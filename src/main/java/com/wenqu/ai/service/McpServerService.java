@@ -1,5 +1,6 @@
 package com.wenqu.ai.service;
 
+import com.wenqu.ai.agent.chat.ChatRunRuntime;
 import com.wenqu.ai.agent.chat.ChatCommand;
 import com.wenqu.ai.config.ConfigDefaults;
 import com.alibaba.fastjson2.JSON;
@@ -333,7 +334,7 @@ public class McpServerService {
                         .structuredContent(Map.of("sessionId", sid))
                         .build();
             } finally {
-                RagService.forgetSseChannel(sink);
+                ChatRunRuntime.forgetSseChannel(sink);
             }
         });
     }
@@ -494,7 +495,7 @@ public class McpServerService {
                     .build();
         } finally {
             // 收集型通道不触发 onCompletion，必须主动清登记，否则 RagService 的 ACTIVE_SSE 残留
-            RagService.forgetSseChannel(sink);
+            ChatRunRuntime.forgetSseChannel(sink);
         }
     }
 

@@ -49,6 +49,18 @@ import java.util.Map;
 public class ChatController {
 
     private final RagService ragService;
+    /**
+     * 人在回路裁决（P6 刀 1 自 RagService 抽族）：三张卡——工具执行审批、askUser 提问、执行计划批准——
+     * 的裁决提交与跨设备恢复都走这里。问答运行时不再代管卡片，本控制器也就不再向它要卡片。
+     */
+    private final com.wenqu.ai.agent.hitl.HitlDecisionService hitl;
+    /**
+     * 轮次控制与存活（P6 刀 2）：「停止本轮」「运行中插话」「有没有一轮在跑」「接流回来」
+     * 这四个入口都在它那里——它们问的是这一轮的通道与生死，不是这一轮怎么把答案生成出来。
+     */
+    private final com.wenqu.ai.agent.chat.ChatRunRuntime runtime;
+    /** 对话历史的装配与滚动压缩（P6 刀 4）：/compact 直接找它，不再绕问答服务 */
+    private final com.wenqu.ai.agent.context.HistoryCompactionService historyCompaction;
     private final SessionService sessionService;
     private final ImageUrlSigner imageUrlSigner;
     private final KnowledgeMapper knowledgeMapper;
@@ -274,14 +286,12 @@ public class ChatController {
                 normalized.setName(doc.getFileName());
                 normalized.setKbId(doc.getKbId() == null ? kbService.defaultId(RequestUser.uid()) : doc.getKbId());
             } else if ("agent".equals(type)) {
-                // @ 智能体（轮级委派）：get() 内含可读校验（共享范围外按不存在处理，不泄露存在性）。
-                // 子智能体是主智能体的内部检索角色，不作为问答角色直接提及——与对话页下拉同一口径
+                // @ 智能体（P5：本轮强制咨询它）：get() 内含可读校验（共享范围外按不存在处理，
+                // 不泄露存在性）。子智能体同样可以被 @ ——@ 不再是"换它来作答"而是"派它去查"，
+                // 而子智能体恰恰是挂得最规整的那一份资料域。它仍然不能当问答角色（对话页下拉照旧剔除）。
                 var a = agentService.get(id);
                 if (a == null) {
                     throw new BizException("提及的智能体不存在或无权访问");
-                }
-                if (Integer.valueOf(1).equals(a.getIsSubagent())) {
-                    throw new BizException("子智能体不能被 @ 提及（它只能被主智能体委派调用）");
                 }
                 normalized.setType("agent");
                 normalized.setId(a.getId());
@@ -335,7 +345,7 @@ public class ChatController {
     public ResultJson stopChatTurn(@RequestBody Map<String, String> body) {
         String sessionId = body == null ? null : body.get("sessionId");
         if (sessionId == null || sessionId.isBlank()) return ResultJson.error("缺少会话 ID");
-        boolean stopped = ragService.stopTurn(sessionId.trim(), com.wenqu.ai.util.RequestUser.uid());
+        boolean stopped = runtime.stopTurn(sessionId.trim(), com.wenqu.ai.util.RequestUser.uid());
         return ResultJson.ok(java.util.Map.of("stopped", stopped));
     }
 
@@ -351,7 +361,7 @@ public class ChatController {
         if (sessionId == null || sessionId.isBlank() || text == null || text.isBlank()) {
             return ResultJson.error("缺少会话 ID 或插话内容");
         }
-        String messageId = ragService.steerTurn(sessionId.trim(), com.wenqu.ai.util.RequestUser.uid(), text);
+        String messageId = runtime.steerTurn(sessionId.trim(), com.wenqu.ai.util.RequestUser.uid(), text);
         return ResultJson.ok(java.util.Map.of("accepted", messageId != null,
                 "messageId", messageId == null ? "" : messageId));
     }
@@ -363,7 +373,7 @@ public class ChatController {
     public ResultJson chatRunStatus(
             @Parameter(description = "会话 ID") @RequestParam("sessionId") String sessionId) {
         if (sessionId == null || sessionId.isBlank()) return ResultJson.error("缺少会话 ID");
-        return ResultJson.ok(ragService.runStatus(sessionId.trim(), com.wenqu.ai.util.RequestUser.uid()));
+        return ResultJson.ok(runtime.runStatus(sessionId.trim(), com.wenqu.ai.util.RequestUser.uid()));
     }
 
     @Operation(summary = "断线重连接流", description = "把一条新的 SSE 通道挂到该会话正在跑的这一轮上："
@@ -381,7 +391,7 @@ public class ChatController {
             emitter.complete();
             return emitter;
         }
-        ragService.resumeTurn(sessionId.trim(), com.wenqu.ai.util.RequestUser.uid(), emitter);
+        runtime.resumeTurn(sessionId.trim(), com.wenqu.ai.util.RequestUser.uid(), emitter);
         return emitter;
     }
 
@@ -392,7 +402,7 @@ public class ChatController {
             @Parameter(description = "审批请求 ID（approval_required 事件下发）") @PathVariable("approvalId") String approvalId,
             @RequestBody Map<String, Boolean> body) {
         boolean approved = Boolean.TRUE.equals(body.get("approved"));
-        boolean ok = ragService.resolveApproval(approvalId, approved, com.wenqu.ai.util.RequestUser.uid());
+        boolean ok = hitl.resolveApproval(approvalId, approved, com.wenqu.ai.util.RequestUser.uid());
         if (!ok) return ResultJson.error("审批请求不存在或已失效（可能已超时）");
         return ResultJson.ok(approved ? "已批准" : "已拒绝");
     }
@@ -403,13 +413,13 @@ public class ChatController {
     public ResultJson listPendingToolApprovals(
             @Parameter(description = "会话 ID") @RequestParam("sessionId") String sessionId) {
         return ResultJson.ok(java.util.Map.of("items",
-                ragService.listPendingApprovals(sessionId, com.wenqu.ai.util.RequestUser.uid())));
+                hitl.listPendingApprovals(sessionId, com.wenqu.ai.util.RequestUser.uid())));
     }
 
     @GetMapping("/tool-approval/{approvalId}")
     public ResultJson getToolApproval(
             @Parameter(description = "审批请求 ID") @PathVariable("approvalId") String approvalId) {
-        return ResultJson.ok(ragService.getApproval(approvalId, com.wenqu.ai.util.RequestUser.uid()));
+        return ResultJson.ok(hitl.getApproval(approvalId, com.wenqu.ai.util.RequestUser.uid()));
     }
 
     @Operation(summary = "回答智能体提问", description = "回答智能体的结构化提问（ask_user 事件下发，人在回路）：仅本轮用户本人可答，"
@@ -425,7 +435,7 @@ public class ChatController {
         String uid = com.wenqu.ai.util.RequestUser.uid();
         boolean ok;
         if (ignore) {
-            ok = ragService.resolveAskIgnore(askId, uid);
+            ok = hitl.resolveAskIgnore(askId, uid);
         } else {
             // 一卡多问：answers 为与问题下标对齐的答案数组；兼容旧式单答案 {answer}
             java.util.List<String> answers = new java.util.ArrayList<>();
@@ -435,7 +445,7 @@ public class ChatController {
             } else if (body.get("answer") != null) {
                 answers.add(String.valueOf(body.get("answer")));
             }
-            ok = ragService.resolveAsk(askId, answers, uid);
+            ok = hitl.resolveAsk(askId, answers, uid);
         }
         if (!ok) return ResultJson.error("提问已结束，这次作答没能送达智能体");
         return ResultJson.ok(ignore ? "已忽略，智能体将自行判断" : "已提交");
@@ -448,7 +458,7 @@ public class ChatController {
     public ResultJson listPendingAsks(
             @Parameter(description = "会话 ID") @RequestParam("sessionId") String sessionId) {
         return ResultJson.ok(java.util.Map.of("items",
-                ragService.listPendingAsks(sessionId, com.wenqu.ai.util.RequestUser.uid())));
+                hitl.listPendingAsks(sessionId, com.wenqu.ai.util.RequestUser.uid())));
     }
 
     @Operation(summary = "工具完整输出（外溢原文读回）", description = "读回一条被外溢存储的工具原文（沙盒输出、读到的整份文件等）。"
@@ -514,7 +524,7 @@ public class ChatController {
         boolean supersede = Boolean.TRUE.equals(body.get("supersede"));
         Object p = body.get("plan");
         String plan = p == null ? null : String.valueOf(p);
-        boolean ok = ragService.resolvePlanApproval(planApprovalId, approved, plan, revise, supersede, com.wenqu.ai.util.RequestUser.uid());
+        boolean ok = hitl.resolvePlanApproval(planApprovalId, approved, plan, revise, supersede, com.wenqu.ai.util.RequestUser.uid());
         if (!ok) return ResultJson.error("计划已处理或已失效（可能已超时）");
         return ResultJson.ok(supersede ? "本版计划已作废（继续对话见新计划）"
                 : (revise ? "已按你的意见修改计划" : (approved ? "已批准，按计划执行" : "已取消本轮")));
@@ -528,7 +538,7 @@ public class ChatController {
     public ResultJson listPendingPlans(
             @Parameter(description = "会话 ID") @RequestParam("sessionId") String sessionId) {
         return ResultJson.ok(java.util.Map.of("items",
-                ragService.listPendingPlans(sessionId, com.wenqu.ai.util.RequestUser.uid())));
+                hitl.listPendingPlans(sessionId, com.wenqu.ai.util.RequestUser.uid())));
     }
 
     @Operation(summary = "会话列表", description = "游标分页列出当前用户的会话（含 anonymous 历史兼容池；置顶优先、按更新时间倒序）。"
@@ -690,7 +700,7 @@ public class ChatController {
             throw new BizException("未指定模型：请先在对话中选择模型，或在个人设置中配置默认模型");
         }
         String instruction = instrArg == null ? null : String.valueOf(instrArg);
-        return ResultJson.ok(ragService.compactSession(sessionId, resolvedModel, instruction), "压缩完成");
+        return ResultJson.ok(historyCompaction.compactSession(sessionId, resolvedModel, instruction), "压缩完成");
     }
 
     @Operation(summary = "删除会话", description = "删除指定会话（MySQL 软删除 + Redis 清理；校验会话归属）")

@@ -135,6 +135,18 @@ public class ToolRegistry {
     }
 
     /**
+     * 卡片展示字段写入：中文名 + 悬停说明，未知工具（MCP 动态名）不写字段，由前端那份映射兜底。
+     * <p>实时审批卡、工具状态卡、刷新后重建的待批列表三处同源，所以这段收在注册中心而不是问答侧——
+     *     留在服务里就会有多份手抄，而手抄的失败方式正是「同一张卡刷新前后换了个名字」。
+     */
+    public void putDisplayFields(Map<String, Object> payload, String name) {
+        String label = displayLabel(name);
+        if (label != null) payload.put("label", label);
+        String hint = cardHint(name);
+        if (hint != null) payload.put("hint", hint);
+    }
+
+    /**
      * 是否需要用户审批。
      * <p><b>未登记的工具一律要</b>（fail-closed）：外部 MCP server 的工具名前缀来自用户自己起的
      * clientInfo 名（可以是 context7、可以是任意串），靠命名规律去认「这是外部工具」迟早漏——

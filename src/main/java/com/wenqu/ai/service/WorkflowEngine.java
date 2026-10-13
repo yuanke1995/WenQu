@@ -1,5 +1,6 @@
 package com.wenqu.ai.service;
 
+import com.wenqu.ai.agent.chat.ChatRunRuntime;
 import com.wenqu.ai.agent.chat.ChatCommand;
 import com.wenqu.ai.config.ConfigDefaults;
 import com.alibaba.cloud.ai.graph.CompiledGraph;
@@ -1080,7 +1081,7 @@ public class WorkflowEngine {
                 return new NodeOut(Map.of("answer", answer), null, null, trace);
             } finally {
                 // 收集型通道不触发 onCompletion，必须主动清登记；临时会话随手删（软删，审计留痕）
-                RagService.forgetSseChannel(sink);
+                ChatRunRuntime.forgetSseChannel(sink);
                 try {
                     sessionService.deleteSession(ctx.uid, sessionId);
                 } catch (Exception ignored) {

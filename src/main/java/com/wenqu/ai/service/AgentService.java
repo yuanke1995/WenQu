@@ -268,18 +268,60 @@ public class AgentService {
     }
 
     /**
-     * 自动派遣候选（agentId="auto" 时用）：可见的主智能体实体列表（isSubagent≠1 + 可读性过滤）。
-     * 与 {@link #available()} 同口径，但返回实体供派遣路由读取名称/描述。
+     * 可读助手的 id+名称（含子智能体）：给前端还原「本轮咨询了谁」的徽标用。
+     * <p>为什么不复用 {@link #available()}：那份刻意剔除子智能体（它们不能当问答角色），
+     * 而咨询清单恰恰包含它们——少一份名称就会出现"徽标上挂着一串裸 id"。
      */
-    public List<Agent> dispatchCandidates() {
+    public List<Map<String, Object>> consultable() {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Agent a : list()) {
+            if (!readable(a)) continue;
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", a.getId());
+            m.put("name", a.getName());
+            out.add(m);
+        }
+        return out;
+    }
+
+    /**
+     * 本轮可咨询的助手清单（P5 agent-as-tool）：使用者可读的<b>全部</b>智能体，含子智能体，
+     * 只排除"自己咨询自己"。
+     * <p>它刻意<b>包含</b>子智能体：过去那套派遣问的是"换哪个角色来答"，所以要剔掉子智能体；
+     * 这里问的是"有哪几块资料可以派出去查"，子智能体恰恰是最规整的那一块。
+     * <p>递归靠深度硬顶与每轮咨询上限收口（见问答侧的咨询台账），不在清单里做——清单要按"这人能不能读"
+     * 判，与调用链无关，把链算进可读集合会让缓存与权限判定搅在一起。
+     */
+    public List<Agent> consultCandidates(String selfAgentId) {
         List<Agent> out = new ArrayList<>();
         for (Agent a : list()) {
-            if (Integer.valueOf(1).equals(a.getIsSubagent())) continue;
             if (!readable(a)) continue;
+            if (selfAgentId != null && selfAgentId.equals(a.getId())) continue;
             out.add(a);
         }
         return out;
     }
+
+    /**
+     * 渲染系统提示的「可咨询助手」一节：每行 {@code - id | 名称：职责描述}。
+     * <p>没有候选时返回空串，调用方整段不写——写一节"你可以咨询以下助手"而下面是空的，模型会照着
+     * 这个格式去猜一个不存在的 id。
+     * <p>描述为空的助手如实标"未填职责描述"：这等于告诉模型"这位不知道管什么，别派给它"，
+     * 比留一行空白让它按名字联想要诚实（描述质量就是路由质量，这一行也是管理员看自己配置好没好的镜子）。
+     */
+    public String consultCatalog(String selfAgentId) {
+        List<Agent> cs = consultCandidates(selfAgentId);
+        if (cs.isEmpty()) return "";
+        StringBuilder sb = new StringBuilder();
+        for (Agent a : cs) {
+            String desc = a.getDescription() == null ? "" : a.getDescription().strip();
+            sb.append("- ").append(a.getId()).append(" | ").append(a.getName()).append('：')
+                    .append(desc.isEmpty() ? "通用助手（未填职责描述，除非名称明显对口否则不要咨询）" : desc)
+                    .append('\n');
+        }
+        return sb.toString();
+    }
+
 
     /**
      * 可委派的子智能体（供主智能体配置页勾选）。

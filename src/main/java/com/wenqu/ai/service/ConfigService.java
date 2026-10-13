@@ -298,6 +298,10 @@ public class ConfigService {
         // （模型引用只认归属人），又让"一个库都没绑 = 全平台没重排"这个默认态有解。
         d.put("rerank.platformRef", "");
         d.put("rerank.baseUrl", properties.getRetrieval().getRerank().getBaseUrl());
+        // 重排窗口两键：此前只有代码默认值（ConfigDefaults），设置页看不见、PUT 改不动，
+        // 只能直接改库——调参时等于"没有入口"，2026-10-13 登记进 schema 一并补齐
+        d.put("rerank.minHits", String.valueOf(ConfigDefaults.RERANK_MIN_HITS));
+        d.put("rerank.maxHits", String.valueOf(ConfigDefaults.RERANK_MAX_HITS));
         // context.safetyFactor / context.costCapTokens / context.maxOutputTokens 已退役：
         // 窗口与最大输出按模型在「模型管理」声明（对话类窗口必填），安全系数固定为
         // ModelRegistryService.CONTEXT_SAFETY_FACTOR，成本软上限移除。存量库中的旧行成为孤儿数据（无读取方）。
@@ -306,6 +310,8 @@ public class ConfigService {
         d.put("context.snippetWindowChars", String.valueOf(properties.getContext().getSnippetWindowChars()));
         d.put("context.maxContextHits", String.valueOf(properties.getContext().getMaxContextHits()));
         d.put("context.maxBlocksPerDoc", "3");             // 单文档块数配额（0=不限制；@ 引用块豁免）
+        // P5 解绑后主检索覆盖使用者全部可见库，没有每库配额就会被"块多且词面泛"的那个库占满名额
+        d.put("context.maxBlocksPerKb", "4");              // 单知识库块数配额（0=不限制；@ 引用块与库取不到的块豁免）
         d.put("context.dedupEnabled", "true");             // 信息增益去冗余（默认开）
         d.put("context.dedupThreshold", "0.45");           // 词元重叠阈值（越高越宽松）
         d.put("context.dedupPathThreshold", "0.28");       // 同章节路径下重叠阈值
@@ -590,9 +596,12 @@ public class ConfigService {
         d.put("memory.maxInjectCount", "30");              // 每轮最多注入条数（按更新时间取最近）
         d.put("memory.injectBudgetChars", "1500");         // 注入字符预算（防挤占知识上下文）
         d.put("agent.autoRoute", "true");                  // 按需委派：主模型先挑相关的子智能体再咨询
-        d.put("agent.dispatchNarrowScope", "false");       // 委派收窄检索范围：挑出子集后主检索收窄到主智能体库∪选中助手库（默认关——路由判错会漏召回）
         d.put("agent.routeTimeoutMs", String.valueOf(ConfigDefaults.AGENT_ROUTE_TIMEOUT_MS));             // 路由判定超时（超时回退全部候选）
-        d.put("agent.autoDispatch", "true");               // 自动派遣：对话页选「自动派遣」时按名称+描述路由（关=回落默认智能体）
+        // P5 agent-as-tool：模型自己在工具循环里决定咨询谁、咨询几次（与上面那条派遣路由是两套机制，本卡收口时旧的删）
+        d.put("agent.personalDefault", "");                     // 个人默认助手（空=跟随平台默认智能体）：问答流水线线程已装载个人覆盖，解析作答方时直接读
+        d.put("agent.consultMaxPerTurn", String.valueOf(ConfigDefaults.AGENT_CONSULT_MAX_PER_TURN));   // 一轮最多咨询几位助手
+        d.put("agent.consultTimeoutMs", String.valueOf(ConfigDefaults.AGENT_CONSULT_TIMEOUT_MS));      // 单次咨询等那条子轮的上限
+        d.put("tool.subagentConsult.enabled", "true");                                                 // 咨询工具族开关（仍受工具总闸 tool.enabled 管）
         // 智能体配置版本快照保留份数（超出按版本号最小先删）；设置页挂在「定时任务 → 智能体配置版本」
         d.put("agent.versionKeep", "20");
         // mcp.enabled / mcp.servers 已移除：MCP **客户端**改为每人自己的 c_ai_user_mcp（见 McpClientService）
@@ -872,6 +881,11 @@ public class ConfigService {
     /** 保存可编辑项（白名单校验）→ 写 DB + 刷新缓存 */
     public Map<String, String> update(Map<String, Map<String, String>> groups) {
         Map<String, String> updates = new HashMap<>();
+        // 不认识项的清单：必须在任何写入之前整笔拒绝，不能丢弃后继续——
+        // 原先只把不认识的键静默扔掉，接口照样返回"配置已保存并生效"，库里一个字没改
+        // （实测 rerank.maxHits 改了没反应，据此做的 A/B 结论全是错的）。
+        // 个人配置侧（UserConfigService.save）已是拒绝口径，管理端对齐同一行为。
+        Set<String> unknownKeys = new LinkedHashSet<>();
         if (groups != null) {
             for (Map.Entry<String, Map<String, String>> g : groups.entrySet()) {
                 String prefix = g.getKey() + ".";
@@ -879,9 +893,16 @@ public class ConfigService {
                     String fullKey = prefix + kv.getKey();
                     if (schema.isEditable(fullKey)) {
                         updates.put(fullKey, kv.getValue() == null ? "" : kv.getValue().trim());
+                    } else {
+                        unknownKeys.add(fullKey);
                     }
                 }
             }
+        }
+        if (!unknownKeys.isEmpty()) {
+            throw new IllegalArgumentException("这些项系统不认，本次未保存任何改动："
+                    + String.join("、", unknownKeys)
+                    + "（可能是页面版本过旧，或该项已改名/取消）。请刷新设置页后重试");
         }
         // 掩码回写保护：snapshot 对敏感项脱敏为 "****后4位"，前端未修改时会把掩码原样提交；
         // 掩码值（**** 开头）一律跳过更新，避免覆盖库中真实 key（真实 master key 不可能以 **** 开头）

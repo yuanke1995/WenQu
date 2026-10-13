@@ -124,12 +124,13 @@ public class SessionService {
         }
     }
 
-    /** 取当前用户可复用的空会话（无消息、未绑定智能体、未置顶；取最近更新的那条） */
+    /** 取当前用户可复用的空会话（无消息、未置顶；取最近更新的那条）。
+     *  <p>P5 起不再看 agent_id：那一列已从"会话锁定的智能体"变成"最近一次作答的智能体"，
+     *  一个还没发过消息的会话本来就没有作答方，用它当"不可复用"的判据是旧锁定语义的残留。 */
     private Session findEmptySession(String uid) {
         LambdaQueryWrapper<Session> q = new LambdaQueryWrapper<>();
         q.eq(Session::getUserId, uid)
                 .eq(Session::getMessageCount, 0)
-                .isNull(Session::getAgentId)
                 .and(w -> w.isNull(Session::getIsPinned).or().ne(Session::getIsPinned, 1))
                 .orderByDesc(Session::getUpdateTime)
                 .last("LIMIT 1");
@@ -1086,51 +1087,24 @@ public class SessionService {
         }
     }
 
+    
     /**
-     * 会话级智能体绑定（首问锁定）：仅当会话尚未绑定（agent_id IS NULL）时写入，已绑定则原样不动
-     * ——这正是「一次锁定、全程一致」的实现点：后续轮次即使请求里带了别的 agentId 也不再改变本会话。
-     * <p>
-     * 取值语义：有值=锁定该智能体；空串=已决定不绑定（走全局配置）；NULL=尚未决定（新会话未发过消息）。
-     * 空串与 NULL 必须区分，否则"用户明确选了不用智能体"会被当成未绑定而每轮重新路由。
-     *
-     * @return true=本次调用完成绑定；false=已绑定过或写库失败（写库失败由调用方按 fail-loud 处理）
+     * 记下本轮实际作答的智能体（P5：这一列从"会话锁定值"改为"最近作答方"）。
+     * <p>为什么还留着写它：分享页要按智能体列访客会话（{@link #listSessionsForAgent}）、
+     * 访客闲置会话要按智能体回收（{@link #deleteSessionsOfVisitor}）——对免登录链路来说
+     * 作答方恒等于被发布的那个智能体，语义没变；变的是登录对话页不再被它锁住。
+     * <p>best-effort：写失败只影响列表回显，不影响这一轮回答。
      */
-    public boolean bindAgent(String sessionId, String agentId, String agentName) {
+    public void recordTurnAgent(String sessionId, String agentId, String agentName) {
+        if (sessionId == null || sessionId.isBlank() || agentId == null || agentId.isBlank()) return;
         try {
-            // 注意：全局逻辑删除字段 deleted 使得 updateById 无法置空/改部分字段的场景受限，
-            // 这里按项目约定走 LambdaUpdateWrapper.set（显式 SET，且带 isNull 条件保证只锁一次）
-            int rows = sessionMapper.update(null, new LambdaUpdateWrapper<Session>()
+            sessionMapper.update(null, new LambdaUpdateWrapper<Session>()
                     .eq(Session::getId, sessionId)
-                    .isNull(Session::getAgentId)
-                    .set(Session::getAgentId, agentId == null ? "" : agentId)
+                    .set(Session::getAgentId, agentId)
                     .set(Session::getAgentName, agentName == null ? "" : agentName));
-            return rows > 0;
         } catch (Exception e) {
-            log.warn("会话绑定智能体失败 (session={}): {}", sessionId, e.getMessage());
-            return false;
+            log.warn("记录本轮作答智能体失败 (session={}): {}", sessionId, e.getMessage());
         }
-    }
-
-    /**
-     * 读取会话已锁定的智能体。返回 null 表示「尚未绑定」（列仍为 NULL、会话不存在或查询失败）。
-     * 返回的 agentId 可能为空串（已决定不绑定智能体）。
-     */
-    public AgentBinding getAgentBinding(String sessionId) {
-        try {
-            Session s = sessionMapper.selectOne(new LambdaQueryWrapper<Session>()
-                    .eq(Session::getId, sessionId)
-                    .select(Session::getAgentId, Session::getAgentName)
-                    .last("LIMIT 1"));
-            if (s == null || s.getAgentId() == null) return null;
-            return new AgentBinding(s.getAgentId(), s.getAgentName());
-        } catch (Exception e) {
-            log.warn("读取会话智能体绑定失败 (session={}): {}", sessionId, e.getMessage());
-            return null;
-        }
-    }
-
-    /** 会话级智能体绑定快照（agentId 空串 = 已决定不绑定智能体） */
-    public record AgentBinding(String agentId, String agentName) {
     }
 
     /**
@@ -1142,7 +1116,7 @@ public class SessionService {
         assertOwned(sessionId, userId);
         String m = model == null ? "" : model.trim();
         if (m.length() > 190) throw new com.wenqu.ai.common.BizException("模型引用过长");
-        // 清除覆盖要显式 SET null：updateById 默认忽略 null 字段（置空清不掉，见 bindAgent 同款约束）
+        // 清除覆盖要显式 SET null：updateById 默认忽略 null 字段（置空清不掉，故显式 SET）
         sessionMapper.update(null, new LambdaUpdateWrapper<Session>()
                 .eq(Session::getId, sessionId)
                 .set(Session::getModel, m.isEmpty() ? null : m));
@@ -1252,6 +1226,39 @@ public class SessionService {
         } catch (Exception e) {
             // 标记写不进去只影响「刷新后还能不能看到这版切换器」，不阻断本轮落库，留痕即可
             log.warn("[BRANCH] 版本组标记写入失败 (messageId={}): {}", messageId, e.getMessage());
+        }
+    }
+
+    /**
+     * 本轮降级事件补写（回答落库后另发一条 UPDATE，只在**真有降级**时调用——正常轮次不产生这次往返）。
+     * <p>为什么不塞进 appendMessage 那串 21 个位置参数：那条签名已是 P6 的搬迁对象，为一个偶发字段
+     * 再加一位会让调用点更难对齐；且降级列表在落库时点之后还会增长（工具链路与换路重试都可能在之后登记）。
+     */
+    /**
+     * 本轮降级事件补写到回答消息行（没降级就不写）。
+     * <p>补的是「只在流里活一次」那半只钥匙：降级条此前只随 done 事件下发，刷新/切会话后整块消失——
+     * 用户当时看见「本轮没咨询成其他助手」，回头看不见就成了没发生过，与设置页不许有假开关是同一条底线。
+     * <p>P6 刀 4 从问答侧的那层私有包装收口到这里：主链路与工作流那条路都要补，
+     * 留两份就是两份「什么时候不补」的判据。
+     */
+    public void persistDegradations(String messageId, java.util.List<java.util.Map<String, String>> degradations) {
+        if (messageId == null || messageId.isBlank() || degradations == null || degradations.isEmpty()) return;
+        saveMessageDegradations(messageId, com.alibaba.fastjson2.JSON.toJSONString(degradations));
+    }
+
+    public void saveMessageDegradations(String messageId, String degradationsJson) {
+        if (messageId == null || messageId.isBlank()
+                || degradationsJson == null || degradationsJson.isBlank()
+                || "[]".equals(degradationsJson)) {
+            return;
+        }
+        try {
+            messageMapper.update(null, new LambdaUpdateWrapper<Message>()
+                    .eq(Message::getId, messageId)
+                    .set(Message::getDegradations, degradationsJson));
+        } catch (Exception e) {
+            // 写不进去只影响「刷新后还能不能看到这轮的降级条」，不阻断问答收尾，留痕即可
+            log.warn("[DEGRADATION] 降级事件落库失败 (messageId={}): {}", messageId, e.getMessage());
         }
     }
 
@@ -1568,6 +1575,14 @@ public class SessionService {
                 map.put("related", JSON.parseArray(m.getRelated(), String.class)); // 「接下来可以」推荐（历史回显）
             } catch (Exception e) {
                 // related 解析失败忽略
+            }
+        }
+        if (m.getDegradations() != null && !m.getDegradations().isBlank()) {
+            try {
+                // 本轮降级事件（历史回显：刷新后降级条仍在，与当轮流式观感一致）
+                map.put("degradations", JSON.parseArray(m.getDegradations(), Map.class));
+            } catch (Exception e) {
+                // degradations 解析失败忽略
             }
         }
         if (m.getArtifacts() != null && !m.getArtifacts().isBlank()) {

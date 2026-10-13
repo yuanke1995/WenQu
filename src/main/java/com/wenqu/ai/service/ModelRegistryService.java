@@ -496,6 +496,10 @@ public class ModelRegistryService {
             m.put("thinking", resolveThinking(mi));
             // 管理列表速览：图片能力解析结果（auto 已按类型/模型名判定）；思考登记原值（编辑回填须用原值，避免 auto 被解析结果写死）
             m.put("visionResolved", visionCapable(mi));
+            // 工具能力也回显解析结果：登记值默认是"未填=chat/omni 一律放行"，
+            // 管理员看不见"这个模型实际会不会被下发 tools"，私有化网关不认 function calling 时
+            // 只能从整轮失败反推（P5 §六）
+            m.put("toolCapableResolved", toolCapable(mi));
             m.put("thinkingRaw", mi.getThinking());
             // 思考强度：支持档位数组 + 默认档位（编辑弹窗回显；无档位=只支持思考开关）
             m.put("reasoningLevels", reasoningLevelsOf(mi));

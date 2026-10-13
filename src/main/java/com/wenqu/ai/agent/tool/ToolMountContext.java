@@ -6,7 +6,7 @@ package com.wenqu.ai.agent.tool;
  * 与 {@link ToolTurnContext} 的分工：那份是「工具已经要执行了，本轮状态给执行层」，本份是
  * 「还没决定挂什么，本轮条件给各族自己判」。分成两个是因为二者的信息面完全不同——装配期要读
  * 智能体配置与开关，执行期要读引用列表与 SSE 落点，合成一份就会变成又一个 86 字段的
- * AnswerStreamState 影子。
+ * TurnState 影子。
  * <p>
  * 为什么要让各族自己判：迁移前「哪个开关控制哪族挂不挂、游客给不给」整份抄在
  * {@code RagService.enabledToolCallbacks} 的 if 链里，并且为免登录分享会话又整份复制了一遍

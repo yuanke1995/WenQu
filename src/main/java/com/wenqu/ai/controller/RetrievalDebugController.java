@@ -1,6 +1,7 @@
 package com.wenqu.ai.controller;
 
 import com.wenqu.ai.common.BizException;
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.dto.ResultJson;
 import com.wenqu.ai.mapper.KnowledgeMapper;
 import com.wenqu.ai.model.Knowledge;
@@ -151,16 +152,44 @@ public class RetrievalDebugController {
         }
         result.put("reranked", reranked.stream().map(this::hitMap).toList());
 
-        // 5. 最终上下文（截断 8）+ 被排除
-        List<HybridRetrievalService.Hit> finalTop = reranked.size() > MAX_CONTEXT_HITS
-                ? reranked.subList(0, MAX_CONTEXT_HITS) : reranked;
-        result.put("finalContext", finalTop.stream().map(this::hitMap).toList());
-        if (reranked.size() > MAX_CONTEXT_HITS) {
-            result.put("excluded", reranked.subList(MAX_CONTEXT_HITS, reranked.size())
-                    .stream().map(this::hitMap).toList());
-        } else {
-            result.put("excluded", List.of());
+        // 5. 最终上下文：走与真实问答**同一道相关性门**。
+        //    此前这里只截前 8 条，面板报 8 而生产实际进 1~2 条——排查召回的人会去找一个不存在的堵点
+        //    （2026-10-13 实测：为此连试每库配额、门限、重排窗口三组 A/B 全部空转，真因是分布本身
+        //    只有 1~2 块过 0.6 门）。与本文件上面第 4 步那条"面板要与生产同口径"是同一条标准。
+        double minRerank = configService.getDouble("retrieval.minContextScore", ConfigDefaults.RETRIEVAL_MIN_CONTEXT_SCORE);
+        double minFusion = configService.getDouble("retrieval.minFusionScore", ConfigDefaults.RETRIEVAL_MIN_FUSION_SCORE);
+        List<HybridRetrievalService.Hit> gated = new ArrayList<>();
+        int droppedByGate = 0;
+        // 重排本轮真执行过时，未进重排窗口的候选不得借融合分混进上下文——与生产同一条规则，
+        // 少了它面板就会报 8 而实际进 2（相关性分域不同，融合分与重排分不可互相顶替）
+        boolean rerankExecuted = Boolean.TRUE.equals(result.get("rerankApplied"));
+        for (HybridRetrievalService.Hit h : reranked) {
+            boolean hasRerank = h.rerankScore() != null;
+            if (rerankExecuted && !hasRerank) {
+                droppedByGate++;
+                continue;
+            }
+            double rankScore = hasRerank ? h.rerankScore() : h.score();
+            double gate = hasRerank ? minRerank : minFusion;
+            if (gate > 0 && rankScore < gate) {
+                droppedByGate++;
+                continue;
+            }
+            if (gated.size() >= MAX_CONTEXT_HITS) break;
+            gated.add(h);
         }
+        Map<String, Object> gateInfo = new LinkedHashMap<>();
+        gateInfo.put("minRerank", minRerank);
+        gateInfo.put("minFusion", minFusion);
+        gateInfo.put("droppedByGate", droppedByGate);
+        // 与生产仍有两处已知差别，写出来让看的人自己校正预期，而不是又当成 bug 去查：
+        gateInfo.put("note", "面板对全部候选重排，生产只重排融合分 top rerank.maxHits——窗口大小不同会让面板数略多于实际；"
+                + "单文档/单库配额与信息增益去冗这里不复刻（只减不增）。相关性门与未重排不得入场两条已同口径。");
+        result.put("contextGate", gateInfo);
+        result.put("finalContext", gated.stream().map(this::hitMap).toList());
+        List<HybridRetrievalService.Hit> rest = new ArrayList<>(reranked);
+        rest.removeAll(gated);
+        result.put("excluded", rest.stream().map(this::hitMap).toList());
         return ResultJson.ok(result);
     }
 

@@ -41,6 +41,12 @@ public class Message {
     private String retrieved;
     /** 相关推荐问句 (JSON数组字符串)：此前只随 done 事件下发，刷新后"接下来可以"整块消失 */
     private String related;
+    /**
+     * 本轮降级事件 (JSON数组字符串: [{level,code,msg}])。
+     * <p>与 related 同一个错法：以前只随 done 事件下发，刷新/切会话后「本轮未能…」那条提示就没了——
+     * 用户当时看见过、回头看不见，等于这一轮没降过级。空列表不落库（多数轮次没有降级）。
+     */
+    private String degradations;
     /** 产物交付 (JSON数组: [{url,filename,size,description}]，原始 URL 存库、展示层签名) */
     private String artifacts;
 

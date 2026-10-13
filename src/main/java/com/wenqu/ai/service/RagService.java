@@ -2,6 +2,15 @@ package com.wenqu.ai.service;
 
 import com.wenqu.ai.agent.tool.ResourceRefs;
 import com.wenqu.ai.agent.chat.ChatCommand;
+import com.wenqu.ai.agent.chat.ChatRunRuntime;
+import com.wenqu.ai.agent.chat.TurnDeadline;
+import com.wenqu.ai.agent.chat.TurnHandle;
+import com.wenqu.ai.agent.chat.TurnRegistry;
+import com.wenqu.ai.agent.chat.SseClientGoneException;
+import com.wenqu.ai.agent.hitl.HitlDecisionService;
+import com.wenqu.ai.agent.chat.TurnState;
+import com.wenqu.ai.agent.hitl.HitlDecisionService.PlanDecision;
+import com.wenqu.ai.agent.hitl.HitlDecisionService.QItem;
 import com.wenqu.ai.agent.subagent.BranchReport;
 import com.wenqu.ai.agent.subagent.BranchRequest;
 import com.wenqu.ai.agent.subagent.BranchRunner;
@@ -162,6 +171,38 @@ public class RagService {
     private int streamRetryCount() { return configService.getInt("chat.streamRetryCount", 1); }
 
     /**
+     * 判断一次流式失败是不是"上游不认 tools"（P5 §六）。
+     * <p>判据刻意保守：必须同时出现「工具/function」与「不支持/无效/未知」两类字样。
+     * 宁可漏判（走原有的失败提示）也不误判——误判会把一次真实的额度或服务故障
+     * 伪装成"本轮没有工具"，用户就会拿着错的原因去排查。
+     * <p>取文本要覆盖**整条异常链加 HTTP 响应体**：实测（假上游 {@code scripts/fake_upstream_no_tools.py}）
+     * 网关的 400 到这一层只剩 {@code WebClientResponseException: 400 Bad Request from POST …}，
+     * 上游写的 "does not support tools" 在 {@code getResponseBodyAsString()} 里——只看 message 时判据永远落空，
+     * 换路一次都不会触发，表现照旧是"整轮失败"（这条链路在补上假上游之前无法实测，就这么静默着）。
+     */
+    private static boolean looksLikeToolsRejected(Throwable error) {
+        String m = failureText(error).toLowerCase();
+        boolean toolMention = m.contains("tool") || m.contains("function");
+        boolean rejected = m.contains("not support") || m.contains("unsupported") || m.contains("invalid")
+                || m.contains("unknown") || m.contains("unrecognized") || m.contains("unexpected");
+        return toolMention && rejected;
+    }
+
+    /** 异常链上的全部可见文本（含 WebClient 的 HTTP 响应体，限长防大串），最多回溯 16 层防自引用成因死循环 */
+    private static String failureText(Throwable error) {
+        StringBuilder sb = new StringBuilder();
+        Throwable t = error;
+        for (int depth = 0; t != null && depth < 16; t = t.getCause(), depth++) {
+            sb.append(t.getMessage()).append('\n');
+            if (t instanceof org.springframework.web.reactive.function.client.WebClientResponseException wre) {
+                sb.append(wre.getResponseBodyAsString()).append('\n');
+            }
+            if (sb.length() > 8000) break;
+        }
+        return sb.toString();
+    }
+
+    /**
      * 所有降级事件（无命中/改写失败/图片剔除/未标注引用/缓存命中等）统一由 chat.retrievalDebugEnabled 开关控制
      * （与检索调试入口/归属徽标同属调试显示，一个开关统管），默认关闭：回答区不展示任何降级提示，
      * 全部只进 [FAIL-LOUD] 日志；排障时开启「检索调试入口」才在回答中展示。
@@ -193,13 +234,6 @@ public class RagService {
         return false;
     }
 
-    /** fail-loud：按 code 去重添加降级事件（全部 debug 级，由 chat.retrievalDebugEnabled 开关控制，默认不展示） */
-    private void addDegradation(List<Map<String, String>> list, Set<String> codes, String code, String msg) {
-        if (!codes.add(code)) return;
-        if (configService.getBoolean("chat.retrievalDebugEnabled")) {
-            list.add(Map.of("code", code, "msg", msg, "level", "debug"));
-        }
-    }
 
     /**
      * 重排（重排模型归知识库检索设置：queryParams["rerank.model"] 经线程局部覆盖生效）；
@@ -212,7 +246,7 @@ public class RagService {
             if (reason != null) {
                 // 文案说清后果而不只是机制：「按融合分排序」用户看不懂，
                 // 真正影响是引用没过语义筛选，弱相关块会混进上下文与引用面板
-                addDegradation(degradations, degradedCodes, "rerankUnavailable",
+                runtime.addDegradation(degradations, degradedCodes, "rerankUnavailable",
                         "重排不可用（" + reason + "）：本轮按融合分排序，引用未做语义筛选，相关性可能偏低");
             } else {
                 hits = rerankService.rank(hits, query);
@@ -275,26 +309,14 @@ public class RagService {
     private static final Pattern IMG_NUMBER_PATTERN = Pattern.compile("\\[图片\\d+[^\\]]*\\]");
     /** 从图片占位中提取全局编号（[图片12：xxx] → 12） */
     private static final Pattern IMG_NUM_DIGITS_PATTERN = Pattern.compile("\\d+");
-    /** 入库原文里的图片占位：[图片] 或 [图片：描述]（尚未编号；填充上下文时替换为 IMG_NUMBER_PATTERN 形态） */
-    private static final Pattern IMG_PLACEHOLDER_PATTERN = Pattern.compile("\\[图片(：.*?)?\\]");
-    /** 中断兜底落库时追加在正文尾部的截断标记：刷新/历史可见的 fail-loud 提示。
-     *  落在时间线区间之外，前端 restore 后由尾段兜底渲染成独立的引用块 */
-    private static final String TRUNCATION_SUFFIX = "\n\n> ⏹ 回答在此处被中断，以上为已生成的部分";
-    /**
-     * 用户主动叫停本轮时追加在正文尾部的标记。与 TRUNCATION_SUFFIX 区分：那是通道断开/看门狗掐的，
-     * 这是用户按下的停止——历史里要能看出「这一轮是我让它停的」，而不是「回答自己断了」。
-     */
-    private static final String STOP_SUFFIX = "\n\n> ⏹ 已停止本轮，以上为已生成的部分";
     /**
      * 进程收尾（重启/部署/被容器杀掉）时追加的标记。第三种成因，必须与前两个分开：用户既没按停止、
      * 连接也没断，是服务本身换了个进程——写成「已停止本轮」会让人以为是自己手滑停的。
      */
     private static final String RESTART_SUFFIX = "\n\n> ⏹ 服务在这一轮中途重启，以上为已生成的部分";
-    /** 思考留痕下限（字）：深度思考动辄上千字，少于这个数说明刚起步就被停，不值得占一条回答 */
-    private static final int STOP_THINKING_TRACE_MIN_CHARS = 120;
     /**
      * 整轮失败（模型流抛异常 / 工具失败冒泡）时追加在正文尾部的标注。
-     * 与 TRUNCATION_SUFFIX 区分：中断是「本来还能继续」，失败是「这次没能答完」。
+     * 与 TurnState.TRUNCATION_SUFFIX 区分：中断是「本来还能继续」，失败是「这次没能答完」。
      * 工具卡片已经记录了失败原因，这行只交代正文本身的完整性，刷新后仍在。
      */
     private static final String STREAM_ERROR_SUFFIX =
@@ -355,8 +377,8 @@ public class RagService {
     private final SubAgentOrchestrator subAgentOrchestrator;
     /** 智能体配置（4.1）：对话页下拉选中后，按智能体覆盖模型/提示词/工具/知识库范围 */
     private final AgentService agentService;
-    /** 自动派遣（agentId="auto"）：按名称+描述从可见主智能体中路由本轮智能体 */
-    private final AgentDispatchService agentDispatchService;
+    /** 智能体咨询（P5 agent-as-tool）：模型在工具循环里自己决定咨询谁；台账按轮建 */
+    private final com.wenqu.ai.agent.subagent.SubAgentConsultService subAgentConsult;
     private final ModelRegistryService modelRegistryService;
     /**
      * M4：工作流服务（智能体绑定工作流时取用）。走 ObjectProvider <b>惰性</b>获取而不是直接注入：
@@ -364,8 +386,7 @@ public class RagService {
      * 这里再直接注入就成环（Spring Boot 3 默认禁止循环依赖，启动直接失败）。惰性取用把这个
      * 「只有绑定了工作流的智能体才用得到」的反向依赖推迟到调用时，依赖图保持单向。
      */
-    private final org.springframework.beans.factory.ObjectProvider<WorkflowService> workflowServiceProvider;
-    private final com.wenqu.ai.mapper.ToolApprovalMapper toolApprovalMapper;
+
     /** @ 引用：被引文档的块直接前置进上下文（不经检索，不参与相关性门） */
     private final com.wenqu.ai.mapper.KnowledgeMapper knowledgeMapper;
     /** 站内通知：工具审批待决（tool.approval）通知发起人。旁路语义 */
@@ -393,7 +414,7 @@ public class RagService {
     private final ToolRegistry toolRegistry;
     /**
      * 权限档位解析（P2）：沙盒执行档 × 工具执行确认捆成的具名预设，加上平台默认与管理员上限。
-     * <p>本轮只解析一次并落在 {@code AnswerStreamState} 上，装配侧与守卫侧读同一份——两处各算一次
+     * <p>本轮只解析一次并落在 {@code TurnState} 上，装配侧与守卫侧读同一份——两处各算一次
      * 就会漂出「工具表里没收、执行时却放得过去」这类反向错配。
      */
     private final com.wenqu.ai.agent.permission.PermissionPolicyResolver permissionPolicyResolver;
@@ -403,6 +424,68 @@ public class RagService {
      * "这一次运行"，人已经不想要这一轮了，脚本却还能继续回调平台，那是多出来的一个窗口。
      */
     private final com.wenqu.ai.agent.runcode.RunTokenRegistry runTokens;
+    /**
+     * 人在回路裁决服务（P6 刀 1 抽族）：三张卡（工具执行审批 / askUser 提问 / 执行计划批准）的
+     * 挂起登记、终态落库、用户裁决与跨设备恢复都在它那里。本类只留「发卡 + 阻塞等待」那一段——
+     * 那一段持有的是本轮的通道与计时，而卡片本身（谁在等、等哪一张、答成什么样）与通道无关。
+     */
+    private final com.wenqu.ai.agent.hitl.HitlDecisionService hitl;
+    /**
+     * 本轮状态的运行时依赖（P6 刀 0）。
+     * <p>{@code TurnState} 原先是私有内部类，隐式拿着整个问答服务——任何一处「抽服务」都会变成多个类
+     * 共享同一个可变口袋。提顶层后它要什么必须写在 {@link TurnState.Deps} 里，这张清单就是唯一答案。
+     * <p>那三个动作（SSE 投递、降级登记、半程落库）暂时还长在问答侧：它们都要动通道与落库，归属随
+     * 刀 2「轮次控制」那一刀才搬得干净。这里交的是匿名实现而不是 this——{@code TurnState} 拿到的是
+     * 三个方法，不是整个服务。
+     */
+    private final TurnState.Deps turnDeps;
+    /**
+     * 轮次控制与存活（P6 刀 2）：SSE 投递与断开跟踪、心跳与存活看门狗、停止本轮 / 运行中插话 /
+     * 探测接流、断线宽限中止都在它那里。本类只剩「这一轮怎么把资料找出来、答案怎么生成出来」。
+     * <p>方向单向：问答侧调用它，它不回叫问答侧。{@code chat()} 刻意留在这边（要提交流水线），
+     * 而原先直接摸那三张登记表的四处改走它的具名闸口——登记表不外露，进出都得走名字。
+     */
+    private final ChatRunRuntime runtime;
+
+    /**
+     * run_code 的子调用通道与实时面板（P6 刀 3a）：脚本里那一路与模型直调同一条守卫链，
+     * 扇出清单/在途/额度这本账也只在子调用通道里才看得全。本类只在挂了 run_code 的轮次找它。
+     */
+    private final com.wenqu.ai.agent.runcode.RunCodeSubCallRuntime subCall;
+
+    /**
+     * 子智能体分支的簿记（P6 刀 3b）：派一支的通道、回报文本、引用与图片回填、给下一层的父轮上下文。
+     * 「跑一整轮」仍由本类传入（{@code this::chat}），所以它不认识问答服务、也没有反向引用。
+     */
+    private final com.wenqu.ai.agent.subagent.SubAgentBranchRuntime branch;
+
+    /**
+     * 对话历史的装配与滚动压缩（P6 刀 4）：本轮带多少历史、什么时候压、手动 /compact 怎么分批压完。
+     * 它不认识 {@code TurnState}，只要会话、模型、预算与降级容器——所以问答侧调它，它不回叫问答侧。
+     */
+    private final com.wenqu.ai.agent.context.HistoryCompactionService historyCompaction;
+
+    /**
+     * 深度思考这一族（P6 刀 4）：生成前那次同步消费的思考流与从里面提出的检索计划。
+     * 它不回头调问答入口，所以能做成 bean；检索与生成仍在本类（阶段3 交回这里执行）。
+     */
+    private final com.wenqu.ai.agent.think.DeepThinkService deepThinkService;
+
+    /**
+     * chatflow 桥（P6 刀 4）：智能体绑定了工作流的那条路——每轮把问题送进图，end 节点出参就是回答。
+     * 这一条路没有生成流，所以桥完全不碰 {@code TurnState}，只吃通道与会话落库。
+     */
+    private final com.wenqu.ai.agent.chatflow.ChatflowBridge chatflow;
+
+    /**
+     * 计划模式这一族（P6 刀 4）：出计划、挂批准卡、按意见重出下一版、计划意图识别。
+     * 它要「按与生成轮同一条口径」装配一次工具集、要弹一张与执行期同管道的提问卡——
+     * 这两件事都在本类，所以经 {@link #planHooks} 交进去（同 P3a 把「跑一整轮」当参数交进分支族那条口径）。
+     */
+    private final com.wenqu.ai.agent.plan.PlanModeService plan;
+
+    /** 计划族本轮要用的回call（无本轮状态，只是把本类那四个方法按接口签名摆出来） */
+    private final com.wenqu.ai.agent.plan.PlanModeService.PlanTurnHooks planHooks;
 
     /** M1：查询改写专用线程池（隔离超时任务，避免占用公共池/无限堆积）。
      *  线程数随 chat.pipelineThreads 联动扩容（syncPipelineSize）：改写是每轮必经的短 LLM 调用
@@ -414,16 +497,6 @@ public class RagService {
         return t;
     });
 
-    /** 历史压缩专用线程池：与改写池分开（同轮可能先压缩再改写，共用会互相排队拉长首字时延）。
-     *  线程数随 chat.pipelineThreads 联动（syncPipelineSize）：压缩是偶发的长 LLM 调用（≤20s），
-     *  排队只延迟压缩不影响本轮可答性，给流水线并发的四分之一即可。
-     *  直接构造 ThreadPoolExecutor（Executors 工厂返回不可转型的包装类，调容需 setCore/Max） */
-    private ThreadPoolExecutor compressExecutor = new ThreadPoolExecutor(1, 1, 0L, TimeUnit.MILLISECONDS,
-            new LinkedBlockingQueue<>(), r -> {
-        Thread t = new Thread(r, "history-compress");
-        t.setDaemon(true);
-        return t;
-    });
 
     /** 问答流水线线程池：图片描述 join/改写/检索/深度思考等重活都在独立线程执行，避免占满 Tomcat 请求线程；
      *   chat.pipelineThreads 可调（保存即生效），队列有界，满时快速失败返回"系统繁忙" */
@@ -479,7 +552,7 @@ public class RagService {
         // 辅助池联动：改写=每轮一次的短调用给一半流水线并发，压缩=偶发长调用给四分之一。
         // 不联动的话，流水线扩到百级而辅助池固定 2/1，改写与压缩成片超时静默降级
         resizePool(rewriteExecutor, Math.max(4, n / 2));
-        resizePool(compressExecutor, Math.max(2, n / 4));
+        historyCompaction.syncPoolSize(Math.max(2, n / 4));   // 压缩池归历史族自己管（刀 4）
     }
 
     /** 有界线程池安全调容：全程维持 max ≥ core 的不变量（先抬 max、core 归位后再收 max） */
@@ -510,9 +583,9 @@ public class RagService {
      */
     @org.springframework.context.event.EventListener(org.springframework.context.event.ContextClosedEvent.class)
     void flushInFlightTurnsOnShutdown() {
-        if (TURN_STATES.isEmpty()) return;
+        if (!TurnRegistry.hasRunning()) return;
         int saved = 0;
-        for (AnswerStreamState st : List.copyOf(TURN_STATES.values())) {
+        for (TurnState st : TurnRegistry.runningStates()) {
             String sid = st.sessionId;
             try {
                 if (st.claimTerminal()) {
@@ -522,7 +595,7 @@ public class RagService {
                 // 账本同样要留这一笔：事后回看「这一轮为什么只有半程」，不写会以为是自己断的线
                 sessionEventService.append(sid, st.userId, st.turnId, "stop",
                         "进程收尾中止：正文 " + st.fullResponse.length() + " 字、工具步 "
-                                + st.toolStepCount.get() + " 步");
+                                + st.tools.toolStepCount.get() + " 步");
                 // 一条都没产出的轮：给那一问打上「中断」的终止原因，否则用户只看到一句孤零零的问题
                 sessionService.markTurnStopped(sid, "interrupted");
                 // 总线立刻收摊：接流的观众当场看到这一轮停了，而不是干等巡检
@@ -553,15 +626,13 @@ public class RagService {
                       ChatAttachmentService chatAttachmentService,
                       SubAgentOrchestrator subAgentOrchestrator,
                       AgentService agentService,
-                      AgentDispatchService agentDispatchService,
+                      com.wenqu.ai.agent.subagent.SubAgentConsultService subAgentConsult,
                       KnowledgeBaseService knowledgeBaseService,
                       RoleService roleService,
                       com.wenqu.ai.mapper.UserMapper userMapper,
                       ModelRegistryService modelRegistryService,
                       UserMemoryService userMemoryService,
                       UserConfigService userConfigService,
-                      org.springframework.beans.factory.ObjectProvider<WorkflowService> workflowServiceProvider,
-                      com.wenqu.ai.mapper.ToolApprovalMapper toolApprovalMapper,
                       com.wenqu.ai.mapper.KnowledgeMapper knowledgeMapper,
                       NotificationService notificationService,
                       SessionEventService sessionEventService,
@@ -571,7 +642,15 @@ public class RagService {
                       ToolPipelineFactory toolPipeline,
                       ToolRegistry toolRegistry,
                       com.wenqu.ai.agent.permission.PermissionPolicyResolver permissionPolicyResolver,
-                      com.wenqu.ai.agent.runcode.RunTokenRegistry runTokens) {
+                      com.wenqu.ai.agent.runcode.RunTokenRegistry runTokens,
+                      com.wenqu.ai.agent.hitl.HitlDecisionService hitl,
+                      ChatRunRuntime runtime,
+                      com.wenqu.ai.agent.runcode.RunCodeSubCallRuntime subCall,
+                      com.wenqu.ai.agent.subagent.SubAgentBranchRuntime branch,
+                      com.wenqu.ai.agent.context.HistoryCompactionService historyCompaction,
+                      com.wenqu.ai.agent.think.DeepThinkService deepThinkService,
+                      com.wenqu.ai.agent.chatflow.ChatflowBridge chatflow,
+                      com.wenqu.ai.agent.plan.PlanModeService plan) {
         // 基于 DynamicOpenAiChatModel 的 ChatClient：网关地址/API Key/补全路径支持跨厂商热切换（保存即生效）
         this.chatClient = chatClient;
         this.sessionService = sessionService;
@@ -592,15 +671,13 @@ public class RagService {
         this.chatAttachmentService = chatAttachmentService;
         this.subAgentOrchestrator = subAgentOrchestrator;
         this.agentService = agentService;
-        this.agentDispatchService = agentDispatchService;
+        this.subAgentConsult = subAgentConsult;
         this.knowledgeBaseService = knowledgeBaseService;
         this.roleService = roleService;
         this.userMapper = userMapper;
         this.userMemoryService = userMemoryService;
         this.userConfigService = userConfigService;
-        this.workflowServiceProvider = workflowServiceProvider;
         this.modelRegistryService = modelRegistryService;
-        this.toolApprovalMapper = toolApprovalMapper;
         this.knowledgeMapper = knowledgeMapper;
         this.notificationService = notificationService;
         this.sessionEventService = sessionEventService;
@@ -611,6 +688,56 @@ public class RagService {
         this.toolRegistry = toolRegistry;
         this.permissionPolicyResolver = permissionPolicyResolver;
         this.runTokens = runTokens;
+        this.hitl = hitl;
+        this.runtime = runtime;
+        this.subCall = subCall;
+        this.branch = branch;
+        this.historyCompaction = historyCompaction;
+        this.deepThinkService = deepThinkService;
+        this.chatflow = chatflow;
+        this.plan = plan;
+        this.planHooks = new com.wenqu.ai.agent.plan.PlanModeService.PlanTurnHooks() {
+            @Override
+            public java.util.List<org.springframework.ai.tool.ToolCallback> mountTools(
+                    com.wenqu.ai.model.Agent agent, TurnState st) {
+                return enabledToolCallbacks(agent, st.userId, st);
+            }
+
+            @Override
+            public boolean todoExposed(com.wenqu.ai.model.Agent agent, TurnState st) {
+                return RagService.this.todoExposed(st.guestMode, agent, st.branchTurn);
+            }
+
+            @Override
+            public void recordToolStatus(TurnState st, String name, String input, String status,
+                                         String resultOrError, long elapsedMs, int attempts, boolean denied) {
+                RagService.this.recordToolStatus(st, name, input, status, resultOrError, elapsedMs, attempts, denied);
+            }
+
+            @Override
+            public String askUser(TurnState st, java.util.List<BuiltinTools.AskQuestion> questions) {
+                return RagService.this.doAskUserMulti(st, questions);
+            }
+        };
+        // 本轮状态的依赖清单：必须在上面全部赋值之后再建（它要引用这些服务）
+        this.turnDeps = new TurnState.Deps(configService, rerankService, imageUrlSigner, chatRunBus,
+                subAgentConsult, new TurnState.TurnRuntime() {
+                    @Override
+                    public boolean sendSse(SseEmitter e, String type, String content, String sessionId) {
+                        return runtime.sendSseEvent(e, type, content, sessionId);
+                    }
+
+                    @Override
+                    public void addDegradation(List<Map<String, String>> list, Set<String> codes,
+                                               String code, String msg) {
+                        runtime.addDegradation(list, codes, code, msg);
+                    }
+
+                    @Override
+                    public void persistPartial(TurnState st, String tailMarker) {
+                        persistPartialAnswer(st, tailMarker);
+                    }
+                });
     }
 
     /**
@@ -651,17 +778,17 @@ public class RagService {
         // 会话轮级互斥：同一会话同时只允许一轮在跑。并发两问会历史交错、ArtifactService EMITTERS
         // 相互覆盖（后轮覆盖前轮，先完成者注销掉后轮的推送）、首问智能体绑定竞态。断线后台续跑
         // 与 askUser 等待期同样占坑——等待作答时再发新消息正是要挡的交错。限频/归属校验已在上游。
-        if (TURN_IN_FLIGHT.putIfAbsent(sessionId, Boolean.TRUE) != null) {
+        if (!runtime.tryBeginTurn(sessionId)) {
             log.warn("[FAIL-LOUD] 同会话并发问答被拒: session={}", sessionId);
-            sendSseEvent(emitter, "error", "该会话上一轮还在回答中，请等回答结束或先停止本轮，再发送新消息", sessionId);
-            completeEmitter(emitter);
+            runtime.sendSseEvent(emitter, "error", "该会话上一轮还在回答中，请等回答结束或先停止本轮，再发送新消息", sessionId);
+            runtime.completeEmitter(emitter);
             return;
         }
         // 本轮身份从这一刻起可用（早于流状态构造）：账本的每条事件都挂得到同一个 turnId
         final String turnId = java.util.UUID.randomUUID().toString().replace("-", "");
-        TURN_HANDLES.put(sessionId, new TurnHandle(turnId, userId, emitter));
-        // 断开跟踪：登记查表项并绑定生命周期回调清理；发送失败也会打标（见 sendSseEvent），各等待点据此短路后续 LLM/检索开销
-        ACTIVE_SSE.put(emitter, new java.util.concurrent.atomic.AtomicBoolean());
+        TurnRegistry.registerHandle(sessionId, new TurnHandle(turnId, userId, emitter));
+        // 断开跟踪：登记查表项并绑定生命周期回调清理；发送失败也会打标（见 runtime.sendSseEvent），各等待点据此短路后续 LLM/检索开销
+        runtime.trackChannel(emitter);
         // 运行总线登记（P0 断线重连接流）：本轮的执行不再绑死在发起时那条通道上——刷新/换设备能接回来看它
         // 继续长出来，观众走光也只是「暂时没人看」，宽限（chat.detachGraceMs）到点才由总线回调按中断收束，
         // 走的还是既有半程截断落库那条路。刻意不登记：收集型通道（定时任务/MCP/工作流节点没有真实响应）、
@@ -674,9 +801,9 @@ public class RagService {
                 && !(emitter instanceof CollectingSseEmitter)) {
             chatRunBus.open(sessionId, turnId, runOwner, emitter,
                     () -> resumeSnapshot(sessionId, turnId),
-                    () -> abortTurnWithoutViewer(sessionId),
+                    () -> runtime.abortTurnWithoutViewer(sessionId),
                     () -> {
-                        TurnHandle h = TURN_HANDLES.get(sessionId);
+                        TurnHandle h = TurnRegistry.handle(sessionId);
                         return h != null && turnId.equals(h.turnId());
                     });
         }
@@ -684,14 +811,14 @@ public class RagService {
         // 收集型通道（定时任务/MCP/子智能体节点）不挂：它没有真实响应、节奏由调用方 awaitDone 控制。
         TurnDeadline ledger = null;
         if (!(emitter instanceof CollectingSseEmitter)) {
-            ledger = new TurnDeadline(turnMachineBudgetMs());
-            TURN_DEADLINES.put(emitter, ledger);
-            startTurnWatchdog(emitter, sessionId, ledger);
+            ledger = new TurnDeadline(runtime.turnMachineBudgetMs());
+            TurnRegistry.registerDeadline(emitter, ledger);
+            runtime.startTurnWatchdog(emitter, sessionId, ledger);
         }
         final TurnDeadline deadline = ledger;
-        emitter.onCompletion(() -> releaseSseChannel(emitter, deadline, sessionId));
-        emitter.onTimeout(() -> releaseSseChannel(emitter, deadline, sessionId));
-        emitter.onError(t -> releaseSseChannel(emitter, deadline, sessionId));
+        emitter.onCompletion(() -> runtime.releaseSseChannel(emitter, deadline, sessionId));
+        emitter.onTimeout(() -> runtime.releaseSseChannel(emitter, deadline, sessionId));
+        emitter.onError(t -> runtime.releaseSseChannel(emitter, deadline, sessionId));
         syncPipelineSize();
         try {
             pipelineExecutor.execute(() -> {
@@ -711,18 +838,18 @@ public class RagService {
                 } finally {
                     // 轮次登记（TURN_STATES / TURN_HANDLES）刻意不在这里摘：runChat 在 subscribe 后就
                     // 返回了，生成与工具循环此后跑在响应式线程上，这里摘会让「停止本轮」找不到正在出字
-                    // 的那一轮。摘除统一挂在 AnswerStreamState#claimTerminal()（本轮真收尾那一刻）。
+                    // 的那一轮。摘除统一挂在 TurnState#claimTerminal()（本轮真收尾那一刻）。
                     // 反过来，前置阶段叫停的轮次要等检查点才退场，所以「这一问没有回答」的标记
                     // 只能在本线程走到底时打——早一步判会抢在落库之前，晚一步这里已经出不来了。
                     // 断线宽限到点的中止也在这一并判：那条路径由总线线程 dispose，把手当场就没了，
-                    // 只看 turnStopRequested 会漏打标记，用户下次进来读到的是「问出去了却什么都没有」的空档。
+                    // 只看 runtime.turnStopRequested 会漏打标记，用户下次进来读到的是「问出去了却什么都没有」的空档。
                     // 两种终止要分开写：用户点停止 ≠ 没人看超时——后者不是用户做的事，文案不许怪他
-                    if (BARE_ABORTS.remove(sessionId, turnId)) {
+                    if (runtime.takeBareAbort(sessionId, turnId)) {
                         sessionService.markTurnStopped(sessionId, "interrupted");
-                    } else if (turnStopRequested(sessionId)) {
+                    } else if (runtime.turnStopRequested(sessionId)) {
                         sessionService.markTurnStopped(sessionId, "stopped");
                     }
-                    TURN_IN_FLIGHT.remove(sessionId);
+                    runtime.endTurnMutex(sessionId);
                     if (identity) com.wenqu.ai.util.RequestUser.clear();
                     // 智能体检索参数的作用域覆盖随本轮结束清除（ThreadLocal，池化线程复用必须清，
                     // 否则下一轮请求会继承上一轮智能体的检索策略）
@@ -732,133 +859,13 @@ public class RagService {
             });
         } catch (RejectedExecutionException e) {
             // 任务未入队即拒绝：轮级互斥标记须同步放掉，否则该会话从此被永久挡在门外
-            TURN_HANDLES.remove(sessionId);
-            TURN_IN_FLIGHT.remove(sessionId);
+            TurnRegistry.removeHandle(sessionId);
+            runtime.endTurnMutex(sessionId);
             // L7 fail-loud：繁忙拒绝时告知当前队列长度（用户可感知拥堵程度）
             int queued = pipelineExecutor == null ? 0 : pipelineExecutor.getQueue().size();
             log.warn("[FAIL-LOUD] 问答流水线繁忙，拒绝请求（排队 {}）: session={}", queued, sessionId);
-            sendSseEvent(emitter, "error", "系统繁忙（当前排队 " + queued + " 个请求），请稍后重试", sessionId);
-            completeEmitter(emitter);
-        }
-    }
-
-    /**
-     * 服务端停止本轮：按会话找到正在跑的轮次，掐断生成流、把已生成内容按「已停止」落库、解开正在等人
-     * 裁决的挂起项，让流水线线程立刻退出并释放会话轮级互斥（下一问马上能发，不必等审批/提问超时）。
-     * <p>不依赖 SSE 通道是否还在：前端 abort 只断开连接，通道断开在「正等人作答」的语义下是
-     * <b>继续后台跑完</b>（见 {@link AnswerStreamState#keepRunningWithoutChannel}），那不是用户按下停止
-     * 想要的意思；换设备打开同一会话时也没有通道可断。故单独一条按 sessionId 的服务端路径。
-     * <p>正在执行中的那一个工具调用无法半途掐死（沙盒命令已在容器里跑），它在下一步闸口被拦住。
-     *
-     * @return true=确实停掉了一轮；false=该会话没有在跑的轮，或这不是本人的轮（越权 fail-loud 拒绝）
-     */
-    public boolean stopTurn(String sessionId, String userId) {
-        AnswerStreamState st = sessionId == null ? null : TURN_STATES.get(sessionId);
-        if (st == null) {
-            // 还没有流状态（深度思考/检索阶段）：置把手标志 + 关通道，思考流的下一个增量按
-            // 「本轮已中止」退出，各前置检查点同样短路，不再往下检索与生成
-            TurnHandle h = TURN_HANDLES.get(sessionId);
-            if (h == null || userId == null || !userId.equals(h.userId())) return false;
-            h.stopped().set(true);
-            sessionEventService.append(sessionId, h.userId(), h.turnId(), "stop", "用户停止本轮（尚未进入生成流）");
-            completeEmitter(h.emitter());
-            // 不在这里给那一问打终止标记：本轮此刻还没真正退场（思考/检索线程要等下一个检查点才断），
-            // 此刻判「有没有回答」会抢在落库之前。标记统一由 chat 流水线 finally 打（见该方法注释）。
-            log.info("[SSE] 用户停止本轮（前置阶段）: session={}", sessionId);
-            return true;
-        }
-        // 归属：与 resolveApproval/resolveAsk 同口径——只认发起本轮的那个 uid，别人停不动
-        if (userId == null || !userId.equals(st.userId)) {
-            log.warn("[FAIL-LOUD] 停止本轮被拒（非本人轮次）: session={} uid={}", sessionId, userId);
-            return false;
-        }
-        if (st.settled()) {
-            // 已经收过尾的轮次（登记残留一拍）：按「没有在跑的轮」答复，并顺手摘掉这条陈旧登记，
-            // 不给一次并不存在的停止记账
-            TURN_STATES.remove(sessionId, st);
-            return false;
-        }
-        st.userStopped = true;
-        // 把手标志同步置位：前置阶段与各检查点认的是把手，流状态只覆盖生成阶段
-        st.handle.stopped().set(true);
-        // 先把挂在人身上的卡片落成终态，再掐流（disposeSafe 会中断等待线程，那时表里就没人了）
-        markHumanWaitsTerminal(sessionId, "STOPPED");
-        // 叫停即撤这一轮还没用完的沙盒回调凭据（P3b）：人不想要这一轮了，脚本不该还留着一条回程。
-        // 守卫链本身也会按 userStopped 拒掉后续子调用，这里是把"已发出的凭据"这件事一并收掉
-        runTokens.revokeByTurn(st.turnId);
-        // 账本先记停止本身：disposeSafe 会把通道与心跳一并收掉，之后再想还原「是谁、在什么进度上
-        // 叫停的这一轮」就没有依据了
-        sessionEventService.append(sessionId, st.userId, st.turnId, "stop",
-                "用户停止本轮：正文=" + st.fullResponse.length() + "字 工具步=" + st.toolStepCount.get()
-                        + (st.detached ? " 通道=已断开(后台续跑)" : " 通道=在线"));
-        st.disposeSafe();
-        // 关闭通道：disposeSafe 只掐上游、不 complete emitter——从另一台设备或直接用接口叫停时，
-        // 正开着这个会话的页面会一直挂在「正在生成」里，直到前端 120s 空闲看门狗才自己收束。
-        completeEmitter(st.emitter);
-        // 解开人在回路的阻塞等待（放最后：正文已按停止态落库，线程再往下走时幂等闸已占住，不会二次落库）
-        releaseHumanWaits(sessionId, "STOPPED");
-        // 本轮若一条回答都没落下（正文/工具卡/思考全空），把终止事实记回那一问；
-        // 判据就是「该问之后有没有 assistant 消息」，所以放在解开等待之后——被叫停的计划轮会补落一张
-        // 收尾消息，那时这里自然不标（有 assistant 行）。极端竞态下可能多标一行安静提示，不影响正确性
-        sessionService.markTurnStopped(sessionId, "stopped");
-        // 总线立刻收摊：巡检最多要 5 秒才回收，那几秒里另一台设备接上的流既收不到 done 也等不到关闭，
-        // 只会「还在转」并自己重试三次——用户点的是停止，别的窗口该马上停下来
-        chatRunBus.finish(sessionId);
-        log.info("[SSE] 用户停止本轮: session={} 正文={}字 工具步={} 通道={}",
-                sessionId, st.fullResponse.length(), st.toolStepCount.get(),
-                st.detached ? "已断开(后台)" : "在线");
-        return true;
-    }
-
-    /**
-     * 放弃该会话所有挂在人身上的等待：审批按拒绝、提问按中止（走既有 ExecutionException 分支，
-     * 回给模型「用户中止了本轮回答」）、计划按未批准终止本轮。这些 future 不解开，流水线线程会一直
-     * 挂在 {@code future.get(timeout)} 上，会话互斥要等到超时才释放——「停了还不能马上问下一句」。
-     * <p>解开之前先把那几条卡片落成终态（{@code endReason}：用户叫停=STOPPED，无观众宽限中止=INTERRUPTED）。
-     * 以前只解 future 不落库：{@code complete(false)} / {@code complete(reject())} 让等待处的
-     * {@code TimeoutException} 分支变成不可达，那条记录就一直停在 PENDING——审计看不出这一轮是谁停的，
-     * 而且除了进程重启时的启动清理，再没人会把它收掉。两个 mark 都带「非 PENDING 即拒绝」的幂等闸，
-     * 所以流水线线程随后那一次 TIMEOUT 写入自然落空，先到先得。
-     */
-    private void releaseHumanWaits(String sessionId, String endReason) {
-        String abortHint = "STOPPED".equals(endReason) ? "用户已停止本轮" : "本轮长时间无人查看，已中止";
-        PENDING_APPROVALS.entrySet().stream()
-                .filter(e -> sessionId.equals(e.getValue().sessionId()))
-                .forEach(e -> e.getValue().future().complete(false));
-        PENDING_ASKS.values().stream()
-                .filter(p -> sessionId.equals(p.sessionId()))
-                // 刻意不用 CancellationException：CompletableFuture.get() 对它有特殊分支——原样直抛、
-                // 不包成 ExecutionException，会绕过提问等待处既有的「用户中止本轮」兜底，冒成系统异常
-                .forEach(p -> p.future().completeExceptionally(new IllegalStateException(abortHint)));
-        PENDING_PLANS.entrySet().stream()
-                .filter(e -> sessionId.equals(e.getValue().sessionId()))
-                .forEach(e -> e.getValue().future().complete(PlanDecision.reject()));
-    }
-
-    /**
-     * 把这一轮挂在人身上的三张卡落成终态（{@code STOPPED}=用户叫停，{@code INTERRUPTED}=无人查看宽限中止）。
-     * <p><b>必须在掐流之前调</b>：{@code disposeSafe()} 会中断那根正阻塞在 {@code future.get()} 上的工具线程，
-     * 它走的是 {@code InterruptedException} 分支——既不落库、其 {@code finally} 还要把挂起项从表里摘掉。
-     * 放在掐流之后就变成对着空表落库，记录照旧停在 PENDING（2026-10-12 真机抓到：叫停返回成功，
-     * 而 {@code /tool-approval/pending} 仍把那条当待批，日志里先出「审批未通过 outcome=CANCELLED」再出解开）。
-     * <p>提问卡的答案留空：没答就是没答，不代答（与超时不代答同一条口径）。
-     */
-    private void markHumanWaitsTerminal(String sessionId, String endReason) {
-        int written = 0;
-        for (var e : PENDING_APPROVALS.entrySet()) {
-            if (!sessionId.equals(e.getValue().sessionId())) continue;
-            if (markApprovalResolved(e.getKey(), endReason, e.getValue().userId())) written++;
-        }
-        for (var e : PENDING_ASKS.entrySet()) {
-            if (!sessionId.equals(e.getValue().sessionId())) continue;
-            if (markAskResolved(e.getKey(), endReason, null, e.getValue().userId())) written++;
-        }
-        for (var e : PENDING_PLANS.entrySet()) {
-            if (!sessionId.equals(e.getValue().sessionId())) continue;
-            if (markApprovalResolved(e.getKey(), endReason, e.getValue().userId())) written++;
-        }
-        if (written > 0) {
-            log.info("[HITL] 人在回路卡片随本轮收尾落终态: session={} status={} 共 {} 条", sessionId, endReason, written);
+            runtime.sendSseEvent(emitter, "error", "系统繁忙（当前排队 " + queued + " 个请求），请稍后重试", sessionId);
+            runtime.completeEmitter(emitter);
         }
     }
 
@@ -906,7 +913,7 @@ public class RagService {
         long startTime = System.currentTimeMillis();
         // 本轮身份：取自 chat() 入口登记的把手（runChat 全程都在这一轮里跑，把手到真收尾才摘），
         // 随消息落库挂上——逐气泡的「过程」按它取这一轮的事件账本
-        final String turnId = turnIdOf(sessionId);
+        final String turnId = runtime.turnIdOf(sessionId);
         // 个人偏好一次取齐：聊天模型（resolveModel 用）
         final com.wenqu.ai.model.User prefUser = loadPrefUser(userId);
         // 本轮生效模型（请求覆盖 > 会话已存覆盖 > 个人默认，全局兜底已移除），回填进流式状态供 buildAnswerStream 使用。
@@ -919,61 +926,67 @@ public class RagService {
         final String resolvedModel = resolveModel(effectiveOverride, prefUser);
         if (resolvedModel.isBlank()) {
             log.warn("[FAIL-LOUD] 未配置任何模型（会话覆盖/个人默认均未指定）: session={}", sessionId);
-            sendSseEvent(emitter, "error",
+            runtime.sendSseEvent(emitter, "error",
                     "未指定模型：请在对话右上角选择模型，或在个人设置中配置默认模型", sessionId);
-            completeEmitter(emitter);
+            runtime.completeEmitter(emitter);
             return;
         }
         // 本轮回答的全部降级/兜底事件（fail-loud：随 done 下发，前端渲染警示条；code 去重，同类只报一次）。
         // 声明在智能体解析之前：会话锁定的智能体若已不可用，需要就地登记提示而不是静默改用全局配置
         List<Map<String, String>> degradations = new ArrayList<>();
         Set<String> degradedCodes = new HashSet<>();
-        // §4 会话内 @ 智能体：消息里 @ 了其他主智能体 = 本轮临时委派它作答——人设/知识库/工具集整轮按它执行，
-        // 会话绑定不变（不落 session，仅本轮覆盖）。先于绑定解析：委派生效时请求里的 "auto" 不再触发
-        // 派遣路由（显式指定优先于路由，不为注定被覆盖的一轮花一次 LLM 判路调用）
-        final Agent delegatedAgent = resolveDelegatedAgent(mentions, degradations, degradedCodes);
-        String bindAgentId = agentId;
-        if (delegatedAgent != null && "auto".equals(agentId)) {
-            bindAgentId = null;   // 首问绑定按默认智能体收敛；已锁定会话本就忽略请求 agentId，无影响
-        }
-        // 智能体（4.1）：会话级绑定——已锁定的会话沿用锁定值，未锁定的按请求解析并锁定（首问路由一次）。
-        // 派遣在 resolveModel 之后（用当轮生效模型判路），失败回落默认智能体
-        final Agent boundAgent = resolveSessionAgent(sessionId, bindAgentId, question, resolvedModel, emitter,
-                degradations, degradedCodes);
-        // 委派生效判定：@ 的智能体与会话绑定（或默认解析结果）同一人时无需覆盖，也不发委派事件
-        final boolean delegatedRound = delegatedAgent != null
-                && (boundAgent == null || !delegatedAgent.getId().equals(boundAgent.getId()));
-        final Agent agent = delegatedRound ? delegatedAgent : boundAgent;
-        if (delegatedRound) {
-            log.info("[AGENT] 会话 {} 本轮由 @ 提及的智能体 {}（{}）作答（会话绑定不变）",
-                    sessionId, delegatedAgent.getId(), delegatedAgent.getName());
-            emitAgentDelegated(emitter, delegatedAgent, sessionId);
+        // @ 智能体（P5 换芯）：不再是"整轮换成它作答"，而是"本轮必须咨询它一次"——它带着自己的
+        // 知识库跑一条分支，把资料与专业视角交回来，人设/工具/权限档仍归本轮作答方。
+        // 用户显式点名的咨询不受 agent.enabled 影响：那是平台侧编排开关，这条是用户指令。
+        final Agent forcedConsult = resolveDelegatedAgent(mentions, degradations, degradedCodes);
+        // 作答方解析（P5）：请求带 id 用它、否则默认智能体；不再有首问锁定
+        final Agent agent = resolveTurnAgent(agentId, degradations, degradedCodes);
+        final boolean consultSelf = forcedConsult != null && agent != null
+                && forcedConsult.getId().equals(agent.getId());
+        if (forcedConsult != null && !consultSelf) {
+            log.info("[AGENT] 会话 {} 本轮强制咨询 @ 提及的智能体 {}（{}）",
+                    sessionId, forcedConsult.getId(), forcedConsult.getName());
+            emitAgentDelegated(emitter, forcedConsult, sessionId);
+        } else if (consultSelf) {
+            // @ 的就是本轮作答方：咨询自己没有对象，如实说一句，而不是把用户的指令静默吞掉
+            runtime.addDegradation(degradations, degradedCodes, "consultSelf",
+                    "你 @ 的就是本轮作答的助手，无需再咨询自己，已直接按它的资料回答");
         }
         if (agent != null) {
             log.info("[AGENT] 本轮使用智能体 {}（{}）", agent.getId(), agent.getName());
+            // 会话行记一笔"最近作答方"（供分享页按智能体列会话与访客回收用；
+            // P5 起它不再是锁定值，下一轮照常按请求重新解析）
+            sessionService.recordTurnAgent(sessionId, agent.getId(), agent.getName());
         }
         // M4：智能体绑定工作流（chatflow）——回答由工作流产出，整条不走常规检索/生成链路。
         // 位置在智能体解析之后：绑定是智能体的属性，会话级锁定后每轮都走同一张图（同一人设语义）。
         // 图片/附件在此路径下不参与（工作流只接收文本入参），显式登记为降级提示而不是静默丢弃。
         if (agent != null && agent.getWorkflowId() != null && !agent.getWorkflowId().isBlank()) {
             if ((userImages != null && !userImages.isEmpty()) || (attachments != null && !attachments.isEmpty())) {
-                addDegradation(degradations, degradedCodes, "workflowInputIgnored",
+                runtime.addDegradation(degradations, degradedCodes, "workflowInputIgnored",
                         "该智能体由工作流驱动，本轮的图片/附件不会传入工作流（工作流当前只接收文本入参）");
             }
             if (planMode) {
-                addDegradation(degradations, degradedCodes, "planWorkflowUnsupported",
+                runtime.addDegradation(degradations, degradedCodes, "planWorkflowUnsupported",
                         "该智能体由工作流驱动，计划模式不生效，本轮按工作流直接执行");
             }
-            runWorkflowChat(sessionId, question, userId, emitter, startTime, degradations, degradedCodes,
-                    agent, guestMode, regenerate, replaceMessageId, editVariantGroup,
-                    delegatedRound ? delegatedAgent : null);
+            // memoryModel 用本轮已经取到的那份个人偏好（工作流节点用自己的模型，长期记忆按个人默认提取）
+            chatflow.runWorkflowChat(sessionId, question, userId,
+                    prefUser == null ? null : prefUser.getDefaultModel(),
+                    emitter, startTime, degradations, degradedCodes,
+                    agent, guestMode, branchTurn, regenerate, replaceMessageId, editVariantGroup,
+                    null);
             return;
         }
         // 目标知识库集合（检索按库的向量模型分组逐库查询；null=不限，全库分组检索）。
-        // 内置「问渠」按本轮使用者解析为「自己的默认库 ＋ 官方内置手册库」（智能体全局一只、默认库每人一个，无法静态绑定）。
-        // 按需委派开启「收窄检索范围」（agent.dispatchNarrowScope）时，本集合会在路由判定后被
-        // 重赋值为「主智能体库 ∪ 被选中子智能体库」（见检索前的路由段），因此不能声明为 final
-        java.util.Collection<String> scopeKbIds = scopeKbIdsOf(agent, userId);
+        // P5：用户在对话页直接问的那一轮<b>不再按"作答智能体绑了哪些库"划墙</b>——问题会跨主题，
+        // 墙的表现就是"上一轮问手册、这一轮问法律，法律库一块也进不来"。范围回到本轮使用者的可见库
+        // （检索侧按 loadVisibleKbIds 收口，放开的是"智能体的库界"，不是"人的权限"）。
+        // 仍然保留库界的两种情形：① 免登录分享页与对外 MCP（那是匿名访客读资料的唯一权限墙）；
+        // ② 子智能体分支（被咨询的那一位必须只查自己那套库，否则"派给专业助手"就没有意义，
+        //    父轮已经把所有可见库查过一遍了）。
+        // @ 引用仍会把范围收窄到被引库（用户显式指定优先，见下）。
+        java.util.Collection<String> scopeKbIds = scopeKbIdsOf(agent, userId, guestMode || branchTurn);
         // @ 引用（输入框显式指定，**优先于智能体配置**——与「手动指定优先」的既有口径一致）：
         //   kb  → 本轮检索收窄到被引库，不跑无关库、不让无关块挤占上下文名额；
         //   doc → 该文档的块不经检索直接前置进上下文（用户认为它相关，不该被相关性门/排序挡掉），
@@ -1007,11 +1020,12 @@ public class RagService {
         // 内置「问渠」豁免：其范围固定为使用者默认库（配置页无入口、后端拒绝改动），存量行若带 1 也不生效
         final boolean knowledgeOff = agent != null && !Integer.valueOf(1).equals(agent.getIsBuiltin())
                 && Integer.valueOf(1).equals(agent.getKnowledgeDisabled());
-        // 检索范围：智能体关联的知识库（主路径）→ 库内文档；knowledgeScope 降级为「库内再细选文档」
-        // @ 文档时收窄到这些文档（显式指定优先）——用户就是在问这份文档，别的文档的块不该进上下文
+        // 检索范围：智能体关联的知识库（主路径）→ 库内文档；knowledgeScope 降级为「库内再细选文档」。
+        // @ 文档时收窄到这些文档（显式指定优先）——用户就是在问这份文档，别的文档的块不该进上下文。
+        // P5：登录页的父轮与上面同口径，不取智能体的文档细选（否则解绑只解了一半）。
         final Set<String> scopeDocIds = mentionScope != null && !mentionScope.docIds().isEmpty()
                 ? new LinkedHashSet<>(mentionScope.docIds())
-                : resolveScopeDocIds(agent, userId);
+                : resolveScopeDocIds(agent, userId, guestMode || branchTurn);
         // Agentic RAG「检索-反思」循环模式判定：开启后本轮强制暴露知识检索工具，并在生成提示词
         // 注入「证据充分性自评」循环规则——模型判断首轮检索证据不足时自主换关键词/换角度再检索
         // （次数仍由 agent.maxToolSteps 兜底），证据足够才作答。
@@ -1021,12 +1035,12 @@ public class RagService {
         {
             boolean reflectOn = !knowledgeOff && reflectiveRetrievalOn(useDeepThink, thinkLevel);
             if (reflectOn && !configService.getBoolean("tool.enabled")) {
-                addDegradation(degradations, degradedCodes, "reflectiveDegraded",
+                runtime.addDegradation(degradations, degradedCodes, "reflectiveDegraded",
                         "检索-反思循环需要工具总开关（tool.enabled）开启，本轮未生效");
                 reflectOn = false;
             }
             if (reflectOn && !modelRegistryService.toolCapableOf(resolvedModel)) {
-                addDegradation(degradations, degradedCodes, "reflectiveDegraded",
+                runtime.addDegradation(degradations, degradedCodes, "reflectiveDegraded",
                         "当前模型「" + modelDisplayName(resolvedModel)
                                 + "」不支持工具调用（Function Calling），检索-反思循环本轮未生效");
                 reflectOn = false;
@@ -1056,18 +1070,18 @@ public class RagService {
                 planSteps.add("检索知识库");
                 planSteps.add("生成回答");
             }
-            sendSseEvent(emitter, "plan", JSON.toJSONString(planSteps), sessionId);
+            runtime.sendSseEvent(emitter, "plan", JSON.toJSONString(planSteps), sessionId);
             // 0. 进度提示：理解问题阶段（图片描述/改写都有耗时，先给用户反馈）
-            sendSseEvent(emitter, "stage", "正在理解问题…", sessionId);
+            runtime.sendSseEvent(emitter, "stage", "正在理解问题…", sessionId);
             // 前置心跳：从本轮一开始就保活（图片视觉描述/深度思考/检索都是长静默区，
             // serverless 端点冷启动时检索可达 90s+，此前该阶段无心跳 ⇒ 前端 120s 空闲看门狗
             // 掐断连接，用户看到"无输出且报错"而后端其实还在干活）。句柄在 st 创建时接管
-            // （startRunHeartbeat 幂等复用），终态路径照旧停止；st 前异常/断开由发送失败自停兜住。
+            // （runtime.startRunHeartbeat 幂等复用），终态路径照旧停止；st 前异常/断开由发送失败自停兜住。
             final java.util.concurrent.ScheduledFuture<?> preHeartbeat =
-                    scheduleKeepalive(emitter, "前置");
+                    runtime.scheduleKeepalive(emitter, "前置");
             // 计划意图识别（按用户意图自动开启计划模式）：尽早启动、与图片/附件/检索并行跑，闸门前取结果。
             // 计划开关已开时无需检测（本轮必走计划）；重新生成不检测——用户要的是重答，不是重出一份计划
-            final java.util.concurrent.CompletableFuture<Boolean> planIntentFuture = startPlanIntentCheck(
+            final java.util.concurrent.CompletableFuture<Boolean> planIntentFuture = plan.startIntentCheck(
                     emitter, guestMode, planMode, regenerate, sessionId, question, resolvedModel,
                     (userImages != null && !userImages.isEmpty()) || (attachments != null && !attachments.isEmpty()));
             // 0. 用户上传图片，两条链路（图片理解只看当前聊天模型的能力位——个人默认视觉模型已下线）：
@@ -1093,7 +1107,7 @@ public class RagService {
                 // 降级只在真有图片被排除时登记：0 张图片≠降级——模型不支持视觉但本轮没传图，
                 // 没有任何内容「仅作展示」，不该对用户弹「本轮 0 张图片仅作展示」的提示（也不刷 WARN 日志）
                 if (!userImgs.isEmpty()) {
-                    addDegradation(degradations, degradedCodes, "chatModelNoVision",
+                    runtime.addDegradation(degradations, degradedCodes, "chatModelNoVision",
                             "当前模型「" + resolvedModel.substring(resolvedModel.indexOf('/') + 1)
                                     + "」不支持图片理解，本轮 " + userImgs.size()
                                     + " 张图片仅作展示、未参与回答；如需识别图片请更换支持图片理解的模型");
@@ -1157,7 +1171,7 @@ public class RagService {
                 runNoKnowledgeChat(sessionId, question, userId, userImgs, imgNote, attachmentText, userSkillText,
                         mentionText, historyRefText, preHeartbeat, emitter, startTime, thinkingHolder,
                         degradations, degradedCodes, agent, stageMs, resolvedModel, guestMode, replaceMessageId,
-                        userMessageId, delegatedRound ? delegatedAgent : null, planMode, skills, subagentDepth, fromSteer);
+                        userMessageId, null, planMode, skills, subagentDepth, fromSteer);
                 return;
             }
 
@@ -1179,27 +1193,40 @@ public class RagService {
             final String queryForLog = retrievalQuery;
 
             // 断开或用户叫停短路（图片视觉处理/改写期间断开已在此打标）：思考与检索都是成本操作，不再发起
-            if (turnAborted(sessionId, emitter)) {
+            if (runtime.turnAborted(sessionId, emitter)) {
                 log.info("[SSE] 客户端断开或已停止，终止本轮问答（检索前）: session={}", sessionId);
                 return;
             }
 
-            // 0.5 按需委派路由提前：委派挑选（route）不依赖检索结果，放在检索前执行——
-            // 开启「委派收窄检索范围」（agent.dispatchNarrowScope）时，主检索可先收窄到
-            // 「主智能体库 ∪ 被选中子智能体库」再跑，避免无关库的弱相关块挤进上下文/引用
-            // （路由判错的代价是漏召回，故默认关；误拦由检索本身兜底——子代理各自仍会检索自己库）。
+            // 0.5 按需委派路由提前：委派挑选（route）不依赖检索结果，放在检索前执行。
             // 总耗时不变：原时序为 检索→route→子代理，现对调为 route→检索→子代理（串行段相同）。
+            // （这里曾有一条「委派收窄主检索范围」的分支（agent.dispatchNarrowScope）：把主检索收窄到
+            //  主智能体库∪被选中子智能体库。P5 解绑后主检索本来就覆盖使用者全部可见库，收窄反而重新
+            //  造出一堵墙，故连同该配置键一并删除。）
             List<Agent> subCandidates = List.of();
             SubAgentOrchestrator.RouteResult routeRes = null;
-            // 按需委派的路由结果（创建 AnswerStreamState 时要回填，供 done 下发与持久化）
+            // 本轮实际要咨询的助手（@ 点名的那位一定在内，即使平台侧路由没挑它）
+            List<Agent> consultAgents = List.of();
+            // 按需委派的路由结果（创建 TurnState 时要回填，供 done 下发与持久化）
             Map<String, Object> subagentRouteInfo = null;
-            if (configService.getBoolean("agent.enabled")) {
-                subCandidates = resolveSubAgents(agent);
+            if (configService.getBoolean("agent.enabled") || forcedConsult != null) {
+                List<Agent> declared = resolveSubAgents(agent);
+                // @ 点名的那位排在最前且一定在场：它可能不是"子智能体"、也没挂在作答方名下，
+                // 但用户点了名——用户指令优先于平台侧编排开关（agent.enabled 关着也照样咨询）。
+                subCandidates = forcedConsult == null ? declared : withFirst(forcedConsult, declared);
                 if (!subCandidates.isEmpty()) {
                     // 阶段文案统一：路由挑选属"理解问题"准备段（具体挑了谁由 subagent_route 事件承载）
-                    sendSseEvent(emitter, "stage", "正在理解问题…", sessionId);
+                    runtime.sendSseEvent(emitter, "stage", "正在理解问题…", sessionId);
                     routeRes = subAgentOrchestrator.route(question, subCandidates, resolvedModel);
                     List<Agent> delegated = routeRes.picked();
+                    if (forcedConsult != null && !hasAgentId(delegated, forcedConsult.getId())) {
+                        // 路由没挑上用户点名的一位：不拿路由结论否决用户指令，补进去
+                        List<Agent> merged = new ArrayList<>();
+                        merged.add(forcedConsult);
+                        merged.addAll(delegated);
+                        delegated = merged;
+                    }
+                    consultAgents = delegated;
                     if (delegated.size() != subCandidates.size()) {
                         log.info("[SUBAGENT] 按需委派：{} 个候选中挑选 {} 个（{}）", subCandidates.size(), delegated.size(),
                                 delegated.stream().map(Agent::getName).collect(Collectors.joining("、")));
@@ -1212,30 +1239,7 @@ public class RagService {
                     routeInfo.put("names", delegated.stream().map(Agent::getName).toList());
                     if (!routeRes.reasons().isEmpty()) routeInfo.put("reasons", routeRes.reasons());
                     subagentRouteInfo = routeInfo;
-                    sendSseEvent(emitter, "subagent_route", JSON.toJSONString(routeInfo), sessionId);
-                    // 委派收窄检索范围（默认关）：仅当路由产生了**真子集**时收窄——真子集才证明路由有判别力；
-                    // 全量返回（route 失败回退 / autoRoute 关 / 真全选）都视作"无范围信息"，保持原范围。
-                    // 并集 = 主智能体库 ∪ 被选中子智能体库；双方都没绑库（或并集为空）时无从收窄，保持原范围。
-                    if (configService.getBoolean("agent.dispatchNarrowScope")
-                            && !delegated.isEmpty() && delegated.size() < subCandidates.size()) {
-                        Set<String> union = new java.util.LinkedHashSet<>();
-                        boolean bounded = false;
-                        if (scopeKbIds != null) {
-                            union.addAll(scopeKbIds);
-                            bounded = true;
-                        }
-                        for (Agent sub : delegated) {
-                            java.util.Collection<String> subKbs = scopeKbIdsOf(sub, userId);
-                            if (subKbs != null) {
-                                union.addAll(subKbs);
-                                bounded = true;
-                            }
-                        }
-                        if (bounded && !union.isEmpty()) {
-                            scopeKbIds = union;
-                            log.info("[SUBAGENT] 委派收窄主检索范围：{} 个库（{}）", union.size(), String.join("、", union));
-                        }
-                    }
+                    runtime.sendSseEvent(emitter, "subagent_route", JSON.toJSONString(routeInfo), sessionId);
                 }
             }
             // 检索参数覆盖：库级按本轮实际检索范围（委派收窄后；未选智能体时同样生效），智能体级在其上叠加
@@ -1250,7 +1254,7 @@ public class RagService {
             // 思考关键词增强（从思考全文提取词元补充检索；深度思考失败时也用它增强降级检索）
             List<String> thinkTerms = List.of();
             if (useDeepThink) {
-                DeepThinkResult dr = runDeepThinking(sessionId, question, imgNote, attachmentText, emitter, resolvedModel, thinkLevel);
+                var dr = deepThinkService.run(sessionId, question, imgNote, attachmentText, emitter, resolvedModel, thinkLevel);
                 thinkingHolder[0] = dr.thinking();
                 thinkTerms = thinkingEnhanceTerms(dr.thinking());
                 if (configService.getBoolean("deepReasoning.injectThinking") && dr.thinking() != null && !dr.thinking().isBlank()) {
@@ -1261,7 +1265,7 @@ public class RagService {
                 if (dr.ok()) {
                     String rankQuery;
                     // 多路检索：精化 query + 子问题并行召回合并 + 思考词元增强路；开关关闭时单路精化 query
-                    sendSseEvent(emitter, "stage", "正在检索资料…", sessionId);
+                    runtime.sendSseEvent(emitter, "stage", "正在检索资料…", sessionId);
                     if (configService.getBoolean("deepReasoning.multiRetrieval")) {
                         List<String> queries = new ArrayList<>();
                         queries.add(dr.refinedQuery());
@@ -1287,17 +1291,17 @@ public class RagService {
                             dr.refinedQuery(), dr.subQueries(), thinkTerms, hits.size());
                 } else {
                     // M2 fail-loud：深度思考降级（思考阶段失败/超时/未提取到检索计划）——用户可读措辞，技术原因留日志
-                    addDegradation(degradations, degradedCodes, "deepThinkDegraded", "深度思考未完成，已转为普通回答");
+                    runtime.addDegradation(degradations, degradedCodes, "deepThinkDegraded", "深度思考未完成，已转为普通回答");
                 }
             }
             // 深度思考期间断开/叫停（thinking 发送失败或下一个增量撞上停止标志即中止思考流）：降级路径同样不再继续检索
-            if (turnAborted(sessionId, emitter)) {
+            if (runtime.turnAborted(sessionId, emitter)) {
                 log.info("[SSE] 客户端断开或已停止，终止本轮问答（思考后）: session={}", sessionId);
                 return;
             }
             // 降级/未开启深度思考：走普通单路检索
             if (hits == null) {
-                sendSseEvent(emitter, "stage", "正在检索资料…", sessionId);
+                runtime.sendSseEvent(emitter, "stage", "正在检索资料…", sessionId);
                 // 深度思考失败但产生了思考内容：用"原问题 + 思考词元"检索，思考不算白费（比纯普通检索召回更好）
                 if (useDeepThink && !thinkTerms.isEmpty()) {
                     retrievalQuery = question + " " + String.join(" ", thinkTerms);
@@ -1313,21 +1317,21 @@ public class RagService {
             }
             // M4/M13/L1 fail-loud：检索单路失败/降级透传（keywordFallback 仅调试展示，不扰用户）
             if (retrievalDiag.isVectorFailed()) {
-                addDegradation(degradations, degradedCodes, "vectorFailed", "向量检索失败，本次仅关键词召回");
+                runtime.addDegradation(degradations, degradedCodes, "vectorFailed", "向量检索失败，本次仅关键词召回");
             }
             // 多库检索中某库向量检索失败：其余库向量命中仍参与召回，不能谎称"仅关键词召回"；
             // 提示用户相关库未参与本次召回（具体供应商/原因见服务端日志与额度通知）
             if (retrievalDiag.isVectorPartialFailed()) {
-                addDegradation(degradations, degradedCodes, "vectorPartialFailed", "部分知识库向量检索失败，相关库未参与本次召回");
+                runtime.addDegradation(degradations, degradedCodes, "vectorPartialFailed", "部分知识库向量检索失败，相关库未参与本次召回");
             }
             if (retrievalDiag.isKeywordFailed()) {
-                addDegradation(degradations, degradedCodes, "keywordDegraded", "关键词引擎不可用，已降级 MySQL 检索");
+                runtime.addDegradation(degradations, degradedCodes, "keywordDegraded", "关键词引擎不可用，已降级 MySQL 检索");
             }
             if (retrievalDiag.isKeywordBusy()) {
-                addDegradation(degradations, degradedCodes, "keywordBusy", "关键词检索繁忙/超时，本次仅向量召回");
+                runtime.addDegradation(degradations, degradedCodes, "keywordBusy", "关键词检索繁忙/超时，本次仅向量召回");
             }
             if (retrievalDiag.isMultiTimeout()) {
-                addDegradation(degradations, degradedCodes, "multiTimeout", "多路检索超时，仅用已完成结果");
+                runtime.addDegradation(degradations, degradedCodes, "multiTimeout", "多路检索超时，仅用已完成结果");
             }
             log.info("[RAG] 检索命中 {} 块, query={}", hits.size(), retrievalQuery);
             // 本轮主链路重排是否实际执行（有任一命中拿到重排分）：已执行时，未重排候选不得再走融合门入场（见填充段分域门）
@@ -1335,7 +1339,7 @@ public class RagService {
             // 兜住最后一处静默：重排"看起来可用"（探测通过、调用也发了）却没给出任何重排分——
             // 此时门同样退化到融合门，与不可用后果一致，必须同样告知（不能只在 debugUnavailableReason 有值时才提示）
             if (!rerankActive && !hits.isEmpty()) {
-                addDegradation(degradations, degradedCodes, "rerankUnavailable",
+                runtime.addDegradation(degradations, degradedCodes, "rerankUnavailable",
                         "重排本轮未返回相关性分数：上下文与引用按融合分筛选，相关性可能偏低");
             }
 
@@ -1359,11 +1363,12 @@ public class RagService {
                     // 执行形态与工具步数：让用户看得见"这一支是交资料还是真干活"（digest 恒 steps=0）
                     m.put("mode", branch.mode());
                     m.put("steps", branch.steps());
-                    sendSseEvent(emitter, "subagent", JSON.toJSONString(m), sessionId);
+                    runtime.sendSseEvent(emitter, "subagent", JSON.toJSONString(m), sessionId);
                 };
-                // 全循环分支的执行器（P3a）：把分支交回这条管线自己跑。刻意按轮回传而不是注入一个 bean，
-                // 见 BranchRunner 接口注释。
-                BranchRunner runner = branchRunner(sessionId, turnId, userId, guestMode, emitter);
+                // 全循环分支的执行器（P3a）：把分支交回这条管线自己跑。
+                // 「跑一整轮」仍是按传进来的函数（this::chat），簿记在 SubAgentBranchRuntime 里——
+                // 判据见该类的注释：要回头调问答入口的一族不能做成互相注入的 bean。
+                BranchRunner runner = branch.branchRunner(this::chat, sessionId, turnId, userId, guestMode, emitter);
                 if (subCandidates.isEmpty() && branchTurn) {
                     // 分支轮不再展开「多视角并行检索」：这一支本身就是父轮扇出来的一条分支，
                     // 再展开一层就是乘数成本（真机实测每支多 4~6 秒与两次提炼调用），
@@ -1373,22 +1378,22 @@ public class RagService {
                 } else if (subCandidates.isEmpty()) {
                     // 未挂子智能体 → 原有的「多视角并行检索」
                     // 阶段文案统一：并行检索只是检索的一种实现（分支进度由 subagent 事件承载）
-                    sendSseEvent(emitter, "stage", "正在检索资料…", sessionId);
+                    runtime.sendSseEvent(emitter, "stage", "正在检索资料…", sessionId);
                     subOutcome = subAgentOrchestrator.run(new SubAgentOrchestrator.BranchSpec(
                             question, null, onBranch, resolvedModel, subagentDepth, sessionId, turnId,
                             userId, null, guestMode, runner));
                 } else {
                     // 挂了子智能体 → 路由已在检索前完成（见 0.5 段的 subagent_route 事件），此处直接按挑选结果并行咨询；
                     // 全量为空=路由判定无需咨询任何助手（问题与各助手职责均不匹配），跳过编排
-                    List<Agent> delegated = routeRes.picked();
+                    List<Agent> delegated = consultAgents;
                     if (delegated.isEmpty()) {
                         log.info("[SUBAGENT] 按需委派判定无需咨询任何助手，跳过并行编排（问题与各助手职责均不匹配）");
                     } else {
                         // 阶段文案统一：子智能体也是检索路数之一（咨询了哪几个由 subagent 事件承载）
-                        sendSseEvent(emitter, "stage", "正在检索资料…", sessionId);
+                        runtime.sendSseEvent(emitter, "stage", "正在检索资料…", sessionId);
                         subOutcome = subAgentOrchestrator.run(new SubAgentOrchestrator.BranchSpec(
                                 question, delegated, onBranch, resolvedModel, subagentDepth, sessionId, turnId,
-                                userId, branchBrief(sessionId, question, subagentDepth), guestMode, runner));
+                                userId, branch.branchBrief(sessionId, question, subagentDepth), guestMode, runner));
                     }
                 }
                 if (subOutcome != null && !subOutcome.hits().isEmpty()) {
@@ -1447,6 +1452,7 @@ public class RagService {
             }
             // 人机协同三入口（计划卡/任务清单/提问卡）的分工指引：与无知识库分支共用同一装配（见 humanLoopGuide）
             system.append(humanLoopGuide(guestMode, agent, resolvedModel, emitter, branchTurn));
+            system.append(consultGuide(guestMode, agent, branchTurn));
             system
                     .append(relatedPromptLine());
             // 容量计量分段标记：按 StringBuilder 位置切出各段，供容量面板分类展示（系统提示词/记忆/技能/其他）
@@ -1476,7 +1482,7 @@ public class RagService {
                 // 解析结果会是空集合，用后者判断会把「属于其他用户」的提示也一起吞掉。
                 if (skillRefs != null && !skillRefs.isEmpty()) {
                     if (!skillScope.notMine().isEmpty()) {
-                        addDegradation(degradations, degradedCodes, "agentSkillNotMine",
+                        runtime.addDegradation(degradations, degradedCodes, "agentSkillNotMine",
                                 "智能体指定的技能 " + String.join("、", skillScope.notMine())
                                         + " 属于其他用户（技能是个人资产），对你不可用");
                     }
@@ -1487,7 +1493,7 @@ public class RagService {
                     List<String> missSkills = (onlySkills == null ? Set.<String>of() : onlySkills).stream()
                             .filter(n -> !haveSkills.contains(n)).toList();
                     if (!missSkills.isEmpty()) {
-                        addDegradation(degradations, degradedCodes, "agentSkillUnavailable",
+                        runtime.addDegradation(degradations, degradedCodes, "agentSkillUnavailable",
                                 "智能体指定的技能 " + String.join("、", missSkills)
                                         + " 在你名下不存在或已停用（技能是个人资产），本轮未生效");
                         log.warn("[SKILL] uid={} 智能体 {} 指定的技能未命中: {}", userId,
@@ -1515,13 +1521,13 @@ public class RagService {
             }
             // 全循环分支的回报段（P3a）：这一段里的引用与图片编号此刻还是<b>子轮自己的</b>，
             // 先以 ⟦b<支>:r<号>⟧ / ⟦b<支>:i<号>⟧ 占位入位（长度与最终形态接近，所以能按现长计入预算），
-            // 等主链路资料填充完、父轮编号定了，再就地替换（见 resolveBranchReportRefs）。
+            // 等主链路资料填充完、父轮编号定了，再就地替换（见 branch.resolveBranchReportRefs）。
             // 为什么不能直接拼子轮原文：子轮的 [3] 与父轮的 [3] 指的是两份不同资料，
             // 拼起来就是一个指向错误来源的引用——用户点开看到的是别处的内容。
             int subReportStart = -1;
             int subReportEnd = -1;
             if (subOutcome != null && !subOutcome.fulls().isEmpty()) {
-                String reports = branchReportsText(subOutcome.fulls());
+                String reports = branch.branchReportsText(subOutcome.fulls());
                 if (!reports.isBlank()) {
                     system.append("\n\n【子智能体回报】以下是它替你办完的一件事，其中结论的来源已并入本轮参考资料：\n")
                             .append(reports);
@@ -1537,9 +1543,9 @@ public class RagService {
             int budget = ctxBudget.budget();
 
             // 4. 对话历史：预算驱动全量带入——近期原样 + 更早轮次滚动摘要（替代旧的「按轮数 + 单条截断」）
-            HistoryBundle historyBundle = assembleHistory(sessionId, resolvedModel, budget, degradations, degradedCodes);
+            var historyBundle = historyCompaction.assemble(sessionId, resolvedModel, budget, degradations, degradedCodes);
             historyCompressedTurns = historyBundle.compressedTurns();
-            String historySummaryBlock = summaryBlock(historyBundle.summaryText());
+            String historySummaryBlock = historyCompaction.summaryBlock(historyBundle.summaryText());
             if (!historySummaryBlock.isEmpty() || !historyBundle.recentText().isEmpty()) {
                 system.append("\n\n对话历史：\n");
                 if (!historySummaryBlock.isEmpty()) system.append(historySummaryBlock);
@@ -1618,7 +1624,7 @@ public class RagService {
                 if (rerankService.debugUnavailableReason() == null) {
                     subHits = rerankService.rankForced(new ArrayList<>(subHits), retrievalQuery);
                 } else {
-                    addDegradation(degradations, degradedCodes, "rerankUnavailable",
+                    runtime.addDegradation(degradations, degradedCodes, "rerankUnavailable",
                             "重排不可用，子代理命中按融合分参与填充");
                 }
                 for (HybridRetrievalService.Hit h : subHits) {
@@ -1684,6 +1690,15 @@ public class RagService {
             // 单文档块数配额（0=不限制）：docId → 已进上下文的块数
             int maxBlocksPerDoc = configService.getInt("context.maxBlocksPerDoc", 3);
             Map<String, Integer> docBlockCount = new HashMap<>();
+            // 每库配额（P5 解绑后的配套件）：主检索不再被智能体绑定的库限住，一轮可能同时面对十几个库。
+            // 没有这一条，块数最多、词面最泛的那个库会把上下文名额占满——症状从"别的库查不到"变成
+            // "别的库查到了但挤不进来"，一样是跨主题答不好，而且更难归因。0=不限制。
+            int maxBlocksPerKb = configService.getInt("context.maxBlocksPerKb", 4);
+            Map<String, Integer> kbBlockCount = new HashMap<>();
+            Map<String, String> hitKbIds = maxBlocksPerKb > 0
+                    ? documentMetaCache.getKbIds(allHits.stream().map(HybridRetrievalService.Hit::docId)
+                    .filter(d -> d != null && !d.isBlank()).collect(Collectors.toSet()))
+                    : Map.of();
             List<Set<String>> selectedTermSets = new ArrayList<>();
             List<String> selectedPaths = new ArrayList<>();
             for (int hi = 0; hi < allHits.size(); hi++) {
@@ -1705,6 +1720,16 @@ public class RagService {
                     log.debug("[CTX] 单文档配额跳过: docId={} kid={} title={}",
                             hit.docId(), hit.knowledgeId(), hit.title());
                     continue;
+                }
+                // 单库配额：同一知识库最多进 maxBlocksPerKb 块。@ 引用块豁免（用户显式指定优先于算法配额）；
+                // 库取不到（缓存回源失败/文档已删）时放行——配额是防挤占的，不该让一次查库失败吃掉资料。
+                if (!mentioned && maxBlocksPerKb > 0 && hit.docId() != null) {
+                    String hitKbId = hitKbIds.get(hit.docId());
+                    if (hitKbId != null && kbBlockCount.merge(hitKbId, 1, Integer::sum) > maxBlocksPerKb) {
+                        log.debug("[CTX] 单库配额跳过: kbId={} kid={} title={}",
+                                hitKbId, hit.knowledgeId(), hit.title());
+                        continue;
+                    }
                 }
                 // 重排已实际执行 → 相关性结论以重排分为准：未被重排的候选（超出重排区间的主链路尾部）
                 // 不得改走更低的融合门入场，否则「重排判定无相关资料」会被尾部词面噪声推翻
@@ -1736,7 +1761,7 @@ public class RagService {
                 // 避免"先输出后剔除"导致图闪一下再消失；图片仍留在 sources.images 供引用弹窗查看。
                 boolean imgPrefilter = retrievalQuery != null && retrievalQuery.length() >= 2;
                 int imgIdxForChunk = 0;
-                Matcher matcher = IMG_PLACEHOLDER_PATTERN.matcher(text);
+                Matcher matcher = TurnState.IMG_PLACEHOLDER_PATTERN.matcher(text);
                 StringBuffer sb = new StringBuffer();
                 while (matcher.find()) {
                     if (imgIdxForChunk < urls.size()) {
@@ -1805,7 +1830,7 @@ public class RagService {
                 }
                 if (usedTokens + tokens > remainTokens) {
                     // M5 fail-loud：首块超预算被硬截断（高相关块信息可能丢失），不再只记 debug
-                    addDegradation(degradations, degradedCodes, "contextTruncated",
+                    runtime.addDegradation(degradations, degradedCodes, "contextTruncated",
                             "资料内容较长，仅截取部分，细节可能缺失");
                     text = truncateChars(text, Math.max(TRUNCATE_FALLBACK_CHARS, remainTokens - usedTokens));
                     tokens = TokenCounter.estimate(text);
@@ -1867,7 +1892,7 @@ public class RagService {
             // 并把父轮资料表里确实没有的那几块注册进来（origin=SUBAGENT），让"子智能体查到的"也能点开看来源。
             // 放在这里而不是编排处：编排时父轮编号还不存在，先编必然撞号。
             if (subReportStart >= 0 && subOutcome != null) {
-                String resolved = resolveBranchReportRefs(system.substring(subReportStart, subReportEnd),
+                String resolved = branch.resolveBranchReportRefs(system.substring(subReportStart, subReportEnd),
                         subOutcome.fulls(), sources, imgIndex, imgDescIndex, fileNameMap, scopeDocIds,
                         degradations, degradedCodes);
                 system.replace(subReportStart, subReportEnd, resolved);
@@ -1881,12 +1906,12 @@ public class RagService {
             List<String> searchTerms = keywordExtractor.extractMain(retrievalQuery);
             String retrievedJson = JSON.toJSONString(Map.of(
                     "keywords", searchTerms.size(), "refs", docNo - 1, "terms", searchTerms));
-            sendSseEvent(emitter, "retrieved", retrievedJson, sessionId);
+            runtime.sendSseEvent(emitter, "retrieved", retrievedJson, sessionId);
 
             // 4. SSE 先发图片 URL 列表（编号顺序，生产开启鉴权时动态签名）
             if (!imgIndex.isEmpty()) {
                 List<String> signedUrls = imgIndex.values().stream().map(imageUrlSigner::signUrl).toList();
-                sendSseEvent(emitter, "image", JSON.toJSONString(signedUrls), sessionId);
+                runtime.sendSseEvent(emitter, "image", JSON.toJSONString(signedUrls), sessionId);
             }
 
             String user = context.length() == 0
@@ -1895,29 +1920,41 @@ public class RagService {
 
             // 5. 异步流式生成（缓冲过滤 <related> 块：跨 token 分割也能正确剥离，前端不会看到标签原文）
             // 生成前最后一道短路检查：流式回答是最长成本段，断开即不再发起（生成中断开由 doOnNext 发送失败取消订阅）
-            if (turnAborted(sessionId, emitter)) {
+            if (runtime.turnAborted(sessionId, emitter)) {
                 log.info("[SSE] 客户端断开或已停止，终止本轮问答（生成前）: session={}", sessionId);
                 return;
             }
-            sendSseEvent(emitter, "stage", "正在生成回答…", sessionId);
-            AnswerStreamState st = new AnswerStreamState(sessionId, question, userId, emitter,
+            runtime.sendSseEvent(emitter, "stage", "正在生成回答…", sessionId);
+            TurnState st = new TurnState(sessionId, question, userId, emitter,
                     imgIndex, imgDescIndex, sources, userImgs, startTime, queryForLog, thinkingHolder,
-                    degradations, degradedCodes, retrievedJson);
-            st.docFileNames = fileNameMap; // 工具命中注册来源时取文件名（悬浮提示/引用弹窗展示用）
-            st.docMetaCache = documentMetaCache; // 映射覆盖不到的文档（工具本轮首次命中）按需补查
-            st.heartbeat = preHeartbeat; // 前置心跳句柄移交（buildAnswerStream 的 startRunHeartbeat 幂等复用，终态照旧停止）
-            st.toolScopeKbIds = scopeKbIds; // 精确检索工具与主链路同库界（库隔离）
-            st.toolScopeDocIds = scopeDocIds;
+                    degradations, degradedCodes, retrievedJson, turnDeps);
+            st.refs.docFileNames = fileNameMap; // 工具命中注册来源时取文件名（悬浮提示/引用弹窗展示用）
+            st.refs.docMetaCache = documentMetaCache; // 映射覆盖不到的文档（工具本轮首次命中）按需补查
+            st.channel.heartbeat = preHeartbeat; // 前置心跳句柄移交（buildAnswerStream 的 runtime.startRunHeartbeat 幂等复用，终态照旧停止）
+            st.tools.toolScopeKbIds = scopeKbIds; // 精确检索工具与主链路同库界（库隔离）
+            st.tools.toolScopeDocIds = scopeDocIds;
             st.model = resolvedModel; // 本轮生效模型（会话覆盖 > 个人默认）
             st.deepThink = useDeepThink; // 归一后的深度思考（按生效模型能力 + 用户开关）
             st.reasoningLevel = thinkLevel; // 本轮思考强度档位（请求级优先，null=只有开关无强度）
             st.guestMode = guestMode; // 游客分享会话：工具只保留知识检索与内置项（见 enabledToolCallbacks）
             st.replaceMessageId = replaceMessageId; // 重新生成：落库前软删被替换的旧回答
             st.userMessageId = userMessageId; // 本轮用户消息 ID（编辑重发后前端挂切换器/再编辑用）
-            st.delegatedAgentId = delegatedRound ? delegatedAgent.getId() : null; // §4 轮级委派归属（随 done 下发）
-            st.delegatedAgentName = delegatedRound ? delegatedAgent.getName() : null;
+            // 本轮强制咨询的助手（@ 换芯后的可见标记，随 done 下发；不再是"谁作答"的归属）
+            st.delegatedAgentId = forcedConsult != null && !consultSelf ? forcedConsult.getId() : null;
+            st.delegatedAgentName = forcedConsult != null && !consultSelf ? forcedConsult.getName() : null;
             applyPermissionTier(agent, st); // 权限档位（P2）：沙盒执行档 + 生效的工具执行确认档位
-            st.maxToolSteps = resolveMaxToolSteps(agent, subagentDepth); // 步数上限（智能体覆盖 > 全局；分支逐层减半）
+            st.tools.maxToolSteps = resolveMaxToolSteps(agent, subagentDepth); // 步数上限（智能体覆盖 > 全局；分支逐层减半）
+            // 智能体咨询（P5 agent-as-tool）：把"我是谁、在第几层、用哪个模型、谁在问"打包成一份按轮快照。
+            // 工具回调跑在弹性线程上，拿不到这些局部量，也不许去读任何跨轮状态（与 P1 删 ThreadLocal 同一条理由）。
+            st.tools.consultCtx = new com.wenqu.ai.agent.subagent.SubAgentConsultService.Ctx(
+                    sessionId, turnId, userId, resolvedModel, guestMode, subagentDepth,
+                    agent == null ? "" : agent.getId(),
+                    // @ 强制咨询过的那位：工具侧据此拒绝同一轮再开一条相同分支
+                    forcedConsult != null && !consultSelf ? forcedConsult.getId() : "",
+                    // 咨询跑通即广播（id, 名称）：前端那条「本轮咨询了谁」的徽标要活着长出来，
+                    // 不能等整轮 done——用户盯着转圈的这两三十秒里就该看见它在问谁
+                    (consultedId, consultedName) -> runtime.sendSseEvent(st.channel.emitter, "agent_consulted",
+                            JSON.toJSONString(Map.of("id", consultedId, "name", consultedName)), st.sessionId));
             st.branchTurn = branchTurn;   // 子智能体分支：「要有人在场」的工具不挂（见 ToolMountContext#turnAllows）
             st.reflectiveRetrieval = reflectiveRetrieval; // 检索-反思循环：工具强制暴露与结果自评约束按此门控
             // Token 消耗可视化回填：上下文实际用量/预算/填充块数（输出侧在 done 时用回答正文估算）
@@ -1950,13 +1987,13 @@ public class RagService {
                 st.subagentBranches = subOutcome.branches();
             }
             st.subagentRoute = subagentRouteInfo;
-            // 合并主流程已记录的分段（改写 / 检索），后续生成与自检由流回调继续写入 st.stageMs
-            st.stageMs.putAll(stageMs);
+            // 合并主流程已记录的分段（改写 / 检索），后续生成与自检由流回调继续写入 st.channel.stageMs
+            st.channel.stageMs.putAll(stageMs);
             // 计划模式（人在回路）：先产出执行计划等用户批准，批准后的计划注入本轮 system 再进生成。
             // 挂起点在 st 创建之后：断线后台续跑/人工等待不计费/刷新恢复全部继承 askUser 的既有语义。
             // 用户没开计划开关时，按消息意图自动开启：识别命中=本轮按计划模式走（卡片标「自动开启」）
             boolean planRound = planMode;
-            if (!planRound && awaitPlanIntent(planIntentFuture)) {
+            if (!planRound && plan.awaitIntent(planIntentFuture)) {
                 planRound = true;
                 st.planAuto = true;
                 log.info("[PLAN] 意图识别命中，本轮自动开启计划模式: session={}", sessionId);
@@ -1965,8 +2002,8 @@ public class RagService {
                 String planQuestion = question + (imgNote == null || imgNote.isBlank() ? "" : imgNote)
                         + (attachmentText.isBlank() ? ""
                         : "\n\n（用户上传了 " + preparedAtts.size() + " 个附件，其内容将在执行阶段提供）");
-                String gate = planApprovalGate(st, agent, rolePart, planQuestion, skills,
-                        buildRefsDigest(sources), system);
+                String gate = plan.approvalGate(st, agent, rolePart, planQuestion, skills,
+                        plan.refsDigest(sources), system, planHooks);
                 if (gate == null) {
                     // 拒绝/超时：整轮就此终止（plan_cancelled 让前端卡片定格「未批准」）；
                     // 「继续对话」取代：本版作废（plan_superseded，随后用户那条意见消息会接上）。
@@ -1974,10 +2011,10 @@ public class RagService {
                     // 收尾轮没有流式回答可挂计划卡：先补落一条收尾助手消息（含 plan 快照，刷新后卡不丢）
                     if (st.planSuperseded) {
                         persistPlanSuperseded(st);
-                        sendSseEvent(emitter, "plan_superseded", "{}", sessionId);
+                        runtime.sendSseEvent(emitter, "plan_superseded", "{}", sessionId);
                     } else {
                         persistPlanRejected(st);
-                        sendSseEvent(emitter, "plan_cancelled", "{}", sessionId);
+                        runtime.sendSseEvent(emitter, "plan_cancelled", "{}", sessionId);
                     }
                     Map<String, Object> cancelled = new LinkedHashMap<>();
                     cancelled.put("sources", List.of());
@@ -1986,30 +2023,30 @@ public class RagService {
                     if (st.planSuperseded) cancelled.put("planSuperseded", true);
                     else cancelled.put("planCancelled", true);
                     // 计划被拒/超时这条 done 也必须挂插话：漏了它，插进的话就在这个分支里静默消失
-                    attachLeftoverSteers(cancelled, st, sessionId);
-                    sendSseEvent(emitter, "done", JSON.toJSONString(cancelled), sessionId);
-                    completeEmitter(emitter);
+                    runtime.attachLeftoverSteers(cancelled, st, sessionId);
+                    runtime.sendSseEvent(emitter, "done", JSON.toJSONString(cancelled), sessionId);
+                    runtime.completeEmitter(emitter);
                     return;
                 }
             }
-            st.disposableRef.set(buildAnswerStream(system.toString(), user, st, agent));
+            st.channel.disposableRef.set(buildAnswerStream(system.toString(), user, st, agent));
 
-            // 前端断开/终态时停止生成。整轮截断（原「SSE 超时」）已由 startTurnWatchdog 承担：
+            // 前端断开/终态时停止生成。整轮截断（原「SSE 超时」）已由 runtime.startTurnWatchdog 承担：
             // 容器级超时不可续期且会把人工答题时间算进去，emitter 不再设容器超时
             emitter.onCompletion(() -> { if (!st.keepRunningWithoutChannel()) st.disposeSafe(); });
             emitter.onError(t -> { if (!st.keepRunningWithoutChannel()) st.disposeSafe(); });
 
         } catch (Exception e) {
-            if (turnStopRequested(sessionId)) {
+            if (runtime.turnStopRequested(sessionId)) {
                 // 用户叫停后，被解开的等待与被掐断的流会以异常形态冒到这里——这是预期收场，
                 // 不能报「系统处理异常」（那等于把用户的操作说成平台故障）
                 log.info("[SSE] 本轮已被用户停止，收尾异常按预期吞掉: session={} {}", sessionId, e.getMessage());
-                completeEmitter(emitter);
+                runtime.completeEmitter(emitter);
                 return;
             }
             log.error("Chat error", e);
-            sendSseEvent(emitter, "error", "系统处理异常，请稍后重试", sessionId);
-            completeEmitter(emitter);
+            runtime.sendSseEvent(emitter, "error", "系统处理异常，请稍后重试", sessionId);
+            runtime.completeEmitter(emitter);
         }
     }
 
@@ -2028,11 +2065,11 @@ public class RagService {
      * 技能与 MCP 已于 2026-09-26 下沉为个人资产，因此按 userId 取：只读**这个人**的技能、只连**这个人**的 MCP。
      */
     private java.util.List<org.springframework.ai.tool.ToolCallback> enabledToolCallbacks(Agent agent, String userId,
-                                                                                          AnswerStreamState st) {
+                                                                                          TurnState st) {
         java.util.List<org.springframework.ai.tool.ToolCallback> callbacks = new ArrayList<>(4);
         java.util.Set<String> sensitiveTools = new java.util.HashSet<>();
         if (!configService.getBoolean("tool.enabled")) {
-            st.sensitiveToolNames = sensitiveTools;
+            st.tools.sensitiveToolNames = sensitiveTools;
             return callbacks;
         }
         // 挂不挂由各族自己判（绞杀式中）：内置/检索/联网/产物/技能/任务清单六族已迁到注册中心，
@@ -2052,7 +2089,7 @@ public class RagService {
             }
             callbacks.addAll(mounted);
         }
-        if (!mcpNames.isEmpty()) st.mcpToolNames = java.util.Set.copyOf(mcpNames);
+        if (!mcpNames.isEmpty()) st.tools.mcpToolNames = java.util.Set.copyOf(mcpNames);
         // 八族全部由 provider 装配（P1 seam 化的装配面到此收口）：游客收窄看描述符 guestAllowed、
         // 审批=off 的整族禁用看 ToolFamily.blockedWhenApprovalOff、开关归属与具体项白名单看各族 exposes，
         // MCP 的个人资产语义看 McpToolProvider。这里不再留任何一族的 if——迁移时最贵的错就是
@@ -2074,7 +2111,7 @@ public class RagService {
      * 看不出成因，所以宁可在这里喊出来。
      */
     private void finishMounts(java.util.List<org.springframework.ai.tool.ToolCallback> callbacks,
-                              java.util.Set<String> sensitiveTools, AnswerStreamState st) {
+                              java.util.Set<String> sensitiveTools, TurnState st) {
         java.util.Set<String> seenNames = new java.util.LinkedHashSet<>();
         java.util.List<String> duplicated = new ArrayList<>(1);
         callbacks.removeIf(cb -> {
@@ -2099,13 +2136,13 @@ public class RagService {
             }
         }
         // 记录本轮"有副作用"的工具名单（沙盒/MCP）：智能体 toolApprovalMode=ask 时执行前需用户确认
-        st.sensitiveToolNames = sensitiveTools;
+        st.tools.sensitiveToolNames = sensitiveTools;
         // DSML 剥离白名单：本轮真实下发的工具名（小写）。部分模型在 Function Calling 之外还会把
         // 工具调用以 <searchKnowledge><parameter …></parameter></searchKnowledge> 的 DSML 文本再输出
         // 一遍（工具卡片已由 native tool_calls 生成，文本那份是重复产物），不剥离会原样漏给用户。
         // 排除与 HTML/XML 标准标签同名的工具（MCP 工具名由外部 server 自定，可能叫 link/form/table）：
         // 那类名字按标签剥会误伤模型正常写的 HTML/XML 正文，宁可漏剥离也不能吃掉用户内容。
-        st.dsmlToolNamesLc = callbacks.stream()
+        st.tools.dsmlToolNamesLc = callbacks.stream()
                 .map(cb -> cb.getToolDefinition().name())
                 .filter(java.util.Objects::nonNull)
                 .map(n -> n.toLowerCase())
@@ -2121,15 +2158,15 @@ public class RagService {
     }
 
     /**
-     * 开轮解析本轮权限档位（P2）：一次算完，落 {@code AnswerStreamState} 供装配与守卫共读。
+     * 开轮解析本轮权限档位（P2）：一次算完，落 {@code TurnState} 供装配与守卫共读。
      * <p>审批模式在这里一并改写：智能体显式设过就以它为准，没设过才用档位的建议值
      * （常规档的建议值是 null=不动它，所以未选档的存量智能体这一行与改动前逐字相同）。
      */
-    private void applyPermissionTier(Agent agent, AnswerStreamState st) {
-        st.permissionPolicy = resolvePermissionPolicy(agent, st.guestMode,
-                (code, message) -> addDegradation(st.degradations, st.degradedCodes, code, message));
-        st.toolApprovalMode = st.permissionPolicy.approvalMode();
-        log.info("[PERM] 本轮权限档位: {} session={}", st.permissionPolicy.describe(), st.sessionId);
+    private void applyPermissionTier(Agent agent, TurnState st) {
+        st.tools.permissionPolicy = resolvePermissionPolicy(agent, st.guestMode,
+                (code, message) -> runtime.addDegradation(st.degradations, st.degradedCodes, code, message));
+        st.tools.toolApprovalMode = st.tools.permissionPolicy.approvalMode();
+        log.info("[PERM] 本轮权限档位: {} session={}", st.tools.permissionPolicy.describe(), st.sessionId);
     }
 
     /**
@@ -2152,10 +2189,10 @@ public class RagService {
      * <p>「族 → c_ai_agent 的哪一列」这条映射留在问答侧：Agent 是业务实体，通用装配层不该认识它，
      * 否则下一族想加开关时得先改通用层。
      */
-    private ToolMountContext toolMountContext(Agent agent, String userId, AnswerStreamState st) {
+    private ToolMountContext toolMountContext(Agent agent, String userId, TurnState st) {
         return mountContext(agent, userId, st.guestMode, st.reflectiveRetrieval, st.branchTurn,
-                (code, message) -> addDegradation(st.degradations, st.degradedCodes, code, message),
-                st.permissionPolicy);
+                (code, message) -> runtime.addDegradation(st.degradations, st.degradedCodes, code, message),
+                st.tools.permissionPolicy);
     }
 
     /**
@@ -2171,7 +2208,7 @@ public class RagService {
     }
 
     /**
-     * @param turnPolicy 本轮已解析的权限档位（问答侧传 {@code st.permissionPolicy}，与守卫读同一份）；
+     * @param turnPolicy 本轮已解析的权限档位（问答侧传 {@code st.tools.permissionPolicy}，与守卫读同一份）；
      *                   null = 现算（提示词侧那条路径没有本轮状态对象）
      * @param branchTurn 本轮是否为子智能体分支（P3a）：分支里「要有人在场」的工具（提问卡、任务清单）
      *                   不进工具表，判据与装配同一条 {@link ToolMountContext#turnAllows}
@@ -2266,6 +2303,10 @@ public class RagService {
             case ARTIFACT -> agent.getToolArtifact();
             case SKILL -> agent.getToolSkill();
             case SANDBOX -> null;   // 沙盒暂无智能体级列（c_ai_agent 未建 toolSandbox，见 SandboxTools 类注释）
+            // 智能体咨询（P5）同理：c_ai_agent 没有 toolSubagent 列，本族只受全局
+            // tool.subagentConsult.enabled 与工具总闸管。要按人/按智能体收口的话，加列要走配置页 schema，
+            // 别在这里塞"看起来能配"的 null 让管理员以为勾了就没效果。
+            case SUBAGENT -> null;
             case TODO, MCP -> null;
         };
     }
@@ -2274,7 +2315,7 @@ public class RagService {
      * 工具调用管线接入口（P1 seam 化第一刀）。
      * <p>
      * 迁移前这里是两百行匿名内部类：叫停闸、步数闸、审批等待、上下文注入、状态观测、插话附送全部
-     * 内联，并且直读 AnswerStreamState 的私有字段——于是工作流的 mcp/skill 节点想复用其中任何一道闸
+     * 内联，并且直读 TurnState 的私有字段——于是工作流的 mcp/skill 节点想复用其中任何一道闸
      * 都无从下手（那两条路现在是 {@code target.call(json)} 裸调，绕开审批、绕开预算、绕开工具卡与
      * 事件账本）。守卫链与管线本体已迁到 {@code com.wenqu.ai.agent.tool}，这里只剩一份
      * 「本轮问答状态 → 工具执行层契约」的适配。
@@ -2282,277 +2323,14 @@ public class RagService {
      * 本期只接问答流水线这一条装配路径，行为与迁移前逐项对齐；其余旁路留待后续族迁移时接同一条管线。
      */
     private org.springframework.ai.tool.ToolCallback[] instrumentTools(
-            java.util.List<org.springframework.ai.tool.ToolCallback> rawTools, AnswerStreamState st) {
+            java.util.List<org.springframework.ai.tool.ToolCallback> rawTools, TurnState st) {
         return toolPipeline.wrap(rawTools, toolTurnContext(st));
     }
 
     // ==================== P3b：沙盒脚本的子调用回程 ====================
 
     /**
-     * 为本轮准备「脚本子调用」的管线（P3b）。
-     * <p>
-     * 只在真挂了 {@code run_code} 时构建，其余轮次一个对象都不多造（默认关的功能不该给每轮加开销）。
-     * <p><b>为什么要再包一条</b>：脚本里的子调用必须与模型直调走<b>同一条守卫链</b>（叫停、权限档位、
-     * 引用登记、工具卡片），绕过去就不是"少几次模型往返"而是"少一层管控"。但<b>不能共用同一份步数预算</b>：
-     * 一段扇出 30 份资料的脚本会把 15 步的模型预算一次吃光，主模型随后就没工具可用了——那正是 P3b
-     * 要解决的问题本身。所以这条管线与本轮同源，只换预算那一项（{@code maxToolSteps}/{@code takeStep}
-     * 走本轮的子调用计数，上限是 {@code tool.runcode.maxSubCalls}）。
-     */
-    private void prepareSubCallPipeline(AnswerStreamState st,
-                                        java.util.List<org.springframework.ai.tool.ToolCallback> rawTools,
-                                        ToolTurnContext turnCtx) {
-        boolean runCodeMounted = rawTools.stream().anyMatch(
-                cb -> cb.getToolDefinition() != null
-                        && SandboxTools.RUN_CODE_TOOL_NAME.equals(cb.getToolDefinition().name()));
-        if (!runCodeMounted) return;
-        java.util.List<org.springframework.ai.tool.ToolCallback> subRaw = new ArrayList<>();
-        for (org.springframework.ai.tool.ToolCallback cb : rawTools) {
-            String n = cb.getToolDefinition() == null ? null : cb.getToolDefinition().name();
-            if (n == null || SandboxTools.RUN_CODE_TOOL_NAME.equals(n)) continue;
-            // 脚本里不给 execute（嵌套命令行）：刀4 用「平台侧回执日志」定位过——四路并发时
-            // 平台把四条响应都组装好并写回，容器里的脚本只收到部分，剩下的连接永远等不到返回；
-            // 改成流式响应 + 每 2s 写一个心跳空格更糟（一条都送不到）。丢在容器→宿主这条回程上，
-            // 本机环境无法从平台侧修好，所以切断入口：命令行请用工具本身（模型直调，看得见且走
-            // 平台自己的流式通道）。文件类（读写列目录交付）走文件 API、不碰那条会话，实测正常。
-            if (SandboxTools.STREAMING_TOOL_NAME.equals(n)) continue;
-            // 「要有人在场」的工具不给脚本：askUser 在脚本里既没人答、又会把整段运行挂住——
-            // 判据与本轮装配同一条（描述符 viewerRequired），不在这里再抄一份名字表
-            com.wenqu.ai.agent.tool.ToolDescriptor d = toolRegistry.find(n).orElse(null);
-            if (d != null && d.viewerRequired()) continue;
-            subRaw.add(cb);
-        }
-        if (subRaw.isEmpty()) {
-            log.info("[P3B] 本轮挂了 run_code 但没有可子调用的工具，脚本只能用 Python 自己算");
-            return;
-        }
-        st.subCallTools = new java.util.LinkedHashMap<>();
-        for (org.springframework.ai.tool.ToolCallback cb : toolPipeline.wrap(subRaw, subCallTurnContext(st, turnCtx))) {
-            String n = cb.getToolDefinition() == null ? null : cb.getToolDefinition().name();
-            if (n != null) st.subCallTools.put(n, cb);
-        }
-        log.info("[P3B] 本轮子调用通道就绪：{} 个工具，上限 {} 次",
-                st.subCallTools.size(), configService.getInt("tool.runcode.maxSubCalls", 50));
-    }
-
-    /** 本轮 run_code 的子调用入口（按轮闭包；容器侧只看到一次 HTTP 回调） */
-    private com.wenqu.ai.agent.runcode.RunCodeBridge runCodeBridge(AnswerStreamState st) {
-        return new com.wenqu.ai.agent.runcode.RunCodeBridge() {
-            @Override
-            public String sessionId() {
-                return st.sessionId;
-            }
-
-            @Override
-            public String turnId() {
-                return st.turnId;
-            }
-
-            @Override
-            public String userId() {
-                return st.userId;
-            }
-
-            @Override
-            public java.util.List<com.wenqu.ai.agent.runcode.RunCodeBridge.Spec> callableSpecs() {
-                java.util.Map<String, org.springframework.ai.tool.ToolCallback> map = st.subCallTools;
-                if (map == null) return List.of();
-                List<Spec> out = new ArrayList<>();
-                for (org.springframework.ai.tool.ToolCallback cb : map.values()) {
-                    out.add(specOf(cb));
-                }
-                return out;
-            }
-
-            @Override
-            public String invoke(String tool, String argsJson) {
-                java.util.Map<String, org.springframework.ai.tool.ToolCallback> map = st.subCallTools;
-                org.springframework.ai.tool.ToolCallback cb = map == null ? null : map.get(tool);
-                if (cb == null) {
-                    throw new com.wenqu.ai.agent.runcode.RunLimitException(
-                            "本轮没有挂载工具「" + tool + "」，脚本调不到模型也用不了的能力");
-                }
-                String args = argsJson == null || argsJson.isBlank() ? "{}" : argsJson;
-                // 守卫在包装回调内部：这一句就是「再过一遍叫停闸/权限闸/引用登记」的地方。
-                // 工具自己抛的业务异常照常向上传，由回调控制器转成 ok=false（脚本看得懂字段）
-                return cb.call(args);
-            }
-
-            @Override
-            public int maxSubCalls() {
-                return Math.max(1, configService.getInt("tool.runcode.maxSubCalls", 50));
-            }
-
-            @Override
-            public long subCallTimeoutMs() {
-                return Math.max(5_000L, configService.getLong("tool.runcode.subCallTimeoutMs", 60_000L));
-            }
-
-            @Override
-            public int callsUsed() {
-                return st.subCallCount.get();
-            }
-
-            @Override
-            public void recordRunOutcome(com.wenqu.ai.agent.runcode.RunCodeService.Outcome outcome) {
-                st.runOutcome = outcome == null ? null : outcome.asCard();
-            }
-        };
-    }
-
-    /** 工具回调 → Python 客户端的一节（参数名与说明都取自它自己的 inputSchema，脚本侧不必猜） */
-    private com.wenqu.ai.agent.runcode.RunCodeBridge.Spec specOf(
-            org.springframework.ai.tool.ToolCallback cb) {
-        org.springframework.ai.tool.definition.ToolDefinition def = cb.getToolDefinition();
-        String name = def == null ? "" : def.name();
-        String label = toolRegistry.find(name).map(com.wenqu.ai.agent.tool.ToolDescriptor::displayLabel)
-                .orElse(name);
-        List<String> params = new ArrayList<>();
-        Map<String, String> docs = new LinkedHashMap<>();
-        List<String> required = new ArrayList<>();
-        try {
-            JSONObject schema = def == null || def.inputSchema() == null
-                    ? null : JSON.parseObject(def.inputSchema());
-            JSONObject props = schema == null ? null : schema.getJSONObject("properties");
-            if (props != null) {
-                for (String k : props.keySet()) {
-                    params.add(k);
-                    JSONObject p = props.getJSONObject(k);
-                    if (p != null && p.getString("description") != null) docs.put(k, p.getString("description"));
-                }
-            }
-            JSONArray req = schema == null ? null : schema.getJSONArray("required");
-            if (req != null) for (Object o : req) if (o != null) required.add(String.valueOf(o));
-        } catch (Exception e) {
-            // schema 解析失败不影响这次子调用能用什么：退化成"只给 call_tool，参数由模型自己按工具说明传"
-            log.warn("[P3B] 工具 {} 的入参 schema 解析失败（脚本侧只走 call_tool）: {}", name, e.getMessage());
-        }
-        return new com.wenqu.ai.agent.runcode.RunCodeBridge.Spec(name, label, List.copyOf(params),
-                Map.copyOf(docs), List.copyOf(required));
-    }
-
-    /**
-     * 子调用的本轮上下文：除预算那三项，其余全部转发给本轮那份。
-     * <p>刻意<b>不</b>重算身份：{@code toolTurnContext(st)} 在流水线入口线程捕获了 RequestUser 快照，
-     * 子调用来自 Tomcat 线程、那里根本没有这个 ThreadLocal——转发（而不是新建）是唯一正确的做法，
-     * 也是 P1 那条「身份快照必须在入口线程捕获」结论的复用。
-     */
-    private ToolTurnContext subCallTurnContext(AnswerStreamState st, ToolTurnContext base) {
-        final int maxSub = Math.max(1, configService.getInt("tool.runcode.maxSubCalls", 50));
-        return new ToolTurnContext() {
-            @Override
-            public String sessionId() {
-                return base.sessionId();
-            }
-
-            @Override
-            public String userId() {
-                return base.userId();
-            }
-
-            @Override
-            public String turnId() {
-                return base.turnId();
-            }
-
-            @Override
-            public boolean userStopped() {
-                return base.userStopped();
-            }
-
-            @Override
-            public int maxToolSteps() {
-                // 子调用有自己的一摞预算，不吃模型的单轮步数（见 prepareSubCallPipeline 注释）
-                return maxSub;
-            }
-
-            @Override
-            public int stepsTaken() {
-                return st.subCallCount.get();
-            }
-
-            @Override
-            public void takeStep() {
-                st.subCallCount.incrementAndGet();
-            }
-
-            @Override
-            public String approvalMode() {
-                return base.approvalMode();
-            }
-
-            @Override
-            public boolean requiresApproval(String toolName) {
-                return base.requiresApproval(toolName);
-            }
-
-            @Override
-            public long approvalTimeoutMs() {
-                return base.approvalTimeoutMs();
-            }
-
-            @Override
-            public com.wenqu.ai.agent.tool.ToolApprover approver() {
-                return base.approver();
-            }
-
-            @Override
-            public com.wenqu.ai.agent.permission.ExecutionPolicy permissionPolicy() {
-                return base.permissionPolicy();
-            }
-
-            @Override
-            public Map<String, Object> baseToolContext() {
-                return base.baseToolContext();
-            }
-
-            @Override
-            public Map<ToolFamily, ToolEnrichment> enrichments() {
-                return base.enrichments();
-            }
-
-            @Override
-            public String execute(org.springframework.ai.tool.ToolCallback raw, String arguments,
-                                  Map<String, Object> context, ToolInvocation inv, int[] attemptsOut) {
-                return base.execute(raw, arguments, context, inv, attemptsOut);
-            }
-
-            @Override
-            public void observe(ToolInvocation inv, String status, String resultOrError) {
-                // 子调用不各开一张顶层卡片：一段脚本扇出 20 次就把过程区刷出 20 行，而它们本来就属于
-                // 同一次运行。改成记进 run_code 那张卡的「扇出清单」，点开看结构（这是过程下钻的落点）。
-                // 守卫链其它三道（叫停/步数/权限）与引用登记都照常走，只是不再各占一个操作位。
-                // <p>start 也过这里：在途那几条与"本轮额度还剩多少"只有起止两侧才知道。
-                // 这里只改计数、不发帧——发帧由面板 ticker 每秒合并一帧（见 RUN_PROGRESS_POOL）。
-                if ("start".equals(status)) {
-                    markSubCallInFlight(st, inv.toolName(), true);
-                    return;
-                }
-                recordSubCall(st, inv.toolName(), status, resultOrError, inv.elapsedMillis());
-                markSubCallInFlight(st, inv.toolName(), false);
-            }
-
-            @Override
-            public void onOutput(ToolInvocation inv, String delta) {
-                // 刻意不转发：脚本里再调 execute 时的逐行输出属于那次子调用，
-                // 顶层那张 run_code 卡已经在流式转发脚本自己的 stdout 了，两路一起推会互相打断
-            }
-
-            @Override
-            public String decorateResult(ToolInvocation inv, String result) {
-                return base.decorateResult(inv, result);
-            }
-
-            @Override
-            public String appendSteers(ToolInvocation inv, String result) {
-                // 插话是给"正在出字的这一轮"的，脚本的一条子调用不是它的受众：附在这里会让
-                // 一句"换个方向"混进 Python 的返回值里，模型下一步看到的是一段脏 JSON
-                return result;
-            }
-        };
-    }
-
-    /**
-     * 本轮的工具执行上下文：把 AnswerStreamState 的问答态映射成 {@link ToolTurnContext} 声明的
+     * 本轮的工具执行上下文：把 TurnState 的问答态映射成 {@link ToolTurnContext} 声明的
      * 十余件事。
      * <p>
      * <b>身份快照在本方法（入口线程）捕获</b>：工具实际执行在 Reactor boundedElastic 线程上，
@@ -2560,7 +2338,7 @@ public class RagService {
      * 这不是安全降级而是功能损坏（库门恒假 → 召回 0 并耗尽工具预算，线上实测过）。
      * 放在执行点捕获同样无效，那里已经在弹性线程上。见 {@link #callWithRetry}。
      */
-    private ToolTurnContext toolTurnContext(AnswerStreamState st) {
+    private ToolTurnContext toolTurnContext(TurnState st) {
         final com.wenqu.ai.util.RequestUser.Snapshot identity = com.wenqu.ai.util.RequestUser.snapshot();
         // 本轮检索参数覆盖（库级 + 智能体级）与个人配置覆盖装在同一个 ThreadLocal 盲区里：
         // 不带进工具线程，配置页上那份 retrieval.* 对 searchKnowledge 一律静默失效，
@@ -2581,33 +2359,35 @@ public class RagService {
                         @Override
                         public KnowledgeRetrievalTool.SourceRegistrar.Registration register(
                                 HybridRetrievalService.Hit h, String snippet) {
-                            return st.registerToolSource(h, snippet);
+                            return st.refs.registerToolSource(h, snippet);
                         }
 
                         @Override
                         public void degrade(String code, String msg) {
                             // 工具链路（重排不可用等）可写回本轮 degradations，与主链路同一份列表、同一展示位
-                            addDegradation(st.degradations, st.degradedCodes, code, msg);
+                            runtime.addDegradation(st.degradations, st.degradedCodes, code, msg);
                         }
                     });
                     // 检索范围：工具与主链路同库界，不得越过智能体知识库绑定去检索其他库
                     m.put(KnowledgeRetrievalTool.CTX_KB_SCOPE,
-                            new KnowledgeRetrievalTool.KbScope(st.toolScopeKbIds, st.toolScopeDocIds));
+                            new KnowledgeRetrievalTool.KbScope(st.tools.toolScopeKbIds, st.tools.toolScopeDocIds));
                     m.put(KnowledgeRetrievalTool.CTX_REFLECTIVE, st.reflectiveRetrieval);
                     return m;
                 },
-                ToolFamily.WEBSEARCH, inv -> Map.of(WebSearchTools.CTX_SINK, st),
+                // 联网搜索的落点=本轮引用池（刀 0 第二步后 sink 由 TurnSourceRegistry 实现，
+                // 不再是整个状态袋——工具拿不到本轮的任何其它字段，也就没法往别处写）
+                ToolFamily.WEBSEARCH, inv -> Map.of(WebSearchTools.CTX_SINK, st.refs),
                 ToolFamily.SANDBOX, inv -> {
                     Map<String, Object> m = new java.util.HashMap<>();
                     // 本轮权限档位（P2）：沙盒工具据此判定这次写入是否落在允许区内。走上下文而不是让
                     // 工具去查配置——档位是「这一轮」的属性，同一会话的两轮可以不同档
-                    m.put(SandboxTools.CTX_SANDBOX_POLICY, st.permissionPolicy);
+                    m.put(SandboxTools.CTX_SANDBOX_POLICY, st.tools.permissionPolicy);
                     // run_code 的子调用回程（P3b）：只在这一轮真挂了 run_code 时才有内容，
-                    // 且必须在执行侧现取——本轮的可调用清单在 st.subCallTools 里，装配期还没建好
+                    // 且必须在执行侧现取——本轮的可调用清单在 st.tools.subCallTools 里，装配期还没建好
                     boolean runCode = SandboxTools.RUN_CODE_TOOL_NAME.equals(inv.toolName());
-                    if (runCode) startRunBoard(st);
+                    if (runCode) subCall.startRunBoard(st);
                     if (runCode) {
-                        m.put(SandboxTools.CTX_RUN_CODE_BRIDGE, runCodeBridge(st));
+                        m.put(SandboxTools.CTX_RUN_CODE_BRIDGE, subCall.runCodeBridge(st));
                     }
                     // 输出增量回调：execute 检测到它即走流式执行（后台脱离+轮询），增量经
                     // recordToolOutput 转 SSE，前端「看着它跑」。
@@ -2649,34 +2429,34 @@ public class RagService {
 
             @Override
             public int maxToolSteps() {
-                return st.maxToolSteps;
+                return st.tools.maxToolSteps;
             }
 
             @Override
             public int stepsTaken() {
-                return st.toolStepCount.get();
+                return st.tools.toolStepCount.get();
             }
 
             @Override
             public void takeStep() {
-                st.toolStepCount.incrementAndGet();
+                st.tools.toolStepCount.incrementAndGet();
             }
 
             @Override
             public String approvalMode() {
-                return st.toolApprovalMode;
+                return st.tools.toolApprovalMode;
             }
 
             @Override
             public boolean requiresApproval(String toolName) {
-                return st.sensitiveToolNames != null && st.sensitiveToolNames.contains(toolName);
+                return st.tools.sensitiveToolNames != null && st.tools.sensitiveToolNames.contains(toolName);
             }
 
             @Override
             public long approvalTimeoutMs() {
-                // 必须显式指向外层服务方法：匿名类里裸写 approvalTimeoutMs() 解析到的是本方法自己，
+                // 必须点名取外部服务的方法：匿名类里裸写 approvalTimeoutMs() 解析到的是本方法自己，
                 // 审批闸一读等待上限就无限递归把工具线程栈打爆（ApprovalGate 调它即在「每次问我」档必炸）
-                return RagService.this.approvalTimeoutMs();
+                return hitl.approvalTimeoutMs();
             }
 
             @Override
@@ -2691,7 +2471,7 @@ public class RagService {
 
             @Override
             public com.wenqu.ai.agent.permission.ExecutionPolicy permissionPolicy() {
-                return st.permissionPolicy;
+                return st.tools.permissionPolicy;
             }
 
             @Override
@@ -2728,15 +2508,15 @@ public class RagService {
             public String decorateResult(ToolInvocation inv, String result) {
                 // MCP 外部工具结果注册引用来源（tool.mcpCiteEnabled）：模型依据 MCP 内容作答时正文才有
                 // 可点溯源的 [N]，否则是悬空角标（引用面板无对应条目）
-                if (st.mcpToolNames != null && st.mcpToolNames.contains(inv.toolName())) {
-                    return st.registerMcpCitations(inv.toolName(), result);
+                if (st.tools.mcpToolNames != null && st.tools.mcpToolNames.contains(inv.toolName())) {
+                    return st.refs.registerMcpCitations(inv.toolName(), result);
                 }
                 return result;
             }
 
             @Override
             public String appendSteers(ToolInvocation inv, String result) {
-                String steered = drainSteers(st);
+                String steered = runtime.drainSteers(st);
                 return steered.isEmpty() ? result : result + "\n\n" + steered.trim();
             }
         };
@@ -2752,35 +2532,19 @@ public class RagService {
      * 阻塞等待有界（chat.approvalTimeoutMs，默认 120s）；超时/拒绝都<b>不代用户批准</b>，
      * 由守卫把原因回给模型，让它基于已有信息继续而不是反复重试。
      */
-    private ToolApprover.Outcome requestToolApproval(AnswerStreamState st, ToolInvocation inv, long timeoutMs) {
+    private ToolApprover.Outcome requestToolApproval(TurnState st, ToolInvocation inv, long timeoutMs) {
         String name = inv.toolName();
         String toolInput = inv.arguments();
         String approvalId = inv.callId();
-        java.util.concurrent.CompletableFuture<Boolean> future = new java.util.concurrent.CompletableFuture<>();
-        // 落库审批记录（持久化 + 审计；内存 future 仍负责阻塞工具线程，不可省）
-        try {
-            com.wenqu.ai.model.ToolApproval rec = new com.wenqu.ai.model.ToolApproval();
-            rec.setId(approvalId);
-            rec.setSessionId(st.sessionId);
-            rec.setUserId(st.userId);
-            rec.setTurnId(st.turnId);
-            rec.setToolName(name);
-            rec.setStatus("PENDING");
-            String argsSummary = toolInput == null ? "" : (toolInput.length() > 2000 ? toolInput.substring(0, 2000) : toolInput);
-            rec.setRequestArgs(argsSummary);
-            rec.setCreatedAt(java.time.LocalDateTime.now());
-            toolApprovalMapper.insert(rec);
-        } catch (Exception e) {
-            log.warn("[TOOL] 审批记录落库失败（不阻塞审批流程）: {}", e.getMessage());
-        }
-        PENDING_APPROVALS.put(approvalId, new PendingApproval(st.sessionId, st.userId, name, future));
-        // 审批待决站内通知（旁路）：SSE 只能触达正开着这个会话页的人，人不在页面时铃铛是唯一可感知面。
-        // 超时/裁决后通知不撤（留在列表里作审计痕迹，点了即已读）。
-        notificationService.create(st.userId, com.wenqu.ai.model.Notification.TYPE_TOOL_APPROVAL,
-                "工具执行待确认：" + name,
-                "智能体正在请求执行有副作用工具「" + name + "」，请在会话中确认或拒绝（超时未确认按拒绝处理）。",
-                "session", st.sessionId, "tool:" + approvalId, approvalId);
-        try {
+        // 挂起这张审批卡（P6 刀 1：落 PENDING 记录与登记唤醒句柄都在 HitlDecisionService 一次做完）。
+        // 句柄是 AutoCloseable：离开作用域即摘登记，不会再出现「解了 future 却漏摘登记」那种半成品。
+        try (var wait = hitl.openApproval(approvalId, st.sessionId, st.userId, st.turnId, name, toolInput)) {
+            // 审批待决站内通知（旁路）：SSE 只能触达正开着这个会话页的人，人不在页面时铃铛是唯一可感知面。
+            // 超时/裁决后通知不撤（留在列表里作审计痕迹，点了即已读）。
+            notificationService.create(st.userId, com.wenqu.ai.model.Notification.TYPE_TOOL_APPROVAL,
+                    "工具执行待确认：" + name,
+                    "智能体正在请求执行有副作用工具「" + name + "」，请在会话中确认或拒绝（超时未确认按拒绝处理）。",
+                    "session", st.sessionId, "tool:" + approvalId, approvalId);
             Map<String, Object> req = new LinkedHashMap<>();
             req.put("approvalId", approvalId);
             req.put("tool", name);
@@ -2790,268 +2554,54 @@ public class RagService {
             String args = toolInput == null ? "" : toolInput;
             req.put("args", args.length() > 2000 ? args.substring(0, 2000) + "…" : args);
             req.put("timeoutMs", timeoutMs);
-            sendSseEvent(st.emitter, "approval_required", JSON.toJSONString(req), st.sessionId);
+            runtime.sendSseEvent(st.channel.emitter, "approval_required", JSON.toJSONString(req), st.sessionId);
             log.info("[TOOL] 等待用户确认: tool={} approvalId={} session={}", name, approvalId, st.sessionId);
             boolean approved;
             ToolApprover.Outcome timeoutOutcome = ToolApprover.Outcome.TIMED_OUT;
-            beginHumanWait(st.emitter);   // 用户确认时间不计入整轮机器预算（见 TurnDeadline）
+            TurnRegistry.beginHumanWait(st.channel.emitter);   // 用户确认时间不计入整轮机器预算（见 TurnDeadline）
             try {
-                approved = future.get(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
+                approved = wait.future().get(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
             } catch (java.util.concurrent.ExecutionException ee) {
                 approved = false;
                 timeoutOutcome = ToolApprover.Outcome.REJECTED;
             } catch (java.util.concurrent.TimeoutException te) {
                 approved = false;
-                markApprovalResolved(approvalId, "TIMEOUT", st.userId);
+                hitl.markApprovalResolved(approvalId, "TIMEOUT", st.userId);
                 log.warn("[TOOL] 审批超时，按拒绝处理: tool={} session={}", name, st.sessionId);
             } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
                 approved = false;
                 timeoutOutcome = ToolApprover.Outcome.CANCELLED;
             } finally {
-                endHumanWait(st.emitter);
+                TurnRegistry.endHumanWait(st.channel.emitter);
             }
             if (!approved) {
                 return timeoutOutcome;
             }
             log.info("[TOOL] 用户已批准: tool={} session={}", name, st.sessionId);
             return ToolApprover.Outcome.ALLOWED;
-        } finally {
-            PENDING_APPROVALS.remove(approvalId);
         }
     }
 
     /** 工具展示名下发：卡片名与悬停说明都取注册中心，未知工具（MCP 动态名）不下发空字段，前端用自己那份兜底 */
     private void putToolDisplayName(Map<String, Object> payload, String name) {
-        String label = toolRegistry.displayLabel(name);
-        if (label != null) payload.put("label", label);
-        String hint = toolRegistry.cardHint(name);
-        if (hint != null) payload.put("hint", hint);
+        toolRegistry.putDisplayFields(payload, name);
     }
 
     // ==================== 工具执行心跳 ====================
 
-    /** 心跳间隔 15s：小于常见中间代理 60s 读超时与前端 120s 空闲看门狗，留足余量。 */
-    private static final long TOOL_HEARTBEAT_INTERVAL_MS = 15_000;
-
-    /** SSE 心跳调度池（2 线程，守护）：仅供 15s keepalive 注释行下发。与看门狗分池——心跳是
-     *  高频周期任务（百级并发 = 每 15s 约两百次 send），看门狗是整轮截断的安全网：同队时一个
-     *  慢客户端卡住的 send 会连看门狗一起停摆，全平台的截断机制失效 */
-    private static final java.util.concurrent.ScheduledExecutorService TOOL_HEARTBEAT_POOL =
-            java.util.concurrent.Executors.newScheduledThreadPool(2, r -> {
-                Thread t = new Thread(r, "sse-keepalive");
-                t.setDaemon(true);
-                return t;
-            });
-
-    /** 整轮存活看门狗（独立单线程，与心跳分池见上）：检查本身无 IO。到点的截断收尾虽有阻塞
-     *  send，但失联客户端快速抛错、健康客户端 send 极短，独占线程不与两百次/15s 的心跳互相放大 */
-    private static final java.util.concurrent.ScheduledExecutorService TURN_WATCHDOG_POOL =
-            java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
-                Thread t = new Thread(r, "turn-watchdog");
-                t.setDaemon(true);
-                return t;
-            });
-
-    /**
-     * run_code 实时面板的下发线程（P3b）。与心跳/看门狗分池，理由与上面那条注释同源：
-     * 一次慢客户端的 send 不许连坐别人的心跳。
-     * <p><b>发送点刻意不在子调用线程上</b>：扇出六路时六个 Tomcat 线程同时往同一根 SSE 通道 send，
-     * 各自的 HTTP 响应被自己刚发的进度帧卡住，脚本就停在第 7 次调用之前直到整段运行超时
-     * （本机实测：6 路 execute 扇出，卡片停在「子调用 6 次」120s 不前进）。
-     * 现在子调用线程只置脏位，ticker 每秒最多合并成一帧。
-     */
-    private static final java.util.concurrent.ScheduledExecutorService RUN_PROGRESS_POOL =
-            java.util.concurrent.Executors.newScheduledThreadPool(2, r -> {
-                Thread t = new Thread(r, "runcode-progress");
-                t.setDaemon(true);
-                return t;
-            });
-
-    /** 面板刷新间隔：1s 一跳，与卡片上那份实时耗时同拍，扇出再密也不会把通道刷成洪水 */
-    private static final long RUN_PROGRESS_INTERVAL_MS = 1000L;
-
-    /**
-     * 按 15s 间隔向 emitter 发 SSE 注释行（":keepalive"）保活，返回句柄供停止/移交。
-     * 发送失败（客户端已断开）自停，防任务泄漏。供 startRunHeartbeat 与 runChat 前置阶段共用。
-     */
-    private static java.util.concurrent.ScheduledFuture<?> scheduleKeepalive(SseEmitter emitter, String phase) {
-        java.util.concurrent.atomic.AtomicReference<java.util.concurrent.ScheduledFuture<?>> self =
-                new java.util.concurrent.atomic.AtomicReference<>();
-        java.util.concurrent.ScheduledFuture<?> f = TOOL_HEARTBEAT_POOL.scheduleWithFixedDelay(() -> {
-            try {
-                emitter.send(SseEmitter.event().comment("keepalive"));
-            } catch (Exception e) {
-                log.debug("[RUN-HEARTBEAT] {}心跳下发失败（客户端可能已断开），心跳自停: {}", phase, e.getMessage());
-                java.util.concurrent.ScheduledFuture<?> s = self.get();
-                if (s != null) s.cancel(false);
-            }
-        }, TOOL_HEARTBEAT_INTERVAL_MS, TOOL_HEARTBEAT_INTERVAL_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
-        self.set(f);
-        return f;
-    }
-
-    /**
-     * 整轮流级 SSE 心跳：覆盖「工具执行（沙盒命令/审批等待可达数分钟）」与「工具结束→
-     * 最终回答首 token」两段全静默区——中间代理（vite/nginx 默认 60s 读超时）会掐断连接、
-     * 前端 120s 空闲看门狗会把静默误判为失联。每 15s 发一条 SSE 注释行（":keepalive"）：
-     * 中间层与看门狗都视之为存活信号，前端解析器忽略注释行、UI 零打扰。
-     * <p>生命周期：runChat 在**检索/深度思考阶段前**就启动前置心跳（serverless 端点冷启动期间
-     * 检索可达 90s+，此前该阶段无心跳会被前端掐断），st 创建时接管句柄（本方法幂等复用），
-     * 终态路径（doOnComplete / doOnError / disposeSafe）停止；发送失败自停，防任务泄漏。
-     */
-    private synchronized void startRunHeartbeat(AnswerStreamState st) {
-        if (st.heartbeat != null && !st.heartbeat.isDone()) return;
-        st.heartbeat = scheduleKeepalive(st.emitter, "整轮");
-    }
-
-    private static void stopRunHeartbeat(AnswerStreamState st) {
-        java.util.concurrent.ScheduledFuture<?> f = st.heartbeat;
-        if (f != null) {
-            f.cancel(false);
-            st.heartbeat = null;
-        }
+    private void stopRunHeartbeat(TurnState st) {
+        // 心跳句柄的停法只有一份，在轮次运行时里（起也在那儿）
+        runtime.stopHeartbeat(st);
         // 整轮收口时一并撤掉脚本面板的 ticker：中断/异常那几条路没有 run_code 终态记录，
         // 只靠"终态自停"会留下一个每秒空转的周期任务
-        st.runBoardActive = false;
-        stopRunBoardTicker(st);
+        st.board.runBoardActive = false;
+        subCall.stopRunBoardTicker(st);
     }
 
-    // ==================== 整轮存活看门狗 ====================
-
-    /**
-     * 本轮耗时台账：整轮预算只计<b>机器</b>时间，人在回路的等待从中扣除。
-     * <p>背景：askUser 提问卡单卡允许等 chat.askTimeoutMs（默认 10 分钟）、工具审批 120s，而容器级 SSE
-     * 超时是<b>从请求开始
-     * 一路走到头的墙钟</b>且不可续期（Spring 在 async 启动后禁止改 timeout，实测发心跳也不复位）。
-     * 于是「用户慢慢答完第二张卡」必然在答题途中被掐断：提问线程被中断、askId 落库改成 TIMEOUT，
-     * 用户点提交收到「提问不存在、已回答或已超时」。现 emitter 不设容器超时（见 ChatController），
-     * 截断判定改由本台账 + {@link #startTurnWatchdog} 负责。
-     */
-    private static final class TurnDeadline {
-        final long startMs = System.currentTimeMillis();
-        final long budgetMs;
-        /** 已结束的人在回路等待累计（提问卡 + 工具审批阻塞时长），不计入预算 */
-        final java.util.concurrent.atomic.AtomicLong humanWaitMs = new java.util.concurrent.atomic.AtomicLong();
-        /** 进行中的等待：计数 + 起点。必须**边等边扣**——等完再补记的话，看门狗在用户答题那几分钟里
-         *  看到的还是整段墙钟，照样把正在作答的轮次掐了（2026-10-07 复测实测到） */
-        final java.util.concurrent.atomic.AtomicInteger openWaits = new java.util.concurrent.atomic.AtomicInteger();
-        volatile long waitBegin;
-        /** 只截断一次：到点后并发 tick 不重复发 warn/complete */
-        final java.util.concurrent.atomic.AtomicBoolean fired = new java.util.concurrent.atomic.AtomicBoolean();
-        volatile java.util.concurrent.ScheduledFuture<?> watchdog;
-        /** 本轮流式状态（AnswerStreamState 构造时挂入）：到点停流与半程正文截断落库用；工作流轮为 null */
-        volatile AnswerStreamState state;
-
-        TurnDeadline(long budgetMs) {
-            this.budgetMs = budgetMs;
-        }
-
-        void beginWait() {
-            if (openWaits.getAndIncrement() == 0) waitBegin = System.currentTimeMillis();
-        }
-
-        void endWait() {
-            if (openWaits.decrementAndGet() <= 0) {
-                long b = waitBegin;
-                if (b > 0) humanWaitMs.addAndGet(System.currentTimeMillis() - b);
-                waitBegin = 0;
-            }
-        }
-
-        long machineMs() {
-            long w = humanWaitMs.get();
-            long b = waitBegin;
-            if (b > 0) w += System.currentTimeMillis() - b;
-            return System.currentTimeMillis() - startMs - w;
-        }
-
-        /** 通道断开时台账要不要留着续跑：本轮正等用户作答，或已转后台续跑且尚未落库收尾 */
-        boolean holdsForDetachedTurn() {
-            AnswerStreamState s = state;
-            if (s == null) return false;
-            return s.askWaits.get() > 0 || s.planWaits.get() > 0 || (s.detached && !s.settled());
-        }
-    }
-
-    /** emitter → 本轮台账：与 ACTIVE_SSE 同生命周期（onCompletion/onError 或 forgetSseChannel 清） */
-    private static final java.util.concurrent.ConcurrentHashMap<SseEmitter, TurnDeadline> TURN_DEADLINES =
-            new java.util.concurrent.ConcurrentHashMap<>();
-
-    /** 整轮机器耗时预算（chat.sseTimeoutMs，默认 5 分钟） */
-    private long turnMachineBudgetMs() {
-        long t = configService.getLong("chat.sseTimeoutMs");
-        return t > 0 ? t : 300000L;
-    }
-
-    /**
-     * 整轮存活看门狗：每 {@link #TOOL_HEARTBEAT_INTERVAL_MS} 检查一次「墙钟 − 人工等待」是否越过预算。
-     * 到点先发 warn（此刻 emitter 还活着，前端气泡真能看到「回答超时已截断」），再 dispose 停流
-     * （半程正文按截断态落库）并 complete。失联兜底另有 15s 心跳、前端 120s 空闲看门狗与各阶段自身
-     * 超时，本看门狗只管「整轮做机器工作太久」。
-     */
-    private java.util.concurrent.ScheduledFuture<?> startTurnWatchdog(SseEmitter emitter, String sessionId,
-                                                                      TurnDeadline d) {
-        java.util.concurrent.ScheduledFuture<?> f = TURN_WATCHDOG_POOL.scheduleWithFixedDelay(() -> {
-            long machineMs = d.machineMs();
-            if (machineMs <= d.budgetMs) return;
-            if (!d.fired.compareAndSet(false, true)) return;
-            log.warn("[FAIL-LOUD] 本轮问答超时截断: session={} 机器耗时 {}ms / 预算 {}ms（人工等待 {}ms 不计入）",
-                    sessionId, machineMs, d.budgetMs, d.humanWaitMs.get());
-            try {
-                sendSseEvent(emitter, "warn", "回答超时已截断，请重试或缩短问题", sessionId);
-                AnswerStreamState st = d.state;
-                if (st != null) st.disposeSafe();
-                completeEmitter(emitter);
-            } finally {
-                stopTurnDeadline(emitter);
-            }
-        }, TOOL_HEARTBEAT_INTERVAL_MS, TOOL_HEARTBEAT_INTERVAL_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
-        d.watchdog = f;
-        return f;
-    }
-
-    /** 结束本轮台账：停看门狗并放掉 emitter 引用（终态/断连/收集型通道共用） */
-    private static void stopTurnDeadline(SseEmitter emitter) {
-        TurnDeadline d = TURN_DEADLINES.remove(emitter);
-        if (d != null && d.watchdog != null) {
-            d.watchdog.cancel(false);
-        }
-    }
-
-    /**
-     * 通道生命周期回调（onCompletion/onTimeout/onError）：清断开登记并回收整轮台账。
-     * <p>例外：台账所绑的那轮正在等用户作答、已转入「断线后台续跑」且尚未落库收尾，
-     * <b>或这一轮还挂在运行总线上</b>（宽限期内可能随时有人接流回来）时，
-     * <b>必须留着台账与看门狗</b>——那是后台轮唯一的机器耗时上界，随通道一起回收等于放它无界跑下去。
-     */
-    private void releaseSseChannel(SseEmitter emitter, TurnDeadline deadline, String sessionId) {
-        ACTIVE_SSE.remove(emitter);
-        // 通道走完：从本轮的观众里摘掉（总线语义与 ACTIVE_SSE 的区别就在这——这里只少了一个观众，
-        // 本轮该继续跑；观众走光多久之后才掐，由 chat.detachGraceMs 决定）
-        chatRunBus.drop(emitter);
-        if (deadline != null
-                && (deadline.holdsForDetachedTurn() || chatRunBus.holdsRun(sessionId))) {
-            log.info("[ASK] 客户端断开但本轮仍在等人作答/后台续跑/挂在总线上，整轮台账与看门狗保留: session={}",
-                    sessionId);
-            return;
-        }
-        stopTurnDeadline(emitter);
-    }
-
-    /**
-     * 人在回路等待开始/结束（提问卡与工具审批的阻塞窗口）：这段墙钟不计入整轮机器预算。
-     * 未登记台账的通道（收集型）直接忽略。
-     */
-    private static void beginHumanWait(SseEmitter emitter) {
-        TurnDeadline d = TURN_DEADLINES.get(emitter);
-        if (d != null) d.beginWait();
-    }
-
-    private static void endHumanWait(SseEmitter emitter) {
-        TurnDeadline d = TURN_DEADLINES.get(emitter);
-        if (d != null) d.endWait();
-    }
+    // ==================== 工具调用瞬时故障重试 ====================
+    // （刀 2 把心跳与存活看门狗本体搬进 ChatRunRuntime 之后，这个章节位上剩的是重试包装；
+    //  标题按内容改直，别再用旧横幅误导"看门狗还在这里"）
 
     /**
      * 工具调用瞬时故障自动重试：失败后 500ms 重试一次（共至多 2 次），attempts 记录实际尝试次数。
@@ -3118,7 +2668,7 @@ public class RagService {
     private static final String SPILL_SUFFIX = "\n\n…（以上为预览，完整输出可点卡片下方「查看完整输出」读回）";
 
     /** 取出工具侧上报的外溢标识（按工具名匹配最早那条未消费的；没有返回 null） */
-    private static String takeToolSpill(AnswerStreamState st, String name) {
+    private static String takeToolSpill(TurnState st, String name) {
         for (java.util.Iterator<String> it = st.toolSpills.iterator(); it.hasNext(); ) {
             String e = it.next();
             int bar = e.indexOf('|');
@@ -3154,7 +2704,7 @@ public class RagService {
 
     /** 工具实时输出增量：SSE tool_output 事件（前端在运行中的工具卡片里实时滚动）。不落库——
      *  完整输出随 done 汇总的 result 走持久化；本事件仅服务执行期的"看着它跑"。 */
-    private void recordToolOutput(AnswerStreamState st, String toolName, String delta) {
+    private void recordToolOutput(TurnState st, String toolName, String delta) {
         if (delta == null || delta.isEmpty()) {
             return;
         }
@@ -3164,9 +2714,9 @@ public class RagService {
         rec.put("delta", brief);
         String payload = JSON.toJSONString(rec);
         // 总线优先：接流的观众也要看着工具卡片转圈与实时输出滚动（快照给不了「正在跑」这一条）
-        if (!chatRunBus.publishRaw(st.emitter, "tool_output", payload, st.sessionId)) {
+        if (!chatRunBus.publishRaw(st.channel.emitter, "tool_output", payload, st.sessionId)) {
             try {
-                st.emitter.send(SseEmitter.event().name("tool_output")
+                st.channel.emitter.send(SseEmitter.event().name("tool_output")
                         .data("{\"type\":\"tool_output\",\"content\":" + payload
                                 + ",\"sessionId\":\"" + st.sessionId + "\"}"));
             } catch (Exception e) {
@@ -3179,7 +2729,7 @@ public class RagService {
      * 把锚点到 pos 之间的正文记为一个文本段（无新增正文则忽略）。工具/产物插入时间线前调用，
      * 使「正文 → 工具 → 正文」的交错顺序可被记录（只存区间，不复制正文）。
      */
-    private void flushTimelineText(AnswerStreamState st, int pos) {
+    private void flushTimelineText(TurnState st, int pos) {
         int from = st.timelineAnchor.get();
         if (pos <= from) return;
         Map<String, Object> seg = new LinkedHashMap<>();
@@ -3194,7 +2744,7 @@ public class RagService {
      * 过程时间线成段：锚点到 pos 之间的过程独白记为一个过程段（区间指向 processText，与正文段同构）。
      * 连续追加时锚点不前移、区间自动延伸；工具/产物插入时先成段再插卡，保持「正文—过程—工具」真实交错。
      */
-    private void flushTimelineProcess(AnswerStreamState st, int pos) {
+    private void flushTimelineProcess(TurnState st, int pos) {
         int from = st.processAnchor.get();
         if (pos <= from) return;
         synchronized (st.timeline) {
@@ -3223,15 +2773,15 @@ public class RagService {
      * 过程独白入通道：累积 processResponse、推进时间线过程段、SSE process 实时下发。
      * 客户端断开只丢实时显示，累积与落库不受影响。
      */
-    private void routeProcessText(AnswerStreamState st, String delta) {
+    private void routeProcessText(TurnState st, String delta) {
         if (delta == null || delta.isEmpty()) return;
         st.processResponse.append(delta);
         flushTimelineProcess(st, st.processResponse.length());
-        sendSseEvent(st.emitter, "process", delta, st.sessionId);
+        runtime.sendSseEvent(st.channel.emitter, "process", delta, st.sessionId);
     }
 
     /** 产物生成时刻：正文成段后插入产物段（下标指向本轮产物清单，与 artifacts 数组同源同序） */
-    private void pushTimelineArtifact(AnswerStreamState st, int artifactIndex) {
+    private void pushTimelineArtifact(TurnState st, int artifactIndex) {
         flushTimelineText(st, st.fullResponse.length());
         flushTimelineProcess(st, st.processResponse.length());
         Map<String, Object> seg = new LinkedHashMap<>();
@@ -3245,7 +2795,7 @@ public class RagService {
      * 引用自检可能删除若干引用标记使最终正文短于流式累积，区间按最终版收敛（不越界）；
      * 只有「单段覆盖全文」时返回空（与整段渲染等价，不必占一列存储）。
      */
-    private List<Map<String, Object>> buildTimelineSnapshot(AnswerStreamState st, String answer,
+    private List<Map<String, Object>> buildTimelineSnapshot(TurnState st, String answer,
                                                             int toolCount, int artifactCount) {
         return timelineSnapshot(st, answer == null ? 0 : answer.length(), toolCount, artifactCount, true);
     }
@@ -3260,7 +2810,7 @@ public class RagService {
      *       （实时视图与刷新视图本应同源）。尾段只在副本上补齐，用于让接流方看到「已经流出的那段正文」。</li>
      * </ul>
      */
-    private List<Map<String, Object>> timelineSnapshot(AnswerStreamState st, int len,
+    private List<Map<String, Object>> timelineSnapshot(TurnState st, int len,
                                                        int toolCount, int artifactCount, boolean flush) {
         int processLen = st.processResponse.length();
         List<Map<String, Object>> src;
@@ -3315,7 +2865,7 @@ public class RagService {
      * 只读尾段补齐：把「锚点之后尚未成段的正文/过程」接在副本末尾（与 flushTimelineText/Process 同规则：
      * 末段同类且正好接在锚点上就延伸它，否则另起一段）。只改 {@code src}，不碰 {@code st.timeline} 与锚点。
      */
-    private static void appendPendingTimelineTails(AnswerStreamState st, List<Map<String, Object>> src,
+    private static void appendPendingTimelineTails(TurnState st, List<Map<String, Object>> src,
                                                    int len, int processLen) {
         appendTailIfLonger(src, "text", st.timelineAnchor.get(), len);
         appendTailIfLonger(src, "process", st.processAnchor.get(), processLen);
@@ -3353,7 +2903,7 @@ public class RagService {
      *
      * @param tailMarker 正文尾部追加的可见标记（截断态/失败态各自不同，均落在时间线区间之外）
      */
-    private void persistPartialAnswer(AnswerStreamState st, String tailMarker) {
+    private void persistPartialAnswer(TurnState st, String tailMarker) {
         try {
             String answer = st.fullResponse.toString();
             // 空轮不落库：正文、工具记录、过程独白、已完成的思考全空时，落了也是一条空消息，只污染历史。
@@ -3364,8 +2914,8 @@ public class RagService {
                     && (thinkingSoFar == null || thinkingSoFar.isBlank())) {
                 return;
             }
-            List<Map<String, Object>> sources = st.sources;
-            List<String> finalImgs = new ArrayList<>(st.imgIndex.values());
+            List<Map<String, Object>> sources = st.refs.sources;
+            List<String> finalImgs = new ArrayList<>(st.refs.imgIndex.values());
             String sourcesJson = sources.isEmpty() ? null : JSON.toJSONString(sources);
             // retrieved 状态行 refs 对齐 + 编排视图随持久化（与 doOnComplete 同款小步：来源可能被工具续编）
             String finalRetrievedJson = st.retrievedJson;
@@ -3413,6 +2963,8 @@ public class RagService {
             if (replaceGroup != null && partialMessageId != null) {
                 sessionService.setMessageVariant(partialMessageId, replaceGroup);
             }
+            // 中断轮同样留降级证据（半程回答也是这一轮的事实）
+            sessionService.persistDegradations(partialMessageId, st.degradations);
             // 中断即终态：产物 emitter/监听注册表一并清理（此前断开路径无人清理，靠下一轮覆盖兜底）
             artifactService.unregisterEmitter(st.sessionId);
             log.info("[SSE] 中断/失败兜底：半程回答已落库 (session={}, chars={}, tools={})",
@@ -3423,28 +2975,6 @@ public class RagService {
         }
     }
 
-    /**
-     * 思考阶段被用户叫停的留痕：这一轮既没有正文也没有工具记录，什么都不落的话历史里只剩一句提问，
-     * 用户读到的是「我发了个问题，没回答」而不是「我让它停了」。落一条只带思考与停止标记的消息。
-     * <p>为什么单开一条：{@link #persistPartialAnswer} 挂在流状态上，而 {@link AnswerStreamState}
-     * 要到生成阶段才构造——思考阶段没有那个状态可借。
-     *
-     * @param turnId 本轮身份（调用点从把手取，见 {@link #turnIdOf}）：带上它这条留痕才回得去那一轮的账本
-     */
-    private void persistThinkingOnlyOnStop(String sessionId, String thinking, String turnId) {
-        // 留痕下限：思考刚起步就被停（几个字）时落库，得到的是一条读不出任何东西的气泡——
-        // 那种情况交给问题上的「本轮已停止」说明，不造空回答
-        if (thinking == null || thinking.strip().length() < STOP_THINKING_TRACE_MIN_CHARS) {
-            log.info("[SSE] 停止时思考不足 {} 字，不留痕（由问题上的终止标记交代）: session={}",
-                    STOP_THINKING_TRACE_MIN_CHARS, sessionId);
-            return;
-        }
-        try {
-            sessionService.appendMessageWithTurn(sessionId, "assistant", STOP_SUFFIX.trim(), thinking, turnId);
-        } catch (Exception e) {
-            log.warn("[SSE] 停止留痕落库失败（不影响已停止的本轮）: session={} {}", sessionId, e.getMessage());
-        }
-    }
 
     /**
      * Token 用量快照（done 下发与落库共用）：工具调用循环逐轮求和（native 原始口径）=全部请求轮次总量，
@@ -3453,7 +2983,7 @@ public class RagService {
      * 连真实 usage 都没有再回落 TokenCounter 估算；估算才需 10% 余量，实报应如实。
      * 中断兜底路径复用同一口径：逐轮实测（若有）如实反映已耗用量，无则按半程正文估算。
      */
-    private Map<String, Object> buildUsageSnapshot(AnswerStreamState st, String answer) {
+    private Map<String, Object> buildUsageSnapshot(TurnState st, String answer) {
         long sumPrompt = st.roundUsage.promptTotal(), sumOutput = st.roundUsage.completionTotal();
         long sumCached = st.roundUsage.cachedTotal();
         long finalPrompt = st.roundUsage.finalRoundPrompt();
@@ -3470,7 +3000,7 @@ public class RagService {
         int maxOutput = st.effectiveMaxOutput;
         int answerRoundOutput = hasRounds ? (int) finalRoundOutput : outputTokens;
         if (maxOutput > 0 && realOutput && answerRoundOutput >= maxOutput) {
-            addDegradation(st.degradations, st.degradedCodes, "outputTruncated",
+            runtime.addDegradation(st.degradations, st.degradedCodes, "outputTruncated",
                     "回答达到输出长度上限（" + maxOutput + " tokens），可能不完整；可在模型管理中调大该模型的最大输出");
         }
         int promptTokens = hasRounds ? (int) sumPrompt
@@ -3503,9 +3033,9 @@ public class RagService {
      * ② 只在网关回了真实 usage 时参与判定，且门槛留足余量：中英混排、表格与 markdown 都会拉低
      * 字符/token 比，宁可漏报不可误报。
      */
-    private String truncationSuffix(AnswerStreamState st, String answer) {
+    private String truncationSuffix(TurnState st, String answer) {
         if (st.finishLength) {
-            addDegradation(st.degradations, st.degradedCodes, "outputTruncated",
+            runtime.addDegradation(st.degradations, st.degradedCodes, "outputTruncated",
                     "回答达到模型输出长度上限被截断；可在模型管理中调大该模型的最大输出");
             log.warn("[FAIL-LOUD] 网关 finish_reason=length，回答被截断: session={}, 正文 {} 字",
                     st.sessionId, answer.length());
@@ -3522,7 +3052,7 @@ public class RagService {
         int accounted = answer.length() + st.processResponse.length() + st.reasoningChars + toolArgChars;
         if (realUsage && finalRoundOutput >= OUTPUT_LOSS_MIN_TOKENS
                 && accounted < finalRoundOutput * OUTPUT_LOSS_CHAR_PER_TOKEN) {
-            addDegradation(st.degradations, st.degradedCodes, "outputLost",
+            runtime.addDegradation(st.degradations, st.degradedCodes, "outputLost",
                     "模型本轮生成 " + finalRoundOutput + " tokens，仅 " + accounted + " 字进入回答，内容疑似丢失");
             log.warn("[FAIL-LOUD] 生成量与正文字数不符: session={}, 最终轮输出={} tokens, 已交代={} 字"
                             + "（正文 {}/过程 {}/思考 {}/工具入参 {}）, finishReason={}",
@@ -3533,160 +3063,7 @@ public class RagService {
         return null;
     }
 
-    /** 记录一条工具状态：实时 SSE tool_status 事件（短摘要）+ AnswerStreamState.toolCalls 累积（全文，done 汇总与持久化用） */
-    /**
-     * 记一条脚本子调用进 run_code 卡片的扇出清单（P3b 过程下钻）。
-     * <p>摘要取结果首行/失败原因前 80 字：够看出这一支在查什么、有没有被挡下，又不至于把卡片变成第二个输出区。
-     */
-    private static void recordSubCall(AnswerStreamState st, String tool, String status,
-                                      String resultOrError, long elapsedMs) {
-        Map<String, Object> row = new LinkedHashMap<>();
-        row.put("name", tool);
-        row.put("status", status);
-        row.put("elapsedMs", elapsedMs);
-        String text = resultOrError == null ? "" : resultOrError.replaceAll("\\s+", " ").trim();
-        row.put("brief", text.length() > 80 ? text.substring(0, 80) + "…" : text);
-        synchronized (st.subCallLog) {
-            st.subCallLog.add(row);
-        }
-        st.subCallDirty.set(true);
-    }
-
-    /** 脚本子调用清单最多带这么多行进卡片（再多只报总数——清单本身不该比结果还长） */
-    private static final int SUB_CALL_CARD_ROWS = 40;
-
-    /** 交付类子调用的工具名（扇出清单里数它，卡片才写得出"这段脚本交回了几个文件"） */
-    private static final String DELIVER_TOOL_NAME = "deliver_artifact";
-
-    /**
-     * 一次 run_code 起头：清掉上一段脚本的扇出清单与在途计数，并开一个每秒合并的下发 ticker。
-     * <p>清单的作用域是<b>一次运行</b>：同一轮里连跑两段脚本时，第二张卡片不该显示第一段做过的事。
-     * <p>刻意<b>不</b>复位 {@code subCallCount}：那是守卫按轮扣的预算，换一段脚本不会让额度回来，
-     * 面板上把它如实标成「本轮额度」。
-     */
-    private void startRunBoard(AnswerStreamState st) {
-        st.subCallLog.clear();
-        st.subCallRunning.clear();
-        st.subCallInFlight.set(0);
-        st.subCallDirty.set(true);
-        st.runBoardActive = true;
-        stopRunBoardTicker(st);
-        java.util.concurrent.atomic.AtomicReference<java.util.concurrent.ScheduledFuture<?>> self =
-                new java.util.concurrent.atomic.AtomicReference<>();
-        java.util.concurrent.ScheduledFuture<?> f = RUN_PROGRESS_POOL.scheduleWithFixedDelay(() -> {
-            try {
-                if (!st.runBoardActive) {
-                    stopRunBoardTicker(st);
-                    return;
-                }
-                if (st.subCallDirty.compareAndSet(true, false)) publishRunProgress(st);
-            } catch (Exception e) {
-                log.debug("[P3B] 进度帧生成失败（不影响脚本执行）: {}", e.getMessage());
-            }
-        }, RUN_PROGRESS_INTERVAL_MS, RUN_PROGRESS_INTERVAL_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
-        self.set(f);
-        st.runProgress = f;
-    }
-
-    /** 停掉本段脚本的面板 ticker（终态、自停、整轮收尾三条路都走这里，句柄只有一份） */
-    private static void stopRunBoardTicker(AnswerStreamState st) {
-        java.util.concurrent.ScheduledFuture<?> f = st.runProgress;
-        if (f != null) {
-            f.cancel(false);
-            st.runProgress = null;
-        }
-    }
-
-    /**
-     * 在途计数：start 加、终态减，并置脏位让 ticker 下一秒发一帧。
-     * <p>这里<b>不做任何 IO</b>：子调用线程忙着把 HTTP 响应送回去，面板由 ticker 代劳。
-     */
-    private static void markSubCallInFlight(AnswerStreamState st, String tool, boolean started) {
-        synchronized (st.subCallRunning) {
-            st.subCallDirty.set(true);
-            if (started) {
-                st.subCallInFlight.incrementAndGet();
-                st.subCallRunning.merge(tool == null ? "?" : tool, 1, Integer::sum);
-                return;
-            }
-            st.subCallInFlight.decrementAndGet();
-            String name = tool == null ? "?" : tool;
-            Integer left = st.subCallRunning.merge(name, -1, Integer::sum);
-            if (left == null || left <= 0) st.subCallRunning.remove(name);
-        }
-    }
-
-    /**
-     * 组一份扇出清单（run_code 卡片的看板数据）。
-     *
-     * @param live 实时帧额外带上在途那几条（它们还没有结果可摘要），终态那份只给已完成的
-     */
-    private Map<String, Object> buildFanOut(AnswerStreamState st, boolean live) {
-        List<Map<String, Object>> done = new ArrayList<>();
-        int delivered = 0;
-        synchronized (st.subCallLog) {
-            for (Map<String, Object> row : st.subCallLog) {
-                if (row == null) continue;
-                done.add(row);
-                if (DELIVER_TOOL_NAME.equals(row.get("name")) && "done".equals(row.get("status"))) delivered++;
-            }
-        }
-        List<Map<String, Object>> items = new ArrayList<>(done.size() + st.subCallRunning.size());
-        items.addAll(done.size() > SUB_CALL_CARD_ROWS ? done.subList(0, SUB_CALL_CARD_ROWS) : done);
-        if (live) {
-            synchronized (st.subCallRunning) {
-                for (Map.Entry<String, Integer> e : st.subCallRunning.entrySet()) {
-                    int n = Math.max(1, e.getValue() == null ? 1 : e.getValue());
-                    Map<String, Object> row = new LinkedHashMap<>();
-                    row.put("name", e.getKey());
-                    row.put("status", "start");
-                    row.put("running", n);
-                    items.add(row);
-                }
-            }
-        }
-        Map<String, Object> fan = new LinkedHashMap<>();
-        fan.put("total", done.size());
-        fan.put("inFlight", Math.max(0, st.subCallInFlight.get()));
-        fan.put("items", items);
-        if (done.size() > SUB_CALL_CARD_ROWS) {
-            fan.put("omitted", done.size() - SUB_CALL_CARD_ROWS);
-        }
-        // 预算与并发上限：面板要能说出"这一次扇出离上限还有多远"，否则 12/50 和 12/12 看着一样
-        fan.put("used", st.subCallCount.get());
-        fan.put("max", Math.max(1, configService.getInt("tool.runcode.maxSubCalls", 50)));
-        fan.put("parallel", Math.max(1, configService.getInt("tool.runcode.maxParallel", 8)));
-        if (delivered > 0) fan.put("delivered", delivered);
-        return fan;
-    }
-
-    /**
-     * 下发一帧脚本运行进度（P3b 的实时面板）。
-     * <p>只走实时通道：不进 {@code toolCalls}、不进账本——这份数据的价值在"当场看得见"，
-     * 跑完后卡片自己带终态那份（随消息落库，刷新后仍点得开），两套真源只会对不上。
-     */
-    private void publishRunProgress(AnswerStreamState st) {
-        Map<String, Object> payload = new LinkedHashMap<>();
-        payload.put("tool", SandboxTools.RUN_CODE_TOOL_NAME);
-        payload.put("fanOut", buildFanOut(st, true));
-        String json = JSON.toJSONString(payload);
-        boolean sent = false;
-        try {
-            sent = chatRunBus.publishRaw(st.emitter, "runcode_progress", json, st.sessionId);
-        } catch (Exception e) {
-            log.debug("[P3B] 进度帧走总线失败，改直发: {}", e.getMessage());
-        }
-        if (sent) return;
-        try {
-            st.emitter.send(SseEmitter.event().name("runcode_progress")
-                    .data("{\"type\":\"runcode_progress\",\"content\":" + json
-                            + ",\"sessionId\":\"" + st.sessionId + "\"}"));
-        } catch (Exception e) {
-            log.debug("[P3B] 进度帧下发失败（客户端可能已断开）: {}", e.getMessage());
-        }
-    }
-
-    private void recordToolStatus(AnswerStreamState st, String name, String input,
+    private void recordToolStatus(TurnState st, String name, String input,
                                   String status, String resultOrError, long elapsedMs, int attempts,
                                   boolean denied) {
         Map<String, Object> rec = new LinkedHashMap<>();
@@ -3711,14 +3088,14 @@ public class RagService {
         // 只带终态那一份，且随卡片一起落库——刷新后仍然点得开，不然这段结构只有实时看得到
         if ("run_code".equals(name) && !"start".equals(status)) {
             // 这一段脚本结束了：面板不再刷（终态那一份就挂在下面这条记录里，随消息落库）
-            st.runBoardActive = false;
-            stopRunBoardTicker(st);
-            if (!st.subCallLog.isEmpty()) rec.put("fanOut", buildFanOut(st, false));
+            st.board.runBoardActive = false;
+            subCall.stopRunBoardTicker(st);
+            if (!st.board.subCallLog.isEmpty()) rec.put("fanOut", subCall.buildFanOut(st, false));
             // 这一次运行到底是跑完了、超时了，还是沙盒压根没通——字段化随卡片落库，
             // 刷新后仍然看得出来（正文里那句话只有读的人才知道它在说什么）
-            if (st.runOutcome != null) {
-                rec.put("run", st.runOutcome);
-                st.runOutcome = null;
+            if (st.board.runOutcome != null) {
+                rec.put("run", st.board.runOutcome);
+                st.board.runOutcome = null;
             }
         }
         // 工具发起时刻：锚点前已产出的正文/过程独白先各自成段，再插入工具段——
@@ -3769,9 +3146,9 @@ public class RagService {
         }
         String ssePayload = JSON.toJSONString(rec);
         // 总线优先：接流的观众看到的工具卡片要有实时状态（快照只给到接流那一刻为止的记录）
-        if (!chatRunBus.publishRaw(st.emitter, "tool_status", ssePayload, st.sessionId)) {
+        if (!chatRunBus.publishRaw(st.channel.emitter, "tool_status", ssePayload, st.sessionId)) {
             try {
-                st.emitter.send(SseEmitter.event().name("tool_status")
+                st.channel.emitter.send(SseEmitter.event().name("tool_status")
                         .data("{\"type\":\"tool_status\",\"content\":" + ssePayload
                                 + ",\"sessionId\":\"" + st.sessionId + "\"}"));
             } catch (Exception e) {
@@ -3851,10 +3228,10 @@ public class RagService {
 
     /**
      * 构建并订阅主 LLM 流式回答（H2：未输出任何 token 时中断自动重试，次数 chat.streamRetryCount 可配）。
-     * 可变状态与 complete 回调依赖收敛在 AnswerStreamState；重试时重建全新流并丢弃旧缓冲。
+     * 可变状态与 complete 回调依赖收敛在 TurnState；重试时重建全新流并丢弃旧缓冲。
      */
-    private Disposable buildAnswerStream(String system, String user, AnswerStreamState st, Agent agent) {
-        SseEmitter emitter = st.emitter;
+    private Disposable buildAnswerStream(String system, String user, TurnState st, Agent agent) {
+        SseEmitter emitter = st.channel.emitter;
         // 智能体归属快照：随助手消息落库（完成路径直接用闭包 agent，中断兜底路径取这里的快照）
         st.agentId = agent == null ? null : agent.getId();
         st.agentName = agent == null ? null : agent.getName();
@@ -3864,19 +3241,19 @@ public class RagService {
         artifactService.registerArtifactListener(st.sessionId, (sid, idx) -> pushTimelineArtifact(st, idx));
         // 整轮流级心跳：从这里到终态（complete/error/dispose）全程保活，覆盖工具执行
         // 与「工具结束→最终回答首 token」两段静默盲区（重试重建流时幂等复用）
-        startRunHeartbeat(st);
+        runtime.startRunHeartbeat(st);
         java.util.List<org.springframework.ai.tool.ToolCallback> rawToolCallbacks =
-                st.enabledCallbacks != null ? st.enabledCallbacks : enabledToolCallbacks(agent, st.userId, st);
+                st.tools.enabledCallbacks != null ? st.tools.enabledCallbacks : enabledToolCallbacks(agent, st.userId, st);
         // 一份本轮上下文，两条管线：主链路用包装后的回调给模型，脚本子调用用同一条上下文再包一条
         // （身份快照只能在这条线程上取——流水线入口才有 RequestUser，子调用到达时在 Tomcat 线程）
         ToolTurnContext turnCtx = toolTurnContext(st);
         org.springframework.ai.tool.ToolCallback[] toolCallbacks = toolPipeline.wrap(rawToolCallbacks, turnCtx);
-        prepareSubCallPipeline(st, rawToolCallbacks, turnCtx);
+        subCall.prepareSubCallPipeline(st, rawToolCallbacks, turnCtx);
         // 模型不支持 Function Calling 时不下发 tools：部分网关收到 tools 字段直接 400（fail-loud，不静默）。
         // 登记为用户可见降级事件——工具是智能体配置带来的，用不了要让人知道原因。
         if (toolCallbacks.length > 0 && !modelRegistryService.toolCapableOf(st.model)) {
             log.warn("[FAIL-LOUD] 当前模型不支持 Function Calling，本轮不下发工具: model={}", st.model);
-            addDegradation(st.degradations, st.degradedCodes, "modelToolUnsupported",
+            runtime.addDegradation(st.degradations, st.degradedCodes, "modelToolUnsupported",
                     "当前模型「" + modelDisplayName(st.model) + "」不支持工具调用（Function Calling），本轮未启用工具");
             toolCallbacks = new org.springframework.ai.tool.ToolCallback[0];
         }
@@ -3891,7 +3268,7 @@ public class RagService {
             if (def == null) continue;
             int t = TokenCounter.estimate(def.name() + " " + def.description() + " " + def.inputSchema());
             toolSchemaTokens += t;
-            if (st.mcpToolNames.contains(def.name())) mcpSchemaTokens += t;
+            if (st.tools.mcpToolNames.contains(def.name())) mcpSchemaTokens += t;
         }
         st.ctxParts.put("toolSchema", toolSchemaTokens - mcpSchemaTokens);
         st.ctxParts.put("mcpSchema", mcpSchemaTokens);
@@ -3913,7 +3290,7 @@ public class RagService {
         usageEarly.put("window", st.windowTokens);
         usageEarly.put("windowSource", st.windowSource);
         usageEarly.put("parts", st.ctxParts);
-        sendSseEvent(emitter, "usage", JSON.toJSONString(usageEarly), st.sessionId);
+        runtime.sendSseEvent(emitter, "usage", JSON.toJSONString(usageEarly), st.sessionId);
         // 聊天直读图片：本轮图片走直读链路时（UserImage.dataUrl 在场即标记），原图以
         // image_url 内容部件随用户消息发给聊天模型——模型自带图片理解（省一次调用、不丢图细节）。
         // 仅展示链路（模型不支持读图）的图片 dataUrl 为空 → media 列表为空 → 走纯文本分支，行为不变。
@@ -3961,7 +3338,7 @@ public class RagService {
             } else {
                 log.warn("[FAIL-LOUD] 模型登记了思考强度档位但网关无强度方言，未下发: model={} level={}",
                         st.model, thinkLevel);
-                addDegradation(st.degradations, st.degradedCodes, "reasoningLevelUnsupported",
+                runtime.addDegradation(st.degradations, st.degradedCodes, "reasoningLevelUnsupported",
                         "模型「" + modelDisplayName(st.model) + "」登记了默认思考强度（" + thinkLevel
                                 + "），但该网关不支持强度调节（已按仅思考开关处理）");
             }
@@ -4042,8 +3419,8 @@ public class RagService {
                     return delta;
                 })
                 .doOnNext(token -> {
-                    st.emitBuf.append(token);
-                    String bufStr = st.emitBuf.toString();
+                    st.channel.emitBuf.append(token);
+                    String bufStr = st.channel.emitBuf.toString();
                     // 未闭合的 <process> 开口：开口后的内容走增量通道（过程独白按 token 流式下发，不再等
                     // </process> 到达才整块蹦出）。开口前的内容（head）照旧走下面的完整块/正文剥离流程；
                     // 开口后的正文（openBody）只扣留「可能是 </process> 真前缀」的尾巴，其余立即下发；
@@ -4059,21 +3436,21 @@ public class RagService {
                     // 未闭合的 DSML 工具调用块：与 related/process 同策略——继续缓冲等闭合，
                     // 闭合后整块丢弃。模型把工具调用以文本再写一遍时，开标签与参数值先到、
                     // 闭合标签后到，不等闭合就发会把半截标签漏进正文。
-                    boolean unclosedDsml = containsUnclosedDsml(bufStr, st.dsmlToolNamesLc);
+                    boolean unclosedDsml = containsUnclosedDsml(bufStr, st.tools.dsmlToolNamesLc);
                     if (unclosedDsml && !unclosedRelated && !unclosedProcess) {
                         // 只可能是 DSML 未闭合：整批继续缓冲等闭合标签到达（与 related/process 同款等待）
                         if (bufStr.length() > 3000) {
                             // 模型压根不写闭合标签（输出触顶截断在闭合之前）：开口起整段丢弃，
                             // 否则裸露的 <searchKnowledge> 与参数值会一路落屏——按原文发正文等于把协议噪声泄给用户
-                            String trimmed = dropUnclosedDsmlTail(bufStr, st.dsmlToolNamesLc);
+                            String trimmed = dropUnclosedDsmlTail(bufStr, st.tools.dsmlToolNamesLc);
                             if (!trimmed.equals(bufStr)) {
-                                addDegradation(st.degradations, st.degradedCodes, "toolTextMalformed",
+                                runtime.addDegradation(st.degradations, st.degradedCodes, "toolTextMalformed",
                                         "模型以文本形式输出了未闭合的工具调用，已从回答中移除");
                             }
-                            st.emitBuf.setLength(0);
+                            st.channel.emitBuf.setLength(0);
                             if (!trimmed.isEmpty()) {
                                 st.fullResponse.append(trimmed);
-                                if (!sendSseEvent(emitter, "token", trimmed, st.sessionId)
+                                if (!runtime.sendSseEvent(emitter, "token", trimmed, st.sessionId)
                                         && !st.keepRunningWithoutChannel()) {
                                     st.disposeSafe();
                                     return;
@@ -4084,7 +3461,7 @@ public class RagService {
                     }
                     if (unclosedRelated || unclosedProcess) {
                         if (bufStr.length() > 3000) {
-                            st.emitBuf.setLength(0);
+                            st.channel.emitBuf.setLength(0);
                             // 缓冲整体倾倒，未闭合开口的增量态一并归零（其内容已随本次倾倒归入过程通道）
                             st.processOpen = false;
                             st.openProcessChars = 0;
@@ -4092,14 +3469,14 @@ public class RagService {
                             if (unclosedProcess && !unclosedRelated && bufStr.contains("<process>")) {
                                 // 未闭合 <process>（模型漏写闭合标签）：开口前是正文走 token，
                                 // 其后剥标签整体归入过程通道（fail-loud 标记）——按原文发正文会把独白漏给用户
-                                addDegradation(st.degradations, st.degradedCodes, "processMalformed",
+                                runtime.addDegradation(st.degradations, st.degradedCodes, "processMalformed",
                                         "模型输出格式异常（process 标签未闭合），开口后内容已整体归入过程叙述");
                                 int pIdx = bufStr.indexOf("<process>");
                                 String ansPart = bufStr.substring(0, pIdx);
                                 String procPart = bufStr.substring(pIdx + "<process>".length());
                                 if (!ansPart.isEmpty()) {
                                     st.fullResponse.append(ansPart);
-                                    if (!sendSseEvent(emitter, "token", ansPart, st.sessionId)
+                                    if (!runtime.sendSseEvent(emitter, "token", ansPart, st.sessionId)
                                             && !st.keepRunningWithoutChannel()) {
                                         st.disposeSafe();
                                         return;
@@ -4108,13 +3485,13 @@ public class RagService {
                                 routeProcessText(st, procPart.stripLeading());
                             } else {
                                 // related 未闭合（或两类标签并存难以可靠拆分）：按原文发送（extractRelated 兜底清理）；fail-loud 标记
-                                addDegradation(st.degradations, st.degradedCodes, "relatedMalformed",
+                                runtime.addDegradation(st.degradations, st.degradedCodes, "relatedMalformed",
                                         "模型输出格式异常（related 标签未闭合），已按原文清理");
                                 String raw = bufStr;
                                 st.fullResponse.append(raw);
                                 // 客户端断开：取消流订阅立即停止模型输出（不补 error/complete）；
                                 // 本轮在等人作答或已转后台续跑则只丢事件、继续生成
-                                if (!sendSseEvent(emitter, "token", raw, st.sessionId)
+                                if (!runtime.sendSseEvent(emitter, "token", raw, st.sessionId)
                                         && !st.keepRunningWithoutChannel()) {
                                     st.disposeSafe();
                                     return;
@@ -4139,12 +3516,12 @@ public class RagService {
                     // 剥离模型以文本形式重复输出的工具调用（DSML）：工具卡片已由 native 链路渲染，
                     // 这份是重复产物，留着就以标签字样漏进正文。放在 related 之后、扣留之前，
                     // 保证扣留窗口看到的已是清洗过的文本。
-                    if (!st.dsmlToolNamesLc.isEmpty()) {
-                        String dsmlClean = stripDsmlToolText(clean, st.dsmlToolNamesLc);
+                    if (!st.tools.dsmlToolNamesLc.isEmpty()) {
+                        String dsmlClean = stripDsmlToolText(clean, st.tools.dsmlToolNamesLc);
                         if (!dsmlClean.equals(clean)) {
-                            if (!st.dsmlStrippedNoted) {
-                                st.dsmlStrippedNoted = true;
-                                addDegradation(st.degradations, st.degradedCodes, "toolTextLeak",
+                            if (!st.tools.dsmlStrippedNoted) {
+                                st.tools.dsmlStrippedNoted = true;
+                                runtime.addDegradation(st.degradations, st.degradedCodes, "toolTextLeak",
                                         "模型以文本形式重复输出了工具调用内容，已自动从回答中移除");
                                 log.warn("[TOOL-TEXT] 模型以 DSML 文本重复输出工具调用，已剥离: model={} sid={}",
                                         st.model, st.sessionId);
@@ -4167,7 +3544,7 @@ public class RagService {
                         st.openProcessChars += emitProc.length();
                         if (st.openProcessChars > 3000 && !st.processMalformedNoted) {
                             st.processMalformedNoted = true;
-                            addDegradation(st.degradations, st.degradedCodes, "processMalformed",
+                            runtime.addDegradation(st.degradations, st.degradedCodes, "processMalformed",
                                     "模型输出格式异常（process 标签长时间未闭合），已按过程叙述继续呈现");
                         }
                     } else {
@@ -4179,18 +3556,18 @@ public class RagService {
                     // 尾部只扣留「可能是标签真前缀」的后缀（通常 0 字符），其余立即下发——
                     // 此前固定扣 19 字符：正文 token 滞后下发而 tool_status/process 事件即时下发，
                     // 旁路事件越过未下发正文 ⇒ 前端实时时间线错序断词（「提|示文件已存在」被劈开）
-                    st.emitBuf.setLength(0);
+                    st.channel.emitBuf.setLength(0);
                     int keep = tagPrefixSuffixLen(clean);
                     String sendPart = clean.substring(0, clean.length() - keep);
                     String tailKeep = clean.substring(clean.length() - keep);
-                    st.emitBuf.append(tailKeep);
+                    st.channel.emitBuf.append(tailKeep);
                     // 开口标签与扣留尾巴留在缓冲：下一 token 仍从此开口位置续（增量态因此可跨 token 延续）
-                    if (openBody != null) st.emitBuf.append("<process>").append(heldProc);
+                    if (openBody != null) st.channel.emitBuf.append("<process>").append(heldProc);
                     if (!sendPart.isEmpty()) {
                         st.fullResponse.append(sendPart);
                         // 客户端断开：取消流订阅立即停止模型输出（不补 error/complete）；
                         // 本轮在等人作答或已转后台续跑则只丢事件、继续生成（正文仍会完整落库）
-                        if (!sendSseEvent(emitter, "token", sendPart, st.sessionId)
+                        if (!runtime.sendSseEvent(emitter, "token", sendPart, st.sessionId)
                                 && !st.keepRunningWithoutChannel()) {
                             st.disposeSafe();
                         }
@@ -4207,7 +3584,7 @@ public class RagService {
                 .doOnError(error -> {
                     // 客户端已断开：不重试也不报错（管道已不在），直接收尾；
                     // 本轮在等人作答或已转后台续跑则照常走错误处置（重试/降级落库），不给断开掐死
-                    if (clientDisconnected(st.emitter) && !st.keepRunningWithoutChannel()) {
+                    if (runtime.clientDisconnected(st.channel.emitter) && !st.keepRunningWithoutChannel()) {
                         st.disposeSafe();
                         return;
                     }
@@ -4218,13 +3595,29 @@ public class RagService {
                     // 识别口径在 ModelQuotaGuard（与聊天链路同一处），此处只负责不给它重试。
                     boolean retryable = !ModelQuotaGuard.isQuotaExhausted(error)
                             && !ModelQuotaGuard.isRateLimited(error);
-                    boolean noTokenYet = st.fullResponse.length() == 0 && st.emitBuf.length() == 0;
-                    if (retryable && noTokenYet && st.retried.getAndIncrement() < streamRetryCount()) {
+                    boolean noTokenYet = st.fullResponse.length() == 0 && st.channel.emitBuf.length() == 0;
+                    // 模型登记为"支持工具调用"、上游却把带 tools 的请求打回来（私有化网关与
+                    // vLLM/Ollama 裸部署最常见）。原样重试只会再失败一次；这里改走"不挂工具"的同一轮，
+                    // 并如实登记降级——不这么做的话用户看到的只是一句"服务异常"，
+                    // 而真实情况是"这一轮不会咨询其他助手、也不会补充检索"。
+                    if (!st.toolsDropped && noTokenYet && retryable && looksLikeToolsRejected(error)) {
+                        st.toolsDropped = true;
+                        st.toolsRetryQueued = true;
+                        st.tools.enabledCallbacks = java.util.List.of();
+                        runtime.addDegradation(st.degradations, st.degradedCodes, "toolsRejected",
+                                "当前模型不接受工具调用，本轮已改为不带工具回答：不会咨询其他助手，也不会补充检索");
+                        log.warn("[FAIL-LOUD] 上游拒绝 tools 请求，本轮改为不挂工具重试: {}", root);
+                    }
+                    // 换路只给一次机会，用完即闸门关闭；通用重试仍走 chat.streamRetryCount 的额度
+                    boolean toolsSwapRetry = st.toolsRetryQueued;
+                    st.toolsRetryQueued = false;
+                    if ((toolsSwapRetry || (retryable && st.retried.getAndIncrement() < streamRetryCount()))
+                            && noTokenYet) {
                         log.warn("[FAIL-LOUD] 主 LLM 流式中断且未输出 token，自动重试第 {} 次: {} -> {}",
                                 st.retried.get(), error.getClass().getSimpleName(), root);
                         // 重建全新流，丢弃旧缓冲（避免重试拼接出重复内容）
                         st.fullResponse.setLength(0);
-                        st.emitBuf.setLength(0);
+                        st.channel.emitBuf.setLength(0);
                         st.relatedBlock.setLength(0);
                         // 时间线同属本轮缓冲：一并清空并回到 0 锚点（否则重试后正文区间与正文错位）
                         st.timeline.clear();
@@ -4239,7 +3632,7 @@ public class RagService {
                         st.finishLength = false;
                         st.lastFinishReason = null;
                         st.reasoningChars = 0;
-                        st.disposableRef.set(buildAnswerStream(system, user, st, agent));
+                        st.channel.disposableRef.set(buildAnswerStream(system, user, st, agent));
                         return;
                     }
                     log.error("Stream error: {} -> {}", error.getClass().getSimpleName(), root.toString());
@@ -4258,7 +3651,7 @@ public class RagService {
                     st.degradations.add(Map.of("code",
                             ModelQuotaGuard.isQuotaExhausted(error) ? "modelQuotaExhausted" : "streamError",
                             "msg", "模型输出中断：" + msg));
-                    sendSseEvent(emitter, "error", msg, st.sessionId);
+                    runtime.sendSseEvent(emitter, "error", msg, st.sessionId);
                     // 失败兜底落库：工具失败/超出单轮步数上限这类轮次，诊断信息全在工具记录里
                     // （工具名、入参、失败原因、耗时），正文可能一个 token 都没有。此前错误路径
                     // 既不落库也不走 persistPartialAnswer，导致整条助手消息连同全部工具卡片在刷新/
@@ -4269,8 +3662,8 @@ public class RagService {
                     }
                     // 终态：停整轮流级心跳（error 路径）
                     stopRunHeartbeat(st);
-                    completeEmitter(emitter);
-                    stopTurnDeadline(emitter);
+                    runtime.completeEmitter(emitter);
+                    TurnRegistry.stopDeadline(emitter);
                     artifactService.unregisterEmitter(st.sessionId);
                     chatRunBus.finish(st.sessionId);
                 })
@@ -4278,9 +3671,9 @@ public class RagService {
                     // 终态：先停整轮流级心跳（complete 路径），收尾阶段不再有心跳字节
                     stopRunHeartbeat(st);
                     // 下发缓冲尾部（可能残留滑动窗口），并剥离可能的不完整标签
-                    if (st.emitBuf.length() > 0) {
-                        String rest = st.emitBuf.toString();
-                        st.emitBuf.setLength(0);
+                    if (st.channel.emitBuf.length() > 0) {
+                        String rest = st.channel.emitBuf.toString();
+                        st.channel.emitBuf.setLength(0);
                         // 缓冲尾可能压着刚闭合/未闭合的 process 块（被扣留窗口压住）：先剥离，
                         // 正文先行下发后再路由过程通道（保持流式顺序）
                         StringBuilder procTail = new StringBuilder();
@@ -4291,7 +3684,7 @@ public class RagService {
                         // 其后剥标签归入过程通道并 fail-loud——原样发正文会把独白漏给用户
                         int pIdx = rest.indexOf("<process");
                         if (pIdx >= 0) {
-                            addDegradation(st.degradations, st.degradedCodes, "processMalformed",
+                            runtime.addDegradation(st.degradations, st.degradedCodes, "processMalformed",
                                     "模型输出格式异常（process 标签未闭合，通常是输出达到长度上限被截断），已归入过程叙述");
                             String procPart = rest.substring(pIdx);
                             int gt = procPart.indexOf('>');
@@ -4306,7 +3699,7 @@ public class RagService {
                         String noOpen = rest.replace("<related>", "");
                         if (!noOpen.equals(rest)) {
                             rest = noOpen;
-                            addDegradation(st.degradations, st.degradedCodes, "relatedMalformed",
+                            runtime.addDegradation(st.degradations, st.degradedCodes, "relatedMalformed",
                                     "模型输出格式异常（related 标签未闭合，通常是输出达到长度上限被截断），已保留可读内容");
                         }
                         // 尾部残留的半截标签（截断恰好停在 <related / </related / <process / </process 中间）：剥掉避免漏出标签字样
@@ -4320,13 +3713,13 @@ public class RagService {
                         }
                         // 收尾兜底再剥一次 DSML：跨 token 切分导致主路径扣留窗口没兜住的整块
                         // （闭合标签恰好落在缓冲被扣留、下一 token 才补齐的场景）
-                        if (!st.dsmlToolNamesLc.isEmpty()) {
+                        if (!st.tools.dsmlToolNamesLc.isEmpty()) {
                             String dsmlRest = dropUnclosedDsmlTail(
-                                    stripDsmlToolText(rest, st.dsmlToolNamesLc), st.dsmlToolNamesLc);
+                                    stripDsmlToolText(rest, st.tools.dsmlToolNamesLc), st.tools.dsmlToolNamesLc);
                             if (!dsmlRest.equals(rest)) {
-                                if (!st.dsmlStrippedNoted) {
-                                    st.dsmlStrippedNoted = true;
-                                    addDegradation(st.degradations, st.degradedCodes, "toolTextLeak",
+                                if (!st.tools.dsmlStrippedNoted) {
+                                    st.tools.dsmlStrippedNoted = true;
+                                    runtime.addDegradation(st.degradations, st.degradedCodes, "toolTextLeak",
                                             "模型以文本形式重复输出了工具调用内容，已自动从回答中移除");
                                 }
                                 rest = dsmlRest;
@@ -4334,7 +3727,7 @@ public class RagService {
                         }
                         if (!rest.isEmpty()) {
                             st.fullResponse.append(rest);
-                            sendSseEvent(emitter, "token", rest, st.sessionId);
+                            runtime.sendSseEvent(emitter, "token", rest, st.sessionId);
                         }
                         // 正文下发后再路由过程独白（流式顺序：先到的正文先行）。
                         // 尾部可能压着半截 </process>（输出触顶截断在闭合标签之前）：剥掉，
@@ -4354,13 +3747,13 @@ public class RagService {
                     // 终态兜底：整轮再剥一次 DSML 工具调用文本。流式主路径已逐批剥离，
                     // 这里覆盖非流式/异常路径与跨 token 边界残留——工具卡片已展示同一内容，
                     // 残留标签纯属噪声，落到用户眼前就是截图里那种裸露的 <searchknowledge>。
-                    if (!st.dsmlToolNamesLc.isEmpty()) {
+                    if (!st.tools.dsmlToolNamesLc.isEmpty()) {
                         String dsmlAnswer = dropUnclosedDsmlTail(
-                                stripDsmlToolText(answer, st.dsmlToolNamesLc), st.dsmlToolNamesLc);
+                                stripDsmlToolText(answer, st.tools.dsmlToolNamesLc), st.tools.dsmlToolNamesLc);
                         if (!dsmlAnswer.equals(answer)) {
-                            if (!st.dsmlStrippedNoted) {
-                                st.dsmlStrippedNoted = true;
-                                addDegradation(st.degradations, st.degradedCodes, "toolTextLeak",
+                            if (!st.tools.dsmlStrippedNoted) {
+                                st.tools.dsmlStrippedNoted = true;
+                                runtime.addDegradation(st.degradations, st.degradedCodes, "toolTextLeak",
                                         "模型以文本形式重复输出了工具调用内容，已自动从回答中移除");
                             }
                             log.warn("[TOOL-TEXT] 终态兜底剥离 DSML 工具调用文本 {} 字: session={}",
@@ -4380,33 +3773,33 @@ public class RagService {
                         String merged = String.join("\n\n", relatedProse);
                         answer = answer.isBlank() ? merged : answer.stripTrailing() + "\n\n" + merged;
                         related = relatedChips;
-                        addDegradation(st.degradations, st.degradedCodes, "relatedHoldsAnswer",
+                        runtime.addDegradation(st.degradations, st.degradedCodes, "relatedHoldsAnswer",
                                 "模型把正文写进了推荐块（" + relatedProse.size() + " 段），已并回回答");
                         log.warn("[FAIL-LOUD] related 内含正文 {} 段（{} 字），已并回回答: session={}",
                                 relatedProse.size(), merged.length(), st.sessionId);
                     }
                     // 引用来源（局部可变：语义一致性自检会剔除不支撑的条目并重编 ref，替换新列表）
-                    List<Map<String, Object>> sources = st.sources;
+                    List<Map<String, Object>> sources = st.refs.sources;
 
                     // 图片相关性校验兜底：剔除与描述不匹配的 [图片N] 标记并重建编号（LLM 偶发错配）
-                    List<String> finalImgs = new ArrayList<>(st.imgIndex.values());
-                    if (properties.getImages().getImageFilter().isEnabled() && !st.imgIndex.isEmpty()) {
-                        ImageFilterService.RebuildResult rr = imageFilterService.rebuild(answer, st.imgDescIndex, st.question,
+                    List<String> finalImgs = new ArrayList<>(st.refs.imgIndex.values());
+                    if (properties.getImages().getImageFilter().isEnabled() && !st.refs.imgIndex.isEmpty()) {
+                        ImageFilterService.RebuildResult rr = imageFilterService.rebuild(answer, st.refs.imgDescIndex, st.question,
                                 properties.getImages().getImageFilter().getMinHits(),
                                 properties.getImages().getImageFilter().getPreContextChars());
                         if (!rr.dropped().isEmpty()) {
                             // M7 fail-loud：图片被剔除后回答仍引用旧编号，需告知
-                            addDegradation(st.degradations, st.degradedCodes, "imgFilterDropped",
+                            runtime.addDegradation(st.degradations, st.degradedCodes, "imgFilterDropped",
                                     "已剔除 " + rr.dropped().size() + " 张与回答内容不匹配的图片引用");
                             log.info("[IMG-FILTER] 图片错配剔除 {} 个: {}", rr.dropped().size(), rr.dropped());
                             answer = rr.text();
-                            finalImgs = rr.keptSeq().stream().map(st.imgIndex::get).toList();
+                            finalImgs = rr.keptSeq().stream().map(st.refs.imgIndex::get).toList();
                         }
                     }
                     // L4 fail-loud：有引用来源但回答未标注任何 [N]（溯源缺失）
                     // 注意用 find() 而非 matches()：matches 全串锚定且 . 不跨行，多行回答永远误判为未标注
                     if (!sources.isEmpty() && !CITE_PATTERN.matcher(answer).find()) {
-                        addDegradation(st.degradations, st.degradedCodes, "noCitation", "回答未标注引用来源");
+                        runtime.addDegradation(st.degradations, st.degradedCodes, "noCitation", "回答未标注引用来源");
                     }
                     // 引用编号越界校验：剔除超出来源范围的 [N]（LLM 偶发编造编号，用户点击角标无溯源）。
                     // 来源为空（maxRef=0）时同样执行——本轮没有任何可溯源来源，正文不允许残留任何 [N]；
@@ -4429,7 +3822,7 @@ public class RagService {
                     cm.appendTail(cb);
                     if (invalidRefs > 0) {
                         answer = cb.toString();
-                        addDegradation(st.degradations, st.degradedCodes, "invalidCitation",
+                        runtime.addDegradation(st.degradations, st.degradedCodes, "invalidCitation",
                                 "已移除 " + invalidRefs + " 处无效的引用标注（编号超出来源范围）");
                         log.info("[CITE-CHECK] 剔除越界引用 {} 处 (maxRef={})", invalidRefs, maxRef);
                     }
@@ -4437,7 +3830,7 @@ public class RagService {
                     // （imgIndex，由主链路上下文填充建立）范围内。工具模式下模型手里没有编号图片
                     // （工具返回文本不带编号、images 为空），却可能按「尽量配图」规则编造 [图片N]，
                     // 前端 images[N-1] 映射不到就把字面 [图片N] 原样显示在回答里。剔除标记 + fail-loud。
-                    int maxImg = st.imgIndex.size();
+                    int maxImg = st.refs.imgIndex.size();
                     java.util.regex.Matcher im = IMG_NUMBER_PATTERN.matcher(answer);
                     StringBuilder imgSb = new StringBuilder();
                     int bogusImgs = 0;
@@ -4454,12 +3847,12 @@ public class RagService {
                     im.appendTail(imgSb);
                     if (bogusImgs > 0) {
                         answer = imgSb.toString();
-                        addDegradation(st.degradations, st.degradedCodes, "invalidImageRef",
+                        runtime.addDegradation(st.degradations, st.degradedCodes, "invalidImageRef",
                                 "已移除 " + bogusImgs + " 处无效的图片标记（本轮没有对应的图片资料）");
                         log.info("[IMG-CHECK] 剔除无效图片标记 {} 处 (maxImg={})", bogusImgs, maxImg);
                     }
                     // 生成完成（引用自检前的最后一步）
-                    st.stageMs.put("generate", System.currentTimeMillis() - st.startTime);
+                    st.channel.stageMs.put("generate", System.currentTimeMillis() - st.channel.startTime);
                     // 引用语义一致性自检（深度防线）：编号没越界 ≠ 内容被支撑——LLM 可能引用了一个块，
                     // 但对应句子的结论与该块无关（编号正确、语义不符）。把每个 [N] 的"前文句子"与其
                     // 来源 snippet 打包给 LLM 判"是否支撑"，不支撑的剔除标记、来源同步裁剪并重编 ref。
@@ -4476,7 +3869,7 @@ public class RagService {
                             if (ccr.droppedCount() > 0) {
                                 answer = ccr.text();
                                 sources = ccr.sources();
-                                addDegradation(st.degradations, st.degradedCodes, "citationUnsupported",
+                                runtime.addDegradation(st.degradations, st.degradedCodes, "citationUnsupported",
                                         "已剔除 " + ccr.droppedCount() + " 处与引用内容不匹配的引用标注");
                                 log.info("[CITE-CHECK] 引用语义一致性剔除 {} 处: {}", ccr.droppedCount(), ccr.dropped());
                             }
@@ -4486,11 +3879,11 @@ public class RagService {
                         } finally {
                             com.wenqu.ai.util.UsageAttr.clear();
                         }
-                        st.stageMs.put("citation", System.currentTimeMillis() - st.startTime);
+                        st.channel.stageMs.put("citation", System.currentTimeMillis() - st.channel.startTime);
                     }
                     // 截断必须让用户看见：降级提示受 chat.retrievalDebugEnabled 控制（面向用户的部署
                     // 默认关闭），只落提示等于没提示——标注直接进正文尾部，随 done 与落库一起走，
-                    // 刷新后仍在（与中断兜底的 TRUNCATION_SUFFIX 同口径）。
+                    // 刷新后仍在（与中断兜底的 TurnState.TRUNCATION_SUFFIX 同口径）。
                     String truncSuffix = truncationSuffix(st, answer);
                     if (truncSuffix != null) {
                         answer = answer.stripTrailing() + truncSuffix;
@@ -4539,7 +3932,7 @@ public class RagService {
                     // 注册了来源时不算"未检索到"——生成前判定拿不到工具后续注册的引用，会出现在回答带着
                     // [N] 引用的同时提示"未检索到相关资料"的自相矛盾。最终（sources 含工具注册项）仍为空才提示。
                     if (sources.isEmpty()) {
-                        addDegradation(st.degradations, st.degradedCodes, "noHit", "未检索到相关资料，回答可能缺乏依据");
+                        runtime.addDegradation(st.degradations, st.degradedCodes, "noHit", "未检索到相关资料，回答可能缺乏依据");
                     }
                     // Token 用量快照（done 下发与落库共用；中断兜底路径同口径，见 buildUsageSnapshot）
                     Map<String, Object> tokens = buildUsageSnapshot(st, answer);
@@ -4583,11 +3976,17 @@ public class RagService {
                         }
                     }
 
+                    // 降级条随消息行落库：只随 done 事件下发时刷新即消失，这一轮"降了什么级"就没了证据
+                    sessionService.persistDegradations(messageId, st.degradations);
+
+                    // 本轮降级事件随消息行落库：done 已下发过一次，刷新后据此仍能看到"这一轮降了什么级"
+                    sessionService.persistDegradations(messageId, st.degradations);
+
                     // 异步落问答日志（不阻塞 SSE 完成）；messageId/agentId 随行（trace 关联键与筛选维度）
                     List<String> hitDocIds = sources.stream().map(s -> String.valueOf(s.get("docId"))).toList();
                     qaLogService.logAsync(st.sessionId, st.question, answer, hitDocIds,
-                            !st.sources.isEmpty(), System.currentTimeMillis() - st.startTime,
-                            st.queryForLog, st.stageMs.isEmpty() ? null : JSON.toJSONString(st.stageMs),
+                            !st.refs.sources.isEmpty(), System.currentTimeMillis() - st.channel.startTime,
+                            st.queryForLog, st.channel.stageMs.isEmpty() ? null : JSON.toJSONString(st.channel.stageMs),
                             st.deepThink, messageId, agent == null ? null : agent.getId());
 
                     // done 事件：引用来源/相关推荐/消息ID + 校验修正后的内容/图片 + 思考全文 + 本轮全部降级事件（fail-loud）
@@ -4636,17 +4035,10 @@ public class RagService {
                     // 本轮生效模型引用（与落库同源）：前端把 live 气泡的模型校正为后端权威解析值
                     // （请求未带覆盖时后端回落个人默认，前端本地只知道空覆盖），供「模型已切换」比对
                     donePayload.put("model", st.model);
-                    // 智能体归属与会话锁定状态（以库中绑定为准，而非本轮局部变量：绑库失败时不应误导前端）。
-                    // agentLocked=true 是前端「本会话已绑定、切换智能体=新会话」的依据；
-                    // agentId 为空串表示已绑定为"不使用智能体"（与未绑定的 NULL 区分），此时不下发 id/name。
-                    SessionService.AgentBinding finalBinding = sessionService.getAgentBinding(st.sessionId);
-                    if (finalBinding != null) {
-                        donePayload.put("agentLocked", true);
-                        if (!finalBinding.agentId().isEmpty()) {
-                            donePayload.put("agentId", finalBinding.agentId());
-                            donePayload.put("agentName",
-                                    finalBinding.agentName() == null ? "" : finalBinding.agentName());
-                        }
+                    // 本轮作答方归属（P5）：不再有会话锁定，前端按这一轮实际作答的智能体显示归属徽标
+                    if (agent != null) {
+                        donePayload.put("agentId", agent.getId());
+                        donePayload.put("agentName", agent.getName() == null ? "" : agent.getName());
                     }
                     // §4 轮级委派归属：本轮由 @ 提及的智能体作答时单独下发（agentId/agentName 保持会话绑定口径，
                     // 前端绑定镜像不受影响；气泡归属按委派值展示，与刷新后按落库快照回显的结果一致）
@@ -4657,11 +4049,11 @@ public class RagService {
                     }
                     // 本轮收尾仍有没赶上的插话（模型这轮没再调工具就直接答完了）：交回前端自动作为
                     // 下一句发出，与计划「继续对话」同一条通路——用户说过的话不许静默丢掉
-                    attachLeftoverSteers(donePayload, st, st.sessionId);
-                    sendSseEvent(emitter, "done", JSON.toJSONString(donePayload), st.sessionId);
-                    completeEmitter(emitter);
+                    runtime.attachLeftoverSteers(donePayload, st, st.sessionId);
+                    runtime.sendSseEvent(emitter, "done", JSON.toJSONString(donePayload), st.sessionId);
+                    runtime.completeEmitter(emitter);
                     // 本轮收尾：显式回收台账（断线后台续跑的轮在通道断开回调里被故意留着，重复回收无害）
-                    stopTurnDeadline(emitter);
+                    TurnRegistry.stopDeadline(emitter);
                     artifactService.unregisterEmitter(st.sessionId);
                     chatRunBus.finish(st.sessionId);   // done 已扇给所有观众，总线跟着收摊
                     // 记忆提取：问答完整落定后异步提炼长期记忆（服务内自判开关/游客/匿名，best-effort）；
@@ -4670,695 +4062,6 @@ public class RagService {
                             st.fullResponse.toString(), st.guestMode, st.model);
                 })
                 .subscribe();
-    }
-
-    /**
-     * 单次回答的流式状态与 complete 回调依赖（H2 重试重建流时复用同一状态，旧缓冲被清空）。
-     */
-    /** 非静态内部类：工具图片注册（registerToolSource）需调用外部实例的 sendSseEvent/imageUrlSigner；生命周期=单轮请求，无泄漏 */
-    private final class AnswerStreamState implements WebSearchTools.WebSearchSink {
-        final String sessionId;
-        final String question;
-        /** 本轮所属用户 uid：技能/MCP 都是个人资产，取工具与取技能时只认它 */
-        final String userId;
-        /**
-         * 本轮身份把手（turnId + userId 的来源）：沿用 {@code chat()} 入口发的那一个；
-         * 非 chat 入口（手动压缩等）没有把手，自造一个、也自己摘。
-         */
-        final TurnHandle handle;
-        /**
-         * 本轮唯一 ID。计划卡、子智能体编排、检索统计这些事件都早于本状态构造，
-         * 共用同一个 ID 才拼得回一条完整轨迹。
-         */
-        final String turnId;
-        final SseEmitter emitter;
-        final Map<Integer, String> imgIndex;
-        final Map<Integer, String> imgDescIndex;
-        final List<Map<String, Object>> sources;
-        final List<UserImageService.UserImage> userImgs;
-        final long startTime;
-        /** 分段耗时（距开始的累计 ms）：改写/检索由主流程 putAll 合并进来，生成/自检由流回调写入 */
-        final Map<String, Long> stageMs = new LinkedHashMap<>();
-        final String queryForLog;
-        final String[] thinkingHolder;
-        final List<Map<String, String>> degradations;
-        final Set<String> degradedCodes;
-        final String retrievedJson;
-        final StringBuilder fullResponse = new StringBuilder();
-        final StringBuilder relatedBlock = new StringBuilder();
-        final StringBuilder emitBuf = new StringBuilder();
-        final AtomicInteger retried = new AtomicInteger();
-        final AtomicReference<Disposable> disposableRef = new AtomicReference<>();
-/** 本轮问答的工具调用过程记录（name/args摘要/status/耗时），实时发 tool_status SSE + done 汇总 + 持久化 */
-        final java.util.List<Map<String, Object>> toolCalls = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
-        /** 本轮回答时间线：正文区间段 {kind:'text',from,to} 与工具/产物下标段 {kind:'tool'|'artifact',i} 按发生
-         *  顺序排列。随消息落库并在 done 下发，供刷新/历史会话还原「正文与工具卡片交错」的过程视图——
-         *  此前只落整段正文 + 工具终态列表，刷新后只能整段渲染、工具与产物堆在气泡底部。 */
-        final java.util.List<Map<String, Object>> timeline = java.util.Collections.synchronizedList(new java.util.ArrayList<>());
-        /** 时间线锚点：下一个文本段的起点（已记入时间线的正文长度），工具/产物插入时先把锚点前的正文成段 */
-        final java.util.concurrent.atomic.AtomicInteger timelineAnchor = new java.util.concurrent.atomic.AtomicInteger(0);
-        /** 过程独白（<process> 标签内）：与正文分流累积，随消息落库（process_text 列）并经 SSE process 事件实时下发 */
-        final StringBuilder processResponse = new StringBuilder();
-        /** 过程时间线锚点：下一个过程段的起点（已记入时间线的过程独白长度），工具/产物插入时先成段 */
-        final java.util.concurrent.atomic.AtomicInteger processAnchor = new java.util.concurrent.atomic.AtomicInteger(0);
-        /** 未闭合 &lt;process&gt; 开口的增量下发状态：processOpen=本开口已下发过首块（首块剥前导空白，
-         *  其后原样追加）；openProcessChars=本开口已下发字符数（长时间不闭合时 fail-loud 提示一次） */
-        volatile boolean processOpen;
-        volatile int openProcessChars;
-        volatile boolean processMalformedNoted;
-        /** 引用文件名映射（docId→fileName）：主链路构建后回填，供工具命中注册来源时取文件名 */
-        volatile Map<String, String> docFileNames;
-        /** 工具来源引用编号 → 该来源图片的全局图片编号清单（重复注册同一块时原样返回，供工具文本重复附清单） */
-        final Map<Integer, List<Integer>> toolRefImages = new java.util.HashMap<>();
-        /** 本轮联网搜索已执行次数（配额 webSearch.maxCallsPerTurn；<=0 不限制） */
-        final java.util.concurrent.atomic.AtomicInteger webSearchCalls = new java.util.concurrent.atomic.AtomicInteger();
-        /** 已注册的联网来源（归一化 URL → 引用编号）：同一 URL 二次命中复用原编号，不重复占号 */
-        final Map<String, Integer> webRefByUrl = new java.util.HashMap<>();
-        /** 精确检索工具的检索范围（与主链路同库界，工具执行线程内生效）：kbIds 限定库，docIds 后过滤命中 */
-        volatile java.util.Collection<String> toolScopeKbIds;
-        volatile Set<String> toolScopeDocIds;
-        /** 本轮生效模型（会话覆盖 > 个人默认；智能体不绑定模型。主链路解析后回填，生成流按此发送） */
-        volatile String model;
-        /** 归一后的深度思考（生效模型能力 + 用户开关）；随 done 写 QA 日志 deep_think */
-        volatile boolean deepThink;
-        /** 本轮思考强度档位（请求级优先，null=只有思考开关、无强度语义）；生成流按此下发厂商方言字段 */
-        volatile String reasoningLevel;
-        /** 游客分享会话（公开链接）：工具白名单收窄为知识检索+内置项，沙盒/产物/MCP/技能不暴露 */
-        volatile boolean guestMode;
-        /** 本轮"有副作用"工具名单（沙盒/MCP，enabledToolCallbacks 装配时回填）：审批模式 ask 时执行前需确认 */
-        volatile java.util.Set<String> sensitiveToolNames = java.util.Set.of();
-        /** 本轮接入的 MCP 工具名单（enabledToolCallbacks 装配时回填）：结果注册引用来源用 */
-        volatile java.util.Set<String> mcpToolNames = java.util.Set.of();
-        /**
-         * 本轮生效工具名（小写）：剥离模型误吐的 DSML 工具调用文本的白名单。
-         * 只认本轮真实下发的工具名——按通用 XML 规则剥会把模型正常写的 HTML/XML 正文
-         * （技术问答里代码块尤其常见）当噪声吃掉，白名单匹配则天然不误伤。
-         */
-        volatile java.util.Set<String> dsmlToolNamesLc = java.util.Set.of();
-        /** DSML 文本剥离是否已提示过降级（同一轮只提示一次，避免刷屏） */
-        volatile boolean dsmlStrippedNoted;
-        /** 本轮已注册的 MCP 引用条数（上限 tool.mcpCiteMaxRefs，防引用面板被单轮刷屏） */
-        final java.util.concurrent.atomic.AtomicInteger mcpCiteCount = new java.util.concurrent.atomic.AtomicInteger();
-        /** 本轮 askUser 已提问次数（上限 MAX_ASKS_PER_TURN）：多轮澄清合法，刷屏循环不合法 */
-        final java.util.concurrent.atomic.AtomicInteger askCount = new java.util.concurrent.atomic.AtomicInteger();
-        /** 工具执行审批模式（本轮生效值：智能体显式设置优先，未设置落到权限档位的建议值；null=auto） */
-        volatile String toolApprovalMode;
-        /**
-         * 本轮权限档位策略（P2，开轮解析一次）：装配侧与守卫侧共用这一份。
-         * <p>刻意不在两处各算各的：档位禁用某工具时，装配要让它从模型的工具表里消失，守卫要拦住绕过
-         * 装配的调用——两份判据一旦漂移，就会出现「挂着的被拦、没挂的反能跑」。
-         */
-        volatile com.wenqu.ai.agent.permission.ExecutionPolicy permissionPolicy;
-        /** 单轮工具调用步数上限（agent.maxToolSteps > 全局 agent.maxToolSteps；<=0 不限制）；已执行步数 */
-        volatile int maxToolSteps;
-        /**
-         * 本轮是否为子智能体分支（P3a）：装配判据（{@code ToolMountContext#turnAllows}）据此
-         * 不收「要有人在场」的工具（提问卡等人点、任务清单给人看，而分支那条会话没有观众）。
-         * 判据本体在描述符的 {@code viewerRequired} 上，这里只把"这是分支"那个事实带到装配处。
-         */
-        volatile boolean branchTurn;
-        /**
-         * 本轮可被沙盒脚本子调用的工具（P3b）：名字 → <b>已过守卫链包装</b>的回调。
-         * <p>只在挂了 run_code 时构建；null = 本轮没有这条通道（脚本里的回调一律拒）。
-         * 用 Map 而不是列表：容器侧按工具名找函数，名字重复时后挂的覆盖前面的比"两个都能调"清楚。
-         */
-        volatile java.util.Map<String, org.springframework.ai.tool.ToolCallback> subCallTools;
-        /** 本轮已发生的子调用次数（子调用的独立预算计数，不进模型的单轮步数） */
-        final java.util.concurrent.atomic.AtomicInteger subCallCount = new java.util.concurrent.atomic.AtomicInteger();
-        /**
-         * 本段脚本的子调用清单（P3b 的过程下钻）：一条一次调用一行，随 run_code 那张卡片下发与落库。
-         * <p>作用域是<b>一次运行</b>而不是本轮——{@link #startRunBoard} 在每次 run_code 起头清空它，
-         * 否则同一轮里的第二段脚本，卡片会显示成第一段做过的事。
-         * <p>刻意不各开顶层卡片、也不进 {@code toolCalls}：那是"模型自己做的操作"的清单，
-         * 一段脚本扇出的几十次调用混进去会把过程区刷成一堵墙，也让人看不出它们属于同一次运行。
-         */
-        final List<Map<String, Object>> subCallLog = java.util.Collections.synchronizedList(new ArrayList<>());
-        /**
-         * 本段脚本<b>正在途</b>的子调用数（P3b 实时面板）：start 加、终态减，随每次 run_code 起头复位。
-         * <p>只有起止两侧才知道这个数：终态清单里它永远是 0，而"在跑几条、并发上限多少"正是脚本跑着时
-         * 唯一看不见的东西。
-         */
-        final java.util.concurrent.atomic.AtomicInteger subCallInFlight = new java.util.concurrent.atomic.AtomicInteger();
-        /** 在途子调用按工具名的计数（同名并发合成一条「在跑×N」），终态即摘名 */
-        final Map<String, Integer> subCallRunning = java.util.Collections.synchronizedMap(new LinkedHashMap<>());
-        /** 面板有变化待下发：子调用线程只置脏，实际 send 由 ticker 每秒合并一帧 */
-        final java.util.concurrent.atomic.AtomicBoolean subCallDirty = new java.util.concurrent.atomic.AtomicBoolean();
-        /** 本段脚本的面板 ticker 句柄（每次 run_code 起头新建，终态与整轮收尾取消） */
-        volatile java.util.concurrent.ScheduledFuture<?> runProgress;
-        /** 本段脚本还在跑：false 时 ticker 自停，不留一个空转的周期任务 */
-        volatile boolean runBoardActive;
-        /** 本段脚本运行的结构化结果（退出码/超时/沙盒故障），随 run_code 终态卡片下发并落库 */
-        volatile Map<String, Object> runOutcome;
-        final java.util.concurrent.atomic.AtomicInteger toolStepCount = new java.util.concurrent.atomic.AtomicInteger();
-        /**
-         * 检索-反思循环模式（Agentic RAG，runChat 按配置与思考档位判定后回填）：开启时本轮强制暴露
-         * 知识检索工具（enabledToolCallbacks 两分支 ||），工具结果尾部附「证据充分性自评」约束
-         * （KnowledgeRetrievalTool.setReflective 按轮注入）。knowledgeOff / 工作流驱动轮恒为 false。
-         */
-        volatile boolean reflectiveRetrieval;
-        /** 整轮流级心跳句柄（buildAnswerStream 启动、终态路径停止）：覆盖工具执行与最终回答首 token 两段静默区 */
-        volatile java.util.concurrent.ScheduledFuture<?> heartbeat;
-        /**
-         * 文档元数据缓存：主链路的 docFileNames 只覆盖「初始检索命中的文档」，
-         * 而精确检索工具可能命中本轮首次出现的文档（映射里没有）→ 用它按需补查，避免引用显示成"未知文档"。
-         */
-        DocumentMetaCache docMetaCache;
-        /** 本轮上下文 token 用量（主链路构建后回填）：实际/预算/填充块数，供 done 下发做 Token 消耗可视化 */
-        volatile int contextTokens;
-        volatile int budgetTokens;
-        volatile int contextHits;
-        /** 生效最大输出 token（模型管理中该模型声明的最大输出；0=未声明，不下发 max_tokens）：max_tokens 下发与终态触顶判定共用 */
-        volatile int effectiveMaxOutput;
-        /** 网关返回的真实 usage（部分兼容网关末块携带；拿不到保持 0，回落 TokenCounter 估算） */
-        volatile int realPromptTokens;
-        volatile int realOutputTokens;
-        /**
-         * 网关在末块携带的终止原因（stop/length/tool_calls/…；null=网关未带）。
-         * 截断判定的直接依据——此前只看「输出 token ≥ 声明的最大输出」，而模型声明值常远大于
-         * 厂商实际上限，那条判定等于永不生效。
-         */
-        volatile String lastFinishReason;
-        /** 本轮任一轮次报过 finish_reason=length（输出触顶）：截断标注的判据，比逐轮取值抗末块乱序 */
-        volatile boolean finishLength;
-        /** 本轮网关返回的思考增量字符数（计入 completion tokens 但不进正文）：生成量对账要扣掉它 */
-        volatile int reasoningChars;
-        /** 缓存命中的 prompt token（网关 prompt_tokens_details.cached_tokens；0=网关未回传，面板隐藏该行） */
-        volatile int cachedPromptTokens;
-        /**
-         * 生成链路的逐轮用量累加器（工具调用循环每轮一次真实请求，累加后才是本次问答实耗）。
-         * 与台账（DynamicOpenAiChatModel 出口记账）共用 {@link com.wenqu.ai.util.UsageAccumulator}
-         * 的口径，保证「回答气泡上的本次用量」与「个人统计/账单」同源。
-         */
-        final com.wenqu.ai.util.UsageAccumulator roundUsage = new com.wenqu.ai.util.UsageAccumulator();
-        /** 本轮生效窗口 token 与来源（用户所选档位/模型声明/未声明），容量面板展示「已用 X / 窗口 Y」 */
-        volatile int windowTokens;
-        volatile String windowSource = "";
-        /** 容量分类用量（消息/早期摘要/知识块/系统提示词/系统工具/MCP 工具/技能/其他）：估算后按真实 prompt 等比校准 */
-        volatile Map<String, Integer> ctxParts = new LinkedHashMap<>();
-        /** 本轮压缩进摘要的历史轮数（0=未压缩）；done 下发供前端提示「已压缩 N 轮」 */
-        volatile int historyCompressedTurns;
-        /** 编排视图：各子代理分支的最终状态（主链路编排完成后回填，随 done 下发并持久化） */
-        volatile java.util.List<Map<String, Object>> subagentBranches = List.of();
-        /** 按需委派的路由结果（{candidates,picked,names}；未启用路由时为 null），随 done 下发并持久化 */
-        volatile Map<String, Object> subagentRoute = null;
-        /** 重新生成时被替换的旧回答消息 ID：落库前软删旧行（历史只留最新一版；null=普通问答） */
-        volatile String replaceMessageId;
-        /** 本轮用户消息 ID（0.3 段即时落库返回；regenerate 时为 null——沿用上一轮请求已入库的消息）。
-         *  随 done 下发：编辑重发后前端用它给新用户消息挂分支切换器、支持再次编辑 */
-        volatile String userMessageId;
-        /** 助手消息落库幂等闸：正常完成（doOnComplete）与中断兜底（disposeSafe → persistPartialAnswer）
-         *  两条路径 CAS 先到先得——SSE 超时回调与正常完成存在并发窗口，不加闸同一轮可能落两条 */
-        final java.util.concurrent.atomic.AtomicBoolean answerPersistGate = new java.util.concurrent.atomic.AtomicBoolean(false);
-        /**
-         * 提问卡（askUser）阻塞计数：>0 表示本轮正挂在「等你作答」上。此刻通道失效<b>不中止本轮</b>
-         * ——提问已落库，用户在另一台设备或刷新页面后仍能答，答案必须回到还阻塞着的工具线程。
-         */
-        final java.util.concurrent.atomic.AtomicInteger askWaits = new java.util.concurrent.atomic.AtomicInteger();
-        /**
-         * 计划批准卡（planApproval）阻塞计数：>0 表示本轮正挂在「等你批准执行计划」上。
-         * 语义与 {@link #askWaits} 相同：此刻通道失效不中止本轮——计划已落库，用户在另一台设备
-         * 或刷新页面后仍能批准，批准后的回答必须回到还阻塞着的流水线线程。
-         */
-        final java.util.concurrent.atomic.AtomicInteger planWaits = new java.util.concurrent.atomic.AtomicInteger();
-        /**
-         * 本轮计划快照（计划模式，{plan,status}）：runPlanPhase 裁决落定时写入，助手消息落库时随 plan 列持久化
-         * ——刷新/切会话后按轮重建气泡计划卡（此前计划只活在实时流里，刷新即丢）。null=本轮未走计划模式。
-         */
-        volatile Map<String, Object> planRecord;
-        /** 计划被用户「继续对话」取代（gate 收尾按取代口径：不写「未批准」收束语，发 plan_superseded） */
-        volatile boolean planSuperseded;
-        /** 本轮计划是「按消息意图自动开启」（用户没开计划开关）：随计划快照落库，卡片标「自动开启」 */
-        volatile boolean planAuto;
-        /**
-         * 已装配的工具回调缓存（计划模式闸门先行装配时写入）：buildAnswerStream 直接复用，
-         * 避免 MCP 工具集二次装配（外部 server 连接不重复建立）。null=未缓存，走原路径。
-         */
-        volatile java.util.List<org.springframework.ai.tool.ToolCallback> enabledCallbacks;
-        /**
-         * 断线后台续跑：本轮失去了通道（人在作答时才断开），此后 SSE 事件一律丢弃，
-         * 但生成继续走完并按正常路径完整落库——用户回到本会话就能看到答案。
-         */
-        volatile boolean detached;
-        /**
-         * 工具侧（沙盒那层截断之前）已经外溢留存的登记，条目形如 {@code execute|<spillId>}。
-         * <p>为什么在工具里发起而不是在这里补：只有它知道完整原文长什么样——问答侧拿到的已经是被截过的
-         * 文本，在这层再截一次只是二次丢失。工具经 {@link #toolContext} 注入的能力落盘并上报，
-         * 这里只接住、把「查看完整输出」挂到对应那张卡片上（不重复落盘，也不把 id 塞进模型看到的文本）。
-         */
-        final java.util.concurrent.ConcurrentLinkedQueue<String> toolSpills =
-                new java.util.concurrent.ConcurrentLinkedQueue<>();
-
-        /**
-         * 用户按下「停止本轮」：置位后不再执行任何工具步（含副作用工具），生成流被掐断，
-         * 半程正文按 {@link #STOP_SUFFIX} 落库。
-         * <p>与 {@link #detached} 分开是因为口径相反：断线时「人在等答复」要把本轮留在后台跑完，
-         * 而用户叫停是<b>明确要它停</b>——正挂在审批/提问/计划等待上的轮同样必须停下。
-         */
-        volatile boolean userStopped;
-
-        /**
-         * 通道已失效（客户端断开 / emitter 完成 / 发送失败）时问一句：本轮还要不要继续跑？
-         * <p>正在等用户作答、或早已转入后台续跑 ⇒ 置 {@link #detached} 返回 true：事件丢弃但不掐流，
-         * 用户答完后回答照常生成并落库；<b>本轮还挂在运行总线上时同样返回 true</b>——通道没了只是
-         * 少了一个观众，何时该停由总线的宽限期回调统一决定（{@code abortTurnWithoutViewer}），
-         * 在这里掐等于把「刷新页面就丢这一轮」写回死路径（2026-10-10 真机复测就是撞在这条上：
-         * 观众已经接流成功了，六秒后原通道的 onCompletion 仍把整轮 dispose 掉）。
-         * 其余情形返回 false，由调用方照常规中止本轮并落半程正文——「断开即止损」的成本闸门口径不变，
-         * 只在人在回路这一段让路。
-         */
-        boolean keepRunningWithoutChannel() {
-            if (askWaits.get() > 0 || planWaits.get() > 0 || detached) {
-                detached = true;
-                return true;
-            }
-            return chatRunBus.holdsRun(sessionId);
-        }
-
-        /** 本轮是否已收尾（正文已落库，正常完成或截断兜底都算）：台账据此回收 */
-        boolean settled() {
-            return answerPersistGate.get();
-        }
-
-        /**
-         * 收尾时仍未送达的插话：{@link #claimTerminal()} 摘把手之前先把队列转存到这里，
-         * 否则 done 组装时把手已不在，没赶上的插话就静默消失了（实测踩过：模型不再调工具直接答完，
-         * 插话既没送达也没续发）。
-         */
-        final List<String> leftoverSteers = new ArrayList<>();
-
-        /**
-         * 占住「本轮已收尾」闸位，并同时摘掉会话轮次登记（{@link #TURN_STATES} / {@link #TURN_HANDLES}）。
-         * <p>摘登记必须挂在这里而不是流水线线程的 finally：{@code runChat} 在 {@code subscribe} 之后
-         * 立刻就返回了，生成与工具循环此后跑在响应式线程上——finally 一摘，正在出字的轮就从轮次表里
-         * 消失，「停止本轮」再也找不到它，账本的归属也会断。谁先占闸谁负责摘，两条终态路径共用。
-         *
-         * @return true=本次占位成功（调用方应当落库）；false=已有别的终态路径收过尾
-         */
-        boolean claimTerminal() {
-            boolean claimed = answerPersistGate.compareAndSet(false, true);
-            if (claimed) {
-                // 先把没送达的插话转存进本轮，再摘把手：done 载荷要在把手消失后仍拿得到它们
-                String s;
-                while ((s = handle.steers().poll()) != null) leftoverSteers.add(s);
-                TURN_HANDLES.remove(sessionId, handle);
-                TURN_STATES.remove(sessionId, this);
-            }
-            return claimed;
-        }
-
-        /** 本轮智能体归属快照（buildAnswerStream 回填）：中断兜底落库时 appendMessage 需要，彼时已拿不到闭包里的 agent */
-        volatile String agentId;
-        volatile String agentName;
-        /** §4 轮级委派：本轮由 @ 提及的智能体作答时的归属（null=无委派）。随 done 单独下发——
-         *  done 的 agentId/agentName 保持「会话绑定」口径（前端绑定镜像依赖它），委派归属不可混入 */
-        volatile String delegatedAgentId;
-        volatile String delegatedAgentName;
-
-        AnswerStreamState(String sessionId, String question, String userId, SseEmitter emitter,
-                          Map<Integer, String> imgIndex, Map<Integer, String> imgDescIndex,
-                          List<Map<String, Object>> sources, List<UserImageService.UserImage> userImgs,
-                          long startTime, String queryForLog, String[] thinkingHolder,
-                          List<Map<String, String>> degradations, Set<String> degradedCodes, String retrievedJson) {
-            this.sessionId = sessionId;
-            this.question = question;
-            this.userId = userId;
-            this.emitter = emitter;
-            this.imgIndex = imgIndex;
-            this.imgDescIndex = imgDescIndex;
-            this.sources = sources;
-            this.userImgs = userImgs;
-            this.startTime = startTime;
-            this.queryForLog = queryForLog;
-            this.thinkingHolder = thinkingHolder;
-            this.degradations = degradations;
-            this.degradedCodes = degradedCodes;
-            this.retrievedJson = retrievedJson;
-            // 挂进整轮台账：看门狗到点要停流并截断落库（收集型通道无台账，自然跳过）
-            TurnDeadline d = TURN_DEADLINES.get(emitter);
-            if (d != null) d.state = this;
-            TurnHandle h = TURN_HANDLES.get(sessionId);
-            if (h == null) {
-                // 非 chat 入口（手动压缩等）：自造把手，收尾时由 claimTerminal 按值摘掉
-                h = new TurnHandle(java.util.UUID.randomUUID().toString().replace("-", ""), userId, emitter);
-                TURN_HANDLES.put(sessionId, h);
-            }
-            this.handle = h;
-            this.turnId = h.turnId();
-            // 登记进会话轮次表：服务端「停止本轮」按 sessionId 找到它（摘除见 chat 流水线 finally 与落库收尾）
-            TURN_STATES.put(sessionId, this);
-        }
-
-        void disposeSafe() {
-            // 客户端断开：顺带停整轮流级心跳（防断开后调度任务空转泄漏；发送失败也会自停，双保险）
-            java.util.concurrent.ScheduledFuture<?> hb = heartbeat;
-            if (hb != null) hb.cancel(false);
-            // 本轮已中止：整轮台账与看门狗一并回收（通道断开回调遇后台续跑时会故意留着它）
-            stopTurnDeadline(emitter);
-            Disposable d = disposableRef.get();
-            if (d != null) d.dispose();
-            // 中断兜底：按截断态落库，刷新/重进会话后已生成的部分仍在历史里（此前只有完整完成
-            // 才落库，中断轮在历史里只剩问题）。与正常完成路径共用幂等闸（CAS 先到先得）。
-            // 看门狗截断/断线多发生在工具循环里——正文可能一个 token 都没有，价值全在工具卡片
-            // 与计划快照上（用户盯着跑了五分钟的一场执行），只认正文非空会让这种轮整条蒸发，
-            // 用户看到的是「已输出的内容刷新后全没了」。真正空轮（无正文且无工具记录）由
-            // persistPartialAnswer 内部守卫拦住，不落空消息。
-            // 本回调可能在容器线程触发（超时/错误），与流线程的正文追加存在理论竞态——
-            // dispose() 已先行掐断上游，最坏读到略短的快照，对存档可接受
-            if (claimTerminal()) {
-                persistPartialAnswer(this, userStopped ? STOP_SUFFIX : TRUNCATION_SUFFIX);
-            }
-        }
-
-        /**
-         * 精确检索工具命中注册为引用来源：续编 ref 编号（与主链路 [1..N] 同一编号空间），
-         * 同块已注册/已在主链路则复用原编号不重复注册；返回分配的编号供工具文本【引用N】提示模型标注。
-         * origin=TOOL 供前端区分工具来源；synchronized 防工具线程与流回调并发追加。
-         */
-        /**
-         * 工具命中注册：来源进 sources 续编引用编号；来源图片并入全局图片编号体系
-         * （imgIndex/imgDescIndex，同一 URL 全局只编号一次，编号与主链路上下文填充连续）。
-         * 描述从块原文的 [图片]/[图片：描述] 占位按出现顺序对齐（第 i 个占位 ↔ 第 i 张图，与主链路同口径），
-         * 拿不到描述留空（imgFilter rebuild 对空描述放行，不会误剔）。
-         * 有新增图片时重发全量 image 事件（前端 onImage 是整体替换，必须发全量已签名清单），
-         * 模型后续正文才能引用真实存在的 [图片N]，前端 images[N-1] 才映射得到。
-         */
-        KnowledgeRetrievalTool.SourceRegistrar.Registration registerToolSource(HybridRetrievalService.Hit h, String snippet) {
-            Integer existing = findExistingSourceRef(h);
-            if (existing != null) {
-                return new KnowledgeRetrievalTool.SourceRegistrar.Registration(existing,
-                        toolRefImages.getOrDefault(existing, List.of()));
-            }
-            int ref;
-            synchronized (sources) {
-                existing = findExistingSourceRef(h); // 并发注册同一块的双检
-                if (existing != null) {
-                    return new KnowledgeRetrievalTool.SourceRegistrar.Registration(existing,
-                            toolRefImages.getOrDefault(existing, List.of()));
-                }
-                ref = sources.size() + 1;
-                Map<String, Object> src = new LinkedHashMap<>();
-                src.put("ref", ref);
-                src.put("knowledgeId", h.knowledgeId());
-                src.put("docId", h.docId());
-                String docName = docFileNames != null ? docFileNames.get(h.docId()) : null;
-                // 工具命中的文档若不在主链路映射里（本轮首次出现），直接取是 null →
-                // 前端会把来源显示成"未知文档"；这里按需补查一次（DocumentMetaCache 自带缓存，代价很低）
-                if (docName == null && h.docId() != null && !h.docId().isBlank() && docMetaCache != null) {
-                    docName = docMetaCache.getFileNames(Set.of(h.docId())).get(h.docId());
-                }
-                src.put("fileName", docName);
-                src.put("title", h.title());
-                src.put("snippet", snippet);
-                src.put("images", h.images());
-                src.put("origin", "TOOL");
-                // 与主链路口径一致：融合分恒有，重排分仅有则透出
-                src.put("score", Math.round(h.score() * 1000) / 1000.0);
-                if (h.rerankScore() != null) {
-                    src.put("rerankScore", Math.round(h.rerankScore() * 1000) / 1000.0);
-                }
-                sources.add(src);
-            }
-            // 图片编号并入 + SSE 在 sources 锁外（签名与网络写不应持锁）
-            List<Integer> imgSeqs = assignToolImages(h);
-            toolRefImages.put(ref, imgSeqs);
-            return new KnowledgeRetrievalTool.SourceRegistrar.Registration(ref, imgSeqs);
-        }
-
-        // ==================== MCP 工具结果：引用注册（origin=MCP） ====================
-
-        /** 结果文本里的 http(s) 链接（MCP 结果常是 JSON 转义文本，换行为字面 \n 序列——字符类显式排除反斜杠，防 URL 粘上后续正文） */
-        private static final Pattern MCP_URL_PATTERN = Pattern.compile("https?://[^\\s\"'<>\\\\]+");
-
-        /**
-         * MCP 工具结果注册引用来源：扫描结果文本里的 http(s) URL 逐个注册（origin=MCP，与
-         * TOOL/WEB 共用同一编号空间；归一化 URL 复用 webRefByUrl 去重——联网与 MCP 拿到同一
-         * 网页合并同号）。返回在原结果后追加「引用来源清单」的文本，模型据此在正文标注 [N]；
-         * 无 URL / 超上限时原样返回（纯文本结果不伪造来源，模型强编的 [N] 由终态越界校验剔除）。
-         * 约定：只有结果文本显式给出 URL 的内容才可溯源——这是通用 MCP 工具唯一稳定的来源标识
-         * （如 Context7 文档片段的「Source: https://…」行）。
-         */
-        String registerMcpCitations(String toolName, String result) {
-            if (result == null || result.isBlank()) return result;
-            if (!configService.getBoolean("tool.mcpCiteEnabled")) return result;
-            // MCP 结果常是 JSON 转义文本（换行为字面 \n 两字符序列）：先还原成真实空白再做
-            // URL/标题/摘要提取——否则摘要把 "\n\n\n" 原样带进引用弹窗、标题按行切分失效（title 全空）。
-            // 只用于提取；返回给模型的仍是原结果（转义文本可能含代码示例里的合法 \n，还原会改坏样例）。
-            int perAnswerCap = configService.getInt("tool.mcpCiteMaxRefs", 10);
-            String text = result.replace("\\n", "\n").replace("\\r", "\n").replace("\\t", " ");
-            Matcher um = MCP_URL_PATTERN.matcher(text);
-            List<String> footnotes = new ArrayList<>();
-            List<String[]> fresh = new ArrayList<>();   // [url, title, snippet]
-            Set<String> seenRaw = new HashSet<>();
-            while (um.find() && fresh.size() < 3) {
-                String url = trimUrlTail(um.group());
-                if (url.length() < 12 || !seenRaw.add(url)) continue;
-                String key = com.wenqu.ai.service.websearch.WebSearchService.normalizeUrl(url);
-                String title = mcpTitleNear(text, um.start(), um.end(), url);
-                String snippet = mcpSnippetAfter(text, um.end());
-                Integer existing;
-                synchronized (sources) { existing = webRefByUrl.get(key); }
-                if (existing != null) {
-                    footnotes.add("[" + existing + "] " + title + "（" + mcpHostOf(url) + "）"); // 同源（含联网已注册的）复用原编号
-                    continue;
-                }
-                fresh.add(new String[]{url, title, snippet});
-            }
-            if (fresh.isEmpty() && footnotes.isEmpty()) return result;
-            // 批量重排：给每条片段一个对用户问题的真实相关度（重排分 0~1，与库内来源同域透出）——
-            // 否则 MCP 来源无分数（WEB 的分来自搜索引擎，MCP 没有现成分）。不可用/失败时无分注册
-            // （前端不显示分数行），不阻塞引用注册本身。rankForced 返回按分排序，用 content 映射回候选。
-            Map<String, Double> scoreBySnippet = new HashMap<>();
-            if (!fresh.isEmpty()) {
-                List<HybridRetrievalService.Hit> toRank = new ArrayList<>();
-                for (String[] f : fresh) {
-                    toRank.add(new HybridRetrievalService.Hit(null, "", f[1], f[2],
-                            List.of(), 0d, null, null, null));
-                }
-                for (HybridRetrievalService.Hit h : rerankService.rankForced(toRank, question)) {
-                    if (h.rerankScore() != null) scoreBySnippet.put(h.content(), h.rerankScore());
-                }
-            }
-            for (String[] f : fresh) {
-                if (mcpCiteCount.incrementAndGet() > perAnswerCap) {
-                    mcpCiteCount.decrementAndGet();
-                    break; // 本轮配额用尽：后续 URL 不再注册
-                }
-                String key = com.wenqu.ai.service.websearch.WebSearchService.normalizeUrl(f[0]);
-                Double score = scoreBySnippet.get(f[2]);
-                int ref;
-                synchronized (sources) {
-                    Integer existing = webRefByUrl.get(key); // 双检（重排耗时窗口内可能并发注册同源）
-                    if (existing != null) {
-                        ref = existing; // 同一来源（含联网搜索已注册的）复用原编号
-                    } else {
-                        ref = sources.size() + 1;
-                        Map<String, Object> src = new LinkedHashMap<>();
-                        src.put("ref", ref);
-                        src.put("origin", "MCP");
-                        src.put("url", f[0]);
-                        src.put("siteName", mcpHostOf(f[0]));
-                        src.put("title", f[1]);
-                        // snippet 即引用自检的证据（citationConsistencyCheck 取 sources[n-1].snippet）
-                        src.put("snippet", f[2]);
-                        if (score != null) {
-                            src.put("rerankScore", Math.round(score * 1000) / 1000.0);
-                        }
-                        sources.add(src);
-                        webRefByUrl.put(key, ref);
-                    }
-                }
-                footnotes.add("[" + ref + "] " + f[1] + "（" + mcpHostOf(f[0]) + "）");
-            }
-            if (footnotes.isEmpty()) return result;
-            log.info("[MCP] 工具 {} 注册 {} 条引用来源", toolName, footnotes.size());
-            return result + "\n\n（本结果包含以下可溯源来源，回答中引用其内容时，请在对应句子后标注对应编号："
-                    + String.join("；", footnotes) + "）";
-        }
-
-        /** 剔除 URL 匹配尾部粘连的标点/括号/引号（markdown 链接与句尾标点会粘进 \S+ 匹配） */
-        private static String trimUrlTail(String raw) {
-            String u = raw;
-            while (!u.isEmpty() && "\"',<>)\\]}.;:!?".indexOf(u.charAt(u.length() - 1)) >= 0) {
-                u = u.substring(0, u.length() - 1);
-            }
-            return u;
-        }
-
-        /**
-         * 标题三级兜底：① URL 前方最近的「# …」标题行（Context7 片段的章节标题）；
-         * ② URL 后首行正文（片段第一句——并非所有片段的 Source: 行前都有邻近标题）；
-         * ③ URL 路径尾段（openai-chat.html → "Openai chat"）。保证每个来源都有名称可显示。
-         */
-        private static String mcpTitleNear(String text, int start, int end, String url) {
-            String before = text.substring(Math.max(0, start - 300), start);
-            for (String raw : before.split("\n")) {
-                String line = raw.trim();
-                if (line.startsWith("#")) {
-                    String t = line.replaceFirst("^#+\\s*", "").trim();
-                    if (!t.isEmpty()) return capMcpTitle(t);
-                }
-            }
-            for (String raw : text.substring(Math.min(text.length(), end)).split("\n")) {
-                String line = raw.trim();
-                if (line.isEmpty() || line.startsWith("---") || line.startsWith("![")) continue;
-                return capMcpTitle(line);
-            }
-            return mcpSlugOf(url);
-        }
-
-        /** 标题截 80 字符（回退到词边界），避免截半个词 */
-        private static String capMcpTitle(String t) {
-            if (t.length() <= 80) return t;
-            int cut = t.lastIndexOf(' ', 80);
-            return (cut > 40 ? t.substring(0, cut) : t.substring(0, 80)) + "…";
-        }
-
-        /** URL 路径尾段转可读名：openai-chat.html → "Openai chat" */
-        private static String mcpSlugOf(String url) {
-            String u = url.split("\\?")[0];
-            int slash = u.lastIndexOf('/');
-            String seg = slash >= 0 ? u.substring(slash + 1) : u;
-            int dot = seg.lastIndexOf('.');
-            if (dot > 0) seg = seg.substring(0, dot);
-            seg = seg.replace('-', ' ').replace('_', ' ').trim();
-            return seg.isEmpty() ? "" : Character.toUpperCase(seg.charAt(0)) + seg.substring(1);
-        }
-
-        /** 摘要取 URL 之后的一段正文（折叠空白），供引用弹窗与引用自检当证据 */
-        private static String mcpSnippetAfter(String text, int pos) {
-            String rest = text.substring(Math.min(text.length(), pos));
-            rest = rest.replaceAll("\\s+", " ").trim();
-            return rest.length() > 200 ? rest.substring(0, 200) + "…" : rest;
-        }
-
-        /** 主机名（去 www.）；解析失败回落原串前 40 字符 */
-        private static String mcpHostOf(String url) {
-            try {
-                String host = java.net.URI.create(url.trim()).getHost();
-                if (host == null) return url.length() > 40 ? url.substring(0, 40) : url;
-                return host.startsWith("www.") ? host.substring(4) : host;
-            } catch (Exception e) {
-                return url.length() > 40 ? url.substring(0, 40) : url;
-            }
-        }
-
-        // ==================== 联网搜索：引用注册 / 配额 / 降级（WebSearchTools.WebSearchSink） ====================
-
-        /**
-         * 扣减一次联网搜索配额。工具是全局单例，计数必须落在流状态上——否则一次搜索会永久占掉后续问答的额度。
-         */
-        @Override
-        public boolean tryConsumeQuota() {
-            int max = configService.getInt("webSearch.maxCallsPerTurn", 2);
-            if (max <= 0) return true; // 0=不限制
-            return webSearchCalls.incrementAndGet() <= max;
-        }
-
-        /** 搜索失败挂一条本轮降级提示（fail-loud：让用户看见"为什么没搜成"，而不是静默无结果） */
-        @Override
-        public void degrade(String code, String message) {
-            addDegradation(degradations, degradedCodes, code, message);
-        }
-
-        /**
-         * 联网结果注册为引用来源：与库内来源**共用同一编号空间**（主链路 [1..N] 续编），
-         * 前端角标是按 ref 直接索引 sources 的，另起一套编号必然错位；引用自检也因此能一并校验联网引用。
-         * 去重键是归一化 URL（去 utm 等跟踪参数），同一链接不重复占号。
-         *
-         * @return 分配的引用编号（已注册过则返回原编号）
-         */
-        @Override
-        public int register(WebSearchResult r) {
-            String key = com.wenqu.ai.service.websearch.WebSearchService.normalizeUrl(r.url());
-            synchronized (sources) {
-                Integer existing = webRefByUrl.get(key);
-                if (existing != null) return existing;
-                int ref = sources.size() + 1;
-                Map<String, Object> src = new LinkedHashMap<>();
-                src.put("ref", ref);
-                src.put("origin", "WEB");
-                src.put("url", r.url());
-                src.put("siteName", r.siteName());
-                src.put("title", r.title());
-                // snippet 即引用自检的证据（citationConsistencyCheck 取 sources[n-1].snippet）——
-                // 联网来源不进 images 图片编号体系（那是库内文档的签名图片，外链图片不适合复用）
-                src.put("snippet", r.snippet());
-                if (r.publishedAt() != null && !r.publishedAt().isBlank()) {
-                    src.put("publishedAt", r.publishedAt());
-                }
-                if (r.score() != null) {
-                    src.put("score", Math.round(r.score() * 1000) / 1000.0);
-                }
-                sources.add(src);
-                webRefByUrl.put(key, ref);
-                return ref;
-            }
-        }
-
-        /** 已注册过同一知识块 → 返回既有引用编号（未注册返回 null） */
-        private Integer findExistingSourceRef(HybridRetrievalService.Hit h) {
-            if (h.knowledgeId() == null) return null;
-            synchronized (sources) {
-                for (Map<String, Object> s : sources) {
-                    if (h.knowledgeId().equals(s.get("knowledgeId"))) {
-                        return (Integer) s.get("ref");
-                    }
-                }
-            }
-            return null;
-        }
-
-        /**
-         * 来源图片并入全局编号：URL 去重（全局一张图一个编号），编号延续 imgIndex.size()+1；
-         * 有新增则重发全量 image 事件（SSE 发送在 sources 锁外——签名与网络写不应持锁）。
-         */
-        private List<Integer> assignToolImages(HybridRetrievalService.Hit h) {
-            List<String> urls = h.images();
-            if (urls == null || urls.isEmpty()) return List.of();
-            String[] descs = extractImgDescs(h);
-            boolean added = false;
-            List<Integer> seqs = new ArrayList<>();
-            synchronized (sources) {
-                for (int i = 0; i < urls.size(); i++) {
-                    String url = urls.get(i);
-                    int seq = -1;
-                    for (Map.Entry<Integer, String> e : imgIndex.entrySet()) {
-                        if (url.equals(e.getValue())) { seq = e.getKey(); break; }
-                    }
-                    if (seq < 0) {
-                        seq = imgIndex.size() + 1;
-                        imgIndex.put(seq, url);
-                        imgDescIndex.put(seq, i < descs.length && descs[i] != null ? descs[i] : "");
-                        added = true;
-                    }
-                    seqs.add(seq);
-                }
-            }
-            if (added) {
-                List<String> signed = imgIndex.values().stream().map(imageUrlSigner::signUrl).toList();
-                sendSseEvent(emitter, "image", JSON.toJSONString(signed), sessionId);
-            }
-            return seqs;
-        }
-
-        /** 从块原文按占位出现顺序提取图片描述（第 i 个 [图片：desc] ↔ 第 i 张图；占位多于图片数时多余描述丢弃） */
-        private String[] extractImgDescs(HybridRetrievalService.Hit h) {
-            List<String> urls = h.images();
-            String[] descs = new String[urls == null ? 0 : urls.size()];
-            String content = h.content() == null ? "" : h.content();
-            Matcher pm = IMG_PLACEHOLDER_PATTERN.matcher(content);
-            int di = 0;
-            while (pm.find() && di < descs.length) {
-                String raw = pm.group();
-                String d = "";
-                int ci = raw.indexOf('：');
-                if (ci >= 0 && raw.length() > ci + 2) {
-                    d = raw.substring(ci + 1, raw.length() - 1).trim();
-                }
-                descs[di++] = d;
-            }
-            return descs;
-        }
     }
 
     /**
@@ -5605,138 +4308,43 @@ public class RagService {
         return related;
     }
 
-    // ---- 智能体（4.1）覆盖解析辅助 ----
+    // ---- 智能体（P5）本轮作答方解析 ----
 
     /**
-     * 智能体解析：agentId="auto" → 自动派遣（当轮生效模型按名称+描述从可见主智能体中挑选；
-     * 单候选直接命中；超时/失败/无命中回落默认智能体，agent.autoDispatch 关闭时直接回落默认）。
-     * 派遣结果经 SSE agent_dispatched 下发（路由过程对用户可见）。
-     * 其余 agentId 走 agentService.get（无效/不可读返回 null，继承全局）。
-     * agentId 为空（前端「默认（全局配置）」/ 调用方未指定）：有默认智能体（isDefault=1）时
-     * 即用默认智能体——「全局 = 默认智能体」，未填维度仍继承系统设置（智能体覆盖机制本就如此）；
-     * 未设默认智能体才走纯系统设置全局配置。首问会把解析结果锁定进会话，归属/trace 随之正确。
+     * 本轮作答的智能体：请求带 id 就用它（分享页 / 定时任务 / 工作流 / 对外 MCP 都是显式指定），
+     * 不带就用默认智能体（isDefault=1）；未设默认才落到纯系统设置的全局配置。
+     * <p>P5 起这里<b>不再有"会话锁定"</b>。过去首问把智能体锁进会话，是为了让同一会话里人设、知识库、
+     * 工具集全程一致；代价是跨主题的问题只能对着自己那套库空转——"上一轮问手册、这一轮问法律就查不到"。
+     * 现在资料域由模型经 consultAgent 主动派出去查，作答方不需要被锁，也没有"换人请新建会话"这回事。
+     * <p>显式指定却解析不到（已删除或无权限）时 fail-loud：静默改用全局配置等于悄悄换人，用户无从察觉。
      */
-    private Agent resolveAgent(String agentId, String question, String resolvedModel,
-                               String sessionId, SseEmitter emitter) {
-        if (agentId == null || agentId.isBlank()) return agentService.defaultAgent();
-        if (!"auto".equals(agentId)) return agentService.get(agentId);
-        List<Agent> candidates = agentService.dispatchCandidates();
-        if (candidates.isEmpty()) return null;
-        if (candidates.size() == 1 || !configService.getBoolean("agent.autoDispatch")) {
-            Agent direct = candidates.size() == 1 ? candidates.get(0) : agentService.defaultAgent();
-            emitDispatched(emitter, direct, candidates.size(), false, sessionId);
-            return direct;
-        }
-        // 阶段文案统一：自动派遣属"理解问题"准备段（派中了谁由 dispatched 事件承载）
-        sendSseEvent(emitter, "stage", "正在理解问题…", sessionId);
-        // 最近两轮对话参与路由（追问如"之前说的退款进度"要靠上下文才能派对）
-        String recentContext = "";
-        try {
-            recentContext = buildHistoryText(sessionService.getRecentHistory(sessionId, 2));
-        } catch (Exception e) {
-            log.debug("[DISPATCH] 会话历史读取失败（无上下文路由）: {}", e.getMessage());
-        }
-        long t0 = System.currentTimeMillis();
-        Agent picked = agentDispatchService.dispatch(question, candidates, resolvedModel, recentContext);
-        boolean fallback = picked == null;
-        if (fallback) picked = agentService.defaultAgent();
-        log.info("[DISPATCH] 自动派遣: {} 个候选 → {}（{}，{}ms）", candidates.size(),
-                picked == null ? "无（继承全局）" : picked.getName(),
-                fallback ? "回落默认" : "路由命中", System.currentTimeMillis() - t0);
-        emitDispatched(emitter, picked, candidates.size(), fallback, sessionId);
-        return picked;
-    }
-
-    /**
-     * 会话级智能体解析（4.1：会话绑定）：智能体不再是"每轮随请求变化"，而是会话创建后首问锁定、全程一致。
-     * <ul>
-     *   <li>已锁定会话：一律用锁定值，请求里的 agentId 不再生效——人设/知识库/工具集全程一致，
-     *       与交互约定「切换智能体 = 新会话」配套（否则就是同一个会话里悄悄换人）。</li>
-     *   <li>未锁定会话：按请求解析（auto=自动派遣，只在首问路由一次），解析结果写入会话锁定。</li>
-     * </ul>
-     * 锁定值不可用时 fail-loud 提示（不静默回落全局配置）：那等于悄悄换人，用户无从察觉。
-     */
-    private Agent resolveSessionAgent(String sessionId, String requestedAgentId, String question,
-                                      String resolvedModel, SseEmitter emitter,
-                                      List<Map<String, String>> degradations, Set<String> degradedCodes) {
-        SessionService.AgentBinding bound = sessionService.getAgentBinding(sessionId);
-        if (bound != null) {
-            if (bound.agentId().isEmpty()) return null; // 已决定不绑定智能体（走全局配置）
-            Agent locked = agentService.get(bound.agentId());
-            if (locked == null) {
-                String name = (bound.agentName() == null || bound.agentName().isBlank())
-                        ? bound.agentId() : bound.agentName();
-                addDegradation(degradations, degradedCodes, "agentUnavailable",
-                        "本会话绑定的智能体「" + name + "」已不可访问（已删除或权限变更），本轮未使用它；如需换用其它智能体请新建会话");
-                log.warn("[AGENT] 会话 {} 绑定的智能体 {} 不可访问，本轮按不可用处理", sessionId, bound.agentId());
-                return null;
+    private Agent resolveTurnAgent(String requestedAgentId, List<Map<String, String>> degradations,
+                                   Set<String> degradedCodes) {
+        if (requestedAgentId == null || requestedAgentId.isBlank()) {
+            // 个人默认助手（设置页「对话偏好」里选的那位）：流水线线程已装载个人覆盖，直接 get 就是本人值。
+            // 它为替代被删掉的"会话锁定"而存在——整天只跟一位助手聊的人不必每会话重挑一次。
+            String personal = configService.get("agent.personalDefault");
+            if (personal != null && !personal.isBlank()) {
+                Agent mine = agentService.get(personal.trim());
+                if (mine != null) return mine;
+                // 选了之后被删/失去共享：如实说一句再回落，而不是让人以为自己的默认还生效
+                runtime.addDegradation(degradations, degradedCodes, "personalAgentGone",
+                        "你的默认助手已不可用（被删除或不再共享给你），本轮已改用平台默认智能体");
             }
-            if (requestedAgentId != null && !requestedAgentId.isBlank()
-                    && !"auto".equals(requestedAgentId) && !requestedAgentId.equals(bound.agentId())) {
-                log.info("[AGENT] 会话 {} 已锁定智能体 {}，忽略请求中的 agentId={}（换人请新建会话）",
-                        sessionId, bound.agentId(), requestedAgentId);
-            }
-            return locked;
+            return agentService.defaultAgent();
         }
-        // 未锁定：按请求解析（auto → 首问自动派遣），结果即锁定，后续轮次不再重路由
-        Agent picked = resolveAgent(requestedAgentId, question, resolvedModel, sessionId, emitter);
-        // 用户显式指定了智能体却拿不到（已删除或无权访问）：不静默改用全局配置（等于悄悄换人），明确告知。
-        // auto 派遣无候选是设计内回落（候选为空时本就走全局），不在此列。
-        if (picked == null && requestedAgentId != null && !requestedAgentId.isBlank()
-                && !"auto".equals(requestedAgentId)) {
-            addDegradation(degradations, degradedCodes, "agentMissing",
+        Agent picked = agentService.get(requestedAgentId);
+        if (picked == null) {
+            runtime.addDegradation(degradations, degradedCodes, "agentMissing",
                     "所选智能体不可用（已删除或你无访问权限），本轮按全局配置回答");
-            log.warn("[AGENT] 会话 {} 请求的智能体 {} 不可解析，本轮按全局配置回答", sessionId, requestedAgentId);
+            log.warn("[AGENT] 请求的智能体 {} 不可解析，本轮按全局配置回答", requestedAgentId);
         }
-        boolean boundOk = sessionService.bindAgent(sessionId,
-                picked == null ? "" : picked.getId(),
-                picked == null ? "" : picked.getName());
-        if (!boundOk) {
-            // 写库未生效（并发首问各写一次 / 写库异常）：下轮会再解析一次，理论上可能换人——告警便于排查
-            log.warn("[AGENT] 会话 {} 智能体绑定未写入（并发或写库失败），下一轮将重新解析", sessionId);
-        } else if (picked != null) {
-            log.info("[AGENT] 会话 {} 首问锁定智能体 {}（{}）", sessionId, picked.getId(), picked.getName());
-        } else {
-            log.info("[AGENT] 会话 {} 首问未使用智能体（锁定为全局配置）", sessionId);
-        }
-        // 绑定结果就地广播（不等整轮 done）：锁定发生在首问开始，前端也应在当轮就切到锁定态，
-        // 否则用户要等回答结束才看到"已绑定"，误以为锁定是在会话结束时才做的。
-        emitAgentBound(emitter, sessionId, picked);
         return picked;
-    }
-
-    /** 会话级绑定结果下发：{locked,agentId,agentName}（agentId 空串表示已绑定为"不使用智能体"） */
-    private void emitAgentBound(SseEmitter emitter, String sessionId, Agent bound) {
-        try {
-            Map<String, Object> info = new LinkedHashMap<>();
-            info.put("locked", true);
-            info.put("agentId", bound == null ? "" : bound.getId());
-            info.put("agentName", bound == null ? "" : bound.getName());
-            sendSseEvent(emitter, "agent_bound", JSON.toJSONString(info), sessionId);
-        } catch (Exception e) {
-            log.debug("[AGENT] 绑定结果事件下发失败（不影响问答）: {}", e.getMessage());
-        }
-    }
-
-    /** 派遣结果下发（复用编排卡片风格：候选数/命中/名称，前端在输入区上方展示） */
-    private void emitDispatched(SseEmitter emitter, Agent picked, int candidates, boolean fallback, String sessionId) {
-        if (picked == null) return;
-        try {
-            Map<String, Object> info = new LinkedHashMap<>();
-            info.put("candidates", candidates);
-            info.put("id", picked.getId());
-            info.put("name", picked.getName());
-            info.put("description", picked.getDescription());
-            info.put("fallback", fallback);
-            sendSseEvent(emitter, "agent_dispatched", JSON.toJSONString(info), sessionId);
-        } catch (Exception e) {
-            log.debug("[DISPATCH] 派遣结果事件下发失败（不影响问答）: {}", e.getMessage());
-        }
     }
 
     /**
      * §4 轮级委派下发：{id,name,description}。用户主动 @ 的归属变化要在当轮看得见（气泡上「由 X 作答本轮」），
-     * 不能像自动派遣那样归入排障开关——那是系统行为，这是用户指令。
+     * 不能像系统侧的检索细节那样归入排障开关——那是机器行为，这是用户指令。
      */
     private void emitAgentDelegated(SseEmitter emitter, Agent delegate, String sessionId) {
         try {
@@ -5744,7 +4352,7 @@ public class RagService {
             info.put("id", delegate.getId());
             info.put("name", delegate.getName());
             info.put("description", delegate.getDescription());
-            sendSseEvent(emitter, "agent_delegated", JSON.toJSONString(info), sessionId);
+            runtime.sendSseEvent(emitter, "agent_delegated", JSON.toJSONString(info), sessionId);
         } catch (Exception e) {
             log.debug("[AGENT] 委派事件下发失败（不影响问答）: {}", e.getMessage());
         }
@@ -5772,7 +4380,7 @@ public class RagService {
             Agent a = agentService.get(m.getId());
             if (a == null) {
                 String shown = (m.getName() == null || m.getName().isBlank()) ? m.getId() : m.getName();
-                addDegradation(degradations, degradedCodes, "agentMentionUnavailable",
+                runtime.addDegradation(degradations, degradedCodes, "agentMentionUnavailable",
                         "你 @ 的智能体「" + shown + "」已不可访问（被删除或权限变更），本轮由会话绑定的智能体回答");
                 log.warn("[AGENT] @ 提及的智能体 {} 不可解析，本轮回落会话绑定", m.getId());
             } else {
@@ -5780,7 +4388,7 @@ public class RagService {
             }
         }
         if (first != null && hasMore) {
-            addDegradation(degradations, degradedCodes, "agentMentionMultiple",
+            runtime.addDegradation(degradations, degradedCodes, "agentMentionMultiple",
                     "一次只能由一个智能体作答：已取第一个 @ 的「" + first.getName() + "」，其余提及本轮忽略");
         }
         return first;
@@ -5850,7 +4458,6 @@ public class RagService {
         return hasOwn ? agent.getSystemPrompt() : properties.getSystemPrompt();
     }
 
-
     /**
      * 内置工具本轮是否真的挂得上：本族开关（全局/智能体三态）+ 智能体的「具体项白名单」两道都过才算。
      * <p>判据本体在 {@code BuiltinToolProvider.exposes}，这里只是问答侧的查询口——装配与提示词
@@ -5873,6 +4480,33 @@ public class RagService {
         return toolRegistry.anyExposed(ToolFamily.TODO,
                 mountContext(agent, "", guestMode, false, branchTurn, (code, message) -> {
                 }, null));
+    }
+
+    /** 咨询工具本轮挂不挂（判据本体在 {@code SubAgentToolProvider.exposes}：族开关 + 游客 + 分支轮不挂） */
+    private boolean consultExposed(boolean guestMode, Agent agent, boolean branchTurn) {
+        return toolRegistry.exposes(ToolFamily.SUBAGENT, "consultAgent",
+                mountContext(agent, "", guestMode, false, branchTurn, (code, message) -> {
+                }, null));
+    }
+
+    /**
+     * 「可咨询助手」一节（P5 agent-as-tool）：把本轮真的能咨询的助手连同 id 一起交给模型。
+     * <p>为什么必须写进提示词而不是塞进工具描述：{@code @Tool} 描述是编译期常量，而这份清单是本轮的
+     * （按使用者可读范围算）。没有这一节，模型只能猜 id——猜错的表现是一次莫名其妙的"查无此人"，
+     * 用户看不出是自己没配助手还是模型编了个号。
+     * <p>挂不上工具就不写这一节（与装配同一条判据）：教模型用一件它手上没有的能力，是本仓反复点名的错。
+     * 没有可读助手 / 游客 / 分支轮 → 返回空串，对本轮提示词零影响。
+     */
+    private String consultGuide(boolean guestMode, Agent agent, boolean branchTurn) {
+        if (!consultExposed(guestMode, agent, branchTurn)) return "";
+        String catalog = agentService.consultCatalog(agent == null ? "" : agent.getId());
+        if (catalog.isBlank()) return "";
+        return "\n\n## 可咨询助手\n"
+                + "遇到超出你手上资料、且明显落在某位助手职责范围内的问题，用 consultAgent 派它去查"
+                + "（可以派多次，每次一位；它会带着自己的知识库查一遍再把结论与资料交回）。"
+                + "id 必须逐字取自下面这份清单，不要猜。"
+                + "通用问题（常识、写作、建议）不要派——没有对应的助手，直接自己答。\n"
+                + catalog;
     }
 
     /**
@@ -5937,6 +4571,20 @@ public class RagService {
      * <p>未配置或配置为空 → 返回空列表，编排走原有的多视角策略；
      * 配置了 ID → 逐个加载，跳过已删除或已改回普通智能体的（避免残留 ID 造成空转）。</p>
      */
+    /** 把某位排到列表最前（已在场时去重后前置，不重复出现两次） */
+    private static List<Agent> withFirst(Agent first, List<Agent> rest) {
+        List<Agent> out = new ArrayList<>();
+        out.add(first);
+        for (Agent a : rest) if (!first.getId().equals(a.getId())) out.add(a);
+        return out;
+    }
+
+    /** 列表里是否已有该 id（@ 点名去重用） */
+    private static boolean hasAgentId(List<Agent> list, String id) {
+        for (Agent a : list) if (a.getId().equals(id)) return true;
+        return false;
+    }
+
     private List<Agent> resolveSubAgents(Agent agent) {
         if (agent == null || agent.getSubAgentIds() == null || agent.getSubAgentIds().isBlank()) {
             return List.of();
@@ -5972,452 +4620,6 @@ public class RagService {
     // ==================== P3a：子智能体真全循环 ====================
 
     /**
-     * 派分支时带过去的父轮上下文（对标 DeepSeek Harness 的 fork-in-process：分支继承父历史）。
-     * <p>不做这件事的代价很具体：主智能体问"上面那份流程里第三步是什么，把它写成脚本"，分支只拿到
-     * 后半句，检索不到任何东西，回报回来是废的——委派越常见，这个缺口越像 bug。
-     * <p>预算<b>逐层递减</b>（{@code agent.subagentBriefChars / depth}）：孙辈不需要整段父历史，
-     * 层数一深就变成每层都重复搬一遍全文，那是纯成本。
-     * <p>历史取不到（{@code getRecentHistory} 明确返回 null=读失败）时只带问题，不谎称"没有历史"。
-     */
-    private String branchBrief(String sessionId, String question, int depth) {
-        int nextDepth = depth + 1;
-        int budget = Math.max(200, configService.getInt("agent.subagentBriefChars", 1200) / nextDepth);
-        // 三档继承（agent.subagentBriefMode）：brief=最近 4 条、各截 220 字（本项引入前的行为，逐字不变）；
-        // recent=按配置的轮数带、每条放宽；full=尽量整条带、只在总预算处夹。
-        // 为什么默认还是 brief：分支是按支数乘成本的，「多带前情」在单支上是收益、在多支上是纯加钱，
-        // 而且带多了会把子智能体自己的知识库范围挤没——所以放开必须是显式选择。
-        String mode = configService.get("agent.subagentBriefMode");
-        mode = mode == null ? "brief" : mode.trim().toLowerCase();
-        boolean briefMode = !"recent".equals(mode) && !"full".equals(mode);
-        int turns = Math.max(2, configService.getInt("agent.subagentBriefTurns", 6));
-        // 一问一答算一轮，所以条数是轮数的两倍；full 不逐条截（保留换行与表格），只在末尾按预算夹
-        int maxLines = briefMode ? 4 : turns * 2;
-        int perLine = briefMode ? 220 : "recent".equals(mode) ? Math.max(320, budget / 3) : budget;
-        StringBuilder sb = new StringBuilder();
-        sb.append("用户最初的问题：").append(truncateForBrief(question, budget));
-        int lineCount = 0;
-        try {
-            List<Map<String, Object>> history = sessionService.getRecentHistory(sessionId, maxLines + 1);
-            if (history == null) {
-                log.warn("[SUBAGENT] 父轮历史读取失败（分支只带问题，不带上下文）session={}", sessionId);
-            } else if (!history.isEmpty()) {
-                // 最近一轮通常是本问题自己（刚即时落库），倒序取、跳过它，才拿到真正的前情
-                List<String> lines = new ArrayList<>();
-                for (int i = history.size() - 1; i >= 0 && lines.size() < maxLines; i--) {
-                    Map<String, Object> m = history.get(i);
-                    String content = m.get("content") == null ? "" : String.valueOf(m.get("content")).trim();
-                    if (content.isBlank()) continue;
-                    String role = String.valueOf(m.getOrDefault("role", ""));
-                    if (content.equals(question == null ? "" : question.trim())) continue;
-                    String body = "full".equals(mode) ? clipForBrief(content, perLine)
-                            : truncateForBrief(content, perLine);
-                    lines.add(("user".equalsIgnoreCase(role) ? "问：" : "答：") + body);
-                }
-                lineCount = lines.size();
-                if (!lines.isEmpty()) {
-                    sb.append("\n此前的对话（从新到旧）：\n");
-                    for (String line : lines) sb.append("- ").append(line).append("\n");
-                }
-            }
-        } catch (Exception e) {
-            log.warn("[SUBAGENT] 父轮上下文整理失败（分支只带问题）: {}", e.getMessage());
-        }
-        String brief = sb.toString().trim();
-        if (brief.length() > budget) brief = brief.substring(0, budget);
-        // 每次派分支留一行：档位、预算、带了几条、成文多长。分支回报里那句「没随附原文」是真是假，
-        // 只有这一行能对得上——否则「继承档没生效」和「子智能体自己没读」在现场完全分不开
-        log.info("[SUBAGENT] 父轮交代：档={} 预算 {} 带 {} 条 成文 {} 字 session={}",
-                mode, budget, lineCount, brief.length(), sessionId);
-        return brief;
-    }
-
-    /** full 档用的夹取：只限长度，不动空白（表格与列表的换行就是内容，压成一行会把它读散） */
-    private static String clipForBrief(String s, int max) {
-        if (s == null) return "";
-        String t = s.trim();
-        return t.length() > max ? t.substring(0, max) + "…" : t;
-    }
-
-    private static String truncateForBrief(String s, int max) {
-        if (s == null) return "";
-        String t = s.replaceAll("\\s+", " ").trim();
-        return t.length() > max ? t.substring(0, max) + "…" : t;
-    }
-
-    /**
-     * 全循环分支的执行器（{@link BranchRunner} 的实现，按轮回传）。
-     * <p>形状与工作流的 subagent 节点同一条通路（临时会话 + 收集型通道 + 完整 {@code chat} 管线），
-     * 区别在归属：这一条要<b>继承父轮</b>的深度与上下文、要把产物收养进父会话、并且失败绝不能外抛——
-     * 分支是增强项，一支炸了不能让用户这一轮整个报错。
-     * <p>为什么用临时会话：{@code chat()} 的轮级互斥 {@code TURN_IN_FLIGHT} 按会话加锁，
-     * 借父会话就是父轮自己撞自己的坑（派出去立刻失败）；而分支之间用不同会话天然并行、
-     * 彼此不互斥。临时会话跑完即删（软删可审计），不污染会话列表。
-     */
-    private BranchRunner branchRunner(String parentSessionId, String parentTurnId, String userId,
-                                      boolean guestMode, SseEmitter parentEmitter) {
-        return req -> {
-            long start = System.currentTimeMillis();
-            String childSession = null;
-            CollectingSseEmitter sink = new CollectingSseEmitter();
-            // 分支的实时过程（P3a 刀2）：那一支在父轮卡片上原本只有「跑了 N 步工具」这个事后计数，
-            // 一支跑两三分钟时用户对着一个静止的数字等。这里把它自己那几路过程事件原样转给父轮通道，
-            // 事件名换成 subagent_step、带上分支序号，前端归到对应那一行下面（不重组协议、不改内容）。
-            // 只转不发完就没了：这份实时步骤不落库，刷新后看到的仍是步数与回报全文。
-            final int branchIndex = Math.max(0, req.branchIndex());
-            final boolean[] first = {false};
-            sink.forwardProcess((type, content) -> {
-                Map<String, Object> step = new LinkedHashMap<>();
-                step.put("i", branchIndex);
-                step.put("agent", req.childAgentName());
-                step.put("type", type);
-                step.put("content", content == null ? "" : content);
-                boolean sent = sendSseEvent(parentEmitter, "subagent_step", JSON.toJSONString(step), parentSessionId);
-                if (!first[0]) {
-                    // 只在首帧留一行：接通与否是"这一支有没有实时过程"的分水岭，而静默失败最难查
-                    first[0] = true;
-                    log.info("[SUBAGENT] 分支实时过程首帧：branch={} type={} 父轮接收={} session={}",
-                            branchIndex, type, sent, parentSessionId);
-                }
-            });
-            try {
-                childSession = sessionService.createSession(req.userId());
-                chat(ChatCommand.builder()
-                        .sessionId(childSession)
-                        .question(req.question())
-                        .userId(req.userId())
-                        .userImages(List.of())
-                        .attachments(List.of())
-                        .skills(List.of())
-                        .agentId(req.childAgentId())
-                        .modelOverride(req.modelRef())
-                        .guestMode(guestMode)
-                        .subagentDepth(req.depth())
-                        .parentBrief(req.parentBrief())
-                        .parentSessionId(req.parentSessionId())
-                        .build(), sink);
-                if (!sink.awaitDone(req.timeoutMs())) {
-                    // 超时必须把那一支叫停：它还在流水线里跑，而父轮已经不等它了。
-                    // 不叫停的后果是"删了一条还在被写的会话"+"一条线程被派出去的任务占住"，
-                    // 并发几轮之后问答池就被没人等的分支填满。
-                    stopTurn(childSession, req.userId());
-                    return BranchReport.failed(BranchReport.TIMEOUT,
-                            "分支超时（" + req.timeoutMs() / 1000 + " 秒）", System.currentTimeMillis() - start);
-                }
-                if (sink.lastError() != null && !sink.lastError().isBlank()) {
-                    return BranchReport.failed(BranchReport.FAILED, sink.lastError(),
-                            System.currentTimeMillis() - start);
-                }
-                String answer = sink.answer() == null ? "" : sink.answer().strip();
-                if (answer.isBlank()) {
-                    return BranchReport.failed(BranchReport.FAILED, "子智能体未产生回答",
-                            System.currentTimeMillis() - start);
-                }
-                // 子轮的引用/图片表是父轮续编编号的依据（done 载荷里那份是<b>已签名</b>的展示副本，
-                // 存进回报前先把签名参数剥掉，回到与主链路一致的原始 URL）
-                List<Map<String, Object>> childSources = new ArrayList<>();
-                List<String> childImages = new ArrayList<>();
-                int steps = 0;
-                try {
-                    // done 的 content 在 sendSseEvent 里是被当**字符串**再序列化一次的（外层 {"content":"{...}"}），
-                    // 所以这里要解两层：直接 parseObject 会在内层引号处报 illegal input（真机实测踩到，
-                    // 表现是引用与工具步数静默为 0，只有日志能看出来）
-                    Object parsed = sink.donePayload() == null ? null : com.alibaba.fastjson2.JSON.parse(sink.donePayload());
-                    if (parsed instanceof String s) parsed = com.alibaba.fastjson2.JSON.parse(s);
-                    com.alibaba.fastjson2.JSONObject done = parsed instanceof com.alibaba.fastjson2.JSONObject o ? o : null;
-                    if (done != null) {
-                        com.alibaba.fastjson2.JSONArray ss = done.getJSONArray("sources");
-                        if (ss != null) {
-                            for (int i = 0; i < ss.size(); i++) {
-                                com.alibaba.fastjson2.JSONObject o = ss.getJSONObject(i);
-                                if (o == null) continue;
-                                Map<String, Object> m = new LinkedHashMap<>(o);
-                                m.put("images", rawUrlsOf(o.getList("images", String.class)));
-                                childSources.add(m);
-                            }
-                        }
-                        childImages = rawUrlsOf(done.getList("finalImages", String.class));
-                        // 「这一支跑了 N 步工具」只数真执行过的：被守卫挡下的那几次工具体一次没跑，
-                        // 按台账条数算会把"平台只让它试了 4 次"读成"它试了 8 次还没找到"
-                        com.alibaba.fastjson2.JSONArray tc = done.getJSONArray("toolCalls");
-                        if (tc != null) {
-                            for (int i = 0; i < tc.size(); i++) {
-                                com.alibaba.fastjson2.JSONObject o = tc.getJSONObject(i);
-                                if (o != null && !o.getBooleanValue("denied")) steps++;
-                            }
-                        }
-                    }
-                } catch (Exception e) {
-                    log.warn("[SUBAGENT] 分支回报解析失败（正文照常带回，引用与图片不续编）: {}", e.getMessage());
-                }
-                // 产物收养：子轮交付的东西归到父会话，用户在父轮里就点得到（跑完即删的临时会话留不住它）
-                List<String> artifactFiles = new ArrayList<>();
-                try {
-                    for (Map<String, Object> a : artifactService.adoptFromSession(childSession, parentSessionId)) {
-                        Object f = a.get("filename");
-                        if (f != null) artifactFiles.add(String.valueOf(f));
-                    }
-                } catch (Exception e) {
-                    log.warn("[SUBAGENT] 分支产物收养失败（回答仍有效，产物留在子会话）: {}", e.getMessage());
-                }
-                long ms = System.currentTimeMillis() - start;
-                log.info("[SUBAGENT] 全循环分支完成 {}：正文 {}字 引用 {} 条 工具步 {} 产物 {} 个 耗时 {}ms",
-                        req.describe(), answer.length(), childSources.size(), steps, artifactFiles.size(), ms);
-                return new BranchReport(BranchReport.DONE, answer, List.copyOf(childSources),
-                        List.copyOf(childImages), steps, List.copyOf(artifactFiles), ms, null);
-            } catch (Exception e) {
-                Throwable cause = e.getCause() != null ? e.getCause() : e;
-                log.warn("[SUBAGENT] 全循环分支异常（按失败降级，不影响主链路）{}: {}",
-                        req.describe(), cause.toString());
-                return BranchReport.failed(BranchReport.FAILED, cause.toString(), System.currentTimeMillis() - start);
-            } finally {
-                // 收集型通道不触发 onCompletion，登记必须主动清（否则整轮台账与断开表挂着引用）
-                forgetSseChannel(sink);
-                if (childSession != null) {
-                    try {
-                        sessionService.deleteSession(req.userId(), childSession);
-                    } catch (Exception ignored) {
-                        // 删失败只多留一条临时会话，不影响回答；硬抛会把已跑完的分支报成失败
-                    }
-                }
-            }
-        };
-    }
-
-    /** 展示层签名 URL → 原始 URL（与库内/上下文里存的那份同源，才能与主链路的编号表对上） */
-    private static List<String> rawUrlsOf(List<String> urls) {
-        if (urls == null) return List.of();
-        List<String> out = new ArrayList<>();
-        for (String u : urls) {
-            if (u == null || u.isBlank()) continue;
-            int q = u.indexOf('?');
-            out.add(q > 0 ? u.substring(0, q) : u);
-        }
-        return List.copyOf(out);
-    }
-
-    /**
-     * 回报段文本（占位形态）：每条分支一段，正文里的引用/图片先写成 {@code ⟦b<支>:r<号>⟧}。
-     * <p>预算：全部回报共享 {@code agent.digestMaxChars}，按支数均分——一支写完一篇文章把
-     * 主链路的上下文挤光，用户看到的就不是主智能体的回答而是它的拼接稿。
-     * <p>失败分支照样留一行（沿用要点段那条「失败要看得见」的口径）：不写，主模型会把
-     * "这一支没结果"当成"这件事不用做"。
-     */
-    private String branchReportsText(List<SubAgentOrchestrator.FullBranch> fulls) {
-        int per = Math.max(300, configService.getInt("agent.digestMaxChars", 1500) / Math.max(1, fulls.size()));
-        StringBuilder sb = new StringBuilder();
-        for (SubAgentOrchestrator.FullBranch fb : fulls) {
-            BranchReport r = fb.report();
-            if (sb.length() > 0) sb.append("\n");
-            if (!r.usable()) {
-                sb.append("· 【").append(fb.name()).append("】未办成（")
-                        .append(BranchReport.TIMEOUT.equals(r.status()) ? "超时" : "失败").append("：")
-                        .append(truncateForBrief(r.error() == null ? "无详情" : r.error(), 60)).append("）\n");
-                continue;
-            }
-            sb.append("· 【").append(fb.name()).append("】");
-            if (!r.artifactFilesOrEmpty().isEmpty()) {
-                sb.append("已交付：").append(String.join("、", r.artifactFilesOrEmpty())).append("；");
-            }
-            sb.append(r.toolSteps() > 0 ? "用了 " + r.toolSteps() + " 步工具：\n" : "结论：\n");
-            sb.append(placeholderize(r, fb.idx(), per)).append("\n");
-        }
-        return sb.toString().strip();
-    }
-
-    /**
-     * 把子轮正文里的 {@code [N]} / {@code [图片N]} 换成占位记号，等父轮编号定稿后回填。
-     * <p>只认子轮真发过的编号（超出其引用数/图片数的编号是模型编的，直接去掉——与主链路对
-     * 模型越界编号的处理同口径，不能让分支里的假引用比主链路更好混）。
-     */
-    private static String placeholderize(BranchReport r, int branchIdx, int budget) {
-        String text = r.answerOrEmpty().replaceAll("\\s+", " ").strip();
-        if (text.length() > budget) {
-            log.warn("[SUBAGENT] 分支回报超预算已截断：{} 字 > {} 字（分支 {}）", text.length(), budget, branchIdx);
-            text = text.substring(0, budget) + "…";
-        }
-        int maxRef = r.sourcesOrEmpty().size();
-        int maxImg = r.imagesOrEmpty().size();
-        Matcher cm = Pattern.compile("\\[(\\d{1,3})]").matcher(text);
-        StringBuffer cited = new StringBuffer();
-        while (cm.find()) {
-            int n = Integer.parseInt(cm.group(1));
-            cm.appendReplacement(cited, n >= 1 && n <= maxRef
-                    ? Matcher.quoteReplacement("⟦b" + branchIdx + ":r" + n + "⟧") : "");
-        }
-        // appendTail 必须有：只调 appendReplacement 时，最后一段（以及一处都没命中时的整段正文）
-        // 不会进 StringBuffer——那等于把子智能体的回报悄悄吞成空串，界面上是"派了，什么都没有"
-        cm.appendTail(cited);
-        cm = Pattern.compile("\\[图片(\\d{1,3})]").matcher(cited.toString());
-        StringBuffer imgs = new StringBuffer();
-        while (cm.find()) {
-            int n = Integer.parseInt(cm.group(1));
-            cm.appendReplacement(imgs, n >= 1 && n <= maxImg
-                    ? Matcher.quoteReplacement("⟦b" + branchIdx + ":i" + n + "⟧") : "");
-        }
-        cm.appendTail(imgs);
-        return imgs.toString();
-    }
-
-    /**
-     * 回填父轮编号（P3a 的"引用继承"落点）。
-     * <ul>
-     *   <li>子轮引用过的块<b>多数已在父轮参考资料里</b>（分支命中的那些本就并进了主链路填充）——
-     *       按 knowledgeId 复用父轮已有编号，绝不重复注册同号；</li>
-     *   <li>父轮没带上的（分支自己调检索工具命中、没进主链路的）补注册为新来源，origin=SUBAGENT，
-     *       续在父轮编号尾部——用户点得开，才算"分支的结论有出处"；</li>
-     *   <li>超出本轮资料范围（智能体库范围之外）的那几块<b>不注册</b>：只把编号摘掉并在段末说明。
-     *       范围是智能体配置的能力边界，不能因为"分支跑在另一个会话里"就把本该看不到的资料
-     *       顺带引到主轮来；</li>
-     *   <li>图片按 URL 归并：同一张图在父子两轮共用一个编号，否则回答里会出现两张同一截图。</li>
-     * </ul>
-     */
-    private String resolveBranchReportRefs(String section, List<SubAgentOrchestrator.FullBranch> fulls,
-                                           List<Map<String, Object>> sources, Map<Integer, String> imgIndex,
-                                           Map<Integer, String> imgDescIndex, Map<String, String> fileNameMap,
-                                           Set<String> scopeDocIds, List<Map<String, String>> degradations,
-                                           Set<String> degradedCodes) {
-        Map<Integer, Map<Integer, Integer>> refMap = new HashMap<>();     // 支 → (子引用号 → 父号)
-        Map<Integer, Map<Integer, Integer>> imgMap = new HashMap<>();     // 支 → (子图片号 → 父图片号)
-        int dropped = 0;
-        for (SubAgentOrchestrator.FullBranch fb : fulls) {
-            BranchReport r = fb.report();
-            if (!r.usable()) continue;
-            Map<Integer, Integer> rm = new HashMap<>();
-            Map<Integer, Integer> im = new HashMap<>();
-            // 本轮被接受的那些来源里的图片 URL：图片编号只从这些里续编。
-            // 不加这道限制就会把"父轮范围外那块资料上的截图"编进父轮图片表——正文里的编号摘掉了，
-            // 图却仍然随 image 事件下发给了前端，等于绕过了上面那条范围判定。
-            Set<String> acceptedImgUrls = new HashSet<>();
-            for (Map<String, Object> src : r.sourcesOrEmpty()) {
-                Integer childRef = intOf(src.get("ref"));
-                if (childRef == null) continue;
-                String kid = src.get("knowledgeId") == null ? null : String.valueOf(src.get("knowledgeId"));
-                String docId = src.get("docId") == null ? null : String.valueOf(src.get("docId"));
-                if (kid == null || kid.isBlank()) continue;
-                Integer parent = findSourceRef(sources, kid);
-                if (parent == null) {
-                    if (scopeDocIds != null && (docId == null || !scopeDocIds.contains(docId))) {
-                        dropped++;
-                        continue;   // 范围外：宁可不编号，也不把父轮不该用的资料引出来
-                    }
-                    parent = registerBranchSource(src, sources, imgIndex, imgDescIndex, fileNameMap, fb.name());
-                }
-                if (parent == null) continue;
-                rm.put(childRef, parent);
-                if (src.get("images") instanceof List<?> l) {
-                    for (Object u : l) if (u != null) acceptedImgUrls.add(String.valueOf(u));
-                }
-            }
-            List<String> childImgs = r.imagesOrEmpty();
-            for (int i = 0; i < childImgs.size(); i++) {
-                String url = childImgs.get(i);
-                if (url == null || !acceptedImgUrls.contains(url)) continue;
-                Integer seq = parentImageSeq(url, imgIndex, imgDescIndex);
-                if (seq != null) im.put(i + 1, seq);   // 子轮 [图片1] = 下标 0
-            }
-            refMap.put(fb.idx(), rm);
-            imgMap.put(fb.idx(), im);
-        }
-        String out = fillTokens(section, refMap, imgMap);
-        if (dropped > 0) {
-            out = out + "\n（注：该分支有 " + dropped + " 处引用超出本轮资料范围，未编号，回答时不要引用它们。）";
-            addDegradation(degradations, degradedCodes, "subagentSourceOutOfScope",
-                    "子智能体回报中有 " + dropped + " 处资料不在本轮检索范围内，未作为引用");
-            log.warn("[SUBAGENT] 分支回报中 {} 处引用超出本轮资料范围（未编号）", dropped);
-        }
-        return out;
-    }
-
-    /** 把占位记号换成父轮编号；换不到（对应资料没进来）的一律摘掉，不留一个指不回来源的编号 */
-    private static String fillTokens(String text, Map<Integer, Map<Integer, Integer>> refMap,
-                                     Map<Integer, Map<Integer, Integer>> imgMap) {
-        Matcher m = Pattern.compile("⟦b(\\d+):([ri])(\\d{1,4})⟧").matcher(text);
-        StringBuffer sb = new StringBuffer();
-        while (m.find()) {
-            int branch = Integer.parseInt(m.group(1));
-            int n = Integer.parseInt(m.group(3));
-            Map<Integer, Integer> map = "r".equals(m.group(2)) ? refMap.get(branch) : imgMap.get(branch);
-            Integer mapped = map == null ? null : map.get(n);
-            String rep = mapped == null ? ""
-                    : ("r".equals(m.group(2)) ? "[" + mapped + "]" : "[图片" + mapped + "]");
-            m.appendReplacement(sb, Matcher.quoteReplacement(rep));
-        }
-        m.appendTail(sb);
-        return sb.toString();
-    }
-
-    /** 父轮引用表里是否已有这一块（按 knowledgeId，与主链路填充的判重同一口径） */
-    private static Integer findSourceRef(List<Map<String, Object>> sources, String knowledgeId) {
-        for (Map<String, Object> s : sources) {
-            if (s == null || knowledgeId == null) continue;
-            if (knowledgeId.equals(String.valueOf(s.get("knowledgeId")))) {
-                return intOf(s.get("ref"));
-            }
-        }
-        return null;
-    }
-
-    /** 子轮来源补注册进父轮：续编号、带原文片段与图片，origin=SUBAGENT 供前端标出来路 */
-    private Integer registerBranchSource(Map<String, Object> src, List<Map<String, Object>> sources,
-                                         Map<Integer, String> imgIndex, Map<Integer, String> imgDescIndex,
-                                         Map<String, String> fileNameMap, String agentName) {
-        Map<String, Object> entry = new LinkedHashMap<>();
-        int ref = sources.size() + 1;
-        entry.put("ref", ref);
-        entry.put("knowledgeId", src.get("knowledgeId"));
-        entry.put("docId", src.get("docId"));
-        String docId = src.get("docId") == null ? null : String.valueOf(src.get("docId"));
-        String fileName = fileNameMap == null || docId == null ? null : fileNameMap.get(docId);
-        if (fileName == null && docId != null && !docId.isBlank() && documentMetaCache != null) {
-            fileName = documentMetaCache.getFileNames(Set.of(docId)).get(docId);
-        }
-        entry.put("fileName", fileName);
-        entry.put("title", src.get("title"));
-        entry.put("snippet", src.get("snippet"));
-        List<String> images = src.get("images") instanceof List<?> l
-                ? l.stream().map(String::valueOf).toList() : List.of();
-        entry.put("images", images);
-        entry.put("origin", "SUBAGENT");
-        entry.put("agent", agentName);
-        Object score = src.get("score");
-        if (score != null) {
-            try {
-                entry.put("score", Math.round(Double.parseDouble(String.valueOf(score)) * 1000) / 1000.0);
-            } catch (NumberFormatException ignored) {
-                // 子轮没给分数就不写一个假分数
-            }
-        }
-        sources.add(entry);
-        for (String url : images) {
-            parentImageSeq(url, imgIndex, imgDescIndex);
-        }
-        return ref;
-    }
-
-    /** 图片按原始 URL 归并进父轮编号表；没有则续编一个（描述未知留空，图片相关性校验对空描述放行） */
-    private static Integer parentImageSeq(String rawUrl, Map<Integer, String> imgIndex,
-                                          Map<Integer, String> imgDescIndex) {
-        if (rawUrl == null || rawUrl.isBlank()) return null;
-        for (Map.Entry<Integer, String> e : imgIndex.entrySet()) {
-            if (rawUrl.equals(e.getValue())) return e.getKey();
-        }
-        int seq = imgIndex.size() + 1;
-        imgIndex.put(seq, rawUrl);
-        imgDescIndex.put(seq, "");
-        return seq;
-    }
-
-    private static Integer intOf(Object v) {
-        if (v == null) return null;
-        if (v instanceof Number n) return n.intValue();
-        try {
-            return Integer.valueOf(String.valueOf(v).trim());
-        } catch (NumberFormatException e) {
-            return null;
-        }
-    }
-
-    /**
      * 「具体项范围」字段解析（与主流智能体平台的资源选择语义一致）：
      * <ul>
      *   <li>null → null：跟随全局，不做具体项筛选；</li>
@@ -6434,9 +4636,16 @@ public class RagService {
                 .collect(Collectors.toSet());
     }
 
-
-    /** 智能体绑定的知识库集合（主链路检索与精确检索工具共用；null=智能体未绑定，不限库） */
-    private java.util.Collection<String> scopeKbIdsOf(Agent agent, String userId) {
+    /**
+     * 本轮的库界（主链路检索与精确检索工具共用）。
+     * <p>{@code walled=false}（用户在对话页直接发起的轮）返回 null＝不限库，检索侧按使用者可见库收口：
+     * 智能体绑定的库不再是"这一轮能查什么"的墙（P5）。返回 null 与"智能体没绑库"是同一条路径，
+     * 语义就是"没有墙"。
+     * <p>{@code walled=true}（免登录分享页 / 对外 MCP / 子智能体分支）保持原语义：内置「问渠」按使用者
+     * 解析为「默认库＋官方手册库」，其余按智能体绑定的库。前两者是权限墙，后者是"专业域"的定义。
+     */
+    private java.util.Collection<String> scopeKbIdsOf(Agent agent, String userId, boolean walled) {
+        if (!walled) return null;
         Set<String> builtinScope = builtinScopeKbIds(agent, userId);
         if (builtinScope != null) return builtinScope;
         return (agent == null || agent.getKnowledgeBaseIds() == null || agent.getKnowledgeBaseIds().isBlank())
@@ -6498,7 +4707,9 @@ public class RagService {
      * <p>内置「问渠」例外：范围恒为使用者默认库「问渠」＋官方内置手册库的<b>整库</b>
      * （见 {@link #builtinScopeKbIds}），不叠加文档级细选——该字段对内置无编辑入口，存量值也不再生效。</p>
      */
-    private Set<String> resolveScopeDocIds(Agent agent, String userId) {
+    private Set<String> resolveScopeDocIds(Agent agent, String userId, boolean walled) {
+        // 与 {@link #scopeKbIdsOf} 同一条口径：登录页的父轮没有墙，被咨询方/游客/分支才有
+        if (!walled) return null;
         if (agent == null) return null;
         Set<String> builtinScope = builtinScopeKbIds(agent, userId);
         if (builtinScope != null) {
@@ -6573,7 +4784,7 @@ public class RagService {
             if (out.isEmpty()) {
                 // 显式 @ 了文档却取不到内容（未解析/解析失败/全部停用）——不能静默变成"什么都没引用"
                 log.warn("[FAIL-LOUD] @ 引用的文档没有可用内容块（未解析或全部停用）: docs={}", scope.docIds());
-                addDegradation(degradations, degradedCodes, "mentionEmpty",
+                runtime.addDegradation(degradations, degradedCodes, "mentionEmpty",
                         "你引用的文档还没有可用的解析内容，本轮不会把它作为参考资料");
             } else {
                 log.info("[MENTION] @ 引用文档块前置 {} 块（{} 篇，每篇上限 {}）",
@@ -6582,7 +4793,7 @@ public class RagService {
             return out;
         } catch (Exception e) {
             log.warn("[FAIL-LOUD] @ 引用文档块加载失败: {}", e.toString());
-            addDegradation(degradations, degradedCodes, "mentionLoadFailed", "引用的文档内容读取失败，本轮未带入");
+            runtime.addDegradation(degradations, degradedCodes, "mentionLoadFailed", "引用的文档内容读取失败，本轮未带入");
             return List.of();
         }
     }
@@ -6653,7 +4864,7 @@ public class RagService {
         // 最大输出未声明 = 不主动限制（不下发 max_tokens，交由厂商默认）；预算公式按 0 处理
         int maxOutput = declaredOutput != null && declaredOutput > 0 ? declaredOutput : 0;
         if (!windowFromModel) {
-            addDegradation(degradations, degradedCodes, "ctxWindowUndeclared",
+            runtime.addDegradation(degradations, degradedCodes, "ctxWindowUndeclared",
                     "该模型未声明上下文窗口，检索资料将无法填入；请在模型管理页为 " + resolvedModel + " 声明窗口");
             log.warn("[CTX] 模型 {} 未声明上下文窗口，检索预算托底 1000", resolvedModel);
             return new CtxBudget(0, maxOutput, 1000, "未声明");
@@ -6675,7 +4886,7 @@ public class RagService {
         // 否则用户只看到「预算 1.0k」却不知道是最大输出把检索资料的预算吃光了。修复入口在模型管理。
         if (maxOutput > 0 && budget <= 0) {
             boolean fromUser = "用户所选窗口".equals(windowSource);
-            addDegradation(degradations, degradedCodes, "contextBudgetFloored",
+            runtime.addDegradation(degradations, degradedCodes, "contextBudgetFloored",
                     "该模型声明的最大输出 " + maxOutput + " 不小于" + windowSource + "预算（" + windowSource + " " + window
                             + " × 安全系数 " + ModelRegistryService.CONTEXT_SAFETY_FACTOR + " = " + windowBudget + "），"
                             + "上下文预算被托底为 1000，检索资料将无法填入；请在"
@@ -6780,265 +4991,11 @@ public class RagService {
     }
 
     /**
-     * 构建注入「辅助调用」的对话历史（多轮改写/自动派遣等短上下文场景）：
-     * 单条截断 + 剥离 [图片N] 标记 + token 总上限。主回答走 {@link #assembleHistory}（预算驱动全量带入）。
-     */
-    private String buildHistoryText(List<Map<String, Object>> history) {
-        if (history == null || history.isEmpty()) return "";
-        int perMsgChars = 200;
-        int maxTokens = 1200;
-        StringBuilder sb = new StringBuilder();
-        int total = 0;
-        for (Map<String, Object> msg : history) {
-            String role = String.valueOf(msg.getOrDefault("role", ""));
-            String content = String.valueOf(msg.getOrDefault("content", ""));
-            content = stripImageMarks(content).trim();
-            if (content.isEmpty()) continue;
-            if (content.length() > perMsgChars) {
-                content = content.substring(0, perMsgChars) + "…";
-            }
-            String line = role + ": " + content + "\n";
-            int tokens = TokenCounter.estimate(line);
-            if (total + tokens > maxTokens) {
-                break; // 超总上限，丢弃更早的历史
-            }
-            sb.append(line);
-            total += tokens;
-        }
-        return sb.toString();
-    }
-
-    // ==================== 对话历史：预算驱动全量带入 + 滚动压缩 ====================
-
-    /** 历史装配结果：注入 prompt 的两段文本 + 分类用量（容量面板） + 本轮压缩轮数 */
-    private record HistoryBundle(String summaryText, String recentText,
-                                 int summaryTokens, int recentTokens, int compressedTurns) {}
-
-    /** 历史扫描上限（条）：单会话未压缩积压的读取上限，超出部分下一轮压缩自愈 */
-    private static final int HISTORY_SCAN_LIMIT = 200;
-    /** 至少保留原样的消息条数（2 轮）：保证最近一问一答逐字在场，压缩不吞掉刚说的话 */
-    private static final int HISTORY_MIN_KEEP = 4;
-    /** 手动压缩（/compact）单次请求的摘要调用上限与单批输入上限：长会话分多批滚动合并，
-     *  避免一次调用吃掉整窗（输入超限会被网关直接拒绝）；到上限仍有积压时回传 partial，不假装压完了 */
-    private static final int COMPACT_MAX_ROUNDS = 8;
-    private static final int COMPACT_CHUNK_TOKENS = 12000;
-    /** 手动压缩单批超时下限（毫秒）：用户显式发起、界面有 loading，不必卡自动路径那个 20 秒的紧阈值
-     *  （单批输出接近 1024 上限时实测可跑 19 秒，紧阈值下会误判超时） */
-    private static final long COMPACT_TIMEOUT_FLOOR_MS = 60000L;
-
-    /**
-     * 预算驱动装配对话历史（替代旧的「按轮数 + 单条截断」）：近期轮次原样注入、更早轮次滚动压缩进会话摘要，
-     * 全部历史信息始终在场（近期原样 + 远期摘要）。
-     * <p>
-     * 压缩触发线 = 检索预算 × context.compressRatio。不在整窗打满时才压：压缩调用自身要花输入 token 与数秒时延，
-     * 提前压才能给当轮回答留出空间，且之后每轮摊销、不会每轮都触发。
-     * 压缩关闭或调用失败 → 回落「按预算装近期、更早丢弃」（失败时强制可见降级提示，不静默丢历史）。
-     */
-    private HistoryBundle assembleHistory(String sessionId, String resolvedModel, int budget,
-                                          List<Map<String, String>> degradations, Set<String> degradedCodes) {
-        Session session = sessionService.sessionById(sessionId);
-        String summary = (session == null || session.getHistorySummary() == null) ? "" : session.getHistorySummary();
-        long untilSeq = (session == null || session.getSummaryUntilSeq() == null) ? 0L : session.getSummaryUntilSeq();
-        List<Map<String, Object>> backlog = sessionService.getHistoryAfter(sessionId, untilSeq, HISTORY_SCAN_LIMIT);
-        if (backlog == null) {
-            // M6 fail-loud：历史读取失败 → 本次对话无历史注入
-            addDegradation(degradations, degradedCodes, "historyFailed", "会话历史读取失败，本次无多轮记忆");
-            return new HistoryBundle("", "", 0, 0, 0);
-        }
-        boolean compressOn = configService.getBoolean("context.historyCompress");
-        double ratio = Math.max(0.1, Math.min(0.9, configService.getDouble("context.compressRatio")));
-        int threshold = Math.max(1000, (int) (budget * ratio));
-        int summaryTokens = TokenCounter.estimate(summary);
-        int compressedTurns = 0;
-
-        if (compressOn && backlog.size() > HISTORY_MIN_KEEP) {
-            int totalTokens = summaryTokens;
-            for (Map<String, Object> m : backlog) totalTokens += TokenCounter.estimate(historyLine(m));
-            if (totalTokens > threshold) {
-                // 近期原样保留到「阈值 − 摘要」装不下为止，更早的（连同旧摘要）滚动并入新摘要
-                int keepFrom = fitFromNewest(backlog, Math.max(200, threshold - summaryTokens));
-                if (keepFrom > 0) {
-                    List<Map<String, Object>> older = backlog.subList(0, keepFrom);
-                    try {
-                        // 自动压缩跑在回答链路里：超时用紧阈值（等不起），与手动 /compact 的宽等待分开
-                        String merged = summarizeHistory(sessionId, resolvedModel, summary, historyText(older), null, null);
-                        if (merged != null && !merged.isBlank()) {
-                            long newUntil = seqOf(older.get(older.size() - 1));
-                            sessionService.updateHistorySummary(sessionId, merged, newUntil);
-                            summary = merged;
-                            summaryTokens = TokenCounter.estimate(summary);
-                            backlog = backlog.subList(keepFrom, backlog.size());
-                            compressedTurns = Math.max(1, older.size() / 2);
-                            log.info("[CTX] 历史压缩完成: {} 条并入摘要（until={}，摘要 {} token，保留近期 {} 条）",
-                                    older.size(), newUntil, summaryTokens, backlog.size());
-                        }
-                    } catch (Exception e) {
-                        // 压缩失败不能静默：用户会看到「早期对话消失」却不知原因。绕过检索调试开关直接上报。
-                        degradations.add(Map.of("code", "historyCompressFailed", "level", "warn",
-                                "msg", "早期对话压缩失败，本轮仅带入近期历史（下轮自动重试）"));
-                        log.warn("[CTX] 历史压缩失败，回落「按预算装近期」: {}", e.getMessage());
-                    }
-                }
-            }
-        }
-        // 近期原样：从最新往回装到「阈值 − 摘要」为止（压缩关闭/失败时即「按预算装近期、更早丢弃」）
-        int recentBudget = Math.max(200, threshold - summaryTokens);
-        int from = fitFromNewest(backlog, recentBudget);
-        String recentText = historyText(backlog.subList(from, backlog.size()));
-        return new HistoryBundle(summary, recentText, summaryTokens, TokenCounter.estimate(recentText), compressedTurns);
-    }
-
-    /**
-     * 手动压缩会话上下文（/compact 斜杠命令）。
-     * <p>
-     * 与自动压缩的差别：自动压缩在「摘要 + 积压 &gt; 检索预算 × compressRatio」时才动、且只压到阈值内；
-     * 用户显式发起时不等阈值，也不看 {@code context.historyCompress} 开关——该开关只管"要不要自动压"，
-     * 而摘要注入本身与它无关（关掉自动压缩的人照样会带摘要），所以手动压缩始终可用。
-     * 压缩目标明确：除最近 {@link #HISTORY_MIN_KEEP} 条原样保留外，其余全部并入会话摘要。
-     * <p>
-     * 长会话分多批：每批从最旧往新取到 {@link #COMPACT_CHUNK_TOKENS} 为止，先并入旧摘要再落库
-     * （下一批复用刚落库的摘要，边压边持久化——中途失败时已压部分不丢）；最多 {@link #COMPACT_MAX_ROUNDS} 批，
-     * 到上限仍有积压则回传 {@code partial=true}，由前端提示可再次执行。历史读取失败/首批压缩失败会抛异常
-     * （会话未被改动，fail-loud），已压了一部分之后再失败则返回已完成的部分。
-     *
-     * @param resolvedModel 摘要调用所用模型（调用方已解析；空值由调用方拦在前面）
-     * @param instruction   用户附加要求（可空）：希望这次摘要保留什么、忽略什么
-     * @return compressedTurns / compressedMessages / keepRecent / summaryTokens / summary / rounds / partial
-     */
-    public Map<String, Object> compactSession(String sessionId, String resolvedModel, String instruction) {
-        Session session = sessionService.sessionById(sessionId);
-        String summary = (session == null || session.getHistorySummary() == null) ? "" : session.getHistorySummary();
-        long untilSeq = (session == null || session.getSummaryUntilSeq() == null) ? 0L : session.getSummaryUntilSeq();
-        int compressedMessages = 0;
-        int rounds = 0;
-        boolean partial = false;
-        long batchTimeout = Math.max(configService.getLong("context.compressTimeoutMs", 20000L),
-                COMPACT_TIMEOUT_FLOOR_MS);
-        while (rounds < COMPACT_MAX_ROUNDS) {
-            List<Map<String, Object>> backlog = sessionService.getHistoryAfter(sessionId, untilSeq, HISTORY_SCAN_LIMIT);
-            if (backlog == null) {
-                if (compressedMessages == 0) throw new com.wenqu.ai.common.BizException("会话历史读取失败，请稍后重试");
-                partial = true;
-                break;
-            }
-            int keepFrom = backlog.size() - HISTORY_MIN_KEEP;
-            if (keepFrom <= 0) break;   // 只剩近期原样：压完了
-            List<Map<String, Object>> older = backlog.subList(0, compactChunkSize(backlog, keepFrom));
-            long newUntil = seqOf(older.get(older.size() - 1));
-            // 序号没推进（消息缺 sequence）：宁可停手也不做死循环，已压的部分照常返回
-            if (newUntil <= untilSeq) {
-                partial = true;
-                break;
-            }
-            String merged;
-            try {
-                merged = summarizeHistory(sessionId, resolvedModel, summary, historyText(older), instruction, batchTimeout);
-            } catch (Exception e) {
-                if (compressedMessages == 0) {
-                    log.warn("[CTX] 手动压缩失败（{} 条待压，会话未改动）: {}", older.size(), e.getMessage());
-                    throw new com.wenqu.ai.common.BizException("压缩失败：" + compactFailReason(e) + "，会话未被改动");
-                }
-                log.warn("[CTX] 手动压缩中途失败（已并入 {} 条）: {}", compressedMessages, e.getMessage());
-                partial = true;
-                break;
-            }
-            if (merged == null || merged.isBlank()) {
-                // 空摘要不能落库：会把旧摘要一起清掉，等于凭空丢历史。
-                // 模型空回答多半是思考档吃掉了输出预算（maxTokens 计入推理 token）——留痕才查得动
-                log.warn("[CTX] 手动压缩拿到空摘要（已并入 {} 条，本批 {} 条，模型 {}）",
-                        compressedMessages, older.size(), resolvedModel);
-                if (compressedMessages == 0) throw new com.wenqu.ai.common.BizException("模型未返回摘要内容，会话未被改动，请稍后重试");
-                partial = true;
-                break;
-            }
-            sessionService.updateHistorySummary(sessionId, merged, newUntil);
-            summary = merged;
-            untilSeq = newUntil;
-            compressedMessages += older.size();
-            rounds++;
-            log.info("[CTX] 手动压缩第 {} 批：{} 条并入摘要（until={}，摘要 {} token）",
-                    rounds, older.size(), newUntil, TokenCounter.estimate(summary));
-        }
-        if (!partial && rounds >= COMPACT_MAX_ROUNDS) {
-            // 达到批次上限：确认是真的还有积压（而非刚好压完），否则用户会白看到一句"可再次执行"
-            List<Map<String, Object>> rest = sessionService.getHistoryAfter(sessionId, untilSeq, HISTORY_MIN_KEEP + 1);
-            partial = rest != null && rest.size() > HISTORY_MIN_KEEP;
-        }
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("compressedTurns", compressedMessages <= 0 ? 0 : Math.max(1, compressedMessages / 2));
-        out.put("compressedMessages", compressedMessages);
-        out.put("keepRecent", HISTORY_MIN_KEEP);
-        out.put("summaryTokens", TokenCounter.estimate(summary));
-        out.put("summary", summary);
-        out.put("rounds", rounds);
-        out.put("partial", partial);
-        return out;
-    }
-
-    /** 手动压缩的失败原因：超时的 TimeoutException 消息为 null，直接拼 getMessage() 会给用户一句空话 */
-    private String compactFailReason(Exception e) {
-        if (e instanceof TimeoutException) return "模型响应超时";
-        String m = e.getMessage();
-        return (m == null || m.isBlank()) ? e.getClass().getSimpleName() : m;
-    }
-
-    /** 单批压缩条数：从最旧往新装，装到 {@link #COMPACT_CHUNK_TOKENS} 为止（至少 1 条——单条自身超上限也得压走） */
-    private int compactChunkSize(List<Map<String, Object>> backlog, int limit) {
-        int total = 0;
-        int take = 0;
-        while (take < limit) {
-            int t = TokenCounter.estimate(historyLine(backlog.get(take)));
-            if (take > 0 && total + t > COMPACT_CHUNK_TOKENS) break;
-            total += t;
-            take++;
-        }
-        return Math.max(1, take);
-    }
-
-    /**
      * 非问答轮（手动压缩 /compact）的生效模型解析：显式指定 &gt; 个人默认；返回空串表示未配置，
      * 由调用方 fail-loud 引导用户选模型（与问答轮同一解析顺序，避免两条路走进不同模型）
      */
     public String resolveChatModel(String userId, String modelOverride) {
         return resolveModel(modelOverride, loadPrefUser(userId));
-    }
-
-    /** 一条历史消息的注入文本（role: content，剥离 [图片N] 标记；全文注入，不再按字符硬截断） */
-    private String historyLine(Map<String, Object> msg) {
-        String role = String.valueOf(msg.getOrDefault("role", ""));
-        String content = stripImageMarks(String.valueOf(msg.getOrDefault("content", ""))).trim();
-        if (content.isEmpty()) return "";
-        return role + ": " + content + "\n";
-    }
-
-    private String historyText(List<Map<String, Object>> msgs) {
-        StringBuilder sb = new StringBuilder();
-        for (Map<String, Object> m : msgs) sb.append(historyLine(m));
-        return sb.toString();
-    }
-
-    /** 从最新往回挑选能装进预算的消息，返回起始下标；至少保留最新一条（单条超预算时不再往前扩） */
-    private int fitFromNewest(List<Map<String, Object>> msgs, int budgetTokens) {
-        int total = 0;
-        int from = msgs.size();
-        for (int i = msgs.size() - 1; i >= 0; i--) {
-            int t = TokenCounter.estimate(historyLine(msgs.get(i)));
-            if (total > 0 && total + t > budgetTokens) break;
-            total += t;
-            from = i;
-        }
-        return from;
-    }
-
-    /** 消息的 sequence（压缩覆盖点推进用）；缺失时回落 0（不推进，下轮重试） */
-    private long seqOf(Map<String, Object> msg) {
-        Object seq = msg.get("sequence");
-        if (seq instanceof Number n) return n.longValue();
-        try {
-            return seq == null ? 0L : Long.parseLong(String.valueOf(seq));
-        } catch (Exception e) {
-            return 0L;
-        }
     }
 
     /**
@@ -7076,74 +5033,6 @@ public class RagService {
         // 舍入误差归到最后一个分类，保证分类之和严格等于网关 prompt_tokens
         if (last != null) out.put(last.getKey(), (int) (last.getValue() + (promptTokens - acc)));
         return out;
-    }
-
-    /** 早期摘要注入段（与近期原样历史拼进 system 的「对话历史」段） */
-    private String summaryBlock(String summary) {
-        return (summary == null || summary.isBlank()) ? ""
-                : "【早期对话摘要】（更早轮次已压缩，完整记录可在会话中回看）\n" + summary.trim() + "\n";
-    }
-
-    /**
-     * 滚动历史摘要：把「已有摘要 + 本轮要压缩的更早轮次」合并成新摘要（用本轮生效模型，关思考、限输出）。
-     * 摘要与会话绑定、与模型无关（切换模型可复用）；超时/失败抛异常由调用方回落。
-     * 用量归属：压缩跑在专属线程池上，ThreadLocal/请求上下文都不可见——入口线程先取 uid，
-     * 池内 hold 显式带上（台账按 UsageAttr 记账），finally 清理防线程复用污染。
-     *
-     * @param instruction 用户对本次压缩的额外要求（/compact 可带，自动压缩传 null）：想保住什么、忽略什么
-     * @param timeoutOverrideMs 超时覆盖（毫秒，null=用 context.compressTimeoutMs）：手动压缩没有"卡在回答中间"
-     *                          的问题，可以等更久——单批输出接近上限时耗时可到 20 秒上下，与自动路径的
-     *                          紧阈值不是一回事
-     */
-    private String summarizeHistory(String sessionId, String resolvedModel, String oldSummary, String olderText,
-                                    String instruction, Long timeoutOverrideMs) throws Exception {
-        String prompt = "你是对话历史压缩器。把下面的对话记录压缩成简洁要点摘要，供后续回答继续参考：\n"
-                + "1. 保留：用户的目标与诉求、已达成的结论与决定、出现的关键实体（人名/产品名/编号/数值/时间）、尚未解决的问题。\n"
-                + "2. 丢弃：寒暄、重复表述、已被后续对话推翻的中间过程。\n"
-                + "3. 用第三人称陈述（\"用户询问了…\"\"助手回答了…\"），按时间顺序条目化。\n"
-                + "4. 只输出摘要正文，不要解释、不要加标题。\n"
-                + (instruction == null || instruction.isBlank() ? ""
-                        : "5. 用户对本次压缩的额外要求（优先满足，但不得与 1~4 冲突）：" + instruction.trim() + "\n")
-                + "\n"
-                + (oldSummary == null || oldSummary.isBlank() ? "" : "【已有摘要（更早的历史）】\n" + oldSummary + "\n\n")
-                + "【本次要并入的对话】\n" + olderText;
-        long timeoutMs = timeoutOverrideMs != null ? timeoutOverrideMs
-                : configService.getLong("context.compressTimeoutMs", 20000L);
-        // 摘要不需要推理：思考 token 与正文共享 max_tokens，默认开思考的模型会把预算全花在推理上、
-        // 正文返回空（实测摘要 completion 恒等于上限而内容为空）。能关思考的方言下发关闭字段；
-        // 关不掉的（恒思考 / 未识别方言）多留一份输出预算，别让摘要被推理挤没。
-        Map<String, Object> thinkOff = modelRegistryService.reasoningOffBody(resolvedModel);
-        int summaryMaxTokens = thinkOff.isEmpty() ? 2560 : 1024;
-        String billingUid = com.wenqu.ai.util.RequestUser.uid();
-        java.util.concurrent.Future<String> f = compressExecutor.submit(() -> {
-            com.wenqu.ai.util.UsageAttr.hold(com.wenqu.ai.util.UsageAttr.of(
-                    com.wenqu.ai.util.RequestUser.ANONYMOUS.equals(billingUid) ? null : billingUid,
-                    sessionId, null, "compress"));
-            try {
-                OpenAiChatOptions.Builder opts = OpenAiChatOptions.builder()
-                        .model(resolvedModel)
-                        .temperature(0.2)
-                        .maxTokens(summaryMaxTokens);
-                if (!thinkOff.isEmpty()) opts.extraBody(thinkOff);
-                return chatClient.prompt()
-                        .system("你是对话历史压缩器，只输出要点摘要。")
-                        .user(prompt)
-                        .options(opts.build())
-                        .call()
-                        .content();
-            } finally {
-                com.wenqu.ai.util.UsageAttr.clear();
-            }
-        });
-        return f.get(timeoutMs, TimeUnit.MILLISECONDS);
-    }
-
-    /**
-     * 剥离文本中的图片标记 [图片N] / [图片N：描述] / [图片：描述]（用于注入历史，避免编号与本轮冲突）
-     */
-    private String stripImageMarks(String text) {
-        if (text == null || text.isEmpty()) return text;
-        return text.replaceAll("\\[图片\\d*(?:[：:][^\\]]*)?\\]", " ").replaceAll("\\s+", " ").trim();
     }
 
     private String snippet(String content) {
@@ -7346,1298 +5235,37 @@ public class RagService {
     private record CitationCheckResult(String text, List<Map<String, Object>> sources, Set<Integer> dropped, int droppedCount) {
     }
 
-    // ==================== 深度思考（生产级） ====================
 
-    /** 深度思考结果：ok=是否成功（失败降级时 refinedQuery 无意义），thinking=剥离 <search> 后的展示文本，reason=失败原因（fail-loud） */
-    private record DeepThinkResult(boolean ok, String thinking, String refinedQuery, List<String> subQueries, String reason) {
-    }
 
-    /**
-     * 深度思考三阶段：
-     * 阶段1 流式思考（SSE thinking 增量；thinkingMode=model 从 reasoning_content 提取，prompt 从 content 提取）
-     * 阶段2 提取 <search> 检索计划（精化 query + 子问题）
-     * 阶段3 由调用方执行多路检索（本方法只返回计划）
-     * 失败/超时/未提取到计划 → 返回 ok=false + 已收集思考增量（调用方用思考词元增强降级检索）
-     * 思考长度护栏（maxThinkingChars）：超限中断思考流但保留已收集内容继续走计划提取，不整段丢弃
-     */
-    private DeepThinkResult runDeepThinking(String sessionId, String question, String imgNote,
-                                            String attachmentText,
-                                            SseEmitter emitter, String resolvedModel, String reasoningLevel) {
-        String thinkingMode = configService.get("deepReasoning.thinkingMode");
-        boolean enableThinking = configService.getBoolean("deepReasoning.enableThinking");
-        boolean multiRetrieval = configService.getBoolean("deepReasoning.multiRetrieval");
-        int timeoutMillis = configService.getInt("deepReasoning.timeoutMillis");
-        int maxThinkingTokens = configService.getInt("deepReasoning.maxThinkingTokens");
-        int maxThinkingChars = configService.getInt("deepReasoning.maxThinkingChars", 3000);
 
-        // 思考 system = 思考引导 prompt + 对话历史（复用 buildHistoryText 裁剪）
-        StringBuilder system = new StringBuilder(configService.get("deepReasoning.prompt"));
-        String historyText = buildHistoryText(sessionService.getRecentHistory(sessionId, 2));
-        if (!historyText.isEmpty()) {
-            system.append("\n\n对话历史：\n").append(historyText);
-        }
-        // user = 原始问题 + 图片说明（仅"模型不支持读图"时有值）
-        StringBuilder user = new StringBuilder(question);
-        if (imgNote != null && !imgNote.isBlank()) {
-            user.append(imgNote);
-        }
-        // 附件内容随思考上下文（附件是回答素材，思考阶段就应看到）
-        if (attachmentText != null && !attachmentText.isBlank()) {
-            user.append("\n\n用户上传了附件，内容如下（仅用于辅助思考）：\n").append(attachmentText);
-        }
 
-        OpenAiChatOptions.Builder optionsBuilder = OpenAiChatOptions.builder()
-                .model(resolvedModel);
-        // 思考模式下不发 temperature：主流网关在 thinking 开启时忽略 temperature/top_p 等采样参数
-        // （DeepSeek/GLM/豆包/Claude/Qwen 官方文档均明确）——不报错也不生效，属静默失效。
-        // 仅 thinkingMode=model（网关原生思考）适用；prompt 模式是提示词引导、思考走 content，
-        // 采样参数照常生效。
-        if (!("model".equals(thinkingMode) && enableThinking)) {
-            optionsBuilder.temperature(configService.getDouble("chat.temperature"));
-        }
-        // qwen 思考模式 max_tokens 会导致空输出：默认不设，仅显式配置 >0 时才设
-        if (maxThinkingTokens > 0) {
-            optionsBuilder.maxTokens(maxThinkingTokens);
-        }
-        // thinkingMode=model：extraBody 透传 enable_thinking，思考从 reasoning_content 提取
-        if ("model".equals(thinkingMode) && enableThinking) {
-            optionsBuilder.extraBody(Map.of("enable_thinking", true));
-        }
-        // 思考强度档位（本轮请求级，null 时回落模型登记默认档位；thinkingMode=model 且开着思考时才下发）：
-        // 按厂商方言映射成 reasoning_effort / thinking.budget_tokens / thinking_budget。
-        // 与上面 enable_thinking 合并（extraBody 单次设置，后者覆盖前者——故在此合并成一个 map）。
-        if ("model".equals(thinkingMode) && enableThinking) {
-            String thinkLevel = reasoningLevel != null
-                    ? reasoningLevel : modelRegistryService.defaultReasoningLevelOf(resolvedModel);
-            if (thinkLevel != null) {
-                // reasoning_effort 走原生 setter（extraBody 会导致同名字段序列化两次 → 网关 422）
-                String effort = modelRegistryService.reasoningEffortValue(resolvedModel, thinkLevel, true);
-                if (effort != null) {
-                    optionsBuilder.reasoningEffort(effort);
-                }
-                Map<String, Object> body = new LinkedHashMap<>();
-                body.put("enable_thinking", true);
-                body.putAll(modelRegistryService.reasoningExtraBody(resolvedModel, thinkLevel, true));
-                optionsBuilder.extraBody(body);
-                log.info("[REASONING] 深度思考强度已下发: model={} level={} effort={} extra={}",
-                        resolvedModel, thinkLevel, effort, body.keySet());
-            }
-        }
 
-        StringBuilder thinking = new StringBuilder();
-        // 用量归属：思考流是独立订阅，doFinally 落在网关 I/O 线程上，ThreadLocal 不可见——
-        // 入口线程先取 uid，用 Reactor Context 带上（护栏截断/断连取消时，中断估算同样按此归属）
-        String billingUid = com.wenqu.ai.util.RequestUser.uid();
-        try {
-            chatClient.prompt()
-                    .system(system.toString())
-                    .user(user.toString())
-                    .options(optionsBuilder.build())
-                    .stream()
-                    .chatResponse()
-                    .doOnNext(resp -> {
-                        String delta = extractThinkingDelta(resp, thinkingMode);
-                        if (delta != null && !delta.isBlank()) {
-                            // 思考长度护栏：超上限即中断思考流（保留已收集部分），避免刷爆上下文/token
-                            if (maxThinkingChars > 0 && thinking.length() + delta.length() > maxThinkingChars) {
-                                throw new ThinkingCappedException();
-                            }
-                            thinking.append(delta);
-                            // 客户端断开或用户叫停：抛异常中止同步消费（blockLast），省余下思考输出，
-                            // 调用方检查点兜底不再检索。停止要先于发送判——通道 complete 后发送未必立刻失败
-                            // （容器缓冲区还在），那样会白烧掉一截思考 token
-                            if (turnStopRequested(sessionId)
-                                    || !sendSseEvent(emitter, "thinking", delta, sessionId)) {
-                                throw new SseClientGoneException();
-                            }
-                        }
-                    })
-                    .contextWrite(ctx -> com.wenqu.ai.util.UsageAttr.put(ctx,
-                            com.wenqu.ai.util.UsageAttr.of(
-                                    com.wenqu.ai.util.RequestUser.ANONYMOUS.equals(billingUid) ? null : billingUid,
-                                    sessionId, null, "think")))
-                    .blockLast(Duration.ofMillis(Math.max(1000, timeoutMillis)));
 
-            return finishDeepThinking(thinking.toString(), question, sessionId, emitter, true);
-        } catch (SseClientGoneException e) {
-            String partialThinking = stripSearchBlock(thinking.toString(), "search");
-            boolean stoppedByUser = turnStopRequested(sessionId);
-            log.info("[SSE] {}，深度思考终止: session={} 已思考={}字",
-                    stoppedByUser ? "用户停止本轮" : "客户端断开", sessionId, partialThinking.length());
-            if (stoppedByUser) {
-                persistThinkingOnlyOnStop(sessionId, partialThinking, turnIdOf(sessionId));
-            }
-            return new DeepThinkResult(false, partialThinking, question, List.of(), "disconnected");
-        } catch (ThinkingCappedException e) {
-            // 思考长度达上限：用已收集内容继续（可能提取到计划则 ok，否则由调用方用思考词元增强降级）
-            log.info("[DEEP-THINK] 思考长度达上限截断（{} 字），用已收集内容继续", thinking.length());
-            return finishDeepThinking(thinking.toString(), question, sessionId, emitter, false);
-        } catch (Exception e) {
-            // 思考流异常/超时：若已收集内容含检索计划仍可用，否则降级（调用方用思考词元增强）
-            log.warn("[FAIL-LOUD] 深度思考失败/超时，降级检索: {}", e.getMessage());
-            return finishDeepThinking(thinking.toString(), question, sessionId, emitter, false);
-        }
-    }
 
-    /**
-     * 思考收尾公共逻辑：提取检索计划、剥离 <search> 块、下发 thinking_done。
-     * ok = 流正常完成，或虽中断但已收集内容中提取到了有效检索计划（refinedQuery 非原问题或子问题非空）——
-     * 这样长度截断/部分异常时思考内容不白费，能继续多路检索。
-     */
-    private DeepThinkResult finishDeepThinking(String rawThinking, String question, String sessionId, SseEmitter emitter, boolean streamOk) {
-        SearchPlan plan = extractSearchPlan(rawThinking, question);
-        String display = stripSearchBlock(rawThinking, plan.searchTag());
-        boolean hasPlan = !plan.subQueries().isEmpty()
-                || (plan.refinedQuery() != null && !plan.refinedQuery().equals(question));
-        boolean ok = streamOk || hasPlan;
-        Map<String, Object> done = new LinkedHashMap<>();
-        done.put("status", ok ? "ok" : "degraded");
-        done.put("thinking", display);
-        sendSseEvent(emitter, "thinking_done", JSON.toJSONString(done), sessionId);
-        log.info("[DEEP-THINK] 思考结束 {} 字, ok={}, refined={}, subs={}", display.length(), ok, plan.refinedQuery(), plan.subQueries());
-        return new DeepThinkResult(ok, display, plan.refinedQuery(), plan.subQueries(), null);
-    }
 
-    /** 思考流长度达上限的中断信号（内部异常，不走 fail-loud） */
-    private static final class ThinkingCappedException extends RuntimeException {
-    }
 
-    /** 检索计划：精化 query + 子问题列表 */
-    private record SearchPlan(String refinedQuery, List<String> subQueries, String searchTag) {
-    }
 
-    /** 从思考文本提取 <search>精化query|子问题1|子问题2</search>；未命中返回原始问题 */
-    private SearchPlan extractSearchPlan(String thinking, String fallback) {
-        String tag = configService.get("deepReasoning.searchTag");
-        if (tag == null || tag.isBlank()) tag = "search";
-        String escapedTag = Pattern.quote(tag);
-        Pattern p = Pattern.compile("<" + escapedTag + ">([\\s\\S]*?)</" + escapedTag + ">");
-        Matcher m = p.matcher(thinking == null ? "" : thinking);
-        String inner = null;
-        if (m.find()) {
-            inner = m.group(1);
-        } else {
-            // 未闭合兜底：思考被长度/异常截断时，检索计划恰好在末尾（<search> 有开头没结尾）——
-            // 按闭合匹配会整块丢失，多路检索静默退化为单路。取最后一个开标签到文本末尾。
-            Matcher om = Pattern.compile("<" + escapedTag + ">([\\s\\S]*)$").matcher(thinking == null ? "" : thinking);
-            if (om.find()) {
-                inner = om.group(1);
-                log.info("[DEEP-THINK] 检索计划标签未闭合（思考截断），按未闭合提取");
-            }
-        }
-        if (inner != null) {
-            String[] parts = inner.split("\\|");
-            // 模型不守"|"格式的常见变体：换行/分号分隔的列表——只有一段但含这些分隔符时再切一次
-            if (parts.length == 1 && (inner.contains("\n") || inner.contains("；") || inner.contains(";"))) {
-                parts = inner.split("\\r?\\n|；|;");
-            }
-            List<String> list = Arrays.stream(parts)
-                    .map(s -> s.replaceFirst("^\\s*(?:\\d+[.、)）]|[-*•])\\s*", "").trim()) // 清理 "1. " / "- " 编号前缀
-                    .filter(s -> !s.isBlank())
-                    .toList();
-            if (!list.isEmpty()) {
-                int maxSub = configService.getInt("deepReasoning.maxSubQueries");
-                List<String> subs = list.size() > 1
-                        ? list.subList(1, Math.min(list.size(), 1 + Math.max(0, maxSub)))
-                        : List.of();
-                return new SearchPlan(list.get(0), subs, tag);
-            }
-        }
-        return new SearchPlan(fallback, List.of(), tag);
-    }
 
-    /** 剥离 <search>...</search> 块（思考展示/持久化不含检索计划） */
-    private String stripSearchBlock(String thinking, String tag) {
-        if (thinking == null || thinking.isBlank()) return "";
-        String escapedTag = Pattern.quote(tag == null || tag.isBlank() ? "search" : tag);
-        return thinking.replaceAll("<" + escapedTag + ">[\\s\\S]*?</" + escapedTag + ">", "").trim();
-    }
 
-    /** 按 thinkingMode 从 ChatResponse 提取思考增量：model=metadata.reasoningContent（回退 text）；prompt=text */
-    private String extractThinkingDelta(ChatResponse resp, String thinkingMode) {
-        if (resp == null || resp.getResult() == null || resp.getResult().getOutput() == null) return null;
-        Object output = resp.getResult().getOutput();
-        if (!(output instanceof AssistantMessage am)) return null;
-        if ("model".equals(thinkingMode)) {
-            Object rc = am.getMetadata().get("reasoningContent");
-            if (rc != null && !String.valueOf(rc).isBlank()) {
-                return String.valueOf(rc);
-            }
-        }
-        // prompt 模式或 metadata 无思考内容：回退 content 文本
-        String text = am.getText();
-        return (text == null || text.isBlank()) ? null : text;
-    }
 
-    /** 活跃 SSE 通道的断开标记（emitter → 已断开）。仅内部查表用；发送失败即打标、完成回调即移除，不会长期滞留 */
-    private static final java.util.concurrent.ConcurrentHashMap<SseEmitter, java.util.concurrent.atomic.AtomicBoolean> ACTIVE_SSE =
-            new java.util.concurrent.ConcurrentHashMap<>();
 
-    /** 会话轮级互斥标记：sessionId → 在跑。随轮进出（chat 入口/流水线 finally），进程重启即清空
-     *  （与挂起恢复管道同为内存态，语义一致） */
-    private static final java.util.concurrent.ConcurrentHashMap<String, Boolean> TURN_IN_FLIGHT =
-            new java.util.concurrent.ConcurrentHashMap<>();
 
-    /**
-     * 会话在跑轮次的流状态：sessionId → AnswerStreamState，供服务端「停止本轮」按会话定位。
-     * <p>刻意不复用 {@link #TURN_IN_FLIGHT} 的布尔标记，也不靠 SSE 通道反查：要能叫停的轮次里，
-     * 有一类通道早就断了（断线后台续跑）、还有一类正挂在等人裁决上（审批/提问/计划等待），
-     * 这两种都不是「连接还在」能表达的。随轮进出（状态构造登记 / 流水线 finally 摘除），进程重启即清空。
-     */
-    private static final java.util.concurrent.ConcurrentHashMap<String, AnswerStreamState> TURN_STATES =
-            new java.util.concurrent.ConcurrentHashMap<>();
 
-    /**
-     * 本轮身份把手：sessionId → (turnId, userId)，在 {@code chat()} 抢到轮级互斥的那一刻就建好。
-     * <p>比 {@link #TURN_STATES} 早得多也必须早：计划卡、子智能体编排、检索统计这些事件发生在
-     * {@link AnswerStreamState} 构造之前，只靠状态表归因会把同一轮的轨迹劈成「无 turn_id 的孤儿行」
-     * 与「有 turn_id 的行」两截，回放时拼不回去。
-     */
-    private record TurnHandle(String turnId, String userId, SseEmitter emitter,
-                              java.util.concurrent.atomic.AtomicBoolean stopped,
-                              java.util.concurrent.ConcurrentLinkedQueue<String> steers) {
-        TurnHandle(String turnId, String userId, SseEmitter emitter) {
-            this(turnId, userId, emitter, new java.util.concurrent.atomic.AtomicBoolean(false),
-                    new java.util.concurrent.ConcurrentLinkedQueue<>());
-        }
-    }
 
-    private static final java.util.concurrent.ConcurrentHashMap<String, TurnHandle> TURN_HANDLES =
-            new java.util.concurrent.ConcurrentHashMap<>();
 
-    /**
-     * 本轮 turnId（消息落库时挂的关联键）：取自 {@code chat()} 入口登记的把手。
-     * <p>把手已随终态摘除时返回 null——这条消息就没有过程可回放，前端按「本行无过程记录」处理，
-     * 不去猜一个别的轮的 id（猜错是比缺失更坏的账本）。
-     */
-    private String turnIdOf(String sessionId) {
-        TurnHandle h = sessionId == null ? null : TURN_HANDLES.get(sessionId);
-        return h == null ? null : h.turnId();
-    }
 
-    /**
-     * 被「断线宽限到点」掐掉的轮次登记（sessionId → turnId）。
-     * <p>为什么单记一笔：中止发生在总线线程上，它 dispose 时 {@code claimTerminal()} 当场摘掉了把手，
-     * 而「这一问没产生回答」的标记要由流水线线程走到到底时才打（早一步会抢在落库之前，见 {@code chat()}
-     * 那段注释），届时 {@code turnStopRequested} 已经查不到把手了。没有这一笔，用户回来只会看到
-     * 一句没有任何交代的提问。
-     */
-    private static final java.util.concurrent.ConcurrentHashMap<String, String> BARE_ABORTS =
-            new java.util.concurrent.ConcurrentHashMap<>();
 
-    /**
-     * 运行中插话（steer）：用户在本轮还在跑时补一句方向性意见。
-     * <p>能力边界要说清：工具循环由 Spring AI 的 ToolCallAdvisor 持有，我们不持有，所以做不到
-     * 「掐掉当前这一步立刻改方向」——插话在**下一个工具步**随工具结果送达模型。本轮自然收尾前
-     * 还没被消费的，随 {@code done} 回落给前端作为同一句话续发（与计划「继续对话」同一条通路），
-     * 绝不静默丢话。
-     * <p><b>落库为一条普通用户消息</b>：用户按了发送、话是自己说的，界面与历史里它就该长成用户消息
-     * 的样子（前端据此推一条气泡；刷新后由历史接口按同一个 ID 回显同一条）。不引入任何标记列——
-     * 它不需要"身份"，它本来就是一条用户消息；也没必要新开端点，"没发出去"的东西留在前端队列里即可。
-     *
-     * @return 落库后的消息 ID（前端挂到那条气泡上，刷新后同一条）；没有在跑的轮 / 越权 / 超限返回 null
-     */
-    public String steerTurn(String sessionId, String userId, String text) {
-        TurnHandle h = sessionId == null ? null : TURN_HANDLES.get(sessionId);
-        if (h == null || text == null || text.isBlank() || h.stopped().get()) return null;
-        if (userId == null || !userId.equals(h.userId())) {
-            log.warn("[FAIL-LOUD] 插话被拒（非本人轮次）: session={} uid={}", sessionId, userId);
-            return null;
-        }
-        // 单轮插话上限：防把这里当成第二个输入框连发刷屏（超出即拒，前端按普通消息发）
-        if (h.steers().size() >= MAX_STEERS_PER_TURN) return null;
-        String clean = text.strip();
-        String capped = clean.length() > STEER_MAX_CHARS ? clean.substring(0, STEER_MAX_CHARS) + "…" : clean;
-        // 与正常提问同一口径落库（role=user、同一 turnId）：先落库再入队，这样前端拿到 ID 就能
-        // 立刻推出一颗带 ID 的气泡，刷新后回显的是同一条而不是两条
-        String messageId = sessionService.appendMessage(sessionId, "user", capped, null, null, null, null,
-                null, null, null, null, null, null, null, null, null, null, null, null, null, h.turnId());
-        h.steers().add(capped);
-        sessionEventService.append(sessionId, h.userId(), h.turnId(), "steer", capped);
-        log.info("[STEER] 插话已入队（下一个工具步生效）: session={} 字数={} msgId={}",
-                sessionId, capped.length(), messageId);
-        return messageId;
-    }
 
-    /** 单轮插话条数上限 / 单条字数上限（超出按普通消息发更合适） */
-    private static final int MAX_STEERS_PER_TURN = 3;
-    private static final int STEER_MAX_CHARS = 800;
-
-    /**
-     * 取走待送达的插话并拼成一段提示（无插话返回空串）。附在工具结果**尾部**送达。
-     */
-    private String drainSteers(AnswerStreamState st) {
-        List<String> pending = drainSteersList(st);
-        if (pending.isEmpty()) return "";
-        // 送达留痕：库里的工具摘要与账本记的都是**附加前**的结果，不加这行日志就无从判断
-        // 模型到底看没看到这句插话（"回答没变"可能只是模型没采纳，而不是没送达）
-        log.info("[STEER] 已随工具结果送达模型: session={} 条数={} 字数={}",
-                st.sessionId, pending.size(), pending.stream().mapToInt(String::length).sum());
-        StringBuilder sb = new StringBuilder();
-        for (String s : pending) sb.append("【用户中途补充】").append(s).append('\n');
-        return sb.toString();
-    }
-
-    /** 取走（并清空）该轮尚未送达的插话 */
-    private static List<String> drainSteersList(AnswerStreamState st) {
-        return drainSteersOf(st.sessionId);
-    }
-
-    /** 同上，按会话取（无流状态的分支也用这一条） */
-    private static List<String> drainSteersOf(String sessionId) {
-        TurnHandle h = TURN_HANDLES.get(sessionId);
-        if (h == null || h.steers().isEmpty()) return List.of();
-        List<String> out = new ArrayList<>();
-        String s;
-        while ((s = h.steers().poll()) != null) out.add(s);
-        return out;
-    }
-
-    /**
-     * 本轮收尾前把没送达的插话挂进 done 载荷，交回前端自动作为下一句发出。
-     * <p><b>每一条 done 都要挂</b>——正常答完、被停、计划被拒/超时、无知识库分支都算。漏一条，
-     * 用户说过的话就在那个分支里静默消失，而"不许静默丢话"是插话机制的底线。
-     */
-    private static void attachLeftoverSteers(Map<String, Object> donePayload, AnswerStreamState st, String sessionId) {
-        List<String> out = new ArrayList<>();
-        if (st != null) {
-            out.addAll(st.leftoverSteers);       // 摘把手时转存下来的
-            out.addAll(drainSteersOf(sessionId)); // 把手还在（未经 claimTerminal 的收尾路径）
-        } else {
-            out.addAll(drainSteersOf(sessionId));
-        }
-        out.removeIf(s -> s == null || s.isBlank());
-        if (!out.isEmpty()) {
-            donePayload.put("pendingSteers", out);
-            log.info("[STEER] 未随工具步送达，交回前端续发: session={} 条数={}", sessionId, out.size());
-        }
-    }
-
-    /**
-     * 本轮是否已被用户叫停。深度思考与检索阶段还没有 {@link AnswerStreamState}（它在流式生成前才构造），
-     * 那段时间的停止只能靠把手上的标志——所以标志独立于状态表存在。
-     */
-    private static boolean turnStopRequested(String sessionId) {
-        TurnHandle h = sessionId == null ? null : TURN_HANDLES.get(sessionId);
-        return h != null && h.stopped().get();
-    }
-
-    /**
-     * 本轮还要不要往下跑：客户端已断开，或用户已叫停。
-     * <p>两者都必须一起判——{@code complete()} 会走 onCompletion 把断开标记整条摘掉，
-     * 只看 {@link #clientDisconnected} 的话，被服务端叫停的轮会穿过检查点继续去检索、生成。
-     */
-    private boolean turnAborted(String sessionId, SseEmitter emitter) {
-        return clientDisconnected(emitter) || turnStopRequested(sessionId);
-    }
-
-    /**
-     * 会话事件账本收录的「结构性事件」白名单（其余 SSE 类型不落账本）。
-     * <p>刻意不含 {@code done}：轮终态快照本就随助手消息落库（正文/时间线/工具列表/用量），
-     * 账本再存一份只是把大 JSON 截断成半截文本，没有增量信息。也不含 token/thinking/process/
-     * stage/image/plan_delta/keepalive 这类高频增量——它们会让账本行数淹没真正的执行轨迹。
-     */
-    private static final java.util.Set<String> LEDGER_SSE_TYPES = java.util.Set.of(
-            "approval_required", "ask_user", "plan", "plan_approval", "plan_cancelled", "plan_superseded",
-            "artifact", "subagent", "subagent_route", "agent_dispatched", "agent_delegated", "agent_bound",
-            "retrieved", "usage", "error", "warn");
-
-    /** 工具执行审批挂起项：approvalId → 等待用户批准（内存态；进程重启/刷新页面即失效，超时自动拒绝） */
-    private record PendingApproval(String sessionId, String userId, String toolName,
-                                   java.util.concurrent.CompletableFuture<Boolean> future) {
-    }
-
-    private static final java.util.concurrent.ConcurrentHashMap<String, PendingApproval> PENDING_APPROVALS =
-            new java.util.concurrent.ConcurrentHashMap<>();
-
-    /**
-     * askUser 挂起项：askId → 等待用户作答的内存唤醒句柄。
-     * <p>只有它负责「把答案送回还阻塞着的工具线程」；卡片本体（问题/时限/答案）以 c_ai_tool_approval
-     * 为准，所以刷新页面或换设备后仍能查到并作答。进程重启后句柄消失（live=false），此时作答只入审计、
-     * 无法送达模型，该轮按超时收尾。
-     */
-    private record PendingAsk(String sessionId, String userId,
-                              java.util.concurrent.CompletableFuture<String> future) {
-    }
-
-    private static final java.util.concurrent.ConcurrentHashMap<String, PendingAsk> PENDING_ASKS =
-            new java.util.concurrent.ConcurrentHashMap<>();
-
-    /** askUser 单轮提问上限：防模型把「一问一答」变成刷屏循环；正常澄清 1~2 问足够 */
-    private static final int MAX_ASKS_PER_TURN = 3;
-
-    /** askUser 单张卡片承载的问题上限（一卡多问）：超出则整卡拒绝、让模型合并后重问。
-     *  刻意不做「静默截断保留前 N」：截断会让模型拿到的答案数组比它自己传入的问题数短，
-     *  下标对不上（模型会把第 N 个答案当成第 N+1 问的），且界面上会出现「有问无答」的残缺问。 */
-    private static final int MAX_QUESTIONS_PER_CARD = 6;
-
-    /** askUser 单题候选上限：卡面固定「3 个候选 + 1 行自由输入」共 4 行，超过就不像选择题而像阅读理解。
-     *  模型给多了按前 N 个截断（第一项是推荐项，截掉的是次选），不整题丢弃——丢题会让答案数组与模型
-     *  传入的问题数对不上，界面上还会出现「有问无答」的残缺问。 */
-    private static final int MAX_ASK_OPTIONS = 3;
-
-    /** askUser 提问卡等待上限（一卡多问需人工逐题作答，比工具审批宽）：默认 10 分钟，
-     *  平台可调（chat.askTimeoutMs）。提问已落库且等待期间断线不中止本轮，所以窗口可以给到分钟级；
-     *  前端倒计时取 SSE 下发的 timeoutMs、跨设备恢复取 DB 的 created_at + 本值，两处口径必须同源。 */
-    private long askTimeoutMs() {
-        long t = configService.getLong("chat.askTimeoutMs");
-        return t > 0 ? t : 600000L;
-    }
-
-    // ==================== 计划模式（人在回路：先出执行计划，批准后按计划执行） ====================
-
-    /** 计划批准挂起项：planApprovalId → 等待用户批准/退回重出（内存态；进程重启后句柄消失，超时按未批准收尾）。
-     *  与工具审批/askUser 同一套挂起-恢复管道：内存 future 阻塞流水线线程 + DB 卡片记录 + SSE 卡 + 站内通知 */
-    private record PendingPlan(String sessionId, String userId,
-                               java.util.concurrent.CompletableFuture<PlanDecision> future) {
-    }
-
-    /** 单版计划的用户裁决：approve=批准（plan 为批准版文本，可能沿 API 带过用户改稿）；
-     *  reject=取消本轮（plan/feedback 均为 null）；revise=退回让模型按 feedback 重出下一版；
-     *  supersede=用户带着修改意见继续对话（本版作废，新一轮会产出修改后的计划） */
-    private record PlanDecision(boolean approved, String plan, String reviseFeedback, boolean superseded) {
-        static PlanDecision approve(String plan) { return new PlanDecision(true, plan, null, false); }
-        static PlanDecision reject() { return new PlanDecision(false, null, null, false); }
-        static PlanDecision revise(String feedback) { return new PlanDecision(false, null, feedback, false); }
-        static PlanDecision supersede() { return new PlanDecision(false, null, null, true); }
-    }
-
-    private static final java.util.concurrent.ConcurrentHashMap<String, PendingPlan> PENDING_PLANS =
-            new java.util.concurrent.ConcurrentHashMap<>();
-
-    /** 计划文本长度护栏：超限直接停收增量（计划是一份动作清单，写这么长一定是跑题了） */
-    private static final int PLAN_MAX_CHARS = 6000;
-
-    /** 计划阶段（单版）结果：plan=本版计划文本（生成失败为 null）；approved=true 表示用户已批准本版；
-     *  reviseFeedback 非 null=用户要修改本版（gate 据此带意见重出下一版）；
-     *  superseded=true=用户带着修改意见继续对话（本版作废，整轮收尾）；
-     *  generateFailed=true=计划生成失败（已登记降级，调用方按普通模式继续）；
-     *  三者皆否=拒绝/超时（整轮终止） */
-    private record PlanPhaseOutcome(String plan, boolean approved, boolean generateFailed, String reviseFeedback,
-                                    boolean superseded) {
-        static PlanPhaseOutcome of(String plan, boolean approved, String reviseFeedback) {
-            return new PlanPhaseOutcome(plan, approved, false, reviseFeedback, false);
-        }
-        static PlanPhaseOutcome failed() { return new PlanPhaseOutcome(null, false, true, null, false); }
-        static PlanPhaseOutcome superseded(String plan) { return new PlanPhaseOutcome(plan, false, false, null, true); }
-    }
-
-    /** 计划生成流式超时（chat.planGenTimeoutMs，默认 120s；阻塞流水线线程，必须有界） */
-    private long planGenTimeoutMs() {
-        long t = configService.getLong("chat.planGenTimeoutMs");
-        return t > 0 ? t : 120000L;
-    }
-
-    /** 计划批准等待上限（chat.planTimeoutMs，默认 10 分钟，与 askUser 提问卡同级的人工等待） */
-    private long planTimeoutMs() {
-        long t = configService.getLong("chat.planTimeoutMs");
-        return t > 0 ? t : 600000L;
-    }
-
-    // ==================== 计划意图识别（按用户意图自动开启计划模式） ====================
-
-    /** 意图识别专用线程池（与派遣路由同款：2 线程 + 超时 cancel(true) 中断底层调用；daemon 不阻 JVM 退出） */
-    private static final java.util.concurrent.ThreadPoolExecutor PLAN_INTENT_EXECUTOR =
-            new java.util.concurrent.ThreadPoolExecutor(2, 2, 0L, java.util.concurrent.TimeUnit.MILLISECONDS,
-                    new java.util.concurrent.LinkedBlockingQueue<>(), r -> {
-                Thread t = new Thread(r, "plan-intent");
-                t.setDaemon(true);
-                return t;
-            });
-
-    /**
-     * 启动计划意图识别（与图片/附件/检索并行跑，闸门前取结果）：用户在计划开关之外没提计划时，
-     * 判断这条消息是否「不先对齐就会白做」——方向没定清又要从零产出成型交付物，或动作不易回头。
-     * 环节多、有产物本身都不是理由（进度有任务清单，不拦人）。判据见下方提示词，改判据要同步改
-     * config-schema 的 planAutoIntent 说明。
-     * 与闸门同口径跳过不适用的轮次：游客、无工具模型（计划本就降级）、收集型通道（定时任务/MCP/子智能体
-     * 没人能批准计划卡）、重新生成（用户要的是重答不是重出计划）。返回 null = 本轮不检测。
-     */
-    private java.util.concurrent.CompletableFuture<Boolean> startPlanIntentCheck(
-            SseEmitter emitter, boolean guestMode, boolean planMode, boolean regenerate,
-            String sessionId, String question, String model, boolean hasAttachments) {
-        if (planMode || guestMode || regenerate || emitter instanceof CollectingSseEmitter) return null;
-        if (!configService.getBoolean("chat.planAutoIntent", true)) return null;
-        if (model == null || !modelRegistryService.toolCapableOf(model)) return null;
-        String uid = com.wenqu.ai.util.RequestUser.uid();
-        return java.util.concurrent.CompletableFuture.supplyAsync(() -> {
-            com.wenqu.ai.util.UsageAttr.hold(com.wenqu.ai.util.UsageAttr.of(
-                    com.wenqu.ai.util.RequestUser.ANONYMOUS.equals(uid) ? null : uid, null, null, "planIntent"));
-            try {
-                String history = "";
-                try {
-                    history = buildHistoryText(sessionService.getRecentHistory(sessionId, 2));
-                } catch (Exception e) { /* 无上下文也能判 */ }
-                String prompt = "你是「计划模式」判断器。计划模式＝先写一份「要做什么、分几步」的计划，用户批准后才动手，"
-                        + "代价是这一轮会被拦住等他点确认。所以只在「不先对齐就会白做」时才判适合。\n"
-                        + "\n适合（必须命中其一）：用户还没说清要做成什么样，需要他先定方向，且这轮要从零产出一份成型交付物"
-                        + "（网页/文件/报告/方案/多份材料）；或动作不易回头（删除、覆盖、批量改写、对外发送、改线上）。\n"
-                        + "不适合（一律判不适合，直接回答就行）：\n"
-                        + "· 用户已把做法或步骤写死——原样运行、逐字使用、依次调用这几个工具、分几次查、按这个格式改；\n"
-                        + "· 用户在问你的判断——还能不能再优化、行不行、有什么问题、为什么、帮我分析；他要的是结论，不是计划；\n"
-                        + "· 只读性质：查、看、找、读、汇总，不改动任何东西；\n"
-                        + "· 对已有内容做局部改动：润色、调整、换措辞换配色、改一处；\n"
-                        + "· 环节多但没有需要他拍板的岔路——执行进度有任务清单展示，不需要计划卡。\n"
-                        + "一句话判据：只有「先花一分钟对齐要交付成什么样」能明显减少返工，或这一步做下去不易回头，才算适合；"
-                        + "只是环节多、只是最终会有产物，都不算。\n"
-                        + (hasAttachments ? "（本条消息附带了文件或图片——通常意味着要把材料加工成产物，但仍以「做法说清了没有、"
-                        + "有没有要他拍板的岔路」为准。）\n" : "")
-                        + (history == null || history.isBlank() ? ""
-                        : "最近对话（辅助理解意图，如「继续」「改成 X」这类指代）：\n" + history + "\n")
-                        + "\n用户消息：" + question
-                        + "\n\n只回答 YES 或 NO，不要输出任何其他内容。";
-                // 与计划轮同口径的思考档处理：能关思考的方言下发关闭字段（思考与正文共享 max_tokens，
-                // 恒思考模型会把预算花在推理上、判定正文被挤空）；关不掉的多留一份输出预算
-                Map<String, Object> thinkOff = modelRegistryService.reasoningOffBody(model);
-                org.springframework.ai.openai.OpenAiChatOptions.Builder opts =
-                        org.springframework.ai.openai.OpenAiChatOptions.builder()
-                                .model(model)
-                                .temperature(0.0)
-                                .maxTokens(thinkOff.isEmpty() ? 3072 : 128)
-                                .internalToolExecutionEnabled(false);
-                if (!thinkOff.isEmpty()) opts.extraBody(thinkOff);
-                String out = chatClient.prompt()
-                        .user(prompt)
-                        .options(opts.build())
-                        .call()
-                        .content();
-                boolean yes = out != null && out.trim().toUpperCase(java.util.Locale.ROOT).startsWith("YES");
-                log.info("[PLAN] 计划意图识别：{}（{} 字消息）", yes ? "适合" : "不适合", question.length());
-                return yes;
-            } catch (Exception e) {
-                log.info("[PLAN] 计划意图识别失败，本轮不自动开计划: {}", e.getMessage());
-                return false;
-            } finally {
-                com.wenqu.ai.util.UsageAttr.clear();
-            }
-        }, PLAN_INTENT_EXECUTOR);
-    }
-
-    /** 取意图识别结果（闸门前调用）：没跑完最多再等 1.5 秒——自动开启宁缺毋滥，不拖慢回答 */
-    private boolean awaitPlanIntent(java.util.concurrent.CompletableFuture<Boolean> f) {
-        if (f == null) return false;
-        try {
-            return Boolean.TRUE.equals(f.get(1500, java.util.concurrent.TimeUnit.MILLISECONDS));
-        } catch (java.util.concurrent.TimeoutException te) {
-            f.cancel(true);
-            log.info("[PLAN] 计划意图识别超时，本轮不自动开计划");
-            return false;
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
-    /**
-     * 计划模式闸门（runChat 主链路与无知识库分支共用）：装配本轮工具集 → 无工具/游客降级 →
-     * 产出执行计划 → 挂起等用户裁决。批准后的计划由调用方注入执行轮 system。
-     * <p>裁决含「退回重出」：用户不满意可带修改意见退回，模型在同一轮内重出下一版（v2/v3…），
-     * 反复直到确认/取消/超时。每版落一条批准记录（REVISED=被用户意见取代），版本链随本轮计划快照落库。
-     *
-     * @return null=本轮应就此终止（用户拒绝/超时发 plan_cancelled、或「继续对话」取代发 plan_superseded，
-     *         由调用方按 {@link AnswerStreamState#planSuperseded} 分流收尾）；
-     *         ""=降级为普通回答（无工具/游客/生成失败，降级提示已登记，不注入计划）；
-     *         非 null=批准后的计划文本（调用方追加进 system）
-     */
-    private String planApprovalGate(AnswerStreamState st, Agent agent, String rolePart, String planQuestion,
-                                    List<String> skills, String refsDigest, StringBuilder system) {
-        if (st.guestMode) {
-            addDegradation(st.degradations, st.degradedCodes, "planGuestUnsupported",
-                    "游客会话不支持计划模式，本轮按普通模式回答");
-            return "";
-        }
-        // 计划门控的对象是工具执行：模型不支持 Function Calling 时工具本来就下不去，计划没有可门控的执行，
-        // 直接降级（不缓存工具集，让 buildAnswerStream 的同款检查走它自己的标准降级提示）
-        if (!modelRegistryService.toolCapableOf(st.model)) {
-            addDegradation(st.degradations, st.degradedCodes, "planNoTools",
-                    "当前模型不支持工具调用（Function Calling），计划模式未生效，已按普通模式回答");
-            return "";
-        }
-        // 计划轮自己不执行任何工具，但计划必须基于「本轮真实可用的能力」来写——先按与生成轮完全
-        // 相同的口径装配一次工具集，既给计划当能力清单，也缓存给 buildAnswerStream 复用（MCP 连接不二次建立）
-        java.util.List<org.springframework.ai.tool.ToolCallback> rawCbs = enabledToolCallbacks(agent, st.userId, st);
-        st.enabledCallbacks = rawCbs;
-        if (rawCbs.isEmpty()) {
-            addDegradation(st.degradations, st.degradedCodes, "planNoTools",
-                    "本轮没有启用的工具可执行，计划模式未生效，已按普通模式回答");
-            return "";
-        }
-        // 版本链 [{plan, feedback}]：feedback=产出该版的用户意见（v1 为空串）
-        List<Map<String, Object>> versions = new java.util.ArrayList<>();
-        String feedback = null;   // 本版应遵循的用户意见（v1 为 null）
-        while (true) {
-            boolean first = versions.isEmpty() && feedback == null;
-            sendSseEvent(st.emitter, "stage",
-                    first ? "正在制定计划…" : "正在按你的意见修改计划…", st.sessionId);
-            PlanPhaseOutcome po = runPlanPhase(st, rolePart, planQuestion, skills, rawCbs, refsDigest,
-                    feedback, versions, first);
-            if (po.reviseFeedback() != null) {
-                // 用户退回本版：记账后带着意见重出下一版（站内通知只在首版发，修订不再提醒）
-                versions.add(planVersionEntry(po.plan(), feedback));
-                feedback = po.reviseFeedback();
-                continue;
-            }
-            if (po.superseded()) {
-                // 用户带着修改意见继续对话：本版作废（不是「未批准」——内容没被否定，是提出了修改）。
-                // 快照落 superseded，收尾（收尾助手消息 + plan_superseded 事件）见调用方
-                versions.add(planVersionEntry(po.plan(), feedback));
-                st.planRecord = planSnapshot(versions, "superseded", st.planAuto);
-                st.planSuperseded = true;
-                return null;
-            }
-            if (po.generateFailed()) {
-                // 修订轮生成失败：已有一版等待批准的计划，不能悄悄放弃用户诉求转普通回答——
-                // 也没有可裁决的卡可挂（旧卡已按 REVISED 收口），登记降级后按停止本轮收尾
-                if (!versions.isEmpty()) {
-                    st.planRecord = planSnapshot(versions, "rejected", st.planAuto);
-                    addDegradation(st.degradations, st.degradedCodes, "planReviseFailed",
-                            "按你的意见重出计划失败，本轮已停止（可重新发送）");
-                    return null;
-                }
-                return "";
-            }
-            versions.add(planVersionEntry(po.plan(), feedback));
-            if (po.approved()) {
-                st.planRecord = planSnapshot(versions, "approved", st.planAuto);
-                String block = approvedPlanBlock(po.plan(), todoExposed(st.guestMode, agent, st.branchTurn));
-                system.append(block);
-                // 容量计量：计划块与技能/摘要一样是注入段，并入 other 桶（done 的用量校准同源）
-                st.ctxParts.merge("other", TokenCounter.estimate(block), Integer::sum);
-                return po.plan();
-            }
-            // 拒绝/超时：整轮终止（快照含各版计划，历史里这轮的「未批准」卡照常带修改记录）
-            st.planRecord = planSnapshot(versions, "rejected", st.planAuto);
-            return null;
-        }
-    }
-
-    /** 版本链条目：feedback=产出该版的用户意见（v1 为空串，前端按「你的意见」插在两版之间展示） */
-    private Map<String, Object> planVersionEntry(String plan, String feedback) {
-        Map<String, Object> v = new LinkedHashMap<>();
-        v.put("plan", plan == null ? "" : plan);
-        v.put("feedback", feedback == null ? "" : feedback);
-        return v;
-    }
-
-    /** 本轮计划快照（助手消息 plan 列）：plan=末版正文（卡片主体展示），versions=完整版本链（修改记录）；
-     *  auto=true=该计划按消息意图自动开启（用户没开计划开关），历史回显时卡片照常标「自动开启」 */
-    private Map<String, Object> planSnapshot(List<Map<String, Object>> versions, String status, boolean auto) {
-        Map<String, Object> rec = new LinkedHashMap<>();
-        Map<String, Object> last = versions.get(versions.size() - 1);
-        rec.put("plan", last.get("plan"));
-        rec.put("status", status);
-        rec.put("versions", new java.util.ArrayList<>(versions));
-        if (auto) rec.put("auto", true);
-        return rec;
-    }
-
-    /** 批准后的计划 → 执行轮 system 注入块 */
-    private String approvedPlanBlock(String plan, boolean todoExposed) {
-        return "\n\n【已批准的执行计划】用户已审阅并批准以下执行计划，请按计划逐步执行；"
-                + "执行中发现计划不可行时可作必要偏离，但需在回答中说明原因。"
-                + (todoExposed ? "开工前先把下面每一条落成任务清单项（writeTodo，整表一次传全），"
-                        + "随后每完成一条就更新状态——清单是给这个计划配的执行进度视图，不是第二次确认。" : "")
-                + "\n" + plan;
-    }
-
-    /**
-     * 已检索资料清单（计划模式的计划输入）：只给标题与来源文档名——计划关心「有什么可依据」，
-     * 不需要正文本身；全文在执行轮照常注入，计划调用保持轻量（标题清单 vs 全文差一个数量级的输入）。
-     */
-    private String buildRefsDigest(List<Map<String, Object>> sources) {
-        if (sources == null || sources.isEmpty()) return null;
-        StringBuilder sb = new StringBuilder();
-        int n = 0;
-        for (Map<String, Object> s : sources) {
-            if (n >= 10) {
-                sb.append("…等共 ").append(sources.size()).append(" 段\n");
-                break;
-            }
-            Object title = s.get("title");
-            sb.append("- ").append(title == null || String.valueOf(title).isBlank()
-                    ? "（无标题）" : String.valueOf(title));
-            Object fileName = s.get("fileName");
-            if (fileName != null && !String.valueOf(fileName).isBlank()) {
-                sb.append("（").append(fileName).append("）");
-            }
-            sb.append("\n");
-            n++;
-        }
-        return sb.toString().trim();
-    }
-
-    /**
-     * 计划阶段（单版）执行体：一次无工具的流式模型调用产出计划文本（plan_delta 逐段下发，用户即时看到计划成形），
-     * 流毕落库计划批准卡（c_ai_tool_approval，tool_name=planApproval）并阻塞等待用户裁决。
-     * <p>等待语义与 askUser 相同：人工等待不计入整轮机器预算（beginHumanWait）；等待期间通道失效不中止
-     * 本轮（卡片已落库，用户刷新/换设备后仍可批准，回答转后台续跑照常落库）；超时按未批准收尾。
-     * <p>计划生成本身失败/超时/产出为空：不挂卡，登记降级后按普通模式继续——计划模式不能把本轮卡死。
-     *
-     * @param userFeedback 非 null=本版是用户退回后的修订版，按该意见重出（v1 为 null）
-     * @param versions     已产的版本链（修订版作为上一版上下文喂给模型）
-     * @param notify       是否发「执行计划待确认」站内通知（仅首版发，修订版用户就在会话里）
-     */
-    private PlanPhaseOutcome runPlanPhase(AnswerStreamState st, String rolePart, String planQuestion,
-                                          List<String> skills,
-                                          java.util.List<org.springframework.ai.tool.ToolCallback> callbacks,
-                                          String refsDigest, String userFeedback,
-                                          List<Map<String, Object>> versions, boolean notify) {
-        // ---- 1. 计划 prompt：角色段 + 计划指令 + 能力清单（与生成轮同口径装配的回调名与描述）----
-        StringBuilder ps = new StringBuilder(rolePart == null ? "" : rolePart)
-                .append("\n\n【计划模式】用户为本轮开启了计划模式：请先产出一份执行计划供用户确认，暂时不要开始回答。\n")
-                .append("计划要求：\n")
-                .append("1. 这是给用户审阅的「结果计划」：用 Markdown 有序列表说明成品将做成什么样——最终交付物是什么形态、"
-                        + "包含哪些部分、关键选择是什么（结构、内容范围、风格基调、呈现方式等），"
-                        + "用户看完就能判断是不是他要的东西；也可以说明会怎么让他看到它（如先给一版可预览的原型）；\n")
-                .append("2. 只写用户关心的结果：不写工具名、能力名、内部做法与执行细节；\n")
-                .append("3. 关键要素在出计划前已向用户确认过（若发生过提问，答案见「用户已确认的关键要素」）："
-                        + "不要再写「先与你确认…」这类步骤；仍有拿不准的细节按你的最佳判断定，"
-                        + "并在计划里点明这是你的选择，用户可以直接改；\n")
-                .append("4. 只能计划用下面列出的能力去做，不要出现清单之外的动作（清单仅供你核对可行性，名字不要写进计划）：\n");
-        int listed = 0;
-        for (org.springframework.ai.tool.ToolCallback cb : callbacks) {
-            if (listed >= 15) {
-                ps.append("   - …等共 ").append(callbacks.size()).append(" 个工具\n");
-                break;
-            }
-            var def = cb.getToolDefinition();
-            if (def == null) continue;
-            String desc = def.description() == null ? "" : def.description();
-            if (desc.length() > 80) desc = desc.substring(0, 80) + "…";
-            ps.append("   - ").append(def.name()).append("：").append(desc).append("\n");
-            listed++;
-        }
-        ps.append("5. 事情简单或资料已足够时，计划可以只有一条（例如：直接产出结果）；\n")
-                .append("6. 只输出计划本身（Markdown 列表），不要输出前言、解释或计划以外的任何内容，总长度控制在 10 行以内。");
-        StringBuilder pu = new StringBuilder(planQuestion == null ? "" : planQuestion);
-        if (skills != null && !skills.isEmpty()) {
-            pu.append("\n\n（用户本轮指定了技能：").append(String.join("、", skills))
-                    .append("——其全文将在执行阶段注入，计划里可以提到按技能执行）");
-        }
-        if (refsDigest != null && !refsDigest.isBlank()) {
-            pu.append("\n\n【已检索资料清单】本轮已检索到以下参考资料（仅标题，执行阶段提供全文）：\n").append(refsDigest);
-        }
-        String historyText = buildHistoryText(sessionService.getRecentHistory(st.sessionId, 2));
-        if (!historyText.isEmpty()) {
-            pu.append("\n\n对话历史：\n").append(historyText);
-        }
-        // 修订版（用户在等批界面退回并给了意见）：上一版计划 + 修改意见一起喂给模型重出——
-        // 用户也可能直接改写了计划全文，此时意见即改稿，按改稿重出（只做必要澄清，别丢用户的改动）
-        if (userFeedback != null) {
-            String prevPlan = "";
-            for (int i = versions.size() - 1; i >= 0; i--) {
-                Object p = versions.get(i).get("plan");
-                if (p != null && !String.valueOf(p).isBlank()) { prevPlan = String.valueOf(p); break; }
-            }
-            ps.append("\n\n【修订轮】本次不是首版计划：用户已看过上一版并提出了修改意见，"
-                    + "请按意见产出新的完整计划（仍是 Markdown 列表、10 行以内、只输出计划本身）；"
-                    + "与用户意见无关的部分保持原样，不要借机重写。");
-            pu.append("\n\n【上一版计划（用户要修改它）】\n").append(prevPlan)
-                    .append("\n\n【用户的修改意见】\n").append(userFeedback)
-                    .append("\n\n请产出修改后的新一版计划。");
-        } else {
-            // 「继续对话」轮（上一版计划被用户带着意见取代）：本轮问题就是对上一版提的修改要求，
-            // 把上一版计划带上，产出"修改后的计划"而不是从零重来
-            String prevSuperseded = findSupersededPlan(st.sessionId);
-            if (prevSuperseded != null) {
-                ps.append("\n\n【继续对话】用户对上一版执行计划提出了修改要求（见下方的用户消息），"
-                        + "请在他要改的基础上产出修改后的完整计划（仍是 Markdown 列表、10 行以内、只输出计划本身）；"
-                        + "与他意见无关的部分保持原样，不要借机重写。");
-                pu.append("\n\n【上一版计划（用户要改的是它）】\n").append(prevSuperseded);
-            }
-        }
-        // ---- 1.5 计划前的要素澄清（每轮计划的首版前问一次，同轮修订版不问）：模型拿不准才弹提问卡，
-        //          答完把确认结果并入计划依据——「先问 → 答 → 再出计划」的第一步；拿得准走 READY 不打扰。
-        //          收集型通道没人能作答（定时任务/MCP/子智能体），跳过。
-        // lambda 中引用需 effectively final，用容器承接
-        java.util.concurrent.atomic.AtomicBoolean clarifyAsked = new java.util.concurrent.atomic.AtomicBoolean();
-        if (versions.isEmpty() && userFeedback == null && !(st.emitter instanceof CollectingSseEmitter)) {
-            java.util.List<BuiltinTools.AskQuestion> clarifyQs = planClarifyQuestions(st, rolePart, pu.toString());
-            if (!clarifyQs.isEmpty()) {
-                clarifyAsked.set(true);
-                if (!st.detached) sendSseEvent(st.emitter, "stage", "正在确认关键要素…", st.sessionId);
-                // 提问卡走与执行期 askUser 完全相同的记录管道：start（时间线占位，前端对 askUser 的
-                // start 不渲染）+ 终态（前端据此撤下提问面板、问答记录卡落进 toolCalls 随消息持久化）。
-                // 不记录的话「提问面板撤下」永远不会触发（面板只在 askUser 工具终态或整轮结束时撤），
-                // 而计划轮要挂着等用户批准 ⇒ 提问面板会一直挡住计划卡与确认栏。
-                String askArgs = JSON.toJSONString(Map.of("questions", clarifyQs.stream().map(q -> {
-                    Map<String, Object> m = new LinkedHashMap<>();
-                    m.put("topic", q.topic());
-                    m.put("question", q.question());
-                    m.put("options", q.options());
-                    return m;
-                }).toList()));
-                long askStartAt = System.currentTimeMillis();
-                recordToolStatus(st, "askUser", askArgs, "start", null, 0, 1, false);
-                String clarified = doAskUserMulti(st, clarifyQs);
-                recordToolStatus(st, "askUser", askArgs, "done", clarified,
-                        System.currentTimeMillis() - askStartAt, 1, false);
-                String qa = formatClarifyAnswers(clarifyQs, clarified);
-                if (!qa.isBlank()) {
-                    pu.append("\n\n【用户已确认的关键要素】\n").append(qa);
-                }
-                pu.append("\n\n（未作答或未问到的关键点：按你的最佳判断给默认，并在计划里点明该处，用户可以直接改。）");
-                if (!st.detached) sendSseEvent(st.emitter, "stage", "正在制定计划…", st.sessionId);
-            }
-        }
-        // ---- 2. 调用选项：辅助调用口径——能关思考的方言下发关闭字段（思考与正文共享 max_tokens，
-        //         默认开思考的模型会把预算花在推理上、计划正文被挤空）；关不掉的多留一份输出预算。
-        //         计划要短，max_tokens 收紧到声明值以内。 ----
-        Map<String, Object> thinkOff = modelRegistryService.reasoningOffBody(st.model);
-        OpenAiChatOptions.Builder opts = OpenAiChatOptions.builder()
-                .model(st.model)
-                .temperature(configService.getDouble("chat.temperature"))
-                .maxTokens(thinkOff.isEmpty() ? 3072 : 1536);
-        if (!thinkOff.isEmpty()) opts.extraBody(thinkOff);
-        if (st.effectiveMaxOutput > 0 && st.effectiveMaxOutput < 3072) {
-            opts.maxTokens(st.effectiveMaxOutput);
-        }
-        // ---- 3. 流式生成：增量走 plan_delta（复用整轮流级心跳/看门狗）----
-        // 通道失效时分两类：本轮刚问过用户（用户在等待期断线/换了设备，答案已送到）或正等人作答/已转后台
-        // 续跑 ⇒ 只丢事件、继续产出并挂卡（卡片落库，从「待批准计划」恢复）；其余照旧「断开即止损」中止本轮。
-        // 注意不能只靠 keepRunningWithoutChannel：答案送达时 askWaits 已归零，而断线往往到第一次发送
-        // 失败才被发现（等待期没有写入事件）——这个竞态窗口靠 clarifyAsked 兜住。
-        StringBuilder planText = new StringBuilder();
-        String billingUid = com.wenqu.ai.util.RequestUser.uid();
-        try {
-            chatClient.prompt()
-                    .system(ps.toString())
-                    .user(pu.toString())
-                    .options(opts.build())
-                    .stream()
-                    .chatResponse()
-                    .doOnNext(resp -> {
-                        String delta = "";
-                        if (resp.getResult() != null && resp.getResult().getOutput() != null) {
-                            String text = resp.getResult().getOutput().getText();
-                            delta = text == null ? "" : text;
-                        }
-                        if (!delta.isEmpty() && planText.length() <= PLAN_MAX_CHARS) {
-                            planText.append(delta);
-                            if (!st.detached && !sendSseEvent(st.emitter, "plan_delta", delta, st.sessionId)) {
-                                if (clarifyAsked.get() || st.keepRunningWithoutChannel()) {
-                                    st.detached = true;   // 转后台续跑：此后只积累不发送
-                                } else {
-                                    throw new SseClientGoneException();
-                                }
-                            }
-                        }
-                    })
-                    .contextWrite(ctx -> com.wenqu.ai.util.UsageAttr.put(ctx,
-                            com.wenqu.ai.util.UsageAttr.of(
-                                    com.wenqu.ai.util.RequestUser.ANONYMOUS.equals(billingUid) ? null : billingUid,
-                                    st.sessionId, null, "chat")))
-                    .blockLast(Duration.ofMillis(planGenTimeoutMs()));
-        } catch (SseClientGoneException e) {
-            log.info("[PLAN] 客户端断开，计划流终止: session={}", st.sessionId);
-            return PlanPhaseOutcome.failed();
-        } catch (Exception e) {
-            log.warn("[FAIL-LOUD] 计划生成失败/超时，本轮降级为普通回答: session={} {}", st.sessionId, e.getMessage());
-            addDegradation(st.degradations, st.degradedCodes, "planGenFailed",
-                    "计划生成失败，本轮已按普通模式继续");
-            return PlanPhaseOutcome.failed();
-        }
-        String draft = stripPlanNoise(planText.toString());
-        if (draft.isBlank()) {
-            log.warn("[FAIL-LOUD] 计划生成为空（正文 0 token），本轮降级为普通回答: session={}", st.sessionId);
-            addDegradation(st.degradations, st.degradedCodes, "planGenFailed",
-                    "计划生成为空，本轮已按普通模式继续");
-            return PlanPhaseOutcome.failed();
-        }
-        // ---- 4. 挂起等批准：落库 + 内存句柄 + 站内通知 + SSE 卡（与 askUser 同一管道）----
-        long timeout = planTimeoutMs();
-        String planApprovalId = java.util.UUID.randomUUID().toString();
-        java.util.concurrent.CompletableFuture<PlanDecision> future = new java.util.concurrent.CompletableFuture<>();
-        try {
-            com.wenqu.ai.model.ToolApproval rec = new com.wenqu.ai.model.ToolApproval();
-            rec.setId(planApprovalId);
-            rec.setSessionId(st.sessionId);
-            rec.setUserId(st.userId);
-            rec.setTurnId(st.turnId);
-            rec.setToolName("planApproval");
-            rec.setStatus("PENDING");
-            rec.setRequestArgs(JSON.toJSONString(java.util.Map.of("plan", draft)));
-            rec.setCreatedAt(java.time.LocalDateTime.now());
-            toolApprovalMapper.insert(rec);
-        } catch (Exception e) {
-            log.warn("[PLAN] 计划记录落库失败（不阻塞计划流程）: {}", e.getMessage());
-        }
-        PENDING_PLANS.put(planApprovalId, new PendingPlan(st.sessionId, st.userId, future));
-        if (notify) {
-            try {
-                notificationService.create(st.userId, com.wenqu.ai.model.Notification.TYPE_TOOL_APPROVAL,
-                        "执行计划待确认",
-                        "模型为本轮产出了执行计划，请在会话中批准或修改后执行（超时未确认本轮将停止）。",
-                        "session", st.sessionId, "tool:" + planApprovalId, planApprovalId);
-            } catch (Exception e) {
-                log.warn("[PLAN] 计划通知写入失败（不阻塞计划流程）: {}", e.getMessage());
-            }
-        }
-        try {
-            Map<String, Object> req = new LinkedHashMap<>();
-            req.put("planApprovalId", planApprovalId);
-            req.put("plan", draft);
-            req.put("timeoutMs", timeout);
-            if (st.planAuto) req.put("auto", true);   // 按消息意图自动开启：卡片标「自动开启」
-            // 卡片下发失败（连接已断）：本轮转后台续跑——卡片已落库，用户刷新/换设备后仍可批准，
-            // 批准后的回答照常生成并落库（与 askUser 同语义）
-            if (!sendSseEvent(st.emitter, "plan_approval", JSON.toJSONString(req), st.sessionId)) {
-                st.detached = true;
-                log.info("[PLAN] 计划卡通道已失效，本轮转后台续跑: id={} session={}", planApprovalId, st.sessionId);
-            }
-            log.info("[PLAN] 等待用户确认执行计划: id={} session={} 窗口={}ms 计划 {} 字",
-                    planApprovalId, st.sessionId, timeout, draft.length());
-            PlanDecision decision;
-            st.planWaits.incrementAndGet();
-            beginHumanWait(st.emitter);   // 用户裁决时间不计入整轮机器预算（见 TurnDeadline）
-            try {
-                decision = future.get(timeout, java.util.concurrent.TimeUnit.MILLISECONDS);
-            } catch (java.util.concurrent.TimeoutException te) {
-                markApprovalResolved(planApprovalId, "TIMEOUT", st.userId);
-                decision = null;
-                log.warn("[PLAN] 计划批准超时，按未批准收尾: id={} session={}", planApprovalId, st.sessionId);
-            } catch (java.util.concurrent.ExecutionException ee) {
-                markApprovalResolved(planApprovalId, "TIMEOUT", st.userId);
-                decision = null;
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-                markApprovalResolved(planApprovalId, "TIMEOUT", st.userId);
-                decision = null;
-            } finally {
-                st.planWaits.decrementAndGet();
-                endHumanWait(st.emitter);
-            }
-            // 本版结果交回闸门（版本链快照由闸门统一组装，这里不再落 st.planRecord）
-            if (decision == null) return PlanPhaseOutcome.of(draft, false, null);                    // 超时=未批准
-            if (decision.reviseFeedback() != null) return PlanPhaseOutcome.of(draft, false, decision.reviseFeedback()); // 退回重出
-            if (decision.superseded()) return PlanPhaseOutcome.superseded(draft);                    // 继续对话：本版作废
-            if (!decision.approved()) return PlanPhaseOutcome.of(draft, false, null);                // 拒绝
-            String finalPlan = decision.plan() == null || decision.plan().isBlank() ? draft : decision.plan();
-            return PlanPhaseOutcome.of(finalPlan, true, null);                                       // 批准
-        } finally {
-            PENDING_PLANS.remove(planApprovalId);
-        }
-    }
-
-    /**
-     * 计划前的要素澄清（首版计划前的一次小判定）：判断是否有「无法从资料与对话推断、必须由用户拍板」的
-     * 关键要素——有就先走提问卡问清、答完再出计划（「先问 → 答 → 再出计划」）；模型拿得准则输出 READY，
-     * 不打扰用户、直接出计划。上下文与计划轮同源：同一段角色提示词（判定者先知道自己是谁、产品是什么，
-     * 才不会有「你是做什么的」这类本可自答的问题）+ 同一段 user 文本；失败/超时/输出不可解析一律当
-     * READY——澄清是加分项，不能把计划轮卡住。
-     * <p>问的范围刻意收紧：计划卡本身就是「用户看一版、不满意退回重出」的确认关口，凡计划里写明了
-     * 就能被用户直接改掉的取舍（呈现形式、篇幅长短、风格措辞……）都不必提前问——实测过一轮：判在这里
-     * 问了「三块内容合成一张表还是分三段」，而这个问题用户在看计划时改一句就解决，提问卡却把整轮挂住十分钟。
-     */
-    private java.util.List<BuiltinTools.AskQuestion> planClarifyQuestions(AnswerStreamState st, String rolePart,
-                                                                          String planContext) {
-        String instructions = (rolePart == null || rolePart.isBlank() ? "" : rolePart + "\n\n")
-                + "你是「计划前澄清」判断器：用户开启了计划模式，你即将给他一份「成品将做成什么样」的计划。"
-                + "先判断：有哪些关键要素，是「不确认就很可能做错方向」、又无法从用户消息 / 已检索资料 / "
-                + "对话历史 / 上一版计划里得到的？\n"
-                + "- 逐个自问：用户消息里已经给了吗？能从资料/历史里看出来吗？能先按默认做、在计划里标出让用户改吗？"
-                + "只要占一条，就不要问它；\n"
-                + "- **不要问**这些：成品长什么样（表格还是分段、篇幅、语气措辞、要不要配图举例）、"
-                + "内容取舍的宽窄、可以分几种做法——这些都会写进计划，用户看计划时改一句就行，"
-                + "提前问等于把同一件事确认两遍；\n"
-                + "- 只问「问错了整份计划就得重做」的方向性前提：例如这件事给谁用、要解决的到底是哪个问题、"
-                + "有哪个业务口径是你无权替他定的；通常 0~1 个，最多 3 个；一个都不该问就输出 READY；\n"
-                + "- 每个问题一句话交代背景与要决定的事；给 2~3 个具体候选（第一项是你推荐的），用户也可自由输入；\n"
-                + "- 只输出下面两种内容之一，不要任何解释：\n"
-                + "  无需提问：READY\n"
-                + "  需要提问：{\"questions\":[{\"topic\":\"话题\",\"question\":\"……\",\"options\":[\"……\",\"……\"]}]}";
-        // 与计划轮同口径的思考档处理：能关的关掉；这是小判定，生成封顶 20s，超时当 READY
-        Map<String, Object> thinkOff = modelRegistryService.reasoningOffBody(st.model);
-        OpenAiChatOptions.Builder opts = OpenAiChatOptions.builder()
-                .model(st.model)
-                .temperature(0.0)
-                .maxTokens(thinkOff.isEmpty() ? 3072 : 1536)
-                .internalToolExecutionEnabled(false);
-        if (!thinkOff.isEmpty()) opts.extraBody(thinkOff);
-        StringBuilder out = new StringBuilder();
-        String billingUid = com.wenqu.ai.util.RequestUser.uid();
-        try {
-            chatClient.prompt()
-                    .system(instructions)
-                    .user(planContext)
-                    .options(opts.build())
-                    .stream()
-                    .chatResponse()
-                    .doOnNext(resp -> {
-                        if (resp.getResult() != null && resp.getResult().getOutput() != null
-                                && out.length() < 8000) {
-                            String t = resp.getResult().getOutput().getText();
-                            if (t != null) out.append(t);
-                        }
-                    })
-                    .contextWrite(ctx -> com.wenqu.ai.util.UsageAttr.put(ctx,
-                            com.wenqu.ai.util.UsageAttr.of(
-                                    com.wenqu.ai.util.RequestUser.ANONYMOUS.equals(billingUid) ? null : billingUid,
-                                    st.sessionId, null, "chat")))
-                    .blockLast(Duration.ofMillis(Math.min(planGenTimeoutMs(), 20000L)));
-        } catch (Exception e) {
-            log.info("[PLAN] 要素澄清判定失败/超时，直接出计划: session={} {}", st.sessionId, e.getMessage());
-            return java.util.List.of();
-        }
-        return parseClarifyQuestions(out.toString());
-    }
-
-    /** 解析澄清判定输出：READY / 无 JSON / 解析失败 / 全部不合法都返回空表（=不用问）；问题按提问卡限制收敛
-     *  （最多 3 问、每题 2~MAX_ASK_OPTIONS 个候选），避免走到整卡拒绝那条路上去 */
-    private java.util.List<BuiltinTools.AskQuestion> parseClarifyQuestions(String raw) {
-        if (raw == null || raw.isBlank()) return java.util.List.of();
-        String s = raw.trim();
-        int a = s.indexOf('{');
-        int b = s.lastIndexOf('}');
-        if (a < 0 || b <= a) return java.util.List.of();
-        try {
-            JSONArray arr = JSON.parseObject(s.substring(a, b + 1)).getJSONArray("questions");
-            if (arr == null) return java.util.List.of();
-            java.util.List<BuiltinTools.AskQuestion> qs = new java.util.ArrayList<>();
-            for (int i = 0; i < arr.size() && qs.size() < 3; i++) {
-                JSONObject o = arr.getJSONObject(i);
-                if (o == null) continue;
-                String question = o.getString("question") == null ? "" : o.getString("question").trim();
-                if (question.isEmpty()) continue;
-                if (question.length() > 500) question = question.substring(0, 500);
-                String topic = o.getString("topic") == null ? "" : o.getString("topic").trim();
-                if (topic.length() > 16) topic = topic.substring(0, 16);
-                java.util.List<String> opts = new java.util.ArrayList<>();
-                JSONArray oa = o.getJSONArray("options");
-                if (oa != null) for (Object oo : oa) {
-                    if (opts.size() >= MAX_ASK_OPTIONS) break;
-                    String v = oo == null ? "" : String.valueOf(oo).trim();
-                    if (v.isEmpty() || opts.contains(v)) continue;
-                    opts.add(v.length() > 200 ? v.substring(0, 200) : v);
-                }
-                if (opts.size() < 2) continue;   // 少于 2 个候选不构成选择题（与提问卡口径一致）
-                qs.add(new BuiltinTools.AskQuestion(topic, question, opts));
-            }
-            return qs;
-        } catch (Exception e) {
-            log.info("[PLAN] 要素澄清输出不可解析，按无需提问处理: {}", e.getMessage());
-            return java.util.List.of();
-        }
-    }
-
-    /** 提问卡的批量答案 → 计划轮可读的问答块；未作答（忽略/超时/留空）的条目不列 */
-    private String formatClarifyAnswers(java.util.List<BuiltinTools.AskQuestion> qs, String answers) {
-        java.util.List<String> ans = new java.util.ArrayList<>();
-        if (qs.size() == 1) {
-            ans.add(answers == null ? "" : answers);
-        } else {
-            try {
-                for (Object o : JSON.parseArray(answers == null ? "[]" : answers)) {
-                    ans.add(o == null ? "" : String.valueOf(o));
-                }
-            } catch (Exception e) {
-                log.warn("[PLAN] 澄清答案解析失败，按未作答处理: {}", e.getMessage());
-            }
-        }
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < qs.size(); i++) {
-            String a = i < ans.size() ? ans.get(i).trim() : "";
-            if (a.isEmpty() || a.startsWith("（用户未回答这一题")) continue;
-            if (!sb.isEmpty()) sb.append("\n");
-            sb.append("- ").append(qs.get(i).question()).append("\n  用户选择：").append(a);
-        }
-        return sb.toString();
-    }
-
-    /** 计划正文降噪：剥掉 <process>/<related> 闭合块与首个未闭合开口之后的内容（计划轮没有工具，
-     *  正常不会产出这些标签，防角色提示词诱导出的独白混进计划卡） */
-    private String stripPlanNoise(String raw) {
-        if (raw == null || raw.isEmpty()) return "";
-        String s = raw.replaceAll("(?s)<process>.*?</process>|<related>.*?</related>", " ");
-        int cut = s.indexOf("<process>");
-        int cut2 = s.indexOf("<related>");
-        if (cut >= 0 && (cut2 < 0 || cut < cut2)) s = s.substring(0, cut);
-        else if (cut2 >= 0) s = s.substring(0, cut2);
-        return s.trim();
-    }
-
-    /** 从落库 request_args 还原模型原稿计划（批准未带编辑稿时回退用） */
-    private String parsePlanDraft(String argsJson) {
-        try {
-            com.alibaba.fastjson2.JSONObject args = JSON.parseObject(argsJson);
-            return args == null ? "" : (args.getString("plan") == null ? "" : args.getString("plan"));
-        } catch (Exception e) {
-            return "";
-        }
-    }
-
-    /** 上一版被「继续对话」取代的计划文本（新一轮按用户意见改它；没有则 null）：
-     *  只认「最近一条助手消息就是被取代的计划」——中间隔了别的回答就不挂上一版，避免把无关计划当底稿 */
-    private String findSupersededPlan(String sessionId) {
-        try {
-            List<Map<String, Object>> recent = sessionService.getRecentHistory(sessionId, 3);
-            if (recent == null) return null;
-            for (int i = recent.size() - 1; i >= 0; i--) {
-                Map<String, Object> m = recent.get(i);
-                if (m == null || !"assistant".equals(String.valueOf(m.get("role")))) continue;
-                Object planObj = m.get("plan");
-                if (!(planObj instanceof Map)) return null;
-                Map<?, ?> plan = (Map<?, ?>) planObj;
-                if (!"superseded".equals(String.valueOf(plan.get("status")))) return null;
-                Object p = plan.get("plan");
-                String text = p == null ? "" : String.valueOf(p);
-                return text.isBlank() ? null : text;
-            }
-        } catch (Exception e) {
-            log.warn("[PLAN] 读取上一版计划失败（本轮按首版出计划）: session={} {}", sessionId, e.getMessage());
-        }
-        return null;
-    }
-
-    /**
-     * 用户裁决执行计划（计划模式）：仅发起本轮问答的用户本人可裁决（uid 比对，与工具审批同口径）。
-     * revise=true 为退回重出（plan=用户的修改意见/改稿，同一轮内模型产出下一版，可反复）；
-     * supersede=true 为「继续对话」（用户带着修改意见继续对话，本版作废，新一轮按意见重做计划）；
-     * approved=false 为拒绝（整轮终止）；approved=true 时 plan 为用户（可能编辑过的）批准版计划，
-     * 空串回落模型原稿。返回 false 表示裁决没能送达（记录不存在/非本人/已收尾/句柄随进程重启消失）。
-     */
-    public boolean resolvePlanApproval(String planApprovalId, boolean approved, String plan, boolean revise,
-                                       boolean supersede, String uid) {
-        if (planApprovalId == null || planApprovalId.isBlank()) return false;
-        com.wenqu.ai.model.ToolApproval rec = toolApprovalMapper.selectById(planApprovalId);
-        if (rec == null || !"planApproval".equals(rec.getToolName())) return false;
-        if (uid == null || !uid.equals(rec.getUserId())) {
-            log.warn("[PLAN] 裁决人非本轮用户，拒绝: id={} by={}", planApprovalId, uid);
-            return false;
-        }
-        if (!"PENDING".equals(rec.getStatus())) return false; // 已处理，幂等
-        PendingPlan p = PENDING_PLANS.get(planApprovalId);
-        if (p == null) {
-            // 唤醒句柄已不在（进程重启/多副本下那轮挂在别的实例）：终态照落，本轮无法续跑
-            markApprovalResolved(planApprovalId, approved || revise || supersede ? "TIMEOUT" : "REJECTED", uid);
-            log.info("[PLAN] 唤醒句柄已不在，本轮无法续跑: id={} session={}", planApprovalId, rec.getSessionId());
-            return false;
-        }
-        if (!uid.equals(p.userId())) return false;
-        if (supersede) {
-            // 用户带着修改意见继续对话：本版作废（不是「未批准」——内容没被否定，是提出了修改）。
-            // 前端随后把那条意见作为用户消息发出，新一轮按意见产出修改后的计划
-            markApprovalResolved(planApprovalId, "SUPERSEDED", uid);
-            log.info("[PLAN] 用户带着修改意见继续对话，本版计划作废: id={} session={}", planApprovalId, rec.getSessionId());
-            return p.future().complete(PlanDecision.supersede());
-        }
-        if (revise) {
-            String feedback = plan == null ? "" : plan.trim();
-            if (feedback.isBlank()) return false;   // 空意见不能退回（前端也会拦）
-            // 本版被用户的修改意见取代：意见留审计（answer 列与 askUser 同语义），状态记 REVISED
-            try {
-                toolApprovalMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<com.wenqu.ai.model.ToolApproval>()
-                        .eq(com.wenqu.ai.model.ToolApproval::getId, planApprovalId)
-                        .set(com.wenqu.ai.model.ToolApproval::getAnswer,
-                                feedback.length() > 8000 ? feedback.substring(0, 8000) : feedback));
-            } catch (Exception e) {
-                log.warn("[PLAN] 修改意见留审计失败（不阻塞退回）: {}", e.getMessage());
-            }
-            markApprovalResolved(planApprovalId, "REVISED", uid);
-            log.info("[PLAN] 用户要求修改计划，退回重出下一版: id={} session={} 意见 {} 字",
-                    planApprovalId, rec.getSessionId(), feedback.length());
-            return p.future().complete(PlanDecision.revise(feedback));
-        }
-        if (!approved) {
-            markApprovalResolved(planApprovalId, "REJECTED", uid);
-            return p.future().complete(PlanDecision.reject());
-        }
-        String finalPlan = plan == null || plan.isBlank() ? parsePlanDraft(rec.getRequestArgs()) : plan.trim();
-        // 批准版计划留审计（answer 列与 askUser 同语义：用户最终确认的内容）
-        try {
-            toolApprovalMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<com.wenqu.ai.model.ToolApproval>()
-                    .eq(com.wenqu.ai.model.ToolApproval::getId, planApprovalId)
-                    .set(com.wenqu.ai.model.ToolApproval::getAnswer,
-                            finalPlan.length() > 8000 ? finalPlan.substring(0, 8000) : finalPlan));
-        } catch (Exception e) {
-            log.warn("[PLAN] 批准稿留审计失败（不阻塞批准）: {}", e.getMessage());
-        }
-        markApprovalResolved(planApprovalId, "APPROVED", uid);
-        log.info("[PLAN] 用户已批准执行计划: id={} session={} 编辑={}", planApprovalId, rec.getSessionId(),
-                plan != null && !plan.isBlank());
-        return p.future().complete(PlanDecision.approve(finalPlan));
-    }
-
-    /**
-     * 待批准计划列表（卡片持久化后的恢复入口）：按会话取本人名下仍挂在「上一轮计划」上的记录，
-     * 供前端在会话加载/切换、或点开计划通知进入会话时重建批准卡。
-     * <p>版本链重建：自最新记录往前，直到遇到两版之间的终态（APPROVED/REJECTED/TIMEOUT）为止——
-     * 这一串 PENDING/REVISED 就是本轮（同一轮内退回重出）的计划各版；链尾不是 PENDING 说明正在重出中，不重建。
-     * 返回 items：最新一条（含 {@code planApprovalId/plan/timeoutMs/remainingMs/createdAt/expired/live}）
-     * 加 {@code versions:[{plan,feedback}]} 版本链；{@code live=false} 表示唤醒句柄已不在
-     * （进程重启/多副本），批准送不到模型，前端按「本轮已结束」提示。
-     */
-    public java.util.List<java.util.Map<String, Object>> listPendingPlans(String sessionId, String uid) {
-        java.util.List<java.util.Map<String, Object>> out = new java.util.ArrayList<>();
-        if (sessionId == null || sessionId.isBlank() || uid == null || uid.isBlank()) return out;
-        long window = planTimeoutMs();
-        try {
-            java.util.List<com.wenqu.ai.model.ToolApproval> rows = toolApprovalMapper.selectList(
-                    new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<com.wenqu.ai.model.ToolApproval>()
-                            .eq(com.wenqu.ai.model.ToolApproval::getSessionId, sessionId)
-                            .eq(com.wenqu.ai.model.ToolApproval::getUserId, uid)
-                            .eq(com.wenqu.ai.model.ToolApproval::getToolName, "planApproval")
-                            .orderByDesc(com.wenqu.ai.model.ToolApproval::getCreatedAt)
-                            .last("LIMIT 30"));
-            if (rows.isEmpty()) return out;
-            // 自最新往前收集本轮版本链（PENDING/REVISED 继续、遇到终态即止）。
-            // 最近一条已是终态（批准/取代/拒绝/超时，绝大多数会话进来看的就是这种情况）⇒ 链为空，
-            // 没有待批计划可重建——必须先判空再取 last：getLast() 对空链抛 NoSuchElementException
-            // （message 为 null），每次切进会话都会刷「待批准计划查询失败 …: null」的误导性警告
-            java.util.LinkedList<com.wenqu.ai.model.ToolApproval> chain = new java.util.LinkedList<>();
-            for (com.wenqu.ai.model.ToolApproval rec : rows) {
-                String s = rec.getStatus();
-                if ("PENDING".equals(s) || "REVISED".equals(s)) chain.addFirst(rec);
-                else break;
-            }
-            if (chain.isEmpty()) return out;
-            com.wenqu.ai.model.ToolApproval last = chain.getLast();
-            // 链尾必须是 PENDING（可裁决）才重建；还是 REVISED = 正在按意见重出下一页，等它生成完再取
-            if (!"PENDING".equals(last.getStatus())) return out;
-            long createdMs = last.getCreatedAt() == null ? 0L
-                    : last.getCreatedAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
-            long remaining = createdMs > 0 ? Math.max(0L, createdMs + window - System.currentTimeMillis()) : window;
-            // 已过期但还没被超时路径收尾（收尾需要流水线线程醒一次）：不再当作可批卡片重建
-            if (remaining <= 0) return out;
-            // 各版 = 该版计划文本 + 产出该版的用户意见（前一版被 REVISED 时记在它的 answer 列；v1 无意见）
-            java.util.List<Map<String, Object>> versions = new java.util.ArrayList<>();
-            String producedBy = "";
-            for (com.wenqu.ai.model.ToolApproval rec : chain) {
-                String plan = parsePlanDraft(rec.getRequestArgs());
-                if (plan.isBlank()) continue;
-                Map<String, Object> v = new LinkedHashMap<>();
-                v.put("plan", plan);
-                v.put("feedback", producedBy);
-                versions.add(v);
-                producedBy = "REVISED".equals(rec.getStatus()) && rec.getAnswer() != null ? rec.getAnswer() : "";
-            }
-            if (versions.isEmpty()) return out;
-            Map<String, Object> item = new LinkedHashMap<>();
-            item.put("planApprovalId", last.getId());
-            // 归属轮次：与提问卡、审批卡同一口径
-            item.put("turnId", last.getTurnId() == null ? "" : last.getTurnId());
-            item.put("plan", versions.get(versions.size() - 1).get("plan"));
-            item.put("versions", versions);
-            item.put("timeoutMs", window);
-            item.put("remainingMs", remaining);
-            item.put("createdAt", createdMs);
-            item.put("expired", false);
-            item.put("live", PENDING_PLANS.containsKey(last.getId()));
-            out.add(item);
-        } catch (Exception e) {
-            log.warn("[PLAN] 待批准计划查询失败 session={}: {}", sessionId, e.getMessage());
-        }
-        return out;
-    }
 
     /** 计划快照 → 助手消息 plan 列 JSON（null=本轮未走计划模式）；落库点见 buildAnswerStream 与中断兜底 */
-    private String planRecordJson(AnswerStreamState st) {
+    private String planRecordJson(TurnState st) {
         return st.planRecord == null ? null : JSON.toJSONString(st.planRecord);
     }
 
     /**
      * 计划被拒/超时的收尾落库：本轮没有流式回答（gate==null 直接终止，不会走 buildAnswerStream 的落库）。
      */
-    private void persistPlanRejected(AnswerStreamState st) {
+    private void persistPlanRejected(TurnState st) {
         persistPlanCloseout(st, "（计划未批准，本轮已停止）", "拒绝");
     }
 
@@ -8645,7 +5273,7 @@ public class RagService {
      * 「继续对话」取代的收尾落库：与拒绝轮同构，但正文与卡片终态是「已被取代」而不是「未批准」——
      * 用户并没有否定计划内容，只是提出了修改；新一轮会按他的意见产出修改后的计划。
      */
-    private void persistPlanSuperseded(AnswerStreamState st) {
+    private void persistPlanSuperseded(TurnState st) {
         persistPlanCloseout(st, "（你提出了修改，这版计划已被取代）", "取代");
     }
 
@@ -8657,7 +5285,7 @@ public class RagService {
      * <p>answerPersistGate 先到先得：占住闸位也宣告本轮已收尾，通道断开兜底（disposeSafe）与
      * 看门狗不再对同一轮补落第二条。
      */
-    private void persistPlanCloseout(AnswerStreamState st, String content, String phase) {
+    private void persistPlanCloseout(TurnState st, String content, String phase) {
         if (!st.claimTerminal()) return;   // 已有终态路径落过库
         try {
             List<Map<String, Object>> sessionArtifacts = artifactService.takeArtifacts(st.sessionId);
@@ -8668,13 +5296,15 @@ public class RagService {
                     buildTimelineSnapshot(st, content, toolCallSnapshot.size(), sessionArtifacts.size());
             String timelineJson = timelineSnapshot.isEmpty() ? null : JSON.toJSONString(timelineSnapshot);
             String processText = st.processResponse.toString();
-            sessionService.appendMessage(st.sessionId, "assistant", content,
+            String closeoutMessageId = sessionService.appendMessage(st.sessionId, "assistant", content,
                     null, null, st.thinkingHolder[0], st.retrievedJson,
                     sessionArtifacts.isEmpty() ? null : JSON.toJSONString(sessionArtifacts),
                     toolCallsJson, null, null, timelineJson, processText.isEmpty() ? null : processText,
                     st.agentId, st.agentName, st.model,
                     null, null, null,
                     planRecordJson(st), st.turnId);
+            // 降级条同样要能刷新后还在（计划收尾轮也会登记降级，如"上游不认工具"）
+            sessionService.persistDegradations(closeoutMessageId, st.degradations);
         } catch (Exception e) {
             log.warn("[PLAN] {}轮收尾落库失败 (session={}): {}", phase, st.sessionId, e.getMessage());
         }
@@ -8685,16 +5315,17 @@ public class RagService {
      * 与工具审批同一套挂起-恢复管道（内存 future 阻塞工具线程 + DB 卡片记录 + SSE 提问卡 + 站内通知旁路）。
      * <p>返回值直接作为工具结果回给模型：每问一个答案的并行数组（多问为 JSON 数组字符串，单问退化为纯文本）。
      * <b>超时与忽略都不替用户选</b>——该题回一句「用户没有回答」，由模型自行推进（见
-     * {@link #buildCombinedAnswer}）。等待窗口 chat.askTimeoutMs（默认 10 分钟）；这段时间内客户端断开
-     * 不中止本轮（见 {@link AnswerStreamState#keepRunningWithoutChannel}），用户刷新或换设备后仍可按
+     * {@link com.wenqu.ai.agent.hitl.HitlDecisionService#buildCombinedAnswer}）。等待窗口 chat.askTimeoutMs
+     * （默认 10 分钟）；这段时间内客户端断开
+     * 不中止本轮（见 {@link TurnState#keepRunningWithoutChannel}），用户刷新或换设备后仍可按
      * DB 记录重建卡片并把答案送回来。
      */
-    private String doAskUserMulti(AnswerStreamState st, java.util.List<BuiltinTools.AskQuestion> raw) {
+    private String doAskUserMulti(TurnState st, java.util.List<BuiltinTools.AskQuestion> raw) {
         if (st.guestMode) {
             return "（游客会话不支持结构化提问：请改为在回答正文中直接列出候选选项，请用户回复序号或自行描述。）";
         }
-        if (st.askCount.incrementAndGet() > MAX_ASKS_PER_TURN) {
-            return "（本轮提问次数已达上限 " + MAX_ASKS_PER_TURN + " 次：请基于已有信息直接作答，不要再提问。）";
+        if (st.askCount.incrementAndGet() > HitlDecisionService.MAX_ASKS_PER_TURN) {
+            return "（本轮提问次数已达上限 " + HitlDecisionService.MAX_ASKS_PER_TURN + " 次：请基于已有信息直接作答，不要再提问。）";
         }
         // 归一为多问题列表（每题独立校验：空问题/选项非法直接丢弃该题，不留半成品卡）
         java.util.List<QItem> qs = new java.util.ArrayList<>();
@@ -8708,7 +5339,7 @@ public class RagService {
             java.util.List<String> opts = new java.util.ArrayList<>();
             if (a.options() != null) {
                 for (String o : a.options()) {
-                    if (opts.size() >= MAX_ASK_OPTIONS) break;
+                    if (opts.size() >= HitlDecisionService.MAX_ASK_OPTIONS) break;
                     if (o == null) continue;
                     String s = o.trim();
                     if (s.isEmpty() || opts.contains(s)) continue;
@@ -8719,337 +5350,62 @@ public class RagService {
             qs.add(new QItem(t, q, opts));
         }
         if (qs.isEmpty()) {
-            return "（无有效问题：每题须含非空的 question 与 2~" + MAX_ASK_OPTIONS + " 个候选选项，工具未执行；请调整后重试，或直接在回答正文中列出选项提问。）";
+            return "（无有效问题：每题须含非空的 question 与 2~" + HitlDecisionService.MAX_ASK_OPTIONS + " 个候选选项，工具未执行；请调整后重试，或直接在回答正文中列出选项提问。）";
         }
-        if (qs.size() > MAX_QUESTIONS_PER_CARD) {
-            return "（本次提问共 " + qs.size() + " 个问题，超过单卡上限 " + MAX_QUESTIONS_PER_CARD
-                    + " 个，工具未执行：请把问题合并或分批，压缩到 " + MAX_QUESTIONS_PER_CARD + " 个以内后重新提问。）";
+        if (qs.size() > HitlDecisionService.MAX_QUESTIONS_PER_CARD) {
+            return "（本次提问共 " + qs.size() + " 个问题，超过单卡上限 " + HitlDecisionService.MAX_QUESTIONS_PER_CARD
+                    + " 个，工具未执行：请把问题合并或分批，压缩到 " + HitlDecisionService.MAX_QUESTIONS_PER_CARD + " 个以内后重新提问。）";
         }
-        long timeout = askTimeoutMs();
+        long timeout = hitl.askTimeoutMs();
         String askId = java.util.UUID.randomUUID().toString();
-        java.util.concurrent.CompletableFuture<String> future = new java.util.concurrent.CompletableFuture<>();
-        // 落库（复用 c_ai_tool_approval：tool_name=askUser，questions 存 request_args，答案数组存 answer）
-        try {
-            com.wenqu.ai.model.ToolApproval rec = new com.wenqu.ai.model.ToolApproval();
-            rec.setId(askId);
-            rec.setSessionId(st.sessionId);
-            rec.setUserId(st.userId);
-            rec.setTurnId(st.turnId);
-            rec.setToolName("askUser");
-            rec.setStatus("PENDING");
-            rec.setRequestArgs(askArgsJson(qs));
-            rec.setCreatedAt(java.time.LocalDateTime.now());
-            toolApprovalMapper.insert(rec);
-        } catch (Exception e) {
-            log.warn("[ASK] 提问记录落库失败（不阻塞提问流程）: {}", e.getMessage());
-        }
-        PENDING_ASKS.put(askId, new PendingAsk(st.sessionId, st.userId, future));
-        // 提问待答站内通知（旁路）：卡片已落库且等待期间断线不中止本轮，人不在本页时铃铛是唯一
-        // 可感知面，点进去仍能把这张卡答完（会话加载时按 DB 待答记录重建卡片）。
-        try {
-            notificationService.create(st.userId, com.wenqu.ai.model.Notification.TYPE_TOOL_ASK,
-                    qs.size() > 1 ? "智能体有 " + qs.size() + " 个问题想跟你确认" : "智能体在等你回答",
-                    "回到会话里作答，它才按你的选择继续；没答的那题不会替你选。",
-                    "session", st.sessionId, "ask:" + askId, askId);
-        } catch (Exception e) {
-            log.warn("[ASK] 提问通知写入失败（不阻塞提问）: {}", e.getMessage());
-        }
-        try {
+        // 挂起这张提问卡：落 PENDING 记录（questions 存 request_args）+ 登记唤醒句柄，都在新服务一次做完
+        try (var wait = hitl.openAsk(askId, st.sessionId, st.userId, st.turnId, qs)) {
+            // 提问待答站内通知（旁路）：卡片已落库且等待期间断线不中止本轮，人不在本页时铃铛是唯一
+            // 可感知面，点进去仍能把这张卡答完（会话加载时按 DB 待答记录重建卡片）。
+            try {
+                notificationService.create(st.userId, com.wenqu.ai.model.Notification.TYPE_TOOL_ASK,
+                        qs.size() > 1 ? "智能体有 " + qs.size() + " 个问题想跟你确认" : "智能体在等你回答",
+                        "回到会话里作答，它才按你的选择继续；没答的那题不会替你选。",
+                        "session", st.sessionId, "ask:" + askId, askId);
+            } catch (Exception e) {
+                log.warn("[ASK] 提问通知写入失败（不阻塞提问）: {}", e.getMessage());
+            }
             Map<String, Object> req = new LinkedHashMap<>();
             req.put("askId", askId);
-            req.put("questions", qs.stream().map(this::askQuestionToMap).toList());
+            req.put("questions", hitl.questionsPayload(qs));
             req.put("timeoutMs", timeout);
             // 卡片下发失败（连接已断）：本轮就此转入后台续跑——提问已落库，用户从别的页面答完，
             // 回答照样生成并落库，回会话页可见。不转的话答完的第一个 token 发送失败会掐掉整轮。
-            if (!sendSseEvent(st.emitter, "ask_user", JSON.toJSONString(req), st.sessionId)) {
-                st.detached = true;
+            if (!runtime.sendSseEvent(st.channel.emitter, "ask_user", JSON.toJSONString(req), st.sessionId)) {
+                st.channel.detached = true;
                 log.info("[ASK] 提问卡通道已失效，本轮转后台续跑: askId={} session={}", askId, st.sessionId);
             }
             log.info("[ASK] 等待用户批量作答: askId={} session={} n={} 窗口={}ms",
                     askId, st.sessionId, qs.size(), timeout);
             String answer;
-            beginHumanWait(st.emitter);   // 用户作答时间不计入整轮机器预算（见 TurnDeadline）
+            TurnRegistry.beginHumanWait(st.channel.emitter);   // 用户作答时间不计入整轮机器预算（见 TurnDeadline）
             st.askWaits.incrementAndGet();
             try {
-                answer = future.get(timeout, java.util.concurrent.TimeUnit.MILLISECONDS);
+                answer = wait.future().get(timeout, java.util.concurrent.TimeUnit.MILLISECONDS);
             } catch (java.util.concurrent.TimeoutException te) {
-                answer = buildCombinedAnswer(askId, st.userId, qs, null, "TIMEOUT");
+                answer = hitl.buildCombinedAnswer(askId, st.userId, qs, null, "TIMEOUT");
             } catch (java.util.concurrent.ExecutionException ee) {
-                markAskResolved(askId, "TIMEOUT", null, st.userId);
+                hitl.markAskResolved(askId, "TIMEOUT", null, st.userId);
                 answer = "（用户中止了本轮回答：请基于已有信息直接作答，不要再次提问。）";
             } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
-                markAskResolved(askId, "TIMEOUT", null, st.userId);
+                hitl.markAskResolved(askId, "TIMEOUT", null, st.userId);
                 answer = "（本轮问答已被中止：请基于已有信息直接作答，不要再次提问。）";
             } finally {
                 st.askWaits.decrementAndGet();
-                endHumanWait(st.emitter);
+                TurnRegistry.endHumanWait(st.channel.emitter);
             }
             return answer;
-        } finally {
-            PENDING_ASKS.remove(askId);
-        }
-    }
-
-    /** 单题内部表示 */
-    private record QItem(String topic, String question, java.util.List<String> options) {}
-
-    /** questions → SSE/落库用的 Map（topic 可空省略） */
-    private Map<String, Object> askQuestionToMap(QItem x) {
-        Map<String, Object> m = new LinkedHashMap<>();
-        if (!x.topic().isEmpty()) m.put("topic", x.topic());
-        m.put("question", x.question());
-        m.put("options", x.options());
-        return m;
-    }
-
-    /** questions → request_args JSON（TEXT 列，放宽到 8000 字符防多问题截断） */
-    private String askArgsJson(java.util.List<QItem> qs) {
-        String json = JSON.toJSONString(java.util.Map.of("questions", qs.stream().map(this::askQuestionToMap).toList()));
-        return json.length() > 8000 ? json.substring(0, 8000) : json;
-    }
-
-    /**
-     * 用户回答智能体提问：仅发起该轮问答的用户本人可答（uid 比对，内存态与 DB 双重校验，
-     * 与工具审批同口径）。
-     * <p>提问卡已落库、等待期间断线不中止本轮，所以刷新页面或换设备后按 {@link #listPendingAsks}
-     * 取回卡片仍能把答案送到那根还阻塞着的工具线程。返回 false 表示这次作答没能送达（记录不存在/
-     * 非本人/已收尾，或唤醒句柄已随进程重启消失），调用方据此提示用户。
-     */
-    public boolean resolveAsk(String askId, java.util.List<String> answers, String uid) {
-        if (askId == null || askId.isBlank()) return false;
-        com.wenqu.ai.model.ToolApproval rec = toolApprovalMapper.selectById(askId);
-        if (rec == null || !"askUser".equals(rec.getToolName())) return false;
-        if (uid == null || !uid.equals(rec.getUserId())) {
-            log.warn("[ASK] 答题人非本轮用户，拒绝: askId={} by={}", askId, uid);
-            return false;
-        }
-        if (!"PENDING".equals(rec.getStatus())) return false; // 已处理，幂等
-        java.util.List<QItem> qs = parseQuestions(rec.getRequestArgs());
-        if (qs.isEmpty()) return false;
-        java.util.List<String> norm = answers == null ? java.util.List.of() : answers;
-        PendingAsk p = PENDING_ASKS.get(askId);
-        if (p == null) {
-            // 没有人真的在等这轮（进程重启过，或多副本下这轮挂在另一个实例上）：答案无处可送。
-            // 记录置终态并把用户所答留进审计列，卡片因此从待答列表消失，不再误导成「答了就生效」
-            markAskResolved(askId, "TIMEOUT", JSON.toJSONString(norm), uid);
-            log.info("[ASK] 唤醒句柄已不在，本轮无法续跑: askId={} session={}", askId, rec.getSessionId());
-            return false;
-        }
-        if (!uid.equals(p.userId())) {
-            log.warn("[ASK] 答题人非本轮用户（内存），拒绝: askId={} by={}", askId, uid);
-            return false;
-        }
-        String combined = buildCombinedAnswer(askId, uid, qs, norm, "APPROVED");
-        return p.future().complete(combined);
-    }
-
-    /**
-     * 待答提问列表（卡片持久化后的恢复入口）：按会话取本人名下仍是 PENDING 的 askUser 记录，
-     * 供前端在会话加载/切换、或点开 tool.ask 通知进入会话时重建提问卡。
-     * <p>{@code live=false} 表示卡片还在但唤醒句柄已不在（进程重启；多副本下也可能是那轮挂在别的实例），
-     * 此时作答送不到模型，前端按「本轮已结束」提示而不是给一个静默失败的输入框。
-     * 倒计时以 DB 的 {@code createdAt} + 当前窗口换算，与后端阻塞超时同源。
-     */
-    public java.util.List<java.util.Map<String, Object>> listPendingAsks(String sessionId, String uid) {
-        java.util.List<java.util.Map<String, Object>> out = new java.util.ArrayList<>();
-        if (sessionId == null || sessionId.isBlank() || uid == null || uid.isBlank()) return out;
-        long window = askTimeoutMs();
-        try {
-            java.util.List<com.wenqu.ai.model.ToolApproval> rows = toolApprovalMapper.selectList(
-                    new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<com.wenqu.ai.model.ToolApproval>()
-                            .eq(com.wenqu.ai.model.ToolApproval::getSessionId, sessionId)
-                            .eq(com.wenqu.ai.model.ToolApproval::getUserId, uid)
-                            .eq(com.wenqu.ai.model.ToolApproval::getToolName, "askUser")
-                            .eq(com.wenqu.ai.model.ToolApproval::getStatus, "PENDING")
-                            .orderByAsc(com.wenqu.ai.model.ToolApproval::getCreatedAt));
-            for (com.wenqu.ai.model.ToolApproval rec : rows) {
-                java.util.List<QItem> qs = parseQuestions(rec.getRequestArgs());
-                if (qs.isEmpty()) continue;
-                long createdMs = rec.getCreatedAt() == null ? 0L
-                        : rec.getCreatedAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
-                long remaining = createdMs > 0 ? Math.max(0L, createdMs + window - System.currentTimeMillis()) : window;
-                Map<String, Object> item = new LinkedHashMap<>();
-                item.put("askId", rec.getId());
-                // 归属轮次：恢复出来的卡片要挂回它自己那一轮的气泡（NULL=补列前的存量，前端按原口径处理）
-                item.put("turnId", rec.getTurnId() == null ? "" : rec.getTurnId());
-                item.put("questions", qs.stream().map(this::askQuestionToMap).toList());
-                item.put("timeoutMs", window);
-                item.put("remainingMs", remaining);
-                item.put("createdAt", createdMs);
-                // 已过期但还没被超时路径收尾（超时分支落终态需要工具线程醒一次）：不再当作可答卡片重建
-                item.put("expired", remaining <= 0);
-                item.put("live", PENDING_ASKS.containsKey(rec.getId()));
-                out.add(item);
-                if (out.size() >= 10) break; // 一卡最多 6 问、一轮最多 3 卡，10 条封顶纯属防御
-            }
-        } catch (Exception e) {
-            log.warn("[ASK] 待答提问查询失败 session={}: {}", sessionId, e.getMessage());
-        }
-        return out;
-    }
-
-    /**
-     * 待批准的工具执行审批列表（与 {@link #listPendingAsks}、{@code /plan-approval/pending} 同一套恢复口径）：
-     * 按会话取本人名下仍是 PENDING 的审批记录（排除提问卡与计划卡共用的那两类 tool_name）。
-     * <p>为什么必须有这条：审批卡此前只有「实时 SSE 下发」和「知道 approvalId 才能查」两条路，
-     * 于是刷新或换设备接回这一轮时，<b>正卡在「等你批准执行」上的那一张完全看不见</b>——而这一轮又豁免
-     * 断线宽限、会一直等下去，用户读到的就是「智能体莫名其妙不动了」。铃铛深链能救，但前提是他去点了铃铛。
-     * <p>{@code live=false} 同提问卡语义：记录还在但唤醒句柄已不在（进程重启/多副本挂在别的实例），
-     * 批准送不回模型，前端按已失效处理而不是给一个静默失败的按钮。
-     */
-    public java.util.List<java.util.Map<String, Object>> listPendingApprovals(String sessionId, String uid) {
-        java.util.List<java.util.Map<String, Object>> out = new java.util.ArrayList<>();
-        if (sessionId == null || sessionId.isBlank() || uid == null || uid.isBlank()) return out;
-        long window = approvalTimeoutMs();
-        try {
-            java.util.List<com.wenqu.ai.model.ToolApproval> rows = toolApprovalMapper.selectList(
-                    new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<com.wenqu.ai.model.ToolApproval>()
-                            .eq(com.wenqu.ai.model.ToolApproval::getSessionId, sessionId)
-                            .eq(com.wenqu.ai.model.ToolApproval::getUserId, uid)
-                            .eq(com.wenqu.ai.model.ToolApproval::getStatus, "PENDING")
-                            .notIn(com.wenqu.ai.model.ToolApproval::getToolName, "askUser", "planApproval")
-                            .orderByAsc(com.wenqu.ai.model.ToolApproval::getCreatedAt));
-            for (com.wenqu.ai.model.ToolApproval rec : rows) {
-                long createdMs = rec.getCreatedAt() == null ? 0L
-                        : rec.getCreatedAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
-                // 审批窗口只有 120s（比提问/计划短得多）：过期就别再重建一张点了没反应的卡
-                long remaining = createdMs > 0 ? Math.max(0L, createdMs + window - System.currentTimeMillis()) : window;
-                if (remaining <= 0) continue;
-                Map<String, Object> item = new LinkedHashMap<>();
-                item.put("approvalId", rec.getId());
-                // 归属轮次：与提问卡同一口径，恢复时挂回自己那一轮而不是最后一条助手气泡
-                item.put("turnId", rec.getTurnId() == null ? "" : rec.getTurnId());
-                item.put("tool", rec.getToolName());
-                // 展示名与实时审批卡同源（注册中心）：恢复出来的卡片若只给英文名，用户在同一张卡上
-                // 会先看到「运行命令」、刷新后看到「execute」
-                putToolDisplayName(item, rec.getToolName());
-                item.put("args", rec.getRequestArgs() == null ? "" : rec.getRequestArgs());
-                item.put("timeoutMs", window);
-                item.put("remainingMs", remaining);
-                item.put("createdAt", createdMs);
-                item.put("live", PENDING_APPROVALS.containsKey(rec.getId()));
-                out.add(item);
-                if (out.size() >= 5) break;   // 一步只挂一张卡，5 条纯属防御
-            }
-        } catch (Exception e) {
-            log.warn("[TOOL] 待批准审批查询失败 session={}: {}", sessionId, e.getMessage());
-        }
-        return out;
-    }
-
-
-    /**
-     * 用户忽略提问（提问面板「忽略」按钮）：不作答，立刻让本轮带着「用户没答这一题」继续推进
-     * ——与超时同一语义的提前触发，都不替用户选答案。审计记 TIMEOUT + 空答案（用户确实做了「跳过」动作）。
-     */
-    public boolean resolveAskIgnore(String askId, String uid) {
-        if (askId == null || askId.isBlank()) return false;
-        // 问题列表从落库 args 还原（DB 是权威源：内存 future 只负责唤醒）
-        com.wenqu.ai.model.ToolApproval rec = toolApprovalMapper.selectById(askId);
-        if (rec == null || !"askUser".equals(rec.getToolName())) return false;
-        if (uid == null || !uid.equals(rec.getUserId())) {
-            log.warn("[ASK] 忽略人非本轮用户，拒绝: askId={} by={}", askId, uid);
-            return false;
-        }
-        if (!"PENDING".equals(rec.getStatus())) return false; // 已处理，幂等
-        java.util.List<QItem> qs = parseQuestions(rec.getRequestArgs());
-        if (qs.isEmpty()) return false;
-        PendingAsk p = PENDING_ASKS.get(askId);
-        if (p == null) {
-            markAskResolved(askId, "TIMEOUT", null, uid);
-            log.info("[ASK] 唤醒句柄已不在，忽略动作无处生效: askId={} session={}", askId, rec.getSessionId());
-            return false;
-        }
-        if (uid == null || !uid.equals(p.userId())) return false;
-        String combined = buildCombinedAnswer(askId, uid, qs, null, "IGNORE");
-        return p.future().complete(combined);
-    }
-
-    /** 从落库 request_args 还原问题列表（兼容旧式单问题 {question,options} 与一卡多问 {questions}） */
-    private java.util.List<QItem> parseQuestions(String argsJson) {
-        java.util.List<QItem> out = new java.util.ArrayList<>();
-        try {
-            com.alibaba.fastjson2.JSONObject args = JSON.parseObject(argsJson);
-            if (args == null) return out;
-            com.alibaba.fastjson2.JSONArray arr = args.getJSONArray("questions");
-            if (arr != null) {
-                for (int i = 0; i < arr.size(); i++) {
-                    com.alibaba.fastjson2.JSONObject o = arr.getJSONObject(i);
-                    if (o == null) continue;
-                    String q = o.getString("question");
-                    if (q == null || q.isEmpty()) continue;
-                    com.alibaba.fastjson2.JSONArray opts = o.getJSONArray("options");
-                    java.util.List<String> os = opts == null ? java.util.List.of() : opts.toJavaList(String.class);
-                    out.add(new QItem(o.getString("topic") == null ? "" : o.getString("topic"), q, os));
-                }
-                return out;
-            }
-            // 旧式单问题
-            String q = args.getString("question");
-            if (q == null || q.isEmpty()) return out;
-            com.alibaba.fastjson2.JSONArray opts = args.getJSONArray("options");
-            java.util.List<String> os = opts == null ? java.util.List.of() : opts.toJavaList(String.class);
-            out.add(new QItem(args.getString("topic") == null ? "" : args.getString("topic"), q, os));
-        } catch (Exception e) {
-            log.warn("[ASK] 解析提问参数失败: {}", e.getMessage());
-        }
-        return out;
-    }
-
-    /**
-     * 组装批量答案：未作答的问题<b>不替用户选</b>——把「这一题没答」如实回给模型，让它基于已有
-     * 信息自行推进或在正文里请用户回复。此前按推荐项（options[0]）代答：即便附了「并非用户亲自选择」
-     * 的注脚，模型转述时仍会把默认决策讲成用户亲选，且业界（Claude Code 到期取消、Cursor 上报 skip）
-     * 都没有「超时即替人选第一项」这一档。
-     * 落库 answer 列（TEXT），返回工具结果文本（单问退化为纯文本，多问为 JSON 数组字符串，与问题下标对齐）。
-     */
-    private String buildCombinedAnswer(String askId, String uid, java.util.List<QItem> qs,
-                                       java.util.List<String> userAnswers, String mode) {
-        java.util.List<String> finalAnswers = new java.util.ArrayList<>();
-        for (int i = 0; i < qs.size(); i++) {
-            String ua = (userAnswers != null && i < userAnswers.size()) ? userAnswers.get(i) : null;
-            if (ua != null && !ua.trim().isEmpty()) { finalAnswers.add(ua.trim()); continue; }
-            // 统一前缀「（用户未回答这一题」：前端问答记录据此渲染成「未作答」，
-            // 不把给模型看的处置指令原样摊给用户（见 web/src/chat/projections.js askUserView）
-            String lead = switch (mode) {
-                case "IGNORE" -> "（用户未回答这一题（点了忽略）";
-                case "TIMEOUT" -> "（用户未回答这一题（已超时）";
-                default -> "（用户未回答这一题（提交时留空）";
-            };
-            finalAnswers.add(lead + "。请基于已有信息自行判断，不要替用户假定选择，也不要重复提问。）");
-        }
-        String answerJson = JSON.toJSONString(finalAnswers);
-        String status = "APPROVED".equals(mode) ? "APPROVED" : "TIMEOUT";
-        markAskResolved(askId, status, answerJson, uid);
-        if (qs.size() == 1) return finalAnswers.get(0);
-        return answerJson;
-    }
-
-    /** 更新提问记录为终态（幂等：已非 PENDING 直接返回 false；uid 不匹配拒绝；answer 可空）。best-effort 不抛 */
-    private boolean markAskResolved(String askId, String status, String answer, String uid) {
-        try {
-            com.wenqu.ai.model.ToolApproval rec = toolApprovalMapper.selectById(askId);
-            if (rec == null) return false;
-            if (uid != null && !uid.equals(rec.getUserId())) {
-                log.warn("[ASK] 答题人非本轮用户（DB），拒绝: askId={} by={}", askId, uid);
-                return false;
-            }
-            if (!"PENDING".equals(rec.getStatus())) return false; // 已处理，幂等
-            toolApprovalMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<com.wenqu.ai.model.ToolApproval>()
-                    .eq(com.wenqu.ai.model.ToolApproval::getId, askId)
-                    .set(com.wenqu.ai.model.ToolApproval::getStatus, status)
-                    .set(com.wenqu.ai.model.ToolApproval::getAnswer, answer)
-                    .set(com.wenqu.ai.model.ToolApproval::getResolvedAt, java.time.LocalDateTime.now()));
-            return true;
-        } catch (Exception e) {
-            log.warn("[ASK] 提问裁决落库失败: {}", e.getMessage());
-            return false;
         }
     }
 
     /** 本轮工具上下文：会话/用户归属 + askUser 执行器（闭包持有 st，提问面板 SSE 与阻塞等待都靠它） */
-    private java.util.Map<String, Object> toolContext(AnswerStreamState st) {
+    private java.util.Map<String, Object> toolContext(TurnState st) {
         java.util.Map<String, Object> ctx = new java.util.HashMap<>();
         ctx.put(PresentArtifactTool.CTX_SESSION_ID, st.sessionId);
         ctx.put(PresentArtifactTool.CTX_USER_ID, st.userId);
@@ -9063,7 +5419,7 @@ public class RagService {
             String doc = todoService.docJson(st.turnId, n.items());
             todoService.save(st.sessionId, doc);
             sessionEventService.append(st.sessionId, st.userId, st.turnId, "todo", doc);
-            sendSseEvent(st.emitter, "todo", doc, st.sessionId);
+            runtime.sendSseEvent(st.channel.emitter, "todo", doc, st.sessionId);
             return todoService.describe(n);
         });
         // 工具大输出外溢：沙盒那层截断前把整份原文交给我们落盘，卡片给「查看完整输出」按需读回。
@@ -9072,87 +5428,20 @@ public class RagService {
                 (toolName, text) -> toolSpillService.spill(st.sessionId, st.userId, toolName, text));
         ctx.put(SandboxTools.CTX_SPILL_REPORT, (java.util.function.BiConsumer<String, String>)
                 (toolName, spillId) -> st.toolSpills.offer(toolName + "|" + spillId));
+        // 智能体咨询（P5 agent-as-tool）：模型自己决定咨询谁、咨询几次，回答者不变。
+        // 执行器按轮回传（为什么不是 bean 见 BranchRunner 接口注释），台账与父轮上下文都取本轮快照；
+        // 被咨询方查到的资料经 sink 注册进父轮引用表，所以它的结论点得开出处、模型标得出角标。
+        // consultCtx 缺省（非主流水线那条路建的 st，例如二次生成路径）时如实回一句，不 NPE 也不静默。
+        ctx.put(com.wenqu.ai.agent.tool.SubAgentTools.CTX_CONSULT,
+                (com.wenqu.ai.agent.tool.SubAgentTools.ConsultFn) (agentId, q) -> {
+                    if (st.tools.consultCtx == null) {
+                        return "咨询通道本轮未就绪，请基于已有资料回答。";
+                    }
+                    return subAgentConsult.consult(st.tools.consultLedger, st.tools.consultCtx,
+                            branch.branchRunner(this::chat, st.sessionId, st.turnId, st.userId, st.guestMode, st.channel.emitter),
+                            src -> st.refs.registerConsultedSource(src), agentId, q);
+                });
         return ctx;
-    }
-
-    /**
-     * 用户裁决工具审批：仅发起该轮问答的用户本人可批（uid 比对，内存态与 DB 双重校验）；
-     * 内存态丢失（进程重启/已超时）时仍可更新 DB 审计记录（幂等），但无法唤醒已死的工具线程。
-     */
-    /**
-     * 从通知恢复审批卡：按 id 取审批记录（仅本人可查；不存在/非本人/已失效返回 null）。
-     * 用于用户点开 tool.approval 通知后，在会话内重建审批卡——刷新丢失的 SSE 卡据此补回。
-     */
-    public com.wenqu.ai.model.ToolApproval getApproval(String approvalId, String uid) {
-        if (approvalId == null || approvalId.isBlank()) return null;
-        try {
-            com.wenqu.ai.model.ToolApproval rec = toolApprovalMapper.selectById(approvalId);
-            if (rec == null || rec.getUserId() == null || !rec.getUserId().equals(uid)) return null;
-            return rec;
-        } catch (Exception e) {
-            log.warn("[TOOL] 恢复审批查询失败 approvalId={}: {}", approvalId, e.getMessage());
-            return null;
-        }
-    }
-
-    public boolean resolveApproval(String approvalId, boolean approved, String uid) {
-        if (approvalId == null || approvalId.isBlank()) return false;
-        String status = approved ? "APPROVED" : "REJECTED";
-        boolean dbOk = markApprovalResolved(approvalId, status, uid);
-        PendingApproval p = PENDING_APPROVALS.get(approvalId);
-        if (p == null) {
-            // 内存态缺失：DB 更新成功说明是合法裁决（或已被裁决过），返回 dbOk；线程已不可唤醒
-            return dbOk;
-        }
-        if (uid == null || !uid.equals(p.userId())) {
-            log.warn("[TOOL] 审批人非本轮用户，拒绝: approvalId={} by={}", approvalId, uid);
-            return false;
-        }
-        return p.future().complete(approved);
-    }
-
-    /** 更新审批记录为终态（幂等：已非 PENDING 直接返回 false；uid 不匹配拒绝）。best-effort 不抛 */
-    private boolean markApprovalResolved(String approvalId, String status, String uid) {
-        try {
-            com.wenqu.ai.model.ToolApproval rec = toolApprovalMapper.selectById(approvalId);
-            if (rec == null) return false;
-            if (uid != null && !uid.equals(rec.getUserId())) {
-                log.warn("[TOOL] 审批人非本轮用户（DB），拒绝: approvalId={} by={}", approvalId, uid);
-                return false;
-            }
-            if (!"PENDING".equals(rec.getStatus())) return false; // 已裁决，幂等
-            toolApprovalMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<com.wenqu.ai.model.ToolApproval>()
-                    .eq(com.wenqu.ai.model.ToolApproval::getId, approvalId)
-                    .set(com.wenqu.ai.model.ToolApproval::getStatus, status)
-                    .set(com.wenqu.ai.model.ToolApproval::getResolvedAt, java.time.LocalDateTime.now()));
-            return true;
-        } catch (Exception e) {
-            log.warn("[TOOL] 审批裁决落库失败: {}", e.getMessage());
-            return false;
-        }
-    }
-
-    /** 启动期清理遗留 PENDING（进程重启后内存态丢失，DB 中超时未裁决的记录置 TIMEOUT，避免审计永久挂起；
-     *  askUser 提问卡同表同理——重启后那根阻塞的工具线程已不在，卡片留着也无人可唤醒） */
-    @jakarta.annotation.PostConstruct
-    public void purgeStaleApprovals() {
-        try {
-            long timeoutSec = approvalTimeoutMs() / 1000 + 5;
-            java.time.LocalDateTime cutoff = java.time.LocalDateTime.now().minusSeconds(timeoutSec);
-            toolApprovalMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<com.wenqu.ai.model.ToolApproval>()
-                    .eq(com.wenqu.ai.model.ToolApproval::getStatus, "PENDING")
-                    .lt(com.wenqu.ai.model.ToolApproval::getCreatedAt, cutoff)
-                    .set(com.wenqu.ai.model.ToolApproval::getStatus, "TIMEOUT")
-                    .set(com.wenqu.ai.model.ToolApproval::getResolvedAt, java.time.LocalDateTime.now()));
-        } catch (Exception e) {
-            log.warn("[TOOL] 遗留审批清理失败（可忽略，下次启动重试）: {}", e.getMessage());
-        }
-    }
-
-    /** 审批等待上限（chat.approvalTimeoutMs，默认 120s；阻塞工具调用线程，必须有界） */
-    private long approvalTimeoutMs() {
-        long t = configService.getLong("chat.approvalTimeoutMs");
-        return t > 0 ? t : 120000L;
     }
 
     /**
@@ -9175,159 +5464,8 @@ public class RagService {
         return Math.max(3, base >> depth);
     }
 
-    /** 客户端是否已断开（供各等待点短路，避免断开后继续跑 LLM 调用与检索） */
-    private static boolean clientDisconnected(SseEmitter emitter) {
-        java.util.concurrent.atomic.AtomicBoolean dead = ACTIVE_SSE.get(emitter);
-        return dead != null && dead.get();
-    }
-
-    /**
-     * 清除某通道的断开标记登记。**无客户端的收集型通道**（定时执行智能体用的 CollectingSseEmitter）
-     * 用完必须主动调用：它不会触发 onCompletion（没有真实响应可完成），否则 ACTIVE_SSE 与整轮台账
-     * 会一直持有该 emitter 引用不放（看门狗也停不下来）。
-     */
-    static void forgetSseChannel(SseEmitter emitter) {
-        if (emitter != null) {
-            ACTIVE_SSE.remove(emitter);
-            stopTurnDeadline(emitter);
-        }
-    }
-
-    /** 客户端断开信号：思考流 doOnNext 内中断同步消费（blockLast）用 */
-    private static final class SseClientGoneException extends RuntimeException {
-    }
-
-    /**
-     * SSE 发送。返回 false = 通道已不可用（客户端断开，或 emitter 已完成后仍在发送）；
-     * 失败只记日志不抛错（fail-loud），调用方在关键发送点按返回值短路后续 LLM/检索开销。
-     */
-    private boolean sendSseEvent(SseEmitter emitter, String type, String content, String sessionId) {
-        // 账本按「事件是否发生」记，不按「是否送达」记：断线转后台续跑的那一轮，恰恰是最需要事后回放的
-        // 过程（卡片、编排、裁决都在那一刻之后产生，而通道已经没了）。只收结构性事件
-        // （{@link #LEDGER_SSE_TYPES}）——token/thinking/plan_delta 这类增量与心跳没有超出消息表的信息量。
-        if (LEDGER_SSE_TYPES.contains(type)) {
-            TurnHandle handle = sessionId == null ? null : TURN_HANDLES.get(sessionId);
-            sessionEventService.append(sessionId, handle == null ? null : handle.userId(),
-                    handle == null ? null : handle.turnId(), type, content);
-        }
-        // 运行总线接管（本轮已登记且未终结）：事件按「这一轮」扇给此刻挂着的所有通道，没人看也照发。
-        // 返回 true 的含义是「本轮还活着，别把没人看当成客户端断开」——各发送点那条
-        // `if (!sendSseEvent(...) && !keepRunningWithoutChannel()) disposeSafe()` 兜底，因此不会在用户
-        // 刷新页面的那一刻掐掉正在出字的轮；真正的中止由总线按宽限期回调统一做（见 abortTurnWithoutViewer）。
-        if (chatRunBus.publish(emitter, type, content, sessionId, textDeltaPos(emitter, type, sessionId))) {
-            return true;
-        }
-        java.util.concurrent.atomic.AtomicBoolean dead = ACTIVE_SSE.get(emitter);
-        if (dead != null && dead.get()) return false;
-        try {
-            emitter.send(SseEmitter.event()
-                    .name(type)
-                    .data("{\"type\":\"" + type + "\",\"content\":" +
-                            JSON.toJSONString(content) +
-                            ",\"sessionId\":\"" + sessionId + "\"}"));
-            return true;
-        } catch (IOException e) {
-            markSseDead(emitter);
-            log.warn("[FAIL-LOUD] SSE 客户端断开 (type={}, session={}): {}", type, sessionId, e.getMessage());
-            return false;
-        } catch (IllegalStateException e) {
-            // "ResponseBodyEmitter has already completed"：终态/截断之后仍有发送（如迟到的流增量）。
-            // 必须在这里咽掉——异常冒出会走 DispatcherServlet 的异步派发错误分支，
-            // 全局异常处理器再往 text/event-stream 里写 ResultJson，必然二次失败并刷屏。
-            markSseDead(emitter);
-            log.debug("[SSE] 通道已关闭，事件丢弃 (type={}, session={}): {}", type, sessionId, e.getMessage());
-            return false;
-        }
-    }
-
-    private static void markSseDead(SseEmitter emitter) {
-        ACTIVE_SSE.computeIfAbsent(emitter,
-                k -> new java.util.concurrent.atomic.AtomicBoolean()).set(true);
-    }
-
-    private void completeEmitter(SseEmitter emitter) {
-        try {
-            emitter.complete();
-        } catch (Exception e) {
-            // 忽略
-        }
-    }
 
     // ==================== 断线重连接流（P0 最后一刀，配合 ChatRunBus） ====================
-
-    /**
-     * 文本型增量的<b>绝对下标</b>：应用这条增量之后本轮权威缓冲有多长。
-     * <p>接流的观众先拿快照再接增量，而「正文已进缓冲、事件号还没推进」那一条恰好可能被快照覆盖一次
-     * ——重复的那片字由前端按 pos 丢弃（pos 不大于本地已有长度即已存在）。只有 token/process 这两类
-     * 逐字增量需要它；结构性事件靠快照重建，done 又是权威全文，缺口在那一刻归零。
-     */
-    private Integer textDeltaPos(SseEmitter emitter, String type, String sessionId) {
-        if (!"token".equals(type) && !"process".equals(type)) return null;
-        AnswerStreamState st = sessionId == null ? null : TURN_STATES.get(sessionId);
-        if (st == null || st.emitter != emitter) return null;
-        return "token".equals(type) ? st.fullResponse.length() : st.processResponse.length();
-    }
-
-    /**
-     * 探测：这个会话是否有一轮还在跑。前端切会话时问一句，有才值得开一条接流通道。
-     * <p>归属只认发起本轮的那个 uid：查不到 ≠ 不存在，而是「不归你看」——别人的会话不在跑这件事也不告诉你。
-     */
-    public Map<String, Object> runStatus(String sessionId, String userId) {
-        ChatRunBus.Run run = chatRunBus.running(sessionId);
-        // 只看「Run 还在」不够：本轮落库收尾到总线关闭之间有一拍（落库＋done 组装那几十到几百毫秒），
-        // 其间探测会说「在跑」，而接流拿到的快照是 running:false —— 前端就会在「探测→接流→收掉→再探测」
-        // 上空转几轮，界面上是气泡一闪一闪。判据与快照同源：流状态已占闸（settled）就不算在跑。
-        AnswerStreamState st = run == null ? null : TURN_STATES.get(sessionId);
-        boolean settled = st != null && st.settled();
-        boolean mine = run != null && !settled && userId != null && userId.equals(run.userId);
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("running", mine);
-        if (mine) {
-            out.put("turnId", run.turnId());
-            out.put("beganAt", run.beganAt);
-            out.put("viewers", run.viewers());
-        }
-        return out;
-    }
-
-    /**
-     * 接流：把一条新通道挂到该会话正在跑的那一轮上。
-     * <p>先送一份权威快照（已产出的正文/过程独白/工具卡片/时间线/引用/产物/计划/清单 + 总线镜像的阶段文案），
-     * 此后只收快照之后的增量——与「一直看着这一轮」的观感等价，缺的那段是「没看见前面逐字流出来」，
-     * 而不是「前面那段没了」。本轮已收尾、不属于本人、或没在跑（含服务重启后）一律 {@code running:false}
-     * 后立即关闭，前端按历史回显即可。
-     */
-    public void resumeTurn(String sessionId, String userId, SseEmitter emitter) {
-        ChatRunBus.Run run = chatRunBus.running(sessionId);
-        if (run == null || userId == null || !userId.equals(run.userId)) {
-            sendFrame(emitter, "snapshot", JSON.toJSONString(Map.of("running", false)), sessionId);
-            completeEmitter(emitter);
-            return;
-        }
-        // 这条通道走完就摘掉订阅（本轮该继续跑还是继续跑，只是少了一个观众）
-        emitter.onCompletion(() -> chatRunBus.drop(emitter));
-        emitter.onTimeout(() -> chatRunBus.drop(emitter));
-        emitter.onError(t -> chatRunBus.drop(emitter));
-        Map<String, Object> snapshot = chatRunBus.attach(run, emitter);
-        if (!sendFrame(emitter, "snapshot", JSON.toJSONString(snapshot), sessionId, snapshot.get("seq"))) {
-            chatRunBus.drop(emitter);
-            completeEmitter(emitter);
-            return;
-        }
-        // 接流这一刻补一份「挂在哪一等」的提示：人在回路的等待本来就与通道无关（断开也一直在等你），
-        // 迟到的观众需要知道界面为什么停住不动，否则读成「卡住了」
-        Object pending = pendingWaitHint(sessionId);
-        if (pending != null) sendFrame(emitter, "stage", String.valueOf(pending), sessionId);
-    }
-
-    /** 本轮此刻正挂在哪种人工裁决上（提问/计划/审批）→ 给接流方的阶段文案；没在等就 null */
-    private Object pendingWaitHint(String sessionId) {
-        AnswerStreamState st = TURN_STATES.get(sessionId);
-        if (st == null) return null;
-        if (st.askWaits.get() > 0) return "等你作答，回答才不会跑偏";
-        if (st.planWaits.get() > 0) return "等你批准执行计划，批准后回答才开始";
-        return null;
-    }
 
     /**
      * 接流快照：从本轮的权威缓冲重建「到此刻为止看得见的东西」。
@@ -9339,12 +5477,12 @@ public class RagService {
      */
     private Map<String, Object> resumeSnapshot(String sessionId, String turnId) {
         Map<String, Object> snap = new LinkedHashMap<>();
-        TurnHandle h = TURN_HANDLES.get(sessionId);
+        TurnHandle h = TurnRegistry.handle(sessionId);
         if (h == null || !turnId.equals(h.turnId())) {
             snap.put("running", false);   // 本轮已收尾（把手由 claimTerminal 摘掉）
             return snap;
         }
-        AnswerStreamState st = TURN_STATES.get(sessionId);
+        TurnState st = TurnRegistry.state(sessionId);
         if (st == null) {
             // 还在前置阶段（改写/检索/深度思考/计划编排）：流状态尚未构造，此刻确实没有正文可给。
             // 阶段文案、计划步骤与任务清单由总线镜像在 snapshot.events 里，前端重放即可复现界面
@@ -9360,8 +5498,8 @@ public class RagService {
         List<Map<String, Object>> artifacts = artifactService.takeArtifacts(sessionId);
         List<Map<String, Object>> toolCalls = new ArrayList<>(st.toolCalls);
         List<Map<String, Object>> sources;
-        synchronized (st.sources) {
-            sources = new ArrayList<>(st.sources);
+        synchronized (st.refs.sources) {
+            sources = new ArrayList<>(st.refs.sources);
         }
         snap.put("running", true);
         snap.put("phase", "generating");
@@ -9375,10 +5513,10 @@ public class RagService {
         snap.put("artifacts", artifacts);
         snap.put("timeline", timelineSnapshot(st, content.length(), toolCalls.size(), artifacts.size(), false));
         snap.put("sources", imageUrlSigner.signSourceImages(sources));
-        snap.put("images", new ArrayList<>(st.imgIndex.values()).stream().map(imageUrlSigner::signUrl).toList());
+        snap.put("images", new ArrayList<>(st.refs.imgIndex.values()).stream().map(imageUrlSigner::signUrl).toList());
         snap.put("model", st.model);
-        snap.put("toolStepCount", st.toolStepCount.get());
-        snap.put("maxToolSteps", st.maxToolSteps);
+        snap.put("toolStepCount", st.tools.toolStepCount.get());
+        snap.put("maxToolSteps", st.tools.maxToolSteps);
         if (!st.subagentBranches.isEmpty()) snap.put("subagentBranches", st.subagentBranches);
         if (st.subagentRoute != null) snap.put("subagentRoute", st.subagentRoute);
         if (st.planRecord != null) snap.put("planRecord", st.planRecord);
@@ -9387,46 +5525,6 @@ public class RagService {
             snap.put("agentName", st.agentName);
         }
         return snap;
-    }
-
-    /**
-     * 宽限到点：没人看的那一轮按<b>中断</b>收束（不是用户停止——账本与终止文案都得如实区分）。
-     * 走的是与今天「断开即停」完全相同的一条路：掐流 + 半程正文按截断态落库 + 释放会话互斥。
-     *
-     * @return true=本轮已终结（总线随之关闭）；false=本轮不归宽限管，继续等（并重新起算宽限）
-     */
-    private boolean abortTurnWithoutViewer(String sessionId) {
-        AnswerStreamState st = TURN_STATES.get(sessionId);
-        if (st == null) {
-            TurnHandle h = TURN_HANDLES.get(sessionId);
-            if (h == null) return true;   // 本轮早没了，总线直接关
-            // 前置阶段（改写/检索/思考/计划编排）没有流状态，中止只能靠把手的标志；
-            // 同样记一笔，让流水线线程走到到底时写「已中断」而不是「已停止」
-            BARE_ABORTS.put(sessionId, h.turnId());
-            h.stopped().set(true);
-            completeEmitter(h.emitter());
-            return true;
-        }
-        if (st.settled()) return true;
-        // 挂在人工裁决上的轮不许被宽限掐：等待期间「关掉页面它一直等你」是对用户承诺过的行为
-        // （见配置项 askTimeoutMs 的说明），也不该由「没人看」这件事替用户做决定
-        if (st.askWaits.get() > 0 || st.planWaits.get() > 0) return false;
-        // 同 stopTurn：卡片落终态要在掐流之前（掐流会把等待线程打断，那时挂起表已空）
-        markHumanWaitsTerminal(sessionId, "INTERRUPTED");
-        sessionEventService.append(sessionId, st.userId, st.turnId, "detach",
-                "断线超过宽限，本轮按中断收束：正文=" + st.fullResponse.length() + "字 工具步="
-                        + st.toolStepCount.get());
-        // 记一笔给流水线线程：它走到到底时据此给那一问打上「未产生回答」的标记
-        //（此刻把手还在，dispose 之后 turnStopRequested 就查不到了）
-        BARE_ABORTS.put(sessionId, st.turnId);
-        st.disposeSafe();
-        completeEmitter(st.emitter);
-        // 解掉可能还挂着的人工等待：提问/计划在上面已经豁免（那种轮不该被宽限掐），走到这里说明
-        // 卡着的是**工具执行审批**——它的线程阻塞在 future.get(approvalTimeoutMs) 上，不解开就把
-        // 会话互斥一起占满 120 秒，用户「明明没人在跑却问不出下一句」，正是停止功能要消灭的那类事。
-        // 终态写 INTERRUPTED 而不是 STOPPED：没有人点停止，是「无观众宽限到点」——审计要分得开这两种。
-        releaseHumanWaits(sessionId, "INTERRUPTED");
-        return true;
     }
 
     /**
@@ -9508,27 +5606,6 @@ public class RagService {
         return t;
     }
 
-    /** 直接往一条通道送一帧（不经总线：接流的第一帧快照本身） */
-    private boolean sendFrame(SseEmitter emitter, String type, String content, String sessionId) {
-        return sendFrame(emitter, type, content, sessionId, null);
-    }
-
-    private boolean sendFrame(SseEmitter emitter, String type, String content, String sessionId, Object seq) {
-        try {
-            StringBuilder sb = new StringBuilder(96);
-            sb.append("{\"type\":").append(JSON.toJSONString(type))
-                    .append(",\"content\":").append(JSON.toJSONString(content == null ? "" : content))
-                    .append(",\"sessionId\":").append(JSON.toJSONString(sessionId == null ? "" : sessionId));
-            if (seq instanceof Number n) sb.append(",\"seq\":").append(n.longValue());
-            sb.append('}');
-            emitter.send(SseEmitter.event().name(type).data(sb.toString()));
-            return true;
-        } catch (Exception e) {
-            log.debug("[RUN] 接流首帧发送失败（观众可能又走了）: session={} {}", sessionId, e.getMessage());
-            return false;
-        }
-    }
-
     /**
      * 多轮检索查询改写（指代消解）：把「对话历史 + 当前问题」交给对话模型改写成一个<b>自包含</b>的检索
      * query——消解「它/这个/上述」等指代、补全省略的主语与限定词。多轮追问（如先问「X 系统是什么」
@@ -9575,7 +5652,7 @@ public class RagService {
             });
             String rewritten = f.get(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS);
             if (rewritten == null || rewritten.isBlank()) {
-                addDegradation(degradations, degradedCodes, "queryRewriteFailed", "多轮查询改写返回空，按原句检索");
+                runtime.addDegradation(degradations, degradedCodes, "queryRewriteFailed", "多轮查询改写返回空，按原句检索");
                 return question;
             }
             String q = rewritten.trim().replaceAll("^[\"'「『]+|[\"'」』]+$", "");   // 去模型可能包的引号
@@ -9586,10 +5663,10 @@ public class RagService {
             log.info("[RETRIEVE] 多轮改写生效: \"{}\" -> \"{}\"", question, q);
             return q;
         } catch (java.util.concurrent.TimeoutException te) {
-            addDegradation(degradations, degradedCodes, "queryRewriteFailed", "多轮查询改写超时（retrieval.rewriteTimeoutMs），按原句检索");
+            runtime.addDegradation(degradations, degradedCodes, "queryRewriteFailed", "多轮查询改写超时（retrieval.rewriteTimeoutMs），按原句检索");
             return question;
         } catch (Exception e) {
-            addDegradation(degradations, degradedCodes, "queryRewriteFailed", "多轮查询改写失败，按原句检索: " + e.getMessage());
+            runtime.addDegradation(degradations, degradedCodes, "queryRewriteFailed", "多轮查询改写失败，按原句检索: " + e.getMessage());
             return question;
         }
     }
@@ -9643,219 +5720,6 @@ public class RagService {
                 + sb;
     }
 
-    // ==================== M4：智能体绑定工作流（chatflow 语义） ====================
-
-    /**
-     * 智能体绑定工作流后的问答路径（M4）：会话每轮把用户问题送进图，end 节点的出参即回答。
-     * <p>
-     * 与常规链路的分工：绑定了工作流的智能体，<b>行为由工作流定义</b>——智能体自带的人设 /
-     * 知识库范围 / 工具开关都不参与（那些是"预设型智能体"的维度）。两套逻辑同时生效会让回答
-     * 不可预测，故这里整条走工作流，不做混合。
-     * <p>
-     * 流式：llm 节点的 token 经 {@code WorkflowRunCtx#tokenSink} 透传到这里，逐块转 SSE token 事件；
-     * 最终回答以 end 节点出参为准（done.finalContent 覆盖流式累积——多 llm 节点或模板聚合时
-     * 出参可能不等于任一节点的原文，这是设计使然，不是不一致）。
-     */
-    private void runWorkflowChat(String sessionId, String question, String userId, SseEmitter emitter,
-                                 long startTime, List<Map<String, String>> degradations,
-                                 Set<String> degradedCodes, Agent agent, boolean guestMode, boolean regenerate,
-                                 String replaceMessageId, String editVariantGroup, Agent delegatedAgent) {
-        sendSseEvent(emitter, "plan", JSON.toJSONString(List.of("执行工作流")), sessionId);
-        sendSseEvent(emitter, "stage", "正在执行工作流…", sessionId);
-        // 本轮身份（把手在 chat() 入口已登记，工作流分支同样走那一条轮）：问答两侧都挂它，
-        // 逐气泡「过程」才取得到本轮的账本事件
-        final String workflowTurnId = turnIdOf(sessionId);
-        java.util.concurrent.ScheduledFuture<?> heartbeat = scheduleKeepalive(emitter, "工作流");
-        try {
-            String workflowUserMsgId = null;
-            if (!regenerate) {
-                workflowUserMsgId = sessionService.appendMessageWithTurn(sessionId, "user", question,
-                        null, workflowTurnId);
-                // 编辑重发：新用户消息挂上被替换旧分支的版本组键（与主链路同口径）
-                if (workflowUserMsgId != null && editVariantGroup != null && !editVariantGroup.isBlank()) {
-                    sessionService.setMessageVariant(workflowUserMsgId, editVariantGroup);
-                }
-            }
-            Map<String, Object> inputs = buildWorkflowInputs(sessionId, question, degradations, degradedCodes);
-            StringBuilder streamed = new StringBuilder();
-            // 图片机制（与主链路同口径）：retrieval 节点完成 [图片N] 编号后回调累计原始 URL 列表——
-            // 签名后发 SSE image 事件（时序先于 LLM token，前端按 images[N-1] 渲染回答里的 [图片N]），
-            // 原始列表留给落库（历史接口存原始 URL、读时动态签名）。回调抛错不打断工作流（fail-soft 与 tokenSink 同口径）
-            List<String> workflowImages = new ArrayList<>();
-            WorkflowService.Principal p = WorkflowService.Principal.current();   // 流水线线程已 loadIdentity(userId)
-            WorkflowRun run = workflowServiceProvider.getObject()
-                    .runForAgent(agent.getWorkflowId(), inputs, p, token -> {
-                        streamed.append(token);
-                        sendSseEvent(emitter, "token", token, sessionId);
-                    }, imgs -> {
-                        if (imgs == null || imgs.isEmpty()) return;
-                        synchronized (workflowImages) {
-                            workflowImages.clear();
-                            workflowImages.addAll(imgs);
-                        }
-                        List<String> signed = imgs.stream().map(imageUrlSigner::signUrl).toList();
-                        sendSseEvent(emitter, "image", JSON.toJSONString(signed), sessionId);
-                    });
-            if (!"success".equals(run.getStatus())) {
-                String reason = run.getError() == null || run.getError().isBlank()
-                        ? "工作流运行未成功（状态 " + run.getStatus() + "）" : run.getError();
-                log.warn("[WORKFLOW-CHAT] 工作流运行失败: session={} run={} : {}", sessionId, run.getId(), reason);
-                sendSseEvent(emitter, "error", "工作流执行失败：" + reason, sessionId);
-                completeEmitter(emitter);
-                return;
-            }
-            String answer = workflowAnswerOf(run);
-            Map<String, Object> tokens = workflowTokensOf(run);
-            // 重新生成：先软删被替换的旧回答并登记分支版本组（与主链路口径一致，多版本可切换）
-            String replaceGroup = null;
-            if (replaceMessageId != null && !replaceMessageId.isBlank()) {
-                replaceGroup = sessionService.beginAnswerReplace(replaceMessageId);
-            }
-            String messageId = sessionService.appendMessage(sessionId, "assistant", answer,
-                    workflowImages.isEmpty() ? null : List.copyOf(workflowImages), null, null, null, null, null,
-                    null, JSON.toJSONString(tokens), null, null,
-                    agent.getId(), agent.getName(),
-                    // model / related / mentions / historyRefs / plan：工作流分支不带这些维度（此前也无落库点）
-                    null, null, null, null, null, workflowTurnId);
-            if (replaceGroup != null && messageId != null) {
-                sessionService.setMessageVariant(messageId, replaceGroup);
-            }
-            qaLogService.logAsync(sessionId, question, answer, List.of(), false,
-                    System.currentTimeMillis() - startTime, question, null, false,
-                    messageId, agent.getId());
-            Map<String, Object> donePayload = new LinkedHashMap<>();
-            donePayload.put("sources", List.of());
-            donePayload.put("related", List.of());
-            donePayload.put("messageId", messageId);
-            donePayload.put("turnId", workflowTurnId);   // 本轮身份：与消息行同源，当轮气泡即可按轮回看过程
-            // 本轮用户消息 ID（编辑重发后前端给新用户消息挂分支切换器；regenerate 时为 null 不下发）
-            if (workflowUserMsgId != null && !workflowUserMsgId.isBlank()) {
-                donePayload.put("userMessageId", workflowUserMsgId);
-            }
-            donePayload.put("finalContent", answer);
-            // 与主链路一致地动态签名（前端 onDone 用 finalImages 覆盖流式期间已签名的 images；
-            // 落库存的是原始 URL，此处仅对下发副本签名）
-            donePayload.put("finalImages", workflowImages.stream().map(imageUrlSigner::signUrl).toList());
-            donePayload.put("degradations", degradations);
-            donePayload.put("artifacts", List.of());
-            donePayload.put("toolCalls", List.of());
-            donePayload.put("tokens", tokens);
-            // 工作流运行信息：前端可展示"本次回答由工作流 v{n} 产出，耗时 xx"
-            Map<String, Object> wfInfo = new LinkedHashMap<>();
-            wfInfo.put("workflowId", run.getWorkflowId());
-            wfInfo.put("version", run.getVersion());
-            wfInfo.put("runId", run.getId());
-            wfInfo.put("status", run.getStatus());
-            wfInfo.put("durationMs", run.getDurationMs());
-            donePayload.put("workflowRun", wfInfo);
-            SessionService.AgentBinding finalBinding = sessionService.getAgentBinding(sessionId);
-            if (finalBinding != null) {
-                donePayload.put("agentLocked", true);
-                if (!finalBinding.agentId().isEmpty()) {
-                    donePayload.put("agentId", finalBinding.agentId());
-                    donePayload.put("agentName", finalBinding.agentName() == null ? "" : finalBinding.agentName());
-                }
-            }
-            // §4 轮级委派归属（与主链路同口径）：工作流智能体被 @ 委派时气泡归属按委派值展示
-            if (delegatedAgent != null) {
-                donePayload.put("delegatedAgentId", delegatedAgent.getId());
-                donePayload.put("delegatedAgentName", delegatedAgent.getName() == null ? "" : delegatedAgent.getName());
-            }
-            // 没赶上的插话同样交回前端（本分支没有流状态，把手还在就直接取）
-            attachLeftoverSteers(donePayload, null, sessionId);
-            sendSseEvent(emitter, "done", JSON.toJSONString(donePayload), sessionId);
-            completeEmitter(emitter);
-            // 记忆提取：工作流节点用的是自己的模型，这里按「用户个人默认聊天模型」提取长期记忆
-            // （没有配置默认模型就不提取——记忆提取必须有模型，不传空引用去让下游猜/报内部错）
-            com.wenqu.ai.model.User prefUser = loadPrefUser(userId);
-            String memoryModel = prefUser == null ? null : prefUser.getDefaultModel();
-            if (memoryModel != null && !memoryModel.isBlank()) {
-                userMemoryService.maybeExtract(userId, sessionId, question, answer, guestMode, memoryModel);
-            } else {
-                log.debug("[WORKFLOW-CHAT] 未配置个人默认模型，跳过长期记忆提取: uid={}", userId);
-            }
-            log.info("[WORKFLOW-CHAT] 工作流回答完成: session={} run={} v={} 耗时 {}ms",
-                    sessionId, run.getId(), run.getVersion(), run.getDurationMs());
-        } catch (com.wenqu.ai.common.BizException e) {
-            log.warn("[WORKFLOW-CHAT] 工作流执行被拒绝: session={} : {}", sessionId, e.getMessage());
-            sendSseEvent(emitter, "error", e.getMessage(), sessionId);
-            completeEmitter(emitter);
-        } catch (Exception e) {
-            log.error("[WORKFLOW-CHAT] 工作流执行异常: session={} : {}", sessionId, e.toString());
-            sendSseEvent(emitter, "error", "工作流执行异常：" + e.getMessage(), sessionId);
-            completeEmitter(emitter);
-        } finally {
-            heartbeat.cancel(false);
-        }
-    }
-
-    /**
-     * 工作流开始节点的入参：固定提供 {@code question}（本轮问题）与 {@code history}（近期多轮文本）。
-     * 只有 start 节点<b>声明过</b>的键才会被真正引用（引擎只校验声明项，多给的键不影响执行），
-     * 因此多轮能力是"工作流声明了 history 才生效"，不必为它单独开关。
-     */
-    private Map<String, Object> buildWorkflowInputs(String sessionId, String question,
-                                                    List<Map<String, String>> degradations,
-                                                    Set<String> degradedCodes) {
-        Map<String, Object> inputs = new LinkedHashMap<>();
-        inputs.put("question", question == null ? "" : question);
-        // 工作流 inputs 的短历史用固定 5 轮（代码常量，非用户设置）：工作流节点自带上下文语义，
-        // 不做预算驱动全量带入，避免把主链路的压缩策略耦合进工作流
-        List<Map<String, Object>> recent = sessionService.getRecentHistory(sessionId, 5);
-        if (recent == null) {
-            addDegradation(degradations, degradedCodes, "historyFailed", "会话历史读取失败，本次无多轮记忆");
-            recent = List.of();
-        }
-        inputs.put("history", buildHistoryText(recent));
-        return inputs;
-    }
-
-    /**
-     * 结束节点出参 → 回答文本：优先取 {@code answer} 键；没有该键但只有唯一出参时取它；
-     * 多出参且无 answer → fail-loud（不明确指定就把某个出参当回答，是猜）。
-     */
-    private String workflowAnswerOf(WorkflowRun run) {
-        Map<String, Object> outputs = new LinkedHashMap<>();
-        try {
-            outputs = JSON.parseObject(run.getOutputs() == null ? "{}" : run.getOutputs());
-        } catch (Exception ignored) {
-        }
-        if (outputs == null || outputs.isEmpty()) {
-            throw new com.wenqu.ai.common.BizException("工作流的结束节点没有产出任何出参，无法作为回答");
-        }
-        Object answer = outputs.get("answer");
-        if (answer == null && outputs.size() == 1) answer = outputs.values().iterator().next();
-        if (answer == null) {
-            throw new com.wenqu.ai.common.BizException("工作流的结束节点未声明 answer 出参（当前出参："
-                    + String.join("、", outputs.keySet()) + "）——请在结束节点里把回答映射到 answer");
-        }
-        String text = String.valueOf(answer);
-        return text.isBlank() ? "（工作流未产出回答内容）" : text;
-    }
-
-    /** 本次运行的 token 汇总（各节点 trace 相加；拿不到算 0，不臆造数字） */
-    private Map<String, Object> workflowTokensOf(WorkflowRun run) {
-        int prompt = 0, completion = 0;
-        try {
-            JSONArray arr = JSON.parseArray(run.getNodeTraces() == null ? "[]" : run.getNodeTraces());
-            if (arr != null) {
-                for (Object o : arr) {
-                    if (!(o instanceof Map<?, ?> m)) continue;
-                    Object p = m.get("promptTokens");
-                    Object c = m.get("completionTokens");
-                    if (p instanceof Number n) prompt += n.intValue();
-                    if (c instanceof Number n) completion += n.intValue();
-                }
-            }
-        } catch (Exception ignored) {
-        }
-        Map<String, Object> tokens = new LinkedHashMap<>();
-        tokens.put("prompt", prompt);
-        tokens.put("output", completion);
-        tokens.put("total", prompt + completion);
-        return tokens;
-    }
-
     /**
      * 插话续发的用户消息前缀：把「这句话是对上一轮回答的补充」讲清楚，别让模型当成一次新提问。
      * <p>不做这件事的实测后果（短问答必现，模型不调工具时插话必然赶不上工具步）：
@@ -9895,7 +5759,7 @@ public class RagService {
         try {
             // 计划意图识别（按用户意图自动开启计划模式）：与主链路同口径；本分支无检索可争抢，
             // 识别在闸门前串行取结果（宁缺毋滥，最多让本轮多等 awaitPlanIntent 的上限）
-            final java.util.concurrent.CompletableFuture<Boolean> planIntentFuture = startPlanIntentCheck(
+            final java.util.concurrent.CompletableFuture<Boolean> planIntentFuture = plan.startIntentCheck(
                     emitter, guestMode, planMode,
                     replaceMessageId != null && !replaceMessageId.isBlank(),
                     sessionId, question, resolvedModel, attachmentText != null && !attachmentText.isBlank());
@@ -9911,6 +5775,7 @@ public class RagService {
                               + "不要输出 [N] 来源标注（本轮没有参考资料）。");
             // 人机协同三入口：无知识库分支同样挂着 writeTodo/askUser，缺这段就会和主链路行为不一致
             system.append(humanLoopGuide(guestMode, agent, resolvedModel, emitter, branchTurn));
+            system.append(consultGuide(guestMode, agent, branchTurn));
             // 用户长期记忆（与主链路同口径；游客分享会话不注入）
             if (!guestMode) {
                 String memoryText = userMemoryService.injectText(userId, question);
@@ -9923,10 +5788,10 @@ public class RagService {
             // chatflow 主回答：沿用固定 5 轮短历史（代码常量，非用户设置）；预算驱动全量带入只在 runChat 主链路生效
             List<Map<String, Object>> recentHistory = sessionService.getRecentHistory(sessionId, 5);
             if (recentHistory == null) {
-                addDegradation(degradations, degradedCodes, "historyFailed", "会话历史读取失败，本次无多轮记忆");
+                runtime.addDegradation(degradations, degradedCodes, "historyFailed", "会话历史读取失败，本次无多轮记忆");
                 recentHistory = List.of();
             }
-            String historyText = buildHistoryText(recentHistory);
+            String historyText = historyCompaction.buildHistoryText(recentHistory);
             if (!historyText.isEmpty()) {
                 system.append("\n\n对话历史：\n").append(historyText);
             }
@@ -9949,19 +5814,20 @@ public class RagService {
             }
             String user = userQuestion.toString();
 
-            if (turnAborted(sessionId, emitter)) {
+            if (runtime.turnAborted(sessionId, emitter)) {
                 log.info("[SSE] 客户端断开或已停止，终止本轮问答（无知识库分支，生成前）: session={}", sessionId);
                 return;
             }
-            sendSseEvent(emitter, "stage", "正在生成回答…", sessionId);
+            runtime.sendSseEvent(emitter, "stage", "正在生成回答…", sessionId);
             stageMs.put("total", System.currentTimeMillis() - startTime);
-            AnswerStreamState st = new AnswerStreamState(sessionId, question, userId, emitter,
+            TurnState st = new TurnState(sessionId, question, userId, emitter,
                     new LinkedHashMap<>(), new HashMap<>(), new ArrayList<>(), userImgs,
-                    startTime, question, thinkingHolder, degradations, degradedCodes, null);
-            st.docMetaCache = documentMetaCache;
-            // 本轮无知识库检索，但工具仍可能被模型调用：范围同样跟随智能体库绑定（库隔离）
-            st.toolScopeKbIds = scopeKbIdsOf(agent, userId);
-            st.toolScopeDocIds = resolveScopeDocIds(agent, userId);
+                    startTime, question, thinkingHolder, degradations, degradedCodes, null, turnDeps);
+            st.refs.docMetaCache = documentMetaCache;
+            // 本轮无知识库检索，但工具仍可能被模型调用：范围与主链路同口径（P5——登录页的父轮没有库界，
+            // 游客与子智能体分支才按智能体绑定的库收口）
+            st.tools.toolScopeKbIds = scopeKbIdsOf(agent, userId, guestMode || branchTurn);
+            st.tools.toolScopeDocIds = resolveScopeDocIds(agent, userId, guestMode || branchTurn);
             // 本轮生效模型（会话覆盖 > 个人默认）：不赋值会让 buildAnswerStream 发出无 model 的请求，
             // DynamicOpenAiChatModel 落到遗留全局网关且 model 为空 → 网关 400（2026-09-25 通用助手实测）
             st.model = resolvedModel;
@@ -9971,19 +5837,19 @@ public class RagService {
             st.delegatedAgentId = delegatedAgent != null ? delegatedAgent.getId() : null; // §4 轮级委派归属
             st.delegatedAgentName = delegatedAgent != null ? delegatedAgent.getName() : null;
             applyPermissionTier(agent, st); // 权限档位（P2）：与主链路同一份解析，无检索分支不另算
-            st.maxToolSteps = resolveMaxToolSteps(agent, subagentDepth); // 步数上限（分支逐层减半，见该方法注释）
+            st.tools.maxToolSteps = resolveMaxToolSteps(agent, subagentDepth); // 步数上限（分支逐层减半，见该方法注释）
             st.branchTurn = branchTurn;   // 子智能体分支：「要有人在场」的工具不挂
-            st.heartbeat = preHeartbeat; // 前置心跳句柄移交（终态照旧停止）
+            st.channel.heartbeat = preHeartbeat; // 前置心跳句柄移交（终态照旧停止）
             st.contextTokens = 0;
             st.budgetTokens = 0;
             st.contextHits = 0;
             // 生效最大输出（模型管理中该模型声明的值）：buildAnswerStream 的 max_tokens 与触顶判定共用
             st.effectiveMaxOutput = effectiveMaxOutputOf(resolvedModel);
-            st.stageMs.putAll(stageMs);
+            st.channel.stageMs.putAll(stageMs);
             // 计划模式（人在回路）：与主链路同一段钩子（本分支没有检索资料，计划输入不含资料清单）；
             // 未开计划开关时同样按消息意图自动开启（识别命中=本轮按计划模式走，卡片标「自动开启」）
             boolean planRound = planMode;
-            if (!planRound && awaitPlanIntent(planIntentFuture)) {
+            if (!planRound && plan.awaitIntent(planIntentFuture)) {
                 planRound = true;
                 st.planAuto = true;
                 log.info("[PLAN] 意图识别命中，本轮自动开启计划模式（无知识库分支）: session={}", sessionId);
@@ -9992,17 +5858,17 @@ public class RagService {
                 String planQuestion = question + (imgNote == null || imgNote.isBlank() ? "" : imgNote)
                         + (attachmentText == null || attachmentText.isBlank() ? ""
                         : "\n\n（用户上传了附件，其内容将在执行阶段提供）");
-                String gate = planApprovalGate(st, agent, resolveSystemPrompt(agent), planQuestion, skills,
-                        null, system);
+                String gate = plan.approvalGate(st, agent, resolveSystemPrompt(agent), planQuestion, skills,
+                        null, system, planHooks);
                 if (gate == null) {
                     // 同主链路：拒绝/超时=未批准定格；「继续对话」取代=本版作废；均先补落收尾助手消息
                     // （含 plan 快照）再发对应事件 + 标准 done（防「连接被提前关闭」误报）
                     if (st.planSuperseded) {
                         persistPlanSuperseded(st);
-                        sendSseEvent(emitter, "plan_superseded", "{}", sessionId);
+                        runtime.sendSseEvent(emitter, "plan_superseded", "{}", sessionId);
                     } else {
                         persistPlanRejected(st);
-                        sendSseEvent(emitter, "plan_cancelled", "{}", sessionId);
+                        runtime.sendSseEvent(emitter, "plan_cancelled", "{}", sessionId);
                     }
                     Map<String, Object> cancelled = new LinkedHashMap<>();
                     cancelled.put("sources", List.of());
@@ -10011,19 +5877,19 @@ public class RagService {
                     if (st.planSuperseded) cancelled.put("planSuperseded", true);
                     else cancelled.put("planCancelled", true);
                     // 计划被拒/超时这条 done 也必须挂插话：漏了它，插进的话就在这个分支里静默消失
-                    attachLeftoverSteers(cancelled, st, sessionId);
-                    sendSseEvent(emitter, "done", JSON.toJSONString(cancelled), sessionId);
-                    completeEmitter(emitter);
+                    runtime.attachLeftoverSteers(cancelled, st, sessionId);
+                    runtime.sendSseEvent(emitter, "done", JSON.toJSONString(cancelled), sessionId);
+                    runtime.completeEmitter(emitter);
                     return;
                 }
             }
-            st.disposableRef.set(buildAnswerStream(system.toString(), user, st, agent));
+            st.channel.disposableRef.set(buildAnswerStream(system.toString(), user, st, agent));
             emitter.onCompletion(() -> { if (!st.keepRunningWithoutChannel()) st.disposeSafe(); });
             emitter.onError(t -> { if (!st.keepRunningWithoutChannel()) st.disposeSafe(); });
         } catch (Exception e) {
             log.error("No-knowledge chat error", e);
-            sendSseEvent(emitter, "error", "系统处理异常，请稍后重试", sessionId);
-            completeEmitter(emitter);
+            runtime.sendSseEvent(emitter, "error", "系统处理异常，请稍后重试", sessionId);
+            runtime.completeEmitter(emitter);
         }
     }
 }

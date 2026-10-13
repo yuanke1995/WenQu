@@ -1,5 +1,6 @@
 package com.wenqu.ai.service;
 
+import com.wenqu.ai.agent.chat.ChatRunRuntime;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.wenqu.ai.agent.chat.ChatCommand;
@@ -280,7 +281,7 @@ public class ScheduledJobService {
                 run.setAnswer(trimTo(sink.answer(), ANSWER_PREVIEW));
             } finally {
                 // 收集型通道不触发 onCompletion，必须主动清登记，否则 RagService 的 ACTIVE_SSE 残留
-                RagService.forgetSseChannel(sink);
+                ChatRunRuntime.forgetSseChannel(sink);
             }
         } catch (Exception e) {
             run.setStatus("failed");

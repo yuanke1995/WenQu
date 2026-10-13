@@ -46,7 +46,7 @@ public class KnowledgeRetrievalTool {
 
         /**
          * 登记一条本轮可见降级（与 RagService.addDegradation 同口径、同一份 degradations 列表）。
-         * 工具链路自己拿不到 AnswerStreamState，由注册器桥接——典型用途：重排不可用时明确告知
+         * 工具链路自己拿不到 TurnState，由注册器桥接——典型用途：重排不可用时明确告知
          * 「本轮引用未做语义筛选」，而不是让用户对着一堆弱相关引用以为是检索本来就这样。
          */
         void degrade(String code, String msg);

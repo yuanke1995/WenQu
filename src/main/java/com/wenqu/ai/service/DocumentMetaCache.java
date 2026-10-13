@@ -41,10 +41,13 @@ public class DocumentMetaCache {
     /** 缓存条目（带过期时间；命中时刷新过期线，冷条目持续活跃） */
     private static final class Entry {
         final String name;
+        /** 该文档所属知识库（每库配额用；与文件名同一行同一次回源取回，不另开查询路径） */
+        final String kbId;
         volatile long expireAt;
 
-        Entry(String name, long expireAt) {
+        Entry(String name, String kbId, long expireAt) {
             this.name = name;
+            this.kbId = kbId;
             this.expireAt = expireAt;
         }
 
@@ -70,7 +73,7 @@ public class DocumentMetaCache {
         try {
             AiDocument doc = documentMapper.selectById(docId);
             if (doc != null && doc.getFileName() != null && !doc.getFileName().isBlank()) {
-                fileNameCache.put(docId, new Entry(doc.getFileName(), System.currentTimeMillis() + entryTtlMs()));
+                fileNameCache.put(docId, new Entry(doc.getFileName(), doc.getKbId(), System.currentTimeMillis() + entryTtlMs()));
                 return doc.getFileName();
             }
             // DB 中已不存在/文件名为空：清除本地陈旧缓存（跨副本删除/改名自愈）
@@ -106,7 +109,7 @@ public class DocumentMetaCache {
             List<AiDocument> docs = documentMapper.selectBatchIds(missing);
             for (AiDocument doc : docs) {
                 if (doc != null && doc.getFileName() != null && !doc.getFileName().isBlank()) {
-                    fileNameCache.put(doc.getId(), new Entry(doc.getFileName(), now + entryTtlMs()));
+                    fileNameCache.put(doc.getId(), new Entry(doc.getFileName(), doc.getKbId(), now + entryTtlMs()));
                     result.put(doc.getId(), doc.getFileName());
                 }
             }
@@ -118,6 +121,40 @@ public class DocumentMetaCache {
             }
         } catch (Exception e) {
             log.warn("[DocumentMetaCache] 批量查询文档名失败: error={}", e.getMessage());
+        }
+        return result;
+    }
+
+    /**
+     * 批量取文档所属知识库 ID（上下文按库分配额用）。与文件名共用同一份缓存条目与同一次批量回源，
+     * 不另开查询路径——上下文填充循环每轮都要用它，多一份缓存就多一处会漂移的真源。
+     * <p>查不到库的 docId 不出现在结果里：调用方按"库未知"放行该块，缓存失效不该变成"资料进不了上下文"。
+     */
+    public Map<String, String> getKbIds(Collection<String> docIds) {
+        Map<String, String> result = new HashMap<>();
+        if (docIds == null || docIds.isEmpty()) return result;
+        long now = System.currentTimeMillis();
+        List<String> missing = new ArrayList<>();
+        for (String docId : docIds) {
+            if (docId == null || docId.isBlank()) continue;
+            Entry entry = fileNameCache.get(docId);
+            if (entry != null && entry.fresh()) {
+                entry.expireAt = now + entryTtlMs();
+                if (entry.kbId != null && !entry.kbId.isBlank()) result.put(docId, entry.kbId);
+            } else {
+                missing.add(docId);
+            }
+        }
+        if (missing.isEmpty()) return result;
+        try {
+            for (AiDocument doc : documentMapper.selectBatchIds(missing)) {
+                if (doc == null || doc.getKbId() == null || doc.getKbId().isBlank()) continue;
+                String name = doc.getFileName() == null ? "" : doc.getFileName();
+                fileNameCache.put(doc.getId(), new Entry(name, doc.getKbId(), now + entryTtlMs()));
+                result.put(doc.getId(), doc.getKbId());
+            }
+        } catch (Exception e) {
+            log.warn("[DocumentMetaCache] 批量查询文档所属库失败: error={}", e.getMessage());
         }
         return result;
     }

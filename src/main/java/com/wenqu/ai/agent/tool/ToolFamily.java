@@ -31,6 +31,12 @@ public enum ToolFamily {
     TODO("todo", "任务清单"),
     /** 沙盒执行（隔离容器里的命令与文件读写）；审批 off 档整族不挂 */
     SANDBOX("sandbox", "沙盒执行", true),
+    /**
+     * 智能体咨询（P5 agent-as-tool）：把另一位智能体当"带自己知识库的一次子轮"调用。
+     * <p>算有副作用：它起的是完整的一轮问答（模型 token、它自己的工具与写盘能力都在里面），
+     * 所以审批 off 档整族不挂、ask 档执行前要确认——与沙盒同族待遇。
+     */
+    SUBAGENT("subagent", "智能体咨询", true),
     /** MCP 外部工具：按用户登记动态合入，没有静态清单；审批 off 档整族不挂 */
     MCP("mcp", "MCP 外部工具", true);
 

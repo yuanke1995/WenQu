@@ -88,6 +88,14 @@ public class AgentController {
         return ResultJson.ok(agentService.available());
     }
 
+    @Operation(summary = "可读助手名称表", description = "本轮可咨询范围内的 id+名称（含子智能体，按可读性过滤）。"
+            + "与 /available 的差别：那份剔除子智能体（不能当问答角色），而咨询清单包含它们——"
+            + "前端还原「本轮咨询了谁」的徽标需要这一份，否则子智能体只能显示裸 id")
+    @GetMapping("/consultable")
+    public ResultJson consultable() {
+        return ResultJson.ok(agentService.consultable());
+    }
+
     @Operation(summary = "可委派的子智能体", description = "只返回 is_subagent=1 的智能体（id/name/description/"
             + "subagentMode 这一支实际怎么跑 + subagentModeInherited 是否跟随平台默认），供主智能体配置页勾选允许委派的对象")
     @GetMapping("/sub")

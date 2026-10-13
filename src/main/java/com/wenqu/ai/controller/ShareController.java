@@ -56,6 +56,12 @@ public class ShareController {
     private final AgentShareService agentShareService;
     private final SessionService sessionService;
     private final RagService ragService;
+
+    /**
+     * 轮次控制与存活（P6 刀 2）。免登录分享页也要能问「这一轮还在跑吗」、能接回正在跑的流、
+     * 能叫停——这三件事与「谁在答这一问」无关，归轮次运行时。
+     */
+    private final com.wenqu.ai.agent.chat.ChatRunRuntime runtime;
     private final RateLimitService rateLimitService;
     private final ModelRegistryService modelRegistryService;
     private final com.wenqu.ai.service.SessionShareService sessionShareService;
@@ -245,7 +251,7 @@ public class ShareController {
         rateLimitService.checkRateLimit("chat", "ip:" + clientIp(httpRequest));
         String visitorUid = AgentShareService.visitorUid(visitorId);
         sessionService.assertOwned(sessionId.trim(), visitorUid);
-        return ResultJson.ok(ragService.runStatus(sessionId.trim(), visitorUid));
+        return ResultJson.ok(runtime.runStatus(sessionId.trim(), visitorUid));
     }
 
     @Operation(summary = "游客接流", description = "把一条新的 SSE 通道挂到该访客这一会话正在跑的那一轮上："
@@ -270,11 +276,11 @@ public class ShareController {
             rateLimitService.checkRateLimit("chat", "ip:" + clientIp(httpRequest));
             String visitorUid = AgentShareService.visitorUid(visitorId);
             sessionService.assertOwned(sessionId.trim(), visitorUid);
-            ragService.resumeTurn(sessionId.trim(), visitorUid, emitter);
+            runtime.resumeTurn(sessionId.trim(), visitorUid, emitter);
         } catch (Exception e) {
             // 这条通道是免登录的：任何一关没过就送一份 running:false 的快照并关掉，
             // 前端按历史回显——不能留一条挂着不走的 SSE 请求
-            ragService.resumeTurn(sessionId.trim(), null, emitter);
+            runtime.resumeTurn(sessionId.trim(), null, emitter);
         }
         return emitter;
     }
@@ -297,7 +303,7 @@ public class ShareController {
         // 过完之后才按发布者 uid 叫停——本轮在流水线里登记的身份是发布者（免登录问答按发布者检索）。
         String visitorUid = AgentShareService.visitorUid(visitorId);
         sessionService.assertOwned(sessionId.trim(), visitorUid);
-        boolean stopped = ragService.stopTurn(sessionId.trim(), ctx.owner().getUid());
+        boolean stopped = runtime.stopTurn(sessionId.trim(), ctx.owner().getUid());
         log.info("[AUDIT] 游客停止本轮 ip={} agent={} session={} stopped={}",
                 clientIp(httpRequest), ctx.agent().getId(), sessionId, stopped);
         return ResultJson.ok(stopped ? "已停止本轮" : "这一会话没有在跑的回答（可能刚结束）");

@@ -159,6 +159,14 @@
             <artifactId>spring-ai-alibaba-agent-framework</artifactId>
             <version>${spring-ai-alibaba.version}</version>
         </dependency>
+
+        <!-- 单元测试（JUnit 5 + Mockito + AssertJ，版本由 Boot 父 POM 管理）：
+             只覆盖不需要 Spring 上下文的纯逻辑断言（如配置保存的未知键拒绝口径） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <!-- Spring AI BOM 统一管理各模块版本（1.1 GA 起无需 milestone 仓库，Maven Central 即可） -->

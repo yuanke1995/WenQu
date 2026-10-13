@@ -118,7 +118,7 @@ public class ChatRequest {
             + "区间时生效，越界值收敛到区间内；模型未登记区间或本值为空 = 用模型登记窗口（默认上限）。")
     private Integer contextWindow;
 
-    @Schema(description = "智能体 ID；\"auto\"=自动派遣（当轮生效模型按名称+描述从可见主智能体中挑选，失败回落默认智能体）；"
+    @Schema(description = "智能体 ID；空=默认智能体（isDefault），未设默认则走全局配置（P5：会话不再锁定，每轮按本参数解析）；"
             + "其他非空值=该轮问答按该智能体的提示词/工具/知识库范围执行；空=继承全局配置")
     private String agentId;
 

@@ -7,12 +7,13 @@ import java.util.Map;
 /**
  * 一轮问答交给工具执行层的契约（P1 seam 的 Consumer 侧）。
  * <p>
- * 为什么是接口而不是一句「把 AnswerStreamState 传进去」：AnswerStreamState 是 RagService 的私有内部类，
+ * 为什么是接口而不是一句「把 TurnState 传进去」：TurnState 是本轮的可变状态袋（P6 刀 0 才从 RagService
+ *   的私有内部类提成顶层类），工具层不该因为「想读一个本轮的事实」就依赖它的类型，
  * 86 个字段、什么都有。守卫链一旦认识它，就再也拿不出问答流水线之外——工作流节点与技能那两条
  * 现在完全绕过守卫的旁路（{@code WorkflowEngine.mcpBody}/{@code skillBody}）会永远接不上来。
  * 本接口只声明工具执行层真正需要的十余件事，其余本轮状态留在问答侧自己管。
  * <p>
- * 生命周期：一轮一个。实现方（当前的 {@code RagService.AnswerStreamState}）不许把它存进静态字段
+ * 生命周期：一轮一个。实现方（当前的 {@link com.wenqu.ai.agent.chat.TurnState}）不许把它存进静态字段
  * 或跨轮复用——这一条正是本次迁移要修掉的老写法。
  *
  * @author yuanke

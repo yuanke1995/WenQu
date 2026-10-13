@@ -722,7 +722,9 @@ public class SubAgentOrchestrator {
      * 引用展示）；{@code chunkIndex}/{@code titlePath} 子轮没下发，置空即可——主链路只有相邻块合并用得到它们。
      */
     @SuppressWarnings("unchecked")
-    private static HybridRetrievalService.Hit hitFromChildSource(Map<String, Object> src) {
+    /** 包内可见：智能体咨询（P5）那条路也要把子轮来源转成命中块登记进父轮引用，与编排复用同一份映射 */
+    /** public：P6 刀 0 之后 {@code agent.chat.TurnState} 也要用它把被咨询方交回的资料转成命中块 */
+    public static HybridRetrievalService.Hit hitFromChildSource(Map<String, Object> src) {
         if (src == null) return null;
         String kid = str(src.get("knowledgeId"));
         if (kid == null || kid.isBlank()) return null;

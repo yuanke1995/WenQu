@@ -10,7 +10,7 @@ package com.wenqu.ai.agent.subagent;
  * 传函数则连「这一轮才有父轮上下文」这件事一起传了：分支的归属用户、父会话、深度都来自当轮，
  * 放在单例 bean 上就变成又一份跨轮共享的 ThreadLocal 状态（P1 第一刀删掉的那三对就是这类东西）。
  * <p>
- * 实现方的契约（见 {@code RagService#branchRunner}）：
+ * 实现方的契约（见 {@code SubAgentBranchRuntime#branchRunner}，P6 刀 3b 起簿记在那边）：
  * <ul>
  *   <li>用自己的临时会话跑完整问答管线，<b>不许</b>复用父会话——{@code chat()} 的轮级互斥是按会话的，
  *       借父会话会当场撞上父轮自己那一坑，表现成"派出去就失败"；</li>
