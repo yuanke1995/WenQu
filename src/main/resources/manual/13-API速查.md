@@ -44,7 +44,7 @@
 | `tool_status` / `tool_output` | 工具状态 / 沙盒命令输出实时流 |
 | `approval_required` | 有副作用工具等待确认（批准/拒绝经 tool-approval 端点） |
 | `artifact` | 产物交付落盘（卡片字段） |
-| `subagent` / `subagent_route` / `agent_dispatched` / `agent_bound` | 编排分支状态 / 路由理由 / 自动派遣 / 首问绑定 |
+| `subagent` / `subagent_route` / `agent_delegated` | 编排分支状态 / 路由理由 / 本轮由 @ 提及的智能体作答 |
 | `image` | 命中图片 URL 列表 |
 | `warn` | 非致命降级提示 |
 | `done` | 完成：sources、timeline、tokens 等终态载荷 |

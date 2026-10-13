@@ -198,7 +198,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 - **多模态输入**：拖入/粘贴/点击上传图片（最多 5 张）；`@` 引用指定文档（被 @ 文档内最相关块前置注入上下文）；聊天模型不支持图片理解时**可见降级**（图片仅随消息展示，并向模型如实说明图片不可见，不静默丢弃）
 - **上下文容量面板**：输入框工具栏的容量圆环（占比 >80% / >95% 变色告警）悬浮展开明细——用量/窗口占比 + **十类计量**（消息 / 早期摘要 / 知识块 / 系统提示词 / 系统工具 / MCP 工具 / 技能 / 记忆 / 输入 / 其他）+ **缓存命中率**（网关返回缓存命中 token 才显示；done 时按网关实测校准）
 - **下一步建议**：回答末尾给出「接下来可以」可点击追问标签，点击即发起提问（条数个人可调）
-- **智能体绑定**：会话首问时锁定智能体（含「自动派遣」也只在首问路由一次，路由理由随 SSE 下发），全程同一人设/知识库/工具集——**切换智能体请新建会话**；绑定智能体不可用时 fail-loud 提示，不静默回落
+- **智能体（P5）**：会话**不再锁定**智能体。不挑就用默认助手（可在个人设置里指定自己的默认助手）；挑了从下一问起立即生效，**不必新建会话**。资料域由模型按需经 `consultAgent` 派给职责对口的助手去查（可派多位，每位带着自己的知识库跑一条子轮，结论与引用交回）；作答的智能体不可用时 fail-loud 提示，不静默换人
 - **用户长期记忆**（默认开）：问答完成后异步提炼值得长期记住的用户信息（事实/偏好/项目背景），按预算注入后续对话；`/profile` 个人设置可查/改/删（含来源会话溯源与被注入次数）；公开分享页与 MCP 游客链路不携带
 - **会话管理**：置顶/收藏/重命名/搜索/批量删除/清空、导出 Markdown、重新生成（软删旧答案）、赞/踩反馈、按消息组删除与撤销删除
 
@@ -364,8 +364,6 @@ docker compose up -d          # 自包含：redis-stack + meilisearch + 内置 M
 | `tool_output` | 沙盒 `execute` 命令执行中 | 命令输出逐行增量（实时流式；长命令边跑边看） |
 | `subagent` | 子智能体并行执行推进 | 分支状态 `{id,name,status,hits,elapsedMs,delegated,description,digest}` |
 | `subagent_route` | 按需委派路由判定完成 | `{candidates,picked,names,reasons}`——reasons 为各被选助手的「挑选理由」（随消息持久化，历史回显） |
-| `agent_dispatched` | 会话首问「自动派遣」选定智能体 | `{candidates,id,name,description,fallback}`（fallback=true 表示路由失败回落默认智能体） |
-| `agent_bound` | 会话首问智能体绑定完成（就地广播，不等 done） | `{locked:true, agentId, agentName}`（agentId 空串=已绑定为「不使用智能体」） |
 | `approval_required` | 有副作用工具（沙盒/MCP）执行前等待确认 | `{approvalId,tool,args,timeoutMs}`（批准/拒绝经 `POST /api/ai/tool-approval/{id}`） |
 | `artifact` | 产物交付工具落盘 | 产物卡片字段 `{id,url,filename,ext,size,description}` |
 | `usage` | 生成一开始预下发 prompt 侧用量（点亮容量圆环；done 时以网关实测覆盖） | tokens `{window,windowSource,cached,parts,historyCompressed,…}` |
@@ -444,7 +442,7 @@ spring:
 | `keyword.*` / `eval.*` / `cleanup.*` / `images.*` / `upload.*` | 引擎兜底冷却、体检参数与评判模型 `eval.judgeModel`（全局仅存的模型键，未配置时体检跳过评分）、会话保留期(30 天)、图片鉴权、上传上限(200MB) | 保存即生效 |
 | `tool.*` / `webSearch.*` | `tool.enabled`(**false**)、`knowledgeRetrieval.enabled`、`artifact.enabled`、`builtin.enabled`、**`sandbox.enabled`**；联网搜索 `enabled`(**false**)、`provider`(tavily/bocha/generic)、`apiKey`(敏感)、`maxCallsPerTurn`(2)、`requireApproval`(false) | 保存即生效——**默认全关，需显式开启** |
 | `skill.*` | `enabled`、`dir`(./data/skills)、`injectEnabled`(true)、`remoteAllowedHosts`(精确 host 白名单) | 保存即生效 |
-| `agent.*` | `enabled`(**false**)、`subAgents`(2)、`topKPerAgent`(3)、`digestEnabled`、`aggregateMode`(concat/rerank/supervisor)、`digestMaxChars`(1500)、`aggregateMarkFailed`、`autoRoute`(true)、`dispatchNarrowScope`(**false**)、`autoDispatch`(true)、`routeTimeoutMs`(8000)、`maxToolSteps`(15) | 保存即生效 |
+| `agent.*` | `enabled`(**false**)、`subAgents`(2)、`topKPerAgent`(3)、`digestEnabled`、`aggregateMode`(concat/rerank/supervisor)、`digestMaxChars`(1500)、`aggregateMarkFailed`、`autoRoute`(true)、`routeTimeoutMs`(8000)、`maxToolSteps`(15)、`consultMaxPerTurn`(3)、`consultTimeoutMs`(120000) | 保存即生效 |
 | `memory.*` | `enabled`(true)、`platformEmbeddingRef`（**平台内置向量化模型**，空=语义去重降级精确匹配、语义注入关闭；记忆向量化不暴露为个人设置）、`maxPerUser`(50)、`maxInjectCount`(30)、`injectBudgetChars`(1500)、`dedupThreshold`(0.9)、`useSemanticInject`(true) | 用户长期记忆：保存即生效（提取在问答完成后异步执行；用户级开关 `memory_enabled` 在个人设置） |
 | `artifact.*` | `retentionDays`(90，≤0 不清理)、`cleanupIntervalMs`(1d) | 产物超期清理 |
 | `web.*` | `refreshEnabled`(true)、`refreshScanIntervalMs`(60s) | 网页源定时刷新总开关与扫描间隔 |
@@ -580,7 +578,7 @@ bash deploy/sandbox-provisioner/run.sh status
 - `vision.timeoutMillis` 需重启（视觉客户端启动时构建，其余 `vision.*` 保存即生效）
 
 **智能体行为**
-- 智能体会话级绑定：会话首问锁定后全程不变，切换须新建会话；绑定智能体被删/无权时 fail-loud 提示，不静默换人
+- 智能体（P5）：会话不锁定，换人下一问立即生效；跨主题由模型经 `consultAgent` 把那一问派给职责对口的助手去查（各带自己的知识库），作答智能体被删/无权时 fail-loud 提示，不静默换人
 
 **部署与数据**
 - `.nvmrc` 固定 Node 22 LTS（要求 ≥22.12，Node 18/21 不可构建）
