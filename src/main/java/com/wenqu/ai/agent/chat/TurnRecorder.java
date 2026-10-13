@@ -1,6 +1,7 @@
 package com.wenqu.ai.agent.chat;
 
 import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.JSONObject;
 import com.wenqu.ai.agent.runcode.RunCodeSubCallRuntime;
 import com.wenqu.ai.agent.tool.ToolRegistry;
 import com.wenqu.ai.service.ArtifactService;
@@ -110,6 +111,20 @@ public class TurnRecorder {
 
     /** 原文已外溢成功时挂在预览尾部的说明（前端据此显示「查看完整输出」，这句只兜住展开前的一眼） */
     private static final String SPILL_SUFFIX = "\n\n…（以上为预览，完整输出可点卡片下方「查看完整输出」读回）";
+
+    /** 子对话卡里那份「它的回答」超长时的收尾说明——截断要写在脸上，不能看着像它只说了这么多 */
+    private static final String ANSWER_CLIP_SUFFIX = "\n\n…（它的回答过长，卡片内已截断；完整回报见本卡「输出」）";
+
+    /** 从 consultAgent 的入参里取被咨询那位的 id（取不到返回 null：宁可少一张卡，不拿名字去猜归属） */
+    private static String consultTarget(String input) {
+        if (input == null || input.isBlank()) return null;
+        try {
+            JSONObject j = JSON.parseObject(input);
+            return j == null ? null : j.getString("agentId");
+        } catch (Exception e) {
+            return null;
+        }
+    }
 
     /** 取出工具侧上报的外溢标识（按工具名匹配最早那条未消费的；没有返回 null） */
     private static String takeToolSpill(TurnState st, String name) {
@@ -543,6 +558,20 @@ public class TurnRecorder {
             if (st.board.runOutcome != null) {
                 rec.put("run", st.board.runOutcome);
                 st.board.runOutcome = null;
+            }
+        }
+        // 咨询另一位助手：卡片上挂一份「子对话」（我们问它什么、它答了什么、它据哪些资料），
+        // 随卡片落库——刷新/换设备后仍然看得到那一问一答，而不是只剩一串裸 JSON 入参。
+        // 与 run_code 的 fanOut/run 同一条路子：只挂终态那一份，按被咨询那位 id 从本轮台账取走
+        //（一轮可以问多位、工具在弹性线程上并发跑，共用一个槽会串台）
+        if ("consultAgent".equals(name) && !"start".equals(status)) {
+            Map<String, Object> subChat = st.tools.consultLedger.takeReport(consultTarget(input));
+            if (subChat != null) {
+                // 与入参/输出同一把长度尺：一条跑偏的长回答不该把整条消息行撑爆
+                if (subChat.get("answer") instanceof String s && s.length() > TOOL_IO_MAX) {
+                    subChat.put("answer", s.substring(0, TOOL_IO_MAX) + ANSWER_CLIP_SUFFIX);
+                }
+                rec.put("subChat", subChat);
             }
         }
         // 工具发起时刻：锚点前已产出的正文/过程独白先各自成段，再插入工具段——

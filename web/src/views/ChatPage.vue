@@ -229,6 +229,11 @@
                         </button>
                         <!-- askUser 问答记录：可折叠（默认展开），刷新/历史恢复同构 -->
                         <AskRecordCard v-if="t.name === 'askUser' && t.status !== 'start'" :t="t" />
+                        <!-- 咨询另一位助手：这一问一答就地成卡（那份 subChat 随后端工具卡一起落库，
+                             所以刷新/换设备与实时同构）；老消息没这份就不渲染，退回上面的普通工具卡 -->
+                        <SubAgentChatCard v-if="t.name === 'consultAgent' && t.subChat" :t="t"
+                                          :agent="agentBadgeOf(agentList, t.subChat.agentId, t.subChat.agentName)"
+                                          :sources="m.sources" />
                         <div v-if="t._open" class="tl-card-body">
                       <!-- 脚本扇出清单（P3b 过程下钻）：一次运行内部调了什么、各多久、有没有被挡下。
                            子调用刻意不各占一张顶层卡片（会被刷成一堵墙），结构就收在这里 -->
@@ -327,6 +332,9 @@
                     </button>
                     <!-- askUser 问答记录：可折叠（默认展开），刷新/历史恢复同构 -->
                     <AskRecordCard v-if="t.name === 'askUser' && t.status !== 'start'" :t="t" />
+                    <SubAgentChatCard v-if="t.name === 'consultAgent' && t.subChat" :t="t"
+                                      :agent="agentBadgeOf(agentList, t.subChat.agentId, t.subChat.agentName)"
+                                      :sources="m.sources" />
                     <div v-if="t._open" class="tl-card-body">
                       <!-- 脚本扇出清单（P3b 过程下钻）：一次运行内部调了什么、各多久、有没有被挡下。
                            子调用刻意不各占一张顶层卡片（会被刷成一堵墙），结构就收在这里 -->
@@ -1544,6 +1552,7 @@ import { isNarrow, isCoarse } from '../h5/mobile'
 import MobileChatHead from '../h5/MobileChatHead.vue'
 import MobileSampleCards from '../h5/MobileSampleCards.vue'
 import AskRecordCard from '../components/AskRecordCard.vue'
+import SubAgentChatCard from '../components/SubAgentChatCard.vue'
 import MsgDivider from '../components/MsgDivider.vue'
 import ToolSpillButton from '../components/ToolSpillButton.vue'
 import SessionEventsPanel from '../components/SessionEventsPanel.vue'

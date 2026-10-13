@@ -7,9 +7,11 @@ import com.wenqu.ai.service.ConfigService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -84,6 +86,12 @@ public class SubAgentConsultService {
     /** 本轮已咨询过的助手 → 当时那份「给模型的文本」（同一位问两次不该再花一整条子轮） */
     public static final class Ledger {
         private final Map<String, String> answered = new LinkedHashMap<>();
+        /**
+         * 每次真跑过的咨询那一份「子对话」（助手 id → 结构化回报），供聊天区显示问答。
+         * <p>按 id 存而不是一个槽位：一轮可以咨询多位，且工具在弹性线程上并发跑，
+         * 单槽会被后跑的那一位盖掉前一位（问答侧取走即摘，见 {@link #takeReport}）。
+         */
+        private final Map<String, Map<String, Object>> reports = new ConcurrentHashMap<>();
         private int started;
 
         synchronized String cached(String agentId) {
@@ -102,6 +110,19 @@ public class SubAgentConsultService {
         synchronized int used() {
             return started;
         }
+
+        void report(String agentId, Map<String, Object> payload) {
+            if (agentId != null && payload != null) reports.put(agentId, payload);
+        }
+
+        /** 问答侧取走某一位的子对话（取走即摘：一条咨询只对应一张卡片，也不留跨轮残留） */
+        public Map<String, Object> takeReport(String agentId) {
+            return agentId == null ? null : reports.remove(agentId);
+        }
+    }
+
+    /** 一次咨询的两个出口：给模型的文本 + 给用户看的子对话（同一次跑出来的两份，编号口径必须一致） */
+    private record Rendered(String text, Map<String, Object> chat) {
     }
 
     /**
@@ -157,6 +178,8 @@ public class SubAgentConsultService {
             // 执行器契约是不外抛；真抛了说明契约破了，这里兜住并留真因（CompletableFuture 那类包装的 message 常为 null）
             Throwable cause = e.getCause() != null ? e.getCause() : e;
             log.warn("[CONSULT] 咨询 {} 异常: {}", a.getName(), cause.toString());
+            ledger.report(id, failedChat(a, question, BranchReport.FAILED, cause.getMessage(),
+                    System.currentTimeMillis() - t0));
             return "咨询「" + a.getName() + "」失败：" + cause.getMessage() + "。请基于已有资料回答，并说明这一部分没核实到。";
         }
         long ms = System.currentTimeMillis() - t0;
@@ -165,11 +188,13 @@ public class SubAgentConsultService {
             String text = "咨询「" + a.getName() + "」没有拿到结果（" + why + "，用时 " + ms / 1000 + " 秒）。"
                     + "换一位助手或换个问法再试，也可以基于现有资料作答并说明这一部分没查到。";
             ledger.remember(id, text);
+            ledger.report(id, failedChat(a, question, report.status(), why, ms));
             return text;
         }
 
-        String text = render(a, report, sink, ms);
-        ledger.remember(id, text);
+        Rendered r = render(a, question, report, sink, ms);
+        ledger.remember(id, r.text());
+        ledger.report(id, r.chat());
         if (ctx.onConsulted() != null) {
             try {
                 ctx.onConsulted().accept(a.getId(), a.getName());
@@ -180,11 +205,26 @@ public class SubAgentConsultService {
         log.info("[CONSULT] 咨询 {} 完成：回报 {} 字、资料 {} 条、工具步 {}、用时 {}ms（本轮第 {} 次）",
                 a.getName(), report.answerOrEmpty().length(), report.sourcesOrEmpty().size(),
                 report.toolSteps(), ms, ledger.used());
-        return text;
+        return r.text();
     }
 
-    /** 回报 → 给模型的文本：清掉子轮编号、登记父轮引用、把可用的引用号如实列出来 */
-    private String render(Agent a, BranchReport report, SourceSink sink, long ms) {
+    /**
+     * 没跑成的那一次也要留一份子对话：卡片上如实写「没问到结果（超时/失败 + 原因）」，
+     * 而不是这一位从聊天区悄悄少一张卡——「失败要看得见」与工具卡同一条口径。
+     */
+    private static Map<String, Object> failedChat(Agent a, String question, String status, String error, long ms) {
+        Map<String, Object> chat = new LinkedHashMap<>();
+        chat.put("agentId", a.getId());
+        chat.put("agentName", a.getName());
+        chat.put("question", question == null ? "" : question.strip());
+        chat.put("status", BranchReport.TIMEOUT.equals(status) ? BranchReport.TIMEOUT : BranchReport.FAILED);
+        chat.put("error", error == null ? "" : error);
+        chat.put("elapsedMs", ms);
+        return chat;
+    }
+
+    /** 回报 → 给模型的文本 + 给用户看的子对话：清掉子轮编号、登记父轮引用、把可用的引用号如实列出来 */
+    private Rendered render(Agent a, String question, BranchReport report, SourceSink sink, long ms) {
         StringBuilder sb = new StringBuilder();
         sb.append("「").append(a.getName()).append("」的回报（用时 ").append(ms / 1000)
                 .append(" 秒，它自己跑了 ").append(report.toolSteps()).append(" 步工具）：\n");
@@ -194,6 +234,7 @@ public class SubAgentConsultService {
         if (!report.artifactFilesOrEmpty().isEmpty()) {
             sb.append("\n\n它交付的产物：").append(String.join("、", report.artifactFilesOrEmpty()));
         }
+        List<Map<String, Object>> registered = new ArrayList<>();
         if (sink != null && !report.sourcesOrEmpty().isEmpty()) {
             // 整批送父轮登记：门与配额由父轮按自己的问题判（子轮的门是子轮问题的门，
             // 管不了父轮面板——修复前这里逐条全量搬入，一场跑偏的咨询能把 28 条无关引用摆进用户眼前）
@@ -204,6 +245,10 @@ public class SubAgentConsultService {
                     if (refs.length() > 0) refs.append("、");
                     refs.append('[').append(reg.ref()).append(']').append('《')
                             .append(String.valueOf(reg.title())).append('》');
+                    Map<String, Object> one = new LinkedHashMap<>();
+                    one.put("ref", reg.ref());
+                    one.put("title", String.valueOf(reg.title()));
+                    registered.add(one);
                 }
                 sb.append("\n\n它的结论依据这些资料，已登记进你的引用表：").append(refs)
                         .append("。引用时请在正文里按这些编号标注（形如 ").append('[').append("编号]").append("）。");
@@ -213,6 +258,18 @@ public class SubAgentConsultService {
                 sb.append("\n（另有 ").append(dropped).append(" 处资料未通过本轮相关度校验或超出引用配额，未登记为引用，不要在正文里引用它们。）");
             }
         }
-        return sb.toString();
+        // 给用户看的那一份：编号用的是**父轮**编号（与下面这份资料清单同源），
+        // 所以子轮自己那些 [N] 一律不带进回答正文——与模型看到的那份保持同一把尺
+        Map<String, Object> chat = new LinkedHashMap<>();
+        chat.put("agentId", a.getId());
+        chat.put("agentName", a.getName());
+        chat.put("question", question == null ? "" : question.strip());
+        chat.put("answer", body.strip());
+        chat.put("status", BranchReport.DONE);
+        chat.put("toolSteps", report.toolSteps());
+        chat.put("elapsedMs", ms);
+        chat.put("sources", registered);
+        chat.put("artifacts", report.artifactFilesOrEmpty());
+        return new Rendered(sb.toString(), chat);
     }
 }

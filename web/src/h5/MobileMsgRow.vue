@@ -131,6 +131,8 @@
                   </button>
                   <!-- askUser 问答记录：可折叠（默认展开），与 PC 同构 -->
                   <AskRecordCard v-if="t.name === 'askUser' && t.status !== 'start'" :t="t" />
+                  <SubAgentChatCard v-if="t.name === 'consultAgent' && t.subChat" :t="t" :sources="m.sources"
+                                    :viewer="false" @citation="onBodyCitation" @preview="onBodyPreview" />
                   <div v-show="t._open" class="card-body">
                     <!-- 脚本扇出清单（P3b 过程下钻）：子调用不各占一张顶层卡片，结构收在这里 -->
                     <template v-if="fanHasBoard(t.fanOut)">
@@ -190,6 +192,9 @@
           <div v-show="m._fbOpen" class="card-body">
             <template v-for="(t, ti) in toolCallsView(m.toolCalls)" :key="ti">
               <AskRecordCard v-if="t.name === 'askUser' && t.status !== 'start'" :t="t" />
+              <!-- 咨询另一位助手：这一行整行换成子对话卡（它自带「谁 · 几步 · 多久」，再留一行是重复） -->
+              <SubAgentChatCard v-else-if="t.name === 'consultAgent' && t.subChat" :t="t" :sources="m.sources"
+                                :viewer="false" @citation="onBodyCitation" @preview="onBodyPreview" />
               <div v-else class="tool-line">
                 <check-outlined v-if="t.status === 'done'" class="ic-ok" />
                 <close-circle-outlined v-else-if="t.status === 'error'" class="ic-err" />
@@ -354,6 +359,7 @@ import {
   pasteTitle, pasteSub, isPastedText, consultedOf
 } from '../chat/projections'
 import AskRecordCard from '../components/AskRecordCard.vue'
+import SubAgentChatCard from '../components/SubAgentChatCard.vue'
 import ToolSpillButton from '../components/ToolSpillButton.vue'
 import AgentAvatar from '../components/AgentAvatar.vue'
 
@@ -517,6 +523,10 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
 .tool-card :deep(.ask-rec-body) { padding: 4px 12px 0; }
 .card-body :deep(.ask-rec) { margin: 0 0 8px; }
 .card-body :deep(.ask-rec-body) { padding: 4px 0 0; }
+
+/* 咨询子对话卡同理：两处宿主内边距不同，让它与各自的卡片头左右对齐 */
+.tool-card :deep(.sa-chat) { --sa-chat-pad: 0 12px 10px; }
+.card-body :deep(.sa-chat) { --sa-chat-pad: 0 0 10px; }
 
 .err-card { border: 1px solid var(--app-danger-border); background: var(--app-danger-weak); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .err-card.net { border-color: var(--app-warn-border); background: var(--app-warn-weak); }

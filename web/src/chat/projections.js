@@ -208,6 +208,35 @@ const consultedOf = m => {
   })
   return out
 }
+// ==================== consultAgent（问另一位助手）子对话 ====================
+// 一次咨询在聊天区的那份问答：我们问它什么 + 它答了什么 + 它据哪些资料。
+// 数据来自后端随工具卡落库的 subChat（SubAgentConsultService.render 那份），所以刷新、换设备、
+// 历史回看与实时同构——刻意不依赖只活一次的 SSE。
+// 被咨询那位的名字：优先后端随卡带的那一份，退回按入参 id 查本轮登记过的助手清单
+const consultNameOf = t => {
+  const n = t?.subChat?.agentName
+  if (n) return n
+  try { return agentNames.get(JSON.parse(t?.args || 'null')?.agentId) || '' } catch (e) { return '' }
+}
+/** 工具卡上的子对话视图；null = 这条记录没有子对话（老消息、或咨询没跑到出结果），退回普通工具卡 */
+const consultChatView = t => {
+  const s = t?.subChat
+  if (!s || typeof s !== 'object') return null
+  const status = s.status || 'done'
+  return {
+    id: s.agentId || '',
+    name: s.agentName || consultNameOf(t),
+    question: s.question || '',
+    answer: s.answer || '',
+    steps: Number(s.toolSteps) || 0,
+    dur: toolDuration(Number(s.elapsedMs) || 0),
+    sources: (Array.isArray(s.sources) ? s.sources : []).filter(x => x && x.ref),
+    artifacts: (Array.isArray(s.artifacts) ? s.artifacts : []).filter(Boolean),
+    failed: status !== 'done',
+    timeout: status === 'timeout',
+    error: s.error || ''
+  }
+}
 // 是否有「正在运行且可见」的编排分支。必须带 delegated 条件：编排卡片（subagentCard）只渲染
 // 委派分支（多视角模式的分支是实现细节，不渲染卡片）。若这里不带 delegated，多视角模式下
 // busyOf 会以为「卡片在转圈」而让位，实际卡片根本不渲染 → 气泡整个空白，loading 凭空消失。
@@ -511,6 +540,12 @@ const toolBrief = t => {
   if (!t?.args) return ''
   let obj = null
   try { obj = JSON.parse(t.args) } catch (e) { return oneLine(t.args, 56) } // 非 JSON（MCP 兼容）：纯文本截断
+  // 咨询另一位助手：标题行亮出「问的是谁」——一串智能体 id 对用户没有信息量，
+  // 完整问答就在下面那张子对话卡里
+  if (t.name === 'consultAgent') {
+    const who = consultNameOf(t)
+    if (who) return oneLine(who, 56)
+  }
   if (!obj || typeof obj !== 'object') return oneLine(t.args, 56)
   for (const k of TOOL_BRIEF_KEYS) {
     const v = obj[k]
@@ -952,7 +987,7 @@ const parseSampleQuestions = raw => String(raw || '').split('\n')
   .filter(Boolean)
 export {
   TOOL_LABELS, TOOL_DESCS, MCP_CLIENT_PREFIXES, bareToolName, toolLabel, toolDesc, toolCallsView, executedCount,
-  toolDuration, toolRunning, consultedOf, rememberAgents, subRunning, busyOf, stageLabel, hasTimelineBlocks, extendTimelineText, askUserView,
+  toolDuration, toolRunning, consultedOf, consultChatView, consultNameOf, rememberAgents, subRunning, busyOf, stageLabel, hasTimelineBlocks, extendTimelineText, askUserView,
   extendTimelineProcess, procOpen, toggleProc, procSlice, pushTimelineTool, pushTimelineArtifact,
   restoreTimeline, SENTENCE_END_CHARS, endsSentence, timelineView, timelineRows, TOOL_BRIEF_KEYS, oneLine,
   clusterize, clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterDur, clusterProcCount,

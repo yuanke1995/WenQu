@@ -1920,6 +1920,9 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
             if (t.args) last.args = t.args
             if (t.result != null) last.result = t.result
             if (t.error) last.error = t.error
+            // 咨询的「子对话」只存在于终态那一份（start 那会儿还没有回答）：这里逐字段挑着合并，
+            // 漏一行就是实时看不到、刷新才冒出来——两条路必须同构
+            if (t.subChat) last.subChat = t.subChat
           } else {
             const rec = { ...t }
             list.push(rec)
