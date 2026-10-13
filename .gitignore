@@ -33,6 +33,9 @@ config/application-local.yml
 /dump/
 /user-data/
 /skill-projections/
+# 本机运行日志（logback 按大小滚动，目录里还有 .gz 归档，*.log 那条盖不住）。
+# 这是开发机本地栈写出来的东西，不是交付物；线上日志走容器与运维侧，不随仓走。
+/logs/
 
 # ===== AI 工具链本地目录 =====
 /.workbuddy/
