@@ -102,7 +102,8 @@ public class WebSearchService {
                     snippet,
                     siteName,
                     r.publishedAt(),
-                    r.score()));
+                    r.score(),
+                    r.rerankScore()));
         }
         return out;
     }

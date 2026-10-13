@@ -69,6 +69,7 @@ public class BochaSearchProvider implements WebSearchProvider {
                     snippet,
                     it.getString("siteName"),
                     it.getString("datePublished"),
+                    null,
                     null));
         }
         return out;

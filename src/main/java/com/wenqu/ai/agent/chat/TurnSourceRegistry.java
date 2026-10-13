@@ -1,6 +1,7 @@
 package com.wenqu.ai.agent.chat;
 
 import com.alibaba.fastjson2.JSON;
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.service.ConfigService;
 import com.wenqu.ai.service.HybridRetrievalService;
 import com.wenqu.ai.service.ImageUrlSigner;
@@ -23,6 +24,7 @@ import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 /**
  * 本轮的<b>引用池</b>：一条编号空间（[1..N]）+ 与之绑定的来源清单、图片编号与注册入口
@@ -117,16 +119,119 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
     // ==================== 库内 / 子智能体来源注册 ====================
 
     /**
-     * 被咨询方交回的资料登记进父轮引用表（P5 智能体咨询）：子轮那份来源转成命中块后走
-     * 与精确检索工具同一条注册路径续编号，于是父轮正文里的 [N] 指得到真身、卡片也标得出来路。
-     * <p>转不成命中块（缺 knowledgeId、或该块已不可读）返回 null——调用方据此不提这一条，
+     * 被咨询方交回的资料<b>整批</b>登记进父轮引用表（P5 智能体咨询）。
+     * <p>子轮那份来源转成命中块后走与精确检索工具同一条注册路径续编号，于是父轮正文里的 [N]
+     * 指得到真身、卡片也标得出来路。转不成命中块（缺 knowledgeId）的丢弃——调用方据此不提这一条，
      * 而不是给模型一个点开是空的角标。
+     * <p><b>为什么必须在这里加门</b>：子轮的门是<b>子轮问题</b>的门（它的检索工具按它自己的提问
+     * 过滤过），父轮引用面板的门必须是<b>父轮问题</b>的门。修复前这里零门禁全量搬入——
+     * 2026-10-13「我想开发一个考勤系统」会话实测：主模型锚偏后咨询了智报平台手册智能体，
+     * 对方 15 步调研史（28 条报表手册块，重排分 0.98 是对它自己问题的分）原样进面板，
+     * 45 条引用里 35 条与考勤无关。同批块在主管线按用户问题重排后全部门掉（retrieved refs=0），
+     * 两条路标准不一才是病根。
+     * <p>门与配额和主管线上下文填充逐条同口径：按父轮问题批量重排（{@code rankForced}），
+     * 重排分走 {@code retrieval.minContextScore}、未重排的融合分走 {@code retrieval.minFusionScore}，
+     * 重排实际执行过则窗口外尾部不借融合门入场；再叠单文档 {@code context.maxBlocksPerDoc}、
+     * 单库 {@code context.maxBlocksPerKb}（面板已有来源也占配额）与单次咨询总量
+     * {@code context.maxContextHits}。重排不可用时不臆造分数，按融合门 + 配额兜底（与主管线
+     * 「重排不可用」同语义），并留 info 日志说明本轮未做相关度重排。
+     *
+     * @return 实际登记（或复用既有编号）的条目，供回报文本列给模型；被门/配额滤掉的不出现在内
      */
-    public Integer registerConsultedSource(Map<String, Object> childSource) {
-        HybridRetrievalService.Hit h = SubAgentOrchestrator.hitFromChildSource(childSource);
-        if (h == null || h.knowledgeId() == null) return null;
-        Object snippet = childSource.get("snippet");
-        return registerToolSource(h, snippet == null ? "" : String.valueOf(snippet)).ref();
+    public List<com.wenqu.ai.agent.subagent.SubAgentConsultService.SourceSink.Registered>
+    registerConsultedSources(List<Map<String, Object>> childSources) {
+        if (childSources == null || childSources.isEmpty()) return List.of();
+        List<HybridRetrievalService.Hit> candidates = new ArrayList<>();
+        for (Map<String, Object> src : childSources) {
+            HybridRetrievalService.Hit h = SubAgentOrchestrator.hitFromChildSource(src);
+            if (h != null && h.knowledgeId() != null) candidates.add(h);
+        }
+        if (candidates.isEmpty()) return List.of();
+
+        // 1. 按父轮问题批量重排（与主管线 subHits 并入前同口径）
+        boolean rerankActive = false;
+        if (question != null && !question.isBlank() && rerankService.debugUnavailableReason() == null) {
+            candidates = rerankService.rankForced(candidates, question);
+            rerankActive = candidates.stream().anyMatch(h -> h.rerankScore() != null);
+        } else {
+            log.info("[CONSULT] 重排不可用，咨询来源按融合分门 + 配额登记（{} 条候选）", candidates.size());
+        }
+
+        // 2. 分域门 + 配额（数值与主管线上下文填充一致：一个面板一把尺）
+        double minRerankGate = configService.getDouble("retrieval.minContextScore", ConfigDefaults.RETRIEVAL_MIN_CONTEXT_SCORE);
+        double minFusionGate = configService.getDouble("retrieval.minFusionScore", ConfigDefaults.RETRIEVAL_MIN_FUSION_SCORE);
+        int maxBlocksPerDoc = configService.getInt("context.maxBlocksPerDoc", 3);
+        int maxBlocksPerKb = configService.getInt("context.maxBlocksPerKb", 4);
+        int maxPerConsult = Math.max(1, configService.getInt("context.maxContextHits", 8));
+        Map<String, Integer> docCount = new HashMap<>();
+        Map<String, Integer> kbCount = new HashMap<>();
+        // 面板已有来源也占配额：不清零计数，按现有 sources 播种（否则"检索占满 + 咨询再补"同库仍会刷屏）
+        if (maxBlocksPerDoc > 0 || maxBlocksPerKb > 0) {
+            synchronized (sources) {
+                Set<String> docIds = new HashSet<>();
+                for (Map<String, Object> s : sources) {
+                    Object d = s.get("docId");
+                    if (d != null && !String.valueOf(d).isBlank()) docIds.add(String.valueOf(d));
+                }
+                if (!docIds.isEmpty() && docMetaCache != null) {
+                    for (Map.Entry<String, String> e : docMetaCache.getKbIds(docIds).entrySet()) {
+                        kbCount.merge(e.getValue(), 1, Integer::sum);
+                    }
+                }
+                for (Map<String, Object> s : sources) {
+                    Object d = s.get("docId");
+                    if (d != null && !String.valueOf(d).isBlank()) docCount.merge(String.valueOf(d), 1, Integer::sum);
+                }
+            }
+        }
+        // 候选的 kbId 一次批量取（逐条查缓存也是一人一次 IO，批量是一轮一次）
+        Map<String, String> candKbIds = docMetaCache != null
+                ? docMetaCache.getKbIds(candidates.stream()
+                        .map(HybridRetrievalService.Hit::docId)
+                        .filter(d -> d != null && !d.isBlank())
+                        .collect(Collectors.toSet()))
+                : Map.of();
+
+        List<com.wenqu.ai.agent.subagent.SubAgentConsultService.SourceSink.Registered> out = new ArrayList<>();
+        int filtered = 0;
+        for (HybridRetrievalService.Hit h : candidates) {
+            if (out.size() >= maxPerConsult) {
+                log.info("[CONSULT] 单次咨询引用达上限 {}，剩余不再登记", maxPerConsult);
+                break;
+            }
+            Double rr = h.rerankScore();
+            if (rr == null && rerankActive) {   // 窗口外未重排的尾部：不借融合门入场（同主管线）
+                filtered++;
+                continue;
+            }
+            double rankScore = rr != null ? rr : h.score();
+            double gate = rr != null ? minRerankGate : minFusionGate;
+            if (gate > 0 && rankScore < gate) {
+                filtered++;
+                continue;
+            }
+            String docId = h.docId();
+            if (maxBlocksPerDoc > 0 && docId != null && !docId.isBlank()
+                    && docCount.merge(docId, 1, Integer::sum) > maxBlocksPerDoc) {
+                docCount.merge(docId, -1, Integer::sum);
+                filtered++;
+                continue;
+            }
+            String kbId = docId == null ? null : candKbIds.get(docId);
+            if (maxBlocksPerKb > 0 && kbId != null && kbCount.merge(kbId, 1, Integer::sum) > maxBlocksPerKb) {
+                kbCount.merge(kbId, -1, Integer::sum);
+                if (docId != null && !docId.isBlank()) docCount.merge(docId, -1, Integer::sum);
+                filtered++;
+                continue;
+            }
+            KnowledgeRetrievalTool.SourceRegistrar.Registration reg =
+                    registerToolSource(h, h.content() == null ? "" : h.content());
+            out.add(new com.wenqu.ai.agent.subagent.SubAgentConsultService.SourceSink.Registered(
+                    reg.ref(), h.title() == null ? "资料" : h.title()));
+        }
+        log.info("[CONSULT] 咨询来源按父轮问题过滤：候选 {} → 登记 {}（滤掉 {}，rerankActive={}，问题=\"{}\"）",
+                candidates.size(), out.size(), filtered, rerankActive, question);
+        return out;
     }
 
     /**
@@ -419,14 +524,25 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
     }
 
     /**
+     * 本轮问题（工具侧相关度门的判据）：联网搜索结果按它重排后过门，与库内来源同一把尺。
+     * <p>由问答侧传入的是<b>改写后的检索查询</b>（多轮指代消解的结果），与主管线判相关的口径一致；
+     * 无知识库分支等没有改写查询的路径退化为原句。
+     */
+    @Override
+    public String question() {
+        return question;
+    }
+
+    /**
      * 联网结果注册为引用来源：与库内来源<b>共用同一编号空间</b>（主链路 [1..N] 续编），
      * 前端角标是按 ref 直接索引 sources 的，另起一套编号必然错位；引用自检也因此能一并校验联网引用。
      * 去重键是归一化 URL（去 utm 等跟踪参数），同一链接不重复占号。
      *
+     * @param rerankScore 工具侧按本轮问题重排出的相关度分（ null = 未重排/重排不可用）
      * @return 分配的引用编号（已注册过则返回原编号）
      */
     @Override
-    public int register(WebSearchResult r) {
+    public int register(WebSearchResult r, Double rerankScore) {
         String key = WebSearchService.normalizeUrl(r.url());
         synchronized (sources) {
             Integer existing = webRefByUrl.get(key);
@@ -447,9 +563,17 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
             if (r.score() != null) {
                 src.put("score", Math.round(r.score() * 1000) / 1000.0);
             }
+            if (rerankScore != null) {
+                src.put("rerankScore", Math.round(rerankScore * 1000) / 1000.0);
+            }
             sources.add(src);
             webRefByUrl.put(key, ref);
             return ref;
         }
+    }
+
+    @Override
+    public int register(WebSearchResult r) {
+        return register(r, null);
     }
 }

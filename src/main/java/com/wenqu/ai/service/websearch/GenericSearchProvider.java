@@ -71,7 +71,8 @@ public class GenericSearchProvider implements WebSearchProvider {
                     it.getString("content"),
                     null,
                     it.getString("published_date"),
-                    score));
+                    score,
+                    null));
         }
         return out;
     }

@@ -12,6 +12,9 @@ package com.wenqu.ai.service.websearch;
  * @param siteName    站点名（展示用；服务商不提供时由 url 的 host 兜底）
  * @param publishedAt 发布时间（服务商不提供则 null，不猜测、不补当前时间）
  * @param score       服务商相关性分（仅透出做展示，不参与门限判定）
+ * @param rerankScore 按<b>本轮问题</b>重排出的相关度分（0~1；工具侧过门后随注册落库展示。
+ *                    null = 未重排/重排不可用——服务商分（尤其 SearXNG 的位置衰减分）没有相关性含义，
+ *                    不能拿来充当相关度）
  */
 public record WebSearchResult(
         String title,
@@ -19,6 +22,7 @@ public record WebSearchResult(
         String snippet,
         String siteName,
         String publishedAt,
-        Double score
+        Double score,
+        Double rerankScore
 ) {
 }

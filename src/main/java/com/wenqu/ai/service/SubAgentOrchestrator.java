@@ -62,6 +62,7 @@ public class SubAgentOrchestrator {
     private final ConfigService configService;
     private final ChatClient chatClient;
     private final KeywordExtractor keywordExtractor;
+    private final RerankService rerankService;
 
     /** 按子代理数缓存编译后的图（图结构随 N 变化；N 通常 2~4，缓存避免每轮重建） */
     private final Map<Integer, CompiledGraph> graphCache = new ConcurrentHashMap<>();
@@ -78,11 +79,13 @@ public class SubAgentOrchestrator {
             });
 
     public SubAgentOrchestrator(HybridRetrievalService retrievalService, ConfigService configService,
-                               ChatClient chatClient, KeywordExtractor keywordExtractor) {
+                               ChatClient chatClient, KeywordExtractor keywordExtractor,
+                               RerankService rerankService) {
         this.retrievalService = retrievalService;
         this.configService = configService;
         this.chatClient = chatClient;
         this.keywordExtractor = keywordExtractor;
+        this.rerankService = rerankService;
     }
 
     /**
@@ -973,6 +976,13 @@ public class SubAgentOrchestrator {
             // （子代理只取 topKPerAgent 条，权限剔掉的名额会直接让分支结果变少）
             List<HybridRetrievalService.Hit> hits = retrievalService.search(subQuery, null, branchKbIds, true);
             if (sub != null) hits = inScope(hits, sub.scopeDocIds());
+            // 分支相关度门：与主管线对 subHits 的口径逐条一致（重排 + 分域门）。
+            // 修复前 digest 拿裸融合分的 topK 直接提炼：检索本身无门，融分了「系统」这种泛词
+            // 的无关块会以「某视角查到了」的身份进 system 要点段，把主模型锚偏——
+            // 2026-10-13「我想开发一个考勤系统」会话实测：智报平台手册块进要点 → 主模型转而
+            // 咨询手册智能体 → 28 条无关引用进面板。同批块在主管线按用户问题重排后全部门掉
+            // （retrieved refs=0），两条路标准不一才是病根。
+            hits = gateBranchHits(hits, subQuery);
             List<HybridRetrievalService.Hit> fresh = new ArrayList<>();
             synchronized (ctx) {
                 int added = 0;
@@ -1046,6 +1056,44 @@ public class SubAgentOrchestrator {
     private static List<HybridRetrievalService.Hit> inScope(List<HybridRetrievalService.Hit> hits, Set<String> scope) {
         if (scope == null || hits == null) return hits;
         return hits.stream().filter(h -> h.docId() != null && scope.contains(h.docId())).toList();
+    }
+
+    /**
+     * 分支相关度门（digest 与 collected 共用）：按本分支的子查询重排 + 分域门，口径与主管线
+     * 对 subHits 的并入前处理逐条一致——重排分走 {@code retrieval.minContextScore}、未重排的
+     * 融合分走 {@code retrieval.minFusionScore}、重排实际执行过则窗口外尾部不借融合门入场。
+     * <p>重排不可用（未启用/服务故障）时不臆造分数，退化为融合门并留 info 日志——与主管线
+     * 「重排不可用」同语义，不静默。
+     * <p>门掉的块既不进要点（digest）也不进 collected：它们对子查询都不相关，进主管线也会被
+     * 同一道门滤掉，提前滤掉只是让编排卡片的命中数诚实一点。
+     */
+    List<HybridRetrievalService.Hit> gateBranchHits(List<HybridRetrievalService.Hit> hits, String subQuery) {
+        if (hits == null || hits.isEmpty()) return hits;
+        List<HybridRetrievalService.Hit> gated = hits;
+        boolean rerankActive = false;
+        if (subQuery != null && !subQuery.isBlank() && rerankService.debugUnavailableReason() == null) {
+            gated = rerankService.rankForced(gated, subQuery);
+            rerankActive = gated.stream().anyMatch(h -> h.rerankScore() != null);
+        } else {
+            log.info("[SUBAGENT] 重排不可用，分支 {} 块按融合分门过滤", hits.size());
+        }
+        double minRerankGate = configService.getDouble("retrieval.minContextScore",
+                ConfigDefaults.RETRIEVAL_MIN_CONTEXT_SCORE);
+        double minFusionGate = configService.getDouble("retrieval.minFusionScore",
+                ConfigDefaults.RETRIEVAL_MIN_FUSION_SCORE);
+        List<HybridRetrievalService.Hit> out = new ArrayList<>();
+        for (HybridRetrievalService.Hit h : gated) {
+            Double rr = h.rerankScore();
+            if (rr == null && rerankActive) continue;   // 窗口外未重排的尾部：不借融合门入场
+            double rank = rr != null ? rr : h.score();
+            double gate = rr != null ? minRerankGate : minFusionGate;
+            if (gate > 0 && rank < gate) continue;
+            out.add(h);
+        }
+        if (out.size() < hits.size()) {
+            log.info("[SUBAGENT] 分支相关度门：{} → {} 块（子查询：{}）", hits.size(), out.size(), subQuery);
+        }
+        return out;
     }
 
     /**

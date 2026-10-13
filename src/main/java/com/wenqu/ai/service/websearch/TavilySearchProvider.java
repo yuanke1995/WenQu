@@ -72,7 +72,8 @@ public class TavilySearchProvider implements WebSearchProvider {
                     it.getString("content"),
                     null,
                     null,
-                    score));
+                    score,
+                    null));
         }
         return out;
     }

@@ -1,11 +1,18 @@
 package com.wenqu.ai.service.websearch;
 
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.service.ConfigService;
+import com.wenqu.ai.service.HybridRetrievalService;
+import com.wenqu.ai.service.RerankService;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 联网搜索工具（Function Calling / Tool Calling）。
@@ -16,6 +23,12 @@ import java.util.List;
  * **结果必须进引用体系**：命中注册为引用来源并续编 [N]（与主链路、知识检索工具共用同一编号空间），
  * 模型按编号标注后才能溯源；不注册而让模型引用，等于放行无出处的断言，与问渠的可溯源性冲突。
  * <p>
+ * **结果必须过相关度门**（与库内来源同一把尺）：搜索返回后按<b>本轮问题</b>重排，低于
+ * {@code retrieval.minContextScore} 的不注册、不列给模型。修复前这里零门禁——本地 SearXNG
+ * 引擎降级时会把百度首页、小红书首页、机场交通页当搜索结果返回（其 score 是 1.0/0.5/0.333
+ * 位置衰减，毫无相关性含义），原样进引用面板就是「检索内容页」一半是垃圾。
+ * 判据取 sink 上的本轮问题（改写后的检索查询），取不到时退化为工具查询本身。
+ * <p>
  * 线程模型：本轮落点（配额、引用注册、降级）经 {@code ToolContext} 随本次调用传入，工具对象自身
  * 不持有任何跨调用的可变状态。迁移前这里是一对静态 ThreadLocal（setSink / clearSink），
  * 注释自陈「否则跨会话串号」——它靠时间窗而不是作用域保证正确性，漏清一次就把上一轮的落点
@@ -23,6 +36,7 @@ import java.util.List;
  *
  * @author yuanke
  */
+@Slf4j
 @Component
 public class WebSearchTools {
 
@@ -33,15 +47,21 @@ public class WebSearchTools {
     private static final int DEFAULT_SNIPPET_CHARS = 600;
 
     /**
-     * 本轮问答的落点：注册引用来源 + 扣减单轮配额 + 记录降级提示。
+     * 本轮问答的落点：注册引用来源 + 扣减单轮配额 + 记录降级提示 + 提供本轮问题（相关度门判据）。
      * 由问答侧经 {@code ToolContext} 随本次调用传入（见 {@link #CTX_SINK}），非流式直接调用时为 null。
      */
     public interface WebSearchSink {
         /** 扣减一次本轮搜索配额；false=已达 webSearch.maxCallsPerTurn，本次调用应拒绝 */
         boolean tryConsumeQuota();
 
+        /** 本轮问题（相关度门的判据）：问答侧传入的是改写后的检索查询，取不到返回 null */
+        String question();
+
         /** 注册一条结果为引用来源，返回分配的引用编号（同一 URL 已注册则复用原编号） */
         int register(WebSearchResult result);
+
+        /** 注册并携带按本轮问题重排出的相关度分（供引用面板展示；null = 未重排） */
+        int register(WebSearchResult result, Double rerankScore);
 
         /** 记录一条降级提示（fail-loud：让用户看见"为什么没搜成"，而不是静默无结果） */
         void degrade(String code, String message);
@@ -60,10 +80,13 @@ public class WebSearchTools {
 
     private final WebSearchService webSearchService;
     private final ConfigService configService;
+    private final RerankService rerankService;
 
-    public WebSearchTools(WebSearchService webSearchService, ConfigService configService) {
+    public WebSearchTools(WebSearchService webSearchService, ConfigService configService,
+                          RerankService rerankService) {
         this.webSearchService = webSearchService;
         this.configService = configService;
+        this.rerankService = rerankService;
     }
 
     /**
@@ -112,13 +135,63 @@ public class WebSearchTools {
             return "未检索到相关网页结果。请如实说明没有找到可依据的联网资料，不要凭记忆编写内容。";
         }
 
+        // 相关度门：按本轮问题重排，低于 retrieval.minContextScore 的结果不注册、不列给模型。
+        // 判据优先取 sink 上的本轮问题（多轮指代消解后的检索查询，与主管线判相关同口径），
+        // 取不到（非流式直调）退化为工具查询本身。重排实际没跑成（不可用/请求失败）时不过门、
+        // 全量保留并挂降级——宁可让用户看见"没过滤"，也不把一次瞬时故障演变成"什么都搜不到"。
+        String gateQuery = sink != null ? sink.question() : null;
+        if (gateQuery == null || gateQuery.isBlank()) gateQuery = query.trim();
+        List<WebSearchResult> kept = results;
+        int filtered = 0;
+        if (rerankService.debugUnavailableReason() == null) {
+            double minGate = configService.getDouble("retrieval.minContextScore",
+                    ConfigDefaults.RETRIEVAL_MIN_CONTEXT_SCORE);
+            List<HybridRetrievalService.Hit> toRank = new ArrayList<>();
+            for (WebSearchResult r : results) {
+                toRank.add(new HybridRetrievalService.Hit(null, "", r.title(), r.snippet(),
+                        List.of(), 0d, null, null, null));
+            }
+            // rankForced 返回的是重排后的新 Hit 列表，按 snippet 映射回原结果（同批 ≤5 条，片段撞车概率可忽略）
+            Map<String, Double> scoreBySnippet = new HashMap<>();
+            for (HybridRetrievalService.Hit h : rerankService.rankForced(toRank, gateQuery)) {
+                if (h.rerankScore() != null) scoreBySnippet.put(h.content(), h.rerankScore());
+            }
+            if (!scoreBySnippet.isEmpty()) {
+                kept = new ArrayList<>();
+                for (WebSearchResult r : results) {
+                    Double rr = scoreBySnippet.get(r.snippet());
+                    if (rr != null && minGate > 0 && rr >= minGate) {
+                        kept.add(new WebSearchResult(r.title(), r.url(), r.snippet(), r.siteName(),
+                                r.publishedAt(), r.score(), rr));
+                    } else {
+                        filtered++;
+                        log.debug("[WEB-SEARCH] 相关度不足不过门：{}（rerank={}）", r.title(), rr);
+                    }
+                }
+            } else {
+                log.warn("[WEB-SEARCH] 重排未返回分数（服务不可用或失败），本轮不过相关度门");
+                if (sink != null) {
+                    sink.degrade("webSearchUnfiltered", "重排不可用，联网搜索结果未经相关性过滤，可能包含不相关来源");
+                }
+            }
+        } else {
+            log.warn("[WEB-SEARCH] 重排不可用（{}），本轮不过相关度门", rerankService.debugUnavailableReason());
+            if (sink != null) {
+                sink.degrade("webSearchUnfiltered", "重排不可用，联网搜索结果未经相关性过滤，可能包含不相关来源");
+            }
+        }
+        if (kept.isEmpty()) {
+            return "未检索到与问题相关的网页结果（" + filtered + " 条搜索结果相关度不足，已过滤）。"
+                    + "请如实说明没有找到可依据的联网资料，不要凭记忆编写内容。";
+        }
+
         int snippetChars = configService.getInt("webSearch.snippetChars", DEFAULT_SNIPPET_CHARS);
         StringBuilder sb = new StringBuilder();
         int seq = 0;
-        for (WebSearchResult r : results) {
+        for (WebSearchResult r : kept) {
             seq++;
             if (sink != null) {
-                sb.append("【引用").append(sink.register(r)).append("】");
+                sb.append("【引用").append(sink.register(r, r.rerankScore())).append("】");
             } else {
                 sb.append("【片段").append(seq).append("】");
             }
@@ -133,6 +206,9 @@ public class WebSearchTools {
             if (snippet.length() > snippetChars) snippet = snippet.substring(0, snippetChars) + "…（已截断）";
             sb.append("摘要：").append(snippet).append("\n");
             sb.append("链接：").append(r.url()).append("\n\n");
+        }
+        if (filtered > 0) {
+            sb.append("（另有 ").append(filtered).append(" 条搜索结果与问题相关度不足，未列为引用，不要使用。）\n\n");
         }
         if (sink != null) {
             sb.append("（回答中引用以上内容时，请在对应句子后用方括号标注上述引用编号，如 [3]；"

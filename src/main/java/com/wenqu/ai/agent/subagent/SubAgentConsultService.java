@@ -8,6 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -59,12 +60,25 @@ public class SubAgentConsultService {
     }
 
     /**
-     * 把子轮的一份来源登记成父轮引用，返回父轮编号；登记不了（不在本轮检索范围、权限剔除）返回 null。
-     * <p>由问答侧提供实现——它才知道父轮的引用表与编号空间在哪。
+     * 把子轮来源<b>整批</b>登记成父轮引用的出口；登记不了（被父轮相关度门/配额滤掉、不在本轮检索范围）
+     * 的条数从返回值里自然缺席，调用方据此如实告诉模型"另有 N 处未登记"。
+     * <p>由问答侧提供实现——它才知道父轮的引用表与编号空间在哪，也持着父轮问题与重排服务
+     * （门必须按<b>父轮问题</b>判，子轮的门管不了父轮的面板，见 {@link #render}）。
      */
     @FunctionalInterface
     public interface SourceSink {
-        Integer register(Map<String, Object> childSource);
+
+        /** 一条登记成功的来源：父轮编号 + 标题（回报文本列给模型用） */
+        record Registered(int ref, String title) {
+        }
+
+        /**
+         * 整批登记；实现方内部做相关度门与配额后返回实际登记上的条目（保序）。
+         *
+         * @param childSources 子轮交回的来源清单（{@code sources} 原样）
+         * @return 登记（含复用既有编号）的条目；空列表 = 一条都没进
+         */
+        List<Registered> registerAll(List<Map<String, Object>> childSources);
     }
 
     /** 本轮已咨询过的助手 → 当时那份「给模型的文本」（同一位问两次不该再花一整条子轮） */
@@ -181,28 +195,22 @@ public class SubAgentConsultService {
             sb.append("\n\n它交付的产物：").append(String.join("、", report.artifactFilesOrEmpty()));
         }
         if (sink != null && !report.sourcesOrEmpty().isEmpty()) {
-            StringBuilder refs = new StringBuilder();
-            int registered = 0;
-            for (Map<String, Object> src : report.sourcesOrEmpty()) {
-                Integer ref = null;
-                try {
-                    ref = sink.register(src);
-                } catch (Exception e) {
-                    log.debug("[CONSULT] 子轮来源登记进父轮失败（不阻塞回报）: {}", e.getMessage());
+            // 整批送父轮登记：门与配额由父轮按自己的问题判（子轮的门是子轮问题的门，
+            // 管不了父轮面板——修复前这里逐条全量搬入，一场跑偏的咨询能把 28 条无关引用摆进用户眼前）
+            List<SourceSink.Registered> regs = sink.registerAll(report.sourcesOrEmpty());
+            if (!regs.isEmpty()) {
+                StringBuilder refs = new StringBuilder();
+                for (SourceSink.Registered reg : regs) {
+                    if (refs.length() > 0) refs.append("、");
+                    refs.append('[').append(reg.ref()).append(']').append('《')
+                            .append(String.valueOf(reg.title())).append('》');
                 }
-                if (ref == null) continue;
-                registered++;
-                if (refs.length() > 0) refs.append("、");
-                refs.append('[').append(ref).append(']').append('《')
-                        .append(String.valueOf(src.getOrDefault("title", "资料"))).append('》');
-            }
-            if (registered > 0) {
                 sb.append("\n\n它的结论依据这些资料，已登记进你的引用表：").append(refs)
                         .append("。引用时请在正文里按这些编号标注（形如 ").append('[').append("编号]").append("）。");
             }
-            int dropped = report.sourcesOrEmpty().size() - registered;
+            int dropped = report.sourcesOrEmpty().size() - regs.size();
             if (dropped > 0) {
-                sb.append("\n（另有 ").append(dropped).append(" 处资料不在本轮可引用范围内，未登记为引用。）");
+                sb.append("\n（另有 ").append(dropped).append(" 处资料未通过本轮相关度校验或超出引用配额，未登记为引用，不要在正文里引用它们。）");
             }
         }
         return sb.toString();

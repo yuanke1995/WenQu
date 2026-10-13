@@ -836,6 +836,9 @@ public class ChatService {
      * <p>建池点在流水线而不是在 {@code TurnState} 里代凑——池要的是三件无状态服务（配置/重排/图片签名）
      * 与一个投递出口，这些本来就在本类手上；让状态袋替它们转一手，袋就得认识重排与签名这两件与
      * 「本轮跑到哪」无关的事，那正是刀 0 要拆掉的形状。
+     * <p>{@code question} 传<b>改写后的检索查询</b>（多轮是指代消解结果，首轮即原句）：工具来源
+     * （联网/MCP）与咨询来源的相关度门都按它判，和主管线判上下文 Relevance 的是同一把尺；
+     * 无知识库分支没有改写查询，传原句（那条路本就没有主检索口径可对齐）。
      */
     private TurnSourceRegistry newSourceRegistry(String sessionId, String question, SseEmitter emitter,
                                                  List<Map<String, Object>> sources,
@@ -1605,7 +1608,7 @@ public class ChatService {
             }
             runtime.sendSseEvent(emitter, "stage", "正在生成回答…", sessionId);
             TurnState st = new TurnState(sessionId, question, userId, emitter,
-                    newSourceRegistry(sessionId, question, emitter, sources, imgIndex, imgDescIndex,
+                    newSourceRegistry(sessionId, retrievalQuery, emitter, sources, imgIndex, imgDescIndex,
                             degradations, degradedCodes),
                     userImgs, startTime, queryForLog, thinkingHolder,
                     degradations, degradedCodes, retrievedJson, turnDeps, subAgentConsult);
@@ -4044,7 +4047,7 @@ public class ChatService {
                     }
                     return subAgentConsult.consult(st.tools.consultLedger, st.tools.consultCtx,
                             branch.branchRunner(this::chat, st.sessionId, st.turnId, st.userId, st.guestMode, st.channel.emitter),
-                            src -> st.refs.registerConsultedSource(src), agentId, q);
+                            srcs -> st.refs.registerConsultedSources(srcs), agentId, q);
                 });
         return ctx;
     }
