@@ -59,38 +59,31 @@ public final class TurnState {
     /** 入库原文里的图片占位：[图片] 或 [图片：描述]（尚未编号；填充上下文时替换成编号形态） */
     public static final Pattern IMG_PLACEHOLDER_PATTERN = Pattern.compile("\\[图片(：.*?)?\\]");
 
+    /** 已编号的图片标记：[图片N] 或 [图片N：描述]。上下文填充与终态越界校验都认这一个语法（单源） */
+    public static final Pattern IMG_NUMBER_PATTERN = Pattern.compile("\\[图片\\d+[^\\]]*\\]");
+
     /**
-     * 本轮状态要请问答侧代做的三件事（P6 刀 0：原先是隐式的外层实例引用）。
-     * <p>刻意只点名这三个动作而不交整张服务：那三个都要动通道与落库，归属还在问答侧；
-     * 刀 2 把它们收进运行时时，换的只是实现方，这个类型与调用点都不动。
+     * 本轮状态要请问答侧代做的<b>一件事</b>（P6 刀 0 交进来的是三件，刀 5a 收走两件）。
+     * <p>半程正文落库要动消息表与时间线快照，归属还在问答侧——刀 5 把持久化缝收完，这条尾巴也就没了。
+     * <p>SSE 投递与降级登记不再走这里：刀 5a 把引用池的构造点移进流水线，池直接拿
+     * {@link ChatRunRuntime}（同为问答运行时的投递出口），不必再借状态袋的动作面。
      */
     public interface TurnRuntime {
-        /** SSE 投递：先走运行总线（本轮还活着就不把「没人看」当成断开），再落事件账本 */
-        boolean sendSse(SseEmitter emitter, String type, String content, String sessionId);
-
-        /** fail-loud 降级登记：按 code 去重，且只在「检索调试入口」开着时留条目 */
-        void addDegradation(List<Map<String, String>> list, Set<String> codes, String code, String msg);
-
         /** 半程正文与过程快照落库（幂等闸由调用方先经 {@link TurnState#claimTerminal()} 占住） */
         void persistPartial(TurnState st, String tailMarker);
     }
 
     /**
      * 本轮状态需要的运行时依赖：构造时显式交进来，之后不再从别处拿。
-     * <p>这五个服务都是无状态的单例，动作类（{@link TurnRuntime}）才是本轮绑定的东西——
-     * 分开列是为了让「本轮到底依赖外部什么」这个问题有一次性的答案。
+     * <p>刀 5a 之后只剩两件——「本轮还挂在运行总线上吗」与「半程正文怎么落」。
+     * 原先那四件（配置/重排/图片签名/咨询工厂）都只服务引用池与工具面，现在由它们自己按窄接口拿着。
      */
-    public record Deps(ConfigService config,
-                       RerankService rerank,
-                       ImageUrlSigner signer,
-                       ChatRunBus runBus,
-                       SubAgentConsultService consult,
-                       TurnRuntime runtime) {
+    public record Deps(ChatRunBus runBus, TurnRuntime runtime) {
     }
 
     // ==================== 四个按归属下沉的子结构（刀 0 第二步） ====================
 
-    /** 引用池：一条 [1..N] 编号空间 + 来源清单与图片编号（刀 5 的收编对象） */
+    /** 引用池：一条 [1..N] 编号空间 + 来源清单与图片编号（刀 5a 起由流水线建好交进来，本对象不再代凑依赖） */
     public final TurnSourceRegistry refs;
     /** 出口通道与计时 */
     public final TurnChannel channel;
@@ -282,11 +275,10 @@ public final class TurnState {
             new java.util.concurrent.ConcurrentLinkedQueue<>();
 
     public TurnState(String sessionId, String question, String userId, SseEmitter emitter,
-                       Map<Integer, String> imgIndex, Map<Integer, String> imgDescIndex,
-                       List<Map<String, Object>> sources, List<UserImageService.UserImage> userImgs,
+                       TurnSourceRegistry refs, List<UserImageService.UserImage> userImgs,
                        long startTime, String queryForLog, String[] thinkingHolder,
                        List<Map<String, String>> degradations, Set<String> degradedCodes,
-                       String retrievedJson, Deps deps) {
+                       String retrievedJson, Deps deps, SubAgentConsultService consult) {
         this.deps = deps;
         this.sessionId = sessionId;
         this.question = question;
@@ -297,13 +289,10 @@ public final class TurnState {
         this.degradations = degradations;
         this.degradedCodes = degradedCodes;
         this.retrievedJson = retrievedJson;
-        // 通道与计时先建：引用池的图片事件要用本轮通道，构造顺序不能倒
         this.channel = new TurnChannel(emitter, startTime);
-        this.refs = new TurnSourceRegistry(deps, sessionId, question, channel,
-                sources, imgIndex, imgDescIndex, degradations, degradedCodes);
-        // 咨询台账在建轮第一件事就建：工具回调并发执行，懒建会造出两份，
-        // 「同一位助手只咨询一次」这条规则在并发下就不成立
-        this.tools = new TurnToolset(deps);
+        // 引用池与工具面都由流水线建好交进来：本对象不再替它们凑依赖（刀 5a）
+        this.refs = refs;
+        this.tools = new TurnToolset(consult);
         // 挂进整轮台账：看门狗到点要停流并截断落库（收集型通道无台账，自然跳过）
         TurnDeadline d = TurnRegistry.deadline(emitter);
         if (d != null) d.state = this;

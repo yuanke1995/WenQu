@@ -1,13 +1,17 @@
 package com.wenqu.ai.agent.chat;
 
 import com.alibaba.fastjson2.JSON;
+import com.wenqu.ai.service.ConfigService;
 import com.wenqu.ai.service.HybridRetrievalService;
+import com.wenqu.ai.service.ImageUrlSigner;
+import com.wenqu.ai.service.RerankService;
 import com.wenqu.ai.service.KnowledgeRetrievalTool;
 import com.wenqu.ai.service.SubAgentOrchestrator;
 import com.wenqu.ai.service.websearch.WebSearchResult;
 import com.wenqu.ai.service.websearch.WebSearchService;
 import com.wenqu.ai.service.websearch.WebSearchTools;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -42,19 +46,25 @@ import java.util.regex.Pattern;
  *
  * <p>{@link WebSearchTools.WebSearchSink} 由本类实现（原先在 {@link TurnState} 上）：
  * 工具经 {@code ToolContext} 拿到的是"本轮的引用注册器/配额计"，不是整个状态袋。
+ * <p>刀 5a 把依赖面也收窄了：池只吃配置/重排/图片签名三件无状态服务加一个投递出口，
+ * 不再借 {@code TurnState.Deps} 拿运行时动作——于是那条 Deps 只剩「本轮还要不要继续跑」与
+ * 「半程正文怎么落」两件事，那才是它名字该有的意思。
  *
  * @author yuanke
  */
 @Slf4j
 public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
 
-    /** 本轮的运行时依赖（配置/重排/签名/投递），与 {@link TurnState} 同一份 */
-    private final TurnState.Deps deps;
+    private final ConfigService configService;
+    private final RerankService rerankService;
+    private final ImageUrlSigner imageUrlSigner;
+    /** 投递与降级登记的出口（刀 5a：池不再借本轮状态袋的 Deps 拿运行时动作，方向仍然是池→运行时单向） */
+    private final ChatRunRuntime runtime;
     private final String sessionId;
     /** 本轮问题：MCP 来源的相关度重排按它打分（与主链路同一口径） */
     private final String question;
-    /** 出口通道：新增图片要重发全量 image 事件 */
-    private final TurnChannel channel;
+    /** 本轮创建时的那条通道：新增图片要重发全量 image 事件 */
+    private final SseEmitter emitter;
     /** 降级登记的两只容器（与本轮状态袋同一对象引用，不另建） */
     private final List<Map<String, String>> degradations;
     private final Set<String> degradedCodes;
@@ -81,14 +91,19 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
     /** 本轮联网搜索已执行次数（配额 webSearch.maxCallsPerTurn；<=0 不限制） */
     public final AtomicInteger webSearchCalls = new AtomicInteger();
 
-    public TurnSourceRegistry(TurnState.Deps deps, String sessionId, String question, TurnChannel channel,
+    public TurnSourceRegistry(ConfigService configService, RerankService rerankService,
+                              ImageUrlSigner imageUrlSigner, ChatRunRuntime runtime,
+                              String sessionId, String question, SseEmitter emitter,
                               List<Map<String, Object>> sources, Map<Integer, String> imgIndex,
                               Map<Integer, String> imgDescIndex,
                               List<Map<String, String>> degradations, Set<String> degradedCodes) {
-        this.deps = deps;
+        this.configService = configService;
+        this.rerankService = rerankService;
+        this.imageUrlSigner = imageUrlSigner;
+        this.runtime = runtime;
         this.sessionId = sessionId;
         this.question = question;
-        this.channel = channel;
+        this.emitter = emitter;
         this.sources = sources;
         this.imgIndex = imgIndex;
         this.imgDescIndex = imgDescIndex;
@@ -204,8 +219,8 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
             }
         }
         if (added) {
-            List<String> signed = imgIndex.values().stream().map(deps.signer()::signUrl).toList();
-            deps.runtime().sendSse(channel.emitter, "image", JSON.toJSONString(signed), sessionId);
+            List<String> signed = imgIndex.values().stream().map(imageUrlSigner::signUrl).toList();
+            runtime.sendSseEvent(emitter, "image", JSON.toJSONString(signed), sessionId);
         }
         return seqs;
     }
@@ -241,11 +256,11 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
      */
     public String registerMcpCitations(String toolName, String result) {
         if (result == null || result.isBlank()) return result;
-        if (!deps.config().getBoolean("tool.mcpCiteEnabled")) return result;
+        if (!configService.getBoolean("tool.mcpCiteEnabled")) return result;
         // MCP 结果常是 JSON 转义文本（换行为字面 \n 两字符序列）：先还原成真实空白再做
         // URL/标题/摘要提取——否则摘要把 "\n\n\n" 原样带进引用弹窗、标题按行切分失效（title 全空）。
         // 只用于提取；返回给模型的仍是原结果（转义文本可能含代码示例里的合法 \n，还原会改坏样例）。
-        int perAnswerCap = deps.config().getInt("tool.mcpCiteMaxRefs", 10);
+        int perAnswerCap = configService.getInt("tool.mcpCiteMaxRefs", 10);
         String text = result.replace("\\n", "\n").replace("\\r", "\n").replace("\\t", " ");
         Matcher um = MCP_URL_PATTERN.matcher(text);
         List<String> footnotes = new ArrayList<>();
@@ -276,7 +291,7 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
                 toRank.add(new HybridRetrievalService.Hit(null, "", f[1], f[2],
                         List.of(), 0d, null, null, null));
             }
-            for (HybridRetrievalService.Hit h : deps.rerank().rankForced(toRank, question)) {
+            for (HybridRetrievalService.Hit h : rerankService.rankForced(toRank, question)) {
                 if (h.rerankScore() != null) scoreBySnippet.put(h.content(), h.rerankScore());
             }
         }
@@ -392,7 +407,7 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
      */
     @Override
     public boolean tryConsumeQuota() {
-        int max = deps.config().getInt("webSearch.maxCallsPerTurn", 2);
+        int max = configService.getInt("webSearch.maxCallsPerTurn", 2);
         if (max <= 0) return true; // 0=不限制
         return webSearchCalls.incrementAndGet() <= max;
     }
@@ -400,7 +415,7 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
     /** 搜索失败挂一条本轮降级提示（fail-loud：让用户看见"为什么没搜成"，而不是静默无结果） */
     @Override
     public void degrade(String code, String message) {
-        deps.runtime().addDegradation(degradations, degradedCodes, code, message);
+        runtime.addDegradation(degradations, degradedCodes, code, message);
     }
 
     /**

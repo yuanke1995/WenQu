@@ -77,7 +77,9 @@ public final class TurnToolset {
      */
     public final SubAgentConsultService.Ledger consultLedger;
 
-    public TurnToolset(TurnState.Deps deps) {
-        this.consultLedger = deps.consult().newLedger();
+    public TurnToolset(SubAgentConsultService consult) {
+        // 台账在建工具面第一件事就建：工具回调并发执行，懒建会造出两份，
+        // 「同一位助手只咨询一次」这条规则在并发下就不成立
+        this.consultLedger = consult.newLedger();
     }
 }

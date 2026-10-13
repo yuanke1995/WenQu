@@ -1,6 +1,6 @@
 # P6 · 拆 RagService：它不是检索器，是整轮问答运行时
 
-> 立项卡 · 2026-10-12 · 状态：**刀 1、刀 0（第一步+第二步）、刀 2、刀 3（3a+3b）、刀 4（四族）已落地并真机验通（2026-10-13，见 §二·六 ~ §二·十二）**，`RagService` 10118 → **5893 行**；只剩刀 5（引用池收编 + 检索编排 + 门面改名）
+> 立项卡 · 2026-10-12 · 状态：**刀 1、刀 0（两步）、刀 2、刀 3（3a+3b）、刀 4（四族）、刀 5a（引用面）已落地并真机验通（2026-10-13，见 §二·六 ~ §二·十三）**，`RagService` 10118 → **5696 行**；刀 5 已扩成四子刀，剩 5b 上下文与提示词装配、5c 落库与用量缝、5d 门面改名
 > 起因：用户一句话点破——「Rag 是知识库检索啊，只有知识库相关的才走 RagService，应该有一个 ChatService 去使用 RagService 吧？」
 > 实测结论：这个判断成立，而且比"混了点代码"严重——它已经不是检索器了，检索只是它 13 个章节里的一个。
 
@@ -38,7 +38,7 @@
 | **刀 2 · 轮次控制与存活**（**已落地 2026-10-13，见 §二·八**） | `chat:625`、`stopTurn:755`、`steerTurn:7640`、`runStatus:9275`、`resumeTurn:9300` + 章节 2832 心跳 / 2920 看门狗 / 9256 断线重连 | `ChatRunRuntime`（`ChatController` 改叫它） | 3–4d |
 | **刀 3 · 分支运行时**（**拆两刀：3a run_code 子调用与面板已落地 2026-10-13，见 §二·九**；3b 分支簿记待做） | 章节 5972 P3a + 2289 P3b 子调用回程 + `branchRunner:6056`（构造点 `:1366`） | `SubAgentBranchRuntime`；`BranchRunner` 此时才适合升为 bean 方法（运行时是父、编排器是子） | 2–3d |
 | **刀 4 · 上下文与生成辅助**（**已落地 2026-10-13，四刀一起见 §二·十二**） | 章节 6811 + `compactSession:6908`、`resolveChatModel:7002`；章节 7349；章节 7787+7837；章节 9646 | 四个类：`HistoryCompactionService`（`agent/context`） / `DeepThinkService`（`agent/think`） / `PlanModeService`（`agent/plan`） / `ChatflowBridge`（`agent/chatflow`） | 4–6d（实际一日四刀） |
-| **刀 5 · 剩下的才是检索** | 引用池（章节 5087、5245 + `registerToolSource`）先长成 `TurnSourceRegistry`；其余检索编排 | `RetrievalPipeline`（由 `ChatRunRuntime` 持有） | 2–3d |
+| **刀 5 · 剩下的才是检索**（**5a 引用面已定型 2026-10-13，见 §二·十三**；5b 上下文与提示词装配、5c 落库与用量缝、5d 门面改名待做） | 引用池（章节 5087、5245 + `registerToolSource`）先长成 `TurnSourceRegistry`；其余检索编排 | `RetrievalPipeline`（由门面持有；原先写"由 `ChatRunRuntime` 持有"已作废——方向必须单向，见 §二·八 第 3 条） | 2–3d（已扩成 5a~5d 四子刀） |
 
 ### 二·五、刀 1 的实测结论（2026-10-12 已核，顺序就此定下）
 
@@ -275,6 +275,32 @@
 3. `chat()` / `runChat()` 的提交与编排仍在问答侧（刀 2 就为这条不肯搬走 `chat`）；等流水线进门面，§八 D2 的命名才有对象。
 4. 剩下最大两块是**上下文填充**（要 `refs`，已就位）与**提示词装配**（要挂载判据，`PlanTurnHooks` 那条口径已就位）——刀 5 里谁先动取决于谁回头调谁，别让填充反过来叫提示词。
 
+## 二·十三、刀 5a 已落地（2026-10-13，编译 + 真机全绿）：引用面定型
+
+刀 5 太大（剩下的上下文装配、提示词装配、生成流、落库缝、入口门面），先按可独立停手切第一刀——**把"本轮引用面"整族定成一件事**：池自己拿依赖、校验只有一个入口。
+
+**结果数字**：`RagService` **5895 → 5696 行（−199）**。新 bean `agent/context/CitationIntegrityService` **292 行 / 5 个注入依赖**（ConfigService、ChatClient、ImageFilterService、AppProperties、ChatRunRuntime），搬走 8 个成员（`CITE_PATTERN`/`CODE_SEGMENT`/`codeRanges`/`inCodeSegment`/`citationConsistencyCheck`/`CitationCheckResult`/`IMG_NUMBER_PATTERN`/`IMG_NUM_DIGITS_PATTERN`）+ 流收尾里散着的**四道校验**（图片相关性兜底、未标注引用、引用编号越界、图片标记越界、语义自检——五段共 100 行，收成一个 `check(answer, st)` 返回 `Outcome(text, sources, images)`）。
+
+**`TurnState.Deps` 从 6 个组件缩到 2 个**（`runBus` + `runtime`），`TurnRuntime` 从三个动作缩到**一个**（`persistPartial`）：
+- 池原先借 `deps` 拿 config/rerank/signer 与 `sendSse`/`addDegradation`——那六件里只有"投递与降级登记"勉强算本轮动作，其余都是无状态服务，让状态袋替它们转一手，袋就得认识重排与图片签名这两件与「本轮跑到哪」无关的事。现在 `TurnSourceRegistry` 的构造点在流水线（`RagService.newSourceRegistry(...)`，主链路与无知识库分支两处），直接吃那三件服务 + `ChatRunRuntime`。
+- `TurnToolset` 原先也吃 `deps`，只为 `consult().newLedger()`；改吃 `SubAgentConsultService` 本体。台账"建轮第一句就建、不能懒建"那条口径原样保留（注释跟着走）。
+- 于是 `Deps` 剩下的两件才是它名字该有的意思：**本轮还挂在运行总线上吗**、**半程正文怎么落**。这两个都是"问答侧还要替本轮做的事"，不是无状态服务清单。
+
+**收口时抓到一条真缺陷（照搬不改才会露出来）**：语义自检原本**在越界剔除之后**自己重算一次 `codeRanges(answer)`。我收口时想省一次计算，把剔除前算好的范围传进去——越界剔除会删字符、偏移全变，复用旧范围等于用错位的一把尺去量"这段是不是代码字面量"，代码里的 `[0]` 会被当成正文引用参与判定。已改回**按当前这份正文重算**（`consistencyCheck` 里第一行就是它）。**教训：把两段"看起来一样"的计算收成一次调用前，先确认它们的输入是同一份——收口不是无脑去重。**
+
+**顺带一处手抄**：`[图片N]` 这个标记语法原先在上下文填充与终态校验里各写了一份字面量正则，提成 `TurnState.IMG_NUMBER_PATTERN` 单源（与刀 0 第一步的 `IMG_PLACEHOLDER_PATTERN` 并排）。
+
+**真机验收（2026-10-13 19:44–19:56，最终字节码；探针会话与消息/账本已删净、库里 PENDING 0 条）**
+1. **主链路 + 工具命中注册**（池脱袋后）：一轮知识库问答拿到 8 条来源（`RETRIEVAL` ×1 + `TOOL` ×7，编号连续），正文 1381 字；期间 **3 帧 `image` 事件**由池重发全量签名清单（`assignToolImages` 走的是池自己拿的 `ChatRunRuntime`，不再是 `deps.runtime().sendSse`）。
+2. **越界引用剔除**（新类直接证据）：指令式让正文原样写出 `[7]` 与 `[图片9]`，本轮无可溯源来源 → 日志 `c.w.a.a.c.CitationIntegrityService: [CITE-CHECK] 剔除越界引用 1 处 (maxRef=0)` + `[IMG-CHECK] 剔除无效图片标记 1 处 (maxImg=0)`；**落库/done 的正文里两个标记都不残留**，degradations 出 `invalidCitation` + `invalidImageRef`（`maxRef=0` 也执行，正是那条"来源为空照样拦"的口径）。
+3. **语义自检每轮在跑**：`[CITE-CHECK] 自检完成: 剔除 0 处, 耗时 1040~1306 ms` 出现在每一轮（本机 `chat.citationCheckEnabled=true`、`imageFilter.enabled=true`）。
+4. **`Deps` 只剩一条动作后回归两条**：出字后叫停 → 只落 1 条助手消息、尾部「⏹ 已停止本轮」（`persistPartial` 那条匿名实现照常）；跑着时断线 → `/chat/run` 回 `running=true`（`runBus.holdsRun`）→ `/chat/resume` 先 `snapshot` 再接 247 帧 → 该轮完整落库 1515 字。
+5. `mvn test` 3/3；前端零改动。
+
+**没验的（按推断记）**：**语义自检真的剔除那一支**（造不出"编号合法但语义不支撑"的复现，只验到它在跑与耗时可见——代码逐字搬，与原文归一化后只剩 5 行机械差异）；**图片相关性兜底 `imgFilterDropped`** 那一支同此；Node stub、自动压缩阈值、提问卡忽略分支、H5、四条非对话入口仍沿用刀 4 那条未验清单。
+
+**刀 5 剩下的三子刀（下一批）**：5b 上下文装配与提示词装配（`runChat` 里那两段最长的 inline，配 `RetrievalPipeline`）；5c 落库与用量缝（`persistPartialAnswer`+`buildUsageSnapshot`+时间线三件+`recordToolStatus`，做完能把 `TurnRuntime` 最后那条动作也消掉）；5d 入口门面与改名（`chat()`/`runChat()`/`runNoKnowledgeChat()` 进 `ChatService`，8 处外部调用点同步）。
+
 ## 三、施工约束
 
 - **不许在拆分 commit 里夹带功能或调默认值**（提示词、检索参数、门槛都不改）。
@@ -295,7 +321,7 @@
 > 刀 1 已跑的一批记在 §二·六（含没跑到的三条），下面的清单留给后面每一刀照抄。
 
 **结构断言（可 grep；括号里是 2026-10-13 刀 4 收口时的实测）**
-1. 每一刀后 `RagService.java` 行数单调下降，刀 5 结束时 ≤ 1500 行。**现状：10118 → 9472（刀 1）→ 8678（刀 0 第一步）→ 8149（刀 2）→ 7738（刀 3a）→ 7274（刀 3b）→ 7276（刀 0 第二步，只多注释：这一刀改归属不改引用量）→ 5893（刀 4 四族）**。
+1. 每一刀后 `RagService.java` 行数单调下降，刀 5 结束时 ≤ 1500 行。**现状：10118 → 9472（刀 1）→ 8678（刀 0 第一步）→ 8149（刀 2）→ 7738（刀 3a）→ 7274（刀 3b）→ 7276（刀 0 第二步，只多注释：这一刀改归属不改引用量）→ 5895（刀 4 四族）→ 5696（刀 5a 引用面定型）**。
 2. `grep -c "private final class AnswerStreamState"` = 0（**已达**）；`st.` 引用从 728 降到 0（**现状 652 处 / 跨 536 行**——刀 0 第二步把它变长了而不是变少了，引用点跟着状态搬家才是刀 5 的降法）。
 3. 新类各自的 `private final` 数：`ChatRunRuntime` ≤ 15（**6**），其余 ≤ 10（**TurnSourceRegistry 6 注入 + 6 本轮上下文、HistoryCompactionService 6、DeepThinkService 6、ChatflowBridge 7、PlanModeService 8 + 一份回call接口**）。`RagService` 侧注入从 39 涨到 46——**每一刀都带进一个新 bean、同时摘掉真用完的依赖**（刀 4 摘了 `workflowServiceProvider`），这条不是回归，是"依赖清单没变少、但每条都变小了"：它现在装的是 5 个无状态服务 + 一批按族切出来的 bean，而原先那些 bean 的职责全在它自己身上。
 4. `grep -rn "ragService\." src/main/java` 只剩刀 5 之后仍合理的调用。**现状 8 处**：`chat` ×6（ChatController / ShareController / 定时任务 / 工作流 / MCP ×2）、`listSessionEvents`、`resolveChatModel`（后者刻意留着——它要 `loadPrefUser`，见 §二·十二 那张表的"留在问答侧"一列）。
