@@ -637,8 +637,10 @@ public class TurnRecorder {
             acc += v;
             last = e;
         }
-        // 舍入误差归到最后一个分类，保证分类之和严格等于网关 prompt_tokens
-        if (last != null) out.put(last.getKey(), (int) (last.getValue() + (promptTokens - acc)));
+        // 舍入误差归到最后一个分类，保证分类之和严格等于网关 prompt_tokens。
+        // 注意必须用「已缩放后的值」(out.get) 累加补差，不能用原始 last.getValue()——
+        // 否则末项会被还原回缩放前的值，使之和偏离 prompt_tokens（本仓实测偏差=末项缩放前-缩放后）。
+        if (last != null) out.put(last.getKey(), out.get(last.getKey()) + (int) (promptTokens - acc));
         return out;
     }
 

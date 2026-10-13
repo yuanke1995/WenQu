@@ -349,6 +349,12 @@
 **偏离卡的地方**：卡上写"落库与用量缝"，实际落点扩成**落库 + 时间线 + 工具卡片留痕 + 计划快照**四件——它们共用同一批私有件（`truncBrief`、spill 记账、timeline flush、`planRecordJson`），按卡上口径拆成两三个 bean 会让彼此互够私有方法，等于没拆。另一处：卡上只说"消掉 `TurnRuntime` 最后那条动作"，实际是**整个接口删掉**，只留一个方法引用——留着接口就等于给门面留了一个"往 TurnState 上挂行为"的合法入口。
 
 
+**本地单测验证（2026-10-13 22:1x，编译 + JUnit Platform launcher 直跑，临时单测未入库）**：3/3 绿，覆盖 5c 三件最容易回归的事——
+1. **中断态落库字段不丢**：构造含工具(start+done 两态)/计划/时间线/过程独白的 `TurnState`，调 `persistPartialAnswer`，用 `ArgumentCaptor` 抓 `sessionService.appendMessage` 参数——`toolCalls`(含 `"name":"execute"`)、`tokens`、`timeline`(含 `"kind":"tool"` 段)、`processText`、`plan`(含 `step1`) 全部非 null 且内容在，正文尾部带 `RESTART_SUFFIX`；
+2. **空轮不落库**：正文/工具/过程/思考全空时 `appendMessage` 不被调用（不留污染历史的空消息）；
+3. **用量校准同口径**：`buildUsageSnapshot` 的 `ctxParts` 缩放后之和严格等于网关 `prompt_tokens`。
+——**验证中揪出 `calibrateParts` 末项补差的真实 bug**：原代码 `out.put(last.getKey(), (int)(last.getValue() + (promptTokens - acc)))` 用**原始值** `last.getValue()` 而非已缩放值累加补差，末项被还原回缩放前，分类之和偏离网关 `prompt_tokens`（实测 `parts={system=375,knowledge=375,message=200}` sum=950 vs prompt=1000，偏差=末项缩放前−缩放后）。改为 `out.get(last.getKey()) + (int)(promptTokens - acc)` 修复后测试3 由 950→1000 通过。该 bug 违反本卡三条口径之「用量与账单同口径」，且只有真机对账或单测会暴露（UI 只显示总量，单测才断言分类之和）。
+
 ## 二·十五、刀 5d 已落地（2026-10-13，编译级验证全绿）：入口门面与改名
 
 **结果数字**：`RagService` 4501 → **`ChatService` 4502 行**（+1 为类 javadoc 重写；本刀纯机械改名，逻辑零改动）；`grep -rn "ragService\." src/main/java` **8 → 0**；`st.` 引用 360 行（5c 之后的值，本刀不动）。
