@@ -1377,7 +1377,6 @@ public class ChatService {
 
             // 2. System 提示：角色段（DB 可编辑，保存即生效；空则用代码默认值兜底）+ 规则段（代码固定，与解析器耦合）
             //    + 对话历史（预算驱动全量带入：近期原样 + 更早轮次滚动摘要，见 assembleHistory）
-            int historyCompressedTurns = 0;   // 本轮压缩进摘要的轮数（done 下发，前端提示「已压缩 N 轮」）
             String rolePart = resolveSystemPrompt(agent);
             StringBuilder system = new StringBuilder(rolePart)
                     .append("\n\n【规则】\n")
@@ -1518,7 +1517,6 @@ public class ChatService {
 
             // 4. 对话历史：预算驱动全量带入——近期原样 + 更早轮次滚动摘要（替代旧的「按轮数 + 单条截断」）
             var historyBundle = historyCompaction.assemble(sessionId, resolvedModel, budget, degradations, degradedCodes);
-            historyCompressedTurns = historyBundle.compressedTurns();
             String historySummaryBlock = historyCompaction.summaryBlock(historyBundle.summaryText());
             if (!historySummaryBlock.isEmpty() || !historyBundle.recentText().isEmpty()) {
                 system.append("\n\n对话历史：\n");
@@ -1649,7 +1647,7 @@ public class ChatService {
             st.effectiveMaxOutput = ctxBudget.maxOutput();
             st.windowTokens = ctxBudget.window();
             st.windowSource = ctxBudget.windowSource();
-            st.historyCompressedTurns = historyCompressedTurns;
+            st.summaryUntilSeq = historyBundle.summaryUntilSeq();
             // 容量分类用量（估算，done 时按网关真实 prompt_tokens 等比校准）：
             // 按 system 组装时的分段标记切出各段，避免为计量再跑一遍拼接
             Map<String, Integer> parts = new LinkedHashMap<>();

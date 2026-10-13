@@ -85,41 +85,46 @@
         </template>
       </div>
 
-      <MobileMsgRow
-        v-for="(m, i) in messages" :key="m.messageId || i"
-        :m="m" :index="i" :active="activeIdx === i" :is-last="i === messages.length - 1"
-        :debug-display="debugDisplayVisible" :session-id="currentSessionId || ''" :loading="loading"
-        :variant-switching="variantSwitching"
-        @activate="activeIdx = $event"
-        @preview="openPreview"
-        @paste-view="openPasteView"
-        @source="openSourceDetail"
-        @retry="regenerate"
-        @edit="startEdit"
-        @feedback="submitFeedback"
-        @approve="resolveApproval"
-        @switch-version="switchBranch"
-        @ask="ask"
-        @copy="copyAnswer"
-        @copy-user="copyUserMessage"
-        @more="openRound"
-      />
+      <template v-for="(m, i) in messages" :key="m.messageId || i">
+        <!-- 压缩记录：这条提问上方出现分隔线=此线以上的早期对话已折进摘要（判据与 PC 同源，在引擎里） -->
+        <MsgDivider v-if="compactDividerAt(m, i)" touch class="m-cdiv">
+          <compress-outlined />
+          <span>已压缩上下文</span>
+          <button class="app-link-btn" type="button" :disabled="compactSummaryLoading"
+                  @click="openCompactSummary">{{ compactSummaryLoading ? '读取中…' : '查看摘要' }}</button>
+        </MsgDivider>
+        <MobileMsgRow
+          :m="m" :index="i" :active="activeIdx === i" :is-last="i === messages.length - 1"
+          :debug-display="debugDisplayVisible" :session-id="currentSessionId || ''" :loading="loading"
+          :variant-switching="variantSwitching"
+          @activate="activeIdx = $event"
+          @preview="openPreview"
+          @paste-view="openPasteView"
+          @source="openSourceDetail"
+          @retry="regenerate"
+          @edit="startEdit"
+          @feedback="submitFeedback"
+          @approve="resolveApproval"
+          @switch-version="switchBranch"
+          @ask="ask"
+          @copy="copyAnswer"
+          @copy-user="copyUserMessage"
+          @more="openRound"
+        />
+      </template>
     </main>
 
     <button v-if="!stickToBottom && messages.length" class="m-jump" type="button" title="回到最新" @click="scrollForce()">
       <arrow-down-outlined />
     </button>
 
-    <!-- 手动压缩结果条（PC 端 /compact 的同一份状态）：消息流与输入区之间的独立横条，
-         发送下一轮即退场，不会被读成「本轮压缩」（那是回答气泡内 info-bar 的语义） -->
-    <div v-if="compactNotice && compactNotice.sid === currentSessionId" class="m-compact-bar">
-      <span class="mc-text">
-        已把 {{ compactNotice.turns }} 轮早期对话压缩为摘要，最近 {{ compactNotice.keepTurns }} 轮保持原样
-        <template v-if="compactNotice.partial">（会话很长，可再次压缩继续）</template>
-      </span>
-      <button v-if="compactNotice.summary" class="mc-btn" type="button" @click="openCompactSummary">查看</button>
-      <button class="mc-btn ghost" type="button" title="不再显示" @click="compactNotice = null"><close-outlined /></button>
-    </div>
+    <!-- 手动压缩当场那条（与 PC 同一份状态）：下一轮落库的摘要覆盖点会接上这件事，
+         届时上面那条持久分隔线画在同一个缝上，不会重复出现 -->
+    <MsgDivider v-if="compactNotice && compactNotice.sid === currentSessionId" touch class="m-cdiv-tail">
+      <compress-outlined />
+      <span>已压缩上下文</span>
+      <button class="app-link-btn" type="button" @click="openCompactSummary">查看摘要</button>
+    </MsgDivider>
 
     <!-- ==================== 输入区 ==================== -->
     <footer class="m-composer">
@@ -282,13 +287,41 @@
       </div>
     </Teleport>
 
-    <!-- ==================== 压缩摘要（结果条「查看」） ==================== -->
-    <BottomSheet :open="csumOpen" title="早期对话摘要" max-height="70dvh" @close="csumOpen = false">
-      <div class="mc-sum-tip">
-        以下是后续回答里「早期对话」的呈现形式（约 {{ fmtTokens(csumTokens) }} tokens）。
-        完整问答仍保留在会话中，往上翻可回看。
+    <!-- ==================== 早期对话摘要（分隔线「查看摘要」，与 PC 弹窗同一份数据源） ==================== -->
+    <BottomSheet :open="compactSummaryOpen" title="早期对话摘要"
+                 subtitle="后续回答里的「更早的对话」就按这一份带入"
+                 max-height="76dvh" @close="compactSummaryOpen = false">
+      <div class="m-csum-stats">
+        <div v-if="compactSummary && compactSummary.freed > 0" class="m-csum-stat">
+          <span>本次腾出</span><b>约 {{ fmtTokens(compactSummary.freed) }} tokens</b>
+        </div>
+        <div v-if="compactSummary" class="m-csum-stat">
+          <span>摘要规模</span><b>{{ fmtTokens(compactSummary.tokens) }} tokens</b>
+        </div>
+        <div v-if="compactSummary && compactSummary.keepTurns > 0" class="m-csum-stat">
+          <span>逐字保留</span><b>最近 {{ compactSummary.keepTurns }} 次问答</b>
+        </div>
       </div>
-      <pre class="mc-sum-body">{{ csumText }}</pre>
+      <!-- 摘要正文本身是模型给的条目化 Markdown：按 Markdown 渲染，别用 pre 把 - 和 # 原样摊出来 -->
+      <div class="md m-csum-md" v-html="renderMd(compactSummary ? compactSummary.text : '')"></div>
+      <div class="m-csum-tip">完整问答仍保留在会话中，往上翻可回看；每次压缩都会把更早的对话并入这一份。</div>
+      <div class="m-csum-acts">
+        <button class="app-btn ghost small" type="button" @click="csumInstrOpen = !csumInstrOpen">
+          <edit-outlined /> 带要求重新压缩
+        </button>
+        <button class="app-btn small" type="button"
+                @click="copyText(compactSummary ? compactSummary.text : '', '已复制摘要')">
+          <copy-outlined /> 复制摘要
+        </button>
+      </div>
+      <div v-if="csumInstrOpen" class="m-csum-instr">
+        <input v-model="csumInstr" class="m-csum-instr-input" maxlength="200"
+               placeholder="这次摘要要保留什么、忽略什么" @keyup.enter="applyRecompact" />
+        <button class="app-btn small" type="button" :disabled="compacting" @click="applyRecompact">
+          {{ compacting ? '压缩中…' : '重新压缩' }}
+        </button>
+        <button class="app-btn ghost small" type="button" @click="csumInstrOpen = false">取消</button>
+      </div>
     </BottomSheet>
 
     <!-- ==================== 粘贴文本全文（点粘贴卡片打开） ==================== -->
@@ -315,7 +348,8 @@ import { message } from 'ant-design-vue'
 import {
   MenuOutlined, PlusOutlined, CaretDownOutlined, ArrowUpOutlined, ArrowDownOutlined, PauseCircleOutlined,
   ThunderboltOutlined, PlusCircleOutlined, CloseOutlined, GlobalOutlined, SearchOutlined, UpOutlined, DownOutlined,
-  BellOutlined, ExclamationCircleOutlined, FileTextOutlined, CopyOutlined, HistoryOutlined
+  BellOutlined, ExclamationCircleOutlined, FileTextOutlined, CopyOutlined, HistoryOutlined,
+  CompressOutlined, EditOutlined
 } from '@ant-design/icons-vue'
 import { pasteTitle, pasteSub } from '../chat/projections'
 import { useChatEngine } from '../chat/useChatEngine'
@@ -339,6 +373,7 @@ import MobileSampleCards from './MobileSampleCards.vue'
 import BrandMark from '../components/BrandMark.vue'
 import SetupGuide from '../components/SetupGuide.vue'
 import WelcomeCopy from '../components/WelcomeCopy.vue'
+import MsgDivider from '../components/MsgDivider.vue'
 import { chatDone, refreshSetupGuide, setupGuide } from '../utils/setupGuide'
 
 const router = useRouter()
@@ -416,9 +451,10 @@ const {
   pendingHistoryRefs, toggleSkill, removePendingImage, removePendingFile, removeMention, removeHistoryRef,
   takePastedText,
   ignoreAsk,
-  // 手动压缩上下文（入口在「模型与思考」sheet；结果条与摘要 sheet 在本页。
-  // 「压缩中」态由 sheet 自己表达，本页只消费已完成的结果）
-  compactNotice, compactContext,
+  // 手动压缩上下文（入口在「模型与思考」sheet；分隔线与摘要 sheet 在本页。
+  // 「压缩中」态由 compacting 一并表达）
+  compacting, compactNotice, compactContext, compactDividerAt,
+  compactSummaryOpen, compactSummary, compactSummaryLoading, openCompactSummary, recompactWith,
   // 空态示例问题（配置驱动：个人覆盖 > 系统全局，可自定义可关闭；与 PC 壳同一份生效值）
   sampleQuestions,
   ready
@@ -521,15 +557,12 @@ watch(() => {
 
 // ==================== 手动压缩上下文（/compact 的移动入口） ====================
 // 移动壳没有 / 命令面板，入口落在「模型与思考」sheet 的上下文区（与窗口档位同处一块）；
-// 结果条摆在消息流底部，发送下一轮即退场（引擎内清），语义与 PC 结果条一致
-const csumOpen = ref(false)
-const csumText = ref('')
-const csumTokens = ref(0)
-const openCompactSummary = () => {
-  // 打开时快照：发送下一轮会清掉 compactNotice，弹层若直读它会当场变空
-  csumText.value = compactNotice.value?.summary || ''
-  csumTokens.value = compactNotice.value?.summaryTokens || 0
-  csumOpen.value = true
+// 压缩记录以分隔线留在对话流里（判据、摘要面板数据源都在引擎，与 PC 同一份）
+const csumInstrOpen = ref(false)
+const csumInstr = ref('')
+const applyRecompact = async () => {
+  // 压完了才收起输入行：没得压/失败的原因引擎已就地提示，输入留着方便改一句再试
+  if (await recompactWith(csumInstr.value.trim())) csumInstrOpen.value = false
 }
 
 // 模型短名（工具条展示）：优先模型库友好名，缩到 10 字以内
@@ -869,20 +902,29 @@ onUnmounted(() => {
   display: inline-flex; align-items: center; justify-content: center; touch-action: manipulation; z-index: 5;
 }
 
-/* ---- 手动压缩结果条（/compact）---- */
-.m-compact-bar {
-  flex: none; display: flex; align-items: center; gap: 8px; margin: 0 10px 4px;
-  padding: 7px 10px; border-radius: 8px; font-size: 12px; line-height: 1.5;
-  background: var(--app-accent-weak); border: 1px solid var(--app-accent-border); color: var(--app-accent);
+/* ---- 上下文压缩：流内分隔线 + 摘要 sheet ---- */
+.m-cdiv { margin: 2px 0 8px; }
+.m-cdiv-tail { flex: none; margin: 0 12px 6px; }
+.m-csum-stats {
+  display: flex; flex-wrap: wrap; gap: 4px 16px; margin-bottom: 8px;
+  padding: 8px 10px; border-radius: 8px; background: var(--app-panel-2);
 }
-.mc-text { flex: 1; min-width: 0; }
-.mc-btn {
-  flex: none; min-height: 26px; padding: 0 10px; border-radius: 999px; font-size: 12px;
-  border: 1px solid var(--app-accent-border); background: transparent; color: inherit;
-  touch-action: manipulation;
+.m-csum-stat { display: inline-flex; align-items: baseline; gap: 6px; font-size: 12px; }
+.m-csum-stat span { color: var(--app-text3); }
+.m-csum-stat b { color: var(--app-text); font-weight: 500; }
+/* 摘要正文按 Markdown 渲染（模型产出的就是条目化列表） */
+.m-csum-md {
+  max-height: 40dvh; overflow: auto; padding: 10px 12px; border-radius: 8px;
+  background: var(--app-panel-2); border: 1px solid var(--app-border); font-size: 13px; line-height: 1.7;
 }
-.mc-btn.ghost { border-color: transparent; opacity: .75; }
-.mc-sum-tip { margin-bottom: 8px; font-size: 12px; color: var(--app-text3); line-height: 1.6; }
+.m-csum-tip { margin: 8px 0; font-size: 12px; color: var(--app-text3); line-height: 1.6; }
+.m-csum-acts { display: flex; gap: 8px; }
+.m-csum-instr { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.m-csum-instr-input {
+  flex: 1; min-width: 0; padding: 8px 10px; font-size: 13px;
+  border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-panel); color: var(--app-text);
+}
+/* 粘贴全文 sheet 仍用这份 pre 容器 */
 .mc-sum-body {
   margin: 0; max-height: 52dvh; overflow: auto; padding: 10px 12px; border-radius: 8px;
   background: var(--app-panel-2); border: 1px solid var(--app-border); color: var(--app-text2);

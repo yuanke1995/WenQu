@@ -42,9 +42,9 @@ import java.util.concurrent.LinkedBlockingQueue;
 @Service
 public class HistoryCompactionService {
 
-    /** 历史装配结果：注入 prompt 的两段文本 + 分类用量（容量面板） + 本轮压缩轮数 */
+    /** 历史装配结果：注入 prompt 的两段文本 + 分类用量（容量面板） + 本轮装配时的摘要覆盖点 */
     public record HistoryBundle(String summaryText, String recentText,
-                                int summaryTokens, int recentTokens, int compressedTurns) {}
+                                int summaryTokens, int recentTokens, long summaryUntilSeq) {}
 
     /** 历史扫描上限（条）：单会话未压缩积压的读取上限，超出部分下一轮压缩自愈 */
     private static final int HISTORY_SCAN_LIMIT = 200;
@@ -125,13 +125,12 @@ public class HistoryCompactionService {
         if (backlog == null) {
             // M6 fail-loud：历史读取失败 → 本次对话无历史注入
             runtime.addDegradation(degradations, degradedCodes, "historyFailed", "会话历史读取失败，本次无多轮记忆");
-            return new HistoryBundle("", "", 0, 0, 0);
+            return new HistoryBundle("", "", 0, 0, untilSeq);
         }
         boolean compressOn = configService.getBoolean("context.historyCompress");
         double ratio = Math.max(0.1, Math.min(0.9, configService.getDouble("context.compressRatio")));
         int threshold = Math.max(1000, (int) (budget * ratio));
         int summaryTokens = TokenCounter.estimate(summary);
-        int compressedTurns = 0;
 
         if (compressOn && backlog.size() > HISTORY_MIN_KEEP) {
             int totalTokens = summaryTokens;
@@ -150,7 +149,8 @@ public class HistoryCompactionService {
                             summary = merged;
                             summaryTokens = TokenCounter.estimate(summary);
                             backlog = backlog.subList(keepFrom, backlog.size());
-                            compressedTurns = Math.max(1, older.size() / 2);
+                            // 覆盖点前移即「本轮压掉了东西」：对话流里那条「已压缩上下文」分隔线就靠它定位
+                            untilSeq = newUntil;
                             log.info("[CTX] 历史压缩完成: {} 条并入摘要（until={}，摘要 {} token，保留近期 {} 条）",
                                     older.size(), newUntil, summaryTokens, backlog.size());
                         }
@@ -167,7 +167,24 @@ public class HistoryCompactionService {
         int recentBudget = Math.max(200, threshold - summaryTokens);
         int from = fitFromNewest(backlog, recentBudget);
         String recentText = historyText(backlog.subList(from, backlog.size()));
-        return new HistoryBundle(summary, recentText, summaryTokens, TokenCounter.estimate(recentText), compressedTurns);
+        return new HistoryBundle(summary, recentText, summaryTokens, TokenCounter.estimate(recentText), untilSeq);
+    }
+
+    /**
+     * 当前这份滚动摘要（对话流里「已压缩上下文」分隔线点开要看的东西）。
+     * <p>会话只有<b>一份</b>摘要：每次压缩都把更早的对话并入同一份、覆盖点往后推。所以从任何一条
+     * 分隔线点进来看到的都是这一份——它不是"当时那一版快照"，而是"现在生效的这份"，界面上按这个口径说。
+     */
+    public Map<String, Object> currentSummary(String sessionId) {
+        com.wenqu.ai.model.Session session = sessionService.sessionById(sessionId);
+        String summary = (session == null || session.getHistorySummary() == null) ? "" : session.getHistorySummary();
+        long untilSeq = (session == null || session.getSummaryUntilSeq() == null) ? 0L : session.getSummaryUntilSeq();
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("summary", summary);
+        out.put("summaryTokens", TokenCounter.estimate(summary));
+        out.put("untilSeq", untilSeq);
+        out.put("keepTurns", HISTORY_MIN_KEEP / 2);
+        return out;
     }
 
     /** 早期摘要注入段（与近期原样历史拼进 system 的「对话历史」段） */
@@ -222,7 +239,8 @@ public class HistoryCompactionService {
      *
      * @param resolvedModel 摘要调用所用模型（调用方已解析；空值由调用方拦在前面）
      * @param instruction   用户附加要求（可空）：希望这次摘要保留什么、忽略什么
-     * @return compressedTurns / compressedMessages / keepRecent / summaryTokens / summary / rounds / partial
+     * @return compressedTurns / compressedMessages / keepRecent / keepTurns / summaryTokens / freedTokens
+     *         / summary / rounds / partial
      */
     public Map<String, Object> compactSession(String sessionId, String resolvedModel, String instruction) {
         com.wenqu.ai.model.Session session = sessionService.sessionById(sessionId);
@@ -231,6 +249,9 @@ public class HistoryCompactionService {
         int compressedMessages = 0;
         int rounds = 0;
         boolean partial = false;
+        // 「腾出多少」按进出差额计：并入摘要的原文（连同被重写的那份旧摘要）不再逐字付费，
+        // 但新摘要本身要占一份——只报净收益，别拿原文规模冒充省下来的空间
+        int foldedTokens = TokenCounter.estimate(summary);
         long batchTimeout = Math.max(configService.getLong("context.compressTimeoutMs", 20000L),
                 COMPACT_TIMEOUT_FLOOR_MS);
         while (rounds < COMPACT_MAX_ROUNDS) {
@@ -249,9 +270,10 @@ public class HistoryCompactionService {
                 partial = true;
                 break;
             }
+            String olderText = historyText(older);
             String merged;
             try {
-                merged = summarizeHistory(sessionId, resolvedModel, summary, historyText(older), instruction, batchTimeout);
+                merged = summarizeHistory(sessionId, resolvedModel, summary, olderText, instruction, batchTimeout);
             } catch (Exception e) {
                 if (compressedMessages == 0) {
                     log.warn("[CTX] 手动压缩失败（{} 条待压，会话未改动）: {}", older.size(), e.getMessage());
@@ -271,6 +293,8 @@ public class HistoryCompactionService {
                 break;
             }
             sessionService.updateHistorySummary(sessionId, merged, newUntil);
+            // 只在落库成功后计收益：失败/空摘要那批没进摘要，不该算成"腾出来的"
+            foldedTokens += TokenCounter.estimate(olderText);
             summary = merged;
             untilSeq = newUntil;
             compressedMessages += older.size();
@@ -287,7 +311,10 @@ public class HistoryCompactionService {
         out.put("compressedTurns", compressedMessages <= 0 ? 0 : Math.max(1, compressedMessages / 2));
         out.put("compressedMessages", compressedMessages);
         out.put("keepRecent", HISTORY_MIN_KEEP);
+        // 原样保留的问答对数：界面按「次问答」说话，别让前端拿 keepRecent 折半去猜
+        out.put("keepTurns", HISTORY_MIN_KEEP / 2);
         out.put("summaryTokens", TokenCounter.estimate(summary));
+        out.put("freedTokens", Math.max(0, foldedTokens - TokenCounter.estimate(summary)));
         out.put("summary", summary);
         out.put("rounds", rounds);
         out.put("partial", partial);

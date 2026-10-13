@@ -462,8 +462,10 @@ public class TurnRecorder {
         tokens.put("cached", hasRounds ? (int) sumCached : st.cachedPromptTokens);
         tokens.put("parts", calibrateParts(st.ctxParts,
                 hasRounds ? (int) finalPrompt : promptTokens, hasRounds || st.realPromptTokens > 0));
-        if (st.historyCompressedTurns > 0) {
-            tokens.put("historyCompressed", st.historyCompressedTurns);
+        // 摘要覆盖点（本轮装配时「折到哪条消息为止」）：前端按「比上一轮更靠后」在对话流里画
+        // 那条「已压缩上下文」分隔线——手动 /compact 推后了它，下一轮同样会被记下来，两条链路共用一份数据
+        if (st.summaryUntilSeq > 0) {
+            tokens.put("summaryUntil", st.summaryUntilSeq);
         }
         return tokens;
     }
@@ -657,15 +659,17 @@ public class TurnRecorder {
     }
 
     /**
-     * 「继续对话」取代的收尾落库：与拒绝轮同构，但正文与卡片终态是「已被取代」而不是「未批准」——
+     * 「继续对话」取代的收尾落库：与拒绝轮同构，但卡片终态是「已被取代」而不是「未批准」——
      * 用户并没有否定计划内容，只是提出了修改；新一轮会按他的意见产出修改后的计划。
+     * <p>正文留空：这一行的本体是 plan 快照（执行计划卡）与本轮执行快照，「已被取代」已经写在卡片
+     * 角标上，再落一句收束语只是把同一件事说两遍。留空后前端历史过滤要认 plan 快照，否则卡片随刷新蒸发。
      */
     public void persistPlanSuperseded(TurnState st) {
-        persistPlanCloseout(st, "（你提出了修改，这版计划已被取代）", "取代");
+        persistPlanCloseout(st, "", "取代");
     }
 
     /**
-     * 计划收尾轮（未批准 / 已被取代）的兜底落库：正文=前端同款收束语 + plan 快照 + 本轮执行快照。
+     * 计划收尾轮（未批准 / 已被取代）的兜底落库：正文（未批准=收束语，取代=空）+ plan 快照 + 本轮执行快照。
      * <p>执行快照（提问卡问答、工具卡片、过程独白、时间线）必须一并落：这些在实时气泡里是用户
      * 看得见的「已输出的内容」（如计划前的那张问答记录卡），只落收束语会让它们刷新后整块消失，
      * 而计划卡本身也随刷新蒸发——历史只剩一条孤零零的用户提问。

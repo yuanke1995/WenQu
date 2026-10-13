@@ -351,6 +351,10 @@ export const clearSession = sid => request(`/session/${sid}`, { method: 'DELETE'
 export const compactSessionApi = (sid, { instruction = '', model = '' } = {}) =>
   request(`/session/${sid}/compact`, { method: 'POST', body: JSON.stringify({ instruction, model }), timeout: 300000 })
 
+/** 会话当前那份滚动摘要（对话流「已压缩上下文」分隔线点开）：{summary, summaryTokens, untilSeq, keepTurns}。
+ *  会话只有一份摘要、每次压缩往后滚，所以从哪条分隔线点进来看到的都是生效中的这一版 */
+export const sessionHistorySummaryApi = sid => request(`/session/${sid}/history-summary`)
+
 // ==================== 会话只读分享（链接持有者可看，不可续聊） ====================
 /** 查询分享状态（仅会话所有者）：{enabled, token, visitCount, lastVisitAt} */
 export const getSessionShare = sid => request(`/session/${sid}/share`)

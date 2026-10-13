@@ -193,8 +193,9 @@ public final class TurnState {
     public volatile String windowSource = "";
     /** 容量分类用量（消息/早期摘要/知识块/系统提示词/系统工具/MCP 工具/技能/其他）：估算后按真实 prompt 等比校准 */
     public volatile Map<String, Integer> ctxParts = new LinkedHashMap<>();
-    /** 本轮压缩进摘要的历史轮数（0=未压缩）；done 下发供前端提示「已压缩 N 轮」 */
-    public volatile int historyCompressedTurns;
+    /** 本轮装配历史时的摘要覆盖点（该 sequence 及更早的原样对话已折进早期摘要；0=会话还没压过）；
+     *  随 tokens 落库，前端按「比上一轮更靠后」定位那条「已压缩上下文」分隔线 */
+    public volatile long summaryUntilSeq;
 
     // ==================== 编排展示与落库归属 ====================
 

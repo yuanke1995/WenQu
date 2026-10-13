@@ -17,7 +17,7 @@
 
 | 能力域 | 亮点 |
 |--------|------|
-| 智能对话 | SSE 流式回答、句末 `[N]` 引用溯源、深度思考（思考强度五档）、上下文容量面板（十类计量 + 缓存命中率）、过程独白与消息时间线、图片理解、@ 文档引用、回答末尾下一步建议 |
+| 智能对话 | SSE 流式回答、句末 `[N]` 引用溯源、深度思考（思考强度五档）、上下文容量面板（十类计量 + 缓存命中率）、过程独白与消息时间线、图片理解、@ 文档引用、回答末尾下一步建议、计划模式（执行计划卡：确认/继续对话/取消） |
 | 知识库（RAG） | Word/PDF/Excel/TXT/Markdown/网页解析（扫描件 OCR）、混合检索 + 查询改写 + GraphRAG 图谱扩展、父子分块与问答对增强、网页定时刷新 |
 | 智能体 | 人设/知识/工具可配、会话级绑定、多智能体并行编排（StateGraph）、子智能体按需委派与可配聚合策略、定时执行 |
 | 工具与沙盒 | 内置工具 + 联网搜索（Tavily/博查/SearXNG）+ 技能包（Skills）+ MCP 工具；Docker 沙盒隔离执行 shell/文件读写（输出实时流式回传）；有副作用工具支持执行前人工确认 |
@@ -195,10 +195,11 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 - **深度思考**：思维链折叠面板流式展示 → `<search>` 检索计划 → 多路并行检索 → 思考链注入最终回答；思考关键词增强检索、失败细化降级、思考长度护栏；**思考强度五档**（低/中/高/超高/极致，按模型登记档位过滤，经 `reasoning_effort` 等厂商方言贯通到请求）；「关闭 / 开启 / 恒思考」三态与强度均按模型记忆
 - **上下文窗口档位**：模型登记「最小~最大窗口」区间后，聊天面板可在档位间下调（省 token / 提速），默认用窗口上限；未登记区间的模型不可调
 - **过程独白与消息时间线**：工具模式下模型的推理/试错独白与正文分流（`<process>` 标签整块剥离），前端灰字原位展示；整轮「文本段 + 工具段 + 产物段」编为消息时间线随消息落库——刷新页面后仍是交错的实时过程视图
+- **计划模式**（人在回路）：输入框「+」面板开「计划模式」后，每轮先产出**执行计划卡**（生成中 → 待确认），确认栏三选——**确认**（按计划执行）/ **继续对话**（修改意见作为一条用户消息在同一会话继续，本版作废、按意见重出，可反复）/ **取消**（本轮停止，卡定格「未批准」）；挂起有倒计时（默认 10 分钟，超时按未批准收尾）；没开计划模式时适合先拍板的消息会**按意图自动开启**（卡片标「自动开启」，`chat.planAutoIntent` 默认开）；计划卡随消息落库，刷新/换设备后可继续裁决，右栏「计划」卡可定位本会话每轮计划，卡内「修改记录」回看各版计划与意见
 - **多模态输入**：拖入/粘贴/点击上传图片（最多 5 张）；`@` 引用指定文档（被 @ 文档内最相关块前置注入上下文）；聊天模型不支持图片理解时**可见降级**（图片仅随消息展示，并向模型如实说明图片不可见，不静默丢弃）
 - **上下文容量面板**：输入框工具栏的容量圆环（占比 >80% / >95% 变色告警）悬浮展开明细——用量/窗口占比 + **十类计量**（消息 / 早期摘要 / 知识块 / 系统提示词 / 系统工具 / MCP 工具 / 技能 / 记忆 / 输入 / 其他）+ **缓存命中率**（网关返回缓存命中 token 才显示；done 时按网关实测校准）
 - **下一步建议**：回答末尾给出「接下来可以」可点击追问标签，点击即发起提问（条数个人可调）
-- **智能体（P5）**：会话**不再锁定**智能体。不挑就用默认助手（可在个人设置里指定自己的默认助手）；挑了从下一问起立即生效，**不必新建会话**。资料域由模型按需经 `consultAgent` 派给职责对口的助手去查（可派多位，每位带着自己的知识库跑一条子轮，结论与引用交回）；作答的智能体不可用时 fail-loud 提示，不静默换人
+- **智能体（P5）**：会话**不再锁定**智能体。不挑就用默认助手（可在个人设置里指定自己的默认助手）；挑了从下一问起立即生效，**不必新建会话**。资料域由模型按需经 `consultAgent` 派给职责对口的助手去查（可派多位，每位带着自己的知识库跑一条子轮，结论与引用交回）；交回的资料按**父轮问题**再过一道相关度门与引用配额（与主管线同一把尺——子轮的门是子轮问题的门，管不了父轮面板），被滤掉的条数如实告知模型，不放无出处断言；作答的智能体不可用时 fail-loud 提示，不静默换人
 - **用户长期记忆**（默认开）：问答完成后异步提炼值得长期记住的用户信息（事实/偏好/项目背景），按预算注入后续对话；`/profile` 个人设置可查/改/删（含来源会话溯源与被注入次数）；公开分享页与 MCP 游客链路不携带
 - **会话管理**：置顶/收藏/重命名/搜索/批量删除/清空、导出 Markdown、重新生成（软删旧答案）、赞/踩反馈、按消息组删除与撤销删除
 
@@ -228,7 +229,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 
 - **工具开关集中在 `tool.*`，总开关与子开关默认均为 false**（需显式开启）
 - **内置工具**：计算器（递归下降自实现表达式求值，仅四则/幂/括号，**不执行任意代码**）、日期；另有知识检索工具（命中块进引用流）、产物交付工具、技能读取工具（渐进披露读 `SKILL.md`）
-- **联网搜索**（默认关）：Function Calling 工具，服务商 Tavily / 博查 / generic（自建 SearXNG）；结果**强制注册进引用体系**（与知识库引用同源展示）；单轮搜索次数配额防反复搜烧 token；可纳入「执行前确认」审批；游客分享链路不暴露
+- **联网搜索**（默认关）：Function Calling 工具，服务商 Tavily / 博查 / generic（自建 SearXNG）；结果**强制注册进引用体系**（与知识库引用同源展示）；返回结果按**本轮问题**（多轮为指代消解后的检索查询）重排过相关度门，低于 `retrieval.minContextScore` 的不注册、不列给模型——服务商自带的相关度分（如位置衰减）没有相关性含义，不参与判定；重排不可用时明确提示「本轮搜索结果未经相关性过滤」，不把瞬时故障演变成「什么都搜不到」；单轮搜索次数配额防反复搜 token；可纳入「执行前确认」审批；游客分享链路不暴露
 - **技能包（Skills）**：目录 + `SKILL.md` 形式的可插拔能力；支持新建 / URL 安装（远程域白名单）/ 启停用 / 删除；可注入 System Prompt 或由模型按需读取；按用户隔离（个人资产）；沙盒内以只读投影暴露
 - **沙盒隔离执行**：模型经 Function Calling 在隔离 Linux 容器内获得 6 个工具——`execute`（shell，**输出实时流式回传**）/ `read_file` / `write_file`（创建语义）/ `edit_file`（精确替换）/ `ls` / `deliver_artifact`（交付为「我的产物」）；**scope 挂会话**（同会话文件跨轮保留，按用户隔离工作目录），会话空闲（默认 60 分钟）自动回收容器；命令超时/输出上限/keepalive 均可配；瞬时故障自动重试；对话右栏「沙盒」卡可浏览/下载工作区文件
 - **产物交付**：`/artifacts` 汇总问答与定时任务交付的文件产物（Markdown/CSV/JSON/HTML/py/png/xlsx/zip 等），可预览、下载（HMAC 签名 URL）、删除；交付落盘 `data/artifacts/{uid}/{yyyyMM}/`，扩展名白名单 + 文件名净化，单个 ≤1MB
@@ -300,12 +301,14 @@ docker compose up -d          # 自包含：redis-stack + meilisearch + 内置 M
 
 ## API 参考
 
-> 完整接口文档见 **Swagger UI**（启动后访问 `/ai/swagger-ui/index.html`，随代码自动更新）。共 **38 个控制器、240+ 端点**，下表为核心端点速查（完整契约以 Swagger 为准）：
+> 完整接口文档见 **Swagger UI**（启动后访问 `/ai/swagger-ui/index.html`，随代码自动更新）。共 **39 个控制器、290+ 端点**，下表为核心端点速查（完整契约以 Swagger 为准）：
 
 | 端点 | 说明 |
 |------|------|
 | `POST /api/ai/chat` | SSE 流式问答（事件见下方 SSE 事件表） |
 | `POST /api/ai/tool-approval/{approvalId}` | 工具执行确认（人在回路）：批准/拒绝有副作用的沙盒/MCP 工具调用 |
+| `POST /api/ai/plan-approval/{planApprovalId}` | 执行计划裁决（计划模式）：批准（可带修改后计划全文）/ 取消 / `supersede` 取代（意见作为新消息继续对话、按意见重做计划） |
+| `GET /api/ai/plan-approval/pending?sessionId=` | 待批准计划卡（刷新/换设备后的恢复入口，含版本链与剩余时间） |
 | `GET /api/ai/auth/me` | 当前身份、权限与菜单树（前端据此渲染侧边栏与管理入口） |
 | `POST /api/ai/auth/login`、`/api/ai/auth/oidc/{config,login-url,callback,exchange-code}` | 本地登录 / OIDC 单点登录四端点 |
 | `GET /api/ai/sessions?keyword=`、`POST /api/ai/session/new`、`GET /api/ai/session/{id}`、`PUT /api/ai/session/{id}/rename` | 会话列表（搜索）/ 新建 / 历史恢复 / 重命名 |
@@ -365,6 +368,10 @@ docker compose up -d          # 自包含：redis-stack + meilisearch + 内置 M
 | `subagent` | 子智能体并行执行推进 | 分支状态 `{id,name,status,hits,elapsedMs,delegated,description,digest}` |
 | `subagent_route` | 按需委派路由判定完成 | `{candidates,picked,names,reasons}`——reasons 为各被选助手的「挑选理由」（随消息持久化，历史回显） |
 | `approval_required` | 有副作用工具（沙盒/MCP）执行前等待确认 | `{approvalId,tool,args,timeoutMs}`（批准/拒绝经 `POST /api/ai/tool-approval/{id}`） |
+| `plan_delta` | 计划模式产出执行计划时 | 计划文本增量（执行计划卡流式成形） |
+| `plan_approval` | 计划生成完毕、等待用户确认 | `{planApprovalId,plan,timeoutMs,auto?}`（确认/取消/带稿批准经 `POST /api/ai/plan-approval/{id}`，取代走同端点 `supersede`） |
+| `plan_cancelled` | 计划未批准（用户取消或超时按未批准收尾） | `{}`（卡片定格「未批准」，本轮停止） |
+| `plan_superseded` | 用户对计划提修改意见、「继续对话」取代本版 | `{}`（卡片定格「已被取代」，意见作为新消息在同会话继续） |
 | `artifact` | 产物交付工具落盘 | 产物卡片字段 `{id,url,filename,ext,size,description}` |
 | `usage` | 生成一开始预下发 prompt 侧用量（点亮容量圆环；done 时以网关实测覆盖） | tokens `{window,windowSource,cached,parts,historyCompressed,…}` |
 | `warn` | 非致命降级/告警 | 提示文案 |
@@ -438,7 +445,7 @@ spring:
 | `chunk.*` / `parse.*` | `maxSize`(800)、`structural`(true)、`concurrency`(2)、`ocrDpi`(200)；问答对生成无独立模型键（跟随库主个人默认聊天模型） | **需重解析/对后续解析生效** |
 | `vision.*` | `enabled`(true)、`prompt`、`concurrency`(2)、`retryCount`(1)、`descCacheVersion`(1)、`descCacheTtlDays`(180) | 保存即生效（`timeoutMillis` 需重启）；视觉模型按知识库 `visionRef` 绑定，无全局键 |
 | `context.*` | `historyCompress`(true)、`compressRatio`(0.5)、`snippetWindowChars`(150)、`maxContextHits`(8)、`maxBlocksPerDoc`(3)、`dedupEnabled`(true)/`dedupThreshold`(0.45)、`adjacentMergeEnabled`(true)/`adjacentMergeMaxChunks`(3) | 保存即生效 |
-| `rerank.*` | `enabled`(false，平台默认值)、`model`（个人层）、`platformRef`（**平台默认重排模型**）；取值顺序：知识库/智能体检索设置 > 个人 > 平台默认 > 平台内置重排服务 | 保存即生效 |
+| `rerank.*` | `enabled`(**true**，平台默认值；未绑模型/服务不可用时按融合分排序并提示，不阻塞问答)、`minHits`(6，少于几条不重排)、`maxHits`(15，重排窗口)、`platformRef`（**平台默认重排模型**）；取值顺序：知识库/智能体检索设置 > 平台默认 > 平台内置重排服务（**无个人层**，`rerank.model` 个人槽位入口已下线） | 保存即生效 |
 | `keyword.*` / `eval.*` / `cleanup.*` / `images.*` / `upload.*` | 引擎兜底冷却、体检参数与评判模型 `eval.judgeModel`（全局仅存的模型键，未配置时体检跳过评分）、会话保留期(30 天)、图片鉴权、上传上限(200MB) | 保存即生效 |
 | `tool.*` / `webSearch.*` | `tool.enabled`(**false**)、`knowledgeRetrieval.enabled`、`artifact.enabled`、`builtin.enabled`、**`sandbox.enabled`**；联网搜索 `enabled`(**false**)、`provider`(tavily/bocha/generic)、`apiKey`(敏感)、`maxCallsPerTurn`(2)、`requireApproval`(false) | 保存即生效——**默认全关，需显式开启** |
 | `skill.*` | `enabled`、`dir`(./data/skills)、`injectEnabled`(true)、`remoteAllowedHosts`(精确 host 白名单) | 保存即生效 |
@@ -491,7 +498,7 @@ WenQu/                               # 项目根（git 仓库名 WenQu；本地�
 ├── src/main/java/.../ai/
 │   ├── WenQuApplication.java        # 入口
 │   ├── config/                      # SecurityConfig(Token+RBAC) / SchemaMigrator(存量库补列补索引) / DynamicChatClientConfig / OpenApiConfig / GlobalExceptionHandler 等
-│   ├── controller/                  # 38 个控制器、240+ 端点（完整契约以 Swagger 为准）
+│   ├── controller/                  # 39 个控制器、290+ 端点（完整契约以 Swagger 为准）
 │   ├── service/                     # 问答主链路（ChatService/HybridRetrievalService/RerankService/GraphRagService）
 │   │                                #   智能体与工具（SubAgentOrchestrator/ArtifactService/BuiltinTools/SkillTools/websearch/）
 │   │                                #   工作流（WorkflowDsl/WorkflowValidator/WorkflowEngine/WorkflowService）

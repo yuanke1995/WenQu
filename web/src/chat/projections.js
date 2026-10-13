@@ -108,13 +108,18 @@ const executedCount = list => (Array.isArray(list) ? list : []).filter(t => t &&
 // （超时/忽略/留空的题回一句「（用户未回答这一题…」，本模块渲染成「未作答」，见 askAnswerLabel）。
 //
 // 两个必须收口的渲染口径（否则会出现「有问无答」的残缺问）：
-//  ① answers 非数组 ⇒ 这张卡根本没发出去（超限被拒 / 提问次数用尽 / 无有效问题），
-//     result 是一句说明而不是答案——此时按单条说明渲染，绝不按问题逐条铺开空答。
+//  ① 单问的答案后端退化成纯文本（buildCombinedAnswer 只在多问时回 JSON 数组），不能把「解析不出数组」
+//     一律当成「这张卡没发出去」——那样正常作答的单问会连问句一起消失、只剩一句答案。
+//     真正没发出去的卡（游客会话 / 提问次数用尽 / 无有效问题 / 本轮中止）回给模型的是一句括号里的
+//     处置说明，按单条说明渲染，绝不按问题逐条铺开空答。
 //  ② answers 数组比问题短 ⇒ 历史数据里后端曾静默截断过（现已改为整卡拒绝），只渲染有答案的前 N 问。
 // 未作答的题回给模型的是一句处置指令（前缀由后端 buildCombinedAnswer 固定），卡片里收成「未作答」，
 // 不把模型口径的长句原样摊给用户
 const UNANSWERED_PREFIX = '（用户未回答这一题'
 const askAnswerLabel = a => (typeof a === 'string' && a.startsWith(UNANSWERED_PREFIX)) ? '未作答' : a
+// 整条被全角括号包住 ⇒ 后端写给模型的系统说明，不是用户敲的答案（用户答案不会带这层壳）
+const askNoticeText = s => typeof s === 'string' && s.length > 1
+  && s.startsWith('（') && s.endsWith('）') && !s.startsWith(UNANSWERED_PREFIX)
 const askUserView = t => {
   let topic = '', question = '', options = null, questions = null
   try {
@@ -138,13 +143,16 @@ const askUserView = t => {
     try { const p = JSON.parse(raw); if (Array.isArray(p)) answers = p } catch (e) { /* 非数组：按单问处理 */ }
   }
   if (questions) {
-    // ① 没发出去的卡：result 是说明文本，按单条展示
-    if (!answers) return { topic: '', question: '', options: null, answer: raw, notice: true }
+    // ① 没发出去的卡：result 是说明文本，按单条展示（问句压根没问过，不配一行「问」）
+    if (!answers) {
+      if (questions.length === 1 && !askNoticeText(raw)) answers = [raw]
+      else return { topic: '', question: '', options: null, answer: raw, notice: true }
+    }
     // ② 截断过的历史数据：只渲染有答案的部分
     const list = questions.slice(0, answers.length).map((q, i) => ({
       topic: q.topic, question: q.question, options: q.options,
-      // 多问答案=JSON 数组；单问（questions 仅 1 项）= 纯文本，解析失败回退到 raw
-      answer: askAnswerLabel(i < answers.length ? answers[i] : (questions.length === 1 ? raw : ''))
+      // 多问答案=JSON 数组；单问=纯文本，已在 ① 里补成单元素数组
+      answer: askAnswerLabel(answers[i])
     }))
     return { multi: true, questions: list }
   }
@@ -807,7 +815,15 @@ const fmtSourceScore = s => {
   const v = s ? (s.rerankScore != null ? s.rerankScore : s.score) : null
   return (v == null || isNaN(Number(v))) ? '' : Number(v).toFixed(2)
 }
-const scoreTitle = s => (s && s.rerankScore != null ? '重排相关度 ' + s.rerankScore : '检索融合分 ' + s.score)
+// 分值口径：rerankScore=按本轮问题重排出的相关度（联网来源过相关度门后同样有），
+// 其缺失回落服务商分（WEB）/ 检索融合分（库内）；MCP 无相关度分，不出标签
+const scoreTitle = s => {
+  if (!s) return ''
+  if (s.rerankScore != null) return '重排相关度 ' + s.rerankScore
+  if (s.origin === 'WEB') return '服务商相关度 ' + s.score
+  if (s.origin === 'MCP') return ''
+  return '检索融合分 ' + s.score
+}
 const fmtSize = n => {
   if (!n && n !== 0) return ''
   if (n < 1024) return n + ' B'

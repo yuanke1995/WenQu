@@ -673,7 +673,8 @@ public class ChatController {
     @Operation(summary = "手动压缩会话上下文",
             description = "把较早的对话压缩成摘要（前端 /compact 斜杠命令）：除最近 2 轮原样保留外，其余全部并入会话摘要，"
                     + "为后续提问腾出上下文空间；可带 instruction 指定这次摘要要保留什么。摘要调用按 chat 桶限频并计入用量台账。"
-                    + "返回 {compressedTurns, compressedMessages, keepRecent, summaryTokens, summary, rounds, partial}；"
+                    + "返回 {compressedTurns, compressedMessages, keepRecent, keepTurns, summaryTokens, freedTokens, summary, rounds, partial}；"
+                    + "freedTokens=本次净腾出的 token 数（并入摘要的原文减去新摘要自身），keepTurns=逐字保留的问答对数；"
                     + "compressedTurns=0 表示对话还短、无需压缩")
     @ApiResponse(responseCode = "200", description = "压缩结果统计（含摘要全文，供前端展示）")
     @PostMapping("/session/{sessionId}/compact")
@@ -701,6 +702,17 @@ public class ChatController {
         }
         String instruction = instrArg == null ? null : String.valueOf(instrArg);
         return ResultJson.ok(historyCompaction.compactSession(sessionId, resolvedModel, instruction), "压缩完成");
+    }
+
+    @Operation(summary = "当前早期对话摘要", description = "读会话现在这份滚动历史摘要（对话流里「已压缩上下文」分隔线点开的内容）："
+            + "每次压缩都把更早的对话并入同一份、覆盖点往后推，所以返回的始终是生效中的那一版，不是当时那一瞬的快照。"
+            + "返回 {summary, summaryTokens, untilSeq, keepTurns}；从未压缩过时 summary 为空串。")
+    @ApiResponse(responseCode = "200", description = "当前摘要与覆盖点")
+    @GetMapping("/session/{sessionId}/history-summary")
+    public ResultJson historySummary(
+            @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId) {
+        sessionService.assertOwned(sessionId, RequestUser.uid());
+        return ResultJson.ok(historyCompaction.currentSummary(sessionId));
     }
 
     @Operation(summary = "删除会话", description = "删除指定会话（MySQL 软删除 + Redis 清理；校验会话归属）")

@@ -234,14 +234,11 @@
           </a>
         </div>
 
-        <!-- 降级/警告/压缩提示 -->
+        <!-- 降级/警告 -->
         <div v-if="m.degradations && m.degradations.length" class="warn-bar">
           <span v-for="(d, di) in m.degradations" :key="di">{{ d.msg }}</span>
         </div>
         <div v-if="m.warnMsg" class="warn-bar">{{ m.warnMsg }}</div>
-        <div v-if="m.tokens && m.tokens.historyCompressed > 0" class="info-bar">
-          已把 {{ m.tokens.historyCompressed }} 轮早期对话压缩为摘要（完整记录仍可在会话中回看）
-        </div>
 
         <!-- 检索行：折叠看检索词与引用片段 -->
         <div v-if="retrievalLineTitle(m) || toolSearchQueries(m).length || (m.sources && m.sources.length)" class="card">
@@ -543,7 +540,6 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
 .artifact-dl { color: var(--app-text3); }
 
 .warn-bar { border: 1px solid var(--app-warn-border); background: var(--app-warn-weak); color: var(--app-warn-text); border-radius: 8px; padding: 8px 10px; font-size: 12px; display: flex; flex-direction: column; gap: 4px; }
-.info-bar { border: 1px solid var(--app-info-border); background: var(--app-info-weak); color: var(--app-accent); border-radius: 8px; padding: 8px 10px; font-size: 12px; }
 
 .rt-terms { font-size: 12px; color: var(--app-text3); margin-bottom: 6px; }
 .rt-ref { padding: 8px 0; border-top: 1px dashed var(--app-border); font-size: 12px; color: var(--app-text2); cursor: pointer; }

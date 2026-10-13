@@ -99,15 +99,19 @@
         </div>
 
         <div v-for="(m, i) in messages" :key="i" :data-row-index="i" class="row" :class="m.role">
+          <!-- 压缩记录：画在这条提问上方=此线以上的早期对话已折进摘要，以下逐字在场。
+               手动 /compact 与自动压缩共用这一条判据（摘要覆盖点相对上一轮推进了），不做两套状态 -->
+          <MsgDivider v-if="compactDividerAt(m, i)" class="cdiv">
+            <compress-outlined />
+            <span>已压缩上下文</span>
+            <button class="app-link-btn" type="button" :disabled="compactSummaryLoading"
+                    @click="openCompactSummary">{{ compactSummaryLoading ? '读取中…' : '查看摘要' }}</button>
+          </MsgDivider>
           <!-- 模型切换记录：本轮回答与前一条回答模型不同时才出现（发消息产生新回答的那一刻，切换选择器本身不产生记录） -->
-          <div v-if="modelSwitchInfo(m, i)" class="model-switch-divider">
-            <span class="msd-line"></span>
-            <span class="msd-text">
-              <swap-outlined class="msd-ic" />
-              <span>模型已切换 {{ modelSwitchInfo(m, i).fromLabel }} → {{ modelSwitchInfo(m, i).toLabel }}</span>
-            </span>
-            <span class="msd-line"></span>
-          </div>
+          <MsgDivider v-if="modelSwitchInfo(m, i)" class="msd">
+            <swap-outlined />
+            <span>模型已切换 {{ modelSwitchInfo(m, i).fromLabel }} → {{ modelSwitchInfo(m, i).toLabel }}</span>
+          </MsgDivider>
           <div class="msg-block" :class="[m.role, { editing: editingIdx === i }]">
             <div class="bubble" :class="m.role">
               <div v-if="m.role === 'user' && m.images && m.images.length" class="msg-imgs">
@@ -433,11 +437,6 @@
                 <span v-for="(d, di) in m.degradations" :key="di" class="degradation-item">{{ d.msg }}</span>
               </div>
               <div v-if="m.role === 'ai' && m.warnMsg" class="degradation-bar">{{ m.warnMsg }}</div>
-              <!-- 历史压缩提示（信息条，蓝色区别于黄色警告）：完整记录仍在会话里，往前翻可见 -->
-              <div v-if="m.role === 'ai' && m.tokens && m.tokens.historyCompressed > 0" class="ctx-compress-bar">
-                <compress-outlined style="margin-right:6px" />
-                已把 {{ m.tokens.historyCompressed }} 轮早期对话压缩为摘要（完整记录仍可在会话中回看）
-              </div>
               <div v-if="m.role === 'ai' && (retrievalLineTitle(m) || toolSearchQueries(m).length || (m.sources && m.sources.length))" class="retrieval-merged">
                 <div class="retrieval-line" @click="m.rtOpen = !m.rtOpen">
                   <template v-if="retrievalLineTitle(m)">{{ retrievalLineTitle(m) }}<template v-if="m.retrieved && m.tokens && m.tokens.hits != null && m.tokens.hits > 0 && m.tokens.hits !== m.retrieved.refs">（{{ m.tokens.hits }} 段填入上下文）</template></template>
@@ -637,17 +636,13 @@
             </div>
           </div>
         </div>
-        <!-- 手动压缩结果条（/compact）：纯本地状态、不落库；下一轮发送即退场，
-             避免它躺在最新回答下方被读成「本轮压缩了 N 轮」（那是气泡上 ctx-compress-bar 的语义） -->
-        <div v-if="compactNotice && compactNotice.sid === currentSessionId" class="ctx-compress-bar compact-notice">
-          <compress-outlined class="cn-ic" />
-          <span class="cn-text">
-            已把 {{ compactNotice.turns }} 轮早期对话压缩为摘要，最近 {{ compactNotice.keepTurns }} 轮保持原样
-            <template v-if="compactNotice.partial">（会话很长，本次只压了最早的几批，可再次执行 /compact 继续）</template>
-          </span>
-          <button v-if="compactNotice.summary" class="app-btn ghost small" @click="openCompactSummary">查看摘要</button>
-          <button class="app-icon-btn" title="不再显示" @click="compactNotice = null"><close-outlined /></button>
-        </div>
+        <!-- 手动压缩当场留下的记录：下一轮回答落库的摘要覆盖点会接上这件事，届时由上面那条持久判据
+             画在同一条缝上，所以这里只是提前把线补出来，不会和它重复 -->
+        <MsgDivider v-if="compactNotice && compactNotice.sid === currentSessionId" class="cn-tail">
+          <compress-outlined />
+          <span>已压缩上下文</span>
+          <button class="app-link-btn" type="button" @click="openCompactSummary">查看摘要</button>
+        </MsgDivider>
         <!-- 尾随留白：本轮问题下方补足一屏，使贴底落点=问题置顶（回答长过一屏后归零，恢复正常贴底跟尾） -->
         <div v-if="tailSpacer > 0" class="tail-spacer" :style="{ height: tailSpacer + 'px' }" aria-hidden="true"></div>
         <div v-if="!stickToBottom && messages.length" class="jump-latest" title="回到底部" @click.stop="scrollForce">↓</div>
@@ -746,73 +741,6 @@
           </div>
         </div>
         <div v-if="!pendingAsk && !pendingPlan" class="input-box">
-          <!-- @ 引用候选面板（敲 @ 唤起）：kb=收窄检索范围 / doc=强制带入内容 -->
-          <div v-if="mentionOpen" class="mention-panel">
-            <div class="mention-head">
-              <span class="mention-head-tag">@</span>
-              <span class="mention-head-word" :class="{ dim: !mentionQuery }">{{ mentionQuery || '输入以筛选知识库、文档或智能体' }}</span>
-              <button class="app-icon-btn" title="关闭" @click="closeMentionPanel"><close-outlined /></button>
-            </div>
-            <div class="mention-tabs">
-              <button class="mention-tab" :class="{ on: mentionTab === 'kb' }" @click="switchMentionTab('kb')">
-                <database-outlined /> 知识库 {{ mentionKbs.length }}
-              </button>
-              <button class="mention-tab" :class="{ on: mentionTab === 'doc' }" @click="switchMentionTab('doc')">
-                <file-text-outlined /> 文档 {{ mentionDocs.length }}
-              </button>
-              <button class="mention-tab" :class="{ on: mentionTab === 'agent' }" @click="switchMentionTab('agent')">
-                <robot-outlined /> 智能体 {{ mentionAgents.length }}
-              </button>
-            </div>
-            <div ref="mentionListEl" class="mention-list">
-              <div v-if="mentionLoading" class="mention-empty">加载中…</div>
-              <template v-else-if="mentionTab === 'kb'">
-                <div v-for="(k, ki) in mentionKbFiltered" :key="k.id" class="mention-item"
-                     :class="{ on: isMentioned('kb', k.id), hi: mentionHi === ki }" @click="pickMentionByClick('kb', k)">
-                  <span class="mention-ava"><database-outlined /></span>
-                  <div class="mention-text">
-                    <span class="mention-name">{{ k.name }}</span>
-                    <span class="mention-desc">{{ k.desc || (k.docCount ? k.docCount + ' 篇文档' : '') }}</span>
-                  </div>
-                  <check-outlined v-if="isMentioned('kb', k.id)" class="mention-check" />
-                </div>
-                <div v-if="!mentionKbFiltered.length" class="mention-empty">
-                  {{ mentionKbs.length ? '没有匹配的知识库' : '没有可见的知识库' }}
-                </div>
-              </template>
-              <template v-else-if="mentionTab === 'agent'">
-                <div v-for="(a, ai) in mentionAgentFiltered" :key="a.id" class="mention-item"
-                     :class="{ on: isMentioned('agent', a.id), hi: mentionHi === ai }" @click="pickMentionByClick('agent', a)">
-                  <AgentAvatar class="mention-ava-agent" :agent="a" :size="22" />
-                  <div class="mention-text">
-                    <span class="mention-name">{{ a.name }}</span>
-                    <span class="mention-desc">{{ a.desc || '本轮会向这位助手咨询' }}</span>
-                  </div>
-                  <check-outlined v-if="isMentioned('agent', a.id)" class="mention-check" />
-                </div>
-                <div v-if="!mentionAgentFiltered.length" class="mention-empty">
-                  {{ mentionAgents.length ? '没有匹配的智能体' : '没有可见的智能体' }}
-                </div>
-              </template>
-              <template v-else>
-                <div v-for="(d, di) in mentionDocFiltered" :key="d.id" class="mention-item"
-                     :class="{ on: isMentioned('doc', d.id), hi: mentionHi === di }" @click="pickMentionByClick('doc', d)">
-                  <span class="mention-ava"><file-text-outlined /></span>
-                  <div class="mention-text">
-                    <span class="mention-name">{{ d.fileName }}</span>
-                    <span class="mention-desc">{{ mentionDocStatus(d) }}</span>
-                  </div>
-                  <check-outlined v-if="isMentioned('doc', d.id)" class="mention-check" />
-                </div>
-                <div v-if="!mentionDocFiltered.length" class="mention-empty">
-                  {{ mentionDocs.length ? '没有匹配的文档' : '没有可见的文档' }}
-                </div>
-              </template>
-            </div>
-            <div class="mention-foot">
-              ↑↓ 选择 · Enter 确认 · Esc 关闭　|　@ 知识库 = 本轮检索只在这些库里找；@ 文档 = 该文档内容直接带入本轮上下文；@ 智能体 = 本轮强制咨询它（它带自己的知识库查一遍，回答仍由当前助手汇总）
-            </div>
-          </div>
           <!-- / 快捷命令面板（敲 / 唤起）：模板=往输入框插入常用问法框架；操作=会话级动作立即执行 -->
           <div v-if="slashOpen" class="mention-panel">
             <div class="mention-head">
@@ -859,42 +787,93 @@
             </div>
             <div class="mention-foot">↑↓ 选择 · Enter 确认 · Esc 关闭　|　# 勾选的历史问答作为本轮上下文带给模型（只对本轮生效，最多 10 条）</div>
           </div>
-          <!-- 「+」面板（附件 / 技能 / 历史 / 命令 四页签）：鼠标流入口——勾选与筛选都在面板内完成，
-               不往正文插触发字符（那是键盘流 @ / # 的做法）。行式交互与样式复用 .mention-panel / .mention-item -->
-          <div v-if="addOpen" class="mention-panel" @keydown.esc.stop="closeAddPanel">
+          <!-- 「+」面板（附件 / 引用 / 技能 / 计划 / 历史 / 命令 六页签）：输入框唯一的候选面板。
+               两个入口同一块面板——点「+」从鼠标流进来（筛选词落在面板搜索框），输入框敲 @ 也开这里
+               （停在「引用」页，筛选词实时取「@ 到光标」之间的正文，见 syncPanelQuery）。
+               六页签共用一套交互：搜索 + 数量统计 + Tab 切页 + ↑↓ 选择 + Enter 确认 + Esc 关闭。
+               行式交互与样式复用 .mention-panel / .mention-item -->
+          <div v-if="addOpen" class="mention-panel" @keydown="onPanelNavKeydown">
             <div class="mention-head add-head">
               <button v-for="t in ADD_TABS" :key="t.key" class="mention-tab" :class="{ on: addTab === t.key }"
-                      type="button" @click="addTab = t.key">
-                <component :is="t.icon" /> {{ t.label }}<span v-if="t.count()" class="add-tab-n">{{ t.count() }}</span>
+                      type="button" @click="switchAddTab(t.key)">
+                <component :is="t.icon" /> {{ t.label }}<span v-if="t.total()" class="add-tab-total">{{ t.total() }}</span><span v-if="t.count()" class="add-tab-n">{{ t.count() }}</span>
               </button>
               <button class="app-icon-btn add-close" title="关闭" @click="closeAddPanel"><close-outlined /></button>
             </div>
-            <!-- 附件：选完即收面板——面板正盖着输入框上方的附件 chip，收起来让用户看到已加上 -->
-            <template v-if="addTab === 'file'">
-              <div class="mention-list">
-                <div class="mention-item" @click="pickAttachments">
-                  <span class="mention-ava"><paper-clip-outlined /></span>
+            <div v-if="addSearchable" class="add-filter-row">
+              <input ref="addSearchEl" v-model="addQuery" class="add-filter" type="search"
+                     :placeholder="addSearchHint" autocomplete="off" />
+            </div>
+            <!-- 引用页的三类候选各自计数（沿用原 @ 弹窗的口径）；子页签只换列表，不重置搜索词 -->
+            <div v-if="addTab === 'ref'" class="mention-tabs add-subtabs">
+              <button v-for="s in REF_SUB_TABS" :key="s.key" class="mention-tab" :class="{ on: mentionTab === s.key }"
+                      type="button" @click="switchRefTab(s.key)">
+                <component :is="s.icon" /> {{ s.label }} {{ s.count() }}
+              </button>
+            </div>
+            <div ref="addListEl" class="mention-list">
+              <!-- 附件：选完即收面板（onAttachChange）——面板正盖着输入框上方的附件 chip，收起来让用户看到已加上 -->
+              <template v-if="addTab === 'file'">
+                <div v-for="(r, ri) in ADD_FILE_ROWS" :key="r.key" class="mention-item"
+                     :class="{ hi: addHi === ri }" @click="r.run()">
+                  <span class="mention-ava"><component :is="r.icon" /></span>
                   <div class="mention-text">
-                    <span class="mention-name">选择文件</span>
-                    <span class="mention-desc">上传后随本轮提问一起发送，解析后供模型阅读</span>
+                    <span class="mention-name">{{ r.name }}</span>
+                    <span class="mention-desc">{{ r.desc }}</span>
                   </div>
                 </div>
-                <div class="mention-item" @click="pickAddImages">
-                  <span class="mention-ava"><picture-outlined /></span>
-                  <div class="mention-text">
-                    <span class="mention-name">选择图片</span>
-                    <span class="mention-desc">压缩后随本轮提问（支持多选，最多 5 张）</span>
+              </template>
+              <!-- 引用：知识库=收窄本轮检索范围 / 文档=内容直接带入 / 智能体=本轮委派给它 -->
+              <template v-else-if="addTab === 'ref'">
+                <div v-if="mentionLoading" class="mention-empty">加载中…</div>
+                <template v-else-if="mentionTab === 'kb'">
+                  <div v-for="(k, ki) in addRefList" :key="k.id" class="mention-item"
+                       :class="{ on: isMentioned('kb', k.id), hi: addHi === ki }" @click="confirmRefRow('kb', k)">
+                    <span class="mention-ava"><database-outlined /></span>
+                    <div class="mention-text">
+                      <span class="mention-name">{{ k.name }}</span>
+                      <span class="mention-desc">{{ k.desc || (k.docCount ? k.docCount + ' 篇文档' : '') }}</span>
+                    </div>
+                    <check-outlined v-if="isMentioned('kb', k.id)" class="mention-check" />
                   </div>
-                </div>
-              </div>
-              <div class="mention-foot">支持 PDF / Word / Excel / PPT 与文本、代码文件；单个不超过 15MB（一次最多 5 个）　|　也可直接把文件拖进来</div>
-            </template>
-            <!-- 技能 -->
-            <template v-else-if="addTab === 'skill'">
-              <div class="mention-list">
+                  <div v-if="!addRefList.length" class="mention-empty">
+                    {{ mentionKbs.length ? '没有匹配的知识库' : '没有可见的知识库' }}
+                  </div>
+                </template>
+                <template v-else-if="mentionTab === 'agent'">
+                  <div v-for="(a, ai) in addRefList" :key="a.id" class="mention-item"
+                       :class="{ on: isMentioned('agent', a.id), hi: addHi === ai }" @click="confirmRefRow('agent', a)">
+                    <AgentAvatar class="mention-ava-agent" :agent="a" :size="22" />
+                    <div class="mention-text">
+                      <span class="mention-name">{{ a.name }}</span>
+                      <span class="mention-desc">{{ a.desc || '本轮会向这位助手咨询' }}</span>
+                    </div>
+                    <check-outlined v-if="isMentioned('agent', a.id)" class="mention-check" />
+                  </div>
+                  <div v-if="!addRefList.length" class="mention-empty">
+                    {{ mentionAgents.length ? '没有匹配的智能体' : '没有可见的智能体' }}
+                  </div>
+                </template>
+                <template v-else>
+                  <div v-for="(d, di) in addRefList" :key="d.id" class="mention-item"
+                       :class="{ on: isMentioned('doc', d.id), hi: addHi === di }" @click="confirmRefRow('doc', d)">
+                    <span class="mention-ava"><file-text-outlined /></span>
+                    <div class="mention-text">
+                      <span class="mention-name">{{ d.fileName }}</span>
+                      <span class="mention-desc">{{ mentionDocStatus(d) }}</span>
+                    </div>
+                    <check-outlined v-if="isMentioned('doc', d.id)" class="mention-check" />
+                  </div>
+                  <div v-if="!addRefList.length" class="mention-empty">
+                    {{ mentionDocs.length ? '没有匹配的文档' : '没有可见的文档' }}
+                  </div>
+                </template>
+              </template>
+              <!-- 技能 -->
+              <template v-else-if="addTab === 'skill'">
                 <div v-if="!skillList.length" class="mention-empty">还没有可用技能，管理员可在「设置 → 技能」中安装</div>
-                <div v-for="s in skillList" :key="s.name" class="mention-item"
-                     :class="{ on: pickedSkills.includes(s.name) }" @click="toggleSkill(s.name)">
+                <div v-for="(s, si) in addSkillList" :key="s.name" class="mention-item"
+                     :class="{ on: pickedSkills.includes(s.name), hi: addHi === si }" @click="toggleSkill(s.name)">
                   <span class="mention-ava skill-ava" :style="skillAvaStyle(s.name)">{{ (s.name || '技').slice(0, 1) }}</span>
                   <div class="mention-text">
                     <span class="mention-name">{{ s.name }}</span>
@@ -902,15 +881,13 @@
                   </div>
                   <check-outlined v-if="pickedSkills.includes(s.name)" class="mention-check" />
                 </div>
-              </div>
-              <div class="mention-foot">选用的技能对本轮生效，下一轮自动取消（一次最多 3 个）</div>
-            </template>
-            <!-- 计划模式：入口开关（持久化）。开启后每轮先产出执行计划，由用户批准/修改/取消后才正式回答。
-                 持久模式用开关表达（不套技能/历史那种「本轮勾选」的语汇）：行可点、开关可拨，
-                 开启态只变开关自身，不再整行变色/头像实心——那套是「列表里挑中了」的语义 -->
-            <template v-else-if="addTab === 'plan'">
-              <div class="mention-list">
-                <div class="mention-item plan-switch-row" @click="setPlanMode(!planModeOn)">
+                <div v-if="skillList.length && !addSkillList.length" class="mention-empty">没有匹配的技能</div>
+              </template>
+              <!-- 计划模式：入口开关（持久化）。开启后每轮先产出执行计划，由用户批准/修改/取消后才正式回答。
+                   持久模式用开关表达（不套技能/历史那种「本轮勾选」的语汇）：行可点、开关可拨，
+                   开启态只变开关自身，不再整行变色/头像实心——那套是「列表里挑中了」的语义 -->
+              <template v-else-if="addTab === 'plan'">
+                <div class="mention-item plan-switch-row" :class="{ hi: addHi === 0 }" @click="setPlanMode(!planModeOn)">
                   <span class="mention-ava"><ordered-list-outlined /></span>
                   <div class="mention-text">
                     <span class="mention-name">计划模式</span>
@@ -920,16 +897,11 @@
                     <a-switch :checked="planModeOn" size="small" @change="setPlanMode" />
                   </span>
                 </div>
-              </div>
-            </template>
-            <!-- 历史引用：勾选不关面板（多选），与键盘流 # 面板同源同一份候选 -->
-            <template v-else-if="addTab === 'hist'">
-              <div class="add-filter-row">
-                <input v-model="addHistQuery" class="add-filter" type="search" placeholder="筛选历史问答…" />
-              </div>
-              <div class="mention-list">
-                <div v-for="m in addHistCandidates" :key="m.messageId" class="mention-item"
-                     :class="{ on: isHistPicked(m.messageId) }" @click="toggleHistoryRef(m)">
+              </template>
+              <!-- 历史引用：勾选不关面板（多选），与键盘流 # 面板同源同一份候选 -->
+              <template v-else-if="addTab === 'hist'">
+                <div v-for="(m, mi) in addHistCandidates" :key="m.messageId" class="mention-item"
+                     :class="{ on: isHistPicked(m.messageId), hi: addHi === mi }" @click="toggleHistoryRef(m)">
                   <span class="mention-ava" :class="m.role === 'user' ? 'hist-ava-q' : 'hist-ava-a'">
                     {{ m.role === 'user' ? '问' : '答' }}
                   </span>
@@ -942,14 +914,11 @@
                 <div v-if="!addHistCandidates.length" class="mention-empty">
                   {{ histPool.length ? '没有匹配的历史问答' : '本会话还没有可引用的历史问答' }}
                 </div>
-              </div>
-              <div class="mention-foot">勾选的历史问答作为本轮上下文带给模型（只对本轮生效，最多 10 条）　|　也可在输入框输入 # 唤起</div>
-            </template>
-            <!-- 快捷命令：模板插入输入框可再编辑（收面板），操作立即执行 -->
-            <template v-else>
-              <div class="mention-list">
-                <div v-for="c in slashCommands" :key="c.key" class="mention-item"
-                     :class="{ 'mi-off': loading }" @click="runCmdFromAddPanel(c)">
+              </template>
+              <!-- 快捷命令：模板插入输入框可再编辑（收面板），操作立即执行 -->
+              <template v-else>
+                <div v-for="(c, ci) in addCmdList" :key="c.key" class="mention-item"
+                     :class="{ 'mi-off': loading, hi: addHi === ci }" @click="runCmdFromAddPanel(c)">
                   <span class="mention-ava"><component :is="c.icon" /></span>
                   <div class="mention-text">
                     <span class="mention-name"><code v-if="c.cmd" class="slash-cmd">/{{ c.cmd }}</code>{{ c.name }}</span>
@@ -957,9 +926,10 @@
                   </div>
                   <span class="slash-kind" :class="c.kind === 'tpl' ? 'k-tpl' : 'k-act'">{{ c.kind === 'tpl' ? '模板' : '操作' }}</span>
                 </div>
-              </div>
-              <div class="mention-foot">模板 = 插入常用问法框架（可再编辑）；操作 = 立即执行　|　也可在输入框输入 / 唤起</div>
-            </template>
+                <div v-if="!addCmdList.length" class="mention-empty">没有匹配的命令</div>
+              </template>
+            </div>
+            <div class="mention-foot">{{ addFootHint }}</div>
           </div>
           <a-textarea ref="textareaRef" v-model:value="text" :placeholder="composerPlaceholder"
                       :auto-size="{ minRows: 1, maxRows: 6 }" class="input-area"
@@ -1016,7 +986,7 @@
                 </template>
               </a-dropdown>
               <button class="app-icon-btn add-btn" :class="{ 'toolbar-btn-on': addOpen || pickedSkills.length || planModeOn }"
-                      title="添加：附件 / 技能 / 计划模式 / 引用历史问答 / 快捷命令" @click="toggleAddPanel">
+                      title="添加：附件 / 引用资料 / 技能 / 计划模式 / 引用历史问答 / 快捷命令" @click="toggleAddPanel">
                 <plus-outlined />
               </button>
             </div>
@@ -1185,8 +1155,14 @@
         </button>
         <div v-if="todoOpen" class="rp-todo-list">
           <div v-for="(t, ti) in sessionTodos.items" :key="ti" class="rp-todo-item" :class="t.status">
-            <span class="rp-todo-box">{{ t.status === 'done' ? '✓' : t.status === 'doing' ? '▸' : '' }}</span>
+            <!-- 进行中且本轮还在跑：方框换成转圈 + 整行底色 + 「执行中」文字。
+                 三者一起上是因为单独任何一个都不够——14px 的框里换个符号在五条长句子中等同没换，
+                 而只有转圈没有文字时用户会以为那是页面在加载。本轮已停时不给转圈：清单是快照，
+                 停掉的那一项再转下去就是撒谎。 -->
+            <span v-if="t.status === 'doing' && loading" class="rp-todo-run"><loading-outlined spin /></span>
+            <span v-else class="rp-todo-box">{{ t.status === 'done' ? '✓' : '' }}</span>
             <span class="rp-todo-txt">{{ t.content }}</span>
+            <span v-if="t.status === 'doing' && loading" class="rp-todo-run-tag">执行中</span>
           </div>
         </div>
       </div>
@@ -1382,14 +1358,49 @@
       </a-spin>
     </a-modal>
 
-    <!-- 压缩后的摘要全文：压缩结果条「查看摘要」打开。正文在打开时快照（compactSummaryText），
-         否则发送新一轮清掉 compactNotice 后，弹窗内容会跟着变空 -->
-    <a-modal v-model:open="compactSummaryOpen" title="早期对话摘要" :footer="null" width="640px">
-      <div class="csum-tip">
-        以下是后续回答里「早期对话」的呈现形式（约 {{ fmtTokens(compactSummaryTokens) }} tokens）。
-        完整问答仍保留在会话中，往上翻可回看。
+    <!-- 早期对话摘要：分隔线「查看摘要」打开。内容在打开那一刻快照下来（见引擎 openCompactSummary），
+         否则发送下一轮会清掉当场结果、弹窗跟着变空 -->
+    <a-modal v-model:open="compactSummaryOpen" :footer="null" width="720px">
+      <template #title>
+        <div class="csum-head">
+          <span class="csum-title">早期对话摘要</span>
+          <span class="csum-sub">后续回答里的「更早的对话」就按这一份带入</span>
+        </div>
+      </template>
+      <div class="csum-stats">
+        <div v-if="compactSummary && compactSummary.freed > 0" class="csum-stat">
+          <span class="cs-k">本次腾出</span><span class="cs-v">约 {{ fmtTokens(compactSummary.freed) }} tokens</span>
+        </div>
+        <div v-if="compactSummary" class="csum-stat">
+          <span class="cs-k">摘要规模</span><span class="cs-v">{{ fmtTokens(compactSummary.tokens) }} tokens</span>
+        </div>
+        <div v-if="compactSummary && compactSummary.keepTurns > 0" class="csum-stat">
+          <span class="cs-k">逐字保留</span><span class="cs-v">最近 {{ compactSummary.keepTurns }} 次问答</span>
+        </div>
       </div>
-      <pre class="csum-body">{{ compactSummaryText }}</pre>
+      <!-- 摘要正文本身是模型给的条目化 Markdown：按 Markdown 渲染，别用 pre 把 - 和 # 原样摊出来 -->
+      <div class="md csum-md" v-html="renderMd(compactSummary ? compactSummary.text : '')"></div>
+      <div class="csum-foot">
+        <span class="csum-tip">完整问答仍保留在会话中，往上翻可回看；每次压缩都会把更早的对话并入这一份。</span>
+        <div class="csum-acts">
+          <button class="app-btn ghost small" type="button" @click="csumInstrOpen = !csumInstrOpen">
+            <edit-outlined /> 带要求重新压缩
+          </button>
+          <button class="app-btn small" type="button" @click="copyText(compactSummary ? compactSummary.text : '', '已复制摘要')">
+            <copy-outlined /> 复制摘要
+          </button>
+        </div>
+      </div>
+      <!-- 附加要求随摘要提示词下发给模型（后端 compact 的 instruction 参数）：这次要保留什么、忽略什么。
+           此前只有 /compact 空格加要求这一条没人知道的路径能用 -->
+      <div v-if="csumInstrOpen" class="csum-instr">
+        <input v-model="csumInstr" class="csum-instr-input" maxlength="200"
+               placeholder="这次摘要要保留什么、忽略什么" @keyup.enter="applyRecompact" />
+        <button class="app-btn small" type="button" :disabled="compacting" @click="applyRecompact">
+          {{ compacting ? '压缩中…' : '重新压缩' }}
+        </button>
+        <button class="app-btn ghost small" type="button" @click="csumInstrOpen = false">取消</button>
+      </div>
     </a-modal>
 
     <!-- 粘贴文本卡片点开看全文：正文只留在本轮内存里（随问答落库的是名称/体积），
@@ -1511,7 +1522,7 @@ import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, Close
          ArrowUpOutlined, RobotOutlined, SettingOutlined, ThunderboltOutlined, LockOutlined, RedoOutlined,
          CloseOutlined, DatabaseOutlined, SearchOutlined, UpOutlined, ShareAltOutlined,
          HistoryOutlined, TranslationOutlined, QuestionCircleOutlined, SwapOutlined, InfoCircleOutlined,
-         AppstoreOutlined, PictureOutlined, ClockCircleOutlined,
+         AppstoreOutlined, PictureOutlined, ClockCircleOutlined, BookOutlined,
          OrderedListOutlined, CheckCircleOutlined } from '@ant-design/icons-vue'
 import { debugRetrieval, deleteMessageGroup, submitFeedback as apiSubmitFeedback,
          addEvalCase, getSessionShare, enableSessionShare, disableSessionShare } from '../api'
@@ -1533,6 +1544,7 @@ import { isNarrow, isCoarse } from '../h5/mobile'
 import MobileChatHead from '../h5/MobileChatHead.vue'
 import MobileSampleCards from '../h5/MobileSampleCards.vue'
 import AskRecordCard from '../components/AskRecordCard.vue'
+import MsgDivider from '../components/MsgDivider.vue'
 import ToolSpillButton from '../components/ToolSpillButton.vue'
 import SessionEventsPanel from '../components/SessionEventsPanel.vue'
 // 回答正文与它的浮层宿主：与两个分享页共用同一份实现（详见 src/chat/answerViewer.js 顶部说明）
@@ -2054,20 +2066,23 @@ const onAddImgChange = e => {
   addFiles(files)
   closeAddPanel()
 }
+/** 敲 @ 唤起「+」面板并停在「引用」页：不再有独立的 @ 弹窗，两个入口同一块面板。
+ *  与点「+」进来的差别只在筛选词从哪来——这里由 syncPanelQuery 实时取正文里「@ 到光标」那一段。
+ *  只能逐个关其它面板：调用点（onInputKeydown）刚把 @ 的位置记进 panelTriggerPos/Ch，
+ *  closeAllPanels 会顺手抹掉它，筛选词通道就断了（openSlashPanel / openHistPanel 同理）。 */
 const openMentionPanel = () => {
-  addOpen.value = false
-  mentionOpen.value = true
+  slashOpen.value = false
+  histOpen.value = false
+  addTab.value = 'ref'
+  addOpen.value = true
+  addHi.value = 0
   mentionQuery.value = ''
-  mentionHi.value = 0
-  if (panelTriggerCh !== '@') { panelTriggerPos = -1; panelTriggerCh = '' }
-  if (!mentionKbs.value.length && !mentionDocs.value.length) loadMentionCandidates()
-  if (!agentList.value.length) loadAgents()   // 智能体候选直接复用下拉的数据（挂载时已开始加载，兜底再拉一次）
+  ensureRefCandidates()
 }
-const closeMentionPanel = () => closeAllPanels()
 /** 点面板/输入区之外关闭（面板不遮断输入，所以用 document 级监听而不是遮罩层）；
- *  @ 引用 / / 命令 / # 历史引用 / + 添加四个面板共用同一关闭监听（同一容器、同一交互约定） */
+ *  / 命令 / # 历史引用 / + 添加三个面板共用同一关闭监听（同一容器、同一交互约定） */
 const onDocClickForMention = e => {
-  if (!mentionOpen.value && !slashOpen.value && !histOpen.value && !addOpen.value) return
+  if (!slashOpen.value && !histOpen.value && !addOpen.value) return
   const el = e.target
   if (el && el.closest && (el.closest('.mention-panel') || el.closest('.input-box'))) return
   closeAllPanels()
@@ -2075,49 +2090,44 @@ const onDocClickForMention = e => {
 onMounted(() => document.addEventListener('click', onDocClickForMention))
 onUnmounted(() => document.removeEventListener('click', onDocClickForMention))
 
-// ==================== 三个唤起面板的共用输入通道 ====================
+// ==================== 面板的共用键盘导航通道 ====================
 // 起因：原来三个面板各自带一个搜索框，敲 @ 时 preventDefault 吞掉字符 + nextTick 把焦点抢进搜索框。
 // 后果是「@ 打不进输入框」，用户无法在任意位置输入该符号（a@b.com、@某人 全部被吞）。
 // 现在反过来：**输入框是唯一输入源**——字符正常落下、焦点全程留在输入框，
 // 面板只做「展示 + 键盘导航」，筛选词实时取「触发字符到光标」之间的正文（syncPanelQuery）。
 // 确认后用 stripTriggerToken 把「触发字符 + 筛选词」这一段从正文里摘掉，不留残渣。
+// @ 弹窗已并进「+」面板（见下方 addOpen 一节）：敲 @ 开的是同一块面板、停在「引用」页，
+// 所以这条键盘通道现在同时服务 / # 两个触发面板与「+」面板；焦点在哪（输入框 / 面板搜索框）都走 onPanelNavKeydown。
 
 /** 触发字符在正文里的位置与字符本身（keydown 时记录：字符尚未进 DOM，插入后下标即为 pos） */
 let panelTriggerPos = -1
 let panelTriggerCh = ''
 
-const panelAnyOpen = () => mentionOpen.value || slashOpen.value || histOpen.value
+const panelAnyOpen = () => slashOpen.value || histOpen.value || addOpen.value
 const closeAllPanels = () => {
-  mentionOpen.value = false
   slashOpen.value = false
   histOpen.value = false
   addOpen.value = false
   panelTriggerPos = -1
   panelTriggerCh = ''
 }
-/** 当前打开面板的候选总数与高亮下标读写（三面板结构一致，抽出来避免各写一遍 if/else） */
+/** 当前打开面板的候选总数与高亮下标读写（各面板结构一致，抽出来避免各写一遍 if/else） */
 const panelListSize = () => {
-  if (mentionOpen.value) {
-    return mentionTab.value === 'kb' ? mentionKbFiltered.value.length
-      : mentionTab.value === 'agent' ? mentionAgentFiltered.value.length : mentionDocFiltered.value.length
-  }
   if (slashOpen.value) return slashFiltered.value.length
   if (histOpen.value) return histCandidates.value.length
+  if (addOpen.value) return addListSize.value
   return 0
 }
-// 第三分支必须是 histHi（ref）。曾误写为 histOpen.value（布尔），导致 # 面板 getPanelHi().value
-// 为 undefined → 高亮写进 NaN、方向键不动、Enter 落空后把「#」原文当问题发出（鼠标点选不受影响）。
-const getPanelHi = () => (mentionOpen.value ? mentionHi : slashOpen.value ? slashHi : histHi)
-const setPanelHi = v => {
-  if (mentionOpen.value) mentionHi.value = v
-  else if (slashOpen.value) slashHi.value = v
-  else if (histOpen.value) histHi.value = v
-}
-// 三个面板的可滚列表（v-if 同时只渲染一个；取用顺序与 getPanelHi 一致）
-const mentionListEl = ref(null)
+// 取回的必须是 ref 本身而非 .value（movePanelHi 还要再读 .value）。
+// 曾把布尔写成 ref，导致 # 面板 getPanelHi().value 为 undefined → 高亮写进 NaN、方向键不动、
+// Enter 落空后把「#」原文当问题发出（鼠标点选不受影响）。
+const getPanelHi = () => (slashOpen.value ? slashHi : histOpen.value ? histHi : addHi)
+const setPanelHi = v => { getPanelHi().value = v }
+// 各面板的可滚列表（同时只渲染一个；取用顺序与 getPanelHi 一致）
 const slashListEl = ref(null)
 const histListEl = ref(null)
-const panelListEl = () => (mentionOpen.value ? mentionListEl : slashOpen.value ? slashListEl : histListEl).value
+const addListEl = ref(null)
+const panelListEl = () => (slashOpen.value ? slashListEl : histOpen.value ? histListEl : addListEl).value
 /** 高亮滑出列表可视区时把列表滚回来：面板不抢焦点（输入框是唯一输入源），浏览器不会替我们滚，
  *  不管的话 ↑↓ 按过可视区边界就等于「没人被选中」。
  *  手算 scrollTop 而非 scrollIntoView：后者会连祖先滚动容器（对话区）一起滚，方向键一按整页跳位。 */
@@ -2136,18 +2146,10 @@ const movePanelHi = dir => {
   setPanelHi((getPanelHi().value + dir + n) % n)   // 循环滚动
   nextTick(scrollPanelHiIntoView)
 }
-/** Enter 确认高亮项：@ 引用（加 chip）/ / 命令（插入模板或执行）/ # 历史引用（加 chip）。返回是否消费了本次回车 */
+/** Enter 确认高亮项：/ 命令（插入模板或执行）/ # 历史引用（加 chip）/「+」面板当前页。
+ *  返回 false = 没有可确认的候选（筛空了），本次回车交回输入框照常发送，避免"打不中就发不出去" */
 const confirmPanelHi = () => {
   const i = getPanelHi().value
-  if (mentionOpen.value) {
-    const item = mentionTab.value === 'kb' ? mentionKbFiltered.value[i]
-      : mentionTab.value === 'agent' ? mentionAgentFiltered.value[i] : mentionDocFiltered.value[i]
-    if (!item) return false
-    stripTriggerToken()
-    toggleMention(mentionTab.value, item)
-    closeAllPanels()
-    return true
-  }
   if (slashOpen.value) {
     const c = slashFiltered.value[i]
     if (!c) return false
@@ -2164,6 +2166,7 @@ const confirmPanelHi = () => {
     closeAllPanels()
     return true
   }
+  if (addOpen.value) return confirmAddHi(i)
   return false
 }
 /** 摘掉「触发字符 + 其后已输入的筛选词」：引用已由 chip 承载，正文里不该残留这段触发文本。
@@ -2206,18 +2209,11 @@ const syncPanelQuery = () => {
   // 空白 = 这个"词"已经结束，收起面板；例外是 / 命令的带参写法（/compact 保留结论）——
   // 别名打完整后敲的空格是在给命令传要求，此时收起面板就等于把参数那半句丢掉
   if (/\s/.test(q) && !(slashOpen.value && slashArgPending(q))) { closeAllPanels(); return }
-  if (mentionOpen.value) mentionQuery.value = q
-  else if (slashOpen.value) slashQuery.value = q
+  if (slashOpen.value) slashQuery.value = q
   else if (histOpen.value) histQuery.value = q
+  else if (addOpen.value) mentionQuery.value = q   // 敲 @ 开的是「+」面板的引用页，筛选词同样取自正文
   setPanelHi(0)
   nextTick(scrollPanelHiIntoView)   // 高亮回到第一条后列表也跟着回去，否则筛完第一条停在可视区外
-}
-
-// 鼠标点候选：与 Enter 确认同一条路径（先摘掉触发片段再加 chip），避免两条路行为不一致
-const pickMentionByClick = (type, item) => {
-  stripTriggerToken()
-  toggleMention(type, item)
-  closeAllPanels()
 }
 
 // ==================== / 快捷命令面板（模板插入 + 会话操作） ====================
@@ -2250,10 +2246,11 @@ const slashCommands = [
     desc: '开一个空白会话（当前会话保留在侧边栏）',
     run: () => createNewSession() }
 ]
+/** 只能逐个关其它面板，不能调 closeAllPanels：调用点（onInputKeydown）刚把触发字符的位置记进
+ *  panelTriggerPos/Ch，closeAllPanels 会顺手抹掉它，筛选词通道就断了。 */
 const openSlashPanel = () => {
   addOpen.value = false
   histOpen.value = false
-  mentionOpen.value = false
   slashOpen.value = true
   slashQuery.value = ''
   slashHi.value = 0
@@ -2347,33 +2344,182 @@ const pickHistoryRefByClick = m => {
 const openHistPanel = () => {
   addOpen.value = false
   slashOpen.value = false
-  mentionOpen.value = false
   histOpen.value = true
   histQuery.value = ''
   histHi.value = 0
 }
 const closeHistPanel = () => closeAllPanels()
 
-// ==================== 「+」面板（附件 / 技能 / 历史 / 命令 四页签） ====================
-// 鼠标流入口：@ / # 由输入框敲字符唤起（触发面板的筛选通道依赖输入框正文），这条不插触发字符、
-// 筛选用面板内输入框。两条流互斥 —— 开一个就收起另一个。
+// ==================== 「+」面板（附件 / 引用 / 技能 / 计划 / 历史 / 命令 六页签） ====================
+// 输入框唯一的候选面板。两个入口：点「+」从鼠标流进来（筛选词落在面板搜索框），
+// 敲 @ 也开这里（停在「引用」页，筛选词由 syncPanelQuery 取正文里「@ 到光标」那一段）。
+// 六页签共用一套交互：搜索 + 数量统计 + Tab 切页 + ↑↓ 选择 + Enter 确认 + Esc 关闭。
 const addOpen = ref(false)
 const addTab = ref('file')
+const addHi = ref(0)
+const addSearchEl = ref(null)
 const addHistQuery = ref('')
+const addSkillQuery = ref('')
+const addCmdQuery = ref('')
 const addHistCandidates = computed(() => histListOf(addHistQuery.value))
+// count()=已选/生效数（实心徽标，告诉用户这轮会带上什么）；total()=可挑数（弱色数字，原 @ 弹窗的口径）
 const ADD_TABS = [
-  { key: 'file', label: '附件', icon: PaperClipOutlined, count: () => pendingFiles.value.length + pendingImages.value.length },
-  { key: 'skill', label: '技能', icon: AppstoreOutlined, count: () => pickedSkills.value.length },
-  { key: 'plan', label: '计划', icon: OrderedListOutlined, count: () => planModeOn.value ? 1 : 0 },
-  { key: 'hist', label: '历史', icon: HistoryOutlined, count: () => pendingHistoryRefs.value.length },
-  { key: 'cmd', label: '命令', icon: ThunderboltOutlined, count: () => 0 }
+  { key: 'file', label: '附件', icon: PaperClipOutlined, count: () => pendingFiles.value.length + pendingImages.value.length, total: () => 0 },
+  { key: 'ref', label: '引用', icon: BookOutlined, count: () => pendingMentions.value.length, total: () => 0 },
+  { key: 'skill', label: '技能', icon: AppstoreOutlined, count: () => pickedSkills.value.length, total: () => skillList.value.length },
+  { key: 'plan', label: '计划', icon: OrderedListOutlined, count: () => planModeOn.value ? 1 : 0, total: () => 0 },
+  { key: 'hist', label: '历史', icon: HistoryOutlined, count: () => pendingHistoryRefs.value.length, total: () => 0 },
+  { key: 'cmd', label: '命令', icon: ThunderboltOutlined, count: () => 0, total: () => slashCommands.length }
 ]
+const REF_SUB_TABS = [
+  { key: 'kb', label: '知识库', icon: DatabaseOutlined, count: () => mentionKbs.value.length },
+  { key: 'doc', label: '文档', icon: FileTextOutlined, count: () => mentionDocs.value.length },
+  { key: 'agent', label: '智能体', icon: RobotOutlined, count: () => mentionAgents.value.length }
+]
+const ADD_FILE_ROWS = [
+  { key: 'file', name: '选择文件', desc: '上传后随本轮提问一起发送，解析后供模型阅读', icon: PaperClipOutlined, run: pickAttachments },
+  { key: 'image', name: '选择图片', desc: '压缩后随本轮提问（支持多选，最多 5 张）', icon: PictureOutlined, run: pickAddImages }
+]
+// 搜索框一页一词：切页签不串味（引用页那一份就是 mentionQuery，敲 @ 时由正文实时灌进来）
+const addSearchable = computed(() => ['ref', 'skill', 'hist', 'cmd'].includes(addTab.value))
+const addQuery = computed({
+  get: () => addTab.value === 'ref' ? mentionQuery.value
+    : addTab.value === 'skill' ? addSkillQuery.value
+      : addTab.value === 'hist' ? addHistQuery.value
+        : addTab.value === 'cmd' ? addCmdQuery.value : '',
+  set: v => {
+    if (addTab.value === 'ref') mentionQuery.value = v
+    else if (addTab.value === 'skill') addSkillQuery.value = v
+    else if (addTab.value === 'hist') addHistQuery.value = v
+    else if (addTab.value === 'cmd') addCmdQuery.value = v
+  }
+})
+const addSearchHint = computed(() => ({
+  ref: '搜索知识库、文档或智能体',
+  skill: '搜索技能',
+  hist: '筛选历史问答',
+  cmd: '搜索命令'
+}[addTab.value] || ''))
+const addFootHint = computed(() => {
+  const nav = 'Tab 切页 · ↑↓ 选择 · Enter 确认 · Esc 关闭'
+  const t = addTab.value
+  if (t === 'file') return nav + '　|　支持 PDF / Word / Excel / PPT 与文本、代码文件；单个不超过 15MB（一次最多 5 个），也可直接把文件拖进来'
+  if (t === 'ref') return nav + '　|　引用只对本轮生效：知识库 = 本轮检索只在这些库里找；文档 = 内容直接带入本轮上下文；智能体 = 本轮强制咨询它（它带自己的知识库查一遍，回答仍由当前助手汇总）'
+  if (t === 'skill') return nav + '　|　选用的技能对本轮生效，下一轮自动取消（一次最多 3 个）'
+  if (t === 'plan') return nav + '　|　开启后每轮先产出执行计划，你批准或修改后才开始回答'
+  if (t === 'hist') return nav + '　|　勾选的历史问答作为本轮上下文带给模型（只对本轮生效，最多 10 条）'
+  return nav + '　|　模板 = 插入常用问法框架（可再编辑）；操作 = 立即执行'
+})
+const addSkillList = computed(() => {
+  const s = addSkillQuery.value.trim().toLowerCase()
+  if (!s) return skillList.value
+  return skillList.value.filter(x => `${x.name || ''} ${x.description || ''}`.toLowerCase().includes(s))
+})
+const addCmdList = computed(() => {
+  const s = addCmdQuery.value.trim().toLowerCase()
+  if (!s) return slashCommands
+  return slashCommands.filter(c => `${c.name} ${c.desc || ''} ${c.cmd || ''}`.toLowerCase().includes(s))
+})
+/** 引用页当前子页签的候选（点击与 Enter 都读这一份，下标才对得上） */
+const addRefList = computed(() => mentionTab.value === 'kb' ? mentionKbFiltered.value
+  : mentionTab.value === 'agent' ? mentionAgentFiltered.value : mentionDocFiltered.value)
+const addListSize = computed(() => addTab.value === 'ref' ? addRefList.value.length
+  : addTab.value === 'skill' ? addSkillList.value.length
+    : addTab.value === 'hist' ? addHistCandidates.value.length
+      : addTab.value === 'cmd' ? addCmdList.value.length
+        : addTab.value === 'file' ? ADD_FILE_ROWS.length
+          : addTab.value === 'plan' ? 1 : 0)
+// 候选集变了，原高亮下标已无意义：回到第一条，并把列表滚回顶部区域
+watch(addQuery, () => { addHi.value = 0; nextTick(scrollPanelHiIntoView) })
+
 const closeAddPanel = () => { addOpen.value = false }
+/** 引用候选懒加载（首次进入引用页才拉）：库/文档走列表接口（共享范围已在后端过滤），
+ *  智能体复用工具条下拉的同一份数据（挂载时已开始加载，兜底再拉一次） */
+const ensureRefCandidates = () => {
+  if (!mentionKbs.value.length && !mentionDocs.value.length) loadMentionCandidates()
+  if (!agentList.value.length) loadAgents()
+}
+/** 可搜索的页签把焦点交给面板内搜索框（打字即筛），否则交回输入框——
+ *  两处键盘都走 onPanelNavKeydown，焦点在哪都能继续 ↑↓/Enter/Esc */
+const focusAddSearch = () => nextTick(() => {
+  if (addSearchable.value) addSearchEl.value?.focus?.()
+  else textareaRef.value?.focus?.()
+})
+const switchAddTab = k => {
+  if (k !== addTab.value) {
+    // 敲 @ 进来时正文里留着「@ + 筛选词」。切到别的页签就意味着改由搜索框接手筛选，
+    // 所以先把触发片段摘掉（词本身留在 mentionQuery 里，回到「引用」页还能接着筛）
+    if (panelTriggerPos >= 0) stripTriggerToken()
+    addTab.value = k
+    addHi.value = 0
+    if (k === 'ref') ensureRefCandidates()
+  }
+  focusAddSearch()
+}
+const moveAddTab = dir => {
+  const keys = ADD_TABS.map(t => t.key)
+  const i = keys.indexOf(addTab.value)
+  switchAddTab(keys[(i + dir + keys.length) % keys.length])
+}
+const switchRefTab = k => {
+  mentionTab.value = k
+  addHi.value = 0
+  nextTick(scrollPanelHiIntoView)
+}
+/** 引用行确认（Enter 与鼠标点击同一条路径）。两种入口两种收尾：
+ *  敲 @ 进来的，确认后摘掉触发片段、收面板、焦点回输入框接着打字（引用已由 chip 承载）；
+ *  点「+」进来的，勾选后留在面板里继续挑——引用可多选，收面板等于逼用户反复点开。 */
+const confirmRefRow = (type, item) => {
+  const byTrigger = panelTriggerPos >= 0 && panelTriggerCh === '@'
+  if (byTrigger) { stripTriggerToken(); closeAllPanels() }
+  toggleMention(type, item)
+  if (byTrigger) focusInput()
+}
+/** Enter 确认「+」面板当前页的高亮项。返回 false = 这一页没有可确认的候选，
+ *  本次回车交回输入框照常发送（避免"筛到空了就打不出发不出去"） */
+const confirmAddHi = i => {
+  const t = addTab.value
+  if (t === 'file') {
+    const row = ADD_FILE_ROWS[i]
+    if (!row) return false
+    row.run()
+    return true
+  }
+  if (t === 'ref') {
+    const item = addRefList.value[i]
+    if (!item) return false
+    confirmRefRow(mentionTab.value, item)
+    return true
+  }
+  if (t === 'skill') {
+    const s = addSkillList.value[i]
+    if (!s) return false
+    toggleSkill(s.name)
+    return true
+  }
+  if (t === 'plan') { setPlanMode(!planModeOn.value); return true }
+  if (t === 'hist') {
+    const m = addHistCandidates.value[i]
+    if (!m) return false
+    toggleHistoryRef(m)
+    return true
+  }
+  const c = addCmdList.value[i]
+  if (!c) return false
+  runCmdFromAddPanel(c)
+  return true
+}
 const toggleAddPanel = () => {
   if (addOpen.value) { closeAddPanel(); return }
-  closeAllPanels()          // 可能与 @ / / # 面板同屏，先收起它们
+  closeAllPanels()          // 与 / # 触发面板互斥，开一个收一个
   addHistQuery.value = ''   // 每次打开从干净筛选开始（页签停留在上次看的那页）
+  addSkillQuery.value = ''
+  addCmdQuery.value = ''
+  mentionQuery.value = ''   // 引用页同理：上次敲 @ 筛剩的词不该在重开时还挂着
+  addHi.value = 0
+  if (addTab.value === 'ref') ensureRefCandidates()
   addOpen.value = true
+  focusAddSearch()
 }
 /** 命令页点选：模板插入输入框（可再编辑）、操作立即执行；两者都收起面板。
  *  生成中「操作」与触发面板同口径禁用——那些命令会改会话状态，不能和流式回答打架 */
@@ -2483,31 +2629,40 @@ const doEnableShare = () => enableShare(false)
 const regenerateShareLink = () => enableShare(true)
 const doDisableShare = () => stopShare()
 const openSharedPage = () => { if (shareUrl.value) window.open(shareUrl.value, '_blank', 'noopener') }
+/** 面板键盘导航（/ # 触发面板与「+」面板共用一套；焦点在输入框还是在面板搜索框都走这一个函数）。
+ *  返回 true = 本次按键已被面板消费，调用方（onInputKeydown）不要再落到发送分支。 */
+const onPanelNavKeydown = e => {
+  if (e.isComposing || e.keyCode === 229) return false   // 输入法组合中（中文候选未上屏）一律放行
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault()
+    movePanelHi(e.key === 'ArrowDown' ? 1 : -1)
+    return true
+  }
+  if (e.key === 'Escape') {
+    e.preventDefault()
+    closeAllPanels()
+    focusInput()
+    return true
+  }
+  // Tab 切页签只在「+」面板有意义（六页签互切）；/ # 面板没有页签，留给原生焦点跳转
+  if (e.key === 'Tab' && addOpen.value) {
+    e.preventDefault()
+    moveAddTab(e.shiftKey ? -1 : 1)
+    return true
+  }
+  // 有高亮候选才由 Enter 确认；没有候选（筛空了）时 Enter 仍走发送，避免"打不中就发不出去"
+  if (e.key === 'Enter' && !e.shiftKey && confirmPanelHi()) {
+    e.preventDefault()
+    return true
+  }
+  return false
+}
 // 输入框回车发送（Enter 发送，Shift+Enter 换行；输入法组合中不发送）
 const onInputKeydown = e => {
   if (e.isComposing || e.keyCode === 229) return   // 输入法组合中（中文候选未上屏）一律放行
-  // 面板打开时由输入框接管导航：↑↓ 移动高亮、Enter 确认、Esc 关闭
-  if (mentionOpen.value || slashOpen.value || histOpen.value) {
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      e.preventDefault()
-      movePanelHi(e.key === 'ArrowDown' ? 1 : -1)
-      return
-    }
-    if (e.key === 'Escape') {
-      e.preventDefault()
-      closeAllPanels()
-      return
-    }
-    if (e.key === 'Enter' && !e.shiftKey) {
-      // 有高亮候选才由 Enter 确认；没有候选（筛空了）时 Enter 仍走发送，避免"打不中就发不出去"
-      if (confirmPanelHi()) { e.preventDefault(); return }
-    }
-  }
-  // 「+」面板不参与键盘导航：Esc 收起它，Enter 照常发送
-  if (addOpen.value && e.key === 'Escape') {
-    e.preventDefault()
-    closeAddPanel()
-    return
+  // 面板打开时由输入框接管导航：↑↓ 移动高亮、Enter 确认、Esc 关闭、「+」面板还能 Tab 切页签
+  if (slashOpen.value || histOpen.value || addOpen.value) {
+    if (onPanelNavKeydown(e)) return
   }
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
@@ -2845,16 +3000,19 @@ const {
   // 图片与附件
   pendingImages, addImageFiles, removePendingImage, MAX_FILES, pendingFiles, hasUploadingFile, addFiles,
   removePendingFile, takePastedText,
-  // @ 引用
-  mentionOpen, mentionTab, mentionQuery, mentionLoading, mentionKbs, mentionDocs, pendingMentions,
-  mentionHi, isMentioned, toggleMention, removeMention, switchMentionTab, loadMentionCandidates,
+  // @ 引用（面板与筛选词在「+」面板一节，高亮下标用本页自己的 addHi）
+  mentionTab, mentionQuery, mentionLoading, mentionKbs, mentionDocs, pendingMentions,
+  isMentioned, toggleMention, removeMention, loadMentionCandidates,
   mentionDocStatus, mentionKbFiltered, mentionAgents, mentionAgentFiltered, mentionDocFiltered,
   // # 历史引用
   pendingHistoryRefs, histPool, isHistPicked, toggleHistoryRef, removeHistoryRef,
   // 会话生命周期 / 重新生成 / 分支 / 初始化
   switchSession, createNewSession, regenerate, variantSwitching, switchBranch, ready,
-  // 手动压缩上下文（/compact：命令面板与结果条）
-  compactNotice, compactContext
+  // 手动压缩上下文（/compact：命令面板、分隔线与摘要弹窗）
+  compacting, compactNotice, compactContext,
+  compactSummaryOpen, compactSummary, compactSummaryLoading, openCompactSummary, recompactWith,
+  // 「已压缩上下文」分隔线的判据（引擎里，与 H5 共用）
+  compactDividerAt
 } = useChatEngine({
   chatPath: '/chat',
   // 计划模式（人在回路）只在 PC 壳开放入口：移动壳没有计划卡 UI，引擎侧按此开关兜底拦下
@@ -3106,15 +3264,12 @@ const onAskPanelKeydown = (e) => {
   }
 }
 
-// ==================== 手动压缩摘要弹窗（/compact 结果条「查看摘要」） ====================
-// 打开时快照摘要与用量：发送下一轮会清掉 compactNotice，弹窗若直接读它会当场变空
-const compactSummaryOpen = ref(false)
-const compactSummaryText = ref('')
-const compactSummaryTokens = ref(0)
-const openCompactSummary = () => {
-  compactSummaryText.value = compactNotice.value?.summary || ''
-  compactSummaryTokens.value = compactNotice.value?.summaryTokens || 0
-  compactSummaryOpen.value = true
+// ==================== 摘要弹窗的「带要求重新压缩」（弹窗开关与数据快照在引擎，PC/H5 共用） ====================
+const csumInstrOpen = ref(false)
+const csumInstr = ref('')
+const applyRecompact = async () => {
+  // 压完了才收起输入行：没得压/失败的原因引擎已就地提示，输入留着方便改一句再试
+  if (await recompactWith(csumInstr.value.trim())) csumInstrOpen.value = false
 }
 
 // 开始回答即收起悬浮思考面板（loading 声明后才能 watch，getter 在 watch 调用时同步执行）
@@ -3377,20 +3532,37 @@ onMounted(async () => {
 }
 .degradation-item { display: inline-block; }
 
-/* 历史压缩信息条（蓝色，区别于黄色警告）：说明早期对话已并入摘要，完整记录仍在会话中 */
-.ctx-compress-bar {
-  margin-top: 8px; padding: 6px 10px; border-radius: 6px;
-  background: var(--app-accent-weak); border: 1px solid var(--app-accent-border); color: var(--app-accent);
-  font-size: 12px; line-height: 1.6; display: flex; align-items: center;
-}
-/* 手动压缩结果条（/compact）：消息流尾部独立一条，与消息气泡同宽居中收边 */
-.compact-notice { margin: 12px 24px 0; gap: 8px; }
-.cn-ic { flex: none; }
-.cn-text { flex: 1; min-width: 0; }
-.compact-notice .app-icon-btn { color: inherit; opacity: .75; }
-.compact-notice .app-icon-btn:hover { opacity: 1; }
+/* 手动压缩当场那条分隔线（在 v-for 外面，拿不到 .row 上的 --mdv-inset，自己补一份同样的内缩） */
+.cn-tail { --mdv-inset: calc((100% - min(94%, 860px)) / 2); margin: -8px 0 12px; }
+
 /* 摘要弹窗 */
-.csum-tip { margin-bottom: 10px; font-size: 12px; color: var(--app-text3); line-height: 1.6; }
+.csum-head { display: flex; align-items: baseline; gap: 10px; }
+.csum-title { font-size: 15px; font-weight: 600; color: var(--app-text); }
+.csum-sub { font-size: 12px; color: var(--app-text3); }
+.csum-stats {
+  display: flex; flex-wrap: wrap; gap: 6px 18px; margin-bottom: 10px;
+  padding: 8px 10px; border-radius: 8px; background: var(--app-panel-2);
+}
+.csum-stat { display: inline-flex; align-items: baseline; gap: 6px; font-size: 12px; }
+.cs-k { color: var(--app-text3); }
+.cs-v { color: var(--app-text); font-weight: 500; }
+/* 摘要正文按 Markdown 渲染（模型产出的就是条目化列表），不再用 pre 把 - 和 # 原样摊出来 */
+.csum-md {
+  max-height: 46vh; overflow: auto; margin: 0; padding: 10px 12px; border-radius: 8px;
+  background: var(--app-panel-2); border: 1px solid var(--app-border);
+  font-size: 13px; line-height: 1.7;
+}
+.csum-foot { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+.csum-tip { flex: 1; min-width: 0; font-size: 12px; color: var(--app-text3); line-height: 1.6; }
+.csum-acts { flex: none; display: inline-flex; gap: 8px; }
+.csum-instr { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.csum-instr-input {
+  flex: 1; min-width: 0; padding: 6px 10px; font-size: 12px;
+  border: 1px solid var(--app-border); border-radius: 8px;
+  background: var(--app-panel); color: var(--app-text);
+}
+.csum-instr-input:focus { border-color: var(--app-accent); }
+/* 粘贴全文等纯文本弹层仍用这份 pre 容器 */
 .csum-body {
   margin: 0; max-height: 52vh; overflow: auto; padding: 10px 12px; border-radius: 8px;
   background: var(--app-panel-2); border: 1px solid var(--app-border); color: var(--app-text2);
@@ -3829,18 +4001,14 @@ onMounted(async () => {
 }
 /* 徽标内的智能体头像：AgentAvatar 自带圆角块，这里只保证不被 flex 压扁 */
 .agent-tag-ava { flex: none; }
-/* 模型切换记录（— ⇄ 模型已切换 A → B —）：居中分隔条独占一行，弱化呈现；flex-basis:100%
-   配合 .row 的 flex-wrap 把气泡挤到下一行。
-   左右内缩到正文列宽（.msg-block 的 min(94%,860px)）：分隔条盒子仍占满一行，
-   靠 padding 收窄可见部分，否则分隔线横贯整个消息区、比正文宽出一倍 */
-.model-switch-divider {
-  flex-basis: 100%; display: flex; align-items: center; gap: 10px;
-  padding: 0 calc((100% - min(94%, 860px)) / 2);
-  margin: 2px 0 10px; color: var(--app-text3);
-}
-.model-switch-divider .msd-line { flex: 1; border-top: 1px solid var(--app-border); }
-.model-switch-divider .msd-text { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; white-space: nowrap; }
-.model-switch-divider .msd-ic { font-size: 12px; opacity: .75; }
+/* 分隔线（MsgDivider）左右内缩到正文列宽（.msg-block 的 min(94%,860px)）：分隔条盒子仍占满一行，
+   靠 padding 收窄可见部分，否则分隔线横贯整个消息区、比正文宽出一倍。
+   自定义属性按声明原样传给后代、在使用处才求值，所以这里的 100% 仍是分隔线自己的宽度=行宽 */
+.row { --mdv-inset: calc((100% - min(94%, 860px)) / 2); }
+/* 模型切换那条贴气泡更紧（组件默认 6px 上下等距偏松） */
+.msd { margin: 2px 0 10px; }
+/* 压缩那条在这条提问上方，上下都要跟前后两轮拉开 */
+.cdiv { margin: 6px 0 12px; }
 
 /* 智能体下拉面板（自绘：每项能放下描述与模型差异） */
 .agent-menu {
@@ -3886,13 +4054,20 @@ onMounted(async () => {
 }
 .agent-menu-foot:hover { background: var(--app-accent-weak); }
 
-/* 输入框「+」面板：页签行 + 面板内筛选输入（外壳与行式交互复用 .mention-panel / .mention-item） */
-.add-head { gap: 6px; }
+/* 输入框「+」面板：页签行 + 面板内搜索框（外壳与行式交互复用 .mention-panel / .mention-item）。
+   六页签在窄输入框上会排不下，页签行允许换行；计数分两种口径，别混在一个样式里：
+   .add-tab-n = 已选/生效数（实心主色，回答"这轮会带上什么"），.add-tab-total = 可挑数（弱色数字） */
+.add-head { gap: 6px; flex-wrap: wrap; }
 .add-tab-n {
   font-size: 10px; line-height: 15px; padding: 0 5px; border-radius: 999px;
   background: var(--app-accent); color: #fff;
 }
+.add-tab-total { font-size: 11px; color: var(--app-text3); margin-left: 3px; }
 .add-close { margin-left: auto; }
+/* 引用页的子页签：比顶栏页签低一级（弱底小块），否则两行同样式的药丸看不出谁包着谁 */
+.add-subtabs { padding: 0 10px 2px; }
+.add-subtabs .mention-tab { background: var(--app-panel-2); }
+.add-subtabs .mention-tab.on { background: var(--app-accent-weak); }
 .add-filter-row { padding: 8px 10px 0; }
 .add-filter {
   width: 100%; box-sizing: border-box; padding: 6px 10px;
@@ -4023,17 +4198,22 @@ onMounted(async () => {
 .rp-plan-row:hover { background: var(--app-panel-2); }
 .rp-plan-row:hover .rp-plan-t { color: var(--app-accent); }
 .rp-plan-ic { flex: none; font-size: 12px; color: var(--app-text3); }
-/* 右栏任务清单卡：进度比条目先说话（「3/7」一眼看出还剩几步），条目状态用方框符号而不是颜色，
-   暗色主题下颜色对比不稳 */
+/* 右栏任务清单卡：进度比条目先说话（「3/7」一眼看出还剩几步），完成态用绿色勾 + 删除线，
+   进行态用整行底色 + 转圈 + 文字标签（暗色主题下只靠颜色对比不稳，故三样一起给） */
 .rp-todo-head { display: flex; align-items: center; gap: 8px; width: 100%; background: none; border: none; cursor: pointer; }
 .rp-todo-progress { margin-left: auto; font-variant-numeric: tabular-nums; font-size: 11px; color: var(--app-text3); }
 .rp-todo-list { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
-.rp-todo-item { display: flex; align-items: flex-start; gap: 6px; font-size: 12px; line-height: 1.5; }
+.rp-todo-item {
+  display: flex; align-items: flex-start; gap: 6px; font-size: 12px; line-height: 1.5;
+  padding: 3px 6px; margin: 0 -6px; border-radius: 7px;
+}
+.rp-todo-item.doing { background: var(--app-accent-weak); }
 .rp-todo-box { flex: none; width: 14px; height: 14px; margin-top: 2px; border: 1px solid var(--app-border); border-radius: 4px; font-size: 10px; line-height: 12px; text-align: center; color: var(--app-panel); }
+.rp-todo-run { flex: none; width: 14px; margin-top: 2px; font-size: 12px; line-height: 14px; color: var(--app-accent); }
+.rp-todo-run-tag { flex: none; margin-left: 2px; font-size: 11px; line-height: 16px; color: var(--app-accent); }
 .rp-todo-item.done .rp-todo-box { background: var(--app-ok); border-color: var(--app-ok); }
 .rp-todo-item.done .rp-todo-txt { color: var(--app-text3); text-decoration: line-through; }
-.rp-todo-item.doing .rp-todo-box { border-color: var(--app-accent); color: var(--app-accent); }
-.rp-todo-item.doing .rp-todo-txt { color: var(--app-accent); }
+.rp-todo-item.doing .rp-todo-txt { color: var(--app-accent); font-weight: 500; }
 .rp-todo-txt { min-width: 0; word-break: break-word; }
 .rp-plan-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rp-plan-st { flex: none; font-size: 11px; color: var(--app-text3); }

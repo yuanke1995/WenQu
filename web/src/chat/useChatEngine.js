@@ -7,7 +7,7 @@ import { ref, reactive, computed, watch, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { isAdminSync } from '../utils/auth'
 import { message } from 'ant-design-vue'
-import { sendQuestion, resumeChat, getChatRun, newSession, getHistory, deleteSessionApi, switchMessageVariant, compactSessionApi, getConfig, getRuntimeConfig, listAvailableAgents, listConsultableAgents,
+import { sendQuestion, resumeChat, getChatRun, newSession, getHistory, deleteSessionApi, switchMessageVariant, compactSessionApi, sessionHistorySummaryApi, getConfig, getRuntimeConfig, listAvailableAgents, listConsultableAgents,
          listAvailableSkills, getUserPreference, approveToolCall, answerAgentAsk, ignoreAgentAsk, stopChatTurn, steerChatTurn,
          listPendingAsks, listPendingApprovals, resolvePlanApproval, supersedePlanApproval, listPendingPlans, updateSessionModelApi, getSessionModelApi,
          listKnowledgeBases, listDocuments, uploadChatAttachment, getSessionTodosApi,
@@ -270,6 +270,30 @@ const modelSwitchInfo = (m, i) => {
   }
   return null
 }
+/**
+ * 「已压缩上下文」分隔记录：本轮回答装配历史时，摘要覆盖点比上一轮更靠后 → 分隔线画在这条提问<b>上方</b>，
+ * 读作「此线以上的早期对话已折进摘要，以下逐字在场」。
+ * <p>手动 /compact 与自动压缩共用这一条判据：手动压缩当场推后了覆盖点，但它不产生消息行，
+ * 于是下一轮装配读到的就是那个新值——相对上一轮仍是推进，线正好落在压缩发生的那个缝上
+ * （手动压缩当时挂在流尾的临时条也在同一个位置，两者不会同时出现）。
+ * <p>落库前那批旧消息没有 summaryUntil：无从判定，不画——线放错位置比不放更坏。
+ */
+const compactDividerAt = (m, i) => {
+  if (m.role !== 'user') return false
+  for (let k = i + 1; k < messages.value.length; k++) {
+    const cur = messages.value[k]
+    if (cur.role === 'user') continue
+    const until = Number(cur.tokens?.summaryUntil) || 0
+    if (until <= 0) return false
+    for (let j = k - 1; j >= 0; j--) {
+      const prev = messages.value[j]
+      if (prev.role !== 'ai' || prev === cur) continue
+      return until > (Number(prev.tokens?.summaryUntil) || 0)
+    }
+    return true   // 本会话第一条回答就带着覆盖点：说明压缩发生在它之前
+  }
+  return false
+}
 const loadAgents = async () => {
   try {
     // 走 available 接口：问答用户可读的精简列表（管理端 /agent/list 仅管理员）
@@ -372,7 +396,9 @@ const debugDisplayVisible = ref(false)
 const sampleQuestionsRaw = ref(null)
 const sampleQuestions = computed(() => sampleQuestionsRaw.value == null
   ? DEFAULT_SAMPLE_QUESTIONS : parseSampleQuestions(sampleQuestionsRaw.value))
-const lastAi = computed(() => [...messages.value].reverse().find(m => m.role === 'ai' && !m.loading && (m.content || m.sources?.length)))
+// 右栏「最近一次检索/本次用量」的锚定轮。带计划卡的行也算：被「继续对话」取代那轮正文留空，
+// 但它确实检索过，不算进来右栏就会退回更早那一轮
+const lastAi = computed(() => [...messages.value].reverse().find(m => m.role === 'ai' && !m.loading && (m.content || m.sources?.length || m.planCard)))
 const lastRetrieved = computed(() => lastAi.value?.retrieved || null)
 const lastSources = computed(() => lastAi.value?.sources || [])
 // 引用来源按文档分组：先看到"引用了哪几个文档、各几段"，再按需展开看具体片段
@@ -803,7 +829,9 @@ const switchSession = async sid => {
     // 快速连续切换时晚到的历史响应不覆盖当前视图
     if (r.success && Array.isArray(r.data) && currentSessionId.value === sid) {
       const list = r.data
-        .filter(m => m && (m.content || (Array.isArray(m.images) && m.images.length)))
+        // 带 plan 快照的行即使正文为空也要留：被「继续对话」取代的那轮正文就是空的（状态只写在
+        // 计划卡角标上），只按正文过滤会让整张计划卡随刷新一起蒸发
+        .filter(m => m && (m.content || (Array.isArray(m.images) && m.images.length) || m.plan))
         .map(m => {
           const msg = {
             role: m.role === 'user' ? 'user' : 'ai',
@@ -2014,7 +2042,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         degradations = Array.isArray(p.degradations) ? p.degradations : []
         // 计划模式被拒/超时：done 载荷带 planCancelled（plan_cancelled 事件已置过，这里是双保险——
         // 正文为空时收束语按「计划未批准」口径而不是「已停止生成」）；被「继续对话」取代同理由
-        // planSuperseded 走另一句收束语
+        // planSuperseded 置位，但那轮正文留空（状态只写在计划卡角标上）
         if (p.planCancelled) msg.planStopped = true
         if (p.planSuperseded) msg.planSuperseded = true
         // 插话队列结算：本轮收尾（答完/被停/失败）时结算一次——还没点「立即发送」的在这里
@@ -2059,10 +2087,11 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         if (Array.isArray(p.subagentBranches) && p.subagentBranches.length) msg.subagents = p.subagentBranches
         if (p.subagentRoute) msg.subagentRoute = p.subagentRoute
       } catch (e) { /* 旧版/停止生成：无负载 */ }
-      // 计划模式被拒/超时的整轮：无正文，气泡收束语与「已停止生成」区分开（计划卡停在「未批准」态）；
-      // 被「继续对话」取代的整轮：收束语按取代口径（计划卡停在「已被取代」态）
-      if (msg.content === '') msg.content = msg.planSuperseded ? '（你提出了修改，这版计划已被取代）'
-        : (msg.planStopped ? '（计划未批准，本轮已停止）' : '（已停止生成）')
+      // 计划模式被拒/超时的整轮：无正文，气泡收束语与「已停止生成」区分开（计划卡停在「未批准」态）。
+      // 被「继续对话」取代的整轮不写收束语——「已被取代」已经标在计划卡角标上，两句并排是重复
+      if (msg.content === '' && !msg.planSuperseded) {
+        msg.content = msg.planStopped ? '（计划未批准，本轮已停止）' : '（已停止生成）'
+      }
       msg.loading = false
       // 整轮已收口：提问卡（若还在）撤掉——超时/忽略走的是 done 前的 tool_status 终态，此处兜底
       // 队列一起清：这一轮不会再有可答的卡了
@@ -2408,9 +2437,15 @@ function flushPendingSteers (backendLeft = []) {
 }
 // ==================== 手动压缩会话上下文（/compact） ====================
 // 与「按阈值自动压缩」共用同一套摘要机制（后端 HistoryCompactionService.compactSession），差别是显式发起：
-// 不等阈值、不看 context.historyCompress 开关，直接压到「除最近 2 轮外全部并入摘要」。
+// 不等阈值、不看 context.historyCompress 开关，直接压到「除最近 2 次问答外全部并入摘要」。
 const compacting = ref(false)
-// 最近一次压缩结果（本地提示条，不落库）：带 sid，会话切走后不再显示——否则会把别的会话的结论挂在当前会话下
+/**
+ * 当场这一次的结果（本地状态、不落库，下一轮发送即退场）。
+ * <p>持久的那份是「已压缩上下文」分隔线（靠消息行上的摘要覆盖点算出来，见 compactDividerAt）；
+ * 这里只负责两件事：压缩完立刻在流尾补一条线（不等下一轮），以及给摘要面板带上
+ * 「本次腾出多少」——这个数只在当场拿得到，事后会话里只剩那份滚动摘要本身。
+ * <p>带 sid：会话切走后不再显示，否则会把别的会话的结论挂在当前会话下。
+ */
 const compactNotice = ref(null)
 
 /**
@@ -2429,16 +2464,17 @@ const compactContext = async (instruction = '') => {
   try {
     const r = await compactSessionApi(sid, { instruction, model: currentOverrideModel.value || '' })
     const d = (r && r.data) || {}
-    // 两种情形都算「没得压」：对话本来就短，或早期对话上次已经压过了（最近 2 轮不会被压掉）
+    // 两种情形都算「没得压」：对话本来就短，或早期对话上次已经压过了（最近 2 次问答不会被压掉）
     if (!d.compressedTurns) { message.info('没有可压缩的早期对话（对话还短，或已经压过了）'); return d }
-    // keepRecent 是消息条数（一会合一答算两条），提示条按「轮」说话，故折半后再至少保 1
     compactNotice.value = {
-      sid, turns: d.compressedTurns, keepTurns: Math.max(1, Math.round((d.keepRecent || 4) / 2)),
+      sid, turns: d.compressedTurns, keepTurns: Number(d.keepTurns) || 0,
+      freedTokens: Number(d.freedTokens) || 0,
       summary: d.summary || '', summaryTokens: d.summaryTokens || 0, partial: !!d.partial
     }
-    message.success(d.partial
-      ? `已压缩 ${d.compressedTurns} 轮早期对话（会话很长，可再次执行 /compact 继续）`
-      : `已压缩 ${d.compressedTurns} 轮早期对话为摘要`)
+    // 只报用户要的结果（腾出多少），不复述内部计数
+    const freed = Number(d.freedTokens) || 0
+    message.success(`已压缩早期对话${freed > 0 ? `，为后续腾出约 ${fmtTokens(freed)} tokens` : ''}`
+      + (d.partial ? '（会话很长，可再次执行 /compact 继续）' : ''))
     return d
   } catch (e) {
     message.error(e?.message || '压缩失败，请稍后重试')
@@ -2447,6 +2483,51 @@ const compactContext = async (instruction = '') => {
     hide()
     compacting.value = false
   }
+}
+
+// ==================== 早期对话摘要面板（流尾结果条与「已压缩上下文」分隔线共用） ====================
+const compactSummaryOpen = ref(false)
+const compactSummaryLoading = ref(false)
+/** 面板内容：打开时快照一份。发送下一轮会清掉 compactNotice，面板若直读它会当场变空 */
+const compactSummary = ref(null)
+
+const snapshotSummary = (text, tokens, keepTurns, freed) => {
+  compactSummary.value = { text, tokens: Number(tokens) || 0, keepTurns: Number(keepTurns) || 0, freed: Number(freed) || 0 }
+}
+
+/**
+ * 打开「早期对话摘要」。当场压过就用 /compact 的返回（多一个「本次腾出」）；
+ * 从历史里的分隔线点进来则按会话读当前那份——会话只有<b>一份</b>滚动摘要，每次压缩都往后并入同一份，
+ * 所以从哪条线点进来看到的都是生效中的这一版，面板上按这个口径说。
+ */
+const openCompactSummary = async () => {
+  const n = compactNotice.value
+  if (n?.summary) {
+    snapshotSummary(n.summary, n.summaryTokens, n.keepTurns, n.freedTokens)
+    compactSummaryOpen.value = true
+    return
+  }
+  const sid = currentSessionId.value
+  if (!sid || compactSummaryLoading.value) return
+  compactSummaryLoading.value = true
+  try {
+    const d = ((await sessionHistorySummaryApi(sid)) || {}).data || {}
+    if (!d.summary) { message.info('这个会话还没有生成过摘要'); return }
+    snapshotSummary(d.summary, d.summaryTokens, d.keepTurns, 0)
+    compactSummaryOpen.value = true
+  } catch (e) {
+    message.error(e?.message || '摘要读取失败，请稍后重试')
+  } finally {
+    compactSummaryLoading.value = false
+  }
+}
+
+/** 带着要求再压一次（摘要面板里的入口）：成功后面板刷成新摘要；没得压/失败的原因引擎已就地提示 */
+const recompactWith = async (instruction) => {
+  const d = await compactContext(instruction)
+  if (!d || !d.compressedTurns) return false
+  snapshotSummary(d.summary, d.summaryTokens, d.keepTurns, d.freedTokens)
+  return true
 }
 
 // ==================== 挂载初始化 ====================
@@ -2523,7 +2604,7 @@ if (typeof window !== 'undefined') {
     // 智能体
     agentList, agentMap, defaultAgentId, hasDefaultAgent,
     currentAgentId, isAdmin, agentPickerOpen, currentAgentName, currentAgent, pickAgent,
-    showAgentTag, modelLabelOf, modelSwitchInfo, loadAgents,
+    showAgentTag, modelLabelOf, modelSwitchInfo, compactDividerAt, loadAgents,
     // 会话与消息
     currentSessionId, loading, messages, currentSessionTitle, roundCount,
     // 模型
@@ -2555,6 +2636,8 @@ if (typeof window !== 'undefined') {
     attachRunningTurn,
     // 手动压缩上下文（/compact：PC 斜杠命令与移动端模型面板共用）
     compacting, compactNotice, compactContext,
+    // 早期对话摘要面板（PC 弹窗与移动端 sheet 共用的数据源）
+    compactSummaryOpen, compactSummary, compactSummaryLoading, openCompactSummary, recompactWith,
     // 重新生成 / 分支切换 / 挂载初始化
     switchVersion, regenerate, variantSwitching, switchBranch, ready
   }

@@ -8,6 +8,8 @@
 |------|------|
 | `POST /api/ai/chat` | SSE 流式问答（事件见下表） |
 | `POST /api/ai/tool-approval/{approvalId}` | 工具执行确认：批准/拒绝有副作用的沙盒/MCP 工具调用 |
+| `POST /api/ai/plan-approval/{planApprovalId}` | 执行计划裁决（计划模式）：批准（可带修改后计划全文）/ 取消 / `supersede` 取代（继续对话重做计划） |
+| `GET /api/ai/plan-approval/pending?sessionId=` | 待批准计划卡（刷新/换设备后的恢复入口） |
 | `GET /api/ai/auth/me` | 当前身份、权限与菜单树 |
 | `POST /api/ai/auth/login` | 本地登录；OIDC 四端点见 `/api/ai/auth/oidc/*` |
 | `GET /api/ai/sessions` 等 | 会话列表/新建/重命名/置顶/收藏/删除/批量删除 |
@@ -43,6 +45,8 @@
 | `process` | 工具模式下过程独白增量 |
 | `tool_status` / `tool_output` | 工具状态 / 沙盒命令输出实时流 |
 | `approval_required` | 有副作用工具等待确认（批准/拒绝经 tool-approval 端点） |
+| `plan_delta` / `plan_approval` | 计划模式：执行计划流式增量 / 计划待确认（planApprovalId + 计划全文 + 超时） |
+| `plan_cancelled` / `plan_superseded` | 计划未批准（取消/超时收尾）/ 被「继续对话」取代 |
 | `artifact` | 产物交付落盘（卡片字段） |
 | `subagent` / `subagent_route` / `agent_delegated` | 编排分支状态 / 路由理由 / 本轮由 @ 提及的智能体作答 |
 | `image` | 命中图片 URL 列表 |

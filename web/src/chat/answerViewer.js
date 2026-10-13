@@ -179,8 +179,11 @@ const showRefTip = (el, sources, n) => {
       : (src.fileName || (src.docId ? '来源文档不可用' : '手动补充的知识')),
     title: src.title || '',
     snippet: src.snippet || '（无原文片段）',
+    // 分值口径：rerankScore 优先（联网来源也按本轮问题重排出相关度分了），
+    // 其缺失才回落服务商分（WEB）/ 检索融合分（库内）；MCP 无相关度分，标签区留空
     score: (src.rerankScore != null ? src.rerankScore : src.score),
-    scoreLabel: src.origin === 'WEB' ? '服务商相关度' : (src.rerankScore != null ? '重排相关度' : (src.origin === 'MCP' ? '' : '检索融合分')),
+    scoreLabel: src.rerankScore != null ? '重排相关度'
+      : (src.origin === 'WEB' ? '服务商相关度' : (src.origin === 'MCP' ? '' : '检索融合分')),
     src
   }
 }
