@@ -97,8 +97,8 @@ const CHAT_EVENT_CB = {
   tool_status: 'onToolStatus', tool_output: 'onToolOutput', process: 'onProcess',
   runcode_progress: 'onRunCodeProgress', subagent_step: 'onSubagentStep',
   subagent: 'onSubagent', subagent_route: 'onSubagentRoute',
-  agent_dispatched: 'onAgentDispatched', agent_delegated: 'onAgentDelegated',
-  agent_bound: 'onAgentBound', approval_required: 'onApprovalRequired', ask_user: 'onAskUser',
+  agent_delegated: 'onAgentDelegated', agent_consulted: 'onAgentConsulted',
+  approval_required: 'onApprovalRequired', ask_user: 'onAskUser',
   plan_delta: 'onPlanDelta', plan_approval: 'onPlanApproval', plan_cancelled: 'onPlanCancelled',
   plan_superseded: 'onPlanSuperseded', todo: 'onTodo', snapshot: 'onSnapshot'
 }
@@ -729,6 +729,8 @@ export const deleteApiKey = id => request(`/api-key/${id}`, { method: 'DELETE' }
 // ==================== 智能体 Agent 配置（4.1：模型/知识库/工具/提示词） ====================
 /** 对话页下拉：问答用户可读的精简列表（仅 id/name/description/model/isDefault） */
 export const listAvailableAgents = () => request('/agent/available')
+/** 可读助手名称表（含子智能体）：还原「本轮咨询了谁」的徽标用，非关键路径 */
+export const listConsultableAgents = () => request('/agent/consultable')
 /** 对话页技能菜单：未停用技能精简列表（问答用户可读） */
 export const listAvailableSkills = () => request('/skill/available')
 export const listAgents = () => request('/agent/list')

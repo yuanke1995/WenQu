@@ -287,20 +287,12 @@
                 <loading-outlined spin />
                 <span v-if="busyOf(m).text">{{ busyOf(m).text }}</span>
               </div>
-              <!-- 自动派遣结果（路由过程对用户可见；每轮可不同） -->
-              <!-- 与上方「由 X 回答」归属徽标同属内部排障信息：同一个开关（chat.retrievalDebugEnabled）控制 -->
-              <div v-if="m.dispatched && debugDisplayVisible" class="dispatch-chip">
-                <thunderbolt-outlined class="dispatch-ic" />
-                <span>已派遣「{{ m.dispatched.name }}」</span>
-                <span v-if="m.dispatched.fallback" class="dispatch-fallback">（路由未命中，按默认）</span>
-                <span v-if="m.dispatched.description" class="dispatch-desc">{{ m.dispatched.description }}</span>
-              </div>
-              <!-- 会话内 @ 智能体（§4）：本轮由用户 @ 提及的智能体作答。用户主动指令，常显不进排障开关；
-                   刷新后按落库归属与会话绑定比对恢复（见 switchSession），前后端口径一致 -->
-              <div v-if="m.delegated" class="dispatch-chip delegated-chip">
-                <AgentAvatar class="dispatch-ava" :agent="agentBadgeOf(agentList, m.agentId, m.delegated.name)" :size="14" />
-                <span>由「{{ m.delegated.name }}」回答本轮</span>
-                <span v-if="m.delegated.description" class="dispatch-desc">{{ m.delegated.description }}</span>
+              <!-- 本轮咨询了谁（P5 常显）：@ 强制咨询与模型自主咨询合并成一条并按 id 去重。
+                   跨主题的问题答好了，用户也要看得见是"派给谁查的"——不然好答案像偶然，
+                   而派错了也没人知道该去改谁的描述。刷新后从落库的 consultAgent 入参还原。 -->
+              <div v-if="consultedOf(m).length" class="dispatch-chip delegated-chip">
+                <AgentAvatar class="dispatch-ava" :agent="agentBadgeOf(agentList, consultedOf(m)[0].id, consultedOf(m)[0].name)" :size="14" />
+                <span>本轮已咨询 {{ consultedOf(m).map(c => `「${c.name}」`).join('、') }} · 采纳{{ consultedOf(m).length > 1 ? '它们' : '它' }}查到的资料</span>
               </div>
               <!-- 历史恢复/正文重建回退：无 timeline（无法重建交错点），工具按终态列表折叠展示，卡片可展开看全文 -->
               <div v-if="m.role === 'ai' && m.toolCalls && m.toolCalls.length && !hasTimelineBlocks(m)" class="tool-status-list">
@@ -626,7 +618,7 @@
                 <span v-for="(mm, mi2) in editMentions" :key="mm.type + ':' + mm.id" class="at-chip mention-chip"
                       :class="'mention-' + mm.type"
                       :title="mm.type === 'kb' ? '本轮检索收窄到该知识库'
-                              : (mm.type === 'agent' ? '本轮改由该智能体作答（会话绑定不变）' : '该文档内容直接带入本轮上下文')">
+                              : (mm.type === 'agent' ? '本轮会强制咨询这位助手：它带着自己的知识库查一遍，回答仍由当前助手汇总' : '该文档内容直接带入本轮上下文')">
                   <robot-outlined v-if="mm.type === 'agent'" class="at-chip-ic" />
                   <database-outlined v-else-if="mm.type === 'kb'" class="at-chip-ic" />
                   <file-text-outlined v-else class="at-chip-ic" />
@@ -704,7 +696,7 @@
           <span v-for="(mm, mi) in pendingMentions" :key="mm.type + ':' + mm.id" class="at-chip mention-chip"
                 :class="'mention-' + mm.type"
                 :title="mm.type === 'kb' ? '本轮检索收窄到该知识库'
-                        : (mm.type === 'agent' ? '本轮改由该智能体作答（会话绑定不变）' : '该文档内容直接带入本轮上下文')">
+                        : (mm.type === 'agent' ? '本轮会强制咨询这位助手：它带着自己的知识库查一遍，回答仍由当前助手汇总' : '该文档内容直接带入本轮上下文')">
             <database-outlined v-if="mm.type === 'kb'" class="at-chip-ic" />
             <robot-outlined v-else-if="mm.type === 'agent'" class="at-chip-ic" />
             <file-text-outlined v-else class="at-chip-ic" />
@@ -794,7 +786,7 @@
                   <AgentAvatar class="mention-ava-agent" :agent="a" :size="22" />
                   <div class="mention-text">
                     <span class="mention-name">{{ a.name }}</span>
-                    <span class="mention-desc">{{ a.desc || '本轮改由该智能体作答' }}</span>
+                    <span class="mention-desc">{{ a.desc || '本轮会向这位助手咨询' }}</span>
                   </div>
                   <check-outlined v-if="isMentioned('agent', a.id)" class="mention-check" />
                 </div>
@@ -818,7 +810,7 @@
               </template>
             </div>
             <div class="mention-foot">
-              ↑↓ 选择 · Enter 确认 · Esc 关闭　|　@ 知识库 = 本轮检索只在这些库里找；@ 文档 = 该文档内容直接带入本轮上下文；@ 智能体 = 本轮改由它作答（会话绑定不变）
+              ↑↓ 选择 · Enter 确认 · Esc 关闭　|　@ 知识库 = 本轮检索只在这些库里找；@ 文档 = 该文档内容直接带入本轮上下文；@ 智能体 = 本轮强制咨询它（它带自己的知识库查一遍，回答仍由当前助手汇总）
             </div>
           </div>
           <!-- / 快捷命令面板（敲 / 唤起）：模板=往输入框插入常用问法框架；操作=会话级动作立即执行 -->
@@ -980,32 +972,20 @@
           <div :class="isNarrow ? 'input-toolbar as-mobile' : 'input-toolbar'">
             <div class="toolbar-left">
               <a-dropdown v-model:open="agentPickerOpen" :trigger="['click']" placement="topLeft">
-                <button class="agent-pill" :class="{ on: !!currentAgentId, open: agentPickerOpen, locked: agentLocked, 'as-icon': isNarrow }"
-                        :title="agentLocked
-                          ? `本会话已绑定「${currentAgentName}」，切换智能体会开启新会话`
-                          : '选择智能体：按预设覆盖提示词 / 知识库范围 / 能力（模型在右侧选择）'">
+                <button class="agent-pill" :class="{ on: !!currentAgentId, open: agentPickerOpen, 'as-icon': isNarrow }"
+                        title="选择作答的智能体：换人立即生效（下一问起就是它）；不挑就用默认助手。模型在右侧选择">
                   <AgentAvatar v-if="currentAgent" :agent="currentAgent" :size="16" />
-                  <!-- 窄屏只留头像：智能体名（如「自动派遣」）+ 模型名会把工具条撑破，
-                       完整名称由 title 与下拉面板承载 -->
+                  <!-- 窄屏只留头像：智能体名 + 模型名会把工具条撑破，完整名称由 title 与下拉面板承载 -->
                   <span v-if="!isNarrow" class="agent-pill-name">{{ currentAgentName }}</span>
-                  <lock-outlined v-if="agentLocked" class="agent-pill-lock" />
                   <down-outlined v-if="!isNarrow" class="agent-pill-caret" />
                 </button>
                 <template #overlay>
                   <div class="agent-menu">
                     <div class="agent-menu-head">
                       <span>选择智能体</span>
-                      <span class="agent-menu-hint">决定这一轮问答用哪套配置</span>
+                      <span class="agent-menu-hint">选一位来答这一问 · 换人立即生效，不必新建会话</span>
                     </div>
                     <div class="agent-menu-list">
-                      <div v-if="agentList.length" class="agent-mi" :class="{ active: currentAgentId === AUTO_AGENT }" @click="pickAgent(AUTO_AGENT)">
-                        <span class="agent-mi-ava"><thunderbolt-outlined /></span>
-                        <div class="agent-mi-text">
-                          <span class="agent-mi-name">自动派遣</span>
-                          <span class="agent-mi-desc">每轮由模型按各智能体的职责描述，挑最合适的来回答</span>
-                        </div>
-                        <check-outlined v-if="currentAgentId === AUTO_AGENT" class="agent-mi-check" />
-                      </div>
                       <div v-if="!hasDefaultAgent" class="agent-mi" :class="{ active: !currentAgentId }" @click="pickAgent('')">
                         <span class="agent-mi-ava"><robot-outlined /></span>
                         <div class="agent-mi-text">
@@ -1573,7 +1553,7 @@ import { toolLabel, toolDesc, toolCallsView, executedCount, toolDuration, toolRu
          toggleSubagents, fmtDuration, fmtWindow, externalOrigin, sourceName, fmtSourceScore, scoreTitle,
          fmtMsgTime, fmtSize, errorBrief, histItemTitle, verLocal, canSwitchPrev, canSwitchNext, verLabel,
          pasteTitle, pasteSub, isPastedText,
-         THINK_LEVEL_ON, levelLabel, stopTick, agentBadgeOf } from '../chat/projections'
+         THINK_LEVEL_ON, levelLabel, stopTick, agentBadgeOf, consultedOf } from '../chat/projections'
 
 const router = useRouter()
 const route = useRoute()
@@ -2666,7 +2646,7 @@ const debugStages = computed(() => {
     { name: `向量命中（${(d.vectorHits || []).length}）`, items: map(d.vectorHits, it => '相似度 ' + (it.score ?? 0)) },
     { name: `合并后（${(d.merged || []).length}）`, items: map(d.merged, it => '分 ' + (it.score ?? 0)) },
     { name: `重排后（${(d.reranked || []).length}）` + (d.rerankApplied ? '' : `（${d.rerankSkipReason || '未重排'}）`), items: map(d.reranked, it => '分 ' + (it.score ?? 0)) },
-    { name: `最终上下文（${(d.finalContext || []).length}/8）`, items: map(d.finalContext, it => '分 ' + (it.score ?? 0)) },
+    { name: `最终上下文（${(d.finalContext || []).length}/8 · 门拦下 ${d.contextGate?.droppedByGate ?? 0} 块）`, items: map(d.finalContext, it => '分 ' + (it.rerankScore ?? it.score ?? 0)) },
     { name: `被排除（${(d.excluded || []).length}）`, items: map(d.excluded, it => '分 ' + (it.score ?? 0)) }
   ]
 })
@@ -2849,7 +2829,7 @@ const {
   // 技能
   skillList, pickedSkills, toggleSkill, skillAvaStyle,
   // 智能体
-  agentList, hasDefaultAgent, AUTO_AGENT, currentAgentId, agentLocked, isAdmin, agentPickerOpen,
+  agentList, hasDefaultAgent, currentAgentId, isAdmin, agentPickerOpen,
   currentAgentName, currentAgent, pickAgent, showAgentTag, modelSwitchInfo, loadAgents,
   // 会话与消息
   currentSessionId, loading, messages, currentSessionTitle, roundCount,

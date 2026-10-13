@@ -7,7 +7,7 @@ import { ref, reactive, computed, watch, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { isAdminSync } from '../utils/auth'
 import { message } from 'ant-design-vue'
-import { sendQuestion, resumeChat, getChatRun, newSession, getHistory, deleteSessionApi, switchMessageVariant, compactSessionApi, getConfig, getRuntimeConfig, listAvailableAgents,
+import { sendQuestion, resumeChat, getChatRun, newSession, getHistory, deleteSessionApi, switchMessageVariant, compactSessionApi, getConfig, getRuntimeConfig, listAvailableAgents, listConsultableAgents,
          listAvailableSkills, getUserPreference, approveToolCall, answerAgentAsk, ignoreAgentAsk, stopChatTurn, steerChatTurn,
          listPendingAsks, listPendingApprovals, resolvePlanApproval, supersedePlanApproval, listPendingPlans, updateSessionModelApi, getSessionModelApi,
          listKnowledgeBases, listDocuments, uploadChatAttachment, getSessionTodosApi,
@@ -18,7 +18,7 @@ import { loadModelIndex } from '../utils/modelRef'
 import { THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel, CTX_WINDOW_STEPS, fmtWindow,
          groupSources, ensureTick, mergeDoneToolCalls, restoreTimeline, extendTimelineText, extendTimelineProcess,
          pushTimelineTool, pushTimelineArtifact, snapshotVersion, applyVersion, toolCallsView, histItemDigest,
-         DEFAULT_SAMPLE_QUESTIONS, parseSampleQuestions, PASTE_TEXT_BASE } from './projections'
+         DEFAULT_SAMPLE_QUESTIONS, parseSampleQuestions, PASTE_TEXT_BASE, rememberAgents } from './projections'
 
 export function useChatEngine (hooks = {}) {
   const route = useRoute()
@@ -199,84 +199,46 @@ const skillAvaStyle = name => {
   const color = SKILL_AVA_COLORS[(i < 0 ? name.length : i) % SKILL_AVA_COLORS.length]
   return { background: color }
 }
-// ==================== 智能体（4.1）：会话级绑定（首问锁定，切换=新会话） ====================
+// ==================== 智能体（P5）：本轮作答方，会话不再锁定 ====================
 const agentList = ref([])                       // 全部主智能体
-// 未绑定会话的待选值：会话ID → 选中的智能体（'__auto__'=自动派遣 / id / ''=全局配置；
-// '' 在后端有默认智能体时解析为默认智能体，未设默认才走纯系统设置）
+// 会话ID → 用户为本会话挑的作答智能体（''=默认助手）。纯前端待选值：P5 起后端没有"首问锁定"，
+// 每轮都按请求里的 agentId 解析，所以这一项就是"下一问用谁"，换人立即生效、不需要开新会话。
 const agentMap = ref({})
-// 已绑定会话的绑定镜像：会话ID → {agentId, agentName}，来源为后端 c_ai_session 的绑定
-// （done 事件即时回填 + 会话列表兜底，刷新页面后仍能判断锁定态）
-const sessionAgent = ref({})
 const defaultAgentId = ref('')                  // 默认智能体（isDefault），无则空=全局配置
 // 是否存在「默认智能体」（isDefault=1）：有则后端把空 agentId（全局配置）解析为它——
 // 「默认（全局配置）」与默认智能体是同一套配置，菜单里只留默认智能体一项，避免两行同义的重复项
 const hasDefaultAgent = computed(() => agentList.value.some(a => a.isDefault === 1 || a.isDefault === true))
-const AUTO_AGENT = '__auto__'                   // 自动派遣哨兵值（请求时转 "auto"，由后端按描述路由）
-/** 会话的智能体绑定（后端权威）：本地镜像优先（本轮刚锁定、会话列表尚未刷新），否则取会话列表项 */
-const boundAgentOf = sid => {
-  if (!sid) return null
-  const local = sessionAgent.value[sid]
-  if (local) return local
-  const s = sessionStore.list.find(x => x.id === sid)
-  // 必须用 != null 同时排除 null 与 undefined：后端未绑定时 agent_id 为 NULL，序列化后是 null（不是字段缺失），
-  // 若只判 !== undefined 会把「未绑定」误判成「已绑定为不使用智能体」——表现为会话一进来就锁死，
-  // 每次点选都走"开启新会话"分支，点一次建一个空会话。
-  if (s && s.agentId != null) return { agentId: s.agentId || '', agentName: s.agentName || '' }
-  return null
-}
+/** 本会话下一问的作答智能体（''=默认助手：后端解析为 isDefault 那一个，未设默认则走全局配置） */
 const currentAgentId = computed({
-  // 新会话默认「自动派遣」：首问由模型按名称+描述挑最合适的智能体（命中后即锁定，后续轮次不再重路由）；
-  // 已绑定会话一律回显锁定值（''=该会话绑定为「不使用智能体」）；没有任何智能体时回退默认助手/全局配置
   get: () => {
-    const bound = boundAgentOf(currentSessionId.value)
-    if (bound) return bound.agentId || ''
     const memo = agentMap.value[currentSessionId.value]
     if (memo !== undefined) return memo
-    return agentList.value.length ? AUTO_AGENT : (defaultAgentId.value || '')
+    return defaultAgentId.value || ''
   },
   set: v => { agentMap.value = { ...agentMap.value, [currentSessionId.value]: v || '' } }
 })
-/** 当前会话是否已锁定智能体（含"已绑定为不使用智能体"；锁定后切换=新会话） */
-const agentLocked = computed(() => boundAgentOf(currentSessionId.value) !== null)
-const isAdmin = ref(isAdminSync())
-const agentPickerOpen = ref(false)
-/** 当前生效的智能体名（自动派遣/空 = 走对应模式；已锁定会话显示绑定名） */
-const currentAgentName = computed(() => {
-  const bound = boundAgentOf(currentSessionId.value)
-  if (bound) {
-    if (!bound.agentId) return '默认（全局配置）'
-    const b = agentList.value.find(x => x.id === bound.agentId)
-    return (b && b.name) || bound.agentName || '默认（全局配置）'
-  }
-  if (currentAgentId.value === AUTO_AGENT) return '自动派遣'
-  const a = agentList.value.find(x => x.id === currentAgentId.value)
-  return a ? a.name : '默认（全局配置）'
-})
-/** 当前生效的智能体对象（仅用于 agent-pill 头像；自动派遣 / 全局配置 = null，不显示头像） */
-const currentAgent = computed(() => {
-  const id = currentAgentId.value
-  if (!id || id === AUTO_AGENT) return null
-  return agentList.value.find(x => x.id === id) || null
-})
-/** 选中智能体：未绑定会话记录待选值；已绑定会话按主流约定「切换 = 开启新会话」 */
 const pickAgent = id => {
   agentPickerOpen.value = false
-  if (agentLocked.value) {
-    // 人设/知识库/工具集都随智能体变，同一会话中途换人会让上下文串味 —— 换人即换会话
-    const cur = currentAgentName.value
-    const target = id === AUTO_AGENT
-      ? '自动派遣' : (agentList.value.find(a => a.id === id)?.name || '默认（全局配置）')
-    message.info(`本会话已绑定「${cur}」，将开启新会话使用「${target}」`)
-    createNewSession(id)
-    return
-  }
-  currentAgentId.value = id || ''
-  if (id === AUTO_AGENT) message.success('已切换为「自动派遣」')
+  agentMap.value = { ...agentMap.value, [currentSessionId.value]: id || '' }
+  if (!id) message.success('已切回「默认助手」')
   else {
     const a = agentList.value.find(x => x.id === id)
-    if (a) message.success(`已切换为「${a.name}」`)
+    if (a) message.success(`已切换为「${a.name}」，下一问起由它作答`)
   }
 }
+/** 当前生效的智能体名（空 = 默认助手；P5 起没有"锁定"这一说，换人立即生效） */
+const currentAgentName = computed(() => {
+  const id = currentAgentId.value
+  if (!id) return '默认助手'
+  const a = agentList.value.find(x => x.id === id)
+  return a ? a.name : '默认助手'
+})
+/** 当前生效的智能体对象（仅用于 agent-pill 头像；默认助手 = null，不显示头像） */
+const currentAgent = computed(() => {
+  const id = currentAgentId.value
+  if (!id) return null
+  return agentList.value.find(x => x.id === id) || null
+})
 /**
  * 归属徽标的「去重」判定：会话内首条助手消息、或与上一条助手消息归属不同时才标（同一个人全程一致不必重复）。
  * 是否允许显示由排障显示开关叠加判断（调用处 && debugDisplayVisible），本函数只负责去重，不读配置。
@@ -289,6 +251,8 @@ const showAgentTag = (m, i) => {
   }
   return true
 }
+const isAdmin = ref(isAdminSync())
+const agentPickerOpen = ref(false)
 /** 模型引用 → 展示名（模型库友好名优先，查不到回退原始引用 provider/model） */
 const modelLabelOf = ref => modelIndex.value[ref]?.displayName || ref
 /**
@@ -311,12 +275,20 @@ const loadAgents = async () => {
     // 走 available 接口：问答用户可读的精简列表（管理端 /agent/list 仅管理员）
     const r = await listAvailableAgents()
     agentList.value = (r && r.success && Array.isArray(r.data)) ? r.data : []
+    // 登记 id→名称，供刷新后还原「本轮咨询了谁」的徽标（见 projections.rememberAgents）。
+    // 另拉一份含子智能体的名称表：agentList 刻意剔除子智能体（它们不当问答角色），
+    // 只登记它的话，被咨询的子智能体在徽标上会退化成一串裸 id。拉失败不影响问答，静默即可。
+    rememberAgents(agentList.value)
+    try {
+      const cs = await listConsultableAgents()
+      if (cs && cs.success && Array.isArray(cs.data)) rememberAgents(cs.data)
+    } catch (e) { /* 非关键路径 */ }
     // 优先默认助手；未设默认时用列表第一个，保证下拉总有可选项
     const def = agentList.value.find(a => a.isDefault === 1 || a.isDefault === true) || agentList.value[0]
     defaultAgentId.value = def ? def.id : ''
-    // 当前会话尚未选择时：有候选智能体则默认「自动派遣」，否则落到默认智能体
+    // 当前会话尚未挑过作答智能体：落到默认智能体（P5 起没有「自动派遣」这一档）
     if (!(currentSessionId.value in agentMap.value)) {
-      agentMap.value = { ...agentMap.value, [currentSessionId.value]: agentList.value.length ? AUTO_AGENT : defaultAgentId.value }
+      agentMap.value = { ...agentMap.value, [currentSessionId.value]: defaultAgentId.value || '' }
     }
   } catch (e) { /* 接口不可用时静默：选择器回退为「默认（全局配置）」 */ }
 }
@@ -845,6 +817,8 @@ const switchSession = async sid => {
             sources: Array.isArray(m.sources) ? m.sources : [],
             // 「接下来可以」推荐（随消息落库后回显）：此前恒为空数组，刷新后推荐整块消失
             related: Array.isArray(m.related) ? m.related : [],
+            // 本轮降级事件（随消息落库后回显）：此前只活在流式那一瞬，刷新后降级条整块消失
+            degradations: Array.isArray(m.degradations) ? m.degradations : [],
             // @ 引用（随用户消息常驻落库）：刷新/历史回显保留引用标注，重新生成/编辑重发据此原样带出
             mentions: Array.isArray(m.mentions) ? m.mentions : [],
             // # 历史引用（同上）
@@ -890,12 +864,6 @@ const switchSession = async sid => {
             timeline: []
           }
           if (Array.isArray(m.timeline)) msg.timeline = restoreTimeline(msg, m.timeline)
-          // 会话内 @ 智能体（§4）：落库的归属与会话绑定不同 = 该轮由 @ 提及的智能体作答，
-          // 刷新后委派徽标照常回显（绑定镜像缺省时无从比对则不显示，与排障徽标同一宽容口径）
-          const bound = boundAgentOf(sid)
-          if (msg.agentId && msg.agentName && bound && msg.agentId !== (bound.agentId || '')) {
-            msg.delegated = { name: msg.agentName, description: '' }
-          }
           return msg
         })
       // 该会话正在流式回答：把 live 消息接回视图尾部。流式中的这轮前后端不落库助手消息，
@@ -954,9 +922,8 @@ const createNewSession = async presetAgentId => {
   if (creatingSession.value) return
   // 空会话复用排除正在流式的会话：列表里的 messageCount 是快照（首条消息 done 后才刷新），
   // 流式中的会话可能仍记 0——命中它会把当前视图清空而不是开新会话
-  // 已绑定智能体的空会话不复用：它带着自己的绑定（删掉一轮问答不会解锁），复用会让"切换智能体"看起来没生效
   const emptySid = sessionStore.list.find(s => (s.messageCount ?? 0) === 0
-    && !chatStreams.has(s.id) && !boundAgentOf(s.id))?.id
+    && !chatStreams.has(s.id))?.id
   if (emptySid) {
     if (presetAgentId !== undefined) {
       agentMap.value = { ...agentMap.value, [emptySid]: presetAgentId || '' }
@@ -1675,7 +1642,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
   // prev = 自动重试上下文 { sid, agentId, model }：沿用原会话与原选择，不读当前 UI 态
   //（重试定时器触发时用户可能已切到别的会话/换了模型）
   const sid = prev ? prev.sid : currentSessionId.value
-  const agentId = prev ? prev.agentId : (currentAgentId.value === AUTO_AGENT ? 'auto' : (currentAgentId.value || ''))
+  const agentId = prev ? prev.agentId : (currentAgentId.value || '')
   const model = prev ? prev.model : (currentOverrideModel.value || '')
   // 重新生成：被替换的旧回答 ID 必须在下面 fresh 覆盖之前捕获（fresh 会把 messageId 置空，
   // 覆盖后再读就永远是空 → 后端不软删旧回答 → 刷新后同一问题出现两条答案）
@@ -2014,18 +1981,18 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         msg.subagentRoute = { candidates: r.candidates || 0, picked: r.picked || 0, names: r.names || [], reasons: r.reasons || {} }
       } catch (e) { /* 忽略 */ }
     },
-    onAgentDispatched: payload => {
+    // 会话内 @ 智能体（§4）：本轮由用户 @ 提及的智能体作答（会话绑定不变）。用户指令，常显徽标；
+    // 归属同步改写（done 的 delegatedAgentName 会再校正一次，两处同值）
+    // 模型自主咨询跑通（P5）：常显徽标的数据源之一。@ 强制咨询走另一条事件，
+    // 两处由投影视图的合并函数按 id 去重，不在这里判重
+    onAgentConsulted: payload => {
       try {
         const r = typeof payload === 'string' ? JSON.parse(payload) : payload
         if (!r || !r.name) return
-        msg.dispatched = {
-          name: r.name, description: r.description || '', fallback: r.fallback === true
-        }
+        msg.consulted = [...(msg.consulted || []), { id: r.id || '', name: r.name }]
         liveScroll()
       } catch (e) { /* 忽略 */ }
     },
-    // 会话内 @ 智能体（§4）：本轮由用户 @ 提及的智能体作答（会话绑定不变）。用户指令，常显徽标；
-    // 归属同步改写（done 的 delegatedAgentName 会再校正一次，两处同值）
     onAgentDelegated: payload => {
       try {
         const r = typeof payload === 'string' ? JSON.parse(payload) : payload
@@ -2034,18 +2001,6 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         msg.agentName = r.name
         if (r.id) msg.agentId = r.id
         liveScroll()
-      } catch (e) { /* 忽略 */ }
-    },
-    // 会话级绑定结果：后端在首问解析并锁定后就下发（不等整轮结束），输入区立刻切锁定态
-    onAgentBound: payload => {
-      try {
-        const r = typeof payload === 'string' ? JSON.parse(payload) : payload
-        if (!r || !r.locked) return
-        sessionAgent.value = {
-          ...sessionAgent.value,
-          [sid]: { agentId: r.agentId || '', agentName: r.agentName || '' }
-        }
-        if (r.agentName) msg.agentName = r.agentName
       } catch (e) { /* 忽略 */ }
     },
     onDone: contentJson => {
@@ -2074,14 +2029,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         // 本轮身份：done 带回的 turnId 与刚落库的消息行同源——「过程」入口不该是刷新后才有的东西
         if (p.turnId) msg.turnId = String(p.turnId)
         if (p.tokens && typeof p.tokens === 'object') msg.tokens = p.tokens
-        // 会话级绑定：首问后本会话即锁定智能体（agentLocked 由后端下发，含"绑定为不使用智能体"）。
-        // 本地镜像先于会话列表刷新生效，输入区立刻切到锁定态（切换=新会话）
-        if (p.agentLocked) {
-          sessionAgent.value = {
-            ...sessionAgent.value,
-            [sid]: { agentId: p.agentId || '', agentName: p.agentName || '' }
-          }
-        }
+        // 本轮作答方归属（P5：不再有会话锁定，done 的 agentId/agentName 就是这一轮实际作答的智能体）
         if (p.agentName) msg.agentName = p.agentName
         // 会话内 @ 智能体（§4）：done 的 agentName 是会话绑定口径，本轮由被 @ 的智能体作答时
         // 气泡归属按委派值覆盖（后端落库快照同为委派智能体，刷新后回显一致）
@@ -2573,8 +2521,8 @@ if (typeof window !== 'undefined') {
     // 技能
     skillList, pickedSkills, loadSkills, toggleSkill, skillAvaStyle,
     // 智能体
-    agentList, agentMap, sessionAgent, defaultAgentId, hasDefaultAgent, AUTO_AGENT, boundAgentOf,
-    currentAgentId, agentLocked, isAdmin, agentPickerOpen, currentAgentName, currentAgent, pickAgent,
+    agentList, agentMap, defaultAgentId, hasDefaultAgent,
+    currentAgentId, isAdmin, agentPickerOpen, currentAgentName, currentAgent, pickAgent,
     showAgentTag, modelLabelOf, modelSwitchInfo, loadAgents,
     // 会话与消息
     currentSessionId, loading, messages, currentSessionTitle, roundCount,

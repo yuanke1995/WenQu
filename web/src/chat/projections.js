@@ -165,6 +165,41 @@ const toolDuration = ms => {
 }
 // 是否有正在执行的工具（沙盒命令/MCP 可长时间阻塞）：执行中不显示裸 spin，并在工具条实时计时
 const toolRunning = m => Array.isArray(m?.toolCalls) && m.toolCalls.some(t => t.status === 'start')
+// 智能体 id → 名称：由引擎在拉到助手列表时登记一份，供刷新后从工具入参还原「咨询了谁」用。
+// 刻意不要求每个调用方都把 agentList 传进来——移动端的消息行拿不到它，
+// 靠参数透传会变成"PC 有名字、H5 只有 id"，那种半截功能最容易被当成 bug 反复返工。
+const agentNames = new Map()
+const rememberAgents = list => {
+  if (!Array.isArray(list)) return
+  list.forEach(a => { if (a && a.id && a.name) agentNames.set(a.id, a.name) })
+}
+/**
+ * 本轮咨询过谁（P5 常显徽标的唯一数据源）：@ 强制咨询 + 模型自主咨询合并成一条，
+ * 并按 id/名称去重——同一位既被 @ 又被模型自己派过一次时，只该出现一个名字。
+ * 刷新后 SSE 事件已丢：从落库的 consultAgent 工具调用里把目标补回来（args 是 JSON 串，
+ * 解析不出或旧记录非 JSON 就跳过，不拿名字去猜）。
+ */
+const consultedOf = m => {
+  const out = []
+  const push = (id, name, forced) => {
+    const key = id || name
+    if (!key) return
+    const hit = out.find(x => (x.id || x.name) === key)
+    if (hit) { if (forced) hit.forced = true; return }
+    out.push({ id: id || '', name: name || id, forced: !!forced })
+  }
+  if (m?.delegated) push(m.delegated.id || '', m.delegated.name, true)
+  ;(Array.isArray(m?.consulted) ? m.consulted : []).forEach(c => push(c.id, c.name, false))
+  ;(Array.isArray(m?.toolCalls) ? m.toolCalls : []).forEach(t => {
+    if (!t || t.name !== 'consultAgent' || !t.args) return
+    try {
+      const j = JSON.parse(t.args)
+      if (!j || !j.agentId) return
+      push(j.agentId, agentNames.get(j.agentId) || '', false)
+    } catch (e) { /* 非 JSON 的旧记录：跳过 */ }
+  })
+  return out
+}
 // 是否有「正在运行且可见」的编排分支。必须带 delegated 条件：编排卡片（subagentCard）只渲染
 // 委派分支（多视角模式的分支是实现细节，不渲染卡片）。若这里不带 delegated，多视角模式下
 // busyOf 会以为「卡片在转圈」而让位，实际卡片根本不渲染 → 气泡整个空白，loading 凭空消失。
@@ -901,7 +936,7 @@ const parseSampleQuestions = raw => String(raw || '').split('\n')
   .filter(Boolean)
 export {
   TOOL_LABELS, TOOL_DESCS, MCP_CLIENT_PREFIXES, bareToolName, toolLabel, toolDesc, toolCallsView, executedCount,
-  toolDuration, toolRunning, subRunning, busyOf, stageLabel, hasTimelineBlocks, extendTimelineText, askUserView,
+  toolDuration, toolRunning, consultedOf, rememberAgents, subRunning, busyOf, stageLabel, hasTimelineBlocks, extendTimelineText, askUserView,
   extendTimelineProcess, procOpen, toggleProc, procSlice, pushTimelineTool, pushTimelineArtifact,
   restoreTimeline, SENTENCE_END_CHARS, endsSentence, timelineView, timelineRows, TOOL_BRIEF_KEYS, oneLine,
   clusterize, clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterDur, clusterProcCount,

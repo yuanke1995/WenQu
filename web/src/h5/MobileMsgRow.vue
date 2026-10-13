@@ -61,12 +61,8 @@
         <div v-if="showAgentTag && debugDisplay" class="agent-tag">
           <AgentAvatar class="agent-tag-ava" :agent="badgeOf(m.agentId, m.agentName)" :size="14" /> 由「{{ m.agentName }}」回答
         </div>
-        <div v-if="m.delegated" class="agent-tag">
-          <AgentAvatar class="agent-tag-ava" :agent="badgeOf(m.agentId, m.delegated.name)" :size="14" /> 由「{{ m.delegated.name }}」回答本轮
-          <span v-if="m.delegated.description" class="agent-tag-desc">{{ m.delegated.description }}</span>
-        </div>
-        <div v-if="m.dispatched && debugDisplay" class="agent-tag">
-          <thunderbolt-outlined /> 已派遣「{{ m.dispatched.name }}」<span v-if="m.dispatched.fallback">（路由未命中，按默认）</span>
+        <div v-if="consultedOf(m).length" class="agent-tag">
+          <AgentAvatar class="agent-tag-ava" :agent="badgeOf(consultedOf(m)[0].id, consultedOf(m)[0].name)" :size="14" /> 本轮已咨询 {{ consultedOf(m).map(c => `「${c.name}」`).join('、') }}
         </div>
 
         <!-- 深度思考面板：折叠态一行，展开看全文 -->
@@ -358,7 +354,7 @@ import {
   fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget, fanRun, runBoardText,
   fallbackDur, toolCallsView, executedCount, toolSearchQueries, retrievalLineTitle, subagentCard, barWidth, toggleSubagents, fmtDuration,
   fmtMsgTime, fmtSize, errorBrief, sourceName, canSwitchPrev, canSwitchNext, verLabel, agentBadgeOf,
-  pasteTitle, pasteSub, isPastedText
+  pasteTitle, pasteSub, isPastedText, consultedOf
 } from '../chat/projections'
 import AskRecordCard from '../components/AskRecordCard.vue'
 import ToolSpillButton from '../components/ToolSpillButton.vue'

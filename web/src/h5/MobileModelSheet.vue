@@ -5,13 +5,6 @@
     <div class="ms">
       <!-- ---- 智能体 ---- -->
       <div class="ms-section-title">智能体</div>
-      <div v-if="agentLocked" class="ms-note">本会话已绑定智能体，切换会开启新会话（人设/知识库/工具集随智能体变）</div>
-      <button class="ms-row" :class="{ on: currentAgentId === AUTO_AGENT }" type="button" @click="pickAgentRow(AUTO_AGENT)">
-        <span class="ms-ico-fallback">自</span>
-        <span class="ms-name">自动派遣</span>
-        <span class="ms-sub">按名称与描述挑最合适的</span>
-        <check-outlined v-if="currentAgentId === AUTO_AGENT" class="ms-check" />
-      </button>
       <button v-if="!hasDefaultAgent" class="ms-row" :class="{ on: !currentAgentId }" type="button" @click="pickAgentRow('')">
         <span class="ms-ico-fallback">默</span>
         <span class="ms-name">默认（全局配置）</span>
@@ -115,12 +108,11 @@ const {
   compacting, compactContext,
   thinkCapsOf, levelOptionsOf, currentLevelOf, deepOnOf, setThinkLevel, modelLabelOf,
   ctxWindowOptionsOf, effectiveCtxWindowOf,
-  agentList, AUTO_AGENT, currentAgentId, currentAgentName, hasDefaultAgent, agentLocked, pickAgent
+  agentList, currentAgentId, currentAgentName, hasDefaultAgent, pickAgent
 } = engine
 
-// 智能体切换：已绑定会话由引擎按「切换 = 开启新会话」处理并给出提示（与 PC 下拉同一路径）。
-// 未锁定时选完即关 sheet（用户接下来多半要打字）；锁定时不关——引擎刚开了新会话，让提示可读。
-const pickAgentRow = id => { pickAgent(id); if (!agentLocked.value) emit('close') }
+// 智能体切换（P5）：换人立即生效，下一问就由它答，不需要新建会话；选完即关 sheet（用户接下来多半要打字）
+const pickAgentRow = id => { pickAgent(id); emit('close') }
 
 // 模型下拉数据（与 ModelSelect 同源 /provider/available）：10s 模块级缓存，避免每次开 sheet 都打接口。
 // 过滤口径必须带 type=chat（与 PC 的 ModelSelect 一致）：不过滤会把 OCR/向量/重排模型也列成可聊模型；

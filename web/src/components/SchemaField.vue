@@ -18,6 +18,11 @@
     <template v-else-if="field.type === 'model'">
       <ModelSelect v-model="value" :type="field.modelType || 'chat'" :allow-clear="!!field.allowClear" width="100%" />
     </template>
+    <template v-else-if="field.type === 'agent'">
+      <a-select :value="value || undefined" size="small" :options="agentOptions" style="width: 160px"
+                show-search option-filter-prop="label" :loading="agentsLoading" placeholder="跟随平台默认"
+                @update:value="v => value = v || ''" />
+    </template>
     <a-input-password v-else-if="field.type === 'password'" v-model:value="value" size="small" style="width: 120px" />
     <a-input v-else v-model:value="value" size="small" style="width: 120px" />
   </template>
@@ -49,6 +54,15 @@
       <ModelSelect v-model="value" :type="field.modelType || 'chat'"
                    :allow-clear="!!field.allowClear" :width="field.width || 420"
                    :admin-tip-visible="true" />
+    </template>
+
+    <!-- 助手选择（个人默认助手）：候选来自 /agent/available（只列本轮读者读得到的），
+         清空=跟随平台默认智能体。值存成个人覆盖配置，不是 c_ai_user 的列——
+         与档位个人上限同一档归属，别为它再开一条偏好接口 -->
+    <template v-else-if="field.type === 'agent'">
+      <a-select :value="value || undefined" :options="agentOptions" show-search option-filter-prop="label"
+                :loading="agentsLoading" :style="{ width: (field.width || 320) + 'px' }"
+                placeholder="跟随平台默认智能体" allow-clear @update:value="v => value = v || ''" />
     </template>
 
     <template v-else-if="field.type === 'number'">
@@ -104,6 +118,7 @@
 import { computed, ref, watch } from 'vue'
 import { QuestionCircleOutlined } from '@ant-design/icons-vue'
 import { FIELDS, isVisible } from '../configSchema'
+import { listAvailableAgents } from '../api'
 import ModelSelect from './ModelSelect.vue'
 
 const props = defineProps({
@@ -114,6 +129,29 @@ const props = defineProps({
   bare: { type: Boolean, default: false }
 })
 const emit = defineEmits(['change'])
+
+// 助手候选（type=agent 的字段用）：首次渲染到这种字段才拉一次，全站共享一份模块级缓存
+const agentOptions = ref([])
+const agentsLoading = ref(false)
+let agentsPromise = null
+const ensureAgents = async () => {
+  if (props.field?.type !== 'agent' || agentOptions.value.length) return
+  if (!agentsPromise) agentsPromise = listAvailableAgents().then(r =>
+    (r && r.success && Array.isArray(r.data) ? r.data : []).map(a => ({
+      label: a.name + (a.isDefault === 1 ? '（平台默认）' : ''), value: a.id
+    })))
+  agentsLoading.value = true
+  try {
+    agentOptions.value = await agentsPromise
+  } catch (e) {
+    // 候选拉不到不能留个空下拉假装"没有助手"——那是把接口故障读成数据为空
+    agentOptions.value = []
+    agentsPromise = null
+  } finally {
+    agentsLoading.value = false
+  }
+}
+watch(() => [props.field?.type, props.bare], ensureAgents, { immediate: true })
 
 const read = (o, p) => p.split('.').reduce((a, k) => (a == null ? a : a[k]), o)
 const write = (o, p, v) => {

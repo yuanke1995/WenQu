@@ -1067,7 +1067,7 @@ const applyModelEdit = () => {
   if (editIsNew.value) {
     models.value.push({
       rowKey: 'new-' + (++rowSeq), id: undefined, isNew: true, enabled: true,
-      thinkingResolved: undefined, visionResolved: false, ...norm
+      thinkingResolved: undefined, visionResolved: false, toolCapableResolved: true, ...norm
     })
   } else {
     const target = models.value.find(m => m.rowKey === editSourceKey.value)
@@ -1084,6 +1084,9 @@ const capsOf = r => {
   if (!visionApplies(r)) return []
   const out = []
   if (r.visionResolved || r.visionCapable === '1') out.push('图片')
+  // 只标"会被判为不能调工具"这一侧：对话类模型默认都能调，逐个标「工具」是噪声；
+  // 而私有化网关不认 function calling 时，这个标记就是"为什么它不咨询其他助手"的第一条线索
+  if (r.toolCapableResolved === false) out.push('无工具')
   const t = r.isNew ? r.thinking : (r.thinkingResolved || r.thinking)
   if (t && t !== 'none' && t !== 'auto') {
     out.push(r.reasoningLevels?.length ? `思考·${r.reasoningLevels.length}档` : '思考')
@@ -1203,6 +1206,7 @@ const openModels = async p => {
       thinkingResolved: m.thinking || 'auto',       // 解析结果（auto 已按模型名判定，速览标签用）
       visionCapable: m.visionCapable == null ? 'auto' : String(m.visionCapable),
       visionResolved: !!m.visionResolved,           // 图片能力解析结果（速览标签用）
+      toolCapableResolved: m.toolCapableResolved !== false,  // 工具能力解析结果（P5：登记值未填=放行，这里回显实际结论）
       toolCapable: m.toolCapable == null ? 'auto' : String(m.toolCapable),
       reasoningLevels: Array.isArray(m.reasoningLevels) ? [...m.reasoningLevels] : [],
       defaultReasoningLevel: m.defaultReasoningLevel || null,

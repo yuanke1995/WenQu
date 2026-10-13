@@ -55,7 +55,7 @@
           </button>
           <div v-if="!listLen" class="as-empty">没有可引用的{{ mentionTab === 'kb' ? '知识库' : (mentionTab === 'doc' ? '文档' : '智能体') }}</div>
         </template>
-        <div class="as-hint">引用只对本轮生效：知识库收窄检索范围，文档整篇带入上下文，智能体由它作答本轮</div>
+        <div class="as-hint">引用只对本轮生效：知识库收窄检索范围，文档整篇带入上下文，智能体本轮强制咨询它</div>
       </template>
 
       <!-- ==================== 历史(#) ==================== -->

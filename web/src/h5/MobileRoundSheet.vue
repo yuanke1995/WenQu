@@ -160,7 +160,7 @@ const debugStages = computed(() => {
     { name: `向量命中（${(d.vectorHits || []).length}）`, items: map(d.vectorHits, it => '相似度 ' + (it.score ?? 0)) },
     { name: `合并后（${(d.merged || []).length}）`, items: map(d.merged, it => '分 ' + (it.score ?? 0)) },
     { name: `重排后（${(d.reranked || []).length}）` + (d.rerankApplied ? '' : `（${d.rerankSkipReason || '未重排'}）`), items: map(d.reranked, it => '分 ' + (it.score ?? 0)) },
-    { name: `最终上下文（${(d.finalContext || []).length}/8）`, items: map(d.finalContext, it => '分 ' + (it.score ?? 0)) },
+    { name: `最终上下文（${(d.finalContext || []).length}/8 · 门拦下 ${d.contextGate?.droppedByGate ?? 0} 块）`, items: map(d.finalContext, it => '分 ' + (it.rerankScore ?? it.score ?? 0)) },
     { name: `被排除（${(d.excluded || []).length}）`, items: map(d.excluded, it => '分 ' + (it.score ?? 0)) }
   ]
 })

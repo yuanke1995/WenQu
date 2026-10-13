@@ -179,8 +179,8 @@ const EV_TYPE_LABEL = {
   tool: '工具', approval: '工具审批', approval_required: '工具待批准', ask_user: '提问卡',
   plan: '本轮步骤', plan_approval: '计划待批准', plan_cancelled: '计划未批准',
   plan_superseded: '计划被取代', artifact: '产物', subagent: '子智能体',
-  subagent_route: '派遣路由', agent: '智能体', agent_bound: '绑定智能体',
-  agent_dispatched: '自动派遣', agent_delegated: '委派作答',
+  subagent_route: '派遣路由', agent: '智能体',
+  agent_delegated: '委派作答', agent_consulted: '智能体咨询',
   retrieved: '检索', usage: '用量', todo: '任务清单', error: '失败', warn: '提醒',
   steer: '中途插话', stop: '用户停止', interrupted: '中断收尾', detach: '断线中止',
   done: '本轮结束'
