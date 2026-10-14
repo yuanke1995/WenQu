@@ -795,22 +795,17 @@
             </div>
             <div class="mention-foot">↑↓ 选择 · Enter 确认 · Esc 关闭　|　# 勾选的历史问答作为本轮上下文带给模型（只对本轮生效，最多 10 条）</div>
           </div>
-          <!-- 「+」面板（附件 / 引用 / 技能 / 计划 / 历史 / 命令 六页签）：输入框唯一的候选面板。
-               两个入口同一块面板——点「+」从鼠标流进来（筛选词落在面板搜索框），输入框敲 @ 也开这里
-               （停在「引用」页，筛选词实时取「@ 到光标」之间的正文，见 syncPanelQuery）。
-               六页签共用一套交互：搜索 + 数量统计 + Tab 切页 + ↑↓ 选择 + Enter 确认 + Esc 关闭。
+          <!-- 「+」面板（分层菜单）：输入框唯一的候选面板。两个入口同一块面板——
+               点「+」先出一级轻菜单（上传文件/图片一击直达，引用/技能/历史/命令进二级列表），
+               输入框敲 @ 也开这里（直接落在「引用」二级，筛选词实时取「@ 到光标」之间的正文，见 syncPanelQuery）。
+               计划模式不占面板——它是模式开关，在工具条上有独立胶囊（plan-pill）。
+               键盘：↑↓ 选择 · Enter 确认/进入 · Tab 进/退层级 · Esc 关闭（由一级进入的二级先退回一级）。
                行式交互与样式复用 .mention-panel / .mention-item -->
           <div v-if="addOpen" class="mention-panel" @keydown="onPanelNavKeydown">
             <div class="mention-head add-head">
-              <button v-for="t in ADD_TABS" :key="t.key" class="mention-tab" :class="{ on: addTab === t.key }"
-                      type="button" @click="switchAddTab(t.key)">
-                <component :is="t.icon" /> {{ t.label }}<span v-if="t.total()" class="add-tab-total">{{ t.total() }}</span><span v-if="t.count()" class="add-tab-n">{{ t.count() }}</span>
-              </button>
+              <button v-if="addTab !== 'root'" class="app-icon-btn add-back" title="返回上一层" @click="backToRoot"><left-outlined /></button>
+              <span class="add-title">{{ addTab === 'root' ? '添加到本轮' : ADD_TITLES[addTab] }}</span>
               <button class="app-icon-btn add-close" title="关闭" @click="closeAddPanel"><close-outlined /></button>
-            </div>
-            <div v-if="addSearchable" class="add-filter-row">
-              <input ref="addSearchEl" v-model="addQuery" class="add-filter" type="search"
-                     :placeholder="addSearchHint" autocomplete="off" />
             </div>
             <!-- 引用页的三类候选各自计数（沿用原 @ 弹窗的口径）；子页签只换列表，不重置搜索词 -->
             <div v-if="addTab === 'ref'" class="mention-tabs add-subtabs">
@@ -819,19 +814,24 @@
                 <component :is="s.icon" /> {{ s.label }} {{ s.count() }}
               </button>
             </div>
+            <div v-if="addSearchable" class="add-filter-row">
+              <input ref="addSearchEl" v-model="addQuery" class="add-filter" type="search"
+                     :placeholder="addSearchHint" autocomplete="off" />
+            </div>
             <div ref="addListEl" class="mention-list">
-              <!-- 附件：选完即收面板（onAttachChange）——面板正盖着输入框上方的附件 chip，收起来让用户看到已加上 -->
-              <template v-if="addTab === 'file'">
-                <div v-for="(r, ri) in ADD_FILE_ROWS" :key="r.key" class="mention-item"
+              <!-- 一级菜单：上传两行点了直接弹系统文件框；其余四行进二级。kbd=输入框里对应的触发符，
+                   把鼠标流和键盘流接到同一个地方；badge=已选/生效数（本轮会带上什么） -->
+              <template v-if="addTab === 'root'">
+                <div v-for="(r, ri) in ADD_ROOT_ROWS" :key="r.key" class="mention-item"
                      :class="{ hi: addHi === ri }" @click="r.run()">
                   <span class="mention-ava"><component :is="r.icon" /></span>
                   <div class="mention-text">
-                    <span class="mention-name">{{ r.name }}</span>
+                    <span class="mention-name">{{ r.name }}<span v-if="r.badge()" class="add-root-badge">{{ r.badge() }}</span></span>
                     <span class="mention-desc">{{ r.desc }}</span>
                   </div>
+                  <span v-if="r.kbd" class="add-kbd">{{ r.kbd }}</span>
                 </div>
               </template>
-              <!-- 引用：知识库=收窄本轮检索范围 / 文档=内容直接带入 / 智能体=本轮委派给它 -->
               <template v-else-if="addTab === 'ref'">
                 <div v-if="mentionLoading" class="mention-empty">加载中…</div>
                 <template v-else-if="mentionTab === 'kb'">
@@ -890,21 +890,6 @@
                   <check-outlined v-if="pickedSkills.includes(s.name)" class="mention-check" />
                 </div>
                 <div v-if="skillList.length && !addSkillList.length" class="mention-empty">没有匹配的技能</div>
-              </template>
-              <!-- 计划模式：入口开关（持久化）。开启后每轮先产出执行计划，由用户批准/修改/取消后才正式回答。
-                   持久模式用开关表达（不套技能/历史那种「本轮勾选」的语汇）：行可点、开关可拨，
-                   开启态只变开关自身，不再整行变色/头像实心——那套是「列表里挑中了」的语义 -->
-              <template v-else-if="addTab === 'plan'">
-                <div class="mention-item plan-switch-row" :class="{ hi: addHi === 0 }" @click="setPlanMode(!planModeOn)">
-                  <span class="mention-ava"><ordered-list-outlined /></span>
-                  <div class="mention-text">
-                    <span class="mention-name">计划模式</span>
-                    <span class="mention-desc">每轮先出执行计划，你批准或修改后才开始回答</span>
-                  </div>
-                  <span class="plan-switch-wrap" @click.stop>
-                    <a-switch :checked="planModeOn" size="small" @change="setPlanMode" />
-                  </span>
-                </div>
               </template>
               <!-- 历史引用：勾选不关面板（多选），与键盘流 # 面板同源同一份候选 -->
               <template v-else-if="addTab === 'hist'">
@@ -993,9 +978,16 @@
                   </div>
                 </template>
               </a-dropdown>
-              <button class="app-icon-btn add-btn" :class="{ 'toolbar-btn-on': addOpen || pickedSkills.length || planModeOn }"
-                      title="添加：附件 / 引用资料 / 技能 / 计划模式 / 引用历史问答 / 快捷命令" @click="toggleAddPanel">
+              <button class="app-icon-btn add-btn" :class="{ 'toolbar-btn-on': addOpen || pickedSkills.length }"
+                      title="添加：上传文件图片 / 引用资料 / 技能 / 引用历史问答 / 快捷命令" @click="toggleAddPanel">
                 <plus-outlined />
+              </button>
+              <!-- 计划模式开关：独立胶囊（原来是「+」面板里的一个页签——模式开关混进候选列表，
+                   找它要切页签、状态还要靠徽标转达，语义就错了）。开启态用警示色与计划 chip 同源 -->
+              <button class="plan-pill" :class="{ on: planModeOn }" type="button"
+                      title="计划模式：每轮先出执行计划，你批准或修改后才开始回答" @click="setPlanMode(!planModeOn)">
+                <ordered-list-outlined />
+                <span>{{ isNarrow ? '计划' : '计划模式' }}</span>
               </button>
             </div>
             <div class="toolbar-right">
@@ -1131,10 +1123,10 @@
             </span>
           </div>
         </div>
-        <input ref="attachInput" type="file" multiple style="display:none" @change="onAttachChange" />
-        <!-- 图片选择：accept 写显式 MIME 列表而非通配 —— 「斜杠星号」会被 check-h5 的注释剥离器
-             当作块注释开头，把后续 400 行当注释吞掉，右栏等三条断言全部误报 -->
-        <input ref="addImgInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif,image/bmp" multiple style="display:none" @change="onAddImgChange" />
+        <!-- 合成点击要 .stop：pickAttachments 里 input.click() 的点击事件会冒泡到 document，
+             而 input 挂在计划面板容器下（不在 .input-box/.mention-panel 内），外点关闭监听会误判成
+             「点在面板外」把「+」面板关掉——表现为选择框还开着、背后面板没了，取消选择后面板也回不来 -->
+        <input ref="attachInput" type="file" multiple style="display:none" @click.stop @change="onAttachChange" />
       </div>
     </div>
 
@@ -1530,8 +1522,8 @@ import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, Close
          ArrowUpOutlined, RobotOutlined, SettingOutlined, ThunderboltOutlined, LockOutlined, RedoOutlined,
          CloseOutlined, DatabaseOutlined, SearchOutlined, UpOutlined, ShareAltOutlined,
          HistoryOutlined, TranslationOutlined, QuestionCircleOutlined, SwapOutlined, InfoCircleOutlined,
-         AppstoreOutlined, PictureOutlined, ClockCircleOutlined, BookOutlined,
-         OrderedListOutlined, CheckCircleOutlined } from '@ant-design/icons-vue'
+         AppstoreOutlined, ClockCircleOutlined, BookOutlined,
+         OrderedListOutlined, CheckCircleOutlined, LeftOutlined } from '@ant-design/icons-vue'
 import { debugRetrieval, deleteMessageGroup, submitFeedback as apiSubmitFeedback,
          addEvalCase, getSessionShare, enableSessionShare, disableSessionShare } from '../api'
 import { renderMd, resolveImg, onImgError } from '../utils/markdown'
@@ -2058,17 +2050,9 @@ const pickAttachments = () => {
   if (pendingFiles.value.length >= MAX_FILES) { message.warning(`一次最多上传 ${MAX_FILES} 个附件`); return }
   attachInput.value?.click()
 }
-/** 选完即收面板：面板正盖着输入框上方的附件 chip，收起来让用户看到已加上（取消选择不关） */
+/** 选完即收面板：面板正盖着输入框上方的附件 chip，收起来让用户看到已加上（取消选择不关）。
+ *  文件与图片同一入口：input 不设 accept（都能选），addFiles 按 MIME 自动分流（图片压缩、其余走附件校验） */
 const onAttachChange = e => {
-  const files = Array.from(e.target.files || [])
-  e.target.value = ''
-  if (!files.length) return
-  addFiles(files)
-  closeAddPanel()
-}
-const addImgInput = ref(null)
-const pickAddImages = () => addImgInput.value?.click()
-const onAddImgChange = e => {
   const files = Array.from(e.target.files || [])
   e.target.value = ''
   if (!files.length) return
@@ -2085,6 +2069,7 @@ const openMentionPanel = () => {
   addTab.value = 'ref'
   addOpen.value = true
   addHi.value = 0
+  addFromRoot.value = false   // @ 直接落在二级，没有「上一层」，Esc 应整个关闭而不是退回菜单
   mentionQuery.value = ''
   ensureRefCandidates()
 }
@@ -2092,8 +2077,11 @@ const openMentionPanel = () => {
  *  / 命令 / # 历史引用 / + 添加三个面板共用同一关闭监听（同一容器、同一交互约定） */
 const onDocClickForMention = e => {
   if (!slashOpen.value && !histOpen.value && !addOpen.value) return
-  const el = e.target
-  if (el && el.closest && (el.closest('.mention-panel') || el.closest('.input-box'))) return
+  // 不能用 e.target.closest 判「点在面板里」：一级菜单点进二级时 Vue 当场换掉整个列表分支，
+  // 被点节点被拆下树（parent 链断在 .mention-item），closest 会判成面板外 → 切层的那一下
+  // 自己就把面板关了。composedPath 在事件派发时已定，含换层前的旧祖先链，用它认面板。
+  const path = typeof e.composedPath === 'function' ? e.composedPath() : []
+  if (path.some(n => n && n.classList && (n.classList.contains('mention-panel') || n.classList.contains('input-box')))) return
   closeAllPanels()
 }
 onMounted(() => document.addEventListener('click', onDocClickForMention))
@@ -2364,30 +2352,32 @@ const closeHistPanel = () => closeAllPanels()
 // 敲 @ 也开这里（停在「引用」页，筛选词由 syncPanelQuery 取正文里「@ 到光标」那一段）。
 // 六页签共用一套交互：搜索 + 数量统计 + Tab 切页 + ↑↓ 选择 + Enter 确认 + Esc 关闭。
 const addOpen = ref(false)
-const addTab = ref('file')
+const addTab = ref('root')
 const addHi = ref(0)
 const addSearchEl = ref(null)
 const addHistQuery = ref('')
 const addSkillQuery = ref('')
 const addCmdQuery = ref('')
 const addHistCandidates = computed(() => histListOf(addHistQuery.value))
-// count()=已选/生效数（实心徽标，告诉用户这轮会带上什么）；total()=可挑数（弱色数字，原 @ 弹窗的口径）
-const ADD_TABS = [
-  { key: 'file', label: '附件', icon: PaperClipOutlined, count: () => pendingFiles.value.length + pendingImages.value.length, total: () => 0 },
-  { key: 'ref', label: '引用', icon: BookOutlined, count: () => pendingMentions.value.length, total: () => 0 },
-  { key: 'skill', label: '技能', icon: AppstoreOutlined, count: () => pickedSkills.value.length, total: () => skillList.value.length },
-  { key: 'plan', label: '计划', icon: OrderedListOutlined, count: () => planModeOn.value ? 1 : 0, total: () => 0 },
-  { key: 'hist', label: '历史', icon: HistoryOutlined, count: () => pendingHistoryRefs.value.length, total: () => 0 },
-  { key: 'cmd', label: '命令', icon: ThunderboltOutlined, count: () => 0, total: () => slashCommands.length }
+// 「+」面板两级形态：root=一级轻菜单（ADD_ROOT_ROWS），其余 key=二级列表（ADD_TITLES 给头部标题）。
+// count()=已选/生效数（实心徽标，告诉用户这轮会带上什么）；不再有页签双计数
+const ADD_ROOT_ROWS = [
+  { key: 'file', name: '上传文件', desc: '文件与图片一起选：文件解析后供模型阅读，图片压缩后随本轮提问（最多 5 张）', icon: PaperClipOutlined,
+    badge: () => pendingFiles.value.length + pendingImages.value.length, run: () => pickAttachments() },
+  { key: 'ref', name: '引用资料', desc: '知识库 / 文档 / 智能体，只对本轮生效', icon: BookOutlined, kbd: '@',
+    badge: () => pendingMentions.value.length, run: () => switchAddTab('ref') },
+  { key: 'skill', name: '技能', desc: '临时增强本轮，下一轮自动取消（一次最多 3 个）', icon: AppstoreOutlined,
+    badge: () => pickedSkills.value.length, run: () => switchAddTab('skill') },
+  { key: 'hist', name: '引用历史问答', desc: '勾选本会话的问答作为本轮上下文（最多 10 条）', icon: HistoryOutlined, kbd: '#',
+    badge: () => pendingHistoryRefs.value.length, run: () => switchAddTab('hist') },
+  { key: 'cmd', name: '快捷命令', desc: '常用问法模板与即时操作', icon: ThunderboltOutlined, kbd: '/',
+    badge: () => 0, run: () => switchAddTab('cmd') }
 ]
+const ADD_TITLES = { ref: '引用资料', skill: '技能', hist: '引用历史问答', cmd: '快捷命令' }
 const REF_SUB_TABS = [
   { key: 'kb', label: '知识库', icon: DatabaseOutlined, count: () => mentionKbs.value.length },
   { key: 'doc', label: '文档', icon: FileTextOutlined, count: () => mentionDocs.value.length },
   { key: 'agent', label: '智能体', icon: RobotOutlined, count: () => mentionAgents.value.length }
-]
-const ADD_FILE_ROWS = [
-  { key: 'file', name: '选择文件', desc: '上传后随本轮提问一起发送，解析后供模型阅读', icon: PaperClipOutlined, run: pickAttachments },
-  { key: 'image', name: '选择图片', desc: '压缩后随本轮提问（支持多选，最多 5 张）', icon: PictureOutlined, run: pickAddImages }
 ]
 // 搜索框一页一词：切页签不串味（引用页那一份就是 mentionQuery，敲 @ 时由正文实时灌进来）
 const addSearchable = computed(() => ['ref', 'skill', 'hist', 'cmd'].includes(addTab.value))
@@ -2410,12 +2400,11 @@ const addSearchHint = computed(() => ({
   cmd: '搜索命令'
 }[addTab.value] || ''))
 const addFootHint = computed(() => {
-  const nav = 'Tab 切页 · ↑↓ 选择 · Enter 确认 · Esc 关闭'
   const t = addTab.value
-  if (t === 'file') return nav + '　|　支持 PDF / Word / Excel / PPT 与文本、代码文件；单个不超过 15MB（一次最多 5 个），也可直接把文件拖进来'
+  if (t === 'root') return '↑↓ 选择 · Enter 进入 · Tab 进/退层 · Esc 关闭　|　输入框可直接敲 @ 引用、# 历史、/ 命令；文件也可直接拖进来'
+  const nav = '↑↓ 选择 · Enter 确认 · Tab 返回 · Esc 关闭'
   if (t === 'ref') return nav + '　|　引用只对本轮生效：知识库 = 本轮检索只在这些库里找；文档 = 内容直接带入本轮上下文；智能体 = 本轮强制咨询它（它带自己的知识库查一遍，回答仍由当前助手汇总）'
   if (t === 'skill') return nav + '　|　选用的技能对本轮生效，下一轮自动取消（一次最多 3 个）'
-  if (t === 'plan') return nav + '　|　开启后每轮先产出执行计划，你批准或修改后才开始回答'
   if (t === 'hist') return nav + '　|　勾选的历史问答作为本轮上下文带给模型（只对本轮生效，最多 10 条）'
   return nav + '　|　模板 = 插入常用问法框架（可再编辑）；操作 = 立即执行'
 })
@@ -2432,12 +2421,11 @@ const addCmdList = computed(() => {
 /** 引用页当前子页签的候选（点击与 Enter 都读这一份，下标才对得上） */
 const addRefList = computed(() => mentionTab.value === 'kb' ? mentionKbFiltered.value
   : mentionTab.value === 'agent' ? mentionAgentFiltered.value : mentionDocFiltered.value)
-const addListSize = computed(() => addTab.value === 'ref' ? addRefList.value.length
-  : addTab.value === 'skill' ? addSkillList.value.length
-    : addTab.value === 'hist' ? addHistCandidates.value.length
-      : addTab.value === 'cmd' ? addCmdList.value.length
-        : addTab.value === 'file' ? ADD_FILE_ROWS.length
-          : addTab.value === 'plan' ? 1 : 0)
+const addListSize = computed(() => addTab.value === 'root' ? ADD_ROOT_ROWS.length
+  : addTab.value === 'ref' ? addRefList.value.length
+    : addTab.value === 'skill' ? addSkillList.value.length
+      : addTab.value === 'hist' ? addHistCandidates.value.length
+        : addTab.value === 'cmd' ? addCmdList.value.length : 0)
 // 候选集变了，原高亮下标已无意义：回到第一条，并把列表滚回顶部区域
 watch(addQuery, () => { addHi.value = 0; nextTick(scrollPanelHiIntoView) })
 
@@ -2452,8 +2440,27 @@ const ensureRefCandidates = () => {
  *  两处键盘都走 onPanelNavKeydown，焦点在哪都能继续 ↑↓/Enter/Esc */
 const focusAddSearch = () => nextTick(() => {
   if (addSearchable.value) addSearchEl.value?.focus?.()
-  else textareaRef.value?.focus?.()
+  // 退回一级时聚焦原生 textarea 而非组件实例：antd 的 focus() 在 keydown 事件流里调用不生效
+  // （实测焦点落回 BODY，后续 Esc 全打空）。且同一事件流里连原生 focus() 也留不住，
+  // 必须 setTimeout 挪出事件流；click 流（点「+」打开）没这问题，多延一拍无害
+  else setTimeout(() => {
+    const ta = rawTextarea()
+    if (ta) {
+      ta.focus()
+      const n = ta.value.length
+      try { ta.setSelectionRange(n, n) } catch (err) { /* setSelectionRange 个别输入类型不支持，忽略 */ }
+    } else textareaRef.value?.focus?.()
+  }, 0)
 })
+/** 二级页是否由一级菜单进入（区别于敲 @ 直接落在引用页）：决定 Esc 在二级是退回一级还是整个关闭 */
+const addFromRoot = ref(false)
+/** 二级 → 返回一级菜单。@ 触发的筛选片段还挂在正文里时先摘掉（回到一级意味着改由搜索框接手） */
+const backToRoot = () => {
+  if (panelTriggerPos >= 0) stripTriggerToken()
+  addTab.value = 'root'
+  addHi.value = 0
+  focusAddSearch()
+}
 const switchAddTab = k => {
   if (k !== addTab.value) {
     // 敲 @ 进来时正文里留着「@ + 筛选词」。切到别的页签就意味着改由搜索框接手筛选，
@@ -2461,14 +2468,10 @@ const switchAddTab = k => {
     if (panelTriggerPos >= 0) stripTriggerToken()
     addTab.value = k
     addHi.value = 0
+    addFromRoot.value = true
     if (k === 'ref') ensureRefCandidates()
   }
   focusAddSearch()
-}
-const moveAddTab = dir => {
-  const keys = ADD_TABS.map(t => t.key)
-  const i = keys.indexOf(addTab.value)
-  switchAddTab(keys[(i + dir + keys.length) % keys.length])
 }
 const switchRefTab = k => {
   mentionTab.value = k
@@ -2488,8 +2491,8 @@ const confirmRefRow = (type, item) => {
  *  本次回车交回输入框照常发送（避免"筛到空了就打不出发不出去"） */
 const confirmAddHi = i => {
   const t = addTab.value
-  if (t === 'file') {
-    const row = ADD_FILE_ROWS[i]
+  if (t === 'root') {
+    const row = ADD_ROOT_ROWS[i]
     if (!row) return false
     row.run()
     return true
@@ -2506,7 +2509,6 @@ const confirmAddHi = i => {
     toggleSkill(s.name)
     return true
   }
-  if (t === 'plan') { setPlanMode(!planModeOn.value); return true }
   if (t === 'hist') {
     const m = addHistCandidates.value[i]
     if (!m) return false
@@ -2521,12 +2523,12 @@ const confirmAddHi = i => {
 const toggleAddPanel = () => {
   if (addOpen.value) { closeAddPanel(); return }
   closeAllPanels()          // 与 / # 触发面板互斥，开一个收一个
-  addHistQuery.value = ''   // 每次打开从干净筛选开始（页签停留在上次看的那页）
+  addHistQuery.value = ''   // 每次打开从干净筛选开始（一级菜单总是从头展示，不记住上次逛到哪）
   addSkillQuery.value = ''
   addCmdQuery.value = ''
   mentionQuery.value = ''   // 引用页同理：上次敲 @ 筛剩的词不该在重开时还挂着
   addHi.value = 0
-  if (addTab.value === 'ref') ensureRefCandidates()
+  addTab.value = 'root'
   addOpen.value = true
   focusAddSearch()
 }
@@ -2597,6 +2599,20 @@ const onSearchHotkey = e => {
 }
 onMounted(() => document.addEventListener('keydown', onSearchHotkey))
 onUnmounted(() => document.removeEventListener('keydown', onSearchHotkey))
+/** Esc 兜底：候选面板开着时点击行（非可聚焦 div，如「+」一级菜单行）焦点会落回 BODY，
+ *  keydown 到不了面板的 @keydown 与输入框——在 document 层接住 Esc。焦点还在面板/输入框内时
+ *  跳过（onPanelNavKeydown / onInputKeydown 已处理，避免双份关闭）。 */
+const onDocEscKeydown = e => {
+  if (e.key !== 'Escape' || e.isComposing || e.keyCode === 229) return
+  if (!slashOpen.value && !histOpen.value && !addOpen.value) return
+  const hit = n => n instanceof HTMLElement && (n.closest('.mention-panel') || n.closest('.input-box'))
+  if (e.composedPath().some(hit)) return
+  e.preventDefault()
+  closeAllPanels()
+  focusInput()
+}
+onMounted(() => document.addEventListener('keydown', onDocEscKeydown))
+onUnmounted(() => document.removeEventListener('keydown', onDocEscKeydown))
 
 // ==================== 会话分享（只读链接） ====================
 // 分享的是"这段对话"：链接持有者可看不可续聊。链接展示的是会话**最新内容**（后端按 token 实时读，
@@ -2649,14 +2665,18 @@ const onPanelNavKeydown = e => {
   }
   if (e.key === 'Escape') {
     e.preventDefault()
+    // 「+」面板里由一级菜单进入的二级页，Esc 先退回一级（再按一次才关）；敲 @ 直接落在引用页的
+    // 没有「上一层」，Esc 整个关闭。/ # 面板无层级，Esc 直接关
+    if (addOpen.value && addTab.value !== 'root' && addFromRoot.value) { backToRoot(); return true }
     closeAllPanels()
     focusInput()
     return true
   }
-  // Tab 切页签只在「+」面板有意义（六页签互切）；/ # 面板没有页签，留给原生焦点跳转
+  // Tab 在「+」面板里进/退层级：一级=进入高亮项，二级=退回一级。/ # 面板没有层级，留给原生焦点跳转
   if (e.key === 'Tab' && addOpen.value) {
     e.preventDefault()
-    moveAddTab(e.shiftKey ? -1 : 1)
+    if (addTab.value === 'root') confirmAddHi(addHi.value)
+    else backToRoot()
     return true
   }
   // 有高亮候选才由 Enter 确认；没有候选（筛空了）时 Enter 仍走发送，避免"打不中就发不出去"
@@ -3985,6 +4005,16 @@ onMounted(async () => {
 .thinkp-opt-check { font-size: 12px; }
 .thinkp-foot { margin-top: 2px; padding-top: 10px; border-top: 1px solid var(--app-border); font-size: 12px; line-height: 1.6; color: var(--app-text3); }
 .toolbar-btn-on { color: var(--app-accent) !important; background: var(--app-accent-weak) !important; }
+/* 计划模式胶囊：工具条上的独立模式开关（原「+」面板「计划」页签迁出）。
+   开启态用警示色，与气泡上的计划 chip（.plan-chip）同一色源，两处状态一眼对得上 */
+.plan-pill {
+  display: inline-flex; align-items: center; gap: 5px; height: 28px; flex: none;
+  padding: 0 10px; border-radius: 999px; border: none; cursor: pointer;
+  background: transparent; color: var(--app-text3); font-size: 13px; font-weight: 400;
+  transition: background .15s, color .15s;
+}
+.plan-pill:hover { background: var(--app-panel-2); color: var(--app-text); }
+.plan-pill.on { background: var(--app-warn-weak); color: var(--app-warn-text); }
 .model-name {
   margin-left: auto; font-size: 11px; color: var(--app-text3); margin-right: 8px; user-select: none;
   max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -4063,17 +4093,23 @@ onMounted(async () => {
 }
 .agent-menu-foot:hover { background: var(--app-accent-weak); }
 
-/* 输入框「+」面板：页签行 + 面板内搜索框（外壳与行式交互复用 .mention-panel / .mention-item）。
-   六页签在窄输入框上会排不下，页签行允许换行；计数分两种口径，别混在一个样式里：
-   .add-tab-n = 已选/生效数（实心主色，回答"这轮会带上什么"），.add-tab-total = 可挑数（弱色数字） */
-.add-head { gap: 6px; flex-wrap: wrap; }
-.add-tab-n {
-  font-size: 10px; line-height: 15px; padding: 0 5px; border-radius: 999px;
-  background: var(--app-accent); color: #fff;
-}
-.add-tab-total { font-size: 11px; color: var(--app-text3); margin-left: 3px; }
+/* 输入框「+」面板：分层菜单。一级=轻菜单（无页签无徽标），二级=原列表 + 头部返回键 + 搜索框
+   （外壳与行式交互复用 .mention-panel / .mention-item）。
+   .add-kbd = 一级菜单行尾的触发符提示（@ # /，把鼠标流和键盘流接到同一处）；
+   .add-root-badge = 已选/生效数（实心主色，回答"这轮会带上什么"） */
+.add-head { gap: 6px; }
+.add-back { flex: none; }
+.add-title { font-size: 13px; font-weight: 600; color: var(--app-text2); }
 .add-close { margin-left: auto; }
-/* 引用页的子页签：比顶栏页签低一级（弱底小块），否则两行同样式的药丸看不出谁包着谁 */
+.add-kbd {
+  flex: none; font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: 4px;
+  border: 1px solid var(--app-border); background: var(--app-panel-2); color: var(--app-text3);
+}
+.add-root-badge {
+  margin-left: 6px; font-size: 10px; line-height: 15px; padding: 0 5px; border-radius: 999px;
+  background: var(--app-accent); color: #fff; font-weight: 400; vertical-align: 1px;
+}
+/* 引用页的子页签：比头部低一级（弱底小块），否则两行同样式的药丸看不出谁包着谁 */
 .add-subtabs { padding: 0 10px 2px; }
 .add-subtabs .mention-tab { background: var(--app-panel-2); }
 .add-subtabs .mention-tab.on { background: var(--app-accent-weak); }
@@ -4339,11 +4375,6 @@ onMounted(async () => {
 .plan-hist-item .plan-body { margin-top: 6px; font-size: 12.5px; }
 .plan-hist-item .plan-wrap.is-clamped .plan-body { max-height: 96px; }
 .plan-chip { border-color: var(--app-warn-border); background: var(--app-warn-weak); }
-/* 「+」面板：计划模式开关行——持久模式用开关表达（行可点、开关可拨），
-   开启态只变开关自身，不再整行变色/头像实心（那是「本轮勾选」的语汇）。
-   开关外包一层 span 挡冒泡：a-switch 的 click 是组件事件（payload 非 DOM 事件），
-   直接挂 @click.stop 会抛 stopPropagation is not a function，也让行点击与开关点击互相抵消 */
-.plan-switch-wrap { flex: none; display: inline-flex; }
 
 .ar-title { font-size: 13px; font-weight: 600; color: var(--app-warn-text); display: flex; align-items: center; gap: 6px; }
 .ar-args { margin: 8px 0 0; background: var(--app-panel); border: 1px solid var(--app-warn-border); border-radius: 6px; padding: 8px; font-size: 12px; font-family: "SF Mono", Menlo, monospace; white-space: pre-wrap; word-break: break-all; max-height: 160px; overflow-y: auto; }
