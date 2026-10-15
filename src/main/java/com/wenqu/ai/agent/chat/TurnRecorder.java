@@ -487,7 +487,6 @@ public class TurnRecorder {
                 : (st.realPromptTokens > 0 ? st.realPromptTokens : st.contextTokens);
         Map<String, Object> tokens = new LinkedHashMap<>();
         tokens.put("context", st.contextTokens);
-        tokens.put("budget", st.budgetTokens);
         tokens.put("hits", st.contextHits);
         tokens.put("output", outputTokens);
         tokens.put("prompt", promptTokens);

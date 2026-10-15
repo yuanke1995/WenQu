@@ -55,6 +55,8 @@ public class ChatController {
      */
     private final com.wenqu.ai.agent.hitl.HitlDecisionService hitl;
     private final com.wenqu.ai.agentx.FrameworkSessions frameworkSessions;
+    /** 任务清单的存储桥（权威真源是框架 AgentState，这里读它；读不到才回落会话表） */
+    private final com.wenqu.ai.service.TodoBridge todoBridge;
     /**
      * 轮次控制与存活（P6 刀 2）：「停止本轮」「运行中插话」「有没有一轮在跑」「接流回来」
      * 这四个入口都在它那里——它们问的是这一轮的通道与生死，不是这一轮怎么把答案生成出来。
@@ -672,15 +674,21 @@ public class ChatController {
         return ResultJson.ok("操作成功");
     }
 
-    @Operation(summary = "任务清单", description = "取本会话当前任务清单（writeTodo 整表覆盖的那一份）：返回 "
+    @Operation(summary = "任务清单", description = "取本会话当前任务清单：返回 "
             + "{todos:{turnId,items:[{content,status}],updatedAt}} 或 null。切会话/刷新后右栏「任务清单」卡据此回显；"
-            + "校验会话归属。")
+            + "校验会话归属。清单的权威存储是框架 AgentState（todo_write 工具的同一份），"
+            + "本进程内没有该会话实例时回落会话表里最后落的那份（服务重启后的兜底）。")
     @GetMapping("/session/{sessionId}/todos")
     public ResultJson getSessionTodos(
             @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId) {
-        sessionService.assertOwned(sessionId, RequestUser.uid());
-        String doc = sessionService.todosOf(sessionId);
+        String uid = RequestUser.uid();
+        sessionService.assertOwned(sessionId, uid);
         java.util.Map<String, Object> out = new java.util.HashMap<>();
+        // 首选框架 state（权威真源）；读不到（实例不在本进程 / 重启过）才回落会话表那份
+        String doc = todoBridge.docJson(frameworkSessions.peek(uid, sessionId), null, "");
+        if (doc == null || doc.isBlank()) {
+            doc = sessionService.todosOf(sessionId);
+        }
         out.put("todos", doc == null || doc.isBlank() ? null : com.alibaba.fastjson.JSON.parse(doc));
         return ResultJson.ok(out);
     }

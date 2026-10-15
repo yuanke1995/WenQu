@@ -9,6 +9,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
@@ -166,10 +167,46 @@ public class FrameworkSessions {
         return session;
     }
 
+    /**
+     * 按「谁 + 哪条会话」取<b>当前进程内</b>的框架会话实例（只读，不新建、不建实例）。
+     *
+     * <p>给谁用：任务清单要按框架 state 回显，而 state 挂在常驻实例上。REST 端点读清单时
+     * 实例可能不在（服务重启过、或这条会话还没在本进程答过一轮）——那属于「读不到」，
+     * 调用方该回落别的来源，而不是在这里悄悄建一个空实例（建了就是凭空多一份状态）。
+     *
+     * @return null=这条会话当前没有进程内实例
+     */
+    public AgentSession peek(String userId, String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) return null;
+        String uid = (userId == null || userId.isBlank()) ? "guest" : userId;
+        Held h = held.get(uid + "|" + sessionId);
+        return h == null ? null : h.session();
+    }
+
     /** 本轮新出现的待办登记归属，供答复端点找回会话。 */
     public void notePending(String sessionKey, Map<String, SessionEvent> pending) {
         for (String requestId : pending.keySet()) {
             pendingOwner.put(requestId, sessionKey);
+        }
+    }
+
+    /**
+     * 这条会话当前挂着的工具声明（{@code tools} 字段的 schema），供容量面板估算「工具声明」一段。
+     * <p>取值走常驻实例的 toolkit —— 与真正发出去的那份请求同一份，不是重算一遍：
+     * 工具挂载是建实例时定死的（{@code open} 只在新建或换模型时调 factory），所以读实例
+     * 拿到的就是本轮真实下发的清单。
+     * <p>会话还没建起来时返回空表（调用方按「无工具」处理，该段不出现）——拿不到就少画一段，
+     * 不能拿别的会话的工具集冒充本轮。
+     */
+    public List<io.agentscope.core.model.ToolSchema> toolSchemas(ChatCommand cmd) {
+        Held h = held.get(key(cmd));
+        if (h == null || h.agent() == null) return List.of();
+        try {
+            io.agentscope.core.tool.Toolkit toolkit = h.agent().getToolkit();
+            return toolkit == null ? List.of() : toolkit.getToolSchemas();
+        } catch (Exception e) {
+            log.warn("[agentx] 工具声明读取失败（容量面板少一段）: session={}, {}", key(cmd), e.toString());
+            return List.of();
         }
     }
 

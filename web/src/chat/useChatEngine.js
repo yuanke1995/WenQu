@@ -423,26 +423,30 @@ const liveTokensPreview = computed(() => {
 // 容量圆环/明细卡数据源：流式估算优先（生成一开始就亮），无估算回落已完成轮的实测 tokens
 const ctxTokens = computed(() => liveTokensPreview.value || lastTokens.value)
 // ==================== 上下文容量面板（工具栏圆环悬浮：用量/窗口 + 分类占比 + 缓存命中） ====================
-/** 分类展示名与配色（与后端 ctxParts 的键一一对应；占比条按此顺序堆叠） */
+/** 分类展示名与配色（与后端 agentx FrameworkCtxParts 的键一一对应；占比条按此顺序堆叠）。
+ *  按 AgentScope 的消息结构分类：MsgRole 只有 SYSTEM/USER/ASSISTANT/TOOL 四种，内容块再按类型细分。
+ *  手写运行时（工作流旁路）仍按旧十类下发，本表只认框架那套键——两套分类不同时展示，
+ *  键名对不上时那一类不渲染（下面 filter 天然过滤掉），不会出现半截错位的构成条。 */
 const CTX_PART_META = [
-  { key: 'messages', label: '消息', color: '#1677ff' },
-  { key: 'summary', label: '早期摘要', color: '#13c2c2' },
-  { key: 'chunks', label: '知识块', color: '#52c41a' },
   { key: 'system', label: '系统提示词', color: '#722ed1' },
-  { key: 'toolSchema', label: '系统工具', color: '#fa8c16' },
-  { key: 'mcpSchema', label: 'MCP 工具', color: '#eb2f96' },
-  { key: 'skill', label: '技能', color: '#a0d911' },
-  { key: 'memory', label: '记忆', color: '#2f54eb' },
-  { key: 'input', label: '输入', color: '#8c8c8c' },
-  { key: 'other', label: '其他', color: '#bfbfbf' }
+  { key: 'history', label: '历史对话', color: '#1677ff' },
+  { key: 'input', label: '本轮提问', color: '#8c8c8c' },
+  { key: 'retrieval', label: '检索资料', color: '#52c41a' },
+  { key: 'toolOutput', label: '工具结果', color: '#fa8c16' },
+  { key: 'thinking', label: '思考内容', color: '#13c2c2' },
+  { key: 'toolSchema', label: '工具声明', color: '#eb2f96' }
 ]
-/** 容量数据：窗口取模型登记/用户档位（tokens.window 优先，回落 modelIndex），用量取本轮真实 prompt（无则估算）；
- *  数据源走 ctxTokens（流式期间=usage 预下发的估算，完成后=done 的实测 tokens），生成一开始即点亮 */
+/** 容量数据：窗口取模型登记/用户档位（tokens.window 优先，回落 modelIndex），用量取本轮结束时的
+ *  上下文占用（tokens.context，无则 prompt）；数据源走 ctxTokens（流式期间=usage 帧，完成后=done 的
+ *  实测 tokens），生成一开始即点亮。
+ *  用量为什么优先 context 而不是 prompt：prompt 是各轮请求的输入之和（账单口径，工具调用会让它
+ *  逐轮累加、远大于真实占用），而本面板回答的是「窗口被占了多少」——分类之和就是按 context 校准的，
+ *  分子分母必须同一个口径，否则顶部百分比与下面分段条各说各话。 */
 const ctxCapData = computed(() => {
   const t = ctxTokens.value
   const info = modelIndex.value[effectiveModel.value]
   const window_ = (t && t.window) || info?.contextWindow || 0
-  const used = t ? (Number(t.prompt) || Number(t.context) || 0) : 0
+  const used = t ? (Number(t.context) || Number(t.prompt) || 0) : 0
   const parts = (t && t.parts && typeof t.parts === 'object') ? t.parts : null
   const rows = parts
     ? CTX_PART_META.filter(m => Number(parts[m.key]) > 0)
@@ -450,12 +454,14 @@ const ctxCapData = computed(() => {
     : []
   const sum = rows.reduce((a, r) => a + r.tokens, 0)
   const pct = window_ > 0 ? Math.min(100, Math.round(used / window_ * 1000) / 10) : 0
-  const cached = t && Number(t.cached) > 0 ? Number(t.cached) : 0
+  // 缓存命中：优先 cachedLast（末轮命中量，与上面的 used 同为「此刻上下文」口径）。
+  // 没有它才回落 cached（各轮命中之和）——那是账单口径，配上 context 当分母能算出 >100% 的命中率。
+  const cached = t ? (Number(t.cachedLast) || Number(t.cached) || 0) : 0
   return {
     window: window_, used, pct, rows, sum,
     // 填充条宽=用量/窗口（不取整：窗口大用量小时 pct 取整会成 0 宽），填充内段宽按构成比分
     fillPct: window_ > 0 ? Math.min(100, used / window_ * 100) : 0,
-    // 分类占比以分类之和为分母（校准后与 prompt 一致；无 parts 时退化为空列表）
+    // 分类占比以分类之和为分母（后端按 context 校准后两者相等；无 parts 时退化为空列表）
     pctOf: r => sum > 0 ? (r.tokens / sum * 100) : 0,
     cached, cacheRate: (cached > 0 && used > 0) ? Math.round(cached / used * 1000) / 10 : null
   }
@@ -550,13 +556,9 @@ const sessionRetrieval = computed(() => {
   }
   return { rounds, refs, search, tools }
 })
-// ===== 上下文占用条（P0 #3）：context/budget，>80% 警告 / >95% 危险 =====
-const ctxPct = computed(() => {
-  const t = lastTokens.value
-  if (!t || !t.budget) return 0
-  return Math.min(100, Math.max(0, Math.round((t.context / t.budget) * 100)))
-})
-const ctxLevel = computed(() => (ctxPct.value > 95 ? 'danger' : (ctxPct.value > 80 ? 'warn' : '')))
+// 上下文占用条（context/budget）已删：budget 是 legacy 时代的检索配额（窗口×安全系数−最大输出），
+// 框架引擎下这套分配不存在，报上来只会让「上下文 3.4K / 预算 120K」里的 120K 无人认领。
+// 上下文占用了窗口多少，现在由容量卡的 ctxCapData 回答（context/window，>80% 警告 / >95% 危险）。
 // ==================== 图片上传（粘贴，压缩为 dataURL） ====================
 const pendingImages = ref([])
 const compressImage = file => new Promise((resolve, reject) => {
@@ -2646,7 +2648,7 @@ if (typeof window !== 'undefined') {
     // 检索 / 用量 / 来源 / 上下文容量
     lastAi, lastRetrieved, lastSources, groupedSources, lastTokens, liveTokensPreview, ctxTokens,
     ctxCapData, ctxRingDash, ctxRingLevel, panelAi, retryPanelRound, sessionArtifacts,
-    sessionTokens, sessionTokensLabel, sessionRetrieval, ctxPct, ctxLevel, sessionTodos,
+    sessionTokens, sessionTokensLabel, sessionRetrieval, sessionTodos,
     // 图片与附件
     pendingImages, addImageFiles, removePendingImage, MAX_FILES, pendingFiles, hasUploadingFile,
     addFiles, removePendingFile,

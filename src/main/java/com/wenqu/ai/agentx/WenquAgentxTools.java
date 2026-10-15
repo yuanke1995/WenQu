@@ -1,6 +1,7 @@
 package com.wenqu.ai.agentx;
 
 import com.wenqu.ai.agent.chat.ChatCommand;
+import io.agentscope.harness.agent.session.AgentSession;
 import com.wenqu.ai.agent.permission.ExecutionPolicy;
 import com.wenqu.ai.agent.chat.ChatRunRuntime;
 import com.wenqu.ai.agent.context.RetrievalScopeService;
@@ -38,6 +39,8 @@ public class WenquAgentxTools {
     private final com.wenqu.ai.service.ToolAssemblyService toolAssembly;
     private final com.wenqu.ai.agent.tool.ToolRegistry toolRegistry;
     private final com.wenqu.ai.service.TodoService todoService;
+    /** 清单的存储桥：问渠只出护栏与呈现，实际落盘写进框架 AgentState（见 {@link TodoBridge}） */
+    private final com.wenqu.ai.service.TodoBridge todoBridge;
     private final com.wenqu.ai.service.ToolSpillService toolSpillService;
     private final com.wenqu.ai.service.SessionEventService sessionEventService;
     private final com.wenqu.ai.agent.subagent.SubAgentConsultService consultService;
@@ -57,6 +60,7 @@ public class WenquAgentxTools {
                             com.wenqu.ai.service.ToolAssemblyService toolAssembly,
                             com.wenqu.ai.agent.tool.ToolRegistry toolRegistry,
                             com.wenqu.ai.service.TodoService todoService,
+                            com.wenqu.ai.service.TodoBridge todoBridge,
                             com.wenqu.ai.service.ToolSpillService toolSpillService,
                             com.wenqu.ai.service.SessionEventService sessionEventService,
                             com.wenqu.ai.agent.subagent.SubAgentConsultService consultService,
@@ -73,6 +77,7 @@ public class WenquAgentxTools {
         this.toolAssembly = toolAssembly;
         this.toolRegistry = toolRegistry;
         this.todoService = todoService;
+        this.todoBridge = todoBridge;
         this.toolSpillService = toolSpillService;
         this.sessionEventService = sessionEventService;
         this.consultService = consultService;
@@ -102,7 +107,32 @@ public class WenquAgentxTools {
                             Map<String, String> overrides, Map<String, String> userOverrides,
                             RunCodeHolder runCode,
                             java.util.List<org.springframework.ai.tool.ToolCallback> rawCallbacks,
-                            java.util.Set<String> mcpToolNames) {
+                            java.util.Set<String> mcpToolNames,
+                            SessionHolder sessionHolder) {
+
+        /**
+         * 本轮的框架会话实例（开轮后才有值）。
+         * <p>为什么是 holder 而不是直接给值：{@code newHooks} 在 {@code sessions.open} 之前调用
+         * （工具装配要发生在建实例之前），而 session 只有 open 之后才拿得到。用可后填的 holder，
+         * 装配期与建实例期就不用互相等。
+         * <p>名字不叫 {@code session()}：record 的自动访问器已经占了那个名字（返回 holder 本身）。
+         */
+        public AgentSession agentSession() {
+            return sessionHolder == null ? null : sessionHolder.get();
+        }
+    }
+
+    /** 框架会话实例的后填 holder（装配期还没有、开轮后才有，见 {@link TurnHooks#agentSession()}） */
+    public static final class SessionHolder {
+        private volatile AgentSession session;
+
+        public AgentSession get() {
+            return session;
+        }
+
+        public void set(AgentSession session) {
+            this.session = session;
+        }
     }
 
     /**
@@ -132,7 +162,8 @@ public class WenquAgentxTools {
         return new TurnHooks(cmd.getSessionId(), cmd.getUserId(), modelRef, turnId, spills, ledger,
                 RequestUser.snapshot(), configService.currentOverrides(), configService.currentUserOverrides(),
                 new RunCodeHolder(), java.util.Collections.synchronizedList(new java.util.ArrayList<>()),
-                java.util.Collections.synchronizedSet(new java.util.HashSet<>()));
+                java.util.Collections.synchronizedSet(new java.util.HashSet<>()),
+                new SessionHolder());
     }
 
     /**
@@ -403,11 +434,21 @@ public class WenquAgentxTools {
     }
 
     /**
-     * 任务清单写入器（与主链路 {@code ChatService.toolContext} 同一段动作：归一 → 整表落库
-     * → 账本留痕 → 实时 {@code todo} 帧 → 回给模型一句「存成什么样了」）。
-     * <p>不给的表现为模型每次写清单都收到「本轮未启用任务清单」，右栏永远空白——这条是真机抓到的：
-     * 原先把它挂在内置族的落点上，而 {@code writeTodo} 属任务清单族，于是每次调用都取不到写入器。
-     * 主链路那份 {@code toolContext} 本来就是全族共用的一张表，所以这里也挂在共用落点上。
+     * 任务清单写入器：<b>存储落在框架的 {@code AgentState.tasksContext}</b>，问渠只保留护栏与呈现。
+     *
+     * <p>为什么不再自己落 {@code c_ai_session.todos}：清单的权威状态该由框架持有
+     * （{@code todo_write} 工具 + {@code TaskReminderMiddleware} 每轮重述都围绕它），
+     * 问渠再存一份就是两个真���源迟早对不上。现在问渠做的是三件框架不管的事：
+     * <ol>
+     *   <li><b>护栏</b>——≤{@value com.wenqu.ai.service.TodoService#MAX_ITEMS} 项、单项截断、
+     *       状态归一、同时只允许一项 doing。框架的 {@code todo_write} 没有这层，模型写歪了
+     *       （几十项、单项写成段落、同时三项 doing）会直接进用户可见的清单卡；</li>
+     *   <li><b>呈现在线</b>——转成 {@code todo} 帧推给前端，右栏那张「任务清单」卡要实时长出来；</li>
+     *   <li><b>账本留痕</b>——断线后台续跑那一轮，清清单要能事后回放（与手写侧同一句）。</li>
+     * </ol>
+     *
+     * <p>写入走 {@link com.wenqu.ai.service.TodoBridge}：它把问渠的归一结果翻译成框架
+     * {@code Task} 列表，交给框架 state 落盘并回读确认，不自己碰存储。
      */
     private com.wenqu.ai.service.TodoService.WriteFn todoWriter(com.wenqu.ai.engine.RunChannel channel,
                                                                  TurnHooks hooks) {
@@ -415,8 +456,19 @@ public class WenquAgentxTools {
             var n = todoService.normalize(items);
             if (!n.ok()) return "错误：清单没有有效条目，每项都要写一句可验收的动作。";
             String turnId = hooks.turnId().get();
-            String doc = todoService.docJson(turnId, n.items());
-            todoService.save(hooks.sessionId(), doc);
+            // 存储：框架 AgentState（todo_write 工具的同一份 tasksContext）。
+            // 写不进去就不往下走——宁可这轮没有清单，也不能出现「右栏有清单、框架那边没有」
+            // 的两个真值源（下次进同一会话模型看到的还是旧的）。
+            var written = todoBridge.replace(hooks, n.items());
+            if (!written.ok()) {
+                // 不用 logger：这个类没有 log 字段，而失败原因已经原样回给模型了（工具报错会让它重试，
+                // 说清比记一行日志有用）。真要排查，模型的重试内容里就有这句话。
+                return "错误：清单写入失败（" + written.reason() + "），本轮未能更新任务清单。";
+            }
+            String doc = todoBridge.docJson(hooks.agentSession(), n.items(), turnId);
+            if (doc == null) {
+                return "错误：清单已写入但回读失败（框架状态不可用），本轮未能同步任务清单。";
+            }
             // 账本留痕：断线后台续跑那一轮，清单也要能事后回放（与手写侧同一句）
             sessionEventService.append(hooks.sessionId(), hooks.userId(), turnId, "todo", doc);
             if (channel != null) channel.emit(com.wenqu.ai.engine.RunEventType.TODO, doc);

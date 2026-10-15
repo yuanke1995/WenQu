@@ -29,7 +29,7 @@
       <div class="rs-section">本轮用量</div>
       <div v-if="!tokens" class="rs-empty">本轮还没有用量记录</div>
       <template v-else>
-        <div class="rs-kv"><span>上下文</span><b>{{ tokens.context ?? '—' }} / {{ tokens.budget ?? '—' }}</b></div>
+        <div class="rs-kv"><span>上下文</span><b>{{ tokens.context ?? '—' }}<template v-if="cap.window > 0"> / {{ cap.window }}（{{ cap.pct }}%）</template></b></div>
         <div class="rs-kv"><span>输出</span><b>{{ tokens.output ?? '—' }} tokens<template v-if="tokens.outputIsReal === false">（估算）</template></b></div>
         <div class="rs-kv"><span>合计</span><b>{{ fmtTokens(tokens.total) }} tokens</b></div>
         <div v-if="tokens.hits > 0" class="rs-kv"><span>填入上下文</span><b>{{ tokens.hits }} 段</b></div>
@@ -136,27 +136,29 @@ const { groupedSources, lastTokens, lastSources, sessionTokens, sessionTokensLab
 // 容量构成：与 PC 的 ctxCapData 同一算法（窗口取本轮 tokens.window，回落模型登记窗口；
 // 用量取 prompt，无则 context；分类占窗口比例撑填充段）。分类表是 PC 视图层的同款副本——
 // 纯呈现映射，两端各自持有（抽到共用单元会把两端一起拖住）。
+// 分类按 AgentScope 框架的消息结构（MsgRole + 内容块），与后端 agentx FrameworkCtxParts 同键同序。
 const CTX_PART_META = [
-  { key: 'messages', label: '消息', color: '#1677ff' },
-  { key: 'summary', label: '早期摘要', color: '#13c2c2' },
-  { key: 'chunks', label: '知识块', color: '#52c41a' },
   { key: 'system', label: '系统提示词', color: '#722ed1' },
-  { key: 'toolSchema', label: '系统工具', color: '#fa8c16' },
-  { key: 'mcpSchema', label: 'MCP 工具', color: '#eb2f96' },
-  { key: 'skill', label: '技能', color: '#a0d911' },
-  { key: 'memory', label: '记忆', color: '#2f54eb' },
-  { key: 'input', label: '输入', color: '#8c8c8c' },
-  { key: 'other', label: '其他', color: '#bfbfbf' }
+  { key: 'history', label: '历史对话', color: '#1677ff' },
+  { key: 'input', label: '本轮提问', color: '#8c8c8c' },
+  { key: 'retrieval', label: '检索资料', color: '#52c41a' },
+  { key: 'toolOutput', label: '工具结果', color: '#fa8c16' },
+  { key: 'thinking', label: '思考内容', color: '#13c2c2' },
+  { key: 'toolSchema', label: '工具声明', color: '#eb2f96' }
 ]
 const cap = computed(() => {
   const t = ctxTokens.value
-  const win = (t && Number(t.window)) || Number(modelIndex.value[effectiveModel.value]?.contextWindow) || Number(t && t.budget) || 0
-  const used = t ? (Number(t.prompt) || Number(t.context) || 0) : 0
+  // 窗口只认 tokens.window（框架按 maxContextTokens 下发），回落模型登记值；
+  // 旧的 tokens.budget 回落已删——那是 legacy 检索配额，框架引擎下不存在
+  const win = (t && Number(t.window)) || Number(modelIndex.value[effectiveModel.value]?.contextWindow) || 0
+  // 用量与缓存命中都与 PC 侧同口径：分母取 context（本轮结束时的上下文占用）而非 prompt
+  // （各轮输入之和的账单口径），分子取 cachedLast（末轮命中）——否则命中率能算出 >100%。
+  const used = t ? (Number(t.context) || Number(t.prompt) || 0) : 0
   const parts = (t && t.parts && typeof t.parts === 'object') ? t.parts : null
   const rows = parts
     ? CTX_PART_META.filter(x => Number(parts[x.key]) > 0).map(x => ({ ...x, tokens: Number(parts[x.key]) }))
     : []
-  const cached = (t && Number(t.cached) > 0) ? Number(t.cached) : 0
+  const cached = t ? (Number(t.cachedLast) || Number(t.cached) || 0) : 0
   return {
     window: win, used, rows,
     pct: win > 0 ? Math.min(100, Math.round(used / win * 1000) / 10) : 0,

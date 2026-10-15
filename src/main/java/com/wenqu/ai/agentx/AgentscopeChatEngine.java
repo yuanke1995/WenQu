@@ -200,7 +200,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 consultService.newLedger());
         AgentSession session = sessions.open(cmd, route.modelId(),
                 ctx -> buildAgent(cmd, channel, pool, policy, route, hooks));
-
+        // 框架会话实例回填进本轮落点袋：任务清单要写进它的 AgentState（todo_write 的同一份
+        // tasksContext），而工具装配发生在建实例之前，所以那时拿不到，只能后填（见 TurnHooks#agentSession）
+        hooks.sessionHolder().set(session);
         // 工具步数预算按轮归零：实例是常驻的，不归零就是上一轮的步数吃掉这一轮的预算
         AgentxStepBudget stepBudget = sessions.stepBudget(sessions.key(cmd));
         if (stepBudget != null) {
@@ -1405,8 +1407,24 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         .timeout(java.time.Duration.ofSeconds(turnSeconds()))
                         .build())
                 .maxIters(configService.getInt("chat.agentscopeMaxIters", 12))
-                // 计划模式工具面常驻开启，具体某一轮进不进由 enterPlanMode 决定（实例按会话复用）
+                // 计划模式工具面常驻开启，具体某一轮进不进由 enterPlanMode 决定（实例按会话复用）。
+                //
+                // 这里与 PlanModeService **不是双跑**：那套在框架路径下只被用来做「意图判断」
+                // （startIntentCheck/awaitIntent，决定这一轮要不要先出计划卡），而
+                // approvalGate/refsDigest 那些计划版本链、澄清提问轮、计划快照落库的逻辑框架路径下
+                // 并不调用。分工是「问渠判要不要出计划 → 框架管计划怎么执行」：
+                //   问渠 PlanModeService.startIntentCheck/awaitIntent —— 意图闸（用户开关之外还有按消息意图自动开）
+                //   框架 enablePlanMode + PlanModeMiddleware        —— plan_enter/write/exit 三把工具 + 计划位拦截写操作
+                // 别把它当成「两套计划机制同时跑」去"修"——那是分工，真合并要先决定计划版本链怎么在框架的
+                // plan 文件上表达（框架只有单份 plan 文件，问渠那套支持多版本取代），不是删代码能解决的。
                 .enablePlanMode()
+                // 任务清单：**不开**框架的 enableTaskList，只借它的 state 做存储。
+                // 原因：开它会同时注册 todo_write 工具并由 TaskReminderMiddleware 每轮教模型用
+                // 「in_progress/completed」这套词，而问渠挂的是 writeTodo（教的是 doing/done，
+                // 且带护栏与中文展示名）。两套工具 + 两套状态词同时进模型上下文，它会挑错工具、
+                // 或者把 doing 写进 todo_write 被框架判非法。storage 用框架的、tool 面用问渠的，
+                // 是这里刻意的分工——框架 AgentState 才是清单的权威真源（见 TodoBridge）。
+                // 真要换成框架工具面，得连护栏、中文名、前端契约一起换，不能只开这个开关。
                 .maxContextTokens(contextTokens(cmd))
                 // 上下文压缩：框架默认就开着（50 条消息或动态 token 阈值触发、逐字保留最近 20 条）。
                 // 这里只留两个改口的地方——常规阈值按配置，手动 /compact 在框架引擎下落到「下一次建实例先压」
@@ -1643,8 +1661,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     /**
      * 本轮实测用量：只累计这一轮新增消息的 {@link io.agentscope.core.model.ChatUsage}。
      * <p>字段名与主链路 {@code TurnRecorder.buildUsageSnapshot} 对齐（前端容量面板只认这套键）；
-     * 主链路有而框架给不出的分类拆分（{@code parts}）与预算（{@code budget}）不填——前端对缺字段
-     * 是「不显示该行」，填了估算反而是在造假数据。
+     * 分类拆分（{@code parts}）按<b>框架自己的消息结构</b>产出，见 {@link FrameworkCtxParts}——
+     * 手写侧那十类靠拼装 system 时的分段位置切，框架侧没有那四个标记，不套用。
+     * <p>上下文预算（{@code budget}）框架不给：{@code maxContextTokens} 是给框架做压缩用的阈值，
+     * 不是问渠「给这一轮留了多少」的预算，报上去会让右栏占用条按一个没人承诺过的数算百分比。
+     * 前端对缺字段是「不显示该行」，不填比填个假预算诚实。
      */
     private Map<String, Object> usageOf(AgentSession session, int historyBefore,
                                         WenquSourcePool pool, ChatCommand cmd) {
@@ -1655,6 +1676,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         long cached = 0;
         int lastInput = 0;
         long lastOutput = 0;
+        int lastCached = 0;
         boolean any = false;
         for (int i = from; i < messages.size(); i++) {
             io.agentscope.core.model.ChatUsage usage = messages.get(i).getUsage();
@@ -1666,6 +1688,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             // 最后一轮的 prompt≈本轮结束时的上下文占用（工具结果逐轮进上下文），与主链路口径同源
             lastInput = usage.getInputTokens();
             lastOutput = usage.getOutputTokens();
+            // 末轮命中量：容量面板的「缓存命中率」分母是「此刻上下文」（lastInput），
+            // 分子必须是同一时刻的命中量——用各轮命中之和（cached）配它会算出 >100% 的命中率
+            lastCached = usage.getCachedTokens();
         }
         if (!any) return new java.util.LinkedHashMap<>();
         Map<String, Object> tokens = new java.util.LinkedHashMap<>();
@@ -1675,6 +1700,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         tokens.put("finalOutput", lastOutput);
         tokens.put("total", prompt + output);
         tokens.put("cached", cached);
+        tokens.put("cachedLast", lastCached);
         tokens.put("context", lastInput);
         tokens.put("outputIsReal", true);
         tokens.put("hits", pool.sources().size());
@@ -1683,7 +1709,29 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             tokens.put("window", window);
             tokens.put("windowSource", "framework");
         }
+        // 分类用量：按框架消息结构切分，并按本轮真实 prompt（最终轮输入）校准。
+        // 分类拆的是「本轮结束时的上下文」，所以校准基准用 lastInput 而不是各轮 prompt 之和——
+        // 工具调用会让 prompt 逐轮递增，sum 是账单口径，拿它当基准会把容量条撑到虚高。
+        // 传 historyBefore 而非上面夹取过的 from：分类器要靠「index < 该值」认出哪些是历史消息，
+        // 传 from 会被 clamp 截断（historyBefore 超出 transcript 长度时）而误把整段当本轮新增。
+        Map<String, Integer> parts = FrameworkCtxParts.of(messages, historyBefore, toolSchemasOf(cmd), lastInput);
+        if (!parts.isEmpty()) tokens.put("parts", parts);
         return tokens;
+    }
+
+    /**
+     * 本轮请求下发的工具声明（{@code tools} 字段）：容量面板的「工具声明」一段按它估算。
+     * <p>取不到就返回 null（分类器按「无工具」处理，该段不出现）——工具声明是这轮上下文的固定开销，
+     * 拿不到时宁可少画一段，也不能拿上一轮的工具集冒充本轮。
+     */
+    private List<io.agentscope.core.model.ToolSchema> toolSchemasOf(ChatCommand cmd) {
+        try {
+            return sessions.toolSchemas(cmd);
+        } catch (Exception e) {
+            log.warn("[CTX-PARTS] 工具声明读不出来，本轮容量面板少「工具声明」一段: session={}, {}",
+                    cmd.getSessionId(), e.toString());
+            return null;
+        }
     }
 
     private static void emit(RunChannel channel, RunEventType type, String content) {

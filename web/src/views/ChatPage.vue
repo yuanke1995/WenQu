@@ -557,7 +557,7 @@
                   </template>
                 </a-dropdown>
               </template>
-              <a-tooltip v-if="m.tokens" :title="`上下文 ${m.tokens.context} / 预算 ${m.tokens.budget} · 输出 ${m.tokens.output} tokens${m.tokens.outputIsReal ? '（网关实测）' : '（估算）'}`">
+              <a-tooltip v-if="m.tokens" :title="`上下文 ${m.tokens.context} tokens · 输出 ${m.tokens.output} tokens${m.tokens.outputIsReal ? '（网关实测）' : '（估算）'}`">
                 <span class="msg-tokens">{{ m.tokens.outputIsReal ? '' : '≈' }}{{ fmtTokens(m.tokens.total) }} tokens</span>
               </a-tooltip>
               <span v-if="m.time" class="msg-time-inline">{{ fmtMsgTime(m.time) }}</span>
@@ -1238,11 +1238,7 @@
           <template v-if="lastTokens">
             <div class="rp-divider"></div>
             <div class="rp-strong">{{ lastTokens.outputIsReal ? '' : '≈' }}{{ fmtTokens(lastTokens.total) }} tokens</div>
-            <!-- 上下文占用条：context/budget，逼近预算变警告色（>80% 警告 / >95% 危险） -->
-            <div v-if="lastTokens.budget > 0" class="rp-ctx-bar" :title="'上下文占用 ' + ctxPct + '%'">
-              <span class="rp-ctx-fill" :class="ctxLevel" :style="{ width: ctxPct + '%' }"></span>
-            </div>
-            <div class="rp-row" :style="lastTokens.budget > 0 ? 'margin-top:5px' : ''"><span>上下文 {{ fmtTokens(lastTokens.context) }}<template v-if="lastTokens.budget > 0">（{{ ctxPct }}%）</template></span><span class="rp-dim">预算 {{ fmtTokens(lastTokens.budget) }}</span></div>
+            <div class="rp-row"><span>上下文 {{ fmtTokens(lastTokens.context) }}</span><span v-if="ctxCapData.window > 0" class="rp-dim">窗口 {{ fmtTokens(ctxCapData.window) }}（{{ ctxCapData.pct }}%）</span></div>
             <div class="rp-meta">输出 {{ fmtTokens(lastTokens.output) }}<template v-if="lastTokens.hits > 0"> · 上下文填入 {{ lastTokens.hits }} 块</template><template v-if="!lastTokens.outputIsReal"> · 估算值</template></div>
           </template>
         </template>
@@ -1502,7 +1498,7 @@
             <div v-if="ctxCapData.cacheRate != null" class="ctxcap-foot">
               <span>缓存命中率</span><span class="ctxcap-row-val">{{ ctxCapData.cacheRate }}%</span>
             </div>
-            <div class="ctxcap-tip">窗口：{{ fmtWindow(ctxCapData.window) }} · 占比按本轮用量计 · 用量为本轮真实 prompt token（网关未回传时按估算）</div>
+            <div class="ctxcap-tip">窗口：{{ fmtWindow(ctxCapData.window) }} · 占比按本轮结束时的上下文计 · 分类按 AgentScope 消息结构（系统/历史/提问/检索/工具结果/思考/工具声明）</div>
           </template>
           <div v-else class="ctxcap-empty">该模型未登记上下文窗口，请在模型管理中声明</div>
         </div>
@@ -3025,7 +3021,7 @@ const {
   // 检索 / 用量 / 来源
   lastAi, lastRetrieved, lastSources, groupedSources, lastTokens, ctxTokens, ctxCapData, ctxRingDash,
   ctxRingLevel, panelAi, retryPanelRound, sessionArtifacts, sessionTokens, sessionTokensLabel, sessionTodos,
-  sessionRetrieval, ctxPct, ctxLevel,
+  sessionRetrieval,
   // 图片与附件
   pendingImages, addImageFiles, removePendingImage, MAX_FILES, pendingFiles, hasUploadingFile, addFiles,
   removePendingFile, takePastedText,
@@ -4284,11 +4280,6 @@ onMounted(async () => {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right;
 }
 .rp-plan-badge.is-pending { color: var(--app-warn-text); font-weight: 500; }
-.rp-ctx-bar { height: 6px; border-radius: 3px; background: var(--app-accent-weak); overflow: hidden; margin-top: 6px; }
-.rp-ctx-fill { display: block; height: 100%; background: var(--app-accent); transition: width .3s; }
-.rp-ctx-fill.warn { background: #d9861f; }
-.rp-ctx-fill.danger { background: var(--app-danger); }
-@media (prefers-reduced-motion: reduce) { .rp-ctx-fill { transition: none; } }
 
 /* 引用相关度 + 角标联动（右栏 ↔ 正文） */
 .rp-src-ref { flex: none; font-size: 11px; color: var(--app-text3); }

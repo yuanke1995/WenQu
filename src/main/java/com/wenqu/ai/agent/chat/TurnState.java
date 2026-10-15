@@ -163,9 +163,11 @@ public final class TurnState {
 
     // ==================== token 与容量用量 ====================
 
-    /** 本轮上下文 token 用量（主链路构建后回填）：实际/预算/填充块数，供 done 下发做 Token 消耗可视化 */
+    /** 本轮上下文 token 用量（主链路构建后回填）：实际用量/填充块数，供 done 下发做 Token 消耗可视化。
+     *  <p>曾有个 budgetTokens（检索配额 = 窗口×安全系数−最大输出）一起上报，现已删：那是问渠自己
+     *  分配给「裁历史 + 限检索资料」的额度，框架引擎下这套分配根本不存在（上下文压缩由 AgentScope
+     *  按 maxContextTokens 自己做），报上去等于拿一个没人承诺过的分母算占用率。占用率看 window。 */
     public volatile int contextTokens;
-    public volatile int budgetTokens;
     public volatile int contextHits;
     /** 生效最大输出 token（模型管理中该模型声明的最大输出；0=未声明，不下发 max_tokens）：max_tokens 下发与终态触顶判定共用 */
     public volatile int effectiveMaxOutput;
