@@ -29,6 +29,11 @@
         <mcp.version>0.18.3</mcp.version>
         <poi.version>5.2.3</poi.version>
         <lombok.version>1.18.46</lombok.version>
+        <!-- AgentScope Java：agentx 运行时的宿主框架（Phase 0 实测定案，见 docs/wenqu-agentscope-phase0.md）。
+             刻意选 2.1.0-BETA1 而非稳定版 2.0.4：AgentSession（后台续跑/运行中插话/HITL 待办持久化/
+             按游标续流）只在 BETA1 存在，而这几件正是问渠手写运行时最贵的一层；稳定线 2.0.4 里没有该类。
+             风险由 chat.engineMode=legacy 兜住——默认不执行框架代码。 -->
+        <agentscope.version>2.1.0-BETA1</agentscope.version>
     </properties>
 
     <dependencies>
@@ -160,6 +165,25 @@
             <version>${spring-ai-alibaba.version}</version>
         </dependency>
 
+        <!-- AgentScope Java：agentx 运行时的框架本体（HarnessAgent 推理循环 + Toolkit + 权限
+             + AgentSession 会话调度 + Plan Mode + 上下文压缩）。控制流由框架持有，本仓库不再
+             自研等价物；问渠只出领域工具（检索/知识库）与前端事件词汇适配。
+             模型走 openai 扩展而非 dashscope：问渠 c_ai_provider.base_url 实测全是 OpenAI 兼容网关。 -->
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-harness</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-model-openai</artifactId>
+        </dependency>
+        <!-- 多副本部署时的会话状态后端（RedisAgentStateStore / RedisDistributedStore）；
+             框架默认把状态落在 ~/.agentscope/state/**，在问渠数据目录之外，生产必须换 Redis。 -->
+        <dependency>
+            <groupId>io.agentscope</groupId>
+            <artifactId>agentscope-extensions-redis</artifactId>
+        </dependency>
+
         <!-- 单元测试（JUnit 5 + Mockito + AssertJ，版本由 Boot 父 POM 管理）：
              只覆盖不需要 Spring 上下文的纯逻辑断言（如配置保存的未知键拒绝口径） -->
         <dependency>
@@ -176,6 +200,14 @@
                 <groupId>org.springframework.ai</groupId>
                 <artifactId>spring-ai-bom</artifactId>
                 <version>${spring-ai.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <!-- AgentScope 各扩展模块同版本发布，用它的 BOM 收口传递依赖 -->
+            <dependency>
+                <groupId>io.agentscope</groupId>
+                <artifactId>agentscope-bom</artifactId>
+                <version>${agentscope.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>

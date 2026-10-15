@@ -309,7 +309,12 @@ public class SessionService {
         return page;
     }
 
-    /** 会话列表公共过滤条件：归属（+anonymous 兼容池）、种类（排除内部临时会话）与关键词，供计数/置顶/分页三路查询复用（避免 OR 分组被重复拼装） */
+    /** 会话列表公共过滤条件：归属（+anonymous 兼容池）、种类（排除内部临时会话）、仅含消息的会话，
+     *  供计数/置顶/分页三路查询复用（避免 OR 分组被重复拼装）。
+     *  <p>「仅含消息」必须下推到 SQL：侧栏展示层隐藏空会话，若只靠前端过滤，空会话仍占游标分页的
+     *  页容量——一旦积攒了 20+ 条空会话（如验证脚本直插、异常流程残留），最新的真实对话会被挤到
+     *  第二页之后，侧栏整页"暂无会话"而组头计数正常（2026-10-14 实测）。空会话的复用由
+     *  {@code createOrReuseEmptySession} 在服务端管理，不依赖列表返回空会话。 */
     private LambdaQueryWrapper<Session> baseWrapper(String uid, boolean anonPool, String kw) {
         LambdaQueryWrapper<Session> wrapper = new LambdaQueryWrapper<>();
         wrapper.and(w -> {
@@ -317,6 +322,7 @@ public class SessionService {
             if (anonPool) w.or().eq(Session::getUserId, RequestUser.ANONYMOUS);
         });
         wrapper.ne(Session::getKind, KIND_TEMP);
+        wrapper.gt(Session::getMessageCount, 0);
         if (kw != null) {
             String esc = escapeLike(kw);
             wrapper.and(w -> w.like(Session::getTitle, escapeLikeWildcard(kw))

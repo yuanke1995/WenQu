@@ -165,6 +165,78 @@ public class HitlDecisionService {
         return new WaitHandle<>(pendingApprovals, approvalId, future);
     }
 
+    /**
+     * 为<b>框架引擎</b>的待办落一条同表记录（P3/人在回路平移）：卡片要能在刷新/换设备后经
+     * {@code /tool-approval/pending}、{@code /ask-user/pending}、{@code /plan-approval/pending} 取回。
+     * <p>刻意只做「落这一行」：不建 future、不注册内存唤醒句柄——框架那侧的等待与接续执行归
+     * {@code AgentSession}（pending/respond 是一等公民），这里要的只是同一份持久化与审计形状。
+     * <p>已存在同 id 就原样返回（幂等：待办每轮会被复查多次，重复 insert 会撞主键）。
+     *
+     * @param toolName 确认类填工具名；提问类填 {@code askUser}；计划卡填 {@code planApproval}（与手写侧同词）
+     */
+    public void recordFrameworkPending(String id, String sessionId, String userId, String turnId,
+                                       String toolName, String requestArgs) {
+        if (id == null || id.isBlank()) return;
+        try {
+            if (toolApprovalMapper.selectById(id) != null) return;
+            ToolApproval rec = new ToolApproval();
+            rec.setId(id);
+            rec.setSessionId(sessionId);
+            rec.setUserId(userId);
+            rec.setTurnId(turnId);
+            rec.setToolName(toolName);
+            rec.setStatus("PENDING");
+            rec.setRequestArgs(requestArgs == null ? ""
+                    : (requestArgs.length() > 2000 ? requestArgs.substring(0, 2000) : requestArgs));
+            rec.setCreatedAt(java.time.LocalDateTime.now());
+            toolApprovalMapper.insert(rec);
+        } catch (Exception e) {
+            log.warn("[AGENTX] 框架待办落库失败（不阻塞本轮，但刷新后这张卡取不回）: {}", e.getMessage());
+        }
+    }
+
+    /** 按 ID 取那条待办记录（框架恢复路径要用：归属会话/用户/轮次都只在这张表里）。不存在返回 null。 */
+    public com.wenqu.ai.model.ToolApproval findApproval(String id) {
+        if (id == null || id.isBlank()) return null;
+        try {
+            return toolApprovalMapper.selectById(id);
+        } catch (Exception e) {
+            log.debug("[AGENTX] 查待办记录失败: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /** 框架待办被答复/裁决：把这一行落成终态（超时与忽略都不代答，只标状态）。 */
+    public void resolveFrameworkPending(String id, String status, String uid, String answer) {
+        try {
+            ToolApproval rec = id == null ? null : toolApprovalMapper.selectById(id);
+            if (rec == null || uid != null && !uid.equals(rec.getUserId())) return;
+            rec.setStatus(status);
+            if (answer != null && !answer.isBlank()) rec.setAnswer(answer);
+            rec.setResolvedAt(java.time.LocalDateTime.now());
+            toolApprovalMapper.updateById(rec);
+        } catch (Exception e) {
+            log.warn("[AGENTX] 框架待办终态回写失败: {}", e.getMessage());
+        }
+    }
+
+    /** 这条待办是否属于框架引擎且仍在等（恢复端点据此标 live，避免「卡片取回却没人能答」）。 */
+    public java.util.Set<String> pendingIdsOf(String sessionId, String uid) {
+        java.util.Set<String> out = new java.util.LinkedHashSet<>();
+        if (sessionId == null) return out;
+        try {
+            for (ToolApproval rec : toolApprovalMapper.selectList(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<ToolApproval>()
+                    .eq(ToolApproval::getSessionId, sessionId)
+                    .eq(ToolApproval::getUserId, uid)
+                    .eq(ToolApproval::getStatus, "PENDING"))) {
+                if (rec.getId() != null) out.add(rec.getId());
+            }
+        } catch (Exception e) {
+            log.debug("[AGENTX] 列待办失败（按空集处理）: {}", e.getMessage());
+        }
+        return out;
+    }
+
     /** 挂起一张 askUser 提问卡（一卡多问）：问题列表存 request_args，答案数组存 answer。 */
     public WaitHandle<String> openAsk(String askId, String sessionId, String userId, String turnId,
                                       List<QItem> questions) {

@@ -73,34 +73,54 @@ public class CitationIntegrityService {
     public record Outcome(String text, List<Map<String, Object>> sources, List<String> images) {}
 
     /**
+     * 本轮引用完整性所需的最小状态。
+     * <p>刻意不认 {@code TurnState}：并列的第二套运行时（AgentScope 框架引擎）没有那份状态袋，
+     * 而这套校验（悬空角标剔除、未标注 fail-loud、语义一致性自检）是<b>答案质量防线</b>，
+     * 不该因为运行时换了就缺席。留一个只认 TurnState 的转发口，手写侧调用点一行不动。
+     *
+     * @param sources 本轮引用池（活引用：语义自检会重编它，调用方按返回的 Outcome 回写）
+     */
+    public record Ctx(String sessionId, String userId, String question, String model,
+                      List<Map<String, Object>> sources, Map<Integer, String> imgIndex,
+                      Map<Integer, String> imgDescIndex, List<Map<String, String>> degradations,
+                      Set<String> degradedCodes, Map<String, Long> stageMs, long startTime) {
+    }
+
+    /** 手写运行时的本轮状态 → {@link Ctx}（只做搬运，判据与语义都在 {@link #check(String, Ctx)} 里）。 */
+    public Outcome check(String answer, TurnState st) {
+        return check(answer, new Ctx(st.sessionId, st.userId, st.question, st.model,
+                st.refs.sources, st.refs.imgIndex, st.refs.imgDescIndex,
+                st.degradations, st.degradedCodes, st.channel.stageMs, st.channel.startTime));
+    }
+
+    /**
      * 跑完四道检查并把结果一次交回。降级登记走本轮的 degradations（与调用方同一份列表、同一展示位）。
      *
      * @param answer 生成流定稿的正文（尚未做截断标注）
-     * @param st     本轮状态：引用池、问题、生效模型与身份都从这里取
      */
-    public Outcome check(String answer, TurnState st) {
-        List<Map<String, Object>> sources = st.refs.sources;
-        List<String> images = new ArrayList<>(st.refs.imgIndex.values());
+    public Outcome check(String answer, Ctx ctx) {
+        List<Map<String, Object>> sources = ctx.sources();
+        List<String> images = new ArrayList<>(ctx.imgIndex().values());
 
         // 1) 图片相关性兜底：剔除与描述不匹配的 [图片N] 并重建编号（LLM 偶发错配）
-        if (properties.getImages().getImageFilter().isEnabled() && !st.refs.imgIndex.isEmpty()) {
-            ImageFilterService.RebuildResult rr = imageFilterService.rebuild(answer, st.refs.imgDescIndex, st.question,
+        if (properties.getImages().getImageFilter().isEnabled() && !ctx.imgIndex().isEmpty()) {
+            ImageFilterService.RebuildResult rr = imageFilterService.rebuild(answer, ctx.imgDescIndex(), ctx.question(),
                     properties.getImages().getImageFilter().getMinHits(),
                     properties.getImages().getImageFilter().getPreContextChars());
             if (!rr.dropped().isEmpty()) {
                 // M7 fail-loud：图片被剔除后回答仍引用旧编号，需告知
-                degrade(st, "imgFilterDropped",
+                degrade(ctx, "imgFilterDropped",
                         "已剔除 " + rr.dropped().size() + " 张与回答内容不匹配的图片引用");
                 log.info("[IMG-FILTER] 图片错配剔除 {} 个: {}", rr.dropped().size(), rr.dropped());
                 answer = rr.text();
-                images = rr.keptSeq().stream().map(st.refs.imgIndex::get).toList();
+                images = rr.keptSeq().stream().map(ctx.imgIndex()::get).toList();
             }
         }
 
         // 2) L4 fail-loud：有引用来源但回答未标注任何 [N]（溯源缺失）
         // 注意用 find() 而非 matches()：matches 全串锚定且 . 不跨行，多行回答永远误判为未标注
         if (!sources.isEmpty() && !CITE_PATTERN.matcher(answer).find()) {
-            degrade(st, "noCitation", "回答未标注引用来源");
+            degrade(ctx, "noCitation", "回答未标注引用来源");
         }
 
         // 3) 引用编号越界：剔除超出来源范围的 [N]（LLM 偶发编造编号，用户点击角标无溯源）。
@@ -124,7 +144,7 @@ public class CitationIntegrityService {
         cm.appendTail(cb);
         if (invalidRefs > 0) {
             answer = cb.toString();
-            degrade(st, "invalidCitation",
+            degrade(ctx, "invalidCitation",
                     "已移除 " + invalidRefs + " 处无效的引用标注（编号超出来源范围）");
             log.info("[CITE-CHECK] 剔除越界引用 {} 处 (maxRef={})", invalidRefs, maxRef);
         }
@@ -132,7 +152,7 @@ public class CitationIntegrityService {
         // 4) 图片标记越界（与引用越界同构）：正文 [图片N] 必须落在本轮真实图片（imgIndex）范围内。
         //    工具模式下模型手里没有编号图片（工具返回文本不带编号、images 为空），却可能按「尽量配图」
         //    规则编造 [图片N]，前端 images[N-1] 映射不到就把字面 [图片N] 原样显示在回答里。剔除 + fail-loud。
-        int maxImg = st.refs.imgIndex.size();
+        int maxImg = ctx.imgIndex().size();
         Matcher im = TurnState.IMG_NUMBER_PATTERN.matcher(answer);
         StringBuilder imgSb = new StringBuilder();
         int bogusImgs = 0;
@@ -149,13 +169,13 @@ public class CitationIntegrityService {
         im.appendTail(imgSb);
         if (bogusImgs > 0) {
             answer = imgSb.toString();
-            degrade(st, "invalidImageRef",
+            degrade(ctx, "invalidImageRef",
                     "已移除 " + bogusImgs + " 处无效的图片标记（本轮没有对应的图片资料）");
             log.info("[IMG-CHECK] 剔除无效图片标记 {} 处 (maxImg={})", bogusImgs, maxImg);
         }
 
         // 生成完成（引用语义自检之前的最后一步计时；自检本身另记 citation）
-        st.channel.stageMs.put("generate", System.currentTimeMillis() - st.channel.startTime);
+        ctx.stageMs().put("generate", System.currentTimeMillis() - ctx.startTime());
 
         // 5) 语义一致性自检（深度防线）：编号没越界 ≠ 内容被支撑——LLM 可能引用了一个块，
         //    但对应句子的结论与该块无关（编号正确、语义不符）。把每个 [N] 的"前文句子"与其
@@ -164,17 +184,17 @@ public class CitationIntegrityService {
         if (configService.getBoolean("chat.citationCheckEnabled") && !sources.isEmpty()) {
             // 用量归属：自检跑在流收尾回调线程上，ThreadLocal 身份已不可见——hold 显式带上
             com.wenqu.ai.util.UsageAttr.hold(com.wenqu.ai.util.UsageAttr.of(
-                    st.userId, st.sessionId, null, "citecheck"));
+                    ctx.userId(), ctx.sessionId(), null, "citecheck"));
             try {
                 long citeT0 = System.currentTimeMillis();
-                CheckResult cr = consistencyCheck(answer, sources, st.question, st.model);
+                CheckResult cr = consistencyCheck(answer, sources, ctx.question(), ctx.model());
                 // 剔除 0 处也打一条：否则"自检开了没、花了多久"完全不可观测（调参时无法确认防线在位）
                 log.info("[CITE-CHECK] 自检完成: 剔除 {} 处, 耗时 {} ms", cr.droppedCount(),
                         System.currentTimeMillis() - citeT0);
                 if (cr.droppedCount() > 0) {
                     answer = cr.text();
                     sources = cr.sources();
-                    degrade(st, "citationUnsupported",
+                    degrade(ctx, "citationUnsupported",
                             "已剔除 " + cr.droppedCount() + " 处与引用内容不匹配的引用标注");
                     log.info("[CITE-CHECK] 引用语义一致性剔除 {} 处: {}", cr.droppedCount(), cr.dropped());
                 }
@@ -184,7 +204,7 @@ public class CitationIntegrityService {
             } finally {
                 com.wenqu.ai.util.UsageAttr.clear();
             }
-            st.channel.stageMs.put("citation", System.currentTimeMillis() - st.channel.startTime);
+            ctx.stageMs().put("citation", System.currentTimeMillis() - ctx.startTime());
         }
         return new Outcome(answer, sources, images);
     }
@@ -193,8 +213,8 @@ public class CitationIntegrityService {
     private record CheckResult(String text, List<Map<String, Object>> sources,
                                Set<Integer> dropped, int droppedCount) {}
 
-    private void degrade(TurnState st, String code, String msg) {
-        runtime.addDegradation(st.degradations, st.degradedCodes, code, msg);
+    private void degrade(Ctx ctx, String code, String msg) {
+        runtime.addDegradation(ctx.degradations(), ctx.degradedCodes(), code, msg);
     }
 
     private CheckResult consistencyCheck(String answer, List<Map<String, Object>> sources,

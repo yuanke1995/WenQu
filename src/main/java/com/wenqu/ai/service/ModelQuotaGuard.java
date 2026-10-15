@@ -58,6 +58,10 @@ public final class ModelQuotaGuard {
             "账户余额", "账号余额", "余额已用尽", "欠费", "已欠费", "计费额度", "免费额度",
             "insufficient balance", "insufficient quota", "exceeded your current quota",
             "quota exceeded", "out of credit", "billing", "arrearage", "payment required",
+            // 厂商的「免费额度用尽」是英文原文（实测阿里云百炼：403 "Free quota exhausted. To continue…"）。
+            // 不收这一条的后果：两条运行时的流错误都被判成通用的「AI 回复失败，请稍后重试」，
+            // 用户等一会重试到永远——这件事的处置和额度不足是同一个（去充值或换模型）
+            "free quota exhausted", "quota exhausted", "free quota",
             "account balance", "not in account",   // 「model not in account」：套餐内无此模型权限，实质同为额度问题
             "insufficient permissions to query the model"  // 同上，OpenAI 表述
     };
@@ -97,6 +101,26 @@ public final class ModelQuotaGuard {
         String text = allTextOf(throwable);
         if (statusCodeOf(throwable) == 429) return true;
         return containsAny(text, RATE_LIMIT_TEXTS);
+    }
+
+    /**
+     * 按<b>文案</b>判「额度不足」——给拿不到 {@code Throwable}、只剩一句错误文本的调用方
+     * （框架引擎把执行异常收成字符串留在 {@code executionError()} 里）。
+     * <p>判据必须与 {@link #isQuotaExhausted(Throwable)} 用同一张表：两处各抄一份的结果，
+     * 就是同一件 402 在一边是人话、在另一边是原文（双跑实测过这个形状）。
+     */
+    public static boolean isQuotaText(String text) {
+        if (text == null || text.isBlank()) return false;
+        String lower = text.toLowerCase(java.util.Locale.ROOT);
+        return containsAny(lower, QUOTA_CODES) || containsAny(lower, QUOTA_TEXTS)
+                || lower.contains("status 402") || lower.contains(" 402 ");
+    }
+
+    /** 按文案判「瞬时限流」（与上一条共用两张表，语义仍互斥）。 */
+    public static boolean isRateLimitedText(String text) {
+        if (text == null || text.isBlank() || isQuotaText(text)) return false;
+        String lower = text.toLowerCase(java.util.Locale.ROOT);
+        return containsAny(lower, RATE_LIMIT_TEXTS) || lower.contains("status 429");
     }
 
     /**

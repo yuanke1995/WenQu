@@ -255,6 +255,17 @@ public class ConfigService {
         // 「默认开的开关」在键未入库时静默变关），该坑已在 getOrDefaultParsed 修掉并加启动自检点名。
         d.put("chat.resumeEnabled", "true");                // 刷新/换设备后接回正在跑的那一轮
         d.put("chat.detachGraceMs", "180000");              // 没人观看多久后按中断收束本轮；-1=一律跑完，0=关掉就停
+        // ---------- 问答引擎分派（手写 agent.* 与 AgentScope 框架运行时并存）----------
+        // legacy=手写运行时（默认，全量现行为）；agentscope=框架引擎；ab=按 sessionId 哈希分流灰度。
+        d.put("chat.engineMode", "legacy");
+        // ab 档下走框架引擎的会话占比（0~100）：分流要的是「一个会话一套行为」，所以按 sessionId 哈希
+        d.put("chat.engineAbPercent", "0");
+        // 框架会话状态目录：AgentScope 默认写 ~/.agentscope/state/**，在问渠受管数据目录之外（容器里等于丢）
+        d.put("chat.agentscopeStateDir", System.getProperty("user.dir") + "/user-data/agentscope");
+        d.put("chat.agentscopeTurnTimeoutSeconds", "0");   // 框架引擎单轮墙钟上限；0=沿用 chat.sseTimeoutMs（两套运行时同一个天花板）
+        d.put("chat.agentscopeMaxIters", "12");            // 框架引擎单轮推理步数上限（ReAct 循环）
+        // 框架侧上下文预算（token）：0=用框架默认；用户在这一轮显式选过的窗口优先于它
+        d.put("chat.agentscopeMaxContextTokens", "0");
         d.put("tool.spillEnabled", "true");                 // 工具大输出外溢留存（截断即丢 → 预览+可回读）
         d.put("tool.spillMaxMbPerUser", "200");             // 每人留存原文的磁盘配额(MB)，0=不限量；超出按落盘时间淘汰最旧几份
         // 留存的两条治理参数都要进 defaults()：snapshot() 只回显这里登记过的键，

@@ -2467,6 +2467,12 @@ const compactContext = async (instruction = '') => {
   try {
     const r = await compactSessionApi(sid, { instruction, model: currentOverrideModel.value || '' })
     const d = (r && r.data) || {}
+    // 另一套运行方式（框架引擎）的上下文由系统在提问前自己整理：这里没有「本次腾出多少」可报，
+    // 也不该画一条并没有发生的分隔线——如实说排到了下一次提问前
+    if (d.scheduled) {
+      message.info('这套引擎会在提问前自己整理上下文，已安排下一次提问前折一次早期对话')
+      return d
+    }
     // 两种情形都算「没得压」：对话本来就短，或早期对话上次已经压过了（最近 2 次问答不会被压掉）
     if (!d.compressedTurns) { message.info('没有可压缩的早期对话（对话还短，或已经压过了）'); return d }
     compactNotice.value = {

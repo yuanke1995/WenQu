@@ -69,8 +69,17 @@ public class RunCodeSubCallRuntime {
      * 走本轮的子调用计数，上限是 {@code tool.runcode.maxSubCalls}）。
      */
     public void prepareSubCallPipeline(TurnState st,
-                                        java.util.List<org.springframework.ai.tool.ToolCallback> rawTools,
-                                        ToolTurnContext turnCtx) {
+                                       java.util.List<org.springframework.ai.tool.ToolCallback> rawTools,
+                                       ToolTurnContext turnCtx) {
+        prepareSubCallPipeline(RunCodeTurn.ofTurnState(st, turnCtx), rawTools);
+    }
+
+    /**
+     * 同上，但认的是「这一轮」的抽象（{@link RunCodeTurn}）——手写侧与框架侧共用这一条子调用管线。
+     */
+    public void prepareSubCallPipeline(RunCodeTurn turn,
+                                       java.util.List<org.springframework.ai.tool.ToolCallback> rawTools) {
+        ToolTurnContext turnCtx = turn.baseContext();
         boolean runCodeMounted = rawTools.stream().anyMatch(
                 cb -> cb.getToolDefinition() != null
                         && SandboxTools.RUN_CODE_TOOL_NAME.equals(cb.getToolDefinition().name()));
@@ -95,36 +104,42 @@ public class RunCodeSubCallRuntime {
             log.info("[P3B] 本轮挂了 run_code 但没有可子调用的工具，脚本只能用 Python 自己算");
             return;
         }
-        st.tools.subCallTools = new java.util.LinkedHashMap<>();
-        for (org.springframework.ai.tool.ToolCallback cb : toolPipeline.wrap(subRaw, subCallTurnContext(st, turnCtx))) {
+        // 清单就地重建（ofTurnState 已把它与 turn.subCallTools() 绑成同一张表，这里不换引用）
+        turn.subCallTools().clear();
+        for (org.springframework.ai.tool.ToolCallback cb : toolPipeline.wrap(subRaw, subCallTurnContext(turn))) {
             String n = cb.getToolDefinition() == null ? null : cb.getToolDefinition().name();
-            if (n != null) st.tools.subCallTools.put(n, cb);
+            if (n != null) turn.subCallTools().put(n, cb);
         }
         log.info("[P3B] 本轮子调用通道就绪：{} 个工具，上限 {} 次",
-                st.tools.subCallTools.size(), configService.getInt("tool.runcode.maxSubCalls", 50));
+                turn.subCallTools().size(), configService.getInt("tool.runcode.maxSubCalls", 50));
     }
 
-    /** 本轮 run_code 的子调用入口（按轮闭包；容器侧只看到一次 HTTP 回调） */
+    /** 本轮 run_code 的子调用入口（按轮回传；容器侧只看到一次 HTTP 回调） */
     public com.wenqu.ai.agent.runcode.RunCodeBridge runCodeBridge(TurnState st) {
+        return runCodeBridge(RunCodeTurn.ofTurnState(st, null));
+    }
+
+    /** 同上，认「这一轮」的抽象：框架引擎用它就能挂同一套子调用回程。 */
+    public com.wenqu.ai.agent.runcode.RunCodeBridge runCodeBridge(RunCodeTurn turn) {
         return new com.wenqu.ai.agent.runcode.RunCodeBridge() {
             @Override
             public String sessionId() {
-                return st.sessionId;
+                return turn.sessionId();
             }
 
             @Override
             public String turnId() {
-                return st.turnId;
+                return turn.turnId();
             }
 
             @Override
             public String userId() {
-                return st.userId;
+                return turn.userId();
             }
 
             @Override
             public java.util.List<com.wenqu.ai.agent.runcode.RunCodeBridge.Spec> callableSpecs() {
-                java.util.Map<String, org.springframework.ai.tool.ToolCallback> map = st.tools.subCallTools;
+                java.util.Map<String, org.springframework.ai.tool.ToolCallback> map = turn.subCallTools();
                 if (map == null) return List.of();
                 List<Spec> out = new ArrayList<>();
                 for (org.springframework.ai.tool.ToolCallback cb : map.values()) {
@@ -135,7 +150,7 @@ public class RunCodeSubCallRuntime {
 
             @Override
             public String invoke(String tool, String argsJson) {
-                java.util.Map<String, org.springframework.ai.tool.ToolCallback> map = st.tools.subCallTools;
+                java.util.Map<String, org.springframework.ai.tool.ToolCallback> map = turn.subCallTools();
                 org.springframework.ai.tool.ToolCallback cb = map == null ? null : map.get(tool);
                 if (cb == null) {
                     throw new com.wenqu.ai.agent.runcode.RunLimitException(
@@ -159,12 +174,12 @@ public class RunCodeSubCallRuntime {
 
             @Override
             public int callsUsed() {
-                return st.board.subCallCount.get();
+                return turn.board().subCallCount.get();
             }
 
             @Override
             public void recordRunOutcome(com.wenqu.ai.agent.runcode.RunCodeService.Outcome outcome) {
-                st.board.runOutcome = outcome == null ? null : outcome.asCard();
+                turn.board().runOutcome = outcome == null ? null : outcome.asCard();
             }
         };
     }
@@ -206,7 +221,8 @@ public class RunCodeSubCallRuntime {
      * 子调用来自 Tomcat 线程、那里根本没有这个 ThreadLocal——转发（而不是新建）是唯一正确的做法，
      * 也是 P1 那条「身份快照必须在入口线程捕获」结论的复用。
      */
-    private ToolTurnContext subCallTurnContext(TurnState st, ToolTurnContext base) {
+    private ToolTurnContext subCallTurnContext(RunCodeTurn turn) {
+        final ToolTurnContext base = turn.baseContext();
         final int maxSub = Math.max(1, configService.getInt("tool.runcode.maxSubCalls", 50));
         return new ToolTurnContext() {
             @Override
@@ -237,12 +253,12 @@ public class RunCodeSubCallRuntime {
 
             @Override
             public int stepsTaken() {
-                return st.board.subCallCount.get();
+                return turn.board().subCallCount.get();
             }
 
             @Override
             public void takeStep() {
-                st.board.subCallCount.incrementAndGet();
+                turn.board().subCallCount.incrementAndGet();
             }
 
             @Override
@@ -294,11 +310,11 @@ public class RunCodeSubCallRuntime {
                 // <p>start 也过这里：在途那几条与"本轮额度还剩多少"只有起止两侧才知道。
                 // 这里只改计数、不发帧——发帧由面板 ticker 每秒合并一帧（见 RUN_PROGRESS_POOL）。
                 if ("start".equals(status)) {
-                    markSubCallInFlight(st, inv.toolName(), true);
+                    markSubCallInFlight(turn, inv.toolName(), true);
                     return;
                 }
-                recordSubCall(st, inv.toolName(), status, resultOrError, inv.elapsedMillis());
-                markSubCallInFlight(st, inv.toolName(), false);
+                recordSubCall(turn, inv.toolName(), status, resultOrError, inv.elapsedMillis());
+                markSubCallInFlight(turn, inv.toolName(), false);
             }
 
             @Override
@@ -344,7 +360,7 @@ public class RunCodeSubCallRuntime {
      * 记一条脚本子调用进 run_code 卡片的扇出清单（P3b 过程下钻）。
      * <p>摘要取结果首行/失败原因前 80 字：够看出这一支在查什么、有没有被挡下，又不至于把卡片变成第二个输出区。
      */
-    private static void recordSubCall(TurnState st, String tool, String status,
+    private static void recordSubCall(RunCodeTurn turn, String tool, String status,
                                       String resultOrError, long elapsedMs) {
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("name", tool);
@@ -352,10 +368,10 @@ public class RunCodeSubCallRuntime {
         row.put("elapsedMs", elapsedMs);
         String text = resultOrError == null ? "" : resultOrError.replaceAll("\\s+", " ").trim();
         row.put("brief", text.length() > 80 ? text.substring(0, 80) + "…" : text);
-        synchronized (st.board.subCallLog) {
-            st.board.subCallLog.add(row);
+        synchronized (turn.board().subCallLog) {
+            turn.board().subCallLog.add(row);
         }
-        st.board.subCallDirty.set(true);
+        turn.board().subCallDirty.set(true);
     }
 
     /** 脚本子调用清单最多带这么多行进卡片（再多只报总数——清单本身不该比结果还长） */
@@ -371,35 +387,43 @@ public class RunCodeSubCallRuntime {
      * 面板上把它如实标成「本轮额度」。
      */
     public void startRunBoard(TurnState st) {
-        st.board.subCallLog.clear();
-        st.board.subCallRunning.clear();
-        st.board.subCallInFlight.set(0);
-        st.board.subCallDirty.set(true);
-        st.board.runBoardActive = true;
-        stopRunBoardTicker(st);
+        startRunBoard(RunCodeTurn.ofTurnState(st, null));
+    }
+
+    public void startRunBoard(RunCodeTurn turn) {
+        turn.board().subCallLog.clear();
+        turn.board().subCallRunning.clear();
+        turn.board().subCallInFlight.set(0);
+        turn.board().subCallDirty.set(true);
+        turn.board().runBoardActive = true;
+        stopRunBoardTicker(turn);
         java.util.concurrent.atomic.AtomicReference<java.util.concurrent.ScheduledFuture<?>> self =
                 new java.util.concurrent.atomic.AtomicReference<>();
         java.util.concurrent.ScheduledFuture<?> f = RUN_PROGRESS_POOL.scheduleWithFixedDelay(() -> {
             try {
-                if (!st.board.runBoardActive) {
-                    stopRunBoardTicker(st);
+                if (!turn.board().runBoardActive) {
+                    stopRunBoardTicker(turn);
                     return;
                 }
-                if (st.board.subCallDirty.compareAndSet(true, false)) publishRunProgress(st);
+                if (turn.board().subCallDirty.compareAndSet(true, false)) publishRunProgress(turn);
             } catch (Exception e) {
                 log.debug("[P3B] 进度帧生成失败（不影响脚本执行）: {}", e.getMessage());
             }
         }, RUN_PROGRESS_INTERVAL_MS, RUN_PROGRESS_INTERVAL_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
         self.set(f);
-        st.board.runProgress = f;
+        turn.board().runProgress = f;
     }
 
     /** 停掉本段脚本的面板 ticker（终态、自停、整轮收尾三条路都走这里，句柄只有一份） */
     public static void stopRunBoardTicker(TurnState st) {
-        java.util.concurrent.ScheduledFuture<?> f = st.board.runProgress;
+        stopRunBoardTicker(RunCodeTurn.ofTurnState(st, null));
+    }
+
+    public static void stopRunBoardTicker(RunCodeTurn turn) {
+        java.util.concurrent.ScheduledFuture<?> f = turn.board().runProgress;
         if (f != null) {
             f.cancel(false);
-            st.board.runProgress = null;
+            turn.board().runProgress = null;
         }
     }
 
@@ -407,18 +431,18 @@ public class RunCodeSubCallRuntime {
      * 在途计数：start 加、终态减，并置脏位让 ticker 下一秒发一帧。
      * <p>这里<b>不做任何 IO</b>：子调用线程忙着把 HTTP 响应送回去，面板由 ticker 代劳。
      */
-    private static void markSubCallInFlight(TurnState st, String tool, boolean started) {
-        synchronized (st.board.subCallRunning) {
-            st.board.subCallDirty.set(true);
+    private static void markSubCallInFlight(RunCodeTurn turn, String tool, boolean started) {
+        synchronized (turn.board().subCallRunning) {
+            turn.board().subCallDirty.set(true);
             if (started) {
-                st.board.subCallInFlight.incrementAndGet();
-                st.board.subCallRunning.merge(tool == null ? "?" : tool, 1, Integer::sum);
+                turn.board().subCallInFlight.incrementAndGet();
+                turn.board().subCallRunning.merge(tool == null ? "?" : tool, 1, Integer::sum);
                 return;
             }
-            st.board.subCallInFlight.decrementAndGet();
+            turn.board().subCallInFlight.decrementAndGet();
             String name = tool == null ? "?" : tool;
-            Integer left = st.board.subCallRunning.merge(name, -1, Integer::sum);
-            if (left == null || left <= 0) st.board.subCallRunning.remove(name);
+            Integer left = turn.board().subCallRunning.merge(name, -1, Integer::sum);
+            if (left == null || left <= 0) turn.board().subCallRunning.remove(name);
         }
     }
 
@@ -428,20 +452,24 @@ public class RunCodeSubCallRuntime {
      * @param live 实时帧额外带上在途那几条（它们还没有结果可摘要），终态那份只给已完成的
      */
     public Map<String, Object> buildFanOut(TurnState st, boolean live) {
+        return buildFanOut(RunCodeTurn.ofTurnState(st, null), live);
+    }
+
+    public Map<String, Object> buildFanOut(RunCodeTurn turn, boolean live) {
         List<Map<String, Object>> done = new ArrayList<>();
         int delivered = 0;
-        synchronized (st.board.subCallLog) {
-            for (Map<String, Object> row : st.board.subCallLog) {
+        synchronized (turn.board().subCallLog) {
+            for (Map<String, Object> row : turn.board().subCallLog) {
                 if (row == null) continue;
                 done.add(row);
                 if (DELIVER_TOOL_NAME.equals(row.get("name")) && "done".equals(row.get("status"))) delivered++;
             }
         }
-        List<Map<String, Object>> items = new ArrayList<>(done.size() + st.board.subCallRunning.size());
+        List<Map<String, Object>> items = new ArrayList<>(done.size() + turn.board().subCallRunning.size());
         items.addAll(done.size() > SUB_CALL_CARD_ROWS ? done.subList(0, SUB_CALL_CARD_ROWS) : done);
         if (live) {
-            synchronized (st.board.subCallRunning) {
-                for (Map.Entry<String, Integer> e : st.board.subCallRunning.entrySet()) {
+            synchronized (turn.board().subCallRunning) {
+                for (Map.Entry<String, Integer> e : turn.board().subCallRunning.entrySet()) {
                     int n = Math.max(1, e.getValue() == null ? 1 : e.getValue());
                     Map<String, Object> row = new LinkedHashMap<>();
                     row.put("name", e.getKey());
@@ -453,13 +481,13 @@ public class RunCodeSubCallRuntime {
         }
         Map<String, Object> fan = new LinkedHashMap<>();
         fan.put("total", done.size());
-        fan.put("inFlight", Math.max(0, st.board.subCallInFlight.get()));
+        fan.put("inFlight", Math.max(0, turn.board().subCallInFlight.get()));
         fan.put("items", items);
         if (done.size() > SUB_CALL_CARD_ROWS) {
             fan.put("omitted", done.size() - SUB_CALL_CARD_ROWS);
         }
         // 预算与并发上限：面板要能说出"这一次扇出离上限还有多远"，否则 12/50 和 12/12 看着一样
-        fan.put("used", st.board.subCallCount.get());
+        fan.put("used", turn.board().subCallCount.get());
         fan.put("max", Math.max(1, configService.getInt("tool.runcode.maxSubCalls", 50)));
         fan.put("parallel", Math.max(1, configService.getInt("tool.runcode.maxParallel", 8)));
         if (delivered > 0) fan.put("delivered", delivered);
@@ -471,22 +499,22 @@ public class RunCodeSubCallRuntime {
      * <p>只走实时通道：不进 {@code toolCalls}、不进账本——这份数据的价值在"当场看得见"，
      * 跑完后卡片自己带终态那份（随消息落库，刷新后仍点得开），两套真源只会对不上。
      */
-    private void publishRunProgress(TurnState st) {
+    private void publishRunProgress(RunCodeTurn turn) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("tool", SandboxTools.RUN_CODE_TOOL_NAME);
-        payload.put("fanOut", buildFanOut(st, true));
+        payload.put("fanOut", buildFanOut(turn, true));
         String json = JSON.toJSONString(payload);
         boolean sent = false;
         try {
-            sent = chatRunBus.publishRaw(st.channel.emitter, "runcode_progress", json, st.sessionId);
+            sent = chatRunBus.publishRaw(turn.emitter(), "runcode_progress", json, turn.sessionId());
         } catch (Exception e) {
             log.debug("[P3B] 进度帧走总线失败，改直发: {}", e.getMessage());
         }
         if (sent) return;
         try {
-            st.channel.emitter.send(SseEmitter.event().name("runcode_progress")
+            turn.emitter().send(SseEmitter.event().name("runcode_progress")
                     .data("{\"type\":\"runcode_progress\",\"content\":" + json
-                            + ",\"sessionId\":\"" + st.sessionId + "\"}"));
+                            + ",\"sessionId\":\"" + turn.sessionId() + "\"}"));
         } catch (Exception e) {
             log.debug("[P3B] 进度帧下发失败（客户端可能已断开）: {}", e.getMessage());
         }

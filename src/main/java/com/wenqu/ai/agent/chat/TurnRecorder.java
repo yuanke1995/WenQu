@@ -126,6 +126,26 @@ public class TurnRecorder {
         }
     }
 
+    /**
+     * 咨询卡片要挂的那份「子对话」：按被咨询那位的 id 从本轮台账取走（取走即摘），并裁到卡片长度上限。
+     * <p>公开这一个口子是因为并列的第二套运行时（AgentScope 框架引擎）也要挂同一张卡：
+     * 截断长度与「只挂终态那一份」的口径分两处写，早晚一边裁了另一边没裁。
+     *
+     * @param input 这次 consultAgent 调用的入参 JSON（取 agentId 用）
+     * @return 子对话；本轮没有可挂的回报时返回 null
+     */
+    public static Map<String, Object> consultCardSubChat(
+            com.wenqu.ai.agent.subagent.SubAgentConsultService.Ledger ledger, String input) {
+        if (ledger == null) return null;
+        Map<String, Object> subChat = ledger.takeReport(consultTarget(input));
+        if (subChat == null) return null;
+        // 与入参/输出同一把长度尺：一条跑偏的长回答不该把整条消息行撑爆
+        if (subChat.get("answer") instanceof String s && s.length() > TOOL_IO_MAX) {
+            subChat.put("answer", s.substring(0, TOOL_IO_MAX) + ANSWER_CLIP_SUFFIX);
+        }
+        return subChat;
+    }
+
     /** 取出工具侧上报的外溢标识（按工具名匹配最早那条未消费的；没有返回 null） */
     private static String takeToolSpill(TurnState st, String name) {
         for (java.util.Iterator<String> it = st.toolSpills.iterator(); it.hasNext(); ) {
@@ -510,8 +530,7 @@ public class TurnRecorder {
             if (args != null) toolArgChars += String.valueOf(args).length();
         }
         int accounted = answer.length() + st.processResponse.length() + st.reasoningChars + toolArgChars;
-        if (realUsage && finalRoundOutput >= OUTPUT_LOSS_MIN_TOKENS
-                && accounted < finalRoundOutput * OUTPUT_LOSS_CHAR_PER_TOKEN) {
+        if (looksLikeOutputLost(finalRoundOutput, accounted, realUsage)) {
             runtime.addDegradation(st.degradations, st.degradedCodes, "outputLost",
                     "模型本轮生成 " + finalRoundOutput + " tokens，仅 " + accounted + " 字进入回答，内容疑似丢失");
             log.warn("[FAIL-LOUD] 生成量与正文字数不符: session={}, 最终轮输出={} tokens, 已交代={} 字"
@@ -521,6 +540,17 @@ public class TurnRecorder {
             return OUTPUT_LOST_SUFFIX;
         }
         return null;
+    }
+
+    /**
+     * 「暗截断」判据（网关没明说 length，但生成量与已交代字符数严重不符 ⇒ 内容在剥离环节丢了）。
+     * <p>收成一处是因为两条运行时都要跑它：把常量抄第二份的结果是两边阈值各自演进，
+     * 同一件事在一条路上报错、在另一条路上静默。已交代字符数<b>必须含思考字符</b>——
+     * deepseek 这一族关着思考也照样回 reasoning，不算进去就是轮轮误报。
+     */
+    public static boolean looksLikeOutputLost(long finalRoundOutput, int accountedChars, boolean realUsage) {
+        return realUsage && finalRoundOutput >= OUTPUT_LOSS_MIN_TOKENS
+                && accountedChars < finalRoundOutput * OUTPUT_LOSS_CHAR_PER_TOKEN;
     }
 
     public void recordToolStatus(TurnState st, String name, String input,
@@ -565,14 +595,8 @@ public class TurnRecorder {
         // 与 run_code 的 fanOut/run 同一条路子：只挂终态那一份，按被咨询那位 id 从本轮台账取走
         //（一轮可以问多位、工具在弹性线程上并发跑，共用一个槽会串台）
         if ("consultAgent".equals(name) && !"start".equals(status)) {
-            Map<String, Object> subChat = st.tools.consultLedger.takeReport(consultTarget(input));
-            if (subChat != null) {
-                // 与入参/输出同一把长度尺：一条跑偏的长回答不该把整条消息行撑爆
-                if (subChat.get("answer") instanceof String s && s.length() > TOOL_IO_MAX) {
-                    subChat.put("answer", s.substring(0, TOOL_IO_MAX) + ANSWER_CLIP_SUFFIX);
-                }
-                rec.put("subChat", subChat);
-            }
+            Map<String, Object> subChat = consultCardSubChat(st.tools.consultLedger, input);
+            if (subChat != null) rec.put("subChat", subChat);
         }
         // 工具发起时刻：锚点前已产出的正文/过程独白先各自成段，再插入工具段——
         // 记录的是「正文与过程说到多少之后发起的工具」，刷新后据此把卡片放回原位

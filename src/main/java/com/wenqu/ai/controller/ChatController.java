@@ -54,6 +54,7 @@ public class ChatController {
      * 的裁决提交与跨设备恢复都走这里。问答运行时不再代管卡片，本控制器也就不再向它要卡片。
      */
     private final com.wenqu.ai.agent.hitl.HitlDecisionService hitl;
+    private final com.wenqu.ai.agentx.FrameworkSessions frameworkSessions;
     /**
      * 轮次控制与存活（P6 刀 2）：「停止本轮」「运行中插话」「有没有一轮在跑」「接流回来」
      * 这四个入口都在它那里——它们问的是这一轮的通道与生死，不是这一轮怎么把答案生成出来。
@@ -61,6 +62,8 @@ public class ChatController {
     private final com.wenqu.ai.agent.chat.ChatRunRuntime runtime;
     /** 对话历史的装配与滚动压缩（P6 刀 4）：/compact 直接找它，不再绕问答服务 */
     private final com.wenqu.ai.agent.context.HistoryCompactionService historyCompaction;
+    /** 分派层：/compact 要按「这条会话接下来由谁持有上下文」分家，判据必须与问答选引擎那条一致 */
+    private final com.wenqu.ai.engine.ChatEngineFactory chatEngines;
     private final SessionService sessionService;
     private final ImageUrlSigner imageUrlSigner;
     private final KnowledgeMapper knowledgeMapper;
@@ -402,7 +405,11 @@ public class ChatController {
             @Parameter(description = "审批请求 ID（approval_required 事件下发）") @PathVariable("approvalId") String approvalId,
             @RequestBody Map<String, Boolean> body) {
         boolean approved = Boolean.TRUE.equals(body.get("approved"));
-        boolean ok = hitl.resolveApproval(approvalId, approved, com.wenqu.ai.util.RequestUser.uid());
+        // 框架引擎的待办先走它自己：AgentSession.respond 会找回待办所属的原任务与工具调用并安排
+        // 接续执行；不在这套会话里才交回人在回路的旧通道（两条通道不双写同一个审批号）
+        boolean ok = frameworkSessions.respond(approvalId, approved,
+                approved ? null : String.valueOf(body.get("reason"))) != null
+                || hitl.resolveApproval(approvalId, approved, com.wenqu.ai.util.RequestUser.uid());
         if (!ok) return ResultJson.error("审批请求不存在或已失效（可能已超时）");
         return ResultJson.ok(approved ? "已批准" : "已拒绝");
     }
@@ -413,7 +420,26 @@ public class ChatController {
     public ResultJson listPendingToolApprovals(
             @Parameter(description = "会话 ID") @RequestParam("sessionId") String sessionId) {
         return ResultJson.ok(java.util.Map.of("items",
-                hitl.listPendingApprovals(sessionId, com.wenqu.ai.util.RequestUser.uid())));
+                markFrameworkLive(hitl.listPendingApprovals(sessionId, com.wenqu.ai.util.RequestUser.uid()))));
+    }
+
+    /**
+     * 框架引擎的待办活在 {@code AgentSession} 上，而恢复端点的 {@code live} 是按旧通道的内存表判的
+     * ——不改的话框架卡一律被标成「卡片还在但没人能唤醒」，用户取回一张答不了的卡。
+     * <p>只改明确属于框架会话的那些 id，其余原样返回（两条通道不双写同一个号，判归属也一样）。
+     */
+    private java.util.List<java.util.Map<String, Object>> markFrameworkLive(
+            java.util.List<java.util.Map<String, Object>> items) {
+        if (items == null) return java.util.List.of();
+        for (java.util.Map<String, Object> item : items) {
+            Object id = item.get("approvalId") != null ? item.get("approvalId")
+                    : (item.get("askId") != null ? item.get("askId") : item.get("planApprovalId"));
+            if (id != null && frameworkSessions.isLive(String.valueOf(id))) {
+                item.put("live", true);
+                item.put("engine", "agentscope");
+            }
+        }
+        return items;
     }
 
     @GetMapping("/tool-approval/{approvalId}")
@@ -433,6 +459,15 @@ public class ChatController {
             @RequestBody Map<String, Object> body) {
         boolean ignore = Boolean.TRUE.equals(body.get("ignore"));
         String uid = com.wenqu.ai.util.RequestUser.uid();
+        // 框架引擎的提问卡走框架待办（挂起→答复→由框架接续原任务），不属于它才回落旧通道；
+        // 忽略＝把「用户没答」原样送回模型，绝不替用户编一个答案
+        if (!ignore) {
+            String text = String.valueOf(java.util.Optional.ofNullable(body.get("answers"))
+                    .orElse(java.util.Optional.ofNullable(body.get("answer")).orElse("")));
+            if (frameworkSessions.respondAsk(askId, text) != null) {
+                return ResultJson.ok("已提交");
+            }
+        }
         boolean ok;
         if (ignore) {
             ok = hitl.resolveAskIgnore(askId, uid);
@@ -458,7 +493,7 @@ public class ChatController {
     public ResultJson listPendingAsks(
             @Parameter(description = "会话 ID") @RequestParam("sessionId") String sessionId) {
         return ResultJson.ok(java.util.Map.of("items",
-                hitl.listPendingAsks(sessionId, com.wenqu.ai.util.RequestUser.uid())));
+                markFrameworkLive(hitl.listPendingAsks(sessionId, com.wenqu.ai.util.RequestUser.uid()))));
     }
 
     @Operation(summary = "工具完整输出（外溢原文读回）", description = "读回一条被外溢存储的工具原文（沙盒输出、读到的整份文件等）。"
@@ -524,6 +559,15 @@ public class ChatController {
         boolean supersede = Boolean.TRUE.equals(body.get("supersede"));
         Object p = body.get("plan");
         String plan = p == null ? null : String.valueOf(p);
+        // 框架引擎的计划退出确认走框架待办：批准=approve，退回重出/继续对话/拒绝都按拒绝带上理由，
+        // 让模型在原任务里看到用户的意见（revise 与 supersede 的界面差异仍由前端承担，不在此分叉）
+        if (frameworkSessions.respondPlanApproval(planApprovalId, approved,
+                revise ? plan : (supersede ? "用户带着意见继续对话，本版计划作废" : (approved ? null : "用户拒绝了这版计划")),
+                approved ? "approve" : (supersede ? "supersede" : (revise ? "revise" : "reject")))) {
+            // 界面终态（supersede/reject）由框架引擎那侧的循环取走并补发 plan_superseded / plan_cancelled
+            // 与带标记的 done——不在这里直接收轮：控制流归框架持有
+            return ResultJson.ok(approved ? "已批准" : "已退回");
+        }
         boolean ok = hitl.resolvePlanApproval(planApprovalId, approved, plan, revise, supersede, com.wenqu.ai.util.RequestUser.uid());
         if (!ok) return ResultJson.error("计划已处理或已失效（可能已超时）");
         return ResultJson.ok(supersede ? "本版计划已作废（继续对话见新计划）"
@@ -538,7 +582,7 @@ public class ChatController {
     public ResultJson listPendingPlans(
             @Parameter(description = "会话 ID") @RequestParam("sessionId") String sessionId) {
         return ResultJson.ok(java.util.Map.of("items",
-                hitl.listPendingPlans(sessionId, com.wenqu.ai.util.RequestUser.uid())));
+                markFrameworkLive(hitl.listPendingPlans(sessionId, com.wenqu.ai.util.RequestUser.uid()))));
     }
 
     @Operation(summary = "会话列表", description = "游标分页列出当前用户的会话（含 anonymous 历史兼容池；置顶优先、按更新时间倒序）。"
@@ -675,7 +719,9 @@ public class ChatController {
                     + "为后续提问腾出上下文空间；可带 instruction 指定这次摘要要保留什么。摘要调用按 chat 桶限频并计入用量台账。"
                     + "返回 {compressedTurns, compressedMessages, keepRecent, keepTurns, summaryTokens, freedTokens, summary, rounds, partial}；"
                     + "freedTokens=本次净腾出的 token 数（并入摘要的原文减去新摘要自身），keepTurns=逐字保留的问答对数；"
-                    + "compressedTurns=0 表示对话还短、无需压缩")
+                    + "compressedTurns=0 表示对话还短、无需压缩。"
+                    + "框架引擎（chat.engineMode=agentscope／ab 命中该会话）由框架自己压缩，本接口不产问渠摘要，"
+                    + "改为登记一次强制压缩并返回 {engine:\"agentscope\", scheduled:true}，下一次提问开跑前生效")
     @ApiResponse(responseCode = "200", description = "压缩结果统计（含摘要全文，供前端展示）")
     @PostMapping("/session/{sessionId}/compact")
     public ResultJson compactSession(
@@ -684,9 +730,17 @@ public class ChatController {
             HttpServletRequest httpRequest) {
         String userId = RequestUser.uid();
         sessionService.assertOwned(sessionId, userId);
-        // 摘要要花一次（长会话是数次）模型调用：并入 chat 桶限频，防连点刷额度
+        // 摘要调用按 chat 桶限频，防连点刷额度（框架那一路也要过这道，不然连点能一直重建实例）
         rateLimitService.checkRateLimit("chat", RequestUser.ANONYMOUS.equals(userId)
                 ? "ip:" + clientIp(httpRequest) : "user:" + userId);
+        // 框架引擎那条路不产问渠那份摘要：它的上下文由框架自己压缩（阈值触发、逐字保留最近若干条），
+        // 而问渠这份摘要在这条路上没有人读——照老路压一次，用户拿到的是一张「已压缩」卡片和一件
+        // 没有发生的事。这里改成把强制压缩登记到这条会话：下一次提问开跑前真的折一次。
+        if (chatEngines.frameworkOwns(sessionId)) {
+            frameworkSessions.requestCompact(userId, sessionId);
+            return ResultJson.ok(java.util.Map.of("engine", "agentscope", "scheduled", true,
+                    "compressedTurns", 0), "已排到下一次提问前压缩");
+        }
         Object modelArg = body == null ? null : body.get("model");
         Object instrArg = body == null ? null : body.get("instruction");
         // 请求未显式指定时回落会话已存覆盖（刷新后本地选择清空也能压对模型）。

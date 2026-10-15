@@ -238,12 +238,8 @@ public class ChatService {
 
     /** <related> 下一步建议条数（retrieval.relatedCount 可配，默认 3）：提示词里的示例与数量保持一致 */
     private String relatedPromptLine() {
-        int n = Math.max(1, configService.getInt("retrieval.relatedCount", 3));
-        StringBuilder ex = new StringBuilder("建议1");
-        for (int i = 2; i <= n; i++) ex.append("|建议").append(i);
-        return "\n回答末尾用 <related>" + ex + "</related> 输出 " + n
-                + " 条下一步建议（用 | 分隔）：结合本轮回答与用户目标给出，可以是想确认清楚的追问、值得深入的方向、"
-                + "也可以是马上能执行的操作，几条建议的类型不要雷同；每条要具体、可直接点选，如无合适建议可不输出。";
+        // 出处在 RelatedPrompt：两条运行时读同一句提示词，不改两份
+        return com.wenqu.ai.agent.chat.RelatedPrompt.line(configService.getInt("retrieval.relatedCount", 3));
     }
 
     /**
@@ -451,6 +447,18 @@ public class ChatService {
     /** 计划族本轮要用的回call（无本轮状态，只是把本类那四个方法按接口签名摆出来） */
     private final com.wenqu.ai.agent.plan.PlanModeService.PlanTurnHooks planHooks;
 
+    /**
+     * 问答引擎分派（手写 {@code agent.*} 与 AgentScope 框架运行时并存，按 chat.engineMode 选一）。
+     * 本类是 legacy 那一侧的执行体：启动时把自己那一段流水线注册回去，之后每一轮由工厂决定交给谁。
+     */
+    private final com.wenqu.ai.engine.ChatEngineFactory chatEngines;
+
+    /** 本轮检索范围解析（库界+文档级细选），与框架引擎共用同一处判定 */
+    private final com.wenqu.ai.agent.context.RetrievalScopeService retrievalScope;
+
+    /** 本轮工具装配判据（挂不挂这一族）的唯一实现，与框架引擎共用；原先私有在本类 */
+    private final com.wenqu.ai.service.ToolAssemblyService toolAssembly;
+
     /** M1：查询改写专用线程池（隔离超时任务，避免占用公共池/无限堆积）。
      *  线程数随 chat.pipelineThreads 联动扩容（syncPipelineSize）：改写是每轮必经的短 LLM 调用
      *  （≤8s），固定 2 线程在百级并发下排队到超时、改写静默降级为原句——不报错但召回质量塌方 */
@@ -468,8 +476,32 @@ public class ChatService {
 
     @jakarta.annotation.PostConstruct
     void initPipeline() {
+        // legacy 引擎=本类那段流水线。用函数注册而不是 bean 注入，避免 ChatService↔工厂↔引擎成构造环
+        // （与 BranchRunner、PlanTurnHooks 同一套路数）
+        chatEngines.bindLegacy(this::runLegacyTurn);
         syncPipelineSize();
         warmUpToolSchemas();
+    }
+
+    /**
+     * 这个智能体是否由工作流产出回答（绑定是智能体的属性；未指定智能体/默认入口一律不算）。
+     * <p>读不到绑定时按「没绑」处理并 fail-loud：宁可让分派照常选引擎，也不要把一轮钉死在旧运行时上——
+     * 猜错的两种后果里，「图被跳过」是看得见的错，「引擎不该换却没换」只是少了一半灰度。
+     */
+    private boolean workflowBoundOf(String agentId) {
+        if (agentId == null || agentId.isBlank()) return false;
+        try {
+            com.wenqu.ai.model.Agent a = agentService.get(agentId);
+            return a != null && a.getWorkflowId() != null && !a.getWorkflowId().isBlank();
+        } catch (Exception e) {
+            log.warn("[FAIL-LOUD] 智能体的工作流绑定读不出来，本轮按常规分派: agent={} {}", agentId, e.toString());
+            return false;
+        }
+    }
+
+    /** 手写运行时这一侧的执行体：出口仍用本轮那条 emitter，深度思考由入口处裁决好传入。 */
+    private void runLegacyTurn(ChatCommand cmd, com.wenqu.ai.engine.RunChannel channel) {
+        runChat(cmd, channel.emitter(), channel.deepThink());
     }
 
     /**
@@ -617,7 +649,10 @@ public class ChatService {
                       com.wenqu.ai.agent.plan.PlanModeService plan,
                       com.wenqu.ai.agent.context.CitationIntegrityService citations,
                       com.wenqu.ai.agent.context.RetrievalPipeline retrieval,
-                      com.wenqu.ai.agent.chat.TurnRecorder recorder) {
+                      com.wenqu.ai.agent.chat.TurnRecorder recorder,
+                      com.wenqu.ai.engine.ChatEngineFactory chatEngines,
+                      com.wenqu.ai.agent.context.RetrievalScopeService retrievalScope,
+                      com.wenqu.ai.service.ToolAssemblyService toolAssembly) {
         // 基于 DynamicOpenAiChatModel 的 ChatClient：网关地址/API Key/补全路径支持跨厂商热切换（保存即生效）
         this.chatClient = chatClient;
         this.sessionService = sessionService;
@@ -666,6 +701,9 @@ public class ChatService {
         this.citations = citations;
         this.retrieval = retrieval;
         this.recorder = recorder;
+        this.chatEngines = chatEngines;
+        this.retrievalScope = retrievalScope;
+        this.toolAssembly = toolAssembly;
         this.planHooks = new com.wenqu.ai.agent.plan.PlanModeService.PlanTurnHooks() {
             @Override
             public java.util.List<org.springframework.ai.tool.ToolCallback> mountTools(
@@ -789,7 +827,19 @@ public class ChatService {
                 // 与身份同生命周期：池化线程复用，finally 必须清（否则下一轮会带着上一轮用户的偏好）
                 configService.putUserOverrides(userConfigService.overrides(userId));
                 try {
-                runChat(cmd, emitter, useDeepThink);
+                // 分派点刻意放在这一段：会话轮级互斥、turnId 登记、断线总线、看门狗、身份与个人覆盖
+                // 装载都是「这一轮」的外壳，两种引擎都要；被替换的只是外壳里面那段推理循环本身。
+                var dispatchChannel =
+                        new com.wenqu.ai.engine.SseRunEventChannel(runtime, emitter, sessionId, useDeepThink);
+                // 绑定了工作流的智能体<b>不进任何一条推理循环</b>：那条路由工作流 end 节点的出参当回答
+                // （ChatflowBridge 的口径是「整条不走常规检索/生成，人设/库界/工具都不参与」）。
+                // 分派原先只看「引擎选哪个」，于是切到框架引擎后这张图被整个跳过——用户配的是「图的答案」，
+                // 拿到的却是模型自己答的一句。这不是观测出来的差异，是 Phase 5 排工作流用例时读代码照出来的。
+                if (workflowBoundOf(cmd.getAgentId())) {
+                    runLegacyTurn(cmd, dispatchChannel);
+                } else {
+                    chatEngines.select(cmd).chat(cmd, dispatchChannel);
+                }
                 } finally {
                     // 轮次登记（TURN_STATES / TURN_HANDLES）刻意不在这里摘：runChat 在 subscribe 后就
                     // 返回了，生成与工具循环此后跑在响应式线程上，这里摘会让「停止本轮」找不到正在出字
@@ -892,10 +942,10 @@ public class ChatService {
         // 请求未带覆盖时回落会话已存值：聊天页切换模型已由 /chat 落库，老标签页/重新生成等不发 model 的轮次
         // 沿用用户此前切的选择（刷新/换端不丢）。覆盖的落库在 ChatController 同步段——这里只读不写：
         // 游客分享（会话归访客、身份是发布者）/定时任务（任务级模型）/工作流等旁路调用不带「手动切换」语义，不能改写会话。
-        final String effectiveOverride = modelOverride != null && !modelOverride.isBlank()
-                ? modelOverride.trim() : sessionService.sessionModelOf(sessionId);
-        // 全部未配置时 fail-loud：引导用户配置，而不是发空 model 到网关
-        final String resolvedModel = resolveModel(effectiveOverride, prefUser);
+        // 全部未配置时 fail-loud：引导用户配置，而不是发空 model 到网关。
+        // 这条解析链（请求覆盖 > 会话固定 > 个人默认）与框架引擎共用一处实现（见 modelRefFor）——
+        // 两套运行时各算一遍，迟早一边认个人默认、另一边不认
+        final String resolvedModel = modelRefFor(modelOverride, sessionId, prefUser);
         if (resolvedModel.isBlank()) {
             log.warn("[FAIL-LOUD] 未配置任何模型（会话覆盖/个人默认均未指定）: session={}", sessionId);
             runtime.sendSseEvent(emitter, "error",
@@ -1858,12 +1908,7 @@ public class ChatService {
      */
     private com.wenqu.ai.agent.permission.ExecutionPolicy resolvePermissionPolicy(
             Agent agent, boolean guestMode, java.util.function.BiConsumer<String, String> onClamp) {
-        return permissionPolicyResolver.resolve(
-                agent == null ? null : agent.getPermissionPreset(),
-                agent == null ? null : agent.getToolApprovalMode(),
-                guestMode,
-                agent == null ? null : agent.getToolDeny(),
-                onClamp);
+        return toolAssembly.resolvePermissionPolicy(agent, guestMode, onClamp);
     }
 
     /**
@@ -1885,8 +1930,7 @@ public class ChatService {
      * （今天只有 MCP 族会报降级，而它只在装配回调时被调用）。
      */
     private ToolMountContext mountContext(Agent agent, String userId, boolean guestMode, boolean reflective) {
-        return mountContext(agent, userId, guestMode, reflective, false, (code, message) -> {
-        }, null);
+        return toolAssembly.mountContext(agent, userId, guestMode, reflective);
     }
 
     /**
@@ -1899,98 +1943,17 @@ public class ChatService {
                                           boolean branchTurn,
                                           java.util.function.BiConsumer<String, String> degradationSink,
                                           com.wenqu.ai.agent.permission.ExecutionPolicy turnPolicy) {
-        return new ToolMountContext() {
-            @Override
-            public String userId() {
-                return userId == null ? "" : userId;
-            }
-
-            @Override
-            public boolean guestMode() {
-                return guestMode;
-            }
-
-            @Override
-            public boolean branchTurn() {
-                return branchTurn;
-            }
-
-            @Override
-            public boolean reflectiveRetrieval() {
-                return reflective;
-            }
-
-            @Override
-            public boolean gateOn(String gateKey) {
-                return configService.getBoolean(gateKey);
-            }
-
-            @Override
-            public boolean masterOn() {
-                return configService.getBoolean("tool.enabled");
-            }
-
-            @Override
-            public Integer agentFlag(ToolFamily family) {
-                return agentFlagFor(family, agent);
-            }
-
-            @Override
-            public java.util.Set<String> agentSelection(ToolFamily family) {
-                return agentSelectionFor(family, agent);
-            }
-
-            @Override
-            public boolean approvalOff() {
-                // 工具执行确认=off（禁用）：不给模型沙盒/MCP 这类有副作用工具。UI 与手册均按此语义承诺，
-                // 此前仅 ask 分支有实现、off 静默等同 auto——按承诺补齐。联网搜索不受本档管辖（族上未标）。
-                return agent != null && "off".equalsIgnoreCase(agent.getToolApprovalMode());
-            }
-
-            @Override
-            public boolean approvalAsk() {
-                return agent != null && "ask".equalsIgnoreCase(agent.getToolApprovalMode());
-            }
-
-            @Override
-            public com.wenqu.ai.agent.permission.ExecutionPolicy permissionPolicy() {
-                if (turnPolicy != null) return turnPolicy;
-                return resolvePermissionPolicy(agent, guestMode, degradationSink);
-            }
-
-            @Override
-            public void degrade(String code, String message) {
-                degradationSink.accept(code, message);
-            }
-        };
+        return toolAssembly.mountContext(agent, userId, guestMode, reflective, branchTurn, degradationSink, turnPolicy);
     }
 
-    /** 族 → 智能体的「具体项」选择（null=未指定，本族全挂）；只有内置与 MCP 有这一层 */
+    /** 族 → 智能体的「具体项」选择：实现见 {@link ToolAssemblyService}（判据只有一处） */
     private java.util.Set<String> agentSelectionFor(ToolFamily family, Agent agent) {
-        if (agent == null) return null;
-        return switch (family) {
-            case BUILTIN -> scopeOf(agent.getBuiltinTools());
-            case MCP -> scopeOf(agent.getMcps());
-            default -> null;
-        };
+        return toolAssembly.agentSelectionFor(family, agent);
     }
 
     /** 族 → 智能体级三态列（null = 本族没有智能体级开关，跟随全局） */
     private Integer agentFlagFor(ToolFamily family, Agent agent) {
-        if (agent == null) return null;
-        return switch (family) {
-            case BUILTIN -> agent.getToolBuiltin();
-            case KNOWLEDGE -> agent.getToolKnowledge();
-            case WEBSEARCH -> agent.getToolWebsearch();
-            case ARTIFACT -> agent.getToolArtifact();
-            case SKILL -> agent.getToolSkill();
-            case SANDBOX -> null;   // 沙盒暂无智能体级列（c_ai_agent 未建 toolSandbox，见 SandboxTools 类注释）
-            // 智能体咨询（P5）同理：c_ai_agent 没有 toolSubagent 列，本族只受全局
-            // tool.subagentConsult.enabled 与工具总闸管。要按人/按智能体收口的话，加列要走配置页 schema，
-            // 别在这里塞"看起来能配"的 null 让管理员以为勾了就没效果。
-            case SUBAGENT -> null;
-            case TODO, MCP -> null;
-        };
+        return toolAssembly.agentFlagFor(family, agent);
     }
 
     /**
@@ -3512,6 +3475,22 @@ public class ChatService {
         return "";
     }
 
+    /**
+     * 本轮该用哪个模型引用：请求覆盖 &gt; 会话固定 &gt; 个人默认；返回空串＝全链未配置（调用方 fail-loud）。
+     * <p>公开是因为并列的第二套运行时（AgentScope 框架引擎）必须问得到<b>同一条</b>解析链：
+     * 它原先只拿「请求里的 model」，用户靠个人默认作答时框架侧就解析不出路由（实测是 NPE 打断整轮）。
+     */
+    public String modelRefFor(String modelOverride, String sessionId, com.wenqu.ai.model.User prefUser) {
+        String effective = modelOverride != null && !modelOverride.isBlank()
+                ? modelOverride.trim() : sessionService.sessionModelOf(sessionId);
+        return resolveModel(effective, prefUser);
+    }
+
+    /** 同上，但从这一轮的命令自己算（框架引擎按轮问一次）。 */
+    public String modelRefFor(ChatCommand cmd) {
+        return modelRefFor(cmd.getModelOverride(), cmd.getSessionId(), loadPrefUser(cmd.getUserId()));
+    }
+
     /** 个人偏好用户行（含三类个人默认模型）；匿名/未登录/查询失败返回 null（全部走空语义） */
     /**
      * 在流水线线程内装载本轮用户身份（uid / 部门 / 角色），供检索的文档可见性过滤按**真实用户**判定。
@@ -3604,14 +3583,8 @@ public class ChatService {
      */
     private String consultGuide(boolean guestMode, Agent agent, boolean branchTurn) {
         if (!consultExposed(guestMode, agent, branchTurn)) return "";
-        String catalog = agentService.consultCatalog(agent == null ? "" : agent.getId());
-        if (catalog.isBlank()) return "";
-        return "\n\n## 可咨询助手\n"
-                + "遇到超出你手上资料、且明显落在某位助手职责范围内的问题，用 consultAgent 派它去查"
-                + "（可以派多次，每次一位；它会带着自己的知识库查一遍再把结论与资料交回）。"
-                + "id 必须逐字取自下面这份清单，不要猜。"
-                + "通用问题（常识、写作、建议）不要派——没有对应的助手，直接自己答。\n"
-                + catalog;
+        // 正文与并列的第二套运行时共用一份（见 AgentService#consultGuideSection）
+        return agentService.consultGuideSection(agent == null ? "" : agent.getId());
     }
 
     /**
@@ -3742,104 +3715,19 @@ public class ChatService {
     }
 
     /**
-     * 本轮的库界（主链路检索与精确检索工具共用）。
-     * <p>{@code walled=false}（用户在对话页直接发起的轮）返回 null＝不限库，检索侧按使用者可见库收口：
-     * 智能体绑定的库不再是"这一轮能查什么"的墙（P5）。返回 null 与"智能体没绑库"是同一条路径，
-     * 语义就是"没有墙"。
-     * <p>{@code walled=true}（免登录分享页 / 对外 MCP / 子智能体分支）保持原语义：内置「问渠」按使用者
-     * 解析为「默认库＋官方手册库」，其余按智能体绑定的库。前两者是权限墙，后者是"专业域"的定义。
+     * 本轮的库界（主链路检索与精确检索工具共用）。判定已抽到 {@link RetrievalScopeService}：
+     * 并列第二套问答运行时（框架引擎）必须拿得到<b>同一把尺</b>，留在本类里只能逼它复制一份库界
+     * 判定（两套判定=配错时静默放宽检索范围）。这里保留同名私有方法只做转发，四处调用点不动。
+     * <p>{@code walled=false}（对话页直接发起的轮）返回 null＝不限库；只有免登录分享/对外 MCP/
+     * 子智能体分支才是权限墙（P5 口径）。
      */
     private java.util.Collection<String> scopeKbIdsOf(Agent agent, String userId, boolean walled) {
-        if (!walled) return null;
-        Set<String> builtinScope = builtinScopeKbIds(agent, userId);
-        if (builtinScope != null) return builtinScope;
-        return (agent == null || agent.getKnowledgeBaseIds() == null || agent.getKnowledgeBaseIds().isBlank())
-                ? null : KnowledgeBaseService.splitIds(agent.getKnowledgeBaseIds());
+        return retrievalScope.resolve(agent, userId, walled).kbIds();
     }
 
-    /**
-     * 内置「问渠」的检索范围（非内置或身份无法解析时返回 null）= <b>本轮使用者的默认库「问渠」
-     * ＋ 官方内置手册库</b>（「问渠使用手册」，存在时）。默认库每人一个、没有可静态绑定的库 ID，
-     * 按使用者动态解析（见 {@link #builtinDefaultKbId}）；手册库是独立的内置库（全局一只、
-     * 全员只读），并轨后「问渠怎么用」类问题才检索得到官方手册。
-     *
-     * @return 库 ID 集合（默认库在前）；非内置智能体或无法解析身份时返回 null（回落不限库）
-     */
-    private Set<String> builtinScopeKbIds(Agent agent, String userId) {
-        String defaultKb = builtinDefaultKbId(agent, userId);
-        if (defaultKb == null) return null;
-        Set<String> out = new java.util.LinkedHashSet<>();
-        out.add(defaultKb);
-        KnowledgeBase manual = knowledgeBaseService.builtinKb();
-        if (manual != null && manual.getId() != null && !manual.getId().isBlank()) {
-            out.add(manual.getId());
-        }
-        return out;
-    }
-
-    /**
-     * 内置「问渠」的默认库解析 = <b>本轮使用者自己的默认库「问渠」</b>。智能体行全局唯一
-     * （启动维护：多余降级、缺失播种，created_by='system'），默认库却每人一个——没有可静态
-     * 绑定的库 ID，故在这里按使用者动态解析（{@link KnowledgeBaseService#defaultId} 懒创建）。
-     * 完整检索范围（默认库 ＋ 官方手册库）见 {@link #builtinScopeKbIds}。
-     * <p>游客分享/MCP/定时任务等链路传入的 userId 即发布者或任务归属人，同样按人解析；
-     * 匿名或解析失败返回 null（回落旧行为：不限库，仍受可见性约束）。
-     *
-     * @return 默认库 id；非内置智能体或无法解析身份时返回 null
-     */
-    private String builtinDefaultKbId(Agent agent, String userId) {
-        if (agent == null || !Integer.valueOf(1).equals(agent.getIsBuiltin())) return null;
-        if (userId == null || userId.isBlank() || com.wenqu.ai.util.RequestUser.ANONYMOUS.equals(userId)) return null;
-        try {
-            return knowledgeBaseService.defaultId(userId);
-        } catch (Exception e) {
-            log.warn("[KB] 内置「问渠」默认库解析失败（本轮按不限库检索）uid={}: {}", userId, e.getMessage());
-            return null;
-        }
-    }
-
-    /**
-     * 解析本轮允许检索的文档集合（返回 null = 不额外限制，仍受可见性约束）。
-     * <p>两级范围，概念上不重叠：
-     * <ol>
-     *   <li><b>知识库级（主路径）</b>：智能体关联的 {@code knowledgeBaseIds} → 各库文档 ID 的并集。
-     *       文档归谁由它属于哪个库决定，不需要再由智能体逐个指定文档。</li>
-     *   <li><b>文档级细选（可选）</b>：{@code knowledgeScope} 非空时，与库级结果取交集，
-     *       用于"库内只要某几个文档"的场景。</li>
-     * </ol>
-     * 注意：库 ID 配错时得到的是空集合，检索结果自然为空——**不会退化为全库**，
-     * 避免配置错误静默放宽检索范围。
-     * <p>内置「问渠」例外：范围恒为使用者默认库「问渠」＋官方内置手册库的<b>整库</b>
-     * （见 {@link #builtinScopeKbIds}），不叠加文档级细选——该字段对内置无编辑入口，存量值也不再生效。</p>
-     */
+    /** 本轮允许检索的文档集合（与 {@link #scopeKbIdsOf} 同一条口径，null＝不额外限制）。 */
     private Set<String> resolveScopeDocIds(Agent agent, String userId, boolean walled) {
-        // 与 {@link #scopeKbIdsOf} 同一条口径：登录页的父轮没有墙，被咨询方/游客/分支才有
-        if (!walled) return null;
-        if (agent == null) return null;
-        Set<String> builtinScope = builtinScopeKbIds(agent, userId);
-        if (builtinScope != null) {
-            // 内置：整库范围（默认库＋官方手册库），文档级细选不参与
-            return knowledgeBaseService.docIdsOf(builtinScope);
-        }
-        Set<String> byKb = null;
-        String kbIds = agent.getKnowledgeBaseIds();
-        if (kbIds != null && !kbIds.isBlank()) {
-            Set<String> ids = KnowledgeBaseService.splitIds(kbIds);
-            if (!ids.isEmpty()) byKb = knowledgeBaseService.docIdsOf(ids);
-        }
-        // 文档级细选：沿用原语义（null/空/all = 不限制）
-        Set<String> fine = null;
-        String scope = agent.getKnowledgeScope();
-        if (scope != null && !scope.isBlank() && !"all".equalsIgnoreCase(scope.trim())) {
-            fine = Arrays.stream(scope.split(","))
-                    .map(String::trim).filter(s -> !s.isEmpty()).collect(Collectors.toSet());
-        }
-        if (byKb != null && fine != null) {
-            Set<String> merged = new java.util.HashSet<>(byKb);
-            merged.retainAll(fine);
-            return merged;
-        }
-        return byKb != null ? byKb : fine;
+        return retrievalScope.resolve(agent, userId, walled).docIds();
     }
 
 
@@ -4061,13 +3949,7 @@ public class ChatService {
      * 分支按全局档减半处理，宁可少跑也不放飞。
      */
     private int resolveMaxToolSteps(Agent agent, int depth) {
-        Integer v = agent == null ? null : agent.getMaxToolSteps();
-        int global = configService.getInt("agent.maxToolSteps", 15);
-        boolean unlimited = v != null && v == 0;
-        int base = (v == null || v < 0) ? global : v;
-        if (depth <= 0) return Math.max(0, base);
-        if (unlimited) base = Math.max(1, global);
-        return Math.max(3, base >> depth);
+        return toolAssembly.maxToolSteps(agent, depth);
     }
 
 
