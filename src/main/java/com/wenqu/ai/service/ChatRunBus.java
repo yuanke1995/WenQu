@@ -63,7 +63,7 @@ public class ChatRunBus {
      * <p>前端把 {@code snapshot.events} 按普通事件重放，所以这里存的必须是<b>事件原文的 content</b>，
      * 与实时下发时喂给回调的值同源（stage 是文案，plan/todo/retrieved/usage 是 JSON 串）。
      */
-    private static final List<String> MIRROR_TYPES = List.of("stage", "plan", "todo", "retrieved", "usage");
+    private static final List<String> MIRROR_TYPES = List.of("stage", "plan", "todo", "retrieved", "usage", "warn");
 
     private final ConfigService configService;
 
@@ -93,8 +93,8 @@ public class ChatRunBus {
         public long beganAt() {
             return beganAt;
         }
-        /** 权威快照供给（正文/工具/时间线这些仍归本轮状态所有，由 ChatService 提供） */
-        final Supplier<Map<String, Object>> snapshotSource;
+        /** 权威快照供给（正文/工具/时间线这些仍归本轮状态所有，由跑出这一轮的引擎提供） */
+        private volatile Supplier<Map<String, Object>> snapshotSource;
         /** 宽限到点：由 ChatService 掐本轮并走半程落库。返回 false=本轮不归宽限管（例如正等人工裁决），顺延 */
         final BooleanSupplier onGraceExpired;
         /** 本轮是否还在跑（把手还在且是同一 turnId）：终态后由巡检回收，免得每条终态路径都得记得关总线 */
@@ -112,6 +112,15 @@ public class ChatRunBus {
 
         public String turnId() {
             return turnId;
+        }
+
+        /**
+         * 换成引擎那份「有内容」的快照供给。
+         * <p>开轮那一刻外壳只有「还没开始出字」的空快照，跑出这一轮的运行时才有正文与工具卡；
+         * 换供给与取快照都在 {@code run} 这把锁里（见 {@link #attach}），不会读到半新半旧那一份。
+         */
+        void offerSnapshot(Supplier<Map<String, Object>> src) {
+            if (src != null) this.snapshotSource = src;
         }
 
         /** 当前观众数（日志与「别人也在看」的提示用） */
@@ -196,6 +205,15 @@ public class ChatRunBus {
     public Run running(String sessionId) {
         Run run = sessionId == null ? null : runs.get(sessionId);
         return run != null && !run.closed ? run : null;
+    }
+
+    /**
+     * 换上一份权威快照供给（由跑出这一轮的引擎在状态袋建好时调用）。
+     * <p>本轮不在总线上（接流关闭、收集型通道、开关关掉）就什么都不做——那种情况下没有迟到观众要接。
+     */
+    public void offerSnapshot(String sessionId, Supplier<Map<String, Object>> snapshotSource) {
+        Run run = running(sessionId);
+        if (run != null) run.offerSnapshot(snapshotSource);
     }
 
     /**

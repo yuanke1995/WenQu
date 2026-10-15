@@ -793,8 +793,9 @@ public class SessionService {
     }
 
     /**
-     * 追加消息（含工具调用过程）：toolCalls 为 JSON 数组字符串（[{name,status,elapsedMs,args,result}]），
+     * 追加消息（含工具调用过程）：toolCalls 为 JSON 数组字符串（[{name,status,startedAtMs,elapsedMs,args,result}]），
      * 随消息持久化使工具调用状态刷新后仍可回显（工具调用状态展示与留存）。
+     * 时长两个字段由框架引擎那份带上：缺位＝这一条没计时，前端据此不显示数字，而不是显示 0 毫秒。
      */
     public String appendMessage(String sessionId, String role, String content, List<String> images, String sources,
                                 String thinking, String retrieved, String artifacts, String toolCalls) {
@@ -824,8 +825,9 @@ public class SessionService {
     }
 
     /**
-     * 追加消息（含回答时间线）：timeline 为 JSON 数组字符串（正文区间段/工具下标段/产物下标段），
-     * 与 content、toolCalls、artifacts 同源落库，刷新与历史会话据此还原正文与工具/产物的交错顺序。
+     * 追加消息（含回答时间线）：timeline 为 JSON 数组字符串（正文区间段/工具下标段/产物下标段，
+     * 另含指向 processText 与 thinking 全文偏移的过程段与思考段），与 content、toolCalls、artifacts
+     * 同源落库，刷新与历史会话据此还原正文与工具/思考/过程的交错顺序。
      * 不落库则历史回看只能整段正文 + 底部汇总（过程感丢失）。
      *
      * @param processText 过程独白全文（&lt;process&gt; 标签内，与正文分流；时间线 process 段区间指向它，可为空）
@@ -1378,6 +1380,23 @@ public class SessionService {
     }
 
     /**
+     * 本轮警示条补写到回答消息行（没警示就不写）。
+     * <p>与降级条同一个错法：warn 帧只随流下发一次，「沙盒写入未执行」「该操作被权限档位拒绝」这类
+     * 当场看得见的异常刷新后整块消失，用户回头读到的是一轮看起来普普通通的回答。
+     * <p>只存最后一条：实时那侧本来就是一颗气泡一个警示位（后发的盖掉前发的），落库这份与它同形。
+     */
+    public void saveMessageWarn(String messageId, String warn) {
+        if (messageId == null || messageId.isBlank() || warn == null || warn.isBlank()) return;
+        try {
+            messageMapper.update(null, new LambdaUpdateWrapper<Message>()
+                    .eq(Message::getId, messageId)
+                    .set(Message::getWarnMsg, warn));
+        } catch (Exception e) {
+            log.warn("[WARN] 警示条落库失败 (messageId={}): {}", messageId, e.getMessage());
+        }
+    }
+
+    /**
      * 编辑重发的分支手术（控制器同步段调用，先于本轮问答执行，fail-loud）：
      * 被编辑的用户消息及其后的整段可见分支软删让位（旧分支整体留档），并留下版本组键与尾部快照；
      * 返回的组键贯穿本轮挂到新用户消息上，与旧消息构成可切换的版本序列。
@@ -1706,6 +1725,10 @@ public class SessionService {
             } catch (Exception e) {
                 // artifacts 解析失败忽略
             }
+        }
+        // 本轮警示条（沙盒基建异常/权限拒绝这类当场看得见的异常）：只随流下发时刷新即消失
+        if (m.getWarnMsg() != null && !m.getWarnMsg().isBlank()) {
+            map.put("warnMsg", m.getWarnMsg());
         }
         if (m.getToolCalls() != null && !m.getToolCalls().isBlank()) {
             try {

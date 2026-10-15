@@ -8,6 +8,8 @@ import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -74,5 +76,49 @@ class TodoBridgeTest {
         assertFalse(svc.normalize(List.of()).ok(), "空清单不能写进去（要收尾就把每项标 done 后整表传回）");
         assertFalse(svc.normalize(List.of(new TodoService.TodoItem("  ", "pending"))).ok(),
                 "只有空白内容的条目等同于没有条目");
+    }
+
+    @Test
+    void 写进活状态就要能从同一份读回来() {
+        // 盯住真机踩过的那次：写入落在 session.inspect() 重放出来的只读快照上，改完即丢，
+        // 于是每轮都报「清单已写入但回读失败」。这条断言只在「写的那份==读的那份」时成立
+        var state = io.agentscope.core.state.AgentState.builder().build();
+        var items = List.of(new TodoService.TodoItem("核对共享范围", "doing"),
+                new TodoService.TodoItem("写手册章节", "pending"));
+        var written = new TodoBridge().replace(state, "session-1", items);
+        assertTrue(written.ok(), "写入失败会把原因带回模型：" + written.reason());
+        assertEquals(2, state.getTasksContext().getTasks().size());
+
+        String doc = new TodoBridge().docJson(state, items, "turn-1");
+        assertNotNull(doc);
+        assertTrue(doc.contains("\"turnId\":\"turn-1\""), "前端按 turnId 标「哪一轮写的」");
+        assertTrue(doc.contains("核对共享范围") && doc.contains("\"doing\""),
+                "右栏认 doing/done，不认 in_progress/completed：" + doc);
+        assertTrue(doc.contains("写手册章节") && doc.contains("\"pending\""));
+    }
+
+    @Test
+    void 整表重写保留条目标识只换状态() {
+        var bridge = new TodoBridge();
+        var state = io.agentscope.core.state.AgentState.builder().build();
+        bridge.replace(state, "session-1", List.of(new TodoService.TodoItem("第一件事", "pending"),
+                new TodoService.TodoItem("第二件事", "pending")));
+        var first = state.getTasksContext().getTasks();
+        bridge.replace(state, "session-1", List.of(new TodoService.TodoItem("第一件事", "done"),
+                new TodoService.TodoItem("第二件事", "doing")));
+        var second = state.getTasksContext().getTasks();
+        assertEquals(first.stream().map(io.agentscope.core.state.Task::getId).toList(),
+                second.stream().map(io.agentscope.core.state.Task::getId).toList(),
+                "标识每轮都变就等于每次重写都在建新条目，框架侧的引用与留痕全对不上");
+    }
+
+    @Test
+    void 没有活状态就明确失败而不是写进快照() {
+        // 拿不到本轮状态（工具上下文没带）时，报错是唯一正确的行为：写投影那份是静默丢失
+        var bad = new TodoBridge().replace(null, "session-1",
+                List.of(new TodoService.TodoItem("一件事", "pending")));
+        assertFalse(bad.ok());
+        assertFalse(bad.reason().isBlank(), "原因要能回给模型，它才知道这一轮没记上");
+        assertNull(new TodoBridge().docJson((io.agentscope.core.state.AgentState) null, List.of(), "t"));
     }
 }

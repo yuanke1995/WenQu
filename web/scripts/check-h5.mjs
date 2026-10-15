@@ -196,6 +196,36 @@ const check = (ok, label, detail = '') => {
   }
 }
 
+// ---- ⑧b 耗时口径：首尾真实跨度，且没计时就不显示（两端同构 + 不许退回求和） ----
+// 背景：簇头/组头原先是「各张卡耗时之和」。同一步里的工具是并发跑的，相加比用户实际等的时间长；
+// 两次调用之间的思考又不落在任何一张卡里，相加又比实际等待短——一个数同时朝两个方向错。
+// 更要命的是 elapsedMs 此前只活在一帧里、不落库：刷新后每张卡都没有数，簇头却照样渲染「· 0ms」，
+// 把「没记录」显示成「跑了 0 毫秒」。静态编译全绿，只有真机翻一遍历史才看得见。
+{
+  const pc = stripComments(read('src/views/ChatPage.vue'))
+  const h5 = stripComments(read('src/h5/MobileMsgRow.vue'))
+  for (const [label, s] of [['PC', pc], ['移动端', h5]]) {
+    for (const fn of ['clusterDur(seg)', 'groupDur(seg)', 'fallbackDur(m)']) {
+      check(new RegExp(`v-if="${fn.replace(/[()]/g, '\\$&')}"`).test(s),
+        `${label} 跨度为空时整块不渲染（不出现「· 0ms」这种假数）→ ${fn}`)
+    }
+  }
+  const pj = stripComments(read('src/chat/projections.js'))
+  const span = pj.match(/const spanOfTools = tools => \{[\s\S]*?\n\}/)
+  check(!!span, '跨度实现可定位（spanOfTools）')
+  if (span) {
+    const src = span[0]
+    check(!/ms \+= t\.elapsedMs/.test(src), '跨度不是各张卡之和（并发只算一次）')
+    check(/waited/.test(src), '跨度减掉等人那一段（只扣单卡不扣跨度，簇头照样多出用户读卡那分钟）')
+    check(/return ''/.test(src), '一张都没计时数据时返回空串，而不是 0ms')
+  }
+  const endAt = pj.match(/const toolEndAt = t => \{[\s\S]*?\n\}/)
+  check(!!endAt && /startedAtMs/.test(endAt[0]),
+    '起止只用服务端时刻（前端 tick 需换算到同一个钟，混两个钟就会被时钟差带歪）')
+  check(/const DUR_SPAN_TITLE = /.test(pj), '口径说明只有一份（PC 与 H5 共用，防两端各写一句漂移）')
+  check(!/const durOfTools = /.test(pj), '求和那份已退役（不许两处口径并存）')
+}
+
 // ---- ⑨ 过程回放（事件账本）：两端共用一份，移动壳不许没有 ----
 // 背景：逐轮回放落地时只做了 PC（头部「过程」+ 气泡「看这一轮的过程」），移动壳整条入口缺席，
 // 而静态检查全绿——少的是一个按钮和一层 sheet，编译不出来。这类「一端有、一端压根没入口」
@@ -219,4 +249,42 @@ const check = (ok, label, detail = '') => {
 }
 
 console.log(bad ? `\n${bad} 项不符` : '\n全部通过')
+// ---- ⑩ 深度思考按轮就地成段（不许叠回气泡顶上） ----
+// 背景：一轮问答常有多次思考（每次调工具/出正文前各一次）。此前它们首尾粘成一块挂在气泡顶上，
+// 用户读不出「这一段是在哪一步想的」。改成 think 段进时间线后，最容易复发的三种退化是：
+//   ① 只改一端（PC 就地、H5 还在顶上叠一块）——两端各有一份模板，编译都不会报错；
+//   ② 后端落了 think 段但前端某处不认这个 kind，思考整块看不见（静默丢段比丢卡片更难发现）；
+//   ③ 存量消息没分段、又没兜底，刷新后历史里的思考凭空消失。
+{
+  const pc = stripComments(read('src/views/ChatPage.vue'))
+  const h5 = stripComments(read('src/h5/MobileMsgRow.vue'))
+  const eng = stripComments(read('src/chat/useChatEngine.js'))
+  const pj = read('src/chat/projections.js')
+  for (const [label, s] of [['PC', pc], ['移动端', h5]]) {
+    check(/seg\.kind === 'think'/.test(s), `${label} 在时间线里就地渲染思考段`)
+    check(/toggleThinkSeg\(m,\s*seg\)/.test(s), `${label} 思考段可点开/收起`)
+    check(/thinkSlice\(m,\s*seg\)/.test(s), `${label} 只渲染这一段区间（不整块全文重印）`)
+    check(/thinkGrowing\(m,\s*seg\)/.test(s), `${label} 进行中标记挂在正在长的那一段上`)
+    check(!/m\.thinkOpen/.test(s), `${label} 不再读写消息级 thinkOpen（折叠态按段存 _thinkOpen）`)
+  }
+  check(!/class="think-panel"/.test(pc), 'PC 气泡顶上那块整段思考面板已退役（防叠加回潮）')
+  // 段格式三处必须同时认 think：视图、历史重建、以及「值不值得走时间线」的门槛
+  const tv = stripComments(pj).match(/const timelineView = m => \{[\s\S]*?\n\}/)
+  check(!!tv && /seg\.kind === 'think'/.test(tv[0]), 'timelineView 认 think 段（不认就是静默丢段）')
+  const rt = stripComments(pj).match(/const restoreTimeline = \(m, segs\) => \{[\s\S]*?\n\}/)
+  check(!!rt && /'think'/.test(rt[0]), 'restoreTimeline 认 think 段（刷新后仍是分段视图）')
+  const htb = stripComments(pj).match(/const hasTimelineBlocks = m => \{[\s\S]*?\n\}/)
+  check(!!htb && /'think'/.test(htb[0]),
+    'hasTimelineBlocks 含 think（只有思考、没调工具的回答也走时间线，否则那段无处可渲染）')
+  // 存量/兜底：历史、done、接流快照三条路径都要补，少一条就是那条路上看不见思考
+  check(/const ensureThinkSegment = m =>/.test(stripComments(pj)), '头部补段的兜底函数在位')
+  const nEns = (eng.match(/ensureThinkSegment\(msg\)/g) || []).length
+  check(nEns >= 3, `三条取数路径都调兜底补段（实测 ${nEns} 处，少于 3 即有路径看不见思考）`)
+  check(/pushTimelineThink\(msg/.test(eng) && /extendTimelineThink\(msg/.test(eng),
+    '引擎按段建/续：断过段另起一段，连续增量延伸末段')
+  const nClose = (eng.match(/thinkRoundOpen = false/g) || []).length
+  check(nClose >= 4,
+    `收尾帧/正文/过程/工具四处都断段（实测 ${nClose} 处，少一处就会把下一轮思考接在同一行后面）`)
+}
+
 process.exit(bad ? 1 : 0)

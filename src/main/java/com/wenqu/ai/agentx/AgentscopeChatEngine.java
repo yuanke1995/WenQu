@@ -3,6 +3,7 @@ package com.wenqu.ai.agentx;
 import com.wenqu.ai.agent.chat.ChatCommand;
 import com.wenqu.ai.agent.chat.TurnRegistry;
 import com.wenqu.ai.agent.permission.ExecutionPolicy;
+import com.wenqu.ai.agent.plan.PlanCopy;
 import com.wenqu.ai.config.AppProperties;
 import com.wenqu.ai.engine.ChatEngine;
 import com.wenqu.ai.engine.RunChannel;
@@ -31,6 +32,7 @@ import redis.clients.jedis.UnifiedJedis;
 import redis.clients.jedis.DefaultJedisClientConfig;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -227,9 +229,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 只按裸名判「模型没换」就不重建实例，于是换了供应商仍拿旧网关旧 Key 跑，且日志上一切正常
         AgentSession session = sessions.open(cmd, ref,
                 ctx -> buildAgent(cmd, channel, pool, policy, route, hooks));
-        // 框架会话实例回填进本轮落点袋：任务清单要写进它的 AgentState（todo_write 的同一份
-        // tasksContext），而工具装配发生在建实例之前，所以那时拿不到，只能后填（见 TurnHooks#agentSession）
-        hooks.sessionHolder().set(session);
         // 上一轮只要以失败收场过，这条会话后续每一轮都不会被框架启动：开轮前先把它归档掉
         reconcileStalledTurn(session, cmd);
         // 工具步数预算按轮归零：实例是常驻的，不归零就是上一轮的步数吃掉这一轮的预算
@@ -294,6 +293,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                             AgentSession.Task current,
                             boolean planAuto, Recording recording, long startedAt) {
         long turnDeadline = startedAt + turnSeconds() * 1000L;
+        // 接流快照改由本轮自己供：外壳开轮时只有「还没出字」那份空快照，而正文/工具卡/时间线
+        // 只活在这里的 Recording 与引用池里。不回填的表现为——生成中刷新，气泡接回来是一片空白。
+        channel.offerSnapshot(() -> turnSnapshot(cmd, channel, pool, route, recording, turnId));
         // 人在回路的累计等待（ms）：引擎自己的墙钟上限与共享台账都按「墙钟 − 这段」判超时。
         // 踩过一次——计划卡挂出后用户还在读卡，机器预算却被这段等待吃光，本轮在用户点批准之前
         // 就被判超时截断（真机 2026-10-15 13:59:53，日志写明「人工等待 0ms 不计入」）。
@@ -355,7 +357,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                     // 计划卡 13:57:46 挂出、用户还没点批准就被判「机器耗时 300087ms / 预算 300000ms
                     // （人工等待 0ms 不计入）」，界面上就是「一直 loading 到超时」。
                     // 引擎自己的 turnDeadline 同理要在下面按同一口径扣掉，否则卡一挂出这一轮就只剩几十秒。
-                    beginHumanWait(channel);
+                    beginHumanWait(channel, recording, session);
                     waitBeganAt = System.currentTimeMillis();
                     waitingOnHuman = true;
                 }
@@ -373,7 +375,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         humanWaitMs += System.currentTimeMillis() - waitBeganAt;
                         waitBeganAt = 0;
                         waitingOnHuman = false;
-                        endHumanWait(channel);
+                        endHumanWait(channel, recording);
                         continue;
                     }
                     // 超时一律不替用户代答（既有口径）：卡片作废，这一轮按未完成收
@@ -392,7 +394,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 humanWaitMs += System.currentTimeMillis() - waitBeganAt;
                 waitBeganAt = 0;
                 waitingOnHuman = false;
-                endHumanWait(channel);
+                endHumanWait(channel, recording);
             }
             pendingSince = 0;
             AgentSession.Task latest = latestTaskInTurn(session, current);
@@ -429,7 +431,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             humanWaitMs += System.currentTimeMillis() - waitBeganAt;
             waitBeganAt = 0;
             waitingOnHuman = false;
-            endHumanWait(channel);
+            endHumanWait(channel, recording);
         }
         drain(session, cursor, emitFrom, channel, recording);
 
@@ -488,9 +490,15 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 这时候落一条「已中断」就是两件坏事：它说的话是假的（这轮并没有结束），等真正的答案
         // 来了历史里还多出一条气泡（同一个问题两个助手回答）。
         boolean awaiting = !timedOut && !session.pending().isEmpty();
-        finish(cmd, channel, pool, route, answer, recording, userMessageId, stopped,
-                timedOut, awaiting, System.currentTimeMillis() - startedAt, session, historyBefore, turnId,
-                planRecord);
+        long wallMs = System.currentTimeMillis() - startedAt;
+        // 报出去的「本轮耗时」说的是机器干活用了多久，不是这一轮在墙上挂了多久：人在计划卡上读了
+        // 三分钟，读成「它答了三分多钟」就是把人自己的时间记到了机器账上。同一句里把两个数都留下，
+        // 截断与卡死排障要看的是墙钟，成本与性能看的是机器时间——少一个数就必然有人拿错一个数对账。
+        log.info("[TURN] 本轮收口: session={} 机器耗时={}ms 墙钟={}ms 人工等待={}ms",
+                cmd.getSessionId(), Math.max(0L, wallMs - humanWaitMs), wallMs, humanWaitMs);
+        finish(cmd, channel, pool, route, hooks.modelRef(), answer, recording, userMessageId, stopped,
+                timedOut, awaiting, Math.max(0L, wallMs - humanWaitMs), humanWaitMs, wallMs,
+                session, historyBefore, turnId, planRecord);
     }
 
     /**
@@ -778,13 +786,35 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 直接跳过——{@code ConcurrentHashMap.get(null)} 会抛 NPE，所以这里的判空不能省。
      * <p>成对出现是硬要求：只 begin 不 end，台账的 {@code openWaits} 会永久停在 1，之后这一轮算出来的
      * 机器耗时一直偏小，看门狗形同虚设；只 end 不 begin 则这段等待照扣预算，正是本次修的那个 bug。
+     * <p>整轮台账与工具卡计时必须同时开始、同时结束，所以两处只留这一个入口：分头调用的下一次漂移，
+     * 表现是「看门狗不截断了，但提问卡上写着 3m12s」——同一个数在两个地方各扣各的。
      */
-    private static void beginHumanWait(RunChannel channel) {
+    private static void beginHumanWait(RunChannel channel, Recording recording, AgentSession session) {
         if (channel.emitter() != null) TurnRegistry.beginHumanWait(channel.emitter());
+        recording.beginToolWait(pendingCallKeys(session));
     }
 
-    private static void endHumanWait(RunChannel channel) {
+    private static void endHumanWait(RunChannel channel, Recording recording) {
         if (channel.emitter() != null) TurnRegistry.endHumanWait(channel.emitter());
+        recording.endToolWait();
+    }
+
+    /**
+     * 现在挂着的那（几）张卡属于哪一次工具调用：配对键与 {@link Recording#toolCallKey} 同一套算法，
+     * 这样「这段等待」能落到正确的工具卡头上，而不是摊给同一步里另外那把真在跑的工具。
+     * <p>认不出来（字段形状变了）时返回空集合，由 {@link Recording#endToolWait} 走兜底摊给在飞的调用。
+     */
+    private static java.util.List<String> pendingCallKeys(AgentSession session) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        for (SessionEvent e : session.pending().values()) {
+            Map<String, Object> data = e.data() == null ? Map.of() : e.data();
+            Object call = firstNonNull(data.get("call"), data);
+            String name = toolNameOf(call);
+            String id = call instanceof Map<?, ?> cm && cm.get("id") != null ? String.valueOf(cm.get("id")) : null;
+            if (name.isBlank() && (id == null || id.isBlank())) continue;
+            out.add(Recording.toolCallKey(id, name));
+        }
+        return out;
     }
 
     /** 这一批待办按哪种形态处理：只要有提问卡就按提问走（提问最需要的是不替用户做决定）。 */
@@ -882,7 +912,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 框架引擎没有它。这里只攒落库要的两样，不另造一套轮次状态。
      */
     static final class Recording {
-        private final StringBuilder thinking = new StringBuilder();
+        // 这几份是「本轮已经产出什么」的唯一真源，而接流那条线程会与流水线线程同时读它们：
+        // StringBuffer 的 toString/append 自带同步，两份清单靠 snapshotFields() 取快照副本，
+        // 于是刷新时重建气泡不会读到半截（手写运行时那一份状态袋同样是被两条线程共读的）。
+        private final StringBuffer thinking = new StringBuffer();
         /**
          * 本轮实际流出的正文（与发给前端的 {@code token} 帧同源）。
          * <p>为什么不只取会话里那条最终 assistant 消息：框架把「一条完整的助手消息」在跑完时才写进
@@ -890,8 +923,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
          * 助手消息」拿到的是<b>上一轮的答复</b>，等于拿别人的话给这一轮存档（真机踩过：停止后库里 0 行，
          * 而同一份代码在多轮会话里就会落成上一轮的内容）。
          */
-        private final StringBuilder answerText = new StringBuilder();
-        private final java.util.List<java.util.Map<String, Object>> toolCalls = new java.util.ArrayList<>();
+        private final StringBuffer answerText = new StringBuffer();
+        private final java.util.List<java.util.Map<String, Object>> toolCalls =
+                java.util.Collections.synchronizedList(new java.util.ArrayList<>());
         /** 工具大输出外溢的落盘标识（{@code 工具名|spillId}），收尾时挂回对应工具卡，卡片才有「查看完整输出」。 */
         private final java.util.Queue<String> spills;
         /** 本轮的咨询台账（卡片要挂的那份「子对话」从这里取）。 */
@@ -913,6 +947,15 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         private String lastToolName = "";
         private String lastToolInput = "";
         /**
+         * 每次调用的入参，按 {@link #toolCallKey} 配回<b>它自己那一次</b>调用。
+         * <p>为什么不能共用 {@link #lastToolInput} 那一个字段：模型一步里可以同时点两把工具（框架并发派发），
+         * 后到的 requested 会盖掉先到的入参，先那把的 done 帧就带着别人的参数下发。而前端
+         * {@code onToolStatus} 收终态是「按名字找最近那张 start 卡并把 args 写回去」，于是那张卡的
+         * 「入参」整段变成另一个工具的参数（真机：整理任务清单的卡显示成 {@code {"query":"断线重连"}}）。
+         * 落库那份是在 start 时写的、本来就是对的，所以症状是「实时看到的入参是错的、刷新又好了」。
+         */
+        private final Map<String, String> toolInputByKey = new java.util.LinkedHashMap<>();
+        /**
          * 收集模型实际发出的检索词：{@code search_knowledge} 工具的 {@code query} 入参即它真去搜的短语
          * （模型自己怎么改写的检索短语，比从用户原问句抽关键词更贴近「它真搜了什么」）。
          * 状态行 {@code retrieved.terms} 优先用这一份，收集不到才退回问题关键词（见 {@link #retrievedJson}）。
@@ -929,23 +972,79 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         private String planMarkdown = "";
         /** 已实时下发过的过程独白长度：{@code related.process()} 是累积值，按长度差取增量发 PROCESS。 */
         private int lastProcessLen;
-        /** 每把工具的开始时刻（按名记），终态时算耗时下发——前端工具卡读 elapsedMs，缺它就显示 0ms。 */
+        /** 每次调用的开始时刻（与入参同一个配对键），终态时算耗时下发——前端工具卡读 elapsedMs，缺它就显示 0ms。 */
         private final Map<String, Long> toolStartMs = new java.util.LinkedHashMap<>();
+        /**
+         * 在飞工具各自被「等人」占掉的时长（配对键 → 累计毫秒）。
+         * <p>提问卡/计划卡/审批卡挂出到用户点完，那一段既在工具的开始-结束窗口里、又不是机器在干活。
+         * 不拆出去的后果：一张让人思考了三分钟的提问卡，卡片自己写着「3m12s」，读起来就是「这个工具慢得离谱」。
+         */
+        private final Map<String, Long> toolWaitMs = new java.util.LinkedHashMap<>();
+        /** 当前这段等待的起点（0 = 此刻没在等人）；与 followTurn 里的 {@code waitBeganAt} 同步进出。 */
+        private long toolWaitBeganAt;
 
-        void markToolStart(String name) {
-            if (name != null && !name.isBlank()) toolStartMs.put(name, System.currentTimeMillis());
+        /**
+         * 一次工具调用的配对键：有 {@code toolCallId} 就按它（并发派发时唯一不串号的标识，
+         * 框架两侧都带：requested 在顶层、result 在结果块里），没有才退回按工具名配。
+         */
+        static String toolCallKey(String toolCallId, String name) {
+            return toolCallId == null || toolCallId.isBlank() ? (name == null ? "" : name) : toolCallId;
         }
 
-        long takeToolElapsed(String name) {
-            Long t = toolStartMs.remove(name);
-            return t == null ? 0L : Math.max(0L, System.currentTimeMillis() - t);
+        /** 登记开始时刻并把它回给调用方：同一个时刻既要进等待账、也要写进卡片那份 {@code startedAtMs}。 */
+        long markToolStart(String key) {
+            long at = System.currentTimeMillis();
+            if (key != null && !key.isBlank()) toolStartMs.put(key, at);
+            return at;
+        }
+
+        /** 取回这一次调用的开始时刻；配不上 start（如从游标中途接流）时为 0，调用方按「没有计时」处理，不许当 0 毫秒。 */
+        long takeToolStart(String key) {
+            Long t = key == null ? null : toolStartMs.remove(key);
+            return t == null ? 0L : t;
+        }
+
+        /** 当前这段等待归属于哪几把调用（只有挂卡那把在等人，同一步里并发跑的别家是真在干活）。 */
+        private final java.util.List<String> toolWaitKeys = new java.util.ArrayList<>();
+
+        /** 等待开始：记下这段等待该摊给谁；归属认不出来时才摊给所有在飞的调用（宁可多扣不可漏扣）。 */
+        void beginToolWait(java.util.Collection<String> keys) {
+            toolWaitBeganAt = System.currentTimeMillis();
+            toolWaitKeys.clear();
+            if (keys != null) toolWaitKeys.addAll(keys);
+        }
+
+        /** 等待收口：把这段摊给归属的那几把调用；一张都没摊上（本轮只等人、没有在飞的调用）时这段只进整轮账。 */
+        void endToolWait() {
+            if (toolWaitBeganAt <= 0L) return;
+            long wait = System.currentTimeMillis() - toolWaitBeganAt;
+            toolWaitBeganAt = 0L;
+            java.util.List<String> targets = new java.util.ArrayList<>();
+            for (String key : toolWaitKeys) if (toolStartMs.containsKey(key)) targets.add(key);
+            if (targets.isEmpty()) targets.addAll(toolStartMs.keySet());   // 归属没认出来的兜底
+            toolWaitKeys.clear();
+            for (String key : targets) toolWaitMs.merge(key, wait, Long::sum);
+        }
+
+        /**
+         * 这一次调用被「等人」盖住了多久，同时把这笔账销掉。
+         * <p>这个数要单独下发：光把等待从工具的 {@code elapsedMs} 里扣掉，扣完的那段等待就从整轮里
+         * 消失了，可它仍然躺在「第一张卡到最后一张卡」这个区间<b>中间</b>——跨度不减它，簇头照样读出
+         * 一个比机器时间大一分多钟的数（真机 2026-10-15 23:09 那条：墙钟 118.6s／等待 86.3s）。
+         */
+        long takeToolWait(String key) {
+            // 等待账跟着这次结算一起销掉：键是一次性的，留着只会让本轮的表越长越大
+            long wait = key == null ? 0L : toolWaitMs.getOrDefault(key, 0L);
+            if (key != null) toolWaitMs.remove(key);
+            return wait;
         }
         /**
-         * 回答时间线（与 legacy {@code TurnRecorder} 同一套段格式：正文区间段 / 工具下标段）。
+         * 回答时间线（与 legacy {@code TurnRecorder} 同一套段格式：正文区间段 / 工具下标段 / 思考区间段）。
          * <p>不落库的后果：刷新后前端拿不到交错点，{@code hasTimelineBlocks} 为假，工具卡掉进
          * 「历史恢复兜底」列表、沉到正文下方——实时看着对、刷新就错位。
          */
-        private final List<Map<String, Object>> timeline = new java.util.ArrayList<>();
+        private final List<Map<String, Object>> timeline =
+                java.util.Collections.synchronizedList(new java.util.ArrayList<>());
         /** 正文区间段的锚点（已成段的正文长度），与 legacy {@code TurnRecorder.timelineAnchor} 同义。 */
         private int timelineAnchor;
 
@@ -967,8 +1066,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             return timeline.isEmpty() ? null : com.alibaba.fastjson2.JSON.toJSONString(timeline);
         }
 
-        /** 思考段是否还开着：框架没有「思考阶段结束」这个事件，只能在第一个正文块到来时补收尾帧。 */
+        /**
+         * 思考段是否还开着：框架没有「思考阶段结束」这个事件，只能在正文块或工具调用到来时补收尾帧。
+         * <p>{@code thinkFrom} 记这一段在累计全文里的起点——一次问答常有多轮思考（每轮工具调用前各一次），
+         * 只交全文会让它们首尾粘成一块；按轮成段写进时间线，前端才能把「它在哪一步想了什么」就地渲染。
+         */
         private boolean thinkingOpen;
+        private int thinkFrom;
         /**
          * {@code <related>}／{@code <process>} 的流式剥离器：正文增量先过它再下发。
          * <p>不接的表现为推荐块标签原文印在回答里——那句「回答末尾用 &lt;related&gt;…」的提示词
@@ -995,10 +1099,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         }
 
         void thinking(String delta) {
-            if (delta != null) {
-                thinking.append(delta);
+            if (delta == null || delta.isEmpty()) return;
+            if (!thinkingOpen) {
                 thinkingOpen = true;
+                thinkFrom = thinking.length();
             }
+            thinking.append(delta);
         }
 
         /** 正文增量：与发给前端的 {@code token} 帧同源，中断轮靠这一份存档（见 {@link #answerText}）。 */
@@ -1011,29 +1117,43 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         }
 
         /**
-         * 思考段收尾：开过就交出累计全文并置闭，没开过返回 null（不发空帧）。
-         * <p>框架把思考当流内块、没有「思考阶段结束」这件事，而前端的 {@code thinking_done} 认的是
-         * 「关掉转圈并折叠 + 定稿那份思考全文」——只能在正文块到来或整轮收尾时补这一帧。
+         * 思考段收尾：把这一段的区间记进时间线，并交出累计全文（前端据此停转圈并折叠这一段）。
+         * 没开过返回 null（不发空帧）。
+         * <p>框架把思考当流内块、没有「思考阶段结束」这件事，只能在正文块/工具调用到来或整轮收尾时补这一帧。
+         * 全文不清空、继续累加：落库的 {@code thinking} 列与暗截断对账都要按「本轮一共想了多少字」算，
+         * 分段只靠区间，不做第二份存储。
          */
         String closeThinking() {
             if (!thinkingOpen) return null;
             thinkingOpen = false;
+            int end = thinking.length();
+            if (end > thinkFrom) timeline.add(Map.of("kind", "think", "from", thinkFrom, "to", end));
             return thinking.toString();
         }
 
-        void toolCall(String name, String status) {
+        /**
+         * 工具卡登记：start 建一张带本次入参的开始时刻，终态按名找最近那张 start 改状态并补耗时。
+         *
+         * @param args      这一次调用自己的入参（JSON 文本）。并发派发时它必须由调用方按
+         *                  {@link #toolCallKey} 配好传进来，读共用字段就是甲张卡收乙次的参数
+         * @param elapsedMs 这一次调用的机器耗时（等人已扣）；0 = 没有可报的数，不写这个字段
+         * @param beganAtMs 服务端开始时刻；0 = 配不上 start，落库那份改记当下
+         * @param waitedMs  这一次调用里被「等人」盖住的时长；整段跨度要减它，0 = 这一段没等过人
+         */
+        void toolCall(String name, String status, String args, long elapsedMs, long beganAtMs, long waitedMs) {
             if (name == null || name.isBlank()) return;
             boolean runCode = com.wenqu.ai.service.SandboxTools.RUN_CODE_TOOL_NAME.equals(name);
             for (int i = toolCalls.size() - 1; i >= 0; i--) {
                 java.util.Map<String, Object> prior = toolCalls.get(i);
                 if (name.equals(prior.get("name")) && "start".equals(prior.get("status"))) {
                     prior.put("status", status);
+                    putTiming(prior, elapsedMs, beganAtMs, waitedMs);
                     String spill = takeSpill(name);
                     if (spill != null) prior.put("spill", spill);
                     // 咨询卡片挂那一问一答（与手写侧同一个实现与同一把长度尺）：刷新后仍点得开
                     if ("consultAgent".equals(name)) {
                         Map<String, Object> subChat = com.wenqu.ai.agent.chat.TurnRecorder
-                                .consultCardSubChat(consultLedger, lastToolInput);
+                                .consultCardSubChat(consultLedger, args);
                         if (subChat != null) prior.put("subChat", subChat);
                     }
                     // run_code 终态：停面板 ticker 并把扇出清单与这次运行的结构化结果挂上卡片
@@ -1049,7 +1169,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             entry.put("status", status);
             // 入参随卡片落库：前端刷新后的工具卡、咨询卡「被咨询那一位的名字」、
             // 以及暗截断对账里的「工具入参字符数」都读这一列（缺它等于三处一起退化）
-            if (lastToolInput != null && !lastToolInput.isBlank()) entry.put("args", lastToolInput);
+            if (args != null && !args.isBlank()) entry.put("args", args);
+            // 耗时与开始时刻同样落库：此前只有 SSE 那一帧带 elapsedMs，刷新后每张卡都没有数，
+            // 「执行了 N 个操作」后面跟着的是各张卡之和（全为 0）——当场看着有、回头读成 0ms。
+            putTiming(entry, elapsedMs, beganAtMs > 0L ? beganAtMs : System.currentTimeMillis(), waitedMs);
             // 时间线：先把这把工具之前的正文成段，再插工具段（下标=它在 toolCalls 里的位置），
             // 刷新后前端据此把工具卡还原到正文之间的原位，而不是一律沉底。
             flushTimelineText(answerText.length());
@@ -1057,6 +1180,17 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             toolCalls.add(entry);
             // 脚本开始跑：开这块实时面板（作用域是一次运行，两段脚本各自复位）
             if (runCode) tools.beginRunCode(hooks);
+        }
+
+        /**
+         * 计时字段只在有值时才写：「没有这条计时」与「跑了 0 毫秒」在两处消费者（工具卡、时间跨度）
+         * 那里必须长得不一样，都写成 0 就等于用假数字填掉了缺口。
+         */
+        private static void putTiming(java.util.Map<String, Object> entry, long elapsedMs,
+                                      long beganAtMs, long waitedMs) {
+            if (beganAtMs > 0L) entry.put("startedAtMs", beganAtMs);
+            if (elapsedMs > 0L) entry.put("elapsedMs", elapsedMs);
+            if (waitedMs > 0L) entry.put("waitedMs", waitedMs);
         }
 
         /** 按工具名取最早那条未消费的外溢标识（与手写侧 {@code TurnRecorder.takeToolSpill} 同一口径）。 */
@@ -1081,6 +1215,28 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
         java.util.List<java.util.Map<String, Object>> toolCallList() {
             return toolCalls;
+        }
+
+        /**
+         * 接流快照里属于本轮状态的几份内容（正文 / 过程独白 / 思考全文 / 工具卡 / 时间线），全部取副本。
+         * <p>读它的是「刷新进来接流」那条线程，写它的始终是本轮流水线线程：两份清单用同步容器、
+         * 两段全文用 {@link StringBuffer}，就是为了这一刻不读到半截。
+         * <p>时间线末尾那段正文在这里现算（不回填 {@link #timeline}）：工具段按下标指向同一时刻的
+         * {@code toolCalls}，所以两份必须出自同一次快照，错开一步前端就把卡片插到别的位置上。
+         */
+        Map<String, Object> snapshotFields() {
+            Map<String, Object> snap = new java.util.LinkedHashMap<>();
+            String body = answerText.toString();
+            snap.put("content", body);
+            snap.put("processText", related.process());
+            if (thinking.length() > 0) snap.put("thinking", thinking.toString());
+            snap.put("toolCalls", new java.util.ArrayList<>(toolCalls));
+            java.util.List<Map<String, Object>> tl = new java.util.ArrayList<>(timeline);
+            if (body.length() > timelineAnchor) {
+                tl.add(Map.of("kind", "text", "from", timelineAnchor, "to", body.length()));
+            }
+            snap.put("timeline", tl);
+            return snap;
         }
     }
 
@@ -1122,6 +1278,15 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         @Override
         public boolean emit(RunEvent event) {
             return true;
+        }
+
+        @Override
+        public String lastWarn() {
+            return null;
+        }
+
+        @Override
+        public void offerSnapshot(java.util.function.Supplier<Map<String, Object>> snapshotSource) {
         }
 
         @Override
@@ -1178,12 +1343,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         recording.thinking(thinkingDelta);
                         emit(channel, RunEventType.THINKING, thinkingDelta);
                     } else if ("text".equals(b.get("type"))) {
-                        // 正文开始 = 思考段收场：补一条 thinking_done（带全文），前端据此折叠并停转圈
-                        String closedThinking = recording.closeThinking();
-                        if (closedThinking != null) {
-                            channel.emit(RunEventType.THINKING_DONE, com.alibaba.fastjson2.JSON.toJSONString(
-                                    Map.of("thinking", closedThinking)));
-                        }
+                        // 正文开始 = 这一段思考收场：补一条 thinking_done，前端据此停转圈并折叠就地那段
+                        closeThinkingFrame(channel, recording);
                         String clean = recording.related.feed(str(b.get("text")));
                         if (!clean.isEmpty()) {
                             recording.answer(clean);
@@ -1201,6 +1362,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 }
             }
             case "tool/requested" -> {
+                // 调工具也是「这一段想完了」的信号：不在这儿收场，思考段会一直挂着转圈直到下一段正文出现，
+                // 而时间线里这段思考也会压到工具卡后面（区间是按关闭时刻写的，顺序即到达顺序）
+                closeThinkingFrame(channel, recording);
                 // 载荷形状（实测）：{toolCallId, call:{type,id,name,input}} —— 名字在 call.name 里，
                 // 不在顶层；按顶层取会拿到空串，工具卡就成了没有名字的空白行
                 recording.lastToolName = toolNameOf(data.get("call"));
@@ -1208,6 +1372,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 必须序列化成 JSON：咨询卡片按入参里的 agentId 取那一份子对话，
                 // 用 Map.toString() 就得到 "{agentId=xxx}" 这种 Java 形状，解析必然失败（实测卡片没了）
                 recording.lastToolInput = com.alibaba.fastjson2.JSON.toJSONString(requestedInput);
+                // 按这一次调用登记入参与开始时刻：一步里并发两把工具时，共用字段会被后到的盖掉（见 toolInputByKey）
+                String callKey = Recording.toolCallKey(toolCallIdOf(data), recording.lastToolName);
+                recording.toolInputByKey.put(callKey, recording.lastToolInput);
                 // 收集模型实际发出的检索词：search_knowledge 的 query 入参即它真去搜的短语
                 if (requestedInput instanceof Map<?, ?> in) {
                     if ("search_knowledge".equals(recording.lastToolName)) {
@@ -1220,22 +1387,33 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         if (!content.isEmpty()) recording.planMarkdown = content;
                     }
                 }
-                recording.toolCall(recording.lastToolName, "start");
-                recording.markToolStart(recording.lastToolName);
+                long beganAt = recording.markToolStart(callKey);
+                recording.toolCall(recording.lastToolName, "start", recording.lastToolInput, 0L, beganAt, 0L);
                 // 进行中必须是 "start"（不是 "running"）：前端 onToolStatus 只认 status==='start' 才建/合并
                 // 实时工具卡。发 "running" 会让前端把这张当终态卡 push 出去，随后的 done 又找不到可合并的
                 // start 卡再 push 一张——一次调用渲染成两张，其中停在 "running" 的那张显示为失败(❌)。
-                emit(channel, RunEventType.TOOL_STATUS, toolCard(recording.lastToolName, "start", 0L, recording.lastToolInput, null));
+                emit(channel, RunEventType.TOOL_STATUS,
+                        toolCard(recording.lastToolName, "start", 0L, beganAt, 0L, recording.lastToolInput, null));
             }
             case "tool/result" -> {
                 String name = toolNameOf(data.get("message"));
                 if (name.isBlank()) name = recording.lastToolName;
+                // 入参与耗时都按这一次调用取回：读共用那份就是「甲张卡的入参是乙次调用的参数」
+                String callKey = Recording.toolCallKey(toolCallIdOf(data), name);
+                String args = recording.toolInputByKey.remove(callKey);
+                if (args == null) args = recording.lastToolInput;   // 配不上对应的 requested（如从游标中途接流）才沿用
                 // 失败判定：优先读 ToolResultBlock 结构化的 state 字段（JSON 值 "error"），
                 // 不再依赖 Map.toString() 拼出的 "STATE=ERROR" 字符串形状（序列化一变就漏判）。
                 boolean failed = toolResultFailed(data);
-                recording.toolCall(name, failed ? "error" : "done");
+                // 耗时＝墙钟窗口扣掉这段等待：提问卡挂三分钟不是「这个工具跑三分钟」，是「用户读了三分钟」。
+                // 扣掉的那段另发一份 waitedMs：整段跨度减它才剩机器时间，只在单卡上扣会留在区间中间出不去。
+                long beganAt = recording.takeToolStart(callKey);
+                long waited = recording.takeToolWait(callKey);
+                long elapsed = beganAt <= 0L ? 0L
+                        : Math.max(0L, System.currentTimeMillis() - beganAt - waited);
+                recording.toolCall(name, failed ? "error" : "done", args, elapsed, beganAt, waited);
                 emit(channel, RunEventType.TOOL_STATUS, toolCard(name, failed ? "error" : "done",
-                        recording.takeToolElapsed(name), recording.lastToolInput, toolResultText(data)));
+                        elapsed, beganAt, waited, args, toolResultText(data)));
             }
             case "tool/decision" -> {
                 // 权限判定由框架说出（实测字段 decision=allowed|denied）：拒绝必须让用户看见，
@@ -1341,8 +1519,15 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 计划模式的退出确认走问渠的计划卡（plan_approval），不是普通工具审批卡：
                 // 两者在界面上是两张不同的卡，用户在那里能看到整份计划
                 Map<String, Object> planCard = new java.util.LinkedHashMap<>();
-                String planText = planTextOf(toolInputOf(data.get("call")),
+                String rawPlan = planTextOf(toolInputOf(data.get("call")),
                         recording == null ? null : recording.planMarkdown);
+                if (NO_PLAN_BODY.equals(rawPlan)) {
+                    // 「模型没调 plan_write」是排查用的内部原因，只进日志——它印在用户要点批准的卡片上没意义
+                    log.warn("[PLAN] 本轮 plan_exit 没带计划正文（未取得 plan_write 的 content）: session={} tool={}",
+                            cmd.getSessionId(), tool);
+                }
+                // 用户口径的保底：正文里出现沙盒/运行目录路径就收成文件名（提示词已经教过，这里防它照抄工具说明）
+                String planText = PlanCopy.stripInternalPaths(rawPlan, planInternalRoots());
                 planCard.put("planApprovalId", entry.getKey());
                 planCard.put("plan", planText);
                 planCard.put("timeoutMs", configService.getInt("chat.planTimeoutMs", 600000));
@@ -1410,8 +1595,34 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             fallback = str(input).trim();
         }
         if (!fallback.isEmpty()) return fallback;
-        // 有 plan_exit 但没落过 plan_write：说清发生了什么，别装作有计划
-        return "（本轮未取到计划正文：模型未通过 plan_write 记录计划）";
+        // 有 plan_exit 但没落过 plan_write：说清「这里没有计划可看」就行，内部原因是哪个工具没调
+        // 归日志（见 announcePending），不印在用户要点批准的卡片上
+        return NO_PLAN_BODY;
+    }
+
+    /** 计划正文取不到时给用户的那句话（同时也是 {@code announcePending} 里「该记一条日志」的判据） */
+    static final String NO_PLAN_BODY = "（这一轮没有取到计划内容，可以直接重试，或把要求写得更具体一些）";
+
+    /**
+     * 计划正文里算「内部路径」的根，补在 {@link PlanCopy} 内置名单之外：
+     * 沙盒虚拟工作区（{@code sandbox.virtualPathPrefix}）与框架状态目录
+     * （{@code chat.agentscopeStateDir}，框架的 {@code plans/PLAN.md} 就落在这里面）。
+     * 相对与绝对两种写法都要给：状态目录配的是相对路径时，模型拿到的 banner 是解析成绝对路径后的样子。
+     */
+    private List<String> planInternalRoots() {
+        List<String> roots = new ArrayList<>();
+        String prefix = configService.get("sandbox.virtualPathPrefix");
+        if (prefix != null && !prefix.isBlank()) roots.add(prefix.trim());
+        String stateDir = configService.get("chat.agentscopeStateDir");
+        if (stateDir != null && !stateDir.isBlank()) {
+            roots.add(stateDir.trim());
+            try {
+                roots.add(Path.of(stateDir.trim()).toAbsolutePath().normalize().toString());
+            } catch (Exception ignored) {
+                // 配置成了非法路径：内置名单照样兜底，不为这一条把整轮打挂
+            }
+        }
+        return roots;
     }
 
     /**
@@ -1508,7 +1719,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 .description("问渠·AgentScope 运行时")
                 // 角色提示词归智能体管（chat.systemPrompt 已退役）：本轮无智能体绑定时用内置默认。
                 // 「可咨询助手」一节必须跟着挂：工具挂上了却不给清单，模型只能猜 id（判据与挂载同源）
-                .sysPrompt(properties.getSystemPrompt() + tools.consultGuide(cmd)
+                // 用户口径那条（正文/计划/清单不写沙盒路径与工具名）也要跟着挂：它原先长在已退役的手写
+                // 计划阶段里，框架这一路没人再说第二遍，而框架的 PLAN banner 与沙盒工具说明反而主动把
+                // 路径喂给模型——不挂回去，计划卡就变成「它打算在沙盒里怎么写文件」的说明书
+                .sysPrompt(properties.getSystemPrompt() + tools.consultGuide(cmd) + PlanCopy.guidance()
                         + com.wenqu.ai.agent.chat.RelatedPrompt.line(
                                 configService.getInt("retrieval.relatedCount", 3)))
                 // 问渠所有供应商都是 OpenAI 兼容网关（c_ai_provider.base_url 实测全是 compatible-mode）
@@ -1600,10 +1814,43 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         return com.wenqu.ai.agent.chat.TurnRecorder.TRUNCATION_SUFFIX;
     }
 
+    /**
+     * 接流快照：本轮到此刻已经产出的东西，一次交全给总线（见 {@code ChatRunBus#attach}）。
+     * <p>字段名与前端 {@code applyTurnSnapshot} 一一对齐，且与「刷新后读历史」那份同源同形：
+     * 正文/思考/工具卡/时间线出自 {@link Recording#snapshotFields()}，引用出自本轮引用池，产物走
+     * {@code takeArtifacts} 那份不消费的副本。缺哪一项，前端只是那一段还没长出来，不会报错。
+     * <p>不含待裁决的卡片（提问/计划/审批）：它们的时限与「唤醒句柄还在不在」以库为准，前端走既有的
+     * pending 端点恢复；也不含逐字增量，正文取缓冲本身比回放上千条 token 帧快。
+     */
+    private Map<String, Object> turnSnapshot(ChatCommand cmd, RunChannel channel, WenquSourcePool pool,
+                                             ModelRegistryService.ModelRoute route, Recording recording,
+                                             String turnId) {
+        Map<String, Object> snap = recording.snapshotFields();
+        snap.put("running", true);
+        snap.put("phase", "generating");
+        snap.put("sources", new java.util.ArrayList<>(pool.sources()));
+        snap.put("artifacts", artifactService.takeArtifacts(cmd.getSessionId()));
+        snap.put("model", route.modelId());
+        snap.put("turnId", turnId);
+        if (cmd.getAgentId() != null && !cmd.getAgentId().isBlank()) {
+            snap.put("agentId", cmd.getAgentId());
+            String name = agentNameOf(cmd);
+            if (name != null) snap.put("agentName", name);
+        }
+        return snap;
+    }
+
+    /**
+     * 收尾：落库、下发 done 帧、进问答台账。
+     *
+     * @param elapsedMs   机器耗时（墙钟扣掉人在回路的等待）——界面、看板、台账都说这个数
+     * @param humanWaitMs 这一轮里用户读卡/答题累计的等待，随 done 下发供界面上单独说明
+     * @param wallMs      整轮墙钟（开轮那一刻到收尾），只用来反推本轮真实开始时刻与写日志
+     */
     private void finish(ChatCommand cmd, RunChannel channel, WenquSourcePool pool,
-                        ModelRegistryService.ModelRoute route, String answer, Recording recording,
+                        ModelRegistryService.ModelRoute route, String modelRef, String answer, Recording recording,
                         String userMessageId, boolean stopped, boolean timedOut, boolean awaiting,
-                        long elapsedMs,
+                        long elapsedMs, long humanWaitMs, long wallMs,
                         AgentSession session, int historyBefore, String turnId,
                         Map<String, Object> planRecord) {
         // 落库这一轮：框架引擎此前只发帧不落库，界面上点进去是空会话（真机被这个抓到）。
@@ -1638,9 +1885,14 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 停止轮与「只有过程没有正文」的半程轮都不跑：那两句标注不是答案，跑了对它们就是白报一条
         // 「未标注引用」（半程轮往往还带着工具召回的来源，正好满足那条 fail-loud 的触发条件）。
         if (!stopped && !timedOut && realAnswer) {
-            long startedAtMs = System.currentTimeMillis() - elapsedMs;
+            // 反推本轮真实开始时刻必须用墙钟：拿机器耗时去减会把开始点往后挪，挪进用户读卡那几分钟里，
+            // 这道防线读到的「本轮」就成了后半截
+            long startedAtMs = System.currentTimeMillis() - wallMs;
+            // 这里必须交引用串 {providerId}/{modelId} 而不是 route.modelId()：自检那次调用走
+            // DynamicOpenAiChatModel，它只按引用解析路由，裸模型名一律 fail-loud——传错就是这道防线
+            // 每轮静默哑火（只剩一条 WARN，正文照旧）。落库和 done 帧用裸名是展示口径，不同。
             var outcome = citations.check(body, new com.wenqu.ai.agent.context.CitationIntegrityService.Ctx(
-                    cmd.getSessionId(), cmd.getUserId(), cmd.getQuestion(), route.modelId(),
+                    cmd.getSessionId(), cmd.getUserId(), cmd.getQuestion(), modelRef,
                     pool.sources(), pool.imgIndex(), pool.imgDescIndex(),
                     pool.degradations(), pool.degradedCodes(), new java.util.HashMap<>(), startedAtMs));
             body = outcome.text();
@@ -1654,11 +1906,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // usage 帧：前端把它挂在流式期的容量预览上，done 的 tokens 才是终值——两帧同源于
         // 同一份快照，不做第二套估算
         // 整轮结束而思考段还开着（只思考没出正文、或被叫停）：照样补一条收尾帧，别让转圈永远挂着
-        String openThinking = recording.closeThinking();
-        if (openThinking != null) {
-            channel.emit(RunEventType.THINKING_DONE, com.alibaba.fastjson2.JSON.toJSONString(
-                    Map.of("thinking", openThinking)));
-        }
+        closeThinkingFrame(channel, recording);
         // 思考字数进台账：这一族关着思考也照样回 reasoning，单列出来放量时才看得出
         // 「框架引擎多烧的那一截」是思考而不是正文（§29 成本账那条）
         tokens.put("thinkingChars", recording.thinking.length());
@@ -1701,6 +1949,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 null, null,
                 planRecord == null ? null : com.alibaba.fastjson2.JSON.toJSONString(planRecord),
                 framedTurnId) : null;
+        // 警示条也要活过刷新：它此前只随 warn 帧下发一次，用户当场看见「沙盒写入未执行」，
+        // 刷新一次就等于没发生过——而这一轮确实被沙盒挡下过一次（与 degradations 那条同一个错法）
+        sessionService.saveMessageWarn(assistantMessageId, channel.lastWarn());
         // 问答台账：与手写侧 doOnComplete 同一处时机（半程轮不落台账，那是中断轮的收尾语义）。
         // 不接的表现为看板与「未命中问题」列表只统计到 legacy 那部分流量——分派切了运行时，
         // 运营侧的数却悄悄少了一半，而且没有任何一处会报错。
@@ -1718,6 +1969,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 + ",\"sources\":" + com.alibaba.fastjson2.JSON.toJSONString(pool.sources())
                 + ",\"degradations\":" + com.alibaba.fastjson2.JSON.toJSONString(pool.degradations())
                 + ",\"elapsedMs\":" + elapsedMs
+                + ",\"humanWaitMs\":" + humanWaitMs
                 + ",\"tokens\":" + com.alibaba.fastjson2.JSON.toJSONString(tokens)
                 + ",\"toolCalls\":" + (recording.toolCallsJson() == null ? "[]" : recording.toolCallsJson())
                 + ",\"artifacts\":" + (artifactsJson == null ? "[]" : artifactsJson)
@@ -1860,6 +2112,17 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         if (content != null && !content.isEmpty()) channel.emit(type, content);
     }
 
+    /**
+     * 收场当前这一段思考：记时间线区间 + 补一条 {@code thinking_done}（带本轮累计全文）。
+     * 没在思考中就是空操作，不发空帧。
+     */
+    private static void closeThinkingFrame(RunChannel channel, Recording recording) {
+        String closed = recording.closeThinking();
+        if (closed == null) return;
+        channel.emit(RunEventType.THINKING_DONE,
+                com.alibaba.fastjson2.JSON.toJSONString(Map.of("thinking", closed)));
+    }
+
     /** 最终正文取自会话记录（框架已把它落成一条 assistant 消息），不靠适配器攒字符串。 */
     private static String lastAssistantText(AgentSession session) {
         List<Msg> messages = session.transcript().messages();
@@ -1913,8 +2176,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 工具名塞进 {@code label}，前端 {@code toolLabel} 认得出「label 就是名字」而回落它那份手抄映射，
      * 表里没有的 {@code consultAgent}、{@code plan_*} 就现出英文裸名。取不到展示名时<b>不写该字段</b>
      * （前端映射与「后端确实没给名字」两种情况在界面上同形，但载荷里能分辨）。
+     *
+     * <p>{@code startedAtMs} 用<b>服务端</b>墙上时刻：并发派发时各张卡的起止只有落在同一个钟上才减得出
+     * 「从第一个操作到最后一个操作」的真实跨度；拿前端收到帧的本地时刻去减，接流/后台节流就会把跨度算歪。
      */
-    private String toolCard(String name, String status, long elapsedMs, String args, String result) {
+    private String toolCard(String name, String status, long elapsedMs, long startedAtMs, long waitedMs,
+                            String args, String result) {
         StringBuilder sb = new StringBuilder("{\"name\":\"").append(esc(name)).append("\"");
         String label = displayNames.label(name);
         if (label != null) sb.append(",\"label\":\"").append(esc(label)).append("\"");
@@ -1922,11 +2189,36 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         if (hint != null) sb.append(",\"hint\":\"").append(esc(hint)).append("\"");
         sb.append(",\"status\":\"").append(status)
                 .append("\",\"elapsedMs\":").append(elapsedMs);
-        // 入参随卡片下发：前端工具卡展开要显示「这把工具拿什么去做的」，缺它展开就是一张空卡
-        if (args != null && !args.isBlank()) sb.append(",\"args\":").append(args);
+        // 只在真有值时写：缺它 = 这一把没计时（前端不显示），写成 0 = 谎称这一把从 1970 年跑起 / 跑了 0 毫秒
+        if (startedAtMs > 0L) sb.append(",\"startedAtMs\":").append(startedAtMs);
+        if (waitedMs > 0L) sb.append(",\"waitedMs\":").append(waitedMs);
+        // 入参随卡片下发：前端工具卡展开要显示「这把工具拿什么去做的」，缺它展开就是一张空卡。
+        // 必须按字符串下发（和落库那份同形，见 Recording#toolCall）：前端读 args 的四处全是
+        // JSON.parse(t.args)，裸拼对象会让流式时的标题行与入参段都成 [object Object]（刷新读落库那份却正常），
+        // 还顺带废掉「同一次 start 只建一张卡」的入参比对（两个对象永不 ===）
+        if (args != null && !args.isBlank()) sb.append(",\"args\":").append(com.alibaba.fastjson2.JSON.toJSONString(args));
         // 输出（截断）：展开卡的「输出」段读它；缺了只剩入参，看不到工具到底返回了什么
         if (result != null && !result.isBlank()) sb.append(",\"result\":").append(com.alibaba.fastjson2.JSON.toJSONString(result));
         return sb.append("}").toString();
+    }
+
+    /**
+     * 一次调用的标识：{@code tool/requested} 在顶层带 {@code toolCallId}，{@code tool/result} 只在
+     * 结果块里（{@code content[].id}，与它对应的那个 ToolUseBlock 同一个 id）。两侧都拿不到时返回空串，
+     * 调用方按 {@link Recording#toolCallKey} 退回按工具名配对。
+     */
+    private static String toolCallIdOf(Map<String, Object> data) {
+        Object top = data.get("toolCallId");
+        if (top != null && !String.valueOf(top).isBlank()) return String.valueOf(top);
+        if (data.get("message") instanceof Map<?, ?> msg && msg.get("content") instanceof List<?> blocks) {
+            for (Object b : blocks) {
+                if (b instanceof Map<?, ?> bm && bm.get("name") != null && bm.get("id") != null
+                        && !String.valueOf(bm.get("id")).isBlank()) {
+                    return String.valueOf(bm.get("id"));
+                }
+            }
+        }
+        return "";
     }
 
     /**

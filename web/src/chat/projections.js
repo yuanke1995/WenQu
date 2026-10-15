@@ -273,7 +273,7 @@ const subRunning = m => Array.isArray(m?.subagents) && m.subagents.some(b => b.s
 // 阶段提示 / 裸 spin / 重试条各自写 v-if 条件（那样每加一种状态就可能再叠一层）。
 // 返回 null = 此刻不该有底部进度行：进行中状态已由更具体的构件表达——
 //   工具卡片（转圈 + 实时耗时 + 工具名）、编排卡片（每分支转圈 + 进度条）、
-//   深度思考面板（转圈 + 「已完成」）、审批卡（批准/拒绝按钮）。
+//   正在长的思考段（就地一行 + 转圈）、审批卡（批准/拒绝按钮）。
 // 返回 { text } = 带文案的进度行；{ spin: true } = 只有转圈（正文已在流出，不必重复写字）。
 const busyOf = m => {
   if (!m || !m.loading) return null
@@ -282,9 +282,9 @@ const busyOf = m => {
   if (m.retrying) return { text: '连接中断，正在自动重试…', warn: true }
   if (toolRunning(m)) return null                 // 工具自己会转圈并计时
   if (subRunning(m)) return null                  // 编排卡片每个分支自带转圈 + 进度条
-  // 深度思考面板只有 thinking 非空才渲染（v-if m.thinking）：让位条件与之对齐，
-  // 否则 thinkLoading=true 而面板未渲染时进度行同样凭空消失（与 subRunning 同类坑）
-  if (m.thinkLoading && m.thinking) return null       // 深度思考面板自己会转圈
+  // 思考段自己会在就地那一行亮加载态（标题循环渐变，见 thinkGrowing 的消费方）：让位条件要与它同判据，
+  // 否则 thinkLoading=true 而段还没建出来时进度行同样凭空消失（与 subRunning 同类坑）
+  if (m.thinkLoading && m.thinking) return null       // 深度思考那一行自己会亮加载态
   if (m.stage) return { text: stageLabel(m.stage) }   // 后端阶段文案（两档，映射见 stageLabel）
   if (m.content) return { spin: true }            // 正文续写中：一个转圈足够
   return { text: '正在生成回答…' }                // 工具已回、正文未出（含多轮工具之间的空档）
@@ -300,8 +300,9 @@ const stageLabel = s => (s ? (STAGE_LABELS[s] || s) : '')
 
 // ==================== 时间线（正文与工具交错渲染） ====================
 // 正文与工具卡片按事件到达顺序交错渲染。timeline 是段数组：
-//   {kind:'text', from, to} → 指向 m.content 的切片区间（不复制文本，done 换正文时自动跟随）；
-//   {kind:'tool', tool}     → 引用 m.toolCalls 里的同一对象（done/error 原地改状态，卡片自动更新）。
+//   {kind:'text', from, to}  → 指向 m.content 的切片区间（不复制文本，done 换正文时自动跟随）；
+//   {kind:'tool', tool}      → 引用 m.toolCalls 里的同一对象（done/error 原地改状态，卡片自动更新）。
+//   {kind:'think'/'process', from, to} → 同区间写法，分别指向 m.thinking / m.processText。
 // 渲染经 timelineView(m) 生成视图：连续工具合并为折叠组，正文保持段落连续。
 // 时间线随消息落库（正文区间 + 工具/产物下标），历史恢复时由 restoreTimeline 重建，
 // 刷新后仍是「正文—工具—正文」的交错过程视图；旧消息无 timeline 才走底部汇总兜底。
@@ -309,10 +310,11 @@ const stageLabel = s => (s ? (STAGE_LABELS[s] || s) : '')
 // 注：插话（steer）已不占时间线段——用户按了发送就会落成一条独立 user 消息，
 // 在消息流里和普通提问并列，不再需要夹在回答的时间线里留痕。
 
-/** 是否值得按时间线渲染：有工具段/产物段/过程段才有交错意义（纯正文段与整段渲染等价）。 */
+/** 是否值得按时间线渲染：有工具段/产物段/过程段/思考段才有交错意义（纯正文段与整段渲染等价）。 */
 const hasTimelineBlocks = m => {
   return Array.isArray(m?.timeline)
-    && m.timeline.some(s => s && (s.kind === 'tool' || s.kind === 'artifact' || s.kind === 'process'))
+    && m.timeline.some(s => s && (s.kind === 'tool' || s.kind === 'artifact'
+      || s.kind === 'process' || s.kind === 'think'))
 }
 
 const extendTimelineText = (m, from, to) => {
@@ -336,7 +338,7 @@ const extendTimelineProcess = (m, from, to) => {
 // 段对象本身不保状态，与工具卡 _open 存在 toolCalls 对象上同理，这里挂在消息上）。
 // 用户点过就认点过的（true/false 写死在 _procOpen 上）；没点过时：流式期间自动展开「正在长的那一段」
 // （过程按 token 增量下发，展开才看得见它逐字长出，而不是等闭合标签到达整块蹦出），本轮结束自动收起
-// ——与深度思考面板同款（thinkOpen 流式期 true、thinking_done 置 false），历史消息恒折叠。
+// ——与思考段同款（thinkGrowing 流式期展开那一段，收场后自动折叠），历史消息恒折叠。
 const procOpen = (m, seg) => {
   const marked = m && m._procOpen ? m._procOpen[seg.from] : undefined
   if (marked === true) return true
@@ -351,6 +353,60 @@ const procOpen = (m, seg) => {
 const toggleProc = (m, seg) => {
   if (!m._procOpen) m._procOpen = {}
   m._procOpen[seg.from] = !procOpen(m, seg)
+}
+
+// ==================== 思考段（每一轮模型思考就地长在它发生的位置） ====================
+/* 一轮问答常有多次思考（每次调工具/出正文前各一次）。此前它们首尾粘成一块挂在气泡顶上，
+ * 用户读不出「这一段是在哪一步想的」；改成按轮成段进时间线，区间指向 m.thinking 的偏移
+ * （与 process 段指向 processText 同一套写法，不复制文本、不做第二份存储）。
+ * 段的边界由引擎侧的 thinkSegOpen 决定：thinking_done / 正文 / 工具事件一到就断段，
+ * 下一片思考另起一段——光靠「区间是否相接」判不出来，两次思考之间可能一个字正文都没出。 */
+const pushTimelineThink = (m, from, to) => {
+  if (!m) return
+  const tl = Array.isArray(m.timeline) ? m.timeline : (m.timeline = [])
+  tl.push({ kind: 'think', from, to })
+}
+const extendTimelineThink = (m, from, to) => {
+  if (!m) return
+  const tl = Array.isArray(m.timeline) ? m.timeline : (m.timeline = [])
+  const last = tl[tl.length - 1]
+  if (last && last.kind === 'think' && last.to === from) last.to = to
+  else tl.push({ kind: 'think', from, to })
+}
+const thinkSlice = (m, seg) => (m.thinking || '').slice(seg.from, seg.to)
+
+/** 此刻正在长的思考段（一轮里同时至多一段在长）：它决定转圈挂在哪儿、哪一段自动展开 */
+const thinkGrowing = (m, seg) => {
+  if (!m || !m.loading || !m.thinkLoading || !seg) return false
+  const tl = Array.isArray(m.timeline) ? m.timeline : []
+  for (let i = tl.length - 1; i >= 0; i--) {
+    if (tl[i] && tl[i].kind === 'think') return (Number(tl[i].from) || 0) === (Number(seg.from) || 0)
+  }
+  return false
+}
+/** 折叠态与 procOpen 同款约定：键用段起点 from，用户点过就认点过的；没点过时只自动展开
+ *  正在长的那一段（看得见它逐字长出），本轮收尾后一律收起，历史消息恒折叠。
+ *  名字带 Seg 是必须的：MobileModelSheet 里已有一个同名局部函数管「思考开关」，两者不是一回事。 */
+const thinkSegOpen = (m, seg) => {
+  const marked = m && m._thinkOpen ? m._thinkOpen[seg.from] : undefined
+  if (marked === true) return true
+  if (marked === false) return false
+  return thinkGrowing(m, seg)
+}
+const toggleThinkSeg = (m, seg) => {
+  if (!m._thinkOpen) m._thinkOpen = {}
+  m._thinkOpen[seg.from] = !thinkSegOpen(m, seg)
+}
+
+/** 有思考全文却没有就地段：在时间线头部补一整段。
+ *  覆盖三种拿不到分段的数据——改动前落库的存量消息、正文被引用自检整体重建导致时间线作废、
+ *  以及接流快照只给全文不给分段。退化成「思考在回答之前」这个旧位置，也不能整块看不见。 */
+const ensureThinkSegment = m => {
+  if (!m || !m.thinking) return m
+  const tl = Array.isArray(m.timeline) ? m.timeline : (m.timeline = [])
+  if (tl.some(s => s && s.kind === 'think')) return m
+  tl.unshift({ kind: 'think', from: 0, to: m.thinking.length })
+  return m
 }
 
 // ==================== 过程簇（连续过程/工具的二次折叠） ====================
@@ -387,7 +443,7 @@ const clusterize = out => {
 }
 
 /** 簇内正在长的那一簇（仅末尾簇）标记 grow：流式期自动展开它，本轮结束自动收起，
- *  与 procOpen / thinkOpen 同款约定；用户点过就以用户为准（m._clOpen）。 */
+ *  与 procOpen / thinkSegOpen 同款约定；用户点过就以用户为准（m._clOpen）。 */
 const markGrowingCluster = view => {
   const last = view[view.length - 1]
   if (last && last.kind === 'cluster') last.grow = true
@@ -406,7 +462,7 @@ const toggleCluster = (m, cl) => {
   m._clOpen[cl.key] = !clusterOpen(m, cl)
 }
 
-/** 簇内工具（跨多个 group 汇总）：头部的操作数/耗时与状态图标都从这里派生，与 groupDur 同口径 */
+/** 簇内工具（跨多个 group 汇总）：头部的操作数与状态图标都从这里派生，耗时走同一份真实跨度口径 */
 const clusterTools = cl => {
   const out = []
   for (const s of cl?.segs || []) if (s && s.kind === 'group' && s.tools) out.push(...s.tools)
@@ -414,7 +470,7 @@ const clusterTools = cl => {
 }
 const clusterRunning = cl => clusterTools(cl).some(t => t.status === 'start')
 const clusterHasError = cl => clusterTools(cl).some(t => t.status === 'error')
-const clusterDur = cl => durOfTools(clusterTools(cl))
+const clusterDur = cl => spanOfTools(clusterTools(cl))
 /** 簇内独白段数：只在簇里一个工具都没有时外露（那时它是唯一可报的信息量） */
 const clusterProcCount = cl => (cl?.segs || []).filter(s => s && s.kind === 'process').length
 
@@ -461,6 +517,9 @@ const restoreTimeline = (m, segs) => {
     if (!s || !s.kind) continue
     if (s.kind === 'text') {
       out.push({ kind: 'text', from: Number(s.from) || 0, to: Number(s.to) || 0 })
+    } else if (s.kind === 'think') {
+      // 思考段不合并相邻区间：后端每段就是一次「想完再动手」，合成一段等于把分段又抹平
+      out.push({ kind: 'think', from: Number(s.from) || 0, to: Number(s.to) || 0 })
     } else if (s.kind === 'process') {
       const from = Number(s.from) || 0
       const to = Number(s.to) || 0
@@ -514,6 +573,17 @@ const timelineView = m => {
   }
   for (const seg of tl) {
     if (!seg) continue
+    if (seg.kind === 'think') {
+      // 思考段：区间指向 m.thinking，就地一行折叠头。与 process 同理不参与句中吸收/工具分组
+      // （它切在正文与工具之间正是「先想了什么才动手」的时序，被吸收掉就等于又叠回一块）
+      flushMerge()
+      flushGroup()
+      const tlen = (m.thinking || '').length
+      const tf = Math.min(Number(seg.from) || 0, tlen)
+      const tt = Math.min(Number(seg.to) || 0, tlen)
+      if (tt > tf) out.push({ kind: 'think', from: tf, to: tt })
+      continue
+    }
     if (seg.kind === 'process') {
       // 过程独白段：区间指向 m.processText（独立累积），原位灰字渲染；
       // 不参与句中吸收/工具分组，直接断开当前合并窗口与工具组
@@ -652,18 +722,47 @@ const fanBudget = f => {
 }
 const groupRunning = g => g.tools.some(t => t.status === 'start')
 const groupHasError = g => g.tools.some(t => t.status === 'error')
-// 一组工具的累计耗时（运行中的按实时 tick 计，其余用终态值）。过程簇跨多个 group 汇总，
-// 与 groupDur 共用这一份口径——两处各写一遍必然出现「簇头耗时 ≠ 内部各组之和」。
-const durOfTools = tools => {
-  let ms = 0, running = false
-  for (const t of tools) {
-    if (t.status === 'start') { running = true; if (t.startAt) ms += Math.max(0, nowTick.value - t.startAt) }
-    else ms += t.elapsedMs || 0
-  }
-  return toolDuration(ms) + (running ? '…' : '')
+// 一组工具的真实跨度：从第一个操作起、到最后一个操作止（含两次调用之间模型想下一步的那几秒）。
+// 刻意不是各张卡之和——同一步里的工具是并发跑的，相加必然比用户实际等的时间长；而两张卡之间的思考
+// 又不落在任何一张卡的窗口里，相加同时又比实际等待短。两个方向的误差挤在同一个数上，怎么解释都是假的。
+// 过程簇跨多个 group 汇总，与 groupDur 共用这一份口径——两处各写一遍必然出现「簇头 ≠ 内部各组」。
+/** 这张卡结束在服务钟上的哪一刻；没有服务端起点时返回 0（= 这一张没有计时，不参与跨度） */
+const toolEndAt = t => {
+  const began = Number(t.startedAtMs) || 0
+  if (!began) return 0
+  if (t.status !== 'start') return began + (Number(t.elapsedMs) || 0)
+  // 还挂在这一轮的进行中卡才有「现在」可跟：历史里那种停在 start 没等到终态的残缺记录（那一跑被判超时
+  // 或进程重启截断了），拿当下的 tick 去当终点会把簇头撑成「3d4h」。它只贡献起点，不贡献终点。
+  if (!t.startAt) return began
+  // 把 1s 一跳的前端 tick 换算回服务端那个钟（差值＝收到这一帧时两钟之间的偏移，含网络与排队）。
+  // 直接拿本地 nowTick 去减服务端的起点，用户机器时钟不准时跨度会算出几百小时。
+  return nowTick.value - (t.startAt - began)
 }
-const groupDur = g => durOfTools(g.tools)
-const fallbackDur = m => toolDuration(toolCallsView(m.toolCalls).reduce((s, t) => s + (t.elapsedMs || 0), 0))
+const spanOfTools = tools => {
+  let from = 0, to = 0, running = false, waited = 0
+  for (const t of tools) {
+    if (!t) continue
+    const began = Number(t.startedAtMs) || 0
+    if (!began) continue
+    // 历史里那种停在「进行中」没等到终态的残缺记录（那一跑被判超时或进程重启截断了）：终点未知，
+    // 不参与跨度——跟着当下的 tick 长会把簇头撑成「3d4h」，按 0 长度算又会显示「· 0ms」这个假数
+    if (t.status === 'start' && !t.startAt) continue
+    if (t.status === 'start') running = true
+    if (!from || began < from) from = began
+    const end = toolEndAt(t)
+    if (end > to) to = end
+    // 等人那段虽然就躺在这个区间中间，但不是机器在干活：按这张卡自己记的等待账减掉。
+    // 只把等待从单张卡的耗时里扣、跨度不减，簇头照样读出一个比机器时间大一分多钟的数。
+    waited += Number(t.waitedMs) || 0
+  }
+  // 一张都没有计时数据时返回空串：老数据没有这两个字段，此处显示「0ms」就是把「没记录」谎称成「跑了 0 毫秒」
+  if (!from) return ''
+  return toolDuration(Math.max(0, to - from - waited)) + (running ? '…' : '')
+}
+/** 簇头/组头那个数字的悬停说明：口径只在这一处描述，PC 与 H5 共用（两处各写一遍必然写歪） */
+const DUR_SPAN_TITLE = '从第一个操作到最后一个操作实际用的时间：同时做的只算一次，含它在想下一步的那几秒，不含等你答题或批准的那段'
+const groupDur = g => spanOfTools(g.tools)
+const fallbackDur = m => spanOfTools(toolCallsView(m.toolCalls))
 
 /** done 汇总的工具终态合并进现有数组（原地改，保住 timeline 里的对象引用与实时到达的顺序） */
 const mergeDoneToolCalls = (m, doneCalls) => {
@@ -675,6 +774,10 @@ const mergeDoneToolCalls = (m, doneCalls) => {
     if (live) {
       live.status = d.status || 'done'
       live.elapsedMs = d.elapsedMs || live.elapsedMs || 0
+      // 起点跟着终态那份走：done 汇总是落库那一份的同源数据，实时帧万一漏了这张卡的重发，
+      // 缺起点就等于这一张永远不进跨度；等待账同理，缺了就把人读卡的时间算进机器时间
+      if (d.startedAtMs) live.startedAtMs = d.startedAtMs
+      if (d.waitedMs) live.waitedMs = d.waitedMs
       if (d.args) live.args = d.args // done 汇总带全文（≤8KB），覆盖实时 200 字摘要
       if (d.error) live.error = d.error
       if (d.attempts != null) live.attempts = d.attempts
@@ -958,6 +1061,7 @@ const snapshotVersion = m => ({
   plan: m.plan || null,
   processText: m.processText || '',
   degradations: m.degradations || [],
+  warnMsg: m.warnMsg || '',
   retrieved: m.retrieved || null,
   doneTime: m.doneTime || null,
   model: m.model || ''
@@ -974,6 +1078,7 @@ const applyVersion = (m, v) => {
   m.plan = v.plan
   m.processText = v.processText
   m.degradations = v.degradations
+  m.warnMsg = v.warnMsg
   m.retrieved = v.retrieved
   m.doneTime = v.doneTime
   // 模型随版本走：切回旧版本时分隔记录按那一版当时用的模型比对，不串到最新一轮的模型
@@ -1014,11 +1119,13 @@ export {
   TOOL_LABELS, TOOL_DESCS, MCP_CLIENT_PREFIXES, bareToolName, toolLabel, toolDesc, toolCallsView, executedCount,
   toolDuration, toolRunning, consultedOf, consultChatView, consultNameOf, rememberAgents, subRunning, busyOf, stageLabel, hasTimelineBlocks, extendTimelineText, askUserView,
   extendTimelineProcess, procOpen, toggleProc, procSlice, pushTimelineTool, pushTimelineArtifact,
+  pushTimelineThink, extendTimelineThink, thinkSlice, thinkGrowing, thinkSegOpen, toggleThinkSeg, ensureThinkSegment,
   restoreTimeline, SENTENCE_END_CHARS, endsSentence, timelineView, timelineRows, TOOL_BRIEF_KEYS, oneLine,
   clusterize, clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterDur, clusterProcCount,
   toolBrief, prettyIo, LIVE_TAIL_CHARS, liveOutput, groupRunning, groupHasError, groupDur,
   fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget, fanRun, runBoardText,
   fallbackDur, mergeDoneToolCalls, nowTick, ensureTick, stopTick, liveToolDur, toolSearchQueries,
+  DUR_SPAN_TITLE,
   retrievalLineTitle,
   THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel, CTX_WINDOW_STEPS, fmtWindow,
   fmtDuration, subagentCard, barWidth, toggleSubagents, groupSources, externalOrigin, sourceName,

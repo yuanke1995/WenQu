@@ -411,6 +411,14 @@ public class ChatRunRuntime {
                 k -> new java.util.concurrent.atomic.AtomicBoolean()).set(true);
     }
 
+    /**
+     * 把这一轮的权威快照供给换成引擎那份（正文/工具卡/时间线只有跑出它的那条运行时看得见）。
+     * 本轮没挂在总线上时是空操作，见 {@code ChatRunBus#offerSnapshot}。
+     */
+    public void offerSnapshot(String sessionId, java.util.function.Supplier<Map<String, Object>> snapshotSource) {
+        chatRunBus.offerSnapshot(sessionId, snapshotSource);
+    }
+
     public void completeEmitter(SseEmitter emitter) {
         try {
             emitter.complete();

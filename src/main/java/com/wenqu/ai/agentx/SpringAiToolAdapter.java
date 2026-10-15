@@ -2,10 +2,12 @@ package com.wenqu.ai.agentx;
 
 import com.alibaba.fastjson2.JSON;
 import com.wenqu.ai.agent.permission.ExecutionPolicy;
+import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.message.ToolResultBlock;
 import io.agentscope.core.permission.PermissionContextState;
 import io.agentscope.core.permission.PermissionDecision;
 import io.agentscope.core.permission.PermissionMode;
+import io.agentscope.core.state.AgentState;
 import io.agentscope.core.tool.ToolBase;
 import io.agentscope.core.tool.ToolCallParam;
 import org.springframework.ai.chat.model.ToolContext;
@@ -14,6 +16,7 @@ import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.function.Supplier;
 
@@ -30,6 +33,17 @@ import java.util.function.Supplier;
  * 本适配器只负责协议搬运与权限挂载，避免把「一轮的上下文」藏进一个通用组件里。
  */
 public final class SpringAiToolAdapter extends ToolBase {
+
+    /**
+     * 工具上下文键：本轮框架<b>活</b>的 {@link AgentState}（任务清单的权威存储，见 {@code TodoBridge}）。
+     * <p>为什么由本适配器来填：框架自己的工具是靠 {@code @Tool(stateInjected=true)} 让
+     * {@code ToolMethodInvoker} 把 {@code RuntimeContext} 上那份 call 级状态绑进方法参数，
+     * 而问渠的工具是 Spring AI 的 {@code ToolCallback}，框架不认识它们的签名，绑不进去。
+     * 这里是唯一还拿得到 {@code ToolCallParam} 的地方，所以状态也从这里递进 {@code ToolContext}。
+     * <p>不能改用 {@code AgentSession.inspect()} 那份代替：它是从会话日志重放出来的<b>只读快照</b>，
+     * 改完不回写、也看不到本轮还没收尾时写进去的条目（真机踩过：清单每轮都报「回读失败」）。
+     */
+    public static final String CTX_AGENT_STATE = "agentscopeAgentState";
 
     private final ToolCallback callback;
     /** 本次调用的落点（引用注册器/库界/权限档位等 per-call 上下文），刻意不做跨调用静态状态。 */
@@ -102,8 +116,13 @@ public final class SpringAiToolAdapter extends ToolBase {
         return Mono.fromCallable(() -> {
                     Map<String, Object> input = param.getInput() == null
                             ? Collections.emptyMap() : param.getInput();
-                    String result = callback.call(JSON.toJSONString(input),
-                            new ToolContext(contextSupplier.get()));
+                    // 每次调用现搭一份上下文：这把工具在同一轮里可能被并发调多次，
+                    // 共用一个 Map 就是甲次调用读到乙次的框架状态
+                    Map<String, Object> context = new HashMap<>(contextSupplier.get());
+                    AgentState state = RuntimeContext.resolveAgentState(
+                            param.getRuntimeContext(), param.getAgent());
+                    if (state != null) context.put(CTX_AGENT_STATE, state);
+                    String result = callback.call(JSON.toJSONString(input), new ToolContext(context));
                     return ToolResultBlock.text(result);
                 })
                 // 工具是真阻塞调用（检索/HTTP/沙盒等待），必须离开框架的响应式线程

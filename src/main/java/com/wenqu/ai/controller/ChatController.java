@@ -698,7 +698,7 @@ public class ChatController {
         sessionService.assertOwned(sessionId, uid);
         java.util.Map<String, Object> out = new java.util.HashMap<>();
         // 首选框架 state（权威真源）；读不到（实例不在本进程 / 重启过）才回落会话表那份
-        String doc = todoBridge.docJson(frameworkSessions.peek(uid, sessionId), null, "");
+        String doc = todoBridge.docJson(frameworkSessions.peek(uid, sessionId), "");
         if (doc == null || doc.isBlank()) {
             doc = sessionService.todosOf(sessionId);
         }

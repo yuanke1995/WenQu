@@ -65,26 +65,25 @@
           <AgentAvatar class="agent-tag-ava" :agent="badgeOf(consultedOf(m)[0].id, consultedOf(m)[0].name)" :size="14" /> 本轮已咨询 {{ consultedOf(m).map(c => `「${c.name}」`).join('、') }}
         </div>
 
-        <!-- 深度思考面板：折叠态一行，展开看全文 -->
-        <div v-if="m.thinking" class="card think-card">
-          <button class="card-head" type="button" @click.stop="m.thinkOpen = !m.thinkOpen">
-            <span class="card-title">深度思考</span>
-            <span v-if="m.thinkLoading" class="spinner" aria-label="进行中"></span>
-            <span v-else class="card-badge">已完成</span>
-            <caret-right-outlined class="caret" :class="{ open: m.thinkOpen }" />
-          </button>
-          <div v-show="m.thinkOpen" class="card-body">
-            <AnswerBody class="think-md" :content="m.thinking" :viewer="false" />
-          </div>
-        </div>
-
-        <!-- 时间线：正文与过程/工具按到达顺序交错 -->
+        <!-- 时间线：正文与思考/过程/工具按到达顺序交错（深度思考不再单独堆在气泡顶上） -->
         <div v-if="hasTimelineBlocks(m)" class="md bubble-md" :data-msg-index="index">
           <template v-for="(seg, si) in timelineRows(m)" :key="si">
             <AnswerBody v-if="seg.kind === 'text'" class="tl-text" :content="m.content.slice(seg.from, seg.to)"
                         :images="m.images" :sources="m.sources" :msg-index="index"
                         runnable :session-id="sessionId" :streaming="m.loading"
                         :viewer="false" @citation="onBodyCitation" @preview="onBodyPreview" />
+            <!-- 思考段：这一轮在想什么就长在哪一行，只有正在长的那一段自动展开 -->
+            <div v-else-if="seg.kind === 'think'" class="card think-card">
+              <button class="card-head" type="button" @click.stop="toggleThinkSeg(m, seg)">
+                <span class="card-title">深度思考</span>
+                <span v-if="thinkGrowing(m, seg)" class="spinner" aria-label="进行中"></span>
+                <caret-right-outlined class="caret" :class="{ open: thinkSegOpen(m, seg) }" />
+              </button>
+              <div v-show="thinkSegOpen(m, seg)" class="card-body">
+                <AnswerBody class="think-md" :content="thinkSlice(m, seg)" :viewer="false"
+                            :streaming="thinkGrowing(m, seg)" />
+              </div>
+            </div>
             <div v-else-if="seg.kind === 'cluster'" class="card proc-cluster" :class="{ open: clusterOpen(m, seg) }">
               <button class="card-head" type="button" @click.stop="toggleCluster(m, seg)">
                 <span v-if="clusterRunning(seg)" class="spinner"></span>
@@ -92,7 +91,9 @@
                 <close-circle-outlined v-else class="ic-err" />
                 <span v-if="clusterTools(seg).length" class="card-title">已执行 {{ executedCount(clusterTools(seg)) }} 个操作</span>
                 <span v-else class="card-title">执行过程 · {{ clusterProcCount(seg) }} 段说明</span>
-                <span class="card-dim">· {{ clusterDur(seg) }}</span>
+                <span v-if="clusterDur(seg)" class="card-dim"
+                      :title="DUR_SPAN_TITLE"
+                >· {{ clusterDur(seg) }}</span>
                 <span v-if="runBoardText(m)" class="run-board">{{ runBoardText(m) }}</span>
                 <caret-right-outlined class="caret" :class="{ open: clusterOpen(m, seg) }" />
               </button>
@@ -110,7 +111,9 @@
                 <check-outlined v-else-if="!groupHasError(seg)" class="ic-ok" />
                 <close-circle-outlined v-else class="ic-err" />
                 <span class="card-title">执行了 {{ executedCount(seg.tools) }} 个操作</span>
-                <span class="card-dim">· {{ groupDur(seg) }}</span>
+                <span v-if="groupDur(seg)" class="card-dim"
+                      :title="DUR_SPAN_TITLE"
+                >· {{ groupDur(seg) }}</span>
                 <span v-if="runBoardText(m)" class="run-board">{{ runBoardText(m) }}</span>
                 <caret-right-outlined class="caret" :class="{ open: seg.tools[0]._groupOpen }" />
               </button>
@@ -186,7 +189,7 @@
             <check-outlined v-else-if="!m.toolCalls.some(t => t.status === 'error')" class="ic-ok" />
             <close-circle-outlined v-else class="ic-err" />
             <span class="card-title">执行了 {{ executedCount(toolCallsView(m.toolCalls)) }} 个操作</span>
-            <span class="card-dim">· {{ fallbackDur(m) }}</span>
+            <span v-if="fallbackDur(m)" class="card-dim" :title="DUR_SPAN_TITLE">· {{ fallbackDur(m) }}</span>
             <caret-right-outlined class="caret" :class="{ open: m._fbOpen }" />
           </button>
           <div v-show="m._fbOpen" class="card-body">
@@ -350,11 +353,13 @@ import { resolveImg } from '../utils/markdown'
 import AnswerBody from '../components/AnswerBody.vue'
 import { fmtTokens } from '../utils/token'
 import {
-  busyOf, hasTimelineBlocks, timelineRows, procOpen, toggleProc, procSlice, toolLabel, toolBrief,
+  busyOf, hasTimelineBlocks, timelineRows, procOpen, toggleProc, procSlice,
+  thinkSegOpen, toggleThinkSeg, thinkSlice, thinkGrowing, toolLabel, toolBrief,
   clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterDur, clusterProcCount,
   prettyIo, liveOutput, toolDuration, liveToolDur, toolRunning, groupRunning, groupHasError, groupDur,
   fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget, fanRun, runBoardText,
   fallbackDur, toolCallsView, executedCount, toolSearchQueries, retrievalLineTitle, subagentCard, barWidth, toggleSubagents, fmtDuration,
+  DUR_SPAN_TITLE,
   fmtMsgTime, fmtSize, errorBrief, sourceName, canSwitchPrev, canSwitchNext, verLabel, agentBadgeOf,
   pasteTitle, pasteSub, isPastedText, consultedOf
 } from '../chat/projections'
@@ -481,7 +486,6 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
 }
 .card-title { font-weight: 500; }
 .card-dim { font-size: 12px; color: var(--app-text3); }
-.card-badge { font-size: 11px; color: var(--app-ok); }
 .card-body { padding: 0 12px 10px; font-size: 13px; }
 .think-md { font-size: 14px; line-height: 1.7; }
 .proc-body { color: var(--app-text2); white-space: pre-wrap; word-break: break-word; }

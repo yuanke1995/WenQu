@@ -370,7 +370,9 @@ const traceCols = computed(() => traceKind.value === 'workflow' ? [
   { title: '问题', dataIndex: 'title', key: 'title', ellipsis: true },
   { title: '状态', key: 'statusCol', width: 160 },
   { title: '命中', dataIndex: 'hitDocCount', key: 'hitDocCount', width: 70 },
-  { title: '耗时', dataIndex: 'elapsedMs', key: 'elapsedMs', width: 90, customRender: ({ text }) => text != null ? text + ' ms' : '—' },
+  { title: '耗时', dataIndex: 'elapsedMs', key: 'elapsedMs', width: 90,
+    customHeaderCell: () => ({ title: '这一轮机器实际干活的时间：等你在提问卡/计划卡上读卡答题的那段不算（日志里两个数都留着）' }),
+    customRender: ({ text }) => text != null ? text + ' ms' : '—' },
   { title: '操作', key: 'action', width: 70 }
 ])
 

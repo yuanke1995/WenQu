@@ -1,7 +1,6 @@
 package com.wenqu.ai.agentx;
 
 import com.wenqu.ai.agent.chat.ChatCommand;
-import io.agentscope.harness.agent.session.AgentSession;
 import com.wenqu.ai.agent.permission.ExecutionPolicy;
 import com.wenqu.ai.agent.chat.ChatRunRuntime;
 import com.wenqu.ai.agent.context.RetrievalScopeService;
@@ -107,32 +106,7 @@ public class WenquAgentxTools {
                             Map<String, String> overrides, Map<String, String> userOverrides,
                             RunCodeHolder runCode,
                             java.util.List<org.springframework.ai.tool.ToolCallback> rawCallbacks,
-                            java.util.Set<String> mcpToolNames,
-                            SessionHolder sessionHolder) {
-
-        /**
-         * 本轮的框架会话实例（开轮后才有值）。
-         * <p>为什么是 holder 而不是直接给值：{@code newHooks} 在 {@code sessions.open} 之前调用
-         * （工具装配要发生在建实例之前），而 session 只有 open 之后才拿得到。用可后填的 holder，
-         * 装配期与建实例期就不用互相等。
-         * <p>名字不叫 {@code session()}：record 的自动访问器已经占了那个名字（返回 holder 本身）。
-         */
-        public AgentSession agentSession() {
-            return sessionHolder == null ? null : sessionHolder.get();
-        }
-    }
-
-    /** 框架会话实例的后填 holder（装配期还没有、开轮后才有，见 {@link TurnHooks#agentSession()}） */
-    public static final class SessionHolder {
-        private volatile AgentSession session;
-
-        public AgentSession get() {
-            return session;
-        }
-
-        public void set(AgentSession session) {
-            this.session = session;
-        }
+                            java.util.Set<String> mcpToolNames) {
     }
 
     /**
@@ -162,8 +136,7 @@ public class WenquAgentxTools {
         return new TurnHooks(cmd.getSessionId(), cmd.getUserId(), modelRef, turnId, spills, ledger,
                 RequestUser.snapshot(), configService.currentOverrides(), configService.currentUserOverrides(),
                 new RunCodeHolder(), java.util.Collections.synchronizedList(new java.util.ArrayList<>()),
-                java.util.Collections.synchronizedSet(new java.util.HashSet<>()),
-                new SessionHolder());
+                java.util.Collections.synchronizedSet(new java.util.HashSet<>()));
     }
 
     /**
@@ -448,29 +421,31 @@ public class WenquAgentxTools {
      * </ol>
      *
      * <p>写入走 {@link com.wenqu.ai.service.TodoBridge}：它把问渠的归一结果翻译成框架
-     * {@code Task} 列表，交给框架 state 落盘并回读确认，不自己碰存储。
+     * {@code Task} 列表，落在<b>这一轮活着的</b> {@code AgentState} 上（框架收尾时自己会 checkpoint，
+     * 落库不在这条路径上）。那份活状态由 {@link SpringAiToolAdapter} 按次调用放进工具上下文——
+     * 不是会话投影，投影是只读快照，改完即丢。
      */
     private com.wenqu.ai.service.TodoService.WriteFn todoWriter(com.wenqu.ai.engine.RunChannel channel,
                                                                  TurnHooks hooks) {
-        return items -> {
+        return (items, state) -> {
             var n = todoService.normalize(items);
             if (!n.ok()) return "错误：清单没有有效条目，每项都要写一句可验收的动作。";
             String turnId = hooks.turnId().get();
-            // 存储：框架 AgentState（todo_write 工具的同一份 tasksContext）。
+            // 存储：框架这一轮活着的 AgentState（框架自己 todo_write 的同一份 tasksContext）。
             // 写不进去就不往下走——宁可这轮没有清单，也不能出现「右栏有清单、框架那边没有」
             // 的两个真值源（下次进同一会话模型看到的还是旧的）。
-            var written = todoBridge.replace(hooks, n.items());
+            var written = todoBridge.replace(state, hooks.sessionId(), n.items());
             if (!written.ok()) {
                 // 不用 logger：这个类没有 log 字段，而失败原因已经原样回给模型了（工具报错会让它重试，
                 // 说清比记一行日志有用）。真要排查，模型的重试内容里就有这句话。
                 return "错误：清单写入失败（" + written.reason() + "），本轮未能更新任务清单。";
             }
-            String doc = todoBridge.docJson(hooks.agentSession(), n.items(), turnId);
-            if (doc == null) {
-                return "错误：清单已写入但回读失败（框架状态不可用），本轮未能同步任务清单。";
-            }
+            String doc = todoBridge.docJson(state, n.items(), turnId);
+            if (doc == null) return "错误：清单写入后读不出条目，本轮未能同步任务清单。";
             // 账本留痕：断线后台续跑那一轮，清单也要能事后回放（与手写侧同一句）
             sessionEventService.append(hooks.sessionId(), hooks.userId(), turnId, "todo", doc);
+            // 会话表那一份只是重启后的回显兜底（权威真源是框架 state；见 TodoBridge 类注释）
+            todoService.save(hooks.sessionId(), doc);
             if (channel != null) channel.emit(com.wenqu.ai.engine.RunEventType.TODO, doc);
             return todoService.describe(n);
         };

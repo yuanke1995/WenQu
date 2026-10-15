@@ -80,6 +80,9 @@ public class CitationIntegrityService {
      * <b>答案质量防线</b>，不该因为运行时换了就缺席——两条运行时各自按自己的结构搬一份 {@link Ctx} 进来。
      *
      * @param sources 本轮引用池（活引用：语义自检会重编它，调用方按返回的 Outcome 回写）
+     * @param model   本轮生效模型的<b>引用串</b> {@code {providerId}/{modelId}}——自检那次调用经
+     *                {@code DynamicOpenAiChatModel} 只按引用解析路由，传裸模型名会 fail-loud，
+     *                这道防线就整轮静默缺席（只剩一条 WARN）
      */
     public record Ctx(String sessionId, String userId, String question, String model,
                       List<Map<String, Object>> sources, Map<Integer, String> imgIndex,

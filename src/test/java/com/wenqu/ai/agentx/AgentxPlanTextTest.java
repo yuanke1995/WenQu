@@ -57,7 +57,9 @@ class AgentxPlanTextTest {
     void 两档皆空有兜底文案() {
         String text = AgentscopeChatEngine.planTextOf(planExitInput(null), "   ");
         assertTrue(text != null && !text.isBlank(), "兜底文案必须非空：空白卡和 [object Object] 一样是坏体验");
-        assertTrue(text.contains("plan_write"), "兜底文案要说清计划正文本该从哪来，便于排查");
+        // 用户口径：这句话印在「用户要点批准」的卡片上，内部机制（哪个工具没调）归日志，不归正文
+        assertFalse(text.contains("plan_write"), "计划卡正文不出现工具名：用户不知道 plan_write 是什么");
+        assertEquals(AgentscopeChatEngine.NO_PLAN_BODY, text, "兜底文案要能被调用方认出来（认出它才去记那条日志）");
     }
 
     @Test

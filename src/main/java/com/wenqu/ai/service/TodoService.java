@@ -21,7 +21,9 @@ import java.util.Map;
  * "它总共打算做几件事、还剩几件"，跑着跑着就像在原地打转；计划模式那份计划是**一段自由文本**，
  * 批准后整块注入，不维护逐步状态。清单把同一件事变成可勾选的条目。
  *
- * <p>存储口径（刻意）：整表覆盖、只存会话上的一份（{@code c_ai_session.todos}）。清单表达的是
+ * <p>存储口径（刻意）：整表覆盖，权威真源是框架这一轮的 {@code AgentState.tasksContext}
+ * （见 {@code TodoBridge}），会话表 {@code c_ai_session.todos} 只留最后写成的那一份做回显兜底
+ * （进程重启后框架实例不在本进程，右栏仍要能长出清单）。清单表达的是
  * "现在还剩几步"，不是历史；历次写入由会话事件账本留痕。
  *
  * @author yuanke
@@ -50,10 +52,12 @@ public class TodoService {
             String status) {
     }
 
-    /** 清单写入器签名：整表 → 回给模型的文本（含被归一/拒绝的说明） */
+    /** 清单写入器签名：整表 + 本轮框架的活会话状态 → 回给模型的文本（含被归一/拒绝的说明）。
+     * <p>{@code state} 由 {@code SpringAiToolAdapter} 按次调用放进工具上下文（见其 {@code CTX_AGENT_STATE}）：
+     * 它是清单的权威存储，没有它就写不进去，只能回一句错让模型知道这一轮没记上。 */
     @FunctionalInterface
     public interface WriteFn {
-        String write(List<TodoItem> items);
+        String write(List<TodoItem> items, io.agentscope.core.state.AgentState state);
     }
 
     /**
@@ -73,10 +77,12 @@ public class TodoService {
             ToolContext toolContext) {
         Object sid = toolContext == null ? null : toolContext.getContext().get(PresentArtifactTool.CTX_SESSION_ID);
         Object fn = toolContext == null ? null : toolContext.getContext().get(CTX_TODO);
+        Object state = toolContext == null ? null
+                : toolContext.getContext().get(com.wenqu.ai.agentx.SpringAiToolAdapter.CTX_AGENT_STATE);
         if (!(sid instanceof String sessionId) || sessionId.isBlank()) return "错误：无法定位当前会话";
         if (!(fn instanceof WriteFn write)) return "错误：本轮未启用任务清单";
         if (todos == null || todos.isEmpty()) return "错误：清单为空。要收尾请把每一项显式标为 done 后整表传回。";
-        return write.write(todos);
+        return write.write(todos, state instanceof io.agentscope.core.state.AgentState s ? s : null);
     }
 
     /**

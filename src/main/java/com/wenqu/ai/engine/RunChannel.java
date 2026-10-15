@@ -4,6 +4,9 @@ package com.wenqu.ai.engine;
 
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.util.Map;
+import java.util.function.Supplier;
+
 /**
  * 这一轮的出口。引擎只管往这里写事件，不关心底下是浏览器那条 SSE、断线后的总线扇出，还是
  * 定时任务/MCP 用的收集型通道。
@@ -27,6 +30,20 @@ public interface RunChannel {
     default boolean emit(RunEventType type, String content) {
         return emit(RunEvent.of(type, content));
     }
+
+    /**
+     * 本轮最后一条 {@code warn} 帧的正文，没有则 null。
+     * <p>收尾要把它落库：警示条此前只活在流式那一瞬——用户当场看见「沙盒写入未执行」，刷新一次就当
+     * 没发生过。实时与刷新必须同形，所以出口顺手记下这一份，而不是各引擎自己攒。
+     */
+    String lastWarn();
+
+    /**
+     * 把「本轮到此刻已经产出了什么」交给运行总线：刷新/换设备接流的第一帧据此重建气泡。
+     * <p>外壳开轮时只有「还没开始出字」那一份空快照，真正的内容只有握着本轮状态的那条运行时能给，
+     * 所以由引擎在状态袋建好之后回填。不回填的后果是接回来的气泡一片空白。
+     */
+    void offerSnapshot(Supplier<Map<String, Object>> snapshotSource);
 
     void complete();
 }

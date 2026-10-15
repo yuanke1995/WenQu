@@ -17,7 +17,8 @@ import { fmtTokens } from '../utils/token'
 import { loadModelIndex } from '../utils/modelRef'
 import { THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel, CTX_WINDOW_STEPS, fmtWindow,
          groupSources, ensureTick, mergeDoneToolCalls, restoreTimeline, extendTimelineText, extendTimelineProcess,
-         pushTimelineTool, pushTimelineArtifact, snapshotVersion, applyVersion, toolCallsView, histItemDigest,
+         pushTimelineTool, pushTimelineArtifact, pushTimelineThink, extendTimelineThink, ensureThinkSegment,
+         snapshotVersion, applyVersion, toolCallsView, histItemDigest,
          DEFAULT_SAMPLE_QUESTIONS, parseSampleQuestions, PASTE_TEXT_BASE, rememberAgents } from './projections'
 
 export function useChatEngine (hooks = {}) {
@@ -872,6 +873,8 @@ const switchSession = async sid => {
             related: Array.isArray(m.related) ? m.related : [],
             // 本轮降级事件（随消息落库后回显）：此前只活在流式那一瞬，刷新后降级条整块消失
             degradations: Array.isArray(m.degradations) ? m.degradations : [],
+            // 本轮警示条（同上）：沙盒基建异常这类当场看得见的异常，刷新后必须还在
+            warnMsg: typeof m.warnMsg === 'string' ? m.warnMsg : '',
             // @ 引用（随用户消息常驻落库）：刷新/历史回显保留引用标注，重新生成/编辑重发据此原样带出
             mentions: Array.isArray(m.mentions) ? m.mentions : [],
             // # 历史引用（同上）
@@ -879,7 +882,6 @@ const switchSession = async sid => {
             // 本轮终止原因（叫停且该轮没产出回答时记在用户提问上）：刷新后据此在问题下补一行说明
             endReason: m.endReason || '',
             thinking: m.thinking || '',
-            thinkOpen: false,
             time: m.createTime ? new Date(m.createTime).getTime() : null,
             artifacts: Array.isArray(m.artifacts) ? m.artifacts : [],
             toolCalls: Array.isArray(m.toolCalls) ? m.toolCalls : [],
@@ -917,6 +919,8 @@ const switchSession = async sid => {
             timeline: []
           }
           if (Array.isArray(m.timeline)) msg.timeline = restoreTimeline(msg, m.timeline)
+          // 存量消息没落思考分段（改动前只存一整块全文）：补一段在头部，别让它从界面上消失
+          ensureThinkSegment(msg)
           return msg
         })
       // 该会话正在流式回答：把 live 消息接回视图尾部。流式中的这轮前后端不落库助手消息，
@@ -1353,7 +1357,7 @@ const hydratePendingAsk = async sid => {
       continue
     }
     const bubble = reactive({ role: 'ai', content: '', images: [], sources: [], related: [],
-      degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkOpen: false,
+      degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '',
       thinkLoading: false, stage: '等你作答，回答才不会跑偏', time: Date.now(), artifacts: [],
       toolCalls: [], subagents: [], plan: null, timeline: [], errorCard: null, model: '', delegated: null,
       turnId: item.turnId || '' })
@@ -1454,7 +1458,7 @@ const hydratePendingPlans = async sid => {
   // 这一轮的助手消息要到回答完成才落库，此刻视图里没有可挂的气泡：补一个「等你批准」的占位泡，
   // 批准卡挂上；批准后轮询到新回答，整个列表按历史重载，占位泡随之消失
   const anchor = reactive({ role: 'ai', content: '', images: [], sources: [], related: [],
-    degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkOpen: false,
+    degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '',
     thinkLoading: false, stage: '等你批准执行计划，批准后回答才开始', time: Date.now(), artifacts: [],
     toolCalls: [], subagents: [], plan: null, planCard: null, timeline: [], errorCard: null, model: '',
     delegated: null, turnId: item.turnId || '' })
@@ -1500,7 +1504,7 @@ const hydratePendingApprovals = async sid => {
   // 补一个「等你批准执行」的占位泡。那一轮是真的卡在审批上（live=唤醒句柄还在），
   // 什么都不挂就是用户读到的「智能体莫名其妙不动了」
   const anchor = reactive({ role: 'ai', content: '', images: [], sources: [], related: [],
-    degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkOpen: false,
+    degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '',
     thinkLoading: false, stage: '等你批准执行，批准后这一轮才继续', time: Date.now(), artifacts: [],
     toolCalls: [], subagents: [], plan: null, planCard: null, timeline: [], errorCard: null,
     model: '', delegated: null, approval: null, turnId: item.turnId || '' })
@@ -1678,6 +1682,9 @@ const applyTurnSnapshot = (msg, snap, sid) => {
   if (snap.planRecord) msg.planCard = planCardFromRecord(snap.planRecord)
   // 时间线必须在 toolCalls/artifacts 之后重建：段里的下标指向这两份清单，清单没铺好就先建会指空
   if (Array.isArray(snap.timeline) && snap.timeline.length) msg.timeline = restoreTimeline(msg, snap.timeline)
+  // 快照只给思考全文、给不了分段（那一轮跑到一半接上来的）：头部补一段，
+  // 之后实时流出的每一轮各起一段，接流方看到的与从头看着的一样
+  ensureThinkSegment(msg)
   // 状态型事件的最后一份（本轮步骤/检索状态/用量预估/任务清单/阶段文案）按普通事件同一口径解析
   const ev = snap.events || {}
   if (ev.plan) {
@@ -1695,6 +1702,8 @@ const applyTurnSnapshot = (msg, snap, sid) => {
   if (ev.todo) {
     try { const j = JSON.parse(ev.todo); if (j && Array.isArray(j.items)) setTodos(sid, j) } catch (e) { /* 忽略 */ }
   }
+  // 本轮警示条（沙盒基建异常这类）：实时是后发的盖前发的，镜像留的就是最后那一条，口径一致
+  if (typeof ev.warn === 'string' && ev.warn) msg.warnMsg = ev.warn
   // 阶段文案是瞬时的进度提示：接流时若本轮已经有正文、或还有没跑完的工具步，那条「正在…」早已过期，
   // 按实时流的同一口径清掉（工具卡片自己会表达进度）。正在等人工裁决时，后端会在快照之后补发一条
   // 准确的 stage，那条才该显示
@@ -1729,7 +1738,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
   // model 先按前端解析的生效引用预填（覆盖>个人默认，与后端 resolveModel 同序）：「模型已切换」
   // 分隔记录在本轮回答一出现就能比对；done 再用后端权威值校正
   // stage 预置检索档（两档口径见 projections 的阶段文案映射）：与后端首条事件映射结果同词，开场不闪词
-  const fresh = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkOpen: true, thinkLoading: false, stage: resume ? '正在接回这一轮…' : '正在检索资料…', time: Date.now(), artifacts: [], toolCalls: [], subagents: [], plan: null, planCard: null, timeline: [], errorCard: null, model: model || effectiveModel.value, delegated: null }
+  const fresh = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkLoading: false, stage: resume ? '正在接回这一轮…' : '正在检索资料…', time: Date.now(), artifacts: [], toolCalls: [], subagents: [], plan: null, planCard: null, timeline: [], errorCard: null, model: model || effectiveModel.value, delegated: null }
   const msg = replaceMsg ? Object.assign(replaceMsg, fresh, { messageId: null, fb: null }) : reactive(fresh)
   if (!replaceMsg) messages.value.push(msg)
   const viewing = () => currentSessionId.value === sid  // 只有正在看这个会话才滚动/贴底
@@ -1750,6 +1759,8 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
   // 长回答越流越卡。done/停止等终态路径 flushNow() 保底：最终态完整、不丢已流出内容。
   let flushTimer = null
   let flushedLen = 0
+  // 当前这段思考是否还开着：正文/工具/收尾帧一到就断段，下一片思考另起一段就地长
+  let thinkRoundOpen = false
   const flushNow = (keepScroll = true) => {
     if (flushTimer) { clearTimeout(flushTimer); flushTimer = null }
     if (full.length > flushedLen) {
@@ -1811,25 +1822,37 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
     // 会话级模型覆盖：仅用户手动切换时传（空=后端按 个人默认>无 兜底解析，全局模型默认已退役）
     model,
     onThinking: t => {
-      msg.thinking = (msg.thinking || '') + t
+      if (!t) return
+      const have = msg.thinking || ''
+      if (thinkRoundOpen) extendTimelineThink(msg, have.length, have.length + t.length)
+      else pushTimelineThink(msg, have.length, have.length + t.length)
+      thinkRoundOpen = true
+      msg.thinking = have + t
       msg.thinkLoading = true
       liveScroll()
     },
     onThinkingDone: payload => {
+      thinkRoundOpen = false
       msg.thinkLoading = false
-      msg.thinkOpen = false
       try {
         const j = JSON.parse(payload)
-        if (j.thinking) msg.thinking = j.thinking
+        // 权威全文比本地累积长（接流接缝丢了一片）：多出来那一截归到刚收场的这一段，别让它悬在段外
+        if (j.thinking && j.thinking.length > (msg.thinking || '').length) {
+          const tl = Array.isArray(msg.timeline) ? msg.timeline : []
+          const last = tl[tl.length - 1]
+          if (last && last.kind === 'think') last.to = j.thinking.length
+          msg.thinking = j.thinking
+        }
       } catch (e) { /* 兼容旧 payload */ }
     },
-    onToken: (t, ev) => { gotToken = true; full += dropResumedOverlap(full, t, ev); flushSoon(); msg.stage = ''; msg.thinkLoading = false },
+    onToken: (t, ev) => { gotToken = true; full += dropResumedOverlap(full, t, ev); flushSoon(); msg.stage = ''; msg.thinkLoading = false; thinkRoundOpen = false },
     onProcess: (t, ev) => {
       // 过程独白（<process> 标签内，与正文分流）：累积 processText 并推进时间线过程段（灰字弱化渲染）。
       // 后端按 token 增量下发，这里逐条追加即成流式。先 flushNow 落屏节流中的正文：正文 token 走
       // 120ms 节流而过程事件即时到达，不先刷正文，过程段会被记在尚未落屏的正文之前——实时视图里
       // 灰字块跳到正文上方（done 用落库版时间线校正后又会跳回去，一来一回正是「块突然出现又移位」）
       flushNow(false)
+      thinkRoundOpen = false
       const have = msg.processText || ''
       const add = dropResumedOverlap(have, t, ev)
       if (!add) return                       // 接流时这一片已被快照覆盖
@@ -1945,6 +1968,9 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       try {
         const t = typeof rec === 'string' ? JSON.parse(rec) : rec
         if (!t || !t.name) return
+        // 工具事件也是「这一段思考想完了」的信号：后端在 tool/requested 前会补收尾帧，
+        // 这里再断一次是防漏（漏断会把下一轮思考接在同一行后面，正是用户要摆脱的叠加）
+        thinkRoundOpen = false
         if (!Array.isArray(msg.toolCalls)) msg.toolCalls = []
         if (t.status === 'start') {
           // askUser 的「进行中」由提问卡（m.ask）表达，不渲染通用工具卡——否则一问两卡
@@ -1968,6 +1994,10 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
           if (last) {
             last.status = t.status
             last.elapsedMs = t.elapsedMs || 0
+            // 起点以服务端那份为准：跨度是在同一个钟上减的，混进前端收到帧的时刻就会被时钟差与网络排队带歪
+            // 等待账同理：漏了它，簇头就会把用户读卡答题那几分钟也算进机器时间
+            if (t.startedAtMs) last.startedAtMs = t.startedAtMs
+            if (t.waitedMs) last.waitedMs = t.waitedMs
             if (t.args) last.args = t.args
             if (t.result != null) last.result = t.result
             if (t.error) last.error = t.error
@@ -2137,6 +2167,8 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         // 时间线以落库版为准：本轮视图与刷新后视图同源（工具/产物下标与终态清单一一对应）
         if (Array.isArray(p.timeline) && p.timeline.length) msg.timeline = restoreTimeline(msg, p.timeline)
         else if (msg.content !== full) msg.timeline = []
+        // 落库时间线没带思考分段（正文被重建导致整条作废、或后端是旧版）：头部补一段，不许看不见
+        ensureThinkSegment(msg)
         // 编排视图：done 下发分支最终状态，覆盖实时 subagent 事件收敛到终态
         if (Array.isArray(p.subagentBranches) && p.subagentBranches.length) msg.subagents = p.subagentBranches
         if (p.subagentRoute) msg.subagentRoute = p.subagentRoute
@@ -2229,6 +2261,9 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       flushNow()
       msg.loading = false
       msg.retrying = false
+      // 本轮失败：正在长的那一段思考必须停下进行中标记（它认的是「这一轮还在流」，
+      // 而 loading 已假 → 该段自然收起），否则那一行会永远转下去，把「这一轮断了」读成「它还在想」
+      msg.thinkLoading = false
       msg.failed = true
       msg.errorCard = { message: String(e), kind: kind || '', at: Date.now() }
       if (chatStreams.get(sid) === st) chatStreams.delete(sid)

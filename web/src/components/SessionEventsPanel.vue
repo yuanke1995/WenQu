@@ -39,7 +39,8 @@
             <span class="ev-no">{{ i + 1 }}</span>
             <span class="ev-step-name">{{ s.name }}</span>
             <span class="ev-step-state" :class="s.status === 'error' ? 'bad' : 'ok'">{{ stepState(s.status) }}</span>
-            <span v-if="s.elapsedMs" class="ev-step-ms">{{ s.elapsedMs }}ms</span>
+            <span v-if="s.elapsedMs" class="ev-step-ms" :title="s.elapsedMs + ' ms（这一次调用实际跑掉的时长，等人作答不算）'"
+            >{{ toolDuration(s.elapsedMs) }}</span>
           </li>
         </ol>
         <AnswerBody class="ev-body" :content="answerText" :images="message.images || []"
@@ -53,7 +54,9 @@
             <caret-right-outlined class="ev-caret" :class="{ open: t._open }" />
             <span class="ev-time">{{ fmtEvTime(t.startedAt) }}</span>
             <span class="ev-count">{{ t.count }} 条</span>
-            <span v-if="t.endedAt > t.startedAt" class="ev-dur">{{ ((t.endedAt - t.startedAt) / 1000).toFixed(1) }}s</span>
+            <span v-if="t.endedAt > t.startedAt" class="ev-dur"
+                  title="这一轮从开跑到收口挂了多久（含你在提问卡、计划卡上读卡答题的时间；每一行的工具时长不含等待）"
+            >{{ ((t.endedAt - t.startedAt) / 1000).toFixed(1) }}s</span>
             <span class="ev-types">{{ evTypeSummary(t) }}</span>
           </button>
           <div v-if="t._open" class="ev-list">
@@ -77,6 +80,9 @@
 import { computed, ref, watch } from 'vue'
 import { CaretRightOutlined } from '@ant-design/icons-vue'
 import { getSessionEvents } from '../api'
+// 时长文案与工具卡同一把尺（<1s 用 ms、1~60s 一位小数、更长换成 m/s）：账本里另写一套
+// 「180000ms」会让同一个数在两处长得不一样，读的人先要怀疑是不是数错了
+import { toolDuration } from '../chat/projections'
 import AnswerBody from './AnswerBody.vue'
 
 // viewer=false（移动壳）时正文里的角标/图片点击往外抛，由页面用它自己的底部抽屉展示——

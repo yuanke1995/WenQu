@@ -47,10 +47,22 @@ public class Message {
      * 用户当时看见过、回头看不见，等于这一轮没降过级。空列表不落库（多数轮次没有降级）。
      */
     private String degradations;
+    /**
+     * 本轮警示条（最后一条 warn 帧的原文，如「沙盒基建异常：沙盒写入未执行…」）。
+     * <p>它此前只随流下发一次：用户当场看见这一轮被沙盒或权限档挡下过，刷新一次就当没发生过。
+     * 与 degradations 分开存——那一列是 {@code chat.retrievalDebugEnabled} 管的内部排障信息，
+     * 这一列是给用户看的。
+     */
+    private String warnMsg;
     /** 产物交付 (JSON数组: [{url,filename,size,description}]，原始 URL 存库、展示层签名) */
     private String artifacts;
 
-    /** 工具调用过程 (JSON数组: [{name,status,elapsedMs,args,result|error}]) */
+    /**
+     * 工具调用过程 (JSON数组: [{name,status,startedAtMs,elapsedMs,waitedMs,args,result|error}])。
+     * startedAtMs 是服务端墙上开始时刻（跨度要落在同一个钟上才减得出来），elapsedMs 是这一次实际跑掉的
+     * 时长，waitedMs 是其中被「等你读卡答题」盖住的那段（算整段跨度时要减）。字段缺位＝这一条没计时，
+     * 不等于跑了 0 毫秒——前端据此不显示数字。
+     */
     private String toolCalls;
 
     /**

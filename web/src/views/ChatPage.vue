@@ -162,20 +162,22 @@
                 <AgentAvatar class="agent-tag-ava" :agent="agentBadgeOf(agentList, m.agentId, m.agentName)" :size="14" />
                 <span>由「{{ m.agentName }}」回答</span>
               </div>
-              <div v-if="m.role === 'ai' && m.thinking" class="think-panel" :class="{ open: m.thinkOpen }">
-                <div class="think-head" @click="m.thinkOpen = !m.thinkOpen">
-                  <span class="think-title">深度思考</span>
-                  <a-spin v-if="m.thinkLoading" size="small" style="margin-left:6px" />
-                  <span v-else class="think-badge">已完成</span>
-                  <caret-right-outlined class="tl-caret" :class="{ open: m.thinkOpen }" />
-                </div>
-                <div v-show="m.thinkOpen" class="think-body"><AnswerBody :content="m.thinking" :streaming="m.thinkLoading" /></div>
-              </div>
+              <!-- 深度思考不再叠在气泡顶上：每一轮思考各占一行，长在它发生的那个位置（见时间线里的 think 段） -->
               <div v-if="hasTimelineBlocks(m)" class="md" :data-msg-index="i">
                 <template v-for="(seg, si) in timelineRows(m)" :key="si">
                   <AnswerBody v-if="seg.kind === 'text'" class="tl-text" :content="m.content.slice(seg.from, seg.to)"
                               :images="m.images" :sources="m.sources" :msg-index="i"
                               runnable :session-id="currentSessionId" :streaming="m.loading" />
+                  <!-- 思考段：这一轮模型在想什么，就地一行。只有正在长的那一段自动展开，其余折叠 -->
+                  <div v-else-if="seg.kind === 'think'" class="tl-think-block">
+                    <button class="tl-think-head" type="button" @click="toggleThinkSeg(m, seg)">
+                      <span class="tl-think-title" :class="{ running: thinkGrowing(m, seg) }">深度思考</span>
+                      <caret-right-outlined class="tl-caret" :class="{ open: thinkSegOpen(m, seg) }" />
+                    </button>
+                    <div v-show="thinkSegOpen(m, seg)" class="tl-think">
+                      <AnswerBody :content="thinkSlice(m, seg)" :streaming="thinkGrowing(m, seg)" />
+                    </div>
+                  </div>
                   <!-- 过程簇头：连续的「独白+工具」收成一行。展开后其内各段由 timelineRows 摊平接着渲染，
                        内部结构与展开前完全一致（时序零损失）；纯独白簇（无工具）退化为「N 段说明」 -->
                   <div v-else-if="seg.kind === 'cluster'" class="tl-cluster" :class="{ open: clusterOpen(m, seg) }">
@@ -185,7 +187,7 @@
                       <check-outlined v-else class="tool-ic tool-ic-ok" />
                       <span v-if="clusterTools(seg).length">已执行 {{ executedCount(clusterTools(seg)) }} 个操作</span>
                       <span v-else>执行过程 · {{ clusterProcCount(seg) }} 段说明</span>
-                      <span class="tool-dur">· {{ clusterDur(seg) }}</span>
+                      <span v-if="clusterDur(seg)" class="tool-dur" :title="DUR_SPAN_TITLE">· {{ clusterDur(seg) }}</span>
                       <span v-if="runBoardText(m)" class="run-board">{{ runBoardText(m) }}</span>
                       <span class="tl-caret" :class="{ open: clusterOpen(m, seg) }"><caret-right-outlined /></span>
                     </button>
@@ -206,7 +208,9 @@
                       <close-circle-outlined v-else-if="groupHasError(seg)" class="tool-ic tool-ic-err" />
                       <check-outlined v-else class="tool-ic tool-ic-ok" />
                       <span>执行了 {{ executedCount(seg.tools) }} 个操作</span>
-                      <span class="tool-dur">· {{ groupDur(seg) }}</span>
+                      <span v-if="groupDur(seg)" class="tool-dur"
+                            :title="DUR_SPAN_TITLE"
+                      >· {{ groupDur(seg) }}</span>
                       <span v-if="runBoardText(m)" class="run-board">{{ runBoardText(m) }}</span>
                       <span class="tl-caret" :class="{ open: seg.tools[0]._groupOpen }"><caret-right-outlined /></span>
                     </button>
@@ -310,7 +314,7 @@
                   <close-circle-outlined v-else-if="m.toolCalls.some(t => t.status === 'error')" class="tool-ic tool-ic-err" />
                   <check-outlined v-else class="tool-ic tool-ic-ok" />
                   <span>执行了 {{ executedCount(toolCallsView(m.toolCalls)) }} 个操作</span>
-                  <span class="tool-dur">· {{ fallbackDur(m) }}</span>
+                  <span v-if="fallbackDur(m)" class="tool-dur" :title="DUR_SPAN_TITLE">· {{ fallbackDur(m) }}</span>
                   <span class="tl-caret" :class="{ open: m._fbOpen }"><caret-right-outlined /></span>
                 </button>
                 <div v-if="m._fbOpen" class="tl-group-body">
@@ -1556,9 +1560,11 @@ import { useChatSearch } from '../chat/useChatSearch'
 import { openImages, previewUrl, openSource, hoveredRef } from '../chat/answerViewer'
 import { useApprovalRecovery } from '../chat/useApprovalRecovery'
 import { toolLabel, toolDesc, toolCallsView, executedCount, toolDuration, toolRunning, busyOf, hasTimelineBlocks,
-         procOpen, toggleProc, procSlice, timelineRows, toolBrief, prettyIo, liveOutput, groupRunning,
+         procOpen, toggleProc, procSlice, thinkSegOpen, toggleThinkSeg, thinkSlice, thinkGrowing,
+         timelineRows, toolBrief, prettyIo, liveOutput, groupRunning,
          clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterDur, clusterProcCount,
          groupHasError, groupDur, fallbackDur, liveToolDur, toolSearchQueries, retrievalLineTitle, subagentCard, barWidth,
+         DUR_SPAN_TITLE,
          fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget, fanRun, runBoardText,
          toggleSubagents, fmtDuration, fmtWindow, externalOrigin, sourceName, fmtSourceScore, scoreTitle,
          fmtMsgTime, fmtSize, errorBrief, histItemTitle, verLocal, canSwitchPrev, canSwitchNext, verLabel,
@@ -3454,14 +3460,6 @@ onMounted(async () => {
   background: rgba(0,0,0,.55); color: #fff; font-size: 12px; line-height: 18px; text-align: center; cursor: pointer; }
 .pending-del:hover { background: var(--app-danger); }
 
-.think-panel { margin: 4px 0 8px; border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-panel-2); overflow: hidden; width: fit-content; max-width: 100%; }
-.think-head { display: flex; align-items: center; gap: 6px; padding: 6px 10px; cursor: pointer; user-select: none; font-size: 12px; color: var(--app-text3); }
-.think-head:hover { background: var(--app-panel-2); }
-.think-title { font-weight: 500; color: var(--app-text2); }
-.think-badge { font-size: 11px; color: var(--app-text3); }
-.think-body { padding: 0 10px 8px; border-top: 1px dashed var(--app-border); color: var(--app-text2); font-size: 12px; line-height: 1.7; max-height: 300px; overflow-y: auto; }
-.think-body :deep(.md > p) { margin: 4px 0; }
-
 /* ==================== 工具执行卡片 / 折叠组 ====================
  * 正文与工具交错：连续工具合并折叠组（组条窄条化，不把文章剁开）；
  * 卡片标题行亮出关键参数（命令/路径/检索词），展开看完整入参/输出（toolCalls 存 ≤8KB 全文）。 */
@@ -3475,6 +3473,20 @@ onMounted(async () => {
 .tl-process-head:hover { color: var(--app-text2); background: var(--app-panel-2); }
 .tl-process-title { font-weight: 500; color: var(--app-text2); }
 .tl-process { margin: 2px 0; padding: 2px 10px; border-left: 2px solid var(--app-border); color: var(--app-text3); font-size: 12.5px; line-height: 1.7; white-space: pre-wrap; word-break: break-word; }
+/* 思考段：一轮思考一行，长在它发生的位置（旧版那块「气泡顶上的深度思考面板」已退役——
+   多轮思考首尾粘成一块读不出时序）。头部与过程独白同款窄条，展开体保留 markdown 排版。 */
+.tl-think-block { margin: 2px 0; }
+.tl-think-head { display: inline-flex; align-items: center; gap: 5px; border: 0; background: none; padding: 2px 4px; margin: 0 0 2px -4px; border-radius: 4px; cursor: pointer; user-select: none; font-size: 12px; color: var(--app-text3); }
+.tl-think-head:hover { color: var(--app-text2); background: var(--app-panel-2); }
+.tl-think-title { font-weight: 500; color: var(--app-text2); }
+/* 思考进行中的加载态：标题在主色与次文本之间循环渐变，与会话列表 running 标题同一语言。
+   原先这里挂一个三点转圈图标——一行小标题里塞图标既吵，又和它下面正在流的正文重复报进度。
+   关动效时退化为常亮主色：状态还在，只是不闪。 */
+.tl-think-title.running { animation: tl-think-running 1.6s ease-in-out infinite; }
+@keyframes tl-think-running { 0%, 100% { color: var(--app-text2); } 50% { color: var(--app-accent); } }
+@media (prefers-reduced-motion: reduce) { .tl-think-title.running { animation: none; color: var(--app-accent); } }
+.tl-think { margin: 2px 0; padding: 2px 10px; border-left: 2px solid var(--app-border); color: var(--app-text3); font-size: 12.5px; line-height: 1.7; max-height: 320px; overflow-y: auto; }
+.tl-think :deep(.md > p) { margin: 4px 0; }
 /* 过程簇头：把连续的「独白+工具」收成一行（此前一轮过程会散成 6 行折叠头）。
    展开后其内各段由 timelineRows 摊平接着渲染，视觉上是一棵树、DOM 上是同级兄弟。 */
 .tl-cluster { margin: 3px 0; }
