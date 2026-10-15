@@ -195,10 +195,17 @@ public class ChatController {
         // 后续每轮都会在回答期报错（与上面 PUT 端点同口径）
         if (request.getModel() != null && !request.getModel().isBlank()) {
             String modelRef = request.getModel().trim();
-            if (modelRef.contains("/") && modelRegistryService.resolveReference(modelRef) == null) {
-                throw new BizException("模型引用无效或已被删除，请重新选择");
+            // 已停用的引用不再写进会话、也不再发给上游：界面（选择器）只列可用项，走到这里的只有
+            // 停留在旧选择上的页签与重发。让它落库就是「A 端切成 X、B 端一句重发又盖回停用模型」
+            String issue = modelRegistryService.issueMessage(modelRef, userId, RequestUser.role());
+            if (!issue.isEmpty()) {
+                throw new BizException("模型" + issue + "，请重新选择");
             }
-            sessionService.updateModel(userId, sessionId, modelRef);
+            // 重新生成/自动重试带的还是这一轮原来那个模型，它不是「用户改了一次选择」：
+            // 写下去就是把一次失败的重发当成一次选择变更，覆盖掉别的端刚选的那一份
+            if (!request.isRegenerate()) {
+                sessionService.updateModel(userId, sessionId, modelRef);
+            }
         }
 
         // @ 引用校验（同样必须在发起问答前 fail-loud）：类型合法 + 资源存在 + 在当前用户共享范围内。
@@ -642,14 +649,19 @@ public class ChatController {
     }
 
     @Operation(summary = "读取会话模型",
-            description = "返回该会话已存的模型覆盖（空串=跟随个人默认）。聊天页切到列表未加载的会话"
+            description = "返回该会话已存的模型覆盖（空串=跟随个人默认）与它当前能不能用"
+                    + "（modelIssue 非空=已停用/已被移除，界面据此标出失效态）。聊天页切到列表未加载的会话"
                     + "（通知/分享深链进老会话）时按需拉取，保证选择器显示与实际作答模型一致")
     @GetMapping("/session/{sessionId}/model")
     public ResultJson getSessionModel(
             @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId,
             HttpServletRequest httpRequest) {
         sessionService.assertOwned(sessionId, RequestUser.uid());
-        return ResultJson.ok(Map.of("model", sessionService.sessionModelOf(sessionId)));
+        String model = sessionService.sessionModelOf(sessionId);
+        String issue = model.isBlank() ? ""
+                : modelRegistryService.issueText(modelRegistryService
+                        .referenceUsability(model, null, null, false).issue());
+        return ResultJson.ok(Map.of("model", model, "modelIssue", issue));
     }
 
     @Operation(summary = "切换会话模型",
@@ -663,11 +675,12 @@ public class ChatController {
         String userId = RequestUser.uid();
         String model = body == null || body.get("model") == null ? "" : String.valueOf(body.get("model")).trim();
         if (!model.isBlank()) {
-            // 与 /chat 同口径的 fail-loud：普通用户只能存自己可用的模型；引用须在模型库可解析
-            // （否则存进会话后每轮回答期才报错，用户无从定位）。遗留裸模型名不做解析校验
-            modelRegistryService.assertUsable(model, userId, RequestUser.role());
-            if (model.contains("/") && modelRegistryService.resolveReference(model) == null) {
-                throw new BizException("模型引用无效或已被删除，请重新选择");
+            // 与 /chat 同口径的 fail-loud：普通用户只能存自己可用的模型；引用须真的可用
+            // （已停用/已从模型列表移除也算不可用——存进会话后每轮都要到回答期才撞上上游报错，
+            // 用户无从定位）。遗留裸模型名维持放行
+            String issue = modelRegistryService.issueMessage(model, userId, RequestUser.role());
+            if (!issue.isEmpty()) {
+                throw new BizException("模型" + issue + "，请重新选择");
             }
         }
         sessionService.updateModel(userId, sessionId, model);
@@ -761,6 +774,11 @@ public class ChatController {
         String resolvedModel = chatService.resolveChatModel(userId, requestedModel);
         if (resolvedModel.isBlank()) {
             throw new BizException("未指定模型：请先在对话中选择模型，或在个人设置中配置默认模型");
+        }
+        // 与问答轮同一判据：压缩是拿这个模型改写会话历史，坏引用发给上游只会回一句看不懂的网关错
+        String modelIssue = modelRegistryService.issueMessage(resolvedModel, userId, RequestUser.role());
+        if (!modelIssue.isEmpty()) {
+            throw new BizException("模型" + modelIssue + "，请重新选择后再压缩");
         }
         String instruction = instrArg == null ? null : String.valueOf(instrArg);
         return ResultJson.ok(historyCompaction.compactSession(sessionId, resolvedModel, instruction), "压缩完成");

@@ -45,7 +45,7 @@ import java.util.Set;
  *
  * <p><b>估算与校准</b>：各段都是 {@link TokenCounter} 估算直和（中文按字、英文按词折算），
  * 与网关实测的 prompt 必然有偏差，所以整体按 {@code prompt / 估算和} 等比缩放
- * （{@link TurnRecorder} 侧的 {@code calibrateParts} 是同一把尺，两条运行时口径一致）。
+ * （{@link #calibrate}，与问渠台账侧同一把尺）。
  * 缩放后各类之和严格等于本轮真实 prompt——容量条的分段与顶部百分比不会各说各话。
  */
 final class FrameworkCtxParts {
@@ -211,7 +211,8 @@ final class FrameworkCtxParts {
 
     /**
      * 按网关实测 prompt 等比校准，并让各类之和严格等于它（舍入误差归到最大的一段）。
-     * <p>与 {@code TurnRecorder#calibrateParts} 同一把尺：两条运行时的容量条不能一个校准一个不校准。
+     * <p>与 {@code TurnRecorder} 侧同源同算法：容量条的「分类之和 = 网关 prompt」这条不变量
+     * 两条运行时共用一把尺，不能一个校准一个不校准。
      * 缩放系数用「已缩放后的值」补差，否则末段会被还原回缩放前的值、和偏离 prompt。
      */
     private static Map<String, Integer> calibrate(Map<String, Integer> parts, long realPrompt) {

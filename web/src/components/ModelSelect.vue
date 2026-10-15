@@ -3,12 +3,12 @@
     ref="rootRef"
     :value="modelValue || undefined"
     :style="{ width: compact ? '104px' : (pill ? pillWidth + 'px' : (typeof width === 'string' ? width : (width || 320) + 'px')) }"
-    :placeholder="placeholder || '选择模型'"
+    :placeholder="displayPlaceholder"
     :disabled="disabled"
     :loading="loading"
     :allow-clear="allowClear"
-    :class="{ 'ms-pill': pill, 'ms-has-value': !!modelValue, 'ms-compact': compact }"
-    
+    :class="{ 'ms-pill': pill, 'ms-has-value': !!modelValue, 'ms-compact': compact, 'ms-has-issue': !!issue }"
+
     popup-class-name="ms-dropdown"
     :dropdown-match-select-width="false"
     option-label-prop="label"
@@ -25,8 +25,16 @@
       <span class="ms-inherit">{{ inheritLabel }}</span>
     </a-select-option>
     <!-- 引用失配兜底：值不在当前列表（模型/供应商登记变化导致）时，antd 触发器会原样显示
-         含供应商 UUID 的引用串；补一个隐藏选项让触发器只显示模型 id 部分 -->
-    <a-select-option v-if="orphanRef" :value="orphanRef" :label="orphanLabel" class="ms-orphan" />
+         含供应商 UUID 的引用串；补一个隐藏选项让触发器只显示模型 id 部分。
+         带 issue（后端判这个引用已经不能用）时这一项要<b>现身</b>并标灰禁用：
+         用户点开面板看见的是「我选的那个在这儿，但它已经停了」，而不是列表里凭空少了自己那一项 -->
+    <a-select-option
+      v-if="orphanRef"
+      :value="orphanRef"
+      :label="orphanLabelWithIssue"
+      :disabled="!!issue"
+      :class="issue ? 'ms-dead' : 'ms-orphan'"
+    />
     <a-select-opt-group v-for="g in groups" :key="g.providerId" :label="g.name">
       <!-- 行悬浮事件挂 option 上：rc-select 会把 option 的额外事件铺到行根元素（含行内边距区），
            统一转成 option-hover(ref, 行元素) 透传，父层据此按悬浮行弹 per-item 面板（聊天页深度思考） -->
@@ -44,13 +52,14 @@
     <template #option="opt">
       <span v-if="opt.value === ''" class="ms-inherit">{{ opt.label }}</span>
       <span v-else-if="!opt.value" class="ms-group-text">{{ opt.label }}</span>
-      <span v-else class="ms-option" :class="{ 'ms-option-blocked': blockedOf(opt.value) }">
+      <span v-else class="ms-option" :class="{ 'ms-option-blocked': blockedOf(opt.value), 'ms-option-dead': deadOf(opt.value) }">
         <ProviderIcon :icon="iconOf(opt.value)" :name="providerNameOf(opt.value)" :size="16" />
-        <span class="ms-name">{{ opt.label }}</span>
+        <span class="ms-name">{{ deadOf(opt.value) ? orphanLabel : opt.label }}</span>
         <!-- 额度不足标记：就地告知「这个选不了、为什么选不了」，而不是等点了才报错。
              原因用 title 原生提示而非 a-tooltip：disabled 的 option 在 rc-select 里可能收不到
              鼠标事件，包一层 tooltip 反而会跟着一起失效，用户就只剩下「灰的」没有解释。 -->
         <span v-if="blockedOf(opt.value)" class="ms-quota-flag" :title="blockedTip(opt.value)">额度不足</span>
+        <span v-else-if="deadOf(opt.value)" class="ms-issue-flag" :title="issueTip">{{ issue }}</span>
       </span>
     </template>
     <template v-if="!loading && !groups.length" #notFoundContent>
@@ -96,6 +105,13 @@ const props = defineProps({
    *  不用「纯图标」形态：vc-select 没有 #label 插槽（那是 Form 的），无法在触发器里注入图标。 */
   compact: { type: Boolean, default: false },
   disabled: { type: Boolean, default: false },
+  /**
+   * 当前值已经不能用的原因（后端判定后由上层下发：空=可用）。非空时：
+   * 触发器变红并带上这句原因，下拉里那一项现身、标灰、点不动。
+   * 为什么不让组件自己判：启停状态在供应商与模型登记两张表上，前端只能看到「可用清单里没有它」，
+   * 那既可能是停用也可能是还没加载完——判不准就会把好的模型标成坏的。
+   */
+  issue: { type: String, default: '' },
   /** 空数据时是否提示管理员去「模型供应商」页登记（非管理员界面可不提示） */
   adminTipVisible: { type: Boolean, default: false },
 })
@@ -165,6 +181,25 @@ const orphanLabel = computed(() => {
   if (!v) return ''
   const i = v.indexOf('/')
   return i === -1 ? v : v.slice(i + 1)
+})
+/** 失效态的触发器文案：模型名后面直接带原因，用户不点开面板也知道这一轮发不出去 */
+const orphanLabelWithIssue = computed(() => orphanLabel.value + (props.issue ? ' ' + props.issue : ''))
+/** 这一项是不是「当前钉着但已经不能用」的那一行 */
+function deadOf(ref) {
+  return !!props.issue && !!orphanRef.value && ref === orphanRef.value
+}
+const issueTip = computed(() => props.issue
+  ? `这个模型${props.issue}。换一个就能继续问。`
+  : '')
+/**
+ * 占位文案同样要报失效：值留空（跟随个人默认）而那个默认已经不能用时，
+ * 触发器显示的是占位串——它可能是含供应商 UUID 的原始引用，直接抛给用户看不懂。
+ */
+const displayPlaceholder = computed(() => {
+  const base = props.placeholder || '选择模型'
+  if (!props.issue || (props.modelValue || '').trim()) return base
+  const i = base.indexOf('/')
+  return (i === -1 ? base : base.slice(i + 1)) + ' ' + props.issue
 })
 
 /** 下拉自绘行用：按引用反查所属供应商的图标 / 名称 */
@@ -259,6 +294,26 @@ watch([() => props.modelValue, () => groups.value, () => props.inheritLabel,
    保证品牌图标与文字都一起变淡（antd disabled 已会给底色，这里只补视觉层次） */
 .ms-option-blocked {
   opacity: 0.55;
+}
+/* 已失效的那一项（当前会话/个人默认钉着但已经不能用）：同样压暗，红标说的是原因 */
+.ms-option-dead {
+  opacity: 0.55;
+}
+.ms-issue-flag {
+  flex: none;
+  margin-left: auto;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 17px;
+  color: var(--app-danger-text);
+  background: var(--app-danger-weak);
+  cursor: help;
+}
+/* 触发器进入失效态：文字与占位都提红，扫一眼就知道这一轮发不出去（红标在文案里自带原因） */
+.ms-has-issue :deep(.ant-select-selection-item),
+.ms-has-issue :deep(.ant-select-selection-placeholder) {
+  color: var(--app-danger-text) !important;
 }
 .ms-quota-flag {
   flex: none;

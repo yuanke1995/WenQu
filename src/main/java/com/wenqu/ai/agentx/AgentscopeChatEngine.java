@@ -13,6 +13,11 @@ import com.wenqu.ai.service.ModelRegistryService;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.session.SessionEvent;
+import io.agentscope.core.session.SessionInbox;
+import io.agentscope.core.session.SessionLog;
+import io.agentscope.core.session.SessionProjection;
+import io.agentscope.core.session.SessionRecovery;
+import io.agentscope.core.session.SessionTurns;
 import io.agentscope.core.state.AgentStateStore;
 import io.agentscope.core.state.JsonFileAgentStateStore;
 import io.agentscope.extensions.redis.state.RedisAgentStateStore;
@@ -49,6 +54,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     /** 推荐块里条目长过这个字数就按正文处理（与手写侧 {@code RELATED_PROSE_MIN_CHARS} 同值同理由）。 */
     private static final int RELATED_PROSE_MIN_CHARS = 80;
 
+    /** 本轮提交离队的宽限：投递循环 100ms 一跳，超过这一段还没启动就是被闸门锁住了。 */
+    private static final long LAUNCH_GRACE_MS = 30_000L;
+
     private final ModelRegistryService modelRegistry;
     private final ConfigService configService;
     private final AppProperties properties;
@@ -70,8 +78,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 问渠自己的工具归注册中心，框架挂的那几把归 {@link FrameworkToolLabels}，两处合成一个解析入口。
      */
     private final ToolDisplayNames displayNames;
-    /** 本轮模型引用的解析链（请求覆盖 &gt; 会话固定 &gt; 个人默认），由问答侧按函数传入。 */
-    private final java.util.function.Function<ChatCommand, String> modelResolver;
+    /**
+     * 本轮模型的解析与失效处置（请求覆盖 &gt; 会话固定 &gt; 个人默认，撞上已停用的模型时决定
+     * 清覆盖回落还是 refuse），由问答侧按函数传入。两条运行时必须问同一条链，否则
+     * 「聊天页看着能答、框架那一路解析不出路由」。
+     */
+    private final java.util.function.Function<ChatCommand, com.wenqu.ai.service.ChatService.TurnModel> modelResolver;
     /**
      * 会话状态存储：单副本用框架自带的本地文件实现（落在受管数据目录）；多副本部署时切换到 Redis，
      * 避免「待办/续跑落在别的实例」却读不到 stateStore 而失败。解析一次后缓存，配置不常变。
@@ -90,7 +102,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                                com.wenqu.ai.agent.plan.PlanModeService plan,
                                com.wenqu.ai.service.QaLogService qaLog,
                                com.wenqu.ai.agent.tool.ToolRegistry toolRegistry,
-                               java.util.function.Function<ChatCommand, String> modelResolver) {
+                               java.util.function.Function<ChatCommand, com.wenqu.ai.service.ChatService.TurnModel> modelResolver) {
         this.modelRegistry = modelRegistry;
         this.configService = configService;
         this.properties = properties;
@@ -171,7 +183,14 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     public void chat(ChatCommand cmd, RunChannel channel) {
         // 模型引用按问答侧同一条链解析（请求覆盖 > 会话固定 > 个人默认）：只认请求里那一份时，
         // 靠个人默认作答的轮会解析不出路由（实测是 NPE 打断整轮，连错误帧都没有）
-        String ref = modelResolver.apply(cmd);
+        com.wenqu.ai.service.ChatService.TurnModel turn = modelResolver.apply(cmd);
+        if (turn.unusableMessage() != null) {
+            // 已停用的模型不发给上游：上游只会回一句 401/404，用户读到的是「网关坏了」，
+            // 而不是「你选的这个模型已经不能用了，去这儿改」
+            failLoud(channel, turn.unusableMessage());
+            return;
+        }
+        String ref = turn.ref();
         if (ref == null || ref.isBlank()) {
             failLoud(channel, "未指定模型：请在对话右上角选择模型，或在个人设置中配置默认模型");
             return;
@@ -191,6 +210,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 (cmd.getUserImages() != null && !cmd.getUserImages().isEmpty())
                         || (cmd.getAttachments() != null && !cmd.getAttachments().isEmpty()));
         WenquSourcePool pool = tools.newPool(cmd, channel.emitter());
+        // 本轮改过用户存过的选择（失效的会话模型已清除、改用他的默认模型）必须说出来。
+        // 只登记降级、不再另发一条 WARN：降级随消息落库、刷新后仍在，WARN 是同一句话的第二份，
+        // 两条都会渲染成警示条（实测同一个原因上下各一条）
+        if (turn.fallbackNotice() != null) {
+            pool.registrar().degrade("modelFallback", turn.fallbackNotice());
+        }
         channel.emit(RunEventType.STAGE, "框架引擎（AgentScope）正在回答…");
 
         // 本轮身份（轮级互斥外壳已经登记好 turnId）：待办落库、任务清单留痕、步数预算归零都认它
@@ -198,11 +223,15 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         java.util.concurrent.ConcurrentLinkedQueue<String> spills = new java.util.concurrent.ConcurrentLinkedQueue<>();
         WenquAgentxTools.TurnHooks hooks = tools.newHooks(cmd, ref, () -> turnId, spills,
                 consultService.newLedger());
-        AgentSession session = sessions.open(cmd, route.modelId(),
+        // 实例键用完整引用而不是裸模型名：同一个模型名可以挂在好几个供应商下（各自的 baseUrl 与 Key 不同），
+        // 只按裸名判「模型没换」就不重建实例，于是换了供应商仍拿旧网关旧 Key 跑，且日志上一切正常
+        AgentSession session = sessions.open(cmd, ref,
                 ctx -> buildAgent(cmd, channel, pool, policy, route, hooks));
         // 框架会话实例回填进本轮落点袋：任务清单要写进它的 AgentState（todo_write 的同一份
         // tasksContext），而工具装配发生在建实例之前，所以那时拿不到，只能后填（见 TurnHooks#agentSession）
         hooks.sessionHolder().set(session);
+        // 上一轮只要以失败收场过，这条会话后续每一轮都不会被框架启动：开轮前先把它归档掉
+        reconcileStalledTurn(session, cmd);
         // 工具步数预算按轮归零：实例是常驻的，不归零就是上一轮的步数吃掉这一轮的预算
         AgentxStepBudget stepBudget = sessions.stepBudget(sessions.key(cmd));
         if (stepBudget != null) {
@@ -287,12 +316,19 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         boolean stopped = false;
         // 等待预算用尽：卡片已落终态，收尾时不再对用户说「答完会自动接着跑」
         boolean timedOut = false;
+        // 本轮有没有真的被框架启动。投递循环 100ms 一跳，正常几百毫秒内就离队；被闸门跳过时它会
+        // 永远停在 queued，而「没启动」这件事框架自己不报错——不另设一条早于整轮预算的判据，
+        // 用户看到的就只是「转了五分钟然后说超时」，一个字也没有（真机 sbx-3 三连中）。
+        boolean launched = false;
+        boolean neverLaunched = false;
+        long launchDeadline = startedAt + LAUNCH_GRACE_MS;
 
         // 一整轮里待办可能出好几次：批准之后模型仍可再要一次确认。所以这里不是「等一次答复」，
         // 而是跟随会话现状——有待办就等人，没待办就跟到最后一条任务，任务结算了还要再看一眼
         // 有没有新待办或接续出来的新任务，两者都没有才算这一轮跑完（真机踩过：只等一次就收尾，
         // 第二次确认的卡永远发不出去，正文也是空的）
         while (System.currentTimeMillis() - humanWaitMs < turnDeadline) {
+            if (!launched && current != null && !"queued".equals(current.status())) launched = true;
             cursor = drain(session, cursor, emitFrom, channel, recording);
             announcedRefs = emitRetrieved(cmd, pool, channel, announcedRefs, recording);
             announcePending(session, cmd, channel, announcedApprovals, planAuto, turnId, recording);
@@ -301,6 +337,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 「本轮已停止」的留痕仍由问答侧那套收束逻辑做——不假装能当场掐断工具。
                 session.interrupt();
                 stopped = true;
+                break;
+            }
+            // 只有「确实没人在跑这一条会话」才算没启动：另一线程正驱动它时，本轮排在队列里是正常状态。
+            // current 为 null 是续跑那一跑（不是新提问，手里没有本轮命令），对它没有「启动」可判
+            if (!launched && current != null && System.currentTimeMillis() > launchDeadline
+                    && session.pending().isEmpty() && session.inspect().activeRuns().isEmpty()) {
+                neverLaunched = true;
                 break;
             }
             if (!session.pending().isEmpty()) {
@@ -415,20 +458,31 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             channel.emit(RunEventType.WARN, "有工具在等你确认，答完会自动接着跑（可稍后回来接着看它）");
         }
         sessions.setPlanMode(cmd, false);
-        // 正文取哪一份：优先本轮实际流出来的那一截（与发出去的 token 帧同源）；只有它为空才回退到
-        // 会话里最后一条有正文的助手消息。反过来先查会话会出两件坏事：被叫停的那一跑在 Transcript 里
+        // 正文取哪一份：优先本轮实际流出来的那一截（与发出去的 token 帧同源）；只有它为空、且这一轮
+        // 本身没失败，才回退到会话里最后一条有正文的助手消息。反过来先查会话会出两件坏事：被叫停的那一跑在 Transcript 里
         // 没有 committed text，取到的是<b>上一轮的答复</b>——拿别人的话给这一轮存档；真机踩过停止轮
         // 库里 0 行，就是这个取序的另一面（那一会话恰好只有一轮，所以表现为空而不是串轮）。
         // 流末尾留着没定性的尾巴先归位（它可能只是正文的最后几个字）
         recording.answer(recording.related.finish());
         String answer = recording.answerText();
-        if (answer.isBlank()) answer = lastAssistantText(session);
+        // 失败判据必须排在回填前面：回填不问这一轮是不是失败的那一跑，上游 401 的轮因此会顶着
+        // 「答好了」的样子把上一轮的正文存进历史——真机 2026-10-15 20:00:49 那轮 401，库里多出一条
+        // 597 字助手行、model 记的正是失败那个模型，界面上只收到一个正常 done，失败一个字没提。
+        String failure = runFailure(session, current);
+        if (answer.isBlank() && failure == null) answer = lastAssistantText(session);
         // 框架那一跑本身失败（上游 402 额度、网关异常、运行被拒……）必须说出来的那一件事：双跑实测——
         // 同一问题 legacy 发 error 帧，框架只发了一条「done + 空正文」，用户看到的是「它答了个空」，
         // 而不是「这次没答出来，原因是额度不足」。失败判据用框架自己留的 executionError / 任务终态。
-        if (!stopped && answer.isBlank()) {
-            String failure = runFailure(session, current);
-            if (failure != null) emitRunFailure(pool, channel, failure);
+        if (neverLaunched) {
+            // 单独一句而不是套用「AI 回复失败，请稍后重试」：这一轮模型根本没被调用，重试同样的坑还在，
+            // 得让用户知道该换个动作
+            pool.registrar().degrade("frameworkNotLaunched", "框架引擎本轮未启动执行（提交停在队列里）");
+            channel.emit(RunEventType.ERROR,
+                    "框架引擎本轮没有开始执行（模型未被调用），请重试；反复出现请新建一条会话");
+            log.warn("[FAIL-LOUD] 本轮 submit 始终未被框架启动: session={} turn={} 空等 {}ms",
+                    cmd.getSessionId(), turnId, System.currentTimeMillis() - startedAt);
+        } else if (!stopped && failure != null && answer.isBlank()) {
+            emitRunFailure(pool, channel, failure);
         }
         // 卡片还开着、且没有被判超时：这一轮只是暂时没人跟——用户答了会有新的跟随者把它跑完并落库。
         // 这时候落一条「已中断」就是两件坏事：它说的话是假的（这轮并没有结束），等真正的答案
@@ -474,6 +528,70 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         log.info("[agentx] 本轮失败收束: {} 原文={}", msg, raw.length() > 200 ? raw.substring(0, 200) : raw);
     }
 
+    /**
+     * 归档「以失败收场却没被框架当成结束」的上一轮，否则这条会话从那一刻起每一轮都不会启动。
+     *
+     * <p>框架的投递循环只在上一轮 {@code ended()} 时才 launch 新的 submit，而它的 ended 判据只认
+     * {@code completed}／{@code cancelled}——上游一次 401 留下的 {@code run/end status=failed}
+     * 因此永远不算结束。真机踩过（session=sbx-3，2026-10-15 19:33 那轮 401）：此后同一条会话的每一轮
+     * 都只写进收件箱（{@code inbox/accepted}）而没有一条 {@code inbox/started}，模型请求一次也没发出，
+     * 界面上是「转到 300s 被看门狗截断、正文一个字也没有」，日志里连 {@code PRE_CALL} 都没有。
+     *
+     * <p>只在「那一轮确实不会再动了」时动手：还在跑（activeRuns）、挂着人在回路的待办（pending）、
+     * 或有待对账的工具结果（uncertainToolCalls，框架要求先 reconcile）时一律不碰。
+     */
+    private void reconcileStalledTurn(AgentSession session, ChatCommand cmd) {
+        SessionLog journal = session.log();
+        SessionTurns.Turn latest;
+        SessionProjection view;
+        try {
+            latest = SessionTurns.read(journal).latest();
+            if (latest == null || latest.ended()) return;
+            view = session.inspect();
+        } catch (RuntimeException unreadable) {
+            log.warn("[agentx] 读会话轮次台账失败 session={}: {}", cmd.getSessionId(), unreadable.toString());
+            return;
+        }
+        if (!view.activeRuns().isEmpty() || !view.uncertainToolCalls().isEmpty()
+                || !session.pending().isEmpty()) return;
+        // 先丢弃积压再归档：闸门还关着时投递循环不会 launch，这一步才有竞争安全性。
+        // 反过来先归档，那些旧提交会在几十毫秒内被倒着补跑，正文灌进正在跟的这一轮的气泡里。
+        discardUnstartedSubmits(journal, cmd);
+        try {
+            SessionRecovery.cancelPending(journal, latest.turnId());
+        } catch (RuntimeException refused) {
+            log.warn("[agentx] 遗留轮 {} 归档失败 session={}: {}",
+                    latest.turnId(), cmd.getSessionId(), refused.toString());
+            return;
+        }
+        log.warn("[FAIL-LOUD] 上一轮以 {} 收场未被框架记成结束，已按取消归档（不归档则这条会话之后每轮都不启动）:"
+                + " session={} turn={}", latest.status(), cmd.getSessionId(), latest.turnId());
+    }
+
+    /**
+     * 作废「进了收件箱但从未启动」的旧提问。
+     * <p>它们是上一轮卡住时被判超时的提问，用户侧已经收到过「超时截断」；留着不管，闸门一开就会被补跑，
+     * 后果是几分钟后凭空冒出旧问题的回答。
+     */
+    private void discardUnstartedSubmits(SessionLog journal, ChatCommand cmd) {
+        try {
+            new SessionInbox(journal).locked(tx -> {
+                SessionInbox.Snapshot snapshot = tx.snapshot();
+                Set<String> started = SessionTurns.read(journal).started();
+                for (SessionInbox.Command command : snapshot.commands()) {
+                    if (!"submit".equals(command.kind()) || started.contains(command.id())
+                            || snapshot.rejected().containsKey(command.id())) continue;
+                    tx.reject(command, "上一轮遗留、从未启动，已作废");
+                    log.warn("[FAIL-LOUD] 作废一条从未启动的积压提问 turn={} session={}",
+                            command.turnId(), cmd.getSessionId());
+                }
+                return null;
+            });
+        } catch (RuntimeException failed) {
+            log.warn("[agentx] 积压提问清理失败 session={}: {}", cmd.getSessionId(), failed.toString());
+        }
+    }
+
     /** 重启后续跑的执行线程：单线程串行——同一条会话不该被两轮同时驱动。 */
     private static final java.util.concurrent.ExecutorService RESUME_POOL =
             java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
@@ -500,8 +618,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         if (sessionId == null || sessionId.isBlank()) return null;
         ChatCommand cmd = ChatCommand.builder().sessionId(sessionId).question("")
                 .userId(userId == null || userId.isBlank() ? "guest" : userId).build();
-        String ref = modelResolver.apply(cmd);
-        if (ref == null || ref.isBlank()) return null;
+        com.wenqu.ai.service.ChatService.TurnModel turn = modelResolver.apply(cmd);
+        String ref = turn.usable() ? turn.ref() : "";
+        if (ref.isBlank()) return null;
         ModelRegistryService.ModelRoute route = modelRegistry.chatRoute(ref);
         if (route == null) return null;
         org.springframework.web.servlet.mvc.method.annotation.SseEmitter sink =
@@ -517,7 +636,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 consultService.newLedger());
         AgentSession session;
         try {
-            session = sessions.open(cmd, route.modelId(),
+            session = sessions.open(cmd, ref,
                     ctx -> buildAgent(cmd, channel, pool, policy, route, hooks));
         } catch (Exception e) {
             log.warn("[agentx] 重建会话失败 session={}: {}", sessionId, e.toString());
@@ -614,12 +733,16 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     /**
-     * 本轮墙钟上限（秒）。配 0（默认）＝沿用问答侧那条 SSE 超时：两套运行时共用同一个天花板，
-     * 不让框架再多一层没人知道的限制。
+     * 本轮墙钟上限（秒），恒定取问答侧 SSE 超时：两套运行时共用一个天花板。
+     * <p>框架（AgentScope）对单把工具有自带的 5 分钟硬超时（{@code ExecutionConfig.TOOL_DEFAULTS}，
+     * 不重试），不显式覆盖就会多一道没人知道的天花板——咨询子轮、沙盒长命令都会撞上去
+     * （实测：咨询跑满 5 分钟被判工具失败，父轮只收到一句 Tool execution timeout）。
+     * 工具超时跟着整轮超时走：SSE 调大时长工具不会被框架固定的 5 分钟砍掉。
+     * <p>此前这里是可配项（chat.agentscopeTurnTimeoutSeconds，0=沿用 SSE 超时），默认态两者同值，
+     * 属「框架已有限制、参数只留个默认就用不上的改口」，已取消——需要单独给框架引擎配墙钟的
+     * 场景不存在：整轮超时本来就是唯一该有的天花板。
      */
     private int turnSeconds() {
-        int v = configService.getInt("chat.agentscopeTurnTimeoutSeconds", 0);
-        if (v > 0) return v;
         return Math.max(30, configService.getInt("chat.sseTimeoutMs", 300000) / 1000);
     }
 
@@ -1332,24 +1455,23 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     /**
-     * 压缩配置。框架默认（不配＝50 条消息触发、动态 token 阈值、逐字留最近 20 条）本身就是一条
-     * 会跑的滚动压缩，问渠不再另算一份摘要——两边各算就是两份「已压缩上下文」互相冒充。
-     * <p>{@code chat.agentscopeCompactTriggerMessages}（0＝框架默认）给常规阈值留个口子；
-     * 手动 {@code /compact} 在这一路会话上留过请求时，本次建实例强制「有一条就先压」，
+     * 压缩配置。框架默认（不配＝动态 token 阈值或 50 条消息触发、逐字留最近 20 条、prune 开）
+     * 本身就是一条会跑的滚动压缩，问渠不再另算一份摘要——两边各算就是两份「已压缩上下文」互相冒充。
+     * <p>手动 {@code /compact} 在这一路会话上留过请求时，本次建实例强制「有一条就先压」，
      * 让那次点击真的在下一次提问前把旧对话折进去（框架没有「就地压一次」的入口，压缩长在推理循环前）。
+     * <p>此前框架默认阈值另有可配项（chat.agentscopeCompactTriggerMessages，0＝框架默认），默认态
+     * 与框架默认逐字相同，属「框架已有限制、参数只留个默认就用不上的改口」，已取消。
      */
     private io.agentscope.harness.agent.memory.compaction.CompactionConfig compactionConfig(ChatCommand cmd) {
         String key = sessions.key(cmd);
-        boolean forced = sessions.takeCompactRequest(key);
-        int configured = configService.getInt("chat.agentscopeCompactTriggerMessages", 0);
-        if (!forced && configured <= 0) {
+        if (!sessions.takeCompactRequest(key)) {
             return io.agentscope.harness.agent.memory.compaction.CompactionConfig.builder().build();
         }
         // 强制压缩只应作用「下一次提问」那一个实例：实例按会话常驻，triggerMessages(1) 若不复位会被
         // 这一条会话的后续每一轮继承（每轮都压）。这里标「下次开轮重建」，让下一轮回到默认压缩配置。
-        if (forced) sessions.markRebuildAfterCompact(key);
+        sessions.markRebuildAfterCompact(key);
         return io.agentscope.harness.agent.memory.compaction.CompactionConfig.builder()
-                .triggerMessages(forced ? 1 : configured)
+                .triggerMessages(1)
                 .build();
     }
 
@@ -1466,16 +1588,16 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * {@code TurnSourceRegistry}，前端引用面板不需要为框架引擎写第二套渲染。
      */
     /**
-     * 半程轮的用户可见标注。三种成因必须分开写（与手写侧 {@code TurnState}/{@code TurnRecorder} 同一组口径）：
+     * 半程轮的用户可见标注。三种成因必须分开写（与问渠台账 {@code TurnRecorder} 同一组终态标记口径）：
      * 用户自己按了停止 ≠ 没人答卡等到超时 ≠ 连接断了或被看门狗掐——把后两种写成「已停止本轮」是在怪用户。
      * <p>措辞按卡种分：卡是提问还是审批，决定超时这件事该说成「你有机会答但没答」还是「闸门没被放行」。
      * 提问卡超时后这一轮本来就不该走到这里（走的是「按未作答继续」那条），所以这里出现的多半是
      * 计划卡或审批卡——用「确认」统称即可，不必替用户猜是哪一种。
      */
     private static String interruptMarker(boolean stopped, boolean timedOut) {
-        if (stopped) return com.wenqu.ai.agent.chat.TurnState.STOP_SUFFIX.trim();
+        if (stopped) return com.wenqu.ai.agent.chat.TurnRecorder.STOP_SUFFIX.trim();
         if (timedOut) return "\n\n> ⏹ 等待确认超时，这一轮没有继续执行";
-        return com.wenqu.ai.agent.chat.TurnState.TRUNCATION_SUFFIX;
+        return com.wenqu.ai.agent.chat.TurnRecorder.TRUNCATION_SUFFIX;
     }
 
     private void finish(ChatCommand cmd, RunChannel channel, WenquSourcePool pool,

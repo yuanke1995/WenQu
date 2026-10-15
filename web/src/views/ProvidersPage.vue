@@ -445,6 +445,11 @@
               <a-button v-if="refJumpOf(r)" size="small" class="pv-ref-go" @click="jumpRef(r)">
                 去修改
               </a-button>
+              <!-- 历史会话这一类没有管理页可跳，但能一次清干净：给按钮而不是只留一句「进每条会话里切」 -->
+              <a-button v-else-if="r.kind === 'session' && refsData.sessionOverrideCount"
+                        size="small" class="pv-ref-go" :loading="clearing" @click="clearSessionModels">
+                清除这 {{ refsData.sessionOverrideCount }} 条会话的选择
+              </a-button>
               <span v-else class="pv-ref-note">{{ refNoteOf(r) }}</span>
             </div>
           </div>
@@ -466,7 +471,8 @@ import { refreshSetupGuide } from '../utils/setupGuide'
 import {
 listProviders, createProvider, updateProvider, setProviderEnabled, deleteProvider,
   listProviderModels, saveProviderModels, fetchProviderModels, testProvider,
-  batchDeleteProviders, batchSetProvidersEnabled, listProviderReferences
+  batchDeleteProviders, batchSetProvidersEnabled, listProviderReferences,
+  clearProviderSessionModels
 } from '../api'
 
 const route = useRoute()
@@ -538,12 +544,33 @@ const jumpRef = r => {
  * 两者必须对得上，否则会出现「按钮给得出去、跳过去却是灰框」。
  */
 const refNoteOf = r => {
-  if (r.kind === 'session') return '进该会话切一次模型即可覆盖'
+  if (r.kind === 'session') return '逐条进该会话切一次模型即可覆盖；点右侧按钮可一次清干净'
   if (r.kind === 'userDefault' || r.kind === 'userConfig') {
     return r.id && r.id !== me.value ? `属 ${r.name} 的个人设置，需其本人修改` : '无管理入口'
   }
   if (r.kind === 'configSlot') return '请到系统设置对应项修改'
   return '无管理入口'
+}
+
+// ---- 一次清除历史会话里指向本供应商的模型选择 ----
+// 为什么给它一个按钮：停用供应商或把模型移出列表，都不会让历史会话里钉着的那串值自己消失。
+// 用户改完这里能看见的所有引用，回到聊天页仍会被那句「模型已停用」挡住，而且一条条会话点过去才清得掉。
+const clearing = ref(false)
+const clearSessionModels = async () => {
+  const p = refsProvider.value
+  if (!p) return
+  clearing.value = true
+  try {
+    const r = await clearProviderSessionModels(p.id)
+    const n = (r && r.data && r.data.cleared) || 0
+    message.success(n ? `已清除 ${n} 条会话的模型选择，它们回到跟随各自的默认模型` : '没有会话还在用这个供应商的模型')
+    // 清完重查一次清单：那条「历史会话」应当消失。不重查用户读成「点了没生效」
+    await openRefs(p)
+  } catch (e) {
+    message.error(`清除失败：${e?.message || '请稍后重试'}`)
+  } finally {
+    clearing.value = false
+  }
 }
 
 // 当前登录人 uid（归属提示只用它判断「这是不是别人的供应商」）

@@ -1017,6 +1017,7 @@
                    档位点选即时写入按模型 localStorage 记忆；对生效模型下一轮发送立即生效，
                    对其它模型则先记住、选中该模型时生效 -->
               <ModelSelect v-model="currentOverrideModel" type="chat" pill allow-clear
+                           :issue="effectiveModelIssue"
                            :placeholder="effectiveModelLabel || '选择模型'"
                            :compact="isNarrow"
                            :width="190"
@@ -3015,7 +3016,7 @@ const {
   currentSessionId, loading, messages, currentSessionTitle, roundCount,
   // 模型
   currentOverrideModel, modelIndex, effectiveModel, effectiveModelLabel, effectiveModelIcon,
-  effectiveModelProvider, debugEntryVisible, debugDisplayVisible,
+  effectiveModelProvider, debugEntryVisible, debugDisplayVisible, effectiveModelIssue,
   // 空态示例问题（配置驱动：个人覆盖 > 系统全局，可关可自定义）
   sampleQuestions,
   // 检索 / 用量 / 来源

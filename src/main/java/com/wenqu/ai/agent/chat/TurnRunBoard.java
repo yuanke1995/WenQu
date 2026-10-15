@@ -12,7 +12,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * 本轮沙盒脚本的<b>运行面板</b>（P3b；P6 刀 0 第二步自 {@link TurnState} 的平铺字段下沉，
+ * 本轮沙盒脚本的<b>运行面板</b>（P3b；P6 刀 0 第二步从手写运行时的平铺字段下沉，
  * 行为与簿记本体在 {@code agent/runcode/RunCodeSubCallRuntime}）。
  *
  * <p><b>作用域是一次运行，不是本轮</b>：{@code RunCodeSubCallRuntime#startRunBoard} 在每次 run_code
@@ -20,7 +20,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * 之所以仍然挂在轮上而不是每次新建：面板 ticker、子调用线程与终态卡片都要在<b>没有共同闭包</b>的
  * 三个位置之间交接同一个计数袋，按轮存一处比传三份对象更接近"谁都能看见同一份"。
  *
- * <p>刻意不各开顶层工具卡、也不进 {@code TurnState#toolCalls}：那是"模型自己做的操作"的清单，
+ * <p>刻意不各开顶层工具卡、也不进模型直调的工具卡清单：那是"模型自己做的操作"的清单，
  * 一段脚本扇出的几十次调用混进去会把过程区刷成一堵墙，也让人看不出它们属于同一次运行。
  *
  * @author yuanke

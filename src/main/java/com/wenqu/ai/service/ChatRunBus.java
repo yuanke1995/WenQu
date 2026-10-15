@@ -32,7 +32,7 @@ import java.util.function.Supplier;
  * （中止走 ChatService 既有的半程截断落库路径，落库结果与今天「断开即停」完全一致）。
  * 迟到的观众先拿一份<b>权威快照</b>（正文/过程独白/工具卡片/时间线/清单……），此后只收快照之后的增量。
  *
- * <p>为什么不缓冲逐字增量：正文本身已经在 {@link com.wenqu.ai.agent.chat.TurnState#fullResponse} 这类权威缓冲里，
+ * <p>为什么不缓冲逐字增量：正文的权威缓冲在运行时自己手里（框架引擎是 AgentScope 的会话状态），
  * 总线再存一份等于同一串字存两遍，而快照取缓冲比回放上千条 token 事件快得多。
  * 快照与增量的接缝靠「事件序号 + 文本增量的绝对下标 pos」收口：接流时在锁内同时取快照并登记订阅者，
  * 序号不大于快照时刻的事件不再发给它；「正文已进缓冲、事件号还没推进」那唯一一条可能重复的增量
@@ -40,8 +40,8 @@ import java.util.function.Supplier;
  *
  * <p>刻意保留的边界：
  * <ul>
- *   <li><b>人在回路的等待不受宽限约束</b>——挂在提问卡/计划卡/审批上的轮，关掉页面本来就一直在等人
- *       （见 {@link com.wenqu.ai.agent.chat.TurnState#keepRunningWithoutChannel()}），宽限不许把它掐了：那是对用户承诺过的行为；</li>
+ *   <li><b>人在回路的等待不受宽限约束</b>——挂在提问卡/计划卡/审批上的轮，关掉页面本来就一直在等人，
+ *       宽限不许把它掐了：那是对用户承诺过的行为（判据在框架会话侧的挂起态，见 {@code FrameworkSessions}）；</li>
  *   <li><b>只在内存</b>：进程重启后轮已经没了，此时接流方拿 {@code running:false}，按历史落库回显（与今天一致）；</li>
  *   <li>游客分享会话与工作流/定时任务的收集型通道（{@code CollectingSseEmitter}）不登记总线；</li>
  *   <li>开关 {@code chat.resumeEnabled} 关掉后一条事件都不接，行为回到「断开即中止、刷新看不到在跑的轮」。</li>

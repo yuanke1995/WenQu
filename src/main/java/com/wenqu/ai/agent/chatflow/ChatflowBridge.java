@@ -181,7 +181,7 @@ public class ChatflowBridge {
                 donePayload.put("delegatedAgentName", delegatedAgent.getName() == null ? "" : delegatedAgent.getName());
             }
             // 没赶上的插话同样交回前端（本分支没有流状态，把手还在就直接取）
-            runtime.attachLeftoverSteers(donePayload, null, sessionId);
+            runtime.attachLeftoverSteers(donePayload, sessionId);
             runtime.sendSseEvent(emitter, "done", JSON.toJSONString(donePayload), sessionId);
             runtime.completeEmitter(emitter);
             // 记忆提取：工作流节点用的是自己的模型，这里按「用户个人默认聊天模型」提取长期记忆

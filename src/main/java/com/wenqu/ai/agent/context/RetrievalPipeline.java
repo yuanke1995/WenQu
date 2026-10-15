@@ -3,7 +3,7 @@ package com.wenqu.ai.agent.context;
 // [保留] 问渠检索 / 上下文个性化 —— 框架引擎与共享服务仍依赖，勿删。
 
 import com.alibaba.fastjson2.JSON;
-import com.wenqu.ai.agent.chat.TurnState;
+import com.wenqu.ai.agent.chat.TurnSourceRegistry;
 import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.mapper.KnowledgeMapper;
 import com.wenqu.ai.model.Knowledge;
@@ -315,7 +315,7 @@ public class RetrievalPipeline {
             // 避免"先输出后剔除"导致图闪一下再消失；图片仍留在 sources.images 供引用弹窗查看。
             boolean imgPrefilter = retrievalQuery != null && retrievalQuery.length() >= 2;
             int imgIdxForChunk = 0;
-            Matcher matcher = TurnState.IMG_PLACEHOLDER_PATTERN.matcher(text);
+            Matcher matcher = TurnSourceRegistry.IMG_PLACEHOLDER_PATTERN.matcher(text);
             StringBuffer sb = new StringBuffer();
             while (matcher.find()) {
                 if (imgIdxForChunk < urls.size()) {
@@ -358,7 +358,7 @@ public class RetrievalPipeline {
                 // 片段截取会丢掉窗口外的 [图片N：描述] 占位 → LLM 看不到图、漏配图。
                 // 把片段里没有的图片占位（描述截断到 60 字符）追加到片段末尾，保证 LLM 有完整配图依据
                 List<String> cutImgs = new ArrayList<>();
-                Matcher im = TurnState.IMG_NUMBER_PATTERN.matcher(fullTextForImg);
+                Matcher im = TurnSourceRegistry.IMG_NUMBER_PATTERN.matcher(fullTextForImg);
                 while (im.find()) {
                     String g = im.group();
                     if (!text.contains(g)) {

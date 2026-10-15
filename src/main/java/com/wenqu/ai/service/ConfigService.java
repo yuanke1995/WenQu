@@ -259,10 +259,15 @@ public class ConfigService {
         // 手写 legacy 与 ab 灰度分流已下线；框架会话状态目录：AgentScope 默认写 ~/.agentscope/state/**，
         // 在问渠受管数据目录之外（容器里等于丢）
         d.put("chat.agentscopeStateDir", System.getProperty("user.dir") + "/user-data/agentscope");
-        d.put("chat.agentscopeTurnTimeoutSeconds", "0");   // 框架引擎单轮墙钟上限；0=沿用 chat.sseTimeoutMs
-        d.put("chat.agentscopeMaxIters", "12");            // 框架引擎单轮推理步数上限（ReAct 循环）
+        d.put("chat.agentscopeMaxIters", "12");            // 框架引擎单轮推理步数上限（ReAct 循环；框架默认 10，问渠显式 12）
         // 框架侧上下文预算（token）：0=用框架默认；用户在这一轮显式选过的窗口优先于它
         d.put("chat.agentscopeMaxContextTokens", "0");
+        // chat.agentscopeTurnTimeoutSeconds 已取消（2026-10）：框架对单把工具有自带 5 分钟硬超时，
+        // 此前用该键覆盖成 SSE 超时，默认 0=沿用 SSE 超时——框架已有限制、参数只留个默认就用不上，
+        // 现由 AgentscopeChatEngine.turnSeconds() 恒定取 chat.sseTimeoutMs，不再留配置口
+        // chat.agentscopeCompactTriggerMessages 已取消（2026-10）：框架默认（动态 token 阈值或
+        // 50 条消息触发、逐字留最近 20 条）本身就是会跑的滚动压缩，默认态与框架默认逐字相同，
+        // 现 compactionConfig() 只保留手动 /compact 的强制压缩路径
         d.put("tool.spillEnabled", "true");                 // 工具大输出外溢留存（截断即丢 → 预览+可回读）
         d.put("tool.spillMaxMbPerUser", "200");             // 每人留存原文的磁盘配额(MB)，0=不限量；超出按落盘时间淘汰最旧几份
         // 留存的两条治理参数都要进 defaults()：snapshot() 只回显这里登记过的键，

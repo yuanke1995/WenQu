@@ -32,7 +32,7 @@ public class AgentxConfiguration {
                                com.wenqu.ai.service.ChatService chatService) {
         AgentscopeChatEngine engine = new AgentscopeChatEngine(modelRegistry, configService, properties, tools,
                 sessions, sessionService, keywordExtractor, artifactService, consultService, citations, plan,
-                qaLog, toolRegistry, chatService::modelRefFor);
+                qaLog, toolRegistry, chatService::resolveTurnModel);
         factory.bindFramework(engine);
         // 重启后的待办由引擎接回：表里有归属、框架状态在 stateStore 里，续跑是做得到的事，
         // 不该回一句「已批准」然后什么都不发生

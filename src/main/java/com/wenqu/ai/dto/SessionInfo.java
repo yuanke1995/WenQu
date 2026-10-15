@@ -34,4 +34,7 @@ public class SessionInfo {
     private String agentName;
     @Schema(description = "会话级模型覆盖（聊天页切换过模型才有值，引用或遗留名；空=跟随个人默认）。前端据此恢复该会话的模型选择")
     private String model;
+    @Schema(description = "上面这个模型已经不能用了的原因（一句话文案；能用或未设置时为空）。"
+            + "界面据此把选择器标成失效态，而不是等回答时撞上上游报错")
+    private String modelIssue;
 }

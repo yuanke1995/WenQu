@@ -31,8 +31,6 @@ public final class TurnDeadline {
     /** 只截断一次：到点后并发 tick 不重复发 warn/complete */
     public final AtomicBoolean fired = new AtomicBoolean();
     public volatile ScheduledFuture<?> watchdog;
-    /** 本轮流式状态（{@link TurnState} 构造时挂入）：到点停流与半程正文截断落库用；工作流轮为 null */
-    public volatile TurnState state;
 
     public TurnDeadline(long budgetMs) {
         this.budgetMs = budgetMs;
@@ -56,12 +54,5 @@ public final class TurnDeadline {
         long b = waitBegin;
         if (b > 0) w += System.currentTimeMillis() - b;
         return System.currentTimeMillis() - startMs - w;
-    }
-
-    /** 通道断开时台账要不要留着续跑：本轮正等用户作答，或已转后台续跑且尚未落库收尾 */
-    public boolean holdsForDetachedTurn() {
-        TurnState s = state;
-        if (s == null) return false;
-        return s.askWaits.get() > 0 || s.planWaits.get() > 0 || (s.channel.detached && !s.settled());
     }
 }

@@ -13,7 +13,7 @@ import java.util.Map;
  * 现在完全绕过守卫的旁路（{@code WorkflowEngine.mcpBody}/{@code skillBody}）会永远接不上来。
  * 本接口只声明工具执行层真正需要的十余件事，其余本轮状态留在问答侧自己管。
  * <p>
- * 生命周期：一轮一个。实现方（当前的 {@link com.wenqu.ai.agent.chat.TurnState}）不许把它存进静态字段
+ * 生命周期：一轮一个。实现方（框架侧由 {@code WenquAgentxTools} 按轮建）不许把它存进静态字段
  * 或跨轮复用——这一条正是本次迁移要修掉的老写法。
  *
  * @author yuanke

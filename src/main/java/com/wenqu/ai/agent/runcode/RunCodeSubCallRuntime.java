@@ -3,7 +3,6 @@ package com.wenqu.ai.agent.runcode;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
-import com.wenqu.ai.agent.chat.TurnState;
 import com.wenqu.ai.agent.tool.ToolEnrichment;
 import com.wenqu.ai.agent.tool.ToolFamily;
 import com.wenqu.ai.agent.tool.ToolInvocation;
@@ -68,14 +67,8 @@ public class RunCodeSubCallRuntime {
      * 要解决的问题本身。所以这条管线与本轮同源，只换预算那一项（{@code maxToolSteps}/{@code takeStep}
      * 走本轮的子调用计数，上限是 {@code tool.runcode.maxSubCalls}）。
      */
-    public void prepareSubCallPipeline(TurnState st,
-                                       java.util.List<org.springframework.ai.tool.ToolCallback> rawTools,
-                                       ToolTurnContext turnCtx) {
-        prepareSubCallPipeline(RunCodeTurn.ofTurnState(st, turnCtx), rawTools);
-    }
-
     /**
-     * 同上，但认的是「这一轮」的抽象（{@link RunCodeTurn}）——手写侧与框架侧共用这一条子调用管线。
+     * 同上，但认的是「这一轮」的抽象（{@link RunCodeTurn}）——运行时共用这一条子调用管线。
      */
     public void prepareSubCallPipeline(RunCodeTurn turn,
                                        java.util.List<org.springframework.ai.tool.ToolCallback> rawTools) {
@@ -104,7 +97,7 @@ public class RunCodeSubCallRuntime {
             log.info("[P3B] 本轮挂了 run_code 但没有可子调用的工具，脚本只能用 Python 自己算");
             return;
         }
-        // 清单就地重建（ofTurnState 已把它与 turn.subCallTools() 绑成同一张表，这里不换引用）
+        // 清单就地重建（ofFramework 已把它与 turn.subCallTools() 绑成同一张表，这里不换引用）
         turn.subCallTools().clear();
         for (org.springframework.ai.tool.ToolCallback cb : toolPipeline.wrap(subRaw, subCallTurnContext(turn))) {
             String n = cb.getToolDefinition() == null ? null : cb.getToolDefinition().name();
@@ -115,11 +108,6 @@ public class RunCodeSubCallRuntime {
     }
 
     /** 本轮 run_code 的子调用入口（按轮回传；容器侧只看到一次 HTTP 回调） */
-    public com.wenqu.ai.agent.runcode.RunCodeBridge runCodeBridge(TurnState st) {
-        return runCodeBridge(RunCodeTurn.ofTurnState(st, null));
-    }
-
-    /** 同上，认「这一轮」的抽象：框架引擎用它就能挂同一套子调用回程。 */
     public com.wenqu.ai.agent.runcode.RunCodeBridge runCodeBridge(RunCodeTurn turn) {
         return new com.wenqu.ai.agent.runcode.RunCodeBridge() {
             @Override
@@ -355,7 +343,7 @@ public class RunCodeSubCallRuntime {
     /** 面板刷新间隔：1s 一跳，与卡片上那份实时耗时同拍，扇出再密也不会把通道刷成洪水 */
     private static final long RUN_PROGRESS_INTERVAL_MS = 1000L;
 
-    /** 记录一条工具状态：实时 SSE tool_status 事件（短摘要）+ TurnState.toolCalls 累积（全文，done 汇总与持久化用） */
+    /** 记录一条工具状态：实时 SSE tool_status 事件（短摘要）+ 本轮扇出清单累积（全文，done 汇总与持久化用） */
     /**
      * 记一条脚本子调用进 run_code 卡片的扇出清单（P3b 过程下钻）。
      * <p>摘要取结果首行/失败原因前 80 字：够看出这一支在查什么、有没有被挡下，又不至于把卡片变成第二个输出区。
@@ -386,10 +374,6 @@ public class RunCodeSubCallRuntime {
      * <p>刻意<b>不</b>复位 {@code subCallCount}：那是守卫按轮扣的预算，换一段脚本不会让额度回来，
      * 面板上把它如实标成「本轮额度」。
      */
-    public void startRunBoard(TurnState st) {
-        startRunBoard(RunCodeTurn.ofTurnState(st, null));
-    }
-
     public void startRunBoard(RunCodeTurn turn) {
         turn.board().subCallLog.clear();
         turn.board().subCallRunning.clear();
@@ -415,10 +399,6 @@ public class RunCodeSubCallRuntime {
     }
 
     /** 停掉本段脚本的面板 ticker（终态、自停、整轮收尾三条路都走这里，句柄只有一份） */
-    public static void stopRunBoardTicker(TurnState st) {
-        stopRunBoardTicker(RunCodeTurn.ofTurnState(st, null));
-    }
-
     public static void stopRunBoardTicker(RunCodeTurn turn) {
         java.util.concurrent.ScheduledFuture<?> f = turn.board().runProgress;
         if (f != null) {
@@ -451,10 +431,6 @@ public class RunCodeSubCallRuntime {
      *
      * @param live 实时帧额外带上在途那几条（它们还没有结果可摘要），终态那份只给已完成的
      */
-    public Map<String, Object> buildFanOut(TurnState st, boolean live) {
-        return buildFanOut(RunCodeTurn.ofTurnState(st, null), live);
-    }
-
     public Map<String, Object> buildFanOut(RunCodeTurn turn, boolean live) {
         List<Map<String, Object>> done = new ArrayList<>();
         int delivered = 0;

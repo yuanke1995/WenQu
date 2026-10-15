@@ -30,7 +30,7 @@ import java.util.stream.Collectors;
 
 /**
  * 本轮的<b>引用池</b>：一条编号空间（[1..N]）+ 与之绑定的来源清单、图片编号与注册入口
- * （P6 刀 0 第二步自 {@link TurnState} 的平铺字段与注册方法下沉；刀 5 以此为
+ * （P6 刀 0 第二步自手写运行时 {@code TurnState} 的平铺字段与注册方法下沉；刀 5 以此为
  * {@code TurnSourceRegistry} 的收编对象）。
  *
  * <p><b>为什么这一族必须是一个对象而不是一袋字段</b>：库内命中、精确检索工具的结果、联网搜索结果、
@@ -48,16 +48,24 @@ import java.util.stream.Collectors;
  *   <li>只有结果文本<b>显式给出 URL</b> 的 MCP 内容才可溯源——伪造来源比没有来源更糟。</li>
  * </ul>
  *
- * <p>{@link WebSearchTools.WebSearchSink} 由本类实现（原先在 {@link TurnState} 上）：
+ * <p>{@link WebSearchTools.WebSearchSink} 由本类实现（原先在手写运行时的状态袋上）：
  * 工具经 {@code ToolContext} 拿到的是"本轮的引用注册器/配额计"，不是整个状态袋。
  * <p>刀 5a 把依赖面也收窄了：池只吃配置/重排/图片签名三件无状态服务加一个投递出口，
- * 不再借 {@code TurnState.Deps} 拿运行时动作——于是那条 Deps 只剩「本轮还要不要继续跑」与
- * 「半程正文怎么落」两件事，那才是它名字该有的意思。
+ * 不再借本轮状态袋的 Deps 拿运行时动作——方向保持池→运行时单向。
  *
  * @author yuanke
  */
 @Slf4j
 public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
+
+    /** 入库原文里的图片占位：[图片] 或 [图片：描述]（尚未编号；填充上下文时替换成编号形态） */
+    public static final Pattern IMG_PLACEHOLDER_PATTERN = Pattern.compile("\\[图片(：.*?)?\\]");
+
+    /**
+     * 已编号的图片标记：[图片N] 或 [图片N：描述]。上下文填充与终态越界校验都认这一个语法（单源）——
+     * 与引用编号 [N] 是两套空间，共用一个类是因为图片编号本来就在引用池里（imgIndex）。
+     */
+    public static final Pattern IMG_NUMBER_PATTERN = Pattern.compile("\\[图片\\d+[^\\]]*\\]");
 
     private final ConfigService configService;
     private final RerankService rerankService;
@@ -337,7 +345,7 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
         List<String> urls = h.images();
         String[] descs = new String[urls == null ? 0 : urls.size()];
         String content = h.content() == null ? "" : h.content();
-        Matcher pm = TurnState.IMG_PLACEHOLDER_PATTERN.matcher(content);
+        Matcher pm = IMG_PLACEHOLDER_PATTERN.matcher(content);
         int di = 0;
         while (pm.find() && di < descs.length) {
             String raw = pm.group();

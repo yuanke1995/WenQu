@@ -75,6 +75,8 @@ public class SessionService {
     private final MessageMapper messageMapper;
     private final SessionShareMapper sessionShareMapper;
     private final TransactionTemplate transactionTemplate;
+    /** 会话级模型覆盖的可用的判定（这一列存的是一个模型引用，存进去之后供应商可能被停用、模型可能被移除） */
+    private final ModelRegistryService modelRegistryService;
 
     /**
      * 创建新会话（MySQL + Redis）
@@ -112,8 +114,10 @@ public class SessionService {
     /**
      * 「新建对话」入口：先复用当前用户已存在的空会话（无消息、未绑定智能体、未置顶），没有才真正新建。
      * <p>
-     * 空会话数量恒定为 1（前端侧栏本就隐藏空会话，堆积的空会话不出现在界面上，只会在游标分页里
+     * 空会话不再新增（前端侧栏本就隐藏空会话，堆积的空会话不出现在界面上，只会在游标分页里
      * 挤占真实会话的名额——首屏 20 条里大半是空会话时，侧栏首屏看起来就只剩几条）。
+     * <b>注意「恒定为 1」只对新增这一侧成立</b>：规则上线前与各类探针留下的存量空行仍在表里，
+     * 会被新对话逐条领走，所以领走时要顺手洗掉其上已失效的模型（见下方复用处）。
      * 复用条件与前端 useChatEngine 的本地复用口径一致：未绑定智能体的空会话才复用（已绑定的带着
      * 自己的绑定，复用会让「切换智能体」看起来没生效）。定时任务 / 工作流 / MCP 建会话走
      * createSession，不参与复用——它们的会话有各自语义，不该占用用户待用的空会话。
@@ -139,7 +143,18 @@ public class SessionService {
         }
         try {
             Session empty = findEmptySession(uid);
-            return empty != null ? empty.getId() : createSession(uid);
+            if (empty == null) return createSession(uid);
+            // 领走之前洗一次：空行上存的模型是这条行上一辈子（或探针）留下的，这个新对话用户还没开始，
+            // 留着就会让他第一问就收到一条「已清除你上次选的东西」。只洗不能用的——能用的那份是
+            // 用户在开聊前主动选好的，必须原样带过去
+            String stale = empty.getModel();
+            if (stale != null && !stale.isBlank()
+                    && !modelRegistryService.referenceUsability(stale, uid, null).usable()) {
+                sessionMapper.update(null, new LambdaUpdateWrapper<Session>()
+                        .eq(Session::getId, empty.getId())
+                        .set(Session::getModel, null));
+            }
+            return empty.getId();
         } finally {
             if (Boolean.TRUE.equals(locked)) {
                 try {
@@ -371,6 +386,21 @@ public class SessionService {
             info.setAgentName(s.getAgentName() == null ? "" : s.getAgentName());
         }
         info.setModel(s.getModel() == null ? "" : s.getModel());
+        // 这一列存的是某次点选留下的引用，而它随时可能变成不能用（供应商停用、模型被移除）：
+        // 判不出来就只能等回答时撞上游报错，用户读到的是「网关坏了」而不是「你选的这个模型没了」。
+        // 反过来，还没有消息的行（「新建对话」会复用空行）上的失效值是历史脏值，不是这个对话的选择——
+        // 报出来会让用户以为自己对一个新对话做过什么决定
+        if (s.getModel() != null && !s.getModel().isBlank()) {
+            var u = modelRegistryService.referenceUsability(s.getModel(), null, null, false);
+            if (u.usable()) {
+                info.setModelIssue("");
+            } else if (s.getMessageCount() == null || s.getMessageCount() <= 0) {
+                info.setModel("");
+                info.setModelIssue("");
+            } else {
+                info.setModelIssue(modelRegistryService.issueText(u.issue()));
+            }
+        }
         return info;
     }
 
@@ -1161,19 +1191,65 @@ public class SessionService {
                 .set(Session::getModel, m.isEmpty() ? null : m));
     }
 
+    /** 本人会话里仍钉着该供应商的模型覆盖条数（供应商管理界面「谁还在用」的那一项） */
+    public int countModelOverridesOf(String userId, String providerId) {
+        if (providerId == null || providerId.isBlank()) return 0;
+        return Math.toIntExact(sessionMapper.selectCount(new LambdaQueryWrapper<Session>()
+                .eq(Session::getUserId, normalizeUser(userId))
+                .likeRight(Session::getModel, providerId.trim() + "/")));
+    }
+
+    /**
+     * 清除会话级模型覆盖中指向某个供应商的那些条（只动本人的会话——这一列只归本人改）。
+     * <p>为什么需要：停用供应商或把模型从模型列表里移除，都不会让历史会话里钉着的那串引用自己消失，
+     * 于是每一轮都要拿坏引用去打上游（真机 sbx-3：停用后连续几轮 401）。问答侧会在撞上时清掉当前这一条，
+     * 这里给的是「一次清干净」的入口，配合供应商管理界面的引用清单用。
+     *
+     * @return 清掉的条数
+     */
+    public int clearModelOverridesOf(String userId, String providerId) {
+        int count = countModelOverridesOf(userId, providerId);
+        if (count == 0) return 0;
+        sessionMapper.update(null, new LambdaUpdateWrapper<Session>()
+                .eq(Session::getUserId, normalizeUser(userId))
+                .likeRight(Session::getModel, providerId.trim() + "/")
+                .set(Session::getModel, null));
+        return count;
+    }
+
     /**
      * 读取会话已存的模型覆盖（聊天轮请求未显式携带时的回落依据）。无覆盖/会话不存在/查询失败返回空串。
      */
     public String sessionModelOf(String sessionId) {
+        return sessionPinOf(sessionId).model();
+    }
+
+    /**
+     * @param model  已存的模型覆盖（空串=没有）
+     * @param empty  这条会话还没有任何消息
+     */
+    public record SessionPin(String model, boolean empty) {
+    }
+
+    /**
+     * 会话覆盖 + 「这条会话还是不是空的」。
+     * <p>空会话这一维是给失效判定用的：「新建对话」会复用一条还没消息的行（前端 createNewSession 的
+     * emptySid 分支），这种行上可能带着它上一辈子留下的、如今已经停用的模型。用户在这个新对话里
+     * 什么都没选过，所以既不该在胶囊上报红，也不该在回答前被告知「清除了你上次选的东西」。
+     * 可选的模型不会走到这一步——能选的一定可用，空会话上存着不可用的值只可能是历史脏值。
+     */
+    public SessionPin sessionPinOf(String sessionId) {
         try {
             Session s = sessionMapper.selectOne(new LambdaQueryWrapper<Session>()
                     .eq(Session::getId, sessionId)
-                    .select(Session::getModel)
+                    .select(Session::getModel, Session::getMessageCount)
                     .last("LIMIT 1"));
-            return s == null || s.getModel() == null ? "" : s.getModel();
+            if (s == null) return new SessionPin("", true);
+            return new SessionPin(s.getModel() == null ? "" : s.getModel(),
+                    s.getMessageCount() == null || s.getMessageCount() <= 0);
         } catch (Exception e) {
             log.warn("读取会话模型覆盖失败 (session={}): {}", sessionId, e.getMessage());
-            return "";
+            return new SessionPin("", true);
         }
     }
 

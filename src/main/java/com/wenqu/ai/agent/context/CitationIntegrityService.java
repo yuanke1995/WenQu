@@ -3,7 +3,7 @@ package com.wenqu.ai.agent.context;
 // [保留] 问渠检索 / 上下文个性化 —— 框架引擎与共享服务仍依赖，勿删。
 
 import com.wenqu.ai.agent.chat.ChatRunRuntime;
-import com.wenqu.ai.agent.chat.TurnState;
+import com.wenqu.ai.agent.chat.TurnSourceRegistry;
 import com.wenqu.ai.config.AppProperties;
 import com.wenqu.ai.service.ConfigService;
 import com.wenqu.ai.service.ImageFilterService;
@@ -76,9 +76,8 @@ public class CitationIntegrityService {
 
     /**
      * 本轮引用完整性所需的最小状态。
-     * <p>刻意不认 {@code TurnState}：并列的第二套运行时（AgentScope 框架引擎）没有那份状态袋，
-     * 而这套校验（悬空角标剔除、未标注 fail-loud、语义一致性自检）是<b>答案质量防线</b>，
-     * 不该因为运行时换了就缺席。留一个只认 TurnState 的转发口，手写侧调用点一行不动。
+     * <p>刻意不认运行时的状态袋：这套校验（悬空角标剔除、未标注 fail-loud、语义一致性自检）是
+     * <b>答案质量防线</b>，不该因为运行时换了就缺席——两条运行时各自按自己的结构搬一份 {@link Ctx} 进来。
      *
      * @param sources 本轮引用池（活引用：语义自检会重编它，调用方按返回的 Outcome 回写）
      */
@@ -86,13 +85,6 @@ public class CitationIntegrityService {
                       List<Map<String, Object>> sources, Map<Integer, String> imgIndex,
                       Map<Integer, String> imgDescIndex, List<Map<String, String>> degradations,
                       Set<String> degradedCodes, Map<String, Long> stageMs, long startTime) {
-    }
-
-    /** 手写运行时的本轮状态 → {@link Ctx}（只做搬运，判据与语义都在 {@link #check(String, Ctx)} 里）。 */
-    public Outcome check(String answer, TurnState st) {
-        return check(answer, new Ctx(st.sessionId, st.userId, st.question, st.model,
-                st.refs.sources, st.refs.imgIndex, st.refs.imgDescIndex,
-                st.degradations, st.degradedCodes, st.channel.stageMs, st.channel.startTime));
     }
 
     /**
@@ -155,7 +147,7 @@ public class CitationIntegrityService {
         //    工具模式下模型手里没有编号图片（工具返回文本不带编号、images 为空），却可能按「尽量配图」
         //    规则编造 [图片N]，前端 images[N-1] 映射不到就把字面 [图片N] 原样显示在回答里。剔除 + fail-loud。
         int maxImg = ctx.imgIndex().size();
-        Matcher im = TurnState.IMG_NUMBER_PATTERN.matcher(answer);
+        Matcher im = TurnSourceRegistry.IMG_NUMBER_PATTERN.matcher(answer);
         StringBuilder imgSb = new StringBuilder();
         int bogusImgs = 0;
         while (im.find()) {

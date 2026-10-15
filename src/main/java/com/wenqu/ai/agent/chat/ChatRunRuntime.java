@@ -3,8 +3,6 @@ package com.wenqu.ai.agent.chat;
 // [保留] 问渠轮次台账 / 个性化提示词 —— AgentScope 框架不提供等价能力，框架引擎(agentx)与共享服务仍依赖此文件，勿当 legacy 控制流删除。
 
 import com.alibaba.fastjson2.JSON;
-import com.wenqu.ai.agent.hitl.HitlDecisionService;
-import com.wenqu.ai.agent.runcode.RunTokenRegistry;
 import com.wenqu.ai.service.ChatRunBus;
 import com.wenqu.ai.service.ConfigService;
 import com.wenqu.ai.service.SessionEventService;
@@ -48,21 +46,15 @@ public class ChatRunRuntime {
     private final ChatRunBus chatRunBus;
     private final SessionEventService sessionEventService;
     private final SessionService sessionService;
-    private final HitlDecisionService hitl;
-    private final RunTokenRegistry runTokens;
 
     public ChatRunRuntime(ConfigService configService,
                           ChatRunBus chatRunBus,
                           SessionEventService sessionEventService,
-                          SessionService sessionService,
-                          HitlDecisionService hitl,
-                          RunTokenRegistry runTokens) {
+                          SessionService sessionService) {
         this.configService = configService;
         this.chatRunBus = chatRunBus;
         this.sessionEventService = sessionEventService;
         this.sessionService = sessionService;
-        this.hitl = hitl;
-        this.runTokens = runTokens;
     }
 
     // ==================== 给 chat() 入口用的四个闸口 ====================
@@ -106,70 +98,25 @@ public class ChatRunRuntime {
     }
 
     /**
-     * 服务端停止本轮：按会话找到正在跑的轮次，掐断生成流、把已生成内容按「已停止」落库、解开正在等人
-     * 裁决的挂起项，让流水线线程立刻退出并释放会话轮级互斥（下一问马上能发，不必等审批/提问超时）。
+     * 服务端停止本轮：按会话找到正在跑的轮次，置把手标志 + 关通道，让流水线线程在下一个检查点退出
+     * 并释放会话轮级互斥（下一问马上能发，不必等审批/提问超时）。
      * <p>不依赖 SSE 通道是否还在：前端 abort 只断开连接，通道断开在「正等人作答」的语义下是
-     * <b>继续后台跑完</b>（见 {@link TurnState#keepRunningWithoutChannel}），那不是用户按下停止
-     * 想要的意思；换设备打开同一会话时也没有通道可断。故单独一条按 sessionId 的服务端路径。
+     * <b>继续后台跑完</b>，那不是用户按下停止想要的意思；换设备打开同一会话时也没有通道可断。
+     * 故单独一条按 sessionId 的服务端路径。
      * <p>正在执行中的那一个工具调用无法半途掐死（沙盒命令已在容器里跑），它在下一步闸口被拦住。
+     * <p>归属只认发起本轮的那个 uid：只认把手（{@link TurnRegistry#handle}），别人停不动。
      *
      * @return true=确实停掉了一轮；false=该会话没有在跑的轮，或这不是本人的轮（越权 fail-loud 拒绝）
      */
     public boolean stopTurn(String sessionId, String userId) {
-        TurnState st = sessionId == null ? null : TurnRegistry.state(sessionId);
-        if (st == null) {
-            // 还没有流状态（深度思考/检索阶段）：置把手标志 + 关通道，思考流的下一个增量按
-            // 「本轮已中止」退出，各前置检查点同样短路，不再往下检索与生成
-            TurnHandle h = TurnRegistry.handle(sessionId);
-            if (h == null || userId == null || !userId.equals(h.userId())) return false;
-            h.stopped().set(true);
-            sessionEventService.append(sessionId, h.userId(), h.turnId(), "stop", "用户停止本轮（尚未进入生成流）");
-            completeEmitter(h.emitter());
-            // 不在这里给那一问打终止标记：本轮此刻还没真正退场（思考/检索线程要等下一个检查点才断），
-            // 此刻判「有没有回答」会抢在落库之前。标记统一由 chat 流水线 finally 打（见该方法注释）。
-            log.info("[SSE] 用户停止本轮（前置阶段）: session={}", sessionId);
-            return true;
-        }
-        // 归属：与 resolveApproval/resolveAsk 同口径——只认发起本轮的那个 uid，别人停不动
-        if (userId == null || !userId.equals(st.userId)) {
-            log.warn("[FAIL-LOUD] 停止本轮被拒（非本人轮次）: session={} uid={}", sessionId, userId);
-            return false;
-        }
-        if (st.settled()) {
-            // 已经收过尾的轮次（登记残留一拍）：按「没有在跑的轮」答复，并顺手摘掉这条陈旧登记，
-            // 不给一次并不存在的停止记账
-            TurnRegistry.unregisterState(sessionId, st);
-            return false;
-        }
-        st.userStopped = true;
-        // 把手标志同步置位：前置阶段与各检查点认的是把手，流状态只覆盖生成阶段
-        st.handle.stopped().set(true);
-        // 人在回路一次性收摊：先把挂在人身上的卡片落成 STOPPED 终态，再解开还阻塞着的等待。
-        // 必须在 disposeSafe 之前——掐流会把等待线程中断下来，那时挂起表已空、落库也就落空了
-        // （顺序约束与它的事故记录都在 HitlDecisionService#terminateSessionWaits）
-        hitl.terminateSessionWaits(sessionId, "STOPPED");
-        // 叫停即撤这一轮还没用完的沙盒回调凭据（P3b）：人不想要这一轮了，脚本不该还留着一条回程。
-        // 守卫链本身也会按 userStopped 拒掉后续子调用，这里是把"已发出的凭据"这件事一并收掉
-        runTokens.revokeByTurn(st.turnId);
-        // 账本先记停止本身：disposeSafe 会把通道与心跳一并收掉，之后再想还原「是谁、在什么进度上
-        // 叫停的这一轮」就没有依据了
-        sessionEventService.append(sessionId, st.userId, st.turnId, "stop",
-                "用户停止本轮：正文=" + st.fullResponse.length() + "字 工具步=" + st.tools.toolStepCount.get()
-                        + (st.channel.detached ? " 通道=已断开(后台续跑)" : " 通道=在线"));
-        st.disposeSafe();
-        // 关闭通道：disposeSafe 只掐上游、不 complete emitter——从另一台设备或直接用接口叫停时，
-        // 正开着这个会话的页面会一直挂在「正在生成」里，直到前端 120s 空闲看门狗才自己收束。
-        completeEmitter(st.channel.emitter);
-        // 本轮若一条回答都没落下（正文/工具卡/思考全空），把终止事实记回那一问；
-        // 判据就是「该问之后有没有 assistant 消息」，所以放在解开等待之后——被叫停的计划轮会补落一张
-        // 收尾消息，那时这里自然不标（有 assistant 行）。极端竞态下可能多标一行安静提示，不影响正确性
-        sessionService.markTurnStopped(sessionId, "stopped");
-        // 总线立刻收摊：巡检最多要 5 秒才回收，那几秒里另一台设备接上的流既收不到 done 也等不到关闭，
-        // 只会「还在转」并自己重试三次——用户点的是停止，别的窗口该马上停下来
-        chatRunBus.finish(sessionId);
-        log.info("[SSE] 用户停止本轮: session={} 正文={}字 工具步={} 通道={}",
-                sessionId, st.fullResponse.length(), st.tools.toolStepCount.get(),
-                st.channel.detached ? "已断开(后台)" : "在线");
+        TurnHandle h = sessionId == null ? null : TurnRegistry.handle(sessionId);
+        if (h == null || userId == null || !userId.equals(h.userId())) return false;
+        h.stopped().set(true);
+        sessionEventService.append(sessionId, h.userId(), h.turnId(), "stop", "用户停止本轮");
+        completeEmitter(h.emitter());
+        // 不在这里给那一问打终止标记：本轮此刻还没真正退场（引擎线程要等下一个检查点才断），
+        // 此刻判「有没有回答」会抢在落库之前。标记统一由 chat 流水线 finally 打（见该方法注释）。
+        log.info("[SSE] 用户停止本轮: session={}", sessionId);
         return true;
     }
 
@@ -220,13 +167,10 @@ public class ChatRunRuntime {
      * 最终回答首 token」两段全静默区——中间代理（vite/nginx 默认 60s 读超时）会掐断连接、
      * 前端 120s 空闲看门狗会把静默误判为失联。每 15s 发一条 SSE 注释行（":keepalive"）：
      * 中间层与看门狗都视之为存活信号，前端解析器忽略注释行、UI 零打扰。
-     * <p>生命周期：runChat 在**检索/深度思考阶段前**就启动前置心跳（serverless 端点冷启动期间
-     * 检索可达 90s+，此前该阶段无心跳会被前端掐断），st 创建时接管句柄（本方法幂等复用），
-     * 终态路径（doOnComplete / doOnError / disposeSafe）停止；发送失败自停，防任务泄漏。
+     * <p>各运行时的静默段自行起停（今天框架引擎未接这条心跳，见清理记录）；发送失败自停，防任务泄漏。
      */
-    public synchronized void startRunHeartbeat(TurnState st) {
-        if (st.channel.heartbeat != null && !st.channel.heartbeat.isDone()) return;
-        st.channel.heartbeat = scheduleKeepalive(st.channel.emitter, "整轮");
+    public static java.util.concurrent.ScheduledFuture<?> startRunHeartbeat(SseEmitter emitter) {
+        return scheduleKeepalive(emitter, "整轮");
     }
 
     /** 整轮机器耗时预算（chat.sseTimeoutMs，默认 5 分钟） */
@@ -251,8 +195,6 @@ public class ChatRunRuntime {
                     sessionId, machineMs, d.budgetMs, d.humanWaitMs.get());
             try {
                 sendSseEvent(emitter, "warn", "回答超时已截断，请重试或缩短问题", sessionId);
-                TurnState st = d.state;
-                if (st != null) st.disposeSafe();
                 completeEmitter(emitter);
             } finally {
                 TurnRegistry.stopDeadline(emitter);
@@ -264,8 +206,7 @@ public class ChatRunRuntime {
 
     /**
      * 通道生命周期回调（onCompletion/onTimeout/onError）：清断开登记并回收整轮台账。
-     * <p>例外：台账所绑的那轮正在等用户作答、已转入「断线后台续跑」且尚未落库收尾，
-     * <b>或这一轮还挂在运行总线上</b>（宽限期内可能随时有人接流回来）时，
+     * <p>例外：这一轮还挂在运行总线上（宽限期内可能随时有人接流回来）时，
      * <b>必须留着台账与看门狗</b>——那是后台轮唯一的机器耗时上界，随通道一起回收等于放它无界跑下去。
      */
     public void releaseSseChannel(SseEmitter emitter, TurnDeadline deadline, String sessionId) {
@@ -273,9 +214,8 @@ public class ChatRunRuntime {
         // 通道走完：从本轮的观众里摘掉（总线语义与 ACTIVE_SSE 的区别就在这——这里只少了一个观众，
         // 本轮该继续跑；观众走光多久之后才掐，由 chat.detachGraceMs 决定）
         chatRunBus.drop(emitter);
-        if (deadline != null
-                && (deadline.holdsForDetachedTurn() || chatRunBus.holdsRun(sessionId))) {
-            log.info("[ASK] 客户端断开但本轮仍在等人作答/后台续跑/挂在总线上，整轮台账与看门狗保留: session={}",
+        if (deadline != null && chatRunBus.holdsRun(sessionId)) {
+            log.info("[ASK] 客户端断开但本轮仍挂在运行总线上（后台续跑/宽限期接流），整轮台账与看门狗保留: session={}",
                     sessionId);
             return;
         }
@@ -303,7 +243,7 @@ public class ChatRunRuntime {
 
     /**
      * 被「断线宽限到点」掐掉的轮次登记（sessionId → turnId）。
-     * <p>为什么单记一笔：中止发生在总线线程上，它 dispose 时 {@code claimTerminal()} 当场摘掉了把手，
+     * <p>为什么单记一笔：中止发生在总线线程上，那一刻把手随即被摘掉，
      * 而「这一问没产生回答」的标记要由流水线线程走到到底时才打（早一步会抢在落库之前，见 {@code chat()}
      * 那段注释），届时 {@code turnStopRequested} 已经查不到把手了。没有这一笔，用户回来只会看到
      * 一句没有任何交代的提问。
@@ -351,26 +291,8 @@ public class ChatRunRuntime {
     private static final int STEER_MAX_CHARS = 800;
 
     /**
-     * 取走待送达的插话并拼成一段提示（无插话返回空串）。附在工具结果**尾部**送达。
+     * 取走（并清空）该会话尚未送达的插话（按把手取，与运行时无关）。
      */
-    public String drainSteers(TurnState st) {
-        List<String> pending = drainSteersList(st);
-        if (pending.isEmpty()) return "";
-        // 送达留痕：库里的工具摘要与账本记的都是**附加前**的结果，不加这行日志就无从判断
-        // 模型到底看没看到这句插话（"回答没变"可能只是模型没采纳，而不是没送达）
-        log.info("[STEER] 已随工具结果送达模型: session={} 条数={} 字数={}",
-                st.sessionId, pending.size(), pending.stream().mapToInt(String::length).sum());
-        StringBuilder sb = new StringBuilder();
-        for (String s : pending) sb.append("【用户中途补充】").append(s).append('\n');
-        return sb.toString();
-    }
-
-    /** 取走（并清空）该轮尚未送达的插话 */
-    private static List<String> drainSteersList(TurnState st) {
-        return drainSteersOf(st.sessionId);
-    }
-
-    /** 同上，按会话取（无流状态的分支也用这一条） */
     private static List<String> drainSteersOf(String sessionId) {
         TurnHandle h = TurnRegistry.handle(sessionId);
         if (h == null || h.steers().isEmpty()) return List.of();
@@ -385,14 +307,8 @@ public class ChatRunRuntime {
      * <p><b>每一条 done 都要挂</b>——正常答完、被停、计划被拒/超时、无知识库分支都算。漏一条，
      * 用户说过的话就在那个分支里静默消失，而"不许静默丢话"是插话机制的底线。
      */
-    public static void attachLeftoverSteers(Map<String, Object> donePayload, TurnState st, String sessionId) {
-        List<String> out = new ArrayList<>();
-        if (st != null) {
-            out.addAll(st.leftoverSteers);       // 摘把手时转存下来的
-            out.addAll(drainSteersOf(sessionId)); // 把手还在（未经 claimTerminal 的收尾路径）
-        } else {
-            out.addAll(drainSteersOf(sessionId));
-        }
+    public static void attachLeftoverSteers(Map<String, Object> donePayload, String sessionId) {
+        List<String> out = new ArrayList<>(drainSteersOf(sessionId));
         out.removeIf(s -> s == null || s.isBlank());
         if (!out.isEmpty()) {
             donePayload.put("pendingSteers", out);
@@ -401,8 +317,8 @@ public class ChatRunRuntime {
     }
 
     /**
-     * 本轮是否已被用户叫停。深度思考与检索阶段还没有 {@link TurnState}（它在流式生成前才构造），
-     * 那段时间的停止只能靠把手上的标志——所以标志独立于状态表存在。
+     * 本轮是否已被用户叫停。标志在把手上（{@link TurnHandle#stopped()}）：从轮级互斥抢到那一刻起，
+     * 任何阶段（检索/思考/生成/等人裁决）都认同一个标志——所以它独立于任何流式结构存在。
      */
     public static boolean turnStopRequested(String sessionId) {
         TurnHandle h = sessionId == null ? null : TurnRegistry.handle(sessionId);
@@ -508,26 +424,22 @@ public class ChatRunRuntime {
      * <p>接流的观众先拿快照再接增量，而「正文已进缓冲、事件号还没推进」那一条恰好可能被快照覆盖一次
      * ——重复的那片字由前端按 pos 丢弃（pos 不大于本地已有长度即已存在）。只有 token/process 这两类
      * 逐字增量需要它；结构性事件靠快照重建，done 又是权威全文，缺口在那一刻归零。
+     * <p>框架运行时的正文权威缓冲在引擎侧（AgentScope 会话状态），问渠这一侧没有可对账的缓冲，
+     * 一律给 null——前端对 null pos 的帧按「无下标」处理（增量仍可追加，仅失去这一层去重）。
      */
     private Integer textDeltaPos(SseEmitter emitter, String type, String sessionId) {
-        if (!"token".equals(type) && !"process".equals(type)) return null;
-        TurnState st = sessionId == null ? null : TurnRegistry.state(sessionId);
-        if (st == null || st.channel.emitter != emitter) return null;
-        return "token".equals(type) ? st.fullResponse.length() : st.processResponse.length();
+        return null;
     }
 
     /**
      * 探测：这个会话是否有一轮还在跑。前端切会话时问一句，有才值得开一条接流通道。
      * <p>归属只认发起本轮的那个 uid：查不到 ≠ 不存在，而是「不归你看」——别人的会话不在跑这件事也不告诉你。
+     * <p>判据与快照同源：框架引擎同步跑完整轮，run 存在即真在跑（落库收尾到总线关闭之间那一拍
+     * 由总线的 finish 时序兜底，见 {@code ChatService} 分派点注释）。
      */
     public Map<String, Object> runStatus(String sessionId, String userId) {
         ChatRunBus.Run run = chatRunBus.running(sessionId);
-        // 只看「Run 还在」不够：本轮落库收尾到总线关闭之间有一拍（落库＋done 组装那几十到几百毫秒），
-        // 其间探测会说「在跑」，而接流拿到的快照是 running:false —— 前端就会在「探测→接流→收掉→再探测」
-        // 上空转几轮，界面上是气泡一闪一闪。判据与快照同源：流状态已占闸（settled）就不算在跑。
-        TurnState st = run == null ? null : TurnRegistry.state(sessionId);
-        boolean settled = st != null && st.settled();
-        boolean mine = run != null && !settled && userId != null && userId.equals(run.userId());
+        boolean mine = run != null && userId != null && userId.equals(run.userId());
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("running", mine);
         if (mine) {
@@ -562,57 +474,22 @@ public class ChatRunRuntime {
             completeEmitter(emitter);
             return;
         }
-        // 接流这一刻补一份「挂在哪一等」的提示：人在回路的等待本来就与通道无关（断开也一直在等你），
-        // 迟到的观众需要知道界面为什么停住不动，否则读成「卡住了」
-        Object pending = pendingWaitHint(sessionId);
-        if (pending != null) sendFrame(emitter, "stage", String.valueOf(pending), sessionId);
-    }
-
-    /** 本轮此刻正挂在哪种人工裁决上（提问/计划/审批）→ 给接流方的阶段文案；没在等就 null */
-    private Object pendingWaitHint(String sessionId) {
-        TurnState st = TurnRegistry.state(sessionId);
-        if (st == null) return null;
-        if (st.askWaits.get() > 0) return "等你作答，回答才不会跑偏";
-        if (st.planWaits.get() > 0) return "等你批准执行计划，批准后回答才开始";
-        return null;
     }
 
     /**
      * 宽限到点：没人看的那一轮按<b>中断</b>收束（不是用户停止——账本与终止文案都得如实区分）。
-     * 走的是与今天「断开即停」完全相同的一条路：掐流 + 半程正文按截断态落库 + 释放会话互斥。
+     * <p>框架引擎同步跑完整轮，中止靠把手标志 + 关通道：引擎在下一个检查点见到 stopped 即退出，
+     * 半程内容由引擎自己的收尾路径落库（终止标记由 chat 流水线 finally 打）。
      *
-     * @return true=本轮已终结（总线随之关闭）；false=本轮不归宽限管，继续等（并重新起算宽限）
+     * @return true=本轮已终结（总线随之关闭）；false=该会话没有在跑的轮
      */
     public boolean abortTurnWithoutViewer(String sessionId) {
-        TurnState st = TurnRegistry.state(sessionId);
-        if (st == null) {
-            TurnHandle h = TurnRegistry.handle(sessionId);
-            if (h == null) return true;   // 本轮早没了，总线直接关
-            // 前置阶段（改写/检索/思考/计划编排）没有流状态，中止只能靠把手的标志；
-            // 同样记一笔，让流水线线程走到到底时写「已中断」而不是「已停止」
-            BARE_ABORTS.put(sessionId, h.turnId());
-            h.stopped().set(true);
-            completeEmitter(h.emitter());
-            return true;
-        }
-        if (st.settled()) return true;
-        // 挂在人工裁决上的轮不许被宽限掐：等待期间「关掉页面它一直等你」是对用户承诺过的行为
-        // （见配置项 askTimeoutMs 的说明），也不该由「没人看」这件事替用户做决定
-        if (st.askWaits.get() > 0 || st.planWaits.get() > 0) return false;
-        // 同 stopTurn：卡片落终态与解开等待都要抢在掐流之前（disposeSafe 会把等待线程中断下来，那时挂起表已空）。
-        // 不解开的话，还挂着的人工等待（提问/计划在上面已豁免，走到这里说明卡着的是**工具执行审批**）会让它的
-        // 线程一直阻塞在 future.get(approvalTimeoutMs) 上，把会话互斥一起占满 120 秒——
-        // 用户「明明没人在跑却问不出下一句」，正是停止功能要消灭的那类事。
-        // 终态写 INTERRUPTED 而不是 STOPPED：没有人点停止，是「无观众宽限到点」——审计要分得开这两种。
-        hitl.terminateSessionWaits(sessionId, "INTERRUPTED");
-        sessionEventService.append(sessionId, st.userId, st.turnId, "detach",
-                "断线超过宽限，本轮按中断收束：正文=" + st.fullResponse.length() + "字 工具步="
-                        + st.tools.toolStepCount.get());
-        // 记一笔给流水线线程：它走到到底时据此给那一问打上「未产生回答」的标记
-        //（此刻把手还在，dispose 之后 turnStopRequested 就查不到了）
-        BARE_ABORTS.put(sessionId, st.turnId);
-        st.disposeSafe();
-        completeEmitter(st.channel.emitter);
+        TurnHandle h = TurnRegistry.handle(sessionId);
+        if (h == null) return true;   // 本轮早没了，总线直接关
+        // 记一笔，让流水线线程走到到底时写「已中断」而不是「已停止」
+        BARE_ABORTS.put(sessionId, h.turnId());
+        h.stopped().set(true);
+        completeEmitter(h.emitter());
         return true;
     }
 
@@ -634,15 +511,6 @@ public class ChatRunRuntime {
         } catch (Exception e) {
             log.debug("[RUN] 接流首帧发送失败（观众可能又走了）: session={} {}", sessionId, e.getMessage());
             return false;
-        }
-    }
-
-    /** 停掉本轮的流级心跳（脚本面板的 ticker 由问答侧另行收口：那是 run_code 的展示层） */
-    public void stopHeartbeat(TurnState st) {
-        ScheduledFuture<?> f = st.channel.heartbeat;
-        if (f != null) {
-            f.cancel(false);
-            st.channel.heartbeat = null;
         }
     }
 }

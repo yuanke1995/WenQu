@@ -67,6 +67,7 @@
           <div class="pf-row">
             <!-- 用组件声明的 v-model（而非 v-model:value——那是透传到根 a-select 的偶然生效路径） -->
             <ModelSelect v-model="pref[panelMeta.field]" type="chat"
+                         :issue="current === 'chat' ? defaultModelIssue : ''"
                          inherit-label="不设默认" :width="isNarrow ? '100%' : 360" :disabled="loading" />
           </div>
           <p class="pf-sub-hint">{{ panelMeta.tail }}</p>
@@ -320,6 +321,8 @@ const panelMeta = computed(() => PANELS[current.value] || PANELS.chat)
 const loading = ref(false)
 const saving = ref(false)
 const pref = ref({ defaultModel: '' })
+// 个人默认模型此刻能不能用（后端判：供应商被停用、模型被移出列表）。不参与保存，只驱动界面
+const defaultModelIssue = ref('')
 
 const load = async () => {
   loading.value = true
@@ -329,6 +332,7 @@ const load = async () => {
     pref.value = {
       defaultModel: d.defaultModel || ''
     }
+    defaultModelIssue.value = d.defaultModelIssue || ''
     // 用户级记忆开关（后端口径：null 视为开）
     memAutoEnabled.value = d.memoryEnabled !== false
   } catch (e) { /* 拉取失败保持空（未设默认） */ }

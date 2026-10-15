@@ -325,6 +325,87 @@ public class ModelRegistryService {
         }
     }
 
+    /**
+     * 引用不可用的原因（界面按此出文案，不再各拼一遍）。
+     * <p>为什么要有这一份：`resolveReference` 只看供应商行在不在册，`assertUsable` 只判归属，
+     * 「停用供应商」「从模型库删掉这个模型」在问答链上都不构成失效——历史写进会话覆盖/个人默认的引用串
+     * 会照样发请求，用户读到的是上游 401 而不是「你选的模型已经不能用了」（真机 sbx-3，2026-10-15 19:33）。
+     */
+    public static final String ISSUE_NOT_CONFIGURED = "notConfigured";
+    public static final String ISSUE_PROVIDER_GONE = "providerGone";
+    public static final String ISSUE_PROVIDER_OFF = "providerOff";
+    public static final String ISSUE_MODEL_GONE = "modelGone";
+    public static final String ISSUE_MODEL_OFF = "modelOff";
+    public static final String ISSUE_NOT_YOURS = "notYours";
+
+    /**
+     * @param usable 现在还能不能用
+     * @param issue  不可用原因（{@code ISSUE_*}；可用时为 null）
+     * @param label  展示名（供应商模型库里登记的友好名，查不到退回引用里的模型名）
+     */
+    public record Usability(boolean usable, String issue, String label) {
+    }
+
+    /**
+     * 一个模型引用此刻对请求者是否真的可用。选择器清单（{@link #available}）里查不到这个引用
+     * 与这里判为不可用是同一件事，两种问法共用这一处判据。
+     * <p>非引用格式的遗留裸模型名判为可用：它不带供应商，无从判停用/删除，改变它的口径会打断既有手填配置。
+     */
+    public Usability referenceUsability(String value, String uid, String role) {
+        return referenceUsability(value, uid, role, true);
+    }
+
+    /**
+     * @param checkOwnership 是否判「这个供应商是不是你的」。游客对话用的是分享主登记的模型，
+     *                       按访客身份判必然判成「不属于你」，那一路上要关掉这一条。
+     */
+    public Usability referenceUsability(String value, String uid, String role, boolean checkOwnership) {
+        if (value == null || value.isBlank()) return new Usability(false, ISSUE_NOT_CONFIGURED, "");
+        String v = value.trim();
+        int slash = v.indexOf('/');
+        if (slash <= 0) return new Usability(true, null, v);
+        if (slash == v.length() - 1) return new Usability(false, ISSUE_MODEL_GONE, v.substring(0, slash));
+        Provider p = providerById(v.substring(0, slash));
+        String modelId = v.substring(slash + 1);
+        if (p == null) return new Usability(false, ISSUE_PROVIDER_GONE, modelId);
+        String label = displayNameOf(p, modelId);
+        if (checkOwnership && !canUse(p, uid, role)) return new Usability(false, ISSUE_NOT_YOURS, label);
+        if (Integer.valueOf(0).equals(p.getEnabled())) return new Usability(false, ISSUE_PROVIDER_OFF, label);
+        ModelInfo mi = snap.modelIndex().get(p.getId() + "/" + modelId);
+        if (mi == null) return new Usability(false, ISSUE_MODEL_GONE, label);
+        if (Integer.valueOf(0).equals(mi.getEnabled())) return new Usability(false, ISSUE_MODEL_OFF, label);
+        return new Usability(true, null, label);
+    }
+
+    /**
+     * 不可用原因的一句话文案（可用时返回空串）。拼在模型名后面要读得通：
+     * 「deepseek-v4-pro」所在的供应商已停用。措辞只讲用户看得见的结果，不写引用/路由这些内部名词。
+     */
+    public String issueText(String issue) {
+        if (issue == null) return "";
+        return switch (issue) {
+            case ISSUE_PROVIDER_GONE -> "已经不存在了";
+            case ISSUE_PROVIDER_OFF -> "所在的供应商已停用";
+            case ISSUE_MODEL_GONE -> "已经被移出模型列表";
+            case ISSUE_MODEL_OFF -> "已停用";
+            case ISSUE_NOT_YOURS -> "不是你登记的模型，你不能用";
+            case ISSUE_NOT_CONFIGURED -> "还没有选择模型";
+            default -> "现在不能用";
+        };
+    }
+
+    /** 「这个模型为什么不能用」的一句话（可用时空串）。 */
+    public String issueMessage(Usability u) {
+        if (u == null || u.usable()) return "";
+        String text = issueText(u.issue());
+        return u.label() == null || u.label().isBlank() ? text : "「" + u.label() + "」" + text;
+    }
+
+    /** 上面两条的合用形态：给出「能不能用 + 该对用户说什么」。不可用时文案自带展示名。 */
+    public String issueMessage(String value, String uid, String role) {
+        return issueMessage(referenceUsability(value, uid, role));
+    }
+
     private String displayNameOf(Provider p, String modelId) {
         ModelInfo m = snap.modelIndex().get(p.getId() + "/" + modelId);
         return m != null && m.getDisplayName() != null && !m.getDisplayName().isBlank()

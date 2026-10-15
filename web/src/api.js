@@ -1237,8 +1237,12 @@ export const fetchProviderModels = (baseUrl, apiKey, providerId) =>
 export const testProvider = body =>
   request('/provider/test', { method: 'POST', body: JSON.stringify(body), timeout: 20000 })
 /** 供应商被引用清单：定位「这个模型在哪些地方被用着」。
- *  返回 {total, editableCount, hasBlocking, byKind, items:[{kind,label,name,id,hint,editable}]} */
+ *  返回 {total, editableCount, hasBlocking, sessionOverrideCount, byKind, items:[{kind,label,name,id,hint,editable}]} */
 export const listProviderReferences = id => request(`/provider/${encodeURIComponent(id)}/references`)
+/** 一次清除本人历史会话里指向该供应商的模型选择（不清就是那些会话此后每轮都撞「模型已停用」）。
+ *  返回 {cleared} 条数 */
+export const clearProviderSessionModels = id =>
+  request(`/provider/${encodeURIComponent(id)}/clear-session-models`, { method: 'POST' })
 /** 可用模型清单（登录即可用；type 过滤如 chat/vision/embedding/rerank，期望 chat 时全模态 omni 一并入选）：[{providerId,name,icon,models:[{ref,modelId,displayName,type}]}]。
  *  此处解包信封直接返回数组（ModelSelect/modelRef 两处消费方都按数组用，漏解包会静默变空态） */
 export const listAvailableModels = async (type = '') => {

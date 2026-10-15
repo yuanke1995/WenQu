@@ -254,7 +254,17 @@ const showAgentTag = (m, i) => {
 const isAdmin = ref(isAdminSync())
 const agentPickerOpen = ref(false)
 /** 模型引用 → 展示名（模型库友好名优先，查不到回退原始引用 provider/model） */
-const modelLabelOf = ref => modelIndex.value[ref]?.displayName || ref
+/**
+ * 模型的展示名。模型库里查不到时（模型被移出列表、所在供应商已停用）退化成引用串里的模型名那一段——
+ * 直接把 `供应商UUID/deepseek-v4-pro` 抛到界面上，用户读到的是「这是什么」。
+ */
+const modelLabelOf = ref => {
+  if (!ref) return ''
+  const hit = modelIndex.value[ref]?.displayName
+  if (hit) return hit
+  const i = ref.indexOf('/')
+  return i === -1 ? ref : ref.slice(i + 1)
+}
 /**
  * 「模型已切换」分隔记录：本轮回答与上一条助手消息的落库模型不同时，在本条回答上方挂一条居中分隔。
  * 只在发消息产生新回答时出现（切换选择器本身不产生任何记录）；两侧都有模型引用才比对——
@@ -330,6 +340,9 @@ const currentSessionTitle = computed(() => {
 const roundCount = computed(() => messages.value.filter(m => m.role === 'ai' && !m.loading).length)
 // ==================== 模型切换：会话级覆盖 > 智能体 > 个人默认 > 全局 ====================
 const modelMap = ref({})            // 会话ID → 用户手动选择的模型引用（按会话记忆；空=跟随）
+// 会话ID → 那个引用此刻还能不能用（后端判据随会话列表下发：停用供应商、把模型从列表移除
+// 都不会让会话里钉着的历史值自己消失，界面必须报出来，而不是等回答时撞一句网关错）
+const modelIssueMap = ref({})
 const currentOverrideModel = computed({
   get: () => modelMap.value[currentSessionId.value] || '',
   set: v => {
@@ -345,10 +358,15 @@ const currentOverrideModel = computed({
 /** 会话列表 → modelMap 回填（seed-once：本地已有的选择不动——切换已即时落库，避免慢响应竞态把 UI 回退） */
 const seedSessionModels = () => {
   const patch = {}
+  const issues = {}
   for (const s of sessionStore.list) {
-    if (s && s.id && !(s.id in modelMap.value)) patch[s.id] = s.model || ''
+    if (!s || !s.id) continue
+    if (!(s.id in modelMap.value)) patch[s.id] = s.model || ''
+    // 可用性每次重算：它随管理员停启用供应商/模型而变，不像选择那样归本地
+    issues[s.id] = s.modelIssue || ''
   }
   if (Object.keys(patch).length) modelMap.value = { ...modelMap.value, ...patch }
+  modelIssueMap.value = { ...modelIssueMap.value, ...issues }
 }
 // 监听列表本身，而不是在挂载流程里调一次：会话列表由侧栏（AppLayout）与聊天页各自触发加载，
 // 并发时 loadSessions 的加载代次守卫会丢弃较早的一次（列表还没写入），挂载时点读到的可能是空列表。
@@ -356,19 +374,15 @@ const seedSessionModels = () => {
 // seed 幂等且只做字典合并，列表每次变动重跑无副作用。
 watch(() => sessionStore.list, seedSessionModels, { deep: true, immediate: true })
 const userDefaultModel = ref('')    // 个人默认模型（个人设置，后端 /user/preference）
+const userDefaultModelIssue = ref('')  // 它此刻能不能用（同样由后端判，空=可用/未设置）
 const modelIndex = ref({})          // 引用 → { displayName, providerName, icon }（展示映射）
 
 /** 实际生效的模型（引用或遗留名）：会话覆盖 > 个人默认（智能体不绑模型、全局兜底已移除；空=未指定，发送时引导选择） */
 const effectiveModel = computed(() => {
   return currentOverrideModel.value || userDefaultModel.value
 })
-/** 生效模型的展示名（引用串在模型库里映射成 友好名；查不到回退原值） */
-const effectiveModelLabel = computed(() => {
-  const v = effectiveModel.value
-  if (!v) return ''
-  const info = modelIndex.value[v]
-  return info ? info.displayName : v
-})
+/** 生效模型的展示名（引用串在模型库里映射成 友好名；查不到回退模型名那一段，不抛供应商 UUID） */
+const effectiveModelLabel = computed(() => modelLabelOf(effectiveModel.value))
 const effectiveModelIcon = computed(() => {
   const info = modelIndex.value[effectiveModel.value]
   return info ? info.icon : ''
@@ -382,6 +396,15 @@ const modelSourceLabel = computed(() => {
   if (currentOverrideModel.value) return '会话指定'
   if (userDefaultModel.value) return '个人默认'
   return ''
+})
+/**
+ * 生效模型此刻不能用的原因（空=能用）。报的是「这一轮根本发不出去」的那一份：
+ * 会话钉着失效的就说会话的，跟随个人默认时就说默认的。
+ * 判定归后端（要看供应商与模型登记的启停状态），前端只负责把它摆到选择器上。
+ */
+const effectiveModelIssue = computed(() => {
+  if (currentOverrideModel.value) return modelIssueMap.value[currentSessionId.value] || ''
+  return userDefaultModel.value ? userDefaultModelIssue.value : ''
 })
 // 「检索调试」/「加入评测集」菜单项专属（管理端点，普通用户必 403）：只在管理员身份下从 /config 读取
 const debugEntryVisible = ref(false)
@@ -1693,7 +1716,11 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
   //（重试定时器触发时用户可能已切到别的会话/换了模型）
   const sid = prev ? prev.sid : currentSessionId.value
   const agentId = prev ? prev.agentId : (currentAgentId.value || '')
-  const model = prev ? prev.model : (currentOverrideModel.value || '')
+  // 会话已有 ID 时**不再**随发送带模型：会话里存的那一份是权威（选择器改动即时 PUT 落库，后端也按它作答）。
+  // 把页签内存里的那一份发上去，等于用一个端的选择盖掉另一个端刚改过的值——真机 sbx-3：A 端刚切到
+  // 可用模型，B 端一句重发又把已停用的写回会话，两边来回盖、每轮都在重建实例。
+  // 只有还没有会话 ID 的首问才随载荷带过去（那时 PUT 无处可落，后端补建会话后据此落库）
+  const model = prev ? prev.model : (currentSessionId.value ? '' : (currentOverrideModel.value || ''))
   // 重新生成：被替换的旧回答 ID 必须在下面 fresh 覆盖之前捕获（fresh 会把 messageId 置空，
   // 覆盖后再读就永远是空 → 后端不软删旧回答 → 刷新后同一问题出现两条答案）
   const replacedMessageId = replaceMsg && replaceMsg.messageId ? replaceMsg.messageId : ''
@@ -1702,7 +1729,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
   // model 先按前端解析的生效引用预填（覆盖>个人默认，与后端 resolveModel 同序）：「模型已切换」
   // 分隔记录在本轮回答一出现就能比对；done 再用后端权威值校正
   // stage 预置检索档（两档口径见 projections 的阶段文案映射）：与后端首条事件映射结果同词，开场不闪词
-  const fresh = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkOpen: true, thinkLoading: false, stage: resume ? '正在接回这一轮…' : '正在检索资料…', time: Date.now(), artifacts: [], toolCalls: [], subagents: [], plan: null, planCard: null, timeline: [], errorCard: null, model: model || userDefaultModel.value, delegated: null }
+  const fresh = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkOpen: true, thinkLoading: false, stage: resume ? '正在接回这一轮…' : '正在检索资料…', time: Date.now(), artifacts: [], toolCalls: [], subagents: [], plan: null, planCard: null, timeline: [], errorCard: null, model: model || effectiveModel.value, delegated: null }
   const msg = replaceMsg ? Object.assign(replaceMsg, fresh, { messageId: null, fb: null }) : reactive(fresh)
   if (!replaceMsg) messages.value.push(msg)
   const viewing = () => currentSessionId.value === sid  // 只有正在看这个会话才滚动/贴底
@@ -2133,6 +2160,13 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       msg.related = related
       msg.messageId = messageId
       msg.degradations = degradations
+      // 后端替用户改过模型选择（会话里钉着的那个已停用，已清除并改用他的默认模型）：
+      // 本地内存里那份同样作废，否则选择器还挂着已停用的模型，用户看到的是「它自己没改过来」
+      if (degradations.some(d => d && d.code === 'modelFallback')) {
+        modelMap.value = { ...modelMap.value, [sid]: '' }
+        modelIssueMap.value = { ...modelIssueMap.value, [sid]: '' }
+        loadSessions()
+      }
       // 记录仍指向本轮才清（防止误删同会话新一轮的记录）
       if (chatStreams.get(sid) === st) chatStreams.delete(sid)
       // 收尾同样走 liveScroll：跟随中的会话落到最新，用户已上翻看历史的会话原地不动——
@@ -2489,7 +2523,9 @@ const compactContext = async (instruction = '') => {
   compacting.value = true
   const hide = message.loading('正在压缩早期对话…', 0)
   try {
-    const r = await compactSessionApi(sid, { instruction, model: currentOverrideModel.value || '' })
+    // 不随请求带 model：压缩就该用这条会话本身在用的那个模型（后端按会话存的覆盖→个人默认解析）。
+    // 拿页签内存里的旧选择去压，会把历史折进「另一个模型的口吻」里，而用户没做过那次选择
+    const r = await compactSessionApi(sid, { instruction })
     const d = (r && r.data) || {}
     // 另一套运行方式（框架引擎）的上下文由系统在提问前自己整理：这里没有「本次腾出多少」可报，
     // 也不该画一条并没有发生的分隔线——如实说排到了下一次提问前
@@ -2600,6 +2636,7 @@ const ready = async () => {
   }).catch(() => {})
   getUserPreference().then(r => {
     userDefaultModel.value = (r && r.data && r.data.defaultModel) || ''
+    userDefaultModelIssue.value = (r && r.data && r.data.defaultModelIssue) || ''
   }).catch(() => {})
   loadModelIndex().then(idx => { modelIndex.value = idx || {} }).catch(() => {})
 }
@@ -2642,7 +2679,8 @@ if (typeof window !== 'undefined') {
     currentSessionId, loading, messages, currentSessionTitle, roundCount,
     // 模型
     modelMap, currentOverrideModel, userDefaultModel, modelIndex, effectiveModel, effectiveModelLabel,
-    effectiveModelIcon, effectiveModelProvider, modelSourceLabel, debugEntryVisible, debugDisplayVisible,
+    effectiveModelIcon, effectiveModelProvider, modelSourceLabel, effectiveModelIssue,
+    debugEntryVisible, debugDisplayVisible,
     // 空态示例问题（新会话空态引导卡；两套壳共用同一份生效值）
     sampleQuestions,
     // 检索 / 用量 / 来源 / 上下文容量

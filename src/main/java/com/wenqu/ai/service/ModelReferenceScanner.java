@@ -55,6 +55,8 @@ public class ModelReferenceScanner {
     private final com.wenqu.ai.mapper.ConfigMapper configMapper;
     private final com.wenqu.ai.mapper.AgentShareMapper agentShareMapper;
     private final ConfigService configService;
+    /** 会话级覆盖的计数与清除（只有请求者本人这一维能界定范围） */
+    private final SessionService sessionService;
 
     /**
      * 一条引用记录。
@@ -205,10 +207,25 @@ public class ModelReferenceScanner {
      * @return {total, editableCount, items:[Reference], byKind:{kind:count}, hasBlocking}
      */
     public Map<String, Object> overviewOf(String providerId) {
+        return overviewOf(providerId, null);
+    }
+
+    /**
+     * @param uid 请求者 uid。给了才逐条扫本人会话里的覆盖并给出<b>条数与一键清除</b>；
+     *            不给（额度通知这类非请求线程）保持原来的泛化提示项——扫会话表既超出该场景的边界，
+     *            也没有「谁的会话」这个概念可依。
+     */
+    public Map<String, Object> overviewOf(String providerId, String uid) {
         List<Reference> refs = new ArrayList<>(referencesOf(providerId));
-        // 会话覆盖项总是列出：它是唯一一类「可能在界面里改不掉」的引用，
-        // 漏掉它会让用户改完所有可见引用仍偶发失败，且无从排查
-        refs.add(sessionHint());
+        // 会话级覆盖必须显式列出来，不能静默略过：漏掉它会让用户改完所有可见引用仍偶发失败、且无从排查
+        int sessionCount = uid == null || uid.isBlank() || providerId == null || providerId.isBlank()
+                ? -1 : sessionService.countModelOverridesOf(uid, providerId);
+        if (sessionCount > 0) {
+            refs.add(new Reference(KIND_SESSION, "历史会话", sessionCount + " 条会话上次用的模型在这个供应商下",
+                    null, "这些会话此后每轮都会撞上「模型已停用」，可一次清除这些会话的选择", true));
+        } else if (sessionCount < 0) {
+            refs.add(sessionHint());
+        }
         Map<String, Integer> byKind = new LinkedHashMap<>();
         int editable = 0;
         for (Reference r : refs) {
@@ -222,6 +239,8 @@ public class ModelReferenceScanner {
         out.put("byKind", byKind);
         // 存在不可就地修改的引用（如会话覆盖）时提示用户还需额外处理，避免改完仍失败
         out.put("hasBlocking", refs.stream().anyMatch(r -> !r.editable()));
+        // 前端「清除这些会话的选择」按钮要的就是这个数：零就整个按钮不出现
+        out.put("sessionOverrideCount", Math.max(sessionCount, 0));
         return out;
     }
 

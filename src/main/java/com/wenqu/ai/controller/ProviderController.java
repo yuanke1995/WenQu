@@ -38,6 +38,7 @@ public class ProviderController {
     private final ConnectivityProbeService connectivityProbeService;
     private final ModelReferenceScanner referenceScanner;
     private final ModelQuotaService quotaService;
+    private final com.wenqu.ai.service.SessionService sessionService;
 
     @Operation(summary = "供应商列表", description = "按归属过滤：仅见自己登记的（数据按 userId 隔离）。apiKey 脱敏；每行带 ownerUid/manageable")
     @GetMapping
@@ -98,17 +99,30 @@ public class ProviderController {
     }
 
     @Operation(summary = "供应商被引用清单", description = "列出该供应商下模型当前被哪些位置引用（知识库向量/图谱模型、"
-            + "个人默认模型、个人设置、系统配置槽位、游客对话模型），每条带类型标签、可读名称与跳转 ID。"
-            + "用于额度不足时定位「该去改哪几处」；与删除守门同一口径。返回 "
-            + "{total, editableCount, hasBlocking, byKind, items:[{kind,label,name,id,hint,editable}]}")
+            + "个人默认模型、个人设置、系统配置槽位、游客对话模型、本人的历史会话覆盖），每条带类型标签、可读名称与跳转 ID。"
+            + "用于额度不足/停用前定位「该去改哪几处」；与删除守门同一口径。返回 "
+            + "{total, editableCount, hasBlocking, sessionOverrideCount, byKind, items:[{kind,label,name,id,hint,editable}]}")
     @GetMapping("/{id}/references")
     public ResultJson references(
             @Parameter(description = "供应商ID") @PathVariable("id") String id) {
         ResultJson denied = denyUnlessManageable(id);
         if (denied != null) return denied;
-        // 会话级覆盖的提示项由扫描器统一附带（overviewOf 内已 add sessionHint），
+        // 会话级覆盖的计数与提示项由扫描器统一附带（overviewOf 内一处决定），
         // 控制器不自行拼装——否则两处各记一份「有哪些引用」，必然漂移
-        return ResultJson.ok(referenceScanner.overviewOf(id));
+        return ResultJson.ok(referenceScanner.overviewOf(id, RequestUser.uid()));
+    }
+
+    @Operation(summary = "清除指向该供应商的会话模型选择", description = "本人在聊天页里选过这个供应商下模型的会话，"
+            + "停用/删除之后那些会话仍会每轮撞上「模型已停用」；这里一次清除它们的选择（清除后回到跟随各自的默认模型）。"
+            + "只动本人自己的会话，返回 {cleared} 条数")
+    @PostMapping("/{id}/clear-session-models")
+    public ResultJson clearSessionModels(
+            @Parameter(description = "供应商ID") @PathVariable("id") String id) {
+        ResultJson denied = denyUnlessManageable(id);
+        if (denied != null) return denied;
+        int cleared = sessionService.clearModelOverridesOf(RequestUser.uid(), id);
+        return ResultJson.ok(Map.of("cleared", cleared),
+                cleared == 0 ? "没有会话还在用这个供应商的模型" : "已清除 " + cleared + " 条会话的模型选择");
     }
 
     // --------------------------------------------------------------------------------------------------

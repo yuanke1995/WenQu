@@ -22,6 +22,8 @@
       <!-- 当前生效模型所属供应商欠费：就地告知（与 PC 选择器的额度标记同一件事），
            不处理的话用户会带着一个必失败的模型继续对话，报错时才第一次知道 -->
       <div v-if="currentBlockedTip" class="ms-note warn"><exclamation-circle-outlined /> {{ currentBlockedTip }}</div>
+      <!-- 模型已停用/已被移除：先说「你现在用的这个不行了」，再给下面的可换清单 -->
+      <div v-if="currentIssueTip" class="ms-note warn"><exclamation-circle-outlined /> {{ currentIssueTip }}</div>
       <div v-if="loadingModels" class="ms-note">加载中…</div>
       <template v-else>
         <button v-if="userDefaultModel" class="ms-row" :class="{ on: !currentOverrideModel }" type="button" @click="pick('')">
@@ -105,6 +107,7 @@ const emit = defineEmits(['close'])
 const engine = inject('wqChat')
 const {
   currentOverrideModel, userDefaultModel, effectiveModel, effectiveModelLabel, loading,
+  effectiveModelIssue,
   compacting, compactContext,
   thinkCapsOf, levelOptionsOf, currentLevelOf, deepOnOf, setThinkLevel, modelLabelOf,
   ctxWindowOptionsOf, effectiveCtxWindowOf,
@@ -148,6 +151,13 @@ const currentBlockedTip = computed(() => {
   const g = blockedGroupOf(effectiveModel.value)
   return g ? `当前模型所在的「${g.name}」${g.quotaMessage ? '额度不足：' + g.quotaMessage : '额度不足'}，回答会失败，请在下方换用其他模型。` : ''
 })
+
+// 钉着的那个模型已经不能用（供应商被停用 / 模型被移出列表）：与电脑端选择器上的红标同一件事。
+// 触屏没有 hover，原因必须写进这条提示本身，不能挂在 title 上。
+// 不说「回答会失败」——发问时会自动改用可用的那个并留痕，这里要给的只是「换一个更省事」
+const currentIssueTip = computed(() => effectiveModelIssue.value
+  ? `当前选用的「${modelLabelOf(effectiveModel.value)}」${effectiveModelIssue.value}，在下方换一个继续问。`
+  : '')
 
 const pick = ref_ => {
   if (ref_) {

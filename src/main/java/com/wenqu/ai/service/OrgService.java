@@ -165,7 +165,13 @@ public class OrgService {
     public java.util.Map<String, Object> getPreference(String uid, String role) {
         User u = userMapper.selectById(uid);
         java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
-        m.put("defaultModel", u == null ? null : u.getDefaultModel());
+        String defaultModel = u == null ? null : u.getDefaultModel();
+        m.put("defaultModel", defaultModel);
+        // 个人默认模型是否还能用（停用供应商 / 从模型列表移除之后，这一列不会自己变）：
+        // 界面上「进入系统就知道」，而不是每轮撞一次上游报错
+        m.put("defaultModelIssue", defaultModel == null || defaultModel.isBlank() ? ""
+                : modelRegistryService.issueText(modelRegistryService
+                        .referenceUsability(defaultModel, uid, role).issue()));
         // 用户级长期记忆开关（null=历史行缺省，视为开）：个人设置「长期记忆」页开关数据源
         m.put("memoryEnabled", u == null || !Integer.valueOf(0).equals(u.getMemoryEnabled()));
         m.put("models", modelRegistryService.available(ModelRegistryService.TYPE_CHAT, uid, role));

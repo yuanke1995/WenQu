@@ -89,8 +89,8 @@ public final class SpringAiToolAdapter extends ToolBase {
         }
         if (approvalRequired && mode != PermissionMode.DONT_ASK) {
             if (!approvalCanAsk) {
-                return Mono.just(PermissionDecision.deny("该工具需要执行前确认，而框架引擎尚未接入人在回路应答："
-                        + getName() + "（请用无需确认的能力完成，或切回 legacy 运行时）"));
+                return Mono.just(PermissionDecision.deny("该工具需要执行前确认，而本轮回合没有可应答的在场通道："
+                        + getName() + "（请改用无需确认的能力完成）"));
             }
             return Mono.just(PermissionDecision.ask("执行 " + getName() + " 需要你在场确认"));
         }
