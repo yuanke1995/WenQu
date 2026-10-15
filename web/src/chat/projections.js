@@ -12,6 +12,8 @@ import { chatStreams } from '../views/store'
 // 就是这个手抄机制的代价）。
 const TOOL_LABELS = {
   searchKnowledge: '查知识库资料',
+  // AgentScope 框架引擎的知识检索工具（与上面 searchKnowledge 同一能力，工具名不同）
+  search_knowledge: '查知识库资料',
   presentArtifact: '生成文件',
   deliver_artifact: '保存生成的文件',
   calculate: '做算术计算',
@@ -32,6 +34,18 @@ const TOOL_LABELS = {
   write_file: '写入文件',
   edit_file: '编辑文件',
   ls: '查看文件列表',
+  // ↓ 这一段是「历史消息」专用：框架引擎（AgentScope）早期把工具裸名当 label 下发，
+  // 那几轮消息已经按裸名落进库里了。后端现已改为随卡下发中文名（ToolRegistry → 框架工具表），
+  // 新消息不再走这里；留着是为了让刷新回来的老消息也读得懂。
+  // 措辞刻意与后端 ToolDescriptor.cardLabel / FrameworkToolLabels 保持一致——两份不一致时
+  // 表现是「同一张卡刷新前后换了个名字」，比少一条映射更难排查。
+  consultAgent: '问另一位助手',
+  writeTodo: '整理任务清单',
+  run_code: '运行脚本',
+  // 框架原生的计划模式三把（agentscope-harness 的 PlanModeTools，不在问渠工具注册中心里）
+  plan_enter: '开始规划方案',
+  plan_write: '把计划写下来',
+  plan_exit: '提交计划待确认',
   // MCP（context7）：去前缀后按裸名匹配
   resolve_library_id: '查找文档来源',
   query_docs: '查阅官方文档',
@@ -66,6 +80,13 @@ const TOOL_DESCS = {
   write_file: '在云端沙盒里新建或覆盖文件',
   edit_file: '在云端沙盒里修改文件内容',
   ls: '列出云端沙盒里某个目录下的文件',
+  // 历史消息专用（同 TOOL_LABELS 里那一段的来由）：措辞与后端 cardHint 保持一致
+  consultAgent: '把这一小问交给职责对口的助手去查，它带着自己的知识库把结论与资料交回来',
+  writeTodo: '把要做的事列成清单，看得见总共几件、还剩几件',
+  run_code: '在云端沙盒里跑一段 Python：脚本可以自己循环取资料、批量处理，只把结果带回来',
+  plan_enter: '先只读地调研与设计方案，这期间不改任何东西',
+  plan_write: '把想好的方案写成计划，你点开就能看',
+  plan_exit: '计划写完了，请你过目；你同意后它才开始动手',
   resolve_library_id: '先确定要查阅哪个库的官方文档',
   query_docs: '到对应库的官方文档里查找相关内容',
   read_wiki_structure: '浏览开源项目 Wiki 的目录结构',
@@ -85,12 +106,16 @@ const bareToolName = n => {
   return pre ? n.slice(pre.length) : n
 }
 const toolLabel = (n, label) => {
-  // 后端下发的展示名优先（工具注册中心 → tool_status / approval 载荷），拿不到才用本地这份兜底
-  if (label) return label
+  // 后端下发的展示名优先（工具注册中心 → tool_status / approval 载荷），拿不到才用本地这份兜底。
+  // 但当它只是工具裸名时不算展示名——那会让英文裸名顶掉中文映射（一次调用全显示
+  // search_knowledge/consultAgent…）。此时走本地映射。
+  // 框架引擎早前会把 name 原样当 label 下发，现已改为随卡下发中文名（ToolRegistry → FrameworkToolLabels）；
+  // 这个「裸名不算展示名」的判断仍然留着：库里的老消息按裸名落着，撤掉它那些消息就现出英文名了。
+  if (label && label !== n && label !== bareToolName(n)) return label
   if (TOOL_LABELS[n]) return TOOL_LABELS[n]
   // MCP 工具记录名带 clientInfo 前缀：先去前缀再试一次映射，未映射的展示裸名
   const bare = bareToolName(n)
-  return TOOL_LABELS[bare] || bare
+  return TOOL_LABELS[bare] || label || bare
 }
 const toolDesc = (n, hint) => (hint || TOOL_DESCS[n] || TOOL_DESCS[bareToolName(n)] || '')
 const toolCallsView = list => {

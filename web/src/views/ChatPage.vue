@@ -1498,7 +1498,7 @@
               <span class="ctxcap-row-label">{{ r.label }}</span>
               <span class="ctxcap-row-val">{{ fmtWindow(r.tokens) }} · {{ ctxCapData.pctOf(r).toFixed(1) }}%</span>
             </div>
-            <div v-if="!ctxCapData.rows.length" class="ctxcap-empty">发送问题后显示分类占用</div>
+            <div v-if="!ctxCapData.rows.length" class="ctxcap-empty">本轮无分类明细</div>
             <div v-if="ctxCapData.cacheRate != null" class="ctxcap-foot">
               <span>缓存命中率</span><span class="ctxcap-row-val">{{ ctxCapData.cacheRate }}%</span>
             </div>
@@ -3457,7 +3457,7 @@ onMounted(async () => {
   background: rgba(0,0,0,.55); color: #fff; font-size: 12px; line-height: 18px; text-align: center; cursor: pointer; }
 .pending-del:hover { background: var(--app-danger); }
 
-.think-panel { margin: 4px 0 8px; border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-panel-2); overflow: hidden; }
+.think-panel { margin: 4px 0 8px; border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-panel-2); overflow: hidden; width: fit-content; max-width: 100%; }
 .think-head { display: flex; align-items: center; gap: 6px; padding: 6px 10px; cursor: pointer; user-select: none; font-size: 12px; color: var(--app-text3); }
 .think-head:hover { background: var(--app-panel-2); }
 .think-title { font-weight: 500; color: var(--app-text2); }

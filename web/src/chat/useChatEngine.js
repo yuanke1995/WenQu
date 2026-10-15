@@ -1344,13 +1344,33 @@ let restoredPoll = null
 const stopRestoredPoll = () => { if (restoredPoll) { clearInterval(restoredPoll); restoredPoll = null } }
 
 /**
+ * 计划正文归一化成**字符串**：卡片主体最终交给 renderMd 渲染，喂进去非字符串就是屏幕上那个
+ * `[object Object]`（真机踩过：框架 plan_exit 的入参只有一句 summary，后端把整个入参对象当 plan 下发）。
+ * 这里做最后一道闸——对象按常见字段名（content/plan/text/summary）取值，都取不到才退成可读的 JSON，
+ * 绝不把对象直接透传给渲染层。
+ */
+const planText = v => {
+  if (v == null) return ''
+  if (typeof v === 'string') return v
+  if (Array.isArray(v)) return v.map(planText).filter(Boolean).join('\n')
+  if (typeof v === 'object') {
+    for (const k of ['content', 'plan', 'text', 'summary']) {
+      const t = planText(v[k])
+      if (t) return t
+    }
+    try { return JSON.stringify(v, null, 2) } catch (e) { return '' }
+  }
+  return String(v)
+}
+
+/**
  * 落库计划快照 → 气泡计划卡字段（历史回显与待批准卡重建共用）：
  * plan=末版正文（卡片主体），versions=已产各版（不含末版，供「修改记录」逐版回看），feedback=产出末版的用户意见。
  * 老消息无 versions 字段 → 退化为单版（与改动前一致）。
  */
 const planCardFromRecord = (rec, statusOverride) => {
   const all = (rec && Array.isArray(rec.versions) ? rec.versions : [])
-    .filter(v => v && typeof v.plan === 'string')
+    .filter(v => v && planText(v.plan))
   const st = rec && (rec.status === 'rejected' || rec.status === 'superseded') ? rec.status : 'approved'
   const card = {
     plan: '', status: statusOverride || st,
@@ -1359,11 +1379,11 @@ const planCardFromRecord = (rec, statusOverride) => {
   }
   if (all.length) {
     const last = all[all.length - 1]
-    card.plan = last.plan
+    card.plan = planText(last.plan)
     card.feedback = last.feedback || ''
-    card.versions = all.slice(0, -1).map(v => ({ plan: v.plan, feedback: v.feedback || '' }))
+    card.versions = all.slice(0, -1).map(v => ({ plan: planText(v.plan), feedback: v.feedback || '' }))
   } else if (rec) {
-    card.plan = String(rec.plan || '')
+    card.plan = planText(rec.plan)
   }
   return card
 }
@@ -1852,7 +1872,9 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         if (!msg.planCard) msg.planCard = { plan: '', status: 'drafting', busy: false, editText: '', versions: [], feedback: '' }
         const c = msg.planCard
         c.id = j.planApprovalId
-        c.plan = j.plan || c.plan        // 后端权威稿（已剥标签/护栏截断）覆盖流式累积
+        // 后端权威稿（已剥标签/护栏截断）覆盖流式累积；过 planText 归一化，
+        // 非字符串直接透传会让卡片渲染成 [object Object]
+        c.plan = planText(j.plan) || c.plan
         c.timeoutMs = Number(j.timeoutMs) || 0
         c.deadline = c.timeoutMs > 0 ? Date.now() + c.timeoutMs : 0
         c.status = 'pending'

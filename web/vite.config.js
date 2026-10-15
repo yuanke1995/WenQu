@@ -30,7 +30,9 @@ export default defineConfig({
     proxy: {
       // 前端调 /proxy/**，转发到 AI 服务 http://localhost:8090/ai/**
       '/proxy': {
-        target: 'http://localhost:8090/ai',
+        // 后端地址：默认 8090；8090 被本机代理占用、后端改跑 8091 时，用 VITE_PROXY_TARGET 覆盖
+        // （启动时：VITE_PROXY_TARGET=http://localhost:8091/ai npm run dev）
+        target: process.env.VITE_PROXY_TARGET || 'http://localhost:8090/ai',
         changeOrigin: true,
         rewrite: path => path.replace(/^\/proxy/, '')
       }
