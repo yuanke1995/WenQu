@@ -1,5 +1,7 @@
 package com.wenqu.ai.agent.permission;
 
+// [保留] 问渠权限与沙箱模型 —— 框架引擎(AgentxPermissions/WenquAgentxTools)与共享服务仍依赖，勿删。
+
 /**
  * 权限档位预设：把「沙盒能干什么」和「要不要逐项问用户」这两根旋钮捆成一句人话。
  * <p>

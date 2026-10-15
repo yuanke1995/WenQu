@@ -720,7 +720,7 @@ public class ChatController {
                     + "返回 {compressedTurns, compressedMessages, keepRecent, keepTurns, summaryTokens, freedTokens, summary, rounds, partial}；"
                     + "freedTokens=本次净腾出的 token 数（并入摘要的原文减去新摘要自身），keepTurns=逐字保留的问答对数；"
                     + "compressedTurns=0 表示对话还短、无需压缩。"
-                    + "框架引擎（chat.engineMode=agentscope／ab 命中该会话）由框架自己压缩，本接口不产问渠摘要，"
+                    + "框架引擎由框架自己压缩，本接口不产问渠摘要，"
                     + "改为登记一次强制压缩并返回 {engine:\"agentscope\", scheduled:true}，下一次提问开跑前生效")
     @ApiResponse(responseCode = "200", description = "压缩结果统计（含摘要全文，供前端展示）")
     @PostMapping("/session/{sessionId}/compact")

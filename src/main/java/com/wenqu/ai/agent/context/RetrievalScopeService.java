@@ -1,5 +1,7 @@
 package com.wenqu.ai.agent.context;
 
+// [保留] 问渠检索 / 上下文个性化 —— 框架引擎与共享服务仍依赖，勿删。
+
 import com.wenqu.ai.model.Agent;
 import com.wenqu.ai.model.KnowledgeBase;
 import com.wenqu.ai.service.KnowledgeBaseService;

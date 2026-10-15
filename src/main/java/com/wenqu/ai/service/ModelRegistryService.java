@@ -736,8 +736,11 @@ public class ModelRegistryService {
         if (!THINK_SWITCHABLE.equals(resolveThinking(mi))) return Map.of();
         return switch (reasoningDialectOf(mi.getModelId())) {
             case QWEN -> Map.of("enable_thinking", false);
-            // 与 reasoningExtraBody 里的 thinking.type=enabled 同一字段（该方言族的思考开关）
-            case DEEPSEEK, GLM, DOUBAO, KIMI, MINIMAX -> Map.of("thinking", Map.of("type", "disabled"));
+            // GLM（Ark，如 glm-5-3-flash-260828）实测拒绝 thinking.type=disabled：
+            // 返回 400 InvalidParameter「thinking.type `disabled` is not supported by this model」——
+            // 它只认 enabled，不带即不思考。所以 GLM 的「关」= 不下发该字段（落到 default），
+            // 别把它和 DeepSeek/豆包/Kimi 归为一类发 disabled，否则计划意图线程与引用自检全被 400 打断。
+            case DEEPSEEK, DOUBAO, KIMI, MINIMAX -> Map.of("thinking", Map.of("type", "disabled"));
             default -> Map.of();
         };
     }

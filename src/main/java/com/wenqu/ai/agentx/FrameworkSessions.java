@@ -137,6 +137,12 @@ public class FrameworkSessions {
     public AgentSession open(ChatCommand cmd, String modelRef, Function<RuntimeContext, HarnessAgent> agentFactory) {
         String key = key(cmd);
         Held current = held.get(key);
+        // /compact 强制压缩那一实例的 triggerMessages(1) 只应作用一轮：下次开轮丢掉它、用默认配置重建。
+        if (rebuildAfterCompact.remove(key) && current != null) {
+            closeQuietly(key, current);
+            held.remove(key);
+            current = null;
+        }
         if (current != null && current.modelRef().equals(modelRef)) {
             touch(key);
             return current.session();
@@ -294,6 +300,18 @@ public class FrameworkSessions {
     }
 
     /**
+     * 提问卡等满预算、已按「未作答」把答案送回模型：把那一行落成 TIMEOUT 并摘掉归属。
+     * <p>与 {@link #markPendingTimeout} 的区别是那条给「整轮作废」用——它把这条会话还挂着的所有待办
+     * 一锅端了；这里只处理这一张提问卡，且答案要留审计（模型收到的那句「用户未回答这一题」）。
+     * 状态仍记 TIMEOUT 而不是 ANSWERED：用户确实没答，审计要看得出来。
+     */
+    public void markAskTimedOut(String requestId, String unanswered) {
+        if (requestId == null) return;
+        pendingOwner.remove(requestId);
+        hitl.resolveFrameworkPending(requestId, "TIMEOUT", null, unanswered);
+    }
+
+    /**
      * 等待预算用尽：把这条会话还挂着的待办落成 TIMEOUT 并摘掉归属。
      * <p>不落终态的话库里永远留着 PENDING——刷新后端点还会把一张已经作废的卡片重建出来，
      * 用户答了才发现什么都没发生。超时一律不替用户代答（既有口径），这里只改状态。
@@ -312,24 +330,34 @@ public class FrameworkSessions {
      * 框架给的是 {@code enterPlanMode(userId, sessionId)} 这一对显式开关，用完必须退出，
      * 否则下一条不想要计划的轮会继承它。
      */
-    public void setPlanMode(ChatCommand cmd, boolean on) {
+    /**
+     * 按「这一轮」进出计划模式。实例是按会话常驻的，所以计划模式不能在 build 期定死；
+     * 框架给的是 {@code enterPlanMode(userId, sessionId)} 这一对显式开关，用完必须退出，
+     * 否则下一条不想要计划的轮会继承它。
+     *
+     * @return 这一轮计划模式最终是否真的处于激活位（on=true 时若没能进入即返回 false）
+     */
+    public boolean setPlanMode(ChatCommand cmd, boolean on) {
         Held h = held.get(key(cmd));
-        if (h == null) return;
+        if (h == null) return false;
         String userId = cmd.getUserId() == null || cmd.getUserId().isBlank() ? "guest" : cmd.getUserId();
         try {
             if (on) {
                 h.agent().enterPlanMode(userId, cmd.getSessionId());
                 // 计划模式是不是真的进了，直接决定 plan_* 那一族工具能不能被模型调用
                 // （框架的 PlanModeMiddleware 会把不在计划位上的计划工具调用滤掉，症状是「空补全」而不是报错）
-                log.info("[agentx] 计划模式已开启？key={} active={}", key(cmd),
-                        h.agent().isPlanModeActive(userId, cmd.getSessionId()));
+                boolean active = h.agent().isPlanModeActive(userId, cmd.getSessionId());
+                log.info("[agentx] 计划模式已开启？key={} active={}", key(cmd), active);
+                return active;
             }
             else if (h.agent().isPlanModeActive(userId, cmd.getSessionId())) {
                 h.agent().exitPlanMode(userId, cmd.getSessionId());
             }
         } catch (Exception e) {
             log.warn("[agentx] 计划模式切换失败 on={}: {}", on, e.toString());
+            return false;
         }
+        return false;
     }
 
     /**
@@ -354,6 +382,17 @@ public class FrameworkSessions {
     /** 取走并清掉这次强制压缩（一次请求只对应一次生效）。 */
     public boolean takeCompactRequest(String sessionKey) {
         return sessionKey != null && compactRequests.remove(sessionKey);
+    }
+
+    /**
+     * 标「下一次开轮重建」：配合 {@code takeCompactRequest} 的强制压缩用——强制压缩的
+     * {@code triggerMessages(1)} 会烤进常驻实例，若不复位会被该会话后续每一轮继承（每轮都压）。
+     * 标记后，下一轮 {@link #open} 会丢掉这个实例、用默认压缩配置重建，保证「/compact 只压一次」。
+     */
+    private final java.util.Set<String> rebuildAfterCompact = ConcurrentHashMap.newKeySet();
+
+    public void markRebuildAfterCompact(String sessionKey) {
+        if (sessionKey != null) rebuildAfterCompact.add(sessionKey);
     }
 
     /** 建实例时登记这一路会话的步数预算闸（引擎在 {@code buildAgent} 里回调）。 */

@@ -1,5 +1,7 @@
 package com.wenqu.ai.agent.chat;
 
+// [保留] 问渠轮次台账 / 个性化提示词 —— AgentScope 框架不提供等价能力，框架引擎(agentx)与共享服务仍依赖此文件，勿当 legacy 控制流删除。
+
 import com.alibaba.fastjson2.JSON;
 import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.service.ConfigService;

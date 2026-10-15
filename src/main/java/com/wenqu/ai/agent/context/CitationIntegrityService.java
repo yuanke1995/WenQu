@@ -1,5 +1,7 @@
 package com.wenqu.ai.agent.context;
 
+// [保留] 问渠检索 / 上下文个性化 —— 框架引擎与共享服务仍依赖，勿删。
+
 import com.wenqu.ai.agent.chat.ChatRunRuntime;
 import com.wenqu.ai.agent.chat.TurnState;
 import com.wenqu.ai.config.AppProperties;

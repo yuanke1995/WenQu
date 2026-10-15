@@ -33,10 +33,15 @@ public final class WenquSourcePool {
     private final Set<String> degradedCodes = new HashSet<>();
 
     public WenquSourcePool(ChatRunRuntime runtime, ConfigService configService, RerankService rerankService,
-                           ImageUrlSigner imageUrlSigner, String sessionId, String question, SseEmitter emitter) {
+                           ImageUrlSigner imageUrlSigner, String sessionId, String question, SseEmitter emitter,
+                           com.wenqu.ai.service.DocumentMetaCache docMetaCache) {
         this.runtime = runtime;
         this.registry = new TurnSourceRegistry(configService, rerankService, imageUrlSigner, runtime,
                 sessionId, question, emitter, sources, imgIndex, imgDescIndex, degradations, degradedCodes);
+        // 工具本轮首次命中的文档不在主检索的 docFileNames 映射里，文件名靠 docMetaCache 按 docId 补查。
+        // 手写侧是在 ChatService 里给 st.refs.docMetaCache 赋值；框架这条自己 new 引用池，不注入就恒为 null，
+        // TurnSourceRegistry 的兜底被 `docMetaCache != null` 跳过 → 来源面板一律「来源文档不可用」。
+        this.registry.docMetaCache = docMetaCache;
     }
 
     /** 知识检索工具的落点：命中块注册进本轮 sources 续编引用编号，工具文本改【引用N】提示。 */

@@ -470,20 +470,48 @@ public class HitlDecisionService {
         return out;
     }
 
-    /** 启动期清理遗留 PENDING（进程重启后内存态丢失，DB 中超时未裁决的记录置 TIMEOUT，避免审计永久挂起；
-     *  askUser 提问卡同表同理——重启后那根阻塞的工具线程已不在，卡片留着也无人可唤醒） */
+    /**
+     * 启动期清理遗留 PENDING（进程重启后内存态丢失，DB 中超时未裁决的记录置 TIMEOUT，避免审计永久挂起）。
+     * <p><b>必须按卡种分窗口</b>：三张卡的等待预算差 5 倍（工具审批 120s，提问卡与计划卡各 10 分钟），
+     * 而这一段原先拿 {@code approvalTimeoutMs} 一刀切全部行——重启一次就把还有 8 分钟寿命的提问卡
+     * 提前判成 TIMEOUT，用户刷新回来看到一张已经作废的卡，答了只得到「这次作答没能送达」。
+     */
     @jakarta.annotation.PostConstruct
     public void purgeStaleApprovals() {
         try {
-            long timeoutSec = approvalTimeoutMs() / 1000 + 5;
-            LocalDateTime cutoff = LocalDateTime.now().minusSeconds(timeoutSec);
-            toolApprovalMapper.update(null, new LambdaUpdateWrapper<ToolApproval>()
-                    .eq(ToolApproval::getStatus, "PENDING")
-                    .lt(ToolApproval::getCreatedAt, cutoff)
-                    .set(ToolApproval::getStatus, "TIMEOUT")
-                    .set(ToolApproval::getResolvedAt, LocalDateTime.now()));
+            // 提问卡与计划卡同档（askTimeoutMs / planTimeoutMs），其余按审批窗口；+5s 是扫描落库时刻的偏差余量
+            long askSec = askTimeoutMs() / 1000 + 5;
+            long planSec = planTimeoutMs() / 1000 + 5;
+            long approvalSec = approvalTimeoutMs() / 1000 + 5;
+            purgeStale("askUser", askSec);
+            purgeStale("planApproval", planSec);
+            // 工具审批卡：明确排除上面两类，它们各有自己的窗口
+            purgeStale(null, approvalSec);
         } catch (Exception e) {
             log.warn("[TOOL] 遗留审批清理失败（可忽略，下次启动重试）: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 把某类卡里已过窗口的 PENDING 落成 TIMEOUT。
+     *
+     * @param toolName 卡种（{@code askUser} / {@code planApproval}）；null = 工具审批卡（排除前两类）
+     */
+    private void purgeStale(String toolName, long windowSec) {
+        try {
+            var q = new LambdaUpdateWrapper<ToolApproval>()
+                    .eq(ToolApproval::getStatus, "PENDING")
+                    .lt(ToolApproval::getCreatedAt, LocalDateTime.now().minusSeconds(windowSec))
+                    .set(ToolApproval::getStatus, "TIMEOUT")
+                    .set(ToolApproval::getResolvedAt, LocalDateTime.now());
+            if (toolName == null) {
+                q.notIn(ToolApproval::getToolName, "askUser", "planApproval");
+            } else {
+                q.eq(ToolApproval::getToolName, toolName);
+            }
+            toolApprovalMapper.update(null, q);
+        } catch (Exception e) {
+            log.warn("[TOOL] 遗留审批清理失败（可忽略，下次启动重试） card={}: {}", toolName, e.getMessage());
         }
     }
 

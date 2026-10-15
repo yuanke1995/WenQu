@@ -448,8 +448,10 @@ public class ChatService {
     private final com.wenqu.ai.agent.plan.PlanModeService.PlanTurnHooks planHooks;
 
     /**
-     * 问答引擎分派（手写 {@code agent.*} 与 AgentScope 框架运行时并存，按 chat.engineMode 选一）。
-     * 本类是 legacy 那一侧的执行体：启动时把自己那一段流水线注册回去，之后每一轮由工厂决定交给谁。
+     * 问答外壳与工作流桥：常规问答已全部交给 AgentScope 框架引擎（见 {@code agentx} 包），
+     * 本类保留承担「轮级外壳」（会话轮级互斥、断线续跑、身份与个人覆盖装载）以及工作流（Chatflow）旁路
+     * ——绑定工作流的智能体由工作流 end 节点的出参当回答，这条路由工作流执行、是 AgentScope 不提供的
+     * 个性化能力，经 {@code runChat} 内的 chatflow 分支处理，不属于被框架替代的手写推理循环。
      */
     private final com.wenqu.ai.engine.ChatEngineFactory chatEngines;
 
@@ -476,9 +478,6 @@ public class ChatService {
 
     @jakarta.annotation.PostConstruct
     void initPipeline() {
-        // legacy 引擎=本类那段流水线。用函数注册而不是 bean 注入，避免 ChatService↔工厂↔引擎成构造环
-        // （与 BranchRunner、PlanTurnHooks 同一套路数）
-        chatEngines.bindLegacy(this::runLegacyTurn);
         syncPipelineSize();
         warmUpToolSchemas();
     }
@@ -839,6 +838,14 @@ public class ChatService {
                     runLegacyTurn(cmd, dispatchChannel);
                 } else {
                     chatEngines.select(cmd).chat(cmd, dispatchChannel);
+                    // 框架引擎同步跑完整轮：方法返回即本轮已终结（待办/计划批准期间引擎是在循环里
+                    // 阻塞等待的，不会提前返回）。必须在这里摘轮次把手 + 收掉总线 run——总线 run 的
+                    // turnAlive 判的是「TurnRegistry 里的把手是否还是本轮」，不摘就恒为真：会话被永久
+                    // 当成「正在跑」，刷新/换设备接回来永远转圈，直到 300s 看门狗超时才收（实测踩过）。
+                    // legacy 那一支不能摘：它的 runChat 在 subscribe 后就返回，生成还在响应式线程上跑，
+                    // 由 TurnState#claimTerminal 在真收尾时摘。
+                    TurnRegistry.removeHandle(sessionId);
+                    chatRunBus.finish(sessionId);
                 }
                 } finally {
                     // 轮次登记（TURN_STATES / TURN_HANDLES）刻意不在这里摘：runChat 在 subscribe 后就

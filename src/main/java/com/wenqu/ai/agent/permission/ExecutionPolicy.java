@@ -1,5 +1,7 @@
 package com.wenqu.ai.agent.permission;
 
+// [保留] 问渠权限与沙箱模型 —— 框架引擎(AgentxPermissions/WenquAgentxTools)与共享服务仍依赖，勿删。
+
 import com.wenqu.ai.agent.tool.SideEffect;
 import com.wenqu.ai.agent.tool.ToolDescriptor;
 import com.wenqu.ai.agent.tool.ToolFamily;

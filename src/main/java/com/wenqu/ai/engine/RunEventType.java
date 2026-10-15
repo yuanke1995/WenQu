@@ -1,5 +1,7 @@
 package com.wenqu.ai.engine;
 
+// [保留] 引擎抽象与前端事件契约 —— AgentScope 框架引擎经 RunChannel/RunEvent 向问渠前端发事件，前端只认这套事件名与契约，非 legacy 死代码，勿删。
+
 /**
  * 问答这一轮往前端推的事件词汇表。
  * <p>名字与 {@code ChatRunRuntime.sendSseEvent} 的 type 实参一一对应，是<b>前端契约</b>而不是内部枚举：

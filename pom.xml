@@ -55,10 +55,15 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
-        <!-- Spring AI Redis VectorStore 自动配置依赖 Jedis（仅 Lettuce 时不满足 @ConditionalOnClass） -->
+        <!-- Spring AI Redis VectorStore 自动配置依赖 Jedis（仅 Lettuce 时不满足 @ConditionalOnClass）。
+             版本钉死 7.4.1：① agentscope-extensions-redis 的 RedisAgentStateStore 需要 UnifiedJedis（jedis 7.x）；
+             ② Spring AI 1.1.8 的 RedisVectorStore 已用 JedisPooled + redis/clients/jedis/json/Path2 + search 模块，
+                这些只存在于 jedis 5+，3.3.0 实际无法驱动该向量库；③ ConfigService 仅用 Jedis(host,port,timeout)/
+                auth(String)/subscribe(JedisPubSub,String...)，7.4.1 均保留。 -->
         <dependency>
             <groupId>redis.clients</groupId>
             <artifactId>jedis</artifactId>
+            <version>7.4.1</version>
         </dependency>
 
         <!-- Spring AI（1.1 起 starter 更名，由 spring-ai-bom 管理版本） -->

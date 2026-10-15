@@ -1,5 +1,7 @@
 package com.wenqu.ai.agent.permission;
 
+// [保留] 问渠权限与沙箱模型 —— 框架引擎(AgentxPermissions/WenquAgentxTools)与共享服务仍依赖，勿删。
+
 /**
  * 沙盒档位的<b>兑现程度</b>（这条记录的是「平台实际拦住了什么」，不是「档位名字听起来拦住了什么」）。
  * <p>

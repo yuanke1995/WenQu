@@ -43,10 +43,11 @@ public class WenquAgentxTools {
     private final com.wenqu.ai.agent.subagent.SubAgentConsultService consultService;
     private final com.wenqu.ai.agent.subagent.SubAgentBranchRuntime branchRuntime;
     private final com.wenqu.ai.agent.runcode.RunCodeSubCallRuntime subCall;
+    /** 引用来源的文件名兜底查询：工具首命中的文档不在主检索映射里，靠它按 docId 补查（见 {@link #newPool}）。 */
+    private final com.wenqu.ai.service.DocumentMetaCache documentMetaCache;
     /**
      * 问答侧的「跑一整轮」入口（分支执行器要它起子轮）。用函数注册而不是注入 {@code ChatService}：
-     * 与 {@code chatEngines.bindLegacy(this::runLegacyTurn)} 同一套路数——并列实现认一个可调用口，
-     * 不认那个上帝类本身，否则构造环与「框架引擎依赖手写运行时」这两件事同时发生。
+     * 认一个可调用口、不认那个上帝类本身，否则构造环与「框架引擎反过来依赖问渠编排」这两件事同时发生。
      */
     private volatile com.wenqu.ai.agent.subagent.SubAgentBranchRuntime.TurnRunner branchTurnRunner;
 
@@ -60,7 +61,8 @@ public class WenquAgentxTools {
                             com.wenqu.ai.service.SessionEventService sessionEventService,
                             com.wenqu.ai.agent.subagent.SubAgentConsultService consultService,
                             com.wenqu.ai.agent.subagent.SubAgentBranchRuntime branchRuntime,
-                            com.wenqu.ai.agent.runcode.RunCodeSubCallRuntime subCall) {
+                            com.wenqu.ai.agent.runcode.RunCodeSubCallRuntime subCall,
+                            com.wenqu.ai.service.DocumentMetaCache documentMetaCache) {
         this.knowledgeRetrieval = knowledgeRetrieval;
         this.retrievalScope = retrievalScope;
         this.agentService = agentService;
@@ -76,6 +78,7 @@ public class WenquAgentxTools {
         this.consultService = consultService;
         this.branchRuntime = branchRuntime;
         this.subCall = subCall;
+        this.documentMetaCache = documentMetaCache;
     }
 
     /** 由 {@code AgentxConfiguration} 在装配期登记：{@code ChatService::chat}（含轮级互斥外壳的那个入口）。 */
@@ -309,7 +312,7 @@ public class WenquAgentxTools {
     /** 本轮的引用池（编号唯一真源仍是 {@code TurnSourceRegistry}，本类不另写一份）。 */
     public WenquSourcePool newPool(ChatCommand cmd, SseEmitter emitter) {
         return new WenquSourcePool(runtime, configService, rerankService, imageUrlSigner,
-                cmd.getSessionId(), cmd.getQuestion(), emitter);
+                cmd.getSessionId(), cmd.getQuestion(), emitter, documentMetaCache);
     }
 
     /**
