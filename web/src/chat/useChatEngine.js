@@ -432,9 +432,9 @@ const groupedSources = computed(() => groupSources(lastSources.value))
 
 // 本次用量（Token 消耗可视化，1.9）：来自 done 事件的 tokens（上下文实际/预算/块数 + 输出估算）
 const lastTokens = computed(() => lastAi.value?.tokens || null)
-// 流式中的 prompt 侧用量（后端 usage 事件预下发的估算，onUsage 挂在 msg.tokensPreview）：
-// 只看最新一轮 AI 消息——该轮生成中且估算已到才返回；否则为 null（回落 lastTokens，
-// 与旧口径一致：流式期间显示上一完成轮的用量）。done 的实测 tokens 到达后自然切换为终值。
+// 流式中的 prompt 侧用量（后端 usage 事件，第一次模型回包后到、之后每一步各刷一次；
+// onUsage 挂在 msg.tokensPreview）：只看最新一轮 AI 消息——该轮生成中且估算已到才返回；否则为 null
+// （回落 lastTokens，与旧口径一致：流式期间显示上一完成轮的用量）。done 的实测 tokens 到达后自然切换为终值。
 const liveTokensPreview = computed(() => {
   for (let i = messages.value.length - 1; i >= 0; i--) {
     const m = messages.value[i]
@@ -1906,8 +1906,9 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       } catch (e) { /* 载荷异常：保留上一份，不清空界面 */ }
     },
     onUsage: payload => {
-      // 用量预下发（usage 事件，生成一开始就到）：prompt 侧估算先行点亮容量圆环/明细卡；
-      // done 下发的实测 tokens 仍是终值（落库/累计/输出侧都只认它），此处只挂流式中的估算视图
+      // 用量逐帧下发（usage 事件，第一次模型回包后到、本轮每落地一步再发一份）：prompt 侧占用先行
+      // 点亮容量圆环/明细卡；done 下发的实测 tokens 仍是终值（落库/累计/输出侧都只认它），此处只挂
+      // 流式中的预览，后到的覆盖先到的
       try {
         const j = typeof payload === 'string' ? JSON.parse(payload) : payload
         if (j && typeof j === 'object') msg.tokensPreview = j

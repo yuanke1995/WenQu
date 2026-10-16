@@ -407,6 +407,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         long emitFrom = startCursor;
         int announcedRefs = 0;
         Set<String> announcedApprovals = new LinkedHashSet<>();
+        // 流式用量帧的「上一次算过的 transcript 条数」，见 emitLiveUsage
+        long[] usageStamp = { -1 };
         boolean stopped = false;
         // 等待预算用尽：卡片已落终态，收尾时不再对用户说「答完会自动接着跑」
         boolean timedOut = false;
@@ -424,6 +426,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         while (System.currentTimeMillis() - humanWaitMs < turnDeadline) {
             if (!launched && current != null && !"queued".equals(current.status())) launched = true;
             cursor = drain(session, cursor, emitFrom, channel, recording);
+            emitLiveUsage(session, cmd, pool, channel, historyBefore, usageStamp);
             announcedRefs = emitRetrieved(cmd, pool, channel, announcedRefs, recording);
             announcePending(session, cmd, channel, announcedApprovals, planAuto, turnId, recording);
             if (tools.stopRequested(cmd)) {
@@ -2030,8 +2033,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 com.wenqu.ai.agent.chat.TurnRegistry.handle(cmd.getSessionId());
         String framedTurnId = handle == null ? turnId : handle.turnId();
         Map<String, Object> tokens = usageOf(session, historyBefore, pool, cmd);
-        // usage 帧：前端把它挂在流式期的容量预览上，done 的 tokens 才是终值——两帧同源于
-        // 同一份快照，不做第二套估算
+        // 收尾这一发是终值（与 done 里的 tokens 同一份快照）；流式期间那几发见 emitLiveUsage，
+        // 两拨都出自 usageOf，不做第二套估算
         // 整轮结束而思考段还开着（只思考没出正文、或被叫停）：照样补一条收尾帧，别让转圈永远挂着
         closeThinkingFrame(channel, recording);
         // 思考字数进台账：这一族关着思考也照样回 reasoning，单列出来放量时才看得出
@@ -2157,6 +2160,31 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         }
         return com.alibaba.fastjson2.JSON.toJSONString(Map.of(
                 "keywords", terms.size(), "refs", pool.sources().size(), "terms", terms));
+    }
+
+    /**
+     * 流式期的用量帧：本轮每落地一条新消息就重发一份 {@code usage}，让输入框工具栏的容量圆环
+     * 在第一次模型回包后就点亮，而不是等整轮收尾才出现（收尾那一发离结束只剩一帧，等于没有）。
+     * <p>与 {@link #finish} 里的终值同源同算法（都走 {@link #usageOf}），前端只把它挂在
+     * {@code tokensPreview} 上：落库、累计、输出侧仍只认 done 的 tokens，这里不另立口径。
+     * <p>按 transcript 条数变化触发，不按循环节拍：分类拆分要对全量上下文做 BPE 计数，
+     * 200ms 一跳空转会把跟随线程烧在数 token 上。发不出去只是容量圆环晚一帧，不该带走这一轮的答案，
+     * 所以异常只告警不上抛。
+     */
+    private void emitLiveUsage(AgentSession session, ChatCommand cmd, WenquSourcePool pool,
+                               RunChannel channel, int historyBefore, long[] stamp) {
+        int size = session.transcript().messages().size();
+        if (size == stamp[0]) return;
+        stamp[0] = size;
+        try {
+            Map<String, Object> tokens = usageOf(session, historyBefore, pool, cmd);
+            // 还没有任何一次模型回包带 usage：此刻报不出占用，等下一跳（空表发出去只会让前端清空预览）
+            if (tokens.isEmpty()) return;
+            channel.emit(RunEventType.USAGE, com.alibaba.fastjson2.JSON.toJSONString(tokens));
+        } catch (Exception e) {
+            log.warn("[USAGE] 流式用量帧发不出来，容量圆环要等本轮收尾: session={}, {}",
+                    cmd.getSessionId(), e.toString());
+        }
     }
 
     /**
