@@ -16,7 +16,7 @@
 --       记忆向量化：全局 memory.platformEmbeddingRef 未配则去重降级精确匹配、语义注入关闭。
 --       请引导使用者在「个人设置 → 聊天模型与偏好 → 模型默认」补配自己登记的模型（rerank/graphrag/qa）。
 --
--- 用法：mysql -u root -p ai_doc_assistant < scripts/cleanup-personal-model-refs-2026-10-03.sql
+-- 用法：mysql -u root -p ai_doc_assistant < scripts/db/cleanup-personal-model-refs-2026-10-03.sql
 
 -- 1) 清理三个个人专属键的历史全局行（c_ai_config）
 DELETE FROM `c_ai_config` WHERE `config_key` IN

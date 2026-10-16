@@ -7,7 +7,7 @@
 -- 是否深度思考现在完全由「用户自己的开关（对话页 per-model）」+「模型思考能力位」决定。
 --
 -- 本脚本只删存量库里的孤儿配置行（改完代码后跑一次即可；新库不会写入这些键）。
--- 用法：mysql -u root -p ai_doc_assistant < scripts/cleanup-deep-reasoning-switches-2026-10-03.sql
+-- 用法：mysql -u root -p ai_doc_assistant < scripts/db/cleanup-deep-reasoning-switches-2026-10-03.sql
 
 -- 1) 全局层：五个已删除的键（enabled / autoRoute / autoRouteMinChars / autoRouteLongChars / autoRouteKeywords）
 DELETE FROM `c_ai_config` WHERE `config_key` IN

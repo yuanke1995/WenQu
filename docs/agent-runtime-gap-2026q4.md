@@ -102,7 +102,7 @@ DSH 不值得抄的是**它的架构由其形态决定**：DSH 是本机单用�
 
 ##### 三、还欠的验证与已知小缺口
 
-- **生产发布要显式跑 `scripts/fix-schema-2026-10-12-tool-approval-text.sql`**：`c_ai_tool_approval.request_args/answer`
+- **生产发布要显式跑 `scripts/db/fix-schema-2026-10-12-tool-approval-text.sql`**：`c_ai_tool_approval.request_args/answer`
   原是 `VARCHAR(2000)`，而计划卡写的是整份计划 JSON（多步常态 2–6K 字、写侧根本没截）。严格模式插入报 1406
   被落库处的 try/catch 吞成一行 warn → 卡片没进库 → 刷新后 `/plan-approval/pending` 查不到，那张正在倒计时的卡**就地消失**；
   非严格模式静默截成半截 JSON，一样重建不出卡。`schema.sql` 已改 TEXT，但本机这两列**早就是 TEXT**（`information_schema` 查得），
@@ -410,7 +410,7 @@ DSH 侧的机制值得全盘吸收：沙盒 3 档 `read-only|workspace-write|dan
 > **已验**：`/tmp/wq-p2-h2` 用真解析器 + 假配置源跑 12 条行为断言全过（未设个人值=第一刀行为逐字不变、
 > 个人收到只读时全自主智能体被钳回且工具面真的少四件、个人宽于平台时不放开、同档按平台口径表述、
 > 未选档智能体同样受个人上限保护、认不出不收紧、收紧后显式审批仍以它为准、游客恒只读）；
-> `node scripts/gen_config_schema.js` 无新漂移、后端编译 EXIT=0。
+> `node scripts/codegen/gen_config_schema.js` 无新漂移、后端编译 EXIT=0。
 > **真机也验了（起前后端各跑一轮）**：`/user/settings` 把新字段按 select 下发（含三个 options 与全局值），
 > 个人上限设成 research 后，**显式选了 autonomous 的智能体**被钳回只读——
 > `[PERM] 档位被你的个人上限钳制: 请求=autonomous 平台上限=autonomous 个人上限=research 生效=research`，

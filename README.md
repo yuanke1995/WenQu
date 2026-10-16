@@ -398,7 +398,7 @@ ai-app:
     vector-weight: 0.6                     # 混合检索：向量权重
     keyword-weight: 0.4                    # 混合检索：关键词权重
     title-bonus: 0.1
-    rerank:                                # 平台内置重排服务（OpenAI 兼容 /v1/rerank；scripts/ 提供启动脚本）
+    rerank:                                # 平台内置重排服务（OpenAI 兼容 /v1/rerank；由外部供应商网关或自建服务承载）
       enabled: ${AI_RERANK_ENABLED:false}
       base-url: ${AI_RERANK_BASE_URL:http://localhost:7997}
       model: ${AI_RERANK_MODEL:BAAI/bge-reranker-v2-m3}

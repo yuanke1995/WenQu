@@ -10,7 +10,7 @@
 -- SchemaMigrator 刻意只做「补列/补索引」不改列类型，所以存量库要跑本脚本。
 --
 -- 用法（MODIFY 到 TEXT 是放宽，不动数据，可重复执行）：
---   mysql -u root -h 127.0.0.1 -p wenqu_ai --force < scripts/fix-schema-2026-10-12-tool-approval-text.sql
+--   mysql -u root -h 127.0.0.1 -p wenqu_ai --force < scripts/db/fix-schema-2026-10-12-tool-approval-text.sql
 -- （库名按你本地实际调整）
 
 ALTER TABLE `c_ai_tool_approval`

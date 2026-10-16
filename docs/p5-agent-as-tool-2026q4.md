@@ -80,7 +80,7 @@
 3. 断言"委派不提权"：父轮 standard、被调方 autonomous → 过程面板出现降级提示，沙盒写入仍落在工作区。
 4. 断言游客链路没被放宽：免登录分享页问超出该智能体库范围的主题，拿不到别的库内容。
 5. 断言路由代码真的没了：`grep -rn "AgentDispatchService\|autoDispatch\|agent_dispatched" src web/src` 为空（README/手册同步后）。
-6. 断言 §六 的降级：造一次上游对带 `tools` 的请求返回 400（接一个不认 tools 的端点即可）→ 页面出现"本轮未能咨询其他智能体"的降级条，回答仍带得上多域并集检索的资料，**不是裸答**。（2026-10-13 08:47 用 `scripts/fake_upstream_no_tools.py` 实测通过：换路后正文到手、`done` 里 `toolsRejected` 降级登记、`toolSchema` 6583→0 而提示词内容不变。**两点修正**：一是当初实现判据取不到响应体、根本不会触发（已修，见 §七）；二是当时降级条只在本轮流式里可见，**刷新后消失——已随 #18 持久化并实测刷新后仍在**。）
+6. 断言 §六 的降级：造一次上游对带 `tools` 的请求返回 400（接一个不认 tools 的端点即可）→ 页面出现"本轮未能咨询其他智能体"的降级条，回答仍带得上多域并集检索的资料，**不是裸答**。（2026-10-13 08:47 用 `scripts/services/fake_upstream_no_tools.py` 实测通过：换路后正文到手、`done` 里 `toolsRejected` 降级登记、`toolSchema` 6583→0 而提示词内容不变。**两点修正**：一是当初实现判据取不到响应体、根本不会触发（已修，见 §七）；二是当时降级条只在本轮流式里可见，**刷新后消失——已随 #18 持久化并实测刷新后仍在**。）
 7. 断言回显：管理页模型列表看得出"这个模型实际会不会被下发 tools"，且与 `toolCapable` 原值（未登记＝默认放行）不矛盾。
 8. 回归：定时任务、工作流触发、断线重连回放（每条气泡归属仍对）、H5 全流程、`npm run check` 全绿。
 
@@ -133,7 +133,7 @@
 
 ### §六 降级路径实测（#16，2026-10-13 08:47）：判据当年根本触发不了，另外抓出一条无限重试
 
-**先补上造不出来的触发条件**：`scripts/fake_upstream_no_tools.py`（OpenAI 兼容假上游，监听 127.0.0.1:7999）——带 `tools` 的请求一律 400 且把 "does not support tools" 写在**响应体**里；两个模型分别演「不带 tools 就正常流式」和「不带 tools 也 500」。登记成个人供应商 + 两个 chat 模型（`toolCapable` 留空＝默认放行，正好复刻 §六 说的那类私有化网关），会话级切过去打真实一轮。**验完供应商、模型、测试会话都已删干净**。
+**先补上造不出来的触发条件**：`scripts/services/fake_upstream_no_tools.py`（OpenAI 兼容假上游，监听 127.0.0.1:7999）——带 `tools` 的请求一律 400 且把 "does not support tools" 写在**响应体**里；两个模型分别演「不带 tools 就正常流式」和「不带 tools 也 500」。登记成个人供应商 + 两个 chat 模型（`toolCapable` 留空＝默认放行，正好复刻 §六 说的那类私有化网关），会话级切过去打真实一轮。**验完供应商、模型、测试会话都已删干净**。
 
 **实测结果把「已实现但没验证」的两条都推翻了**：
 
@@ -183,7 +183,7 @@
 
 ### #17 重排窗口两键登记进设置页（2026-10-13 09:05）
 
-`rerank.minHits` / `rerank.maxHits` 进了 `config-schema.json`（检索设置面板·重排区，与「启用重排」同一节），并在 `ConfigService.defaults()` 登记——`node scripts/gen_config_schema.js` 的「字段 ↔ defaults」一致性检查通过。库里那两行是 8-27 就存在的旧行（remark 写着「只读配置」），顺手把 remark 改成了实际说明；新环境首次插入时用 schema 的 help 文案。
+`rerank.minHits` / `rerank.maxHits` 进了 `config-schema.json`（检索设置面板·重排区，与「启用重排」同一节），并在 `ConfigService.defaults()` 登记——`node scripts/codegen/gen_config_schema.js` 的「字段 ↔ defaults」一致性检查通过。库里那两行是 8-27 就存在的旧行（remark 写着「只读配置」），顺手把 remark 改成了实际说明；新环境首次插入时用 schema 的 help 文案。
 
 实测（真机）：
 - `GET /config/schema` 下发两个字段（label「少于几条不重排」def 6 / 「重排窗口」def 15）；`GET /config` 快照 `editable=true`、值 6/15。

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 最小 MCP Server（streamable HTTP）——用于本地端到端验证「MCP 外部工具接入」：
-  python3 scripts/mcp-test-server.py            # 默认端口 8931
-  python3 scripts/mcp-test-server.py 8932      # 指定端口
+  python3 scripts/services/mcp-test-server.py            # 默认端口 8931
+  python3 scripts/services/mcp-test-server.py 8932      # 指定端口
 
 提供两个测试工具：
   - get_current_time: 获取当前日期时间

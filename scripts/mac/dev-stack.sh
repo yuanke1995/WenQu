@@ -9,7 +9,6 @@
 #    meili     7700   原生 meilisearch —— 关键词索引（data.ms）在这个进程
 #    searxng   8888   docker compose deploy/searxng   联网搜索 generic 服务商
 #    sandbox   8002   docker compose deploy/sandbox-provisioner
-#    ocr      30011   docker compose deploy/ocr（不在默认组：首次构建 ~10 分钟）
 #
 #  用法（任意目录都可执行，根目录由脚本自身位置解析，无需 cd）
 #    dev-stack.sh                启动默认组（mysql redis meili searxng sandbox）
@@ -45,10 +44,9 @@ SEARXNG_PORT="${SEARXNG_PORT:-8888}"
 SEARXNG_URL="http://127.0.0.1:${SEARXNG_PORT}"
 SANDBOX_PORT="${SANDBOX_PORT:-8002}"
 SANDBOX_URL="http://127.0.0.1:${SANDBOX_PORT}"
-OCR_PORT="${OCR_PORT:-30011}"
 
 DEFAULT_UNITS=(mysql redis meili searxng sandbox)
-ALL_UNITS=(mysql redis meili searxng sandbox ocr)
+ALL_UNITS=(mysql redis meili searxng sandbox)
 
 # ---- 探活原语 ----
 tcp_up() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
@@ -176,14 +174,7 @@ u_sandbox_down() {
 }
 u_sandbox_logs() { docker_ready && compose "$ROOT/deploy/sandbox-provisioner/docker-compose.yml" logs -f; }
 
-u_ocr_health() { bash "$ROOT/scripts/mac/start-ocr.sh" health >/dev/null 2>&1; }
-u_ocr_up() {
-  if u_ocr_health; then echo "  已在运行 http://127.0.0.1:$OCR_PORT"; return 0; fi
-  echo "  OCR 首次构建约 10 分钟、首次解析下载 ~2GB 模型"
-  bash "$ROOT/scripts/mac/start-ocr.sh" start
-}
-u_ocr_down() { bash "$ROOT/scripts/mac/start-ocr.sh" stop; }
-u_ocr_logs() { bash "$ROOT/scripts/mac/start-ocr.sh" logs; }
+# OCR 走 deploy/ocr 的 docker compose（不在本脚本管理范围内）。
 
 # ============================================================
 #  调度
@@ -219,7 +210,6 @@ do_status() {
   printf '%-9s %-7s %-24s %s\n' "meili" "$MEILI_PORT" "原生 meilisearch" "$(u_meili_health && echo 运行中 || echo 未运行)"
   printf '%-9s %-7s %-24s %s\n' "searxng" "$SEARXNG_PORT" "docker compose" "$(u_searxng_health && echo 运行中 || echo 未运行)"
   printf '%-9s %-7s %-24s %s\n' "sandbox" "$SANDBOX_PORT" "docker compose" "$(u_sandbox_health && echo 运行中 || echo 未运行)"
-  printf '%-9s %-7s %-24s %s\n' "ocr" "$OCR_PORT" "docker compose" "$(u_ocr_health && echo 运行中 || echo 未运行)"
   echo
   [ -n "$DOCKER" ] && "$DOCKER" info >/dev/null 2>&1 && echo "docker: 就绪" || echo "docker: 不可用（Docker Desktop 未启动？）"
   echo "项目根: $ROOT"

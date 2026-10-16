@@ -7,8 +7,8 @@
 这条链路只能代码走查、无法实测。本脚本就是把那类上游摆到 localhost 上。
 
 用法：
-    python3 scripts/fake_upstream_no_tools.py            # 监听 127.0.0.1:7999
-    python3 scripts/fake_upstream_no_tools.py 7999
+    python3 scripts/services/fake_upstream_no_tools.py            # 监听 127.0.0.1:7999
+    python3 scripts/services/fake_upstream_no_tools.py 7999
 
 然后把它登记成一个供应商（OpenAI 兼容，地址填 http://127.0.0.1:7999，Key 随意），登记两个 chat 模型：
     fake-no-tools           带 tools → 400；不带 tools → 正常流式回答（验"换路后仍能答 + 降级可见"）

@@ -13,12 +13,12 @@
  * 永远回显表单默认值（用户改了也看不出变化）；反过来「defaults 有、字段没有」属正常的
  * 只读/内部配置（如 embedding.dimensions、eval.lastReport），只做提示不算错误。
  *
- * 用法：node scripts/gen_config_schema.js
+ * 用法：node scripts/codegen/gen_config_schema.js
  */
 const fs = require('fs')
 const path = require('path')
 
-const ROOT = path.resolve(__dirname, '..')
+const ROOT = path.resolve(__dirname, '..', '..')
 const javaPath = ROOT + '/src/main/java/com/wenqu/ai/service/ConfigService.java'
 const schemaPath = ROOT + '/src/main/resources/config-schema.json'
 

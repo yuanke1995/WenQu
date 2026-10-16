@@ -240,8 +240,8 @@ curl -s http://127.0.0.1:7700/health</code></pre>
   <div class="note"><b>必须用 Node ≥22.12（或 20.19+）</b>Ubuntu 24.04 仓库自带的 <code>nodejs</code> 是 v18.19.1，跑 <code>npm run build</code> 会直接报 <code>TypeError [ERR_INVALID_ARG_TYPE]: The "paths[0]" argument must be of type string</code>——根因是依赖链里的 <code>unplugin</code> 在模块顶层使用 <code>import.meta.dirname</code>（Node 20.11+ 才有），Node 18 上取值为 undefined。不要降级依赖绕开，先装对 Node。</div>
 
 <pre><code># 安装 Node 22 LTS（NodeSource 官方源，幂等；想装 24 就加 NODE_MAJOR=24）
-sudo bash scripts/setup-node.sh
-#  只想体检不改东西：bash scripts/setup-node.sh --check
+sudo bash scripts/setup/setup-node.sh
+#  只想体检不改东西：bash scripts/setup/setup-node.sh --check
 
 # 确认新开终端里 node -v 应为 v22.x
 node -v
@@ -306,7 +306,7 @@ docker compose logs --tail=100 mysql    # 中间件日志同理</code></pre>
 git pull
 
 # Node 版本有变动时（.nvmrc 现在是 22；先体检，输出提示改用哪版就照做）
-bash scripts/setup-node.sh --check
+bash scripts/setup/setup-node.sh --check
 
 # 后端（有新提交时）
 docker compose build app &amp;&amp; docker compose up -d
