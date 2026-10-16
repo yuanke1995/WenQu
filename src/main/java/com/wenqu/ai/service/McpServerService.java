@@ -8,13 +8,16 @@ import com.alibaba.fastjson2.JSONArray;
 import com.alibaba.fastjson2.JSONObject;
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.mapper.McpCallLogMapper;
+import com.wenqu.ai.mapper.MessageMapper;
 import com.wenqu.ai.mapper.UserMapper;
 import com.wenqu.ai.model.Agent;
 import com.wenqu.ai.model.AgentShare;
 import com.wenqu.ai.model.ApiKey;
 import com.wenqu.ai.model.KnowledgeBase;
 import com.wenqu.ai.model.McpCallLog;
+import com.wenqu.ai.model.Message;
 import com.wenqu.ai.model.User;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenqu.ai.util.RequestUser;
 import io.modelcontextprotocol.common.McpTransportContext;
 import io.modelcontextprotocol.server.McpServer;
@@ -117,6 +120,7 @@ public class McpServerService {
     private final AgentService agentService;
     private final ResourceVisibilityService visibility;
     private final McpCallLogMapper mcpCallLogMapper;
+    private final MessageMapper messageMapper;
 
     public McpServerService(AgentShareService agentShareService, SessionService sessionService,
                             ChatService chatService, RateLimitService rateLimitService,
@@ -124,7 +128,8 @@ public class McpServerService {
                             ApiKeyService apiKeyService, UserMapper userMapper,
                             KnowledgeRetrievalTool knowledgeRetrievalTool,
                             KnowledgeBaseService knowledgeBaseService, AgentService agentService,
-                            ResourceVisibilityService visibility, McpCallLogMapper mcpCallLogMapper) {
+                            ResourceVisibilityService visibility, McpCallLogMapper mcpCallLogMapper,
+                            MessageMapper messageMapper) {
         this.agentShareService = agentShareService;
         this.sessionService = sessionService;
         this.chatService = chatService;
@@ -138,6 +143,7 @@ public class McpServerService {
         this.agentService = agentService;
         this.visibility = visibility;
         this.mcpCallLogMapper = mcpCallLogMapper;
+        this.messageMapper = messageMapper;
     }
 
     /** MCP 端点总开关（mcp.server.enabled，默认关：不主动对外暴露能力） */
@@ -743,6 +749,72 @@ public class McpServerService {
     }
 
     /**
+     * 把解析失败信息变成**看得见**的描述。
+     *
+     * <p>为什么专门做这个：fastjson 的报错是 {@code illegal input, offset 4124, char \x1a}——
+     * 那个 char 本身是个 C0 控制字符，写进日志后在终端与文本工具里**根本不显示**（表现为
+     * "char " 后面什么都没有）。真机排查时为此多绕了三轮。这里把控制字符转成可见的
+     * {@code U+001A} 形式，下次一眼就能看出是哪个字符坏了 JSON。
+     */
+    private static String describeParseFailure(Exception e) {
+        String msg = e.getMessage() == null ? "" : e.getMessage();
+        StringBuilder out = new StringBuilder(msg.length() + 16);
+        for (int i = 0; i < msg.length(); i++) {
+            char c = msg.charAt(i);
+            if (c < 0x20 || c == 0x7f) out.append(String.format("U+%04X", (int) c));
+            else out.append(c);
+        }
+        return out.toString();
+    }
+
+    /**
+     * 从整包不可解析的载荷里，用括号配平单独切出 {@code sources} 数组并解析。
+     *
+     * <p><b>为什么需要它</b>：真机实测过一次——MCP 回答的正文里带着 {@code [2][3]} 角标，
+     * 而 {@code structuredContent.sources} 是空数组、文本也没有来源清单，日志给出
+     * 「解析 done 载荷取来源失败」。载荷是 {@code AgentscopeChatEngine} 手工拼接的 JSON，
+     * 任何一处漏转义都会让整包非法；但 sources 那一段本身是良构的。
+     * 本方法只做一件事：**不让一个与取来源无关的载荷缺陷，毁掉「答案可溯源」**。
+     *
+     * <p>切法：定位 {@code "sources":[} 之后做深度扫描，遇引号切换字符串态（认转义 \\），
+     * 层次回到 0 时收尾。不猜内容、不做容错解析——切出来的片段仍要过一遍 JSON 解析，
+     * 不合法就照旧返回空（宁缺勿错）。
+     */
+    private static JSONArray extractSourcesArray(String payload) {
+        if (payload == null) return null;
+        int at = payload.indexOf("\"sources\":");
+        if (at < 0) return null;
+        int start = payload.indexOf('[', at + "\"sources\":".length());
+        if (start < 0) return null;
+        int depth = 0;
+        boolean inStr = false;
+        for (int i = start; i < payload.length(); i++) {
+            char c = payload.charAt(i);
+            if (inStr) {
+                if (c == '\\') { i++; continue; }   // 跳过被转义的字符
+                if (c == '"') inStr = false;
+                continue;
+            }
+            if (c == '"') { inStr = true; continue; }
+            if (c == '[' || c == '{') depth++;
+            else if (c == ']' || c == '}') {
+                depth--;
+                if (depth == 0) {
+                    try {
+                        JSONArray arr = JSON.parseArray(payload.substring(start, i + 1));
+                        log.info("[MCP] done 载荷整体非法，但已按括号配平切出 {} 条来源", arr.size());
+                        return arr;
+                    } catch (Exception e) {
+                        log.warn("[MCP] 切出的 sources 片段仍不可解析: {}", e.getMessage());
+                        return null;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
      * 把本轮回答的来源清单从 {@code done} 事件里取出来投影成外发形状。
      *
      * <p><b>为什么必须带上</b>：回答正文里的 {@code [1][2]} 角标只有配上这份清单才有意义。此前
@@ -759,16 +831,35 @@ public class McpServerService {
     private static List<Map<String, Object>> sourcesOf(String donePayload) {
         List<Map<String, Object>> out = new ArrayList<>();
         if (donePayload == null || donePayload.isBlank()) return out;
-        JSONArray arr;
-        try {
-            JSONObject done = JSON.parseObject(donePayload);
-            arr = done == null ? null : done.getJSONArray("sources");
-        } catch (Exception e) {
-            // 投影失败不该把一个已经拿到的回答变成错误：来源是附加信息，降级为「本轮无来源」
-            log.warn("[MCP] 解析 done 载荷取来源失败，本轮按无来源外发: {}", e.getMessage());
-            return out;
+        JSONArray arr = null;
+        Exception firstError = null;
+        // 三个入口依次试。为什么不是一个：真机实测 fastjson2 的 parseObject 会对**完全合法**
+        // 的载荷在 EOF 处抛 `illegal input`（报错里的 char U+001A 在载荷里根本不存在——
+        // 「非标准控制字符=0」是实测数据）。换入口是零成本的绕行，比继续猜它的解析器行为划算。
+        for (int attempt = 0; attempt < 2 && arr == null; attempt++) {
+            try {
+                Object parsed = attempt == 0 ? JSON.parseObject(donePayload) : JSON.parse(donePayload);
+                if (parsed instanceof JSONObject o) arr = o.getJSONArray("sources");
+                else if (parsed instanceof java.util.Map<?, ?> m && m.get("sources") instanceof JSONArray a) arr = a;
+            } catch (Exception ex) {
+                if (firstError == null) firstError = ex;
+            }
         }
-        if (arr == null) return out;
+        if (arr == null) {
+            Exception e = firstError == null ? new IllegalStateException("载荷无 sources") : firstError;
+            // 投影失败不该把一个已经拿到的回答变成错误：来源是附加信息，降级为「本轮无来源」。
+            // 但**必须把现场记下来**：载荷本身非法时（上游手工拼 JSON 漏转义），光说"取来源失败"
+            // 会让人以为投影写错了，而真正的位置在载荷构造处。只记长度与尾部——够看结构问题，
+            // 又不至于把整段回答写进日志。
+            log.warn("[MCP] 解析 done 载荷取来源失败，本轮按无来源外发: {}", describeParseFailure(e));
+            // 只记**结尾 60 字符**：合法载荷必然以 "}" 收尾（完整形态 …"engine":"agentscope"}）。
+            // 结尾停在半句上 ⇒ 载荷被截断；结尾结构完整 ⇒ 是转义问题。两者修法完全不同，
+            // 这一行就是为了让下次看一眼就知道是哪一种（此前记 400 字窗口，反而看不出结尾）。
+            // 二级：整包解析不了 ≠ sources 取不出来。载荷是拼接出来的，某处漏转义会让整包非法，
+            // 但 sources 那一段本身仍是良构 JSON 数组——用括号配平把它单独切出来。
+            arr = extractSourcesArray(donePayload);
+            if (arr == null) return out;
+        }
         for (int i = 0; i < arr.size() && out.size() < MAX_SOURCES_OUT; i++) {
             JSONObject s = arr.getJSONObject(i);
             if (s == null) continue;
@@ -822,11 +913,16 @@ public class McpServerService {
     /**
      * 构造带来源的回答结果：文本里附可读来源清单，结构化输出里带 sources 数组。
      *
+     * <p><b>两级取数</b>：先按本轮 {@code done} 载荷投影；载荷不可解析时（上游手工拼 JSON 的
+     * 历史包袱），退回按会话读最近一条助手消息的 {@code sources} 列。第二级是刻意留的：
+     * 「答案可溯源」是外部调用的核心价值，不该因为一个与本功能无关的载荷缺陷而整条丢掉——
+     * 本轮真实发生过（真机 MCP 调用正文带 [2][3] 角标、sources 却是空数组）。
+     *
      * @param sink        收集型通道（已 done）
-     * @param sessionId   本轮会话 id
+     * @param sessionId   本轮会话 id（第二级取数用）
      * @param extraFields 额外并入 structuredContent 的字段（平台级入口用，可为 null）
      */
-    private static McpSchema.CallToolResult answerWithSources(
+    private McpSchema.CallToolResult answerWithSources(
             CollectingSseEmitter sink, String sessionId, Map<String, Object> extraFields) {
         String payload = sink.donePayload();
         int total = 0;
@@ -838,7 +934,24 @@ public class McpServerService {
                 // 只影响「另有 N 条」这句，取不到就按已列出的条数说话
             }
         }
-        List<Map<String, Object>> sources = sourcesOf(payload);
+        // **主路径是按会话回读消息行**，不是解析 done 载荷。
+        // 真机实测（5 轮真实 MCP 调用）：载荷结构完整、结尾闭合、非标准控制字符 0，但 fastjson2
+        // 的 parseObject 与 parse 两个入口都会在 EOF 处抛 `illegal input, char U+001A`——那个字符
+        // 在载荷里根本不存在（"非标准控制字符=0"是打点数据）。既然整包解析不可靠，就不该让
+        // 「答案可溯源」建立在它上面；消息行的 sources 列是本链路的权威记录，且与 done 同轮落库。
+        List<Map<String, Object>> sources = sourcesFromSession(sessionId);
+        if (sources.isEmpty()) {
+            // 消息行还没落（半程轮/落库失败）时，退回载荷投影；再不行就按括号配平切
+            sources = sourcesOf(payload);
+            if (sources.isEmpty()) {
+                log.info("[MCP] 本轮无来源（消息行与载荷都没有，session={}）", sessionId);
+            }
+        } else {
+            total = Math.max(total, sources.size());
+            // 主路径成功时也留痕：这条链路此前"静默成功"，导致无法从日志判断来源到底来自
+            // 消息行还是载荷投影——提交前复验时就卡在"看起来对，但不知道走的哪条路"。
+            log.info("[MCP] 本轮来源 {} 条（取自消息行 session={}）", sources.size(), sessionId);
+        }
         Map<String, Object> structured = new LinkedHashMap<>();
         if (extraFields != null) structured.putAll(extraFields);
         structured.put("sessionId", sessionId);
@@ -847,6 +960,30 @@ public class McpServerService {
                 .addTextContent(appendSourcesBlock(sink.answer(), sources, total))
                 .structuredContent(structured)
                 .build();
+    }
+
+    /**
+     * 兜底取数：按会话读最近一条助手消息的 {@code sources} 列（与前端刷新后回显的是同一份）。
+     *
+     * <p>为什么能兜住：这一列在 {@code done} 之前就已落库（{@code TurnRecorder} 的落库缝与
+     * done 事件同轮），所以"MCP 拿到回答"时它一定在。归属沿用本轮 visitor/client uid，
+     * 不额外信任任何外部输入。
+     */
+    private List<Map<String, Object>> sourcesFromSession(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) return List.of();
+        try {
+            Message msg = messageMapper.selectOne(new LambdaQueryWrapper<Message>()
+                    .eq(Message::getSessionId, sessionId)
+                    .eq(Message::getRole, "assistant")
+                    .eq(Message::getDeleted, 0)
+                    .orderByDesc(Message::getCreateTime)
+                    .last("LIMIT 1"));
+            if (msg == null || msg.getSources() == null || msg.getSources().isBlank()) return List.of();
+            return sourcesOf("{\"sources\":" + msg.getSources() + "}");
+        } catch (Exception e) {
+            log.warn("[MCP] 回退按会话取来源也失败（session={}）: {}", sessionId, e.getMessage());
+            return List.of();
+        }
     }
 
     private static McpSchema.CallToolResult ok(String text) {
