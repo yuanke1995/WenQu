@@ -4,6 +4,8 @@ import com.wenqu.ai.agent.chat.ChatRunRuntime;
 import com.wenqu.ai.agent.chat.ChatCommand;
 import com.wenqu.ai.config.ConfigDefaults;
 import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.JSONArray;
+import com.alibaba.fastjson2.JSONObject;
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.mapper.McpCallLogMapper;
 import com.wenqu.ai.mapper.UserMapper;
@@ -87,6 +89,13 @@ public class McpServerService {
     private static final String CTX_IP = "wenqu.mcp.ip";
     /** 单条提问长度上限（与游客对话同口径） */
     private static final int MAX_QUESTION_CHARS = 8000;
+    /**
+     * 单次回答随附的来源条数上限。
+     *
+     * <p>来源清单是给外部客户端「核答案」用的，不是把检索结果整包倒出去——超出的条数在外发文本里
+     * 以「另有 N 条未列出」交代，不静默截断（截断而不说，客户端会以为引用只有这些）。
+     */
+    private static final int MAX_SOURCES_OUT = 20;
     /** Origin 未配置允许列表时放行的回环主机（本地自部署/本机客户端） */
     private static final Set<String> LOOPBACK_HOSTS = Set.of("localhost", "127.0.0.1", "[::1]");
 
@@ -329,10 +338,8 @@ public class McpServerService {
                 }
                 String answer = sink.answer();
                 if (answer.isBlank()) return toolError("本轮未产生回答内容");
-                return McpSchema.CallToolResult.builder()
-                        .addTextContent(answer)
-                        .structuredContent(Map.of("sessionId", sid))
-                        .build();
+                // 与 per-agent 端点同一口径：文本附可读来源清单，结构化输出带 sources
+                return answerWithSources(sink, sid, null);
             } finally {
                 ChatRunRuntime.forgetSseChannel(sink);
             }
@@ -488,11 +495,8 @@ public class McpServerService {
             if (answer.isBlank()) {
                 return toolError("本轮未产生回答内容");
             }
-            return McpSchema.CallToolResult.builder()
-                    .addTextContent(answer)
-                    // 结构化输出给支持它的客户端（续接上下文用）；文本输出对老客户端始终可读
-                    .structuredContent(Map.of("sessionId", sessionId))
-                    .build();
+            // 正文里的 [N] 角标必须配上来源清单才有意义（见 sourcesOf 的说明）
+            return answerWithSources(sink, sessionId, null);
         } finally {
             // 收集型通道不触发 onCompletion，必须主动清登记，否则 ChatRunRuntime 的 ACTIVE_SSE 残留
             ChatRunRuntime.forgetSseChannel(sink);
@@ -707,6 +711,113 @@ public class McpServerService {
             m.put(triples[i], Map.of("type", triples[i + 1], "description", triples[i + 2]));
         }
         return m;
+    }
+
+    /**
+     * 把本轮回答的来源清单从 {@code done} 事件里取出来投影成外发形状。
+     *
+     * <p><b>为什么必须带上</b>：回答正文里的 {@code [1][2]} 角标只有配上这份清单才有意义。此前
+     * MCP 只回正文与 sessionId，外部客户端拿到的是「带角标的无源回答」——而「答案可溯源」正是
+     * 本产品唯一承诺的东西，在网页与分享页都兑现了，只有 MCP 这一路整个丢掉。
+     *
+     * <p><b>字段白名单与不外发的边界</b>（与分享页 {@code SessionShareService.projectMessages} 同一口径）：
+     * 只给文档名/章节标题/站点/相关度；<b>知识块全文（snippet）与块内图片一律不外发</b>——
+     * 那是库内内容，不是协议该顺带送出去的东西。
+     *
+     * @param donePayload {@code done} 事件原文（可为 null，取不到就当本轮没有来源）
+     * @return 投影后的来源列表（可能为空；不会返回 null）
+     */
+    private static List<Map<String, Object>> sourcesOf(String donePayload) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (donePayload == null || donePayload.isBlank()) return out;
+        JSONArray arr;
+        try {
+            JSONObject done = JSON.parseObject(donePayload);
+            arr = done == null ? null : done.getJSONArray("sources");
+        } catch (Exception e) {
+            // 投影失败不该把一个已经拿到的回答变成错误：来源是附加信息，降级为「本轮无来源」
+            log.warn("[MCP] 解析 done 载荷取来源失败，本轮按无来源外发: {}", e.getMessage());
+            return out;
+        }
+        if (arr == null) return out;
+        for (int i = 0; i < arr.size() && out.size() < MAX_SOURCES_OUT; i++) {
+            JSONObject s = arr.getJSONObject(i);
+            if (s == null) continue;
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("ref", s.get("ref"));
+            r.put("origin", s.get("origin"));
+            r.put("fileName", s.get("fileName"));
+            r.put("siteName", s.get("siteName"));
+            r.put("url", s.get("url"));
+            r.put("title", s.get("title"));
+            // 与分享页同一档位：有重排分用重排分，否则融合分
+            Object score = s.get("rerankScore") != null ? s.get("rerankScore") : s.get("score");
+            if (score != null) r.put("score", score);
+            out.add(r);
+        }
+        return out;
+    }
+
+    /**
+     * 把来源清单拼成模型与人都读得懂的文本块，附在回答正文之后。
+     *
+     * <p>为什么要拼进正文而不只放 structuredContent：不是所有 MCP 客户端都读结构化输出，
+     * 而「[1] 是哪份文档」这件事必须对最笨的客户端也成立。超出的条数如实交代，不静默截断。
+     */
+    private static String appendSourcesBlock(String answer, List<Map<String, Object>> sources, int total) {
+        if (sources.isEmpty()) return answer;
+        StringBuilder sb = new StringBuilder(answer);
+        sb.append("\n\n---\n来源：\n");
+        for (Map<String, Object> s : sources) {
+            String origin = text(s.get("origin"));
+            String where;
+            if ("WEB".equals(origin)) {
+                String site = text(s.get("siteName"));
+                where = (site.isEmpty() ? "联网" : "联网 · " + site) + " " + text(s.get("url"));
+            } else {
+                String file = text(s.get("fileName"));
+                where = file.isEmpty() ? "知识库" : "知识库 · " + file;
+            }
+            String title = text(s.get("title"));
+            String score = s.get("score") == null ? "" : " · 相关度 " + s.get("score");
+            sb.append("[").append(text(s.get("ref"))).append("] ").append(where);
+            if (!title.isEmpty()) sb.append(" · ").append(title);
+            sb.append(score).append("\n");
+        }
+        if (total > sources.size()) {
+            sb.append("（另有 ").append(total - sources.size()).append(" 条来源未列出）\n");
+        }
+        return sb.toString();
+    }
+
+    /**
+     * 构造带来源的回答结果：文本里附可读来源清单，结构化输出里带 sources 数组。
+     *
+     * @param sink        收集型通道（已 done）
+     * @param sessionId   本轮会话 id
+     * @param extraFields 额外并入 structuredContent 的字段（平台级入口用，可为 null）
+     */
+    private static McpSchema.CallToolResult answerWithSources(
+            CollectingSseEmitter sink, String sessionId, Map<String, Object> extraFields) {
+        String payload = sink.donePayload();
+        int total = 0;
+        if (payload != null && !payload.isBlank()) {
+            try {
+                JSONArray raw = JSON.parseObject(payload).getJSONArray("sources");
+                total = raw == null ? 0 : raw.size();
+            } catch (Exception ignored) {
+                // 只影响「另有 N 条」这句，取不到就按已列出的条数说话
+            }
+        }
+        List<Map<String, Object>> sources = sourcesOf(payload);
+        Map<String, Object> structured = new LinkedHashMap<>();
+        if (extraFields != null) structured.putAll(extraFields);
+        structured.put("sessionId", sessionId);
+        structured.put("sources", sources);
+        return McpSchema.CallToolResult.builder()
+                .addTextContent(appendSourcesBlock(sink.answer(), sources, total))
+                .structuredContent(structured)
+                .build();
     }
 
     private static McpSchema.CallToolResult ok(String text) {
