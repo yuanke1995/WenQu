@@ -105,7 +105,7 @@
                   <!-- 常规字段（SchemaField 全量复用：类型控件/条件显隐/参数说明）。
                        技能与 MCP 的内容已迁到「智能体」页的个人 Tab，这里只剩技能的两个上下文预算参数 -->
                   <template v-else-if="blk.type === 'field'">
-                    <SchemaField :field="blk.field" :form="form" :tips="TIPS">
+                    <SchemaField :field="blk.field" :form="form" :tips="TIPS" :options="denyOptions">
                       <template v-if="probeKey(blk.field)" #extra>
                         <button class="app-btn ghost small probe-btn" :disabled="probeStates[probeKey(blk.field)].loading" @click="doProbe(probeKey(blk.field))">
                           {{ probeStates[probeKey(blk.field)].loading ? '测试中…' : '测试连接' }}
@@ -705,7 +705,12 @@ const fetchAndFill = async () => {
       for (const f of FIELDS) {
         const raw = d[f.group]?.[f.submitKey || f.key]?.value
         let v
-        if (raw === undefined || raw === null || raw === '') {
+        // 多选名单（如平台停用工具名单）先判：库里是逗号串、表单里恒为数组，空值也不能例外。
+        // 落到下面那条 def 分支会填进空串——控件虽然还能渲染（SchemaField.rawMulti 会兜），
+        // 但表单里就出现「有的库是数组、有的库是字符串」两种形态，拼载荷时要靠运气
+        if (f.type === 'multiselect') {
+          v = String(raw ?? '').split(',').map(s => s.trim()).filter(Boolean)
+        } else if (raw === undefined || raw === null || raw === '') {
           v = f.type === 'switch' ? false : (f.type === 'number' ? f.def : (f.def ?? ''))
         } else if (f.type === 'number') v = Number(raw)
         else if (f.type === 'switch') v = raw === 'true' || raw === true
@@ -724,6 +729,14 @@ const buildPayload = () => {
   const out = {}
   for (const f of FIELDS) {
     let v = readForm(form.value, f.path)
+    if (f.type === 'multiselect') {
+      // 数组 → 后端那一个逗号串键（顺序即标签顺序）。空数组也要提交成空串：这一步是与
+      // 「库里清空」的唯一通路，而脏检测只比 payload 里出现过的键——这里 continue 掉，
+      // 删完最后一个标签时按钮就永远是灰的，用户清不掉任何一项（实测踩到）。
+      const joined = (Array.isArray(v) ? v : []).map(s => String(s).trim()).filter(Boolean).join(',')
+      ;(out[f.group] = out[f.group] || {})[f.submitKey || f.key] = joined
+      continue
+    }
     if (typeof v === 'string') {
       v = v.trim()
       if (/apikey/i.test(f.key) && v.startsWith('****')) continue
@@ -1046,6 +1059,14 @@ const loadToolInventory = async () => {
     toolInvLoading.value = false
   }
 }
+
+// 「平台停用工具名单」（tool.deny，multiselect）的候选：直接用上面这份工具全景，不另开接口。
+// 名字与族名都在 option 的 label 里（optionFilterProp=label ⇒ 中文名和工具名都能搜到）；
+// 历史值里已不在名册上的名字由控件自己补成标签（见 SchemaField 的 multiOptions）。
+const denyOptions = computed(() => toolInv.value.flatMap(g => (g.tools || []).map(t => ({
+  value: t.name,
+  label: (g.familyLabel ? g.familyLabel + ' · ' : '') + (t.label || t.name)
+}))))
 
 // 清单内直接切换工具族启用/禁用：写该族的全局配置键（与上方表单同一键），保存即生效。
 // 提交值用字符串（与表单提交形态一致），同步回写 form 后把本组视为已保存（不产生 dirty 提示）
@@ -1441,7 +1462,9 @@ const fmtCountdown = (due, serverNow) => {
   return Math.ceil(left / 86400000) + ' 天内'
 }
 
-onMounted(fetchAndFill)
+// 进页即拉一次工具全景：不只是给下方清单区用——「平台停用工具名单」的候选项也来自它，
+// 而那个字段在配置表单里，不会触发工具面板的 watch（等切页签才拉会让下拉先空一段）
+onMounted(() => { fetchAndFill(); loadToolInventory() })
 </script>
 
 <style scoped>

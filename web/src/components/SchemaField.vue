@@ -15,6 +15,11 @@
     <template v-else-if="field.type === 'select'">
       <a-select v-model:value="value" size="small" :options="field.options" style="width: 120px" />
     </template>
+    <template v-else-if="field.type === 'multiselect'">
+      <a-select :value="rawMulti" mode="tags" size="small" :options="multiOptions" allow-clear
+                option-filter-prop="label" :max-tag-count="2" style="width: 180px"
+                @update:value="v => value = normalizeMulti(v)" />
+    </template>
     <template v-else-if="field.type === 'model'">
       <ModelSelect v-model="value" :type="field.modelType || 'chat'" :allow-clear="!!field.allowClear" width="100%" />
     </template>
@@ -63,6 +68,25 @@
       <a-select :value="value || undefined" :options="agentOptions" show-search option-filter-prop="label"
                 :loading="agentsLoading" :style="{ width: (field.width || 320) + 'px' }"
                 placeholder="跟随平台默认智能体" allow-clear @update:value="v => value = v || ''" />
+    </template>
+
+    <!-- 多选名单（逗号串）：表单里是字符串数组，提交时 join(',') 还原成后端那一个字符串键
+         （见 SettingsPage.buildPayload）。候选由调用方给（options prop），字段自己不去猜数据源 -->
+    <template v-else-if="field.type === 'multiselect'">
+      <a-select :value="rawMulti" mode="tags" :options="multiOptions" allow-clear show-search
+                option-filter-prop="label" :max-tag-count="field.maxTagCount || 8"
+                :style="{ width: (field.width || 420) + 'px' }" :placeholder="field.ph"
+                @update:value="v => value = normalizeMulti(v)">
+        <!-- 标签只用工具自己的名字：候选行里的「族 · 中文名」是为了在长列表里认得出，
+             挂成标签后族名是噪声（同一个工具不会因为少个前缀而认不出），4 个标签就能把
+             输入行撑满两行。注意这会覆盖 antd 从 option.label 自动取的标签文案 -->
+        <template #tagRender="{ label, closable, onClose }">
+          <span class="ms-tag">
+            {{ tagText(label) }}
+            <close-outlined v-if="closable" class="ms-tag-x" @click="onClose" />
+          </span>
+        </template>
+      </a-select>
     </template>
 
     <template v-else-if="field.type === 'number'">
@@ -116,7 +140,7 @@
 
 <script setup>
 import { computed, ref, watch } from 'vue'
-import { QuestionCircleOutlined } from '@ant-design/icons-vue'
+import { QuestionCircleOutlined, CloseOutlined } from '@ant-design/icons-vue'
 import { FIELDS, isVisible } from '../configSchema'
 import { listAvailableAgents } from '../api'
 import ModelSelect from './ModelSelect.vue'
@@ -125,6 +149,9 @@ const props = defineProps({
   field: { type: Object, required: true },
   form: { type: Object, required: true },
   tips: { type: Object, default: () => ({}) },
+  /** 多选类字段的候选（type=multiselect）：数据源在调用方——同一类字段在不同页面候选不同
+   *  （平台的停用名单＝工具全景，智能体的名单＝名册），字段定义里写死一处会锁死另一处 */
+  options: { type: Array, default: () => [] },
   /** 裸控件模式：不套 a-form-item（见模板顶部注释）。标签与说明由使用方负责 */
   bare: { type: Boolean, default: false }
 })
@@ -165,6 +192,28 @@ const value = computed({
   get: () => read(props.form, props.field.path),
   set: v => write(props.form, props.field.path, v)
 })
+
+// ==================== 多选名单（逗号串） ====================
+// 表单值是数组（控件要数组），落库值是逗号串——两端的换算只在这里与 SettingsPage 的
+// fetchAndFill/buildPayload 各一处，别在别处再 split 一次（多一处就是多一个口径）
+const normalizeMulti = v => (Array.isArray(v) ? v : [])
+  .map(s => String(s).trim()).filter(Boolean)
+const rawMulti = computed(() => {
+  const v = value.value
+  if (Array.isArray(v)) return v
+  return String(v ?? '').split(',').map(s => s.trim()).filter(Boolean)
+})
+// 候选 = 调用方给的名册 + 当前值里名册已经没有的名字。少了后一半，被停用/改名后的工具
+// 在界面上会整个消失（标签没了），前端读起来就是「我没停用它」——而它其实还在库里拦着
+const multiOptions = computed(() => {
+  const given = (props.options || []).map(o => (typeof o === 'string' ? { value: o, label: o } : o))
+  const known = new Set(given.map(o => o.value))
+  const stale = rawMulti.value.filter(v => !known.has(v))
+    .map(v => ({ value: v, label: v + '（已不在名册里）' }))
+  return given.concat(stale)
+})
+/** 标签文案：候选行是「族 · 中文名」，标签只留工具名（见模板里 tagRender 的说明） */
+const tagText = label => String(label ?? '').split(' · ').pop()
 
 const pairPath = computed(() =>
   props.field.pairKey ? props.field.path.replace(/[^.]+$/, props.field.pairKey) : '')
@@ -252,5 +301,28 @@ const onSelectChange = v => emit('change', props.field, v)
   color: var(--app-text3);
   margin-left: 8px;
   white-space: nowrap;
+}
+/* 多选标签：默认 antd 标签在长标签下会把选择框撑得很高，这里收一下字号与内边距 */
+.ms-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 0 6px;
+  margin: 2px 4px 2px 0;
+  border: 1px solid var(--app-border);
+  border-radius: 4px;
+  background: var(--app-panel-2);
+  color: var(--app-text);
+  font-size: 12px;
+  line-height: 20px;
+}
+.ms-tag-x {
+  font-size: 10px;
+  color: var(--app-text3);
+  cursor: pointer;
+}
+.ms-tag-x:hover {
+  color: var(--app-accent);
 }
 </style>
