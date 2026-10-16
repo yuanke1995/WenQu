@@ -583,7 +583,7 @@ const sessionRetrieval = computed(() => {
 // 上下文占用条（context/budget）已删：budget 是 legacy 时代的检索配额（窗口×安全系数−最大输出），
 // 框架引擎下这套分配不存在，报上来只会让「上下文 3.4K / 预算 120K」里的 120K 无人认领。
 // 上下文占用了窗口多少，现在由容量卡的 ctxCapData 回答（context/window，>80% 警告 / >95% 危险）。
-// ==================== 图片上传（粘贴，压缩为 dataURL） ====================
+// ==================== 图片（「+」菜单选择 / 拖入 / 粘贴 → 压缩为 dataURL） ====================
 const pendingImages = ref([])
 const compressImage = file => new Promise((resolve, reject) => {
   const img = new Image()
@@ -604,15 +604,8 @@ const compressImage = file => new Promise((resolve, reject) => {
   img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('图片加载失败')) }
   img.src = url
 })
-const addImageFiles = (files, list = pendingImages) => {
-  for (const f of files) {
-    if (list.value.length >= 5) { message.warning('最多上传 5 张图片'); break }
-    if (!f.type.startsWith('image/')) continue
-    compressImage(f).then(dataUrl => list.value.push({ dataUrl })).catch(() => message.error(`图片处理失败: ${f.name}`))
-  }
-}
 const removePendingImage = i => pendingImages.value.splice(i, 1)
-// ==================== 附件上传（「+」菜单选择/拖入 → 先传换 fileId，问答请求只带 fileId） ====================
+// ==================== 附件上传（「+」菜单选择/拖入/粘贴 → 先传换 fileId，问答请求只带 fileId） ====================
 // 此前附件以 base64 内联在 /chat 的 JSON body 里：5×15MB 会打出 ~100MB 的字符串，弱网必挂、
 // 断线要整包重传、后端也得先把整包读进内存。现在文件先走 multipart 上传落盘换号，请求体只带 id。
 const MAX_FILES = 5
@@ -629,7 +622,9 @@ const extOf = name => {
 /** 上传单个附件换 fileId（上传中就挂进列表，用户能看到进度/失败态，而不是点发送后才知道没传上去）；
  *  list 缺省挂主输入框，编辑卡复用时传自己的列表；extra 是只给本地呈现用的附加字段（如粘贴文本的原文） */
 const uploadOneFile = async (f, list = pendingFiles, extra) => {
-  const item = { name: f.name, size: f.size, mime: f.type || '', fileId: '', uploading: true, error: '', ...(extra || {}) }
+  // 先 reactive 再入列：直接改裸对象绕过代理的 set 陷阱，进度/失败态不会重渲染，
+  // 卡片会停在「上传中…」直到下一次无关渲染才突然变成体积（实测踩过）
+  const item = reactive({ name: f.name, size: f.size, mime: f.type || '', fileId: '', uploading: true, error: '', ...(extra || {}) })
   list.value.push(item)
   try {
     const r = await uploadChatAttachment(f)
@@ -654,22 +649,41 @@ const addFiles = (files, target, extra) => {
   const imgList = target?.images || pendingImages
   const fileList = target?.files || pendingFiles
   for (const f of files) {
+    // 粘贴进来的文件可能没有名字（剪贴板只给了个 blob），提示里不能留一个空位
+    const label = f.name || '未命名文件'
     if (f.type.startsWith('image/')) {
       if (imgList.value.length >= 5) { message.warning('最多上传 5 张图片'); continue }
       compressImage(f).then(dataUrl => imgList.value.push({ dataUrl }))
-        .catch(() => message.error(`图片处理失败: ${f.name}`))
+        .catch(() => message.error(`图片处理失败: ${label}`))
       continue
     }
     if (fileList.value.length >= MAX_FILES) { message.warning(`一次最多上传 ${MAX_FILES} 个附件`); break }
     if (!SUPPORTED_EXTS.includes(extOf(f.name))) {
-      message.warning(`暂不支持的附件类型：${f.name}（支持 PDF / Word / Excel / PPT / 文本与代码文件）`)
+      message.warning(`暂不支持的附件类型：${label}（支持 PDF / Word / Excel / PPT / 文本与代码文件）`)
       continue
     }
-    if (f.size > MAX_FILE_MB * 1024 * 1024) { message.warning(`单个附件不能超过 ${MAX_FILE_MB}MB：${f.name}`); continue }
+    if (f.size > MAX_FILE_MB * 1024 * 1024) { message.warning(`单个附件不能超过 ${MAX_FILE_MB}MB：${label}`); continue }
     uploadOneFile(f, fileList, extra)
   }
 }
 const removePendingFile = i => pendingFiles.value.splice(i, 1)
+// ==================== 粘贴文件 → 附件 ====================
+/** 剪贴板里的文件：files 命中即用；部分浏览器只把它挂在 items 上，空了再退一路。
+ *  两路不合流，否则同一个文件会入列两次 */
+const pasteFilesOf = cd => {
+  const files = Array.from(cd?.files || [])
+  if (files.length) return files
+  return Array.from(cd?.items || []).filter(i => i.kind === 'file').map(i => i.getAsFile()).filter(Boolean)
+}
+/** 粘贴带文件（截图、也带 PDF / Word / 文本等真附件）：与「+」选择、拖入走同一分流口径。
+ *  必须 preventDefault——否则浏览器会把文件名当文本插进正文；返回 true 表示已消费，调用方按需截断冒泡 */
+const takePastedFiles = (e, target) => {
+  const files = pasteFilesOf(e.clipboardData)
+  if (!files.length) return false
+  e.preventDefault()
+  addFiles(files, target)
+  return true
+}
 // ==================== 长文本粘贴 →「粘贴的文本」附件 ====================
 // 整篇文档、大段日志塞进输入框既读不清也发不出去（问题正文有长度上限，超限直接报错）。
 // 超过阈值就把它包成一个 .txt 文件，走与「选择文件」完全相同的管线：卡片呈现、随本轮上传、
@@ -683,11 +697,11 @@ const pasteNameOf = list => {
   while (used.has(`${PASTE_TEXT_BASE} ${n}.txt`)) n++
   return `${PASTE_TEXT_BASE} ${n}.txt`
 }
-/** 输入框粘贴事件里取长文本：带图片的粘贴让给图片管线，短文本照常内联可编辑。
+/** 输入框粘贴事件里取长文本：带文件的粘贴让给文件管线，短文本照常内联可编辑。
  *  返回 true 表示这次粘贴已被消费（原文不再落进输入框），调用方按需要截断冒泡 */
 const takePastedText = (e, target) => {
   const cd = e.clipboardData
-  if (!cd || Array.from(cd.files || []).some(f => f.type.startsWith('image/'))) return false
+  if (!cd || pasteFilesOf(cd).length) return false
   const raw = cd.getData('text/plain')
   if (!raw || raw.length < PASTE_TEXT_MIN_CHARS) return false
   const fileList = target?.files || pendingFiles
@@ -2739,10 +2753,10 @@ if (typeof window !== 'undefined') {
     ctxCapData, ctxRingDash, ctxRingLevel, panelAi, retryPanelRound, sessionArtifacts,
     sessionTokens, sessionTokensLabel, sessionRetrieval, sessionTodos,
     // 图片与附件
-    pendingImages, addImageFiles, removePendingImage, MAX_FILES, pendingFiles, hasUploadingFile,
+    pendingImages, removePendingImage, MAX_FILES, pendingFiles, hasUploadingFile,
     addFiles, removePendingFile,
-    // 长文本粘贴转附件
-    takePastedText,
+    // 粘贴转附件（文件与图片 / 超长文本）
+    takePastedFiles, takePastedText,
     // @ 引用（本轮显式指定知识库/文档/智能体）
     mentionOpen, mentionTab, mentionQuery, mentionLoading, mentionKbs, mentionDocs, pendingMentions,
     mentionHi, MAX_MENTIONS, isMentioned, toggleMention, removeMention, switchMentionTab,

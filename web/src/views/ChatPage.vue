@@ -1609,7 +1609,7 @@ import { toolLabel, toolDesc, toolCallsView, executedCount, toolDuration, toolRu
          DUR_SPAN_TITLE,
          fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget, fanRun, runBoardText,
          toggleSubagents, fmtDuration, fmtWindow, externalOrigin, sourceName, fmtSourceScore, scoreTitle,
-         fmtMsgTime, fmtSize, errorBrief, histItemTitle, verLocal, canSwitchPrev, canSwitchNext, verLabel,
+         fmtMsgTime, fmtSize, errorBrief, histItemTitle, histItemDigest, verLocal, canSwitchPrev, canSwitchNext, verLabel,
          pasteTitle, pasteSub, isPastedText,
          THINK_LEVEL_ON, levelLabel, stopTick, agentBadgeOf, consultedOf } from '../chat/projections'
 
@@ -2006,7 +2006,7 @@ const onGlobalKeydown = e => {
     }
   }
 }
-const onGlobalPaste = e => onPasteImages(e)
+const onGlobalPaste = e => takePastedFiles(e)
 // 窗口高度变化会改变「一屏」的量：重算留白（跟随中的会话顺手回到落点）
 // 重测输入框：antd Textarea 内部靠 ResizeObserver 自测高度，但 iOS Safari 在键盘
 // 动画期间该观察可能不触发（overflow 计算在键盘态下不稳定），表现为输入框塌成一行。
@@ -2071,15 +2071,9 @@ const onDropFiles = e => {
   dragOver.value = false
   addFiles(Array.from(e.dataTransfer?.files || []))
 }
-const onPasteImages = e => {
-  const imgs = Array.from(e.clipboardData?.files || []).filter(f => f.type.startsWith('image/'))
-  if (!imgs.length) return
-  e.preventDefault()
-  addImageFiles(imgs)
-}
-// 输入框粘贴：整段长文本转成「粘贴的文本」附件（图片粘贴仍走上面的 window 级管线）。
-// 截断冒泡只为避开 window 级监听的重复处理，附件本身已由引擎入列
-const onComposerPaste = e => { if (takePastedText(e)) e.stopPropagation() }
+// 输入框粘贴：文件与图片挂成待发送附件（图片压缩预览），整段长文本转成「粘贴的文本」附件；
+// 短文本照常内联可编辑。截断冒泡只为避开 window 级监听的重复处理，材料本身已由引擎入列
+const onComposerPaste = e => { if (takePastedFiles(e) || takePastedText(e)) e.stopPropagation() }
 // 粘贴卡片点开看全文：原文只留在内存（待发送项与本轮消息），刷新后的历史卡片没有它
 const pasteView = reactive({ open: false, name: '', text: '' })
 const openPasteView = a => {
@@ -2407,7 +2401,7 @@ const addHistCandidates = computed(() => histListOf(addHistQuery.value))
 // 「+」面板两级形态：root=一级轻菜单（ADD_ROOT_ROWS），其余 key=二级列表（ADD_TITLES 给头部标题）。
 // count()=已选/生效数（实心徽标，告诉用户这轮会带上什么）；不再有页签双计数
 const ADD_ROOT_ROWS = [
-  { key: 'file', name: '上传文件', desc: '文件与图片一起选：文件解析后供模型阅读，图片压缩后随本轮提问（最多 5 张）', icon: PaperClipOutlined,
+  { key: 'file', name: '上传文件', desc: '也可直接粘贴或拖进来：文件读出正文供模型看，图片压缩后随本轮提问（各最多 5 个）', icon: PaperClipOutlined,
     badge: () => pendingFiles.value.length + pendingImages.value.length, run: () => pickAttachments() },
   { key: 'ref', name: '引用资料', desc: '知识库 / 文档 / 智能体，只对本轮生效', icon: BookOutlined, kbd: '@',
     badge: () => pendingMentions.value.length, run: () => switchAddTab('ref') },
@@ -2983,14 +2977,9 @@ const onEditAttachChange = e => {
   addFiles(files, { images: editImgs, files: editAtts })
 }
 const onEditPaste = e => {
-  const imgs = Array.from(e.clipboardData?.files || []).filter(f => f.type.startsWith('image/'))
-  if (!imgs.length) {
-    if (takePastedText(e, { files: editAtts })) e.stopPropagation()
-    return
-  }
-  e.preventDefault()
-  e.stopPropagation()   // 截住冒泡：window 级粘贴监听会把图挂到主输入框去
-  addImageFiles(imgs, editImgs)
+  const into = { images: editImgs, files: editAtts }
+  // 截住冒泡：window 级粘贴监听会把材料挂到主输入框去
+  if (takePastedFiles(e, into) || takePastedText(e, into)) e.stopPropagation()
 }
 const removeEditImage = i => editImgs.value.splice(i, 1)
 const removeEditAtt = i => editAtts.value.splice(i, 1)
@@ -3146,8 +3135,8 @@ const {
   ctxRingLevel, panelAi, retryPanelRound, sessionArtifacts, sessionTokens, sessionTokensLabel, sessionTodos,
   sessionRetrieval,
   // 图片与附件
-  pendingImages, addImageFiles, removePendingImage, MAX_FILES, pendingFiles, hasUploadingFile, addFiles,
-  removePendingFile, takePastedText,
+  pendingImages, removePendingImage, MAX_FILES, pendingFiles, hasUploadingFile, addFiles,
+  removePendingFile, takePastedFiles, takePastedText,
   // @ 引用（面板与筛选词在「+」面板一节，高亮下标用本页自己的 addHi）
   mentionTab, mentionQuery, mentionLoading, mentionKbs, mentionDocs, pendingMentions,
   isMentioned, toggleMention, removeMention, loadMentionCandidates,

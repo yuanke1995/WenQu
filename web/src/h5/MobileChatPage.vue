@@ -449,7 +449,7 @@ const {
   deepThinkOn, effectiveModelLabel, debugDisplayVisible, regenerate, switchBranch, variantSwitching,
   resolveApproval, pickAskOption, commitAskCustom, askSubmitAll, createNewSession, pendingImages, pendingFiles, pickedSkills, pendingMentions,
   pendingHistoryRefs, toggleSkill, removePendingImage, removePendingFile, removeMention, removeHistoryRef,
-  takePastedText,
+  takePastedFiles, takePastedText,
   ignoreAsk,
   // 手动压缩上下文（入口在「模型与思考」sheet；分隔线与摘要 sheet 在本页。
   // 「压缩中」态由 compacting 一并表达）
@@ -581,8 +581,8 @@ const preview = reactive({ list: [], idx: 0 })
 const openPreview = (list, idx) => { preview.list = list || []; preview.idx = idx || 0 }
 const closePreview = () => { preview.list = []; preview.idx = 0 }
 
-// 输入框粘贴长文本 → 「粘贴的文本」附件（短粘贴照常内联，可继续编辑）
-const onComposerPaste = e => { takePastedText(e) }
+// 输入框粘贴：文件与图片挂成待发送附件，整段长文本转成「粘贴的文本」附件（短粘贴照常内联，可继续编辑）
+const onComposerPaste = e => { if (takePastedFiles(e)) return; takePastedText(e) }
 // 粘贴卡片点开看全文：正文只在内存里（随问答落库的是名称/体积），
 // 刷新后的历史卡片没有它 —— 明确说明，而不是点一下没反应
 const pasteView = reactive({ open: false, name: '', text: '' })
