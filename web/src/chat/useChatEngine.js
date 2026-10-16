@@ -825,6 +825,13 @@ const todosMap = ref({})
 const sessionTodos = computed(() => todosMap.value[currentSessionId.value] || null)
 function setTodos (sid, doc) { todosMap.value = { ...todosMap.value, [sid]: doc } }
 
+/** switchSession 的在途加载：同一 sid 只允许一个 getHistory 在飞，重复调用直接复用它的结果。
+ *  为什么需要：刷新落地时会连着调两次同一个 sid——一次来自首屏/地址栏，一次来自
+ *  finishResumedShell（接流气泡收场后按历史重显）。两次都 await getHistory，谁先返回谁写
+ *  messages.value，晚返回的那份就会用**旧快照**覆盖掉已经接回视图的 live 气泡，
+ *  症状是「正在回答时刷一下，正在跑的那一条连同它上面的提问一起没了」。 */
+const historyLoads = new Map()
+
 const switchSession = async sid => {
   // 不再被"正在回答"拦截：流式回调改写的是 chatStreams 里的消息对象，切走不影响后台流
   currentSessionId.value = sid
@@ -849,6 +856,9 @@ const switchSession = async sid => {
   // 必须保留兄弟参数：?approval=<id>（工具审批通知深链）直接写 query:{sid} 会被抹掉，
   // 恢复横幅能否出现变成异步时序的侥幸（fetch 先回才亮），刷新后则永久丢失。
   router.replace({ path: hooks.chatPath, query: { ...route.query, sid } }).catch(() => {})
+  // 同一会话已在加载：复用它的结果，别再发一次请求、也别让两份快照互相覆盖
+  if (historyLoads.has(sid)) return historyLoads.get(sid)
+  const task = (async () => {
   try {
     // 403（会话归属拒绝）由本函数静默回退处理，不触发全局提示
     const r = await getHistory(sid, { silentForbidden: true })
@@ -967,7 +977,13 @@ const switchSession = async sid => {
         sessionRecovering = false
       }
     }
+  } finally {
+    // 本次在途加载结束：清掉登记，让下一次 switchSession 能正常重新拉历史
+    historyLoads.delete(sid)
   }
+  })()
+  historyLoads.set(sid, task)
+  return task
 }
 
 const creatingSession = ref(false)

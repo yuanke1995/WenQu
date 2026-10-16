@@ -606,8 +606,8 @@
               </div>
               <div v-if="editAtts.length" class="pending-files">
                 <template v-for="(f, fi) in editAtts" :key="fi">
-                  <div v-if="f.paste" class="pending-file paste-card" :class="{ err: !!f.error }"
-                       :title="f.error || '点击查看粘贴的全文'" @click="openPasteView(f)">
+                  <div v-if="f.paste" class="pending-file paste-card" :class="{ err: !!f.error, expired: !!f.expired }"
+                       :title="f.expired ? '粘贴文本的正文只留在当轮内存里，刷新后不随历史保留' : (f.error || '点击查看粘贴的全文')" @click="openPasteView(f)">
                     <span class="paste-card-ic"><file-text-outlined /></span>
                     <span class="paste-card-txt">
                       <span class="paste-card-name">{{ pasteTitle(f.name) }}</span>
@@ -615,10 +615,12 @@
                     </span>
                     <span class="pending-file-del" @click.stop="removeEditAtt(fi)">×</span>
                   </div>
-                  <div v-else class="pending-file" :class="{ err: !!f.error }" :title="f.error || f.name">
+                  <div v-else class="pending-file" :class="{ err: !!f.error, expired: !!f.expired }"
+                       :title="f.expired ? (f.name + '：原始文件已过保留期（默认 24h），不能随编辑重发；如仍需它，请重新上传') : (f.error || f.name)">
                     <file-text-outlined class="pending-file-ic" />
                     <span class="pending-file-name">{{ f.name }}</span>
                     <span v-if="f.uploading" class="pending-file-size">上传中…</span>
+                    <span v-else-if="f.expired" class="pending-file-size">已失效</span>
                     <span v-else-if="f.error" class="pending-file-size">上传失败</span>
                     <span v-else class="pending-file-size">{{ fmtSize(f.size) }}</span>
                     <span class="pending-file-del" @click.stop="removeEditAtt(fi)">×</span>
@@ -636,6 +638,46 @@
                   <span class="at-chip-name">{{ mm.name || mm.id }}</span>
                   <span class="at-chip-del" title="移除该引用" @click="removeEditMention(mi2)">×</span>
                 </span>
+              </div>
+              <!-- 技能（编辑卡内可增删）：与主输入框同一份 skillList/toggleSkill -->
+              <div v-if="editSkills.length" class="edit-mentions">
+                <span v-for="n in editSkills" :key="n" class="at-chip skill-chip">
+                  <span class="skill-chip-ava" :style="skillAvaStyle(n)">{{ n.slice(0, 1) }}</span>
+                  <span class="at-chip-name">{{ n }}</span>
+                  <span class="at-chip-del" title="移除该技能" @click="removeEditSkill(n)">×</span>
+                </span>
+              </div>
+              <!-- # 引用的历史问答（编辑卡内可增删）：候选仍是 histPool（同会话已落库的消息） -->
+              <div v-if="editHistRefs.length" class="edit-mentions">
+                <span v-for="(h, hi) in editHistRefs" :key="h.messageId" class="at-chip"
+                      :title="'引用的历史' + (h.role === 'assistant' ? '回答' : '提问') + (h.digest ? '：' + h.digest : '')">
+                  <history-outlined class="at-chip-ic" />
+                  <span class="at-chip-name">{{ h.digest || (h.role === 'assistant' ? '回答' : '提问') }}</span>
+                  <span class="at-chip-del" title="移除该引用" @click="removeEditHistRef(hi)">×</span>
+                </span>
+              </div>
+              <!-- 添加入口：技能 + # 历史引用（两者都是「从本会话已有内容里挑」，不适用文件选择器） -->
+              <div class="edit-add-row">
+                <a-dropdown v-if="skillList.length" trigger="click">
+                  <button class="app-icon-btn" title="添加技能"><thunderbolt-outlined /></button>
+                  <template #overlay>
+                    <a-menu>
+                      <a-menu-item v-for="s in skillList" :key="s.name" @click="addEditSkill(s.name)">
+                        {{ s.name }}
+                      </a-menu-item>
+                    </a-menu>
+                  </template>
+                </a-dropdown>
+                <a-dropdown v-if="editHistPool.length" trigger="click">
+                  <button class="app-icon-btn" title="引用历史问答"><history-outlined /></button>
+                  <template #overlay>
+                    <a-menu>
+                      <a-menu-item v-for="m in editHistPool" :key="m.messageId" @click="addEditHistRef(m.messageId)">
+                        {{ m.role === 'assistant' ? '答' : '问' }}：{{ (m.content || '').slice(0, 40) }}
+                      </a-menu-item>
+                    </a-menu>
+                  </template>
+                </a-dropdown>
               </div>
               <div class="msg-inline-edit-actions">
                 <button class="app-icon-btn" title="添加图片或附件" @click="pickEditFiles"><paper-clip-outlined /></button>
@@ -2846,11 +2888,15 @@ const editingIdx = ref(null)
 const editingText = ref('')
 const editingBusy = ref(false)
 const editingRef = ref(null)
-// 随行内容：从原消息播种，编辑期内可增删（图片/附件与主输入框同构同管线；@ 引用只可移除；
-// 深度思考/技能/# 历史引用不进编辑卡，沿用原轮）。历史回放的图片只剩服务端 URL，重发时按 data: 过滤
+// 随行内容：从原消息播种，编辑期内可增删（图片/附件与主输入框同构同管线）。
+// 「原封不动地编辑」= 原问题带过的每一项都能在编辑卡里看到、改、删：图片 / 文档附件 /
+// @ 引用 / # 历史引用 / 技能。深度思考不进编辑卡（它是模型侧的算力档位、没有可编辑内容，
+// 重发时沿用原轮）。
 const editImgs = ref([])      // [{ dataUrl }]
 const editAtts = ref([])      // [{ name, mime, size, fileId, uploading, error }]，attachData+attachments 合并态
 const editMentions = ref([])  // [{ type, id, name, kbId }]
+const editHistRefs = ref([])  // [{ messageId, role, digest }]，# 历史引用
+const editSkills = ref([])    // [技能名]
 const editAttachInput = ref(null)
 // v-for 内的模板 ref 走函数式（ref 属性在循环里会聚集成数组，取值麻烦）
 const setEditingRef = el => { editingRef.value = el }
@@ -2872,21 +2918,61 @@ const editMessage = mi => {
   // 已有编辑框在别处打开：切换目标
   editingIdx.value = mi
   editingText.value = m.content
-  editImgs.value = (m.images || []).map(u => ({ dataUrl: u }))
   // attachData（重发载荷 {name,mime,fileId}）与 attachments（展示 {name,mime,size}）合并成一份可编辑列表
+  //
+  // 历史回放的消息只有 attachments、没有 attachData：上传文件按 chat.uploadRetentionHours
+  // （默认 24h）已清理，fileId 早已失效，带它重发会被后端以「附件已过期」拒掉。
+  // 所以历史条目照常回显成「已失效」卡片（不静默消失——那条曾经真的传上去过），
+  // 但没有 fileId，重发时由 okAtts = filter(f => f.fileId && !f.error) 自然滤掉。
   const metaByName = new Map((m.attachments || []).map(a => [a.name, a]))
-  editAtts.value = (m.attachData || []).map(a => {
+  const live = (m.attachData || []).map(a => {
     const meta = metaByName.get(a.name) || {}
     // paste/text 只在展示侧（本轮内存消息）有：不带回来编辑卡就退化成普通文件条，也点不开全文
     return { size: meta.size, paste: isPastedText(meta), text: meta.text, uploading: false, error: '', ...a }
   })
+  const expiredNames = new Set(live.map(f => f.name))
+  const expired = (m.attachments || [])
+    .filter(a => !expiredNames.has(a.name))
+    .map(a => ({ name: a.name, mime: a.mime, size: a.size, paste: isPastedText(a), text: a.text,
+                  fileId: '', uploading: false, expired: true, error: '' }))
+  editAtts.value = [...live, ...expired]
   editMentions.value = [...(m.mentions || [])]
+  // # 历史引用 / 技能：都是纯元信息（消息 ID、技能名），没有过期问题，可原样带回。
+  // digest 走 histItemDigest 重算——历史回放的消息带上它，编辑卡的标题/摘要才能正常显示。
+  editHistRefs.value = (m.historyRefs || [])
+    .filter(h => h && h.messageId)
+    .map(h => ({ messageId: h.messageId, role: h.role, digest: histItemDigest(h) }))
+  editSkills.value = Array.isArray(m.skills) ? [...m.skills] : []
+  // 历史回放的图片只剩带签名的服务端 URL，直接重发会被 imgs 的 data: 过滤丢掉。
+  // 抓回字节转成 data URL 就能像本会话图片一样原样带走（签名有效期内 fetch 得到）。
+  // fetch 失败（签名过期/文件已清）就退回留 URL，编辑卡仍能看见，只是重发时不带。
+  const seedImgs = (m.images || []).map(u => ({ dataUrl: u }))
+  editImgs.value = seedImgs
+  seedImgs.forEach((it, i) => {
+    if (String(it.dataUrl || '').startsWith('data:')) return
+    fetchToDataUrl(resolveImg(it.dataUrl))
+      .then(d => { if (editingIdx.value === mi && editImgs.value[i] === it) it.dataUrl = d })
+      .catch(() => { /* 抓不回来就保持 URL 原样，灯箱里仍可看 */ })
+  })
   nextTick(() => { autosizeEditing(); editingRef.value?.focus() })
+}
+/** 服务端图片 URL → data URL（编辑重发需要 data: 才能带上；失败抛给调用方决定回退策略） */
+const fetchToDataUrl = async url => {
+  const r = await fetch(url)
+  if (!r.ok) throw new Error('HTTP ' + r.status)
+  const b = await r.blob()
+  return await new Promise((resolve, reject) => {
+    const fr = new FileReader()
+    fr.onload = () => resolve(fr.result)
+    fr.onerror = () => reject(new Error('读取失败'))
+    fr.readAsDataURL(b)
+  })
 }
 const cancelEdit = () => {
   editingIdx.value = null
   editingText.value = ''
   editImgs.value = []; editAtts.value = []; editMentions.value = []
+  editHistRefs.value = []; editSkills.value = []
 }
 
 // ---- 编辑卡的随行内容操作：管线完全复用主输入框，只换目标列表 ----
@@ -2909,6 +2995,25 @@ const onEditPaste = e => {
 const removeEditImage = i => editImgs.value.splice(i, 1)
 const removeEditAtt = i => editAtts.value.splice(i, 1)
 const removeEditMention = i => editMentions.value.splice(i, 1)
+// ---- 编辑卡内的技能 / # 历史引用增删（与主输入框同一份候选，改的是编辑态列表） ----
+/** # 引用的候选：本会话已落库、有 messageId、正文非空的消息。排除正在编辑的这一轮本身
+ *  （引用自己没意义，且它马上会被软删重建，messageId 也就不成立了）。 */
+const editHistPool = computed(() => histPool.value
+  .filter(m => m.messageId !== (messages.value[editingIdx.value] || {}).messageId))
+const addEditSkill = name => {
+  if (editSkills.value.includes(name)) return
+  if (editSkills.value.length >= 3) { message.warning('一次最多选用 3 个技能'); return }
+  editSkills.value.push(name)
+}
+const removeEditSkill = name => { editSkills.value = editSkills.value.filter(n => n !== name) }
+const addEditHistRef = mid => {
+  if (editHistRefs.value.some(h => h.messageId === mid)) return
+  if (editHistRefs.value.length >= MAX_HISTORY_REFS) { message.warning(`一次最多引用 ${MAX_HISTORY_REFS} 条历史消息`); return }
+  const m = histPool.value.find(x => x.messageId === mid)
+  if (!m) return
+  editHistRefs.value.push({ messageId: mid, role: m.role, digest: histItemDigest(m) })
+}
+const removeEditHistRef = i => editHistRefs.value.splice(i, 1)
 const previewEditImage = pi => {
   openImages(editImgs.value.map(p => resolveImg(p.dataUrl)), pi)
 }
@@ -2934,38 +3039,49 @@ const confirmEdit = () => {
   const atts = okAtts.map(f => ({ name: f.name, mime: f.mime, fileId: f.fileId }))
   const attsMeta = okAtts.map(f => ({ name: f.name, mime: f.mime, size: f.size, paste: !!f.paste, text: f.text }))
   const imgsAll = editImgs.value.map(p => p.dataUrl)
-  // 只有本会话的 data: 图能重发（历史回放的图只剩服务端 URL，与重新生成的口径一致）
+  // 只有 data: 图能重发。本会话发的图本身就是 data:；历史回放的图正由 openEdit 异步抓成
+  // data:，抓取失败的那个仍是 URL——此时不能让它把「其他已抓好的图」一起废掉，
+  // 所以逐张过滤而不是整体判空。
   const imgs = imgsAll.filter(u => u.startsWith('data:'))
   const mentionsNew = [...editMentions.value]
-  if (!txt && !imgs.length && !atts.length) { message.warning('内容不能为空'); return }
-  // 什么都没改=没有分支语义，直接收起，不打无谓的重发（文本/图片/附件/@ 引用任一变了才重发）
+  const histRefsNew = editHistRefs.value.map(h => h.messageId)
+  const skillsNew = [...editSkills.value]
+  // 失效附件（原始文件已过保留期）不能重发：fileId 已被后端清理，带回去必 400。
+  // 但只要它还在编辑卡里，就不能算「内容为空」——用户至少还能改文字后重发。
+  if (!txt && !imgsAll.length && !atts.length && !editAtts.value.length) { message.warning('内容不能为空'); return }
+  // 什么都没改=没有分支语义，直接收起，不打无谓的重发（文本/图片/附件/@ 引用/# 引用/技能任一变了才重发）
   const listEq = (a, b) => a.length === b.length && a.every((x, k) => x === b[k])
   const attEq = (a, b) => a.length === b.length && a.every((x, k) => x.name === b[k].name && x.mime === b[k].mime && x.fileId === b[k].fileId)
   const mentionEq = (a, b) => a.length === b.length && a.every((x, k) => x.type === b[k].type && x.id === b[k].id)
+  const histRefEq = (a, b) => a.length === b.length && a.every((x, k) => x === b[k])
+  const skillEq = (a, b) => a.length === b.length && a.every((x, k) => x === b[k])
   if (txt === old.content && listEq(imgsAll, old.images || [])
       && attEq(atts, Array.isArray(old.attachData) ? old.attachData : [])
-      && mentionEq(mentionsNew, Array.isArray(old.mentions) ? old.mentions : [])) { cancelEdit(); return }
+      && mentionEq(mentionsNew, Array.isArray(old.mentions) ? old.mentions : [])
+      && histRefEq(histRefsNew, (old.historyRefs || []).map(h => h.messageId))
+      && skillEq(skillsNew, Array.isArray(old.skills) ? old.skills : [])) { cancelEdit(); return }
   if (loading.value) { message.warning('当前正在回答，请先停止或稍候'); return }
   const editMessageId = old.messageId
   if (!editMessageId) { message.warning('该消息尚未落库，暂不能编辑重发'); return }
   cancelEdit()
   // 本地视图截断到该轮之前：旧分支整体交给后端软删留档，本地不再渲染（切回走分支切换接口+重拉历史）
-  const skills = Array.isArray(old.skills) ? old.skills : []
-  const historyRefs = Array.isArray(old.historyRefs) ? old.historyRefs : []
+  // 深度思考沿用原轮（编辑卡里没有这一项：它是算力档位，没有可编辑内容）
   const deep = !!old.deepThink
   messages.value = messages.value.slice(0, mi)
-  // 新分支的用户消息：档位/技能/# 历史引用沿用原轮，正文/图片/附件/@ 引用以编辑后的为准；
+  // 新分支的用户消息：正文/图片/附件/@ 引用/# 引用/技能全部以编辑后的为准；
   // 版本计数 +1（旧值缺省=首次编辑即 2 版）
   const verN = (old.variantCount || 1) + 1
   const nu = reactive({
     role: 'user', content: txt,
     images: imgsAll, attachments: attsMeta, attachData: atts,
-    skills, mentions: mentionsNew, historyRefs, deepThink: deep,
+    skills: skillsNew, mentions: mentionsNew, historyRefs: (old.historyRefs || []).filter(h => histRefsNew.includes(h.messageId)),
+    deepThink: deep,
     time: Date.now(), messageId: null,
     variantCount: verN, variantIndex: verN
   })
   messages.value.push(nu)
-  streamAnswer(txt, imgs, null, false, 1, deep, atts, skills, mentionsNew, null, historyRefs, editMessageId, nu)
+  streamAnswer(txt, imgs, null, false, 1, deep, atts, skillsNew, mentionsNew, null,
+    histRefsNew.map(mid => ({ messageId: mid })), editMessageId, nu)
 }
 const ask = q => { text.value = q; nextTick(send) }
 
@@ -4134,6 +4250,12 @@ onMounted(async () => {
 /* 待发送附件条 + 技能选中标签 */
 .pending-files { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 auto 8px; max-width: var(--chat-col); }
 .pending-file.err { background: var(--app-danger-weak); border-color: var(--app-danger-border); color: var(--app-danger-text); }
+/* 历史附件：原始文件已过保留期，只能看、不能随编辑重发——用中性灰弱化，
+   不套用 err 的红色（那表示上传失败，是需要用户处理的事；这里是既成事实） */
+.pending-file.expired { opacity: .6; }
+.pending-file.expired .pending-file-ic { color: var(--app-text3); }
+/* 编辑卡的「添加技能 / 引用历史问答」入口行：与下方 actions 同一套图标按钮，紧贴内容块下沿 */
+.edit-add-row { display: flex; gap: 6px; margin: 0 0 6px; }
 .pending-file {
   display: inline-flex; align-items: center; gap: 6px; max-width: 280px;
   padding: 5px 8px; border-radius: 8px; font-size: 12px;

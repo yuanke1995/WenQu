@@ -1005,6 +1005,7 @@ const pasteSub = f => {
   if (!f) return ''
   if (f.uploading) return '上传中…'
   if (f.error) return '上传失败'
+  if (f.expired) return f.text ? '正文未随历史保留' : '已失效'
   return [fmtSize(f.size), f.text ? f.text.length + ' 字' : ''].filter(Boolean).join(' · ')
 }
 const histItemTitle = m => String(m.content).replace(/[#*`>\-\n]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60)
