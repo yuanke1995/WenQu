@@ -428,6 +428,14 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             cursor = drain(session, cursor, emitFrom, channel, recording);
             emitLiveUsage(session, cmd, pool, channel, historyBefore, usageStamp);
             announcedRefs = emitRetrieved(cmd, pool, channel, announcedRefs, recording);
+            // 用户点了「继续对话」：这一轮就此收口——修改意见由前端作为一条用户消息开出完整新一轮
+            // （与手写引擎同一契约）。框架那一跑是被 reject 唤醒的，它会自己往下重出一版计划，
+            // 不掐断就是把那一跑的帧漏进下一轮；而前端紧跟着发的新请求还会撞上会话轮级互斥，
+            // 用户看到的是「生成失败」。排在 announcePending 之前：否则掐断之前先给用户多弹一张卡。
+            if ("supersede".equals(sessions.peekPlanOutcome(sessions.key(cmd)))) {
+                session.interrupt();
+                break;
+            }
             announcePending(session, cmd, channel, announcedApprovals, planAuto, turnId, recording);
             if (tools.stopRequested(cmd)) {
                 // 框架的中断是协作式的：在飞工具会跑到结束（Phase 0 实测）。这里只发中断，
@@ -533,7 +541,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 计划卡裁决的界面终态：拒绝=plan_cancelled、继续对话=plan_superseded。不补的表现为
         // 用户已经拒了计划，那张卡却还挂着「等待中」（控制流仍归框架判，这里只补留痕帧与 done 标记）
         String planOutcome = sessions.takePlanOutcome(sessions.key(cmd));
-        if ("supersede".equals(planOutcome)) channel.emit(RunEventType.PLAN_SUPERSEDED, "{}");
+        boolean superseded = "supersede".equals(planOutcome);
+        if (superseded) channel.emit(RunEventType.PLAN_SUPERSEDED, "{}");
         else if ("reject".equals(planOutcome)) channel.emit(RunEventType.PLAN_CANCELLED, "{}");
         // 裁决过的计划卡随助手消息落 plan 列（字段与手写侧 planSnapshot 同名：plan/status/versions/auto）。
         // 不落的表现：刷新后只剩「还在等确认」的那一张（它由待办恢复端点重建），已批过的每张计划都消失，
@@ -584,7 +593,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 卡片还开着、且没有被判超时：这一轮只是暂时没人跟——用户答了会有新的跟随者把它跑完并落库。
         // 这时候落一条「已中断」就是两件坏事：它说的话是假的（这轮并没有结束），等真正的答案
         // 来了历史里还多出一条气泡（同一个问题两个助手回答）。
-        boolean awaiting = !timedOut && !session.pending().isEmpty();
+        // 继续对话取代的那一轮不算「暂时没人跟」：中断之后不会再有跟随者，而这一版的「已被取代」
+        // 必须随行落库（历史里要有这一版计划，新一轮也靠它取上一版），所以放行到 persist。
+        boolean awaiting = !timedOut && !superseded && !session.pending().isEmpty();
         long wallMs = System.currentTimeMillis() - startedAt;
         // 报出去的「本轮耗时」说的是机器干活用了多久，不是这一轮在墙上挂了多久：人在计划卡上读了
         // 三分钟，读成「它答了三分多钟」就是把人自己的时间记到了机器账上。同一句里把两个数都留下，
@@ -2003,8 +2014,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 「正文非空」单独判会让只跑了工具的轮整条蒸发，而真空轮落一条空消息只是污染历史——
         // 真机实测到的正是后者：确认卡没人答、撞到墙钟上限收尾，历史里多出一条空白助手消息
         boolean hasProcess = !recording.toolCalls.isEmpty() || recording.thinking.length() > 0;
+        boolean supersededRound = planRecord != null && "superseded".equals(planRecord.get("status"));
         if (!realAnswer && hasProcess) {
-            body = interruptMarker(stopped, timedOut);
+            // 被「继续对话」取代的那一轮正文留空：计划卡角标已经写着「已被取代」，再补一句中断
+            // 标注就是把同一件事说两遍（与手写引擎同一口径）
+            body = supersededRound ? "" : interruptMarker(stopped, timedOut);
         } else if (realAnswer && (stopped || timedOut)) {
             // 半程正文：标注追加在尾部（与手写侧同一口径——用户要看得见「这句只有半截」）
             body = body + interruptMarker(stopped, timedOut);

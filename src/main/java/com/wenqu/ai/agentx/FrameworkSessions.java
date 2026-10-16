@@ -315,7 +315,8 @@ public class FrameworkSessions {
         h.session().respond(planApprovalId, approved
                 ? io.agentscope.harness.agent.session.SessionAnswer.approve()
                 : io.agentscope.harness.agent.session.SessionAnswer.reject(why));
-        hitl.resolveFrameworkPending(planApprovalId, approved ? "APPROVED" : "REJECTED", null, why);
+        hitl.resolveFrameworkPending(planApprovalId, approved ? "APPROVED"
+                : "supersede".equals(outcome) ? "SUPERSEDED" : "REJECTED", null, why);
         planOutcomes.put(sessionKey, outcome == null ? "reject" : outcome);
         log.info("[agentx] 计划卡已裁决 id={} approved={} outcome={}", planApprovalId, approved, outcome);
         ensureFollowing(planApprovalId);
@@ -325,6 +326,11 @@ public class FrameworkSessions {
     /** 引擎取走并清掉本轮的计划裁决（一次裁决只对应一次定格）。 */
     public String takePlanOutcome(String sessionKey) {
         return sessionKey == null ? null : planOutcomes.remove(sessionKey);
+    }
+
+    /** 只看不取：跟随循环要在「还在跑」的时候就知道用户点了继续对话，取走了收尾就没得发帧。 */
+    public String peekPlanOutcome(String sessionKey) {
+        return sessionKey == null ? null : planOutcomes.get(sessionKey);
     }
 
     /**

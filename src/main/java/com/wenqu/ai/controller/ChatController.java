@@ -554,8 +554,8 @@ public class ChatController {
     @Operation(summary = "执行计划裁决（计划模式）", description = "批准/退回重出/继续对话取代/拒绝 plan_approval 事件下发的执行计划（人在回路）："
             + "批准可带编辑后的计划全文（body {approved:true,plan:\"...\"}，plan 空串=按模型原稿执行）；"
             + "退回重出（body {revise:true,plan:\"修改意见\"}）＝用户不满意本版，同一轮内模型按意见产出下一版，"
-            + "可反复直到批准/拒绝/超时；继续对话（body {supersede:true}）＝用户带着修改意见继续对话，本版作废"
-            + "（前端随后把意见作为用户消息发出，新一轮按意见重做计划）；拒绝（approved:false）或超时=本轮终止。"
+            + "可反复直到批准/拒绝/超时；继续对话（body {supersede:true,plan:\"修改意见\"}）＝用户带着修改意见继续对话，本版作废"
+            + "（意见全文同时记进待办终态；本轮随即收口，前端随后把意见作为用户消息发出，新一轮按意见重做计划）；拒绝（approved:false）或超时=本轮终止。"
             + "仅本轮用户本人可裁决；记录持久化在 c_ai_tool_approval（tool_name=planApproval，"
             + "PENDING→REVISED/APPROVED/REJECTED/SUPERSEDED/TIMEOUT/STOPPED/INTERRUPTED），等待期间断开不中止本轮，"
             + "刷新/换设备后仍可经 /plan-approval/pending 取回卡片（含版本链）继续裁决。")
@@ -569,9 +569,12 @@ public class ChatController {
         Object p = body.get("plan");
         String plan = p == null ? null : String.valueOf(p);
         // 框架引擎的计划退出确认走框架待办：批准=approve，退回重出/继续对话/拒绝都按拒绝带上理由，
-        // 让模型在原任务里看到用户的意见（revise 与 supersede 的界面差异仍由前端承担，不在此分叉）
+        // 让模型在原任务里看到用户的意见（revise 与 supersede 的界面差异仍由前端承担，不在此分叉）。
+        // 继续对话也带上意见全文：那一轮随即被收口，理由主要落在待办记录的 answer 上——审计要看得
+        // 见用户到底说了什么，而不是只剩一句「用户带着意见继续对话」
+        String supersedeReason = plan == null || plan.isBlank() ? "用户带着意见继续对话，本版计划作废" : plan;
         if (frameworkSessions.respondPlanApproval(planApprovalId, approved,
-                revise ? plan : (supersede ? "用户带着意见继续对话，本版计划作废" : (approved ? null : "用户拒绝了这版计划")),
+                revise ? plan : (supersede ? supersedeReason : (approved ? null : "用户拒绝了这版计划")),
                 approved ? "approve" : (supersede ? "supersede" : (revise ? "revise" : "reject")))) {
             // 界面终态（supersede/reject）由框架引擎那侧的循环取走并补发 plan_superseded / plan_cancelled
             // 与带标记的 done——不在这里直接收轮：控制流归框架持有

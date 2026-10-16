@@ -974,10 +974,11 @@ export const listPendingAsks = sessionId =>
 export const resolvePlanApproval = (planApprovalId, approved, plan = '') =>
   request(`/plan-approval/${encodeURIComponent(planApprovalId)}`, { method: 'POST', body: JSON.stringify({ approved, plan }) })
 
-/** 执行计划「继续对话」取代：用户带着修改意见继续对话，本版计划作废（前端随后把那条意见作为
- *  用户消息发出，新一轮按意见重做计划）。仅本轮用户本人可裁决 */
-export const supersedePlanApproval = planApprovalId =>
-  request(`/plan-approval/${encodeURIComponent(planApprovalId)}`, { method: 'POST', body: JSON.stringify({ supersede: true }) })
+/** 执行计划「继续对话」取代：用户带着修改意见继续对话，本版计划作废（服务端随即收口本轮，前端随后
+ *  把那条意见作为用户消息发出，新一轮按意见重做计划）。意见全文一并带上，落在待办终态的 answer 里。
+ *  仅本轮用户本人可裁决 */
+export const supersedePlanApproval = (planApprovalId, feedback = '') =>
+  request(`/plan-approval/${encodeURIComponent(planApprovalId)}`, { method: 'POST', body: JSON.stringify({ supersede: true, plan: feedback }) })
 
 /** 待批准计划（卡片恢复入口）：列本人该会话仍挂起的执行计划批准卡。
  *  返回 {items:[{planApprovalId,plan,versions:[{plan,feedback}],timeoutMs,remainingMs,createdAt,expired,live}]}；
