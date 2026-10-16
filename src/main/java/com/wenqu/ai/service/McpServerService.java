@@ -367,11 +367,40 @@ public class McpServerService {
                 }));
     }
 
+    /**
+     * 列出可用智能体，并标出**哪些已经开放了独立的 MCP 端点**。
+     *
+     * <p>平台级入口能问任何智能体（{@code wenqu_ask} + agentId），但想让某个智能体**单独**接进
+     * Claude / Cursor（工具名、提示词、权限都是那一个），得去它的「公开发布 → MCP 端点」拿地址。
+     * 此前这一步只能靠人在网页上翻，外部调用方在 MCP 里看不到——这里把已开放的那些直接标出来。
+     *
+     * <p>只标出 {@code mcpEnabled=1 且未停用} 的：停用的分享会让端点立即失效，标出来等于给个死链。
+     */
     private McpSchema.CallToolResult listAgents(McpTransportContext ctx) {
         ApiKey key = apiKeyOf(ctx);
         return audit("platform", "wenqu_list_agents", keyOwner(key), keyRef(key),
                 key == null ? null : key.getId(), null, ipOf(ctx),
-                () -> withIdentity(key, () -> ok(JSON.toJSONString(agentService.available()))));
+                () -> withIdentity(key, () -> ok(JSON.toJSONString(agentsWithEndpoints()))));
+    }
+
+    /** agentService.available() 的可读清单 + 已开放的 MCP 端点（没有端点就不加这个字段） */
+    private List<Map<String, Object>> agentsWithEndpoints() {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> a : agentService.available()) {
+            Map<String, Object> m = new LinkedHashMap<>(a);
+            Object id = a.get("id");
+            if (id != null) {
+                AgentShare share = agentShareService.getByAgent(String.valueOf(id));
+                boolean live = share != null
+                        && Integer.valueOf(1).equals(share.getEnabled())
+                        && Integer.valueOf(1).equals(share.getMcpEnabled());
+                if (live) {
+                    m.put("mcpEndpoint", ENDPOINT_PREFIX + share.getToken());
+                }
+            }
+            out.add(m);
+        }
+        return out;
     }
 
     // ==================== 端点解析 ====================
