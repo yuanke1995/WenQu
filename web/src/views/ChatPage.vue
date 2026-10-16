@@ -656,36 +656,20 @@
                   <span class="at-chip-del" title="移除该引用" @click="removeEditHistRef(hi)">×</span>
                 </span>
               </div>
-              <!-- 添加入口：技能 + # 历史引用（两者都是「从本会话已有内容里挑」，不适用文件选择器） -->
-              <div class="edit-add-row">
-                <a-dropdown v-if="skillList.length" trigger="click">
-                  <button class="app-icon-btn" title="添加技能"><thunderbolt-outlined /></button>
-                  <template #overlay>
-                    <a-menu>
-                      <a-menu-item v-for="s in skillList" :key="s.name" @click="addEditSkill(s.name)">
-                        {{ s.name }}
-                      </a-menu-item>
-                    </a-menu>
-                  </template>
-                </a-dropdown>
-                <a-dropdown v-if="editHistPool.length" trigger="click">
-                  <button class="app-icon-btn" title="引用历史问答"><history-outlined /></button>
-                  <template #overlay>
-                    <a-menu>
-                      <a-menu-item v-for="m in editHistPool" :key="m.messageId" @click="addEditHistRef(m.messageId)">
-                        {{ m.role === 'assistant' ? '答' : '问' }}：{{ (m.content || '').slice(0, 40) }}
-                      </a-menu-item>
-                    </a-menu>
-                  </template>
-                </a-dropdown>
-              </div>
               <div class="msg-inline-edit-actions">
-                <button class="app-icon-btn" title="添加图片或附件" @click="pickEditFiles"><paper-clip-outlined /></button>
+                <!-- 添加入口与主输入框同一个「+」分层面板（同一块面板，编辑态下 Teleport 进这张卡）：
+                     上传附件 / 引用资料 / 技能 / 引用历史问答四处共用一套候选、一套搜索与键盘导航。
+                     快捷命令不进来：模板是往主输入框插问法，操作会改会话状态，与"改这一问"无关 -->
+                <button class="app-icon-btn add-btn" :class="{ 'toolbar-btn-on': (addOpen && addOnEdit) || editAddCount }"
+                        title="添加：上传文件图片 / 引用资料 / 技能 / 引用历史问答" @click="toggleEditAddPanel">
+                  <plus-outlined />
+                </button>
                 <span class="msg-inline-edit-hint"><info-circle-outlined /> 编辑后将从此处重新开始对话，已有产物不会被删除</span>
                 <button class="app-btn ghost" @click="cancelEdit">取消</button>
                 <button class="app-btn" :disabled="editingBusy || (!editingText.trim() && !editImgs.length && !editAtts.length)"
                         @click="confirmEdit">发送</button>
               </div>
+              <div class="add-mount"></div>
               <input :ref="setEditAttachInputRef" type="file" multiple style="display:none" @change="onEditAttachChange" />
             </div>
           </div>
@@ -844,10 +828,13 @@
           <!-- 「+」面板（分层菜单）：输入框唯一的候选面板。两个入口同一块面板——
                点「+」先出一级轻菜单（上传文件/图片一击直达，引用/技能/历史/命令进二级列表），
                输入框敲 @ 也开这里（直接落在「引用」二级，筛选词实时取「@ 到光标」之间的正文，见 syncPanelQuery）。
+               就地编辑卡的「+」也开这里：同一块面板按写入目标（addTarget）决定选中结果落到
+               主输入框还是编辑卡的随行内容上，编辑态下整块 Teleport 进卡内的挂载点。
                计划模式不占面板——它是模式开关，在工具条上有独立胶囊（plan-pill）。
                键盘：↑↓ 选择 · Enter 确认/进入 · Tab 进/退层级 · Esc 关闭（由一级进入的二级先退回一级）。
                行式交互与样式复用 .mention-panel / .mention-item -->
-          <div v-if="addOpen" class="mention-panel" @keydown="onPanelNavKeydown">
+          <Teleport v-if="addOpen" :to="EDIT_ADD_MOUNT" :disabled="!addOnEdit">
+          <div class="mention-panel" @keydown="onPanelNavKeydown">
             <div class="mention-head add-head">
               <button v-if="addTab !== 'root'" class="app-icon-btn add-back" title="返回上一层" @click="backToRoot"><left-outlined /></button>
               <span class="add-title">{{ addTab === 'root' ? '添加到本轮' : ADD_TITLES[addTab] }}</span>
@@ -865,10 +852,10 @@
                      :placeholder="addSearchHint" autocomplete="off" />
             </div>
             <div ref="addListEl" class="mention-list">
-              <!-- 一级菜单：上传两行点了直接弹系统文件框；其余四行进二级。kbd=输入框里对应的触发符，
-                   把鼠标流和键盘流接到同一个地方；badge=已选/生效数（本轮会带上什么） -->
+              <!-- 一级菜单：上传行点了直接弹系统文件框；其余行进二级。kbd=主输入框里对应的触发符，
+                   把鼠标流和键盘流接到同一个地方（编辑卡那份不显示）；badge=已选/生效数（这一轮会带上什么） -->
               <template v-if="addTab === 'root'">
-                <div v-for="(r, ri) in ADD_ROOT_ROWS" :key="r.key" class="mention-item"
+                <div v-for="(r, ri) in addRootRows" :key="r.key" class="mention-item"
                      :class="{ hi: addHi === ri }" @click="r.run()">
                   <span class="mention-ava"><component :is="r.icon" /></span>
                   <div class="mention-text">
@@ -882,13 +869,13 @@
                 <div v-if="mentionLoading" class="mention-empty">加载中…</div>
                 <template v-else-if="mentionTab === 'kb'">
                   <div v-for="(k, ki) in addRefList" :key="k.id" class="mention-item"
-                       :class="{ on: isMentioned('kb', k.id), hi: addHi === ki }" @click="confirmRefRow('kb', k)">
+                       :class="{ on: isAddMentioned('kb', k.id), hi: addHi === ki }" @click="confirmRefRow('kb', k)">
                     <span class="mention-ava"><database-outlined /></span>
                     <div class="mention-text">
                       <span class="mention-name">{{ k.name }}</span>
                       <span class="mention-desc">{{ k.desc || (k.docCount ? k.docCount + ' 篇文档' : '') }}</span>
                     </div>
-                    <check-outlined v-if="isMentioned('kb', k.id)" class="mention-check" />
+                    <check-outlined v-if="isAddMentioned('kb', k.id)" class="mention-check" />
                   </div>
                   <div v-if="!addRefList.length" class="mention-empty">
                     {{ mentionKbs.length ? '没有匹配的知识库' : '没有可见的知识库' }}
@@ -896,13 +883,13 @@
                 </template>
                 <template v-else-if="mentionTab === 'agent'">
                   <div v-for="(a, ai) in addRefList" :key="a.id" class="mention-item"
-                       :class="{ on: isMentioned('agent', a.id), hi: addHi === ai }" @click="confirmRefRow('agent', a)">
+                       :class="{ on: isAddMentioned('agent', a.id), hi: addHi === ai }" @click="confirmRefRow('agent', a)">
                     <AgentAvatar class="mention-ava-agent" :agent="a" :size="22" />
                     <div class="mention-text">
                       <span class="mention-name">{{ a.name }}</span>
                       <span class="mention-desc">{{ a.desc || '本轮会向这位助手咨询' }}</span>
                     </div>
-                    <check-outlined v-if="isMentioned('agent', a.id)" class="mention-check" />
+                    <check-outlined v-if="isAddMentioned('agent', a.id)" class="mention-check" />
                   </div>
                   <div v-if="!addRefList.length" class="mention-empty">
                     {{ mentionAgents.length ? '没有匹配的智能体' : '没有可见的智能体' }}
@@ -910,13 +897,13 @@
                 </template>
                 <template v-else>
                   <div v-for="(d, di) in addRefList" :key="d.id" class="mention-item"
-                       :class="{ on: isMentioned('doc', d.id), hi: addHi === di }" @click="confirmRefRow('doc', d)">
+                       :class="{ on: isAddMentioned('doc', d.id), hi: addHi === di }" @click="confirmRefRow('doc', d)">
                     <span class="mention-ava"><file-text-outlined /></span>
                     <div class="mention-text">
                       <span class="mention-name">{{ d.fileName }}</span>
                       <span class="mention-desc">{{ mentionDocStatus(d) }}</span>
                     </div>
-                    <check-outlined v-if="isMentioned('doc', d.id)" class="mention-check" />
+                    <check-outlined v-if="isAddMentioned('doc', d.id)" class="mention-check" />
                   </div>
                   <div v-if="!addRefList.length" class="mention-empty">
                     {{ mentionDocs.length ? '没有匹配的文档' : '没有可见的文档' }}
@@ -927,20 +914,21 @@
               <template v-else-if="addTab === 'skill'">
                 <div v-if="!skillList.length" class="mention-empty">还没有可用技能，管理员可在「设置 → 技能」中安装</div>
                 <div v-for="(s, si) in addSkillList" :key="s.name" class="mention-item"
-                     :class="{ on: pickedSkills.includes(s.name), hi: addHi === si }" @click="toggleSkill(s.name)">
+                     :class="{ on: isAddSkillOn(s.name), hi: addHi === si }" @click="toggleAddSkill(s.name)">
                   <span class="mention-ava skill-ava" :style="skillAvaStyle(s.name)">{{ (s.name || '技').slice(0, 1) }}</span>
                   <div class="mention-text">
                     <span class="mention-name">{{ s.name }}</span>
                     <span v-if="s.description" class="mention-desc">{{ s.description }}</span>
                   </div>
-                  <check-outlined v-if="pickedSkills.includes(s.name)" class="mention-check" />
+                  <check-outlined v-if="isAddSkillOn(s.name)" class="mention-check" />
                 </div>
                 <div v-if="skillList.length && !addSkillList.length" class="mention-empty">没有匹配的技能</div>
               </template>
-              <!-- 历史引用：勾选不关面板（多选），与键盘流 # 面板同源同一份候选 -->
+              <!-- 历史引用：勾选不关面板（多选），与键盘流 # 面板同一份交互；
+                   候选按写入目标取——编辑卡那份要排掉正在编辑的这一问（引用自己没意义） -->
               <template v-else-if="addTab === 'hist'">
                 <div v-for="(m, mi) in addHistCandidates" :key="m.messageId" class="mention-item"
-                     :class="{ on: isHistPicked(m.messageId), hi: addHi === mi }" @click="toggleHistoryRef(m)">
+                     :class="{ on: isAddHistPicked(m.messageId), hi: addHi === mi }" @click="toggleAddHistoryRef(m)">
                   <span class="mention-ava" :class="m.role === 'user' ? 'hist-ava-q' : 'hist-ava-a'">
                     {{ m.role === 'user' ? '问' : '答' }}
                   </span>
@@ -948,10 +936,10 @@
                     <span class="mention-name">{{ histItemTitle(m) }}</span>
                     <span class="mention-desc">{{ m.role === 'user' ? '你的提问' : 'AI 的回答' }}{{ m.time ? ' · ' + fmtMsgTime(m.time) : '' }}</span>
                   </div>
-                  <check-outlined v-if="isHistPicked(m.messageId)" class="mention-check" />
+                  <check-outlined v-if="isAddHistPicked(m.messageId)" class="mention-check" />
                 </div>
                 <div v-if="!addHistCandidates.length" class="mention-empty">
-                  {{ histPool.length ? '没有匹配的历史问答' : '本会话还没有可引用的历史问答' }}
+                  {{ addHistPool.length ? '没有匹配的历史问答' : '本会话还没有可引用的历史问答' }}
                 </div>
               </template>
               <!-- 快捷命令：模板插入输入框可再编辑（收面板），操作立即执行 -->
@@ -970,6 +958,7 @@
             </div>
             <div class="mention-foot">{{ addFootHint }}</div>
           </div>
+          </Teleport>
           <a-textarea ref="textareaRef" v-model:value="text" :placeholder="composerPlaceholder"
                       :auto-size="{ minRows: 1, maxRows: 6 }" class="input-area"
                       @paste="onComposerPaste"
@@ -1024,7 +1013,7 @@
                   </div>
                 </template>
               </a-dropdown>
-              <button class="app-icon-btn add-btn" :class="{ 'toolbar-btn-on': addOpen || pickedSkills.length }"
+              <button class="app-icon-btn add-btn" :class="{ 'toolbar-btn-on': (addOpen && !addOnEdit) || pickedSkills.length }"
                       title="添加：上传文件图片 / 引用资料 / 技能 / 引用历史问答 / 快捷命令" @click="toggleAddPanel">
                 <plus-outlined />
               </button>
@@ -2105,6 +2094,7 @@ const onAttachChange = e => {
 const openMentionPanel = () => {
   slashOpen.value = false
   histOpen.value = false
+  addTarget.value = 'main'   // 敲 @ 只发生在主输入框，别沿用上次编辑卡留下的写入目标
   addTab.value = 'ref'
   addOpen.value = true
   addHi.value = 0
@@ -2120,7 +2110,8 @@ const onDocClickForMention = e => {
   // 被点节点被拆下树（parent 链断在 .mention-item），closest 会判成面板外 → 切层的那一下
   // 自己就把面板关了。composedPath 在事件派发时已定，含换层前的旧祖先链，用它认面板。
   const path = typeof e.composedPath === 'function' ? e.composedPath() : []
-  if (path.some(n => n && n.classList && (n.classList.contains('mention-panel') || n.classList.contains('input-box')))) return
+  if (path.some(n => n && n.classList && (n.classList.contains('mention-panel') || n.classList.contains('input-box')
+      || n.classList.contains('msg-inline-edit')))) return
   closeAllPanels()
 }
 onMounted(() => document.addEventListener('click', onDocClickForMention))
@@ -2226,6 +2217,11 @@ const stripTriggerToken = () => {
 
 /** a-textarea 的 ref 是组件实例，取内部原生 textarea（光标位置只能从原生元素读） */
 const rawTextarea = () => textareaRef.value?.resizableTextArea?.textArea || textareaRef.value?.$el || null
+/** 面板收掉后焦点回谁那儿：编辑卡开的回卡内正文，其余回主输入框 */
+const focusPanelOwner = () => {
+  if (addOnEdit.value) { editingRef.value?.focus?.(); return }
+  focusInput()
+}
 
 /** 输入框内容/光标变化时同步筛选词与高亮：
  *  - 光标在触发字符之前 → 用户把触发符删了或移开了，收起面板
@@ -2365,10 +2361,11 @@ const histQuery = ref('')
 const histHi = ref(0)
 const histQueryNorm = computed(() => histQuery.value.trim())
 /** 历史候选口径（# 面板与「+」面板共用）：筛选 + 最近在前 + 最多列 60 条（防超长会话渲染卡顿） */
-const histListOf = q => {
+const histListOf = (q, pool) => {
   const s = String(q || '').toLowerCase()
-  const pool = histPool.value.filter(m => !s || String(m.content).toLowerCase().includes(s))
-  return pool.slice(-60).reverse()
+  const src = pool || histPool.value
+  const list = src.filter(m => !s || String(m.content).toLowerCase().includes(s))
+  return list.slice(-60).reverse()
 }
 const histCandidates = computed(() => histListOf(histQueryNorm.value))
 const histChipLabel = h => h.digest || ''
@@ -2386,10 +2383,10 @@ const openHistPanel = () => {
 }
 const closeHistPanel = () => closeAllPanels()
 
-// ==================== 「+」面板（附件 / 引用 / 技能 / 计划 / 历史 / 命令 六页签） ====================
-// 输入框唯一的候选面板。两个入口：点「+」从鼠标流进来（筛选词落在面板搜索框），
-// 敲 @ 也开这里（停在「引用」页，筛选词由 syncPanelQuery 取正文里「@ 到光标」那一段）。
-// 六页签共用一套交互：搜索 + 数量统计 + Tab 切页 + ↑↓ 选择 + Enter 确认 + Esc 关闭。
+// ==================== 「+」面板（附件 / 引用 / 技能 / 历史 / 命令） ====================
+// 唯一的候选面板，两个入口共用同一块：主输入框点「+」或敲 @，就地编辑卡点「+」。
+// 入口决定写入目标 addTarget，选中结果、行上的勾选、一级菜单的计数全部经 addStore 这一层读写。
+// 一套交互：搜索 + 数量统计 + Tab 切页 + ↑↓ 选择 + Enter 确认 + Esc 关闭。
 const addOpen = ref(false)
 const addTab = ref('root')
 const addHi = ref(0)
@@ -2397,21 +2394,63 @@ const addSearchEl = ref(null)
 const addHistQuery = ref('')
 const addSkillQuery = ref('')
 const addCmdQuery = ref('')
-const addHistCandidates = computed(() => histListOf(addHistQuery.value))
-// 「+」面板两级形态：root=一级轻菜单（ADD_ROOT_ROWS），其余 key=二级列表（ADD_TITLES 给头部标题）。
-// count()=已选/生效数（实心徽标，告诉用户这轮会带上什么）；不再有页签双计数
-const ADD_ROOT_ROWS = [
-  { key: 'file', name: '上传文件', desc: '也可直接粘贴或拖进来：文件读出正文供模型看，图片压缩后随本轮提问（各最多 5 个）', icon: PaperClipOutlined,
-    badge: () => pendingFiles.value.length + pendingImages.value.length, run: () => pickAttachments() },
-  { key: 'ref', name: '引用资料', desc: '知识库 / 文档 / 智能体，只对本轮生效', icon: BookOutlined, kbd: '@',
-    badge: () => pendingMentions.value.length, run: () => switchAddTab('ref') },
-  { key: 'skill', name: '技能', desc: '临时增强本轮，下一轮自动取消（一次最多 3 个）', icon: AppstoreOutlined,
-    badge: () => pickedSkills.value.length, run: () => switchAddTab('skill') },
-  { key: 'hist', name: '引用历史问答', desc: '勾选本会话的问答作为本轮上下文（最多 10 条）', icon: HistoryOutlined, kbd: '#',
-    badge: () => pendingHistoryRefs.value.length, run: () => switchAddTab('hist') },
-  { key: 'cmd', name: '快捷命令', desc: '常用问法模板与即时操作', icon: ThunderboltOutlined, kbd: '/',
-    badge: () => 0, run: () => switchAddTab('cmd') }
-]
+/** 面板写入目标：'main'=主输入框（默认），'edit'=就地编辑卡。开面板时由入口设定，关面板不复用 */
+const addTarget = ref('main')
+// 编辑卡已收起（切会话/取消/发送）就不再算编辑态：面板同时被 cancelEdit 关掉，这里只是双保险
+const addOnEdit = computed(() => addTarget.value === 'edit' && editingIdx.value != null)
+/** 编辑态下面板整块搬进卡内挂载点；主输入框那一份靠 disabled 原地不动（DOM 与之前完全一致） */
+const EDIT_ADD_MOUNT = '.msg-inline-edit .add-mount'
+/** 目标适配器：面板不关心自己往哪写，两套随行内容在这一层对齐 */
+const addStore = computed(() => addOnEdit.value ? {
+  files: editAtts, images: editImgs, mentions: editMentions, skills: editSkills,
+  histPool: editHistPool, histPicked: () => editHistRefs.value,
+  pickFiles: pickEditFiles,
+  toggleSkill: toggleEditSkill, skillOn: n => editSkills.value.includes(n),
+  toggleMention: toggleEditMention, mentionOn: (t, id) => editMentions.value.some(m => m.type === t && m.id === id),
+  toggleHist: toggleEditHistoryRef, histOn: id => editHistRefs.value.some(h => h.messageId === id)
+} : {
+  files: pendingFiles, images: pendingImages, mentions: pendingMentions, skills: pickedSkills,
+  histPool: histPool, histPicked: () => pendingHistoryRefs.value,
+  pickFiles: pickAttachments,
+  toggleSkill, skillOn: n => pickedSkills.value.includes(n),
+  toggleMention, mentionOn: isMentioned,
+  toggleHist: toggleHistoryRef, histOn: isHistPicked
+})
+/** 一级菜单的行：计数与描述按写入目标现算（编辑态没有「下一轮」可取消，措辞跟着改口径）；
+ *  kbd 是主输入框的触发符，编辑卡正文不接这些符号所以不显示；快捷命令只属于主输入框——
+ *  模板是往输入框插问法、操作会改会话状态，两者都与"改这一问"无关 */
+const addRootRows = computed(() => {
+  const s = addStore.value
+  const edit = addOnEdit.value
+  const scope = edit ? '这一问' : '本轮'
+  const rows = [
+    { key: 'file', name: '上传文件', icon: PaperClipOutlined,
+      desc: edit ? '文件读出正文供模型看，图片压缩后随这一问重发；也可直接粘贴进来（各最多 5 个）'
+                 : '也可直接粘贴或拖进来：文件读出正文供模型看，图片压缩后随本轮提问（各最多 5 个）',
+      badge: () => s.files.value.length + s.images.value.length, run: () => s.pickFiles() },
+    { key: 'ref', name: '引用资料', icon: BookOutlined, kbd: edit ? '' : '@',
+      desc: `知识库 / 文档 / 智能体，只对${scope}生效`,
+      badge: () => s.mentions.value.length, run: () => switchAddTab('ref') },
+    { key: 'skill', name: '技能', icon: AppstoreOutlined,
+      desc: edit ? '临时增强这一问，重发时随它一起带上（一次最多 3 个）'
+                 : '临时增强本轮，下一轮自动取消（一次最多 3 个）',
+      badge: () => s.skills.value.length, run: () => switchAddTab('skill') },
+    { key: 'hist', name: '引用历史问答', icon: HistoryOutlined, kbd: edit ? '' : '#',
+      desc: `勾选本会话的问答作为${scope}上下文（最多 10 条）`,
+      badge: () => s.histPicked().length, run: () => switchAddTab('hist') }
+  ]
+  if (!edit) rows.push({ key: 'cmd', name: '快捷命令', icon: ThunderboltOutlined, kbd: '/',
+    desc: '常用问法模板与即时操作', badge: () => 0, run: () => switchAddTab('cmd') })
+  return rows
+})
+const addHistPool = computed(() => addStore.value.histPool.value)
+const addHistCandidates = computed(() => histListOf(addHistQuery.value, addHistPool.value))
+const isAddSkillOn = n => addStore.value.skillOn(n)
+const toggleAddSkill = n => addStore.value.toggleSkill(n)
+const isAddMentioned = (t, id) => addStore.value.mentionOn(t, id)
+const toggleAddMention = (t, item) => addStore.value.toggleMention(t, item)
+const isAddHistPicked = id => addStore.value.histOn(id)
+const toggleAddHistoryRef = m => addStore.value.toggleHist(m)
 const ADD_TITLES = { ref: '引用资料', skill: '技能', hist: '引用历史问答', cmd: '快捷命令' }
 const REF_SUB_TABS = [
   { key: 'kb', label: '知识库', icon: DatabaseOutlined, count: () => mentionKbs.value.length },
@@ -2440,11 +2479,17 @@ const addSearchHint = computed(() => ({
 }[addTab.value] || ''))
 const addFootHint = computed(() => {
   const t = addTab.value
-  if (t === 'root') return '↑↓ 选择 · Enter 进入 · Tab 进/退层 · Esc 关闭　|　输入框可直接敲 @ 引用、# 历史、/ 命令；文件也可直接拖进来'
+  const edit = addOnEdit.value
+  if (t === 'root') {
+    const nav = '↑↓ 选择 · Enter 进入 · Tab 进/退层 · Esc 关闭'
+    return nav + (edit ? '　|　文件图片也可以直接粘贴进来'
+      : '　|　输入框可直接敲 @ 引用、# 历史、/ 命令；文件也可直接拖进来')
+  }
   const nav = '↑↓ 选择 · Enter 确认 · Tab 返回 · Esc 关闭'
-  if (t === 'ref') return nav + '　|　引用只对本轮生效：知识库 = 本轮检索只在这些库里找；文档 = 内容直接带入本轮上下文；智能体 = 本轮强制咨询它（它带自己的知识库查一遍，回答仍由当前助手汇总）'
-  if (t === 'skill') return nav + '　|　选用的技能对本轮生效，下一轮自动取消（一次最多 3 个）'
-  if (t === 'hist') return nav + '　|　勾选的历史问答作为本轮上下文带给模型（只对本轮生效，最多 10 条）'
+  const scope = edit ? '这一问' : '本轮'
+  if (t === 'ref') return nav + `　|　引用只对${scope}生效：知识库 = 检索只在这些库里找；文档 = 内容直接带入上下文；智能体 = 强制咨询它（它带自己的知识库查一遍，回答仍由当前助手汇总）`
+  if (t === 'skill') return nav + `　|　选用的技能随${scope}带上` + (edit ? '（一次最多 3 个）' : '，下一轮自动取消（一次最多 3 个）')
+  if (t === 'hist') return nav + `　|　勾选的历史问答作为${scope}上下文带给模型（最多 10 条）`
   return nav + '　|　模板 = 插入常用问法框架（可再编辑）；操作 = 立即执行'
 })
 const addSkillList = computed(() => {
@@ -2460,7 +2505,7 @@ const addCmdList = computed(() => {
 /** 引用页当前子页签的候选（点击与 Enter 都读这一份，下标才对得上） */
 const addRefList = computed(() => mentionTab.value === 'kb' ? mentionKbFiltered.value
   : mentionTab.value === 'agent' ? mentionAgentFiltered.value : mentionDocFiltered.value)
-const addListSize = computed(() => addTab.value === 'root' ? ADD_ROOT_ROWS.length
+const addListSize = computed(() => addTab.value === 'root' ? addRootRows.value.length
   : addTab.value === 'ref' ? addRefList.value.length
     : addTab.value === 'skill' ? addSkillList.value.length
       : addTab.value === 'hist' ? addHistCandidates.value.length
@@ -2478,11 +2523,12 @@ const ensureRefCandidates = () => {
 /** 可搜索的页签把焦点交给面板内搜索框（打字即筛），否则交回输入框——
  *  两处键盘都走 onPanelNavKeydown，焦点在哪都能继续 ↑↓/Enter/Esc */
 const focusAddSearch = () => nextTick(() => {
-  if (addSearchable.value) addSearchEl.value?.focus?.()
+  if (addSearchable.value) { addSearchEl.value?.focus?.(); return }
   // 退回一级时聚焦原生 textarea 而非组件实例：antd 的 focus() 在 keydown 事件流里调用不生效
   // （实测焦点落回 BODY，后续 Esc 全打空）。且同一事件流里连原生 focus() 也留不住，
   // 必须 setTimeout 挪出事件流；click 流（点「+」打开）没这问题，多延一拍无害
-  else setTimeout(() => {
+  setTimeout(() => {
+    if (addOnEdit.value) { editingRef.value?.focus?.(); return }
     const ta = rawTextarea()
     if (ta) {
       ta.focus()
@@ -2523,7 +2569,7 @@ const switchRefTab = k => {
 const confirmRefRow = (type, item) => {
   const byTrigger = panelTriggerPos >= 0 && panelTriggerCh === '@'
   if (byTrigger) { stripTriggerToken(); closeAllPanels() }
-  toggleMention(type, item)
+  toggleAddMention(type, item)
   if (byTrigger) focusInput()
 }
 /** Enter 确认「+」面板当前页的高亮项。返回 false = 这一页没有可确认的候选，
@@ -2531,7 +2577,7 @@ const confirmRefRow = (type, item) => {
 const confirmAddHi = i => {
   const t = addTab.value
   if (t === 'root') {
-    const row = ADD_ROOT_ROWS[i]
+    const row = addRootRows.value[i]
     if (!row) return false
     row.run()
     return true
@@ -2545,13 +2591,13 @@ const confirmAddHi = i => {
   if (t === 'skill') {
     const s = addSkillList.value[i]
     if (!s) return false
-    toggleSkill(s.name)
+    toggleAddSkill(s.name)
     return true
   }
   if (t === 'hist') {
     const m = addHistCandidates.value[i]
     if (!m) return false
-    toggleHistoryRef(m)
+    toggleAddHistoryRef(m)
     return true
   }
   const c = addCmdList.value[i]
@@ -2559,8 +2605,8 @@ const confirmAddHi = i => {
   runCmdFromAddPanel(c)
   return true
 }
-const toggleAddPanel = () => {
-  if (addOpen.value) { closeAddPanel(); return }
+/** 两个入口共用的开面板动作：先复位筛选与层级，再按入口标定写入目标 */
+const openAddPanel = target => {
   closeAllPanels()          // 与 / # 触发面板互斥，开一个收一个
   addHistQuery.value = ''   // 每次打开从干净筛选开始（一级菜单总是从头展示，不记住上次逛到哪）
   addSkillQuery.value = ''
@@ -2568,8 +2614,19 @@ const toggleAddPanel = () => {
   mentionQuery.value = ''   // 引用页同理：上次敲 @ 筛剩的词不该在重开时还挂着
   addHi.value = 0
   addTab.value = 'root'
+  addFromRoot.value = false
+  addTarget.value = target
   addOpen.value = true
   focusAddSearch()
+}
+const toggleAddPanel = () => {
+  if (addOpen.value && !addOnEdit.value) { closeAddPanel(); return }
+  openAddPanel('main')
+}
+/** 就地编辑卡的「+」：同一块面板，选中结果落到这张卡的随行内容上 */
+const toggleEditAddPanel = () => {
+  if (addOpen.value && addOnEdit.value) { closeAddPanel(); return }
+  openAddPanel('edit')
 }
 /** 命令页点选：模板插入输入框（可再编辑）、操作立即执行；两者都收起面板。
  *  生成中「操作」与触发面板同口径禁用——那些命令会改会话状态，不能和流式回答打架 */
@@ -2708,7 +2765,7 @@ const onPanelNavKeydown = e => {
     // 没有「上一层」，Esc 整个关闭。/ # 面板无层级，Esc 直接关
     if (addOpen.value && addTab.value !== 'root' && addFromRoot.value) { backToRoot(); return true }
     closeAllPanels()
-    focusInput()
+    focusPanelOwner()
     return true
   }
   // Tab 在「+」面板里进/退层级：一级=进入高亮项，二级=退回一级。/ # 面板没有层级，留给原生焦点跳转
@@ -2879,6 +2936,7 @@ const debugStages = computed(() => {
 // 被编辑消息及其后的旧分支由后端软删留档（variant_group/variant_tail），可随时切回。
 // 编辑重发与直接回填输入框（旧行为，发起新一轮）是两个入口：这里走 editMessageId 分支链路。
 const editingIdx = ref(null)
+const editingMessageId = ref('')
 const editingText = ref('')
 const editingBusy = ref(false)
 const editingRef = ref(null)
@@ -2911,6 +2969,7 @@ const editMessage = mi => {
   if (!m.messageId) { message.warning('该消息尚未落库（流式回答中），请稍后再编辑'); return }
   // 已有编辑框在别处打开：切换目标
   editingIdx.value = mi
+  editingMessageId.value = m.messageId
   editingText.value = m.content
   // attachData（重发载荷 {name,mime,fileId}）与 attachments（展示 {name,mime,size}）合并成一份可编辑列表
   //
@@ -2964,9 +3023,12 @@ const fetchToDataUrl = async url => {
 }
 const cancelEdit = () => {
   editingIdx.value = null
+  editingMessageId.value = ''
   editingText.value = ''
   editImgs.value = []; editAtts.value = []; editMentions.value = []
   editHistRefs.value = []; editSkills.value = []
+  // 面板此刻正挂在这张卡里：卡没了它也就没了落脚点，一起收掉
+  if (addOpen.value && addTarget.value === 'edit') closeAddPanel()
 }
 
 // ---- 编辑卡的随行内容操作：管线完全复用主输入框，只换目标列表 ----
@@ -2974,7 +3036,36 @@ const pickEditFiles = () => editAttachInput.value?.click()
 const onEditAttachChange = e => {
   const files = Array.from(e.target.files || [])
   e.target.value = ''
+  if (!files.length) return
   addFiles(files, { images: editImgs, files: editAtts })
+  closeAddPanel()   // 与主输入框同口径：选完即收面板，让加上的附件条露出来
+}
+// 「+」面板在编辑态下的写入端：勾选/计数都按这张卡自己的列表算，规则与主输入框一致
+// （技能最多 3 个、引用可多选但智能体单选一替换、历史引用最多 10 条）
+const editAddCount = computed(() => editImgs.value.length + editAtts.value.length
+  + editMentions.value.length + editSkills.value.length + editHistRefs.value.length)
+const toggleEditSkill = n => (editSkills.value.includes(n) ? removeEditSkill(n) : addEditSkill(n))
+const toggleEditHistoryRef = m => {
+  const i = editHistRefs.value.findIndex(h => h.messageId === m.messageId)
+  if (i >= 0) { editHistRefs.value.splice(i, 1); return }
+  addEditHistRef(m.messageId)
+}
+const toggleEditMention = (type, item) => {
+  const hit = editMentions.value.findIndex(mm => mm.type === type && mm.id === item.id)
+  if (hit >= 0) { editMentions.value.splice(hit, 1); return }
+  // 智能体委派是单主语：一轮只能由一个智能体作答，再选一个=替换（与主输入框同规则）
+  if (type === 'agent') editMentions.value = editMentions.value.filter(mm => mm.type !== 'agent')
+  else if (editMentions.value.length >= MAX_MENTIONS) {
+    message.warning(`一次最多引用 ${MAX_MENTIONS} 个知识库/文档/智能体`)
+    return
+  }
+  // 载荷形状与主输入框一致（type/id/name/kbId），重发时原样带给后端
+  editMentions.value.push({
+    type,
+    id: item.id,
+    name: type === 'doc' ? item.fileName : item.name,
+    kbId: type === 'doc' ? (item.kbId || '') : ''
+  })
 }
 const onEditPaste = e => {
   const into = { images: editImgs, files: editAtts }
@@ -3009,6 +3100,9 @@ const previewEditImage = pi => {
 // 键盘：Enter 发送 / Shift+Enter 换行 / Esc 取消；输入法组合中的 Enter/Esc 是候选操作，放行给 IME
 const onEditKeydown = e => {
   if (e.isComposing || e.keyCode === 229) return
+  // 「+」面板开着时，卡内正文就是导航输入源（与主输入框同一套：↑↓ 移高亮、Enter 勾选、
+  // Esc 先退层/关面板，不会被下面的"Esc 取消整张卡"抢走）
+  if (addOpen.value && addOnEdit.value && onPanelNavKeydown(e)) return
   if (e.key === 'Enter') {
     if (!e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); confirmEdit() }
     return
@@ -3139,10 +3233,10 @@ const {
   removePendingFile, takePastedFiles, takePastedText,
   // @ 引用（面板与筛选词在「+」面板一节，高亮下标用本页自己的 addHi）
   mentionTab, mentionQuery, mentionLoading, mentionKbs, mentionDocs, pendingMentions,
-  isMentioned, toggleMention, removeMention, loadMentionCandidates,
+  isMentioned, toggleMention, removeMention, loadMentionCandidates, MAX_MENTIONS,
   mentionDocStatus, mentionKbFiltered, mentionAgents, mentionAgentFiltered, mentionDocFiltered,
-  // # 历史引用
-  pendingHistoryRefs, histPool, isHistPicked, toggleHistoryRef, removeHistoryRef,
+  // # 历史引用（上限常量此前漏了，编辑卡里点历史引用会直接抛 ReferenceError）
+  pendingHistoryRefs, histPool, isHistPicked, toggleHistoryRef, removeHistoryRef, MAX_HISTORY_REFS,
   // 会话生命周期 / 重新生成 / 分支 / 初始化
   switchSession, createNewSession, regenerate, variantSwitching, switchBranch, ready,
   // 手动压缩上下文（/compact：命令面板、分隔线与摘要弹窗）
@@ -3417,6 +3511,12 @@ watch(messages, () => {
   if (!searchOpen.value || !searchQuery.value.trim()) return
   searchPos.value = 0 // 换会话后从头开始，避免停在上一个会话的偏移上
   nextTick(() => { paintSearchHighlight(); scrollToMatch() })
+})
+// 编辑卡按下标定位，而切会话/新建/切分支/删当前会话都会整体替换 messages。不绑回原消息
+// 就会让编辑卡跟到另一个会话的第 N 条上，点发送则把新分支开在错的会话里（还会截断它的视图）
+watch(messages, () => {
+  if (editingIdx.value == null) return
+  if ((messages.value[editingIdx.value] || {}).messageId !== editingMessageId.value) cancelEdit()
 })
 // Mermaid 图表的补画已随正文下沉到 AnswerBody（每个 .md 容器画自己那份，且同样只在非流式态画：
 // 流式期间 ```mermaid 围栏是半截代码，画必然失败，每个 token 重试一次纯属浪费）。
@@ -3922,6 +4022,11 @@ onMounted(async () => {
 .msg-inline-edit-input::placeholder { color: var(--app-text3); }
 .msg-inline-edit .pending-imgs, .msg-inline-edit .pending-files { margin: 0; max-width: none; }
 .edit-mentions { display: flex; flex-wrap: wrap; gap: 6px; }
+/* 编辑卡里的「+」面板：主输入框那份靠浮层（bottom:100% 往上弹），这张卡可能停在消息流
+   中间，往上弹会被视口裁掉，所以改成静态流——面板直接长在卡里、把卡往下撑开。
+   挂载点用 display:contents 挂空不占位（不留一条 gap），有面板时它直接成为卡的一个 flex 项 */
+.msg-inline-edit .add-mount { display: contents; }
+.msg-inline-edit .mention-panel { position: static; box-shadow: none; }
 .msg-inline-edit-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .msg-inline-edit-hint {
   margin-right: auto; display: inline-flex; align-items: center; gap: 4px;
@@ -4243,8 +4348,6 @@ onMounted(async () => {
    不套用 err 的红色（那表示上传失败，是需要用户处理的事；这里是既成事实） */
 .pending-file.expired { opacity: .6; }
 .pending-file.expired .pending-file-ic { color: var(--app-text3); }
-/* 编辑卡的「添加技能 / 引用历史问答」入口行：与下方 actions 同一套图标按钮，紧贴内容块下沿 */
-.edit-add-row { display: flex; gap: 6px; margin: 0 0 6px; }
 .pending-file {
   display: inline-flex; align-items: center; gap: 6px; max-width: 280px;
   padding: 5px 8px; border-radius: 8px; font-size: 12px;

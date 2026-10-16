@@ -735,15 +735,21 @@ const doFeedback = async () => {
 }
 
 // 编辑重发（全屏编辑，正文可改；随行的技能/@/历史/深度思考沿用原轮）
-const edit = reactive({ open: false, idx: null, text: '' })
+const edit = reactive({ open: false, idx: null, mid: '', text: '' })
 const startEdit = mi => {
   const m = messages.value[mi]
   if (!m || m.role !== 'user') return
   if (loading.value) { message.warning('当前正在回答，请先停止或稍候'); return }
   if (!m.messageId) { message.warning('该消息尚未落库，暂不能编辑重发'); return }
-  edit.idx = mi; edit.text = m.content || ''; edit.open = true
+  edit.idx = mi; edit.mid = m.messageId; edit.text = m.content || ''; edit.open = true
 }
-const closeEdit = () => { edit.open = false; edit.idx = null; edit.text = '' }
+const closeEdit = () => { edit.open = false; edit.idx = null; edit.mid = ''; edit.text = '' }
+// 编辑态按下标定位，而切会话/新建/切分支/删当前会话都会整体替换消息列表。不绑回原消息
+// 就会让全屏编辑开在另一个会话的第 N 条上，确认时把新分支建在错的会话里
+watch(messages, () => {
+  if (edit.idx == null) return
+  if ((messages.value[edit.idx] || {}).messageId !== edit.mid) closeEdit()
+})
 const confirmEdit = () => {
   const mi = edit.idx
   const old = mi != null ? messages.value[mi] : null
