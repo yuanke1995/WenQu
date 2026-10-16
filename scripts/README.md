@@ -100,6 +100,8 @@
 
 ### mac/
 - `dev-stack.sh` — 本机开发栈统一启停：`mysql` / `redis` / `meili` / `searxng` / `sandbox`
+  （`mysql`/`redis` 仍走 brew/原生实例——数据在那儿；`meili`/`searxng`/`sandbox` 走 `deploy/`
+  下的 compose，meili 索引在命名卷 `wenqu-meili-data`）
 - `start-backend.sh` — 启动后端 jar（`target/wenqu.jar`）
 
 ### win/

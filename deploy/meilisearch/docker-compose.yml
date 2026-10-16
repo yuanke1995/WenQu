@@ -1,0 +1,42 @@
+# Meilisearch 本地实例（问渠关键词索引）
+#
+# 启动：  docker compose up -d      （日常用 scripts/mac/dev-stack.sh up meili 调度）
+# 验证：  curl http://127.0.0.1:7700/health   →  {"status":"available"}
+# 停止：  docker compose down       —— 只停容器，数据卷 wenqu-meili-data 不动
+#
+# 数据放在命名卷里（容器内 /meili_data/data.ms），不要把宿主目录直接 bind 进来：
+# Meilisearch 的 LMDB 依赖 mmap 与文件锁，宿主目录经 virtiofs 共享给 Docker VM 时
+# 锁语义不可靠，轻则报 "no new readers available"，重则索引损坏。
+#
+# 问渠侧配置（设置页 · 检索设置 → 服务连接）：
+#   引擎 = meilisearch，服务地址 = http://localhost:7700 或 http://127.0.0.1:7700 都行
+#   （本机落库的是前者；端口只发布到 IPv4 回环，[::1]:7700 会被拒，客户端按地址列表回落）
+#   Key = 下方 MEILI_KEY 同值，两侧不一致是 403；索引名只从 env/yml 读 AI_MEILI_INDEX，默认 ai-doc-chunks
+#
+# 镜像按补丁版本钉住：卷里的 LMDB 只认写出它的那个版本。1.53.2 这个构建既没有 `snapshot`
+# 子命令、也没有 POST /snapshot（实测 404），跨版本别直接换 tag——升级后在设置页全量重建
+# 关键词索引即可（索引是 MySQL 的派生数据，丢了不丢语料）。
+services:
+  meilisearch:
+    image: getmeili/meilisearch:v1.53.2
+    container_name: wenqu-meilisearch
+    restart: unless-stopped
+    ports:
+      # 只绑回环：与 sandbox-provisioner 一致，回环地址在 macOS 系统代理例外列表内，
+      # 且避免 7700 带弱 key 暴露到局域网。宿主端口可用 MEILI_PORT 覆盖。
+      - "127.0.0.1:${MEILI_PORT:-7700}:7700"
+    environment:
+      MEILI_MASTER_KEY: ${MEILI_KEY:-my-master-key-123456}
+      MEILI_ENV: production
+    volumes:
+      - wenqu-meili-data:/meili_data
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:7700/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  wenqu-meili-data:
+    name: wenqu-meili-data

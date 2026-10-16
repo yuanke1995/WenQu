@@ -2,11 +2,13 @@
 # ============================================================
 #  问渠本机开发栈统一启停 - macOS
 #
-#  管什么（原则：数据在谁手里就管谁，不搬盘）
+#  管什么（原则：数据在谁手里就管谁，不搬盘；meili 是例外——索引属可从 MySQL 重算的
+#  派生数据，已整体搬进 docker 命名卷）
 #    mysql     3306   brew services mysql@8.0
 #    redis     6379   原生 redis-stack-server —— 向量库在这个实例；compose 里的
 #                     docker redis-stack 映射 6380，本机 app 连的是 6379，起它是空库
-#    meili     7700   原生 meilisearch —— 关键词索引（data.ms）在这个进程
+#    meili     7700   docker compose deploy/meilisearch —— 关键词索引在命名卷
+#                     wenqu-meili-data（原原生实例的 data.ms 已迁入该卷）
 #    searxng   8888   docker compose deploy/searxng   联网搜索 generic 服务商
 #    sandbox   8002   docker compose deploy/sandbox-provisioner
 #
@@ -19,9 +21,14 @@
 #    dev-stack.sh logs sandbox   跟随日志（Ctrl+C 退出）
 #
 #  可用环境变量覆盖（换机/改端口）：
-#    MYSQL_SERVICE REDIS_PORT REDIS_DATA_DIR MEILI_KEY MEILI_DB_PATH
+#    MYSQL_SERVICE REDIS_PORT REDIS_DATA_DIR MEILI_KEY MEILI_PORT
 #    SEARXNG_PORT SANDBOX_PORT OCR_PORT LOG_DIR
-#  MEILI_DB_PATH 指哪就读写哪份索引；指到新路径 = 空索引，需在设置页全量重建关键词索引。
+#  MEILI_KEY 两侧必须一致：它既是容器的 MEILI_MASTER_KEY，也要等于设置页「检索设置 →
+#  服务连接」里的 Key，不一致是 403。
+#  索引数据在命名卷 wenqu-meili-data 里，不在宿主目录；想推倒重来：
+#    docker compose -f deploy/meilisearch/docker-compose.yml down &&
+#    docker volume rm wenqu-meili-data && 本脚本 up meili
+#  得到的是空索引，需在设置页全量重建（或 POST /api/ai/search-index/reindex）。
 #
 #  想少敲路径，可在 ~/.zshrc 加（路径换成你的项目根）：
 #    alias wenqu-stack='<项目根>/scripts/mac/dev-stack.sh'
@@ -37,8 +44,10 @@ REDIS_PORT="${REDIS_PORT:-6379}"
 REDIS_DATA_DIR="${REDIS_DATA_DIR:-/opt/homebrew/var/db/redis-stack}"
 REDIS_CLI="${REDIS_CLI:-$(command -v redis-cli 2>/dev/null || echo /opt/homebrew/bin/redis-cli)}"
 MEILI_KEY="${MEILI_KEY:-my-master-key-123456}"
-MEILI_DB_PATH="${MEILI_DB_PATH:-$ROOT/scripts/mac/data.ms}"
 MEILI_PORT="${MEILI_PORT:-7700}"
+# compose 读这两个变量渲染 master key 与宿主端口，必须是环境变量
+export MEILI_KEY MEILI_PORT
+MEILI_COMPOSE="$ROOT/deploy/meilisearch/docker-compose.yml"
 MEILI_URL="http://127.0.0.1:${MEILI_PORT}"
 SEARXNG_PORT="${SEARXNG_PORT:-8888}"
 SEARXNG_URL="http://127.0.0.1:${SEARXNG_PORT}"
@@ -51,19 +60,6 @@ ALL_UNITS=(mysql redis meili searxng sandbox)
 # ---- 探活原语 ----
 tcp_up() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
 http_up() { curl -sf -m "${2:-4}" "$1" >/dev/null 2>&1; }
-
-stop_pid_on_port() {
-  local port="$1" pid
-  pid="$(lsof -nP -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null | head -1)"
-  [ -z "$pid" ] && return 1
-  kill "$pid" 2>/dev/null || return 1
-  for _ in $(seq 1 20); do
-    tcp_up "$port" || return 0
-    sleep 0.5
-  done
-  echo "  进程 $pid 未在 10s 内退出，可能需要 sudo kill -9 $pid"
-  return 1
-}
 
 # ---- docker ----
 if command -v docker >/dev/null 2>&1; then
@@ -124,18 +120,19 @@ u_redis_logs() { tail -f "$LOG_DIR/redis-stack.log" 2>/dev/null || echo "  当�
 u_meili_health() { http_up "$MEILI_URL/health"; }
 u_meili_up() {
   if u_meili_health; then echo "  已在运行 $MEILI_URL"; return 0; fi
-  command -v meilisearch >/dev/null 2>&1 || { echo "  meilisearch 未找到（brew install meilisearch）"; return 1; }
-  mkdir -p "$MEILI_DB_PATH" "$LOG_DIR"
-  echo "  启动 meilisearch（db-path=$MEILI_DB_PATH）"
-  # master-key 必须与设置页「检索设置 → 服务连接」里的 keyword.apiKey 一致，不一致是 403
-  nohup meilisearch --master-key "$MEILI_KEY" --db-path "$MEILI_DB_PATH" >>"$LOG_DIR/meilisearch.log" 2>&1 &
-  wait_up u_meili_health 15
+  docker_ready || return 1
+  local f="$MEILI_COMPOSE" out
+  out="$(compose "$f" up -d 2>&1)" || { echo "  docker compose up 失败:"; printf '%s\n' "$out" | sed 's/^/    /'; return 1; }
+  echo "  wenqu-meilisearch $MEILI_URL（索引数据在命名卷 wenqu-meili-data）"
+  wait_up u_meili_health 20
 }
 u_meili_down() {
-  u_meili_health || { echo "  本来就没跑"; return 0; }
-  stop_pid_on_port "$MEILI_PORT" && echo "  已停止（LMDB 已提交）"
+  docker_ready || return 1
+  u_meili_health || echo "  本来就没跑"
+  compose "$MEILI_COMPOSE" down >/dev/null 2>&1 \
+    && echo "  已停止（容器移除，数据卷 wenqu-meili-data 未动）"
 }
-u_meili_logs() { tail -f "$LOG_DIR/meilisearch.log" 2>/dev/null || echo "  当前实例不是本脚本起的，日志在它自己的 stdout" >&2; }
+u_meili_logs() { docker_ready && compose "$MEILI_COMPOSE" logs -f; }
 
 u_searxng_health() { http_up "$SEARXNG_URL/" 6; }
 u_searxng_up() {
@@ -207,7 +204,7 @@ do_status() {
   printf -- '---------------------------------------------------------------\n'
   printf '%-9s %-7s %-24s %s\n' "mysql" "$MYSQL_PORT" "brew $MYSQL_SERVICE" "$(u_mysql_health && echo 运行中 || echo 未运行)"
   printf '%-9s %-7s %-24s %s\n' "redis" "$REDIS_PORT" "原生 redis-stack-server" "$(u_redis_health && echo 运行中 || echo 未运行)"
-  printf '%-9s %-7s %-24s %s\n' "meili" "$MEILI_PORT" "原生 meilisearch" "$(u_meili_health && echo 运行中 || echo 未运行)"
+  printf '%-9s %-7s %-24s %s\n' "meili" "$MEILI_PORT" "docker compose" "$(u_meili_health && echo 运行中 || echo 未运行)"
   printf '%-9s %-7s %-24s %s\n' "searxng" "$SEARXNG_PORT" "docker compose" "$(u_searxng_health && echo 运行中 || echo 未运行)"
   printf '%-9s %-7s %-24s %s\n' "sandbox" "$SANDBOX_PORT" "docker compose" "$(u_sandbox_health && echo 运行中 || echo 未运行)"
   echo

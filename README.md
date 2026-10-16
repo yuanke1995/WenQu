@@ -160,6 +160,9 @@ docker compose up -d
 `scripts/mac/dev-stack.sh [start|stop|restart|status|logs] [单元...]`（任意目录可执行，
 单元为 `mysql redis meili searxng sandbox ocr`）。它在数据已有归属时不会另起一份空实例
 （例如原生 redis-stack 占着 6379 就不去 compose 起 6380 那份空库），默认组不含 OCR。
+其中 `meili` 走 `deploy/meilisearch/docker-compose.yml`（容器 `wenqu-meilisearch`，宿主只绑
+`127.0.0.1:7700`），关键词索引在命名卷 `wenqu-meili-data` 里——`down` 只删容器不动卷；
+删了卷就是空索引，需在设置页全量重建（或 `POST /api/ai/search-index/reindex`）。
 
 后端监听 `http://localhost:8090/ai`（context-path `/ai`），API 前缀 `/api/ai/*`，
 健康检查：`GET http://localhost:8090/ai/actuator/health`。
@@ -559,8 +562,9 @@ curl -X POST http://localhost:8090/api/ai/eval/run \
     ]}'
 
 # 5. Meilisearch 关键词引擎（可选）
-docker compose up meilisearch          # 需先设置 AI_MEILI_KEY
-curl http://localhost:7700/health       # 期望 {"status":"available"}
+scripts/mac/dev-stack.sh up meili    # 开发机：起 wenqu-meilisearch（索引在卷 wenqu-meili-data）
+docker compose up meilisearch        # 全栈 Compose 部署：起 ai-doc-meilisearch，需先设置 AI_MEILI_KEY
+curl http://localhost:7700/health     # 期望 {"status":"available"}；两者都占 7700，同机只起一个
 
 # 6. 沙盒（隔离执行环境）
 bash deploy/sandbox-provisioner/run.sh docker-up

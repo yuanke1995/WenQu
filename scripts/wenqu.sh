@@ -112,7 +112,7 @@ infra_port() {
 }
 infra_container() {
   case "$1" in
-    meili)   echo ai-doc-meilisearch ;;
+    meili)   echo wenqu-meilisearch ;;
     searxng) echo wenqu-searxng ;;
     sandbox) echo wenqu-sandbox-provisioner ;;
     ocr)     echo wenqu-mineru ;;
@@ -123,7 +123,7 @@ infra_desc() {
   case "$1" in
     mysql)   echo "MySQL 数据库 (brew mysql@8.0)" ;;
     redis)   echo "Redis 缓存  (brew redis)" ;;
-    meili)   echo "Meilisearch 检索 (docker ai-doc-meilisearch)" ;;
+    meili)   echo "Meilisearch 检索 (docker compose deploy/meilisearch，数据在卷 wenqu-meili-data)" ;;
     searxng) echo "SearXNG 联网搜索 (docker compose)" ;;
     sandbox) echo "代码沙盒 (docker compose)" ;;
     ocr)     echo "MinerU OCR (docker compose)" ;;
@@ -146,8 +146,7 @@ infra_up() {
   case "$name" in
     mysql)   brew services start mysql@8.0 ;;
     redis)   brew services start redis ;;
-    meili)   docker start ai-doc-meilisearch 2>/dev/null \
-               || echo "容器不存在，请先运行: docker run -d --name ai-doc-meilisearch -p 7700:7700 -e MEILI_ENV=development getmeili/meilisearch:v1.53" ;;
+    meili)   (cd "$PROJECT_ROOT/deploy/meilisearch" && docker compose up -d) ;;
     searxng) docker start wenqu-searxng 2>/dev/null \
                || (cd "$PROJECT_ROOT/deploy/searxng" && docker compose up -d) ;;
     sandbox) (cd "$PROJECT_ROOT/deploy/sandbox-provisioner" && docker compose up -d) ;;
@@ -159,7 +158,7 @@ infra_down() {
   case "$name" in
     mysql)   brew services stop mysql@8.0 ;;
     redis)   brew services stop redis ;;
-    meili)   docker stop ai-doc-meilisearch ;;
+    meili)   (cd "$PROJECT_ROOT/deploy/meilisearch" && docker compose down) ;;
     searxng) docker stop wenqu-searxng ;;
     sandbox) (cd "$PROJECT_ROOT/deploy/sandbox-provisioner" && docker compose down) ;;
     ocr)     (cd "$PROJECT_ROOT/deploy/ocr" && docker compose down) ;;
@@ -170,7 +169,7 @@ infra_logs() {
   case "$name" in
     mysql)   brew services info mysql@8.0 --log 2>/dev/null | tail -n 50 || echo "无日志" ;;
     redis)   tail -f "$(brew --prefix)/var/log/redis.log" 2>/dev/null || echo "无日志" ;;
-    meili)   docker logs -f ai-doc-meilisearch ;;
+    meili)   (cd "$PROJECT_ROOT/deploy/meilisearch" && docker compose logs -f) ;;
     searxng) docker logs -f wenqu-searxng ;;
     sandbox) (cd "$PROJECT_ROOT/deploy/sandbox-provisioner" && docker compose logs -f) ;;
     ocr)     (cd "$PROJECT_ROOT/deploy/ocr" && docker compose logs -f) ;;
@@ -188,7 +187,7 @@ infra_cmd_help() {
   case "$name" in
     mysql)   echo "brew services start/stop mysql@8.0" ;;
     redis)   echo "brew services start/stop redis" ;;
-    meili)   echo "docker start/stop ai-doc-meilisearch" ;;
+    meili)   echo "cd deploy/meilisearch && docker compose up -d/down" ;;
     searxng) echo "docker start/stop wenqu-searxng  (或 cd deploy/searxng && docker compose up/down)" ;;
     sandbox) echo "cd deploy/sandbox-provisioner && docker compose up -d/down" ;;
     ocr)     echo "cd deploy/ocr && docker compose up -d/down" ;;
