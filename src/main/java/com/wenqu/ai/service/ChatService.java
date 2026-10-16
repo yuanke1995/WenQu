@@ -92,6 +92,8 @@ public class ChatService {
 
     private final SessionService sessionService;
     private final ConfigService configService;
+    /** 附件元信息落库的共用口径（工作流路径用；与框架引擎同一个方法，见 metasJson 的类注释） */
+    private final ChatAttachmentService chatAttachments;
     /** 知识库精确检索工具（Function Calling；由 tool.* 配置开关控制，默认开启） */
     private final KnowledgeRetrievalTool knowledgeRetrievalTool;
     /** MCP 客户端服务（外部 MCP server 工具接入；按用户隔离连接池，各人连各人的服务） */
@@ -289,7 +291,9 @@ public class ChatService {
                 prefUser == null ? null : prefUser.getDefaultModel(),
                 emitter, startTime, degradations, degradedCodes,
                 agent, guestMode, branchTurn, regenerate, replaceMessageId, editVariantGroup,
-                null);
+                null,
+                chatAttachments.metasJson(attachments, userId),
+                (mentions == null || mentions.isEmpty()) ? null : com.alibaba.fastjson2.JSON.toJSONString(mentions));
     }
 
     /**
@@ -359,6 +363,7 @@ public class ChatService {
 
     public ChatService(SessionService sessionService,
                       ConfigService configService,
+                      ChatAttachmentService chatAttachments,
                       KnowledgeRetrievalTool knowledgeRetrievalTool,
                       BuiltinTools builtinTools,
                       AgentService agentService,
@@ -374,6 +379,7 @@ public class ChatService {
                       com.wenqu.ai.engine.ChatEngineFactory chatEngines) {
         this.sessionService = sessionService;
         this.configService = configService;
+        this.chatAttachments = chatAttachments;
         this.knowledgeRetrievalTool = knowledgeRetrievalTool;
         this.builtinTools = builtinTools;
         this.agentService = agentService;

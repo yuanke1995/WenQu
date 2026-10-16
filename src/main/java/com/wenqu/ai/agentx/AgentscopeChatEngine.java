@@ -2,6 +2,7 @@ package com.wenqu.ai.agentx;
 
 import com.wenqu.ai.agent.chat.ChatCommand;
 import com.wenqu.ai.agent.chat.TurnRegistry;
+import com.wenqu.ai.dto.ChatRequest;
 import com.wenqu.ai.agent.permission.ExecutionPolicy;
 import com.wenqu.ai.agent.plan.PlanCopy;
 import com.wenqu.ai.config.AppProperties;
@@ -9,6 +10,7 @@ import com.wenqu.ai.engine.ChatEngine;
 import com.wenqu.ai.engine.RunChannel;
 import com.wenqu.ai.engine.RunEvent;
 import com.wenqu.ai.engine.RunEventType;
+import com.wenqu.ai.service.ChatAttachmentService;
 import com.wenqu.ai.service.ConfigService;
 import com.wenqu.ai.service.ModelRegistryService;
 import io.agentscope.core.agent.RuntimeContext;
@@ -65,6 +67,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private final WenquAgentxTools tools;
     private final FrameworkSessions sessions;
     private final com.wenqu.ai.service.SessionService sessionService;
+    /** 附件元信息落库的共用口径（与工作流路径同一个方法，见 metasJson 的类注释）。 */
+    private final ChatAttachmentService attachments;
+    /** 技能清单注入 system prompt（正文仍由模型按需 readSkill 取，不塞进上下文）。 */
+    private final com.wenqu.ai.service.SkillService skills;
     private final com.wenqu.ai.service.KeywordExtractor keywordExtractor;
     private final com.wenqu.ai.service.ArtifactService artifactService;
     private final com.wenqu.ai.agent.subagent.SubAgentConsultService consultService;
@@ -97,6 +103,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                                AppProperties properties, WenquAgentxTools tools,
                                FrameworkSessions sessions,
                                com.wenqu.ai.service.SessionService sessionService,
+                               ChatAttachmentService attachments,
+                               com.wenqu.ai.service.SkillService skills,
                                com.wenqu.ai.service.KeywordExtractor keywordExtractor,
                                com.wenqu.ai.service.ArtifactService artifactService,
                                com.wenqu.ai.agent.subagent.SubAgentConsultService consultService,
@@ -111,6 +119,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         this.tools = tools;
         this.sessions = sessions;
         this.sessionService = sessionService;
+        this.attachments = attachments;
+        this.skills = skills;
         this.keywordExtractor = keywordExtractor;
         this.artifactService = artifactService;
         this.consultService = consultService;
@@ -119,6 +129,79 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         this.qaLog = qaLog;
         this.displayNames = new ToolDisplayNames(toolRegistry);
         this.modelResolver = modelResolver;
+    }
+
+    /** @ 引用 / # 历史引用的消息级常驻标注（刷新/历史回显保留）。 */
+    private String mentionsJson(List<ChatRequest.Mention> mentions) {        if (mentions == null || mentions.isEmpty()) return null;
+        return com.alibaba.fastjson2.JSON.toJSONString(mentions);
+    }
+
+    private String historyRefsJson(List<ChatRequest.HistoryRef> historyRefs) {
+        if (historyRefs == null || historyRefs.isEmpty()) return null;
+        return com.alibaba.fastjson2.JSON.toJSONString(historyRefs);
+    }
+
+    /**
+     * 技能清单（注入 system prompt）：本轮用户选用了哪些技能，就只列这些；一个都没选则列出全部启用的
+     * 技能，让模型仍能主动发现可用做法。
+     * <p>只列名称与描述，正文由模型按需调 {@code readSkill} 取——这是技能设计的本意（见
+     * {@code SkillService.promptBlock}），把全文塞进每次请求会把上下文吃光。
+     */
+    private String skillPrompt(ChatCommand cmd) {
+        try {
+            List<String> only = cmd.getSkills();
+            Set<String> picked = (only == null || only.isEmpty()) ? null : new java.util.LinkedHashSet<>(only);
+            return skills.promptBlock(cmd.getUserId(), 1200, picked);
+        } catch (Exception e) {
+            log.warn("[SKILL] 技能清单注入失败（不影响本轮作答）: {}", e.getMessage());
+            return "";
+        }
+    }
+
+    /**
+     * 本轮随行内容 → 送进模型的用户文本。
+     * <p><b>为什么必须在这里装配</b>：附件正文 / @ 引用 / # 历史引用此前**只落库、不入上下文**——
+     * 用户上传了文件、在输入框里 @ 了知识库、# 了历史问答，模型却一个字都收不到，于是如实回答
+     * 「没有看到您上传的文件」。落库与回显只是给人看的，模型要答得对，内容必须真的送到它眼前。
+     * <p>三段各自独立、任一为空就不追加段落；附件解析失败由 {@link ChatAttachmentService#prepare}
+     * 自己兜成一段可读的错误说明（fail-loud 到用户可见文案，而不是静默丢）。
+     */
+    private String userContentWithContext(ChatCommand cmd) {
+        StringBuilder sb = new StringBuilder();
+        String q = cmd.getQuestion() == null ? "" : cmd.getQuestion();
+        sb.append(q);
+        // 1) 文档附件正文（当轮看一眼的轻路径：只抽文本，超长截断，不进向量库）
+        if (cmd.getAttachments() != null && !cmd.getAttachments().isEmpty()) {
+            List<ChatAttachmentService.PreparedAttachment> prepared =
+                    attachments.prepare(cmd.getAttachments(), cmd.getUserId());
+            String text = attachments.buildContextText(prepared);
+            if (!text.isBlank()) sb.append('\n').append(text);
+        }
+        // 2) @ 引用：kb=收窄检索范围（由检索侧按 mentions 生效，无需在这里重复正文）；
+        //    doc=该文档内容**直接带入上下文**，必须由这段送进去，否则 @ 了等于没 @；
+        //    agent=强制咨询，由工具侧处理，这里只说明本轮有一支会被咨询，避免模型自答。
+        if (cmd.getMentions() != null && !cmd.getMentions().isEmpty()) {
+            sb.append("\n【本轮 @ 引用】\n");
+            for (ChatRequest.Mention m : cmd.getMentions()) {
+                if (m == null) continue;
+                sb.append("- ").append(m.getType()).append("：").append(m.getName()).append('\n');
+            }
+            boolean hasDoc = cmd.getMentions().stream()
+                    .anyMatch(m -> m != null && "doc".equals(m.getType()));
+            if (hasDoc) {
+                sb.append("（doc 类型的内容已由系统直接前置到本轮上下文，请据此作答，勿声称没有看到）\n");
+            }
+        }
+        // 3) # 引用：把被引用的历史问答原文带过来，否则模型无从知道"这一句"在说什么
+        if (cmd.getHistoryRefs() != null && !cmd.getHistoryRefs().isEmpty()) {
+            sb.append("\n【本轮引用的历史问答】\n");
+            for (ChatRequest.HistoryRef h : cmd.getHistoryRefs()) {
+                if (h == null || h.getContent() == null || h.getContent().isBlank()) continue;
+                sb.append("- ").append("assistant".equals(h.getRole()) ? "答" : "问").append("：")
+                        .append(h.getContent()).append('\n');
+            }
+        }
+        return sb.toString();
     }
 
     /**
@@ -247,10 +330,15 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         long startCursor = session.log().head().seq();
 
         // 问题先落库：这一轮哪怕中途停掉或出错，界面上也不该出现「问出去了却什么都没有」的空档
-        // （与手写运行时的即时落库同一条口径）
+        // （与手写运行时的即时落库同一条口径）。附件/@/#历史引用随用户消息一并持久化，刷新后回显不丢。
         String userMessageId = cmd.isRegenerate() || cmd.isFromSteer() ? null
                 : sessionService.appendMessage(cmd.getSessionId(), "user", cmd.getQuestion(),
-                        cmd.getUserImages(), null);
+                        cmd.getUserImages(), null, null, null, null, null,
+                        attachments.metasJson(cmd.getAttachments(), cmd.getUserId()),
+                        null, null, null, null, null, null, null,
+                        mentionsJson(cmd.getMentions()),
+                        historyRefsJson(cmd.getHistoryRefs()),
+                        null, turnId);
         Recording recording = new Recording(spills, hooks.consultLedger(), tools, hooks, displayNames);
 
         // 计划模式（框架原生 plan_enter/plan_write/plan_exit）按轮进入，跑完必须退出。
@@ -270,7 +358,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                     cmd.getSessionId());
             channel.emit(RunEventType.WARN, "计划模式未能启用（框架侧未进入计划位），本轮将不使用计划卡");
         }
-        AgentSession.Task current = session.submit(cmd.getQuestion());
+        // 送进模型的不只是问题原文：附件正文 / @ 引用 / # 历史引用都在这一段拼进去。
+        // 此前这里直接送 cmd.getQuestion()，于是用户传的东西模型一概看不见（附件问题表现为
+        // 它如实回答「没有看到您上传的文件」）——落库只保证人能回看到，不等于模型收到了。
+        String modelInput = userContentWithContext(cmd);
+        AgentSession.Task current = session.submit(modelInput);
         // 占住这一条会话的跟随位，收尾让位：答复端点据此判断「这次答完有没有人接着跑」
         String sessionKey = sessions.key(cmd);
         sessions.claimFollower(sessionKey);
@@ -1757,6 +1849,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 计划阶段里，框架这一路没人再说第二遍，而框架的 PLAN banner 与沙盒工具说明反而主动把
                 // 路径喂给模型——不挂回去，计划卡就变成「它打算在沙盒里怎么写文件」的说明书
                 .sysPrompt(properties.getSystemPrompt() + tools.consultGuide(cmd) + PlanCopy.guidance()
+                        + skillPrompt(cmd)
                         + com.wenqu.ai.agent.chat.RelatedPrompt.line(
                                 configService.getInt("retrieval.relatedCount", 3)))
                 // 问渠所有供应商都是 OpenAI 兼容网关（c_ai_provider.base_url 实测全是 compatible-mode）

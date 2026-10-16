@@ -68,6 +68,25 @@ public class ChatAttachmentService {
         return m;
     }
 
+    /**
+     * 把本轮上传的附件转成可落库的元信息 JSON 数组字符串（[{name,mime,size}]），供用户消息持久化后
+     * 在气泡里回显。体积取自上传侧落盘的元信息（{@link ChatUploadService#stat}），不在这里重读文件。
+     * <p>空列表返回 null（不落库这一列），与「本轮没有附件」同义。
+     * <p><b>为什么单独一条出口</b>：附件元信息要写进用户消息的那一行，但落库发生在两条互不相干的路径上
+     * （框架引擎 {@code AgentscopeChatEngine} 与工作流 {@code ChatflowBridge}），两处各写一遍取体积的
+     * 逻辑迟早漂移。共用这一个方法，两条路径都拿同一份口径。
+     */
+    public String metasJson(List<ChatRequest.Attachment> attachments, String uid) {
+        if (attachments == null || attachments.isEmpty()) return null;
+        List<Map<String, Object>> metas = new ArrayList<>(attachments.size());
+        for (ChatRequest.Attachment a : attachments) {
+            // stat 读不到（已过期/不存在）时体积记 0：气泡仍如实显示文件名，不因为体积取不到就不显示附件
+            ChatUploadService.Uploaded st = chatUploadService.stat(a.getFileId(), uid);
+            metas.add(metaOf(a, st != null ? st.size() : 0L));
+        }
+        return com.alibaba.fastjson2.JSON.toJSONString(metas);
+    }
+
     /** 前端上传校验用：扩展名是否受支持（不受支持的在发送前就拒绝，避免白传 base64） */
     public static boolean supportedExt(String name) {
         return extOf(name) != null;

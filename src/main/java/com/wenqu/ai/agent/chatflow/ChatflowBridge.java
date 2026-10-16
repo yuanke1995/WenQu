@@ -80,7 +80,8 @@ public class ChatflowBridge {
                                  long startTime, List<Map<String, String>> degradations,
                                  Set<String> degradedCodes, Agent agent, boolean guestMode, boolean branchTurn,
                                  boolean regenerate,
-                                 String replaceMessageId, String editVariantGroup, Agent delegatedAgent) {
+                                 String replaceMessageId, String editVariantGroup, Agent delegatedAgent,
+                                 String attachmentsJson, String mentionsJson) {
         runtime.sendSseEvent(emitter, "plan", JSON.toJSONString(List.of("执行工作流")), sessionId);
         runtime.sendSseEvent(emitter, "stage", "正在执行工作流…", sessionId);
         // 本轮身份（把手在 chat() 入口已登记，工作流分支同样走那一条轮）：问答两侧都挂它，
@@ -90,8 +91,14 @@ public class ChatflowBridge {
         try {
             String workflowUserMsgId = null;
             if (!regenerate) {
-                workflowUserMsgId = sessionService.appendMessageWithTurn(sessionId, "user", question,
-                        null, workflowTurnId);
+                // 附件/@ 引用随用户消息一并落库：工作流路径虽不把它们送进图（已登记 workflowInputIgnored
+                // 降级），但用户确实上传/引用了，气泡里凭空消失就是「刷新一次当没发生过」
+                workflowUserMsgId = sessionService.appendMessage(sessionId, "user", question,
+                        null, null, null, null, null, null,
+                        attachmentsJson,
+                        null, null, null, null, null, null, null,
+                        mentionsJson,
+                        null, null, workflowTurnId);
                 // 编辑重发：新用户消息挂上被替换旧分支的版本组键（与主链路同口径）
                 if (workflowUserMsgId != null && editVariantGroup != null && !editVariantGroup.isBlank()) {
                     sessionService.setMessageVariant(workflowUserMsgId, editVariantGroup);
