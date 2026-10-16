@@ -228,6 +228,36 @@
                         （请求头带 <code>Authorization: Bearer sk-…</code>），供 Claude / Cursor 等客户端调用：检索知识库、提问、列出可见库与智能体</li>
                       <li>不再使用建议「停用」而非删除：停用可保留审计线索，删除记录即消失</li>
                     </ul>
+
+                    <!-- 平台级 MCP 接入点：开关只是授权，这里给的是"粘上就能用"的地址与配置。
+                         此前本页只有一个 MCP 开关和一句说明，地址从没露过面——授权了也不知道接哪。
+                         刻意不加"有 Key 才显示"的门：地址跟有没有 Key 无关，而还没建 Key 的人
+                         恰恰是最该先看清"接哪、怎么接"的人（真机验证时库里 0 个 Key，
+                         正是这一条把整块藏没了）。 -->
+                    <div class="mcp-entry">
+                      <div class="key-usage-label">MCP 接入点（平台级 · 一个地址调用整套能力）</div>
+                      <div class="key-code">
+                        <code>{{ mcpPlatformUrl }}</code>
+                        <button class="key-copy" :title="copiedSample === 'mcpUrl' ? '已复制' : '复制'"
+                                @click="copySample('mcpUrl', mcpPlatformUrl)">
+                          <check-outlined v-if="copiedSample === 'mcpUrl'" class="key-copy-ok" /><copy-outlined v-else />
+                        </button>
+                      </div>
+                      <div class="key-usage-label">mcp.json（粘贴到 Cursor 的 .cursor/mcp.json 或 Claude Desktop 配置）</div>
+                      <div class="key-code">
+                        <pre class="key-code-pre">{{ mcpPlatformJson }}</pre>
+                        <button class="key-copy" :title="copiedSample === 'mcpJson' ? '已复制' : '复制'"
+                                @click="copySample('mcpJson', mcpPlatformJson)">
+                          <check-outlined v-if="copiedSample === 'mcpJson'" class="key-copy-ok" /><copy-outlined v-else />
+                        </button>
+                      </div>
+                      <ul class="key-usage-list">
+                        <li>需要<strong>该 Key 打开上方「MCP」开关</strong>，且管理员在「系统设置 → MCP 服务（双向）」开启「对外提供 MCP 端点」——总开关同时约束平台级入口与每个智能体自己的端点</li>
+                        <li>对外域名访问（不是 localhost）时，还须把前端域名填进「MCP 服务（双向）→ 允许的 Origin」，否则浏览器型客户端会被 403 拒绝（Claude / Cursor 这类本地进程客户端不带 Origin，不受影响）</li>
+                        <li>可见范围与 Key 创建者在网页上看到的完全一致；每次调用都落进下方「MCP 调用审计」</li>
+                        <li>想让某一个智能体单独对外，改用它的「公开发布 → MCP 端点」标签页，那是另一个地址（<code>/ai/mcp/{token}</code>），凭据是分享 token 而不是 Key</li>
+                      </ul>
+                    </div>
                   </div>
                 </div>
 
@@ -944,6 +974,23 @@ const curlSample = computed(() => {
   -H "X-Api-Key: ${k}..." \\
   -d '{"question":"如何创建评分组件？"}'`
 })
+
+/**
+ * 平台级 MCP 接入点。地址由 window.location.origin 拼出，因此开发态是 vite 的 5800
+ * （vite 已把 /ai 代理到后端，curl 实测通），生产态就是前端域名——不需要用户自己去拼。
+ *
+ * 凭据头用真 Key 前缀 + "..."：完整 Key 明文只在签发时回显一次，这里不可能拿到，
+ * 用前缀是为了让粘贴的人一眼知道该换成什么，而不是留一句"你的 Key"让人猜位置。
+ */
+const mcpPlatformUrl = computed(() => window.location.origin + '/ai/mcp')
+const mcpPlatformJson = computed(() => {
+  const k = keys.value.find(x => !x.disabled && !x.expired)?.keyPrefix || 'sk-你的Key'
+  return JSON.stringify({
+    mcpServers: {
+      wenqu: { url: mcpPlatformUrl.value, headers: { Authorization: `Bearer ${k}...` } }
+    }
+  }, null, 2)
+})
 const openCreateKey = () => {
   createForm.value = { name: '', expireMode: 'never', expireDate: null }
   createdKey.value = { name: '', apiKey: '' }
@@ -1534,6 +1581,14 @@ onMounted(() => { fetchAndFill(); loadToolInventory() })
 .fold-caret { display: inline-block; width: 12px; color: var(--app-text3); }
 .key-usage-body { padding: 10px 0 0 12px; }
 .key-usage-label { font-size: 12px; color: var(--app-text2); margin-bottom: 6px; }
+/* 平台级 MCP 接入点：同一张卡里第二、三个 label 之间要留出间距，否则两块代码框贴成一片 */
+.mcp-entry { margin-top: 14px; }
+.mcp-entry .key-usage-label + .key-code + .key-usage-label { margin-top: 12px; }
+/* mcp.json 是多行 pre：.key-code 那套 code 选择器不管 pre，这里补上，并给右上角复制按钮让位 */
+.key-code-pre {
+  margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+  line-height: 1.7; white-space: pre-wrap; word-break: break-all; color: var(--app-text);
+}
 .key-code { position: relative; background: var(--app-panel-2); border: 1px solid var(--app-border); border-radius: 6px; padding: 10px 34px 10px 12px; }
 .key-code code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.7; white-space: pre-wrap; word-break: break-all; color: var(--app-text); }
 .key-copy {
