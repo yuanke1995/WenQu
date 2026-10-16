@@ -801,8 +801,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
     /**
      * 现在挂着的那（几）张卡属于哪一次工具调用：配对键与 {@link Recording#toolCallKey} 同一套算法，
-     * 这样「这段等待」能落到正确的工具卡头上，而不是摊给同一步里另外那把真在跑的工具。
-     * <p>认不出来（字段形状变了）时返回空集合，由 {@link Recording#endToolWait} 走兜底摊给在飞的调用。
+     * 这样「这段等待」对外记在挂卡那一张头上（每张卡自己的耗时另有按在飞清单摊的扣账，见
+     * {@code Recording#endToolWait}）。
+     * <p>认不出来（字段形状变了）时返回空集合，由 {@link Recording#endToolWait} 兜底记给在飞的第一把。
      */
     private static java.util.List<String> pendingCallKeys(AgentSession session) {
         java.util.List<String> out = new java.util.ArrayList<>();
@@ -975,11 +976,21 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         /** 每次调用的开始时刻（与入参同一个配对键），终态时算耗时下发——前端工具卡读 elapsedMs，缺它就显示 0ms。 */
         private final Map<String, Long> toolStartMs = new java.util.LinkedHashMap<>();
         /**
-         * 在飞工具各自被「等人」占掉的时长（配对键 → 累计毫秒）。
+         * 在飞工具各自要<b>扣掉</b>的「等人」时长（配对键 → 累计毫秒）。
          * <p>提问卡/计划卡/审批卡挂出到用户点完，那一段既在工具的开始-结束窗口里、又不是机器在干活。
          * 不拆出去的后果：一张让人思考了三分钟的提问卡，卡片自己写着「3m12s」，读起来就是「这个工具慢得离谱」。
+         * <p>扣账摊给<b>等待期间仍在飞的每一把</b>，不是只摊给挂卡那一把：人在回路的这道闸门卡住的是
+         * 整个工具步，同一步里别家的 result 也要等用户点完才到。真机 08:55 那一轮的账：
+         * {@code plan_write} 的窗口 160610ms，其中 160288ms 是用户在读 {@code plan_exit} 的批准卡，
+         * 而 plan_write 自己只跑了三百毫秒——只摊给挂卡那一把时，这张卡就顶着 2m40s 上界面。
          */
-        private final Map<String, Long> toolWaitMs = new java.util.LinkedHashMap<>();
+        private final Map<String, Long> toolWaitDeduct = new java.util.LinkedHashMap<>();
+        /**
+         * 每段等待<b>记在哪一张卡上</b>（对外下发与落库的那份 {@code waitedMs}）。
+         * <p>一张闸门只记一笔：前端整段跨度算的是「首尾之差 − 各张卡 waitedMs 之和」，同一段时间摊到两张
+         * 卡上就扣了两遍——真机那一轮两个 160288 相加 320576ms，比整个 169901ms 的窗口还长，跨度被夹成 0。
+         */
+        private final Map<String, Long> toolWaitCharge = new java.util.LinkedHashMap<>();
         /** 当前这段等待的起点（0 = 此刻没在等人）；与 followTurn 里的 {@code waitBeganAt} 同步进出。 */
         private long toolWaitBeganAt;
 
@@ -1004,38 +1015,56 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             return t == null ? 0L : t;
         }
 
-        /** 当前这段等待归属于哪几把调用（只有挂卡那把在等人，同一步里并发跑的别家是真在干活）。 */
+        /** 挂卡那几把调用的配对键：这段等待要<b>记账</b>在其中第一张上（认不出来时兜底给在飞的第一把）。 */
         private final java.util.List<String> toolWaitKeys = new java.util.ArrayList<>();
 
-        /** 等待开始：记下这段等待该摊给谁；归属认不出来时才摊给所有在飞的调用（宁可多扣不可漏扣）。 */
+        /** 等待开始：记下挂的是哪几把调用的卡；扣账在收口时按当时在飞的清单现算。 */
         void beginToolWait(java.util.Collection<String> keys) {
             toolWaitBeganAt = System.currentTimeMillis();
             toolWaitKeys.clear();
             if (keys != null) toolWaitKeys.addAll(keys);
         }
 
-        /** 等待收口：把这段摊给归属的那几把调用；一张都没摊上（本轮只等人、没有在飞的调用）时这段只进整轮账。 */
+        /**
+         * 等待收口：<b>扣账摊给此刻仍在飞的每一把</b>（闸门卡住整个工具步，谁的窗口都盖住了这段），
+         * <b>记账只落挂卡那一张</b>（跨度按各张 waitedMs 之和来减，记两张等于同一段时间扣两遍）。
+         * <p>一把都没在飞（本轮只等人、没有未结算的调用）时两处都不记，这段只进整轮那本账。
+         */
         void endToolWait() {
             if (toolWaitBeganAt <= 0L) return;
             long wait = System.currentTimeMillis() - toolWaitBeganAt;
             toolWaitBeganAt = 0L;
-            java.util.List<String> targets = new java.util.ArrayList<>();
-            for (String key : toolWaitKeys) if (toolStartMs.containsKey(key)) targets.add(key);
-            if (targets.isEmpty()) targets.addAll(toolStartMs.keySet());   // 归属没认出来的兜底
+            java.util.List<String> inflight = new java.util.ArrayList<>(toolStartMs.keySet());
+            if (inflight.isEmpty()) {
+                toolWaitKeys.clear();
+                return;
+            }
+            for (String key : inflight) toolWaitDeduct.merge(key, wait, Long::sum);
+            String chargeKey = null;
+            for (String key : toolWaitKeys) {
+                if (toolStartMs.containsKey(key)) { chargeKey = key; break; }
+            }
+            if (chargeKey == null) chargeKey = inflight.get(0);   // 归属认不出来（字段形状变了）才兜底
+            toolWaitCharge.merge(chargeKey, wait, Long::sum);
             toolWaitKeys.clear();
-            for (String key : targets) toolWaitMs.merge(key, wait, Long::sum);
         }
 
         /**
-         * 这一次调用被「等人」盖住了多久，同时把这笔账销掉。
-         * <p>这个数要单独下发：光把等待从工具的 {@code elapsedMs} 里扣掉，扣完的那段等待就从整轮里
-         * 消失了，可它仍然躺在「第一张卡到最后一张卡」这个区间<b>中间</b>——跨度不减它，簇头照样读出
-         * 一个比机器时间大一分多钟的数（真机 2026-10-15 23:09 那条：墙钟 118.6s／等待 86.3s）。
+         * 这一次调用的窗口里被「等人」盖住了多久（用于算它自己的 {@code elapsedMs}），同时销掉这笔扣账。
+         * <p>与 {@link #takeToolCharge} 分开的理由见那两个字段各自的注释：一张卡该报真实干活时长，
+         * 而整段跨度只按挂卡那一张减一次。
          */
         long takeToolWait(String key) {
             // 等待账跟着这次结算一起销掉：键是一次性的，留着只会让本轮的表越长越大
-            long wait = key == null ? 0L : toolWaitMs.getOrDefault(key, 0L);
-            if (key != null) toolWaitMs.remove(key);
+            long wait = key == null ? 0L : toolWaitDeduct.getOrDefault(key, 0L);
+            if (key != null) toolWaitDeduct.remove(key);
+            return wait;
+        }
+
+        /** 这一段等待对外记在哪张卡上的那份数（只有挂卡那把拿得到非零值），同时销掉这笔记账。 */
+        long takeToolCharge(String key) {
+            long wait = key == null ? 0L : toolWaitCharge.getOrDefault(key, 0L);
+            if (key != null) toolWaitCharge.remove(key);
             return wait;
         }
         /**
@@ -1136,9 +1165,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
          *
          * @param args      这一次调用自己的入参（JSON 文本）。并发派发时它必须由调用方按
          *                  {@link #toolCallKey} 配好传进来，读共用字段就是甲张卡收乙次的参数
-         * @param elapsedMs 这一次调用的机器耗时（等人已扣）；0 = 没有可报的数，不写这个字段
+         * @param elapsedMs 这一次调用的机器耗时（盖住它的等待已扣干净，同一步里别家挂的卡也算）；
+         *                  0 = 没有可报的数，不写这个字段
          * @param beganAtMs 服务端开始时刻；0 = 配不上 start，落库那份改记当下
-         * @param waitedMs  这一次调用里被「等人」盖住的时长；整段跨度要减它，0 = 这一段没等过人
+         * @param waitedMs  这段等待<b>记本账的那一笔</b>：只有挂卡那一张拿到非零值，整段跨度按它减一次；
+         *                  0 = 这张不是挂卡那张（它的等待已经体现在 elapsedMs 里，但跨度不该重复减）
          */
         void toolCall(String name, String status, String args, long elapsedMs, long beganAtMs, long waitedMs) {
             if (name == null || name.isBlank()) return;
@@ -1408,12 +1439,15 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 耗时＝墙钟窗口扣掉这段等待：提问卡挂三分钟不是「这个工具跑三分钟」，是「用户读了三分钟」。
                 // 扣掉的那段另发一份 waitedMs：整段跨度减它才剩机器时间，只在单卡上扣会留在区间中间出不去。
                 long beganAt = recording.takeToolStart(callKey);
-                long waited = recording.takeToolWait(callKey);
+                // 扣账与记账分开：这张卡自己的耗时要把盖住它的等待减干净（同一步里别家挂卡也一样被闸门盖住），
+                // 而对外那份 waitedMs 只在挂卡那一张上出现——跨度按各张之和减，记两张就扣两遍。
+                long covered = recording.takeToolWait(callKey);
+                long charged = recording.takeToolCharge(callKey);
                 long elapsed = beganAt <= 0L ? 0L
-                        : Math.max(0L, System.currentTimeMillis() - beganAt - waited);
-                recording.toolCall(name, failed ? "error" : "done", args, elapsed, beganAt, waited);
+                        : Math.max(0L, System.currentTimeMillis() - beganAt - covered);
+                recording.toolCall(name, failed ? "error" : "done", args, elapsed, beganAt, charged);
                 emit(channel, RunEventType.TOOL_STATUS, toolCard(name, failed ? "error" : "done",
-                        elapsed, beganAt, waited, args, toolResultText(data)));
+                        elapsed, beganAt, charged, args, toolResultText(data)));
             }
             case "tool/decision" -> {
                 // 权限判定由框架说出（实测字段 decision=allowed|denied）：拒绝必须让用户看见，
