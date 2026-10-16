@@ -384,7 +384,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                             String turnId, int historyBefore, long startCursor, String userMessageId,
                             AgentSession.Task current,
                             boolean planAuto, Recording recording, long startedAt) {
-        long turnDeadline = startedAt + turnSeconds() * 1000L;
+        long machineBudgetMs = turnSeconds() * 1000L;
         // 接流快照改由本轮自己供：外壳开轮时只有「还没出字」那份空快照，而正文/工具卡/时间线
         // 只活在这里的 Recording 与引用池里。不回填的表现为——生成中刷新，气泡接回来是一片空白。
         channel.offerSnapshot(() -> turnSnapshot(cmd, channel, pool, route, recording, turnId));
@@ -423,7 +423,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 而是跟随会话现状——有待办就等人，没待办就跟到最后一条任务，任务结算了还要再看一眼
         // 有没有新待办或接续出来的新任务，两者都没有才算这一轮跑完（真机踩过：只等一次就收尾，
         // 第二次确认的卡永远发不出去，正文也是空的）
-        while (System.currentTimeMillis() - humanWaitMs < turnDeadline) {
+        while (machineMs(startedAt, humanWaitMs, waitingOnHuman, waitBeganAt) < machineBudgetMs) {
             if (!launched && current != null && !"queued".equals(current.status())) launched = true;
             cursor = drain(session, cursor, emitFrom, channel, recording);
             emitLiveUsage(session, cmd, pool, channel, historyBefore, usageStamp);
@@ -459,7 +459,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                     // 不登记的后果是本轮必然在 300s 线上被看门狗误截断——真机 2026-10-15 13:59:53 实测：
                     // 计划卡 13:57:46 挂出、用户还没点批准就被判「机器耗时 300087ms / 预算 300000ms
                     // （人工等待 0ms 不计入）」，界面上就是「一直 loading 到超时」。
-                    // 引擎自己的 turnDeadline 同理要在下面按同一口径扣掉，否则卡一挂出这一轮就只剩几十秒。
+                    // 引擎自己的机器预算同理要按同一口径扣掉，否则卡一挂出这一轮就只剩几十秒。
                     beginHumanWait(channel, recording, session);
                     waitBeganAt = System.currentTimeMillis();
                     waitingOnHuman = true;
@@ -558,7 +558,19 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             if (recording.planAuto) planRecord.put("auto", true);
         }
 
-        if (!stopped && !timedOut && session.pending().size() > 0) {
+        // 机器预算用尽退场、卡片还挂着：这一轮不会再有跟随者（超时回收要靠活着的那个循环，它已经退了）。
+        // 不判终态就是两件坏事，而且第二件正是用户报的那个症状：
+        //  1) 下面 `awaiting` 那一支刻意不落库 → 用户刷一下页面，整半轮过程（思考/工具卡/引用/用量）
+        //     在库里根本不存在，界面上凭空消失，只剩第一句提问；
+        //  2) 卡片留在 PENDING → 恢复端点还能把它重建出来，但答了没人接，成了「点了没反应」。
+        // 所以按超时收口：待办落 TIMEOUT、这一轮走 timedOut 那条落库与文案（半程内容据此可见）。
+        if (!stopped && !timedOut && !superseded && !neverLaunched && !session.pending().isEmpty()) {
+            channel.emit(RunEventType.WARN, "本轮已超时结束，等你确认的那一步已作废");
+            sessions.markPendingTimeout(sessions.key(cmd));
+            timedOut = true;
+        }
+
+        if (!stopped && !timedOut && !superseded && session.pending().size() > 0) {
             // 「答完会自动接着跑」只对还活着的等待成立：超时那一支已经把待办落成终态，
             // 再说这句就是在承诺一件不会发生的事
             channel.emit(RunEventType.WARN, "有工具在等你确认，答完会自动接着跑（可稍后回来接着看它）");
@@ -858,6 +870,19 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      */
     private int turnSeconds() {
         return Math.max(30, configService.getInt("chat.sseTimeoutMs", 300000) / 1000);
+    }
+
+    /**
+     * 本轮到目前为止花掉的「机器时间」：墙钟减去人在回路的等待，<b>含正挂在卡上的这一段</b>。
+     * <p>少了在途那一段就是拿墙钟当机器预算用：{@code humanWaitMs} 只在待办清空时才累加，用户对着
+     * 计划卡读五分钟，循环下一跳算出来的机器时间就已经涨满 300s，整轮在人还没裁决时被静默收口
+     * （真机 2026-10-16 19:56:33：机器耗时 59790ms／人工等待 333422ms 的一轮在卡上被判跑完，
+     * 而 awaiting 让那一轮整条不落库，刷新后只剩第一句提问）。
+     */
+    private static long machineMs(long startedAt, long humanWaitMs, boolean waitingOnHuman, long waitBeganAt) {
+        long now = System.currentTimeMillis();
+        long waiting = humanWaitMs + (waitingOnHuman && waitBeganAt > 0 ? now - waitBeganAt : 0);
+        return now - startedAt - waiting;
     }
 
     /**
