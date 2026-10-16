@@ -58,7 +58,7 @@ public class PPStructureV3OcrEngine implements OcrEngine {
 
     private String uri() {
         String u = configService.get("parse.ocrPpUri");
-        return (u == null || u.isBlank()) ? "http://localhost:8080" : u.replaceAll("/+$", "");
+        return (u == null || u.isBlank()) ? "" : u.replaceAll("/+$", "");
     }
 
     private Duration timeout() {

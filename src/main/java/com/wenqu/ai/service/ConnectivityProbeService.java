@@ -144,7 +144,7 @@ public class ConnectivityProbeService {
 
     /**
      * 重排模型探测：真实 POST {base}/rerank 一次（与 {@link RerankService} 运行时同款载荷），
-     * 同时验证地址、路径、Key、模型名。本地 reranker 无 Key 时不带 Authorization。
+     * 同时验证地址、路径、Key、模型名。rerank 服务无 Key 时不带 Authorization.
      */
     private Map<String, Object> rerankProbe(String baseUrl, String apiKey, String model, long start) {
         String base = value(baseUrl, "rerank.baseUrl");

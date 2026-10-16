@@ -72,7 +72,7 @@ public class MinerUOcrEngine implements OcrEngine {
 
     private String uri() {
         String u = configService.get("parse.ocrMineruUri");
-        return (u == null || u.isBlank()) ? "http://localhost:30011" : u.replaceAll("/+$", "");
+        return (u == null || u.isBlank()) ? "" : u.replaceAll("/+$", "");
     }
 
     @Override

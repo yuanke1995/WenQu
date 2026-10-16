@@ -1096,7 +1096,7 @@
       "label": "PP-StructureV3 服务地址",
       "type": "text",
       "tips": "ocrPpUri",
-      "def": "http://localhost:8080",
+      "def": "",
       "width": 300,
       "note": "PaddleX serving 地址；健康检查 GET {uri}/health；仅 pp_structure_v3 引擎使用",
       "tier": 2,
@@ -1112,7 +1112,7 @@
       "label": "MinerU 服务地址",
       "type": "text",
       "tips": "ocrMineruUri",
-      "def": "http://localhost:30011",
+      "def": "",
       "width": 300,
       "note": "MinerU http-server 地址；健康检查 GET {uri}/openapi.json；仅 mineru 引擎使用",
       "tier": 2,
@@ -1566,7 +1566,7 @@
       "tips": "rerankModel",
       "def": "",
       "personalOnly": true,
-      "note": "重排模型归知识库/智能体检索设置绑定（模型归登记人）；未绑定时回落平台内置重排服务",
+      "note": "重排模型归知识库/智能体检索设置绑定（模型归登记人）；未绑定时回落 rerank.baseUrl 指向的外部 /v1/rerank 服务（需显式配置）",
       "tier": 2
     },
     {
@@ -1582,7 +1582,7 @@
       "allowClear": true,
       "tips": "rerankPlatformRef",
       "def": "",
-      "note": "知识库/智能体检索设置都没绑重排模型时的平台兜底（管理员登记一次，全平台生效）；仍为空才回落平台内置重排服务。没配重排 = 相关分门从重排门（0.6）退化到融合分门（0.5），与问题仅词面重叠的无关块更容易进上下文与引用面板",
+      "note": "知识库/智能体检索设置都没绑重排模型时的平台兜底（管理员登记一次，全平台生效）；仍为空才回落 rerank.baseUrl 指向的外部 /v1/rerank 服务（需显式配置）。没配重排 = 相关分门从重排门（0.6）退化到融合分门（0.5），与问题仅词面重叠的无关块更容易进上下文与引用面板",
       "tier": 2
     },
     {
@@ -4956,7 +4956,7 @@
     "context.dedupPathThreshold": "上下文：同章节路径下去冗余阈值(0~1，默认0.28，同章节切片重叠更易剪)",
     "chat.citationCheckEnabled": "回答引用语义一致性自检（生成后校验[N]对应句子是否被引用内容支撑，不支撑剔除；增加一次校验调用延迟）",
     "rerank.enabled": "重排：是否启用（平台默认值，个人设置可覆盖；默认开。未绑定重排模型或服务不可用时按融合分排序并提示，不阻塞问答）",
-    "rerank.model": "重排：默认重排模型引用（个人设置项，模型归登记人；各库检索设置未单独配置时生效；清空=回落平台内置重排服务）",
+    "rerank.model": "重排：默认重排模型引用（个人设置项，模型归登记人；各库检索设置未单独配置时生效；清空=回落 rerank.baseUrl 指向的外部 /v1/rerank 服务，需显式配置）",
     "rerank.minHits": "重排：候选少于此数跳过重排(下限 2，省一次往返)",
     "rerank.maxHits": "重排：窗口上限，候选超出时只重排头部这么多条，其余保持融合分序",
     "retrieval.vecThreshold": "检索：向量相似度下限(0~1，评估对比后可应用)",

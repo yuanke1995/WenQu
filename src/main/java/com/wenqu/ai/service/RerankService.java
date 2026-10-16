@@ -13,11 +13,11 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * 重排服务：调用独立 reranker 服务（OpenAI 兼容 POST /v1/rerank，如 scripts/rerank_server.py 本地服务）。
+ * 重排服务：调用独立 reranker 服务（OpenAI 兼容 POST /v1/rerank；由外部供应商网关或平台内置重排服务承载，无本地脚本依赖）。
  *
  * <p>注意：Ollama 官方（含 1.x）没有 /api/rerank 端点、官方库也没有 rerank 模型，
  * 社区模型仅能经 /api/embed 近似且部分环境 embedding 被禁用，因此本项目只支持 OpenAI 兼容协议。
- * 本地部署参考 scripts/win|mac/start_rerank_server.*（sentence-transformers CrossEncoder 服务）。
+ * 重排由外部 OpenAI 兼容 /v1/rerank 服务承载（供应商网关或自建服务），无本地启动脚本。
  *
      * <p>配置经 {@link ModelRegistryService#rerankRoute} 解析（rerank.model 为引用时取对应供应商网关
      * baseUrl/apiKey，遗留值走全局 rerank.* 配置），知识库/智能体检索设置保存即生效。
@@ -51,14 +51,14 @@ public class RerankService {
     /** 动态读配置（保存即生效） */
     private boolean enabled() { return configService.getBoolean("rerank.enabled"); }
 
-    /** 重排路由：引用→供应商网关；遗留→全局 rerank.*（本地 reranker 默认模型兜底） */
+    /** 重排路由：引用→供应商网关；遗留→全局 rerank.*（未配置模型时无兜底，重排直接不可用） */
     private ModelRegistryService.ModelRoute route() {
         return modelRegistryService.rerankRoute();
     }
 
     private String model() {
         String m = route().modelId();
-        return m == null || m.isBlank() ? "BAAI/bge-reranker-v2-m3" : m;
+        return m == null || m.isBlank() ? "" : m;
     }
 
     private int timeoutMillis() {
@@ -76,7 +76,7 @@ public class RerankService {
      */
     private RestClient client() {
         ModelRegistryService.ModelRoute r = route();
-        // 版本段尾缀（…/v1、…/v4）自动移入重排路径；本地地址保持 /v1/rerank
+        // 版本段尾缀（…/v1、…/v4）自动移入重排路径；无版本段时回落 /v1/rerank
         String[] np = DynamicOpenAiChatModel.normalize(r.baseUrl(), "", "/v1/rerank", "/rerank");
         int t = timeoutMillis();
         RestClient current = client;
@@ -154,7 +154,7 @@ public class RerankService {
         return "****" + secret.substring(secret.length() - 4);
     }
 
-    /** 供应商 Key 非空时附带 Bearer（云端 rerank 网关需要；本地 reranker 服务无 Key 时省略） */
+    /** 供应商 Key 非空时附带 Bearer（云端 rerank 网关需要；无 Key 时不带 Authorization） */
     private <T extends RestClient.RequestHeadersSpec<?>> T auth(T spec) {
         String apiKey = route().apiKey();
         if (apiKey != null && !apiKey.isBlank()) {
@@ -245,28 +245,25 @@ public class RerankService {
         if (!enabled()) {
             return "未启用：系统设置的平台默认「启用重排」未打开，知识库/智能体检索设置也未开启";
         }
-        // 未绑定重排模型（库/智能体覆盖、平台默认都为空）→ 路由回落本地 rerank.baseUrl。
-        // 此时探测多半失败，但根因是"没配模型"而不是"服务没起"——旧文案一律指到启动本地 reranker，
-        // 会把管理员引去维护一个本可不必存在的服务（云端重排明明可用）。先按未绑定给明确指引。
+        // 未绑定重排模型（库/智能体覆盖、平台默认都为空）→ 重排直接不可用（无本地兜底）。
+        // 根因是"没配模型"而不是"服务没起"，给出明确的绑定指引，避免管理员去维护一个本可不必存在的本地服务。
         if (route().providerId() == null) {
-            String base = configService.get("rerank.baseUrl");
-            return "未绑定重排模型：知识库/智能体检索设置与平台默认都为空，当前回落平台内置重排服务 "
-                    + (base == null || base.isBlank() ? "（rerank.baseUrl 未配置）" : base)
-                    + "；请在系统设置的检索面板登记「平台默认重排模型」，或在知识库检索设置里单独绑定";
+            return "未绑定重排模型：知识库/智能体检索设置与平台默认都为空，重排将不可用"
+                    + "；请在系统设置的检索面板登记「平台默认重排模型」，或在知识库检索设置里单独绑定"
+                    + "（也可在设置页把 rerank.baseUrl 指向可用的 /v1/rerank 服务）";
         }
         if (!checkSupport()) {
             if (System.currentTimeMillis() - lastFailTs < failCooldownMs()) {
                 return "重排服务调用失败，冷却中（" + failCooldownMs() / 1000 + "s 后自动重试）";
             }
-            // 提示按实际路由区分：云端供应商引用失败时指向网关连通性/Key——旧文案写死"本地 reranker"，
-            // 云端路由失败也被指到没起的本地服务，误导排障方向（本地服务明明已停用）
+            // 按实际路由区分：供应商引用失败时指向网关连通性/Key；rerank.baseUrl 直连失败时指向服务可用性
             ModelRegistryService.ModelRoute r = route();
             if (r.providerId() != null) {
                 return "重排服务探测失败（/v1/models 无响应），请检查重排模型 " + r.displayName()
                         + " 的供应商网关 " + r.baseUrl() + " 连通性与 API Key";
             }
-            return "重排服务探测失败（/v1/models 无响应），请确认平台内置重排服务已在部署机启动"
-                    + "（部署机 scripts/mac/start_rerank_server.sh 或 scripts/win/start_rerank_server.bat）";
+            return "重排服务探测失败（/v1/models 无响应），请确认 rerank.baseUrl 指向的 /v1/rerank 服务可用"
+                    + "（或在设置页绑定供应商重排模型）";
         }
         return null;
     }

@@ -85,12 +85,12 @@ public class AppProperties {
 
     @Data
     public static class Rerank {
-        /** 是否启用重排（需先启动本地 reranker 服务：scripts/win|mac/start_rerank_server.*） */
+        /** 是否启用重排（rerank.baseUrl 指向外部 OpenAI 兼容 /v1/rerank 服务，或绑定供应商重排模型） */
         private boolean enabled = false;
-        /** reranker 服务 base-url（OpenAI 兼容，POST /v1/rerank） */
-        private String baseUrl = "http://localhost:7997";
-        /** rerank 模型名 */
-        private String model = "BAAI/bge-reranker-v2-m3";
+        /** reranker 服务 base-url（OpenAI 兼容，POST /v1/rerank；需显式配置，无本地兜底） */
+        private String baseUrl = "";
+        /** rerank 模型名（建议绑定供应商重排模型引用，或填 rerank.baseUrl 对应模型；留空则重排不可用） */
+        private String model = "";
         /** 单次重排超时(ms) */
         private int timeoutMillis = 5000;
     }

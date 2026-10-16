@@ -229,10 +229,10 @@ public class ModelRegistryService {
         return snap.modelIndex().get(v);
     }
 
-    /** 重排路由：rerank.model 引用 → 供应商；遗留 → rerank.* 配置（本地 reranker 服务）。
+    /*     * 重排路由：rerank.model 引用 → 供应商；遗留 → rerank.baseUrl（OpenAI 兼容 /v1/rerank 服务，需显式配置，无本地兜底）。
      *  值链：知识库/智能体检索参数（线程局部覆盖）＞ 个人设置默认（personalOnly，问答线程装载个人值）
      *  ＞ **平台默认 rerank.platformRef**（管理员登记，非 personalOnly，全平台兜底）
-     *  ＞ 空（回落本地 rerank.baseUrl 服务）。
+     *  ＞ 空（回落 rerank.baseUrl；未配置则重排不可用）。
      *  平台层是 2026-10-04 补的：重排模型历来只认归属人（库级或个人），任何一处没配就等于没有重排，
      *  相关分门随之从重排门（0.6）退化到融合分门（minFusionScore，默认 0.5），词面重叠的无关块更容易
      *  进上下文与引用面板（实测 222 条带引用消息仅 9 条拿到重排分）。平台层让"没重排"从默认态变成异常态。 */

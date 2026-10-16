@@ -305,7 +305,7 @@ public class ConfigService {
         d.put("retrieval.vectorWeight", String.valueOf(properties.getRetrieval().getVectorWeight()));
         d.put("retrieval.keywordWeight", String.valueOf(properties.getRetrieval().getKeywordWeight()));
         d.put("rerank.enabled", String.valueOf(properties.getRetrieval().getRerank().isEnabled()));
-        d.put("rerank.model", "");                         // 重排模型引用槽位（personalOnly，无全局层）：归知识库/智能体检索设置绑定；空=回落 rerank.baseUrl 本地服务
+        d.put("rerank.model", "");                         // 重排模型引用槽位（personalOnly，无全局层）：归知识库/智能体检索设置绑定；空=回落 rerank.baseUrl（未配置则重排不可用）
         // 平台默认重排模型（管理员登记，全平台兜底）：库/智能体覆盖与个人设置都为空时生效，
         // 仍为空才回落 rerank.baseUrl。与 rerank.model 分开成键，是为了不动 personalOnly 的归属语义
         // （模型引用只认归属人），又让"一个库都没绑 = 全平台没重排"这个默认态有解。
@@ -466,8 +466,8 @@ public class ConfigService {
         d.put("parse.embedBatchSize", String.valueOf(ConfigDefaults.PARSE_EMBED_BATCH_SIZE));
         d.put("parse.ocrDpi", "200");
         d.put("parse.ocrEngine", "none");      // PDF 深度解析引擎：none=文本抽取+扫描件视觉兜底（默认）/ vision=整份逐页视觉OCR / pp_structure_v3 / mineru=外部版面解析服务（失败 fail-loud 不回落）
-        d.put("parse.ocrPpUri", "http://localhost:8080");       // PP-StructureV3 服务地址（健康检查 GET {uri}/health）
-        d.put("parse.ocrMineruUri", "http://localhost:30011");  // MinerU 服务地址（宿主端口 30011：30001 与 IDEA 内置服务冲突；容器内仍是 30001）
+        d.put("parse.ocrPpUri", "");       // PP-StructureV3 服务地址（健康检查 GET {uri}/health；未配置则引擎 fail-loud）
+        d.put("parse.ocrMineruUri", "");  // MinerU 服务地址（宿主端口 30011：30001 与 IDEA 内置服务冲突；容器内仍是 30001；未配置则引擎 fail-loud）
         d.put("parse.ocrMineruBackend", "pipeline"); // MinerU 解析后端：pipeline=CPU 稳（默认）/ hybrid-auto-engine=本地 VLM 高精度（需算力）
         d.put("parse.ocrTimeoutMs", String.valueOf(ConfigDefaults.PARSE_OCR_TIMEOUT_MS)); // 版面引擎单次调用超时(ms)：大 PDF 版面解析慢，默认 10 分钟
         d.put("ratelimit.windowSeconds", "60");
