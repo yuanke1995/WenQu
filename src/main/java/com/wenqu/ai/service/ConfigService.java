@@ -262,6 +262,11 @@ public class ConfigService {
         d.put("chat.agentscopeMaxIters", "12");            // 框架引擎单轮推理步数上限（ReAct 循环；框架默认 10，问渠显式 12）
         // 框架侧上下文预算（token）：0=用框架默认；用户在这一轮显式选过的窗口优先于它
         d.put("chat.agentscopeMaxContextTokens", "0");
+        // 框架引擎状态存 Redis（多副本部署时开：副本间共享 stateStore，待办答复/断线续跑才能落到同一副本）
+        // 登记这一行是为了与 schema 的 def=false 对齐：此前只在 schema 声明、defaults() 没登记，
+        // 读取点 `get()` 落空返回 ""，行为恰好也是关（读点用 "true".equalsIgnoreCase 判定），
+        // 所以不是静默失效；但设置页「恢复默认」无配置行可复位，三层口径不齐。默认关，保持原行为不变。
+        d.put("chat.agentscopeRedisEnabled", "false");
         // chat.agentscopeTurnTimeoutSeconds 已取消（2026-10）：框架对单把工具有自带 5 分钟硬超时，
         // 此前用该键覆盖成 SSE 超时，默认 0=沿用 SSE 超时——框架已有限制、参数只留个默认就用不上，
         // 现由 AgentscopeChatEngine.turnSeconds() 恒定取 chat.sseTimeoutMs，不再留配置口
@@ -560,26 +565,20 @@ public class ConfigService {
         // 族级开关（tool.websearch.enabled 等）粒度太粗——关一族会连带关掉同族其它能力；
         // 智能体级黑名单又要求每个智能体都改一遍。这一项补的是中间那一档。
         d.put("tool.deny", "");                                 // 平台禁用工具名单（空=不禁）
-        d.put("agent.enabled", "false");                   // SubAgent 并行编排总开关（默认关）
-        d.put("agent.subAgents", "2");                     // 子代理数量（2~4）
-        d.put("agent.topKPerAgent", "3");                  // 每个子代理取回命中块数
-        d.put("agent.digestEnabled", "true");              // 是否用模型提炼要点
-        d.put("agent.aggregateMode", "concat");            // 结果聚合模式：concat=按分支顺序直拼 / rerank=按重排分排序 / supervisor=LLM 二次聚合
-        d.put("agent.digestMaxChars", "1500");             // 要点段总字符预算（超限截断；supervisor 模式作为压缩目标）
-        d.put("agent.aggregateMarkFailed", "true");        // 失败分支在要点段显式占位（让主模型知道该视角无资料）
+        // 已退役：agent.enabled / agent.subAgents / agent.topKPerAgent / agent.digestEnabled /
+        // agent.aggregateMode / agent.digestMaxChars / agent.aggregateMarkFailed / agent.autoRoute /
+        // agent.routeTimeoutMs / agent.maxParallelSubAgents / agent.subagentMaxDepth /
+        // agent.subagentTimeoutMs / agent.subagentBriefChars / agent.subagentBriefMode /
+        // agent.subagentBriefTurns。
+        // 这一组属于 P5 之前那套「SubAgentOrchestrator 并行编排」（自建 StateGraph 扇出 + 要点提炼
+        // + digest/full 双形态 + autoRoute 模型路由）。P5 把派遣换成 consultAgent（agent-as-tool、模型
+        // 自主发起）后，该编排器连同这组键的读取点一起归零，编排器本体已删除，键不再登记——
+        // 留着只会让设置页显示一套点了不生效的开关，而「配了没生效」正是用户最难自行归因的故障。
         d.put("agent.maxToolSteps", "15");                 // 单轮工具调用步数上限（智能体可覆盖；0=不限制）
         // ---------- 子智能体分支的执行形态（P3a）----------
         // 默认 digest = 引入本档之前的行为逐字相同（只并行检索 + 一次短调用提炼要点，不跑工具循环）。
         // full 那一档才是"分支里真有一个完整智能体在跑"，按子智能体逐个开，代价是每支都等于一轮问答。
         d.put("agent.subagentMode", "digest");             // 平台默认档（子智能体没自己选时用它）
-        d.put("agent.subagentMaxDepth", "2");              // 嵌套深度硬顶（1=只允许派一层，父派子就不再往下派）
-        d.put("agent.maxParallelSubAgents", "4");          // 并行分支上限（原来硬编码 4，委派名单也按它截断）
-        d.put("agent.subagentTimeoutMs", "240000");        // 单条全循环分支的等待上限（ms；超时按失败降级）
-        d.put("agent.subagentBriefChars", "1200");         // 传给分支的父轮上下文字符预算（逐层递减）
-        // 分支到底能看见多少父轮前情：默认 brief 与引入本项之前逐字相同（最近 4 条、各截 220 字）。
-        // recent/full 是给「接着上面那段做」这类委派放开的眼界，代价是每支都多带一截历史进上下文。
-        d.put("agent.subagentBriefMode", "brief");        // brief|recent|full——派分支时带多少父轮历史
-        d.put("agent.subagentBriefTurns", "6");           // recent/full 档最多带最近几轮
         d.put("workflow.maxSteps", String.valueOf(ConfigDefaults.WORKFLOW_MAX_STEPS));                  // 工作流单次运行的最大图步数（StateGraph recursionLimit；M3 loop 回跳也受此闸）
         d.put("workflow.subagentTimeoutMs", "180000");     // 工作流子智能体节点等待回答的超时（ms，下限 30s）
         d.put("workflow.runTimeoutSeconds", "600");        // M5：工作流单次运行硬超时（秒，0=不限制；超时按 timeout 终态收口，防长管线占死执行线程）
@@ -608,9 +607,9 @@ public class ConfigService {
         d.put("memory.maxPerUser", "50");                  // 每人记忆条数上限（满后自动提取跳过，个人设置可清理）
         d.put("memory.maxInjectCount", "30");              // 每轮最多注入条数（按更新时间取最近）
         d.put("memory.injectBudgetChars", "1500");         // 注入字符预算（防挤占知识上下文）
-        d.put("agent.autoRoute", "true");                  // 按需委派：主模型先挑相关的子智能体再咨询
-        d.put("agent.routeTimeoutMs", String.valueOf(ConfigDefaults.AGENT_ROUTE_TIMEOUT_MS));             // 路由判定超时（超时回退全部候选）
-        // P5 agent-as-tool：模型自己在工具循环里决定咨询谁、咨询几次（与上面那条派遣路由是两套机制，本卡收口时旧的删）
+        // 已退役：agent.autoRoute / agent.routeTimeoutMs（派遣路由的两项）。P5 换成 agent-as-tool 后这两项
+        // 的读取点随 SubAgentOrchestrator 一起归零——见本方法上方那段「已退役」清单的统一说明。
+        // 本轮补做 P5 收口时承诺的这件事：下面的咨询工具是唯一在用的委派机制。
         d.put("agent.personalDefault", "");                     // 个人默认助手（空=跟随平台默认智能体）：问答流水线线程已装载个人覆盖，解析作答方时直接读
         d.put("agent.consultMaxPerTurn", String.valueOf(ConfigDefaults.AGENT_CONSULT_MAX_PER_TURN));   // 一轮最多咨询几位助手
         d.put("agent.consultTimeoutMs", String.valueOf(ConfigDefaults.AGENT_CONSULT_TIMEOUT_MS));      // 单次咨询等那条子轮的上限

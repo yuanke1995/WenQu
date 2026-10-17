@@ -57,8 +57,6 @@ public final class ConfigDefaults {
     public static final int ARTIFACT_RETENTION_DAYS = 90;
     /** cleanup.visitorIdleDays：访客会话闲置多少天后回收（分享页与 MCP 端点产生，没有主人会去删） */
     public static final int VISITOR_SESSION_IDLE_DAYS = 30;
-    /** agent.routeTimeoutMs：按需委派（子智能体编排）的路由判定超时（超时回退全部候选） */
-    public static final int AGENT_ROUTE_TIMEOUT_MS = 8_000;
     /** agent.consultMaxPerTurn：一轮最多把几问交给别的助手去查（P5 咨询工具；超出如实回给模型，不静默少问） */
     public static final int AGENT_CONSULT_MAX_PER_TURN = 3;
     /** agent.consultTimeoutMs：单次咨询要等那条子轮跑完的上限（超时按失败回报，不拖垮父轮） */

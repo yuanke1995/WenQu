@@ -2547,59 +2547,6 @@
       "tier": 3
     },
     {
-      "backendKey": "agent.enabled",
-      "panel": "agent",
-      "section": 0,
-      "group": "agent",
-      "key": "enabled",
-      "path": "agent.enabled",
-      "label": "总开关",
-      "type": "switch",
-      "tips": "agentEnabled",
-      "def": false,
-      "core": true,
-      "note": "开启后每轮问答先并行多视角检索再汇总（默认关，会增加首字延迟）",
-      "tier": 2
-    },
-    {
-      "backendKey": "agent.subAgents",
-      "panel": "agent",
-      "section": 0,
-      "group": "agent",
-      "key": "subAgents",
-      "path": "agent.subAgents",
-      "label": "子代理数量",
-      "type": "number",
-      "tips": "agentSubAgents",
-      "def": 2,
-      "min": 2,
-      "max": 4,
-      "step": 1,
-      "width": 200,
-      "note": "2~4：越多召回越全，并发检索与提炼调用也越多",
-      "vif": "agent.enabled",
-      "tier": 2
-    },
-    {
-      "backendKey": "agent.topKPerAgent",
-      "panel": "agent",
-      "section": 0,
-      "group": "agent",
-      "key": "topKPerAgent",
-      "path": "agent.topKPerAgent",
-      "label": "每代理取块数",
-      "type": "number",
-      "tips": "agentTopK",
-      "def": 3,
-      "min": 1,
-      "max": 10,
-      "step": 1,
-      "width": 200,
-      "note": "每个子代理取回命中块上限（跨代理自动去重）",
-      "vif": "agent.enabled",
-      "tier": 3
-    },
-    {
       "backendKey": "agent.maxToolSteps",
       "panel": "agent",
       "section": 0,
@@ -2734,99 +2681,6 @@
       "tier": 3
     },
     {
-      "backendKey": "agent.digestEnabled",
-      "panel": "agent",
-      "section": 0,
-      "group": "agent",
-      "key": "digestEnabled",
-      "path": "agent.digestEnabled",
-      "label": "要点提炼",
-      "type": "switch",
-      "tips": "agentDigest",
-      "def": true,
-      "note": "开=每个子代理用模型提炼 2~3 条要点再汇总；关=只并行检索合并（零额外调用）",
-      "vif": "agent.enabled",
-      "tier": 2
-    },
-    {
-      "backendKey": "agent.aggregateMode",
-      "panel": "agent",
-      "section": 0,
-      "group": "agent",
-      "key": "aggregateMode",
-      "path": "agent.aggregateMode",
-      "label": "结果聚合",
-      "type": "select",
-      "tips": "agentAggregateMode",
-      "def": "concat",
-      "options": [
-        {
-          "value": "concat",
-          "label": "concat（按分支顺序直拼）"
-        },
-        {
-          "value": "rerank",
-          "label": "rerank（按重排分降序合并）"
-        },
-        {
-          "value": "supervisor",
-          "label": "supervisor（LLM 二次聚合）"
-        }
-      ],
-      "note": "concat=按分支顺序直拼；rerank=命中按重排分降序合并（高分块优先进上下文）；supervisor=LLM 二次聚合（去重、按价值排序、矛盾标注冲突，多一次调用）",
-      "vif": "agent.enabled",
-      "tier": 2
-    },
-    {
-      "backendKey": "agent.digestMaxChars",
-      "panel": "agent",
-      "section": 0,
-      "group": "agent",
-      "key": "digestMaxChars",
-      "path": "agent.digestMaxChars",
-      "label": "要点预算(字)",
-      "type": "number",
-      "tips": "agentDigestMaxChars",
-      "def": 1500,
-      "min": 200,
-      "max": 6000,
-      "step": 100,
-      "width": 200,
-      "note": "并行检索要点段的总字符上限：直拼模式超限截断；supervisor 模式作为压缩目标",
-      "vif": "agent.enabled",
-      "tier": 2
-    },
-    {
-      "backendKey": "agent.aggregateMarkFailed",
-      "panel": "agent",
-      "section": 0,
-      "group": "agent",
-      "key": "aggregateMarkFailed",
-      "path": "agent.aggregateMarkFailed",
-      "label": "失败分支占位",
-      "type": "switch",
-      "tips": "agentMarkFailed",
-      "def": true,
-      "note": "开=失败分支在要点段显式标注「未返回结果」，让主模型知道该视角无资料（可声明资料不足）；关=静默跳过",
-      "vif": "agent.enabled",
-      "tier": 2
-    },
-    {
-      "backendKey": "agent.autoRoute",
-      "panel": "agent",
-      "section": 0,
-      "group": "agent",
-      "key": "autoRoute",
-      "path": "agent.autoRoute",
-      "label": "按需委派",
-      "type": "switch",
-      "tips": "agentAutoRoute",
-      "def": true,
-      "note": "开=主模型先从候选助手挑出相关的、只咨询选中的（省开销、卡片无无关角色）；关=每轮全部并行",
-      "vif": "agent.enabled",
-      "tier": 2
-    },
-    {
       "backendKey": "agent.consultMaxPerTurn",
       "panel": "agent",
       "section": 0,
@@ -2857,47 +2711,6 @@
       "tier": 2
     },
     {
-      "backendKey": "agent.routeTimeoutMs",
-      "panel": "agent",
-      "section": 0,
-      "group": "agent",
-      "key": "routeTimeoutMs",
-      "path": "agent.routeTimeoutMs",
-      "label": "路由超时(ms)",
-      "type": "number",
-      "tips": "agentRouteTimeout",
-      "def": 8000,
-      "min": 1000,
-      "max": 20000,
-      "step": 500,
-      "width": 200,
-      "note": "挑选助手的最长等待；超时/失败自动回退为全部候选（不影响问答）",
-      "vif": "agent.enabled",
-      "tier": 3,
-      "presets": [
-        [
-          3000,
-          "3 秒"
-        ],
-        [
-          5000,
-          "5 秒"
-        ],
-        [
-          8000,
-          "8 秒"
-        ],
-        [
-          15000,
-          "15 秒"
-        ],
-        [
-          20000,
-          "20 秒"
-        ]
-      ]
-    },
-    {
       "backendKey": "agent.subagentMode",
       "panel": "agent",
       "section": 0,
@@ -2919,132 +2732,7 @@
         }
       ],
       "note": "子智能体没自己选时的默认跑法：digest=只并行检索并提炼要点（一次检索+一次短调用）；full=分支里真跑一轮完整问答（自己的知识库范围、工具、技能、沙盒、产物都生效）。默认 digest，与引入本项之前逐字相同",
-      "vif": "agent.enabled",
       "tier": 2
-    },
-    {
-      "backendKey": "agent.maxParallelSubAgents",
-      "panel": "agent",
-      "section": 0,
-      "group": "agent",
-      "key": "maxParallelSubAgents",
-      "path": "agent.maxParallelSubAgents",
-      "label": "并行分支上限",
-      "type": "number",
-      "tips": "agentMaxParallelSubAgents",
-      "def": 4,
-      "min": 1,
-      "max": 8,
-      "step": 1,
-      "width": 160,
-      "note": "一次最多同时咨询几个子智能体，超出部分不派（委派名单也按它截断）。full 档下每一支都等于一轮完整问答，这个数就是问答流水线的并发占用",
-      "vif": "agent.enabled",
-      "tier": 2
-    },
-    {
-      "backendKey": "agent.subagentMaxDepth",
-      "panel": "agent",
-      "section": 0,
-      "group": "agent",
-      "key": "subagentMaxDepth",
-      "path": "agent.subagentMaxDepth",
-      "label": "嵌套深度上限",
-      "type": "number",
-      "tips": "agentSubagentMaxDepth",
-      "def": 2,
-      "min": 1,
-      "max": 3,
-      "step": 1,
-      "width": 160,
-      "note": "子智能体再往下派孙智能体的层数硬顶（1=只派一层）。到顶后不再跑全循环，回落检索要点——分支并发是乘法，没有这一层闸，配置成环的子智能体会把线程池和额度一起吃满",
-      "vif": "agent.enabled",
-      "tier": 3
-    },
-    {
-      "backendKey": "agent.subagentTimeoutMs",
-      "panel": "agent",
-      "section": 0,
-      "group": "agent",
-      "key": "subagentTimeoutMs",
-      "path": "agent.subagentTimeoutMs",
-      "label": "单支等待上限(ms)",
-      "type": "number",
-      "tips": "agentSubagentTimeout",
-      "def": 240000,
-      "min": 15000,
-      "max": 900000,
-      "step": 15000,
-      "width": 200,
-      "note": "一条全循环分支最多等多久（下限 15 秒）。超时按这一支失败处理：主链路照常作答，并在回报里说明这一支没结果，不会拖住整轮",
-      "vif": "agent.enabled",
-      "tier": 3
-    },
-    {
-      "backendKey": "agent.subagentBriefMode",
-      "panel": "agent",
-      "section": 0,
-      "group": "agent",
-      "key": "subagentBriefMode",
-      "path": "agent.subagentBriefMode",
-      "label": "分支能看见多少前情",
-      "type": "select",
-      "tips": "agentSubagentBriefMode",
-      "def": "brief",
-      "options": [
-        {
-          "value": "brief",
-          "label": "brief（只带最近几句）"
-        },
-        {
-          "value": "recent",
-          "label": "recent（带最近几轮）"
-        },
-        {
-          "value": "full",
-          "label": "full（尽量带全本轮前情）"
-        }
-      ],
-      "note": "派分支时把父轮前情带到什么程度。默认 brief=最近 4 条、每条截 220 字，与引入本项之前逐字相同；recent=按下面的轮数带，每条放宽；full=尽量整条带，装不下才截。带的越多分支越接得住「接着上面那段做」，但每一支都多花这些字",
-      "vif": "agent.enabled",
-      "tier": 3
-    },
-    {
-      "backendKey": "agent.subagentBriefTurns",
-      "panel": "agent",
-      "section": 0,
-      "group": "agent",
-      "key": "subagentBriefTurns",
-      "path": "agent.subagentBriefTurns",
-      "label": "带前情的轮数",
-      "type": "number",
-      "tips": "agentSubagentBriefTurns",
-      "def": 6,
-      "min": 2,
-      "max": 40,
-      "step": 2,
-      "width": 160,
-      "note": "recent / full 档带最近几轮（一问一答算一轮）。brief 档不受它影响",
-      "vif": "agent.subagentBriefMode=recent|full",
-      "tier": 3
-    },
-    {
-      "backendKey": "agent.subagentBriefChars",
-      "panel": "agent",
-      "section": 0,
-      "group": "agent",
-      "key": "subagentBriefChars",
-      "path": "agent.subagentBriefChars",
-      "label": "父轮上下文预算(字)",
-      "type": "number",
-      "tips": "agentSubagentBriefChars",
-      "def": 1200,
-      "min": 200,
-      "max": 6000,
-      "step": 100,
-      "width": 200,
-      "note": "派分支时带过去的父轮问题与最近对话的字符上限，让子智能体接得住「接着上面那步做」这类说法。每往下一层减半（孙辈只有一半预算）",
-      "vif": "agent.enabled",
-      "tier": 3
     },
     {
       "panel": "skills",
@@ -5003,18 +4691,9 @@
     "tool.builtin.enabled": "工具调用：内置高频工具开关（默认开；算术计算/当前时间/日期差，需总开关开启）",
     "skill.injectMaxChars": "技能（Skills）：清单注入字符上限（防技能过多挤占上下文）",
     "skill.maxFileChars": "技能（Skills）：单个技能全文读取上限（字符，超出截断）",
-    "agent.enabled": "SubAgent 并行编排：总开关（多视角并行检索 + 要点提炼；默认关，开启后每轮多 2~4 次提炼调用）",
-    "agent.subAgents": "SubAgent 并行编排：子代理数量（2~4，默认 2）",
-    "agent.topKPerAgent": "SubAgent 并行编排：每个子代理取回命中块数（默认 3）",
-    "agent.digestEnabled": "SubAgent 并行编排：是否用模型把命中提炼成要点（关=只并行检索不调模型）",
-    "agent.aggregateMode": "SubAgent 并行编排：结果聚合模式（concat=直拼 / rerank=按重排分排序 / supervisor=LLM 二次聚合）",
-    "agent.digestMaxChars": "SubAgent 并行编排：要点段总字符预算（直拼超限截断；supervisor 作为压缩目标）",
-    "agent.aggregateMarkFailed": "SubAgent 并行编排：失败分支在要点段显式占位「未返回结果」（关=静默跳过）",
-    "agent.autoRoute": "SubAgent 并行编排：按需委派（主模型先从候选子智能体里挑选相关的，只咨询选中的；关=每轮全部并行）",
     "agent.consultMaxPerTurn": "智能体咨询（P5）：一轮最多派给几位助手（默认 3）",
     "agent.consultTimeoutMs": "智能体咨询（P5）：单次咨询等那条子轮跑完的超时毫秒（默认 120000）",
     "tool.subagentConsult.enabled": "工具调用：智能体咨询工具开关（默认开；免登录分享页与子智能体分支不挂）",
-    "agent.routeTimeoutMs": "SubAgent 并行编排：按需委派的路由判定超时毫秒（超时回退为全部候选，默认 5000）",
     "skill.remoteAllowedHosts": "技能（Skills）：远程安装来源域名白名单（逗号分隔，空=关闭远程安装）",
     "artifact.retentionDays": "产物保留天数（0=不清理）",
     "artifact.cleanupIntervalMs": "产物超期清理任务间隔(ms，≤0=暂停)",

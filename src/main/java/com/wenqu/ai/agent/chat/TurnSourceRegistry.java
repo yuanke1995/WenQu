@@ -9,7 +9,6 @@ import com.wenqu.ai.service.HybridRetrievalService;
 import com.wenqu.ai.service.ImageUrlSigner;
 import com.wenqu.ai.service.RerankService;
 import com.wenqu.ai.service.KnowledgeRetrievalTool;
-import com.wenqu.ai.service.SubAgentOrchestrator;
 import com.wenqu.ai.service.websearch.WebSearchResult;
 import com.wenqu.ai.service.websearch.WebSearchService;
 import com.wenqu.ai.service.websearch.WebSearchTools;
@@ -153,7 +152,7 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
         if (childSources == null || childSources.isEmpty()) return List.of();
         List<HybridRetrievalService.Hit> candidates = new ArrayList<>();
         for (Map<String, Object> src : childSources) {
-            HybridRetrievalService.Hit h = SubAgentOrchestrator.hitFromChildSource(src);
+            HybridRetrievalService.Hit h = hitFromChildSource(src);
             if (h != null && h.knowledgeId() != null) candidates.add(h);
         }
         if (candidates.isEmpty()) return List.of();
@@ -585,5 +584,42 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
     @Override
     public int register(WebSearchResult r) {
         return register(r, null);
+    }
+
+    /**
+     * 子轮交回的来源（{@code Map}）→ 父轮可登记的命中块。
+     * <p>子轮来源只有 {@code knowledgeId/docId/title/snippet/images/score} 这几项（重排分可选、
+     * 有则带上供父轮二次过门与展示）；{@code chunkIndex}/{@code titlePath} 子轮没下发，置空即可——
+     * 主链路只有相邻块合并用得到它们。
+     * <p>原先挂在 {@code SubAgentOrchestrator} 上，而那是 P5 之后已被 {@code consultAgent} 取代的
+     * 编排器（连同它的 StateGraph 一起成了孤儿）。这条映射是纯转换、与编排无关，且此处是唯一调用方，
+     * 故随编排器退役一并收归本类，避免为一个静态工具继续保留一个 1142 行的已死服务。
+     *
+     * @return 命中块；{@code knowledgeId} 缺失时返回 null（没有知识块身份的来源无法进引用编号体系）
+     */
+    static HybridRetrievalService.Hit hitFromChildSource(Map<String, Object> src) {
+        if (src == null) return null;
+        String kid = str(src.get("knowledgeId"));
+        if (kid == null || kid.isBlank()) return null;
+        List<String> images = src.get("images") instanceof List<?> l
+                ? l.stream().map(String::valueOf).toList() : List.of();
+        double score = num(src.get("score"), 0.0);
+        Double rerank = src.get("rerankScore") == null ? null
+                : Double.valueOf(String.valueOf(src.get("rerankScore")));
+        return new HybridRetrievalService.Hit(kid, str(src.get("docId")), str(src.get("title")),
+                str(src.get("snippet")), images, score, null, null, rerank);
+    }
+
+    private static String str(Object v) {
+        return v == null ? null : String.valueOf(v);
+    }
+
+    private static double num(Object v, double fallback) {
+        if (v == null) return fallback;
+        try {
+            return Double.parseDouble(String.valueOf(v));
+        } catch (NumberFormatException e) {
+            return fallback;
+        }
     }
 }
