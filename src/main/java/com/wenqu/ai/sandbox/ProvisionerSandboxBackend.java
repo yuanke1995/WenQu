@@ -404,8 +404,25 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
         if (overrideClient != null) {
             return overrideClient;
         }
+        // 包一层自愈：容器被带外删除（docker rm / provisioner 重启）时，缓存里的 URL 已死，
+        // 正常空闲回收会摘缓存但带外删除绕过那条路 → 当场摘缓存重建并重试一次，
+        // 而不是让用户看到「404 sandbox not found」。收口在这一处，所有文件/shell 操作自动受益。
+        return new SelfHealingRuntimeClient(
+                provider,
+                threadId,
+                uid,
+                buildClient(getConnection().getSandboxUrl()),
+                () -> buildClient(this.getConnectionFresh().getSandboxUrl()));
+    }
+
+    /** 自愈重建用：强制丢掉本作用域缓存再取一次连接（否则又拿到同一个死 URL） */
+    private SandboxConnection getConnectionFresh() {
+        provider.invalidate(threadId, uid);
         SandboxConnection connection = getConnection();
-        return buildClient(connection.getSandboxUrl());
+        if (connection == null) {
+            throw new RuntimeException("sandbox is unavailable for thread " + threadId);
+        }
+        return connection;
     }
 
     /** 构造沙盒 runtime 远程 client（对应 _build_client / _build_async_client）。 */

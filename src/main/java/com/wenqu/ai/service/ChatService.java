@@ -139,6 +139,8 @@ public class ChatService {
     private final UserConfigService userConfigService;
     /** 工作区：默认助手解析（工作区页配的助手优先于个人默认） */
     private final ProjectService projectService;
+    /** 工作区级轮次互斥：同一工作区共用一个沙盒目录，并发写会互相覆盖（用户对话 / 定时任务 / 工作流三方） */
+    private final ProjectTurnMutex projectTurnMutex;
     /** 智能体配置（4.1）：对话页下拉选中后，按智能体覆盖模型/提示词/工具/知识库范围 */
     private final AgentService agentService;
     private final ModelRegistryService modelRegistryService;
@@ -401,6 +403,7 @@ public class ChatService {
                       ModelRegistryService modelRegistryService,
                       UserConfigService userConfigService,
                       ProjectService projectService,
+                      ProjectTurnMutex projectTurnMutex,
                       SessionEventService sessionEventService,
                       ChatRunBus chatRunBus,
                       ChatRunRuntime runtime,
@@ -417,6 +420,7 @@ public class ChatService {
         this.userMapper = userMapper;
         this.userConfigService = userConfigService;
         this.projectService = projectService;
+        this.projectTurnMutex = projectTurnMutex;
         this.modelRegistryService = modelRegistryService;
         this.sessionEventService = sessionEventService;
         this.chatRunBus = chatRunBus;
@@ -449,6 +453,18 @@ public class ChatService {
         if (!runtime.tryBeginTurn(sessionId)) {
             log.warn("[FAIL-LOUD] 同会话并发问答被拒: session={}", sessionId);
             runtime.sendSseEvent(emitter, "error", "该会话上一轮还在回答中，请等回答结束或先停止本轮，再发送新消息", sessionId);
+            runtime.completeEmitter(emitter);
+            return;
+        }
+        // 工作区级轮次互斥：同一工作区共用一个沙盒容器与同一个工作目录（projectWorkdirEnabled 开启后），
+        // 用户对话 / 到点的定时任务 / 跑着的工作流三方并发写会互相覆盖。与会话锁同一风格：快速失败，
+        // 不让人对着输入框等几分钟；抢不到就立刻说清是谁在跑。
+        final String projectId = projectService.projectIdOfSession(sessionId);
+        if (projectId != null && !projectTurnMutex.tryBegin(projectId)) {
+            log.warn("[FAIL-LOUD] 同工作区并发轮次被拒: project={} session={}", projectId, sessionId);
+            runtime.sendSseEvent(emitter, "error",
+                    "这个工作区里已有任务在跑（另一条对话、定时任务或工作流），等它结束或先停掉它再发送", sessionId);
+            runtime.endTurnMutex(sessionId);
             runtime.completeEmitter(emitter);
             return;
         }
@@ -539,6 +555,7 @@ public class ChatService {
                         sessionService.markTurnStopped(sessionId, "stopped");
                     }
                     runtime.endTurnMutex(sessionId);
+                    if (projectId != null) projectTurnMutex.end(projectId);
                     if (identity) com.wenqu.ai.util.RequestUser.clear();
                     // 智能体检索参数的作用域覆盖随本轮结束清除（ThreadLocal，池化线程复用必须清，
                     // 否则下一轮请求会继承上一轮智能体的检索策略）
@@ -550,6 +567,8 @@ public class ChatService {
             // 任务未入队即拒绝：轮级互斥标记须同步放掉，否则该会话从此被永久挡在门外
             TurnRegistry.removeHandle(sessionId);
             runtime.endTurnMutex(sessionId);
+            // 工作区锁同理：流水线压根没跑，锁必须在这放掉，否则那个工作区从此再也发不出消息
+            if (projectId != null) projectTurnMutex.end(projectId);
             // L7 fail-loud：繁忙拒绝时告知当前队列长度（用户可感知拥堵程度）
             int queued = pipelineExecutor == null ? 0 : pipelineExecutor.getQueue().size();
             log.warn("[FAIL-LOUD] 问答流水线繁忙，拒绝请求（排队 {}）: session={}", queued, sessionId);

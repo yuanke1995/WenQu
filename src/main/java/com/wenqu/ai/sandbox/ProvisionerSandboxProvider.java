@@ -10,6 +10,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
 import com.wenqu.ai.service.ConfigService;
 import jakarta.annotation.PreDestroy;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 /**
@@ -43,6 +44,7 @@ import org.springframework.stereotype.Service;
  *   <li>{@code postgres_conninfo()} 是 psycopg 专属辅助，随 env 注入一并去掉。</li>
  * </ul>
  */
+@Slf4j
 @Service
 public class ProvisionerSandboxProvider {
 
@@ -247,6 +249,27 @@ public class ProvisionerSandboxProvider {
     }
 
     // ==================== 运行时作用域获取 / 释放 ====================
+
+    /**
+     * 作废某个作用域的连接缓存（不删容器，只让下一次 get 重新 create/discover）。
+     *
+     * <p><b>谁需要它</b>：容器被**带外删除**（{@code docker rm}、provisioner 重启、节点漂移）时，
+     * 缓存里的 URL 还指着那个已经不存在的容器。正常的空闲回收走 {@link #release}，那里本来就会
+     * 摘缓存条目；带外删除这条路绕过了它，Java 侧只能等到下一次 touch（还有节流窗口）才发现，
+     * 窗口内的调用就撞 404。调用方（{@code SelfHealingRuntimeClient}）拿到 404 后先摘缓存再重试一次。
+     *
+     * @return 是否确实摘掉了条目（false = 本来就没有缓存）
+     */
+    public boolean invalidate(String threadId, String uid) {
+        String cacheKey = sandboxKey(uid, threadId);
+        SandboxConnection removed = connections.remove(cacheKey);
+        lastTouchAt.remove(cacheKey);
+        if (removed != null) {
+            log.info("[SANDBOX] 作废作用域连接缓存 scope={}（容器多半已被带外删除，下次调用将重建）", cacheKey);
+            return true;
+        }
+        return false;
+    }
 
     public SandboxConnection get(
             String threadId,
