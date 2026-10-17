@@ -1108,7 +1108,7 @@ const spaceMenu = (space, key) => {
   if (key === 'delete') {
     Modal.confirm({
       title: '删除这个工作区？',
-      content: '只解除归属：工作区下的会话与产物都会保留。此操作不可撤销。',
+      content: '对话与产物仍能看到，但它的文件将再也打不开，工作区约定也会一起丢失。此操作不可撤销。',
       okText: '删除',
       okType: 'danger',
       cancelText: '取消',

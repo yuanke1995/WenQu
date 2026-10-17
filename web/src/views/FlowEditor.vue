@@ -6,6 +6,9 @@
     <div class="wf-toolbar">
       <button class="app-btn ghost small wf-tb-back" @click="$emit('back')"><arrow-left-outlined /> 返回</button>
       <a-input v-model:value="name" class="wf-name" :maxlength="100" :disabled="readonly" placeholder="工作流名称" @change="dirty = true" />
+      <!-- 归属工作区：选上之后，这个工作区页的「自动化 → 工作流」才列得到它（运行记录与产物也跟着进去） -->
+      <a-select v-model:value="projectId" class="wf-ws" :disabled="readonly" allow-clear
+                placeholder="不挂工作区" :options="workspaceOptions" @change="dirty = true" />
       <div class="wf-tb-status">
         <span class="wf-dot" :class="dirty ? 'dot-dirty' : 'dot-saved'" />
         <span class="wf-save-hint">{{ readonly ? '只读（共享查看）' : (dirty ? '有未保存改动' : '已保存') }}</span>
@@ -574,7 +577,8 @@ import {
   listWorkflowRuns, getWorkflowRun, getWorkflowPendingApproval,
   listKnowledgeBases, listAvailableAgents, resolveWorkflowApproval, publishWorkflow,
   listAvailableSkills, getMcpStatus,
-  listCredentials, createCredential, updateCredential, deleteCredential
+  listCredentials, createCredential, updateCredential, deleteCredential,
+  listProjects
 } from '../api'
 
 const props = defineProps({
@@ -640,6 +644,16 @@ function tint(hex, alpha = 0.12) {
 const nodes = ref([])
 const edges = ref([])
 const name = ref('')
+/** 归属工作区：空 = 不挂。保存时总带上当前值——载入时已从详情回填，不会把已有归属冲掉 */
+const projectId = ref('')
+const workspaces = ref([])
+const workspaceOptions = computed(() => workspaces.value
+  .filter(p => p.selectionStatus !== 'implicit' && !p.isImplicit)
+  .map(p => ({ value: p.id, label: p.displayName || p.name || '未命名工作区' })))
+// 拉不到要说出来：空下拉会被读成「我还没有工作区」，而实际是接口挂了
+listProjects()
+  .then(r => { workspaces.value = (r && r.data) || [] })
+  .catch(e => message.warning('归属工作区列表没拉到：' + (e.message || '请刷新重试')))
 const workflowId = ref(props.workflowId)
 const dirty = ref(false)
 const busy = ref(false)
@@ -1187,9 +1201,13 @@ async function doSave() {
       message.warning('结构通过但编译未过（' + (d.compileError || '未知') + '）；仍可保存，运行时会再校')
     }
     if (workflowId.value) {
-      await updateWorkflow(workflowId.value, { name: name.value.trim(), dsl: dslText })
+      await updateWorkflow(workflowId.value, {
+        name: name.value.trim(), dsl: dslText, projectId: projectId.value || ''
+      })
     } else {
-      const r = await createWorkflow({ name: name.value.trim(), dsl: dslText })
+      const r = await createWorkflow({
+        name: name.value.trim(), dsl: dslText, projectId: projectId.value || ''
+      })
       workflowId.value = r.data.id
     }
     savedDsl.value = dslText
@@ -1459,6 +1477,7 @@ async function load() {
     const r = await getWorkflow(workflowId.value)
     const row = r.data || {}
     name.value = row.name || ''
+    projectId.value = row.projectId || ''
     publishedVersion.value = row.publishedVersion == null ? null : row.publishedVersion
     const dsl = safeParse(row.dsl) || { nodes: [], edges: [] }
     loadGraph(dsl)
@@ -1650,6 +1669,7 @@ load()
 }
 .wf-tb-back { flex: none; }
 .wf-name { width: 200px; flex: none; }
+.wf-ws { width: 150px; flex: none; }
 .wf-tb-status { display: flex; align-items: center; gap: 8px; flex: none; }
 .wf-tb-sep { width: 1px; height: 14px; background: var(--app-border); }
 /* 状态点：比纯文字更快读出"有没有未保存改动" */

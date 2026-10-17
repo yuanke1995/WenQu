@@ -176,7 +176,7 @@
                 <a class="app-btn ghost pj-block-act" href="/agents?tab=workflow">去画布</a>
               </div>
               <div v-if="!filteredWorkflows.length" class="pj-empty">
-                {{ kw ? '没有匹配的工作流' : '还没有工作流。在「智能体 → 工作流」里建一个，把归属选成这个工作区，它就会出现在这里。' }}
+                {{ kw ? '没有匹配的工作流' : '还没有工作流。在「智能体 → 工作流」里建一个，保存时把归属选成这个工作区，它就会出现在这里。' }}
               </div>
               <div v-else class="pj-file-list">
                 <div v-for="w in filteredWorkflows" :key="w.id" class="pj-item">
@@ -501,7 +501,7 @@ const load = async () => {
 const removeProject = () => {
   Modal.confirm({
     title: '删除这个工作区？',
-    content: '只解除归属：工作区下的会话与文件都会保留。此操作不可撤销。',
+    content: '对话与产物仍能在「会话」里看到，但这里的文件将再也打不开，工作区约定也会一起丢失。此操作不可撤销。',
     okText: '删除',
     okType: 'danger',
     cancelText: '取消',
