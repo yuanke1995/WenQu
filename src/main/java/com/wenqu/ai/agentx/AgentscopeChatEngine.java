@@ -10,6 +10,7 @@ import com.wenqu.ai.engine.ChatEngine;
 import com.wenqu.ai.engine.RunChannel;
 import com.wenqu.ai.engine.RunEvent;
 import com.wenqu.ai.engine.RunEventType;
+import com.wenqu.ai.model.Agent;
 import com.wenqu.ai.service.ChatAttachmentService;
 import com.wenqu.ai.service.ConfigService;
 import com.wenqu.ai.service.ModelRegistryService;
@@ -1604,6 +1605,24 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     /**
+     * 本轮的角色提示词段（{@code sysPrompt} 的第一段）：智能体人设优先，为空回落平台默认。
+     * <p>选段口径在 {@link RolePrompt#of}——抽成纯函数是为了让这条口径可被单测钉住，
+     * 它此前是「注释写着归智能体管、实现里没人读」的形状。
+     * <p><b>为什么吞异常</b>：人设取不到不该把整轮打挂——回落平台默认即可，
+     * 与 {@code agentNameOf} 同样的降级姿态。
+     */
+    private String rolePrompt(ChatCommand cmd) {
+        Agent bound = null;
+        try {
+            bound = tools.agentOf(cmd);
+        } catch (Exception e) {
+            log.warn("[agentx] 本轮智能体人设解析失败，回落平台默认提示词: session={} err={}",
+                    cmd.getSessionId(), e.getMessage());
+        }
+        return RolePrompt.of(bound, properties.getSystemPrompt());
+    }
+
+    /**
      * 只记账不播报的通道：读历史事件时用它——事件照样进 {@link Recording}（工具卡、思考全文都要落库），
      * 但不再发一遍给观众。
      */
@@ -2068,12 +2087,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 .agentId("wenqu")
                 .name("wenqu")
                 .description("问渠·AgentScope 运行时")
-                // 角色提示词归智能体管（chat.systemPrompt 已退役）：本轮无智能体绑定时用内置默认。
+                // 角色提示词归智能体管（chat.systemPrompt 已退役）：见 rolePrompt 的分层说明。
                 // 「可咨询助手」一节必须跟着挂：工具挂上了却不给清单，模型只能猜 id（判据与挂载同源）
                 // 用户口径那条（正文/计划/清单不写沙盒路径与工具名）也要跟着挂：它原先长在已退役的手写
                 // 计划阶段里，框架这一路没人再说第二遍，而框架的 PLAN banner 与沙盒工具说明反而主动把
                 // 路径喂给模型——不挂回去，计划卡就变成「它打算在沙盒里怎么写文件」的说明书
-                .sysPrompt(properties.getSystemPrompt() + tools.consultGuide(cmd) + PlanCopy.guidance()
+                .sysPrompt(rolePrompt(cmd) + tools.consultGuide(cmd) + PlanCopy.guidance()
                         + skillPrompt(cmd)
                         + com.wenqu.ai.agent.chat.RelatedPrompt.line(
                                 configService.getInt("retrieval.relatedCount", 3)))
@@ -2274,6 +2293,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 思考字数进台账：这一族关着思考也照样回 reasoning，单列出来放量时才看得出
         // 「框架引擎多烧的那一截」是思考而不是正文（§29 成本账那条）
         tokens.put("thinkingChars", recording.thinking.length());
+        // 整轮耗时随消息行落库：它此前只活在 done 那一帧，刷新一次「这一轮跑了多久」就读不出来了——
+        // 而界面已经改成只在气泡顶部报这一个数（原先每张卡各挂一个），落不了库就等于刷新即空白。
+        // 两份都要：机器时间对得上看板与台账，等待那份让前端能拼回墙钟（屏幕上跳着的是墙钟，
+        // 收尾只报机器时间会让数字在答完那一刻变小），并在悬停里说清等了多久。
+        // humanWaitMs 只在真等过的时候写：为 0 时不占键位。
+        tokens.put("turnElapsedMs", elapsedMs);
+        if (humanWaitMs > 0L) tokens.put("humanWaitMs", humanWaitMs);
         // 暗截断对账：判据在 TurnRecorder 那一处，两条运行时共用同一把尺，不复制第二份。
         // 「已交代」必须算上思考字符与工具入参——前者漏了就是轮轮误报（deepseek 系恒思考），
         // 后者漏了会把「写文件动辄几百 token」的正常轮判成内容丢失。
@@ -2337,6 +2363,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         done.put("userMessageId", userMessageId);
         done.put("turnId", framedTurnId);
         done.put("model", route.modelId());
+        // 作答方归属随 done 一起回：这两个键本来就落在消息行上（下面 saveMessage 同一对值），
+        // 此前只有刷新那条路给得出——「由「X」回答」实时看不见、刷一下才冒出来。前端 done 分支
+        // 一直在读 p.agentName，缺的是这一侧，不是那边
+        done.put("agentId", cmd.getAgentId());
+        done.put("agentName", agentNameOf(cmd));
         done.put("sources", pool.sources());
         // 定稿配图清单（与 finalContent 里那套 [图片N] 编号严格同序）：流式期间的 image 帧是
         // 剔图重编之前那一份，不覆盖就会让正文第 N 个标记配到另一张图。

@@ -89,6 +89,32 @@ public class ChatService {
         return ov;
     }
 
+    /**
+     * 把本轮智能体的检索参数覆盖装进 {@link ConfigService} 的线程作用域覆盖层。
+     * <p>来源是 {@code c_ai_agent.query_params}（键为 {@link #AGENT_QUERY_PARAM_KEYS} 白名单内的
+     * {@code retrieval.*} / {@code rerank.*} 全名，如 {@code {"retrieval.vecThreshold":"0.35"}}）。
+     * 解析与白名单校验复用 {@link #parseQueryParams}：越权键丢弃并记 warn，解析失败只忽略该来源。
+     * <p><b>无智能体绑定 / 参数为空时不装载</b>——留着 {@code OVERRIDE} 为空，检索便一路读全局设置，
+     * 与「null/空=全部继承全局设置」的字段口径一致。清理由本轮 finally 的
+     * {@code clearOverride()} 负责，本方法不自行清理（它在引擎跑完整轮之前不能撤）。
+     */
+    private void loadAgentQueryOverrides(String agentId) {
+        if (agentId == null || agentId.isBlank()) return;
+        Agent bound;
+        try {
+            bound = agentService.get(agentId);
+        } catch (Exception e) {
+            log.warn("[AGENT] 智能体检索参数装载失败（本轮按全局设置检索）: agent={} err={}",
+                    agentId, e.getMessage());
+            return;
+        }
+        if (bound == null) return;
+        Map<String, String> ov = parseQueryParams(bound.getQueryParams());
+        if (ov.isEmpty()) return;
+        configService.putOverrides(ov);
+        log.info("[AGENT] 本轮装载智能体检索参数覆盖: agent={} keys={}", agentId, ov.keySet());
+    }
+
 
     private final SessionService sessionService;
     private final ConfigService configService;
@@ -490,6 +516,12 @@ public class ChatService {
                 // personal 字段优先读个人值（相关建议条数等）。
                 // 与身份同生命周期：池化线程复用，finally 必须清（否则下一轮会带着上一轮用户的偏好）
                 configService.putUserOverrides(userConfigService.overrides(userId));
+                // 智能体检索参数覆盖（c_ai_agent.query_params）：本轮绑定的智能体可按自己的场景定制检索策略
+                // （法律助手提高阈值保精度、手册助手放宽保召回）。装在与个人覆盖同一段、同一生命周期——
+                // 下面的 finally 早就在清它（见 "智能体检索参数的作用域覆盖随本轮结束清除"），此前缺的只是装载。
+                // 优先级：显式覆盖(此处) > 个人覆盖 > 全局默认。个人覆盖装的是「个人设置 → 对话偏好」里
+                // 用户自己的显式选择，智能体参数是管理员/建设者对该助手场景的整轮口径，故置于其上。
+                loadAgentQueryOverrides(agentId);
                 try {
                 // 分派点刻意放在这一段：会话轮级互斥、turnId 登记、断线总线、看门狗、身份与个人覆盖
                 // 装载都是「这一轮」的外壳，两种引擎都要；被替换的只是外壳里面那段推理循环本身。

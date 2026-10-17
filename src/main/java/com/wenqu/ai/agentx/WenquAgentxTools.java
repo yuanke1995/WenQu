@@ -190,8 +190,12 @@ public class WenquAgentxTools {
             var family = provider.family();
             if (family == com.wenqu.ai.agent.tool.ToolFamily.KNOWLEDGE) {
                 // 知识族自己走问渠那条 @Tool（框架侧引用注册直接给），但脚本的子调用清单里要有它——
-                // 所以只把回调收进本轮原始清单，不再挂进框架 Toolkit
-                provider.callbacks(mc).forEach(hooks.rawCallbacks()::add);
+                // 所以只把回调收进本轮原始清单，不再挂进框架 Toolkit。
+                // 纯角色智能体（knowledge_disabled=1）连这份原始清单也不给：脚本子调用那条路同样能打到检索，
+                // 只闸 Toolkit 而漏了这里，等于「不使用知识库」被 run_code 里的子调用绕过去
+                if (!knowledgeDisabledFor(cmd)) {
+                    provider.callbacks(mc).forEach(hooks.rawCallbacks()::add);
+                }
                 continue;
             }
 
@@ -308,6 +312,29 @@ public class WenquAgentxTools {
         return cmd.getAgentId() == null || cmd.getAgentId().isBlank() ? null : agentService.get(cmd.getAgentId());
     }
 
+    /**
+     * 本轮是否「不使用知识库」（{@code c_ai_agent.knowledge_disabled=1}，纯角色智能体）。
+     * <p>判据与 {@link #agentOf} 同源：无智能体绑定 = false（平台默认档照常检索）。
+     * <p><b>为什么必须在挂载点收口</b>：该开关的语义是「整条跳过检索链路」（见 {@code Agent#knowledgeDisabled}
+     * 字段注释）。若只把它做成一个没人读的库字段，用户勾了「不使用知识库」却照样看到检索命中与引用角标，
+     * 就是「配了没生效」——本仓对这种形状的处置口径是「要么生效，要么让用户看见降级」。
+     * <p><b>为什么不必担心误伤 @ 文档</b>：用户手动 @ 的文档走 {@code cmd.getHistoryRefs()} 的消息前置注入，
+     * 不经知识检索工具。闸掉知识族不会把字段注释里那条「手动指定优先于配置」一起掐掉。
+     */
+    public boolean knowledgeDisabledFor(ChatCommand cmd) {
+        return blocksKnowledge(agentOf(cmd));
+    }
+
+    /**
+     * {@link #knowledgeDisabledFor} 的纯判定（智能体行 → 是否整条跳过检索链路）。
+     * <p>抽出来是为了让这条口径可被单测钉住：判据只有「恰好为 1」一种，
+     * {@code null}（历史行未写）/ 0 / 其它值一律按「使用知识库」——宽松解析会把「字段没写」
+     * 读成「用户要求关掉检索」，那是比不生效更坏的方向。
+     */
+    public static boolean blocksKnowledge(Agent a) {
+        return a != null && Integer.valueOf(1).equals(a.getKnowledgeDisabled());
+    }
+
     /** 问答侧那套通道/账本/总线单点（重启续跑要拿它建一条没有观众的通道）。 */
     public ChatRunRuntime runtime() {
         return runtime;
@@ -327,6 +354,9 @@ public class WenquAgentxTools {
      * 则是设置页那份 {@code retrieval.*} 对工具侧静默失效。两个坑都是实测踩过的。
      */
     public List<Object> turnTools(ChatCommand cmd, WenquSourcePool pool) {
+        // 纯角色智能体（knowledge_disabled=1）：整条不挂知识检索工具。挂上了再指望模型不用，
+        // 是「配了没生效」的另一种写法——用户勾了不使用知识库，就不该再看到检索命中与引用角标
+        if (knowledgeDisabledFor(cmd)) return List.of();
         KnowledgeRetrievalTool.KbScope scope =
                 retrievalScope.resolve(agentOf(cmd), cmd.getUserId(), cmd.isGuestMode());
         return List.of(new KnowledgeTools(knowledgeRetrieval, configService, scope, pool.registrar(),
