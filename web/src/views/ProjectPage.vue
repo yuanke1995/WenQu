@@ -734,4 +734,26 @@ watch(id, () => {
   font-size: var(--app-fs-xs); font-weight: 400; padding: 1px 6px; border-radius: var(--app-radius-sm);
   background: var(--app-accent-weak); color: var(--app-accent); vertical-align: middle;
 }
+
+/* ==================== 窄屏（手机）：/project 已进守卫白名单，这里做真适配 ====================
+   卡片列表形态天然适合竖排：行内元素允许换行、输入类控件收回全宽、元信息列压缩；
+   页头两组工具各自占一行（.app-page-head 的全局折行兜底 + 搜索框吃掉剩余宽度）。 */
+@media (max-width: 768px) {
+  .pj-search { flex: 1; width: auto; min-width: 0; }
+  /* 短标签不许折行：窄屏下「工作区设置」折成两行很难看（内容挤的是摘要，不该挤标题） */
+  .pj-label { white-space: nowrap; }
+  .pj-fold-head .pj-hint { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* 文件/会话/任务/运行行：标题与操作换行后仍对齐，元信息不再占固定 72px */
+  .pj-item { flex-wrap: wrap; row-gap: 4px; }
+  .pj-item-title { flex: 1 1 100%; order: -1; }
+  .pj-item-meta { min-width: 0; }
+  .pj-badge-cell { width: auto; margin-left: auto; }
+  .pj-act { padding: 6px 4px; }   /* 触摸热区：行内小按钮加到可点尺寸 */
+  /* 表单类控件收回全宽（cron/名称/助手选择原本都是定宽横排） */
+  .pj-cron-input, .pj-name-input, .pj-agent-select { max-width: none; width: 100%; }
+  .pj-path { max-width: 100%; }
+  .pj-job-form .pj-row { flex-wrap: wrap; row-gap: 8px; }
+  /* 删除弹窗选项说明文字在窄屏占满 */
+  .dp-item .dp-d { white-space: normal; }
+}
 </style>

@@ -33,6 +33,10 @@
           <folder-outlined class="ss-space-ic" />
           <span class="ss-space-name">{{ space.name }}</span>
           <span class="ss-space-n">{{ space.count }}</span>
+          <!-- 真实工作区（有 id）整头可点，进工作区页：约定/文件/会话/运行都在那里。
+               「会话」栏（implicit + 没挂工作区）没有工作区可进，保持纯标签 -->
+          <button v-if="space.id" class="ss-space-go" type="button" title="进入工作区"
+                  @click.stop="openSpace(space.id)"><right-outlined /></button>
         </div>
         <div v-for="s in space.items" :key="s.id" class="ss-row" :class="{ cur: s.id === currentId }">
           <button class="ss-main" type="button" @click="$emit('select', s.id)">
@@ -107,7 +111,7 @@ import { useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { SearchOutlined, PlusOutlined, MoreOutlined, PushpinOutlined, StarOutlined, StarFilled, EditOutlined, DeleteOutlined, DownloadOutlined,
          UserOutlined, QuestionCircleOutlined, BulbOutlined, LogoutOutlined, MobileOutlined, FileTextOutlined, DatabaseOutlined,
-         FolderOutlined, FolderOpenOutlined } from '@ant-design/icons-vue'
+         FolderOutlined, FolderOpenOutlined, RightOutlined } from '@ant-design/icons-vue'
 import { installable, installEntryVisible, promptInstall } from './pwa'
 import BottomSheet from './BottomSheet.vue'
 import MoveToWorkspaceModal from '../components/MoveToWorkspaceModal.vue'
@@ -201,6 +205,13 @@ const doMoveSession = async projectId => {
   } finally {
     moveSaving.value = false
   }
+}
+
+// 进工作区页（/project/:id 已进窄屏白名单）：先收 sheet 再跳，避免两层叠着
+const openSpace = id => {
+  menuFor.value = null
+  emit('close')
+  router.push('/project/' + id)
 }
 
 const kw = ref('')
@@ -315,6 +326,15 @@ const doDelete = () => {
 .ss-space-ic { font-size: 13px; color: var(--app-text3); flex: none; }
 .ss-space-name { font-weight: 500; color: var(--app-text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ss-space-n { margin-left: auto; font-size: 12px; color: var(--app-text3); }
+/* 进工作区：计数右侧的箭头钮。常显（不像 ⋯ 那样平时隐身）——分组头是这棵树里
+   唯一的「往下走一层」入口，藏起来等于没有 */
+.ss-space-go {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 30px; height: 30px; margin: -4px -4px -4px 0;
+  border: 0; border-radius: 8px; background: transparent; cursor: pointer;
+  color: var(--app-text3); font-size: 13px; touch-action: manipulation;
+}
+.ss-space-go:active { color: var(--app-accent); background: var(--app-accent-weak); }
 .ss-space-empty { padding: 4px 2px 6px 22px; font-size: 12px; color: var(--app-text3); }
 .ss-row { display: flex; align-items: stretch; gap: 2px; border-radius: 10px; padding-left: 10px; }
 .ss-row.cur { background: var(--app-accent-weak); }
