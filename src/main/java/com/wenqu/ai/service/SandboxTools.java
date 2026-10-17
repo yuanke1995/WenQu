@@ -291,7 +291,7 @@ public class SandboxTools {
      * 沙盒里跑一段脚本（P3b）。工具本身只做"该不该给"的判定与落点解析，运行编排在
      * {@link com.wenqu.ai.agent.runcode.RunCodeService}：生成 Python 客户端、发一次性运行凭据、
      * 执行、回收。
-     * <p>写盘位置走与 write/edit 同一条档位判据（脚本与客户端要落进会话工作区），所以只读档压根
+     * <p>写盘位置走与 write/edit 同一条档位判据（脚本与客户端要落进沙盒目录），所以只读档压根
      * 挂不上这个工具（{@code SideEffect.MUTATE} 被档位裁掉），全自主档也不给它越过工作区的能力。
      */
     @Tool(name = RUN_CODE_TOOL_NAME, description = "在沙盒里跑一段脚本，用来把<b>多件同类的活一次做完</b>："
@@ -320,7 +320,7 @@ public class SandboxTools {
         }
         com.wenqu.ai.agent.runcode.ToolStubRenderer.Lang lang =
                 com.wenqu.ai.agent.runcode.ToolStubRenderer.Lang.of(language);
-        // 与 write/edit 同一条档位判据：脚本与客户端要写进会话工作区
+        // 与 write/edit 同一条档位判据：脚本与客户端要写进沙盒目录
         String denial = writeDenial(toolContext, runCodeService.workDir() + "/" + lang.scriptFile());
         if (denial != null) {
             return reportFsError(toolContext, denial);
@@ -421,7 +421,7 @@ public class SandboxTools {
         }
         String root = policy.writableRoot() == null || policy.writableRoot().isBlank()
                 ? "(平台未配置 sandbox.virtualPathPrefix，本轮不放行任何写入)" : policy.writableRoot();
-        return "沙盒写入未执行：本轮档位「" + policy.preset().label() + "」只允许写在会话工作区 " + root
+        return "沙盒写入未执行：本轮档位「" + policy.preset().label() + "」只允许写在沙盒目录 " + root
                 + " 之内，当前路径越界。请把路径改到该目录下再试。";
     }
 

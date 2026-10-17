@@ -56,8 +56,8 @@ import java.util.HexFormat;
  *   <li>执行超时与输出上限同上（新栈读 {@code SANDBOX_EXEC_TIMEOUT_SECONDS} / {@code SANDBOX_MAX_OUTPUT_BYTES}）。</li>
  *   <li>runtime client 的 token 由 {@code provider.token()} 静态取用
  *       改为 {@code provider.token()}（本工程没有静态单例）。</li>
- *   <li>去掉 {@code BackendPaths} 依赖（它其余方法是「工作区 Workdir ↔ 沙盒路径」的双向映射，
- *       本工程无工作区/工作区概念，不做该映射）。</li>
+ *   <li>去掉 {@code BackendPaths} 依赖（它其余方法是「工作区目录 ↔ 沙盒路径」的双向映射，
+ *       本工程不挂工作区，不做该映射）。</li>
  * </ul>
  * <p><b>未接线（显式标注）</b>：{@code downloadAuthorizedFileToPath} / {@code uploadAuthorizedFileFromPath} /
  * {@code listAuthorizedDirectory} / {@code createAuthorizedDirectory} / {@code deleteAuthorizedPath}
@@ -96,7 +96,7 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
     private final String workdirPath;
     private final boolean inheritEnv;
     private final boolean createIfMissing;
-    /** P2 权限档位 danger-full-access：true 时写类工具不再限定在工作区根内（见 writableRoots） */
+    /** P2 权限档位 danger-full-access：true 时写类工具不再限定在沙盒根目录内（见 writableRoots） */
     private final boolean unrestrictedWrites;
     private final int commandTimeoutSeconds;
     private final int maxOutputBytes;
@@ -116,7 +116,7 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
     }
 
     /**
-     * @param unrestrictedWrites P2 权限档位的 {@code danger-full-access}：写类工具不再限定在工作区根内。
+     * @param unrestrictedWrites P2 权限档位的 {@code danger-full-access}：写类工具不再限定在沙盒根目录内。
      *                           默认 false=只可写 {@code userDataRoot}（引入档位前后的形态都由这条守住）。
      *                           档位是<b>本轮</b>属性，所以它经构造参数进来而不是读全局配置——同一会话两轮可以不同档。
      */
@@ -186,7 +186,7 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
 
     private List<String> writableRoots() {
         // 全自主档放开到容器根：/home/gem 之下的其它目录（~/.cache、pip 的 site-packages 等）
-        // 也在同一个会话级容器里，不是别人的工作区
+        // 也在同一个会话级容器里，不是别人碰得到的目录
         return unrestrictedWrites ? List.of("/") : List.of(userDataRoot);
     }
 
@@ -936,7 +936,7 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
      * 执行脚本与上游数据注入文件（容器本地 /tmp）。
      *
      * <p>与 {@link #write(String, String)} 的关键差异是<b>刻意的</b>：write() 的 user-data 守卫是用户
-     * 工具面（write_file）的产品语义——「用户文件进 user-data 工作区」；而沙盒 execute 本就持完整
+     * 工具面（write_file）的产品语义——「用户文件进 user-data 目录」；而沙盒 execute 本就持完整
      * shell 权限，对引擎内部 /tmp 放置套这个守卫不会更安全，只会把失败伪装成执行期的
      * {@code can't open file}（exit=2，2026-09-30 实测踩坑：provisioner 日志零 file/write 请求、
      * runtime 实测接受 /tmp 写入）。

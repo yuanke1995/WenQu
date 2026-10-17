@@ -1367,7 +1367,7 @@ export const getUserSettings = () => request('/user/settings')
 export const saveUserSettings = values =>
   request('/user/settings', { method: 'PUT', body: JSON.stringify(values || {}) })
 
-// ---- 沙盒工作区浏览（右栏「沙盒」卡）：只读、不创建容器；下载走字节流（带令牌 fetch 后本地保存） ----
+// ---- 沙盒目录浏览（右栏「沙盒」卡）：只读、不创建容器；下载走字节流（带令牌 fetch 后本地保存） ----
 export const sandboxState = sessionId =>
   request(`/sandbox/state?sessionId=${encodeURIComponent(sessionId || '')}`, { timeout: 15000 })
 export const sandboxTree = (sessionId, path) =>

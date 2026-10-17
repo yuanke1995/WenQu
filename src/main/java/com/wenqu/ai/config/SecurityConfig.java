@@ -160,7 +160,7 @@ public class SecurityConfig implements WebMvcConfigurer {
         // 站内通知（铃铛，个人资产）：列表/未读数/标记已读——接收人一律取登录 uid（NotificationController 内过滤），
         // 每人只看得到并只操作得了自己的通知，所有角色可用
         if (path.equals("/api/ai/notification") || path.startsWith("/api/ai/notification/")) return true;
-        // 沙盒工作区浏览（个人资产）：scope=(sessionId,uid)，sandboxId 由二者派生——探别人的会话 id
+        // 沙盒目录浏览（个人资产）：scope=(sessionId,uid)，sandboxId 由二者派生——探别人的会话 id
         // 只会按自己的 uid 派生 sandboxId，天然探不到别人的容器；开关 tool.sandbox.enabled 关闭时控制器 fail-closed
         if (path.equals("/api/ai/sandbox") || path.startsWith("/api/ai/sandbox/")) return true;
         // 知识块（2026-10）：预览/搜索/编辑对「文档可读/可管理」的普通用户开放——资源级判定在

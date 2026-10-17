@@ -26,7 +26,7 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * 沙盒工作区浏览 + 回答内代码执行（右栏「沙盒」卡的数据源 / 代码块「在沙盒中运行」按钮的后端）。
+ * 沙盒目录浏览 + 回答内代码执行（右栏「沙盒」卡的数据源 / 代码块「在沙盒中运行」按钮的后端）。
  * <p>
  * 归属与隔离：scope = (sessionId, uid)，sandboxId 由 (uid, sessionId) 派生——探别人的会话 id
  * 只会按**自己的 uid** 派生 sandboxId，天然找不到别人的容器，无需额外越权判定。
@@ -43,7 +43,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/ai/sandbox")
 @RequiredArgsConstructor
-@Tag(name = "沙盒", description = "会话沙盒工作区浏览（state/tree/download，只读不创建容器）与代码块沙盒执行（run）")
+@Tag(name = "沙盒", description = "会话沙盒目录浏览（state/tree/download，只读不创建容器）与代码块沙盒执行（run）")
 public class SandboxController {
 
     /** 回答内「在沙盒中运行」支持的语言 → 解释器与扩展名（与工作流 code 节点同口径，fail-loud 拒绝未知语言）。 */

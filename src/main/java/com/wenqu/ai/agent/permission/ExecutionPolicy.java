@@ -14,7 +14,7 @@ import com.wenqu.ai.sandbox.SandboxPaths;
  * <ul>
  *   <li>装配侧（{@code ToolMountContext#policyAllows}）：档位不允许的工具<b>不进模型的工具表</b>；</li>
  *   <li>守卫侧（{@code PermissionGuard}）：没挂上却被调到了（旁路、或将来某条裸调路径）一律拒；</li>
- *   <li>沙盒工具侧（{@code SandboxTools}）：允许写、但要收束到工作区根的那些，按 path 参数逐条判。</li>
+ *   <li>沙盒工具侧（{@code SandboxTools}）：允许写、但要收束到沙盒根目录的那些，按 path 参数逐条判。</li>
  * </ul>
  * <p>
  * 刻意不是 record 直出 JSON 的那种对象：本工程用 fastjson 序列化，它不认 record（会得到 {@code {}}），
@@ -103,7 +103,7 @@ public record ExecutionPolicy(
         return !allowsTool(d);
     }
 
-    /** 是否要求写入收束到工作区根（不受限档不要求；只读档压根不给写） */
+    /** 是否要求写入收束到沙盒根目录（不受限档不要求；只读档压根不给写） */
     public boolean confinesWrites() {
         return sandboxMode == SandboxMode.WORKSPACE_WRITE;
     }

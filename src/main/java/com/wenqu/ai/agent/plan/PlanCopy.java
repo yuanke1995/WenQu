@@ -48,7 +48,7 @@ public final class PlanCopy {
     private static final Pattern PATH_TOKEN =
             Pattern.compile("[A-Za-z0-9_.+@~%-]*(?:/[A-Za-z0-9_.+@~%-]+)+/?");
 
-    /** 沙盒里的工作区根（模型会照抄进计划的那些）：整词命中时换成用户读得懂的说法 */
+    /** 沙盒根目录（模型会照抄进计划的那些）：整词命中时换成用户读得懂的说法 */
     private static final List<String> SANDBOX_ROOTS = List.of(
             "/home/gem/user-data", "/home/gem", "/workspace", "/app/user-data", "user-data");
 
@@ -56,14 +56,14 @@ public final class PlanCopy {
     private static final List<String> RUNTIME_ROOTS = List.of(
             "user-data/agentscope", "/.agentscope-runtime", "plans");
 
-    private static final String WORKSPACE_WORD = "沙盒工作区";
+    private static final String WORKSPACE_WORD = "沙盒目录";
     private static final String RUNTIME_WORD = "问渠的运行目录";
     private static final String PLAN_FILE_WORD = "本轮计划";
 
     /**
      * 兜底：把计划正文里的内部路径换成用户看得懂的说法，只保留交付物自身的名称。
      * <p>{@code /home/gem/user-data/index.html} → {@code index.html}（用户要认的就是这个文件名）；
-     * {@code /home/gem/user-data} 这种「目录本身」→ 「沙盒工作区」；
+     * {@code /home/gem/user-data} 这种「目录本身」→ 「沙盒目录」；
      * {@code …/plans/PLAN.md} → 「本轮计划」。
      * <p>不动的东西：网址（{@code https://…} 与 {@code //cdn…} 这类，前一个字符是冒号或斜杠即跳过）、
      * 没有扩展名的一律当接口路径或分数（{@code /api/chat}、{@code 768/1023}）保持原样。

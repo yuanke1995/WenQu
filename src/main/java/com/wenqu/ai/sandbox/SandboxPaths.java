@@ -84,7 +84,7 @@ public final class SandboxPaths {
 
     /**
      * candidate 是否为 ancestor 自身或其后裔（对应 {@code _is_same_or_child}）。
-     * <p>P2 的写入收束用它：{@code workspace-write} 档下沙盒写类工具的 path 必须落在会话工作区根内。
+     * <p>P2 的写入收束用它：{@code workspace-write} 档下沙盒写类工具的 path 必须落在沙盒根目录内。
      * 两侧共用一份实现，否则「浏览面板判的越界」和「工具执行判的越界」迟早不是同一个边界。
      */
     public static boolean isSameOrChild(String candidate, String ancestor) {

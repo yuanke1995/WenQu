@@ -25,12 +25,12 @@ public enum SandboxMode {
      */
     READ_ONLY("read-only", "只读", false, false),
     /**
-     * 工作区可写：写/编辑/交付三类工具的路径收束到会话工作区根（{@code sandbox.virtualPathPrefix}），
+     * 沙盒目录可写：写/编辑/交付三类工具的路径收束到沙盒根目录（{@code sandbox.virtualPathPrefix}），
      * 命令可执行。这是平台的默认档，也是问渠今天实际形态的如实命名。
      */
-    WORKSPACE_WRITE("workspace-write", "工作区可写", true, true),
+    WORKSPACE_WRITE("workspace-write", "沙盒目录可写", true, true),
     /**
-     * 不受限：路径不收束。给「用户自己搭的智能体要在工作区外读写」留的口，
+     * 不受限：路径不收束。给「用户自己搭的智能体要在沙盒目录外读写」留的口，
      * 由管理员经 {@code agent.permissionPreset.max} 决定平台上准不准用这一档。
      */
     DANGER_FULL_ACCESS("danger-full-access", "不受限", true, true);

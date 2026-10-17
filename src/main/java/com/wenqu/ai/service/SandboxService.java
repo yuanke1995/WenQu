@@ -99,7 +99,7 @@ public class SandboxService {
      * 取当前会话的沙盒 backend，并带上本轮的写入边界。
      *
      * @param unrestrictedWrites P2 权限档位的 {@code danger-full-access}：true 时写类工具不再限定在
-     *                           工作区根内。默认 false——**沙盒的文件写入边界本来就在这个类这一层**，
+     *                           沙盒根目录内。默认 false——**沙盒的文件写入边界本来就在这个类这一层**，
      *                           档位要改变它必须经这里传进来，否则「全自主」只是个标签。
      */
     public ProvisionerSandboxBackend backend(String sessionId, String uid, boolean unrestrictedWrites) {

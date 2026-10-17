@@ -22,12 +22,12 @@ public enum PermissionPreset {
     /** 只读调研：沙盒只留读文件与列目录，命令执行与写入不进工具表；外部工具（MCP）每一步都要确认 */
     RESEARCH("research", "只读调研", SandboxMode.READ_ONLY, "ask",
             "只看不动：沙盒里能读已有文件、列目录，不能执行命令也不能写；外部工具每次调用都要你确认"),
-    /** 常规：平台默认档，沙盒写操作收束在会话工作区内，工具执行确认完全跟随智能体自己的设置 */
+    /** 常规：平台默认档，沙盒写操作收束在沙盒目录内，工具执行确认完全跟随智能体自己的设置 */
     STANDARD("standard", "常规", SandboxMode.WORKSPACE_WRITE, null,
-            "日常默认：沙盒里能跑命令、能在自己的工作区写文件，写到工作区外会被拒绝"),
+            "日常默认：沙盒里能跑命令、能在自己的沙盒目录写文件，写到沙盒目录外会被拒绝"),
     /** 全自主：写入位置不再由平台收束（沙盒层的可写根一并放开）、命令不逐项确认（平台准不准用这一档由 agent.permissionPreset.max 决定） */
     AUTONOMOUS("autonomous", "全自主", SandboxMode.DANGER_FULL_ACCESS, "auto",
-            "不设限：沙盒里写文件不再限于工作区、命令直接执行、不再逐个确认（管理员可整体禁用这一档）");
+            "不设限：沙盒里写文件不再限于沙盒目录、命令直接执行、不再逐个确认（管理员可整体禁用这一档）");
 
     private final String code;
     private final String label;

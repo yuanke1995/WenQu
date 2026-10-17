@@ -90,7 +90,7 @@ PERSISTENT_SANDBOX_MOUNT_ROOTS = (
     "/home/gem/projects",
 )
 # 沙盒容器内运行时用户（镜像约定 gem 1000:1000；k8s 初始化脚本 normalize() 同值）。
-# 会话工作区目录必须归它所有，否则 Linux 宿主上沙盒写文件报 Permission denied。
+# 会话沙盒目录必须归它所有，否则 Linux 宿主上沙盒写文件报 Permission denied。
 SANDBOX_RUNTIME_UID = 1000
 SANDBOX_RUNTIME_GID = 1000
 SANDBOX_READY_INITIAL_DELAY_SECONDS = 0.05
@@ -692,11 +692,11 @@ class LocalContainerProvisionerBackend:
         return Path(self._skill_projections_host_path) / uid
 
     def _session_workspace_host_path(self, uid: str, thread_id: str) -> Path:
-        """单个会话沙盒的宿主工作区：shared/{uid}/workspace/sessions/{thread_id}。
+        """单个会话沙盒的宿主目录：shared/{uid}/workspace/sessions/{thread_id}。
 
         与蓝本的刻意差异（问渠 fork）：蓝本把整个 per-uid workspace 挂给该用户的
         所有沙盒，同一用户的多个会话互相可见、可互相覆盖；问渠沙盒本就按会话创建
-        （sandbox_id 由 uid+thread 派生），工作区同样下沉到会话——每个会话只能看到
+        （sandbox_id 由 uid+thread 派生），沙盒目录同样下沉到会话——每个会话只能看到
         自己的目录，从挂载层杜绝跨会话读写。老布局散落在 workspace 根下的文件
         不再进入任何会话（存量由运维清理）。
         """
@@ -710,7 +710,7 @@ class LocalContainerProvisionerBackend:
         )
 
     def _prepare_session_workspace(self, uid: str, thread_id: str) -> None:
-        """确保会话工作区存在、无 symlink 组件，并把属主交给沙盒内运行时用户。
+        """确保沙盒目录存在、无 symlink 组件，并把属主交给沙盒内运行时用户。
 
         属主校正是 Linux 宿主的必需品：目录由 provisioner（root）创建，而沙盒内文件
         服务以 uid 1000 运行——root:root 0755 的目录对其不可写，写文件报
@@ -762,7 +762,7 @@ class LocalContainerProvisionerBackend:
             os.close(fd)
         # 返回**工作区目录本身**的宿主路径（bind source）：
         # 挂 workspace 根会让同 uid 的其它工作区目录一并可见——跨工作区隔离直接失效（真机实测过）。
-        # 与「会话沙盒把 session 目录挂成根」同一套思路：工作区根 = 本作用域可触达的全部。
+        # 与「会话沙盒把 session 目录挂成根」同一套思路：沙盒根目录 = 本作用域可触达的全部。
         # 必须是宿主路径：容器内路径（/app/user-data/...）会报 "not shared from the host"。
         return Path(self._user_data_host_path) / "shared" / uid / "workspace" / Path(workdir_path)
 
@@ -1142,7 +1142,7 @@ class LocalContainerProvisionerBackend:
                     )
                     self.delete(sandbox_id)
                     existing = None
-            # 复用与新建两条路都要准备会话工作区：新目录要建 + 定属主，老目录在此自愈。
+            # 复用与新建两条路都要准备沙盒目录：新目录要建 + 定属主，老目录在此自愈。
             if not ephemeral_storage:
                 self._prepare_session_workspace(safe_uid, safe_thread_id)
             if existing is not None:
@@ -1231,7 +1231,7 @@ class LocalContainerProvisionerBackend:
                     "mode": "rw",
                 }
                 if safe_workdir_path:
-                    # 工作区目录即工作区根，容器内不再有 projects/{id} 这一层
+                    # 挂载源目录即沙盒根目录，容器内不再有 projects/{id} 这一层
                     run_kwargs["working_dir"] = "/home/gem/user-data"
             sandbox_env = (
                 merged_sandbox_env(self._sandbox_env, env or {}) if inherit_env else {}
@@ -1623,7 +1623,7 @@ class KubernetesProvisionerBackend:
             return False
         if actual_claims.get("skills-data") != self._skill_pvc:
             return False
-        # 注意：k8s 后端未对齐会话级工作区（见 _build_pod_spec 的显式标注）
+        # 注意：k8s 后端未对齐会话级沙盒目录（见 _build_pod_spec 的显式标注）
         expected_mounts = {
             "/home/gem/user-data": ("user-data", f"shared/{uid}/workspace"),
             "/home/gem/skills": ("skills-data", f"skill-projections/{uid}"),
