@@ -10,18 +10,26 @@
  * 用法：
  *   node scripts/loadtest/mock-gateway.mjs &        # 先起 mock 网关（:9101）
  *   SERVER_PORT=8091 AI_RATELIMIT_CHAT=200 java -jar target/*.jar   # 仓库根起 8091 栈
- *   node scripts/loadtest/loadtest.mjs              # 跑三阶段并输出报告（CLEANUP=1 顺带清数据）
+ *   node scripts/loadtest/loadtest.mjs              # 跑三阶段并输出报告，收尾自动清数据
+ *   KEEP=1 node scripts/loadtest/loadtest.mjs       # 保留压测数据（要留现场排查时用）
+ *
+ * 收尾必须清台账：压测用户/供应商删掉后，c_ai_usage_log 里 `providerId/mock-chat` 的行会变成
+ * 单价无处可登记的孤儿引用，把管理端「数据看板 → 费用」的未计价模型清单撑成几百个标签
+ * （历史教训见 scripts/db/cleanup-usage-ledger-orphans-2026-10-16.sql）。清台账要连会话与
+ * 消息一起删，走 mysql 客户端本机直连；连不上时打印待执行 SQL 而不是让压测失败。
  *
  * 管理员令牌按 AuthCrypto 的 JWT 格式（HS256, iss=wenqu, aud=wenqu-api）本地自签，
  * 密钥取本地 config/application-local.yml 的 ai-app.auth.jwt-secret。
  */
 import crypto from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 
 const BASE = process.env.BASE || 'http://127.0.0.1:8091/ai';
 const SECRET = process.env.JWT_SECRET || '01c1479b3059c8f23a9fcbdb2c3cbaa9073bc7605c4911d1';
 const USERS = +process.env.USERS || 100;
 const ASKERS = +process.env.ASKERS || 40;
-const CLEANUP = process.env.CLEANUP === '1';
+const KEEP = process.env.KEEP === '1';
 const STREAM_TIMEOUT_MS = 180_000;
 
 const b64u = (buf) => Buffer.from(buf).toString('base64url');
@@ -215,7 +223,8 @@ async function main() {
   console.log(`阶段A（${USERS} 路并发）:        ${passA ? '✅ 通过' : '❌ 未通过'}`);
   console.log(`阶段B（挂起隔离+恢复）:          ${passB ? '✅ 通过' : '❌ 未通过'}`);
   console.log(`阶段C（同会话互斥）:             ${passC ? '✅ 通过' : '❌ 未通过'}`);
-  if (CLEANUP) await cleanup(tokens);
+  if (KEEP) console.log('\n[cleanup] KEEP=1：压测用户、网关、会话与用量台账全部保留');
+  else await cleanup(tokens);
   if (!(passA && passB && passC)) process.exit(1);
 }
 
@@ -244,7 +253,49 @@ async function cleanup(tokens) {
   const ulist = await api('/api/ai/user/list', { token: admin });
   const users = (ulist.json?.data ?? []).filter((u) => String(u.uid).startsWith('loadtest_'));
   for (const u of users) await api(`/api/ai/user/${u.uid}`, { method: 'DELETE', token: admin });
-  console.log(`[cleanup] 已删 ${tokens.length} 个用户的网关与 ${users.length} 个压测用户（残留会话请用 SQL 清理）`);
+  console.log(`[cleanup] 已删 ${tokens.length} 个用户的网关与 ${users.length} 个压测用户`);
+
+  // 接口层删不掉的三张表：用量台账 + 会话 + 消息。按本轮 uid 精确删（这 100 个 uid 只属于压测），
+  // 不能只删网关不管台账——网关一没，台账里的 model 引用就再也登记不到单价。
+  purgeRows(Array.from({ length: USERS }, (_, i) => `loadtest_${String(i + 1).padStart(3, '0')}`));
+}
+
+/** 数据源坐标：与后端同一份 config/application-local.yml，env 可覆盖（压测栈可能连别的库） */
+function dbConf() {
+  let url = process.env.DB_URL || '', user = process.env.DB_USERNAME || 'root', password = process.env.DB_PASSWORD;
+  try {
+    const yml = readFileSync(new URL('../../config/application-local.yml', import.meta.url), 'utf8');
+    url ||= yml.match(/^\s*url:\s*(jdbc:mysql:\/\/\S+)/m)?.[1] || '';
+    password ??= yml.match(/^\s*password:\s*"?([^"\n]*)"?\s*$/m)?.[1] ?? '';
+  } catch { /* 私有配置缺失时只认 env */ }
+  const m = url.match(/jdbc:mysql:\/\/([^:/]+):?(\d*)\/([^?]+)/);
+  if (!m) throw new Error(`未能从 DB_URL / config/application-local.yml 解析出 jdbc:mysql 连接串（当前 url=${url || '空'}）`);
+  return { host: m[1], port: m[2] || '3306', db: m[3], user, password: password ?? '' };
+}
+
+/** 走本机 mysql 客户端清三张表的压测残留；连不上就打印等价 SQL 交给人工，不拖垮压测结论 */
+function purgeRows(uids) {
+  const inList = uids.map((u) => `'${u.replace(/[^a-z0-9_]/g, '')}'`).join(',');
+  const sql = [
+    `DELETE FROM c_ai_message WHERE session_id IN (SELECT id FROM c_ai_session WHERE user_id IN (${inList}));`,
+    `DELETE FROM c_ai_session WHERE user_id IN (${inList});`,
+    `DELETE FROM c_ai_usage_log WHERE uid IN (${inList});`,
+  ].join('\n');
+  let conf;
+  try {
+    conf = dbConf();
+  } catch (e) {
+    console.log(`[cleanup] 跳过台账/会话清理：${e.message}\n${sql}`);
+    return;
+  }
+  const args = ['-h', conf.host, '-P', conf.port, '-u', conf.user, `--default-character-set=utf8mb4`, conf.db];
+  if (conf.password) args.push(`-p${conf.password}`);
+  const r = spawnSync('mysql', args, { input: sql, encoding: 'utf8' });
+  if (r.status === 0) {
+    console.log(`[cleanup] 已清 ${conf.db} 中 ${uids.length} 个压测用户的会话、消息与用量台账`);
+  } else {
+    console.log(`[cleanup] 台账/会话清理失败（${(r.stderr || r.error?.message || '').trim().slice(0, 200)}），请手工执行：\n${sql}`);
+  }
 }
 
 main().catch((e) => {

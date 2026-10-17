@@ -83,6 +83,8 @@
 - `cleanup-personal-model-refs-2026-10-03.sql` — 清理个人模型引用
 - `cleanup-deep-reasoning-switches-2026-10-03.sql` — 清理深度推理开关
 - `cleanup-retired-config-2026-09-30.sql` — 清理已废弃配置
+- `cleanup-usage-ledger-orphans-2026-10-16.sql` — 清理用量台账里供应商已不存在的孤儿引用
+  （压测/探针留下的 `providerId/mock-chat` 行，会把费用报表的未计价清单撑成几百个标签）
 
 ### services/（Python，独立进程）
 - `mcp-test-server.py` — 最小 MCP 测试服务（:8931），验证 MCP 外部工具接入
@@ -96,7 +98,8 @@
 
 ### loadtest/
 - `mock-gateway.mjs` — 压测 mock 网关（:9101）
-- `loadtest.mjs` — 100 路并发压测
+- `loadtest.mjs` — 100 路并发压测；跑完默认自动收尾（删压测用户/网关，并直连本机 MySQL 清掉
+  自己写的会话、消息与用量台账），`KEEP=1` 保留现场
 
 ### mac/
 - `dev-stack.sh` — 本机开发栈统一启停：`mysql` / `redis` / `meili` / `searxng` / `sandbox`
