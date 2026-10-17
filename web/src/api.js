@@ -478,6 +478,9 @@ export const deleteProject = (id, deleteFiles = false) =>
 export const getProject = id => request(`/project/${id}`)
 // 工作区下的工作流（本人）
 export const listProjectWorkflows = id => request(`/project/${id}/workflows`)
+/** 工作区运行记录（定时任务执行 + 工作流运行合流，按开始时刻倒序） */
+export const getProjectRuns = (id, limit) =>
+  request(`/project/${id}/runs${limit ? '?limit=' + limit : ''}`)
 // 归档 / 恢复工作区（不动会话与产物，implicit 兜底容器不可归档）
 export const setProjectStatus = (id, status) =>
   request(`/project/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) })

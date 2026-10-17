@@ -190,8 +190,33 @@
                 </div>
               </div>
             </div>
-          </a-tab-pane>
-        </a-tabs>
+        </a-tab-pane>
+
+        <a-tab-pane key="runs">
+          <template #tab><span>运行 <span class="pj-count">{{ runs.length }}</span></span></template>
+          <div v-if="runsError" class="pj-empty pj-err">
+            {{ runsError }}
+            <button class="pj-link-btn" @click="loadRuns">重试</button>
+          </div>
+          <div v-else-if="!filteredRuns.length" class="pj-empty">
+            {{ kw ? '没有匹配的运行记录' : '还没有运行记录。定时任务到点自己跑、工作流手动或定时触发，记录都会落在这里。' }}
+          </div>
+          <div v-else class="pj-file-list">
+            <div v-for="x in filteredRuns" :key="x.kind + ':' + x.id" class="pj-item">
+              <span class="pj-item-title">
+                <span class="run-kind">{{ x.kind === 'scheduled' ? '定时任务' : '工作流' }}</span>
+                {{ x.name }}
+                <span v-if="x.error" class="run-err-ic" :title="x.error">!</span>
+              </span>
+              <span class="run-status" :class="'rs-' + x.status">{{ runStatusText(x.status) }}</span>
+              <span class="pj-item-meta">{{ runTriggerText(x.trigger) }}</span>
+              <span class="pj-item-meta">{{ fmtAgo(toMs(x.startedAt)) }}</span>
+              <span v-if="x.kind === 'scheduled' && x.sessionId" class="pj-act" @click="openRunSession(x.sessionId)">结果会话</span>
+              <span v-else-if="x.kind === 'workflow'" class="pj-act" @click="openWfRun(x)">运行详情</span>
+            </div>
+          </div>
+        </a-tab-pane>
+      </a-tabs>
       </template>
     </div>
 
@@ -213,7 +238,7 @@ import { message, Modal } from 'ant-design-vue'
 import { ReloadOutlined, PlusOutlined, CopyOutlined } from '@ant-design/icons-vue'
 import { getProject, updateProject, deleteProject, listArtifacts, listSessions, listAvailableAgents, listProjectFiles,
          downloadProjectFile, listScheduledJobs, createScheduledJob, runScheduledJob, listProjectWorkflows, runWorkflow,
-         setProjectStatus, setNewSessionProject } from '../api'
+         setProjectStatus, setNewSessionProject, getProjectRuns } from '../api'
 import DeleteProjectModal from '../components/DeleteProjectModal.vue'
 import { sessionStore, rememberSession } from './store'
 
@@ -245,6 +270,8 @@ const files = ref([])
 const filesError = ref('')
 const jobs = ref([])
 const workflows = ref([])
+const runs = ref([])
+const runsError = ref('')
 const jobFormOpen = ref(false)
 const jobSaving = ref(false)
 const jobForm = ref({ name: '', prompt: '', cron: '0 9 * * 1' })
@@ -306,6 +333,30 @@ const filteredFiles = computed(() => fileRows.value.filter(f => hit(f.name, f.pa
 const filteredSessions = computed(() => sessions.value.filter(s => hit(s.title || '新对话')))
 const filteredJobs = computed(() => jobs.value.filter(j => hit(j.name, j.prompt)))
 const filteredWorkflows = computed(() => workflows.value.filter(w => hit(w.name)))
+const filteredRuns = computed(() => runs.value.filter(x => hit(x.name, x.error)))
+
+// ==================== 运行记录（定时任务执行 + 工作流运行合流） ====================
+const RUN_STATUS_TEXT = {
+  success: '成功', succeeded: '成功', failed: '失败', timeout: '超时',
+  running: '进行中', queued: '排队中', waiting_approval: '待审核', skipped: '已跳过'
+}
+const RUN_TRIGGER_TEXT = { manual: '手动', schedule: '定时', scheduled: '定时', agent: '智能体', api: 'API' }
+const runStatusText = s => RUN_STATUS_TEXT[s] || s || '—'
+const runTriggerText = t => RUN_TRIGGER_TEXT[t] || t || '—'
+const loadRuns = async () => {
+  try {
+    const r = await getProjectRuns(id.value)
+    runs.value = (r && r.data) || []
+    runsError.value = ''
+  } catch (e) {
+    runs.value = []
+    runsError.value = e.message || '运行记录加载失败'
+  }
+}
+/** 定时任务的结果会话（一任务一会话，历史都追加在里面） */
+const openRunSession = sid => router.push({ path: '/chat', query: { sid } })
+/** 工作流运行详情：智能体页工作流面板的运行历史深链（?wf=&run= 原有协议） */
+const openWfRun = x => router.push('/agents?tab=workflow&wf=' + x.workflowId + '&run=' + x.id)
 
 const fmtTime = s => (s ? String(s).replace('T', ' ').slice(0, 16) : '—')
 /** 相对时间：同一天里的七八条用绝对日期根本分不出先后 */
@@ -507,6 +558,7 @@ const load = async () => {
     }
     await loadJobs()
     await loadWorkflows()
+    await loadRuns()
     // 落点只在首次决定：文件是这个工作区的独占视图，有就先看它；空工作区则给「新建对话」的会话空态
     if (!loadedOnce.value) tab.value = fileRows.value.length ? 'files' : 'sessions'
     loadedOnce.value = true
@@ -557,6 +609,8 @@ watch(id, () => {
   filesError.value = ''
   jobs.value = []
   workflows.value = []
+  runs.value = []
+  runsError.value = ''
   instrEdit.value = false
   instrFull.value = false
   settingsOpen.value = false
@@ -614,6 +668,24 @@ watch(id, () => {
 }
 
 /* ---- 内容区 ---- */
+/* 运行记录行：来源徽章 + 状态徽章（成功/失败/进行中/待审核各一色，均为弱底不抢标题） */
+.run-kind {
+  flex: none; font-size: 11px; line-height: 16px; padding: 0 5px; margin-right: 6px; border-radius: 4px;
+  background: var(--app-bg-layer-2); color: var(--app-label-secondary);
+}
+.run-status {
+  flex: none; min-width: 44px; text-align: center; font-size: 11px; line-height: 16px; padding: 0 5px;
+  border-radius: 4px; background: var(--app-bg-layer-2); color: var(--app-label-secondary);
+}
+.rs-success, .rs-succeeded { background: var(--app-ok-weak); color: var(--app-ok); }
+.rs-failed, .rs-timeout { background: var(--app-danger-weak); color: var(--app-danger-text); }
+.rs-running, .rs-queued { background: var(--app-accent-weak); color: var(--app-accent); }
+.rs-waiting_approval { background: var(--app-warn-weak); color: var(--app-warn-text); }
+.run-err-ic {
+  display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px;
+  margin-left: 6px; border-radius: 50%; background: var(--app-danger-weak); color: var(--app-danger-text);
+  font-size: 10px; cursor: help; vertical-align: middle;
+}
 .pj-tabs { margin-top: var(--app-sp-1); }
 .pj-block { margin-bottom: var(--app-sp-4); }
 .pj-block:last-child { margin-bottom: 0; }

@@ -276,6 +276,40 @@ public class ScheduledJobService {
                 .stream().map(this::runDto).toList();
     }
 
+    /**
+     * 某工作区的定时任务执行记录（工作区页「运行」tab 用）。
+     *
+     * <p>执行记录表本身没有 {@code project_id}（记录归属任务），所以先取该工作区下本人的任务，
+     * 再按 {@code job_id in} 查最近的执行——「一任务一会话、历史追加」的语义不变。
+     * <p>结果带 {@code kind=scheduled} 与任务名，供与工作流运行记录合流展示。
+     */
+    public List<Map<String, Object>> runsByProject(String uid, String projectId, int limit) {
+        int n = Math.max(1, Math.min(limit <= 0 ? 50 : limit, 200));
+        List<ScheduledJob> jobs = jobMapper.selectList(new LambdaQueryWrapper<ScheduledJob>()
+                .eq(ScheduledJob::getUid, uid)
+                .eq(ScheduledJob::getProjectId, projectId)
+                .eq(ScheduledJob::getDeleted, 0));
+        if (jobs.isEmpty()) return List.of();
+        Map<String, String> names = new LinkedHashMap<>();
+        List<String> ids = new ArrayList<>();
+        for (ScheduledJob j : jobs) {
+            names.put(j.getId(), j.getName());
+            ids.add(j.getId());
+        }
+        List<ScheduledRun> runs = runMapper.selectList(new LambdaQueryWrapper<ScheduledRun>()
+                .in(ScheduledRun::getJobId, ids)
+                .orderByDesc(ScheduledRun::getCreateTime)
+                .last("limit " + n));
+        List<Map<String, Object>> out = new ArrayList<>(runs.size());
+        for (ScheduledRun r : runs) {
+            Map<String, Object> m = runDto(r);
+            m.put("kind", "scheduled");
+            m.put("name", names.get(r.getJobId()));
+            out.add(m);
+        }
+        return out;
+    }
+
     // ==================== 调度与执行 ====================
 
     /**

@@ -4,6 +4,7 @@ import com.wenqu.ai.dto.ResultJson;
 import com.wenqu.ai.model.Project;
 import com.wenqu.ai.service.ProjectFileService;
 import com.wenqu.ai.service.ProjectService;
+import com.wenqu.ai.service.ScheduledJobService;
 import com.wenqu.ai.service.WorkflowService;
 import com.wenqu.ai.util.RequestUser;
 import io.swagger.v3.oas.annotations.Operation;
@@ -45,6 +46,7 @@ public class ProjectController {
     private final ProjectService projectService;
     private final ProjectFileService projectFileService;
     private final WorkflowService workflowService;
+    private final ScheduledJobService scheduledJobService;
 
     @Operation(summary = "我的工作区列表",
             description = "implicit 兜底容器在前（每人一个、后台懒创建），其余按创建时间倒序。"
@@ -170,6 +172,33 @@ public class ProjectController {
         } catch (IllegalArgumentException e) {
             return ResultJson.error(400, e.getMessage());
         }
+    }
+
+    /**
+     * 工作区运行记录（「运行」tab）：定时任务执行记录与工作流运行记录合流，按开始时刻倒序。
+     * <p>两类来源各取 limit 条再合流截断——单个来源的 limit 会把另一方挤掉，合流才是
+     * 「这个工作区最近发生了什么」的完整视图。定时任务的行带结果会话链接（answer 摘录
+     * 在结果会话里），工作流的行带去运行历史的深链。
+     */
+    @Operation(summary = "工作区运行记录",
+            description = "合流定时任务执行记录与工作流运行记录（按开始时刻倒序，默认 50 条）。"
+                    + "kind=scheduled 的行带 sessionId（结果会话）；kind=workflow 的行带 workflowId 与 run id（运行历史深链）")
+    @GetMapping("/{id}/runs")
+    public ResultJson runs(@PathVariable("id") String id,
+                           @RequestParam(value = "limit", required = false, defaultValue = "50") int limit) {
+        String uid = RequestUser.uid();
+        projectService.detail(uid, id);   // 归属校验（不存在/他人/已删一律抛）
+        int n = Math.max(1, Math.min(limit <= 0 ? 50 : limit, 200));
+        List<Map<String, Object>> out = new ArrayList<>();
+        out.addAll(scheduledJobService.runsByProject(uid, id, n));
+        out.addAll(workflowService.runsByProject(id, n));
+        // 合流排序：startedAt 为 null 的行排在最后（LocalDateTime.toString 同位宽可字典序比）
+        out.sort((a, b) -> {
+            String x = a.get("startedAt") == null ? "" : String.valueOf(a.get("startedAt"));
+            String y = b.get("startedAt") == null ? "" : String.valueOf(b.get("startedAt"));
+            return y.compareTo(x);
+        });
+        return ResultJson.ok(out.size() > n ? out.subList(0, n) : out);
     }
 
     @Operation(summary = "新建工作区", description = "用户显式创建一个工作区；其下可继续积累会话与产物。implicit 兜底容器不用建、也不可删")
