@@ -1,7 +1,7 @@
 // D2 真浏览器校验：API 密钥页的「平台级 MCP 接入点」是否真的看得见、拿得到、能复制。
 //
 // 为什么必须有这一层：本次改动全是"界面上多一块东西"，静态校验只能证明代码在位。
-// 本项目已连续栽在"静态全绿、用户点不到"上（抽屉 v-model 同名 ref、面板数据源用错两次）。
+// 本仓库已连续栽在"静态全绿、用户点不到"上（抽屉 v-model 同名 ref、面板数据源用错两次）。
 //
 // 真后端（8090）+ 真浏览器（系统 Edge）+ dev server（5800），用 admin 登录取真 Key 列表，
 // 因此验的是"用户真能看到什么"，而不是 mock 出来的形状。
@@ -109,7 +109,7 @@ const check = (ok, label, detail = '') => {
     check(!!clip && clip.includes('/ai/mcp'), '点复制后剪贴板拿到地址', String(clip))
   }
 
-  // 7) 几何断言：这块不能破版/溢出（本项目排版问题只有量尺寸才看得出来）
+  // 7) 几何断言：这块不能破版/溢出（本仓库排版问题只有量尺寸才看得出来）
   const box = await page.locator('.mcp-entry').first().boundingBox()
   check(!!box && box.width > 300, '区块有实际尺寸（没被压成 0）', box ? `${Math.round(box.width)}×${Math.round(box.height)}` : 'null')
   const overflow = await page.evaluate(sel => {

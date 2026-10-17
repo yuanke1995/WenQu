@@ -1,6 +1,6 @@
 // 前端静态校验：不起 Spring、不启 dev server。
 // 1) SFC 编译  2) 模块解析（抓 import 路径/导出名错误）  3) CSS 语法
-// 4) 项目硬约束（裸 hex / 断点值 / 禁用词）  5) manifest 与图标文件存在性
+// 4) 仓库硬约束（裸 hex / 断点值 / 禁用词）  5) manifest 与图标文件存在性
 //
 // 用法：node scripts/verify-sfc.mjs [子命令]
 //   node scripts/verify-sfc.mjs            全部
@@ -133,7 +133,7 @@ function checkCss () {
   console.log(`CSS 语法：${csss.length} 个 .css + ${targets.length - csss.length} 个内联 style`)
 }
 
-// ==================== 4) 项目硬约束 ====================
+// ==================== 4) 仓库硬约束 ====================
 // 品牌固定色白名单：这些是"刻意不随主题变"的语义色，与 --app-* 区分开
 const HEX_OK = new Set(['#2a5fe0', '#2e6be6', '#5e93f5', '#1677ff', '#fff', '#ffffff', '#000', '#000000'])
 
@@ -143,7 +143,7 @@ const HEX_OK = new Set(['#2a5fe0', '#2e6be6', '#5e93f5', '#1677ff', '#fff', '#ff
 // 「本地镜像」「纯本地档」「本地存储」这类描述前端状态的说法是合法的，全局禁词会误报一片。
 const BANNED_LOCAL_GATEWAY = /本地[^\n]{0,20}(网关|Ollama|自托管|模型)|(网关|Ollama|自托管)[^\n]{0,20}本地/
 
-// 存量断点：项目历史上各页面各用各的（640/860/900/1000/1024/1100/1199/1200/1440）。
+// 存量断点：仓库历史上各页面各用各的（640/860/900/1000/1024/1100/1199/1200/1440）。
 // 不去动它们，但新代码只允许 768
 const LEGACY_BP = new Set([640, 860, 900, 1000, 1024, 1100, 1199, 1200, 1440])
 
@@ -151,7 +151,7 @@ function checkConventions () {
   // 这两项是「代码风格」检查，存量代码里早有历史遗留（如 md.css 的一批 highlight 配色）。
   // 全量扫会把 150 条存量噪声刷出来，反而让人忽略新问题 —— 故只检查**相对 HEAD 有改动**的文件。
   const changed = changedFiles()
-  if (!changed.size) { console.log('项目约束：无改动文件，跳过（风格检查只看增量）'); return }
+  if (!changed.size) { console.log('仓库约束：无改动文件，跳过（风格检查只看增量）'); return }
   const scope = all.filter(f => changed.has(f))
   for (const f of scope) {
     const src = readFileSync(f, 'utf8')
@@ -178,7 +178,7 @@ function checkConventions () {
       warn(`${rel(f)} 新增裸色值 ${m[0]}（应走 var(--app-*)）`)
     }
   }
-  console.log(`项目约束：${scope.length} 个改动文件的断点值 / 裸色值 / 禁用词`)
+  console.log(`仓库约束：${scope.length} 个改动文件的断点值 / 裸色值 / 禁用词`)
 }
 
 // 文件在 HEAD 里的内容；不存在（新增文件）或读失败则返回 null。

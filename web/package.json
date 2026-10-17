@@ -16,7 +16,8 @@
     "check:publish": "node scripts/check-publish.cjs",
     "gen:icons": "node scripts/gen-icons.mjs",
     "check:mshell": "node scripts/check-mshell.cjs",
-    "check:sidebar": "node scripts/check-sidebar-ops.cjs"
+    "check:sidebar": "node scripts/check-sidebar-ops.cjs",
+    "check:space-fold": "node scripts/check-space-fold.cjs"
   },
   "dependencies": {
     "@ant-design/icons-vue": "^7.0.0",

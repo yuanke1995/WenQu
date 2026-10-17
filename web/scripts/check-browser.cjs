@@ -4,7 +4,7 @@
 //
 // 前置：先构建产物到 web/dist
 //   npx vite build --outDir web/dist --emptyOutDir
-// 依赖：playwright-core（不装进项目，临时用）：
+// 依赖：playwright-core（不装进仓库依赖，临时用）：
 //   mkdir -p /tmp/wq-verify && cd /tmp/wq-verify && npm i playwright-core
 //   NODE_PATH=/tmp/wq-verify/node_modules node scripts/check-browser.cjs
 // 无 playwright-core 时会给出提示并跳过（exit 0），不阻塞其它校验。
@@ -88,7 +88,7 @@ function serveStatic (page) {
     // 我的产物：窄屏白名单与删除确认口径的断言需要列表数据
     if (u.pathname === '/api/ai/artifact/list') {
       return json([
-        { id: 11, filename: '周报.md', ext: 'md', size: 2048, createTime: '2026-10-06T09:00:00', description: '项目周报', url: '/files/11.md', expireTime: '' },
+        { id: 11, filename: '周报.md', ext: 'md', size: 2048, createTime: '2026-10-06T09:00:00', description: '周报', url: '/files/11.md', expireTime: '' },
         { id: 12, filename: '清单.csv', ext: 'csv', size: 512, createTime: '2026-10-05T18:30:00', description: '', url: '/files/12.csv', expireTime: '' }
       ])
     }
@@ -398,7 +398,7 @@ const check = (ok, label, detail = '') => {
   })
   check(!w.hasTopbar, '宽屏不渲染移动顶栏')
   check(w.sidePos !== 'fixed', '宽屏侧栏非 fixed（回归 PC 布局）', `position=${w.sidePos}`)
-  check(w.sideLeft === 0 && w.sideW >= 190, '宽屏侧栏常驻 200px', `left=${w.sideLeft} w=${w.sideW}`)
+  check(w.sideLeft === 0 && w.sideW >= 190, '宽屏侧栏常驻（≥190px）', `left=${w.sideLeft} w=${w.sideW}`)
 
   // ---- PC 铃铛（取数单元与移动壳共用）：角标 / 弹层 / 深链 ----
   // 这三条同时守着一次重构：通知逻辑从 AppLayout 抽到 chat/useNotifications.js 后，

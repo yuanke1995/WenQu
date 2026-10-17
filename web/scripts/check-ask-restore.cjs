@@ -4,7 +4,7 @@
 //
 // 前置：先构建产物到 web/dist
 //   npx vite build --outDir dist --emptyOutDir
-// 依赖：playwright-core（不装进项目，临时用）：
+// 依赖：playwright-core（不装进仓库依赖，临时用）：
 //   mkdir -p /tmp/wq-verify2 && cd /tmp/wq-verify2 && npm i playwright-core
 //   NODE_PATH=/tmp/wq-verify2/node_modules node scripts/check-ask-restore.cjs
 // 无 playwright-core 时会给出提示并跳过（exit 0），不阻塞其它校验。
@@ -146,7 +146,7 @@ const check = (ok, label, detail = '') => {
   check(/高铁/.test(String(ans[0] || '')), '第一题回的是用户点选的候选', `a0=${ans[0]}`)
   check(ans[1] === '' && ans[2] === '', '没答的两题留空送后端（由后端如实回「用户未回答」，不代答）', `a1=${ans[1]},a2=${ans[2]}`)
   check(!after.hasPanel, '恢复态提交后撤下答题面板（本设备没有这一轮的流，终态事件不会来）')
-  check(/回答生成中/.test(after.body), '气泡转入「回答生成中，稍后自动刷新…」的后台续跑态')
+  check(/正在溯源/.test(after.body), '气泡转入进行中那一行（「正在溯源，用时 N 秒 …」），后台续跑靠轮询取回')
 
   // ==================== 三、轮询取回后台生成的答案 ====================
   const firstGets = historyGets

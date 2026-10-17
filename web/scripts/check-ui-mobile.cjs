@@ -1,7 +1,7 @@
 // 窄屏 UI 布局断言：验「PC UI 压缩到手机」这类症状是否复发。
 // 与 check-browser.cjs 的分工：那个验「能不能用」，这个验「布局对不对」——
 // 工具条是否单行、文字是否竖排、卡宽是否横滑、双顶栏是否消除、宽屏是否回归。
-// 依赖 playwright-core（不装进项目）：
+// 依赖 playwright-core（不装进仓库依赖）：
 //   mkdir -p /tmp/wq-verify2 && cd /tmp/wq-verify2 && npm i playwright-core
 //   npx vite build --outDir dist --emptyOutDir
 //   NODE_PATH=/tmp/wq-verify2/node_modules node scripts/check-ui-mobile.cjs

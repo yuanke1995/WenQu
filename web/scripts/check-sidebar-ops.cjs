@@ -9,7 +9,7 @@
 //
 // 前置：先构建产物到 web/dist
 //   npm run build
-// 依赖：playwright-core（不装进项目，临时用）：
+// 依赖：playwright-core（不装进仓库依赖，临时用）：
 //   mkdir -p /tmp/wq-verify && cd /tmp/wq-verify && npm i playwright-core
 //   NODE_PATH=/tmp/wq-verify/node_modules node scripts/check-sidebar-ops.cjs
 // 无 playwright-core / 无浏览器时会给出提示并跳过（exit 0），不阻塞其它校验。

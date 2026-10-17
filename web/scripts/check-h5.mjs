@@ -234,6 +234,10 @@ const check = (ok, label, detail = '') => {
       `${label} 簇内独白段改称「过程说明」（防父子同名套娃）`)
     check(/toggleCluster\(m,\s*seg\)/.test(s), `${label} 簇头可点开/收起`)
     check(/clusterProcCount\(seg\)/.test(s), `${label} 纯独白簇有退化文案（N 段说明）`)
+    // 簇内只有一个工具组 ⇒ 组条与簇头数的是同一批操作（真机两行都报「7 个操作」）：那一层不出
+    check(/seg\.tools\.length > 1 && !seg\.flat/.test(s), `${label} 单组簇不再重复出组条（与簇头同一批操作）`)
+    check(/seg\.tools\.length === 1 \|\| seg\.flat \|\| seg\.tools\[0\]\._groupOpen/.test(s),
+      `${label} 组条不出时卡片直接摊开（不能连卡片一起藏掉）`)
   }
   // 聚簇边界：不得跨正文段打包，也不得给单段套壳（否则单个工具组要点两次）
   const pj = read('src/chat/projections.js')
@@ -246,6 +250,9 @@ const check = (ok, label, detail = '') => {
     check(/run\.length === 1\s*\)\s*res\.push\(run\[0\]\)/.test(src),
       '单段不包壳（run.length === 1 直通）')
   }
+  const tr = stripComments(pj).match(/const timelineRows = m => \{[\s\S]*?\n\}/)
+  check(!!tr && /groups\.length === 1 && inner\.kind === 'group'/.test(tr[0]),
+    'flat 只给「簇内唯一的那个工具组」——两个以上组各数各的子集，组条要留')
 }
 
 // ---- ⑧b 耗时只报一处：整轮那一条在气泡顶部，逐行耗时不许复现（两端同构） ----

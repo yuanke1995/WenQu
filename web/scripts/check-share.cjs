@@ -5,7 +5,7 @@
 //
 // 前置：先构建产物到 web/dist
 //   npx vite build --outDir dist --emptyOutDir
-// 依赖：playwright-core（不装进项目，临时用）：
+// 依赖：playwright-core（不装进仓库依赖，临时用）：
 //   mkdir -p /tmp/wq-verify && cd /tmp/wq-verify && npm i playwright-core
 //   NODE_PATH=/tmp/wq-verify/node_modules node scripts/check-share.cjs
 'use strict'
@@ -117,29 +117,28 @@ function serveStatic (page) {
     }
     if (u.pathname === '/api/ai/share/tok-4/info') return json(AGENT)
     // 游客流式对话 mock（两个 token 各测一个场景）。
-    // 存在意义是**抓阶段提示重复渲染**：真实 SSE 会连发多条 stage，而模板曾同时渲染
-    // 「气泡内 m.stage」与「底部 sending && lastAiStage」两个同源节点 ⇒ 同一句话出现两次。
-    //   tok-3 = 只发 stage 不发 token/done：响应体结束后前端 pump() 停在 done 分支，
-    //           sending 仍是 true ⇒ 页面冻结在「进行中」，正好采样重复渲染。
-    //   tok-2 = 完整流：验证结束后阶段提示已撤掉、行数不重复。
+    // 存在意义是**抓进行中提示重复渲染**：一轮里用户可见的「正在…」只许有一条（TurnBar 的
+    // 「正在溯源，用时 N …」），历史上它和阶段脚注、底部独立气泡各说各话，同一句话出现两次。
+    //   tok-3 = 一帧都不发也不收尾：响应体结束后前端 pump() 等不到 done，sending 仍是 true
+    //           ⇒ 页面稳定停在「进行中」，可重复采样，不怕时序抖动。
+    //   tok-2 = 完整流（token→done 带 elapsedMs）：验证正文出来后进行中那行换成整轮总览。
     if (u.pathname === '/api/ai/share/tok-3/chat' || u.pathname === '/api/ai/share/tok-2/chat') {
       try { cap.chatBodies.push(JSON.parse(route.request().postData() || '{}')) } catch (e) { /* 非 JSON 请求体 */ }
       const tok3 = u.pathname.includes('tok-3')
-      const frames = [
-        'data: ' + JSON.stringify({ type: 'stage', content: '正在检索资料…' }) + '\n\n',
-        'data: ' + JSON.stringify({ type: 'stage', content: '正在检索资料…' }) + '\n\n'
-      ]
+      const frames = []
       if (!tok3) frames.push(
         'data: ' + JSON.stringify({ type: 'token', content: '根据文档，' }) + '\n\n',
         'data: ' + JSON.stringify({ type: 'token', content: '答案是 5。' }) + '\n\n',
         // done.content 是本轮的落库版汇总（与服务端 done 信封同形）。这里刻意带上
         // messageId 与 degradations：前者是评价/重新生成的凭据，后者是"答了但打了折扣"的说明，
         // 两样都是后端**早就在下发**、而分享页此前整个丢掉的东西。
+        // elapsedMs 同样是后端一直在发的整轮墙钟：分享页那行「已完成，用时 …」读的就是它。
         'data: ' + JSON.stringify({
           type: 'done', sessionId: 's-share-1',
           content: JSON.stringify({
             finalContent: '根据文档，答案是 5。',
             messageId: 'm-ai-1',
+            elapsedMs: 12000,
             sources: [],
             degradations: [{ code: 'modelFallback', msg: '本轮按备用模型作答' }]
           })
@@ -306,27 +305,31 @@ const check = (ok, label, detail = '') => {
   check(sc.vhH >= 800 && sc.vhH <= 916, '满高容器消费 --app-vh（键盘弹起收缩的前提）', `h=${sc.vhH}`)
   check(sc.scrollW <= sc.clientW + 1, '智能体分享页无横向溢出', `scrollW=${sc.scrollW} clientW=${sc.clientW}`)
 
-  // ---- 真发一条消息：阶段提示必须只出现一次 ----
-  // 2026-10 用户截图报「正在检索资料…」出现两次。根因是模板同时渲染了两处同源状态：
-  // 气泡内的 m.stage 与底部一条 sending && lastAiStage 的独立气泡。
-  // 这里让 SSE 连发两次相同 stage（真实链路就是会重复推同一条阶段），
-  // 再断言全页 .tm-stage 只有 1 个。
+  // ---- 真发一条消息：进行中提示只有一条，答完收成整轮总览 ----
+  // 2026-10 用户截图报「正在检索资料…」出现两次（气泡内阶段脚注 + 底部独立气泡）。
+  // 现在分享页与主对话页共用同一个 TurnBar：一轮只有一行状态，收尾就换成「已完成，用时 …」。
   await page.goto(ORIGIN + '/s/tok-2', { waitUntil: 'networkidle' })
   await page.waitForTimeout(900)
   await typeDraft(page, '你好')
   await page.click('.ci-send')
   await page.waitForTimeout(1500)
   const streamed = await page.evaluate(() => ({
-    // 正文已开始（token 已到）⇒ 阶段提示应已撤掉（m.stage 随正文开始被清）
-    stageN: document.querySelectorAll('.tm-stage').length,
-    typingN: document.querySelectorAll('.tm-typing').length,
+    turnN: document.querySelectorAll('.turn-bar').length,
+    turnText: (document.querySelector('.turn-bar') || {}).textContent?.trim() || '',
+    // 退役的阶段提示行不该再有节点（.tm-typing / .tm-stage 整块随通道删除）
+    legacyN: document.querySelectorAll('.tm-typing, .tm-stage').length,
+    // 遗留文案一个字都不许出现在屏幕上
+    stale: ['正在检索资料', '正在理解问题', '正在执行工作流', '框架引擎']
+      .filter(s => (document.body.innerText || '').includes(s)),
     body: (document.querySelector('.bubble.ai') || {}).textContent || '',
     bubbles: document.querySelectorAll('.row').length
   }))
-  check(streamed.body.includes('答案是 5'), '分享页 SSE 正文正常渲染（stage→token→done 全链路）', streamed.body.slice(0, 40))
-  check(streamed.stageN === 0 && streamed.typingN === 0,
-    '正文出来后阶段提示已消失（既无脚注也无「正在思考」行）', `stage=${streamed.stageN} typing=${streamed.typingN}`)
-  check(streamed.bubbles === 2, '一轮问答只渲染 2 条（用户 1 + AI 1，无重复的阶段气泡）', `rows=${streamed.bubbles}`)
+  check(streamed.body.includes('答案是 5'), '分享页 SSE 正文正常渲染（token→done 全链路）', streamed.body.slice(0, 40))
+  check(streamed.turnN === 1 && streamed.turnText === '已完成，用时 12 秒',
+    '收尾：整轮总览只有一条，用时读 done 带回的墙钟', `n=${streamed.turnN} "${streamed.turnText}"`)
+  check(streamed.legacyN === 0 && streamed.stale.length === 0,
+    '阶段提示行与遗留文案全页为零', `legacy=${streamed.legacyN} stale=${streamed.stale.join('/')}`)
+  check(streamed.bubbles === 2, '一轮问答只渲染 2 条（用户 1 + AI 1，无重复的状态气泡）', `rows=${streamed.bubbles}`)
   // 灰底时代浅灰用户气泡几乎隐形（"看着不一样"的主因）——有消息后再取样比对
   const contrast = await page.evaluate(() => {
     const p = document.querySelector('.sc-page'), u = document.querySelector('.bubble.user')
@@ -660,23 +663,23 @@ const check = (ok, label, detail = '') => {
   check(emb.labelDisplay === 'none' && emb.headH > 0 && emb.headH <= 56,
     '窄屏会话按钮收成图标（不挤掉智能体名称）', `h=${emb.headH} label=${emb.labelDisplay}`)
 
-  // 进行中（只收到 stage、还没正文）：阶段提示**全页只能有一条**。
-  // tok-3 的 mock 只发 stage 帧，响应体结束后前端 pump() 走 done 分支只 settle 不改 sending
-  // ⇒ 页面稳定停在「进行中」，可重复采样，不怕时序抖动。
+  // 进行中（一帧没到、正文未到）：整轮的进行中提示**全页只能有一条**，说的是「正在溯源」。
+  // tok-3 的 mock 什么都不发，响应体结束后前端 pump() 等不到 done ⇒ 页面稳定停在「进行中」，
+  // 可重复采样，不怕时序抖动。
   await page.goto(ORIGIN + '/s/tok-3', { waitUntil: 'networkidle' })
   await page.waitForTimeout(900)
   await typeDraft(page, '你好')
   await page.click('.ci-send')
-  await page.waitForTimeout(1600)
+  await page.waitForTimeout(2600)
   const during = await page.evaluate(() => {
-    const tip = document.querySelector('.tm-typing')
+    const tip = document.querySelector('.turn-bar')
     const r = tip ? tip.getBoundingClientRect() : { width: 0, height: 0 }
     return {
       // 提示行唯一（不多处渲染同一条）
-      tipN: document.querySelectorAll('.tm-typing').length,
-      stageN: document.querySelectorAll('.tm-stage').length,
+      tipN: document.querySelectorAll('.turn-bar').length,
+      legacyN: document.querySelectorAll('.tm-typing, .tm-stage').length,
       tipText: tip ? tip.textContent.trim() : '',
-      // 单行：高度不应超过 ~28px（折成两行会翻倍）
+      // 单行：高度不应超过 ~34px（折成两行会翻倍）
       tipH: Math.round(r.height), tipW: Math.round(r.width),
       // 生成中不该有气泡壳：没有边框/底色，也就没有"框中框"
       // 「无气泡壳」= 元素可存在（内容容器），但不得有边框/底色/内边距。
@@ -692,16 +695,28 @@ const check = (ok, label, detail = '') => {
     }
   })
   check(during.sending, '流未结束时发送键处于「停止」态（确在生成中）')
-  check(during.tipN === 1 && during.stageN === 0,
-    '进行中：提示只出现一次（不多处渲染同一条）', `typing=${during.tipN} stage=${during.stageN} "${during.tipText}"`)
-  check(during.tipH > 0 && during.tipH <= 30,
+  check(during.tipN === 1 && during.legacyN === 0,
+    '进行中：提示只出现一次（阶段提示行已退役）', `turn=${during.tipN} legacy=${during.legacyN} "${during.tipText}"`)
+  check(/^正在溯源，用时 \d+ 秒 …$/.test(during.tipText),
+    '进行中：说的是「正在溯源」并带秒数', `"${during.tipText}"`)
+  // 秒针真的在走：分享页没有问答引擎去开那张全局表，靠进行中这一行自己挂表。
+  // 单次采样证不了「在走」——隔两秒再读一次，数字必须变大。
+  const secOf = t => { const m = /用时 (\d+) 秒/.exec(t); return m ? Number(m[1]) : -1 }
+  await page.waitForTimeout(2200)
+  const again = await page.evaluate(() => {
+    const e = document.querySelector('.turn-bar')
+    return e ? e.textContent.trim() : ''
+  })
+  check(secOf(again) > secOf(during.tipText),
+    '进行中：分享页的秒针在自己走（两次采样数字变大）', `"${during.tipText}" → "${again}"`)
+  check(during.tipH > 0 && during.tipH <= 34,
     '进行中：提示是单行（不被挤成两行）', `h=${during.tipH} "${during.tipText}"`)
   // AI 侧**本就没有气泡壳**（对齐 ChatPage .bubble.ai：transparent + padding:0）。
   // 断"背景透明 + 无边框 + 无内边距"三项，而不是断元素个数——元素是内容容器，本就该存在。
   const bs = during.bubbleStyle
   check(bs && bs.bg === 'rgba(0, 0, 0, 0)' && parseFloat(bs.border) === 0 && parseFloat(bs.pad) === 0,
     '进行中：AI 侧无气泡壳（背景透明/无边框/无内边距）', JSON.stringify(bs))
-  check(during.rows === 2, '进行中：一轮问答仍只渲染 2 条（无多余的阶段气泡）', `rows=${during.rows}`)
+  check(during.rows === 2, '进行中：一轮问答仍只渲染 2 条（无多余的状态气泡）', `rows=${during.rows}`)
 
   // ---- 桌面回归：1280 下分享页保持居中栏与 PC 字号（窄屏补丁不得外溢到桌面）----
   const dpage = await ctx.newPage()
