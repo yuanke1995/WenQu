@@ -55,3 +55,7 @@ config/application-local.yml
 /deploy/sandbox-provisioner/data.ms/
 /scripts/mac/data.ms/
 /scripts/win/data.ms/
+# ===== 测试代码只留本地，不上远端仓库 =====
+# 后端测试是开发期的回归网（跑法见 IDEA 或本机 mvn test），不作为仓库交付物发布；
+# 已入库的那批用 `git rm -r --cached src/test` 摘掉跟踪，文件仍在磁盘上。
+/src/test/
