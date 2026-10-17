@@ -6,7 +6,7 @@
 #  派生数据，已整体搬进 docker 命名卷）
 #    mysql     3306   brew services mysql@8.0
 #    redis     6379   原生 redis-stack-server —— 向量库在这个实例；compose 里的
-#                     docker redis-stack 映射 6380，本机 app 连的是 6379，起它是空库
+#                     同名服务是另一份实例（本机 app 连 6379 这个）
 #    meili     7700   docker compose deploy/meilisearch —— 关键词索引在命名卷
 #                     wenqu-meili-data（原原生实例的 data.ms 已迁入该卷）
 #    searxng   8888   docker compose deploy/searxng   联网搜索 generic 服务商

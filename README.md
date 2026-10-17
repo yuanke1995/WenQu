@@ -157,8 +157,7 @@ docker compose up -d
 
 开发机上依赖服务已各自跑着、只想按需拉起可选服务（联网搜索 / 沙盒 / OCR）时，用
 `scripts/mac/dev-stack.sh [start|stop|restart|status|logs] [单元...]`（任意目录可执行，
-单元为 `mysql redis meili searxng sandbox ocr`）。它在数据已有归属时不会另起一份空实例
-（例如原生 redis-stack 占着 6379 就不去 compose 起 6380 那份空库），默认组不含 OCR。
+单元为 `mysql redis meili searxng sandbox ocr`）。它在数据已有归属时不会另起一份空实例，默认组不含 OCR。
 其中 `meili` 走 `deploy/meilisearch/docker-compose.yml`（容器 `wenqu-meilisearch`，宿主只绑
 `127.0.0.1:7700`），关键词索引在命名卷 `wenqu-meili-data` 里——`down` 只删容器不动卷；
 删了卷就是空索引，需在设置页全量重建（或 `POST /api/ai/search-index/reindex`）。

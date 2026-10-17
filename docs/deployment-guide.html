@@ -81,7 +81,7 @@ Nginx（宿主安装）
               Docker Compose（四件套，同一容器网络）
               ├── app            问渠后端（Java 17，宿主仅绑 127.0.0.1:8090）
               ├── mysql:8.4      业务数据（仅容器网络，无宿主端口）
-              ├── redis-stack    向量索引/广播/限流（宿主 6380 → 容器 6379）
+              ├── redis-stack    向量索引/广播/限流
               └── meilisearch    关键词引擎（可选，宿主 7700）</div>
 
   <h3>组件清单（中间件全在 compose 里，无需单独安装）</h3>
@@ -207,7 +207,7 @@ docker compose ps</code></pre>
   <table>
     <tr><th>服务</th><th>部署即生效的行为</th></tr>
     <tr><td>mysql</td><td>容器启动时自动建库 <code>wenqu_ai</code>；应用启动自动建表（幂等）。看护：重启容器数据不丢（mysql-data 卷）。</td></tr>
-    <tr><td>redis-stack</td><td>知识库向量索引的底座（检索 / 重排 / 图谱扩展都经它）；同时承担配置变更广播、接口限流、分布式锁。宿主端口映射为 <code>6380</code>（避开本机已有 Redis）。</td></tr>
+    <tr><td>redis-stack</td><td>知识库向量索引的底座（检索 / 重排 / 图谱扩展都经它）；同时承担配置变更广播、接口限流、分布式锁。</td></tr>
     <tr><td>meilisearch</td><td>默认「待命」：应用关键词引擎默认是 MySQL LIKE（零依赖）。日后在「设置页 → 检索设置」切换引擎为 meilisearch 即启用中文分词检索，应用侧连接地址已预置好，无需改配置。</td></tr>
   </table>
 
@@ -363,7 +363,6 @@ docker compose exec -T app tar xzf - -C /app/data &lt; ~/backup-appdata-2026-10-
     <tr><td>22</td><td>SSH</td><td>腾讯云默认放行</td></tr>
     <tr><td><b>80</b></td><td>Nginx</td><td><b>唯一对外入口</b>（静态 + 反代）</td></tr>
     <tr><td>8090</td><td>后端 app</td><td>仅绑 <code>127.0.0.1</code>，外部不可达（设计如此）</td></tr>
-    <tr><td>6380 → 6379</td><td>Redis Stack</td><td>容器内 6379；防火墙不放行即外部不可达。<span class="tag">可选加固</span>改为 <code>127.0.0.1:6380:6379</code></td></tr>
     <tr><td>7700</td><td>Meilisearch</td><td>同上（可选加固 <code>127.0.0.1:7700:7700</code>）</td></tr>
   </table>
   <table>
