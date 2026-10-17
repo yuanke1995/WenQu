@@ -1202,7 +1202,7 @@ const doCreateProject = async () => {
     createOpen.value = false
     message.success('工作区已创建')
     await loadSessions(undefined, { refreshProjects: true })
-    // 建完直接落到它的工作区页：第一件事就是写约定（那里有三步引导）
+    // 建完直接落到它的工作区页：第一件事就是写约定（空工作区时约定区默认就是编辑态）
     if (created) {
       setNewSessionProject(created)
       router.push('/project/' + created)

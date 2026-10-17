@@ -3,7 +3,6 @@ package com.wenqu.ai.controller;
 import com.wenqu.ai.dto.ResultJson;
 import com.wenqu.ai.model.Project;
 import com.wenqu.ai.service.ProjectFileService;
-import com.wenqu.ai.service.ProjectBackfillService;
 import com.wenqu.ai.service.ProjectService;
 import com.wenqu.ai.service.WorkflowService;
 import com.wenqu.ai.util.RequestUser;
@@ -28,8 +27,9 @@ import java.util.Map;
 /**
  * 工作区容器接口：把「一个工作目录 + 若干次会话 + 若干份产物」收在一个可持续的根下。
  *
- * <p><b>当前只读</b>：本刀只提供「列出我的工作区」，让产物页能把成果按工作分组。
- * 建工作区/改名/删除随后续刀再开——先让归属跑起来，再谈管理界面。
+ * <p>能力面：列表 / 详情 / 设置（名称·约定·默认助手）/ 归档恢复 / 新建 / 删除（可连目录）、
+ * 工作区文件浏览与下载、本工作区的工作流。会话与产物的移动归属在
+ * {@code /session/{id}/project} 与 {@code /artifact/{id}/project}（那两个端点管归属，这里管容器）。
  *
  * <p><b>归属口径</b>：一律按 {@link RequestUser#uid()} 过滤，与产物同口径。
  * 工作区不是权限边界，它只是归属与过滤维度（见 {@code c_ai_project} 建表注释）。
@@ -45,8 +45,6 @@ public class ProjectController {
     private final ProjectService projectService;
     private final ProjectFileService projectFileService;
     private final WorkflowService workflowService;
-    private final ProjectBackfillService projectBackfillService;
-    private final com.wenqu.ai.service.RoleService roleService;
 
     @Operation(summary = "我的工作区列表",
             description = "implicit 兜底容器在前（每人一个、后台懒创建），其余按创建时间倒序。"
@@ -113,18 +111,6 @@ public class ProjectController {
     }
 
     public record UpdateReq(String name, String instructions, String defaultAgentId) {
-    }
-
-    @Operation(summary = "存量归属回填（管理员）",
-            description = "【已过时，2026-10-17 起不建议调用】旧模型会把 project_id 为空的历史会话/产物回填到"
-                    + " implicit「兜底容器」；新模型把「会话」栏视为一等状态，前端顶部「会话」直接展示。"
-                    + "保留该端点只为兼容旧运维脚本，调用后 UI 仍会经 __nospace__ 把它们显示在「会话」里。")
-    @PostMapping("/backfill")
-    public ResultJson backfill() {
-        if (!roleService.isAdminCode(RequestUser.role())) {
-            return ResultJson.error(403, "需要管理员权限");
-        }
-        return ResultJson.ok(projectBackfillService.backfillLegacyOwnership(), "回填完成");
     }
 
     @Operation(summary = "归档 / 恢复工作区", description = "body: {status: active|archived}。归档不动会话与产物，implicit 兜底容器不可归档")

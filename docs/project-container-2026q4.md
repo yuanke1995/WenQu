@@ -434,7 +434,7 @@ sandboxIdForThread(threadId, uid) → sha256(uid + ":" + threadId)[0..12]
 
 ### 12.1 存量归属回填（立项卡 §三 第 3 步落实）
 
-- 新端点：`POST /api/ai/project/backfill`（管理员）；服务：`ProjectBackfillService`。
+- 新端点：`POST /api/ai/project/backfill`（管理员）；服务：`ProjectBackfillService`。（**2026-10-17 晚后续**：该端点与服务已删除——一次性迁移早已跑完，全仓无调用方；记录留此备查。）
 - 语义：**只处理 `project_id IS NULL` 的历史行**，归到**各用户自己的兜底容器**（先 `ensureImplicit` 再批量更新）。
   这不是"猜工作区"——这些数据产生于工作区概念出现之前，本来就属于该用户的默认容器；有归属的行一行不动。幂等。
 - 实测：`{"users":24,"sessions":258,"artifacts":44}`；回填后 `NULL` 会话从 264 → 6（剩余 6 条属 `anonymous` 共享池），
