@@ -335,7 +335,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         }
         ModelRegistryService.ModelRoute route = modelRegistry.chatRoute(ref);
         if (route == null) {
-            failLoud(channel, "模型「" + ref + "」未登记或已不可用：请在模型管理里确认该供应商与模型");
+            failLoud(channel, "模型「" + ref + "」未登记或已不可用：请在「智能体 → 模型供应商」里确认该供应商与模型");
             return;
         }
         ExecutionPolicy policy = tools.policyFor(cmd,

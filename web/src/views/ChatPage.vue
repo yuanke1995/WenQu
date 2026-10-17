@@ -1446,7 +1446,7 @@
               <span>缓存命中率</span><span class="ctxcap-row-val">{{ ctxCapData.cacheRate }}%</span>
             </div>
           </template>
-          <div v-else class="ctxcap-empty">该模型未登记上下文窗口，请在模型管理中声明</div>
+          <div v-else class="ctxcap-empty">该模型未登记上下文窗口，请在「模型供应商」里声明</div>
         </div>
       </div>
     </Teleport>

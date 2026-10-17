@@ -1083,7 +1083,7 @@ const errorBrief = (raw, kind) => {
   if (/Failed to fetch|NetworkError|network/i.test(s)) return '网络连接失败：请检查网络或代理设置'
   if (/401|Unauthorized/i.test(s)) return '鉴权失败：登录已过期，请重新登录'
   if (/429|rate\s*limit/i.test(s)) return '请求过于频繁：模型服务限流，稍后重试'
-  if (/5\d{2}|Bad Gateway|Service Unavailable/i.test(s)) return '模型服务异常：稍后重试，或到设置页检查供应商状态'
+  if (/5\d{2}|Bad Gateway|Service Unavailable/i.test(s)) return '模型服务异常：稍后重试，或到「模型供应商」检查该供应商状态'
   return '生成失败，可重试或更换模型'
 }
 // ==================== 重新生成多版本（同一问题的多次回答可来回切换） ====================

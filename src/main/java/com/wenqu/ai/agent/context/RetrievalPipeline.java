@@ -550,7 +550,7 @@ public class RetrievalPipeline {
         int maxOutput = declaredOutput != null && declaredOutput > 0 ? declaredOutput : 0;
         if (!windowFromModel) {
             onDegrade.accept("ctxWindowUndeclared",
-                    "该模型未声明上下文窗口，检索资料将无法填入；请在模型管理页为 " + resolvedModel + " 声明窗口");
+                    "该模型未声明上下文窗口，检索资料将无法填入；请在「模型供应商」里为 " + resolvedModel + " 声明窗口");
             log.warn("[CTX] 模型 {} 未声明上下文窗口，检索预算托底 1000", resolvedModel);
             return new CtxBudget(0, maxOutput, 1000, "未声明");
         }
@@ -575,7 +575,7 @@ public class RetrievalPipeline {
                     "该模型声明的最大输出 " + maxOutput + " 不小于" + windowSource + "预算（" + windowSource + " " + window
                             + " × 安全系数 " + ModelRegistryService.CONTEXT_SAFETY_FACTOR + " = " + windowBudget + "），"
                             + "上下文预算被托底为 1000，检索资料将无法填入；请在"
-                            + (fromUser ? "聊天页把该模型的上下文窗口档位调大" : "模型管理中调小该模型的最大输出"));
+                            + (fromUser ? "聊天页把该模型的上下文窗口档位调大" : "「模型供应商」里调小该模型的最大输出"));
             log.warn("[CTX] 最大输出 {} ≥ 窗口预算 {}（窗口 {}，来源={}），上下文预算托底 1000",
                     maxOutput, windowBudget, window, windowSource);
         }
