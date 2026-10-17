@@ -726,8 +726,9 @@ export const setApiKeyDisabled = (id, disabled) =>
 /** 授权 / 收回该 Key 访问平台级 MCP 入口（/ai/mcp）的资格 */
 export const setApiKeyMcp = (id, mcpEnabled) =>
   request(`/api-key/${id}/mcp`, { method: 'PUT', body: JSON.stringify({ mcpEnabled }) })
-export const renameApiKey = (id, name) =>
-  request(`/api-key/${id}/name`, { method: 'PUT', body: JSON.stringify({ name }) })
+/** 编辑 Key：用途名称与有效期（expireAt 传 'yyyy-MM-dd'，空串=长期有效）；Key 本身不可改 */
+export const updateApiKey = (id, body) =>
+  request(`/api-key/${id}`, { method: 'PUT', body: JSON.stringify(body) })
 export const deleteApiKey = id => request(`/api-key/${id}`, { method: 'DELETE' })
 
 // ==================== 智能体 Agent 配置（4.1：模型/知识库/工具/提示词） ====================
@@ -900,6 +901,38 @@ export function uploadChatAttachment(file, onProgress) {
   fd.append('file', file)
   return upload('/chat/attachment', fd, onProgress)
 }
+
+/**
+ * 游客附件上传（免登录分享链路）：返回形态与登录态一致（{fileId,name,mime,size}），但打的是
+ * {@code /share/{token}/attachment}——那个端点按 {@code share-visitor:{visitorId}} 落盘，
+ * 于是每个访客各有自己的目录。**不能复用** {@code /chat/attachment}：那条按登录 uid 分目录，
+ * 而游客 uid 恒为 anonymous，所有访客会挤进同一个目录，彼此的 fileId 都能 stat 到。
+ * <p>服务端要求发布者已开启「允许游客上传附件」，未开启时返回明确错误（不静默丢弃）。
+ */
+export function uploadShareAttachment(token, visitorId, file, onProgress) {
+  const fd = new FormData()
+  fd.append('file', file)
+  return upload(`/share/${encodeURIComponent(token)}/attachment?visitorId=${encodeURIComponent(visitorId)}`, fd, onProgress)
+}
+
+/**
+ * 游客提交回答反馈（👍/👎，可选文字）：发布者在公开链接上唯一拿得到的内容质量信号。
+ * <p>不能走登录态的 {@code /feedback}——那条按 RequestUser.uid() 校验归属，游客是 anonymous，一律 403。
+ * 服务端改为按访客 uid 校验：由 messageId 取回消息，再比对消息所属会话是否属于该访客。
+ */
+export const submitShareFeedback = (token, payload) =>
+  request(`/share/${encodeURIComponent(token)}/feedback`, {
+    method: 'POST',
+    body: JSON.stringify(payload || {})
+  })
+
+/**
+ * 批量问「这些 fileId 的字节还在不在」：返回 {live:[fileId]}。
+ * 编辑卡/输入框的内联附件 chip 用它把「已失效」这三个字落到证据上——不在盘上才叫失效，
+ * 只是这一端没拿到凭据不叫（服务端保留期默认 24h，刷新页面只需 0 秒）。
+ */
+export const checkChatAttachmentsLive = fileIds =>
+  request('/chat/attachment/live', { method: 'POST', body: JSON.stringify(fileIds || []) })
 
 /** 上传文档（onProgress 接收 0-100 百分比；visionRef 可选=文档级视觉模型覆盖，空=跟随知识库） */
 export function uploadDocument(file, description, onProgress, kbId, visionRef) {
