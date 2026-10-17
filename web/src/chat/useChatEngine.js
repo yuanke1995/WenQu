@@ -1768,7 +1768,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
   // model 先按前端解析的生效引用预填（覆盖>个人默认，与后端 resolveModel 同序）：「模型已切换」
   // 分隔记录在本轮回答一出现就能比对；done 再用后端权威值校正
   // stage 预置检索档（两档口径见 projections 的阶段文案映射）：与后端首条事件映射结果同词，开场不闪词
-  const fresh = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkLoading: false, stage: resume ? '正在接回这一轮…' : '正在检索资料…', time: Date.now(), artifacts: [], toolCalls: [], subagents: [], plan: null, planCard: null, timeline: [], errorCard: null, model: model || effectiveModel.value, delegated: null }
+  const fresh = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkLoading: false, stage: resume ? '正在接回这一轮…' : '正在检索资料…', time: Date.now(), turnMs: 0, humanWaitMs: 0, artifacts: [], toolCalls: [], subagents: [], plan: null, planCard: null, timeline: [], errorCard: null, model: model || effectiveModel.value, delegated: null }
   const msg = replaceMsg ? Object.assign(replaceMsg, fresh, { messageId: null, fb: null }) : reactive(fresh)
   if (!replaceMsg) messages.value.push(msg)
   const viewing = () => currentSessionId.value === sid  // 只有正在看这个会话才滚动/贴底
@@ -1778,6 +1778,9 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
   const abort = new AbortController()
   const st = { msg, abort }
   chatStreams.set(sid, st)
+  // 顶部那条整轮用时从开流第一秒就要跟着跳，不能等第一张工具卡才起表：纯检索、纯思考那几分钟
+  // 同样在跑，没这一句它停在「0 秒」不动，看着像卡死
+  ensureTick()
   // 首条消息发出即把会话抬进侧栏列表（列表隐藏空会话，等 onDone 才刷新的话长回答期间不可见）
   if (isFirstMessage) markSessionActive(sid, question)
   // 本轮视角归位：留白补足并落屏后贴底，问题正好落在视口最上（与空会话首问同一落点）
@@ -2009,11 +2012,12 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
           // 幂等兜底：同一次调用可能被快照与增量各给一遍（后端按事件序号过滤，这里再守一道）。
           // 重复的 start 会多出一颗转圈卡片，要等 done 才被终态盖掉——刷新那一刻最容易撞见
           if (msg.toolCalls.some(x => x.status === 'start' && x.name === t.name && (x.args || '') === (t.args || ''))) return
-          const rec = { ...t, startAt: Date.now() }
+          const rec = { ...t }
           msg.toolCalls.push(rec)
           pushTimelineTool(msg, rec)
           // 进入工具阶段：上一句阶段文案（如「正在检索资料…」）已过期，清掉避免工具跑完又复活。
-          // 该阶段由工具卡片自己表达（转圈 + 实时耗时），底部进度行不重复描述
+          // 该阶段由工具卡片自己表达（转圈），底部进度行不重复描述；用时不在卡片上报，
+          // 一轮只气泡顶部那一条说一个数（判据在投影层的整轮用时那组函数里）
           msg.stage = ''
           ensureTick()
         } else {
@@ -2172,7 +2176,12 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         // 本轮身份：done 带回的 turnId 与刚落库的消息行同源——「过程」入口不该是刷新后才有的东西
         if (p.turnId) msg.turnId = String(p.turnId)
         if (p.tokens && typeof p.tokens === 'object') msg.tokens = p.tokens
+        // 整轮用时（气泡顶部那一条读的数）：done 这份是后端算好的机器时间（墙钟扣掉人在回路的
+        // 等待），与看板、台账同一个数；历史恢复读 tokens 里落库的那一份，两条路同源
+        if (typeof p.elapsedMs === 'number') msg.turnMs = p.elapsedMs
+        if (typeof p.humanWaitMs === 'number') msg.humanWaitMs = p.humanWaitMs
         // 本轮作答方归属（P5：不再有会话锁定，done 的 agentId/agentName 就是这一轮实际作答的智能体）
+        if (p.agentId) msg.agentId = p.agentId
         if (p.agentName) msg.agentName = p.agentName
         // 会话内 @ 智能体（§4）：done 的 agentName 是会话绑定口径，本轮由被 @ 的智能体作答时
         // 气泡归属按委派值覆盖（后端落库快照同为委派智能体，刷新后回显一致）
@@ -2214,7 +2223,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       // 队列一起清：这一轮不会再有可答的卡了
       msg.ask = null
       msg.askQueue = []
-      // 整轮耗时（右栏「生成回答」行的 duration）；历史恢复的消息无此值则不显示
+      // 整轮结束时刻（右栏「生成回答」行的 duration 用它）；历史恢复的消息无此值则不显示
       msg.doneTime = Date.now()
       // 生成完成：编排卡片收起为一行（用户未手动干预时），避免答案出来后还占着版面
       if (msg.saOpen && !msg.saTouched) msg.saOpen = false

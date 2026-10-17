@@ -229,7 +229,7 @@ const check = (ok, label, detail = '') => {
   const h5 = stripComments(read('src/h5/MobileMsgRow.vue'))
   for (const [label, s] of [['PC', pc], ['移动端', h5]]) {
     check(/seg\.kind === 'cluster'/.test(s), `${label} 渲染过程簇头（cluster 分支存在）`)
-    check(/timelineRows\(m\)/.test(s), `${label} 用timelineRows 摊平渲染（非旧 timelineView）`)
+    check(/turnRows\(m\)/.test(s), `${label} 用整块折叠那一步摊平渲染（收起时只出正文行）`)
     check(/inCluster\s*\?\s*'过程说明'\s*:\s*'执行过程'/.test(s),
       `${label} 簇内独白段改称「过程说明」（防父子同名套娃）`)
     check(/toggleCluster\(m,\s*seg\)/.test(s), `${label} 簇头可点开/收起`)
@@ -248,34 +248,58 @@ const check = (ok, label, detail = '') => {
   }
 }
 
-// ---- ⑧b 耗时口径：首尾真实跨度，且没计时就不显示（两端同构 + 不许退回求和） ----
-// 背景：簇头/组头原先是「各张卡耗时之和」。同一步里的工具是并发跑的，相加比用户实际等的时间长；
-// 两次调用之间的思考又不落在任何一张卡里，相加又比实际等待短——一个数同时朝两个方向错。
-// 更要命的是 elapsedMs 此前只活在一帧里、不落库：刷新后每张卡都没有数，簇头却照样渲染「· 0ms」，
-// 把「没记录」显示成「跑了 0 毫秒」。静态编译全绿，只有真机翻一遍历史才看得见。
+// ---- ⑧b 耗时只报一处：整轮那一条在气泡顶部，逐行耗时不许复现（两端同构） ----
+// 背景：这里曾经是簇头、组条、每张工具卡各挂一个数，一屏六个读数读不出重点，两个口径还互相打架
+// （组条是首尾跨度、单卡是各自跑掉多久）。更要命的是那些数只活在 SSE 那一帧、不落库，刷新后
+// 每张卡都没数却照样渲染「· 0ms」——把「没记录」显示成「跑了 0 毫秒」。
+// 现在一轮只顶部那一条报一个数（后端算好的机器时间，随消息落库），它同时是整块过程的折叠开关。
 {
   const pc = stripComments(read('src/views/ChatPage.vue'))
   const h5 = stripComments(read('src/h5/MobileMsgRow.vue'))
+  const bar = stripComments(read('src/components/TurnBar.vue'))
+  check(/turnShow\(m\)/.test(bar) && /turnHead\(m\)/.test(bar) && /toggleTurn\(m\)/.test(bar)
+    && /turnToggleable\(m\)/.test(bar) && /turnTitle\(m\)/.test(bar),
+    '那一条的渲染与折叠开关只有一份实现（TurnBar.vue），两端各挂一次')
+  check(!/v-if="turnExpandable\(m\)"/.test(bar),
+    '开关不只认「有没有过程」——跑着的时候它只是一行计时器，不给折叠（收起正在长的过程没有可读的东西）')
   for (const [label, s] of [['PC', pc], ['移动端', h5]]) {
-    for (const fn of ['clusterDur(seg)', 'groupDur(seg)', 'fallbackDur(m)']) {
-      check(new RegExp(`v-if="${fn.replace(/[()]/g, '\\$&')}"`).test(s),
-        `${label} 跨度为空时整块不渲染（不出现「· 0ms」这种假数）→ ${fn}`)
+    const tops = (s.match(/<TurnBar[^>]*!m\.loading[^>]*>/g) || []).length
+    const bots = (s.match(/<TurnBar(?![^>]*!m\.loading)[^>]*m\.loading[^>]*>/g) || []).length
+    check(tops === 1 && bots === 1,
+      `${label} 那一条按「跑着在正文末尾 / 答完在回答顶上」两处各挂一次（实得 顶 ${tops} 底 ${bots}）`)
+    // 逐行耗时复现 = 一屏又开始报好几个数，用户点名的就是这件事
+    for (const gone of ['clusterDur', 'groupDur', 'fallbackDur', 'liveToolDur', 'toolDuration', 'DUR_SPAN_TITLE']) {
+      check(!new RegExp(`${gone}\\(`).test(s), `${label} 不再逐行报耗时（${gone} 已退役）`)
     }
+    // 进行中提示也只留这一处：原先气泡底下还挂一行阶段文案，两句「正在…」上下同屏
+    check(!/class="busy"|busy-hint/.test(s), `${label} 那一条底下不再另挂一行进行中提示`)
   }
+  check(!/toolDuration\(/.test(bar), '那一条自己也不报逐项耗时（只报整轮那一个数）')
   const pj = stripComments(read('src/chat/projections.js'))
-  const span = pj.match(/const spanOfTools = tools => \{[\s\S]*?\n\}/)
-  check(!!span, '跨度实现可定位（spanOfTools）')
-  if (span) {
-    const src = span[0]
-    check(!/ms \+= t\.elapsedMs/.test(src), '跨度不是各张卡之和（并发只算一次）')
-    check(/waited/.test(src), '跨度减掉等人那一段（只扣单卡不扣跨度，簇头照样多出用户读卡那分钟）')
-    check(/return ''/.test(src), '一张都没计时数据时返回空串，而不是 0ms')
+  const rows = pj.match(/const turnRows = m => \{[\s\S]*?\n\}/)
+  check(!!rows, '折叠判据可定位（turnRows）')
+  if (rows) {
+    check(/timelineRows\(m\)/.test(rows[0]) && /turnOpen\(m\) \?/.test(rows[0]),
+      '展开走原交错时序、收起才裁行（不是反过来把时间线拆成两份）')
+    check(/kind === 'text'/.test(rows[0]), '收起时只留正文行（正文各段本就是 content 的连续切片）')
   }
-  const endAt = pj.match(/const toolEndAt = t => \{[\s\S]*?\n\}/)
-  check(!!endAt && /startedAtMs/.test(endAt[0]),
-    '起止只用服务端时刻（前端 tick 需换算到同一个钟，混两个钟就会被时钟差带歪）')
-  check(/const DUR_SPAN_TITLE = /.test(pj), '口径说明只有一份（PC 与 H5 共用，防两端各写一句漂移）')
-  check(!/const durOfTools = /.test(pj), '求和那份已退役（不许两处口径并存）')
+  const open = pj.match(/const turnOpen = m => \{[\s\S]*?\n\}/)
+  check(!!open && /_turnOpen/.test(open[0]) && /m\.loading/.test(open[0]),
+    '跑着展开、答完收起，且用户点过的那一次优先（否则读过程读到一半被自动收掉）')
+  check(/const durZh = ms =>/.test(pj), '中文长格式只有一份（PC 与 H5 共用）')
+  // 跨度那套（首尾相减、扣等待账）随逐行耗时一起退役：留着就是两套口径并存，早晚有人接回去
+  for (const gone of ['spanOfTools', 'toolEndAt', 'DUR_SPAN_TITLE', 'const clusterDur', 'const groupDur', 'const fallbackDur']) {
+    check(!new RegExp(gone).test(pj), `${gone} 已删净（不许与整轮耗时并存两套口径）`)
+  }
+  // 气泡级进度行那套互斥优先级链随第二行一起退役：它的存在前提（进度行要在多处构件间让位）已经没了
+  for (const gone of ['const busyOf', 'subRunning']) {
+    check(!new RegExp(gone).test(pj), `${gone} 已删净（进行中提示只由那一条表达，不许再长出第二处）`)
+  }
+  // 那个数必须落库：只随 done 一帧下发的话，刷新一次「这一轮跑了多久」就读不出来
+  check(/turnElapsedMs/.test(pj), '前端读的是落库/done 那一份整轮用时')
+  const head = pj.match(/const turnHead = m => \{[\s\S]*?\n\}/)
+  check(!!head && /const dur = ms \?/.test(head[0]),
+    '没数时标题里不拼「用时」（宁可只说「已完成」，凑出来的 0 会被当成事实读）')
 }
 
 // ---- ⑨ 过程回放（事件账本）：两端共用一份，移动壳不许没有 ----

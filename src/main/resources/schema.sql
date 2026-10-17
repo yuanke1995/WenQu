@@ -226,7 +226,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_message` (
     `tool_calls`  MEDIUMTEXT   DEFAULT NULL COMMENT '工具调用过程 (JSON数组: [{name,status,startedAtMs,elapsedMs,waitedMs,args,result|error}]；startedAtMs 是服务端墙上开始时刻、elapsedMs 是这一次实际跑掉的时长、waitedMs 是其中被等你读卡答题盖住的时长（整段跨度要减它），三者缺位表示没计时、前端不显示；入参/输出存≤8KB全文，供前端卡片展开)',
     `timeline`    TEXT         DEFAULT NULL COMMENT '回答时间线 (JSON数组：正文区间段 / 过程区间段 / 工具下标段 / 产物下标段，记录交错顺序，刷新后还原过程视图)',
     `process_text` TEXT        DEFAULT NULL COMMENT '过程独白全文 (<process> 标签内的模型思考叙述，与正文分流；时间线 process 段区间指向本字段)',
-    `tokens`      TEXT         DEFAULT NULL COMMENT 'Token 用量 (JSON: context/budget/hits/output/prompt/outputIsReal/total)',
+    `tokens`      TEXT         DEFAULT NULL COMMENT '本轮运行统计 (JSON: context/budget/hits/output/prompt/outputIsReal/total/thinkingChars/summaryUntil; turnElapsedMs=这一轮机器耗时即墙钟扣掉人在回路、humanWaitMs=其中被等你读卡答题盖住的时长且只在真等过时才写) —— 气泡顶部那条整轮耗时读这两个键，不落库则刷新即没数',
     `model`       VARCHAR(190) DEFAULT NULL COMMENT '本轮生效模型引用（助手消息落库；用量统计按模型分组的依据，存量行为 NULL 归入未知）',
     `attachments` TEXT         DEFAULT NULL COMMENT '附件元信息 (JSON数组: [{name,mime,size}]，不含内容本体)',
     `agent_id`    VARCHAR(50)  DEFAULT NULL COMMENT '本轮生效的智能体（取自会话级绑定的当轮快照；NULL=未使用智能体）',

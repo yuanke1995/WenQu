@@ -65,9 +65,12 @@
           <AgentAvatar class="agent-tag-ava" :agent="badgeOf(consultedOf(m)[0].id, consultedOf(m)[0].name)" :size="14" /> 本轮已咨询 {{ consultedOf(m).map(c => `「${c.name}」`).join('、') }}
         </div>
 
+        <!-- 整轮用时那一条：答完之后它在回答顶上当总览（跑着的时候它在正文末尾，见下面进度行后） -->
+        <TurnBar v-if="!m.loading" :m="m" mobile />
+
         <!-- 时间线：正文与思考/过程/工具按到达顺序交错（深度思考不再单独堆在气泡顶上） -->
         <div v-if="hasTimelineBlocks(m)" class="md bubble-md" :data-msg-index="index">
-          <template v-for="(seg, si) in timelineRows(m)" :key="si">
+          <template v-for="(seg, si) in turnRows(m)" :key="si">
             <AnswerBody v-if="seg.kind === 'text'" class="tl-text" :content="m.content.slice(seg.from, seg.to)"
                         :images="m.images" :sources="m.sources" :msg-index="index"
                         runnable :session-id="sessionId" :streaming="m.loading"
@@ -91,9 +94,6 @@
                 <close-circle-outlined v-else class="ic-err" />
                 <span v-if="clusterTools(seg).length" class="card-title">已执行 {{ executedCount(clusterTools(seg)) }} 个操作</span>
                 <span v-else class="card-title">执行过程 · {{ clusterProcCount(seg) }} 段说明</span>
-                <span v-if="clusterDur(seg)" class="card-dim"
-                      :title="DUR_SPAN_TITLE"
-                >· {{ clusterDur(seg) }}</span>
                 <span v-if="runBoardText(m)" class="run-board">{{ runBoardText(m) }}</span>
                 <caret-right-outlined class="caret" :class="{ open: clusterOpen(m, seg) }" />
               </button>
@@ -111,9 +111,6 @@
                 <check-outlined v-else-if="!groupHasError(seg)" class="ic-ok" />
                 <close-circle-outlined v-else class="ic-err" />
                 <span class="card-title">执行了 {{ executedCount(seg.tools) }} 个操作</span>
-                <span v-if="groupDur(seg)" class="card-dim"
-                      :title="DUR_SPAN_TITLE"
-                >· {{ groupDur(seg) }}</span>
                 <span v-if="runBoardText(m)" class="run-board">{{ runBoardText(m) }}</span>
                 <caret-right-outlined class="caret" :class="{ open: seg.tools[0]._groupOpen }" />
               </button>
@@ -128,8 +125,6 @@
                     <span v-if="t.attempts > 1" class="card-dim">重试 {{ t.attempts - 1 }} 次</span>
                     <span v-if="fanHasBoard(t.fanOut)" class="card-dim">{{ fanHead(t) }}</span>
                     <span v-if="fanRun(t)" class="fan-run">{{ fanRun(t) }}</span>
-                    <span v-if="t.status === 'start' && t.startAt" class="card-dim">{{ liveToolDur(t.startAt) }}</span>
-                    <span v-else-if="t.elapsedMs > 0" class="card-dim">{{ toolDuration(t.elapsedMs) }}</span>
                     <caret-right-outlined class="caret" :class="{ open: t._open }" />
                   </button>
                   <!-- askUser 问答记录：可折叠（默认展开），与 PC 同构 -->
@@ -172,7 +167,7 @@
           </template>
         </div>
         <!-- 无时间线（整段渲染）。正文为空且在生成中时不渲染气泡壳——
-             否则「正在检索/生成」阶段会出现一个空白的圆角框（进度行已表达状态） -->
+             否则准备期会露一个空白的圆角框（这一轮的状态由整轮用时那一条说着） -->
         <AnswerBody v-else-if="m.content || !m.loading" class="bubble-md" :content="m.content || ''"
                     :images="m.images" :sources="m.sources" :msg-index="index"
                     runnable :session-id="sessionId"
@@ -182,14 +177,13 @@
         <!-- 智能体提问（askUser）的「待答」态不在气泡里渲染：移动壳与 PC 同语义，把底部输入卡
              整块替换成提问面板（见 MobileChatPage 的 m-askp）；答复后问答记录以工具卡形态留在本气泡 -->
 
-        <!-- 工具列表兜底（历史消息无时间线时） -->
-        <div v-if="m.toolCalls && m.toolCalls.length && !hasTimelineBlocks(m)" class="card">
+        <!-- 工具列表兜底（历史消息无时间线时）：受顶部那条管辖，整块过程收起时一并出去 -->
+        <div v-if="m.toolCalls && m.toolCalls.length && !hasTimelineBlocks(m) && turnOpen(m)" class="card">
           <button class="card-head" type="button" @click.stop="m._fbOpen = !m._fbOpen">
             <span v-if="toolRunning(m)" class="spinner"></span>
             <check-outlined v-else-if="!m.toolCalls.some(t => t.status === 'error')" class="ic-ok" />
             <close-circle-outlined v-else class="ic-err" />
             <span class="card-title">执行了 {{ executedCount(toolCallsView(m.toolCalls)) }} 个操作</span>
-            <span v-if="fallbackDur(m)" class="card-dim" :title="DUR_SPAN_TITLE">· {{ fallbackDur(m) }}</span>
             <caret-right-outlined class="caret" :class="{ open: m._fbOpen }" />
           </button>
           <div v-show="m._fbOpen" class="card-body">
@@ -205,7 +199,6 @@
                 <span class="tool-line-name">{{ toolLabel(t.name, t.label) }}</span>
                 <span v-if="fanHasBoard(t.fanOut)" class="card-dim">{{ fanHead(t) }}</span>
                     <span v-if="fanRun(t)" class="fan-run">{{ fanRun(t) }}</span>
-                <span v-if="t.elapsedMs > 0" class="card-dim">{{ toolDuration(t.elapsedMs) }}</span>
               </div>
             </template>
           </div>
@@ -218,11 +211,9 @@
           <button class="btn-ghost" @click.stop="$emit('retry', index)"><redo-outlined /> 重新生成</button>
         </div>
 
-        <!-- 进度行：一轮同时只出现一处（互斥见 busyOf） -->
-        <div v-if="busyOf(m)" class="busy" :class="{ warn: busyOf(m).warn }">
-          <span class="spinner" />
-          <span v-if="busyOf(m).text">{{ busyOf(m).text }}</span>
-        </div>
+        <!-- 跑着的时候整轮用时这一条跟在正文最后面：触屏上眼睛盯的就是最新长出来的那一行，
+             它同时也是这一轮唯一的进行中提示（底下不再另挂一行阶段文案） -->
+        <TurnBar v-if="m.loading" :m="m" mobile />
 
         <!-- 工具审批（人在回路） -->
         <div v-if="m.approval" class="approval">
@@ -353,17 +344,18 @@ import { resolveImg } from '../utils/markdown'
 import AnswerBody from '../components/AnswerBody.vue'
 import { fmtTokens } from '../utils/token'
 import {
-  busyOf, hasTimelineBlocks, timelineRows, procOpen, toggleProc, procSlice,
+  hasTimelineBlocks, procOpen, toggleProc, procSlice,
+  turnRows, turnOpen,
   thinkSegOpen, toggleThinkSeg, thinkSlice, thinkGrowing, toolLabel, toolBrief,
-  clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterDur, clusterProcCount,
-  prettyIo, liveOutput, toolDuration, liveToolDur, toolRunning, groupRunning, groupHasError, groupDur,
+  clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterProcCount,
+  prettyIo, liveOutput, toolRunning, groupRunning, groupHasError,
   fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget, fanRun, runBoardText,
-  fallbackDur, toolCallsView, executedCount, toolSearchQueries, retrievalLineTitle, subagentCard, barWidth, toggleSubagents, fmtDuration,
-  DUR_SPAN_TITLE,
+  toolCallsView, executedCount, toolSearchQueries, retrievalLineTitle, subagentCard, barWidth, toggleSubagents, fmtDuration,
   fmtMsgTime, fmtSize, errorBrief, sourceName, canSwitchPrev, canSwitchNext, verLabel, agentBadgeOf,
   pasteTitle, pasteSub, isPastedText, consultedOf
 } from '../chat/projections'
 import AskRecordCard from '../components/AskRecordCard.vue'
+import TurnBar from '../components/TurnBar.vue'
 import SubAgentChatCard from '../components/SubAgentChatCard.vue'
 import ToolSpillButton from '../components/ToolSpillButton.vue'
 import AgentAvatar from '../components/AgentAvatar.vue'
@@ -503,7 +495,7 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
 .ic-err { color: var(--app-danger); }
 .ic-accent { color: var(--app-accent); }
 /* 过程簇：连续的「独白+工具」收成一张卡（PC 端同构，见 ChatPage.vue .tl-cluster）。
-   展开后其内各段由 timelineRows 摊平接着渲染，这里只给簇内段左缩进一格做出层级。 */
+   展开后其内各段由摊平那一步接着渲染，这里只给簇内段左缩进一格做出层级。 */
 .proc-cluster { background: var(--app-panel); }
 .tl-group { display: flex; flex-direction: column; gap: 6px; }
 .proc-card.inCluster, .tl-group.inCluster { margin-left: 12px; }
@@ -537,8 +529,6 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
 .err-head { font-size: 13px; color: var(--app-danger-text); display: flex; align-items: center; gap: 6px; }
 .err-card.net .err-head { color: var(--app-warn-text); }
 .err-tip { font-size: 12px; color: var(--app-text2); }
-.busy { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--app-text2); }
-.busy.warn { color: var(--app-warn-text); }
 
 .approval { border: 1px solid var(--app-warn-border); background: var(--app-warn-weak); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .approval-title { font-size: 13px; font-weight: 600; color: var(--app-warn-text); display: flex; align-items: center; gap: 6px; }

@@ -265,36 +265,10 @@ const consultChatView = t => {
     error: s.error || ''
   }
 }
-// 是否有「正在运行且可见」的编排分支。必须带 delegated 条件：编排卡片（subagentCard）只渲染
-// 委派分支（多视角模式的分支是实现细节，不渲染卡片）。若这里不带 delegated，多视角模式下
-// busyOf 会以为「卡片在转圈」而让位，实际卡片根本不渲染 → 气泡整个空白，loading 凭空消失。
-// 两处判定必须同源：busyOf 只能把进度让位给「真的正在渲染」的构件。
-const subRunning = m => Array.isArray(m?.subagents) && m.subagents.some(b => b.status === 'running' && b.delegated)
-
-// ==================== 气泡级「进行中」提示（单一进度行） ====================
-// 一轮回答里同一时刻只出现一处进行中指示，互斥由本函数的优先级链保证，而不是让
-// 阶段提示 / 裸 spin / 重试条各自写 v-if 条件（那样每加一种状态就可能再叠一层）。
-// 返回 null = 此刻不该有底部进度行：进行中状态已由更具体的构件表达——
-//   工具卡片（转圈 + 实时耗时 + 工具名）、编排卡片（每分支转圈 + 进度条）、
-//   正在长的思考段（就地一行 + 转圈）、审批卡（批准/拒绝按钮）。
-// 返回 { text } = 带文案的进度行；{ spin: true } = 只有转圈（正文已在流出，不必重复写字）。
-const busyOf = m => {
-  if (!m || !m.loading) return null
-  if (m.approval) return null                     // 等用户批准：进度让位给审批卡
-  if (m.ask) return null                          // 等用户作答：进度让位给提问卡
-  if (m.retrying) return { text: '连接中断，正在自动重试…', warn: true }
-  if (toolRunning(m)) return null                 // 工具自己会转圈并计时
-  if (subRunning(m)) return null                  // 编排卡片每个分支自带转圈 + 进度条
-  // 思考段自己会在就地那一行亮加载态（标题循环渐变，见 thinkGrowing 的消费方）：让位条件要与它同判据，
-  // 否则 thinkLoading=true 而段还没建出来时进度行同样凭空消失（与 subRunning 同类坑）
-  if (m.thinkLoading && m.thinking) return null       // 深度思考那一行自己会亮加载态
-  if (m.stage) return { text: stageLabel(m.stage) }   // 后端阶段文案（两档，映射见 stageLabel）
-  if (m.content) return { spin: true }            // 正文续写中：一个转圈足够
-  return { text: '正在生成回答…' }                // 工具已回、正文未出（含多轮工具之间的空档）
-}
-
-// ==================== 阶段文案（两档收敛） ====================
-// 一轮回答的进度行只讲两档：准备期统一「正在检索资料…」，生成期「正在生成回答…」。
+// ==================== 阶段文案（只给分享页那条提示用） ====================
+// 主对话页（PC 与移动壳）不读这里：一轮的进行中提示只有一处，就是「整轮用时」那一条
+// （见 turnHead）。原先气泡底下还有一行阶段文案，与它上下同屏、各说各话——用户点名的就是
+// 这一对重复。分享页没有那一条，仍靠这里把后端 stage 帧显示成一行提示。
 // 「正在理解问题…」并入检索档——它只占 ~1 秒，独立换词带来的是闪烁而不是信息
 // （理解/改写/路由的细节由工具卡、检索行等具体构件表达）。
 // 计划模式、执行工作流是独立模式的进程文案，原样保留不并档。
@@ -465,7 +439,7 @@ const toggleCluster = (m, cl) => {
   m._clOpen[cl.key] = !clusterOpen(m, cl)
 }
 
-/** 簇内工具（跨多个 group 汇总）：头部的操作数与状态图标都从这里派生，耗时走同一份真实跨度口径 */
+/** 簇内工具（跨多个 group 汇总）：头部的操作数与状态图标都从这里派生 */
 const clusterTools = cl => {
   const out = []
   for (const s of cl?.segs || []) if (s && s.kind === 'group' && s.tools) out.push(...s.tools)
@@ -473,7 +447,6 @@ const clusterTools = cl => {
 }
 const clusterRunning = cl => clusterTools(cl).some(t => t.status === 'start')
 const clusterHasError = cl => clusterTools(cl).some(t => t.status === 'error')
-const clusterDur = cl => spanOfTools(clusterTools(cl))
 /** 簇内独白段数：只在簇里一个工具都没有时外露（那时它是唯一可报的信息量） */
 const clusterProcCount = cl => (cl?.segs || []).filter(s => s && s.kind === 'process').length
 
@@ -487,6 +460,93 @@ const timelineRows = m => {
     if (s.kind === 'cluster' && clusterOpen(m, s)) for (const inner of s.segs) out.push({ ...inner, inCluster: true })
   }
   return out
+}
+
+// ==================== 「整轮用时」那一条（跑着在正文末尾，答完在回答顶上） ====================
+// 一轮回答的耗时只报这一处。原先簇头、组条、每张工具卡各挂一个数：一屏六个读数读不出重点，
+// 而且互相打架（组条是首尾跨度、单卡是各自跑掉多久，两个数并排放谁都不认）。现在整块过程收在
+// 这一条底下——跑的时候它跟在正文后面跟着秒走，答完回到回答顶上收成一条总览，点开才回到交错时序。
+/** 整轮用时（中文长格式）：35 分 19 秒 / 6 分 26 秒 / 40.5 秒。它现在独占一行标题，
+ *  要的是读出量级，不是 toolDuration 那种给行尾小 chip 用的紧凑写法（226.0s 读不出是几分）。 */
+const durZh = ms => {
+  const n = Math.max(0, Number(ms) || 0)
+  if (n < 1000) return '不到 1 秒'
+  const tenths = Math.round(n / 100)
+  if (tenths < 600) return (tenths % 10 ? (tenths / 10).toFixed(1) : String(tenths / 10)) + ' 秒'
+  const secs = Math.round(tenths / 10)
+  if (secs < 3600) {
+    const s = secs % 60
+    return Math.floor(secs / 60) + ' 分' + (s ? ' ' + s + ' 秒' : '')
+  }
+  const m = Math.round(secs / 60) % 60
+  return Math.floor(Math.round(secs / 60) / 60) + ' 小时' + (m ? ' ' + m + ' 分' : '')
+}
+/** 这一轮此刻的用时。跑的时候用本地钟跟着 tick 走；收尾后读 done 那两份相加，历史恢复没走过
+ *  done，只认 tokens 落库的那两份。
+ *  两处都没有就返回 0、界面不报数：不拿工具跨度凑一个数出来，那是「跑了多久工具」不是
+ *  「这一轮用了多久」，凑出来的数比空白更容易被当成事实读。 */
+const turnElapsedMs = m => {
+  if (!m) return 0
+  if (m.loading) return Math.max(0, nowTick.value - (Number(m.time) || nowTick.value))
+  // 机器时间 + 等人那一段＝服务端那侧的墙钟。报墙钟不报机器时间：屏幕上跳着的那一份本来就是
+  // 墙钟，收尾改成机器时间会让数字在答完那一刻变小（真机量过：跳到 5.7 秒 → 已完成 4.2 秒），
+  // 用户读成「计时坏了」。等了多久在悬停里单独交代，见 turnTitle。
+  return (Number(m.turnMs) || Number(m.tokens && m.tokens.turnElapsedMs) || 0) + turnWaitMs(m)
+}
+/** 其中被「等你答题/批准」盖掉的时长：不单独占一个数，但要在悬停里说清楚——不然一轮答得慢，
+ *  账全算在模型头上。 */
+const turnWaitMs = m => {
+  if (!m) return 0
+  return Number(m.humanWaitMs) || Number(m.tokens && m.tokens.humanWaitMs) || 0
+}
+/** 过程块折叠态：与思考段/簇同一套约定——用户点过就认点过的，没点过时收场收起、历史消息天然收起。
+ *  跑着的时候恒展开且**不认用户点过的那一次**：这一条此刻只是跟着秒走的计时器，把正在长的过程
+ *  收起来既没有可读的东西、又会把「答案写完之前看不到它在干什么」变成常态。
+ *  另外「重新生成」复用同一个消息对象，跑着时忽略标记也就顺手挡住了上一版留下的旧开合态。 */
+const turnOpen = m => {
+  if (!m) return false
+  if (m.loading) return true
+  const marked = m._turnOpen
+  if (marked === true) return true
+  if (marked === false) return false
+  return false
+}
+const toggleTurn = m => { if (m) m._turnOpen = !turnOpen(m) }
+/** 这条底下到底有没有过程可展开：有时间线过程段、或有无时间线时的兜底工具列表。
+ *  没有就别挂折叠三角——点开一片空比不挂更坏。 */
+const turnExpandable = m => hasTimelineBlocks(m) || !!(m && Array.isArray(m.toolCalls) && m.toolCalls.length)
+/** 这一刻点它有没有意义：只有答完（这一条当总览用）之后才给开关，跑着的时候它是一行状态。 */
+const turnToggleable = m => turnShow(m) && !!(m && !m.loading) && turnExpandable(m)
+/** 这条要不要占一行：跑着（它就是这一轮的进行中指示）、有数可报、或确有过程可展开。
+ *  三样都不占的（比如什么都没跑出来就失败）不报——错误卡自己会说。 */
+const turnShow = m => !!(m && m.loading) || turnElapsedMs(m) > 0 || turnExpandable(m)
+/** 此刻是不是异常态（连接断了在自动重试）：这一条是本轮唯一的状态行，异常也说在同一句里，
+ *  不另起一行——模板据此换警示配色。 */
+const turnWarn = m => !!(m && m.loading && m.retrying)
+/** 收尾只报用时，不报步数：步数数的是 toolCalls，展开出来的却是时间线那一份。引用自检改过正文时
+ *  整条时间线作废（后端 timelineJson 返回 null），那句「5 步操作」点开会是一片空——一个兑不了现的数。 */
+const turnHead = m => {
+  const ms = turnElapsedMs(m)
+  const dur = ms ? '，用时 ' + durZh(ms) : ''
+  if (m && m.loading) return (m.retrying ? '连接中断，正在自动重试' : '正在溯源') + dur + ' …'
+  if (m && (m.errorCard || m.failed)) return '这一轮中断' + dur
+  return '已完成' + dur
+}
+/** 这条躺哪儿：跑着的时候跟在正文最后面（眼睛在最新长出来的那一行，它又是跟着秒走的计时器），
+ *  答完之后回到回答顶上，当这一轮的总览。两端模板都只认这两个判据，不各写一份条件。 */
+const turnBottom = m => !!(m && m.loading) && turnShow(m)
+const turnTop = m => !!(m && !m.loading) && turnShow(m)
+/** 悬停说明：口径只在这一处描述，PC 与 H5 共用（两处各写一遍必然写歪） */
+const turnTitle = m => {
+  const w = turnWaitMs(m)
+  return w ? '从发出提问到答完一共 ' + durZh(turnElapsedMs(m)) + '，其中等你答题或批准 ' + durZh(w)
+    : '从发出提问到答完实际用的时间'
+}
+/** 顶部那条收起时只留正文行：正文各段本来就是 content 的连续切片（工具不往正文写内容），
+ *  连排与全量渲染等价，零失真；展开时回到按到达顺序交错的原始时序。 */
+const turnRows = m => {
+  const rows = timelineRows(m)
+  return turnOpen(m) ? rows : rows.filter(s => s.kind === 'text')
 }
 
 // 历史消息的 processText 可能带前导换行（后端修复前落库的数据，每个 <process> 块标签后的换行
@@ -725,47 +785,6 @@ const fanBudget = f => {
 }
 const groupRunning = g => g.tools.some(t => t.status === 'start')
 const groupHasError = g => g.tools.some(t => t.status === 'error')
-// 一组工具的真实跨度：从第一个操作起、到最后一个操作止（含两次调用之间模型想下一步的那几秒）。
-// 刻意不是各张卡之和——同一步里的工具是并发跑的，相加必然比用户实际等的时间长；而两张卡之间的思考
-// 又不落在任何一张卡的窗口里，相加同时又比实际等待短。两个方向的误差挤在同一个数上，怎么解释都是假的。
-// 过程簇跨多个 group 汇总，与 groupDur 共用这一份口径——两处各写一遍必然出现「簇头 ≠ 内部各组」。
-/** 这张卡结束在服务钟上的哪一刻；没有服务端起点时返回 0（= 这一张没有计时，不参与跨度） */
-const toolEndAt = t => {
-  const began = Number(t.startedAtMs) || 0
-  if (!began) return 0
-  if (t.status !== 'start') return began + (Number(t.elapsedMs) || 0)
-  // 还挂在这一轮的进行中卡才有「现在」可跟：历史里那种停在 start 没等到终态的残缺记录（那一跑被判超时
-  // 或进程重启截断了），拿当下的 tick 去当终点会把簇头撑成「3d4h」。它只贡献起点，不贡献终点。
-  if (!t.startAt) return began
-  // 把 1s 一跳的前端 tick 换算回服务端那个钟（差值＝收到这一帧时两钟之间的偏移，含网络与排队）。
-  // 直接拿本地 nowTick 去减服务端的起点，用户机器时钟不准时跨度会算出几百小时。
-  return nowTick.value - (t.startAt - began)
-}
-const spanOfTools = tools => {
-  let from = 0, to = 0, running = false, waited = 0
-  for (const t of tools) {
-    if (!t) continue
-    const began = Number(t.startedAtMs) || 0
-    if (!began) continue
-    // 历史里那种停在「进行中」没等到终态的残缺记录（那一跑被判超时或进程重启截断了）：终点未知，
-    // 不参与跨度——跟着当下的 tick 长会把簇头撑成「3d4h」，按 0 长度算又会显示「· 0ms」这个假数
-    if (t.status === 'start' && !t.startAt) continue
-    if (t.status === 'start') running = true
-    if (!from || began < from) from = began
-    const end = toolEndAt(t)
-    if (end > to) to = end
-    // 等人那段虽然就躺在这个区间中间，但不是机器在干活：按这张卡自己记的等待账减掉。
-    // 只把等待从单张卡的耗时里扣、跨度不减，簇头照样读出一个比机器时间大一分多钟的数。
-    waited += Number(t.waitedMs) || 0
-  }
-  // 一张都没有计时数据时返回空串：老数据没有这两个字段，此处显示「0ms」就是把「没记录」谎称成「跑了 0 毫秒」
-  if (!from) return ''
-  return toolDuration(Math.max(0, to - from - waited)) + (running ? '…' : '')
-}
-/** 簇头/组头那个数字的悬停说明：口径只在这一处描述，PC 与 H5 共用（两处各写一遍必然写歪） */
-const DUR_SPAN_TITLE = '从第一个操作到最后一个操作实际用的时间：同时做的只算一次，含它在想下一步的那几秒，不含等你答题或批准的那段'
-const groupDur = g => spanOfTools(g.tools)
-const fallbackDur = m => spanOfTools(toolCallsView(m.toolCalls))
 
 /** done 汇总的工具终态合并进现有数组（原地改，保住 timeline 里的对象引用与实时到达的顺序） */
 const mergeDoneToolCalls = (m, doneCalls) => {
@@ -773,8 +792,15 @@ const mergeDoneToolCalls = (m, doneCalls) => {
   if (!Array.isArray(m.toolCalls)) m.toolCalls = []
   const list = m.toolCalls
   for (const d of doneCalls) {
+    // 先找还挂在「进行中」的那一张：正常流是 start 帧建卡、终态帧就地改状态，done 这份只补全文。
     const live = [...list].reverse().find(x => x.name === d.name && x.status === 'start')
+      // 找不到就认「同名、已终态、且这一份还没认领过」的那一张——实时帧早就把这张卡改成 done 了，
+      // done 这份该把全文并到它身上。少了这一路，落库那份会被当成一次新调用 push 进去，同一件事
+      // 在界面上算两遍：「执行了 N 个操作」和总览那半步的步数当场翻倍（真机 2 次 writeTodo 数成 4）。
+      // 正向扫：两份都是到达顺序，倒着配会把重复同名调用的入参/输出串到别的卡上。
+      || list.find(x => x.name === d.name && !x._merged)
     if (live) {
+      live._merged = true
       live.status = d.status || 'done'
       live.elapsedMs = d.elapsedMs || live.elapsedMs || 0
       // 起点跟着终态那份走：done 汇总是落库那一份的同源数据，实时帧万一漏了这张卡的重发，
@@ -794,11 +820,13 @@ const mergeDoneToolCalls = (m, doneCalls) => {
       if (d.fanOut) live.fanOut = d.fanOut
       if (d.run) live.run = d.run
     } else {
-      list.push({ ...d })
+      // 这张卡是 done 那份自己带来的（实时那帧丢了）：同样标成已认领，否则下一条同名汇总会
+      // 并进它身上，把两次调用合成一张卡（翻倍的反方向错法）
+      list.push({ ...d, _merged: true })
     }
   }
 }
-// 运行中工具的实时耗时：1s 一跳的 tick 驱动重渲染，让"卡住"变成可见的进行中
+// 整轮用时的秒针：1s 一跳的 tick 驱动重渲染，让"卡住"变成可见的进行中（顶部那条跟着走）
 const nowTick = ref(Date.now())
 let tickTimer = null
 const ensureTick = () => {
@@ -810,7 +838,6 @@ const ensureTick = () => {
 }
 // 组件卸载时停表（纯模块挂不了 onUnmounted，由消费方在 onUnmounted 里调用）
 const stopTick = () => { if (tickTimer) { clearInterval(tickTimer); tickTimer = null } }
-const liveToolDur = startAt => toolDuration(Math.max(0, nowTick.value - startAt))
 // 精确检索工具实际使用的检索词（模型可主动改词做二次检索，与主链路 retrieved 的词不同源）。
 // 从 toolCalls 终态记录的 args 派生：实时路径 start 记录带 args（done 合并后保留），历史恢复是 done 记录带 args，两路都覆盖
 const toolSearchQueries = m => {
@@ -1071,6 +1098,9 @@ const snapshotVersion = m => ({
   warnMsg: m.warnMsg || '',
   retrieved: m.retrieved || null,
   doneTime: m.doneTime || null,
+  // 整轮用时随版本走：不带上就是「切回第 1 版，气泡里那一版的过程配着第 2 版的用时」
+  turnMs: m.turnMs || 0,
+  humanWaitMs: m.humanWaitMs || 0,
   model: m.model || ''
 })
 const applyVersion = (m, v) => {
@@ -1088,6 +1118,8 @@ const applyVersion = (m, v) => {
   m.warnMsg = v.warnMsg
   m.retrieved = v.retrieved
   m.doneTime = v.doneTime
+  m.turnMs = v.turnMs || 0
+  m.humanWaitMs = v.humanWaitMs || 0
   // 模型随版本走：切回旧版本时分隔记录按那一版当时用的模型比对，不串到最新一轮的模型
   m.model = v.model || ''
 }
@@ -1124,15 +1156,17 @@ const parseSampleQuestions = raw => String(raw || '').split('\n')
   .filter(Boolean)
 export {
   TOOL_LABELS, TOOL_DESCS, MCP_CLIENT_PREFIXES, bareToolName, toolLabel, toolDesc, toolCallsView, executedCount,
-  toolDuration, toolRunning, consultedOf, consultChatView, consultNameOf, rememberAgents, subRunning, busyOf, stageLabel, hasTimelineBlocks, extendTimelineText, askUserView,
+  toolDuration, toolRunning, consultedOf, consultChatView, consultNameOf, rememberAgents, stageLabel, hasTimelineBlocks, extendTimelineText, askUserView,
   extendTimelineProcess, procOpen, toggleProc, procSlice, pushTimelineTool, pushTimelineArtifact,
   pushTimelineThink, extendTimelineThink, thinkSlice, thinkGrowing, thinkSegOpen, toggleThinkSeg, ensureThinkSegment,
   restoreTimeline, SENTENCE_END_CHARS, endsSentence, timelineView, timelineRows, TOOL_BRIEF_KEYS, oneLine,
-  clusterize, clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterDur, clusterProcCount,
-  toolBrief, prettyIo, LIVE_TAIL_CHARS, liveOutput, groupRunning, groupHasError, groupDur,
+  clusterize, clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterProcCount,
+  turnRows, turnOpen, toggleTurn, turnShow, turnWarn, turnExpandable, turnHead, turnTitle, turnElapsedMs, turnWaitMs,
+  turnTop, turnBottom, turnToggleable,
+  durZh,
+  toolBrief, prettyIo, LIVE_TAIL_CHARS, liveOutput, groupRunning, groupHasError,
   fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget, fanRun, runBoardText,
-  fallbackDur, mergeDoneToolCalls, nowTick, ensureTick, stopTick, liveToolDur, toolSearchQueries,
-  DUR_SPAN_TITLE,
+  mergeDoneToolCalls, nowTick, ensureTick, stopTick, toolSearchQueries,
   retrievalLineTitle,
   THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel, CTX_WINDOW_STEPS, fmtWindow,
   fmtDuration, subagentCard, barWidth, toggleSubagents, groupSources, externalOrigin, sourceName,

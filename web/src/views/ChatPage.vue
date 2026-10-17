@@ -149,9 +149,11 @@
               </div>
           </template>
           <template #body="{ m, i }">
+              <!-- 整轮用时那一条：答完之后它在回答顶上当总览（跑着的时候它在正文末尾，见 body-after） -->
+              <TurnBar v-if="m.role === 'ai' && !m.loading" :m="m" />
               <!-- 深度思考不再叠在气泡顶上：每一轮思考各占一行，长在它发生的那个位置（见时间线里的 think 段） -->
               <div v-if="hasTimelineBlocks(m)" class="md" :data-msg-index="i">
-                <template v-for="(seg, si) in timelineRows(m)" :key="si">
+                <template v-for="(seg, si) in turnRows(m)" :key="si">
                   <AnswerBody v-if="seg.kind === 'text'" class="tl-text" :content="m.content.slice(seg.from, seg.to)"
                               :images="m.images" :sources="m.sources" :msg-index="i"
                               runnable :session-id="currentSessionId" :streaming="m.loading" />
@@ -165,7 +167,7 @@
                       <AnswerBody :content="thinkSlice(m, seg)" :streaming="thinkGrowing(m, seg)" />
                     </div>
                   </div>
-                  <!-- 过程簇头：连续的「独白+工具」收成一行。展开后其内各段由 timelineRows 摊平接着渲染，
+                  <!-- 过程簇头：连续的「独白+工具」收成一行。展开后其内各段由摊平那一步接着渲染，
                        内部结构与展开前完全一致（时序零损失）；纯独白簇（无工具）退化为「N 段说明」 -->
                   <div v-else-if="seg.kind === 'cluster'" class="tl-cluster" :class="{ open: clusterOpen(m, seg) }">
                     <button class="tl-cluster-bar" type="button" @click="toggleCluster(m, seg)">
@@ -174,7 +176,6 @@
                       <check-outlined v-else class="tool-ic tool-ic-ok" />
                       <span v-if="clusterTools(seg).length">已执行 {{ executedCount(clusterTools(seg)) }} 个操作</span>
                       <span v-else>执行过程 · {{ clusterProcCount(seg) }} 段说明</span>
-                      <span v-if="clusterDur(seg)" class="tool-dur" :title="DUR_SPAN_TITLE">· {{ clusterDur(seg) }}</span>
                       <span v-if="runBoardText(m)" class="run-board">{{ runBoardText(m) }}</span>
                       <span class="tl-caret" :class="{ open: clusterOpen(m, seg) }"><caret-right-outlined /></span>
                     </button>
@@ -195,9 +196,6 @@
                       <close-circle-outlined v-else-if="groupHasError(seg)" class="tool-ic tool-ic-err" />
                       <check-outlined v-else class="tool-ic tool-ic-ok" />
                       <span>执行了 {{ executedCount(seg.tools) }} 个操作</span>
-                      <span v-if="groupDur(seg)" class="tool-dur"
-                            :title="DUR_SPAN_TITLE"
-                      >· {{ groupDur(seg) }}</span>
                       <span v-if="runBoardText(m)" class="run-board">{{ runBoardText(m) }}</span>
                       <span class="tl-caret" :class="{ open: seg.tools[0]._groupOpen }"><caret-right-outlined /></span>
                     </button>
@@ -213,8 +211,6 @@
                       <!-- 脚本扇出的规模（P3b）：不点开卡片也能看出"这一次跑了多少个子调用" -->
                       <span v-if="fanHasBoard(t.fanOut)" class="tool-dur">{{ fanHead(t) }}</span>
                       <span v-if="fanRun(t)" class="fan-run">{{ fanRun(t) }}</span>
-                          <span v-if="t.status === 'start' && t.startAt" class="tool-dur">{{ liveToolDur(t.startAt) }}</span>
-                          <span v-else-if="t.elapsedMs > 0" class="tool-dur">{{ toolDuration(t.elapsedMs) }}</span>
                           <span v-if="t.status === 'error'" class="tool-fail">失败</span>
                           <span class="tl-caret" :class="{ open: t._open }"><caret-right-outlined /></span>
                         </button>
@@ -290,11 +286,9 @@
                   <pre class="mec-raw">{{ m.errorCard.message }}</pre>
                 </details>
               </div>
-              <!-- 气泡级进度行：一轮里同时只显示一处（互斥见 busyOf），工具/深度思考/审批由各自构件表达 -->
-              <div v-if="busyOf(m)" class="busy-hint" :class="{ warn: busyOf(m).warn }">
-                <loading-outlined spin />
-                <span v-if="busyOf(m).text">{{ busyOf(m).text }}</span>
-              </div>
+              <!-- 跑着的时候整轮用时这一条跟在正文最后面：它同时是这一轮唯一的进行中提示，
+                   眼睛盯的是最新长出来的那一行，而它正是那一行的计时器 -->
+              <TurnBar v-if="m.role === 'ai' && m.loading" :m="m" />
               <!-- 本轮咨询了谁（P5 常显）：@ 强制咨询与模型自主咨询合并成一条并按 id 去重。
                    跨主题的问题答好了，用户也要看得见是"派给谁查的"——不然好答案像偶然，
                    而派错了也没人知道该去改谁的描述。刷新后从落库的 consultAgent 入参还原。 -->
@@ -302,14 +296,14 @@
                 <AgentAvatar class="dispatch-ava" :agent="agentBadgeOf(agentList, consultedOf(m)[0].id, consultedOf(m)[0].name)" :size="14" />
                 <span>本轮已咨询 {{ consultedOf(m).map(c => `「${c.name}」`).join('、') }} · 采纳{{ consultedOf(m).length > 1 ? '它们' : '它' }}查到的资料</span>
               </div>
-              <!-- 历史恢复/正文重建回退：无 timeline（无法重建交错点），工具按终态列表折叠展示，卡片可展开看全文 -->
-              <div v-if="m.role === 'ai' && m.toolCalls && m.toolCalls.length && !hasTimelineBlocks(m)" class="tool-status-list">
+              <!-- 历史恢复/正文重建回退：无 timeline（无法重建交错点），工具按终态列表折叠展示，卡片可展开看全文。
+                   受顶部那条管辖：整块过程收起时它一并出去（否则「已完成」底下还挂一摞操作行） -->
+              <div v-if="m.role === 'ai' && m.toolCalls && m.toolCalls.length && !hasTimelineBlocks(m) && turnOpen(m)" class="tool-status-list">
                 <button class="tl-group-bar" type="button" @click="m._fbOpen = !m._fbOpen">
                   <loading-outlined v-if="toolRunning(m)" spin class="tool-ic tool-ic-run" />
                   <close-circle-outlined v-else-if="m.toolCalls.some(t => t.status === 'error')" class="tool-ic tool-ic-err" />
                   <check-outlined v-else class="tool-ic tool-ic-ok" />
                   <span>执行了 {{ executedCount(toolCallsView(m.toolCalls)) }} 个操作</span>
-                  <span v-if="fallbackDur(m)" class="tool-dur" :title="DUR_SPAN_TITLE">· {{ fallbackDur(m) }}</span>
                   <span class="tl-caret" :class="{ open: m._fbOpen }"><caret-right-outlined /></span>
                 </button>
                 <div v-if="m._fbOpen" class="tl-group-body">
@@ -324,8 +318,6 @@
                       <!-- 脚本扇出的规模（P3b）：不点开卡片也能看出"这一次跑了多少个子调用" -->
                       <span v-if="fanHasBoard(t.fanOut)" class="tool-dur">{{ fanHead(t) }}</span>
                       <span v-if="fanRun(t)" class="fan-run">{{ fanRun(t) }}</span>
-                      <span v-if="t.status === 'start' && t.startAt" class="tool-dur">{{ liveToolDur(t.startAt) }}</span>
-                      <span v-else-if="t.elapsedMs > 0" class="tool-dur">{{ toolDuration(t.elapsedMs) }}</span>
                       <span v-if="t.status === 'error'" class="tool-fail">失败</span>
                       <span class="tl-caret" :class="{ open: t._open }"><caret-right-outlined /></span>
                     </button>
@@ -1492,6 +1484,7 @@ import SourceList from '../chat/SourceList.vue'
 import MobileChatHead from '../h5/MobileChatHead.vue'
 import MobileSampleCards from '../h5/MobileSampleCards.vue'
 import AskRecordCard from '../components/AskRecordCard.vue'
+import TurnBar from '../components/TurnBar.vue'
 import SubAgentChatCard from '../components/SubAgentChatCard.vue'
 import MsgDivider from '../components/MsgDivider.vue'
 import ToolSpillButton from '../components/ToolSpillButton.vue'
@@ -1508,12 +1501,12 @@ import { splitAtts } from '../chat/attachments'
 // 正文浮层的共享状态：右栏来源联动（hoveredRef / 点角标定位）与灯箱开关要用
 import { openImages, previewUrl, openSource, hoveredRef } from '../chat/answerViewer'
 import { useApprovalRecovery } from '../chat/useApprovalRecovery'
-import { toolLabel, toolDesc, toolCallsView, executedCount, toolDuration, toolRunning, busyOf, hasTimelineBlocks,
+import { toolLabel, toolDesc, toolCallsView, executedCount, toolRunning, hasTimelineBlocks,
          procOpen, toggleProc, procSlice, thinkSegOpen, toggleThinkSeg, thinkSlice, thinkGrowing,
-         timelineRows, toolBrief, prettyIo, liveOutput, groupRunning,
-         clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterDur, clusterProcCount,
-         groupHasError, groupDur, fallbackDur, liveToolDur, toolSearchQueries, retrievalLineTitle, subagentCard, barWidth,
-         DUR_SPAN_TITLE,
+         turnRows, turnOpen,
+         toolBrief, prettyIo, liveOutput, groupRunning,
+         clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterProcCount,
+         groupHasError, toolSearchQueries, retrievalLineTitle, subagentCard, barWidth,
          fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget, fanRun, runBoardText,
          toggleSubagents, fmtDuration, fmtWindow, externalOrigin, sourceName, fmtSourceScore, scoreTitle,
          fmtMsgTime, fmtSize, errorBrief, histItemTitle, histItemDigest, verLocal, canSwitchPrev, canSwitchNext, verLabel,
@@ -3732,7 +3725,7 @@ onMounted(async () => {
 .tl-think { margin: 2px 0; padding: 2px 10px; border-left: 2px solid var(--app-border); color: var(--app-text3); font-size: 12.5px; line-height: 1.7; max-height: 320px; overflow-y: auto; }
 .tl-think :deep(.md > p) { margin: 4px 0; }
 /* 过程簇头：把连续的「独白+工具」收成一行（此前一轮过程会散成 6 行折叠头）。
-   展开后其内各段由 timelineRows 摊平接着渲染，视觉上是一棵树、DOM 上是同级兄弟。 */
+   展开后其内各段由摊平那一步接着渲染，视觉上是一棵树、DOM 上是同级兄弟。 */
 .tl-cluster { margin: 3px 0; }
 .tl-cluster-bar {
   display: inline-flex; align-items: center; gap: 6px; width: fit-content; max-width: 100%;
@@ -3969,12 +3962,6 @@ onMounted(async () => {
   padding: 3px 10px; cursor: pointer;
 }
 .related-tag:hover { background: var(--app-ok-weak-hover); }
-.busy-hint { margin-top: 6px; font-size: 13px; color: var(--app-accent); display: flex; align-items: center; gap: 6px; }
-/* 自动重试属异常状态：沿用原重试条的醒目底色，与正常阶段文案区分 */
-.busy-hint.warn {
-  margin-top: 8px; color: var(--app-warn-text); background: var(--app-warn-weak); border: 1px solid var(--app-warn-border);
-  border-radius: 6px; padding: 4px 10px; width: fit-content;
-}
 .dispatch-chip {
   margin-top: 6px; display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap;
   font-size: 12px; color: var(--app-text2);
