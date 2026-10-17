@@ -36,6 +36,22 @@
   --app-code-bg: #f6f8fa;         /* 代码块底 */
   --app-code-inline-bg: #f0f0f0;  /* 行内代码底 */
   --app-scrollbar: rgba(0, 0, 0, .18);
+  /* ---- 语义别名层（借鉴 deepseek-harness 的 design-platform 两层结构：静态值 → 语义名）----
+     目的：页面按**意图**取色/取尺寸，而不是按"这是第几号灰"。换主题/调色只改这一层。
+     这是新增层，旧变量全部保留，现有页面零改动、零视觉变化。 */
+  --app-label-primary: var(--app-text);        /* 主文本 */
+  --app-label-secondary: var(--app-text2);     /* 次文本 */
+  --app-label-tertiary: var(--app-text3);      /* 弱文本/占位 */
+  --app-bg-layer-1: var(--app-panel);          /* 最底层：页面卡片 */
+  --app-bg-layer-2: var(--app-panel-2);        /* 次级：表头/hover/内嵌 */
+  --app-bg-layer-3: #f2f4f7;                   /* 第三级：悬浮/选中底 */
+  --app-border-l1: var(--app-border);          /* 常规分隔 */
+  --app-border-l2: var(--app-border-strong);   /* 强调分隔 */
+  --app-interactive-hover: var(--app-accent-weak);
+  /* ---- 控件高度档位（统一"多高算小/标准/大"，别再各处写死 padding）---- */
+  --app-control-h-sm: 26px;
+  --app-control-h: 32px;
+  --app-control-h-lg: 38px;
   /* ---- 圆角 ---- */
   --app-radius-sm: 6px;
   --app-radius: 10px;
