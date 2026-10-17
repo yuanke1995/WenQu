@@ -97,6 +97,15 @@
         <a-tabs v-model:activeKey="tab" class="pj-tabs">
           <a-tab-pane key="files">
             <template #tab><span>文件 <span class="pj-count">{{ fileRows.length }}</span></span></template>
+            <!-- 工具条：整区导出 + 截断提示（此前静默只列最近 300 个，看着像"就这些"） -->
+            <div v-if="fileRows.length && !filesError" class="pj-filebar">
+              <span v-if="filesTruncated" class="pj-hint">
+                只列了最近 {{ fileRows.length }} 个（目录里共 {{ filesTotal }} 个），更早的可用导出打包查看
+              </span>
+              <button class="pj-act pj-filebar-btn" :disabled="exporting" @click="doExportZip">
+                {{ exporting ? '导出中…' : '打包导出' }}
+              </button>
+            </div>
             <div v-if="filesError" class="pj-empty pj-err">
               {{ filesError }}
               <button class="pj-link-btn" @click="load">重试</button>
@@ -113,8 +122,10 @@
                 </span>
                 <span class="pj-item-meta">{{ fmtSize(f.size) }}</span>
                 <span class="pj-item-meta">{{ fmtAgo(f.at) }}</span>
+                <button v-if="f.path && previewable(f)" class="pj-act" @click="openPreview(f)">预览</button>
                 <button v-if="f.path" class="pj-act" @click="download(f)">下载</button>
                 <a v-else :href="f.artifact.url" :download="f.name" class="pj-act">下载</a>
+                <button v-if="f.path" class="pj-act pj-act-danger" title="删除这个文件" @click="askDeleteFile(f)">删除</button>
               </div>
             </div>
           </a-tab-pane>
@@ -228,6 +239,16 @@
                         :total-size="fileTotalSize"
                         :saving="deleting"
                         @confirm="doRemoveProject" />
+
+    <!-- 文件预览：文本纯文本展示（html/svg 也不渲染成页面）、图片按 blob URL 显示 -->
+    <a-modal v-model:open="previewOpen" :title="previewState ? previewState.name : ''"
+             :footer="null" width="min(860px, 92vw)" @after-close="closePreview">
+      <pre v-if="previewState && previewState.kind === 'text'" class="pv-text">{{ previewState.text }}</pre>
+      <div v-else-if="previewState && previewState.kind === 'image'" class="pv-img-wrap">
+        <img :src="previewState.url" :alt="previewState.name" class="pv-img" />
+      </div>
+      <a-spin v-else :spinning="previewBusy" />
+    </a-modal>
   </div>
 </template>
 
@@ -238,7 +259,8 @@ import { message, Modal } from 'ant-design-vue'
 import { ReloadOutlined, PlusOutlined, CopyOutlined } from '@ant-design/icons-vue'
 import { getProject, updateProject, deleteProject, listArtifacts, listSessions, listAvailableAgents, listProjectFiles,
          downloadProjectFile, listScheduledJobs, createScheduledJob, runScheduledJob, listProjectWorkflows, runWorkflow,
-         setProjectStatus, setNewSessionProject, getProjectRuns } from '../api'
+         setProjectStatus, setNewSessionProject, getProjectRuns,
+         previewProjectFile, exportProjectZip, deleteProjectFile } from '../api'
 import DeleteProjectModal from '../components/DeleteProjectModal.vue'
 import { sessionStore, rememberSession } from './store'
 
@@ -268,6 +290,9 @@ const sessionTotal = ref(0)
 const artifacts = ref([])
 const files = ref([])
 const filesError = ref('')
+/** 目录实际文件数与是否截断（后端给的，别再把「只列最近 300 个」当成「就这些」） */
+const filesTotal = ref(0)
+const filesTruncated = ref(false)
 const jobs = ref([])
 const workflows = ref([])
 const runs = ref([])
@@ -445,6 +470,69 @@ const download = async f => {
   }
 }
 
+// ==================== 文件：预览 / 打包导出 / 删除 ====================
+/** 与后端 TEXT_PREVIEW_EXTS / IMAGE_PREVIEW_EXTS 同口径：其余类型不显示「预览」，免得点开才知道不行 */
+const PREVIEW_TEXT = new Set(['md', 'markdown', 'txt', 'log', 'csv', 'tsv', 'json', 'yaml', 'yml', 'xml', 'toml', 'ini',
+  'conf', 'properties', 'py', 'js', 'mjs', 'ts', 'jsx', 'tsx', 'java', 'go', 'rs', 'sql', 'sh', 'bash', 'zsh',
+  'html', 'htm', 'css', 'scss', 'vue'])
+const PREVIEW_IMAGE = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'])
+const extOf = name => {
+  const dot = String(name || '').lastIndexOf('.')
+  return dot < 0 ? '' : String(name).slice(dot + 1).toLowerCase()
+}
+const previewable = f => {
+  const ext = extOf(f.name)
+  return PREVIEW_TEXT.has(ext) || PREVIEW_IMAGE.has(ext)
+}
+const previewOpen = ref(false)
+const previewBusy = ref(false)
+const previewState = ref(null)   // {kind:'text'|'image', text?, url?, name}
+const openPreview = async f => {
+  previewBusy.value = true
+  try {
+    const r = await previewProjectFile(id.value, f.path)
+    previewState.value = { ...r, name: f.name }
+    previewOpen.value = true
+  } catch (e) {
+    message.error(e.message || '预览失败')
+  } finally {
+    previewBusy.value = false
+  }
+}
+const closePreview = () => {
+  // 图片预览走 blob:URL，不回收就是内存泄漏
+  if (previewState.value && previewState.value.kind === 'image' && previewState.value.url) {
+    URL.revokeObjectURL(previewState.value.url)
+  }
+  previewState.value = null
+}
+const exporting = ref(false)
+const doExportZip = async () => {
+  exporting.value = true
+  try {
+    await exportProjectZip(id.value)
+    message.success('已导出')
+  } catch (e) {
+    message.error(e.message || '导出失败')
+  } finally {
+    exporting.value = false
+  }
+}
+const askDeleteFile = f => Modal.confirm({
+  title: `删除「${f.name}」？`,
+  content: '工作区目录里的这个文件会被删掉，已交付为产物的副本不受影响。此操作不可恢复。',
+  okText: '删除', okType: 'danger', cancelText: '取消',
+  onOk: async () => {
+    try {
+      await deleteProjectFile(id.value, f.path)
+      message.success('已删除')
+      await load()
+    } catch (e) {
+      message.error('删除失败：' + (e.message || '请重试'))
+    }
+  }
+})
+
 /** 工作区页 → 会话：走 SPA 导航，并把这条会话先交给侧栏 store（标题/高亮不用等列表刷新） */
 const openProjectSession = s => {
   rememberSession(s, id.value)
@@ -550,10 +638,15 @@ const load = async () => {
     // 文件单独取：宿主目录读不到（如沙盒在远端）时如实提示，不伪装成空列表
     try {
       const fr = await listProjectFiles(id.value)
-      files.value = (fr && fr.data) || []
+      const d = (fr && fr.data) || {}
+      files.value = d.entries || []
+      filesTotal.value = d.total || 0
+      filesTruncated.value = !!d.truncated
       filesError.value = ''
     } catch (e) {
       files.value = []
+      filesTotal.value = 0
+      filesTruncated.value = false
       filesError.value = e.message || '工作区目录暂时读不到'
     }
     await loadJobs()
@@ -734,6 +827,20 @@ watch(id, () => {
   font-size: var(--app-fs-xs); font-weight: 400; padding: 1px 6px; border-radius: var(--app-radius-sm);
   background: var(--app-accent-weak); color: var(--app-accent); vertical-align: middle;
 }
+
+/* 文件区工具条：截断提示 + 打包导出 */
+.pj-filebar { display: flex; align-items: center; gap: var(--app-sp-2); margin-bottom: var(--app-sp-2); }
+.pj-filebar-btn { margin-left: auto; flex: none; padding: 4px 6px; }
+.pj-act-danger { color: var(--app-danger); }
+/* 预览：文本按纯文本铺（等宽 + 可横向滚动），图片按内容宽度不放大 */
+.pv-text {
+  margin: 0; padding: var(--app-sp-3); max-height: 62vh; overflow: auto;
+  background: var(--app-bg-layer-2); border-radius: var(--app-radius-sm);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 1.7; white-space: pre-wrap;
+  word-break: break-word; color: var(--app-label-primary);
+}
+.pv-img-wrap { display: flex; justify-content: center; max-height: 62vh; overflow: auto; }
+.pv-img { max-width: 100%; height: auto; }
 
 /* ==================== 窄屏（手机）：/project 已进守卫白名单，这里做真适配 ====================
    卡片列表形态天然适合竖排：行内元素允许换行、输入类控件收回全宽、元信息列压缩；

@@ -484,7 +484,7 @@ export const getProjectRuns = (id, limit) =>
 // 归档 / 恢复工作区（不动会话与产物，implicit 兜底容器不可归档）
 export const setProjectStatus = (id, status) =>
   request(`/project/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) })
-// 工作区目录里的文件（相对路径/大小/时间，按时间倒序）
+// 工作区目录里的文件：{entries, total, truncated}（total=实际文件数，truncated=true 表示只取了最近若干条）
 export const listProjectFiles = id => request(`/project/${id}/files`)
 // 下载工作区文件：必须走 fetch 带 Authorization（后端认 JWT，不认 cookie），再落成本地文件
 export const downloadProjectFile = async (id, path, filename) => {
@@ -502,6 +502,45 @@ export const downloadProjectFile = async (id, path, filename) => {
   a.remove()
   setTimeout(() => URL.revokeObjectURL(url), 2000)
 }
+/** 预览工作区文件：文本回文本、图片回 objectURL（后端对 html/svg 也只发纯文本，不在应用里执行） */
+export const previewProjectFile = async (id, path) => {
+  const res = await fetch(`${BASE}/project/${id}/file/preview?path=${encodeURIComponent(path)}`, {
+    headers: authHeaders()
+  })
+  if (!res.ok) throw new Error(`预览失败(${res.status})`)
+  const ct = res.headers.get('content-type') || ''
+  if (ct.startsWith('image/')) {
+    return { kind: 'image', url: URL.createObjectURL(await res.blob()) }
+  }
+  return { kind: 'text', text: await res.text() }
+}
+/** 整区导出 zip：流式下载，文件名由服务端定（工作区名.zip） */
+export const exportProjectZip = async id => {
+  const res = await fetch(`${BASE}/project/${id}/export`, { headers: authHeaders() })
+  if (!res.ok) {
+    // 开流前失败会带 JSON 原因；开流后失败只能给状态码
+    let msg = `导出失败(${res.status})`
+    try {
+      const j = await res.json()
+      if (j && j.msg) msg = j.msg
+    } catch (e) { /* 响应不是 JSON（多半是写流到一半失败），用状态码文案 */ }
+    throw new Error(msg)
+  }
+  const cd = res.headers.get('content-disposition') || ''
+  const m = /filename\*=UTF-8''([^;]+)/.exec(cd) || /filename="?([^";]+)"?/.exec(cd)
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = m ? decodeURIComponent(m[1]) : 'workspace.zip'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 2000)
+}
+/** 删除工作区里的单个文件 */
+export const deleteProjectFile = (id, path) =>
+  request(`/project/${id}/file?path=${encodeURIComponent(path)}`, { method: 'DELETE' })
 // 更新工作区设置：传才改，空串=清空（name / instructions / defaultAgentId）
 export const updateProject = (id, body) =>
   request(`/project/${id}`, { method: 'PUT', body: JSON.stringify(body || {}) })

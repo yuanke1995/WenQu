@@ -128,12 +128,82 @@ public class ProjectController {
     }
 
     @Operation(summary = "工作区文件列表",
-            description = "工作区目录下的文件（相对路径/大小/修改时间，按时间倒序）。目录不存在=正常空态；"
-                    + "宿主目录读不到（如沙盒在另一台机器）如实返回不可用")
+            description = "工作区目录下的文件（相对路径/大小/修改时间，按时间倒序）；"
+                    + "返回 {entries, total, truncated}——total 是实际文件数、truncated=true 表示只返回了最近若干条。"
+                    + "目录不存在=正常空态；宿主目录读不到（如沙盒在另一台机器）如实返回不可用")
     @GetMapping("/{id}/files")
     public ResultJson files(@PathVariable("id") String id) {
         try {
-            return ResultJson.ok(projectFileService.list(RequestUser.uid(), id));
+            return ResultJson.ok(projectFileService.listWithMeta(RequestUser.uid(), id));
+        } catch (IllegalArgumentException e) {
+            return ResultJson.error(400, e.getMessage());
+        } catch (IllegalStateException e) {
+            return ResultJson.error(503, e.getMessage());
+        }
+    }
+
+    @Operation(summary = "预览工作区文件",
+            description = "文本按 text/plain、图片按原类型内联返回；其余类型拒绝并提示下载。"
+                    + "html/svg 一律按纯文本发（工作区文件来源不可控，不在应用里执行）")
+    @GetMapping("/{id}/file/preview")
+    public org.springframework.http.ResponseEntity<byte[]> preview(@PathVariable("id") String id,
+                                           @RequestParam("path") String path) {
+        try {
+            ProjectFileService.PreviewFile f = projectFileService.preview(RequestUser.uid(), id, path);
+            String encoded = java.net.URLEncoder.encode(f.name(), java.nio.charset.StandardCharsets.UTF_8)
+                    .replace("+", "%20");
+            return org.springframework.http.ResponseEntity.ok()
+                    .header("Content-Type", f.contentType())
+                    .header("Content-Disposition", "inline; filename=\"" + encoded + "\"; filename*=UTF-8''" + encoded)
+                    // 文本按 UTF-8 发但浏览器可能按别的方式解，显式声明；同时禁掉嗅探
+                    .header("X-Content-Type-Options", "nosniff")
+                    .header("Cache-Control", "no-store")
+                    .body(f.bytes());
+        } catch (IllegalArgumentException e) {
+            return org.springframework.http.ResponseEntity.badRequest().build();
+        } catch (IllegalStateException e) {
+            return org.springframework.http.ResponseEntity.status(503).build();
+        }
+    }
+
+    @Operation(summary = "打包导出工作区目录",
+            description = "整个工作区目录打成 zip（流式；隐藏文件与 node_modules 等排除在名单外）。"
+                    + "文件数 >2000 或总量 >100MB 明确拒绝（响应开流前就失败，不会给出坏掉的包）")
+    @GetMapping("/{id}/export")
+    public void export(@PathVariable("id") String id, jakarta.servlet.http.HttpServletResponse resp) throws java.io.IOException {
+        String uid = RequestUser.uid();
+        Project project;
+        List<java.nio.file.Path> files;
+        try {
+            project = projectService.detail(uid, id);   // 归属校验（fail-loud）
+            files = projectFileService.collectExportFiles(uid, id);
+        } catch (IllegalArgumentException e) {
+            // 还没开流：可以正经给 400 + 原因
+            resp.setStatus(400);
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write("{\"success\":false,\"code\":400,\"msg\":\"" + e.getMessage() + "\",\"data\":null}");
+            return;
+        } catch (IllegalStateException e) {
+            resp.setStatus(503);
+            resp.setContentType("application/json;charset=UTF-8");
+            resp.getWriter().write("{\"success\":false,\"code\":503,\"msg\":\"" + e.getMessage() + "\",\"data\":null}");
+            return;
+        }
+        String zipName = ((project.getName() == null || project.getName().isBlank()) ? "工作区" : project.getName()) + ".zip";
+        String encoded = java.net.URLEncoder.encode(zipName, java.nio.charset.StandardCharsets.UTF_8).replace("+", "%20");
+        resp.setStatus(200);
+        resp.setContentType("application/zip");
+        resp.setHeader("Content-Disposition", "attachment; filename=\"" + encoded + "\"; filename*=UTF-8''" + encoded);
+        projectFileService.writeZip(uid, id, files, resp.getOutputStream());
+    }
+
+    @Operation(summary = "删除工作区文件", description = "删单个普通文件（路径校验与下载同口径；不支持删目录）")
+    @DeleteMapping("/{id}/file")
+    public ResultJson deleteFile(@PathVariable("id") String id,
+                                 @RequestParam("path") String path) {
+        try {
+            projectFileService.deleteFile(RequestUser.uid(), id, path);
+            return ResultJson.ok(null, "已删除");
         } catch (IllegalArgumentException e) {
             return ResultJson.error(400, e.getMessage());
         } catch (IllegalStateException e) {

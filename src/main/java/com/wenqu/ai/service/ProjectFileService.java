@@ -6,16 +6,21 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
+import java.io.OutputStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.FileTime;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Stream;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 /**
  * 工作区目录的**文件浏览**（工作区页用）。
@@ -44,6 +49,26 @@ public class ProjectFileService {
     /** 递归深度：文件通常平铺或一层子目录，再深只会在页面上糊成一团 */
     private static final int MAX_DEPTH = 3;
 
+    /**
+     * 可预览的文本类扩展名（服务端一律按 {@code text/plain} 下发）。
+     * <p><b>html 也在列里但按纯文本发</b>：同源内联 HTML 会带着用户的登录态跑脚本，
+     * 而工作区里的文件是模型/用户产出的、来源不可控——预览就预览，别在应用里执行它。
+     */
+    private static final java.util.Set<String> TEXT_PREVIEW_EXTS = java.util.Set.of(
+            "md", "markdown", "txt", "log", "csv", "tsv", "json", "yaml", "yml", "xml", "toml", "ini", "conf", "properties",
+            "py", "js", "mjs", "ts", "jsx", "tsx", "java", "go", "rs", "sql", "sh", "bash", "zsh", "html", "htm",
+            "css", "scss", "vue");
+    /** 可预览的图片类型：浏览器直接渲染 */
+    private static final java.util.Set<String> IMAGE_PREVIEW_EXTS =
+            java.util.Set.of("png", "jpg", "jpeg", "gif", "webp", "bmp", "svg");
+    /** 文本预览大小上限（2MB）：再大就不是"看一眼"，该下载 */
+    private static final long MAX_TEXT_PREVIEW = 2L * 1024 * 1024;
+    /** 图片预览大小上限（10MB） */
+    private static final long MAX_IMAGE_PREVIEW = 10L * 1024 * 1024;
+    /** 整区导出：条数与总量上限（流式写盘，不进内存） */
+    private static final int MAX_EXPORT_FILES = 2000;
+    private static final long MAX_EXPORT_BYTES = 100L * 1024 * 1024;
+
     private final ProjectService projectService;
     private final ConfigService configService;
 
@@ -53,29 +78,176 @@ public class ProjectFileService {
     }
 
     /**
-     * 列出工作区目录下的文件（含子目录，深度上限见 {@link #MAX_DEPTH}）。
+     * 列出工作区目录下的文件，附截断信息。
      *
-     * @return 文件条目（相对路径、大小、更新时间），按修改时间倒序
-     * @throws IllegalStateException 宿主目录不可读（远端部署/权限），由控制器转成可读提示
+     * <p><b>为什么要带 truncated/total</b>：此前只回一个裸数组，条数超上限时静默截断，
+     * 界面上看着像"就这些文件"——用户不会知道少了东西。现在显式给出总数与截断标志。
+     *
+     * @return {@code {entries:[…], total:N, truncated:boolean}}
      */
-    public List<Map<String, Object>> list(String uid, String projectId) {
+    public Map<String, Object> listWithMeta(String uid, String projectId) {
         Path base = baseDir(uid, projectId);
-        List<Map<String, Object>> out = new ArrayList<>();
         if (!Files.isDirectory(base)) {
-            // 目录还没建：工作区刚创建、还没跑过任何沙盒命令。这是正常的空态，不是故障。
-            return out;
+            return meta(List.of(), 0);   // 目录不存在 = 正常空态，不是故障
         }
+        List<Map<String, Object>> all = new ArrayList<>();
         try (Stream<Path> walk = Files.walk(base, MAX_DEPTH)) {
             walk.filter(Files::isRegularFile)
                     .filter(p -> !isHiddenRelative(base, p))
                     .sorted(Comparator.comparingLong((Path p) -> lastModifiedMillis(p)).reversed())
-                    .limit(MAX_ENTRIES)
-                    .forEach(p -> out.add(toEntry(base, p)));
+                    .forEach(p -> all.add(toEntry(base, p)));
         } catch (IOException | RuntimeException e) {
             log.warn("[PROJECT] 工作区目录读取失败 uid={} project={} base={}: {}", uid, projectId, base, e.getMessage());
             throw new IllegalStateException("工作区目录暂时读不到（沙盒可能部署在另一台机器上）");
         }
-        return out;
+        int total = all.size();
+        return total <= MAX_ENTRIES ? meta(all, total) : meta(new ArrayList<>(all.subList(0, MAX_ENTRIES)), total);
+    }
+
+    private static Map<String, Object> meta(List<Map<String, Object>> entries, int total) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("entries", entries);
+        m.put("total", total);
+        m.put("truncated", entries.size() < total);
+        return m;
+    }
+
+    /**
+     * 工作区文件预览：文本按 {@code text/plain}、图片按原类型返回，其余类型明确拒掉。
+     *
+     * <p>文本一律 text/plain 是刻意的：工作区里的 html/svg 是模型产出、来源不可控，
+     * 同源内联渲染等于把应用的登录态交给它（脚本、XSS）。预览就预览，不执行。
+     *
+     * @param relPath 相对工作区目录的路径（校验口径与下载同一条）
+     * @throws IllegalArgumentException 路径非法/不存在/不是普通文件/类型不支持预览/超出大小上限
+     */
+    public PreviewFile preview(String uid, String projectId, String relPath) {
+        Path file = resolveDownload(uid, projectId, relPath);   // 含归属 + 越界 + 存在性校验
+        String ext = extOf(file.getFileName().toString());
+        long size = sizeOf(file);
+        if (TEXT_PREVIEW_EXTS.contains(ext)) {
+            if (size > MAX_TEXT_PREVIEW) {
+                throw new IllegalArgumentException("文件太大（"
+                        + (size / 1024 / 1024) + "MB），超过 " + (MAX_TEXT_PREVIEW / 1024 / 1024)
+                        + "MB 预览上限，请下载后查看");
+            }
+            try {
+                return new PreviewFile("text/plain; charset=UTF-8", Files.readAllBytes(file), file.getFileName().toString());
+            } catch (IOException e) {
+                throw new IllegalArgumentException("读取文件失败：" + e.getMessage());
+            }
+        }
+        if (IMAGE_PREVIEW_EXTS.contains(ext)) {
+            if (size > MAX_IMAGE_PREVIEW) {
+                throw new IllegalArgumentException("图片太大（"
+                        + (size / 1024 / 1024) + "MB），超过 " + (MAX_IMAGE_PREVIEW / 1024 / 1024)
+                        + "MB 预览上限，请下载后查看");
+            }
+            try {
+                return new PreviewFile(sniffImageType(ext), Files.readAllBytes(file), file.getFileName().toString());
+            } catch (IOException e) {
+                throw new IllegalArgumentException("读取文件失败：" + e.getMessage());
+            }
+        }
+        throw new IllegalArgumentException("该文件类型不支持预览，请下载后查看");
+    }
+
+    /** 预览结果：内容类型 + 字节 + 文件名（控制器设 Content-Disposition: inline + nosniff） */
+    public record PreviewFile(String contentType, byte[] bytes, String name) {
+    }
+
+    /**
+     * 整区导出的前置检查：收集要打包的文件并校验条数/总量上限。
+     *
+     * <p><b>为什么与写流分成两步</b>：超限必须发生在响应头发出之前——头一开就没法再改成
+     * 400 了，只能吐出一个坏掉的 zip 给用户。校验与写流分开，控制器才能先失败再开流。
+     * <p>不给「少打一部分」的包：那种包看起来像全部，恰好是 truncated 提示要治的病。
+     *
+     * @throws IllegalArgumentException 目录不存在 / 文件数或总量超上限（可读原因）
+     */
+    public List<Path> collectExportFiles(String uid, String projectId) {
+        Path base = baseDir(uid, projectId);
+        if (!Files.isDirectory(base)) {
+            throw new IllegalArgumentException("这个工作区还没有文件可导出");
+        }
+        List<Path> files = new ArrayList<>();
+        long total = 0;
+        try (Stream<Path> walk = Files.walk(base)) {
+            Iterator<Path> it = walk.filter(Files::isRegularFile)
+                    .filter(p -> !isHiddenRelative(base, p))
+                    .iterator();
+            while (it.hasNext()) {
+                Path p = it.next();
+                total += sizeOf(p);
+                files.add(p);
+                if (files.size() > MAX_EXPORT_FILES) {
+                    throw new IllegalArgumentException("文件超过 " + MAX_EXPORT_FILES
+                            + " 个，无法整区导出：请按需下载单个文件");
+                }
+                if (total > MAX_EXPORT_BYTES) {
+                    throw new IllegalArgumentException("目录总量超过 " + (MAX_EXPORT_BYTES / 1024 / 1024)
+                            + "MB，无法整区导出：请按需下载单个文件");
+                }
+            }
+        } catch (IOException | RuntimeException e) {
+            if (e instanceof IllegalArgumentException iae) throw iae;
+            log.warn("[PROJECT] 工作区目录遍历失败 uid={} project={}: {}", uid, projectId, e.getMessage());
+            throw new IllegalStateException("工作区目录暂时读不到（沙盒可能部署在另一台机器上）");
+        }
+        return files;
+    }
+
+    /**
+     * 把 {@link #collectExportFiles} 收好的文件打成 zip 流式写出。
+     * <p>流式而不是先打进内存：目录总量上限 100MB，攒成一个 byte[] 再吐出去等于白占一份内存高峰。
+     */
+    public void writeZip(String uid, String projectId, List<Path> files, OutputStream out) {
+        Path base = baseDir(uid, projectId);
+        try (ZipOutputStream zip = new ZipOutputStream(out, StandardCharsets.UTF_8)) {
+            for (Path p : files) {
+                String rel = base.relativize(p).toString().replace('\\', '/');
+                ZipEntry entry = new ZipEntry(rel);
+                entry.setTime(Files.getLastModifiedTime(p).toMillis());
+                zip.putNextEntry(entry);
+                Files.copy(p, zip);
+                zip.closeEntry();
+            }
+        } catch (IOException e) {
+            log.warn("[PROJECT] 工作区导出失败 uid={} project={}: {}", uid, projectId, e.getMessage());
+            throw new IllegalStateException("导出失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 删一个工作区文件（只删普通文件，目录不走这里）。
+     *
+     * <p>沙盒容器可能正开着这个目录——Unix 语义下删已打开的文件是安全的（容器里的进程
+     * 继续写到已删除的 inode，不影响磁盘释放），所以不查容器状态。
+     */
+    public void deleteFile(String uid, String projectId, String relPath) {
+        Path file = resolveDownload(uid, projectId, relPath);
+        try {
+            Files.delete(file);
+            log.info("[PROJECT] 删除工作区文件 uid={} project={} path={}", uid, projectId, relPath);
+        } catch (IOException e) {
+            throw new IllegalStateException("删除失败（文件可能仍被占用）：" + e.getMessage());
+        }
+    }
+
+    private static String extOf(String name) {
+        int dot = name.lastIndexOf('.');
+        return dot < 0 ? "" : name.substring(dot + 1).toLowerCase(java.util.Locale.ROOT);
+    }
+
+    private static String sniffImageType(String ext) {
+        return switch (ext) {
+            case "png" -> "image/png";
+            case "gif" -> "image/gif";
+            case "webp" -> "image/webp";
+            case "bmp" -> "image/bmp";
+            case "svg" -> "image/svg+xml";
+            default -> "image/jpeg";
+        };
     }
 
     /**
