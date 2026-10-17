@@ -22,11 +22,13 @@
 .md li.ul-item.d2 { margin-left: 32px; list-style-type: square; }
 .md hr { border: none; border-top: 1px solid var(--app-border); margin: 10px 0; }
 
-/* ==================== 富渲染：代码块外框 / Mermaid / 内联预览 / 沙盒运行 ==================== */
-/* 渲染产物类：.md-code（围栏外框，承载运行/预览按钮）+ .md-code-head/.md-code-slot（标题栏与结果槽）
-   + .md-diagram（Mermaid 容器）+ .md-preview-frame（产物预览 iframe）+ .md-run*（沙盒运行输出） */
+/* ==================== 富渲染：代码块外框 / Mermaid / 预览弹层 / 沙盒运行 ==================== */
+/* 渲染产物类：.md-code（围栏外框，承载运行/预览/复制按钮）+ .md-code-head/.md-code-slot（标题栏与运行结果槽）
+   + .md-diagram（Mermaid 容器）+ .md-run*（沙盒运行输出）；预览弹层的 .md-preview-* 挂在 body 上 */
 
-/* 代码块外框：.md pre 的定位上下文从 pre 上移到外框，按钮才能贴在整块右上而不压首行 */
+/* 代码块外框：动作按钮一律待在标题栏这条 flex 行里（语言名靠左、按钮成组靠右），
+   不再往代码区里浮——两行两个尺寸既对不齐也认不出谁是谁。外框 position:relative 是给
+   无标题栏的裸围栏那份浮动复制按钮兜底的 */
 .md .md-code { position: relative; margin: 8px 0; }
 .md .md-code > pre { margin: 0; border-top-left-radius: 0; border-top-right-radius: 0; }
 .md .md-code-head {
@@ -45,33 +47,23 @@
 /* 无语言标注的围栏不显示标题栏（渲染层加 .md-bare，避开 :has() 的兼容面） */
 .md .md-code.md-bare > pre { border-radius: var(--app-radius-sm); }
 
-/* 运行 / 预览按钮（结构由 renderMd 后处理生成，事件走页面级委托） */
+/* 标题栏里的动作按钮：运行 / 预览 / 复制共用这一套尺寸（结构由 renderMd 后处理生成，事件走委托） */
 .md .md-act {
   width: 22px; height: 22px; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
-  font-size: 13px; color: var(--app-text2);
+  font-size: 14px; color: var(--app-text2);
   background: transparent; border: 1px solid transparent; border-radius: 4px;
   cursor: pointer; transition: color .15s, border-color .15s;
 }
 .md .md-act:hover:not(:disabled) { color: var(--app-accent); border-color: var(--app-border); }
 .md .md-act:disabled { opacity: .45; cursor: not-allowed; }
 
-/* 结果槽：预览/运行产物挂在这里，与代码块同宽 */
+/* 结果槽：只承载「沙盒运行」的输出，与代码块同宽（预览已改成弹层，不再往这里塞 iframe） */
 .md .md-code-slot:empty { display: none; }
 .md .md-code-slot {
   border: 1px solid var(--app-border); border-top: none;
   border-radius: 0 0 var(--app-radius-sm) var(--app-radius-sm);
   background: var(--app-panel-2);
-}
-.md .md-preview-bar {
-  display: flex; justify-content: flex-end; padding: 4px 8px;
-  border-bottom: 1px solid var(--app-border);
-}
-.md .md-preview-bar a { font-size: var(--app-fs-sm); color: var(--app-text2); text-decoration: none; }
-.md .md-preview-bar a:hover { color: var(--app-accent); }
-.md .md-preview-frame {
-  display: block; width: 100%; height: 320px;
-  border: none; background: #fff; border-radius: 0 0 var(--app-radius-sm) var(--app-radius-sm);
 }
 
 /* 沙盒运行输出 */
@@ -88,6 +80,41 @@
   white-space: pre-wrap; word-break: break-word;
   border-radius: 0 0 var(--app-radius-sm) var(--app-radius-sm);
 }
+
+/* ==================== 预览弹层 ====================
+   DOM 由 utils/markdown.js 建在 body 上（不进消息 DOM，才不会被流式每帧重渲染拆掉），
+   所以这一节的选择器**不带 .md 前缀**。 */
+body.md-preview-lock { overflow: hidden; }
+.md-preview-mask {
+  position: fixed; inset: 0; z-index: 2200;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, .45);
+}
+/* 视口给足：气泡里 700×320 看不出布局与响应式，这里按整页尺寸来 */
+.md-preview-modal {
+  display: flex; flex-direction: column; overflow: hidden;
+  width: min(1080px, 92vw); height: 86vh;
+  background: var(--app-panel); border: 1px solid var(--app-border);
+  border-radius: var(--app-radius); box-shadow: 0 16px 48px rgba(0, 0, 0, .22);
+}
+.md-preview-head {
+  display: flex; align-items: center; gap: 12px; flex: none;
+  height: 42px; padding: 0 6px 0 14px;
+  background: var(--app-panel-2); border-bottom: 1px solid var(--app-border);
+}
+.md-preview-title { font-size: var(--app-fs-md); font-weight: 600; color: var(--app-text); }
+.md-preview-open { margin-left: auto; font-size: var(--app-fs-sm); color: var(--app-text2); text-decoration: none; }
+.md-preview-open:hover { color: var(--app-accent); }
+.md-preview-close {
+  width: 26px; height: 26px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 14px; color: var(--app-text2);
+  background: transparent; border: 1px solid transparent; border-radius: 4px; cursor: pointer;
+}
+.md-preview-close:hover { color: var(--app-accent); border-color: var(--app-border); }
+.md-preview-body { flex: 1; min-height: 0; background: #fff; }
+/* iframe 铺满主体，产物自己滚动，不给这层再套一条滚动条 */
+.md-preview-frame { display: block; width: 100%; height: 100%; border: none; background: #fff; }
 
 /* Mermaid 图表容器：图形本身居中自适应宽度，源码默认收起 */
 .md .md-diagram {
@@ -114,19 +141,19 @@
 .md .md-diagram-src > summary:hover { color: var(--app-accent); }
 .md .md-diagram-src > pre { margin: 6px 0 0; max-height: 260px; }
 
-/* 代码块复制按钮（render 动态创建，页面级委托点击） */
-.md .code-copy {
-  position: absolute; top: 8px; right: 8px; z-index: 1;
-  width: 26px; height: 26px;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 14px;
-  color: var(--app-text2); background: var(--app-panel);
-  border: 1px solid var(--app-border); border-radius: 4px;
-  cursor: pointer; opacity: 0; transition: opacity .15s;
-}
-.md pre:hover .code-copy { opacity: 1; }
-.md .code-copy:hover { color: var(--app-accent); border-color: var(--app-accent); }
+/* 代码块复制按钮（渲染层动态创建，页面级委托点击）。
+   有语言标题栏时它就是标题栏里的一个动作按钮（吃 .md-act 那套尺寸/透明底，常驻可见）；
+   没有标题栏的（裸围栏、图表源码折叠区）只能浮在代码右上，所以带底色描边、hover 才显——常驻会压住首行代码。
+   浮起那份挂在 .md-code / pre 的**直接子节点**上：塞进 pre 就落进滚动容器，代码一往下滚按钮跟着滚走。 */
+.md .code-copy:hover { color: var(--app-accent); }
 .md .code-copy.copied { color: var(--app-ok); border-color: var(--app-ok); }
+.md .md-code > .code-copy, .md pre > .code-copy {
+  position: absolute; top: 8px; right: 8px; z-index: 1;
+  background: var(--app-panel); border-color: var(--app-border);
+  opacity: 0; transition: opacity .15s, color .15s, border-color .15s;
+}
+.md .md-code > .code-copy:hover, .md pre > .code-copy:hover { border-color: var(--app-accent); }
+.md .md-code:hover > .code-copy, .md pre:hover > .code-copy { opacity: 1; }
 .md .ref-sup:hover { text-decoration: underline; }
 
 /* ==================== 暗色代码高亮（github-dark 主题的 token 配色，按主题作用域隔离） ====================
@@ -166,9 +193,11 @@ html[data-theme="dark"] .hljs-deletion { color: #ffdcd7; }
     max-width: 100%; border-collapse: collapse;
   }
   .md table th, .md table td { border: 1px solid var(--app-border); }
-  /* 图片/预览：原 320px 固定高在 56dvh 以下的屏会顶掉大半个可视区 */
+  /* 图片：原 320px 固定高在 56dvh 以下的屏会顶掉大半个可视区 */
   .md img { max-height: 46dvh; }
-  .md .md-preview-frame { height: 52dvh; }
+  /* 预览弹层窄屏直接全屏，别在 375px 上还留 92vw 的黑边 */
+  .md-preview-mask { align-items: stretch; }
+  .md-preview-modal { width: 100vw; height: 100dvh; border: none; border-radius: 0; }
   .md pre { max-height: 50dvh; }
   .md h2 { font-size: var(--app-fs-lg); }
   .md ul, .md ol { padding-left: 18px; }
@@ -177,10 +206,13 @@ html[data-theme="dark"] .hljs-deletion { color: #ffdcd7; }
 /* ==================== 触屏（hover:none）：hover-only 元素常显 ====================
    判据用「能否 hover」而非宽度 —— iPad 窄屏分屏 <768px 但有鼠标，桌面缩窗到 375px 也能 hover。 */
 @media (hover: none) {
-  /* 代码复制按钮：.md pre:hover 才显（opacity:0 起），触屏永不可见 = 复制功能失效 */
-  .md pre .code-copy { opacity: 1; }
+  /* 代码复制按钮：浮起那份 hover 才显（opacity:0 起），触屏永不可见 = 复制功能失效 */
+  .md .md-code > .code-copy, .md pre > .code-copy { opacity: 1; }
   /* 触控热区：桌面 22px 的按钮在手指上点不准 */
   .md .code-copy, .md .md-act { min-width: 30px; min-height: 30px; }
+  .md-preview-close { min-width: 34px; min-height: 34px; }
+  /* 标题栏跟着让高，否则 30px 的按钮上下各溢出 1px */
+  .md .md-code-head { height: 34px; }
   /* 链接下划线：触屏无 hover，靠 :hover 才显的反馈要给常驻版 */
   .md a { text-decoration: underline; text-underline-offset: 2px; }
 }

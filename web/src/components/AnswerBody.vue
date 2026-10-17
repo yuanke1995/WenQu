@@ -42,13 +42,24 @@ const props = defineProps({
    * 只读会话分享页要置 false：那条链接刻意只外发文档名/章节，不外发知识块原文，
    * 点开只能得到一个空弹窗和一句误导说明——不如让角标保持纯上标（与改动前一致）。
    */
-  citations: { type: Boolean, default: true }
+  citations: { type: Boolean, default: true },
+  /**
+   * 原样排版：不做图片占位与引用角标替换。
+   * <p>给「用户提问」用——提问里的 {@code [图片N]} / {@code [N]} 是用户手打的字，
+   * 替换掉会改他的原文（{@code [图片N]} 那条正则会连后面的空格一起吞）。
+   * 回答正文不要开：那里的标记是模型写的，本来就该渲染成图与角标。
+   */
+  literal: { type: Boolean, default: false }
 })
 
 const emit = defineEmits(['citation', 'preview'])
 
 const rootEl = ref(null)
-const html = computed(() => renderMd(props.content, props.images, { runnable: props.runnable }))
+// preview 写死为真、不做成 prop：这个组件覆盖的就是「回答正文」这一族界面（主聊天页、H5、
+// 分享页、子智能体卡、事件面板），而知识块原文/技能正文那些直接调 renderMd 的地方默认不给预览
+// ——那儿的 html 围栏是别人上传的内容，不该由看的人点一下就在我们域上跑起来
+const html = computed(() => renderMd(props.content, props.images,
+  { runnable: props.runnable, preview: true, literal: props.literal }))
 
 // citations=false 时按「本轮没有可点的来源」处理：传空数组，角标点击自然落空（不弹空窗）
 const sourcesOf = () => (props.citations ? props.sources : [])

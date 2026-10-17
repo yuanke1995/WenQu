@@ -196,7 +196,8 @@ const refTipOpenSource = () => {
 // ==================== 正文的点击 / 悬浮委托 ====================
 
 /**
- * 一段正文（v-html 产物）的点击语义：代码复制 / 沙盒运行与内联预览 / 引用角标 / 图片。
+ * 一段正文（v-html 产物）的点击语义：代码复制 / 沙盒运行 / 引用角标 / 图片。
+ * （预览弹层不在这里：它不需要页面上下文，由 utils/markdown.js 的 document 级委托接）
  * ctx 由渲染该正文的组件提供（图片与来源数组、沙盒所需的会话号）。
  * onCitation / onImages 是留给页面的出口：移动壳用的是底部抽屉与简化灯箱，不套 PC 浮层；
  * 不传就走本模块共用的来源弹窗与灯箱（PC 聊天页与两个分享页）。
@@ -206,7 +207,7 @@ const handleBodyClick = (e, ctx = {}) => {
   if (t && t.closest) {
     const copyBtn = t.closest('.code-copy')
     if (copyBtn) { copyCode(copyBtn); return }
-    // 富渲染按钮（沙盒运行 / 内联预览）：紧跟复制按钮判定，命中即消费
+    // 沙盒运行按钮：紧跟复制按钮判定，命中即消费
     const mdAct = t.closest('.md-act')
     if (mdAct && handleMdAction(mdAct, { sessionId: ctx.sessionId || '' })) return
   }
