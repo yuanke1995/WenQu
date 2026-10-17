@@ -352,6 +352,27 @@ public class ArtifactService {
     /** 没挂工作区这一档的查询占位符（比空串更明确：null 在 MyBatis wrapper 里会被当成"不传"） */
     public static final String UNASSIGNED_PROJECT = "__unassigned__";
 
+    /**
+     * 移动单个产物到另一个工作区，或摘掉归属（{@code projectId} 空/{@code __none__}）。
+     *
+     * <p>产物归用户不归会话，但工作区归属是"从哪个工作区交出来的"这件事的唯一记录——
+     * 用户在产物页整理时要有改的机会（归错比没归更难纠正：用户没法知道系统分对了没有）。
+     * <p>归档区可作为目标（整理动作）；校验口径与{@link ProjectService#resolveMoveTarget} 同一份。
+     */
+    public void moveProject(String uid, String artifactId, String projectId) {
+        Artifact row = getOwned(artifactId, uid);   // 不存在/他人/已删在这里 fail-loud
+        if (row == null) {
+            throw new IllegalArgumentException("产物不存在或已删除");
+        }
+        String target = projectService.resolveMoveTarget(uid, projectId);
+        if (Objects.equals(target, row.getProjectId())) return;
+        // 置空必须走 wrapper 显式 set：updateById 的 NOT_NULL 策略会跳过 null 列
+        artifactMapper.update(null, new LambdaUpdateWrapper<Artifact>()
+                .eq(Artifact::getId, artifactId)
+                .set(Artifact::getProjectId, target));
+        log.info("[ARTIFACT] 产物移动工作区 uid={} id={} {} → {}", uid, artifactId, row.getProjectId(), target);
+    }
+
     /** 取单个产物（校验归属，数据按 userId 隔离）。返回 null = 不存在或已删除。 */
     public Artifact getOwned(String id, String uid) {
         Artifact row = id == null ? null : artifactMapper.selectById(id);

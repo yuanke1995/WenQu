@@ -72,6 +72,9 @@
                 <a :href="r.url" :download="r.filename" class="app-btn ghost small" title="下载">
                   <download-outlined /> 下载
                 </a>
+                <button class="app-btn ghost small" title="移动到工作区" @click="askMove(r)">
+                  <folder-open-outlined />
+                </button>
                 <button class="app-btn ghost small art-del" title="删除" @click="askDelete(r)">
                   <delete-outlined />
                 </button>
@@ -80,6 +83,16 @@
           </template>
         </div>
       </a-spin>
+
+      <!-- 移动到工作区：产物归用户不归会话，但工作区归属是「从哪个工作区交出来的」的唯一记录，
+           归错比没归更难纠正，这里给事后整理的入口 -->
+      <MoveToWorkspaceModal v-model:open="moveOpen"
+                            :projects="projects"
+                            :current-id="moveTarget ? (moveTarget.projectId || '') : ''"
+                            title="移动产物到工作区"
+                            :note="MOVE_ARTIFACT_NOTE"
+                            :saving="moveSaving"
+                            @moved="doMoveArtifact" />
     </div>
   </div>
 </template>
@@ -87,8 +100,9 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { ReloadOutlined, FileTextOutlined, DownloadOutlined, DeleteOutlined } from '@ant-design/icons-vue'
-import { listArtifacts, listProjects, deleteArtifact, deleteArtifactsBatch } from '../api'
+import { ReloadOutlined, FileTextOutlined, DownloadOutlined, DeleteOutlined, FolderOpenOutlined } from '@ant-design/icons-vue'
+import { listArtifacts, listProjects, deleteArtifact, deleteArtifactsBatch, moveArtifactProject } from '../api'
+import MoveToWorkspaceModal from '../components/MoveToWorkspaceModal.vue'
 
 const rows = ref([])
 // 工作区容器：产物按工作区分组展示。空数组时退化成原来的单列表（接口挂掉也不该让页面白屏）
@@ -199,6 +213,28 @@ const fmtExpire = t => {
 const expireSoon = t => {
   const d = expireDaysLeft(t)
   return d !== null && d <= 3
+}
+
+// ==================== 移动到工作区（产物归属可改） ====================
+const MOVE_ARTIFACT_NOTE = '移动只改归属，文件本身不动；已下载过的链接不受影响。'
+const moveOpen = ref(false)
+const moveTarget = ref(null)
+const moveSaving = ref(false)
+const askMove = r => { moveTarget.value = r; moveOpen.value = true }
+const doMoveArtifact = async projectId => {
+  const r = moveTarget.value
+  if (!r) return
+  moveSaving.value = true
+  try {
+    await moveArtifactProject(r.id, projectId)
+    message.success(projectId ? '已移动到该工作区' : '已摘掉工作区归属')
+    moveOpen.value = false
+    await load()
+  } catch (e) {
+    message.error('移动失败：' + (e.message || '请重试'))
+  } finally {
+    moveSaving.value = false
+  }
 }
 
 // ==================== 删除确认：Modal.confirm（含手机） ====================

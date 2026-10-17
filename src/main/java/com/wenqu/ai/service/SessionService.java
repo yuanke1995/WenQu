@@ -95,6 +95,8 @@ public class SessionService {
     private final SessionMapper sessionMapper;
     private final MessageMapper messageMapper;
     private final SessionShareMapper sessionShareMapper;
+    /** 移动会话归属时，其产物要跟着一起走（产物归属本由会话反推）——与 ProjectService 删工作区时同口径，直连 Mapper */
+    private final com.wenqu.ai.mapper.ArtifactMapper artifactMapper;
     private final TransactionTemplate transactionTemplate;
     /** 会话级模型覆盖的可用的判定（这一列存的是一个模型引用，存进去之后供应商可能被停用、模型可能被移除） */
     private final ModelRegistryService modelRegistryService;
@@ -216,6 +218,37 @@ public class SessionService {
             log.warn("[PROJECT] 会话工作区标识解析失败（按无工作区处理）session={}: {}", sessionId, e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * 把会话移动到另一个工作区，或摘掉归属（{@code projectId} 空/{@code __none__}）。
+     *
+     * <p><b>为什么必须有</b>：会话的工作区此前只在创建时定一次。用户在「会话」里聊开了才想起
+     * 该归到某个工作区时，只能重开对话——历史带不走，工作区退化成"建会话前的选择题"。
+     * <p><b>产物跟着一起走</b>：产物归属由会话反推而来，不跟着走会出现「上下文在新家、
+     * 成果在旧家」的撕裂。
+     * <p><b>如实边界（前端必须说）</b>：此前在旧工作区目录里产生的文件仍留在原处
+     * （沙盒 workdir 按工作区分片，已落盘的文件不搬家），移动后新写的文件才进新工作区。
+     * <p>归档区可以作为目标（整理动作不产生新执行）；来源是不是归档区无所谓。
+     */
+    public void moveSessionProject(String uid, String sessionId, String projectId) {
+        if (sessionId == null || sessionId.isBlank()) {
+            throw new com.wenqu.ai.common.BizException("缺少会话标识");
+        }
+        Session s = sessionMapper.selectById(sessionId);
+        if (s == null || !Objects.equals(s.getUserId(), uid)) {
+            throw new com.wenqu.ai.common.BizException("会话不存在或不属于你");
+        }
+        String target = projectService.resolveMoveTarget(uid, projectId);
+        if (Objects.equals(target, s.getProjectId())) return;   // 幂等：原地移动直接成功
+        // 置空必须走 wrapper 显式 set：updateById 的 NOT_NULL 策略会跳过 null 列（摘归属会静默失效）
+        sessionMapper.update(null, new LambdaUpdateWrapper<Session>()
+                .eq(Session::getId, sessionId)
+                .set(Session::getProjectId, target));
+        artifactMapper.update(null, new LambdaUpdateWrapper<com.wenqu.ai.model.Artifact>()
+                .eq(com.wenqu.ai.model.Artifact::getSessionId, sessionId)
+                .set(com.wenqu.ai.model.Artifact::getProjectId, target));
+        log.info("[PROJECT] 会话移动工作区 uid={} sid={} {} → {}（产物随行）", uid, sessionId, s.getProjectId(), target);
     }
 
     /**

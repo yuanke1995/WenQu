@@ -171,6 +171,23 @@ public class ProjectService {
     }
 
     /**
+     * 解析「移动归属」的目标工作区：{@code null}/空/{@code __none__} = 摘掉归属（退回「会话」那一档），
+     * 否则必须是本人的工作区（fail-loud）。
+     *
+     * <p>与 {@link SessionService#resolveTargetProject} 的关键区别：那个拒绝**归档区**（那是"新建"的
+     * 规矩，归档=不接新活）；移动是整理动作，允许把东西挪进归档区——归拢历史不该被"收工"挡住。
+     * <p>{@code __none__} 常量直接复用 {@link SessionService#NO_PROJECT}（同包同值，避免两处各写一份漂移）。
+     */
+    public String resolveMoveTarget(String uid, String projectId) {
+        if (projectId == null || projectId.isBlank() || SessionService.NO_PROJECT.equals(projectId)) return null;
+        Project p = ownedOrNull(uid, projectId);
+        if (p == null) {
+            throw new IllegalArgumentException("工作区不存在或不属于你：" + projectId);
+        }
+        return p.getId();
+    }
+
+    /**
      * 该用户可见的工作区列表：implicit 兜底容器在前，其余按创建时间倒序。
      * <p>不返回已逻辑删除的行（MyBatis-Plus {@code @TableLogic} 自动过滤）。
      */

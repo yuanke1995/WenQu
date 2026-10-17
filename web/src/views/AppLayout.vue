@@ -148,6 +148,15 @@
                  @press-enter="doRenameProject" />
       </a-modal>
 
+      <!-- 移动到工作区：会话菜单进入；产物随会话一起走，文件留在旧工作区（note 说清） -->
+      <MoveToWorkspaceModal v-model:open="moveOpen"
+                            :projects="moveProjects"
+                            :current-id="moveTarget ? (moveTarget.projectId || '') : ''"
+                            title="移动对话到工作区"
+                            :note="MOVE_SESSION_NOTE"
+                            :saving="moveSaving"
+                            @moved="doMoveSession" />
+
       <!-- 批量操作条：进入批量模式才出现，紧贴列表上方，作用于已加载的会话 -->
       <div v-if="!collapsed && batchMode" class="sess-batch-bar">
         <span class="batch-count">已选 {{ batchSel.size }}</span>
@@ -283,6 +292,7 @@
                                  最新内容」的隐私提示与换新/停止），所以这里只发信号让聊天页打开弹窗。 -->
                             <a-menu-item key="share"><share-alt-outlined /> 分享</a-menu-item>
                             <a-menu-item v-if="s.shared" key="share-manage"><share-alt-outlined /> 分享管理</a-menu-item>
+                            <a-menu-item key="move"><folder-open-outlined /> 移动到工作区…</a-menu-item>
                             <a-menu-item key="batch"><check-square-outlined /> 批量管理</a-menu-item>
                             <a-menu-divider />
                             <a-menu-item key="delete" danger><delete-outlined /> 删除</a-menu-item>
@@ -447,7 +457,8 @@ import { PlusOutlined, MessageOutlined, RobotOutlined, FolderOutlined, BarChartO
          ArrowsAltOutlined, ShrinkOutlined } from '@ant-design/icons-vue'
 import { deleteSessionApi, logoutApi, renameSessionApi, pinSession, favoriteSession, batchDeleteSessionsApi,
          getMyMenuLayout, saveMyMenuLayout, setNewSessionProject,
-         updateProject, deleteProject, createProject, setProjectStatus } from '../api'
+         updateProject, deleteProject, createProject, setProjectStatus,
+         listProjects, moveSessionProject } from '../api'
 import { useNotifications, notifIcon, notifClass, notifTime } from '../chat/useNotifications'
 import { themeState, toggleTheme } from '../utils/theme'
 import { authUser, ensureAuth, isAdminSync, clearAuth } from '../utils/auth'
@@ -463,6 +474,7 @@ import MobileNotifSheet from '../h5/MobileNotifSheet.vue'
 import DesktopOnlyGuard from '../h5/DesktopOnlyGuard.vue'
 import UserAvatar from '../components/UserAvatar.vue'
 import SetupGuide from '../components/SetupGuide.vue'
+import MoveToWorkspaceModal from '../components/MoveToWorkspaceModal.vue'
 import { exportSessionMarkdown } from './exportMd'
 import './app.css'
 
@@ -1056,8 +1068,44 @@ const sessionMenu = (s, key) => {
   else if (key === 'export') exportSessionMd(s)
   else if (key === 'share') requestShareOpen(s)
   else if (key === 'share-manage') openShareManage(s.id)
+  else if (key === 'move') openMoveSession(s)
   else if (key === 'batch') enterBatchMode()
   else if (key === 'delete') confirmDelete(s)
+}
+
+// ==================== 移动到工作区（会话归属可改） ====================
+// 会话的工作区此前只在创建时定一次：在「会话」里聊开了才想起归拢，只能重开对话、历史带不走。
+// 这里补上事后整理的入口；产物由后端随会话一起走，文件本身留在旧工作区（弹窗里说清）。
+const MOVE_SESSION_NOTE = '移动后，此前在旧工作区目录里产生的文件仍留在原处；之后新写的文件才进新工作区。该对话交出的产物会跟着一起走。'
+const moveOpen = ref(false)
+const moveTarget = ref(null)
+const moveProjects = ref([])
+const moveSaving = ref(false)
+const openMoveSession = async s => {
+  moveTarget.value = s
+  moveOpen.value = true
+  try {
+    const r = await listProjects()
+    moveProjects.value = (r && r.data) || []
+  } catch (e) {
+    moveProjects.value = []
+    message.error('工作区列表加载失败，暂时无法移动')
+  }
+}
+const doMoveSession = async projectId => {
+  const s = moveTarget.value
+  if (!s) return
+  moveSaving.value = true
+  try {
+    await moveSessionProject(s.id, projectId)
+    message.success(projectId ? '已移动到该工作区' : '已摘掉工作区归属')
+    moveOpen.value = false
+    await loadSessions(undefined, { refreshProjects: true })
+  } catch (e) {
+    message.error('移动失败：' + (e.message || '请重试'))
+  } finally {
+    moveSaving.value = false
+  }
 }
 const confirmDelete = s => {
   Modal.confirm({

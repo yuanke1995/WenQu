@@ -695,6 +695,18 @@ public class ChatController {
         return ResultJson.ok(sessionService.workspaceOfSession(sessionId));
     }
 
+    @Operation(summary = "移动会话到其他工作区",
+            description = "连同该会话的产物一起改归属；projectId 传空串或 __none__ = 摘掉归属。"
+                    + "此前在旧工作区目录里产生的文件仍留在原处（已落盘的文件不搬家）")
+    @PutMapping("/session/{sessionId}/project")
+    public ResultJson moveSessionProject(
+            @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId,
+            @RequestBody Map<String, String> body) {
+        String pid = body == null ? null : body.get("projectId");
+        sessionService.moveSessionProject(RequestUser.uid(), sessionId, pid);
+        return ResultJson.ok(null, "已移动");
+    }
+
     @Operation(summary = "切换会话模型",
             description = "设置会话级模型覆盖（聊天页选择器切换即存，刷新/换端/重新生成后仍保留）；"
                     + "model 传空串 = 清除覆盖，回到跟随个人默认。校验会话归属与模型可用性")

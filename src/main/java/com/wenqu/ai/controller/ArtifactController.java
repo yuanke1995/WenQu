@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -44,6 +45,21 @@ public class ArtifactController {
     public ResultJson list(@RequestParam(value = "keyword", required = false) String keyword,
                            @RequestParam(value = "projectId", required = false) String projectId) {
         return ResultJson.ok(artifactService.list(RequestUser.uid(), keyword, projectId));
+    }
+
+    @Operation(summary = "移动产物到其他工作区",
+            description = "body: {projectId}；传空串或 __none__ = 摘掉归属（退回「会话」一档）。"
+                    + "归档区可作为目标；移动不碰文件本身")
+    @PutMapping("/{id}/project")
+    public ResultJson moveProject(@PathVariable("id") String id,
+                                  @RequestBody(required = false) Map<String, String> body) {
+        try {
+            String pid = body == null ? null : body.get("projectId");
+            artifactService.moveProject(RequestUser.uid(), id, pid);
+            return ResultJson.ok(null, "已移动");
+        } catch (IllegalArgumentException e) {
+            return ResultJson.error(400, e.getMessage());
+        }
     }
 
     @Operation(summary = "删除产物", description = "删除自己的产物（同时删除文件）；删他人的返回 403")

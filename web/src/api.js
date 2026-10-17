@@ -420,6 +420,12 @@ export const updateSessionModelApi = (sid, model) =>
 export const getSessionModelApi = sid => request(`/session/${sid}/model`)
 /** 当前会话所属工作区摘要（聊天页头部标识）：无工作区/非本人会话返回 data=null */
 export const getSessionWorkspace = sid => request(`/session/${sid}/workspace`)
+/** 移动会话到其他工作区（连同其产物一起改归属）；projectId 空串 = 摘掉归属 */
+export const moveSessionProject = (sid, projectId) =>
+  request(`/session/${sid}/project`, { method: 'PUT', body: JSON.stringify({ projectId: projectId || '' }) })
+/** 移动单个产物到其他工作区；projectId 空串 = 摘掉归属 */
+export const moveArtifactProject = (id, projectId) =>
+  request(`/artifact/${id}/project`, { method: 'PUT', body: JSON.stringify({ projectId: projectId || '' }) })
 
 /** 删除会话（MySQL 软删除 + Redis 清理） */
 export const deleteSessionApi = sid => request(`/session/${sid}`, { method: 'DELETE' })

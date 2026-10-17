@@ -78,6 +78,7 @@
         <button class="ss-menu-btn" type="button" @click="doPin"><pushpin-outlined />{{ menuFor.isPinned === 1 ? '取消置顶' : '置顶' }}</button>
         <button class="ss-menu-btn" type="button" @click="doFav"><star-outlined />{{ menuFor.isFavorite === 1 ? '取消收藏' : '收藏' }}</button>
         <button class="ss-menu-btn" type="button" @click="startRename"><edit-outlined />重命名</button>
+        <button class="ss-menu-btn" type="button" @click="openMove"><folder-open-outlined />移动到工作区</button>
         <button class="ss-menu-btn" type="button" @click="doExport"><download-outlined />导出 Markdown</button>
         <button class="ss-menu-btn danger" type="button" @click="doDelete"><delete-outlined />删除</button>
       </div>
@@ -89,6 +90,15 @@
       <button class="ss-menu-close" type="button" @click="menuFor = null">收起</button>
     </div>
   </BottomSheet>
+
+  <!-- 移动到工作区：与 PC 侧栏共用的弹窗（antd modal 自带 teleport，压在 sheet 之上） -->
+  <MoveToWorkspaceModal v-model:open="moveOpen"
+                        :projects="moveProjects"
+                        :current-id="moveTarget ? (moveTarget.projectId || '') : ''"
+                        title="移动对话到工作区"
+                        :note="MOVE_SESSION_NOTE"
+                        :saving="moveSaving"
+                        @moved="doMoveSession" />
 </template>
 
 <script setup>
@@ -97,11 +107,12 @@ import { useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { SearchOutlined, PlusOutlined, MoreOutlined, PushpinOutlined, StarOutlined, StarFilled, EditOutlined, DeleteOutlined, DownloadOutlined,
          UserOutlined, QuestionCircleOutlined, BulbOutlined, LogoutOutlined, MobileOutlined, FileTextOutlined, DatabaseOutlined,
-         FolderOutlined } from '@ant-design/icons-vue'
+         FolderOutlined, FolderOpenOutlined } from '@ant-design/icons-vue'
 import { installable, installEntryVisible, promptInstall } from './pwa'
 import BottomSheet from './BottomSheet.vue'
+import MoveToWorkspaceModal from '../components/MoveToWorkspaceModal.vue'
 import { sessionStore, loadSessions, loadSpaceMore, NO_SPACE_KEY } from '../views/store'
-import { pinSession, favoriteSession, renameSessionApi, logoutApi, deleteSessionApi } from '../api'
+import { pinSession, favoriteSession, renameSessionApi, logoutApi, deleteSessionApi, listProjects, moveSessionProject } from '../api'
 import { clearAuth } from '../utils/auth'
 import { themeState, toggleTheme } from '../utils/theme'
 import { exportSessionMarkdown } from '../views/exportMd'
@@ -156,6 +167,40 @@ const doLogout = () => {
       router.replace('/login')
     }
   })
+}
+
+// 移动到工作区（与 PC 侧栏同一语义）：产物随会话一起走，文件留在旧工作区
+const MOVE_SESSION_NOTE = '移动后，此前在旧工作区目录里产生的文件仍留在原处；之后新写的文件才进新工作区。该对话交出的产物会跟着一起走。'
+const moveOpen = ref(false)
+const moveTarget = ref(null)
+const moveProjects = ref([])
+const moveSaving = ref(false)
+const openMove = async s => {
+  moveTarget.value = s
+  moveOpen.value = true
+  try {
+    const r = await listProjects()
+    moveProjects.value = (r && r.data) || []
+  } catch (e) {
+    moveProjects.value = []
+    message.error('工作区列表加载失败，暂时无法移动')
+  }
+}
+const doMoveSession = async projectId => {
+  const s = moveTarget.value
+  if (!s) return
+  moveSaving.value = true
+  try {
+    await moveSessionProject(s.id, projectId)
+    message.success(projectId ? '已移动到该工作区' : '已摘掉工作区归属')
+    moveOpen.value = false
+    menuFor.value = null
+    await loadSessions()
+  } catch (e) {
+    message.error('移动失败：' + (e.message || '请重试'))
+  } finally {
+    moveSaving.value = false
+  }
 }
 
 const kw = ref('')
