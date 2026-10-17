@@ -20,7 +20,7 @@ public class Config {
     @TableId(type = IdType.INPUT)
     private String configKey;
 
-    /** 配置值（列名 config_value 避开 MySQL/OceanBase 保留字 value） */
+    /** 配置值（列名 config_value 避开 MySQL 保留字 value） */
     private String configValue;
 
     /** 说明 */

@@ -39,7 +39,7 @@
   ├─ 工作流引擎：DSL → StateGraph 翻译执行 + 节点级 trace
   ├─ 沙盒调度 · 定时调度 · 配置中心 · RBAC · OIDC · 限流 · 审计
   │
-  ├─ MySQL / OceanBase …… 业务数据（50+ 张 c_ai_* 表，启动自动建表）
+  ├─ MySQL …… 业务数据（50+ 张 c_ai_* 表，启动自动建表）
   ├─ Redis Stack ………… 向量索引 / 配置变更广播（pub/sub）/ 分布式锁与限频
   ├─ Meilisearch ……… 关键词引擎（可选，默认 MySQL LIKE，零依赖）
   ├─ Docker 沙盒 ……… provisioner + 隔离容器执行环境
@@ -54,7 +54,7 @@
 |------|------|
 | 后端 | Java 17 + Spring Boot 3.5.15 + Spring AI 1.1.8（`spring-ai-bom` 统一版本） |
 | ORM | MyBatis-Plus 3.5.12（逻辑删除 `deleted`，驼峰映射） |
-| 数据库 | MySQL 8 / OceanBase 等 MySQL 协议兼容库（驱动即 MySQL Connector/J，无任何数据库专有逻辑；内置 compose 提供 MySQL，生产环境亦常指向外部 OceanBase；库名 `wenqu_ai` 经 `DB_NAME` 调整）；50+ 张 `c_ai_*` 表由启动自动建立 |
+| 数据库 | MySQL 8 等 MySQL 协议兼容库（驱动即 MySQL Connector/J，无任何数据库专有逻辑；内置 compose 提供 MySQL，生产环境亦可指向外部 MySQL；库名 `wenqu_ai` 经 `DB_NAME` 调整）；50+ 张 `c_ai_*` 表由启动自动建立 |
 | 向量库 | Redis Stack（RediSearch 向量索引，Jedis 客户端，每个知识库独立索引，不再有全局共享索引；连接地址经 `REDIS_HOST`/`REDIS_PORT` 注入，默认 `127.0.0.1:6379`） |
 | LLM | 聊天/视觉/向量/重排/OCR/图谱抽取模型均可跨厂商热切换（DeepSeek / 智谱 GLM / 阿里百炼 Qwen / Kimi / 豆包 / 腾讯混元 / 百度千帆 / MiniMax / SiliconFlow / Ollama 等 OpenAI 兼容网关预设，模型经「供应商表 + 引用」登记绑定，**无全局兜底**——聊天模型缺失/引用无效会 fail-loud 引导选择） |
 | 智能体 / 问答引擎 | **AgentScope 2.1.0-BETA1**（`io.agentscope:agentscope-harness` 的 `HarnessAgent`：推理循环、工具派发、会话状态、上下文压缩、权限、子智能体、HITL、Plan Mode 全部由框架原生接管；手写 legacy 运行时已退役，单一引擎恒走框架）。问渠领域工具/语义经适配层（Spring AI ToolCallback → AgentScope 一等工具）注入 |
@@ -70,7 +70,7 @@
 ### 环境要求
 
 - JDK 17、Node.js ≥22.12（或 20.19+；`.nvmrc` 固定 22 LTS，旧版本会构建失败）
-- MySQL 协议数据库（MySQL 8 / OceanBase）
+- MySQL 协议数据库（MySQL 8）
 - Redis Stack（向量索引）
 - Docker（可选：沙盒、Docker Compose 一键部署）
 
@@ -110,7 +110,7 @@ bash deploy/sandbox-provisioner/run.sh docker-logs    # 跟踪日志
 export DB_PASSWORD=xxx                    # 数据库密码
 
 # ===== 基础设施连接（有默认值，按部署环境调整）=====
-export DB_HOST=127.0.0.1                  # 数据库主机（容器部署默认 mysql；外部 OceanBase 改为实际地址）
+export DB_HOST=127.0.0.1                  # 数据库主机（容器部署默认 mysql；外部 MySQL 改为实际地址）
 export DB_PORT=3306                       # 数据库端口
 export DB_NAME=wenqu_ai                   # 库名
 export DB_USERNAME=root                   # 用户名
@@ -151,7 +151,7 @@ java -jar target/wenqu.jar
 
 # 方式三：Docker Compose（含 redis-stack + meilisearch + 内置 MySQL，自包含）
 docker compose up -d
-# 使用外部 OceanBase/MySQL：先 docker compose up -d redis-stack meilisearch，
+# 使用外部 MySQL：先 docker compose up -d redis-stack meilisearch，
 # 再以 DB_HOST/DB_PORT/DB_NAME/DB_USERNAME 指向外部库启动 app（或改 compose 环境变量）
 ```
 
@@ -274,7 +274,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 docker compose up -d          # 自包含：redis-stack + meilisearch + 内置 MySQL
 ```
 
-使用外部 OceanBase/MySQL 时，先只起中间件，再以 `DB_HOST/DB_PORT/DB_NAME/DB_USERNAME` 指向外部库启动 app。生产 nginx 参考配置见 `deploy/nginx.conf`。
+使用外部 MySQL 时，先只起中间件，再以 `DB_HOST/DB_PORT/DB_NAME/DB_USERNAME` 指向外部库启动 app。生产 nginx 参考配置见 `deploy/nginx.conf`。
 
 ### 多副本部署要求
 
