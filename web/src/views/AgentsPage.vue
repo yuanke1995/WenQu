@@ -6,7 +6,7 @@
         <!-- 页名与 Tab 名重复，标题仅保留给读屏器（sr-only），视觉上从统计起头 -->
         <h1 class="app-page-title sr-only">智能体</h1>
         <span class="ap-count">共 <b>{{ agents.length }}</b> 个</span>
-        <span class="head-hint-plain" title="一个智能体就是一组对话预设：选好模型、写好角色提示词、圈定知识库范围、按需开启能力；对话时在输入框上方选用，这一轮问答就按它走">一组对话预设：模型、角色提示词、知识库范围与能力开关；在输入框上方选用</span>
+        <span class="head-hint-plain" title="一个智能体就是一组对话预设：选好模型、写好角色提示词、圈定知识库范围、按需开启能力；对话时在输入框上方选用，这一轮问答就按它走">一组对话预设：模型、角色提示词、知识库范围与能力开关</span>
         <div class="ap-head-r">
           <a-input v-model:value="keyword" class="ap-search" size="small" allow-clear placeholder="搜索名称或描述">
             <template #prefix><search-outlined class="ap-search-ic" /></template>
@@ -487,6 +487,39 @@
         </div>
       </div>
 
+      <!-- 游客输入：访客能发什么。默认全关——游客模型由上面那一项选定，看不懂图的模型收到图片
+           只会报错或被静默忽略，视觉 token 的成本却记在发布者账上，所以这是「发布者有没有明确同意」
+           的问题而不是体验偏好。两个开关分开而不是合成一个：纯文本模型读 PDF 恰恰是最擅长的，
+           合成一个会逼发布者做无谓的取舍 -->
+      <div class="pub-block">
+        <div class="pub-block-h">游客输入</div>
+        <div class="pub-switch-row">
+          <a-switch v-model:checked="pubGuestImages" :disabled="!pubEnabled" size="small" @change="savePublish" />
+          <div class="pub-switch-t">
+            <div class="pub-switch-label">允许发图</div>
+            <div class="pub-switch-d">访客可粘贴 / 拖入 / 拍照提问；图片压缩到 1280px 后随本轮送出（需模型能看图）</div>
+          </div>
+        </div>
+        <!-- 模型看不懂图时的就地提示：不拦（「跟随个人默认模型」这一档在发布时解析不到具体模型，
+             拦了会把正确配置也挡在门外），但要说清楚会发生什么 -->
+        <div v-if="pubVisionWarn" class="pub-warn">
+          <exclamation-circle-outlined />
+          <span v-if="pubVisionWarn === 'model'">当前对话模型不具备图片理解能力，访客发图会被忽略或报错；请换一个支持看图的模型</span>
+          <span v-else>对话模型为「跟随发布者个人默认模型」，此处无法判定它能否看图；请确认你的个人默认模型支持图片理解，否则访客发来的图会被忽略</span>
+        </div>
+        <div class="pub-switch-row">
+          <a-switch v-model:checked="pubGuestFiles" :disabled="!pubEnabled" size="small" @change="savePublish" />
+          <div class="pub-switch-t">
+            <div class="pub-switch-label">允许上传文档附件</div>
+            <div class="pub-switch-d">访客可上传 PDF / Word / Excel / 代码等；逐访客隔离落盘，24 小时后自动清理</div>
+          </div>
+        </div>
+        <div v-if="!pubEnabled" class="pub-warn">
+          <exclamation-circle-outlined />
+          <span>这两项依赖公开分享：分享停用后访客入口随之消失</span>
+        </div>
+      </div>
+
       <!-- 分发形态：三选一。共享同一个 token，切换不产生新链接 -->
       <div class="pub-block" v-if="pubToken && pubEnabled">
         <div class="pub-block-h">分发方式</div>
@@ -650,6 +683,7 @@ import ProviderIcon from '../components/ProviderIcon.vue'
 import ModelSelect from '../components/ModelSelect.vue'
 import AgentAvatar from '../components/AgentAvatar.vue'
 import { ensureAuth, isAdminSync } from '../utils/auth'
+import { loadModelIndex } from '../utils/modelRef'
 
 // ==================== 能力定义 ====================
 // path：该能力在全局配置里的开关路径；gate：还受此总闸制约（关掉总闸时能力不生效）
@@ -1107,6 +1141,29 @@ const pubEnabled = ref(false)
 const pubMcpEnabled = ref(false)
 const pubModelRef = ref('')
 const pubToken = ref('')
+/** 游客输入开关（默认关；发布者显式打开才给访客多模态入口） */
+const pubGuestImages = ref(false)
+const pubGuestFiles = ref(false)
+/** 模型目录（ref → 展示信息，含 visionCapable）：只用来判断"选中的模型能不能看图"。
+ *  loadModelIndex 自带 10s TTL 缓存且失败静默，拿不到就按"能看"放过——宁可少提示一句，
+ *  也不要因为一次取数失败就在发布弹窗里报一个假警 */
+const modelIndex = ref({})
+/** 选中模型能否看图（三态已由后端归一成布尔）。空 modelRef=跟随个人默认模型，此时无从判定 */
+const pubModelVisionOk = computed(() => !pubModelRef.value || !!modelIndex.value[pubModelRef.value]?.visionCapable)
+/**
+ * 「允许发图」要不要就地提示，以及提示哪一句：
+ *   'model'   —— 选定的模型看不懂图，是**确定的问题**（访客发图会被忽略或报错）
+ *   'inherit' —— 跟随个人默认模型，此处**无从判定**，但同样得提醒去确认
+ *   ''        —— 不必提示
+ * <p>为什么分成两档而不是「判不出来就不提示」：判不出来的那一档恰恰最容易出事——
+ * 发布者以为自己选了默认模型就万事俱备，访客发出去的图却被静默忽略。
+ * 提示要说出「我判不了，你去确认」，而不是假装没问题（这正是本函数存在的理由）。
+ */
+const pubVisionWarn = computed(() => {
+  if (!pubEnabled.value || !pubGuestImages.value) return ''
+  if (!pubModelRef.value) return 'inherit'
+  return pubModelVisionOk.value ? '' : 'model'
+})
 /** 发布后的回收信号（visit_count 每次游客发起对话 +1） */
 const pubVisitCount = ref(0)
 const pubLastVisitAt = ref('')
@@ -1134,14 +1191,21 @@ async function openPublish (a) {
   pubEnabled.value = false
   pubMcpEnabled.value = false
   pubModelRef.value = ''
+  pubGuestImages.value = false
+  pubGuestFiles.value = false
   pubTab.value = 'link'
   pubVisitCount.value = 0
   pubLastVisitAt.value = ''
+  // 模型目录用于「允许发图」那条就地提示；不 await：它是 10s TTL 的展示索引，
+  // 晚到一步只影响那行提示什么时候出现，不该拖住弹窗打开
+  loadModelIndex().then(ix => { modelIndex.value = ix || {} }).catch(() => {})
   try {
     const r = await getAgentPublish(a.id)
     if (r && r.success !== false && r.data) {
       pubEnabled.value = !!r.data.enabled
       pubMcpEnabled.value = !!r.data.mcpEnabled
+      pubGuestImages.value = !!r.data.guestImages
+      pubGuestFiles.value = !!r.data.guestFiles
       pubModelRef.value = r.data.modelRef || ''
       pubToken.value = r.data.token || ''
       pubVisitCount.value = r.data.visitCount || 0
@@ -1153,15 +1217,23 @@ async function openPublish (a) {
 async function savePublish () {
   // MCP 端点是分享的附加形态：分享停用后链接与端点一并失效，前端同步关掉避免发布出无效组合
   if (!pubEnabled.value) pubMcpEnabled.value = false
+  // 游客输入同理依赖分享本身：链接都停了就无所谓"访客能不能发图"，收了才不会回显出
+  // 「未发布 + 已允许发图」这种自相矛盾的状态（后端也归一成关，两边口径一致）
+  if (!pubEnabled.value) { pubGuestImages.value = false; pubGuestFiles.value = false }
   try {
     const r = await publishAgent(pubAgentId.value, {
       enabled: pubEnabled.value,
       mcpEnabled: pubMcpEnabled.value,
+      guestImages: pubGuestImages.value,
+      guestFiles: pubGuestFiles.value,
       modelRef: pubModelRef.value || ''
     })
     if (r && r.success !== false && r.data) {
       pubToken.value = r.data.token || ''
       pubMcpEnabled.value = !!r.data.mcpEnabled
+      // 以后端归一后的值为准（停用分享时它会把两个能力位一起压成 false）
+      pubGuestImages.value = !!r.data.guestImages
+      pubGuestFiles.value = !!r.data.guestFiles
       // 同步列表行：卡片上的「已发布」标记即时反映，不用重拉列表
       const row = agents.value.find(x => x.id === pubAgentId.value)
       if (row) row.published = pubEnabled.value ? 1 : 0

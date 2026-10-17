@@ -62,63 +62,36 @@
       <div v-if="!messages.length && !loading" class="sc-welcome">
         <AgentAvatar :agent="info" :size="44" class="sc-welcome-mark" />
         <h2>{{ info.name || '智能体对话' }}</h2>
-        <p>{{ info.description || '在下方输入你的问题，我会基于所配置的资料与能力回答。' }}</p>
+        <!-- 描述为空时按能力给一句能照着做的引导：发布者没写描述是常态，
+             「在下方输入你的问题」在能发图的链接上等于把最重要的用法藏了起来 -->
+        <p>{{ info.description || welcomeHint }}</p>
       </div>
-      <div v-for="(m, i) in messages" :key="i" class="sc-row" :class="m.role">
-        <div class="sc-msg-block" :class="m.role">
-          <!-- 用户：浅灰底气泡（与 ChatPage .bubble.user 同款，不是主色蓝） -->
-          <div v-if="m.role === 'user'" class="sc-bubble user">{{ m.content }}</div>
-          <!-- AI：无气泡，正文直接排（ChatPage .bubble.ai 是 transparent + padding:0） -->
-          <div v-else class="sc-bubble ai">
-            <!-- 还没出正文时只留一行带呼吸点的提示，不画任何框（文案两档，与主聊天页同源） -->
-            <div v-if="!m.content" class="sc-typing">
-              <span class="sc-pulse" /><span>{{ stageLabel(m.stage) || '正在检索资料…' }}</span>
-            </div>
-            <template v-else>
-              <AnswerBody :content="m.content" :images="m.images" :sources="m.sources"
-                          :msg-index="i" :streaming="!!m.loading" />
-              <!-- 正文已出、后续又推来阶段提示：作为正文下方的脚注 -->
-              <div v-if="m.stage" class="sc-stage"><span class="sc-pulse" />{{ stageLabel(m.stage) }}</div>
-              <!-- 引用来源：与主聊天页同一份 sourceName 口径，点开的是同一个来源弹窗 -->
-              <div v-if="m.sources && m.sources.length" class="sc-srcs">
-                <button class="sc-srcs-head" type="button" @click="m.srcOpen = !m.srcOpen">
-                  <span>引用 {{ m.sources.length }} 条来源</span>
-                  <caret-right-outlined class="sc-srcs-caret" :class="{ open: m.srcOpen }" />
-                </button>
-                <div v-if="m.srcOpen" class="sc-srcs-list">
-                  <div v-for="s in m.sources" :key="s.ref" class="sc-src" title="点击查看原文" @click="openSource(s)">
-                    <span class="sc-src-no">[{{ s.ref }}]</span>
-                    <span class="sc-src-name">{{ sourceName(s) }}</span>
-                  </div>
-                </div>
-              </div>
-            </template>
-          </div>
-        </div>
-      </div>
+      <!-- 消息列表与主对话页共用 chat/ChatThread.vue：行/块/气泡布局、四个叶子的次第
+           （正文 → 降级 → 引用来源 → 动作行）都由它定。分享页没有登录态那些附加物，
+           所以一个插槽都不填——#body 用兜底（等待态 → 正文 → 阶段脚注），
+           #sources 用兜底（不带检索词与片段），只有"重新生成只给最后一轮"这一条要传进去。 -->
+      <ChatThread :messages="messages" :can-regenerate="(m, i) => i === messages.length - 1"
+                  @feedback="(m, i, r) => fb(m, r)" @regenerate="(m, i) => regenerate(i)" />
     </div>
 
-    <footer class="sc-input-wrap">
-      <div class="sc-input">
-        <textarea
-          v-model="draft"
-          class="sc-textarea"
-          :rows="isEmbed ? 1 : 2"
-          :disabled="sending"
-          placeholder="输入你的问题…"
-          enterkeyhint="send"
-          @keydown.enter.exact.prevent="send"
-        ></textarea>
-        <button v-if="!sending" class="sc-send" :disabled="!draft.trim()" aria-label="发送" @click="send">
-          <send-outlined />
-        </button>
-        <button v-else class="sc-send stop" aria-label="停止" @click="stop"><stop-outlined /></button>
-      </div>
-      <div class="sc-foot">
-        <span>内容由 AI 生成，请注意甄别</span>
-        <span v-if="!isEmbed" class="sc-foot-hint">Enter 发送 · Shift + Enter 换行</span>
-      </div>
-    </footer>
+    <!-- 输入区与主对话页同一个组件（chat/ChatInput.vue）：卡片、正文与附件/图片 chip 同流、
+         工具条、拖拽落点、发送/停止键都是一份实现，所以这页不再自己拼一套。
+         分享页没有 + 面板/@ 引用/技能/计划模式，那些插槽一个都不填——「只填自己有的」。
+         页脚放进 #below：它得跟卡片同一个内边距列才居中对齐，包在外面就对不上了。 -->
+    <ChatInput
+      ref="inputRef" v-model="draft" :resolve="chipOf" :placeholder="placeholder"
+      :sending="sending" :can-send="canSend" :can-attach="canAttach" :attach-title="attachTitle"
+      :accept="acceptAttr"
+      @attach="openPicker" @send="send" @stop="stop" @files="onDropFiles"
+      @paste="onComposerPaste" @keydown="onInputKeydown" @update:keys="onKeys"
+      @chip-click="onChipClick" @ready="syncChips">
+      <template #below>
+        <div class="sc-foot">
+          <span>内容由 AI 生成，请注意甄别</span>
+          <span v-if="!isEmbed" class="sc-foot-hint">Enter 发送 · Shift + Enter 换行</span>
+        </div>
+      </template>
+    </ChatInput>
 
     <!-- 正文浮层（图片灯箱 / 引用来源弹窗 / 角标悬浮卡）：与主聊天页共用一份实现。
          不传 sessionId ⇒ 来源弹窗里的代码块不给「在云端沙盒运行」（游客链路本就不暴露沙盒）。 -->
@@ -127,24 +100,41 @@
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { useRoute } from 'vue-router'
-import { SendOutlined, StopOutlined, CaretRightOutlined, HistoryOutlined, PlusOutlined } from '@ant-design/icons-vue'
-import { getShareInfo, getShareHistory, listShareSessions, clearShareSessions, sendShareMessage, getShareRunStatus, resumeShareTurn, stopShareTurn } from '../api'
+// 只留本页自己画的两个图标：发送/停止、引用箭头、复制/评价/重生成、降级感叹号、附件图标
+// 都已随对应叶子进各自组件（这里留着就成了「看着像在用」的死导入）
+import { HistoryOutlined, PlusOutlined } from '@ant-design/icons-vue'
+import { getShareInfo, getShareHistory, listShareSessions, clearShareSessions, sendShareMessage, getShareRunStatus,
+         resumeShareTurn, stopShareTurn, uploadShareAttachment, submitShareFeedback } from '../api'
 import AgentAvatar from '../components/AgentAvatar.vue'
 import BrandMark from '../components/BrandMark.vue'
 // 正文与浮层与主聊天页同源：图片、引用角标、来源弹窗、灯箱都走同一套，不再各写一份
-import AnswerBody from '../components/AnswerBody.vue'
 import AnswerViewerHost from '../components/AnswerViewerHost.vue'
-import { openSource } from '../chat/answerViewer'
-import { sourceName, stageLabel } from '../chat/projections'
+// 输入区与主对话页共用一份壳（卡片/正文与 chip 同流/工具条/拖拽落点/发送停止键）
+import ChatInput from '../chat/ChatInput.vue'
+// 消息列表外壳（与主对话页同一份）：行/块/气泡布局 + 提问随行材料 + 降级条 + 引用来源 + 动作行
+import ChatThread from '../chat/ChatThread.vue'
+import { openImages } from '../chat/answerViewer'
+import { fmtSize } from '../chat/projections'
+// 取材判定层与主聊天页同源（白名单/限额/被拒文案只有一份，改一处两页同时生效）
+import { MAX_IMAGES, MAX_FILES, MAX_FILE_MB, SUPPORTED_EXTS, REJECT, classifyIntake, rejectText,
+         compressImage, pasteFilesOf, isLongPaste, pasteNameOf, isImageFile } from '../chat/intake'
+import { resolveImg } from '../utils/markdown'
 
 const route = useRoute()
 const token = computed(() => String(route.params.token || ''))
 const isEmbed = computed(() => route.query.embed === '1')
 
 const info = ref({ name: '', description: '', icon: '', isBuiltin: false })
+/**
+ * 游客能力位与限额（来自 /share/{token}/info）。
+ * 默认全关：拿不到 info 时页面也不该先给一个"能发图"的假入口——能力位是发布者授的权，
+ * 猜错的方向只能是更保守的那一侧。
+ */
+const cap = ref({ guestImages: false, guestFiles: false, maxImages: MAX_IMAGES, maxImageMb: 10,
+                  maxAttachments: MAX_FILES, maxAttachmentMb: MAX_FILE_MB, maxQuestionChars: 8000 })
 const messages = ref([])
 const draft = ref('')
 const sending = ref(false)
@@ -158,6 +148,41 @@ const histLoading = ref(false)
 const histErr = ref('')
 const askClear = ref(false)
 let controller = null
+
+/** 输入区组件的句柄：开系统选择器、以及 Composer 的 sync/repaint 都走它 */
+const inputRef = ref(null)
+/** 待发送的图片与附件。它们是**数据**，编辑区里的 chip 是**呈现**——
+ *  两边靠 syncChips（数组→DOM）与 onKeys（DOM→数组剪枝）对账，与主对话页同一套契约 */
+const pendingImages = ref([])
+const pendingFiles = ref([])
+/** 待发送 chip 的编号源：fileId 要等上传响应回来才有，之前总得有个稳定身份，
+ *  否则"这颗 chip 对应数组里哪一条"只能靠文件名猜，重名就串号 */
+let chipSeq = 0
+/** 已挂进编辑区的 chip key（按 DOM 顺序）。Composer 只在「父级改了值」与「我们打了字」之间做区分，
+ *  删除动作要靠它反推是哪一条被删了 */
+const inlineKeys = ref([])
+
+const canAttach = computed(() => cap.value.guestImages || cap.value.guestFiles)
+/** 前端预检取「前端默认」与「服务端下发」的较严一档：服务端才是权威，前端不能比它宽松
+ *  （否则用户白传一趟才被拒），也不该比它更严（否则功能看起来莫名少了一截） */
+const limits = computed(() => ({
+  maxImages: Math.max(1, Math.min(MAX_IMAGES, cap.value.maxImages || MAX_IMAGES)),
+  maxFiles: Math.max(1, Math.min(MAX_FILES, cap.value.maxAttachments || MAX_FILES)),
+  maxFileMb: Math.max(1, Math.min(MAX_FILE_MB, cap.value.maxAttachmentMb || MAX_FILE_MB))
+}))
+/** 选择器的接收类型：只收能力位允许的那几类，让系统选择器自己就灰掉不支持的格式 */
+const acceptAttr = computed(() => {
+  const parts = []
+  if (cap.value.guestImages) parts.push('image/*')
+  if (cap.value.guestFiles) parts.push(...SUPPORTED_EXTS.map(e => '.' + e))
+  return parts.join(',') || undefined
+})
+const placeholder = computed(() => canAttach.value ? '输入你的问题，或加上图片/文件…' : '输入你的问题…')
+const welcomeHint = computed(() => canAttach.value
+  ? '在下方输入你的问题；图片和文件可以直接拖进来、粘贴进来，或者点左侧的加号添加。'
+  : '在下方输入你的问题，我会基于所配置的资料与能力回答。')
+const hasUploading = () => pendingFiles.value.some(f => f.uploading)
+const canSend = computed(() => !!draft.value.trim() && !sending.value && !hasUploading())
 
 const visitorId = () => {
   try {
@@ -179,14 +204,25 @@ function rememberSession (id) {
   } catch (e) { /* 隐私模式下 localStorage 不可用，只是刷新后不记忆，不影响对话 */ }
 }
 
-/** 历史消息 → 页面消息（首屏恢复与切换会话同一份口径） */
+/** 历史消息 → 页面消息（首屏恢复与切换会话同一份口径）。
+ *  <p>messageId / degradations 都取自后端**已经在下发**的字段（SessionService.toMessageMap）：
+ *  此前只留 role/content/images/sources，于是降级提示看不见、评价也没有落点。 */
 const mapHistory = rows => (Array.isArray(rows) ? rows : [])
   .filter(m => m && m.content)
   .map(m => ({
-    role: m.role === 'user' ? 'user' : 'assistant', content: m.content,
+    role: m.role === 'user' ? 'user' : 'ai', content: m.content,
+    messageId: m.messageId || '',
     // 图片与引用随消息一起落库（后端 toMessageMap 同源输出），刷新后不必重问一遍才有图
     images: Array.isArray(m.images) ? m.images : [],
     sources: Array.isArray(m.sources) ? m.sources : [],
+    // 附件（含 fileId）：attachments 给气泡展示、attachData 给重新生成带走凭据——
+    // 两个字段名与主对话页一致（共享的 ChatThread/UserBubble 按 attachments 取展示列表）
+    attachments: Array.isArray(m.attachments) ? m.attachments : [],
+    attachData: Array.isArray(m.attachments) ? m.attachments : [],
+    degradations: Array.isArray(m.degradations) ? m.degradations : [],
+    // 既有评价（后端按 messageId 回填，与登录态同口径）：不回填的话刷新后按钮显示成没评过，
+    // 游客会以为反馈丢了再点一次
+    fb: (m.fb === 0 || m.fb === 1) ? m.fb : null,
     srcOpen: true
   }))
 
@@ -241,6 +277,7 @@ async function openSession (id) {
 /** 开一段新对话：只清指针与页面，会话仍由后端在首条消息时创建（不会攒出空会话） */
 function newSession () {
   if (sending.value || !messages.value.length) return
+  clearPending()
   rememberSession('')
   messages.value = []
 }
@@ -253,6 +290,7 @@ async function clearSessions () {
     const n = (r.data && r.data.deleted) || 0
     sessions.value = []
     askClear.value = false
+    clearPending()
     rememberSession('')
     messages.value = []
     histOpen.value = false
@@ -271,7 +309,20 @@ onMounted(async () => {
   try { sessionId.value = localStorage.getItem('share_session_' + token.value) || '' } catch (e) { sessionId.value = '' }
   try {
     const r = await getShareInfo(token.value)
-    if (r && r.success !== false) info.value = r.data || {}
+    if (r && r.success !== false) {
+      const d = r.data || {}
+      info.value = d
+      // 能力位与限额：只认后端下发的，缺失一律按"没开"（保守侧）
+      cap.value = {
+        guestImages: !!d.guestImages,
+        guestFiles: !!d.guestFiles,
+        maxImages: d.maxImages || MAX_IMAGES,
+        maxImageMb: d.maxImageMb || 10,
+        maxAttachments: d.maxAttachments || MAX_FILES,
+        maxAttachmentMb: d.maxAttachmentMb || MAX_FILE_MB,
+        maxQuestionChars: d.maxQuestionChars || 8000
+      }
+    }
   } catch (e) {
     message.error(e.message || '分享链接无效或已停止访问')
     return
@@ -290,26 +341,207 @@ onMounted(async () => {
     attachRunning()   // 刷新时这一轮可能还在跑（关掉页面它照旧继续），接回来给它长完
   }
 })
+onUnmounted(() => {
+  if (controller) controller.abort()
+})
+
+// ==================== 取材：选择 / 拖入 / 粘贴 / 长文本 ====================
+/** 点「+」：分享页没有 + 面板，直接开系统选择器（主对话页那侧是展开面板，各取所需） */
+function openPicker () {
+  if (sending.value) return
+  inputRef.value?.openPicker()
+}
+/** 选择器收下来的文件 */
+function onPickedFiles (files) {
+  if (sending.value) return
+  addFiles(files)
+}
+// 拖拽的进出场与「只有真拖着文件才亮提示」的判据都在 ChatInput 里（它自己数 dragDepth），
+// 这里只接文件数组；生成中不收（本页没有插话能力，收了也发不出去）
+function onDropFiles (files) {
+  if (sending.value) return
+  addFiles(files)
+}
+/** 粘贴：带文件的交给附件管线（Composer 已 preventDefault，不会把文件名当文本插进正文）；
+ *  超长文本转成附件（问题正文有长度上限，整篇文档塞进去只会被拒）。
+ *  返回 true 表示这次粘贴已被本页消费——Composer 据此决定还要不要把纯文本插进光标处 */
+function onComposerPaste (e) {
+  if (!canAttach.value || sending.value) return
+  const files = pasteFilesOf(e.clipboardData)
+  if (files.length) { addFiles(files); return }
+  if (isLongPaste(e.clipboardData)) {
+    addFiles([new File([e.clipboardData.getData('text/plain')], pasteNameOf(pendingFiles.value), { type: 'text/plain' })])
+    message.info('粘贴的长文本已转为附件')
+  }
+}
+/**
+ * 取材统一入口：判定在 intake.js（与主聊天页共用同一份白名单/限额/文案），
+ * 这里只落副作用——图片去压缩、附件去上传、越界就提示。
+ * <p>先按能力位拦一道：能力没开时**不收**（而不是收下再让服务端拒），
+ * 用户当场就知道这条链接不支持，不用等发送。
+ */
+function addFiles (files) {
+  let imgAccepted = 0
+  let fileMaxWarned = false
+  for (const f of files) {
+    if (isImageFile(f) && !cap.value.guestImages) { message.warning('该分享未开放图片输入'); continue }
+    if (!isImageFile(f) && !cap.value.guestFiles) { message.warning('该分享未开放附件上传'); continue }
+    // 本批已接受的张数自己累加：compressImage 是异步的，列表长度在循环里不会变
+    const verdict = classifyIntake(f, pendingImages.value.length + imgAccepted, pendingFiles.value.length, limits.value)
+    if (verdict.kind === 'reject') {
+      if (verdict.reason !== REJECT.FILE_MAX || !fileMaxWarned) {
+        message.warning(rejectText(verdict))
+        if (verdict.reason === REJECT.FILE_MAX) fileMaxWarned = true
+      }
+      continue
+    }
+    if (verdict.kind === 'image') {
+      imgAccepted++
+      compressImage(f)
+        .then(dataUrl => pendingImages.value.push({ chipKey: 'p' + (++chipSeq), dataUrl }))
+        .catch(() => message.error(`图片处理失败：${verdict.label}`))
+      continue
+    }
+    uploadOne(f)
+  }
+}
+/** 上传单个附件换 fileId（上传中就挂进卡片，用户能看到进度与失败态，而不是点发送后才知道没传上去） */
+async function uploadOne (f) {
+  const item = reactive({ chipKey: 'f' + (++chipSeq), name: f.name, size: f.size, mime: f.type || '',
+                          fileId: '', uploading: true, error: '' })
+  pendingFiles.value.push(item)
+  try {
+    const r = await uploadShareAttachment(token.value, visitorId(), f)
+    const d = (r && r.data) || {}
+    if (!d.fileId) throw new Error('上传未返回文件标识')
+    item.fileId = d.fileId
+    item.name = d.name || item.name
+    item.mime = d.mime || item.mime
+    if (d.size) item.size = d.size
+    item.uploading = false
+  } catch (e) {
+    item.uploading = false
+    item.error = e.message || '上传失败'
+    message.error(`附件上传失败：${f.name} — ${item.error}`)
+  }
+}
+function clearPending () {
+  pendingImages.value = []
+  pendingFiles.value = []
+}
+
+// ==================== chip 契约（与主对话页同一套：见 chat/Composer.vue 的三条边界）====================
+/** key → 画成什么样。名称/体积/上传进度/失败态都取自**数组**（DOM 只是呈现） */
+function chipOf (key) {
+  if (!key) return null
+  if (/^f\d+$/.test(key)) {
+    const f = pendingFiles.value.find(x => x.chipKey === key)
+    if (!f) return null
+    return {
+      kind: 'file', icon: 'file',
+      name: f.name,
+      sub: f.uploading ? '上传中…' : (f.error ? '上传失败' : fmtSize(f.size)),
+      state: f.uploading ? 'uploading' : (f.error ? 'err' : ''),
+      title: f.error || f.name, delTitle: '移除该附件',
+      fileId: f.fileId || '', mime: f.mime || '', size: f.size || 0
+    }
+  }
+  if (/^p\d+$/.test(key)) {
+    const p = pendingImages.value.find(x => x.chipKey === key)
+    if (!p) return null
+    return { kind: 'img', icon: 'img', name: '', thumb: p.dataUrl,
+             title: '待发送图片（悬浮可看大图）', delTitle: '移除该图片' }
+  }
+  return null
+}
+/** 数组 → 编辑区：增的插到光标处、减的摘掉节点，顺带重画（上传进度/体积/失败态都在 chip 上） */
+function syncChips () {
+  const cp = inputRef.value
+  if (!cp) return
+  cp.sync(desiredKeys())
+  cp.repaint()
+  inlineKeys.value = cp.domKeys()
+}
+const desiredKeys = () => [...pendingImages.value.map(p => p.chipKey), ...pendingFiles.value.map(f => f.chipKey)]
+/** DOM → 数组：Backspace 删掉一颗 chip 等于取消那条材料（不剪枝的话引用还在生效、卡片却没了） */
+function onKeys (keys) {
+  const keep = new Set(keys)
+  const gone = new Set(inlineKeys.value.filter(k => !keep.has(k)))
+  inlineKeys.value = keys
+  if (!gone.size) return
+  if (pendingImages.value.some(p => gone.has(p.chipKey))) {
+    pendingImages.value = pendingImages.value.filter(p => !gone.has(p.chipKey))
+  }
+  if (pendingFiles.value.some(f => gone.has(f.chipKey))) {
+    pendingFiles.value = pendingFiles.value.filter(f => !gone.has(f.chipKey))
+  }
+}
+/** 点图片 chip：开灯箱看大图（附件没有可点开的全文，全名已在悬浮提示里） */
+function onChipClick (key) {
+  const d = chipOf(key)
+  if (d && d.kind === 'img') {
+    const i = pendingImages.value.findIndex(p => p.chipKey === key)
+    if (i >= 0) openImages(pendingImages.value.map(x => x.dataUrl), i)
+  }
+}
+/** 回车发送 / Shift+回车换行由 Composer 自己插换行，这里只管「回车=发送」这一件事 */
+function onInputKeydown (e) {
+  if (e.isComposing || e.keyCode === 229) return   // 输入法组合中（中文候选未上屏）一律放行
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault()
+    send()
+  }
+}
+watch([pendingImages, pendingFiles], syncChips, { deep: true })
+
+/** 发送载荷：图片走 data URL 内联、附件只带 fileId（与登录态同一形状，服务端共用一套校验）。
+ *  上传失败或还没传完的一律不带——带上去会被后端整轮拒掉，用户看到的就成了"点了没反应"。
+ *  <p>附件顺带带上 name/size 只为本轮气泡显示"我发了哪个文件"：服务端会用自己落盘的元信息
+ *  覆盖这两项，客户端传什么它都不信（见 ShareController.parseGuestAttachments）。 */
+function currentPayload () {
+  return {
+    images: pendingImages.value.map(p => p.dataUrl),
+    attachments: pendingFiles.value
+      .filter(f => f.fileId && !f.error && !f.uploading)
+      .map(f => ({ fileId: f.fileId, name: f.name, mime: f.mime, size: f.size }))
+  }
+}
 
 function send () {
   const text = draft.value.trim()
-  if (!text || sending.value) return
+  if (sending.value) return
+  if (!text) { message.warning('请输入问题'); return }
+  if (text.length > cap.value.maxQuestionChars) {
+    message.warning(`单条内容过长（最多 ${cap.value.maxQuestionChars} 字）`)
+    return
+  }
+  if (hasUploading()) { message.warning('还有附件在上传中，请稍候再发'); return }
+  const { images, attachments } = currentPayload()
   draft.value = ''
-  messages.value.push({ role: 'user', content: text })
+  clearPending()
+  messages.value.push({ role: 'user', content: text, images, attachments, attachData: attachments })
   // 必须用 reactive 包一条消息：直接 push 普通对象再回头改 `ai.stage` 是**绕过代理**的写入，
   // 不触发重渲染（症状：阶段提示永远不出现，页面只显示空气泡 + 停止键）。
   // 此前之所以"看起来正常"，是旁边恰好有个 ref（lastAiStage）在变更、顺带触发了一次重渲染，
   // 把绕过代理写进去的值读了出来——删掉那个 ref 后这条路径就彻底失效了。
-  const ai = reactive({ role: 'assistant', content: '', stage: '', images: [], sources: [], srcOpen: true, loading: true })
+  const ai = newAiMessage()
   messages.value.push(ai)
   sending.value = true
   scrollBottom()
   controller = new AbortController()
-  sendShareMessage(token.value, { sessionId: sessionId.value, visitorId: visitorId(), message: text }, {
+  sendShareMessage(token.value, {
+    sessionId: sessionId.value, visitorId: visitorId(), message: text, images, attachments
+  }, {
     signal: controller.signal,
     ...shareStreamHandlers(ai)
   })
 }
+
+/** 一条等待中的回答（发起与接流共用同一形状） */
+const newAiMessage = () => reactive({
+  role: 'ai', content: '', stage: '', images: [], sources: [], degradations: [],
+  messageId: '', fb: null, srcOpen: true, loading: true
+})
 
 /**
  * 一轮问答的回调（发起与断线接流共用一份）：阶段文案、逐字正文、图片、收尾汇总。
@@ -341,6 +573,9 @@ function shareStreamHandlers (ai) {
         if (Array.isArray(p.sources)) ai.sources = p.sources
         if (Array.isArray(p.finalImages)) ai.images = p.finalImages
         if (typeof p.finalContent === 'string' && p.finalContent !== '') ai.content = p.finalContent
+        if (Array.isArray(p.degradations)) ai.degradations = p.degradations
+        // 落库的消息 ID：评价与「重新生成」都要用它（服务端按它校验归属）
+        if (p.messageId) ai.messageId = p.messageId
       } catch (e) { /* 汇总解析失败：正文已在流式里累积完，不影响可读 */ }
       // 首轮由服务端建会话：done 带回 sessionId，持久化供刷新恢复
       if (d && d.sessionId) rememberSession(d.sessionId)
@@ -374,7 +609,7 @@ async function attachRunning () {
     running = !!(r && r.data && r.data.running)
   } catch (e) { /* 探测失败不打扰：分享页首要还是能用，实在在跑的话下一次刷新再接 */ } finally { attaching.value = false }
   if (!running) return
-  const ai = reactive({ role: 'assistant', content: '', stage: '', images: [], sources: [], srcOpen: true, loading: true })
+  const ai = newAiMessage()
   messages.value.push(ai)
   sending.value = true
   scrollBottom()
@@ -430,6 +665,101 @@ function stop () {
   // 已出正文的那条要撤掉 loading：否则这一轮永远停在流式态，正文里的图表不会被补画
   else if (cur && cur.role === 'assistant') cur.loading = false
   scrollBottom()
+}
+
+// ==================== 回答动作：复制 / 评价 / 重新生成 ====================
+/** 服务端图片 URL → data URL：重新生成要把原图原样带走，而历史回放的图只剩带签名的 URL，
+ *  直接发出去会被服务端的 data:image/ 前缀校验拒掉。签名有效期内 fetch 得到，过期就放弃这张 */
+const fetchToDataUrl = async url => {
+  const r = await fetch(url)
+  if (!r.ok) throw new Error('HTTP ' + r.status)
+  const b = await r.blob()
+  return await new Promise((resolve, reject) => {
+    const fr = new FileReader()
+    fr.onload = () => resolve(fr.result)
+    fr.onerror = () => reject(new Error('读取失败'))
+    fr.readAsDataURL(b)
+  })
+}
+
+
+/**
+ * 提交评价（一击完成，不弹输入框）。
+ * <p>登录态那边点👎会弹一个可选的意见框；公开链接上刻意省掉这一步——访客是路人，
+ * 多一步就少一大截反馈量，而"这一条被踩了"本身已经是最有价值的那条信号。
+ */
+async function fb (m, rating) {
+  if (m.fb != null || !m.messageId || sending.value) return
+  // 乐观置位：按钮立即变灰，避免连点产生两条反馈请求（服务端按 messageId 唯一，重复写只会覆盖）
+  m.fb = rating
+  try {
+    const r = await submitShareFeedback(token.value, {
+      messageId: m.messageId, visitorId: visitorId(), rating
+    })
+    if (r && r.success === false) throw new Error(r.msg || '反馈失败')
+    message.success(rating === 1 ? '谢谢，已记为有帮助' : '谢谢，已记为没帮助')
+  } catch (e) {
+    m.fb = null   // 失败要退回可评状态，否则用户以为评上了、其实没落库
+    message.error(e.message || '反馈失败，请稍后再试')
+  }
+}
+
+/**
+ * 重新生成这一条回答：找到它对应的提问，按原样（含图片/附件）重发一轮。
+ * <p>与登录态同一套语义：{@code regenerate=true} 让服务端跳过用户消息的重复落库，
+ * 并带上 {@code replaceMessageId}（工作流驱动的智能体据此软删旧回答）。
+ * <p>只在最后一条回答上提供入口：中间那轮重跑会与后面几轮的历史错位。
+ */
+async function regenerate (aiIndex) {
+  if (sending.value) return
+  const ai = messages.value[aiIndex]
+  if (!ai || ai.role !== 'ai') return
+  let ui = -1
+  for (let i = aiIndex - 1; i >= 0; i--) {
+    if (messages.value[i].role === 'user') { ui = i; break }
+  }
+  if (ui < 0) { message.warning('找不到这一轮对应的问题'); return }
+  const q = messages.value[ui]
+  // 图片：本会话刚发的是 data URL，历史回放的是签名 URL——后者抓回字节才能重发。
+  // 抓不回来（签名过期/文件已清）就只重生成文字部分，并且说出来，不然用户以为图也带上了
+  const images = []
+  if (cap.value.guestImages) {
+    let dropped = 0
+    for (const u of (q.images || [])) {
+      if (String(u).startsWith('data:')) { images.push(u); continue }
+      try { images.push(await fetchToDataUrl(resolveImg(u))) } catch (e) { dropped++ }
+    }
+    if (dropped) message.warning(`有 ${dropped} 张图片已无法重新发送，本次只按文字重新生成`)
+  }
+  // 附件：只带仍然有效的 fileId（后端会按访客目录再复核一次归属与是否过期）
+  const attachments = cap.value.guestFiles
+    ? (q.attachData || []).filter(a => a && a.fileId).map(a => ({ fileId: a.fileId }))
+    : []
+  if (cap.value.guestFiles && (q.attachData || []).length > attachments.length) {
+    message.warning('部分附件已失效，本次重新生成不带它们')
+  }
+  // 视图上把这一条换掉：新回答接管同一条气泡，旧内容不再占位。
+  // replaceMessageId 必须**先取下来**再清 ai.messageId——顺序反过来就是把自己刚清空的空串发上去，
+  // 旧回答不会被替换，刷新后同一问会挂着两条回答
+  const replaceId = ai.messageId || undefined
+  ai.content = ''
+  ai.images = []
+  ai.sources = []
+  ai.degradations = []
+  ai.fb = null
+  ai.messageId = ''
+  ai.loading = true
+  ai.stage = ''
+  sending.value = true
+  scrollBottom()
+  controller = new AbortController()
+  sendShareMessage(token.value, {
+    sessionId: sessionId.value, visitorId: visitorId(), message: q.content,
+    images, attachments, regenerate: true, replaceMessageId: replaceId
+  }, {
+    signal: controller.signal,
+    ...shareStreamHandlers(ai)
+  })
 }
 </script>
 
@@ -538,103 +868,31 @@ function stop () {
 .sc-welcome h2 { margin: 14px 0 6px; font-size: 16px; font-weight: 500; color: var(--app-text); }
 .sc-welcome p { color: var(--app-text3); margin: 0; font-size: 13px; line-height: 1.7; }
 
-.sc-row { display: flex; flex-wrap: wrap; margin-bottom: 20px; justify-content: center; }
-.sc-msg-block {
-  position: relative; display: flex; flex-direction: column; min-width: 0;
-  max-width: min(94%, 860px); width: 100%;
-}
-.sc-msg-block.user { align-items: flex-end; }
-.sc-msg-block.ai { align-items: flex-start; }
 
-.sc-bubble { width: 100%; line-height: 1.65; font-size: 14px; color: var(--app-text); word-break: break-word; }
-/* 用户气泡：浅灰底 + 圆角，宽度贴合内容（与 ChatPage .bubble.user 逐项一致） */
-.sc-bubble.user {
-  background: var(--app-panel-2); border-radius: 12px; padding: 9px 14px;
-  width: fit-content; max-width: 100%; white-space: pre-wrap;
-}
-/* AI 侧无气泡：正文直接排版，不画边框不画底 */
-.sc-bubble.ai { background: transparent; padding: 0; }
 
-/* 生成中（正文未到）：一行带呼吸点的提示，什么框都不画。
-   加 flex:none 是因为它是 .sc-msg-block 的 flex item，默认可被压缩，一压就折成两行。 */
-.sc-typing {
-  flex: none;
-  display: inline-flex; align-items: center; gap: 8px;
-  font-size: 13px; color: var(--app-text3); line-height: 1.6;
-  padding: 2px 0; white-space: nowrap;
-}
-/* 正文已出、又推来阶段提示：正文下方的脚注一行 */
-.sc-stage {
-  display: flex; align-items: center; gap: 7px;
-  font-size: 12px; color: var(--app-text3); margin-top: 8px; line-height: 1.6;
-}
-.sc-pulse {
-  width: 6px; height: 6px; border-radius: 50%; background: var(--app-accent); flex: none;
-  animation: sc-blink 1.1s ease-in-out infinite;
-}
+
 @keyframes sc-blink { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
 
-/* ---------- 输入区：与 ChatPage .input-box 同款 ---------- */
-.sc-input-wrap { flex: none; padding: 10px 20px 12px; background: var(--app-panel); }
-.sc-input {
-  position: relative; display: flex; gap: 8px; align-items: flex-end;
-  max-width: 860px; margin: 0 auto;
-  background: var(--app-panel); border: 1px solid var(--app-border);
-  border-radius: 16px; padding: 10px 12px 8px;
-  box-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 8px 20px -10px rgba(16, 24, 40, .10);
-  transition: border-color .2s, box-shadow .2s;
-}
-.sc-input:focus-within {
-  border-color: var(--app-accent);
-  box-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 10px 26px -10px rgba(46, 107, 230, .30);
-}
-.sc-textarea {
-  flex: 1; resize: none; border: none; background: transparent;
-  padding: 6px 4px; font-size: 14px; line-height: 1.6; font-family: inherit;
-  color: var(--app-text); outline: none;
-}
-.sc-send {
-  width: 30px; height: 30px; border-radius: 50%; border: none; flex: none;
-  background: var(--app-accent); color: #fff; cursor: pointer; font-size: 15px;
-  display: inline-flex; align-items: center; justify-content: center; transition: background .2s;
-}
-.sc-send:hover:not(:disabled) { background: var(--app-accent-hover); }
-/* 禁用态：浅蓝底 + 白图标对比度太低，图标几乎看不见。改灰底灰图标（与 ChatPage/H5 同口径） */
-.sc-send:disabled { background: var(--app-border); color: var(--app-text3); cursor: not-allowed; }
-/* 停止态：弱化危险色（浅红底+危险色内容），与 ChatPage .send-btn.stop 同一视觉语言 */
-.sc-send.stop { background: var(--app-danger-weak); color: var(--app-danger-text); border: 1px solid var(--app-danger-border); }
+
+
+
 .sc-foot {
   max-width: 860px; margin: 8px auto 0; display: flex; justify-content: space-between;
   gap: 12px; font-size: 11.5px; color: var(--app-text3);
 }
 .sc-foot-hint { white-space: nowrap; }
 
+
 /* iframe 嵌入紧凑模式：无头部、小内边距、空态收紧（宿主给的框通常只有 420×640） */
 .sc-page.embed .sc-list { padding: 12px; }
 .sc-page.embed .sc-welcome { padding: 28px 12px 20px; }
 .sc-page.embed .sc-welcome h2 { font-size: 15px; margin-top: 10px; }
-.sc-page.embed .sc-input-wrap { padding: 8px 12px 8px; }
+/* 输入卡片本身归 ChatInput，这里只调它外层的间距（embed 的宿主框通常只有 420×640）。
+   组件根元素带本页的 scope id，所以 :deep() 能命中它，同时不必把 embed 的数值塞进共享组件 */
+.sc-page.embed :deep(.ci) { padding: 8px 12px; }
+.sc-page.embed :deep(.ci-drop) { inset: 6px 12px; }
 .sc-page.embed .sc-foot-hint { display: none; }
 
-/* 正文排版与引用角标/图片样式全在 src/md.css（.md 全局规则，与主聊天页同源），此处不再各写一份。
-   这里只补本页自有的「引用来源」折叠条。 */
-.sc-srcs { margin-top: 10px; border-top: 1px solid var(--app-border); padding-top: 6px; }
-.sc-srcs-head {
-  display: flex; align-items: center; gap: 6px; width: 100%;
-  padding: 2px 0; border: none; background: transparent; cursor: pointer;
-  font-size: 12.5px; color: var(--app-text2); font-family: inherit;
-}
-.sc-srcs-head:hover { color: var(--app-accent); }
-.sc-srcs-caret { font-size: 10px; transition: transform .18s; }
-.sc-srcs-caret.open { transform: rotate(90deg); }
-.sc-srcs-list { margin-top: 4px; display: flex; flex-direction: column; gap: 2px; }
-.sc-src {
-  display: flex; align-items: baseline; gap: 6px; padding: 4px 6px; border-radius: 6px;
-  font-size: 12.5px; color: var(--app-text2); cursor: pointer; min-width: 0;
-}
-.sc-src:hover { background: var(--app-panel-2); color: var(--app-accent); }
-.sc-src-no { flex: none; color: var(--app-text3); font-size: 11px; }
-.sc-src-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ==================== 移动端窄屏（h5）====================
    分享链接大量在微信/手机浏览器里打开，这页不走 AppLayout、此前零窄屏适配。
@@ -644,6 +902,10 @@ function stop () {
   /* 100vh 在 iOS 键盘弹起时不变 → 输入框被盖。用 --app-vh（视觉视口高，已扣键盘）；
      宽屏不写该变量 → 回落 100vh，与改动前一致 */
   .sc-page { height: 100vh; height: var(--app-vh, 100vh); }
+  /* iOS 上聚焦字号 <16px 的输入框会自动放大页面且不缩回。这条只对分享页成立：
+     /s/:token 不走移动壳（手机直接打开这一页），而主对话页的窄屏是「桌面窗口被拖窄」、
+     没有软键盘，所以 16px 不该塞进共享组件里去改主对话页。 */
+  .sc-page :deep(.composer-edit) { font-size: 16px; }
   .sc-head { padding: calc(10px + var(--sat, 0px)) 12px 10px; gap: 10px; }
   .sc-desc { -webkit-line-clamp: 1; }
   .sc-brand span { display: none; }
@@ -652,18 +914,7 @@ function stop () {
   .sc-tool-t { display: none; }
   .sc-tool { padding: 7px 9px; font-size: 14px; }
   .sc-list { padding: 14px 12px 8px; overscroll-behavior-y: contain; }
-  .sc-row { margin-bottom: 14px; }
   .sc-welcome { padding: 40px 8px 24px; }
-  /* 消息块在窄屏放开到 100%：min(94%,860px) 的 94% 在 412 屏上只有 387px，
-     再叠加气泡自身内边距会显得窄；行长由 .sc-bubble 的可读宽度兜住 */
-  .sc-msg-block { max-width: 100%; }
-  .sc-bubble.user { padding: 8px 12px; }
-  /* 底部输入区：留出 Home Indicator + 键盘高度 */
-  .sc-input-wrap { padding: 8px 10px calc(8px + var(--sab, 0px)); }
-  .sc-input { gap: 6px; padding: 5px 5px 5px 10px; border-radius: 12px; }
-  /* 触控热区：40px 尚可，但输入框内的文字 14px 在 iOS 聚焦会触发自动缩放，必须 16px */
-  .sc-textarea { font-size: 16px; padding: 5px 0; }
-  .sc-send { width: 44px; height: 44px; }
   .sc-foot { padding: 0 2px; }
   .sc-foot-hint { display: none; }
 }

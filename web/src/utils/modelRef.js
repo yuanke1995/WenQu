@@ -20,6 +20,9 @@ export async function loadModelIndex(force = false) {
           icon: g.icon,
           type: m.type,
           thinking: m.thinking,
+          // 图片理解能力（三态已在后端归一成布尔）：发布弹窗用它判断「允许游客发图」会不会落空——
+          // 选中的模型看不懂图，游客发出去只会报错或被静默忽略
+          visionCapable: !!m.visionCapable,
           // 思考强度：支持档位数组 + 模型默认档位（聊天页等级选择据此给可选项）
           reasoningLevels: Array.isArray(m.reasoningLevels) ? m.reasoningLevels : [],
           defaultReasoningLevel: m.defaultReasoningLevel || '',
