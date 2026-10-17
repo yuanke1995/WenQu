@@ -39,9 +39,6 @@
             </button>
           </div>
 
-          <a-alert v-for="(al, ai) in (PANEL_ALERTS[current] || [])" :key="ai" :type="al.type" show-icon
-                   style="margin-bottom:12px" :message="al.msg" />
-
           <div class="app-card set-card">
             <!-- 工具族合并入口：总开关与子工具 / 联网搜索（后续新工具族继续加页签）——
                  避免左侧导航随工具面板膨胀；页签风格与「定时任务」一致（a-tabs），
@@ -65,7 +62,7 @@
                    剩下的通用项按分组折叠，仍保留搜索：数量不多但分组关系仍有意义。 -->
               <template v-if="current === 'maintenance' && maintTab === 'config'">
                 <a-alert type="info" show-icon style="margin-bottom:12px"
-                         message="这里是**不属于任何定时任务**的通用参数。某个任务自己的间隔与专属参数（保留期、并发、超时等），请到「运行状态」页签展开对应任务就地调整。" />
+                         message="这里只放不属于任何定时任务的通用参数。某个任务自己的间隔与专属参数（保留期、并发、超时等），在「运行状态」页签展开对应任务就地调整。" />
                 <div class="cfg-fold-bar">
                   <a-input v-model:value="maintKeyword" size="small" allow-clear
                            placeholder="搜参数名 / 配置键，如 重试、graphrag." style="width: 240px">
@@ -663,8 +660,8 @@ import { FIELDS, PANELS, TIPS, blocksOf, buildDefaultForm, readForm, writeForm, 
 
 // 分组导航（沿用旧版锚点短名）
 const NAV_LABELS = {
-  chat: '对话模型', vision: '图片描述', chunk: '文档解析', embedding: '向量模型', retrieval: '检索设置',
-  context: '上下文控制', deepReasoning: '深度思考', tool: '工具调用', webSearch: '联网搜索',
+  chat: '对话模型', vision: '图片描述', chunk: '文档解析', retrieval: '检索设置',
+  context: '上下文控制', tool: '工具调用', webSearch: '联网搜索',
   ratelimit: '接口限流', maintenance: '定时任务', apiKey: 'API 密钥', skills: '技能预算',
   agent: '并行检索', oidc: '单点登录', sandbox: '沙盒', memory: '长期记忆', debug: '调试设置'
 }
@@ -699,28 +696,10 @@ watch(advMode, v => {
 
 // 无「恢复本组默认」的分组（API Key 由数据库管理；技能的预算项恢复默认意义不大且与个人技能无关；
 // 调试组的落库键前缀是 chat，按 panel 名重置匹配不到键，且两个调试开关默认即关、重置价值低）
-const NO_RESET = ['embedding', 'maintenance', 'apiKey', 'debug']
+const NO_RESET = ['maintenance', 'apiKey', 'debug']
 
-// 分组顶部说明（与旧版文案一致）
-const PANEL_ALERTS = {
-  chat: [{ type: 'info', msg: '问答模型支持跨厂商热切换：修改网关地址/API Key/模型名保存即生效免重启，API Key 以 RSA 加密入库。' }],
-  vision: [{ type: 'info', msg: '视觉模型用于文档解析的图片描述与扫描件 OCR（按知识库绑定）；关闭后解析跳过图片描述、扫描件无法识别。对话中上传图片的理解取决于所选聊天模型，不在此配置。' }],
-  chunk: [{ type: 'info', msg: '上传大小上限保存即生效；分块/图片上限只对重新解析/新上传文档生效，超限按保护策略截断入库。' }],
-  embedding: [{ type: 'warning', msg: '向量模型热切换说明：不同模型的向量数学上不可迁移。保存时会先探测新配置并校验维度，通过后自动重建索引并后台全量重嵌入。重嵌入期间向量检索自动降级关键词路，服务不中断。' }],
-  retrieval: [
-    { type: 'info', msg: '融合分 = 向量权重×向量相似度 + 关键词权重×命中率。保存后立即生效。' },
-    { type: 'info', msg: '重排：OpenAI 兼容 /v1/rerank 服务。未启动或不可用时自动回退融合分排序，不影响正常问答。' }
-  ],
-  context: [{ type: 'info', msg: '上下文窗口与最大输出已按模型在「模型管理」中声明（对话类窗口必填）；这里配置历史的带入方式与知识块的填充/去冗余策略。保存后立即生效。' }],
-  deepReasoning: [{ type: 'info', msg: '深度思考：AI 先流式展示思维链，思考末尾输出检索计划（精化 query + 子问题）多路并行检索合并后回答。失败自动降级。' }],
-  ratelimit: [{ type: 'info', msg: 'Redis 固定窗口计数，按用户（匿名按 IP）限频，超限返回 429。限频设为 0 表示不限流；Redis 不可用时自动放行。' }],
-  maintenance: [{ type: 'info', msg: '后台定时任务参数，保存即生效。周期填 ≤0 表示暂停该任务；清理类任务只删超期数据。' }],
-  apiKey: [{ type: 'info', msg: '给外部系统发放调用问答能力的密钥：调用方在请求头带 X-Api-Key 即可（免平台 token）。Key 权限固定为问答链路，管理端点一律拒绝。' }],
-  // 技能与 MCP 的内容已迁到「智能体」页的个人 Tab（每人管自己的），这里只剩上下文预算参数
-  skills: [{ type: 'info', msg: '技能内容与启停由每个人在「智能体 → 技能 Skills」里自己管理（内置技能随版本分发，可各自停用）。这里只保留两项预算参数：技能清单注入系统提示的字符上限、单个技能全文读取的字符上限——防止技能过多或过长吃掉上下文预算。' }],
-  agent: [{ type: 'info', msg: '并行检索：把一个问题拆成多个检索视角并行执行（各自检索 + 提炼要点）再汇总，改善复杂问题"召回不全"。若当前智能体已配置子智能体，则改为委派子智能体执行——各按自己的知识库范围与角色视角检索。基于 Spring AI Alibaba 的 StateGraph 编排，失败会自动降级为原有单路检索，不影响问答可用性。' }],
-  debug: [{ type: 'warning', msg: '排障专用开关，集中在最后一组统一管理：控制回答界面上调试类元素对所有人的显隐（值经公开配置端点下发，改后需刷新页面生效）。生产环境建议全部关闭。' }],
-}
+// 分组顶部说明已整体删除：逐条核对后，它们说的都是分节标题、字段旁的 ? 说明或页内已有的话
+// （「关闭后怎样」「≤0=暂停」「重排归知识库」等在对应字段上都有），横幅只会把视线从参数上挪走
 
 const loading = ref(false)
 const saving = ref(false)

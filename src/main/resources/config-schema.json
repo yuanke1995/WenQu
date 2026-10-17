@@ -48,7 +48,7 @@
       "key": "context",
       "title": "上下文与长度控制",
       "sections": [
-        "历史裁剪 · 命中片段与填充（窗口/最大输出按模型在模型管理中声明）",
+        "历史裁剪 · 命中片段与填充",
         "信息增益去冗余",
         "@ 引用（输入框手动指定参考资料）"
       ]
@@ -86,9 +86,9 @@
     },
     {
       "key": "agent",
-      "title": "并行检索（未配置子智能体时的默认策略）",
+      "title": "并行检索",
       "sections": [
-        "总开关与并行度"
+        "工具步数与子智能体咨询"
       ]
     },
     {
@@ -1540,7 +1540,7 @@
     {
       "backendKey": "rerank.enabled",
       "panel": "retrieval",
-      "section": 5,
+      "section": 4,
       "group": "rerank",
       "key": "enabled",
       "path": "retrieval.rerank.enabled",
@@ -1554,7 +1554,7 @@
     {
       "backendKey": "rerank.model",
       "panel": "retrieval",
-      "section": 5,
+      "section": 4,
       "group": "rerank",
       "key": "model",
       "path": "retrieval.rerank.model",
@@ -1571,7 +1571,7 @@
     {
       "backendKey": "rerank.platformRef",
       "panel": "retrieval",
-      "section": 5,
+      "section": 4,
       "group": "rerank",
       "key": "platformRef",
       "path": "retrieval.rerank.platformRef",
@@ -1587,7 +1587,7 @@
     {
       "backendKey": "rerank.minHits",
       "panel": "retrieval",
-      "section": 5,
+      "section": 4,
       "group": "rerank",
       "key": "minHits",
       "path": "retrieval.rerank.minHits",
@@ -1603,7 +1603,7 @@
     {
       "backendKey": "rerank.maxHits",
       "panel": "retrieval",
-      "section": 5,
+      "section": 4,
       "group": "rerank",
       "key": "maxHits",
       "path": "retrieval.rerank.maxHits",
@@ -2008,7 +2008,7 @@
     {
       "backendKey": "tool.spillCleanupIntervalMs",
       "panel": "tool",
-      "section": 3,
+      "section": 1,
       "group": "tool",
       "key": "spillCleanupIntervalMs",
       "path": "tool.spillCleanupIntervalMs",
