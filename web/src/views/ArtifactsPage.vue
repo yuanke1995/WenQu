@@ -21,6 +21,14 @@
     </div>
 
     <div class="app-page-body">
+      <!-- 工作区筛选：只列用户自己建的工作区，与侧栏「工作区」分区同一口径（implicit 兜底容器是归属兜底、
+           没挂工作区只是存量状态，都不值得占一档）；建工作区的入口在侧栏那一区的 ＋，不在这里重复一个 -->
+      <div v-if="realProjects.length" class="art-filters">
+        <button :class="['art-filter', { active: !activeProject }]" @click="selectProject('')">全部</button>
+        <button v-for="p in realProjects" :key="p.id" :class="['art-filter', { active: activeProject === p.id }]"
+                @click="selectProject(p.id)">{{ p.displayName }}</button>
+      </div>
+
       <a-spin :spinning="loading">
         <div v-if="!rows.length" class="app-card art-empty">
           <p class="art-empty-title">{{ keyword.trim() ? '没有匹配的产物' : '还没有产物' }}</p>
@@ -30,39 +38,46 @@
         </div>
 
         <div v-else class="art-list">
-          <div v-for="r in rows" :key="r.id" class="app-card art-row" :class="{ picked: selectedIds.includes(r.id) }">
-            <a-checkbox :checked="selectedIds.includes(r.id)" @change="e => toggle(r.id, e.target.checked)" />
-            <file-text-outlined class="art-icon" />
-            <div class="art-main">
-              <div class="art-line">
-                <span class="art-name">{{ r.filename }}</span>
-                <span class="art-chip">{{ r.ext || 'file' }}</span>
-              </div>
-              <div class="art-sub">
-                <span>{{ fmtSize(r.size) }}</span>
-                <span class="art-dot">·</span>
-                <span>{{ fmtTime(r.createTime) }}</span>
-                <template v-if="r.description">
+          <template v-for="g in groups" :key="g.key || '__unassigned__'">
+            <!-- 只有一个分组时不显示分组头：存量产物全在「会话」这一档，加个标题反而像告警 -->
+            <div v-if="groups.length > 1" class="art-group-head">
+              <span class="art-group-name">{{ g.title }}</span>
+              <span class="art-group-count">{{ g.rows.length }}</span>
+            </div>
+            <div v-for="r in g.rows" :key="r.id" class="app-card art-row" :class="{ picked: selectedIds.includes(r.id) }">
+              <a-checkbox :checked="selectedIds.includes(r.id)" @change="e => toggle(r.id, e.target.checked)" />
+              <file-text-outlined class="art-icon" />
+              <div class="art-main">
+                <div class="art-line">
+                  <span class="art-name">{{ r.filename }}</span>
+                  <span class="art-chip">{{ r.ext || 'file' }}</span>
+                </div>
+                <div class="art-sub">
+                  <span>{{ fmtSize(r.size) }}</span>
                   <span class="art-dot">·</span>
-                  <span class="art-desc">{{ r.description }}</span>
-                </template>
-                <span class="art-dot">·</span>
-                <span :class="['art-expire', { warn: expireSoon(r.expireTime) }]"
-                      :title="r.expireTime ? '预计清理时间：' + fmtTime(r.expireTime) : '产物不会被自动清理'">
-                  {{ fmtExpire(r.expireTime) }}
-                </span>
+                  <span>{{ fmtTime(r.createTime) }}</span>
+                  <template v-if="r.description">
+                    <span class="art-dot">·</span>
+                    <span class="art-desc">{{ r.description }}</span>
+                  </template>
+                  <span class="art-dot">·</span>
+                  <span :class="['art-expire', { warn: expireSoon(r.expireTime) }]"
+                        :title="r.expireTime ? '预计清理时间：' + fmtTime(r.expireTime) : '产物不会被自动清理'">
+                    {{ fmtExpire(r.expireTime) }}
+                  </span>
+                </div>
+              </div>
+              <!-- 操作区独立成组：窄屏整组换行右对齐（见 .art-acts 的媒体查询） -->
+              <div class="art-acts">
+                <a :href="r.url" :download="r.filename" class="app-btn ghost small" title="下载">
+                  <download-outlined /> 下载
+                </a>
+                <button class="app-btn ghost small art-del" title="删除" @click="askDelete(r)">
+                  <delete-outlined />
+                </button>
               </div>
             </div>
-            <!-- 操作区独立成组：窄屏整组换行右对齐（见 .art-acts 的媒体查询） -->
-            <div class="art-acts">
-              <a :href="r.url" :download="r.filename" class="app-btn ghost small" title="下载">
-                <download-outlined /> 下载
-              </a>
-              <button class="app-btn ghost small art-del" title="删除" @click="askDelete(r)">
-                <delete-outlined />
-              </button>
-            </div>
-          </div>
+          </template>
         </div>
       </a-spin>
     </div>
@@ -73,9 +88,17 @@
 import { ref, computed, onMounted } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { ReloadOutlined, FileTextOutlined, DownloadOutlined, DeleteOutlined } from '@ant-design/icons-vue'
-import { listArtifacts, deleteArtifact, deleteArtifactsBatch } from '../api'
+import { listArtifacts, listProjects, deleteArtifact, deleteArtifactsBatch } from '../api'
 
 const rows = ref([])
+// 工作区容器：产物按工作区分组展示。空数组时退化成原来的单列表（接口挂掉也不该让页面白屏）
+const projects = ref([])
+// 筛选条只认用户真实建的工作区：implicit 兜底容器不再单独占一档展示
+const realProjects = computed(() => projects.value.filter(p => p.selectionStatus !== 'implicit'))
+/** implicit 兜底容器的 id：它的产物在分组时并入「会话」栏，不再单独出一个兜底容器分组 */
+const implicitProjectId = computed(() => (projects.value.find(p => p.selectionStatus === 'implicit') || {}).id || '')
+// 当前筛选的工作区：'' = 全部；其余 = 工作区 id
+const activeProject = ref('')
 const loading = ref(false)
 const keyword = ref('')
 const selectedIds = ref([])
@@ -84,7 +107,7 @@ const batchLoading = ref(false)
 const load = async () => {
   loading.value = true
   try {
-    const r = await listArtifacts(keyword.value.trim())
+    const r = await listArtifacts(keyword.value.trim(), activeProject.value)
     rows.value = (r && r.data) || []
     // 勾选只保留当前列表里仍存在的产物（搜索/刷新后失效的勾选自动剔除）
     const ids = new Set(rows.value.map(x => x.id))
@@ -97,6 +120,52 @@ const load = async () => {
     loading.value = false
   }
 }
+
+// 切工作区 = 换一次查询（服务端过滤，而不是前端筛：产物可能很多）
+const selectProject = id => {
+  if (activeProject.value === id) return
+  activeProject.value = id
+  selectedIds.value = []
+  load()
+}
+
+// 工作区列表单独加载：失败不影响产物列表（分组退化成"会话"一档，功能仍可用）
+const loadProjects = async () => {
+  try {
+    const r = await listProjects()
+    projects.value = (r && r.data) || []
+  } catch (e) {
+    projects.value = []
+  }
+}
+
+/**
+ * 按工作区分组。
+ * 排序：真实工作区（接口已按此序返回）→「会话」永远最后。
+ * implicit 兜底容器的产物并入「会话」，不再出现「兜底容器」这个分组；
+ * 「会话」就是侧栏那一栏的名字——没有工作区的产物不另起一个名词，免得界面上多出一种归属状态。
+ */
+const groups = computed(() => {
+  const byKey = new Map()
+  for (const r of rows.value) {
+    const raw = r.projectId || ''
+    const k = raw && raw === implicitProjectId.value ? '' : raw
+    if (!byKey.has(k)) byKey.set(k, [])
+    byKey.get(k).push(r)
+  }
+  const out = []
+  for (const p of projects.value) {
+    if (p.selectionStatus === 'implicit') continue
+    if (byKey.has(p.id)) out.push({ key: p.id, title: p.displayName || '未命名工作区', rows: byKey.get(p.id) })
+  }
+  // 接口里已经不存在的工作区（被删）单独兜住，不让这些产物的分组凭空消失
+  for (const [k, list] of byKey) {
+    if (!k) continue
+    if (!projects.value.some(p => p.id === k)) out.push({ key: k, title: '已删除的工作区', rows: list })
+  }
+  if (byKey.has('')) out.push({ key: '', title: '会话', rows: byKey.get('') })
+  return out
+})
 
 // 清空搜索框立即恢复全量（不然用户以为产物少了）
 const onKeywordChange = e => {
@@ -201,11 +270,40 @@ const doBatchDelete = async () => {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  loadProjects()   // 分组标题要用；失败只让分组退化成"没挂工作区"，不阻塞产物列表
+  load()
+})
 </script>
 
 <style scoped>
 .art-list { display: flex; flex-direction: column; gap: 8px; }
+/* 工作区筛选条：横向可滚动，窄屏不换行挤成两排 */
+.art-filters {
+  display: flex; align-items: center; gap: 6px;
+  margin: 0 0 12px; padding-bottom: 2px;
+  overflow-x: auto; white-space: nowrap;
+}
+.art-filter {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 10px; border-radius: 14px; cursor: pointer;
+  font-size: 12px; line-height: 18px;
+  border: 1px solid var(--app-border); background: transparent; color: var(--app-text2, var(--app-text3));
+}
+.art-filter:hover { border-color: var(--app-accent); color: var(--app-accent); }
+.art-filter.active { border-color: var(--app-accent); background: var(--app-accent-weak); color: var(--app-accent); }
+/* 分组头：只在产物跨多个工作区时出现（单组时不渲染，见模板注释） */
+.art-group-head {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 10px; padding: 0 2px 2px;
+  font-size: 12px; color: var(--app-text3);
+}
+.art-group-head:first-child { margin-top: 0; }
+.art-group-name { font-weight: 500; color: var(--app-text2, var(--app-text3)); }
+.art-group-count {
+  font-size: 11px; padding: 0 6px; border-radius: 8px;
+  background: var(--app-accent-weak); color: var(--app-accent);
+}
 .art-row { display: flex; align-items: center; gap: 12px; }
 .art-row.picked { border-color: var(--app-accent); }
 .art-icon { font-size: 18px; color: var(--app-accent); }

@@ -36,6 +36,8 @@ const routes = [
   // 文档管理并入知识库（卡片点进）；旧入口重定向
   { path: '/documents', redirect: '/knowledge' },
   { path: '/artifacts', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/ArtifactsPage.vue')) }], meta: { title: '我的产物' } },
+  // 工作区页：进入一个工作区（约定 / 默认助手 / 会话 / 文件 / 自动化）——它不是筛选标签，得有一个可以进去的地方
+  { path: '/project/:id', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/ProjectPage.vue')) }], meta: { title: '工作区' } },
   { path: '/notifications', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/NotificationCenter.vue')) }], meta: { title: '通知中心' } },
   // 使用统计：个人 Token 用量（所有登录用户，数据按会话归属隔离）
   { path: '/stats', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/StatsPage.vue')) }], meta: { title: '使用统计' } },

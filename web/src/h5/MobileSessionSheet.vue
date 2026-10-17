@@ -1,7 +1,8 @@
 <template>
   <!-- 会话列表（移动壳的「抽屉」）：底部 sheet 形态。
        数据与 PC 侧栏同一份 store（sessionStore）+ 同一组接口（pin/favorite/rename/delete），
-       分组口径与 AppLayout 一致（置顶/今天/7 天内/更早），但用扁平列表 + 行内操作条呈现。 -->
+       分组口径与 AppLayout 一致（会话/工作区：不属于任何工作区的会话在前，用户自己建的工作区按工作区分），
+       每个工作区铺 4 条 + 「查看更多 (N)」，只是把行内操作收成底部操作条。 -->
   <BottomSheet :open="open" title="会话" :subtitle="total ? total + ' 个会话' : ''" max-height="82dvh" @close="$emit('close')">
     <div class="ss">
       <div class="ss-search">
@@ -22,12 +23,18 @@
         <plus-outlined /> 新建对话
       </button>
 
-      <div v-if="sessionStore.loading && !sessionStore.list.length" class="ss-empty">加载中…</div>
-      <div v-else-if="!groups.length" class="ss-empty">{{ kw ? '没有匹配的会话' : '还没有会话' }}</div>
+      <div v-if="sessionStore.loading && !spaces.length" class="ss-empty">加载中…</div>
+      <div v-else-if="!spaces.length" class="ss-empty">{{ kw ? '没有匹配的会话' : '还没有会话' }}</div>
 
-      <template v-for="g in groups" :key="g.label">
-        <div class="ss-group">{{ g.label }}<span class="ss-group-n">{{ g.items.length }}</span></div>
-        <div v-for="s in g.items" :key="s.id" class="ss-row" :class="{ cur: s.id === currentId }">
+      <!-- 与 PC 侧栏同一棵「工作区 → 会话」树：手机上不省掉工作区名，
+           否则几十条会话混在一起又回到"一条看不出来源的平铺列表" -->
+      <template v-for="space in spaces" :key="space.key">
+        <div class="ss-space">
+          <folder-outlined class="ss-space-ic" />
+          <span class="ss-space-name">{{ space.name }}</span>
+          <span class="ss-space-n">{{ space.count }}</span>
+        </div>
+        <div v-for="s in space.items" :key="s.id" class="ss-row" :class="{ cur: s.id === currentId }">
           <button class="ss-main" type="button" @click="$emit('select', s.id)">
             <span class="ss-title">{{ s.title || '新对话' }}</span>
             <span class="ss-meta">
@@ -37,11 +44,12 @@
           </button>
           <button class="ss-more" type="button" title="会话操作" @click.stop="openMenu(s)"><more-outlined /></button>
         </div>
+        <div v-if="!space.items.length" class="ss-space-empty">{{ kw ? '没有匹配的会话' : '暂无会话' }}</div>
+        <button v-if="space.hasMore" class="ss-more-load" type="button" :disabled="space.loadingMore"
+                @click="loadSpaceMore(space)">
+          {{ space.loadingMore ? '加载中…' : `查看更多 (${space.count - space.items.length})` }}
+        </button>
       </template>
-
-      <button v-if="sessionStore.hasMore" class="ss-more-load" type="button" :disabled="sessionStore.loadingMore" @click="loadMoreSessions()">
-        {{ sessionStore.loadingMore ? '加载中…' : '查看更多' }}
-      </button>
     </div>
 
     <!-- 壳外入口（对称 PC 侧栏 foot）：手机上聊天以外的页面只从这里进。
@@ -88,10 +96,11 @@ import { computed, h, inject, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { SearchOutlined, PlusOutlined, MoreOutlined, PushpinOutlined, StarOutlined, StarFilled, EditOutlined, DeleteOutlined, DownloadOutlined,
-         UserOutlined, QuestionCircleOutlined, BulbOutlined, LogoutOutlined, MobileOutlined, FileTextOutlined, DatabaseOutlined } from '@ant-design/icons-vue'
+         UserOutlined, QuestionCircleOutlined, BulbOutlined, LogoutOutlined, MobileOutlined, FileTextOutlined, DatabaseOutlined,
+         FolderOutlined } from '@ant-design/icons-vue'
 import { installable, installEntryVisible, promptInstall } from './pwa'
 import BottomSheet from './BottomSheet.vue'
-import { sessionStore, loadSessions, loadMoreSessions } from '../views/store'
+import { sessionStore, loadSessions, loadSpaceMore, NO_SPACE_KEY } from '../views/store'
 import { pinSession, favoriteSession, renameSessionApi, logoutApi, deleteSessionApi } from '../api'
 import { clearAuth } from '../utils/auth'
 import { themeState, toggleTheme } from '../utils/theme'
@@ -165,7 +174,7 @@ const searchInputRef = ref(null)
 const focusSearch = () => setTimeout(() => { const el = searchInputRef.value; if (el) el.focus() }, 260)
 defineExpose({ focusSearch })
 
-// 时间字段稳健解析 + 分桶（与 AppLayout 的 sessTime/groupedSessions 同口径）
+// 时间字段稳健解析（只用于行内「今天/昨天/本周」的相对时间；分组由 store 的工作区树负责）
 const sessTime = v => {
   if (!v) return null
   if (typeof v === 'number') return new Date(v)
@@ -187,23 +196,9 @@ const relText = d => {
 const sessTimeText = s => relText(sessTime(s.updateTime))
 
 const total = computed(() => sessionStore.total || sessionStore.list.length)
-const groups = computed(() => {
-  const now = new Date()
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
-  const weekStart = startOfToday - 6 * 86400000
-  const out = [
-    { label: '置顶', items: [] }, { label: '今天', items: [] }, { label: '7 天内', items: [] }, { label: '更早', items: [] }
-  ]
-  for (const s of sessionStore.list) {
-    if (s.isPinned === 1) { out[0].items.push(s); continue }
-    const d = sessTime(s.updateTime)
-    const t = d ? d.getTime() : 0
-    if (t >= startOfToday) out[1].items.push(s)
-    else if (t >= weekStart) out[2].items.push(s)
-    else out[3].items.push(s)
-  }
-  return out.filter(g => g.items.length)
-})
+// 移动端不展示空的「会话」栏段：PC 侧栏要用它占住「会话 (0)」的位置，
+// 手机上的空分组只会把真正的工作区往下推。
+const spaces = computed(() => sessionStore.spaces.filter(s => s.key !== NO_SPACE_KEY || s.count > 0))
 
 const menuFor = ref(null)
 const renaming = ref(false)
@@ -266,9 +261,17 @@ const doDelete = () => {
   min-height: 42px; border: 1px dashed var(--app-border-strong); border-radius: 10px;
   background: transparent; color: var(--app-accent); font-size: 14px; touch-action: manipulation;
 }
-.ss-group { font-size: 12px; color: var(--app-text3); padding: 10px 2px 2px; display: flex; gap: 6px; align-items: center; }
-.ss-group-n { opacity: .7; }
-.ss-row { display: flex; align-items: stretch; gap: 2px; border-radius: 10px; }
+/* 工作区头：与 PC 侧栏同一套语义（图标 + 名字 + 会话数），移动端只把字号/热区放大 */
+.ss-space {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 10px; padding: 4px 2px 2px;
+  font-size: 13px; color: var(--app-text2);
+}
+.ss-space-ic { font-size: 13px; color: var(--app-text3); flex: none; }
+.ss-space-name { font-weight: 500; color: var(--app-text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ss-space-n { margin-left: auto; font-size: 12px; color: var(--app-text3); }
+.ss-space-empty { padding: 4px 2px 6px 22px; font-size: 12px; color: var(--app-text3); }
+.ss-row { display: flex; align-items: stretch; gap: 2px; border-radius: 10px; padding-left: 10px; }
 .ss-row.cur { background: var(--app-accent-weak); }
 .ss-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; align-items: flex-start; padding: 10px; border: none; background: transparent; text-align: left; touch-action: manipulation; }
 .ss-title { font-size: 14px; color: var(--app-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }

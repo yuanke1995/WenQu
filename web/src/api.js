@@ -91,7 +91,7 @@ function upload(path, formData, onProgress) {
  * 且要摘掉 visibilitychange 监听）。
  */
 const CHAT_EVENT_CB = {
-  token: 'onToken', stage: 'onStage', plan: 'onPlan', usage: 'onUsage',
+  token: 'onToken', plan: 'onPlan', usage: 'onUsage',
   retrieved: 'onRetrieved', thinking: 'onThinking', thinking_done: 'onThinkingDone',
   image: 'onImage', warn: 'onWarn', artifact: 'onArtifact',
   tool_status: 'onToolStatus', tool_output: 'onToolOutput', process: 'onProcess',
@@ -334,7 +334,20 @@ export function resumeChat (sessionId, opts = {}) {
 export const getChatRun = sid => request(`/chat/run?sessionId=${encodeURIComponent(sid)}`, { timeout: 8000 })
 
 /** 新建会话 */
-export const newSession = () => request('/session/new', { method: 'POST' })
+// 新建对话的目标工作区：由侧栏工作区行的「+」/ 工作区页入口设置。
+// 为什么放在这里而不是让调用方传参：newSession() 的唯一调用点在 chat/useChatEngine.js
+// （对话引擎内部），侧栏与它没有直接引用关系；用一个显式的 setter 比让引擎去读 store 少一层耦合。
+// 未设置 = 显式不挂工作区（传 __none__）：顶部「新建对话」就该落进顶栏「会话」，
+// 而不是像旧口径那样被后端悄悄塞进 implicit 兜底容器。
+const NO_PROJECT = '__none__'
+let newSessionProjectId = ''
+export const setNewSessionProject = id => { newSessionProjectId = id || '' }
+// 只读：侧栏乐观插入会话时要判断它该落进哪个工作区（见 store.markSessionActive）
+export const getNewSessionProject = () => newSessionProjectId
+export const newSession = () => {
+  const target = newSessionProjectId || NO_PROJECT
+  return request('/session/new?projectId=' + encodeURIComponent(target), { method: 'POST' })
+}
 
 /** 获取会话历史 */
 export const getHistory = (sid, opts) => request(`/session/${sid}`, opts)
@@ -377,11 +390,13 @@ export const purgeShareRecord = sid =>
  * keyword 按标题/消息内容模糊搜索（分页同样生效）。
  * 返回 {items, nextCursor, hasMore, groupCounts:{pinned,today,week,earlier}, total}
  */
-export const listSessions = (keyword = '', cursor = '', size) => {
+export const listSessions = (keyword = '', cursor = '', size, projectId = '') => {
   const qs = []
   if (keyword) qs.push('keyword=' + encodeURIComponent(keyword))
   if (cursor) qs.push('cursor=' + encodeURIComponent(cursor))
   if (size) qs.push('size=' + size)
+  // 工作区过滤：工作区 id / __unassigned__（真没挂工作区）/ __nospace__（没挂工作区+兜底容器）；空 = 全部
+  if (projectId) qs.push('projectId=' + encodeURIComponent(projectId))
   return request('/sessions' + (qs.length ? '?' + qs.join('&') : ''))
 }
 
@@ -437,8 +452,47 @@ export const getKbParamDefaults = () => request('/kb/param-defaults')
 export const getKbParamTips = () => request('/kb/param-tips')
 
 // 我的产物（模型在回答中生成的可下载文件，按用户归属；url 为可直接下载的签名地址）
-export const listArtifacts = keyword =>
-  request('/artifact/list' + (keyword ? `?keyword=${encodeURIComponent(keyword)}` : ''))
+// projectId 可选：只看某个工作区的产物；传 __unassigned__ 只看没挂工作区的存量产物；不传=全部
+export const listArtifacts = (keyword, projectId) => {
+  const qs = []
+  if (keyword) qs.push('keyword=' + encodeURIComponent(keyword))
+  if (projectId) qs.push('projectId=' + encodeURIComponent(projectId))
+  return request('/artifact/list' + (qs.length ? '?' + qs.join('&') : ''))
+}
+// 我的工作区容器（implicit 兜底容器在前，前端会过滤掉）；首次调用会懒创建 implicit 行
+export const listProjects = () => request('/project/list')
+// 新建工作区（selectable）；implicit 兜底容器由后端懒建，不需要也不允许前端创建
+export const createProject = name => request('/project', { method: 'POST', body: JSON.stringify({ name }) })
+// 删除工作区：只摘归属，其下会话与产物仍然保留（后端语义）
+export const deleteProject = id => request(`/project/${id}`, { method: 'DELETE' })
+// 工作区详情：名称 / 工作区约定（对该工作区所有会话生效）/ 默认助手
+export const getProject = id => request(`/project/${id}`)
+// 工作区下的工作流（本人）
+export const listProjectWorkflows = id => request(`/project/${id}/workflows`)
+// 归档 / 恢复工作区（不动会话与产物，implicit 兜底容器不可归档）
+export const setProjectStatus = (id, status) =>
+  request(`/project/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) })
+// 工作区目录里的文件（相对路径/大小/时间，按时间倒序）
+export const listProjectFiles = id => request(`/project/${id}/files`)
+// 下载工作区文件：必须走 fetch 带 Authorization（后端认 JWT，不认 cookie），再落成本地文件
+export const downloadProjectFile = async (id, path, filename) => {
+  const res = await fetch(`${BASE}/project/${id}/file?path=${encodeURIComponent(path)}`, {
+    headers: authHeaders()
+  })
+  if (!res.ok) throw new Error(`下载失败(${res.status})`)
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename || 'download'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 2000)
+}
+// 更新工作区设置：传才改，空串=清空（name / instructions / defaultAgentId）
+export const updateProject = (id, body) =>
+  request(`/project/${id}`, { method: 'PUT', body: JSON.stringify(body || {}) })
 export const deleteArtifact = id => request(`/artifact/${id}`, { method: 'DELETE' })
 // 换发产物签名：产物签名 1 小时过期，对话页卡片上的 URL 是 SSE 下发/历史接口里那一份「签好就不变」的，
 // 页面开久后点下载必然 401（「我的产物」页因每次进页面都重签而始终正常）。渲染卡片前调它换一批新签名。
@@ -450,7 +504,8 @@ export const deleteArtifactsBatch = ids =>
   request('/artifact/batch-delete', { method: 'POST', body: JSON.stringify({ ids }) })
 
 // 定时任务（定时执行智能体；个人资产，每人管自己的）
-export const listScheduledJobs = () => request('/scheduled/list')
+export const listScheduledJobs = (projectId) =>
+  request('/scheduled/list' + (projectId ? '?projectId=' + encodeURIComponent(projectId) : ''))
 export const createScheduledJob = body => request('/scheduled', { method: 'POST', body: JSON.stringify(body) })
 export const updateScheduledJob = (id, body) =>
   request(`/scheduled/${id}`, { method: 'PUT', body: JSON.stringify(body) })

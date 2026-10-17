@@ -123,13 +123,32 @@
         </div>
       </nav>
 
-      <!-- 会话搜索（防抖走后端 keyword 检索：标题/消息内容模糊匹配）；右端内嵌批量管理入口 -->
+      <!-- 会话搜索（防抖走后端 keyword 检索：标题/消息内容模糊匹配）。
+           搜索框在「任务 / 工作区」两个分区之上：它过滤的是整棵会话树，不是某一个工作区。 -->
       <div v-if="!collapsed" class="sess-search-wrap">
         <search-outlined class="sess-search-ic" />
         <input ref="searchInputRef" v-model="searchKw" class="sess-search" placeholder="搜索会话…" @input="onSearchInput" />
         <button v-if="searchKw" class="sess-search-clear" title="清除搜索" @click="clearSearch"><close-outlined /></button>
       </div>
-      <!-- 批量操作条：进入批量模式才出现，紧贴列表上方，作用于当前搜索结果 -->
+
+      <!-- 新建工作区：侧栏直接建，不必先去「我的产物」页。
+           全站只有「工作区」这一个词：侧栏分组、工作区页、弹窗都用它，
+           数据模型里的工作区容器（一个工作目录 + 一组会话与产物）不再另起名字。 -->
+      <a-modal v-model:open="createOpen" title="新建工作区" :confirm-loading="createSaving"
+               ok-text="创建" cancel-text="取消" @ok="doCreateProject">
+        <a-input v-model:value="createName" :maxlength="60" placeholder="工作区名，例如：考勤系统改造"
+                 @press-enter="doCreateProject" />
+        <div class="pj-modal-hint">一个工作区就是一个工作目录加一份约定：之后的对话、文件与产物都归到它名下。</div>
+      </a-modal>
+
+      <!-- 工作区重命名：用页内弹窗而不是 Modal.confirm（后者没有输入框） -->
+      <a-modal v-model:open="renameOpen" title="重命名工作区" :confirm-loading="renameSaving"
+               ok-text="保存" cancel-text="取消" @ok="doRenameProject">
+        <a-input v-model:value="renameName" :maxlength="60" placeholder="工作区名"
+                 @press-enter="doRenameProject" />
+      </a-modal>
+
+      <!-- 批量操作条：进入批量模式才出现，紧贴列表上方，作用于已加载的会话 -->
       <div v-if="!collapsed && batchMode" class="sess-batch-bar">
         <span class="batch-count">已选 {{ batchSel.size }}</span>
         <span class="batch-actions">
@@ -138,87 +157,160 @@
           <button class="batch-btn" @click="exitBatchMode">取消</button>
         </span>
       </div>
-      <!-- 会话列表为游标分页：默认 20 条，点底部「查看更多」每次再渲染 20 条；
-           组头数字是后端全量口径，不随加载进度漂移 -->
-      <div class="side-sessions">
-        <a-spin v-if="sessionStore.loading" size="small" style="display:block;margin:16px auto" />
+
+      <!-- 会话树：会话（不属于任何真实工作区：没挂工作区 + implicit 兜底容器）+ 工作区（用户建的）。
+           两个分区都是「标题 (N) → 若干行 → 查看更多 (N)」：行与行的数据加载走 store 的同一套
+           工作区分页，区别只在第一个分区没有工作区头（它就是"没归属"的那一堆会话）。
+           工作区这一区不做全局「显示更多」——每个工作区各自还剩多少，用户要能看到。 -->
+      <div ref="sessionsEl" class="side-sessions">
+        <!-- 折叠成 56px 图标条：分区标题没有横向空间，只保留会话圆点（切换入口不能丢） -->
+        <template v-if="collapsed">
+          <div v-for="s in sessionStore.list" :key="s.id" class="sess-item"
+               :class="{ active: isActive('/chat') && route.query.sid === s.id, running: chatStreams.has(s.id) }"
+               :title="s.title || '新对话'" @click="openSession(s.id)">
+            <span class="sess-dot"></span>
+          </div>
+          <div v-if="!sessionStore.list.length" class="side-empty">暂无会话</div>
+        </template>
+        <a-spin v-else-if="sessionStore.loading && !sessionStore.spaces.length" size="small" style="display:block;margin:16px auto" />
         <template v-else>
-          <!-- 按时间分组展示（后端已按 置顶→更新时间 排序，这里只分桶不改序）；折叠图标条下不显示组头。
-               组头可点击折叠/展开（搜索时强制全展开——搜到却看不见是死胡同） -->
-          <template v-for="g in groupedSessions" :key="g.label">
-            <button v-if="!collapsed" type="button" class="side-label sess-group-label" @click="toggleGroup(g.label)">
-              {{ g.label }}
-              <span class="group-count">{{ groupTotal(g.label, g.items.length) }}</span>
-              <right-outlined class="group-caret" :class="{ open: !groupHidden(g.label) }" />
-            </button>
-            <template v-if="collapsed || !groupHidden(g.label)">
-            <div v-for="s in g.items" :key="s.id"
-               class="sess-item" :class="{ active: !batchMode && isActive('/chat') && route.query.sid === s.id, picked: batchMode && batchSel.has(s.id), running: chatStreams.has(s.id) }"
-               :style="{ '--sess-i': sessRowOrdinal.get(s.id) ?? 0 }"
-               :title="s.title" @click="batchMode && !collapsed ? toggleBatchSel(s.id) : openSession(s.id)">
-            <span v-if="collapsed" class="sess-dot"></span>
-            <template v-else>
-              <!-- 批量模式：行首勾选块，点行即切换选中（不进会话、hover 操作隐藏） -->
-              <span v-if="batchMode" class="batch-check" :class="{ on: batchSel.has(s.id) }">
-                <check-outlined v-if="batchSel.has(s.id)" />
+          <section v-for="sec in sidebarSections" :key="sec.key" class="side-sec">
+            <div class="side-sec-head clickable" role="button" :tabindex="0"
+                 :aria-expanded="String(!secHidden(sec))"
+                 :title="(secHidden(sec) ? '展开：' : '收起：') + sec.title"
+                 @click="toggleSection(sec)"
+                 @keydown.enter.self.prevent="toggleSection(sec)"
+                 @keydown.space.self.prevent="toggleSection(sec)">
+              <span class="side-sec-title" :title="sec.key === 'solo' ? '不属于任何工作区的会话' : ''">{{ sec.title }}</span>
+              <span class="side-sec-count">({{ sec.count }})</span>
+              <!-- 整段折叠的常驻指示：与「已归档」同一个箭头口径（折起 = >，展开 = 转 90° 向下）。
+                   它不能跟着 hover 才出现——这一行能不能点，靠的就是这个箭头告知。 -->
+              <right-outlined class="group-caret sec-caret" :class="{ open: !secHidden(sec) }" />
+              <span v-if="sec.spacesSection" class="side-sec-ops" :class="{ pinned: sessionStore.loading }">
+                <a-spin v-if="sessionStore.loading" size="small" />
+                <!-- 一键展开/折叠全部工作区：图标随当前态翻转（全展开时才给「折叠」，混合态一律给「展开」，
+                     与逐个折叠头的常见口径一致）。整段已收起、或搜索态（store 强制全展开，见 spaceHidden）
+                     都不给这个按钮——前者要的是「展开这一段」，后者点了只会在清空搜索后凭空冒出一排折叠的工作区。
+                     .stop 必需：这一行现在整体可点，冒泡上去会顺手把整段折叠/展开，一次点击两件事。 -->
+                <button v-if="foldableSpaces.length && !secHidden(sec) && !searchKw" class="side-sec-op"
+                        :title="allSpacesExpanded ? '折叠全部工作区' : '展开全部工作区'"
+                        @click.stop="foldAllSpaces(allSpacesExpanded)">
+                  <shrink-outlined v-if="allSpacesExpanded" />
+                  <arrows-alt-outlined v-else />
+                </button>
+                <button class="side-sec-op" title="新建工作区" @click.stop="openCreateSpace"><plus-outlined /></button>
               </span>
-              <pushpin-outlined v-if="s.isPinned === 1" class="sess-pin-flag" />
-              <!-- 分享中：只标 enabled=1（链接还开着）。已停止的不标——否则每次停止分享后
-                   这个图标就永久留在列表里变成噪音。关闭入口在会话内分享面板 / 个人设置→分享管理 -->
-              <a-tooltip v-if="s.shared" title="这段对话正在对外分享（只读链接生效中）">
-                <!-- 必须显式传 s.id：直接把函数名当事件处理器，Vue 会把 PointerEvent 当 sid 传进去，
-                     跳过去就是 /profile?panel=shares&sid=[object PointerEvent]，深链定位静默失效 -->
-                <share-alt-outlined class="sess-share-flag" @click.stop="openShareManage(s.id)" />
-              </a-tooltip>
-              <span class="sess-title" :class="{ fav: s.isFavorite === 1 }">
-                <star-filled v-if="s.isFavorite === 1" class="sess-fav-flag" />{{ s.title || '新对话' }}
-              </span>
-            </template>
-            <template v-if="!collapsed && !batchMode">
-              <a-tooltip :title="s.isPinned === 1 ? '取消置顶' : '置顶'">
-                <button class="sess-op" :class="{ on: s.isPinned === 1 }" @click.stop="togglePin(s)"><pushpin-outlined /></button>
-              </a-tooltip>
-              <a-dropdown trigger="['click']" placement="bottomRight">
-                <button class="sess-op" @click.stop><more-outlined /></button>
-                <template #overlay>
-                  <a-menu @click="({ key }) => sessionMenu(s, key)">
-                    <a-menu-item key="rename"><edit-outlined /> 重命名</a-menu-item>
-                    <a-menu-item key="favorite"><star-filled v-if="s.isFavorite === 1" /><star-outlined v-else /> {{ s.isFavorite === 1 ? '取消收藏' : '收藏' }}</a-menu-item>
-                    <a-menu-item key="export"><download-outlined /> 导出 Markdown</a-menu-item>
-                    <!-- 分享：常驻入口。分享动作本身在聊天页的分享弹窗里（那里才有「链接展示
-                         最新内容」的隐私提示与换新/停止），所以这里只发信号让聊天页打开弹窗。
-                         侧栏与聊天页是兄弟组件，不能直接调弹窗，信号走 sessionStore.shareOpenTick。 -->
-                    <a-menu-item key="share"><share-alt-outlined /> 分享</a-menu-item>
-                    <!-- 分享管理：已分享的会话再给一个「回看全部」入口。停用/清除等管理动作在那边
-                         （是否生效、访问量都只在分享记录上，列表项里查不到） -->
-                    <a-menu-item v-if="s.shared" key="share-manage"><share-alt-outlined /> 分享管理</a-menu-item>
-                    <a-menu-item key="batch"><check-square-outlined /> 批量管理</a-menu-item>
-                    <a-menu-divider />
-                    <a-menu-item key="delete" danger><delete-outlined /> 删除</a-menu-item>
-                  </a-menu>
-                </template>
-              </a-dropdown>
-            </template>
-          </div>
-            </template>
-          </template>
-          <!-- 增量加载入口（居左，内边距与会话行对齐）：查看更多 (N)=剩余可展示条数；
-               点过查看更多后出现「收起」，一键还原首屏 20 条 -->
-          <div v-if="(sessionStore.hasMore || sessionStore.expanded) && !collapsed" class="sess-more">
-            <a-spin v-if="sessionStore.loadingMore" size="small" />
-            <template v-else>
-              <button v-if="sessionStore.hasMore" type="button" class="sess-more-btn" @click="loadMoreSessions">
-                查看更多<template v-if="sessRemaining > 0"> ({{ sessRemaining }})</template>
+            </div>
+
+            <template v-if="!secHidden(sec)">
+            <template v-for="row in sec.rows" :key="row.key">
+              <!-- 已归档的折叠头：插在活动工作区之后，展开时才拉这些工作区的会话 -->
+              <button v-if="row.archivedHead" class="side-sec-sub" @click="toggleArchived">
+                <span>已归档 ({{ sessionStore.archived.length }})</span>
+                <right-outlined class="group-caret" :class="{ open: sessionStore.archivedOpen }" />
               </button>
-              <button v-if="sessionStore.expanded" type="button" class="sess-more-btn collapse" @click="collapseSessions">收起</button>
+              <div v-else class="space" :class="{ archived: row.status === 'archived', bare: sec.bare }">
+                <div v-if="!sec.bare" class="space-head" role="button" tabindex="0"
+                     :aria-expanded="!spaceHidden(row)"
+                     :title="(spaceHidden(row) ? '展开：' : '收起：') + row.name"
+                     @click="toggleSpace(row)"
+                     @keydown.enter.self.prevent="toggleSpace(row)"
+                     @keydown.space.self.prevent="toggleSpace(row)">
+                  <span class="space-icon">
+                    <folder-open-outlined v-if="!spaceHidden(row)" />
+                    <folder-outlined v-else />
+                  </span>
+                  <span class="space-name">{{ row.name }}</span>
+                  <a-spin v-if="row.loading" class="space-spin" size="small" />
+                  <a-dropdown v-if="row.selectable" trigger="['click']" placement="bottomRight">
+                    <button class="space-op" title="工作区操作" @click.stop><more-outlined /></button>
+                    <template #overlay>
+                      <a-menu @click="({ key }) => spaceMenu(row, key)">
+                        <a-menu-item key="open" :disabled="row.virtual"><folder-open-outlined /> 打开工作区</a-menu-item>
+                        <a-menu-item key="rename" :disabled="row.virtual"><edit-outlined /> 重命名</a-menu-item>
+                        <a-menu-divider />
+                        <a-menu-item v-if="row.status === 'archived'" key="restore"><reload-outlined /> 恢复</a-menu-item>
+                        <a-menu-item v-else key="archive"><inbox-outlined /> 归档</a-menu-item>
+                        <a-menu-item v-if="!row.isImplicit" key="delete" danger><delete-outlined /> 删除工作区</a-menu-item>
+                      </a-menu>
+                    </template>
+                  </a-dropdown>
+                  <!-- 新建对话：直接落进这个工作区（归档工作区不提供） -->
+                  <button v-if="row.selectable && row.status !== 'archived'" class="space-add"
+                          title="在此工作区新建对话" @click.stop="newChat(row.id)">
+                    <plus-outlined />
+                  </button>
+                </div>
+
+                <template v-if="sec.bare || !spaceHidden(row)">
+                  <div v-if="row.error" class="side-empty err">
+                    加载失败
+                    <button class="side-inline-btn" @click.stop="reloadSpace(row)">重试</button>
+                  </div>
+                  <div v-for="s in row.items" :key="s.id"
+                       class="sess-item"
+                       :class="{ active: !batchMode && isActive('/chat') && route.query.sid === s.id, picked: batchMode && batchSel.has(s.id), running: chatStreams.has(s.id) }"
+                       :style="{ '--sess-i': sessRowOrdinal.get(s.id) ?? 0 }"
+                       :title="sessTooltip(s)"
+                       @click="batchMode ? toggleBatchSel(s.id) : openSession(s.id)">
+                    <span v-if="batchMode" class="batch-check" :class="{ on: batchSel.has(s.id) }">
+                      <check-outlined v-if="batchSel.has(s.id)" />
+                    </span>
+                    <pushpin-outlined v-if="s.isPinned === 1" class="sess-pin-flag" />
+                    <!-- 这个会话背上有启用的定时任务：不用进工作区页才知道它到点会自己跑 -->
+                    <a-tooltip v-if="jobsOfSession(s.id).length" :title="jobsTip(s.id)">
+                      <clock-circle-outlined class="sess-clock-flag" />
+                    </a-tooltip>
+                    <!-- 分享中：只标 enabled=1（链接还开着）。已停止的不标，避免噪音 -->
+                    <a-tooltip v-if="s.shared" title="这段对话正在对外分享（只读链接生效中）">
+                      <share-alt-outlined class="sess-share-flag" @click.stop="openShareManage(s.id)" />
+                    </a-tooltip>
+                    <span class="sess-title" :class="{ fav: s.isFavorite === 1 }">
+                      <star-filled v-if="s.isFavorite === 1" class="sess-fav-flag" />{{ s.title || '新对话' }}
+                    </span>
+                    <template v-if="!batchMode">
+                      <a-tooltip :title="s.isPinned === 1 ? '取消置顶' : '置顶'">
+                        <button class="sess-op" :class="{ on: s.isPinned === 1 }" @click.stop="togglePin(s)"><pushpin-outlined /></button>
+                      </a-tooltip>
+                      <a-dropdown trigger="['click']" placement="bottomRight">
+                        <button class="sess-op" @click.stop><more-outlined /></button>
+                        <template #overlay>
+                          <a-menu @click="({ key }) => sessionMenu(s, key)">
+                            <a-menu-item key="rename"><edit-outlined /> 重命名</a-menu-item>
+                            <a-menu-item key="favorite"><star-filled v-if="s.isFavorite === 1" /><star-outlined v-else /> {{ s.isFavorite === 1 ? '取消收藏' : '收藏' }}</a-menu-item>
+                            <a-menu-item key="export"><download-outlined /> 导出 Markdown</a-menu-item>
+                            <!-- 分享：常驻入口。分享动作本身在聊天页的分享弹窗里（那里才有「链接展示
+                                 最新内容」的隐私提示与换新/停止），所以这里只发信号让聊天页打开弹窗。 -->
+                            <a-menu-item key="share"><share-alt-outlined /> 分享</a-menu-item>
+                            <a-menu-item v-if="s.shared" key="share-manage"><share-alt-outlined /> 分享管理</a-menu-item>
+                            <a-menu-item key="batch"><check-square-outlined /> 批量管理</a-menu-item>
+                            <a-menu-divider />
+                            <a-menu-item key="delete" danger><delete-outlined /> 删除</a-menu-item>
+                          </a-menu>
+                        </template>
+                      </a-dropdown>
+                    </template>
+                  </div>
+                  <div v-if="!row.error && !row.loading && !row.items.length" class="side-empty">
+                    {{ searchKw ? '没有匹配的会话' : '暂无会话' }}
+                  </div>
+                  <div v-if="!row.error && (row.hasMore || row.expanded)" class="space-foot">
+                    <button v-if="row.hasMore" class="side-more-btn" :disabled="row.loadingMore" @click="loadSpaceMore(row)">
+                      {{ row.loadingMore ? '加载中…' : `查看更多 (${Math.max(0, row.count - row.items.length)})` }}
+                    </button>
+                    <button v-if="row.expanded" class="side-more-btn muted" @click="collapseSpace(row)">收起</button>
+                  </div>
+                </template>
+              </div>
             </template>
-          </div>
-          <div v-if="!visibleSessionList.length && !collapsed" class="sess-empty">
-            {{ searchKw ? '没有匹配的会话' : '暂无会话' }}
-            <button v-if="sessionStore.hasMore" type="button" class="sess-empty-more" @click="loadMoreSessions">
-              查看更多
-            </button>
-          </div>
+            </template>
+
+            <!-- 整段收起时空态也不留：那一块位置此刻正被「分区标题 (N) >」这一行表达 -->
+            <div v-if="sec.spacesSection && !secHidden(sec) && !sec.count && !sessionStore.loading" class="side-empty">
+              {{ searchKw ? '没有匹配的会话' : '暂无工作区' }}
+              <button v-if="!searchKw" class="side-inline-btn" @click="openCreateSpace">新建工作区</button>
+            </div>
+          </section>
         </template>
       </div>
 
@@ -350,15 +442,18 @@ import { PlusOutlined, MessageOutlined, RobotOutlined, FolderOutlined, BarChartO
          LogoutOutlined, UserOutlined, DatabaseOutlined, SafetyOutlined, AppstoreOutlined, FileOutlined,
          FileTextOutlined, SearchOutlined, CloseOutlined, PushpinOutlined, MoreOutlined, EditOutlined, StarFilled, StarOutlined,
          CheckOutlined, CheckSquareOutlined, QuestionCircleOutlined, PieChartOutlined, ShareAltOutlined,
-         RightOutlined, BellOutlined, UnorderedListOutlined } from '@ant-design/icons-vue'
+         RightOutlined, DownOutlined, BellOutlined, UnorderedListOutlined,
+         ClockCircleOutlined, FolderOpenOutlined, InboxOutlined, ReloadOutlined,
+         ArrowsAltOutlined, ShrinkOutlined } from '@ant-design/icons-vue'
 import { deleteSessionApi, logoutApi, renameSessionApi, pinSession, favoriteSession, batchDeleteSessionsApi,
-         getMyMenuLayout, saveMyMenuLayout } from '../api'
+         getMyMenuLayout, saveMyMenuLayout, setNewSessionProject,
+         updateProject, deleteProject, createProject, setProjectStatus } from '../api'
 import { useNotifications, notifIcon, notifClass, notifTime } from '../chat/useNotifications'
 import { themeState, toggleTheme } from '../utils/theme'
 import { authUser, ensureAuth, isAdminSync, clearAuth } from '../utils/auth'
 import { chatDone, chatReady, defaultReady, embeddingReady, pendingCount, refreshSetupGuide, setupGuide,
          advPendingCount } from '../utils/setupGuide'
-import { sessionStore, loadSessions, loadMoreSessions, collapseSessions, visibleSessions, chatStreams } from './store'
+import { sessionStore, loadSessions, loadTasks, loadSpaceMore, collapseSpace, reloadSpace, toggleArchived, visibleSessions, chatStreams, NO_SPACE_KEY } from './store'
 import { isNarrow, mobileShell } from '../h5/mobile'
 import BrandMark from '../components/BrandMark.vue'
 import HelpFab from '../components/HelpFab.vue'
@@ -402,12 +497,19 @@ const navMenus = ref([])
  * 不本地改 navMenus —— 那样会与服务端算出的结果漂移（下次刷新又变回去），
  * 看起来保存了其实没保存。
  */
+/**
+ * 菜单树 → 侧栏可见项。挂载首拉与保存后重拉共用这一份，避免两处 filter 各写一遍。
+ * 某一项占不占侧栏位是菜单表的数据：visible=0 的行服务端不下发，tab/hidden 型在此处不渲染。
+ * 刻意不为某个路径开前端例外 —— 那样管理员在「权限管理」里把菜单改回显示也没用，只能改代码。
+ */
+const sidebarMenusOf = menus => (menus || [])
+  .filter(m => m && (m.renderAs === 'group' || (m.renderAs !== 'tab' && m.renderAs !== 'hidden' && m.path)))
+
 async function reloadMenus () {
   const info = await ensureAuth(true)
   // 侧栏只渲染 sidebar + group；tab 由宿主页（AgentsHubPage 等）按 parentId 取用，hidden 纯权限容器
-  // group 无 path 也保留（title 渲染用 name）；menuPending/menuTitle 对无 path 菜单天然安全（只特判 /chat 与 /knowledge）
-  navMenus.value = ((info && info.menus) || [])
-    .filter(m => m && (m.renderAs === 'group' || (m.renderAs !== 'tab' && m.renderAs !== 'hidden' && m.path)))
+  // group 无 path 也保留（title 渲染用 name）；menuPending/menuTitle 对无 path 菜单天然安全
+  navMenus.value = sidebarMenusOf(info && info.menus)
 }
 
 // ==================== 侧栏就地编辑（个人偏好，独立于角色权限） ====================
@@ -735,64 +837,109 @@ function onNavContextMenu (ev) {
 }
 onUnmounted(clearNavPress)
 
-const visibleSessionList = computed(visibleSessions)
-
-// 会话时间字段稳健解析：ISO 字符串为主（Spring 默认序列化），兼容时间戳/数组/对象形态
-const sessTime = v => {
-  if (!v) return null
-  if (typeof v === 'number') return new Date(v)
-  if (typeof v === 'string') { const d = new Date(v); return isNaN(d.getTime()) ? null : d }
-  if (Array.isArray(v)) return new Date(v[0], (v[1] || 1) - 1, v[2] || 1, v[3] || 0, v[4] || 0, v[5] || 0)
-  if (typeof v === 'object' && v.year) return new Date(v.year, (v.monthValue || 1) - 1, v.dayOfMonth || 1, v.hour || 0, v.minute || 0, v.second || 0)
-  return null
-}
-// 按时间分组（后端已按 置顶→更新时间 排序，这里只分桶不改序）：置顶 / 今天 / 7 天内 / 更早；
-// 组内保持后端序，空组不渲染；批量全选口径仍是 visibleSessionList（平铺），与分组显示无关
-const groupedSessions = computed(() => {
-  const now = new Date()
-  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
-  const weekStart = startOfToday - 6 * 86400000
-  const groups = [
-    { label: '置顶', items: [] },
-    { label: '今天', items: [] },
-    { label: '7 天内', items: [] },
-    { label: '更早', items: [] }
-  ]
-  for (const s of visibleSessionList.value) {
-    if (s.isPinned === 1) { groups[0].items.push(s); continue }
-    const d = sessTime(s.updateTime)
-    const t = d ? d.getTime() : 0
-    if (t >= startOfToday) groups[1].items.push(s)
-    else if (t >= weekStart) groups[2].items.push(s)
-    else groups[3].items.push(s)
-  }
-  return groups.filter(g => g.items.length)
-})
-
-// 分组折叠状态（记忆到 localStorage，默认全展开）；搜索时强制全展开——搜到却看不见是死胡同
-const GROUPS_KEY = 'app_sess_groups_collapsed'
-const collapsedGroups = reactive(new Set((() => {
-  try { return JSON.parse(localStorage.getItem(GROUPS_KEY) || '[]') } catch { return [] }
-})()))
-const toggleGroup = label => {
-  collapsedGroups.has(label) ? collapsedGroups.delete(label) : collapsedGroups.add(label)
-  localStorage.setItem(GROUPS_KEY, JSON.stringify([...collapsedGroups]))
-}
-const groupHidden = label => !searchKw.value && collapsedGroups.has(label)
-
-// ==================== 会话分页：组头全量数字 + 「查看更多」增量加载 ====================
-// 组头计数用后端 groupCounts（全量口径，仅统计有消息的会话）；后端未返回时回退已加载条数
-const COUNT_KEYS = { 置顶: 'pinned', 今天: 'today', '7 天内': 'week', 更早: 'earlier' }
-const groupTotal = (label, loaded) => sessionStore.counts[COUNT_KEYS[label]] ?? loaded
-// 「查看更多 (N)」的 N：全量 - 已加载可展示数（两者同口径：仅统计有消息的会话）
-const sessRemaining = computed(() => Math.max(0, (sessionStore.total || 0) - visibleSessionList.value.length))
-// 会话行在列表里的全序下标：分组只分桶不改序，所以平铺下标就是它渲染成第几行
-// （生成中的会话按它取呼吸相位，见 .sess-item.running）
+const allVisibleSessions = computed(visibleSessions)
+// 会话行在摊平列表里的全序下标：生成中的会话按它取呼吸相位（见 .sess-item.running）。
+// 分组只改渲染位置、不改顺序，所以平铺下标就是它的相位序号。
 const sessRowOrdinal = computed(() => {
   const m = new Map()
-  visibleSessionList.value.forEach((s, i) => m.set(s.id, i))
+  sessionStore.list.forEach((s, i) => m.set(s.id, i))
   return m
 })
+
+// ==================== 工作区分组 ====================
+/** 工作区折叠状态（按工作区 key 记忆，默认全展开）；搜索时强制全展开——搜到却看不见是死胡同 */
+const SPACES_KEY = 'app_space_collapsed'
+const collapsedSpaces = reactive(new Set((() => {
+  try { return JSON.parse(localStorage.getItem(SPACES_KEY) || '[]') } catch (e) { return [] }
+})()))
+const spaceHidden = space => !searchKw.value && collapsedSpaces.has(space.key)
+const persistCollapsedSpaces = () => {
+  try { localStorage.setItem(SPACES_KEY, JSON.stringify([...collapsedSpaces])) } catch (e) { /* 忽略 */ }
+}
+const toggleSpace = space => {
+  // 搜索态强制全展开（搜到却看不见是死胡同）：此时点名字不写折叠状态，
+  // 否则清空搜索后会突然发现这个工作区被折叠了，而用户从没看到它折起来过
+  if (searchKw.value) return
+  if (collapsedSpaces.has(space.key)) collapsedSpaces.delete(space.key)
+  else collapsedSpaces.add(space.key)
+  persistCollapsedSpaces()
+}
+
+// 分区数据：第一段「会话」= 不属于任何真实工作区的会话（没挂工作区 + implicit 兜底容器，
+// 后端用 __nospace__ 一次过滤）；第二段「工作区」= 用户新建的工作区 + 已归档。
+// 两段共用同一套行模板，bare 控制有没有工作区头。
+const ARCHIVED_HEAD = { key: '__archived_head__', archivedHead: true }
+const soloSpace = computed(() => sessionStore.spaces.find(s => s.key === NO_SPACE_KEY) || null)
+const projectSpaces = computed(() => sessionStore.spaces.filter(s => s.key !== NO_SPACE_KEY))
+const sidebarSections = computed(() => {
+  const out = []
+  const solo = soloSpace.value
+  // 搜索态 0 命中的「会话」段不占位置；非搜索态即使没有没挂工作区会话也保留空态
+  // （对应基准稿里的「任务 (0) / 暂无任务」：位置稳定，用户才形成肌肉记忆）
+  const soloVisible = Boolean(solo) && (!searchKw.value || solo.count > 0)
+  if (soloVisible) {
+    out.push({ key: 'solo', title: '会话', count: solo.count, rows: [solo], bare: true, spacesSection: false })
+  }
+  const rows = [...projectSpaces.value]
+  // 搜索态不显示归档（搜索的是会话，不是翻旧工作区），也就省掉归档工作区的懒加载
+  if (!searchKw.value && sessionStore.archived.length) {
+    rows.push(ARCHIVED_HEAD)
+    if (sessionStore.archivedOpen) rows.push(...sessionStore.archived)
+  }
+  // 搜索态只剩「会话」有命中时，不再额外渲染一块「工作区 (0) / 没有匹配」——
+  // 两块空态上下叠着，会让人以为工作区加载失败
+  if (!searchKw.value || rows.length || !soloVisible) {
+    out.push({ key: 'spaces', title: '工作区', count: projectSpaces.value.length, rows, bare: false, spacesSection: true })
+  }
+  return out
+})
+
+/** 表头「展开/折叠全部」的作用域 = 此刻列在「工作区」段里的工作区行
+    （归档头不是工作区；已归档没展开时那些工作区也不在内——只管看得见的这一批） */
+const foldableSpaces = computed(() => {
+  const sec = sidebarSections.value.find(s => s.key === 'spaces')
+  return sec ? sec.rows.filter(r => !r.archivedHead) : []
+})
+const allSpacesExpanded = computed(() =>
+  foldableSpaces.value.length > 0 && foldableSpaces.value.every(s => !spaceHidden(s)))
+function foldAllSpaces (collapse) {
+  for (const s of foldableSpaces.value) {
+    if (collapse) collapsedSpaces.add(s.key)
+    else collapsedSpaces.delete(s.key)
+  }
+  persistCollapsedSpaces()
+}
+
+/** 分区整段的收起状态（表头那一行本身是开关，「会话」「工作区」各记各的）。
+    与单个工作区的折叠是两件事：整段收起=连工作区名一起藏掉，单个收起=只藏这个工作区下的会话。
+    搜索态强制展开（同 spaceHidden 的理由：搜到却看不见是死胡同）。 */
+const SEC_FOLD_KEY = 'app_side_section_folded'
+const foldedSections = reactive(new Set((() => {
+  try { return JSON.parse(localStorage.getItem(SEC_FOLD_KEY) || '[]') } catch (e) { return [] }
+})()))
+const secHidden = sec => foldedSections.has(sec.key) && !searchKw.value
+function toggleSection (sec) {
+  // 同 toggleSpace：搜索态点表头不写折叠状态，否则清空搜索后凭空多出一段收起的分区
+  if (searchKw.value) return
+  if (foldedSections.has(sec.key)) foldedSections.delete(sec.key)
+  else foldedSections.add(sec.key)
+  try { localStorage.setItem(SEC_FOLD_KEY, JSON.stringify([...foldedSections])) } catch (e) { /* 忽略 */ }
+}
+
+// 会话行上的时钟标记：只标启用中的任务（停用的提示「它会自己跑」是假的）
+const jobsBySession = computed(() => {
+  const map = {}
+  for (const j of sessionStore.tasks) {
+    if (!j.sessionId || !j.enabled) continue
+    ;(map[j.sessionId] = map[j.sessionId] || []).push(j)
+  }
+  return map
+})
+const jobsOfSession = sid => jobsBySession.value[sid] || []
+const jobsTip = sid => jobsOfSession(sid).map(j => `${j.name}（${j.cron}）`).join('\n')
+
+/** 会话行悬停提示：标题太长被截断时补全文（所属工作区已由分组头表达，不再重复） */
+const sessTooltip = s => s.title || '新对话'
 const isActive = p => route.path === p
 // 窄屏抽屉开合。不落 localStorage：抽屉是「当前这一秒的临时状态」，
 // 刷新后默认关着才是符合预期的（记住它会让下次进来莫名其妙开着一个遮罩）
@@ -848,7 +995,12 @@ const goChat = to => {
   const done = (isNarrow.value && route.path === '/chat') ? router.replace(to) : router.push(to)
   done.catch(() => {})
 }
-const newChat = () => {
+/**
+ * 新建对话。projectId 可选：工作区右侧的 + 传该工作区 id；顶栏「新建对话」不传 = 不挂工作区。
+ * 落点写进 api 的新会话目标（newSession() 唯一入口在聊天引擎里），再发跨页信号。
+ */
+const newChat = (projectId = '') => {
+  setNewSessionProject(projectId)
   sessionStore.newChatTick++
   goChat('/chat')
 }
@@ -917,15 +1069,125 @@ const confirmDelete = s => {
 }
 // 会话搜索（300ms 防抖走后端 keyword 检索；空串恢复全量）
 const searchKw = ref('')
+// ==================== 工作区操作 ====================
+// 侧栏把会话按工作区收束；工作区落到数据模型就是后端一行 Project 容器（一个工作目录 + 一组会话与产物），
+// 界面上只叫「工作区」。新建 / 重命名 / 归档 / 删除都在各自的 ⋯ 菜单里，不再做一个全局下拉。
+const createOpen = ref(false)
+const createName = ref('')
+const createSaving = ref(false)
+const renameOpen = ref(false)
+const renameTarget = ref(null)
+const renameName = ref('')
+const renameSaving = ref(false)
+
+const openCreateSpace = () => { createName.value = ''; createOpen.value = true }
+const openRenameSpace = space => {
+  renameTarget.value = space
+  renameName.value = space.name || ''
+  renameOpen.value = true
+}
+
+const spaceMenu = (space, key) => {
+  if (!space) return
+  if (key === 'open') {
+    if (space.id) router.push('/project/' + space.id).catch(() => {})
+    return
+  }
+  if (key === 'rename') { openRenameSpace(space); return }
+  if (key === 'archive' || key === 'restore') {
+    const next = key === 'archive' ? 'archived' : 'active'
+    setProjectStatus(space.id, next).then(async () => {
+      // 归档后这个工作区不再有「新建对话」入口；如果它正是新会话的落点，清掉，
+      // 否则下一次「新建对话」会悄悄落进一个已经收起的工作区
+      if (next === 'archived') setNewSessionProject('')
+      message.success(next === 'archived' ? '已归档' : '已恢复')
+      await loadSessions(undefined, { refreshProjects: true })
+    }).catch(e => message.error('操作失败：' + (e.message || '请重试')))
+    return
+  }
+  if (key === 'delete') {
+    Modal.confirm({
+      title: '删除这个工作区？',
+      content: '只解除归属：工作区下的会话与产物都会保留。此操作不可撤销。',
+      okText: '删除',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          await deleteProject(space.id)
+          message.success('已删除')
+          // 删掉的正是「下次新对话」的目标工作区 → 清掉，否则新会话会带一个不存在的 projectId
+          setNewSessionProject('')
+          await loadSessions(undefined, { refreshProjects: true })
+        } catch (e) {
+          message.error('删除失败：' + (e.message || '请重试'))
+        }
+      }
+    })
+  }
+}
+
+const doCreateProject = async () => {
+  const name = (createName.value || '').trim()
+  if (!name) {
+    message.warning('请填写工作区名')
+    return
+  }
+  createSaving.value = true
+  try {
+    const r = await createProject(name)
+    const created = (r && r.data && r.data.id) || ''
+    createOpen.value = false
+    message.success('工作区已创建')
+    await loadSessions(undefined, { refreshProjects: true })
+    // 建完直接落到它的工作区页：第一件事就是写约定（那里有三步引导）
+    if (created) {
+      setNewSessionProject(created)
+      router.push('/project/' + created)
+    }
+  } catch (e) {
+    message.error('创建失败：' + (e.message || '请重试'))
+  } finally {
+    createSaving.value = false
+  }
+}
+
+const doRenameProject = async () => {
+  const p = renameTarget.value
+  const name = (renameName.value || '').trim()
+  if (!p || !name) {
+    message.warning('工作区名不能为空')
+    return
+  }
+  renameSaving.value = true
+  try {
+    await updateProject(p.id, { name })
+    message.success('已重命名')
+    renameOpen.value = false
+    await loadSessions(undefined, { refreshProjects: true })
+  } catch (e) {
+    message.error('重命名失败：' + (e.message || '请重试'))
+  } finally {
+    renameSaving.value = false
+  }
+}
 let searchTimer = null
+// 会话区滚动容器：换搜索词（或清空）后回到顶部，否则用户停在上一屏的位置，
+// 看到的是「搜索结果之外」的旧区域，像是搜索没生效
+const sessionsEl = ref(null)
+const scrollSessionsTop = () => { if (sessionsEl.value) sessionsEl.value.scrollTop = 0 }
 const onSearchInput = () => {
   clearTimeout(searchTimer)
-  searchTimer = setTimeout(() => loadSessions(searchKw.value.trim()), 300)
+  searchTimer = setTimeout(async () => {
+    await loadSessions(searchKw.value.trim())
+    scrollSessionsTop()
+  }, 300)
 }
 const clearSearch = () => {
   searchKw.value = ''
   clearTimeout(searchTimer)
   loadSessions('')
+  scrollSessionsTop()
 }
 onUnmounted(() => clearTimeout(searchTimer))
 
@@ -952,7 +1214,7 @@ const delSession = async sid => {
 const batchMode = ref(false)
 const batchSel = ref(new Set())
 const allSelected = computed(() =>
-  visibleSessionList.value.length > 0 && visibleSessionList.value.every(s => batchSel.value.has(s.id)))
+  allVisibleSessions.value.length > 0 && allVisibleSessions.value.every(s => batchSel.value.has(s.id)))
 const enterBatchMode = () => { batchMode.value = true; batchSel.value = new Set() }
 const exitBatchMode = () => { batchMode.value = false; batchSel.value = new Set() }
 const toggleBatchSel = id => {
@@ -961,7 +1223,7 @@ const toggleBatchSel = id => {
   batchSel.value = next
 }
 const toggleSelectAll = () => {
-  batchSel.value = allSelected.value ? new Set() : new Set(visibleSessionList.value.map(s => s.id))
+  batchSel.value = allSelected.value ? new Set() : new Set(allVisibleSessions.value.map(s => s.id))
 }
 const confirmBatchDelete = () => {
   const ids = [...batchSel.value]
@@ -1071,12 +1333,19 @@ onMounted(async () => {
   const info = await ensureAuth(true)
   isAdmin.value = Boolean(info && info.admin)
   // 侧栏只渲染 sidebar + group；tab 由宿主页（AgentsHubPage 等）按 parentId 取用，hidden 纯权限容器
-  // group 无 path 也保留（title 渲染用 name）；menuPending/menuTitle 对无 path 菜单天然安全（只特判 /chat 与 /knowledge）
-  navMenus.value = ((info && info.menus) || [])
-    .filter(m => m && (m.renderAs === 'group' || (m.renderAs !== 'tab' && m.renderAs !== 'hidden' && m.path)))
+  navMenus.value = sidebarMenusOf(info && info.menus)
   loadSessions()
+  loadTasks(true)  // 「任务」分区 + 会话行时钟标记（与工作区取数并行，不互相阻塞）
   refreshSetupGuide(true)  // 登录即可见的配置引导首拉（此时菜单树已就绪，tag/入口立即可判）
   // 通知未读轮询与 focus/visibility 刷新由 useNotifications 自持（首拉 + 30s 定时 + 卸载清理）
+})
+// 从智能体工作台（定时任务）回来时任务区要跟着变。节流 5s：切会话、切页不重复打这个接口，
+// 但在定时任务页新建/停用后回到对话页，回来这一次一定是新的。
+let tasksRefreshedAt = Date.now()
+watch(() => route.fullPath, () => {
+  if (Date.now() - tasksRefreshedAt < 5000) return
+  tasksRefreshedAt = Date.now()
+  loadTasks(true)
 })
 </script>
 
@@ -1086,8 +1355,12 @@ onMounted(async () => {
 .pref-row { display: flex; align-items: center; gap: 8px; }
 .pref-hint { font-size: 12px; color: var(--app-text3, var(--app-text3)); margin-top: 6px; }
 .pwd-err { color: var(--app-danger); font-size: 12px; margin: 0 0 8px; }
+.pj-modal-hint { margin-top: var(--app-sp-2); font-size: var(--app-fs-sm); color: var(--app-label-tertiary); }
+.sess-clock-flag { font-size: 11px; color: var(--app-label-tertiary); flex-shrink: 0; }
 .side {
-  width: 200px; flex: none; display: flex; flex-direction: column;
+  /* 232px：工作区分组需要「图标 + 名字 + 余量 + 两个操作位」排在一行，
+     200px 下名字会被挤成省略号、查看更多也要换行。 */
+  width: 232px; flex: none; display: flex; flex-direction: column;
   background: var(--app-panel); border-right: 1px solid var(--app-border);
   padding: 10px 8px; transition: width .18s ease; overflow: hidden;
 }
@@ -1148,6 +1421,9 @@ onMounted(async () => {
 /* 粗指针（触屏、含带触摸屏的笔记本）：恒显且退回常规文档流，形态与改动前一致。
    写在 hover 块之后：两者同时命中时（触摸屏笔记本）由这里覆盖。 */
 @media (any-pointer: coarse) {
+  /* 触屏没有 hover：工作区行的 ⋯ 必须常显，否则等于没有操作入口 */
+  .space-op,
+  .space-add { opacity: 1; }
   .side:not(.collapsed) .side-logo-ops {
     position: static; opacity: 1; pointer-events: auto;
   }
@@ -1213,19 +1489,19 @@ onMounted(async () => {
 /* user-select/callout 全关：长按进入编辑态是这一区域的手势，
    鼠标按住时顺手选中一片文字、或触屏弹出系统菜单，都会把它打断 */
 .side-nav {
-  display: flex; flex-direction: column; gap: 2px;
+  display: flex; flex-direction: column; gap: 1px;
   user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
 }
 /* 分组标题（renderAs=group）：不可点、无 hover，仅视觉归类。
    折叠态缩成一条细线——标题只剩占位会让图标条更乱，藏掉更干净 */
 .nav-group {
-  margin: 8px 9px 2px; padding: 0; font-size: 11px; color: var(--app-text3);
+  margin: 6px 9px 1px; padding: 0; font-size: 11px; color: var(--app-text3);
   letter-spacing: .05em; white-space: nowrap; user-select: none;
 }
 .side.collapsed .nav-group { height: 1px; margin: 6px 8px; padding: 0; overflow: hidden; background: var(--app-border); }
 .nav-item {
   display: flex; align-items: center; gap: 9px; border: none; background: transparent;
-  padding: 7px 9px; border-radius: 8px; font-size: 13px; color: var(--app-text2);
+  padding: 6px 9px; border-radius: 8px; font-size: 13px; color: var(--app-text2);
   cursor: pointer; text-align: left; white-space: nowrap; transition: background .15s, color .15s;
   position: relative; /* 折叠态/窄屏的待配置圆点绝对定位于行内右上角 */
 }
@@ -1248,7 +1524,7 @@ onMounted(async () => {
 }
 .side.collapsed .nav-dot { display: block; }
 /* 侧栏引导入口（导航组末尾）：与上方导航留分组间距；必配态主色弱底 + 琥珀计数角标 */
-.guide-entry { margin-top: 10px; background: var(--app-accent-weak); }
+.guide-entry { margin-top: 6px; background: var(--app-accent-weak); }
 .guide-entry-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .guide-count {
   flex: none; font-size: 10px; line-height: 1; padding: 3px 7px; border-radius: 999px;
@@ -1259,24 +1535,102 @@ onMounted(async () => {
 .guide-entry.adv:hover { background: var(--app-accent-weak); color: var(--app-text2); }
 .guide-count.muted { color: var(--app-text3); background: var(--app-panel-2); }
 
-.side-label { margin: 14px 8px 4px; font-size: 11px; color: var(--app-text3); }
-/* 分组头可点折叠：全宽按钮化，箭头指示状态（展开=向下），右侧淡显条数 */
-.sess-group-label {
-  /* 不写 width:calc(100%-12px)：百分比宽 + margin 在滚动容器里会撑出横向溢出（出现横向滚动条），
-     用 flex 列布局默认拉伸 + margin 收窄即可 */
-  display: flex; align-items: center; gap: 4px;
-  border: none; background: transparent; cursor: pointer; padding: 2px 3px; margin: 14px 6px 4px;
-  border-radius: 6px; font-size: 11px; color: var(--app-text3); text-align: left;
+/* ==================== 会话树：分区 / 工作区 / 会话行 ==================== */
+/* 分区标题：小号、加字距、计数紧跟其后。参考的是「任务 (0)」「工作区 (2)」那种目录式表头，
+   而不是旧版灰色小标题 + 组内数字角标（视觉重量太轻，撑不起分区）。 */
+.side-sec { display: flex; flex-direction: column; padding: 0 2px; }
+.side-sec + .side-sec { margin-top: 2px; }
+.side-sec-head { display: flex; align-items: center; gap: 4px; padding: 9px 6px 3px; min-height: 28px; }
+.side-sec-title { font-size: 11px; font-weight: 600; color: var(--app-text3); letter-spacing: .04em; }
+.side-sec-count { font-size: 11px; color: var(--app-text3); opacity: .8; }
+.side-sec-ops { margin-left: auto; display: inline-flex; align-items: center; gap: 2px; }
+.side-sec-op {
+  flex: none; width: 20px; height: 20px; border: none; border-radius: 6px;
+  background: transparent; color: var(--app-text3); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; font-size: 11px;
   transition: color .15s, background .15s;
 }
-.sess-group-label:hover { color: var(--app-text2); background: var(--app-panel-2); }
-/* 箭头靠右：文字在左，条数紧贴文字，箭头居行尾指示展开/折叠 */
+.side-sec-op:hover { color: var(--app-accent); background: var(--app-accent-weak); }
+.side-sec-sub {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  border: none; background: transparent; cursor: pointer; text-align: left;
+  margin-top: 2px; padding: 7px 8px; border-radius: 6px;
+  font-size: 11px; color: var(--app-text3);
+  transition: color .15s, background .15s;
+}
+.side-sec-sub:hover { color: var(--app-text2); background: var(--app-panel-2); }
 .group-caret { margin-left: auto; font-size: 9px; transition: transform .15s; }
 .group-caret.open { transform: rotate(90deg); }
-.group-count { font-size: 10px; color: var(--app-text3); opacity: .8; }
-/* 列表内时间分组组头：比页级标签更贴紧（首组上方由搜索框间距兜底） */
-.sess-group-label { margin: 10px 8px 3px; }
-/* 批量管理入口在每条会话「更多」菜单里（搜索框不再内嵌入口） */
+/* 分区表头（会话 / 工作区）整段可点：光标 + 文字提亮给到可点感，不给整行底色
+   （这一行的上下 padding 是 9/3 不对称的分区留白，铺底色会明显偏上）。
+   箭头紧跟计数、不 .group-caret 那样靠右——它属于「会话 (187)」这个标题，
+   右侧那一组是操作区，两者分开才不会让人以为箭头是某个按钮的图标。 */
+.side-sec-head.clickable { cursor: pointer; }
+.side-sec-head.clickable:hover .side-sec-title,
+.side-sec-head.clickable:hover .side-sec-count { color: var(--app-text2); }
+.sec-caret { margin-left: 0; color: var(--app-text3); }
+
+/* 工作区：一行「图标 + 名字（点名字展开/收起） + ⋯ + 新建对话」。
+   不再放折叠箭头：名字本身就是折叠开关（与基准稿一致），右侧两个图标各管一件事。 */
+.space { display: flex; flex-direction: column; }
+.space-head {
+  display: flex; align-items: center; gap: 6px; min-height: 30px;
+  padding: 5px 4px 5px 6px; border-radius: 7px; cursor: pointer;
+  transition: background .12s;
+}
+.space-head:hover { background: var(--app-accent-weak); }
+.space-icon {
+  flex: none; width: 20px; height: 20px; border-radius: 6px;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--app-accent-weak); color: var(--app-accent); font-size: 11px;
+}
+.space-name {
+  flex: 1; min-width: 0; font-size: 12.5px; font-weight: 500; color: var(--app-text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.space-spin { flex: none; margin-right: 2px; }
+/* ⋯ 与 ＋：触屏/窄屏没有 hover，走这里的常显档（压到 .8 不与工作区名抢注意力）；
+   有鼠标的环境下默认隐身、移到这一行才浮现（见下方 hover 媒体查询）。
+   只改 opacity 不改 display ⇒ 工作区名的可用宽度两种状态一致，不会一动就重排。 */
+.space-op, .space-add {
+  flex: none; padding: 0; border: none; background: transparent;
+  color: var(--app-text2); cursor: pointer; opacity: .8;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: opacity .12s, color .12s, background .12s, border-color .12s;
+}
+.space-op { width: 18px; height: 18px; border-radius: 5px; font-size: 12px; }
+/* + 用一圈细边的小圆扣，和 ⋯ 区分开（一个管管理，一个管新建） */
+.space-add {
+  width: 16px; height: 16px; border-radius: 50%; font-size: 9px;
+  border: 1px solid var(--app-border);
+}
+.space-head:hover .space-op,
+.space-head:hover .space-add { opacity: 1; }
+.space-op:hover { color: var(--app-accent); background: var(--app-accent-weak); }
+.space-add:hover { color: var(--app-accent); border-color: var(--app-accent); background: var(--app-accent-weak); }
+/* ---- 有悬停能力的环境：表头操作组与工作区行右侧图标一律「平时隐身、hover 这一行显形」 ----
+   与 logo 行 .side-logo-ops 同一套口径（触发区只给所在那一行，鼠标扫过列表时不该有东西在闪）。
+   :has(:focus-visible) 兜键盘：Tab 到按钮才显形，看不见的按钮等于没入口；
+   刻意不用 :focus-within —— 鼠标点完焦点会留在按钮上，会把图标一直钉在屏幕上（logo 行实测踩过）。
+   .pinned 给表头：整栏刷新时的转圈是「这里在发生什么」的提示，不能跟着隐身。
+   写在 .space-op/.side-sec-ops 基础规则之后：媒体查询不加 specificity，顺序决定谁生效。 */
+@media (hover: hover) and (pointer: fine) {
+  .side-sec-ops,
+  .space-op,
+  .space-add { opacity: 0; }
+  .side-sec-head:hover .side-sec-ops,
+  .side-sec-ops:has(:focus-visible),
+  .side-sec-ops.pinned,
+  .space-head:hover .space-op,
+  .space-head:hover .space-add,
+  .space-head:has(:focus-visible) .space-op,
+  .space-head:has(:focus-visible) .space-add { opacity: 1; }
+}
+/* 已归档工作区整体压暗：仍可点进去，但不该与"正在推进"的工作区抢注意力 */
+.space.archived .space-head { opacity: .72; }
+/* 27 而不是 33：按钮自带 6px 左内边距（给 hover 弱底留呼吸），加上它才等于会话行的 33px 文字缩进 */
+.space-foot { display: flex; align-items: center; gap: 4px; padding-left: 27px; }
+
 /* 批量操作条：独立一行贴列表上方，主题色弱底提示「处于批量模式」 */
 .sess-batch-bar {
   display: flex; align-items: center; justify-content: space-between;
@@ -1297,10 +1651,13 @@ onMounted(async () => {
   font-size: 9px; color: #fff;
 }
 .batch-check.on { background: var(--app-accent); border-color: var(--app-accent); }
-.side-sessions { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
+.side-sessions { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; }
+/* 会话行缩进 33px：与工作区名的左缘对齐（6 + 20 + 7），一眼能看出它属于哪个工作区。
+   首段「会话」没有工作区头，但保持同样的缩进，两个分区的行在同一列上。 */
 .sess-item {
-  display: flex; align-items: center; padding: 6px 9px; border-radius: 8px;
-  font-size: 12px; color: var(--app-text2); cursor: pointer; min-width: 0;
+  display: flex; align-items: center; gap: 3px;
+  padding: 5px 6px 5px 33px; border-radius: 7px; min-height: 27px;
+  font-size: 12.5px; color: var(--app-text2); cursor: pointer; min-width: 0;
   transition: background .12s;
 }
 .sess-item:hover { background: var(--app-panel-2); }
@@ -1310,6 +1667,9 @@ onMounted(async () => {
 .sess-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
 .sess-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--app-text3); margin: 0 auto; }
 .sess-item.active .sess-dot { background: var(--app-accent); }
+/* 折叠成图标条：圆点居中，行不再左缩进 */
+.side.collapsed .sess-item { padding: 6px 0; justify-content: center; }
+
 /* 本机还在生成的会话（chatStreams 持有它的流）：标题在主色与次文本之间呼吸。
    不用转圈图标：行右端是 hover 操作位、行首已排着置顶/分享标记，再插一个会打架；
    也不用 background-clip 流光：那会让 text-overflow 的省略号一起透明，长标题看不出被截断。
@@ -1346,7 +1706,8 @@ onMounted(async () => {
    视觉与导航项同一语言：无边框弱底胶囊，聚焦时才浮现边框——
    此前常驻边框+纯白底，夹在无边框导航项之间显得格格不入 */
 .sess-search-wrap {
-  position: relative; display: flex; align-items: center; margin: 6px 2px 6px;
+  position: relative; display: flex; align-items: center; margin: 6px 2px 2px;
+  height: 30px; padding: 0 2px;
   border: 1px solid transparent; border-radius: 8px; background: var(--app-panel-2);
 }
 .sess-search-wrap:focus-within { border-color: var(--app-accent); background: var(--app-bg, #fff); }
@@ -1367,6 +1728,7 @@ onMounted(async () => {
 }
 .sess-item:hover .sess-op { opacity: 1; }
 .sess-op:hover { color: var(--app-accent); }
+/* 置顶/收藏的快捷按钮在触屏上没有 hover，常显（≤1024 的媒体查询也会兜一层） */
 .sess-op.on { opacity: 1; color: var(--app-accent); }
 .sess-pin-flag { color: var(--app-accent); font-size: 10px; flex: none; margin-right: 3px; }
 /* 分享标记：与置顶/收藏同级常显（不是 hover 才出现的操作按钮）——它是"这段对话正在对外"
@@ -1374,24 +1736,31 @@ onMounted(async () => {
 .sess-share-flag { color: var(--app-warn); font-size: 10px; flex: none; margin-right: 3px; cursor: pointer; }
 .sess-fav-flag { color: var(--app-warn); font-size: 10px; margin-right: 3px; }
 .sess-title.fav { color: var(--app-text); }
-.sess-empty { font-size: 12px; color: var(--app-text3); text-align: center; padding: 16px 0; }
-/* 游标分页：底部增量加载入口——居左、内边距与 .sess-item 对齐（6px 9px），文本随行首对齐；
-   展开后「查看更多」旁出现「收起」（还原首屏），蓝=主操作、灰=次级操作 */
-.sess-more { display: flex; align-items: center; gap: 10px; padding: 2px 0 4px; }
-.sess-more-btn {
+
+/* 空态：左对齐并缩进到会话行文字处，和行一起读，而不是页面中央的一行灰字 */
+.side-empty { padding: 2px 8px 6px; font-size: 11.5px; color: var(--app-text3); line-height: 1.6; }
+.space .side-empty { padding-left: 33px; }
+/* 首段「会话」没有工作区头：空态与分区标题左对齐，而不是像会话行那样再缩进一次 */
+.space.bare .side-empty { padding-left: 8px; }
+.side-empty.err { color: var(--app-danger); }
+.side-inline-btn {
+  border: none; background: none; cursor: pointer; padding: 0 2px;
+  color: var(--app-accent); font-size: 11.5px;
+}
+.side-inline-btn:hover { text-decoration: underline; }
+
+/* 「查看更多 (N)」：静默认的次级动作，hover 才提亮；不用主题色实心/粗体抢注意力。
+   静置色走弱文本档：会话行本身是 .text2，同色同字号时这行会读成「第 5 条会话」而不是列表收尾 */
+.side-more-btn {
   border: none; background: none; cursor: pointer;
-  font-size: 12px; color: var(--app-accent); padding: 6px 9px; border-radius: 8px;
+  font-size: 11.5px; color: var(--app-text3); padding: 3px 6px; border-radius: 6px;
 }
-.sess-more-btn:hover { background: var(--app-accent-weak); }
-.sess-more-btn.collapse { color: var(--app-text2); }
-.sess-empty-more {
-  display: block; margin: 6px auto 0; border: none; background: none; cursor: pointer;
-  font-size: 12px; color: var(--app-accent); padding: 2px 8px; border-radius: 4px;
-}
-.sess-empty-more:hover { background: var(--app-accent-weak); }
+.side-more-btn:hover { color: var(--app-accent); background: var(--app-accent-weak); }
+.side-more-btn:disabled { color: var(--app-text3); opacity: .6; cursor: default; background: none; }
+.side-more-btn.muted { color: var(--app-text3); }
 
 .side-foot {
-  display: flex; align-items: center; gap: 4px; padding: 8px 6px 2px;
+  display: flex; align-items: center; gap: 4px; padding: 6px 6px 2px;
   border-top: 1px solid var(--app-border);
 }
 /* 头像+昵称 = 个人设置入口（点击进 /profile），占满剩余宽度把右侧两个图标推到行尾 */
@@ -1419,7 +1788,9 @@ onMounted(async () => {
         MobileTopBar。DOM 结构与 PC 完全一致，靠 CSS 与 :class 切换。
    ≤1024：会话操作图标常显（触屏无 hover）。 */
 @media (max-width: 1024px) {
-  .sess-op { opacity: 1; }
+  .sess-op,
+  .space-op,
+  .space-add { opacity: 1; }
 }
 @media (max-width: 768px) {
   /* 抽屉：脱离文档流（fixed），所以 .app-root 保持 flex-direction: row 无需改。
