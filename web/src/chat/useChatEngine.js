@@ -13,13 +13,17 @@ import { sendQuestion, resumeChat, getChatRun, newSession, getHistory, deleteSes
          listKnowledgeBases, listDocuments, uploadChatAttachment, getSessionTodosApi,
          refreshArtifactSigns as refreshArtifactSignsApi } from '../api'
 import { sessionStore, loadSessions, chatStreams, markSessionActive } from '../views/store'
+import { markLive, splitAtts } from './attachments'
+// 取材判定层：图片压缩参数、附件白名单与各项限额都在这里（分享页共用同一份，见 ./intake.js）
+import { MAX_IMAGES, MAX_FILES, classifyIntake, rejectText, REJECT, compressImage, pasteFilesOf,
+         isLongPaste, pasteNameOf } from './intake'
 import { fmtTokens } from '../utils/token'
 import { loadModelIndex } from '../utils/modelRef'
 import { THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel, CTX_WINDOW_STEPS, fmtWindow,
          groupSources, ensureTick, mergeDoneToolCalls, restoreTimeline, extendTimelineText, extendTimelineProcess,
          pushTimelineTool, pushTimelineArtifact, pushTimelineThink, extendTimelineThink, ensureThinkSegment,
          snapshotVersion, applyVersion, toolCallsView, histItemDigest,
-         DEFAULT_SAMPLE_QUESTIONS, parseSampleQuestions, PASTE_TEXT_BASE, rememberAgents } from './projections'
+         DEFAULT_SAMPLE_QUESTIONS, parseSampleQuestions, rememberAgents } from './projections'
 
 export function useChatEngine (hooks = {}) {
   const route = useRoute()
@@ -584,53 +588,30 @@ const sessionRetrieval = computed(() => {
 // 框架引擎下这套分配不存在，报上来只会让「上下文 3.4K / 预算 120K」里的 120K 无人认领。
 // 上下文占用了窗口多少，现在由容量卡的 ctxCapData 回答（context/window，>80% 警告 / >95% 危险）。
 // ==================== 图片（「+」菜单选择 / 拖入 / 粘贴 → 压缩为 dataURL） ====================
+// 压缩参数、附件白名单与各项限额已抽到 ./intake.js：分享页要用同一份口径，
+// 抄一份的代价不是多几行，是两页对「最多几张图 / 收哪些格式」慢慢说出不同的话
 const pendingImages = ref([])
-const compressImage = file => new Promise((resolve, reject) => {
-  const img = new Image()
-  const url = URL.createObjectURL(file)
-  img.onload = () => {
-    const max = 1280
-    let { width, height } = img
-    if (width > max || height > max) {
-      const ratio = Math.min(max / width, max / height)
-      width = Math.round(width * ratio); height = Math.round(height * ratio)
-    }
-    const canvas = document.createElement('canvas')
-    canvas.width = width; canvas.height = height
-    canvas.getContext('2d').drawImage(img, 0, 0, width, height)
-    URL.revokeObjectURL(url)
-    resolve(canvas.toDataURL('image/jpeg', 0.85))
-  }
-  img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('图片加载失败')) }
-  img.src = url
-})
 const removePendingImage = i => pendingImages.value.splice(i, 1)
 // ==================== 附件上传（「+」菜单选择/拖入/粘贴 → 先传换 fileId，问答请求只带 fileId） ====================
 // 此前附件以 base64 内联在 /chat 的 JSON body 里：5×15MB 会打出 ~100MB 的字符串，弱网必挂、
 // 断线要整包重传、后端也得先把整包读进内存。现在文件先走 multipart 上传落盘换号，请求体只带 id。
-const MAX_FILES = 5
-const MAX_FILE_MB = 15
-// 与后端 ChatAttachmentService 的类型白名单一致（doc/ppt 老格式未引入 scratchpad，不支持）
-const SUPPORTED_EXTS = ['pdf', 'docx', 'xls', 'xlsx', 'pptx', 'txt', 'md', 'markdown', 'csv', 'tsv', 'json', 'log',
-  'xml', 'yml', 'yaml', 'html', 'htm', 'java', 'js', 'ts', 'jsx', 'tsx', 'vue', 'py', 'sql', 'sh', 'bat',
-  'c', 'h', 'cpp', 'hpp', 'cs', 'go', 'rs', 'rb', 'php', 'css', 'scss', 'less', 'properties', 'ini', 'conf', 'toml']
 const pendingFiles = ref([])
-const extOf = name => {
-  const dot = (name || '').lastIndexOf('.')
-  return dot < 0 ? '' : name.slice(dot + 1).toLowerCase()
-}
+/** 输入框内联 chip 的编号源：附件/图片在上传前就得有一个稳定身份（fileId 要等响应回来才有），
+ *  否则「这颗 chip 对应数组里哪一条」只能靠文件名猜，重名就串号。 */
+let chipSeq = 0
 /** 上传单个附件换 fileId（上传中就挂进列表，用户能看到进度/失败态，而不是点发送后才知道没传上去）；
  *  list 缺省挂主输入框，编辑卡复用时传自己的列表；extra 是只给本地呈现用的附加字段（如粘贴文本的原文） */
 const uploadOneFile = async (f, list = pendingFiles, extra) => {
   // 先 reactive 再入列：直接改裸对象绕过代理的 set 陷阱，进度/失败态不会重渲染，
   // 卡片会停在「上传中…」直到下一次无关渲染才突然变成体积（实测踩过）
-  const item = reactive({ name: f.name, size: f.size, mime: f.type || '', fileId: '', uploading: true, error: '', ...(extra || {}) })
+  const item = reactive({ chipKey: 'f' + (++chipSeq), name: f.name, size: f.size, mime: f.type || '', fileId: '', uploading: true, error: '', ...(extra || {}) })
   list.value.push(item)
   try {
     const r = await uploadChatAttachment(f)
     const d = r?.data || {}
     if (!d.fileId) throw new Error('上传未返回文件标识')
     item.fileId = d.fileId
+    markLive(d.fileId)   // 自己刚送上来的文件不必再问服务端在不在（编辑卡打开时少一次多余请求）
     item.name = d.name || item.name
     item.mime = d.mime || item.mime
     if (d.size) item.size = d.size
@@ -644,37 +625,55 @@ const uploadOneFile = async (f, list = pendingFiles, extra) => {
 /** 是否存在还没传完的附件（发送前拦一道：不然用户以为发出去了，其实附件没带上） */
 const hasUploadingFile = () => pendingFiles.value.some(f => f.uploading)
 /** 统一入口：图片走压缩预览，其余按附件校验后挂起（类型/数量/体积，口径与后端校验一致）；
- *  target 缺省挂主输入框，编辑卡复用时传 { images, files } 两个 ref 列表 */
+ *  target 缺省挂主输入框，编辑卡复用时传 { images, files } 两个 ref 列表。
+ *  <p>判定本身在 ./intake.js（与分享页共用同一份白名单/限额/文案），这里只负责把判定结果落成
+ *  各自的副作用：图片去压缩、附件去上传、拒收就提示。 */
 const addFiles = (files, target, extra) => {
   const imgList = target?.images || pendingImages
   const fileList = target?.files || pendingFiles
+  // 本批已接受的张数要自己累加：compressImage 是异步的，列表长度在循环里不会变，
+  // 只看 imgList.value.length 的话一次框选 8 张图会全部通过「最多 5 张」那道判断
+  let imgAccepted = 0
+  // 「附件满了」只提示一次：超限的那一批后面往往全是附件，逐个提示会把同一句话刷十几遍。
+  // 但不 break——图片不吃这个上限，后面的图片仍该被收下（原实现在这里 break，混合批次里的图片会被一起丢掉）
+  let fileMaxWarned = false
   for (const f of files) {
-    // 粘贴进来的文件可能没有名字（剪贴板只给了个 blob），提示里不能留一个空位
-    const label = f.name || '未命名文件'
-    if (f.type.startsWith('image/')) {
-      if (imgList.value.length >= 5) { message.warning('最多上传 5 张图片'); continue }
-      compressImage(f).then(dataUrl => imgList.value.push({ dataUrl }))
-        .catch(() => message.error(`图片处理失败: ${label}`))
+    const verdict = classifyIntake(f, imgList.value.length + imgAccepted, fileList.value.length)
+    if (verdict.kind === 'reject') {
+      if (verdict.reason !== REJECT.FILE_MAX || !fileMaxWarned) {
+        message.warning(rejectText(verdict))
+        if (verdict.reason === REJECT.FILE_MAX) fileMaxWarned = true
+      }
       continue
     }
-    if (fileList.value.length >= MAX_FILES) { message.warning(`一次最多上传 ${MAX_FILES} 个附件`); break }
-    if (!SUPPORTED_EXTS.includes(extOf(f.name))) {
-      message.warning(`暂不支持的附件类型：${label}（支持 PDF / Word / Excel / PPT / 文本与代码文件）`)
+    if (verdict.kind === 'image') {
+      imgAccepted++
+      compressImage(f).then(dataUrl => imgList.value.push({ chipKey: 'p' + (++chipSeq), dataUrl }))
+        .catch(() => message.error(`图片处理失败: ${verdict.label}`))
       continue
     }
-    if (f.size > MAX_FILE_MB * 1024 * 1024) { message.warning(`单个附件不能超过 ${MAX_FILE_MB}MB：${label}`); continue }
     uploadOneFile(f, fileList, extra)
   }
 }
 const removePendingFile = i => pendingFiles.value.splice(i, 1)
-// ==================== 粘贴文件 → 附件 ====================
-/** 剪贴板里的文件：files 命中即用；部分浏览器只把它挂在 items 上，空了再退一路。
- *  两路不合流，否则同一个文件会入列两次 */
-const pasteFilesOf = cd => {
-  const files = Array.from(cd?.files || [])
-  if (files.length) return files
-  return Array.from(cd?.items || []).filter(i => i.kind === 'file').map(i => i.getAsFile()).filter(Boolean)
+/** 把一份**已在服务端**的附件直接挂进输入框（粘贴还原用）：字节本来就在盘上，凭 fileId 带走即可，
+ *  重传一遍只是把同一个文件再拷一份落盘。同一 fileId 不重复挂（复制两份粘回来只留一份）。 */
+const attachUploaded = ({ name, mime, size, fileId }) => {
+  if (!fileId || pendingFiles.value.some(f => f.fileId === fileId)) return false
+  if (pendingFiles.value.length >= MAX_FILES) { message.warning(`一次最多上传 ${MAX_FILES} 个附件`); return false }
+  markLive(fileId)
+  pendingFiles.value.push(reactive({ chipKey: 'f' + (++chipSeq), name: name || '附件',
+    mime: mime || '', size: size || 0, fileId, uploading: false, error: '' }))
+  return true
 }
+/** 把一张图挂进输入框（粘贴还原：图片没有服务端凭据，能搬的就是手上这份 data URL） */
+const attachImage = dataUrl => {
+  if (!dataUrl || !String(dataUrl).startsWith('data:')) return false
+  if (pendingImages.value.length >= MAX_IMAGES) { message.warning(`最多上传 ${MAX_IMAGES} 张图片`); return false }
+  pendingImages.value.push(reactive({ chipKey: 'p' + (++chipSeq), dataUrl }))
+  return true
+}
+// ==================== 粘贴文件 → 附件 ====================
 /** 粘贴带文件（截图、也带 PDF / Word / 文本等真附件）：与「+」选择、拖入走同一分流口径。
  *  必须 preventDefault——否则浏览器会把文件名当文本插进正文；返回 true 表示已消费，调用方按需截断冒泡 */
 const takePastedFiles = (e, target) => {
@@ -688,22 +687,12 @@ const takePastedFiles = (e, target) => {
 // 整篇文档、大段日志塞进输入框既读不清也发不出去（问题正文有长度上限，超限直接报错）。
 // 超过阈值就把它包成一个 .txt 文件，走与「选择文件」完全相同的管线：卡片呈现、随本轮上传、
 // 内容进上下文。粘贴文本的原文只留在内存（卡片点开看全文用），落库的仍只有名称/类型/体积。
-const PASTE_TEXT_MIN_CHARS = 800
-/** 同一次可连续粘贴多段：重名时补序号，避免编辑卡按名称回填体积时串号 */
-const pasteNameOf = list => {
-  const used = new Set((list || []).map(f => f.name))
-  if (!used.has(`${PASTE_TEXT_BASE}.txt`)) return `${PASTE_TEXT_BASE}.txt`
-  let n = 2
-  while (used.has(`${PASTE_TEXT_BASE} ${n}.txt`)) n++
-  return `${PASTE_TEXT_BASE} ${n}.txt`
-}
 /** 输入框粘贴事件里取长文本：带文件的粘贴让给文件管线，短文本照常内联可编辑。
  *  返回 true 表示这次粘贴已被消费（原文不再落进输入框），调用方按需要截断冒泡 */
 const takePastedText = (e, target) => {
   const cd = e.clipboardData
-  if (!cd || pasteFilesOf(cd).length) return false
+  if (!isLongPaste(cd)) return false
   const raw = cd.getData('text/plain')
-  if (!raw || raw.length < PASTE_TEXT_MIN_CHARS) return false
   const fileList = target?.files || pendingFiles
   e.preventDefault()
   addFiles([new File([raw], pasteNameOf(fileList.value), { type: 'text/plain' })], target,
@@ -892,6 +881,11 @@ const switchSession = async sid => {
             fb: (m.fb === 0 || m.fb === 1) ? m.fb : null,
             images: Array.isArray(m.images) ? m.images : [],
             attachments: Array.isArray(m.attachments) ? m.attachments : [],
+            // 附件重发凭据：落库的 attachments 现在带 fileId，据此还原 attachData——刷新或切走会话再回来
+            // 才还能把原附件带走（不带它，「这一端没拿到号」会被界面说成「文件已失效」，而文件其实还在盘上）。
+            // 存量行没这个字段 → 空数组，按带不走处理，不假装能重发。
+            attachData: (Array.isArray(m.attachments) ? m.attachments : [])
+              .filter(a => a && a.fileId).map(a => ({ name: a.name, mime: a.mime, fileId: a.fileId })),
             sources: Array.isArray(m.sources) ? m.sources : [],
             // 「接下来可以」推荐（随消息落库后回显）：此前恒为空数组，刷新后推荐整块消失
             related: Array.isArray(m.related) ? m.related : [],
@@ -2326,14 +2320,24 @@ const switchVersion = (mi, delta) => {
   m.vIndex = ni
   applyVersion(m, m.versions[ni])
 }
-const regenerate = mi => {
+const regenerate = async mi => {
   if (loading.value) return
   for (let i = mi - 1; i >= 0; i--) {
     if (messages.value[i].role === 'user') {
       const imgs = (messages.value[i].images || []).filter(u => u.startsWith('data:'))
       const deep = !!messages.value[i].deepThink
-      // 附件/技能随内存消息重发（历史回放的消息无 attachData，则不带附件重试）
-      const atts = Array.isArray(messages.value[i].attachData) ? messages.value[i].attachData : []
+      // 附件随消息重发（内存轮与历史轮都带凭据）。已过保留期的那部分先出声再丢掉：
+      // 带着死凭据发出去会被后端整轮拒掉，用户看到的就成了「重新生成点了没反应」
+      const rawAtts = Array.isArray(messages.value[i].attachData) ? messages.value[i].attachData : []
+      let atts = rawAtts
+      try {
+        const split = await splitAtts(rawAtts)
+        atts = split.ok
+        if (split.dead.length) message.warning(`这一轮的 ${split.dead.length} 个附件已过保留期，重新生成不再带上`)
+      } catch (e) {
+        atts = []
+        message.warning(`附件状态没查到（${e.message || '请求失败'}），重新生成不带附件`)
+      }
       const skills = Array.isArray(messages.value[i].skills) ? messages.value[i].skills : []
       // @ 引用随内存消息重发（历史回放无该数据则不重发；引用只对当轮检索生效）
       const mentions = Array.isArray(messages.value[i].mentions) ? messages.value[i].mentions : []
@@ -2385,6 +2389,23 @@ const switchBranch = async (mi, delta) => {
   }
 }
 
+/**
+ * 把还挂着「进行中」的工具卡就地定格。
+ * 提问卡按「未作答」收（那句前缀是 `askAnswerLabel` 的判据，改了它就渲染不出「未作答」）；
+ * 其它工具只说「结果没取到」——中断是协作式的，那一步可能已经跑完，只是终态帧赶不上这条通道，
+ * 写成「没有执行」就是把一件没把握的事说成事实。耗时宁可不写：前端分不清这段时间里有多少是
+ * 人在读卡（后端落的那份是扣掉人工等待的机器时间）。
+ */
+const closeRunningTools = (msg, why) => {
+  if (!msg || !Array.isArray(msg.toolCalls)) return
+  for (const t of msg.toolCalls) {
+    if (t.status !== 'start') continue
+    const ask = t.name === 'askUser'
+    t.status = ask ? 'done' : 'error'
+    t.result = ask ? `（用户未回答这一题（${why}））` : `${why}，这一步的结果没有取到`
+  }
+}
+
 const stop = () => {
   // 只停当前会话的流；其它会话的后台流不受影响
   const st = chatStreams.get(currentSessionId.value)
@@ -2394,6 +2415,9 @@ const stop = () => {
     // 先请服务端真停：abort 只断本地通道，而通道断开在「正等你作答 / 批准计划」那一轮的语义是
     // **转后台把本轮跑完**，还占着会话互斥直到人工等待超时（表现：按了停止，下一问发不出去、额度照烧）。
     stopChatTurn(sid).catch(() => message.warning('服务端没能停止本轮，它可能仍在后台跑完'))
+    // 服务端补发的终态帧已经赶不上这条通道（abort 就在下一行），不在这里定格就是：
+    // 正文已经写了「已停止本轮」，那张工具卡还在转圈，要等刷新读库里那份才收
+    closeRunningTools(st.msg, '本轮已停止')
     st.abort.abort()  // abort → api.js 按正常结束回调 onDone（气泡收尾为「已停止生成」）
   }
 }
@@ -2761,7 +2785,7 @@ if (typeof window !== 'undefined') {
     sessionTokens, sessionTokensLabel, sessionRetrieval, sessionTodos,
     // 图片与附件
     pendingImages, removePendingImage, MAX_FILES, pendingFiles, hasUploadingFile,
-    addFiles, removePendingFile,
+    addFiles, removePendingFile, attachUploaded, attachImage,
     // 粘贴转附件（文件与图片 / 超长文本）
     takePastedFiles, takePastedText,
     // @ 引用（本轮显式指定知识库/文档/智能体）

@@ -5,6 +5,9 @@
 // 组件卸载时由消费方在 onUnmounted 里调 stopTick() 收尾。
 import { ref } from 'vue'
 import { chatStreams } from '../views/store'
+// 粘贴文本附件的名字前缀：产地是取材层（./intake.js），这里借用并原样再导出。
+// 本模块只用它来「认回」这类附件（isPastedText），并不定义它
+import { PASTE_TEXT_BASE } from './intake'
 // 工具名小白向展示：标签用「动词短语」而不是术语（如 统计字数 / 查阅官方文档）。
 // P1 seam 化之后**首选后端下发的名字**：工具卡与审批载荷都带 label/hint 字段（源自工具注册中心的
 // 描述符），下面的两张表退为兜底——历史消息里没有 label、免登录分享页的旧记录、以及 MCP 动态工具
@@ -994,8 +997,10 @@ const fmtSize = n => {
   return (n / 1024 / 1024).toFixed(1) + ' MB'
 }
 /** 长文本粘贴转成的附件名（不带扩展名部分；实际文件名补 .txt）。
- *  落库元信息只保留名称/类型/体积，所以刷新后靠这个前缀把卡片形态认回来 */
-const PASTE_TEXT_BASE = '粘贴的文本'
+ *  落库元信息只保留名称/类型/体积，所以刷新后靠这个前缀把卡片形态认回来。
+ *  字面量定义在 ./intake.js（取材侧才是它的产地），本模块只借用（见顶部 import），
+ *  并照旧由文件末尾的 export 块对外提供——同一个字符串写两处，改一处忘一处就会出现
+ *  「粘贴卡片认不回来」而代码看起来完全正常 */
 /** 一条附件元信息是否来自长文本粘贴 */
 const isPastedText = a => !!a && (a.paste === true || String(a.name || '').startsWith(PASTE_TEXT_BASE))
 /** 粘贴文本卡片的标题：去掉 .txt 后缀（文件名就叫「粘贴的文本」，扩展名没有信息量） */
@@ -1005,7 +1010,8 @@ const pasteSub = f => {
   if (!f) return ''
   if (f.uploading) return '上传中…'
   if (f.error) return '上传失败'
-  if (f.expired) return f.text ? '正文未随历史保留' : '已失效'
+  if (f.expired) return f.text ? '正文未随历史保留' : '已过保留期'
+  if (f.unavailable) return '不可重发'
   return [fmtSize(f.size), f.text ? f.text.length + ' 字' : ''].filter(Boolean).join(' · ')
 }
 const histItemTitle = m => String(m.content).replace(/[#*`>\-\n]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60)

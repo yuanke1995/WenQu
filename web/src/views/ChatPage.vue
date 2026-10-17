@@ -98,7 +98,15 @@
           </template>
         </div>
 
-        <div v-for="(m, i) in messages" :key="i" :data-row-index="i" class="row" :class="m.role">
+        <!-- 消息列表外壳与公开分享页共用 chat/ChatThread.vue：行/块/气泡布局、四个叶子的
+             出现次第（正文 → 降级 → 引用来源 → 动作行）都由它定。本页只往插槽里填登录态专属的东西：
+             消息分隔线、@引用/#历史引用、时间线与工具卡、错误卡、计划与审批卡、产物、
+             版本切换器与更多菜单、就地编辑卡。次第换不掉，能换的只是「画什么」。 -->
+        <ChatThread :messages="messages" :editing-index="editingIdx" :can-regenerate="() => true"
+                    runnable :session-id="currentSessionId" @paste-view="openPasteView"
+                    @feedback="(m, i, r) => openFeedback(m, r)"
+                    @regenerate="(m, i) => regenerate(i)">
+          <template #row-before="{ m, i }">
           <!-- 压缩记录：画在这条提问上方=此线以上的早期对话已折进摘要，以下逐字在场。
                手动 /compact 与自动压缩共用这一条判据（摘要覆盖点相对上一轮推进了），不做两套状态 -->
           <MsgDivider v-if="compactDividerAt(m, i)" class="cdiv">
@@ -112,31 +120,8 @@
             <swap-outlined />
             <span>模型已切换 {{ modelSwitchInfo(m, i).fromLabel }} → {{ modelSwitchInfo(m, i).toLabel }}</span>
           </MsgDivider>
-          <div class="msg-block" :class="[m.role, { editing: editingIdx === i }]">
-            <div class="bubble" :class="m.role">
-              <div v-if="m.role === 'user' && m.images && m.images.length" class="msg-imgs">
-                <img v-for="(u, ui) in m.images" :key="ui" :src="resolveImg(u)" class="msg-img"
-                     :alt="'上传图片' + (ui + 1)" @click="openPreviewFromMsg(m, ui)" @error="onImgError" />
-              </div>
-              <div v-if="m.role === 'user' && m.attachments && m.attachments.length" class="msg-files">
-                <template v-for="(a, fi) in m.attachments" :key="fi">
-                  <span v-if="isPastedText(a)" class="msg-file paste-card"
-                        :title="a.text ? '点击查看粘贴的全文' : '粘贴文本的正文未随历史记录保留'"
-                        @click="openPasteView(a)">
-                    <span class="paste-card-ic"><file-text-outlined /></span>
-                    <span class="paste-card-txt">
-                      <span class="paste-card-name">{{ pasteTitle(a.name) }}</span>
-                      <span class="paste-card-sub">{{ pasteSub(a) }}</span>
-                    </span>
-                  </span>
-                  <span v-else class="msg-file"
-                        :title="(a.mime || '附件') + (a.size ? ' · ' + fmtSize(a.size) : '')">
-                    <paper-clip-outlined class="msg-file-ic" />
-                    <span class="msg-file-name">{{ a.name }}</span>
-                    <span v-if="a.size" class="msg-file-size">{{ fmtSize(a.size) }}</span>
-                  </span>
-                </template>
-              </div>
+          </template>
+          <template #user-meta="{ m, i }">
               <!-- @ 引用（本轮显式指定的知识库/文档/智能体）：消息级常驻标注，刷新/历史回显均保留 -->
               <div v-if="m.role === 'user' && m.mentions && m.mentions.length" class="msg-files">
                 <span v-for="(mm, mi) in m.mentions" :key="mi" class="msg-file"
@@ -156,12 +141,14 @@
                   <span class="msg-file-name">{{ historyRefPreview(hr) }}</span>
                 </span>
               </div>
-              <!-- 回答归属：会话内首条助手消息、或归属发生变化时才标（同一智能体全程一致则不必重复） -->
-              <!-- 显示与否由排障显示开关控制（chat.retrievalDebugEnabled，与「已派遣」提示同一个开关） -->
+          </template>
+          <template #body-before="{ m, i }">
               <div v-if="showAgentTag(m, i) && debugDisplayVisible" class="agent-tag">
                 <AgentAvatar class="agent-tag-ava" :agent="agentBadgeOf(agentList, m.agentId, m.agentName)" :size="14" />
                 <span>由「{{ m.agentName }}」回答</span>
               </div>
+          </template>
+          <template #body="{ m, i }">
               <!-- 深度思考不再叠在气泡顶上：每一轮思考各占一行，长在它发生的那个位置（见时间线里的 think 段） -->
               <div v-if="hasTimelineBlocks(m)" class="md" :data-msg-index="i">
                 <template v-for="(seg, si) in timelineRows(m)" :key="si">
@@ -278,9 +265,17 @@
                   </div>
                 </template>
               </div>
-              <AnswerBody v-else :content="m.content" :images="m.images" :sources="m.sources" :msg-index="i"
+              <!-- 提问与回答同一条排版口径（markdown，breaks:true 所以换行照旧保留）。
+                   但**提问走 literal**：图片占位与引用角标都不替换——提问里的 [图片N] / [N]
+                   是用户手打的字面量，替换掉会改他的原文、还会让自己的附件多渲染一遍（分享页同此口径） -->
+              <AnswerBody v-else :content="m.content" :msg-index="i"
+                          :images="m.role === 'ai' ? m.images : []"
+                          :sources="m.role === 'ai' ? m.sources : []"
+                          :literal="m.role !== 'ai'"
                           runnable :session-id="currentSessionId"
                           :streaming="m.loading && !m.failed" />
+          </template>
+          <template #body-after="{ m, i }">
               <!-- 错误卡（独立于正文）：回答中断时保留已流出内容，这里给分类文案 + 重试 + 异常详情折叠 -->
               <div v-if="m.errorCard" class="msg-error-card" :class="{ net: m.errorCard.kind === 'interrupted' }">
                 <div class="mec-head"><close-circle-outlined class="mec-ic" /> {{ errorBrief(m.errorCard.message, m.errorCard.kind) }}</div>
@@ -444,29 +439,14 @@
                   <download-outlined class="artifact-dl" />
                 </a>
               </div>
-              <div v-if="m.role === 'ai' && m.degradations && m.degradations.length" class="degradation-bar">
-                <exclamation-circle-outlined style="margin-right:6px" />
-                <span v-for="(d, di) in m.degradations" :key="di" class="degradation-item">{{ d.msg }}</span>
-              </div>
-              <div v-if="m.role === 'ai' && m.warnMsg" class="degradation-bar">{{ m.warnMsg }}</div>
-              <div v-if="m.role === 'ai' && (retrievalLineTitle(m) || toolSearchQueries(m).length || (m.sources && m.sources.length))" class="retrieval-merged">
-                <div class="retrieval-line" @click="m.rtOpen = !m.rtOpen">
-                  <template v-if="retrievalLineTitle(m)">{{ retrievalLineTitle(m) }}<template v-if="m.retrieved && m.tokens && m.tokens.hits != null && m.tokens.hits > 0 && m.tokens.hits !== m.retrieved.refs">（{{ m.tokens.hits }} 段填入上下文）</template></template>
-                  <caret-right-outlined class="tl-caret" :class="{ open: m.rtOpen }" />
-                </div>
-                <div v-if="m.rtOpen" class="retrieval-detail">
-                  <div v-if="m.retrieved?.terms?.length" class="rt-terms">检索词：{{ (m.retrieved.terms || []).join('、') }}</div>
-                  <div v-if="toolSearchQueries(m).length" class="rt-terms rt-tool-terms">
-                    <span class="rt-tool-tag">精确检索</span>{{ toolSearchQueries(m).join('；') }}
-                  </div>
-                  <div v-for="(s, si) in (m.sources || [])" :key="si" class="rt-ref"
-                       :title="externalOrigin(s) ? '点击查看来源摘要与原网页' : '点击查看原文'" @click="openSource(s)">
-                    <span class="rt-ref-tag">[{{ s.ref }}]</span>
-                    <span v-if="s.origin === 'WEB'" class="rt-ref-web">联网</span><span v-else-if="s.origin === 'MCP'" class="rt-ref-web" title="MCP 工具返回的来源">MCP</span>{{ sourceName(s) }}
-                    <div v-if="s.snippet" class="rt-snip">{{ s.snippet }}</div>
-                  </div>
-                </div>
-              </div>
+          </template>
+          <template #sources="{ m, i }">
+              <SourceList v-if="m.role === 'ai' && (retrievalLineTitle(m) || toolSearchQueries(m).length || (m.sources && m.sources.length))"
+                          :sources="m.sources" :title="retrievalLineTitle(m)" :note="hitsNote(m)"
+                          :terms="m.retrieved && m.retrieved.terms" :tool-queries="toolSearchQueries(m)"
+                          show-snippet v-model:open="m.rtOpen" />
+          </template>
+          <template #sources-after="{ m, i }">
               <!-- 子智能体编排（仅【委派模式】显示：分支是有名字有职责的子智能体，信息才有用。
                    多视角模式不显示——那只是把原问题换个问法，是实现细节，对用户没有信息价值） -->
               <div v-if="m.role === 'ai' && subagentCard(m)" class="subagent-panel">
@@ -531,21 +511,18 @@
                 <span class="related-label">接下来可以：</span>
                 <span v-for="(q, qi) in m.related" :key="qi" class="related-tag" @click="ask(q)">{{ q }}</span>
               </div>
-            </div>
-            <div v-if="m.role === 'ai' && !m.loading && (m.messageId || m.time)" class="fb-row">
-              <!-- 重新生成的多版本切换器：本会话内用内存版本（versions）即时切换；
-                   刷新后/编辑重发用持久分支（variantCount）走后端切换，旧版本按保留期留存 -->
-              <div v-if="(m.versions && m.versions.length > 1) || m.variantCount > 1" class="ver-switch"
-                   title="这一回答有多个版本，可来回切换（旧版本按保留期清理）">
-                <button class="ver-btn" :disabled="!canSwitchPrev(m)" @click="switchBranch(i, -1)">‹</button>
-                <span class="ver-idx">{{ verLabel(m) }}</span>
-                <button class="ver-btn" :disabled="!canSwitchNext(m)" @click="switchBranch(i, 1)">›</button>
-              </div>
-              <template v-if="m.messageId">
-                <a-tooltip title="复制"><button class="app-icon-btn" @click="copyAnswer(i)"><copy-outlined /></button></a-tooltip>
-                <a-tooltip :title="m.fb != null ? '已评价' : '有帮助'"><button class="app-icon-btn" :class="{ 'fb-active': m.fb === 1 }" :disabled="m.fb != null" @click="openFeedback(m, 1)"><like-outlined /></button></a-tooltip>
-                <a-tooltip :title="m.fb != null ? '已评价' : '没帮助'"><button class="app-icon-btn" :class="{ 'fb-active': m.fb === 0 }" :disabled="m.fb != null" @click="openFeedback(m, 0)"><dislike-outlined /></button></a-tooltip>
-                <a-tooltip title="重新生成"><button class="app-icon-btn" :disabled="loading" @click="regenerate(i)"><reload-outlined /></button></a-tooltip>
+          </template>
+          <template #actions-prefix="{ m, i }">
+                  <!-- 重新生成的多版本切换器：本会话内用内存版本（versions）即时切换；
+                       刷新后/编辑重发用持久分支（variantCount）走后端切换，旧版本按保留期留存 -->
+                  <div v-if="(m.versions && m.versions.length > 1) || m.variantCount > 1" class="ver-switch"
+                       title="这一回答有多个版本，可来回切换（旧版本按保留期清理）">
+                    <button class="ver-btn" :disabled="!canSwitchPrev(m)" @click="switchBranch(i, -1)">‹</button>
+                    <span class="ver-idx">{{ verLabel(m) }}</span>
+                    <button class="ver-btn" :disabled="!canSwitchNext(m)" @click="switchBranch(i, 1)">›</button>
+                  </div>
+          </template>
+          <template #actions-more="{ m, i }">
                 <a-dropdown :trigger="['hover', 'click']">
                   <button class="app-icon-btn" title="更多"><more-outlined /></button>
                   <template #overlay>
@@ -560,12 +537,14 @@
                     </a-menu>
                   </template>
                 </a-dropdown>
-              </template>
-              <a-tooltip v-if="m.tokens" :title="`上下文 ${m.tokens.context} tokens · 输出 ${m.tokens.output} tokens${m.tokens.outputIsReal ? '（网关实测）' : '（估算）'}`">
-                <span class="msg-tokens">{{ m.tokens.outputIsReal ? '' : '≈' }}{{ fmtTokens(m.tokens.total) }} tokens</span>
-              </a-tooltip>
-              <span v-if="m.time" class="msg-time-inline">{{ fmtMsgTime(m.time) }}</span>
-            </div>
+          </template>
+          <template #actions-extra="{ m, i }">
+                  <a-tooltip v-if="m.tokens" :title="`上下文 ${m.tokens.context} tokens · 输出 ${m.tokens.output} tokens${m.tokens.outputIsReal ? '（网关实测）' : '（估算）'}`">
+                    <span class="msg-tokens">{{ m.tokens.outputIsReal ? '' : '≈' }}{{ fmtTokens(m.tokens.total) }} tokens</span>
+                  </a-tooltip>
+                  <span v-if="m.time" class="msg-time-inline">{{ fmtMsgTime(m.time) }}</span>
+          </template>
+          <template #actions-after="{ m, i }">
             <!-- 叫停且本轮没产出任何回答：终止事实记在「这一问」上（不造一条空回答气泡），刷新/换端从库里带回 -->
             <div v-if="m.role === 'user' && m.endReason === 'stopped'" class="msg-stopped"
                  title="已按你的要求停止这一轮，智能体没有产出回答">
@@ -615,12 +594,15 @@
                     </span>
                     <span class="pending-file-del" @click.stop="removeEditAtt(fi)">×</span>
                   </div>
-                  <div v-else class="pending-file" :class="{ err: !!f.error, expired: !!f.expired }"
-                       :title="f.expired ? (f.name + '：原始文件已过保留期（默认 24h），不能随编辑重发；如仍需它，请重新上传') : (f.error || f.name)">
+                  <div v-else class="pending-file" :class="{ err: !!f.error, expired: !!f.expired || !!f.unavailable }"
+                       :title="f.expired ? (f.name + '：原始文件已过保留期（默认 24h），重发这一问不会带上它；如仍需请重新上传')
+                               : f.unavailable ? (f.name + '：这条消息没留下可带回的原始文件，重发这一问不会带上它；如仍需请重新上传')
+                               : (f.error || f.name)">
                     <file-text-outlined class="pending-file-ic" />
                     <span class="pending-file-name">{{ f.name }}</span>
                     <span v-if="f.uploading" class="pending-file-size">上传中…</span>
-                    <span v-else-if="f.expired" class="pending-file-size">已失效</span>
+                    <span v-else-if="f.expired" class="pending-file-size">已过保留期</span>
+                    <span v-else-if="f.unavailable" class="pending-file-size">不可重发</span>
                     <span v-else-if="f.error" class="pending-file-size">上传失败</span>
                     <span v-else class="pending-file-size">{{ fmtSize(f.size) }}</span>
                     <span class="pending-file-del" @click.stop="removeEditAtt(fi)">×</span>
@@ -659,7 +641,7 @@
               <div class="msg-inline-edit-actions">
                 <!-- 添加入口与主输入框同一个「+」分层面板（同一块面板，编辑态下 Teleport 进这张卡）：
                      上传附件 / 引用资料 / 技能 / 引用历史问答四处共用一套候选、一套搜索与键盘导航。
-                     快捷命令不进来：模板是往主输入框插问法，操作会改会话状态，与"改这一问"无关 -->
+                     快捷命令不进来：那些操作会改会话状态，与"改这一问"无关 -->
                 <button class="app-icon-btn add-btn" :class="{ 'toolbar-btn-on': (addOpen && addOnEdit) || editAddCount }"
                         title="添加：上传文件图片 / 引用资料 / 技能 / 引用历史问答" @click="toggleEditAddPanel">
                   <plus-outlined />
@@ -672,8 +654,8 @@
               <div class="add-mount"></div>
               <input :ref="setEditAttachInputRef" type="file" multiple style="display:none" @change="onEditAttachChange" />
             </div>
-          </div>
-        </div>
+          </template>
+        </ChatThread>
         <!-- 手动压缩当场留下的记录：下一轮回答落库的摘要覆盖点会接上这件事，届时由上面那条持久判据
              画在同一条缝上，所以这里只是提前把线补出来，不会和它重复 -->
         <MsgDivider v-if="compactNotice && compactNotice.sid === currentSessionId" class="cn-tail">
@@ -686,484 +668,413 @@
         <div v-if="!stickToBottom && messages.length" class="jump-latest" title="回到底部" @click.stop="scrollForce">↓</div>
       </div>
 
-      <!-- 输入区：大圆角卡片（文本上、工具行下） -->
-      <div class="input" @dragenter.prevent="onDragEnter" @dragover.prevent @dragleave.prevent="onDragLeave" @drop.prevent="onDropFiles">
-        <div v-if="dragOver" class="drop-overlay">松开以添加图片或附件</div>
-        <div v-if="pendingFiles.length" class="pending-files">
-          <template v-for="(f, fi) in pendingFiles" :key="fi">
-            <div v-if="f.paste" class="pending-file paste-card" :class="{ err: !!f.error }"
-                 :title="f.error || '点击查看粘贴的全文'" @click="openPasteView(f)">
-              <span class="paste-card-ic"><file-text-outlined /></span>
-              <span class="paste-card-txt">
-                <span class="paste-card-name">{{ pasteTitle(f.name) }}</span>
-                <span class="paste-card-sub">{{ pasteSub(f) }}</span>
-              </span>
-              <span class="pending-file-del" @click.stop="removePendingFile(fi)">×</span>
-            </div>
-            <div v-else class="pending-file" :class="{ err: !!f.error }" :title="f.error || f.name">
-              <file-text-outlined class="pending-file-ic" />
-              <span class="pending-file-name">{{ f.name }}</span>
-              <span v-if="f.uploading" class="pending-file-size">上传中…</span>
-              <span v-else-if="f.error" class="pending-file-size">上传失败</span>
-              <span v-else class="pending-file-size">{{ fmtSize(f.size) }}</span>
-              <span class="pending-file-del" @click.stop="removePendingFile(fi)">×</span>
-            </div>
-          </template>
-        </div>
-        <div v-if="pickedSkills.length" class="at-chips">
-          <span v-for="n in pickedSkills" :key="n" class="at-chip skill-chip">
-            <span class="skill-chip-ava" :style="skillAvaStyle(n)">{{ n.slice(0, 1) }}</span>
-            <span class="at-chip-name">{{ n }}</span>
-            <span class="at-chip-del" title="移除该技能" @click="toggleSkill(n)">×</span>
-          </span>
-        </div>
-        <div v-if="planModeOn" class="at-chips">
-          <span class="at-chip plan-chip" title="每轮先产出执行计划，等你批准或修改后才开始回答">
-            <ordered-list-outlined class="at-chip-ic" />
-            <span class="at-chip-name">计划模式</span>
-            <span class="at-chip-del" title="关闭计划模式" @click="setPlanMode(false)">×</span>
-          </span>
-          <span class="at-chips-note">每轮先出计划等确认</span>
-        </div>
-        <div v-if="pendingMentions.length" class="at-chips">
-          <span v-for="(mm, mi) in pendingMentions" :key="mm.type + ':' + mm.id" class="at-chip mention-chip"
-                :class="'mention-' + mm.type"
-                :title="mm.type === 'kb' ? '本轮检索收窄到该知识库'
-                        : (mm.type === 'agent' ? '本轮会强制咨询这位助手：它带着自己的知识库查一遍，回答仍由当前助手汇总' : '该文档内容直接带入本轮上下文')">
-            <database-outlined v-if="mm.type === 'kb'" class="at-chip-ic" />
-            <robot-outlined v-else-if="mm.type === 'agent'" class="at-chip-ic" />
-            <file-text-outlined v-else class="at-chip-ic" />
-            <span class="at-chip-name">{{ mm.name || mm.id }}</span>
-            <span class="at-chip-del" title="移除该引用" @click="removeMention(mi)">×</span>
-          </span>
-          <span class="at-chips-note">引用只对本轮生效</span>
-        </div>
-        <div v-if="pendingHistoryRefs.length" class="at-chips">
-          <span v-for="(hr, hi) in pendingHistoryRefs" :key="hr.messageId" class="at-chip hist-chip"
-                title="该条历史问答会作为本轮上下文带给模型">
-            <history-outlined class="at-chip-ic" />
-            <span class="at-chip-name">{{ histChipLabel(hr) || hr.messageId }}</span>
-            <span class="at-chip-del" title="移除该引用" @click="removeHistoryRef(hi)">×</span>
-          </span>
-          <span class="at-chips-note">历史引用只对本轮生效</span>
-        </div>
-        <!-- 插话队列：生成中你在输入框里按发送，先落到这里排队，点「立即发送」才真发给模型。
-             没点之前它是**纯本地的**——删掉/改掉/拖动排序都只是改数组，所以反悔是白拿的。
-             拖动排序有意义：收尾结算按这个顺序依次发出，用户排的先后就是进模型的先后。
-             刻意放在输入框正上方（而非气泡里）：它是"还没发出去的话"，离输入框最近才对。 -->
-        <div v-if="steerQueue.length" class="steer-queue">
+      <!-- 输入区：卡片外壳 / 正文与 chip 同流 / 工具条 / 拖拽落点全在 chat/ChatInput.vue，
+           与公开分享页共用同一份实现（改一次两页同时生效）。这里只往插槽里填本页自己的东西：
+           智能体胶囊、计划模式、模型与思考、插话队列、三块面板、以及顶替态的两张卡。 -->
+      <ChatInput
+        ref="composerRef" v-model="text" :resolve="chipOf" :placeholder="composerPlaceholder"
+        :sending="loading" steerable :can-send="canSend" :stop-armed="escArmed"
+        attach-title="添加：上传文件图片 / 引用资料 / 技能 / 引用历史问答 / 快捷命令"
+        :attach-on="(addOpen && !addOnEdit) || pickedSkills.length"
+        :replace-box="!!(pendingAsk || pendingPlan)"
+        @attach="toggleAddPanel" @send="sendNow" @stop="stopNow" @files="onDropFiles"
+        @paste="onComposerPaste" @keydown="onInputKeydown" @input="syncPanelQuery"
+        @click="syncPanelQuery" @update:keys="onKeys" @chip-click="onChipClick" @ready="syncChips">
+        <template #above>
+          <!-- 附件/图片/技能/@ 引用/# 历史引用/计划模式全部内联进正文那一条流（见 chat/Composer.vue），
+          这里不再各起一行 chip 轨；「引用只对本轮生效」这类说明收进 chip 的悬浮提示。 -->
+          <!-- 插话队列：生成中你在输入框里按发送，先落到这里排队，点「立即发送」才真发给模型。
+          没点之前它是**纯本地的**——删掉/改掉/拖动排序都只是改数组，所以反悔是白拿的。
+          拖动排序有意义：收尾结算按这个顺序依次发出，用户排的先后就是进模型的先后。
+          刻意放在输入框正上方（而非气泡里）：它是"还没发出去的话"，离输入框最近才对。 -->
+          <div v-if="steerQueue.length" class="steer-queue">
           <div v-for="(it, qi) in steerQueue" :key="qi" class="steer-item"
-               :class="{ sending: it.sending, deferred: it.deferred, dragging: steerDragIdx === qi }"
-               draggable="true"
-               @dragstart="onSteerDragStart(qi, $event)"
-               @dragover.prevent="onSteerDragOver(qi)"
-               @dragend="onSteerDragEnd"
-               @drop.prevent="onSteerDrop">
-            <span class="steer-grip" title="拖动调整顺序">⠿</span>
-            <span class="steer-txt">{{ it.text }}</span>
-            <span v-if="steerExtras(it)" class="steer-extra">{{ steerExtras(it) }}</span>
-            <span v-if="it.deferred" class="steer-state">本轮结束后自动发出</span>
-            <span v-else-if="it.sending" class="steer-state">发送中…</span>
-            <template v-else>
-              <button class="steer-act primary" type="button" title="立刻发给模型（纯文字随下一个工具步生效）"
-                      @click="sendSteer(it)">立即发送</button>
-              <button class="steer-act" type="button" title="取回输入框改" @click="editSteer(it)"><edit-outlined /></button>
-              <button class="steer-act" type="button" title="丢弃这条" @click="dropSteer(it)"><delete-outlined /></button>
-            </template>
+          :class="{ sending: it.sending, deferred: it.deferred, dragging: steerDragIdx === qi }"
+          draggable="true"
+          @dragstart="onSteerDragStart(qi, $event)"
+          @dragover.prevent="onSteerDragOver(qi)"
+          @dragend="onSteerDragEnd"
+          @drop.prevent="onSteerDrop">
+          <span class="steer-grip" title="拖动调整顺序">⠿</span>
+          <span class="steer-txt">{{ it.text }}</span>
+          <span v-if="steerExtras(it)" class="steer-extra">{{ steerExtras(it) }}</span>
+          <span v-if="it.deferred" class="steer-state">本轮结束后自动发出</span>
+          <span v-else-if="it.sending" class="steer-state">发送中…</span>
+          <template v-else>
+          <button class="steer-act primary" type="button" title="立刻发给模型（纯文字随下一个工具步生效）"
+          @click="sendSteer(it)">立即发送</button>
+          <button class="steer-act" type="button" title="取回输入框改" @click="editSteer(it)"><edit-outlined /></button>
+          <button class="steer-act" type="button" title="丢弃这条" @click="dropSteer(it)"><delete-outlined /></button>
+          </template>
           </div>
-        </div>
-        <div v-if="pendingImages.length" class="pending-imgs">
-          <div v-for="(p, pi) in pendingImages" :key="pi" class="pending-img">
-            <img :src="p.dataUrl" alt="待发送图片" @click="previewPendingImage(pi)" />
-            <span class="pending-del" @click.stop="removePendingImage(pi)">×</span>
           </div>
-        </div>
-        <div v-if="!pendingAsk && !pendingPlan" class="input-box">
-          <!-- / 快捷命令面板（敲 / 唤起）：模板=往输入框插入常用问法框架；操作=会话级动作立即执行 -->
-          <div v-if="slashOpen" class="mention-panel">
-            <div class="mention-head">
-              <span class="mention-head-tag">/</span>
-              <span class="mention-head-word" :class="{ dim: !slashQuery }">{{ slashQuery || '输入以筛选快捷命令' }}</span>
-              <button class="app-icon-btn" title="关闭" @click="closeSlashPanel"><close-outlined /></button>
-            </div>
-            <div ref="slashListEl" class="mention-list">
-              <div v-for="(c, ci) in slashFiltered" :key="c.key" class="mention-item"
-                   :class="{ hi: slashHi === ci }" @click="runSlashCommand(c)">
-                <span class="mention-ava"><component :is="c.icon" /></span>
-                <div class="mention-text">
-                  <span class="mention-name"><code v-if="c.cmd" class="slash-cmd">/{{ c.cmd }}</code>{{ c.name }}</span>
-                  <span class="mention-desc">{{ c.desc }}</span>
-                </div>
-                <span class="slash-kind" :class="c.kind === 'tpl' ? 'k-tpl' : 'k-act'">{{ c.kind === 'tpl' ? '模板' : '操作' }}</span>
-              </div>
-              <div v-if="!slashFiltered.length" class="mention-empty">没有匹配的命令</div>
-            </div>
-            <div class="mention-foot">↑↓ 选择 · Enter 确认 · Esc 关闭　|　/ 模板 = 插入常用问法框架（可再编辑）；/ 操作 = 立即执行；命令可附要求（如 /compact 保留结论）</div>
-          </div>
-          <!-- # 历史引用面板（敲 # 唤起）：勾选本会话历史问答，随本轮请求前置给模型 -->
-          <div v-if="histOpen" class="mention-panel">
-            <div class="mention-head">
-              <span class="mention-head-tag">#</span>
-              <span class="mention-head-word" :class="{ dim: !histQuery }">{{ histQuery || '输入以筛选历史问答' }}</span>
-              <button class="app-icon-btn" title="关闭" @click="closeHistPanel"><close-outlined /></button>
-            </div>
-            <div ref="histListEl" class="mention-list">
-              <div v-for="(m, hi2) in histCandidates" :key="m.messageId" class="mention-item"
-                   :class="{ on: isHistPicked(m.messageId), hi: histHi === hi2 }" @click="pickHistoryRefByClick(m)">
-                <span class="mention-ava" :class="m.role === 'user' ? 'hist-ava-q' : 'hist-ava-a'">
-                  {{ m.role === 'user' ? '问' : '答' }}
-                </span>
-                <div class="mention-text">
-                  <span class="mention-name">{{ histItemTitle(m) }}</span>
-                  <span class="mention-desc">{{ m.role === 'user' ? '你的提问' : 'AI 的回答' }}{{ m.time ? ' · ' + fmtMsgTime(m.time) : '' }}</span>
-                </div>
-                <check-outlined v-if="isHistPicked(m.messageId)" class="mention-check" />
-              </div>
-              <div v-if="!histCandidates.length" class="mention-empty">
-                {{ histPool.length ? '没有匹配的历史问答' : '本会话还没有可引用的历史问答' }}
-              </div>
-            </div>
-            <div class="mention-foot">↑↓ 选择 · Enter 确认 · Esc 关闭　|　# 勾选的历史问答作为本轮上下文带给模型（只对本轮生效，最多 10 条）</div>
-          </div>
-          <!-- 「+」面板（分层菜单）：输入框唯一的候选面板。两个入口同一块面板——
-               点「+」先出一级轻菜单（上传文件/图片一击直达，引用/技能/历史/命令进二级列表），
-               输入框敲 @ 也开这里（直接落在「引用」二级，筛选词实时取「@ 到光标」之间的正文，见 syncPanelQuery）。
-               就地编辑卡的「+」也开这里：同一块面板按写入目标（addTarget）决定选中结果落到
-               主输入框还是编辑卡的随行内容上，编辑态下整块 Teleport 进卡内的挂载点。
-               计划模式不占面板——它是模式开关，在工具条上有独立胶囊（plan-pill）。
-               键盘：↑↓ 选择 · Enter 确认/进入 · Tab 进/退层级 · Esc 关闭（由一级进入的二级先退回一级）。
-               行式交互与样式复用 .mention-panel / .mention-item -->
-          <Teleport v-if="addOpen" :to="EDIT_ADD_MOUNT" :disabled="!addOnEdit">
-          <div class="mention-panel" @keydown="onPanelNavKeydown">
-            <div class="mention-head add-head">
-              <button v-if="addTab !== 'root'" class="app-icon-btn add-back" title="返回上一层" @click="backToRoot"><left-outlined /></button>
-              <span class="add-title">{{ addTab === 'root' ? '添加到本轮' : ADD_TITLES[addTab] }}</span>
-              <button class="app-icon-btn add-close" title="关闭" @click="closeAddPanel"><close-outlined /></button>
-            </div>
-            <!-- 引用页的三类候选各自计数（沿用原 @ 弹窗的口径）；子页签只换列表，不重置搜索词 -->
-            <div v-if="addTab === 'ref'" class="mention-tabs add-subtabs">
-              <button v-for="s in REF_SUB_TABS" :key="s.key" class="mention-tab" :class="{ on: mentionTab === s.key }"
-                      type="button" @click="switchRefTab(s.key)">
-                <component :is="s.icon" /> {{ s.label }} {{ s.count() }}
-              </button>
-            </div>
-            <div v-if="addSearchable" class="add-filter-row">
-              <input ref="addSearchEl" v-model="addQuery" class="add-filter" type="search"
-                     :placeholder="addSearchHint" autocomplete="off" />
-            </div>
-            <div ref="addListEl" class="mention-list">
-              <!-- 一级菜单：上传行点了直接弹系统文件框；其余行进二级。kbd=主输入框里对应的触发符，
-                   把鼠标流和键盘流接到同一个地方（编辑卡那份不显示）；badge=已选/生效数（这一轮会带上什么） -->
-              <template v-if="addTab === 'root'">
-                <div v-for="(r, ri) in addRootRows" :key="r.key" class="mention-item"
-                     :class="{ hi: addHi === ri }" @click="r.run()">
-                  <span class="mention-ava"><component :is="r.icon" /></span>
-                  <div class="mention-text">
-                    <span class="mention-name">{{ r.name }}<span v-if="r.badge()" class="add-root-badge">{{ r.badge() }}</span></span>
-                    <span class="mention-desc">{{ r.desc }}</span>
-                  </div>
-                  <span v-if="r.kbd" class="add-kbd">{{ r.kbd }}</span>
-                </div>
-              </template>
-              <template v-else-if="addTab === 'ref'">
-                <div v-if="mentionLoading" class="mention-empty">加载中…</div>
-                <template v-else-if="mentionTab === 'kb'">
-                  <div v-for="(k, ki) in addRefList" :key="k.id" class="mention-item"
-                       :class="{ on: isAddMentioned('kb', k.id), hi: addHi === ki }" @click="confirmRefRow('kb', k)">
-                    <span class="mention-ava"><database-outlined /></span>
-                    <div class="mention-text">
-                      <span class="mention-name">{{ k.name }}</span>
-                      <span class="mention-desc">{{ k.desc || (k.docCount ? k.docCount + ' 篇文档' : '') }}</span>
-                    </div>
-                    <check-outlined v-if="isAddMentioned('kb', k.id)" class="mention-check" />
-                  </div>
-                  <div v-if="!addRefList.length" class="mention-empty">
-                    {{ mentionKbs.length ? '没有匹配的知识库' : '没有可见的知识库' }}
-                  </div>
-                </template>
-                <template v-else-if="mentionTab === 'agent'">
-                  <div v-for="(a, ai) in addRefList" :key="a.id" class="mention-item"
-                       :class="{ on: isAddMentioned('agent', a.id), hi: addHi === ai }" @click="confirmRefRow('agent', a)">
-                    <AgentAvatar class="mention-ava-agent" :agent="a" :size="22" />
-                    <div class="mention-text">
-                      <span class="mention-name">{{ a.name }}</span>
-                      <span class="mention-desc">{{ a.desc || '本轮会向这位助手咨询' }}</span>
-                    </div>
-                    <check-outlined v-if="isAddMentioned('agent', a.id)" class="mention-check" />
-                  </div>
-                  <div v-if="!addRefList.length" class="mention-empty">
-                    {{ mentionAgents.length ? '没有匹配的智能体' : '没有可见的智能体' }}
-                  </div>
-                </template>
-                <template v-else>
-                  <div v-for="(d, di) in addRefList" :key="d.id" class="mention-item"
-                       :class="{ on: isAddMentioned('doc', d.id), hi: addHi === di }" @click="confirmRefRow('doc', d)">
-                    <span class="mention-ava"><file-text-outlined /></span>
-                    <div class="mention-text">
-                      <span class="mention-name">{{ d.fileName }}</span>
-                      <span class="mention-desc">{{ mentionDocStatus(d) }}</span>
-                    </div>
-                    <check-outlined v-if="isAddMentioned('doc', d.id)" class="mention-check" />
-                  </div>
-                  <div v-if="!addRefList.length" class="mention-empty">
-                    {{ mentionDocs.length ? '没有匹配的文档' : '没有可见的文档' }}
-                  </div>
-                </template>
-              </template>
-              <!-- 技能 -->
-              <template v-else-if="addTab === 'skill'">
-                <div v-if="!skillList.length" class="mention-empty">还没有可用技能，管理员可在「设置 → 技能」中安装</div>
-                <div v-for="(s, si) in addSkillList" :key="s.name" class="mention-item"
-                     :class="{ on: isAddSkillOn(s.name), hi: addHi === si }" @click="toggleAddSkill(s.name)">
-                  <span class="mention-ava skill-ava" :style="skillAvaStyle(s.name)">{{ (s.name || '技').slice(0, 1) }}</span>
-                  <div class="mention-text">
-                    <span class="mention-name">{{ s.name }}</span>
-                    <span v-if="s.description" class="mention-desc">{{ s.description }}</span>
-                  </div>
-                  <check-outlined v-if="isAddSkillOn(s.name)" class="mention-check" />
-                </div>
-                <div v-if="skillList.length && !addSkillList.length" class="mention-empty">没有匹配的技能</div>
-              </template>
-              <!-- 历史引用：勾选不关面板（多选），与键盘流 # 面板同一份交互；
-                   候选按写入目标取——编辑卡那份要排掉正在编辑的这一问（引用自己没意义） -->
-              <template v-else-if="addTab === 'hist'">
-                <div v-for="(m, mi) in addHistCandidates" :key="m.messageId" class="mention-item"
-                     :class="{ on: isAddHistPicked(m.messageId), hi: addHi === mi }" @click="toggleAddHistoryRef(m)">
-                  <span class="mention-ava" :class="m.role === 'user' ? 'hist-ava-q' : 'hist-ava-a'">
-                    {{ m.role === 'user' ? '问' : '答' }}
-                  </span>
-                  <div class="mention-text">
-                    <span class="mention-name">{{ histItemTitle(m) }}</span>
-                    <span class="mention-desc">{{ m.role === 'user' ? '你的提问' : 'AI 的回答' }}{{ m.time ? ' · ' + fmtMsgTime(m.time) : '' }}</span>
-                  </div>
-                  <check-outlined v-if="isAddHistPicked(m.messageId)" class="mention-check" />
-                </div>
-                <div v-if="!addHistCandidates.length" class="mention-empty">
-                  {{ addHistPool.length ? '没有匹配的历史问答' : '本会话还没有可引用的历史问答' }}
-                </div>
-              </template>
-              <!-- 快捷命令：模板插入输入框可再编辑（收面板），操作立即执行 -->
-              <template v-else>
-                <div v-for="(c, ci) in addCmdList" :key="c.key" class="mention-item"
-                     :class="{ 'mi-off': loading, hi: addHi === ci }" @click="runCmdFromAddPanel(c)">
-                  <span class="mention-ava"><component :is="c.icon" /></span>
-                  <div class="mention-text">
-                    <span class="mention-name"><code v-if="c.cmd" class="slash-cmd">/{{ c.cmd }}</code>{{ c.name }}</span>
-                    <span class="mention-desc">{{ c.desc }}</span>
-                  </div>
-                  <span class="slash-kind" :class="c.kind === 'tpl' ? 'k-tpl' : 'k-act'">{{ c.kind === 'tpl' ? '模板' : '操作' }}</span>
-                </div>
-                <div v-if="!addCmdList.length" class="mention-empty">没有匹配的命令</div>
-              </template>
-            </div>
-            <div class="mention-foot">{{ addFootHint }}</div>
-          </div>
-          </Teleport>
-          <a-textarea ref="textareaRef" v-model:value="text" :placeholder="composerPlaceholder"
-                      :auto-size="{ minRows: 1, maxRows: 6 }" class="input-area"
-                      @paste="onComposerPaste"
-                      @keydown="onInputKeydown" @input="syncPanelQuery" @click="syncPanelQuery" />
-          <!-- 工具条。窄屏加 as-mobile 类拿「flex-wrap:nowrap」约束 —— 否则模型名一变长
-               （deepseek-flash），整条换行会把「思考」按钮压成竖排两字（图里的实际症状）。
-               类切换而非两套模板：内部内容两种形态完全相同，不复制。
-               刻意不套包装组件：曾用 <component :is> + 具名 slot 包裹，结果内容全被丢弃 -->
-          <div :class="isNarrow ? 'input-toolbar as-mobile' : 'input-toolbar'">
-            <div class="toolbar-left">
-              <a-dropdown v-model:open="agentPickerOpen" :trigger="['click']" placement="topLeft">
-                <button class="agent-pill" :class="{ on: !!currentAgentId, open: agentPickerOpen, 'as-icon': isNarrow }"
-                        title="选择作答的智能体：换人立即生效（下一问起就是它）；不挑就用默认助手。模型在右侧选择">
-                  <AgentAvatar v-if="currentAgent" :agent="currentAgent" :size="16" />
-                  <!-- 窄屏只留头像：智能体名 + 模型名会把工具条撑破，完整名称由 title 与下拉面板承载 -->
-                  <span v-if="!isNarrow" class="agent-pill-name">{{ currentAgentName }}</span>
-                  <down-outlined v-if="!isNarrow" class="agent-pill-caret" />
-                </button>
-                <template #overlay>
-                  <div class="agent-menu">
-                    <div class="agent-menu-head">
-                      <span>选择智能体</span>
-                      <span class="agent-menu-hint">选一位来答这一问 · 换人立即生效，不必新建会话</span>
-                    </div>
-                    <div class="agent-menu-list">
-                      <div v-if="!hasDefaultAgent" class="agent-mi" :class="{ active: !currentAgentId }" @click="pickAgent('')">
-                        <span class="agent-mi-ava"><robot-outlined /></span>
-                        <div class="agent-mi-text">
-                          <span class="agent-mi-name">默认（全局配置）</span>
-                          <span class="agent-mi-desc">沿用系统设置里的模型、提示词与能力开关</span>
-                        </div>
-                        <check-outlined v-if="!currentAgentId" class="agent-mi-check" />
-                      </div>
-                      <div v-for="a in agentList" :key="a.id" class="agent-mi"
-                           :class="{ active: currentAgentId === a.id }" @click="pickAgent(a.id)">
-                        <AgentAvatar :agent="a" :size="26" style="margin-top:1px" />
-                        <div class="agent-mi-text">
-                          <span class="agent-mi-name">
-                            {{ a.name }}
-                            <span v-if="a.isDefault" class="agent-mi-badge">默认</span>
-                          </span>
-                          <span v-if="a.description" class="agent-mi-desc">{{ a.description }}</span>
-                        </div>
-                        <check-outlined v-if="currentAgentId === a.id" class="agent-mi-check" />
-                      </div>
-                      <div v-if="!agentList.length" class="agent-mi-empty">还没有智能体，去「管理智能体」新建一个</div>
-                    </div>
-                    <div v-if="isAdmin" class="agent-menu-foot" @click="goManageAgents">
-                      <setting-outlined />
-                      <span>管理智能体</span>
-                    </div>
-                  </div>
-                </template>
-              </a-dropdown>
-              <button class="app-icon-btn add-btn" :class="{ 'toolbar-btn-on': (addOpen && !addOnEdit) || pickedSkills.length }"
-                      title="添加：上传文件图片 / 引用资料 / 技能 / 引用历史问答 / 快捷命令" @click="toggleAddPanel">
-                <plus-outlined />
-              </button>
-              <!-- 计划模式开关：独立胶囊（原来是「+」面板里的一个页签——模式开关混进候选列表，
-                   找它要切页签、状态还要靠徽标转达，语义就错了）。开启态用警示色与计划 chip 同源 -->
-              <button class="plan-pill" :class="{ on: planModeOn }" type="button"
-                      title="计划模式：每轮先出执行计划，你批准或修改后才开始回答" @click="setPlanMode(!planModeOn)">
-                <ordered-list-outlined />
-                <span>{{ isNarrow ? '计划' : '计划模式' }}</span>
-              </button>
-            </div>
-            <div class="toolbar-right">
-              <!-- 上下文容量圆环：本轮真实 prompt 占窗口比（与右栏容量卡同源数据），悬浮弹明细卡；会话尚无对话（无落库 tokens）时不显示。
-                   触屏无 hover，额外挂 click/@keydown（role/tabindex 只在触屏下加，避免改变宽屏的无障碍语义与 Tab 序） -->
-              <span v-if="ctxTokens && ctxCapData.window > 0" class="ctx-ring" :class="ctxRingLevel" aria-label="上下文容量"
-                    :role="isCoarse ? 'button' : null" :tabindex="isCoarse ? 0 : null"
-                    @mouseenter="showCtxCap($event.currentTarget)" @mouseleave="hideCtxCap()"
-                    @click="isCoarse && showCtxCap($event.currentTarget)"
-                    @keydown.enter="isCoarse && showCtxCap($event.currentTarget)">
-                <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
-                  <circle class="ctx-ring-bg" cx="10" cy="10" r="7.5" fill="none" stroke-width="2.5" />
-                  <circle class="ctx-ring-val" cx="10" cy="10" r="7.5" fill="none" stroke-width="2.5"
-                          stroke-linecap="round" :stroke-dasharray="ctxRingDash" transform="rotate(-90 10 10)" />
-                </svg>
-              </span>
-              <!-- 深度思考设置入口：宽屏挂在模型下拉行上（悬浮哪行弹哪行，见下方 ModelSelect 的 option-hover）；
-                   触屏无 hover，改由这个常驻按钮点开底部 sheet。
-                   显示与否只由 v-if="isCoarse" 决定，CSS 侧不另设 @media(hover:hover) 规则——
-                   两者判据不同源会在「coarse 且 hover:hover」的设备上把入口藏没。 -->
-              <button v-if="isCoarse" class="think-entry" :class="{ on: deepThinkOn }" type="button"
-                      title="深度思考设置" @click="toggleThinkSheet">
-                <thunderbolt-outlined />
-                <span class="think-entry-txt">{{ deepThinkOn ? '思考·开' : '思考' }}</span>
-              </button>
-              <!-- 深度思考设置挂到下拉模型行上：悬浮哪行就弹那个模型的设置面板（Teleport 在模板末尾），
-                   档位点选即时写入按模型 localStorage 记忆；对生效模型下一轮发送立即生效，
-                   对其它模型则先记住、选中该模型时生效 -->
-              <ModelSelect v-model="currentOverrideModel" type="chat" pill allow-clear
-                           :issue="effectiveModelIssue"
-                           :placeholder="effectiveModelLabel || '选择模型'"
-                           :compact="isNarrow"
-                           :width="190"
-                           @option-hover="onModelOptionHover" @open-change="onModelSelectOpenChange" />
-            </div>
-            <!-- 发送键随内容变形：生成中框里有字 → 这一点是「插话」（不是打断当前这一步）；
-                 没字 → 才是停止本轮。两段式 Esc 停止照旧（第一次上膛、第二次才停；点击仍是立即停） -->
-            <button v-if="loading && canSend" class="send-btn"
-                    title="插话（Enter 同效）：立刻告诉模型你想调整的方向，它会在下一步看到"
-                    @click="sendNow"><arrow-up-outlined /></button>
-            <button v-else-if="loading" class="send-btn stop" :title="escArmed ? '再按一次 Esc 停止生成' : '点击停止生成'" @click="stopNow">
-              <span v-if="escArmed" class="esc-cap">esc</span>
-              <pause-circle-outlined v-else />
-            </button>
-            <button v-else class="send-btn" title="发送" :disabled="!canSend" @click="sendNow"><arrow-up-outlined /></button>
-          </div>
-        </div>
-        <!-- 智能体提问面板：当前会话有挂起提问时完全替换聊天输入框（模型在等答案，输入框此时不可用）。
-             样式对齐「编号选项 + 自定义输入末项 + 键盘导航 + 忽略/提交」的提问卡；答复后面板撤下、
-             输入框回归，问答记录以工具卡形态留在气泡原位 -->
-        <div v-else-if="pendingAsk" class="input-box askp-box" @keydown="onAskPanelKeydown">
+        </template>
+        <!-- 顶替态：挂起提问卡 / 待批计划卡整块顶替输入框（卡片样式仍由 ChatInput 提供） -->
+        <template #replace>
+          <!-- 智能体提问面板：当前会话有挂起提问时完全替换聊天输入框（模型在等答案，输入框此时不可用）。
+          样式对齐「编号选项 + 自定义输入末项 + 键盘导航 + 忽略/提交」的提问卡；答复后面板撤下、
+          输入框回归，问答记录以工具卡形态留在气泡原位 -->
+          <div v-if="pendingAsk" class="ci-box askp-box" @keydown="onAskPanelKeydown">
           <div class="askp-head">
-            <span class="askp-tag">{{ curAsk.topic || '向用户提问' }}</span>
-            <span v-if="askQueueCount" class="askp-state" :title="'这一轮还有 ' + askQueueCount + ' 张卡要答，这张答完接着来'">还有 {{ askQueueCount }} 张待答</span>
-            <span class="askp-q">{{ curAsk.question }}</span>
-            <span v-if="pendingAsk.ask.answered" class="askp-state ok">已提交，模型继续中…</span>
-            <span v-else-if="askExpired" class="askp-state warn">已超时，智能体将自行判断…</span>
-            <span v-if="askCountdownText" class="askp-timer" :class="{ warn: askExpired }">
-              <clock-circle-outlined /> {{ askCountdownText }}
-            </span>
-            <span v-if="pendingAsk.ask.questions.length > 1" class="askp-pager">
-              <button class="askp-page-btn" type="button" :disabled="askPage <= 0 || pendingAsk.ask.busy" @click="askPage--">‹</button>
-              <span class="askp-page-num">{{ askPage + 1 }} / {{ pendingAsk.ask.questions.length }}</span>
-              <button class="askp-page-btn" type="button" :disabled="askPage >= pendingAsk.ask.questions.length - 1 || pendingAsk.ask.busy" @click="askPage++">›</button>
-            </span>
+          <span class="askp-tag">{{ curAsk.topic || '向用户提问' }}</span>
+          <span v-if="askQueueCount" class="askp-state" :title="'这一轮还有 ' + askQueueCount + ' 张卡要答，这张答完接着来'">还有 {{ askQueueCount }} 张待答</span>
+          <span class="askp-q">{{ curAsk.question }}</span>
+          <span v-if="pendingAsk.ask.answered" class="askp-state ok">已提交，模型继续中…</span>
+          <span v-else-if="askExpired" class="askp-state warn">已超时，智能体将自行判断…</span>
+          <span v-if="askCountdownText" class="askp-timer" :class="{ warn: askExpired }">
+          <clock-circle-outlined /> {{ askCountdownText }}
+          </span>
+          <span v-if="pendingAsk.ask.questions.length > 1" class="askp-pager">
+          <button class="askp-page-btn" type="button" :disabled="askPage <= 0 || pendingAsk.ask.busy" @click="askPage--">‹</button>
+          <span class="askp-page-num">{{ askPage + 1 }} / {{ pendingAsk.ask.questions.length }}</span>
+          <button class="askp-page-btn" type="button" :disabled="askPage >= pendingAsk.ask.questions.length - 1 || pendingAsk.ask.busy" @click="askPage++">›</button>
+          </span>
           </div>
           <div class="askp-opts">
-            <button v-for="(op, oi) in curAsk.options" :key="oi" type="button"
-                    class="askp-opt" :class="{ sel: pendingAsk.ask.sels[askPage] === oi, 'k-hi': askHi === oi }"
-                    :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || askExpired" @click="onPick(oi)">
-              <span class="askp-no">{{ oi + 1 }}.</span>
-              <span class="askp-kw">{{ askOptionParts(op).kw }}<span v-if="oi === 0" class="askp-rec">（推荐）</span></span>
-              <span v-if="askOptionParts(op).rest" class="askp-rest">{{ askOptionParts(op).rest }}</span>
-            </button>
-            <div class="askp-opt askp-custom-row" :class="{ sel: pendingAsk.ask.sels[askPage] === curAsk.options.length, 'k-hi': askHi === curAsk.options.length }">
-              <span class="askp-no">{{ curAsk.options.length + 1 }}.</span>
-              <input ref="askCustomRef" v-model="pendingAsk.ask.customs[askPage]" class="askp-input" :maxlength="2000"
-                     :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || askExpired"
-                     placeholder="输入你的回答…" @blur="commitCustomAt(askPage, false)" @keydown.enter.prevent="commitCustomAt(askPage, true)" />
-            </div>
+          <button v-for="(op, oi) in curAsk.options" :key="oi" type="button"
+          class="askp-opt" :class="{ sel: pendingAsk.ask.sels[askPage] === oi, 'k-hi': askHi === oi }"
+          :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || askExpired" @click="onPick(oi)">
+          <span class="askp-no">{{ oi + 1 }}.</span>
+          <span class="askp-kw">{{ askOptionParts(op).kw }}<span v-if="oi === 0" class="askp-rec">（推荐）</span></span>
+          <span v-if="askOptionParts(op).rest" class="askp-rest">{{ askOptionParts(op).rest }}</span>
+          </button>
+          <div class="askp-opt askp-custom-row" :class="{ sel: pendingAsk.ask.sels[askPage] === curAsk.options.length, 'k-hi': askHi === curAsk.options.length }">
+          <span class="askp-no">{{ curAsk.options.length + 1 }}.</span>
+          <input ref="askCustomRef" v-model="pendingAsk.ask.customs[askPage]" class="askp-input" :maxlength="2000"
+          :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || askExpired"
+          :placeholder="askCustomPlaceholder" @blur="commitCustomAt(askPage, false)" @keydown="onAskCustomKeydown" />
+          </div>
           </div>
           <div class="askp-foot">
-            <span class="askp-hint"><info-circle-outlined /> 选完自动跳下一题，全部选完自动提交；没答的题不替你选</span>
-            <span class="askp-actions">
-              <!-- 停止 ≠ 忽略：忽略是「这一题我不答，你自行继续」，停止是「整轮叫停」。
-                   面板顶替了打字框，停止键（在发送位上）此时不存在，故在面板内给一个同义入口 -->
-              <button class="app-btn ghost small p-stop" type="button"
-                      title="叫停整轮：不再执行任何工具，已生成的内容按「已停止本轮」保留。与「忽略」不同——忽略会让智能体带着「你没答」继续作答"
-                      @click="stopNow">停止本轮</button>
-              <button class="app-btn ghost small" :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || askExpired" @click="ignoreAsk(pendingAsk)">忽略</button>
-              <button class="app-btn small" :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || askExpired" @click="askSubmitAll(pendingAsk)">提交（{{ askAnsweredCount }} / {{ pendingAsk.ask.questions.length }}）</button>
-            </span>
+          <span class="askp-hint"><info-circle-outlined /> 选完自动跳下一题，全部选完自动提交；没答的题不替你选</span>
+          <span class="askp-actions">
+          <!-- 停止 ≠ 忽略：忽略是「这一题我不答，你自行继续」，停止是「整轮叫停」。
+          面板顶替了打字框，停止键（在发送位上）此时不存在，故在面板内给一个同义入口 -->
+          <button class="app-btn ghost small p-stop" type="button"
+          title="叫停整轮：不再执行任何工具，已生成的内容按「已停止本轮」保留。与「忽略」不同——忽略会让智能体带着「你没答」继续作答"
+          @click="stopNow">停止本轮</button>
+          <button class="app-btn ghost small" :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || askExpired" @click="ignoreAsk(pendingAsk)">忽略</button>
+          <button class="app-btn small" :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || askExpired" @click="askSubmitAll(pendingAsk)">提交（{{ askAnsweredCount }} / {{ pendingAsk.ask.questions.length }}）</button>
+          </span>
           </div>
-        </div>
-        <!-- 计划确认栏：待批准时整块顶替打字框（模型在等裁决，此刻也没法发新消息），与提问面板同构——
-             编号选项：1. 确认（点即按原稿执行）2. 继续对话（光输入框，写要改什么，非空才能送出）。
-             不满意就继续对话：意见作为一条用户消息发出，本版计划作废，模型接着对话按意见重做计划；
-             计划正文在气泡里只读展示。底部「取消」= 提问面板的「忽略」 -->
-        <div v-else class="input-box planp-box">
+          </div>
+          <!-- 计划确认栏：待批准时整块顶替打字框（模型在等裁决，此刻也没法发新消息），与提问面板同构——
+          编号选项：1. 确认（点即按原稿执行）2. 继续对话（光输入框，写要改什么，非空才能送出）。
+          不满意就继续对话：意见作为一条用户消息发出，本版计划作废，模型接着对话按意见重做计划；
+          计划正文在气泡里只读展示。底部「取消」= 提问面板的「忽略」 -->
+          <div v-if="!pendingAsk" class="ci-box planp-box">
           <div class="planp-head">
-            <span class="planp-tag">执行计划</span>
-            <span v-if="planExpired" class="planp-state warn">已超时，本轮将停止</span>
-            <span v-else class="planp-state">待确认</span>
-            <span v-if="planCountdownText" class="planp-timer" :class="{ warn: planExpired }">
-              <clock-circle-outlined /> {{ planCountdownText }}
-            </span>
+          <span class="planp-tag">执行计划</span>
+          <span v-if="planExpired" class="planp-state warn">已超时，本轮将停止</span>
+          <span v-else class="planp-state">待确认</span>
+          <span v-if="planCountdownText" class="planp-timer" :class="{ warn: planExpired }">
+          <clock-circle-outlined /> {{ planCountdownText }}
+          </span>
           </div>
           <div class="planp-opts">
-            <button type="button" class="planp-opt" :disabled="curPlanCard.busy || planExpired"
-                    @click="submitPlanApproval(pendingPlan, 'approve')">
-              <span class="planp-no">1.</span>
-              <span class="planp-kw">确认</span>
-              <span class="planp-rest">直接按此计划开始执行</span>
-            </button>
-            <div class="planp-opt planp-custom-row">
-              <span class="planp-no">2.</span>
-              <div class="planp-custom">
-                <a-textarea v-model:value="curPlanCard.editText" :bordered="false" :auto-size="{ minRows: 1, maxRows: 8 }" :maxlength="8000"
-                            :disabled="curPlanCard.busy || planExpired"
-                            placeholder="不满意就继续对话：写下要改什么…" />
-              </div>
-            </div>
+          <button type="button" class="planp-opt" :disabled="curPlanCard.busy || planExpired"
+          @click="submitPlanApproval(pendingPlan, 'approve')">
+          <span class="planp-no">1.</span>
+          <span class="planp-kw">确认</span>
+          <span class="planp-rest">直接按此计划开始执行</span>
+          </button>
+          <div class="planp-opt planp-custom-row">
+          <span class="planp-no">2.</span>
+          <div class="planp-custom">
+          <a-textarea v-model:value="curPlanCard.editText" :bordered="false" :auto-size="{ minRows: 1, maxRows: 8 }" :maxlength="8000"
+          :disabled="curPlanCard.busy || planExpired"
+          :placeholder="planEditPlaceholder" @keydown="onPlanPanelKeydown" />
+          </div>
+          </div>
           </div>
           <div class="planp-foot">
-            <span class="planp-hint"><info-circle-outlined /> 继续对话会按你的意见重做计划；「确认」才执行；未处理将超时并停止本轮</span>
-            <span class="planp-actions">
-              <!-- 与提问面板同形：面板顶替打字框时，停止入口只能放在面板里 -->
-              <button class="app-btn ghost small p-stop" type="button"
-                      title="叫停整轮：不再执行任何工具。与「取消」不同——取消是「不批准这一版计划」，卡片会定格「未批准」"
-                      @click="stopNow">停止本轮</button>
-              <button class="app-btn ghost small" :disabled="curPlanCard.busy || planExpired" @click="submitPlanApproval(pendingPlan, 'cancel')">取消</button>
-              <button class="app-btn small" :disabled="curPlanCard.busy || planExpired || !(curPlanCard.editText || '').trim()"
-                      @click="continuePlanConversation(pendingPlan, curPlanCard.editText)">继续对话</button>
-            </span>
+          <span class="planp-hint"><info-circle-outlined /> 继续对话会按你的意见重做计划；「确认」才执行；未处理将超时并停止本轮</span>
+          <span class="planp-actions">
+          <!-- 与提问面板同形：面板顶替打字框时，停止入口只能放在面板里 -->
+          <button class="app-btn ghost small p-stop" type="button"
+          title="叫停整轮：不再执行任何工具。与「取消」不同——取消是「不批准这一版计划」，卡片会定格「未批准」"
+          @click="stopNow">停止本轮</button>
+          <button class="app-btn ghost small" :disabled="curPlanCard.busy || planExpired" @click="submitPlanApproval(pendingPlan, 'cancel')">取消</button>
+          <button class="app-btn small" :disabled="curPlanCard.busy || planExpired || !(curPlanCard.editText || '').trim()"
+          @click="continuePlanConversation(pendingPlan, curPlanCard.editText)">继续对话</button>
+          </span>
           </div>
+          </div>
+          <!-- 合成点击要 .stop：pickAttachments 里 input.click() 的点击事件会冒泡到 document，
+          而 input 挂在计划面板容器下（不在 .ci-box/.mention-panel 内），外点关闭监听会误判成
+          「点在面板外」把「+」面板关掉——表现为选择框还开着、背后面板没了，取消选择后面板也回不来 -->
+        </template>
+        <!-- 卡片内、正文之上：+ 面板 / @ 引用面板 / 斜杠面板 -->
+        <!-- / 快捷命令面板（敲 / 唤起）：会话级动作，选中即执行 -->
+        <div v-if="slashOpen" class="mention-panel">
+        <div class="mention-head">
+        <span class="mention-head-tag">/</span>
+        <span class="mention-head-word" :class="{ dim: !slashQuery }">{{ slashQuery || '输入以筛选快捷命令' }}</span>
+        <button class="app-icon-btn" title="关闭" @click="closeSlashPanel"><close-outlined /></button>
         </div>
-        <!-- 合成点击要 .stop：pickAttachments 里 input.click() 的点击事件会冒泡到 document，
-             而 input 挂在计划面板容器下（不在 .input-box/.mention-panel 内），外点关闭监听会误判成
-             「点在面板外」把「+」面板关掉——表现为选择框还开着、背后面板没了，取消选择后面板也回不来 -->
-        <input ref="attachInput" type="file" multiple style="display:none" @click.stop @change="onAttachChange" />
-      </div>
+        <div ref="slashListEl" class="mention-list">
+        <div v-for="(c, ci) in slashFiltered" :key="c.key" class="mention-item"
+        :class="{ hi: slashHi === ci }" @click="runSlashCommand(c)">
+        <span class="mention-ava"><component :is="c.icon" /></span>
+        <div class="mention-text">
+        <span class="mention-name"><code v-if="c.cmd" class="slash-cmd">/{{ c.cmd }}</code>{{ c.name }}</span>
+        <span class="mention-desc">{{ c.desc }}</span>
+        </div>
+        </div>
+        <div v-if="!slashFiltered.length" class="mention-empty">没有匹配的命令</div>
+        </div>
+        <div class="mention-foot">↑↓ 选择 · Enter 确认 · Esc 关闭　|　命令可附要求（如 /compact 保留结论）</div>
+        </div>
+        <!-- # 历史引用面板（敲 # 唤起）：勾选本会话历史问答，随本轮请求前置给模型 -->
+        <div v-if="histOpen" class="mention-panel">
+        <div class="mention-head">
+        <span class="mention-head-tag">#</span>
+        <span class="mention-head-word" :class="{ dim: !histQuery }">{{ histQuery || '输入以筛选历史问答' }}</span>
+        <button class="app-icon-btn" title="关闭" @click="closeHistPanel"><close-outlined /></button>
+        </div>
+        <div ref="histListEl" class="mention-list">
+        <div v-for="(m, hi2) in histCandidates" :key="m.messageId" class="mention-item"
+        :class="{ on: isHistPicked(m.messageId), hi: histHi === hi2 }" @click="pickHistoryRefByClick(m)">
+        <span class="mention-ava" :class="m.role === 'user' ? 'hist-ava-q' : 'hist-ava-a'">
+        {{ m.role === 'user' ? '问' : '答' }}
+        </span>
+        <div class="mention-text">
+        <span class="mention-name">{{ histItemTitle(m) }}</span>
+        <span class="mention-desc">{{ m.role === 'user' ? '你的提问' : 'AI 的回答' }}{{ m.time ? ' · ' + fmtMsgTime(m.time) : '' }}</span>
+        </div>
+        <check-outlined v-if="isHistPicked(m.messageId)" class="mention-check" />
+        </div>
+        <div v-if="!histCandidates.length" class="mention-empty">
+        {{ histPool.length ? '没有匹配的历史问答' : '本会话还没有可引用的历史问答' }}
+        </div>
+        </div>
+        <div class="mention-foot">↑↓ 选择 · Enter 确认 · Esc 关闭　|　# 勾选的历史问答作为本轮上下文带给模型（只对本轮生效，最多 10 条）</div>
+        </div>
+        <!-- 「+」面板（分层菜单）：输入框唯一的候选面板。两个入口同一块面板——
+        点「+」先出一级轻菜单（上传文件/图片一击直达，引用/技能/历史/命令进二级列表），
+        输入框敲 @ 也开这里（直接落在「引用」二级，筛选词实时取「@ 到光标」之间的正文，见 syncPanelQuery）。
+        就地编辑卡的「+」也开这里：同一块面板按写入目标（addTarget）决定选中结果落到
+        主输入框还是编辑卡的随行内容上，编辑态下整块 Teleport 进卡内的挂载点。
+        计划模式不占面板——它是模式开关，在工具条上有独立胶囊（plan-pill）。
+        键盘：↑↓ 选择 · Enter 确认/进入 · Tab 进/退层级 · Esc 关闭（由一级进入的二级先退回一级）。
+        行式交互与样式复用 .mention-panel / .mention-item -->
+        <Teleport v-if="addOpen" :to="EDIT_ADD_MOUNT" :disabled="!addOnEdit">
+        <div class="mention-panel" @keydown="onPanelNavKeydown">
+        <div class="mention-head add-head">
+        <button v-if="addTab !== 'root'" class="app-icon-btn add-back" title="返回上一层" @click="backToRoot"><left-outlined /></button>
+        <span class="add-title">{{ addTab === 'root' ? '添加到本轮' : ADD_TITLES[addTab] }}</span>
+        <button class="app-icon-btn add-close" title="关闭" @click="closeAddPanel"><close-outlined /></button>
+        </div>
+        <!-- 引用页的三类候选各自计数（沿用原 @ 弹窗的口径）；子页签只换列表，不重置搜索词 -->
+        <div v-if="addTab === 'ref'" class="mention-tabs add-subtabs">
+        <button v-for="s in REF_SUB_TABS" :key="s.key" class="mention-tab" :class="{ on: mentionTab === s.key }"
+        type="button" @click="switchRefTab(s.key)">
+        <component :is="s.icon" /> {{ s.label }} {{ s.count() }}
+        </button>
+        </div>
+        <div v-if="addSearchable" class="add-filter-row">
+        <input ref="addSearchEl" v-model="addQuery" class="add-filter" type="search"
+        :placeholder="addSearchHint" autocomplete="off" />
+        </div>
+        <div ref="addListEl" class="mention-list">
+        <!-- 一级菜单：上传行点了直接弹系统文件框；其余行进二级。kbd=主输入框里对应的触发符，
+        把鼠标流和键盘流接到同一个地方（编辑卡那份不显示）；badge=已选/生效数（这一轮会带上什么） -->
+        <template v-if="addTab === 'root'">
+        <div v-for="(r, ri) in addRootRows" :key="r.key" class="mention-item"
+        :class="{ hi: addHi === ri }" @click="r.run()">
+        <span class="mention-ava"><component :is="r.icon" /></span>
+        <div class="mention-text">
+        <span class="mention-name">{{ r.name }}<span v-if="r.badge()" class="add-root-badge">{{ r.badge() }}</span></span>
+        <span class="mention-desc">{{ r.desc }}</span>
+        </div>
+        <span v-if="r.kbd" class="add-kbd">{{ r.kbd }}</span>
+        </div>
+        </template>
+        <template v-else-if="addTab === 'ref'">
+        <div v-if="mentionLoading" class="mention-empty">加载中…</div>
+        <template v-else-if="mentionTab === 'kb'">
+        <div v-for="(k, ki) in addRefList" :key="k.id" class="mention-item"
+        :class="{ on: isAddMentioned('kb', k.id), hi: addHi === ki }" @click="confirmRefRow('kb', k)">
+        <span class="mention-ava"><database-outlined /></span>
+        <div class="mention-text">
+        <span class="mention-name">{{ k.name }}</span>
+        <span class="mention-desc">{{ k.desc || (k.docCount ? k.docCount + ' 篇文档' : '') }}</span>
+        </div>
+        <check-outlined v-if="isAddMentioned('kb', k.id)" class="mention-check" />
+        </div>
+        <div v-if="!addRefList.length" class="mention-empty">
+        {{ mentionKbs.length ? '没有匹配的知识库' : '没有可见的知识库' }}
+        </div>
+        </template>
+        <template v-else-if="mentionTab === 'agent'">
+        <div v-for="(a, ai) in addRefList" :key="a.id" class="mention-item"
+        :class="{ on: isAddMentioned('agent', a.id), hi: addHi === ai }" @click="confirmRefRow('agent', a)">
+        <AgentAvatar class="mention-ava-agent" :agent="a" :size="22" />
+        <div class="mention-text">
+        <span class="mention-name">{{ a.name }}</span>
+        <span class="mention-desc">{{ a.desc || '本轮会向这位助手咨询' }}</span>
+        </div>
+        <check-outlined v-if="isAddMentioned('agent', a.id)" class="mention-check" />
+        </div>
+        <div v-if="!addRefList.length" class="mention-empty">
+        {{ mentionAgents.length ? '没有匹配的智能体' : '没有可见的智能体' }}
+        </div>
+        </template>
+        <template v-else>
+        <div v-for="(d, di) in addRefList" :key="d.id" class="mention-item"
+        :class="{ on: isAddMentioned('doc', d.id), hi: addHi === di }" @click="confirmRefRow('doc', d)">
+        <span class="mention-ava"><file-text-outlined /></span>
+        <div class="mention-text">
+        <span class="mention-name">{{ d.fileName }}</span>
+        <span class="mention-desc">{{ mentionDocStatus(d) }}</span>
+        </div>
+        <check-outlined v-if="isAddMentioned('doc', d.id)" class="mention-check" />
+        </div>
+        <div v-if="!addRefList.length" class="mention-empty">
+        {{ mentionDocs.length ? '没有匹配的文档' : '没有可见的文档' }}
+        </div>
+        </template>
+        </template>
+        <!-- 技能 -->
+        <template v-else-if="addTab === 'skill'">
+        <div v-if="!skillList.length" class="mention-empty">还没有可用技能，管理员可在「设置 → 技能」中安装</div>
+        <div v-for="(s, si) in addSkillList" :key="s.name" class="mention-item"
+        :class="{ on: isAddSkillOn(s.name), hi: addHi === si }" @click="toggleAddSkill(s.name)">
+        <span class="mention-ava skill-ava" :style="skillAvaStyle(s.name)">{{ (s.name || '技').slice(0, 1) }}</span>
+        <div class="mention-text">
+        <span class="mention-name">{{ s.name }}</span>
+        <span v-if="s.description" class="mention-desc">{{ s.description }}</span>
+        </div>
+        <check-outlined v-if="isAddSkillOn(s.name)" class="mention-check" />
+        </div>
+        <div v-if="skillList.length && !addSkillList.length" class="mention-empty">没有匹配的技能</div>
+        </template>
+        <!-- 历史引用：勾选不关面板（多选），与键盘流 # 面板同一份交互；
+        候选按写入目标取——编辑卡那份要排掉正在编辑的这一问（引用自己没意义） -->
+        <template v-else-if="addTab === 'hist'">
+        <div v-for="(m, mi) in addHistCandidates" :key="m.messageId" class="mention-item"
+        :class="{ on: isAddHistPicked(m.messageId), hi: addHi === mi }" @click="toggleAddHistoryRef(m)">
+        <span class="mention-ava" :class="m.role === 'user' ? 'hist-ava-q' : 'hist-ava-a'">
+        {{ m.role === 'user' ? '问' : '答' }}
+        </span>
+        <div class="mention-text">
+        <span class="mention-name">{{ histItemTitle(m) }}</span>
+        <span class="mention-desc">{{ m.role === 'user' ? '你的提问' : 'AI 的回答' }}{{ m.time ? ' · ' + fmtMsgTime(m.time) : '' }}</span>
+        </div>
+        <check-outlined v-if="isAddHistPicked(m.messageId)" class="mention-check" />
+        </div>
+        <div v-if="!addHistCandidates.length" class="mention-empty">
+        {{ addHistPool.length ? '没有匹配的历史问答' : '本会话还没有可引用的历史问答' }}
+        </div>
+        </template>
+        <!-- 快捷命令：会话级动作，选中即执行（生成中拦截见 runSlashCommand） -->
+        <template v-else>
+        <div v-for="(c, ci) in addCmdList" :key="c.key" class="mention-item"
+        :class="{ 'mi-off': loading, hi: addHi === ci }" @click="runCmdFromAddPanel(c)">
+        <span class="mention-ava"><component :is="c.icon" /></span>
+        <div class="mention-text">
+        <span class="mention-name"><code v-if="c.cmd" class="slash-cmd">/{{ c.cmd }}</code>{{ c.name }}</span>
+        <span class="mention-desc">{{ c.desc }}</span>
+        </div>
+        </div>
+        <div v-if="!addCmdList.length" class="mention-empty">没有匹配的命令</div>
+        </template>
+        </div>
+        <div class="mention-foot">{{ addFootHint }}</div>
+        </div>
+        </Teleport>
+        <!-- 正文与附件/图片/技能/@ 引用/# 历史引用/计划模式在同一条文字流里：
+        chip 是文档里的节点，能排在字与字之间，全选复制也就带得上它们（见 chat/Composer.vue） -->
+        <template #left-lead>
+          <a-dropdown v-model:open="agentPickerOpen" :trigger="['click']" placement="topLeft">
+          <button class="agent-pill" :class="{ on: !!currentAgentId, open: agentPickerOpen, 'as-icon': isNarrow }"
+          title="选择作答的智能体：换人立即生效（下一问起就是它）；不挑就用默认助手。模型在右侧选择">
+          <AgentAvatar v-if="currentAgent" :agent="currentAgent" :size="16" />
+          <!-- 窄屏只留头像：智能体名 + 模型名会把工具条撑破，完整名称由 title 与下拉面板承载 -->
+          <span v-if="!isNarrow" class="agent-pill-name">{{ currentAgentName }}</span>
+          <down-outlined v-if="!isNarrow" class="agent-pill-caret" />
+          </button>
+          <template #overlay>
+          <div class="agent-menu">
+          <div class="agent-menu-head">
+          <span>选择智能体</span>
+          <span class="agent-menu-hint">选一位来答这一问 · 换人立即生效，不必新建会话</span>
+          </div>
+          <div class="agent-menu-list">
+          <div v-if="!hasDefaultAgent" class="agent-mi" :class="{ active: !currentAgentId }" @click="pickAgent('')">
+          <span class="agent-mi-ava"><robot-outlined /></span>
+          <div class="agent-mi-text">
+          <span class="agent-mi-name">默认（全局配置）</span>
+          <span class="agent-mi-desc">沿用系统设置里的模型、提示词与能力开关</span>
+          </div>
+          <check-outlined v-if="!currentAgentId" class="agent-mi-check" />
+          </div>
+          <div v-for="a in agentList" :key="a.id" class="agent-mi"
+          :class="{ active: currentAgentId === a.id }" @click="pickAgent(a.id)">
+          <AgentAvatar :agent="a" :size="26" style="margin-top:1px" />
+          <div class="agent-mi-text">
+          <span class="agent-mi-name">
+          {{ a.name }}
+          <span v-if="a.isDefault" class="agent-mi-badge">默认</span>
+          </span>
+          <span v-if="a.description" class="agent-mi-desc">{{ a.description }}</span>
+          </div>
+          <check-outlined v-if="currentAgentId === a.id" class="agent-mi-check" />
+          </div>
+          <div v-if="!agentList.length" class="agent-mi-empty">还没有智能体，去「管理智能体」新建一个</div>
+          </div>
+          <div v-if="isAdmin" class="agent-menu-foot" @click="goManageAgents">
+          <setting-outlined />
+          <span>管理智能体</span>
+          </div>
+          </div>
+          </template>
+          </a-dropdown>
+        </template>
+        <template #left>
+          <!-- 计划模式开关：独立胶囊（原来是「+」面板里的一个页签——模式开关混进候选列表，
+          找它要切页签、状态还要靠徽标转达，语义就错了）。开启态用警示色与计划 chip 同源 -->
+          <button class="plan-pill" :class="{ on: planModeOn }" type="button"
+          title="计划模式：每轮先出执行计划，你批准或修改后才开始回答" @click="setPlanMode(!planModeOn)">
+          <ordered-list-outlined />
+          <span>{{ isNarrow ? '计划' : '计划模式' }}</span>
+          </button>
+        </template>
+        <template #right>
+          <!-- 上下文容量圆环：本轮真实 prompt 占窗口比（与右栏容量卡同源数据），悬浮弹明细卡；会话尚无对话（无落库 tokens）时不显示。
+          触屏无 hover，额外挂 click/@keydown（role/tabindex 只在触屏下加，避免改变宽屏的无障碍语义与 Tab 序） -->
+          <span v-if="ctxTokens && ctxCapData.window > 0" class="ctx-ring" :class="ctxRingLevel" aria-label="上下文容量"
+          :role="isCoarse ? 'button' : null" :tabindex="isCoarse ? 0 : null"
+          @mouseenter="showCtxCap($event.currentTarget)" @mouseleave="hideCtxCap()"
+          @click="isCoarse && showCtxCap($event.currentTarget)"
+          @keydown.enter="isCoarse && showCtxCap($event.currentTarget)">
+          <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
+          <circle class="ctx-ring-bg" cx="10" cy="10" r="7.5" fill="none" stroke-width="2.5" />
+          <circle class="ctx-ring-val" cx="10" cy="10" r="7.5" fill="none" stroke-width="2.5"
+          stroke-linecap="round" :stroke-dasharray="ctxRingDash" transform="rotate(-90 10 10)" />
+          </svg>
+          </span>
+          <!-- 深度思考设置入口：宽屏挂在模型下拉行上（悬浮哪行弹哪行，见下方 ModelSelect 的 option-hover）；
+          触屏无 hover，改由这个常驻按钮点开底部 sheet。
+          显示与否只由 v-if="isCoarse" 决定，CSS 侧不另设 @media(hover:hover) 规则——
+          两者判据不同源会在「coarse 且 hover:hover」的设备上把入口藏没。 -->
+          <button v-if="isCoarse" class="think-entry" :class="{ on: deepThinkOn }" type="button"
+          title="深度思考设置" @click="toggleThinkSheet">
+          <thunderbolt-outlined />
+          <span class="think-entry-txt">{{ deepThinkOn ? '思考·开' : '思考' }}</span>
+          </button>
+          <!-- 深度思考设置挂到下拉模型行上：悬浮哪行就弹那个模型的设置面板（Teleport 在模板末尾），
+          档位点选即时写入按模型 localStorage 记忆；对生效模型下一轮发送立即生效，
+          对其它模型则先记住、选中该模型时生效 -->
+          <ModelSelect v-model="currentOverrideModel" type="chat" pill allow-clear
+          :issue="effectiveModelIssue"
+          :placeholder="effectiveModelLabel || '选择模型'"
+          :compact="isNarrow"
+          :width="190"
+          @option-hover="onModelOptionHover" @open-change="onModelSelectOpenChange" />
+        </template>
+      </ChatInput>
+      <input ref="attachInput" type="file" multiple style="display:none" @click.stop @change="onAttachChange" />
     </div>
 
     <!-- 右侧状态栏（可收起）：计划 / 运行控制 / 产物 / 检索·用量（本轮|会话口径切换）/ 引用来源（有引用才显示）
@@ -1534,7 +1445,6 @@
             <div v-if="ctxCapData.cacheRate != null" class="ctxcap-foot">
               <span>缓存命中率</span><span class="ctxcap-row-val">{{ ctxCapData.cacheRate }}%</span>
             </div>
-            <div class="ctxcap-tip">窗口：{{ fmtWindow(ctxCapData.window) }} · 占比按本轮结束时的上下文计 · 分类按 AgentScope 消息结构（系统/历史/提问/检索/工具结果/思考/工具声明）</div>
           </template>
           <div v-else class="ctxcap-empty">该模型未登记上下文窗口，请在模型管理中声明</div>
         </div>
@@ -1549,11 +1459,11 @@ import { useRouter, useRoute } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, CloseCircleOutlined, FileTextOutlined, DownloadOutlined, GlobalOutlined, ApiOutlined,
          ExclamationCircleOutlined, CopyOutlined, LikeOutlined, DislikeOutlined, ReloadOutlined, MoreOutlined,
-         DeleteOutlined, BugOutlined, EditOutlined, PlusOutlined, PaperClipOutlined, BulbOutlined, PauseCircleOutlined,
+         DeleteOutlined, BugOutlined, EditOutlined, PlusOutlined, PaperClipOutlined, PauseCircleOutlined,
          CompressOutlined,
-         ArrowUpOutlined, RobotOutlined, SettingOutlined, ThunderboltOutlined, LockOutlined, RedoOutlined,
+         RobotOutlined, SettingOutlined, ThunderboltOutlined, LockOutlined, RedoOutlined,
          CloseOutlined, DatabaseOutlined, SearchOutlined, UpOutlined, ShareAltOutlined,
-         HistoryOutlined, TranslationOutlined, QuestionCircleOutlined, SwapOutlined, InfoCircleOutlined,
+         HistoryOutlined, SwapOutlined, InfoCircleOutlined,
          AppstoreOutlined, ClockCircleOutlined, BookOutlined,
          OrderedListOutlined, CheckCircleOutlined, LeftOutlined } from '@ant-design/icons-vue'
 import { debugRetrieval, deleteMessageGroup, submitFeedback as apiSubmitFeedback,
@@ -1572,6 +1482,12 @@ import AgentAvatar from '../components/AgentAvatar.vue'
 import SetupGuide from '../components/SetupGuide.vue'
 import WelcomeCopy from '../components/WelcomeCopy.vue'
 import { isNarrow, isCoarse } from '../h5/mobile'
+// 输入区外壳（卡片/正文与 chip 同流/工具条/拖拽落点）：与公开分享页共用一份，避免两头各写一套
+import ChatInput from '../chat/ChatInput.vue'
+// 消息列表外壳（与公开分享页同一份）：行/块/气泡布局 + 提问随行材料 + 降级条 + 动作行 + 兜底正文。
+// 本页只保留 SourceList 的直接引用——#sources 插槽给的是带检索词与原文片段的版本
+import ChatThread from '../chat/ChatThread.vue'
+import SourceList from '../chat/SourceList.vue'
 // 窄屏专属 UI 组件（PC 态不渲染，详见 src/h5/README.md）
 import MobileChatHead from '../h5/MobileChatHead.vue'
 import MobileSampleCards from '../h5/MobileSampleCards.vue'
@@ -1587,6 +1503,8 @@ import AnswerViewerHost from '../components/AnswerViewerHost.vue'
 // 聊天引擎（M1 引擎抽取）：引擎逻辑见 src/chat/useChatEngine.js，纯函数/常量见 src/chat/projections.js
 import { useChatEngine } from '../chat/useChatEngine'
 import { useChatSearch } from '../chat/useChatSearch'
+import Composer from '../chat/Composer.vue'
+import { splitAtts } from '../chat/attachments'
 // 正文浮层的共享状态：右栏来源联动（hoveredRef / 点角标定位）与灯箱开关要用
 import { openImages, previewUrl, openSource, hoveredRef } from '../chat/answerViewer'
 import { useApprovalRecovery } from '../chat/useApprovalRecovery'
@@ -1613,7 +1531,10 @@ const { approval: recoveryApproval, busy: recoveryBusy, statusText: recoveryStat
 // 注：智能体提问不走 approval 那种顶部横幅——卡片已落库且等待作答期间断线不中止本轮，
 // 恢复改由引擎在会话加载时按待答记录重建提问卡（hydratePendingAsk），仍挂在底部答题面板原位。
 
-const textareaRef = ref(null)
+/** 输入框（contenteditable，正文与 chip 同一条流）与它当前挂着的 chip 顺序。
+ *  顺序的事实归 DOM，数组归引擎——对账逻辑见下方「输入框内联 chip」一节（要等引擎解构完才能注册 watch）。 */
+const composerRef = ref(null)
+const inlineKeys = ref([])
 // ==================== 深度思考面板（宽屏：悬浮模型下拉行弹出；触屏：常驻入口点开底部 sheet） ====================
 // 面板内 20 处逻辑（档位/上下文/能力判断）全部经 thinkHoverModel 取「当前模型」。
 // 把它做成读写 computed 而非裸 ref：宽屏返回真实悬浮值，触屏返回生效模型 ——
@@ -1987,27 +1908,15 @@ const onGlobalKeydown = e => {
       else armEsc()
       return
     }
-    // a-textarea 的 ref 是组件实例而非原生元素：activeElement 比对必须先取其根元素，等值/包含两种形态都兼容
-    const taEl = textareaRef.value?.$el ?? textareaRef.value
-    if (taEl && (document.activeElement === taEl || taEl.contains?.(document.activeElement))) {
+    // 编辑区是 contenteditable 的原生 div：activeElement 直接就是它本身
+    const el = composerRef.value && composerRef.value.rootEl
+    if (el && (document.activeElement === el || el.contains?.(document.activeElement))) {
       if (text.value) text.value = ''
       else document.activeElement?.blur?.()
     }
   }
 }
 const onGlobalPaste = e => takePastedFiles(e)
-// 窗口高度变化会改变「一屏」的量：重算留白（跟随中的会话顺手回到落点）
-// 重测输入框：antd Textarea 内部靠 ResizeObserver 自测高度，但 iOS Safari 在键盘
-// 动画期间该观察可能不触发（overflow 计算在键盘态下不稳定），表现为输入框塌成一行。
-// 注意调用路径：antd 的 Textarea 只 expose 了 focus/blur/resizableTextArea，**没有 resize()**，
-// 直接调 textareaRef.value.resize() 会抛 TypeError。真正的重测入口在其内部实例上：
-//   textareaRef.value.resizableTextArea.instance.resize()（与本文件既有的
-//   textareaRef.value.resizableTextArea.textArea 取法同一层级）。
-// 加 ?. 兜底：万一 antd 换版本改了结构，宁可不重测也不要抛错打断交互。
-const retestTextarea = () => {
-  const rt = textareaRef.value && textareaRef.value.resizableTextArea
-  if (rt && rt.instance && typeof rt.instance.resize === 'function') rt.instance.resize()
-}
 /* 消息区滚动条槽宽实测 → 写入 --chat-sbw，供 .input 右内边距补偿。
    .messages 是滚动容器、.input 不是，两侧可用宽度天然差一个槽宽，居中基准因此错开半个槽
    —— 表现为「聊天区域和输入框没对齐」。macOS 覆盖式滚动条槽宽为 0（无需补偿），
@@ -2024,7 +1933,7 @@ const syncScrollbarGutter = () => {
 const onWindowResize = () => {
   updateTailSpacer()
   if (stickToBottom.value) scroll()
-  if (isNarrow.value) nextTick(retestTextarea)
+  // 输入框不需要跟着重测高度：contenteditable 自己长，超过 6 行在框内滚
   syncScrollbarGutter()
 }
 // 转屏：iOS Safari 从横屏转竖屏时不保证触发 resize 到正确值，单独补一次
@@ -2038,31 +1947,26 @@ onUnmounted(() => {
   clearTimeout(escArmTimer)
   stopTick()
 })
-const focusInput = () => nextTick(() => textareaRef.value?.focus())
-const previewPendingImage = pi => {
-  openImages(pendingImages.value.map(p => p.dataUrl), pi)
-}
+const focusInput = () => nextTick(() => composerRef.value?.focus())
 const openPreviewFromMsg = (m, index) => {
   openImages((m.images || []).map(resolveImg), index || 0)
 }
-const dragOver = ref(false)
-let dragDepth = 0
-const onDragEnter = e => {
-  // 生成中也允许拖进来：插话与正常提问同权，材料可以带着（带材料的整条等本轮结束自动发出）
-  if (Array.from(e.dataTransfer?.types || []).includes('Files')) {
-    dragDepth++
-    dragOver.value = true
-  }
+// 拖进来的文件（含生成中：插话与正常提问同权，材料可以带着，带材料的整条等本轮结束自动发出）。
+// 进出场与「只有真拖着文件才亮提示」的判据都在 ChatInput 里，这里只接文件数组
+const onDropFiles = files => addFiles(files)
+/** 输入框粘贴四分流：文件→附件管线；长文本→「粘贴的文本」附件；自己复制出去的一轮（正文+凭据）→
+ *  按 fileId/data URL 原样挂回，不重传；其余按纯文本插进光标处。
+ *  编辑区一律拦掉浏览器的默认粘贴（那会把外部 HTML 连样式一起搬进正文），所以正文这步得自己动手。 */
+const onComposerPaste = e => {
+  const done = () => e.stopPropagation()   // 材料已由本框入列，别让 window 级监听再收一遍
+  if (takePastedFiles(e) || takePastedText(e)) return done()
+  const cd = e.clipboardData
+  const plain = (cd && cd.getData ? cd.getData('text/plain') : '') || ''
+  const html = (cd && cd.getData ? cd.getData('text/html') : '') || ''
+  if (html.indexOf('data-wenqu-kind') >= 0) restoreWenquChips(html)
+  if (plain) composerRef.value?.insertText(plain)
+  done()
 }
-const onDragLeave = () => { if (--dragDepth <= 0) { dragDepth = 0; dragOver.value = false } }
-const onDropFiles = e => {
-  dragDepth = 0
-  dragOver.value = false
-  addFiles(Array.from(e.dataTransfer?.files || []))
-}
-// 输入框粘贴：文件与图片挂成待发送附件（图片压缩预览），整段长文本转成「粘贴的文本」附件；
-// 短文本照常内联可编辑。截断冒泡只为避开 window 级监听的重复处理，材料本身已由引擎入列
-const onComposerPaste = e => { if (takePastedFiles(e) || takePastedText(e)) e.stopPropagation() }
 // 粘贴卡片点开看全文：原文只留在内存（待发送项与本轮消息），刷新后的历史卡片没有它
 const pasteView = reactive({ open: false, name: '', text: '' })
 const openPasteView = a => {
@@ -2110,7 +2014,8 @@ const onDocClickForMention = e => {
   // 被点节点被拆下树（parent 链断在 .mention-item），closest 会判成面板外 → 切层的那一下
   // 自己就把面板关了。composedPath 在事件派发时已定，含换层前的旧祖先链，用它认面板。
   const path = typeof e.composedPath === 'function' ? e.composedPath() : []
-  if (path.some(n => n && n.classList && (n.classList.contains('mention-panel') || n.classList.contains('input-box')
+  // 卡片是 ChatInput 的 .ci-box（原先本页自己写 .input-box，抽出组件后跟着改）
+  if (path.some(n => n && n.classList && (n.classList.contains('mention-panel') || n.classList.contains('ci-box')
       || n.classList.contains('msg-inline-edit')))) return
   closeAllPanels()
 }
@@ -2180,8 +2085,7 @@ const confirmPanelHi = () => {
   if (slashOpen.value) {
     const c = slashFiltered.value[i]
     if (!c) return false
-    // 不能先 stripTriggerToken：它会把 panelTriggerPos 清成 -1，runSlashCommand 就退回"追加到末尾"，
-    // 在句中唤起时会跳到全文末尾。/ 面板由 runSlashCommand 自己负责处理触发片段（tpl 就地替换、act 摘除）。
+    // 触发片段（含「别名 + 空格 + 参数」整段）由 runSlashCommand 自己摘，它还得先读参数，这里别抢
     runSlashCommand(c)
     return true
   }
@@ -2200,23 +2104,23 @@ const confirmPanelHi = () => {
  *  光标随后落回摘除处，用户可继续在原位打字。 */
 const stripTriggerToken = () => {
   if (panelTriggerPos < 0) return
+  const cp = composerRef.value
+  if (!cp) return
   const from = panelTriggerPos
-  const el = rawTextarea()
-  const caret = el && typeof el.selectionStart === 'number' ? el.selectionStart : text.value.length
-  const to = Math.max(caret, from + 1)
-  text.value = text.value.slice(0, from) + text.value.slice(to)
-  nextTick(() => {
-    const ta = rawTextarea()
-    if (!ta) return
-    ta.focus?.()
-    ta.setSelectionRange(from, from)
-  })
+  cp.replaceRange(from, Math.max(composerCaret(), from + 1), '')
+  cp.focus()
+  cp.setCaret(from)
   panelTriggerPos = -1
   panelTriggerCh = ''
 }
 
-/** a-textarea 的 ref 是组件实例，取内部原生 textarea（光标位置只能从原生元素读） */
-const rawTextarea = () => textareaRef.value?.resizableTextArea?.textArea || textareaRef.value?.$el || null
+/** 光标在正文里的下标（chip 算零宽，与 text 同一口径）；焦点不在编辑区时浏览器不保留选区，退回末尾 */
+const composerCaret = () => {
+  const cp = composerRef.value
+  if (!cp) return text.value.length
+  const i = cp.caretIndex()
+  return i < 0 ? text.value.length : i
+}
 /** 面板收掉后焦点回谁那儿：编辑卡开的回卡内正文，其余回主输入框 */
 const focusPanelOwner = () => {
   if (addOnEdit.value) { editingRef.value?.focus?.(); return }
@@ -2230,9 +2134,7 @@ const focusPanelOwner = () => {
  *  高亮重置到第一条：候选集变了，原下标已无意义。 */
 const syncPanelQuery = () => {
   if (!panelAnyOpen() || panelTriggerPos < 0) return
-  const el = rawTextarea()
-  if (!el) return
-  const caret = typeof el.selectionStart === 'number' ? el.selectionStart : 0
+  const caret = composerCaret()
   if (caret <= panelTriggerPos || text.value[panelTriggerPos] !== panelTriggerCh) {
     closeAllPanels()
     return
@@ -2248,33 +2150,20 @@ const syncPanelQuery = () => {
   nextTick(scrollPanelHiIntoView)   // 高亮回到第一条后列表也跟着回去，否则筛完第一条停在可视区外
 }
 
-// ==================== / 快捷命令面板（模板插入 + 会话操作） ====================
+// ==================== / 快捷命令面板（会话操作） ====================
 const slashOpen = ref(false)
 const slashQuery = ref('')
 const slashHi = ref(0)
-// kind: tpl=插入问法框架到输入框（可再编辑）；act=会话级操作，立即执行
-// 模板贴合本系统场景：资料类问法配合 @ 文档/知识库使用，检索类问法用于优化提问
-// cmd=英文别名（打 /compact 直接命中，与主流 CLI 同一习惯），带别名的 act 命令可跟参数：「别名 + 空格 + 要求」
+// 命令一律是会话级动作，选中即执行、不往正文插任何东西
+// cmd=英文别名（打 /compact 直接命中，与主流 CLI 同一习惯），带别名的命令可跟参数：「别名 + 空格 + 要求」
 const slashCommands = [
-  { key: 'tpl-summary', kind: 'tpl', icon: FileTextOutlined, name: '总结资料',
-    desc: '生成总结问法框架，配合 @ 文档使用', tpl: '请总结以下内容的要点与结论：\n' },
-  { key: 'tpl-translate', kind: 'tpl', icon: TranslationOutlined, name: '翻译内容',
-    desc: '中英互译框架，保留专业术语', tpl: '请把以下内容翻译成英文，保留专业术语：\n' },
-  { key: 'tpl-polish', kind: 'tpl', icon: EditOutlined, name: '润色改写',
-    desc: '让文字更通顺、专业', tpl: '请润色以下文字，使其更通顺、专业：\n' },
-  { key: 'tpl-explain', kind: 'tpl', icon: BulbOutlined, name: '通俗解释',
-    desc: '用大白话解释概念并举例', tpl: '请用通俗的语言解释以下概念，并给出例子：\n' },
-  { key: 'tpl-compare', kind: 'tpl', icon: CopyOutlined, name: '多维对比',
-    desc: '多维度对比分析并给出建议', tpl: '请从多个维度对比分析以下内容，最后给出选择建议：\n' },
-  { key: 'tpl-optimize', kind: 'tpl', icon: QuestionCircleOutlined, name: '优化提问',
-    desc: '把问题改写为更适合知识库检索的表述', tpl: '请帮我优化下面这个问题的表述，使其更适合用于知识库检索：\n' },
-  { key: 'act-compact', kind: 'act', cmd: 'compact', icon: CompressOutlined, name: '压缩上下文',
+  { key: 'act-compact', cmd: 'compact', icon: CompressOutlined, name: '压缩上下文',
     desc: '早期对话压缩为摘要，腾出上下文空间（可附要求）',
     run: args => compactContext(args) },
-  { key: 'act-export', kind: 'act', icon: FileTextOutlined, name: '导出会话 Markdown',
+  { key: 'act-export', icon: FileTextOutlined, name: '导出会话 Markdown',
     desc: '把当前会话全部问答导出为 .md 文件',
     run: () => { if (!currentSessionId.value) { message.warning('当前没有可导出的会话'); return } exportSessionMarkdown(currentSessionId.value, currentSessionTitle.value) } },
-  { key: 'act-new', kind: 'act', icon: PlusOutlined, name: '新建会话',
+  { key: 'act-new', icon: PlusOutlined, name: '新建会话',
     desc: '开一个空白会话（当前会话保留在侧边栏）',
     run: () => createNewSession() }
 ]
@@ -2314,46 +2203,21 @@ const slashFiltered = computed(() => {
   })
 })
 const runSlashCommand = c => {
-  // 参数先取：下面 stripTriggerToken/closeAllPanels 会把触发片段与筛选词清掉，取晚了就只能拿到空串
-  const args = slashArgsOf(c)
-  slashOpen.value = false
-  if (c.kind === 'tpl') {
-    // 模板替换掉「/ + 筛选词」这段触发文本（而不是追加到末尾），否则会留下 "/总结\n请总结…" 的残渣。
-    // 未由键盘唤起（工具栏按钮点开）时 panelTriggerPos 为 -1，退回原有的追加行为。
-    if (panelTriggerPos >= 0) {
-      const from = panelTriggerPos
-      const el0 = rawTextarea()
-      const caret = el0 && typeof el0.selectionStart === 'number' ? el0.selectionStart : text.value.length
-      const to = Math.max(caret, from + 1)
-      text.value = text.value.slice(0, from) + c.tpl + text.value.slice(to)
-      panelTriggerPos = -1
-      panelTriggerCh = ''
-      nextTick(() => {
-        const ta = textareaRef.value
-        if (!ta) return
-        ta.focus?.()
-        const el = ta.resizableTextArea?.textArea
-        const at = from + c.tpl.length
-        if (el) el.setSelectionRange(at, at)
-      })
-      return
-    }
-    // 追加而非替换：输入框已有内容时不吞掉用户已打的字；光标落到末尾方便接着补内容
-    text.value = (text.value ? text.value.replace(/\s+$/, '') + '\n' : '') + c.tpl
-    nextTick(() => {
-      const ta = textareaRef.value
-      if (!ta) return
-      ta.focus?.()
-      const el = ta.resizableTextArea?.textArea
-      if (el) el.setSelectionRange(el.value.length, el.value.length)
-    })
-  } else {
-    // act（立即执行的动作）不往正文插任何东西，触发片段必须摘掉，否则留下 "/新建会话" 残渣
-    // （带参的命令同理："/compact 保留结论"整段都要摘走，参数已在上方取到）
+  // 命令会改会话状态，不能和流式回答打架：/ 面板与「+」面板同一道闸。
+  // 挡下时顺手摘掉触发片段，否则「/新建会话」留在正文里，下一按 Enter 就当问题发出去了
+  if (loading.value) {
     stripTriggerToken()
     closeAllPanels()
-    c.run?.(args)
+    message.info('生成中，请等这轮回答结束后再执行')
+    return
   }
+  // 参数先取：下面 stripTriggerToken/closeAllPanels 会把触发片段与筛选词清掉，取晚了就只能拿到空串
+  const args = slashArgsOf(c)
+  // 命令不往正文插任何东西，触发片段必须摘掉，否则留下 "/新建会话" 残渣
+  // （带参的命令同理："/compact 保留结论"整段都要摘走，参数已在上方取到）
+  stripTriggerToken()
+  closeAllPanels()
+  c.run?.(args)
 }
 // ==================== # 历史引用面板（勾选本会话历史问答 → 本轮上下文） ====================
 const histOpen = ref(false)
@@ -2418,7 +2282,7 @@ const addStore = computed(() => addOnEdit.value ? {
 })
 /** 一级菜单的行：计数与描述按写入目标现算（编辑态没有「下一轮」可取消，措辞跟着改口径）；
  *  kbd 是主输入框的触发符，编辑卡正文不接这些符号所以不显示；快捷命令只属于主输入框——
- *  模板是往输入框插问法、操作会改会话状态，两者都与"改这一问"无关 */
+ *  那些操作会改会话状态，与"改这一问"无关 */
 const addRootRows = computed(() => {
   const s = addStore.value
   const edit = addOnEdit.value
@@ -2440,7 +2304,7 @@ const addRootRows = computed(() => {
       badge: () => s.histPicked().length, run: () => switchAddTab('hist') }
   ]
   if (!edit) rows.push({ key: 'cmd', name: '快捷命令', icon: ThunderboltOutlined, kbd: '/',
-    desc: '常用问法模板与即时操作', badge: () => 0, run: () => switchAddTab('cmd') })
+    desc: '压缩上下文、导出会话、新建会话', badge: () => 0, run: () => switchAddTab('cmd') })
   return rows
 })
 const addHistPool = computed(() => addStore.value.histPool.value)
@@ -2490,7 +2354,7 @@ const addFootHint = computed(() => {
   if (t === 'ref') return nav + `　|　引用只对${scope}生效：知识库 = 检索只在这些库里找；文档 = 内容直接带入上下文；智能体 = 强制咨询它（它带自己的知识库查一遍，回答仍由当前助手汇总）`
   if (t === 'skill') return nav + `　|　选用的技能随${scope}带上` + (edit ? '（一次最多 3 个）' : '，下一轮自动取消（一次最多 3 个）')
   if (t === 'hist') return nav + `　|　勾选的历史问答作为${scope}上下文带给模型（最多 10 条）`
-  return nav + '　|　模板 = 插入常用问法框架（可再编辑）；操作 = 立即执行'
+  return nav + '　|　命令立即执行，可附要求（如 /compact 保留结论）'
 })
 const addSkillList = computed(() => {
   const s = addSkillQuery.value.trim().toLowerCase()
@@ -2524,17 +2388,15 @@ const ensureRefCandidates = () => {
  *  两处键盘都走 onPanelNavKeydown，焦点在哪都能继续 ↑↓/Enter/Esc */
 const focusAddSearch = () => nextTick(() => {
   if (addSearchable.value) { addSearchEl.value?.focus?.(); return }
-  // 退回一级时聚焦原生 textarea 而非组件实例：antd 的 focus() 在 keydown 事件流里调用不生效
-  // （实测焦点落回 BODY，后续 Esc 全打空）。且同一事件流里连原生 focus() 也留不住，
-  // 必须 setTimeout 挪出事件流；click 流（点「+」打开）没这问题，多延一拍无害
+  // 退回一级时把焦点交回编辑区：antd 的 focus() 在 keydown 事件流里调用不生效（实测焦点落回 BODY，
+  // 后续 Esc 全打空），同一事件流里连原生 focus() 也留不住，必须 setTimeout 挪出事件流；
+  // click 流（点「+」打开）没这问题，多延一拍无害
   setTimeout(() => {
     if (addOnEdit.value) { editingRef.value?.focus?.(); return }
-    const ta = rawTextarea()
-    if (ta) {
-      ta.focus()
-      const n = ta.value.length
-      try { ta.setSelectionRange(n, n) } catch (err) { /* setSelectionRange 个别输入类型不支持，忽略 */ }
-    } else textareaRef.value?.focus?.()
+    const cp = composerRef.value
+    if (!cp) return
+    cp.focus()
+    cp.setCaret(text.value.length)
   }, 0)
 })
 /** 二级页是否由一级菜单进入（区别于敲 @ 直接落在引用页）：决定 Esc 在二级是退回一级还是整个关闭 */
@@ -2628,10 +2490,8 @@ const toggleEditAddPanel = () => {
   if (addOpen.value && addOnEdit.value) { closeAddPanel(); return }
   openAddPanel('edit')
 }
-/** 命令页点选：模板插入输入框（可再编辑）、操作立即执行；两者都收起面板。
- *  生成中「操作」与触发面板同口径禁用——那些命令会改会话状态，不能和流式回答打架 */
+/** 命令页点选：先收面板，执行与生成中的拦截都在 runSlashCommand 里 */
 const runCmdFromAddPanel = c => {
-  if (loading.value && c.kind === 'act') { message.info('生成中，请等这轮回答结束后再执行'); return }
   closeAddPanel()
   runSlashCommand(c)
 }
@@ -2701,7 +2561,7 @@ onUnmounted(() => document.removeEventListener('keydown', onSearchHotkey))
 const onDocEscKeydown = e => {
   if (e.key !== 'Escape' || e.isComposing || e.keyCode === 229) return
   if (!slashOpen.value && !histOpen.value && !addOpen.value) return
-  const hit = n => n instanceof HTMLElement && (n.closest('.mention-panel') || n.closest('.input-box'))
+  const hit = n => n instanceof HTMLElement && (n.closest('.mention-panel') || n.closest('.ci-box'))
   if (e.composedPath().some(hit)) return
   e.preventDefault()
   closeAllPanels()
@@ -2798,8 +2658,7 @@ const onInputKeydown = e => {
   // 唤起后焦点留在输入框，筛选词由 syncPanelQuery 从「触发字符到光标」之间的正文实时取。
   // 触发位置仍限「行首 / 空白后」，避免邮箱 a@b.com、URL 里的 / 误开面板。
   if ((e.key === '@' || e.key === '#' || e.key === '/') && !e.ctrlKey && !e.metaKey && !e.altKey) {
-    const ta = e.target
-    const pos = ta && typeof ta.selectionStart === 'number' ? ta.selectionStart : 0
+    const pos = composerCaret()
     const before = text.value.slice(0, pos)
     if (!before || /[\s（(【[]$/.test(before)) {
       // 记录触发字符即将落在的位置（keydown 时字符还没进 DOM，插入后下标即 pos）
@@ -2812,6 +2671,15 @@ const onInputKeydown = e => {
     return
   }
 }
+/** 引用来源折叠行的后缀：「N 段填入上下文」。仅当命中数与引用条数不同才补——
+ *  相同的时候再说一遍只是噪音（原实现把这段写死在模板里，抽组件后挪成具名函数） */
+const hitsNote = m => {
+  const t = m && m.tokens
+  const r = m && m.retrieved
+  if (!r || !t || t.hits == null || t.hits <= 0 || t.hits === r.refs) return ''
+  return `（${t.hits} 段填入上下文）`
+}
+
 const copyAnswer = async mi => {
   const m = messages.value[mi]
   if (!m || !m.content) { message.warning('该回答无可复制内容'); return }
@@ -2962,6 +2830,28 @@ const autosizeEditing = () => {
   el.style.height = Math.min(el.scrollHeight, 200) + 'px'
 }
 
+/** 编辑卡打开后问服务端一次：带凭据的那些到底还在不在，把真被清理的标出来。
+ *  问不到就**不改界面**也不静默当没查到——带死凭据发出去后端会明确拒，比把还能用的文件说成没了代价小。 */
+const probeEditAtts = async () => {
+  const at = editAtts.value
+  const withId = at.filter(f => f.fileId && !f.probed)
+  if (!withId.length) return
+  let split
+  try {
+    split = await splitAtts(withId.map(f => ({ name: f.name, mime: f.mime, size: f.size, fileId: f.fileId })))
+  } catch (e) {
+    message.warning(`附件状态没查到（${e.message || '请求失败'}），重发时若文件已过期会明确报错`)
+    return
+  }
+  if (editAtts.value !== at) return   // 期间已切到别的消息/收起卡片：这份结果作废
+  const deadIds = new Set(split.dead.map(d => d.fileId))
+  at.forEach(f => {
+    if (!f.fileId) return
+    f.probed = true
+    if (deadIds.has(f.fileId)) f.expired = true
+  })
+}
+
 const editMessage = mi => {
   if (loading.value || editingBusy.value) return
   const m = messages.value[mi]
@@ -2971,24 +2861,25 @@ const editMessage = mi => {
   editingIdx.value = mi
   editingMessageId.value = m.messageId
   editingText.value = m.content
-  // attachData（重发载荷 {name,mime,fileId}）与 attachments（展示 {name,mime,size}）合并成一份可编辑列表
+  // 编辑卡里的附件条：attachData（重发载荷 {name,mime,fileId}）与 attachments（展示 {name,mime,size}）合并。
   //
-  // 历史回放的消息只有 attachments、没有 attachData：上传文件按 chat.uploadRetentionHours
-  // （默认 24h）已清理，fileId 早已失效，带它重发会被后端以「附件已过期」拒掉。
-  // 所以历史条目照常回显成「已失效」卡片（不静默消失——那条曾经真的传上去过），
-  // 但没有 fileId，重发时由 okAtts = filter(f => f.fileId && !f.error) 自然滤掉。
+  // 三种形态必须分开说（此前一律写成「已失效」，把还能用的也说没了）：
+  //  · 带 fileId 且服务端确认字节还在 → 原样带走。刷新/切会话回来也一样，凭据现在随消息一起落库。
+  //  · 带 fileId 但服务端说没了 → 「已过保留期」（默认 24h 周期清理），要重传。
+  //  · 没 fileId（凭据开始落库之前发的存量消息）→ 「不可重发」，也要重传。
+  // 中间那种得问过服务端才敢下结论，判定与缓存见 chat/attachments.js。
   const metaByName = new Map((m.attachments || []).map(a => [a.name, a]))
-  const live = (m.attachData || []).map(a => {
+  const rows = (m.attachData || []).map(a => {
     const meta = metaByName.get(a.name) || {}
     // paste/text 只在展示侧（本轮内存消息）有：不带回来编辑卡就退化成普通文件条，也点不开全文
     return { size: meta.size, paste: isPastedText(meta), text: meta.text, uploading: false, error: '', ...a }
   })
-  const expiredNames = new Set(live.map(f => f.name))
-  const expired = (m.attachments || [])
-    .filter(a => !expiredNames.has(a.name))
+  const noHandle = (m.attachments || [])
+    .filter(a => !rows.some(r => r.name === a.name))
     .map(a => ({ name: a.name, mime: a.mime, size: a.size, paste: isPastedText(a), text: a.text,
-                  fileId: '', uploading: false, expired: true, error: '' }))
-  editAtts.value = [...live, ...expired]
+                  fileId: '', uploading: false, unavailable: true, error: '' }))
+  editAtts.value = [...rows, ...noHandle]
+  probeEditAtts()
   editMentions.value = [...(m.mentions || [])]
   // # 历史引用 / 技能：都是纯元信息（消息 ID、技能名），没有过期问题，可原样带回。
   // digest 走 histItemDigest 重算——历史回放的消息带上它，编辑卡的标题/摘要才能正常显示。
@@ -3228,9 +3119,9 @@ const {
   lastAi, lastRetrieved, lastSources, groupedSources, lastTokens, ctxTokens, ctxCapData, ctxRingDash,
   ctxRingLevel, panelAi, retryPanelRound, sessionArtifacts, sessionTokens, sessionTokensLabel, sessionTodos,
   sessionRetrieval,
-  // 图片与附件
-  pendingImages, removePendingImage, MAX_FILES, pendingFiles, hasUploadingFile, addFiles,
-  removePendingFile, takePastedFiles, takePastedText,
+  // 图片与附件（chip 的删除走编辑区 → onKeys 剪枝，不再需要按下标移除）
+  pendingImages, MAX_FILES, pendingFiles, hasUploadingFile, addFiles,
+  takePastedFiles, takePastedText, attachUploaded, attachImage,
   // @ 引用（面板与筛选词在「+」面板一节，高亮下标用本页自己的 addHi）
   mentionTab, mentionQuery, mentionLoading, mentionKbs, mentionDocs, pendingMentions,
   isMentioned, toggleMention, removeMention, loadMentionCandidates, MAX_MENTIONS,
@@ -3255,6 +3146,143 @@ const {
   closePanels: closeAllPanels,
   focusInput
 })
+
+// ==================== 输入框内联 chip（正文与引用同一条流） ====================
+// 两条单向通道，避免双向对账打转：
+//  · 数组 → DOM：任一数组变了就把「应有的 chip 集合」推给编辑区（面板勾选、上传完成、工具条开计划模式）；
+//  · DOM → 数组：用户在编辑区里删掉一颗 chip（Backspace / 点 ×）等价于取消那条引用。
+// 数据只在数组里，DOM 只管「谁在、排在哪」，所以发给模型的载荷与改造前完全一致。
+const PLAN_KEY = 'plan'
+const fileKeyOf = f => f?.chipKey || ''
+const imgKeyOf = p => p?.chipKey || ''
+const menKeyOf = m => `m:${m.type}:${m.id}`
+const skillKeyOf = n => `s:${n}`
+const histKeyOf = h => `h:${h.messageId}`
+/** 三类 @ 引用的差别（原 chip 行上的说明收进悬浮提示，正文上方不再占一行） */
+const MENTION_TIP = {
+  kb: '本轮检索收窄到该知识库',
+  agent: '本轮会强制咨询这位助手：它带着自己的知识库查一遍，回答仍由当前助手汇总',
+  doc: '该文档内容直接带入本轮上下文'
+}
+/** 数组里现在应该有的 chip（集合语义，顺序由编辑区自己保持） */
+const desiredKeys = () => [
+  ...pendingFiles.value.map(fileKeyOf),
+  ...pendingImages.value.map(imgKeyOf),
+  ...pendingMentions.value.map(menKeyOf),
+  ...pickedSkills.value.map(skillKeyOf),
+  ...pendingHistoryRefs.value.map(histKeyOf),
+  ...(planModeOn.value ? [PLAN_KEY] : [])
+].filter(Boolean)
+/** key → 画一颗 chip 所需的全部信息（fileId/dataUrl 也在这里，复制时随 text/html 外发） */
+const chipOf = key => {
+  if (!key) return null
+  if (key === PLAN_KEY) return {
+    kind: 'plan', icon: 'plan', name: '计划模式',
+    title: '每轮先产出执行计划，等你批准或修改后才开始回答', delTitle: '关闭计划模式'
+  }
+  if (/^f\d+$/.test(key)) {
+    const f = pendingFiles.value.find(x => fileKeyOf(x) === key)
+    if (!f) return null
+    const paste = isPastedText(f)
+    return {
+      kind: 'file', icon: 'file', paste,
+      name: paste ? pasteTitle(f.name) : f.name,
+      sub: paste ? pasteSub(f) : (f.uploading ? '上传中…' : (f.error ? '上传失败' : fmtSize(f.size))),
+      state: f.uploading ? 'uploading' : (f.error ? 'err' : (f.expired ? 'expired' : '')),
+      title: f.error || (paste ? '点击查看粘贴的全文' : f.name),
+      delTitle: '移除该附件',
+      fileId: f.fileId || '', mime: f.mime || '', size: f.size || 0
+    }
+  }
+  if (/^p\d+$/.test(key)) {
+    const p = pendingImages.value.find(x => imgKeyOf(x) === key)
+    if (!p) return null
+    return { kind: 'img', icon: 'img', name: '', thumb: p.dataUrl, title: '待发送图片（悬浮可看大图）', delTitle: '移除该图片' }
+  }
+  if (key.startsWith('m:')) {
+    const mm = pendingMentions.value.find(x => menKeyOf(x) === key)
+    if (!mm) return null
+    return {
+      kind: 'mention', mod: mm.type, icon: mm.type === 'doc' ? 'mention' : mm.type, name: mm.name || mm.id,
+      title: MENTION_TIP[mm.type] || '该引用只对本轮生效', delTitle: '移除该引用',
+      mtype: mm.type, id: mm.id
+    }
+  }
+  if (key.startsWith('s:')) {
+    const n = key.slice(2)
+    if (!pickedSkills.value.includes(n)) return null
+    return { kind: 'skill', name: n, avatar: n.slice(0, 1), title: '本轮带上这个技能', delTitle: '移除该技能' }
+  }
+  if (key.startsWith('h:')) {
+    const h = pendingHistoryRefs.value.find(x => histKeyOf(x) === key)
+    if (!h) return null
+    return {
+      kind: 'hist', icon: 'hist', name: histChipLabel(h) || h.messageId,
+      title: '该条历史问答会作为本轮上下文带给模型', delTitle: '移除该引用', messageId: h.messageId
+    }
+  }
+  return null
+}
+/** DOM 报回来的顺序 → 数组剪枝（谁被用户删了就取消谁）。
+ *  只剪「上一次在 DOM 里、这一次不在了」的：数组刚被程序化加过条目时 DOM 还没同步（syncChips 走 nextTick），
+ *  拿全量集合去比就会把刚加上的那条当作用户删掉的剪掉——粘贴还原附件就是这么丢的。 */
+const onKeys = keys => {
+  const keep = new Set(keys)
+  const removed = inlineKeys.value.filter(k => !keep.has(k))
+  inlineKeys.value = keys
+  if (!removed.length) return
+  const gone = new Set(removed)
+  const hit = k => gone.has(k)
+  if (pendingFiles.value.some(f => hit(fileKeyOf(f)))) pendingFiles.value = pendingFiles.value.filter(f => !hit(fileKeyOf(f)))
+  if (pendingImages.value.some(p => hit(imgKeyOf(p)))) pendingImages.value = pendingImages.value.filter(p => !hit(imgKeyOf(p)))
+  if (pendingMentions.value.some(m => hit(menKeyOf(m)))) pendingMentions.value = pendingMentions.value.filter(m => !hit(menKeyOf(m)))
+  if (pendingHistoryRefs.value.some(h => hit(histKeyOf(h)))) pendingHistoryRefs.value = pendingHistoryRefs.value.filter(h => !hit(histKeyOf(h)))
+  if (pickedSkills.value.some(n => hit(skillKeyOf(n)))) pickedSkills.value = pickedSkills.value.filter(n => !hit(skillKeyOf(n)))
+  if (planModeOn.value && gone.has(PLAN_KEY)) setPlanMode(false)
+}
+/** 数组 → 编辑区：增的插到光标处、减的摘掉节点，顺带重画（上传进度/体积/失败态都在 chip 上） */
+const syncChips = () => {
+  const cp = composerRef.value
+  if (!cp) return
+  cp.sync(desiredKeys())
+  cp.repaint()
+  inlineKeys.value = cp.domKeys()
+}
+watch([pendingFiles, pendingImages, pendingMentions, pickedSkills, pendingHistoryRefs, planModeOn], syncChips, { deep: true })
+/** 点附件 chip：粘贴文本卡点开看全文（其余类型的点开没意义，文件名全名已在悬浮提示里） */
+const onChipClick = key => {
+  const d = chipOf(key)
+  if (d && d.kind === 'file' && d.paste) openPasteView(pendingFiles.value.find(x => fileKeyOf(x) === key))
+}
+/** 粘回自己复制出去的一轮：附件按 fileId 直接挂回（不重传），图片按 data URL 挂回，引用/技能/历史走各自开关。
+ *  只认 data-wenqu-* 属性，正文仍取 text/plain——所以从别的应用粘进来的是纯文本，不会带进一堆标签。 */
+const restoreWenquChips = html => {
+  let doc = null
+  try { doc = new DOMParser().parseFromString(html, 'text/html') } catch (e) { return false }
+  const nodes = Array.from(doc.querySelectorAll('[data-wenqu-kind]'))
+  if (!nodes.length) return false
+  let n = 0
+  for (const el of nodes) {
+    const k = el.getAttribute('data-wenqu-kind')
+    if (k === 'file' && attachUploaded({ name: el.getAttribute('data-wenqu-name'), mime: el.getAttribute('data-wenqu-mime'),
+      size: Number(el.getAttribute('data-wenqu-size') || 0), fileId: el.getAttribute('data-wenqu-file-id') })) n++
+    else if (k === 'img' && attachImage(el.getAttribute('data-wenqu-dataurl'))) n++
+    else if (k === 'mention') {
+      const type = el.getAttribute('data-wenqu-mtype')
+      const id = el.getAttribute('data-wenqu-id')
+      const name = el.getAttribute('data-wenqu-name')
+      if (type && id && !isMentioned(type, id)) { toggleMention(type, { id, name, fileName: name }); n++ }
+    } else if (k === 'skill') {
+      const name = el.getAttribute('data-wenqu-name')
+      if (name && !pickedSkills.value.includes(name)) { toggleSkill(name); n++ }
+    } else if (k === 'hist') {
+      const id = el.getAttribute('data-wenqu-id')
+      const hit = id && histPool.value.find(m => String(m.messageId) === String(id))
+      if (hit && !isHistPicked(hit.messageId)) { toggleHistoryRef(hit); n++ }
+    } else if (k === 'plan' && !planModeOn.value) { setPlanMode(true); n++ }
+  }
+  return n > 0
+}
 
 // 右栏「任务清单」卡：有清单就默认展开（用户开这个功能就是为了看见还剩几步，收着没意义）
 const todoOpen = ref(true)
@@ -3353,6 +3381,19 @@ const planNeedsFold = plan => {
   if (!s.trim()) return false
   return s.split('\n').filter(x => x.trim()).length > 5 || s.length > 200
 }
+const planEditPlaceholder = computed(() => isNarrow.value
+  ? '不满意就继续对话：写下要改什么…'
+  : '不满意就继续对话：写下要改什么…（Enter 送出，Shift+Enter 换行）')
+/** 计划意见框回车=直接「继续对话」送出（与主输入框同一口径：Shift 留给换行，输入法选字的回车不算提交） */
+const onPlanPanelKeydown = e => {
+  if (e.isComposing || e.keyCode === 229) return
+  const c = curPlanCard.value
+  if (!c || c.busy || planExpired.value) return
+  if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault()
+    continuePlanConversation(pendingPlan.value, c.editText)
+  }
+}
 
 // ==================== 智能体提问面板（替换聊天输入框） ====================
 // 当前会话存在挂起中的提问时，底部聊天输入框整块替换为提问面板（模型在等答案，此刻也没法发新消息）；
@@ -3372,6 +3413,9 @@ const askPage = ref(0)              // 当前翻页（0 基）：一卡多问逐
 const askCustomRef = ref(null)
 const askNow = ref(Date.now())      // 倒计时心跳（仅挂起中有 deadline 时走表）
 const askHi = ref(null)             // 键盘高亮行（0..n-1=选项，n=自定义）；null=不高亮（推荐项不预选）
+const askCustomPlaceholder = computed(() => isNarrow.value
+  ? '输入你的回答…'
+  : '输入你的回答…（Enter 确认）')
 let askTimer = null
 // 当前展示的问题（随翻页切换）；越界时回退到最后一题
 const curAsk = computed(() => {
@@ -3472,6 +3516,14 @@ watch(() => {
   return a && !a.busy && !a.answered && !askExpired.value && a.questions.length > 0
     && a.sels.filter(s => s != null).length === a.questions.length
 }, (done) => { if (done) askSubmitAll(pendingAsk.value) })
+const onAskCustomKeydown = e => {
+  if (e.isComposing || e.keyCode === 229) return   // 输入法选字的回车不算提交
+  if (e.key === 'Enter') {
+    e.preventDefault()
+    e.stopPropagation()
+    commitCustomAt(askPage.value, true)
+  }
+}
 const onAskPanelKeydown = (e) => {
   const a = pendingAsk.value?.ask
   if (!a || a.busy || a.answered || askExpired.value) return
@@ -3486,8 +3538,9 @@ const onAskPanelKeydown = (e) => {
     askHi.value = (cur - 1 + total) % total
     focusAskRow()
     e.preventDefault()
-  } else if (e.key === 'Enter' || (e.key === ' ' && !inInput)) {
-    // 回车/空格=确认当前高亮项（点选或自定义），确认后自动跳下一题
+  } else if (!inInput && (e.key === 'Enter' || e.key === ' ')) {
+    // 回车/空格=确认当前高亮项（点选或自定义），确认后自动跳下一题；
+    // 自定义输入行里的回车由 onAskCustomKeydown 处理，免得两处分歧
     if (askHi.value == null) { e.preventDefault(); return }
     if (askHi.value < (curAsk.value.options || []).length) onPick(askHi.value)
     else commitCustomAt(askPage.value)
@@ -3538,7 +3591,7 @@ onMounted(async () => {
 
 <style scoped>
 /* --chat-col：消息列与输入卡片共用的居中列宽。两侧必须同宽同基准，否则宽屏下
-   两条竖边对不齐（.msg-block 与 .input-box 各写一个 max-width，改一处忘另一处就会漂）。
+   两条竖边对不齐（.msg-block 与输入卡片各写一个 max-width，改一处忘另一处就会漂）。
    --chat-sbw：消息区滚动条实测槽宽（onMounted 起由 syncScrollbarGutter 写入）。
    .messages 是滚动容器、.input 不是，两侧可用宽度天然差一个槽宽 → 居中基准错开半个滚动条。
    两侧内边距都按它补偿，差值归零。 */
@@ -3640,24 +3693,10 @@ onMounted(async () => {
   background: rgba(0, 0, 0, .03); border-radius: 6px; padding: 7px 9px; max-height: 160px; overflow: auto;
 }
 
-.row { display: flex; flex-wrap: wrap; margin-bottom: 20px; justify-content: center; }
-.msg-block {
-  position: relative; display: flex; flex-direction: column; min-width: 0;
-  /* 上限与 .input-box 同为 --chat-col。原来这里是 min(94%, 860px)：窄屏时 94% 生效，
-     消息列比输入卡片窄一截，两侧竖边再次错开。横向留白已由 .messages 的 padding 负责，
-     这里只需与输入卡片同宽即可（容器不够宽时 width:100% 自然收敛）。 */
-  max-width: var(--chat-col); width: 100%;
-}
-.msg-block.user { align-items: flex-end; }
-.msg-block.ai { align-items: flex-start; }
-.bubble { width: 100%; line-height: 1.65; }
-.bubble.user { background: var(--app-panel-2); border-radius: 12px; padding: 9px 14px; width: fit-content; max-width: 100%; }
-.bubble.user :deep(.md > p) { margin: 0; }
-.bubble.ai { background: transparent; padding: 0; }
+/* 行 / 消息块 / 气泡的样式已随布局进 chat/ChatThread.vue（与公开分享页共用一份）。
+   本页只保留"就地编辑"那两条：它们约束的是本页插进去的编辑卡 */
 
-.msg-imgs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
-.msg-img { width: 88px; height: 88px; object-fit: cover; border-radius: 8px; border: 1px solid var(--app-border); cursor: zoom-in; }
-/* 宽度与 .msg-block / .input-box 同源（--chat-col），否则三处各写 860 极易漂移 */
+/* 宽度与 .msg-block / 输入卡片同源（--chat-col），否则三处各写 860 极易漂移 */
 .pending-imgs { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 auto 8px; max-width: var(--chat-col); }
 .pending-img { position: relative; }
 .pending-img img { width: 60px; height: 60px; object-fit: cover; border-radius: 8px; border: 1px solid var(--app-border); cursor: zoom-in; }
@@ -3768,12 +3807,6 @@ onMounted(async () => {
 .artifact-desc { color: var(--app-text3); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .artifact-dl { color: var(--app-text3); margin-left: auto; }
 
-.degradation-bar {
-  margin-top: 8px; padding: 6px 10px; border-radius: 6px;
-  background: var(--app-warn-weak); border: 1px solid var(--app-warn-border); color: var(--app-warn-text);
-  font-size: 12px; line-height: 1.6; display: flex; flex-wrap: wrap; gap: 4px 12px;
-}
-.degradation-item { display: inline-block; }
 
 /* 手动压缩当场那条分隔线（在 v-for 外面，拿不到 .row 上的 --mdv-inset，自己补一份同样的内缩） */
 .cn-tail { --mdv-inset: calc((100% - min(94%, 860px)) / 2); margin: -8px 0 12px; }
@@ -3849,30 +3882,6 @@ onMounted(async () => {
 .ctx-ring.warn .ctx-ring-val { stroke: var(--app-warn); }
 .ctx-ring.danger .ctx-ring-val { stroke: var(--app-danger); }
 
-.retrieval-merged { margin-top: 8px; width: 100%; }
-.retrieval-line { display: flex; align-items: center; gap: 2px; font-size: 12px; color: var(--app-text3); user-select: none; cursor: pointer; }
-.retrieval-line:hover { color: var(--app-accent); }
-.retrieval-detail {
-  font-size: 12px; color: var(--app-text2); background: var(--app-panel-2); border: 1px solid var(--app-border);
-  border-radius: 8px; padding: 8px 10px; margin: 4px 0 2px; line-height: 1.6;
-}
-.rt-terms { margin-bottom: 6px; }
-/* 末行不留尾部外边距：右侧信息卡的小字同样只给 margin-top（.rp-terms），
-   卡片内末行若带 margin-bottom，多出的间距会落在 padding 内侧，
-   把单行文字顶得偏上（上 13px / 下 19px）、卡片下沿多出等量空白 */
-.retrieval-detail > :last-child { margin-bottom: 0; }
-.rt-tool-terms { color: var(--app-accent); }
-.rt-tool-tag {
-  display: inline-block; font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 999px;
-  background: var(--app-accent-weak); color: var(--app-accent); margin-right: 6px; vertical-align: 1px;
-}
-.rt-ref { padding: 3px 0; border-top: 1px dashed var(--app-border); cursor: pointer; }
-.rt-ref:hover { color: var(--app-accent); }
-.rt-ref-tag { color: var(--app-accent); margin-right: 4px; }
-/* 联网来源标记：与库内来源区分开，用户有权知道这条依据是网上的还是库里的 */
-.rt-ref-web { margin: 0 6px; padding: 0 5px; border-radius: 4px; background: var(--app-panel-2);
-  color: var(--app-text3); font-size: 11px; }
-.rt-snip { color: var(--app-text3); margin-top: 2px; }
 
 /* 子智能体编排卡片（仅委派模式；对齐通用智能体平台的子任务卡片：名字+状态+任务描述+要点结果） */
 .subagent-panel {
@@ -3979,7 +3988,6 @@ onMounted(async () => {
 /* @ 智能体委派徽标（§4）：与派遣徽标同族，但这是用户指令——常显，配色加重以示区别 */
 .delegated-chip { color: var(--app-accent); border-color: var(--app-accent); background: var(--app-accent-weak); font-weight: 500; }
 
-.fb-row { margin-top: 8px; display: flex; align-items: center; gap: 2px; }
 /* 重新生成的多版本切换器：与操作图标同一行，弱化呈现 */
 .ver-switch {
   display: inline-flex; align-items: center; gap: 1px; margin-right: 10px;
@@ -3992,7 +4000,6 @@ onMounted(async () => {
 .ver-btn:hover:not(:disabled) { background: var(--app-panel-2); color: var(--app-accent); }
 .ver-btn:disabled { opacity: .45; cursor: not-allowed; }
 .ver-idx { font-variant-numeric: tabular-nums; }
-.fb-row :deep(.fb-active) { color: var(--app-accent); }
 /* 本轮被叫停且没产出回答：跟在问题下方一行安静说明（与时间戳同一弱化口径），
    不造空回答气泡——「这一问没有回答」是那一问的事实，不是一条回答的内容 */
 .msg-stopped {
@@ -4044,19 +4051,6 @@ onMounted(async () => {
 }
 .jump-latest:hover { border-color: var(--app-border-strong); box-shadow: var(--app-shadow); }
 
-.input {
-  position: relative; flex: none;
-  /* 右内边距额外补一个滚动条槽宽：.messages 常驻槽（scrollbar-gutter: stable）比 .input 少一截，
-     不补则消息列的居中基准比输入卡片左移半个槽 → 两侧竖边错开，肉眼可见。
-     槽宽由 syncScrollbarGutter 实测写入 --chat-sbw（macOS 覆盖式滚动条为 0，Windows/Linux 为 8~15px）。 */
-  padding: 10px calc(32px + var(--chat-sbw)) 14px 32px;
-}
-.drop-overlay {
-  position: absolute; inset: 6px calc(32px + var(--chat-sbw)) 6px 32px; z-index: 6; pointer-events: none;
-  background: rgba(46,107,230,.06); border: 2px dashed var(--app-accent); border-radius: 14px;
-  display: flex; align-items: center; justify-content: center;
-  color: var(--app-accent); font-size: 14px; font-weight: 500;
-}
 /* 插话队列（输入框正上方）：生成中按发送先落到这里排队，点「立即发送」才真发给模型。
    没点之前是纯本地的，所以「删除/修改」是白拿的反悔窗口；拖动可排序。
    与 @引用/技能 chip 同一带、同宽居中——它是"还没发出去的话"，视觉上属于输入区而不是消息流。 */
@@ -4084,20 +4078,8 @@ onMounted(async () => {
 }
 .steer-act:hover { background: var(--app-panel-2); }
 .steer-act.primary { border-color: var(--app-accent); color: var(--app-accent); }
-.input-box {
-  position: relative; max-width: var(--chat-col); margin: 0 auto;
-  border: 1px solid var(--app-border); border-radius: 16px; background: var(--app-panel);
-  padding: 10px 12px 8px;
-  box-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 8px 20px -10px rgba(16, 24, 40, .10);
-  transition: border-color .2s, box-shadow .2s;
-}
-.input-box:focus-within {
-  border-color: var(--app-accent);
-  box-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 10px 26px -10px rgba(46, 107, 230, .30);
-}
-/* 已选引用标签：输入卡片正上方一行，与卡片同宽居中——缺 max-width 会贴窗口左缘，宽屏下像「跑出输入区」；
+/* 就地编辑卡里的引用标签（主输入框那一套已改成正文内联 chip，见 chat/Composer.vue）；
    × 可整体移除（@ 引用与技能 chip 共用） */
-.at-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 2px 4px 6px; max-width: var(--chat-col); margin: 0 auto; }
 .at-chip {
   display: inline-flex; align-items: center; gap: 4px; max-width: 260px;
   padding: 2px 6px; border-radius: 6px; font-size: 12px;
@@ -4107,7 +4089,6 @@ onMounted(async () => {
 .at-chip-del { flex: none; cursor: pointer; font-size: 13px; line-height: 1; opacity: .65; padding: 0 1px; }
 .at-chip-del:hover { opacity: 1; color: var(--app-danger); }
 /* @ 引用 chip：知识库/文档/智能体用图标与底色区隔（技能 chip 沿用 .skill-chip 原样） */
-.at-chips-note { font-size: 11px; color: var(--app-text3); align-self: center; margin-left: 2px; }
 .at-chip-ic { font-size: 12px; flex: none; }
 .mention-chip.mention-doc { background: var(--app-warn-weak); color: var(--app-warn-text); }
 /* @ 智能体 chip（§4 轮级委派）：沿用默认主色弱底，与 kb（同主色系）靠图标区分 */
@@ -4135,7 +4116,8 @@ onMounted(async () => {
   padding: 4px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .mention-head-word.dim { color: var(--app-text3); }
-.mention-tabs { display: flex; gap: 4px; padding: 8px 10px 2px; }
+/* 上下各 8px：药丸上沿不能压住表头那条分隔线（原来顶边距是 0，正好贴死） */
+.mention-tabs { display: flex; gap: 4px; padding: 8px 10px 0; }
 .mention-tab {
   display: inline-flex; align-items: center; gap: 4px; border: none; cursor: pointer;
   background: transparent; color: var(--app-text3); font-size: 12px;
@@ -4171,18 +4153,6 @@ onMounted(async () => {
 /* # 历史引用面板：问/答头像按角色着色（问=主色、答=弱底），一眼分清引用的是问题还是回答 */
 .mention-ava.hist-ava-q { background: var(--app-accent-weak); color: var(--app-accent); font-weight: 600; }
 .mention-ava.hist-ava-a { font-weight: 600; }
-/* / 命令面板：右侧类型徽标（模板=可再编辑 / 操作=立即执行），与勾选态视觉区分 */
-.slash-kind {
-  flex: none; font-size: 11px; padding: 1px 8px; border-radius: 999px;
-  background: var(--app-panel-2); color: var(--app-text3);
-}
-.slash-kind.k-tpl { background: var(--app-accent-weak); color: var(--app-accent); }
-.slash-kind.k-act { background: var(--app-warn-weak); color: var(--app-warn-text); }
-.input-area { resize: none; padding: 6px 4px; font-size: 14px; line-height: 1.6; border: none; background: transparent; }
-.input-area:focus { border: none; box-shadow: none; }
-.input-toolbar { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
-.toolbar-left { display: flex; align-items: center; gap: 2px; min-width: 0; }
-.toolbar-right { margin-left: auto; display: flex; align-items: center; gap: 2px; }
 /* ==================== 深度思考设置（悬浮下拉模型行弹出面板卡，参考模型详情面板形态） ====================
    面板 Teleport 到 body 以 fixed 定位：位置按悬浮的模型行实时给定（thinkPanelPos），
    z-index 1060 高于 antd 下拉（1050），叠在下拉上方且不被裁剪 */
@@ -4329,7 +4299,6 @@ onMounted(async () => {
   background: var(--app-accent); color: #fff; font-weight: 400; vertical-align: 1px;
 }
 /* 引用页的子页签：比头部低一级（弱底小块），否则两行同样式的药丸看不出谁包着谁 */
-.add-subtabs { padding: 0 10px 2px; }
 .add-subtabs .mention-tab { background: var(--app-panel-2); }
 .add-subtabs .mention-tab.on { background: var(--app-accent-weak); }
 .add-filter-row { padding: 8px 10px 0; }
@@ -4366,51 +4335,10 @@ onMounted(async () => {
   display: inline-flex; align-items: center; justify-content: center; background: rgba(255, 255, 255, .7);
 }
 
-/* 气泡内附件标签（历史回显） */
-.msg-files { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
-.msg-file {
-  display: inline-flex; align-items: center; gap: 5px; max-width: 260px;
-  padding: 4px 8px; border-radius: 8px; font-size: 12px;
-  background: rgba(255, 255, 255, .55); border: 1px solid var(--app-border);
-}
-.msg-file-ic { flex: none; color: var(--app-accent); font-size: 13px; }
-.msg-file-name { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.msg-file-size { flex: none; font-size: 11px; opacity: .65; }
 
-/* 长文本粘贴卡片（待发送 / 编辑卡 / 气泡内共用）：图标块 + 标题与体积两行，点开看全文。
-   放在 .pending-file / .msg-file 之后，靠同权重后置覆盖它们的单行 chip 尺寸；背景仍随基础类走主题 */
-.paste-card {
-  display: flex; align-items: center; gap: 10px; max-width: 320px; padding: 8px 10px;
-  border-radius: 10px; cursor: pointer;
-}
-.paste-card-ic {
-  flex: none; width: 32px; height: 32px; border-radius: 8px; font-size: 16px;
-  display: inline-flex; align-items: center; justify-content: center;
-  background: var(--app-panel); border: 1px solid var(--app-border); color: var(--app-accent);
-}
-.paste-card-txt { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.paste-card-name { font-size: 13px; color: var(--app-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.paste-card-sub { font-size: 11px; color: var(--app-text3); }
 .paste-view-bar { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
 .paste-view-meta { font-size: 12px; color: var(--app-text3); }
 
-.send-btn {
-  width: 30px; height: 30px; border-radius: 50%; border: none;
-  background: var(--app-accent); color: #fff; font-size: 15px; cursor: pointer;
-  display: inline-flex; align-items: center; justify-content: center; transition: background .2s;
-}
-.send-btn:hover:not(:disabled) { background: var(--app-accent-hover); }
-/* 禁用态：浅蓝底（--app-accent-disabled）+ 白图标，对比度太低，图标几乎看不见，
-   看着像按钮坏了。改灰底灰图标 —— 禁用就该"退后"而不是"变淡"（分享页同步）。 */
-.send-btn:disabled { background: var(--app-border); color: var(--app-text3); cursor: not-allowed; }
-/* 停止态：弱化危险色（浅红底+危险色内容，与 app-pill.err/右栏停止按钮同一视觉语言），不做实心红圆 */
-.send-btn.stop {
-  background: var(--app-danger-weak); color: var(--app-danger-text);
-  border: 1px solid var(--app-danger-border);
-}
-.send-btn.stop:hover:not(:disabled) { background: var(--app-danger-border); }
-/* 上膛态：按钮内嵌 esc 字样（生成中第一次 Esc 后出现，再按一次才停止），无键帽描边 */
-.send-btn .esc-cap { font-size: 10px; font-weight: 600; line-height: 1; letter-spacing: .5px; }
 
 /* 右侧状态栏 */
 .right-panel {
@@ -4684,28 +4612,18 @@ onMounted(async () => {
     width: 260px; border: 1px solid var(--app-border); border-radius: var(--app-radius);
     box-shadow: var(--app-shadow-lg); background: var(--app-panel); }
   /* 窄屏输入卡片会贴到右缘，为右下角全局帮助 FAB 让出角落（否则压住发送键一侧）。
-     让位量在 .input 的右内边距上叠加（含滚动条槽），不能再单独覆盖 padding-right，
-     否则会把上面为对齐做的补偿冲掉。 */
-  .input { padding-right: calc(56px + var(--chat-sbw)); }
-  /* 拖拽高亮框跟随卡片右缘（与 .input 同侧内边距） */
-  .drop-overlay { right: calc(56px + var(--chat-sbw)); }
+     让位量交给输入区组件叠加到它自己的右内边距上（--ci-right-extra），
+     而不是在这里覆盖 padding-right —— 卡片与拖拽框的几何现在只有组件那一份。 */
+  .chat-col { --ci-right-extra: 56px; }
 }
 @media (max-width: 768px) {
   /* 内边距从 32px 收到 10px，与 .chat-head 的横向节奏一致 */
   .messages { padding: 10px 10px 6px; overscroll-behavior-y: contain; }
-  /* padding 用简写：同时重置 1200 块的 padding-right:56px（窄屏 FAB 已隐藏）。
-     简写会把滚动条槽一起抹掉，所以再用长写补回来 —— 否则窄屏又不对齐。 */
-  .input { padding: 8px calc(10px + var(--chat-sbw)) calc(10px + var(--sab, 0px)) 10px; }
-  .drop-overlay { right: calc(10px + var(--chat-sbw)); left: 10px; }
   .chat-head { padding: 6px 10px; padding-top: calc(6px + var(--sat, 0px)); gap: 6px; }
   .chat-title { max-width: 42%; }
   .head-tip { display: none; }
   .welcome { padding: 40px 12px 24px; }
   .welcome-samples { grid-template-columns: 1fr; max-width: 100%; }
-  .bubble { max-width: 100%; }
-  /* 触摸热区：antd 的 28~32px 控件在手指上偏小 */
-  .send-btn { width: 34px; height: 34px; }
-  .input-toolbar .ant-btn, .input-toolbar .app-icon-btn { min-width: 34px; min-height: 34px; }
   /* 右栏浮层在窄屏近乎全屏：改成真正的底部 sheet 形态（圆角在上、留出底部安全区）。
      用 left/right 归零 + bottom:0 覆盖 1200 块给的 right:12px/top:56px 定位 */
   .right-panel.as-sheet {
@@ -4730,21 +4648,15 @@ onMounted(async () => {
 
   /* ---- 工具条窄屏形态：整条不换行 ----
      症状（真机 375px）：模型名 deepseek-flash 把「思考」按钮压成竖排两字。
-     成因：.input-toolbar 是 flex 但**没设 nowrap**，子项宽度总和超过容器时浏览器换行，
+     成因：工具条是 flex 但没设 nowrap，子项宽度总和超过容器时浏览器换行，
      而按钮内的文字被压窄后按字符断行。
-     修法：给 .input-toolbar 加 as-mobile 类并设 flex-wrap:nowrap（见 768 块）。
+     修法：nowrap 已内建在 chat/ChatInput.vue 的 ≤768 块里（工具条本身归它）。
      这里只补 PC 态没有的收窄项：智能体胶囊只留头像、模型 compact。 */
-  .input-toolbar.as-mobile { flex-wrap: nowrap; gap: 2px; }
-  .input-toolbar.as-mobile .toolbar-left,
-  .input-toolbar.as-mobile .toolbar-right { min-width: 0; }
-  .input-toolbar.as-mobile .toolbar-right { margin-left: auto; }
   /* 智能体胶囊窄屏只留头像：固定 34×34 圆形，触控热区达标且不占横向空间 */
   .agent-pill.as-icon { width: 34px; height: 34px; padding: 0; justify-content: center; border-radius: 50%; }
   .agent-pill.as-icon .agent-pill-lock { display: none; }  /* 锁标记在窄屏无空间表达，靠下拉里的文案 */
   /* 思考按钮不折行：nowrap 是必须的，否则「思考」两字会被压成上下两行 */
   .think-entry-txt { white-space: nowrap; }
-  /* 发送键在窄屏略缩，给工具条腾出宽度（仍 34px，触控达标） */
-  .input-toolbar.as-mobile .send-btn { flex: none; }
 }
 
 /* ==================== 触屏（hover:none）专属 ====================
