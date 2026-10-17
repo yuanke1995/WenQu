@@ -625,8 +625,10 @@ public class ChatController {
             @RequestParam(value = "cursor", required = false) String cursor,
             @Parameter(description = "每页条数（默认 10，上限 100）")
             @RequestParam(value = "size", required = false, defaultValue = "10") int size,
+            @Parameter(description = "工作区过滤（可选）：工作区 id；传 __unassigned__ 只看没挂工作区的存量会话；不传=全部")
+            @RequestParam(value = "projectId", required = false) String projectId,
             HttpServletRequest httpRequest) {
-        return ResultJson.ok(sessionService.listSessions(RequestUser.uid(), keyword, cursor, size));
+        return ResultJson.ok(sessionService.listSessions(RequestUser.uid(), keyword, cursor, size, projectId));
     }
 
     @Operation(summary = "置顶/取消置顶会话", description = "设置会话置顶状态，置顶会话排在列表最前")
@@ -843,10 +845,15 @@ public class ChatController {
         return ResultJson.ok(Map.of("deleted", deleted));
     }
 
-    @Operation(summary = "新建会话", description = "取一个空白会话供「新建对话」使用：优先复用当前用户已有的空会话（空会话恒为 1 条），没有才新建；返回会话 ID")
+    @Operation(summary = "新建会话", description = "取一个空白会话供「新建对话」使用：优先复用当前用户已有的空会话（空会话恒为 1 条），没有才新建；返回会话 ID。"
+            + "可选 projectId：把这条新对话归到指定工作区；不传=归兜底容器（历史兼容）；传 __none__=不挂任何工作区")
     @PostMapping("/session/new")
-    public ResultJson newSession(HttpServletRequest httpRequest) {
-        return ResultJson.ok(Map.of("sessionId", sessionService.createOrReuseEmptySession(RequestUser.uid())));
+    public ResultJson newSession(
+            @Parameter(description = "目标工作区（可选）；不传=兜底容器；__none__=不挂工作区")
+            @RequestParam(value = "projectId", required = false) String projectId,
+            HttpServletRequest httpRequest) {
+        return ResultJson.ok(Map.of("sessionId",
+                sessionService.createOrReuseEmptySession(RequestUser.uid(), projectId)));
     }
 
     @Operation(summary = "知识块详情", description = "获取指定知识块的全文内容（引用溯源：弹窗展示来源知识块全文与图片）")

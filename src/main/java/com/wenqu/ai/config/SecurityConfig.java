@@ -152,6 +152,9 @@ public class SecurityConfig implements WebMvcConfigurer {
         // 产物交付（我的产物）：普通用户可看/删**自己的**产物（ArtifactController 内按 uid 归属校验，
         // 管理员可越权）；文件下载走 /artifacts/** 签名地址，不经过本拦截器。
         if (path.equals("/api/ai/artifact") || path.startsWith("/api/ai/artifact/")) return true;
+        // 工作区容器（个人资产）：每个登录用户只看/管**自己的**工作区（ProjectController 内一律按
+        // RequestUser.uid() 过滤）。与产物同口径——工作区不是权限边界，它只是归属与过滤维度。
+        if (path.equals("/api/ai/project") || path.startsWith("/api/ai/project/")) return true;
         // 定时执行智能体（个人资产）：每人管自己的任务（ScheduledJobController 内按 uid 归属校验）
         if (path.equals("/api/ai/scheduled") || path.startsWith("/api/ai/scheduled/")) return true;
         // 站内通知（铃铛，个人资产）：列表/未读数/标记已读——接收人一律取登录 uid（NotificationController 内过滤），

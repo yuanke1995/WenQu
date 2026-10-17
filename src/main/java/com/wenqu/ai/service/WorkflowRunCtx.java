@@ -47,6 +47,8 @@ public final class WorkflowRunCtx {
      * 调试运行 / API 触发 / 恢复续跑为 null（无客户端可推，走非流式）。
      */
     final Consumer<String> tokenSink;
+    /** 本次运行所属工作区（可空）：运行期临时会话据此打上工作区归属，产物随之前进 */
+    String projectId;
 
     // ---- 工作流图片机制（与主问答管线同语义，镜像 ChatService 的 [图片N] 编号口径） ----
     /**

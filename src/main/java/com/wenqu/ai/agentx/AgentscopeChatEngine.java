@@ -63,6 +63,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private static final long LAUNCH_GRACE_MS = 30_000L;
 
     private final ModelRegistryService modelRegistry;
+    /** 工作区约定：注入 system prompt 的工作背景段（无工作区/无约定时为空） */
+    private final com.wenqu.ai.service.ProjectService projectService;
     private final ConfigService configService;
     private final AppProperties properties;
     private final WenquAgentxTools tools;
@@ -123,8 +125,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                                com.wenqu.ai.agent.plan.PlanModeService plan,
                                com.wenqu.ai.service.QaLogService qaLog,
                                com.wenqu.ai.agent.tool.ToolRegistry toolRegistry,
+                               com.wenqu.ai.service.ProjectService projectService,
                                java.util.function.Function<ChatCommand, com.wenqu.ai.service.ChatService.TurnModel> modelResolver) {
         this.modelRegistry = modelRegistry;
+        this.projectService = projectService;
         this.configService = configService;
         this.properties = properties;
         this.tools = tools;
@@ -255,7 +259,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
     /**
      * 解析并缓存会话状态存储。默认本地文件；仅当 {@code chat.agentscopeRedisEnabled=true} 时尝试 Redis。
-     * <p>Redis 路径全程兜底：连不上、鉴权失败、甚至 Jedis 类缺失（被项目既有 Jedis 声明压成低版本）
+     * <p>Redis 路径全程兜底：连不上、鉴权失败、甚至 Jedis 类缺失（被仓库既有 Jedis 声明压成低版本）
      * 都退回到本地文件并告警——绝不让「开个多副本开关」把框架引擎整体打挂。
      */
     private AgentStateStore stateStore(Path stateDir) {
@@ -350,7 +354,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         if (turn.fallbackNotice() != null) {
             pool.registrar().degrade("modelFallback", turn.fallbackNotice());
         }
-        channel.emit(RunEventType.STAGE, "框架引擎（AgentScope）正在回答…");
 
         // 本轮身份（轮级互斥外壳已经登记好 turnId）：待办落库、任务清单留痕、步数预算归零都认它
         String turnId = turnIdOf(cmd);
@@ -1623,6 +1626,21 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     /**
+     * 本轮的**工作背景段**：该工作区在工作区页写的约定，对工作区内所有会话全程有效。
+     * <p>取不到/没写约定一律返回空串——不能因为工作背景读失败就把整轮打挂，
+     * 也不能凭空塞一段「这是兜底容器」的噪声（每轮都是纯 token 成本）。
+     */
+    private String projectContext(ChatCommand cmd) {
+        try {
+            String ctx = projectService.projectContextOfSession(cmd.getSessionId());
+            return ctx == null ? "" : ctx;
+        } catch (Exception e) {
+            log.warn("[agentx] 工作背景读取失败（本轮不注入）session={}: {}", cmd.getSessionId(), e.getMessage());
+            return "";
+        }
+    }
+
+    /**
      * 只记账不播报的通道：读历史事件时用它——事件照样进 {@link Recording}（工具卡、思考全文都要落库），
      * 但不再发一遍给观众。
      */
@@ -2092,7 +2110,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 用户口径那条（正文/计划/清单不写沙盒路径与工具名）也要跟着挂：它原先长在已退役的手写
                 // 计划阶段里，框架这一路没人再说第二遍，而框架的 PLAN banner 与沙盒工具说明反而主动把
                 // 路径喂给模型——不挂回去，计划卡就变成「它打算在沙盒里怎么写文件」的说明书
-                .sysPrompt(rolePrompt(cmd) + tools.consultGuide(cmd) + PlanCopy.guidance()
+                .sysPrompt(rolePrompt(cmd) + projectContext(cmd) + tools.consultGuide(cmd) + PlanCopy.guidance()
                         + skillPrompt(cmd)
                         + com.wenqu.ai.agent.chat.RelatedPrompt.line(
                                 configService.getInt("retrieval.relatedCount", 3)))

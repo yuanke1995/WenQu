@@ -116,6 +116,8 @@ public class WorkflowService {
     private final ConfigService configService;
     private final UserConfigService userConfigService;
     private final ResourceVisibilityService visibility;
+    /** 工作区归属校验（工作流可挂工作区，运行记录与运行期会话跟着走） */
+    private final ProjectService projectService;
     private final WorkflowRunStreamService stream;
     private final NotificationService notificationService;
 
@@ -157,6 +159,29 @@ public class WorkflowService {
      * 共享范围存在 JSON 列里无法下推到 SQL，故先按「非本人 + 有 share_config」粗筛再逐个判定
      * （个人资产量级下可接受；判定与执行期 {@link #loadVisible} 完全同口径，不会出现"列表可见却打不开"）。
      */
+    /**
+     * 某个工作区下**本人**的工作流（工作区页用）。
+     * <p>只返回本人的：工作区是单用户容器，别人的工作流即便共享也不该混进这个工作区的「自己的编排」。
+     */
+    public java.util.List<java.util.Map<String, Object>> listByProject(String uid, String projectId) {
+        if (uid == null || uid.isBlank() || projectId == null || projectId.isBlank()) return java.util.List.of();
+        java.util.List<Workflow> rows = workflowMapper.selectList(new LambdaQueryWrapper<Workflow>()
+                .eq(Workflow::getUid, uid)
+                .eq(Workflow::getProjectId, projectId)
+                .orderByDesc(Workflow::getUpdateTime));
+        java.util.List<java.util.Map<String, Object>> out = new java.util.ArrayList<>();
+        for (Workflow w : rows) {
+            java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
+            m.put("id", w.getId());
+            m.put("name", w.getName());
+            m.put("status", w.getStatus());
+            m.put("projectId", w.getProjectId());
+            m.put("updateTime", w.getUpdateTime() == null ? null : w.getUpdateTime().toString());
+            out.add(m);
+        }
+        return out;
+    }
+
     public Map<String, Object> listVisible() {
         Principal p = Principal.current();
         ResourceVisibilityService.Principal vp = vp(p);
@@ -252,6 +277,11 @@ public class WorkflowService {
 
     /** 新建：名称必填、DSL 必须通过结构校验（不接受存进去的坏图） */
     public Workflow create(String name, String description, String dslText) {
+        return create(name, description, dslText, null);
+    }
+
+    /** 带工作区归属的创建（projectId 为空=不挂工作区；非空必须属于本人，fail-loud） */
+    public Workflow create(String name, String description, String dslText, String projectId) {
         if (name == null || name.isBlank()) throw new BizException("请填写工作流名称");
         if (name.length() > 100) throw new BizException("工作流名称不超过 100 个字符");
         if (description != null && description.length() > 500) throw new BizException("描述不超过 500 个字符");
@@ -264,6 +294,7 @@ public class WorkflowService {
         row.setName(name.trim());
         row.setDescription(description == null ? "" : description.trim());
         row.setDsl(dslText.trim());
+        row.setProjectId(resolveProjectId(projectId));
         row.setStatus("draft");
         row.setCreateTime(LocalDateTime.now());
         row.setUpdateTime(LocalDateTime.now());
@@ -274,7 +305,13 @@ public class WorkflowService {
 
     /** 更新：只改传了的字段；dsl 有变更时重新校验 */
     public Workflow update(String id, String name, String description, String dslText) {
+        return update(id, name, description, dslText, null);
+    }
+
+    /** 带工作区归属的更新（projectId 非 null 才改；空串=解除关联） */
+    public Workflow update(String id, String name, String description, String dslText, String projectId) {
         Workflow row = getOwn(id);
+        if (projectId != null) row.setProjectId(resolveProjectId(projectId));
         if (name != null) {
             if (name.isBlank()) throw new BizException("工作流名称不能为空");
             if (name.length() > 100) throw new BizException("工作流名称不超过 100 个字符");
@@ -918,6 +955,7 @@ public class WorkflowService {
         WorkflowRun run = new WorkflowRun();
         run.setId(UUID.randomUUID().toString());
         run.setWorkflowId(row.getId());
+        run.setProjectId(row.getProjectId());
         run.setDslSnapshot(dslText);   // 执行不可变：锁定本次运行用的 DSL（对齐 Coze run 语义）
         run.setTriggerType(triggerType);
         run.setTriggeredBy(triggeredBy);
@@ -941,8 +979,22 @@ public class WorkflowService {
     }
 
     /** 图执行内核（同步/异步共用）：入参校验 → 模型预解析（fail-fast）→ 编译 → 执行 → 出参提取 → 收口 */
+    /** 工作区归属校验：空 -> null（不挂工作区）；非空必须是本人的工作区（fail-loud）。 */
+    private String resolveProjectId(String projectId) {
+        if (projectId == null) return null;
+        String pid = projectId.trim();
+        if (pid.isEmpty()) return null;
+        if (projectService.ownedOrNull(RequestUser.uid(), pid) == null) {
+            throw new BizException("工作区不存在或不属于你：" + pid);
+        }
+        return pid;
+    }
+
     private WorkflowRun runGraph(WorkflowRun run, WorkflowRunCtx ctx, Workflow row, WorkflowDsl dsl) {
         try {
+            // 工作区归属：工作流挂工作区时，运行期创建的临时会话要带上同一个工作区 ——
+            // 这样运行中产生的产物（presentArtifact / deliver_artifact）才会落进工作区
+            ctx.projectId = row == null ? null : row.getProjectId();
             WorkflowEngine.checkStartInputs(dsl, ctx.inputs);
             engine.resolveModels(dsl, ctx);
             CompiledGraph compiled = engine.compile(dsl, ctx);

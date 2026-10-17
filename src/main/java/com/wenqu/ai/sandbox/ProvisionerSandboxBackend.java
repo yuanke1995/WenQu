@@ -56,8 +56,8 @@ import java.util.HexFormat;
  *   <li>执行超时与输出上限同上（新栈读 {@code SANDBOX_EXEC_TIMEOUT_SECONDS} / {@code SANDBOX_MAX_OUTPUT_BYTES}）。</li>
  *   <li>runtime client 的 token 由 {@code provider.token()} 静态取用
  *       改为 {@code provider.token()}（本工程没有静态单例）。</li>
- *   <li>去掉 {@code BackendPaths} 依赖（它其余方法是「项目 Workdir ↔ 沙盒路径」的双向映射，
- *       本工程无项目/工作区概念，不做该映射）。</li>
+ *   <li>去掉 {@code BackendPaths} 依赖（它其余方法是「工作区 Workdir ↔ 沙盒路径」的双向映射，
+ *       本工程无工作区/工作区概念，不做该映射）。</li>
  * </ul>
  * <p><b>未接线（显式标注）</b>：{@code downloadAuthorizedFileToPath} / {@code uploadAuthorizedFileFromPath} /
  * {@code listAuthorizedDirectory} / {@code createAuthorizedDirectory} / {@code deleteAuthorizedPath}
@@ -186,7 +186,7 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
 
     private List<String> writableRoots() {
         // 全自主档放开到容器根：/home/gem 之下的其它目录（~/.cache、pip 的 site-packages 等）
-        // 也在同一个会话级容器里，不是别人的空间
+        // 也在同一个会话级容器里，不是别人的工作区
         return unrestrictedWrites ? List.of("/") : List.of(userDataRoot);
     }
 
@@ -577,12 +577,34 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
      * 交给上层留存的全文上限（字符）：留存侧本身落盘只留前 4M 字，再大拿着也只是把整块老生代占在这一轮上。
      */
     private static final int MAX_FULL_OUTPUT_CHARS = 6 * 1024 * 1024;
+    /**
+     * 沙盒里「工作目录」的容器内路径。
+     *
+     * <p><b>为什么要在 Java 侧 cd</b>：runtime 的 {@code /v1/shell/exec} 固定在 {@code /home/gem} 执行
+     * （实测传 {@code cwd}/{@code workdir} 都被忽略），而 {@code /home/gem/user-data} 才是挂到宿主的工作区目录。
+     * 不 cd 的后果不是"路径不好看"，是**文件写到没挂载的目录里，容器回收即丢失**——
+     * 正好是工作区要解决的问题（2026-10-17 真机实测：echo > attendance.md 落在 /home/gem，宿主 projects/ 下空空如也）。
+     */
+    private static final String WORKSPACE_ROOT = "/home/gem/user-data";
+
+
+    /**
+     * 把命令包成「先进入工作目录再执行」。
+     * <p>用 {@code cd ... &&} 而不是 {@code ;}：进不去工作目录时应当**失败**，
+     * 而不是继续在 {@code /home/gem} 执行然后把文件丢在没有挂载的地方。
+     * <p>用 {@code { ...; }} 包住原命令：原命令里的 {@code cd} 只影响它自己那次执行，
+     * 也不会把多行脚本的语义改掉。
+     */
+    private static String inWorkspace(String command) {
+        if (command == null || command.isBlank()) return command;
+        return "cd " + WORKSPACE_ROOT + " && { " + command + "\n}";
+    }
 
     public ExecuteResponse execute(String command, Integer timeout) {
         try {
             SandboxRuntimeClient client = getClient();
             Duration t = timeout == null ? null : Duration.ofSeconds(timeout);
-            SandboxRuntimeClient.SandboxExecResult result = client.execCommand(command, t, false);
+            SandboxRuntimeClient.SandboxExecResult result = client.execCommand(inWorkspace(command), t, false);
             String output = result.output() == null ? "" : result.output();
             Integer exitCode = result.exitCode();
             boolean truncated = false;
@@ -644,7 +666,11 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
                 return new ExecuteResponse("Error: 沙盒输出流初始化失败: " + prep.output(), 1, false, true);
             }
             // ①′ 命令原文落盘为脚本（heredoc/多行/引号保真；理由见方法注释）
-            SandboxRuntimeClient.SandboxWriteResult wrote = client.writeFile(cmdPath, command);
+            // 脚本首行先进入工作目录：runtime 的 exec 固定在 /home/gem，而 /home/gem/user-data 才是
+            // 挂到宿主的工作区目录（见 WORKSPACE_ROOT 注释）。写在脚本里而不是拼命令行，是为了
+            // 保住 heredoc/多行/引号的原样语义（拼 shell 包装串会破坏 heredoc 终止符）。
+            SandboxRuntimeClient.SandboxWriteResult wrote = client.writeFile(cmdPath,
+                    "cd " + WORKSPACE_ROOT + " || exit 1\n" + command);
             if (!wrote.success()) {
                 return new ExecuteResponse("Error: 沙盒命令脚本落盘失败: "
                         + (wrote.message() == null ? "unknown error" : wrote.message()), 1, false, true);

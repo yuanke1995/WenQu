@@ -40,8 +40,9 @@ public class ScheduledJobController {
 
     @Operation(summary = "我的定时任务", description = "按创建时间倒序，附最近一次执行状态")
     @GetMapping("/list")
-    public ResultJson list() {
-        return ResultJson.ok(scheduledJobService.list(RequestUser.uid()));
+    public ResultJson list(
+            @org.springframework.web.bind.annotation.RequestParam(value = "projectId", required = false) String projectId) {
+        return ResultJson.ok(scheduledJobService.list(RequestUser.uid(), projectId));
     }
 
     @Operation(summary = "任务详情")

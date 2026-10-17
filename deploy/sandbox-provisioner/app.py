@@ -401,10 +401,25 @@ class SandboxOperationPins:
         self._active: dict[str, int] = {}
         self._deleting: set[str] = set()
 
-    def acquire(self, sandbox_id: str) -> None:
+    def acquire(self, sandbox_id: str, timeout: float | None = None) -> None:
+        """占一个操作 pin；同一 id 正在删除时等待其排空。
+
+        timeout 非空时等待有上界，超时抛 TimeoutError（端点转 503）。
+        没有上界的话，一个卡住的删除会让所有后续请求在该条件变量上无限期堆积，
+        每个都在线程池里占一个 token——最终连 /health 都拿不到线程（真机踩过）。
+        """
+        deadline = None if timeout is None else (time.monotonic() + timeout)
         with self._condition:
             while sandbox_id in self._deleting:
-                self._condition.wait()
+                if deadline is None:
+                    self._condition.wait()
+                else:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError(
+                            f"sandbox {sandbox_id} is being deleted; acquire timed out"
+                        )
+                    self._condition.wait(remaining)
             self._active[sandbox_id] = self._active.get(sandbox_id, 0) + 1
 
     def release(self, sandbox_id: str) -> None:
@@ -719,6 +734,38 @@ class LocalContainerProvisionerBackend:
         finally:
             os.close(fd)
 
+    def _prepare_project_workdir(self, uid: str, workdir_path: str) -> Path:
+        """确保**工作区级**工作目录存在，并返回应挂到 /home/gem/user-data 的宿主目录。
+
+        为什么不能沿用会话目录：会话沙盒把 ``sessions/{thread_id}`` 挂成 /home/gem/user-data，
+        每个会话一个独立根——工作区目录若也落在那里，同一工作区的两个会话看到的仍是各自的目录，
+        「共享工作区」根本不可能成立（2026-10-17 真机验证当场 400 并暴露该设计缺口）。
+
+        故带 workdir 的沙盒改为挂 **workspace 根**（shared/{uid}/workspace），与 k8s 初始化脚本
+        ``open_path('/mnt/user-data', shared/uid/workspace + workdir_parts)`` 的口径一致。
+        目录缺失时逐级创建（与 _prepare_session_workspace 同源），并按 1000:1000 + 0700 交付，
+        否则容器内文件服务（uid 1000）写不进去。
+        """
+        parts = ("shared", uid, "workspace") + tuple(PurePosixPath(workdir_path).parts)
+        self._ensure_directory_within(self._user_data_container_path, parts)
+        self._validate_directory_without_symlinks(
+            self._user_data_container_path, parts, label="workdir_path"
+        )
+        target = self._user_data_container_path
+        for part in parts:
+            target = target / part
+        fd = os.open(target, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            os.fchown(fd, SANDBOX_RUNTIME_UID, SANDBOX_RUNTIME_GID)
+            os.fchmod(fd, 0o700)
+        finally:
+            os.close(fd)
+        # 返回**工作区目录本身**的宿主路径（bind source）：
+        # 挂 workspace 根会让同 uid 的其它工作区目录一并可见——跨工作区隔离直接失效（真机实测过）。
+        # 与「会话沙盒把 session 目录挂成根」同一套思路：工作区根 = 本作用域可触达的全部。
+        # 必须是宿主路径：容器内路径（/app/user-data/...）会报 "not shared from the host"。
+        return Path(self._user_data_host_path) / "shared" / uid / "workspace" / Path(workdir_path)
+
     @staticmethod
     def _validate_directory_without_symlinks(
         root: Path, parts: tuple[str, ...], *, label: str
@@ -779,10 +826,27 @@ class LocalContainerProvisionerBackend:
         uid: str,
         thread_id: str,
     ) -> bool:
+        """校验 /home/gem/user-data 的挂载源。
+
+        两套布局：
+        - **会话沙盒**（无 workdir）：挂 ``shared/{uid}/workspace/sessions/{thread_id}``，
+          每个会话一个独立根，从挂载层杜绝跨会话读写；
+        - **工作区沙盒**（带 workdir）：挂 ``shared/{uid}/workspace``（workspace 根），
+          同一工作区的多个会话因此看到同一个工作区——这正是「工作区目录」的全部意义。
+
+        2026-10-17 真机根因：此函数原先只认会话布局，带 workdir 的容器在 discover 时被
+        判为「unexpected user-data mounts」→ **直接删除** → 代理随即 404 sandbox not found。
+        症状是"创建成功但立刻消失"，与被删对象无关的调用方很难看出原因。
+        """
+        labels = container.labels or {}
+        workdir_path = str(labels.get("workdir-path") or "").strip() or None
+        expected_source = (
+            Path(self._user_data_host_path) / "shared" / uid / "workspace" / Path(workdir_path)
+            if workdir_path
+            else self._session_workspace_host_path(uid, thread_id)
+        )
         expected_mounts = {
-            "/home/gem/user-data": str(
-                self._session_workspace_host_path(uid, thread_id)
-            ),
+            "/home/gem/user-data": str(expected_source),
         }
         actual_mounts = {
             str((mount.get("Destination") or "").rstrip("/")): str(
@@ -1124,16 +1188,11 @@ class LocalContainerProvisionerBackend:
                     safe_uid, safe_thread_id
                 )
                 user_skills = self._user_skills_host_path(safe_uid)
+            workdir_mount_root = None
             if safe_workdir_path and session_workspace is not None:
-                self._validate_directory_without_symlinks(
-                    self._user_data_container_path
-                    / "shared"
-                    / safe_uid
-                    / "workspace"
-                    / "sessions"
-                    / safe_thread_id,
-                    PurePosixPath(safe_workdir_path).parts,
-                    label="workdir_path",
+                # 工作区目录：建目录 + 换挂载根（详见 _prepare_project_workdir 的注释）
+                workdir_mount_root = self._prepare_project_workdir(
+                    safe_uid, safe_workdir_path
                 )
             network_name = self._ensure_network(sandbox_id)
 
@@ -1163,14 +1222,17 @@ class LocalContainerProvisionerBackend:
                     "mode": "ro",
                 }
             if not ephemeral_storage and session_workspace is not None:
-                run_kwargs["volumes"][str(session_workspace)] = {
+                mount_root = (
+                    workdir_mount_root if workdir_mount_root is not None
+                    else session_workspace
+                )
+                run_kwargs["volumes"][str(mount_root)] = {
                     "bind": "/home/gem/user-data",
                     "mode": "rw",
                 }
                 if safe_workdir_path:
-                    run_kwargs["working_dir"] = (
-                        f"/home/gem/user-data/{safe_workdir_path}"
-                    )
+                    # 工作区目录即工作区根，容器内不再有 projects/{id} 这一层
+                    run_kwargs["working_dir"] = "/home/gem/user-data"
             sandbox_env = (
                 merged_sandbox_env(self._sandbox_env, env or {}) if inherit_env else {}
             )
@@ -1975,6 +2037,19 @@ runtime_profile_name = sandbox_runtime_profile()
 backend_impl, backend_name = _build_backend()
 sandbox_operation_pins = SandboxOperationPins()
 sandbox_quiescence_gate = SandboxQuiescenceGate()
+# 创建并发上限与等待上界（见 create_sandbox 的注释）
+sandbox_create_slot_limit = max(1, int(os.getenv("SANDBOX_CREATE_CONCURRENCY", "6")))
+sandbox_create_slot_wait_seconds = max(
+    1.0, float(os.getenv("SANDBOX_CREATE_SLOT_WAIT_SECONDS", "15"))
+)
+sandbox_create_slots = threading.BoundedSemaphore(sandbox_create_slot_limit)
+# 同一 sandbox_id 的操作 pin 等待上界：删除排空期间不让后续请求无限堆积
+SANDBOX_PIN_WAIT_SECONDS = max(1.0, float(os.getenv("SANDBOX_PIN_WAIT_SECONDS", "10")))
+# 代理路径的 discover 上界：Docker 守护进程卡住时不能把线程一起带走
+SANDBOX_DISCOVER_TIMEOUT_SECONDS = max(
+    1.0, float(os.getenv("SANDBOX_DISCOVER_TIMEOUT_SECONDS", "15"))
+)
+
 idle_reaper = SandboxIdleReaper(backend_impl, sandbox_operation_pins)
 
 
@@ -2008,7 +2083,11 @@ def sandbox_response(record: SandboxRecord) -> SandboxResponse:
 
 
 @app.get("/health")
-def health():
+async def health():
+    # 必须是 async：uvicorn 把同步端点丢进 anyio 线程池（默认 40 个 token），
+    # 一旦创建/代理请求把线程占满，同步的 health 也会一起超时——2026-10-17 真机实测到
+    # 「连 /health 都 000」，导致运维无法区分「服务死了」与「线程池被占满」。
+    # 健康检查只读几个属性、不做 IO，放在事件循环里是安全的。
     tracked = len(idle_reaper._last_activity_at)  # noqa: SLF001
     return {
         "status": "ok",
@@ -2026,33 +2105,52 @@ def health():
     dependencies=[Depends(require_provisioner_auth)],
 )
 def create_sandbox(payload: CreateSandboxRequest):
+    # 全局创建闸：创建是最重的一次调用（起容器 + 等健康最长 300s），若允许无限并发，
+    # 每个请求都占一个 anyio 线程，很快把线程池吃光 —— 那正是「连 /health 都超时」的成因
+    # （真机 2026-10-17）。这里限流（默认 6），排不上的**立刻** 503 把线程还回去。
+    if not sandbox_create_slots.acquire(timeout=sandbox_create_slot_wait_seconds):
+        raise HTTPException(
+            status_code=503,
+            detail="too many concurrent sandbox creations; retry shortly",
+        )
     try:
-        sandbox_quiescence_gate.acquire_create()
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    try:
-        sandbox_operation_pins.acquire(payload.sandbox_id)
         try:
+            sandbox_quiescence_gate.acquire_create()
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        try:
+            # pin 等待有上界：删除排空期间不无限堆积（超时 → 503）
+            sandbox_operation_pins.acquire(
+                payload.sandbox_id, timeout=SANDBOX_PIN_WAIT_SECONDS
+            )
             try:
-                # Backend.create() already handles container reuse (discovers existing container first)
-                record = backend_impl.create(
-                    payload.sandbox_id,
-                    payload.thread_id,
-                    payload.uid,
-                    payload.env,
-                    workdir_path=payload.workdir_path,
-                    inherit_env=payload.inherit_env,
-                )
-            except ValueError as exc:
-                raise HTTPException(status_code=400, detail=str(exc)) from exc
-            except SandboxCapacityError as exc:
-                raise HTTPException(status_code=503, detail=str(exc)) from exc
-            except Exception as exc:  # noqa: BLE001
-                raise HTTPException(status_code=500, detail=str(exc)) from exc
+                try:
+                    # Backend.create() already handles container reuse (discovers existing container first)
+                    record = backend_impl.create(
+                        payload.sandbox_id,
+                        payload.thread_id,
+                        payload.uid,
+                        payload.env,
+                        workdir_path=payload.workdir_path,
+                        inherit_env=payload.inherit_env,
+                    )
+                except TimeoutError as exc:
+                    raise HTTPException(
+                        status_code=503,
+                        detail=f"sandbox operation is busy: {exc}",
+                    ) from exc
+                except ValueError as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
+                except SandboxCapacityError as exc:
+                    raise HTTPException(status_code=503, detail=str(exc)) from exc
+                except Exception as exc:  # noqa: BLE001
+                    raise HTTPException(status_code=500, detail=str(exc)) from exc
+            finally:
+                sandbox_operation_pins.release(payload.sandbox_id)
         finally:
-            sandbox_operation_pins.release(payload.sandbox_id)
+            sandbox_quiescence_gate.release_create()
     finally:
-        sandbox_quiescence_gate.release_create()
+        sandbox_create_slots.release()
     idle_reaper.touch(record.sandbox_id, generation=record.generation)
     return sandbox_response(record)
 
@@ -2249,7 +2347,10 @@ def delete_sandbox(sandbox_id: str, expected_generation: str | None = None):
 async def proxy_sandbox_request(sandbox_id: str, request: Request, path: str = ""):
     await asyncio.to_thread(sandbox_operation_pins.acquire, sandbox_id)
     try:
-        record = await asyncio.to_thread(backend_impl.discover, sandbox_id)
+        record = await asyncio.wait_for(
+            asyncio.to_thread(backend_impl.discover, sandbox_id),
+            timeout=SANDBOX_DISCOVER_TIMEOUT_SECONDS,
+        )
     except asyncio.CancelledError:
         sandbox_operation_pins.release(sandbox_id)
         raise

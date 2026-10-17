@@ -48,7 +48,7 @@ public class CollectingSseEmitter extends SseEmitter {
     private volatile boolean finished;
     /**
      * 过程事件的转发口（P3a 分支实时下钻）：分支那一轮没有浏览器通道，但它正在跑哪一步
-     * 是父轮卡片上唯一看不见的东西。登记后每帧过程事件（tool_status / tool_output / stage）
+     * 是父轮卡片上唯一看不见的东西。登记后每帧过程事件（tool_status / tool_output）
      * 原样转给父轮通道一次，父轮侧只改事件名、不改内容——不在此处重新组装一份协议。
      */
     private volatile java.util.function.BiConsumer<String, String> forwarder;
@@ -95,7 +95,7 @@ public class CollectingSseEmitter extends SseEmitter {
                     donePayload = c == null ? null : JSON.toJSONString(c);
                     settle();
                 }
-                case "tool_status", "tool_output", "stage" -> {
+                case "tool_status", "tool_output" -> {
                     java.util.function.BiConsumer<String, String> f = forwarder;
                     if (f != null) {
                         try {

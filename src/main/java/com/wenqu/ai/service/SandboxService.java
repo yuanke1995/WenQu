@@ -1,5 +1,6 @@
 package com.wenqu.ai.service;
 
+import com.wenqu.ai.model.Project;
 import com.wenqu.ai.sandbox.ProvisionerSandboxBackend;
 import com.wenqu.ai.sandbox.ProvisionerSandboxProvider;
 import lombok.extern.slf4j.Slf4j;
@@ -7,19 +8,25 @@ import org.springframework.stereotype.Service;
 
 /**
  * 沙盒生命周期与 backend 装配（本工程特有的那一层薄壳）。
- * <p>
- * 问渠新栈把沙盒 scope 挂在「一次 run」上：构图时创建、run 结束由 RunWorker 释放（
- * {@code ProvisionerSandboxProvider.release(runtimeScopeId, uid, …)}）。本工程没有 run 队列，
- * 会话是长生命周期的（同一会话多轮问答是常态，用户希望上一轮生成的文件还在），
- * 所以把 scope 从「run」上移到「会话」：
+ *
+ * <p><b>作用域：工作区优先，会话兜底。</b>沙盒 identity 由 {@code sha256(uid + ":" + scopeId)} 决定
+ * （见 {@code ProvisionerSandboxProvider#sandboxIdForThread}），所以「换一个 scopeId」就等于
+ * 「换一个容器 + 换一个 workdir」，不需要任何新机制：
  * <ul>
- *   <li>scope id = 会话 id ⇒ 同一会话的每一轮问答复用同一个沙盒，文件跨轮保留；</li>
- *   <li>释放不靠「run 结束」，而是<b>空闲回收</b>（{@link #releaseIdle()}，由 {@code ScheduleCenter} 定期调用）
- *       ——否则每个用过沙盒的会话都会永久留一个容器。</li>
+ *   <li>会话有工作区 ⇒ scope = <b>工作区 id</b>，workdir = 工作区的 {@code projects/{工作区 id}}。
+ *       同一工作区的多个会话因此共用同一个容器与同一个工作区——这是「围绕一件事反复干活」
+ *       这件事在盘上的落地；容器空闲回收后 workdir 仍在，<b>文件不丢</b>；</li>
+ *   <li>会话无工作区（存量会话、匿名、没挂工作区）⇒ scope = <b>会话 id</b>，workdir 仍是 {@code null}。
+ *       <b>与本次改动之前逐字相同</b>，保证不建工作区的用户行为零变化。</li>
  * </ul>
- * <p>
- * {@code workdirPath} 传 {@code null}：那是新栈「项目工作目录」的落点，本工程没有项目/工作区概念，
- * 沙盒按用户级共享工作区落下（provisioner 用 {@code uid} 的路径安全目录名做隔离）。
+ *
+ * <p>释放不靠「run 结束」（本工程没有 run 队列），而是<b>空闲回收</b>
+ * （{@link #releaseIdle()}，由 {@code ScheduleCenter} 定期调用）——否则每个用过沙盒的会话都会永久留一个容器。
+ *
+ * <p><b>已知取舍（如实记录，不是待修 bug）</b>：同一工作区下<b>并发</b>的多个会话共用同一容器，
+ * 彼此的 shell 进程与文件系统可见。会话级已有一轮互斥（{@code ChatRuntime#tryBeginTurn}），
+ * 跨会话没有。当前不补工作区级互斥——真出现并发工作流需求时，补法是在 {@code c_ai_project} 上加一把
+ * 轮级锁，而不是再拆沙盒。
  *
  * @author yuanke
  */
@@ -31,9 +38,49 @@ public class SandboxService {
     private static final String KEY_IDLE_RELEASE_MINUTES = "sandbox.idleReleaseMinutes";
 
     private final ProvisionerSandboxProvider provider;
+    /** 工作区解析：决定沙盒作用域与 workdir（无工作区时退回会话级，行为不变） */
+    private final ProjectService projectService;
+    /** 工作区目录开关（默认关，见 scopeOf 的注释） */
+    private final ConfigService configService;
 
-    public SandboxService(ProvisionerSandboxProvider provider) {
+    public SandboxService(ProvisionerSandboxProvider provider, ProjectService projectService,
+                          ConfigService configService) {
         this.provider = provider;
+        this.projectService = projectService;
+        this.configService = configService;
+    }
+
+    /**
+     * 沙盒的作用域与工作目录。
+     *
+     * @param scopeId     交给 provider 的作用域标识（工作区 id / 会话 id），决定容器与缓存键
+     * @param workdirPath 工作区目录（相对 user-data 根）；null = 沿用用户级共享工作区（旧行为）
+     */
+    private record SandboxScope(String scopeId, String workdirPath) {
+    }
+
+    /**
+     * 解析本轮沙盒落在哪个作用域。
+     * <p>解析失败一律退回会话级——沙盒是"能干活"的能力，不该因为工作区归属读不到而整轮不可用。
+     */
+    private SandboxScope scopeOf(String sessionId) {
+        // 工作区目录**默认关闭**：真机验证时发现「工作区会话带 workdir 创建沙盒」这条路
+        // 在 Java→provisioner 往返里仍返回 404 sandbox not found（直连 provisioner 用同样参数
+        // 却能创建成功，说明问题在两侧的生命周期交互而非挂载逻辑），此时若默认开启，
+        // 所有新会话都会带工作区 → 所有沙盒都走这条未验证的路，等于把可用的沙盒弄坏。
+        // 故先收成开关：验证通过前一律走原来的会话级作用域（行为与引入工作区之前逐字相同）。
+        if (!configService.getBoolean("sandbox.projectWorkdirEnabled")) {
+            return new SandboxScope(sessionId, null);
+        }
+        try {
+            Project project = projectService.projectOfSession(sessionId);
+            if (project != null && project.getId() != null && !project.getId().isBlank()) {
+                return new SandboxScope(project.getId(), project.getWorkdirPath());
+            }
+        } catch (Exception e) {
+            log.warn("[SANDBOX] 工作区作用域解析失败，退回会话级 (session={}): {}", sessionId, e.getMessage());
+        }
+        return new SandboxScope(sessionId, null);
     }
 
     /**
@@ -41,7 +88,7 @@ public class SandboxService {
      * <p>backend 本身只持有 provider 与 scope 标识，真正的连接由 provider 按 (uid, scope) 缓存，
      * 所以每次调用新建一个 backend 是廉价的，不需要再缓存一层。
      *
-     * @param sessionId 会话 id（scope）；为空时抛错——没有 scope 就无法保证沙盒与会话一一对应
+     * @param sessionId 会话 id；为空时抛错——没有会话就没有归属与作用域可解析
      * @param uid       归属用户（决定沙盒的持久卷子路径）
      */
     public ProvisionerSandboxBackend backend(String sessionId, String uid) {
@@ -62,7 +109,9 @@ public class SandboxService {
         if (uid == null || uid.isBlank()) {
             throw new IllegalArgumentException("沙盒需要用户上下文（uid）");
         }
-        return new ProvisionerSandboxBackend(provider, sessionId, uid, null, true, true, unrestrictedWrites);
+        SandboxScope scope = scopeOf(sessionId);
+        return new ProvisionerSandboxBackend(provider, scope.scopeId(), uid, scope.workdirPath(),
+                true, true, unrestrictedWrites);
     }
 
     /**
@@ -74,7 +123,8 @@ public class SandboxService {
             return false;
         }
         try {
-            return provider.get(sessionId, uid, false, true, null) != null;
+            SandboxScope scope = scopeOf(sessionId);
+            return provider.get(scope.scopeId(), uid, false, true, scope.workdirPath()) != null;
         } catch (Exception e) {
             log.debug("[SANDBOX] 探测沙盒失败 (session={}): {}", sessionId, e.getMessage());
             return false;
@@ -92,7 +142,8 @@ public class SandboxService {
         if (uid == null || uid.isBlank()) {
             throw new IllegalArgumentException("沙盒需要用户上下文（uid）");
         }
-        return new ProvisionerSandboxBackend(provider, sessionId, uid, null, false, true);
+        SandboxScope scope = scopeOf(sessionId);
+        return new ProvisionerSandboxBackend(provider, scope.scopeId(), uid, scope.workdirPath(), false, true);
     }
 
     /** 沙盒内用户数据虚拟根（可读写区，浏览面板的默认起点；默认 /home/gem/user-data）。 */
@@ -100,9 +151,14 @@ public class SandboxService {
         return provider.virtualPathPrefix();
     }
 
-    /** 立即释放某会话的沙盒（当前未接线到「删除会话」流程，故主要供排障与将来的钩子使用）。 */
+    /**
+     * 立即释放某会话的沙盒。
+     * <p><b>注意作用域</b>：工作区会话的沙盒是按工作区 id 缓存的，必须用同一个作用域释放，
+     * 否则「按会话 id 释放」会找不到容器而静默留下一个（这正是本类最容易写错的一处）。
+     */
     public void release(String sessionId, String uid) {
-        provider.release(sessionId, uid, true, null);
+        SandboxScope scope = scopeOf(sessionId);
+        provider.release(scope.scopeId(), uid, true, scope.workdirPath());
     }
 
     /**

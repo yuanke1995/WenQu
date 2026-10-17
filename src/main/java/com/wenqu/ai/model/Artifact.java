@@ -29,6 +29,15 @@ public class Artifact {
     /** 产生该产物的会话（可空：会话被清理后成果仍归属用户） */
     private String sessionId;
 
+    /**
+     * 所属工作区（{@code c_ai_project.id}）。
+     * <p>由 {@link #sessionId} 反推写入（落库时 session 已在手，不需要改方法签名）。
+     * <p><b>可空是一等状态</b>：{@code NULL} = 没挂工作区（存量产物即此值）。
+     * 删工作区时置 {@code NULL} 而<b>不删行</b>——“会话可以删…但产出的成果仍归人生”（见类注释），
+     * 级联删除会直接违反这条设计意图。
+     */
+    private String projectId;
+
     /** 产物文件名（已净化，含扩展名） */
     private String filename;
 

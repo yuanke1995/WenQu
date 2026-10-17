@@ -37,10 +37,13 @@ public class ArtifactController {
 
     private final ArtifactService artifactService;
 
-    @Operation(summary = "我的产物列表", description = "当前用户生成的产物（时间倒序；keyword 匹配文件名）；url 为可直接下载的签名地址")
+    @Operation(summary = "我的产物列表",
+            description = "当前用户生成的产物（时间倒序；keyword 匹配文件名）；url 为可直接下载的签名地址。"
+                    + "可选 projectId：只看某个工作区的产物；传 __unassigned__ 只看没挂工作区的存量产物；不传=全部")
     @GetMapping("/list")
-    public ResultJson list(@RequestParam(value = "keyword", required = false) String keyword) {
-        return ResultJson.ok(artifactService.list(RequestUser.uid(), keyword));
+    public ResultJson list(@RequestParam(value = "keyword", required = false) String keyword,
+                           @RequestParam(value = "projectId", required = false) String projectId) {
+        return ResultJson.ok(artifactService.list(RequestUser.uid(), keyword, projectId));
     }
 
     @Operation(summary = "删除产物", description = "删除自己的产物（同时删除文件）；删他人的返回 403")

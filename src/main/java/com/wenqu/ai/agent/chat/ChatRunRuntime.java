@@ -339,6 +339,7 @@ public class ChatRunRuntime {
      * <p>刻意不含 {@code done}：轮终态快照本就随助手消息落库（正文/时间线/工具列表/用量），
      * 账本再存一份只是把大 JSON 截断成半截文本，没有增量信息。也不含 token/thinking/process/
      * stage/image/plan_delta/keepalive 这类高频增量——它们会让账本行数淹没真正的执行轨迹。
+     * （stage 通道已整体退役：一轮的进行中提示只剩「整轮用时」那一条。）
      */
     private static final java.util.Set<String> LEDGER_SSE_TYPES = java.util.Set.of(
             "approval_required", "ask_user", "plan", "plan_approval", "plan_cancelled", "plan_superseded",

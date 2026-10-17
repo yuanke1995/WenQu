@@ -38,7 +38,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>
  * <b>与平台版的差异</b>（照搬语义、按本工程改造，不是逐字对齐）：
  * <ul>
- *   <li>去掉 project（项目）依赖——本工程没有项目概念；</li>
+ *   <li>去掉 project（工作区）依赖——本工程没有工作区概念；</li>
  *   <li>去掉统一请求队列 + worker 派发，改为直接调问答链路（本工程没有那套队列）；</li>
  *   <li>去掉 tool_approval_mode（本工程没有工具审批机制）；</li>
  *   <li>cron 用 Spring 自带的 {@link CronExpression}（5 段），不引 croniter 依赖；</li>
@@ -76,6 +76,9 @@ public class ScheduledJobService {
     private final ChatService chatService;
     private final SessionService sessionService;
     private final AgentMapper agentMapper;
+    /** 工作区：任务挂到工作区上时，结果会话要落进该工作区（校验归属也在这里） */
+    private final ProjectService projectService;
+    private final com.wenqu.ai.mapper.SessionMapper sessionMapper;
     /** 站内通知：定时任务终态（完成/失败）通知归属人。旁路语义，create 内部已全捕获 */
     private final NotificationService notificationService;
 
@@ -85,7 +88,9 @@ public class ScheduledJobService {
     public ScheduledJobService(ScheduledJobMapper jobMapper, ScheduledRunMapper runMapper,
                                ConfigService configService, ChatService chatService,
                                SessionService sessionService, AgentMapper agentMapper,
-                               NotificationService notificationService) {
+                               NotificationService notificationService,
+                               ProjectService projectService,
+                               com.wenqu.ai.mapper.SessionMapper sessionMapper) {
         this.jobMapper = jobMapper;
         this.runMapper = runMapper;
         this.configService = configService;
@@ -93,16 +98,27 @@ public class ScheduledJobService {
         this.sessionService = sessionService;
         this.agentMapper = agentMapper;
         this.notificationService = notificationService;
+        this.projectService = projectService;
+        this.sessionMapper = sessionMapper;
     }
 
     // ==================== CRUD ====================
 
     /** 我的任务列表（时间倒序），附最近一次执行状态 */
     public List<Map<String, Object>> list(String uid) {
-        List<ScheduledJob> jobs = jobMapper.selectList(new LambdaQueryWrapper<ScheduledJob>()
+        return list(uid, null);
+    }
+
+    /** 按工作区过滤（projectId 为空 = 全部）；工作区页据此显示「这个工作区会自己跑的任务」 */
+    public List<Map<String, Object>> list(String uid, String projectId) {
+        LambdaQueryWrapper<ScheduledJob> q = new LambdaQueryWrapper<ScheduledJob>()
                 .eq(ScheduledJob::getUid, uid)
                 .eq(ScheduledJob::getDeleted, 0)
-                .orderByDesc(ScheduledJob::getCreateTime));
+                .orderByDesc(ScheduledJob::getCreateTime);
+        if (projectId != null && !projectId.isBlank()) {
+            q.eq(ScheduledJob::getProjectId, projectId);
+        }
+        List<ScheduledJob> jobs = jobMapper.selectList(q);
         List<Map<String, Object>> out = new ArrayList<>(jobs.size());
         for (ScheduledJob job : jobs) {
             Map<String, Object> m = toDto(job);
@@ -260,6 +276,13 @@ public class ScheduledJobService {
             } else {
                 sessionService.ensureSession(sessionId, job.getUid());
             }
+            // 任务挂工作区：把结果会话的归属对齐到工作区（改绑也生效），产物与沙盒工作目录随之前进
+            if (job.getProjectId() != null && !job.getProjectId().isBlank()) {
+                sessionMapper.update(null,
+                        new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<com.wenqu.ai.model.Session>()
+                                .eq(com.wenqu.ai.model.Session::getId, sessionId)
+                                .set(com.wenqu.ai.model.Session::getProjectId, job.getProjectId()));
+            }
             run.setSessionId(sessionId);
             runMapper.updateById(run);
 
@@ -383,6 +406,19 @@ public class ScheduledJobService {
             if (p.isEmpty()) throw new BizException("请填写每轮发送给智能体的指令");
             job.setPrompt(trimTo(p, MAX_PROMPT));
         }
+        Object projectId = body.get("projectId");
+        if (creating || projectId != null) {
+            String pid = str(projectId).trim();
+            if (pid.isEmpty()) {
+                job.setProjectId(null);
+            } else {
+                // fail-loud：绑一个不属于自己的工作区，等于让任务往别人的目录里写东西
+                if (projectService.ownedOrNull(job.getUid(), pid) == null) {
+                    throw new BizException("工作区不存在或不属于你：" + pid);
+                }
+                job.setProjectId(pid);
+            }
+        }
         Object cron = body.get("cron");
         if (creating || cron != null) {
             String c = normalizeCron(str(cron));
@@ -443,6 +479,7 @@ public class ScheduledJobService {
 
     private Map<String, Object> toDto(ScheduledJob job) {
         Map<String, Object> m = new LinkedHashMap<>();
+        m.put("projectId", job.getProjectId() == null ? "" : job.getProjectId());
         m.put("id", job.getId());
         m.put("name", job.getName());
         m.put("prompt", job.getPrompt());

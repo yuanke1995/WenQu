@@ -50,14 +50,15 @@ public class WorkflowController {
     @Operation(summary = "新建工作流", description = "body: {name, description?, dsl}；DSL 必须通过结构校验（不收坏图）")
     @PostMapping
     public ResultJson create(@RequestBody Map<String, Object> body) {
-        Workflow row = workflowService.create(str(body, "name"), str(body, "description"), str(body, "dsl"));
+        Workflow row = workflowService.create(str(body, "name"), str(body, "description"), str(body, "dsl"),
+                str(body, "projectId"));
         return ResultJson.ok(Map.of("id", row.getId(), "name", row.getName()));
     }
 
     @Operation(summary = "更新工作流", description = "body: {name?, description?, dsl?}；只传要改的字段，dsl 变更会重新校验")
     @PutMapping("/{id}")
     public ResultJson update(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
-        Workflow row = workflowService.update(id, str(body, "name"), str(body, "description"), str(body, "dsl"));
+        Workflow row = workflowService.update(id, str(body, "name"), str(body, "description"), str(body, "dsl"), str(body, "projectId"));
         return ResultJson.ok(Map.of("id", row.getId(), "name", row.getName()));
     }
 

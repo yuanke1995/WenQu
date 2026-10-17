@@ -27,6 +27,8 @@ public class SandboxProvisionerClient {
     private final HttpClient http;
     private final Duration timeout;
     private final Duration deleteTimeout;
+    /** 创建沙盒的请求上界：provisioner 的健康检查上限是 300s，这里留 30s 余量 */
+    private static final Duration CREATE_TIMEOUT = Duration.ofSeconds(330);
     private final String authHeader;
 
     public SandboxProvisionerClient(String baseUrl, String token, int timeoutSeconds, int deleteTimeoutSeconds) {
@@ -91,6 +93,12 @@ public class SandboxProvisionerClient {
                     requestBuilder("POST", "/api/sandboxes", null)
                             .header("Content-Type", "application/json")
                             .POST(HttpRequest.BodyPublishers.ofString(body.toJSONString()))
+                            // 创建必须有上界：provisioner 侧建容器要等健康检查（最长 300s），
+                            // 而此前这里传 null（无请求超时）⇒ provisioner 一旦卡住，这个调用会**永久**
+                            // 占住一个 Tomcat 线程，重试还会在同一把 scope 锁上叠加阻塞
+                            // （2026-10-17 真机：provisioner 整体无响应，接口 120s 不返回，jstack 抓到线程停在
+                            //  本方法第 90 行的 send）。取 330s = provisioner 的 300s 健康上限 + 余量。
+                            .timeout(CREATE_TIMEOUT)
                             .build(),
                     HttpResponse.BodyHandlers.ofString());
         } catch (Exception e) {

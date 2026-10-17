@@ -77,6 +77,8 @@ public class ArtifactService {
     private final ConfigService configService;
     /** 运行总线：产物事件也要扇给「接流回来的观众」，直发原发起通道在断线后就送不到了 */
     private final ChatRunBus chatRunBus;
+    /** 工作区归属：产物由 session 反推工作区，与沙盒作用域共用同一份推导（{@link ProjectService#projectIdOfSession}） */
+    private final ProjectService projectService;
 
     /** 会话级 emitter 注册表：问答开始时登记，结束清理；供工具在流式执行中实时下发产物事件 */
     private static final ConcurrentHashMap<String, SseEmitter> EMITTERS = new ConcurrentHashMap<>();
@@ -90,13 +92,15 @@ public class ArtifactService {
 
     public ArtifactService(AppProperties properties, ImageUrlSigner imageUrlSigner,
                            ArtifactMapper artifactMapper, SessionMapper sessionMapper,
-                           ConfigService configService, ChatRunBus chatRunBus) {
+                           ConfigService configService, ChatRunBus chatRunBus,
+                           ProjectService projectService) {
         this.properties = properties;
         this.imageUrlSigner = imageUrlSigner;
         this.artifactMapper = artifactMapper;
         this.sessionMapper = sessionMapper;
         this.configService = configService;
         this.chatRunBus = chatRunBus;
+        this.projectService = projectService;
     }
 
     /** 问答开始时登记：sessionId → emitter（用于工具实时下发 artifact 事件） */
@@ -269,6 +273,9 @@ public class ArtifactService {
         row.setId(id);
         row.setUid(uid);
         row.setSessionId(sessionId);
+        // 工作区归属：由会话反推（sessionId 这里已在手，不需要改任何方法签名）。
+        // 解析不到 = 没挂工作区（null 是一等状态），不影响落库与下载。
+        row.setProjectId(projectService.projectIdOfSession(sessionId));
         row.setFilename(safeName);
         row.setExt(ext);
         row.setSize(bytes.length);
@@ -308,8 +315,14 @@ public class ArtifactService {
         return info;
     }
 
-    /** 我的产物列表（按 uid 归属，时间倒序；keyword 匹配文件名）。url 已按需签名；expireTime 按当前全局保留天数动态算出。 */
-    public List<Map<String, Object>> list(String uid, String keyword) {
+    /**
+     * 我的产物列表（按 uid 归属，时间倒序；keyword 匹配文件名）。
+     * <p>url 已按需签名；expireTime 按当前全局保留天数动态算出。
+     *
+     * @param projectId 可选：只看某个工作区的产物。{@code null}=不限工作区（现状行为）；
+     *                  传 {@code "__unassigned__"} 只看没挂工作区的（存量产物）。
+     */
+    public List<Map<String, Object>> list(String uid, String keyword, String projectId) {
         if (uid == null || uid.isBlank()) return List.of();
         int retentionDays = configService.getInt("artifact.retentionDays", ConfigDefaults.ARTIFACT_RETENTION_DAYS);
         LambdaQueryWrapper<Artifact> w = new LambdaQueryWrapper<Artifact>()
@@ -319,12 +332,25 @@ public class ArtifactService {
         if (keyword != null && !keyword.isBlank()) {
             w.like(Artifact::getFilename, keyword.trim());
         }
+        if (UNASSIGNED_PROJECT.equals(projectId)) {
+            w.isNull(Artifact::getProjectId);
+        } else if (projectId != null && !projectId.isBlank()) {
+            w.eq(Artifact::getProjectId, projectId);
+        }
         List<Map<String, Object>> out = new ArrayList<>();
         for (Artifact row : artifactMapper.selectList(w)) {
             out.add(toDto(row, retentionDays));
         }
         return out;
     }
+
+    /** 保持原签名（工作区过滤是新增可选维度，不该逼所有调用方改） */
+    public List<Map<String, Object>> list(String uid, String keyword) {
+        return list(uid, keyword, null);
+    }
+
+    /** 没挂工作区这一档的查询占位符（比空串更明确：null 在 MyBatis wrapper 里会被当成"不传"） */
+    public static final String UNASSIGNED_PROJECT = "__unassigned__";
 
     /** 取单个产物（校验归属，数据按 userId 隔离）。返回 null = 不存在或已删除。 */
     public Artifact getOwned(String id, String uid) {
@@ -543,6 +569,9 @@ public class ArtifactService {
         m.put("size", row.getSize());
         m.put("description", row.getDescription() == null ? "" : row.getDescription());
         m.put("sessionId", row.getSessionId());
+        // 工作区归属：null=没挂工作区（存量产物）。前端据此分组；**不**把 null 归进任何工作区，
+        // 因为"错误归属"比"没挂工作区"更难纠正（用户没法知道系统把哪份文件分错了）
+        m.put("projectId", row.getProjectId());
         m.put("createTime", row.getCreateTime() == null ? null : row.getCreateTime().toString());
         // 预计清理时间：不落库、按当前全局保留天数即时算，保证与 cleanupExpired 口径同源
         // （落库会在管理员改 retentionDays 后变成陈旧数据）；retentionDays ≤ 0 = 永不清理 → null

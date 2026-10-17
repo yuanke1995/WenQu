@@ -80,4 +80,13 @@ public class Session {
      * 见 {@link com.wenqu.ai.service.SessionService#KIND_TEMP}。
      */
     private String kind;
+
+    /**
+     * 所属工作区（{@code c_ai_project.id}）。
+     * <p><b>可空是一等状态</b>：{@code NULL} = 没挂工作区（存量会话即此值，不按时间/文件名猜测回填）。
+     * 所有读路径都必须容忍 {@code NULL}，它的语义就是「没有工作区」而不是「数据待修」。
+     * <p><b>不是权限边界</b>：只做归属与过滤，检索可见性判定不读它。
+     * <p>会话与工作区是**多对一**：一个工作区下可以有很多次对话，这也是为什么不能「把每个会话变成一个工作区」。
+     */
+    private String projectId;
 }

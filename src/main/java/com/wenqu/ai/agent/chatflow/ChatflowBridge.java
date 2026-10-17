@@ -83,7 +83,6 @@ public class ChatflowBridge {
                                  String replaceMessageId, String editVariantGroup, Agent delegatedAgent,
                                  String attachmentsJson, String mentionsJson) {
         runtime.sendSseEvent(emitter, "plan", JSON.toJSONString(List.of("执行工作流")), sessionId);
-        runtime.sendSseEvent(emitter, "stage", "正在执行工作流…", sessionId);
         // 本轮身份（把手在 chat() 入口已登记，工作流分支同样走那一条轮）：问答两侧都挂它，
         // 逐气泡「过程」才取得到本轮的账本事件
         final String workflowTurnId = runtime.turnIdOf(sessionId);

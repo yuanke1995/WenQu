@@ -150,8 +150,8 @@ CREATE TABLE IF NOT EXISTS `c_ai_agent_share` (
 CREATE TABLE IF NOT EXISTS `c_ai_user_memory` (
     `id`                VARCHAR(50)  NOT NULL COMMENT '主键ID',
     `uid`               VARCHAR(64)  NOT NULL COMMENT '所属用户（记忆按用户隔离，只注入本人会话）',
-    `content`           VARCHAR(500) NOT NULL COMMENT '记忆内容（一句独立可读的事实/偏好，如"用户负责XX项目的运维"）',
-    `category`          VARCHAR(20)  DEFAULT 'fact' COMMENT '类别: fact=事实偏好 instruction=指令约定 project=项目背景',
+    `content`           VARCHAR(500) NOT NULL COMMENT '记忆内容（一句独立可读的事实/偏好，如"用户负责XX工作区的运维"）',
+    `category`          VARCHAR(20)  DEFAULT 'fact' COMMENT '类别: fact=事实偏好 instruction=指令约定 project=工作背景',
     `source`            VARCHAR(20)  DEFAULT 'manual' COMMENT '来源: auto=问答后自动提取 manual=用户手动添加',
     `source_session_id` VARCHAR(50)  DEFAULT NULL COMMENT '来源会话ID（auto 时记录，便于溯源删除）',
     `hit_count`         INT          DEFAULT 0 COMMENT '被注入后续问答的次数（使用度）',
@@ -205,9 +205,11 @@ CREATE TABLE IF NOT EXISTS `c_ai_session` (
     `update_time`   DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     `deleted`       INT          DEFAULT 0 COMMENT '逻辑删除: 0=未删除, 1=已删除',
     `kind`          VARCHAR(16)  NOT NULL DEFAULT 'chat' COMMENT '会话种类：chat=用户发起的对话（进会话列表）；temp=平台内部临时会话（子智能体分支、工作流子智能体节点各跑一整轮，跑完即删），既不出现在会话列表也不参与「新建对话」的空会话复用',
+    `project_id`    VARCHAR(64)  DEFAULT NULL COMMENT '所属工作区（c_ai_project.id；NULL=没挂工作区，存量行为此值。可空是一等状态：所有读路径都必须容忍 NULL，不按时间/文件名猜测回填）',
     PRIMARY KEY (`id`),
     KEY `idx_deleted_update` (`deleted`, `update_time` DESC),
-    KEY `idx_user_update` (`user_id`, `deleted`, `update_time` DESC)
+    KEY `idx_user_update` (`user_id`, `deleted`, `update_time` DESC),
+    KEY `idx_project` (`project_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI会话表';
 
 CREATE TABLE IF NOT EXISTS `c_ai_message` (
@@ -667,6 +669,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_artifact` (
     `id`          VARCHAR(50)  NOT NULL COMMENT '主键ID (UUID)',
     `uid`         VARCHAR(64)  NOT NULL COMMENT '归属用户（c_ai_user.uid）',
     `session_id`  VARCHAR(64)  DEFAULT NULL COMMENT '产生该产物的会话（可空：会话清理后成果仍归人）',
+    `project_id`  VARCHAR(64)  DEFAULT NULL COMMENT '所属工作区（c_ai_project.id；由 session_id 反推写入，NULL=没挂工作区。删工作区时置 NULL 而不删行——"成果归人"这条设计意图不许被级联删除破坏）',
     `filename`    VARCHAR(120) NOT NULL COMMENT '产物文件名（已净化，含扩展名）',
     `ext`         VARCHAR(10)  DEFAULT NULL COMMENT '扩展名（小写，无点）',
     `size`        INT          DEFAULT 0 COMMENT '字节数',
@@ -676,8 +679,45 @@ CREATE TABLE IF NOT EXISTS `c_ai_artifact` (
     `create_time` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     PRIMARY KEY (`id`),
     KEY `idx_uid_time` (`uid`, `create_time`),
-    KEY `idx_session` (`session_id`)
+    KEY `idx_session` (`session_id`),
+    KEY `idx_project` (`project_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='产物交付表（模型生成的可下载文件）';
+
+-- ============================================
+-- 2026-10-17: 工作区容器（Project）
+-- 把「一个工作目录 + 若干次会话 + 若干份产物」收在一个可持续的根下。
+--
+-- 为什么加这张表：执行能力早就是工作区级的（沙盒、多步、产物），容器却停在会话级
+-- （沙盒目录按 sessions/{thread_id} 切分、跨会话互不可见），成果停在用户级（artifact 一张
+-- 扁平表）。换个会话 = 换一个世界。本表补的是中间那个聚合根。
+--
+-- 三条设计边界（写下来是为了挡住下一轮"顺手也做了吧"）：
+--   1. 归属 uid，**不是租户也不是部门**：问渠是单公司私有化产品（tenantId 全仓 0 命中），
+--      引入共享工作区等于引入一套新权限模型，不在本表范围；
+--   2. **不是权限边界**：project_id 只做归属与过滤，任何检索/可见性判定都不读它
+--      （walled 口径维持 P5 的解绑决定，别顺手加回来）；
+--   3. **不是必填概念**：每人一个 implicit 兜底容器由后台懒创建，用户不建工作区也能照常问答，
+--      只是产物开始有归属。
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS `c_ai_project` (
+    `id`               VARCHAR(64)  NOT NULL COMMENT '主键ID (UUID)',
+    `uid`              VARCHAR(64)  NOT NULL COMMENT '归属用户（c_ai_user.uid；单用户容器，不做共享）',
+    `name`             VARCHAR(255) DEFAULT NULL COMMENT '工作区名；implicit 容器可为空（不给它起名，界面只体现为侧栏「会话」栏）',
+    `selection_status` VARCHAR(20)  NOT NULL DEFAULT 'selectable' COMMENT 'implicit=每人一个自动默认（不可删、不进切换器） / selectable=用户显式创建可选中',
+    `workdir_path`     VARCHAR(512) NOT NULL COMMENT '工作区目录（相对 user-data 根的 POSIX 相对路径，形如 projects/{id}；provisioner 侧 normalize_workdir_path 会拒绝对路径与非法分量）',
+    `directory_mode`   VARCHAR(20)  NOT NULL DEFAULT 'managed' COMMENT 'managed=平台托管目录 / linked=关联用户已有目录（暂未实现，保留位）',
+    `instructions`     TEXT         DEFAULT NULL COMMENT '工作区约定：写一次即对该工作区**所有会话**生效（每轮注入 system prompt 的工作背景段）。这是「工作区」与「分类标签」的分界——没有它，每条对话都得重新交代背景',
+    `default_agent_id` VARCHAR(50)  DEFAULT NULL COMMENT '工作区默认助手：会话归属该工作区且用户没显式选助手时用它作答，其知识库范围随助手生效（工作区因此有自己的资料域）',
+    `status`           VARCHAR(20)  NOT NULL DEFAULT 'active' COMMENT 'active=正常 / archived=归档（只读保留，二期）',
+    `deleted`          INT          NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0=正常, 1=已删除（删工作区不删其下会话与产物，只把它们的 project_id 置 NULL）',
+    `idempotency_key`  VARCHAR(128) DEFAULT NULL COMMENT '幂等创建键（自动建 implicit 容器时防并发重复插）',
+    `create_time`      DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time`      DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_uid_idem` (`uid`, `idempotency_key`),
+    KEY `idx_uid_status` (`uid`, `selection_status`, `deleted`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工作区容器（把工作目录/会话/产物收在一个可持续的根下）';
 
 -- ============================================
 -- 2026-09-26: 定时执行智能体（用户自建的计划任务）
@@ -695,7 +735,8 @@ CREATE TABLE IF NOT EXISTS `c_ai_scheduled_job` (
     `agent_id`     VARCHAR(50)   DEFAULT NULL COMMENT '执行的智能体（空=当轮生效的默认智能体）',
     `prompt`       VARCHAR(2000) NOT NULL COMMENT '每轮发送给智能体的问题/指令',
     `cron`         VARCHAR(100)  NOT NULL COMMENT 'cron 表达式（5 段：分 时 日 月 周）',
-    `timezone`     VARCHAR(64)   NOT NULL DEFAULT 'Asia/Shanghai' COMMENT 'cron 的时区解释',
+    `timezone`     VARCHAR(64)   NOT NULL DEFAULT 'Asia/Shanghai',
+    `project_id`   VARCHAR(64)   DEFAULT NULL COMMENT '归属工作区（c_ai_project.id；空=不属于任何工作区）。挂工作区的任务：每轮结果会话落进该工作区，产物与工作目录也跟着进去' COMMENT 'cron 的时区解释',
     `deep_think`   INT           DEFAULT 0 COMMENT '本轮是否深度思考: 0=否 1=是',
     `model_ref`    VARCHAR(255)  DEFAULT NULL COMMENT '模型覆盖（{providerId}/{modelId}；空=个人默认）',
     `enabled`      INT           DEFAULT 1 COMMENT '启用: 1=启用 0=停用（停用时 next_run_at 清空）',
@@ -775,6 +816,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_workflow` (
     `published_at` DATETIME      DEFAULT NULL COMMENT 'M4：最近一次发布时间',
     `published_by` VARCHAR(64)   DEFAULT NULL COMMENT 'M4：最近一次发布者 uid',
     `schedule_cron` VARCHAR(64)  DEFAULT NULL COMMENT '定时触发 cron（5 段：分 时 日 月 周；NULL=未配置定时）',
+    `project_id` VARCHAR(64) DEFAULT NULL COMMENT '归属工作区（c_ai_project.id；空=不属于任何工作区）。挂工作区的运行：运行记录与运行期临时会话都归到该工作区，产物随之前进',
     `schedule_timezone` VARCHAR(64) DEFAULT NULL COMMENT '定时 cron 解释时区（默认 Asia/Shanghai）',
     `schedule_enabled` TINYINT   NOT NULL DEFAULT 0 COMMENT '定时触发开关（1=启用；只跑已发布版本）',
     `schedule_next_run_at` DATETIME DEFAULT NULL COMMENT '下次定时执行时刻（扫描器据此触发；未启用为 NULL）',
@@ -801,6 +843,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_workflow_run` (
     `version`      INT           DEFAULT NULL COMMENT 'M4：本次运行基于的发布版本号（NULL=草稿调试运行）',
     `dsl_source`   VARCHAR(16)   NOT NULL DEFAULT 'draft' COMMENT 'M4：本次运行用的 DSL 来源: draft=草稿 published=已发布版本',
     `api_key_id`   VARCHAR(50)   DEFAULT NULL COMMENT 'M4：API 触发所用的 Key id（人工/智能体触发为 NULL）',
+    `project_id` VARCHAR(64) DEFAULT NULL COMMENT '本次运行所属工作区（快照自工作流；空=无工作区）。供工作区页按工作区查运行记录',
     `error`        VARCHAR(1000) DEFAULT NULL COMMENT '失败原因（截断 1000 字符）',
     `started_at`   DATETIME      DEFAULT CURRENT_TIMESTAMP COMMENT '开始时刻',
     `finished_at`  DATETIME      DEFAULT NULL COMMENT '结束时刻',

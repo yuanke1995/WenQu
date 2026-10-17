@@ -70,4 +70,7 @@ public class WorkflowRun {
 
     /** 总耗时（毫秒） */
     private Long durationMs;
+
+    /** 归属工作区（可空）：挂工作区的运行，记录与运行期会话都归到该工作区 */
+    private String projectId;
 }

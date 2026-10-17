@@ -137,6 +137,8 @@ public class ChatService {
     /** 沙盒工具（execute / read_file / write_file / ls；tool.sandbox.enabled 控制，默认关，依赖 provisioner 服务） */
     /** 个人配置覆盖（个人设置 → 对话偏好）：流水线线程装载 ThreadLocal，本轮 configService.get 优先个人值 */
     private final UserConfigService userConfigService;
+    /** 工作区：默认助手解析（工作区页配的助手优先于个人默认） */
+    private final ProjectService projectService;
     /** 智能体配置（4.1）：对话页下拉选中后，按智能体覆盖模型/提示词/工具/知识库范围 */
     private final AgentService agentService;
     private final ModelRegistryService modelRegistryService;
@@ -286,7 +288,7 @@ public class ChatService {
         // @ 智能体（P5 换芯）：不换成它作答，而是要求它被咨询一次。
         // 用户显式点名的咨询不受 agent.enabled 影响：那是平台侧编排开关，这条是用户指令。
         final Agent forcedConsult = resolveDelegatedAgent(mentions, degradations, degradedCodes);
-        final Agent agent = resolveTurnAgent(agentId, degradations, degradedCodes);
+        final Agent agent = resolveTurnAgent(sessionId, agentId, degradations, degradedCodes);
         final boolean consultSelf = forcedConsult != null && agent != null
                 && forcedConsult.getId().equals(agent.getId());
         if (forcedConsult != null && !consultSelf) {
@@ -398,6 +400,7 @@ public class ChatService {
                       com.wenqu.ai.mapper.UserMapper userMapper,
                       ModelRegistryService modelRegistryService,
                       UserConfigService userConfigService,
+                      ProjectService projectService,
                       SessionEventService sessionEventService,
                       ChatRunBus chatRunBus,
                       ChatRunRuntime runtime,
@@ -413,6 +416,7 @@ public class ChatService {
         this.knowledgeBaseService = knowledgeBaseService;
         this.userMapper = userMapper;
         this.userConfigService = userConfigService;
+        this.projectService = projectService;
         this.modelRegistryService = modelRegistryService;
         this.sessionEventService = sessionEventService;
         this.chatRunBus = chatRunBus;
@@ -588,9 +592,19 @@ public class ChatService {
      * 现在资料域由模型经 consultAgent 主动派出去查，作答方不需要被锁，也没有"换人请新建会话"这回事。
      * <p>显式指定却解析不到（已删除或无权限）时 fail-loud：静默改用全局配置等于悄悄换人，用户无从察觉。
      */
-    private Agent resolveTurnAgent(String requestedAgentId, List<Map<String, String>> degradations,
+    private Agent resolveTurnAgent(String sessionId, String requestedAgentId,
+                                   List<Map<String, String>> degradations,
                                    Set<String> degradedCodes) {
         if (requestedAgentId == null || requestedAgentId.isBlank()) {
+            // 工作区默认助手优先于个人默认：用户在这个工作区里干活，就该由这个工作区配的助手回答
+            // （它的知识库范围/工具集随之生效）。显式请求的 agentId 仍然最优先——那是用户当场点的。
+            String projectAgent = projectService.defaultAgentIdOfSession(sessionId);
+            if (projectAgent != null) {
+                Agent mine = agentService.get(projectAgent);
+                if (mine != null) return mine;
+                runtime.addDegradation(degradations, degradedCodes, "projectAgentGone",
+                        "这个工作区绑定的默认助手已不可用（被删除或不再共享给你），本轮已改用你的默认助手");
+            }
             // 个人默认助手（设置页「对话偏好」里选的那位）：流水线线程已装载个人覆盖，直接 get 就是本人值。
             // 它为替代被删掉的"会话锁定"而存在——整天只跟一位助手聊的人不必每会话重挑一次。
             String personal = configService.get("agent.personalDefault");

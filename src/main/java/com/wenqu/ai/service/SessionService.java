@@ -11,6 +11,7 @@ import com.wenqu.ai.mapper.MessageMapper;
 import com.wenqu.ai.mapper.SessionMapper;
 import com.wenqu.ai.mapper.SessionShareMapper;
 import com.wenqu.ai.model.Message;
+import com.wenqu.ai.model.Project;
 import com.wenqu.ai.model.Session;
 import com.wenqu.ai.model.SessionShare;
 import com.wenqu.ai.thread.ThreadPoolManager;
@@ -60,6 +61,26 @@ public class SessionService {
     public static final String KIND_TEMP = "temp";
 
     /**
+     * 会话列表的「不属于任何真实工作区」过滤占位符。
+     *
+     * <p>与 {@link ArtifactService#UNASSIGNED_PROJECT}（{@code __unassigned__}，仅
+     * {@code project_id IS NULL}）不同：兜底容器（implicit 容器）是后端的兜底容器，
+     * 前端侧栏不把它当成一个「工作区」展示，它的会话要和真正没挂工作区的存量会话一起收进
+     * 顶部「会话」。故这里额外并入该用户 implicit 容器的 id，而不是改
+     * {@code __unassigned__} 的语义——产物页仍需要「真没挂工作区」那一档。
+     */
+    public static final String NO_SPACE_PROJECT = "__nospace__";
+
+    /**
+     * 「显式不挂工作区」占位符（{@code /session/new?projectId=__none__}）。
+     *
+     * <p>与「不传 projectId」区分开：不传仍按历史兼容口径落 implicit 兜底容器；
+     * 显式传这个值才创建 {@code project_id=NULL} 的会话。侧栏顶部「新建对话」用它，
+     * 这样「对话」才真正不属于任何工作区，而不是悄悄挂到兜底容器。
+     */
+    public static final String NO_PROJECT = "__none__";
+
+    /**
      * 原子追加：RPUSH 消息 → LTRIM 保留最近 max 条 → 重置 EXPIRE
      */
     private static final DefaultRedisScript<Long> APPEND_SCRIPT = new DefaultRedisScript<>(
@@ -77,6 +98,8 @@ public class SessionService {
     private final TransactionTemplate transactionTemplate;
     /** 会话级模型覆盖的可用的判定（这一列存的是一个模型引用，存进去之后供应商可能被停用、模型可能被移除） */
     private final ModelRegistryService modelRegistryService;
+    /** 工作区容器：新建会话时挂到该用户的 implicit 兜底容器（不建工作区也能问，只是产物无归属） */
+    private final ProjectService projectService;
 
     /**
      * 创建新会话（MySQL + Redis）
@@ -97,6 +120,19 @@ public class SessionService {
     }
 
     private String createSession(String userId, String kind) {
+        return createSession(userId, kind, null);
+    }
+
+    private String createSession(String userId, String kind, String projectId) {
+        // 旧口径：projectId 为空 ⇒ 再去解析 implicit 兜底容器
+        return createSession(userId, kind, projectId, false);
+    }
+
+    /**
+     * @param projectResolved true = projectId 已经是「解析后的最终归属」（null 表示显式不挂工作区），
+     *                        不再兜底到 implicit 兜底容器；{@code createOrReuseEmptySession} 走这条
+     */
+    private String createSession(String userId, String kind, String projectId, boolean projectResolved) {
         String sessionId = UUID.randomUUID().toString().replace("-", "");
         try {
             Session session = new Session();
@@ -104,11 +140,42 @@ public class SessionService {
             session.setUserId(normalizeUser(userId));
             session.setKind(kind);
             session.setMessageCount(0);
+            // 只有用户会话挂工作区：temp 是平台内部派出的一轮（子智能体分支、工作流子智能体节点），
+            // 挂进工作区会让「工作区里的对话」混进用户看不见的系统轮次。
+            // 工作区解析失败/用户匿名/显式不挂工作区 → projectId 留 null，问答链路照常（可空是一等状态）。
+            if (!KIND_TEMP.equals(kind)) {
+                String resolved = projectResolved
+                        ? projectId
+                        : ((projectId != null && !projectId.isBlank())
+                                ? projectId
+                                : resolveTargetProject(session.getUserId(), null));
+                if (resolved != null && !resolved.isBlank()) session.setProjectId(resolved);
+            }
             sessionMapper.insert(session);
         } catch (Exception e) {
             log.warn("创建会话 MySQL 写入失败: {}", e.getMessage());
         }
         return sessionId;
+    }
+
+    /**
+     * 解析本轮的目标工作区：显式传入 → 校验归属；未传 → 该用户的 implicit 兜底容器。
+     *
+     * @return 工作区 id；匿名/解析不出返回 null（问答照常，只是无归属）
+     * @throws com.wenqu.ai.common.BizException 显式传了但工作区不存在或不属于本人
+     */
+    private String resolveTargetProject(String uid, String projectId) {
+        // 显式「不挂工作区」：不再兜底到 implicit 兜底容器
+        if (NO_PROJECT.equals(projectId)) return null;
+        if (projectId != null && !projectId.isBlank()) {
+            Project p = projectService.ownedOrNull(uid, projectId);
+            if (p == null) {
+                throw new com.wenqu.ai.common.BizException("工作区不存在或不属于你：" + projectId);
+            }
+            return p.getId();
+        }
+        Project implicit = projectService.ensureImplicit(uid);
+        return implicit == null ? null : implicit.getId();
     }
 
     /**
@@ -126,7 +193,20 @@ public class SessionService {
      * 抢不到锁时稍等再查一次（持锁方已落库即可命中复用）。
      */
     public String createOrReuseEmptySession(String userId) {
+        return createOrReuseEmptySession(userId, null);
+    }
+
+    /**
+     * 新建对话（可指定工作区）。
+     *
+     * @param projectId 目标工作区；空/null = 兜底容器（历史兼容）；{@code "__none__"} = 显式不挂工作区。
+     *                  传了具体工作区就必须是本人的工作区（否则 BizException，不做静默回落——
+     *                  把用户明确选的工作区悄悄换掉，比拒绝更难排查）
+     */
+    public String createOrReuseEmptySession(String userId, String projectId) {
         final String uid = normalizeUser(userId);
+        // 目标工作区在加锁之前解析：解析失败要尽早暴露，不要让用户等一个锁
+        final String targetProject = resolveTargetProject(uid, projectId);
         final String lockKey = KEY_PREFIX + "empty-lock:" + uid;
         Boolean locked = null;
         try {
@@ -143,7 +223,17 @@ public class SessionService {
         }
         try {
             Session empty = findEmptySession(uid);
-            if (empty == null) return createSession(uid);
+            // 注意用 projectResolved=true：targetProject 为 null 表示用户显式要一条「不挂工作区」的
+            // 会话，不能再走 createSession 的旧口径把它兜底到 implicit 兜底容器。
+            if (empty == null) return createSession(uid, KIND_CHAT, targetProject, true);
+            // 空会话没有任何内容，改归属无副作用：用户在工作区 B 点「新建对话」就该拿到 B 的空会话；
+            // 从顶部「新建对话」进来（targetProject=null）时则要把它从旧工作区上摘下来——
+            // 旧条件只处理非 null，会让空会话继续留在兜底容器。
+            if (!Objects.equals(targetProject, empty.getProjectId())) {
+                sessionMapper.update(null, new LambdaUpdateWrapper<Session>()
+                        .eq(Session::getId, empty.getId())
+                        .set(Session::getProjectId, targetProject));
+            }
             // 领走之前洗一次：空行上存的模型是这条行上一辈子（或探针）留下的，这个新对话用户还没开始，
             // 留着就会让他第一问就收到一条「已清除你上次选的东西」。只洗不能用的——能用的那份是
             // 用户在开聊前主动选好的，必须原样带过去
@@ -232,6 +322,10 @@ public class SessionService {
         session.setId(sessionId);
         session.setUserId(normalizeUser(userId));
         session.setMessageCount(0);
+        // 补建的用户会话同样挂到 implicit 兜底容器——否则「老客户端直接带 sessionId 进来」
+        // 这条路上的会话会永远没有归属，而它恰恰是最常见的入口（前端新建对话后立刻发问）
+        Project project = projectService.ensureImplicit(session.getUserId());
+        if (project != null) session.setProjectId(project.getId());
         try {
             sessionMapper.insert(session);
         } catch (Exception e) {
@@ -259,14 +353,29 @@ public class SessionService {
      * @param size    每页条数（1~100，服务端强制收敛）
      */
     public SessionPage listSessions(String userId, String keyword, String cursor, int size) {
+        return listSessions(userId, keyword, cursor, size, null);
+    }
+
+    /**
+     * 会话列表（带工作区过滤）。
+     *
+     * @param projectId 可选：只看某个工作区的会话；{@code "__unassigned__"} 只看真正没挂工作区的存量会话；
+     *                  {@code "__nospace__"} 看「不属于任何真实工作区」（没挂工作区 + implicit 兜底容器，
+     *                  侧栏顶部「会话」用）；{@code null}=不限（现状行为）。工作区不是权限边界，只是归属与过滤维度。
+     */
+    public SessionPage listSessions(String userId, String keyword, String cursor, int size, String projectId) {
         final String uid = normalizeUser(userId);
         // anonymous 兼容池口径：仅调用方自身为 anonymous 时并入（等价于旧 canAccessAnonymousPool 判定）
         final boolean anonPool = RequestUser.ANONYMOUS.equals(uid);
         final int pageSize = Math.max(1, Math.min(size, 100));
         final String kw = (keyword == null || keyword.isBlank()) ? null : keyword.trim();
+        // 「不属于任何真实工作区」：在真没挂工作区之外，并入该用户的 implicit 兜底容器。
+        // 只查一次 id，三路查询共用；不懒创建（implicit 行不存在时本工作区下也不可能有会话）。
+        final String noSpaceImplicitId = NO_SPACE_PROJECT.equals(projectId)
+                ? projectService.implicitIdOf(uid) : null;
 
         // ---------- 分组计数：窄列查询（is_pinned/update_time/message_count）+ Java 分桶，一次查询覆盖全部桶 ----------
-        LambdaQueryWrapper<Session> countQ = baseWrapper(uid, anonPool, kw);
+        LambdaQueryWrapper<Session> countQ = baseWrapper(uid, anonPool, kw, projectId, noSpaceImplicitId);
         countQ.select(Session::getIsPinned, Session::getUpdateTime, Session::getMessageCount);
         LocalDateTime startOfToday = LocalDateTime.now().toLocalDate().atStartOfDay();
         LocalDateTime weekStart = startOfToday.minusDays(6);
@@ -288,12 +397,12 @@ public class SessionService {
         // ---------- 本页条目：置顶（仅首页） + 非置顶游标页 ----------
         List<SessionInfo> items = new ArrayList<>();
         if (cursor == null || cursor.isBlank()) {
-            LambdaQueryWrapper<Session> pinnedQ = baseWrapper(uid, anonPool, kw);
+            LambdaQueryWrapper<Session> pinnedQ = baseWrapper(uid, anonPool, kw, projectId, noSpaceImplicitId);
             pinnedQ.eq(Session::getIsPinned, 1)
                     .orderByDesc(Session::getUpdateTime);
             sessionMapper.selectList(pinnedQ).forEach(s -> items.add(toInfo(s)));
         }
-        LambdaQueryWrapper<Session> pageQ = baseWrapper(uid, anonPool, kw);
+        LambdaQueryWrapper<Session> pageQ = baseWrapper(uid, anonPool, kw, projectId, noSpaceImplicitId);
         pageQ.eq(Session::getIsPinned, 0);
         boolean hasCursor = cursor != null && !cursor.isBlank();
         if (hasCursor) {
@@ -330,7 +439,8 @@ public class SessionService {
      *  页容量——一旦积攒了 20+ 条空会话（如验证脚本直插、异常流程残留），最新的真实对话会被挤到
      *  第二页之后，侧栏整页"暂无会话"而组头计数正常（2026-10-14 实测）。空会话的复用由
      *  {@code createOrReuseEmptySession} 在服务端管理，不依赖列表返回空会话。 */
-    private LambdaQueryWrapper<Session> baseWrapper(String uid, boolean anonPool, String kw) {
+    private LambdaQueryWrapper<Session> baseWrapper(String uid, boolean anonPool, String kw,
+                                                    String projectId, String noSpaceImplicitId) {
         LambdaQueryWrapper<Session> wrapper = new LambdaQueryWrapper<>();
         wrapper.and(w -> {
             w.eq(Session::getUserId, uid);
@@ -338,6 +448,23 @@ public class SessionService {
         });
         wrapper.ne(Session::getKind, KIND_TEMP);
         wrapper.gt(Session::getMessageCount, 0);
+        // 工作区过滤（可选）：
+        //   __nospace__      = 不属于任何真实工作区（没挂工作区 + implicit 兜底容器）
+        //   __unassigned__   = 真正没挂工作区的存量会话（产物页共用这个口径）
+        //   其余非空值        = 按工作区 id 精确匹配
+        if (NO_SPACE_PROJECT.equals(projectId)) {
+            final String implicitId = noSpaceImplicitId;
+            wrapper.and(w -> {
+                w.isNull(Session::getProjectId);
+                if (implicitId != null && !implicitId.isBlank()) {
+                    w.or().eq(Session::getProjectId, implicitId);
+                }
+            });
+        } else if (ArtifactService.UNASSIGNED_PROJECT.equals(projectId)) {
+            wrapper.isNull(Session::getProjectId);
+        } else if (projectId != null && !projectId.isBlank()) {
+            wrapper.eq(Session::getProjectId, projectId);
+        }
         if (kw != null) {
             String esc = escapeLike(kw);
             wrapper.and(w -> w.like(Session::getTitle, escapeLikeWildcard(kw))
@@ -385,6 +512,7 @@ public class SessionService {
             info.setAgentId(s.getAgentId());
             info.setAgentName(s.getAgentName() == null ? "" : s.getAgentName());
         }
+        info.setProjectId(s.getProjectId());
         info.setModel(s.getModel() == null ? "" : s.getModel());
         // 这一列存的是某次点选留下的引用，而它随时可能变成不能用（供应商停用、模型被移除）：
         // 判不出来就只能等回答时撞上游报错，用户读到的是「网关坏了」而不是「你选的这个模型没了」。

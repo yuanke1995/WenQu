@@ -93,4 +93,7 @@ public class Workflow {
     private LocalDateTime createTime;
 
     private LocalDateTime updateTime;
+
+    /** 归属工作区（可空）：挂工作区的运行，记录与运行期会话都归到该工作区 */
+    private String projectId;
 }

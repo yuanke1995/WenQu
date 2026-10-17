@@ -14,7 +14,6 @@ public enum RunEventType {
 
     TOKEN("token"),
     PROCESS("process"),
-    STAGE("stage"),
     WARN("warn"),
     THINKING("thinking"),
     THINKING_DONE("thinking_done"),

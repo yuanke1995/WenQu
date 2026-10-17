@@ -59,6 +59,13 @@ public class ScheduledJob {
     /** 该任务的结果会话（懒创建，之后每轮追加） */
     private String sessionId;
 
+    /**
+     * 归属工作区（c_ai_project.id，可空）。
+     * <p>挂到工作区上之后：每轮执行的结果会话落进该工作区，产物与沙盒工作目录也跟着进去 ——
+     * 工作区因此不只是「存东西的地方」，而是能「自己按时间干活」的地方。
+     */
+    private String projectId;
+
     private LocalDateTime createTime;
 
     private LocalDateTime updateTime;

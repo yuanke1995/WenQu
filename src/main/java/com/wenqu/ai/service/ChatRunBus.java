@@ -61,9 +61,9 @@ public class ChatRunBus {
     /**
      * 镜像给迟到者的「状态型」事件：只留最后一份值，随快照一起给（给它们发增量没有意义）。
      * <p>前端把 {@code snapshot.events} 按普通事件重放，所以这里存的必须是<b>事件原文的 content</b>，
-     * 与实时下发时喂给回调的值同源（stage 是文案，plan/todo/retrieved/usage 是 JSON 串）。
+     * 与实时下发时喂给回调的值同源（plan/todo/retrieved/usage/warn 是 JSON 串）。
      */
-    private static final List<String> MIRROR_TYPES = List.of("stage", "plan", "todo", "retrieved", "usage", "warn");
+    private static final List<String> MIRROR_TYPES = List.of("plan", "todo", "retrieved", "usage", "warn");
 
     private final ConfigService configService;
 

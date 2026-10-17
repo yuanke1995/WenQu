@@ -417,7 +417,7 @@ public class ConfigService {
         d.put("chat.sampleQuestions",
                 "🔍 知识检索｜帮我查一下问渠怎么上传文档\n"
                         + "📝 总结提炼｜帮我总结一份文档的核心要点\n"
-                        + "✍️ 辅助写作｜帮我起草一份项目周报的框架\n"
+                        + "✍️ 辅助写作｜帮我起草一份周报的框架\n"
                         + "📊 对比分析｜帮我对比一下两个方案的优缺点");
         // 接口限流（按用户/IP 固定窗口）
         d.put("ratelimit.enabled", String.valueOf(properties.getRatelimit().isEnabled()));
@@ -552,6 +552,13 @@ public class ConfigService {
         d.put("tool.runcode.maxParallel", "8");             // 脚本内并发上限（生成模块里的信号量，也防打爆平台线程池）
         d.put("tool.runcode.timeoutSeconds", "120");        // 单次脚本运行上限（沙盒命令超时）
         d.put("tool.runcode.subCallTimeoutMs", "60000");    // 单个子调用的等待上限（脚本侧 HTTP 超时）
+        // 工作区目录（沙盒挂 shared/{uid}/workspace 的 projects/{id} 而非会话目录）
+        // 默认关：该路径的 Java→provisioner 往返尚未通过真机验证（2026-10-17 实测 404），
+        // 开启前请先跑通 SandboxProjectScopeTest 之外的端到端用例；关着时沙盒行为与引入工作区之前一致。
+        // 工作区目录在**宿主**上的根：工作区页的文件浏览直接读它（沙盒与后端同机部署时成立；
+        // 远端 provisioner 部署下这里读不到，接口会如实返回「不可用」而不是假装空列表）
+        d.put("sandbox.userDataHostDir", System.getProperty("user.dir") + "/user-data");
+        d.put("sandbox.projectWorkdirEnabled", "false");
         d.put("tool.sandbox.enabled", "false");                   // 沙盒工具总开关（跟随 tool.enabled）
         // ---------- 权限档位（P2：沙盒执行档 × 工具执行确认，捆成具名预设）----------
         // 档位取值见 PermissionPreset：research=只读调研 standard=常规 autonomous=全自主。

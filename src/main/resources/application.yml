@@ -7,7 +7,7 @@ spring:
   application:
     name: wenqu
   profiles:
-    # 本地开发：local（每台机器独立的本地配置，位于项目根 config/application-local.yml——Spring Boot 外部配置目录，
+    # 本地开发：local（每台机器独立的本地配置，位于工作区根 config/application-local.yml——Spring Boot 外部配置目录，
     # 不进构建产物，含密钥与数据目录，已被 gitignore）
     # 生产部署：不激活 local（或激活但无 profile 文件即纯默认值），通过环境变量提供密钥与 AI_IMAGES_DIR
     active: local
