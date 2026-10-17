@@ -580,7 +580,7 @@
                 </div>
               </div>
               <div class="pub-hint">
-                粘贴到 Claude Desktop 的 Integrations 或项目根目录 .cursor/mcp.json。
+                粘贴到 Claude Desktop 的 Integrations 或仓库根目录 .cursor/mcp.json。
                 地址含凭据等同密钥：撤销分享或关掉上面开关立即失效。外部调用同样受限——沙盒 / 产物 / 个人技能与个人 MCP 不暴露。
               </div>
             </template>

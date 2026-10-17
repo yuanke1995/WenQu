@@ -113,7 +113,7 @@
                 <template v-if="(record.menuIds || []).length">
                   <span v-for="mid in record.menuIds" :key="mid" class="menu-tag">{{ menuNameOf(mid) }}</span>
                 </template>
-                <span v-else class="rb-none">未归属</span>
+                <span v-else class="rb-none">未挂菜单</span>
               </template>
             </a-table-column>
             <a-table-column title="操作" key="action" width="130">
@@ -604,7 +604,7 @@ const checkedApiIds = ref([])
 const checkedMenuSet = computed(() => new Set(checkedMenuIds.value))
 const checkedApiSet = computed(() => new Set(checkedApiIds.value))
 
-/** 未归属任何现存菜单的接口（挂「其他接口」伪分组） */
+/** 未挂到任何现存菜单的接口（挂「其他接口」伪分组） */
 const ungroupedApis = computed(() => {
   const menuIdSet = new Set(menus.value.map(m => m.id))
   return apis.value.filter(a => !(a.menuIds || []).some(mid => menuIdSet.has(mid)))

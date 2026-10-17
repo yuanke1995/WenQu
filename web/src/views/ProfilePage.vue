@@ -123,7 +123,7 @@
             <span v-if="memories.length" class="mem-count">{{ memories.length }} 条</span>
           </h2>
           <p class="pf-hint">
-            开启时，系统会在每轮问答后自动提炼值得长期记住的信息（偏好、项目背景、明确要求记住的事），
+            开启时，系统会在每轮问答后自动提炼值得长期记住的信息（偏好、工作背景、明确要求记住的事），
             并在你之后的对话中自动带上。这里可以查看、修改、删除——删掉的就永远不会再被提起。
           </p>
           <!-- 用户级开关：仅控制「自动生成」，已存记忆的注入不受影响（逐条删除即可） -->
@@ -557,7 +557,7 @@ const memSaving = ref(false)
 const memDraft = ref('')
 const memEditing = ref('')
 const memEditDraft = ref('')
-const CATEGORY_LABELS = { fact: '事实', instruction: '约定', project: '项目' }
+const CATEGORY_LABELS = { fact: '事实', instruction: '约定', project: '工作背景' }
 const categoryLabel = c => CATEGORY_LABELS[c] || '事实'
 // 手动添加可选分类（后端 addManual 本就支持 category，此前前端没暴露）
 const CAT_OPTIONS = Object.entries(CATEGORY_LABELS).map(([value, label]) => ({ value, label }))

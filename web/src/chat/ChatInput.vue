@@ -233,7 +233,7 @@ const showStop = computed(() => props.sending && !(props.steerable && props.canS
   .ci-toolbar { flex-wrap: nowrap; gap: 2px; }
   .ci-left, .ci-right { min-width: 0; }
   .ci-right { margin-left: auto; }
-  /* 触摸热区：antd 的 28~32px 控件在手指上偏小。发送键给到 44px —— 项目里
+  /* 触摸热区：antd 的 28~32px 控件在手指上偏小。发送键给到 44px —— 仓库里
      分享页与移动壳的触控标准都是 44（check:share / check:mshell 按 44 断言），
      主对话页窄屏原为 34px，此处一并对齐到同一口径 */
   .ci-toolbar .ant-btn { min-width: 34px; min-height: 34px; }

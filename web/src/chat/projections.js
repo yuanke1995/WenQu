@@ -92,9 +92,9 @@ const TOOL_DESCS = {
   plan_exit: '计划写完了，请你过目；你同意后它才开始动手',
   resolve_library_id: '先确定要查阅哪个库的官方文档',
   query_docs: '到对应库的官方文档里查找相关内容',
-  read_wiki_structure: '浏览开源项目 Wiki 的目录结构',
-  read_wiki_contents: '阅读开源项目 Wiki 的具体内容',
-  ask_wiki_question: '就开源项目 Wiki 的内容提问并取回答案',
+  read_wiki_structure: '浏览开源仓库 Wiki 的目录结构',
+  read_wiki_contents: '阅读开源仓库 Wiki 的具体内容',
+  ask_wiki_question: '就开源仓库 Wiki 的内容提问并取回答案',
   list_wiki_repos: '列出当前账号在 DeepWiki 上已建索引的仓库',
   generate_wiki: '为指定仓库生成一份代码 Wiki 文档'
 }
@@ -265,16 +265,6 @@ const consultChatView = t => {
     error: s.error || ''
   }
 }
-// ==================== 阶段文案（只给分享页那条提示用） ====================
-// 主对话页（PC 与移动壳）不读这里：一轮的进行中提示只有一处，就是「整轮用时」那一条
-// （见 turnHead）。原先气泡底下还有一行阶段文案，与它上下同屏、各说各话——用户点名的就是
-// 这一对重复。分享页没有那一条，仍靠这里把后端 stage 帧显示成一行提示。
-// 「正在理解问题…」并入检索档——它只占 ~1 秒，独立换词带来的是闪烁而不是信息
-// （理解/改写/路由的细节由工具卡、检索行等具体构件表达）。
-// 计划模式、执行工作流是独立模式的进程文案，原样保留不并档。
-const STAGE_LABELS = { '正在理解问题…': '正在检索资料…' }
-const stageLabel = s => (s ? (STAGE_LABELS[s] || s) : '')
-
 // ==================== 时间线（正文与工具交错渲染） ====================
 // 正文与工具卡片按事件到达顺序交错渲染。timeline 是段数组：
 //   {kind:'text', from, to}  → 指向 m.content 的切片区间（不复制文本，done 换正文时自动跟随）；
@@ -452,12 +442,20 @@ const clusterProcCount = cl => (cl?.segs || []).filter(s => s && s.kind === 'pro
 
 /** 渲染行= timelineView 的扁平化：簇头一行，簇展开时紧跟其内各段（标记 inCluster）。
  *  用「摊平 + 原分支复用」而不是在模板里嵌套 v-for，是为了不复制一份工具组/独白渲染代码——
- *  两份模板必然漂移（PC 与 H5 已经各有第三份了）。折叠即不产出内段，无需 v-show 维持其状态。 */
+ *  两份模板必然漂移（PC 与 H5 已经各有第三份了）。折叠即不产出内段，无需 v-show 维持其状态。
+ *  flat：簇内只有一个工具组时，组条与簇头数的是同一批操作（真机「SpringAi框架怎么用」这条
+ *  两行都报 7 个操作，点一层还有一层）——那一层组条不再出，卡片直接摊在簇头下。
+ *  两个以上组才留各自组条：那时它数的是不同的子集，是有信息量的下一层。 */
 const timelineRows = m => {
   const out = []
   for (const s of timelineView(m)) {
     out.push(s)
-    if (s.kind === 'cluster' && clusterOpen(m, s)) for (const inner of s.segs) out.push({ ...inner, inCluster: true })
+    if (s.kind === 'cluster' && clusterOpen(m, s)) {
+      const groups = (s.segs || []).filter(x => x && x.kind === 'group')
+      for (const inner of s.segs) {
+        out.push({ ...inner, inCluster: true, flat: groups.length === 1 && inner.kind === 'group' })
+      }
+    }
   }
   return out
 }
@@ -829,12 +827,22 @@ const mergeDoneToolCalls = (m, doneCalls) => {
 // 整轮用时的秒针：1s 一跳的 tick 驱动重渲染，让"卡住"变成可见的进行中（顶部那条跟着走）
 const nowTick = ref(Date.now())
 let tickTimer = null
+/** 挂表引用数：主对话页由引擎开轮时 ensureTick；分享页没有引擎，由正在跑的那一条 TurnBar 自己挂。
+ *  两边都不再需要（没有在跑的流、也没有挂表的进行中行）才停表——否则分享页「正在溯源」的秒数永远不动。 */
+let tickHolders = 0
 const ensureTick = () => {
   if (tickTimer) return
   tickTimer = setInterval(() => {
     nowTick.value = Date.now()
-    if (!chatStreams.size) { clearInterval(tickTimer); tickTimer = null }
+    if (!chatStreams.size && !tickHolders) { clearInterval(tickTimer); tickTimer = null }
   }, 1000)
+}
+/** 挂一次表，返回摘表的那只手（TurnBar 卸载或这一轮答完时调用） */
+const holdTick = () => {
+  tickHolders++
+  ensureTick()
+  let held = true
+  return () => { if (held) { held = false; tickHolders = Math.max(0, tickHolders - 1) } }
 }
 // 组件卸载时停表（纯模块挂不了 onUnmounted，由消费方在 onUnmounted 里调用）
 const stopTick = () => { if (tickTimer) { clearInterval(tickTimer); tickTimer = null } }
@@ -1139,7 +1147,7 @@ const verLabel = m => verLocal(m)
 const DEFAULT_SAMPLE_QUESTIONS = [
   { label: '🔍 知识检索', text: '帮我查一下问渠怎么上传文档' },
   { label: '📝 总结提炼', text: '帮我总结一份文档的核心要点' },
-  { label: '✍️ 辅助写作', text: '帮我起草一份项目周报的框架' },
+  { label: '✍️ 辅助写作', text: '帮我起草一份周报的框架' },
   { label: '📊 对比分析', text: '帮我对比一下两个方案的优缺点' }
 ]
 // 一行一条；写成「标签｜问题」时前段作小标题（全/半角竖线都认），只写问题则无标签。
@@ -1156,7 +1164,7 @@ const parseSampleQuestions = raw => String(raw || '').split('\n')
   .filter(Boolean)
 export {
   TOOL_LABELS, TOOL_DESCS, MCP_CLIENT_PREFIXES, bareToolName, toolLabel, toolDesc, toolCallsView, executedCount,
-  toolDuration, toolRunning, consultedOf, consultChatView, consultNameOf, rememberAgents, stageLabel, hasTimelineBlocks, extendTimelineText, askUserView,
+  toolDuration, toolRunning, consultedOf, consultChatView, consultNameOf, rememberAgents, hasTimelineBlocks, extendTimelineText, askUserView,
   extendTimelineProcess, procOpen, toggleProc, procSlice, pushTimelineTool, pushTimelineArtifact,
   pushTimelineThink, extendTimelineThink, thinkSlice, thinkGrowing, thinkSegOpen, toggleThinkSeg, ensureThinkSegment,
   restoreTimeline, SENTENCE_END_CHARS, endsSentence, timelineView, timelineRows, TOOL_BRIEF_KEYS, oneLine,
@@ -1166,7 +1174,7 @@ export {
   durZh,
   toolBrief, prettyIo, LIVE_TAIL_CHARS, liveOutput, groupRunning, groupHasError,
   fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget, fanRun, runBoardText,
-  mergeDoneToolCalls, nowTick, ensureTick, stopTick, toolSearchQueries,
+  mergeDoneToolCalls, nowTick, ensureTick, holdTick, stopTick, toolSearchQueries,
   retrievalLineTitle,
   THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel, CTX_WINDOW_STEPS, fmtWindow,
   fmtDuration, subagentCard, barWidth, toggleSubagents, groupSources, externalOrigin, sourceName,
