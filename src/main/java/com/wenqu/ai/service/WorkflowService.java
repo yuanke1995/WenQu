@@ -18,6 +18,7 @@ import com.wenqu.ai.model.WorkflowRun;
 import com.wenqu.ai.model.WorkflowVersion;
 import com.wenqu.ai.model.Agent;
 import com.wenqu.ai.model.Notification;
+import com.wenqu.ai.model.Project;
 import com.wenqu.ai.model.ToolApproval;
 import com.wenqu.ai.model.User;
 import com.wenqu.ai.thread.ThreadPoolManager;
@@ -811,6 +812,7 @@ public class WorkflowService {
     public WorkflowRun run(String id, Map<String, Object> inputs) {
         Principal p = Principal.current();
         Workflow row = loadVisible(id, p);
+        assertProjectActive(row);
         RunTarget t = resolveRunTarget(row, p);
         return execute(row, t.dslText, "manual", p.uid(), null, t.version, t.dslSource, inputs, null, null, p);
     }
@@ -823,6 +825,7 @@ public class WorkflowService {
     public WorkflowRun runAsync(String id, Map<String, Object> inputs) {
         Principal p = Principal.current();
         Workflow row = loadVisible(id, p);
+        assertProjectActive(row);
         RunTarget t = resolveRunTarget(row, p);
         WorkflowDsl dsl = parseDsl(t.dslText);   // 入队前解析：坏 DSL 立即报错，不占用队列
         WorkflowRun run = newRun(row, t.dslText, "manual", p.uid(), null, t.version, t.dslSource, inputs);
@@ -984,10 +987,29 @@ public class WorkflowService {
         if (projectId == null) return null;
         String pid = projectId.trim();
         if (pid.isEmpty()) return null;
-        if (projectService.ownedOrNull(RequestUser.uid(), pid) == null) {
+        Project p = projectService.ownedOrNull(RequestUser.uid(), pid);
+        if (p == null) {
             throw new BizException("工作区不存在或不属于你：" + pid);
         }
+        // 归档=收工：不给已归档的工作区挂新工作流（恢复后再绑）
+        if (Project.STATUS_ARCHIVED.equals(p.getStatus())) {
+            throw new BizException("工作区已归档：恢复后才能把工作流挂到它上面");
+        }
         return pid;
+    }
+
+    /**
+     * 归档=收工：归属的工作区已归档则不许运行（fail-loud）。
+     * <p>手动/调试触发直接抛错让人知道为什么没跑；定时触发由调用方按「跳过本轮」处理
+     * （背景扫描没有人看报错，留一条跳过记录即可）。
+     */
+    private void assertProjectActive(Workflow row) {
+        if (row == null || row.getProjectId() == null || row.getProjectId().isBlank()) return;
+        Project p = projectService.byId(row.getProjectId());
+        if (p != null && Project.STATUS_ARCHIVED.equals(p.getStatus())) {
+            String name = p.getName() == null || p.getName().isBlank() ? "未命名工作区" : p.getName();
+            throw new BizException("工作区「" + name + "」已归档：恢复后才能运行");
+        }
     }
 
     private WorkflowRun runGraph(WorkflowRun run, WorkflowRunCtx ctx, Workflow row, WorkflowDsl dsl) {
@@ -1548,6 +1570,7 @@ public class WorkflowService {
     /** 手动立即触发一次定时运行（管理权）：同步返回终态 run，便于在界面直接看 trace */
     public WorkflowRun runScheduleNow(String id) {
         Workflow row = requireManage(id);
+        assertProjectActive(row);
         WorkflowRun run = runScheduledSync(row.getId());
         if (run == null) throw new BizException("该工作流尚未发布：定时运行只跑已发布版本");
         return run;
@@ -1577,6 +1600,14 @@ public class WorkflowService {
     private WorkflowRun runScheduledSync(String workflowId) {
         Workflow row = workflowMapper.selectById(workflowId);
         if (row == null) return null;
+        if (row.getProjectId() != null && !row.getProjectId().isBlank()) {
+            Project p = projectService.byId(row.getProjectId());
+            if (p != null && Project.STATUS_ARCHIVED.equals(p.getStatus())) {
+                // 定时扫描没有人看报错：跳过本轮并告警（与「未发布」同口径），不留失败记录
+                log.warn("[WORKFLOW] 定时触发跳过：{}（{}）归属的工作区已归档", row.getName(), row.getId());
+                return null;
+            }
+        }
         if (!"published".equals(row.getStatus()) || row.getPublishedDsl() == null || row.getPublishedDsl().isBlank()) {
             log.warn("[WORKFLOW] 定时触发跳过：{}（{}）未发布（定时只跑已发布版本）", row.getName(), row.getId());
             return null;

@@ -46,14 +46,22 @@ public class ProjectService {
      * 校验是低频动作，用到时再取即可。
      */
     private final org.springframework.beans.factory.ObjectProvider<AgentService> agentProvider;
+    /**
+     * 归档联动停用/恢复定时任务。
+     * <p>同样必须惰性取：{@code ScheduledJobService} 的构造器依赖本类（校验任务的工作区归属），
+     * 直接注入会构成构造器环（Spring Boot 3 默认禁止，启动直接失败）。归档是低频动作，用到时再取即可。
+     */
+    private final org.springframework.beans.factory.ObjectProvider<ScheduledJobService> scheduledJobProvider;
 
     public ProjectService(ProjectMapper projectMapper, SessionMapper sessionMapper,
                           ArtifactMapper artifactMapper,
-                          org.springframework.beans.factory.ObjectProvider<AgentService> agentProvider) {
+                          org.springframework.beans.factory.ObjectProvider<AgentService> agentProvider,
+                          org.springframework.beans.factory.ObjectProvider<ScheduledJobService> scheduledJobProvider) {
         this.projectMapper = projectMapper;
         this.sessionMapper = sessionMapper;
         this.artifactMapper = artifactMapper;
         this.agentProvider = agentProvider;
+        this.scheduledJobProvider = scheduledJobProvider;
     }
 
     /**
@@ -150,6 +158,16 @@ public class ProjectService {
             log.warn("[PROJECT] 会话归属解析失败（按无工作区处理）session={}: {}", sessionId, e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * 服务端内部查询（无用户上下文，如调度线程/启动维护）：按 id 取工作区行；不存在返回 {@code null}。
+     * <p>与 {@link #ownedOrNull} 的区别是不校验归属——调用方都是系统侧（如定时任务扫描判断
+     * 工作区是否已归档），没有登录身份可校验。
+     */
+    public Project byId(String projectId) {
+        if (projectId == null || projectId.isBlank()) return null;
+        return projectMapper.selectById(projectId);
     }
 
     /**
@@ -321,6 +339,9 @@ public class ProjectService {
      * 归档 / 恢复工作区。
      * <p>归档不是删除：会话与产物一条不动，只把这个容器从"正在推进"降级为"已收工"。
      * implicit 兜底容器不允许归档（它是侧栏「会话」栏那批无工作区会话的归属根）。
+     * <p><b>归档即停活</b>：归属该工作区的已启用定时任务会被自动停用（打快照标记），
+     * 恢复时只还原被归档停掉的那一批——用户自己停用的任务不会被擅自放跑。
+     * 没有这条，「归档」只是折起侧栏，任务周一早上照跑照烧额度，与"收工"的字面意思相反。
      */
     public Project setStatus(String uid, String projectId, String status) {
         Project p = ownedProject(uid, projectId);
@@ -329,6 +350,18 @@ public class ProjectService {
         }
         if (Project.STATUS_ARCHIVED.equals(status) && Project.SELECTION_IMPLICIT.equals(p.getSelectionStatus())) {
             throw new IllegalArgumentException("「会话」栏不是一个工作区，不能归档");
+        }
+        if (Project.STATUS_ARCHIVED.equals(status)) {
+            ScheduledJobService jobs = scheduledJobProvider.getIfAvailable();
+            if (jobs == null) {
+                // fail-loud：停不掉任务却把工作区归档了，等于悄悄违背"收工"语义
+                throw new IllegalStateException("定时任务组件暂不可用，暂时无法归档工作区，请稍后重试");
+            }
+            jobs.pauseByArchive(p.getId());
+        } else if (Project.STATUS_ARCHIVED.equals(p.getStatus())) {
+            // 仅「已归档 → 恢复」时还原；本来就是 active 的重复置位不动作
+            ScheduledJobService jobs = scheduledJobProvider.getIfAvailable();
+            if (jobs != null) jobs.resumeByArchive(p.getId());
         }
         p.setStatus(status);
         p.setUpdateTime(java.time.LocalDateTime.now());

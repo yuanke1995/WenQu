@@ -11,7 +11,9 @@
       <div class="art-tools">
         <a-input v-model:value="kw" allow-clear placeholder="搜索会话 / 文件 / 任务…" class="pj-search" />
         <button class="app-btn ghost" :disabled="loading" @click="load"><reload-outlined /> 刷新</button>
-        <button class="app-btn" @click="goChat"><plus-outlined /> 新建对话</button>
+        <button class="app-btn" :disabled="isArchived" :title="isArchived ? '工作区已归档，恢复后才能新建对话' : ''" @click="goChat">
+          <plus-outlined /> 新建对话
+        </button>
       </div>
     </div>
 
@@ -78,7 +80,7 @@
               <button v-if="!isImplicit" class="app-btn ghost" :disabled="archiving" @click="toggleArchive">
                 {{ form.status === 'archived' ? '恢复' : '归档' }}
               </button>
-              <span class="pj-hint">归档只是收进侧栏的折叠区，会话与产物一条不动</span>
+              <span class="pj-hint">归档后收进侧栏折叠区：定时任务自动暂停，恢复时重新启用；会话与产物一条不动</span>
               <button v-if="!isImplicit" class="app-btn danger pj-del" :disabled="deleting" @click="removeProject">
                 {{ deleting ? '删除中…' : '删除工作区' }}
               </button>
@@ -101,7 +103,7 @@
             </div>
             <div v-else-if="!filteredFiles.length" class="pj-empty">
               {{ kw ? '没有匹配的文件' : '还没有文件。让它在这个工作区里跑一段会写文件的命令，或把结果交付成产物，文件就会出现在这里。' }}
-              <button v-if="!kw" class="pj-link-btn" @click="goChat">去对话</button>
+              <button v-if="!kw && !isArchived" class="pj-link-btn" @click="goChat">去对话</button>
             </div>
             <div v-else class="pj-file-list">
               <div v-for="f in filteredFiles" :key="f.key" class="pj-item">
@@ -124,7 +126,7 @@
             </div>
             <div v-if="!filteredSessions.length" class="pj-empty">
               {{ kw ? '没有匹配的会话' : '还没有对话。' }}
-              <button v-if="!kw" class="pj-link-btn" @click="goChat">新建一条对话</button>
+              <button v-if="!kw && !isArchived" class="pj-link-btn" @click="goChat">新建一条对话</button>
               <span v-if="!kw">，就会落在这个工作区里，并自动带上上面的约定。</span>
             </div>
             <div v-else class="pj-file-list">
@@ -143,17 +145,18 @@
               <div class="pj-label">
                 定时任务 <span class="pj-count">{{ jobs.length }}</span>
                 <span class="pj-hint">到点自己跑，结果落进这个工作区</span>
-                <button class="app-btn ghost pj-block-act" @click="jobFormOpen = !jobFormOpen">
+                <button class="app-btn ghost pj-block-act" :disabled="isArchived"
+                        :title="isArchived ? '工作区已归档，恢复后才能新建任务' : ''" @click="jobFormOpen = !jobFormOpen">
                   {{ jobFormOpen ? '收起' : '新建任务' }}
                 </button>
               </div>
               <div v-if="jobFormOpen" class="pj-job-form">
-                <a-input v-model:value="jobForm.name" placeholder="任务名，例如：每周一汇总上周工单" :maxlength="100" />
-                <a-textarea v-model:value="jobForm.prompt" :rows="2" :maxlength="2000"
+                <a-input v-model:value="jobForm.name" placeholder="任务名，例如：每周一汇总上周工单" :maxlength="100" :disabled="isArchived" />
+                <a-textarea v-model:value="jobForm.prompt" :rows="2" :maxlength="2000" :disabled="isArchived"
                             placeholder="每轮发给智能体的指令，例如：汇总上周新增工单，按处理人分组，输出一份 Markdown" />
                 <div class="pj-row" style="margin-top:0">
-                  <a-input v-model:value="jobForm.cron" placeholder="cron，例如 0 9 * * 1（每周一 9 点）" class="pj-cron-input" />
-                  <button class="app-btn" :disabled="jobSaving" @click="createJob">{{ jobSaving ? '创建中…' : '创建并启用' }}</button>
+                  <a-input v-model:value="jobForm.cron" placeholder="cron，例如 0 9 * * 1（每周一 9 点）" class="pj-cron-input" :disabled="isArchived" />
+                  <button class="app-btn" :disabled="jobSaving || isArchived" @click="createJob">{{ jobSaving ? '创建中…' : '创建并启用' }}</button>
                 </div>
               </div>
               <div v-if="!filteredJobs.length" class="pj-empty">
@@ -164,7 +167,7 @@
                   <span class="pj-item-title" :title="j.prompt">{{ j.name }}</span>
                   <code class="pj-cron">{{ j.cron }}</code>
                   <span class="pj-item-meta">{{ j.enabled ? ('下次 ' + fmtTime(j.nextRunAt)) : '已停用' }}</span>
-                  <button class="pj-act" @click="runJob(j)">试跑</button>
+                  <button class="pj-act" :disabled="isArchived" :title="isArchived ? '工作区已归档，恢复后才能试跑' : ''" @click="runJob(j)">试跑</button>
                 </div>
               </div>
             </div>
@@ -183,7 +186,7 @@
                   <span class="pj-item-title">{{ w.name }}</span>
                   <span class="pj-item-meta">{{ w.status === 'published' ? '已发布' : '草稿' }}</span>
                   <span class="pj-item-meta">{{ fmtAgo(toMs(w.updateTime)) }}</span>
-                  <button class="pj-act" @click="runWf(w)">运行</button>
+                  <button class="pj-act" :disabled="isArchived" :title="isArchived ? '工作区已归档，恢复后才能运行' : ''" @click="runWf(w)">运行</button>
                 </div>
               </div>
             </div>
@@ -215,6 +218,8 @@ const saving = ref(false)
 const deleting = ref(false)
 const archiving = ref(false)
 const isImplicit = ref(false)
+/** 归档=收工：新建对话/任务/运行一律禁用（后端同样拒绝，双保险；这里先给可见的反馈） */
+const isArchived = computed(() => form.value.status === 'archived')
 /** saved = 服务端当前值（读态显示它）；form = 编辑中的副本。分开才判得出「未保存」 */
 const saved = ref({ instructions: '', defaultAgentId: '', name: '' })
 const form = ref({ name: '', instructions: '', defaultAgentId: undefined, workdirPath: '', status: 'active' })

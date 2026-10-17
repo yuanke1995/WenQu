@@ -10,6 +10,7 @@ import com.wenqu.ai.mapper.ScheduledJobMapper;
 import com.wenqu.ai.mapper.ScheduledRunMapper;
 import com.wenqu.ai.model.Agent;
 import com.wenqu.ai.model.Notification;
+import com.wenqu.ai.model.Project;
 import com.wenqu.ai.model.ScheduledJob;
 import com.wenqu.ai.model.ScheduledRun;
 import com.wenqu.ai.thread.ThreadPoolManager;
@@ -38,7 +39,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>
  * <b>与平台版的差异</b>（照搬语义、按本工程改造，不是逐字对齐）：
  * <ul>
- *   <li>去掉 project（工作区）依赖——本工程没有工作区概念；</li>
+ *   <li>任务可挂工作区（{@code project_id}）：结果会话、产物与沙盒工作目录随之落进该工作区，
+ *       工作区因此能「自己按时间干活」；工作区被归档时联动停用、恢复时按快照还原；</li>
  *   <li>去掉统一请求队列 + worker 派发，改为直接调问答链路（本工程没有那套队列）；</li>
  *   <li>去掉 tool_approval_mode（本工程没有工具审批机制）；</li>
  *   <li>cron 用 Spring 自带的 {@link CronExpression}（5 段），不引 croniter 依赖；</li>
@@ -182,14 +184,85 @@ public class ScheduledJobService {
     /** 启停：启用时重算下次执行时刻（从"现在"往后找，不会因为停机期间错过而立刻补跑） */
     public Map<String, Object> toggle(String uid, String id, boolean enabled) {
         ScheduledJob job = mustOwn(uid, id);
+        if (enabled) {
+            // 归档区里不让启用：否则「归档=收工」又被戳个洞
+            assertProjectActive(job.getUid(), job.getProjectId());
+        }
         job.setEnabled(enabled ? 1 : 0);
         job.setNextRunAt(enabled ? nextRunAt(job.getCron(), job.getTimezone(), LocalDateTime.now()) : null);
-        // 同 update()：停用要把 next_run_at 显式置空，updateById 会静默跳过 null 列
+        // 同 update()：停用要把 next_run_at 显式置空，updateById 会静默跳过 null 列；
+        // 同时清掉归档快照标记——用户此刻的启停选择就是最终意图，恢复工作区时不再动它
         jobMapper.update(null, new LambdaUpdateWrapper<ScheduledJob>()
                 .eq(ScheduledJob::getId, id)
                 .set(ScheduledJob::getEnabled, job.getEnabled())
+                .set(ScheduledJob::getPausedByArchive, 0)
                 .set(ScheduledJob::getNextRunAt, job.getNextRunAt()));
         return toDto(job);
+    }
+
+    // ==================== 归档联动（ProjectService.setStatus 调用，勿在请求线程外改语义） ====================
+
+    /**
+     * 归档工作区时停用其下已启用的任务，并打快照标记。
+     * <p>只停「归档那一刻还开着」的任务；用户自己停用的不碰——恢复时也只还原这一批，
+     * 不会把用户特意停掉的任务擅自放跑。
+     */
+    public void pauseByArchive(String projectId) {
+        if (projectId == null || projectId.isBlank()) return;
+        List<ScheduledJob> jobs = jobMapper.selectList(new LambdaQueryWrapper<ScheduledJob>()
+                .eq(ScheduledJob::getProjectId, projectId)
+                .eq(ScheduledJob::getDeleted, 0)
+                .eq(ScheduledJob::getEnabled, 1));
+        for (ScheduledJob j : jobs) {
+            // next_run_at 必须显式置空：updateById 的 NOT_NULL 策略会跳过 null 列，停用时留着旧时刻会误导
+            jobMapper.update(null, new LambdaUpdateWrapper<ScheduledJob>()
+                    .eq(ScheduledJob::getId, j.getId())
+                    .set(ScheduledJob::getEnabled, 0)
+                    .set(ScheduledJob::getPausedByArchive, 1)
+                    .set(ScheduledJob::getNextRunAt, null));
+        }
+        if (!jobs.isEmpty()) {
+            log.info("[SCHEDULED] 工作区归档，联动停用 {} 个定时任务 project={}", jobs.size(), projectId);
+        }
+    }
+
+    /**
+     * 恢复工作区时还原被归档停用的任务（按快照标记）。
+     * <p>下次执行时刻从「现在」重算——归档期间错过的轮次不补跑（与手动启停同口径）。
+     */
+    public void resumeByArchive(String projectId) {
+        if (projectId == null || projectId.isBlank()) return;
+        List<ScheduledJob> jobs = jobMapper.selectList(new LambdaQueryWrapper<ScheduledJob>()
+                .eq(ScheduledJob::getProjectId, projectId)
+                .eq(ScheduledJob::getDeleted, 0)
+                .eq(ScheduledJob::getPausedByArchive, 1));
+        for (ScheduledJob j : jobs) {
+            LocalDateTime next = nextRunAt(j.getCron(), j.getTimezone(), LocalDateTime.now());
+            jobMapper.update(null, new LambdaUpdateWrapper<ScheduledJob>()
+                    .eq(ScheduledJob::getId, j.getId())
+                    .set(ScheduledJob::getEnabled, 1)
+                    .set(ScheduledJob::getPausedByArchive, 0)
+                    .set(ScheduledJob::getNextRunAt, next));
+        }
+        if (!jobs.isEmpty()) {
+            log.info("[SCHEDULED] 工作区恢复，还原 {} 个被归档停用的定时任务 project={}", jobs.size(), projectId);
+        }
+    }
+
+    /** 用户态校验：工作区已归档则抛可读错误（请求线程里用，身份取登录用户） */
+    private void assertProjectActive(String uid, String projectId) {
+        if (projectId == null || projectId.isBlank()) return;
+        Project p = projectService.ownedOrNull(uid, projectId);
+        if (p != null && Project.STATUS_ARCHIVED.equals(p.getStatus())) {
+            throw new BizException("工作区已归档：恢复后才能新建/启用归属它的任务");
+        }
+    }
+
+    /** 服务端态判定：调度线程里没有登录身份，按 id 直查（归档时 pauseByArchive 已停用，这里是防御网） */
+    private boolean isProjectArchived(String projectId) {
+        if (projectId == null || projectId.isBlank()) return false;
+        Project p = projectService.byId(projectId);
+        return p != null && Project.STATUS_ARCHIVED.equals(p.getStatus());
     }
 
     /** 某任务的执行历史（最近 limit 条） */
@@ -221,6 +294,18 @@ public class ScheduledJobService {
                 .orderByAsc(ScheduledJob::getNextRunAt)
                 .last("limit " + SCAN_LIMIT));
         for (ScheduledJob job : due) {
+            if (isProjectArchived(job.getProjectId())) {
+                // 防御网：正常路径下归档时已联动停用（pauseByArchive），走不到这里；
+                // 真到了说明任务在归档后被异常改回过启用——如实跳过、留一条记录，并自愈式停用
+                log.warn("[SCHEDULED] 任务 {} 归属的工作区已归档，本轮跳过", job.getName());
+                insertRun(job, "scheduled", "skipped", "工作区已归档，本轮跳过", null, null);
+                jobMapper.update(null, new LambdaUpdateWrapper<ScheduledJob>()
+                        .eq(ScheduledJob::getId, job.getId())
+                        .set(ScheduledJob::getEnabled, 0)
+                        .set(ScheduledJob::getPausedByArchive, 1)
+                        .set(ScheduledJob::getNextRunAt, null));
+                continue;
+            }
             // 先推进 next_run_at 再执行：即使执行很久，也不会在下一拍被重复触发
             job.setNextRunAt(nextRunAt(job.getCron(), job.getTimezone(), now));
             jobMapper.updateById(job);
@@ -232,6 +317,7 @@ public class ScheduledJobService {
     /** 手动立即执行（异步：执行可能持续几十秒，接口立即返回，状态看执行历史） */
     public Map<String, Object> runNow(String uid, String jobId) {
         ScheduledJob job = mustOwn(uid, jobId);
+        assertProjectActive(job.getUid(), job.getProjectId());
         if (!dispatch(job, "manual")) {
             throw new BizException("该任务正在执行中，请稍候再试");
         }
@@ -416,6 +502,8 @@ public class ScheduledJobService {
                 if (projectService.ownedOrNull(job.getUid(), pid) == null) {
                     throw new BizException("工作区不存在或不属于你：" + pid);
                 }
+                // 归档=收工：不给已归档的工作区塞新任务（恢复后再绑）
+                assertProjectActive(job.getUid(), pid);
                 job.setProjectId(pid);
             }
         }
@@ -446,6 +534,9 @@ public class ScheduledJobService {
         }
         if (body.containsKey("enabled")) {
             job.setEnabled(bool(body.get("enabled")) ? 1 : 0);
+            // 显式改启停=用户意图，清掉归档快照标记——否则恢复工作区时会和用户的选择打架
+            // （用户特意停掉的被擅自放跑，或特意开着的被再放跑一遍）
+            job.setPausedByArchive(0);
         } else if (creating) {
             job.setEnabled(1);
         }

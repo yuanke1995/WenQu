@@ -50,6 +50,13 @@ public class ScheduledJob {
     /** 启用: 1=启用 0=停用（停用时 next_run_at 清空） */
     private Integer enabled;
 
+    /**
+     * 归档联动停用快照: 1=因工作区归档被自动停用（恢复工作区时只还原这些，用户自己停用的不动）。
+     * <p>没有它就无法区分「归档前就是停用的」和「被归档停掉的」——恢复时会把用户
+     * 特意停用的任务也放跑，那正是「归档=收工」语义要避免的。
+     */
+    private Integer pausedByArchive;
+
     /** 下次执行时刻（按 timezone 计算得出；停用/删除时为 null） */
     private LocalDateTime nextRunAt;
 

@@ -740,6 +740,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_scheduled_job` (
     `deep_think`   INT           DEFAULT 0 COMMENT '本轮是否深度思考: 0=否 1=是',
     `model_ref`    VARCHAR(255)  DEFAULT NULL COMMENT '模型覆盖（{providerId}/{modelId}；空=个人默认）',
     `enabled`      INT           DEFAULT 1 COMMENT '启用: 1=启用 0=停用（停用时 next_run_at 清空）',
+    `paused_by_archive` INT      DEFAULT 0 COMMENT '归档联动停用快照: 1=因工作区归档被自动停用（恢复工作区时只还原这些，用户自己停用的不动）',
     `next_run_at`  DATETIME      DEFAULT NULL COMMENT '下次执行时刻（按 timezone 计算得出）',
     `last_run_at`  DATETIME      DEFAULT NULL COMMENT '上次触发时刻',
     `session_id`   VARCHAR(50)   DEFAULT NULL COMMENT '该任务的结果会话（懒创建，之后每轮追加）',

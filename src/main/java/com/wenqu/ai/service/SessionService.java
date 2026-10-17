@@ -172,6 +172,10 @@ public class SessionService {
             if (p == null) {
                 throw new com.wenqu.ai.common.BizException("工作区不存在或不属于你：" + projectId);
             }
+            // 归档=收工：已归档的工作区不接新会话（老会话照常可看可聊，历史不冻结）
+            if (Project.STATUS_ARCHIVED.equals(p.getStatus())) {
+                throw new com.wenqu.ai.common.BizException("工作区已归档：恢复后才能在里面新建对话");
+            }
             return p.getId();
         }
         Project implicit = projectService.ensureImplicit(uid);
