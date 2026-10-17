@@ -267,7 +267,7 @@ public class KnowledgeBaseService {
         }
         upd.set(KnowledgeBase::getUpdateTime, LocalDateTime.now());
         // 必须显式 set：updateById 走 NOT_NULL 策略会跳过 null 列，
-        // 导致「清空检索参数 → 恢复继承全局」这类操作静默失效（本项目已踩过同一坑）
+        // 导致「清空检索参数 → 恢复继承全局」这类操作静默失效（本仓库已踩过同一坑）
         kbMapper.update(null, upd);
         defaultIdByUid.clear();
         return kbMapper.selectById(id);

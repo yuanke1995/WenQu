@@ -1059,7 +1059,7 @@ public class HybridRetrievalService {
             for (AiDocument d : docs) {
                 if (d == null) continue;
                 String kbId = d.getKbId();
-                // 未归属任何库的文档（kbId 空）按默认库判定（kb_id 空=默认库语义，与管理接口一致）
+                // 未挂任何库的文档（kbId 空）按默认库判定（kb_id 空=默认库语义，与管理接口一致）
                 boolean kbVisible = kbId == null || kbId.isBlank() || visibleKbIds.contains(kbId);
                 boolean docVisible = resourceVisibilityService.canReadDocFollowKb(
                         p, d.getShareConfig(), d.getCreatedBy());

@@ -31,7 +31,7 @@ import java.util.stream.Collectors;
  * 写入两条路 + 一条注入：
  * <ul>
  *   <li><b>自动提取</b>（{@link #maybeExtract}）：每轮问答完成后**异步**调 LLM 提炼值得长期
- *       记住的事实（偏好/项目背景/明确要求记住的事），最多 3 条；best-effort 失败仅日志；
+ *       记住的事实（偏好/工作背景/明确要求记住的事），最多 3 条；best-effort 失败仅日志；
  *       受两级开关控制：全局 {@code memory.enabled}（管理端配置）+ 用户级
  *       {@code c_ai_user.memory_enabled}（个人设置「自动提炼记忆」，仅关生成，不关注入）；</li>
  *   <li><b>手动管理</b>（addManual/updateContent/delete）：个人设置页增删改，自动提取的条目
@@ -270,7 +270,7 @@ public class UserMemoryService {
             return;
         }
         String sys = "你是记忆提取器。判断这段对话是否包含值得长期记住的用户信息（用户身份/职责、偏好、"
-                + "项目背景、明确要求记住的事）。只提取对【未来对话】有用的持久事实，"
+                + "工作背景、明确要求记住的事）。只提取对【未来对话】有用的持久事实，"
                 + "不要提取一次性的任务内容、临时问题和回答正文。"
                 + "只输出 JSON 数组，格式：[{\"content\":\"一句独立可读的事实\",\"category\":\"fact|instruction|project\"}]，最多 3 条；没有值得记的就输出 []。不要输出任何其他内容。";
         String user = "用户：" + question + "\n\n助手：" + answer;
@@ -293,7 +293,7 @@ public class UserMemoryService {
         // 语义去重：加载该用户全部记忆，lazy 补向量后与本轮提取项比对（存量通常几十~几百条，Java 端余弦足够）
         List<UserMemory> existing = memoryMapper.selectList(new LambdaQueryWrapper<UserMemory>().eq(UserMemory::getUid, uid));
         double threshold = dedupThreshold();
-        // 记忆向量模型按本项目唯一归属人解析一次（异步提取线程没有问答流水线的个人覆盖装载）
+        // 记忆向量模型按平台内置那一份解析一次（异步提取线程没有问答流水线的个人覆盖装载）
         String ref = embeddingRef();
         int saved = 0;
         for (int i = 0; i < arr.size() && saved < 3; i++) {

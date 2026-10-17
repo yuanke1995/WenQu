@@ -232,7 +232,7 @@ public class McpController {
         if (tool != null && !tool.isBlank()) qw.like(McpCallLog::getToolName, tool.trim());
         if (success != null) qw.eq(McpCallLog::getSuccess, success);
         long total = mcpCallLogMapper.selectCount(qw);
-        // count 之后才拼 LIMIT：同一 wrapper 先数总数再取页（项目无分页插件，手工 offset）
+        // count 之后才拼 LIMIT：同一 wrapper 先数总数再取页（工作区无分页插件，手工 offset）
         qw.last("LIMIT " + (long) (p - 1) * n + ", " + n);
         List<McpCallLog> rows = mcpCallLogMapper.selectList(qw);
         Map<String, Object> data = new LinkedHashMap<>();

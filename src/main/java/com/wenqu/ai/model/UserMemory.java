@@ -29,7 +29,7 @@ public class UserMemory {
     /** 记忆内容（一句独立可读的事实/偏好） */
     private String content;
 
-    /** 类别: fact=事实偏好 instruction=指令约定 project=项目背景 */
+    /** 类别: fact=事实偏好 instruction=指令约定 project=工作背景 */
     private String category;
 
     /** 来源: auto=问答后自动提取 manual=用户手动添加 */

@@ -5,7 +5,7 @@ package com.wenqu.ai.util;
  * <p>
  * 由 {@code UserContextInterceptor} 在请求入口解析登录令牌（{@code Authorization: Bearer <JWT>}）后装载
  * （含部门/角色）；未登录一律为 {@link #ANONYMOUS}。业务层（创建资源写 created_by、检索层按可见范围过滤）
- * 直接读取，无需层层透传参数。参照项目既有 {@code SubAgentOrchestrator.CTX} 的 ThreadLocal 模式。
+ * 直接读取，无需层层透传参数。参照工作区既有 {@code SubAgentOrchestrator.CTX} 的 ThreadLocal 模式。
  *
  * @author yuanke
  */
@@ -59,7 +59,7 @@ public final class RequestUser {
     /**
      * 身份快照（跨线程传递用）。
      * <p>
-     * <b>为什么需要</b>：本类用<b>裸 {@link ThreadLocal}</b>，只在装载它的线程可见。项目里凡是
+     * <b>为什么需要</b>：本类用<b>裸 {@link ThreadLocal}</b>，只在装载它的线程可见。工作区里凡是
      * 「换线程执行用户态逻辑」的地方都会丢失身份并回落 {@link #ANONYMOUS}，而 {@code anonymous}
      * 不是一个安全的降级值——检索层 {@code loadVisibleKbIds()} 会判它「什么都读不到」，
      * 于是<b>在主链路明明召回到、换个线程就恒空</b>（线上实测：{@code searchKnowledge} 在

@@ -16,7 +16,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * 重排服务：调用独立 reranker 服务（OpenAI 兼容 POST /v1/rerank；由外部供应商网关或平台内置重排服务承载，无本地脚本依赖）。
  *
  * <p>注意：Ollama 官方（含 1.x）没有 /api/rerank 端点、官方库也没有 rerank 模型，
- * 社区模型仅能经 /api/embed 近似且部分环境 embedding 被禁用，因此本项目只支持 OpenAI 兼容协议。
+ * 社区模型仅能经 /api/embed 近似且部分环境 embedding 被禁用，因此本仓库只支持 OpenAI 兼容协议。
  * 重排由外部 OpenAI 兼容 /v1/rerank 服务承载（供应商网关或自建服务），无本地启动脚本。
  *
      * <p>配置经 {@link ModelRegistryService#rerankRoute} 解析（rerank.model 为引用时取对应供应商网关

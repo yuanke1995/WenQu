@@ -36,7 +36,7 @@ import java.util.stream.Collectors;
  * 动机：接口权限要「真拦截」，前提是接口清单真实完整——手填 30+ 端点既繁琐又必然漂移。
  * 扫描 {@link RequestMappingHandlerMapping} 的全部 HandlerMethod：
  * <ul>
- *   <li>仅登记 {@code /api/} 前缀的端点（拦截器 guarded 空间）；</li>
+ *   <li>仅登记 {@code /api/} 前缀的端点（拦截器 guarded 工作区）；</li>
  *   <li>幂等：按 (method, path) 唯一键 {@code INSERT IGNORE}，新端点自动出现、已登记的不动
  *       （保留管理员改过的名称/模块）；</li>
  *   <li>名称优先取 {@code @Operation#summary}（Swagger 注解），缺失回落「Controller#方法」；</li>

@@ -594,7 +594,7 @@ public class DocxParser implements DocumentParser {
     }
 
     /**
-     * 结构模式超长块硬切：内容 ≤maxSize 单块；超长按段落/句边界拆成多块（单块 ≤maxSize，预留路径前缀空间），
+     * 结构模式超长块硬切：内容 ≤maxSize 单块；超长按段落/句边界拆成多块（单块 ≤maxSize，预留路径前缀工作区），
      * 图片 URL 按各段 [图片] 占位出现顺序切片对应
      */
     private void flushStructural(String title, StringBuilder content, List<SavedImage> currentImages,

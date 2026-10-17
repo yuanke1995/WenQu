@@ -12,7 +12,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <p>
  * <b>为什么需要它</b>：模型一带工具就会多轮调用网关，Spring AI 每轮独立返回 usage；
  * 其跨轮累加链（previousChatResponse）在「工具触发块不带 usage、usage 在其后的独立
- * 末块」时断裂（本项目未开启 stream_options.include_usage，部分兼容网关不支持该
+ * 末块」时断裂（本仓库未开启 stream_options.include_usage，部分兼容网关不支持该
  * 参数），且嵌套 Flux 的发射顺序使最后到达的反而是第 1 轮的末块——直接覆盖赋值
  * 只会留下某一轮。native usage 恒为当轮原始值（Spring AI 的累加产物不带 native），
  * 逐轮求和即为全轮总量，与供应商账单同口径。

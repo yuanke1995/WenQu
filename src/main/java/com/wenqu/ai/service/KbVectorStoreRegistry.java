@@ -69,7 +69,7 @@ public class KbVectorStoreRegistry {
      */
     public VectorStore storeForKb(String kbId) {
         if (kbId == null || kbId.isBlank()) {
-            throw new IllegalStateException("文档未归属任何知识库（kbId 为空），无法路由向量库；请检查该文档的 kb_id 数据");
+            throw new IllegalStateException("文档未挂任何知识库（kbId 为空），无法路由向量库；请检查该文档的 kb_id 数据");
         }
         String effective = kbId.trim();
         RedisVectorStore custom = byKb.get(effective);
