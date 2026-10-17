@@ -119,15 +119,20 @@ public class ApiKeyService {
         }).toList();
     }
 
-    /** 重命名（用途备注可随时改，不影响 Key 本身与调用方） */
-    public void rename(String id, String name) {
+    /**
+     * 编辑 Key 的可改属性：用途名称与有效期（Key 本身不可改——明文只在签发时回显一次）。
+     * <p><b>{@code expireAt} 必须走 {@code set(...)} 显式写入</b>：MyBatis-Plus 默认更新策略是 NOT_NULL，
+     * {@code updateById} 会跳过 null 字段，「改回长期有效」就会静默不生效（与 {@link #updateShareConfig} 同一个坑）。</p>
+     */
+    public void updateInfo(String id, String name, LocalDateTime expireAt) {
         ensureManageable(mapper.selectById(id));
-        ApiKey k = new ApiKey();
-        k.setId(id);
-        k.setName(name.length() > 200 ? name.substring(0, 200) : name);
-        k.setUpdateTime(LocalDateTime.now());
-        mapper.updateById(k);
-        log.info("[API-KEY] 重命名 {} → {}", id, k.getName());
+        String trimmed = name.length() > 200 ? name.substring(0, 200) : name;
+        mapper.update(null, new LambdaUpdateWrapper<ApiKey>()
+                .eq(ApiKey::getId, id)
+                .set(ApiKey::getName, trimmed)
+                .set(ApiKey::getExpireAt, expireAt)
+                .set(ApiKey::getUpdateTime, LocalDateTime.now()));
+        log.info("[API-KEY] 编辑 {}：名称 {}，有效期 {}", id, trimmed, expireAt == null ? "长期" : expireAt);
     }
 
     /** 启用/停用（吊销即停用；不物理删除，保留审计线索） */

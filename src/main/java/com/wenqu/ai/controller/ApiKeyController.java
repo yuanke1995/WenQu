@@ -21,7 +21,7 @@ import java.time.LocalDateTime;
 import java.util.Map;
 
 /**
- * API Key 管理接口（管理员）：签发 / 列表 / 启停 / 删除 / 共享范围。
+ * API Key 管理接口（管理员）：签发 / 列表 / 编辑 / 启停 / 删除 / 共享范围。
  *
  * <p>Key 的权限固定为「问答链路」——持有 Key 的调用方走 X-Api-Key 头，
  * 仅能访问与普通用户等价的端点（问答/会话/反馈/引用溯源等），管理端点一律拒绝。
@@ -53,12 +53,13 @@ public class ApiKeyController {
         return ResultJson.ok(apiKeyService.create(name, expireAt, RequestUser.uid()));
     }
 
-    @Operation(summary = "重命名 Key", description = "改用途备注，不影响 Key 本身与调用方；body: {\"name\": \"…\"}")
-    @PutMapping("/{id}/name")
-    public ResultJson rename(@PathVariable("id") String id, @RequestBody Map<String, String> body) {
+    @Operation(summary = "编辑 Key", description = "改用途名称与有效期，不影响 Key 本身与调用方；"
+            + "body: {\"name\": \"…\", \"expireAt\": \"yyyy-MM-dd\"}——expireAt 缺省/空串=改为长期有效")
+    @PutMapping("/{id}")
+    public ResultJson update(@PathVariable("id") String id, @RequestBody Map<String, String> body) {
         String name = body.get("name");
         if (name == null || name.isBlank()) throw new BizException("名称不能为空");
-        apiKeyService.rename(id, name.trim());
+        apiKeyService.updateInfo(id, name.trim(), parseExpire(body.get("expireAt")));
         return ResultJson.ok(Map.of("id", id, "name", name.trim()));
     }
 

@@ -17,6 +17,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -221,7 +222,7 @@ public class UsageStatsService {
         // ---- 费用（§13 Token 成本报表）：台账 tokens × 模型登记单价，Java 侧换算 ----
         // 全时段费用（统计卡口径）+ 区间内按模型费用（模型列表同窗口）；未登记单价的模型
         // 不计入费用，其 token 数单列（unpricedTokens）让「费用数字不完整」可见，而不是静默少算。
-        Map<String, BigDecimal[]> prices = priceMap();
+        Map<String, BigDecimal[]> prices = priceMap(modelRows());
         List<Map<String, Object>> allCost = usageLogMapper.statCostDetail(userId, null);
         double totalCost = 0;
         long totalUnpriced = 0;
@@ -266,7 +267,9 @@ public class UsageStatsService {
     public Map<String, Object> adminCost(int range) {
         int r = range == 7 ? 7 : 30;
         LocalDate today = LocalDate.now();
-        Map<String, BigDecimal[]> prices = priceMap();
+        List<ModelInfo> modelRows = modelRows();
+        Map<String, BigDecimal[]> prices = priceMap(modelRows);
+        Set<String> registered = registeredRefs(modelRows);
         List<Map<String, Object>> rows = usageLogMapper.statCostDetail(null, today.minusDays(r - 1L).atStartOfDay());
 
         double total = 0;
@@ -276,7 +279,7 @@ public class UsageStatsService {
         Map<String, double[]> userCost = new HashMap<>();
         Map<String, long[]> modelTok = new LinkedHashMap<>();
         Map<String, double[]> modelCost = new HashMap<>();
-        Set<String> unpricedModels = new TreeSet<>();
+        Map<String, Long> unpricedByRef = new LinkedHashMap<>();   // 未计价的完整引用 -> tokens
         for (Map<String, Object> row : rows) {
             String model = row.get("model") == null ? UNKNOWN_LABEL : String.valueOf(row.get("model"));
             String uid = row.get("uid") == null ? "" : String.valueOf(row.get("uid"));
@@ -288,7 +291,7 @@ public class UsageStatsService {
                 total += cost;
             } else {
                 unpricedTokens += t;
-                unpricedModels.add(model);
+                unpricedByRef.merge(model, t, Long::sum);
             }
             userTok.computeIfAbsent(uid, k -> new long[2])[0] += p;
             userTok.get(uid)[1] += c;
@@ -297,6 +300,34 @@ public class UsageStatsService {
             modelTok.get(model)[1] += c;
             if (cost != null) modelCost.merge(model, new double[]{cost}, (a, b) -> new double[]{a[0] + b[0]});
         }
+
+        // 未计价清单按展示名合并：同一个模型名曾散在几百个已删供应商下（压测遗留），逐个列等于没信息量；
+        // 而「供应商已删/台账没记模型」的引用登记不到单价，混进清单里只会教用户去做一件做不到的事，
+        // 所以拆成 unregistered* 两个计数，由前端单独说明一句。
+        Map<String, long[]> unpricedByLabel = new LinkedHashMap<>();   // label -> {tokens, 引用数}
+        long unregisteredTokens = 0;
+        Set<String> unregisteredRefs = new HashSet<>();
+        for (Map.Entry<String, Long> e : unpricedByRef.entrySet()) {
+            String ref = e.getKey();
+            if (UNKNOWN_LABEL.equals(ref) || !registered.contains(ref)) {
+                unregisteredTokens += e.getValue();
+                unregisteredRefs.add(ref);
+                continue;
+            }
+            long[] agg = unpricedByLabel.computeIfAbsent(labelOf(ref), k -> new long[2]);
+            agg[0] += e.getValue();
+            agg[1] += 1;
+        }
+        List<Map<String, Object>> unpricedModels = unpricedByLabel.entrySet().stream()
+                .sorted(Comparator.comparingLong((Map.Entry<String, long[]> e) -> e.getValue()[0]).reversed())
+                .map(e -> {
+                    Map<String, Object> m = new LinkedHashMap<String, Object>();
+                    m.put("label", e.getKey());
+                    m.put("tokens", e.getValue()[0]);
+                    m.put("refs", e.getValue()[1]);   // 同名不同供应商的在册引用数
+                    return m;
+                })
+                .toList();
 
         // 用户名回填（看板展示 uid 没有人味；量级=成员数，一次全量可接受）
         Map<String, String> names = new HashMap<>();
@@ -310,7 +341,10 @@ public class UsageStatsService {
                     Map<String, Object> m = new LinkedHashMap<String, Object>();
                     double[] cost = userCost.get(e.getKey());
                     m.put("uid", e.getKey());
-                    m.put("name", names.getOrDefault(e.getKey(), e.getKey()));
+                    // 台账里留着、成员表里已没有的 uid＝已注销（压测用户被删后正是这种），
+                    // 只报裸 uid 会被读成「这人的名字怎么是一串代号」
+                    m.put("name", e.getKey().isBlank() ? "匿名（未登录）"
+                            : names.getOrDefault(e.getKey(), e.getKey() + "（已注销）"));
                     m.put("promptTokens", e.getValue()[0]);
                     m.put("completionTokens", e.getValue()[1]);
                     m.put("tokens", e.getValue()[0] + e.getValue()[1]);
@@ -318,7 +352,9 @@ public class UsageStatsService {
                     return m;
                 })
                 .sorted(Comparator.comparingDouble((Map<String, Object> m) ->
-                        m.get("cost") == null ? -1 : ((Number) m.get("cost")).doubleValue()).reversed())
+                        m.get("cost") == null ? -1 : ((Number) m.get("cost")).doubleValue()).reversed()
+                        .thenComparing(Comparator.comparingLong((Map<String, Object> m) ->
+                                ((Number) m.get("tokens")).longValue()).reversed()))
                 .toList();
         List<Map<String, Object>> byModel = modelTok.entrySet().stream()
                 .map(e -> {
@@ -334,33 +370,53 @@ public class UsageStatsService {
                     return m;
                 })
                 .sorted(Comparator.comparingDouble((Map<String, Object> m) ->
-                        m.get("cost") == null ? -1 : ((Number) m.get("cost")).doubleValue()).reversed())
+                        m.get("cost") == null ? -1 : ((Number) m.get("cost")).doubleValue()).reversed()
+                        .thenComparing(Comparator.comparingLong((Map<String, Object> m) ->
+                                ((Number) m.get("tokens")).longValue()).reversed()))
                 .toList();
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("range", r);
         out.put("total", round2(total));
         out.put("unpricedTokens", unpricedTokens);
-        out.put("unpricedModels", List.copyOf(unpricedModels));
+        out.put("unpricedModels", unpricedModels);
+        out.put("unregisteredTokens", unregisteredTokens);
+        out.put("unregisteredCount", unregisteredRefs.size());
         out.put("byUser", byUser);
         out.put("byModel", byModel);
         return out;
     }
 
-    /** 模型引用 → [输入单价, 输出单价]（元/百万 tokens）；ref 规则与台账 model 列一致（providerId/modelId） */
-    private Map<String, BigDecimal[]> priceMap() {
-        Map<String, BigDecimal[]> out = new HashMap<>();
+    /** 模型登记表全量快照：单价与「引用是否还在册」两处判据共用这一次读取（在册模型量级为几十） */
+    private List<ModelInfo> modelRows() {
         try {
-            for (ModelInfo mi : modelInfoMapper.selectList(null)) {
-                if (mi.getInputPrice() == null && mi.getOutputPrice() == null) continue;
-                out.put(mi.getProviderId() + "/" + mi.getModelId(),
-                        new BigDecimal[]{mi.getInputPrice() == null ? BigDecimal.ZERO : mi.getInputPrice(),
-                                         mi.getOutputPrice() == null ? BigDecimal.ZERO : mi.getOutputPrice()});
-            }
+            return modelInfoMapper.selectList(null);
         } catch (Exception e) {
-            log.warn("[Cost] 模型单价读取失败，本轮费用按未计价处理: {}", e.getMessage());
+            log.warn("[Cost] 模型登记读取失败，本轮费用按未计价处理: {}", e.getMessage());
+            return List.of();
+        }
+    }
+
+    /** 模型引用 → [输入单价, 输出单价]（元/百万 tokens）；ref 规则与台账 model 列一致（providerId/modelId） */
+    private Map<String, BigDecimal[]> priceMap(List<ModelInfo> rows) {
+        Map<String, BigDecimal[]> out = new HashMap<>();
+        for (ModelInfo mi : rows) {
+            if (mi.getInputPrice() == null && mi.getOutputPrice() == null) continue;
+            out.put(refOf(mi), new BigDecimal[]{mi.getInputPrice() == null ? BigDecimal.ZERO : mi.getInputPrice(),
+                                                mi.getOutputPrice() == null ? BigDecimal.ZERO : mi.getOutputPrice()});
         }
         return out;
+    }
+
+    /** 仍在册的模型引用集合：台账里的引用不在其中＝供应商或模型已被删除，单价无处可登记 */
+    private Set<String> registeredRefs(List<ModelInfo> rows) {
+        Set<String> out = new HashSet<>();
+        for (ModelInfo mi : rows) out.add(refOf(mi));
+        return out;
+    }
+
+    private static String refOf(ModelInfo mi) {
+        return mi.getProviderId() + "/" + mi.getModelId();
     }
 
     /** 区间内按模型的费用：model → 费用（元，2 位小数）；未登记单价的模型不在返回里 */

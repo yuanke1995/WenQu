@@ -51,7 +51,10 @@ public class UsageStatsController {
     @Operation(summary = "费用报表（管理）",
             description = "全员台账 × 模型登记单价（元/百万 tokens，输入/输出分开）：total=区间费用合计；"
                     + "byUser/byModel=按用户/按模型两维度（token 明细与费用，未登记单价的模型费用为 null）；"
-                    + "unpricedTokens=未计价模型的 token 总量（费用合计不含它，避免误读为全部真实成本）")
+                    + "unpricedTokens=未计价模型的 token 总量（费用合计不含它，避免误读为全部真实成本）；"
+                    + "unpricedModels=在册但没配单价的模型（按展示名合并、token 降序，refs=该名下在册供应商引用数）；"
+                    + "unregisteredTokens/unregisteredCount=模型记录已被删除或早期未记模型的台账，"
+                    + "无处登记单价，故不进 unpricedModels")
     @GetMapping("/stats/cost")
     public ResultJson<Map<String, Object>> cost(
             @Parameter(description = "统计范围（天）：7 或 30")
