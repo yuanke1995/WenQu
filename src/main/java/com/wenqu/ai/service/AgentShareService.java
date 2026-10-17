@@ -45,6 +45,26 @@ public class AgentShareService {
     public record GuestContext(AgentShare share, Agent agent, User owner) {
     }
 
+    /**
+     * 发布/更新分享配置的入参。
+     * <p><b>为什么不再用 publish(agentId, enabled, mcpEnabled, modelRef, uid)</b>：多模态设置进来之后尾部还要再挂
+     * 两个同类型 boolean，调用点写成 {@code publish(id, true, false, true, "", uid)} 谁也看不出第三个 true 指的是什么，
+     * 顺序写反了编译器也不拦。对象化之后加开关不再动签名，每个开关还自带名字。
+     */
+    public record PublishSpec(boolean enabled, boolean mcpEnabled, boolean guestImages,
+                              boolean guestFiles, String modelRef) {
+    }
+
+    /** 游客发图是否开启（列可能为 NULL——存量行由 SchemaMigrator 补列前就是 NULL，按关闭兜底） */
+    public static boolean guestImagesOn(AgentShare share) {
+        return share != null && share.getGuestImagesEnabled() != null && share.getGuestImagesEnabled() == 1;
+    }
+
+    /** 游客上传附件是否开启（NULL 按关闭兜底，同上） */
+    public static boolean guestFilesOn(AgentShare share) {
+        return share != null && share.getGuestFilesEnabled() != null && share.getGuestFilesEnabled() == 1;
+    }
+
     /** 按智能体取分享配置（未发布返回 null） */
     public AgentShare getByAgent(String agentId) {
         if (agentId == null || agentId.isBlank()) return null;
@@ -62,10 +82,11 @@ public class AgentShareService {
 
     /**
      * 发布/更新分享配置：首次生成 token（此后不变）；modelRef 空串=清空（回退发布者个人默认模型）。
-     * mcpEnabled 控制同一个 token 是否同时作为 MCP 端点（/ai/mcp/{token}）对外提供。
+     * mcpEnabled 控制同一个 token 是否同时作为 MCP 端点（/ai/mcp/{token}）对外提供；
+     * guestImages / guestFiles 是游客多模态输入的两个开关（见 {@link PublishSpec}）。
      * 由 AgentController 在归属校验（canManage）通过后调用。
      */
-    public AgentShare publish(String agentId, boolean enabled, boolean mcpEnabled, String modelRef, String uid) {
+    public AgentShare publish(String agentId, PublishSpec spec, String uid) {
         AgentShare share = getByAgent(agentId);
         if (share == null) {
             share = new AgentShare();
@@ -73,16 +94,19 @@ public class AgentShareService {
             share.setToken(generateToken());
             share.setCreatedBy(uid);
         }
-        share.setEnabled(enabled ? 1 : 0);
-        share.setMcpEnabled(mcpEnabled ? 1 : 0);
-        share.setModelRef(modelRef == null || modelRef.isBlank() ? null : modelRef.trim());
+        share.setEnabled(spec.enabled() ? 1 : 0);
+        share.setMcpEnabled(spec.mcpEnabled() ? 1 : 0);
+        share.setGuestImagesEnabled(spec.guestImages() ? 1 : 0);
+        share.setGuestFilesEnabled(spec.guestFiles() ? 1 : 0);
+        share.setModelRef(spec.modelRef() == null || spec.modelRef().isBlank() ? null : spec.modelRef().trim());
         if (share.getId() == null) {
             shareMapper.insert(share);
         } else {
             shareMapper.updateById(share);
         }
-        log.info("[AUDIT] 智能体分享发布 operator={} agent={} enabled={} mcp={} token={}***",
-                uid, agentId, enabled, mcpEnabled, share.getToken().substring(0, 6));
+        log.info("[AUDIT] 智能体分享发布 operator={} agent={} enabled={} mcp={} 游客发图={} 游客附件={} token={}***",
+                uid, agentId, spec.enabled(), spec.mcpEnabled(), spec.guestImages(), spec.guestFiles(),
+                share.getToken().substring(0, 6));
         return share;
     }
 

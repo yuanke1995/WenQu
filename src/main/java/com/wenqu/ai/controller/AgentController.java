@@ -2,6 +2,7 @@ package com.wenqu.ai.controller;
 
 import com.wenqu.ai.dto.ResultJson;
 import com.wenqu.ai.service.AgentService;
+import com.wenqu.ai.service.AgentShareService;
 import com.wenqu.ai.service.ResourceVisibilityService;
 import com.wenqu.ai.util.BatchResults;
 import com.wenqu.ai.util.RequestUser;
@@ -237,16 +238,22 @@ public class AgentController {
         return ResultJson.ok("共享范围已保存");
     }
 
-    @Operation(summary = "查询公开分享配置", description = "返回 {enabled, mcpEnabled, token, modelRef, visitCount, lastVisitAt}；"
+    @Operation(summary = "查询公开分享配置", description = "返回 {enabled, mcpEnabled, guestImages, guestFiles, token, modelRef, visitCount, lastVisitAt}；"
             + "未发布返回 enabled=false（仅可管理者可见）")
     @GetMapping("/{id}/publish")
     public ResultJson getPublish(@PathVariable("id") String id) {
         if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
         var share = agentShareService.getByAgent(id);
-        if (share == null) return ResultJson.ok(Map.of("enabled", false, "mcpEnabled", false));
+        // 未发布时能力位一律 false：多模态开关与分享同生命周期，分享没开就没有"游客能不能发图"这回事
+        if (share == null) {
+            return ResultJson.ok(Map.of("enabled", false, "mcpEnabled", false,
+                    "guestImages", false, "guestFiles", false));
+        }
         java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
         out.put("enabled", share.getEnabled() != null && share.getEnabled() == 1);
         out.put("mcpEnabled", share.getMcpEnabled() != null && share.getMcpEnabled() == 1);
+        out.put("guestImages", AgentShareService.guestImagesOn(share));
+        out.put("guestFiles", AgentShareService.guestFilesOn(share));
         out.put("token", share.getToken() == null ? "" : share.getToken());
         out.put("modelRef", share.getModelRef() == null ? "" : share.getModelRef());
         // 发布出去之后唯一能看到的反馈：被问过几次、最近一次是什么时候（会话内容不对发布者开放）
@@ -255,8 +262,9 @@ public class AgentController {
         return ResultJson.ok(out);
     }
 
-    @Operation(summary = "发布/更新公开分享", description = "body: {enabled, mcpEnabled, modelRef}——开启后 /s/{token} 免登录可对话；"
+    @Operation(summary = "发布/更新公开分享", description = "body: {enabled, mcpEnabled, guestImages, guestFiles, modelRef}——开启后 /s/{token} 免登录可对话；"
             + "mcpEnabled=true 时同一个 token 兼作 MCP 端点 /ai/mcp/{token}（Streamable HTTP，供 Claude/Cursor 等接入）；"
+            + "guestImages/guestFiles 分别控制访客能否发图、能否上传文档附件（默认都关）；"
             + "modelRef 为游客对话模型引用（须为自己可用的供应商模型，空=回退本人个人默认模型）；首次发布生成 token，此后不变。"
             + "游客能力收窄：沙盒/产物/MCP/技能执行不暴露，检索可见性与默认模型按发布者执行")
     @PostMapping("/{id}/publish")
@@ -264,6 +272,8 @@ public class AgentController {
         if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
         boolean enabled = Boolean.parseBoolean(String.valueOf(body.get("enabled")));
         boolean mcpEnabled = Boolean.parseBoolean(String.valueOf(body.get("mcpEnabled")));
+        boolean guestImages = Boolean.parseBoolean(String.valueOf(body.get("guestImages")));
+        boolean guestFiles = Boolean.parseBoolean(String.valueOf(body.get("guestFiles")));
         Object refObj = body.get("modelRef");
         String modelRef = refObj == null ? "" : String.valueOf(refObj).trim();
         // MCP 端点是分享的附加形态：分享停用（enabled=0）时链接与端点一并失效，
@@ -271,16 +281,30 @@ public class AgentController {
         if (mcpEnabled && !enabled) {
             return ResultJson.error("开启 MCP 端点需要先启用公开分享");
         }
+        // 多模态能力位同理依赖分享本身：链接都停了就无所谓游客能不能发图——收了会让弹窗回显出
+        // 「未发布 + 已允许发图」这种自相矛盾的状态，归一成关
+        if (!enabled) {
+            guestImages = false;
+            guestFiles = false;
+        }
         // 模型引用归属校验：只能用自己可用的供应商（平台级 + 自己登记的个人级），发布时 fail-loud
         if (enabled && !modelRef.isBlank()) {
             modelRegistryService.assertUsable(modelRef, RequestUser.uid(), RequestUser.role());
         }
-        var share = agentShareService.publish(id, enabled, mcpEnabled, modelRef, RequestUser.uid());
-        return ResultJson.ok(Map.of(
-                "enabled", enabled,
-                "mcpEnabled", mcpEnabled,
-                "token", share.getToken() == null ? "" : share.getToken(),
-                "modelRef", share.getModelRef() == null ? "" : share.getModelRef()));
+        // 允许游客发图却不校验模型视觉能力：不拦，因为「跟随个人默认模型」这一档在发布时解析不到具体模型，
+        // 拦了会把正确配置也挡在门外。改为发布弹窗就地提示（前端按 ModelSelect 选中的模型给警示），
+        // 把判断留给最清楚自己用哪个模型的人
+        var share = agentShareService.publish(id,
+                new AgentShareService.PublishSpec(enabled, mcpEnabled, guestImages, guestFiles, modelRef),
+                RequestUser.uid());
+        java.util.Map<String, Object> ok = new java.util.LinkedHashMap<>();
+        ok.put("enabled", enabled);
+        ok.put("mcpEnabled", mcpEnabled);
+        ok.put("guestImages", AgentShareService.guestImagesOn(share));
+        ok.put("guestFiles", AgentShareService.guestFilesOn(share));
+        ok.put("token", share.getToken() == null ? "" : share.getToken());
+        ok.put("modelRef", share.getModelRef() == null ? "" : share.getModelRef());
+        return ResultJson.ok(ok);
     }
 
     @Operation(summary = "撤销公开分享", description = "删除分享配置（链接立即失效）；重新发布会生成新 token")

@@ -44,6 +44,22 @@ public class AgentShare {
      */
     private Integer mcpEnabled;
 
+    /**
+     * 游客能否发图：1=允许，0=关闭（默认）。
+     * <p><b>为什么默认关而不是跟开</b>：游客模型由本行的 {@link #modelRef} 决定，而图片要送到模型才谈得上"看懂"——
+     * 非视觉模型收到图片只会报错或被静默忽略，视觉 token 的成本却记在发布者账上。这既不是偏好也不是体验问题，
+     * 是"发布者有没有明确同意"的问题，所以由发布者在发布弹窗里显式打开。
+     */
+    private Integer guestImagesEnabled;
+
+    /**
+     * 游客能否上传文档附件（PDF/Word/代码等）：1=允许，0=关闭（默认）。
+     * <p>附件与图片走的是两条不同的上游链路（附件要 multipart 上传换 fileId、按访客隔离落盘），
+     * 所以与 {@link #guestImagesEnabled} 分开两列、两个开关——一个模型可能是纯文本的，
+     * 但读 PDF 恰恰是它最擅长的事，合成一个开关就会逼发布者做无谓的取舍。
+     */
+    private Integer guestFilesEnabled;
+
     /** 创建人（游客对话以该用户身份执行检索可见性） */
     private String createdBy;
 

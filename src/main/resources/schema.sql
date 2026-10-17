@@ -135,6 +135,8 @@ CREATE TABLE IF NOT EXISTS `c_ai_agent_share` (
     `model_ref`   VARCHAR(255) DEFAULT NULL COMMENT '游客对话模型引用（providerId/modelId，须为平台级供应商或创建者可用；空=回退创建者个人默认模型）',
     `enabled`     INT          DEFAULT 1 COMMENT '启用: 1=可访问, 0=暂停（保留 token，恢复即用）',
     `mcp_enabled` INT          DEFAULT 0 COMMENT 'MCP 端点: 1=对外提供 /ai/mcp/{token}（Streamable HTTP，Token 即凭据），0=关闭',
+    `guest_images_enabled` INT DEFAULT 0 COMMENT '游客发图: 1=允许访客在分享页发图，0=关闭（默认）。默认关而非跟开：游客模型由发布者选定，非视觉模型收到图片只会报错或静默忽略，视觉 token 成本却记在发布者账上',
+    `guest_files_enabled`  INT DEFAULT 0 COMMENT '游客文档附件: 1=允许访客上传 PDF/Word/代码等附件（逐访客隔离落盘 + 24h 清理 + 按发布者身份解析），0=关闭（默认）',
     `created_by`  VARCHAR(64)  DEFAULT NULL COMMENT '创建人（登录用户 uid；游客对话与 MCP 调用以该用户身份执行检索可见性与工具）',
     `visit_count`  INT         DEFAULT 0 COMMENT '游客对话累计访问次数（每次成功发起一次游客对话 +1；发布访问统计）',
     `last_visit_at` DATETIME   DEFAULT NULL COMMENT '最近一次游客对话时间',
