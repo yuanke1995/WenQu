@@ -57,6 +57,12 @@
 }
 .md .md-act:hover:not(:disabled) { color: var(--app-accent); border-color: var(--app-border); }
 .md .md-act:disabled { opacity: .45; cursor: not-allowed; }
+/* 「运行」是唯一带文字的动作：宽度自适应、图标与文字留 4px；其余动作保持 22px 方形图标 */
+.md .md-code-head .md-act-run {
+  width: auto; padding: 0 7px; gap: 4px;
+  color: var(--app-accent); border-color: var(--app-accent-weak, var(--app-border));
+}
+.md .md-code-head .md-act-run .md-act-label { font-size: 11px; line-height: 1; }
 
 /* 结果槽：只承载「沙盒运行」的输出，与代码块同宽（预览已改成弹层，不再往这里塞 iframe） */
 .md .md-code-slot:empty { display: none; }

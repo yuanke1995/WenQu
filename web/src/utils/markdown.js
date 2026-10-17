@@ -350,7 +350,7 @@ const renderMdInner = (t, images = [], runnable = RUNNABLE_DEFAULT, preview = PR
       return
     }
     // 按 data-lang 挂「在沙盒中运行」/「预览」（后端 SandboxController.LANGS 同口径）
-    if (runnable && RUNNABLE_LANGS.has(lang)) head.appendChild(actBtn('md-act-run', '在云端沙盒中运行（不影响本机）', RUN_ICON))
+    if (runnable && RUNNABLE_LANGS.has(lang)) head.appendChild(actBtn('md-act-run', '在云端沙盒中运行（不影响本机）', RUN_ICON, '运行'))
     if (preview && PREVIEW_LANGS.has(lang)) head.appendChild(actBtn('md-act-preview', '预览', PREVIEW_ICON))
     head.appendChild(actBtn('code-copy', '复制', COPY_SVG))
   })
@@ -361,12 +361,15 @@ const renderMdInner = (t, images = [], runnable = RUNNABLE_DEFAULT, preview = PR
   return box.innerHTML
 }
 
-const actBtn = (cls, title, icon) => {
+const actBtn = (cls, title, icon, label) => {
   const b = document.createElement('button')
   b.type = 'button'
   b.className = 'md-act ' + cls
   b.title = title
-  b.innerHTML = icon
+  // 只有「运行」带文字：预览/复制是通用图标语义，业务用户一眼认得；
+  // 而「在云端沙盒里跑一段代码」不是通用语义，纯图标（22px 的小圆圈）在真机截图里几乎看不出来
+  // 2026-10-17 真机验收：用户是业务岗，图标不可发现 = 这个能力等于不存在。
+  b.innerHTML = label ? icon + `<span class="md-act-label">${label}</span>` : icon
   return b
 }
 
