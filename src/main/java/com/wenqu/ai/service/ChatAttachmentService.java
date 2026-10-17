@@ -59,18 +59,28 @@ public class ChatAttachmentService {
     public record PreparedAttachment(String name, String mime, long size, String text, boolean truncated) {
     }
 
-    /** 附件元信息（随消息持久化，前端气泡回显）：不含内容本体 */
+    /**
+     * 附件元信息（随消息持久化，前端气泡回显）：不含内容本体。
+     * <p><b>为什么带 fileId</b>：它是「编辑重发 / 重新生成要把原附件原样带走」唯一的凭据。此前只落
+     * name/mime/size，凭据只活在浏览器内存那条消息上，于是刷新页面或切走会话再回来后，附件在界面上
+     * 还在、却再也带不走——而文件其实仍在盘上（保留期默认 24h）。不带号等于把「刷新过一次」变成丢附件的理由。
+     * <p>外泄面已核：出参只有登录态的会话历史（{@code SessionService.toMessageMap} 原样透传这一层），
+     * 免登录分享页走 {@code SessionShareService.publicHistory} 的字段白名单、压根不含 attachments；
+     * 且 fileId 只在归属者自己的哈希目录下可解（见 {@link ChatUploadService#read}），别人的号读不到别人的文件。
+     */
     public static Map<String, Object> metaOf(ChatRequest.Attachment a, long size) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("name", a.getName());
         m.put("mime", a.getMime() == null ? "" : a.getMime());
         m.put("size", size);
+        m.put("fileId", a.getFileId() == null ? "" : a.getFileId());
         return m;
     }
 
     /**
-     * 把本轮上传的附件转成可落库的元信息 JSON 数组字符串（[{name,mime,size}]），供用户消息持久化后
-     * 在气泡里回显。体积取自上传侧落盘的元信息（{@link ChatUploadService#stat}），不在这里重读文件。
+     * 把本轮上传的附件转成可落库的元信息 JSON 数组字符串（[{name,mime,size,fileId}]），供用户消息持久化后
+     * 在气泡里回显、并在编辑重发时凭 fileId 原样带走。体积取自上传侧落盘的元信息（{@link ChatUploadService#stat}），
+     * 不在这里重读文件。
      * <p>空列表返回 null（不落库这一列），与「本轮没有附件」同义。
      * <p><b>为什么单独一条出口</b>：附件元信息要写进用户消息的那一行，但落库发生在两条互不相干的路径上
      * （框架引擎 {@code AgentscopeChatEngine} 与工作流 {@code ChatflowBridge}），两处各写一遍取体积的

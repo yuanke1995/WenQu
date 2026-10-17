@@ -100,6 +100,23 @@ public class ChatController {
     }
 
     /**
+     * 批量校验附件是否仍可重发：返回入参里字节仍在盘上的那部分（{@code {live:[fileId]}}）。
+     * 界面上「已失效」这三个字得有据可查——不带这个端点，前端只能把「这一端没拿到 fileId」
+     * 一律报成「已过保留期」，而文件其实还在（保留期默认 24h，刷新页面只需 0 秒）。
+     */
+    @Operation(summary = "批量校验聊天附件是否仍可重发",
+            description = "入参为 fileId 的 JSON 数组，返回其中仍可读回的子集 live；"
+                    + "只查当前用户自己的上传目录，形态非法或不属于本人的 id 一律按不在处理。一次最多 50 个")
+    @ApiResponse(responseCode = "200", description = "返回 {live:[fileId]}")
+    @PostMapping("/chat/attachment/live")
+    public ResultJson liveAttachments(
+            @Parameter(description = "待校验的 fileId 数组") @RequestBody List<String> fileIds) {
+        if (fileIds == null || fileIds.isEmpty()) return ResultJson.ok(Map.of("live", List.of()));
+        if (fileIds.size() > 50) throw new BizException("一次最多校验 50 个附件");
+        return ResultJson.ok(Map.of("live", chatUploadService.liveIds(fileIds, RequestUser.uid())));
+    }
+
+    /**
      * 当前身份与权限（普通用户问答 UI 据此隐藏/显示管理入口；白名单端点，无需管理员即可调用）。
      * 2026-09-26 RBAC：响应追加 {@code menus}（当前角色可见的侧边栏菜单树，前端动态渲染导航）；
      * {@code admin} 按管理员级角色判定（含自定义 admin_flag=1 角色）。

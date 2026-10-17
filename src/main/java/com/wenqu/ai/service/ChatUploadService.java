@@ -119,6 +119,24 @@ public class ChatUploadService {
         }
     }
 
+    /**
+     * 仍可读取（字节在盘上）的 fileId 子集：编辑卡与输入框的内联附件 chip 据此区分
+     * 「已过保留期、真的带不走」和「只是这一端没拿到凭据」。
+     * <p>判据取数据文件而非元信息侧写——重发要的是字节还在，侧写只在两者被拆开时不足以作证。
+     * <p>只查本人哈希目录：形态非法或落在别人目录下的 id 一律算不在（不区分「不存在」与「不是你的」，
+     * 免得这个端点变成 fileId 探测 oracle）。
+     */
+    public java.util.Set<String> liveIds(java.util.Collection<String> fileIds, String uid) {
+        java.util.Set<String> out = new java.util.LinkedHashSet<>();
+        if (fileIds == null || fileIds.isEmpty()) return out;
+        Path dir = dirOf(uid);
+        for (String id : fileIds) {
+            if (id == null || !FILE_ID.matcher(id).matches()) continue;
+            if (Files.isRegularFile(dir.resolve(id))) out.add(id);
+        }
+        return out;
+    }
+
     /** 过期清理（ScheduleCenter 周期调用）：删除超过保留期的附件与其元信息 */
     public int cleanupExpired() {
         int hours = configService.getInt("chat.uploadRetentionHours", 24);
