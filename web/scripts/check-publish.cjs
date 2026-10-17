@@ -31,9 +31,11 @@ const AGENTS = [
     shareConfig: '', workflowId: '', toolKnowledge: 1, createTime: '2026-10-01T10:00:00' }
 ]
 const PUBLISH = { enabled: true, mcpEnabled: true, token: 'tok-abc123', modelRef: '',
+  // 游客多模态能力位（2026-10 新增）：默认关，由发布者在「游客输入」里显式打开
+  guestImages: false, guestFiles: false,
   visitCount: 7, lastVisitAt: '2026-10-06T15:40:00' }
 
-function serveStatic (page) {
+function serveStatic (page, postBodies) {
   return page.route('**/*', route => {
     const u = new URL(route.request().url())
     const json = data => route.fulfill({ status: 200, contentType: 'application/json',
@@ -41,16 +43,31 @@ function serveStatic (page) {
     if (u.pathname === '/api/ai/auth/me') {
       return route.fulfill({ status: 200, contentType: 'application/json',
         headers: { 'access-control-allow-origin': '*' },
-        body: JSON.stringify({ success: true, data: { user: 'admin', username: '管理员', role: 'superadmin', admin: true, menus: [] } }) })
+        // menus 必须给出「智能体」这个 sidebar 父菜单及其 tab 子项：
+        // /agents 现在渲染的是 AgentsHubPage（菜单表驱动的 Tab 壳），Tab 清单只来自这里。
+        // 空 menus 的后果不是"少几个 Tab"，而是整个壳渲染成 a-empty —— AgentsPage 根本不挂载，
+        // 于是本脚本后面每一条断言都在量一个不存在的页面（实测：连 /agent/list 都不会发出去）。
+        body: JSON.stringify({ success: true, data: { user: 'admin', username: '管理员', role: 'superadmin', admin: true,
+          menus: [{ id: 'menu-agents', name: '智能体', path: '/agents', children: [
+            { id: 'menu-agents-list', name: '智能体', path: '/agents?tab=agents', renderAs: 'tab' },
+            { id: 'menu-agents-skills', name: '技能', path: '/agents?tab=skills', renderAs: 'tab' },
+            { id: 'menu-agents-providers', name: '模型供应商', path: '/agents?tab=providers', renderAs: 'tab' }
+          ] }] } }) })
     }
     if (u.pathname === '/api/ai/agent/list') return json(AGENTS)
     if (u.pathname === '/api/ai/agent/a-1/publish') {
       // POST=弹窗里拨开关（savePublish）：按请求体回写 enabled，模拟后端真实落库
       if (route.request().method() === 'POST') {
         const body = route.request().postDataJSON() || {}
+        if (postBodies) postBodies.push(body)
         PUBLISH.enabled = !!body.enabled
         PUBLISH.mcpEnabled = !!body.mcpEnabled
-        return json({ enabled: PUBLISH.enabled, mcpEnabled: PUBLISH.mcpEnabled, token: 'tok-abc123', modelRef: '' })
+        // 与后端同口径：停用分享时两个能力位一并压成 false（分享都没了就没有"访客能不能发图"）
+        PUBLISH.guestImages = PUBLISH.enabled && !!body.guestImages
+        PUBLISH.guestFiles = PUBLISH.enabled && !!body.guestFiles
+        return json({ enabled: PUBLISH.enabled, mcpEnabled: PUBLISH.mcpEnabled,
+          guestImages: PUBLISH.guestImages, guestFiles: PUBLISH.guestFiles,
+          token: 'tok-abc123', modelRef: '' })
       }
       return json(PUBLISH)
     }
@@ -87,7 +104,8 @@ const check = (ok, label, detail = '') => {
     } catch (e) { /* ignore */ }
   })
   const page = await ctx.newPage()
-  await serveStatic(page)
+  const postBodies = []
+  await serveStatic(page, postBodies)
   const errors = []
   page.on('pageerror', e => errors.push(String(e.message)))
   page.on('console', m => { if (m.type() === 'error') errors.push(m.text()) })
@@ -228,6 +246,51 @@ const check = (ok, label, detail = '') => {
   })
   check(narrow.scrollW <= narrow.clientW + 1, '窄宽度（820）弹窗无横向溢出', `scrollW=${narrow.scrollW} clientW=${narrow.clientW}`)
   check(narrow.btnW >= 28, '窄宽度下框内复制按钮仍是可点尺寸（不被压扁）', `w=${narrow.btnW} pane=${narrow.pane} boxN=${narrow.rowN}`)
+
+  // ---- 游客输入（多模态能力位）：分享页能不能收图片/附件由这里决定 ----
+  // 这一段覆盖本轮新增的两个开关。断言三件：区块与两个开关在位、拨开关真的 POST 出去、
+  // 以及「模型可能看不懂图」的就地提示（选中的是"跟随个人默认模型"这一档，无从解析，
+  // 所以提示该走"请确认你的个人默认模型"那句，而不是断言一个具体模型名）
+  const gi = await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('.pub-switch-row')]
+    const byLabel = t => rows.find(r => (r.querySelector('.pub-switch-label') || {}).textContent?.includes(t))
+    const img = byLabel('允许发图')
+    const fil = byLabel('允许上传文档附件')
+    const sw = r => r && r.querySelector('.ant-switch')
+    const blockTitle = [...document.querySelectorAll('.pub-block-h')].map(x => x.textContent.trim())
+    return {
+      hasBlock: blockTitle.includes('游客输入'),
+      hasImg: !!img, hasFil: !!fil,
+      imgDesc: img ? (img.querySelector('.pub-switch-d') || {}).textContent || '' : '',
+      filDesc: fil ? (fil.querySelector('.pub-switch-d') || {}).textContent || '' : '',
+      imgOn: sw(img) ? sw(img).classList.contains('ant-switch-checked') : null,
+      // 默认必须是「关」：发布者不明确同意就不给访客多模态入口
+      offByDefault: sw(img) && sw(fil)
+        ? (!sw(img).classList.contains('ant-switch-checked') && !sw(fil).classList.contains('ant-switch-checked'))
+        : false
+    }
+  })
+  check(gi.hasBlock && gi.hasImg && gi.hasFil, '发布弹窗有「游客输入」区块与两个开关', JSON.stringify({ block: gi.hasBlock, img: gi.hasImg, fil: gi.hasFil }))
+  check(gi.offByDefault, '两个开关默认都是关（发布者不明确同意就不给访客多模态入口）', `imgOn=${gi.imgOn}`)
+  check(gi.imgDesc.includes('1280') || gi.imgDesc.includes('图片'), '「允许发图」写出它会做什么', gi.imgDesc.slice(0, 30))
+  check(gi.filDesc.includes('隔离') || gi.filDesc.includes('清理'), '「允许上传附件」写出隔离与清理口径', gi.filDesc.slice(0, 30))
+
+  // 拨开「允许发图」：必须真的把 guestImages 发给服务端（只在前端亮个灯不算数）
+  await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('.pub-switch-row')]
+    const row = rows.find(r => (r.querySelector('.pub-switch-label') || {}).textContent?.includes('允许发图'))
+    row.querySelector('.ant-switch').click()
+  })
+  await page.waitForTimeout(900)
+  const lastPost = postBodies[postBodies.length - 1] || {}
+  check(lastPost.guestImages === true && lastPost.guestFiles === false,
+    '拨「允许发图」把 guestImages 发给服务端（不是只在前端亮灯）', JSON.stringify(lastPost))
+  const warn = await page.evaluate(() => {
+    const w = document.querySelector('.pub-warn')
+    return { txt: w ? w.textContent.trim() : '', n: document.querySelectorAll('.pub-warn').length }
+  })
+  check(warn.txt.includes('个人默认模型') || warn.txt.includes('图片理解'),
+    '选了「跟随个人默认模型」时提示要自己确认它看得懂图（无从解析就不假装知道）', warn.txt.slice(0, 40))
 
   const real = errors.filter(e => !/Failed to load resource|ERR_FAILED|401|Failed to fetch/i.test(e))
   check(real.length === 0, '无 JS 运行时错误', real.slice(0, 3).join(' | '))

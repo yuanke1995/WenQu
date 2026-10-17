@@ -39,8 +39,41 @@ const check = (ok, label, detail = '') => {
     '白名单含 /knowledge 且前缀表覆盖 /knowledge/:id/docs')
 }
 
-// ---- ② antd Textarea 没有 resize()，必须走 resizableTextArea.instance ----
+// ---- ② 输入框内核：contenteditable 的 Composer（此前是 antd Textarea） ----
 {
+  const c = stripComments(read('src/views/ChatPage.vue'))
+  check(!/textareaRef/.test(c), 'ChatPage 主输入框不再走 antd Textarea 的 ref 通道',
+    /textareaRef/.test(c) ? '仍有 textareaRef 残留：那条 resize 路径已经不存在了' : '')
+  // 输入区已抽成 chat/ChatInput.vue（与公开分享页共用一份壳）。剪枝通道（DOM→数组）现在穿过两层：
+  // ChatPage 接 @update:keys="onKeys"，ChatInput 再把 Composer 的 update:keys 原样上抛。
+  // 两层任何一层漏接，Backspace 删掉 chip 后数组里那条就还在——引用还在生效、卡片却没了
+  const inputSfc = read('src/chat/ChatInput.vue')
+  check(/<ChatInput[\s\S]{0,700}@update:keys="onKeys"/.test(c),
+    'ChatPage 装配 ChatInput 且接了 DOM→数组 的剪枝通道')
+
+  // ---- 消息区整块复用：两页都必须装配 chat/ChatThread.vue ----
+  // 这一层是「免得两头改」的地基：行/块/气泡布局与四个叶子的次第只有一份。
+  // 静态断言它是为了防"回退式重构"——谁哪天把行布局抄回页面里，两侧立刻开始漂，
+  // 而症状（两条竖边对不齐、降级条跑到正文上面）只有肉眼能看出来。
+  const thread = read('src/chat/ChatThread.vue')
+  const shareSfc = read('src/views/ShareChatPage.vue')
+  check(/import ChatThread from '\.\.\/chat\/ChatThread\.vue'/.test(c) && /<ChatThread[\s\S]{0,400}:messages="messages"/.test(c),
+    'ChatPage 装配 ChatThread（消息行布局只有一份）')
+  check(/import ChatThread from '\.\.\/chat\/ChatThread\.vue'/.test(shareSfc) && /<ChatThread[\s\S]{0,400}:messages="messages"/.test(shareSfc),
+    '分享页装配 ChatThread（同一份外壳）')
+  check(/\.msg-block\s*\{/.test(thread) && /\.bubble\.user\s*\{/.test(thread),
+    '行/块/气泡布局只定义在 ChatThread 里')
+  check(!/\.msg-block\s*\{/.test(c) && !/^\.bubble\s*\{/m.test(c),
+    'ChatPage 不再自己写行/块/气泡布局（抄回来就会两边漂）')
+  check(!/\.sc-msg-block\s*\{/.test(shareSfc) && !/\.sc-bubble\s*\{/.test(shareSfc),
+    '分享页不再自己写行/块/气泡布局')
+  // 叶子只该由 ChatThread 摆位：页面各自摆一遍，次第迟早不一致
+  check(/<UserBubble/.test(thread) && /<DegradationBar/.test(thread) && /<AnswerActions/.test(thread),
+    '四个叶子由 ChatThread 统一摆位（提问随行材料 / 降级条 / 动作行）')
+  check(/<Composer[\s\S]{0,700}@update:keys="k => emit\('update:keys', k\)"/.test(inputSfc),
+    'ChatInput 把 Composer 的 update:keys 上抛（少这一句剪枝通道就断在组件里）')
+  // antd Textarea 只 expose focus/blur/resizableTextArea，没有 resize()：这条上游事实仍然成立，
+  // 页面里剩下的 a-textarea（计划意见框、反馈框）哪天要自测高度，仍须走 resizableTextArea.instance.resize()
   const antd = join(ROOT, 'node_modules/ant-design-vue/es/input/TextArea.js')
   if (!existsSync(antd)) {
     check(false, 'antd Textarea 源码可读（用于核实 expose）', '文件不存在，无法核实')
@@ -48,16 +81,35 @@ const check = (ok, label, detail = '') => {
     const a = stripComments(read('node_modules/ant-design-vue/es/input/TextArea.js'))
     const m = a.match(/expose\(\{[\s\S]*?\}\)/)
     const exposed = m ? m[0] : ''
-    // 核实 antd 真实暴露的 API
-    const hasResize = /(^|[^.\w])resize\s*[:(]/.test(exposed)
-    check(!hasResize, 'antd Textarea 未暴露 resize()（所以不能直接调）',
-      hasResize ? 'antd 已暴露 resize，调用路径可简化' : '确认：须走 resizableTextArea.instance.resize()')
-    const c = stripComments(read('src/views/ChatPage.vue'))
-    const bad1 = /textareaRef\.value\.resize\(\)/.test(c)
-    check(!bad1, 'ChatPage 未直调 textareaRef.value.resize()（会抛 TypeError）')
-    const good = /resizableTextArea[\s\S]{0,80}instance[\s\S]{0,40}resize/.test(c)
-    check(good, 'ChatPage 走 resizableTextArea.instance.resize() 的正确路径')
+    check(!/(^|[^.\w])resize\s*[:(]/.test(exposed), 'antd Textarea 仍未暴露 resize()（残留 a-textarea 不能直接调）')
   }
+}
+
+// ---- ②b 内联 chip 的三条静默失效面（写错不报错、界面直接不对） ----
+{
+  const cp = read('src/chat/Composer.vue')
+  const c = read('src/views/ChatPage.vue')
+  // chip 节点是命令式建的，拿不到 scoped 的 data-v 标记：样式不包 :deep() 就一条都不生效
+  check(/:deep\(\.cchip\)/.test(cp), 'Composer 的 chip 样式走 :deep()（否则 scoped 选择器匹配不到命令式节点）')
+  // 图标靠 data-ic 与 chipOf 返回的 icon 对上；对不上就是没图且不报错（kebab 名写错同罪）
+  const provided = new Set([...cp.matchAll(/data-ic="([^"]+)"/g)].map(m => m[1]))
+  const vocab = ['file', 'mention', 'kb', 'agent', 'hist', 'plan', 'img']
+  const missing = vocab.filter(k => !provided.has(k))
+  check(missing.length === 0, 'chip 图标源覆盖 chipOf 用到的每个 icon 名',
+    missing.length ? '缺：' + missing.join(', ') : `已核对 ${vocab.length} 个`)
+  // kebab 图标标签要靠显式具名导入才解析得到（AntDesignVueResolver 不解析 icons-vue）：
+  // 漏 import 不报错、不画图标，看起来只像「UI 丑」
+  const tplIcons = [...cp.matchAll(/<([a-z]+(?:-[a-z]+)*)-outlined\s+/g)].map(m => m[1])
+  const imported = new Set((cp.match(/import \{([^}]*)\} from '@ant-design\/icons-vue'/)?.[1] || '')
+    .split(',').map(s => s.trim()).filter(Boolean))
+  const pascal = s => s.replace(/(^|-)([a-z])/g, (m, _x, c) => c.toUpperCase()) + 'Outlined'
+  const noImport = [...new Set(tplIcons)].filter(t => !imported.has(pascal(t)))
+  check(noImport.length === 0, 'Composer 模板里每个 *-outlined 都有对应的 icons-vue 具名导入',
+    noImport.length ? '缺 import：' + noImport.map(pascal).join(', ') : `已核对 ${new Set(tplIcons).size} 个`)
+  // 正文与 chip 的边界：序列化必须跳过 chip 节点，否则附件名会被当成正文发给模型
+  check(/if \(isChip\(c\)\) continue/.test(stripComments(cp)), 'Composer 序列化跳过 chip（chip 不产出字符）')
+  // 复制靠 copy 事件的 setData：ClipboardItem 写文件受 MIME 白名单限制，走错一条路就静默丢附件
+  check(/clipboardData\.setData\('text\/html'/.test(stripComments(cp)), '复制走 clipboardData.setData 外发 chip 凭据')
 }
 
 // ---- ③ 同一功能不得混用两套判据（isCoarse 与 @media(hover:hover)） ----
@@ -103,12 +155,12 @@ const check = (ok, label, detail = '') => {
   // 欢迎卡：网格与横滑卡片二选一，不能同时渲染
   check(/<div v-if="!isNarrow" class="welcome-samples">/.test(c), '宽屏用网格示例卡')
   check(/<MobileSampleCards v-else/.test(c), '窄屏用横滑示例卡')
-  // 工具条：窄屏必须拿到 nowrap 约束。
-  // 用「class 切换」而非包装组件：曾用 <component :is> + 具名 slot 包装，
-  // 结果内容全被丢弃（渲染成空的 mib-left/mib-right）—— 具名槽卡位置，漏接就丢内容。
-  // 现在只加 as-mobile 类，DOM 结构两种形态完全一致。
-  check(/:class="isNarrow \? 'input-toolbar as-mobile' : 'input-toolbar'"/.test(c),
-    '工具条用 as-mobile 类切换（不套包装组件）')
+  // 工具条：窄屏必须拿到 nowrap 约束，否则模型名一变长就把「思考」压成竖排两字。
+  // 这条约束随工具条一起进了 chat/ChatInput.vue（它的 ≤768 块里），不再由页面切 as-mobile 类。
+  // 历史教训仍要防住：曾用 <component :is> + 具名 slot 包装工具条，
+  // 结果内容全被丢弃（渲染成空的 mib-left/mib-right）——具名槽卡位置，漏接就丢内容。
+  check(/@media \(max-width: 768px\)[\s\S]*?\.ci-toolbar \{ flex-wrap: nowrap/.test(read('src/chat/ChatInput.vue')),
+    '工具条窄屏 nowrap 约束在 ChatInput 的 ≤768 块里')
   check(/MobileInputBar/.test(c) === false, '未引入 MobileInputBar 包装组件（曾导致工具条内容被丢弃）')
   check(/:compact="isNarrow"/.test(c), '模型选择器窄屏用 compact（省略号、不换行）')
   // 智能体胶囊窄屏只留头像

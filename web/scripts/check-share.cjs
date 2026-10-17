@@ -40,21 +40,47 @@ const SHARED = {
     ] }
   ]
 }
-const AGENT = { name: '客服助手', description: '回答产品与订单问题', icon: '📦', isBuiltin: false }
+const AGENT = { name: '客服助手', description: '回答产品与订单问题', icon: '📦', isBuiltin: false,
+  // 游客多模态能力位与限额（发布者在「公开发布 → 游客输入」里打开后由 /info 下发）。
+  // 断言里的数字刻意与前端默认值不同：这样"前端有没有真的用服务端下发的值"才测得出来
+  guestImages: true, guestFiles: true,
+  maxImages: 3, maxImageMb: 10, maxAttachments: 2, maxAttachmentMb: 5, maxQuestionChars: 8000 }
+/** 未开放多模态的分享：附件入口必须**根本不出现**（摆一个点了报错的按钮等于骗用户） */
+const AGENT_PLAIN = { name: '纯文字助手', description: '只能文字提问', icon: '🤖', isBuiltin: false,
+  guestImages: false, guestFiles: false,
+  maxImages: 9, maxImageMb: 10, maxAttachments: 5, maxAttachmentMb: 15, maxQuestionChars: 8000 }
 
-// 游客多会话：一个访客在同一链接下可以有多段对话（列表 + 各自历史）
+// 游客多会话：一个访客在同一链接下可以有多段对话（列表 + 各自历史）。
+// 时间**相对当前时刻**生成，不写死日期：断言的正是「今天 HH:MM」那一档文案，
+// 写死 2026-10-07 的后果是过了那天这条用例必然失败——而它当时看起来完全正常。
+// 现在第一条=今天（走「今天」分支），第二条=昨天（走「昨天」分支），两档文案都被覆盖。
+// 锚在「当地某天的固定钟点」而不是「现在往前推 N 小时」：后者在凌晨 0–2 点跑会把
+// "往前推 2 小时"推到昨天，于是断言里的「今天 HH:MM」必然落空（实测踩过，00:30 跑的）。
+const atLocal = (dayOffset, hh, mm) => {
+  const d = new Date()
+  d.setDate(d.getDate() + dayOffset)
+  d.setHours(hh, mm, 0, 0)
+  return d.toISOString()
+}
 const SESSIONS = [
-  { id: 's-share-1', title: '你好', updateTime: '2026-10-07T10:20:00', messageCount: 2 },
-  { id: 's-share-0', title: '退款要几天到账', updateTime: '2026-10-06T09:00:00', messageCount: 4 }
+  { id: 's-share-1', title: '你好', updateTime: atLocal(0, 10, 20), messageCount: 2 },
+  { id: 's-share-0', title: '退款要几天到账', updateTime: atLocal(-1, 9, 0), messageCount: 4 }
 ]
 const HISTORIES = {
   's-share-1': [{ role: 'user', content: '你好' }, { role: 'ai', content: '你好呀，有什么可以帮你？' }],
-  's-share-0': [{ role: 'user', content: '退款要几天到账' }, { role: 'ai', content: '一般 1-3 个工作日到账。' }]
+  's-share-0': [{ role: 'user', content: '退款要几天到账' }, { role: 'ai', content: '一般 1-3 个工作日到账。' }],
+  // 评价状态回填：后端（ShareController.history 与 ChatController.history 同口径）会给已评过的
+  // 消息带上 fb。前端不回填的话，刷新后按钮显示成没评过，游客会以为反馈丢了再点一次
+  's-share-fb': [
+    { role: 'user', content: '这个怎么算' },
+    { role: 'ai', content: '按天算。', messageId: 'm-fb-1', fb: 0 }
+  ]
 }
 
 function serveStatic (page) {
-  // cap：把浏览器发出去的游客请求回传给断言（新对话必须清空 sessionId；清除必须真的发删除）
-  const cap = { chatBodies: [], deletes: [] }
+  // cap：把浏览器发出去的游客请求回传给断言（新对话必须清空 sessionId；清除必须真的发删除；
+  // 多模态要看发送体里到底带了什么；评价/重新生成要看打没打到服务端、带没带对凭据）
+  const cap = { chatBodies: [], deletes: [], uploads: [], feedbacks: [] }
   page.route('**/*', route => {
     const u = new URL(route.request().url())
     const json = data => route.fulfill({ status: 200, contentType: 'application/json',
@@ -62,6 +88,17 @@ function serveStatic (page) {
     // 免登录页不走 /auth/me；分享接口按 token 给 mock
     if (u.pathname === '/api/ai/share/session/tok-1') return json(SHARED)
     if (u.pathname === '/api/ai/share/tok-2/info') return json(AGENT)
+    if (u.pathname === '/api/ai/share/tok-5/info') return json(AGENT_PLAIN)
+    // 游客附件上传：按 visitorId 记账，回一个 fileId（服务端真实实现按访客隔离落盘）
+    if (u.pathname === '/api/ai/share/tok-2/attachment') {
+      cap.uploads.push({ visitorId: u.searchParams.get('visitorId') || '' })
+      return json({ fileId: 'f-mock-1', name: 'note.txt', mime: 'text/plain', size: 5 })
+    }
+    // 游客评价：把请求体回传给断言（messageId/rating/visitorId 三样都必须带对）
+    if (u.pathname === '/api/ai/share/tok-2/feedback') {
+      try { cap.feedbacks.push(JSON.parse(route.request().postData() || '{}')) } catch (e) { /* 非 JSON */ }
+      return json('感谢反馈')
+    }
     if (u.pathname === '/api/ai/share/tok-2/sessions') {
       if (route.request().method() === 'DELETE') {
         cap.deletes.push(u.pathname + u.search)
@@ -95,7 +132,18 @@ function serveStatic (page) {
       if (!tok3) frames.push(
         'data: ' + JSON.stringify({ type: 'token', content: '根据文档，' }) + '\n\n',
         'data: ' + JSON.stringify({ type: 'token', content: '答案是 5。' }) + '\n\n',
-        'data: ' + JSON.stringify({ type: 'done', sessionId: 's-share-1' }) + '\n\n')
+        // done.content 是本轮的落库版汇总（与服务端 done 信封同形）。这里刻意带上
+        // messageId 与 degradations：前者是评价/重新生成的凭据，后者是"答了但打了折扣"的说明，
+        // 两样都是后端**早就在下发**、而分享页此前整个丢掉的东西。
+        'data: ' + JSON.stringify({
+          type: 'done', sessionId: 's-share-1',
+          content: JSON.stringify({
+            finalContent: '根据文档，答案是 5。',
+            messageId: 'm-ai-1',
+            sources: [],
+            degradations: [{ code: 'modelFallback', msg: '本轮按备用模型作答' }]
+          })
+        }) + '\n\n')
       return route.fulfill({ status: 200, contentType: 'text/event-stream',
         headers: { 'access-control-allow-origin': '*', 'cache-control': 'no-cache' },
         body: frames.join('') })
@@ -112,6 +160,39 @@ function serveStatic (page) {
   })
   return cap
 }
+
+// 输入区已抽成 chat/ChatInput.vue（与主对话页共用）：正文是 contenteditable 的 .composer-edit，
+// 附件/图片是同一条文字流里的 .cchip 节点。于是 page.fill('.sc-textarea') 那套不再适用，
+// 这里补两个与真实键入同路径的助手。
+//
+// 为什么用 execCommand('insertText') 而不是直接改 textContent：
+// 后者不触发 input 事件，Composer 不知道正文变了，组件也不会把值同步出去——
+// 那样测到的是「我改了 DOM」而不是「用户打字后页面怎么反应」。
+const typeDraft = async (page, text) => {
+  await page.evaluate(t => {
+    const el = document.querySelector('.composer-edit')
+    el.focus()
+    // 光标落到**正文末尾**再插字：绝不能 selectAll + insertText ——
+    // chip 是编辑区里的原子节点，全选会被这次插入一起替换掉，
+    // 于是测到的变成「把材料删光之后发送」，而不是「带着材料打完字发送」（实测踩过）
+    const range = document.createRange()
+    range.selectNodeContents(el)
+    range.collapse(false)
+    const sel = window.getSelection()
+    sel.removeAllRanges(); sel.addRange(range)
+    document.execCommand('insertText', false, t)
+  }, text)
+  await page.waitForTimeout(150)
+}
+// 正文（不含 chip）：chip 按设计「不产出字符」（见 Composer 的三条边界），
+// 所以读的时候要把它们摘掉再取文本，否则断言测的是渲染而不是序列化口径
+const draftText = page => page.evaluate(() => {
+  const el = document.querySelector('.composer-edit')
+  if (!el) return ''
+  const c = el.cloneNode(true)
+  c.querySelectorAll('.cchip').forEach(n => n.remove())
+  return c.textContent || ''
+})
 
 let bad = 0
 const check = (ok, label, detail = '') => {
@@ -177,8 +258,8 @@ const check = (ok, label, detail = '') => {
   await page.waitForTimeout(1100)
   const sc = await page.evaluate(() => {
     const de = document.documentElement
-    const ta = document.querySelector('.sc-textarea')
-    const send = document.querySelector('.sc-send')
+    const ta = document.querySelector('.composer-edit')
+    const send = document.querySelector('.ci-send')
     const page_ = document.querySelector('.sc-page')
     const list = document.querySelector('.sc-list')
     const listRect = list ? list.getBoundingClientRect() : { height: 0 }
@@ -229,18 +310,18 @@ const check = (ok, label, detail = '') => {
   // 2026-10 用户截图报「正在检索资料…」出现两次。根因是模板同时渲染了两处同源状态：
   // 气泡内的 m.stage 与底部一条 sending && lastAiStage 的独立气泡。
   // 这里让 SSE 连发两次相同 stage（真实链路就是会重复推同一条阶段），
-  // 再断言全页 .sc-stage 只有 1 个。
+  // 再断言全页 .tm-stage 只有 1 个。
   await page.goto(ORIGIN + '/s/tok-2', { waitUntil: 'networkidle' })
   await page.waitForTimeout(900)
-  await page.fill('.sc-textarea', '你好')
-  await page.click('.sc-send')
+  await typeDraft(page, '你好')
+  await page.click('.ci-send')
   await page.waitForTimeout(1500)
   const streamed = await page.evaluate(() => ({
     // 正文已开始（token 已到）⇒ 阶段提示应已撤掉（m.stage 随正文开始被清）
-    stageN: document.querySelectorAll('.sc-stage').length,
-    typingN: document.querySelectorAll('.sc-typing').length,
-    body: (document.querySelector('.sc-bubble.ai') || {}).textContent || '',
-    bubbles: document.querySelectorAll('.sc-row').length
+    stageN: document.querySelectorAll('.tm-stage').length,
+    typingN: document.querySelectorAll('.tm-typing').length,
+    body: (document.querySelector('.bubble.ai') || {}).textContent || '',
+    bubbles: document.querySelectorAll('.row').length
   }))
   check(streamed.body.includes('答案是 5'), '分享页 SSE 正文正常渲染（stage→token→done 全链路）', streamed.body.slice(0, 40))
   check(streamed.stageN === 0 && streamed.typingN === 0,
@@ -248,7 +329,7 @@ const check = (ok, label, detail = '') => {
   check(streamed.bubbles === 2, '一轮问答只渲染 2 条（用户 1 + AI 1，无重复的阶段气泡）', `rows=${streamed.bubbles}`)
   // 灰底时代浅灰用户气泡几乎隐形（"看着不一样"的主因）——有消息后再取样比对
   const contrast = await page.evaluate(() => {
-    const p = document.querySelector('.sc-page'), u = document.querySelector('.sc-bubble.user')
+    const p = document.querySelector('.sc-page'), u = document.querySelector('.bubble.user')
     if (!p || !u) return null
     return { page: getComputedStyle(p).backgroundColor, user: getComputedStyle(u).backgroundColor }
   })
@@ -276,15 +357,15 @@ const check = (ok, label, detail = '') => {
   await page.click('.sc-tool-new')
   await page.waitForTimeout(300)
   const afterNew = await page.evaluate(() => ({
-    rows: document.querySelectorAll('.sc-row').length,
+    rows: document.querySelectorAll('.row').length,
     hero: !!document.querySelector('.sc-welcome'),
     stored: localStorage.getItem('share_session_tok-2')
   }))
   check(afterNew.rows === 0 && afterNew.hero && !afterNew.stored,
     '新对话：清空页面并放弃旧会话指针（回到空态，而不是接着往旧对话后面追加）', JSON.stringify(afterNew))
 
-  await page.fill('.sc-textarea', '第二段的问题')
-  await page.click('.sc-send')
+  await typeDraft(page, '第二段的问题')
+  await page.click('.ci-send')
   await page.waitForTimeout(1200)
   const lastBody = cap.chatBodies[cap.chatBodies.length - 1] || {}
   check(lastBody.sessionId === '', '新对话首条消息不带旧 sessionId（后端据此开第二段）', JSON.stringify(lastBody.sessionId))
@@ -305,8 +386,8 @@ const check = (ok, label, detail = '') => {
   await page.locator('.sc-hist-item').nth(1).click()
   await page.waitForTimeout(900)
   const switched = await page.evaluate(() => ({
-    rows: document.querySelectorAll('.sc-row').length,
-    first: (document.querySelector('.sc-bubble.user') || {}).textContent || '',
+    rows: document.querySelectorAll('.row').length,
+    first: (document.querySelector('.bubble.user') || {}).textContent || '',
     stored: localStorage.getItem('share_session_tok-2'),
     // 面板收起不能断"节点不存在"——antd 默认不销毁浮层节点，收起后它只是零高
     popOpen: (() => { const e = document.querySelector('.sc-hist'); return !!e && e.getBoundingClientRect().height > 0 })()
@@ -319,8 +400,8 @@ const check = (ok, label, detail = '') => {
   await page.goto(ORIGIN + '/s/tok-2', { waitUntil: 'networkidle' })
   await page.waitForTimeout(1000)
   const restored = await page.evaluate(() => ({
-    rows: document.querySelectorAll('.sc-row').length,
-    first: (document.querySelector('.sc-bubble.user') || {}).textContent || ''
+    rows: document.querySelectorAll('.row').length,
+    first: (document.querySelector('.bubble.user') || {}).textContent || ''
   }))
   check(restored.rows === 2 && restored.first.includes('退款要几天'),
     '刷新后回到切换后的那一段（不是最早记住的那段）', JSON.stringify(restored))
@@ -361,7 +442,7 @@ const check = (ok, label, detail = '') => {
   await page.waitForTimeout(900)
   const cleared = await page.evaluate(() => ({
     stored: localStorage.getItem('share_session_tok-2'),
-    rows: document.querySelectorAll('.sc-row').length,
+    rows: document.querySelectorAll('.row').length,
     hero: !!document.querySelector('.sc-welcome'),
     popOpen: (() => { const e = document.querySelector('.sc-hist'); return !!e && e.getBoundingClientRect().height > 0 })()
   }))
@@ -370,6 +451,194 @@ const check = (ok, label, detail = '') => {
     '确认后才真的发删除（带访客标识，服务端按 uid+智能体圈定范围）', JSON.stringify(cap.deletes))
   check(!cleared.stored && cleared.rows === 0 && cleared.hero && !cleared.popOpen,
     '清除后：当前线程清空回到空态、指针作废、面板收起', JSON.stringify(cleared))
+
+  // ---- 游客多模态输入（图片 / 文档附件，发布者可配开关）----
+  // 背景：分享页此前在构造上就是纯文字的——ShareController.chat 写死
+  // userImages(List.of()).attachments(List.of())，前端也没有任何取材入口。
+  // 这一段把「能力位 → 入口 → 取材 → 发送载荷」整条链路走一遍。
+  await page.goto(ORIGIN + '/s/tok-2', { waitUntil: 'networkidle' })
+  await page.evaluate(() => { try { localStorage.clear() } catch (e) { /* ignore */ } })
+  await page.goto(ORIGIN + '/s/tok-2', { waitUntil: 'networkidle' })
+  await page.waitForTimeout(900)
+
+  const att0 = await page.evaluate(() => {
+    const btn = document.querySelector('.ci-attach')
+    const r = btn ? btn.getBoundingClientRect() : null
+    return {
+      has: !!btn,
+      w: r ? Math.round(r.width) : 0, h: r ? Math.round(r.height) : 0,
+      // 接收类型必须只覆盖能力位允许的那几类
+      accept: (document.querySelector('.ci-file') || {}).accept || '',
+      placeholder: (document.querySelector('.composer-edit') || {}).getAttribute?.('data-ph') || ''
+    }
+  })
+  check(att0.has, '开放了多模态的分享：输入框左侧出现附件入口')
+  check(att0.w >= 36 && att0.h >= 36, '附件入口触控热区 ≥36px', `${att0.w}×${att0.h}`)
+  check(att0.accept.includes('image/*') && att0.accept.includes('.pdf'),
+    '选择器接收类型按能力位生成（图片 + 受支持文档格式）', att0.accept.slice(0, 40))
+  check(att0.placeholder.includes('图片'), '输入框占位文案点出能带图片/文件', att0.placeholder)
+
+  // 图片走**粘贴**这条路（截图是分享页最高频的多模态入口）：在页面里用 canvas 造一张真 PNG，
+  // 组一个带文件的 paste 事件派发出去——比 setInputFiles 更接近真实用户动作，也顺带验证
+  // "粘贴必须 preventDefault"这条（否则浏览器会把文件名当文本插进正文）
+  await page.evaluate(async () => {
+    const c = document.createElement('canvas')
+    c.width = 8; c.height = 8
+    const ctx = c.getContext('2d')
+    ctx.fillStyle = '#e33'; ctx.fillRect(0, 0, 8, 8)
+    const blob = await new Promise(r => c.toBlob(r, 'image/png'))
+    const file = new File([blob], 'shot.png', { type: 'image/png' })
+    const dt = new DataTransfer()
+    dt.items.add(file)
+    document.querySelector('.composer-edit').dispatchEvent(
+      new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }))
+  })
+  await page.waitForTimeout(600)
+  const imgChip = await page.evaluate(() => ({
+    n: document.querySelectorAll('.cchip-img').length,
+    // 压缩后是 JPEG data URL（1280px / q0.85），不是原图
+    src: (document.querySelector('.cchip-thumb') || {}).src || '',
+    ta: null   // 下面用 draftText 单独取（contenteditable 没有 .value）
+  }))
+  check(imgChip.n === 1, '粘贴图片进入待发送区（缩略图 chip）', `n=${imgChip.n}`)
+  check(imgChip.src.startsWith('data:image/jpeg'), '图片已压缩为 JPEG data URL（与主聊天页同一管线的参数）', imgChip.src.slice(0, 24))
+  const afterPasteDraft = await draftText(page)
+  check(afterPasteDraft === '', '带文件的粘贴被截断默认行为（文件名没被当文本插进正文）', JSON.stringify(afterPasteDraft))
+
+  // 附件走「选文件」这条路：.txt 在白名单内，上传换 fileId
+  await page.setInputFiles('.ci-file', { name: 'note.txt', mimeType: 'text/plain', buffer: Buffer.from('hello') })
+  await page.waitForTimeout(700)
+  const fileChip = await page.evaluate(() => {
+    const chip = document.querySelector('.cchip-file')
+    return {
+      n: document.querySelectorAll('.cchip-file').length,
+      name: (document.querySelector('.cchip-file .cchip-name') || {}).textContent || '',
+      sub: (document.querySelector('.cchip-file .cchip-sub') || {}).textContent || '',
+      err: chip ? chip.classList.contains('err') : false
+    }
+  })
+  check(fileChip.n === 1 && fileChip.name === 'note.txt', '选中附件进入待发送区（文件名可见）', JSON.stringify(fileChip))
+  check(!fileChip.err && /B|KB|MB/.test(fileChip.sub), '附件上传完成后显示体积（不是停在「上传中…」）', fileChip.sub)
+
+  // 移除入口：发错了要能撤回（发送前）
+  await page.click('.cchip-img .cchip-del')
+  await page.waitForTimeout(200)
+  const afterRemove = await page.evaluate(() => document.querySelectorAll('.cchip-img').length)
+  check(afterRemove === 0, '待发送图片可移除', `n=${afterRemove}`)
+
+  // 再挂一张图后发送，断言载荷形状：images 是 data URL 数组、attachments 只带 fileId（+显示用元信息）
+  await page.evaluate(async () => {
+    const c = document.createElement('canvas')
+    c.width = 8; c.height = 8
+    c.getContext('2d').fillRect(0, 0, 8, 8)
+    const blob = await new Promise(r => c.toBlob(r, 'image/png'))
+    const dt = new DataTransfer()
+    dt.items.add(new File([blob], 'shot2.png', { type: 'image/png' }))
+    document.querySelector('.composer-edit').dispatchEvent(
+      new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }))
+  })
+  await page.waitForTimeout(500)
+  await typeDraft(page, '这张图里是什么')
+  await page.click('.ci-send')
+  await page.waitForTimeout(1600)
+  const sent = cap.chatBodies[cap.chatBodies.length - 1] || {}
+  check(Array.isArray(sent.images) && sent.images.length === 1 && String(sent.images[0]).startsWith('data:image/'),
+    '发送载荷带上了图片（data URL 数组）', `images=${(sent.images || []).length}`)
+  check(Array.isArray(sent.attachments) && sent.attachments.length === 1
+        && sent.attachments[0].fileId === 'f-mock-1' && sent.attachments[0].name === 'note.txt',
+    '发送载荷附带 fileId（服务端按访客目录复核归属）', JSON.stringify(sent.attachments))
+  check(cap.uploads.length === 1 && /^[a-zA-Z0-9-]{8,64}$/.test(cap.uploads[0].visitorId),
+    '上传打在游客通道上并带合法访客标识（按访客隔离落盘的前提）', JSON.stringify(cap.uploads))
+
+  // 提问气泡要能看见自己发了什么（图 + 附件），否则游客发完图只看到一句文字
+  const echo = await page.evaluate(() => ({
+    imgs: document.querySelectorAll('.msg-imgs .msg-img').length,
+    atts: [...document.querySelectorAll('.msg-files .msg-file-name')].map(e => e.textContent.trim()),
+    chipLeft: document.querySelectorAll('.cchip').length
+  }))
+  check(echo.imgs === 1, '提问气泡里能看到自己发的图', `n=${echo.imgs}`)
+  check(echo.atts.includes('note.txt'), '提问气泡里能看到自己发的附件名', JSON.stringify(echo.atts))
+  check(echo.chipLeft === 0, '发送后待发送区已清空（否则会以为发了两遍）', `n=${echo.chipLeft}`)
+
+  // 降级提示：后端一直在 done 里下发 degradations，分享页此前整个丢掉
+  const deg = await page.evaluate(() => ({
+    n: document.querySelectorAll('.degradation-bar').length,
+    txt: (document.querySelector('.degradation-bar') || {}).textContent || ''
+  }))
+  check(deg.n === 1 && deg.txt.includes('备用模型'), '降级提示已渲染（模型回退/工作流不收图片这类原因不再静默）', deg.txt.trim())
+
+  // 回答动作行：复制 / 有帮助 / 没帮助 / 重新生成
+  const acts = await page.evaluate(() => ({
+    n: document.querySelectorAll('.fb-row .app-icon-btn').length,
+    labels: [...document.querySelectorAll('.fb-row .app-icon-btn')].map(e => e.getAttribute('title') || '')
+  }))
+  check(acts.n === 4, '回答下方出现四个动作（复制/有帮助/没帮助/重新生成）', JSON.stringify(acts.labels))
+
+  // 评价：一击提交，服务端要能收到 messageId + rating + visitorId 三样
+  // 复制先桩掉剪贴板（无头 + 非安全上下文下 navigator.clipboard 根本不存在），
+  // 否则"点了没报错"什么也证明不了——要断的是复制到的到底是哪段文字
+  await page.evaluate(() => {
+    window.__copied = null
+    try {
+      Object.defineProperty(navigator, 'clipboard', {
+        value: { writeText: t => { window.__copied = t; return Promise.resolve() } },
+        configurable: true
+      })
+    } catch (e) { window.__copied = 'DEFINE_FAILED' }
+  })
+  await page.click('.fb-row .app-icon-btn:nth-child(1)')
+  await page.waitForTimeout(400)
+  const copied = await page.evaluate(() => window.__copied)
+  check(copied === '根据文档，答案是 5。', '整段复制拿到的就是回答正文', JSON.stringify(copied))
+  await page.click('.fb-row .app-icon-btn:nth-child(2)')
+  await page.waitForTimeout(700)
+  const fbk = cap.feedbacks[cap.feedbacks.length - 1] || {}
+  check(fbk.messageId === 'm-ai-1' && fbk.rating === 1 && /^[a-zA-Z0-9-]{8,64}$/.test(String(fbk.visitorId || '')),
+    '评价打到服务端且带上落库消息 ID（游客反馈的唯一凭据）', JSON.stringify(fbk))
+  const fbState = await page.evaluate(() => {
+    const a = document.querySelectorAll('.fb-row .app-icon-btn')[1]
+    return { on: a.classList.contains('fb-active'), disabled: a.disabled }
+  })
+  check(fbState.on && fbState.disabled, '评价后按钮置为已评态并禁用（同一条不重复评）', JSON.stringify(fbState))
+
+  // 重新生成：不带重复落库、带被替换的回答 ID（后者是归属校验的落点）
+  await page.click('.fb-row .app-icon-btn:nth-child(4)')
+  await page.waitForTimeout(1600)
+  const regen = cap.chatBodies[cap.chatBodies.length - 1] || {}
+  check(regen.regenerate === true && regen.replaceMessageId === 'm-ai-1',
+    '重新生成带 regenerate + 被替换回答 ID（不重复落库、旧回答可被替换）', JSON.stringify({ r: regen.regenerate, id: regen.replaceMessageId }))
+  check(regen.message === '这张图里是什么', '重新生成复用原问题原文', String(regen.message))
+  const rowsAfterRegen = await page.evaluate(() => document.querySelectorAll('.row').length)
+  check(rowsAfterRegen === 2, '重新生成在原气泡上重跑（不新增一条回答气泡）', `rows=${rowsAfterRegen}`)
+
+  // 评价状态回填：刷新后已评过的按钮必须还是锁定态（否则游客以为反馈丢了、会重复点）
+  await page.evaluate(() => { try { localStorage.setItem('share_session_tok-2', 's-share-fb') } catch (e) { /* ignore */ } })
+  await page.goto(ORIGIN + '/s/tok-2', { waitUntil: 'networkidle' })
+  await page.waitForTimeout(1100)
+  const fbRestored = await page.evaluate(() => {
+    const acts = [...document.querySelectorAll('.fb-row .app-icon-btn')]
+    const like = acts[1]   // 次第：复制 / 有帮助 / 没帮助 /（重新生成）——图标按钮靠位置认，不再靠文案
+    const dislike = acts[2]
+    return {
+      likeOn: like ? like.classList.contains('fb-active') : null,
+      dislikeOn: dislike ? dislike.classList.contains('fb-active') : null,
+      dislikeDisabled: dislike ? dislike.disabled : null
+    }
+  })
+  check(fbRestored.dislikeOn === true && fbRestored.likeOn === false && fbRestored.dislikeDisabled === true,
+    '刷新后既有评价锁定态被恢复（后端回填 fb，游客不会重复点）', JSON.stringify(fbRestored))
+
+  // 未开放多模态的分享：入口必须根本不出现，而不是点了才报错
+  await page.goto(ORIGIN + '/s/tok-5', { waitUntil: 'networkidle' })
+  await page.waitForTimeout(900)
+  const plain = await page.evaluate(() => ({
+    attach: !!document.querySelector('.ci-attach'),
+    ph: (document.querySelector('.composer-edit') || {}).getAttribute?.('data-ph') || '',
+    hero: (document.querySelector('.sc-welcome p') || {}).textContent || ''
+  }))
+  check(!plain.attach, '未开放多模态的分享：附件入口不出现（能力没开就不摆一个点了报错的按钮）')
+  check(!plain.ph.includes('图片'), '未开放多模态时占位文案不提图片/文件', plain.ph)
+  check(!plain.hero.includes('图片'), '未开放多模态时空态引导不提拖入图片/文件', plain.hero.slice(0, 30))
 
   // 嵌入紧凑模式没有头部，会话工具必须还在（收成一行小条）
   await page.goto(ORIGIN + '/s/tok-2?embed=1', { waitUntil: 'networkidle' })
@@ -396,16 +665,16 @@ const check = (ok, label, detail = '') => {
   // ⇒ 页面稳定停在「进行中」，可重复采样，不怕时序抖动。
   await page.goto(ORIGIN + '/s/tok-3', { waitUntil: 'networkidle' })
   await page.waitForTimeout(900)
-  await page.fill('.sc-textarea', '你好')
-  await page.click('.sc-send')
+  await typeDraft(page, '你好')
+  await page.click('.ci-send')
   await page.waitForTimeout(1600)
   const during = await page.evaluate(() => {
-    const tip = document.querySelector('.sc-typing')
+    const tip = document.querySelector('.tm-typing')
     const r = tip ? tip.getBoundingClientRect() : { width: 0, height: 0 }
     return {
       // 提示行唯一（不多处渲染同一条）
-      tipN: document.querySelectorAll('.sc-typing').length,
-      stageN: document.querySelectorAll('.sc-stage').length,
+      tipN: document.querySelectorAll('.tm-typing').length,
+      stageN: document.querySelectorAll('.tm-stage').length,
       tipText: tip ? tip.textContent.trim() : '',
       // 单行：高度不应超过 ~28px（折成两行会翻倍）
       tipH: Math.round(r.height), tipW: Math.round(r.width),
@@ -413,13 +682,13 @@ const check = (ok, label, detail = '') => {
       // 「无气泡壳」= 元素可存在（内容容器），但不得有边框/底色/内边距。
       // 断元素个数会把"改成 transparent 但保留容器"这种正确实现误判成 bug。
       bubbleStyle: (() => {
-        const e = document.querySelector('.sc-bubble.ai')
+        const e = document.querySelector('.bubble.ai')
         if (!e) return null
         const cs = getComputedStyle(e)
         return { bg: cs.backgroundColor, border: cs.borderTopWidth, pad: cs.paddingTop }
       })(),
-      rows: document.querySelectorAll('.sc-row').length,
-      sending: !!document.querySelector('.sc-send.stop')
+      rows: document.querySelectorAll('.row').length,
+      sending: !!document.querySelector('.ci-send.stop')
     }
   })
   check(during.sending, '流未结束时发送键处于「停止」态（确在生成中）')
@@ -454,10 +723,10 @@ const check = (ok, label, detail = '') => {
   await dpage.goto(ORIGIN + '/s/tok-2', { waitUntil: 'networkidle' })
   await dpage.waitForTimeout(900)
   const dsc = await dpage.evaluate(() => {
-    const ta = document.querySelector('.sc-textarea')
-    const th = document.querySelector('.sc-msg-block')
+    const ta = document.querySelector('.composer-edit')
+    const th = document.querySelector('.msg-block')
     const hero = document.querySelector('.sc-welcome')
-    const inp = document.querySelector('.sc-input')
+    const inp = document.querySelector('.ci-box')
     return {
       taFont: ta ? getComputedStyle(ta).fontSize : '',
       // 桌面宽度下线程/输入区必须限宽居中，否则 1280 宽的气泡行长失控。

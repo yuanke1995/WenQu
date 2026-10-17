@@ -39,6 +39,25 @@ const ORIGIN = 'http://h5.local'
 const MIME = { '.html':'text/html', '.js':'text/javascript', '.css':'text/css', '.json':'application/json',
   '.webmanifest':'application/manifest+json', '.svg':'image/svg+xml', '.png':'image/png', '.ico':'image/x-icon' }
 // SPA 回退：文件不存在就回 index.html（等价生产 nginx try_files）
+// 一条「信息最全」的历史（消息区叶子组件的回归样本）：提问带图片/附件/@引用，
+// 回答带引用来源、降级提示、messageId（动作行的出现条件）与 tokens（用量那一段）。
+// 这些叶子 2026-10 抽成共享组件（chat/UserBubble|AnswerActions|SourceList|DegradationBar），
+// 抽之前主对话页这一侧一条断言都没有——插槽接错、字段漏传，页面看着完整、内容却是空的。
+const CHAT_MESSAGES = [
+  { messageId: 'm-u1', role: 'user', content: '这两份材料一起看，给个结论',
+    images: ['data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=='],
+    attachments: [{ name: '需求说明.docx', mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', size: 24832, fileId: 'f1' }],
+    mentions: [{ type: 'kb', id: 'kb-1', name: '产品手册' }] },
+  // 第二条提问：正文里手打了 [图片1] 这个字面量。它不该被替换成图——
+  // 提问里的 [图片N]/[N] 是用户打的字，替换了就会让自己的附件在缩略图之外再渲染一遍
+  { messageId: 'm-u2', role: 'user', content: '这条手打了 [图片1] 字面量，还带了个角标 [1] 看看',
+    images: ['data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg=='] },
+  { messageId: 'm-a1', role: 'assistant', content: '结论：先做A，再做B。',
+    sources: [{ ref: '1', fileName: '产品手册.pdf', title: '指标口径', score: 0.82, snippet: '指标口径说明…' }],
+    degradations: [{ code: 'modelFallback', msg: '本轮按备用模型作答' }],
+    tokens: { context: 1200, output: 300, total: 1500, outputIsReal: true } }
+]
+
 function serveStatic (page) {
   return page.route('**/*', route => {
     const u = new URL(route.request().url())
@@ -53,6 +72,11 @@ function serveStatic (page) {
     const json = data => route.fulfill({ status: 200, contentType: 'application/json',
       headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ success: true, data }) })
     if (u.pathname === '/api/ai/notification/unread-count') return json({ count: 3 })
+    if (u.pathname === '/api/ai/sessions') {
+      return json({ items: [{ id: 's-verify', title: '叶子组件校验', messageCount: CHAT_MESSAGES.length }],
+        hasMore: false, nextCursor: '', counts: { pinned: 0, today: 1, week: 0, earlier: 0 }, total: 1 })
+    }
+    if (u.pathname === '/api/ai/session/s-verify') return json(CHAT_MESSAGES)
     if (u.pathname === '/api/ai/notification/list') {
       return json({ items: [
         { id: 1, type: 'tool.approval', title: '工具审批待处理', content: '请求执行「联网搜索」', refId: 's-appr', refSub: 'ap-1', readFlag: 0, createTime: Date.now() - 60000 },
@@ -167,6 +191,169 @@ const check = (ok, label, detail = '') => {
       docClientW: document.documentElement.clientWidth
     }
   })
+  // ---- 输入区（chat/ChatInput.vue，与公开分享页共用一份壳）----
+  // 这一段是 2026-10 抽出组件后补的回归网：输入区此前只有 check-share 在测（分享页那侧），
+  // 主对话页这侧一条断言都没有——而它恰恰是插槽装配最容易接错的地方
+  // （插槽顺序错了、事件漏接，页面看着完整，功能是哑的）。
+  const ci = await page.evaluate(() => {
+    const box = document.querySelector('.ci-box')
+    const edit = document.querySelector('.composer-edit')
+    const left = document.querySelector('.ci-left')
+    const right = document.querySelector('.ci-right')
+    const kids = left ? [...left.children] : []
+    // 「+」在左栏里的位置：主对话页的次第是「智能体胶囊 → + → 计划模式」，
+    // 组件为此提供了 left-lead / left 两个插槽，接错就会跑到胶囊前面去
+    const attachIdx = kids.findIndex(k => k.classList.contains('ci-attach'))
+    const agentIdx = kids.findIndex(k => k.classList.contains('agent-pill'))
+    const planIdx = kids.findIndex(k => k.classList.contains('plan-pill'))
+    const send = right ? right.querySelector('.ci-send') : null
+    return {
+      hasBox: !!box, hasEdit: !!edit, hasLeft: !!left, hasRight: !!right,
+      attachIdx, agentIdx, planIdx,
+      attachInLeft: attachIdx >= 0,
+      // 发送键必须是右栏最后一颗（后面再冒出按钮就说明有人往 right 插槽之后加了东西）
+      sendLast: !!(right && send && right.lastElementChild === send),
+      sendSize: send ? Math.round(send.getBoundingClientRect().height) : 0,
+      editPh: edit ? (edit.getAttribute('data-ph') || '') : '',
+      // 卡片列宽与消息列同源（都取 --chat-col），否则宽屏下两条竖边对不齐
+      boxW: box ? Math.round(box.getBoundingClientRect().width) : 0,
+      dropHidden: !document.querySelector('.ci-drop'),
+      // 插槽内容必须真的渲染出来：曾用 <component :is> + 具名 slot 包装工具条，
+      // 结果内容全被丢弃（渲染成空的 left/right）——两条都非空才算接上了
+      leftN: kids.length, rightN: right ? right.children.length : 0
+    }
+  })
+  check(ci.hasBox && ci.hasEdit, '输入区渲染出卡片与 contenteditable 正文（ChatInput 装配成功）',
+    JSON.stringify({ box: ci.hasBox, edit: ci.hasEdit }))
+  check(ci.leftN > 0 && ci.rightN > 0, '工具条左右插槽内容都已渲染（不是空壳）',
+    `left=${ci.leftN} right=${ci.rightN}`)
+  check(ci.agentIdx >= 0 && ci.attachInLeft && ci.agentIdx < ci.attachIdx,
+    '工具条次第正确：智能体胶囊在「+」之前（left-lead / left 两个插槽没接反）',
+    `agent=${ci.agentIdx} attach=${ci.attachIdx} plan=${ci.planIdx}`)
+  check(ci.sendLast, '发送键是右栏最后一颗（right 插槽没把按钮挤到它后面）')
+  check(ci.dropHidden, '未拖拽时不渲染落点提示（只有真拖着文件才亮）')
+  check(ci.boxW > 0 && ci.boxW <= 880, '输入卡片限宽居中（与消息列同取 --chat-col）', `w=${ci.boxW}`)
+
+  // ---- 消息区叶子组件（chat/UserBubble|AnswerActions|SourceList|DegradationBar）----
+  // 2026-10 抽成共享组件后补的回归网。抽之前这四块在主对话页这侧零断言：
+  // 插槽接错、字段名写错，页面看着完整、内容却是空的（分享页此前正是这样丢掉了整块随行内容）。
+  const wide2 = await ctx.newPage()
+  await wide2.setViewportSize({ width: 1280, height: 900 })
+  serveStatic(wide2)
+  await wide2.goto(ORIGIN + '/chat?sid=s-verify', { waitUntil: 'networkidle' })
+  await wide2.waitForTimeout(1500)
+  const leaf = await wide2.evaluate(() => {
+    const rows = [...document.querySelectorAll('.row')]
+    const userRow = rows.find(r => r.classList.contains('user'))
+    const aiRow = rows.find(r => r.classList.contains('ai'))
+    const q = sel => (userRow ? userRow.querySelector(sel) : null)
+    const a = sel => (aiRow ? aiRow.querySelector(sel) : null)
+    const acts = aiRow ? [...aiRow.querySelectorAll('.fb-row .app-icon-btn')] : []
+    return {
+      rows: rows.length,
+      // 提问随行内容：图 + 附件 chip + @引用（后者走 #meta 插槽，是主对话页独有的那一半）
+      imgN: userRow ? userRow.querySelectorAll('.msg-imgs .msg-img').length : 0,
+      imgSrc: (q('.msg-img') || {}).getAttribute ? (q('.msg-img').getAttribute('src') || '').slice(0, 12) : '',
+      fileName: q('.msg-files .msg-file-name') ? q('.msg-files .msg-file-name').textContent.trim() : '',
+      fileSize: q('.msg-files .msg-file-size') ? q('.msg-files .msg-file-size').textContent.trim() : '',
+      mention: q('.msg-files .msg-file-name') ? [...userRow.querySelectorAll('.msg-file-name')].map(x => x.textContent.trim()) : [],
+      // 回答侧：降级条 + 引用来源 + 动作行
+      degrad: a('.degradation-bar') ? a('.degradation-bar').textContent.trim() : '',
+      srcTitle: a('.retrieval-line') ? a('.retrieval-line').textContent.trim() : '',
+      srcRows: aiRow ? aiRow.querySelectorAll('.retrieval-detail .rt-ref').length : -1,
+      actN: acts.length,
+      actTitles: acts.map(b => (b.closest('.ant-tooltip-open') ? '' : '') || b.getAttribute('title') || ''),
+      // 更多菜单（#more 插槽）必须在：它是主对话页独有的附加动作
+      moreN: aiRow ? aiRow.querySelectorAll('.fb-row .app-icon-btn[title="更多"]').length : 0,
+      tokenTxt: a('.msg-tokens') ? a('.msg-tokens').textContent.trim() : ''
+    }
+  })
+  check(leaf.rows >= 2, '会话历史渲染出用户与回答两行（叶子组件的宿主就位）', `rows=${leaf.rows}`)
+  check(leaf.imgN === 1 && leaf.imgSrc.startsWith('data:image'), '提问气泡渲染出自己的图（UserBubble 图片分支）',
+    `n=${leaf.imgN} src=${leaf.imgSrc}`)
+  check(leaf.fileName === '需求说明.docx' && /KB|MB|B/.test(leaf.fileSize),
+    '提问气泡渲染出附件 chip 与体积（UserBubble 附件分支）', `${leaf.fileName} / ${leaf.fileSize}`)
+  check(leaf.mention.includes('产品手册'), '#meta 插槽里的 @ 引用也渲染了（插槽没接成空壳）', JSON.stringify(leaf.mention))
+  // 提问正文里的 [图片N] 是字面量：只该有缩略图那一张，正文里不许再冒出一张
+  const literal = await wide2.evaluate(() => {
+    const row = [...document.querySelectorAll('.row')].filter(r => r.classList.contains('user'))
+      .find(r => r.textContent.includes('字面量'))
+    if (!row) return null
+    const md = row.querySelector('.bubble.user .md')
+    return {
+      thumbs: row.querySelectorAll('.msg-imgs .msg-img').length,
+      inBody: row.querySelectorAll('.bubble.user .md img').length,
+      sups: row.querySelectorAll('.bubble.user .ref-sup').length,
+      // 原文照旧：空格不被吞（[图片N] 那条正则会连它后面的空白一起吃掉）
+      keptSpace: md ? /\[图片1\] 字面量/.test(md.textContent) : false,
+      text: md ? md.textContent.trim() : ''
+    }
+  })
+  check(literal && literal.thumbs === 1 && literal.inBody === 0,
+    '提问里的 [图片1] 不被替换成图（自己的附件不会渲染两遍）', JSON.stringify(literal))
+  check(literal && literal.sups === 0 && literal.keptSpace,
+    '提问原样呈现：不生成引用角标、不吃掉原文空格（literal 口径）',
+    JSON.stringify({ sups: literal && literal.sups, kept: literal && literal.keptSpace }))
+  check(leaf.degrad.includes('备用模型'), '降级提示渲染（DegradationBar）', leaf.degrad)
+  check(leaf.srcTitle.length > 0, '引用来源折叠行渲染（SourceList）', leaf.srcTitle)
+  // 历史消息的 rtOpen 没有值 ⇒ 默认收起，明细本来就不该在 DOM 里；
+  // 点开再量，顺带把「emit → v-model:open」这条双向链走一遍（只渲染不响应才是真坏）
+  check(leaf.srcRows === 0, '来源默认收起（历史消息没有 rtOpen，不自作主张展开）', `rows=${leaf.srcRows}`)
+  await wide2.click('.retrieval-line')
+  await wide2.waitForTimeout(300)
+  const srcOpen = await wide2.evaluate(() => {
+    const aiRow = [...document.querySelectorAll('.row')].find(r => r.classList.contains('ai'))
+    const ref = aiRow ? aiRow.querySelector('.retrieval-detail .rt-ref') : null
+    return { rows: aiRow ? aiRow.querySelectorAll('.retrieval-detail .rt-ref').length : 0,
+      tag: ref ? (ref.querySelector('.rt-ref-tag') || {}).textContent || '' : '',
+      name: ref ? ref.textContent.trim() : '' }
+  })
+  check(srcOpen.rows === 1 && srcOpen.tag === '[1]' && srcOpen.name.includes('产品手册'),
+    '点开后列出条目（v-model:open 双向生效，不是只渲染不响应）', JSON.stringify(srcOpen))
+  check(leaf.actN >= 4, '回答动作行四颗按钮齐全（AnswerActions）', `n=${leaf.actN}`)
+  check(leaf.moreN === 1, '「更多」菜单挂进 #more 插槽（主对话页独有的附加动作没丢）', `n=${leaf.moreN}`)
+  check(/tokens/.test(leaf.tokenTxt), '用量文字挂进 #extra 插槽（#extra 没接成空壳）', leaf.tokenTxt)
+
+  // ---- 行几何：消息块的居中列与输入卡片必须同宽同基准（.row/.msg-block/.bubble 三处 max-width 极易漂）----
+  // 这是历史上真出过的那类 bug（分享页回答卡右边缘比用户气泡差 98px），静态校验查不出来。
+  // 抽 ChatThread 之前先把这条钉住：布局一旦搬进组件，最怕的就是"看起来没变、实际窄了一截"。
+  const geo = await wide2.evaluate(() => {
+    const rows = [...document.querySelectorAll('.row')]
+    const u = rows.find(r => r.classList.contains('user'))
+    const a = rows.find(r => r.classList.contains('ai'))
+    const ub = u ? u.querySelector('.msg-block') : null
+    const ab = a ? a.querySelector('.msg-block') : null
+    const bub = u ? u.querySelector('.bubble.user') : null
+    const box = document.querySelector('.ci-box')
+    const pick = el => el ? el.getBoundingClientRect() : null
+    const r = el => { const x = pick(el); return x ? { l: Math.round(x.left), r: Math.round(x.right), w: Math.round(x.width) } : null }
+    return { user: r(ub), ai: r(ab), bubble: r(bub), box: r(box) }
+  })
+  check(geo.user && geo.ai && Math.abs(geo.user.l - geo.ai.l) <= 1 && Math.abs(geo.user.r - geo.ai.r) <= 1,
+    '用户与回答的消息块同宽同基准（居中列只有一份）', JSON.stringify({ u: geo.user, a: geo.ai }))
+  check(geo.box && geo.user && Math.abs(geo.user.w - geo.box.w) <= 2,
+    '消息块与输入卡片同宽（--chat-col 一处定义、两处消费）', `msg=${geo.user && geo.user.w} input=${geo.box && geo.box.w}`)
+  check(geo.bubble && geo.user && geo.bubble.r <= geo.user.r + 1,
+    '用户气泡贴右不越界（width:fit-content + max-width:100%）', JSON.stringify(geo.bubble))
+
+  // ---- 叶子出现顺序：提问随行内容 → 正文；回答正文 → 降级 → 来源 → 动作 ----
+  // 顺序是"读起来对不对"的核心（降级条跑到正文上面、动作行跑到来源上面都会很怪），
+  // 而插槽化之后顺序完全取决于组件里 slot 的摆放，所以值得钉死
+  const order = await wide2.evaluate(() => {
+    const rows = [...document.querySelectorAll('.row')]
+    const a = rows.find(r => r.classList.contains('ai'))
+    if (!a) return null
+    const idx = sel => {
+      const el = a.querySelector(sel)
+      if (!el) return -1
+      return [...a.querySelectorAll('.bubble > *, .fb-row')].indexOf(el.closest('.bubble > *, .fb-row') || el)
+    }
+    return { body: idx('.md'), deg: idx('.degradation-bar'), src: idx('.retrieval-merged'), acts: idx('.fb-row') }
+  })
+  check(order && order.body >= 0 && order.deg > order.body && order.src > order.deg && order.acts > order.src,
+    '回答侧次第：正文 → 降级 → 引用来源 → 动作行（插槽摆错就会乱序）', JSON.stringify(order))
+  await wide2.close()
+
   check(chat.hasSide && chat.sidePos === 'fixed', '侧栏窄屏为 fixed（抽屉形态）', `position=${chat.sidePos}`)
   check(chat.hasSide && chat.sideRight <= 0, '侧栏默认滑出屏外（translateX(-100%) 生效）', `right=${chat.sideRight}`)
   check(chat.sideW > 200 && chat.sideW <= 375, '抽屉宽度合理（min(84vw,320px)）', `w=${chat.sideW}`)
