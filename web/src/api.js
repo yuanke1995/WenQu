@@ -418,6 +418,8 @@ export const updateSessionModelApi = (sid, model) =>
 
 /** 读取会话已存的模型覆盖（切到列表未加载的会话时按需恢复选择器） */
 export const getSessionModelApi = sid => request(`/session/${sid}/model`)
+/** 当前会话所属工作区摘要（聊天页头部标识）：无工作区/非本人会话返回 data=null */
+export const getSessionWorkspace = sid => request(`/session/${sid}/workspace`)
 
 /** 删除会话（MySQL 软删除 + Redis 清理） */
 export const deleteSessionApi = sid => request(`/session/${sid}`, { method: 'DELETE' })

@@ -183,6 +183,42 @@ public class SessionService {
     }
 
     /**
+     * 当前会话所属工作区的摘要（聊天页头部标识用）：名字 + 是否带约定 + 是否已归档。
+     *
+     * <p>约定每轮注入 system prompt 且要求回答遵守——用户有权在聊天的当场看见「我现在处于
+     * 哪个工作区、有没有约定在生效」，否则改过的约定对老会话无声生效，是透明度缺口。
+     * <p>没有工作区 / 工作区已不存在 / 非本人会话一律返回 {@code null}（标识不显示）：
+     * 不编名字——界面上不存在的名词会被复述出来（与 {@code ProjectService} 同一口径）。
+     * 解析失败按无工作区处理，不抛：一个标识不该让聊天页开不了场。
+     */
+    public Map<String, Object> workspaceOfSession(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) return null;
+        try {
+            Session s = sessionMapper.selectById(sessionId);
+            if (s == null) return null;
+            String uid = RequestUser.uid();
+            // 归属校验：只给自己会话的标识（anonymous 池会话对未登录访客可见，同口径放行）
+            boolean mine = Objects.equals(s.getUserId(), uid)
+                    || (RequestUser.ANONYMOUS.equals(uid) && RequestUser.ANONYMOUS.equals(s.getUserId()));
+            if (!mine) return null;
+            String pid = s.getProjectId();
+            if (pid == null || pid.isBlank()) return null;
+            Project p = projectService.byId(pid);
+            if (p == null) return null;
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("projectId", p.getId());
+            // implicit 兜底容器没有名字：显示「会话」（与侧栏那一栏同名，不另造名词）
+            m.put("name", p.getName() == null || p.getName().isBlank() ? "会话" : p.getName());
+            m.put("hasInstructions", p.getInstructions() != null && !p.getInstructions().isBlank());
+            m.put("archived", Project.STATUS_ARCHIVED.equals(p.getStatus()));
+            return m;
+        } catch (Exception e) {
+            log.warn("[PROJECT] 会话工作区标识解析失败（按无工作区处理）session={}: {}", sessionId, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
      * 「新建对话」入口：先复用当前用户已存在的空会话（无消息、未绑定智能体、未置顶），没有才真正新建。
      * <p>
      * 空会话不再新增（前端侧栏本就隐藏空会话，堆积的空会话不出现在界面上，只会在游标分页里

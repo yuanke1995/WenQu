@@ -686,6 +686,15 @@ public class ChatController {
         return ResultJson.ok(Map.of("model", model, "modelIssue", issue));
     }
 
+    @Operation(summary = "当前会话所属工作区",
+            description = "聊天页头部标识用：工作区名 + 是否带约定（约定每轮生效）。"
+                    + "没有工作区 / 工作区已不存在 / 非本人会话一律返回 data=null（标识不显示，不编名字）")
+    @GetMapping("/session/{sessionId}/workspace")
+    public ResultJson sessionWorkspace(
+            @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId) {
+        return ResultJson.ok(sessionService.workspaceOfSession(sessionId));
+    }
+
     @Operation(summary = "切换会话模型",
             description = "设置会话级模型覆盖（聊天页选择器切换即存，刷新/换端/重新生成后仍保留）；"
                     + "model 传空串 = 清除覆盖，回到跟随个人默认。校验会话归属与模型可用性")

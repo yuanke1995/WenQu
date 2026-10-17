@@ -6,6 +6,14 @@
            其中的会话查找/分享/状态三个动作改由下面的 MobileChatHead 以图标提供 -->
       <div v-if="!isNarrow" class="chat-head">
         <span class="chat-title">{{ currentSessionTitle }}</span>
+        <!-- 当前工作区标识：约定每轮注入 system prompt，用户有权在聊天的当场看见它在生效；
+             没有工作区/非本人会话时接口返回 null，标识不显示（不编名字） -->
+        <button v-if="sessionWorkspace" class="head-ws" :class="{ 'head-ws-archived': sessionWorkspace.archived }"
+                :title="wsTitle" @click="router.push('/project/' + sessionWorkspace.projectId)">
+          <folder-open-outlined class="head-ws-ic" />
+          <span class="head-ws-name">{{ sessionWorkspace.name }}</span>
+          <span v-if="sessionWorkspace.hasInstructions" class="head-ws-tag">约定生效</span>
+        </button>
         <span class="head-tip" title="查看免责声明" @click="disclaimerVisible = true">AI 回答可能有误，重要信息请核实</span>
         <!-- 头部动作区：右对齐一组，图标按钮无框安静（此前每个按钮各自 margin-left:auto 散落标题栏中间，视觉突兀） -->
         <div class="head-actions">
@@ -1457,9 +1465,10 @@ import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, Close
          CloseOutlined, DatabaseOutlined, SearchOutlined, UpOutlined, ShareAltOutlined,
          HistoryOutlined, SwapOutlined, InfoCircleOutlined,
          AppstoreOutlined, ClockCircleOutlined, BookOutlined,
-         OrderedListOutlined, CheckCircleOutlined, LeftOutlined } from '@ant-design/icons-vue'
+         OrderedListOutlined, CheckCircleOutlined, LeftOutlined, FolderOpenOutlined } from '@ant-design/icons-vue'
 import { debugRetrieval, deleteMessageGroup, submitFeedback as apiSubmitFeedback,
-         addEvalCase, getSessionShare, enableSessionShare, disableSessionShare } from '../api'
+         addEvalCase, getSessionShare, enableSessionShare, disableSessionShare,
+         getSessionWorkspace } from '../api'
 import { renderMd, resolveImg, onImgError } from '../utils/markdown'
 import { loadSessions, sessionStore } from './store'
 import { exportAnswerMd, exportSessionMarkdown } from './exportMd'
@@ -3140,6 +3149,31 @@ const {
   focusInput
 })
 
+// ==================== 当前工作区标识（聊天页头部） ====================
+// 约定对该工作区所有会话生效（每轮注入 system prompt）——老会话被无声改约定是最糟的透明度，
+// 所以这里把「我在哪个工作区、有没有约定在生效」摆在标题旁边，点一下进工作区页。
+// 取数口径与后端 ProjectService.projectContextOfSession 同源（session → project），
+// 切换会话即刷新；取不到（无工作区/非本人/接口异常）一律不显示，不用侧栏分组猜。
+const sessionWorkspace = ref(null)
+const wsTitle = computed(() => {
+  const w = sessionWorkspace.value
+  if (!w) return ''
+  let t = '当前工作区：' + w.name
+  if (w.hasInstructions) t += '，其约定对本次对话生效'
+  if (w.archived) t += '（已归档）'
+  return t + '（点击进入工作区）'
+})
+watch(currentSessionId, async sid => {
+  sessionWorkspace.value = null
+  if (!sid) return
+  try {
+    const r = await getSessionWorkspace(sid)
+    sessionWorkspace.value = (r && r.data) || null
+  } catch (e) {
+    sessionWorkspace.value = null   // 标识是增强信息：取不到不打扰聊天
+  }
+}, { immediate: true })
+
 // ==================== 输入框内联 chip（正文与引用同一条流） ====================
 // 两条单向通道，避免双向对账打转：
 //  · 数组 → DOM：任一数组变了就把「应有的 chip 集合」推给编辑区（面板勾选、上传完成、工具条开计划模式）；
@@ -3598,6 +3632,24 @@ onMounted(async () => {
   border-bottom: 1px solid var(--app-border); flex: none; background: var(--app-panel);
 }
 .chat-title { font-size: 13px; font-weight: 500; max-width: 40%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 当前工作区标识：安静的一颗 chip（图标 + 工作区名 [+ 约定生效]），点进工作区页。
+   不用强调色描边——它是状态不是动作；「约定生效」才用弱强调底，让人一眼看出
+   「这个会话有额外规矩在跑」（与侧栏工作区行的存在感同级，不抢标题）。 */
+.head-ws {
+  display: inline-flex; align-items: center; gap: 5px; flex: none;
+  max-width: 220px; height: 22px; padding: 0 8px;
+  border: 1px solid var(--app-border); border-radius: 999px;
+  background: transparent; cursor: pointer; font: inherit; font-size: 12px; color: var(--app-text2);
+}
+.head-ws:hover { color: var(--app-accent); border-color: var(--app-accent); }
+.head-ws-ic { font-size: 12px; flex: none; }
+.head-ws-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.head-ws-tag {
+  flex: none; font-size: 10px; line-height: 14px; padding: 0 5px; border-radius: 4px;
+  background: var(--app-accent-weak); color: var(--app-accent);
+}
+.head-ws-archived { opacity: 0.65; }
+.head-ws-archived .head-ws-name { text-decoration: line-through; }
 .head-tip { font-size: 11px; color: var(--app-text3); cursor: pointer; user-select: none; }
 .head-tip:hover { color: var(--app-accent); }
 /* 会话内查找条：标题栏与消息流之间的一条，随查找开关出现/消失 */
