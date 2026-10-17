@@ -21,9 +21,19 @@
              「改这列菜单」是侧栏自身的形态操作，与折叠同属一类。
              也曾试过放导航组末尾：混在菜单列表里像第 11 个功能入口，用户会预期点了跳页
              （实际是切换形态），且紧贴「搜索会话」视觉上像搜索框的附属按钮。
-             折叠态不出现：56px 图标条里既无文字可排也无开关可拨，功能在那里不可用。 -->
-        <div v-if="!collapsed" class="side-logo-ops">
-          <button class="app-icon-btn" :class="{ on: navEditing }"
+             展开态下这组默认**隐身**、鼠标移到 logo 行才浮现（无边框裸图标，样式见 .side-logo-ops）：
+             logo 行平时只留品牌名。隐身不等于丢入口——长按菜单区同样进编辑态
+             （见 onNavPressStart），纯触屏则恒显（没有 hover 就没有第二次机会）。
+             编辑按钮折叠态不渲染：56px 图标条里既无文字可排也无开关可拨；
+             折叠按钮则必须在（折叠态它的图标就是品牌标，是唯一的展开入口），
+             但**编辑态里隐身**（.slot-hidden，见样式）：折叠本来就会结束编辑（toggleFold 里
+             exitNavEdit），点它等于「取消编辑」，留着只会误点。
+             注意是「隐身留位」而不是 v-if 摘掉：摘掉后整组靠右对齐，✓ 会右移 28px
+             正好补进折叠图标原来的格子，用户「点别处」一按就退出编辑态，
+             看着就像图标自己消失了。留位后进/出编辑态图标都不挪位。
+             navEditing 时整组常显（pinned）——正用着的工具条不能因为鼠标移开就消失。 -->
+        <div class="side-logo-ops" :class="{ pinned: navEditing }">
+          <button v-if="!collapsed" class="app-icon-btn" :class="{ on: navEditing }"
                   :disabled="navEditLoading"
                   :title="navEditing ? '完成侧栏编辑' : '编辑侧栏（调整顺序与显示）'"
                   @click="toggleNavEdit">
@@ -31,14 +41,20 @@
             <check-outlined v-else-if="navEditing" />
             <unordered-list-outlined v-else />
           </button>
+          <button class="app-icon-btn fold" :class="{ 'slot-hidden': navEditing && !collapsed }"
+                  :title="collapsed ? '展开侧边栏' : '折叠侧边栏'" @click="toggleFold">
+            <BrandMark v-if="collapsed" :size="24" />
+            <menu-fold-outlined v-else />
+          </button>
         </div>
-        <button class="app-icon-btn fold" :title="collapsed ? '展开侧边栏' : '折叠侧边栏'" @click="toggleFold">
-          <BrandMark v-if="collapsed" :size="24" />
-          <menu-fold-outlined v-else />
-        </button>
       </div>
 
-      <nav class="side-nav" ref="navEl" @transitionend="onFlipEnd">
+      <!-- 长按菜单区 0.5s = 直接进编辑态（入口平时隐身，触屏更没有 hover，手势是常驻通道）。
+           pointerdown 挂在 nav 这一层而不是逐项绑：菜单项/分组标题/引导入口全覆盖，
+           将来加菜单也不用记得补。click.capture 是给长按后那次抬手点击兜底的（必须吞掉）。 -->
+      <nav class="side-nav" ref="navEl" @transitionend="onFlipEnd"
+           @pointerdown="onNavPressStart" @contextmenu="onNavContextMenu"
+           @click.capture="onNavClickCapture">
         <button class="nav-item" :class="{ active: isActive('/chat') && !route.query.sid }" @click="navEditing ? null : newChat()" title="新建对话">
           <plus-outlined />
           <span v-if="!collapsed">新建对话</span>
@@ -648,8 +664,76 @@ const toggleFold = () => {
   // 不这么做的话，编辑行/操作条只判 navEditing 不判 collapsed，会挤进 56px 图标条——
   // 带文字和开关的行在图标条里必然溢出（实测：开关悬在条外、「恢复默认」文字糊成一团）。
   // 未保存的草稿直接丢弃，语义同「点编辑按钮退出」。
+  // 编辑态里折叠按钮已隐身（模板 .slot-hidden），所以这条联动是第二道保险：
+  // 防的是将来别处直接改 collapsed 而绕过按钮。
   if (collapsed.value) exitNavEdit()
 }
+
+/* ---------------- 长按菜单区 = 直接进侧栏编辑 ----------------
+ * 展开态下「编辑侧栏」按钮平时隐身（鼠标移到 logo 行才浮出），触屏更是连 hover 都没有，
+ * 所以再给一条常驻的手势通道：按住菜单区 0.5s 直接进编辑态。
+ * 四条边界，缺一条都会误伤日常操作：
+ * 1. 长按触发后必须**吞掉紧随其后的那次 click**：松手时指针下还是原来那一项，
+ *    不吞就变成「想改顺序，结果被带去别的页面」（按在「新建对话」上更直接，会新开一轮对话）；
+ * 2. 移动超过 8px、指针抬起/取消、侧栏内滚动都判为「不是长按」——拖拽与滚动优先；
+ * 3. 编辑态内不再起计时：那片区域的手势已被编辑行的拖拽排序占满；
+ * 4. 折叠态也认这个手势：先展开再进编辑态——56px 图标条里放不下带文字和开关的编辑行。
+ * 监听挂 window 而非 nav（同拖拽排序的取舍）：指针划出侧栏、或在栏外松手也收得到。
+ */
+const LONG_PRESS_MS = 500
+const LONG_PRESS_SLOP = 8
+let lpTimer = null
+let lpFrom = null          // 按下点，用于判定「手抖还是拖动」
+let lpSwallow = false      // 长按已触发 → 下一次 click 要吞掉
+
+function onNavPressStart (ev) {
+  // 新手势开始：上一轮长按若没换来 click（指针移出侧栏才松手），标记到此为止，
+  // 否则它会吃掉这一次正常点击
+  lpSwallow = false
+  if (showNavEditor.value) return
+  if (ev.button != null && ev.button !== 0) return   // 右键/中键不是长按，别抢右键菜单
+  clearNavPress()
+  lpFrom = { x: ev.clientX, y: ev.clientY }
+  lpTimer = setTimeout(fireNavLongPress, LONG_PRESS_MS)
+  window.addEventListener('pointermove', onNavPressMove)
+  window.addEventListener('pointerup', clearNavPress)
+  window.addEventListener('pointercancel', clearNavPress)
+  window.addEventListener('scroll', clearNavPress, true)
+}
+function onNavPressMove (ev) {
+  if (!lpFrom) return
+  if (Math.abs(ev.clientX - lpFrom.x) > LONG_PRESS_SLOP ||
+      Math.abs(ev.clientY - lpFrom.y) > LONG_PRESS_SLOP) clearNavPress()
+}
+function clearNavPress () {
+  clearTimeout(lpTimer)
+  lpTimer = null
+  lpFrom = null
+  window.removeEventListener('pointermove', onNavPressMove)
+  window.removeEventListener('pointerup', clearNavPress)
+  window.removeEventListener('pointercancel', clearNavPress)
+  window.removeEventListener('scroll', clearNavPress, true)
+}
+function fireNavLongPress () {
+  clearNavPress()
+  lpSwallow = true
+  if (navEditLoading.value) return   // 正在拉布局：再触发一次只会叠一次请求
+  if (collapsed.value) toggleFold()  // 图标条里长按：先把侧栏展开，编辑 UI 才有地方放
+  if (!navEditing.value) toggleNavEdit()
+}
+/** capture 阶段拦截长按后那一次 click：要拦在目标之前——编辑行里开关的 @click.stop 也在其内 */
+function onNavClickCapture (ev) {
+  if (!lpSwallow) return
+  lpSwallow = false
+  ev.preventDefault()
+  ev.stopPropagation()
+}
+/** 触屏长按会顺手唤起系统菜单/文本选择（按住期间 lpTimer 还在），一律掐掉；
+ *  桌面右键因为没起计时所以不受影响 */
+function onNavContextMenu (ev) {
+  if (lpTimer || lpSwallow) ev.preventDefault()
+}
+onUnmounted(clearNavPress)
 
 const visibleSessionList = computed(visibleSessions)
 
@@ -1008,7 +1092,7 @@ onMounted(async () => {
   padding: 10px 8px; transition: width .18s ease; overflow: hidden;
 }
 .side.collapsed { width: 56px; }
-.side-logo { display: flex; align-items: center; gap: 8px; padding: 2px 6px 12px; }
+.side-logo { position: relative; display: flex; align-items: center; gap: 8px; padding: 2px 6px 12px; }
 /* 折叠态：logo 与收起按钮总宽超出 56px 会被 overflow:hidden 裁掉按钮 → 折叠态只渲染一个
    按钮，图标即问渠品牌标（点击展开侧边栏），比裸的展开箭头更能表明"这是谁家的栏" */
 .side.collapsed .side-logo { justify-content: center; padding: 2px 0 12px; }
@@ -1020,12 +1104,54 @@ onMounted(async () => {
 .side.collapsed .side-foot .app-icon-btn { margin-left: 0 !important; }
 /* 品牌标用 BrandMark 组件（SVG 自带圆角与品牌渐变，明暗主题通用）；此处只留占位规则 */
 .logo-name { font-weight: 500; font-size: 13px; white-space: nowrap; }
-/* 形态操作组：编辑 + 折叠 整体靠右，两者相邻。margin-left:auto 必须落在**容器**上——
-   落在单个按钮上只会推走那一个，另一个留在品牌名旁（实测返工过一次）。 */
+/* 形态操作组：编辑 + 折叠，整体靠右（margin-left:auto 必须落在**容器**上——
+   落在单个按钮上只会推走那一个，另一个留在品牌名旁，实测返工过一次）。 */
 .side-logo-ops { margin-left: auto; display: flex; align-items: center; gap: 2px; }
 .side-logo-ops .app-icon-btn.on { color: var(--app-accent); background: var(--app-accent-weak); }
 /* auto 由 .side-logo-ops 承担（展开态才渲染该容器），折叠态下无右侧元素可推 */
 .fold { margin-left: 0; }
+/* 编辑态：折叠按钮隐身但**留位**（visibility:hidden 保留占位）。
+   不用 v-if 摘掉——摘掉后整组靠右对齐，✓ 会右移 28px 正好补进折叠图标原来的格子，
+   用户的「点一下别处」很容易落在那格上，一按就退出编辑态（看着像图标自己消失了）。
+   visibility:hidden 同时摘掉点击与 Tab 焦点，不留任何可误触的热区。 */
+.fold.slot-hidden { visibility: hidden; pointer-events: none; }
+/* 折叠态：容器里只剩折叠按钮（图标=品牌标），居中交给 .side-logo 的 justify-content，
+   这里必须把 margin-left:auto 撤掉——auto 在只有一个子项时会把它推到右边缘，居中失效 */
+.side.collapsed .side-logo-ops { margin-left: 0; }
+
+/* ---- 展开态的悬浮形态：默认隐身，鼠标移到 logo **这一行**才浮现 ----
+   触发区刻意只给这一行（不是整个侧栏）：鼠标扫过会话列表时不该有东西在顶上闪。
+   绝对定位 ⇒ 不占 logo 行的排版空间（那一行平时只有品牌名），
+   只改 opacity 不改 display ⇒ 浮出过程没有布局抖动。
+   无边框无底色：就是两个裸图标浮在行尾，不加「小工具条」那种外框。
+   只在**真有悬停能力**的环境隐身：触屏点了才亮一次，藏起来就等于没有入口（见下方 any-pointer 兜底）。 */
+@media (hover: hover) and (pointer: fine) {
+  .side:not(.collapsed) .side-logo-ops {
+    position: absolute; top: 1px; right: 0; z-index: 3;
+    opacity: 0; pointer-events: none;
+    transition: opacity .16s ease;
+  }
+  /* 显形三条路，选择器都必须带上 .side:not(.collapsed) 前缀：
+     隐身规则的 specificity 是 (0,3,0)，写成 .side-logo-ops.pinned 这种 (0,2,0) 会被它压住——
+     编辑态里鼠标一移开图标就消失，连「保存」都点不到（实测踩过，见 check-sidebar-ops.cjs）。
+     · hover：鼠标移到 logo 行；
+     · :has(:focus-visible)：**键盘** Tab 到按钮（pointer-events:none 挡不住焦点，
+       看不见的按钮等于没入口）。这里刻意不用 :focus-within —— 鼠标点完按钮后焦点仍留在它身上
+       （Chrome 里 click 就等价于 focus），:focus-within 会把整组钉在屏幕上：点「✓」退出编辑态后
+       图标一直常驻，直到用户再点别处才消失，看着就像"退出没生效"（2026-10-16 实测踩过）；
+       :focus-visible 只在键盘导航时命中，鼠标点击不触发。
+     · pinned：编辑态，用户正在用的工具条不能因为鼠标移开就消失。 */
+  .side:not(.collapsed) .side-logo:hover .side-logo-ops,
+  .side:not(.collapsed) .side-logo-ops:has(:focus-visible),
+  .side:not(.collapsed) .side-logo-ops.pinned { opacity: 1; pointer-events: auto; }
+}
+/* 粗指针（触屏、含带触摸屏的笔记本）：恒显且退回常规文档流，形态与改动前一致。
+   写在 hover 块之后：两者同时命中时（触摸屏笔记本）由这里覆盖。 */
+@media (any-pointer: coarse) {
+  .side:not(.collapsed) .side-logo-ops {
+    position: static; opacity: 1; pointer-events: auto;
+  }
+}
 
 /* 编辑态行：与 .nav-item 同宽同高，肉眼只多出把手和开关 */
 .nav-edit-row {
@@ -1084,7 +1210,12 @@ onMounted(async () => {
   color: var(--app-text3); opacity: 1;
 }
 
-.side-nav { display: flex; flex-direction: column; gap: 2px; }
+/* user-select/callout 全关：长按进入编辑态是这一区域的手势，
+   鼠标按住时顺手选中一片文字、或触屏弹出系统菜单，都会把它打断 */
+.side-nav {
+  display: flex; flex-direction: column; gap: 2px;
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+}
 /* 分组标题（renderAs=group）：不可点、无 hover，仅视觉归类。
    折叠态缩成一条细线——标题只剩占位会让图标条更乱，藏掉更干净 */
 .nav-group {

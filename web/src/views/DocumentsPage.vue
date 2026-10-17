@@ -120,6 +120,7 @@
             <span class="col-kb">
               <!-- 移动库 = 写操作：仅对文档有管理权的人开放，其他人显示为纯文本 -->
               <a-select v-if="canManageDoc(d)" :value="kbOf(d)" size="small" style="width:100%" :options="kbSelectOptions"
+                        :dropdown-match-select-width="false"
                         :title="'切换所属知识库：决定哪些助手能检索到该文档'"
                         @change="v => onMoveKb(d, v)" />
               <span v-else class="kb-name-text" :title="kbNameOf(d)">{{ kbNameOf(d) }}</span>
@@ -1395,7 +1396,9 @@ const fmtTime = t => {
 .head-row { font-size: 11px; color: var(--app-text3); background: var(--app-panel-2); border-bottom: 1px solid var(--app-border); user-select: none; }
 .col-check { width: 26px; flex: none; }
 .col-name { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; }
-.col-kb { width: 150px; flex: none; }
+/* 归属列要能读完「库名（文档数）」：常态 220px；行宽不够时先由本列让（可缩到 132px），
+   而不是把文件名挤没——下拉已改成按内容自适应宽，让了也不会读不到候选库名。 */
+.col-kb { flex: 0 1 220px; min-width: 132px; }
 .file-ic {
   width: 34px; height: 24px; border-radius: 5px; font-size: 9px; font-weight: 500; flex: none;
   display: inline-flex; align-items: center; justify-content: center; letter-spacing: .5px;

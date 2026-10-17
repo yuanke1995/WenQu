@@ -2,7 +2,7 @@
   <div class="app-page">
     <div class="app-page-head">
       <h1 class="app-page-title">我的产物</h1>
-      <span class="head-hint-plain">模型在回答里生成的可下载文件（Markdown / CSV / JSON / HTML），按用户归属保存</span>
+      <span class="head-hint-plain">模型在回答里生成的可下载文件</span>
       <!-- 工具条分两组：窄屏各自占一整行（搜索行 / 批量行），宽屏保持原来的单行排布 -->
       <div class="art-tools">
         <a-input v-model:value="keyword" placeholder="按文件名搜索" allow-clear class="art-search"

@@ -37,18 +37,24 @@ onUnmounted(() => window.removeEventListener('app:open-help', onOpenHelp))
 </script>
 
 <style scoped>
-/* 30px 小尺寸 + 贴角 10px 是有意的：宽屏下输入卡片居中留白大、无遮挡；
+/* 30px 小尺寸是有意的：宽屏下输入卡片居中留白大、无遮挡；
    窄屏下输入卡片贴右缘时，该尺寸刚好压在卡片圆角的内边距上，不盖到发送键 */
 .help-fab {
-  position: fixed; right: 10px; bottom: 10px; z-index: 90;
+  position: fixed; right: 2px; bottom: 2px; z-index: 90;
   width: 30px; height: 30px; border-radius: 50%; padding: 0;
-  border: 1px solid var(--app-border); background: var(--app-panel); color: var(--app-text3);
+  border: 1px solid var(--app-border); color: var(--app-text3);
   display: inline-flex; align-items: center; justify-content: center;
   font-size: 15px; cursor: pointer;
-  box-shadow: var(--app-shadow-sm);
-  transition: color .15s, border-color .15s, box-shadow .15s;
+  /* 半隐藏＝只降视觉权重、绝不移位。贴角的元素一旦 hover 时位移，指针就会落在
+     它让开的位置上 → hover 断开 → 弹回 → 又 hover，角上反复横跳。
+     故静止态用「透明底 + 压暗」藏起来，hover 态只点亮，几何位置全程不动。 */
+  opacity: .38; background: transparent; box-shadow: none;
+  transition: opacity .18s, color .15s, border-color .15s, background-color .15s, box-shadow .15s;
 }
-.help-fab:hover { color: var(--app-accent); border-color: var(--app-accent); box-shadow: var(--app-shadow); }
+.help-fab:hover, .help-fab:focus-visible {
+  opacity: 1; color: var(--app-accent); border-color: var(--app-accent);
+  background: var(--app-panel); box-shadow: var(--app-shadow);
+}
 
 .help-drawer-title { display: flex; flex-direction: column; gap: 1px; padding-right: 12px; }
 .help-drawer-name { font-size: 14px; font-weight: 500; }
@@ -56,9 +62,13 @@ onUnmounted(() => window.removeEventListener('app:open-help', onOpenHelp))
 
 /* 窄屏隐藏：fixed 右下角的 FAB 会压住对话页输入框的发送键一侧。
    帮助入口改到移动顶栏（src/h5/MobileTopBar.vue 通过 app:open-help 事件打开同一个抽屉）。
-   注意这里用 max-width 而非 hover —— 判据是「有没有别的地方提供该入口」，
-   而非「能不能 hover」，两者在此恰好一致。 */
+   判据用宽度而非 hover：这里问的是「别处有没有该入口」，而顶栏正是随宽度出现的。 */
 @media (max-width: 768px) {
   .help-fab { display: none; }
+}
+/* 触屏（无 hover）不压暗：它没有能点亮的那一下。
+   判据与 h5/mobile.js 的 isCoarse 同源；769~1024 的触屏平板仍会渲染本 FAB。 */
+@media (hover: none) {
+  .help-fab { opacity: 1; background: var(--app-panel); box-shadow: var(--app-shadow-sm); }
 }
 </style>

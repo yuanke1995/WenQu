@@ -15,7 +15,8 @@
     "check:share": "node scripts/check-share.cjs",
     "check:publish": "node scripts/check-publish.cjs",
     "gen:icons": "node scripts/gen-icons.mjs",
-    "check:mshell": "node scripts/check-mshell.cjs"
+    "check:mshell": "node scripts/check-mshell.cjs",
+    "check:sidebar": "node scripts/check-sidebar-ops.cjs"
   },
   "dependencies": {
     "@ant-design/icons-vue": "^7.0.0",

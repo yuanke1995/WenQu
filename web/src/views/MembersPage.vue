@@ -28,7 +28,6 @@
                     placeholder="全部部门" :options="deptFilterOptions" />
           <a-select v-if="tab === 'users'" v-model:value="roleFilter" allow-clear size="small" class="mem-filter"
                     placeholder="全部角色" :options="roleFilterOptions" />
-          <span class="mem-count">{{ tab === 'users' ? filteredUsers.length + ' 名用户' : filteredDepts.length + ' 个部门' }}</span>
           <button v-if="tab === 'users'" class="app-btn mem-new" @click="openUserCreate"><plus-outlined /> 新建用户</button>
           <button v-else class="app-btn mem-new" @click="openDeptCreate"><plus-outlined /> 新建部门</button>
         </div>

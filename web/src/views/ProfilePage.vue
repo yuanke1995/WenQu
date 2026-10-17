@@ -14,10 +14,6 @@
         <!-- 个人资料（自助：仅昵称，登录账号不可改） -->
         <div v-if="current === 'profile'" class="app-card pf-card">
           <h2 class="app-card-title">个人资料</h2>
-          <p class="pf-hint pf-hint-top">
-            昵称与头像显示在侧边栏和成员列表中，仅作展示、不用于登录；登录账号不可修改。
-          </p>
-
           <!-- 头像：上传图片（≤2MB）或选一个 emoji；留空=回落昵称首字。改动后侧栏/成员列表立即同步 -->
           <div class="pf-avatar-block">
             <div class="pf-avatar-frame">
@@ -56,7 +52,6 @@
                        placeholder="显示昵称，如 张三" @pressEnter="saveNickname" />
               <button class="app-btn" :disabled="nickSaving || !nickForm.username.trim()" @click="saveNickname">保存</button>
             </div>
-            <p class="pf-sub-hint">改完侧边栏立即生效；管理员仍可在「成员管理」中调整。</p>
           </div>
         </div>
 

@@ -26,7 +26,7 @@
           </template>
           <a-button v-if="canSync" type="primary" :loading="syncing" @click="doSync">立即同步</a-button>
         </a-empty>
-        <div v-else-if="activeHtml" class="help-article md-body" v-html="activeHtml"></div>
+        <div v-else-if="activeHtml" class="help-article md" v-html="activeHtml"></div>
         <a-spin v-else-if="contentLoading" style="display:block;margin:60px auto" />
       </article>
     </div>
