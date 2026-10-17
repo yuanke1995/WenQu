@@ -301,7 +301,7 @@
 | | 帧 | 结局 |
 | --- | --- | --- |
 | 改前 | stage/thinking/tool_status×1/**approval_required**/done | 正文为空，整轮靠超时收 |
-| 改后 | stage/thinking×43/**token×86**/tool_status×4/warn×1/done | 正常收尾，正文给出项目定位一句话 |
+| 改后 | stage/thinking×43/**token×86**/tool_status×4/warn×1/done | 正常收尾，正文给出工作区定位一句话 |
 
 `mvn verify` 10/10 绿（新增断言：无人可答时必须 DENY 而不是挂悬卡）。测后 `chat.engineMode` 回 `legacy` 并回查 DB，8099 实例已停。
 

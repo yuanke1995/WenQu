@@ -94,7 +94,7 @@ if (agent != null && agent.getWorkflowId() != null && !agent.getWorkflowId().isB
 | **删除风险** | ① 前端「历史压缩」面板与手动压缩按钮依赖其落库结果，删了要一并改前端；② `ChatflowBridge:48`、`PlanModeService:84`、`DeepThinkService:53` 三处仍注入它，删前要一并改；③ 框架压缩只活在 agent state 里，问渠的会话表看不到——**两者是「不同存储、不同生命周期」的同一算法**，切过去需要写一个从 `CompactionConfig` 到会话表 summary 字段的桥。 |
 
 > 注：框架侧已经接了（`AgentscopeChatEngine.java:1413` `.compaction(compactionConfig(cmd))`），
-> 注释明确说「手动 /compact 在框架引擎下落到下一次建实例先压」——**说明项目方已经知道这条重复存在，且选择了并存**。
+> 注释明确说「手动 /compact 在框架引擎下落到下一次建实例先压」——**说明工作区方已经知道这条重复存在，且选择了并存**。
 
 ---
 
@@ -203,7 +203,7 @@ if (agent != null && agent.getWorkflowId() != null && !agent.getWorkflowId().isB
 | 事项 | 问什么 | 为什么需要问 |
 |---|---|---|
 | **① 工作流旁路怎么安置** | 是否接受把 `runChat` 的 908–1009 前导段 + `chatflow` 分支抽成独立方法（如 `runWorkflowBoundTurn`），从而让 2300 行整体删除？ | 技术上可行，但会改动 `chat()` 的分派结构。**这是唯一挡住 2300 行的决策点。** |
-| **② 手动 `/compact` 与压缩面板** | 框架压缩只写 agent state，问渠的压缩结果要落 `c_ai_session.summary` 并在前端可见。是接受"框架压缩 + 桥接落库"，还是保留问渠这套并存？ | 项目方在 `AgentscopeChatEngine.java:1411-1413` 已经选了并存。**需要确认这是长期决定还是过渡态。** |
+| **② 手动 `/compact` 与压缩面板** | 框架压缩只写 agent state，问渠的压缩结果要落 `c_ai_session.summary` 并在前端可见。是接受"框架压缩 + 桥接落库"，还是保留问渠这套并存？ | 工作区方在 `AgentscopeChatEngine.java:1411-1413` 已经选了并存。**需要确认这是长期决定还是过渡态。** |
 | **③ 计划版本链** | 问渠的计划支持"生成→澄清→改进→被新计划取代"的多版本链，框架的 `PlanModeManager` 只有单份 plan 文件。是接受功能退化，还是保留问渠的版本链？ | 两侧**现在同时在跑**（框架挂 `plan_*` 工具 + 问渠跑意图闸），需要先定架构再谈删。 |
 | **④ 计划模式双跑** | `enablePlanMode()` 已开、`PlanModeService` 也注入着，模型可能同时看到两套计划机制。**这可能是个待修的 bug，不只是重复问题** —— 建议优先排查。 | 属于"框架已提供但接法有问题"，而非"自研待退役"。 |
 | **⑤ 框架 HITL 通道** | `SpringAiToolAdapter` 里 `approvalCanAsk=false` 导致需确认的工具被直接 deny（注释说"接框架确认事件之前必须 false"）。但 `AgentSession.respond` 已经存在了。**要不要现在接上？** | 这不是删代码，是补一个缺失接线。补上后审批类工具在框架路径下可用。 |
@@ -223,7 +223,7 @@ if (agent != null && agent.getWorkflowId() != null && !agent.getWorkflowId().isB
 
 ## 五、执行结果（据本报告执行的那笔提交）
 
-项目方定的方针是「框架有的能力直接用，不保留自研手写；**就算要自研，也要在新框架上自研**」。
+工作区方定的方针是「框架有的能力直接用，不保留自研手写；**就算要自研，也要在新框架上自研**」。
 据此执行，四条决策点的落定如下：
 
 | 盘点里的决策点 | 落定 | 实际做法 |

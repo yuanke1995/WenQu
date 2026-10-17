@@ -112,7 +112,7 @@ PC 壳传与原实现逐字等价的回调；移动壳传自己的滚动与 `/m/
 
 ## 静态校验
 
-- `node scripts/verify-sfc.mjs`：SFC 编译、模块解析、CSS 语法、项目约束、PWA 资源存在性。
+- `node scripts/verify-sfc.mjs`：SFC 编译、模块解析、CSS 语法、仓库约束、PWA 资源存在性。
 - `node scripts/check-engine-imports.mjs`：projections 引用完整 + 从引擎 inject 解构的名字必须真实存在
   （两类漏接都只在真浏览器渲染时才炸，这里前移为静态失败）。
 - `node scripts/check-mshell.cjs`：412×916 触屏跑 dist 产物，验重定向/结构/热区/sheet 开合/

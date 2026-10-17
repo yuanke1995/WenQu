@@ -60,7 +60,7 @@ DSH 不值得抄的是**它的架构由其形态决定**：DSH 是本机单用�
 > 其中一条订正的是**本文与旧记录共同写错的事实**：沙盒命令输出的帽有两道（Java 侧按字节 + 镜像侧只回最后约 1 万行），
 > 问答走流式读 log 文件所以全文在手，同步 exec 路径拿不到全文且**没有任何被砍标记**。
 
-好消息（已核实）：`SessionService.appendToMysql:948-1007` **本就是 insert-only**（`selectForUpdate` 锁会话行 → `maxSequencePhysical+1` → `insert`，全项目无内容列 UPDATE），`Session.summaryUntilSeq` 已是 checkpoint 水位，前端 `web/src/chat/projections.js`（836 行）已显式命名投影层 → **半径是加一张事件表，不是重写会话层**。
+好消息（已核实）：`SessionService.appendToMysql:948-1007` **本就是 insert-only**（`selectForUpdate` 锁会话行 → `maxSequencePhysical+1` → `insert`，全工作区无内容列 UPDATE），`Session.summaryUntilSeq` 已是 checkpoint 水位，前端 `web/src/chat/projections.js`（836 行）已显式命名投影层 → **半径是加一张事件表，不是重写会话层**。
 
 #### P0 的真实边界与验证账（2026-10-13 收编自 `docs/p0-leftovers-2026q4.md`，那份文件已删）
 
