@@ -189,19 +189,30 @@
               <div class="metric-sub" style="margin-top:6px">模型未登记单价，费用合计不含这部分</div>
             </div>
           </div>
-          <div v-if="(cost.unpricedModels || []).length" class="app-card" style="margin-bottom:12px">
+          <div v-if="unpricedList.length || Number(cost.unregisteredTokens) > 0" class="app-card" style="margin-bottom:12px">
             <div class="app-card-title">未计价模型
-              <span class="card-sub">在「智能体 → 模型供应商 → 管理模型 → 编辑」里登记单价后即可计入费用</span>
+              <span class="card-sub">{{ unpricedList.length
+                  ? '在「智能体 → 模型供应商 → 管理模型 → 编辑」里登记单价后即可计入费用'
+                  : '这些 token 对应的模型记录已不在册，无处登记单价' }}</span>
             </div>
-            <div style="display:flex;flex-wrap:wrap;gap:6px;padding:4px 0 8px">
-              <a-tag v-for="m in cost.unpricedModels" :key="m" color="orange">{{ m }}</a-tag>
+            <div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:4px 0 8px">
+              <a-tag v-for="m in shownUnpriced" :key="m.label" color="orange">
+                {{ m.label }} · {{ fmtTokensCompact(m.tokens) }}<template v-if="Number(m.refs) > 1">（{{ m.refs }} 个供应商）</template>
+              </a-tag>
+              <button v-if="unpricedList.length > UNPRICED_SHOWN" class="app-link-btn" @click="unpricedAll = !unpricedAll">
+                {{ unpricedAll ? '收起' : `展开全部 ${unpricedList.length} 类` }}
+              </button>
+            </div>
+            <div v-if="Number(cost.unregisteredTokens) > 0" class="metric-sub">
+              另有 {{ fmtTokensCompact(cost.unregisteredTokens) }} tokens 来自已删除的模型记录或未记录模型的早期台账
+              （{{ cost.unregisteredCount }} 个引用），不计入费用，也无法通过登记单价挽回。
             </div>
           </div>
           <div class="two-col">
             <div class="app-card">
               <div class="app-card-title">按用户<span class="card-sub">台账输入/输出 tokens × 模型单价</span></div>
               <a-table :data-source="cost.byUser || []" :columns="costUserCols" size="small" row-key="uid"
-                       :loading="costLoading" :pagination="false" :locale="{ emptyText: '该时间范围内没有用量' }">
+                       :loading="costLoading" :pagination="costPager" :locale="{ emptyText: '该时间范围内没有用量' }">
                 <template #bodyCell="{ column, record }">
                   <template v-if="column.key === 'cost'">{{ record.cost != null ? fmtCost(record.cost) : '—' }}</template>
                 </template>
@@ -210,7 +221,7 @@
             <div class="app-card">
               <div class="app-card-title">按模型<span class="card-sub">计价口径：输入/输出单价分开（元/百万 tokens）</span></div>
               <a-table :data-source="cost.byModel || []" :columns="costModelCols" size="small" row-key="model"
-                       :loading="costLoading" :pagination="false" :locale="{ emptyText: '该时间范围内没有用量' }">
+                       :loading="costLoading" :pagination="costPager" :locale="{ emptyText: '该时间范围内没有用量' }">
                 <template #bodyCell="{ column, record }">
                   <template v-if="column.key === 'cost'">{{ record.cost != null ? fmtCost(record.cost) : '未计价' }}</template>
                 </template>
@@ -665,6 +676,13 @@ const reloadAll = async () => {
 const costRange = ref(30)
 const costLoading = ref(false)
 const cost = ref({})
+/** 未计价清单默认只展开前 8 类（按 token 降序）——曾经这里是几百个原始 providerId/模型名标签 */
+const UNPRICED_SHOWN = 8
+const unpricedAll = ref(false)
+const unpricedList = computed(() => cost.value.unpricedModels || [])
+const shownUnpriced = computed(() =>
+  unpricedAll.value ? unpricedList.value : unpricedList.value.slice(0, UNPRICED_SHOWN))
+const costPager = { pageSize: 10, showSizeChanger: false, hideOnSinglePage: true }
 const loadCost = async () => {
   costLoading.value = true
   try {

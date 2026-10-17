@@ -178,7 +178,7 @@
                   </a-table-column>
                   <a-table-column title="MCP" key="mcp" width="86">
                     <template #default="{ record }">
-                      <a-tooltip :title="record.mcpEnabled ? '可访问平台级 MCP 入口 /ai/mcp（点击收回）' : '未授权 MCP 入口（点击授权）'">
+                      <a-tooltip :title="record.mcpEnabled ? '可访问平台级 MCP 入口 /ai/mcp' : '未授权 MCP 入口（点击授权）'">
                         <a-switch size="small" :checked="!!record.mcpEnabled"
                                   :loading="keyMcpTogglingId === record.id" @change="toggleKeyMcp(record)" />
                       </a-tooltip>
@@ -198,7 +198,7 @@
                   <a-table-column title="操作" key="act" width="150">
                     <template #default="{ record }">
                       <button class="app-link-btn" @click="openShareKey(record)">共享</button>
-                      <button class="app-link-btn" @click="openRenameKey(record)">改名</button>
+                      <button class="app-link-btn" @click="openEditKey(record)">编辑</button>
                       <a-popconfirm title="删除该 Key？调用方将立即失效" ok-text="删除" cancel-text="取消" @confirm="delKey(record.id)">
                         <button class="app-link-btn danger">删除</button>
                       </a-popconfirm>
@@ -381,17 +381,29 @@
                   </template>
                 </a-modal>
 
-                <!-- 改名弹窗 -->
-                <a-modal v-model:open="renameOpen" title="重命名 API Key" :footer="null" :width="460">
+                <!-- 编辑弹窗：名称与有效期都能改（Key 本身改不了——明文只在签发时回显一次） -->
+                <a-modal v-model:open="editOpen" title="编辑 API Key" :footer="null" :width="460">
                   <a-form layout="vertical">
                     <a-form-item label="用途名称" required>
-                      <a-input v-model:value="renameForm.name" placeholder="如：报表系统集成"
-                               :maxlength="200" @press-enter="submitRenameKey" />
+                      <a-input v-model:value="editForm.name" placeholder="如：报表系统集成"
+                               :maxlength="200" @press-enter="submitEditKey" />
+                    </a-form-item>
+                    <a-form-item label="有效期">
+                      <a-radio-group v-model:value="editForm.expireMode" size="small" button-style="solid">
+                        <a-radio-button value="never">长期有效</a-radio-button>
+                        <a-radio-button value="30">30 天</a-radio-button>
+                        <a-radio-button value="90">90 天</a-radio-button>
+                        <a-radio-button value="custom">选日期</a-radio-button>
+                      </a-radio-group>
+                      <a-date-picker v-if="editForm.expireMode === 'custom'" v-model:value="editForm.expireDate"
+                                     style="margin-top:8px" placeholder="选择到期日期"
+                                     :disabled-date="d => d && d.valueOf() < Date.now() - 86400000" />
+                      <div class="key-field-hint">「30 天 / 90 天」从今天起算；到期后该 Key 立即不可调用，改回长期即恢复</div>
                     </a-form-item>
                   </a-form>
                   <div class="key-modal-foot">
-                    <button class="app-btn ghost" @click="renameOpen = false">取消</button>
-                    <button class="app-btn" @click="submitRenameKey">保存</button>
+                    <button class="app-btn ghost" @click="editOpen = false">取消</button>
+                    <button class="app-btn" @click="submitEditKey">保存</button>
                   </div>
                 </a-modal>
 
@@ -636,10 +648,11 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, watch, nextTick, h } from 'vue'
 import { message, Modal } from 'ant-design-vue'
+import dayjs from 'dayjs'
 import { SaveOutlined, QuestionCircleOutlined, CopyOutlined, CheckOutlined, SearchOutlined, ReloadOutlined } from '@ant-design/icons-vue'
 import { getConfig, getConfigSchema, saveConfig, resetConfig,
          probeConnectivity,
-         listApiKeys, createApiKey, setApiKeyDisabled, setApiKeyMcp, deleteApiKey, renameApiKey, updateApiKeyShare,
+         listApiKeys, createApiKey, setApiKeyDisabled, setApiKeyMcp, deleteApiKey, updateApiKey, updateApiKeyShare,
          getMcpAuditLogs, getMcpAuditSummary,
          getScheduleTasks, triggerScheduleTask, getScheduleRuns, clearScheduleRuns,
          getToolInventory } from '../api'
@@ -925,8 +938,8 @@ const createOpen = ref(false)
 const createStep = ref('form')
 const createForm = ref({ name: '', expireMode: 'never', expireDate: null })
 const createdKey = ref({ name: '', apiKey: '' })
-const renameOpen = ref(false)
-const renameForm = ref({ id: '', name: '' })
+const editOpen = ref(false)
+const editForm = ref({ id: '', name: '', expireMode: 'never', expireDate: null })
 
 const activeKeyCount = computed(() => keys.value.filter(k => !k.disabled && !k.expired).length)
 const filteredKeys = computed(() => {
@@ -952,13 +965,13 @@ const loadKeys = async () => {
 const copyText = async t => {
   try { await navigator.clipboard.writeText(t); return true } catch (e) { return false }
 }
-/** 有效期选择 → 提交给后端的 expireAt（yyyy-MM-dd；空串=长期） */
-const expirePayload = () => {
-  const m = createForm.value.expireMode
+/** 有效期选择 → 提交给后端的 expireAt（yyyy-MM-dd；空串=长期）。创建与编辑两个弹窗共用 */
+const expirePayload = form => {
+  const m = form.expireMode
   if (m === 'never') return ''
   const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   if (m === 'custom') {
-    const d = createForm.value.expireDate
+    const d = form.expireDate
     if (!d) return ''
     return d.format ? d.format('YYYY-MM-DD') : ymd(new Date(d))
   }
@@ -1008,7 +1021,7 @@ const submitCreateKey = async () => {
   if (createForm.value.expireMode === 'custom' && !createForm.value.expireDate) { message.warning('请选择到期日期'); return }
   keyCreating.value = true
   try {
-    const r = await createApiKey({ name: createForm.value.name.trim(), expireAt: expirePayload() })
+    const r = await createApiKey({ name: createForm.value.name.trim(), expireAt: expirePayload(createForm.value) })
     if (r.success) {
       createdKey.value = { name: r.data?.name || createForm.value.name.trim(), apiKey: r.data?.apiKey || '' }
       createStep.value = 'done'
@@ -1027,9 +1040,11 @@ const copySample = async (k, text) => {
   copiedSample.value = ok ? k : ''
   if (!ok) message.warning('浏览器未授权剪贴板，请手动选中复制')
 }
-const openRenameKey = rec => {
-  renameForm.value = { id: rec.id, name: rec.name || '' }
-  renameOpen.value = true
+const openEditKey = rec => {
+  // 有效期回填：有到期日 → 「选日期」并显示那一天（已过期的也显示，改到未来或切长期才恢复可用）；无 → 长期有效
+  const exp = rec.expireAt ? dayjs(String(rec.expireAt).slice(0, 10)) : null
+  editForm.value = { id: rec.id, name: rec.name || '', expireMode: exp ? 'custom' : 'never', expireDate: exp }
+  editOpen.value = true
 }
 
 // ==================== API Key 共享范围（弹窗为公共组件 ShareScopeModal） ====================
@@ -1040,14 +1055,15 @@ const openShareKey = rec => {
   keyShareTarget.value = { id: rec.id, shareConfig: rec.shareConfig || '' }
   keyShareVisible.value = true
 }
-const submitRenameKey = async () => {
-  const name = renameForm.value.name.trim()
+const submitEditKey = async () => {
+  const name = editForm.value.name.trim()
   if (!name) { message.warning('名称不能为空'); return }
+  if (editForm.value.expireMode === 'custom' && !editForm.value.expireDate) { message.warning('请选择到期日期'); return }
   try {
-    const r = await renameApiKey(renameForm.value.id, name)
-    if (r.success) { message.success('已改名'); renameOpen.value = false; loadKeys() }
-    else message.error(r.msg || '改名失败')
-  } catch (e) { message.error(e.message || '改名失败') }
+    const r = await updateApiKey(editForm.value.id, { name, expireAt: expirePayload(editForm.value) })
+    if (r.success) { message.success('已保存'); editOpen.value = false; loadKeys() }
+    else message.error(r.msg || '保存失败')
+  } catch (e) { message.error(e.message || '保存失败') }
 }
 const toggleKey = async rec => {
   if (keyTogglingId.value) return
@@ -1602,6 +1618,7 @@ onMounted(() => { fetchAndFill(); loadToolInventory() })
 .key-usage-list code { background: var(--app-panel-2); padding: 1px 5px; border-radius: 4px; font-size: 11px; }
 /* 弹窗内 */
 .key-modal-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+.key-field-hint { margin-top: 6px; font-size: 12px; color: var(--app-text3); line-height: 1.6; }
 .key-done-warn {
   background: var(--app-warn-weak); border: 1px solid var(--app-warn-border); color: var(--app-warn-text);
   border-radius: 6px; padding: 8px 10px; font-size: 12px; margin-bottom: 12px; line-height: 1.6;
