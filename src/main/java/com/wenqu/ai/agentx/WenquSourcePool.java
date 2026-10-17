@@ -10,8 +10,8 @@ import com.wenqu.ai.service.RerankService;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -25,10 +25,13 @@ import java.util.Set;
 public final class WenquSourcePool {
 
     private final ChatRunRuntime runtime;
+    private final ImageUrlSigner imageUrlSigner;
     private final TurnSourceRegistry registry;
     private final List<Map<String, Object>> sources = new ArrayList<>();
-    private final Map<Integer, String> imgIndex = new HashMap<>();
-    private final Map<Integer, String> imgDescIndex = new HashMap<>();
+    // 必须是 LinkedHashMap：`.values()` 就是 [图片N] 的下标序列（编号 N → 数组第 N-1 项），
+    // HashMap 在条目数越过扩容阈值后按桶序迭代，正文里的 [图片3] 会配到另一张图。
+    private final Map<Integer, String> imgIndex = new LinkedHashMap<>();
+    private final Map<Integer, String> imgDescIndex = new LinkedHashMap<>();
     private final List<Map<String, String>> degradations = new ArrayList<>();
     private final Set<String> degradedCodes = new HashSet<>();
 
@@ -36,6 +39,7 @@ public final class WenquSourcePool {
                            ImageUrlSigner imageUrlSigner, String sessionId, String question, SseEmitter emitter,
                            com.wenqu.ai.service.DocumentMetaCache docMetaCache) {
         this.runtime = runtime;
+        this.imageUrlSigner = imageUrlSigner;
         this.registry = new TurnSourceRegistry(configService, rerankService, imageUrlSigner, runtime,
                 sessionId, question, emitter, sources, imgIndex, imgDescIndex, degradations, degradedCodes);
         // 工具本轮首次命中的文档不在主检索的 docFileNames 映射里，文件名靠 docMetaCache 按 docId 补查。
@@ -86,6 +90,25 @@ public final class WenquSourcePool {
 
     public Map<Integer, String> imgDescIndex() {
         return imgDescIndex;
+    }
+
+    /**
+     * 本轮正文配图清单（原始 URL，下标即 [图片N] 的 N-1）——落库用这份。
+     * <p>库里必须存原始地址：签名是一次性凭据，落库等于写进一批过期数据（产物 URL 同一口径，
+     * 读侧由 {@code ImageUrlSigner.signMessageMedia} 现场签）。
+     */
+    public List<String> rawImages() {
+        return new ArrayList<>(imgIndex.values());
+    }
+
+    /** 按图片鉴权配置签一份 URL 清单（未开鉴权时原样返回）。出 SSE 帧的都是签名副本，落库的必须不是。 */
+    public List<String> sign(List<String> rawUrls) {
+        return rawUrls.stream().map(imageUrlSigner::signUrl).toList();
+    }
+
+    /** 本轮配图清单的展示副本（已签名）：接流快照用它，image 帧与 done.finalImages 同形。 */
+    public List<String> signedImages() {
+        return sign(rawImages());
     }
 
     public Set<String> degradedCodes() {

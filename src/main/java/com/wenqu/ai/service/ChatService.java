@@ -292,7 +292,8 @@ public class ChatService {
                 emitter, startTime, degradations, degradedCodes,
                 agent, guestMode, branchTurn, regenerate, replaceMessageId, editVariantGroup,
                 null,
-                chatAttachments.metasJson(attachments, userId),
+                // 同上：上传归属者（免登录分享时是访客）
+                chatAttachments.metasJson(attachments, cmd.uploadOwnerUid()),
                 (mentions == null || mentions.isEmpty()) ? null : com.alibaba.fastjson2.JSON.toJSONString(mentions));
     }
 

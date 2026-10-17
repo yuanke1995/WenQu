@@ -60,6 +60,16 @@ public final class ChatCommand {
     /** 提问用户：解析个人默认模型、个人资产（技能/MCP）归属、数据权限都按它 */
     final String userId;
     /**
+     * 本轮附件字节所在的<b>上传目录归属者</b>（空=同 {@link #userId}）。
+     * <p><b>为什么必须与 userId 分开</b>：附件是 multipart 上传换 fileId、按 uid 分目录落盘的，
+     * 读回时也要拿同一个 uid 才找得到。登录态两者天然同一人；但免登录分享链路里，
+     * {@link #userId} 是<b>发布者</b>（检索可见性、默认模型都按他执行），而文件是<b>访客</b>传的、
+     * 落在访客自己的目录里——拿发布者的 uid 去读，访客的附件在模型侧一律读成"已过期或不存在"
+     * （上传成功、也能落库回显，唯独正文进不了上下文，症状很像"模型没认真看"）。
+     * <p>所以这里显式区分「按谁的身份作答」与「去谁的目录取材料」，不再让一个字段兼职两件事。
+     */
+    final String attachmentOwnerUid;
+    /**
      * 思考强度档位（用户显式选的才传；落在模型支持档位内才生效，否则回落该模型默认档位）。
      * null = 本轮不指定强度，只有深度思考开关。
      */
@@ -118,6 +128,14 @@ public final class ChatCommand {
     /** 是否处于子智能体分支里（{@link #subagentDepth} &gt; 0 的唯一判定点，别在调用方各写一遍） */
     public boolean branchTurn() {
         return subagentDepth > 0;
+    }
+
+    /**
+     * 本轮附件该去谁的目录取：显式指定了上传归属者就用它，否则与提问用户同人
+     * （登录态、定时任务、工作流节点、MCP 调用都是这一档；只有免登录分享会显式指定）。
+     */
+    public String uploadOwnerUid() {
+        return attachmentOwnerUid == null || attachmentOwnerUid.isBlank() ? userId : attachmentOwnerUid;
     }
 
     /** 只带最小三要素的命令（后台续跑、子 agent、定时任务这类没有前端请求体的调用方用） */

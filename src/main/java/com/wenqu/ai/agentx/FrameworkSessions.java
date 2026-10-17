@@ -344,7 +344,7 @@ public class FrameworkSessions {
 
     /**
      * 提问卡等满预算、已按「未作答」把答案送回模型：把那一行落成 TIMEOUT 并摘掉归属。
-     * <p>与 {@link #markPendingTimeout} 的区别是那条给「整轮作废」用——它把这条会话还挂着的所有待办
+     * <p>与 {@link #markPendingTerminal} 的区别是那条给「整轮作废」用——它把这条会话还挂着的所有待办
      * 一锅端了；这里只处理这一张提问卡，且答案要留审计（模型收到的那句「用户未回答这一题」）。
      * 状态仍记 TIMEOUT 而不是 ANSWERED：用户确实没答，审计要看得出来。
      */
@@ -355,17 +355,34 @@ public class FrameworkSessions {
     }
 
     /**
-     * 等待预算用尽：把这条会话还挂着的待办落成 TIMEOUT 并摘掉归属。
+     * 等待预算用尽或用户叫停：把这条会话还挂着的待办落成终态并摘掉归属。
      * <p>不落终态的话库里永远留着 PENDING——刷新后端点还会把一张已经作废的卡片重建出来，
-     * 用户答了才发现什么都没发生。超时一律不替用户代答（既有口径），这里只改状态。
+     * 用户答了才发现什么都没发生。超时与叫停都不替用户代答（既有口径），这里只改状态。
+     *
+     * @param status {@code TIMEOUT}=等满预算，{@code STOPPED}=用户叫停（与手写侧
+     *               {@code HitlDecisionService.terminateSessionWaits} 同一组词）
      */
-    public void markPendingTimeout(String sessionKey) {
+    public void markPendingTerminal(String sessionKey, String status) {
         if (sessionKey == null) return;
         for (Map.Entry<String, String> e : new java.util.LinkedHashMap<>(pendingOwner).entrySet()) {
             if (!sessionKey.equals(e.getValue())) continue;
-            hitl.resolveFrameworkPending(e.getKey(), "TIMEOUT", null, null);
+            hitl.resolveFrameworkPending(e.getKey(), status, null, null);
             pendingOwner.remove(e.getKey());
         }
+    }
+
+    /**
+     * 这些待办在问渠侧是不是都已经没人能答了（记录已落终态，或压根没落过库）。
+     * <p>给「上一轮停在等人裁决、这一轮再也起不动」的自愈判据用：恢复端点只列 PENDING，
+     * 所以非 PENDING 就等于这张卡不会再有人答——框架那一轮不该继续占着会话。见 {@code abandoned} 的调用方。
+     */
+    public boolean abandoned(java.util.Collection<String> requestIds) {
+        if (requestIds == null || requestIds.isEmpty()) return true;
+        for (String id : requestIds) {
+            var rec = hitl.findApproval(id);
+            if (rec != null && "PENDING".equals(rec.getStatus())) return false;
+        }
+        return true;
     }
 
     /**

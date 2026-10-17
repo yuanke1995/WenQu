@@ -69,6 +69,15 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private final com.wenqu.ai.service.SessionService sessionService;
     /** 附件元信息落库的共用口径（与工作流路径同一个方法，见 metasJson 的类注释）。 */
     private final ChatAttachmentService attachments;
+    /**
+     * 用户上传图片的落盘链路（data URL → 文件 + 回显 URL）。
+     * <p><b>为什么必须接回来</b>：手写推理循环退役时，本服务仅有的两个调用点跟着一起被删了，于是框架这条路上
+     * 图片两头都断——{@code appendMessage} 拿到的是原始 base64 data URL，而 {@code c_ai_message.images} 是
+     * {@code TEXT}(65535) 且库跑在 {@code STRICT_TRANS_TABLES} 下，一张 1280px JPEG 的 base64 约 270KB，
+     * 实测直接 {@code ERROR 1406 Data too long} 打断整轮；同时模型侧再没人把图片拼进本轮输入，图发了等于没发。
+     * 本服务（落盘 + 回显 URL + 保留原图 dataURL 供直发）与 {@code ScheduleCenter} 的清理任务本来就还在。
+     */
+    private final com.wenqu.ai.service.UserImageService userImages;
     /** 技能清单注入 system prompt（正文仍由模型按需 readSkill 取，不塞进上下文）。 */
     private final com.wenqu.ai.service.SkillService skills;
     private final com.wenqu.ai.service.KeywordExtractor keywordExtractor;
@@ -104,6 +113,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                                FrameworkSessions sessions,
                                com.wenqu.ai.service.SessionService sessionService,
                                ChatAttachmentService attachments,
+                               com.wenqu.ai.service.UserImageService userImages,
                                com.wenqu.ai.service.SkillService skills,
                                com.wenqu.ai.service.KeywordExtractor keywordExtractor,
                                com.wenqu.ai.service.ArtifactService artifactService,
@@ -120,6 +130,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         this.sessions = sessions;
         this.sessionService = sessionService;
         this.attachments = attachments;
+        this.userImages = userImages;
         this.skills = skills;
         this.keywordExtractor = keywordExtractor;
         this.artifactService = artifactService;
@@ -131,8 +142,44 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         this.modelResolver = modelResolver;
     }
 
+    /**
+     * 本轮「文本 + 原图」的多模态消息：正文一个 TextBlock，每张图一个 ImageBlock。
+     * <p>只在模型能读图（{@code visionCapableOf}）时走这条路——读不了图还硬塞 ImageBlock，
+     * 上游要么报错要么静默丢图，两种都比「明确不发 + 在问题里说明看不见」更糟。
+     * <p>图片用 {@code Base64Source} 直发原始字节：data URL 已经就是 base64（拆掉
+     * {@code data:<mediaType>;base64,} 前缀即可），不必再落盘读回一遍——本服务本来就是
+     * 「原图直发、不丢细节」的那条链路的产物。
+     */
+    private io.agentscope.core.message.Msg buildMultimodalMsg(
+            String text, List<com.wenqu.ai.service.UserImageService.UserImage> imgs) {
+        List<io.agentscope.core.message.ContentBlock> blocks = new java.util.ArrayList<>();
+        blocks.add(io.agentscope.core.message.TextBlock.builder().text(text).build());
+        for (com.wenqu.ai.service.UserImageService.UserImage img : imgs) {
+            String dataUrl = img.dataUrl();
+            if (dataUrl == null || !dataUrl.startsWith("data:")) continue;
+            int comma = dataUrl.indexOf(',');
+            if (comma <= 0) continue;
+            // data:<mediaType>;base64,<payload>
+            String header = dataUrl.substring(5, comma);
+            int semi = header.indexOf(';');
+            String mediaType = semi < 0 ? header : header.substring(0, semi);
+            if (mediaType.isBlank()) mediaType = "image/jpeg";
+            String payload = dataUrl.substring(comma + 1);
+            if (payload.isBlank()) continue;
+            blocks.add(io.agentscope.core.message.ImageBlock.builder()
+                    .source(new io.agentscope.core.message.Base64Source(mediaType, payload))
+                    .build());
+        }
+        // 一张都没解析出来（data URL 形态异常）就退回纯文本：绝不 submit 一个只有 TextBlock 以外的空壳
+        if (blocks.size() == 1) return null;
+        return io.agentscope.core.message.Msg
+                .builderForRole(io.agentscope.core.message.MsgRole.USER)
+                .content(blocks).build();
+    }
+
     /** @ 引用 / # 历史引用的消息级常驻标注（刷新/历史回显保留）。 */
-    private String mentionsJson(List<ChatRequest.Mention> mentions) {        if (mentions == null || mentions.isEmpty()) return null;
+    private String mentionsJson(List<ChatRequest.Mention> mentions) {
+        if (mentions == null || mentions.isEmpty()) return null;
         return com.alibaba.fastjson2.JSON.toJSONString(mentions);
     }
 
@@ -173,7 +220,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 1) 文档附件正文（当轮看一眼的轻路径：只抽文本，超长截断，不进向量库）
         if (cmd.getAttachments() != null && !cmd.getAttachments().isEmpty()) {
             List<ChatAttachmentService.PreparedAttachment> prepared =
-                    attachments.prepare(cmd.getAttachments(), cmd.getUserId());
+                    // 按上传归属者读（免登录分享时是访客，不是发布者）——见 ChatCommand#uploadOwnerUid
+                    attachments.prepare(cmd.getAttachments(), cmd.uploadOwnerUid());
             String text = attachments.buildContextText(prepared);
             if (!text.isBlank()) sb.append('\n').append(text);
         }
@@ -329,12 +377,45 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 正文与工具卡当增量再发一遍（前端按 pos 去重只护得住同一条气泡的重复片段，护不住跨轮）
         long startCursor = session.log().head().seq();
 
+        // 本轮用户图片：先落盘换 URL，再决定「原图要不要进模型」。
+        // 两条链路的分叉点只有一个——聊天模型能不能读图（visionCapableOf，与发布游客模型时同一个判据）：
+        //   能读：processDirect（落盘 + 保留原图 dataURL 供本轮直发，不丢细节）
+        //   不能：processDisplay（只落盘回显，dataURL 不占内存；本轮在问题里注入诚实说明，见 imgNote）
+        // 无论哪条，**落库的一律是 URL**：data URL 永远不进库（TEXT 列放不下，见 userImages 字段注释）。
+        boolean chatSeesImages = modelRegistry.visionCapableOf(ref);
+        List<String> rawImages = cmd.getUserImages();
+        List<com.wenqu.ai.service.UserImageService.UserImage> userImgs =
+                (rawImages == null || rawImages.isEmpty())
+                        ? List.of()
+                        : (chatSeesImages ? userImages.processDirect(rawImages) : userImages.processDisplay(rawImages));
+        List<String> userImgUrls = userImgs.stream()
+                .map(com.wenqu.ai.service.UserImageService.UserImage::url).toList();
+        // 模型读不了图时必须**说出来**：登记降级（受 chat.retrievalDebugEnabled 控制，与其它降级同一条口径），
+        // 并把说明拼进本轮问题——后者才是生产环境下用户真正看得见的那一层：
+        // 模型据此回答「我看不到图，别猜」，而不是对着看不见的图硬编一段。
+        // 只在真有图片被排除时登记：本轮没传图就无所谓模型支不支持视觉，不该弹「0 张图片仅作展示」
+        String imgNote = "";
+        if (!userImgs.isEmpty() && !chatSeesImages) {
+            imgNote = "\n\n用户上传了 " + userImgs.size()
+                    + " 张图片，但当前模型不支持图片理解，图片内容对你不可见。"
+                    + "请勿猜测图片内容；若图片对回答关键，可建议用户更换支持图片理解的模型后重试。";
+            pool.registrar().degrade("chatModelNoVision",
+                    "当前模型「" + ref.substring(ref.indexOf('/') + 1)
+                            + "」不支持图片理解，本轮 " + userImgs.size()
+                            + " 张图片仅作展示、未参与回答；如需识别图片请更换支持图片理解的模型");
+            log.warn("[FAIL-LOUD] 聊天模型不支持图片理解，图片仅展示: session={} model={} count={}",
+                    cmd.getSessionId(), ref, userImgs.size());
+        } else if (!userImgs.isEmpty()) {
+            log.info("[IMAGE] 聊天模型自带图片理解，图片直发模型: session={} model={} count={}",
+                    cmd.getSessionId(), ref, userImgs.size());
+        }
+
         // 问题先落库：这一轮哪怕中途停掉或出错，界面上也不该出现「问出去了却什么都没有」的空档
         // （与手写运行时的即时落库同一条口径）。附件/@/#历史引用随用户消息一并持久化，刷新后回显不丢。
         String userMessageId = cmd.isRegenerate() || cmd.isFromSteer() ? null
                 : sessionService.appendMessage(cmd.getSessionId(), "user", cmd.getQuestion(),
-                        cmd.getUserImages(), null, null, null, null, null,
-                        attachments.metasJson(cmd.getAttachments(), cmd.getUserId()),
+                        userImgUrls.isEmpty() ? null : userImgUrls, null, null, null, null, null,
+                        attachments.metasJson(cmd.getAttachments(), cmd.uploadOwnerUid()),
                         null, null, null, null, null, null, null,
                         mentionsJson(cmd.getMentions()),
                         historyRefsJson(cmd.getHistoryRefs()),
@@ -361,8 +442,17 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 送进模型的不只是问题原文：附件正文 / @ 引用 / # 历史引用都在这一段拼进去。
         // 此前这里直接送 cmd.getQuestion()，于是用户传的东西模型一概看不见（附件问题表现为
         // 它如实回答「没有看到您上传的文件」）——落库只保证人能回看到，不等于模型收到了。
-        String modelInput = userContentWithContext(cmd);
-        AgentSession.Task current = session.submit(modelInput);
+        String modelInput = userContentWithContext(cmd) + imgNote;
+        // 模型能读图时，把原图作为 image_url 内容部件随本轮一起送进去。此前这里只有 submit(String)，
+        // 图片在「问题正文」里没有任何落点——附件有 buildContextText 抽正文，图片没有等价的通道，
+        // 于是发了图模型也一概看不见（它只会如实回答"没有看到图片"）。
+        // 框架原生支持多模态：submit(Msg)，Msg 里可混排 TextBlock 与 ImageBlock。
+        // buildMultimodalMsg 在图片形态都不可用时会返回 null，那时退回纯文本 submit，不拿 null 去提交
+        io.agentscope.core.message.Msg multimodal =
+                (chatSeesImages && !userImgs.isEmpty()) ? buildMultimodalMsg(modelInput, userImgs) : null;
+        AgentSession.Task current = multimodal != null
+                ? session.submit(multimodal)
+                : session.submit(modelInput);
         // 占住这一条会话的跟随位，收尾让位：答复端点据此判断「这次答完有没有人接着跑」
         String sessionKey = sessions.key(cmd);
         sessions.claimFollower(sessionKey);
@@ -481,11 +571,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         endHumanWait(channel, recording);
                         continue;
                     }
-                    // 超时一律不替用户代答（既有口径）：卡片作废，这一轮按未完成收
+                    // 超时一律不替用户代答（既有口径）：卡片作废，这一轮按未完成收。
+                    // 待办的终态（框架结算 + 卡片收口 + 落库）统一由循环外的 abandonPendingInteractions 做
                     channel.emit(RunEventType.WARN, kind == PendingKind.PLAN
                             ? "计划等待超时，本轮未继续执行"
                             : "确认等待超时，本轮未继续执行该工具");
-                    sessions.markPendingTimeout(sessions.key(cmd));
                     timedOut = true;
                     break;
                 }
@@ -566,7 +656,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 所以按超时收口：待办落 TIMEOUT、这一轮走 timedOut 那条落库与文案（半程内容据此可见）。
         if (!stopped && !timedOut && !superseded && !neverLaunched && !session.pending().isEmpty()) {
             channel.emit(RunEventType.WARN, "本轮已超时结束，等你确认的那一步已作废");
-            sessions.markPendingTimeout(sessions.key(cmd));
             timedOut = true;
         }
 
@@ -575,6 +664,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             // 再说这句就是在承诺一件不会发生的事
             channel.emit(RunEventType.WARN, "有工具在等你确认，答完会自动接着跑（可稍后回来接着看它）");
         }
+        // 这一轮到此不再有人跟随：还挂在人身上的待办当场收口（框架结算 + 卡片终态 + 待办行落库）。
+        // neverLaunched 那一支不碰——那些待办属于**上一轮**，卡片可能正等用户答，本轮没启动不是它的错。
+        if (!neverLaunched) abandonPendingInteractions(session, cmd, channel, recording, stopped);
         sessions.setPlanMode(cmd, false);
         // 正文取哪一份：优先本轮实际流出来的那一截（与发出去的 token 帧同源）；只有它为空、且这一轮
         // 本身没失败，才回退到会话里最后一条有正文的助手消息。反过来先查会话会出两件坏事：被叫停的那一跑在 Transcript 里
@@ -663,8 +755,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 都只写进收件箱（{@code inbox/accepted}）而没有一条 {@code inbox/started}，模型请求一次也没发出，
      * 界面上是「转到 300s 被看门狗截断、正文一个字也没有」，日志里连 {@code PRE_CALL} 都没有。
      *
-     * <p>只在「那一轮确实不会再动了」时动手：还在跑（activeRuns）、挂着人在回路的待办（pending）、
-     * 或有待对账的工具结果（uncertainToolCalls，框架要求先 reconcile）时一律不碰。
+     * <p>只在「那一轮确实不会再动了」时动手：还在跑（activeRuns）或有待对账的工具结果
+     * （uncertainToolCalls，框架要求先 reconcile）时一律不碰。挂着待办（pending）的那一轮分两种：
+     * 卡片还挂在 PENDING = 真的在等人，不碰；卡片已随叫停/超时落终态 = 没人会再答它，
+     * 那一轮同样永远不会结束（{@code run/end status=suspended}），照归。
      */
     private void reconcileStalledTurn(AgentSession session, ChatCommand cmd) {
         SessionLog journal = session.log();
@@ -678,8 +772,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             log.warn("[agentx] 读会话轮次台账失败 session={}: {}", cmd.getSessionId(), unreadable.toString());
             return;
         }
-        if (!view.activeRuns().isEmpty() || !view.uncertainToolCalls().isEmpty()
-                || !session.pending().isEmpty()) return;
+        if (!view.activeRuns().isEmpty() || !view.uncertainToolCalls().isEmpty()) return;
+        // 挂在人身上那张卡的轮也算「遗留」：卡片在问渠侧已经落终态（叫停/超时都落），没人能再答它，
+        // 而框架那一轮停在 suspended 不算结束——不放过这一条，这条会话之后就再也起不动了。
+        // 还挂在 PENDING 的照旧不碰：那一张真的在等人。
+        if (!session.pending().isEmpty() && !sessions.abandoned(session.pending().keySet())) return;
         // 先丢弃积压再归档：闸门还关着时投递循环不会 launch，这一步才有竞争安全性。
         // 反过来先归档，那些旧提交会在几十毫秒内被倒着补跑，正文灌进正在跟的这一轮的气泡里。
         discardUnstartedSubmits(journal, cmd);
@@ -1027,6 +1124,81 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         return false;
     }
 
+    /**
+     * 这一轮不再有人跟随：把还挂在人身上的待办当场收口。三件事必须一起做，少一件就有一件用户看得见的事坏掉。
+     * <ul>
+     *  <li><b>卡片终态</b>：挂在提问卡上的那一次工具调用只有 {@code tool/requested}、没有结果，不补终态
+     *      那张卡就永远转圈（真机 2026-10-16 21:19：用户早已叫停、正文也落了「已停止本轮」，那张
+     *      「向用户提问」还在转圈——因为落库那份 {@code status} 就停在 start，刷新一次还是转圈）。</li>
+     *  <li><b>框架侧结算</b>（{@link SessionRecovery#cancelPending}）：那一跑在框架台账里留的是
+     *      {@code run/end status=suspended}，而 {@code Turn.ended()} 只认 completed/cancelled——不补这一刀，
+     *      这条会话之后每一轮都只进收件箱不启动（与 {@code reconcileStalledTurn} 那条 failed 轮同一种病）。</li>
+     *  <li><b>待办行落终态</b>：停在 PENDING 的卡片刷新后仍会被恢复端点重建出来，用户答了才发现没人接。</li>
+     * </ul>
+     * <p><b>终态帧由问渠自己发，不重放框架那条合成结果</b>：框架为取消补写的 {@code tool/result} 说的是
+     * 英文内部话（"Caller cancelled this pending interaction…"），而且下面 {@link Recording#toolCall}
+     * 已经把 start 卡关掉了，再让 {@link #translate} 读一遍会因配不上 start 而多推一张重复卡。
+     *
+     * @param stopped true=用户叫停，false=等待预算用尽（落库状态与卡片措辞都按它分）
+     */
+    private void abandonPendingInteractions(AgentSession session, ChatCommand cmd, RunChannel channel,
+                                            Recording recording, boolean stopped) {
+        Map<String, SessionEvent> pending = new java.util.LinkedHashMap<>(session.pending());
+        if (pending.isEmpty()) return;
+        String why = stopped ? "本轮已停止" : "等待超时";
+        // 结构性收口排在发帧之前：通道可能已经被停止/断开收掉了，那一帧发不出去是小事，
+        // 结算没做才是大事（这条会话之后就再也起不动）。
+        Set<String> frameworkTurns = new LinkedHashSet<>();
+        for (SessionEvent e : pending.values()) {
+            if (e.turnId() != null && !e.turnId().isBlank()) frameworkTurns.add(e.turnId());
+        }
+        for (String fwTurn : frameworkTurns) {
+            try {
+                SessionRecovery.cancelPending(session.log(), fwTurn);
+            } catch (RuntimeException refused) {
+                log.warn("[FAIL-LOUD] 框架待办取消失败（不落 turn/cancelled 这条会话之后可能起不动）"
+                        + " session={} turn={}: {}", cmd.getSessionId(), fwTurn, refused.toString());
+            }
+        }
+        sessions.markPendingTerminal(sessions.key(cmd), stopped ? "STOPPED" : "TIMEOUT");
+        for (Map.Entry<String, SessionEvent> entry : pending.entrySet()) {
+            Map<String, Object> data = entry.getValue().data() == null ? Map.of() : entry.getValue().data();
+            Object call = firstNonNull(data.get("call"), data);
+            String name = toolNameOf(call);
+            if (name.isBlank()) name = recording.lastToolName;
+            if (name.isBlank()) continue;
+            // 已经出过终态的那一把不补（例如 plan_exit：确认是另一件事，工具结果早到了）——
+            // 补了就是 Recording 找不到 start 而整张新卡，一次调用两张卡
+            if (!recording.hasOpenTool(name)) continue;
+            String id = call instanceof Map<?, ?> cm && cm.get("id") != null
+                    ? String.valueOf(cm.get("id")) : entry.getKey();
+            String callKey = Recording.toolCallKey(id, name);
+            long beganAt = recording.takeToolStart(callKey);
+            long covered = recording.takeToolWait(callKey);
+            long charged = recording.takeToolCharge(callKey);
+            String args = recording.toolInputByKey.remove(callKey);
+            if (args == null) args = recording.lastToolInput;
+            long elapsed = beganAt <= 0L ? 0L
+                    : Math.max(0L, System.currentTimeMillis() - beganAt - covered);
+            // 提问卡：没答就是没答，按「未作答」收尾（那句前缀是前端 askAnswerLabel 的判据，别改词）；
+            // 其它工具：那一步确实没执行，按失败收——给一个 ✓ 就是假装它跑完了
+            boolean ask = AskUserTool.NAME.equals(name);
+            String status = ask ? "done" : "error";
+            String result = ask ? "（用户未回答这一题（" + why + "））" : why + "，这一步没有执行";
+            // 落库那份先写、无条件：刷新读的就是它
+            recording.toolCall(name, status, args, elapsed, beganAt, charged);
+            try {
+                emit(channel, RunEventType.TOOL_STATUS,
+                        toolCard(name, status, elapsed, beganAt, charged, args, result));
+            } catch (RuntimeException gone) {
+                log.info("[agentx] 待办终态帧没发出去（通道已收），落库那份仍在: session={} tool={}",
+                        cmd.getSessionId(), name);
+            }
+        }
+        log.info("[agentx] 本轮不再跟随，{} 条待办已收口: session={} 原因={}",
+                pending.size(), cmd.getSessionId(), why);
+    }
+
     /** 同一轮里最后出现的那条任务：{@code respond} 接续出来的是新任务（同 turnId、新 runId）。 */
     private static AgentSession.Task latestTaskInTurn(AgentSession session, AgentSession.Task known) {
         if (known == null) return null;
@@ -1342,6 +1514,20 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             toolCalls.add(entry);
             // 脚本开始跑：开这块实时面板（作用域是一次运行，两段脚本各自复位）
             if (runCode) tools.beginRunCode(hooks);
+        }
+
+        /**
+         * 这个名字的工具当前有没有还挂着「进行中」的卡。
+         * <p>判据与 {@link #toolCall} 的合并规则同源（按名字找最后一条 start）：只有它返回 true，
+         * 补一份终态才是「把这张卡关掉」，否则就是凭空多推一张卡——同一次调用渲染成两张。
+         */
+        boolean hasOpenTool(String name) {
+            if (name == null || name.isBlank()) return false;
+            for (int i = toolCalls.size() - 1; i >= 0; i--) {
+                java.util.Map<String, Object> prior = toolCalls.get(i);
+                if (name.equals(prior.get("name"))) return "start".equals(prior.get("status"));
+            }
+            return false;
         }
 
         /**
@@ -1995,6 +2181,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         snap.put("running", true);
         snap.put("phase", "generating");
         snap.put("sources", new java.util.ArrayList<>(pool.sources()));
+        // 配图清单随快照一起给：image 帧是「有新增才发全量」的状态事件，接流方漏不上那一帧就是
+        // 整轮没有图位（前端按 images[N-1] 还原，缺数组则 [图片N] 原样留在正文里）
+        snap.put("images", pool.signedImages());
         snap.put("artifacts", artifactService.takeArtifacts(cmd.getSessionId()));
         snap.put("model", route.modelId());
         snap.put("turnId", turnId);
@@ -2049,6 +2238,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             body = body + interruptMarker(stopped, timedOut);
         }
         boolean persist = realAnswer || (hasProcess && !awaiting);
+        // 本轮正文配图清单：正文里的 [图片N] 就是按这份的下标还原的（N → 第 N-1 项）。
+        // 它此前只活在 SSE image 帧里、从不落库，表现是「当场看得见图，一刷新全变成 [图片1] 四个字」。
+        List<String> turnImages = pool.rawImages();
         // 引用完整性防线：悬空角标剔除、「有来源却没标 [N]」的 fail-loud、「编号对上了但语义不支撑」的
         // LLM 自检——与手写侧同一个实现。换了运行时不该把这道答案质量防线摘掉。
         // 停止轮与「只有过程没有正文」的半程轮都不跑：那两句标注不是答案，跑了对它们就是白报一条
@@ -2065,6 +2257,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                     pool.sources(), pool.imgIndex(), pool.imgDescIndex(),
                     pool.degradations(), pool.degradedCodes(), new java.util.HashMap<>(), startedAtMs));
             body = outcome.text();
+            // 自检剔图后编号是重编过的（[图片3] 可能已变成 [图片2]）：清单必须换成 outcome 那一份，
+            // 否则落库/下发的是剔除前的顺序，正文第 N 个标记会配到另一张图
+            turnImages = outcome.images();
             // 自检会裁掉不支撑的来源并重编编号：池不回写，正文角标与引用面板就会错位
             pool.applyCitationOutcome(outcome);
         }
@@ -2106,7 +2301,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 artifactService.takeArtifacts(cmd.getSessionId()));
         String artifactsJson = "[]".equals(artifactList) ? null : artifactList;
         String assistantMessageId = persist ? sessionService.appendMessage(cmd.getSessionId(), "assistant",
-                body, null,
+                body, turnImages,
                 com.alibaba.fastjson2.JSON.toJSONString(pool.sources()), recording.thinkingJson(),
                 lastRetrieved, artifactsJson,
                 recording.toolCallsJson(), null,
@@ -2130,27 +2325,47 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                     !pool.sources().isEmpty(), elapsedMs, cmd.getQuestion(), null,
                     cmd.isDeepThink(), assistantMessageId, cmd.getAgentId());
         }
-        String payload = "{\"finalContent\":" + json(body)
-                + ",\"messageId\":" + json(assistantMessageId)
-                + ",\"userMessageId\":" + json(userMessageId)
-                + ",\"turnId\":" + json(framedTurnId)
-                + ",\"model\":" + json(route.modelId())
-                + ",\"sources\":" + com.alibaba.fastjson2.JSON.toJSONString(pool.sources())
-                + ",\"degradations\":" + com.alibaba.fastjson2.JSON.toJSONString(pool.degradations())
-                + ",\"elapsedMs\":" + elapsedMs
-                + ",\"humanWaitMs\":" + humanWaitMs
-                + ",\"tokens\":" + com.alibaba.fastjson2.JSON.toJSONString(tokens)
-                + ",\"toolCalls\":" + (recording.toolCallsJson() == null ? "[]" : recording.toolCallsJson())
-                + ",\"artifacts\":" + (artifactsJson == null ? "[]" : artifactsJson)
-                + ",\"related\":" + com.alibaba.fastjson2.JSON.toJSONString(relatedChips)
-                + ",\"thinking\":" + json(recording.thinking.length() == 0 ? null : recording.thinking.toString())
-                + (planRecord != null && "superseded".equals(planRecord.get("status"))
-                        ? ",\"planSuperseded\":true" : "")
-                + (planRecord != null && "rejected".equals(planRecord.get("status"))
-                        ? ",\"planCancelled\":true" : "")
-                + (planRecord == null ? "" : ",\"planRecord\":"
-                        + com.alibaba.fastjson2.JSON.toJSONString(planRecord))
-                + ",\"engine\":\"agentscope\"}";
+        // 载荷改为 JSONObject 序列化，**不再手工拼字符串**。
+        // 原先按 "..." + json(x) 手工拼接，json() 只转义 \\ " \n \r \t——其余控制字符与非法转义
+        // 序列会让整包失去合法性。真机实测两轮 MCP 调用都命中：报 "illegal input" 且偏移正好落在
+        // 字符串末尾，危害是**本轮来源清单与外发文本一起丢掉**，「答案可溯源」在外部链路静默失效。
+        // 键序与拼接版逐字一致（下游有多个消费方按名取字段，含前端与子轮回取）。
+        // WriteMapNullValue 保持「显式给 null」的旧语义（原先 json(null) 产出空串，缺键会让前端读不到）。
+        com.alibaba.fastjson2.JSONObject done = new com.alibaba.fastjson2.JSONObject();
+        done.put("finalContent", body);
+        done.put("messageId", assistantMessageId);
+        done.put("userMessageId", userMessageId);
+        done.put("turnId", framedTurnId);
+        done.put("model", route.modelId());
+        done.put("sources", pool.sources());
+        // 定稿配图清单（与 finalContent 里那套 [图片N] 编号严格同序）：流式期间的 image 帧是
+        // 剔图重编之前那一份，不覆盖就会让正文第 N 个标记配到另一张图。
+        // 被咨询那支也按这个字段回取子轮图片（SubAgentBranchRuntime 剥签名后续编父轮编号）
+        done.put("finalImages", pool.sign(turnImages));
+        done.put("degradations", pool.degradations());
+        done.put("elapsedMs", elapsedMs);
+        done.put("humanWaitMs", humanWaitMs);
+        done.put("tokens", tokens);
+        done.put("toolCalls", recording.toolCallList());
+        done.put("artifacts", artifactsJson == null ? List.of()
+                : com.alibaba.fastjson2.JSON.parseArray(artifactsJson));
+        done.put("related", relatedChips);
+        done.put("thinking", recording.thinking.length() == 0 ? null : recording.thinking.toString());
+        if (planRecord != null && "superseded".equals(planRecord.get("status"))) {
+            done.put("planSuperseded", true);
+        }
+        if (planRecord != null && "rejected".equals(planRecord.get("status"))) {
+            done.put("planCancelled", true);
+        }
+        if (planRecord != null) done.put("planRecord", planRecord);
+        done.put("engine", "agentscope");
+        // BrowserCompatible：把尖括号/引号/非 ASCII 一并输出成 Unicode 转义序列。这不是为了浏览器，
+        // 而是**结构性免疫**——凡是能漏进载荷的字符都会被规范化成转义序列，不存在"某个字段忘了
+        // 转义控制字符"这种事。真机为此付过代价：thinking 文本里的 U+001A 让整包 JSON 非法，
+        // 而它在终端里不可见，排查绕了三轮（U+001A）。
+        String payload = com.alibaba.fastjson2.JSON.toJSONString(done,
+                com.alibaba.fastjson2.JSONWriter.Feature.WriteMapNullValue,
+                com.alibaba.fastjson2.JSONWriter.Feature.BrowserCompatible);
         channel.emit(RunEventType.DONE, payload);
         // done 之后必须收通道：手写侧是 runChat 自己 completeEmitter，框架引擎原先漏了这一步，
         // 表现是帧都到了、连接却挂着直到看门狗 300s 超时截断（真机实测：done 在 01:20:32，
@@ -2457,7 +2672,31 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     private static String json(String s) {
-        return s == null ? "\"\"" : "\"" + esc(s).replace("\t", "\\t") + "\"";
+        if (s == null) return "\"\"";
+        StringBuilder sb = new StringBuilder(s.length() + 16);
+        sb.append('"');
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '\\' -> sb.append("\\\\");
+                case '"' -> sb.append("\\\"");
+                case '\n' -> sb.append("\\n");
+                case '\r' -> sb.append("\\r");
+                case '\t' -> sb.append("\\t");
+                case '\b' -> sb.append("\\b");
+                case '\f' -> sb.append("\\f");
+                default -> {
+                    // **JSON 规范要求 U+0000–U+001F 全部转义**，不只是 \n \r \t。
+                    // 真机实测（2026-10-16）：模型思考文本里出现 U+001A（SUB），上面那个 esc() 放它
+                    // 过去，整份 done 载荷变成非法 JSON → MCP 取不到来源清单 → 「答案可溯源」在外部
+                    // 链路静默失效。报错是 `illegal input, offset <len>, char \x1a`，而这个字符在
+                    // 终端与文本工具里根本显示不出来，定位成本极高。
+                    if (c < 0x20) sb.append(String.format("\\u%04x", (int) c));
+                    else sb.append(c);
+                }
+            }
+        }
+        return sb.append('"').toString();
     }
 
     private static void sleep(long ms) {
