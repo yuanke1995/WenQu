@@ -42,7 +42,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *       2026-10-06 起<b>不再随启动自动跑</b>——同步是真发 embedding 请求的动作（每篇逐块向量化，
  *       十余篇手册 = 数十次远程调用），而重启是纯运维动作、用户什么都没做却被扣费；
  *       额度耗尽时更会连带「删不掉旧篇目」（向量清理同样走该供应商），手册库就此卡死。
- *       与「后台动作不许偷烧额度」是同一条约束（见 {@link StartupDataPolicy}）；</li>
+ *       与「后台动作不许偷烧额度」是同一条约束（见本包 {@code package-info} 的铁律）；</li>
  *   <li><b>幂等增量</b>：按源文件 SHA-256 指纹（c_ai_document.source_hash）判定——
  *       指纹未变且状态生效则跳过（<b>跳过不花钱</b>）；变更/新增整篇重建
  *       （删旧文档走 {@link DocumentService#delete} 全套清理）；</li>

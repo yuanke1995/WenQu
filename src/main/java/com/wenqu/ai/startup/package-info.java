@@ -1,5 +1,3 @@
-package com.wenqu.ai.startup;
-
 /**
  * 启动期数据操作的总账（<b>本包存在的原因</b>）。
  *
@@ -14,7 +12,7 @@ package com.wenqu.ai.startup;
  *       把「删向量」绑到了远程 embedding 可用性上（见 {@code LocalDimensionEmbeddingModel}）。</li>
  * </ul>
  * 散落在 {@code config}/{@code service}/{@code schedule} 各处时，没人说得清「启动到底会动哪些数据」。
- * 故把<b>所有「启动即动数据」的代码收进本包</b>——收口的目���不是好看，是<b>可审计、可清理</b>：
+ * 故把<b>所有「启动即动数据」的代码收进本包</b>——收口的目的不是好看，是<b>可审计、可清理</b>：
  * 想确认「重启一次到底会发生什么」，只看本包即可，不必在十几个包里翻钩子。
  *
  * <h3>本包收录标准（新增启动钩子必须归位）</h3>
@@ -37,19 +35,20 @@ package com.wenqu.ai.startup;
  *   <li><b>不可预期</b>：多副本同时启动会各自跑一遍，成本翻倍且难以对账。</li>
  * </ol>
  * 确需自动执行的重活，一律走 {@code ScheduleCenter} 周期任务 + 配置开关（可暂停、可观测、可手动触发），
- * <b>不在启动路径上</b>。
+ * <b>不在启动路径上</b>。本条红线只有文档、没有代码守卫：以后有人想在启动时做点「顺手的事」，
+ * 先回来看这段，而不是散落在各处注释里的口头约定。
  *
- * <h3>本包现状（2026-10-06 审计）</h3>
+ * <h3>本包现状（2026-10-06 审计，2026-10-17 复核清单未变）</h3>
  * <table border="1">
  *   <caption>启动钩子清单</caption>
  *   <tr><th>类</th><th>触发</th><th>动什么数据</th><th>是否烧额度</th></tr>
- *   <tr><td>{@link SchemaMigrator}</td><td>ApplicationRunner</td>
+ *   <tr><td>{@link com.wenqu.ai.startup.SchemaMigrator}</td><td>ApplicationRunner</td>
  *       <td>按 schema.sql 增量补缺列/索引（只增不删不建全量）</td><td>否</td></tr>
- *   <tr><td>{@link RbacSeedRunner}</td><td>ApplicationRunner</td>
+ *   <tr><td>{@link com.wenqu.ai.startup.RbacSeedRunner}</td><td>ApplicationRunner</td>
  *       <td>角色/菜单种子，仅表空时插入</td><td>否</td></tr>
- *   <tr><td>{@link ApiEndpointScanner}</td><td>ApplicationRunner</td>
+ *   <tr><td>{@link com.wenqu.ai.startup.ApiEndpointScanner}</td><td>ApplicationRunner</td>
  *       <td>扫描 Spring 端点清单入库（供权限页勾选）</td><td>否</td></tr>
- *   <tr><td>{@link ManualSeedService}</td><td><b>无启动钩子（手动触发）</b></td>
+ *   <tr><td>{@link com.wenqu.ai.startup.ManualSeedService}</td><td><b>无启动钩子（手动触发）</b></td>
  *       <td>官方手册同步：建库 + 逐篇分块向量化</td><td><b>是，已改为手动</b></td></tr>
  * </table>
  *
@@ -64,22 +63,4 @@ package com.wenqu.ai.startup;
  *
  * @author yuanke
  */
-public final class StartupDataPolicy {
-
-    private StartupDataPolicy() {
-    }
-
-    /**
-     * 启动期是否允许触发<b>会调模型</b>的动作。
-     *
-     * <p>当前恒为 false：手册同步已改为手动触发（{@code POST /api/ai/manual/sync}），
-     * 启动路径上不再有任何模型调用。这个方法存在的意义是<b>让规矩可执行</b>——
-     * 以后有人想在启动时做点「顺手的事」，能在本类看到一条明确的红线，
-     * 而不是散落在各处注释里的口头约定。
-     *
-     * @return 一律 false；保留返回值形式便于将来引入「按配置放开」时不必改调用方
-     */
-    public static boolean allowsModelCallsOnStartup() {
-        return false;
-    }
-}
+package com.wenqu.ai.startup;

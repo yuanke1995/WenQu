@@ -78,7 +78,7 @@ public class ManualController {
      * <p><b>为什么是手动而不是自动</b>：同步会对每篇手册逐块调 embedding 模型（十余篇 = 数十次远程请求），
      * 成本落在所选向量模型供应商的额度上。挂成自动意味着<b>每次重启都烧用户额度</b>，
      * 而重启是纯运维动作、用户什么都没做；额度耗尽时还会连带「删不掉旧篇目」，手册库就此卡死。
-     * 见 {@code StartupDataPolicy}。
+     * 见本包包级文档（{@code com.wenqu.ai.startup} 的 package-info）。
      *
      * <p><b>权限</b>：仅管理员。该端点走 SecurityConfig 默认门禁（只读手册端点是按 GET 精确放行的，
      * POST /manual/sync 命中不了那两条分支）——写操作 + 烧额度，不能对普通用户开放。
