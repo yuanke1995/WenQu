@@ -3,7 +3,7 @@
  * 消息列表外壳（主对话页与公开分享页共用）：一行一条消息的布局 + 两页逐字相同的那些渲染。
  *
  * <p><b>共享的部分</b>（放这里，两页不再各写一份）：居中列与行距、消息块的左右贴边、
- * 用户气泡的外观、等待态与阶段脚注、以及四个叶子的**出现位置与次第**：
+ * 用户气泡的外观、整轮用时那一条、以及四个叶子的**出现位置与次第**：
  * 提问随行材料 → 正文 → 降级条 → 引用来源 → 动作行。次第是"读起来对不对"的核心，
  * 两个页面各摆一次，迟早有一个把降级条摆到正文上面去。
  *
@@ -12,7 +12,7 @@
  *   <li>{@code #row-before}   —— 行之前（主对话页的消息分隔线：上下文压缩点、模型切换点）</li>
  *   <li>{@code #user-meta}    —— 提问随行材料之后（主对话页的 @引用 / #历史引用）</li>
  *   <li>{@code #body-before}  —— 正文之前（主对话页的回答归属徽标）</li>
- *   <li>{@code #body}         —— 正文本身。**不给就退化成共用兜底**（等待态 → AnswerBody → 阶段脚注），
+ *   <li>{@code #body}         —— 正文本身。**不给就退化成共用兜底**（TurnBar + AnswerBody），
  *                                 公开分享页与将来的简单壳直接用兜底；主对话页给的是时间线/工具卡那一套</li>
  *   <li>{@code #body-after}   —— 正文之后（错误卡、忙碌提示、派发提示、工具状态、计划卡、审批卡、产物）</li>
  *   <li>{@code #sources}      —— 引用来源。不给就用共用 SourceList（分享页口径）；主对话页给带检索词的版本</li>
@@ -29,7 +29,8 @@ import UserBubble from './UserBubble.vue'
 import DegradationBar from './DegradationBar.vue'
 import SourceList from './SourceList.vue'
 import AnswerActions from './AnswerActions.vue'
-import { stageLabel, retrievalLineTitle } from './projections'
+import TurnBar from '../components/TurnBar.vue'
+import { retrievalLineTitle } from './projections'
 
 const props = defineProps({
   /** 消息数组（两页的形状一致：role/content/images/sources/messageId/fb/degradations…） */
@@ -79,26 +80,19 @@ function sourceTitle (m) {
         <slot name="body-before" :m="m" :i="i" />
 
         <slot name="body" :m="m" :i="i">
-          <!-- 共用兜底正文：等正文时只留一行带呼吸点的提示（不画任何框），
-               正文到了直接排版，后续又推来阶段提示就作正文下方的脚注。
-               阶段文案与主对话页同源（chat/projections 的 stageLabel） -->
-          <div v-if="!m.content" class="tm-typing">
-            <span class="tm-pulse" /><span>{{ stageLabel(m.stage) || '正在检索资料…' }}</span>
-          </div>
-          <template v-else>
-            <!-- 提问与回答同一条排版口径（markdown，breaks:true 所以换行照旧保留），
-                 但提问走 literal：图片占位与引用角标都不替换——提问里的 [图片N] / [N]
-                 是用户手打的字面量，替换掉会改他的原文、还会让自己的附件多渲染一遍 -->
-            <AnswerBody :content="m.content" :msg-index="i"
-                        :images="m.role === 'ai' ? m.images : []"
-                        :sources="m.role === 'ai' ? m.sources : []"
-                        :literal="m.role !== 'ai'"
-                        :runnable="runnable" :session-id="sessionId"
-                        :streaming="!!m.loading" />
-            <div v-if="m.role === 'ai' && m.stage" class="tm-stage">
-              <span class="tm-pulse" />{{ stageLabel(m.stage) }}
-            </div>
-          </template>
+          <!-- 共用兜底正文：一轮的进行中提示只有 TurnBar 那一条（与主对话页同一个组件、同一句
+               「正在溯源」），不再另写阶段提示行——跑着的时候它跟在正文末尾（正文未到就只这一行），
+               答完回到回答顶上当总览。 -->
+          <TurnBar v-if="m.role === 'ai' && !m.loading" :m="m" />
+          <!-- 提问走 literal：图片占位与引用角标都不替换——提问里的 [图片N] / [N] 是用户手打的
+               字面量，替换掉会改他的原文、还会让自己的附件多渲染一遍 -->
+          <AnswerBody v-if="m.content" :content="m.content" :msg-index="i"
+                      :images="m.role === 'ai' ? m.images : []"
+                      :sources="m.role === 'ai' ? m.sources : []"
+                      :literal="m.role !== 'ai'"
+                      :runnable="runnable" :session-id="sessionId"
+                      :streaming="!!m.loading" />
+          <TurnBar v-if="m.role === 'ai' && m.loading" :m="m" />
         </slot>
 
         <slot name="body-after" :m="m" :i="i" />
@@ -149,23 +143,7 @@ function sourceTitle (m) {
 /* AI 侧无气泡：正文直接排版，不画边框不画底 */
 .bubble.ai { background: transparent; padding: 0; }
 
-/* 生成中（正文未到）：一行带呼吸点的提示。flex:none 是必须的——它是 .msg-block 的 flex item，
-   默认可被压缩，一压就折成两行 */
-.tm-typing {
-  flex: none; display: inline-flex; align-items: center; gap: 8px;
-  font-size: 13px; color: var(--app-text3); line-height: 1.6;
-  padding: 2px 0; white-space: nowrap;
-}
-/* 正文已出、又推来阶段提示：正文下方的脚注一行 */
-.tm-stage {
-  display: flex; align-items: center; gap: 7px;
-  font-size: 12px; color: var(--app-text3); margin-top: 8px; line-height: 1.6;
-}
-.tm-pulse {
-  width: 6px; height: 6px; border-radius: 50%; background: var(--app-accent); flex: none;
-  animation: tm-blink 1.1s ease-in-out infinite;
-}
-@keyframes tm-blink { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
+/* 生成中那一行由 components/TurnBar.vue 自己带样式与动效，这里不再画提示行 */
 
 /* 就地编辑：编辑中的那一行要顶掉原气泡与操作行（只剩页面插进来的编辑卡）。
    操作行（.msg-edit-row）由页面通过 #actions-after 插入，拿不到本组件的 scope 属性，

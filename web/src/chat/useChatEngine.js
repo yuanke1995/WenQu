@@ -1170,20 +1170,19 @@ async function submitPlanApproval (m, action) {
       message.warning(r.msg || '提交失败')
       c.busy = false
       // 恢复态的卡：本轮已无人接收（超时/重启），留着只会让人反复提交，撤下并重载会话
-      if (c.restored) { m.planCard = null; m.stage = ''; stopRestoredPoll(); switchSession(currentSessionId.value) }
+      if (c.restored) { m.planCard = null; stopRestoredPoll(); switchSession(currentSessionId.value) }
       return
     }
     if (approved) {
       c.status = 'approved'
       if (c.restored) {
         m.planCard = null
-        m.stage = '回答生成中，稍后自动刷新…'
-        pollRestoredAnswer(currentSessionId.value, m)
+        pollRestoredAnswer(currentSessionId.value)
         return
       }
     } else {
       c.status = 'rejected'
-      if (c.restored) { m.planCard = null; m.stage = ''; stopRestoredPoll(); switchSession(currentSessionId.value) }
+      if (c.restored) { m.planCard = null; stopRestoredPoll(); switchSession(currentSessionId.value) }
     }
     hooks.scrollSoft?.()
   } catch (e) {
@@ -1388,7 +1387,7 @@ const hydratePendingAsk = async sid => {
     }
     const bubble = reactive({ role: 'ai', content: '', images: [], sources: [], related: [],
       degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '',
-      thinkLoading: false, stage: '等你作答，回答才不会跑偏', time: Date.now(), artifacts: [],
+      thinkLoading: false, time: Date.now(), artifacts: [],
       toolCalls: [], subagents: [], plan: null, timeline: [], errorCard: null, model: '', delegated: null,
       turnId: item.turnId || '' })
     attachAskCard(bubble, { ...item, restored: true }, item.remainingMs)
@@ -1489,7 +1488,7 @@ const hydratePendingPlans = async sid => {
   // 批准卡挂上；批准后轮询到新回答，整个列表按历史重载，占位泡随之消失
   const anchor = reactive({ role: 'ai', content: '', images: [], sources: [], related: [],
     degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '',
-    thinkLoading: false, stage: '等你批准执行计划，批准后回答才开始', time: Date.now(), artifacts: [],
+    thinkLoading: false, time: Date.now(), artifacts: [],
     toolCalls: [], subagents: [], plan: null, planCard: null, timeline: [], errorCard: null, model: '',
     delegated: null, turnId: item.turnId || '' })
   anchor.planCard = card
@@ -1535,7 +1534,7 @@ const hydratePendingApprovals = async sid => {
   // 什么都不挂就是用户读到的「智能体莫名其妙不动了」
   const anchor = reactive({ role: 'ai', content: '', images: [], sources: [], related: [],
     degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '',
-    thinkLoading: false, stage: '等你批准执行，批准后这一轮才继续', time: Date.now(), artifacts: [],
+    thinkLoading: false, time: Date.now(), artifacts: [],
     toolCalls: [], subagents: [], plan: null, planCard: null, timeline: [], errorCard: null,
     model: '', delegated: null, approval: null, turnId: item.turnId || '' })
   anchor.approval = card
@@ -1547,7 +1546,7 @@ const hydratePendingApprovals = async sid => {
  * 恢复态卡片答完后的答案取回：本设备没有这一轮的流式通道，回答在后台生成。
  * 先记下当前历史条数，每 4s 比一次——多出那条（助手回答落库）即完成，重载会话视图。
  */
-const pollRestoredAnswer = async (sid, msg) => {
+const pollRestoredAnswer = async sid => {
   stopRestoredPoll()
   let baseline = -1
   try {
@@ -1560,7 +1559,6 @@ const pollRestoredAnswer = async (sid, msg) => {
     if (currentSessionId.value !== sid) { stopRestoredPoll(); return }
     if (++ticks > 45) {
       stopRestoredPoll()
-      if (msg) msg.stage = ''
       message.warning('这一轮回答还在生成，稍后回到本会话查看')
       return
     }
@@ -1592,15 +1590,14 @@ async function askSubmitAll (m) {
       message.warning(r.msg || '回答提交失败')
       a.busy = false
       // 恢复态的卡：本轮已无人接收（超时/重启），留着只会让人反复提交，撤下并重载会话
-      if (a.restored) { retireAskCard(m); m.stage = ''; stopRestoredPoll(); switchSession(currentSessionId.value) }
+      if (a.restored) { retireAskCard(m); stopRestoredPoll(); switchSession(currentSessionId.value) }
       return
     }
     a.answered = true
     if (a.restored) {
       // 本设备没有这一轮的流，终态事件不会来撤卡：自己撤下面板、把气泡交给后台生成并轮询取回
       retireAskCard(m)
-      m.stage = '回答生成中，稍后自动刷新…'
-      pollRestoredAnswer(currentSessionId.value, m)
+      pollRestoredAnswer(currentSessionId.value)
       return
     }
     hooks.scrollSoft?.()
@@ -1621,13 +1618,12 @@ async function ignoreAsk (m) {
     if (r && r.success === false) {
       message.warning(r.msg || '操作失败')
       a.busy = false
-      if (a.restored) { retireAskCard(m); m.stage = ''; stopRestoredPoll(); switchSession(currentSessionId.value) }
+      if (a.restored) { retireAskCard(m); stopRestoredPoll(); switchSession(currentSessionId.value) }
       return
     }
     if (a.restored) {
       retireAskCard(m)
-      m.stage = '回答生成中，稍后自动刷新…'
-      pollRestoredAnswer(currentSessionId.value, m)
+      pollRestoredAnswer(currentSessionId.value)
       return
     }
     a.answered = '（已忽略）'
@@ -1734,11 +1730,6 @@ const applyTurnSnapshot = (msg, snap, sid) => {
   }
   // 本轮警示条（沙盒基建异常这类）：实时是后发的盖前发的，镜像留的就是最后那一条，口径一致
   if (typeof ev.warn === 'string' && ev.warn) msg.warnMsg = ev.warn
-  // 阶段文案是瞬时的进度提示：接流时若本轮已经有正文、或还有没跑完的工具步，那条「正在…」早已过期，
-  // 按实时流的同一口径清掉（工具卡片自己会表达进度）。正在等人工裁决时，后端会在快照之后补发一条
-  // 准确的 stage，那条才该显示
-  const inFlight = (msg.toolCalls || []).some(x => x.status === 'start')
-  if (ev.stage && !msg.content && !inFlight) msg.stage = ev.stage
   return true
 }
 
@@ -1767,8 +1758,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
   // 下标会指错位置；对象引用由 chatStreams 持有，切回来时 switchSession 把它接回视图尾部
   // model 先按前端解析的生效引用预填（覆盖>个人默认，与后端 resolveModel 同序）：「模型已切换」
   // 分隔记录在本轮回答一出现就能比对；done 再用后端权威值校正
-  // stage 预置检索档（两档口径见 projections 的阶段文案映射）：与后端首条事件映射结果同词，开场不闪词
-  const fresh = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkLoading: false, stage: resume ? '正在接回这一轮…' : '正在检索资料…', time: Date.now(), turnMs: 0, humanWaitMs: 0, artifacts: [], toolCalls: [], subagents: [], plan: null, planCard: null, timeline: [], errorCard: null, model: model || effectiveModel.value, delegated: null }
+  const fresh = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkLoading: false, time: Date.now(), turnMs: 0, humanWaitMs: 0, artifacts: [], toolCalls: [], subagents: [], plan: null, planCard: null, timeline: [], errorCard: null, model: model || effectiveModel.value, delegated: null }
   const msg = replaceMsg ? Object.assign(replaceMsg, fresh, { messageId: null, fb: null }) : reactive(fresh)
   if (!replaceMsg) messages.value.push(msg)
   const viewing = () => currentSessionId.value === sid  // 只有正在看这个会话才滚动/贴底
@@ -1802,7 +1792,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
     }
     if (msg.content !== full) msg.content = full
     // 正文增长必须在这里推进视角：token 不走 liveScroll（只进缓冲、由这里批量落屏），
-    // 少这一下长回答就只跟到最后一个 stage 事件，新内容滚出屏幕看不见。
+    // 少这一下长回答就不再跟着新内容走，新内容滚出屏幕看不见。
     // keepScroll=false：调用方（过程独白增量）随后自己会补 liveScroll，避免同一次落屏量两遍 DOM
     if (keepScroll) liveScroll()
   }
@@ -1878,7 +1868,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         }
       } catch (e) { /* 兼容旧 payload */ }
     },
-    onToken: (t, ev) => { gotToken = true; full += dropResumedOverlap(full, t, ev); flushSoon(); msg.stage = ''; msg.thinkLoading = false; thinkRoundOpen = false },
+    onToken: (t, ev) => { gotToken = true; full += dropResumedOverlap(full, t, ev); flushSoon(); msg.thinkLoading = false; thinkRoundOpen = false },
     onProcess: (t, ev) => {
       // 过程独白（<process> 标签内，与正文分流）：累积 processText 并推进时间线过程段（灰字弱化渲染）。
       // 后端按 token 增量下发，这里逐条追加即成流式。先 flushNow 落屏节流中的正文：正文 token 走
@@ -1893,7 +1883,6 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       extendTimelineProcess(msg, have.length, msg.processText.length)
       liveScroll()
     },
-    onStage: s => { msg.stage = s; liveScroll() },
     onPlan: p => {
       // 本轮执行计划（后端按配置确定会跑的步骤）：右栏清单逐项点亮的数据源；仅实时，历史轮无此字段
       try {
@@ -1921,7 +1910,6 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       try {
         const j = JSON.parse(payload)
         msg.retrieved = { keywords: j.keywords || 0, refs: j.refs || 0, terms: j.terms || [] }
-        msg.stage = ''
         liveScroll()
       } catch (e) { /* 忽略 */ }
     },
@@ -2015,10 +2003,8 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
           const rec = { ...t }
           msg.toolCalls.push(rec)
           pushTimelineTool(msg, rec)
-          // 进入工具阶段：上一句阶段文案（如「正在检索资料…」）已过期，清掉避免工具跑完又复活。
-          // 该阶段由工具卡片自己表达（转圈），底部进度行不重复描述；用时不在卡片上报，
-          // 一轮只气泡顶部那一条说一个数（判据在投影层的整轮用时那组函数里）
-          msg.stage = ''
+          // 用时不在卡片上报，一轮只气泡顶部那一条说一个数
+          // （判据在投影层的整轮用时那组函数里）
           ensureTick()
         } else {
           // askUser 已出终态（用户已答，或超时/忽略后按「未作答」收尾）：问答记录卡接管展示，撤掉提问卡
@@ -2104,8 +2090,6 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         } else if (s.type === 'tool_output') {
           const live = [...rows].reverse().find(r => r.status === 'start')
           if (live) live.out = ((live.out || '') + (c.delta || '')).slice(-400)
-        } else if (c.text) {
-          rows.push({ status: 'stage', stage: String(c.text).slice(0, 60), name: '', elapsedMs: 0 })
         }
         if (rows.length > 30) rows.splice(0, rows.length - 30)
       } catch (e) { /* 忽略 */ }

@@ -17,12 +17,22 @@
 </template>
 
 <script setup>
+import { onBeforeUnmount, watch } from 'vue'
 import { CaretRightOutlined } from '@ant-design/icons-vue'
-import { turnShow, turnOpen, toggleTurn, turnHead, turnTitle, turnToggleable, turnWarn } from '../chat/projections'
+import { turnShow, turnOpen, toggleTurn, turnHead, turnTitle, turnToggleable, turnWarn, holdTick } from '../chat/projections'
 
 // 折叠态必须落在消息对象上（m._turnOpen），不能放组件本地 ref：真正决定过程行渲不渲染的是
 // 父级模板里那份摊平结果，本地 ref 管不到它。
-defineProps({ m: { type: Object, required: true }, mobile: Boolean })
+const props = defineProps({ m: { type: Object, required: true }, mobile: Boolean })
+
+// 跑着的时候这一行是跟着秒走的计时器。主对话页的秒表由问答引擎开轮时挂，分享页没有引擎——
+// 由正在进行的这一条自己挂表，答完或卸载就摘（读数判据在 projections 的 turnElapsedMs）。
+let releaseTick = null
+watch(() => props.m && props.m.loading, running => {
+  if (running && !releaseTick) releaseTick = holdTick()
+  else if (!running && releaseTick) { releaseTick(); releaseTick = null }
+}, { immediate: true })
+onBeforeUnmount(() => { if (releaseTick) releaseTick() })
 </script>
 
 <style scoped>

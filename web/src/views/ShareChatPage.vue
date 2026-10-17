@@ -520,10 +520,8 @@ function send () {
   draft.value = ''
   clearPending()
   messages.value.push({ role: 'user', content: text, images, attachments, attachData: attachments })
-  // 必须用 reactive 包一条消息：直接 push 普通对象再回头改 `ai.stage` 是**绕过代理**的写入，
-  // 不触发重渲染（症状：阶段提示永远不出现，页面只显示空气泡 + 停止键）。
-  // 此前之所以"看起来正常"，是旁边恰好有个 ref（lastAiStage）在变更、顺带触发了一次重渲染，
-  // 把绕过代理写进去的值读了出来——删掉那个 ref 后这条路径就彻底失效了。
+  // 必须用 reactive 包一条消息：直接 push 普通对象再回头改 `ai.content` 是**绕过代理**的写入，
+  // 不触发重渲染（症状：正文永远不出现，页面只显示空气泡 + 停止键）。
   const ai = newAiMessage()
   messages.value.push(ai)
   sending.value = true
@@ -539,19 +537,27 @@ function send () {
 
 /** 一条等待中的回答（发起与接流共用同一形状） */
 const newAiMessage = () => reactive({
-  role: 'ai', content: '', stage: '', images: [], sources: [], degradations: [],
-  messageId: '', fb: null, srcOpen: true, loading: true
+  role: 'ai', content: '', images: [], sources: [], degradations: [],
+  messageId: '', fb: null, srcOpen: true, time: Date.now(), turnMs: 0, humanWaitMs: 0, failed: false, loading: true
 })
 
+/** 开一轮要把「整轮用时」那三条数复位：TurnBar 跑着时读 time 当起点，答完读 done 带回的
+ *  墙钟。重新生成复用同一个消息对象，漏一下就是上一轮的秒数接着往这轮上加。 */
+function resetAiTurn (ai) {
+  ai.time = Date.now()
+  ai.turnMs = 0
+  ai.humanWaitMs = 0
+  ai.failed = false
+  ai.loading = true
+}
+
 /**
- * 一轮问答的回调（发起与断线接流共用一份）：阶段文案、逐字正文、图片、收尾汇总。
+ * 一轮问答的回调（发起与断线接流共用一份）：逐字正文、图片、收尾汇总。
  * 抽出来是为了「接回来的这一轮」和「一直看着的这一轮」在屏幕上长得一样。
  */
 function shareStreamHandlers (ai) {
   return {
-    onStage: s => { ai.stage = s; scrollBottom() },
     onToken: t => {
-      if (ai.stage) ai.stage = ''   // 正文开始即撤掉阶段提示
       ai.content += t
       scrollBottom()
     },
@@ -564,7 +570,6 @@ function shareStreamHandlers (ai) {
     },
     onDone: d => {
       sending.value = false
-      ai.stage = ''
       ai.loading = false
       // done.content 是本轮落库版汇总：sources（角标点开的就是它）、finalImages（正文图）、
       // finalContent（引用自检/清理后改写过正文时，以它为准，否则 [图片N] 与 [N] 的下标会错位）
@@ -576,6 +581,9 @@ function shareStreamHandlers (ai) {
         if (Array.isArray(p.degradations)) ai.degradations = p.degradations
         // 落库的消息 ID：评价与「重新生成」都要用它（服务端按它校验归属）
         if (p.messageId) ai.messageId = p.messageId
+        // 整轮用时：与主对话页读同一个数（后端算好的墙钟），那条总览两页才说同一句话
+        if (typeof p.elapsedMs === 'number') ai.turnMs = p.elapsedMs
+        if (typeof p.humanWaitMs === 'number') ai.humanWaitMs = p.humanWaitMs
       } catch (e) { /* 汇总解析失败：正文已在流式里累积完，不影响可读 */ }
       // 首轮由服务端建会话：done 带回 sessionId，持久化供刷新恢复
       if (d && d.sessionId) rememberSession(d.sessionId)
@@ -583,8 +591,8 @@ function shareStreamHandlers (ai) {
     },
     onError: msg => {
       sending.value = false
-      ai.stage = ''
       ai.loading = false
+      ai.failed = true
       if (!ai.content) ai.content = '⚠️ ' + (msg || '回答失败')
       else message.warning(msg || '本轮中断')
       scrollBottom()
@@ -657,13 +665,15 @@ function stop () {
   }
   if (controller) controller.abort()
   sending.value = false
-  // 中断要把这一轮**整条撤掉**，不能只置 sending=false——那样「正在检索资料…」会永久
+  // 中断要把这一轮**整条撤掉**，不能只置 sending=false——那样「正在溯源」那一行会永久
   // 卡在页面上（后续新消息也压不掉它）。曾改成补一句「已停止生成」占位气泡，
   // 但那是空的回答，留在对话里比不留更碍眼；用户点了停止，要的就是"没这条"。
+  // 判据必须是 'ai'：这页从历史回显到本地气泡都用 'ai'/'user'，写成别的名义上是撤气泡、
+  // 实际上是两条分支都不执行（空泡留着呼吸、已出正文的那条永远停在流式态）
   const cur = messages.value[messages.value.length - 1]
-  if (cur && cur.role === 'assistant' && !cur.content) messages.value.pop()
+  if (cur && cur.role === 'ai' && !cur.content) messages.value.pop()
   // 已出正文的那条要撤掉 loading：否则这一轮永远停在流式态，正文里的图表不会被补画
-  else if (cur && cur.role === 'assistant') cur.loading = false
+  else if (cur && cur.role === 'ai') cur.loading = false
   scrollBottom()
 }
 
@@ -748,8 +758,7 @@ async function regenerate (aiIndex) {
   ai.degradations = []
   ai.fb = null
   ai.messageId = ''
-  ai.loading = true
-  ai.stage = ''
+  resetAiTurn(ai)
   sending.value = true
   scrollBottom()
   controller = new AbortController()

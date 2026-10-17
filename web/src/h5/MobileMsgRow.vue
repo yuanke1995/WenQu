@@ -105,8 +105,8 @@
               </button>
               <div v-show="procOpen(m, seg)" class="card-body proc-body">{{ procSlice(m, seg) }}</div>
             </div>
-            <div v-else-if="seg.kind === 'group'" class="tl-group" :class="{ inCluster: seg.inCluster }">
-              <button v-if="seg.tools.length > 1" class="card-head" type="button" @click.stop="seg.tools[0]._groupOpen = !seg.tools[0]._groupOpen">
+            <div v-else-if="seg.kind === 'group'" class="tl-group" :class="{ inCluster: seg.inCluster, flat: seg.flat }">
+              <button v-if="seg.tools.length > 1 && !seg.flat" class="card-head" type="button" @click.stop="seg.tools[0]._groupOpen = !seg.tools[0]._groupOpen">
                 <span v-if="groupRunning(seg)" class="spinner"></span>
                 <check-outlined v-else-if="!groupHasError(seg)" class="ic-ok" />
                 <close-circle-outlined v-else class="ic-err" />
@@ -114,7 +114,7 @@
                 <span v-if="runBoardText(m)" class="run-board">{{ runBoardText(m) }}</span>
                 <caret-right-outlined class="caret" :class="{ open: seg.tools[0]._groupOpen }" />
               </button>
-              <div v-if="seg.tools.length === 1 || seg.tools[0]._groupOpen" class="tl-group-body">
+              <div v-if="seg.tools.length === 1 || seg.flat || seg.tools[0]._groupOpen" class="tl-group-body">
                 <div v-for="(t, ti) in seg.tools" :key="ti" class="card tool-card" :class="{ run: t.status === 'start', err: t.status === 'error' }">
                   <button class="card-head" type="button" @click.stop="t._open = !t._open">
                     <span v-if="t.status === 'start'" class="spinner"></span>
@@ -286,8 +286,8 @@
                 <div v-for="(s, li) in b.live" :key="li" class="fan-row"
                      :class="{ err: s.status === 'error', run: s.status === 'start' }">
                   <span class="fan-idx">{{ li + 1 }}</span>
-                  <span class="fan-name">{{ s.stage || toolLabel(s.name, s.label) }}</span>
-                  <span class="fan-dur">{{ s.stage ? '' : fanRowState(s) }}</span>
+                  <span class="fan-name">{{ toolLabel(s.name, s.label) }}</span>
+                  <span class="fan-dur">{{ fanRowState(s) }}</span>
                   <span class="fan-brief"></span>
                 </div>
               </div>

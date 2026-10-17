@@ -190,8 +190,8 @@
                     <div v-show="procOpen(m, seg)" class="tl-process">{{ procSlice(m, seg) }}</div>
                   </div>
                   <!-- 产物段不再就地渲染：产物统一沉底（时间线数据仍保留 artifact 段以备后续） -->
-                  <div v-else class="tl-group" :class="{ inCluster: seg.inCluster }">
-                    <button v-if="seg.tools.length > 1" class="tl-group-bar" type="button" @click="seg.tools[0]._groupOpen = !seg.tools[0]._groupOpen">
+                  <div v-else class="tl-group" :class="{ inCluster: seg.inCluster, flat: seg.flat }">
+                    <button v-if="seg.tools.length > 1 && !seg.flat" class="tl-group-bar" type="button" @click="seg.tools[0]._groupOpen = !seg.tools[0]._groupOpen">
                       <loading-outlined v-if="groupRunning(seg)" spin class="tool-ic tool-ic-run" />
                       <close-circle-outlined v-else-if="groupHasError(seg)" class="tool-ic tool-ic-err" />
                       <check-outlined v-else class="tool-ic tool-ic-ok" />
@@ -199,7 +199,7 @@
                       <span v-if="runBoardText(m)" class="run-board">{{ runBoardText(m) }}</span>
                       <span class="tl-caret" :class="{ open: seg.tools[0]._groupOpen }"><caret-right-outlined /></span>
                     </button>
-                    <div v-if="seg.tools.length === 1 || seg.tools[0]._groupOpen" class="tl-group-body" :class="{ solo: seg.tools.length === 1 }">
+                    <div v-if="seg.tools.length === 1 || seg.flat || seg.tools[0]._groupOpen" class="tl-group-body" :class="{ solo: seg.tools.length === 1 }">
                       <div v-for="(t, ti) in seg.tools" :key="ti" class="tl-card" :class="{ run: t.status === 'start', err: t.status === 'error' }">
                         <button class="tl-card-head" type="button" @click="t._open = !t._open">
                           <loading-outlined v-if="t.status === 'start'" spin class="tool-ic tool-ic-run" />
@@ -478,8 +478,8 @@
                       <div v-for="(s, li) in b.live" :key="li" class="fan-row"
                            :class="{ err: s.status === 'error', run: s.status === 'start' }">
                         <span class="fan-idx">{{ li + 1 }}</span>
-                        <span class="fan-name">{{ s.stage || toolLabel(s.name, s.label) }}</span>
-                        <span class="fan-dur">{{ s.stage ? '' : fanRowState(s) }}</span>
+                        <span class="fan-name">{{ toolLabel(s.name, s.label) }}</span>
+                        <span class="fan-dur">{{ fanRowState(s) }}</span>
                         <span class="fan-brief">{{ s.out ? '…' + s.out.slice(-60) : '' }}</span>
                       </div>
                     </div>
@@ -3754,6 +3754,8 @@ onMounted(async () => {
   display: flex; flex-direction: column; gap: 6px; max-width: 100%;
 }
 .tl-group-body.solo { margin: 4px 0 2px; padding-left: 0; border-left: none; }
+/* 簇内只有一个工具组时组条不出（与簇头数同一批操作）：卡片直接摊在簇头下，不再多缩一层 */
+.tl-group.flat .tl-group-body { margin-left: 0; }
 .tl-card { border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-panel); width: fit-content; max-width: 100%; }
 .tl-card.err { border-color: color-mix(in srgb, var(--app-danger) 45%, transparent); }
 .tl-card-head {
