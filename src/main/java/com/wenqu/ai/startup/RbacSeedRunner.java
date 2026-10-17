@@ -50,18 +50,26 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class RbacSeedRunner implements ApplicationRunner {
 
-    /** 内置菜单定义：id / 名称 / 图标 / 路径 / 排序 */
+    /**
+     * 内置菜单定义：id / 名称 / 图标 / 路径 / 排序 / 默认可见性（1=显示，0=隐藏）。
+     * <p>
+     * {@code menu-chat} 默认 0：侧栏顶部已有「新建对话」，会话本身从工作区树进入，
+     * 「对话」这一项不再占侧栏位。但**行必须留着**——它承载 Chat 接口的归属（{@code c_ai_menu_api}），
+     * 删行会连带清掉绑定（见 {@link #RETIRED_MENUS} 那段）。
+     * 隐藏写成菜单数据而不是前端硬过滤：管理员在「权限管理 → 编辑菜单」把「显示」打开即可恢复，
+     * 不必改代码；反过来若前端按路径开例外，这里改了也没效果。
+     */
     private static final List<String[]> BUILTIN_MENUS = List.of(
-            new String[]{"menu-chat", "对话", "MessageOutlined", "/chat", "10"},
-            new String[]{"menu-agents", "智能体", "RobotOutlined", "/agents", "20"},
-            new String[]{"menu-knowledge", "知识库", "DatabaseOutlined", "/knowledge", "30"},
-            new String[]{"menu-artifacts", "我的产物", "FileTextOutlined", "/artifacts", "35"},
-            new String[]{"menu-stats", "使用统计", "PieChartOutlined", "/stats", "38"},
-            new String[]{"menu-members", "成员管理", "TeamOutlined", "/members", "40"},
-            new String[]{"menu-dashboard", "数据看板", "BarChartOutlined", "/dashboard", "50"},
-            new String[]{"menu-evaluation", "检索评估", "ExperimentOutlined", "/evaluation", "60"},
-            new String[]{"menu-permissions", "权限管理", "SafetyOutlined", "/permissions", "70"},
-            new String[]{"menu-settings", "系统设置", "SettingOutlined", "/settings", "80"}
+            new String[]{"menu-chat", "对话", "MessageOutlined", "/chat", "10", "0"},
+            new String[]{"menu-agents", "智能体", "RobotOutlined", "/agents", "20", "1"},
+            new String[]{"menu-knowledge", "知识库", "DatabaseOutlined", "/knowledge", "30", "1"},
+            new String[]{"menu-artifacts", "我的产物", "FileTextOutlined", "/artifacts", "35", "1"},
+            new String[]{"menu-stats", "使用统计", "PieChartOutlined", "/stats", "38", "1"},
+            new String[]{"menu-members", "成员管理", "TeamOutlined", "/members", "40", "1"},
+            new String[]{"menu-dashboard", "数据看板", "BarChartOutlined", "/dashboard", "50", "1"},
+            new String[]{"menu-evaluation", "检索评估", "ExperimentOutlined", "/evaluation", "60", "1"},
+            new String[]{"menu-permissions", "权限管理", "SafetyOutlined", "/permissions", "70", "1"},
+            new String[]{"menu-settings", "系统设置", "SettingOutlined", "/settings", "80", "1"}
     );
 
     /**
@@ -148,7 +156,7 @@ public class RbacSeedRunner implements ApplicationRunner {
             m.setIcon(d[2]);
             m.setPath(d[3]);
             m.setSortOrder(Integer.valueOf(d[4]));
-            m.setVisible(1);
+            m.setVisible(Integer.valueOf(d[5]));
             m.setBuiltin(1);
             m.setCreateTime(now);
             menuMapper.insert(m);
