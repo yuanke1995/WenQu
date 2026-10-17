@@ -19,15 +19,13 @@ public final class SseRunEventChannel implements RunChannel {
     private final ChatRunRuntime runtime;
     private final SseEmitter emitter;
     private final String sessionId;
-    private final boolean deepThink;
     /** 本轮最后一条警示文案：所有 warn 帧都从这一个出口过，所以不必要求各发送点自己记账 */
     private volatile String lastWarn;
 
-    public SseRunEventChannel(ChatRunRuntime runtime, SseEmitter emitter, String sessionId, boolean deepThink) {
+    public SseRunEventChannel(ChatRunRuntime runtime, SseEmitter emitter, String sessionId) {
         this.runtime = runtime;
         this.emitter = emitter;
         this.sessionId = sessionId;
-        this.deepThink = deepThink;
     }
 
     @Override
@@ -38,11 +36,6 @@ public final class SseRunEventChannel implements RunChannel {
     @Override
     public String sessionId() {
         return sessionId;
-    }
-
-    @Override
-    public boolean deepThink() {
-        return deepThink;
     }
 
     @Override

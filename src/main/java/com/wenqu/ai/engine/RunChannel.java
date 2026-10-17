@@ -21,9 +21,6 @@ public interface RunChannel {
 
     String sessionId();
 
-    /** 本轮是否深度思考——由用户开关与模型能力在入口处裁决，刻意不回写 {@code ChatCommand}。 */
-    boolean deepThink();
-
     /** @return false = 通道已不可用（客户端断开或本轮已终结），调用方据此短路后续 LLM/检索开销。 */
     boolean emit(RunEvent event);
 

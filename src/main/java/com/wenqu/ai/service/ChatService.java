@@ -437,31 +437,12 @@ public class ChatService {
      * 混进同一个列表就会出现第 11 个重载。整条流水线在独立线程池执行（重活不占 Tomcat 请求线程）。
      */
     public void chat(ChatCommand cmd, SseEmitter emitter) {
-        // 解包成本轮内的局部名：流水线体量大（互斥登记、总线开轮、状态构造、异步提交），
-        // 逐处改成 cmd.getX() 的收益是零、风险是把一个位置写错的 bug 埋进八千行里
+        // 只解包这一段外壳真正要用的四个名字，其余字段由引擎整包收 cmd 后自取（见 ChatEngine#chat）
         final String sessionId = cmd.getSessionId();
-        final String question = cmd.getQuestion();
-        final List<String> userImages = cmd.getUserImages();
-        final List<ChatRequest.Attachment> attachments = cmd.getAttachments();
-        final List<String> skills = cmd.getSkills();
-        final List<ChatRequest.Mention> mentions = cmd.getMentions();
-        final List<ChatRequest.HistoryRef> historyRefs = cmd.getHistoryRefs();
-        final boolean deepThink = cmd.isDeepThink();
         final String agentId = cmd.getAgentId();
-        final String modelOverride = cmd.getModelOverride();
         final String userId = cmd.getUserId();
-        final String reasoningLevel = cmd.getReasoningLevel();
-        final Integer requestedContextWindow = cmd.getRequestedContextWindow();
         final boolean guestMode = cmd.isGuestMode();
-        final boolean regenerate = cmd.isRegenerate();
-        final String replaceMessageId = cmd.getReplaceMessageId();
-        final String editVariantGroup = cmd.getEditVariantGroup();
-        final boolean planMode = cmd.isPlanMode();
-        final boolean fromSteer = cmd.isFromSteer();
 
-        // 是否深度思考由用户自己决定（对话页 per-model 开关）+ 模型能力决定，平台不代为路由：
-        // 管理员侧的自动路由已删除——它会覆盖用户显式关闭的选择、强制消耗用户的 token。
-        final boolean useDeepThink = deepThink;
         // 会话轮级互斥：同一会话同时只允许一轮在跑。并发两问会历史交错、ArtifactService EMITTERS
         // 相互覆盖（后轮覆盖前轮，先完成者注销掉后轮的推送）、首问智能体绑定竞态。断线后台续跑
         // 与 askUser 等待期同样占坑——等待作答时再发新消息正是要挡的交错。限频/归属校验已在上游。
@@ -530,7 +511,7 @@ public class ChatService {
                 // 分派点刻意放在这一段：会话轮级互斥、turnId 登记、断线总线、看门狗、身份与个人覆盖
                 // 装载都是「这一轮」的外壳，两种引擎都要；被替换的只是外壳里面那段推理循环本身。
                 var dispatchChannel =
-                        new com.wenqu.ai.engine.SseRunEventChannel(runtime, emitter, sessionId, useDeepThink);
+                        new com.wenqu.ai.engine.SseRunEventChannel(runtime, emitter, sessionId);
                 // 绑定了工作流的智能体<b>不进任何一条推理循环</b>：那条路由工作流 end 节点的出参当回答
                 // （ChatflowBridge 的口径是「整条不走常规检索/生成，人设/库界/工具都不参与」）。
                 // 分派原先只看「引擎选哪个」，于是切到框架引擎后这张图被整个跳过——用户配的是「图的答案」，

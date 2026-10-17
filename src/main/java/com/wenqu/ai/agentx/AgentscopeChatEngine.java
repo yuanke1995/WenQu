@@ -853,7 +853,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         org.springframework.web.servlet.mvc.method.annotation.SseEmitter sink =
                 new com.wenqu.ai.service.CollectingSseEmitter();
         RunChannel channel = new com.wenqu.ai.engine.SseRunEventChannel(
-                tools.runtime(), sink, sessionId, false);
+                tools.runtime(), sink, sessionId);
         ExecutionPolicy policy = tools.policyFor(cmd, (code, message) -> {
         });
         WenquSourcePool pool = tools.newPool(cmd, sink);
@@ -1653,11 +1653,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         @Override
         public String sessionId() {
             return "";
-        }
-
-        @Override
-        public boolean deepThink() {
-            return false;
         }
 
         @Override
