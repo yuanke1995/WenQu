@@ -203,16 +203,24 @@ public class ProjectController {
     /**
      * 删除工作区。语义：<b>只摘归属，不删东西</b>——其下会话与产物的 {@code project_id} 置 NULL
      * （成果归人这条设计意图不许被级联删除破坏），工作区行逻辑删除。兜底容器不可删。
+     * <p>{@code deleteFiles=true} 时连同工作目录一起删（先删文件、失败即整单失败，行保留可重试）；
+     * 不传则文件留在盘上——删了行就再也找不到那个目录，这是给用户的显式选择而不是默认行为。
      */
     @Operation(summary = "删除工作区",
-            description = "删除后其下会话与产物仍然保留（只摘掉工作区归属）。implicit 兜底容器不可删")
+            description = "删除后其下会话与产物仍然保留（只摘掉工作区归属）。implicit 兜底容器不可删。"
+                    + "deleteFiles=true 时连工作目录一起删（不可恢复，先删文件失败则整单失败）")
     @DeleteMapping("/{id}")
-    public ResultJson delete(@PathVariable("id") String id) {
+    public ResultJson delete(@PathVariable("id") String id,
+                             @RequestParam(value = "deleteFiles", required = false, defaultValue = "false") boolean deleteFiles) {
         try {
-            projectService.delete(RequestUser.uid(), id);
-            return ResultJson.ok(null, "已删除（其下会话与产物已保留，仅摘掉归属）");
+            projectService.delete(RequestUser.uid(), id, deleteFiles);
+            return ResultJson.ok(null, deleteFiles
+                    ? "已删除（其下会话与产物已保留，工作目录已一起删除）"
+                    : "已删除（其下会话与产物已保留，仅摘掉归属）");
         } catch (IllegalArgumentException e) {
             return ResultJson.error(400, e.getMessage());
+        } catch (IllegalStateException e) {
+            return ResultJson.error(503, e.getMessage());
         }
     }
 }

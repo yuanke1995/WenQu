@@ -129,6 +129,36 @@ public class ProjectFileService {
         return base;
     }
 
+    /**
+     * 删除整个工作区目录（删工作区时用户显式选择「连文件一起删」才走这里）。
+     *
+     * <p><b>为什么先删文件再删行</b>：行删了文件没删掉，就再也找不到这个目录了
+     * （工作区 id 只在已删的行里）——磁盘泄漏且无法补救。所以文件删除失败即抛，
+     * 让工作区行保留，用户可以重试。
+     * <p>目录不存在算成功（从没跑过沙盒的工作区本该如此）；路径校验与下载同口径
+     * （{@code baseDir} 已做归属 + 越界双重校验）。
+     *
+     * @throws IllegalStateException 目录删除失败（控制器转可读错误，工作区行不动）
+     */
+    public void deleteWorkdir(String uid, String projectId) {
+        Path base = baseDir(uid, projectId);
+        if (!Files.exists(base)) return;
+        if (!Files.isDirectory(base)) {
+            throw new IllegalStateException("工作区目录不是文件夹，拒绝删除：" + base);
+        }
+        try (Stream<Path> walk = Files.walk(base)) {
+            // 深度优先：先删子文件再删目录（反序即自底向上）
+            List<Path> all = walk.sorted(Comparator.reverseOrder()).toList();
+            for (Path p : all) {
+                Files.delete(p);
+            }
+            log.info("[PROJECT] 工作区目录已删除 uid={} project={} base={} 条目={}", uid, projectId, base, all.size());
+        } catch (IOException | RuntimeException e) {
+            log.warn("[PROJECT] 工作区目录删除失败 uid={} project={} base={}: {}", uid, projectId, base, e.getMessage());
+            throw new IllegalStateException("工作区文件删除失败（目录可能仍被占用），工作区未删除，可重试");
+        }
+    }
+
     private static boolean isHiddenRelative(Path base, Path file) {
         Path rel = base.relativize(file);
         for (Path seg : rel) {

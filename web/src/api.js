@@ -472,7 +472,8 @@ export const listProjects = () => request('/project/list')
 // 新建工作区（selectable）；implicit 兜底容器由后端懒建，不需要也不允许前端创建
 export const createProject = name => request('/project', { method: 'POST', body: JSON.stringify({ name }) })
 // 删除工作区：只摘归属，其下会话与产物仍然保留（后端语义）
-export const deleteProject = id => request(`/project/${id}`, { method: 'DELETE' })
+export const deleteProject = (id, deleteFiles = false) =>
+  request(`/project/${id}${deleteFiles ? '?deleteFiles=true' : ''}`, { method: 'DELETE' })
 // 工作区详情：名称 / 工作区约定（对该工作区所有会话生效）/ 默认助手
 export const getProject = id => request(`/project/${id}`)
 // 工作区下的工作流（本人）

@@ -52,16 +52,23 @@ public class ProjectService {
      * 直接注入会构成构造器环（Spring Boot 3 默认禁止，启动直接失败）。归档是低频动作，用到时再取即可。
      */
     private final org.springframework.beans.factory.ObjectProvider<ScheduledJobService> scheduledJobProvider;
+    /**
+     * 删工作区时按用户选择连工作目录一起删。
+     * <p>同样惰性取：{@code ProjectFileService} 的构造器依赖本类（{@code baseDir} 里的归属校验）。
+     */
+    private final org.springframework.beans.factory.ObjectProvider<ProjectFileService> projectFileProvider;
 
     public ProjectService(ProjectMapper projectMapper, SessionMapper sessionMapper,
                           ArtifactMapper artifactMapper,
                           org.springframework.beans.factory.ObjectProvider<AgentService> agentProvider,
-                          org.springframework.beans.factory.ObjectProvider<ScheduledJobService> scheduledJobProvider) {
+                          org.springframework.beans.factory.ObjectProvider<ScheduledJobService> scheduledJobProvider,
+                          org.springframework.beans.factory.ObjectProvider<ProjectFileService> projectFileProvider) {
         this.projectMapper = projectMapper;
         this.sessionMapper = sessionMapper;
         this.artifactMapper = artifactMapper;
         this.agentProvider = agentProvider;
         this.scheduledJobProvider = scheduledJobProvider;
+        this.projectFileProvider = projectFileProvider;
     }
 
     /**
@@ -245,14 +252,28 @@ public class ProjectService {
      *   <li>工作区行本身：逻辑删除（{@code deleted=1}）。</li>
      * </ul>
      *
+     * <p><b>工作目录（{@code deleteFiles=true}）</b>：默认不删——删了行就再也找不到那个目录，
+     * 它会作为孤儿永远躺在盘上。所以给用户一个「连文件一起删」的显式选项，且**先删文件、
+     * 失败即整单失败**（行保留可重试），不搞"行删了文件没删掉"的不可逆组合。
+     *
      * <p><b>implicit 兜底容器不可删</b>：它是每个人的兜底归属，删了会让新会话无处可挂。
      *
+     * @param deleteFiles true = 连同工作区目录一起删除（不可恢复）；false = 文件留在盘上
      * @throws IllegalArgumentException 工作区不存在/不属于该用户/implicit 容器
+     * @throws IllegalStateException      选择连文件一起删但删除失败（工作区行不动，可重试）
      */
-    public void delete(String uid, String projectId) {
+    public void delete(String uid, String projectId, boolean deleteFiles) {
         Project p = ownedProject(uid, projectId);
         if (Project.SELECTION_IMPLICIT.equals(p.getSelectionStatus())) {
             throw new IllegalArgumentException("「会话」栏不是一个工作区，不能删除");
+        }
+        if (deleteFiles) {
+            ProjectFileService files = projectFileProvider.getIfAvailable();
+            if (files == null) {
+                throw new IllegalStateException("文件服务暂不可用，暂时无法连文件一起删除，请稍后重试");
+            }
+            // 先删文件：失败即抛，下面两行摘归属与删行都不会执行（行留着，目录就还找得到）
+            files.deleteWorkdir(uid, projectId);
         }
         // 先摘归属（两条 update 都是集合操作，幂等；即便随后工作区行删除失败也不会留下悬空引用）
         sessionMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Session>()
@@ -263,7 +284,13 @@ public class ProjectService {
                 .set(Artifact::getProjectId, null));
         // 逻辑删除工作区行（@TableLogic 自动写 deleted=1，select 自动过滤）
         projectMapper.deleteById(p.getId());
-        log.info("[PROJECT] 删除工作区（会话/产物已摘归属，未删除）uid={} id={} name={}", uid, p.getId(), p.getName());
+        log.info("[PROJECT] 删除工作区（会话/产物已摘归属，未删除{}）uid={} id={} name={}",
+                deleteFiles ? "，工作目录已删" : "", uid, p.getId(), p.getName());
+    }
+
+    /** 保持原签名（不删文件）；新调用方显式传 {@code deleteFiles} */
+    public void delete(String uid, String projectId) {
+        delete(uid, projectId, false);
     }
 
     /**

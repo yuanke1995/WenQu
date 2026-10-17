@@ -157,6 +157,12 @@
                             :saving="moveSaving"
                             @moved="doMoveSession" />
 
+      <!-- 删除工作区二选一：保留文件（默认）/ 连文件一起删；侧栏不知道目录大小，不编数字 -->
+      <DeleteProjectModal v-model:open="delOpen"
+                          :project-name="delTarget ? (delTarget.name || '未命名工作区') : ''"
+                          :saving="delSaving"
+                          @confirm="doDeleteProject" />
+
       <!-- 批量操作条：进入批量模式才出现，紧贴列表上方，作用于已加载的会话 -->
       <div v-if="!collapsed && batchMode" class="sess-batch-bar">
         <span class="batch-count">已选 {{ batchSel.size }}</span>
@@ -475,6 +481,7 @@ import DesktopOnlyGuard from '../h5/DesktopOnlyGuard.vue'
 import UserAvatar from '../components/UserAvatar.vue'
 import SetupGuide from '../components/SetupGuide.vue'
 import MoveToWorkspaceModal from '../components/MoveToWorkspaceModal.vue'
+import DeleteProjectModal from '../components/DeleteProjectModal.vue'
 import { exportSessionMarkdown } from './exportMd'
 import './app.css'
 
@@ -1154,24 +1161,31 @@ const spaceMenu = (space, key) => {
     return
   }
   if (key === 'delete') {
-    Modal.confirm({
-      title: '删除这个工作区？',
-      content: '对话与产物仍能看到，但它的文件将再也打不开，工作区约定也会一起丢失。此操作不可撤销。',
-      okText: '删除',
-      okType: 'danger',
-      cancelText: '取消',
-      onOk: async () => {
-        try {
-          await deleteProject(space.id)
-          message.success('已删除')
-          // 删掉的正是「下次新对话」的目标工作区 → 清掉，否则新会话会带一个不存在的 projectId
-          setNewSessionProject('')
-          await loadSessions(undefined, { refreshProjects: true })
-        } catch (e) {
-          message.error('删除失败：' + (e.message || '请重试'))
-        }
-      }
-    })
+    // 删除二选一弹窗与工作区页共用一套：保留文件（默认）/ 连文件一起删
+    delTarget.value = space
+    delOpen.value = true
+  }
+}
+
+// ==================== 删除工作区（二选一：保留文件 / 连文件一起删） ====================
+const delOpen = ref(false)
+const delTarget = ref(null)
+const delSaving = ref(false)
+const doDeleteProject = async withFiles => {
+  const space = delTarget.value
+  if (!space) return
+  delSaving.value = true
+  try {
+    await deleteProject(space.id, withFiles)
+    message.success(withFiles ? '已删除，工作目录已一起删除' : '已删除')
+    delOpen.value = false
+    // 删掉的正是「下次新对话」的目标工作区 → 清掉，否则新会话会带一个不存在的 projectId
+    setNewSessionProject('')
+    await loadSessions(undefined, { refreshProjects: true })
+  } catch (e) {
+    message.error('删除失败：' + (e.message || '请重试'))
+  } finally {
+    delSaving.value = false
   }
 }
 

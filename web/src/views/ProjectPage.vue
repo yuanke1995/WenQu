@@ -194,6 +194,15 @@
         </a-tabs>
       </template>
     </div>
+
+    <!-- 删除二选一：保留工作目录（默认）/ 连文件一起删；会话与产物不受影响 -->
+    <DeleteProjectModal v-model:open="delOpen"
+                        :project-name="form.name || '未命名工作区'"
+                        files-known
+                        :file-count="fileRows.length"
+                        :total-size="fileTotalSize"
+                        :saving="deleting"
+                        @confirm="doRemoveProject" />
   </div>
 </template>
 
@@ -205,6 +214,7 @@ import { ReloadOutlined, PlusOutlined, CopyOutlined } from '@ant-design/icons-vu
 import { getProject, updateProject, deleteProject, listArtifacts, listSessions, listAvailableAgents, listProjectFiles,
          downloadProjectFile, listScheduledJobs, createScheduledJob, runScheduledJob, listProjectWorkflows, runWorkflow,
          setProjectStatus, setNewSessionProject } from '../api'
+import DeleteProjectModal from '../components/DeleteProjectModal.vue'
 import { sessionStore, rememberSession } from './store'
 
 const HEAD_HINT = '一个工作目录 + 自己的约定 + 自己的助手；这里发生的一切都归到它名下'
@@ -217,6 +227,10 @@ const loading = ref(false)
 const saving = ref(false)
 const deleting = ref(false)
 const archiving = ref(false)
+/** 删除二选一弹窗（保留文件 / 连文件一起删） */
+const delOpen = ref(false)
+/** 工作目录总大小：删除弹窗里说清「连文件一起删」删的是多少 */
+const fileTotalSize = computed(() => fileRows.value.reduce((n, f) => n + (Number(f.size) || 0), 0))
 const isImplicit = ref(false)
 /** 归档=收工：新建对话/任务/运行一律禁用（后端同样拒绝，双保险；这里先给可见的反馈） */
 const isArchived = computed(() => form.value.status === 'archived')
@@ -503,26 +517,20 @@ const load = async () => {
   }
 }
 
-const removeProject = () => {
-  Modal.confirm({
-    title: '删除这个工作区？',
-    content: '对话与产物仍能在「会话」里看到，但这里的文件将再也打不开，工作区约定也会一起丢失。此操作不可撤销。',
-    okText: '删除',
-    okType: 'danger',
-    cancelText: '取消',
-    onOk: async () => {
-      deleting.value = true
-      try {
-        await deleteProject(id.value)
-        message.success('已删除')
-        router.push('/chat')
-      } catch (e) {
-        message.error('删除失败：' + (e.message || '请重试'))
-      } finally {
-        deleting.value = false
-      }
-    }
-  })
+const removeProject = () => { delOpen.value = true }
+/** 删除二选一：withFiles=false 保留工作目录（默认）；true 连文件一起删（后端先删文件、失败即整单失败） */
+const doRemoveProject = async withFiles => {
+  deleting.value = true
+  try {
+    await deleteProject(id.value, withFiles)
+    message.success(withFiles ? '已删除，工作目录已一起删除' : '已删除')
+    delOpen.value = false
+    router.push('/chat')
+  } catch (e) {
+    message.error('删除失败：' + (e.message || '请重试'))
+  } finally {
+    deleting.value = false
+  }
 }
 
 onMounted(async () => {
