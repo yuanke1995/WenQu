@@ -61,9 +61,6 @@
         <div v-if="showAgentTag && debugDisplay" class="agent-tag">
           <AgentAvatar class="agent-tag-ava" :agent="badgeOf(m.agentId, m.agentName)" :size="14" /> 由「{{ m.agentName }}」回答
         </div>
-        <div v-if="consultedOf(m).length" class="agent-tag">
-          <AgentAvatar class="agent-tag-ava" :agent="badgeOf(consultedOf(m)[0].id, consultedOf(m)[0].name)" :size="14" /> 本轮已咨询 {{ consultedOf(m).map(c => `「${c.name}」`).join('、') }}
-        </div>
 
         <!-- 整轮用时那一条：答完之后它在回答顶上当总览（跑着的时候它在正文末尾，见下面进度行后） -->
         <TurnBar v-if="!m.loading" :m="m" mobile />
@@ -308,8 +305,8 @@
           </div>
         </div>
 
-        <!-- 追问建议 -->
-        <div v-if="m.related && m.related.length" class="related">
+        <!-- 追问建议：与 PC 同口径，只在最新一轮出现（更早那几轮的建议已被后面的对话取代） -->
+        <div v-if="lastRound && m.related && m.related.length" class="related">
           <span class="card-dim">接下来可以：</span>
           <button v-for="(q, qi) in m.related" :key="qi" class="related-tag" type="button" @click.stop="$emit('ask', q)">{{ q }}</button>
         </div>
@@ -330,7 +327,7 @@
                  触屏没有 hover 菜单，收进底部 sheet（MobileRoundSheet） -->
             <button class="act-btn" title="更多操作" @click.stop="$emit('more', index)"><more-outlined /></button>
           </template>
-          <span v-if="m.tokens" class="act-time">≈{{ fmtTokens(m.tokens.total) }} tokens</span>
+          <span v-if="usageCtxTokens(m.tokens)" class="act-time">上下文{{ m.tokens.outputIsReal ? ' ' : ' ≈' }}{{ fmtTokens(usageCtxTokens(m.tokens)) }} tokens</span>
           <span v-if="m.time" class="act-time">{{ fmtMsgTime(m.time) }}</span>
         </div>
       </template>
@@ -358,7 +355,7 @@ import {
   fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget, fanRun, runBoardText,
   toolCallsView, executedCount, toolSearchQueries, retrievalLineTitle, subagentCard, barWidth, toggleSubagents, fmtDuration,
   fmtMsgTime, fmtSize, errorBrief, sourceName, canSwitchPrev, canSwitchNext, verLabel, agentBadgeOf,
-  pasteTitle, pasteSub, isPastedText, consultedOf
+  pasteTitle, pasteSub, isPastedText, usageCtxTokens
 } from '../chat/projections'
 import AskRecordCard from '../components/AskRecordCard.vue'
 import PlanCard from '../components/PlanCard.vue'
@@ -374,6 +371,8 @@ const props = defineProps({
   active: { type: Boolean, default: false },
   /** 是否最新一条 AI 消息 */
   isLast: { type: Boolean, default: false },
+  /** 是否最新一轮（最后一条 AI 消息，含进行中）：「接下来可以」只在这一轮渲染，与 PC 同口径 */
+  lastRound: { type: Boolean, default: false },
   /** 排障显示开关（归属徽标/派遣提示，engine 的 debugDisplayVisible） */
   debugDisplay: { type: Boolean, default: false },
   /** 沙盒运行等富渲染按钮需要会话上下文 */

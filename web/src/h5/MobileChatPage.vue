@@ -95,6 +95,7 @@
         </MsgDivider>
         <MobileMsgRow
           :m="m" :index="i" :active="activeIdx === i" :is-last="i === messages.length - 1"
+          :last-round="m === panelAi"
           :debug-display="debugDisplayVisible" :session-id="currentSessionId || ''" :loading="loading"
           :variant-switching="variantSwitching"
           @activate="activeIdx = $event"
@@ -118,9 +119,14 @@
       <arrow-down-outlined />
     </button>
 
+    <!-- 压缩进行中：占的就是压完那条线的位子，只换文案（与 PC 同一条状态、同一处落点） -->
+    <MsgDivider v-if="compacting" touch class="m-cdiv-tail">
+      <loading-outlined spin />
+      <span>正在压缩上下文</span>
+    </MsgDivider>
     <!-- 手动压缩当场那条（与 PC 同一份状态）：下一轮落库的摘要覆盖点会接上这件事，
          届时上面那条持久分隔线画在同一个缝上，不会重复出现 -->
-    <MsgDivider v-if="compactNotice && compactNotice.sid === currentSessionId" touch class="m-cdiv-tail">
+    <MsgDivider v-else-if="compactNotice && compactNotice.sid === currentSessionId" touch class="m-cdiv-tail">
       <compress-outlined />
       <span>已压缩上下文</span>
       <button class="app-link-btn" type="button" @click="openCompactSummary">查看摘要</button>
@@ -287,6 +293,11 @@
                         @knowledge="() => onGoPage('/knowledge')" />
     <MobileModelSheet :open="modelOpen" @close="modelOpen = false" />
     <MobileAttachSheet :open="attachOpen" @close="attachOpen = false" />
+
+    <!-- 技能正文查看：与 PC 端同一个组件（sheet 关掉也留着，读正文不该被「+」面板的生命周期带走） -->
+    <SkillContentModal :open="!!skillDoc" :name="skillDoc" :entry="skillDocEntry"
+                       :session-id="currentSessionId || ''"
+                       @update:open="v => { if (!v) skillDoc = '' }" @changed="loadSkills" />
     <MobileRefSheet :open="refOpen" @close="refOpen = false" @source="openSourceDetail" />
     <MobileNotifSheet :open="notifOpen" @close="notifOpen = false" />
     <MobileRoundSheet :open="roundOpen" :index="roundIdx" @close="roundOpen = false" @events="openRoundEvents" />
@@ -397,7 +408,7 @@ import {
   MenuOutlined, PlusOutlined, CaretDownOutlined, ArrowUpOutlined, ArrowDownOutlined, PauseCircleOutlined,
   ThunderboltOutlined, PlusCircleOutlined, CloseOutlined, GlobalOutlined, SearchOutlined, UpOutlined, DownOutlined,
   BellOutlined, ExclamationCircleOutlined, FileTextOutlined, CopyOutlined, HistoryOutlined,
-  CompressOutlined, EditOutlined, OrderedListOutlined
+  CompressOutlined, EditOutlined, OrderedListOutlined, LoadingOutlined
 } from '@ant-design/icons-vue'
 import { pasteTitle, pasteSub } from '../chat/projections'
 import { useChatEngine } from '../chat/useChatEngine'
@@ -417,6 +428,7 @@ import MobileRefSheet from './MobileRefSheet.vue'
 import MobileNotifSheet from './MobileNotifSheet.vue'
 import MobileRoundSheet from './MobileRoundSheet.vue'
 import MobileEventsSheet from './MobileEventsSheet.vue'
+import SkillContentModal from '../components/SkillContentModal.vue'
 import MobileSampleCards from './MobileSampleCards.vue'
 import BrandMark from '../components/BrandMark.vue'
 import SetupGuide from '../components/SetupGuide.vue'
@@ -497,9 +509,11 @@ const engine = useChatEngine({
 provide('wqChat', engine)
 const {
   text, canSend, send, stop, streamAnswer, messages, loading, currentSessionId, currentSessionTitle,
+  panelAi,
   deepThinkOn, effectiveModelLabel, debugDisplayVisible, regenerate, switchBranch, variantSwitching,
   resolveApproval, pickAskOption, commitAskCustom, askSubmitAll, createNewSession, pendingImages, pendingFiles, pickedSkills, pendingMentions,
   pendingHistoryRefs, toggleSkill, removePendingImage, removePendingFile, removeMention, removeHistoryRef,
+  skillDoc, loadSkills, skillList,
   takePastedFiles, takePastedText,
   ignoreAsk,
   // 计划模式（人在回路）：开关在「添加」sheet，确认栏在本页打字框原位，卡片本体共用 PlanCard
@@ -516,6 +530,8 @@ const {
 
 // 空态引导用：本轮 @ 引用的资料名（欢迎副标题会说明「只在这些资料里找答案」）
 const mentionNames = computed(() => pendingMentions.value.map(m => m.name || m.id))
+// 技能正文弹窗：按名字现取清单里的那条（存快照会让停用/恢复后的按钮停在旧状态）
+const skillDocEntry = computed(() => skillList.value.find(s => s.name === skillDoc.value) || {})
 
 // ==================== 智能体提问面板（替换输入卡） ====================
 // 与 PC 壳同语义：存在挂起提问时输入卡整块换成提问面板，答复后回归、问答记录留在气泡原位。

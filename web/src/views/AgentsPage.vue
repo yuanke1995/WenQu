@@ -263,6 +263,11 @@
                   <a-select v-model:value="form[c.listKey]" mode="multiple" :options="optionsOf(c)" allow-clear
                             size="small" style="width:100%"
                             :placeholder="'选择' + c.label + '（一项都不选则等同「不使用」）'" />
+                  <!-- 技能是逐字进提示词的正文：选了哪几条，就得能就地看到那几条写了什么 -->
+                  <div v-if="c.listKey === 'skills' && form[c.listKey].length" class="ap-pick-docs">
+                    已选正文：<button v-for="n in form[c.listKey]" :key="n" class="app-link-btn"
+                                     @click="openSkillDoc(n)">{{ String(n).split('/').pop() }}</button>
+                  </div>
                   <div v-if="!optionsOf(c).length" class="ap-pick-empty">
                     <template v-if="c.optionsKey === 'builtinOptions' && toolCatalogError">
                       工具名册加载失败 —— <button class="app-btn ghost small" @click="loadToolCatalog">重试</button>
@@ -660,6 +665,11 @@
         </svg>
       </div>
     </a-modal>
+
+    <!-- 技能正文查看（「指定」旁那几个「已选正文」入口）：本页没有会话上下文，
+         给的是内置 + 名下那两份，与下拉看到的是同一份清单 -->
+    <SkillContentModal :open="!!skillDoc" :name="skillDoc" :entry="skillDocEntry"
+                       @update:open="v => { if (!v) skillDoc = '' }" @changed="reloadSkillOptions" />
   </div>
 </template>
 
@@ -675,13 +685,14 @@ import {
   CopyOutlined, ExportOutlined, LinkOutlined, ExclamationCircleOutlined
 } from '@ant-design/icons-vue'
 import { listAgents, createAgent, updateAgent, deleteAgent, batchDeleteAgents, setAgentDefault, listKnowledgeBases, getConfig,
-         listSkills, getMcpStatus, listSubAgents, getToolCatalog, getPermissionPresets, updateAgentShare, getKbParamDefaults,
+         listAvailableSkills, getMcpStatus, listSubAgents, getToolCatalog, getPermissionPresets, updateAgentShare, getKbParamDefaults,
          getAgentPublish, publishAgent, revokeAgentPublish, listWorkflows, createWorkflowFromAgent,
          listAgentVersions, rollbackAgent } from '../api'
 import ShareScopeModal from './ShareScopeModal.vue'
 import ProviderIcon from '../components/ProviderIcon.vue'
 import ModelSelect from '../components/ModelSelect.vue'
 import AgentAvatar from '../components/AgentAvatar.vue'
+import SkillContentModal from '../components/SkillContentModal.vue'
 import { ensureAuth, isAdminSync } from '../utils/auth'
 import { loadModelIndex } from '../utils/modelRef'
 
@@ -818,6 +829,23 @@ const presetHint = () => {
   return p ? (p.title || '') : ''
 }
 const skillOptions = ref([])
+// 技能清单原样留着：「指定」下拉旁要给每条已选技能一个「看正文」的出口，靠这份数据取来源与停用态
+const skillRaw = ref([])
+const skillDoc = ref('')
+const applySkillList = list => {
+  skillRaw.value = list
+  skillOptions.value = list.map(s => ({
+    value: s.ref || s.name,
+    label: s.name + (s.source === 'builtin' ? '（内置）' : '（我的）')
+  }))
+}
+/** 停用/恢复之后就地重拉这份清单（不整页 reload：那会把正在编辑的表单所在的面板闪成加载态） */
+const reloadSkillOptions = () => listAvailableSkills()
+    .then(r => { if (r && r.success && Array.isArray(r.data)) applySkillList(r.data) })
+    .catch(() => {})
+/** 「指定」里存的是引用串（个人技能带 {uid}/ 前缀），取回裸名；条目按名字现取，快照会停在改动前那份 */
+const openSkillDoc = refStr => { skillDoc.value = String(refStr || '').split('/').pop() }
+const skillDocEntry = computed(() => skillRaw.value.find(s => s.name === skillDoc.value) || {})
 const mcpOptions = ref([])
 // 可委派的子智能体下拉（4.3：来自 /agent/sub，仅作为主智能体的委派候选，本身不参与对话）
 const subOptions = ref([])
@@ -1346,7 +1374,7 @@ const reload = async () => {
     isAdmin.value = me.admin
     // /kb/param-defaults 普通用户可读（检索参数占位符展示全局当前值用），可安全进 Promise.all
     const [ar, dr, sr, mr, xr, pd, wr] = await Promise.all([
-      listAgents(), listKnowledgeBases(), listSkills(), getMcpStatus(), listSubAgents(), getKbParamDefaults(),
+      listAgents(), listKnowledgeBases(), listAvailableSkills().catch(() => null), getMcpStatus(), listSubAgents(), getKbParamDefaults(),
       // 工作流是个人资产端点（非管理端点），普通用户可安全并行拉取；失败只影响绑定下拉
       listWorkflows().catch(() => null),
       // 能力名册：结果自己写进 builtinOptions / toolCatalogError，失败不阻断本页其余加载
@@ -1371,16 +1399,10 @@ const reload = async () => {
       }))
     }
     // 技能与 MCP Server 的可选项（供「指定」模式下的多选）
-    // /skill/list 返回的是 { skills: [...] }（不是数组）——按数组判定会让「指定技能」永远没有可选项
-    // value 存**引用串**而非裸名：个人技能/MCP 是个人资产，{uid}/{name} 才能精确绑定到归属人，
+    // /skill/available 直接给数组（只读清单，管理动作已由框架技能工具承担）
+    // value 存**引用串**而非裸名：个人技能是个人资产，{uid}/{name} 才能精确绑定到归属人，
     // 避免别人用同名但内容不同的资源时被张冠李戴；内置技能后端给的 ref 就是裸名（人人都有）。
-    if (sr && sr.success && sr.data) {
-      const list = Array.isArray(sr.data.skills) ? sr.data.skills : []
-      skillOptions.value = list.filter(s => !s.disabled).map(s => ({
-        value: s.ref || s.name,
-        label: s.name + (s.source === 'builtin' ? '（内置）' : '（我的）')
-      }))
-    }
+    if (sr && sr.success && Array.isArray(sr.data)) applySkillList(sr.data)
     if (mr && mr.success && mr.data) {
       mcpOptions.value = (mr.data.servers || []).map(s => ({
         value: s.ref || s.name,
@@ -1813,6 +1835,8 @@ onMounted(async () => { })
 /* 「指定」模式展开的具体项多选：与上方图标块左对齐 */
 .ap-cap-pick { padding: 0 0 12px 42px; }
 .ap-pick-empty { font-size: 11px; color: var(--app-text3); margin-top: 5px; }
+.ap-pick-docs { margin-top: 5px; font-size: 11px; color: var(--app-text3); }
+.ap-pick-docs .app-link-btn { font-size: 11px; margin-right: 6px; }
 .ap-cap-ic {
   width: 30px; height: 30px; border-radius: 8px; flex: none; font-size: 14px;
   display: inline-flex; align-items: center; justify-content: center;

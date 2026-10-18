@@ -25,7 +25,6 @@ import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import AgentsPage from './AgentsPage.vue'
 import ProvidersPage from './ProvidersPage.vue'
-import SkillPanel from './SkillPanel.vue'
 import McpPanel from './McpPanel.vue'
 import ScheduledPanel from './ScheduledPanel.vue'
 import WorkflowPanel from './WorkflowPanel.vue'
@@ -35,7 +34,6 @@ import { ensureAuth } from '../utils/auth'
 const TAB_COMPONENTS = {
   providers: ProvidersPage,
   agents: AgentsPage,
-  skills: SkillPanel,
   mcp: McpPanel,
   workflow: WorkflowPanel,
   scheduled: ScheduledPanel

@@ -662,7 +662,7 @@ import { FIELDS, PANELS, TIPS, blocksOf, buildDefaultForm, readForm, writeForm, 
 const NAV_LABELS = {
   chat: '对话模型', vision: '图片描述', chunk: '文档解析', retrieval: '检索设置',
   context: '上下文控制', tool: '工具调用', webSearch: '联网搜索',
-  ratelimit: '接口限流', maintenance: '定时任务', apiKey: 'API 密钥', skills: '技能预算',
+  ratelimit: '接口限流', maintenance: '定时任务', apiKey: 'API 密钥', skills: '技能',
   agent: '并行检索', oidc: '单点登录', sandbox: '沙盒', memory: '长期记忆', debug: '调试设置'
 }
 // 导航短名优先；未登记的分组回退到 schema 面板标题的中文主干（取「（」前的主体），

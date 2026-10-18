@@ -5,6 +5,7 @@
 // 组件卸载时由消费方在 onUnmounted 里调 stopTick() 收尾。
 import { ref } from 'vue'
 import { chatStreams } from '../views/store'
+import { fmtTokens } from '../utils/token'
 // 粘贴文本附件的名字前缀：产地是取材层（./intake.js），这里借用并原样再导出。
 // 本模块只用它来「认回」这类附件（isPastedText），并不定义它
 import { PASTE_TEXT_BASE } from './intake'
@@ -32,10 +33,13 @@ const TOOL_LABELS = {
   askUser: '向用户提问',
   readSkill: '读取技能说明',
   webSearch: '联网搜索',
-  execute: '运行命令',
-  read_file: '读取文件',
-  write_file: '写入文件',
-  edit_file: '编辑文件',
+  execute: '执行沙盒命令',
+  read_file: '读取沙盒文件',
+  write_file: '写入沙盒文件',
+  edit_file: '编辑沙盒文件',
+  grep_files: '在沙盒里搜内容',
+  glob_files: '按文件名模式找文件',
+  list_files: '查看沙盒目录',
   ls: '查看文件列表',
   // ↓ 这一段是「历史消息」专用：框架引擎（AgentScope）早期把工具裸名当 label 下发，
   // 那几轮消息已经按裸名落进库里了。后端现已改为随卡下发中文名（ToolRegistry → 框架工具表），
@@ -49,6 +53,24 @@ const TOOL_LABELS = {
   plan_enter: '开始规划方案',
   plan_write: '把计划写下来',
   plan_exit: '提交计划待确认',
+  // 框架原生的技能、记忆与子智能体工具（全框架化 P0/P3）：同样只在后端框架工具表里登记，
+  // 这张表只为已经按裸名落库的那几轮兜底。
+  load_skill_through_path: '打开技能说明书',
+  skill_manage: '改写我的技能',
+  propose_skill: '把做法草拟成技能',
+  memory_search: '翻长期记忆',
+  memory_get: '读记忆原文',
+  memory_save: '记进长期记忆',
+  session_search: '搜以前的会话',
+  session_list: '列出以前的会话',
+  session_history: '回看某次会话',
+  agent_spawn: '派个助手去做',
+  agent_send: '给助手补一句',
+  agent_list: '看看有哪些助手',
+  task_list: '查后台任务进度',
+  task_output: '取回任务结果',
+  task_cancel: '停掉后台任务',
+  wait_async_results: '等后台结果',
   // MCP（context7）：去前缀后按裸名匹配
   resolve_library_id: '查找文档来源',
   query_docs: '查阅官方文档',
@@ -78,10 +100,13 @@ const TOOL_DESCS = {
   askUser: '向你提出选项问题，点选或输入答案后继续回答',
   readSkill: '按需加载某个技能的详细说明',
   webSearch: '上网搜索相关资料，结果会作为引用来源',
-  execute: '在隔离的云端沙盒里执行命令行（不影响本机）',
-  read_file: '在云端沙盒里读取文件内容',
+  execute: '在隔离的云端沙盒里跑一条命令，不影响你本机',
+  read_file: '读云端沙盒里的文件，不会碰你本机的文件',
   write_file: '在云端沙盒里新建或覆盖文件',
-  edit_file: '在云端沙盒里修改文件内容',
+  edit_file: '在云端沙盒里替换文件中的某段内容',
+  grep_files: '按关键词在沙盒文件里搜，跨很多文件一起找',
+  glob_files: '按文件名规律找文件，比如「所有 .md」',
+  list_files: '列出云端沙盒里某个目录下有哪些文件',
   ls: '列出云端沙盒里某个目录下的文件',
   // 历史消息专用（同 TOOL_LABELS 里那一段的来由）：措辞与后端 cardHint 保持一致
   consultAgent: '把这一小问交给职责对口的助手去查，它带着自己的知识库把结论与资料交回来',
@@ -90,6 +115,22 @@ const TOOL_DESCS = {
   plan_enter: '先只读地调研与设计方案，这期间不改任何东西',
   plan_write: '把想好的方案写成计划，你点开就能看',
   plan_exit: '计划写完了，请你过目；你同意后它才开始动手',
+  load_skill_through_path: '把某个技能的说明书读出来，它照着那份做',
+  skill_manage: '新建、修改或删除你名下的技能',
+  propose_skill: '先起草一份技能给你过目，同意后才会留下',
+  memory_search: '在沉淀下来的记忆里按关键词找，看看以前记过什么',
+  memory_get: '把某一份记忆的具体内容读出来',
+  memory_save: '把这件事写进你的长期记忆，以后还能想起来',
+  session_search: '在以往的历史会话里按关键词搜',
+  session_list: '列出历史会话都有哪些',
+  session_history: '把某一次历史会话的往来读出来',
+  agent_spawn: '让一个子助手单独去完成这件事，做完把结果交回来',
+  agent_send: '往已经在跑的助手那儿再递一句话',
+  agent_list: '看看这一轮派出去的助手都有哪些在跑',
+  task_list: '看看派出去的任务跑到哪一步了',
+  task_output: '把后台任务跑出来的结果读回来',
+  task_cancel: '让一个还没跑完的后台任务停下来',
+  wait_async_results: '派出去的活还没回来，在这儿等一会儿',
   resolve_library_id: '先确定要查阅哪个库的官方文档',
   query_docs: '到对应库的官方文档里查找相关内容',
   read_wiki_structure: '浏览开源仓库 Wiki 的目录结构',
@@ -123,7 +164,13 @@ const toolLabel = (n, label) => {
 const toolDesc = (n, hint) => (hint || TOOL_DESCS[n] || TOOL_DESCS[bareToolName(n)] || '')
 const toolCallsView = list => {
   if (!Array.isArray(list)) return []
-  return list.filter(t => !(t.status === 'start' && list.some(x => x !== t && x.name === t.name && x.status !== 'start')))
+  const closed = list.filter(t => !(t.status === 'start' && list.some(x => x !== t && x.name === t.name && x.status !== 'start')))
+  // 存量兼容：框架工具的档位闸曾经在引擎之外再记一张 start/done 卡，同一次调用在库里是两条——
+  // 闸那条只有 name/args/status（没有 elapsedMs/result），引擎那条带耗时与输出。
+  // 这里只合并「同名同入参、另一条确实带耗时，而本条既无耗时也无输出」的那一种，
+  // 真正跑过两次的同名调用两张都带耗时/输出，不会被并掉（新数据已从写入侧修掉，这里仅兜历史行）。
+  return closed.filter(t => !(t.status === 'done' && t.elapsedMs == null && !t.result && !t.error && !t.subChat
+    && closed.some(x => x !== t && x.name === t.name && x.args === t.args && x.elapsedMs != null)))
 }
 /** 「执行了 N 个操作」的计数口径：只数真执行过的。
  *  被守卫在执行前挡下的那几条（denied，如本轮工具步数已用完）工具体一次没跑，
@@ -208,33 +255,6 @@ const agentNames = new Map()
 const rememberAgents = list => {
   if (!Array.isArray(list)) return
   list.forEach(a => { if (a && a.id && a.name) agentNames.set(a.id, a.name) })
-}
-/**
- * 本轮咨询过谁（P5 常显徽标的唯一数据源）：@ 强制咨询 + 模型自主咨询合并成一条，
- * 并按 id/名称去重——同一位既被 @ 又被模型自己派过一次时，只该出现一个名字。
- * 刷新后 SSE 事件已丢：从落库的 consultAgent 工具调用里把目标补回来（args 是 JSON 串，
- * 解析不出或旧记录非 JSON 就跳过，不拿名字去猜）。
- */
-const consultedOf = m => {
-  const out = []
-  const push = (id, name, forced) => {
-    const key = id || name
-    if (!key) return
-    const hit = out.find(x => (x.id || x.name) === key)
-    if (hit) { if (forced) hit.forced = true; return }
-    out.push({ id: id || '', name: name || id, forced: !!forced })
-  }
-  if (m?.delegated) push(m.delegated.id || '', m.delegated.name, true)
-  ;(Array.isArray(m?.consulted) ? m.consulted : []).forEach(c => push(c.id, c.name, false))
-  ;(Array.isArray(m?.toolCalls) ? m.toolCalls : []).forEach(t => {
-    if (!t || t.name !== 'consultAgent' || !t.args) return
-    try {
-      const j = JSON.parse(t.args)
-      if (!j || !j.agentId) return
-      push(j.agentId, agentNames.get(j.agentId) || '', false)
-    } catch (e) { /* 非 JSON 的旧记录：跳过 */ }
-  })
-  return out
 }
 // ==================== consultAgent（问另一位助手）子对话 ====================
 // 一次咨询在聊天区的那份问答：我们问它什么 + 它答了什么 + 它据哪些资料。
@@ -934,6 +954,20 @@ const fmtWindow = n => {
   }
   return String(n)
 }
+/** 本轮结束时的上下文占用：与容量圆环、右栏用量同一个分子（缺占用才回落计费输入，取数式同右栏容量卡）。
+ *  气泡上那一个数用它，不用 total——total 是本轮内每次模型调用输入的累加，工具往返会把同一份上下文
+ *  反复送进去，几轮下来能到占用的两三倍。拿它当「这一轮用了多少」摆在「上下文 · 输出」旁边，
+ *  两个数永远加不上，用户只会读成数字算错了。 */
+const usageCtxTokens = t => (!t || typeof t !== 'object') ? 0 : (Number(t.context) || Number(t.prompt) || 0)
+/** 用量悬停明细：三个数各起各的名，谁也不跟谁相加（占用 ≠ 累计送入 ≠ 输出）。 */
+const usageTip = t => {
+  if (!t || typeof t !== 'object') return ''
+  const n = v => fmtTokens(Number(v) || 0)
+  const segs = [`上下文占用 ${n(usageCtxTokens(t))} tokens`]
+  if (Number(t.prompt) > 0) segs.push(`本轮累计送入 ${n(t.prompt)}（含每次工具往返重发）`)
+  segs.push(`输出 ${n(t.output)} tokens`)
+  return segs.join(' · ') + (t.outputIsReal ? '（网关实测）' : '（估算）')
+}
 // ============ 子智能体编排卡片（仅委派模式显示） ============
 // 多视角模式（delegated=false）的分支只是把原问题换个问法，属实现细节，不展示；
 // 只有主智能体委派了真实子智能体（有名字、有职责）时，卡片才有信息价值。
@@ -1164,7 +1198,7 @@ const parseSampleQuestions = raw => String(raw || '').split('\n')
   .filter(Boolean)
 export {
   TOOL_LABELS, TOOL_DESCS, MCP_CLIENT_PREFIXES, bareToolName, toolLabel, toolDesc, toolCallsView, executedCount,
-  toolDuration, toolRunning, consultedOf, consultChatView, consultNameOf, rememberAgents, hasTimelineBlocks, extendTimelineText, askUserView,
+  toolDuration, toolRunning, consultChatView, consultNameOf, rememberAgents, hasTimelineBlocks, extendTimelineText, askUserView,
   extendTimelineProcess, procOpen, toggleProc, procSlice, pushTimelineTool, pushTimelineArtifact,
   pushTimelineThink, extendTimelineThink, thinkSlice, thinkGrowing, thinkSegOpen, toggleThinkSeg, ensureThinkSegment,
   restoreTimeline, SENTENCE_END_CHARS, endsSentence, timelineView, timelineRows, TOOL_BRIEF_KEYS, oneLine,
@@ -1177,6 +1211,7 @@ export {
   mergeDoneToolCalls, nowTick, ensureTick, holdTick, stopTick, toolSearchQueries,
   retrievalLineTitle,
   THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel, CTX_WINDOW_STEPS, fmtWindow,
+  usageCtxTokens, usageTip,
   fmtDuration, subagentCard, barWidth, toggleSubagents, groupSources, externalOrigin, sourceName,
   fmtSourceScore, scoreTitle, fmtSize, histItemTitle, histItemDigest, fmtMsgTime, errorBrief, agentBadgeOf,
   pasteTitle, pasteSub, isPastedText, PASTE_TEXT_BASE,

@@ -14,6 +14,9 @@ import { listSessions, listProjects, listScheduledJobs, getNewSessionProject } f
 // 每个工作区首屏铺几条。4 条与基准稿（任务/工作区各 4 条后接「查看更多」）一致：
 // 再多一进来就是长列表，再少又看不出这个工作区最近在聊什么。
 const FIRST_PAGE_SIZE = 4
+// 「会话」那一段（兜底容器 + 没挂工作区的都在这里）是主列表，不是分组预览：它动辄上百条，
+// 只铺 4 条等于把最常用的入口压成一行「查看更多」，所以首屏铺 10 条。
+const CHAT_FIRST_PAGE_SIZE = 10
 // 搜索态每个工作区多铺一些：命中的会话本来就少，搜到了却还要点两次「查看更多」是死胡同
 const SEARCH_PAGE_SIZE = 20
 // 「查看更多」每次向服务端追加的页大小（游标分页，不按偏移量）
@@ -136,6 +139,17 @@ function allSessionsSpace () {
 }
 
 /**
+ * 某一段的首屏条数：「会话」这一段（以及工作区接口不可用时退化出的「全部会话」）是主列表，
+ * 铺 10 条；真实工作区各组是分组预览，铺 4 条。
+ * 搜索态不分主次——命中的本来就少，还要点两次「查看更多」是死胡同。
+ */
+function firstPageSize (space, kw) {
+  if (kw) return SEARCH_PAGE_SIZE
+  const k = space && space.key
+  return (k === NO_SPACE_KEY || k === '') ? CHAT_FIRST_PAGE_SIZE : FIRST_PAGE_SIZE
+}
+
+/**
  * 取一个工作区的首屏/下一页数据。
  * 空会话（messageCount=0）在展示层过滤掉：后端列表本来就只回有消息的会话，
  * 这里再兜一次是因为本地乐观插入（markSessionActive）也会往同一个数组里写。
@@ -247,10 +261,9 @@ export async function loadSessions (keyword, { refreshProjects = false } = {}) {
       ? [noSpaceSpace(), ...projects.filter(p => p.status !== 'archived' && !p.isImplicit).map(spaceOfProject)]
       : [allSessionsSpace()]
 
-    const size = kw ? SEARCH_PAGE_SIZE : FIRST_PAGE_SIZE
     const loaded = await Promise.all(defs.map(async def => {
       try {
-        return applyFirstPage(def, await fetchSpacePage(def, kw, size))
+        return applyFirstPage(def, await fetchSpacePage(def, kw, firstPageSize(def, kw)))
       } catch (e) {
         // 单个工作区失败不拖垮整栏：该工作区显示「加载失败 + 重试」，其余工作区照常
         return { ...def, error: e.message || '加载失败', loaded: true }
@@ -288,7 +301,7 @@ export async function reloadSpace (space) {
   space.loading = true
   const gen = loadGen
   try {
-    const page = await fetchSpacePage(space, sessionStore.keyword, sessionStore.keyword ? SEARCH_PAGE_SIZE : FIRST_PAGE_SIZE)
+    const page = await fetchSpacePage(space, sessionStore.keyword, firstPageSize(space, sessionStore.keyword))
     if (gen !== loadGen) return
     Object.assign(space, applyFirstPage(space, page), { error: '' })
     rebuildFlat()

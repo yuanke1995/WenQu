@@ -12,17 +12,22 @@
 
       <!-- ==================== 技能 ==================== -->
       <template v-if="tab === 'skill'">
-        <div class="as-hint">选用的技能对本轮生效，下一轮自动取消（一次最多 3 个）</div>
+        <div class="as-hint">选用的技能对本轮生效，下一轮自动取消（一次最多 3 个）；点「正文」看这条到底写了什么</div>
         <div v-if="!skillList.length" class="as-empty">暂无可用技能</div>
-        <button v-for="s in skillList" :key="s.name" class="as-row" :class="{ on: pickedSkills.includes(s.name) }"
-                type="button" @click="toggleSkill(s.name)">
-          <span class="as-ava" :style="skillAvaStyle(s.name)">{{ (s.name || '技').slice(0, 1) }}</span>
-          <span class="as-main">
-            <span class="as-name">{{ s.name }}</span>
-            <span v-if="s.description" class="as-desc">{{ s.description }}</span>
-          </span>
-          <check-outlined v-if="pickedSkills.includes(s.name)" class="as-check" />
-        </button>
+        <div v-for="s in skillList" :key="s.name" class="as-row" :class="{ on: pickedSkills.includes(s.name) }">
+          <button class="as-hit" type="button" :disabled="s.selectable === false" @click="toggleSkill(s.name)">
+            <span class="as-ava" :style="skillAvaStyle(s.name)">{{ (s.name || '技').slice(0, 1) }}</span>
+            <span class="as-main">
+              <span class="as-name">{{ s.name }}
+                <span v-if="s.disabled" class="as-flag off">已停用</span>
+                <span v-else-if="s.source === 'workspace'" class="as-flag">工作区·只读</span>
+              </span>
+              <span v-if="s.description" class="as-desc">{{ s.description }}</span>
+            </span>
+            <check-outlined v-if="pickedSkills.includes(s.name)" class="as-check" />
+          </button>
+          <button class="as-doc" type="button" @click="skillDoc = s.name">正文</button>
+        </div>
       </template>
 
       <!-- ==================== 引用(@) ==================== -->
@@ -125,7 +130,7 @@ defineEmits(['close'])
 
 const engine = inject('wqChat')
 const {
-  skillList, pickedSkills, toggleSkill, skillAvaStyle,
+  skillList, pickedSkills, toggleSkill, skillAvaStyle, skillDoc,
   mentionTab, mentionQuery, mentionLoading, mentionKbFiltered, mentionDocFiltered, mentionAgentFiltered,
   mentionDocStatus, isMentioned, toggleMention, switchMentionTab, loadMentionCandidates, agentList, loadAgents,
   histPool, isHistPicked, toggleHistoryRef,
@@ -209,6 +214,15 @@ const onImg = e => {
 }
 .as-row.on { background: var(--app-accent-weak); border-color: var(--app-accent-border); }
 .as-row.static { cursor: default; }
+/* 技能行：整行是「勾选/取消」的命中区，右侧另给一个「正文」入口（按钮不能嵌套，故行改为 div） */
+.as-hit { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 0; border: 0;
+  background: transparent; color: inherit; font: inherit; text-align: left; touch-action: manipulation; }
+.as-hit:disabled { cursor: default; }
+.as-doc { flex: none; padding: 6px 4px; border: 0; background: transparent; color: var(--app-accent);
+  font-size: 13px; touch-action: manipulation; }
+.as-flag { margin-left: 6px; padding: 2px 6px; border-radius: 999px; font-size: 11px;
+  background: var(--app-panel-2); color: var(--app-text3); }
+.as-flag.off { background: var(--app-danger-weak); color: var(--app-danger-text); }
 .as-ava { width: 30px; height: 30px; flex: none; border-radius: 8px; display: inline-flex; align-items: center; justify-content: center; font-size: 14px; color: var(--app-accent); }
 .as-ic { color: var(--app-text3); flex: none; font-size: 16px; }
 .as-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }

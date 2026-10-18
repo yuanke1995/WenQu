@@ -1,3 +1,6 @@
+<!-- 长期记忆面板已移除（全框架化 P3）：记忆改由框架 MemorySearchTool/MemorySaveTool
+     与 MemoryFlushManager 承担，存储从c_ai_user_memory 表改为 MEMORY.md + memory/*.md。
+     用户不再有手动增删改入口（已接受的降级，见 docs/harness-framework-migration.md）。 -->
 <template>
   <div class="app-page">
     <div class="app-page-head">
@@ -67,6 +70,16 @@
           </div>
           <p class="pf-sub-hint">{{ panelMeta.tail }}</p>
 
+          <!-- 长期记忆的生成闸（即时生效，不参与下方「保存」）：只关「问答后自动提炼」这一步，
+               已沉淀的记忆在后续问答里照常被提起。关掉后下一轮起才停（正在跑的那一轮不受影响）。 -->
+          <div class="mem-auto-row" style="display:flex;align-items:flex-start;gap:12px">
+            <div class="mem-auto-text">
+              <div class="mem-auto-title">自动提炼记忆</div>
+              <p class="pf-sub-hint">关掉后问答不再往长期记忆里添新条目；已经记下的仍会在后续问答中被提起。</p>
+            </div>
+            <a-switch :checked="memAutoEnabled" :loading="memAutoSaving" @change="toggleMemAuto" />
+          </div>
+
           <!-- 回答偏好（仅聊天面板）：个人覆盖系统设置的体验参数，仅对本人生效 -->
           <template v-if="current === 'chat'">
             <a-divider style="margin:16px 0 12px" />
@@ -117,85 +130,6 @@
         </div>
 
         <!-- 长期记忆（跨会话个性化） -->
-        <div v-else-if="current === 'memory'" class="app-card pf-card mem-card">
-          <h2 class="app-card-title">
-            我的长期记忆
-            <span v-if="memories.length" class="mem-count">{{ memories.length }} 条</span>
-          </h2>
-          <p class="pf-hint">
-            开启时，系统会在每轮问答后自动提炼值得长期记住的信息（偏好、工作背景、明确要求记住的事），
-            并在你之后的对话中自动带上。这里可以查看、修改、删除——删掉的就永远不会再被提起。
-          </p>
-          <!-- 用户级开关：仅控制「自动生成」，已存记忆的注入不受影响（逐条删除即可） -->
-          <div class="pf-row mem-auto-row">
-            <div class="mem-auto-text">
-              <div class="mem-auto-title">自动提炼记忆</div>
-              <div class="pf-sub-hint">关闭后不再从你的对话中自动生成新记忆；已存的记忆仍会注入，可逐条删除。</div>
-            </div>
-            <a-switch :checked="memAutoEnabled" :loading="memAutoSaving" @change="toggleMemAuto" />
-          </div>
-          <div class="mem-add-row">
-            <a-input v-model:value="memDraft" :maxlength="500" allow-clear class="mem-add-input"
-                     placeholder="手动添加一条记忆，如：我负责 XX 系统的运维" @pressEnter="addMemory" />
-            <a-select v-model:value="memDraftCat" class="mem-add-cat" :options="CAT_OPTIONS" />
-            <button class="app-btn" :disabled="memSaving || !memDraft.trim()" @click="addMemory">{{ memAdding ? '添加中…' : '添加' }}</button>
-          </div>
-          <!-- 批量操作栏：有勾选即出现（勾选命中区=行左侧整列，见 .mem-check） -->
-          <div v-if="memSelected.length" class="mem-batch">
-            <span class="mem-batch-count">已选 {{ memSelected.length }} 条：</span>
-            <button class="app-btn ghost small mem-danger" :disabled="memSaving" @click="confirmRemoveSelected">删除</button>
-            <button v-if="memSelected.length < memories.length" class="app-link-btn"
-                    @click="memSelected = memories.map(m => m.id)">全选剩余</button>
-            <button class="app-link-btn" @click="memSelected = []">取消选择</button>
-          </div>
-          <a-spin :spinning="memLoading">
-            <div v-if="memError" class="mem-empty">
-              <div class="mem-empty-ico">⚠️</div>
-              <p class="mem-empty-title">记忆列表没加载出来</p>
-              <p class="pf-sub-hint">{{ memError }}</p>
-              <button class="app-btn ghost small" :disabled="memLoading" @click="loadMemories">重试</button>
-            </div>
-            <div v-else-if="!memories.length" class="mem-empty">
-              <div class="mem-empty-ico">💡</div>
-              <p class="mem-empty-title">还没有记忆</p>
-              <p class="pf-sub-hint">多聊几轮让系统自动提炼，或在上方手动添加一条。</p>
-            </div>
-            <div v-else class="mem-list">
-              <div v-for="m in memories" :key="m.id" class="mem-item" :class="{ sel: memSelected.includes(m.id) }">
-                <a-checkbox class="mem-check" :checked="memSelected.includes(m.id)"
-                            @change="e => toggleMemSelect(m.id, e.target.checked)" />
-                <div class="mem-main">
-                  <!-- 编辑态：文本域独占卡片，计数与按钮同排（antd show-count 渲染在文本域下方，会与按钮行重叠） -->
-                  <template v-if="memEditing === m.id">
-                    <a-textarea v-model:value="memEditDraft" :maxlength="500"
-                                :auto-size="{ minRows: 2, maxRows: 8 }" />
-                    <div class="mem-edit-foot">
-                      <span class="mem-edit-count">{{ memEditDraft.length }} / 500</span>
-                      <button class="app-btn ghost" :disabled="memSaving" @click="memEditing = ''">取消</button>
-                      <button class="app-btn" :disabled="memSaving || !memEditDraft.trim()" @click="saveMemEdit(m)">保存</button>
-                    </div>
-                  </template>
-                  <template v-else>
-                    <div class="mem-content">{{ m.content }}</div>
-                    <div class="mem-foot">
-                      <span class="mem-tag" :class="'mem-cat-' + (m.category || 'fact')">{{ categoryLabel(m.category) }}</span>
-                      <span v-if="m.source === 'auto'" class="mem-tag mem-src"
-                            :title="'来自会话 ' + (m.sourceSessionId || '')">自动</span>
-                      <span class="mem-meta">用过 {{ m.hitCount || 0 }} 次</span>
-                      <span class="mem-acts">
-                        <button class="app-link-btn" @click="startMemEdit(m)">编辑</button>
-                        <button class="app-link-btn danger" @click="confirmRemoveMemory(m)">删除</button>
-                      </span>
-                    </div>
-                  </template>
-                </div>
-              </div>
-            </div>
-          </a-spin>
-          <p class="pf-sub-hint">
-            记忆只属于你自己，只注入你本人的对话（公开分享页不会携带）；已达上限时自动提取会暂停，删掉几条即可恢复。
-          </p>
-        </div>
 
         <!-- 分享管理（会话只读分享）：链接发出后就散在各处，这里是统一的回看与停用入口。
              会话内分享面板管"这一条"，这里管"全部"——单条面板无法回答"我一共发出过哪些"。 -->
@@ -274,7 +208,6 @@ import { shareUrlOf } from './shareSession'
 import { markSessionShared } from './store'
 import { changePasswordApi, getUserPreference, setUserPreference, updateMyProfile, uploadAvatarApi,
          getUserSettings, saveUserSettings,
-         listMyMemories, addMyMemory, updateMyMemory, deleteMyMemory,
          listMySessionShares, stopShareBySession, purgeShareRecord, enableSessionShare } from '../api'
 import ModelSelect from '../components/ModelSelect.vue'
 import SchemaField from '../components/SchemaField.vue'
@@ -287,7 +220,6 @@ const route = useRoute()
 const navs = [
   { key: 'profile', label: '个人资料' },
   { key: 'chat', label: '聊天模型与偏好' },
-  { key: 'memory', label: '长期记忆' },
   { key: 'shares', label: '分享管理' },
   { key: 'security', label: '账号安全' }
 ]
@@ -550,105 +482,6 @@ const toggleMemAuto = async checked => {
   } finally { memAutoSaving.value = false }
 }
 
-// ---- 长期记忆：列表 / 手动添加 / 编辑 / 删除（注入与自动提取在后端完成） ----
-const memories = ref([])
-const memLoading = ref(false)
-const memSaving = ref(false)
-const memDraft = ref('')
-const memEditing = ref('')
-const memEditDraft = ref('')
-const CATEGORY_LABELS = { fact: '事实', instruction: '约定', project: '工作背景' }
-const categoryLabel = c => CATEGORY_LABELS[c] || '事实'
-// 手动添加可选分类（后端 addManual 本就支持 category，此前前端没暴露）
-const CAT_OPTIONS = Object.entries(CATEGORY_LABELS).map(([value, label]) => ({ value, label }))
-const memDraftCat = ref('fact')
-
-const memError = ref('')
-const loadMemories = async () => {
-  memLoading.value = true
-  memError.value = ''
-  try {
-    const r = await listMyMemories()
-    memories.value = (r && r.data) || []
-    // 选中项对账：刷新后已不在列表的 id 移出，避免批量栏计数虚高、删除时打空
-    const alive = new Set(memories.value.map(m => m.id))
-    memSelected.value = memSelected.value.filter(id => alive.has(id))
-  } catch (e) {
-    // 不能静默：失败会落到「还没有记忆」空态，用户以为刚添加的记忆没生效
-    memories.value = []
-    memError.value = e.message || '记忆列表加载失败'
-  } finally { memLoading.value = false }
-}
-const memAdding = ref(false)
-const addMemory = async () => {
-  const c = memDraft.value.trim()
-  if (!c) return
-  memSaving.value = true
-  memAdding.value = true
-  try {
-    const r = await addMyMemory(c, memDraftCat.value)
-    if (r && r.success !== false) { memDraft.value = ''; await loadMemories() }
-    else message.error(r?.msg || '添加失败')
-  } catch (e) { message.error(e.message || '添加失败') }
-  finally { memSaving.value = false; memAdding.value = false }
-}
-const startMemEdit = m => { memEditing.value = m.id; memEditDraft.value = m.content }
-const saveMemEdit = async m => {
-  const c = memEditDraft.value.trim()
-  if (!c) return
-  memSaving.value = true
-  try {
-    const r = await updateMyMemory(m.id, c)
-    if (r && r.success !== false) { memEditing.value = ''; await loadMemories() }
-    else message.error(r?.msg || '保存失败')
-  } catch (e) { message.error(e.message || '保存失败') }
-  finally { memSaving.value = false }
-}
-/** 删除确认：Modal.confirm（a-popconfirm 点击浮层在 iab 内嵌页不弹，全站统一用 Modal） */
-const confirmRemoveMemory = m => {
-  Modal.confirm({
-    title: '删除这条记忆？',
-    content: '「' + m.content.slice(0, 40) + (m.content.length > 40 ? '…' : '') + '」删除后不会再被提起。',
-    okText: '删除', okType: 'danger', cancelText: '取消',
-    onOk: () => removeMemory(m)
-  })
-}
-const removeMemory = async m => {
-  try {
-    const r = await deleteMyMemory(m.id)
-    if (r && r.success !== false) await loadMemories()
-    else message.error(r?.msg || '删除失败')
-  } catch (e) { message.error(e.message || '删除失败') }
-}
-
-// ---- 长期记忆：批量勾选 / 批量删除 ----
-const memSelected = ref([])
-const toggleMemSelect = (id, checked) => {
-  memSelected.value = checked ? [...memSelected.value, id] : memSelected.value.filter(x => x !== id)
-}
-const confirmRemoveSelected = () => {
-  const ids = [...memSelected.value]
-  Modal.confirm({
-    title: `删除选中的 ${ids.length} 条记忆？`,
-    content: '删掉的记忆不会再被提起，无法恢复。',
-    okText: '删除', okType: 'danger', cancelText: '取消',
-    onOk: () => removeSelectedMemories(ids)
-  })
-}
-/** 批量删除：后端只有单条 DELETE（自带归属校验），条数上限 50 以内并行发完即可 */
-const removeSelectedMemories = async ids => {
-  memSaving.value = true
-  try {
-    const rs = await Promise.allSettled(ids.map(id => deleteMyMemory(id)))
-    const ok = rs.filter(r => r.status === 'fulfilled' && r.value?.success !== false).length
-    if (ok === ids.length) message.success(`已删除 ${ok} 条记忆`)
-    else message.error(`已删除 ${ok} 条，${ids.length - ok} 条失败`)
-    memSelected.value = []
-    await loadMemories()
-  } catch (e) { message.error(e.message || '删除失败') }
-  finally { memSaving.value = false }
-}
-
 // ---- 分享管理（会话只读链接的统一回看与停用） ----
 // 与会话内分享面板（views/shareSession.js）的关系：那边管"这一条"，这里管"全部"。
 // 链接拼装复用 shareUrlOf —— 协议只有一处定义，两边各拼一次迟早漂移。
@@ -751,7 +584,6 @@ const purgeRecord = s => {
 // 面板切换时才拉列表：其余面板不碰这个接口（个人设置是常驻页，每次进都拉会白跑一次）
 // 记忆同理——自动提炼是在后台往库里加条目的，切回面板必须重拉，否则看到的是进页那一刻的旧快照
 watch(current, v => {
-  if (v === 'memory') loadMemories()
   if (v === 'shares') {
     focusSid.value = route.query.sid || ''
     loadShares()
@@ -763,7 +595,6 @@ onMounted(() => {
   loadPrefs()
   ensureAuth().then(me => { nickForm.value.username = me.username || ''; avatarPreview.value = me.avatar || '' })
   // 深链直达（?panel=xxx）时 watch 不会触发，首拉在这里补齐
-  if (current.value === 'memory') loadMemories()
   if (current.value === 'shares') loadShares()
 })
 </script>

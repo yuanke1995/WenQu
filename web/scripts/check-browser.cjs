@@ -339,7 +339,9 @@ const check = (ok, label, detail = '') => {
     '点开后列出条目（v-model:open 双向生效，不是只渲染不响应）', JSON.stringify(srcOpen))
   check(leaf.actN >= 4, '回答动作行四颗按钮齐全（AnswerActions）', `n=${leaf.actN}`)
   check(leaf.moreN === 1, '「更多」菜单挂进 #more 插槽（主对话页独有的附加动作没丢）', `n=${leaf.moreN}`)
-  check(/tokens/.test(leaf.tokenTxt), '用量文字挂进 #extra 插槽（#extra 没接成空壳）', leaf.tokenTxt)
+  // 气泡那一个数只认上下文占用（夹具里 1200），不认账单累加（total 1500）：
+  // 两者相差两三倍是工具往返重发的正常账，摆错口径用户第一反应就是「数字加不上，算错了」
+  check(leaf.tokenTxt === '上下文 1.2k tokens', '用量文字挂进 #extra 插槽，报的是上下文占用而非累计送入', leaf.tokenTxt)
 
   // ---- 行几何：消息块的居中列与输入卡片必须同宽同基准（.row/.msg-block/.bubble 三处 max-width 极易漂）----
   // 这是历史上真出过的那类 bug（分享页回答卡右边缘比用户气泡差 98px），静态校验查不出来。

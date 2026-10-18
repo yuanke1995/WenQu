@@ -41,6 +41,11 @@
                             :message="eventsMsg" :question="eventsQuestion" />
       </a-modal>
 
+      <!-- 技能正文查看：写入已交给助手，读的这一侧要能审（正文是逐字进提示词的）；移动壳用同一份组件 -->
+      <SkillContentModal :open="!!skillDoc" :name="skillDoc" :entry="skillDocEntry"
+                         :session-id="currentSessionId || ''"
+                         @update:open="v => { if (!v) skillDoc = '' }" @changed="loadSkills" />
+
       <!-- 会话内查找：按消息导航 + 命中高亮（长会话里定位旧问答） -->
       <div v-if="searchOpen" class="chat-search">
         <search-outlined class="cs-ic" />
@@ -123,10 +128,11 @@
             <button class="app-link-btn" type="button" :disabled="compactSummaryLoading"
                     @click="openCompactSummary">{{ compactSummaryLoading ? '读取中…' : '查看摘要' }}</button>
           </MsgDivider>
-          <!-- 模型切换记录：本轮回答与前一条回答模型不同时才出现（发消息产生新回答的那一刻，切换选择器本身不产生记录） -->
+          <!-- 模型切换记录：本轮回答与前一条回答的模型展示名不同才出现（发消息产生新回答的那一刻，切换选择器本身不产生记录）。
+               只点名换成了谁：这一行夹在两条回答中间，上一条是什么顺着看就有，两个名字并排会把行撑得比正文还长 -->
           <MsgDivider v-if="modelSwitchInfo(m, i)" class="msd">
             <swap-outlined />
-            <span>模型已切换 {{ modelSwitchInfo(m, i).fromLabel }} → {{ modelSwitchInfo(m, i).toLabel }}</span>
+            <span>模型已切换 → {{ modelSwitchInfo(m, i).toLabel }}</span>
           </MsgDivider>
           </template>
           <template #user-meta="{ m, i }">
@@ -297,13 +303,6 @@
               <!-- 跑着的时候整轮用时这一条跟在正文最后面：它同时是这一轮唯一的进行中提示，
                    眼睛盯的是最新长出来的那一行，而它正是那一行的计时器 -->
               <TurnBar v-if="m.role === 'ai' && m.loading" :m="m" />
-              <!-- 本轮咨询了谁（P5 常显）：@ 强制咨询与模型自主咨询合并成一条并按 id 去重。
-                   跨主题的问题答好了，用户也要看得见是"派给谁查的"——不然好答案像偶然，
-                   而派错了也没人知道该去改谁的描述。刷新后从落库的 consultAgent 入参还原。 -->
-              <div v-if="consultedOf(m).length" class="dispatch-chip delegated-chip">
-                <AgentAvatar class="dispatch-ava" :agent="agentBadgeOf(agentList, consultedOf(m)[0].id, consultedOf(m)[0].name)" :size="14" />
-                <span>本轮已咨询 {{ consultedOf(m).map(c => `「${c.name}」`).join('、') }} · 采纳{{ consultedOf(m).length > 1 ? '它们' : '它' }}查到的资料</span>
-              </div>
               <!-- 历史恢复/正文重建回退：无 timeline（无法重建交错点），工具按终态列表折叠展示，卡片可展开看全文。
                    受顶部那条管辖：整块过程收起时它一并出去（否则「已完成」底下还挂一摞操作行） -->
               <div v-if="m.role === 'ai' && m.toolCalls && m.toolCalls.length && !hasTimelineBlocks(m) && turnOpen(m)" class="tool-status-list">
@@ -466,7 +465,9 @@
                    class="subagent-skip">
                 已从 {{ m.subagentRoute.candidates }} 个候选择手中筛选：本问题无需咨询任何助手，直接作答
               </div>
-              <div v-if="m.role === 'ai' && m.related && m.related.length" class="related">
+              <!-- 只在最新一轮出现（panelAi=最后一条 AI 消息，含进行中）：更早那几轮的建议已被后面的对话取代，
+                   每轮都留着会让整页散落着可点的旧问句，翻历史时容易误点重发一个早问过的话题 -->
+              <div v-if="m.role === 'ai' && m === panelAi && m.related && m.related.length" class="related">
                 <span class="related-label">接下来可以：</span>
                 <span v-for="(q, qi) in m.related" :key="qi" class="related-tag" @click="ask(q)">{{ q }}</span>
               </div>
@@ -498,8 +499,11 @@
                 </a-dropdown>
           </template>
           <template #actions-extra="{ m, i }">
-                  <a-tooltip v-if="m.tokens" :title="`上下文 ${m.tokens.context} tokens · 输出 ${m.tokens.output} tokens${m.tokens.outputIsReal ? '（网关实测）' : '（估算）'}`">
-                    <span class="msg-tokens">{{ m.tokens.outputIsReal ? '' : '≈' }}{{ fmtTokens(m.tokens.total) }} tokens</span>
+                  <!-- 那一个数=本轮结束时的上下文占用（与输入框容量圆环、右栏用量同一个分子）。
+                       悬停里把三个口径分开报名，不并列成能相加的样子：占用 ≠ 累计送入 ≠ 输出。
+                       占用为 0 的历史轮整块不显示——不拿别的数凑一个「这一轮用了多少」出来。 -->
+                  <a-tooltip v-if="usageCtxTokens(m.tokens)" :title="usageTip(m.tokens)">
+                    <span class="msg-tokens">上下文{{ m.tokens.outputIsReal ? ' ' : ' ≈' }}{{ fmtTokens(usageCtxTokens(m.tokens)) }} tokens</span>
                   </a-tooltip>
                   <span v-if="m.time" class="msg-time-inline">{{ fmtMsgTime(m.time) }}</span>
           </template>
@@ -615,9 +619,15 @@
             </div>
           </template>
         </ChatThread>
+        <!-- 压缩进行中：占的就是压完那条线的位子，只换文案——压一次是一次模型调用，进度由这条线
+             自己在流尾说，不再挂一条常驻的 loading 提示（那条飘在页面上，说的却不是这个位置的事） -->
+        <MsgDivider v-if="compacting" class="cn-tail">
+          <loading-outlined spin />
+          <span>正在压缩上下文</span>
+        </MsgDivider>
         <!-- 手动压缩当场留下的记录：下一轮回答落库的摘要覆盖点会接上这件事，届时由上面那条持久判据
              画在同一条缝上，所以这里只是提前把线补出来，不会和它重复 -->
-        <MsgDivider v-if="compactNotice && compactNotice.sid === currentSessionId" class="cn-tail">
+        <MsgDivider v-else-if="compactNotice && compactNotice.sid === currentSessionId" class="cn-tail">
           <compress-outlined />
           <span>已压缩上下文</span>
           <button class="app-link-btn" type="button" @click="openCompactSummary">查看摘要</button>
@@ -896,14 +906,19 @@
         </template>
         <!-- 技能 -->
         <template v-else-if="addTab === 'skill'">
-        <div v-if="!skillList.length" class="mention-empty">还没有可用技能，管理员可在「设置 → 技能」中安装</div>
+        <div v-if="!skillList.length" class="mention-empty">还没有可用技能</div>
         <div v-for="(s, si) in addSkillList" :key="s.name" class="mention-item"
-        :class="{ on: isAddSkillOn(s.name), hi: addHi === si }" @click="toggleAddSkill(s.name)">
+        :class="{ on: isAddSkillOn(s.name), hi: addHi === si, 'mi-off': s.selectable === false }"
+        @click="toggleAddSkill(s.name)">
         <span class="mention-ava skill-ava" :style="skillAvaStyle(s.name)">{{ (s.name || '技').slice(0, 1) }}</span>
         <div class="mention-text">
-        <span class="mention-name">{{ s.name }}</span>
+        <span class="mention-name">{{ s.name }}
+        <span v-if="s.disabled" class="skill-flag off">已停用</span>
+        <span v-else-if="s.source === 'workspace'" class="skill-flag">工作区·只读</span>
+        </span>
         <span v-if="s.description" class="mention-desc">{{ s.description }}</span>
         </div>
+        <button class="app-link-btn skill-doc-btn" @click.stop="skillDoc = s.name">查看正文</button>
         <check-outlined v-if="isAddSkillOn(s.name)" class="mention-check" />
         </div>
         <div v-if="skillList.length && !addSkillList.length" class="mention-empty">没有匹配的技能</div>
@@ -1140,12 +1155,14 @@
             </template>
           </template>
           <div v-else class="rp-dim">本轮尚无检索记录</div>
-          <!-- 用量（1.9 Token 消耗可视化）：上下文为实际填充、输出在网关返回 usage 时用实测、否则估算 -->
+          <!-- 用量（1.9 Token 消耗可视化）：主数=本轮结束时的上下文占用，与气泡、容量圆环同一个数。
+               账单口径那份（本轮每次模型调用输入之和）沉到第三行并写明含工具往返重发——
+               它比占用大两三倍是正常账，但摆成主数会让人以为窗口被吃掉这么多。 -->
           <template v-if="lastTokens">
             <div class="rp-divider"></div>
-            <div class="rp-strong">{{ lastTokens.outputIsReal ? '' : '≈' }}{{ fmtTokens(lastTokens.total) }} tokens</div>
-            <div class="rp-row"><span>上下文 {{ fmtTokens(lastTokens.context) }}</span><span v-if="ctxCapData.window > 0" class="rp-dim">窗口 {{ fmtTokens(ctxCapData.window) }}（{{ ctxCapData.pct }}%）</span></div>
-            <div class="rp-meta">输出 {{ fmtTokens(lastTokens.output) }}<template v-if="lastTokens.hits > 0"> · 上下文填入 {{ lastTokens.hits }} 块</template><template v-if="!lastTokens.outputIsReal"> · 估算值</template></div>
+            <div class="rp-strong">上下文{{ lastTokens.outputIsReal ? ' ' : ' ≈' }}{{ fmtTokens(usageCtxTokens(lastTokens)) }} tokens</div>
+            <div v-if="ctxCapData.window > 0" class="rp-row"><span>占窗口 {{ ctxCapData.pct }}%</span><span class="rp-dim">窗口 {{ fmtTokens(ctxCapData.window) }}</span></div>
+            <div class="rp-meta"><template v-if="lastTokens.prompt > 0">本轮累计送入 {{ fmtTokens(lastTokens.prompt) }}（含工具往返重发）· </template>输出 {{ fmtTokens(lastTokens.output) }}<template v-if="lastTokens.hits > 0"> · 上下文填入 {{ lastTokens.hits }} 块</template><template v-if="!lastTokens.outputIsReal"> · 估算值</template></div>
           </template>
         </template>
         <!-- 会话态：全量累计，只按真实记录的数据统计（c_ai_message 未落库 tokens，历史恢复的轮没有该字段，不冒充 0） -->
@@ -1457,6 +1474,7 @@ import SubAgentChatCard from '../components/SubAgentChatCard.vue'
 import MsgDivider from '../components/MsgDivider.vue'
 import ToolSpillButton from '../components/ToolSpillButton.vue'
 import SessionEventsPanel from '../components/SessionEventsPanel.vue'
+import SkillContentModal from '../components/SkillContentModal.vue'
 // 回答正文与它的浮层宿主：与两个分享页共用同一份实现（详见 src/chat/answerViewer.js 顶部说明）
 import AnswerBody from '../components/AnswerBody.vue'
 import AnswerViewerHost from '../components/AnswerViewerHost.vue'
@@ -1480,7 +1498,8 @@ import { toolLabel, toolDesc, toolCallsView, executedCount, toolRunning, hasTime
          toggleSubagents, fmtDuration, fmtWindow, externalOrigin, sourceName, fmtSourceScore, scoreTitle,
          fmtMsgTime, fmtSize, errorBrief, histItemTitle, histItemDigest, verLocal, canSwitchPrev, canSwitchNext, verLabel,
          pasteTitle, pasteSub, isPastedText,
-         THINK_LEVEL_ON, levelLabel, stopTick, agentBadgeOf, consultedOf } from '../chat/projections'
+         THINK_LEVEL_ON, levelLabel, stopTick, agentBadgeOf,
+         usageCtxTokens, usageTip } from '../chat/projections'
 
 const router = useRouter()
 const route = useRoute()
@@ -3067,7 +3086,7 @@ const {
   // 上下文窗口档位（面板点选 + 发送载荷）
   ctxRangeOf, ctxWindowOptionsOf, effectiveCtxWindowOf, setCtxWindow,
   // 技能
-  skillList, pickedSkills, toggleSkill, skillAvaStyle,
+  skillList, pickedSkills, toggleSkill, skillAvaStyle, loadSkills, skillDoc,
   // 智能体
   agentList, hasDefaultAgent, currentAgentId, isAdmin, agentPickerOpen,
   currentAgentName, currentAgent, pickAgent, showAgentTag, modelSwitchInfo, loadAgents,
@@ -3116,6 +3135,9 @@ const {
 // 取数口径与后端 ProjectService.projectContextOfSession 同源（session → project），
 // 切换会话即刷新；取不到（无工作区/非本人/接口异常）一律不显示，不用侧栏分组猜。
 const sessionWorkspace = ref(null)
+// 正文弹窗按名字现取清单里的那条：停用/恢复后清单重拉，弹窗里的按钮状态才会跟着翻面
+// （存条目快照会一直显示改动前的那一份）
+const skillDocEntry = computed(() => skillList.value.find(s => s.name === skillDoc.value) || {})
 const wsTitle = computed(() => {
   const w = sessionWorkspace.value
   if (!w) return ''
@@ -3768,8 +3790,8 @@ onMounted(async () => {
 .artifact-dl { color: var(--app-text3); margin-left: auto; }
 
 
-/* 手动压缩当场那条分隔线（在 v-for 外面，拿不到 .row 上的 --mdv-inset，自己补一份同样的内缩） */
-.cn-tail { --mdv-inset: calc((100% - min(94%, 860px)) / 2); margin: -8px 0 12px; }
+/* 手动压缩当场那条分隔线（在 v-for 外面，与上面 .row 里那几条同形） */
+.cn-tail { margin-block: -8px 12px; }
 
 /* 摘要弹窗 */
 .csum-head { display: flex; align-items: baseline; gap: 10px; }
@@ -3929,18 +3951,6 @@ onMounted(async () => {
   padding: 3px 10px; cursor: pointer;
 }
 .related-tag:hover { background: var(--app-ok-weak-hover); }
-.dispatch-chip {
-  margin-top: 6px; display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap;
-  font-size: 12px; color: var(--app-text2);
-  border: 1px solid var(--app-border); border-radius: 999px; padding: 3px 10px;
-  background: color-mix(in srgb, var(--app-accent) 6%, transparent);
-}
-.dispatch-ic { color: var(--app-accent); font-size: 12px; }
-.dispatch-ava { flex: none; }  /* 委派徽标内的智能体头像，同 .agent-tag-ava */
-.dispatch-fallback { color: var(--app-text3); }
-.dispatch-desc { color: var(--app-text3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 420px; }
-/* @ 智能体委派徽标（§4）：与派遣徽标同族，但这是用户指令——常显，配色加重以示区别 */
-.delegated-chip { color: var(--app-accent); border-color: var(--app-accent); background: var(--app-accent-weak); font-weight: 500; }
 
 /* 重新生成的多版本切换器：与操作图标同一行，弱化呈现 */
 .ver-switch {
@@ -4183,14 +4193,13 @@ onMounted(async () => {
 }
 /* 徽标内的智能体头像：AgentAvatar 自带圆角块，这里只保证不被 flex 压扁 */
 .agent-tag-ava { flex: none; }
-/* 分隔线（MsgDivider）左右内缩到正文列宽（.msg-block 的 min(94%,860px)）：分隔条盒子仍占满一行，
-   靠 padding 收窄可见部分，否则分隔线横贯整个消息区、比正文宽出一倍。
-   自定义属性按声明原样传给后代、在使用处才求值，所以这里的 100% 仍是分隔线自己的宽度=行宽 */
-.row { --mdv-inset: calc((100% - min(94%, 860px)) / 2); }
+/* 三条消息分隔线（压缩点 / 模型切换 / 流尾当场那条）共用的宽度约定：收到消息列（--chat-col），
+   线才与正文两端对齐。铺满滚动容器会在宽屏下比正文探出去一截，读起来像页面分隔栏而不是这一轮的留痕 */
+.cdiv, .msd, .cn-tail { max-width: var(--chat-col); margin-inline: auto; }
 /* 模型切换那条贴气泡更紧（组件默认 6px 上下等距偏松） */
-.msd { margin: 2px 0 10px; }
+.msd { margin-block: 2px 10px; }
 /* 压缩那条在这条提问上方，上下都要跟前后两轮拉开 */
-.cdiv { margin: 6px 0 12px; }
+.cdiv { margin-block: 6px 12px; }
 
 /* 智能体下拉面板（自绘：每项能放下描述与模型差异） */
 .agent-menu {
@@ -4263,6 +4272,11 @@ onMounted(async () => {
 }
 .add-filter:focus { border-color: var(--app-accent-border, var(--app-accent)); }
 .skill-ava { font-size: 12px; font-weight: 600; }
+/* 技能行的来源与停用小标、正文入口（「+」面板的技能分页） */
+.skill-flag { margin-left: 6px; padding: 3px 6px; border-radius: 999px; font-size: 11px; line-height: 1;
+  background: var(--app-panel-2); color: var(--app-text3); }
+.skill-flag.off { background: var(--app-danger-weak); color: var(--app-danger-text); }
+.skill-doc-btn { flex: none; font-size: 12px; }
 
 /* 待发送附件条 + 技能选中标签 */
 .pending-files { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 auto 8px; max-width: var(--chat-col); }

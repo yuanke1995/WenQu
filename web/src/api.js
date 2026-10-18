@@ -97,6 +97,8 @@ const CHAT_EVENT_CB = {
   tool_status: 'onToolStatus', tool_output: 'onToolOutput', process: 'onProcess',
   runcode_progress: 'onRunCodeProgress', subagent_step: 'onSubagentStep',
   subagent: 'onSubagent', subagent_route: 'onSubagentRoute',
+  // agent_consulted 登记在表里但不配回调：咨询过程由 consultAgent 工具卡呈现，
+  // 事件仍照发（账本逐帧排查用），留名只为不被判成「未识别事件」
   agent_delegated: 'onAgentDelegated', agent_consulted: 'onAgentConsulted',
   approval_required: 'onApprovalRequired', ask_user: 'onAskUser',
   plan_delta: 'onPlanDelta', plan_approval: 'onPlanApproval', plan_cancelled: 'onPlanCancelled',
@@ -804,26 +806,6 @@ export const dismissTraceSample = id => request(`/trace/pool/${id}/dismiss`, { m
 export const runTraceSampling = () => request('/trace/sample/run', { method: 'POST' })
 export const getTraceStats = () => request('/trace/stats')
 
-// ==================== 技能（Skills）（个人资产：每人管自己的技能） ====================
-export const listSkills = () => request('/skill/list')
-export const getSkillDetail = name => request('/skill/detail?name=' + encodeURIComponent(name))
-export const createSkill = body => request('/skill', { method: 'POST', body: JSON.stringify(body) })
-export const installSkillFromUrl = (url, name) =>
-  request('/skill/install', { method: 'POST', body: JSON.stringify({ url, name }) })
-export const setSkillDisabled = (name, disabled) =>
-  request(`/skill/${encodeURIComponent(name)}/disabled`, { method: 'PUT', body: JSON.stringify({ disabled }) })
-export const deleteSkill = name => request(`/skill/${encodeURIComponent(name)}`, { method: 'DELETE' })
-// 内置技能改写（仅管理员）：内容全局生效（所有人读到同一份），删除改写行即恢复随版本分发的默认内容
-export const updateBuiltinSkill = (name, content) =>
-  request(`/skill/${encodeURIComponent(name)}/builtin`, { method: 'PUT', body: JSON.stringify({ content }) })
-export const resetBuiltinSkill = name =>
-  request(`/skill/${encodeURIComponent(name)}/builtin`, { method: 'DELETE' })
-// 批量：ids 为技能名（dirName）清单；返回 {succeeded:[name], failed:[{id,name,error}]}
-export const batchDeleteSkills = ids =>
-  request('/skill/batch-delete', { method: 'POST', body: JSON.stringify({ ids }) })
-export const batchSetSkillsDisabled = (ids, disabled) =>
-  request('/skill/batch-disabled', { method: 'POST', body: JSON.stringify({ ids, disabled }) })
-
 // ==================== API 密钥（对外开放问答能力） ====================
 export const listApiKeys = () => request('/api-key/list')
 export const createApiKey = body => request('/api-key', { method: 'POST', body: JSON.stringify(body) })
@@ -842,8 +824,14 @@ export const deleteApiKey = id => request(`/api-key/${id}`, { method: 'DELETE' }
 export const listAvailableAgents = () => request('/agent/available')
 /** 可读助手名称表（含子智能体）：还原「本轮咨询了谁」的徽标用，非关键路径 */
 export const listConsultableAgents = () => request('/agent/consultable')
-/** 对话页技能菜单：未停用技能精简列表（问答用户可读） */
-export const listAvailableSkills = () => request('/skill/available')
+/** 可用技能清单（只读）：内置 + 本人技能目录 +（带会话时）沙盒工作区技能。
+ *  技能内容的写入已由框架的 skill_manage 工具承担，这里给的是「有哪些、哪条已停用」与下面的正文查看。 */
+export const listAvailableSkills = sessionId =>
+  request(`/skill/available${sessionId ? '?sessionId=' + encodeURIComponent(sessionId) : ''}`)
+/** 技能正文（SKILL.md 全文）：与模型本轮吃到的那份同源；已停用的也查得到 */
+export const getSkillContent = (name, sessionId) =>
+  request(`/skill/content?name=${encodeURIComponent(name || '')}`
+    + (sessionId ? '&sessionId=' + encodeURIComponent(sessionId) : ''))
 export const listAgents = () => request('/agent/list')
 export const listSubAgents = () => request('/agent/sub')
 /** 能力名册（登录用户可读）：智能体配置页的「指定内置工具」可选项从这里来，
@@ -1200,18 +1188,6 @@ export const getBadCases = () => request('/analytics/badcases')
 export const getUsageStats = range => request(`/stats/usage?range=${range === 7 ? 7 : 30}`)
 // 费用报表（管理）：全员台账×模型单价，按用户/按模型两维度；range=7|30
 export const getUsageCost = range => request(`/stats/cost?range=${range === 7 ? 7 : 30}`)
-
-// ==================== 用户长期记忆（个人设置页管理；提取与注入在后端自动完成） ====================
-/** 我的记忆列表（按更新时间倒序；含来源与被注入次数） */
-export const listMyMemories = () => request('/memory')
-/** 手动添加记忆（category: fact/instruction/project，默认 fact） */
-export const addMyMemory = (content, category) =>
-  request('/memory', { method: 'POST', body: JSON.stringify({ content, category }) })
-/** 编辑记忆内容（仅本人） */
-export const updateMyMemory = (id, content) =>
-  request(`/memory/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify({ content }) })
-/** 删除记忆（仅本人；自动提取的也可删） */
-export const deleteMyMemory = id => request(`/memory/${encodeURIComponent(id)}`, { method: 'DELETE' })
 
 /** 追加单条评估 case（差评回流：问题 → 引用过的知识块） */
 export const addEvalCase = (question, knowledgeIds) =>

@@ -24,7 +24,7 @@ const routes = [
   // 与管理页的 DesktopOnlyGuard 白名单无关（那套只管 AppLayout 子路由）。
   { path: '/m/chat', component: page(() => import('./h5/MobileChatPage.vue')), meta: { title: '对话' } },
   { path: '/profile', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/ProfilePage.vue')) }], meta: { title: '个人设置' } },
-  // 智能体工作台不再要求管理员：技能 Skills 与 MCP 是个人资产，所有人都要能进来管自己的；
+  // 智能体工作台不再要求管理员：MCP 外部工具是个人资产，所有人都要能进来管自己的；
   // 其中的「模型供应商 / 智能体」Tab 在页内按管理员身份显隐（见 AgentsHubPage）
   { path: '/agents', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/AgentsHubPage.vue')) }], meta: { title: '智能体' } },
   // 模型供应商并入智能体页 Tab（?tab=providers）；旧入口重定向

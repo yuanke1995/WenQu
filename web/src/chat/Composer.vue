@@ -365,9 +365,12 @@ const onKeydown = e => {
   if (e.key === 'Delete' && deleteAdjacentChip(1)) { e.preventDefault(); return }
   emit('keydown', e)
 }
-const onInput = () => { if (!composing.value) afterEdit() }
+/** 占位文案是行内 ::before，它不撤走就会把没上屏的拼音顶到提示语末尾去（看着像字从半路开始打）。
+ *  组合期间只准动这一个 class：afterEdit 会序列化、扫 <br>，跑一次就把上屏打断了。 */
+const hidePlaceholder = () => { if (rootEl.value) rootEl.value.classList.remove('is-empty') }
+const onInput = () => { if (composing.value) hidePlaceholder(); else afterEdit() }
 const onCompositionend = () => { composing.value = false; afterEdit() }
-const onCompositionstart = () => { composing.value = true }
+const onCompositionstart = () => { composing.value = true; hidePlaceholder() }
 
 /** 复制：正文走 text/plain（与发出去的一字不差），条目走 text/html 里的 data-wenqu-* 凭据。
  *  走 copy 事件的 setData 而不是 ClipboardItem——后者写文件受浏览器 MIME 白名单限制（写 pdf 会被拒），

@@ -25,13 +25,13 @@
         </div>
       </div>
 
-      <!-- ---- 本轮用量 ---- -->
+      <!-- ---- 本轮用量 ---- 三个数各起各的名：占用 ≠ 输出 ≠ 累计送入（后者含工具往返重发，别拿去跟前两个相加） ---- -->
       <div class="rs-section">本轮用量</div>
       <div v-if="!tokens" class="rs-empty">本轮还没有用量记录</div>
       <template v-else>
-        <div class="rs-kv"><span>上下文</span><b>{{ tokens.context ?? '—' }}<template v-if="cap.window > 0"> / {{ cap.window }}（{{ cap.pct }}%）</template></b></div>
-        <div class="rs-kv"><span>输出</span><b>{{ tokens.output ?? '—' }} tokens<template v-if="tokens.outputIsReal === false">（估算）</template></b></div>
-        <div class="rs-kv"><span>合计</span><b>{{ fmtTokens(tokens.total) }} tokens</b></div>
+        <div class="rs-kv"><span>上下文占用</span><b>{{ usageCtx }}<template v-if="cap.window > 0"> / {{ cap.window }}（{{ cap.pct }}%）</template></b></div>
+        <div class="rs-kv"><span>输出</span><b>{{ tokens.output ?? '—' }} tokens<template v-if="!tokens.outputIsReal">（估算）</template></b></div>
+        <div v-if="tokens.prompt > 0" class="rs-kv"><span>本轮累计送入</span><b>{{ fmtTokens(tokens.prompt) }} tokens</b></div>
         <div v-if="tokens.hits > 0" class="rs-kv"><span>填入上下文</span><b>{{ tokens.hits }} 段</b></div>
         <div v-if="tokens.cached > 0" class="rs-kv"><span>缓存命中</span><b>{{ tokens.cached }} tokens</b></div>
       </template>
@@ -57,7 +57,7 @@
       <!-- ---- 会话累计 ---- -->
       <div class="rs-section">本会话累计</div>
       <div class="rs-kv"><span>已完成轮次</span><b>{{ sessionTokens.rounds }}</b></div>
-      <div class="rs-kv"><span>Token 合计</span><b>{{ sessionTokensLabel }}</b></div>
+      <div v-if="sessionTokens.rounds" class="rs-kv"><span>累计送入</span><b>{{ fmtTokens(sessionTokens.prompt) }} tokens</b></div>
       <div class="rs-kv"><span>检索轮次 / 引用</span><b>{{ sessionRetrieval.rounds }} 轮 · {{ sessionRetrieval.refs }} 段</b></div>
 
       <!-- ---- 产物 ---- -->
@@ -121,7 +121,7 @@ import { CaretRightOutlined, FileTextOutlined, DownloadOutlined, ShareAltOutline
 import { message } from 'ant-design-vue'
 import BottomSheet from './BottomSheet.vue'
 import { fmtTokens } from '../utils/token'
-import { fmtSourceScore, fmtWindow } from '../chat/projections'
+import { fmtSourceScore, fmtWindow, usageCtxTokens } from '../chat/projections'
 import { buildSessionMd, saveMd } from '../views/exportMd'
 import { copyText } from '../utils/clipboard'
 import { useSessionShare } from '../views/shareSession'
@@ -130,7 +130,7 @@ defineProps({ open: { type: Boolean, default: false } })
 defineEmits(['close', 'source'])
 
 const engine = inject('wqChat')
-const { groupedSources, lastTokens, lastSources, sessionTokens, sessionTokensLabel, sessionRetrieval, sessionArtifacts,
+const { groupedSources, lastTokens, lastSources, sessionTokens, sessionRetrieval, sessionArtifacts,
   currentSessionId, currentSessionTitle, messages, ctxTokens, modelIndex, effectiveModel } = engine
 
 // 容量构成：与 PC 的 ctxCapData 同一算法（窗口取本轮 tokens.window，回落模型登记窗口；
@@ -176,6 +176,8 @@ const toggleSrc = g => { srcOpen[g.key] = !srcOpenOf(g) }
 const groups = computed(() => groupedSources.value)
 const sources = computed(() => lastSources.value || [])
 const tokens = computed(() => lastTokens.value)
+// 上下文占用（给足原值，不缩成 k）：与下面容量条同一个分子
+const usageCtx = computed(() => usageCtxTokens(tokens.value) || '—')
 const artifacts = computed(() => sessionArtifacts.value)
 const scoreOf = s => (s.rerankScore != null || s.score != null) ? fmtSourceScore(s) : ''
 

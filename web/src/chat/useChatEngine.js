@@ -182,12 +182,14 @@ const contextWindowParam = computed(() => {
 })
 const canSend = computed(() => !!(text.value.trim() || pendingImages.value.length || pendingFiles.value.length))
 // ==================== 技能（输入框「+」菜单选用，仅对本轮生效） ====================
-const skillList = ref([])                 // 可用技能（后端 /skill/available：未停用技能精简列表）
+const skillList = ref([])                 // 可用技能（后端 /skill/available：内置 + 本人 + 本会话工作区的只读清单）
 const pickedSkills = ref([])              // 本轮选用的技能名（发送后清空）
+const skillDoc = ref('')                  // 正在看正文的那条技能名（''=没打开）；存名字而不是条目快照，
+                                          // 这样停用/恢复后清单重拉，弹窗看到的仍是活的那条
 const SKILL_AVA_COLORS = ['#e8f1ff', '#fff3e0', '#e8f5e9', '#fdeaf3', '#ede7f6', '#e0f4f1']
 const loadSkills = async () => {
   try {
-    const r = await listAvailableSkills()
+    const r = await listAvailableSkills(currentSessionId.value)
     skillList.value = (r && r.success && Array.isArray(r.data)) ? r.data : []
   } catch (e) { /* 接口不可用时静默：菜单只显示附件入口 */ }
 }
@@ -195,6 +197,9 @@ const toggleSkill = name => {
   const i = pickedSkills.value.indexOf(name)
   if (i >= 0) pickedSkills.value.splice(i, 1)
   else {
+    // 工作区那一路只给看、不给点名：它随会话走，钉进本轮会带出一个换会话就解析不出的名字
+    const hit = skillList.value.find(s => s.name === name)
+    if (hit && hit.selectable === false) return
     if (pickedSkills.value.length >= 3) { message.warning('一次最多选用 3 个技能'); return }
     pickedSkills.value.push(name)
   }
@@ -271,17 +276,21 @@ const modelLabelOf = ref => {
   return i === -1 ? ref : ref.slice(i + 1)
 }
 /**
- * 「模型已切换」分隔记录：本轮回答与上一条助手消息的落库模型不同时，在本条回答上方挂一条居中分隔。
+ * 「模型已切换」分隔记录：本轮回答与上一条助手消息的落库模型**展示名**不同时，在本条回答上方挂一条居中分隔。
  * 只在发消息产生新回答时出现（切换选择器本身不产生任何记录）；两侧都有模型引用才比对——
- * 旧消息/工作流轮没有 model，无法判定是否切换，不渲染。返回 {fromLabel,toLabel} 或 null。
+ * 旧消息/工作流轮没有 model，无法判定是否切换，不渲染。返回 {toLabel} 或 null。
+ * <p>比展示名而不是比落库原串：同一个模型在库里存过两种写法（早期是「供应商/模型名」整条引用，
+ * 现在只存模型名），拿原串比会把没换模型报成换了；何况展示名一样时「模型已切换 X → X」这句话本身就是假的。
  */
 const modelSwitchInfo = (m, i) => {
   if (m.role !== 'ai' || !m.model) return null
+  const toLabel = modelLabelOf(m.model)
   for (let k = i - 1; k >= 0; k--) {
     const prev = messages.value[k]
     if (prev.role !== 'ai') continue
-    if (!prev.model || prev.model === m.model) return null
-    return { fromLabel: modelLabelOf(prev.model), toLabel: modelLabelOf(m.model) }
+    if (!prev.model) return null
+    const fromLabel = modelLabelOf(prev.model)
+    return fromLabel === toLabel ? null : { toLabel }
   }
   return null
 }
@@ -332,6 +341,8 @@ const loadAgents = async () => {
   } catch (e) { /* 接口不可用时静默：选择器回退为「默认（全局配置）」 */ }
 }
 const currentSessionId = ref(null)
+// 「工作区」那一路技能随会话走：换会话必须重拉清单，否则「+」里还是上一个会话的技能（或空着不给看）
+watch(currentSessionId, () => { loadSkills() })
 // 「当前会话正在回答」：流式记录按会话各存一条（chatStreams，store.js 模块单例，跨路由存活）。
 // 语义变化：以前是页面全局布尔（任何会话在答都不能切会话/新建，点击被静默吞掉），
 // 现在只表示"正在看的这个会话在答"——其它会话后台流不影响新建/切换/发送；
@@ -556,19 +567,20 @@ const refreshArtifactSigns = async () => {
     }
   } catch (e) { /* 换签失败静默降级：仍可沿用旧签名，不阻断浏览 */ }
 }
-// 会话累计 tokens：只累加消息里真实记录的用量（tokens 随 done 事件下发、未落库，
-// 历史恢复的轮没有该字段——不计入，也不冒充 0）
+// 会话累计：只累加消息里真实记录的用量（历史恢复的轮没有该字段——不计入，也不冒充 0）。
+// 主数取「累计送入」（本轮内每次模型调用输入之和的会话总和，账单口径），不取输入+输出之和：
+// 输出在下面单列，再算进主数就是把同一笔钱报两遍。
 const sessionTokens = computed(() => {
-  let total = 0, output = 0, rounds = 0
+  let prompt = 0, output = 0, rounds = 0
   for (const m of messages.value) {
     if (m.role !== 'ai' || !m.tokens || typeof m.tokens !== 'object') continue
     rounds++
-    total += Number(m.tokens.total) || 0
+    prompt += Number(m.tokens.prompt) || 0
     output += Number(m.tokens.output) || 0
   }
-  return { total, output, rounds }
+  return { prompt, output, rounds }
 })
-const sessionTokensLabel = computed(() => sessionTokens.value.rounds ? fmtTokens(sessionTokens.value.total) + ' tokens' : '用量未记录')
+const sessionTokensLabel = computed(() => sessionTokens.value.rounds ? `累计送入 ${fmtTokens(sessionTokens.value.prompt)} tokens` : '用量未记录')
 // 会话累计检索/工具：检索轮数按「该轮有检索行或引用」计；精确检索次数按 searchKnowledge 终态记录计
 const sessionRetrieval = computed(() => {
   let rounds = 0, refs = 0, search = 0, tools = 0
@@ -1422,7 +1434,7 @@ const hydratePendingAsk = async sid => {
     const bubble = reactive({ role: 'ai', content: '', images: [], sources: [], related: [],
       degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '',
       thinkLoading: false, time: Date.now(), artifacts: [],
-      toolCalls: [], subagents: [], plan: null, timeline: [], errorCard: null, model: '', delegated: null,
+      toolCalls: [], subagents: [], plan: null, timeline: [], errorCard: null, model: '',
       turnId: item.turnId || '' })
     attachAskCard(bubble, { ...item, restored: true }, item.remainingMs)
     messages.value = [...messages.value, bubble]
@@ -1524,7 +1536,7 @@ const hydratePendingPlans = async sid => {
     degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '',
     thinkLoading: false, time: Date.now(), artifacts: [],
     toolCalls: [], subagents: [], plan: null, planCard: null, timeline: [], errorCard: null, model: '',
-    delegated: null, turnId: item.turnId || '' })
+    turnId: item.turnId || '' })
   anchor.planCard = card
   messages.value = [...list, anchor]
   hooks.scrollForce?.()
@@ -1570,7 +1582,7 @@ const hydratePendingApprovals = async sid => {
     degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '',
     thinkLoading: false, time: Date.now(), artifacts: [],
     toolCalls: [], subagents: [], plan: null, planCard: null, timeline: [], errorCard: null,
-    model: '', delegated: null, approval: null, turnId: item.turnId || '' })
+    model: '', approval: null, turnId: item.turnId || '' })
   anchor.approval = card
   messages.value = [...messages.value, anchor]
   hooks.scrollForce?.()
@@ -1790,9 +1802,10 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
   const replacedMessageId = replaceMsg && replaceMsg.messageId ? replaceMsg.messageId : ''
   // 流式回调统一改写 msg 对象（而非 messages.value[idx]）：切走会话后 messages 数组已换人，
   // 下标会指错位置；对象引用由 chatStreams 持有，切回来时 switchSession 把它接回视图尾部
-  // model 先按前端解析的生效引用预填（覆盖>个人默认，与后端 resolveModel 同序）：「模型已切换」
-  // 分隔记录在本轮回答一出现就能比对；done 再用后端权威值校正
-  const fresh = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkLoading: false, time: Date.now(), turnMs: 0, humanWaitMs: 0, artifacts: [], toolCalls: [], subagents: [], plan: null, planCard: null, timeline: [], errorCard: null, model: model || effectiveModel.value, delegated: null }
+  // model 留空，等 done/接流快照带后端那份权威值回来：前端预填的是「生效引用」（覆盖>个人默认），
+  // 后端落库的是模型名那一段，两边写法不同却都叫 model——拿引用去和上一条的落库值比，
+  // 同一个模型会被判成「已切换」，done 一到又自己消失（刷新后更是从来没有过这条线）
+  const fresh = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkLoading: false, time: Date.now(), turnMs: 0, humanWaitMs: 0, artifacts: [], toolCalls: [], subagents: [], plan: null, planCard: null, timeline: [], errorCard: null, model: '' }
   const msg = replaceMsg ? Object.assign(replaceMsg, fresh, { messageId: null, fb: null }) : reactive(fresh)
   if (!replaceMsg) messages.value.push(msg)
   const viewing = () => currentSessionId.value === sid  // 只有正在看这个会话才滚动/贴底
@@ -2146,23 +2159,12 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         msg.subagentRoute = { candidates: r.candidates || 0, picked: r.picked || 0, names: r.names || [], reasons: r.reasons || {} }
       } catch (e) { /* 忽略 */ }
     },
-    // 会话内 @ 智能体（§4）：本轮由用户 @ 提及的智能体作答（会话绑定不变）。用户指令，常显徽标；
-    // 归属同步改写（done 的 delegatedAgentName 会再校正一次，两处同值）
-    // 模型自主咨询跑通（P5）：常显徽标的数据源之一。@ 强制咨询走另一条事件，
-    // 两处由投影视图的合并函数按 id 去重，不在这里判重
-    onAgentConsulted: payload => {
-      try {
-        const r = typeof payload === 'string' ? JSON.parse(payload) : payload
-        if (!r || !r.name) return
-        msg.consulted = [...(msg.consulted || []), { id: r.id || '', name: r.name }]
-        liveScroll()
-      } catch (e) { /* 忽略 */ }
-    },
+    // 会话内 @ 智能体（§4）：本轮由用户 @ 提及的智能体作答（会话绑定不变），归属同步改写
+    // （done 的 delegatedAgentName 会再校正一次，两处同值）
     onAgentDelegated: payload => {
       try {
         const r = typeof payload === 'string' ? JSON.parse(payload) : payload
         if (!r || !r.name) return
-        msg.delegated = { name: r.name, description: r.description || '' }
         msg.agentName = r.name
         if (r.id) msg.agentId = r.id
         liveScroll()
@@ -2224,7 +2226,12 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         if (Array.isArray(p.toolCalls) && p.toolCalls.length) mergeDoneToolCalls(msg, p.toolCalls)
         // 时间线以落库版为准：本轮视图与刷新后视图同源（工具/产物下标与终态清单一一对应）
         if (Array.isArray(p.timeline) && p.timeline.length) msg.timeline = restoreTimeline(msg, p.timeline)
-        else if (msg.content !== full) msg.timeline = []
+        else if (msg.content !== full) {
+          // 正文被引用自检重建、后端没给时间线：只有 text 段的区间失效（正文变了），
+          // 思考/过程/工具段各自指向独立的累积文本与卡片对象，仍然有效。
+          // 一律清空会让这一轮跑过的操作在答完那一刻整体消失——「已完成」点开只剩一段思考。
+          msg.timeline = (Array.isArray(msg.timeline) ? msg.timeline : []).filter(s => s && s.kind !== 'text')
+        }
         // 落库时间线没带思考分段（正文被重建导致整条作废、或后端是旧版）：头部补一段，不许看不见
         ensureThinkSegment(msg)
         // 编排视图：done 下发分支最终状态，覆盖实时 subagent 事件收敛到终态
@@ -2644,16 +2651,15 @@ const compactContext = async (instruction = '') => {
   if (loading.value) { message.warning('正在生成回答，等本轮结束后再压缩'); return null }
   if (compacting.value) return null
   compacting.value = true
-  const hide = message.loading('正在压缩早期对话…', 0)
+  // 进行中不给常驻 toast：流尾那条「正在压缩上下文」分隔线就是进度（压完原地换成结果那条）
   try {
     // 不随请求带 model：压缩就该用这条会话本身在用的那个模型（后端按会话存的覆盖→个人默认解析）。
     // 拿页签内存里的旧选择去压，会把历史折进「另一个模型的口吻」里，而用户没做过那次选择
     const r = await compactSessionApi(sid, { instruction })
     const d = (r && r.data) || {}
-    // 另一套运行方式（框架引擎）的上下文由系统在提问前自己整理：这里没有「本次腾出多少」可报，
-    // 也不该画一条并没有发生的分隔线——如实说排到了下一次提问前
+    // 无活实例/压缩失败回落：框架在提问前自己整理上下文，这里如实说排到了下一次提问前
     if (d.scheduled) {
-      message.info('这套引擎会在提问前自己整理上下文，已安排下一次提问前折一次早期对话')
+      message.info('已安排下一次提问前折一次早期对话')
       return d
     }
     // 两种情形都算「没得压」：对话本来就短，或早期对话上次已经压过了（最近 2 次问答不会被压掉）
@@ -2672,7 +2678,6 @@ const compactContext = async (instruction = '') => {
     message.error(e?.message || '压缩失败，请稍后重试')
     return null
   } finally {
-    hide()
     compacting.value = false
   }
 }
@@ -2795,7 +2800,7 @@ if (typeof window !== 'undefined') {
     // 上下文窗口档位（发送载荷 + 思考面板消费）
     ctxRangeOf, ctxWindowOptionsOf, ctxWindowMap, effectiveCtxWindowOf, setCtxWindow, contextWindowParam,
     // 技能
-    skillList, pickedSkills, loadSkills, toggleSkill, skillAvaStyle,
+    skillList, pickedSkills, loadSkills, toggleSkill, skillAvaStyle, skillDoc,
     // 智能体
     agentList, agentMap, defaultAgentId, hasDefaultAgent,
     currentAgentId, isAdmin, agentPickerOpen, currentAgentName, currentAgent, pickAgent,

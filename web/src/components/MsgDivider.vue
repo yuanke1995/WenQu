@@ -17,17 +17,17 @@ defineProps({
 </script>
 
 <style scoped>
-/* 左右内缩由宿主用 --mdv-inset 传入（PC 收到正文列宽，H5 满宽即不传）：
-   否则分隔线横贯整个消息区、比正文宽出一倍 */
+/* 整条按内容居中，两侧细线撑满宿主给的那一行：读作「横过这一列的一道痕」，线太短就成了
+   飘在中间的一行小字，看不出它划在两条消息之间。能有多宽由宿主定（见各页的分隔线类），
+   组件只管把线拉到宿主给的那一行。 */
 /* 上下留白由宿主给（组件不设 margin）：这条线在 PC 正文列、H5 整宽、流尾各处的间距都不一样，
    写在组件里就要靠选择器权重去压宿主样式，不如交回调用方 */
 .msg-divider {
-  flex-basis: 100%; display: flex; align-items: center; gap: 10px;
-  padding: 0 var(--mdv-inset, 0px);
+  flex-basis: 100%; display: flex; align-items: center; justify-content: center; gap: 12px;
   color: var(--app-text3); font-size: 12px;
 }
 .msg-divider.touch { font-size: 13px; }
-.mdv-line { flex: 1; border-top: 1px solid var(--app-border); }
+.mdv-line { flex: 1 1 0; min-width: 24px; border-top: 1px solid var(--app-border); }
 .mdv-text { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; flex: none; }
 .mdv-text :deep(.anticon) { font-size: 12px; opacity: .75; }
 .msg-divider.touch .mdv-text :deep(button) { min-height: 30px; padding: 0 8px; font-size: 13px; }
