@@ -79,17 +79,29 @@ public final class WenquSourcePool {
         return registry.registerConsultedSources(childSources);
     }
 
+    /**
+     * 引用池快照（副本）。
+     * <p>池在本轮工具执行期间会被多路并行工具并发写入（模型一次可发多个 search_knowledge），
+     * 直接返回内部 List 会让调用方（接流快照/落库序列化）在遍历时撞上并发 add。副本的代价是
+     * 一次浅拷贝，换来的是「任何读方都不需要懂这把锁」。
+     */
     public List<Map<String, Object>> sources() {
-        return sources;
+        synchronized (sources) {
+            return new ArrayList<>(sources);
+        }
     }
 
-    /** 本轮图片编号体系（引用完整性自检要按它判 [图片N] 是否悬空）。 */
+    /** 本轮图片编号体系快照（引用完整性自检要按它判 [图片N] 是否悬空）。 */
     public Map<Integer, String> imgIndex() {
-        return imgIndex;
+        synchronized (sources) {
+            return new LinkedHashMap<>(imgIndex);
+        }
     }
 
     public Map<Integer, String> imgDescIndex() {
-        return imgDescIndex;
+        synchronized (sources) {
+            return new LinkedHashMap<>(imgDescIndex);
+        }
     }
 
     /**
@@ -98,7 +110,9 @@ public final class WenquSourcePool {
      * 读侧由 {@code ImageUrlSigner.signMessageMedia} 现场签）。
      */
     public List<String> rawImages() {
-        return new ArrayList<>(imgIndex.values());
+        synchronized (sources) {
+            return new ArrayList<>(imgIndex.values());
+        }
     }
 
     /** 按图片鉴权配置签一份 URL 清单（未开鉴权时原样返回）。出 SSE 帧的都是签名副本，落库的必须不是。 */
@@ -111,6 +125,11 @@ public final class WenquSourcePool {
         return sign(rawImages());
     }
 
+    /**
+     * 降级去重表：<b>故意返回活引用</b>——引用自检（{@link com.wenqu.ai.agent.context.CitationIntegrityService}）
+     * 要在检查过程中往里登记降级，给副本等于把提示丢在半路。并发写由
+     * {@code ChatRunRuntime#addDegradation} 在 {@code codes} 上串行；读方都在本轮收口之后。
+     */
     public Set<String> degradedCodes() {
         return degradedCodes;
     }
@@ -125,10 +144,13 @@ public final class WenquSourcePool {
         // 直接 clear() 再 addAll(自己) 得到的是空表——双跑实测抓到：框架引擎每轮引用面板全空、
         // 正文角标没有出处，而 legacy 同一问题有 17 条来源。
         var snapshot = new ArrayList<>(outcome.sources());
-        sources.clear();
-        sources.addAll(snapshot);
+        synchronized (sources) {
+            sources.clear();
+            sources.addAll(snapshot);
+        }
     }
 
+    /** 降级明细：同样返回活引用（理由见 {@link #degradedCodes()}），登记与消费共用这一份。 */
     public List<Map<String, String>> degradations() {
         return degradations;
     }

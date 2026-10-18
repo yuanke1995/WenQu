@@ -89,11 +89,18 @@ public class ChatRunRuntime {
         return BARE_ABORTS.remove(sessionId, turnId);
     }
 
-    /** fail-loud：按 code 去重添加降级事件（全部 debug 级，由 chat.retrievalDebugEnabled 开关控制，默认不展示） */
+    /**
+     * fail-loud：按 code 去重添加降级事件（全部 debug 级，由 chat.retrievalDebugEnabled 开关控制，默认不展示）。
+     * <p>并行工具调用会同时走到这里（典型：同一轮 4 路 search_knowledge 各自发现重排不可用）：
+     * {@code Set.add} 与 {@code List.add} 都必须串行，否则两个普通集合会被并发写坏。
+     * 锁放在 {@code codes} 上，与 {@code WenquSourcePool} 读取快照用的是同一把。
+     */
     public void addDegradation(List<Map<String, String>> list, Set<String> codes, String code, String msg) {
-        if (!codes.add(code)) return;
-        if (configService.getBoolean("chat.retrievalDebugEnabled")) {
-            list.add(Map.of("code", code, "msg", msg, "level", "debug"));
+        synchronized (codes) {
+            if (!codes.add(code)) return;
+            if (configService.getBoolean("chat.retrievalDebugEnabled")) {
+                list.add(Map.of("code", code, "msg", msg, "level", "debug"));
+            }
         }
     }
 

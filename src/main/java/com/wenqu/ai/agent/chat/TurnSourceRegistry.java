@@ -76,6 +76,8 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
     private final String question;
     /** 本轮创建时的那条通道：新增图片要重发全量 image 事件 */
     private final SseEmitter emitter;
+    /** 串行化 image 事件（整体替换语义，见 {@link #publishImageEvent()}）；加锁顺序固定为 imageEventLock → sources */
+    private final Object imageEventLock = new Object();
     /** 降级登记的两只容器（与本轮状态袋同一对象引用，不另建） */
     private final List<Map<String, String>> degradations;
     private final Set<String> degradedCodes;
@@ -254,10 +256,15 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
     public KnowledgeRetrievalTool.SourceRegistrar.Registration registerToolSource(HybridRetrievalService.Hit h, String snippet) {
         Integer existing = findExistingSourceRef(h);
         if (existing != null) {
-            return new KnowledgeRetrievalTool.SourceRegistrar.Registration(existing,
-                    toolRefImages.getOrDefault(existing, List.of()));
+            // 图片清单与来源同锁写入：这里读的也持锁，避免另一路正在给别的来源 put 时读到半更新状态
+            synchronized (sources) {
+                return new KnowledgeRetrievalTool.SourceRegistrar.Registration(existing,
+                        toolRefImages.getOrDefault(existing, List.of()));
+            }
         }
         int ref;
+        List<Integer> imgSeqs;
+        boolean imagesAdded;
         synchronized (sources) {
             existing = findExistingSourceRef(h); // 并发注册同一块的双检
             if (existing != null) {
@@ -286,10 +293,21 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
                 src.put("rerankScore", Math.round(h.rerankScore() * 1000) / 1000.0);
             }
             sources.add(src);
+            // 图片编号与来源编号在同一把锁内落定：assignToolImages 要遍历 imgIndex（LinkedHashMap），
+            // 而并行工具调用会同时往 imgIndex 写图 —— 在锁外遍历就是 fail-fast，真机现场
+            // search_knowledge 并发 4 路时抛 ConcurrentModificationException，整路工具结果变成错误。
+            ImageAssignment imgs = assignToolImages(h);
+            imgSeqs = imgs.seqs();
+            // 与 sources.add 同一把锁：否则并发注册撞到「来源已占号、图片清单还没写入」的窗口，
+            // 后到的那一路命中同一块时会拿到空清单（正文配图丢失而非报错，更难发现）。
+            toolRefImages.put(ref, imgSeqs);
+            imagesAdded = imgs.added();
         }
-        // 图片编号并入 + SSE 在 sources 锁外（签名与网络写不应持锁）
-        List<Integer> imgSeqs = assignToolImages(h);
-        toolRefImages.put(ref, imgSeqs);
+        // 签名与 SSE 发送仍在 sources 锁外（网络写不应持锁）；image 事件是「全量替换」，
+        // 必须串行且每次重读最新快照，否则先快照后发送的两路可能把较短的旧清单盖回去。
+        if (imagesAdded) {
+            publishImageEvent();
+        }
         return new KnowledgeRetrievalTool.SourceRegistrar.Registration(ref, imgSeqs);
     }
 
@@ -307,12 +325,18 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
     }
 
     /**
-     * 来源图片并入全局编号：URL 去重（全局一张图一个编号），编号延续 imgIndex.size()+1；
-     * 有新增则重发全量 image 事件（SSE 发送在 sources 锁外——签名与网络写不应持锁）。
+     * 来源图片并入全局编号：URL 去重（全局一张图一个编号），编号延续 imgIndex.size()+1。
+     * <p><b>调用方必须持有 {@code sources} 锁</b>：本方法要遍历 imgIndex，而并发工具调用会同时写它。
+     * 2026-10-18 真机现场 4 路 {@code search_knowledge} 并发注册，锁外遍历 {@code imgIndex.values()}
+     * 抛 {@code ConcurrentModificationException}，该路工具结果整条变成
+     * {@code Error: Tool execution failed: ConcurrentModificationException}。
+     * <p>SSE 发送不在这里做（签名与网络写不应持锁），由调用方在锁外以 {@link #publishImageEvent()} 发全量清单。
+     *
+     * @return 本次命中的图片编号，以及是否真的新增了图片（决定要不要重发 image 事件）
      */
-    private List<Integer> assignToolImages(HybridRetrievalService.Hit h) {
+    private ImageAssignment assignToolImages(HybridRetrievalService.Hit h) {
         List<String> urls = h.images();
-        if (urls == null || urls.isEmpty()) return List.of();
+        if (urls == null || urls.isEmpty()) return new ImageAssignment(List.of(), false);
         String[] descs = extractImgDescs(h);
         boolean added = false;
         List<Integer> seqs = new ArrayList<>();
@@ -332,11 +356,26 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
                 seqs.add(seq);
             }
         }
-        if (added) {
-            List<String> signed = imgIndex.values().stream().map(imageUrlSigner::signUrl).toList();
+        return new ImageAssignment(seqs, added);
+    }
+
+    /** 一次图片并入的结果：编号清单 + 是否新增（新增才需要重发全量 image 事件）。 */
+    private record ImageAssignment(List<Integer> seqs, boolean added) {}
+
+    /**
+     * 重发全量图片清单。image 帧是「整体替换」语义，所以发送必须串行：
+     * 两路工具并发新增图片时，先取快照的一路若后发，会把更长的新清单盖回旧长度，前端直接丢图。
+     * 串行块内重读最新快照（读也持 {@code sources} 锁），后发的一定不短于先发的。
+     */
+    private void publishImageEvent() {
+        synchronized (imageEventLock) {
+            List<String> raw;
+            synchronized (sources) {
+                raw = List.copyOf(imgIndex.values());
+            }
+            List<String> signed = raw.stream().map(imageUrlSigner::signUrl).toList();
             runtime.sendSseEvent(emitter, "image", JSON.toJSONString(signed), sessionId);
         }
-        return seqs;
     }
 
     /** 从块原文按占位出现顺序提取图片描述（第 i 个 [图片：desc] ↔ 第 i 张图；占位多于图片数时多余描述丢弃） */
