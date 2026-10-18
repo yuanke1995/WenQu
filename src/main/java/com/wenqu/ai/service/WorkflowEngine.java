@@ -120,7 +120,8 @@ public class WorkflowEngine {
     private final com.wenqu.ai.mapper.SessionMapper sessionMapper;
     private final com.wenqu.ai.mapper.ToolApprovalMapper toolApprovalMapper;
     private final RerankService rerankService;
-    private final SkillService skillService;
+    /** 技能读取（全框架化 P3）：改走框架技能仓库，按当前 uid 解析可见技能。 */
+    private final com.wenqu.ai.skill.WenquSkillRepository skillRepository;
     private final McpClientService mcpClientService;
     private final CredentialService credentialService;
 
@@ -131,7 +132,8 @@ public class WorkflowEngine {
                           SandboxService sandboxService, AgentService agentService,
                           ChatService chatService, SessionService sessionService,
                           com.wenqu.ai.mapper.ToolApprovalMapper toolApprovalMapper,
-                          RerankService rerankService, SkillService skillService,
+                          RerankService rerankService,
+                          com.wenqu.ai.skill.WenquSkillRepository skillRepository,
                           McpClientService mcpClientService, CredentialService credentialService,
                           com.wenqu.ai.mapper.SessionMapper sessionMapper) {
         this.validator = validator;
@@ -147,7 +149,7 @@ public class WorkflowEngine {
         this.sessionMapper = sessionMapper;
         this.toolApprovalMapper = toolApprovalMapper;
         this.rerankService = rerankService;
-        this.skillService = skillService;
+        this.skillRepository = skillRepository;
         this.mcpClientService = mcpClientService;
         this.credentialService = credentialService;
     }
@@ -1158,12 +1160,12 @@ public class WorkflowEngine {
     // ---- 第 3 期：skill / mcp（生态节点） ----
 
     /**
-     * 技能节点：把所选技能的<b>全文</b>注入下游上下文（与聊天「+」菜单的「本轮指定技能」同一约定，
-     * 见 {@code ChatService.buildUserSkillText}）——输出 {@code text}，下游 llm 节点用
+     * 技能节点：把所选技能的<b>全文</b>注入下游上下文（与聊天「+」菜单里点名技能同一约定，
+     * 见 {@code AgentscopeChatEngine.pickedSkillsText}）——输出 {@code text}，下游 llm 节点用
      * {@code {{skill_1.text}}} 引用即可让模型按技能要求作答。
      * <p>
-     * 技能是个人资产（不共享）：按 {@code ctx.uid} 取，名字不存在/已停用即 fail-loud，不静默降级。
-     * 单个技能正文由 {@code SkillService.readContent} 按 {@code skill.maxFileChars} 截断（与聊天同口径）。
+     * 技能按归属人解析（内置技能 + 本人技能目录，同名以本人版为准）：名字取不到即 fail-loud，不静默降级。
+     * 正文按 {@code skill.maxFileChars} 截断（与聊天里点名技能同一口径），防止一篇长技能吃掉下游节点的预算。
      */
     private Function<OverAllState, NodeOut> skillBody(WorkflowDsl.Node n, WorkflowRunCtx ctx) {
         return state -> {
@@ -1173,10 +1175,21 @@ public class WorkflowEngine {
             }
             StringBuilder sb = new StringBuilder();
             List<String> loaded = new ArrayList<>();
+            int maxChars = configService.getInt("skill.maxFileChars",
+                    com.wenqu.ai.config.ConfigDefaults.SKILL_MAX_FILE_CHARS);
             for (String name : names) {
-                String content = withReplay(ctx, () -> skillService.readContent(ctx.uid, name));
+                String content = withReplay(ctx, () -> {
+                    io.agentscope.core.skill.AgentSkill sk =
+                            skillRepository.getSkill(name, io.agentscope.core.agent.RuntimeContext.builder()
+                                    .userId(ctx.uid).sessionId("workflow").build());
+                    return sk == null ? null : sk.getSkillContent();
+                });
                 if (content == null || content.isBlank()) {
-                    throw new BizException("节点「" + n.getId() + "」技能「" + name + "」不存在、已停用或对当前用户不可用");
+                    throw new BizException("节点「" + n.getId() + "」技能「" + name + "」不存在或当前用户不可用");
+                }
+                // 与聊天点名技能同一条截断口径：预算参数只有一处真源，两个入口不该各读各的
+                if (content.length() > maxChars) {
+                    content = content.substring(0, maxChars) + "\n…（正文超长已截断）";
                 }
                 loaded.add(name);
                 sb.append("\n\n### 技能：").append(name).append("\n").append(content);
@@ -1185,7 +1198,7 @@ public class WorkflowEngine {
             Map<String, Object> trace = new LinkedHashMap<>();
             trace.put("skills", loaded);
             trace.put("chars", text.length());
-            // 与 mcp 节点同一口径的旁路声明：这里直接读 SkillService，不经 readSkill 工具回调，
+            // 与 mcp 节点同一口径的旁路声明：这里直接读技能仓库，不经本轮工具回调，
             // 所以聊天守卫链（步数预算/工具卡/账本）都不适用——技能节点的留痕就是这条 trace。
             trace.put("guardBypass", "chat-guard-chain");
             return new NodeOut(Map.of("text", text, "skills", loaded), null, null, trace);

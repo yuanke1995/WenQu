@@ -9,7 +9,6 @@ import com.wenqu.ai.model.WorkflowRun;
 import com.wenqu.ai.service.ImageUrlSigner;
 import com.wenqu.ai.service.QaLogService;
 import com.wenqu.ai.service.SessionService;
-import com.wenqu.ai.service.UserMemoryService;
 import com.wenqu.ai.service.WorkflowService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
@@ -44,7 +43,6 @@ public class ChatflowBridge {
     private final ObjectProvider<WorkflowService> workflowServiceProvider;
     private final ImageUrlSigner imageUrlSigner;
     private final QaLogService qaLogService;
-    private final UserMemoryService userMemoryService;
     private final HistoryCompactionService historyCompaction;
 
     public ChatflowBridge(ChatRunRuntime runtime,
@@ -52,14 +50,12 @@ public class ChatflowBridge {
                           ObjectProvider<WorkflowService> workflowServiceProvider,
                           ImageUrlSigner imageUrlSigner,
                           QaLogService qaLogService,
-                          UserMemoryService userMemoryService,
                           HistoryCompactionService historyCompaction) {
         this.runtime = runtime;
         this.sessionService = sessionService;
         this.workflowServiceProvider = workflowServiceProvider;
         this.imageUrlSigner = imageUrlSigner;
         this.qaLogService = qaLogService;
-        this.userMemoryService = userMemoryService;
         this.historyCompaction = historyCompaction;
     }
 
@@ -190,13 +186,10 @@ public class ChatflowBridge {
             runtime.attachLeftoverSteers(donePayload, sessionId);
             runtime.sendSseEvent(emitter, "done", JSON.toJSONString(donePayload), sessionId);
             runtime.completeEmitter(emitter);
-            // 记忆提取：工作流节点用的是自己的模型，这里按「用户个人默认聊天模型」提取长期记忆
-            // （没有配置默认模型就不提取——记忆提取必须有模型，不传空引用去让下游猜/报内部错）
-            if (memoryModel != null && !memoryModel.isBlank()) {
-                userMemoryService.maybeExtract(userId, sessionId, question, answer, guestMode, memoryModel);
-            } else {
-                log.debug("[WORKFLOW-CHAT] 未配置个人默认模型，跳过长期记忆提取: uid={}", userId);
-            }
+            // 长期记忆提取已交框架（全框架化P3）：MemoryFlushManager 在上下文压缩时按 MemoryConfig
+            // 的触发条件自动 flush，不再由问渠在工作流收尾处手动调模型提炼。
+            // 代价（如实记录）：工作流这条路径**不再提取长期记忆**——它绕过 agent 运行时，
+            // 框架的 flush 钩子挂不上。
             log.info("[WORKFLOW-CHAT] 工作流回答完成: session={} run={} v={} 耗时 {}ms",
                     sessionId, run.getId(), run.getVersion(), run.getDurationMs());
         } catch (com.wenqu.ai.common.BizException e) {

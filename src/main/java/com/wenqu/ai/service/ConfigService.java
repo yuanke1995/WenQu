@@ -260,8 +260,12 @@ public class ConfigService {
         // 在问渠受管数据目录之外（容器里等于丢）
         d.put("chat.agentscopeStateDir", System.getProperty("user.dir") + "/user-data/agentscope");
         d.put("chat.agentscopeMaxIters", "12");            // 框架引擎单轮推理步数上限（ReAct 循环；框架默认 10，问渠显式 12）
-        // 框架侧上下文预算（token）：0=用框架默认；用户在这一轮显式选过的窗口优先于它
-        d.put("chat.agentscopeMaxContextTokens", "0");
+        // chat.agentscopeMaxContextTokens 已取消（2026-10-18）：该键原以为能控制框架的压缩阈值，
+        // 实测框架里 .maxContextTokens(...) 是 WorkspaceContextMiddleware 的「工作区材料注入预算」
+        // （AGENTS.md/MEMORY.md/knowledge 注入上限，框架默认 8000），不是压缩阈值；压缩阈值由
+        // model.getContextWindowSize() 推导（CompactionMiddleware: window-reserved 20k）。
+        // 用户的窗口档位现落 OpenAIChatModel.contextWindowSize（AgentscopeChatEngine.modelContextWindow）。
+        // 数据库遗留该键不影响行为（无读取点），设置页 debug 面板若无对应 schema 行也不会显示。
         // 框架引擎状态存 Redis（多副本部署时开：副本间共享 stateStore，待办答复/断线续跑才能落到同一副本）
         // 登记这一行是为了与 schema 的 def=false 对齐：此前只在 schema 声明、defaults() 没登记，
         // 读取点 `get()` 落空返回 ""，行为恰好也是关（读点用 "true".equalsIgnoreCase 判定），
@@ -295,7 +299,6 @@ public class ConfigService {
         // 平台内置向量化模型（全局、管理员可编辑、非 personalOnly）：运营方登记一个 embedding 模型引用，
         // 作为全体用户记忆语义能力的统一来源——用户零配置即可获得语义记忆。留空=不提供向量化
         // （记忆去重降级为精确匹配、语义注入关闭）。记忆向量化已不再暴露为个人设置项
-        d.put("memory.platformEmbeddingRef", "");
         // 分块粒度与标题层级：解析器统一经 configService 读取（d 里必须给出种子，否则丢失 yml 默认），
         // 知识库 parse_params 的库级覆盖才可能生效（覆盖走线程局部，读 AppProperties 的旁路读不到）
         d.put("chunk.maxSize", String.valueOf(properties.getChunk().getMaxSize()));
@@ -449,8 +452,6 @@ public class ConfigService {
         d.put("scheduled.scanIntervalMs", "30000");            // 到期扫描间隔(ms，≤0=暂停扫描)
         d.put("web.refreshEnabled", "true");                   // 网页源定时刷新总开关（仅 file_type=url 且文档开启 autoRefresh 才刷新）
         d.put("web.refreshScanIntervalMs", "60000");           // 网页源到期扫描间隔(ms，≤0=暂停扫描)
-        d.put("memory.dedupThreshold", "0.90");               // 自动提取/手动添加记忆的语义去重余弦阈值（≥此值视为重复，跳过）
-        d.put("memory.useSemanticInject", "true");           // 注入是否按当前对话语义检索 Top-K（关闭则回退按更新时间倒序）
         // 原 yml 参数开放为可配置（值由 syncProperties 回写到 AppProperties，读取点无需改动）
         // 注：chunk.maxSize / chunk.headingDepth 已在上方按 properties 播种（保证 yml/env 覆盖生效），此处不得再写死覆盖
         d.put("images.maxWidth", "1280");              // 图片压缩最长边(px,0=不压缩)
@@ -507,12 +508,11 @@ public class ConfigService {
         d.put("webSearch.timeoutMs", "8000");             // 单次请求超时(ms)
         d.put("webSearch.snippetChars", "600");           // 单条摘要截断字符数（控制工具结果 token 量）
         d.put("webSearch.requireApproval", "true");       // 是否纳入"有副作用工具"：true=受智能体 toolApprovalMode=ask 管辖。默认开：联网是唯一会向外部第三方发请求、可能对用户计费的能力，让模型自主决定花谁的钱不该是默认态
-        // 技能的内容与启停已在个人表 c_ai_user_skill / c_ai_skill_disabled（谁装谁管），此处只剩两项预算参数
-        d.put("skill.injectMaxChars", "1200");             // 清单注入字符上限
+        // 技能正文的写入已由 AgentScope 框架接管（内置随版本分发 + 本人技能目录 + 助手在对话里沉淀到
+        // 沙盒工作区），这里只剩两项：一条技能全文能读进来多少字（本轮点名时按它截断，防止一篇长技能
+        // 吃掉整轮上下文），以及「哪些技能不要再用」（平台层对所有人、个人层只对自己，一行一条技能名）。
         d.put("skill.maxFileChars", String.valueOf(ConfigDefaults.SKILL_MAX_FILE_CHARS));              // 单技能全文读取上限
-        // 远程安装来源白名单（逗号分隔的精确 host，子域要单列；留空=关闭远程安装）：技能正文入库不执行，
-        // 但"允许从哪儿拉"必须是平台可控的边界（GitHub 走 raw 链接，故含 raw.githubusercontent.com）
-        d.put("skill.remoteAllowedHosts", "github.com,raw.githubusercontent.com,modelscope.cn,www.modelscope.cn");
+        d.put("skill.disabled", "");                                                                   // 停用清单（平台层）
 
         // ---------- 单点登录（OIDC）----------
         // 语义与平台版 config/options.py 的 OIDCConfig 一致（字段名改成 camelCase 落 c_ai_config）：
@@ -621,10 +621,7 @@ public class ConfigService {
         d.put("graphrag.batchChunks", "3");                // P1：合并批抽取的块数（3~5 平衡 token 与归属粒度）
         d.put("graphrag.expandTopK", "5");                 // P1：检索时图扩展并入的块数上限（0=不扩展）
         // 用户长期记忆（跨会话个性化）
-        d.put("memory.enabled", "true");                   // 总开关：问答后自动提取 + 注入本人后续问答
-        d.put("memory.maxPerUser", "50");                  // 每人记忆条数上限（满后自动提取跳过，个人设置可清理）
-        d.put("memory.maxInjectCount", "30");              // 每轮最多注入条数（按更新时间取最近）
-        d.put("memory.injectBudgetChars", "1500");         // 注入字符预算（防挤占知识上下文）
+        d.put("memory.enabled", "true");                   // 总开关：关掉后全平台问答不再自动提炼记忆（已沉淀的仍会注入）
         // 已退役：agent.autoRoute / agent.routeTimeoutMs（派遣路由的两项）。P5 换成 agent-as-tool 后这两项
         // 的读取点随 SubAgentOrchestrator 一起归零——见本方法上方那段「已退役」清单的统一说明。
         // 本轮补做 P5 收口时承诺的这件事：下面的咨询工具是唯一在用的委派机制。

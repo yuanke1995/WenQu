@@ -147,22 +147,6 @@ CREATE TABLE IF NOT EXISTS `c_ai_agent_share` (
     KEY `idx_share_agent` (`agent_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='智能体公开分享配置（一个智能体一条；/s/{token} 免登录对话）';
 
-CREATE TABLE IF NOT EXISTS `c_ai_user_memory` (
-    `id`                VARCHAR(50)  NOT NULL COMMENT '主键ID',
-    `uid`               VARCHAR(64)  NOT NULL COMMENT '所属用户（记忆按用户隔离，只注入本人会话）',
-    `content`           VARCHAR(500) NOT NULL COMMENT '记忆内容（一句独立可读的事实/偏好，如"用户负责XX工作区的运维"）',
-    `category`          VARCHAR(20)  DEFAULT 'fact' COMMENT '类别: fact=事实偏好 instruction=指令约定 project=工作背景',
-    `source`            VARCHAR(20)  DEFAULT 'manual' COMMENT '来源: auto=问答后自动提取 manual=用户手动添加',
-    `source_session_id` VARCHAR(50)  DEFAULT NULL COMMENT '来源会话ID（auto 时记录，便于溯源删除）',
-    `hit_count`         INT          DEFAULT 0 COMMENT '被注入后续问答的次数（使用度）',
-    `last_hit_at`       DATETIME     DEFAULT NULL COMMENT '最近一次被注入时间',
-    `create_time`       DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    `update_time`       DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-    PRIMARY KEY (`id`),
-    `embedding`      TEXT         DEFAULT NULL COMMENT '记忆向量（JSON float 数组；语义去重与注入检索用）',
-    KEY `idx_mem_uid` (`uid`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户长期记忆（跨会话事实/偏好；注入本人后续问答的 system prompt）';
-
 -- ============================================
 -- 2026-10-02: 个人配置覆盖（个人设置 → 对话偏好）
 -- 键限定为 config-schema.json 中标记 personal 的字段（如相关建议条数）：个人值覆盖系统全局值
@@ -530,50 +514,14 @@ CREATE TABLE IF NOT EXISTS `c_ai_model` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 模型库表（按类型登记供应商可用模型）';
 
 -- ============================================
--- 2026-09-26: 技能（Skills）与 MCP Server 下沉为「个人资产」
--- 变更背景：这两类资源原先是管理员在系统设置里维护的**全局**资源——技能落在服务器目录
---   skill.dir（{技能名}/SKILL.md）+ 全局停用名单 skill.disabledNames，MCP 落在全局配置
---   mcp.servers（JSON 数组）+ mcp.enabled；普通用户既看不见也改不了（/api/ai/skill/** 与
---   /api/ai/mcp/** 对非管理员返回 403）。现改为按 uid 归属，每人各管各的。
---   系统设置只保留与"内容无关"的预算类参数（skill.injectMaxChars / skill.maxFileChars）
---   与工具调用总开关 tool.enabled；技能是否使用、MCP 连哪些服务器由用户自己决定。
+-- 2026-09-26: MCP Server 下沉为「个人资产」
+-- 变更背景：这类资源原先是管理员在系统设置里维护的**全局**配置——MCP 落在全局配置
+--   mcp.servers（JSON 数组）+ mcp.enabled；普通用户既看不见也改不了
+--   （/api/ai/mcp/** 对非管理员返回 403）。现改为按 uid 归属，每人各管各的。
+-- 技能三张表（个人技能 / 内置停用 / 内置改写）与用户长期记忆表已随「全框架化 P3」退役：
+--   技能正文与记忆都改由文件系统承载，增删改交给框架的技能与记忆工具。
+--   存量库的清理见文件末尾「退役清理」段。
 -- ============================================
-
-CREATE TABLE IF NOT EXISTS `c_ai_user_skill` (
-    `id`          VARCHAR(50)  NOT NULL COMMENT '主键ID (UUID)',
-    `uid`         VARCHAR(64)  NOT NULL COMMENT '归属用户（c_ai_user.uid）',
-    `dir_name`    VARCHAR(64)  NOT NULL COMMENT '技能标识（详情/停用/删除的主键；沿用原「技能目录名」口径：中英文/数字/下划线/连字符）',
-    `name`        VARCHAR(200) NOT NULL COMMENT '技能显示名（frontmatter name，注入系统提示用）',
-    `description` VARCHAR(500) DEFAULT NULL COMMENT '一句话描述（模型据此判断要不要读取该技能）',
-    `version`     VARCHAR(32)  DEFAULT NULL COMMENT '版本（frontmatter version）',
-    `content`     MEDIUMTEXT   NOT NULL COMMENT 'SKILL.md 全文（含 YAML frontmatter；只作纯文本读取，不执行其中任何内容）',
-    `source`      VARCHAR(20)  DEFAULT 'user' COMMENT '来源: user=自建 url=URL 安装',
-    `disabled`    INT          DEFAULT 0 COMMENT '停用: 0=生效 1=停用（停用后不注入清单、readSkill 也拒绝读取）',
-    `create_time` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    `update_time` DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-    PRIMARY KEY (`id`),
-    UNIQUE KEY `uk_uid_dir` (`uid`, `dir_name`),
-    KEY `idx_uid` (`uid`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='个人技能表（ Skills：能力包正文，按用户隔离，替代原服务器技能目录）';
-
-CREATE TABLE IF NOT EXISTS `c_ai_skill_disabled` (
-    `uid`         VARCHAR(64) NOT NULL COMMENT '归属用户（c_ai_user.uid）',
-    `dir_name`    VARCHAR(64) NOT NULL COMMENT '内置技能标识（classpath skills/{dirName}/SKILL.md 的目录名）',
-    `create_time` DATETIME    DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    PRIMARY KEY (`uid`, `dir_name`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='内置技能的个人停用标记（内置技能随版本分发、所有人可见，是否停用由各人自定）';
-
-CREATE TABLE IF NOT EXISTS `c_ai_builtin_skill_override` (
-    `dir_name`    VARCHAR(64)  NOT NULL COMMENT '内置技能标识（classpath skills/{dirName}/SKILL.md 的目录名），主键',
-    `name`        VARCHAR(200) NOT NULL COMMENT '技能显示名（frontmatter name，注入系统提示用；改它会让智能体上按名字的引用失配，故开放编辑但会提示）',
-    `description` VARCHAR(500) DEFAULT NULL COMMENT '一句话描述（模型据此判断要不要读取该技能）',
-    `version`     VARCHAR(32)  DEFAULT NULL COMMENT '版本（frontmatter version）',
-    `content`     MEDIUMTEXT   NOT NULL COMMENT '管理员改写后的 SKILL.md 全文（含 YAML frontmatter；只作纯文本读取，不执行其中任何内容）',
-    `updated_by`  VARCHAR(64)  DEFAULT NULL COMMENT '最后修改人 uid（审计）',
-    `create_time` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    `update_time` DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-    PRIMARY KEY (`dir_name`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='内置技能的全局改写（管理员可编辑内置技能；无行=用随版本分发的原文，删除该行即恢复默认）';
 
 CREATE TABLE IF NOT EXISTS `c_ai_user_mcp` (
     `id`          VARCHAR(50)  NOT NULL COMMENT '主键ID (UUID)',
@@ -1029,3 +977,17 @@ CREATE TABLE IF NOT EXISTS `c_ai_session_event` (
     KEY `idx_se_session_turn` (`session_id`, `turn_id`),
     KEY `idx_se_created` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='会话事件账本（结构性事件，服务过程回放与审计；旁路写入，失败不影响问答）';
+
+-- ============================================
+-- 退役清理（全框架化 P3：技能与记忆改由文件系统 + 框架工具承载）
+-- 本文件由 spring.sql.init 在每次启动时逐条执行，故这四条 DROP 是幂等的：表不存在就是空操作。
+-- 为什么必须写在这里而不是「删掉建表语句就完事」：schema.sql 只管建表，存量库里已经存在的表
+--   不会因为语句被删而消失；而只要建表语句还在，删掉的表下次启动就被重建（实测踩过：16:45 手工
+--   DROP，16:47 重启后四张表原样复活、0 行挂着当僵尸表）。写显式 DROP 才能让新老库一起干净。
+-- 数据去向：技能正文 → 内置技能目录（classpath 随版本分发，启动时落盘到 user-data/skills-builtin）
+--   与本人技能目录；长期记忆 → 工作区里的 MEMORY.md + memory/*.md。删表前的库备份是这一刀的回滚点。
+-- ============================================
+DROP TABLE IF EXISTS `c_ai_user_skill`;
+DROP TABLE IF EXISTS `c_ai_skill_disabled`;
+DROP TABLE IF EXISTS `c_ai_builtin_skill_override`;
+DROP TABLE IF EXISTS `c_ai_user_memory`;

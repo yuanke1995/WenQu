@@ -204,6 +204,16 @@ public class OrgService {
     }
 
     /**
+     * 本人的「自动提炼记忆」是否开着（null=历史行缺省，视为开）。
+     * <p>框架引擎按它决定这一路的 {@code MemoryConfig.flushTrigger}：关掉的只是每轮收尾的提炼，
+     * 已沉淀的 {@code MEMORY.md} 照常注入——与个人设置里那句「仅关生成，不关注入」一致。
+     */
+    public boolean memoryFlushEnabled(String uid) {
+        User u = uid == null || uid.isBlank() ? null : userMapper.selectById(uid);
+        return u == null || !Integer.valueOf(0).equals(u.getMemoryEnabled());
+    }
+
+    /**
      * 本人修改个人资料：username/avatar 各自缺省(null)=不修改；avatar 空串=清除头像（回落昵称首字）。
      * 昵称校验唯一性；头像写入走 setAvatar（含旧上传图清理、取值合法性校验）。
      */

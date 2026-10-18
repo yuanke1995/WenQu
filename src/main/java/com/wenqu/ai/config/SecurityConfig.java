@@ -120,9 +120,11 @@ public class SecurityConfig implements WebMvcConfigurer {
         // 对话页智能体下拉：只读精简列表（不含提示词/知识库范围等管理配置），问答用户可用；
         // 管理端 /api/ai/agent/list 等仍走管理员判定。
         if ("GET".equals(method) && path.equals("/api/ai/agent/available")) return true;
-        // 技能与 MCP 已于 2026-09-26 从「管理员全局设置」下沉为「个人资产」：
-        // 每个登录用户增删改查自己的，控制器统一按 RequestUser.uid() 过滤（看不到也改不了别人的），
-        // 因此不再要求管理员；未登录请求受 require-login 门禁保护（放行时归属 anonymous）。
+        // 技能与 MCP 已于 2026-09-26 从「管理员全局设置」下沉为「个人资产」：控制器统一按
+        // RequestUser.uid() 过滤（看不到也改不了别人的），因此不再要求管理员；未登录请求受 require-login
+        // 门禁保护（放行时归属 anonymous）。技能侧只剩两个只读端点：/skill/available 清单、
+        // /skill/content 正文（两者都按 uid 解析、工作区那一路还要求会话归属）——
+        // 技能内容的写入改由 AgentScope 框架的技能工具在沙箱工作区里做，平台不再提供管理端点。
         if (path.equals("/api/ai/skill") || path.startsWith("/api/ai/skill/")) return true;
         if (path.equals("/api/ai/mcp") || path.startsWith("/api/ai/mcp/")) return true;
         // 可用模型清单（聊天页模型选择器/个人设置数据源）：只读、不含 baseUrl/apiKey
@@ -169,8 +171,6 @@ public class SecurityConfig implements WebMvcConfigurer {
         if (path.startsWith("/api/ai/knowledge/") && !path.equals("/api/ai/knowledge/unmatched")) return true;
         // 智能体公开分享（游客通道）：免登录，token 即凭据（/s/{token} 的后端 API）
         if (isShareGuestEndpoint(path)) return true;
-        // 用户长期记忆（个人资产）：个人设置页增删改查自己的（归属在 MemoryController 按 uid 过滤）
-        if (path.equals("/api/ai/memory") || path.startsWith("/api/ai/memory/")) return true;
         // 帮助中心（官方内置手册，只读）：数据源为全员只读的内置库，且 ManualController 只暴露手册篇目，
         // 登录即可读——入口是前端右下角全局悬浮按钮，所有角色都要能用
         if ("GET".equals(method) && (path.equals("/api/ai/manual/documents")
