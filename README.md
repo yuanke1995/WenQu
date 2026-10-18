@@ -25,7 +25,7 @@
 | MCP 双向 | 接入任意外部 MCP Server；智能体一键发布为 MCP 端点（Claude/Cursor 直连）；平台级 MCP 入口 |
 | 安全管控 | RBAC 菜单/端点两级管控、OIDC 单点登录、API Key（仅存哈希）、接口限流、操作审计 |
 | 运营闭环 | 个人使用统计（Token 热力图/趋势/模型用量）、问答日志、赞/踩反馈回流、数据看板（知识缺口一键补块）、检索量化评估（recall@k / MRR）、检索链路分步调试 |
-| 长期记忆 | 问答后异步提炼用户画像、跨会话注入；个人设置可查/改/删（用户级开关） |
+| 长期记忆 | 问答后异步提炼用户画像、跨会话注入；个人设置与系统设置各有一道开关（只关提炼，不关提起） |
 
 ## 系统架构
 
@@ -101,7 +101,7 @@ bash deploy/sandbox-provisioner/run.sh docker-down    # 停止
 bash deploy/sandbox-provisioner/run.sh docker-logs    # 跟踪日志
 ```
 
-> 需要 Docker Desktop；首次 `docker-up` 会构建 provisioner 镜像并拉取沙盒运行时镜像（约 12GB，之后免拉取）。沙盒持久卷在工作区 `user-data/shared/{uid}/workspace/`（bind 给容器内 `/home/gem/user-data`），技能投影在 `skill-projections/`（容器内只读 `/home/gem/skills`）。provisioner 访问令牌默认 `wenqu-local-dev-sandbox-provisioner-token`（compose 默认值，须与设置页「沙盒 → 访问令牌」一致，≥32 字符）。沙盒运行时镜像如需 JDK/Node 等依赖，用 `sandbox-image/Dockerfile` 派生新镜像并在 `.env` 设 `SANDBOX_IMAGE`（容器内无 sudo，依赖必须烧进镜像层）。
+> 需要 Docker Desktop；首次 `docker-up` 会构建 provisioner 镜像并拉取沙盒运行时镜像（约 12GB，之后免拉取）。沙盒持久卷在工作区 `user-data/shared/{uid}/workspace/`（bind 给容器内 `/home/gem/user-data`），本人技能目录在 `skill-projections/{uid}/`（历史投影，读侧仍按它解析；新技能由助手直接写进沙盒工作区）。provisioner 访问令牌默认 `wenqu-local-dev-sandbox-provisioner-token`（compose 默认值，须与设置页「沙盒 → 访问令牌」一致，≥32 字符）。沙盒运行时镜像如需 JDK/Node 等依赖，用 `sandbox-image/Dockerfile` 派生新镜像并在 `.env` 设 `SANDBOX_IMAGE`（容器内无 sudo，依赖必须烧进镜像层）。
 
 ### 2. 配置环境变量
 
@@ -199,9 +199,9 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 - **计划模式**（人在回路）：输入框「+」面板开「计划模式」后，每轮先产出**执行计划卡**（生成中 → 待确认），确认栏三选——**确认**（按计划执行）/ **继续对话**（修改意见作为一条用户消息在同一会话继续，本版作废、按意见重出，可反复）/ **取消**（本轮停止，卡定格「未批准」）；挂起有倒计时（默认 10 分钟，超时按未批准收尾）；没开计划模式时适合先拍板的消息会**按意图自动开启**（卡片标「自动开启」，`chat.planAutoIntent` 默认开）；计划卡随消息落库，刷新/换设备后可继续裁决，右栏「计划」卡可定位本会话每轮计划，卡内「修改记录」回看各版计划与意见
 - **多模态输入**：拖入/粘贴/点击上传图片（最多 5 张）；`@` 引用指定文档（被 @ 文档内最相关块前置注入上下文）；聊天模型不支持图片理解时**可见降级**（图片仅随消息展示，并向模型如实说明图片不可见，不静默丢弃）
 - **上下文容量面板**：输入框工具栏的容量圆环（占比 >80% / >95% 变色告警）悬浮展开明细——用量/窗口占比 + **七类计量**（系统提示词 / 历史对话 / 本轮提问 / 检索资料 / 工具结果 / 思考内容 / 工具声明；按 AgentScope 消息结构分类，旧手写运行时的「十类」分类已弃用）+ **缓存命中率**（网关返回缓存命中 token 才显示；done 时按网关实测校准）
-- **下一步建议**：回答末尾给出「接下来可以」可点击追问标签，点击即发起提问（条数个人可调）
+- **下一步建议**：回答末尾给出「接下来可以」可点击追问标签，点击即发起提问（条数个人可调；只跟在最新一轮后面，往上翻历史不重复摆出旧建议）
 - **智能体**：会话**不再锁定**智能体。不挑就用默认助手（可在个人设置里指定自己的默认助手）；挑了从下一问起立即生效，**不必新建会话**。资料域由模型按需经 `consultAgent` 派给职责对口的助手去查（可派多位，每位带着自己的知识库跑一条子轮，结论与引用交回）；交回的资料按**父轮问题**再过一道相关度门与引用配额（与主管线同一把尺——子轮的门是子轮问题的门，管不了父轮面板），被滤掉的条数如实告知模型，不放无出处断言；作答的智能体不可用时 fail-loud 提示，不静默换人
-- **用户长期记忆**（默认开）：问答完成后异步提炼值得长期记住的用户信息（事实/偏好/工作背景），按预算注入后续对话；`/profile` 个人设置可查/改/删（含来源会话溯源与被注入次数）；公开分享页与 MCP 游客链路不携带
+- **用户长期记忆**（默认开）：问答完成后异步提炼值得长期记住的用户信息（事实/偏好、明确要求记住的事），写进本人的记忆文件并在后续问答里提起；`/profile` 个人设置里有关（只停提炼，已记住的照常提起），系统设置里另有一道平台总闸；公开分享页与 MCP 游客链路不携带
 - **会话管理**：置顶/收藏/重命名/搜索/批量删除/清空、导出 Markdown、重新生成（软删旧答案）、赞/踩反馈、按消息组删除与撤销删除
 
 ### 知识库与检索增强（`/knowledge`）
@@ -218,7 +218,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 
 ### 智能体（`/agents`，全员开放）
 
-智能体工作台六 Tab：**模型供应商 · 智能体 · 技能 Skills · MCP 外部工具 · 工作流 · 定时任务**。
+智能体工作台五 Tab：**模型供应商 · 智能体 · MCP 外部工具 · 工作流 · 定时任务**。
 
 - **智能体配置**：System Prompt、知识库范围、能力开关（含联网搜索）、MCP/技能、委派关系、**检索参数覆盖**（`retrieval.*`/`rerank.*` 短名 JSON，把检索策略下沉到使用场景，空=继承全局；聊天模型不绑定智能体——走会话覆盖/个人默认）；卡片可**公开发布**（生成 `/s/{token}` 免登录链接与 iframe 嵌入代码，游客工具收窄为知识检索+内置项）；支持**编排视图**（主→子 SVG 拓扑图：委派链路高亮、悬空引用与孤儿子智能体警示）
 - **按需委派（agent-as-tool）**：模型遇到跨主题问题自主发起 `consultAgent`，从候选助手中挑出对口者（各带自己的知识库跑一条子轮，结论与引用交回）；挑选理由随 SSE 下发并可解释；用户可用 `@` 强制咨询某助手；被咨询助手不可用时 fail-loud，不静默换人
@@ -231,7 +231,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 - **工具开关集中在 `tool.*`**：总开关 `tool.enabled` 默认**开**（基础工具开箱即用）；沙盒执行、`run_code`、`todo` 等具体能力默认**关**，需显式开启
 - **内置工具**：计算器（递归下降自实现表达式求值，仅四则/幂/括号，**不执行任意代码**）、日期；另有知识检索工具（命中块进引用流）、产物交付工具、技能读取工具（渐进披露读 `SKILL.md`）
 - **联网搜索**（默认关）：Function Calling 工具，服务商 Tavily / 博查 / generic（自建 SearXNG）；结果**强制注册进引用体系**（与知识库引用同源展示）；返回结果按**本轮问题**（多轮为指代消解后的检索查询）重排过相关度门，低于 `retrieval.minContextScore` 的不注册、不列给模型——服务商自带的相关度分（如位置衰减）没有相关性含义，不参与判定；重排不可用时明确提示「本轮搜索结果未经相关性过滤」，不把瞬时故障演变成「什么都搜不到」；单轮搜索次数配额防反复搜 token；可纳入「执行前确认」审批；游客分享链路不暴露
-- **技能包（Skills）**：目录 + `SKILL.md` 形式的可插拔能力；支持新建 / URL 安装（远程域白名单）/ 启停用 / 删除；可注入 System Prompt 或由模型按需读取；按用户隔离（个人资产）；沙盒内以只读投影暴露
+- **技能包（Skills）**：目录 + `SKILL.md` 形式的可插拔能力；内置技能随版本分发（启动时落盘到 `user-data/skills-builtin/`），本人技能放在 `skill-projections/{uid}/`，同名以本人那份为准；每轮模型先看清单、需要时才读正文，用户在输入框里点名的技能会把正文直接带上；增删改由框架的技能工具在沙盒工作区里完成，不再提供管理面板
 - **沙盒隔离执行**：模型经 Function Calling 在隔离 Linux 容器内获得 6 个工具——`execute`（shell，**输出实时流式回传**）/ `read_file` / `write_file`（创建语义）/ `edit_file`（精确替换）/ `ls` / `deliver_artifact`（交付为「我的产物」）；**scope 挂会话**（同会话文件跨轮保留，按用户隔离工作目录），会话空闲（默认 60 分钟）自动回收容器；命令超时/输出上限/keepalive 均可配；瞬时故障自动重试；对话右栏「沙盒」卡可浏览/下载工作区文件
 - **产物交付**：`/artifacts` 汇总问答与定时任务交付的文件产物（Markdown/CSV/JSON/HTML/py/png/xlsx/zip 等），可预览、下载（HMAC 签名 URL）、删除；交付落盘 `data/artifacts/{uid}/{yyyyMM}/`，扩展名白名单 + 文件名净化，单个 ≤1MB
 
@@ -333,7 +333,7 @@ docker compose up -d          # 自包含：redis-stack + meilisearch + 内置 M
 | `GET /api/ai/agent/list`、`GET /api/ai/agent/available`、`POST /api/ai/agent`、`PUT /api/ai/agent/{id}`、`DELETE /api/ai/agent/{id}`、`POST /api/ai/agent/{id}/default` | 智能体 CRUD / 对话页精简列表（普通用户可访问）/ 设默认 |
 | `GET/POST /api/ai/agent/{id}/publish`、`DELETE /api/ai/agent/{id}/publish` | 公开分享发布/查询/撤销（生成 token，免登录对话入口） |
 | `GET /api/ai/share/{token}/info`、`GET /api/ai/share/{token}/history`、`POST /api/ai/share/{token}/chat` | 游客通道（免登录）：分享信息 / 游客会话历史 / 流式对话（IP 限频、工具白名单收窄） |
-| `GET /api/ai/skill/list`、`GET /api/ai/skill/detail`、`POST /api/ai/skill`、`POST /api/ai/skill/install`、`PUT /api/ai/skill/{name}/disabled`、`DELETE /api/ai/skill/{name}` | 技能包：列表 / 详情 / 新建 / URL 安装 / 启停 / 删除 |
+| `GET /api/ai/skill/available` | 技能包：可用技能只读清单（内置 + 本人技能目录，仅本人可见自己的归属） |
 | `GET /api/ai/mcp/status`、`POST /api/ai/mcp/reload`、`POST /api/ai/mcp/probe` | MCP Client：状态 / 重连 / 临时探测 |
 | `POST /ai/mcp/{token}`（`GET` 同路径；**不在 `/api` 之下**，token 即凭据） | MCP Server·per-agent 端点：一个智能体一个工具 |
 | `POST /ai/mcp`（`GET` 同路径；凭据走 `Authorization: Bearer sk-…` 或 `X-Api-Key`） | MCP Server·平台级入口：固定元工具集（检索 / 提问 / 列库 / 列智能体） |
@@ -346,8 +346,8 @@ docker compose up -d          # 自包含：redis-stack + meilisearch + 内置 M
 | `GET /api/ai/artifacts`、`DELETE /api/ai/artifacts/{id}` | 产物列表 / 删除（下载走签名 URL） |
 | `GET /api/ai/api-key/list`、`POST /api/ai/api-key`、`PUT /api/ai/api-key/{id}/disabled` | 对外 API Key：列表 / 签发（明文仅一次）/ 吊销 |
 | `GET /api/ai/user/list`、`GET /api/ai/role/*`、`GET /api/ai/menu/*` | 成员 / 角色 / 菜单（RBAC 维护） |
-| `GET/POST /api/ai/memory`、`PUT/DELETE /api/ai/memory/{id}` | 用户长期记忆：列表（含来源与被注入次数）/ 手动添加 / 编辑 / 删除（仅本人） |
-| `GET/PUT /api/ai/user/preference`、`GET/PUT /api/ai/user/settings` | 个人偏好（默认聊天模型、长期记忆开关）/ 个人对话偏好（如下一步建议条数） |
+| `GET /api/ai/skill/available` | 可用技能只读清单（内置 + 本人技能目录）；技能的增删改由框架技能工具在对话里完成 |
+| `GET/PUT /api/ai/user/preference`、`GET/PUT /api/ai/user/settings` | 个人偏好（默认聊天模型、自动提炼记忆开关）/ 个人对话偏好（如下一步建议条数） |
 | `GET /api/ai/search-index/stats`、`POST /api/ai/search-index/reindex`、`DELETE /api/ai/search-index` | 关键词索引运维 |
 | `POST /api/ai/debug/retrieval` | 检索链路分步调试 |
 | `POST /api/ai/eval/generate`、`GET /api/ai/eval/set`、`POST /api/ai/eval/run`、`POST /api/ai/eval/case`、`POST /api/ai/eval/run-auto` | 检索量化评估 |
@@ -451,7 +451,7 @@ spring:
 | `tool.*` / `webSearch.*` | `tool.enabled`(**false**)、`knowledgeRetrieval.enabled`、`artifact.enabled`、`builtin.enabled`、**`sandbox.enabled`**；联网搜索 `enabled`(**false**)、`provider`(tavily/bocha/generic)、`apiKey`(敏感)、`maxCallsPerTurn`(2)、`requireApproval`(false) | 保存即生效——**默认全关，需显式开启** |
 | `skill.*` | `injectMaxChars`(渐进披露读 `SKILL.md` 上限)、`maxFileChars`(单技能目录文件上限)、`remoteAllowedHosts`(精确 host 白名单) | 全局启停用各技能自身开关（无统一 `skill.enabled` 键，`dir` 硬编码 `./data/skills`）；保存即生效 |
 | `agent.*` | `permissionPreset.default`(standard)/`.max`(autonomous)/`.personalMax`(autonomous，个人上限取低)、`personalDefault`(个人默认助手)、`maxToolSteps`(15)、`consultMaxPerTurn`(3)、`consultTimeoutMs`(120000)、`subagentMode`(digest/full，子智能体分支执行形态)、`versionKeep`(20，配置版本快照保留份数) | 保存即生效。**旧并行编排键已退役**：`enabled`/`subAgents`/`topKPerAgent`/`digestEnabled`/`aggregateMode`/`digestMaxChars`/`aggregateMarkFailed`/`autoRoute`/`routeTimeoutMs`/`maxParallelSubAgents`/`subagent*` 等不再登记（并行编排器已删除，资料域改走 agent-as-tool 咨询）——见 `ConfigService` 退役注释 |
-| `memory.*` | `enabled`(true)、`platformEmbeddingRef`（**平台内置向量化模型**，空=语义去重降级精确匹配、语义注入关闭；记忆向量化不暴露为个人设置）、`maxPerUser`(50)、`maxInjectCount`(30)、`injectBudgetChars`(1500)、`dedupThreshold`(0.9)、`useSemanticInject`(true) | 用户长期记忆：保存即生效（提取在问答完成后异步执行；用户级开关 `memory_enabled` 在个人设置） |
+| `memory.enabled` | `enabled`(true) | 长期记忆的平台总闸：关掉后问答不再提炼新记忆（已记住的照常提起，文件不删）；个人层另有自己的开关 |
 | `artifact.*` | `retentionDays`(90，≤0 不清理)、`cleanupIntervalMs`(1d) | 产物超期清理 |
 | `web.*` | `refreshEnabled`(true)、`refreshScanIntervalMs`(60s) | 网页源定时刷新总开关与扫描间隔 |
 | `scheduled.*` | `enabled`(true)、`maxPerUser`(20)、`scanIntervalMs`(30s)、`timeoutMs`(300000) | 定时执行智能体 |
@@ -465,7 +465,7 @@ spring:
 
 ### 设置页 17 分组
 
-对话模型 / 图片描述（视觉）/ 文档解析默认模板 / 检索设置（混合检索权重 + 重排 + 关键词引擎）/ 上下文与长度控制 / 工具调用（含沙盒执行工具开关）/ 联网搜索 / API 密钥 / 技能预算与安装策略 / 默认检索策略（未配置委派咨询时）/ 接口限流 / 定时任务 / 单点登录 OIDC / 沙盒 / 用户长期记忆 / MCP 服务（双向）/ 调试设置。改动后页头「保存配置」一次性保存；**模型跨厂商热切换**（聊天走会话/个人引用、向量/视觉/OCR/图谱抽取/重排归知识库绑定，API Key RSA 加密、保存即生效；向量模型换绑先探测维度、通过后自动全量重嵌入）。深度思考不设全局面板——思考强度等在对话页按模型选择。
+对话模型 / 图片描述（视觉）/ 文档解析默认模板 / 检索设置（混合检索权重 + 重排 + 关键词引擎）/ 上下文与长度控制 / 工具调用（含沙盒执行工具开关）/ 联网搜索 / API 密钥 / 技能 / 默认检索策略（未配置委派咨询时）/ 接口限流 / 定时任务 / 单点登录 OIDC / 沙盒 / 用户长期记忆 / MCP 服务（双向）/ 调试设置。改动后页头「保存配置」一次性保存；**模型跨厂商热切换**（聊天走会话/个人引用、向量/视觉/OCR/图谱抽取/重排归知识库绑定，API Key RSA 加密、保存即生效；向量模型换绑先探测维度、通过后自动全量重嵌入）。深度思考不设全局面板——思考强度等在对话页按模型选择。
 
 ## 后台定时任务
 
@@ -524,7 +524,7 @@ WenQu/                               # 工作区根（git 仓库名 WenQu；本�
 │   └── sandbox-provisioner/         # 沙盒 provisioner 部署资产：app.py(FastAPI) + Dockerfile + compose + run.sh + sandbox.env
 │       └── sandbox-image/Dockerfile # 派生沙盒镜像（容器内无 sudo，运行时依赖必须烧进镜像层）
 ├── user-data/                       # 沙盒持久卷：shared/{uid}/workspace/（bind 给容器内 /home/gem/user-data）
-├── skill-projections/               # 沙盒技能投影（只读挂给容器内 /home/gem/skills）
+├── skill-projections/               # 本人技能目录（{uid}/技能名/SKILL.md，问答侧按归属读取）
 └── web/                             # 前端单页应用（Vite，.nvmrc 固定 Node 22 LTS）
     ├── vite.config.js               # /proxy → http://localhost:8090/ai（端口固定 5800，strictPort）
     ├── src/router.js                # 路由表（/chat /agents /knowledge /artifacts /stats /profile /s/:token /shared/:token + 管理页；管理页带管理员守卫）

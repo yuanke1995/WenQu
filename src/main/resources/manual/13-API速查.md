@@ -20,7 +20,7 @@
 | `GET/PUT /api/ai/config`、`GET /api/ai/config/schema`、`POST /api/ai/config/reset` | 配置读写（脱敏）/ schema 下发 / 恢复分组默认 |
 | `GET /api/ai/provider/*` | 模型供应商登记/启停/判权 |
 | `GET/POST/PUT/DELETE /api/ai/agent*` | 智能体 CRUD / `GET /agent/available` 对话页精简列表 / 发布分享 |
-| `GET/POST /api/ai/skill/*` | 技能列表/新建/URL 安装/启停/删除 |
+| `GET /api/ai/skill/available` | 可用技能只读清单（内置 + 本人技能目录） |
 | `GET /api/ai/mcp/status`、`POST /api/ai/mcp/reload`、`POST /api/ai/mcp/probe` | MCP Client 状态/重连/探测 |
 | `POST /ai/mcp/{token}` | MCP Server·per-agent 端点（不在 /api 之下，token 即凭据） |
 | `POST /ai/mcp` | MCP Server·平台级入口（凭据 API Key + MCP 开关） |
