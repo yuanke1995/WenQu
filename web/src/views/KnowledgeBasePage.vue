@@ -3,7 +3,7 @@
     <div class="app-page-head">
       <h3 class="app-page-title">知识库</h3>
       <span class="head-hint-plain" title="文档的容器：检索按库隔离，向量/检索/解析参数随库">文档的容器：检索按库隔离，向量/检索/解析参数随库</span>
-      <button class="app-btn" style="margin-left:auto" @click="openCreate">
+      <button v-if="!mobileShell" class="app-btn" style="margin-left:auto" @click="openCreate">
         <plus-outlined /> 新建知识库
       </button>
     </div>
@@ -38,7 +38,9 @@
             <div class="kb-card-actions" @click.stop>
               <!-- 官方内置库：文档内容随版本自动同步（后端拒绝改内容与删除），但检索/解析参数是运行时配置、
                    同步不碰——管理员可编辑这两项（典型用途：给官方库绑定重排模型）。非管理员仍无任何管理入口 -->
-              <template v-if="isAdmin || (kb.createdBy === myUid && kb.builtin !== 1)">
+              <!-- 移动壳只读：编辑/图谱/删除都不渲染（图谱弹窗里有「构建/清空图谱」这类写动作，
+                   且它本身还没做移动适配，见 h5/README 的下一候选） -->
+              <template v-if="!mobileShell && (isAdmin || (kb.createdBy === myUid && kb.builtin !== 1))">
                 <button class="app-link-btn" @click="openEdit(kb)">编辑</button>
                 <template v-if="kb.builtin !== 1">
                   <button class="app-link-btn" @click="openGraph(kb)">图谱</button>
@@ -64,7 +66,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { message } from 'ant-design-vue'
+import { message, Modal } from 'ant-design-vue'
 import { useRouter } from 'vue-router'
 import { PlusOutlined } from '@ant-design/icons-vue'
 import { listKnowledgeBases, deleteKnowledgeBase } from '../api'
@@ -73,6 +75,9 @@ import KnowledgeBaseEditModal from '../components/KnowledgeBaseEditModal.vue'
 import KbIcon from '../components/KbIcon.vue'
 import { loadModelIndex, modelRefInfo } from '../utils/modelRef'
 import { isAdminSync, ensureAuth } from '../utils/auth'
+// 移动壳（H5）下本库页只读——这是 DesktopOnlyGuard 对 /knowledge 的承诺（库卡片 + 文档列表 + 知识块预览）。
+// 判据用 mobileShell 而不是 isNarrow：手机横屏不算「窄屏」但仍是 H5，桌面把窗口拖窄仍该保留 PC 行为。
+import { mobileShell } from '../h5/mobile'
 
 // 权限：管理员全量；普通用户可自建自管自己的库，可见=自己的库+默认库+别人显式共享的库（只读），后端按共享范围过滤返回
 const isAdmin = isAdminSync()
@@ -112,18 +117,24 @@ const openGraph = kb => {
   graphModal.value = true
 }
 
-const onDelete = async row => {
-  try {
-    const r = await deleteKnowledgeBase(row.id)
-    if (r && r.success === false) {
-      message.warning(r.msg || '无法删除')
-      return
+const onDelete = row => {
+  // 有确认才敢点：后端会拦住「库里还有文档」的那一类，所以这里删掉的是空壳库，
+  // 真正静默的后果是级联——所有绑定它的智能体（含子智能体）当场失去这份资料域，向量索引一并清理。
+  Modal.confirm({
+    title: `删除知识库「${row.name || '未命名'}」？`,
+    content: '库里必须已无文档才能删。删除后，绑定过它的智能体会自动摘除这个知识库，'
+      + '该库的向量索引同时清理，且不可恢复。',
+    okText: '删除', okType: 'danger', cancelText: '取消',
+    onOk: async () => {
+      const r = await deleteKnowledgeBase(row.id)
+      if (r && r.success === false) {
+        message.warning(r.msg || '无法删除')
+        return
+      }
+      message.success('已删除（关联智能体已同步摘除该库）')
+      await load()
     }
-    message.success('已删除（关联智能体已同步摘除该库）')
-    await load()
-  } catch (e) {
-    message.error(e.message || '删除失败')
-  }
+  })
 }
 
 onMounted(() => {

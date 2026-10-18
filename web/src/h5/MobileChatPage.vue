@@ -198,6 +198,45 @@
         </div>
       </div>
 
+      <!-- 计划确认栏（人在回路）：待批准期间整块顶替输入卡，与 PC 的 planp-* 同一套引擎状态
+          （pendingPlan / curPlanCard / planExpired / planCountdownText 都在 useChatEngine 里，不在此重算）。
+           计划正文不在这里重复一份——它随气泡里的执行计划卡呈现（共用 chat/PlanCard.vue）。
+           触屏没有 Enter 提交这回事：写完意见点「继续对话」。 -->
+      <div v-else-if="pendingPlan" class="m-input-card m-planp">
+        <div class="m-planp-head">
+          <span class="m-planp-tag">执行计划</span>
+          <span v-if="planExpired" class="m-planp-state warn">已超时，本轮将停止</span>
+          <span v-else class="m-planp-state">待确认</span>
+          <span v-if="planCountdownText" class="m-planp-timer" :class="{ warn: planExpired }">{{ planCountdownText }}</span>
+        </div>
+        <div class="m-planp-opts">
+          <button type="button" class="m-planp-opt" :disabled="curPlanCard.busy || planExpired"
+                  @click="submitPlanApproval(pendingPlan, 'approve')">
+            <span class="m-planp-no">1.</span>
+            <span class="m-planp-kw">确认</span>
+            <span class="m-planp-rest">直接按此计划开始执行</span>
+          </button>
+          <div class="m-planp-opt m-planp-custom">
+            <span class="m-planp-no">2.</span>
+            <textarea v-model="curPlanCard.editText" class="m-planp-ta" rows="2" :maxlength="8000"
+                      :disabled="curPlanCard.busy || planExpired"
+                      placeholder="不满意就继续对话：写下要改什么…"></textarea>
+          </div>
+        </div>
+        <div class="m-planp-foot">
+          <span class="m-planp-hint">「继续对话」按你的意见重做计划；「确认」才动手；不处理会超时并停止本轮</span>
+          <span class="m-planp-actions">
+            <button class="m-rec-btn ghost" type="button" :disabled="curPlanCard.busy"
+                    @click="stop()">停止本轮</button>
+            <button class="m-rec-btn ghost" type="button" :disabled="curPlanCard.busy || planExpired"
+                    @click="submitPlanApproval(pendingPlan, 'cancel')">取消</button>
+            <button class="m-rec-btn primary" type="button"
+                    :disabled="curPlanCard.busy || planExpired || !(curPlanCard.editText || '').trim()"
+                    @click="continuePlanConversation(pendingPlan, curPlanCard.editText)">继续对话</button>
+          </span>
+        </div>
+      </div>
+
       <div v-else class="m-input-card">
         <textarea
           ref="ta"
@@ -213,6 +252,15 @@
           <button class="m-tool" type="button" title="模型与思考" @click="modelOpen = true">
             <thunderbolt-outlined :class="{ 'm-tool-on': deepThinkOn }" />
             <span class="m-tool-text">{{ modelShort }}</span>
+          </button>
+          <!-- 计划模式开关：与 PC 同一个独立控件（PC 那条注释记着它为什么不在「+」页签里——
+               模式开关混进候选列表，找它要切页签、状态还得靠徽标转达）。触屏没有 hover，
+               开启态直接换色并把「计划」两字点出来 -->
+          <button class="m-tool" :class="{ 'm-tool-plan-on': planModeOn }" type="button"
+                  title="计划模式：每轮先出执行计划，你批准或修改后才开始回答"
+                  @click="setPlanMode(!planModeOn)">
+            <ordered-list-outlined />
+            <span class="m-tool-text">计划</span>
           </button>
           <button class="m-tool" type="button" title="添加：技能 / 引用 / 历史 / 附件" @click="attachOpen = true">
             <plus-circle-outlined />
@@ -349,7 +397,7 @@ import {
   MenuOutlined, PlusOutlined, CaretDownOutlined, ArrowUpOutlined, ArrowDownOutlined, PauseCircleOutlined,
   ThunderboltOutlined, PlusCircleOutlined, CloseOutlined, GlobalOutlined, SearchOutlined, UpOutlined, DownOutlined,
   BellOutlined, ExclamationCircleOutlined, FileTextOutlined, CopyOutlined, HistoryOutlined,
-  CompressOutlined, EditOutlined
+  CompressOutlined, EditOutlined, OrderedListOutlined
 } from '@ant-design/icons-vue'
 import { pasteTitle, pasteSub } from '../chat/projections'
 import { useChatEngine } from '../chat/useChatEngine'
@@ -440,7 +488,10 @@ const engine = useChatEngine({
   scrollFollow: scroll,
   scrollForce,
   scrollSoft: scroll,
-  closePanels: closeSheets
+  closePanels: closeSheets,
+  // 移动壳有计划卡了（底部 m-planp + 气泡 PlanCard），开关可以放行；分享页仍不给，
+  // 那里没有裁决入口，开了只会发出一轮「没人能批准」的计划问答
+  planModeEnabled: true
 })
 // sheet 族经 provide 取同一实例（useChatEngine 必须单例，不能各调一次）
 provide('wqChat', engine)
@@ -451,6 +502,9 @@ const {
   pendingHistoryRefs, toggleSkill, removePendingImage, removePendingFile, removeMention, removeHistoryRef,
   takePastedFiles, takePastedText,
   ignoreAsk,
+  // 计划模式（人在回路）：开关在「添加」sheet，确认栏在本页打字框原位，卡片本体共用 PlanCard
+  planModeOn, setPlanMode, submitPlanApproval, continuePlanConversation,
+  pendingPlan, curPlanCard, planExpired, planCountdownText,
   // 手动压缩上下文（入口在「模型与思考」sheet；分隔线与摘要 sheet 在本页。
   // 「压缩中」态由 compacting 一并表达）
   compacting, compactNotice, compactContext, compactDividerAt,
@@ -1004,6 +1058,27 @@ onUnmounted(() => {
 .m-askp-no { flex: none; color: var(--app-text3); font-variant-numeric: tabular-nums; }
 .m-askp-kw { font-weight: 600; }
 .m-askp-rec { font-weight: 600; color: var(--app-ok); }
+/* —— 计划确认栏（与提问面板同形，顶替输入卡）：正文在气泡的执行计划卡里，这里只放裁决 —— */
+.m-planp { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.m-planp-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.m-planp-tag { flex: none; font-size: 12px; line-height: 1; padding: 5px 9px; border-radius: 999px; background: var(--app-warn-weak); border: 1px solid var(--app-warn-border); color: var(--app-warn-text); }
+.m-planp-state { font-size: 12px; color: var(--app-warn-text); }
+.m-planp-state.warn { color: var(--app-warn); }
+.m-planp-timer { flex: none; margin-left: auto; font-size: 12px; color: var(--app-text3); font-variant-numeric: tabular-nums; }
+.m-planp-timer.warn { color: var(--app-warn); }
+.m-planp-opts { display: flex; flex-direction: column; gap: 6px; }
+.m-planp-opt { display: flex; align-items: flex-start; gap: 8px; width: 100%; text-align: left; background: none; border: none; border-radius: 8px; padding: 10px 8px; min-height: 44px; font-size: 14px; line-height: 1.55; color: var(--app-text); touch-action: manipulation; }
+.m-planp-opt:active { background: var(--app-panel); }
+.m-planp-opt:disabled { opacity: 0.55; }
+.m-planp-no { flex: none; color: var(--app-text3); font-variant-numeric: tabular-nums; }
+.m-planp-kw { font-weight: 600; }
+.m-planp-rest { color: var(--app-text2); }
+.m-planp-custom { border: 1px solid var(--app-border); background: var(--app-panel); align-items: flex-start; }
+.m-planp-ta { flex: 1; min-width: 0; border: none; outline: none; background: none; resize: none; font: inherit; font-size: 14px; line-height: 1.55; color: var(--app-text); padding: 0; }
+.m-planp-ta:disabled { color: var(--app-text3); }
+.m-planp-foot { display: flex; flex-direction: column; gap: 8px; }
+.m-planp-hint { font-size: 12px; color: var(--app-text3); }
+.m-planp-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 .m-askp-rest { color: var(--app-text2); margin-left: 8px; flex: 1; min-width: 0; }
 .m-askp-custom { align-items: center; }
 .m-askp-input { flex: 1; min-width: 0; border: none; outline: none; background: transparent; font-size: 15px; color: var(--app-text); padding: 0; }
@@ -1024,6 +1099,8 @@ onUnmounted(() => {
 }
 .m-tool-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .m-tool-on { color: var(--app-accent); }
+/* 计划模式开启态：与 PC 的计划胶囊同源用警示色（它改变的是这一轮要不要先出计划，不是「又一个开关」） */
+.m-tool-plan-on { color: var(--app-warn-text); background: var(--app-warn-weak); border-color: var(--app-warn-border); }
 .m-tools-sp { flex: 1; }
 .m-send {
   width: 42px; height: 42px; flex: none; border: none; border-radius: 50%;

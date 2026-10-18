@@ -58,6 +58,12 @@ const CHAT_MESSAGES = [
     tokens: { context: 1200, output: 300, total: 1500, outputIsReal: true } }
 ]
 
+// 计划卡夹具（PC 回归用）：批准一次后就不再返回待批准记录
+let PLAN_PENDING = true
+const PLAN_POSTS = []
+const PLAN_V1 = '## 第一步\n先列提纲。'
+const PLAN_MD = '## 写法\n1. 收集资料\n2. 产出报告\n3. 复核数字\n4. 交付\n5. 复盘'
+
 function serveStatic (page) {
   return page.route('**/*', route => {
     const u = new URL(route.request().url())
@@ -107,6 +113,27 @@ function serveStatic (page) {
     // 路径与 src/api.js 一致（/api/ai/tool-approval/{id}）：写成 /chat/tool-approval/ 会 404
     if (u.pathname.startsWith('/api/ai/tool-approval/')) {
       return json({ id: 'ap-1', toolName: '联网搜索', requestArgs: '{"q":"测试"}', status: 'PENDING' })
+    }
+    // ---- 计划模式夹具（PC 侧回归）：卡片本体抽成共用组件后，PC 的确认栏与气泡卡必须照样渲染 ----
+    if (u.pathname === '/api/ai/plan-approval/pending') {
+      // 作用域只给 s-plan：给所有会话返回待批准记录会 hydrate 出占位泡，污染别段的消息行数
+      const want = u.searchParams.get('sessionId') === 's-plan'
+      return json(want && PLAN_PENDING ? { items: [{ planApprovalId: 'pl-1', plan: PLAN_MD,
+        versions: [{ plan: PLAN_V1 }, { plan: PLAN_MD }], timeoutMs: 600000, remainingMs: 500000,
+        expired: false, live: true, turnId: 't-plan' }] } : { items: [] })
+    }
+    if (u.pathname.startsWith('/api/ai/plan-approval/') && route.request().method() === 'POST') {
+      const body = route.request().postData() || ''
+      PLAN_POSTS.push(body)
+      if (/"approved"\s*:\s*true/.test(body)) PLAN_PENDING = false
+      return json({ success: true })
+    }
+    if (u.pathname === '/api/ai/session/s-plan') {
+      return json([
+        { messageId: 'q-p1', role: 'user', content: '给我一份季度复盘的写法', createTime: Date.now() - 90000 },
+        { messageId: 'a-p0', role: 'assistant', content: '先给一版计划，你确认后我再动笔。', createTime: Date.now() - 80000,
+          plan: { plan: PLAN_V1, status: 'superseded', versions: [{ plan: PLAN_V1 }] } }
+      ])
     }
     if (u.host !== 'h5.local') return route.abort()      // 其余外部请求掐断
     let p = decodeURIComponent(u.pathname)
@@ -492,6 +519,42 @@ const check = (ok, label, detail = '') => {
   check(docsN.headHidden, '窄屏文档表头隐藏（行重排生效）')
   check(docsN.actBelow, '窄屏文档操作区换到文件名下一行')
   check(docsN.scrollW <= docsN.clientW + 1, '窄屏文档列表无横向溢出', `scrollW=${docsN.scrollW} clientW=${docsN.clientW}`)
+
+  // ---- 计划模式（PC 回归）：卡片抽成两端共用组件后，PC 的确认栏与气泡卡必须照样渲染 ----
+  await page.goto(ORIGIN + '/chat?sid=s-plan', { waitUntil: 'networkidle' })
+  await page.waitForTimeout(1500)
+  const pcPlan = await page.evaluate(() => {
+    const box = document.querySelector('.planp-box')
+    const byLabel = label => [...document.querySelectorAll('.planp-opt, .planp-actions button')]
+      .find(b => b.textContent.includes(label))
+    return {
+      hasBox: !!box,
+      head: box ? box.textContent.replace(/\s+/g, ' ').trim().slice(0, 40) : '',
+      cards: document.querySelectorAll('.plan-card').length,
+      markdown: [...document.querySelectorAll('.plan-body')].some(e => e.textContent.includes('收集资料')),
+      approveDisabled: byLabel('确认') ? byLabel('确认').disabled : null,
+      contDisabled: byLabel('继续对话') ? byLabel('继续对话').disabled : null,
+      hasTa: !!document.querySelector('.planp-custom textarea')
+    }
+  })
+  check(pcPlan.hasBox, 'PC 待批准时确认栏仍在打字框原位（抽公共件没把它抽走）', pcPlan.head)
+  check(/执行计划/.test(pcPlan.head) && /待确认/.test(pcPlan.head), 'PC 栏头文案未变', pcPlan.head)
+  check(pcPlan.cards >= 2, 'PC 气泡里有两张计划卡（被取代那版 + 待批准这版）', `cards=${pcPlan.cards}`)
+  check(pcPlan.markdown, 'PC 计划正文仍按 markdown 渲染（组件内 renderMd 没丢）')
+  check(pcPlan.approveDisabled === false && pcPlan.contDisabled === true,
+    'PC 确认/继续对话的可用态判据不变（空意见不许顶掉计划）')
+  check(pcPlan.hasTa, 'PC 意见输入框挂在确认栏里')
+  await page.locator('.planp-custom textarea').fill('第二段再细一点')
+  await page.waitForTimeout(300)
+  check(await page.evaluate(() => {
+    const b = [...document.querySelectorAll('.planp-actions button')].find(x => x.textContent.includes('继续对话'))
+    return !!b && b.disabled === false
+  }), 'PC 写了意见后「继续对话」解锁')
+  await page.locator('.planp-opt', { hasText: '确认' }).first().dispatchEvent('click')
+  await page.waitForTimeout(1500)
+  const pcSent = PLAN_POSTS[PLAN_POSTS.length - 1] || ''
+  check(/"approved"\s*:\s*true/.test(pcSent), 'PC 点确认送出 approved:true', pcSent)
+  check(await page.evaluate(() => !document.querySelector('.planp-box')), 'PC 批准后确认栏撤下')
 
   // ---- 引导卡：非白名单页面窄屏应给引导卡，且真实页面**未渲染** ----
   // 前提：/auth/me 被 mock 成管理员（见 serveStatic），否则守卫会先弹回 /chat

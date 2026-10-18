@@ -418,6 +418,7 @@ import ModelSelect from '../components/ModelSelect.vue'
 import { renderMd, prepKnowledgeContent, resolveImg, onImgError, copyCode } from '../utils/markdown'
 import { estimateTokens, fmtTokens } from '../utils/token'
 import { isAdminSync, ensureAuth } from '../utils/auth'
+import { mobileShell } from '../h5/mobile'
 
 // 上传限制（启动时从 /config/public 动态获取）
 const MAX_SIZE = 200 * 1024 * 1024
@@ -464,6 +465,11 @@ const currentKbBuiltin = computed(() => {
 })
 /** 当前库是否可管理（上传/批量操作的门槛；官方内置库对所有人只读） */
 const canManageCurrentKb = computed(() => {
+  // 移动壳（H5）只读：这是 DesktopOnlyGuard 对 /knowledge/:id/docs 的承诺（文档列表 + 知识块预览），
+  // 上传/导入/批量/删除/重解析/配置/图谱一律不渲染。判据用 mobileShell 而不是 isNarrow：
+  // 手机横屏不算「窄屏」但仍是 H5，桌面把窗口拖窄仍该保留 PC 行为。
+  // 收在这两个根判定上而不是逐个按钮加 v-if：漏一处就是假文案。
+  if (mobileShell.value) return false
   // 官方内置库：文档内容只读（上传/删除篇目都不开放，与后端 DocumentController 一致），
   // 但**「知识库配置」对管理员开放**——检索/解析参数与向量模型是运行时配置，管理员要能改
   // （后端 KnowledgeBaseService.update 的内置库白名单即这三个字段）。
@@ -485,7 +491,7 @@ const canConfigKb = computed(() => canManageCurrentKb.value)
 const canUploadToKb = computed(() => canManageCurrentKb.value && !currentKbBuiltin.value)
 
 /** 单个文档是否可管理（创建者或管理员；后端还会按共享范围二次判定；官方内置库的篇目只读） */
-const canManageDoc = d => !currentKbBuiltin.value && (isAdmin || (myUid.value && d.createdBy === myUid.value))
+const canManageDoc = d => !mobileShell.value && !currentKbBuiltin.value && (isAdmin || (myUid.value && d.createdBy === myUid.value))
 /** 当前所在知识库（路由参数）：列表/上传都限定在该库 */
 const currentKbId = computed(() => String(route.params.kbId || ''))
 const currentKbName = computed(() => {

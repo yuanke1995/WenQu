@@ -215,6 +215,12 @@
              它同时也是这一轮唯一的进行中提示（底下不再另挂一行阶段文案） -->
         <TurnBar v-if="m.loading" :m="m" mobile />
 
+        <!-- 执行计划卡（人在回路）：与 PC 同一份组件；裁决入口在底部确认栏，这里只读留痕。
+             .stop：卡在卡片里的「查看完整计划/修改记录」不该顺手把整行选中 -->
+        <div v-if="m.planCard" @click.stop>
+          <PlanCard :card="m.planCard" />
+        </div>
+
         <!-- 工具审批（人在回路） -->
         <div v-if="m.approval" class="approval">
           <div class="approval-title"><exclamation-circle-outlined /> 请求执行工具「{{ toolLabel(m.approval.tool, m.approval.label) }}」</div>
@@ -355,6 +361,7 @@ import {
   pasteTitle, pasteSub, isPastedText, consultedOf
 } from '../chat/projections'
 import AskRecordCard from '../components/AskRecordCard.vue'
+import PlanCard from '../components/PlanCard.vue'
 import TurnBar from '../components/TurnBar.vue'
 import SubAgentChatCard from '../components/SubAgentChatCard.vue'
 import ToolSpillButton from '../components/ToolSpillButton.vue'

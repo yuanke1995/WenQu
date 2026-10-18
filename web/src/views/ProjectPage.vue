@@ -187,7 +187,9 @@
               <div class="pj-label">
                 工作流 <span class="pj-count">{{ workflows.length }}</span>
                 <span class="pj-hint">可视化编排，手动或定时触发</span>
-                <a class="app-btn ghost pj-block-act" href="/agents?tab=workflow">去画布</a>
+                <!-- 移动壳不给「去画布」：/agents 在手机上被守卫挡着，点了只会整页重载撞进引导卡。
+                     工作流列表照旧可见（它们是事实），画布只在电脑端开 -->
+                <a v-if="!mobileShell" class="app-btn ghost pj-block-act" href="/agents?tab=workflow">去画布</a>
               </div>
               <div v-if="!filteredWorkflows.length" class="pj-empty">
                 {{ kw ? '没有匹配的工作流' : '还没有工作流。在「智能体 → 工作流」里建一个，保存时把归属选成这个工作区，它就会出现在这里。' }}
@@ -223,7 +225,7 @@
               <span class="pj-item-meta">{{ runTriggerText(x.trigger) }}</span>
               <span class="pj-item-meta">{{ fmtAgo(toMs(x.startedAt)) }}</span>
               <span v-if="x.kind === 'scheduled' && x.sessionId" class="pj-act" @click="openRunSession(x.sessionId)">结果会话</span>
-              <span v-else-if="x.kind === 'workflow'" class="pj-act" @click="openWfRun(x)">运行详情</span>
+              <span v-else-if="x.kind === 'workflow' && !mobileShell" class="pj-act" @click="openWfRun(x)">运行详情</span>
             </div>
           </div>
         </a-tab-pane>
@@ -263,6 +265,8 @@ import { getProject, updateProject, deleteProject, listArtifacts, listSessions, 
          previewProjectFile, exportProjectZip, deleteProjectFile } from '../api'
 import DeleteProjectModal from '../components/DeleteProjectModal.vue'
 import { sessionStore, rememberSession } from './store'
+// 移动壳下不给跳往桌面专属页的入口（/agents 被 DesktopOnlyGuard 挡着，点了只会撞引导卡）
+import { mobileShell } from '../h5/mobile'
 
 const HEAD_HINT = '一个工作目录 + 自己的约定 + 自己的助手；这里发生的一切都归到它名下'
 

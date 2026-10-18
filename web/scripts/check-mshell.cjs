@@ -27,6 +27,11 @@ const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css
 // 静态服务 + mock 身份（路由守卫要 /auth/me；其余接口掐断 → 页面落到「无会话」的空态）
 // 配置引导断言用开关：先给"未就绪"（无模型）看引导卡，断言后翻成"就绪"看示例卡
 let setupUnready = true
+// 计划卡夹具：批准一次后就不再返回待批准记录（状态可翻转，断言才判得准）
+let planPending = true
+const CAPTURED = { planApproval: [] }
+const PLAN_V1 = '## 第一步\n先列提纲。'
+const PLAN_MD = '## 写法\n1. 收集资料\n2. 产出报告\n3. 复核数字\n4. 交付\n5. 复盘'
 function serveStatic (page) {
   return page.route('**/*', route => {
     const u = new URL(route.request().url())
@@ -92,6 +97,32 @@ function serveStatic (page) {
     }
     if (u.pathname === '/api/ai/eval/case') return json({ added: true, expected: 1 })
     if (u.pathname.startsWith('/api/ai/message-group/')) return json({})
+    // ---- 计划模式（人在回路）夹具 ----
+    // 移动壳此前没有计划卡：引擎两端都把 planCard 挂进 messages，渲染处只有 PC 一份。
+    // 这段夹具驱动「恢复一张待批准的卡 → 在移动壳上批准」的真渲染路径。
+    if (u.pathname === '/api/ai/plan-approval/pending') {
+      // 只对 s-plan 这条会话给待批准记录：不作用域的话，别的会话也会被 hydrate 出一张
+      // 「等你批准」的占位泡，把它们的消息行数与容量统计全污染掉（实测踩过）
+      const wantPlan = u.searchParams.get('sessionId') === 's-plan'
+      return json(wantPlan && planPending ? { items: [{ planApprovalId: 'pl-1', plan: PLAN_MD,
+        versions: [{ plan: PLAN_V1 }, { plan: PLAN_MD }], timeoutMs: 600000, remainingMs: 500000,
+        expired: false, live: true, turnId: 't-plan' }] } : { items: [] })
+    }
+    if (u.pathname.startsWith('/api/ai/plan-approval/') && route.request().method() === 'POST') {
+      const body = route.request().postData() || ''
+      CAPTURED.planApproval.push(body)
+      // 批准后这张卡不再待批准（否则 hydrate 会立刻把同一张卡挂回来，撤下断言判不出来）
+      if (/"approved"\s*:\s*true/.test(body)) planPending = false
+      return json({ success: true })
+    }
+    if (u.pathname === '/api/ai/session/s-plan') {
+      return json([
+        { messageId: 'q-p1', role: 'user', content: '给我一份季度复盘的写法', createTime: Date.now() - 90000 },
+        // 上一版计划已被「继续对话」取代：这条是气泡里的只读留痕（裁决过就要活过刷新）
+        { messageId: 'a-p0', role: 'assistant', content: '先给一版计划，你确认后我再动笔。', createTime: Date.now() - 80000,
+          plan: { plan: PLAN_V1, status: 'superseded', versions: [{ plan: PLAN_V1 }] } }
+      ])
+    }
     // 路径与 src/api.js 一致（/api/ai/tool-approval/{id}）：写成 /chat/tool-approval/ 会 404，
     // 恢复横幅的两条断言会静默变成假阴性
     if (u.pathname.startsWith('/api/ai/tool-approval/')) {
@@ -447,6 +478,86 @@ const check = (ok, label, detail = '') => {
   const afterDel = await page.evaluate(() => ({ rows: document.querySelectorAll('.mrow').length,
     welcome: !!document.querySelector('.m-welcome') }))
   check(afterDel.rows === 0 && afterDel.welcome, '删除本轮后消息流移除该轮（回到空态）', JSON.stringify(afterDel))
+
+  // ---- 计划模式（人在回路）在移动壳不是残废版 ----
+  // 背景：卡片数据两端都挂（引擎 hydratePendingPlans），渲染处过去只有 PC 一份——
+  // 手机上的现象是「出了一轮计划，界面一个字不显示」，只能干等到超时。这段验真渲染与真裁决。
+  await page.goto(ORIGIN + '/m/chat?sid=s-round', { waitUntil: 'networkidle' })
+  await page.waitForTimeout(900)
+  check(await page.evaluate(() => [...document.querySelectorAll('.m-tool')]
+    .some(x => x.textContent.includes('计划'))), '移动壳工具条有「计划」开关（与 PC 同一个独立控件）')
+  await page.locator('.m-tool', { hasText: '计划' }).first().dispatchEvent('click')
+  await page.waitForTimeout(400)
+  const planOn = await page.evaluate(() => ({
+    on: (([...document.querySelectorAll('.m-tool')].find(x => x.textContent.includes('计划')) || {}).className || '')
+      .includes('m-tool-plan-on'),
+    ls: localStorage.getItem('ai_plan_mode')
+  }))
+  check(planOn.on === true && planOn.ls === '1', '点一下进开启态（警示色 + 与 PC 同源的那份存储）', JSON.stringify(planOn))
+  await page.locator('.m-tool', { hasText: '计划' }).first().dispatchEvent('click')
+  await page.waitForTimeout(400)
+  check(await page.evaluate(() => localStorage.getItem('ai_plan_mode') === '0'), '再点一下关得掉')
+
+  await page.goto(ORIGIN + '/m/chat?sid=s-plan', { waitUntil: 'networkidle' })
+  await page.waitForTimeout(1500)
+  const planView = await page.evaluate(() => {
+    const bar = document.querySelector('.m-planp')
+    const txt = el => (el ? el.textContent.replace(/\s+/g, ' ').trim() : '')
+    const byLabel = label => [...document.querySelectorAll('.m-planp-opt, .m-planp-actions button')]
+      .find(b => b.textContent.includes(label))
+    const btn = label => { const b = byLabel(label); return b ? b.disabled : null }
+    return {
+      hasBar: !!bar,
+      head: txt(bar && bar.querySelector('.m-planp-head')),
+      timer: txt(bar && bar.querySelector('.m-planp-timer')),
+      cards: document.querySelectorAll('.plan-card').length,
+      bodyHasPlan: [...document.querySelectorAll('.plan-body')].some(e => e.textContent.includes('收集资料')),
+      approveDisabled: btn('确认'),
+      contDisabled: btn('继续对话'),
+      inputGone: !document.querySelector('.m-ta')
+    }
+  })
+  check(planView.hasBar, '待批准时移动壳出现计划确认栏（此前整块不显示，只能等超时）', JSON.stringify(planView))
+  check(/执行计划/.test(planView.head) && /待确认/.test(planView.head), '栏头有「执行计划 · 待确认」', planView.head)
+  check(/^\d{2}:\d{2}$/.test(planView.timer), '倒计时按秒在走（mm:ss）', planView.timer)
+  check(planView.cards >= 2, '气泡里有两张计划卡（被取代的那版 + 这张待批准）——留痕活过刷新', `cards=${planView.cards}`)
+  check(planView.bodyHasPlan, '计划正文按 markdown 渲染（两端同一份组件）')
+  check(planView.approveDisabled === false, '「确认」此刻可点')
+  check(planView.contDisabled === true, '没写意见时「继续对话」不可点（防一句空意见把计划顶掉）')
+  check(planView.inputGone, '打字框被确认栏整块顶替（模型在等裁决，此刻不该能发新消息）')
+  await page.locator('.m-planp-ta').fill('第二段再细一点')
+  await page.waitForTimeout(300)
+  check(await page.evaluate(() => {
+    const b = [...document.querySelectorAll('.m-planp-actions button')].find(x => x.textContent.includes('继续对话'))
+    return !!b && b.disabled === false
+  }), '写了意见后「继续对话」解锁')
+  await page.locator('.m-planp-opt', { hasText: '确认' }).first().dispatchEvent('click')
+  await page.waitForTimeout(1500)
+  const sent = CAPTURED.planApproval[CAPTURED.planApproval.length - 1] || ''
+  check(/"approved"\s*:\s*true/.test(sent), '点确认送出的是 approved:true（看请求体——响应体只是 ack）', sent)
+  check(await page.evaluate(() => !document.querySelector('.m-planp') && !!document.querySelector('.m-ta')),
+    '批准后确认栏撤下、输入卡回归')
+
+  // ---- 知识库「只读」承诺在移动壳要说真话（写入口必须不渲染）----
+  await page.goto(ORIGIN + '/knowledge', { waitUntil: 'networkidle' })
+  await page.waitForTimeout(1200)
+  const kbRo = await page.evaluate(() => ({
+    create: [...document.querySelectorAll('button')].some(b => b.textContent.includes('新建知识库')),
+    ops: [...document.querySelectorAll('.kb-card-actions button')].map(b => b.textContent.trim())
+  }))
+  check(!kbRo.create, '库页不渲染「新建知识库」', kbRo.ops.join('/'))
+  check(!kbRo.ops.some(t => t === '编辑' || t === '删除'), '库卡片没有编辑/删除（守卫那句「只读浏览」至此才是真话）', kbRo.ops.join('/'))
+  check(kbRo.ops.some(t => t.includes('文档管理')), '只读浏览入口照旧在（文档管理 →）', kbRo.ops.join('/'))
+  await page.goto(ORIGIN + '/knowledge/kb-1/docs', { waitUntil: 'networkidle' })
+  await page.waitForTimeout(1500)
+  const docRo = await page.evaluate(() => ({
+    upload: [...document.querySelectorAll('button')].some(b => b.textContent.includes('上传文档')),
+    importUrl: [...document.querySelectorAll('button')].some(b => b.textContent.includes('网页导入')),
+    search: [...document.querySelectorAll('button')].some(b => b.textContent.includes('全局搜索')),
+    rows: document.querySelectorAll('.doc-row:not(.head-row)').length
+  }))
+  check(!docRo.upload && !docRo.importUrl, '文档页没有上传/网页导入', JSON.stringify(docRo))
+  check(docRo.search && docRo.rows >= 2, '阅读与检索能力仍在（全局搜索 + 两条文档）', JSON.stringify(docRo))
 
   // ---- PWA 安装入口（P3）：iOS 无 beforeinstallprompt，给图文步骤；应用内浏览器不给 ----
   const iosCtx = await browser.newContext({

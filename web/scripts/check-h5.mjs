@@ -370,4 +370,70 @@ console.log(bad ? `\n${bad} 项不符` : '\n全部通过')
     `收尾帧/正文/过程/工具四处都断段（实测 ${nClose} 处，少一处就会把下一轮思考接在同一行后面）`)
 }
 
+// ---- ⑪ 计划模式（人在回路）两端同构 ----
+// 背景：计划卡此前只有 PC 有。引擎的 hydratePendingPlans 两端都把卡片挂进 messages，
+// 移动壳却没有任何地方渲染它——现象是「手机上出了一轮计划，界面一个字不显示，只能干等超时」。
+// 最容易复发的五种退化都钉在这里：
+//   ① 只在某一端加模板（两端各一份文件，编译都不会报错）；
+//   ② 挂卡判据与倒计时在两端各算一遍，一端改了另一端静默漂；
+//   ③ 移动壳放开了开关却没有确认栏 → 发出一轮「没人能批准」的计划问答；
+//   ④ 卡片本体被复制成两份样式，改一处漏一处；
+//   ⑤ PC 改用引擎的名字却没加进解构（点到那条分支才 ReferenceError）。
+{
+  const eng = stripComments(read('src/chat/useChatEngine.js'))
+  const pc = stripComments(read('src/views/ChatPage.vue'))
+  const h5 = stripComments(read('src/h5/MobileChatPage.vue'))
+  const row = stripComments(read('src/h5/MobileMsgRow.vue'))
+  const cardPath = 'src/components/PlanCard.vue'
+  const card = existsSync(join(ROOT, cardPath)) ? stripComments(read(cardPath)) : ''
+  check(!!card, '计划卡是共用组件 src/components/PlanCard.vue（两端各写一份必然改一处漏一处）')
+  check(/from '\.\.\/components\/PlanCard\.vue'/.test(pc) && /from '\.\.\/components\/PlanCard\.vue'/.test(row),
+    'PC 气泡与移动气泡挂的是同一个 PlanCard')
+  // 派生态只许引擎一处定义
+  for (const [label, s] of [['PC', pc], ['移动壳', h5], ['消息行', row]]) {
+    check(!/const pendingPlan =/.test(s), `${label} 不自算挂卡判据（归引擎）`)
+    check(!/const planExpired =/.test(s), `${label} 不自算超时锁（归引擎）`)
+    check(!/const planCountdownText =/.test(s), `${label} 不自算倒计时（归引擎）`)
+  }
+  check(/const pendingPlan = computed/.test(eng) && /const planExpired = computed/.test(eng)
+    && /const planCountdownText = computed/.test(eng), '引擎是这三份派生态的定义处')
+  const nPend = (eng.match(/const pendingPlan = computed/g) || []).length
+  check(nPend === 1, `引擎里 pendingPlan 只有一份（实测 ${nPend} 份）`)
+  // 移动壳三件套：开关放行 + 确认栏顶替输入卡 + 三个裁决口都接引擎
+  check(/planModeEnabled: true/.test(h5), '移动壳放行计划开关（有确认栏才允许开）')
+  check(/v-else-if="pendingPlan"/.test(h5) && /m-planp/.test(h5),
+    '移动壳有计划确认栏且顶替输入卡（与提问面板同形）')
+  check(/submitPlanApproval\(pendingPlan, 'approve'\)/.test(h5)
+    && /continuePlanConversation\(pendingPlan/.test(h5)
+    && /submitPlanApproval\(pendingPlan, 'cancel'\)/.test(h5),
+    '移动壳确认/继续对话/取消三个裁决口都走引擎同一套动作')
+  check(/pendingPlan, curPlanCard, planExpired, planCountdownText/.test(read('src/views/ChatPage.vue')),
+    'PC 已把这四个名字加进引擎解构（漏一个要到那条分支才炸）')
+  const h5Raw = read('src/h5/MobileChatPage.vue')
+  check(/<ordered-list-outlined/.test(h5Raw) && /OrderedListOutlined/.test(h5Raw),
+    '移动壳计划开关的图标已显式 import（kebab 名映射不到导入名就什么都不画）')
+}
+
+// ---- ⑫ 移动壳不许有「点了撞守卫」的入口，知识库只读承诺要说真话 ----
+// 背景：DesktopOnlyGuard 白名单之外的页面（/agents 等）在手机上是一张引导卡。
+// 两处曾经把用户往那儿送：工作区页的「去画布」用 raw href（整页重载才撞卡），
+// 运行列表的「运行详情」用 router.push。另一个方向也错：守卫对 /knowledge 写的是
+// 「只读浏览」，可库页的新建/编辑/删除与文档页的上传/批量照旧渲染——文案是假的。
+{
+  const pjRaw = read('src/views/ProjectPage.vue')
+  check(/<a v-if="!mobileShell" class="app-btn ghost pj-block-act" href="\/agents/.test(pjRaw),
+    '工作区页「去画布」在移动壳不渲染（raw href 会整页重载撞引导卡）')
+  check(/x\.kind === 'workflow' && !mobileShell/.test(pjRaw),
+    '工作区页「运行详情」在移动壳不渲染（同上）')
+  const kb = stripComments(read('src/views/KnowledgeBasePage.vue'))
+  check(/v-if="!mobileShell" class="app-btn"[^>]*@click="openCreate"/.test(kb),
+    '库页「新建知识库」在移动壳不渲染（兑现守卫的只读承诺）')
+  check(/v-if="!mobileShell && \(isAdmin/.test(kb), '库页编辑/图谱/删除整组动作在移动壳不渲染')
+  const dp = stripComments(read('src/views/DocumentsPage.vue'))
+  check(/const canManageCurrentKb = computed\(\(\) => \{\s*if \(mobileShell\.value\) return false/.test(dp),
+    '文档页把移动壳收进 canManageCurrentKb 根判据（逐按钮加 v-if 必漏）')
+  check(/const canManageDoc = d => !mobileShell\.value/.test(dp),
+    '文档行内写动作走 canManageDoc，同一判据收口')
+}
+
 process.exit(bad ? 1 : 0)

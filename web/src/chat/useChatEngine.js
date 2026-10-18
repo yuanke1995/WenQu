@@ -40,9 +40,9 @@ export function useChatEngine (hooks = {}) {
 
 const text = ref('')
 /**
- * 计划模式（人在回路）入口开关：仅传入 planModeEnabled=true 的壳（PC ChatPage 的「+」面板）可开启。
- * 状态本身存 localStorage（桌面/移动同源共享），移动壳没有计划卡 UI——引擎侧按 planModeEnabled
- * 兜底拦下，防止桌面开的开关让移动端发出一轮「没人能批准」的计划问答。
+ * 计划模式（人在回路）入口开关：只有传 planModeEnabled=true 的壳能开启（PC 与移动壳的「+」面板都给了）。
+ * 状态本身存 localStorage（桌面/移动同源共享）。这道闸留着而不是恒真：开关能让这一轮发出
+ * 「没人能批准」的计划问答，所以**没有计划卡 UI 的壳**（如分享页）必须被拦在门外。
  */
 const planModeEnabled = hooks.planModeEnabled === true
 const planModeOn = ref(planModeEnabled && (() => {
@@ -1153,6 +1153,40 @@ async function resolveApproval (m, approved) {
     if (m.approval) m.approval.busy = false
   }
 }
+/**
+ * 待批准的计划卡（两端共用，与提问面板同判据）：倒着找最后一条还挂着 pending 计划的助手消息。
+ * <p>原先这四份派生只长在 ChatPage 里，而计划数据两端都拿得到（hydratePendingPlans 在引擎内），
+ * 于是移动壳的现象是「卡片在 messages 里，界面上一个字都没有」，连超时锁与倒计时都无处可放。
+ * 派生收到这里，两端各自再算一遍就没有可能了。
+ */
+const pendingPlan = computed(() => {
+  const list = messages.value
+  for (let i = list.length - 1; i >= 0; i--) {
+    const m = list[i]
+    if (m && m.role === 'ai' && m.planCard && m.planCard.status === 'pending') return m
+  }
+  return null
+})
+const curPlanCard = computed(() => pendingPlan.value?.planCard || null)
+// 倒计时心跳（仅待确认卡挂 deadline 时走表，与提问卡的 askNow 同一套节奏）
+const planNow = ref(Date.now())
+let planTimer = null
+watch(() => messages.value.some(m => m.planCard && m.planCard.status === 'pending' && m.planCard.deadline), v => {
+  if (v && !planTimer) planTimer = setInterval(() => { planNow.value = Date.now() }, 1000)
+  if (!v && planTimer) { clearInterval(planTimer); planTimer = null }
+})
+onUnmounted(() => { if (planTimer) clearInterval(planTimer) })
+// 已过 deadline（后端超时收尾的 plan_cancelled 马上到）：操作锁住，避免批准必然失败的那一下
+const planExpired = computed(() => {
+  const c = curPlanCard.value
+  return !!(c && c.deadline && planNow.value >= c.deadline)
+})
+const planCountdownText = computed(() => {
+  const c = curPlanCard.value
+  if (!c || !c.deadline) return ''
+  const s = Math.max(0, Math.ceil((c.deadline - planNow.value) / 1000))
+  return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0')
+})
 /**
  * 计划模式（人在回路）：裁决当前气泡挂起的执行计划——批准 / 取消本轮。
  *  action='approve' 批准执行（后端仍兼容带改稿批准，前端不再提供该入口）；
@@ -2753,6 +2787,8 @@ if (typeof window !== 'undefined') {
     streamAnswer, resolveApproval, pickAskOption, commitAskCustom, askSubmitAll, ignoreAsk,
     // 计划模式（人在回路）：开关（「+」面板）与计划卡裁决动作；hydrate 供通知深链/切会话点名
     planModeOn, setPlanMode, submitPlanApproval, continuePlanConversation, hydratePendingPlans,
+    // 待批准卡的派生态与倒计时（确认栏顶替打字框的判据，两端共用）
+    pendingPlan, curPlanCard, planExpired, planCountdownText,
     // 思考能力 / 档位
     thinkCapsOf, reasoningLevelsOf, deepThinkMap, deepOnOf, deepThinkOn, levelOptionsOf, currentLevelOf,
     levelMap, setThinkLevel, currentThinkLevel, reasoningLevelParam,
