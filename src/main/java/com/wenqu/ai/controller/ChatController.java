@@ -784,8 +784,10 @@ public class ChatController {
                     + "返回 {compressedTurns, compressedMessages, keepRecent, keepTurns, summaryTokens, freedTokens, summary, rounds, partial}；"
                     + "freedTokens=本次净腾出的 token 数（并入摘要的原文减去新摘要自身），keepTurns=逐字保留的问答对数；"
                     + "compressedTurns=0 表示对话还短、无需压缩。"
-                    + "框架引擎由框架自己压缩，本接口不产问渠摘要，"
-                    + "改为登记一次强制压缩并返回 {engine:\"agentscope\", scheduled:true}，下一次提问开跑前生效")
+                    + "框架引擎（agentscope）走框架自己的压缩器：进程内持有该会话的活实例时<b>当场压并写回</b>，"
+                    + "返回 {engine:\"agentscope\", scheduled:false, compressedTurns, freedTokens, summary, summaryTokens}；"
+                    + "无活实例（进程重启后 / 本进程没答过）时回落为登记一次强制压缩，"
+                    + "返回 {engine:\"agentscope\", scheduled:true}，下一次提问开跑前生效")
     @ApiResponse(responseCode = "200", description = "压缩结果统计（含摘要全文，供前端展示）")
     @PostMapping("/session/{sessionId}/compact")
     public ResultJson compactSession(
@@ -799,11 +801,12 @@ public class ChatController {
                 ? "ip:" + clientIp(httpRequest) : "user:" + userId);
         // 框架引擎那条路不产问渠那份摘要：它的上下文由框架自己压缩（阈值触发、逐字保留最近若干条），
         // 而问渠这份摘要在这条路上没有人读——照老路压一次，用户拿到的是一张「已压缩」卡片和一件
-        // 没有发生的事。这里改成把强制压缩登记到这条会话：下一次提问开跑前真的折一次。
+        // 没有发生的事。这里改成：会话有活实例时当场就地压（框架 ConversationCompactor + 写回 state，
+        // 用户立即拿到摘要与腾出多少）；无活实例（进程重启/未在本进程答过）回落「排到下一次提问前压」。
         if (chatEngines.frameworkOwns(sessionId)) {
-            frameworkSessions.requestCompact(userId, sessionId);
-            return ResultJson.ok(java.util.Map.of("engine", "agentscope", "scheduled", true,
-                    "compressedTurns", 0), "已排到下一次提问前压缩");
+            Map<String, Object> r = frameworkSessions.compactNow(userId, sessionId);
+            boolean scheduled = Boolean.TRUE.equals(r.get("scheduled"));
+            return ResultJson.ok(r, scheduled ? "已排到下一次提问前压缩" : "压缩完成");
         }
         Object modelArg = body == null ? null : body.get("model");
         Object instrArg = body == null ? null : body.get("instruction");

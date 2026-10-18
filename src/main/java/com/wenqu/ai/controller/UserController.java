@@ -29,6 +29,8 @@ public class UserController {
     private final com.wenqu.ai.service.AuthService authService;
     private final com.wenqu.ai.service.RoleService roleService;
     private final com.wenqu.ai.service.UserConfigService userConfigService;
+    /** 框架会话表：个人偏好里「只能在 build 期定」的那一项（自动提炼记忆）改完要让常驻实例作废。 */
+    private final com.wenqu.ai.agentx.FrameworkSessions frameworkSessions;
 
     @Operation(summary = "用户列表", description = "返回全部用户（按昵称升序）")
     @GetMapping("/list")
@@ -90,9 +92,14 @@ public class UserController {
             + "已回落个人默认聊天模型（本端点的 defaultModel），无需单独配置")
     @PutMapping("/preference")
     public ResultJson setPreference(@RequestBody Map<String, Object> body) {
-        orgService.setPreference(com.wenqu.ai.util.RequestUser.uid(),
+        String uid = com.wenqu.ai.util.RequestUser.uid();
+        Boolean memoryEnabled = body.containsKey("memoryEnabled") ? bool(body.get("memoryEnabled")) : null;
+        orgService.setPreference(uid,
                 body.containsKey("defaultModel") ? str(body.get("defaultModel")) : null,
-                body.containsKey("memoryEnabled") ? bool(body.get("memoryEnabled")) : null);
+                memoryEnabled);
+        // 提炼闸是在建实例时定的（MemoryConfig 烤进常驻实例）：不标脏，下一轮仍按旧设置跑，
+        // 用户会看到「明明关了还在往记忆里写」
+        if (memoryEnabled != null) frameworkSessions.markConfigStale(uid);
         return ResultJson.ok("已保存");
     }
 

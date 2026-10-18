@@ -24,20 +24,22 @@ public class AgentxConfiguration {
                                com.wenqu.ai.service.SessionService sessionService,
                                com.wenqu.ai.service.ChatAttachmentService attachments,
                                com.wenqu.ai.service.UserImageService userImages,
-                               com.wenqu.ai.service.SkillService skills,
                                com.wenqu.ai.service.KeywordExtractor keywordExtractor,
                                com.wenqu.ai.service.ArtifactService artifactService,
+                               com.wenqu.ai.service.SandboxService sandboxService,
                                com.wenqu.ai.agent.subagent.SubAgentConsultService consultService,
                                com.wenqu.ai.agent.context.CitationIntegrityService citations,
                                com.wenqu.ai.agent.plan.PlanModeService plan,
                                com.wenqu.ai.service.QaLogService qaLog,
                                com.wenqu.ai.agent.tool.ToolRegistry toolRegistry,
                                com.wenqu.ai.service.ChatService chatService,
-                               com.wenqu.ai.service.ProjectService projectService) {
+                               com.wenqu.ai.service.ProjectService projectService,
+                               com.wenqu.ai.skill.WenquSkillRepository skillRepository,
+                               com.wenqu.ai.service.OrgService orgService) {
         AgentscopeChatEngine engine = new AgentscopeChatEngine(modelRegistry, configService, properties, tools,
-                sessions, sessionService, attachments, userImages, skills, keywordExtractor, artifactService,
-                consultService, citations, plan, qaLog, toolRegistry, projectService,
-                chatService::resolveTurnModel);
+                sessions, sessionService, attachments, userImages, keywordExtractor, artifactService,
+                sandboxService, consultService, citations, plan, qaLog, toolRegistry, projectService,
+                skillRepository, orgService, chatService::resolveTurnModel);
         factory.bindFramework(engine);
         // 重启后的待办由引擎接回：表里有归属、框架状态在 stateStore 里，续跑是做得到的事，
         // 不该回一句「已批准」然后什么都不发生

@@ -134,28 +134,52 @@ public final class RelatedStreamFilter {
     }
 
     /**
-     * 推荐问句（按 {@code |} 与换行拆条）。护栏与手写侧同一条：条目长过正文量级说明模型把
-     * 正文写进了推荐块，「剥离」等于把回答吃掉——这种条目不当芯片，由调用方并回正文。
+     * 推荐问句（按 {@code |} 与换行拆条）。两道护栏：整块是文档时一颗不出（{@link #holdsDocument}）、
+     * 单条长过正文量级时不当芯片（由调用方并回正文）。
      */
-    public List<String> chips(int proseMinChars) {
+    public List<String> chips(int proseMinChars, int maxChips) {
+        if (holdsDocument(maxChips)) return List.of();
         List<String> chips = new ArrayList<>();
-        for (String q : related.toString().split("[|\n]")) {
-            String t = q.trim();
-            if (t.isEmpty()) continue;
+        for (String t : items()) {
             if (t.length() > proseMinChars) continue;
             chips.add(t);
         }
         return chips;
     }
 
-    /** 推荐块里那些「其实是正文」的长条目（要并回回答的那些）。 */
-    public List<String> prose(int proseMinChars) {
+    /**
+     * 该并回回答的那些条目：整块是文档就全给，否则只给长过正文量级的那几条
+     * （短条目仍是正经建议，不该被牵连）。
+     */
+    public List<String> prose(int proseMinChars, int maxChips) {
         List<String> proseItems = new ArrayList<>();
-        for (String q : related.toString().split("[|\n]")) {
-            String t = q.trim();
-            if (!t.isEmpty() && t.length() > proseMinChars) proseItems.add(t);
+        boolean document = holdsDocument(maxChips);
+        for (String t : items()) {
+            if (document || t.length() > proseMinChars) proseItems.add(t);
         }
         return proseItems;
+    }
+
+    /**
+     * 这一整块「不是建议清单，是被塞进来的正文」：条目数超过提示词要的那 N 条。
+     * <p>拆条按 {@code |} 与换行走，所以一份 Markdown 文档会被切成几十条短行，每条都过得了单条长度闸
+     * ——真机 2026-10-18 21:00 那轮：模型把摘要骨架整块写进 {@code <related>}，71 条短行全部变成芯片，
+     * 界面上是一整屏绿。提示词只要 N 条（用 | 分隔），条数超了就不是清单，判成正文比挑几条当建议准。
+     *
+     * @param maxChips 允许的最多条数（配置的条数加两道余量：多给一两条按清单还认，整块文档不认）
+     */
+    public boolean holdsDocument(int maxChips) {
+        return items().size() > maxChips;
+    }
+
+    /** 块内条目（按 {@code |} 与换行拆、去空）。两个判据共用这一份，不各数一遍。 */
+    private List<String> items() {
+        List<String> out = new ArrayList<>();
+        for (String q : related.toString().split("[|\n]")) {
+            String t = q.trim();
+            if (!t.isEmpty()) out.add(t);
+        }
+        return out;
     }
 
     public boolean hasRelated() {

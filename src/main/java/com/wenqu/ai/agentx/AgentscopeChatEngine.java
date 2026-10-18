@@ -59,6 +59,21 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     /** 推荐块里条目长过这个字数就按正文处理（与手写侧 {@code RELATED_PROSE_MIN_CHARS} 同值同理由）。 */
     private static final int RELATED_PROSE_MIN_CHARS = 80;
 
+    /** 条数闸的余量：配置要 N 条，模型多给一两条还算清单，几十条那种整块文档才判成正文。 */
+    private static final int RELATED_CHIPS_TOLERANCE = 2;
+
+    /** 一次从 Session Log 读多少条事件（框架的翻页上界，见 {@link #drain}）。 */
+    private static final int DRAIN_PAGE = 200;
+
+    /**
+     * 跟随循环问一次「权威状态」的最长间隔（毫秒），见 {@link TurnMirror}。
+     * <p>镜像跟事件，但框架算任务状态时还看两件<b>不落事件</b>的事：租约过期（{@code receipt} 把
+     * running 降级成 interrupted）和 inbox 里的 rejected。光跟事件就永远看不见这两件，所以每一跳之外
+     * 再按这个间隔回查一次。取 2 秒的依据：那一跑真死掉时，最坏晚 2 秒才收，而机器预算与看门狗都在
+     * 更长的线上兜着；反过来若把它压回 200ms，就把刚省下来的全量重读又请回来了。
+     */
+    private static final long STATE_RECHECK_MS = 2_000L;
+
     /** 本轮提交离队的宽限：投递循环 100ms 一跳，超过这一段还没启动就是被闸门锁住了。 */
     private static final long LAUNCH_GRACE_MS = 30_000L;
 
@@ -81,10 +96,17 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 本服务（落盘 + 回显 URL + 保留原图 dataURL 供直发）与 {@code ScheduleCenter} 的清理任务本来就还在。
      */
     private final com.wenqu.ai.service.UserImageService userImages;
-    /** 技能清单注入 system prompt（正文仍由模型按需 readSkill 取，不塞进上下文）。 */
-    private final com.wenqu.ai.service.SkillService skills;
+    /** 关键词召回用的分词器（问答侧的关键词抽取，与技能无关）。 */
     private final com.wenqu.ai.service.KeywordExtractor keywordExtractor;
     private final com.wenqu.ai.service.ArtifactService artifactService;
+
+    /** 沙盒装配（全框架化 P1）：供 builder 侧 .abstractFilesystem(...) 取本轮的沙箱文件系统。 */
+    private final com.wenqu.ai.service.SandboxService sandboxService;
+
+    /** 技能仓库（全框架化 P3）：无状态，按当轮 RuntimeContext 解析可见技能，故由 Spring 单例注入。 */
+    private final com.wenqu.ai.skill.WenquSkillRepository skillRepository;
+    /** 个人偏好（目前只取「自动提炼记忆」开关，见 memoryConfig）。 */
+    private final com.wenqu.ai.service.OrgService orgService;
     private final com.wenqu.ai.agent.subagent.SubAgentConsultService consultService;
     private final com.wenqu.ai.agent.context.CitationIntegrityService citations;
     private final com.wenqu.ai.agent.plan.PlanModeService plan;
@@ -117,15 +139,17 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                                com.wenqu.ai.service.SessionService sessionService,
                                ChatAttachmentService attachments,
                                com.wenqu.ai.service.UserImageService userImages,
-                               com.wenqu.ai.service.SkillService skills,
                                com.wenqu.ai.service.KeywordExtractor keywordExtractor,
                                com.wenqu.ai.service.ArtifactService artifactService,
+                               com.wenqu.ai.service.SandboxService sandboxService,
                                com.wenqu.ai.agent.subagent.SubAgentConsultService consultService,
                                com.wenqu.ai.agent.context.CitationIntegrityService citations,
                                com.wenqu.ai.agent.plan.PlanModeService plan,
                                com.wenqu.ai.service.QaLogService qaLog,
                                com.wenqu.ai.agent.tool.ToolRegistry toolRegistry,
                                com.wenqu.ai.service.ProjectService projectService,
+                               com.wenqu.ai.skill.WenquSkillRepository skillRepository,
+                               com.wenqu.ai.service.OrgService orgService,
                                java.util.function.Function<ChatCommand, com.wenqu.ai.service.ChatService.TurnModel> modelResolver) {
         this.modelRegistry = modelRegistry;
         this.projectService = projectService;
@@ -136,14 +160,16 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         this.sessionService = sessionService;
         this.attachments = attachments;
         this.userImages = userImages;
-        this.skills = skills;
         this.keywordExtractor = keywordExtractor;
         this.artifactService = artifactService;
+        this.sandboxService = sandboxService;
         this.consultService = consultService;
         this.citations = citations;
         this.plan = plan;
         this.qaLog = qaLog;
         this.displayNames = new ToolDisplayNames(toolRegistry);
+        this.skillRepository = skillRepository;
+        this.orgService = orgService;
         this.modelResolver = modelResolver;
     }
 
@@ -194,20 +220,48 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     /**
-     * 技能清单（注入 system prompt）：本轮用户选用了哪些技能，就只列这些；一个都没选则列出全部启用的
-     * 技能，让模型仍能主动发现可用做法。
-     * <p>只列名称与描述，正文由模型按需调 {@code readSkill} 取——这是技能设计的本意（见
-     * {@code SkillService.promptBlock}），把全文塞进每次请求会把上下文吃光。
+     * 本轮「指定技能」的正文注入。
+     * <p>框架的 {@code HarnessSkillMiddleware} 每轮会把<b>全部</b>可见技能的名称+描述注入系统提示，
+     * 正文由模型按需取；而用户在输入框里点名了某几把技能，意思是「这一轮就照这几条做」。
+     * 点名不生效时，用户看到的是「我选了技能，它答得跟没选一样」，所以这里把正文直接送进本轮上下文
+     * （与工作流技能节点同一口径：{@code WenquSkillRepository.getSkill(name, ctx)} 按归属人解析）。
+     * <p>取不到必须写进正文而不是静默跳过：技能被删掉或改名时，让模型如实回答「这条技能当前不可用」，
+     * 比让它按记忆里的旧做法作答更诚实。
      */
-    private String skillPrompt(ChatCommand cmd) {
-        try {
-            List<String> only = cmd.getSkills();
-            Set<String> picked = (only == null || only.isEmpty()) ? null : new java.util.LinkedHashSet<>(only);
-            return skills.promptBlock(cmd.getUserId(), 1200, picked);
-        } catch (Exception e) {
-            log.warn("[SKILL] 技能清单注入失败（不影响本轮作答）: {}", e.getMessage());
-            return "";
+    private String pickedSkillsText(ChatCommand cmd, io.agentscope.core.skill.SkillFilter filter) {
+        List<String> picked = cmd.getSkills();
+        if (picked == null || picked.isEmpty()) return "";
+        String uid = cmd.getUserId();
+        if (uid == null || uid.isBlank()) return "";
+        int maxChars = configService.getInt("skill.maxFileChars", com.wenqu.ai.config.ConfigDefaults.SKILL_MAX_FILE_CHARS);
+        RuntimeContext ctx = RuntimeContext.builder().userId(uid).sessionId(cmd.getSessionId()).build();
+        StringBuilder sb = new StringBuilder();
+        for (String raw : picked) {
+            if (raw == null || raw.isBlank()) continue;
+            // 智能体「指定」模式存的是引用串 {uid}/{name}（个人技能要精确到归属人），输入框点名给的是裸名
+            String name = raw.contains("/") ? raw.substring(raw.lastIndexOf('/') + 1) : raw;
+            sb.append("\n\n【本轮指定技能：").append(name).append("】\n");
+            // 智能体的「技能范围」是能力边界，不是建议：点名也不能越过它。
+            // 只由框架 skillFilter 拦的话，这里仍会把正文直接拼进上下文，白名单等于被点名这条路绕过。
+            if (filter != null && !filter.isAllowed(name)) {
+                sb.append("（本智能体没有启用这条技能：它的「技能范围」未选中「").append(name)
+                        .append("」。请如实告知用户，改用本智能体在用的做法作答，不要按这条技能的内容作答）");
+                continue;
+            }
+            try {
+                io.agentscope.core.skill.AgentSkill sk = skillRepository.getSkill(name, ctx);
+                String body = sk == null ? null : sk.getSkillContent();
+                if (body == null || body.isBlank()) {
+                    sb.append("（这条技能当前对当前用户不可用：可能已被删除或改名。请如实告知用户，不要凭记忆代答）");
+                } else {
+                    sb.append(body.length() > maxChars ? body.substring(0, maxChars) + "\n…（正文超长已截断）" : body);
+                }
+            } catch (RuntimeException e) {
+                log.warn("[SKILL] 读取指定技能失败 name={}: {}", name, e.toString());
+                sb.append("（这条技能正文读取失败：").append(e.getMessage()).append("）");
+            }
         }
+        return sb.toString();
     }
 
     /**
@@ -218,7 +272,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * <p>三段各自独立、任一为空就不追加段落；附件解析失败由 {@link ChatAttachmentService#prepare}
      * 自己兜成一段可读的错误说明（fail-loud 到用户可见文案，而不是静默丢）。
      */
-    private String userContentWithContext(ChatCommand cmd) {
+    private String userContentWithContext(ChatCommand cmd, io.agentscope.core.skill.SkillFilter skillFilter) {
         StringBuilder sb = new StringBuilder();
         String q = cmd.getQuestion() == null ? "" : cmd.getQuestion();
         sb.append(q);
@@ -254,6 +308,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         .append(h.getContent()).append('\n');
             }
         }
+        // 4) 本轮指定技能：点名了就把正文送进去，否则「选了技能」这件事对模型完全不可见
+        sb.append(pickedSkillsText(cmd, skillFilter));
         return sb.toString();
     }
 
@@ -360,10 +416,26 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         java.util.concurrent.ConcurrentLinkedQueue<String> spills = new java.util.concurrent.ConcurrentLinkedQueue<>();
         WenquAgentxTools.TurnHooks hooks = tools.newHooks(cmd, ref, () -> turnId, spills,
                 consultService.newLedger());
+        // 本轮落点：工具表在 build 期定型、实例按会话常驻，pool/channel/hooks 只能放进会话级槽位，
+        // 由这里在 submit 之前换掉。早于 sessions.open 是为了让建实例期的降级也能发到当轮通道上。
+        AgentxTurnSlot slot = sessions.turnSlot(cmd);
+        slot.begin(tools.newTurn(cmd, pool, channel, policy, hooks));
+        // 本轮智能体绑定一次解析：实例重建判据、人设、技能白名单三处共用同一份（避免一轮读三遍库，
+        // 也避免「判据说没换、人设却按另一份装配」这种自相矛盾）
+        AgentBinding binding = bindingOf(cmd, policy);
         // 实例键用完整引用而不是裸模型名：同一个模型名可以挂在好几个供应商下（各自的 baseUrl 与 Key 不同），
         // 只按裸名判「模型没换」就不重建实例，于是换了供应商仍拿旧网关旧 Key 跑，且日志上一切正常
-        AgentSession session = sessions.open(cmd, ref,
-                ctx -> buildAgent(cmd, channel, pool, policy, route, hooks));
+        AgentSession session;
+        try {
+            session = sessions.open(cmd, ref, binding.key(),
+                    ctx -> buildAgent(cmd, policy, route, hooks, binding, slot));
+        } catch (RuntimeException e) {
+            // 建实例失败也要把槽位收回：否则这一会话的「当前轮」永远停在一次没跑起来的轮上
+            slot.end(turnId);
+            throw e;
+        }
+        // run_code 的脚本通道按轮现装：工具面在 build 期固定，轮号/通道/台账必须是当轮的
+        tools.ensureRunCodeTurn(slot, cmd);
         // 上一轮只要以失败收场过，这条会话后续每一轮都不会被框架启动：开轮前先把它归档掉
         reconcileStalledTurn(session, cmd);
         // 工具步数预算按轮归零：实例是常驻的，不归零就是上一轮的步数吃掉这一轮的预算
@@ -373,6 +445,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 pool.registrar().degrade(code, message);
                 channel.emit(RunEventType.WARN, message);
             });
+        }
+        // 框架工具档位闸按轮更新标签（全框架化 P1）：拒了什么要能在日志里追到是哪一轮。
+        AgentxFrameworkToolGate toolGate = sessions.frameworkToolGate(sessions.key(cmd));
+        if (toolGate != null) {
+            toolGate.beginTurn(turnId);
         }
         // 本轮实测用量只算这一轮新增的消息：框架的会话记录跨轮常驻，整表求和会把历史轮的 token
         // 也计进这一轮的账单
@@ -425,6 +502,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         historyRefsJson(cmd.getHistoryRefs()),
                         null, turnId);
         Recording recording = new Recording(spills, hooks.consultLedger(), tools, hooks, displayNames);
+        bindFrameworkToolGate(cmd, recording);
 
         // 计划模式（框架原生 plan_enter/plan_write/plan_exit）按轮进入，跑完必须退出。
         // 开关没开时问一次意图判断器——不这么做的话「按意图自动开计划」这条手写侧的能力在框架下就是空的
@@ -446,7 +524,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 送进模型的不只是问题原文：附件正文 / @ 引用 / # 历史引用都在这一段拼进去。
         // 此前这里直接送 cmd.getQuestion()，于是用户传的东西模型一概看不见（附件问题表现为
         // 它如实回答「没有看到您上传的文件」）——落库只保证人能回看到，不等于模型收到了。
-        String modelInput = userContentWithContext(cmd) + imgNote;
+        String modelInput = userContentWithContext(cmd, binding.skillFilter()) + imgNote;
         // 模型能读图时，把原图作为 image_url 内容部件随本轮一起送进去。此前这里只有 submit(String)，
         // 图片在「问题正文」里没有任何落点——附件有 buildContextText 抽正文，图片没有等价的通道，
         // 于是发了图模型也一概看不见（它只会如实回答"没有看到图片"）。
@@ -465,6 +543,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                     userMessageId, current, planAuto, recording, System.currentTimeMillis());
         } finally {
             sessions.releaseFollower(sessionKey);
+            // 收口后清掉本轮落点：之后再有工具调用会明确失败，而不是回落到这一轮的池子里
+            slot.end(turnId);
         }
     }
 
@@ -512,6 +592,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         boolean launched = false;
         boolean neverLaunched = false;
         long launchDeadline = startedAt + LAUNCH_GRACE_MS;
+        // 会话状态改为跟事件认（见 TurnMirror）。起轮种一次权威待办，之后每一跳只认这一跳读到的事件。
+        TurnMirror mirror = new TurnMirror();
+        mirror.resyncPending(session);
+        // 兜底复查时刻：租约过期与 inbox 拒绝不落事件，只能按 STATE_RECHECK_MS 回查权威值
+        long lastStateProbeAt = 0;
 
         // 一整轮里待办可能出好几次：批准之后模型仍可再要一次确认。所以这里不是「等一次答复」，
         // 而是跟随会话现状——有待办就等人，没待办就跟到最后一条任务，任务结算了还要再看一眼
@@ -519,8 +604,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 第二次确认的卡永远发不出去，正文也是空的）
         while (machineMs(startedAt, humanWaitMs, waitingOnHuman, waitBeganAt) < machineBudgetMs) {
             if (!launched && current != null && !"queued".equals(current.status())) launched = true;
-            cursor = drain(session, cursor, emitFrom, channel, recording);
-            emitLiveUsage(session, cmd, pool, channel, historyBefore, usageStamp);
+            cursor = drain(session, cursor, emitFrom, channel, recording, mirror);
+            final boolean pendingChanged = mirror.takePendingChanged();
+            final boolean taskChanged = mirror.takeTaskChanged();
+            // 用量帧只在上下文真的添了行时才算：算它要先取 transcript，那是一次全量读
+            emitLiveUsage(session, cmd, pool, channel, historyBefore, usageStamp, mirror.takeMessageChanged());
             announcedRefs = emitRetrieved(cmd, pool, channel, announcedRefs, recording);
             // 用户点了「继续对话」：这一轮就此收口——修改意见由前端作为一条用户消息开出完整新一轮
             // （与手写引擎同一契约）。框架那一跑是被 reject 唤醒的，它会自己往下重出一版计划，
@@ -530,7 +618,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 session.interrupt();
                 break;
             }
-            announcePending(session, cmd, channel, announcedApprovals, planAuto, turnId, recording);
+            if (pendingChanged) {
+                announcePending(mirror.pendingSnapshot(), cmd, channel, announcedApprovals,
+                        planAuto, turnId, recording);
+            }
             if (tools.stopRequested(cmd)) {
                 // 框架的中断是协作式的：在飞工具会跑到结束（Phase 0 实测）。这里只发中断，
                 // 「本轮已停止」的留痕仍由问答侧那套收束逻辑做——不假装能当场掐断工具。
@@ -541,11 +632,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             // 只有「确实没人在跑这一条会话」才算没启动：另一线程正驱动它时，本轮排在队列里是正常状态。
             // current 为 null 是续跑那一跑（不是新提问，手里没有本轮命令），对它没有「启动」可判
             if (!launched && current != null && System.currentTimeMillis() > launchDeadline
-                    && session.pending().isEmpty() && session.inspect().activeRuns().isEmpty()) {
+                    && !mirror.hasPending() && session.inspect().activeRuns().isEmpty()) {
                 neverLaunched = true;
                 break;
             }
-            if (!session.pending().isEmpty()) {
+            if (mirror.hasPending()) {
+                Map<String, SessionEvent> waiting = mirror.pendingSnapshot();
                 if (pendingSince == 0) {
                     pendingSince = System.currentTimeMillis();
                     // 人在回路的等待登记进共享台账（与手写侧 PlanModeService/ChatService 同一入口）：
@@ -554,15 +646,15 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                     // 计划卡 13:57:46 挂出、用户还没点批准就被判「机器耗时 300087ms / 预算 300000ms
                     // （人工等待 0ms 不计入）」，界面上就是「一直 loading 到超时」。
                     // 引擎自己的机器预算同理要按同一口径扣掉，否则卡一挂出这一轮就只剩几十秒。
-                    beginHumanWait(channel, recording, session);
+                    beginHumanWait(channel, recording, waiting);
                     waitBeganAt = System.currentTimeMillis();
                     waitingOnHuman = true;
                 }
                 // 三张卡三档等待预算（计划/提问/工具审批），判据与 announcePending 分流同源
-                PendingKind kind = pendingKind(session);
+                PendingKind kind = pendingKind(waiting);
                 long budget = pendingBudgetMs(kind);
                 if (System.currentTimeMillis() - pendingSince > budget) {
-                    if (kind == PendingKind.ASK && answerTimedOutAsk(session, cmd)) {
+                    if (kind == PendingKind.ASK && answerTimedOutAsk(waiting, cmd)) {
                         // 提问卡超时**不收这一轮**：用户暂时不在 ≠ 用户拒绝。把「这一题没回答」如实送回
                         // 工具，模型基于已有信息继续推进（与手写侧 askTimeoutMs 分支同一语义）。
                         // 送不出去（会话已不在）才落到下面那条收尾。
@@ -594,15 +686,25 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 endHumanWait(channel, recording);
             }
             pendingSince = 0;
-            AgentSession.Task latest = latestTaskInTurn(session, current);
-            if (latest != null) current = latest;
+            // 任务状态只在「事件说它变了」或到了兜底间隔时才问权威值：tasks() 对每条历史命令各做一次
+            // 全量 scan，旧循环每一跳都问一遍，长会话里光这一问就是几百毫秒（见 TurnMirror）
+            if (taskChanged || System.currentTimeMillis() - lastStateProbeAt >= STATE_RECHECK_MS) {
+                lastStateProbeAt = System.currentTimeMillis();
+                AgentSession.Task latest = latestTaskInTurn(session, current);
+                if (latest != null) current = latest;
+            }
             if (current == null || current.settled()) {
                 // 结算与待办之间没有原子边界：先让出一拍再确认一遍，避免抢在下一张卡之前收尾
                 sleep(150);
-                cursor = drain(session, cursor, emitFrom, channel, recording);
+                cursor = drain(session, cursor, emitFrom, channel, recording, mirror);
                 announcedRefs = emitRetrieved(cmd, pool, channel, announcedRefs, recording);
-                announcePending(session, cmd, channel, announcedApprovals, planAuto, turnId, recording);
-                if (!session.pending().isEmpty()) continue;
+                // 收尾这一支现读权威值、不用镜像：整轮只走得到这一次，而「少弹一张卡」是用户
+                // 看得见的事，镜像最多晚一跳，这里不给它晚的机会
+                Map<String, SessionEvent> latePending = session.pending();
+                if (!latePending.isEmpty()) {
+                    announcePending(latePending, cmd, channel, announcedApprovals, planAuto, turnId, recording);
+                    continue;
+                }
                 AgentSession.Task newer = latestTaskInTurn(session, current);
                 if (newer != null && !newer.settled()) {
                     current = newer;
@@ -619,7 +721,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 break;
             }
             sleep(200);
-            current = session.task(current.commandId());
         }
         // 兜底：超时收尾 / stopRequested 跳出都可能停在「仍在等人」的状态上。
         // 不收口的话台账的 openWaits 永远 >0，之后这一轮算出来的机器耗时永远是负数/偏小，
@@ -630,7 +731,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             waitingOnHuman = false;
             endHumanWait(channel, recording);
         }
-        drain(session, cursor, emitFrom, channel, recording);
+        // 收尾把游标跑到 head：这一轮的尾巴增量不能再漏（镜像传 null——出轮之后没人读状态）
+        drain(session, cursor, emitFrom, channel, recording, null);
 
         // 计划卡裁决的界面终态：拒绝=plan_cancelled、继续对话=plan_superseded。不补的表现为
         // 用户已经拒了计划，那张卡却还挂着「等待中」（控制流仍归框架判，这里只补留痕帧与 done 标记）
@@ -683,7 +785,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 「答好了」的样子把上一轮的正文存进历史——真机 2026-10-15 20:00:49 那轮 401，库里多出一条
         // 597 字助手行、model 记的正是失败那个模型，界面上只收到一个正常 done，失败一个字没提。
         String failure = runFailure(session, current);
-        if (answer.isBlank() && failure == null) answer = lastAssistantText(session);
+        if (answer.isBlank() && failure == null) answer = stripFallbackBody(recording, lastAssistantText(session));
         // 框架那一跑本身失败（上游 402 额度、网关异常、运行被拒……）必须说出来的那一件事：双跑实测——
         // 同一问题 legacy 发 error 帧，框架只发了一条「done + 空正文」，用户看到的是「它答了个空」，
         // 而不是「这次没答出来，原因是额度不足」。失败判据用框架自己留的 executionError / 任务终态。
@@ -830,6 +932,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     /** 续跑所需的一整套本轮上下文（重启接回与「答完没人跟」两条路共用同一段装配）。 */
     private record Following(ChatCommand cmd, RunChannel channel, WenquSourcePool pool,
                              ModelRegistryService.ModelRoute route, WenquAgentxTools.TurnHooks hooks,
+                             ExecutionPolicy policy,
                              AgentSession session, int historyBefore, long startCursor,
                              Recording recording) {
     }
@@ -844,7 +947,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private Following openForContinuation(String sessionId, String userId, String turnId) {
         if (sessionId == null || sessionId.isBlank()) return null;
         ChatCommand cmd = ChatCommand.builder().sessionId(sessionId).question("")
-                .userId(userId == null || userId.isBlank() ? "guest" : userId).build();
+                .userId(userId == null || userId.isBlank() ? "guest" : userId)
+                .agentId(agentIdOfSession(sessionId))
+                .build();
         com.wenqu.ai.service.ChatService.TurnModel turn = modelResolver.apply(cmd);
         String ref = turn.usable() ? turn.ref() : "";
         if (ref.isBlank()) return null;
@@ -861,10 +966,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 new java.util.concurrent.ConcurrentLinkedQueue<>();
         WenquAgentxTools.TurnHooks hooks = tools.newHooks(cmd, ref, () -> turnId, spills,
                 consultService.newLedger());
+        AgentBinding binding = bindingOf(cmd, policy);
+        AgentxTurnSlot slot = sessions.turnSlot(cmd);
         AgentSession session;
         try {
-            session = sessions.open(cmd, ref,
-                    ctx -> buildAgent(cmd, channel, pool, policy, route, hooks));
+            session = sessions.open(cmd, ref, binding.key(),
+                    ctx -> buildAgent(cmd, policy, route, hooks, binding, slot));
         } catch (Exception e) {
             log.warn("[agentx] 重建会话失败 session={}: {}", sessionId, e.toString());
             return null;
@@ -874,10 +981,49 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             stepBudget.beginTurn(turnId, tools.maxToolSteps(cmd), (code, message) -> {
             });
         }
+        // 接续轮同样要更新档位闸标签（全框架化 P1）：否则被拒的工具在日志里挂到上一轮头上。
+        AgentxFrameworkToolGate toolGate = sessions.frameworkToolGate(sessions.key(cmd));
+        if (toolGate != null) {
+            toolGate.beginTurn(turnId);
+        }
         Recording recording = new Recording(spills, hooks.consultLedger(), tools, hooks, displayNames);
-        // respond 之后框架才会往日志里追加接续那一段的事件，所以这里的 head 就是「接回之前」
-        return new Following(cmd, channel, pool, route, hooks, session,
+        bindFrameworkToolGate(cmd, recording);
+        return new Following(cmd, channel, pool, route, hooks, policy, session,
                 session.transcript().messages().size(), session.log().head().seq(), recording);
+    }
+
+/**
+ * 供 builder 用的框架文件系统（全框架化 P1）。
+ *
+     * <p><b>为什么走 builder 而不是 RuntimeContext</b>：框架的文件工具在 build 期就绑好了文件系统
+     * （{@code HarnessAgent:2895} {@code new FilesystemTool(filesystem, ...)}、
+     * {@code :2903} {@code new ShellExecuteTool(sandbox)}），两者都读 builder 字段，
+     * 对 {@code RuntimeContext} 里的 {@code AbstractFilesystem} 无感。
+     * 真机验证过这个差别：只往 ctx 里put 时，{@code execute("pwd")} 返回宿主项目目录。
+     *
+     * <p>拿不到时返回 null（沙盒不可用）——框架会退回默认文件系统，形态与 P1 之前一致，
+     * 不为了「有工具就挂」而给一个指向宿主的文件系统：那会让隔离静默失效。
+     */
+    private io.agentscope.harness.agent.filesystem.AbstractFilesystem frameworkFilesystem(ChatCommand cmd) {
+        if (sandboxService == null) return null;
+        String uid = cmd.getUserId();
+        String sessionId = cmd.getSessionId();
+        if (uid == null || uid.isBlank() || sessionId == null || sessionId.isBlank()) return null;
+        return sandboxService.frameworkFilesystem(sessionId, uid, /* unrestrictedWrites */ false);
+    }
+
+    /**
+     * 把本轮的工具卡记录器交给框架工具档位闸（全框架化 P1）。
+     *
+     * <p>框架工具走框架 Toolkit，其执行不经过问渠的 {@code rawCallbacks} 通道，
+     * 工具卡只能由闸自己从 {@code ToolUseBlock} 取入参往 {@code Recording} 报。
+     * 闸在 build 期就挂上、Recording 在建实例后才建，故这里做一次绑定而不是构造期注入。
+     */
+    private void bindFrameworkToolGate(ChatCommand cmd, Recording recording) {
+        AgentxFrameworkToolGate gate = sessions.frameworkToolGate(sessions.key(cmd));
+        if (gate != null) {
+            gate.bindRecording(recording);
+        }
     }
 
     /** 占到跟随位才起这一跑：同一条会话不许有两个循环对着跟（各读一份事件流就会各落一条助手消息）。 */
@@ -887,6 +1033,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             log.info("[agentx] 这一轮已经有跟随者在跑，不重复起 session={}", f.cmd().getSessionId());
             return;
         }
+        // 接回的那一轮也要占住槽位：工具与脚本通道读的是「当前轮」，不 begin 就会拿到上一轮
+        AgentxTurnSlot slot = sessions.turnSlot(f.cmd());
+        slot.begin(tools.newTurn(f.cmd(), f.pool(), f.channel(), f.policy(), f.hooks()));
+        tools.ensureRunCodeTurn(slot, f.cmd());
+        String turnId = f.hooks().turnId().get();
         RESUME_POOL.execute(() -> {
             try {
                 followTurn(f.session(), f.cmd(), f.channel(), f.pool(), f.route(), f.hooks(),
@@ -897,6 +1048,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 log.warn("[agentx] 续跑中断 session={}: {}", f.cmd().getSessionId(), e.toString());
             } finally {
                 sessions.releaseFollower(sessionKey);
+                slot.end(turnId);
             }
         });
     }
@@ -952,11 +1104,21 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         return last;
     }
 
-    /** 这一轮的上下文预算（token）：用户在这一轮显式选过的窗口优先，未选交给框架默认。 */
-    private int contextTokens(ChatCommand cmd) {
+    /**
+     * 用户在本轮显式选过的模型上下文窗口（token），落到 {@link OpenAIChatModel} 的
+     * {@code contextWindowSize}。框架的压缩阈值与输入预算都由它推导：
+     * <ul>
+     *   <li>{@code CompactionMiddleware#onReasoning}：{@code window - reserved(20k)} 为动态压缩阈值</li>
+     *   <li>{@code HarnessContextBuilder#inputLimit}：{@code window - output - safety} 为输入上限</li>
+     * </ul>
+     * 未选 / 未登记（≤0）返回 0，调用方不设（模型按名查框架内置 {@code ModelContextWindows} 表）；
+     * 不能把 0 显式塞给模型——{@code OpenAIChatModel} 的 builder 只在 {@code >=0} 时用显式值，
+     * 0 会被当成「窗口=0」喂给压缩逻辑（每轮都压）。用户选过的窗口优先于框架内置表：
+     * 问渠登记的窗口是模型真实口径，框架表按前缀猜名、对中文大模型常缺条目。
+     */
+    private int modelContextWindow(ChatCommand cmd) {
         Integer requested = cmd.getRequestedContextWindow();
-        return requested == null || requested <= 0 ? configService.getInt("chat.agentscopeMaxContextTokens", 0)
-                : requested;
+        return requested == null || requested <= 0 ? 0 : requested;
     }
 
     /**
@@ -1021,9 +1183,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * <p>整轮台账与工具卡计时必须同时开始、同时结束，所以两处只留这一个入口：分头调用的下一次漂移，
      * 表现是「看门狗不截断了，但提问卡上写着 3m12s」——同一个数在两个地方各扣各的。
      */
-    private static void beginHumanWait(RunChannel channel, Recording recording, AgentSession session) {
+    private static void beginHumanWait(RunChannel channel, Recording recording,
+                                       Map<String, SessionEvent> pending) {
         if (channel.emitter() != null) TurnRegistry.beginHumanWait(channel.emitter());
-        recording.beginToolWait(pendingCallKeys(session));
+        recording.beginToolWait(pendingCallKeys(pending));
     }
 
     private static void endHumanWait(RunChannel channel, Recording recording) {
@@ -1037,9 +1200,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * {@code Recording#endToolWait}）。
      * <p>认不出来（字段形状变了）时返回空集合，由 {@link Recording#endToolWait} 兜底记给在飞的第一把。
      */
-    private static java.util.List<String> pendingCallKeys(AgentSession session) {
+    private static java.util.List<String> pendingCallKeys(Map<String, SessionEvent> pending) {
         java.util.List<String> out = new java.util.ArrayList<>();
-        for (SessionEvent e : session.pending().values()) {
+        for (SessionEvent e : pending.values()) {
             Map<String, Object> data = e.data() == null ? Map.of() : e.data();
             Object call = firstNonNull(data.get("call"), data);
             String name = toolNameOf(call);
@@ -1051,9 +1214,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     /** 这一批待办按哪种形态处理：只要有提问卡就按提问走（提问最需要的是不替用户做决定）。 */
-    private static PendingKind pendingKind(AgentSession session) {
+    private static PendingKind pendingKind(Map<String, SessionEvent> pending) {
         java.util.List<Map<String, Object>> datas = new java.util.ArrayList<>();
-        for (SessionEvent e : session.pending().values()) {
+        for (SessionEvent e : pending.values()) {
             datas.add(e.data() == null ? Map.of() : e.data());
         }
         return pendingKindOf(datas);
@@ -1104,9 +1267,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * <p>走 {@code respondRaw} 而不是 {@code respondAsk}：后者末尾会 {@code ensureFollowing} 补起跟随者，
      * 而这里本来就有一个活着的跟随循环在跑，补第二个会有两个循环读同一条会话、各落一条助手消息。
      */
-    private boolean answerTimedOutAsk(AgentSession session, ChatCommand cmd) {
+    private boolean answerTimedOutAsk(Map<String, SessionEvent> pending, ChatCommand cmd) {
         String sessionKey = sessions.key(cmd);
-        for (Map.Entry<String, SessionEvent> e : session.pending().entrySet()) {
+        for (Map.Entry<String, SessionEvent> e : pending.entrySet()) {
             Map<String, Object> data = e.getValue().data() == null ? Map.of() : e.getValue().data();
             if ("confirmation".equals(str(data.get("kind")))) continue;
             String unanswered = "（用户未回答这一题（等待超时，界面没有收到作答）。"
@@ -1393,11 +1556,21 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
         /**
          * 落库用时间线：工具段按调用顺序夹在正文段之间，末段补到 body 全长（含追加的相关推荐/中断标记）。
-         * <p>body 若被引用自检整体替换过（{@code outcome.text()}），正文区间就对不上了——此时返回 null，
-         * 让前端走「历史恢复兜底」，宁可不交错也不能把正文切错。
+         * <p>body 若被引用自检整体替换过（{@code outcome.text()}），正文区间就对不上了——此时<b>只丢 text 段</b>，
+         * 保留思考/过程/工具段：正文由前端按整段接在末尾（{@code timelineView} 的尾段），过程与工具卡仍点得开。
+         * 整条返回 null 的旧口径会让前端在 done 那一步把时间线清空：用户刚看着跑完的几次检索/咨询，
+         * 在答完的同一秒整体消失（真机：3 次 search_knowledge + 1 次咨询，点开「已完成」只剩「深度思考」）。
          */
         String timelineJson(String body, String answerText) {
-            if (body == null || !body.startsWith(answerText == null ? "" : answerText)) return null;
+            if (body == null || !body.startsWith(answerText == null ? "" : answerText)) {
+                java.util.List<Map<String, Object>> kept = new java.util.ArrayList<>();
+                synchronized (timeline) {
+                    for (Map<String, Object> seg : timeline) {
+                        if (seg != null && !"text".equals(seg.get("kind"))) kept.add(seg);
+                    }
+                }
+                return kept.isEmpty() ? null : com.alibaba.fastjson2.JSON.toJSONString(kept);
+            }
             flushTimelineText(body.length());
             return timeline.isEmpty() ? null : com.alibaba.fastjson2.JSON.toJSONString(timeline);
         }
@@ -1614,15 +1787,95 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * <p><b>为什么吞异常</b>：人设取不到不该把整轮打挂——回落平台默认即可，
      * 与 {@code agentNameOf} 同样的降级姿态。
      */
-    private String rolePrompt(ChatCommand cmd) {
-        Agent bound = null;
+    /**
+     * 本轮智能体绑定：行、实例重建判据、技能白名单，一次解析三处共用。
+     *
+     * <p><b>为什么需要判据</b>：常驻实例的人设（{@code sysPrompt}）、工具挂载
+     * （{@code tools.frameworkTools}）、技能白名单都是 <b>build 期</b>固化的，而界面允许在会话内换
+     * 智能体（「下一问起由它作答」）。只比模型引用时，两个用同一模型的智能体之间换人，旧实例会继续用
+     * 上一个人的提示词与工具表——且日志上一切正常。
+     *
+     * @param key 智能体 id + 配置更新时间：换人、改配置都会让它变
+     */
+    private record AgentBinding(Agent row, String key, io.agentscope.core.skill.SkillFilter skillFilter) {
+    }
+
+    private AgentBinding bindingOf(ChatCommand cmd, ExecutionPolicy policy) {
+        Agent row = null;
         try {
-            bound = tools.agentOf(cmd);
-        } catch (Exception e) {
-            log.warn("[agentx] 本轮智能体人设解析失败，回落平台默认提示词: session={} err={}",
+            row = tools.agentOf(cmd);
+        } catch (RuntimeException e) {
+            // 解析失败不打断本轮：按「无绑定」走平台默认档（与改前 rolePrompt 的兜底一致）
+            log.warn("[agentx] 本轮智能体解析失败，回落平台默认档: session={} err={}",
                     cmd.getSessionId(), e.getMessage());
         }
+        String key = row == null
+                ? ""
+                : row.getId() + "@" + (row.getUpdateTime() == null ? "" : row.getUpdateTime());
+        // 执行档位也是 build 期烤进实例的（permissionContext、闸、适配器兜底），档位变了必须重建：
+        // 管理员在设置页改审批档，不能等整条会话换个模型才生效。
+        key = key + "|" + (policy == null ? "" : policy.preset() + "/" + policy.sandboxMode()
+                + "/" + policy.approvalMode() + "/" + policy.deny().stream().sorted().toList());
+        // 注意：思考开关/上下文窗口档也烤在实例里，但续跑入口（openForContinuation）重建的
+        // ChatCommand 不带这两个值，若把它们并进 key，续跑会按默认档重建、丢掉用户原来的选择。
+        // 因此这里只并入可复原的档位；思考/窗口档的变更留给后续「按调用传 GenerateOptions」那一刀。
+        return new AgentBinding(row, key, skillFilterOf(row));
+    }
+
+    /**
+     * 智能体「技能范围」三态 → 框架技能滤镜。
+     * <ul>
+     *   <li>{@code null} = 跟随全局：不限（{@code SkillFilter.all()}）</li>
+     *   <li>{@code 0} = 关闭：一条都不给（{@code SkillFilter.none()}）</li>
+     *   <li>{@code 1} = 指定：只给名单里那几条（{@code SkillFilter.only}）。名单为空就是一条都不给
+     *       ——用户点的是「指定」，空名单是有意的「不给」，不是「没选所以全给」</li>
+     * </ul>
+     * 名单里个人技能存的是 {@code {uid}/{name}} 引用串，框架按 {@code skill.getName()} 比对，故剥成裸名。
+     */
+    private static io.agentscope.core.skill.SkillFilter skillFilterOf(Agent a) {
+        if (a == null || a.getToolSkill() == null) {
+            return io.agentscope.core.skill.SkillFilter.all();
+        }
+        if (a.getToolSkill() == 0) {
+            return io.agentscope.core.skill.SkillFilter.none();
+        }
+        Set<String> names = skillNames(a.getSkills());
+        return io.agentscope.core.skill.SkillFilter.only(names.toArray(new String[0]));
+    }
+
+    /** 技能引用串列表 → 裸名集合（与只读清单、点名注入同一套剥法）。 */
+    private static Set<String> skillNames(String raw) {
+        Set<String> out = new LinkedHashSet<>();
+        if (raw == null || raw.isBlank()) return out;
+        for (String line : raw.split("[\\r\\n,，;；]+")) {
+            String ref = line.trim();
+            if (ref.isEmpty()) continue;
+            int slash = ref.lastIndexOf('/');
+            String name = slash >= 0 ? ref.substring(slash + 1) : ref;
+            if (!name.isBlank()) out.add(name.trim());
+        }
+        return out;
+    }
+
+    private String rolePrompt(Agent bound) {
         return RolePrompt.of(bound, properties.getSystemPrompt());
+    }
+
+    /**
+     * 续跑时把会话绑定的智能体带回来。
+     * <p>续跑入口（{@link #openForContinuation}）是用空问题重建一条 {@link ChatCommand} 的，若不显式带
+     * {@code agentId}，重建出来的实例会退回平台默认人设——而用户明明是在某个智能体下问的那一轮。
+     * 会话表里存着这份归属（{@code c_ai_session.agent_id}），读一次即可，读不到按默认助手继续。
+     */
+    private String agentIdOfSession(String sessionId) {
+        try {
+            com.wenqu.ai.model.Session s = sessionService.sessionById(sessionId);
+            return s == null ? null : s.getAgentId();
+        } catch (RuntimeException e) {
+            log.warn("[agentx] 续跑解析会话归属智能体失败，按默认助手继续 session={}: {}",
+                    sessionId, e.toString());
+            return null;
+        }
     }
 
     /**
@@ -1696,13 +1949,118 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 按游标读增量事件并翻译，返回新游标——同一条事件不会被读第二次。
      * <p>{@code emitFrom} 之前的只记不发：续跑要把批准之前那几次工具记进这一轮的账，但那些帧已经
      * 播过一次，再发一遍等于把上一段正文重新打给观众。
+     * <p><b>必须翻到读完为止</b>：{@code readAfter(after, limit)} 是「最多 limit 条」的截断语义，
+     * 不是「都给你」。一次只取一页等于给两次读之间的积压设了一道隐形上限，而收尾那一次是全轮最后
+     * 一次读——只走一页，此后没人再推进游标，落后的那一截永久丢掉。丢掉的是最后的正文增量：剥离器
+     * 吃不到它，落库就改从框架 transcript 取（那份没经过剥离），用户读到带 {@code <related>} 原文的
+     * 回答，而「接下来可以」那排芯片同时没了（真机 2026-10-18 20:20 那轮，全库 502 条助手消息中 3 条）。
+     * <p>这条按「隐形上限必须拆掉」改，不当它是已定案的根因：要触发得让每一拍慢到追不上增量，照同一
+     * 族问题跑 7 轮（每轮 1350–1776 帧）没能复现。标签到不了用户眼前由 {@link #stripFallbackBody}
+     * 在那条回退路径上兜死，不依赖这里的因果。
+     * <p>上界取进入时的 {@code head} 快照而不是「读到空为止」：事件在跑的过程中持续追加，
+     * 没有快照这个循环可以永不返回。快照之后新到的事件交给下一拍。
      */
-    private long drain(AgentSession session, long cursor, long emitFrom, RunChannel channel, Recording recording) {
-        for (SessionEvent event : session.log().readAfter(cursor, 200)) {
-            cursor = Math.max(cursor, event.seq());
-            translate(event, event.seq() > emitFrom ? channel : SILENT_CHANNEL, recording);
+    private long drain(AgentSession session, long cursor, long emitFrom, RunChannel channel, Recording recording,
+                       TurnMirror mirror) {
+        SessionLog eventLog = session.log();
+        long through = eventLog.head().seq();
+        while (cursor < through) {
+            List<SessionEvent> batch = eventLog.readAfter(cursor, DRAIN_PAGE);
+            if (batch.isEmpty()) break;   // seq 有空洞（压缩/迁移）：游标推不动，不在这儿死循环
+            for (SessionEvent event : batch) {
+                cursor = Math.max(cursor, event.seq());
+                translate(event, event.seq() > emitFrom ? channel : SILENT_CHANNEL, recording);
+                if (mirror != null) mirror.observe(event);
+            }
         }
         return cursor;
+    }
+
+    /**
+     * 跟随循环的<b>事件镜像</b>：会话现在处于什么状态，从已经读到的事件上认，不再每跳重读整条日志。
+     *
+     * <p><b>为什么必须改</b>：框架的 {@code JournalSessionLog#scan} 是从 head 沿父链<b>往回走</b>到
+     * {@code after}，每跳一个 commit 文件都要 read + JSON parse——取尾部增量也是这个代价。更要命的是
+     * {@code SessionInteractions#pending}（即 {@code session.pending()}）按 256 一批从 0 走到 head，
+     * 等于把这条回走跑几十遍；而 {@code transcript()} 与 {@code tasks()}（后者对<b>每条历史命令</b>
+     * 各做一次全量 scan）同样按全量算。旧循环名义上 200ms 一跳，实际每一跳要做三四次这种读，
+     * 真机实测一跳 1.05 秒：正文按秒成坨落地，界面上就成了「不是流式，一下就出来」
+     * （2026-10-18 实测一轮 30.7s／977 帧，token 只分 3 簇：70／394／228 字）。
+     *
+     * <p><b>判据与框架同源，不是近似值</b>：待办＝{@code interaction/requested} 收、{@code interaction/resolved}
+     * 撤（框架 {@code pending()} 就是这两类事件按 requestId 增删）；任务变化＝{@code inbox/*} 与
+     * {@code run/end}（框架 {@code receipt()} 认的就是它们）；上下文条数＝{@code transcript()} 实际读的
+     * 那几类事件。
+     *
+     * <p><b>仍然保留的两处权威读</b>：起轮时 {@link #resyncPending} 种一次（本轮游标之前挂着的待办
+     * 不在 drain 的范围里），收尾那几处照旧现读——镜像只可能晚一跳看见，不会把已提交的事件读丢。
+     */
+    private static final class TurnMirror {
+        private final Map<String, SessionEvent> pending = new java.util.LinkedHashMap<>();
+        private boolean pendingChanged;
+        private boolean taskChanged;
+        private boolean messageChanged;
+
+        void observe(SessionEvent event) {
+            switch (event.type()) {
+                case "interaction/requested", "interaction/resolved" -> {
+                    Map<String, Object> data = event.data() == null ? Map.of() : event.data();
+                    String requestId = String.valueOf(data.get("requestId"));
+                    if ("interaction/requested".equals(event.type())) pending.put(requestId, event);
+                    else pending.remove(requestId);
+                    pendingChanged = true;
+                }
+                case "inbox/accepted", "inbox/started", "inbox/closed", "inbox/handled", "inbox/rejected",
+                     "run/end" -> taskChanged = true;
+                case "message/user", "message/assistant", "tool/result", "turn/output", "migration/baseline" ->
+                        messageChanged = true;
+                default -> {
+                }
+            }
+        }
+
+        /** 取走并清空「本跳有没有……」——取走即清，循环里那几条 continue 才不会把脏位带进下一跳。 */
+        boolean takePendingChanged() {
+            boolean v = pendingChanged;
+            pendingChanged = false;
+            return v;
+        }
+
+        boolean takeTaskChanged() {
+            boolean v = taskChanged;
+            taskChanged = false;
+            return v;
+        }
+
+        boolean takeMessageChanged() {
+            boolean v = messageChanged;
+            messageChanged = false;
+            return v;
+        }
+
+        boolean hasPending() {
+            return !pending.isEmpty();
+        }
+
+        /**
+         * 交给外部的一份副本。
+         * <p>不递内部那张表：{@code sessions.notePending} 存下的引用会被恢复端点跨线程读，
+         * 而镜像在同一个循环的下一跳还会改它。
+         */
+        Map<String, SessionEvent> pendingSnapshot() {
+            return new java.util.LinkedHashMap<>(pending);
+        }
+
+        /**
+         * 用权威值重种待办表：代价是一次全量读，一轮只做一次。
+         * <p>起轮时本轮游标之前挂着的待办（上一轮没答完的那张卡）不在 drain 的范围里，不种就看不见；
+         * 种完把脏位置真，让第一跳照旧把这一批卡报出去——那是改前就有的行为，别顺手改掉。
+         */
+        void resyncPending(AgentSession session) {
+            pending.clear();
+            pending.putAll(session.pending());
+            pendingChanged = true;
+        }
     }
 
     /**
@@ -1881,9 +2239,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     /** 框架待办（一等公民）→ 问渠确认卡；审批号↔会话的归属登记好，答复端点靠它找回。 */
-    private void announcePending(AgentSession session, ChatCommand cmd, RunChannel channel, Set<String> announced,
-                                 boolean planAuto, String turnId, Recording recording) {
-        Map<String, SessionEvent> pending = session.pending();
+    private void announcePending(Map<String, SessionEvent> pending, ChatCommand cmd, RunChannel channel,
+                                 Set<String> announced, boolean planAuto, String turnId, Recording recording) {
         if (pending.isEmpty()) return;
         String sessionKey = sessions.key(cmd);
         sessions.notePending(sessionKey, pending);
@@ -2049,6 +2406,25 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     /**
+     * 记忆提炼配置：两层闸都落在这里——系统设置「用户长期记忆 → 总开关」关掉时全平台不再提炼，
+     * 个人设置里那个开关关掉时只对本人生效。关掉的都只是每轮收尾的那次提炼
+     * （框架 {@code FlushTrigger.never()} 注释原文：*"disables only the per-call flush"*），
+     * 已经沉淀下来的 {@code MEMORY.md} 仍照常注入——与两处界面「仅关生成，不关注入」的说明对齐。
+     * <p>都开着时返回 {@code MemoryConfig.defaults()}，与不写这一句逐字相同；写出来是为了让
+     * 界面上那两个开关真的有下游，而不是只写库没人读。
+     */
+    private io.agentscope.harness.agent.memory.MemoryConfig memoryConfig(ChatCommand cmd) {
+        boolean on = configService.getBoolean("memory.enabled", true)
+                && orgService.memoryFlushEnabled(cmd.getUserId());
+        if (on) {
+            return io.agentscope.harness.agent.memory.MemoryConfig.defaults();
+        }
+        return io.agentscope.harness.agent.memory.MemoryConfig.builder()
+                .flushTrigger(io.agentscope.harness.agent.memory.MemoryConfig.FlushTrigger.never())
+                .build();
+    }
+
+    /**
      * 压缩配置。框架默认（不配＝动态 token 阈值或 50 条消息触发、逐字留最近 20 条、prune 开）
      * 本身就是一条会跑的滚动压缩，问渠不再另算一份摘要——两边各算就是两份「已压缩上下文」互相冒充。
      * <p>手动 {@code /compact} 在这一路会话上留过请求时，本次建实例强制「有一条就先压」，
@@ -2069,9 +2445,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 .build();
     }
 
-    private HarnessAgent buildAgent(ChatCommand cmd, RunChannel channel, WenquSourcePool pool,
-                                    ExecutionPolicy policy, ModelRegistryService.ModelRoute route,
-                                    WenquAgentxTools.TurnHooks hooks) {
+    private HarnessAgent buildAgent(ChatCommand cmd, ExecutionPolicy policy,
+                                    ModelRegistryService.ModelRoute route,
+                                    WenquAgentxTools.TurnHooks hooks, AgentBinding binding,
+                                    AgentxTurnSlot slot) {
         // 状态目录：相对路径会按工作目录（user.dir）解析，等价于种子默认值 user.dir/user-data/agentscope。
         // 防御式兜底：配置被清空或缺失时退回默认，避免 Path.of("") 抛 InvalidPathException 把整轮打挂。
         String stateDirRaw = configService.get("chat.agentscopeStateDir");
@@ -2086,16 +2463,25 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         io.agentscope.core.tool.Toolkit toolkit = new io.agentscope.core.tool.Toolkit();
         // 框架把工具派到自己的弹性线程：身份与本轮检索参数覆盖必须在发起线程取快照、在工具内重放，
         // 不重放就是检索恒空且不报错（Phase 0 与本刀都实测过这个形状）
-        for (Object holder : tools.frameworkTools(cmd, channel, pool, policy, (code, message) -> {
+        for (Object holder : tools.frameworkTools(cmd, policy, slot, (code, message) -> {
             log.info("[agentx] 降级 {}: {}", code, message);
-            // 未接入的能力必须让用户看见：静默少挂一个族会被读成「配了没生效」
-            channel.emit(RunEventType.WARN, message);
-        }, true, hooks)) {
+            // 未接入的能力必须让用户看见：静默少挂一个族会被读成「配了没生效」。
+            // 降级出口也按轮走：实例复用后这里的 channel 是建实例那一轮的，必须从槽位现取。
+            AgentxTurnSlot.Turn t = slot.current();
+            if (t != null) t.channel().emit(RunEventType.WARN, message);
+        }, true)) {
             toolkit.registerTool(holder);
         }
         AgentxStepBudget stepBudget = new AgentxStepBudget();
         // 实例常驻、闸随实例走，登记到会话表好让引擎在开轮时归零它
         sessions.noteStepBudget(sessions.key(cmd), stepBudget);
+        // 框架工具的档位闸（全框架化 P1）：沙箱/文件工具改由框架提供后不再过问渠装配链，
+        // 档位裁剪挪到执行前逐个判。策略按轮取（同实例多轮可能不同档）。
+        AgentxFrameworkToolGate toolGate = new AgentxFrameworkToolGate(() -> {
+            AgentxTurnSlot.Turn t = slot.current();
+            return t == null ? policy : t.policy();
+        });
+        sessions.noteFrameworkToolGate(sessions.key(cmd), toolGate);
         return HarnessAgent.builder()
                 .agentId("wenqu")
                 .name("wenqu")
@@ -2105,11 +2491,15 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 用户口径那条（正文/计划/清单不写沙盒路径与工具名）也要跟着挂：它原先长在已退役的手写
                 // 计划阶段里，框架这一路没人再说第二遍，而框架的 PLAN banner 与沙盒工具说明反而主动把
                 // 路径喂给模型——不挂回去，计划卡就变成「它打算在沙盒里怎么写文件」的说明书
-                .sysPrompt(rolePrompt(cmd) + projectContext(cmd) + tools.consultGuide(cmd) + PlanCopy.guidance()
-                        + skillPrompt(cmd)
+                .sysPrompt(rolePrompt(binding.row()) + projectContext(cmd) + tools.consultGuide(cmd) + PlanCopy.guidance()
                         + com.wenqu.ai.agent.chat.RelatedPrompt.line(
                                 configService.getInt("retrieval.relatedCount", 3)))
-                // 问渠所有供应商都是 OpenAI 兼容网关（c_ai_provider.base_url 实测全是 compatible-mode）
+                // 问渠所有供应商都是 OpenAI 兼容网关（c_ai_provider.base_url 实测全是 compatible-mode）。
+                // 用户在界面选的上下文窗口（contextWindow 档位）落到 model 的 contextWindowSize：
+                // 框架的压缩阈值/输入预算都由它推（CompactionMiddleware: window-reserved；
+                // HarnessContextBuilder.inputLimit: window-output-safety），
+                // 不设就按 ModelContextWindows.lookup 按模型名查内置表，问渠登记窗口≠框架内置表时
+                // 会差一截。0/未登记不设（保持框架按模型名推断），避免把显式 0 塞给模型。
                 .model(OpenAIChatModel.builder()
                         .baseUrl(route.baseUrl())
                         .apiKey(route.apiKey())
@@ -2118,6 +2508,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         .generateOptions(generateOptions(cmd, hooks.modelRef()))
                         .endpointPath(route.completionsPath() == null || route.completionsPath().isBlank()
                                 ? "/v1/chat/completions" : route.completionsPath())
+                        .contextWindowSize(modelContextWindow(cmd))
                         .build())
                 .toolkit(toolkit)
                 // 框架对「一把工具」有自带的 5 分钟硬超时（TOOL_DEFAULTS）。咨询子轮、沙盒长命令都会撞上去，
@@ -2128,7 +2519,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         .build())
                 .maxIters(configService.getInt("chat.agentscopeMaxIters", 12))
                 // 计划模式工具面常驻开启，具体某一轮进不进由 enterPlanMode 决定（实例按会话复用）。
-                //
                 // 这里与 PlanModeService **不是双跑**：那套在框架路径下只被用来做「意图判断」
                 // （startIntentCheck/awaitIntent，决定这一轮要不要先出计划卡），而
                 // approvalGate/refsDigest 那些计划版本链、澄清提问轮、计划快照落库的逻辑框架路径下
@@ -2145,10 +2535,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 或者把 doing 写进 todo_write 被框架判非法。storage 用框架的、tool 面用问渠的，
                 // 是这里刻意的分工——框架 AgentState 才是清单的权威真源（见 TodoBridge）。
                 // 真要换成框架工具面，得连护栏、中文名、前端契约一起换，不能只开这个开关。
-                .maxContextTokens(contextTokens(cmd))
-                // 上下文压缩：框架默认就开着（50 条消息或动态 token 阈值触发、逐字保留最近 20 条）。
-                // 这里只留两个改口的地方——常规阈值按配置，手动 /compact 在框架引擎下落到「下一次建实例先压」
+                // 上下文压缩：框架默认就开着（动态 token 阈值或 50 条消息触发、逐字保留最近 20 条）。
+                // 用户选的窗口已落到 model.contextWindowSize（见 .model(...) 段），压缩阈值由它推导，
+                // 这里不再单独传 maxContextTokens（那是 WorkspaceContextMiddleware 的注入预算，非压缩阈值）。
                 .compaction(compactionConfig(cmd))
+                // 记忆提炼闸：个人设置的「自动提炼记忆」在这里落地（关掉＝本轮起的实例不再做每轮提炼）
+                .memory(memoryConfig(cmd))
                 .workspace(stateDir)
                 // 框架默认把状态写到 ~/.agentscope/state/**（在问渠数据目录之外，容器里等于丢）：
                 // 换成受管数据目录的文件实现；多副本（chat.agentscopeRedisEnabled=true）时自动切 Redis
@@ -2161,22 +2553,74 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 步数预算闸（对标 StepBudgetGuard）：maxIters 限的是推理轮数而不是工具调用次数，
                 // 一轮里模型可以一次要好几把工具，账单闸只能在 onActing 里数
                 .middleware(stepBudget)
-                // Phase 0 实测：框架默认装备子智能体/技能/工作区上下文/tools.json 等旁路能力，
-                // 不关净时模型会自主派子智能体去翻工作区，与问渠自己的体系打架
-                .disableSubagents()
-                .disableDynamicSubagents()
-                .disableDynamicSkills()
+                // 档位闸必须排在步数闸之后：先判「该不该跑」，再判「还剩几步」，
+                // 否则被档位拒绝的那次会白占一步预算（AgentxStepBudget 的「判过即占一步」口径）。
+                .middleware(toolGate)
+                // 流式可见性闸：框架只在一次模型调用结束时才把 chunk 落盘，而观众跟的是落盘后的日志，
+                // 界面上就是「正文一下粘出几百字」。这里把它拆成 200ms 一片（代价见类注释）。
+                .middleware(new AgentxStreamFlushMiddleware())
+                // Phase 0 实测：框架默认装备子智能体/技能/工作区上下文/tools.json 等旁路能力。
+                //
+                // 子智能体已改为**框架接管**（2026-10-18，全框架化迁移 P0）：去掉
+                // disableSubagents / disableDynamicSubagents 后，框架装配 SubagentsMiddleware，
+                // 注册 agent_spawn / agent_send / agent_list 三把工具，并每轮在 SYSTEM 消息前
+                // 插入子智能体使用指引与异步任务摘要（框架自己从「冻结基线」重建 SYSTEM，
+                // 内容不会跨轮累积——见 SubagentsMiddleware 类注释第 3 条）。
+                // 框架子智能体与问渠的 consultAgent 是两套并存：后者管「咨询谁」，
+                // 前者管「派谁干活」，提示词里各说各的，不互相顶替。
+                //
+                // 技能已改为**框架接管**（2026-10-18，全框架化迁移 P3）：
+                // WenquSkillRepository 实现 RuntimeContextSkillRepository，按当轮 uid 解析可见技能
+                // （classpath 内置 + skill-projections/{uid}/，同名用户版优先，与迁移前一致）。
+                // disableDynamicSkills 去掉——那会拦掉框架的动态技能加载。
+                // disableDefaultWorkspaceSkills 保留：工作区里的默认技能集与问渠的技能体系无关。
+                .skillRepositories(List.of(skillRepository))
+                // 智能体的「技能范围」真正生效的地方（全框架化收口）：三态 → SkillFilter。
+                // 框架的 HarnessSkillMiddleware 按它裁目录（被滤掉的不进提示词、也不注册 load 工具），
+                // 所以「限定用哪几个」是边界而不是建议。空白名单/关闭 = 一条都不给。
+                // 注意：只能走 builder —— AgentSession 构造时把 RuntimeContext 复制了一份
+                // （AgentSession:84），事后往原 ctx put SkillFilter 影响不到已建实例。
+                .skillFilter(binding.skillFilter())
+                // 用户侧技能增删改交给框架 skill_manage 工具（全框架化 P3）。
+                // autoPromote=true：新技能直接落可加载目录，下一轮推理即可见。
+                // 框架注释：默认会先进 drafts 目录「不自动加载」，那是给谨慎场景的默认——
+                // 问渠的技能本来就是个人资产、当轮要用，加 drafts 只是多一步人工提升。
+                .enableSkillManageTool(io.agentscope.harness.agent.tool.SkillManageConfig.builder()
+                        .autoPromote(true)
+                        .build())
                 .disableDefaultWorkspaceSkills()
-                .disableWorkspaceContext()
-                // 框架自带的 memory_search / memory_get / memory_save / session_search 一律关掉：
-                // 它们读的是框架工作区里那份 MEMORY.md，而问渠的长期记忆与历史有自己的表、自己的面板。
-                // 留着就是第二套记忆体系——模型会去查一份用户在界面上既看不见也管不着的记忆
-                //（实测一轮里跑了 3 次 session_search/memory_search，白占三步预算）
-                .disableMemoryTools()
+                // 记忆改由框架接管（全框架化 P3）：去掉 disableMemoryTools 后框架注册
+                // memory_search / memory_get / memory_save / session_search 四把。
+                //
+                // 隔离性核对过：`WorkspaceManager#getMemoryDir(rc)` → `resolveRuntimeDataPath(rc, ...)`
+                // 按 RuntimeContext 解析，本轮的 uid 不同则记忆目录不同 —— 满足问渠的 per-user 语义。
+                //
+                // 已接受的降级（换框架的必然结果）：框架 `MemorySearchTool` 是 **keyword 检索**
+                // （源码注释：*"Uses keyword-based search through all memory files"*），
+                // 问渠原实现是 embedding 向量检索；且用户失去「长期记忆」面板的手动管理入口。
+                //
+                // disableWorkspaceContext 已去掉（全框架化 P4 修正）：该开关会整条关掉
+                // WorkspaceContextMiddleware，而它承担 P3 记忆「读回」的两件事——
+                //   ① readMemoryMd(rc) 把 MEMORY.md 注入 HARNESS_CONTEXT（不开则模型看不到已沉淀的记忆）
+                //   ② 注入 Memory Recall / Memory Persistence 使用指引（不开则模型不知道
+                //      memory_search 四把工具何时用）
+                // P3 之前它留着是因为当时记忆/技能还是自研体系（HEAD 注释：关掉框架自带的
+                // memory_* 四把工具防第二套记忆）；P3 把记忆换成框架后这一条已不成立，
+                // 继续关着 = 记忆只写不读（flush hook 照常跑、注入却断了）。
+                // 副作用核对：该 middleware 注入的 ## Workspace 段落会描述沙箱路径，
+                // 但问渠有 PlanCopy.guidance()（提示词「正文/计划/清单不写路径与工具名」）
+                // + PlanCopy.stripInternalPaths（计划卡兜底剥路径）两层护栏，与它共存无冲突。
                 .disableAtPathExpansion()
                 .disableToolsConfig()
-                .disableFilesystemTools()
-                .disableShellTool()
+                // 沙箱与文件系统：**框架接管**（全框架化P1）。
+                // 关键：框架的工具在 **build 期**绑定文件系统——
+                //   HarnessAgent:2895 `new FilesystemTool(filesystem, pathNormalizer)`
+                //   HarnessAgent:2903 `new ShellExecuteTool(sandbox)`（filesystem 当沙箱用）
+                // 两者都从 builder 字段取，**不看 RuntimeContext**。
+                // 所以此前每轮往 ctx 里 put AbstractFilesystem 是无效动作（真机验证已证：
+                // execute("pwd") 返回宿主项目目录）。必须用 abstractFilesystem(...) 在 build 期传进去。
+                .abstractFilesystem(frameworkFilesystem(cmd))
+                .artifactDeliveryTarget(new com.wenqu.ai.sandbox.WenquArtifactDeliveryTarget(artifactService))
                 .disableWebTools()
                 .build();
     }
@@ -2243,9 +2687,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 落库这一轮：框架引擎此前只发帧不落库，界面上点进去是空会话（真机被这个抓到）。
         // 走 SessionService 同一入口，不另写一套消息表——会话列表、历史、引用面板都吃这份数据
         String body = answer == null ? "" : answer;
-        // 推荐块里的长条目按正文并回（与手写侧同一道护栏）：实测过模型把整段正文写进
-        // {@code <related>} 里，此时「剥掉推荐块」等于把回答吃掉——长的并进正文，短的才当芯片。
-        List<String> relatedProse = recording.related.prose(RELATED_PROSE_MIN_CHARS);
+        // 推荐块两道护栏，都住在 RelatedStreamFilter 里：条目数超过要的那 N 条＝整块是被塞进来的正文
+        // （全数并回、一颗芯片不出），否则只并回长过正文量级的那几条。真机 2026-10-18 21:00 那轮模型把
+        // 摘要骨架整块写进 {@code <related>}，71 条短行条条过单条长度闸，界面上是一整屏绿芯片。
+        int relatedMaxChips = Math.max(1, configService.getInt("retrieval.relatedCount", 3)) + RELATED_CHIPS_TOLERANCE;
+        List<String> relatedProse = recording.related.prose(RELATED_PROSE_MIN_CHARS, relatedMaxChips);
         if (!relatedProse.isEmpty()) {
             String merged = String.join("\n\n", relatedProse);
             body = body.isBlank() ? merged : body.stripTrailing() + "\n\n" + merged;
@@ -2254,7 +2700,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             log.warn("[FAIL-LOUD] related 内含正文 {} 段（{} 字），已并回回答: session={}",
                     relatedProse.size(), merged.length(), cmd.getSessionId());
         }
-        List<String> relatedChips = recording.related.chips(RELATED_PROSE_MIN_CHARS);
+        List<String> relatedChips = recording.related.chips(RELATED_PROSE_MIN_CHARS, relatedMaxChips);
         boolean realAnswer = !body.isBlank();
         // 半程轮有过程就落库、连过程都没有就不落（与手写侧 persistPartialAnswer 同一道守卫）：
         // 「正文非空」单独判会让只跑了工具的轮整条蒸发，而真空轮落一条空消息只是污染历史——
@@ -2466,11 +2912,14 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * <p>与 {@link #finish} 里的终值同源同算法（都走 {@link #usageOf}），前端只把它挂在
      * {@code tokensPreview} 上：落库、累计、输出侧仍只认 done 的 tokens，这里不另立口径。
      * <p>按 transcript 条数变化触发，不按循环节拍：分类拆分要对全量上下文做 BPE 计数，
-     * 200ms 一跳空转会把跟随线程烧在数 token 上。发不出去只是容量圆环晚一帧，不该带走这一轮的答案，
+     * 200ms 一跳空转会把跟随线程烧在数 token 上。变化本身由 {@link TurnMirror} 从事件上认，
+     * 因为「问它变了几条」要先做一次全量读——那比数 token 还贵。发不出去只是容量圆环晚一帧，不该带走这一轮的答案，
      * 所以异常只告警不上抛。
      */
     private void emitLiveUsage(AgentSession session, ChatCommand cmd, WenquSourcePool pool,
-                               RunChannel channel, int historyBefore, long[] stamp) {
+                               RunChannel channel, int historyBefore, long[] stamp, boolean transcriptChanged) {
+        // 上下文没添新行就不必读全量日志去问「添了几条」：transcript() 走的是从 head 回走的整条 commit 链
+        if (!transcriptChanged) return;
         int size = session.transcript().messages().size();
         if (size == stamp[0]) return;
         stamp[0] = size;
@@ -2490,9 +2939,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * <p>字段名与主链路 {@code TurnRecorder.buildUsageSnapshot} 对齐（前端容量面板只认这套键）；
      * 分类拆分（{@code parts}）按<b>框架自己的消息结构</b>产出，见 {@link FrameworkCtxParts}——
      * 手写侧那十类靠拼装 system 时的分段位置切，框架侧没有那四个标记，不套用。
-     * <p>上下文预算（{@code budget}）框架不给：{@code maxContextTokens} 是给框架做压缩用的阈值，
-     * 不是问渠「给这一轮留了多少」的预算，报上去会让右栏占用条按一个没人承诺过的数算百分比。
-     * 前端对缺字段是「不显示该行」，不填比填个假预算诚实。
+     * <p>上下文预算（{@code budget}）框架不给：窗口值（{@code modelContextWindow}）是「模型允许的
+     * 上下文上限」，不是问渠「给这一轮留了多少」的预算，报上去会让右栏占用条按一个没人承诺过的数
+     * 算百分比。前端对缺字段是「不显示该行」，不填比填个假预算诚实。
      */
     private Map<String, Object> usageOf(AgentSession session, int historyBefore,
                                         WenquSourcePool pool, ChatCommand cmd) {
@@ -2531,7 +2980,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         tokens.put("context", lastInput);
         tokens.put("outputIsReal", true);
         tokens.put("hits", pool.sources().size());
-        int window = contextTokens(cmd);
+        int window = modelContextWindow(cmd);
         if (window > 0) {
             tokens.put("window", window);
             tokens.put("windowSource", "framework");
@@ -2587,6 +3036,20 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             }
         }
         return "";
+    }
+
+    /**
+     * 回退那一份正文的收尾处理：它出自框架的 transcript，从没进过流式剥离器（{@code model/chunk}
+     * 的增量才是它的正常入口），所以标签得在这儿剥掉。
+     * <p>不剥的表现为两件事同时发生：{@code <related>…</related>} 原文印进回答，而「接下来可以」
+     * 那排芯片一个也没有——芯片正是从这块里拆出来的（真机 2026-10-18 20:20 那轮）。
+     * <p>过同一个 {@link Recording#related} 而不是在这里补一条正则：推荐条数、「模型把正文写进
+     * 推荐块时并回回答」那道护栏、以及 {@code <process>} 分流都住在它身上，同一件事不该有第二份口径。
+     */
+    private static String stripFallbackBody(Recording recording, String raw) {
+        if (raw == null || raw.isEmpty()) return "";
+        // 只取正文、不补发 token 帧：done 的 finalContent 就在下一毫秒，重放一遍等于把同一截话发两次
+        return recording.related.feed(raw) + recording.related.finish();
     }
 
     /**

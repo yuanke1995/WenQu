@@ -104,9 +104,7 @@ public class WenquAgentxTools {
                             com.wenqu.ai.agent.subagent.SubAgentConsultService.Ledger consultLedger,
                             RequestUser.Snapshot identity,
                             Map<String, String> overrides, Map<String, String> userOverrides,
-                            RunCodeHolder runCode,
-                            java.util.List<org.springframework.ai.tool.ToolCallback> rawCallbacks,
-                            java.util.Set<String> mcpToolNames) {
+                            RunCodeHolder runCode) {
     }
 
     /**
@@ -135,8 +133,7 @@ public class WenquAgentxTools {
                               com.wenqu.ai.agent.subagent.SubAgentConsultService.Ledger ledger) {
         return new TurnHooks(cmd.getSessionId(), cmd.getUserId(), modelRef, turnId, spills, ledger,
                 RequestUser.snapshot(), configService.currentOverrides(), configService.currentUserOverrides(),
-                new RunCodeHolder(), java.util.Collections.synchronizedList(new java.util.ArrayList<>()),
-                java.util.Collections.synchronizedSet(new java.util.HashSet<>()));
+                new RunCodeHolder());
     }
 
     /**
@@ -178,14 +175,19 @@ public class WenquAgentxTools {
      *
      * @param onDegrade 降级出口（code, message），由引擎发成 warn 事件
      */
-    public List<Object> frameworkTools(ChatCommand cmd, com.wenqu.ai.engine.RunChannel channel,
-                                       WenquSourcePool pool,
+    public List<Object> frameworkTools(ChatCommand cmd,
                                        com.wenqu.ai.agent.permission.ExecutionPolicy policy,
+                                       AgentxTurnSlot slot,
                                        java.util.function.BiConsumer<String, String> onDegrade,
-                                       boolean approvalCanAsk, TurnHooks hooks) {
+                                       boolean approvalCanAsk) {
         var mc = toolAssembly.mountContext(agentOf(cmd), cmd.getUserId(), cmd.isGuestMode(),
                 false, cmd.branchTurn(), onDegrade, policy);
-        List<Object> holders = new java.util.ArrayList<>(turnTools(cmd, pool));
+        List<Object> holders = new java.util.ArrayList<>(turnTools(cmd, slot));
+        // 建实例时才能定下来的工具面：脚本子调用要用同一批回调，逐轮只换轮号/通道/台账。
+        // 工具闭包里<b>只允许</b>捕获这个会话级槽位（slot），按轮的数据一律调用时现取——
+        // 实例按会话常驻，把 pool/channel/hooks 捕进闭包就是「第二轮起写上一轮的池子」。
+        List<org.springframework.ai.tool.ToolCallback> rawCallbacks = new java.util.ArrayList<>();
+        java.util.Set<String> mcpToolNames = new java.util.HashSet<>();
         for (com.wenqu.ai.agent.tool.ToolFamilyProvider provider : toolRegistry.providersInFamilyOrder()) {
             var family = provider.family();
             if (family == com.wenqu.ai.agent.tool.ToolFamily.KNOWLEDGE) {
@@ -194,7 +196,7 @@ public class WenquAgentxTools {
                 // 纯角色智能体（knowledge_disabled=1）连这份原始清单也不给：脚本子调用那条路同样能打到检索，
                 // 只闸 Toolkit 而漏了这里，等于「不使用知识库」被 run_code 里的子调用绕过去
                 if (!knowledgeDisabledFor(cmd)) {
-                    provider.callbacks(mc).forEach(hooks.rawCallbacks()::add);
+                    provider.callbacks(mc).forEach(rawCallbacks::add);
                 }
                 continue;
             }
@@ -203,63 +205,75 @@ public class WenquAgentxTools {
             // 子智能体是本轮咨询台账；其余族的主链路侧不读 per-call 上下文
             // （实测 enrichments 只有 KNOWLEDGE/WEBSEARCH/SANDBOX 三条），可直接复用
             if (family == com.wenqu.ai.agent.tool.ToolFamily.WEBSEARCH) {
-                mountFrom(provider, mc, holders, cmd, channel, pool, policy, approvalCanAsk,
-                        name -> Map.of(com.wenqu.ai.service.websearch.WebSearchTools.CTX_SINK, pool.sink()), hooks);
+                mountFrom(provider, mc, holders, cmd, slot, rawCallbacks, mcpToolNames, policy, approvalCanAsk,
+                        name -> Map.of(com.wenqu.ai.service.websearch.WebSearchTools.CTX_SINK,
+                                slot.require().pool().sink()));
                 continue;
             }
             if (family == com.wenqu.ai.agent.tool.ToolFamily.SANDBOX) {
                 // 沙盒本轮落点给权限档位、输出增量、基建错误、外溢落盘与 run_code 的子调用回程
-                //（回程在装配末尾、清单建好之后才填进沙盒上下文——脚本要的是「本轮挂上的那些工具」）
-                mountFrom(provider, mc, holders, cmd, channel, pool, policy, approvalCanAsk,
-                        name -> sandboxContext(name, channel, policy, hooks), hooks);
+                mountFrom(provider, mc, holders, cmd, slot, rawCallbacks, mcpToolNames, policy, approvalCanAsk,
+                        name -> sandboxContext(name, slot.require()));
                 continue;
             }
             if (family == com.wenqu.ai.agent.tool.ToolFamily.SUBAGENT) {
                 // 咨询另一位助手：执行器按轮回传，预算/去重/回报转文本都在 SubAgentConsultService 里
                 // （与问答侧同一个实现）。子轮仍走「再起一轮」那条通路——它要的是完整问答外壳
                 // （即时落库、轮级互斥、断线续跑），不是框架引擎里再嵌一个内层循环
-                mountFrom(provider, mc, holders, cmd, channel, pool, policy, approvalCanAsk,
-                        name -> consultContext(cmd, channel, pool, hooks), hooks);
+                mountFrom(provider, mc, holders, cmd, slot, rawCallbacks, mcpToolNames, policy, approvalCanAsk,
+                        name -> consultContext(cmd, slot));
                 continue;
             }
             if (family == com.wenqu.ai.agent.tool.ToolFamily.BUILTIN) {
                 // 提问卡换成框架原生实现（AskUserTool）：内置那个靠阻塞 future 等答案，挂起信号又会被
                 // Spring AI 包掉——框架内只留一套「等人」，不并存
                 holders.add(new AskUserTool());
-                mountFrom(provider, mc, holders, cmd, channel, pool, policy, approvalCanAsk, name -> Map.of(), hooks);
+                mountFrom(provider, mc, holders, cmd, slot, rawCallbacks, mcpToolNames, policy, approvalCanAsk,
+                        name -> Map.of());
                 continue;
             }
-            mountFrom(provider, mc, holders, cmd, channel, pool, policy, approvalCanAsk, name -> Map.of(), hooks);
+            mountFrom(provider, mc, holders, cmd, slot, rawCallbacks, mcpToolNames, policy, approvalCanAsk,
+                    name -> Map.of());
         }
-        mountRunCodeChannel(cmd, channel, pool, policy, hooks, onDegrade);
+        boolean runCodeMounted = rawCallbacks.stream().anyMatch(cb -> cb.getToolDefinition() != null
+                && com.wenqu.ai.service.SandboxTools.RUN_CODE_TOOL_NAME.equals(cb.getToolDefinition().name()));
+        slot.bindSurface(new AgentxTurnSlot.Surface(List.copyOf(rawCallbacks), java.util.Set.copyOf(mcpToolNames),
+                runCodeMounted));
         return holders;
     }
 
     /**
-     * run_code 的子调用通道（P3b 的最后一块）。脚本里的每次工具调用必须回到<b>同一条守卫链</b>上
-     * （叫停闸、权限档位、引用登记、扇出面板），绕过去就不是「少几次模型往返」而是「少一层管控」。
-     * <p>清单在各族都挂完之后才建，所以这一步放在装配末尾。
-     * <p><b>脚本里没人可答</b>：登记为「执行前需确认」的工具在会问人的档位下<b>不进脚本清单</b>——
-     * 与「要有人在场的工具不进分支轮」同一条口径（{@code viewerRequired} 那一道由管线自己把）。
-     * 全自主档（框架侧 DONT_ASK）本来就不问人，照常可被脚本调用。
+     * 本轮的落点（引用池/通道/轮号/台账/档位）。引擎在 {@code submit} 之前调它并交给
+     * {@link AgentxTurnSlot#begin}；工具在每次调用时从槽位现取。
      */
-    private void mountRunCodeChannel(ChatCommand cmd, com.wenqu.ai.engine.RunChannel channel,
-                                     WenquSourcePool pool, ExecutionPolicy policy, TurnHooks hooks,
-                                     java.util.function.BiConsumer<String, String> onDegrade) {
-        boolean mounted = hooks.rawCallbacks().stream().anyMatch(cb -> cb.getToolDefinition() != null
-                && com.wenqu.ai.service.SandboxTools.RUN_CODE_TOOL_NAME.equals(cb.getToolDefinition().name()));
-        if (!mounted) return;
-        var turn = com.wenqu.ai.agent.runcode.RunCodeTurn.ofFramework(cmd.getSessionId(), hooks.turnId().get(),
+    public AgentxTurnSlot.Turn newTurn(ChatCommand cmd, WenquSourcePool pool,
+                                       com.wenqu.ai.engine.RunChannel channel,
+                                       ExecutionPolicy policy, TurnHooks hooks) {
+        KnowledgeRetrievalTool.KbScope scope =
+                retrievalScope.resolve(agentOf(cmd), cmd.getUserId(), cmd.isGuestMode());
+        return new AgentxTurnSlot.Turn(hooks.turnId().get(), pool, channel, hooks, policy, scope);
+    }
+
+    /**
+     * 每轮把脚本子调用通道重新装一遍：轮号、通道、台账、档位都是当轮的。
+     * <p>工具面（{@code rawCallbacks}）在 build 期已随 {@link AgentxTurnSlot#surface()} 固定；
+     * 实例复用时不能沿用建实例那一轮装好的 {@code RunCodeTurn}——那会把脚本进度与产物记到旧轮上。
+     */
+    public void ensureRunCodeTurn(AgentxTurnSlot slot, ChatCommand cmd) {
+        AgentxTurnSlot.Turn t = slot.current();
+        AgentxTurnSlot.Surface surface = slot.surface();
+        if (t == null || !surface.runCodeMounted()) return;
+        var turn = com.wenqu.ai.agent.runcode.RunCodeTurn.ofFramework(cmd.getSessionId(), t.turnId(),
                 cmd.getUserId(), new com.wenqu.ai.agent.chat.TurnRunBoard(), new java.util.LinkedHashMap<>(),
-                channel::emitter, new AgentxTurnContext(cmd, channel, pool, policy, hooks));
-        hooks.runCode().turn(turn);
+                t.channel()::emitter, new AgentxTurnContext(t, cmd, surface));
+        t.hooks().runCode().turn(turn);
         // 「会不会问人」认的是问渠那条审批档（auto/ask/off），不是框架的 PermissionMode：
         // 框架 DEFAULT 下模型直调照样弹卡（那是看得见的逐项确认），但脚本里没有那个卡位。
         // 而且这条判据在装配前就被本族把过——approvalMode=ask 时 run_code 根本不挂
         //（见 SandboxToolProvider#runCodeAllowed），所以这里通常是空转的兜底。
-        boolean asksHuman = asksHuman(policy);
+        boolean asksHuman = asksHuman(t.policy());
         List<org.springframework.ai.tool.ToolCallback> forScript = new java.util.ArrayList<>();
-        for (org.springframework.ai.tool.ToolCallback cb : hooks.rawCallbacks()) {
+        for (org.springframework.ai.tool.ToolCallback cb : surface.rawCallbacks()) {
             String name = cb.getToolDefinition() == null ? null : cb.getToolDefinition().name();
             if (name == null) continue;
             if (asksHuman && toolRegistry.requiresApproval(name, configService::getBoolean)) continue;
@@ -267,7 +281,7 @@ public class WenquAgentxTools {
         }
         subCall.prepareSubCallPipeline(turn, forScript);
         if (asksHuman) {
-            onDegrade.accept("engine.runcode.subcalls",
+            t.channel().emit(com.wenqu.ai.engine.RunEventType.WARN,
                     "脚本可调用的工具已按档位收窄：本轮要求执行前确认，而脚本里没有能答的人"
                             + "（需确认的那几把不进脚本清单；全自主档不受此限）");
         }
@@ -353,44 +367,47 @@ public class WenquAgentxTools {
      * 弹性线程上执行，不重放身份就是 anonymous → 可见库集合为空 → 检索恒空且一声不响；不重放覆盖
      * 则是设置页那份 {@code retrieval.*} 对工具侧静默失效。两个坑都是实测踩过的。
      */
-    public List<Object> turnTools(ChatCommand cmd, WenquSourcePool pool) {
+    public List<Object> turnTools(ChatCommand cmd, AgentxTurnSlot slot) {
         // 纯角色智能体（knowledge_disabled=1）：整条不挂知识检索工具。挂上了再指望模型不用，
         // 是「配了没生效」的另一种写法——用户勾了不使用知识库，就不该再看到检索命中与引用角标
         if (knowledgeDisabledFor(cmd)) return List.of();
-        KnowledgeRetrievalTool.KbScope scope =
-                retrievalScope.resolve(agentOf(cmd), cmd.getUserId(), cmd.isGuestMode());
-        return List.of(new KnowledgeTools(knowledgeRetrieval, configService, scope, pool.registrar(),
-                RequestUser.snapshot(), configService.currentOverrides(), configService.currentUserOverrides()));
+        // 身份快照、配置覆盖、库界、引用注册器全部在工具调用时从当轮槽位取（见 KnowledgeTools）。
+        // 建实例时只捕获会话级的 slot，不捕获那一轮的任何对象。
+        return List.of(new KnowledgeTools(knowledgeRetrieval, configService, slot));
     }
 
     /**
      * 本轮的咨询落点。四样都按轮现算：台账（同一位问两次不该再花一整条子轮）、分支执行器（子轮要的是
-     * 完整问答外壳）、引用登记（子轮查到的资料进<b>父轮</b>编号空间，结论才点得开出处）、
-     * 可见事件（「本轮咨询了谁」的徽标不能等整轮 done——用户盯着转圈的几十秒里就该看见它在问谁）。
+     * 完整问答外壳）、引用登记（子轮查到的资料进<b>父轮</b>编号空间），可见事件（「本轮咨询了谁」的徽标
+     * 不能等整轮 done）。执行时从槽位现取当轮，装配期只捕获会话级的 slot。
      * <p>执行器与预算/去重/回报转文本全部复用 {@code SubAgentConsultService}：框架侧不另写一套咨询语义。
      */
-    private Map<String, Object> consultContext(ChatCommand cmd, com.wenqu.ai.engine.RunChannel channel,
-                                               WenquSourcePool pool, TurnHooks hooks) {
-        com.wenqu.ai.agent.subagent.SubAgentConsultService.Ctx ctx =
-                new com.wenqu.ai.agent.subagent.SubAgentConsultService.Ctx(
-                        cmd.getSessionId(), hooks.turnId().get(), cmd.getUserId(), hooks.modelRef(),
-                        cmd.isGuestMode(), cmd.getSubagentDepth(),
-                        cmd.getAgentId() == null ? "" : cmd.getAgentId(),
-                        // @ 提及强制咨询那一位：框架引擎这一侧没有 mentions 那一段编排，如实留空
-                        //（后果只是「模型可以再问一次同一位」，由台账的去重兜住）
-                        "",
-                        (consultedId, consultedName) -> channel.emit(com.wenqu.ai.engine.RunEventType.AGENT_CONSULTED,
-                                com.alibaba.fastjson2.JSON.toJSONString(
-                                        Map.of("id", consultedId, "name", consultedName))));
-        com.wenqu.ai.agent.subagent.BranchRunner runner = branchTurnRunner == null ? null
-                : branchRuntime.branchRunner(branchTurnRunner, cmd.getSessionId(), hooks.turnId().get(),
-                        cmd.getUserId(), cmd.isGuestMode(), channel.emitter());
-        // runner=null 时咨询服务自己回一句「通道未就绪」给模型（可见降级），不 NPE 也不静默。
-        // asCaller 罩住整次咨询：子轮是在这条弹性线程上「再起一整轮」的，身份与覆盖得跟着进去
+    private Map<String, Object> consultContext(ChatCommand cmd, AgentxTurnSlot slot) {
         return Map.of(com.wenqu.ai.agent.tool.SubAgentTools.CTX_CONSULT,
-                (com.wenqu.ai.agent.tool.SubAgentTools.ConsultFn) (agentId, question) -> asCaller(hooks,
-                        () -> consultService.consult(hooks.consultLedger(), ctx, runner,
-                                pool::registerConsultedSources, agentId, question)));
+                (com.wenqu.ai.agent.tool.SubAgentTools.ConsultFn) (agentId, question) -> {
+                    AgentxTurnSlot.Turn t = slot.require();
+                    TurnHooks hooks = t.hooks();
+                    com.wenqu.ai.agent.subagent.SubAgentConsultService.Ctx ctx =
+                            new com.wenqu.ai.agent.subagent.SubAgentConsultService.Ctx(
+                                    cmd.getSessionId(), t.turnId(), cmd.getUserId(), hooks.modelRef(),
+                                    cmd.isGuestMode(), cmd.getSubagentDepth(),
+                                    cmd.getAgentId() == null ? "" : cmd.getAgentId(),
+                                    // @ 提及强制咨询那一位：框架引擎这一侧没有 mentions 那一段编排，如实留空
+                                    //（后果只是「模型可以再问一次同一位」，由台账的去重兜住）
+                                    "",
+                                    (consultedId, consultedName) -> t.channel().emit(
+                                            com.wenqu.ai.engine.RunEventType.AGENT_CONSULTED,
+                                            com.alibaba.fastjson2.JSON.toJSONString(
+                                                    Map.of("id", consultedId, "name", consultedName))));
+                    com.wenqu.ai.agent.subagent.BranchRunner runner = branchTurnRunner == null ? null
+                            : branchRuntime.branchRunner(branchTurnRunner, cmd.getSessionId(), t.turnId(),
+                                    cmd.getUserId(), cmd.isGuestMode(), t.channel().emitter());
+                    // runner=null 时咨询服务自己回一句「通道未就绪」给模型（可见降级），不 NPE 也不静默。
+                    // asCaller 罩住整次咨询：子轮是在这条弹性线程上「再起一整轮」的，身份与覆盖得跟着进去
+                    return asCaller(hooks,
+                            () -> consultService.consult(hooks.consultLedger(), ctx, runner,
+                                    t.pool()::registerConsultedSources, agentId, question));
+                });
     }
 
     /**
@@ -408,32 +425,33 @@ public class WenquAgentxTools {
 
     private void mountFrom(com.wenqu.ai.agent.tool.ToolFamilyProvider provider,
                            com.wenqu.ai.agent.tool.ToolMountContext mc, List<Object> holders,
-                           ChatCommand cmd, com.wenqu.ai.engine.RunChannel channel, WenquSourcePool pool,
+                           ChatCommand cmd, AgentxTurnSlot slot,
+                           java.util.List<org.springframework.ai.tool.ToolCallback> rawCallbacks,
+                           java.util.Set<String> mcpToolNames,
                            com.wenqu.ai.agent.permission.ExecutionPolicy policy, boolean approvalCanAsk,
-                           java.util.function.Function<String, Map<String, Object>> enrichment,
-                           TurnHooks hooks) {
-        mountFrom(provider, mc, holders, cmd, channel, pool, policy, approvalCanAsk, enrichment, null, hooks);
-    }
-
-    private void mountFrom(com.wenqu.ai.agent.tool.ToolFamilyProvider provider,
-                           com.wenqu.ai.agent.tool.ToolMountContext mc, List<Object> holders,
-                           ChatCommand cmd, com.wenqu.ai.engine.RunChannel channel, WenquSourcePool pool,
-                           com.wenqu.ai.agent.permission.ExecutionPolicy policy, boolean approvalCanAsk,
-                           java.util.function.Function<String, Map<String, Object>> enrichment,
-                           String skipToolName, TurnHooks hooks) {
+                           java.util.function.Function<String, Map<String, Object>> enrichment) {
         for (org.springframework.ai.tool.ToolCallback cb : provider.callbacks(mc)) {
             String name = cb.getToolDefinition().name();
             if (AskUserTool.NAME.equals(name)) continue;   // 由框架原生 AskUserTool 顶替
-            if (skipToolName != null && skipToolName.equals(name)) continue;
-            hooks.rawCallbacks().add(cb);
-            if (provider.family() == com.wenqu.ai.agent.tool.ToolFamily.MCP) hooks.mcpToolNames().add(name);
+            rawCallbacks.add(cb);
+            if (provider.family() == com.wenqu.ai.agent.tool.ToolFamily.MCP) mcpToolNames.add(name);
             // 要不要问人沿用问渠的登记（未登记一律要审批，fail-closed）——不在框架侧另判一次「像不像写操作」
             boolean needsApproval = asksHuman(policy)
                     && toolRegistry.requiresApproval(name, configService::getBoolean);
+            // 上下文在<b>每次调用</b>时现建：槽位里是本轮最新的 pool/channel/hooks。
+            // 闭包只捕获会话级的 slot 与这个工具名，不捕获任何一轮对象。
             holders.add(new SpringAiToolAdapter(cb,
-                    () -> withBaseContext(enrichment.apply(name), cmd, channel, hooks), policy,
+                    () -> withBaseContext(slot.require(), enrichment.apply(name)),
+                    () -> policyOf(slot, policy),
                     needsApproval, approvalCanAsk));
         }
+    }
+
+    /** 调用期的档位：优先当轮那份（管理员中途改审批档也能立刻生效），轮间空档才回落到建实例那份。 */
+    private static com.wenqu.ai.agent.permission.ExecutionPolicy policyOf(
+            AgentxTurnSlot slot, com.wenqu.ai.agent.permission.ExecutionPolicy fallback) {
+        AgentxTurnSlot.Turn t = slot.current();
+        return t == null ? fallback : t.policy();
     }
 
     /**
@@ -487,13 +505,12 @@ public class WenquAgentxTools {
      * 非 0 是两回事）、大输出外溢（截断前把整份原文落盘，卡片才有「查看完整输出」）。
      * 载荷一律交给 fastjson 序列化——沙盒输出里出现引号与换行是常态。
      */
-    private Map<String, Object> sandboxContext(String toolName,
-                                               com.wenqu.ai.engine.RunChannel channel,
-                                               ExecutionPolicy policy, TurnHooks hooks) {
+    private Map<String, Object> sandboxContext(String toolName, AgentxTurnSlot.Turn t) {
+        TurnHooks hooks = t.hooks();
         Map<String, Object> m = new java.util.HashMap<>();
-        m.put(com.wenqu.ai.service.SandboxTools.CTX_SANDBOX_POLICY, policy);
-        // run_code 的子调用回程：装配末尾才建好，这里逐次现取（没建出来时工具自己会回一句可见降级）
-        var rcTurn = hooks == null ? null : hooks.runCode().turn();
+        m.put(com.wenqu.ai.service.SandboxTools.CTX_SANDBOX_POLICY, t.policy());
+        // run_code 的子调用回程：每轮在 ensureRunCodeTurn 里现装（没建出来时工具自己会回一句可见降级）
+        var rcTurn = hooks.runCode().turn();
         if (rcTurn != null) {
             m.put(com.wenqu.ai.service.SandboxTools.CTX_RUN_CODE_BRIDGE, subCall.runCodeBridge(rcTurn));
         }
@@ -503,16 +520,14 @@ public class WenquAgentxTools {
         m.put(com.wenqu.ai.service.SandboxTools.CTX_SPILL_REPORT,
                 (java.util.function.BiConsumer<String, String>)
                         (name, spillId) -> hooks.spills().offer(name + "|" + spillId));
-        if (channel != null) {
-            m.put(com.wenqu.ai.service.SandboxTools.CTX_OUTPUT_SINK,
-                    (java.util.function.Consumer<String>) delta -> channel.emit(
-                            com.wenqu.ai.engine.RunEventType.TOOL_OUTPUT,
-                            com.alibaba.fastjson2.JSON.toJSONString(Map.of("name", toolName,
-                                    "delta", delta == null ? "" : delta))));
-            m.put(com.wenqu.ai.service.SandboxTools.CTX_INFRA_ERROR_SINK,
-                    (java.util.function.Consumer<String>) msg -> channel.emit(
-                            com.wenqu.ai.engine.RunEventType.WARN, "沙盒基建异常：" + msg));
-        }
+        m.put(com.wenqu.ai.service.SandboxTools.CTX_OUTPUT_SINK,
+                (java.util.function.Consumer<String>) delta -> t.channel().emit(
+                        com.wenqu.ai.engine.RunEventType.TOOL_OUTPUT,
+                        com.alibaba.fastjson2.JSON.toJSONString(Map.of("name", toolName,
+                                "delta", delta == null ? "" : delta))));
+        m.put(com.wenqu.ai.service.SandboxTools.CTX_INFRA_ERROR_SINK,
+                (java.util.function.Consumer<String>) msg -> t.channel().emit(
+                        com.wenqu.ai.engine.RunEventType.WARN, "沙盒基建异常：" + msg));
         return m;
     }
 
@@ -523,42 +538,40 @@ public class WenquAgentxTools {
      * <p>任务清单写入器同样放在这份共用落点上：主链路的 {@code toolContext} 就是全族一张表，
      * 按族挂会漏（{@code writeTodo} 属任务清单族而不是内置族，真机错过一次）。
      */
-    private Map<String, Object> withBaseContext(Map<String, Object> perFamily, ChatCommand cmd,
-                                                com.wenqu.ai.engine.RunChannel channel, TurnHooks hooks) {
+    private Map<String, Object> withBaseContext(AgentxTurnSlot.Turn t, Map<String, Object> perFamily) {
+        TurnHooks hooks = t.hooks();
         Map<String, Object> m = new java.util.HashMap<>(perFamily);
-        m.putIfAbsent(com.wenqu.ai.service.PresentArtifactTool.CTX_SESSION_ID, cmd.getSessionId());
+        m.putIfAbsent(com.wenqu.ai.service.PresentArtifactTool.CTX_SESSION_ID, hooks.sessionId());
         m.putIfAbsent(com.wenqu.ai.service.PresentArtifactTool.CTX_USER_ID,
-                cmd.getUserId() == null ? "" : cmd.getUserId());
-        if (hooks != null) {
-            m.putIfAbsent(com.wenqu.ai.service.TodoService.CTX_TODO, todoWriter(channel, hooks));
-        }
+                hooks.userId() == null ? "" : hooks.userId());
+        m.putIfAbsent(com.wenqu.ai.service.TodoService.CTX_TODO, todoWriter(t.channel(), hooks));
         return m;
     }
 
     /** 知识检索工具：命中块当场注册进本轮引用池并拿到真实编号，正文据此标 [N]。 */
     public record KnowledgeTools(KnowledgeRetrievalTool delegate,
                                  ConfigService configService,
-                                 KnowledgeRetrievalTool.KbScope scope,
-                                 KnowledgeRetrievalTool.SourceRegistrar registrar,
-                                 RequestUser.Snapshot identity,
-                                 Map<String, String> overrides,
-                                 Map<String, String> userOverrides) {
+                                 AgentxTurnSlot slot) {
 
         @Tool(name = "search_knowledge", readOnly = true,
                 description = "精确检索知识库，返回与查询相关的知识片段（含章节路径、标题、正文）。当现有信息不足以回答、或需要核对知识库中具体功能/字段/步骤/报错处理时调用。")
         public String searchKnowledge(
                 @ToolParam(name = "query", description = "检索知识库的关键词或短语，越精准越好，可含功能名/字段名/操作对象") String query,
                 @ToolParam(name = "topK", required = false, description = "返回结果条数（1~5，默认 5）") Integer topK) {
+            // 身份快照、配置覆盖、库界与引用注册器都按<b>本次调用</b>从槽位取：
+            // 实例按会话常驻，建实例时捕获的那一份只属于第一轮。
+            AgentxTurnSlot.Turn t = slot.require();
+            TurnHooks hooks = t.hooks();
             // 弹性线程复用：身份必须在 finally 复原。刻意不用 try-with-resources——AutoCloseable.close()
             // 声明受检异常，而 @Tool 方法是被反射调用的，签名不该往外抛 Exception
-            AutoCloseable identityHandle = RequestUser.restore(identity);
+            AutoCloseable identityHandle = RequestUser.restore(hooks.identity());
             try {
                 Map<String, String> prev = configService.currentOverrides();
                 Map<String, String> prevUser = configService.currentUserOverrides();
-                configService.putOverrides(overrides);
-                configService.putUserOverrides(userOverrides);
+                configService.putOverrides(hooks.overrides());
+                configService.putUserOverrides(hooks.userOverrides());
                 try {
-                    return delegate.searchKnowledge(query, topK, scope, registrar, false);
+                    return delegate.searchKnowledge(query, topK, t.scope(), t.pool().registrar(), false);
                 } finally {
                     configService.clearOverride();
                     configService.clearUserOverrides();
@@ -607,39 +620,36 @@ public class WenquAgentxTools {
      * 脚本里的子调用仍走问渠那条守卫链（{@code ToolPipelineFactory.wrap}），所以需要有人把
      * 「这一轮是谁、本轮挂了哪些工具、结果往哪登记引用、进度往哪发」交出去。
      * <p><b>审批恒不问人</b>（{@code approvalMode=off}）。这不是放行：装配时已把「登记为执行前需确认」
-     * 的工具从脚本清单里剔除（见 {@link #mountRunCodeChannel}），管线自己也从不放 {@code viewerRequired}
+     * 的工具从脚本清单里剔除（见 {@link #ensureRunCodeTurn}），管线自己也从不放 {@code viewerRequired}
      * 那几把进来。少任何一道都会变成「脚本绕过了人」。
+     * <p>这个对象按轮新建（{@link #ensureRunCodeTurn}），字段直接取当轮的 {@code Turn}；
+     * 工具面（脚本可调用的回调与 MCP 名单）来自会话级 {@code Surface}，跨轮稳定。
      */
     private final class AgentxTurnContext implements com.wenqu.ai.agent.tool.ToolTurnContext {
 
+        private final AgentxTurnSlot.Turn turn;
         private final ChatCommand cmd;
-        private final com.wenqu.ai.engine.RunChannel channel;
-        private final WenquSourcePool pool;
-        private final ExecutionPolicy policy;
-        private final TurnHooks hooks;
+        private final AgentxTurnSlot.Surface surface;
 
-        AgentxTurnContext(ChatCommand cmd, com.wenqu.ai.engine.RunChannel channel, WenquSourcePool pool,
-                          ExecutionPolicy policy, TurnHooks hooks) {
+        AgentxTurnContext(AgentxTurnSlot.Turn turn, ChatCommand cmd, AgentxTurnSlot.Surface surface) {
+            this.turn = turn;
             this.cmd = cmd;
-            this.channel = channel;
-            this.pool = pool;
-            this.policy = policy;
-            this.hooks = hooks;
+            this.surface = surface;
         }
 
         @Override
         public String sessionId() {
-            return cmd.getSessionId();
+            return turn.hooks().sessionId();
         }
 
         @Override
         public String userId() {
-            return cmd.getUserId();
+            return turn.hooks().userId();
         }
 
         @Override
         public String turnId() {
-            return hooks.turnId().get();
+            return turn.turnId();
         }
 
         @Override
@@ -684,12 +694,12 @@ public class WenquAgentxTools {
 
         @Override
         public ExecutionPolicy permissionPolicy() {
-            return policy;
+            return turn.policy();
         }
 
         @Override
         public Map<String, Object> baseToolContext() {
-            return withBaseContext(Map.of(), cmd, channel, hooks);
+            return withBaseContext(turn, Map.of());
         }
 
         @Override
@@ -697,17 +707,15 @@ public class WenquAgentxTools {
             return Map.of(
                     com.wenqu.ai.agent.tool.ToolFamily.KNOWLEDGE, inv -> knowledgeEntries(),
                     com.wenqu.ai.agent.tool.ToolFamily.WEBSEARCH, inv -> Map.of(
-                            com.wenqu.ai.service.websearch.WebSearchTools.CTX_SINK, pool.sink()),
-                    com.wenqu.ai.agent.tool.ToolFamily.SANDBOX, inv -> sandboxContext(inv.toolName(),
-                            channel, policy, hooks));
+                            com.wenqu.ai.service.websearch.WebSearchTools.CTX_SINK, turn.pool().sink()),
+                    com.wenqu.ai.agent.tool.ToolFamily.SANDBOX, inv -> sandboxContext(inv.toolName(), turn));
         }
 
         /** 知识检索工具的本轮落点：注册器=同一个引用池，库界=与主链路同一条解析（不越过智能体绑定）。 */
         private Map<String, Object> knowledgeEntries() {
             Map<String, Object> m = new java.util.HashMap<>();
-            m.put(KnowledgeRetrievalTool.CTX_SOURCE_REGISTRAR, pool.registrar());
-            m.put(KnowledgeRetrievalTool.CTX_KB_SCOPE,
-                    retrievalScope.resolve(agentOf(cmd), cmd.getUserId(), cmd.isGuestMode()));
+            m.put(KnowledgeRetrievalTool.CTX_SOURCE_REGISTRAR, turn.pool().registrar());
+            m.put(KnowledgeRetrievalTool.CTX_KB_SCOPE, turn.scope());
             m.put(KnowledgeRetrievalTool.CTX_REFLECTIVE, false);
             return m;
         }
@@ -717,7 +725,7 @@ public class WenquAgentxTools {
                               Map<String, Object> context, com.wenqu.ai.agent.tool.ToolInvocation inv,
                               int[] attemptsOut) {
             // 子调用跑在 Tomcat/容器回程线程上：身份与本轮检索覆盖不重放，工具侧就是静默空结果
-            return asCaller(hooks, () -> raw.call(arguments,
+            return asCaller(turn.hooks(), () -> raw.call(arguments,
                     new org.springframework.ai.chat.model.ToolContext(context)));
         }
 
@@ -729,16 +737,16 @@ public class WenquAgentxTools {
 
         @Override
         public void onOutput(com.wenqu.ai.agent.tool.ToolInvocation inv, String delta) {
-            if (channel == null || delta == null) return;
-            channel.emit(com.wenqu.ai.engine.RunEventType.TOOL_OUTPUT,
+            if (delta == null) return;
+            turn.channel().emit(com.wenqu.ai.engine.RunEventType.TOOL_OUTPUT,
                     com.alibaba.fastjson2.JSON.toJSONString(Map.of("name", inv.toolName(), "delta", delta)));
         }
 
         @Override
         public String decorateResult(com.wenqu.ai.agent.tool.ToolInvocation inv, String result) {
             // MCP 结果注册引用来源：脚本依据 MCP 内容作答时正文才有可点的角标，否则是悬空角标
-            if (hooks.mcpToolNames().contains(inv.toolName())) {
-                return pool.sink().registerMcpCitations(inv.toolName(), result);
+            if (surface.mcpToolNames().contains(inv.toolName())) {
+                return turn.pool().sink().registerMcpCitations(inv.toolName(), result);
             }
             return result;
         }

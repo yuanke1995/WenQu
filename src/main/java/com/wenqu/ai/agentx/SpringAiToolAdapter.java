@@ -48,7 +48,8 @@ public final class SpringAiToolAdapter extends ToolBase {
     private final ToolCallback callback;
     /** 本次调用的落点（引用注册器/库界/权限档位等 per-call 上下文），刻意不做跨调用静态状态。 */
     private final Supplier<Map<String, Object>> contextSupplier;
-    private final ExecutionPolicy policy;
+    /** 本轮策略：按调用取（实例常驻，轮与轮之间档位可能变）；引擎传 slot 的当前轮，测试可传常量。 */
+    private final Supplier<ExecutionPolicy> policy;
     /** 本轮是否要求「执行前问人」（智能体档位的审批模式为 ask 且该工具登记为需要审批）。 */
     private final boolean approvalRequired;
     /**
@@ -59,8 +60,15 @@ public final class SpringAiToolAdapter extends ToolBase {
      */
     private final boolean approvalCanAsk;
 
+    /** 固定档位入口（测试与「实例只活一轮」的调用方用）：等价于 {@code () -> policy}。 */
     public SpringAiToolAdapter(ToolCallback callback, Supplier<Map<String, Object>> contextSupplier,
                                ExecutionPolicy policy, boolean approvalRequired, boolean approvalCanAsk) {
+        this(callback, contextSupplier, () -> policy, approvalRequired, approvalCanAsk);
+    }
+
+    public SpringAiToolAdapter(ToolCallback callback, Supplier<Map<String, Object>> contextSupplier,
+                               Supplier<ExecutionPolicy> policy, boolean approvalRequired,
+                               boolean approvalCanAsk) {
         super(callback.getToolDefinition().name(), callback.getToolDefinition().description(),
                 schemaOf(callback), false, true, false, null, false, false);
         this.callback = callback;
@@ -89,10 +97,11 @@ public final class SpringAiToolAdapter extends ToolBase {
      */
     @Override
     public Mono<PermissionDecision> checkPermissions(Map<String, Object> input, PermissionContextState context) {
-        if (policy == null) {
+        ExecutionPolicy current = policy == null ? null : policy.get();
+        if (current == null) {
             return Mono.just(PermissionDecision.deny("本轮未解析权限档位，已按最保守处理：" + getName()));
         }
-        if (policy.denies(getName())) {
+        if (current.denies(getName())) {
             return Mono.just(PermissionDecision.deny("该工具已被本轮档位点名禁用：" + getName()));
         }
         PermissionMode mode = context == null ? null : context.getMode();

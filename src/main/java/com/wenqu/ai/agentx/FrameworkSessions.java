@@ -2,15 +2,24 @@ package com.wenqu.ai.agentx;
 
 import com.wenqu.ai.agent.chat.ChatCommand;
 import io.agentscope.core.agent.RuntimeContext;
+import io.agentscope.core.message.Msg;
 import io.agentscope.core.session.SessionEvent;
+import io.agentscope.core.state.AgentState;
 import io.agentscope.harness.agent.HarnessAgent;
+import io.agentscope.harness.agent.memory.MemoryFlushManager;
+import io.agentscope.harness.agent.memory.compaction.CompactionConfig;
+import io.agentscope.harness.agent.memory.compaction.ConversationCompactor;
+import io.agentscope.harness.agent.memory.compaction.TokenCounterUtil;
 import io.agentscope.harness.agent.session.AgentSession;
+import io.agentscope.harness.agent.workspace.WorkspaceManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.function.Function;
@@ -35,7 +44,14 @@ public class FrameworkSessions {
     /** 常驻实例上限：超出的按最久未用关闭。框架实例带工作区与传输层，不能有上限地攒。 */
     private static final int MAX_HELD = 200;
 
-    private record Held(HarnessAgent agent, AgentSession session, String modelRef) {
+    /**
+     * 常驻实例。
+     *
+     * @param bindingKey 建实例时用到的智能体配置指纹（见 {@code AgentscopeChatEngine#bindingOf}）。
+     *                   人设、工具挂载、技能范围都是 <b>build 期</b>定死的，换了智能体或改了它的配置
+     *                   而只比 {@code modelRef} 的话，旧实例会继续用上一个人的提示词与工具表作答。
+     */
+    private record Held(HarnessAgent agent, AgentSession session, String modelRef, String bindingKey) {
     }
 
     private final Map<String, Held> held = new ConcurrentHashMap<>();
@@ -48,6 +64,31 @@ public class FrameworkSessions {
      * 模型切换重建实例时旧的自动作废（键相同、直接覆盖）。
      */
     private final Map<String, AgentxStepBudget> stepBudgets = new ConcurrentHashMap<>();
+
+    /**
+     * 框架工具的档位闸（全框架化 P1）。形态与 {@link #stepBudgets} 相同：
+     * 闸随实例常驻，登记后由引擎在开轮时更新当前轮标签。
+     */
+    private final Map<String, AgentxFrameworkToolGate> frameworkToolGates = new ConcurrentHashMap<>();
+
+    /**
+     * 每条常驻会话的「当前轮」槽位。
+     * <p>实例与工具表按会话常驻，而引用池/通道/轮号/咨询台账是<b>一轮</b>的——
+     * 工具只能捕获这个会话级槽位，由引擎在每轮 {@code submit} 前换掉里面的 {@code Turn}。
+     * <b>重建实例时不换槽位</b>：工具闭包指向它，换一份新的会让已注册的工具失去落点；
+     * 只在没有实例、也没有在跑的轮、且总量超过高水位时清理，避免长跑进程按会话无限增长。
+     */
+    private final Map<String, AgentxTurnSlot> turnSlots = new ConcurrentHashMap<>();
+
+    /** 取（必要时创建）这条会话的当前轮槽位。开轮与建实例都认同一份。 */
+    public AgentxTurnSlot turnSlot(ChatCommand cmd) {
+        return turnSlots.computeIfAbsent(key(cmd), k -> new AgentxTurnSlot());
+    }
+
+    /** 按会话键取槽位；没有就创建一个（续跑/接回那条路手里只有 key）。 */
+    public AgentxTurnSlot turnSlot(String sessionKey) {
+        return turnSlots.computeIfAbsent(sessionKey, k -> new AgentxTurnSlot());
+    }
     /**
      * 哪几条会话此刻有「把这一轮跟到收尾」的循环。
      * <p>这不是实例存活判据（那是 {@link #held}）：循环有墙钟上限、也会因超时退出，退了实例还在。
@@ -61,8 +102,18 @@ public class FrameworkSessions {
      */
     private final com.wenqu.ai.agent.hitl.HitlDecisionService hitl;
 
-    public FrameworkSessions(com.wenqu.ai.agent.hitl.HitlDecisionService hitl) {
+    /**
+     * 沙盒装配（框架化P1）：按官网「自管沙箱实例」的 {@code externalSandbox} 模式，
+     * 在建会话实例时把本轮沙盒上下文挂进 {@link RuntimeContext}——框架的 {@code SandboxLifecycleMiddleware}
+     * 从这里取到沙箱，只在 call 期间借用，call 结束只 stop() 不 shutdown()。
+     */
+    private final com.wenqu.ai.service.SandboxService sandboxService;
+
+    public FrameworkSessions(
+            com.wenqu.ai.agent.hitl.HitlDecisionService hitl,
+            com.wenqu.ai.service.SandboxService sandboxService) {
         this.hitl = hitl;
+        this.sandboxService = sandboxService;
     }
 
     /**
@@ -132,36 +183,84 @@ public class FrameworkSessions {
 
 
     /**
-     * 取这一轮的会话。{@code agentFactory} 只在需要新建或模型已换时被调用（框架侧建实例有成本，
-     * 每请求都建就失去常驻的意义）。
+     * 取这一轮的会话。{@code agentFactory} 只在需要新建、模型已换、或智能体绑定已变时被调用
+     * （框架侧建实例有成本，每请求都建就失去常驻的意义）。
+     *
+     * @param bindingKey 本轮智能体配置指纹：与建实例时那份不同就必须重建。人设
+     *                   （{@code sysPrompt(rolePrompt(...))}）、工具挂载（{@code tools.frameworkTools}）、
+     *                   技能白名单（{@code .skillFilter}）全在 build 期固化，实例复用时不会重算。
+     *                   传空串表示「本轮没有智能体绑定」（默认助手），与真正绑定了智能体的实例区分开。
      */
-    public AgentSession open(ChatCommand cmd, String modelRef, Function<RuntimeContext, HarnessAgent> agentFactory) {
+    public AgentSession open(ChatCommand cmd, String modelRef, String bindingKey,
+                             Function<RuntimeContext, HarnessAgent> agentFactory) {
         String key = key(cmd);
+        String wantBinding = bindingKey == null ? "" : bindingKey;
         Held current = held.get(key);
         // /compact 强制压缩那一实例的 triggerMessages(1) 只应作用一轮：下次开轮丢掉它、用默认配置重建。
-        if (rebuildAfterCompact.remove(key) && current != null) {
+        // 两个标记都要取走（用 | 而不是 ||，否则第二个 remove 被短路、标记永久留着）。
+        boolean stale = rebuildAfterCompact.remove(key) | staleConfigKeys.remove(key);
+        if (stale && current != null) {
             closeQuietly(key, current);
             held.remove(key);
             current = null;
         }
-        if (current != null && current.modelRef().equals(modelRef)) {
+        if (current != null && current.modelRef().equals(modelRef)
+                && current.bindingKey().equals(wantBinding)) {
             touch(key);
             return current.session();
         }
         if (current != null) {
-            // 模型已切换：旧实例不再能用（框架的模型只能在 build 期定），关掉并接管同一条会话
+            // 旧实例不再能用：模型、人设、工具表、技能范围都只能在 build 期定。关掉并接管同一条会话
+            // ——会话状态在 stateStore 里，重建不丢历史（与换模型同一套依据）。
+            boolean modelChanged = !current.modelRef().equals(modelRef);
             closeQuietly(key, current);
             held.remove(key);
-            log.info("[agentx] 会话 {} 模型切换 {}→{}，重建实例并接管同一会话", key, current.modelRef(), modelRef);
+            if (modelChanged) {
+                log.info("[agentx] 会话 {} 模型切换 {}→{}，重建实例并接管同一会话", key, current.modelRef(), modelRef);
+            } else {
+                log.info("[agentx] 会话 {} 智能体换绑/改配置（{}→{}），重建实例并接管同一会话",
+                        key, current.bindingKey(), wantBinding);
+            }
         }
-        RuntimeContext ctx = RuntimeContext.builder()
+        RuntimeContext.Builder ctxBuilder = RuntimeContext.builder()
                 .userId(cmd.getUserId() == null || cmd.getUserId().isBlank() ? "guest" : cmd.getUserId())
-                .sessionId(cmd.getSessionId())
-                .build();
+                .sessionId(cmd.getSessionId());
+        // 沙盒上下文（框架化 P1）：挂上后框架的文件工具与 ShellExecuteTool 才有沙箱可用。
+        // 取不到时返回 null（沙盒不可用 / 无会话），此时本轮不挂框架沙箱，
+        // 形态与 P1 之前一致——模型退回无沙箱工具，而不是整轮失败。
+        if (sandboxService != null) {
+            String uid = cmd.getUserId();
+            String sessionId = cmd.getSessionId();
+            if (uid != null && !uid.isBlank() && sessionId != null && !sessionId.isBlank()) {
+                try {
+                    io.agentscope.harness.agent.sandbox.SandboxContext sandboxCtx =
+                            sandboxService.frameworkSandboxContext(sessionId, uid, /* unrestrictedWrites */ false);
+                    if (sandboxCtx != null) {
+                        ctxBuilder.put(io.agentscope.harness.agent.sandbox.SandboxContext.class, sandboxCtx);
+                        // 关键：工具真正用的是 AbstractFilesystem，不是 SandboxContext（真机踩出来的）。
+                        // FilesystemTool / ShellExecuteTool 解析 ctx.get(AbstractFilesystem.class)，
+                        // 而 HarnessAgent#ensureSessionDefaults(:1087) 只透传 SandboxContext。
+                        // 只挂前者时模型调 execute("pwd") 拿到的是宿主项目目录——
+                        // 工具静默跑在宿主上，看着成功实则没隔离。
+                        io.agentscope.harness.agent.filesystem.AbstractFilesystem fs =
+                                sandboxService.frameworkFilesystem(sessionId, uid, /* unrestrictedWrites */ false);
+                        if (fs != null) {
+                            ctxBuilder.put(io.agentscope.harness.agent.filesystem.AbstractFilesystem.class, fs);
+                        }
+                    }
+                } catch (RuntimeException e) {
+                    log.warn("[agentx] 框架沙箱上下文注入失败（session={}）：{}", sessionId, e.toString());
+                }
+            }
+        }
+        // 本轮落点槽位必须进 RuntimeContext：重建实例时 buildAgent 里的工具闭包要捕获它，
+        // 而工具调用发生在框架的弹性线程上，只有 ctx 里的这一份能保证「同一个会话同一个槽位」。
+        ctxBuilder.put(AgentxTurnSlot.class, turnSlot(key));
+        RuntimeContext ctx = ctxBuilder.build();
         HarnessAgent agent = agentFactory.apply(ctx);
         AgentSession session = agent.session(ctx);
         session.start();
-        held.put(key, new Held(agent, session, modelRef));
+        held.put(key, new Held(agent, session, modelRef, wantBinding));
         touch(key);
         evictOverflow();
         return session;
@@ -428,6 +527,116 @@ public class FrameworkSessions {
      */
     private final java.util.Set<String> compactRequests = ConcurrentHashMap.newKeySet();
 
+    /**
+     * 手动 /compact 在框架引擎下的<b>就地压缩</b>（全框架化 P4）。
+     * <p>结论修正（2026-10-18）：此前注释说「框架没有把已有会话就地压一次的入口」是<b>错的</b>——
+     * 框架自己在 {@code HarnessAgent#forceCompactAndRetry} 里就是这么用的：
+     * 取 state 上下文 → {@code ConversationCompactor.compactIfNeeded(forceConfig)} → 写回
+     * {@code state.contextMutable()}。而更规范的写回口是 {@code ReActAgent#updateAgentState}
+     * （native 模式走 {@code SessionStateAccess.update}，拿 writer lease、判 pending/uncertain
+     * 后提交 {@code context/replaced}）。
+     * <p>两条路：
+     * <ul>
+     *   <li><b>进程内持有活实例</b>：当场压并写回——用户立即拿到压缩结果（摘要、腾出多少 token），
+     *       不必等下一次提问开跑才生效。</li>
+     *   <li><b>无活实例</b>（进程重启后 / 从未在本进程答过）：回落 {@link #requestCompact}
+     *       排到下一次建实例时压（下一轮 open 会带 triggerMessages(1) 强制压）。</li>
+     * </ul>
+     *
+     * @return 压缩结果（与问渠手写侧同形，前端 {@code compactContext} 按同套键渲染）：
+     *         <ul>
+     *           <li>{@code scheduled=true} = 没压成、排到了下一次提问前（无活实例 / 压缩失败回落）</li>
+     *           <li>否则 {@code compressedTurns}（被覆盖的消息条数）、{@code freedTokens}（净腾出）、
+     *               {@code summary}（框架摘要全文）、{@code summaryTokens}（摘要自身 token）</li>
+     *         </ul>
+     *         没得压（对话还短）返回 {@code compressedTurns=0}。
+     */
+    public Map<String, Object> compactNow(String userId, String sessionId) {
+        String key = (userId == null || userId.isBlank() ? "guest" : userId) + "|" + sessionId;
+        Held h = held.get(key);
+        if (h == null) {
+            // 无活实例：回落「排到下一次建实例时压」（那一路会带上 triggerMessages(1) 强制压缩）
+            requestCompact(userId, sessionId);
+            return java.util.Map.of("engine", "agentscope", "scheduled", true, "compressedTurns", 0);
+        }
+        HarnessAgent agent = h.agent();
+        RuntimeContext ctx = RuntimeContext.builder()
+                .userId(userId == null || userId.isBlank() ? "guest" : userId)
+                .sessionId(sessionId)
+                .build();
+        try {
+            AgentState state = agent.getDelegate().getAgentState(ctx);
+            if (state == null) {
+                requestCompact(userId, sessionId);
+                return java.util.Map.of("engine", "agentscope", "scheduled", true, "compressedTurns", 0);
+            }
+            // 上下文里可能混有 SYSTEM / 合成消息：压缩器只吃对话消息（与 CompactionMiddleware 的
+            // 拆分一致——SYSTEM 由 HarnessContextBuilder 单独装配，不参与压缩）。
+            List<Msg> conversation = new java.util.ArrayList<>();
+            for (Msg m : state.contextMutable()) {
+                if (m.getRole() != null && "SYSTEM".equals(String.valueOf(m.getRole()))) continue;
+                conversation.add(m);
+            }
+            if (conversation.isEmpty()) {
+                return noneCompacted();
+            }
+            int before = TokenCounterUtil.calculateToken(conversation);
+            // 与框架 forceCompactAndRetry 同一套压缩器与强制配置：有一条就先压（逐字留最近 20 条）
+            WorkspaceManager ws = agent.getWorkspaceManager();
+            MemoryFlushManager fm = new MemoryFlushManager(ws, agent.getModel());
+            ConversationCompactor compactor = new ConversationCompactor(agent.getModel(), fm);
+            CompactionConfig forceConfig = CompactionConfig.builder().triggerMessages(1).build();
+            Optional<List<Msg>> opt = compactor
+                    .compactIfNeeded(ctx, conversation, forceConfig, agent.getName(), sessionId)
+                    .block(Duration.ofSeconds(120));
+            if (opt == null || opt.isEmpty()) {
+                // 压不动（safe cutoff 0 等）：不是失败，就是没得压
+                return noneCompacted();
+            }
+            List<Msg> compacted = opt.get();
+            int after = TokenCounterUtil.calculateToken(compacted);
+            List<Msg> finalCompacted = compacted;
+            // 写回：native 模式走 SessionStateAccess.update（writer lease + context/replaced）
+            agent.getDelegate().updateAgentState(ctx, "manual_compact", s -> {
+                s.contextMutable().clear();
+                s.contextMutable().addAll(finalCompacted);
+            });
+            // 摘要与覆盖消息数从摘要消息（name=__compaction_summary__，首位）提取
+            String summary = "";
+            int covered = 0;
+            int summaryTokens = 0;
+            if (!compacted.isEmpty()
+                    && ConversationCompactor.SUMMARY_MSG_NAME.equals(compacted.get(0).getName())) {
+                Msg sm = compacted.get(0);
+                String text = sm.getTextContent();
+                summary = text == null ? "" : text;
+                summaryTokens = TokenCounterUtil.calculateToken(List.of(sm));
+                Object cov = sm.getMetadata() == null ? null : sm.getMetadata().get("context.covered_messages");
+                if (cov instanceof List<?> l) covered = l.size();
+            }
+            log.info("[agentx] 手动 /compact 就地压缩完成: session={} covered={} freedTokens={}",
+                    sessionId, covered, Math.max(0, before - after));
+            return java.util.Map.of(
+                    "engine", "agentscope",
+                    "scheduled", false,
+                    "compressedTurns", Math.max(1, covered),
+                    "freedTokens", Math.max(0, before - after),
+                    "summary", summary,
+                    "summaryTokens", summaryTokens);
+        } catch (Exception e) {
+            log.warn("[agentx] 手动 /compact 就地压缩失败，回落排到下一次: session={}, {}",
+                    sessionId, e.toString());
+            requestCompact(userId, sessionId);
+            return java.util.Map.of("engine", "agentscope", "scheduled", true, "compressedTurns", 0);
+        }
+    }
+
+    /** 「没得压」的统一返回（对话还短 / 压不动）：字段与压缩成功时同形，前端按同一套键渲染。 */
+    private static Map<String, Object> noneCompacted() {
+        return java.util.Map.of("engine", "agentscope", "scheduled", false,
+                "compressedTurns", 0, "freedTokens", 0, "summary", "", "summaryTokens", 0);
+    }
+
     /** 登记一次强制压缩并丢掉常驻实例（下一轮会带新配置重建；会话状态在 stateStore 里，不丢历史）。 */
     public void requestCompact(String userId, String sessionId) {
         String key = (userId == null || userId.isBlank() ? "guest" : userId) + "|" + sessionId;
@@ -437,6 +646,8 @@ public class FrameworkSessions {
             order.remove(key);
             closeQuietly(key, h);
         }
+        // 实例与槽位一起丢：下一轮会按新配置重建，槽位由 turnSlot(cmd) 现建
+        turnSlots.remove(key);
     }
 
     /** 取走并清掉这次强制压缩（一次请求只对应一次生效）。 */
@@ -455,6 +666,23 @@ public class FrameworkSessions {
         if (sessionKey != null) rebuildAfterCompact.add(sessionKey);
     }
 
+    /**
+     * 标「这个人的会话下一次开轮重建实例」——用于**只能在 build 期定**的个人偏好发生变化时。
+     * <p>典型就是「自动提炼记忆」：它落到 {@code MemoryConfig.flushTrigger}，而配置烤在常驻实例里，
+     * 不重建就会让用户看到「我关了，它还在往记忆里写」（或反过来：开了却没生效）。
+     * <p>只标不删：正在跑的那一轮不受影响，下一轮 {@link #open} 才换实例——历史在 stateStore 里，
+     * 换实例不等于丢上下文。
+     */
+    private final java.util.Set<String> staleConfigKeys = ConcurrentHashMap.newKeySet();
+
+    public void markConfigStale(String uid) {
+        if (uid == null || uid.isBlank()) return;
+        String prefix = uid + "|";
+        for (String key : held.keySet()) {
+            if (key.startsWith(prefix)) staleConfigKeys.add(key);
+        }
+    }
+
     /** 建实例时登记这一路会话的步数预算闸（引擎在 {@code buildAgent} 里回调）。 */
     public void noteStepBudget(String sessionKey, AgentxStepBudget budget) {
         if (sessionKey != null && budget != null) stepBudgets.put(sessionKey, budget);
@@ -463,6 +691,21 @@ public class FrameworkSessions {
     /** 取这一轮所属实例的步数预算闸；实例还没建出来时返回 null（开轮即会建，不该长期为空）。 */
     public AgentxStepBudget stepBudget(String sessionKey) {
         return stepBudgets.get(sessionKey);
+    }
+
+    /**
+     * 登记这条会话的框架工具档位闸（全框架化 P1）。
+     *
+     * <p>与 {@link #noteStepBudget} 同一形态：middleware 只能在 build 期挂载，
+     * 而闸的状态（当前轮标签）要按轮更新，所以实例随会话常驻、这里只做登记。
+     */
+    public void noteFrameworkToolGate(String sessionKey, AgentxFrameworkToolGate gate) {
+        if (sessionKey != null && gate != null) frameworkToolGates.put(sessionKey, gate);
+    }
+
+    /** 取这一轮所属实例的框架工具档位闸；实例还没建出来时返回 null。 */
+    public AgentxFrameworkToolGate frameworkToolGate(String sessionKey) {
+        return frameworkToolGates.get(sessionKey);
     }
 
     /**
@@ -502,6 +745,13 @@ public class FrameworkSessions {
             String oldest = order.pollFirst();
             Held h = oldest == null ? null : held.remove(oldest);
             if (h != null) closeQuietly(oldest, h);
+        }
+        // 槽位不跟着实例立刻删：工具闭包捕获的是它，删了之后这条会话下一轮会拿到一个新槽位，
+        // 已建好的工具却还指着旧的那个（又变回「工具写上一轮」）。只在高水位时清理<b>没有实例、
+        // 也没有在跑</b>的槽位，避免长跑进程里按会话无限增长。
+        if (turnSlots.size() > MAX_HELD * 4) {
+            turnSlots.entrySet().removeIf(e ->
+                    !held.containsKey(e.getKey()) && !e.getValue().active());
         }
     }
 
