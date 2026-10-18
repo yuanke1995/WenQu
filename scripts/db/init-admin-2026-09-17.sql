@@ -1,7 +1,7 @@
 -- 问渠：初始化管理员账号 + 存量数据归属 admin（2026-09-17）
--- 用法：mysql -uroot -p ai_doc_assistant < scripts/db/init-admin-2026-09-17.sql
+-- 用法：mysql -uroot -p wenqu_ai < scripts/db/init-admin-2026-09-17.sql
 -- 前置：先执行 src/main/resources/schema.sql（CREATE TABLE IF NOT EXISTS，幂等建表）
---       mysql -uroot -p ai_doc_assistant < src/main/resources/schema.sql
+--       mysql -uroot -p wenqu_ai < src/main/resources/schema.sql
 -- 说明：本脚本幂等，可重复执行；ADD COLUMN 若列已存在会报 1060，可忽略。
 
 -- ========== 1) 补字段（存量表：CREATE TABLE IF NOT EXISTS 不会补列，需显式 ALTER） ==========

@@ -1,6 +1,6 @@
 -- 存量库补列：本地登录鉴权所需（2026-09-16）
 -- 背景：c_ai_user 原无密码字段（鉴权靠网关透传 X-User-Id）；引入本地登录后需补 password_hash 等。
--- 用法：mysql -u root -h 127.0.0.1 -p ai_doc_assistant --force < scripts/db/fix-schema-2026-09-16-auth.sql
+-- 用法：mysql -u root -h 127.0.0.1 -p wenqu_ai --force < scripts/db/fix-schema-2026-09-16-auth.sql
 --   --force 保证幂等：列/索引已存在时报错但不中断后续语句。
 
 ALTER TABLE `c_ai_user` ADD COLUMN `password_hash` VARCHAR(255) DEFAULT NULL COMMENT '密码哈希（PBKDF2；空=未设置，不能本地登录）';

@@ -10,7 +10,7 @@
 -- 幂等：重复执行命中 0 行。可逆：在「权限管理 → 编辑菜单 → 对话 → 可见」打开即可，无需 SQL。
 --
 -- 用法（生产库同样适用）：
---   mysql -u root -p ai_doc_assistant < scripts/db/hide-chat-menu-2026-10-17.sql
+--   mysql -u root -p wenqu_ai < scripts/db/hide-chat-menu-2026-10-17.sql
 
 -- 1) 命中预检：visible 应为 1（存量库）。若已是 0，下面的 UPDATE 空跑，属正常
 SELECT `id`, `path`, `visible`, `render_as`, `builtin` FROM `c_ai_menu` WHERE `id` = 'menu-chat';

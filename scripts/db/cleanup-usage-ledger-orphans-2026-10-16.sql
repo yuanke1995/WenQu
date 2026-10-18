@@ -13,7 +13,7 @@
 --   对中文条件会静默不匹配）。遗留「纯模型名」行（不含 /）不在判据内，保持原样。
 --
 -- 用法（生产库同样适用；备份表留在库里，确认无误后再手工 DROP）：
---   mysql -u root -p ai_doc_assistant < scripts/db/cleanup-usage-ledger-orphans-2026-10-16.sql
+--   mysql -u root -p wenqu_ai < scripts/db/cleanup-usage-ledger-orphans-2026-10-16.sql
 
 -- 1) 命中预检：先看要删多少行、多少 token，与预期不符就停手别往下执行
 SELECT COUNT(*)                    AS rows_to_delete,

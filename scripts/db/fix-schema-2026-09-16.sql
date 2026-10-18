@@ -5,7 +5,7 @@
 -- 若你的运行实例启动期未成功补齐（被静默告警吞掉），可手动跑本脚本。
 --
 -- 用法（用 --force 保证幂等：列已存在时报错也不中断后续语句）：
---   mysql -u root -h 127.0.0.1 -p ai_doc_assistant --force < scripts/db/fix-schema-2026-09-16.sql
+--   mysql -u root -h 127.0.0.1 -p wenqu_ai --force < scripts/db/fix-schema-2026-09-16.sql
 -- （库名按你本地实际调整；若连接带库名，可去掉末尾库名参数）
 
 -- ---------- c_ai_document ----------

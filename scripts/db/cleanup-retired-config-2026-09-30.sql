@@ -13,7 +13,7 @@
 --   * deleteProvider 同步改造：仅活跃键（defaults() 内）计入引用并带键名报错；退役键遗留引用只告警不阻挡。
 --
 -- 用法（生产库按实际改绑目标调整第一条 UPDATE 的值后再执行）：
---   mysql -u root -p ai_doc_assistant < scripts/db/cleanup-retired-config-2026-09-30.sql
+--   mysql -u root -p wenqu_ai < scripts/db/cleanup-retired-config-2026-09-30.sql
 
 -- 1) embedding.model：改绑到启用供应商的在用向量模型（{providerId}/{modelId}）。
 --    ↓↓ 按你环境实际在用的向量模型调整（可查 SELECT kb_id, embedding_ref FROM c_ai_knowledge_base;）

@@ -11,7 +11,7 @@
 -- 本来就不显示任何思考入口，删灯泡对它零影响。
 --
 -- 幂等：只处理 reasoning_levels 为空的行；已登记档位的模型保持管理员配置不动。
--- 用法：mysql -u root -p ai_doc_assistant < scripts/db/migrate-reasoning-levels-2026-10-03.sql
+-- 用法：mysql -u root -p wenqu_ai < scripts/db/migrate-reasoning-levels-2026-10-03.sql
 
 -- 1) 补档位（仅 reasoning_levels 为空时）
 UPDATE `c_ai_model`
