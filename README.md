@@ -125,7 +125,7 @@ export AI_JWT_SECRET=xxx                  # 登录令牌签名密钥（≥32 位
 
 # ===== 仅 env/yml（不进设置页）=====
 export AI_MEILI_KEY=xxx                   # Meilisearch master key（compose 部署必填：meilisearch 容器以它初始化；app 侧同值可在设置页「检索设置 → 服务连接」配）
-export AI_MEILI_INDEX=ai-doc-chunks       # 关键词索引名（只从 env/yml 读，永不入库）
+export AI_MEILI_INDEX=wenqu-chunks        # 关键词索引名（只从 env/yml 读，永不入库）
 export LOG_LEVEL_APP=info                 # 应用日志级别
 export LOG_LEVEL_SPRING_AI=info           # Spring AI 日志级别
 export MYBATIS_LOG_IMPL=org.apache.ibatis.logging.slf4j.Slf4jImpl
@@ -561,8 +561,8 @@ curl -X POST http://localhost:8090/api/ai/eval/run \
 
 # 5. Meilisearch 关键词引擎（可选）
 scripts/mac/dev-stack.sh up meili    # 开发机：起 wenqu-meilisearch（索引在卷 wenqu-meili-data）
-docker compose up meilisearch        # 全栈 Compose 部署：起 ai-doc-meilisearch，需先设置 AI_MEILI_KEY
-curl http://localhost:7700/health     # 期望 {"status":"available"}；两者都占 7700，同机只起一个
+docker compose up meilisearch        # 全栈 Compose 部署：起 wenqu-meilisearch，需先设置 AI_MEILI_KEY
+curl http://localhost:7700/health     # 期望 {"status":"available"}；两套 compose 同名同端口，同机只起一个
 
 # 6. 沙盒（隔离执行环境）
 bash deploy/sandbox-provisioner/run.sh docker-up
@@ -592,6 +592,9 @@ bash deploy/sandbox-provisioner/run.sh status
 **部署与数据**
 - `.nvmrc` 固定 Node 22 LTS（要求 ≥22.12，Node 18/21 不可构建）
 - 存量库升级：`SchemaMigrator` 启动自动补列补索引（幂等）；JSON 列需库侧表达式默认值
+- 运行标识改名 `ai-doc-*` → `wenqu-*`（Redis 向量索引名、Redis 键前缀、Meilisearch 索引名、Compose 容器名）：
+  存量实例跑一次 `bash scripts/redis/rename-ai-doc-indexes-2026-10-17.sh` 收尾。顺序是先部署新代码、每个知识库被访问过
+  一次（应用按新名建索引，同一批向量键自动重新入索引——不重嵌入、不重建关键词索引），再 `--apply` 回收旧索引
 - 图片访问路径：后端返回 `/ai/images/...`（含 context-path），前端经 `/proxy` 代理时已去 `/ai` 前缀
 - 过期会话/消息自动清理：默认每日清除逻辑删除超过 30 天的会话与消息（保留期即「撤销删除」窗口）
 - 沙盒运行时依赖必须烧进镜像：容器内 gem 用户不在 sudoers——用 `deploy/sandbox-provisioner/sandbox-image/Dockerfile` 派生镜像（如 +openjdk-17），`.env` 设 `SANDBOX_IMAGE` 后重建 provisioner；旧沙盒容器直接删（工作区在宿主 bind mount 不丢）

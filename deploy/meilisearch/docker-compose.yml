@@ -11,7 +11,7 @@
 # 问渠侧配置（设置页 · 检索设置 → 服务连接）：
 #   引擎 = meilisearch，服务地址 = http://localhost:7700 或 http://127.0.0.1:7700 都行
 #   （本机落库的是前者；端口只发布到 IPv4 回环，[::1]:7700 会被拒，客户端按地址列表回落）
-#   Key = 下方 MEILI_KEY 同值，两侧不一致是 403；索引名只从 env/yml 读 AI_MEILI_INDEX，默认 ai-doc-chunks
+#   Key = 下方 MEILI_KEY 同值，两侧不一致是 403；索引名只从 env/yml 读 AI_MEILI_INDEX，默认 wenqu-chunks
 #
 # 镜像按补丁版本钉住：卷里的 LMDB 只认写出它的那个版本。1.53.2 这个构建既没有 `snapshot`
 # 子命令、也没有 POST /snapshot（实测 404），跨版本别直接换 tag——升级后在设置页全量重建

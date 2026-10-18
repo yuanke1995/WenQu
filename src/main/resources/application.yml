@@ -122,7 +122,7 @@ ai-app:
     engine: ${AI_KEYWORD_ENGINE:mysql}
     base-url: ${AI_MEILI_BASE_URL:http://localhost:7700}
     api-key: ${AI_MEILI_KEY:}
-    index: ${AI_MEILI_INDEX:ai-doc-chunks}
+    index: ${AI_MEILI_INDEX:wenqu-chunks}
     timeout-millis: 1000
   # 会话（会话严格按登录用户隔离；anonymous 名下的存量会话仅未登录调用方可访问）
   session:

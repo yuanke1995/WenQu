@@ -45,7 +45,7 @@ import java.time.ZoneId;
 @RequiredArgsConstructor
 public class SessionService {
 
-    private static final String KEY_PREFIX = "ai-doc:session:";
+    private static final String KEY_PREFIX = "wenqu:session:";
 
     /** 会话种类：用户发起的对话（默认值，进会话列表） */
     public static final String KIND_CHAT = "chat";

@@ -30,9 +30,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * 知识库向量存储注册中心：按知识库路由 VectorStore（per-KB 向量模型绑定的核心）。
  * <p>
  * 每个库必须绑定自己的向量模型（必须是可解析的供应商引用）：懒创建独立
- * RedisVectorStore——独立索引 {@code ai-doc-kb-{kbId}}、独立 key 前缀 {@code ai:chunkkb-{kbId}:}、
+ * RedisVectorStore——独立索引 {@code wenqu-kb-{kbId}}、独立 key 前缀 {@code ai:chunkkb-{kbId}:}、
  * 独立维度 schema、向量化客户端为该库绑定的模型（{@link DynamicEmbeddingModel#forRef}）。
- * 全局共享索引 ai-doc-index 已退役（spring.ai.vectorstore.type=none 不再装配全局向量库 bean）。
+ * 全局共享向量索引已退役（spring.ai.vectorstore.type=none 不再装配全局向量库 bean）。
  * <p>
  * 维度一致性约束因此从"全库"收缩到"单库"：同库所有块同一向量模型；换模型触发本库重嵌入
  * （{@code DocumentService.reembedKbAsync}）。
@@ -87,9 +87,19 @@ public class KbVectorStoreRegistry {
         return kbId == null ? null : byKb.remove(kbId);
     }
 
+    /** KB 独立向量索引名前缀（RediSearch 索引名） */
+    public static final String KB_INDEX_PREFIX = "wenqu-kb-";
+    /** KB 向量 JSON 键前缀（刻意与索引名前缀不同源：改名只换索引名，存量向量键不动） */
+    public static final String KB_KEY_PREFIX = "ai:chunkkb-";
+
     /** KB 独立索引名（与 build 一致；DROP 旧索引用） */
     public static String kbIndexName(String kbId) {
-        return "ai-doc-kb-" + kbId;
+        return KB_INDEX_PREFIX + kbId;
+    }
+
+    /** KB 独立向量键前缀（含末尾冒号） */
+    public static String kbKeyPrefix(String kbId) {
+        return KB_KEY_PREFIX + kbId + ":";
     }
 
     /**
@@ -128,7 +138,7 @@ public class KbVectorStoreRegistry {
             out.put("separatorReady", gateSeparatorOk(index));
             out.put("indexedDocs", countDocs(index, "*"));
             // TAG 字段不支持 {*} 通配（实测 @docId:* 直接 Syntax error），故抽样读 JSON 键判断
-            out.put("docsWithKbIdSampled", sampleWithKbId(index));
+            out.put("docsWithKbIdSampled", sampleWithKbId(effective));
             long tagged = out.get("docsWithKbIdSampled") instanceof Long v ? v : -1L;
             out.put("kbGateUsable", fieldsReady && tagged > 0);
             out.put("hint", !fieldsReady
@@ -164,8 +174,8 @@ public class KbVectorStoreRegistry {
      *
      * @return 抽样中带库门字段的条数；索引不可读返回 -1
      */
-    private long sampleWithKbId(String index) {
-        String prefix = index.replace("ai-doc-kb-", "ai:chunkkb-") + ":";
+    private long sampleWithKbId(String kbId) {
+        String prefix = kbKeyPrefix(kbId);
         long tagged = 0;
         int sampled = 0;
         try {
@@ -219,8 +229,8 @@ public class KbVectorStoreRegistry {
     private RedisVectorStore build(KnowledgeBase kb) {
         String kbId = kb.getId();
         String index = kbIndexName(kbId);
-        log.info("[KB-VEC] 为知识库「{}」构建独立向量索引: index={}, prefix=ai:chunkkb-{}:, 模型={}",
-                kb.getName(), kbId, kbId, kb.getEmbeddingRef());
+        log.info("[KB-VEC] 为知识库「{}」构建独立向量索引: index={}, prefix={}, 模型={}",
+                kb.getName(), index, kbKeyPrefix(kbId), kb.getEmbeddingRef());
         // 维度来源包一层本地真值：见 LocalDimensionEmbeddingModel 的类注释——不包的话
         // RedisVectorStore 建埋点上下文时会远程探维度，把「删向量」绑到 embedding 服务可用性上
         // （额度耗尽即删不掉文档）；且只有「索引 schema」一级不够，启动清文档时索引尚未建立，
@@ -232,7 +242,7 @@ public class KbVectorStoreRegistry {
         RedisVectorStore store = RedisVectorStore
                 .builder(sharedJedis(), model)
                 .indexName(index)
-                .prefix("ai:chunkkb-" + kbId + ":")
+                .prefix(kbKeyPrefix(kbId))
                 // 可过滤 metadata（全部 TAG）：docId/kbId 两个库门字段。
                 // 不声明这些字段则 RedisFilterExpressionConverter.doKey() 会抛
                 // "Not allowed filter identifier name"，且索引层无字段可过滤（库门下推无从谈起）。
@@ -437,7 +447,7 @@ public class KbVectorStoreRegistry {
             String resp = sharedJedis().ftCreate(index,
                     FTCreateParams.createParams()
                             .on(IndexDataType.JSON)
-                            .addPrefix("ai:chunkkb-" + kbId + ":"),
+                            .addPrefix(kbKeyPrefix(kbId)),
                     fields);
             if (!"OK".equals(resp)) {
                 log.error("[FAIL-LOUD] 索引 {} 重建 schema 返回 {}", index, resp);

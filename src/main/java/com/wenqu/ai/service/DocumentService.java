@@ -129,7 +129,7 @@ public class DocumentService {
     private final GraphRagService graphRagService;
 
     /** 全量重嵌入分布式锁 key：持有期间所有实例的向量检索路跳过（降级关键词路），避免命中半成品索引 */
-    public static final String REEMBED_LOCK_KEY = "ai-doc:reembed:lock";
+    public static final String REEMBED_LOCK_KEY = "wenqu:reembed:lock";
     /** 锁 TTL：任务每批刷新续期；实例崩溃后最多 TTL 秒自愈（不再永久降级） */
     private static final long REEMBED_LOCK_TTL_SECONDS = 120;
 

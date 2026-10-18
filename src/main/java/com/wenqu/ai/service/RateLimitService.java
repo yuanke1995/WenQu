@@ -24,7 +24,7 @@ import java.time.Duration;
 @RequiredArgsConstructor
 public class RateLimitService {
 
-    private static final String PREFIX = "ai-doc:ratelimit:";
+    private static final String PREFIX = "wenqu:ratelimit:";
     /** 窗口长度默认值（秒）：ratelimit.windowSeconds 可配 */
     private static final int WINDOW_SECONDS_DEFAULT = 60;
 

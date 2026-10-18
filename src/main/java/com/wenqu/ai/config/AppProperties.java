@@ -68,7 +68,7 @@ public class AppProperties {
         /** Meilisearch master key（仅 env/yml 配置，不入 DB） */
         private String apiKey = "";
         /** 索引名 */
-        private String index = "ai-doc-chunks";
+        private String index = "wenqu-chunks";
         /** 单次请求超时(ms)：关键词路是辅助召回，超时即降级，不宜过大 */
         private int timeoutMillis = 1000;
     }

@@ -7,6 +7,7 @@
 | 目录 | 内容 | 运行方式 |
 |---|---|---|
 | `db/` | SQL：库初始化、schema 修复、数据迁移、配置清理 | `mysql -u root -p <db> --force < scripts/db/xxx.sql` |
+| `redis/` | Redis / Meilisearch 侧的一次性迁移 | `bash scripts/redis/xxx.sh` |
 | `services/` | 独立运行的服务 / 测试进程（MCP 测试服务、假上游） | `python3 scripts/services/xxx.py` |
 | `codegen/` | Node 代码生成 / 一致性校验 | `node scripts/codegen/xxx.js` |
 | `setup/` | 环境初始化（Ubuntu 安装 Node） | `sudo bash scripts/setup/setup-node.sh` |
@@ -51,7 +52,7 @@
 |---|---|---|---|
 | `mysql` | 3306 | brew `mysql@8.0` | `infra up/down mysql` |
 | `redis` | 6379 | brew `redis` | `infra up/down redis` |
-| `meili` | 7700 | docker `ai-doc-meilisearch` | `infra up/down meili` |
+| `meili` | 7700 | docker `wenqu-meilisearch` | `infra up/down meili` |
 | `searxng` | 8888 | docker compose | `infra up/down searxng` |
 | `sandbox` | 8002 | docker compose | `infra up/down sandbox` |
 | `ocr` | 30011 | docker compose（MinerU） | `infra up/down ocr` |
@@ -85,6 +86,11 @@
 - `cleanup-retired-config-2026-09-30.sql` — 清理已废弃配置
 - `cleanup-usage-ledger-orphans-2026-10-16.sql` — 清理用量台账里供应商已不存在的孤儿引用
   （压测/探针留下的 `providerId/mock-chat` 行，会把费用报表的未计价清单撑成几百个标签）
+
+### redis/（Redis / Meilisearch 侧一次性迁移）
+- `rename-ai-doc-indexes-2026-10-17.sh` — 把存量索引名从 `ai-doc-*` 收到 `wenqu-*`：Meilisearch 关键词索引 PATCH 改名、
+  Redis 各库旧向量索引在「新索引文档数已齐平」后 `FT.DROPINDEX`（不带 DD，向量数据不动）。默认只报告，`--apply` 才动手；
+  退役的全局索引 `ai-doc-index` 要连数据删需另加 `--purge-global-index`
 
 ### services/（Python，独立进程）
 - `mcp-test-server.py` — 最小 MCP 测试服务（:8931），验证 MCP 外部工具接入
