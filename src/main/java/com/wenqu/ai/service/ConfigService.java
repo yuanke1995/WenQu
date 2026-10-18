@@ -409,7 +409,12 @@ public class ConfigService {
         d.put("chat.streamRetryCount", "1");               // H2：主 LLM 流式中断（未输出token）自动重试次数
         d.put("chat.sseTimeoutMs", "300000");              // H4：问答 SSE 超时(ms)
         d.put("chat.askTimeoutMs", "600000");              // 人在回路提问卡等待上限(ms)（2026-10-09 补：schema 早已声明，defaults 漏登记 → 设置页改了回显不出）
-        d.put("chat.retrievalDebugEnabled", "false");      // 检索调试入口（内部排障，默认关；统管调试显示含降级提示）
+        // 调试显示总开关（归属徽标 / 路由提示 / 降级提示）。默认开（2026-10-18 由 false 改 true）：
+        // 它管的已不只是排障项——「无命中 / 改写失败 / 图片剔除」这类降级信息默认不显示，等于系统性地
+        // 不告诉用户这一轮检索没按预期发生，与「答得准、也敢被查」的定位直接冲突：产品承诺的是可被
+        // 核对，若用户看不到自己踩了哪条路，就没有可核对的入口。真正的排障项（分值、步数、路由理由）
+        // 仍只对管理员露出（前端按 isAdminSync 二次收窄），对普通用户开的是降级与归属这类诚实性信息。
+        d.put("chat.retrievalDebugEnabled", "true");
         // 空态示例问题（对话页新会话空态的引导卡，点一下即按这条提问）：体验项 → schema 标 personal，
         // 个人设置可覆盖成自己的或关掉；生效值 = 个人值 > 系统全局，经 /config/public 下发给两套对话页。
         // 内容一行一条，可写「标签｜问题」（schema def 与本串同值：def 管设置页展示，这里管运行时种子）
@@ -488,6 +493,11 @@ public class ConfigService {
         d.put("tool.mcpCiteMaxRefs", "10");                // MCP 引用注册单轮上限（隐藏参数，DB 可调；无设置页字段）
         // ---------- 联网搜索（工具 webSearch；结果注册进引用体系，与知识库来源同 [N] 编号）----------
         // 注意：webSearch.apiKey 以 .apiKey 结尾 → 走敏感项 RSA 密文入库（isSensitiveKey），改不得命名
+        // webSearch.enabled 保持默认关：联网搜索的 provider/baseUrl/apiKey 三个键默认值全为空，
+        // 默认开等于让新装用户的模型去调一个必然失败的接口——每轮白烧 token 并把外部错误透给用户。
+        // 但「纳入执行审批」默认开（2026-10-18 由 false 改 true）：一旦管理员开了联网，它就是
+        // 唯一一类「向外部第三方发请求、可能计费」的工具，没审批就等于让模型自主决定花谁的钱。
+        // 审批关不掉的只有逐项确认（智能体选自动执行时照常自动跑），不会把联网整个关掉。
         d.put("webSearch.enabled", "false");               // 联网搜索总开关（需 tool.enabled 总闸开启）
         d.put("webSearch.provider", "tavily");            // 服务商：tavily / bocha / generic（自建 SearXNG）
         d.put("webSearch.baseUrl", "");                   // 服务地址（留空用服务商默认；generic 必填，如 http://127.0.0.1:8888）
@@ -496,7 +506,7 @@ public class ConfigService {
         d.put("webSearch.maxCallsPerTurn", "2");          // 单轮搜索次数上限（防模型反复搜烧配额；0=不限制）
         d.put("webSearch.timeoutMs", "8000");             // 单次请求超时(ms)
         d.put("webSearch.snippetChars", "600");           // 单条摘要截断字符数（控制工具结果 token 量）
-        d.put("webSearch.requireApproval", "false");      // 是否纳入"有副作用工具"：true=受智能体 toolApprovalMode=ask 管辖；false=自动执行
+        d.put("webSearch.requireApproval", "true");       // 是否纳入"有副作用工具"：true=受智能体 toolApprovalMode=ask 管辖。默认开：联网是唯一会向外部第三方发请求、可能对用户计费的能力，让模型自主决定花谁的钱不该是默认态
         // 技能的内容与启停已在个人表 c_ai_user_skill / c_ai_skill_disabled（谁装谁管），此处只剩两项预算参数
         d.put("skill.injectMaxChars", "1200");             // 清单注入字符上限
         d.put("skill.maxFileChars", String.valueOf(ConfigDefaults.SKILL_MAX_FILE_CHARS));              // 单技能全文读取上限
