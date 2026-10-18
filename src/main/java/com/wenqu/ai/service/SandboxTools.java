@@ -82,7 +82,7 @@ public class SandboxTools {
      * 而前缀匹配会在重构时静默失配。
      */
     public static final java.util.Set<String> TOOL_NAMES = java.util.Set.of(
-            "execute", "read_file", "write_file", "edit_file", "ls", "deliver_artifact", RUN_CODE_TOOL_NAME);
+            "execute", "read_file", "write_file", "edit_file", "ls", RUN_CODE_TOOL_NAME);
 
     private final SandboxService sandboxService;
     private final ArtifactService artifactService;
@@ -94,198 +94,32 @@ public class SandboxTools {
         this.artifactService = artifactService;
         this.runCodeService = runCodeService;
     }
-
-    @Tool(name = "execute", description = "在隔离沙盒（Linux 容器）中执行 shell 命令，返回标准输出与退出码。"
-            + "适合：运行脚本、计算/处理数据、生成文件、安装依赖、查看系统信息。"
-            + "沙盒是持久化的：同一会话内创建的文件在后续调用中仍然存在。"
-            + "命令在沙盒内的工作目录为用户数据根目录下，请把要保留的文件写在那里。")
-    public String execute(
-            @ToolParam(description = "要执行的 shell 命令，如 python3 -c \"print(1+1)\" 或 ls -la") String command,
-            ToolContext toolContext) {
-        ProvisionerSandboxBackend backend = backend(toolContext);
-        if (backend == null) {
-            return reportInfra(toolContext, NO_CONTEXT);
-        }
-        if (command == null || command.isBlank()) {
-            return "命令不能为空";
-        }
-        // 有输出回调（问答流式链路注入）→ 走流式执行：命令后台脱离 + 按行轮询，增量经回调转 SSE
-        // tool_output 实时下发（前端「看着它跑」）；无回调（无流上下文的调用方）保持原同步执行。
-        java.util.function.Consumer<String> sink = outputSink(toolContext);
-        ProvisionerSandboxBackend.ExecuteResponse result = sink != null
-                ? backend.executeStreaming(command, null, sink)
-                : backend.execute(command);
-        // 基础设施故障（provisioner 不可达/ 鉴权失败）：文本照常回给模型，但额外上报让记录落成
-        // status=error（见 CTX_INFRA_ERROR_SINK 注释）。注意与「命令退出码非 0」区分开：
-        // 后者是正常业务结果，改命令即可，不该显示成失败。
-        if (result.infraError) {
-            reportInfra(toolContext, result.output);
-        }
-        StringBuilder sb = new StringBuilder();
-        if (result.exitCode != null && result.exitCode != 0) {
-            sb.append("退出码 ").append(result.exitCode).append('\n');
-        }
-        String output = result.output == null ? "" : result.output;
-        sb.append(output.isEmpty() ? "(无输出)" : output);
-        if (result.truncated) {
-            sb.append("\n…（输出过长已截断）");
-        }
-        // 给模型的这份维持原样（帽在哪一段就是哪一段），只把砍之前的整份原文另交给留存
-        return clip(sb.toString(), result.fullOutput, "execute", toolContext);
-    }
-
-    @Tool(name = "read_file", description = "读取沙盒内某个文本文件的内容（支持 offset/limit 按行读取）。"
-            + "只支持 UTF-8 文本与常见图片；PDF/Office 文档与二进制文件不支持。")
-    public String read_file(
-            @ToolParam(description = "沙盒内的绝对路径，如 /home/gem/user-data/report.md") String path,
-            @ToolParam(description = "起始行号（从 1 开始，留空从第 1 行读）", required = false) Integer offset,
-            @ToolParam(description = "最多读取的行数（留空默认 2000 行）", required = false) Integer limit,
-            ToolContext toolContext) {
-        ProvisionerSandboxBackend backend = backend(toolContext);
-        if (backend == null) {
-            return reportInfra(toolContext, NO_CONTEXT);
-        }
-        int start = offset == null || offset <= 0 ? 0 : offset - 1;
-        ProvisionerSandboxBackend.ReadResult result = backend.read(path, start, limit);
-        if (result.error != null) {
-            return reportFsError(toolContext, "读取失败：" + result.error);
-        }
-        if (result.noLinesRequested) {
-            return "（limit ≤ 0，未读取任何行）";
-        }
-        String content = result.fileData == null ? "" : result.fileData.content;
-        StringBuilder sb = new StringBuilder(content == null ? "" : content);
-        // 「是否还有更多」用本次返回行数与请求行数比较：read() 的 nextOffset/endLine 在整文件读完时也有值，
-        // 单看它会把"读完了"误报成"还有更多"。
-        int returned = result.endLine - result.startLine + 1;
-        Integer requested = limit == null ? 2000 : limit;
-        if (result.endLine > 0 && returned >= requested) {
-            sb.append("\n…（本次读到第 ").append(result.endLine)
-              .append(" 行，可能还有更多；可继续用 offset=").append(result.endLine + 1).append(" 读取）");
-        }
-        return clip(sb.toString(), "read_file", toolContext);
-    }
-
-    @Tool(name = "write_file", description = "在沙盒内创建新文件或整体替换已有文件（父目录自动创建）。"
-            + "只在新建或整文件重写时使用；局部修改优先用 edit_file，更省且不会误伤其余内容。"
-            + "只能在用户数据根目录下写。")
-    public String write_file(
-            @ToolParam(description = "沙盒内的绝对路径，如 /home/gem/user-data/calc.py") String path,
-            @ToolParam(description = "文件内容（纯文本）") String content,
-            ToolContext toolContext) {
-        // 权限档位先判，再碰容器：越界的写入不该把沙盒建起来（backend() 是懒创建的）
-        String denial = writeDenial(toolContext, path);
-        if (denial != null) {
-            return reportFsError(toolContext, denial);
-        }
-        ProvisionerSandboxBackend backend = backend(toolContext);
-        if (backend == null) {
-            return reportInfra(toolContext, NO_CONTEXT);
-        }
-        ProvisionerSandboxBackend.WriteResult result = backend.write(path, content == null ? "" : content);
-        if (result.error != null) {
-            return reportFsError(toolContext, "写入失败：" + result.error);
-        }
-        int bytes = content == null ? 0 : content.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
-        return "已写入 " + result.path + "（" + bytes + " 字节）";
-    }
-
-    @Tool(name = "edit_file", description = "用精确字符串替换修改沙盒内的已有文件（old_string 必须与文件内容完全一致且唯一，"
-            + "除非 replace_all）。适合小改动；大面积重写不如删掉重建。")
-    public String edit_file(
-            @ToolParam(description = "沙盒内的绝对路径") String path,
-            @ToolParam(description = "要被替换的原文（必须逐字匹配）") String oldString,
-            @ToolParam(description = "替换后的新文本") String newString,
-            @ToolParam(description = "是否替换全部匹配（默认只替换第一处）", required = false) Boolean replaceAll,
-            ToolContext toolContext) {
-        String denial = writeDenial(toolContext, path);
-        if (denial != null) {
-            return reportFsError(toolContext, denial);
-        }
-        ProvisionerSandboxBackend backend = backend(toolContext);
-        if (backend == null) {
-            return reportInfra(toolContext, NO_CONTEXT);
-        }
-        if (oldString == null || oldString.isEmpty()) {
-            return "old_string 不能为空";
-        }
-        ProvisionerSandboxBackend.EditResult result =
-                backend.edit(path, oldString, newString == null ? "" : newString, Boolean.TRUE.equals(replaceAll));
-        if (result.error != null) {
-            return reportFsError(toolContext, "编辑失败：" + result.error);
-        }
-        return "已编辑 " + result.path + "（替换 " + result.occurrences + " 处）";
-    }
-
-    @Tool(name = "ls", description = "列出沙盒内某个目录的条目（路径、是否目录、大小）。用于确认文件是否生成、"
-            + "查看工作目录里有什么。")
-    public String ls(
-            @ToolParam(description = "沙盒内的绝对路径（目录或文件）") String dir,
-            ToolContext toolContext) {
-        ProvisionerSandboxBackend backend = backend(toolContext);
-        if (backend == null) {
-            return reportInfra(toolContext, NO_CONTEXT);
-        }
-        SandboxFsBackend.LsResult result = backend.ls(dir);
-        if (result.hasError()) {
-            return reportFsError(toolContext, "列举失败：" + result.error);
-        }
-        if (result.entries == null || result.entries.isEmpty()) {
-            return "（空目录）";
-        }
-        StringBuilder sb = new StringBuilder();
-        for (SandboxFsBackend.FsEntry entry : result.entries) {
-            sb.append(entry.isDir ? "d " : "- ");
-            sb.append(entry.isDir ? "" : (entry.size == null ? "" : entry.size + "B")).append('\t');
-            sb.append(entry.path).append('\n');
-        }
-        return clip(sb.toString(), "ls", toolContext);
-    }
+    /**
+     * execute / read_file / write_file / edit_file / ls 五把已退役（全框架化 P1）。
+     *
+     * <p>改由框架 {@code FilesystemTool}（read/write/edit/grep/glob/list）与 {@code ShellExecuteTool}
+     * 提供，模型侧工具名与契约不变；沙箱经 {@code SandboxService#frameworkFilesystem} 产出的
+     * {@code ProvisionerSandboxFilesystem} 接入 builder 的 {@code .abstractFilesystem(...)}。
+     *
+     * <p><b>必须真删而不是留着</b>：{@code ToolRegistry} 启动期核对「声明的 descriptor」与
+     * 「holder 上反射出的 {@code @Tool} 方法」，两边对不上就打 ERROR（真机验证确实报了）。
+     * 留着还会在同一 toolkit 上挂出与框架重名的工具，模型只能二选一。
+     *
+     * <p>权限档位裁剪改由 {@code AgentxFrameworkToolGate} 在执行前逐个判
+     * （只读档下裁掉写类与 {@code execute}）。
+     *
 
     /**
-     * 沙盒文件 → 我的产物（交付语义，模型显式调用；不做轮末自动扫描——那会把临时文件全灌进产物页）。
-     * 路径由本轮权限档位判据收束（与 write/edit 同一份判据）；扩展名白名单放宽到沙盒典型输出，
-     * 大小上限 1MB（与文本产物一致）。交付后走产物卡片 SSE 实时推送，前端/产物页零改动。
+     * 沙盒文件 → 我的产物已改由框架 {@code deliver_artifact} 承担（全框架化 P1-c）。
+     *
+     * <p>框架侧：{@code ArtifactDeliveryTarget} SPI 的实现见
+     * {@code com.wenqu.ai.sandbox.WenquArtifactDeliveryTarget}，注册点为
+     * {@code HarnessAgent.builder().artifactDeliveryTarget(...)}。框架工具负责从沙盒下载文件字节，
+     * 本类原先那套「路径判据 → downloadFiles → writeBytes → publish」已整体搬进该 SPI 实现。
+     *
+     * <p><b>因此本工具已删除</b>：留着会与框架的同名工具并存，模型面对重名工具会二选一。
+     * 权限档位的路径收束由 {@code AgentxFrameworkToolGate} 统一承担（deliver_artifact 按写类处理）。
      */
-    @Tool(name = "deliver_artifact", description = "把沙盒里生成的文件交付为正式产物（进入用户的「我的产物」，"
-            + "并实时推送产物卡片）。当沙盒中产出了用户要保留/下载的文件（脚本、数据表、图表、文档等）时调用；"
-            + "仅支持用户数据目录下的文件，单个不超过 1MB。"
-            + "硬性约束：文字里向用户承诺「可以交付/一并交付」某个文件，就必须在同一轮对本工具逐个调用、当场交付，"
-            + "禁止只口头承诺而不调用；用户索取沙盒内的任何已有文件时直接交付该文件本身，"
-            + "不要只交付别的文件或只复述文件内容。")
-    public String deliver_artifact(
-            @ToolParam(description = "沙盒内文件的绝对路径，如 /home/gem/user-data/sales.csv") String path,
-            @ToolParam(description = "产物文件名（含扩展名；留空则沿用沙盒内原文件名）", required = false) String filename,
-            @ToolParam(description = "给用户的产物说明（简短，说明这是什么）", required = false) String description,
-            ToolContext toolContext) {
-        String p = path == null ? "" : path.strip();
-        // 交付路径走与 write/edit 同一份档位判据（此前这里手写了一遍 root 前缀比较，是同一件事的第二份拷贝）
-        String denial = writeDenial(toolContext, p);
-        if (denial != null) {
-            return reportFsError(toolContext, denial);
-        }
-        ProvisionerSandboxBackend backend = backend(toolContext);
-        if (backend == null) {
-            return reportInfra(toolContext, NO_CONTEXT);
-        }
-        String sessionId = sessionId(toolContext);
-        if (sessionId == null || sessionId.isBlank()) {
-            return "无法定位当前会话，产物交付失败";
-        }
-        java.util.List<SandboxFsBackend.DownloadResult> results = backend.downloadFiles(java.util.List.of(p));
-        SandboxFsBackend.DownloadResult r = results == null || results.isEmpty() ? null : results.get(0);
-        if (r == null || r.hasError() || r.content == null || r.content.length == 0) {
-            return reportFsError(toolContext, "读取沙盒文件失败：" + (r == null ? "文件不存在" : r.error));
-        }
-        String name = filename == null || filename.isBlank() ? p.substring(p.lastIndexOf('/') + 1) : filename;
-        try {
-            java.util.Map<String, Object> info = artifactService.writeBytes(sessionId, name, r.content, description);
-            artifactService.publish(sessionId, "artifact", com.alibaba.fastjson2.JSON.toJSONString(info));
-            return "已交付产物：" + info.get("filename") + "（" + r.content.length + " 字节） 访问地址：" + info.get("url");
-        } catch (IllegalArgumentException | IllegalStateException e) {
-            return reportFsError(toolContext, "产物交付失败：" + e.getMessage());
-        }
-    }
 
     /**
      * 沙盒里跑一段脚本（P3b）。工具本身只做"该不该给"的判定与落点解析，运行编排在
@@ -304,7 +138,8 @@ public class SandboxTools {
             + "硬性约束：只有标准输出（print / console.log）会回到对话里，函数返回值不会自动出现；"
             + "请只打印结论与关键数字，不要把整份资料打出来（那和直接调工具没区别）。"
             + "单次性的取数直接用对应工具即可，不必绕到脚本；脚本的优势是循环与扇出。"
-            + "扇出时注意：脚本里能并发调用的是检索、读写文件、列目录、交付产物、内置与联网这类工具；"
+            + "扇出时注意：脚本模块里能并发调用的是问渠提供的那几把（检索、联网这类）；"
+            + "沙盒的文件读写、列目录与产物交付不在这个模块里——那几把由平台直接提供，请在脚本之外调用。"
             + "<b>execute（在脚本里再跑命令行）不提供</b>——实测四条并发嵌套命令只有一部分能回到脚本，"
             + "剩下的连接等不到返回，整段脚本停在上面；要跑命令行请直接调 execute 工具。"
             + "文件写在 /home/gem/user-data 下并保留，要交给用户仍需用 deliver_artifact。")
@@ -341,6 +176,7 @@ public class SandboxTools {
         }
         return clip(out == null ? "" : out, RUN_CODE_TOOL_NAME, toolContext);
     }
+
 
     /** 从 toolContext 取会话 id（与 {@link #backend(ToolContext)} 同键，供产物归属使用）。 */
     private String sessionId(ToolContext toolContext) {

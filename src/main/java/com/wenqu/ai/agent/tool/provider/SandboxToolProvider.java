@@ -40,16 +40,17 @@ public class SandboxToolProvider implements ToolFamilyProvider {
         return sandboxTools;
     }
 
-    @Override
-    public List<ToolDescriptor> descriptors() {
+@Override
+public List<ToolDescriptor> descriptors() {
+        // 全框架化 P1：execute / read_file / write_file / edit_file / ls 五把已退役，
+        // 改由框架 FilesystemTool + ShellExecuteTool 提供（工具名相同，模型侧无感）；
+        // deliver_artifact 已退役（P1-c），改由框架的 ArtifactDeliveryTool 提供——
+        // 框架注释明确「配了 ArtifactDeliveryTarget 才注册该工具」，注册点见
+        // AgentscopeChatEngine#buildAgent 的 .artifactDeliveryTarget(...)。
+        // 留着会与框架的同名工具同时挂在 toolkit 上，模型面对重名工具会二选一——
+        // 那既不是「用框架」，也不是「用问渠」，是最坏的一种中间态。
+        // 本族只剩 run_code：框架确无对应工具（core/tool/coding 只到 ShellCommandTool）。
         return List.of(
-                d("execute", "执行沙盒命令", "运行命令", "在隔离的云端沙盒里执行命令行（不影响本机）", SideEffect.MUTATE),
-                d("read_file", "读取沙盒文件", "读取文件", "在云端沙盒里读取文件内容", SideEffect.READ),
-                d("write_file", "写入沙盒文件", "写入文件", "在云端沙盒里新建或覆盖文件", SideEffect.MUTATE),
-                d("edit_file", "编辑沙盒文件", "编辑文件", "在云端沙盒里修改文件内容", SideEffect.MUTATE),
-                d("ls", "查看沙盒目录", "查看文件列表", "列出云端沙盒里某个目录下的文件", SideEffect.READ),
-                d("deliver_artifact", "交付沙盒产物", "保存生成的文件",
-                        "把云端沙盒里生成的文件存进会话，可查看下载", SideEffect.MUTATE),
                 new ToolDescriptor("run_code", ToolFamily.SANDBOX,
                         "沙盒脚本（一次做完一批）", "运行脚本",
                         "在云端沙盒里跑一段 Python：脚本可以自己循环取资料、批量处理，只把结果带回来",

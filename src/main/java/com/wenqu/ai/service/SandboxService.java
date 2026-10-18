@@ -2,9 +2,19 @@ package com.wenqu.ai.service;
 
 import com.wenqu.ai.model.Project;
 import com.wenqu.ai.sandbox.ProvisionerSandboxBackend;
+import com.wenqu.ai.sandbox.ProvisionerSandboxClient;
+import com.wenqu.ai.sandbox.ProvisionerSandboxFilesystem;
 import com.wenqu.ai.sandbox.ProvisionerSandboxProvider;
+import com.wenqu.ai.sandbox.ProvisionerSandbox;
+import com.wenqu.ai.sandbox.ProvisionerSandboxState;
+import io.agentscope.harness.agent.filesystem.AbstractFilesystem;
+import io.agentscope.harness.agent.filesystem.RoutedSandboxFilesystem;
+import io.agentscope.harness.agent.filesystem.local.LocalFilesystem;
+import io.agentscope.harness.agent.sandbox.SandboxContext;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+
+import java.nio.file.Path;
 
 /**
  * 沙盒生命周期与 backend 装配（本工程特有的那一层薄壳）。
@@ -36,6 +46,17 @@ public class SandboxService {
 
     /** 空闲多久回收沙盒（分钟）；≤0 表示不自动回收。 */
     private static final String KEY_IDLE_RELEASE_MINUTES = "sandbox.idleReleaseMinutes";
+
+    /**
+     * 框架状态目录（框架的 workspace 根）。记忆就钉在这下面按 uid 分开——
+     * 与 {@code AgentscopeChatEngine#buildAgent} 里 {@code .workspace(stateDir)} 同一个键同一份默认值，
+     * 那边改了这里必须跟着改，否则「Path 口径」和「文件系统口径」又会对不上。
+     */
+    private static final String KEY_STATE_DIR = "chat.agentscopeStateDir";
+    private static final String STATE_DIR_DEFAULT = "user-data/agentscope";
+
+    /** 记忆文件下载上限（MB）：单份 MEMORY.md / 日账远小于此，超了说明读错了对象。 */
+    private static final int MEMORY_MAX_FILE_MB = 64;
 
     private final ProvisionerSandboxProvider provider;
     /** 工作区解析：决定沙盒作用域与 workdir（无工作区时退回会话级，行为不变） */
@@ -112,6 +133,134 @@ public class SandboxService {
         SandboxScope scope = scopeOf(sessionId);
         return new ProvisionerSandboxBackend(provider, scope.scopeId(), uid, scope.workdirPath(),
                 true, true, unrestrictedWrites);
+    }
+
+    /**
+     * 产框架侧的文件系统（全框架化 P1，{@code SandboxContext} 的必需搭档）。
+     *
+     * <p><b>为什么两者都要</b>：框架 {@code FilesystemTool} / {@code ShellExecuteTool} 解析的是
+     * {@code RuntimeContext.get(AbstractFilesystem.class)}，而 {@code SandboxContext} 只管生命周期。
+     * 真机验证过：只挂 {@code SandboxContext} 时，模型调 {@code execute("pwd")} 返回的是
+     * <b>宿主项目目录</b>——工具静默跑在宿主上，看着成功实则没隔离。
+     *
+     * <p>作用域与 {@link #frameworkSandboxContext} 同源（同一 {@link #scopeOf}），
+     * 因此框架工具与问渠自研工具看到的是同一个容器、同一份工作区文件。
+     */
+    public AbstractFilesystem frameworkFilesystem(String sessionId, String uid, boolean unrestrictedWrites) {
+        if (sessionId == null || sessionId.isBlank() || uid == null || uid.isBlank()) {
+            return null;
+        }
+        try {
+            SandboxScope scope = scopeOf(sessionId);
+            ProvisionerSandboxBackend backend = new ProvisionerSandboxBackend(
+                    provider, scope.scopeId(), uid, scope.workdirPath(),
+                    true, true, unrestrictedWrites);
+            String sandboxId = ProvisionerSandboxProvider.sandboxIdForThread(scope.scopeId(), uid);
+            ProvisionerSandboxFilesystem sandboxFs = new ProvisionerSandboxFilesystem(backend, sandboxId);
+            return memoryRouted(sandboxFs, uid);
+        } catch (Exception e) {
+            log.warn("[SANDBOX] 框架文件系统装配失败 (session={}): {}", sessionId, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 把记忆从沙箱文件系统里摘出来，钉回 uid 级（P3 遗留的收口）。
+     *
+     * <p><b>问题是什么</b>：框架的 {@code WorkspaceManager} 用 build 期那份
+     * {@link AbstractFilesystem} 读写 {@code MEMORY.md} 与 {@code memory/*.md}，而 P1 之后那份就是沙箱
+     * 文件系统——于是记忆跟着沙箱作用域走：开了工作区目录就按工作区、关了就按会话，
+     * 且 P3 之前沉淀在 {@code user-data/agentscope/{uid}/} 的那份读不到（真机问过模型「以前让你做过
+     * 某件事吗」，那条老记忆写得很细，模型答「记忆里检索不到」）。
+     *
+     * <p><b>为什么这样修</b>：框架给的 {@link RoutedSandboxFilesystem} 就是为这件事造的——
+     * 类注释原文 *"Prefix-routed filesystem that preserves shell execution on the primary sandbox backend
+     * … mount … {@code memory-stores/} routes alongside a SandboxBackedFilesystem without losing
+     * {@code shell_execute}"*。把 {@code MEMORY.md} 与 {@code memory/} 两条前缀路由到宿主
+     * {@link LocalFilesystem}，其余路径（工作区文件、{@code skills/}）照旧落沙箱，shell 也照旧走主沙箱。
+     * 路由后记忆的宿主目录正好是 {@code user-data/agentscope/{uid}/}——与 P3 之前的老位置重合，
+     * 所以<b>存量老记忆不用迁移就能读回来</b>。
+     *
+     * <p><b>为什么不用 CompositeFilesystem</b>：它不实现 {@code execute}，框架的 {@code ShellExecuteTool}
+     * 要求 {@code filesystem instanceof AbstractSandboxFilesystem} 才会注册；直接套 composite 会把
+     * shell 工具整个弄哑。
+     *
+     * <p><b>为什么两条前缀各给一个根</b>：路由会把命中的前缀<b>剥掉</b>再交给后端
+     * （{@code CompositeFilesystem#routeForPath}：{@code memory/2026-10-18.md} → 后端路径
+     * {@code /2026-10-18.md}）。若两条前缀共用一个根，日账会落到 {@code {uid}/2026-10-18.md}，
+     * 与老布局 {@code {uid}/memory/2026-10-18.md} 错位（最小用例实测踩过）。故
+     * {@code MEMORY.md} 路由到 {@code {uid}/}、{@code memory/} 路由到 {@code {uid}/memory/}，
+     * 剥完前缀正好各归各位。
+     *
+     * <p>路由装配失败（拿到非法路径等）就退回不路由：记忆落沙箱是旧行为，比整轮没有文件系统好。
+     */
+    private AbstractFilesystem memoryRouted(ProvisionerSandboxFilesystem sandboxFs, String uid) {
+        try {
+            Path base = memoryRoot(uid);
+            AbstractFilesystem memoryMdFs = new LocalFilesystem(base, true, MEMORY_MAX_FILE_MB);
+            AbstractFilesystem memoryDirFs =
+                    new LocalFilesystem(base.resolve("memory"), true, MEMORY_MAX_FILE_MB);
+            return new RoutedSandboxFilesystem(sandboxFs,
+                    java.util.Map.of("/MEMORY.md", memoryMdFs, "/memory/", memoryDirFs));
+        } catch (RuntimeException e) {
+            log.warn("[SANDBOX] 记忆路由装配失败，本轮记忆仍落沙箱 (uid={}): {}", uid, e.toString());
+            return sandboxFs;
+        }
+    }
+
+    /**
+     * 记忆根：{@code stateDir/{uid}}。与 {@code WorkspaceManager#getMemoryDir} 的 Path 口径
+     * （{@code workspace.resolve(uid).resolve("memory")}）落在同一处，两套访问才对得上。
+     */
+    private Path memoryRoot(String uid) {
+        String raw = configService.get(KEY_STATE_DIR);
+        if (raw == null || raw.isBlank()) raw = STATE_DIR_DEFAULT;
+        return Path.of(raw).resolve(uid);
+    }
+
+    /**
+     * 产框架侧的 {@link SandboxContext}（全框架化迁移 P1）。
+     *
+     * <p>按官网「自管沙箱实例（高级）」的 {@code externalSandbox} 模式：沙箱由问渠创建与持有，
+     * 框架只在本次 call 期间借用，call 结束只 {@code stop()} 不 {@code shutdown()}。
+     *
+     * <p><b>作用域口径与 {@link #backend} 完全同源</b>——都走 {@link #scopeOf}，
+     * 所以框架工具与自研工具看到的是同一个容器、同一份工作区文件。
+     * 这是本方法存在的意义：scope 解析只应有一处真源，否则两套沙箱会各算各的。
+     *
+     * @param sessionId 会话 id（决定工作区/会话级作用域）
+     * @param uid       归属用户（决定沙箱 id 与持久卷子路径）
+     * @return 可直接 {@code RuntimeContext.put(SandboxContext.class, ctx)} 的上下文；不可用时返回 null
+     */
+    public SandboxContext frameworkSandboxContext(String sessionId, String uid, boolean unrestrictedWrites) {
+        if (sessionId == null || sessionId.isBlank() || uid == null || uid.isBlank()) {
+            return null;
+        }
+        try {
+            SandboxScope scope = scopeOf(sessionId);
+            ProvisionerSandboxBackend backend = new ProvisionerSandboxBackend(
+                    provider, scope.scopeId(), uid, scope.workdirPath(),
+                    true, true, unrestrictedWrites);
+            ProvisionerSandboxState state = new ProvisionerSandboxState();
+            state.setThreadId(scope.scopeId());
+            state.setUid(uid);
+            state.setWorkdirPath(scope.workdirPath());
+            state.setSandboxId(ProvisionerSandboxProvider.sandboxIdForThread(scope.scopeId(), uid));
+            state.setSessionId(state.getSandboxId());
+            state.setWorkspaceRootReady(true);
+
+            ProvisionerSandbox sandbox = new ProvisionerSandbox(backend, state);
+            sandbox.start();
+            return SandboxContext.builder()
+                    .client(new ProvisionerSandboxClient(provider))
+                    .externalSandbox(sandbox)
+                    .build();
+        } catch (Exception e) {
+            // 沙盒不可用不该让整轮问答失败：问渠侧的沙盒工具也会返回失败文本让模型自行调整。
+            // 这里只不提供框架沙箱上下文，模型退回无沙盒工具的形态，与 P1 之前一致。
+            log.warn("[SANDBOX] 框架沙箱上下文装配失败，本轮不挂框架沙箱 (session={}): {}", sessionId, e.getMessage());
+            return null;
+        }
     }
 
     /**
