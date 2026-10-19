@@ -174,7 +174,17 @@
    搜 `MEMORY.md` + `memory/*.md`。另框架是**两层模型**（`memory/YYYY-MM-DD.md` 日账 append-only +
    `MEMORY.md` 策展去重限长），问渠是单表，结构也变了。
 2. 存储形态从「按 uid 隔离的库」变为「按 uid 隔离的文件」（隔离性仍在，走 RuntimeContext）
-3. 用户失去手动管理界面——以后只能靠模型 `memory_save` 或直接改文件
+3. ~~用户失去手动管理界面~~ —— **P5 已补回**：`/profile → 我的记忆` 支持查看/编辑/清空 `MEMORY.md`、
+   按天查看/删除日账、按上限裁剪；存储仍是框架文件，不建表、不双写。日账只读。
+
+**P5 记忆收口（2026-10-19，本次补）**：
+- 游客/分享/MCP：`buildAgent` 按 `guestMode` 同时 `disableMemoryHooks + disableMemoryTools`，不注入也不写入发布者记忆；
+- 子智能体/咨询轮：`disableMemoryHooks`（只读），不 flush、不跑后台合并，事实由主轮统一提炼；
+- `memory.enabled` 等平台配置变更 → `FrameworkSessions#markAllConfigStale`，常驻实例下一轮重建；
+- `MEMORY.md` 硬上限落在 `MemoryCappedFilesystem`（写入落盘时裁剪），面板可手动「按上限裁剪」；
+- 框架主模型/记忆/压缩统一走 `MeteredModel` 记 `c_ai_usage_log`（kind=chat/subagent/memory/compress）；
+- 账号删除时清理 `user-data/agentscope/{uid}`；多副本接 `RedisDistributedStore` 管节流/watermark，
+  记忆文件仍需共享卷。
 
 **验收**：技能与记忆面板消失；技能经框架工具读取正常；问答后记忆自动沉淀到 `MEMORY.md` 且跨会话读得到；不同 uid 之间不串。
 **风险点**：P3-a6 / P3-b7 数据迁移失败 = 用户资产全丢，**动手前必须先备份数据库**。
@@ -272,7 +282,7 @@ P3 把记忆换成框架（去掉 `disableMemoryTools`，注册 `memory_search` 
 > 未配时 `RunCodeService:69-76` 明确不猜地址、直接返回失败文本。**P1 换沙箱后端时网络拓扑若变动，
 > 必须先验证回调仍可达**，否则 run_code 会在容器内表现为"每个子调用超时"。
 
-**计划模式多版本取代链** — 框架只有单份 plan 文件，问渠 `PlanModeService` 支持版本链；框架 `enablePlanMode()` 只做执行器。
+**计划模式** — 2026-10 收口：问渠 `PlanModeService`（意图预判）已删除，计划模式只由用户开关或模型调用框架 `plan_enter` 决定；`enablePlanMode()` 提供 `plan_enter/write/exit` 与只读拦截，历史计划卡的版本展示仍由落库的 `versions` 承担。
 
 ---
 
@@ -362,17 +372,20 @@ done
 这条不是 bug，是**没定作用域**，现已明确：
 
 - `skill-projections/{uid}/` = **冻结的历史用户级技能库**：不再有写入方，读侧照旧解析（存量资产不丢）。
-- 模型在对话里用 `skill_manage` 沉淀的技能落**工作区** `skills/`（`shared/{uid}/workspace/…`）。
-  两者作用域不同：前者跨工作区存活，后者随工作区/会话走，属于合理分工，不强行合并。
+- 模型在对话里用 `skill_manage` 沉淀的技能落**工作区** `skills/`（`shared/{uid}/workspace/…`），随工作区/会话走。
+- **2026-10-19 补回用户自助安装**：`user-data/skills-users/{uid}/`（宿主、跨会话、不依赖沙箱），
+  由 `SkillController` 提供新建/zip/URL 安装、编辑、删除、个人停用与下载。它与上面两路并存：
+  内置（随版本）→ 历史投影（只读）→ 沙盒工作区（随会话）→ 用户自装（最高优先级）。
+  详见 [技能系统](skills.md)。
 
-读侧已经补到「可审」：
+读侧已经补到「可审 + 可管」：
 
-- `GET /api/ai/skill/available`（可带 `sessionId`）与 `GET /api/ai/skill/content`：
-  三路来源（内置 / 我的 / 工作区），带会话且沙箱在场时才并工作区那一路——**看一眼清单不会把容器拉起来**
-  （与沙箱文件浏览端点同一条判据）；
-- 停用清单改为配置键 `skill.disabled`（平台层 + 个人层），技能表与面板仍然退役，不复活第二套存储；
+- `GET /api/ai/skill/available`（可带 `sessionId`）/ `/list` / `/detail` / `/content`：
+  带会话且沙箱在场时才并工作区那一路——**看一眼清单不会把容器拉起来**（与沙箱文件浏览端点同一条判据）；
+- 停用分两层：平台级 `skill.disabled`（管理员，全平台生效）+ 个人级 `.disabled`（成员自己停，只影响自己）；
+  技能表与面板仍然退役，不复活第二套 DB 存储（用户技能落宿主文件系统）；
 - 边界：工作区技能在界面上 `selectable=false`——**只给看、不给点名**。它随会话走，钉进智能体配置会存下
-  一个换个会话就解析不出来的名字。
+  一个换个会话就解析不出来的名字。用户自装与历史投影可点名（`ref = {uid}/{name}`），内置用裸名。
 
 ---
 

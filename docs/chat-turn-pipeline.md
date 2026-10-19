@@ -52,7 +52,7 @@ sequenceDiagram
     S->>S: 会话轮级互斥 + 工作区互斥 + turnId + 总线登记 + 存活看门狗
     S->>S: pipelineExecutor 异步执行（不占 Tomcat 线程）
     S->>E: select(cmd).chat(cmd, SseRunEventChannel)
-    E->>E: 解析模型路由 / 权限档位 / 计划意图 / 装配本轮工具
+    E->>E: 解析模型路由 / 权限档位 / 装配本轮工具
     E->>D: 用户消息即时落库（turnId）
     E->>F: session.submit(文本或文本+图片)
     loop ReAct（最多 maxIters 轮）
@@ -140,7 +140,7 @@ sequenceDiagram
 1. **模型解析**：`modelResolver.apply(cmd)`，优先级「请求覆盖 > 会话固定 > 个人默认」；不可用时 `failLoud`，不发上游（`:365`）。
 2. **路由**：`modelRegistry.chatRoute(ref)` 解析出 `baseUrl / apiKey / modelId / completionsPath`（`:377`）。
 3. **权限档位**：`tools.policyFor(cmd, ...)` → `ExecutionPolicy`（auto / ask / off），影响工具挂载与审批（`:382`）。
-4. **计划意图**（与后面并行）：`plan.startIntentCheck(...)` 起一个短 LLM 判定；`awaitIntent` 最多等 1.5s，超时按「不自动开计划」处理（`:386`，`agent/plan/PlanModeService.java:85,137`）。
+4. **计划模式**：只由用户显式开关（`cmd.isPlanMode()`）或模型自主调用 `plan_enter` 决定；问渠侧意图预判器已删除（`agent/plan/PlanModeService.java` 不再存在）。
 5. **本轮引用池**：`tools.newPool(cmd, emitter)`，统一 `[1..N]` 编号空间与图片编号（`:391`，`agentx/WenquSourcePool.java`）。
 6. **本轮工具落点袋**：`tools.newHooks(...)` 快照身份、配置覆盖、外溢队列、咨询台账（`:402`）。
 7. **智能体绑定**：`bindingOf(cmd)` 一次解析出人设、技能白名单、实例重建键（`:406`）。
@@ -214,7 +214,7 @@ sequenceDiagram
 4. `RerankService`：对候选做语义重排；不可用时回退融合分序，并在引用侧登记 `rerankUnavailable` 降级。
 5. `TurnSourceRegistry`：全轮唯一的引用编号真源。工具、联网、被咨询子轮、图片都往这一套 `[1..N]` 里续编，前端引用面板与正文角标才能对上（`agent/chat/TurnSourceRegistry.java`）。
 
-> 这条链路与 README 架构图里的「查询改写 → 混合检索 → 重排 → 上下文组装」不是同一段代码。见文末「读码现状」。
+> 这条链路与 README 架构图里的「混合检索 → 重排 → 上下文组装」不是同一段代码。见文末「读码现状」。
 
 ## 8. 阶段 G：事件如何回到浏览器
 
@@ -272,7 +272,7 @@ drain(session, cursor, emitFrom, channel, recording)
 1. **正文取舍**：优先本轮实际流出的 `recording.answerText()`；为空且本轮没失败时，才回退到会话里最后一条助手消息（避免把上一轮的回答存进这一轮）。回退那一份出自框架 transcript、没进过流式剥离器，落库前要再过一次同一个 `RelatedStreamFilter`——否则标签原文印进回答，而芯片（下面第 4 条）也一起没了。
 2. **失败判据**：`runFailure(session, current)` 读框架的 `executionError()` / 任务 `rejected`；有失败且正文为空 → `emitRunFailure`，按额度/限流/连不上/其它给可行动文案。
 3. **半程轮标记**：被用户停止、等待超时、无人观看被中断，分别追加不同后缀；只有过程没有正文时也可能落库（`hasProcess`），但真空轮不落。
-4. **推荐块合并**：两道护栏都在 `RelatedStreamFilter` 里——条目数超过配置的那个条数（`retrieval.relatedCount` + 2 余量）就判整块是正文、一颗芯片不出；否则只把长过 80 字的那几条并回回答，并登记降级。前者治的是「模型把整份文档塞进 `<related>`」：按 `|` 与换行拆条后每条都过得了单条长度闸，界面上会是一整屏芯片（真机 2026-10-18 21:00，71 条）。
+4. **推荐块合并**：两道护栏都在 `RelatedStreamFilter` 里——条目数超过要的那 3 条（`RelatedPrompt.COUNT` + 2 余量）就判整块是正文、一颗芯片不出；否则只把长过 80 字的那几条并回回答，并登记降级。前者治的是「模型把整份文档塞进 `<related>`」：按 `|` 与换行拆条后每条都过得了单条长度闸，界面上会是一整屏芯片（真机 2026-10-18 21:00，71 条）。
 5. **引用完整性自检**：`CitationIntegrityService.check(...)`——
    - 剔除正文里悬空的 `[N]`；
    - 「有来源却没标 `[N]`」fail-loud；
@@ -386,7 +386,7 @@ drain(session, cursor, emitFrom, channel, recording)
 | `[FAIL-LOUD]` | 全链路 | 明确降级/拒绝/失败，按文案定位 |
 | `[RUN] 观众接流` | `ChatRunBus.attach` | 断线重连是否接上、当前观众数 |
 | `[STEER]` | `ChatRunRuntime.steerTurn` | 插话是否入队、是否因超限/非本人被拒 |
-| `[PLAN]` | `PlanModeService` / 引擎 | 计划意图判定、是否进入计划位 |
+| `[PLAN]` | `AgentscopeChatEngine` / 框架 `PlanModeMiddleware` | 是否进入计划位、`plan_*` 工具与审批 |
 | `[SUBAGENT]` | `SubAgentBranchRuntime` | 子轮实时过程是否接通父轮 |
 | `[agentx]` | `AgentscopeChatEngine` | 实例重建、模型切换、Redis 状态存储回退等 |
 
@@ -394,9 +394,11 @@ drain(session, cursor, emitFrom, channel, recording)
 
 这一节是静态阅读当前工作区代码得到的结论，不是产品承诺。前三条如果与预期不符，优先怀疑「迁移收尾没接线」，而不是检索/模型本身。
 
-1. **固定的「查询改写 → 混合检索 → 重排 → 上下文组装」主链路当前没有调用点。**
-   `RetrievalPipeline`（`agent/context/RetrievalPipeline.java`）里的 `assemble()`、`loadMentionChunks()`、`MentionScope` 在本仓库内找不到调用方；`ChatService` 的 `rewriteExecutor` 也没有使用者（只剩创建/调容/关闭）；`HybridRetrievalService.searchMulti` 只被 `RetrievalEvaluationService` 使用。
-   实际发生的是：模型按需调用 `search_knowledge`，由 `KnowledgeRetrievalTool` 直接走 `HybridRetrievalService.search`（单 query、无改写、无多路、无上下文装配）。
+1. **手写「混合检索 → 重排 → 上下文装配」主链路已删除（2026-10 清理）。**
+   `RetrievalPipeline` 无任何调用方，已整类删除；其独占的片段窗口/去冗余/相邻合并/@ 文档块配额配置也一并退役。
+   `HybridRetrievalService.searchMulti` 只被 `RetrievalEvaluationService` 使用，多路共识改为平台常量。
+   查询改写实现已随手写运行时退役（`rewriteExecutor`、`retrieval.queryRewriteEnabled` 均已删除）。
+   实际发生的是：模型按需调用 `search_knowledge`，由 `KnowledgeRetrievalTool` 直接走 `HybridRetrievalService.search`（单 query、无多路、无上下文装配）。
    验证：问一个必须查库的问题，在日志里找 `[TOOL-DIAG] searchKnowledge`；如果模型没调工具，就不会有任何检索。
 
 2. **`@` 引用的「范围收窄 / 文档前置」在当前单引擎路径没有真正接线。**
@@ -423,8 +425,8 @@ drain(session, cursor, emitFrom, channel, recording)
    后果：插话会出现在历史里，但当前这一轮模型看不到它；收尾也不会通过 `done.pendingSteers` 回落。
    验证：跑一个会调工具的长回答，中途插话，看工具结果里有没有这句话、`done` 里有没有 `pendingSteers`。
 
-8. **README 的架构图仍按旧主链路描述。**
-   `README.md` 的「问答管线：查询改写 → 混合检索 → 重排 → 上下文组装 → 流式生成」描述的是 legacy 手写运行时的形态；当前单引擎路径应以本文为准。建议在 README 架构图旁加一句指向本文，避免后来者按图找代码。
+8. **README 架构图已同步（2026-10 清理）。**
+   README 的问答管线已去掉「查询改写」，改为「混合检索 → 重排 → 上下文组装 → 流式生成」，并注明历史压缩由 AgentScope `CompactionMiddleware` 接管；本节其余差异仍以本文为准。
 
 ## 14. 一页速查
 
@@ -436,7 +438,7 @@ drain(session, cursor, emitFrom, channel, recording)
   → 工作流绑定？ChatflowBridge : AgentscopeChatEngine
 
 开轮
-  → 模型路由 → 权限档位 → 计划意图（并行，最多等 1.5s）
+  → 模型路由 → 权限档位
   → 引用池 + 工具落点 + 智能体绑定
   → sessions.open（复用/重建 AgentSession）
   → 用户消息落库（turnId）

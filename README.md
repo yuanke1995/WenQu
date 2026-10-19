@@ -18,7 +18,7 @@
 | 能力域 | 亮点 |
 |--------|------|
 | 智能对话 | SSE 流式回答、句末 `[N]` 引用溯源、深度思考（思考强度五档）、上下文容量面板（分类计量 + 缓存命中率）、过程独白与消息时间线、图片理解、@ 文档引用、回答末尾下一步建议、计划模式（执行计划卡：确认/继续对话/取消） |
-| 知识库（RAG） | Word/PDF/Excel/TXT/Markdown/网页解析（扫描件 OCR）、混合检索 + 查询改写 + GraphRAG 图谱扩展、父子分块与问答对增强、网页定时刷新 |
+| 知识库（RAG） | Word/PDF/Excel/TXT/Markdown/网页解析（扫描件 OCR）、混合检索 + GraphRAG 图谱扩展、父子分块与问答对增强、网页定时刷新 |
 | 智能体 | 人设/知识/工具可配、会话级绑定、按需委派（agent-as-tool，跨主题问题派给对口助手各带知识库查证）、@ 强制咨询、定时执行 |
 | 工具与沙盒 | 内置工具 + 联网搜索（Tavily/博查/SearXNG）+ 技能包（Skills）+ MCP 工具；Docker 沙盒隔离执行 shell/文件读写（输出实时流式回传）；有副作用工具支持执行前人工确认 |
 | 可视化工作流 | DSL 唯一真源 + StateGraph 执行引擎、11 类节点、画布编辑器与节点级 trace 回放、版本发布/回滚、API 触发、cron 定时触发、智能体 chatflow 绑定 |
@@ -34,7 +34,7 @@
   │  REST + SSE · /api/ai/*
   ▼
 问渠服务端（Java 17 · Spring Boot 3.5 · Spring AI）
-  ├─ 问答管线：查询改写 → 混合检索 → 重排 → 上下文组装 → 流式生成
+  ├─ 问答管线：混合检索 → 重排 → 上下文组装 → 流式生成
   ├─ 智能体编排：按需委派（agent-as-tool，跨主题咨询对口助手）
   ├─ 工作流引擎：DSL → StateGraph 翻译执行 + 节点级 trace
   ├─ 沙盒调度 · 定时调度 · 配置中心 · RBAC · OIDC · 限流 · 审计
@@ -101,7 +101,7 @@ bash deploy/sandbox-provisioner/run.sh docker-down    # 停止
 bash deploy/sandbox-provisioner/run.sh docker-logs    # 跟踪日志
 ```
 
-> 需要 Docker Desktop；首次 `docker-up` 会构建 provisioner 镜像并拉取沙盒运行时镜像（约 12GB，之后免拉取）。沙盒持久卷在工作区 `user-data/shared/{uid}/workspace/`（bind 给容器内 `/home/gem/user-data`），本人技能目录在 `skill-projections/{uid}/`（历史投影，读侧仍按它解析；新技能由助手直接写进沙盒工作区）。provisioner 访问令牌默认 `wenqu-local-dev-sandbox-provisioner-token`（compose 默认值，须与设置页「沙盒 → 访问令牌」一致，≥32 字符）。沙盒运行时镜像如需 JDK/Node 等依赖，用 `sandbox-image/Dockerfile` 派生新镜像并在 `.env` 设 `SANDBOX_IMAGE`（容器内无 sudo，依赖必须烧进镜像层）。
+> 需要 Docker Desktop；首次 `docker-up` 会构建 provisioner 镜像并拉取沙盒运行时镜像（约 12GB，之后免拉取）。沙盒持久卷在工作区 `user-data/shared/{uid}/workspace/`（bind 给容器内 `/home/gem/user-data`）；用户自装技能在宿主 `user-data/skills-users/{uid}/`（跨会话、不依赖沙箱），历史投影 `skill-projections/{uid}/` 仍只读解析；助手在对话里沉淀的技能写当前会话的沙盒工作区。provisioner 访问令牌默认 `wenqu-local-dev-sandbox-provisioner-token`（compose 默认值，应用侧用环境变量 `SANDBOX_PROVISIONER_TOKEN` 配同一个值，≥32 字符）。沙盒运行时镜像如需 JDK/Node 等依赖，用 `sandbox-image/Dockerfile` 派生新镜像并在 `.env` 设 `SANDBOX_IMAGE`（容器内无 sudo，依赖必须烧进镜像层）。
 
 ### 2. 配置环境变量
 
@@ -130,6 +130,16 @@ export LOG_LEVEL_APP=info                 # 应用日志级别
 export LOG_LEVEL_SPRING_AI=info           # Spring AI 日志级别
 export MYBATIS_LOG_IMPL=org.apache.ibatis.logging.slf4j.Slf4jImpl
 export ACTUATOR_HEALTH_DETAILS=never      # /actuator/health 详情级别
+
+# ===== 沙盒 / OCR 等部署连接（不进设置页）=====
+export SANDBOX_PROVISIONER_URL=http://127.0.0.1:8002
+export SANDBOX_PROVISIONER_TOKEN=          # 与 provisioner 侧一致，≥32 字符
+export SANDBOX_CALLBACK_BASE_URL=http://host.docker.internal:8090/ai
+export SANDBOX_VIRTUAL_PATH_PREFIX=/home/gem/user-data
+export OCR_PP_STRUCTURE_URI=               # PP-StructureV3 服务地址；空=不用
+export OCR_MINERU_URI=                     # MinerU 服务地址；空=不用
+export OCR_MINERU_BACKEND=pipeline         # pipeline / hybrid-auto-engine
+export OCR_TIMEOUT_MS=600000
 export SPRINGDOC_ENABLED=false            # Swagger/OpenAPI 开关（默认关，接口契约不外泄；本地调试可置 true）
 ```
 
@@ -196,12 +206,12 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 - **深度思考**：思考块按轮就地嵌进消息时间线（每想一段出一行、可点开全文，段尾补 `thinking_done` 收口），前端流式渲染；**思考强度五档**（低/中/高/超高/极致，按模型登记档位过滤，经 `reasoning_effort` 等厂商方言贯通到请求；开启思考时不下发 temperature，网关本就会忽略它）；「关闭 / 开启 / 恒思考」三态与强度均按模型记忆，平台不代为路由
 - **上下文窗口档位**：模型登记「最小~最大窗口」区间后，聊天面板可在档位间下调（省 token / 提速），默认用窗口上限；未登记区间的模型不可调
 - **过程独白与消息时间线**：工具模式下模型的推理/试错独白与正文分流（`<process>` 标签整块剥离），前端灰字原位展示；整轮「文本段 + 工具段 + 产物段」编为消息时间线随消息落库——刷新页面后仍是交错的实时过程视图
-- **计划模式**（人在回路）：输入框「+」面板开「计划模式」后，每轮先产出**执行计划卡**（生成中 → 待确认），确认栏三选——**确认**（按计划执行）/ **继续对话**（修改意见作为一条用户消息在同一会话继续，本版作废、按意见重出，可反复）/ **取消**（本轮停止，卡定格「未批准」）；挂起有倒计时（默认 10 分钟，超时按未批准收尾）；没开计划模式时适合先拍板的消息会**按意图自动开启**（卡片标「自动开启」，`chat.planAutoIntent` 默认开）；计划卡随消息落库，刷新/换设备后可继续裁决，右栏「计划」卡可定位本会话每轮计划，卡内「修改记录」回看各版计划与意见
+- **计划模式**（人在回路）：输入框「+」面板开「计划模式」后，每轮先产出**执行计划卡**（生成中 → 待确认），确认栏三选——**确认**（按计划执行）/ **继续对话**（修改意见作为一条用户消息在同一会话继续，本版作废、按意见重出，可反复）/ **取消**（本轮停止，卡定格「未批准」）；挂起有倒计时（默认 10 分钟，超时按未批准收尾）；没开计划模式时由模型自主判断是否调用框架 `plan_enter` 进入计划（不再做问渠侧意图预判）；计划卡随消息落库，刷新/换设备后可继续裁决，右栏「计划」卡可定位本会话每轮计划，卡内「修改记录」回看各版计划与意见
 - **多模态输入**：拖入/粘贴/点击上传图片（最多 5 张）；`@` 引用指定文档（被 @ 文档内最相关块前置注入上下文）；聊天模型不支持图片理解时**可见降级**（图片仅随消息展示，并向模型如实说明图片不可见，不静默丢弃）
 - **上下文容量面板**：输入框工具栏的容量圆环（占比 >80% / >95% 变色告警）悬浮展开明细——用量/窗口占比 + **七类计量**（系统提示词 / 历史对话 / 本轮提问 / 检索资料 / 工具结果 / 思考内容 / 工具声明；按 AgentScope 消息结构分类，旧手写运行时的「十类」分类已弃用）+ **缓存命中率**（网关返回缓存命中 token 才显示；done 时按网关实测校准）
 - **下一步建议**：回答末尾给出「接下来可以」可点击追问标签，点击即发起提问（条数个人可调；只跟在最新一轮后面，往上翻历史不重复摆出旧建议）
-- **智能体**：会话**不再锁定**智能体。不挑就用默认助手（可在个人设置里指定自己的默认助手）；挑了从下一问起立即生效，**不必新建会话**。资料域由模型按需经 `consultAgent` 派给职责对口的助手去查（可派多位，每位带着自己的知识库跑一条子轮，结论与引用交回）；交回的资料按**父轮问题**再过一道相关度门与引用配额（与主管线同一把尺——子轮的门是子轮问题的门，管不了父轮面板），被滤掉的条数如实告知模型，不放无出处断言；作答的智能体不可用时 fail-loud 提示，不静默换人
-- **用户长期记忆**（默认开）：问答完成后异步提炼值得长期记住的用户信息（事实/偏好、明确要求记住的事），写进本人的记忆文件并在后续问答里提起；`/profile` 个人设置里有关（只停提炼，已记住的照常提起），系统设置里另有一道平台总闸；公开分享页与 MCP 游客链路不携带
+- **智能体**：会话**不再锁定**智能体。不挑就用工作区或平台的默认智能体；挑了从下一问起立即生效，**不必新建会话**。资料域由模型按需经 `consultAgent` 派给职责对口的助手去查（可派多位，每位带着自己的知识库跑一条子轮，结论与引用交回）；交回的资料按**父轮问题**再过一道相关度门与引用配额（与主管线同一把尺——子轮的门是子轮问题的门，管不了父轮面板），被滤掉的条数如实告知模型，不放无出处断言；作答的智能体不可用时 fail-loud 提示，不静默换人
+- **用户长期记忆**（默认开）：问答完成后异步提炼值得长期记住的用户信息（事实/偏好、明确要求记住的事），写进本人的记忆文件并在后续问答里提起；默认同一用户最多每 10 分钟提炼一次（可调，0=每轮），`MEMORY.md` 有 token 硬上限（写入落盘时自动裁剪），日账按保留期归档。`/profile → 我的记忆` 可查看/编辑/清空 `MEMORY.md`、按天查看与删除日账、按上限裁剪；系统设置里另有平台总闸，个人设置里有关（只停提炼，已记住的照常提起）。公开分享页与 MCP 游客链路**不注入也不写入**发布者记忆；子智能体/咨询轮只读不写
 - **会话管理**：置顶/收藏/重命名/搜索/批量删除/清空、导出 Markdown、重新生成（软删旧答案）、赞/踩反馈、按消息组删除与撤销删除
 
 ### 知识库与检索增强（`/knowledge`）
@@ -211,9 +221,8 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 - **网页 URL 导入**：批量粘贴、正文提取（仅公网 http/https，逐跳防内网探测）、源文件为 HTML 快照；可开**定时自动刷新**（文档级 cron 周期重抓、同名替换重建，失败留痕不中断）
 - **混合检索**：Redis 向量 Top-K + 关键词召回并行；**向量分归一化 + 双命中叠加**（语义+关键词命中 = 向量分+关键词分+标题奖励）；**重排/融合双相关分门槛**（重排门 0.6、融合门 0.5，拦词面重叠噪声，设置页可调）；超时/阈值/召回数等参数设置页可调，保存即生效
 - **关键词引擎可切换**：默认 `mysql` LIKE 零依赖；切到 `meilisearch` 用 jieba 中文分词 + 相关度打分（搜索模式细粒度词元 + 长词 2-gram/4-gram 子词元），服务不可用自动降级回 MySQL；切换后需全量重建一次，写索引随解析/编辑/删除增量同步
-- **查询改写**：LLM 将问题改写为检索关键词（默认开启）；多轮对话上下文改写（追问「那删除呢？」自动补全），改写结果入库可评估
 - **GraphRAG 图谱增强**（库级开关，默认关）：解析后按批调 LLM 抽取「主体-关系-客体」三元组（哈希增量账本、每块条数上限的成本闸）；检索命中后**一跳图扩展**——命中内容匹配实体 → 取三元组 → 反查真实知识块，按衰减分并入结果（数量封顶）；抽取模型归知识库绑定，未绑定回落库主个人默认聊天模型，两者皆空不抽取并告警（不静默烧别的模型）
-- **上下文工程**：`预算 = 模型窗口 × 安全系数(0.7) − 最大输出`（窗口/最大输出按模型在模型供应商里声明，对话类窗口必填，可登记最小~最大区间）；价值驱动填充（按相关度累积）、块内命中片段截取（±150 字窗口，截掉的图片占位自动补齐）、信息增益去冗余、相邻块合并（同文档连续块拼成整块再填充）、**预算驱动全量历史 + 滚动压缩**（近期轮次原样注入，更早轮次滚动并入会话摘要——不再按轮数截断，完整记录仍可在会话中回看）；token 计数用 tiktoken（jtokkit cl100k BPE）
+- **上下文工程**：`预算 = 模型窗口 × 安全系数(0.7) − 最大输出`（窗口/最大输出按模型在模型供应商里声明，对话类窗口必填，可登记最小~最大区间）；资料由模型经 `search_knowledge` 工具按需取用，咨询来源按单文档/单库配额收敛；**历史压缩由 AgentScope `CompactionMiddleware` 按模型窗口自动接管**（滚动摘要，完整记录仍可在会话中回看）；token 计数用 tiktoken（jtokkit cl100k BPE）
 - **分块增强**：**父子分块**（超长块切子块做检索索引，命中子块返回父块完整正文）、**问答对增强**（解析时对每块由**库主个人默认聊天模型**生成 QA 并按问法向量化，对标 FastGPT 问答对模式，重嵌入不重调 LLM）
 
 ### 智能体（`/agents`，全员开放）
@@ -231,7 +240,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 - **工具开关集中在 `tool.*`**：总开关 `tool.enabled` 默认**开**（基础工具开箱即用）；沙盒执行、`run_code`、`todo` 等具体能力默认**关**，需显式开启
 - **内置工具**：计算器（递归下降自实现表达式求值，仅四则/幂/括号，**不执行任意代码**）、日期；另有知识检索工具（命中块进引用流）、产物交付工具、技能读取工具（渐进披露读 `SKILL.md`）
 - **联网搜索**（默认关）：Function Calling 工具，服务商 Tavily / 博查 / generic（自建 SearXNG）；结果**强制注册进引用体系**（与知识库引用同源展示）；返回结果按**本轮问题**（多轮为指代消解后的检索查询）重排过相关度门，低于 `retrieval.minContextScore` 的不注册、不列给模型——服务商自带的相关度分（如位置衰减）没有相关性含义，不参与判定；重排不可用时明确提示「本轮搜索结果未经相关性过滤」，不把瞬时故障演变成「什么都搜不到」；单轮搜索次数配额防反复搜 token；可纳入「执行前确认」审批；游客分享链路不暴露
-- **技能包（Skills）**：目录 + `SKILL.md` 形式的可插拔能力；内置技能随版本分发（启动时落盘到 `user-data/skills-builtin/`），本人技能放在 `skill-projections/{uid}/`，同名以本人那份为准；每轮模型先看清单、需要时才读正文，用户在输入框里点名的技能会把正文直接带上；增删改由框架的技能工具在沙盒工作区里完成，不再提供管理面板
+- **技能包（Skills）**：目录 + `SKILL.md` 形式的可插拔能力；四层来源（优先级递增）：内置（随版本分发，启动落盘 `user-data/skills-builtin/`）→ 历史投影（`skill-projections/{uid}/`，只读）→ 沙盒工作区（助手在对话里沉淀，随会话）→ **用户自装（`user-data/skills-users/{uid}/`，跨会话）**。用户可自助 **粘贴 SKILL.md / 上传 zip / 从 URL 安装**，并编辑、删除、个人停用；内置技能只能停用、不能被同名覆盖。每轮模型先看清单、需要时才读正文，输入框点名的技能会把正文直接带上；安装侧校验 frontmatter、路径穿越、zip 体积/条目数、URL 域名白名单与逐跳公网校验。详见 [技能系统](docs/skills.md)
 - **沙盒隔离执行**：模型经 Function Calling 在隔离 Linux 容器内获得 6 个工具——`execute`（shell，**输出实时流式回传**）/ `read_file` / `write_file`（创建语义）/ `edit_file`（精确替换）/ `ls` / `deliver_artifact`（交付为「我的产物」）；**scope 挂会话**（同会话文件跨轮保留，按用户隔离工作目录），会话空闲（默认 60 分钟）自动回收容器；命令超时/输出上限/keepalive 均可配；瞬时故障自动重试；对话右栏「沙盒」卡可浏览/下载工作区文件
 - **产物交付**：`/artifacts` 汇总问答与定时任务交付的文件产物（Markdown/CSV/JSON/HTML/py/png/xlsx/zip 等），可预览、下载（HMAC 签名 URL）、删除；交付落盘 `data/artifacts/{uid}/{yyyyMM}/`，扩展名白名单 + 文件名净化，单个 ≤1MB
 
@@ -333,7 +342,10 @@ docker compose up -d          # 自包含：redis-stack + meilisearch + 内置 M
 | `GET /api/ai/agent/list`、`GET /api/ai/agent/available`、`POST /api/ai/agent`、`PUT /api/ai/agent/{id}`、`DELETE /api/ai/agent/{id}`、`POST /api/ai/agent/{id}/default` | 智能体 CRUD / 对话页精简列表（普通用户可访问）/ 设默认 |
 | `GET/POST /api/ai/agent/{id}/publish`、`DELETE /api/ai/agent/{id}/publish` | 公开分享发布/查询/撤销（生成 token，免登录对话入口） |
 | `GET /api/ai/share/{token}/info`、`GET /api/ai/share/{token}/history`、`POST /api/ai/share/{token}/chat` | 游客通道（免登录）：分享信息 / 游客会话历史 / 流式对话（IP 限频、工具白名单收窄） |
-| `GET /api/ai/skill/available` | 技能包：可用技能只读清单（内置 + 本人技能目录，仅本人可见自己的归属） |
+| `GET /api/ai/skill/available`、`GET /api/ai/skill/list` | 技能清单：对话选用（含本会话工作区）/ 管理页（来源、停用、可否编辑删除、体积） |
+| `POST /api/ai/skill`、`PUT /api/ai/skill/{name}`、`DELETE /api/ai/skill/{name}` | 用户自装技能：新建 / 编辑 / 删除（仅本人；内置与历史只读） |
+| `POST /api/ai/skill/install`、`POST /api/ai/skill/install/zip` | 安装：URL（白名单域名 + 逐跳公网校验）/ zip（逐条目路径与体积校验） |
+| `GET /api/ai/skill/detail`、`GET /api/ai/skill/file`、`GET /api/ai/skill/download`、`PUT /api/ai/skill/{name}/disabled` | 详情（正文 + 文件清单）/ 附属文件预览 / 下载 zip / 个人停用启用 |
 | `GET /api/ai/mcp/status`、`POST /api/ai/mcp/reload`、`POST /api/ai/mcp/probe` | MCP Client：状态 / 重连 / 临时探测 |
 | `POST /ai/mcp/{token}`（`GET` 同路径；**不在 `/api` 之下**，token 即凭据） | MCP Server·per-agent 端点：一个智能体一个工具 |
 | `POST /ai/mcp`（`GET` 同路径；凭据走 `Authorization: Bearer sk-…` 或 `X-Api-Key`） | MCP Server·平台级入口：固定元工具集（检索 / 提问 / 列库 / 列智能体） |
@@ -346,8 +358,10 @@ docker compose up -d          # 自包含：redis-stack + meilisearch + 内置 M
 | `GET /api/ai/artifacts`、`DELETE /api/ai/artifacts/{id}` | 产物列表 / 删除（下载走签名 URL） |
 | `GET /api/ai/api-key/list`、`POST /api/ai/api-key`、`PUT /api/ai/api-key/{id}/disabled` | 对外 API Key：列表 / 签发（明文仅一次）/ 吊销 |
 | `GET /api/ai/user/list`、`GET /api/ai/role/*`、`GET /api/ai/menu/*` | 成员 / 角色 / 菜单（RBAC 维护） |
-| `GET /api/ai/skill/available` | 可用技能只读清单（内置 + 本人技能目录）；技能的增删改由框架技能工具在对话里完成 |
-| `GET/PUT /api/ai/user/preference`、`GET/PUT /api/ai/user/settings` | 个人偏好（默认聊天模型、自动提炼记忆开关）/ 个人对话偏好（如下一步建议条数） |
+| `GET /api/ai/skill/available`、`GET /api/ai/skill/list` | 技能清单（内置 + 用户自装 + 历史投影 + 会话工作区）；增删改见上方技能管理接口 |
+| `GET/PUT /api/ai/user/preference` | 个人偏好（默认聊天模型、自动提炼记忆开关） |
+| `GET/PUT/DELETE /api/ai/memory`、`GET /memory/content`、`POST /memory/compact`、`DELETE /memory/daily` | 个人长期记忆面板：查看/保存 `MEMORY.md`、按天读/删日账、清空、按上限裁剪（仅本人） |
+| `GET/PUT /api/ai/user/settings` | 个人配置覆盖通道（键限定为 config-schema.json 标记 personal 的字段）；当前无此类字段，端点保留待将来再有个人可覆盖项时使用 |
 | `GET /api/ai/search-index/stats`、`POST /api/ai/search-index/reindex`、`DELETE /api/ai/search-index` | 关键词索引运维 |
 | `POST /api/ai/debug/retrieval` | 检索链路分步调试 |
 | `POST /api/ai/eval/generate`、`GET /api/ai/eval/set`、`POST /api/ai/eval/run`、`POST /api/ai/eval/case`、`POST /api/ai/eval/run-auto` | 检索量化评估 |
@@ -374,7 +388,7 @@ docker compose up -d          # 自包含：redis-stack + meilisearch + 内置 M
 | `plan_cancelled` | 计划未批准（用户取消或超时按未批准收尾） | `{}`（卡片定格「未批准」，本轮停止） |
 | `plan_superseded` | 用户对计划提修改意见、「继续对话」取代本版 | `{}`（卡片定格「已被取代」，意见作为新消息在同会话继续） |
 | `artifact` | 产物交付工具落盘 | 产物卡片字段 `{id,url,filename,ext,size,description}` |
-| `usage` | 生成一开始预下发 prompt 侧用量（点亮容量圆环；done 时以网关实测覆盖） | tokens `{window,windowSource,cached,parts,historyCompressed,…}` |
+| `usage` | 生成一开始预下发 prompt 侧用量（点亮容量圆环；done 时以网关实测覆盖） | tokens `{window,windowSource,cached,parts,…}` |
 | `warn` | 非致命降级/告警 | 提示文案 |
 | `done` | 回答完成 | `sources`、`related`（下一步建议数据源）、`messageId`、`thinking`、`finalContent`/`finalImages`（校验修正后全文/图片）、`processText`、`timeline`（段数组——刷新后重建交错过程视图的数据源）、`degradations`、`artifacts`、`toolCalls`、`tokens`（用量：窗口/窗口来源、缓存命中 token、十类计量明细、滚动压缩轮数）、`subagentBranches`/`subagentRoute`（编排终态收敛）；缓存命中仅 `finalContent`/`finalImages` |
 | `error` | 处理或下发异常 | 错误文案 |
@@ -385,7 +399,7 @@ docker compose up -d          # 自包含：redis-stack + meilisearch + 内置 M
 
 ### application.yml 关键项
 
-完整默认值见 `AiAppProperties.java`：
+完整默认值见 `src/main/java/com/wenqu/ai/config/AppProperties.java`：
 
 ```yaml
 ai-app:
@@ -398,36 +412,28 @@ ai-app:
   retrieval:
     vector-weight: 0.6                     # 混合检索：向量权重
     keyword-weight: 0.4                    # 混合检索：关键词权重
-    title-bonus: 0.1
     rerank:                                # 平台内置重排服务（OpenAI 兼容 /v1/rerank；由外部供应商网关或自建服务承载）
-      enabled: ${AI_RERANK_ENABLED:false}
-      base-url: ${AI_RERANK_BASE_URL:http://localhost:7997}
-      model: ${AI_RERANK_MODEL:BAAI/bge-reranker-v2-m3}
+      enabled: ${AI_RERANK_ENABLED:true}   # 默认开；未绑定模型/服务不可用时按融合分排序，不阻塞问答
+      base-url: ${AI_RERANK_BASE_URL:}     # 重排模型引用归知识库/智能体检索设置绑定，不在这里配模型名
   keyword:                                 # 关键词召回引擎（mysql|meilisearch）
     engine: ${AI_KEYWORD_ENGINE:mysql}
     base-url: ${AI_MEILI_BASE_URL:http://localhost:7700}
     api-key: ${AI_MEILI_KEY:}
   ratelimit:                               # 接口限流（Redis 固定窗口）
     enabled: ${AI_RATELIMIT_ENABLED:true}
-  context:                                 # 上下文与长度控制（窗口/最大输出按模型声明，无全局兜底；安全系数固定 0.7）
-    history-compress: true                 # 预算驱动全量历史：近期轮次原样 + 更早滚动压缩为会话摘要
-    compress-ratio: 0.5                    # 摘要+历史估算超过「检索预算×该比例」时触发滚动压缩
-    snippet-window-chars: 150              # 命中片段截取窗口（0=整块塞入）
+  context:                                 # 上下文填充配额（窗口/最大输出按模型声明，无全局兜底；安全系数固定 0.7）
     max-context-hits: 8                    # 上下文填充块数兜底上限
   images:
     dir: ${AI_IMAGES_DIR:./data}           # 数据根目录（源文件/图片/产物/密钥都在此）
     auth-enabled: ${AI_IMAGES_AUTH_ENABLED:true}
   # 视觉/向量/聊天模型不在 yml 配置：网关统一来自「模型供应商」表（供应商登记 + 引用绑定），
   # 行为参数（视觉开关/提示词/并发、向量、检索等）在系统设置页维护（c_ai_config）
-  deep-reasoning:                          # 深度思考（思考强度在对话页按模型选档）
-    enabled: ${AI_DEEP_REASONING_ENABLED:true}
-    thinking-mode: ${AI_DEEP_REASONING_MODE:model}
   auth:
     jwt-secret: ${AI_JWT_SECRET:}          # 留空自动生成（重启后令牌失效）；多副本必须一致
     require-login: ${AI_AUTH_REQUIRE_LOGIN:true}
 
 spring:
-  servlet.multipart: { max-file-size: 1024MB }
+  servlet.multipart: { max-file-size: 256MB, max-request-size: 260MB }
   data.redis: { client-type: jedis, host: ${REDIS_HOST:127.0.0.1}, port: ${REDIS_PORT:6379} }
   ai.vectorstore.type: none                # 关闭全局 RedisVectorStore（per-KB 独立索引由 KbVectorStoreRegistry 管理）
 ```
@@ -440,32 +446,32 @@ spring:
 
 | 前缀 | 主要键（默认值） | 生效方式 |
 |------|------------------|----------|
-| `chat.*` | `citationCheckEnabled`、`pipelineThreads`(8)、`streamRetryCount`、`sseTimeoutMs`、`approvalTimeoutMs`、`askTimeoutMs`(10min)、`maxImagesPerMessage`(5)、`maxImageMb`、`uploadRetentionHours`、`uploadCleanupIntervalMs`(1h)、`retrievalDebugEnabled` | 聊天模型走「会话覆盖 > 个人默认」引用；行为项保存即生效。回答温度已退役（不在设置页/个人偏好，知识库问答固定低温度更稳）；全局 System Prompt / 附加指令 / 历史轮数已退役——提示词归智能体、历史走滚动压缩 |
-| `embedding.*` | （维度由系统回写，非设置项） | 向量模型绑定知识库 `embedding_ref`；维度在绑定层由系统回写（非 `c_ai_config` 键）；换绑重嵌入先探测维度，通过才 DROP 重建 |
-| `retrieval.*` | `vecThreshold`(0.3)、`vectorTopK`(15)、`keywordLimit`(20)、`minContextScore`(0.6 重排门)、`minFusionScore`(0.5 融合门)、`relatedCount`(3，下一步建议条数、个人可调) | 多数保存即生效 |
+| `chat.*` | `citationCheckEnabled`、`sseTimeoutMs`、`approvalTimeoutMs`、`askTimeoutMs`(10min)、`planTimeoutMs`(10min)、`maxImagesPerMessage`(9)、`maxImageMb`、`uploadRetentionHours`、`uploadCleanupIntervalMs`(1h)、`retrievalDebugEnabled` | 聊天模型走「会话覆盖 > 个人默认」引用；行为项保存即生效。设置页的「耐心档位」一次写齐四个超时（标准 / 长任务 / 无人值守），`chat.resumeEnabled`（断线重连接流）保留为内部回滚开关、不再出现在设置页。回答温度已退役（不在设置页/个人偏好，知识库问答固定低温度更稳）；全局 System Prompt / 附加指令 / 历史轮数 / 流式重试已退役——提示词归智能体、历史压缩与重试由 AgentScope 接管 |
+| `embedding.*` | （无全局键） | 向量模型绑定知识库 `embedding_ref`；维度按知识库登记在 `c_ai_knowledge_base.embedding_dimensions`，换绑重嵌入先探测维度，通过才 DROP 重建 |
+| `retrieval.*` | `vecThreshold`(0.3)、`vectorTopK`(15)、`keywordLimit`(20)、`minContextScore`(0.6 重排门)、`minFusionScore`(0.5 融合门) | 多数保存即生效。查询改写、多路共识、检索-反思循环已随手写运行时/深度思考退役，不再有开关 |
 | `chunk.*` / `parse.*` | `maxSize`(800)、`structural`(true)、`concurrency`(2)、`ocrDpi`(200)；问答对生成无独立模型键（跟随库主个人默认聊天模型） | **需重解析/对后续解析生效** |
 | `vision.*` | `enabled`(true)、`prompt`、`concurrency`(2)、`retryCount`(1)、`descCacheVersion`(1)、`descCacheTtlDays`(180) | 保存即生效（`timeoutMillis` 需重启）；视觉模型按知识库 `visionRef` 绑定，无全局键 |
-| `context.*` | `historyCompress`(true)、`compressRatio`(0.5)、`snippetWindowChars`(150)、`maxContextHits`(8)、`maxBlocksPerDoc`(3)、`dedupEnabled`(true)/`dedupThreshold`(0.45)、`adjacentMergeEnabled`(true)/`adjacentMergeMaxChunks`(3) | 保存即生效 |
-| `rerank.*` | `enabled`(**true**，平台默认值；未绑模型/服务不可用时按融合分排序并提示，不阻塞问答)、`minHits`(6，少于几条不重排)、`maxHits`(15，重排窗口)、`platformRef`（**平台默认重排模型**）；取值顺序：知识库/智能体检索设置 > `rerank.platformRef` 平台默认 > `rerank.baseUrl` 外部服务。注：个人层 `rerank.model` 已无设置页写入入口（schema 定义与库级回落链读取位仍残留、恒为空，属待清理技术债） | 保存即生效 |
+| `context.*` | `maxContextHits`(8)、`maxBlocksPerDoc`(3)、`maxBlocksPerKb`(4) | 保存即生效。历史压缩、片段截取、去冗余、相邻块合并已随未接线的手写装配链路退役——压缩由 AgentScope `CompactionMiddleware` 按模型窗口触发 |
+| `rerank.*` | 设置页只保留 `enabled`(true，平台默认值；未绑模型/服务不可用时按融合分排序并提示，不阻塞问答)、`platformRef`（**平台默认重排模型**）；`minHits`/`maxHits` 为隐藏调优默认，`baseUrl`/`model` 为内部回落槽位。取值顺序：知识库/智能体检索设置 > `rerank.platformRef` 平台默认 > 内部回落 | 保存即生效 |
 | `keyword.*` / `eval.*` / `cleanup.*` / `images.*` / `upload.*` | 引擎兜底冷却、体检参数与评判模型 `eval.judgeModel`（全局仅存的模型键，未配置时体检跳过评分）、会话保留期(30 天)、图片鉴权、上传上限(200MB) | 保存即生效 |
-| `tool.*` / `webSearch.*` | `tool.enabled`(**false**)、`knowledgeRetrieval.enabled`、`artifact.enabled`、`builtin.enabled`、**`sandbox.enabled`**；联网搜索 `enabled`(**false**)、`provider`(tavily/bocha/generic)、`apiKey`(敏感)、`maxCallsPerTurn`(2)、`requireApproval`(false) | 保存即生效——**默认全关，需显式开启** |
-| `skill.*` | `injectMaxChars`(渐进披露读 `SKILL.md` 上限)、`maxFileChars`(单技能目录文件上限)、`remoteAllowedHosts`(精确 host 白名单) | 全局启停用各技能自身开关（无统一 `skill.enabled` 键，`dir` 硬编码 `./data/skills`）；保存即生效 |
-| `agent.*` | `permissionPreset.default`(standard)/`.max`(autonomous)/`.personalMax`(autonomous，个人上限取低)、`personalDefault`(个人默认助手)、`maxToolSteps`(15)、`consultMaxPerTurn`(3)、`consultTimeoutMs`(120000)、`subagentMode`(digest/full，子智能体分支执行形态)、`versionKeep`(20，配置版本快照保留份数) | 保存即生效。**旧并行编排键已退役**：`enabled`/`subAgents`/`topKPerAgent`/`digestEnabled`/`aggregateMode`/`digestMaxChars`/`aggregateMarkFailed`/`autoRoute`/`routeTimeoutMs`/`maxParallelSubAgents`/`subagent*` 等不再登记（并行编排器已删除，资料域改走 agent-as-tool 咨询）——见 `ConfigService` 退役注释 |
-| `memory.enabled` | `enabled`(true) | 长期记忆的平台总闸：关掉后问答不再提炼新记忆（已记住的照常提起，文件不删）；个人层另有自己的开关 |
+| `tool.*` / `webSearch.*` | `tool.enabled`(true，问渠工具总开关)、`sandbox.enabled`(false)、`runcode.enabled`(false)；知识检索/产物/内置/咨询/任务清单随总闸启用，大输出留存与 MCP 引用注册为固定行为；联网搜索 `enabled`(false)、`provider`(tavily/bocha/generic)、`apiKey`(敏感)、`maxCallsPerTurn`(2)、`requireApproval`(true) | 保存即生效。低风险工具不再各留平台开关，按智能体三态或 `tool.deny` 收口 |
+| `skill.*` | `disabled`(平台停用清单，从当前可用技能里多选)、`remoteAllowedHosts`(URL 安装允许的域名，逗号分隔；空=关闭远程安装)；正文读取上限为平台常量 `SKILL_MAX_FILE_CHARS`(20000)；存储目录 `wenqu.skills.users-dir`(默认 `user-data/skills-users`) | 个人停用由用户在「智能体 → 技能」自助；保存即生效 |
+| `agent.*` | `permissionPreset.default`(standard)/`.max`(autonomous)、`maxToolSteps`(15)、`consultMaxPerTurn`(3)、`consultTimeoutMs`(120000)、`subagentMode`(digest/full，子智能体分支执行形态)、`versionKeep`(20，配置版本快照保留份数) | 保存即生效。设置页位置：`maxToolSteps`/`consult*`/`subagentMode` 在「工具调用 → 执行预算与助手咨询」，`versionKeep` 在「定时任务 → 智能体配置版本」。**旧并行编排键已退役**：`enabled`/`subAgents`/`topKPerAgent`/`digestEnabled`/`aggregateMode`/`digestMaxChars`/`aggregateMarkFailed`/`autoRoute`/`routeTimeoutMs`/`maxParallelSubAgents`/`subagent*` 等不再登记（并行编排器已删除，资料域改走 agent-as-tool 咨询）——见 `ConfigService` 退役注释 |
+| `memory.*` | `enabled`(true)、`flushThrottleMinutes`(10，0=每轮)、`consolidationMaxTokens`(2000)、`maxMdTokens`(3000，硬上限)、`dailyRetentionDays`(90) | 长期记忆的平台总闸与预算：关掉后问答不再提炼新记忆（已记住的照常提起，文件不删）；节流只限每轮收尾的提炼，压缩前/兜底提炼不受限；`maxMdTokens` 在写入落盘时强制裁剪。个人层另有自己的开关与「我的记忆」面板 |
 | `artifact.*` | `retentionDays`(90，≤0 不清理)、`cleanupIntervalMs`(1d) | 产物超期清理 |
 | `web.*` | `refreshEnabled`(true)、`refreshScanIntervalMs`(60s) | 网页源定时刷新总开关与扫描间隔 |
 | `scheduled.*` | `enabled`(true)、`maxPerUser`(20)、`scanIntervalMs`(30s)、`timeoutMs`(300000) | 定时执行智能体 |
 | `workflow.*` | `maxSteps`(50)、`subagentTimeoutMs`(180000)、`runTimeoutSeconds`(600)、`maxConcurrentRuns`(4)、`runQueueCapacity`(50)、`runLogRetentionDays`(30)、`runCleanupIntervalMs`(1d)、`scheduleScanIntervalMs`(30s) | 单次运行最大图步数（超限 fail-loud）；子智能体节点等待超时；运行超时/并发与排队/运行记录保留期；定时触发扫描 |
 | `mcp.server.*` | `enabled`(**false**)、`timeoutMs`(180000)、`allowedOrigins`("") | MCP **服务端**：`allowedOrigins` 为空时仅允许本机回环（Origin 校验防 DNS rebinding） |
-| `sandbox.*` | `provisionerUrl`(127.0.0.1:8002)、`token`(敏感，RSA 入库)、`virtualPathPrefix`(/home/gem/user-data)、`commandTimeoutSeconds`(180)、`maxOutputBytes`(262144)、`keepaliveIntervalSeconds`(30)、`deleteTimeoutSeconds`(120)、`idleReleaseMinutes`(60)、`cleanupIntervalMs`(600000) | 保存即生效（client 懒构建）；token 与 provisioner 侧 `SANDBOX_PROVISIONER_TOKEN` 一致且 ≥32 字符 |
+| `sandbox.*` | 设置页只保留 `projectWorkdirEnabled`（false）、`commandTimeoutSeconds`(180)、`idleReleaseMinutes`(60)；连接地址/令牌/回调地址/虚拟根走 `SANDBOX_PROVISIONER_URL` / `SANDBOX_PROVISIONER_TOKEN` / `SANDBOX_CALLBACK_BASE_URL` / `SANDBOX_VIRTUAL_PATH_PREFIX`；输出上限/keepalive/删除超时/回收扫描间隔为内部默认 | 保存即生效（client 懒构建）；token 与 provisioner 侧 `SANDBOX_PROVISIONER_TOKEN` 一致且 ≥32 字符 |
 | `oidc.*` | OIDC 面板 20 项（issuer/clientId/clientSecret(敏感)/scopes/frontendBaseUrl 等） | 保存即生效（分离部署必填 `frontendBaseUrl`） |
 | 用户/角色 | `default_model`（个人默认聊天模型）、`memory_enabled`（用户级记忆开关）、角色-菜单/角色-API 绑定（`default_vision_model`/`default_rerank_model` 已退役：视觉看模型能力位、重排归知识库） | 即时生效 |
 
 > **敏感项按后缀判定**（`.apiKey`/`.clientSecret`/`.token`）：RSA 加密入库 + 页面仅回显 `****后4位` + 恢复默认跳过。
 
-### 设置页 17 分组
+### 设置页 10 个导航分组（15 个配置面板）
 
-对话模型 / 图片描述（视觉）/ 文档解析默认模板 / 检索设置（混合检索权重 + 重排 + 关键词引擎）/ 上下文与长度控制 / 工具调用（含沙盒执行工具开关）/ 联网搜索 / API 密钥 / 技能 / 默认检索策略（未配置委派咨询时）/ 接口限流 / 定时任务 / 单点登录 OIDC / 沙盒 / 用户长期记忆 / MCP 服务（双向）/ 调试设置。改动后页头「保存配置」一次性保存；**模型跨厂商热切换**（聊天走会话/个人引用、向量/视觉/OCR/图谱抽取/重排归知识库绑定，API Key RSA 加密、保存即生效；向量模型换绑先探测维度、通过后自动全量重嵌入）。深度思考不设全局面板——思考强度等在对话页按模型选择。
+对话模型（含长期记忆平台总闸）/ 检索设置（RAG：检索 / 上下文 / 文档解析 / 图片描述，页签切换）/ 工具调用（含沙盒 API 与工作流节点开关、联网搜索与技能页签、工具步数与助手咨询）/ API 密钥 / 接口限流 / 定时任务 / 单点登录 OIDC / 沙盒 / MCP 服务（双向）/ 调试设置。改动后页头「保存配置」一次性保存；**模型跨厂商热切换**（聊天走会话/个人引用、向量/视觉/OCR/图谱抽取/重排归知识库绑定，API Key RSA 加密、保存即生效；向量模型换绑先探测维度、通过后自动全量重嵌入）。深度思考不设全局面板——思考强度等在对话页按模型选择，历史压缩由 AgentScope 接管。
 
 ## 后台定时任务
 
@@ -524,7 +530,8 @@ WenQu/                               # 工作区根（git 仓库名 WenQu；本�
 │   └── sandbox-provisioner/         # 沙盒 provisioner 部署资产：app.py(FastAPI) + Dockerfile + compose + run.sh + sandbox.env
 │       └── sandbox-image/Dockerfile # 派生沙盒镜像（容器内无 sudo，运行时依赖必须烧进镜像层）
 ├── user-data/                       # 沙盒持久卷：shared/{uid}/workspace/（bind 给容器内 /home/gem/user-data）
-├── skill-projections/               # 本人技能目录（{uid}/技能名/SKILL.md，问答侧按归属读取）
+├── user-data/skills-users/          # 用户自装技能（{uid}/技能名/SKILL.md，宿主、跨会话）
+├── skill-projections/               # 历史技能投影（只读；{uid}/技能名/SKILL.md）
 └── web/                             # 前端单页应用（Vite，.nvmrc 固定 Node 22 LTS）
     ├── vite.config.js               # /proxy → http://localhost:8090/ai（端口固定 5800，strictPort）
     ├── src/router.js                # 路由表（/chat /agents /knowledge /artifacts /stats /profile /s/:token /shared/:token + 管理页；管理页带管理员守卫）
@@ -567,7 +574,8 @@ curl http://localhost:7700/health     # 期望 {"status":"available"}；两套 c
 # 6. 沙盒（隔离执行环境）
 bash deploy/sandbox-provisioner/run.sh docker-up
 bash deploy/sandbox-provisioner/run.sh status
-# 设置页开启「工具调用 → 沙盒执行工具」+ 配好「沙盒」面板后，对话中即可让模型执行 shell/读写文件
+# 配好「沙盒」面板后，聊天里的 shell/读写文件由框架原生工具提供（受权限档位控制）；
+# 工作流沙盒节点需在「工具调用」里开启「沙盒 API 与工作流节点」
 ```
 
 **端到端手动验证**（建议每次改动后走一遍）：
@@ -580,7 +588,7 @@ bash deploy/sandbox-provisioner/run.sh status
 
 **默认关闭项（安全边界）**
 - 默认关闭的具体能力：`run_code` / `todo` / 沙盒执行默认关，需在设置页显式开启；联网搜索 `webSearch.enabled` 默认 false（受 `tool.enabled` 总闸约束）；MCP 客户端无全局开关（每用户自建）；MCP **服务端** `mcp.server.enabled` 默认关。**总开关 `tool.enabled` 默认开**（基础工具可用；旧的「工具全关」说法有误，已于本次核对更正）。**智能体无全局启用开关**（全员默认可用；旧的 `agent.enabled` 已退役）
-- 沙盒 token：设置页「沙盒 → 访问令牌」须与 provisioner 侧 `SANDBOX_PROVISIONER_TOKEN` 一致且 ≥32 字符（不足 fail-closed 拒绝启用）；token 校验推迟到首次使用（未启用沙盒的部署不因缺 token 起不来）
+- 沙盒 token：应用侧环境变量 `SANDBOX_PROVISIONER_TOKEN` 须与 provisioner 侧一致且 ≥32 字符（不足 fail-closed 拒绝启用）；token 校验推迟到首次使用（未启用沙盒的部署不因缺 token 起不来）
 
 **配置生效时机**
 - 需重解析才生效：`chunk.maxSize` / `headingDepth` / `structural` 等解析参数（检索/上下文类参数均保存即生效）
