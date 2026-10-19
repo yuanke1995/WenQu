@@ -27,18 +27,17 @@
         <template v-if="entry.source === 'workspace'">
           <p class="sc-hint">这条存在本会话的沙盒工作区里，随会话走。要改它或不再用它，直接在对话里说一声。</p>
         </template>
-        <template v-else-if="entry.disabledByPlatform">
-          <p class="sc-hint">这条由平台统一停用，个人设置改不动它。本轮仍可在输入框里点名用它一次。</p>
+        <template v-else-if="entry.source === 'user'">
+          <p class="sc-hint">这是你自己安装的技能，可在「智能体 → 技能」里编辑、停用或删除；其他成员看不到它。</p>
         </template>
-        <template v-else>
-          <button class="app-btn" :disabled="saving" @click="toggleDisabled">
-            {{ entry.disabled ? '恢复使用' : '这条别再用了' }}
-          </button>
-          <p class="sc-hint">
-            {{ entry.disabled
-              ? '恢复后下一问起重新进模型的技能清单。'
-              : '停用后下一问起不再进模型的技能清单；想临时用一次，仍可在输入框里点名带上。' }}
-          </p>
+        <template v-else-if="entry.source === 'legacy'">
+          <p class="sc-hint">历史版本里导入的技能，只读。想继续维护它，可在「智能体 → 技能」里重新安装一份。</p>
+        </template>
+        <template v-else-if="entry.platformDisabled">
+          <p class="sc-hint">这条已由平台统一停用，所有成员都用不了。本轮仍可在输入框里点名用它一次。</p>
+        </template>
+        <template v-else-if="entry.disabled">
+          <p class="sc-hint">你已停用这条技能，它不再进模型清单。可在「智能体 → 技能」里重新启用。</p>
         </template>
       </div>
     </template>
@@ -47,21 +46,19 @@
 
 <script setup>
 import { computed, ref, watch } from 'vue'
-import { message } from 'ant-design-vue'
-import { getSkillContent, getUserSettings, saveUserSettings } from '../api'
+import { getSkillContent } from '../api'
 import { renderMd } from '../utils/markdown'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
   name: { type: String, default: '' },
   sessionId: { type: String, default: '' },
-  // 清单里的那一条（来源 / 是否停用 / 停用是否来自平台层）
+  // 清单里的那一条（来源 / 是否已被平台停用）
   entry: { type: Object, default: () => ({}) }
 })
-const emit = defineEmits(['update:open', 'changed'])
+const emit = defineEmits(['update:open'])
 
-const SOURCE_LABEL = { builtin: '内置技能', user: '我的技能', workspace: '工作区技能' }
-const DISABLED_PATH = 'skill.disabled'
+const SOURCE_LABEL = { builtin: '内置技能', user: '我的技能', legacy: '历史技能', workspace: '工作区技能' }
 
 const visible = computed({
   get: () => props.open,
@@ -71,7 +68,6 @@ const visible = computed({
 const loading = ref(false)
 const error = ref('')
 const content = ref('')
-const saving = ref(false)
 const html = computed(() => renderMd(content.value || '（这条技能没有正文）'))
 
 const load = async () => {
@@ -90,28 +86,6 @@ const load = async () => {
   }
 }
 watch(() => [props.open, props.name], () => { if (props.open) load() }, { immediate: true })
-
-/** 停用清单是个「一行一条」的文本项：改之前先读回本人当前那份，只动被点的这一条。 */
-const toggleDisabled = async () => {
-  saving.value = true
-  try {
-    const r = await getUserSettings()
-    const cur = String(((r.data || {}).values || {})[DISABLED_PATH] || '')
-    const lines = cur.split(/\r?\n/).map(x => x.trim()).filter(Boolean)
-    const target = props.name.trim().toLowerCase()
-    const next = props.entry.disabled
-        ? lines.filter(x => x.toLowerCase() !== target)
-        : (lines.some(x => x.toLowerCase() === target) ? lines : [...lines, props.name.trim()])
-    const s = await saveUserSettings({ [DISABLED_PATH]: next.join('\n') })
-    if (!s || !s.success) throw new Error((s && s.msg) || '保存失败')
-    message.success(props.entry.disabled ? '已恢复，下一问起生效' : '已停用，下一问起生效')
-    emit('changed')
-  } catch (e) {
-    message.error('保存失败：' + (e.message || e))
-  } finally {
-    saving.value = false
-  }
-}
 </script>
 
 <style scoped>

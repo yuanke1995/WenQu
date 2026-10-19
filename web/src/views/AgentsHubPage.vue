@@ -28,12 +28,14 @@ import ProvidersPage from './ProvidersPage.vue'
 import McpPanel from './McpPanel.vue'
 import ScheduledPanel from './ScheduledPanel.vue'
 import WorkflowPanel from './WorkflowPanel.vue'
+import SkillsPage from './SkillsPage.vue'
 import { ensureAuth } from '../utils/auth'
 
 /** tabKey → 组件。菜单表不知道组件的存在，这张表是数据与视图之间唯一的桥 */
 const TAB_COMPONENTS = {
   providers: ProvidersPage,
   agents: AgentsPage,
+  skills: SkillsPage,
   mcp: McpPanel,
   workflow: WorkflowPanel,
   scheduled: ScheduledPanel

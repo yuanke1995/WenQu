@@ -20,21 +20,22 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
- * 问渠的技能仓库（全框架化 P3）——把「classpath 内置技能 + 用户自己的技能」两路合并交给框架。
+ * 问渠的技能仓库（全框架化 P3 + 用户自装技能）——四路合并交给框架。
  *
- * <h3>为什么目录层不用改</h3>
- * 框架 {@code FileSystemSkillRepository} 源码注释要求的布局是
- * {@code baseDir/{skill-name}/SKILL.md}，而问渠的技能目录本来就是这个形状：
- * <ul>
- *   <li>用户技能：{@code skill-projections/{uid}/{技能名}/SKILL.md}</li>
- *   <li>内置技能：{@code user-data/skills-builtin/{技能名}/SKILL.md}
- *       （随 jar 里的 {@code classpath:skills/} 分发，启动时由 {@link BuiltinSkillSeeder} 落盘）</li>
- * </ul>
+ * <h3>四层来源（优先级递增）</h3>
+ * <ol>
+ *   <li><b>内置技能</b>：{@code user-data/skills-builtin/{技能名}/SKILL.md}
+ *       （随 jar 里的 {@code classpath:skills/} 分发，启动时由 {@link BuiltinSkillSeeder} 落盘）；</li>
+ *   <li><b>历史投影</b>：{@code skill-projections/{uid}/{技能名}/SKILL.md}（冻结的存量资产，只读）；</li>
+ *   <li><b>沙盒工作区</b>：模型在对话里用 {@code skill_manage} 沉淀的技能，随会话/工作区走；</li>
+ *   <li><b>用户自装</b>：{@code user-data/skills-users/{uid}/{技能名}/SKILL.md}（{@link UserSkillStore}，
+ *       跨会话、不依赖沙箱，用户明确安装的版本优先级最高）。</li>
+ * </ol>
+ * 框架 {@code FileSystemSkillRepository} 要求的布局正是 {@code baseDir/{skill-name}/SKILL.md}，
  * 故本类不复制、不迁移任何技能文件，只做<b>选择与合并</b>。
  *
  * <p><b>{@code skill-projections/{uid}/} 是冻结的历史用户级技能库</b>（全框架化 P3 之后没有写入方）：
- * 写走框架 {@code skill_manage}、落沙箱工作区；读侧继续解析它是为了不丢存量资产。它<b>不再有生产方</b>
- * ——别再往里写新东西，写进去的内容只有本类读得到，模型侧看不到第二份。
+ * 写走用户自装目录或框架 {@code skill_manage}（沙箱工作区）；读侧继续解析它是为了不丢存量资产。
  *
  * <h3>为什么实现 RuntimeContextSkillRepository</h3>
  * 每轮的 {@code uid} 不同，能看到的技能也不同。框架为此提供了
@@ -50,14 +51,17 @@ import org.springframework.stereotype.Service;
  * {@code shared/{uid}/workspace} 或 {@code sessions/{thread_id}}，天然按用户/工作区隔离），
  * 因此 {@link #save}/{@link #delete} 显式抛 {@link UnsupportedOperationException}：
  * 硬接只会造出「标记可写但写不进去」的假象。
- * <p>那一路技能本类<b>也读得到</b>（{@link #catalog} 的第三路），但只在调用方点名会话、
+ * <p>那一路技能本类<b>也读得到</b>（{@link #catalog} 的沙盒工作区分支），但只在调用方点名会话、
  * 且容器已在场时读——清单要能审到模型自己沉淀的技能，又不能为看一眼清单就把容器拉起来。
  * 问答注入路径（{@link #getAllSkills}）不带这一路：框架装配 agent 时自己会挂上那份可写仓库，
  * 本类再读一遍等于每轮多打一趟沙盒。
  *
  * <h3>合并口径</h3>
- * 优先级递增：内置 → 本人投影 → 沙盒工作区。同名以<b>最后那一路</b>为准，
- * 与框架 {@code composeSkillRepositories} 的 Layer 顺序一致（模型看到的也是这个优先级）。
+ * 优先级递增（应用侧）：内置 → 历史投影 → 沙盒工作区 → 用户自装。同名以<b>最后那一路</b>为准：
+ * 用户明确安装的版本压过会话里临时沉淀的同名技能。
+ * <p><b>注意</b>：框架装配时还会把 {@code skill_manage} 的可写工作区仓库追加到列表末尾，
+ * 所以<b>模型侧</b>同一会话内同名时仍以工作区那份为准；管理页与 {@code /available} 展示的是
+ * 用户自装那份。两者口径差异见 {@code docs/skills.md}「已知限制」。
  */
 @Service
 public class WenquSkillRepository implements RuntimeContextSkillRepository {
@@ -66,12 +70,12 @@ public class WenquSkillRepository implements RuntimeContextSkillRepository {
 
     /** 内置技能根：由 {@link BuiltinSkillSeeder} 从 classpath 落盘到 {@code user-data/skills-builtin}。 */
     private final Path builtinRoot;
-    /** 用户技能投影根：{@code skill-projections/{uid}/}。 */
-    private final Path userProjectsRoot;
-    /** 平台级停用清单（{@code skill.disabled} 全局层）。 */
+    /** 历史用户技能投影根：{@code skill-projections/{uid}/}（冻结存量，只读）。 */
+    private final Path legacyProjectsRoot;
+    /** 用户自装技能仓库（uid 级宿主目录，可读写）。 */
+    private final UserSkillStore userSkillStore;
+    /** 平台级停用清单（{@code skill.disabled}，管理员维护）。 */
     private final com.wenqu.ai.service.ConfigService configService;
-    /** 个人停用清单（同键的个人层，按 uid 显式读，不依赖线程态）。 */
-    private final com.wenqu.ai.service.UserConfigService userConfigs;
     /** 沙盒工作区那一路的读通道。 */
     private final com.wenqu.ai.service.SandboxService sandboxService;
 
@@ -79,15 +83,15 @@ public class WenquSkillRepository implements RuntimeContextSkillRepository {
             @Value("${wenqu.skills.builtin-dir:}") String builtinDir,
             @Value("${wenqu.skills.projects-dir:skill-projections}") String projectsDir,
             com.wenqu.ai.service.ConfigService configService,
-            com.wenqu.ai.service.UserConfigService userConfigs,
-            com.wenqu.ai.service.SandboxService sandboxService) {
+            com.wenqu.ai.service.SandboxService sandboxService,
+            UserSkillStore userSkillStore) {
         this.builtinRoot = resolveBuiltinRoot(builtinDir);
-        this.userProjectsRoot = (projectsDir == null || projectsDir.isBlank())
+        this.legacyProjectsRoot = (projectsDir == null || projectsDir.isBlank())
                 ? Paths.get("skill-projections")
                 : Paths.get(projectsDir);
         this.configService = configService;
-        this.userConfigs = userConfigs;
         this.sandboxService = sandboxService;
+        this.userSkillStore = userSkillStore;
     }
 
     /**
@@ -109,29 +113,34 @@ public class WenquSkillRepository implements RuntimeContextSkillRepository {
         return uid == null || uid.isBlank() ? null : uid;
     }
 
-    /** 本轮用户可见的技能目录（用户投影目录；不存在就是空）。 */
-    private Path userDirOf(RuntimeContext ctx) {
+    /** 本轮用户可见的历史投影目录（只读；不存在就是空）。 */
+    private Path legacyDirOf(RuntimeContext ctx) {
         String uid = uidOf(ctx);
-        if (uid == null || userProjectsRoot == null) return null;
-        Path dir = userProjectsRoot.resolve(uid);
+        if (uid == null || legacyProjectsRoot == null) return null;
+        Path dir = legacyProjectsRoot.resolve(uid).normalize();
+        if (!dir.startsWith(legacyProjectsRoot.normalize())) return null;
         return Files.isDirectory(dir) ? dir : null;
     }
 
     // ==================== RuntimeContextSkillRepository ====================
 
     /**
-     * 清单条目：技能 + 来源 + 是否停用 + 停用是否来自平台层。
-     *
-     * @param global 平台层也停用了这一条——个人改不动它，界面该收起「恢复使用」这个出口
+     * 清单条目：技能 + 来源 + 是否停用（以及停用来自哪一层）。
+     * <p>停用有两层：平台级 {@code skill.disabled}（管理员）与个人级 {@code .disabled}
+     * （{@link UserSkillStore}，成员自己停）。界面要能分别说明「谁停的」，所以拆成两个标记。
      */
-    public record SkillEntry(AgentSkill skill, String source, boolean disabled, boolean global) {
+    public record SkillEntry(AgentSkill skill, String source, boolean disabled,
+                             boolean platformDisabled, boolean userDisabled) {
     }
 
     public static final String SOURCE_BUILTIN = "builtin";
+    /** 用户自装（uid 级宿主目录）。 */
     public static final String SOURCE_USER = "user";
+    /** 历史投影（{@code skill-projections/{uid}}，冻结存量）。 */
+    public static final String SOURCE_LEGACY = "legacy";
     public static final String SOURCE_WORKSPACE = "workspace";
 
-    /** 停用清单的配置键（平台层 + 个人层同名）。 */
+    /** 停用清单的配置键（只有平台层）。 */
     public static final String DISABLED_KEY = "skill.disabled";
 
     /** 沙盒工作区技能根（相对沙盒用户数据根）——与框架 {@code skill_manage} 的落点同取一个常量。 */
@@ -151,34 +160,50 @@ public class WenquSkillRepository implements RuntimeContextSkillRepository {
      * 本轮可见技能的全景清单：有哪些、各自管什么、哪条已被停用、每条从哪来。
      *
      * <p>与 {@link #getAllSkills} 的差别只有两点：带来源与停用标记（停用的也返回，否则界面没法
-     * 提供「恢复使用」），以及可点名会话。
+     * 展示它被停这件事），以及可点名会话。
      *
      * @param sessionId 点名会话时额外并上「沙盒工作区」那一路（助手在对话里沉淀下来的技能）。
-     *                  传空、或该会话沙盒不在场时只给内置 + 本人投影——<b>看一眼清单不许把容器拉起来</b>
+     *                  传空、或该会话沙盒不在场时只给内置 + 历史投影 + 用户自装——<b>看一眼清单不许把容器拉起来</b>
      *                  （与沙盒文件浏览端点同一条判据）。
      */
     public List<SkillEntry> catalog(RuntimeContext ctx, String sessionId) {
         Map<String, SkillEntry> byName = new LinkedHashMap<>();
-        // 停用清单 = 平台层 ∪ 本人层。个人值按 uid 显式查：清单端点跑在 Tomcat 线程上，
-        // 问答流水线那份个人覆盖的 ThreadLocal 在这里不存在，靠 ConfigService.get 的覆盖语义会静默读空
-        Set<String> global = nameSet(configService.get(DISABLED_KEY));
-        Set<String> disabled = new LinkedHashSet<>(global);
-        addNames(disabled, userConfigs.personalValue(uidOf(ctx), DISABLED_KEY));
+        Set<String> platformDisabled = nameSet(configService.get(DISABLED_KEY));
+        String uid = uidOf(ctx);
+        Set<String> userDisabled = (uid == null || userSkillStore == null)
+                ? Set.of() : userSkillStore.disabledNames(uid);
+
         for (AgentSkill s : readAll(builtinRoot)) {
-            byName.put(s.getName(), entry(s, SOURCE_BUILTIN, disabled, global));
+            byName.put(s.getName(), entry(s, SOURCE_BUILTIN, platformDisabled, userDisabled));
         }
-        Path userDir = userDirOf(ctx);
-        if (userDir != null) {
-            for (AgentSkill s : readAll(userDir)) {
-                byName.put(s.getName(), entry(s, SOURCE_USER, disabled, global));
+        Path legacyDir = legacyDirOf(ctx);
+        if (legacyDir != null) {
+            for (AgentSkill s : readAll(legacyDir)) {
+                byName.put(s.getName(), entry(s, SOURCE_LEGACY, platformDisabled, userDisabled));
             }
         }
-        // 最后并入：同名以工作区版为准（与框架 composeSkillRepositories 的 Layer 顺序一致，
-        // 模型看到的也是这个优先级）
+        // 沙盒工作区：随会话走，不参与个人停用（换会话本就不在）
         for (AgentSkill s : readWorkspace(ctx, sessionId)) {
             byName.put(s.getName(), entry(s, SOURCE_WORKSPACE, Set.of(), Set.of()));
         }
+        // 用户自装最后并入 = 优先级最高：明确安装的版本压过会话里临时沉淀的同名技能
+        if (uid != null && userSkillStore != null) {
+            for (AgentSkill s : readAll(userSkillStore.userDir(uid))) {
+                byName.put(s.getName(), entry(s, SOURCE_USER, platformDisabled, userDisabled));
+            }
+        }
         return new ArrayList<>(byName.values());
+    }
+
+    /** 内置技能名（小写）：用户自装 / URL 安装不得占用，避免「装个包把内置技能悄悄顶掉」。 */
+    public Set<String> builtinNames() {
+        Set<String> names = new LinkedHashSet<>();
+        for (AgentSkill s : readAll(builtinRoot)) {
+            if (s.getName() != null && !s.getName().isBlank()) {
+                names.add(s.getName().trim().toLowerCase());
+            }
+        }
+        return names;
     }
 
     /**
@@ -194,11 +219,12 @@ public class WenquSkillRepository implements RuntimeContextSkillRepository {
         return null;
     }
 
-    private static SkillEntry entry(AgentSkill s, String source, Set<String> disabled, Set<String> global) {
+    private static SkillEntry entry(AgentSkill s, String source,
+                                    Set<String> platformDisabled, Set<String> userDisabled) {
         String name = s.getName() == null ? "" : s.getName().trim().toLowerCase();
-        return new SkillEntry(s, source,
-                !name.isEmpty() && disabled.contains(name),
-                !name.isEmpty() && global.contains(name));
+        boolean platform = !name.isEmpty() && platformDisabled.contains(name);
+        boolean user = !name.isEmpty() && userDisabled.contains(name);
+        return new SkillEntry(s, source, platform || user, platform, user);
     }
 
     private static Set<String> nameSet(String raw) {
@@ -298,7 +324,7 @@ public class WenquSkillRepository implements RuntimeContextSkillRepository {
     @Override
     public io.agentscope.core.skill.repository.AgentSkillRepositoryInfo getRepositoryInfo() {
         return new io.agentscope.core.skill.repository.AgentSkillRepositoryInfo(
-                "wenqu", "wenqu-skills", true);
+                "wenqu", "wenqu-skills", false);
     }
 
     @Override

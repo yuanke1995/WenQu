@@ -74,6 +74,12 @@ public class SecurityConfig implements WebMvcConfigurer {
         if (path.equals("/api/ai/session-shares") || path.startsWith("/api/ai/session-shares/")) {
             return true;
         }
+        // 个人长期记忆面板：查看/编辑/清空自己的 MEMORY.md 与日账。所有路径都由
+        // MemoryService 按登录 uid 解析，不接收调用方声明的用户；普通用户必须能用，
+        // 否则「我的记忆」对非管理员是坏的（和分享管理同一条历史教训）。
+        if (path.equals("/api/ai/memory") || path.startsWith("/api/ai/memory/")) {
+            return true;
+        }
         if (path.equals("/api/ai/message-group") || path.startsWith("/api/ai/message-group/")) {
             return true;
         }
@@ -122,9 +128,9 @@ public class SecurityConfig implements WebMvcConfigurer {
         if ("GET".equals(method) && path.equals("/api/ai/agent/available")) return true;
         // 技能与 MCP 已于 2026-09-26 从「管理员全局设置」下沉为「个人资产」：控制器统一按
         // RequestUser.uid() 过滤（看不到也改不了别人的），因此不再要求管理员；未登录请求受 require-login
-        // 门禁保护（放行时归属 anonymous）。技能侧只剩两个只读端点：/skill/available 清单、
-        // /skill/content 正文（两者都按 uid 解析、工作区那一路还要求会话归属）——
-        // 技能内容的写入改由 AgentScope 框架的技能工具在沙箱工作区里做，平台不再提供管理端点。
+        // 门禁保护（放行时归属 anonymous）。技能侧现有清单/正文/详情/**用户自助安装与管理**：
+        // 内置 + 历史投影只读，用户自装（user-data/skills-users/{uid}）可增删改，工作区那一路要求会话归属；
+        // 所有写端点的归属判定在 SkillController 内做（匿名直接 401），这里只按端点放行。
         if (path.equals("/api/ai/skill") || path.startsWith("/api/ai/skill/")) return true;
         if (path.equals("/api/ai/mcp") || path.startsWith("/api/ai/mcp/")) return true;
         // 可用模型清单（聊天页模型选择器/个人设置数据源）：只读、不含 baseUrl/apiKey
@@ -140,7 +146,7 @@ public class SecurityConfig implements WebMvcConfigurer {
         // 必须显式放行：/api/ai/menu/** 整体是权限管理页的管理端点，未放行时普通用户点侧栏齿轮直接 403
         // （管理员靠 isAdminCode 直通，故只在非管理员账号上暴露）。
         if (path.equals("/api/ai/menu/my-layout")) return true;
-        // 个人对话偏好（相关建议条数等，schema personal 字段）：
+        // 个人配置覆盖（schema personal 字段）：
         // 只读写本人的 c_ai_user_config（uid 取登录态），键限定为 schema 标记 personal 的字段
         if (path.equals("/api/ai/user/settings")) return true;
         // 自助修改昵称（PUT /user/profile，仅本人：uid 取登录态，Controller 内只动本人 username 列）
