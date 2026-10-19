@@ -41,13 +41,6 @@ public class PermissionPolicyResolver {
     /** 平台上限档位（管理员收紧处；智能体选得比它高就被钳下来） */
     public static final String KEY_MAX = "agent.permissionPreset.max";
     /**
-     * 个人上限档位（配置四档的「个人覆盖」层）：同一位提问者这一轮最多允许到哪一档。
-     * <p>它只能<b>往下</b>收：生效上限取「平台上限」与「个人上限」的较低者，所以成员不可能靠这一项
-     * 绕过管理员的收紧（那会让 personal 值变成提权通道）。用途是自我约束——"别在我账号下的任何
-     * 智能体里跑命令/改文件"，包括别人建的、显式选了全自主的那些。
-     */
-    public static final String KEY_PERSONAL_MAX = "agent.permissionPreset.personalMax";
-    /**
      * 平台级工具黑名单（逗号分隔工具名）：管理员一次性停掉某一个工具用的。
      * <p>为什么不是族级开关就够：{@code tool.websearch.enabled} 那一档关的是整族，
      * 想停掉其中一个工具会连带关掉同族其余能力；而智能体级黑名单又要把每个智能体都改一遍。
@@ -56,16 +49,12 @@ public class PermissionPolicyResolver {
     public static final String KEY_DENY = "tool.deny";
 
     private final ConfigService configService;
-    /** 个人覆盖值（请求线程没有 putUserOverrides，名册要显式按 uid 合并，见 {@link #catalog(String)}） */
-    private final com.wenqu.ai.service.UserConfigService userConfigService;
     /** 工具注册中心：仅用于启动期核对平台停用名单里的名字存在（见 {@link #checkPlatformDeny()}） */
     private final com.wenqu.ai.agent.tool.ToolRegistry toolRegistry;
 
     public PermissionPolicyResolver(ConfigService configService,
-                                    com.wenqu.ai.service.UserConfigService userConfigService,
                                     com.wenqu.ai.agent.tool.ToolRegistry toolRegistry) {
         this.configService = configService;
-        this.userConfigService = userConfigService;
         this.toolRegistry = toolRegistry;
     }
 
@@ -81,10 +70,7 @@ public class PermissionPolicyResolver {
     public ExecutionPolicy resolve(String agentPresetCode, String agentApprovalMode, boolean guestMode,
                                    String agentToolDeny, BiConsumer<String, String> onClamp) {
         PermissionPreset preset = requestedPreset(agentPresetCode);
-        PermissionPreset platMax = platformCeiling();
-        // 问答流水线线程已装载个人覆盖（ConfigService.putUserOverrides），这里直接 get 就读得到本人值
-        PermissionPreset selfMax = personalCeiling(configService.get(KEY_PERSONAL_MAX));
-        PermissionPreset ceiling = lowerOf(platMax, selfMax);
+        PermissionPreset ceiling = platformCeiling();
         if (guestMode) {
             // 游客会话强制只读档。今天游客拿不到沙盒/MCP 靠的是各族描述符的 guestAllowed 与 provider 自查，
             // 那是「谁能看到什么」的可见性闸；本行管的是「这一轮允许干什么」的能力上限闸。两道闸都要成立：
@@ -92,11 +78,10 @@ public class PermissionPolicyResolver {
             preset = PermissionPreset.RESEARCH;
         } else if (preset.rank() > ceiling.rank()) {
             BiConsumer<String, String> sink = onClamp == null ? (c, m) -> { } : onClamp;
-            String owner = selfMax.rank() < platMax.rank() ? "你的个人上限" : "平台上限";
-            log.info("[PERM] 档位被{}钳制: 请求={} 平台上限={} 个人上限={} 生效={}",
-                    owner, preset.code(), platMax.code(), selfMax.code(), ceiling.code());
+            log.info("[PERM] 档位被平台上限钳制: 请求={} 平台上限={} 生效={}",
+                    preset.code(), ceiling.code(), ceiling.code());
             sink.accept("PERMISSION_PRESET_CLAMPED",
-                    "该智能体的权限档位「" + preset.label() + "」高于" + owner + "「" + ceiling.label()
+                    "该智能体的权限档位「" + preset.label() + "」高于平台上限「" + ceiling.label()
                             + "」，本轮按上限执行（沙盒" + ceiling.sandboxMode().label() + "）");
             preset = ceiling;
         }
@@ -183,42 +168,14 @@ public class PermissionPolicyResolver {
     }
 
     /**
-     * 个人上限。认不出/未设置时=不额外收紧（autonomous）：这一项是成员<b>自愿收紧</b>用的，
-     * 读不出他的意图时不该替他决定一个更紧的档（那会让「个人上限」变成一个能锁死别人的开关——
-     * 别人建的智能体显式选了全自主，也不该因为某人这一项写错就跑不了）。
-     */
-    private PermissionPreset personalCeiling(String code) {
-        PermissionPreset p = PermissionPreset.fromCode(code);
-        if (p != null) return p;
-        if (code != null && !code.isBlank()) {
-            log.warn("[PERM] 个人权限上限无法识别（本轮不额外收紧）: {}", code);
-        }
-        return PermissionPreset.AUTONOMOUS;
-    }
-
-    /** 生效上限=两者取低（个人值只能往下收，绝不能靠它绕过管理员的收紧） */
-    private static PermissionPreset lowerOf(PermissionPreset a, PermissionPreset b) {
-        return a.rank() <= b.rank() ? a : b;
-    }
-
-    /**
      * 档位名册（智能体配置页的下拉就从这里来）。
      * <p>手工组装 Map：本工程用 fastjson 序列化，它不认 record（{@code JSON.toJSONString(record)}
      * 得到 {@code {}}），任何要出参的对象都得走 Map。
      * <p>被上限禁掉的档位<b>照样返回</b>并带 {@code available=false} 与原因：配置页上「这一档没开」
-     * 与「平台没这档」对用户是两件事，藏掉前者会让人以为平台没这能力；原因里还要分清是管理员收的还是
-     * 自己收的（后者该去个人设置里改，不是来问管理员）。
-     * <p><b>请求线程没有 {@code putUserOverrides}</b>，个人上限必须按 uid 显式取（与空态示例问题同一口径），
-     * 否则名册会显示成「平台上限允许」而真正跑起来被个人上限钳住——界面上说有的能力本轮没有，
-     * 是比少给一项更糟的错。
+     * 与「平台没这档」对用户是两件事，藏掉前者会让人以为平台没这能力。
      */
-    public List<Map<String, Object>> catalog(String uid) {
-        PermissionPreset platMax = platformCeiling();
-        PermissionPreset selfMax = personalCeiling(userConfigService.personalValue(uid, KEY_PERSONAL_MAX));
-        PermissionPreset ceiling = lowerOf(platMax, selfMax);
-        boolean personalBinds = selfMax.rank() < platMax.rank();
-        String owner = personalBinds ? "你的个人上限" : "平台上限";
-        String where = personalBinds ? "（在「个人设置 → 回答偏好」里改）" : "（需管理员放开）";
+    public List<Map<String, Object>> catalog() {
+        PermissionPreset ceiling = platformCeiling();
         List<Map<String, Object>> out = new ArrayList<>();
         for (PermissionPreset p : PermissionPreset.values()) {
             boolean available = p.rank() <= ceiling.rank();
@@ -232,7 +189,7 @@ public class PermissionPolicyResolver {
             m.put("approvalFollowsAgent", p.approvalDefault() == null);
             m.put("available", available);
             m.put("unavailableReason", available
-                    ? null : owner + "为「" + ceiling.label() + "」，本档不可选" + where);
+                    ? null : "平台上限为「" + ceiling.label() + "」，本档不可选（需管理员放开）");
             out.add(m);
         }
         return out;

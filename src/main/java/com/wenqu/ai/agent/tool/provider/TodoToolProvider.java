@@ -41,7 +41,7 @@ public class TodoToolProvider implements ToolFamilyProvider {
     public List<ToolDescriptor> descriptors() {
         return List.of(new ToolDescriptor("writeTodo", ToolFamily.TODO,
                 "任务清单", "整理任务清单", "把要做的事列成清单，看得见总共几件、还剩几件",
-                SideEffect.READ, "tool.todo.enabled", false, false, null,
+                SideEffect.READ, null, false, false, null,
                 // viewerRequired=true：清单是给正在看这一轮的人看的进度板。子智能体分支（P3a）跑在
                 // 一条没有观众、跑完即删的临时会话里，写进去的清单谁都看不到，故分支轮不挂——
                 // 判据落在描述符字段上而不是装配处再抄一个 if（见 ToolDescriptor#viewerRequired）
@@ -49,8 +49,8 @@ public class TodoToolProvider implements ToolFamilyProvider {
     }
 
     /**
-     * 没有智能体级三态（要加 c_ai_agent 列），只有全局一档；对匿名访客不挂由描述符
-     * {@code guestAllowed=false} 拦住。
+     * 随工具总闸启用，不再有独立全局开关；对匿名访客不挂由描述符 {@code guestAllowed=false} 拦住，
+     * 无观众的支路由 {@code viewerRequired=true} 拦住。
      * <p>这条判据同时被提示词的「人机协同三入口」段查询（清单卡那一行写不写），
      * 所以问答侧不再自己抄一份 {@code todoToolExposed}。
      */

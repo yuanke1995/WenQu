@@ -43,16 +43,7 @@ public class KnowledgeToolProvider implements ToolFamilyProvider {
     public List<ToolDescriptor> descriptors() {
         return List.of(new ToolDescriptor("searchKnowledge", ToolFamily.KNOWLEDGE,
                 "知识库精确检索", "查知识库资料", "在你上传的知识库里检索相关资料片段",
-                SideEffect.READ, "tool.knowledgeRetrieval.enabled", true, false, null));
-    }
-
-    /**
-     * 检索-反思循环轮次强制暴露：那个模式本身就是「模型自主多轮检索」的显式开启，
-     * 不再要求 tool.knowledgeRetrieval.enabled 子开关（与迁移前装配处同一语义）。
-     */
-    @Override
-    public boolean exposes(ToolDescriptor d, ToolMountContext mc) {
-        return mc.reflectiveRetrieval() || ToolFamilyProvider.super.exposes(d, mc);
+                SideEffect.READ, null, true, false, null));
     }
 
     @Override

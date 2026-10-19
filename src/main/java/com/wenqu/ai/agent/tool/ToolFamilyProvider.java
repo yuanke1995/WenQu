@@ -67,8 +67,7 @@ public interface ToolFamilyProvider {
      * <p>跨族判据（{@link ToolMountContext#turnAllows}：档位裁剪、按名黑名单、分支轮不收的人在回路工具）
      * 放在这里而不是各族的 {@code exposes} 里，
      * 是因为它是<b>跨族的</b>：档位裁剪与按名黑名单对任何族都要生效，而 {@code exposes} 有族级例外
-     * （检索-反思循环那一轮强制暴露检索工具，走的是 {@code mc.reflectiveRetrieval() || super.exposes(...)}）——
-     * 放进默认实现会被那条 {@code ||} 整个绕过，表现就是「管理员点名禁掉的工具在反思轮照样挂上」。
+     * （族级三态/子开关的显式覆盖）——放进默认实现会被那些例外整个绕过。
      * <p>反射不出描述符的回调（说明声明与实现已经漂移）直接跳过——启动核对已经把它记成 ERROR，
      * 这里不再让它静默进模型的工具表。
      */

@@ -75,10 +75,10 @@ public class ToolSpillService {
     /**
      * 外溢一份工具原文。
      *
-     * @return spillId；开关关闭、内容为空或落盘失败时返回 null（调用方按原有「截断展示」继续）
+     * @return spillId；内容为空或落盘失败时返回 null（调用方按原有「截断展示」继续）
      */
     public String spill(String sessionId, String uid, String toolName, String text) {
-        if (!enabled() || text == null || text.isEmpty() || uid == null || uid.isBlank()) return null;
+        if (text == null || text.isEmpty() || uid == null || uid.isBlank()) return null;
         try {
             String id = UUID.randomUUID().toString().replace("-", "");
             Path dir = dirOf(uid);
@@ -110,7 +110,7 @@ public class ToolSpillService {
     /**
      * 按 id 读回原文（仅归属人可读），整份一次给到就读满 {@link #MAX_READ_CHARS}。
      *
-     * @return {@code {tool,size,chars,content,truncated,outOfBand}}；不存在/非本人/开关关闭返回 null
+     * @return {@code {tool,size,chars,content,truncated,outOfBand}}；不存在或非本人返回 null
      */
     public Map<String, Object> read(String id, String uid) {
         return read(id, uid, 0, MAX_READ_CHARS);
@@ -408,11 +408,6 @@ public class ToolSpillService {
         } catch (Exception e) {
             return 0;
         }
-    }
-
-    /** 总开关：关掉后不再外溢，卡片回到「截断展示」，已落的原文仍可读直到保留期结束 */
-    public boolean enabled() {
-        return configService.getBoolean("tool.spillEnabled", true);
     }
 
     private Path dirOf(String uid) {

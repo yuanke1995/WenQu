@@ -43,7 +43,7 @@ public class SubAgentToolProvider implements ToolFamilyProvider {
     public List<ToolDescriptor> descriptors() {
         return List.of(new ToolDescriptor("consultAgent", ToolFamily.SUBAGENT,
                 "智能体咨询", "问另一位助手", "把这一小问交给职责对口的助手去查，它带着自己的知识库把结论与资料交回来",
-                SideEffect.MUTATE, "tool.subagentConsult.enabled", false, true, null));
+                SideEffect.MUTATE, null, false, true, null));
     }
 
     @Override

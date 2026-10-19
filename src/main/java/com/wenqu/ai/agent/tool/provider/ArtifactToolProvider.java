@@ -42,7 +42,7 @@ public class ArtifactToolProvider implements ToolFamilyProvider {
     public List<ToolDescriptor> descriptors() {
         return List.of(new ToolDescriptor("presentArtifact", ToolFamily.ARTIFACT,
                 "生成文件产物", "生成文件", "把内容整理成可下载的文件",
-                SideEffect.MUTATE, "tool.artifact.enabled", false, false, null));
+                SideEffect.MUTATE, null, false, false, null));
     }
 
     /**

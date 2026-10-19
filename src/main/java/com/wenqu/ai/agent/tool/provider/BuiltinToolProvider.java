@@ -64,12 +64,12 @@ public class BuiltinToolProvider implements ToolFamilyProvider {
     private static ToolDescriptor desc(String name, String label, String cardLabel, String cardHint,
                                        boolean viewerRequired) {
         return new ToolDescriptor(name, ToolFamily.BUILTIN, label, cardLabel, cardHint,
-                SideEffect.PURE, "tool.builtin.enabled", true, false, null, viewerRequired);
+                SideEffect.PURE, null, true, false, null, viewerRequired);
     }
 
     /**
-     * 两道闸都要过：本族开关（全局 {@code tool.builtin.enabled} 或智能体三态）+ 智能体的
-     * 「具体项」白名单（agent.builtinTools：null=全挂，否则只挂选中的那几个）。
+     * 两道闸都要过：工具总闸 + 智能体三态；再叠智能体的「具体项」白名单
+     * （agent.builtinTools：null=全挂，否则只挂选中的那几个）。
      * <p>askUser 也在白名单里跟着走——这条判据同时被提示词的「人机协同三入口」段查询：
      * 提问卡没被选中时那一行不该写给模型，否则模型会对着不存在的工具连环空转。
      */

@@ -127,11 +127,10 @@ public class AgentController {
      * 前端抄一份的话「管理员禁了全自主、配置页还让人选」就会出现选了不生效且没有任何提示的界面。
      */
     @Operation(summary = "权限档位名册", description = "返回可选档位：code/label/summary/沙盒执行档/审批建议值，"
-            + "以及该档当前是否可用（available）与被上限禁掉的原因（unavailableReason，区分平台上限与个人上限）")
+            + "以及该档当前是否可用（available）与被平台上限禁掉的原因（unavailableReason）")
     @GetMapping("/permission-presets")
     public ResultJson permissionPresets() {
-        // 按当前请求者算上限：管理员收紧与成员自设的个人上限取低者，界面上灰掉的理由才说得出是谁收的
-        return ResultJson.ok(permissionPolicyResolver.catalog(RequestUser.uid()));
+        return ResultJson.ok(permissionPolicyResolver.catalog());
     }
 
     @Operation(summary = "新建智能体", description = "body 字段：name(必填)/icon(图标：wenqu=问渠品牌标（内置「问渠」专属，其它智能体不可用）/ emoji 字符，省略=默认展示)/"

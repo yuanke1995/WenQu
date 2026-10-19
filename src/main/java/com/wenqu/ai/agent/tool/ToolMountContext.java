@@ -33,12 +33,6 @@ public interface ToolMountContext {
         return false;
     }
 
-    /**
-     * 本轮是否处于检索-反思循环（Agentic RAG）。这一族有特殊待遇是刻意的：该模式本身就是
-     * 「模型自主多轮检索」的显式开启，不再要求 tool.knowledgeRetrieval.enabled 子开关。
-     */
-    boolean reflectiveRetrieval();
-
     /** 全局配置开关（tool.* / webSearch.* 等，键名取自 {@link ToolDescriptor#gateKey()}） */
     boolean gateOn(String gateKey);
 
@@ -71,7 +65,8 @@ public interface ToolMountContext {
         if (!masterOn()) return false;
         Integer flag = agentFlag(family);
         if (flag != null) return flag == 1;
-        return gateOn(gateKey);
+        // gateKey=null：该族没有平台级子开关，总闸开启即随智能体三态/停用名单收口
+        return gateKey == null || gateKey.isBlank() || gateOn(gateKey);
     }
 
     /**

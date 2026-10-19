@@ -81,15 +81,9 @@ public List<ToolDescriptor> descriptors() {
         return !"ask".equalsIgnoreCase(approval == null ? "auto" : approval.trim());
     }
 
-    private static ToolDescriptor d(String name, String label, String cardLabel, String cardHint, SideEffect se) {
-        return new ToolDescriptor(name, ToolFamily.SANDBOX, label, cardLabel, cardHint,
-                se, "tool.sandbox.enabled", false, true, null);
-    }
-
     /**
-     * 三族之外的最后一族开关：{@code tool.sandbox.enabled} 全局一档，暂无智能体级三态
-     * （c_ai_agent 未建 toolSandbox 列，见 SandboxTools 类注释）——沙盒本身按会话隔离，
-     * 工具一旦启用对该智能体的所有会话可用。
+     * 本族只剩 {@code run_code}，开关是 {@code tool.runcode.enabled}。{@code tool.sandbox.enabled}
+     * 只控制沙盒 API 与工作流沙盒节点，不是聊天工具的启停键（框架原生文件/命令工具由权限档位管）。
      * <p>审批档位=off 时整族不挂由 {@code ToolFamily.SANDBOX.blockedWhenApprovalOff()} 统一管，
      * 不再写在装配处的 if 里。<b>权限档位的裁剪也不在本族</b>：只读档下写类工具与 execute 不进工具表
      * 这条判据在 {@code ExecutionPolicy.allowsTool}（按描述符的 SideEffect），由装配样板统一过——

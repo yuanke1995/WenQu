@@ -59,7 +59,7 @@ public class ToolAssemblyService {
      * @param branchTurn         本轮是否为子智能体分支：分支里「要有人在场」的工具不进工具表
      * @param degradationSink    本轮可见降级的出口（fail-loud：要说清「为什么这个能力没生效」）
      */
-    public ToolMountContext mountContext(Agent agent, String userId, boolean guestMode, boolean reflective,
+    public ToolMountContext mountContext(Agent agent, String userId, boolean guestMode,
                                          boolean branchTurn, BiConsumer<String, String> degradationSink,
                                          ExecutionPolicy turnPolicy) {
         return new ToolMountContext() {
@@ -76,11 +76,6 @@ public class ToolAssemblyService {
             @Override
             public boolean branchTurn() {
                 return branchTurn;
-            }
-
-            @Override
-            public boolean reflectiveRetrieval() {
-                return reflective;
             }
 
             @Override
@@ -128,12 +123,6 @@ public class ToolAssemblyService {
         };
     }
 
-    /** 提示词侧那条路径：只问判据、不装配回调，因此降级出口 no-op、档位现算。 */
-    public ToolMountContext mountContext(Agent agent, String userId, boolean guestMode, boolean reflective) {
-        return mountContext(agent, userId, guestMode, reflective, false, (code, message) -> {
-        }, null);
-    }
-
     /** 档位解析（装配判据与执行守卫的唯一入口）。 */
     public ExecutionPolicy resolvePermissionPolicy(Agent agent, boolean guestMode,
                                                    BiConsumer<String, String> onClamp) {
@@ -155,9 +144,9 @@ public class ToolAssemblyService {
             case ARTIFACT -> agent.getToolArtifact();
             case SKILL -> agent.getToolSkill();
             case SANDBOX -> null;   // 沙盒暂无智能体级列（c_ai_agent 未建 toolSandbox，见 SandboxTools 类注释）
-            // 智能体咨询（P5）同理：c_ai_agent 没有 toolSubagent 列，本族只受全局
-            // tool.subagentConsult.enabled 与工具总闸管。要按人/按智能体收口的话，加列要走配置页 schema，
-            // 别在这里塞"看起来能配"的 null 让管理员以为勾了就没效果。
+            // 智能体咨询（P5）同理：c_ai_agent 没有 toolSubagent 列，本族只受工具总闸与
+            // 平台停用名单（tool.deny 按工具名 consultAgent）收口。要按人/按智能体收口的话，
+            // 加列要走配置页 schema，别在这里塞"看起来能配"的 null。
             case SUBAGENT -> null;
             case TODO, MCP -> null;
         };

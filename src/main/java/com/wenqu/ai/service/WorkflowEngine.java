@@ -819,7 +819,7 @@ public class WorkflowEngine {
      */
     private NodeOut renderFetch(WorkflowDsl.Node n, WorkflowRunCtx ctx, URI uri, int timeoutMs) {
         if (!configService.getBoolean("tool.sandbox.enabled")) {
-            throw new BizException("节点「" + n.getId() + "」渲染抓取依赖沙盒，请先在设置页开启「沙盒工具」（tool.sandbox.enabled）");
+            throw new BizException("节点「" + n.getId() + "」渲染抓取依赖沙盒，请先在设置页开启「沙盒 API 与工作流节点」（tool.sandbox.enabled）");
         }
         SsrfGuard.requirePublicHost(uri);   // 沙盒内发起的请求 JVM 管不到，主 URL 必须先过校验
         String urlJson;
@@ -996,7 +996,7 @@ public class WorkflowEngine {
     private Function<OverAllState, NodeOut> codeBody(WorkflowDsl.Node n, WorkflowRunCtx ctx) {
         return state -> {
             if (!configService.getBoolean("tool.sandbox.enabled")) {
-                throw new BizException("节点「" + n.getId() + "」代码执行依赖沙盒，请先在设置页开启「沙盒工具」（tool.sandbox.enabled）");
+                throw new BizException("节点「" + n.getId() + "」代码执行依赖沙盒，请先在设置页开启「沙盒 API 与工作流节点」（tool.sandbox.enabled）");
             }
             String lang = cfgStr(n, "language", true).toLowerCase();
             if (!List.of("python", "node").contains(lang)) {
@@ -1165,7 +1165,7 @@ public class WorkflowEngine {
      * {@code {{skill_1.text}}} 引用即可让模型按技能要求作答。
      * <p>
      * 技能按归属人解析（内置技能 + 本人技能目录，同名以本人版为准）：名字取不到即 fail-loud，不静默降级。
-     * 正文按 {@code skill.maxFileChars} 截断（与聊天里点名技能同一口径），防止一篇长技能吃掉下游节点的预算。
+     * 正文按平台常量 {@code ConfigDefaults.SKILL_MAX_FILE_CHARS} 截断（与聊天里点名技能同一口径），防止一篇长技能吃掉下游节点的预算。
      */
     private Function<OverAllState, NodeOut> skillBody(WorkflowDsl.Node n, WorkflowRunCtx ctx) {
         return state -> {
@@ -1175,8 +1175,7 @@ public class WorkflowEngine {
             }
             StringBuilder sb = new StringBuilder();
             List<String> loaded = new ArrayList<>();
-            int maxChars = configService.getInt("skill.maxFileChars",
-                    com.wenqu.ai.config.ConfigDefaults.SKILL_MAX_FILE_CHARS);
+            int maxChars = com.wenqu.ai.config.ConfigDefaults.SKILL_MAX_FILE_CHARS;
             for (String name : names) {
                 String content = withReplay(ctx, () -> {
                     io.agentscope.core.skill.AgentSkill sk =
@@ -1402,7 +1401,7 @@ public class WorkflowEngine {
         Map<String, String> prev = configService.currentOverrides();
         configService.clearOverride();
         configService.putOverrides(ctx.baseOverrides);
-        // 个人覆盖同口径重放（体验参数归属人：不带就会读到全局值，相关建议条数等个人覆盖会失真；
+        // 个人覆盖同口径重放（归属人参数：不带就会读到全局值，个人层覆盖会失真；
         // 重排归知识库/智能体检索设置，随 baseOverrides 的库级/智能体级覆盖生效）
         Map<String, String> prevUv = configService.currentUserOverrides();
         configService.clearUserOverrides();

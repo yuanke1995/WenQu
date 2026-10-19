@@ -66,7 +66,7 @@ public class SandboxController {
     private final SandboxService sandboxService;
     private final ConfigService configService;
 
-    /** 与沙盒工具同一开关：总开关关闭时浏览端点 fail-closed 拒绝。 */
+    /** 与工作流沙盒节点同一开关：关闭时沙盒 API 的浏览/运行端点 fail-closed 拒绝。 */
     private boolean enabled() {
         return configService.getBoolean("tool.sandbox.enabled");
     }
@@ -170,7 +170,7 @@ public class SandboxController {
     @PostMapping("/run")
     public ResultJson run(@RequestBody(required = false) Map<String, Object> body) {
         if (!enabled()) {
-            return ResultJson.error("沙盒未开启，请先在设置页开启「沙盒工具」");
+            return ResultJson.error("沙盒 API 未开启，请先在设置页开启「沙盒 API 与工作流节点」");
         }
         String sessionId = str(body, "sessionId");
         String language = str(body, "language");
