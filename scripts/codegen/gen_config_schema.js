@@ -11,7 +11,7 @@
  *
  * snapshot() 只回显 defaults() 里存在的键，所以「字段有、defaults 没有」会导致该配置项
  * 永远回显表单默认值（用户改了也看不出变化）；反过来「defaults 有、字段没有」属正常的
- * 只读/内部配置（如 embedding.dimensions、eval.lastReport），只做提示不算错误。
+ * 只读/内部配置（如 session.maxHistory、eval.lastReport），只做提示不算错误。
  *
  * 用法：node scripts/codegen/gen_config_schema.js
  */
@@ -34,7 +34,7 @@ const fieldKeys = schema.fields.map(f => f.backendKey)
 const dupes = [...new Set(fieldKeys.filter((k, i) => fieldKeys.indexOf(k) !== i))]
 
 console.log('字段定义：' + fieldKeys.length + ' 项 / ' + schema.panels.length + ' 面板 / 文案 ' +
-  Object.keys(schema.tips || {}).length + ' 条 / 核心项 ' + (schema.corePaths || []).length + ' 个')
+  Object.keys(schema.tips || {}).length + ' 条')
 console.log('defaults()：' + defaults.size + ' 项')
 console.log('')
 
@@ -67,6 +67,17 @@ if (noPath.length) {
   problems++
   console.log('【字段缺少 path】会导致 buildDefaultForm 崩：')
   for (const f of noPath) console.log('  ' + f.backendKey)
+  console.log('')
+}
+
+// 文案表里的孤条目：没有字段引用它，就永远不会下发到前端（隐藏内部配置的说明也算死文案）。
+// 只在字段定义收敛/退役时出现，留着会让「文案条数」虚高，也容易误以为某个键还有设置入口。
+const tipKeys = new Set(schema.fields.map(f => f.tips).filter(Boolean))
+const orphanTips = Object.keys(schema.tips || {}).filter(k => !tipKeys.has(k))
+if (orphanTips.length) {
+  problems++
+  console.log('【tips 表有、字段没有引用的死文案】：')
+  for (const k of orphanTips) console.log('  ' + k)
   console.log('')
 }
 

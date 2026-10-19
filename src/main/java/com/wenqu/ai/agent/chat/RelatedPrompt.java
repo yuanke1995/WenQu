@@ -11,12 +11,19 @@ package com.wenqu.ai.agent.chat;
  */
 public final class RelatedPrompt {
 
+    /**
+     * 下一步建议的条数：提示词里要几条、剥推荐块时就按这个数判超限。
+     * <p>刻意做成常量而不是配置项——它是回答格式的一部分，不是一个可调的偏好；两处读取点
+     * （挂提示词、{@code RelatedStreamFilter} 的条数闸）分头取值时，改一处会让另一处判错。
+     */
+    public static final int COUNT = 3;
+
     private RelatedPrompt() {
     }
 
-    /** @param relatedCount 推荐条数（{@code retrieval.relatedCount}，最少 1；示例数量与它保持一致） */
-    public static String line(int relatedCount) {
-        int n = Math.max(1, relatedCount);
+    /** 建议条数与 {@link #COUNT} 同源，示例数量也跟着它 */
+    public static String line() {
+        int n = COUNT;
         StringBuilder ex = new StringBuilder("建议1");
         for (int i = 2; i <= n; i++) ex.append("|建议").append(i);
         return "\n回答末尾用 <related>" + ex + "</related> 输出 " + n

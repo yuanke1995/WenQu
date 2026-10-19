@@ -124,16 +124,17 @@ public class UserController {
         return ResultJson.ok(java.util.Map.of("url", url));
     }
 
-    @Operation(summary = "个人对话偏好读取", description = "个人设置 → 对话偏好：可个人覆盖的字段定义（config-schema.json 标记 personal）"
-            + "+ 本人当前个人值 + 系统全局值（界面展示「跟随系统」参照）。无模型类个人字段：问答对生成与 GraphRAG 抽取"
-            + "均回落个人默认聊天模型（defaultModel）；重排已归知识库检索设置绑定")
+    @Operation(summary = "个人偏好读取", description = "可个人覆盖的字段定义（config-schema.json 标记 personal）"
+            + "+ 本人当前个人值 + 系统全局值（界面展示「跟随系统」参照）。"
+            + "当前 schema 里没有标记 personal 的字段（原「回答偏好」五项已连同它们在系统设置里的全局那一份一起下线），"
+            + "本端点作为配置四档的个人层通道保留，fields 返回空数组")
     @GetMapping("/settings")
     public ResultJson getSettings() {
         return ResultJson.ok(userConfigService.describe(com.wenqu.ai.util.RequestUser.uid()));
     }
 
-    @Operation(summary = "保存个人对话偏好", description = "扁平的 {配置键: 值}（键必须在 config-schema.json 标记 personal）；"
-            + "字段缺省=不修改，空串=清除该项回落系统全局（模型类字段即清除个人模型）。"
+    @Operation(summary = "保存个人偏好", description = "扁平的 {配置键: 值}（键必须在 config-schema.json 标记 personal，"
+            + "当前无此类键，任何提交都会被拒）；字段缺省=不修改，空串=清除该项回落系统全局。"
             + "模型引用须归属本人登记（他人供应商拒用）且类型与字段一致；保存即生效（仅对本人问答/本人资源生效）")
     @PutMapping("/settings")
     public ResultJson saveSettings(@RequestBody Map<String, Object> body) {

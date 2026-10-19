@@ -418,7 +418,7 @@ public class ProjectService {
     public static final int MAX_INSTRUCTIONS_LEN = 2000;
 
     /**
-     * 该会话所属工作区的默认助手 id；无工作区/未配置返回 null（调用方回落到个人默认）。
+     * 该会话所属工作区的默认助手 id；无工作区/未配置返回 null（调用方回落到平台默认智能体）。
      */
     public String defaultAgentIdOfSession(String sessionId) {
         Project p = projectOfSession(sessionId);

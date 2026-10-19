@@ -8,7 +8,7 @@ import lombok.Data;
 import java.time.LocalDateTime;
 
 /**
- * 个人配置覆盖（个人设置 → 对话偏好）。
+ * 个人配置覆盖（schema personal 字段）。
  * <p>
  * 键限定为 config-schema.json 中标记 {@code personal} 的字段：个人值覆盖系统全局值（c_ai_config），
  * 仅对该用户本人的问答生效；清空 = 删除本行 = 回落全局。与全局配置同构（键 + 值），

@@ -35,7 +35,6 @@ public class ConfigController {
     private final KeywordIndexService keywordIndexService;
     private final ConnectivityProbeService connectivityProbeService;
     private final com.wenqu.ai.config.ConfigSchemaService configSchemaService;
-    private final com.wenqu.ai.service.UserConfigService userConfigService;
 
     @Operation(summary = "获取全量配置", description = "获取所有模型配置项（分组展示 + editable 标记；apiKey 脱敏显示）")
     @GetMapping
@@ -47,7 +46,7 @@ public class ConfigController {
      * 配置字段定义（设置页渲染 + 后端保存校验的唯一定义源）。
      * <p>前端据此渲染表单（不再内置字段副本），字段的属性/范围/文案与后端校验规则来自同一份定义。
      */
-    @Operation(summary = "获取配置字段定义", description = "面板、字段（类型/范围/默认值/条件显隐/文案）与核心项清单")
+    @Operation(summary = "获取配置字段定义", description = "面板、字段（类型/范围/默认值/条件显隐/文案）")
     @GetMapping("/schema")
     public ResultJson schema() {
         return ResultJson.ok(configSchemaService.describe());
@@ -87,26 +86,9 @@ public class ConfigController {
         // 「检索调试」「加入评测集」这类必 403 的管理入口仍只在管理员侧单独判定，不复用本值。
         Map<String, Object> ui = new LinkedHashMap<>();
         ui.put("debugEntry", configService.getBoolean("chat.retrievalDebugEnabled"));
-        // 空态示例问题（对话页新会话空态的引导卡）：下发**生效文案**——个人覆盖 > 系统全局，
-        // 开关关掉或内容为空即空串，前端整块不渲染。本端点在安全白名单内，匿名调用没有个人层，只拿全局值
-        ui.put("sampleQuestions", sampleQuestionsText());
         resp.put("ui", ui);
 
         return ResultJson.ok(resp);
-    }
-
-    /** 空态示例问题的生效文案（个人值 > 系统全局；开关关或无内容返回空串） */
-    private String sampleQuestionsText() {
-        String uid = com.wenqu.ai.util.RequestUser.uid();
-        String personalOn = userConfigService.personalValue(uid, "chat.sampleQuestionsEnabled");
-        boolean on = personalOn.isBlank()
-                ? configService.getBoolean("chat.sampleQuestionsEnabled", true)
-                : "true".equalsIgnoreCase(personalOn.trim());
-        if (!on) return "";
-        String personal = userConfigService.personalValue(uid, "chat.sampleQuestions");
-        if (!personal.isBlank()) return personal;
-        String global = configService.get("chat.sampleQuestions");
-        return global == null ? "" : global;
     }
 
     /** 字节数 → 可读标签（如 209715200 → "200MB"） */
@@ -154,7 +136,7 @@ public class ConfigController {
             + "提交里出现字段定义外的键时整笔拒绝（400 并点名该键），不会保存一半再返回成功")
     @PutMapping
     public ResultJson updateConfig(
-            @Parameter(description = "{\"chat\": {\"model\": \"..\", \"temperature\": \"0.3\"}, \"vision\": {\"model\": \"..\", \"prompt\": \"..\"}}")
+            @Parameter(description = "{\"chat\": {\"citationCheckEnabled\": \"true\"}, \"vision\": {\"prompt\": \"..\"}}")
             @RequestBody Map<String, Map<String, String>> body) {
         try {
             Map<String, String> updated = configService.update(body);
@@ -166,7 +148,7 @@ public class ConfigController {
         }
     }
 
-    @Operation(summary = "恢复分组默认值", description = "将指定配置分组（chat/vision/chunk/parse/upload/retrieval/rerank/keyword/context/deepReasoning/ratelimit）恢复为出厂默认。不触碰 embedding 组与各模型 API Key，防止误触发全量重嵌入/误清密钥")
+    @Operation(summary = "恢复分组默认值", description = "将指定配置分组（chat/vision/chunk/parse/upload/retrieval/rerank/keyword/context/ratelimit）恢复为出厂默认。不触碰 embedding 组与各模型 API Key，防止误触发全量重嵌入/误清密钥")
     @PostMapping("/reset")
     public ResultJson resetGroup(@Parameter(description = "{\"groups\": [\"chat\"]}")
                                  @RequestBody Map<String, Object> body) {

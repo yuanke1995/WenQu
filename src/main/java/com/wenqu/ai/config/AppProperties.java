@@ -22,8 +22,6 @@ public class AppProperties {
     private Vision vision = new Vision();
     private Ratelimit ratelimit = new Ratelimit();
 
-    private DeepReasoning deepReasoning = new DeepReasoning();
-
     private Context context = new Context();
 
     private Auth auth = new Auth();
@@ -89,10 +87,9 @@ public class AppProperties {
         private boolean enabled = false;
         /** reranker 服务 base-url（OpenAI 兼容，POST /v1/rerank；需显式配置，无本地兜底） */
         private String baseUrl = "";
-        /** rerank 模型名（建议绑定供应商重排模型引用，或填 rerank.baseUrl 对应模型；留空则重排不可用） */
-        private String model = "";
-        /** 单次重排超时(ms) */
-        private int timeoutMillis = 5000;
+        // 模型名与超时不再走 yml：模型引用归知识库/智能体检索设置绑定（rerank.model），
+        // 超时是 DB 隐藏键 rerank.timeoutMillis。曾经在这里的 model/timeoutMillis 两个字段
+        // 没有任何读取方，只会让「改了 yml 却不变」的错觉存在，已删除。
     }
 
     @Data
@@ -123,8 +120,8 @@ public class AppProperties {
         private float quality = 0.9f;
         /** 图片 URL 访问前缀（含 context-path /ai） */
         private String urlPrefix = "/ai/images";
-        /** 图片访问鉴权开关（HMAC 签名 URL，生产开启） */
-        private boolean authEnabled = false;
+        /** 图片访问鉴权开关（HMAC 签名 URL，生产开启；与 yml/schema 默认一致，首次启动由本值播种） */
+        private boolean authEnabled = true;
         /** 签名 URL 有效期（秒） */
         private long authExpireSeconds = 3600;
         /** 回答中 [图片N] 标记与图片描述的相关性校验（LLM 偶发错配兜底） */
@@ -145,8 +142,8 @@ public class AppProperties {
     public static class Vision {
         /** 是否启用图片描述（关闭则只提取图片不调模型；设置页 vision.enabled 可改，保存即生效） */
         private boolean enabled = true;
-        /** 单张图片描述超时(ms)（RestClient 构建期读取，需重启生效） */
-        private int timeoutMillis = 180000;
+        /** 单张图片描述超时(ms)（RestClient 构建期读取，需重启生效；与 defaults()/schema 默认 30s 对齐） */
+        private int timeoutMillis = 30000;
         /** 图片描述并发度（设置页 vision.concurrency 可改，保存即生效） */
         private int concurrency = 2;
         /** 单张图片失败重试次数（syncProperties 回写，设置页保存即生效） */
@@ -156,60 +153,15 @@ public class AppProperties {
     }
 
     /**
-     * 深度思考（生产级）：
-     * 阶段1 思考流式输出思维链（enable_thinking 透传 / 提示词引导双模式）
-     * → 阶段2 从思考文本提取 <search> 检索计划（精化 query + 子问题）
-     * → 阶段3 多路并行检索合并 → 复用现有上下文构建与回答流
-     */
-    @Data
-    public static class DeepReasoning {
-        /** 思考模式：model=extraBody 透传 enable_thinking 从 reasoning_content 提取；prompt=提示词引导输出到 content */
-        private String thinkingMode = "model";
-        /** 是否透传 enable_thinking=true（thinkingMode=model 时生效） */
-        private boolean enableThinking = true;
-        /** 思考引导 prompt（要求先分析不答答案，末尾输出 <search> 检索计划） */
-        private String prompt = "你是一个严谨的分析助手。请只输出对用户问题的深度思考过程，不要直接给出最终答案。"
-                + "要求：1) 先拆解问题关键点，分析可能的知识来源与回答方向；2) 思考要条理清晰、覆盖全面；"
-                + "3) 思考结束后，在最后单独一行输出检索计划，严格按格式：\n"
-                + "<search>精化后的检索query|子问题1|子问题2</search>\n"
-                + "第一个是用于检索知识库的精化查询短语，| 分隔的子问题是需要分别检索的子问题（最多3个）。";
-        /** 检索计划标签名（<search>/</search>） */
-        private String searchTag = "search";
-        /** 最大子问题数（不含精化 query） */
-        private int maxSubQueries = 3;
-        /** 多路并行检索开关 */
-        private boolean multiRetrieval = true;
-        /** 思考阶段超时(ms)，超时用已有内容降级 */
-        private int timeoutMillis = 30000;
-        /** 思考输出上限 token（0=不设，规避 qwen 思考模式 max_tokens 空输出） */
-        private int maxThinkingTokens = 0;
-        /** 思考流长度上限（字符，0=不限制）：超限中断思考流并保留已收集内容，避免刷爆上下文/token */
-        private int maxThinkingChars = 3000;
-        /** 思考链注入最终回答（把推理过程截断后作为参考注入生成 prompt，让"想过的"作用于"答"） */
-        private boolean injectThinking = true;
-        /** 思考链注入回答的长度上限（字符） */
-        private int injectThinkingMaxChars = 800;
-        /** 思考关键词增强检索（从思考全文提取词元补充到检索 query，提升召回） */
-        private boolean injectKeywords = true;
-        /** 思考关键词增强的词元数上限 */
-        private int injectKeywordsMax = 5;
-    }
-
-    /**
      * 上下文与长度控制（价值驱动填充）：
-     * 预算 = 模型窗口 × 安全系数 − 最大输出；块按相关度降序累积填充，历史按预算裁剪。
+     * 预算 = 模型窗口 × 安全系数 − 最大输出；块按相关度降序累积填充。
      * 窗口/最大输出按模型声明（c_ai_model.context_window / max_output，模型管理页维护）；
      * 窗口没有全局兜底——对话类模型登记时强制声明，未声明的存量行运行时 fail-loud 降级提醒。
      * 安全系数为平台固定策略（ModelRegistryService.CONTEXT_SAFETY_FACTOR），不再作为配置项。
+     * 历史压缩由 AgentScope 的 CompactionMiddleware 接管，这里不再有压缩开关/比例。
      */
     @Data
     public static class Context {
-        /** 历史压缩开关：开启后全部历史始终在场（近期原样 + 更早滚动摘要），不再按轮数/字符截断 */
-        private boolean historyCompress = true;
-        /** 压缩触发比例：摘要+原样历史估算超过 检索预算×该比例 时滚动压缩（0.1~0.9） */
-        private double compressRatio = 0.5;
-        /** 知识块命中片段窗口（字符，命中关键词前后各取 N 字；0=整块塞入） */
-        private int snippetWindowChars = 150;
         /** 上下文填充的最大块数（兜底上限，防候选极多时预算失控） */
         private int maxContextHits = 8;
     }

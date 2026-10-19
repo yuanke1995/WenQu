@@ -148,8 +148,8 @@ CREATE TABLE IF NOT EXISTS `c_ai_agent_share` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='智能体公开分享配置（一个智能体一条；/s/{token} 免登录对话）';
 
 -- ============================================
--- 2026-10-02: 个人配置覆盖（个人设置 → 对话偏好）
--- 键限定为 config-schema.json 中标记 personal 的字段（如相关建议条数）：个人值覆盖系统全局值
+-- 2026-10-02: 个人配置覆盖（schema personal 字段）
+-- 键限定为 config-schema.json 中标记 personal 的字段：个人值覆盖系统全局值
 -- （个人设置页保存），仅对该用户本人的
 -- 问答生效；清空 = 删除本行 = 回落全局。存储与全局配置同构（配置键 + 值），加参数只改 schema。
 -- ============================================
@@ -991,3 +991,108 @@ DROP TABLE IF EXISTS `c_ai_user_skill`;
 DROP TABLE IF EXISTS `c_ai_skill_disabled`;
 DROP TABLE IF EXISTS `c_ai_builtin_skill_override`;
 DROP TABLE IF EXISTS `c_ai_user_memory`;
+
+-- ============================================
+-- 退役配置键清理（2026-10：全框架化收口 + 死键盘点）
+-- 这些键已从 defaults() / config-schema.json 删除，代码里没有任何读取点（rerank.model 例外：
+-- 它是 schema personalOnly 键，全局行按设计永远不会被读取）；存量库里的旧行只会让
+-- 「改库能生效」的错觉继续存在，故每次启动幂等删除。新增键不要再往这里加——
+-- 只有确认「无读取方」的退役键才进来。
+-- ============================================
+DELETE FROM `c_ai_config` WHERE `config_key` IN (
+    -- 聊天：全局模型/网关/提示词已退役；流式重试、计划生成超时、框架压缩三键无读取点
+    'chat.model', 'chat.baseUrl', 'chat.apiKey', 'chat.completionsPath',
+    'chat.systemPrompt', 'chat.userSystemPrompt', 'chat.historyRounds',
+    'chat.remainTokenFloor', 'chat.truncateFallbackChars',
+    'chat.agentscopeMaxContextTokens', 'chat.agentscopeTurnTimeoutSeconds',
+    'chat.agentscopeCompactTriggerMessages', 'chat.planGenTimeoutMs', 'chat.streamRetryCount',
+    'chat.planAutoIntent',
+    -- 框架状态存储复用 spring.data.redis，不再单独保存 host/port/password
+    'chat.agentscopeRedisHost', 'chat.agentscopeRedisPort', 'chat.agentscopeRedisPassword',
+    -- 视觉：网关与 Ollama 专属调参无读取点
+    'vision.model', 'vision.baseUrl', 'vision.apiKey',
+    'vision.keepAliveMinutes', 'vision.numCtx', 'vision.think',
+    -- 向量：网关已归供应商表；全局维度记录无写入方也无读取方
+    'embedding.model', 'embedding.baseUrl', 'embedding.apiKey',
+    'embedding.embeddingsPath', 'embedding.dimensions',
+    -- 上下文：历史压缩已由 AgentScope CompactionMiddleware 接管；去冗余/片段截取只服务未接线的 RetrievalPipeline
+    'context.historyCompress', 'context.compressRatio', 'context.compressTimeoutMs',
+    'context.safetyFactor', 'context.costCapTokens', 'context.maxOutputTokens',
+    'context.snippetWindowChars', 'context.dedupEnabled', 'context.dedupThreshold',
+    'context.dedupPathThreshold', 'context.adjacentMergeEnabled', 'context.adjacentMergeMaxChunks',
+    -- 检索：查询改写、多路共识、检索-反思循环都是已删除的深度思考/手写运行时遗留；@ 文档块配额随 RetrievalPipeline 退役
+    'retrieval.queryRewriteEnabled', 'retrieval.multiConsensusBonus', 'retrieval.reflectiveRetrieval',
+    'retrieval.mentionDocChunks',
+    -- 深度思考：整组由对话页按模型选择替代
+    'deepReasoning.thinkingMode', 'deepReasoning.enableThinking', 'deepReasoning.prompt',
+    'deepReasoning.searchTag', 'deepReasoning.maxSubQueries', 'deepReasoning.multiRetrieval',
+    'deepReasoning.timeoutMillis', 'deepReasoning.maxThinkingTokens', 'deepReasoning.maxThinkingChars',
+    'deepReasoning.injectThinking', 'deepReasoning.injectThinkingMaxChars',
+    'deepReasoning.injectKeywords', 'deepReasoning.injectKeywordsMax',
+    -- 解析/图谱：模型引用已回落库主默认聊天模型
+    'parse.qaModel', 'graphrag.modelRef',
+    -- 技能/记忆：面板与自研存储退役后留下的死配置
+    'skill.injectMaxChars', 'skill.remoteAllowedHosts', 'skill.maxFileChars',
+    'memory.maxPerUser', 'memory.maxInjectCount', 'memory.injectBudgetChars',
+    'memory.dedupThreshold', 'memory.useSemanticInject', 'memory.platformEmbeddingRef',
+    -- 工具：低风险工具改为随总闸启用，按智能体三态 / tool.deny 收口，不再各留平台开关
+    'tool.knowledgeRetrieval.enabled', 'tool.artifact.enabled',
+    'tool.builtin.enabled', 'tool.subagentConsult.enabled',
+    'tool.todo.enabled', 'tool.spillEnabled', 'tool.mcpCiteEnabled',
+    -- 子智能体：旧并行编排器已删除，资料域改走 consultAgent
+    'agent.enabled', 'agent.subAgents', 'agent.topKPerAgent', 'agent.digestEnabled',
+    'agent.aggregateMode', 'agent.digestMaxChars', 'agent.aggregateMarkFailed',
+    'agent.autoRoute', 'agent.routeTimeoutMs', 'agent.maxParallelSubAgents',
+    'agent.subagentMaxDepth', 'agent.subagentTimeoutMs', 'agent.subagentBriefChars',
+    'agent.subagentBriefMode', 'agent.subagentBriefTurns',
+    -- 2026-10-19 二次死键盘点：以下键在 defaults() / config-schema.json 中已无定义，
+    -- 全仓库检索也确认零读取点；本地存量库实测仍有行（含部分 2026-09 前的旧键）。
+    -- 旧问答引擎 / 意图识别 / 查询改写 / 语义缓存
+    'chat.engineMode', 'chat.engineAbPercent', 'chat.showDebugDegradations',
+    'chat.suggestedQuestions', 'chat.deepThinkDefault',
+    'intent.enabled', 'intent.model', 'intent.prompt', 'intent.chatPrompt', 'intent.timeoutMillis',
+    'queryRewrite.enabled', 'queryRewrite.historyRounds', 'queryRewrite.prompt', 'queryRewrite.promptMultiTurn',
+    'semanticCache.enabled', 'semanticCache.maxEntries', 'semanticCache.threshold',
+    -- 旧上下文预算（窗口已按模型声明）
+    'context.defaultWindowTokens', 'context.historyMaxTokens',
+    'context.historyPerMsgChars', 'context.modelWindows',
+    -- 旧检索管线：融合/打分与 @ 引用扩展整组随 RetrievalPipeline 退役
+    'atRef.maxChunksPerDoc', 'atRef.maxTotal',
+    'retrieval.fusionMode', 'retrieval.strength', 'retrieval.positionBonus',
+    'retrieval.sectionBonus', 'retrieval.titleBonus', 'retrieval.maxRefsPerBlock',
+    'retrieval.refDetectEnabled', 'retrieval.refDetectMention',
+    'retrieval.refExpandEnabled', 'retrieval.refExpandFuzzyName', 'retrieval.refExpandIncludeIncoming',
+    'retrieval.refExpandMaxHits', 'retrieval.refExpandMaxTokens',
+    'retrieval.refExpandParentEnabled', 'retrieval.refExpandParentMaxLevels',
+    'retrieval.refExpandParentMode', 'retrieval.refExpandParentSummaryChars',
+    'retrieval.rewriteFallbackMinHits', 'retrieval.rewriteFallbackWeakScore', 'retrieval.rewriteTimeoutMs',
+    -- 深度思考自动路由（深度思考整组已退役）
+    'deepReasoning.enabled', 'deepReasoning.autoRoute', 'deepReasoning.autoRouteKeywords',
+    'deepReasoning.autoRouteLongChars', 'deepReasoning.autoRouteMinChars',
+    -- MCP 客户端全局配置已下沉为按用户登记 c_ai_user_mcp
+    'mcp.enabled', 'mcp.servers',
+    -- 记忆向量化改为平台内置模型（个人层入口已下线）
+    'memory.embeddingRef',
+    -- rerank.model 是 personalOnly（无全局层）：历史全局行永远不会被读取，每次启动清掉；
+    -- ensureDefaults 也已跳过 personalOnly，不会再种回来
+    'rerank.model',
+    -- 旧子智能体并行编排 / 访客共享会话
+    'agent.autoDispatch', 'agent.dispatchNarrowScope', 'session.anonymousShared',
+    -- 2026-10-19：「回答偏好」五项个人覆盖连同它们在系统设置里的全局那一份一起下线。
+    -- 建议条数改为平台常量（RelatedPrompt.COUNT=3）、空态示例问题卡整块不再出、
+    -- 个人默认助手取消（回落工作区默认→平台默认）、成员侧停用技能退场（skill.disabled 只留平台层，
+    -- 故不进本清单）、个人执行上限退场（收紧只走 agent.permissionPreset.max）
+    'retrieval.relatedCount', 'chat.sampleQuestionsEnabled', 'chat.sampleQuestions',
+    'agent.personalDefault', 'agent.permissionPreset.personalMax'
+);
+-- 个人层遗留的模型引用键（parse.qaModel / graphrag.modelRef / memory.embeddingRef 曾允许个人覆盖；
+-- rerank.model 的个人设置入口已下线，存量值不再被 UserConfigService 装载）
+DELETE FROM `c_ai_user_config` WHERE `config_key` IN (
+    'parse.qaModel', 'graphrag.modelRef', 'memory.embeddingRef', 'rerank.model',
+    'chat.deepThinkDefault', 'chat.historyRounds', 'chat.userSystemPrompt',
+    -- 2026-10-19：这四项的个人覆盖已随字段定义一起删除，存量行永远不会再被读到
+    'retrieval.relatedCount', 'chat.sampleQuestionsEnabled', 'chat.sampleQuestions',
+    'agent.personalDefault', 'agent.permissionPreset.personalMax',
+    -- 技能停用只剩平台一层：成员那份个人清单不再被 WenquSkillRepository 合并
+    'skill.disabled'
+);

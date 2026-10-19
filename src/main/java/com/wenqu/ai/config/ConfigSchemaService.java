@@ -44,7 +44,6 @@ public class ConfigSchemaService {
     private final List<Field> fields;
     private final Map<String, Field> byKey = new LinkedHashMap<>();
     private final Map<String, String> tips;
-    private final List<String> corePaths;
     /** type=switch 且 def=true 的 backendKey（「默认开」的开关；启动自检据此发现没落库也没登记默认值的键） */
     private final List<String> defaultOnSwitches;
     /** 后端键 → 中文说明（原 EDITABLE 的 value，落库进 c_ai_config.remark） */
@@ -74,11 +73,6 @@ public class ConfigSchemaService {
         JSONObject tj = root.getJSONObject("tips");
         if (tj != null) for (String k : tj.keySet()) t.put(k, tj.getString(k));
         this.tips = Map.copyOf(t);
-
-        List<String> cps = new ArrayList<>();
-        JSONArray ca = root.getJSONArray("corePaths");
-        if (ca != null) for (Object o : ca) cps.add(String.valueOf(o));
-        this.corePaths = List.copyOf(cps);
 
         List<JSONObject> raws = new ArrayList<>();
         List<Field> fs = new ArrayList<>();
@@ -169,7 +163,7 @@ public class ConfigSchemaService {
     }
 
     /**
-     * 字段是否允许个人覆盖（个人设置 → 对话偏好；值存 c_ai_user_config，覆盖系统全局值）。
+     * 字段是否允许个人覆盖（个人设置 → 聊天模型与偏好；值存 c_ai_user_config，覆盖系统全局值）。
      * 未定义字段按 false（fail-closed：个人保存接口只接受 schema 显式标记 personal 的键）。
      */
     public boolean isPersonal(String key) {
@@ -282,7 +276,7 @@ public class ConfigSchemaService {
         return help.getOrDefault(key, def);
     }
 
-    /** 下发给前端的完整定义（面板/字段/文案/核心项），字段保留原始表单属性 */
+    /** 下发给前端的完整定义（面板/字段/文案），字段保留原始表单属性 */
     public Map<String, Object> describe() {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("panels", panels);
@@ -294,7 +288,6 @@ public class ConfigSchemaService {
         }
         m.put("fields", adminFields);
         m.put("tips", tips);
-        m.put("corePaths", corePaths);
         return m;
     }
 

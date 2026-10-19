@@ -66,6 +66,15 @@ public class ConfigService {
 
     private volatile Map<String, String> cache = new HashMap<>();
 
+    /**
+     * 配置变更监听：只在**值真的变了**时通知（reload / update / reset / putInternal 四条写入路径统一发）。
+     * <p>用途是「只能在 build 期定、但又必须保存即生效」的配置——当前是 {@code memory.*}：
+     * flush 节流、consolidation 上限、硬上限都烤在常驻 HarnessAgent 实例里，不重建就会
+     * 「管理员关了总闸，旧会话还在写」。监听器只标记实例失效，不阻塞保存。
+     */
+    private final List<java.util.function.Consumer<Set<String>>> changeListeners =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
+
     public ConfigService(ConfigMapper configMapper, AppProperties properties, Environment environment,
                          StringRedisTemplate redisTemplate, RedisProperties redisProperties,
                          @org.springframework.context.annotation.Lazy KeywordIndexService keywordIndexService,
@@ -159,6 +168,7 @@ public class ConfigService {
     /** 全量重读 c_ai_config 进缓存（本地更新 / Redis 订阅通知 / schedule 包周期兜底均调用） */
     public void reload() {
         try {
+            Map<String, String> before = cache;
             List<Config> all = configMapper.selectList(new LambdaQueryWrapper<Config>());
             Map<String, String> map = new HashMap<>();
             for (Config c : all) {
@@ -166,9 +176,39 @@ public class ConfigService {
             }
             cache = map;
             syncProperties();
+            notifyConfigChanged(diff(before, map));
         } catch (Exception e) {
             log.warn("[Config] 配置重载失败: {}", e.getMessage());
         }
+    }
+
+    /** 注册配置变更监听（只在值真的变化时回调；回调异常只告警，不影响保存）。 */
+    public void addChangeListener(java.util.function.Consumer<Set<String>> listener) {
+        if (listener != null) changeListeners.add(listener);
+    }
+
+    private void notifyConfigChanged(Set<String> changed) {
+        if (changed == null || changed.isEmpty()) return;
+        for (java.util.function.Consumer<Set<String>> listener : changeListeners) {
+            try {
+                listener.accept(changed);
+            } catch (Exception e) {
+                log.warn("[Config] 配置变更监听失败 {}: {}", changed, e.getMessage());
+            }
+        }
+    }
+
+    private static Set<String> diff(Map<String, String> before, Map<String, String> after) {
+        Map<String, String> b = before == null ? Map.of() : before;
+        Map<String, String> a = after == null ? Map.of() : after;
+        Set<String> changed = new LinkedHashSet<>();
+        for (Map.Entry<String, String> e : b.entrySet()) {
+            if (!java.util.Objects.equals(e.getValue(), a.get(e.getKey()))) changed.add(e.getKey());
+        }
+        for (String k : a.keySet()) {
+            if (!b.containsKey(k)) changed.add(k);
+        }
+        return changed;
     }
 
     /**
@@ -217,6 +257,9 @@ public class ConfigService {
     /** 遍历 defaults()，DB 中缺失的 key 自动灌入默认值（单条失败不影响其余） */
     private void ensureDefaults() {
         for (Map.Entry<String, String> e : defaults().entrySet()) {
+            // 个人专属键（schema personalOnly）没有全局槽位：种一行全局值也读不到（get 会直接返回空），
+            // 只会在库里留下一条永远不生效的“死配置”。rerank.model 就是这种键，故不灌库。
+            if (schema.isPersonalOnly(e.getKey())) continue;
             try {
                 Long cnt = configMapper.selectCount(new LambdaQueryWrapper<Config>()
                         .eq(Config::getConfigKey, e.getKey()));
@@ -248,8 +291,11 @@ public class ConfigService {
         // （AppProperties.systemPrompt，yml/env 可覆盖）；附加指令不再提供平台/个人层，存量库中的
         // 旧行成为孤儿数据（无读取方）
         d.put("chat.citationCheckEnabled", "true");         // 引用语义一致性自检（生成后校验：编造/张冠李戴的引用是 RAG 信任根基，默认开；每轮多一次模型调用，超时/失败自动跳过不阻塞）
-        d.put("chat.planAutoIntent", "true");               // 按消息意图自动开计划模式（用户没开开关时，判断本轮是否适合先出执行计划；与检索并行的短判定，超时/失败按不开）
-        // 断线重连接流（P0）：默认开。这里登记=让它成为**配置行**（设置页可关、可改），
+        // chat.planAutoIntent 已退役（2026-10）：计划模式只由用户显式开关或模型自主调用 plan_enter 决定，
+        // 问渠的预判器（PlanModeService）已删除；存量行由 schema.sql 清理。
+        // 断线重连接流（P0）：默认开，且**不再露在设置页**——关掉它没有任何收益（刷新/换设备就丢一轮），
+        // 它只是这次行为改动的回滚开关，不该出现在管理员的日常旋钮里（schema 已移除该字段）。
+        // 这里继续登记=保留配置行与默认值，排障时可直接改库/env 回滚；
         // 与调用方 getBoolean("chat.resumeEnabled", true) 的形参默认值互为双保险——
         // 历史上形参默认值不可靠（Boolean.parseBoolean("") 返回 false 且不抛异常，兜底链走不到第二级，
         // 「默认开的开关」在键未入库时静默变关），该坑已在 getOrDefaultParsed 修掉并加启动自检点名。
@@ -271,13 +317,16 @@ public class ConfigService {
         // 读取点 `get()` 落空返回 ""，行为恰好也是关（读点用 "true".equalsIgnoreCase 判定），
         // 所以不是静默失效；但设置页「恢复默认」无配置行可复位，三层口径不齐。默认关，保持原行为不变。
         d.put("chat.agentscopeRedisEnabled", "false");
+        // 连接 host/port/password 复用 spring.data.redis（REDIS_HOST/REDIS_PORT/REDIS_PASSWORD），
+        // 不再作为 c_ai_config 字段；这里只保留一个 key 前缀，避免与缓存/配置广播混用命名空间。
+        d.put("chat.agentscopeRedisPrefix", "agentscope:session:");
         // chat.agentscopeTurnTimeoutSeconds 已取消（2026-10）：框架对单把工具有自带 5 分钟硬超时，
         // 此前用该键覆盖成 SSE 超时，默认 0=沿用 SSE 超时——框架已有限制、参数只留个默认就用不上，
         // 现由 AgentscopeChatEngine.turnSeconds() 恒定取 chat.sseTimeoutMs，不再留配置口
         // chat.agentscopeCompactTriggerMessages 已取消（2026-10）：框架默认（动态 token 阈值或
         // 50 条消息触发、逐字留最近 20 条）本身就是会跑的滚动压缩，默认态与框架默认逐字相同，
         // 现 compactionConfig() 只保留手动 /compact 的强制压缩路径
-        d.put("tool.spillEnabled", "true");                 // 工具大输出外溢留存（截断即丢 → 预览+可回读）
+        // 工具大输出留存固定开启（不再留开关）；下面两条只治理磁盘占用。
         d.put("tool.spillMaxMbPerUser", "200");             // 每人留存原文的磁盘配额(MB)，0=不限量；超出按落盘时间淘汰最旧几份
         // 留存的两条治理参数都要进 defaults()：snapshot() 只回显这里登记过的键，
         // 漏登记的表现是设置页改完重开仍显示表单默认值（看着像「改了没生效」，实际库里已生效）
@@ -293,9 +342,8 @@ public class ConfigService {
         d.put("vision.descCacheTtlDays", "180");               // 图片描述缓存有效期(天，0=不过期)
         // embedding.baseUrl/apiKey/embeddingsPath 退役：向量网关统一来自「模型供应商」表（kb.embedding_ref
         // 引用 → 供应商网关），遗留网关信息已无任何读取方
-        // 当前向量索引维度（系统记录，非用户可编辑）：按库重嵌入成功后由 putInternal 回写，
-        // 供设置页展示。空/0 = 尚未记录（首次部署或未切换过）
-        d.put("embedding.dimensions", "");
+        // embedding.dimensions 已退役（2026-10）：维度按知识库登记在 c_ai_knowledge_base.embedding_dimensions，
+        // 全局记录既无写入方也无读取方，不再保留配置键
         // 平台内置向量化模型（全局、管理员可编辑、非 personalOnly）：运营方登记一个 embedding 模型引用，
         // 作为全体用户记忆语义能力的统一来源——用户零配置即可获得语义记忆。留空=不提供向量化
         // （记忆去重降级为精确匹配、语义注入关闭）。记忆向量化已不再暴露为个人设置项
@@ -313,7 +361,9 @@ public class ConfigService {
         d.put("retrieval.vectorWeight", String.valueOf(properties.getRetrieval().getVectorWeight()));
         d.put("retrieval.keywordWeight", String.valueOf(properties.getRetrieval().getKeywordWeight()));
         d.put("rerank.enabled", String.valueOf(properties.getRetrieval().getRerank().isEnabled()));
-        d.put("rerank.model", "");                         // 重排模型引用槽位（personalOnly，无全局层）：归知识库/智能体检索设置绑定；空=回落 rerank.baseUrl（未配置则重排不可用）
+        // personalOnly：归知识库/智能体检索设置绑定，没有全局槽位。保留在 defaults() 只为
+        // snapshot/isLiveKey 能识别这个键；ensureDefaults 会跳过 personalOnly，不再往库里种全局行。
+        d.put("rerank.model", "");
         // 平台默认重排模型（管理员登记，全平台兜底）：库/智能体覆盖与个人设置都为空时生效，
         // 仍为空才回落 rerank.baseUrl。与 rerank.model 分开成键，是为了不动 personalOnly 的归属语义
         // （模型引用只认归属人），又让"一个库都没绑 = 全平台没重排"这个默认态有解。
@@ -326,48 +376,32 @@ public class ConfigService {
         // context.safetyFactor / context.costCapTokens / context.maxOutputTokens 已退役：
         // 窗口与最大输出按模型在「模型管理」声明（对话类窗口必填），安全系数固定为
         // ModelRegistryService.CONTEXT_SAFETY_FACTOR，成本软上限移除。存量库中的旧行成为孤儿数据（无读取方）。
-        d.put("context.historyCompress", String.valueOf(properties.getContext().isHistoryCompress()));
-        d.put("context.compressRatio", String.valueOf(properties.getContext().getCompressRatio()));
-        d.put("context.snippetWindowChars", String.valueOf(properties.getContext().getSnippetWindowChars()));
+        // context.historyCompress / context.compressRatio 已退役（2026-10）：自动历史压缩由 AgentScope
+        // CompactionMiddleware 接管，问渠侧那套 assemble/compact 代码已删除；存量行由 schema.sql 清理。
+        // context.snippetWindowChars / dedup* / adjacentMerge* 已退役（2026-10）：唯一读点是已删除的
+        // RetrievalPipeline，问答实际走 search_knowledge 工具；设置页不再展示这些点了不生效的旋钮。
         d.put("context.maxContextHits", String.valueOf(properties.getContext().getMaxContextHits()));
         d.put("context.maxBlocksPerDoc", "3");             // 单文档块数配额（0=不限制；@ 引用块豁免）
         // P5 解绑后主检索覆盖使用者全部可见库，没有每库配额就会被"块多且词面泛"的那个库占满名额
         d.put("context.maxBlocksPerKb", "4");              // 单知识库块数配额（0=不限制；@ 引用块与库取不到的块豁免）
-        d.put("context.dedupEnabled", "true");             // 信息增益去冗余（默认开）
-        d.put("context.dedupThreshold", "0.45");           // 词元重叠阈值（越高越宽松）
-        d.put("context.dedupPathThreshold", "0.28");       // 同章节路径下重叠阈值
-        d.put("context.adjacentMergeEnabled", "true");     // 相邻块合并（同文档 chunk 连续命中拼接进上下文）
-        d.put("context.adjacentMergeMaxChunks", "3");      // 单次相邻合并的块数上限
-        d.put("deepReasoning.thinkingMode", properties.getDeepReasoning().getThinkingMode());
-        d.put("deepReasoning.enableThinking", String.valueOf(properties.getDeepReasoning().isEnableThinking()));
-        d.put("deepReasoning.prompt", properties.getDeepReasoning().getPrompt());
-        d.put("deepReasoning.searchTag", properties.getDeepReasoning().getSearchTag());
-        d.put("deepReasoning.maxSubQueries", String.valueOf(properties.getDeepReasoning().getMaxSubQueries()));
-        d.put("deepReasoning.multiRetrieval", String.valueOf(properties.getDeepReasoning().isMultiRetrieval()));
-        d.put("deepReasoning.timeoutMillis", String.valueOf(properties.getDeepReasoning().getTimeoutMillis()));
-        d.put("deepReasoning.maxThinkingTokens", String.valueOf(properties.getDeepReasoning().getMaxThinkingTokens()));
-        d.put("deepReasoning.maxThinkingChars", String.valueOf(properties.getDeepReasoning().getMaxThinkingChars()));
-        d.put("deepReasoning.injectThinking", String.valueOf(properties.getDeepReasoning().isInjectThinking()));
-        d.put("deepReasoning.injectThinkingMaxChars", String.valueOf(properties.getDeepReasoning().getInjectThinkingMaxChars()));
-        d.put("deepReasoning.injectKeywords", String.valueOf(properties.getDeepReasoning().isInjectKeywords()));
-        d.put("deepReasoning.injectKeywordsMax", String.valueOf(properties.getDeepReasoning().getInjectKeywordsMax()));
+        // deepReasoning.* 已退役（2026-10）：思考强度由对话页按模型选择，框架引擎只透传模型方言，
+        // 旧「思考流 → <search> 检索计划 → 多路检索」整组配置无任何读取点，连同 AppProperties 类一并删除。
         // 读点共用默认值的 key：defaults() 与读点 fallback 共用 ConfigDefaults 常量（改默认值只改常量一处）
 
         // 检索行为参数（原硬编码收口，设置页可调、保存即生效）
         d.put("retrieval.vecThreshold", "0.3");            // 向量相似度归一化基准/下限
         d.put("retrieval.minContextScore", String.valueOf(ConfigDefaults.RETRIEVAL_MIN_CONTEXT_SCORE));  // 最低相关分门槛（仅对重排分 0~1 分域生效，对齐 Dify/Coze Score 阈值；0=关）
         d.put("retrieval.minFusionScore", String.valueOf(ConfigDefaults.RETRIEVAL_MIN_FUSION_SCORE));    // 融合分门槛（未启用重排时生效；2026-10-04 评测基线标定：期望块 95.7%≥0.55，无关块 70%<0.5、通过率 30%，旧 0.25 时通过率 82.7% 拦不住词面重叠噪声；调检索权重后需重标定；0=关）
-        d.put("retrieval.queryRewriteEnabled", "true");    // 多轮查询改写：检索前用对话模型做指代消解（仅多轮触发，失败按原句检索）
+        // retrieval.queryRewriteEnabled 已退役（2026-10）：多轮查询改写实现已随手写运行时删除，
+        // 框架/检索链路没有第二个读取点；存量行由 schema.sql 清理。
         d.put("retrieval.aclTopKSupplant", "true");        // 权限补采是否顶掉原 topK 尾部（2026-10-09 补：schema 早已声明，defaults 漏登记 → 设置页改了回显不出）
         d.put("retrieval.vectorTopK", "15");               // 向量召回 topK（调优/评估扫参用，下限 1）
         d.put("retrieval.keywordLimit", "20");             // 关键词召回上限
         d.put("retrieval.searchTimeoutMs", "8000");        // 混合检索总超时
-        d.put("retrieval.multiConsensusBonus", "0.03");    // 深度思考多路检索的共识加分（被≥2个子查询命中的块；0=关；评测实测 0.03 最优）
-        // 检索-反思循环（Agentic RAG · 自主多轮检索）：off/high/always。默认 off 非默认全量——
-        // 循环轮次多出工具往返与自评开销，由显式开启者承担；high=深度思考高档及以上增强，always=独立开关。
-        // 键取 retrieval 前缀（与 multiConsensusBonus 同属"检索策略"旋钮）：设置页挂在检索面板，
-        // 「恢复本组默认」按前缀重置，前缀与面板一致才能被一起重置
-        d.put("retrieval.reflectiveRetrieval", "off");
+        // retrieval.multiConsensusBonus / retrieval.reflectiveRetrieval 已退役（2026-10）：
+        // 二者都只服务已删除的「深度思考多路检索 + 检索-反思循环」；框架路径的工具挂载把 reflective
+        // 恒传 false，多路共识仅评测的 searchMulti 近似还在用（改为 ConfigDefaults 常量）。
+        // 存量行由 schema.sql 清理。
         // 重排行为参数
         // 关键词召回引擎（mysql=LIKE；meilisearch=外部索引，中文分词+相关度；index 只走 yml 不入库）
         d.put("keyword.engine", properties.getKeyword().getEngine());
@@ -401,15 +435,13 @@ public class ConfigService {
         // chat.remainTokenFloor / chat.truncateFallbackChars 已退役（2026-10）：上下文装配的工程细节
         // 不再暴露给设置页（用户容易误解为压缩参数，误调会在预算耗尽后强塞知识块）——
         // 固定为 ChatService 常量 REMAIN_TOKEN_FLOOR=800 / TRUNCATE_FALLBACK_CHARS=200。存量库旧行成孤儿数据
-        // chat.historyRounds 已退役：历史不再按轮数截断，改为预算驱动全量带入 + 滚动压缩
-        // （context.historyCompress / context.compressRatio 控制；辅助调用内部仍用固定 2 轮短历史）
+        // chat.historyRounds 已退役：历史不再按轮数截断；框架引擎的滚动压缩由 AgentScope
+        // CompactionMiddleware 按模型窗口自动触发（context.historyCompress/compressRatio 已一并退役）。
         // chat.userSystemPrompt（附加指令）已退役：见上方 chat.systemPrompt 注释
         // 深度思考默认偏好（personal；个人设置可改，前端据此决定新模型默认开/关，按模型的手动记忆仍存浏览器）
         d.put("chat.pipelineThreads", "8");                // 问答流水线线程数（重活不占 Tomcat 请求线程）
         d.put("chat.approvalTimeoutMs", "120000");         // 工具执行审批等待上限(ms)：超时按拒绝处理（阻塞工具线程，必须有界）
-        d.put("chat.planGenTimeoutMs", "120000");          // 计划模式：计划生成流式超时(ms)，失败/为空降级为普通回答
         d.put("chat.planTimeoutMs", "600000");             // 计划模式：计划批准等待上限(ms)（人工等待不计入整轮预算）；超时按未批准终止本轮
-        d.put("chat.streamRetryCount", "1");               // H2：主 LLM 流式中断（未输出token）自动重试次数
         d.put("chat.sseTimeoutMs", "300000");              // H4：问答 SSE 超时(ms)
         d.put("chat.askTimeoutMs", "600000");              // 人在回路提问卡等待上限(ms)（2026-10-09 补：schema 早已声明，defaults 漏登记 → 设置页改了回显不出）
         // 调试显示总开关（归属徽标 / 路由提示 / 降级提示）。默认开（2026-10-18 由 false 改 true）：
@@ -418,15 +450,6 @@ public class ConfigService {
         // 核对，若用户看不到自己踩了哪条路，就没有可核对的入口。真正的排障项（分值、步数、路由理由）
         // 仍只对管理员露出（前端按 isAdminSync 二次收窄），对普通用户开的是降级与归属这类诚实性信息。
         d.put("chat.retrievalDebugEnabled", "true");
-        // 空态示例问题（对话页新会话空态的引导卡，点一下即按这条提问）：体验项 → schema 标 personal，
-        // 个人设置可覆盖成自己的或关掉；生效值 = 个人值 > 系统全局，经 /config/public 下发给两套对话页。
-        // 内容一行一条，可写「标签｜问题」（schema def 与本串同值：def 管设置页展示，这里管运行时种子）
-        d.put("chat.sampleQuestionsEnabled", "true");
-        d.put("chat.sampleQuestions",
-                "🔍 知识检索｜帮我查一下问渠怎么上传文档\n"
-                        + "📝 总结提炼｜帮我总结一份文档的核心要点\n"
-                        + "✍️ 辅助写作｜帮我起草一份周报的框架\n"
-                        + "📊 对比分析｜帮我对比一下两个方案的优缺点");
         // 接口限流（按用户/IP 固定窗口）
         d.put("ratelimit.enabled", String.valueOf(properties.getRatelimit().isEnabled()));
         d.put("ratelimit.chatPerMinute", String.valueOf(properties.getRatelimit().getChatPerMinute()));
@@ -452,18 +475,17 @@ public class ConfigService {
         d.put("scheduled.scanIntervalMs", "30000");            // 到期扫描间隔(ms，≤0=暂停扫描)
         d.put("web.refreshEnabled", "true");                   // 网页源定时刷新总开关（仅 file_type=url 且文档开启 autoRefresh 才刷新）
         d.put("web.refreshScanIntervalMs", "60000");           // 网页源到期扫描间隔(ms，≤0=暂停扫描)
-        // 原 yml 参数开放为可配置（值由 syncProperties 回写到 AppProperties，读取点无需改动）
-        // 注：chunk.maxSize / chunk.headingDepth 已在上方按 properties 播种（保证 yml/env 覆盖生效），此处不得再写死覆盖
-        d.put("images.maxWidth", "1280");              // 图片压缩最长边(px,0=不压缩)
-        d.put("images.quality", "0.9");                // JPEG 压缩质量
-        d.put("images.authEnabled", "true");               // 图片签名鉴权开关（默认开：签名 URL 防盗链，关掉等于图片裸奔）
-        d.put("images.authExpireSeconds", "3600");     // 签名 URL 有效期(秒)
-        d.put("vision.timeoutMillis", "30000");        // 视觉模型读取超时(ms，RestClient 构建期读取，需重启生效)
-        d.put("vision.retryCount", "1");               // 单图失败重试次数
-        d.put("session.maxHistory", "10");             // 会话保留轮数
-        d.put("session.expireMinutes", "30");          // 会话过期(分钟)
-        // 查询改写（默认值取 bean，单一来源；消费方 ChatService 经 syncProperties 回写后热生效）
-        // 图片相关性校验（读取点 ChatService；defaults 取 bean）
+        // 原 yml 参数开放为可配置（默认值取 bean，yml/env 可覆盖；再由 syncProperties 回写 AppProperties，
+        // 读取点无需改动）。与 chunk / retrieval / ratelimit 同口径：这里写死字面量会让 yml 配置无声失效。
+        d.put("images.maxWidth", String.valueOf(properties.getImages().getMaxWidth()));          // 图片压缩最长边(px,0=不压缩)
+        d.put("images.quality", String.valueOf(properties.getImages().getQuality()));            // JPEG 压缩质量
+        d.put("images.authEnabled", String.valueOf(properties.getImages().isAuthEnabled()));     // 图片签名鉴权开关（默认开：签名 URL 防盗链）
+        d.put("images.authExpireSeconds", String.valueOf(properties.getImages().getAuthExpireSeconds())); // 签名 URL 有效期(秒)
+        d.put("vision.timeoutMillis", String.valueOf(properties.getVision().getTimeoutMillis())); // 视觉模型读取超时(ms，RestClient 构建期读取，需重启生效)
+        d.put("vision.retryCount", String.valueOf(properties.getVision().getRetryCount()));       // 单图失败重试次数
+        d.put("session.maxHistory", String.valueOf(properties.getSession().getMaxHistory()));     // 会话保留轮数
+        d.put("session.expireMinutes", String.valueOf(properties.getSession().getExpireMinutes())); // 会话过期(分钟)
+        // 图片相关性校验（读取点 ImageFilterService；defaults 取 bean）
         d.put("imageFilter.enabled", String.valueOf(properties.getImages().getImageFilter().isEnabled()));
         d.put("imageFilter.minHits", String.valueOf(properties.getImages().getImageFilter().getMinHits()));
         d.put("imageFilter.preContextChars", String.valueOf(properties.getImages().getImageFilter().getPreContextChars()));
@@ -473,24 +495,22 @@ public class ConfigService {
         // 聊天附件：上传换 fileId 落盘，超保留期由 ScheduleCenter 清理（0=不清理）
         d.put("chat.uploadRetentionHours", "24");
         d.put("chat.uploadCleanupIntervalMs", "3600000");
-        d.put("retrieval.relatedCount", "3");
         d.put("parse.embedBatchSize", String.valueOf(ConfigDefaults.PARSE_EMBED_BATCH_SIZE));
         d.put("parse.ocrDpi", "200");
         d.put("parse.ocrEngine", "none");      // PDF 深度解析引擎：none=文本抽取+扫描件视觉兜底（默认）/ vision=整份逐页视觉OCR / pp_structure_v3 / mineru=外部版面解析服务（失败 fail-loud 不回落）
-        d.put("parse.ocrPpUri", "");       // PP-StructureV3 服务地址（健康检查 GET {uri}/health；未配置则引擎 fail-loud）
-        d.put("parse.ocrMineruUri", "");  // MinerU 服务地址（宿主端口 30011：30001 与 IDEA 内置服务冲突；容器内仍是 30001；未配置则引擎 fail-loud）
-        d.put("parse.ocrMineruBackend", "pipeline"); // MinerU 解析后端：pipeline=CPU 稳（默认）/ hybrid-auto-engine=本地 VLM 高精度（需算力）
-        d.put("parse.ocrTimeoutMs", String.valueOf(ConfigDefaults.PARSE_OCR_TIMEOUT_MS)); // 版面引擎单次调用超时(ms)：大 PDF 版面解析慢，默认 10 分钟
+        d.put("parse.ocrPpUri", env("OCR_PP_STRUCTURE_URI", ""));       // PP-StructureV3 服务地址（环境变量；未配置则引擎 fail-loud）
+        d.put("parse.ocrMineruUri", env("OCR_MINERU_URI", ""));         // MinerU 服务地址（环境变量；未配置则引擎 fail-loud）
+        d.put("parse.ocrMineruBackend", env("OCR_MINERU_BACKEND", "pipeline")); // pipeline=CPU 稳 / hybrid-auto-engine=本地 VLM 高精度
+        d.put("parse.ocrTimeoutMs", env("OCR_TIMEOUT_MS", String.valueOf(ConfigDefaults.PARSE_OCR_TIMEOUT_MS))); // 版面引擎单次调用超时(ms)
         d.put("ratelimit.windowSeconds", "60");
         d.put("cache.docMetaTtlSeconds", "600");
-        // 工具调用（Function Calling）总开关与知识库精确检索工具
-        d.put("tool.enabled", "true");                     // 工具调用总开关（默认开：算术/时间等无副作用能力不该要用户先开箱）
-        d.put("tool.knowledgeRetrieval.enabled", "true");  // 知识库精确检索工具开关（需总开关开启）
+        // 问渠工具总开关（只管理问渠注册的工具；AgentScope 原生文件/命令/记忆/技能由权限档位与各自配置控制）
+        d.put("tool.enabled", "true");
+        // tool.knowledgeRetrieval.enabled / tool.artifact.enabled / tool.builtin.enabled /
+        // tool.subagentConsult.enabled / tool.todo.enabled / tool.mcpCiteEnabled / tool.spillEnabled
+        // 已退役（2026-10）：低风险工具默认随总闸启用，按智能体三态或平台停用名单 tool.deny 收口；
+        // 工具大输出留存与 MCP 引用注册改为固定行为，不再各留一个平台开关。
         d.put("tool.knowledgeRetrieval.maxHits", "5");     // 精确检索工具单次返回命中块上限(1~5)
-        d.put("tool.artifact.enabled", "true");            // 产物交付工具开关（需总开关开启；生成 Markdown/CSV/JSON/HTML 文件并推送）
-        d.put("tool.todo.enabled", "false");               // 任务清单工具开关（默认关：多步任务才用得上，开着会给每轮多一个工具）
-        d.put("tool.builtin.enabled", "true");             // 内置高频工具开关（需总开关开启；计算/当前时间/日期差）
-        d.put("tool.mcpCiteEnabled", "true");              // MCP 工具结果注册引用来源（结果文本带 http(s) URL 才注册；默认开）
         d.put("tool.mcpCiteMaxRefs", "10");                // MCP 引用注册单轮上限（隐藏参数，DB 可调；无设置页字段）
         // ---------- 联网搜索（工具 webSearch；结果注册进引用体系，与知识库来源同 [N] 编号）----------
         // 注意：webSearch.apiKey 以 .apiKey 结尾 → 走敏感项 RSA 密文入库（isSensitiveKey），改不得命名
@@ -508,11 +528,13 @@ public class ConfigService {
         d.put("webSearch.timeoutMs", "8000");             // 单次请求超时(ms)
         d.put("webSearch.snippetChars", "600");           // 单条摘要截断字符数（控制工具结果 token 量）
         d.put("webSearch.requireApproval", "true");       // 是否纳入"有副作用工具"：true=受智能体 toolApprovalMode=ask 管辖。默认开：联网是唯一会向外部第三方发请求、可能对用户计费的能力，让模型自主决定花谁的钱不该是默认态
-        // 技能正文的写入已由 AgentScope 框架接管（内置随版本分发 + 本人技能目录 + 助手在对话里沉淀到
-        // 沙盒工作区），这里只剩两项：一条技能全文能读进来多少字（本轮点名时按它截断，防止一篇长技能
-        // 吃掉整轮上下文），以及「哪些技能不要再用」（平台层对所有人、个人层只对自己，一行一条技能名）。
-        d.put("skill.maxFileChars", String.valueOf(ConfigDefaults.SKILL_MAX_FILE_CHARS));              // 单技能全文读取上限
+        // 技能：内置随版本分发 + 用户自装（user-data/skills-users/{uid}）+ 助手在对话里沉淀到沙盒工作区。
+        // 平台侧只剩两件事：哪些技能全平台不再用（skill.disabled），以及 URL 安装允许哪些来源域名。
+        // 技能正文读取上限改为平台常量（SKILL_MAX_FILE_CHARS），不再作为设置项。
         d.put("skill.disabled", "");                                                                   // 停用清单（平台层）
+        // 用户自助安装（粘贴/zip/URL）开启后，URL 安装只允许这些域名（精确匹配；空=关闭远程安装）。
+        // 服务端仍会逐跳做公网校验（SsrfGuard），这里只回答「允许从哪儿拉」。
+        d.put("skill.remoteAllowedHosts", "");
 
         // ---------- 单点登录（OIDC）----------
         // 语义与平台版 config/options.py 的 OIDCConfig 一致（字段名改成 camelCase 落 c_ai_config）：
@@ -541,11 +563,13 @@ public class ConfigService {
         // ---------- 沙盒（隔离执行环境）----------
         // 语义与问渠新栈的环境变量一一对应（SANDBOX_PROVISIONER_URL / TOKEN / DELETE_TIMEOUT_SECONDS /
         // KEEPALIVE_INTERVAL_SECONDS / VIRTUAL_PATH_PREFIX / EXEC_TIMEOUT_SECONDS / MAX_OUTPUT_BYTES），
-        // 但改走 config-schema：本工程配置唯一来源是 c_ai_config，设置页可改、保存即生效（client 懒构建）。
-        // token 走敏感项（.token 后缀 ⇒ RSA 密文入库 + 快照只回显后 4 位）。
-        d.put("sandbox.provisionerUrl", "http://127.0.0.1:8002"); // provisioner 服务地址
-        d.put("sandbox.token", "");                               // 访问令牌（≥32 字符，不足拒绝启用）
-        d.put("sandbox.virtualPathPrefix", "/home/gem/user-data");// 沙盒内可读写根
+        // 沙盒连接参数属于部署配置，走环境变量而不是设置页：
+        //   SANDBOX_PROVISIONER_URL / SANDBOX_PROVISIONER_TOKEN / SANDBOX_VIRTUAL_PATH_PREFIX /
+        //   SANDBOX_CALLBACK_BASE_URL
+        // token 仍走敏感项（.token 后缀 ⇒ RSA 密文入库 + 快照只回显后 4 位）。
+        d.put("sandbox.provisionerUrl", env("SANDBOX_PROVISIONER_URL", "http://127.0.0.1:8002"));
+        d.put("sandbox.token", env("SANDBOX_PROVISIONER_TOKEN", ""));
+        d.put("sandbox.virtualPathPrefix", env("SANDBOX_VIRTUAL_PATH_PREFIX", "/home/gem/user-data"));
         d.put("sandbox.commandTimeoutSeconds", "180");            // 单条命令超时（秒）
         d.put("sandbox.maxOutputBytes", "262144");                // 单条命令输出上限（字节）
         d.put("sandbox.keepaliveIntervalSeconds", "30");          // keepalive 间隔（秒，≤0 关闭）
@@ -555,7 +579,7 @@ public class ConfigService {
         // 沙盒里的脚本要回调平台工具（P3b run_code）时的回程地址。容器各自挂在自己的 bridge 网络上，
         // 本机实测 host.docker.internal 可解析且能打到应用端口；生产的拓扑不同，所以这项必须显式配置。
         // 留空 = 不提供子调用（run_code 会明确说"回调地址没配"，而不是让脚本每次都超时）。
-        d.put("sandbox.callbackBaseUrl", "http://host.docker.internal:8090/ai");
+        d.put("sandbox.callbackBaseUrl", env("SANDBOX_CALLBACK_BASE_URL", "http://host.docker.internal:8090/ai"));
         // ---------- 沙盒脚本（P3b：一次做完一批同类活）----------
         d.put("tool.runcode.enabled", "false");             // 默认关：能力形态变化，由管理员决定谁先开
         d.put("tool.runcode.maxSubCalls", "50");            // 单次运行的子调用总上限（脚本扇出去的工具调用次数）
@@ -570,15 +594,12 @@ public class ConfigService {
         // 远端 provisioner 部署下这里读不到，接口会如实返回「不可用」而不是假装空列表）
         d.put("sandbox.userDataHostDir", System.getProperty("user.dir") + "/user-data");
         d.put("sandbox.projectWorkdirEnabled", "false");
-        d.put("tool.sandbox.enabled", "false");                   // 沙盒工具总开关（跟随 tool.enabled）
+        d.put("tool.sandbox.enabled", "false");                   // 沙盒 API / 工作流节点开关（不是聊天里的文件/命令工具）
         // ---------- 权限档位（P2：沙盒执行档 × 工具执行确认，捆成具名预设）----------
         // 档位取值见 PermissionPreset：research=只读调研 standard=常规 autonomous=全自主。
         // 上限默认放到最高档=不钳制（存量智能体行为逐字不变），管理员收紧后选得更高的档位按上限执行。
         d.put("agent.permissionPreset.default", "standard");      // 智能体未选档时的平台默认档
         d.put("agent.permissionPreset.max", "autonomous");        // 平台允许的最高档（管理员收紧处）
-        // 个人上限（schema personal 标记 → 个人设置页可覆盖，存 c_ai_user_config）：
-        // 生效上限=平台上限与个人上限取低者，所以成员只能往下收、不能靠它绕过管理员的收紧
-        d.put("agent.permissionPreset.personalMax", "autonomous"); // 个人最高档（默认不额外收紧）
         // 平台级工具黑名单（逗号分隔工具名）：管理员一次性停掉某一个工具，不用逐个智能体改。
         // 族级开关（tool.websearch.enabled 等）粒度太粗——关一族会连带关掉同族其它能力；
         // 智能体级黑名单又要求每个智能体都改一遍。这一项补的是中间那一档。
@@ -622,13 +643,15 @@ public class ConfigService {
         d.put("graphrag.expandTopK", "5");                 // P1：检索时图扩展并入的块数上限（0=不扩展）
         // 用户长期记忆（跨会话个性化）
         d.put("memory.enabled", "true");                   // 总开关：关掉后全平台问答不再自动提炼记忆（已沉淀的仍会注入）
+        d.put("memory.flushThrottleMinutes", String.valueOf(ConfigDefaults.MEMORY_FLUSH_THROTTLE_MINUTES));
+        d.put("memory.consolidationMaxTokens", String.valueOf(ConfigDefaults.MEMORY_CONSOLIDATION_MAX_TOKENS));
+        d.put("memory.maxMdTokens", String.valueOf(ConfigDefaults.MEMORY_MAX_MD_TOKENS));
+        d.put("memory.dailyRetentionDays", String.valueOf(ConfigDefaults.MEMORY_DAILY_RETENTION_DAYS));
         // 已退役：agent.autoRoute / agent.routeTimeoutMs（派遣路由的两项）。P5 换成 agent-as-tool 后这两项
         // 的读取点随 SubAgentOrchestrator 一起归零——见本方法上方那段「已退役」清单的统一说明。
-        // 本轮补做 P5 收口时承诺的这件事：下面的咨询工具是唯一在用的委派机制。
-        d.put("agent.personalDefault", "");                     // 个人默认助手（空=跟随平台默认智能体）：问答流水线线程已装载个人覆盖，解析作答方时直接读
         d.put("agent.consultMaxPerTurn", String.valueOf(ConfigDefaults.AGENT_CONSULT_MAX_PER_TURN));   // 一轮最多咨询几位助手
         d.put("agent.consultTimeoutMs", String.valueOf(ConfigDefaults.AGENT_CONSULT_TIMEOUT_MS));      // 单次咨询等那条子轮的上限
-        d.put("tool.subagentConsult.enabled", "true");                                                 // 咨询工具族开关（仍受工具总闸 tool.enabled 管）
+        // tool.subagentConsult.enabled 已退役：咨询工具随总闸启用，平台级收口走 tool.deny（按工具名 consultAgent）。
         // 智能体配置版本快照保留份数（超出按版本号最小先删）；设置页挂在「定时任务 → 智能体配置版本」
         d.put("agent.versionKeep", "20");
         // mcp.enabled / mcp.servers 已移除：MCP **客户端**改为每人自己的 c_ai_user_mcp（见 McpClientService）
@@ -700,7 +723,7 @@ public class ConfigService {
     private static final ThreadLocal<Map<String, String>> OVERRIDE = new ThreadLocal<>();
 
     /**
-     * 个人配置覆盖（个人设置 → 对话偏好）的线程局部快照：由问答流水线在装载身份后一次性载入
+     * 个人配置覆盖（schema personal 字段）的线程局部快照：由问答流水线在装载身份后一次性载入
      * （键仅限 schema 标记 personal 的字段），只作用于本线程——管理端读取（Tomcat 线程）与
      * 定时任务/评估等无用户上下文的线程读到的仍是全局值。
      * <p>
@@ -726,7 +749,8 @@ public class ConfigService {
      * 都要回来补一处判断，漏掉就会明文落库且界面回显完整密钥。</p>
      */
     private static boolean isSensitiveKey(String key) {
-        return key != null && (key.endsWith(".apiKey") || key.endsWith(".clientSecret") || key.endsWith(".token"));
+        return key != null && (key.endsWith(".apiKey") || key.endsWith(".clientSecret")
+                || key.endsWith(".token") || key.endsWith("Password"));
     }
 
     /**
@@ -753,7 +777,7 @@ public class ConfigService {
     }
 
     /**
-     * 装载本轮用户的个人配置覆盖（个人设置 → 对话偏好；键仅限 schema 标记 personal 的字段）。
+     * 装载本轮用户的个人配置覆盖（键仅限 schema 标记 personal 的字段）。
      * 调用方（问答流水线线程）负责 finally 里 {@link #clearUserOverrides()}；空/null 视为清除。
      */
     public void putUserOverrides(Map<String, String> overrides) {
@@ -974,6 +998,12 @@ public class ConfigService {
         // 视觉网关地址校验已移除：vision.baseUrl 不在可编辑白名单、也无运行时读取点
         // （视觉网关来自供应商表），保留这段只会校验一个永远不会被消费的键
 
+        // 值真的变了才通知（前端保存总是提交当前值；不能把「点了一次保存」当成配置变更）
+        Set<String> changedKeys = new LinkedHashSet<>();
+        for (String key : updates.keySet()) {
+            if (!java.util.Objects.equals(get(key), updates.get(key))) changedKeys.add(key);
+        }
+
         // 敏感 key RSA 加密入库：明文→密文（已加密值原样保留；空值不加密直接存空）
         for (Map.Entry<String, String> kv : updates.entrySet()) {
             String v = kv.getValue();
@@ -1009,6 +1039,7 @@ public class ConfigService {
         cache = newCache;
         syncProperties();
         log.info("模型配置已更新: {}", updates.keySet());
+        notifyConfigChanged(changedKeys);
         // 广播其他实例刷新（多副本部署配置同步）
         publishConfigChanged();
         // 自动全量重建（仅真实切换 mysql→meilisearch 时；reindexAll 内部有防重入与可用性检查）
@@ -1033,13 +1064,13 @@ public class ConfigService {
      *   <li>keyword.engine 不触发索引联动（恢复 mysql 后关键词走 MySQL LIKE，Meili 索引可留待后续重建）。</li>
      * </ul>
      *
-     * @param groups 待恢复分组（chat/vision/chunk/parse/upload/retrieval/rerank/keyword/context/deepReasoning/ratelimit）
+     * @param groups 待恢复分组（chat/vision/chunk/parse/upload/retrieval/rerank/keyword/context/ratelimit）
      * @return 实际恢复的键值
      */
     public Map<String, String> resetDefaults(Collection<String> groups) {
         Set<String> allowed = new HashSet<>(List.of(
                 "chat", "vision", "chunk", "parse", "upload", "retrieval", "rerank",
-                "keyword", "context", "deepReasoning", "ratelimit"));
+                "keyword", "context", "ratelimit"));
         Set<String> targets = new HashSet<>();
         for (String g : groups) {
             if (g == null || g.isBlank() || !allowed.contains(g)) {
@@ -1057,7 +1088,7 @@ public class ConfigService {
             String k = e.getKey();
             int dot = k.indexOf('.');
             if (dot <= 0 || !targets.contains(k.substring(0, dot))) continue;
-            if (isSensitiveKey(k)) continue; // 密钥不随"恢复默认"清空
+            if (isSensitiveKey(k) || schema.isPersonalOnly(k)) continue; // 密钥不随"恢复默认"清空；个人专属键无全局槽位
             String v = e.getValue();
             try {
                 Config c = configMapper.selectById(k);
@@ -1078,8 +1109,13 @@ public class ConfigService {
             next.put(k, v);
             reset.put(k, v);
         }
+        Set<String> changedKeys = new LinkedHashSet<>();
+        for (Map.Entry<String, String> e : reset.entrySet()) {
+            if (!java.util.Objects.equals(get(e.getKey()), e.getValue())) changedKeys.add(e.getKey());
+        }
         cache = next;
         syncProperties();
+        notifyConfigChanged(changedKeys);
         publishConfigChanged();
         log.info("[Config] 分组恢复默认完成: {}（{} 项）", targets, reset.size());
         return reset;
@@ -1087,12 +1123,13 @@ public class ConfigService {
 
     /**
      * 系统内部回写（不经字段定义白名单）：供运行流程记录"既成事实"型配置，
-     * 当前唯一用途是全量重嵌入成功后回写 embedding.dimensions（当前索引维度）。
+     * 当前唯一用途是评估体检报告写 eval.lastReport（看板红绿灯读取）。
      * 与 update() 的区别：不做业务校验、不加密、不触发重嵌入/重建索引等联动，
      * 只落库 + 刷新本地缓存 + 广播其他副本。失败仅告警（记录性数据，不阻断主流程）。
      */
     public void putInternal(String key, String value) {
         try {
+            String old = get(key);
             Config c = configMapper.selectById(key);
             if (c == null) {
                 c = new Config();
@@ -1108,6 +1145,9 @@ public class ConfigService {
             newCache.put(key, value);
             cache = newCache;
             syncProperties();
+            if (!java.util.Objects.equals(old, value)) {
+                notifyConfigChanged(Set.of(key));
+            }
             publishConfigChanged();
             log.info("[Config] 系统内部记录已更新: {}={}", key, value);
         } catch (Exception e) {

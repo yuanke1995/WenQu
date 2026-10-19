@@ -27,7 +27,7 @@ public final class WorkflowRunCtx {
     /** 触发线程的参数覆盖快照（节点线程内重放；见 ConfigService.currentOverrides 的跨线程口径） */
     final Map<String, String> baseOverrides;
     /**
-     * 触发者的个人配置覆盖快照（个人设置 → 对话偏好/模型默认；节点线程内重放）。
+     * 触发者的个人配置覆盖快照（schema personal 字段；节点线程内重放）。
      * 模型引用只认归属人（personalOnly 键全局层不参与读取）：工作流检索/重排等节点若不带
      * 触发者的个人值，就会退化为"未配置"（拿不到本人登记的模型），故与 baseOverrides 同口径显式携带。
      */

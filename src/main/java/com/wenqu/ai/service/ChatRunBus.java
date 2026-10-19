@@ -44,7 +44,8 @@ import java.util.function.Supplier;
  *       宽限不许把它掐了：那是对用户承诺过的行为（判据在框架会话侧的挂起态，见 {@code FrameworkSessions}）；</li>
  *   <li><b>只在内存</b>：进程重启后轮已经没了，此时接流方拿 {@code running:false}，按历史落库回显（与今天一致）；</li>
  *   <li>游客分享会话与工作流/定时任务的收集型通道（{@code CollectingSseEmitter}）不登记总线；</li>
- *   <li>开关 {@code chat.resumeEnabled} 关掉后一条事件都不接，行为回到「断开即中止、刷新看不到在跑的轮」。</li>
+ *   <li>回滚开关 {@code chat.resumeEnabled}（已从设置页移除，仅保留配置行供排障）关掉后一条事件都不接，
+ *       行为回到「断开即中止、刷新看不到在跑的轮」。</li>
  * </ul>
  *
  * @author yuanke

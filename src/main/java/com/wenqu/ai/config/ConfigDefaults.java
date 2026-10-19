@@ -24,6 +24,8 @@ public final class ConfigDefaults {
     public static final double RETRIEVAL_MIN_CONTEXT_SCORE = 0.6;
     /** retrieval.minFusionScore：融合分门（未启用重排时生效；2026-10-04 评测基线标定） */
     public static final double RETRIEVAL_MIN_FUSION_SCORE = 0.5;
+    /** 多路检索共识加分（仅评测的多路近似使用；原 retrieval.multiConsensusBonus 已随深度思考退役） */
+    public static final double RETRIEVAL_MULTI_CONSENSUS_BONUS = 0.03;
     /** rerank.minHits：候选少于该数不触发 cross-encoder（隐藏参数：仅 DB 可调） */
     public static final int RERANK_MIN_HITS = 6;
     /** rerank.maxHits：只重排融合分最高的前 N 块（隐藏参数：仅 DB 可调） */
@@ -49,7 +51,7 @@ public final class ConfigDefaults {
 
     // ---- 其它多读点项 ----
 
-    /** skill.maxFileChars：单个技能全文读取字符上限 */
+    /** 单个技能全文读取字符上限（平台常量，不再作为设置项） */
     public static final int SKILL_MAX_FILE_CHARS = 20_000;
     /** mcp.server.timeoutMs：MCP Server 单次工具调用等待超时 */
     public static final int MCP_SERVER_TIMEOUT_MS = 180_000;
@@ -61,6 +63,18 @@ public final class ConfigDefaults {
     public static final int AGENT_CONSULT_MAX_PER_TURN = 3;
     /** agent.consultTimeoutMs：单次咨询要等那条子轮跑完的上限（超时按失败回报，不拖垮父轮） */
     public static final int AGENT_CONSULT_TIMEOUT_MS = 120_000;
+
+    // ---- 长期记忆 ----
+
+    /** memory.flushThrottleMinutes：每轮收尾的自动提炼最短间隔（分钟；0=每轮都提炼） */
+    public static final int MEMORY_FLUSH_THROTTLE_MINUTES = 10;
+    /** memory.consolidationMaxTokens：consolidation prompt 的目标 token 上限 */
+    public static final int MEMORY_CONSOLIDATION_MAX_TOKENS = 2_000;
+    /** memory.maxMdTokens：MEMORY.md 的硬上限（写入落盘时按 4 字符/token 裁剪） */
+    public static final int MEMORY_MAX_MD_TOKENS = 3_000;
+    /** memory.dailyRetentionDays：日账归档前的保留天数 */
+    public static final int MEMORY_DAILY_RETENTION_DAYS = 90;
+
     /** sandbox.cleanupIntervalMs：沙盒空闲回收扫描间隔 */
     public static final int SANDBOX_CLEANUP_INTERVAL_MS = 600_000;
 

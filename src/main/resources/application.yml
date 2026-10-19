@@ -71,8 +71,9 @@ spring:
       image: false
       moderation: false
     # 模型网关一律来自「模型供应商」表（c_ai_provider，API Key RSA 加密入库）：
-    # 聊天 = 会话覆盖/个人默认的模型引用，视觉 = 知识库 parse_params.visionRef，向量 = kb.embedding_ref，
-    # 记忆向量化 = memory.platformEmbeddingRef（平台内置，管理员统一托管）。这里不再存任何网关/密钥兜底值——解析不出的引用一律 fail-loud。
+    # 聊天 = 会话覆盖/个人默认的模型引用，视觉 = 知识库 parse_params.visionRef，向量 = kb.embedding_ref；
+    # 记忆提炼由 AgentScope 记忆中间件复用本轮会话模型（不再单独配模型引用）。
+    # 这里不再存任何网关/密钥兜底值——解析不出的引用一律 fail-loud。
     # 关闭全局 RedisVectorStore 自动装配（per-KB 独立索引由 KbVectorStoreRegistry 管理）
     vectorstore:
       type: none
@@ -106,16 +107,14 @@ ai-app:
     # 混合检索融合权重（DB c_ai_config 可覆盖，设置页保存即生效）
     vector-weight: 0.6
     keyword-weight: 0.4
-    title-bonus: 0.1
     # 重排（独立 reranker 服务，OpenAI 兼容 /v1/rerank；由外部供应商网关或自建服务承载，无本地脚本）
     # 默认开：重排是引用质量的根基（融合分排序会把词面重叠的无关块放进上下文）。
     # 未绑定重排模型或服务不可用时不会阻塞问答——按融合分排序并 fail-loud 标记 rerankUnavailable，
     # 且失败有 60s 冷却，不会反复打未启动的服务。设 AI_RERANK_ENABLED=false 可显式关掉。
+    # 模型引用归知识库/智能体检索设置绑定，不在这里配全局模型名；超时见 DB 隐藏键 rerank.timeoutMillis。
     rerank:
       enabled: ${AI_RERANK_ENABLED:true}
       base-url: ${AI_RERANK_BASE_URL:}
-      model: ${AI_RERANK_MODEL:}
-      timeout-ms: 5000
   # 关键词召回引擎（mysql=LIKE 零依赖但全表扫描；meilisearch=外部索引，中文分词+相关度打分）
   # 切到 meilisearch 后需先 POST /api/ai/search-index/reindex 建索引；服务不可用时自动降级回 mysql
   keyword:
@@ -140,13 +139,14 @@ ai-app:
     # 生产必须通过 AI_IMAGES_DIR 指定容器内绝对路径（docker-compose 已设 /app/data）。
     dir: ${AI_IMAGES_DIR:./data}
     # 图片压缩：最长边像素，超过则等比缩小（0=不压缩）。压缩图仅供视觉模型识别（展示用原图）
-    # 1280 是 qwen3-vl 视觉 token（约 1600-2500）下的最佳清晰度档，小字截图可识别；需配合 vision.num-ctx 防截断
+    # 1280 是 qwen3-vl 视觉 token（约 1600-2500）下的最佳清晰度档，小字截图可识别；需配合视觉模型的上下文/输出上限防截断
     max-width: 1280
     # JPEG 压缩质量（0~1），带透明通道的图自动转 PNG 无损保留
     quality: 0.9
     url-prefix: /ai/images
     # 图片访问鉴权（HMAC 签名 URL + 过期时间；默认开启——漏配环境变量的独立部署不会裸奔暴露文档截图。
-    # 本地开发如需关闭：在外部 config/application-local.yml 中设 ai-app.images.auth-enabled: false）
+    # 本地开发如需关闭：在外部 config/application-local.yml 中设 ai-app.images.auth-enabled: false。
+    # 注意这些 images.* 值只在首次启动灌入 c_ai_config；已灌库后以设置页/DB 为准，改 yml 不会覆盖存量值）
     auth-enabled: ${AI_IMAGES_AUTH_ENABLED:true}
     # 签名有效期（秒）
     auth-expire-seconds: 3600
@@ -157,32 +157,9 @@ ai-app:
       pre-context-chars: 100
   # 视觉模型不在此配置：模型按知识库绑定（parse_params.visionRef → 「模型供应商」表），
   # 行为参数（开关/提示词/并发/超时/重试/缓存）统一在系统设置页维护（c_ai_config）
-  # 上下文与长度控制（价值驱动填充：预算 = 模型窗口×安全系数−最大输出，块按相关度累积）。
-  # 窗口/最大输出无全局配置：按模型在「模型管理」声明（对话类窗口必填）；安全系数固定 0.7
+  # 上下文填充配额（窗口/最大输出按模型声明；安全系数固定 0.7）
   context:
-    # 对话历史注入上限与单条截断
-    history-max-tokens: 1200
-    history-per-msg-chars: 200
-    # 知识块命中片段窗口（命中关键词前后各 N 字，0=整块）
-    snippet-window-chars: 150
     max-context-hits: 8
-  # 深度思考（生产级：思考流式 → 提取检索计划 → 多路并行检索 → 回答）
-  deep-reasoning:
-    enabled: ${AI_DEEP_REASONING_ENABLED:true}
-    # 思考模式：model=透传 enable_thinking 从 reasoning_content 提取；prompt=提示词引导输出到 content
-    thinking-mode: ${AI_DEEP_REASONING_MODE:model}
-    # 是否透传 enable_thinking=true（thinkingMode=model 时生效）
-    enable-thinking: true
-    # 检索计划标签名
-    search-tag: search
-    # 最大子问题数（不含精化 query）
-    max-sub-queries: 3
-    # 多路并行检索开关
-    multi-retrieval: true
-    # 思考阶段超时(ms)
-    timeout-millis: 30000
-    # 思考输出上限 token（0=不设，规避 qwen 思考模式 max_tokens 空输出）
-    max-thinking-tokens: 0
   # 本地登录鉴权（JWT + PBKDF2，纯 JDK 实现）——唯一认证体系：
   # 管理员由登录角色（admin/superadmin）判定；API Key 仅开放问答链路端点。
   auth:

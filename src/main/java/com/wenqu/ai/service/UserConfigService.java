@@ -17,7 +17,7 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 个人配置覆盖服务（个人设置 → 对话偏好）：个人值覆盖系统全局值（c_ai_config），仅对本人问答生效。
+ * 个人配置覆盖服务：个人值覆盖系统全局值（c_ai_config），仅对本人问答生效。
  * <p>
  * 键限定为 config-schema.json 中标记 {@code personal} 的字段（schema 是字段定义的唯一定义源，
  * 加参数只改 schema 勾选，本服务与前端页面自动跟随）；校验复用 {@link ConfigSchemaService#validate}
