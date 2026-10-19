@@ -485,12 +485,13 @@ public class ChatController {
             @RequestBody Map<String, Object> body) {
         boolean ignore = Boolean.TRUE.equals(body.get("ignore"));
         String uid = com.wenqu.ai.util.RequestUser.uid();
+        // 一卡多问：answers 为与问题下标对齐的答案数组（一题一项，多选的那几项已由前端并成一项里的
+        // 一个串）；兼容旧式单答案 {answer}。两处出口共用这一份解析，不再各抄一遍取数
+        java.util.List<String> answers = answersFromBody(body);
         // 框架引擎的提问卡走框架待办（挂起→答复→由框架接续原任务），不属于它才回落旧通道；
         // 忽略＝把「用户没答」原样送回模型，绝不替用户编一个答案
         if (!ignore) {
-            String text = String.valueOf(java.util.Optional.ofNullable(body.get("answers"))
-                    .orElse(java.util.Optional.ofNullable(body.get("answer")).orElse("")));
-            if (frameworkSessions.respondAsk(askId, text) != null) {
+            if (frameworkSessions.respondAsk(askId, frameworkAskText(answers)) != null) {
                 return ResultJson.ok("已提交");
             }
         }
@@ -498,18 +499,40 @@ public class ChatController {
         if (ignore) {
             ok = hitl.resolveAskIgnore(askId, uid);
         } else {
-            // 一卡多问：answers 为与问题下标对齐的答案数组；兼容旧式单答案 {answer}
-            java.util.List<String> answers = new java.util.ArrayList<>();
-            Object raw = body.get("answers");
-            if (raw instanceof java.util.List<?> list) {
-                for (Object x : list) if (x != null) answers.add(String.valueOf(x));
-            } else if (body.get("answer") != null) {
-                answers.add(String.valueOf(body.get("answer")));
-            }
             ok = hitl.resolveAsk(askId, answers, uid);
         }
         if (!ok) return ResultJson.error("提问已结束，这次作答没能送达智能体");
         return ResultJson.ok(ignore ? "已忽略，智能体将自行判断" : "已提交");
+    }
+
+    /** 作答请求体 → 与问题下标对齐的答案数组（旧式单答案 {@code {answer}} 也归一成一项）。 */
+    static java.util.List<String> answersFromBody(java.util.Map<String, Object> body) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        Object raw = body.get("answers");
+        if (raw instanceof java.util.List<?> list) {
+            for (Object x : list) if (x != null) out.add(String.valueOf(x));
+        } else if (body.get("answer") != null) {
+            out.add(String.valueOf(body.get("answer")));
+        }
+        return out;
+    }
+
+    /**
+     * 框架提问卡送回答给模型的文本。
+     * <p>此前这里是 {@code String.valueOf(answers)}：Java 的 {@code List.toString()} 会把中括号连同
+     * 逗号一起交给模型（用户选「火锅」，模型读到 {@code [火锅]}）。多题按与问题下标对齐的 JSON 数组送
+     * ——与问答侧 {@code HitlDecisionService#buildCombinedAnswer} 同形，问答记录卡才拆得出每题答复。
+     * <p>整题空提交（没选就点了提交）送一句「用户未回答这一题…」，而不是送空串：那句前缀是
+     * 前端把这一题标成「未作答」的判据，也与超时/忽略那两条出口同一个词根——三种「没答」在模型眼里
+     * 不该是三种形状，空串更会被读成「答了但答不上来」。留空的那一题<b>按位置补</b>，不做过滤：
+     * 数组一旦变短，模型会把第 2 题的答案当成第 1 题的。
+     */
+    static String frameworkAskText(java.util.List<String> answers) {
+        if (answers.isEmpty()) return "（用户未回答这一题（点了提交但没有选择答案））";
+        java.util.List<String> one = answers.stream().map(String::trim)
+                .map(s -> s.isEmpty() ? "（用户未回答这一题（点了提交但没有选择答案））" : s).toList();
+        if (one.size() == 1) return one.get(0);
+        return com.alibaba.fastjson2.JSON.toJSONString(one);
     }
 
     @Operation(summary = "待答提问（恢复）", description = "按会话列本人仍挂在 PENDING 的 askUser 提问卡，"
