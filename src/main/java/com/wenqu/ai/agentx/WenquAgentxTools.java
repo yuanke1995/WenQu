@@ -181,7 +181,7 @@ public class WenquAgentxTools {
                                        java.util.function.BiConsumer<String, String> onDegrade,
                                        boolean approvalCanAsk) {
         var mc = toolAssembly.mountContext(agentOf(cmd), cmd.getUserId(), cmd.isGuestMode(),
-                false, cmd.branchTurn(), onDegrade, policy);
+                cmd.branchTurn(), onDegrade, policy);
         List<Object> holders = new java.util.ArrayList<>(turnTools(cmd, slot));
         // 建实例时才能定下来的工具面：脚本子调用要用同一批回调，逐轮只换轮号/通道/台账。
         // 工具闭包里<b>只允许</b>捕获这个会话级槽位（slot），按轮的数据一律调用时现取——
@@ -417,7 +417,7 @@ public class WenquAgentxTools {
      */
     public String consultGuide(ChatCommand cmd) {
         var mc = toolAssembly.mountContext(agentOf(cmd), cmd.getUserId(), cmd.isGuestMode(),
-                false, cmd.branchTurn(), (code, message) -> {
+                cmd.branchTurn(), (code, message) -> {
                 }, null);
         if (!toolRegistry.exposes(com.wenqu.ai.agent.tool.ToolFamily.SUBAGENT, "consultAgent", mc)) return "";
         return agentService.consultGuideSection(cmd.getAgentId() == null ? "" : cmd.getAgentId());
@@ -571,7 +571,7 @@ public class WenquAgentxTools {
                 configService.putOverrides(hooks.overrides());
                 configService.putUserOverrides(hooks.userOverrides());
                 try {
-                    return delegate.searchKnowledge(query, topK, t.scope(), t.pool().registrar(), false);
+                    return delegate.searchKnowledge(query, topK, t.scope(), t.pool().registrar());
                 } finally {
                     configService.clearOverride();
                     configService.clearUserOverrides();
@@ -716,7 +716,6 @@ public class WenquAgentxTools {
             Map<String, Object> m = new java.util.HashMap<>();
             m.put(KnowledgeRetrievalTool.CTX_SOURCE_REGISTRAR, turn.pool().registrar());
             m.put(KnowledgeRetrievalTool.CTX_KB_SCOPE, turn.scope());
-            m.put(KnowledgeRetrievalTool.CTX_REFLECTIVE, false);
             return m;
         }
 

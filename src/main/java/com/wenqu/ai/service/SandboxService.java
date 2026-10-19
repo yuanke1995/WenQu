@@ -1,5 +1,7 @@
 package com.wenqu.ai.service;
 
+import com.wenqu.ai.memory.MemoryBudget;
+import com.wenqu.ai.memory.MemoryCappedFilesystem;
 import com.wenqu.ai.model.Project;
 import com.wenqu.ai.sandbox.ProvisionerSandboxBackend;
 import com.wenqu.ai.sandbox.ProvisionerSandboxClient;
@@ -197,7 +199,11 @@ public class SandboxService {
     private AbstractFilesystem memoryRouted(ProvisionerSandboxFilesystem sandboxFs, String uid) {
         try {
             Path base = memoryRoot(uid);
-            AbstractFilesystem memoryMdFs = new LocalFilesystem(base, true, MEMORY_MAX_FILE_MB);
+            // MEMORY.md 走带硬上限的文件系统：框架的 consolidation prompt 只是建议，
+            // 模型可以写到 57 KB；写入落盘时按 memory.maxMdTokens 裁掉，注入才不会只剩头尾。
+            // 日账是 append-only 原始记录，不裁。
+            AbstractFilesystem memoryMdFs =
+                    new MemoryCappedFilesystem(base, MEMORY_MAX_FILE_MB, MemoryBudget.maxChars(configService));
             AbstractFilesystem memoryDirFs =
                     new LocalFilesystem(base.resolve("memory"), true, MEMORY_MAX_FILE_MB);
             return new RoutedSandboxFilesystem(sandboxFs,

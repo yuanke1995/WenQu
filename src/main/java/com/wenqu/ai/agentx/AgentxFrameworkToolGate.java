@@ -60,14 +60,21 @@ public final class AgentxFrameworkToolGate implements MiddlewareBase {
      * 框架若改名，这里取不到值即按<b>写类</b>处理（fail-closed：漏判成只读比误判成写更危险）。
      */
     private static final Map<String, Boolean> FRAMEWORK_TOOL_WRITES =
-            Map.of(
-                    "read_file", false,
-                    "grep_files", false,
-                    "glob_files", false,
-                    "list_files", false,
-                    "write_file", true,
-                    "edit_file", true,
-                    "execute", true);
+            // Map.of 最多 10 对；这里 11 对（记忆四把补齐后超了），用 ofEntries 保序
+            Map.ofEntries(
+                    Map.entry("read_file", false),
+                    Map.entry("grep_files", false),
+                    Map.entry("glob_files", false),
+                    Map.entry("list_files", false),
+                    Map.entry("write_file", true),
+                    Map.entry("edit_file", true),
+                    Map.entry("execute", true),
+                    // 记忆四把（框架 P3 注册）：读类不写、memory_save 会写 MEMORY.md 与日账。
+                    // 不登记的话它们会走「未登记副作用=按写类」，只读档下连 memory_search 都被拒。
+                    Map.entry("memory_search", false),
+                    Map.entry("memory_get", false),
+                    Map.entry("session_search", false),
+                    Map.entry("memory_save", true));
 
     /** 拒时的回话。措辞与问渠守卫同族：说清「为什么不能」与「接下来怎么办」，模型才能改道。 */
     private static final String DENY_TEMPLATE =
@@ -75,12 +82,33 @@ public final class AgentxFrameworkToolGate implements MiddlewareBase {
                     + "请改用 read_file / grep_files / glob_files / list_files 获取信息，"
                     + "并直接基于已有信息作答；确实需要写入时，请提示用户把权限档位调到可写。";
 
+    /** 子智能体/咨询轮专用拒绝语：那一轮是只读的，别把内部推演写进用户长期记忆。 */
+    private static final String DENY_MEMORY_WRITE =
+            "当前是子智能体只读轮，不能写长期记忆（memory_save 本轮不执行）。"
+                    + "请把结论交回父轮，由父轮统一决定是否记住。";
+
+    /** 普通主轮但档位是只读：同样拒绝写记忆，措辞指向权限档位而不是子轮。 */
+    private static final String DENY_MEMORY_READONLY =
+            "当前是只读档，不能写长期记忆（memory_save 本轮不执行）。"
+                    + "请基于已有信息作答；确实需要记住时，请提示用户把权限档位调到可写。";
+
     private final Set<ExtensionPoint> points = EnumSet.of(ExtensionPoint.ON_ACTING);
 
     /** 本轮策略；按轮取，故用 Supplier 而不是构造期固定。 */
     private final Supplier<ExecutionPolicy> policySupplier;
 
     private volatile String turnLabel = "";
+
+    /**
+     * 本实例是子智能体/咨询轮：只读记忆（保留注入与 search/get），拒绝 memory_save。
+     * <p>为什么闸在 onActing 而不是 build 期摘工具：框架把四把记忆工具打包注册，
+     * 没有「只摘写」的开关；而 disableMemoryTools 会连 MEMORY.md 注入一起关掉（只读也读不到）。
+     */
+    private volatile boolean denyMemoryWrites = false;
+
+    public void denyMemoryWrites(boolean deny) {
+        this.denyMemoryWrites = deny;
+    }
 
     /**
      * 本轮的工具卡记录器（全框架化 P1）。
@@ -146,7 +174,9 @@ public final class AgentxFrameworkToolGate implements MiddlewareBase {
             return next.apply(input);
         }
 
-        String message = String.format(DENY_TEMPLATE, policy.sandboxMode().label(), denied.get(0).getName());
+        String message = denied.stream().allMatch(c -> "memory_save".equals(c.getName()))
+                ? (denyMemoryWrites ? DENY_MEMORY_WRITE : DENY_MEMORY_READONLY)
+                : String.format(DENY_TEMPLATE, policy.sandboxMode().label(), denied.get(0).getName());
         log.info("[agentx] 档位拒绝框架工具 turn={} mode={} tools={}",
                 turnLabel, policy.sandboxMode().code(), denied.stream().map(ToolUseBlock::getName).toList());
 
@@ -208,6 +238,7 @@ public final class AgentxFrameworkToolGate implements MiddlewareBase {
      */
     private boolean permits(ExecutionPolicy policy, String toolName) {
         if (toolName == null || toolName.isBlank()) return true;
+        if (denyMemoryWrites && "memory_save".equals(toolName)) return false;
         if (policy.denies(toolName)) return false;
         Boolean writes = FRAMEWORK_TOOL_WRITES.get(toolName);
         if (writes == null) {

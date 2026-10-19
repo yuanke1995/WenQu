@@ -4,6 +4,7 @@ import com.wenqu.ai.config.AppProperties;
 import com.wenqu.ai.engine.ChatEngineFactory;
 import com.wenqu.ai.service.ConfigService;
 import com.wenqu.ai.service.ModelRegistryService;
+import org.springframework.boot.autoconfigure.data.redis.RedisProperties;
 import org.springframework.context.annotation.Configuration;
 
 /**
@@ -29,17 +30,18 @@ public class AgentxConfiguration {
                                com.wenqu.ai.service.SandboxService sandboxService,
                                com.wenqu.ai.agent.subagent.SubAgentConsultService consultService,
                                com.wenqu.ai.agent.context.CitationIntegrityService citations,
-                               com.wenqu.ai.agent.plan.PlanModeService plan,
+                               RedisProperties redisProperties,
                                com.wenqu.ai.service.QaLogService qaLog,
                                com.wenqu.ai.agent.tool.ToolRegistry toolRegistry,
                                com.wenqu.ai.service.ChatService chatService,
                                com.wenqu.ai.service.ProjectService projectService,
                                com.wenqu.ai.skill.WenquSkillRepository skillRepository,
-                               com.wenqu.ai.service.OrgService orgService) {
+                               com.wenqu.ai.service.OrgService orgService,
+                               com.wenqu.ai.service.UsageLedgerService usageLedger) {
         AgentscopeChatEngine engine = new AgentscopeChatEngine(modelRegistry, configService, properties, tools,
                 sessions, sessionService, attachments, userImages, keywordExtractor, artifactService,
-                sandboxService, consultService, citations, plan, qaLog, toolRegistry, projectService,
-                skillRepository, orgService, chatService::resolveTurnModel);
+                sandboxService, consultService, citations, redisProperties, qaLog, toolRegistry, projectService,
+                skillRepository, orgService, usageLedger, chatService::resolveTurnModel);
         factory.bindFramework(engine);
         // 重启后的待办由引擎接回：表里有归属、框架状态在 stateStore 里，续跑是做得到的事，
         // 不该回一句「已批准」然后什么都不发生

@@ -56,6 +56,17 @@ public class UsageLedgerService {
     }
 
     /**
+     * 框架模型出口记账（{@link com.wenqu.ai.agentx.MeteredModel}）：AgentScope 的
+     * {@code ChatUsage} 与 Spring AI 的 {@code Usage} 字段同名不同包，这里统一折算成
+     * prompt/completion/cached 三个数，仍走同一行 {@code c_ai_usage_log}。
+     */
+    public void recordFramework(UsageAttr.Attr attr, String modelRef,
+                                int prompt, int completion, int cached) {
+        if (prompt <= 0 && completion <= 0) return;
+        record(attr, modelRef, prompt, completion, cached, false);
+    }
+
+    /**
      * 中断兜底估算记账：流被取消（ESC 停止/客户端断开/护栏截断）时网关 usage 只随流末块下发、
      * 永远收不到，但这笔钱供应商已按已下发内容照单计费——不记就是台账与账单的整轮缺口。
      * 按实际下发的 prompt 文本与已收到的输出估算入账，estimated=1 标记非网关真实值

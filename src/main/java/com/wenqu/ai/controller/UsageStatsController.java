@@ -35,8 +35,8 @@ public class UsageStatsController {
     @Operation(summary = "个人用量统计",
             description = "cards=全时段统计卡（累计/峰值 Token、最长聊天时长、当前/最长连续天数、费用）；"
                     + "heatmap=近365天稀疏日清单；trend/models=时间范围内每日×模型趋势与模型占比（models 含按模型费用）；"
-                    + "kinds=同窗口按用途占比（对话问答 / 子智能体分支 / 深度思考 / 检索词改写 / 历史压缩 / "
-                    + "引用自检 / 记忆提取 / 智能体咨询 / 计划意图识别）——辅助调用的开销没有对应消息，只有这里看得见")
+                    + "kinds=同窗口按用途占比（对话问答 / 子智能体分支 / 历史压缩 / "
+                    + "引用自检 / 记忆提取 / 智能体咨询）——辅助调用的开销没有对应消息，只有这里看得见")
     @GetMapping("/stats/usage")
     public ResultJson<Map<String, Object>> usage(
             @Parameter(description = "趋势与模型占比的时间范围（天）：7 或 30")

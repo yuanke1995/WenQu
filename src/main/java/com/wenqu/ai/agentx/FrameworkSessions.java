@@ -683,6 +683,45 @@ public class FrameworkSessions {
         }
     }
 
+    /**
+     * 标「全部活跃会话下一轮重建」——用于**平台级**且只能在 build 期定的配置变化
+     * （当前是 {@code memory.*}：flush 节流、consolidation 上限、硬上限、日账保留期）。
+     * <p>只标不删：正在跑的那一轮不受影响；没有活实例的会话下次 open 本来就会按新配置建。
+     */
+    public void markAllConfigStale() {
+        staleConfigKeys.addAll(held.keySet());
+    }
+
+    /**
+     * 关掉某个用户的全部常驻实例（清空长期记忆/删除账号时用）。
+     * <p>只 mark stale 不够：正在跑的会话收尾时还会 flush，清空后又被写回一条。
+     * 这里先关实例再删文件，语义才是「清空」；下一次提问会按 stateStore 里的历史重建实例。
+     *
+     * @return 关掉的实例数
+     */
+    public int evictUser(String uid) {
+        if (uid == null || uid.isBlank()) return 0;
+        String prefix = uid + "|";
+        int closed = 0;
+        for (String key : new java.util.ArrayList<>(held.keySet())) {
+            if (!key.startsWith(prefix)) continue;
+            Held h = held.remove(key);
+            order.remove(key);
+            stepBudgets.remove(key);
+            frameworkToolGates.remove(key);
+            turnSlots.remove(key);
+            followers.remove(key);
+            compactRequests.remove(key);
+            rebuildAfterCompact.remove(key);
+            staleConfigKeys.remove(key);
+            if (h != null) {
+                closeQuietly(key, h);
+                closed++;
+            }
+        }
+        return closed;
+    }
+
     /** 建实例时登记这一路会话的步数预算闸（引擎在 {@code buildAgent} 里回调）。 */
     public void noteStepBudget(String sessionKey, AgentxStepBudget budget) {
         if (sessionKey != null && budget != null) stepBudgets.put(sessionKey, budget);

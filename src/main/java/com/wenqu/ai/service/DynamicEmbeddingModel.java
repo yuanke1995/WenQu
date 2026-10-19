@@ -59,7 +59,7 @@ public class DynamicEmbeddingModel {
     /**
      * 按引用解析的向量模型：引用格式 {@code providerId/modelId} → 供应商网关。
      * 引用无效（空/非引用/供应商不存在）抛 IllegalArgumentException——调用方应先经 KB 保存校验
-     * 或显式配置（如 memory.platformEmbeddingRef），运行时触达即配置缺失。
+     * 或显式传入的模型引用，运行时触达即配置缺失。
      *
      * <p>返回的是<b>带额度登记的包装</b>：真正发起 embed 的调用（大多在异步线程：重嵌入、
      * QA/子块向量、记忆向量化）失败时会被静默吞成一行日志，套上这层才能让额度不足

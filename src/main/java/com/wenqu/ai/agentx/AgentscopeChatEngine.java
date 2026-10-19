@@ -1,6 +1,7 @@
 package com.wenqu.ai.agentx;
 
 import com.wenqu.ai.agent.chat.ChatCommand;
+import com.wenqu.ai.agent.chat.RelatedPrompt;
 import com.wenqu.ai.agent.chat.TurnRegistry;
 import com.wenqu.ai.dto.ChatRequest;
 import com.wenqu.ai.agent.permission.ExecutionPolicy;
@@ -30,6 +31,7 @@ import io.agentscope.harness.agent.HarnessAgent;
 import io.agentscope.harness.agent.session.AgentSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.data.redis.RedisProperties;
 import redis.clients.jedis.HostAndPort;
 import redis.clients.jedis.UnifiedJedis;
 import redis.clients.jedis.DefaultJedisClientConfig;
@@ -109,9 +111,16 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private final com.wenqu.ai.service.OrgService orgService;
     private final com.wenqu.ai.agent.subagent.SubAgentConsultService consultService;
     private final com.wenqu.ai.agent.context.CitationIntegrityService citations;
-    private final com.wenqu.ai.agent.plan.PlanModeService plan;
+    /** 全局 Redis 连接（与缓存/配置广播同一套 spring.data.redis）；框架状态存储只在其上换 key 前缀 */
+    private final RedisProperties redisProperties;
     /** 问答台账（看板、坏例、未命中问题都吃这张表）——分派换运行时不该把它换成只有一半流量。 */
     private final com.wenqu.ai.service.QaLogService qaLog;
+    /**
+     * 框架模型出口的用量台账：主对话/子智能体/记忆提炼/上下文压缩都经 {@link MeteredModel} 记一行。
+     * <p>P3 换框架后原记账出口（{@code DynamicOpenAiChatModel}）只剩 Spring AI 侧，
+     * 框架调用一笔都没进 {@code c_ai_usage_log}；不补这一层，记忆与压缩的成本完全不可见。
+     */
+    private final com.wenqu.ai.service.UsageLedgerService usageLedger;
     /**
      * 工具展示名与悬停说明的解析入口（与手写侧 {@code TurnRecorder#recordToolStatus} 同一个来源）。
      * <p>框架引擎原先把工具<b>裸名</b>当 {@code label} 下发（{@code toolCard} 里的 {@code esc(name)}），
@@ -132,6 +141,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      */
     private volatile AgentStateStore cachedStateStore;
     private volatile boolean stateStoreResolved;
+    /** 多副本协调（StoreBackedPeriodicGate + consolidation watermark）：与 stateStore 复用同一个 Jedis。 */
+    private volatile io.agentscope.harness.agent.DistributedStore cachedDistributedStore;
+    private volatile boolean distributedStoreResolved;
+    private volatile UnifiedJedis cachedJedis;
+    private volatile boolean jedisResolved;
 
     public AgentscopeChatEngine(ModelRegistryService modelRegistry, ConfigService configService,
                                AppProperties properties, WenquAgentxTools tools,
@@ -144,12 +158,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                                com.wenqu.ai.service.SandboxService sandboxService,
                                com.wenqu.ai.agent.subagent.SubAgentConsultService consultService,
                                com.wenqu.ai.agent.context.CitationIntegrityService citations,
-                               com.wenqu.ai.agent.plan.PlanModeService plan,
+                               RedisProperties redisProperties,
                                com.wenqu.ai.service.QaLogService qaLog,
                                com.wenqu.ai.agent.tool.ToolRegistry toolRegistry,
                                com.wenqu.ai.service.ProjectService projectService,
                                com.wenqu.ai.skill.WenquSkillRepository skillRepository,
                                com.wenqu.ai.service.OrgService orgService,
+                               com.wenqu.ai.service.UsageLedgerService usageLedger,
                                java.util.function.Function<ChatCommand, com.wenqu.ai.service.ChatService.TurnModel> modelResolver) {
         this.modelRegistry = modelRegistry;
         this.projectService = projectService;
@@ -165,12 +180,29 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         this.sandboxService = sandboxService;
         this.consultService = consultService;
         this.citations = citations;
-        this.plan = plan;
+        this.redisProperties = redisProperties;
         this.qaLog = qaLog;
         this.displayNames = new ToolDisplayNames(toolRegistry);
         this.skillRepository = skillRepository;
         this.orgService = orgService;
+        this.usageLedger = usageLedger;
         this.modelResolver = modelResolver;
+    }
+
+    /**
+     * 记忆配置热生效：{@code memory.*} 都烤在常驻 HarnessAgent 实例里（flush 节流、consolidation 上限、
+     * MEMORY.md 硬上限、日账保留期），管理员改完设置页后不重建实例就等于没改。
+     * <p>监听器只标「下一轮重建」，不打断正在跑的那一轮；没有活实例的会话下次 open 本来就会按新配置建。
+     */
+    @jakarta.annotation.PostConstruct
+    void registerMemoryConfigHotReload() {
+        configService.addChangeListener(changed -> {
+            if (changed == null || changed.isEmpty()) return;
+            if (changed.stream().anyMatch(k -> k.startsWith("memory."))) {
+                sessions.markAllConfigStale();
+                log.info("[agentx] 记忆配置已变更 {}，活跃会话下一轮重建实例", changed);
+            }
+        });
     }
 
     /**
@@ -233,7 +265,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         if (picked == null || picked.isEmpty()) return "";
         String uid = cmd.getUserId();
         if (uid == null || uid.isBlank()) return "";
-        int maxChars = configService.getInt("skill.maxFileChars", com.wenqu.ai.config.ConfigDefaults.SKILL_MAX_FILE_CHARS);
+        int maxChars = com.wenqu.ai.config.ConfigDefaults.SKILL_MAX_FILE_CHARS;
         RuntimeContext ctx = RuntimeContext.builder().userId(uid).sessionId(cmd.getSessionId()).build();
         StringBuilder sb = new StringBuilder();
         for (String raw : picked) {
@@ -329,26 +361,75 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     private AgentStateStore resolveStateStore(Path stateDir) {
-        boolean redisOn = "true".equalsIgnoreCase(configService.get("chat.agentscopeRedisEnabled"));
-        if (!redisOn) {
+        UnifiedJedis jedis = redisJedis();
+        if (jedis == null) {
             return new JsonFileAgentStateStore(stateDir);
         }
-        String host = firstNonBlank(configService.get("chat.agentscopeRedisHost"), "localhost");
-        int port = toInt(configService.get("chat.agentscopeRedisPort"), 6379);
-        String password = firstNonBlank(configService.get("chat.agentscopeRedisPassword"), null);
         String prefix = firstNonBlank(configService.get("chat.agentscopeRedisPrefix"), "agentscope:session:");
-        try {
-            UnifiedJedis jedis = password == null || password.isBlank()
-                    ? new UnifiedJedis(new HostAndPort(host, port))
-                    : new UnifiedJedis(new HostAndPort(host, port),
-                            DefaultJedisClientConfig.builder().password(password).build());
-            // 连通性探针：连不上就退回本地文件，不让框架引擎整体挂掉
-            jedis.ping();
-            log.info("[agentx] 会话状态存储使用 Redis: {}:{} prefix={}", host, port, prefix);
-            return RedisAgentStateStore.builder().jedisClient(jedis).keyPrefix(prefix).build();
-        } catch (Throwable e) {
-            log.warn("[agentx] Redis 状态存储不可用（{}），退回本地文件: {}", e.toString(), stateDir);
-            return new JsonFileAgentStateStore(stateDir);
+        return RedisAgentStateStore.builder().jedisClient(jedis).keyPrefix(prefix).build();
+    }
+
+    /**
+     * 全局 Redis 连接（stateStore 与 distributedStore 共用，避免一个引擎建两条连接）。
+     * <p>连不上/鉴权失败/类缺失都返回 null，由调用方退回本地实现——绝不因为开了多副本开关把引擎打挂。
+     */
+    private UnifiedJedis redisJedis() {
+        if (!"true".equalsIgnoreCase(configService.get("chat.agentscopeRedisEnabled"))) return null;
+        if (jedisResolved) return cachedJedis;
+        synchronized (this) {
+            if (jedisResolved) return cachedJedis;
+            String host = redisProperties.getHost() == null || redisProperties.getHost().isBlank()
+                    ? "localhost" : redisProperties.getHost();
+            int port = redisProperties.getPort() > 0 ? redisProperties.getPort() : 6379;
+            String password = redisProperties.getPassword();
+            try {
+                DefaultJedisClientConfig.Builder cfg = DefaultJedisClientConfig.builder()
+                        .database(Math.max(0, redisProperties.getDatabase()))
+                        .ssl(redisProperties.getSsl().isEnabled());
+                if (password != null && !password.isBlank()) cfg.password(password);
+                UnifiedJedis jedis = new UnifiedJedis(new HostAndPort(host, port), cfg.build());
+                jedis.ping();
+                cachedJedis = jedis;
+                log.info("[agentx] 框架 Redis 已连接: {}:{} db={}", host, port, redisProperties.getDatabase());
+            } catch (Throwable e) {
+                cachedJedis = null;
+                log.warn("[agentx] Redis 不可用（{}），框架状态/协调退回本地实现", e.toString());
+            } finally {
+                jedisResolved = true;
+            }
+            return cachedJedis;
+        }
+    }
+
+    /**
+     * 多副本协调：{@link io.agentscope.extensions.redis.RedisDistributedStore} 提供跨副本的
+     * {@code PeriodicGate}（flush/consolidation 节流不再各副本各跑一份）与 {@code BaseStore}
+     * （consolidation watermark 的 CAS），否则多副本会同时合并同一个 {@code MEMORY.md}。
+     * <p>它不搬记忆文件：{@code MEMORY.md} 与日账仍在 {@code chat.agentscopeStateDir} 本地目录，
+     * 多副本必须把该目录挂成共享卷（NFS/EFS/RWX PVC），否则同一用户在不同副本看到不同记忆。
+     */
+    private io.agentscope.harness.agent.DistributedStore distributedStore() {
+        if (distributedStoreResolved) return cachedDistributedStore;
+        synchronized (this) {
+            if (distributedStoreResolved) return cachedDistributedStore;
+            try {
+                UnifiedJedis jedis = redisJedis();
+                if (jedis == null) {
+                    cachedDistributedStore = null;
+                } else {
+                    cachedDistributedStore = io.agentscope.extensions.redis.RedisDistributedStore
+                            .fromJedis(jedis, "agentscope:");
+                    log.info("[agentx] 记忆/压缩节流与 consolidation watermark 使用 Redis 跨副本协调");
+                    log.warn("[agentx] 多副本提示：记忆文件仍落本地 chat.agentscopeStateDir，"
+                            + "请确保各副本挂同一共享卷，否则同一用户在不同副本记忆不一致");
+                }
+            } catch (Throwable e) {
+                cachedDistributedStore = null;
+                log.warn("[agentx] 分布式协调装配失败（{}），退回单副本节流", e.toString());
+            } finally {
+                distributedStoreResolved = true;
+            }
+            return cachedDistributedStore;
         }
     }
 
@@ -357,15 +438,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             if (v != null && !v.isBlank()) return v;
         }
         return null;
-    }
-
-    private static int toInt(String raw, int fallback) {
-        if (raw == null || raw.isBlank()) return fallback;
-        try {
-            return Integer.parseInt(raw.trim());
-        } catch (NumberFormatException e) {
-            return fallback;
-        }
     }
 
     @Override
@@ -396,13 +468,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         }
         ExecutionPolicy policy = tools.policyFor(cmd,
                 (code, message) -> channel.emit(RunEventType.WARN, message));
-        // 计划意图识别：问的是手写侧同一个判断器、同一条判据（用户没开计划开关时，按消息意图决定本轮要不要
-        // 先出计划）。在这里发起是为了与后面建实例、装工具并行跑；开轮前取结果，判定超时按不开（同一口径）。
-        java.util.concurrent.CompletableFuture<Boolean> planIntent = plan.startIntentCheck(
-                channel.emitter(), cmd.isGuestMode(), cmd.isPlanMode(), cmd.isRegenerate(),
-                cmd.getSessionId(), cmd.getQuestion(), ref,
-                (cmd.getUserImages() != null && !cmd.getUserImages().isEmpty())
-                        || (cmd.getAttachments() != null && !cmd.getAttachments().isEmpty()));
         WenquSourcePool pool = tools.newPool(cmd, channel.emitter());
         // 本轮改过用户存过的选择（失效的会话模型已清除、改用他的默认模型）必须说出来。
         // 只登记降级、不再另发一条 WARN：降级随消息落库、刷新后仍在，WARN 是同一句话的第二份，
@@ -505,16 +570,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         bindFrameworkToolGate(cmd, recording);
 
         // 计划模式（框架原生 plan_enter/plan_write/plan_exit）按轮进入，跑完必须退出。
-        // 开关没开时问一次意图判断器——不这么做的话「按意图自动开计划」这条手写侧的能力在框架下就是空的
-        //（真机实测：只认用户开关时，planMode=false 的一轮即使需要方向对齐也不会出计划卡）
-        boolean planRound = cmd.isPlanMode();
-        boolean planAuto = !planRound && plan.awaitIntent(planIntent);
-        if (planAuto) {
-            log.info("[PLAN] 意图识别命中，本轮自动开启计划模式（框架引擎）: session={}", cmd.getSessionId());
-        }
-        // 计划模式是否真进了激活位：没进的话 plan_* 工具会被框架的 PlanModeMiddleware 滤掉，
-        // 症状是「空补全」而非报错——必须显式告警，否则用户以为开了计划其实没生效。
-        boolean planWanted = planRound || planAuto;
+        // 是否进入只由两件事决定：用户显式开计划开关，或模型自己在推理中调用 plan_enter。
+        // 问渠不再做「按消息意图预判」——预判器已删除，避免在模型之外多一层会误判的闸。
+        boolean planWanted = cmd.isPlanMode();
         boolean planEngaged = planWanted && sessions.setPlanMode(cmd, true);
         if (planWanted && !planEngaged) {
             log.warn("[PLAN] 计划模式请求但未进入激活位（框架侧未就位），本轮不展示计划卡: session={}",
@@ -540,7 +598,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         sessions.claimFollower(sessionKey);
         try {
             followTurn(session, cmd, channel, pool, route, hooks, turnId, historyBefore, startCursor,
-                    userMessageId, current, planAuto, recording, System.currentTimeMillis());
+                    userMessageId, current, recording, System.currentTimeMillis());
         } finally {
             sessions.releaseFollower(sessionKey);
             // 收口后清掉本轮落点：之后再有工具调用会明确失败，而不是回落到这一轮的池子里
@@ -557,7 +615,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                             ModelRegistryService.ModelRoute route, WenquAgentxTools.TurnHooks hooks,
                             String turnId, int historyBefore, long startCursor, String userMessageId,
                             AgentSession.Task current,
-                            boolean planAuto, Recording recording, long startedAt) {
+                            Recording recording, long startedAt) {
         long machineBudgetMs = turnSeconds() * 1000L;
         // 接流快照改由本轮自己供：外壳开轮时只有「还没出字」那份空快照，而正文/工具卡/时间线
         // 只活在这里的 Recording 与引用池里。不回填的表现为——生成中刷新，气泡接回来是一片空白。
@@ -620,7 +678,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             }
             if (pendingChanged) {
                 announcePending(mirror.pendingSnapshot(), cmd, channel, announcedApprovals,
-                        planAuto, turnId, recording);
+                        turnId, recording);
             }
             if (tools.stopRequested(cmd)) {
                 // 框架的中断是协作式的：在飞工具会跑到结束（Phase 0 实测）。这里只发中断，
@@ -640,7 +698,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 Map<String, SessionEvent> waiting = mirror.pendingSnapshot();
                 if (pendingSince == 0) {
                     pendingSince = System.currentTimeMillis();
-                    // 人在回路的等待登记进共享台账（与手写侧 PlanModeService/ChatService 同一入口）：
+                    // 人在回路的等待登记进共享台账（与 ChatService 同一入口）：
                     // 这一段是「用户在看卡/在答题」，不是机器在干活，不该消耗整轮机器预算。
                     // 不登记的后果是本轮必然在 300s 线上被看门狗误截断——真机 2026-10-15 13:59:53 实测：
                     // 计划卡 13:57:46 挂出、用户还没点批准就被判「机器耗时 300087ms / 预算 300000ms
@@ -702,7 +760,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 看得见的事，镜像最多晚一跳，这里不给它晚的机会
                 Map<String, SessionEvent> latePending = session.pending();
                 if (!latePending.isEmpty()) {
-                    announcePending(latePending, cmd, channel, announcedApprovals, planAuto, turnId, recording);
+                    announcePending(latePending, cmd, channel, announcedApprovals, turnId, recording);
                     continue;
                 }
                 AgentSession.Task newer = latestTaskInTurn(session, current);
@@ -751,7 +809,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             planRecord.put("status", "approve".equals(planOutcome) ? "approved"
                     : "supersede".equals(planOutcome) ? "superseded" : "rejected");
             planRecord.put("versions", new java.util.ArrayList<>(recording.planVersions));
-            if (recording.planAuto) planRecord.put("auto", true);
         }
 
         // 机器预算用尽退场、卡片还挂着：这一轮不会再有跟随者（超时回收要靠活着的那个循环，它已经退了）。
@@ -1041,7 +1098,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         RESUME_POOL.execute(() -> {
             try {
                 followTurn(f.session(), f.cmd(), f.channel(), f.pool(), f.route(), f.hooks(),
-                        turnIdOf(f.cmd()), f.historyBefore(), f.startCursor(), null, current, false,
+                        turnIdOf(f.cmd()), f.historyBefore(), f.startCursor(), null, current,
                         f.recording(), System.currentTimeMillis());
                 log.info("[agentx] 续跑已收尾 session={}", f.cmd().getSessionId());
             } catch (Exception e) {
@@ -1594,7 +1651,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
          * 用户回头看不出这一轮到底是按哪一版计划跑的。
          */
         private final java.util.List<Map<String, Object>> planVersions = new java.util.ArrayList<>();
-        private boolean planAuto;
 
         Recording(java.util.Queue<String> spills,
                   com.wenqu.ai.agent.subagent.SubAgentConsultService.Ledger consultLedger,
@@ -2240,7 +2296,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
     /** 框架待办（一等公民）→ 问渠确认卡；审批号↔会话的归属登记好，答复端点靠它找回。 */
     private void announcePending(Map<String, SessionEvent> pending, ChatCommand cmd, RunChannel channel,
-                                 Set<String> announced, boolean planAuto, String turnId, Recording recording) {
+                                 Set<String> announced, String turnId, Recording recording) {
         if (pending.isEmpty()) return;
         String sessionKey = sessions.key(cmd);
         sessions.notePending(sessionKey, pending);
@@ -2271,11 +2327,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 planCard.put("planApprovalId", entry.getKey());
                 planCard.put("plan", planText);
                 planCard.put("timeoutMs", configService.getInt("chat.planTimeoutMs", 600000));
-                // 按意图自动开启的那一轮：卡片要标「自动开启」（与手写侧同一个字段名），
-                // 否则用户会以为是自己的开关点错了
-                if (planAuto) planCard.put("auto", true);
                 if (recording != null) {
-                    recording.planAuto = planAuto;
                     Map<String, Object> version = new java.util.LinkedHashMap<>();
                     version.put("plan", planText);
                     recording.planVersions.add(version);
@@ -2410,17 +2462,39 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 个人设置里那个开关关掉时只对本人生效。关掉的都只是每轮收尾的那次提炼
      * （框架 {@code FlushTrigger.never()} 注释原文：*"disables only the per-call flush"*），
      * 已经沉淀下来的 {@code MEMORY.md} 仍照常注入——与两处界面「仅关生成，不关注入」的说明对齐。
-     * <p>都开着时返回 {@code MemoryConfig.defaults()}，与不写这一句逐字相同；写出来是为了让
-     * 界面上那两个开关真的有下游，而不是只写库没人读。
+     *
+     * <p>P5 追加三件：① default 的每轮 ALWAYS 改成可配节流（默认 10 分钟），否则每轮问答
+     * 都多一次主模型提炼调用；② prompt 追加问渠规则（中文、只记持久事实、不记密钥/探针）；
+     * ③ 记忆模型包 MeteredModel（kind=memory），成本进台账。{@code MEMORY.md} 的硬上限
+     * 不在这里——它落在写入文件系统那一层（{@code MemoryCappedFilesystem}）。
      */
-    private io.agentscope.harness.agent.memory.MemoryConfig memoryConfig(ChatCommand cmd) {
+    private io.agentscope.harness.agent.memory.MemoryConfig memoryConfig(
+            ChatCommand cmd, io.agentscope.core.model.Model baseModel, String modelRef) {
         boolean on = configService.getBoolean("memory.enabled", true)
                 && orgService.memoryFlushEnabled(cmd.getUserId());
-        if (on) {
-            return io.agentscope.harness.agent.memory.MemoryConfig.defaults();
+        io.agentscope.core.model.Model memoryModel = new MeteredModel(baseModel, usageLedger,
+                com.wenqu.ai.util.UsageAttr.of(cmd.getUserId(), cmd.getSessionId(), null, "memory"), modelRef);
+        io.agentscope.harness.agent.memory.MemoryConfig.Builder b =
+                io.agentscope.harness.agent.memory.MemoryConfig.builder()
+                        .model(memoryModel)
+                        .flushPrompt(com.wenqu.ai.memory.MemoryPrompts.flushPrompt())
+                        .consolidationPrompt(com.wenqu.ai.memory.MemoryPrompts.consolidationPrompt())
+                        .consolidationMaxTokens(Math.max(500, configService.getInt(
+                                "memory.consolidationMaxTokens",
+                                com.wenqu.ai.config.ConfigDefaults.MEMORY_CONSOLIDATION_MAX_TOKENS)))
+                        .dailyFileRetentionDays(Math.max(7, configService.getInt(
+                                "memory.dailyRetentionDays",
+                                com.wenqu.ai.config.ConfigDefaults.MEMORY_DAILY_RETENTION_DAYS)));
+        if (!on) {
+            return b.flushTrigger(
+                    io.agentscope.harness.agent.memory.MemoryConfig.FlushTrigger.never()).build();
         }
-        return io.agentscope.harness.agent.memory.MemoryConfig.builder()
-                .flushTrigger(io.agentscope.harness.agent.memory.MemoryConfig.FlushTrigger.never())
+        int minutes = configService.getInt("memory.flushThrottleMinutes",
+                com.wenqu.ai.config.ConfigDefaults.MEMORY_FLUSH_THROTTLE_MINUTES);
+        return b.flushTrigger(minutes <= 0
+                        ? io.agentscope.harness.agent.memory.MemoryConfig.FlushTrigger.always()
+                        : io.agentscope.harness.agent.memory.MemoryConfig.FlushTrigger.throttled(
+                                java.time.Duration.ofMinutes(minutes)))
                 .build();
     }
 
@@ -2431,18 +2505,24 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 让那次点击真的在下一次提问前把旧对话折进去（框架没有「就地压一次」的入口，压缩长在推理循环前）。
      * <p>此前框架默认阈值另有可配项（chat.agentscopeCompactTriggerMessages，0＝框架默认），默认态
      * 与框架默认逐字相同，属「框架已有限制、参数只留个默认就用不上的改口」，已取消。
+     * <p>摘要模型包 MeteredModel（kind=compress）：压缩平时不常跑，但一跑就是一次不小的输入，
+     * 不记账就永远不知道它花在哪。
      */
-    private io.agentscope.harness.agent.memory.compaction.CompactionConfig compactionConfig(ChatCommand cmd) {
+    private io.agentscope.harness.agent.memory.compaction.CompactionConfig compactionConfig(
+            ChatCommand cmd, io.agentscope.core.model.Model baseModel, String modelRef) {
+        io.agentscope.core.model.Model compressModel = new MeteredModel(baseModel, usageLedger,
+                com.wenqu.ai.util.UsageAttr.of(cmd.getUserId(), cmd.getSessionId(), null, "compress"),
+                modelRef);
+        io.agentscope.harness.agent.memory.compaction.CompactionConfig.Builder b =
+                io.agentscope.harness.agent.memory.compaction.CompactionConfig.builder().model(compressModel);
         String key = sessions.key(cmd);
         if (!sessions.takeCompactRequest(key)) {
-            return io.agentscope.harness.agent.memory.compaction.CompactionConfig.builder().build();
+            return b.build();
         }
         // 强制压缩只应作用「下一次提问」那一个实例：实例按会话常驻，triggerMessages(1) 若不复位会被
         // 这一条会话的后续每一轮继承（每轮都压）。这里标「下次开轮重建」，让下一轮回到默认压缩配置。
         sessions.markRebuildAfterCompact(key);
-        return io.agentscope.harness.agent.memory.compaction.CompactionConfig.builder()
-                .triggerMessages(1)
-                .build();
+        return b.triggerMessages(1).build();
     }
 
     private HarnessAgent buildAgent(ChatCommand cmd, ExecutionPolicy policy,
@@ -2482,7 +2562,25 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             return t == null ? policy : t.policy();
         });
         sessions.noteFrameworkToolGate(sessions.key(cmd), toolGate);
-        return HarnessAgent.builder()
+        // 子轮只读记忆：框架四把记忆工具打包注册，没有「只摘写」的开关；
+        // 这里在执行前拒 memory_save，保留注入与 memory_search/get（只读也读得到）。
+        toolGate.denyMemoryWrites(cmd.branchTurn());
+        // 主模型只建一次：主对话、记忆提炼、上下文压缩各包一层 MeteredModel（按 kind 分开记账），
+        // 底层仍是同一个 OpenAIChatModel。包装器只旁路 usage，不改变请求参数与上下文窗口。
+        io.agentscope.core.model.Model baseModel = OpenAIChatModel.builder()
+                .baseUrl(route.baseUrl())
+                .apiKey(route.apiKey())
+                .modelName(route.modelId())
+                .stream(true)
+                .generateOptions(generateOptions(cmd, hooks.modelRef()))
+                .endpointPath(route.completionsPath() == null || route.completionsPath().isBlank()
+                        ? "/v1/chat/completions" : route.completionsPath())
+                .contextWindowSize(modelContextWindow(cmd))
+                .build();
+        io.agentscope.core.model.Model chatModel = new MeteredModel(baseModel, usageLedger,
+                com.wenqu.ai.util.UsageAttr.of(cmd.getUserId(), cmd.getSessionId(), null,
+                        cmd.branchTurn() ? "subagent" : "chat"), hooks.modelRef());
+        HarnessAgent.Builder agentBuilder = HarnessAgent.builder()
                 .agentId("wenqu")
                 .name("wenqu")
                 .description("问渠·AgentScope 运行时")
@@ -2492,24 +2590,14 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 计划阶段里，框架这一路没人再说第二遍，而框架的 PLAN banner 与沙盒工具说明反而主动把
                 // 路径喂给模型——不挂回去，计划卡就变成「它打算在沙盒里怎么写文件」的说明书
                 .sysPrompt(rolePrompt(binding.row()) + projectContext(cmd) + tools.consultGuide(cmd) + PlanCopy.guidance()
-                        + com.wenqu.ai.agent.chat.RelatedPrompt.line(
-                                configService.getInt("retrieval.relatedCount", 3)))
+                        + com.wenqu.ai.agent.chat.RelatedPrompt.line())
                 // 问渠所有供应商都是 OpenAI 兼容网关（c_ai_provider.base_url 实测全是 compatible-mode）。
                 // 用户在界面选的上下文窗口（contextWindow 档位）落到 model 的 contextWindowSize：
                 // 框架的压缩阈值/输入预算都由它推（CompactionMiddleware: window-reserved；
                 // HarnessContextBuilder.inputLimit: window-output-safety），
                 // 不设就按 ModelContextWindows.lookup 按模型名查内置表，问渠登记窗口≠框架内置表时
                 // 会差一截。0/未登记不设（保持框架按模型名推断），避免把显式 0 塞给模型。
-                .model(OpenAIChatModel.builder()
-                        .baseUrl(route.baseUrl())
-                        .apiKey(route.apiKey())
-                        .modelName(route.modelId())
-                        .stream(true)
-                        .generateOptions(generateOptions(cmd, hooks.modelRef()))
-                        .endpointPath(route.completionsPath() == null || route.completionsPath().isBlank()
-                                ? "/v1/chat/completions" : route.completionsPath())
-                        .contextWindowSize(modelContextWindow(cmd))
-                        .build())
+                .model(chatModel)
                 .toolkit(toolkit)
                 // 框架对「一把工具」有自带的 5 分钟硬超时（TOOL_DEFAULTS）。咨询子轮、沙盒长命令都会撞上去，
                 // 而手写运行时没有这一层——不显式设，就等于框架比问答侧多一道没人知道的天花板（实测踩过：
@@ -2518,15 +2606,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         .timeout(java.time.Duration.ofSeconds(turnSeconds()))
                         .build())
                 .maxIters(configService.getInt("chat.agentscopeMaxIters", 12))
-                // 计划模式工具面常驻开启，具体某一轮进不进由 enterPlanMode 决定（实例按会话复用）。
-                // 这里与 PlanModeService **不是双跑**：那套在框架路径下只被用来做「意图判断」
-                // （startIntentCheck/awaitIntent，决定这一轮要不要先出计划卡），而
-                // approvalGate/refsDigest 那些计划版本链、澄清提问轮、计划快照落库的逻辑框架路径下
-                // 并不调用。分工是「问渠判要不要出计划 → 框架管计划怎么执行」：
-                //   问渠 PlanModeService.startIntentCheck/awaitIntent —— 意图闸（用户开关之外还有按消息意图自动开）
-                //   框架 enablePlanMode + PlanModeMiddleware        —— plan_enter/write/exit 三把工具 + 计划位拦截写操作
-                // 别把它当成「两套计划机制同时跑」去"修"——那是分工，真合并要先决定计划版本链怎么在框架的
-                // plan 文件上表达（框架只有单份 plan 文件，问渠那套支持多版本取代），不是删代码能解决的。
+                // 计划模式工具面常驻开启：是否进入只由用户显式开计划开关（sessions.setPlanMode）或
+                // 模型自己在推理中调用 plan_enter 决定。问渠不再做「按消息意图预判」——PlanModeService
+                // 与 chat.planAutoIntent 已删除，计划怎么执行全交框架的 plan_enter/write/exit + 只读拦截。
+                // 历史计划卡的多版本落库仍由 Recording.planVersions 负责，与意图判定无关。
                 .enablePlanMode()
                 // 任务清单：**不开**框架的 enableTaskList，只借它的 state 做存储。
                 // 原因：开它会同时注册 todo_write 工具并由 TaskReminderMiddleware 每轮教模型用
@@ -2538,9 +2621,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 上下文压缩：框架默认就开着（动态 token 阈值或 50 条消息触发、逐字保留最近 20 条）。
                 // 用户选的窗口已落到 model.contextWindowSize（见 .model(...) 段），压缩阈值由它推导，
                 // 这里不再单独传 maxContextTokens（那是 WorkspaceContextMiddleware 的注入预算，非压缩阈值）。
-                .compaction(compactionConfig(cmd))
-                // 记忆提炼闸：个人设置的「自动提炼记忆」在这里落地（关掉＝本轮起的实例不再做每轮提炼）
-                .memory(memoryConfig(cmd))
+                // 压缩摘要用独立的 MeteredModel（kind=compress），成本才进得了台账。
+                .compaction(compactionConfig(cmd, baseModel, hooks.modelRef()))
                 .workspace(stateDir)
                 // 框架默认把状态写到 ~/.agentscope/state/**（在问渠数据目录之外，容器里等于丢）：
                 // 换成受管数据目录的文件实现；多副本（chat.agentscopeRedisEnabled=true）时自动切 Redis
@@ -2581,10 +2663,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 注意：只能走 builder —— AgentSession 构造时把 RuntimeContext 复制了一份
                 // （AgentSession:84），事后往原 ctx put SkillFilter 影响不到已建实例。
                 .skillFilter(binding.skillFilter())
-                // 用户侧技能增删改交给框架 skill_manage 工具（全框架化 P3）。
+                // 助手侧「技能沉淀」仍交给框架 skill_manage（全框架化 P3）：写沙盒工作区，随会话走。
+                // 用户自己的技能安装/编辑/删除走 SkillsPage + SkillController（user-data/skills-users/{uid}，
+                // 跨会话、不依赖沙箱）；两套并存，本开关只负责「模型自己起草/改写技能」这条路。
                 // autoPromote=true：新技能直接落可加载目录，下一轮推理即可见。
                 // 框架注释：默认会先进 drafts 目录「不自动加载」，那是给谨慎场景的默认——
-                // 问渠的技能本来就是个人资产、当轮要用，加 drafts 只是多一步人工提升。
+                // 问渠的会话内技能本来就是当轮要用，加 drafts 只是多一步人工提升。
                 .enableSkillManageTool(io.agentscope.harness.agent.tool.SkillManageConfig.builder()
                         .autoPromote(true)
                         .build())
@@ -2621,8 +2705,26 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // execute("pwd") 返回宿主项目目录）。必须用 abstractFilesystem(...) 在 build 期传进去。
                 .abstractFilesystem(frameworkFilesystem(cmd))
                 .artifactDeliveryTarget(new com.wenqu.ai.sandbox.WenquArtifactDeliveryTarget(artifactService))
-                .disableWebTools()
-                .build();
+                .disableWebTools();
+
+        // 记忆闸（P5 收口）：三种轮次三种口径，必须在 build 期定——MemoryConfig 烤在常驻实例里。
+        // ① 游客/分享/MCP：userId 是发布者（检索可见性按他执行），若不关记忆，发布者的 MEMORY.md
+        //    会被注入访客对话，访客的话也会写进发布者日账。两个开关必须同时关：只关 hooks 仍会注入。
+        // ② 子智能体/咨询轮：只读不写——保留 MEMORY.md 注入与 memory_* 工具（子轮要用户上下文），
+        //    但关掉 flush 与后台合并；否则每派一支就多一次提炼调用，内部推演还会沉淀成用户事实。
+        // ③ 正常用户轮：平台/个人开关 + 节流 + 硬上限（见 memoryConfig）。
+        if (cmd.isGuestMode()) {
+            agentBuilder.disableMemoryHooks().disableMemoryTools();
+        } else if (cmd.branchTurn()) {
+            agentBuilder.disableMemoryHooks();
+        } else {
+            agentBuilder.memory(memoryConfig(cmd, baseModel, hooks.modelRef()));
+        }
+        io.agentscope.harness.agent.DistributedStore distributedStore = distributedStore();
+        if (distributedStore != null) {
+            agentBuilder.distributedStore(distributedStore);
+        }
+        return agentBuilder.build();
     }
 
     /**
@@ -2690,7 +2792,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 推荐块两道护栏，都住在 RelatedStreamFilter 里：条目数超过要的那 N 条＝整块是被塞进来的正文
         // （全数并回、一颗芯片不出），否则只并回长过正文量级的那几条。真机 2026-10-18 21:00 那轮模型把
         // 摘要骨架整块写进 {@code <related>}，71 条短行条条过单条长度闸，界面上是一整屏绿芯片。
-        int relatedMaxChips = Math.max(1, configService.getInt("retrieval.relatedCount", 3)) + RELATED_CHIPS_TOLERANCE;
+        int relatedMaxChips = RelatedPrompt.COUNT + RELATED_CHIPS_TOLERANCE;
         List<String> relatedProse = recording.related.prose(RELATED_PROSE_MIN_CHARS, relatedMaxChips);
         if (!relatedProse.isEmpty()) {
             String merged = String.join("\n\n", relatedProse);
