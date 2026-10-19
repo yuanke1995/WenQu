@@ -71,7 +71,7 @@ public class RunCodeService {
             // 没配可达地址时不猜：猜出来的 URL 在容器里十有八九连不上，表现为每个子调用超时，
             // 排查的人只会以为是工具坏了
             log.warn("[FAIL-LOUD] run_code 缺少 sandbox.callbackBaseUrl，本轮不提供子调用");
-            return Outcome.text("沙盒回调地址未配置（系统设置「沙盒 → 平台回调地址」），脚本里的子调用连不到平台。"
+            return Outcome.text("沙盒回调地址未配置（环境变量 SANDBOX_CALLBACK_BASE_URL，要填容器打得到的本服务地址），脚本里的子调用连不到平台。"
                     + "请改用已有的工具逐步完成，或让管理员补这一项。");
         }
         // 凭据 TTL = 脚本运行上限 + 富余：脚本卡住到点被沙盒杀掉，凭据也随之作废，不留一条活着的回程

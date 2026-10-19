@@ -20,31 +20,21 @@
 #
 #   中间件: mysql redis meili searxng sandbox ocr
 #
-# 解释器:  .sh->bash   .py->python3   .js/.mjs->node
-#          .bat->仅 Windows   .sql->打印 mysql 执行命令
+# 解释器:  .sh->bash   .py->python3   .js/.mjs->node   .bat->仅 Windows
 # ---------------------------------------------------------------------------
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-GRPS="db services codegen setup loadtest mac win"
+GRPS="redis services codegen loadtest mac win"
 INFRA_NAMES="mysql redis meili searxng sandbox ocr"
 
 # ===================== 脚本分组 =====================
 desc_of() {
   case "$1" in
-    db/init-admin-2026-09-17.sql)            echo "初始化管理员账号" ;;
-    db/fix-schema-2026-09-16.sql)            echo "补齐早期 schema（表/列）" ;;
-    db/fix-schema-2026-09-16-auth.sql)       echo "补齐 auth 相关 schema" ;;
-    db/fix-schema-2026-10-12-tool-approval-text.sql) echo "修复 tool_approval 文本字段" ;;
-    db/migrate-reasoning-levels-2026-10-03.sql)      echo "迁移 reasoning 级别" ;;
-    db/cleanup-personal-model-refs-2026-10-03.sql)   echo "清理个人模型引用" ;;
-    db/cleanup-deep-reasoning-switches-2026-10-03.sql) echo "清理深度推理开关" ;;
-    db/cleanup-retired-config-2026-09-30.sql) echo "清理已废弃配置" ;;
+    redis/rename-ai-doc-indexes-2026-10-17.sh) echo "存量索引名 ai-doc-* 收到 wenqu-*" ;;
     services/mcp-test-server.py)             echo "最小 MCP 测试服务(:8931)" ;;
-    services/fake_upstream_no_tools.py)      echo "假上游(tools 拒路测试, :7999)" ;;
     codegen/gen_config_schema.js)            echo "配置字段 ↔ defaults 一致性校验" ;;
-    setup/setup-node.sh)                     echo "Ubuntu 安装/升级 Node(前端依赖)" ;;
     loadtest/mock-gateway.mjs)               echo "压测 mock 网关(:9101)" ;;
     loadtest/loadtest.mjs)                   echo "100 路并发压测" ;;
     mac/dev-stack.sh)                        echo "本机开发栈统一启停(mysql/redis/meili/searxng/sandbox)" ;;
@@ -92,9 +82,6 @@ run_file() {
              MINGW*|CYGWIN*|MSYS*) cmd.exe "$f" "$@" ;;
              *) echo "(.bat 仅 Windows 可用，请在 Windows 上运行 scripts/win/ 下对应脚本)" >&2; exit 1 ;;
            esac ;;
-    *.sql) echo "SQL 不可直接执行，请运行：" >&2
-           echo "  mysql -h \"\${DB_HOST:-127.0.0.1}\" -u \"\${DB_USER:-root}\" -p \"\${DB_NAME:-wenqu_ai}\" --force < \"$f\"" >&2
-           exit 0 ;;
     *) echo "不支持的类型: $f" >&2; exit 1 ;;
   esac
 }

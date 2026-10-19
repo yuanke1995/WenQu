@@ -14,9 +14,8 @@
  *   KEEP=1 node scripts/loadtest/loadtest.mjs       # 保留压测数据（要留现场排查时用）
  *
  * 收尾必须清台账：压测用户/供应商删掉后，c_ai_usage_log 里 `providerId/mock-chat` 的行会变成
- * 单价无处可登记的孤儿引用，把管理端「数据看板 → 费用」的未计价模型清单撑成几百个标签
- * （历史教训见 scripts/db/cleanup-usage-ledger-orphans-2026-10-16.sql）。清台账要连会话与
- * 消息一起删，走 mysql 客户端本机直连；连不上时打印待执行 SQL 而不是让压测失败。
+ * 单价无处可登记的孤儿引用，把管理端「数据看板 → 费用」的未计价模型清单撑成几百个标签。
+ * 清台账要连会话与消息一起删，走 mysql 客户端本机直连；连不上时打印待执行 SQL 而不是让压测失败。
  *
  * 管理员令牌按 AuthCrypto 的 JWT 格式（HS256, iss=wenqu, aud=wenqu-api）本地自签，
  * 密钥取本地 config/application-local.yml 的 ai-app.auth.jwt-secret。

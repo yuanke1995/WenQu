@@ -59,8 +59,6 @@ services:
     environment:
       # 必填（无默认值，缺失将启动失败）
       DB_PASSWORD: ${DB_PASSWORD:?请设置 DB_PASSWORD}
-      # 可选：聊天网关的遗留回落密钥（仅在设置页未登记任何模型供应商时生效；正道是登记供应商）
-      AI_CHAT_KEY: ${AI_CHAT_KEY:-}
       # 登录令牌签名密钥（≥32 位随机串）：留空则每次启动随机生成，重启后已发令牌全部失效；
       # 多副本部署必须各副本一致。建议在 .env 中写死（模板见 .env.example）
       AI_JWT_SECRET: ${AI_JWT_SECRET:-}
@@ -92,6 +90,15 @@ services:
       AI_MEILI_BASE_URL: http://meilisearch:7700
       AI_MEILI_KEY: ${AI_MEILI_KEY:-}
       AI_MEILI_INDEX: ${AI_MEILI_INDEX:-wenqu-chunks}
+      # 沙盒 / 外部 OCR 服务连接（部署配置，不进设置页）
+      SANDBOX_PROVISIONER_URL: ${SANDBOX_PROVISIONER_URL:-http://host.docker.internal:8002}
+      SANDBOX_PROVISIONER_TOKEN: ${SANDBOX_PROVISIONER_TOKEN:-}
+      SANDBOX_CALLBACK_BASE_URL: ${SANDBOX_CALLBACK_BASE_URL:-http://host.docker.internal:8090/ai}
+      SANDBOX_VIRTUAL_PATH_PREFIX: ${SANDBOX_VIRTUAL_PATH_PREFIX:-/home/gem/user-data}
+      OCR_PP_STRUCTURE_URI: ${OCR_PP_STRUCTURE_URI:-}
+      OCR_MINERU_URI: ${OCR_MINERU_URI:-}
+      OCR_MINERU_BACKEND: ${OCR_MINERU_BACKEND:-pipeline}
+      OCR_TIMEOUT_MS: ${OCR_TIMEOUT_MS:-600000}
     volumes:
       - app-data:/app/data
     # app 容器内存上限：防堆外/元空间增长挤占同机中间件；堆 6g + 堆外余量 ≈ 8g
