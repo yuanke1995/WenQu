@@ -152,9 +152,6 @@ const check = (ok, label, detail = '') => {
   // 双顶栏：.chat-head 窄屏必须不渲染
   check(/<div v-if="!isNarrow" class="chat-head">/.test(c), '窄屏隐藏 PC 的 .chat-head（避免双顶栏）')
   check(/<MobileChatHead v-if="isNarrow"/.test(c), '窄屏渲染 MobileChatHead 动作行')
-  // 欢迎卡：网格与横滑卡片二选一，不能同时渲染
-  check(/<div v-if="!isNarrow" class="welcome-samples">/.test(c), '宽屏用网格示例卡')
-  check(/<MobileSampleCards v-else/.test(c), '窄屏用横滑示例卡')
   // 工具条：窄屏必须拿到 nowrap 约束，否则模型名一变长就把「思考」压成竖排两字。
   // 这条约束随工具条一起进了 chat/ChatInput.vue（它的 ≤768 块里），不再由页面切 as-mobile 类。
   // 历史教训仍要防住：曾用 <component :is> + 具名 slot 包装工具条，

@@ -52,13 +52,6 @@ const check = (ok, label, detail = '') => {
   await page.waitForTimeout(1200)
 
   // 面板入口：左侧分组导航里的「API 密钥」
-  // ⚠ 前置：apiKey 面板不在 config-schema.json 的 corePaths 里，只在「高级设置」模式下出现
-  //   （基础模式只列 vision/rerank/oidc 三个组）——不先拨这个开关，本页根本看不到它。
-  const adv = page.locator('.adv-toggle input[type="checkbox"], .adv-toggle .ant-switch').first()
-  if (await adv.count() > 0) {
-    const on = await page.locator('.adv-toggle .ant-switch-checked').count()
-    if (!on) { await adv.click(); await page.waitForTimeout(600) }
-  }
   const entry = page.locator('.set-nav-item', { hasText: 'API 密钥' }).first()
   check(await entry.count() > 0, '设置页有「API 密钥」分组')
   if (await entry.count() === 0) {

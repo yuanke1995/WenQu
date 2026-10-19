@@ -1,5 +1,5 @@
 // 定时任务设置页真浏览器验证：playwright-core 驱动系统 Edge，验证「运行状态」页签新增的
-// 间隔就地编辑 / 专属参数列，以及「参数配置」页签的折叠分组与搜索。
+// 间隔就地编辑 / 专属参数列，以及**所有配置面板共用**的分节折叠（默认展开 + 搜索 + 全部收起）。
 //
 // 验的是「用户能不能用」而非「代码在不在」：静态校验全绿但模板没绑变量/接口没返回字段时，
 // 界面照样是灰框或空列（仓库里已连续两轮栽在这类问题上）。
@@ -20,10 +20,23 @@ const TASKS = [
   { name: '文档解析队列扫描', desc: '把到期的解析任务抢占后投给 worker 池执行', configKey: 'parse.queue.scanIntervalMs', editable: true, pauseRisk: null, intervalMs: 5000, paused: false, running: false, lastFinishedAt: null, lastSuccess: null, lastDurationMs: null, lastError: null, successCount: 0, failCount: 0, nextDueAt: Date.now() + 5000, now: Date.now(), relatedKeys: ['parse.queue.capacity', 'parse.concurrency', 'parse.taskLeaseSeconds', 'parse.taskTimeoutMs'] },
   { name: '产物超期清理', desc: '删除超过保留期的产物文件与记录', configKey: 'artifact.cleanupIntervalMs', editable: true, pauseRisk: null, intervalMs: 86400000, paused: false, running: false, lastFinishedAt: Date.now() - 60000, lastSuccess: true, lastDurationMs: 42, lastError: null, successCount: 4, failCount: 0, nextDueAt: Date.now() + 3600000, now: Date.now(), relatedKeys: ['artifact.retentionDays'] },
   { name: 'Trace 线上采样', desc: '线上对话按规则入采样池', configKey: 'trace.samplingIntervalMs', editable: true, pauseRisk: null, intervalMs: 0, paused: true, running: false, lastFinishedAt: null, lastSuccess: null, lastDurationMs: null, lastError: null, successCount: 0, failCount: 0, nextDueAt: null, now: Date.now(), relatedKeys: ['trace.sampleRandomDaily', 'trace.sampleNoHitDaily'] },
-  { name: '内置节拍任务', desc: '没有对应配置项的任务', configKey: null, editable: false, pauseRisk: null, intervalMs: 120000, paused: false, running: false, lastFinishedAt: null, lastSuccess: null, lastDurationMs: null, lastError: null, successCount: 0, failCount: 0, nextDueAt: Date.now() + 120000, now: Date.now(), relatedKeys: [] }
+  { name: '内置节拍任务', desc: '没有对应配置项的任务', configKey: null, editable: false, pauseRisk: null, intervalMs: 120000, paused: false, running: false, lastFinishedAt: null, lastSuccess: null, lastDurationMs: null, lastError: null, successCount: 0, failCount: 0, nextDueAt: Date.now() + 120000, now: Date.now(), relatedKeys: [] },
+  // 自动体检的间隔键必须登记在任务上：它一旦漏掉，eval.autoIntervalMs 会同时出现在
+  // 「参数配置」和「运行状态」两处（正是当初 49 项里 41 项重复的形态）
+  { name: '检索评估自动体检', desc: '按线上参数跑检索评估集并与上期对比，结论落 eval.lastReport 供看板红绿灯', configKey: 'eval.autoIntervalMs', editable: true, pauseRisk: null, intervalMs: 86400000, paused: false, running: false, lastFinishedAt: Date.now() - 3600000, lastSuccess: true, lastDurationMs: 1200, lastError: null, successCount: 12, failCount: 0, nextDueAt: Date.now() + 82800000, now: Date.now(), relatedKeys: [] }
 ]
 
-const SCHEMA = { version: 1, panels: [{ key: 'maintenance', title: '定时任务', sections: ['启动自愈与索引对账', '自动体检', '解析队列', '产物清理', 'Trace 采样', '知识图谱'] }], tips: {}, corePaths: [], editable: [], fields: [
+// 面板刻意给两个：maintenance 验「参数配置」页签的收口，chat 验**折叠视图已推广到普通参数面板**
+// （含「超时档位」卡要留在它那一节里，不能因为切组而丢失或跑到组外）
+const SCHEMA = { version: 1, panels: [
+  { key: 'chat', title: '对话模型', sections: ['回答行为与内容', '超时与等待'] },
+  { key: 'maintenance', title: '定时任务', sections: ['启动自愈与索引对账', '自动体检', '解析队列', '产物清理', 'Trace 采样', '知识图谱'] }
+], tips: {}, editable: [], fields: [
+  // ---- chat 面板（普通参数页）----
+  { backendKey: 'chat.suggestionCount', panel: 'chat', section: 0, group: 'chat', key: 'suggestionCount', path: 'chat.suggestionCount', label: '相关建议条数', type: 'number', def: 3, min: 0, max: 10, step: 1, width: 140 },
+  { backendKey: 'chat.citeCheck', panel: 'chat', section: 0, group: 'chat', key: 'citeCheck', path: 'chat.citeCheck', label: '引用一致性自检', type: 'switch', def: true },
+  { backendKey: 'chat.sseTimeoutMs', panel: 'chat', section: 1, group: 'chat', key: 'sseTimeoutMs', path: 'chat.sseTimeoutMs', label: '回答超时(ms)', type: 'number', def: 300000, min: 0, width: 140 },
+  { backendKey: 'chat.askTimeoutMs', panel: 'chat', section: 1, group: 'chat', key: 'askTimeoutMs', path: 'chat.askTimeoutMs', label: '提问等待(ms)', type: 'number', def: 600000, min: 0, width: 140 },
   // 短键必须与 backendKey 去掉「parse.」前缀后一致（group + 短键 = backendKey）：
   // 后端 ConfigService.update 拼回全键查白名单，拼不齐保存被静默丢弃（保存提示成功但开关不回弹）
   { backendKey: 'parse.queue.scanIntervalMs', panel: 'maintenance', section: 2, group: 'parse', key: 'queue.scanIntervalMs', path: 'parse.queue.scanIntervalMs', label: '队列扫描间隔(ms)', type: 'number', def: 5000, min: 0, max: 60000, step: 500, width: 140, presets: [[1000, '1 秒'], [5000, '5 秒'], [10000, '10 秒'], [30000, '30 秒'], [60000, '1 分钟']] },
@@ -76,9 +89,30 @@ const json = (data) => ({ status: 200, contentType: 'application/json', headers:
 
   await page.goto(BASE + '/settings', { waitUntil: 'networkidle' })
   await page.waitForTimeout(1000)
-  // 左侧导航点「定时任务」；高级设置默认关（corePaths 为空时基础模式无内容），先打开
-  const adv = page.locator('.adv-toggle .ant-switch')
-  if (await adv.count()) { await adv.first().click(); await page.waitForTimeout(500) }
+  const items = () => page.locator('.cfg-fold .ant-form-item').count()
+
+  // ---------- 普通参数面板（落地页就是「对话模型」）：同样按分节折叠、默认展开 ----------
+  const chatHeads = page.locator('.cfg-fold-head')
+  ok(await chatHeads.count() === 2, `对话模型面板按分节折叠，渲染 ${await chatHeads.count()} 个组标题（应=2）`)
+  // 4 个字段 + 「耐心档位」卡自己也是一个 a-form-item ⇒ 5
+  ok(await items() === 5, `默认展开：首屏就铺开 4 个字段与档位卡（实测 ${await items()} 个表单项）`)
+  ok(/2 组 · 共 4 项/.test(await page.locator('.cfg-fold-bar').innerText()), '工具条报出组数与项数')
+  ok((await page.locator('.cfg-fold-bar .app-link-btn').textContent()).trim() === '全部收起',
+     '默认全展开时按钮给的是「全部收起」')
+  // 「超时档位」卡插在它那一节的开头：切组不能把它切到组外或切丢
+  const timeoutFold = page.locator('.cfg-fold').filter({ hasText: '超时与等待' })
+  ok(await timeoutFold.locator('.tp-row').count() === 1, '超时档位卡留在「超时与等待」这一组里')
+  ok(await timeoutFold.locator('.ant-form-item').count() === 3, '该组 = 档位卡 + 两个超时字段')
+  await chatHeads.first().click(); await page.waitForTimeout(400)
+  ok(await items() === 3, '点组标题只收起这一组，其它组不动')
+  await chatHeads.first().click(); await page.waitForTimeout(400)
+  ok(await items() === 5, '再点恢复展开')
+  const chatKw = page.locator('.cfg-fold-bar input')
+  await chatKw.fill('超时'); await page.waitForTimeout(500)
+  ok(await chatHeads.count() === 1, '普通面板也能搜：按标题「超时」只剩命中的那一组')
+  await chatKw.fill(''); await page.waitForTimeout(400)
+
+  // 左侧导航点「定时任务」
   const nav = page.locator('.set-nav-item', { hasText: '定时任务' })
   ok(await nav.count() > 0, '左侧导航存在「定时任务」分组')
   if (await nav.count()) { await nav.first().click(); await page.waitForTimeout(600) }
@@ -87,8 +121,9 @@ const json = (data) => ({ status: 200, contentType: 'application/json', headers:
   const heads = page.locator('.cfg-fold-head')
   const headCount = await heads.count()
   ok(headCount >= 2, `参数配置按分组折叠，渲染 ${headCount} 个分组标题（应≥2）`)
-  ok(headCount > 0 && (await page.locator('.ant-form-item').count()) === 0, '折叠状态下不铺开字段（首屏无长表单）')
-  // 关键回归：任务专属参数不得在这里重复出现（曾 49 项里 41 项两边都有）
+  ok(await items() > 0, '默认展开：进页签就能看到字段')
+  // 关键回归：任务专属参数不得在这里重复出现（曾 49 项里 41 项两边都有）。
+  // 默认展开之后这条断言才算真的——收起时字段根本不在 DOM 里，搜什么都"没出现"
   const cfgText = (await page.locator('.set-card').innerText()) + (await page.locator('.cfg-fold').allTextContents()).join(' ')
   ok(!/队列上限/.test(cfgText), '任务专属参数（parse.queue.capacity）不在参数配置页签重复出现')
   ok(!/保留天数/.test(cfgText), '任务专属参数（artifact.retentionDays）不在参数配置页签重复出现')
@@ -96,22 +131,29 @@ const json = (data) => ({ status: 200, contentType: 'application/json', headers:
   ok(/通用参数/.test(cfgText), '页签有说明：这里只放不属于任何任务的通用参数')
 
   if (headCount) {
+    const all = await items()
     await heads.first().click(); await page.waitForTimeout(400)
-    ok(await page.locator('.cfg-fold .ant-form-item').count() > 0, '点标题能展开该组字段')
+    const left = await items()
+    ok(left < all && left > 0, `点标题收起该组（字段 ${all} → ${left}，其它组仍在）`)
     await heads.first().click(); await page.waitForTimeout(300)
-    ok(await page.locator('.cfg-fold .ant-form-item').count() === 0, '再点能收起')
-    await page.locator('.cfg-fold-bar .app-link-btn').click(); await page.waitForTimeout(400)
-    ok(await page.locator('.cfg-fold .ant-form-item').count() > 0, '「全部展开」生效')
+    ok(await items() === all, '再点能展开回来')
   }
-  // 搜索
+  // 搜索：先全收起，验证「搜到就自动展开」而不是只筛标题
+  const barBtn = page.locator('.cfg-fold-bar .app-link-btn')
   const kw = page.locator('.cfg-fold-bar input')
+  await barBtn.click(); await page.waitForTimeout(400)
+  ok(await items() === 0, '「全部收起」后只剩分组标题，一个字段都不铺')
+  await barBtn.click(); await page.waitForTimeout(400)
+  ok(headCount && await items() > 0, '「全部展开」还原')
+  await heads.first().click(); await page.waitForTimeout(300)   // 先收一组，制造"部分收起"
   await kw.fill('graphrag'); await page.waitForTimeout(500)
-  ok(await heads.count() >= 1, '按配置键搜索（graphrag）能命中剩下的通用参数组')
-  ok(await page.locator('.cfg-fold .ant-form-item').count() > 0, '搜索命中后自动展开（不用再点一次）')
+  ok(await heads.count() === 1, '按配置键搜索（graphrag）能命中剩下的通用参数组')
+  ok(await items() > 0, '搜索命中后自动展开（不用再点一次）')
   await kw.fill('队列上限'); await page.waitForTimeout(500)
   ok(await page.locator('.cfg-fold').count() === 0, '搜任务专属参数在此页无结果（已挪到运行状态）')
   await kw.fill('zzz不存在'); await page.waitForTimeout(500)
   ok(await page.locator('.cfg-fold').count() === 0, '无匹配时给出空态而非空白')
+  ok(/没有匹配「zzz不存在」/.test(await page.locator('.set-card').innerText()), '空态说清搜的是什么')
   await kw.fill(''); await page.waitForTimeout(400)
 
   // ---------- 运行状态页签 ----------

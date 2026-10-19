@@ -50,7 +50,7 @@ const tasks = registered.map((r, i) => ({
 
 fs.writeFileSync('/tmp/s.json', JSON.stringify({
   version: 1, panels: [maintPanel], tips: schema.tips || {},
-  corePaths: schema.corePaths || [], editable: schema.editable || [], fields: maintFields
+  editable: schema.editable || [], fields: maintFields
 }))
 fs.writeFileSync('/tmp/t.json', JSON.stringify(tasks))
 console.log(`mock: fields=${maintFields.length} tasks=${tasks.length} relatedKeys=${tasks.reduce((n, t) => n + t.relatedKeys.length, 0)}`)

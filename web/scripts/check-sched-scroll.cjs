@@ -33,7 +33,6 @@ const VH = 900
   })
   await p.goto(BASE + '/settings', { waitUntil: 'networkidle' })
   await p.waitForTimeout(1500)
-  if (await p.locator('.adv-toggle .ant-switch').count()) { await p.locator('.adv-toggle .ant-switch').first().click(); await p.waitForTimeout(400) }
   await p.locator('.set-nav-item', { hasText: '定时任务' }).first().click()
   await p.waitForTimeout(1200)
 
@@ -47,7 +46,7 @@ const VH = 900
     return over
   }
   console.log(`视口 ${VH}px ｜ 真实数据：${SCHEMA.fields.length} 字段 / ${TASKS.length} 任务\n`)
-  bad += await meas('参数配置（默认收起）')
+  bad += await meas('参数配置（默认展开）')
   await p.locator('.sched-tabs .ant-tabs-tab', { hasText: '运行状态' }).click()
   await p.waitForTimeout(1200)
   bad += await meas('运行状态（17 行表格）')
