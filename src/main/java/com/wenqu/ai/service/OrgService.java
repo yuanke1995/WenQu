@@ -42,6 +42,8 @@ public class OrgService {
     private final ModelRegistryService modelRegistryService;
     private final RoleService roleService;
     private final AppProperties properties;
+    /** 账号删除时一并清理个人记忆文件（MEMORY.md + 日账）；不清理会在磁盘上留下无主数据。 */
+    private final com.wenqu.ai.memory.MemoryService memoryService;
 
     /** 上传头像 URL 前缀（与 ImageWebConfig 资源映射、前端渲染口径一致） */
     private static final String AVATAR_URL_PREFIX = "/ai/images/avatar/";
@@ -153,6 +155,14 @@ public class OrgService {
             throw new BizException("至少保留一名管理员级账号，无法删除最后一名");
         }
         userMapper.deleteById(uid);
+        // 记忆是用户资产，删人不能只删库行：MEMORY.md 与日账都在 user-data/agentscope/{uid} 下。
+        // 清理失败只告警（账号已经删了），但必须显形——静默留下无主记忆会让下一个同名 uid 继承旧数据。
+        try {
+            memoryService.clearAll(uid);
+        } catch (Exception e) {
+            log.error("[MEMORY] 删除用户后清理记忆失败 uid={}（请手工删除 user-data/agentscope/{}）: {}",
+                    uid, uid, e.getMessage());
+        }
         log.info("[AUDIT] 删除用户 uid={}", uid);
     }
 
