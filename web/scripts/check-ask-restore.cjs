@@ -4,9 +4,11 @@
 //
 // 前置：先构建产物到 web/dist
 //   npx vite build --outDir dist --emptyOutDir
-// 依赖：playwright-core（不装进仓库依赖，临时用）：
-//   mkdir -p /tmp/wq-verify2 && cd /tmp/wq-verify2 && npm i playwright-core
-//   NODE_PATH=/tmp/wq-verify2/node_modules node scripts/check-ask-restore.cjs
+// 依赖：playwright-core（不装进仓库依赖，临时用）。NODE_PATH 在 Node 24 不生效，而本脚本要按
+//   __dirname/../dist 找产物，所以把它软链进 web/node_modules 后在 web/ 里跑（node_modules 不入库）：
+//   mkdir -p /tmp/wq-verify && cd /tmp/wq-verify && npm i playwright-core
+//   ln -s /tmp/wq-verify/node_modules/playwright-core web/node_modules/playwright-core
+//   cd web && node scripts/check-ask-restore.cjs
 // 无 playwright-core 时会给出提示并跳过（exit 0），不阻塞其它校验。
 'use strict'
 let chromium
@@ -26,10 +28,11 @@ const ORIGIN = 'http://ask.local'
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json',
   '.webmanifest': 'application/manifest+json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' }
 
-// 一卡三问（与后端 askQuestionToMap 同形），remainingMs 故意给 7 分钟：验证倒计时按服务端剩余时限走
+// 一卡三问（与后端 askQuestionToMap 同形），remainingMs 故意给 7 分钟：验证倒计时按服务端剩余时限走。
+// 第二题带 multi：这张卡同时验单选（点选即换、答完自动跳题）与多选（点一下勾上、再点取消、不自动提交）
 const QUESTIONS = [
   { topic: '出差交通', question: '明天出差，交通怎么走？', options: ['高铁：准点可控', '飞机：省时但易延误', '自驾：灵活但堵'] },
-  { topic: '住宿', question: '住哪种酒店？', options: ['会场附近：省通勤', '车站附近：返程从容', '不住：当天往返'] },
+  { topic: '随行材料', question: '这几样都带上吗？', options: ['合同文本：现场签', '样品：给客户看', '发票：顺路交财务'], multi: true },
   { topic: '午饭', question: '午饭吃什么？', options: ['食堂简餐：不挤行程', '商务工作餐：顺便谈事', '自带：最省时间'] }
 ]
 // live=false 分支（进程重启后唤醒句柄不在）：卡片不该重建出一个点了没反应的输入框
@@ -128,9 +131,48 @@ const check = (ok, label, detail = '') => {
   check(panel.opts.length === 4, '候选 3 项 + 自由输入行齐活', `opts=${panel.opts.length}`)
   check(String(panel.pager).trim() === '1 / 3', '一卡三问的翻页计数正确', `pager=${String(panel.pager).trim()}`)
 
-  // ==================== 二、作答提交：答案数组与问题下标对齐 ====================
+  // ==================== 二、单选那一路：点选即换、答完自动跳下一题 ====================
+  const q1 = await page.evaluate(() => ({
+    ticks: document.querySelectorAll('.m-askp-tick').length,
+    multi: document.querySelectorAll('.m-askp-multi').length,
+    hint: (document.querySelector('.m-askp-hint') || {}).textContent || ''
+  }))
+  check(q1.ticks === 0 && q1.multi === 0, '单选题不画勾选框、不贴「可多选」（一行只可能留一项，画两遍没意义）', `ticks=${q1.ticks},multi=${q1.multi}`)
+  check(/要点提交/.test(q1.hint) && /自动跳下一题/.test(q1.hint),
+    '单选那一题说的是真话：点完会跳题，但整卡不会自动提交（卡里有可多选的题）', `hint=${q1.hint}`)
   await page.evaluate(() => { document.querySelector('.m-askp-opt').click() })
   await page.waitForTimeout(400)
+  const p2 = await page.evaluate(() => ({
+    pager: (document.querySelector('.m-askp-page-num') || {}).textContent || '',
+    ticks: document.querySelectorAll('.m-askp-tick').length,
+    multi: (document.querySelector('.m-askp-multi') || {}).textContent || '',
+    hint: (document.querySelector('.m-askp-hint') || {}).textContent || ''
+  }))
+  check(String(p2.pager).trim() === '2 / 3', '单选答完自动跳到下一道未答题（不用用户找翻页）', `pager=${String(p2.pager).trim()}`)
+  check(/可多选/.test(String(p2.multi)), '翻到多选题：题面旁边标出「可多选」', `multi=${String(p2.multi).trim()}`)
+  check(p2.ticks === 4, '多选题给 3 个候选勾选框 + 1 个自定义勾选框', `ticks=${p2.ticks}`)
+  check(!/自动提交/.test(p2.hint) && /再点一次取消/.test(p2.hint),
+    '卡里含多选题时提示改口：本题可勾多个、不再承诺自动提交', `hint=${p2.hint}`)
+
+  // ==================== 三、多选那一路：勾两项并存、再点取消、答案按一项送出 ====================
+  await page.evaluate(() => {
+    const rows = [...document.querySelectorAll('.m-askp-opt')]
+    rows[0].click(); rows[1].click()
+  })
+  await page.waitForTimeout(300)
+  const two = await page.evaluate(() => ({
+    on: [...document.querySelectorAll('.m-askp-tick')].filter(t => t.classList.contains('on')).length,
+    pager: (document.querySelector('.m-askp-page-num') || {}).textContent || ''
+  }))
+  check(two.on === 2, '勾第二个不顶掉第一个（多选并存）', `on=${two.on}`)
+  await page.screenshot({ path: '/tmp/wq-ask-h5-multi.png' })
+  check(String(two.pager).trim() === '2 / 3', '多选勾完不跳题（跳走会被读成「这题答完了」）', `pager=${String(two.pager).trim()}`)
+  await page.evaluate(() => { [...document.querySelectorAll('.m-askp-opt')][0].click() })
+  await page.waitForTimeout(250)
+  const off = await page.evaluate(() => [...document.querySelectorAll('.m-askp-tick')].filter(t => t.classList.contains('on')).length)
+  check(off === 1, '再点一次是取消勾选（不是重新选一遍）', `on=${off}`)
+  await page.evaluate(() => { [...document.querySelectorAll('.m-askp-opt')][0].click() })
+  await page.waitForTimeout(250)
   await page.evaluate(() => {
     const b = [...document.querySelectorAll('.m-rec-btn')].find(x => x.textContent.includes('提交'))
     if (b) b.click()
@@ -144,16 +186,18 @@ const check = (ok, label, detail = '') => {
   const ans = (postBody && postBody.answers) || []
   check(ans.length === 3, '答案数组按问题数对齐（3 题给 3 个槽位，不截断）', `len=${ans.length}`)
   check(/高铁/.test(String(ans[0] || '')), '第一题回的是用户点选的候选', `a0=${ans[0]}`)
-  check(ans[1] === '' && ans[2] === '', '没答的两题留空送后端（由后端如实回「用户未回答」，不代答）', `a1=${ans[1]},a2=${ans[2]}`)
+  check(String(ans[1] || '') === '合同文本：现场签；样品：给客户看',
+    '多选那两题并成一个答案槽位（用「；」分隔，不额外占位、不把一题拆成两项）', `a1=${ans[1]}`)
+  check(ans[2] === '', '没答的题留空送后端（由后端如实回「用户未回答」，不代答）', `a2=${ans[2]}`)
   check(!after.hasPanel, '恢复态提交后撤下答题面板（本设备没有这一轮的流，终态事件不会来）')
   check(/正在溯源/.test(after.body), '气泡转入进行中那一行（「正在溯源，用时 N 秒 …」），后台续跑靠轮询取回')
 
-  // ==================== 三、轮询取回后台生成的答案 ====================
+  // ==================== 四、轮询取回后台生成的答案 ====================
   const firstGets = historyGets
   await page.waitForTimeout(4500)
   check(historyGets - firstGets >= 1, '恢复态答完后轮询会话历史取回答案（不靠用户手动刷新）', `historyGets=${firstGets}→${historyGets}`)
 
-  // ==================== 四、唤醒句柄已不在（live=false）：不给静默失败的输入框 ====================
+  // ==================== 五、唤醒句柄已不在（live=false）：不给静默失败的输入框 ====================
   askLive = false
   await page.goto(ORIGIN + '/login', { waitUntil: 'networkidle' })
   await page.goto(ORIGIN + '/m/chat?sid=s-ask', { waitUntil: 'networkidle' })
@@ -161,6 +205,58 @@ const check = (ok, label, detail = '') => {
   const dead = await page.evaluate(() => ({ hasPanel: !!document.querySelector('.m-askp'), body: document.body.innerText }))
   check(!dead.hasPanel, 'live=false 时不重建答题面板（点了也没人接）')
   check(/提问已失效|服务已重启/.test(dead.body), 'live=false 时明确出声：这一轮已失效', dead.body.slice(0, 0))
+
+  // ==================== 六、PC 壳同一张卡：勾选框与提交口径与移动壳同形 ====================
+  // 两端各自有一套面板（askp-* / m-askp-*），多选的状态口径却只在引擎里有一份。
+  // 这里用桌面视口（非触屏）跑同一条 mock 卡，确认 PC 也认 multi：漏一条就是「H5 能多选、PC 只能单选」
+  askLive = true
+  posts.length = 0
+  postBody = null
+  const dctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, deviceScaleFactor: 1 })
+  const dpage = await dctx.newPage()
+  await serve(dpage)
+  dpage.on('pageerror', e => errors.push('PC:' + String(e.message)))
+  await dpage.goto(ORIGIN + '/login', { waitUntil: 'networkidle' })
+  await dpage.evaluate(() => { localStorage.setItem('ai_token', 'mock-token-for-verify') })
+  await dpage.goto(ORIGIN + '/chat?sid=s-ask', { waitUntil: 'networkidle' })
+  await dpage.waitForTimeout(1600)
+  const pcOpen = await dpage.evaluate(() => ({
+    hasPanel: !!document.querySelector('.askp-box'),
+    ticks: document.querySelectorAll('.askp-tick').length,
+    opts: document.querySelectorAll('.askp-opt').length
+  }))
+  check(pcOpen.hasPanel, 'PC 壳也从待答记录重建提问面板（.askp-box）', JSON.stringify(pcOpen))
+  if (pcOpen.hasPanel) {
+    check(pcOpen.ticks === 0 && pcOpen.opts === 4, 'PC 第一题也是单选形状：3 候选 + 自由输入，无勾选框', JSON.stringify(pcOpen))
+    await dpage.evaluate(() => { document.querySelector('.askp-opt').click() })
+    await dpage.waitForTimeout(400)
+    const pcTwo = await dpage.evaluate(() => ({
+      pager: (document.querySelector('.askp-page-num') || {}).textContent || '',
+      ticks: document.querySelectorAll('.askp-tick').length,
+      multi: (document.querySelector('.askp-multi') || {}).textContent || '',
+      hint: (document.querySelector('.askp-hint') || {}).textContent || ''
+    }))
+    check(String(pcTwo.pager).trim() === '2 / 3', 'PC 单选答完同样自动跳题', `pager=${String(pcTwo.pager).trim()}`)
+    check(/可多选/.test(String(pcTwo.multi)) && pcTwo.ticks === 4,
+      'PC 多选题同样给「可多选」+ 4 个勾选框（与移动壳同形）', JSON.stringify(pcTwo))
+    check(!/自动提交/.test(pcTwo.hint), 'PC 含多选时提示也不承诺自动提交', `hint=${pcTwo.hint}`)
+    await dpage.evaluate(() => {
+      const rows = [...document.querySelectorAll('.askp-opt')]
+      rows[0].click(); rows[1].click()
+    })
+    await dpage.waitForTimeout(300)
+    const pcOn = await dpage.evaluate(() => [...document.querySelectorAll('.askp-tick')].filter(t => t.classList.contains('on')).length)
+    check(pcOn === 2, 'PC 多选勾两项并存（与移动壳同一份 picks 状态）', `on=${pcOn}`)
+    await dpage.screenshot({ path: '/tmp/wq-ask-pc-multi.png' })
+    await dpage.evaluate(() => {
+      const b = [...document.querySelectorAll('.app-btn')].find(x => x.textContent.includes('提交'))
+      if (b) b.click()
+    })
+    await dpage.waitForTimeout(800)
+    const pcAns = (postBody && postBody.answers) || []
+    check(String(pcAns[1] || '') === '合同文本：现场签；样品：给客户看',
+      'PC 提交的答案串与移动壳同形（「；」连接、一题一槽位）', `a1=${pcAns[1]}`)
+  }
 
   check(errors.length === 0, '全程无页面脚本报错', errors.slice(0, 2).join(' | '))
   await browser.close()
