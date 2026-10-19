@@ -97,7 +97,7 @@ const TOOL_DESCS = {
   textStats: '统计文本的字数、行数、段落数等',
   base64: '在文本与 Base64 编码之间互相转换',
   hash: '给文本算一个「指纹」，用于校验内容是否被改过',
-  askUser: '向你提出选项问题，点选或输入答案后继续回答',
+  askUser: '向你提出问题（可多选的题会标出），点选或输入答案后继续回答',
   readSkill: '按需加载某个技能的详细说明',
   webSearch: '上网搜索相关资料，结果会作为引用来源',
   execute: '在隔离的云端沙盒里跑一条命令，不影响你本机',
@@ -196,19 +196,21 @@ const askAnswerLabel = a => (typeof a === 'string' && a.startsWith(UNANSWERED_PR
 const askNoticeText = s => typeof s === 'string' && s.length > 1
   && s.startsWith('（') && s.endsWith('）') && !s.startsWith(UNANSWERED_PREFIX)
 const askUserView = t => {
-  let topic = '', question = '', options = null, questions = null
+  let topic = '', question = '', options = null, questions = null, qMulti = false
   try {
     const j = JSON.parse(t?.args || 'null')
     if (j && Array.isArray(j.questions) && j.questions.length) {
       questions = j.questions.map(x => ({
         topic: x.topic || '',
         question: x.question || '',
-        options: Array.isArray(x.options) ? x.options : null
+        options: Array.isArray(x.options) ? x.options : null,
+        multi: x.multi === true || String(x.multi) === 'true'
       }))
     } else if (j) {
       topic = j.topic || ''
       question = j.question || ''
       options = Array.isArray(j.options) ? j.options : null
+      qMulti = j.multi === true || String(j.multi) === 'true'
     }
   } catch (e) { /* 入参截断/旧数据：仅显示答案 */ }
   const raw = (t && (t.result || t.output)) || ''
@@ -225,13 +227,14 @@ const askUserView = t => {
     }
     // ② 截断过的历史数据：只渲染有答案的部分
     const list = questions.slice(0, answers.length).map((q, i) => ({
-      topic: q.topic, question: q.question, options: q.options,
+      topic: q.topic, question: q.question, options: q.options, multi: q.multi,
       // 多问答案=JSON 数组；单问=纯文本，已在 ① 里补成单元素数组
       answer: askAnswerLabel(answers[i])
     }))
-    return { multi: true, questions: list }
+    // many=一卡多问（一张卡里几个问句）；multi=一题多选（一题能勾几个候选）。两个词各管一件事
+    return { many: true, questions: list }
   }
-  return { topic, question, options, answer: askAnswerLabel(raw) }
+  return { topic, question, options, multi: qMulti, answer: askAnswerLabel(raw) }
 }
 /** 耗时文案：<1s 用 ms，1~60s 留一位小数，≥60s 换成「3m46s」，≥60m 再换成「1h2m」——226.0s 这种长小数读不出量级 */
 const toolDuration = ms => {

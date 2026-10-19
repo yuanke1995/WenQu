@@ -1282,25 +1282,93 @@ async function continuePlanConversation (m, text) {
   // 强制计划模式：本轮的目的就是按意见重做计划（后端据此再走计划闸门）
   streamAnswer(q, [], null, messages.value.length === 1, 1, deepThinkOn.value, [], [], [], null, [], '', userMsg, true)
 }
-/** 智能体提问（一卡多问）：在某题上点选一个选项——只记录选择，不提交（提交由 askSubmitAll 一次性批量完成） */
+/**
+ * 智能体提问（一卡多问）：在某题上点一个候选——只记录选择，不提交（提交由 askSubmitAll 一次性批量完成）。
+ * <p>单选（默认）与多选走同一个状态形状（{@code picks} 永远是下标数组），差别只在写入规则：
+ * 单选把数组压成一项并撤掉自定义行（候选与自由输入互斥，沿用旧行为）；多选是 toggle，可与自定义并存。
+ * <p>为什么由题面带 {@code multi} 而不是按选项数或问句里有没有「哪些」去猜：猜出来的选择面会把
+ * 「两条路选哪条」这种互斥题变成能同时勾三项的自相矛盾答案，而模型问完会照着那个组合往下做。
+ */
 function pickAskOption (m, page, oi) {
   const a = m && m.ask
   if (!a || a.busy || a.answered) return
-  if (!a.questions[page] || oi == null || oi < 0 || oi >= a.questions[page].options.length) return
-  a.sels[page] = oi
+  const q = a.questions[page]
+  const opts = (q && q.options) || []
+  if (!q || oi == null || oi < 0 || oi >= opts.length) return
+  const cur = a.picks[page] || []
+  if (q.multi) {
+    a.picks[page] = cur.includes(oi) ? cur.filter(x => x !== oi)
+      : [...cur, oi].sort((x, y) => x - y)
+    return
+  }
+  a.picks[page] = [oi]
   a.customs[page] = ''
+  a.customOn[page] = false
 }
-/** 智能体提问（一卡多问）：确认某题自定义答案（回车/失焦）——有文本即标记该题已答（sels=选项数） */
+/**
+ * 智能体提问（一卡多问）：确认某题的自定义答案（回车/失焦）。
+ * 单选：有文本即算答了这一题，并清掉候选选择（两行互斥）；清空则退回未答。
+ * 多选：文本非空即把自定义行当成一个勾选项，与已勾候选并存——多选题「其余还有但要我自己说」是常态。
+ */
 function commitAskCustom (m, page) {
   const a = m && m.ask
   if (!a || a.busy || a.answered) return
-  const len = (a.questions[page] && a.questions[page].options ? a.questions[page].options.length : 0)
+  const q = a.questions[page]
   const t = (a.customs[page] || '').trim()
-  if (t) a.sels[page] = len
-  else if (a.sels[page] === len) a.sels[page] = null
+  if (q && q.multi) { a.customOn[page] = !!t; return }
+  if (t) { a.picks[page] = []; a.customOn[page] = true }
+  else if (a.customOn[page]) a.customOn[page] = false
+}
+/** 某题的候选行是否处于选中态（单选也一样读这份，数组长度最多 1） */
+const askOptionPicked = (a, page, oi) => !!(a && Array.isArray(a.picks[page]) && a.picks[page].includes(oi))
+/** 某题的自定义行是否已确认（单选=选中该行；多选=勾着且有文本） */
+const askCustomPicked = (a, page) => !!(a && a.customOn[page])
+/** 某题算不算答了 */
+const askQuestionAnswered = (a, i) => !!a && (((a.picks[i] || []).length > 0) || !!a.customOn[i])
+/** 已答题数（提交按钮上的「N / M」）；两端面板共用这一份，不各数一遍 */
+const askAnsweredCount = a => (a && a.questions ? a.questions.filter((q, i) => askQuestionAnswered(a, i)).length : 0)
+/** 下一道未答题下标（往后找，找不到再从头找；全答完返回 -1） */
+const askNextUnanswered = (a, page) => {
+  if (!a) return -1
+  const later = a.questions.findIndex((q, i) => i > page && !askQuestionAnswered(a, i))
+  if (later >= 0) return later
+  return a.questions.findIndex((q, i) => !askQuestionAnswered(a, i))
 }
 /**
- * 造一张提问卡（SSE 实时下发与刷新/换设备后重建共用这份形状）。
+ * 某题送模型的答案：勾中的候选按题面原样取出，自定义文本并到末尾，用「；」连接。
+ * 分隔符不用「、」——选项写成「关键词：一句话说明」，说明里出现「、」是常态，拿它当分隔会把一项读成两项。
+ * 单选题天然是长度 1 的数组，join 后就是那一项，与多选共用这一份出口。
+ */
+const askAnswerText = (a, i) => {
+  if (!a) return ''
+  const q = a.questions[i] || {}
+  const opts = q.options || []
+  const parts = (a.picks[i] || []).slice().sort((x, y) => x - y).map(oi => opts[oi]).filter(Boolean)
+  const c = (a.customs[i] || '').trim()
+  if (a.customOn[i] && c) parts.push(c)
+  return parts.join('；')
+}
+/**
+ * 「全部答完就自动提交」只在整卡都是单选时成立：多选题没有「勾完了」这一刻——
+ * 勾第一个和勾第五个在界面上没有区别，任何「这次够了」的猜测都会把用户正在勾的项提前送出去。
+ * 含多选的卡一律等用户自己点提交（面板的提示语同这一句判据）。
+ */
+const askAutoSubmittable = a => !!a && a.questions.length > 0
+  && a.questions.every((q, i) => !q.multi && askQuestionAnswered(a, i))
+/**
+ * 面板底部那句提示（两端共用同一份措辞与判据）：要说清「本题怎么选」和「整卡什么时候送出」。
+ * 单选点完自动跳下一题；卡里只要有一个多选题就永不自动提交，得用户自己点提交。
+ * 三种说法都收尾在「没答的题不替你选」——那是这张卡对用户的承诺，不随题型变。
+ */
+const askHintText = (a, page) => {
+  if (!a) return ''
+  const qs = a.questions || []
+  const cur = qs[page]
+  if (cur && cur.multi) return '可勾多个，再点一次取消；没答的题不替你选'
+  if (qs.some(q => q && q.multi)) return '选完自动跳下一题；卡里有可多选的题，答完要点提交；没答的题不替你选'
+  return '选完自动跳下一题，全部选完自动提交；没答的题不替你选'
+}
+/** 造一张提问卡（SSE 实时下发与刷新/换设备后重建共用这份形状）。
  * @param remainingMs 倒计时剩余毫秒；不传则按 j.timeoutMs 从此刻起算（实时路径没有时差）
  * j.restored=true 表示这张卡是从服务端待答记录重建的：本设备没有这一轮的流式通道，答完后回答在
  * 后台生成，要靠 pollRestoredAnswer 轮询历史取回。
@@ -1311,11 +1379,16 @@ function buildAskCard (j, remainingMs) {
     questions = j.questions.map(x => ({
       topic: x.topic || '',
       question: x.question || '',
-      options: Array.isArray(x.options) ? x.options : []
+      options: Array.isArray(x.options) ? x.options : [],
+      // multi 缺字段=单选：存量卡片与旧数据不用回填，显式 false 与不写两种写法在这里同形
+      multi: x.multi === true || String(x.multi) === 'true'
     }))
   } else if (j.question) {
     // 兼容旧式单问题（等价于一题一卡）
-    questions = [{ topic: j.topic || '', question: j.question, options: j.options || [] }]
+    questions = [{
+      topic: j.topic || '', question: j.question, options: j.options || [],
+      multi: j.multi === true || String(j.multi) === 'true'
+    }]
   } else {
     questions = []
   }
@@ -1329,8 +1402,9 @@ function buildAskCard (j, remainingMs) {
     busy: false,
     answered: false,
     restored: !!j.restored,
-    sels: new Array(n).fill(null),   // 每题已选选项下标（null=未答）
-    customs: new Array(n).fill('')   // 每题自定义输入
+    picks: questions.map(q => []),   // 每题勾中的选项下标（单选最多 1 个，多选可多个）
+    customs: new Array(n).fill(''),  // 每题自定义输入文本
+    customOn: new Array(n).fill(false) // 每题自定义行是否已确认（未确认的半截输入不算答了）
   }
 }
 
@@ -1618,17 +1692,12 @@ const pollRestoredAnswer = async sid => {
   }, 4000)
 }
 
-/** 智能体提问（一卡多问）：一次性批量提交全部答案。未作答的题留空——后端不会替你选，只把「这一题没答」回给模型 */
+/** 智能体提问（一卡多问）：一次性批量提交全部答案。未作答的题留空——后端不会替你选，只把「这一题没答」回给模型。
+ *  一题一项（与问题下标对齐），多选的那几项已由 {@link askAnswerText} 并成这一题的一项，不额外占位 */
 async function askSubmitAll (m) {
   const a = m && m.ask
   if (!a || a.busy || a.answered) return
-  const answers = a.questions.map((q, i) => {
-    const sel = a.sels[i]
-    if (sel != null && sel < q.options.length) return q.options[sel]
-    const c = (a.customs[i] || '').trim()
-    if (c) return c
-    return ''   // 未答 → 模型收到「这一题用户没回答」，不替用户选
-  })
+  const answers = a.questions.map((q, i) => askAnswerText(a, i))
   a.busy = true
   try {
     const r = await answerAgentAsk(a.id, answers)
@@ -2789,7 +2858,10 @@ if (typeof window !== 'undefined') {
   return {
     // 输入与发送
     text, canSend, send, stop, steerQueue, sendSteer, editSteer, dropSteer, moveSteer,
-    streamAnswer, resolveApproval, pickAskOption, commitAskCustom, askSubmitAll, ignoreAsk,
+    streamAnswer, resolveApproval, askSubmitAll, ignoreAsk,
+    // 提问卡的选择状态口径收在引擎一处（单选/多选同一形状），两端面板只读这些、不各自数选中态
+    pickAskOption, commitAskCustom, askOptionPicked, askCustomPicked, askQuestionAnswered,
+    askAnsweredCount, askNextUnanswered, askAnswerText, askAutoSubmittable, askHintText,
     // 计划模式（人在回路）：开关（「+」面板）与计划卡裁决动作；hydrate 供通知深链/切会话点名
     planModeOn, setPlanMode, submitPlanApproval, continuePlanConversation, hydratePendingPlans,
     // 待批准卡的派生态与倒计时（确认栏顶替打字框的判据，两端共用）

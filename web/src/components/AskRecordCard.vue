@@ -8,14 +8,14 @@
       <caret-right-outlined class="ask-rec-h-caret" :class="{ open }" />
     </button>
     <div v-show="open" class="ask-rec-body">
-      <template v-if="v.multi">
+      <template v-if="v.many">
         <div v-for="(q, i) in v.questions" :key="i" class="ask-rec-item">
-          <div class="ask-rec-q"><question-circle-outlined /> <template v-if="v.questions.length > 1">{{ i + 1 }}. </template>{{ q.question }}</div>
+          <div class="ask-rec-q"><question-circle-outlined /> <template v-if="v.questions.length > 1">{{ i + 1 }}. </template>{{ q.question }}<span v-if="q.multi" class="ask-rec-multi">可多选</span></div>
           <div v-if="q.answer" class="ask-rec-a"><check-circle-outlined /> {{ q.answer }}</div>
         </div>
       </template>
       <template v-else>
-        <div v-if="v.question" class="ask-rec-q"><question-circle-outlined /> {{ v.question }}</div>
+        <div v-if="v.question" class="ask-rec-q"><question-circle-outlined /> {{ v.question }}<span v-if="v.multi" class="ask-rec-multi">可多选</span></div>
         <div v-if="v.answer" class="ask-rec-a" :class="{ notice: v.notice }">
           <info-circle-outlined v-if="v.notice" />
           <check-circle-outlined v-else />
@@ -33,12 +33,12 @@ import { askUserView } from '../chat/projections'
 
 const props = defineProps({ t: { type: Object, required: true } })
 const v = computed(() => askUserView(props.t))
-const n = computed(() => (v.value.multi ? v.value.questions.length : (v.value.question ? 1 : 0)))
+const n = computed(() => (v.value.many ? v.value.questions.length : (v.value.question ? 1 : 0)))
 // 折叠态放组件本地 ref：挂在 props.t 上不可靠——历史恢复回填的工具对象是普通对象，
 // 改它不触发更新（父级也不一定把它包成 reactive）。默认收起：问答属于执行过程细节。
 const collapsed = ref(true)
 const open = computed(() => !collapsed.value)
-const firstQ = computed(() => (v.value.multi ? (v.value.questions[0] || {}).question : v.value.question))
+const firstQ = computed(() => (v.value.many ? (v.value.questions[0] || {}).question : v.value.question))
 </script>
 
 <style scoped>
@@ -65,6 +65,8 @@ const firstQ = computed(() => (v.value.multi ? (v.value.questions[0] || {}).ques
 .ask-rec-item { display: flex; flex-direction: column; gap: 4px; padding: 6px 8px; background: var(--app-panel-2); border-radius: 8px; }
 .ask-rec-q { font-size: 12.5px; line-height: 1.6; color: var(--app-text); display: flex; gap: 6px; align-items: flex-start; white-space: pre-wrap; word-break: break-word; }
 .ask-rec-q .anticon { margin-top: 3px; color: var(--app-text3); }
+/* 「可多选」只在该题真给了多选语义时出现——它解释的是答案里那句「A；B」为什么是几项 */
+.ask-rec-multi { flex: none; font-size: 11px; line-height: 1.5; padding: 0 5px; border-radius: 4px; background: var(--app-panel); border: 1px solid var(--app-border); color: var(--app-text3); }
 .ask-rec-a { font-size: 12.5px; line-height: 1.6; font-weight: 600; color: var(--app-text); display: flex; gap: 6px; align-items: flex-start; white-space: pre-wrap; word-break: break-word; background: var(--app-panel-2); border-radius: 6px; padding: 6px 8px; }
 .ask-rec-a .anticon { margin-top: 3px; color: var(--app-ok); }
 /* 未发出的卡（超限被拒/次数用尽）：说明文本，不是「用户答了」 */

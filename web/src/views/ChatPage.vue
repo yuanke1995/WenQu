@@ -688,6 +688,7 @@
           <span class="askp-tag">{{ curAsk.topic || '向用户提问' }}</span>
           <span v-if="askQueueCount" class="askp-state" :title="'这一轮还有 ' + askQueueCount + ' 张卡要答，这张答完接着来'">还有 {{ askQueueCount }} 张待答</span>
           <span class="askp-q">{{ curAsk.question }}</span>
+          <span v-if="curAsk.multi" class="askp-multi">可多选</span>
           <span v-if="pendingAsk.ask.answered" class="askp-state ok">已提交，模型继续中…</span>
           <span v-else-if="askExpired" class="askp-state warn">已超时，智能体将自行判断…</span>
           <span v-if="askCountdownText" class="askp-timer" :class="{ warn: askExpired }">
@@ -701,13 +702,17 @@
           </div>
           <div class="askp-opts">
           <button v-for="(op, oi) in curAsk.options" :key="oi" type="button"
-          class="askp-opt" :class="{ sel: pendingAsk.ask.sels[askPage] === oi, 'k-hi': askHi === oi }"
+          class="askp-opt" :class="{ sel: askOptionPicked(pendingAsk.ask, askPage, oi), 'k-hi': askHi === oi }"
           :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || askExpired" @click="onPick(oi)">
+          <!-- 多选行前方块=勾选框（点一下勾上、再点取消）；单选题保持原来的「点选即换」，不额外画圈：
+               一行只有一个可选项时，勾选框只是把同一件事画第二遍 -->
+          <span v-if="curAsk.multi" class="askp-tick" :class="{ on: askOptionPicked(pendingAsk.ask, askPage, oi) }"></span>
           <span class="askp-no">{{ oi + 1 }}.</span>
           <span class="askp-kw">{{ askOptionParts(op).kw }}<span v-if="oi === 0" class="askp-rec">（推荐）</span></span>
           <span v-if="askOptionParts(op).rest" class="askp-rest">{{ askOptionParts(op).rest }}</span>
           </button>
-          <div class="askp-opt askp-custom-row" :class="{ sel: pendingAsk.ask.sels[askPage] === curAsk.options.length, 'k-hi': askHi === curAsk.options.length }">
+          <div class="askp-opt askp-custom-row" :class="{ sel: askCustomPicked(pendingAsk.ask, askPage), 'k-hi': askHi === curAsk.options.length }">
+          <span v-if="curAsk.multi" class="askp-tick" :class="{ on: askCustomPicked(pendingAsk.ask, askPage) }"></span>
           <span class="askp-no">{{ curAsk.options.length + 1 }}.</span>
           <input ref="askCustomRef" v-model="pendingAsk.ask.customs[askPage]" class="askp-input" :maxlength="2000"
           :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || askExpired"
@@ -715,7 +720,7 @@
           </div>
           </div>
           <div class="askp-foot">
-          <span class="askp-hint"><info-circle-outlined /> 选完自动跳下一题，全部选完自动提交；没答的题不替你选</span>
+          <span class="askp-hint"><info-circle-outlined /> {{ askPanelHint }}</span>
           <span class="askp-actions">
           <!-- 停止 ≠ 忽略：忽略是「这一题我不答，你自行继续」，停止是「整轮叫停」。
           面板顶替了打字框，停止键（在发送位上）此时不存在，故在面板内给一个同义入口 -->
@@ -723,7 +728,7 @@
           title="叫停整轮：不再执行任何工具，已生成的内容按「已停止本轮」保留。与「忽略」不同——忽略会让智能体带着「你没答」继续作答"
           @click="stopNow">停止本轮</button>
           <button class="app-btn ghost small" :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || askExpired" @click="ignoreAsk(pendingAsk)">忽略</button>
-          <button class="app-btn small" :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || askExpired" @click="askSubmitAll(pendingAsk)">提交（{{ askAnsweredCount }} / {{ pendingAsk.ask.questions.length }}）</button>
+          <button class="app-btn small" :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || askExpired" @click="askSubmitAll(pendingAsk)">提交（{{ askAnsweredCount(pendingAsk.ask) }} / {{ pendingAsk.ask.questions.length }}）</button>
           </span>
           </div>
           </div>
@@ -3077,7 +3082,10 @@ const updateTailSpacer = () => {
 const {
   // 输入与发送
   text, canSend, send, stop, steerQueue, sendSteer, editSteer, dropSteer, moveSteer,
-  streamAnswer, resolveApproval, pickAskOption, commitAskCustom, askSubmitAll, ignoreAsk,
+  streamAnswer, resolveApproval, askSubmitAll, ignoreAsk,
+  // 提问卡的选择状态口径全在引擎（单选/多选同一形状）：面板只读这些，不自己数选中态
+  pickAskOption, commitAskCustom, askOptionPicked, askCustomPicked, askQuestionAnswered,
+  askAnsweredCount, askNextUnanswered, askAutoSubmittable, askHintText,
   // 计划模式（人在回路）：「+」面板开关 + 计划卡裁决动作
   planModeOn, setPlanMode, submitPlanApproval, continuePlanConversation,
   pendingPlan, curPlanCard, planExpired, planCountdownText,
@@ -3382,16 +3390,14 @@ let askTimer = null
 // 当前展示的问题（随翻页切换）；越界时回退到最后一题
 const curAsk = computed(() => {
   const a = pendingAsk.value?.ask
-  if (!a || !a.questions.length) return { topic: '', question: '', options: [] }
+  if (!a || !a.questions.length) return { topic: '', question: '', options: [], multi: false }
   const p = Math.min(askPage.value, a.questions.length - 1)
-  return a.questions[p] || { topic: '', question: '', options: [] }
+  return a.questions[p] || { topic: '', question: '', options: [], multi: false }
 })
-// 已答（已确认）题数：只看 sels（选项点选或自定义已确认）。自定义「已输入但未确认」不算，
-// 否则自动提交会在用户刚敲第一个字时就触发。
-const askAnsweredCount = computed(() => {
+// 面板底部那句提示：措辞与判据都在引擎那一份（askHintText），两端一字不差
+const askPanelHint = computed(() => {
   const a = pendingAsk.value?.ask
-  if (!a) return 0
-  return a.sels.filter(s => s != null).length
+  return a ? askHintText(a, askPage.value) : ''
 })
 // 剩余毫秒 / 是否已超时 / 倒计时文本（mm:ss）
 const askRemaining = computed(() => {
@@ -3444,39 +3450,41 @@ const focusAskRow = () => {
     else if (document.activeElement === el) el.blur()
   })
 }
-// 点选某题的一个选项：记录选择 → 自动跳到下一道未答题
+// 点一个候选：单选=记录选择并自动跳到下一道未答题；多选=就地勾上/取消、留在本题。
+// 多选题不跳题是刻意的：勾完一个就翻页，用户会以为这一题答完了、后面的项没地方勾
 const onPick = (oi) => {
   const m = pendingAsk.value
   if (!m || !m.ask || m.ask.busy || m.ask.answered || askExpired.value) return
   pickAskOption(m, askPage.value, oi)
+  if (curAsk.value.multi) return
   askHi.value = null
   advanceAfterSelect(askPage.value)
 }
 // 确认某题自定义答案：回车（doAdvance=true）确认并跳下一题；失焦只确认不跳题，
-// 避免「先打字再点某个选项」时 blur 先触发跳题、导致随后的 click 记到别的题上
+// 避免「先打字再点某个选项」时 blur 先触发跳题、导致随后的 click 记到别的题上。
+// 多选题同样不跳题——自定义那行在多选里只是其中一个勾选项，不是本题的结尾
 const commitCustomAt = (page, doAdvance) => {
   const m = pendingAsk.value
   if (!m || !m.ask || m.ask.busy || m.ask.answered || askExpired.value) return
   commitAskCustom(m, page)
-  if (doAdvance && m.ask.sels[page] != null) {
+  const q = m.ask.questions[page]
+  if (doAdvance && q && !q.multi && askQuestionAnswered(m.ask, page)) {
     askHi.value = null
     advanceAfterSelect(page)
   }
 }
-// 选完本题后跳到下一道未答题；都答完则停在末题（等待自动提交）
+// 选完本题后跳到下一道未答题；都答完则停在末题（等待自动提交）。「答了没」只问引擎那一份判据
 const advanceAfterSelect = (page) => {
   const a = pendingAsk.value?.ask
   if (!a) return
-  const next = a.questions.findIndex((q, i) => i > page && a.sels[i] == null)
-  if (next >= 0) { askPage.value = next; return }
-  const firstUnanswered = a.questions.findIndex((q, i) => a.sels[i] == null)
-  askPage.value = firstUnanswered >= 0 ? firstUnanswered : a.questions.length - 1
+  const next = askNextUnanswered(a, page)
+  askPage.value = next >= 0 ? next : a.questions.length - 1
 }
-// 全部题都确认过 → 自动提交（只触发一次：提交后 answered/busy 置位，watch 条件不再满足）
+// 整卡都是单选且都答过 → 自动提交（只触发一次：提交后 answered/busy 置位，条件不再满足）。
+// 卡里含多选题时这条永不成立，等用户自己点提交——「勾了第一个」和「勾完了」在状态上没有区别
 watch(() => {
   const a = pendingAsk.value?.ask
-  return a && !a.busy && !a.answered && !askExpired.value && a.questions.length > 0
-    && a.sels.filter(s => s != null).length === a.questions.length
+  return !!(a && !a.busy && !a.answered && !askExpired.value && askAutoSubmittable(a))
 }, (done) => { if (done) askSubmitAll(pendingAsk.value) })
 const onAskCustomKeydown = e => {
   if (e.isComposing || e.keyCode === 229) return   // 输入法选字的回车不算提交
@@ -3491,7 +3499,11 @@ const onAskPanelKeydown = (e) => {
   if (!a || a.busy || a.answered || askExpired.value) return
   const total = (curAsk.value.options || []).length + 1   // 最后一格=自定义输入行
   const inInput = e.target && e.target.tagName === 'INPUT'
-  const cur = askHi.value == null ? (a.sels[askPage.value] == null ? -1 : a.sels[askPage.value]) : askHi.value
+  const page = askPage.value
+  // 没有高亮时以「本题已勾的最后一项」为起点（多选按勾选顺序往上/往下走才连得上）
+  const picked = a.picks[page] || []
+  const last = a.customOn[page] ? total - 1 : (picked.length ? picked[picked.length - 1] : -1)
+  const cur = askHi.value == null ? last : askHi.value
   if (e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)) {
     askHi.value = (cur + 1) % total
     focusAskRow()
@@ -3501,11 +3513,11 @@ const onAskPanelKeydown = (e) => {
     focusAskRow()
     e.preventDefault()
   } else if (!inInput && (e.key === 'Enter' || e.key === ' ')) {
-    // 回车/空格=确认当前高亮项（点选或自定义），确认后自动跳下一题；
+    // 回车/空格=点当前高亮行：单选是选中它，多选是勾上/取消它（同一个入口，规则在引擎那份 pickAskOption）；
     // 自定义输入行里的回车由 onAskCustomKeydown 处理，免得两处分歧
     if (askHi.value == null) { e.preventDefault(); return }
     if (askHi.value < (curAsk.value.options || []).length) onPick(askHi.value)
-    else commitCustomAt(askPage.value)
+    else commitCustomAt(page)
     e.preventDefault()
   }
 }
@@ -4461,6 +4473,14 @@ onMounted(async () => {
 .askp-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .askp-tag { flex: none; font-size: 12px; line-height: 1; padding: 5px 9px; border-radius: 999px; background: var(--app-panel-2); border: 1px solid var(--app-border); color: var(--app-text2); }
 .askp-q { font-size: 13.5px; font-weight: 600; color: var(--app-text); }
+/* 「可多选」= 这一题可以勾不止一个候选（不是「这张卡有几个问句」，那由翻页 ‹1/2› 说）。
+   画在题面旁边，用户勾第二个之前就得知道勾第一个不会被顶掉 */
+.askp-multi { flex: none; font-size: 11px; line-height: 1.5; padding: 1px 6px; border-radius: 999px; background: var(--app-panel-2); border: 1px solid var(--app-border); color: var(--app-text2); }
+/* 多选行的勾选框：纯 CSS 画勾（不引图标组件、不靠字体里的 ✓），未勾=空框，勾上=底色加白勾 */
+.askp-tick { flex: none; width: 14px; height: 14px; margin-top: 3px; border: 1.5px solid var(--app-border); border-radius: 3px; background: var(--app-panel); display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; }
+.askp-tick.on { background: var(--app-accent, var(--app-ok)); border-color: var(--app-accent, var(--app-ok)); }
+.askp-tick.on::after { content: ''; display: block; width: 7px; height: 3px; margin-top: -2px; border-left: 2px solid #fff; border-bottom: 2px solid #fff; transform: rotate(-45deg); }
+.askp-custom-row .askp-tick { margin-top: 2px; }
 .askp-state.ok { font-size: 12px; color: var(--app-ok); }
 .askp-state.warn { font-size: 12px; color: var(--app-warn); }
 .askp-timer { flex: none; display: inline-flex; align-items: center; gap: 4px; margin-left: auto; font-size: 12px; color: var(--app-text3); font-variant-numeric: tabular-nums; }

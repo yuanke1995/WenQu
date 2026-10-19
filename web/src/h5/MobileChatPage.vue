@@ -171,6 +171,7 @@
           <span class="m-askp-tag">{{ mCurAsk.topic || '向用户提问' }}</span>
           <span v-if="mAskQueueCount" class="m-askp-state">还有 {{ mAskQueueCount }} 张待答</span>
           <span class="m-askp-q">{{ mCurAsk.question }}</span>
+          <span v-if="mCurAsk.multi" class="m-askp-multi">可多选</span>
           <span v-if="mAskExpired" class="m-askp-state warn">已超时</span>
           <span v-if="mAskCountdownText" class="m-askp-timer" :class="{ warn: mAskExpired }">{{ mAskCountdownText }}</span>
           <span v-if="pendingAsk.ask.questions.length > 1" class="m-askp-pager">
@@ -181,13 +182,16 @@
         </div>
         <div class="m-askp-opts">
           <button v-for="(op, oi) in mCurAsk.options" :key="oi" class="m-askp-opt" type="button"
-                  :class="{ sel: pendingAsk.ask.sels[mAskPage] === oi }"
+                  :class="{ sel: askOptionPicked(pendingAsk.ask, mAskPage, oi) }"
                   :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || mAskExpired" @click="onPickM(oi)">
+            <!-- 与 PC 同一条规则：多选行前方块=勾选框，单选行不画圈（一行只可能留一项，画两遍没意义） -->
+            <span v-if="mCurAsk.multi" class="m-askp-tick" :class="{ on: askOptionPicked(pendingAsk.ask, mAskPage, oi) }"></span>
             <span class="m-askp-no">{{ oi + 1 }}.</span>
             <span class="m-askp-kw">{{ askOptionParts(op).kw }}<span v-if="oi === 0" class="m-askp-rec">（推荐）</span></span>
             <span v-if="askOptionParts(op).rest" class="m-askp-rest">{{ askOptionParts(op).rest }}</span>
           </button>
-          <div class="m-askp-opt m-askp-custom" :class="{ sel: pendingAsk.ask.sels[mAskPage] === mCurAsk.options.length }">
+          <div class="m-askp-opt m-askp-custom" :class="{ sel: askCustomPicked(pendingAsk.ask, mAskPage) }">
+            <span v-if="mCurAsk.multi" class="m-askp-tick" :class="{ on: askCustomPicked(pendingAsk.ask, mAskPage) }"></span>
             <span class="m-askp-no">{{ mCurAsk.options.length + 1 }}.</span>
             <input v-model="pendingAsk.ask.customs[mAskPage]" class="m-askp-input" :maxlength="2000"
                    :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || mAskExpired"
@@ -196,10 +200,10 @@
           </div>
         </div>
         <div class="m-askp-foot">
-          <span class="m-askp-hint">{{ pendingAsk.ask.answered ? '已提交，模型继续中…' : '选完自动跳下一题，全部选完自动提交；没答的题不替你选' }}</span>
+          <span class="m-askp-hint">{{ mAskHint }}</span>
           <span class="m-askp-actions">
             <button class="m-rec-btn ghost" type="button" :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || mAskExpired" @click="ignoreAsk(pendingAsk)">忽略</button>
-            <button class="m-rec-btn primary" type="button" :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || mAskExpired" @click="askSubmitAll(pendingAsk)">提交（{{ mAskAnsweredCount }} / {{ pendingAsk.ask.questions.length }}）</button>
+            <button class="m-rec-btn primary" type="button" :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || mAskExpired" @click="askSubmitAll(pendingAsk)">提交（{{ askAnsweredCount(pendingAsk.ask) }} / {{ pendingAsk.ask.questions.length }}）</button>
           </span>
         </div>
       </div>
@@ -511,7 +515,10 @@ const {
   text, canSend, send, stop, streamAnswer, messages, loading, currentSessionId, currentSessionTitle,
   panelAi,
   deepThinkOn, effectiveModelLabel, debugDisplayVisible, regenerate, switchBranch, variantSwitching,
-  resolveApproval, pickAskOption, commitAskCustom, askSubmitAll, createNewSession, pendingImages, pendingFiles, pickedSkills, pendingMentions,
+  resolveApproval, askSubmitAll, createNewSession, pendingImages, pendingFiles, pickedSkills, pendingMentions,
+  // 提问卡选择状态口径与 PC 同一份（单选/多选同一形状），面板只读不自己数
+  pickAskOption, commitAskCustom, askOptionPicked, askCustomPicked, askQuestionAnswered,
+  askAnsweredCount, askNextUnanswered, askAutoSubmittable, askHintText,
   pendingHistoryRefs, toggleSkill, removePendingImage, removePendingFile, removeMention, removeHistoryRef,
   skillDoc, loadSkills, skillList,
   takePastedFiles, takePastedText,
@@ -546,19 +553,19 @@ const pendingAsk = computed(() => {
 })
 // 排在当前卡之后的待答卡（与 PC 同一份队列语义：并行调用能同一轮挂出两张提问卡）
 const mAskQueueCount = computed(() => ((pendingAsk.value && pendingAsk.value.askQueue) || []).length)
-// 一卡多问：当前翻页 + 当前题 + 已答计数 + 超时倒计时
+// 一卡多问：当前翻页 + 当前题 + 超时倒计时（已答计数走引擎 askAnsweredCount，与 PC 同一份判据）
 const mAskPage = ref(0)
 const mCurAsk = computed(() => {
   const a = pendingAsk.value?.ask
-  if (!a || !a.questions.length) return { topic: '', question: '', options: [] }
-  return a.questions[Math.min(mAskPage.value, a.questions.length - 1)] || { topic: '', question: '', options: [] }
+  if (!a || !a.questions.length) return { topic: '', question: '', options: [], multi: false }
+  return a.questions[Math.min(mAskPage.value, a.questions.length - 1)] || { topic: '', question: '', options: [], multi: false }
 })
-// 已答（已确认）题数：只看 sels（选项点选或自定义已确认）。自定义「已输入未确认」不算，
-// 否则自动提交会在敲第一个字时就触发。
-const mAskAnsweredCount = computed(() => {
+// 底部那句提示：措辞与判据都在引擎那一份（askHintText），与 PC 一字不差；「已提交」态是移动壳自己多带的一句
+const mAskHint = computed(() => {
   const a = pendingAsk.value?.ask
-  if (!a) return 0
-  return a.sels.filter(s => s != null).length
+  if (!a) return ''
+  if (a.answered) return '已提交，模型继续中…'
+  return askHintText(a, mAskPage.value)
 })
 const mAskNow = ref(Date.now())
 let mAskTimer = null
@@ -595,34 +602,36 @@ const askOptionParts = (op) => {
   const i = s.search(/[：:]/)
   return i > 0 ? { kw: s.slice(0, i), rest: s.slice(i + 1).replace(/^[：:]\s*/, '') } : { kw: s, rest: '' }
 }
-// 选完本题后跳到下一道未答题；都答完则停在末题（等待自动提交）
+// 选完本题后跳到下一道未答题；都答完则停在末题（等待自动提交）。「答了没」只问引擎那一份判据
 const advanceM = (page) => {
   const a = pendingAsk.value?.ask
   if (!a) return
-  const next = a.questions.findIndex((q, i) => i > page && a.sels[i] == null)
-  if (next >= 0) { mAskPage.value = next; return }
-  const firstUnanswered = a.questions.findIndex((q, i) => a.sels[i] == null)
-  mAskPage.value = firstUnanswered >= 0 ? firstUnanswered : a.questions.length - 1
+  const next = askNextUnanswered(a, page)
+  mAskPage.value = next >= 0 ? next : a.questions.length - 1
 }
-// 点选某题选项：记录 → 自动跳下一题
+// 点一个候选：单选=记录并自动跳下一题；多选=就地勾上/取消、留在本题（触屏同样不跳题，
+// 勾完一个就翻页会让用户以为本题已答完）
 const onPickM = (oi) => {
   const m = pendingAsk.value
   if (!m || !m.ask || m.ask.busy || m.ask.answered || mAskExpired.value) return
   pickAskOption(m, mAskPage.value, oi)
+  if (mCurAsk.value.multi) return
   advanceM(mAskPage.value)
 }
-// 确认某题自定义答案：回车确认并跳下一题；失焦只确认不跳题（避免打字后点选项时记错题）
+// 确认某题自定义答案：回车确认并跳下一题；失焦只确认不跳题（避免打字后点选项时记错题）。
+// 多选题不跳题——自定义那行在多选里只是其中一个勾选项
 const commitCustomM = (page, doAdvance) => {
   const m = pendingAsk.value
   if (!m || !m.ask || m.ask.busy || m.ask.answered || mAskExpired.value) return
   commitAskCustom(m, page)
-  if (doAdvance && m.ask.sels[page] != null) advanceM(page)
+  const q = m.ask.questions[page]
+  if (doAdvance && q && !q.multi && askQuestionAnswered(m.ask, page)) advanceM(page)
 }
-// 全部题都确认过 → 自动提交（提交后 busy/answered 置位，条件不再满足，只触发一次）
+// 整卡都是单选且都答过 → 自动提交（提交后 busy/answered 置位，条件不再满足，只触发一次）；
+// 含多选题的卡永不自动提交，等用户点提交
 watch(() => {
   const a = pendingAsk.value?.ask
-  return a && !a.busy && !a.answered && !mAskExpired.value && a.questions.length > 0
-    && a.sels.filter(s => s != null).length === a.questions.length
+  return !!(a && !a.busy && !a.answered && !mAskExpired.value && askAutoSubmittable(a))
 }, (done) => { if (done) askSubmitAll(pendingAsk.value) })
 
 // ==================== 手动压缩上下文（/compact 的移动入口） ====================
@@ -1059,6 +1068,12 @@ onUnmounted(() => {
 .m-askp-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .m-askp-tag { flex: none; font-size: 12px; line-height: 1; padding: 5px 9px; border-radius: 999px; background: var(--app-panel); border: 1px solid var(--app-border); color: var(--app-text2); }
 .m-askp-q { font-size: 14px; font-weight: 600; color: var(--app-text); }
+/* 「可多选」与勾选框与 PC 的 askp-multi / askp-tick 同一套语义（触屏框更大一号）：
+   勾上=这一项进答案，再点取消；单选题不画框，一行只可能留一项 */
+.m-askp-multi { flex: none; font-size: 11px; line-height: 1.5; padding: 1px 6px; border-radius: 999px; background: var(--app-panel); border: 1px solid var(--app-border); color: var(--app-text2); }
+.m-askp-tick { flex: none; width: 17px; height: 17px; margin-top: 2px; border: 1.5px solid var(--app-border); border-radius: 4px; background: var(--app-panel); display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; }
+.m-askp-tick.on { background: var(--app-accent, var(--app-ok)); border-color: var(--app-accent, var(--app-ok)); }
+.m-askp-tick.on::after { content: ''; display: block; width: 8px; height: 4px; margin-top: -2px; border-left: 2px solid #fff; border-bottom: 2px solid #fff; transform: rotate(-45deg); }
 .m-askp-state.warn { font-size: 12px; color: var(--app-warn); }
 .m-askp-timer { flex: none; display: inline-flex; align-items: center; gap: 4px; margin-left: auto; font-size: 12px; color: var(--app-text3); font-variant-numeric: tabular-nums; }
 .m-askp-timer.warn { color: var(--app-warn); }
