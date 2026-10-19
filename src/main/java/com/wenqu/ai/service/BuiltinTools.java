@@ -453,11 +453,13 @@ public class BuiltinTools {
     /** ToolContext 键：askUser 的本轮执行器（ChatService 装配会话态时注入） */
     public static final String CTX_ASK = "wenqu.askUser.fn";
 
-    /** askUser 的单个问题（一卡多问）：话题标签（可空）、问题、选项 */
+    /** askUser 的单个问题（一卡多问）：话题标签（可空）、问题、选项、是否可多选 */
     public record AskQuestion(
             @ToolParam(description = "话题标签，2~6 字短语（如「晚餐选择」「住宿方案」），便于界面归组展示；可省略") String topic,
             @ToolParam(description = "要问用户的问题：一句话交代背景与要决定的事") String question,
-            @ToolParam(description = "候选选项，2~3 个（界面固定为「3 个候选 + 1 行自由输入」，超出会被截断），每项「关键词：一句话说明」；第一项视为推荐项") java.util.List<String> options) {
+            @ToolParam(description = "候选选项，2~3 个（界面固定为「3 个候选 + 1 行自由输入」，超出会被截断），每项「关键词：一句话说明」；第一项视为推荐项") java.util.List<String> options,
+            @ToolParam(description = "该题是否允许多选：只在用户可能同时要几项时填 true（勾选范围、组成部分、可并存的素材）；"
+                    + "省略即单选。「两条路选哪条」这类互斥取舍不要设 true", required = false) Boolean multi) {
     }
 
     /** askUser 执行器签名：一组问题（一卡多问） → 批量答案文本（每问一个答案，并行数组） */
@@ -491,6 +493,7 @@ public class BuiltinTools {
             @ToolParam(description = "【旧式】要问用户的问题：一句话交代背景与要决定的事", required = false) String question,
             @ToolParam(description = "【旧式】候选选项，2~3 个，每项「关键词：一句话说明」；第一项视为推荐项", required = false) java.util.List<String> options,
             @ToolParam(description = "【旧式】话题标签，2~6 字短语；可省略", required = false) String topic,
+            @ToolParam(description = "【旧式】该题是否允许多选；判据同 questions 项里的 multi", required = false) Boolean multi,
             ToolContext toolContext) {
         Object fn = toolContext == null ? null : toolContext.getContext().get(CTX_ASK);
         if (!(fn instanceof AskFn)) {
@@ -501,7 +504,7 @@ public class BuiltinTools {
             if (question == null || question.isBlank()) {
                 return "（提问内容为空，工具未执行。请给出要问用户的问题后重试。）";
             }
-            qs = java.util.List.of(new AskQuestion(topic, question, options));
+            qs = java.util.List.of(new AskQuestion(topic, question, options, multi));
         }
         return ((AskFn) fn).ask(qs);
     }

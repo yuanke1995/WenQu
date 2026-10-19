@@ -54,7 +54,7 @@ public class BuiltinToolProvider implements ToolFamilyProvider {
                 desc("base64", "Base64 编解码", "Base64 转码", "在文本与 Base64 编码之间互相转换"),
                 desc("hash", "哈希计算", "计算哈希值", "给文本算一个「指纹」，用于校验内容是否被改过"),
                 // 提问卡是「人在回路」那一件：分支轮（P3a）没有观众，等不到答复，故带 viewerRequired
-                desc("askUser", "向用户提问（人在回路）", "向用户提问", "向你提出选项问题，点选或输入答案后继续回答", true));
+                desc("askUser", "向用户提问（人在回路）", "向用户提问", "向你提出问题（可多选的题会标出），点选或输入答案后继续回答", true));
     }
 
     private static ToolDescriptor desc(String name, String label, String cardLabel, String cardHint) {

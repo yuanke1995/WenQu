@@ -3063,8 +3063,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private String askCard(String askId, Object input, String toolName) {
         Object questions;
         if (input instanceof Map<?, ?> in) {
-            Object multi = in.get("questions");
-            if (multi instanceof List<?> list && !list.isEmpty()) {
+            Object askList = in.get("questions");
+            if (askList instanceof List<?> list && !list.isEmpty()) {
+                // 一卡多问：每题自带 multi，原样透传（这里不替它判单选）
                 questions = list;
             } else {
                 Map<String, Object> one = new java.util.LinkedHashMap<>();
@@ -3074,6 +3075,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 one.put("question", str(in.get("question")));
                 Object options = in.get("options");
                 one.put("options", options instanceof List<?> l ? l : List.of());
+                // multi 只在为真时写：省略=单选，别让用户侧多认一种「显式 false」的写法
+                if (boolOf(in.get("multi"))) one.put("multi", true);
                 questions = List.of(one);
             }
         } else {
@@ -3171,6 +3174,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
     private static String str(Object o) {
         return o == null ? "" : String.valueOf(o);
+    }
+
+    /** 入参布尔位：模型偶尔把布尔写成字符串（"true"），两种形状都认，写歪了按「不勾」处理 */
+    private static boolean boolOf(Object o) {
+        if (o instanceof Boolean b) return b;
+        return o != null && "true".equalsIgnoreCase(String.valueOf(o).trim());
     }
 
     private static String esc(String s) {

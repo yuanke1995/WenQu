@@ -133,8 +133,10 @@ public class HitlDecisionService {
         static PlanDecision supersede() { return new PlanDecision(false, null, null, true); }
     }
 
-    /** askUser 的单题内部表示（落库与下发的形状都从它派生，见 {@link #askArgsJson} 与 {@link #questionsPayload}） */
-    public record QItem(String topic, String question, List<String> options) {
+    /** askUser 的单题内部表示（落库与下发的形状都从它派生，见 {@link #askArgsJson} 与 {@link #questionsPayload}）。
+     *  {@code multi} 决定卡片是单选还是可勾选多项，<b>必须随题面一起过落库这一道</b>：刷新/换设备的卡片
+     *  是从 {@code request_args} 还原的，这里少带一个字段，恢复出来的多选就会变成单选（勾第二个会把第一个顶掉）。 */
+    public record QItem(String topic, String question, List<String> options, boolean multi) {
     }
 
     /**
@@ -675,7 +677,8 @@ public class HitlDecisionService {
         return answerJson;
     }
 
-    /** 从落库 request_args 还原问题列表（兼容旧式单问题 {question,options} 与一卡多问 {questions}） */
+    /** 从落库 request_args 还原问题列表（兼容旧式单问题 {question,options} 与一卡多问 {questions}）。
+     *  {@code multi} 走 {@code getBooleanValue}：缺字段与显式 false 都是单选，历史数据不用回填。 */
     public List<QItem> parseQuestions(String argsJson) {
         List<QItem> out = new ArrayList<>();
         try {
@@ -690,7 +693,8 @@ public class HitlDecisionService {
                     if (q == null || q.isEmpty()) continue;
                     JSONArray opts = o.getJSONArray("options");
                     List<String> os = opts == null ? List.of() : opts.toJavaList(String.class);
-                    out.add(new QItem(o.getString("topic") == null ? "" : o.getString("topic"), q, os));
+                    out.add(new QItem(o.getString("topic") == null ? "" : o.getString("topic"),
+                            q, os, o.getBooleanValue("multi")));
                 }
                 return out;
             }
@@ -699,7 +703,8 @@ public class HitlDecisionService {
             if (q == null || q.isEmpty()) return out;
             JSONArray opts = args.getJSONArray("options");
             List<String> os = opts == null ? List.of() : opts.toJavaList(String.class);
-            out.add(new QItem(args.getString("topic") == null ? "" : args.getString("topic"), q, os));
+            out.add(new QItem(args.getString("topic") == null ? "" : args.getString("topic"),
+                    q, os, args.getBooleanValue("multi")));
         } catch (Exception e) {
             log.warn("[ASK] 解析提问参数失败: {}", e.getMessage());
         }
@@ -717,12 +722,13 @@ public class HitlDecisionService {
         return qs.stream().map(this::askQuestionToMap).toList();
     }
 
-    /** 单题 → Map（topic 可空省略） */
+    /** 单题 → Map（topic 可空省略；multi 只在为真时写，与引擎 {@code askCard} 那份同形） */
     private Map<String, Object> askQuestionToMap(QItem x) {
         Map<String, Object> m = new LinkedHashMap<>();
         if (!x.topic().isEmpty()) m.put("topic", x.topic());
         m.put("question", x.question());
         m.put("options", x.options());
+        if (x.multi()) m.put("multi", true);
         return m;
     }
 
