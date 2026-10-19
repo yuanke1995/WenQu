@@ -12,8 +12,6 @@
       <span v-else-if="card.status === 'approved'" class="plan-state st-ok">已批准</span>
       <span v-else-if="card.status === 'superseded'" class="plan-state st-superseded">已被取代</span>
       <span v-else class="plan-state st-rejected">未批准 · 已停止本轮</span>
-      <span v-if="card.auto" class="plan-auto-tag"
-            title="你没开计划模式，但这条消息适合先出计划——本轮按意图自动开启，确认后才执行">自动开启</span>
       <button v-if="chain.length > 1" type="button" class="plan-hist-toggle"
               :title="card.histOpen ? '收起修改记录' : '查看各版计划与你的修改意见'"
               @click="card.histOpen = !card.histOpen">
@@ -50,7 +48,7 @@ import { OrderedListOutlined, UpOutlined, DownOutlined } from '@ant-design/icons
 import { renderMd } from '../utils/markdown'
 
 const props = defineProps({
-  /** 引擎挂在这一轮助手消息上的计划卡记录：{plan,status,auto,versions,feedback,open,histOpen} */
+  /** 引擎挂在这一轮助手消息上的计划卡记录：{plan,status,versions,feedback,open,histOpen} */
   card: { type: Object, required: true }
 })
 
@@ -96,9 +94,6 @@ const needsFold = plan => {
 .plan-state.st-ok { color: var(--app-ok); }
 .plan-state.st-rejected { color: var(--app-text3); }
 .plan-state.st-superseded { color: var(--app-text3); }
-/* 「按意图自动开启」角标：这条计划不是用户手动开出来的 */
-.plan-auto-tag { flex: none; font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: 999px;
-  background: var(--app-accent-weak); color: var(--app-accent); font-weight: 500; }
 .plan-body { margin-top: 8px; font-size: 13px; }
 /* 长计划紧凑预览：限高 + 底部渐隐，居中「查看完整计划」展开/收起；
    短计划不加限高、不出按钮，与改动前逐字一致 */

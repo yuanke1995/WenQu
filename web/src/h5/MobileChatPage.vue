@@ -68,9 +68,8 @@
          会话加载时由引擎按待答记录重建底部答题面板；答复后问答记录以工具卡形态留在气泡里。 -->
 
     <main ref="box" class="m-list" @scroll.passive="onScroll">
-      <!-- 空态：品牌 + 示例问题（点即发）。
-           门控与 PC 欢迎区同一条：聊天/默认模型未就绪时换成配置引导——没有模型时点示例
-           只会弹拦截 toast，是死路；loaded=false（首次对账未成功）维持示例卡，不闪假引导 -->
+      <!-- 空态：品牌 + 欢迎语。门控与 PC 欢迎区同一条：聊天/默认模型未就绪时换成配置引导
+           （没有可用模型时任何提问都只会弹拦截 toast）；loaded=false（首次对账未成功）维持现状，不闪假引导 -->
       <div v-if="!messages.length" class="m-welcome">
         <BrandMark class="m-brand" />
         <template v-if="setupGuide.loaded && !chatDone">
@@ -78,11 +77,8 @@
           <div class="m-welcome-sub">完成下面的配置即可开始对话</div>
           <div class="m-setup"><SetupGuide scope="chat" variant="card" /></div>
         </template>
-        <template v-else>
-          <WelcomeCopy variant="mobile" :agent-name="engine.currentAgent?.name || ''" :think-on="deepThinkOn"
-                       :attach-count="pendingImages.length + pendingFiles.length" :mentions="mentionNames" />
-          <MobileSampleCards v-if="sampleQuestions.length" :questions="sampleQuestions" @ask="ask" />
-        </template>
+        <WelcomeCopy v-else variant="mobile" :agent-name="engine.currentAgent?.name || ''" :think-on="deepThinkOn"
+                     :attach-count="pendingImages.length + pendingFiles.length" :mentions="mentionNames" />
       </div>
 
       <template v-for="(m, i) in messages" :key="m.messageId || i">
@@ -301,7 +297,7 @@
     <!-- 技能正文查看：与 PC 端同一个组件（sheet 关掉也留着，读正文不该被「+」面板的生命周期带走） -->
     <SkillContentModal :open="!!skillDoc" :name="skillDoc" :entry="skillDocEntry"
                        :session-id="currentSessionId || ''"
-                       @update:open="v => { if (!v) skillDoc = '' }" @changed="loadSkills" />
+                       @update:open="v => { if (!v) skillDoc = '' }" />
     <MobileRefSheet :open="refOpen" @close="refOpen = false" @source="openSourceDetail" />
     <MobileNotifSheet :open="notifOpen" @close="notifOpen = false" />
     <MobileRoundSheet :open="roundOpen" :index="roundIdx" @close="roundOpen = false" @events="openRoundEvents" />
@@ -433,7 +429,6 @@ import MobileNotifSheet from './MobileNotifSheet.vue'
 import MobileRoundSheet from './MobileRoundSheet.vue'
 import MobileEventsSheet from './MobileEventsSheet.vue'
 import SkillContentModal from '../components/SkillContentModal.vue'
-import MobileSampleCards from './MobileSampleCards.vue'
 import BrandMark from '../components/BrandMark.vue'
 import SetupGuide from '../components/SetupGuide.vue'
 import WelcomeCopy from '../components/WelcomeCopy.vue'
@@ -530,8 +525,6 @@ const {
   // 「压缩中」态由 compacting 一并表达）
   compacting, compactNotice, compactContext, compactDividerAt,
   compactSummaryOpen, compactSummary, compactSummaryLoading, openCompactSummary, recompactWith,
-  // 空态示例问题（配置驱动：个人覆盖 > 系统全局，可自定义可关闭；与 PC 壳同一份生效值）
-  sampleQuestions,
   ready
 } = engine
 

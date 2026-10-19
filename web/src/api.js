@@ -832,6 +832,62 @@ export const listAvailableSkills = sessionId =>
 export const getSkillContent = (name, sessionId) =>
   request(`/skill/content?name=${encodeURIComponent(name || '')}`
     + (sessionId ? '&sessionId=' + encodeURIComponent(sessionId) : ''))
+
+// ---- 技能管理（用户自助安装 / 编辑 / 删除 / 个人停用）----
+/** 管理清单：来源（我的/内置/历史）、停用标记、可否编辑删除、体积/文件数 + 远程安装开关与安装限制 */
+export const listSkills = () => request('/skill/list')
+/** 详情：正文 + raw（用户自装技能的 SKILL.md 原文，编辑用）+ 附属文件清单 */
+export const getSkillDetail = (name, sessionId) =>
+  request(`/skill/detail?name=${encodeURIComponent(name || '')}`
+    + (sessionId ? '&sessionId=' + encodeURIComponent(sessionId) : ''))
+/** 新建技能（正文可只写 Markdown，frontmatter 由后端补） */
+export const createSkill = body =>
+  request('/skill', { method: 'POST', body: JSON.stringify(body) })
+/** 编辑自己安装的技能（技能名不可改） */
+export const updateSkill = (name, body) =>
+  request(`/skill/${encodeURIComponent(name)}`, { method: 'PUT', body: JSON.stringify(body) })
+export const deleteSkill = name =>
+  request(`/skill/${encodeURIComponent(name)}`, { method: 'DELETE' })
+/** 个人停用/启用：只影响自己；内置技能也能停，但不能被覆盖 */
+export const setSkillDisabled = (name, disabled) =>
+  request(`/skill/${encodeURIComponent(name)}/disabled`, {
+    method: 'PUT', body: JSON.stringify({ disabled: !!disabled })
+  })
+/** 从 URL 安装（仅 SKILL.md 文本，来源域名白名单由管理员配置） */
+export const installSkillFromUrl = body =>
+  request('/skill/install', { method: 'POST', body: JSON.stringify(body) })
+/** 上传 zip 安装：file + 可选 name / overwrite（multipart） */
+export const installSkillZip = (file, opts = {}, onProgress) => {
+  const fd = new FormData()
+  fd.append('file', file)
+  if (opts.name) fd.append('name', opts.name)
+  fd.append('overwrite', opts.overwrite ? 'true' : 'false')
+  return upload('/skill/install/zip', fd, onProgress)
+}
+/** 用户自装技能目录下的文本文件（references/scripts 预览） */
+export const getSkillFile = (name, path) =>
+  request(`/skill/file?name=${encodeURIComponent(name || '')}&path=${encodeURIComponent(path || '')}`)
+/** 下载技能 zip（备份/分享）：带登录令牌取 blob，避免 window.open 丢 Authorization */
+export async function downloadSkillZip(name) {
+  const bt = authToken()
+  const res = await fetch(BASE + '/skill/download?name=' + encodeURIComponent(name || ''), {
+    headers: bt ? { Authorization: 'Bearer ' + bt } : {}
+  })
+  if (!res.ok) {
+    let msg = ''
+    try { const data = await res.json(); msg = data && data.msg } catch (e) { /* 非 JSON */ }
+    throw new Error(msg || ('下载失败(' + res.status + ')'))
+  }
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = (name || 'skill') + '.zip'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
 export const listAgents = () => request('/agent/list')
 export const listSubAgents = () => request('/agent/sub')
 /** 能力名册（登录用户可读）：智能体配置页的「指定内置工具」可选项从这里来，
@@ -1373,6 +1429,17 @@ export const setUserPreference = payload =>
     method: 'PUT',
     body: JSON.stringify(typeof payload === 'string' ? { defaultModel: payload } : (payload || {}))
   })
+
+// ---- 我的记忆（个人设置 → 我的记忆）：只作用于登录 uid 名下的 MEMORY.md 与 memory/*.md ----
+export const getMemoryOverview = () => request('/memory', { timeout: 20000 })
+export const getMemoryContent = path =>
+  request('/memory/content?path=' + encodeURIComponent(path || ''), { timeout: 20000 })
+export const saveMemoryMd = content =>
+  request('/memory', { method: 'PUT', body: JSON.stringify({ content: content || '' }) })
+export const compactMemory = () => request('/memory/compact', { method: 'POST', timeout: 20000 })
+export const clearMyMemory = () => request('/memory', { method: 'DELETE', timeout: 20000 })
+export const deleteMemoryDaily = date =>
+  request('/memory/daily?date=' + encodeURIComponent(date || ''), { method: 'DELETE', timeout: 20000 })
 // 自助修改个人资料（仅本人；uid 不可改）：username/avatar 各自缺省=不修改，avatar 空串=清除头像
 export const updateMyProfile = (username, avatar) => {
   const body = { username }
@@ -1386,13 +1453,6 @@ export const uploadAvatarApi = file => {
   fd.append('file', file)
   return upload('/user/avatar', fd)
 }
-
-// ---- 个人对话偏好（个人设置 → 对话偏好；键为 config-schema.json 标记 personal 的字段） ----
-/** 读取：{fields, tips, values（本人个人值）, globals（系统全局值，界面「跟随系统」参照）} */
-export const getUserSettings = () => request('/user/settings')
-/** 保存：扁平的 {配置键: 值}；空串=清除该项回落全局 */
-export const saveUserSettings = values =>
-  request('/user/settings', { method: 'PUT', body: JSON.stringify(values || {}) })
 
 // ---- 沙盒目录浏览（右栏「沙盒」卡）：只读、不创建容器；下载走字节流（带令牌 fetch 后本地保存） ----
 export const sandboxState = sessionId =>

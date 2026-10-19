@@ -66,7 +66,7 @@
             <div class="pj-row">
               <span class="pj-label">默认助手</span>
               <a-select v-model:value="form.defaultAgentId" class="pj-agent-select" allow-clear
-                        placeholder="不设 = 跟随我的默认助手" :options="agentOptions" />
+                        placeholder="不设 = 跟随平台默认智能体" :options="agentOptions" />
               <span class="pj-hint">助手带的知识范围与工具会一起生效</span>
             </div>
             <div class="pj-row">

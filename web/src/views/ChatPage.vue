@@ -44,7 +44,7 @@
       <!-- 技能正文查看：写入已交给助手，读的这一侧要能审（正文是逐字进提示词的）；移动壳用同一份组件 -->
       <SkillContentModal :open="!!skillDoc" :name="skillDoc" :entry="skillDocEntry"
                          :session-id="currentSessionId || ''"
-                         @update:open="v => { if (!v) skillDoc = '' }" @changed="loadSkills" />
+                         @update:open="v => { if (!v) skillDoc = '' }" />
 
       <!-- 会话内查找：按消息导航 + 命中高亮（长会话里定位旧问答） -->
       <div v-if="searchOpen" class="chat-search">
@@ -83,32 +83,16 @@
       <div class="messages" ref="box" @scroll="onMessagesScroll">
         <div v-if="messages.length === 0" class="welcome">
           <BrandMark :size="44" class="welcome-mark" />
-          <!-- 引导卡：聊天模型/默认模型未就绪时替代示例问题（loaded 门控——首次对账未成功前维持现状，
-               宁可晚一拍引导，不给已配好的存量用户闪一帧假引导）。无模型时点示例只会弹拦截 toast，是死路 -->
+          <!-- 引导卡：聊天模型/默认模型未就绪时显示（loaded 门控——首次对账未成功前维持现状，
+               宁可晚一拍引导，不给已配好的存量用户闪一帧假引导）。没有可用模型时任何提问都只会弹拦截 toast -->
           <template v-if="setupGuide.loaded && !chatDone">
             <h2>欢迎使用问渠</h2>
             <p>完成下面的配置即可开始对话</p>
             <div class="welcome-guide"><SetupGuide scope="chat" variant="card" /></div>
           </template>
-          <template v-else>
-            <WelcomeCopy :variant="isNarrow ? 'mobile' : 'pc'" :agent-name="currentAgent?.name || ''"
-                         :think-on="deepThinkOn" :attach-count="pendingImages.length + pendingFiles.length"
-                         :mentions="mentionNames" />
-            <!-- 示例问题：点击即发（内容走配置 chat.sampleQuestions，个人覆盖 > 系统全局，可自定义可关闭）。
-                 宽屏 2×2 网格；窄屏竖排卡片（src/h5/MobileSampleCards.vue，字号恢复 12/14px）。
-                 关掉或清空即整块不显示，标题与输入框照常 -->
-            <template v-if="sampleQuestions.length">
-              <div v-if="!isNarrow" class="welcome-samples">
-                <button v-for="(q, i) in sampleQuestions" :key="i" class="ws-card" type="button" @click="ask(q.text)">
-                  <span class="ws-text">
-                    <span v-if="q.label" class="ws-label">{{ q.label }}</span>
-                    <span class="ws-q">{{ q.text }}</span>
-                  </span>
-                </button>
-              </div>
-              <MobileSampleCards v-else :questions="sampleQuestions" @ask="ask" />
-            </template>
-          </template>
+          <WelcomeCopy v-else :variant="isNarrow ? 'mobile' : 'pc'" :agent-name="currentAgent?.name || ''"
+                       :think-on="deepThinkOn" :attach-count="pendingImages.length + pendingFiles.length"
+                       :mentions="mentionNames" />
         </div>
 
         <!-- 消息列表外壳与公开分享页共用 chat/ChatThread.vue：行/块/气泡布局、四个叶子的
@@ -1472,7 +1456,6 @@ import ChatThread from '../chat/ChatThread.vue'
 import SourceList from '../chat/SourceList.vue'
 // 窄屏专属 UI 组件（PC 态不渲染，详见 src/h5/README.md）
 import MobileChatHead from '../h5/MobileChatHead.vue'
-import MobileSampleCards from '../h5/MobileSampleCards.vue'
 import AskRecordCard from '../components/AskRecordCard.vue'
 import TurnBar from '../components/TurnBar.vue'
 import SubAgentChatCard from '../components/SubAgentChatCard.vue'
@@ -3103,8 +3086,6 @@ const {
   // 模型
   currentOverrideModel, modelIndex, effectiveModel, effectiveModelLabel, effectiveModelIcon,
   effectiveModelProvider, debugEntryVisible, debugDisplayVisible, effectiveModelIssue,
-  // 空态示例问题（配置驱动：个人覆盖 > 系统全局，可关可自定义）
-  sampleQuestions,
   // 检索 / 用量 / 来源
   lastAi, lastRetrieved, lastSources, groupedSources, lastTokens, ctxTokens, ctxCapData, ctxRingDash,
   ctxRingLevel, panelAi, retryPanelRound, sessionArtifacts, sessionTokens, sessionTokensLabel, sessionTodos,
@@ -3651,20 +3632,8 @@ onMounted(async () => {
 .welcome h2 { margin: 14px 0 6px; font-size: 16px; font-weight: 500; }
 .welcome p { color: var(--app-text3); margin: 0 0 18px; }
 
-/* 空态示例问题卡片：2×2 网格，点击即发 */
-.welcome-samples { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; max-width: 560px; margin: 0 auto; text-align: left; }
-/* 欢迎区引导卡容器：与示例问题栅格同宽，卡片自身在 SetupGuide.vue 定义 */
+/* 欢迎区引导卡容器：与首屏正文同宽，卡片自身在 SetupGuide.vue 定义 */
 .welcome-guide { max-width: 560px; margin: 18px auto 0; }
-.ws-card {
-  display: flex; align-items: flex-start; gap: 9px; text-align: left;
-  border: 1px solid var(--app-border); border-radius: var(--app-radius); background: var(--app-panel);
-  padding: 11px 12px; cursor: pointer; transition: border-color .15s, box-shadow .15s;
-}
-.ws-card:hover { border-color: var(--app-accent); box-shadow: 0 2px 10px rgba(0, 0, 0, .06); }
-.ws-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-/* 小标题（配置里的「标签｜问题」前段，可自带 emoji）：12px 与窄屏卡片同口径 */
-.ws-label { font-size: 12px; color: var(--app-text3); }
-.ws-q { font-size: 13px; color: var(--app-text2); }
 
 /* 消息错误卡：独立于正文气泡（半程内容保留在上方），分类文案 + 重试 + 详情折叠 */
 .msg-error-card {
@@ -4566,7 +4535,6 @@ onMounted(async () => {
   .chat-title { max-width: 42%; }
   .head-tip { display: none; }
   .welcome { padding: 40px 12px 24px; }
-  .welcome-samples { grid-template-columns: 1fr; max-width: 100%; }
   /* 右栏浮层在窄屏近乎全屏：改成真正的底部 sheet 形态（圆角在上、留出底部安全区）。
      用 left/right 归零 + bottom:0 覆盖 1200 块给的 right:12px/top:56px 定位 */
   .right-panel.as-sheet {

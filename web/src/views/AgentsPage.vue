@@ -669,7 +669,7 @@
     <!-- 技能正文查看（「指定」旁那几个「已选正文」入口）：本页没有会话上下文，
          给的是内置 + 名下那两份，与下拉看到的是同一份清单 -->
     <SkillContentModal :open="!!skillDoc" :name="skillDoc" :entry="skillDocEntry"
-                       @update:open="v => { if (!v) skillDoc = '' }" @changed="reloadSkillOptions" />
+                       @update:open="v => { if (!v) skillDoc = '' }" />
   </div>
 </template>
 
@@ -700,13 +700,13 @@ import { loadModelIndex } from '../utils/modelRef'
 // path：该能力在全局配置里的开关路径；gate：还受此总闸制约（关掉总闸时能力不生效）
 const CAPS = [
   { key: 'toolKnowledge', label: '知识库检索', desc: '回答过程中可自主检索知识库补充依据', icon: FileSearchOutlined,
-    kind: 'switch', path: ['tool', 'knowledgeRetrieval', 'enabled'], gate: ['tool', 'enabled'] },
+    kind: 'switch', gate: ['tool', 'enabled'] },
   // 以下三项是「多实例能力」：除总开关外，还能指定具体用哪几个（对齐通用智能体平台的资源列表语义）
   { key: 'toolBuiltin', label: '内置高频工具', desc: '算术计算 / 当前时间 / 日期相差天数', icon: CalculatorOutlined,
     kind: 'list', modeKey: 'builtinMode', listKey: 'builtinTools', optionsKey: 'builtinOptions',
-    path: ['tool', 'builtin', 'enabled'], gate: ['tool', 'enabled'] },
+    gate: ['tool', 'enabled'] },
   { key: 'toolArtifact', label: '产物交付', desc: '生成 Markdown / CSV / JSON / HTML 文件并附下载卡片', icon: FileDoneOutlined,
-    kind: 'switch', path: ['tool', 'artifact', 'enabled'], gate: ['tool', 'enabled'] },
+    kind: 'switch', gate: ['tool', 'enabled'] },
   // 技能与 MCP 是**个人资产**：这里选中的是「引用串」——个人资源存 {uid}/{name}，
   // 只对该资源的归属人生效（别人的同名资源不会被拿来顶替）；内置技能存裸名，对所有人按名字生效。
   // 两者都没有独立的全局开关（配置里已无 skill.enabled / mcp.enabled），只受「工具调用」总闸制约。
@@ -832,12 +832,23 @@ const skillOptions = ref([])
 // 技能清单原样留着：「指定」下拉旁要给每条已选技能一个「看正文」的出口，靠这份数据取来源与停用态
 const skillRaw = ref([])
 const skillDoc = ref('')
+const SKILL_SOURCE_SUFFIX = { builtin: '（内置）', user: '（我的）', legacy: '（历史）' }
 const applySkillList = list => {
   skillRaw.value = list
-  skillOptions.value = list.map(s => ({
-    value: s.ref || s.name,
-    label: s.name + (s.source === 'builtin' ? '（内置）' : '（我的）')
-  }))
+  const seen = new Set()
+  skillOptions.value = list
+    // 工作区技能随会话走，钉进智能体配置会留下一个换个会话就解析不出来的名字
+    .filter(s => s.selectable !== false)
+    .filter(s => {
+      const v = s.ref || s.name
+      if (seen.has(v)) return false
+      seen.add(v)
+      return true
+    })
+    .map(s => ({
+      value: s.ref || s.name,
+      label: s.name + (SKILL_SOURCE_SUFFIX[s.source] || '')
+    }))
 }
 /** 停用/恢复之后就地重拉这份清单（不整页 reload：那会把正在编辑的表单所在的面板闪成加载态） */
 const reloadSkillOptions = () => listAvailableSkills()
@@ -1295,8 +1306,8 @@ const capsForcedOn = a => CAPS.filter(c => a[c.key] === 1).map(c => c.label)
 /**
  * 取全局配置项的 value。
  * 配置快照是「组 → 键」两层，且**组内键名是含点的扁平字符串**（`tool` 组里就是
- * `knowledgeRetrieval.enabled` / `artifact.enabled`），并不是嵌套对象——所以按
- * ['tool','knowledgeRetrieval','enabled'] 逐层下钻查不到。逐层走，某一层缺失时把
+ * `sandbox.enabled` / `runcode.enabled`），并不是嵌套对象——所以按
+ * ['tool','sandbox','enabled'] 逐层下钻查不到。逐层走，某一层缺失时把
  * 「从该层起的剩余段」用 '.' 拼起来当扁平键直接取（消费掉整段）。
  */
 const rawOf = path => {

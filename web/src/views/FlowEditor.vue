@@ -275,7 +275,7 @@
                 <a-input-number v-model:value="editConfig.timeoutSeconds" :min="1" :max="300" style="width: 140px" />
               </div>
               <div class="wf-hint">
-                依赖沙盒（设置页「沙盒工具」开关）；非 0 退出码视为节点失败，stdout 在 <code>output</code> 里。
+                依赖沙盒（设置页「沙盒 API 与工作流节点」开关）；非 0 退出码视为节点失败，stdout 在 <code>output</code> 里。
               </div>
             </template>
 

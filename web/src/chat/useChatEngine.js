@@ -23,7 +23,7 @@ import { THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel, CTX_WINDOW_ST
          groupSources, ensureTick, mergeDoneToolCalls, restoreTimeline, extendTimelineText, extendTimelineProcess,
          pushTimelineTool, pushTimelineArtifact, pushTimelineThink, extendTimelineThink, ensureThinkSegment,
          snapshotVersion, applyVersion, toolCallsView, histItemDigest,
-         DEFAULT_SAMPLE_QUESTIONS, parseSampleQuestions, rememberAgents } from './projections'
+         rememberAgents } from './projections'
 
 export function useChatEngine (hooks = {}) {
   const route = useRoute()
@@ -429,12 +429,6 @@ const debugEntryVisible = ref(false)
 // 值必须走 /config/public（管理员/普通用户都能读）——这些是"给不给用户看"的显隐，普通用户也要拿到同一个开关值；
 // /config 是管理端点，普通用户调它 403 并触发全局 403 提示（角色未授权），故不复用。
 const debugDisplayVisible = ref(false)
-// 空态示例问题（新会话空态的引导卡）：生效文案走 /config/public 的 ui.sampleQuestions
-// （个人覆盖 > 系统全局，管理员在系统设置改默认，用户在个人设置→对话偏好改自己的或关掉）。
-// null=配置还没取到/取失败（用内置默认，别让用户对着空白首屏）；空串=明确不展示
-const sampleQuestionsRaw = ref(null)
-const sampleQuestions = computed(() => sampleQuestionsRaw.value == null
-  ? DEFAULT_SAMPLE_QUESTIONS : parseSampleQuestions(sampleQuestionsRaw.value))
 // 右栏「最近一次检索/本次用量」的锚定轮。带计划卡的行也算：被「继续对话」取代那轮正文留空，
 // 但它确实检索过，不算进来右栏就会退回更早那一轮
 const lastAi = computed(() => [...messages.value].reverse().find(m => m.role === 'ai' && !m.loading && (m.content || m.sources?.length || m.planCard)))
@@ -2696,8 +2690,8 @@ function flushPendingSteers (backendLeft = []) {
   sendSteerRound(next)
 }
 // ==================== 手动压缩会话上下文（/compact） ====================
-// 与「按阈值自动压缩」共用同一套摘要机制（后端 HistoryCompactionService.compactSession），差别是显式发起：
-// 不等阈值、不看 context.historyCompress 开关，直接压到「除最近 2 次问答外全部并入摘要」。
+// 后端一律走 AgentScope 框架的 ConversationCompactor（FrameworkSessions.compactNow），
+// 问渠侧不再有第二套摘要阈值/开关；这里只负责显式发起并展示当场结果。
 const compacting = ref(false)
 /**
  * 当场这一次的结果（本地状态、不落库，下一轮发送即退场）。
@@ -2827,9 +2821,6 @@ const ready = async () => {
   getRuntimeConfig().then(r => {
     if (!r.success) return
     debugDisplayVisible.value = r.data?.ui?.debugEntry === true
-    // 键缺失（老后端/未重启）按 null 处理 → 用内置默认；下发空串才是「不展示」
-    const sq = r.data?.ui?.sampleQuestions
-    sampleQuestionsRaw.value = typeof sq === 'string' ? sq : null
   }).catch(() => {})
   getUserPreference().then(r => {
     userDefaultModel.value = (r && r.data && r.data.defaultModel) || ''
@@ -2883,8 +2874,6 @@ if (typeof window !== 'undefined') {
     modelMap, currentOverrideModel, userDefaultModel, modelIndex, effectiveModel, effectiveModelLabel,
     effectiveModelIcon, effectiveModelProvider, modelSourceLabel, effectiveModelIssue,
     debugEntryVisible, debugDisplayVisible,
-    // 空态示例问题（新会话空态引导卡；两套壳共用同一份生效值）
-    sampleQuestions,
     // 检索 / 用量 / 来源 / 上下文容量
     lastAi, lastRetrieved, lastSources, groupedSources, lastTokens, liveTokensPreview, ctxTokens,
     ctxCapData, ctxRingDash, ctxRingLevel, panelAi, retryPanelRound, sessionArtifacts,
