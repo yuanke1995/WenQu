@@ -1,6 +1,7 @@
 package com.wenqu.ai.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.mapper.AiDocumentMapper;
 import com.wenqu.ai.mapper.KnowledgeMapper;
 import com.wenqu.ai.model.AiDocument;
@@ -348,7 +349,8 @@ public class HybridRetrievalService {
             // 合并：同一 knowledgeId 保留 score 最高者（跨 query 分数同体系可直接 max），
             // 并统计每块被几个子查询命中——多路共识是强相关信号：只被一路命中的块可能是某次
             // 改写的偶然召回，而多路都命中说明该块与问题的多个侧面都相关。
-            double consensusBonus = configService.getDouble("retrieval.multiConsensusBonus", 0.05);
+            // 原 retrieval.multiConsensusBonus 已随深度思考退役；评测的多路近似沿用同一常量。
+            double consensusBonus = ConfigDefaults.RETRIEVAL_MULTI_CONSENSUS_BONUS;
             Map<String, Hit> merged = new LinkedHashMap<>();
             Map<String, Integer> hitByQueries = new HashMap<>();
             for (CompletableFuture<List<Hit>> f : futures) {

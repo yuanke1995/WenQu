@@ -15,8 +15,7 @@ import java.util.List;
  * <p>
  * 让 LLM 在主链路已注入 RAG 上下文之外，仍能按需主动调用一次"精确检索知识库"，
  * 用于：1) 主链路未召回但模型判断需要补充的信息；2) 用户追问时针对特定主题的二次检索。
- * 暴露条件（其一）：tool.knowledgeRetrieval.enabled 开启；或本轮命中检索-反思循环模式
- * （retrieval.reflectiveRetrieval，ChatService 按轮强制暴露并注入充分性自评约束）。
+ * 暴露条件：工具总闸开启，且未被智能体三态/平台停用名单关闭。
  * <p>
  * 返回内容经裁剪，避免工具结果膨胀挤占上下文预算；命中内容与主链路 RAG 召回天然互补。
  *
@@ -77,14 +76,6 @@ public class KnowledgeRetrievalTool {
     /** toolContext 键：本轮检索范围（值为 {@link KbScope}，null=不限） */
     public static final String CTX_KB_SCOPE = "wenqu.knowledge.scope";
 
-    /**
-     * toolContext 键：本轮是否处于检索-反思循环（值为 Boolean）。
-     * <p>开启时工具结果尾部附「证据充分性自评」约束，引导模型判断证据是否足够、不足则换关键词/
-     * 换角度再检索，足够才作答——把「搜一次答一次」升级为自主多轮检索（Deep Research 形态）。
-     * 只在 retrieval.reflectiveRetrieval 命中的轮次注入，普通轮次不带这段（避免诱导过度检索）。
-     */
-    public static final String CTX_REFLECTIVE = "wenqu.knowledge.reflective";
-
     /** 从本次调用的上下文取注册器（无上下文=非流式直接调用，退回不注册引用的旧行为） */
     private static SourceRegistrar registrarOf(org.springframework.ai.chat.model.ToolContext ctx) {
         Object v = ctx == null ? null : ctx.getContext().get(CTX_SOURCE_REGISTRAR);
@@ -94,11 +85,6 @@ public class KnowledgeRetrievalTool {
     private static KbScope scopeOf(org.springframework.ai.chat.model.ToolContext ctx) {
         Object v = ctx == null ? null : ctx.getContext().get(CTX_KB_SCOPE);
         return v instanceof KbScope s ? s : null;
-    }
-
-    private static boolean reflectiveOf(org.springframework.ai.chat.model.ToolContext ctx) {
-        Object v = ctx == null ? null : ctx.getContext().get(CTX_REFLECTIVE);
-        return Boolean.TRUE.equals(v);
     }
 
     /**
@@ -146,7 +132,7 @@ public class KnowledgeRetrievalTool {
             org.springframework.ai.chat.model.ToolContext toolContext) {
         // 本轮的落点（引用注册器 / 检索范围 / 反思循环标记）全部来自本次调用的上下文，
         // 由问答侧的 ToolEnrichment 按次注入——工具不再读任何跨调用的静态状态
-        return searchKnowledge(query, topK, scopeOf(toolContext), registrarOf(toolContext), reflectiveOf(toolContext));
+        return searchKnowledge(query, topK, scopeOf(toolContext), registrarOf(toolContext));
     }
 
     /**
@@ -156,7 +142,7 @@ public class KnowledgeRetrievalTool {
      * 现在只能显式传，没有「忘了传还留着上次的」这种状态可留。
      */
     public String searchKnowledge(String query, Integer topK, KbScope scope,
-                                  SourceRegistrar registrar, boolean reflective) {
+                                  SourceRegistrar registrar) {
 
         if (query == null || query.isBlank()) {
             return "查询关键词不能为空";
@@ -288,15 +274,7 @@ public class KnowledgeRetrievalTool {
                     + "若要在回答中插入截图，只能使用上列「本段相关截图」中给出的 [图片N] 编号，"
                     + "没有列出的编号一律不要输出——不存在对应的图片）");
         }
-        // 检索-反思循环轮次：结果尾部附充分性自评约束——模型据此决定「再检索」还是「作答」，
-        // 而不是拿到首轮结果就匆忙下笔。只约束措辞不改行为：上限仍由 agent.maxToolSteps 兜底
-        if (registrar != null && reflective) {
-            sb.append("\n\n【证据充分性自评】回答前请先判断以上证据是否足以完整回答当前问题："
-                    + "仍有关键缺口（结论/数值/步骤缺失，或资料之间矛盾）→ 换关键词或换角度"
-                    + "（同义说法、具体字段名、报错原文、拆出的子问题）再次调用本工具；"
-                    + "已足够 → 立即基于现有证据作答，不要为了检索而检索；"
-                    + "多轮检索后仍无新收获 → 如实告知用户知识库中缺少该部分依据，不得凭常识编造。");
-        }
+        // 检索-反思循环已随深度思考退役（2026-10）：不再注入「证据充分性自评」约束。
         return sb.toString().trim();
     }
 }

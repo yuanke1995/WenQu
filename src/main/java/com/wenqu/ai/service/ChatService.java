@@ -16,7 +16,6 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.*;
 import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -131,13 +130,13 @@ public class ChatService {
     /** 用户表（个人默认模型解析） */
     private final com.wenqu.ai.mapper.UserMapper userMapper;
     /** 产物交付工具（Function Calling；生成文件并实时推送） */
-    /** 内置高频工具（计算/当前时间/日期差等，tool.builtin.enabled 控制，默认开） */
+    /** 内置高频工具（计算/当前时间/日期差等，随工具总闸启用，按智能体三态/停用名单收口） */
     private final BuiltinTools builtinTools;
     /** 联网搜索工具（webSearch.enabled 控制，默认关；结果注册进引用体系，与知识库来源同编号） */
-    /** 沙盒工具（execute / read_file / write_file / ls；tool.sandbox.enabled 控制，默认关，依赖 provisioner 服务） */
-    /** 个人配置覆盖（个人设置 → 对话偏好）：流水线线程装载 ThreadLocal，本轮 configService.get 优先个人值 */
+    /** 沙盒（AgentScope 原生文件/命令工具；聊天里的启停由权限档位控制） */
+    /** 个人配置覆盖（schema personal 字段）：流水线线程装载 ThreadLocal，本轮 configService.get 优先个人值 */
     private final UserConfigService userConfigService;
-    /** 工作区：默认助手解析（工作区页配的助手优先于个人默认） */
+    /** 工作区：默认助手解析（工作区页配的助手优先于平台默认智能体） */
     private final ProjectService projectService;
     /** 工作区级轮次互斥：同一工作区共用一个沙盒目录，并发写会互相覆盖（用户对话 / 定时任务 / 工作流三方） */
     private final ProjectTurnMutex projectTurnMutex;
@@ -170,14 +169,6 @@ public class ChatService {
 
 
     /**
-     * 对话历史的装配与滚动压缩（P6 刀 4）：本轮带多少历史、什么时候压、手动 /compact 怎么分批压完。
-     * 它不认识 {@code TurnState}，只要会话、模型、预算与降级容器——所以问答侧调它，它不回叫问答侧。
-     */
-    private final com.wenqu.ai.agent.context.HistoryCompactionService historyCompaction;
-
-
-
-    /**
      * chatflow 桥（P6 刀 4）：智能体绑定了工作流的那条路——每轮把问题送进图，end 节点出参就是回答。
      * 这一条路没有生成流，所以桥完全不碰任何运行时状态袋，只吃通道与会话落库。
      */
@@ -194,18 +185,7 @@ public class ChatService {
 
 
 
-    /** M1：查询改写专用线程池（隔离超时任务，避免占用公共池/无限堆积）。
-     *  线程数随 chat.pipelineThreads 联动扩容（syncPipelineSize）：改写是每轮必经的短 LLM 调用
-     *  （≤8s），固定 2 线程在百级并发下排队到超时、改写静默降级为原句——不报错但召回质量塌方 */
-    private ThreadPoolExecutor rewriteExecutor = new ThreadPoolExecutor(2, 2, 0L, TimeUnit.MILLISECONDS,
-            new LinkedBlockingQueue<>(), r -> {
-        Thread t = new Thread(r, "rewrite");
-        t.setDaemon(true);
-        return t;
-    });
-
-
-    /** 问答流水线线程池：图片描述 join/改写/检索/深度思考等重活都在独立线程执行，避免占满 Tomcat 请求线程；
+    /** 问答流水线线程池：图片描述 join/检索/深度思考等重活都在独立线程执行，避免占满 Tomcat 请求线程；
      *   chat.pipelineThreads 可调（保存即生效），队列有界，满时快速失败返回"系统繁忙" */
     private ThreadPoolExecutor pipelineExecutor;
 
@@ -288,7 +268,7 @@ public class ChatService {
             runtime.addDegradation(degradations, degradedCodes, "modelFallback", turnModel.fallbackNotice());
         }
         // @ 智能体（P5 换芯）：不换成它作答，而是要求它被咨询一次。
-        // 用户显式点名的咨询不受 agent.enabled 影响：那是平台侧编排开关，这条是用户指令。
+        // 用户显式点名的咨询不受平台侧编排开关影响：这条是用户指令。
         final Agent forcedConsult = resolveDelegatedAgent(mentions, degradations, degradedCodes);
         final Agent agent = resolveTurnAgent(sessionId, agentId, degradations, degradedCodes);
         final boolean consultSelf = forcedConsult != null && agent != null
@@ -368,23 +348,10 @@ public class ChatService {
             pipelineExecutor.setMaximumPoolSize(n);
             log.info("[Chat] 问答流水线线程数调整为 {}", n);
         }
-        // 辅助池联动：改写=每轮一次的短调用给一半流水线并发，压缩=偶发长调用给四分之一。
-        // 不联动的话，流水线扩到百级而辅助池固定 2/1，改写与压缩成片超时静默降级
-        resizePool(rewriteExecutor, Math.max(4, n / 2));
-        historyCompaction.syncPoolSize(Math.max(2, n / 4));   // 压缩池归历史族自己管（刀 4）
-    }
-
-    /** 有界线程池安全调容：全程维持 max ≥ core 的不变量（先抬 max、core 归位后再收 max） */
-    private static void resizePool(java.util.concurrent.ThreadPoolExecutor pool, int n) {
-        if (n <= 0 || n == pool.getCorePoolSize()) return;
-        pool.setMaximumPoolSize(Math.max(pool.getMaximumPoolSize(), n));
-        pool.setCorePoolSize(n);
-        pool.setMaximumPoolSize(n);
     }
 
     @jakarta.annotation.PreDestroy
-    void shutdownRewriteExecutor() {
-        rewriteExecutor.shutdownNow();
+    void shutdownPipelineExecutor() {
         if (pipelineExecutor != null) {
             pipelineExecutor.shutdownNow();
         }
@@ -407,7 +374,6 @@ public class ChatService {
                       SessionEventService sessionEventService,
                       ChatRunBus chatRunBus,
                       ChatRunRuntime runtime,
-                      com.wenqu.ai.agent.context.HistoryCompactionService historyCompaction,
                       com.wenqu.ai.agent.chatflow.ChatflowBridge chatflow,
                       com.wenqu.ai.engine.ChatEngineFactory chatEngines) {
         this.sessionService = sessionService;
@@ -425,7 +391,6 @@ public class ChatService {
         this.sessionEventService = sessionEventService;
         this.chatRunBus = chatRunBus;
         this.runtime = runtime;
-        this.historyCompaction = historyCompaction;
         this.chatflow = chatflow;
         this.chatEngines = chatEngines;
 
@@ -513,15 +478,16 @@ public class ChatService {
                 // 这里按本轮 userId 从用户档案装载身份，让过滤按**真实用户**算（来源是用户表，
                 // 与调用线程无关：网页问答的 Tomcat 线程、定时任务的池线程同一个来源）。
                 boolean identity = loadIdentity(userId);
-                // 个人配置覆盖（个人设置 → 对话偏好）：随身份一次性载入，本轮内 configService.get 对
-                // personal 字段优先读个人值（相关建议条数等）。
+                // 个人配置覆盖（schema personal 字段）：随身份一次性载入，本轮内 configService.get 对
+                // 标了 personal 的字段优先读个人值。当前 schema 里没有这类字段（原「回答偏好」五项已下线），
+                // 这一层作为配置四档的通用机制保留，将来再有个人可覆盖项时不必重铺。
                 // 与身份同生命周期：池化线程复用，finally 必须清（否则下一轮会带着上一轮用户的偏好）
                 configService.putUserOverrides(userConfigService.overrides(userId));
                 // 智能体检索参数覆盖（c_ai_agent.query_params）：本轮绑定的智能体可按自己的场景定制检索策略
                 // （法律助手提高阈值保精度、手册助手放宽保召回）。装在与个人覆盖同一段、同一生命周期——
                 // 下面的 finally 早就在清它（见 "智能体检索参数的作用域覆盖随本轮结束清除"），此前缺的只是装载。
-                // 优先级：显式覆盖(此处) > 个人覆盖 > 全局默认。个人覆盖装的是「个人设置 → 对话偏好」里
-                // 用户自己的显式选择，智能体参数是管理员/建设者对该助手场景的整轮口径，故置于其上。
+                // 优先级：显式覆盖(此处) > 个人覆盖 > 全局默认。个人覆盖装的是用户自己的显式选择，
+                // 智能体参数是管理员/建设者对该助手场景的整轮口径，故置于其上。
                 loadAgentQueryOverrides(agentId);
                 try {
                 // 分派点刻意放在这一段：会话轮级互斥、turnId 登记、断线总线、看门狗、身份与个人覆盖
@@ -596,24 +562,14 @@ public class ChatService {
                                    List<Map<String, String>> degradations,
                                    Set<String> degradedCodes) {
         if (requestedAgentId == null || requestedAgentId.isBlank()) {
-            // 工作区默认助手优先于个人默认：用户在这个工作区里干活，就该由这个工作区配的助手回答
+            // 工作区默认助手：用户在这个工作区里干活，就该由这个工作区配的助手回答
             // （它的知识库范围/工具集随之生效）。显式请求的 agentId 仍然最优先——那是用户当场点的。
             String projectAgent = projectService.defaultAgentIdOfSession(sessionId);
             if (projectAgent != null) {
                 Agent mine = agentService.get(projectAgent);
                 if (mine != null) return mine;
                 runtime.addDegradation(degradations, degradedCodes, "projectAgentGone",
-                        "这个工作区绑定的默认助手已不可用（被删除或不再共享给你），本轮已改用你的默认助手");
-            }
-            // 个人默认助手（设置页「对话偏好」里选的那位）：流水线线程已装载个人覆盖，直接 get 就是本人值。
-            // 它为替代被删掉的"会话锁定"而存在——整天只跟一位助手聊的人不必每会话重挑一次。
-            String personal = configService.get("agent.personalDefault");
-            if (personal != null && !personal.isBlank()) {
-                Agent mine = agentService.get(personal.trim());
-                if (mine != null) return mine;
-                // 选了之后被删/失去共享：如实说一句再回落，而不是让人以为自己的默认还生效
-                runtime.addDegradation(degradations, degradedCodes, "personalAgentGone",
-                        "你的默认助手已不可用（被删除或不再共享给你），本轮已改用平台默认智能体");
+                        "这个工作区绑定的默认助手已不可用（被删除或不再共享给你），本轮已改用平台默认智能体");
             }
             return agentService.defaultAgent();
         }

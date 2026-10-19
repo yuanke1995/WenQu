@@ -62,10 +62,8 @@ public class ChatController {
      * 这四个入口都在它那里——它们问的是这一轮的通道与生死，不是这一轮怎么把答案生成出来。
      */
     private final com.wenqu.ai.agent.chat.ChatRunRuntime runtime;
-    /** 对话历史的装配与滚动压缩（P6 刀 4）：/compact 直接找它，不再绕问答服务 */
+    /** 对话历史的只读摘要（存量会话分隔线展示）；压缩本身已交 AgentScope 框架 */
     private final com.wenqu.ai.agent.context.HistoryCompactionService historyCompaction;
-    /** 分派层：/compact 要按「这条会话接下来由谁持有上下文」分家，判据必须与问答选引擎那条一致 */
-    private final com.wenqu.ai.engine.ChatEngineFactory chatEngines;
     private final SessionService sessionService;
     private final ImageUrlSigner imageUrlSigner;
     private final KnowledgeMapper knowledgeMapper;
@@ -802,12 +800,8 @@ public class ChatController {
     }
 
     @Operation(summary = "手动压缩会话上下文",
-            description = "把较早的对话压缩成摘要（前端 /compact 斜杠命令）：除最近 2 轮原样保留外，其余全部并入会话摘要，"
-                    + "为后续提问腾出上下文空间；可带 instruction 指定这次摘要要保留什么。摘要调用按 chat 桶限频并计入用量台账。"
-                    + "返回 {compressedTurns, compressedMessages, keepRecent, keepTurns, summaryTokens, freedTokens, summary, rounds, partial}；"
-                    + "freedTokens=本次净腾出的 token 数（并入摘要的原文减去新摘要自身），keepTurns=逐字保留的问答对数；"
-                    + "compressedTurns=0 表示对话还短、无需压缩。"
-                    + "框架引擎（agentscope）走框架自己的压缩器：进程内持有该会话的活实例时<b>当场压并写回</b>，"
+            description = "把较早的对话压缩成摘要（前端 /compact 斜杠命令），为后续提问腾出上下文空间。"
+                    + "压缩由 AgentScope 框架的 ConversationCompactor 执行：进程内持有该会话的活实例时<b>当场压并写回</b>，"
                     + "返回 {engine:\"agentscope\", scheduled:false, compressedTurns, freedTokens, summary, summaryTokens}；"
                     + "无活实例（进程重启后 / 本进程没答过）时回落为登记一次强制压缩，"
                     + "返回 {engine:\"agentscope\", scheduled:true}，下一次提问开跑前生效")
@@ -815,42 +809,17 @@ public class ChatController {
     @PostMapping("/session/{sessionId}/compact")
     public ResultJson compactSession(
             @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId,
-            @RequestBody(required = false) Map<String, Object> body,
             HttpServletRequest httpRequest) {
         String userId = RequestUser.uid();
         sessionService.assertOwned(sessionId, userId);
         // 摘要调用按 chat 桶限频，防连点刷额度（框架那一路也要过这道，不然连点能一直重建实例）
         rateLimitService.checkRateLimit("chat", RequestUser.ANONYMOUS.equals(userId)
                 ? "ip:" + clientIp(httpRequest) : "user:" + userId);
-        // 框架引擎那条路不产问渠那份摘要：它的上下文由框架自己压缩（阈值触发、逐字保留最近若干条），
-        // 而问渠这份摘要在这条路上没有人读——照老路压一次，用户拿到的是一张「已压缩」卡片和一件
-        // 没有发生的事。这里改成：会话有活实例时当场就地压（框架 ConversationCompactor + 写回 state，
-        // 用户立即拿到摘要与腾出多少）；无活实例（进程重启/未在本进程答过）回落「排到下一次提问前压」。
-        if (chatEngines.frameworkOwns(sessionId)) {
-            Map<String, Object> r = frameworkSessions.compactNow(userId, sessionId);
-            boolean scheduled = Boolean.TRUE.equals(r.get("scheduled"));
-            return ResultJson.ok(r, scheduled ? "已排到下一次提问前压缩" : "压缩完成");
-        }
-        Object modelArg = body == null ? null : body.get("model");
-        Object instrArg = body == null ? null : body.get("instruction");
-        // 请求未显式指定时回落会话已存覆盖（刷新后本地选择清空也能压对模型）。
-        // 模型解析顺序与会话当轮一致（请求指定 > 会话已存覆盖 > 个人默认）；都没有时 fail-loud 引导配置，
-        // 而不是发空 model 到网关
-        String requestedModel = modelArg == null ? null : String.valueOf(modelArg);
-        if (requestedModel == null || requestedModel.isBlank()) {
-            requestedModel = sessionService.sessionModelOf(sessionId);
-        }
-        String resolvedModel = chatService.resolveChatModel(userId, requestedModel);
-        if (resolvedModel.isBlank()) {
-            throw new BizException("未指定模型：请先在对话中选择模型，或在个人设置中配置默认模型");
-        }
-        // 与问答轮同一判据：压缩是拿这个模型改写会话历史，坏引用发给上游只会回一句看不懂的网关错
-        String modelIssue = modelRegistryService.issueMessage(resolvedModel, userId, RequestUser.role());
-        if (!modelIssue.isEmpty()) {
-            throw new BizException("模型" + modelIssue + "，请重新选择后再压缩");
-        }
-        String instruction = instrArg == null ? null : String.valueOf(instrArg);
-        return ResultJson.ok(historyCompaction.compactSession(sessionId, resolvedModel, instruction), "压缩完成");
+        // 单一引擎：会话上下文恒由 AgentScope 框架持有。框架不产问渠旧版那份摘要、也不接受
+        // instruction/model 参数，压缩语义只有框架这一份。
+        Map<String, Object> r = frameworkSessions.compactNow(userId, sessionId);
+        boolean scheduled = Boolean.TRUE.equals(r.get("scheduled"));
+        return ResultJson.ok(r, scheduled ? "已排到下一次提问前压缩" : "压缩完成");
     }
 
     @Operation(summary = "当前早期对话摘要", description = "读会话现在这份滚动历史摘要（对话流里「已压缩上下文」分隔线点开的内容）："

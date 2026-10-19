@@ -284,7 +284,7 @@ public class McpServerService {
             KnowledgeRetrievalTool.KbScope scope = new KnowledgeRetrievalTool.KbScope(
                     kbId.isEmpty() ? null : List.of(kbId), null);
             // 注册器传 null：对外调用没有「本轮回答」可注册引用，结果保持旧【片段N】格式（与迁移前一致）
-            return ok(knowledgeRetrievalTool.searchKnowledge(query, topK, scope, null, false));
+            return ok(knowledgeRetrievalTool.searchKnowledge(query, topK, scope, null));
         });
     }
 
