@@ -1,6 +1,5 @@
-<!-- 长期记忆面板已移除（全框架化 P3）：记忆改由框架 MemorySearchTool/MemorySaveTool
-     与 MemoryFlushManager 承担，存储从c_ai_user_memory 表改为 MEMORY.md + memory/*.md。
-     用户不再有手动增删改入口（已接受的降级，见 docs/harness-framework-migration.md）。 -->
+<!-- 个人设置。长期记忆面板在 P5 收口时补回：框架仍负责写入（MEMORY.md + 日账），
+     这里只提供「看得见、改得动、删得掉」的个人治理入口；日账只读，MEMORY.md 可编辑/清空。 -->
 <template>
   <div class="app-page">
     <div class="app-page-head">
@@ -58,7 +57,7 @@
           </div>
         </div>
 
-        <!-- 个人默认模型面板（承载「回答偏好」个人覆盖项，保存按钮统一提交） -->
+        <!-- 个人默认模型 + 自动提炼记忆开关（保存按钮统一提交默认模型；记忆开关即时生效不参与保存） -->
         <div v-else-if="current === 'chat'" class="app-card pf-card">
           <h2 class="app-card-title">{{ panelMeta.title }}</h2>
           <p class="pf-hint">{{ panelMeta.hint }}</p>
@@ -80,30 +79,80 @@
             <a-switch :checked="memAutoEnabled" :loading="memAutoSaving" @change="toggleMemAuto" />
           </div>
 
-          <!-- 回答偏好（仅聊天面板）：个人覆盖系统设置的体验参数，仅对本人生效 -->
-          <template v-if="current === 'chat'">
-            <a-divider style="margin:16px 0 12px" />
-            <p class="pf-hint">
-              回答偏好默认取「系统设置」的全局值；修改后仅对你<strong>自己</strong>的问答生效（跨设备同步），
-              只有被修改过的项才记为你的个人设置，其余继续跟随全局。
-            </p>
-            <a-spin :spinning="prefLoading">
-              <a-form v-if="answerFields.length" layout="vertical" class="pf-form pf-form-wide">
-                <SchemaField v-for="f in answerFields" :key="f.path" :field="f" :form="prefForm" :tips="prefTips" />
-              </a-form>
-              <p v-else-if="!prefLoading" class="pf-sub-hint">暂无可个人覆盖的配置项。</p>
-            </a-spin>
-
-            <p v-if="prefPersonalKeys.length" class="pf-sub-hint">
-              当前已设个人值：{{ prefPersonalKeys.join('、') }}
-              <button class="app-link-btn" :disabled="saving" @click="clearPrefs">全部清除个人设置</button>
-            </p>
-          </template>
+          <!-- 回答偏好（原「相关建议条数 / 空态示例问题 / 默认助手 / 停用的技能 / 工具执行上限」五项
+               个人覆盖）已整体下线：连同它们在系统设置里的全局那一份一起删干净，不再有两处口径。 -->
 
           <div class="pf-row" style="margin-top:14px">
             <button class="app-btn" :disabled="saving" @click="save">保存</button>
-            <button v-if="current === 'chat' && prefDirty" class="app-link-btn" :disabled="saving" @click="loadPrefs">还原修改</button>
           </div>
+        </div>
+
+        <!-- 我的记忆（P5 收口）：框架负责写，这里负责让用户看得见、改得动、删得掉 -->
+        <div v-else-if="current === 'memory'" class="app-card pf-card mem-card">
+          <h2 class="app-card-title">
+            我的记忆
+            <span v-if="memOverview.daily && memOverview.daily.length" class="mem-count">
+              {{ memOverview.daily.length }} 天日账
+            </span>
+          </h2>
+          <p class="pf-hint">
+            助手会在问答结束后把值得长期记住的信息写进 <code>MEMORY.md</code>，日账则是每天追加的原始记录。
+            这里的内容只有你自己能看到；日账是只读的，删除后无法恢复。
+          </p>
+          <a-spin :spinning="memLoading">
+            <div v-if="memOverview.over" class="mem-warn">
+              当前约 {{ memOverview.tokens }} token，超过硬上限 {{ memOverview.maxTokens }} token；
+              超出部分不会进入模型上下文。
+              <button class="app-link-btn" @click="onCompactMemory">按上限裁剪</button>
+            </div>
+
+            <div class="mem-toolbar">
+              <button class="app-btn" :disabled="memEditing || memSaving" @click="startMemEdit">编辑 MEMORY.md</button>
+              <button class="app-btn ghost" :disabled="!memOverview.content" @click="downloadMemory">下载</button>
+              <button class="app-btn ghost mem-danger"
+                      :disabled="memClearing || (!memOverview.content && !(memOverview.daily && memOverview.daily.length))"
+                      @click="onClearMemory">清空全部记忆</button>
+              <span class="mem-meta">
+                {{ memOverview.size || 0 }} 字符 · 约 {{ memOverview.tokens || 0 }} token
+                / 上限 {{ memOverview.maxTokens || 0 }}
+              </span>
+            </div>
+
+            <template v-if="memEditing">
+              <a-textarea v-model:value="memEditText" :rows="16"
+                          show-count class="mem-edit-area" placeholder="MEMORY.md 内容（Markdown）" />
+              <div class="mem-edit-foot">
+                <span class="mem-edit-count">{{ memEditText.length }} / {{ memOverview.maxChars || 0 }} 字符</span>
+                <button class="app-btn" :disabled="memSaving" @click="saveMemory">
+                  {{ memSaving ? '保存中…' : '保存' }}
+                </button>
+                <button class="app-btn ghost" :disabled="memSaving" @click="cancelMemEdit">取消</button>
+              </div>
+            </template>
+            <pre v-else class="mem-md">{{ memOverview.content || '（还没有沉淀任何记忆。问答几轮后，助手会把值得记住的内容写到这里。）' }}</pre>
+
+            <div class="mem-days">
+              <div class="mem-days-head">日账</div>
+              <div v-if="!memOverview.daily || !memOverview.daily.length" class="pf-sub-hint">还没有日账。</div>
+              <div v-for="d in (memOverview.daily || [])" :key="d.date" class="mem-day-row">
+                <span class="mem-day-date">{{ d.date }}</span>
+                <span class="mem-meta">{{ fmtSize(d.size) }}</span>
+                <div class="mem-day-acts">
+                  <button class="app-link-btn" @click="viewDaily(d.date)">查看</button>
+                  <button class="app-link-btn danger" @click="onDeleteDaily(d.date)">删除</button>
+                </div>
+              </div>
+            </div>
+            <p class="pf-sub-hint">
+              最后合并：{{ memOverview.lastConsolidatedAt ? fmtTime(memOverview.lastConsolidatedAt) : '尚未合并' }}
+              <template v-if="memOverview.lastConsolidatedAt">（后台大约每 30 分钟合并一次）</template>
+            </p>
+          </a-spin>
+
+          <a-modal v-model:open="memViewOpen" :title="memViewTitle" :footer="null"
+                   :width="isNarrow ? '92%' : 720">
+            <pre class="mem-md">{{ memViewText }}</pre>
+          </a-modal>
         </div>
 
         <!-- 模型能力均无个人层槽位：向量空间与知识库索引一一对应、归知识库绑定；
@@ -207,10 +256,10 @@ import { copyText } from '../utils/clipboard'
 import { shareUrlOf } from './shareSession'
 import { markSessionShared } from './store'
 import { changePasswordApi, getUserPreference, setUserPreference, updateMyProfile, uploadAvatarApi,
-         getUserSettings, saveUserSettings,
-         listMySessionShares, stopShareBySession, purgeShareRecord, enableSessionShare } from '../api'
+         listMySessionShares, stopShareBySession, purgeShareRecord, enableSessionShare,
+         getMemoryOverview, getMemoryContent, saveMemoryMd, compactMemory, clearMyMemory,
+         deleteMemoryDaily } from '../api'
 import ModelSelect from '../components/ModelSelect.vue'
-import SchemaField from '../components/SchemaField.vue'
 import UserAvatar from '../components/UserAvatar.vue'
 import { isNarrow } from '../h5/mobile'
 
@@ -220,6 +269,7 @@ const route = useRoute()
 const navs = [
   { key: 'profile', label: '个人资料' },
   { key: 'chat', label: '聊天模型与偏好' },
+  { key: 'memory', label: '我的记忆' },
   { key: 'shares', label: '分享管理' },
   { key: 'security', label: '账号安全' }
 ]
@@ -238,7 +288,7 @@ watch(current, () => nextTick(() => {
 const PANELS = {
   chat: {
     field: 'defaultModel', title: '聊天模型与偏好',
-    hint: '个人默认聊天模型：智能体未指定、会话未手动选择时使用。知识库的问答对生成、GraphRAG 抽取跟随「库主」的个人默认聊天模型——自己的库烧你这份默认，别人的库烧库主的（GraphRAG 抽取优先用库级绑定的抽取模型，未绑定才回落库主默认）。下方「回答偏好」可按需覆盖系统全局值。',
+    hint: '个人默认聊天模型：智能体未指定、会话未手动选择时使用。知识库的问答对生成、GraphRAG 抽取跟随「库主」的个人默认聊天模型——自己的库烧你这份默认，别人的库烧库主的（GraphRAG 抽取优先用库级绑定的抽取模型，未绑定才回落库主默认）。',
     tail: '清空（选「不设默认」）后每次对话需手动选择模型。对话中上传的图片能否被理解取决于所选模型：支持读图的模型原图直发；不支持的本轮图片仅作展示、不参与回答（可换支持读图的模型重试）。文档入库的图片描述使用知识库绑定的视觉模型。'
   }
 }
@@ -269,118 +319,14 @@ const load = async () => {
 const save = async () => {
   saving.value = true
   try {
-    // 个人默认模型（原有全量提交口径）
     await setUserPreference(pref.value)
-    // 对话偏好（仅聊天面板）：只提交与预填不同的项，未改动的继续跟随全局
-    if (current.value === 'chat') {
-      const payload = changedPrefPayload()
-      if (Object.keys(payload).length) {
-        const r = await saveUserSettings(payload)
-        if (r && r.success === false) { message.error(r.msg || '保存失败'); return }
-      }
-    }
     message.success('已保存')
     await load()
-    if (current.value === 'chat') await loadPrefs()
     refreshSetupGuide(true)  // 个人设置改了默认模型 → 引导 tag/卡片立即对账
   } catch (e) {
     message.error(e.message || '保存失败')
     await load() // 回落服务端状态，避免本地与服务端不一致
   } finally { saving.value = false }
-}
-
-// ---- 回答偏好：个人覆盖（c_ai_user_config；schema 驱动渲染，仅 personal 字段） ----
-// 表单预填「生效值」（个人值 > 全局值 > schema 默认值）：用户看到的就是当前生效值；
-// 保存时只提交与预填不同的项（未改动的继续跟随全局，避免把全局值"复制"成个人值）。
-const prefLoading = ref(false)
-const prefFields = ref([])
-const prefTips = ref({})
-const prefForm = ref({})
-const prefInitial = ref({})
-const prefPersonalKeys = ref([])
-
-const answerFields = computed(() => prefFields.value.filter(f => f.type !== 'model'))
-
-const setByPath = (obj, path, v) => {
-  const seg = path.split('.')
-  let t = obj
-  for (let i = 0; i < seg.length - 1; i++) { t[seg[i]] = t[seg[i]] || {}; t = t[seg[i]] }
-  t[seg[seg.length - 1]] = v
-}
-const getByPath = (obj, path) => path.split('.').reduce((a, k) => (a == null ? a : a[k]), obj)
-/** 生效值 → 控件值：switch 用布尔、number 用数字、文本原样（空=控件空） */
-const toControl = (field, raw) => {
-  const v = raw == null ? '' : String(raw)
-  if (field.type === 'switch') return v === 'true'
-  if (field.type === 'number' || field.type === 'range') return v === '' ? null : Number(v)
-  return v
-}
-/** 控件值 → 提交值：全部归一为字符串（后端按字符串存/校验，与设置页同口径） */
-const toSubmit = (field, v) => {
-  if (field.type === 'switch') return v ? 'true' : 'false'
-  if (v == null) return ''
-  return String(v).trim()
-}
-// 数字控件 null 与空串等价（：只比较"是否被改过"，null/'' 归一避免误判脏）
-const norm = v => (v == null ? '' : String(v))
-
-const loadPrefs = async () => {
-  prefLoading.value = true
-  try {
-    const r = await getUserSettings()
-    const d = (r && r.data) || {}
-    const fields = d.fields || []
-    const values = d.values || {}
-    const globals = d.globals || {}
-    const form = {}
-    const init = {}
-    const labels = []
-    for (const f of fields) {
-      const personal = values[f.path]
-      if (personal !== undefined && personal !== '') labels.push(f.label)
-      const effective = (personal !== undefined && personal !== '') ? personal
-        : (globals[f.path] !== undefined && globals[f.path] !== '' ? globals[f.path] : f.def)
-      const ctrl = toControl(f, effective)
-      setByPath(form, f.path, ctrl)
-      setByPath(init, f.path, ctrl)
-    }
-    prefFields.value = fields
-    prefTips.value = d.tips || {}
-    prefForm.value = form
-    prefInitial.value = init
-    prefPersonalKeys.value = labels
-  } catch (e) { /* 拉取失败保持空面板 */ }
-  finally { prefLoading.value = false }
-}
-const prefDirty = computed(() => {
-  for (const f of prefFields.value) {
-    if (norm(getByPath(prefForm.value, f.path)) !== norm(getByPath(prefInitial.value, f.path))) return true
-  }
-  return false
-})
-/** 与预填不同的项 → 提交载荷（统一转字符串；未被改动的项不提交，继续跟随全局） */
-const changedPrefPayload = () => {
-  const payload = {}
-  for (const f of prefFields.value) {
-    const cur = getByPath(prefForm.value, f.path)
-    if (norm(cur) !== norm(getByPath(prefInitial.value, f.path))) {
-      payload[f.path] = toSubmit(f, cur)
-    }
-  }
-  return payload
-}
-/** 全部清除个人设置：清空本人所有个人覆盖（后端按空串=删行；清空后回落全局默认/本地服务） */
-const clearPrefs = async () => {
-  const payload = {}
-  for (const f of prefFields.value) payload[f.path] = ''
-  saving.value = true
-  try {
-    const r = await saveUserSettings(payload)
-    if (r && r.success === false) { message.error(r.msg || '操作失败'); return }
-    message.success('已全部清除个人设置')
-    await loadPrefs()
-  } catch (e) { message.error(e.message || '操作失败') }
-  finally { saving.value = false }
 }
 
 // ---- 账号安全：修改密码（成功后强制重新登录） ----
@@ -480,6 +426,134 @@ const toggleMemAuto = async checked => {
     message.error(e.message || '保存失败')
     await load() // 回落服务端状态，避免开关与服务端不一致
   } finally { memAutoSaving.value = false }
+}
+
+// ---- 我的记忆（个人设置 → 我的记忆） ----
+// 数据源是后端 user-data/agentscope/{uid}/MEMORY.md 与 memory/*.md；后端按登录 uid 解析，
+// 前端不传用户。日账只读，MEMORY.md 可编辑/清空；清空与会自动写入的后台任务互斥由后端标记实例失效。
+const memLoading = ref(false)
+const memSaving = ref(false)
+const memClearing = ref(false)
+const memEditing = ref(false)
+const memEditText = ref('')
+const memViewOpen = ref(false)
+const memViewTitle = ref('')
+const memViewText = ref('')
+const memOverview = ref({
+  content: '', size: 0, tokens: 0, maxTokens: 0, maxChars: 0, over: false,
+  daily: [], lastConsolidatedAt: ''
+})
+
+const fmtSize = n => {
+  const v = Number(n) || 0
+  if (v < 1024) return v + ' B'
+  if (v < 1024 * 1024) return (v / 1024).toFixed(1) + ' KB'
+  return (v / 1024 / 1024).toFixed(1) + ' MB'
+}
+
+const loadMemory = async () => {
+  memLoading.value = true
+  try {
+    const r = await getMemoryOverview()
+    memOverview.value = (r && r.data) || memOverview.value
+  } catch (e) {
+    message.error(e.message || '记忆加载失败')
+  } finally {
+    memLoading.value = false
+  }
+}
+
+const startMemEdit = () => {
+  memEditText.value = memOverview.value.content || ''
+  memEditing.value = true
+}
+const cancelMemEdit = () => {
+  memEditing.value = false
+  memEditText.value = ''
+}
+const saveMemory = async () => {
+  memSaving.value = true
+  try {
+    const r = await saveMemoryMd(memEditText.value)
+    memOverview.value = (r && r.data) || memOverview.value
+    memEditing.value = false
+    message.success('记忆已保存')
+  } catch (e) {
+    message.error(e.message || '保存失败')
+  } finally {
+    memSaving.value = false
+  }
+}
+const onCompactMemory = async () => {
+  memLoading.value = true
+  try {
+    const r = await compactMemory()
+    memOverview.value = (r && r.data) || memOverview.value
+    message.success('已按上限裁剪')
+  } catch (e) {
+    message.error(e.message || '裁剪失败')
+  } finally {
+    memLoading.value = false
+  }
+}
+const onClearMemory = () => {
+  Modal.confirm({
+    title: '清空全部长期记忆？',
+    content: '会删除 MEMORY.md、全部日账与归档，无法恢复。已经开始的问答不受影响，但之后的问答不会再记得这些内容。',
+    okText: '清空', okType: 'danger', cancelText: '取消',
+    onOk: async () => {
+      memClearing.value = true
+      try {
+        const r = await clearMyMemory()
+        memOverview.value = (r && r.data) || memOverview.value
+        memEditing.value = false
+        message.success('已清空长期记忆')
+      } catch (e) {
+        message.error(e.message || '清空失败')
+      } finally {
+        memClearing.value = false
+      }
+    }
+  })
+}
+const viewDaily = async date => {
+  try {
+    const r = await getMemoryContent('memory/' + date + '.md')
+    memViewTitle.value = '日账 ' + date
+    memViewText.value = (r && r.data && r.data.content) || ''
+    memViewOpen.value = true
+  } catch (e) {
+    message.error(e.message || '读取日账失败')
+  }
+}
+const onDeleteDaily = date => {
+  Modal.confirm({
+    title: '删除 ' + date + ' 的日账？',
+    content: '只删除这一天的原始记录，不会回改 MEMORY.md；删除后无法恢复。',
+    okText: '删除', okType: 'danger', cancelText: '取消',
+    onOk: async () => {
+      try {
+        const r = await deleteMemoryDaily(date)
+        memOverview.value = (r && r.data) || memOverview.value
+        message.success('日账已删除')
+      } catch (e) {
+        message.error(e.message || '删除失败')
+      }
+    }
+  })
+}
+const downloadMemory = () => {
+  const text = memOverview.value.content || ''
+  if (!text) return
+  const blob = new Blob([text], { type: 'text/markdown;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'MEMORY.md'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
 }
 
 // ---- 分享管理（会话只读链接的统一回看与停用） ----
@@ -588,14 +662,15 @@ watch(current, v => {
     focusSid.value = route.query.sid || ''
     loadShares()
   }
+  if (v === 'memory') loadMemory()
 })
 
 onMounted(() => {
   load()
-  loadPrefs()
   ensureAuth().then(me => { nickForm.value.username = me.username || ''; avatarPreview.value = me.avatar || '' })
   // 深链直达（?panel=xxx）时 watch 不会触发，首拉在这里补齐
   if (current.value === 'shares') loadShares()
+  if (current.value === 'memory') loadMemory()
 })
 </script>
 
@@ -618,7 +693,6 @@ onMounted(() => {
 .pf-nick-input { width: 280px; }
 /* 表单最大宽度：PC 上限避免长行难读；窄屏取消（见下方 768 块） */
 .pf-form { max-width: 360px; }
-.pf-form-wide { max-width: 560px; }
 .pf-err { color: var(--app-danger); font-size: 12px; margin: 0 0 8px; }
 
 /* 头像区：左预览 + 右侧「按钮行 / 说明行」两行，不再把按钮和长说明挤成一条横带 */
@@ -752,6 +826,32 @@ onMounted(() => {
 .mem-auto-title { font-size: 13px; color: var(--app-text); font-weight: 500; margin-bottom: 2px; }
 .mem-auto-row .pf-sub-hint { margin: 0; }
 
+/* ---- 我的记忆（P5） ---- */
+.mem-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.mem-warn {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  margin-bottom: 12px; padding: 9px 12px; border-radius: 8px;
+  background: var(--app-warn-weak); color: var(--app-warn-text);
+  border: 1px solid var(--app-warn-border); font-size: 12px; line-height: 1.5;
+}
+.mem-warn .app-link-btn { color: var(--app-warn-text); text-decoration: underline; }
+.mem-md {
+  margin: 0; padding: 12px 14px; max-height: 360px; overflow: auto;
+  border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-panel-2);
+  font-family: var(--app-font-mono, ui-monospace, monospace); font-size: 12px; line-height: 1.65;
+  color: var(--app-text); white-space: pre-wrap; word-break: break-word;
+}
+.mem-edit-area { width: 100%; font-family: var(--app-font-mono, ui-monospace, monospace); font-size: 12px; }
+.mem-days { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--app-border); }
+.mem-days-head { font-size: 12px; font-weight: 500; color: var(--app-text); margin-bottom: 6px; }
+.mem-day-row {
+  display: flex; align-items: center; gap: 10px; padding: 7px 0;
+  border-bottom: 1px dashed var(--app-border);
+}
+.mem-day-row:last-child { border-bottom: none; }
+.mem-day-date { font-size: 12px; color: var(--app-text2); font-family: var(--app-font-mono, ui-monospace, monospace); }
+.mem-day-acts { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; }
+
 /* ==================== 窄屏（手机）适配 ====================
    这一页是手机上的白名单页（改昵称/头像/密码是刚需），窄屏必须真能用：
    左列 Tab 竖排 + 定宽卡片 + 并排表单在 412px 上会把内容挤到破版
@@ -785,7 +885,7 @@ onMounted(() => {
   /* 表单行换行：昵称输入 + 保存按钮并排会挤压（保存两字被压成竖排） */
   .pf-row { flex-wrap: wrap; }
   .pf-nick-input { width: 100%; }
-  .pf-form, .pf-form-wide { max-width: none; }
+  .pf-form { max-width: none; }
 
   /* 头像区纵向居中：72px 头像 + 按钮行 + 说明横向放不下（「清除头像」被挤出视口） */
   .pf-avatar-block { flex-direction: column; align-items: center; gap: 12px; }
@@ -805,5 +905,9 @@ onMounted(() => {
   .mem-add-cat { flex: 1; width: auto; }
   /* 分享管理：操作按钮行换行 */
   .shm-acts { flex-wrap: wrap; }
+  /* 我的记忆：按钮行换行，统计信息独占一行 */
+  .mem-toolbar { gap: 6px; }
+  .mem-toolbar .mem-meta { width: 100%; }
+  .mem-md { max-height: 300px; }
 }
 </style>

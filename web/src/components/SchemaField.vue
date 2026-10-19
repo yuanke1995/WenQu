@@ -16,17 +16,12 @@
       <a-select v-model:value="value" size="small" :options="field.options" style="width: 120px" />
     </template>
     <template v-else-if="field.type === 'multiselect'">
-      <a-select :value="rawMulti" mode="tags" size="small" :options="multiOptions" allow-clear
+      <a-select :value="rawMulti" :mode="field.freeInput === false ? 'multiple' : 'tags'" size="small" :options="multiOptions" allow-clear
                 option-filter-prop="label" :max-tag-count="2" style="width: 180px"
                 @update:value="v => value = normalizeMulti(v)" />
     </template>
     <template v-else-if="field.type === 'model'">
       <ModelSelect v-model="value" :type="field.modelType || 'chat'" :allow-clear="!!field.allowClear" width="100%" />
-    </template>
-    <template v-else-if="field.type === 'agent'">
-      <a-select :value="value || undefined" size="small" :options="agentOptions" style="width: 160px"
-                show-search option-filter-prop="label" :loading="agentsLoading" placeholder="跟随平台默认"
-                @update:value="v => value = v || ''" />
     </template>
     <a-input-password v-else-if="field.type === 'password'" v-model:value="value" size="small" style="width: 120px" />
     <a-input v-else v-model:value="value" size="small" style="width: 120px" />
@@ -61,19 +56,10 @@
                    :admin-tip-visible="true" />
     </template>
 
-    <!-- 助手选择（个人默认助手）：候选来自 /agent/available（只列本轮读者读得到的），
-         清空=跟随平台默认智能体。值存成个人覆盖配置，不是 c_ai_user 的列——
-         与档位个人上限同一档归属，别为它再开一条偏好接口 -->
-    <template v-else-if="field.type === 'agent'">
-      <a-select :value="value || undefined" :options="agentOptions" show-search option-filter-prop="label"
-                :loading="agentsLoading" :style="{ width: (field.width || 320) + 'px' }"
-                placeholder="跟随平台默认智能体" allow-clear @update:value="v => value = v || ''" />
-    </template>
-
     <!-- 多选名单（逗号串）：表单里是字符串数组，提交时 join(',') 还原成后端那一个字符串键
          （见 SettingsPage.buildPayload）。候选由调用方给（options prop），字段自己不去猜数据源 -->
     <template v-else-if="field.type === 'multiselect'">
-      <a-select :value="rawMulti" mode="tags" :options="multiOptions" allow-clear show-search
+      <a-select :value="rawMulti" :mode="field.freeInput === false ? 'multiple' : 'tags'" :options="multiOptions" allow-clear show-search
                 option-filter-prop="label" :max-tag-count="field.maxTagCount || 8"
                 :style="{ width: (field.width || 420) + 'px' }" :placeholder="field.ph"
                 @update:value="v => value = normalizeMulti(v)">
@@ -142,7 +128,6 @@
 import { computed, ref, watch } from 'vue'
 import { QuestionCircleOutlined, CloseOutlined } from '@ant-design/icons-vue'
 import { FIELDS, isVisible } from '../configSchema'
-import { listAvailableAgents } from '../api'
 import ModelSelect from './ModelSelect.vue'
 
 const props = defineProps({
@@ -156,29 +141,6 @@ const props = defineProps({
   bare: { type: Boolean, default: false }
 })
 const emit = defineEmits(['change'])
-
-// 助手候选（type=agent 的字段用）：首次渲染到这种字段才拉一次，全站共享一份模块级缓存
-const agentOptions = ref([])
-const agentsLoading = ref(false)
-let agentsPromise = null
-const ensureAgents = async () => {
-  if (props.field?.type !== 'agent' || agentOptions.value.length) return
-  if (!agentsPromise) agentsPromise = listAvailableAgents().then(r =>
-    (r && r.success && Array.isArray(r.data) ? r.data : []).map(a => ({
-      label: a.name + (a.isDefault === 1 ? '（平台默认）' : ''), value: a.id
-    })))
-  agentsLoading.value = true
-  try {
-    agentOptions.value = await agentsPromise
-  } catch (e) {
-    // 候选拉不到不能留个空下拉假装"没有助手"——那是把接口故障读成数据为空
-    agentOptions.value = []
-    agentsPromise = null
-  } finally {
-    agentsLoading.value = false
-  }
-}
-watch(() => [props.field?.type, props.bare], ensureAgents, { immediate: true })
 
 const read = (o, p) => p.split('.').reduce((a, k) => (a == null ? a : a[k]), o)
 const write = (o, p, v) => {
@@ -201,7 +163,7 @@ const normalizeMulti = v => (Array.isArray(v) ? v : [])
 const rawMulti = computed(() => {
   const v = value.value
   if (Array.isArray(v)) return v
-  return String(v ?? '').split(',').map(s => s.trim()).filter(Boolean)
+  return String(v ?? '').split(/[,\n\r，;；]+/).map(s => s.trim()).filter(Boolean)
 })
 // 候选 = 调用方给的名册 + 当前值里名册已经没有的名字。少了后一半，被停用/改名后的工具
 // 在界面上会整个消失（标签没了），前端读起来就是「我没停用它」——而它其实还在库里拦着
