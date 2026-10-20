@@ -101,7 +101,9 @@ public class AgentSandboxRuntimeClient implements SandboxRuntimeClient {
         if (endLine != null) {
             body.put("end_line", endLine);
         }
-        JSONObject data = dataOf(postJson(READ_PATH, body, null));
+        JSONObject payload = postJson(READ_PATH, body, null);
+        requireSuccess(payload, "read", file);
+        JSONObject data = dataOf(payload);
         if (data == null) {
             return new SandboxReadFileResult(new byte[0], null);
         }
@@ -150,7 +152,11 @@ public class AgentSandboxRuntimeClient implements SandboxRuntimeClient {
         body.put("path", path);
         body.put("recursive", recursive);
         body.put("include_size", includeSize);
-        JSONObject data = dataOf(postJson(LIST_PATH, body, null));
+        JSONObject payload = postJson(LIST_PATH, body, null);
+        // 「路径不存在」「那是文件不是目录」都回 HTTP 200 + success:false（真机实测），
+        // 只扒 data.files 会把失败读成一个空目录。
+        requireSuccess(payload, "list", path);
+        JSONObject data = dataOf(payload);
         List<SandboxFileEntry> entries = new ArrayList<>();
         JSONArray files = data == null ? null : data.getJSONArray("files");
         if (files != null) {
@@ -314,6 +320,28 @@ public class AgentSandboxRuntimeClient implements SandboxRuntimeClient {
     }
 
     /** 统一响应包装的 {@code data} 载荷（对应 SDK 的 {@code response.data}）。 */
+    /**
+     * runtime 对失败回的是 <b>HTTP 200 + {@code success:false}</b>（真机实测），不认这一层就会把失败读成结果：
+     * 读不存在的文件＝「空文件、成功」，列不存在的目录＝「空目录、成功」。
+     * <p>{@code not_found} 必须还原成 {@link FileNotFoundError}：流式执行那三处轮询
+     * （{@code drainLines} / {@code tryReadExitCode} / {@code waitForMarker}）都靠它判「标记文件还没落盘」，
+     * 换成其它异常会把轮询直接打断。
+     */
+    private static void requireSuccess(JSONObject payload, String label, String path) {
+        if (payload != null && Boolean.TRUE.equals(payload.getBoolean("success"))) {
+            return;
+        }
+        JSONObject data = payload == null ? null : payload.getJSONObject("data");
+        String message = data != null && data.getString("message") != null
+                ? data.getString("message")
+                : (payload == null ? "empty response" : payload.getString("message"));
+        if (data != null && "not_found".equals(data.getString("error_type"))) {
+            throw new FileNotFoundError(path);
+        }
+        throw new SandboxProvisionerException(
+                "沙盒 " + label + " 失败（" + path + "）：" + message);
+    }
+
     private static JSONObject dataOf(JSONObject payload) {
         return payload == null ? null : payload.getJSONObject("data");
     }

@@ -165,7 +165,8 @@ public class ProvisionerSandboxProvider {
 
     /**
      * 沙盒内 user-data 虚拟根（对应 SANDBOX_VIRTUAL_PATH_PREFIX，默认 {@code /home/gem/user-data}）。
-     * <p>它就是 {@link ProvisionerSandboxBackend} 的读写授权根：**只有该根之下可写**，skills 根只读。</p>
+     * <p>它就是 {@link ProvisionerSandboxBackend} 的读写授权根：常规档只有该根之下可读，
+     * 全自主档才放开到容器根。</p>
      */
     public String virtualPathPrefix() {
         String prefix = configService.get("sandbox.virtualPathPrefix");
@@ -174,11 +175,6 @@ public class ProvisionerSandboxProvider {
             prefix = "/home/gem/user-data";
         }
         return prefix.startsWith("/") ? prefix : "/" + prefix;
-    }
-
-    /** 沙盒内 skills 只读根（参考实现硬编码 {@code /home/gem/skills}，不受虚拟根配置影响）。 */
-    public String virtualSkillsPath() {
-        return "/home/gem/skills";
     }
 
     /** 单条命令的默认超时（秒，对应 SANDBOX_EXEC_TIMEOUT_SECONDS）。 */

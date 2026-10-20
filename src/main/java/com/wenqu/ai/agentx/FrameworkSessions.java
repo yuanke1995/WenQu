@@ -249,17 +249,14 @@ public class FrameworkSessions {
                     io.agentscope.harness.agent.sandbox.SandboxContext sandboxCtx =
                             sandboxService.frameworkSandboxContext(sessionId, uid, /* unrestrictedWrites */ false);
                     if (sandboxCtx != null) {
+                        // 只挂 SandboxContext：文件系统由 build 期的 .abstractFilesystem(...) 那一份负责。
+                        // 框架的 FilesystemTool / ShellExecuteTool 在 build 期就绑好了文件系统，
+                        // 往这里再塞一份 AbstractFilesystem 只会多出一个「与内部消费者不同源」的第二实例
+                        // （同一个容器、两份对象）；框架自己在 ensureSessionDefaults 里会把 build 期那份
+                        // （workspaceManager.getFilesystem()）补进 ctx 供 sessionLog 等内部消费者用。
+                        // 缺 SandboxContext 才是真缺：没有 defaultSandboxContext（问渠不走声明式 spec 路线），
+                        // 框架解析不到沙箱。
                         ctxBuilder.put(io.agentscope.harness.agent.sandbox.SandboxContext.class, sandboxCtx);
-                        // 关键：工具真正用的是 AbstractFilesystem，不是 SandboxContext（真机踩出来的）。
-                        // FilesystemTool / ShellExecuteTool 解析 ctx.get(AbstractFilesystem.class)，
-                        // 而 HarnessAgent#ensureSessionDefaults(:1087) 只透传 SandboxContext。
-                        // 只挂前者时模型调 execute("pwd") 拿到的是宿主项目目录——
-                        // 工具静默跑在宿主上，看着成功实则没隔离。
-                        io.agentscope.harness.agent.filesystem.AbstractFilesystem fs =
-                                sandboxService.frameworkFilesystem(sessionId, uid, /* unrestrictedWrites */ false);
-                        if (fs != null) {
-                            ctxBuilder.put(io.agentscope.harness.agent.filesystem.AbstractFilesystem.class, fs);
-                        }
                     }
                 } catch (RuntimeException e) {
                     log.warn("[agentx] 框架沙箱上下文注入失败（session={}）：{}", sessionId, e.toString());

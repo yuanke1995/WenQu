@@ -140,10 +140,12 @@ public class SandboxService {
     /**
      * 产框架侧的文件系统（全框架化 P1，{@code SandboxContext} 的必需搭档）。
      *
-     * <p><b>为什么两者都要</b>：框架 {@code FilesystemTool} / {@code ShellExecuteTool} 解析的是
-     * {@code RuntimeContext.get(AbstractFilesystem.class)}，而 {@code SandboxContext} 只管生命周期。
+     * <p><b>为什么两者都要</b>：{@code SandboxContext} 只管生命周期，框架的文件与 shell 工具不看它——
+     * {@code FilesystemTool} / {@code ShellExecuteTool} 在 <b>build 期</b>就从 builder 字段绑好了文件系统。
      * 真机验证过：只挂 {@code SandboxContext} 时，模型调 {@code execute("pwd")} 返回的是
      * <b>宿主项目目录</b>——工具静默跑在宿主上，看着成功实则没隔离。
+     * 反过来 {@code AbstractFilesystem} 也替代不了 {@code SandboxContext}：框架只在 spec 路线上自己造
+     * 一份默认沙箱上下文，问渠走的是自管形态（{@code externalSandbox}），不挂它就解析不到沙箱。
      *
      * <p>作用域与 {@link #frameworkSandboxContext} 同源（同一 {@link #scopeOf}），
      * 因此框架工具与问渠自研工具看到的是同一个容器、同一份工作区文件。
