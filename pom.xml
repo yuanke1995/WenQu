@@ -29,10 +29,10 @@
         <mcp.version>0.18.3</mcp.version>
         <poi.version>5.2.3</poi.version>
         <lombok.version>1.18.46</lombok.version>
-        <!-- AgentScope Java：agentx 运行时的宿主框架（Phase 0 实测定案，见 docs/wenqu-agentscope-phase0.md）。
+        <!-- AgentScope Java：agentx 运行时的宿主框架（Phase 0 实测定案（结论账已并入知识卡与 README 的框架平移章节））。
              刻意选 2.1.0-BETA1 而非稳定版 2.0.4：AgentSession（后台续跑/运行中插话/HITL 待办持久化/
              按游标续流）只在 BETA1 存在，而这几件正是问渠手写运行时最贵的一层；稳定线 2.0.4 里没有该类。
-             风险由 chat.engineMode=legacy 兜住——默认不执行框架代码。 -->
+             版本风险由 Phase 0 实测与双跑对账兜住（已无引擎切换开关，单一引擎恒走框架）。 -->
         <agentscope.version>2.1.0-BETA1</agentscope.version>
     </properties>
 

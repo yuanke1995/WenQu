@@ -36,11 +36,11 @@ PC 壳传与原实现逐字等价的回调；移动壳传自己的滚动与 `/m/
   - 手机竖屏/横屏（横屏约 900px）与平板竖屏 → 移动壳；
   - 桌面（含把窗口拖窄的鼠标用户）`isCoarse` 恒 false → 永远留在 PC 布局。
 - 用触屏而非纯宽度：手机横屏 >768px 就不是「窄屏」了，但仍是手指操作，该进移动壳。
-- `AppLayout` + 窄屏补丁**没有退役**：管理页（引导卡）、`/profile`、`/help`、`/artifacts`（我的产物，
+- `AppLayout` + 窄屏补丁服务的页面：管理页（引导卡）、`/profile`、`/help`、`/artifacts`（我的产物，
   已做窄屏适配：卡片列表 + 44px 热区 + Modal.confirm 删除确认）、`/knowledge`（含 `/knowledge/:id/docs`，
   只读浏览：库卡片自适配 + 文档表 ≤560px 行重排——首行文件名、次行状态+操作、表头隐藏、多选退出）
   与拖窄的桌面窗口仍走它。
-- 但 `mobileShell`（触屏 ≤1024）下 AppLayout 只剩「H5 外壳形态」：PC 侧栏（含抽屉态）整体退场，
+- 但 `mobileShell`（触屏 ≤1024）下 AppLayout 只剩「H5 外壳形态」：没有 PC 侧栏（含抽屉态），
   顶栏左上角菜单 / 搜索开的是**同一张会话 sheet**（`MobileSessionSheet`，含壳外入口），
   横屏也如此——H5 里「左上角菜单」只有 sheet 一种形态，不会在切页后掉回 PC 抽屉。
   桌面（含鼠标拖窄窗口）`mobileShell` 恒 false，抽屉行为零改动。
@@ -60,7 +60,7 @@ PC 壳传与原实现逐字等价的回调；移动壳传自己的滚动与 `/m/
 | 站内通知 | 侧栏 foot 铃铛 popover（未读 Badge，30s 轮询） | 顶栏铃铛 → 通知 sheet（角标与列表同源，同一份 useNotifications.js） |
 | 个人设置 / 帮助 / 主题 / 退出 | 侧栏 foot | 会话 sheet 底部四项（壳外入口；通知不在其中，铃铛是高频动作单列顶栏） |
 | 工具审批恢复 | 消息区顶部横幅（`?approval=` 深链重建） | 消息区顶部横幅（同一份 useApprovalRecovery.js） |
-| 上下文容量 | 工具栏圆环 + 悬浮容量卡（十类构成/缓存命中） | 「状态与来源」sheet 的容量段（同算法，分段与标签同 PC） |
+| 上下文容量 | 工具栏圆环 + 悬浮容量卡（七类构成/缓存命中） | 「状态与来源」sheet 的容量段（同算法，分段与标签同 PC） |
 | 空态配置引导 | 欢迎区换 `SetupGuide`（`loaded && !chatDone` 门控） | 同左（同一组件、同一门控；移动壳自己触发 refreshSetupGuide） |
 | 会话分享（只读链接） | 页头动作区的 `a-modal` | 「状态与来源」sheet 内展开（同一份 shareSession.js） |
 | 导出 Markdown | 页头「更多」菜单 / 侧栏菜单 | 会话级：「状态与来源」sheet 保存 + 复制双通道；单轮：操作行「⋯」→ sheet（同 PC 的 buildAnswerMd/buildSessionMd） |
@@ -84,7 +84,7 @@ PC 壳传与原实现逐字等价的回调；移动壳传自己的滚动与 `/m/
 - 移动壳满高容器用 `--app-vh`（已扣键盘），键盘弹起时**容器收缩**而非 fixed 定位被盖住；
 - 去重同时看 `--kb` 与 `vv.height`：浏览器全屏/地址栏收放不改键盘占用但改可视高度，
   只按键盘去重会让 `--app-vh` 停在旧值（全屏后输入区悬空不贴底）；
-- 底部 sheet / 输入区的底部内边距用 `max(0px, var(--sab) - var(--kb))`：键盘开着时不再叠加安全区。
+- 底部 sheet / 输入区的底部内边距用 `max(0px, var(--sab) - var(--kb))`：键盘开着时不叠加安全区。
 
 安全区变量（`--sat` 等）默认恒为 0，只在 `display-mode: standalone / fullscreen`（PWA 真正贴边）才取
 `env(safe-area-inset-*)`：夸克等 Chromium 内核浏览器在普通标签页会把屏幕切洞 inset 泄漏给页面
@@ -94,7 +94,7 @@ PC 壳传与原实现逐字等价的回调；移动壳传自己的滚动与 `/m/
 
 `public/sw.js` 只做一件事：**缓存带内容 hash 的 `/assets/*`**。
 - 明确排除：`/s/*`、`/shared/*`（免登录分享，token 在 URL 里）、API、HTML 与一切非 `/assets/` 请求
-  —— 分享内容不会被落到设备磁盘（旧版「不引 SW」的隐私顾虑由此消解）。
+  —— 分享内容不会被落到设备磁盘。
 - 只在生产构建注册（`import.meta.env.PROD`）；dev 不注册，避免缓存干扰 vite。
 - 资源名带 hash ⇒ 新版本新 URL，天然无陈旧问题；SW 版本号变更时清理旧缓存。
 
@@ -106,7 +106,7 @@ PC 壳传与原实现逐字等价的回调；移动壳传自己的滚动与 `/m/
 
 ## 明确**不放**在这里的东西
 
-- `ChatPage.vue` / `AppLayout.vue` —— PC 壳；手机不再走它们（但桌面窄窗口仍走）。
+- `ChatPage.vue` / `AppLayout.vue` —— PC 壳；手机不走它们（桌面窄窗口仍走）。
 - `api.js` / `md.css` / `app.css` / 主题 token —— 全端共用。
 - 第二个 `index.html` 入口 —— 刻意不做：antd 整包会在两个 entry 里各打一份。
 

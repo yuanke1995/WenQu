@@ -24,7 +24,7 @@
 | `GET /api/ai/mcp/status`、`POST /api/ai/mcp/reload`、`POST /api/ai/mcp/probe` | MCP Client 状态/重连/探测 |
 | `POST /ai/mcp/{token}` | MCP Server·per-agent 端点（不在 /api 之下，token 即凭据） |
 | `POST /ai/mcp` | MCP Server·平台级入口（凭据 API Key + MCP 开关） |
-| `GET/POST /api/ai/scheduled/*`、`POST /api/ai/scheduled/{id}/trigger` | 定时任务与立即触发 |
+| `GET/POST /api/ai/scheduled/*`、`POST /api/ai/scheduled/{id}/run` | 定时任务与立即触发 |
 | `GET/POST/PUT/DELETE /api/ai/workflow*` | 工作流 CRUD / 校验 / 发布 / 版本 / 回滚 |
 | `POST /api/ai/v1/workflows/{id}/run` | 对外工作流触发（`X-Api-Key`，仅已发布版本） |
 | `GET /api/ai/artifact/list`、`DELETE /api/ai/artifact/{id}`、`POST /api/ai/artifact/batch-delete` | 我的产物：列表 / 删除 / 批量删除（下载走签名 URL） |
@@ -48,7 +48,7 @@
 | `plan_delta` / `plan_approval` | 计划模式：执行计划流式增量 / 计划待确认（planApprovalId + 计划全文 + 超时） |
 | `plan_cancelled` / `plan_superseded` | 计划未批准（取消/超时收尾）/ 被「继续对话」取代 |
 | `artifact` | 产物交付落盘（卡片字段） |
-| `subagent` / `subagent_route` / `agent_delegated` | 编排分支状态 / 路由理由 / 本轮由 @ 提及的智能体作答 |
+| `subagent_step` / `agent_delegated` / `agent_consulted` | 被咨询那一支的实时步骤 / 本轮由 @ 提及的智能体作答 / 本轮咨询过谁 |
 | `image` | 命中图片 URL 列表 |
 | `warn` | 非致命降级提示 |
 | `done` | 完成：sources、timeline、tokens 等终态载荷 |
