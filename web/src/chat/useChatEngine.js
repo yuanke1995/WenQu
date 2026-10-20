@@ -590,7 +590,7 @@ const sessionRetrieval = computed(() => {
   }
   return { rounds, refs, search, tools }
 })
-// 上下文占用条（context/budget）已删：budget 是 legacy 时代的检索配额（窗口×安全系数−最大输出），
+// 上下文占用条（context/budget）已删：budget 是手写引擎时代的检索配额（窗口×安全系数−最大输出），
 // 框架引擎下这套分配不存在，报上来只会让「上下文 3.4K / 预算 120K」里的 120K 无人认领。
 // 上下文占用了窗口多少，现在由容量卡的 ctxCapData 回答（context/window，>80% 警告 / >95% 危险）。
 // ==================== 图片（「+」菜单选择 / 拖入 / 粘贴 → 压缩为 dataURL） ====================
@@ -925,20 +925,6 @@ const switchSession = async sid => {
             variantCount: m.variantCount || null,
             variantIndex: m.variantIndex || null,
             retrieved: (() => { try { return m.retrieved ? JSON.parse(m.retrieved) : null } catch (e) { return null } })(),
-            // 编排视图：历史消息的检索状态行含 branches（随 retrieved 持久化），恢复时一并回显编排面板
-            subagents: (() => {
-              try {
-                const r = m.retrieved ? JSON.parse(m.retrieved) : null
-                return (r && Array.isArray(r.branches)) ? r.branches : []
-              } catch (e) { return [] }
-            })(),
-            // 按需委派路由结果（同样随 retrieved 持久化）
-            subagentRoute: (() => {
-              try {
-                const r = m.retrieved ? JSON.parse(m.retrieved) : null
-                return (r && r.route) ? r.route : null
-              } catch (e) { return null }
-            })(),
             // 回答时间线（随消息落库）：重建后刷新页仍是「正文—工具—产物」交错的过程视图
             timeline: []
           }
@@ -1513,7 +1499,7 @@ const hydratePendingAsk = async sid => {
     const bubble = reactive({ role: 'ai', content: '', images: [], sources: [], related: [],
       degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '',
       thinkLoading: false, time: Date.now(), artifacts: [],
-      toolCalls: [], subagents: [], plan: null, timeline: [], errorCard: null, model: '',
+      toolCalls: [], plan: null, timeline: [], errorCard: null, model: '',
       turnId: item.turnId || '' })
     attachAskCard(bubble, { ...item, restored: true }, item.remainingMs)
     messages.value = [...messages.value, bubble]
@@ -1614,7 +1600,7 @@ const hydratePendingPlans = async sid => {
   const anchor = reactive({ role: 'ai', content: '', images: [], sources: [], related: [],
     degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '',
     thinkLoading: false, time: Date.now(), artifacts: [],
-    toolCalls: [], subagents: [], plan: null, planCard: null, timeline: [], errorCard: null, model: '',
+    toolCalls: [], plan: null, planCard: null, timeline: [], errorCard: null, model: '',
     turnId: item.turnId || '' })
   anchor.planCard = card
   messages.value = [...list, anchor]
@@ -1660,7 +1646,7 @@ const hydratePendingApprovals = async sid => {
   const anchor = reactive({ role: 'ai', content: '', images: [], sources: [], related: [],
     degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '',
     thinkLoading: false, time: Date.now(), artifacts: [],
-    toolCalls: [], subagents: [], plan: null, planCard: null, timeline: [], errorCard: null,
+    toolCalls: [], plan: null, planCard: null, timeline: [], errorCard: null,
     model: '', approval: null, turnId: item.turnId || '' })
   anchor.approval = card
   messages.value = [...messages.value, anchor]
@@ -1818,8 +1804,6 @@ const applyTurnSnapshot = (msg, snap, sid) => {
   if (Array.isArray(snap.artifacts) && snap.artifacts.length) msg.artifacts = snap.artifacts
   if (Array.isArray(snap.images) && snap.images.length) msg.images = snap.images
   if (Array.isArray(snap.sources) && snap.sources.length) msg.sources = snap.sources
-  if (Array.isArray(snap.subagentBranches) && snap.subagentBranches.length) msg.subagents = snap.subagentBranches
-  if (snap.subagentRoute) msg.subagentRoute = snap.subagentRoute
   if (typeof snap.model === 'string' && snap.model) msg.model = snap.model
   // 本轮身份（快照与落库/done 同源）：接回来的气泡也要有「看这一轮的过程」，不许刷新才有
   if (typeof snap.turnId === 'string' && snap.turnId) msg.turnId = snap.turnId
@@ -1879,7 +1863,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
   // model 留空，等 done/接流快照带后端那份权威值回来：前端预填的是「生效引用」（覆盖>个人默认），
   // 后端落库的是模型名那一段，两边写法不同却都叫 model——拿引用去和上一条的落库值比，
   // 同一个模型会被判成「已切换」，done 一到又自己消失（刷新后更是从来没有过这条线）
-  const fresh = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkLoading: false, time: Date.now(), turnMs: 0, humanWaitMs: 0, artifacts: [], toolCalls: [], subagents: [], plan: null, planCard: null, timeline: [], errorCard: null, model: '' }
+  const fresh = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkLoading: false, time: Date.now(), turnMs: 0, humanWaitMs: 0, artifacts: [], toolCalls: [], plan: null, planCard: null, timeline: [], errorCard: null, model: '' }
   const msg = replaceMsg ? Object.assign(replaceMsg, fresh, { messageId: null, fb: null }) : reactive(fresh)
   if (!replaceMsg) messages.value.push(msg)
   const viewing = () => currentSessionId.value === sid  // 只有正在看这个会话才滚动/贴底
@@ -2187,53 +2171,6 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         msg.runBoard = p.fanOut
       } catch (e) { /* 忽略 */ }
     },
-    onSubagentStep: payload => {
-      // 全循环分支的实时过程（P3a 刀2）：那一支自己那轮正在跑第几步，此前只有事后那个「跑了 N 步工具」。
-      // 分支按序号 i 归位（编排视图的 id 就是它），只增不删；实时态不落库，刷新后仍看步数与回报全文。
-      try {
-        const s = typeof payload === 'string' ? JSON.parse(payload) : payload
-        if (!s || s.i == null) return
-        const list = msg.subagents || (msg.subagents = [])
-        const b = list.find(x => Number(x.id) === Number(s.i))
-        if (!b) return
-        let c = s.content
-        if (typeof c === 'string') {
-          try { c = JSON.parse(c) } catch (e) { c = { text: c } }
-        }
-        c = c || {}
-        const rows = b.live || (b.live = [])
-        if (s.type === 'tool_status') {
-          if (c.status === 'start') rows.push({ name: c.name || '', label: c.label || '', status: 'start', elapsedMs: 0, out: '' })
-          else {
-            const live = [...rows].reverse().find(r => r.status === 'start' && r.name === c.name)
-            if (live) { live.status = c.status || 'done'; live.elapsedMs = c.elapsedMs || 0 }
-            else rows.push({ name: c.name || '', label: c.label || '', status: c.status || 'done', elapsedMs: c.elapsedMs || 0, out: '' })
-          }
-        } else if (s.type === 'tool_output') {
-          const live = [...rows].reverse().find(r => r.status === 'start')
-          if (live) live.out = ((live.out || '') + (c.delta || '')).slice(-400)
-        }
-        if (rows.length > 30) rows.splice(0, rows.length - 30)
-      } catch (e) { /* 忽略 */ }
-    },
-    onSubagent: payload => {
-      try {
-        const b = typeof payload === 'string' ? JSON.parse(payload) : payload
-        if (!b || b.id == null) return
-        const list = msg.subagents || (msg.subagents = [])
-        const i = list.findIndex(x => x.id === b.id)
-        if (i >= 0) list[i] = { ...list[i], ...b }
-        else list.push(b)
-        liveScroll()
-      } catch (e) { /* 忽略 */ }
-    },
-    onSubagentRoute: payload => {
-      try {
-        const r = typeof payload === 'string' ? JSON.parse(payload) : payload
-        if (!r) return
-        msg.subagentRoute = { candidates: r.candidates || 0, picked: r.picked || 0, names: r.names || [], reasons: r.reasons || {} }
-      } catch (e) { /* 忽略 */ }
-    },
     // 会话内 @ 智能体（§4）：本轮由用户 @ 提及的智能体作答（会话绑定不变），归属同步改写
     // （done 的 delegatedAgentName 会再校正一次，两处同值）
     onAgentDelegated: payload => {
@@ -2309,9 +2246,6 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         }
         // 落库时间线没带思考分段（正文被重建导致整条作废、或后端是旧版）：头部补一段，不许看不见
         ensureThinkSegment(msg)
-        // 编排视图：done 下发分支最终状态，覆盖实时 subagent 事件收敛到终态
-        if (Array.isArray(p.subagentBranches) && p.subagentBranches.length) msg.subagents = p.subagentBranches
-        if (p.subagentRoute) msg.subagentRoute = p.subagentRoute
       } catch (e) { /* 旧版/停止生成：无负载 */ }
       // 计划模式被拒/超时的整轮：无正文，气泡收束语与「已停止生成」区分开（计划卡停在「未批准」态）。
       // 被「继续对话」取代的整轮不写收束语——「已被取代」已经标在计划卡角标上，两句并排是重复
@@ -2326,7 +2260,6 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       // 整轮结束时刻（右栏「生成回答」行的 duration 用它）；历史恢复的消息无此值则不显示
       msg.doneTime = Date.now()
       // 生成完成：编排卡片收起为一行（用户未手动干预时），避免答案出来后还占着版面
-      if (msg.saOpen && !msg.saTouched) msg.saOpen = false
       msg.sources = sources
       if (msg.retrieved && Array.isArray(sources)) msg.retrieved.refs = sources.length
       msg.related = related

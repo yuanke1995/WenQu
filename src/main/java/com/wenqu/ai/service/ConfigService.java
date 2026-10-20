@@ -651,7 +651,7 @@ public class ConfigService {
         // 的读取点随 SubAgentOrchestrator 一起归零——见本方法上方那段「已退役」清单的统一说明。
         d.put("agent.consultMaxPerTurn", String.valueOf(ConfigDefaults.AGENT_CONSULT_MAX_PER_TURN));   // 一轮最多咨询几位助手
         d.put("agent.consultTimeoutMs", String.valueOf(ConfigDefaults.AGENT_CONSULT_TIMEOUT_MS));      // 单次咨询等那条子轮的上限
-        // tool.subagentConsult.enabled 已退役：咨询工具随总闸启用，平台级收口走 tool.deny（按工具名 consultAgent）。
+        // tool.subagentConsult.enabled 已退役：派遣随工具总闸启用，平台级收口走 tool.deny（按工具名 agent_spawn）。
         // 智能体配置版本快照保留份数（超出按版本号最小先删）；设置页挂在「定时任务 → 智能体配置版本」
         d.put("agent.versionKeep", "20");
         // mcp.enabled / mcp.servers 已移除：MCP **客户端**改为每人自己的 c_ai_user_mcp（见 McpClientService）

@@ -133,7 +133,7 @@ public class SubAgentConsultService {
      */
     public String consult(Ledger ledger, Ctx ctx, BranchRunner runner, SourceSink sink,
                           String agentId, String question) {
-        if (agentId == null || agentId.isBlank()) return "错误：agentId 不能为空，请从「可咨询助手」清单里取 id。";
+        if (agentId == null || agentId.isBlank()) return "错误：agent_id 不能为空，请从「派遣助手」清单里取 id。";
         if (question == null || question.isBlank()) return "错误：question 不能为空，写清楚要它查什么。";
         if (runner == null) return "咨询通道本轮未就绪（没有可用的执行器），请基于已有资料回答。";
 
@@ -143,7 +143,7 @@ public class SubAgentConsultService {
         }
         Agent a = agentService.get(id);
         if (a == null) {
-            return "查无这位助手：id=" + id + " 不在可咨询清单里。请按「可咨询助手」一节的 id 逐字使用，不要猜。";
+            return "查无这位助手：id=" + id + " 不在派遣助手清单里。请按清单里的 agent_id 逐字使用，不要猜。";
         }
         if (!agentService.consultCandidates(ctx.selfAgentId()).stream().anyMatch(x -> x.getId().equals(id))) {
             // 存在但不可读/已停用：与"猜错 id"分开报，前者是权限问题，排查方向完全不同
@@ -152,7 +152,7 @@ public class SubAgentConsultService {
 
         if (id.equals(ctx.preConsultedAgentId())) {
             // @ 已经强制咨询过这一位，结论就在本轮上下文里：模型再调一次工具就是同一条子轮跑两遍
-            //（实测发生过：@ 智报 + 模型自己又 consultAgent 智报 → 两条分支、双份开销）
+            //（实测发生过：@ 智报 + 模型自己又派了智报 → 两条分支、双份开销）
             return "本轮已经咨询过这位助手，它的结论与资料已在你的上下文里，无需重复咨询；请据此作答，或改问清单里的其他助手。";
         }
         String hit = ledger.cached(id);

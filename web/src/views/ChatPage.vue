@@ -222,7 +222,7 @@
                         <AskRecordCard v-if="t.name === 'askUser' && t.status !== 'start'" :t="t" />
                         <!-- 咨询另一位助手：这一问一答就地成卡（那份 subChat 随后端工具卡一起落库，
                              所以刷新/换设备与实时同构）；老消息没这份就不渲染，退回上面的普通工具卡 -->
-                        <SubAgentChatCard v-if="t.name === 'consultAgent' && t.subChat" :t="t"
+                        <SubAgentChatCard v-if="t.subChat" :t="t"
                                           :agent="agentBadgeOf(agentList, t.subChat.agentId, t.subChat.agentName)"
                                           :sources="m.sources" />
                         <div v-if="t._open" class="tl-card-body">
@@ -320,7 +320,7 @@
                     </button>
                     <!-- askUser 问答记录：可折叠（默认展开），刷新/历史恢复同构 -->
                     <AskRecordCard v-if="t.name === 'askUser' && t.status !== 'start'" :t="t" />
-                    <SubAgentChatCard v-if="t.name === 'consultAgent' && t.subChat" :t="t"
+                    <SubAgentChatCard v-if="t.subChat" :t="t"
                                       :agent="agentBadgeOf(agentList, t.subChat.agentId, t.subChat.agentName)"
                                       :sources="m.sources" />
                     <div v-if="t._open" class="tl-card-body">
@@ -395,66 +395,6 @@
                           show-snippet v-model:open="m.rtOpen" />
           </template>
           <template #sources-after="{ m, i }">
-              <!-- 子智能体编排（仅【委派模式】显示：分支是有名字有职责的子智能体，信息才有用。
-                   多视角模式不显示——那只是把原问题换个问法，是实现细节，对用户没有信息价值） -->
-              <div v-if="m.role === 'ai' && subagentCard(m)" class="subagent-panel">
-                <div class="subagent-head" @click="toggleSubagents(m)">
-                  <span class="subagent-title">
-                    <robot-outlined class="sa-head-ic" />
-                    {{ subagentCard(m).title }}
-                  </span>
-                  <span class="subagent-sum">
-                    <span v-if="subagentCard(m).routeNote" class="sa-route-note">{{ subagentCard(m).routeNote }}</span>
-                    {{ subagentCard(m).done }}/{{ subagentCard(m).total }} 完成
-                    <caret-right-outlined class="tl-caret" :class="{ open: m.saOpen }" />
-                  </span>
-                </div>
-                <div v-if="m.saOpen" class="subagent-list">
-                  <div v-for="b in subagentCard(m).branches" :key="b.id" class="subagent-row" :class="'st-' + (b.status || 'running')">
-                    <div class="sa-row-head">
-                      <span class="subagent-state">
-                        <a-spin v-if="b.status === 'running'" size="small" />
-                        <check-outlined v-else-if="b.status === 'done'" class="sa-ok" />
-                        <close-circle-outlined v-else class="sa-err" />
-                      </span>
-                      <span class="subagent-name">{{ b.name }}</span>
-                      <!-- 全循环分支（P3a）标出来：它不是"多一路检索"，而是自己把这件事办了一遍 -->
-                      <span v-if="b.mode === 'full'" class="sa-mode-tag">全循环</span>
-                      <span class="sa-status-tag" :class="'st-' + (b.status || 'running')">
-                        {{ b.status === 'running' ? '运行中' : (b.status === 'done' ? '已完成' : '失败') }}
-                      </span>
-                      <span v-if="b.status === 'done'" class="subagent-hits">
-                        <template v-if="b.mode === 'full'">{{ b.steps ? `跑了 ${b.steps} 步工具 · ` : '已办完 · ' }}</template>
-                        <template v-else>{{ b.hits }} 块 · </template>
-                        {{ fmtDuration(b.elapsedMs) }}
-                      </span>
-                    </div>
-                    <!-- 这一支正在跑的第几步（P3a 刀2 实时下钻）：跑完就停在最后看到的这些行上 -->
-                    <div v-if="b.live && b.live.length" class="sa-live fan-list">
-                      <div v-for="(s, li) in b.live" :key="li" class="fan-row"
-                           :class="{ err: s.status === 'error', run: s.status === 'start' }">
-                        <span class="fan-idx">{{ li + 1 }}</span>
-                        <span class="fan-name">{{ toolLabel(s.name, s.label) }}</span>
-                        <span class="fan-dur">{{ fanRowState(s) }}</span>
-                        <span class="fan-brief">{{ s.out ? '…' + s.out.slice(-60) : '' }}</span>
-                      </div>
-                    </div>
-                    <div v-if="b.description" class="sa-desc">{{ b.description }}</div>
-                    <div v-if="b.artifacts && b.artifacts.length" class="sa-desc">已交付：{{ b.artifacts.join('、') }}</div>
-                    <div v-if="subagentCard(m).reasons[b.name]" class="sa-reason">派它：{{ subagentCard(m).reasons[b.name] }}</div>
-                    <div class="sa-bar"><div class="sa-bar-fill" :class="'st-' + (b.status || 'running')" :style="{ width: barWidth(subagentCard(m), b) }" /></div>
-                    <div v-if="b.digest" class="sa-digest">{{ b._rp && b.report ? b.report : b.digest }}</div>
-                    <!-- 全循环分支的回报全文下钻（P3a）：卡片那一行只是摘要，"它到底交回了什么"该就地能看到 -->
-                    <button v-if="b.report && b.report !== b.digest" class="app-btn ghost small sa-more" type="button"
-                            @click="b._rp = !b._rp">{{ b._rp ? '只看摘要' : '看它交回的全文' }}</button>
-                  </div>
-                </div>
-              </div>
-              <!-- 按需委派判定"都不需要咨询"时的说明（否则用户会疑惑为什么没有编排过程） -->
-              <div v-if="m.role === 'ai' && !subagentCard(m) && m.subagentRoute && m.subagentRoute.candidates > 0 && m.subagentRoute.picked === 0"
-                   class="subagent-skip">
-                已从 {{ m.subagentRoute.candidates }} 个候选择手中筛选：本问题无需咨询任何助手，直接作答
-              </div>
               <!-- 只在最新一轮出现（panelAi=最后一条 AI 消息，含进行中）：更早那几轮的建议已被后面的对话取代，
                    每轮都留着会让整页散落着可点的旧问句，翻历史时容易误点重发一个早问过的话题 -->
               <div v-if="m.role === 'ai' && m === panelAi && m.related && m.related.length" class="related">
@@ -1488,9 +1428,9 @@ import { toolLabel, toolDesc, toolCallsView, executedCount, toolRunning, hasTime
          turnRows, turnOpen,
          toolBrief, prettyIo, liveOutput, groupRunning,
          clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterProcCount,
-         groupHasError, toolSearchQueries, retrievalLineTitle, subagentCard, barWidth,
+         groupHasError, toolSearchQueries, retrievalLineTitle,
          fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget, fanRun, runBoardText,
-         toggleSubagents, fmtDuration, fmtWindow, externalOrigin, sourceName, fmtSourceScore, scoreTitle,
+         fmtWindow, externalOrigin, sourceName, fmtSourceScore, scoreTitle,
          fmtMsgTime, fmtSize, errorBrief, histItemTitle, histItemDigest, verLocal, canSwitchPrev, canSwitchNext, verLabel,
          pasteTitle, pasteSub, isPastedText,
          THINK_LEVEL_ON, levelLabel, stopTick, agentBadgeOf,
@@ -3862,47 +3802,6 @@ onMounted(async () => {
 .ctx-ring.danger .ctx-ring-val { stroke: var(--app-danger); }
 
 
-/* 子智能体编排卡片（仅委派模式；对齐通用智能体平台的子任务卡片：名字+状态+任务描述+要点结果） */
-.subagent-panel {
-  margin-top: 8px; border: 1px solid var(--app-border); border-radius: var(--app-radius);
-  background: var(--app-panel); overflow: hidden; width: 100%;
-}
-.subagent-head {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 6px 12px; background: var(--app-accent-weak); font-size: 12px;
-  color: var(--app-text2); cursor: pointer; user-select: none;
-}
-.subagent-head:hover { color: var(--app-accent); }
-.subagent-title { font-weight: 500; color: var(--app-text); display: inline-flex; align-items: center; gap: 6px; }
-.sa-head-ic { color: var(--app-accent); }
-.subagent-sum { font-size: 11px; color: var(--app-text3); display: inline-flex; align-items: center; gap: 5px; }
-.sa-route-note {
-  font-size: 10px; line-height: 1; padding: 3px 7px; border-radius: 999px;
-  background: var(--app-accent-weak); color: var(--app-accent); margin-right: 4px;
-}
-.subagent-list { border-top: 1px solid var(--app-border); }
-.subagent-row { padding: 8px 12px; border-top: 1px dashed var(--app-border); font-size: 12px; }
-.subagent-row:first-child { border-top: none; }
-.sa-row-head { display: flex; align-items: center; gap: 8px; }
-.subagent-state { display: inline-flex; align-items: center; width: 16px; flex: none; }
-.subagent-state .sa-ok { color: var(--app-ok); }
-.subagent-state .sa-err { color: var(--app-danger); }
-.subagent-name { font-weight: 500; color: var(--app-text); }
-.sa-status-tag {
-  font-size: 10px; line-height: 1; padding: 2px 7px; border-radius: 999px; flex: none;
-  background: var(--app-panel-2); color: var(--app-text3);
-}
-.sa-status-tag.st-running { background: var(--app-accent-weak); color: var(--app-accent); }
-.sa-status-tag.st-done { background: var(--app-ok-weak); color: var(--app-ok); }
-.sa-status-tag.st-failed { background: var(--app-danger-weak); color: var(--app-danger); }
-/* 全循环分支标记（P3a）：与状态标签区分开——状态说的是成没成，这一枚说的是这一支跑了多少活 */
-.sa-mode-tag {
-  font-size: 10px; line-height: 1; padding: 2px 6px; border-radius: 4px; flex: none;
-  border: 1px solid var(--app-accent-weak); color: var(--app-accent);
-}
-.subagent-hits { margin-left: auto; font-size: 11px; color: var(--app-text3); }
-/* 分支回报全文下钻的小按钮（跟在摘要后面，不另起一行占版面） */
-.sa-more { margin-top: 4px; font-size: 11px; }
 /* 脚本扇出清单（P3b）：一行一次子调用，窄栏时摘要自己换行，不横向溢出 */
 .fan-list { display: flex; flex-direction: column; gap: 2px; margin: 2px 0 8px; font-size: 12px; }
 .fan-row { display: grid; grid-template-columns: 20px 96px 60px 1fr; gap: 6px; align-items: baseline; }
@@ -3915,31 +3814,12 @@ onMounted(async () => {
 /* 在途那条（实时面板）：还没有结果可摘要，用主色标出"正在跑"而不是留一行空白 */
 .fan-row.run .fan-name { color: var(--app-accent); }
 .fan-row.run .fan-dur { color: var(--app-accent); }
-/* 分支实时步骤（P3a 刀2）：与扇出清单同构，复用 fan-* 那套排版 */
-.sa-live { margin: 2px 0 6px; }
 /* 额度/并发上限/交付数一行（P3b 实时面板）：清单之下、入参之上，弱文本不抢正文 */
 .fan-budget { color: var(--app-text3); font-size: 11px; margin: 2px 0 8px; }
 /* 运行未完成的那三种收尾（超时/沙盒故障/退出码非 0）：警示色，挂在卡片头上不点开也看得见 */
 .fan-run { color: var(--app-warn); font-size: 11px; }
 /* 并发水位总览：脚本跑着的时候挂在过程簇头上，一处看清"跑了多少、在途几条" */
 .run-board { color: var(--app-accent); font-size: 11px; }
-/* 路由挑选理由与分支耗时占比条（运行时可视化增强） */
-.sa-reason { margin-top: 3px; font-size: 11px; color: var(--app-text3); }
-.sa-bar { margin-top: 5px; height: 3px; border-radius: 2px; background: var(--app-border); overflow: hidden; }
-.sa-bar-fill { height: 100%; border-radius: 2px; transition: width .4s ease; }
-.sa-bar-fill.st-done { background: var(--app-ok); }
-.sa-bar-fill.st-running { background: var(--app-accent); }
-.sa-bar-fill.st-failed { background: var(--app-danger); }
-.sa-desc { margin-top: 4px; font-size: 11px; color: var(--app-text3); line-height: 1.5; }
-.sa-digest {
-  margin-top: 5px; font-size: 11.5px; color: var(--app-text2); line-height: 1.6;
-  padding: 6px 9px; background: var(--app-panel-2); border-radius: 5px; white-space: pre-wrap;
-}
-/* 按需委派判定"无需咨询任何助手"时的说明行 */
-.subagent-skip {
-  margin-top: 8px; font-size: 11.5px; color: var(--app-text3); line-height: 1.5;
-  padding: 6px 10px; background: var(--app-panel-2); border: 1px solid var(--app-border); border-radius: var(--app-radius);
-}
 
 .related { margin-top: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .related-label { font-size: 12px; color: var(--app-text3); }

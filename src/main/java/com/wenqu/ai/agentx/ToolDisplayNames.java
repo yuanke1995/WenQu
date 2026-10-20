@@ -11,7 +11,7 @@ import java.util.Map;
  * 手写侧的工具全部由 {@link ToolRegistry} 声明，框架引擎除了那批问渠工具，还挂着框架自己
  * registerTool 进来的 {@code plan_*} 三把（{@code HarnessAgent#enablePlanMode}）。原先框架引擎
  * 压根不问注册中心，直接把裸名当 label 下发，前端只好靠那份手抄映射兜底——而那份表里
- * 没有 {@code consultAgent}、{@code writeTodo}、{@code plan_*}，于是这些卡片现出英文裸名。
+ * 没有 {@code writeTodo}、{@code plan_*}，于是这些卡片现出英文裸名。
  *
  * <p><b>取值顺序（与手写侧同源，顺序本身也是契约）</b>：
  * <ol>

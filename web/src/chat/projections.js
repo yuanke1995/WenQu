@@ -259,15 +259,22 @@ const rememberAgents = list => {
   if (!Array.isArray(list)) return
   list.forEach(a => { if (a && a.id && a.name) agentNames.set(a.id, a.name) })
 }
-// ==================== consultAgent（问另一位助手）子对话 ====================
-// 一次咨询在聊天区的那份问答：我们问它什么 + 它答了什么 + 它据哪些资料。
+// ==================== 派遣助手（问另一位助手）子对话 ====================
+// 一次派遣在聊天区的那份问答：我们问它什么 + 它答了什么 + 它据哪些资料。
 // 数据来自后端随工具卡落库的 subChat（SubAgentConsultService.render 那份），所以刷新、换设备、
 // 历史回看与实时同构——刻意不依赖只活一次的 SSE。
+// 工具名两代都认：自研派遣那把叫 consultAgent（历史消息里仍是它），框架驱使后叫 agent_spawn。
+const CONSULT_TOOL_NAMES = new Set(['consultAgent', 'agent_spawn'])
 // 被咨询那位的名字：优先后端随卡带的那一份，退回按入参 id 查本轮登记过的助手清单
 const consultNameOf = t => {
   const n = t?.subChat?.agentName
   if (n) return n
-  try { return agentNames.get(JSON.parse(t?.args || 'null')?.agentId) || '' } catch (e) { return '' }
+  let id = ''
+  try {
+    const o = JSON.parse(t?.args || 'null')
+    id = o?.agent_id || o?.agentId || ''
+  } catch (e) { return '' }
+  return agentNames.get(id) || ''
 }
 /** 工具卡上的子对话视图；null = 这条记录没有子对话（老消息、或咨询没跑到出结果），退回普通工具卡 */
 const consultChatView = t => {
@@ -744,9 +751,9 @@ const toolBrief = t => {
   if (!t?.args) return ''
   let obj = null
   try { obj = JSON.parse(t.args) } catch (e) { return oneLine(t.args, 56) } // 非 JSON（MCP 兼容）：纯文本截断
-  // 咨询另一位助手：标题行亮出「问的是谁」——一串智能体 id 对用户没有信息量，
+  // 派遣助手：标题行亮出「问的是谁」——一串智能体 id 对用户没有信息量，
   // 完整问答就在下面那张子对话卡里
-  if (t.name === 'consultAgent') {
+  if (CONSULT_TOOL_NAMES.has(t.name)) {
     const who = consultNameOf(t)
     if (who) return oneLine(who, 56)
   }
@@ -996,50 +1003,6 @@ const usageTip = t => {
   segs.push(`输出 ${n(t.output)} tokens`)
   return segs.join(' · ') + (t.outputIsReal ? '（网关实测）' : '（估算）')
 }
-// ============ 子智能体编排卡片（仅委派模式显示） ============
-// 多视角模式（delegated=false）的分支只是把原问题换个问法，属实现细节，不展示；
-// 只有主智能体委派了真实子智能体（有名字、有职责）时，卡片才有信息价值。
-const fmtDuration = ms => ms == null ? '—' : toolDuration(ms)
-function subagentCard (m) {
-  const all = (m && Array.isArray(m.subagents)) ? m.subagents : []
-  // 只要有任一分支标记了委派，就按委派模式渲染（后端按整轮是否委派置位，全部分支一致）
-  const branches = all.filter(b => b && b.delegated)
-  if (!branches.length) return null
-  const done = branches.filter(b => b.status === 'done').length
-  const running = branches.some(b => b.status === 'running')
-  const total = branches.length
-  // 全循环分支（P3a）：这一支不是"查了资料交回来"，而是自己把事办了一遍（用了工具、可能交付了产物）。
-  // 标题要点明这件事，否则用户看到"已咨询 2 个子智能体"会以为只是多路检索，
-  // 也就不会预期这一支可能要几十秒。
-  const full = branches.filter(b => b.mode === 'full').length
-  const title = running
-    ? `并行咨询 ${total} 个子智能体${full ? `（${full} 个在执行任务）` : ''}…`
-    : `已咨询 ${total} 个子智能体${full ? `，${full} 个办完了各自的任务` : ''}`
-  // 按需委派信息：从 N 个候选中挑了 M 个（让"挑选过程"可见，解释为什么只有这几个角色）
-  const rt = m.subagentRoute
-  const routeNote = (rt && rt.candidates > rt.picked)
-    ? `从 ${rt.candidates} 个候选中挑选 ${rt.picked} 个相关的`
-    : ''
-  // 路由「挑选理由」（名称 → 理由；subagent_route 事件与 done payload 下发，旧消息无此字段不展示）
-  const reasons = (rt && rt.reasons && typeof rt.reasons === 'object' && !Array.isArray(rt.reasons)) ? rt.reasons : {}
-  // 耗时占比条基准：最慢分支（相对值，让"谁拖了后腿"一眼可见；运行中分支随进度增长）
-  const maxElapsed = Math.max(1, ...branches.map(b => b.elapsedMs || 0))
-  // 运行中默认展开（要看到实时进度），全部完成后默认收起（信息价值下降，不占版面）；
-  // 用户手动点过则尊重其选择（saTouched），不再自动改变
-  if (m.saOpen === undefined) m.saOpen = running
-  return { branches, done, total, running, title, routeNote, reasons, maxElapsed }
-}
-
-/** 分支耗时占比条宽度：相对最慢分支的百分比（下限 2% 保证可见） */
-function barWidth (card, b) {
-  return Math.max(2, Math.round((b.elapsedMs || 0) / card.maxElapsed * 100)) + '%'
-}
-
-/** 手动展开/收起编排卡片（标记 saTouched，避免生成完成后被自动收起打断阅读） */
-function toggleSubagents (m) {
-  m.saOpen = !m.saOpen
-  m.saTouched = true
-}
 /** 分组内核：入参 sources 数组，返回按 key 分好的组（外部来源 WEB/MCP 单独成组） */
 const groupSources = sources => {
   const groups = []
@@ -1161,7 +1124,6 @@ const snapshotVersion = m => ({
   timeline: m.timeline || [],
   artifacts: m.artifacts || [],
   toolCalls: m.toolCalls || [],
-  subagents: m.subagents || [],
   plan: m.plan || null,
   processText: m.processText || '',
   degradations: m.degradations || [],
@@ -1181,7 +1143,6 @@ const applyVersion = (m, v) => {
   m.timeline = v.timeline
   m.artifacts = v.artifacts
   m.toolCalls = v.toolCalls
-  m.subagents = v.subagents
   m.plan = v.plan
   m.processText = v.processText
   m.degradations = v.degradations
@@ -1219,7 +1180,7 @@ export {
   retrievalLineTitle,
   THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel, CTX_WINDOW_STEPS, fmtWindow,
   usageCtxTokens, usageTip,
-  fmtDuration, subagentCard, barWidth, toggleSubagents, groupSources, externalOrigin, sourceName,
+  groupSources, externalOrigin, sourceName,
   fmtSourceScore, scoreTitle, fmtSize, histItemTitle, histItemDigest, fmtMsgTime, errorBrief, agentBadgeOf,
   pasteTitle, pasteSub, isPastedText, PASTE_TEXT_BASE,
   snapshotVersion, applyVersion, verLocal, canSwitchPrev, canSwitchNext, verLabel

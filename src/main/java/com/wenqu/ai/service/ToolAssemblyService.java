@@ -144,10 +144,8 @@ public class ToolAssemblyService {
             case ARTIFACT -> agent.getToolArtifact();
             case SKILL -> agent.getToolSkill();
             case SANDBOX -> null;   // 沙盒暂无智能体级列（c_ai_agent 未建 toolSandbox，见 SandboxTools 类注释）
-            // 智能体咨询（P5）同理：c_ai_agent 没有 toolSubagent 列，本族只受工具总闸与
-            // 平台停用名单（tool.deny 按工具名 consultAgent）收口。要按人/按智能体收口的话，
-            // 加列要走配置页 schema，别在这里塞"看起来能配"的 null。
-            case SUBAGENT -> null;
+            // 派遣助手已改由框架的 agent_spawn 驱使（登记见 WenquAgentxTools#consultSubagentTargets），
+            // 问渠侧没有这一族了。要按人/按智能体收口走平台停用名单（tool.deny 按工具名 agent_spawn）。
             case TODO, MCP -> null;
         };
     }

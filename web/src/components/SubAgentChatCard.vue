@@ -50,7 +50,7 @@ import AnswerBody from './AnswerBody.vue'
 import { consultChatView } from '../chat/projections'
 
 const props = defineProps({
-  /** 工具卡记录（consultAgent 那一条） */
+  /** 工具卡记录（派遣助手那一条：agent_spawn，或历史消息里的 consultAgent） */
   t: { type: Object, required: true },
   /** 被咨询那位的头像素材（拿不到就默认机器人：移动壳没有助手清单） */
   agent: { type: Object, default: null },

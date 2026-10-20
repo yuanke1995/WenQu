@@ -64,6 +64,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     /** 条数闸的余量：配置要 N 条，模型多给一两条还算清单，几十条那种整块文档才判成正文。 */
     private static final int RELATED_CHIPS_TOLERANCE = 2;
 
+    /**
+     * 会挂「子对话」卡的框架派遣工具名。只认 {@code agent_spawn}：它的入参带 {@code agent_id}
+     * （逐字=问渠的智能体 id），能与本轮台账对上；{@code agent_send} 的入参只有 {@code agent_key}/
+     * {@code label}，认不出是哪一位，宁可不挂也不把上一支的子对话错配到这一张卡上。
+     */
+    private static final java.util.Set<String> CONSULT_CARD_TOOLS = java.util.Set.of("agent_spawn");
+
     /** 一次从 Session Log 读多少条事件（框架的翻页上界，见 {@link #drain}）。 */
     private static final int DRAIN_PAGE = 200;
 
@@ -1754,8 +1761,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                     putTiming(prior, elapsedMs, beganAtMs, waitedMs);
                     String spill = takeSpill(name);
                     if (spill != null) prior.put("spill", spill);
-                    // 咨询卡片挂那一问一答（与手写侧同一个实现与同一把长度尺）：刷新后仍点得开
-                    if ("consultAgent".equals(name)) {
+                    // 咨询卡片挂那一问一答（与手写侧同一个实现与同一把长度尺）：刷新后仍点得开。
+                    // 派遣改由框架驱使后工具名换成 agent_spawn，认哪几把见 CONSULT_CARD_TOOLS
+                    if (CONSULT_CARD_TOOLS.contains(name)) {
                         Map<String, Object> subChat = com.wenqu.ai.agent.chat.TurnRecorder
                                 .consultCardSubChat(consultLedger, args);
                         if (subChat != null) prior.put("subChat", subChat);
@@ -2639,16 +2647,24 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         io.agentscope.core.model.Model chatModel = new MeteredModel(baseModel, usageLedger,
                 com.wenqu.ai.util.UsageAttr.of(cmd.getUserId(), cmd.getSessionId(), null,
                         cmd.branchTurn() ? "subagent" : "chat"), hooks.modelRef());
+        // 可派遣的助手（派遣由框架的 agent_spawn 驱使）：这一份列表同时决定两件事——
+        // 注册进框架的子智能体表（模型手上有没有这把能力），以及提示词里那两句路由纪律（教不教它用）。
+        // 分成两处判就会漂移成「教了模型一件它没有的能力」，这条坑本仓点过名。
+        List<WenquAgentxTools.SubagentTarget> subagentTargets =
+                tools.consultSubagentTargets(cmd, policy, slot);
         HarnessAgent.Builder agentBuilder = HarnessAgent.builder()
                 .agentId("wenqu")
                 .name("wenqu")
                 .description("问渠·AgentScope 运行时")
                 // 角色提示词归智能体管（chat.systemPrompt 已退役）：见 rolePrompt 的分层说明。
-                // 「可咨询助手」一节必须跟着挂：工具挂上了却不给清单，模型只能猜 id（判据与挂载同源）
+                // 派遣纪律必须跟着挂：清单本体由框架的 ## Subagents 段渲染，但「id 逐字取自清单、
+                // 通用问题不要派」这两句只有问渠说得出（派错一位的成本是一整条子轮）
                 // 用户口径那条（正文/计划/清单不写沙盒路径与工具名）也要跟着挂：它原先长在已退役的手写
                 // 计划阶段里，框架这一路没人再说第二遍，而框架的 PLAN banner 与沙盒工具说明反而主动把
                 // 路径喂给模型——不挂回去，计划卡就变成「它打算在沙盒里怎么写文件」的说明书
-                .sysPrompt(rolePrompt(binding.row()) + projectContext(cmd) + tools.consultGuide(cmd) + PlanCopy.guidance()
+                .sysPrompt(rolePrompt(binding.row()) + projectContext(cmd)
+                        + (subagentTargets.isEmpty() ? "" : tools.dispatchDiscipline())
+                        + PlanCopy.guidance()
                         + com.wenqu.ai.agent.chat.RelatedPrompt.line())
                 // 问渠所有供应商都是 OpenAI 兼容网关（c_ai_provider.base_url 实测全是 compatible-mode）。
                 // 用户在界面选的上下文窗口（contextWindow 档位）落到 model 的 contextWindowSize：
@@ -2702,17 +2718,19 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 .middleware(new AgentxStreamFlushMiddleware())
                 // Phase 0 实测：框架默认装备子智能体/技能/工作区上下文/tools.json 等旁路能力。
                 //
-                // 子智能体已改为**框架接管**（2026-10-18，全框架化迁移 P0）：去掉
-                // disableSubagents / disableDynamicSubagents 后，框架装配 SubagentsMiddleware，
+                // 子智能体由**框架驱使**（2026-10-18 全框架化迁移 P0 启用，2026-10-20 收口成一条）：
+                // 去掉 disableSubagents / disableDynamicSubagents 后框架装配 SubagentsMiddleware，
                 // 注册 agent_spawn / agent_send / agent_list 三把工具，并每轮在 SYSTEM 消息前
                 // 插入子智能体使用指引与异步任务摘要（框架自己从「冻结基线」重建 SYSTEM，
                 // 内容不会跨轮累积——见 SubagentsMiddleware 类注释第 3 条）。
-                // 框架子智能体与问渠的 consultAgent 是两套并存：后者管「咨询谁」，
-                // 前者管「派谁干活」，提示词里各说各的，不互相顶替。
+                // 问渠不再另挂一把咨询工具：每位「可咨询助手」登记成框架的子智能体
+                // （见 {@link WenquAgentxTools#consultSubagentTargets}），派遣时机、并行与后台等待
+                // 都归框架；子轮本体仍是问渠那条完整问答通路（临时会话、引用回填、产物收编），
+                // 因为框架的子 agent 只回一段文本、没有问渠的问答外壳。
                 //
                 // 技能已改为**框架接管**（2026-10-18，全框架化迁移 P3）：
                 // WenquSkillRepository 实现 RuntimeContextSkillRepository，按当轮 uid 解析可见技能
-                // （classpath 内置 + skill-projections/{uid}/，同名用户版优先，与迁移前一致）。
+                // （classpath 内置 + 沙盒工作区 + user-data/skills-users/{uid}/，同名用户版优先）。
                 // disableDynamicSkills 去掉——那会拦掉框架的动态技能加载。
                 // disableDefaultWorkspaceSkills 保留：工作区里的默认技能集与问渠的技能体系无关。
                 .skillRepositories(List.of(skillRepository))
@@ -2782,6 +2800,15 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         io.agentscope.harness.agent.DistributedStore distributedStore = distributedStore();
         if (distributedStore != null) {
             agentBuilder.distributedStore(distributedStore);
+        }
+        // 问渠的助手登记成框架的子智能体（派遣改由框架 agent_spawn 驱使，问渠不再挂 consultAgent）。
+        // agent_id 逐字用问渠的智能体 id：卡片归属、台账与提示词里的 id 才是同一个东西。
+        // 工厂造出来的实现体不是框架的模型循环，而是「起一条完整问答轮」那条通路（见 WenquConsultSubagent）——
+        // 子轮要的是问渠的问答外壳：即时落库、轮级互斥、断线续跑、引用回填、产物收编。
+        // 框架自带的 general-purpose 一支照旧存在（dynamic 开着），它派的是通用工作者，与「咨询某位助手」
+        // 不是一件事，也不共用编号体系。
+        for (WenquAgentxTools.SubagentTarget target : subagentTargets) {
+            agentBuilder.subagentFactory(target.agentId(), target.description(), target.factory());
         }
         return agentBuilder.build();
     }
