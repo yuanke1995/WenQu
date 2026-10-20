@@ -363,9 +363,6 @@ export const newSession = () => {
 /** 获取会话历史 */
 export const getHistory = (sid, opts) => request(`/session/${sid}`, opts)
 
-/** 清除会话（Redis 缓存） */
-export const clearSession = sid => request(`/session/${sid}`, { method: 'DELETE' })
-
 /**
  * 手动压缩会话上下文（/compact）：早期对话并入摘要，为后续提问腾出上下文空间。
  * instruction 为附加要求（可空）；model 传会话当前选择的模型引用（空=后端按个人默认解析）。
@@ -440,9 +437,6 @@ export const moveArtifactProject = (id, projectId) =>
 
 /** 删除会话（MySQL 软删除 + Redis 清理） */
 export const deleteSessionApi = sid => request(`/session/${sid}`, { method: 'DELETE' })
-
-/** 清空所有会话 */
-export const clearAllSessionsApi = () => request('/sessions', { method: 'DELETE' })
 
 /** 批量删除会话（按 ID 列表，软删除） */
 export const batchDeleteSessionsApi = ids => request('/sessions/batch-delete', { method: 'POST', body: JSON.stringify({ ids }) })
@@ -1093,16 +1087,6 @@ export const submitShareFeedback = (token, payload) =>
 export const checkChatAttachmentsLive = fileIds =>
   request('/chat/attachment/live', { method: 'POST', body: JSON.stringify(fileIds || []) })
 
-/** 上传文档（onProgress 接收 0-100 百分比；visionRef 可选=文档级视觉模型覆盖，空=跟随知识库） */
-export function uploadDocument(file, description, onProgress, kbId, visionRef) {
-  const fd = new FormData()
-  fd.append('file', file)
-  if (description) fd.append('description', description)
-  if (kbId) fd.append('kbId', kbId)
-  if (visionRef) fd.append('visionRef', visionRef)
-  return upload('/document/upload', fd, onProgress)
-}
-
 /** 批量上传（onProgress 接收 0-100 百分比；description/visionRef 可选，应用到所有文件） */
 export function uploadDocumentsBatch(files, onProgress, description, kbId, visionRef) {
   const fd = new FormData()
@@ -1283,12 +1267,6 @@ export const getConfigSchema = () => request('/config/schema')
 /** 前端运行时配置（文档上传上限/支持格式等，与后端一致） */
 export const getRuntimeConfig = () => request('/config/public')
 
-/** 探测重排服务是否可用（设置页开启前校验） */
-export const checkRerank = () => request('/config/rerank/check')
-
-/** 探测 Meilisearch 是否可用（设置页切换关键词引擎前校验） */
-export const checkKeywordEngine = () => request('/config/keyword/check')
-
 /**
  * 通用连通性探测（设置页各地址旁的「测试连接」按钮）。
  * 用表单里尚未保存的值真实探测，实现"先测后存"；group=chat|vision|embedding|rerank|keyword|sandbox。
@@ -1296,12 +1274,6 @@ export const checkKeywordEngine = () => request('/config/keyword/check')
  */
 export const probeConnectivity = payload =>
   request('/config/probe', { method: 'POST', body: JSON.stringify(payload), timeout: 20000 })
-
-/** 关键词索引运维：引擎状态/索引统计 */
-export const getSearchIndexStats = () => request('/search-index/stats')
-
-/** 关键词索引运维：全量重建（后台执行） */
-export const reindexSearchIndex = () => request('/search-index/reindex', { method: 'POST' })
 
 /** 模型配置：保存可编辑项 {"chat":{...},"vision":{...}} */
 export const saveConfig = payload => request('/config', { method: 'PUT', body: JSON.stringify(payload) })
@@ -1318,10 +1290,6 @@ export const deleteMessageGroup = assistantMessageId =>
 // 后端把当前分支软删留档、按快照恢复目标版本；返回 {restored}，前端随后重拉会话历史刷新视图
 export const switchMessageVariant = (messageId, delta) =>
   request('/message-group/switch', { method: 'POST', body: JSON.stringify({ messageId, delta }) })
-
-/** 撤销删除一轮对话（撤销期内恢复软删消息） */
-export const undoDeleteMessageGroup = assistantMessageId =>
-  request('/message-group/undo', { method: 'POST', body: JSON.stringify({ messageId: assistantMessageId }) })
 
 /** 按文档列出知识块（知识块预览） */
 export const listKnowledgeByDoc = docId => request('/knowledge/list?docId=' + encodeURIComponent(docId))
@@ -1463,28 +1431,6 @@ export const uploadAvatarApi = file => {
   const fd = new FormData()
   fd.append('file', file)
   return upload('/user/avatar', fd)
-}
-
-// ---- 沙盒目录浏览（右栏「沙盒」卡）：只读、不创建容器；下载走字节流（带令牌 fetch 后本地保存） ----
-export const sandboxState = sessionId =>
-  request(`/sandbox/state?sessionId=${encodeURIComponent(sessionId || '')}`, { timeout: 15000 })
-export const sandboxTree = (sessionId, path) =>
-  request(`/sandbox/tree?sessionId=${encodeURIComponent(sessionId || '')}${path ? '&path=' + encodeURIComponent(path) : ''}`, { timeout: 20000 })
-/** 下载沙盒文件：带 Authorization 的 fetch → Blob（浏览器直接 window.open 不带令牌，会 401） */
-export const sandboxDownload = async (sessionId, path, filename) => {
-  const res = await fetch(`${BASE}/sandbox/download?sessionId=${encodeURIComponent(sessionId || '')}&path=${encodeURIComponent(path || '')}`,
-    { headers: { Authorization: 'Bearer ' + authToken() } })
-  if (res.status === 401) window.dispatchEvent(new CustomEvent('app:unauthorized'))
-  if (!res.ok) throw new Error(`下载失败(${res.status})`)
-  const blob = await res.blob()
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename || (path.includes('/') ? path.slice(path.lastIndexOf('/') + 1) : path) || 'download'
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  URL.revokeObjectURL(url)
 }
 /** 回答内代码块「在沙盒中运行」：与 execute 工具同一条物理通道；语言白名单/超时上限由后端把关 */
 export const sandboxRun = (sessionId, language, code) =>

@@ -149,7 +149,7 @@ public class WebSearchTools {
             List<HybridRetrievalService.Hit> toRank = new ArrayList<>();
             for (WebSearchResult r : results) {
                 toRank.add(new HybridRetrievalService.Hit(null, "", r.title(), r.snippet(),
-                        List.of(), 0d, null, null, null));
+                        List.of(), 0d, null, null, null, null));
             }
             // rankForced 返回的是重排后的新 Hit 列表，按 snippet 映射回原结果（同批 ≤5 条，片段撞车概率可忽略）
             Map<String, Double> scoreBySnippet = new HashMap<>();

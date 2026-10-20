@@ -105,7 +105,7 @@ public class FrameworkSessions {
     /**
      * 待办的持久化落点（同一张 {@code c_ai_tool_approval}）。
      * <p>不落这一行的后果是用户看得见的具体问题：<b>刷新页面后框架引擎的确认卡/提问卡/计划卡取不回来</b>
-     * ——三个 {@code /*&#47;pending} 恢复端点都是按这张表列的，legacy 有、框架原先没有。
+     * ——三个 {@code /*&#47;pending} 恢复端点都是按这张表列的，手写运行时有、框架原先没有。
      */
     private final com.wenqu.ai.agent.hitl.HitlDecisionService hitl;
 
@@ -664,7 +664,7 @@ public class FrameworkSessions {
         if (h == null) {
             // 无活实例：回落「排到下一次建实例时压」（那一路会带上 triggerMessages(1) 强制压缩）
             requestCompact(userId, sessionId);
-            return java.util.Map.of("engine", "agentscope", "scheduled", true, "compressedTurns", 0);
+            return java.util.Map.of("scheduled", true, "compressedTurns", 0);
         }
         HarnessAgent agent = h.agent();
         RuntimeContext ctx = RuntimeContext.builder()
@@ -675,7 +675,7 @@ public class FrameworkSessions {
             AgentState state = agent.getDelegate().getAgentState(ctx);
             if (state == null) {
                 requestCompact(userId, sessionId);
-                return java.util.Map.of("engine", "agentscope", "scheduled", true, "compressedTurns", 0);
+                return java.util.Map.of("scheduled", true, "compressedTurns", 0);
             }
             // 上下文里可能混有 SYSTEM / 合成消息：压缩器只吃对话消息（与 CompactionMiddleware 的
             // 拆分一致——SYSTEM 由 HarnessContextBuilder 单独装配，不参与压缩）。
@@ -724,7 +724,6 @@ public class FrameworkSessions {
             log.info("[agentx] 手动 /compact 就地压缩完成: session={} covered={} freedTokens={}",
                     sessionId, covered, Math.max(0, before - after));
             return java.util.Map.of(
-                    "engine", "agentscope",
                     "scheduled", false,
                     "compressedTurns", Math.max(1, covered),
                     "freedTokens", Math.max(0, before - after),
@@ -734,13 +733,13 @@ public class FrameworkSessions {
             log.warn("[agentx] 手动 /compact 就地压缩失败，回落排到下一次: session={}, {}",
                     sessionId, e.toString());
             requestCompact(userId, sessionId);
-            return java.util.Map.of("engine", "agentscope", "scheduled", true, "compressedTurns", 0);
+            return java.util.Map.of("scheduled", true, "compressedTurns", 0);
         }
     }
 
     /** 「没得压」的统一返回（对话还短 / 压不动）：字段与压缩成功时同形，前端按同一套键渲染。 */
     private static Map<String, Object> noneCompacted() {
-        return java.util.Map.of("engine", "agentscope", "scheduled", false,
+        return java.util.Map.of("scheduled", false,
                 "compressedTurns", 0, "freedTokens", 0, "summary", "", "summaryTokens", 0);
     }
 

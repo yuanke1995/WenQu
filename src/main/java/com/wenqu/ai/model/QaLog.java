@@ -26,9 +26,6 @@ public class QaLog {
     /** 回答摘要（前 500 字） */
     private String answerSummary;
 
-    /** 改写后的检索用问题 */
-    private String rewrittenQuery;
-
     /** 命中文档 ID 列表（逗号分隔） */
     private String hitDocIds;
 
@@ -40,14 +37,6 @@ public class QaLog {
 
     /** 回答耗时(ms) */
     private Integer elapsedMs;
-
-    /**
-     * 分段耗时（JSON）：{"rewrite":1200,"retrieve":3100,"generate":28000,"citation":9000}
-     * 值为「距开始的累计毫秒」，相邻两项相减才是该阶段自身耗时。
-     * 缓存命中的回答无分段（null）。
-     */
-    @com.baomidou.mybatisplus.annotation.TableField("stage_ms")
-    private String stageMs;
 
     /**
      * P1：本轮回答消息 ID（trace 详情还原 toolCalls/sources/tokens 的关联键）。

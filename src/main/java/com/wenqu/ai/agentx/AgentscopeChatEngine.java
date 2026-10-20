@@ -860,7 +860,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         String failure = runFailure(session, current);
         if (answer.isBlank() && failure == null) answer = stripFallbackBody(recording, lastAssistantText(session));
         // 框架那一跑本身失败（上游 402 额度、网关异常、运行被拒……）必须说出来的那一件事：双跑实测——
-        // 同一问题 legacy 发 error 帧，框架只发了一条「done + 空正文」，用户看到的是「它答了个空」，
+        // 同一问题手写引擎发 error 帧，框架只发了一条「done + 空正文」，用户看到的是「它答了个空」，
         // 而不是「这次没答出来，原因是额度不足」。失败判据用框架自己留的 executionError / 任务终态。
         if (neverLaunched) {
             // 单独一句而不是套用「AI 回复失败，请稍后重试」：这一轮模型根本没被调用，重试同样的坑还在，
@@ -907,7 +907,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     /**
-     * 把框架留下的失败痕迹说成用户能行动的一句话。判据与文案都取 legacy 那一组
+     * 把框架留下的失败痕迹说成用户能行动的一句话。判据与文案都取手写引擎那一组
      * （{@code ChatService} 的 stream-error 分支：额度／限流／连不上／其它）——同一件 402 在两条
      * 运行时里必须长成同一句话，否则灰度一切换，用户看到的指引就换了。
      */
@@ -1630,13 +1630,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             return wait;
         }
         /**
-         * 回答时间线（与 legacy {@code TurnRecorder} 同一套段格式：正文区间段 / 工具下标段 / 思考区间段）。
+         * 回答时间线（与 {@code TurnRecorder} 同一套段格式：正文区间段 / 工具下标段 / 思考区间段）。
          * <p>不落库的后果：刷新后前端拿不到交错点，{@code hasTimelineBlocks} 为假，工具卡掉进
          * 「历史恢复兜底」列表、沉到正文下方——实时看着对、刷新就错位。
          */
         private final List<Map<String, Object>> timeline =
                 java.util.Collections.synchronizedList(new java.util.ArrayList<>());
-        /** 正文区间段的锚点（已成段的正文长度），与 legacy {@code TurnRecorder.timelineAnchor} 同义。 */
+        /** 正文区间段的锚点（已成段的正文长度），与 {@code TurnRecorder.timelineAnchor} 同义。 */
         private int timelineAnchor;
 
         /** 把锚点到 pos 之间的正文记为一个文本段（无新增则忽略）；插工具段前调用，保持「正文—工具」交错。 */
@@ -3005,12 +3005,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 刷新一次就等于没发生过——而这一轮确实被沙盒挡下过一次（与 degradations 那条同一个错法）
         sessionService.saveMessageWarn(assistantMessageId, channel.lastWarn());
         // 问答台账：与手写侧 doOnComplete 同一处时机（半程轮不落台账，那是中断轮的收尾语义）。
-        // 不接的表现为看板与「未命中问题」列表只统计到 legacy 那部分流量——分派切了运行时，
+        // 不接的表现为看板与「未命中问题」列表只统计到切换前那部分流量——分派切了运行时，
         // 运营侧的数却悄悄少了一半，而且没有任何一处会报错。
         if (persist && realAnswer) {
             qaLog.logAsync(cmd.getSessionId(), cmd.getQuestion(), body,
                     pool.sources().stream().map(x -> String.valueOf(x.get("docId"))).toList(),
-                    !pool.sources().isEmpty(), elapsedMs, cmd.getQuestion(), null,
+                    !pool.sources().isEmpty(), elapsedMs,
                     cmd.isDeepThink(), assistantMessageId, cmd.getAgentId());
         }
         // 载荷改为 JSONObject 序列化，**不再手工拼字符串**。

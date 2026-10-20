@@ -149,7 +149,7 @@ const CTX_PART_META = [
 const cap = computed(() => {
   const t = ctxTokens.value
   // 窗口只认 tokens.window（框架按 maxContextTokens 下发），回落模型登记值；
-  // 旧的 tokens.budget 回落已删——那是 legacy 检索配额，框架引擎下不存在
+  // 旧的 tokens.budget 回落已删——那是手写引擎时代的检索配额，框架引擎下不存在
   const win = (t && Number(t.window)) || Number(modelIndex.value[effectiveModel.value]?.contextWindow) || 0
   // 用量与缓存命中都与 PC 侧同口径：分母取 context（本轮结束时的上下文占用）而非 prompt
   // （各轮输入之和的账单口径），分子取 cachedLast（末轮命中）——否则命中率能算出 >100%。

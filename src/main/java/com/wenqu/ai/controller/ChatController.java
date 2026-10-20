@@ -461,7 +461,6 @@ public class ChatController {
                     : (item.get("askId") != null ? item.get("askId") : item.get("planApprovalId"));
             if (id != null && frameworkSessions.isLive(String.valueOf(id))) {
                 item.put("live", true);
-                item.put("engine", "agentscope");
             }
         }
         return items;

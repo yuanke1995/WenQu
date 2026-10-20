@@ -142,7 +142,7 @@ public final class WenquSourcePool {
         if (outcome == null || outcome.sources() == null) return;
         // 先拷一份再换：自检没裁剪来源时 {@code outcome.sources()} 就是本池这一个 List（同一对象原样返回），
         // 直接 clear() 再 addAll(自己) 得到的是空表——双跑实测抓到：框架引擎每轮引用面板全空、
-        // 正文角标没有出处，而 legacy 同一问题有 17 条来源。
+        // 正文角标没有出处，而手写引擎同一问题有 17 条来源。
         var snapshot = new ArrayList<>(outcome.sources());
         synchronized (sources) {
             sources.clear();

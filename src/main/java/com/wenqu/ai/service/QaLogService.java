@@ -40,8 +40,7 @@ public class QaLogService {
      */
     public void logAsync(String sessionId, String question, String answer,
                          List<String> hitDocIds, boolean hasCitation, long elapsedMs,
-                         String rewrittenQuery, String stageMsJson, boolean deepThink,
-                         String messageId, String agentId) {
+                         boolean deepThink, String messageId, String agentId) {
         ThreadPoolManager.execute(() -> {
             try {
                 QaLog log = new QaLog();
@@ -50,12 +49,9 @@ public class QaLogService {
                 log.setAnswerSummary(summary(answer));
                 log.setHitDocIds(hitDocIds == null || hitDocIds.isEmpty()
                         ? null : hitDocIds.stream().distinct().collect(Collectors.joining(",")));
-                log.setRewrittenQuery(rewrittenQuery == null || rewrittenQuery.equals(question)
-                        ? null : (rewrittenQuery.length() > 500 ? rewrittenQuery.substring(0, 500) : rewrittenQuery));
                 log.setHasCitation(hasCitation ? 1 : 0);
                 log.setDeepThink(deepThink ? 1 : 0);
                 log.setElapsedMs((int) Math.min(elapsedMs, Integer.MAX_VALUE));
-                log.setStageMs(stageMsJson);
                 log.setMessageId(messageId);
                 log.setAgentId(agentId);
                 qaLogMapper.insert(log);
