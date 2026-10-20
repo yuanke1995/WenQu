@@ -16,6 +16,7 @@ import com.wenqu.ai.service.ChatAttachmentService;
 import com.wenqu.ai.service.ConfigService;
 import com.wenqu.ai.service.ModelRegistryService;
 import io.agentscope.core.agent.RuntimeContext;
+import io.agentscope.core.message.GenerateReason;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.session.SessionEvent;
 import io.agentscope.core.session.SessionInbox;
@@ -1837,8 +1838,14 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             return null;
         }
 
-        String thinkingJson() {
-            return thinking.length() == 0 ? null : com.alibaba.fastjson2.JSON.toJSONString(thinking.toString());
+        /**
+         * 落 {@code c_ai_message.thinking} 的那一份：纯文本，不是 JSON。
+         * <p>时间线里的 think 段存的是「from/to 指向本文偏移」，前端历史回看按 {@code slice(from,to)} 切段，
+         * 所以这一列必须与算偏移时那份**逐字符相同**——套一层 JSON 转义会让每个换行多占两字符、
+         * 整列偏移错位，界面上还把 \n 打成字面量。
+         */
+        String thinkingText() {
+            return thinking.length() == 0 ? null : thinking.toString();
         }
 
         String toolCallsJson() {
@@ -2831,7 +2838,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 计划卡或审批卡——用「确认」统称即可，不必替用户猜是哪一种。
      */
     private static String interruptMarker(boolean stopped, boolean timedOut) {
-        if (stopped) return com.wenqu.ai.agent.chat.TurnRecorder.STOP_SUFFIX.trim();
+        if (stopped) return com.wenqu.ai.agent.chat.TurnRecorder.STOP_SUFFIX;
         if (timedOut) return "\n\n> ⏹ 等待确认超时，这一轮没有继续执行";
         return com.wenqu.ai.agent.chat.TurnRecorder.TRUNCATION_SUFFIX;
     }
@@ -2904,7 +2911,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         if (!realAnswer && hasProcess) {
             // 被「继续对话」取代的那一轮正文留空：计划卡角标已经写着「已被取代」，再补一句中断
             // 标注就是把同一件事说两遍（与手写引擎同一口径）
-            body = supersededRound ? "" : interruptMarker(stopped, timedOut);
+            // 只有正文本来就空的那一支才去分隔符：非空正文必须带着「\n\n」拼在尾段，
+            // 少了它引用块会粘回最后一句、">" 原样印在屏幕上（trim 掉分隔符实测中过一次）
+            body = supersededRound ? "" : interruptMarker(stopped, timedOut).trim();
         } else if (realAnswer && (stopped || timedOut)) {
             // 半程正文：标注追加在尾部（与手写侧同一口径——用户要看得见「这句只有半截」）
             body = body + interruptMarker(stopped, timedOut);
@@ -2981,7 +2990,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         String artifactsJson = "[]".equals(artifactList) ? null : artifactList;
         String assistantMessageId = persist ? sessionService.appendMessage(cmd.getSessionId(), "assistant",
                 body, turnImages,
-                com.alibaba.fastjson2.JSON.toJSONString(pool.sources()), recording.thinkingJson(),
+                com.alibaba.fastjson2.JSON.toJSONString(pool.sources()), recording.thinkingText(),
                 lastRetrieved, artifactsJson,
                 recording.toolCallsJson(), null,
                 tokens.isEmpty() ? null : com.alibaba.fastjson2.JSON.toJSONString(tokens),
@@ -3266,15 +3275,23 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 com.alibaba.fastjson2.JSON.toJSONString(Map.of("thinking", closed)));
     }
 
-    /** 最终正文取自会话记录（框架已把它落成一条 assistant 消息），不靠适配器攒字符串。 */
+    /**
+     * 本轮流式一截正文都没攒到时的回退取法：取会话记录里最后一条有正文的 assistant 消息。
+     * <p>最后一条若是框架被叫停时补的那句 recovery 文本（"I noticed that you have interrupted me…"，
+     * generateReason=INTERRUPTED）就**停在这里返回空**，不再往前翻：它是这一跑留在上下文里的最后一条，
+     * 前面那条属于**上一轮**，捞出来就是拿别人的话给这一轮存档（上面那条注释记过的旧坑）。
+     * 空正文的停止轮会落到「只有过程、没有正文」那一支——界面上只剩工具卡与「已停止本轮」标注，
+     * 这才是这一轮真实留下的东西（真机 2026-10-20 22:06 那一轮屏幕上是一句英文客套话）。
+     * 判据用框架自己留的 generateReason，不比对文案。
+     */
     private static String lastAssistantText(AgentSession session) {
         List<Msg> messages = session.transcript().messages();
         for (int i = messages.size() - 1; i >= 0; i--) {
             Msg m = messages.get(i);
-            if ("ASSISTANT".equals(String.valueOf(m.getRole()))) {
-                String text = m.getTextContent();
-                if (text != null && !text.isBlank()) return text;
-            }
+            if (!"ASSISTANT".equals(String.valueOf(m.getRole()))) continue;
+            if (GenerateReason.INTERRUPTED == m.getGenerateReason()) return "";
+            String text = m.getTextContent();
+            if (text != null && !text.isBlank()) return text;
         }
         return "";
     }
