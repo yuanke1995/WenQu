@@ -599,6 +599,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // buildMultimodalMsg 在图片形态都不可用时会返回 null，那时退回纯文本 submit，不拿 null 去提交
         io.agentscope.core.message.Msg multimodal =
                 (chatSeesImages && !userImgs.isEmpty()) ? buildMultimodalMsg(modelInput, userImgs) : null;
+        // 工具面按轮落到框架的组激活集上（判据仍取自老装配那一条 exposes，不另写一份），
+        // 并把「配置允许的名单」与「框架真正下发给模型的工具表」逐名比对一次——不一致就发 warn，
+        // 静默少一道闸正是这套机制最初要治的病。
+        for (String surfaceProblem : sessions.applyToolSurface(cmd, tools.turnGroupedNames(cmd, policy))) {
+            channel.emit(RunEventType.WARN, surfaceProblem);
+        }
         AgentSession.Task current = multimodal != null
                 ? session.submit(multimodal)
                 : session.submit(modelInput);
@@ -2608,17 +2614,17 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 .sessionId(cmd.getSessionId())
                 .build();
         io.agentscope.core.tool.Toolkit toolkit = new io.agentscope.core.tool.Toolkit();
-        // 框架把工具派到自己的弹性线程：身份与本轮检索参数覆盖必须在发起线程取快照、在工具内重放，
+        // 框架把工具派到自己的弹性线程：身份与本轮检索开关覆盖必须在发起线程取快照、在工具内重放，
         // 不重放就是检索恒空且不报错（Phase 0 与本刀都实测过这个形状）
-        for (Object holder : tools.frameworkTools(cmd, policy, slot, (code, message) -> {
+        java.util.Set<String> groupedNames = tools.registerWithGroups(toolkit, tools.frameworkTools(cmd, policy, slot, (code, message) -> {
             log.info("[agentx] 降级 {}: {}", code, message);
             // 未接入的能力必须让用户看见：静默少挂一个族会被读成「配了没生效」。
             // 降级出口也按轮走：实例复用后这里的 channel 是建实例那一轮的，必须从槽位现取。
             AgentxTurnSlot.Turn t = slot.current();
             if (t != null) t.channel().emit(RunEventType.WARN, message);
-        }, true)) {
-            toolkit.registerTool(holder);
-        }
+        }, true));
+        // 这一轮建了组的名单按会话记下来：每轮的激活集只在这份名单里增删，名单外的组（框架技能带出来的）不碰
+        sessions.noteGroupedSurface(sessions.key(cmd), groupedNames);
         AgentxStepBudget stepBudget = new AgentxStepBudget();
         // 实例常驻、闸随实例走，登记到会话表好让引擎在开轮时归零它
         sessions.noteStepBudget(sessions.key(cmd), stepBudget);

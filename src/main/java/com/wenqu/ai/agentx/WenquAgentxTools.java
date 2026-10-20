@@ -13,6 +13,7 @@ import com.wenqu.ai.service.RerankService;
 import com.wenqu.ai.util.RequestUser;
 import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolParam;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -22,9 +23,10 @@ import java.util.Map;
 /**
  * 问渠领域能力 → 框架工具的挂载点。
  * <p>框架没有问渠这套多路召回（向量+关键词+重排+库界+引用编号），所以检索链<b>不重造也不重写</b>：
- * 直接把现有 {@link KnowledgeRetrievalTool} 挂成框架的一等工具，工具本体、检索参数覆盖、降级登记
+ * 直接把现有 {@link KnowledgeRetrievalTool} 挂成框架的一等工具，工具本体、检索开关覆盖、降级登记
  * 全部沿用同一份实现。这里只负责按「这一轮」把库界与引用池接上。
  */
+@Slf4j
 @Component
 public class WenquAgentxTools {
 
@@ -232,6 +234,106 @@ public class WenquAgentxTools {
         slot.bindSurface(new AgentxTurnSlot.Surface(List.copyOf(rawCallbacks), java.util.Set.copyOf(mcpToolNames),
                 runCodeMounted));
         return holders;
+    }
+
+    /**
+     * 本刀交给框架组管理的族。
+     * <p>沙盒与 MCP 刻意留在「无组=永远可见」那一侧：前者与审批档、权限档位耦合最深，后者按用户登记
+     * 动态合入、压根没有静态描述符，两条都要连着改档位闸才有意义（第二刀）。
+     */
+    private static final java.util.List<com.wenqu.ai.agent.tool.ToolFamily> GROUPED_FAMILIES =
+            java.util.List.of(com.wenqu.ai.agent.tool.ToolFamily.BUILTIN,
+                    com.wenqu.ai.agent.tool.ToolFamily.KNOWLEDGE,
+                    com.wenqu.ai.agent.tool.ToolFamily.WEBSEARCH,
+                    com.wenqu.ai.agent.tool.ToolFamily.ARTIFACT,
+                    com.wenqu.ai.agent.tool.ToolFamily.TODO);
+
+    /**
+     * 描述符名 → 框架 Toolkit 里的真实注册名。
+     * <p>知识族是唯一不同源的：注册中心登记的是 {@code searchKnowledge}（Spring AI 那条 @Tool 的方法名），
+     * 框架侧走 {@link #turnTools} 交出去的那把 @Tool 逐字叫 {@code search_knowledge}。组名必须对上注册名，
+     * 对不上就是「建了一条空组、真工具永远无组=永远可见」。
+     */
+    private static final Map<String, String> GROUPED_NAME_ALIASES =
+            Map.of("searchKnowledge", "search_knowledge");
+
+    private static String registeredName(String descriptorName) {
+        return GROUPED_NAME_ALIASES.getOrDefault(descriptorName, descriptorName);
+    }
+
+    /** 本刀纳入组管理的全部注册名（描述符名经别名换算）。 */
+    public java.util.Set<String> groupableNames() {
+        java.util.Set<String> out = new java.util.LinkedHashSet<>();
+        for (var family : GROUPED_FAMILIES) {
+            for (var d : toolRegistry.ofFamily(family)) out.add(registeredName(d.name()));
+        }
+        return out;
+    }
+
+    /**
+     * 按<b>老装配判据</b>算出本轮允许的注册名——这是组激活集的输入。
+     * <p>一条判据都不重写：直接问 {@code ToolRegistry#exposes}，也就是装配循环用的那一份（族开关、
+     * 智能体三态、游客可见、档位裁剪、按名黑名单、分支轮不收的人在回路工具）。另写一份就会漂移成
+     * 「提示词教了、工具表里却没有」。
+     */
+    public java.util.Set<String> turnGroupedNames(ChatCommand cmd, ExecutionPolicy policy) {
+        var mc = toolAssembly.mountContext(agentOf(cmd), cmd.getUserId(), cmd.isGuestMode(),
+                cmd.branchTurn(), (code, message) -> { }, policy);
+        java.util.Set<String> out = new java.util.LinkedHashSet<>();
+        for (var family : GROUPED_FAMILIES) {
+            for (var d : toolRegistry.ofFamily(family)) {
+                if (toolRegistry.exposes(family, d.name(), mc)) out.add(registeredName(d.name()));
+            }
+        }
+        return out;
+    }
+
+    /**
+     * 注册工具持有对象，并给本刀那批问渠工具<b>一把建一个 EXTERNAL 组</b>（组名=工具名）。
+     * <p>为什么一把一个组而不是一个族一个组：框架的组是整组开关，族粒度表达不了「一族三把里只用一把」
+     * （智能体的内置工具白名单）与逐工具黑名单。换成按名 deny 规则更糟——实测
+     * {@code Toolkit#getToolSchemas} 只按激活集过滤，<b>权限规则不过滤 schema</b>，于是那条能力会从
+     * 「模型压根看不见」退化成「看得见、调了被拒」，白烧一步工具预算与 token。
+     * <p>为什么是 EXTERNAL：{@code reset_equipped_tools} 的 enum 与 {@code getNotes()} 只列 META 组，
+     * EXTERNAL 组模型既看不见也装备不回来，这正是问渠「被禁掉的能力要与不存在不可区分」的口径。
+     *
+     * @return 本轮真正建了组的注册名（每轮激活集只会在这份名单里增删）
+     */
+    public java.util.Set<String> registerWithGroups(io.agentscope.core.tool.Toolkit toolkit,
+                                                    List<Object> holders) {
+        java.util.Set<String> before = new java.util.LinkedHashSet<>(toolkit.getToolNames());
+        for (Object holder : holders) toolkit.registerTool(holder);
+        java.util.Set<String> added = new java.util.LinkedHashSet<>(toolkit.getToolNames());
+        added.removeAll(before);
+        java.util.Set<String> groupable = groupableNames();
+        java.util.Set<String> grouped = new java.util.LinkedHashSet<>();
+        for (String name : added) {
+            if (!groupable.contains(name)) continue;
+            if (toolkit.getToolGroup(name) == null) {
+                toolkit.createToolGroup(name, "wenqu:" + name, true,
+                        io.agentscope.core.tool.ToolGroupScope.EXTERNAL);
+            }
+            toolkit.addToolToGroup(name, name);
+            grouped.add(name);
+        }
+        // 漏闸断言：属于本刀的族却没进组的注册名 = 无组 = 永远出现在模型工具表里，
+        // 档位裁剪与按名白名单一概拦不住。宁可当场说错名字，也不要留着静默漏一道闸。
+        for (String name : added) {
+            if (grouped.contains(name)) continue;
+            var family = toolRegistry.familyOf(name);
+            if (family != null && GROUPED_FAMILIES.contains(family)) {
+                log.error("[agentx] 工具 {} 属于族 {} 却没进组（登记名与注册名不同源？）："
+                        + "它将永远出现在模型工具表里，档位与白名单拦不住", name, family.code());
+            }
+        }
+        // 反向核对：名单里有、这轮却没注册进来的名字。族开关关着是正常态，所以只记 info；
+        // 但它同时是「别名写错→建了一条空组、真工具无组」唯一的可见线索。
+        for (String name : groupable) {
+            if (!added.contains(name)) {
+                log.info("[agentx] 组管理名单里的 {} 本轮未注册进 Toolkit（族开关关着、游客收窄，或别名与注册名不符）", name);
+            }
+        }
+        return grouped;
     }
 
     /**

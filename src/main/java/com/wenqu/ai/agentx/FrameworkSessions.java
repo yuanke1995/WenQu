@@ -72,6 +72,13 @@ public class FrameworkSessions {
     private final Map<String, AgentxFrameworkToolGate> frameworkToolGates = new ConcurrentHashMap<>();
 
     /**
+     * 每条常驻会话「交给组管理的注册名」（工具面第一刀）。
+     * <p>就是建实例那一轮注册进 Toolkit 并建了组的那批名字。每轮激活集<b>只在这份名单里增删</b>，
+     * 名单外的组一律不碰——框架的技能工具组是它自己按技能激活的，整份覆盖会把那些一起关掉。
+     */
+    private final Map<String, java.util.Set<String>> groupedSurfaces = new ConcurrentHashMap<>();
+
+    /**
      * 每条常驻会话的「当前轮」槽位。
      * <p>实例与工具表按会话常驻，而引用池/通道/轮号/咨询台账是<b>一轮</b>的——
      * 工具只能捕获这个会话级槽位，由引擎在每轮 {@code submit} 前换掉里面的 {@code Turn}。
@@ -264,6 +271,96 @@ public class FrameworkSessions {
         touch(key);
         evictOverflow();
         return session;
+    }
+
+    /** 登记这条会话本轮建了组的注册名（引擎在 buildAgent 里回调，与 stepBudget 同一套登记口）。 */
+    public void noteGroupedSurface(String sessionKey, java.util.Set<String> names) {
+        if (sessionKey == null || names == null || names.isEmpty()) return;
+        groupedSurfaces.put(sessionKey, java.util.Set.copyOf(names));
+    }
+
+    /**
+     * 把本轮的工具面写成框架的组激活集，并与老装配判据<b>双跑比对</b>（工具面第一刀）。
+     *
+     * <p><b>为什么每轮都要写</b>：激活集是持久化在会话状态里的（{@code tool_context.activated_groups}），
+     * 而实例按会话常驻、换绑重建也不重置它——只在 build 期写一次，第二轮起模型看到的就是上一任配置的
+     * 那一份面。{@code initialActiveToolGroups} 只在<b>首次</b>建态时生效，不是每轮的默认值。
+     *
+     * <p><b>为什么是相对更新</b>：只在本刀管理的名单里增删。框架的技能工具组由它自己按技能激活，
+     * 整份覆盖会把那些一并关掉。
+     *
+     * <p><b>写不动时选哪一头</b>：框架拒这次状态写入（事件日志有未结算的工具调用、或快照已过期）时，
+     * 这一轮沿用旧面并<b>说出来</b>——与改造前的形态同源（那时工具面本来就冻结在建实例那一轮），
+     * 而不是静默少一道闸，也不是把整轮打挂。
+     *
+     * @param allowed 本轮按老装配判据允许的注册名（{@code WenquAgentxTools#turnGroupedNames}）
+     * @return 需要让用户看见的问题；空表=组激活逐字复现了装配判据
+     */
+    public java.util.List<String> applyToolSurface(ChatCommand cmd, java.util.Set<String> allowed) {
+        String key = key(cmd);
+        Held h = held.get(key);
+        java.util.Set<String> managed = groupedSurfaces.get(key);
+        if (h == null || h.agent() == null || managed == null || managed.isEmpty()) return java.util.List.of();
+        String uid = cmd.getUserId() == null || cmd.getUserId().isBlank() ? "guest" : cmd.getUserId();
+        java.util.List<String> problems = new java.util.ArrayList<>();
+        java.util.List<String> activated;
+        try {
+            var state = h.agent().getDelegate().getAgentState(uid, cmd.getSessionId());
+            var toolContext = state.getToolContext();
+            java.util.Set<String> current = new java.util.LinkedHashSet<>(toolContext.getActivatedGroups());
+            java.util.List<String> toAdd = new java.util.ArrayList<>();
+            java.util.List<String> toRemove = new java.util.ArrayList<>();
+            for (String name : managed) {
+                boolean want = allowed != null && allowed.contains(name);
+                if (want && !current.contains(name)) toAdd.add(name);
+                if (!want && current.contains(name)) toRemove.add(name);
+            }
+            if (!toAdd.isEmpty() || !toRemove.isEmpty()) {
+                toolContext.replaceActivatedGroups(toRemove, toAdd);
+                h.agent().getDelegate().saveAgentState(uid, cmd.getSessionId());
+                log.info("[agentx] 会话 {} 本轮工具面：+{} -{}", key, toAdd, toRemove);
+            }
+            activated = toolContext.getActivatedGroups();
+        } catch (RuntimeException e) {
+            log.warn("[agentx] 本轮工具面写入失败（session={}）：{}", key, e.toString());
+            problems.add("本轮能力面未能按配置收窄（框架拒了这次会话状态写入），已沿用上一轮的工具面");
+            return problems;
+        }
+        // 双跑比对：框架真正下发给模型的那份 schema 与老装配判据逐名对齐。
+        // 这一步不是为了打印——它是「别名写错→建了空组、真工具无组=永远可见」唯一的能抓到的地方。
+        try {
+            io.agentscope.core.tool.Toolkit toolkit = h.agent().getToolkit();
+            if (toolkit == null) return problems;
+            java.util.Set<String> schemaNames = new java.util.LinkedHashSet<>();
+            for (var schema : toolkit.getToolSchemas(activated)) {
+                schemaNames.add(schema.getName());
+            }
+            java.util.List<String> missing = new java.util.ArrayList<>();
+            java.util.List<String> extra = new java.util.ArrayList<>();
+            for (String name : managed) {
+                boolean want = allowed != null && allowed.contains(name);
+                boolean seen = schemaNames.contains(name);
+                if (want && !seen) missing.add(name);
+                if (!want && seen) extra.add(name);
+            }
+            if (!missing.isEmpty() || !extra.isEmpty()) {
+                log.error("[agentx] 工具面双跑不一致（session={}）：应挂未挂={}，不该挂却挂着={}",
+                        key, missing, extra);
+                if (!missing.isEmpty()) {
+                    problems.add("这轮有允许的能力没挂上（配置允许、框架工具表里没有）：" + String.join("、", missing));
+                }
+                if (!extra.isEmpty()) {
+                    problems.add("这轮有已禁的能力仍出现在工具表里（配置不允许、框架工具表里有）：" + String.join("、", extra));
+                }
+            }
+            // 阳性对照：一致也要留一行，否则「没报错」分不清是「比过了」还是「压根没跑到」
+            log.info("[agentx] 工具面双跑（session={}）：组管理 {} 把、本轮允许 {} 把、下发工具表 {} 把，{}",
+                    key, managed.size(), allowed == null ? 0 : allowed.size(), schemaNames.size(),
+                    missing.isEmpty() && extra.isEmpty() ? "一致" : "不一致");
+        } catch (RuntimeException e) {
+            log.warn("[agentx] 工具面双跑比对未跑成（session={}）：{}", key, e.toString());
+        }
+        return problems;
     }
 
     /**
