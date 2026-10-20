@@ -372,7 +372,14 @@ public class ProjectService {
         }
         if (changed) {
             p.setUpdateTime(java.time.LocalDateTime.now());
-            projectMapper.updateById(p);
+            // 走显式列集而不是 updateById：后者的字段策略会跳过 null，「清空约定 / 取消默认助手」
+            // 会返回成功、提示也对，但库里一个字没动，下一次读就把旧值顶回来。
+            projectMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Project>()
+                    .eq(Project::getId, p.getId())
+                    .set(Project::getName, p.getName())
+                    .set(Project::getInstructions, p.getInstructions())
+                    .set(Project::getDefaultAgentId, p.getDefaultAgentId())
+                    .set(Project::getUpdateTime, p.getUpdateTime()));
             log.info("[PROJECT] 更新工作区设置 uid={} id={} name={} hasInstructions={} defaultAgent={}",
                     uid, p.getId(), p.getName(), p.getInstructions() != null, p.getDefaultAgentId());
         }
