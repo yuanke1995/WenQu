@@ -7,7 +7,7 @@ import org.springframework.stereotype.Component;
 
 /**
  * 单一引擎分派：终态只保留 AgentScope 框架引擎。
- * <p>手写 legacy 运行时与 ab 灰度分流已在框架平移完成后下线——推理循环、工具派发、会话状态、上下文压缩
+ * <p>手写运行时与 ab 灰度分流已在框架平移完成后下线——推理循环、工具派发、会话状态、上下文压缩
  * 全部由 AgentScope 原生接管，本类只负责把框架引擎实例暴露给 {@code ChatService}。未注册前选中即 fail-loud
  * 报错，绝不静默兜底。
  */
@@ -27,11 +27,6 @@ public class ChatEngineFactory {
     /** 单一引擎：这一轮恒由 AgentScope 框架引擎执行。 */
     public ChatEngine select(ChatCommand cmd) {
         return framework(cmd.getSessionId());
-    }
-
-    /** 单一引擎：会话级操作（如压缩上下文）恒由框架引擎持有。 */
-    public boolean frameworkOwns(String sessionId) {
-        return true;
     }
 
     private ChatEngine framework(String sessionId) {

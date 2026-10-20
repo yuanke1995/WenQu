@@ -302,7 +302,7 @@ public class ConfigService {
         d.put("chat.resumeEnabled", "true");                // 刷新/换设备后接回正在跑的那一轮
         d.put("chat.detachGraceMs", "180000");              // 没人观看多久后按中断收束本轮；-1=一律跑完，0=关掉就停
         // ---------- 问答引擎：单引擎（只保留 AgentScope 框架运行时）----------
-        // 手写 legacy 与 ab 灰度分流已下线；框架会话状态目录：AgentScope 默认写 ~/.agentscope/state/**，
+        // 手写运行时与 ab 灰度分流已下线；框架会话状态目录：AgentScope 默认写 ~/.agentscope/state/**，
         // 在问渠受管数据目录之外（容器里等于丢）
         d.put("chat.agentscopeStateDir", System.getProperty("user.dir") + "/user-data/agentscope");
         d.put("chat.agentscopeMaxIters", "12");            // 框架引擎单轮推理步数上限（ReAct 循环；框架默认 10，问渠显式 12）
@@ -335,7 +335,7 @@ public class ConfigService {
         d.put("vision.prompt", properties.getVision().getPrompt());
         // vision.baseUrl / vision.apiKey 不注默认值：视觉网关统一来自「模型供应商」表（知识库
         // parse_params.visionRef 引用 → 供应商网关）。这两键既不在可编辑白名单、也没有运行时读取点，
-        // 灌进库里只会让"设置值看起来生效"（VisionService.routeFor 对无引用直接跳过，不回落 legacy）
+        // 灌进库里只会让"设置值看起来生效"（VisionService.routeFor 对无引用直接跳过，不回落这两键）
         d.put("vision.enabled", String.valueOf(properties.getVision().isEnabled())); // L12：总开关（设置页可改）
         d.put("vision.concurrency", String.valueOf(properties.getVision().getConcurrency()));
         d.put("vision.descCacheVersion", "1");                 // 图片描述缓存版本（bump 后全量重新描述）

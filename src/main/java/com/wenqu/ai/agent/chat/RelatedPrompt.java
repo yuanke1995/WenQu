@@ -1,6 +1,6 @@
 package com.wenqu.ai.agent.chat;
 
-// [保留] 问渠轮次台账 / 个性化提示词 —— AgentScope 框架不提供等价能力，框架引擎(agentx)与共享服务仍依赖此文件，勿当 legacy 控制流删除。
+// [保留] 问渠轮次台账 / 个性化提示词 —— AgentScope 框架不提供等价能力，框架引擎(agentx)与共享服务仍依赖此文件，勿当作已退役的控制流删除。
 
 /**
  * 「回答末尾用 {@code <related>}… 输出 N 条下一步建议」这条提示词的唯一出处。

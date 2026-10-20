@@ -223,7 +223,7 @@ public class VisionService {
                         Map.of("url", "data:" + mime + ";base64," + base64)),
                 Map.of("type", "text", "text", prompt)))));
 
-        // 网关地址/Key 来自视觉路由（visionRef → 供应商表，Key 在解析时解密；无引用直接跳过，不回落 legacy），
+        // 网关地址/Key 来自视觉路由（visionRef → 供应商表，Key 在解析时解密；无引用直接跳过，不回落配置文件里的网关），
         // 路径容错与 chat 同规则（版本尾缀/完整端点自动识别，支持智谱 /v4 等）
         String baseUrl = route.baseUrl();
         String apiKey = route.apiKey();

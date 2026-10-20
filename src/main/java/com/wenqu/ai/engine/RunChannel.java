@@ -1,6 +1,6 @@
 package com.wenqu.ai.engine;
 
-// [保留] 引擎抽象与前端事件契约 —— AgentScope 框架引擎经 RunChannel/RunEvent 向问渠前端发事件，前端只认这套事件名与契约，非 legacy 死代码，勿删。
+// [保留] 引擎抽象与前端事件契约 —— AgentScope 框架引擎经 RunChannel/RunEvent 向问渠前端发事件，前端只认这套事件名与契约，不是死代码，勿删。
 
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -14,7 +14,7 @@ import java.util.function.Supplier;
 public interface RunChannel {
 
     /**
-     * 手写运行时仍按 emitter 逐点发送（互斥、心跳、账本、seq 全挂在它上面），legacy 引擎据此取回；
+     * 发送侧仍按 emitter 逐点写（互斥、心跳、账本、seq 全挂在它上面），要从 emitter 取回通道的引擎据此复用；
      * 框架引擎不该需要它。
      */
     SseEmitter emitter();
