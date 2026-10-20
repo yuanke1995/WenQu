@@ -95,14 +95,19 @@ const CHAT_EVENT_CB = {
   retrieved: 'onRetrieved', thinking: 'onThinking', thinking_done: 'onThinkingDone',
   image: 'onImage', warn: 'onWarn', artifact: 'onArtifact',
   tool_status: 'onToolStatus', tool_output: 'onToolOutput', process: 'onProcess',
-  runcode_progress: 'onRunCodeProgress', subagent_step: 'onSubagentStep',
-  subagent: 'onSubagent', subagent_route: 'onSubagentRoute',
-  // agent_consulted 登记在表里但不配回调：咨询过程由 consultAgent 工具卡呈现，
+  runcode_progress: 'onRunCodeProgress',
+  // subagent_step 登记在表里但不配回调：分支实时帧仍照发（账本逐帧排查用），而它原来写进的那份
+  // 「编排面板」数据源（msg.subagents）随派遣路由一起退场了——咨询过程现在由工具卡那份 subChat 呈现
+  subagent_step: 'onSubagentStep',
+  // agent_consulted 登记在表里但不配回调：派遣过程由那张工具卡呈现（框架驱使后是 agent_spawn），
   // 事件仍照发（账本逐帧排查用），留名只为不被判成「未识别事件」
   agent_delegated: 'onAgentDelegated', agent_consulted: 'onAgentConsulted',
   approval_required: 'onApprovalRequired', ask_user: 'onAskUser',
   plan_delta: 'onPlanDelta', plan_approval: 'onPlanApproval', plan_cancelled: 'onPlanCancelled',
-  plan_superseded: 'onPlanSuperseded', todo: 'onTodo', snapshot: 'onSnapshot'
+  plan_superseded: 'onPlanSuperseded', todo: 'onTodo', snapshot: 'onSnapshot',
+  // steer＝这句插话被框架写进了正在跑的这一轮（下一次调模型之前那一刻），不是「用户按了发送」——
+  // 那一刻由 /chat/steer 自己回执。前端据此把队列里等它的那条撤下，并长进本轮回答的时间线里。
+  steer: 'onSteer'
 }
 
 /**
@@ -286,7 +291,7 @@ export function sendQuestion (sessionId, question, images = [], opts = {}) {
     // 新增事件只改那张表。这里只解构请求体要用的字段。
     deepThink = false, reasoningLevel = '', agentId = '', model = '', attachments = [], skills = [],
     mentions = [], historyRefs = [], regenerate = false, replaceMessageId = '',
-    contextWindow = null, editMessageId = '', planMode = false
+    contextWindow = null, editMessageId = '', planMode = false, fromSteer = false
   } = opts
   return streamChatSse(signal => fetch(`${BASE}/chat`, {
     method: 'POST',
@@ -312,7 +317,11 @@ export function sendQuestion (sessionId, question, images = [], opts = {}) {
       // 输入框 @ 引用（[{type:'kb'|'doc'|'agent', id, name}]）：kb 收窄本轮检索范围、doc 强制前置其内容、agent 临时委派本轮作答（服务端校验可见性）
       mentions: Array.isArray(mentions) && mentions.length ? mentions : undefined,
       // 输入框 # 历史引用（[{messageId}]）：服务端按会话归属校验并查库回填内容，前置进本轮上下文
-      historyRefs: Array.isArray(historyRefs) && historyRefs.length ? historyRefs : undefined
+      historyRefs: Array.isArray(historyRefs) && historyRefs.length ? historyRefs : undefined,
+      // 插话续发标记：这句话是上一轮跑到一半时补的方向。后端据此跳过用户消息重复落库，
+      // 并在那句话后面补一句上下文声明。必须在这里点名——请求体是按白名单拼的，
+      // 少这一行调用方传了也到不了后端（此前正是这样静默丢过）
+      fromSteer: fromSteer || undefined
     }),
     signal
   }), opts)
@@ -1116,9 +1125,11 @@ export const importDocumentFromUrl = (url, description, kbId) => {
 export const batchReparseDocuments = ids =>
   request('/document/batch/reparse', { method: 'POST', body: JSON.stringify({ ids }) })
 
-/** 运行中插话（steer）：本轮还在跑时补一句方向。插话随**下一个工具步**送达模型（工具循环由框架
- *  持有，掐不断正在执行的这一步）；本轮收尾前没送出的会随 done 回落、由前端自动作为下一句发出。
- *  返回 {accepted}，false=没有在跑的轮 / 超限（单轮 3 条、单条 800 字），调用方按普通消息发送即可 */
+/** 运行中插话（steer）：本轮还在跑时补一句方向。这句话交给框架会话自己送进正在跑的那一轮，生效点是
+ *  下一次模型调用之前（工具循环由框架持有，掐不断正在执行的这一步）；本轮收尾时模型还没收上的，
+ *  会随 done 回落、由前端自动作为下一句发出。
+ *  返回 {accepted, messageId}，false=没有在跑的轮 / 不是本人的轮 / 框架不收（单条最长 800 字），
+ *  调用方把内容放回输入框即可 */
 export const steerChatTurn = (sessionId, text) =>
   request('/chat/steer', { method: 'POST', body: JSON.stringify({ sessionId, text }) })
 

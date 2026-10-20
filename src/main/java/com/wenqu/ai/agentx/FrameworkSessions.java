@@ -765,6 +765,32 @@ public class FrameworkSessions {
         return h.session().respond(requestId, a);
     }
 
+    /**
+     * 把这句话插进此刻正在跑的那一轮（框架原生 steer，运行中插话）。
+     * <p><b>为什么这条能保底而旧那条不能</b>：框架只在「真的有在跑的 run 且写租约还活着」时收货
+     * （{@code SessionRecorder} 每秒续租，长工具调用期间也算活着），收下之后它在<b>下一次调模型之前</b>
+     * 被写进会话上下文并记一条 {@code inbox/applied}；而这一轮没读到这句就<b>不收尾</b>
+     * （{@code ReActAgent#settleSession} → {@code SessionExecution#continueOrClose}）。
+     * 问渠原先靠「把插话附在自家工具结果尾部」送达，框架引擎的模型直调工具不走那条守卫链，
+     * 于是那句话只进历史不进模型——这里换成框架自己的通道，收据号留给收尾对账。
+     *
+     * @return 框架的收据号（{@code InputReceipt.inputId}，与 {@code inbox/applied} 里那些 commandId 同源）；
+     *         null=这一轮不收插话：进程内没有这条会话的实例（工作流轮、重启后还没在本机答过）、
+     *         没有在跑的 run、或租约已过期
+     */
+    public String steer(String userId, String sessionId, String modelText) {
+        AgentSession session = peek(userId, sessionId);
+        if (session == null) return null;
+        try {
+            return session.steer(modelText).inputId();
+        } catch (RuntimeException e) {
+            // 框架对「没有正在跑的轮」抛 IllegalStateException：这不是失败，是插话时机没赶上，
+            // 调用方按「未接受」处理（内容退回输入框），不能让人看到 500
+            log.info("[agentx] 插话未被框架会话接收 session={}: {}", sessionId, e.toString());
+            return null;
+        }
+    }
+
     public void interrupt(ChatCommand cmd) {
         Held h = held.get(key(cmd));
         if (h != null) h.session().interrupt();

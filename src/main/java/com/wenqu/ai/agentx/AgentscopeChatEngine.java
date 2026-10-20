@@ -307,7 +307,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private String userContentWithContext(ChatCommand cmd, io.agentscope.core.skill.SkillFilter skillFilter) {
         StringBuilder sb = new StringBuilder();
         String q = cmd.getQuestion() == null ? "" : cmd.getQuestion();
-        sb.append(q);
+        // 插话没赶上本轮、随收尾交回后作为新一轮补发的那一条：不带这句声明，模型看到的是孤零零一句
+        // 新用户消息，会当成「用户又问了一遍」重新起题。与送进框架会话的那一条同一个出口（ChatCommand）
+        sb.append(cmd.isFromSteer() ? ChatCommand.decorateSteerQuestion(q) : q);
         // 1) 文档附件正文（当轮看一眼的轻路径：只抽文本，超长截断，不进向量库）
         if (cmd.getAttachments() != null && !cmd.getAttachments().isEmpty()) {
             List<ChatAttachmentService.PreparedAttachment> prepared =
@@ -1490,6 +1492,25 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
          */
         private final Set<String> searchQueries = new LinkedHashSet<>();
         /**
+         * 本轮<b>已经被框架写进会话上下文</b>的插话收据号（凭证是 {@code inbox/applied} 事件里的 commandIds）。
+         * <p>记在这里而不是只记在 {@code TurnMirror} 上：收尾那次全量补读传的镜像是 null（出轮之后没人再读
+         * 会话状态），而那恰恰是最后一条插话最可能被应用的时刻。
+         */
+        private final Set<String> appliedSteers = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        /**
+         * 这一跑是否已经真的结束（看到过 {@code run/end}）。
+         * <p>插话对账要用它：跟随循环撞到墙钟上限退出时，框架那一跑<b>还在后台继续</b>，那条插话会在
+         * 下一次调模型前被正常应用。那时候交回前端等于把同一句话发两遍——所以只认「已经收尾、
+         * 且没应用成」的那几条。
+         */
+        private volatile boolean runEnded;
+
+        /** 记一笔「这条插话已经送达模型」——收尾按它认账，没到账的交回前端补发。
+         *  @return false = 这条收据已经记过（收尾那次全量补读会把同一事件再读一遍），别重复留痕 */
+        boolean markSteerApplied(String receiptId) {
+            return receiptId != null && !receiptId.isBlank() && appliedSteers.add(receiptId);
+        }
+        /**
          * 本轮 {@code plan_write} 工具写入的计划正文（框架 {@code PlanWriteTool} 的入参 {@code content}）。
          * <p><b>为什么必须单独攒</b>：框架的计划正文走 {@code plan_write} 落到工作区 {@code plans/PLAN.md}，
          * 而 {@code plan_exit} 的入参只有一个可选的 {@code summary}（一句话摘要，见 {@code PlanExitTool}
@@ -1609,6 +1630,22 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             if (pos <= timelineAnchor) return;
             timeline.add(Map.of("kind", "text", "from", timelineAnchor, "to", pos));
             timelineAnchor = pos;
+        }
+
+        /**
+         * 插话留痕：这一轮<b>在这一刻把用户补的那句听进了上下文</b>（框架 {@code inbox/applied} 的时机），
+         * 所以它夹在正文与工具之间，而不是整段回答之前或之后。与工具段同一手法：先把此前的正文成段，
+         * 再插段，交错顺序如实保留。
+         * <p>只在这句话真被应用时才留痕：没赶上的那句由 {@code done.pendingSteers} 交回前端，
+         * 作为新一轮的问题重新出现——它没进过这一轮，就不该长在这一轮的回答里。
+         */
+        void steer(String text, String messageId) {
+            flushTimelineText(answerText.length());
+            Map<String, Object> seg = new java.util.LinkedHashMap<>();
+            seg.put("kind", "steer");
+            seg.put("text", text);
+            seg.put("messageId", messageId == null ? "" : messageId);
+            timeline.add(seg);
         }
 
         /**
@@ -2227,6 +2264,28 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                     channel.emit(RunEventType.PLAN, com.alibaba.fastjson2.JSON.toJSONString(list));
                 } else if (!str(plan).isBlank()) {
                     emit(channel, RunEventType.PLAN_DELTA, str(plan));
+                }
+            }
+            case "run/end" -> recording.runEnded = true;
+            case "inbox/applied" -> {
+                // 框架把插话写进会话上下文的凭证（载荷是 {commandIds:[...]}，一次可能收好几条）。
+                // 记在 recording 上而不是只记在镜像里：收尾那一次全量补读传的镜像是 null，
+                // 而那正是最后一条插话最可能被应用的时刻。
+                // 同一刻还要给它留痕（回答时间线里的一段 + 一帧 steer）：界面上那句该长在
+                // 「模型真听到它」的位置，而不是整段回答的上面或下面。
+                if (data.get("commandIds") instanceof List<?> ids) {
+                    for (Object id : ids) {
+                        String receiptId = String.valueOf(id);
+                        if (!recording.markSteerApplied(receiptId)) continue;   // 补读会重读同一条
+                        com.wenqu.ai.agent.chat.TurnHandle.SteerAck ack =
+                                steerAckOf(channel.sessionId(), receiptId);
+                        if (ack == null) continue;
+                        recording.steer(ack.text(), ack.messageId());
+                        Map<String, Object> frame = new java.util.LinkedHashMap<>();
+                        frame.put("text", ack.text());
+                        frame.put("messageId", ack.messageId() == null ? "" : ack.messageId());
+                        emit(channel, RunEventType.STEER, com.alibaba.fastjson2.JSON.toJSONString(frame));
+                    }
                 }
             }
             case "turn/interrupted" -> channel.emit(RunEventType.WARN, "本轮已被中断");
@@ -2950,7 +3009,16 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             done.put("planCancelled", true);
         }
         if (planRecord != null) done.put("planRecord", planRecord);
-        done.put("engine", "agentscope");
+        // 「说过但模型没收到」的插话必须随每一条 done 交回前端补发——不许静默丢话是这条机制的底线。
+        // 判据用框架自己留的账：插话在下一次调模型前被写进会话上下文并记一条 inbox/applied。
+        // 会没收上的只有三种收尾——撞了步数上限（框架那时直接走 summarizing，不再应用插话）、被叫停、
+        // 以及跟随循环撞到墙钟上限退出后那一跑没走到 completed。
+        // awaiting（卡片还开着、这一轮只是暂时没人跟）那一支不报：用户答完之后框架那一跑接着走，
+        // 下一次调模型前照样把这句应用上；在这里交回前端等于替用户又问一遍，还会撞上后台那一跑。
+        if (!awaiting) {
+            List<Map<String, Object>> unsentSteers = unsentSteers(handle, turnId, recording);
+            if (!unsentSteers.isEmpty()) done.put("pendingSteers", unsentSteers);
+        }
         // BrowserCompatible：把尖括号/引号/非 ASCII 一并输出成 Unicode 转义序列。这不是为了浏览器，
         // 而是**结构性免疫**——凡是能漏进载荷的字符都会被规范化成转义序列，不存在"某个字段忘了
         // 转义控制字符"这种事。真机为此付过代价：thinking 文本里的 U+001A 让整包 JSON 非法，
@@ -2963,6 +3031,44 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 表现是帧都到了、连接却挂着直到看门狗 300s 超时截断（真机实测：done 在 01:20:32，
         // 通道 01:25:20 才被判超时），前端「这一轮结束」要等五分钟才落地
         channel.complete();
+    }
+
+    /**
+     * 本轮送进过框架会话、但<b>没被写进上下文</b>的插话（要交回前端补发的那几条）。
+     * <p>按把手取：收据与落库的那条用户消息同行，都在本轮的把手上；把手已经换成别的轮（新轮已经开始、
+     * 或已经被摘掉）时一条都不报——把上一轮的插话挂到这一轮的 done 上，前端会把它再发一遍。
+     * <p>只在「这一跑真的结束了」之后认账（{@code run/end}）：墙钟到点退出的那一支里框架那一跑还在
+     * 后台继续，插话照样会在它下一次调模型前被应用——在这里交回前端等于让用户同一句话讲两遍。
+     */
+    /** 按框架收据找回那句插话（用户原话＋它落库的消息 ID）。收据号本轮唯一，配不上就是本轮没这句话。 */
+    private static com.wenqu.ai.agent.chat.TurnHandle.SteerAck steerAckOf(String sessionId, String receiptId) {
+        com.wenqu.ai.agent.chat.TurnHandle h = sessionId == null ? null : TurnRegistry.handle(sessionId);
+        if (h == null) return null;
+        for (com.wenqu.ai.agent.chat.TurnHandle.SteerAck a : h.steerAcks()) {
+            if (a != null && receiptId.equals(a.receiptId())) return a;
+        }
+        return null;
+    }
+
+    private static List<Map<String, Object>> unsentSteers(
+            com.wenqu.ai.agent.chat.TurnHandle handle, String turnId, Recording recording) {
+        List<Map<String, Object>> out = new java.util.ArrayList<>();
+        if (!recording.runEnded) return out;
+        if (handle == null || turnId == null || !turnId.equals(handle.turnId())) return out;
+        for (com.wenqu.ai.agent.chat.TurnHandle.SteerAck ack : handle.steerAcks()) {
+            if (ack == null || ack.receiptId() == null) continue;
+            if (recording.appliedSteers.contains(ack.receiptId())) continue;
+            Map<String, Object> item = new java.util.LinkedHashMap<>();
+            item.put("text", ack.text());
+            // 随它落库的那条用户消息 ID：前端复用同一颗气泡补发，不另推一条，刷新后也不会变两条
+            item.put("messageId", ack.messageId() == null ? "" : ack.messageId());
+            out.add(item);
+        }
+        if (!out.isEmpty()) {
+            log.info("[STEER] 本轮收下的插话有 {} 条没进上下文，交回前端续发: session={} turn={}",
+                    out.size(), handle.userId(), turnId);
+        }
+        return out;
     }
 
     /** 本轮的 turnId（轮级互斥外壳登记的）；外壳没登记时退回会话号，只为留痕不悬空。 */

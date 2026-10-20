@@ -1,6 +1,6 @@
 package com.wenqu.ai.agent.chat;
 
-// [保留] 问渠轮次台账 / 个性化提示词 —— AgentScope 框架不提供等价能力，框架引擎(agentx)与共享服务仍依赖此文件，勿当 legacy 控制流删除。
+// [保留] 问渠轮次台账 / 个性化提示词 —— AgentScope 框架不提供等价能力，框架引擎(agentx)与共享服务仍依赖此文件，勿当作已退役的控制流删除。
 
 import com.alibaba.fastjson2.JSON;
 import com.wenqu.ai.service.ChatRunBus;
@@ -259,16 +259,20 @@ public class ChatRunRuntime {
             new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
-     * 运行中插话（steer）：用户在本轮还在跑时补一句方向性意见。
-     * <p>能力边界要说清：工具循环由 Spring AI 的 ToolCallAdvisor 持有，我们不持有，所以做不到
-     * 「掐掉当前这一步立刻改方向」——插话在**下一个工具步**随工具结果送达模型。本轮自然收尾前
-     * 还没被消费的，随 {@code done} 回落给前端作为同一句话续发（与计划「继续对话」同一条通路），
-     * 绝不静默丢话。
+     * 运行中插话（steer）：用户在本轮还在跑时补一句方向性意见，交给<b>框架会话自己</b>送进正在跑的那一轮。
+     * <p><b>为什么必须走框架</b>：插话的送达点在框架自己的推理循环里——它每次调模型前把待送达的插话写进
+     * 会话上下文（{@code ReActAgent#reasoning} → {@code SessionExecution#beforeStep}），并且
+     * <b>本轮没读到这句就不收尾</b>。问渠原先那条「附在下一个工具结果尾部」的路依赖自己的守卫链，
+     * 而框架引擎的模型直调工具不经过那条链：真机结果是这句话只落进历史、模型一个字没收到，收尾也不会
+     * 交回前端（{@code docs/chat-turn-pipeline.md} 遗留下第 7 条记的正是这件事）。
+     * <p>做不到的是「掐掉正在执行的那一步」——那由框架持有，它自己也是协作式中断。所以插话生效于
+     * <b>下一次模型调用之前</b>，不是当场改写已在飞的那一次。
      * <p><b>落库为一条普通用户消息</b>：用户按了发送、话是自己说的，界面与历史里它就该长成用户消息
      * 的样子（前端据此推一条气泡；刷新后由历史接口按同一个 ID 回显同一条）。不引入任何标记列——
-     * 它不需要"身份"，它本来就是一条用户消息；也没必要新开端点，"没发出去"的东西留在前端队列里即可。
+     * 它不需要"身份"，它本来就是一条用户消息。顺序是<b>先送框架、后落库</b>：框架不收（这一轮已经
+     * 不在跑）就一个字都不写，界面上不会多出一条模型从来没见过的用户消息。
      *
-     * @return 落库后的消息 ID（前端挂到那条气泡上，刷新后同一条）；没有在跑的轮 / 越权 / 超限返回 null
+     * @return 落库后的消息 ID（前端挂到那条气泡上，刷新后同一条）；没有在跑的轮 / 越权 / 框架拒收返回 null
      */
     public String steerTurn(String sessionId, String userId, String text) {
         TurnHandle h = sessionId == null ? null : TurnRegistry.handle(sessionId);
@@ -277,51 +281,45 @@ public class ChatRunRuntime {
             log.warn("[FAIL-LOUD] 插话被拒（非本人轮次）: session={} uid={}", sessionId, userId);
             return null;
         }
-        // 单轮插话上限：防把这里当成第二个输入框连发刷屏（超出即拒，前端按普通消息发）
-        if (h.steers().size() >= MAX_STEERS_PER_TURN) return null;
         String clean = text.strip();
         String capped = clean.length() > STEER_MAX_CHARS ? clean.substring(0, STEER_MAX_CHARS) + "…" : clean;
-        // 与正常提问同一口径落库（role=user、同一 turnId）：先落库再入队，这样前端拿到 ID 就能
-        // 立刻推出一颗带 ID 的气泡，刷新后回显的是同一条而不是两条
+        SteerDelivery d = steerDelivery;
+        if (d == null) return null;
+        // 送进去的那一份带身份声明，落库与界面给的那一份是用户原话：声明是给模型看的，不是给用户看的
+        String receiptId = d.deliver(userId, sessionId, ChatCommand.decorateSteerQuestion(capped));
+        if (receiptId == null) {
+            log.info("[STEER] 插话未被接收（这一轮不在执行中）: session={} 字数={}", sessionId, capped.length());
+            return null;
+        }
         String messageId = sessionService.appendMessage(sessionId, "user", capped, null, null, null, null,
                 null, null, null, null, null, null, null, null, null, null, null, null, null, h.turnId());
-        h.steers().add(capped);
+        h.steerAcks().add(new TurnHandle.SteerAck(receiptId, capped, messageId));
         sessionEventService.append(sessionId, h.userId(), h.turnId(), "steer", capped);
-        log.info("[STEER] 插话已入队（下一个工具步生效）: session={} 字数={} msgId={}",
-                sessionId, capped.length(), messageId);
+        log.info("[STEER] 插话已送进框架会话（下一次模型调用前生效）: session={} 字数={} msgId={} receipt={}",
+                sessionId, capped.length(), messageId, receiptId);
         return messageId;
     }
 
-    /** 单轮插话条数上限 / 单条字数上限（超出按普通消息发更合适） */
-    private static final int MAX_STEERS_PER_TURN = 3;
+    /**
+     * 插话的送达口，由框架引擎在装配期登记（见 {@code AgentxConfiguration}）。
+     * <p>为什么不直接在这里调框架的会话：那条通道归 {@code agentx}，而本类归 {@code agent.chat}，
+     * 引擎已经反向依赖这里（{@code ChatCommand}/{@code TurnRegistry}）。与 {@code bindResume} 同一个
+     * 做法——按登记方向留口，不在两处各写一遍送达逻辑。
+     *
+     * @return 框架的收据号；null=这一轮不收插话（没在跑、已结算、租约过期）
+     */
+    public interface SteerDelivery {
+        String deliver(String userId, String sessionId, String modelText);
+    }
 
+    private volatile SteerDelivery steerDelivery;
+
+    public void bindSteer(SteerDelivery delivery) {
+        this.steerDelivery = delivery;
+    }
+
+    /** 单条插话字数上限（超出按普通消息发更合适：那句话已经长过一句"方向"该有的体量） */
     private static final int STEER_MAX_CHARS = 800;
-
-    /**
-     * 取走（并清空）该会话尚未送达的插话（按把手取，与运行时无关）。
-     */
-    private static List<String> drainSteersOf(String sessionId) {
-        TurnHandle h = TurnRegistry.handle(sessionId);
-        if (h == null || h.steers().isEmpty()) return List.of();
-        List<String> out = new ArrayList<>();
-        String s;
-        while ((s = h.steers().poll()) != null) out.add(s);
-        return out;
-    }
-
-    /**
-     * 本轮收尾前把没送达的插话挂进 done 载荷，交回前端自动作为下一句发出。
-     * <p><b>每一条 done 都要挂</b>——正常答完、被停、计划被拒/超时、无知识库分支都算。漏一条，
-     * 用户说过的话就在那个分支里静默消失，而"不许静默丢话"是插话机制的底线。
-     */
-    public static void attachLeftoverSteers(Map<String, Object> donePayload, String sessionId) {
-        List<String> out = new ArrayList<>(drainSteersOf(sessionId));
-        out.removeIf(s -> s == null || s.isBlank());
-        if (!out.isEmpty()) {
-            donePayload.put("pendingSteers", out);
-            log.info("[STEER] 未随工具步送达，交回前端续发: session={} 条数={}", sessionId, out.size());
-        }
-    }
 
     /**
      * 本轮是否已被用户叫停。标志在把手上（{@link TurnHandle#stopped()}）：从轮级互斥抢到那一刻起，
@@ -350,7 +348,7 @@ public class ChatRunRuntime {
      */
     private static final java.util.Set<String> LEDGER_SSE_TYPES = java.util.Set.of(
             "approval_required", "ask_user", "plan", "plan_approval", "plan_cancelled", "plan_superseded",
-            "artifact", "subagent", "subagent_route", "agent_delegated", "agent_consulted",
+            "artifact", "agent_delegated", "agent_consulted",
             "retrieved", "usage", "error", "warn");
 
     /** 客户端是否已断开（供各等待点短路，避免断开后继续跑 LLM 调用与检索） */

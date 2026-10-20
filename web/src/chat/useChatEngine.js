@@ -21,7 +21,7 @@ import { fmtTokens } from '../utils/token'
 import { loadModelIndex } from '../utils/modelRef'
 import { THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel, CTX_WINDOW_STEPS, fmtWindow,
          groupSources, ensureTick, mergeDoneToolCalls, restoreTimeline, extendTimelineText, extendTimelineProcess,
-         pushTimelineTool, pushTimelineArtifact, pushTimelineThink, extendTimelineThink, ensureThinkSegment,
+         pushTimelineTool, pushTimelineArtifact, pushTimelineSteer, pushTimelineThink, extendTimelineThink, ensureThinkSegment,
          snapshotVersion, applyVersion, toolCallsView, histItemDigest,
          rememberAgents } from './projections'
 
@@ -952,7 +952,18 @@ const switchSession = async sid => {
       // （已被中断的轮次后端会把半程回答按截断态兜底落库——那类轮不再有 live 消息，走上面列表正常回显）
       const st = chatStreams.get(sid)
       if (st && st.msg.loading) list.push(st.msg)
-      messages.value = list
+      // 插话在库里同时是两样东西：一条独立用户消息（sequence 排在当轮回答之前）＋当轮时间线里的一段
+      // （后端在框架把它写进上下文的那一刻留的痕，位置就是模型真听到它的地方）。界面只认后面那个，
+      // 这条用户行就此退场——一句不许显示两遍。没被任何时间线用掉的那些（没赶上这一轮、或本轮
+      // 根本没落库回答）照旧按普通用户行显示，说过的话不许凭空消失。
+      const steered = new Set()
+      for (const m of list) {
+        if (m.role !== 'ai') continue
+        for (const seg of (m.timeline || [])) if (seg && seg.kind === 'steer' && seg.messageId) steered.add(seg.messageId)
+      }
+      messages.value = steered.size
+        ? list.filter(m => !(m.role === 'user' && m.messageId && steered.has(m.messageId)))
+        : list
       // 产物换发新鲜签名（fire-and-forget）：历史接口给的 URL 签好就不变，1 小时后过期即 401。
       // 进会话/切会话都换一次，避免"打开页面久了产物点不动"
       refreshArtifactSigns()
@@ -1948,8 +1959,8 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
     // 编辑重发：被编辑的用户消息 ID（后端软删其旧分支留档，编辑内容作为新分支重新生成）
     editMessageId,
     // 插话续发：这句话是用户**在上一轮回答跑到一半时补的方向**，不是一次新提问。
-    // 后端据此在问题前加一句上下文声明——否则短问答（模型不调工具，插话必然赶不上工具步）
-    // 里模型会当成用户又问了一遍，插话最核心的"改了方向立刻生效"在这些场景直接失效
+    // 后端据此跳过用户消息重复落库，并在那句话后面补一句上下文声明——不带它，模型会把重新
+    // 发出来的那句当成「用户又问了一遍」起题（实测短问答必现），插话"改了方向立刻生效"就废了
     fromSteer: !!fromSteer,
     agentId,
     // 会话级模型覆盖：仅用户手动切换时传（空=后端按 个人默认>无 兜底解析，全局模型默认已退役）
@@ -2096,6 +2107,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         liveScroll()
       } catch (e) { /* 忽略 */ }
     },
+    onSteer: payload => { applySteerFrame(payload, msg); liveScroll() },
     onToolStatus: rec => {
       try {
         const t = typeof rec === 'string' ? JSON.parse(rec) : rec
@@ -2526,10 +2538,10 @@ const stop = () => {
 const steerQueue = ref([])
 
 /**
- * 运行中插话：本轮还在跑时补一句方向，随**下一个工具步**送达模型。
- * 工具循环由后端框架持有，掐不断正在执行的那一步——所以这不是"打断"，是"赶在下一次工具结果里说到"。
+ * 运行中插话：本轮还在跑时补一句方向，由框架在<b>下一次调模型之前</b>送进正在跑的那一轮。
+ * 工具循环由框架持有，掐不断正在执行的那一步——所以这不是"打断"，是"赶在下一步想之前说到"。
  * 服务端同时把它落成一条普通用户消息。
- * @returns 消息 ID（前端挂到那条气泡上）；null=没有在跑的轮 / 超出单轮限额
+ * @returns 消息 ID（前端拿它认队列里那一条，并在模型收到这句时撤下）；null=没有在跑的轮 / 框架不收这句 / 超出单条字数上限
  */
 const steer = async (q) => {
   const sid = currentSessionId.value
@@ -2551,7 +2563,7 @@ const steer = async (q) => {
  * 模型很简单：**没点「立即发送」= 还没发出去**。
  * - 生成中按 Enter / 点发送 → 只把这句话放进队列，一个请求都不发；
  * - 队列里每条带「立即发送 / 修改 / 删除」三个动作，前两个都只是本地数组操作；
- * - 只有点了「立即发送」，才真发出去（纯文字走 /chat/steer，模型随下一个工具步看到；
+ * - 只有点了「立即发送」，才真发出去（纯文字走 /chat/steer，框架在下一次调模型前把它送进这一轮；
  *   带材料的这轮塞不进去，等本轮结束按原载荷开新一轮）。
  *
  * 反悔窗口因此是白拿的：东西还在本地，删掉/改掉就是改数组。**不需要任何后端接口**——
@@ -2582,11 +2594,12 @@ function stageSteer (payload) {
 
 /**
  * 点「立即发送」：把这一条作为插话真正发出去。
- * - 纯文字 → POST /chat/steer（服务端落成一条普通用户消息，并让它随下一个工具步送到模型）。
- *   成功后条目退场，同时把它作为**一条正常用户气泡**推进消息流——用户自己的话、自己按的发送，
- *   就该长成用户消息的样子（不挂任何「插话」角标：那不是用户说过的东西）。
+ * - 纯文字 → POST /chat/steer。送出去之后这条**留在队列里**换成「等这一轮听到」的样子：
+ *   框架只在下一次调模型之前把它写进上下文，那一刻才由 {@code steer} 帧把它取走、变成回答时间线里
+ *   的一段（夹在正文与工具之间，正是它真被听到的位置）。所以队列里那句的语义是「还没进模型的话」，
+ *   界面上不另推一颗独立气泡——两处各显示一遍，反而说不清它到底进没进去。
  * - 带材料 → 这轮塞不进去，标成待发，本轮一结束按原载荷开新一轮——条目留在队列里等这一刻。
- * - 没有在跑的轮 / 超出单轮限额 → 退回输入框，别让用户重打一遍。
+ * - 没有在跑的轮 / 框架不收这句 → 退回输入框，别让用户重打一遍。
  */
 async function sendSteer (item) {
   if (!item || item.sending) return
@@ -2598,35 +2611,33 @@ async function sendSteer (item) {
   item.sending = true
   const id = await steer(item.text)
   if (id) {
-    steerQueue.value = steerQueue.value.filter(s => s !== item)
-    pushSteerBubble(item, id)
-    hooks.scrollForce?.()
+    item.sending = false
+    item.awaiting = true
+    item.messageId = id
     return
   }
   item.sending = false
-  // 没有在跑的轮（刚收尾）/ 超出单轮限额：撤下这一条并把内容**放回输入框**。
+  // 没有在跑的轮（刚收尾、正等人裁决、或这一轮已经不在执行中）：撤下这一条并把内容**放回输入框**。
   // 放回时不覆盖用户正在打的字——他多半已经在为下一句打字了，直接覆盖等于把那段话吃掉。
   steerQueue.value = steerQueue.value.filter(s => s !== item)
   if (!text.value.trim()) text.value = item.text
   else if (!text.value.includes(item.text)) text.value = (text.value.trim() + ' ' + item.text)
-  message.warning('这一轮已经收尾，没能插进去——内容放回输入框了')
+  message.warning('这句没能插进正在跑的这一轮——内容放回输入框了')
 }
 
 /**
- * 把一条插话作为**普通用户气泡**推进消息流（与正常发送的气泡完全同构：图片/附件/技能/
- * @ 引用/# 引用全带上）。
- * <p>`messageId` 是服务端刚落的那条消息 ID：气泡上的复制/编辑/分支切换从此可用，
- * 且刷新后由历史接口按同一个 ID 回显同一条，不会变成两条。
- * <p>刻意不挂「插话」角标：用户要的是"它就是一条我说过的话"，角标反而把它标成了二等公民。
+ * {@code steer} 帧：框架把这句写进了正在跑的这一轮（后端按 inbox/applied 发，位置就是那一刻）。
+ * 两件事：撤下队列里等它的那一条（没有也不报错——别的设备上看不到发起方的队列），以及把它长进
+ * 这一轮回答的时间线里。
  */
-function pushSteerBubble (s, messageId) {
-  messages.value.push(reactive({
-    role: 'user', content: s.text, images: s.images || [],
-    attachments: s.attsMeta || [], attachData: s.atts || [],
-    skills: s.skills || [], mentions: s.mentions || [], historyRefs: s.historyRefs || [],
-    deepThink: !!s.deepThink, planMode: !!s.planMode,
-    time: Date.now(), messageId: messageId || null
-  }))
+function applySteerFrame (payload, msg) {
+  let f = payload
+  try { if (typeof payload === 'string') f = JSON.parse(payload) } catch (e) { return }
+  const t = f && typeof f.text === 'string' ? f.text : ''
+  if (!t) return
+  const id = f.messageId || ''
+  if (id) steerQueue.value = steerQueue.value.filter(s => !(s.awaiting && s.messageId === id))
+  pushTimelineSteer(msg, t, id)
 }
 
 /** 「修改」：取回输入框改（东西还在本地，就是一次数组操作） */
@@ -2655,8 +2666,9 @@ function moveSteer (from, to) {
 }
 
 /** 按原载荷把一条插话作为完整新一轮发出（与计划「继续对话」同一条通路）
- *  `fromSteer` 让后端在问题前加一句"这是对上一轮回答的补充"——不带它，模型会当成用户又问了一遍
- *  （实测短问答必现：它会复述「你消息里的 X 这一段…」），插话最核心的「改了方向立刻生效」就废了。 */
+ *  `fromSteer` 让后端在那句话后面补一句身份声明（"这是上一轮还没答完时补的方向，不是新提问"）——
+ *  不带它，模型会当成用户又问了一遍（实测短问答必现：它会复述「你消息里的 X 这一段…」），
+ *  插话最核心的「改了方向立刻生效」就废了。 */
 function sendSteerRound (s) {
   const userMsg = reactive({ role: 'user', content: s.text, images: s.images || [],
                         attachments: s.attsMeta || [], attachData: s.atts || [],
@@ -2670,20 +2682,54 @@ function sendSteerRound (s) {
 }
 
 /**
- * 本轮收尾时结算队列：把还挂着的（没点过「立即发送」的会在这里自动发出）作为新一轮交给模型。
+ * 补发后端没收上的那句插话：它没进过这一轮的上下文，所以界面上也不该长在这一轮的回答里
+ * （那句只留在队列条上，收尾时随这里一起撤下），而是作为<b>新一轮的问题</b>重新出现。
+ * <p>库里它仍是点「立即发送」那一刻落的同一条用户消息：后端带 fromSteer 时跳过重复落库，
+ * 这颗新气泡直接挂上那个 messageId，刷新后也只有这一条。
+ */
+function resendSteer (t) {
+  const existing = t.messageId
+          ? messages.value.find(m => m.role === 'user' && m.messageId === t.messageId)
+          : null
+  const userMsg = existing || reactive({ role: 'user', content: t.text, images: [],
+                        attachments: [], attachData: [], skills: [], mentions: [], historyRefs: [],
+                        deepThink: false, planMode: false, fromSteer: true,
+                        time: Date.now(), messageId: t.messageId || null })
+  if (!existing) messages.value.push(userMsg)
+  streamAnswer(t.text, [], null, false, 1, false, [], [], [], null, '', '', userMsg,
+               false, false, true)
+}
+
+/** 后端交回的「已经说过、模型却没收到」那几条：排在本地队列前面，本轮一空出来就补发 */
+const steerResend = ref([])
+
+/**
+ * 本轮收尾时结算插话：先补发后端没收上的那句，再把还挂在本地队列里的（没点过「立即发送」的、
+ * 带材料本轮塞不进去的）作为新一轮交给模型。
  * <p>为什么收尾要自动发：本轮已经结束了，"插话"没有可插入的对象，`/chat/steer` 必然被拒；
  * 用户打的那句话不能因此丢掉。带材料的本来就只有这条路。
  * <p>一次只派一条（同一会话同时只能跑一轮），剩下的等它结束再派——done 会再次走到这里。
- * @param backendLeft 后端回来的"纯文字进了队列但没赶上工具步"的内容
+ * @param backendLeft 后端 done 里回来的 pendingSteers：[{ text, messageId }]
  */
 function flushPendingSteers (backendLeft = []) {
-  // 后端交回的：这句已经发过了但没赶上工具步。清掉本地对应条目，它的续发由下面统一处理，
-  // 但**不能在界面上凭空多冒一条**（用户看到的是同一条，不该变两条）
-  for (const t of backendLeft) {
-    const hit = steerQueue.value.find(s => s.text === t)
-    if (hit) steerQueue.value = steerQueue.value.filter(s => s !== hit)
+  for (const raw of backendLeft) {
+    const t = typeof raw === 'string' ? { text: raw, messageId: '' } : (raw || {})
+    if (!t.text) continue
+    // 本地队列里同文那条撤下（用户点了发送、又在这句还没退场时手动重打一遍）：补发已经带上它了，
+    // 发两遍等于替用户把同一句话讲两次
+    steerQueue.value = steerQueue.value.filter(s => s.text !== t.text)
+    if (!steerResend.value.some(x => x.text === t.text)) steerResend.value.push(t)
   }
+  // 本轮已经收尾，队列里还挂着「等这一轮听到」的那几条没有对象可插了：上面没被补发接走的，
+  // 就是模型已经收到过的（那一帧的留痕长在回答里，或刷新后由库里那条用户消息回显）——
+  // 留在条上会被读成「我说了但没人理」。
+  steerQueue.value = steerQueue.value.filter(s => !s.awaiting)
   if (loading.value) return   // 已经有人在跑了（用户抢先发了新消息）：留着，下轮结束再结算
+  const left = steerResend.value.shift()
+  if (left) {
+    resendSteer(left)
+    return
+  }
   const next = steerQueue.value.find(s => !s.sending)
   if (!next) return
   steerQueue.value = steerQueue.value.filter(s => s !== next)

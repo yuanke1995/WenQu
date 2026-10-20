@@ -315,13 +315,6 @@ public class RunCodeSubCallRuntime {
             public String decorateResult(ToolInvocation inv, String result) {
                 return base.decorateResult(inv, result);
             }
-
-            @Override
-            public String appendSteers(ToolInvocation inv, String result) {
-                // 插话是给"正在出字的这一轮"的，脚本的一条子调用不是它的受众：附在这里会让
-                // 一句"换个方向"混进 Python 的返回值里，模型下一步看到的是一段脏 JSON
-                return result;
-            }
         };
     }
 

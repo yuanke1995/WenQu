@@ -187,6 +187,12 @@
                     </button>
                     <div v-show="procOpen(m, seg)" class="tl-process">{{ procSlice(m, seg) }}</div>
                   </div>
+                  <!-- 插话段：用户在这一轮还在跑时补的那句，就地一行（与用户气泡同一形状）。
+                       它长在「模型真听到它」的那个位置——夹在正文与工具之间，不是整段回答的上面
+                       或下面；库里那条独立用户行已由引擎折叠，一句只显示这一遍。 -->
+                  <div v-else-if="seg.kind === 'steer'" class="tl-steer">
+                    <span class="tl-steer-txt">{{ seg.text }}</span>
+                  </div>
                   <!-- 产物段不再就地渲染：产物统一沉底（时间线数据仍保留 artifact 段以备后续） -->
                   <div v-else class="tl-group" :class="{ inCluster: seg.inCluster, flat: seg.flat }">
                     <button v-if="seg.tools.length > 1 && !seg.flat" class="tl-group-bar" type="button" @click="seg.tools[0]._groupOpen = !seg.tools[0]._groupOpen">
@@ -642,7 +648,7 @@
           刻意放在输入框正上方（而非气泡里）：它是"还没发出去的话"，离输入框最近才对。 -->
           <div v-if="steerQueue.length" class="steer-queue">
           <div v-for="(it, qi) in steerQueue" :key="qi" class="steer-item"
-          :class="{ sending: it.sending, deferred: it.deferred, dragging: steerDragIdx === qi }"
+          :class="{ sending: it.sending, deferred: it.deferred, awaiting: it.awaiting, dragging: steerDragIdx === qi }"
           draggable="true"
           @dragstart="onSteerDragStart(qi, $event)"
           @dragover.prevent="onSteerDragOver(qi)"
@@ -653,8 +659,9 @@
           <span v-if="steerExtras(it)" class="steer-extra">{{ steerExtras(it) }}</span>
           <span v-if="it.deferred" class="steer-state">本轮结束后自动发出</span>
           <span v-else-if="it.sending" class="steer-state">发送中…</span>
+          <span v-else-if="it.awaiting" class="steer-state">已送出，等这一轮听到</span>
           <template v-else>
-          <button class="steer-act primary" type="button" title="立刻发给模型（纯文字随下一个工具步生效）"
+          <button class="steer-act primary" type="button" title="立刻发给模型（纯文字在下一次生成前生效）"
           @click="sendSteer(it)">立即发送</button>
           <button class="steer-act" type="button" title="取回输入框改" @click="editSteer(it)"><edit-outlined /></button>
           <button class="steer-act" type="button" title="丢弃这条" @click="dropSteer(it)"><delete-outlined /></button>
@@ -1855,14 +1862,15 @@ const disarmEsc = () => {
   clearTimeout(escArmTimer)
 }
 const stopNow = () => { disarmEsc(); stop() }
-/** 主输入框占位文案：生成中不再禁用输入，所以文案要改口说清"这句是插话、按下去就送出"。
- *  不再解释"要点插话按钮才送出"——那个中间层已经去掉了，占位符只需说明这是什么、什么时候生效。
+/** 主输入框占位文案：生成中不再禁用输入，所以文案要说清"这句是插话"，以及它**不会**随 Enter 直接
+ *  进模型——Enter 只把它排到输入框上方那条队列，点队列里的「立即发送」才真送。
+ *  （早先"一步送达"那一版留下的文案没跟上后来加回的队列，这里按当前行为订正。）
  *  窄屏不写 Enter/Shift+Enter 提示（触屏没有这两个键） */
 const composerPlaceholder = computed(() => {
   if (loading.value) {
     return isNarrow.value
-      ? '补一句方向（发出后模型下一步就会看到）'
-      : '补一句方向（Enter 发出，模型在下一步就会看到）'
+      ? '补一句方向（先排到上面，点「立即发送」才送出）'
+      : '补一句方向（Enter 先排到上面，点「立即发送」才送出）'
   }
   return isNarrow.value
     ? '问点什么？（@ 引用资料 · / 快捷命令）'
@@ -3674,6 +3682,14 @@ onMounted(async () => {
 .tl-text :deep(*:last-child) { margin-bottom: 0; }
 /* 过程独白段（<process> 标签分流）：灰字弱化 + 左侧细线，与正文区分但不打断交错过程视图 */
 .tl-process-block { margin: 2px 0; }
+/* 插话段：用户在这一轮还在跑时补的那句，长在模型真听到它的那个位置。右对齐＋与用户气泡同一形状，
+   一眼认得出是自己说的话；它不跟着过程折叠藏起来（收起态也留一行，见 projections 的 turnRows）。 */
+.tl-steer { display: flex; justify-content: flex-end; margin: 8px 0; }
+.tl-steer-txt {
+  max-width: 78%; padding: 9px 14px; border-radius: 12px; line-height: 1.65;
+  background: var(--app-panel-2); color: var(--app-text);
+  white-space: pre-wrap; word-break: break-word;
+}
 .tl-process-head { display: inline-flex; align-items: center; gap: 5px; border: 0; background: none; padding: 2px 4px; margin: 0 0 2px -4px; border-radius: 4px; cursor: pointer; user-select: none; font-size: 12px; color: var(--app-text3); }
 .tl-process-head:hover { color: var(--app-text2); background: var(--app-panel-2); }
 .tl-process-title { font-weight: 500; color: var(--app-text2); }
