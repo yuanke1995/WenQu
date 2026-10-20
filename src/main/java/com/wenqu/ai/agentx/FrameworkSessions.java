@@ -118,10 +118,15 @@ public class FrameworkSessions {
 
     public FrameworkSessions(
             com.wenqu.ai.agent.hitl.HitlDecisionService hitl,
-            com.wenqu.ai.service.SandboxService sandboxService) {
+            com.wenqu.ai.service.SandboxService sandboxService,
+            SessionLogArchive archive) {
         this.hitl = hitl;
         this.sandboxService = sandboxService;
+        this.archive = archive;
     }
+
+    /** 会话事件日志的归档出口（框架 SessionExportSink，开关关闭时不挂） */
+    private final SessionLogArchive archive;
 
     /**
      * 进程重启后的续跑入口（由引擎在装配期登记）。
@@ -229,8 +234,9 @@ public class FrameworkSessions {
                         key, current.bindingKey(), wantBinding);
             }
         }
+        String ctxUid = cmd.getUserId() == null || cmd.getUserId().isBlank() ? "guest" : cmd.getUserId();
         RuntimeContext.Builder ctxBuilder = RuntimeContext.builder()
-                .userId(cmd.getUserId() == null || cmd.getUserId().isBlank() ? "guest" : cmd.getUserId())
+                .userId(ctxUid)
                 .sessionId(cmd.getSessionId());
         // 沙盒上下文（框架化 P1）：挂上后框架的文件工具与 ShellExecuteTool 才有沙箱可用。
         // 取不到时返回 null（沙盒不可用 / 无会话），此时本轮不挂框架沙箱，
@@ -263,6 +269,13 @@ public class FrameworkSessions {
         // 本轮落点槽位必须进 RuntimeContext：重建实例时 buildAgent 里的工具闭包要捕获它，
         // 而工具调用发生在框架的弹性线程上，只有 ctx 里的这一份能保证「同一个会话同一个槽位」。
         ctxBuilder.put(AgentxTurnSlot.class, turnSlot(key));
+        // 事件日志归档（框架的导出 outbox）：sink 挂在 RuntimeContext 上，框架建 SessionRecorder 时
+        // 从这一份取（ReActAgent 认 SessionExportSink.CONTEXT_KEY），此后每轮心跳按持久游标增量送。
+        // 按会话各挂一个 sink：事件本身不带会话号，写哪个文件只能由 sink 自己带着归属。
+        if (archive != null && archive.enabled()) {
+            ctxBuilder.put(io.agentscope.core.session.SessionExportSink.CONTEXT_KEY,
+                    archive.sinkFor(ctxUid, cmd.getSessionId()));
+        }
         RuntimeContext ctx = ctxBuilder.build();
         HarnessAgent agent = agentFactory.apply(ctx);
         AgentSession session = agent.session(ctx);

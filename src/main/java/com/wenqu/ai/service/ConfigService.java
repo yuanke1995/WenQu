@@ -320,6 +320,15 @@ public class ConfigService {
         // 连接 host/port/password 复用 spring.data.redis（REDIS_HOST/REDIS_PORT/REDIS_PASSWORD），
         // 不再作为 c_ai_config 字段；这里只保留一个 key 前缀，避免与缓存/配置广播混用命名空间。
         d.put("chat.agentscopeRedisPrefix", "agentscope:session:");
+        // 会话事件日志归档：与上面 agentscopeRedisEnabled 是同一个坑（schema 声明了、defaults() 漏登记）。
+        // 漏登记不只是「库里少一行」：snapshot() 只遍历 defaults()，这些键的值永远不回显，
+        // 页面按 schema 的 def 显示初值，而脏检测只比页面上出现过的值——于是归档开关打开后
+        // 在界面上既看不到、也关不掉（库里那行 true 一直留着）。四个键一并登记，读取点
+        // SessionLogArchive/ScheduleCenter 的形参默认值与之同口径。
+        d.put("chat.sessionLogArchive.enabled", "false");   // 归档默认关：JSONL 里有工具入参与结果，生产上等于多一份过程明细落盘
+        d.put("chat.sessionLogArchive.dir", "");             // 留空=落在 {chat.agentscopeStateDir}/session-archive；多副本必须指共享卷
+        d.put("chat.sessionLogArchive.keepDays", "90");      // 按归档文件最后写入时间判定；0=不清理
+        d.put("chat.sessionLogArchive.cleanupIntervalMs", "86400000"); // 清理任务间隔，默认 1 天；≤0 暂停该任务
         // chat.agentscopeTurnTimeoutSeconds 已取消（2026-10）：框架对单把工具有自带 5 分钟硬超时，
         // 此前用该键覆盖成 SSE 超时，默认 0=沿用 SSE 超时——框架已有限制、参数只留个默认就用不上，
         // 现由 AgentscopeChatEngine.turnSeconds() 恒定取 chat.sseTimeoutMs，不再留配置口
