@@ -42,6 +42,8 @@ public class RetrievalDebugController {
     private final KnowledgeBaseService kbService;
     private final com.wenqu.ai.service.ConfigService configService;
     private final com.wenqu.ai.service.UserConfigService userConfigService;
+    /** 库级检索参数：面板要显示“每库生效值”，重排也要按库收敛模型（与生产同口径） */
+    private final com.wenqu.ai.service.KbRetrievalParamService kbRetrievalParams;
 
     @Operation(summary = "检索链路调试",
             description = "分步展示检索全链路：关键词命中、向量命中（含相似度分）、合并结果、重排结果、最终上下文（Top 8）、被排除的候选。用于排查召回质量问题。可选 kbIds 限定库范围（对照实验/单库排查）")
@@ -50,7 +52,7 @@ public class RetrievalDebugController {
             @Parameter(description = "{\"question\": \"检索问题\", \"kbIds\": [\"可选，限定库范围\"]}")
             @RequestBody Map<String, Object> body) {
         // 个人覆盖按测试者身份装载：不装载的话面板判定与
-        // "我自己聊天时实际会走什么"不符（重排已归知识库/智能体检索设置，按其覆盖判定）
+        // "我自己聊天时实际会走什么"不符（重排模型归知识库、开关归智能体，按其覆盖判定）
         configService.putUserOverrides(userConfigService.overrides(com.wenqu.ai.util.RequestUser.uid()));
         try {
             return debugInternal(body);
@@ -127,12 +129,36 @@ public class RetrievalDebugController {
         }
         result.put("merged", merged.stream().map(this::hitMap).toList());
 
+        // 每库生效参数：只列**本轮真正命中的库**（命中块已过可见性判定），不把范围外的库名/模型带出去。
+        // 面板按库展示阈值/权重/重排模型，避免“改了库参数但面板仍显示全局值”的误导。
+        Map<String, Object> kbParams = new LinkedHashMap<>();
+        Set<String> hitKbIds = merged.stream().map(HybridRetrievalService.Hit::kbId)
+                .filter(id -> id != null && !id.isBlank())
+                .collect(java.util.stream.Collectors.toCollection(LinkedHashSet::new));
+        if (!hitKbIds.isEmpty()) {
+            kbRetrievalParams.forScope(kbIds).forEach((id, p) -> {
+                if (!hitKbIds.contains(id)) return;
+                Map<String, Object> m = new LinkedHashMap<>();
+                com.wenqu.ai.model.KnowledgeBase kb = kbService.get(id);
+                m.put("name", kb == null ? id : kb.getName());
+                m.put("vecThreshold", p.vecThreshold());
+                m.put("vectorWeight", p.vectorWeight());
+                m.put("keywordWeight", p.keywordWeight());
+                m.put("rerankModel", p.rerankModel() == null ? "" : p.rerankModel());
+                m.put("configured", kb != null && kb.getQueryParams() != null && !kb.getQueryParams().isBlank());
+                kbParams.put(id, m);
+            });
+        }
+        result.put("kbParams", kbParams);
+
         // 4. 重排（与生产链路同一入口，判定单一来源）：RerankService.rank 内含完整口径——
         //    「候选 <rerank.minHits 跳过 / ≥minHits 重排、超 rerank.maxHits 截断 top maxHits 重排」。
         //    此前本接口自留一份「仅 6~15 条才重排」的旧判定：候选多于此区间时显示 rerankApplied=false，
         //    而生产在重排（实测候选 65 条仍 top15 重排）——面板与实际不符，按面板调参会得出错误结论。
         List<HybridRetrievalService.Hit> reranked = merged;
-        String reason = rerankService.debugUnavailableReason();
+        // 重排可用性/实际调用都按“本轮命中库的重排模型”判定：库绑了模型就不该因平台层没配而报不可用。
+        // 按命中库而不是范围取模型：范围可能是“全部库”，按范围会选中别人的默认库（hitKbIds 已在上面算出）。
+        String reason = kbRetrievalParams.withRerankModel(kbIds, hitKbIds, rerankService::debugUnavailableReason);
         if (reason != null) {
             // 未启用/服务不可用/冷却中——真实反映"没重排"及原因
             result.put("rerankApplied", false);
@@ -141,7 +167,9 @@ public class RetrievalDebugController {
             result.put("rerankApplied", false);
             result.put("rerankSkipReason", "命中过少（<2）无需重排");
         } else {
-            reranked = rerankService.rank(merged, query);
+            final List<HybridRetrievalService.Hit> candidates = merged;
+            reranked = kbRetrievalParams.withRerankModel(kbIds, hitKbIds,
+                    () -> rerankService.rank(candidates, query));
             boolean applied = reranked.stream().anyMatch(h -> h.rerankScore() != null);
             result.put("rerankApplied", applied);
             if (!applied) {

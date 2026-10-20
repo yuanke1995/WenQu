@@ -15,8 +15,10 @@ import java.time.LocalDateTime;
  *   <li><b>文档容器</b>：文档必归属于某个知识库（{@code c_ai_document.kb_id} 必填）。</li>
  *   <li><b>检索作用域</b>：检索按知识库过滤，不同库之间互不干扰（法律库与手册库各自召回）。</li>
  *   <li><b>参数归属</b>：检索参数（{@code queryParams}）存在库上，而非全局——
- *       不同资料性质可配不同策略（法律库提高阈值保精度、手册库放宽阈值保召回）；
- *       留空表示继承「系统设置 → 检索设置」的全局值。</li>
+ *       不同资料性质可配不同策略（法律库关键词权重高保条文命中、口语库向量权重高保语义召回）；
+ *       留空表示继承「系统设置 → 检索设置」的全局值。<b>只拥有“召回池”这一层的键</b>
+ *       （阈值 / 两路权重 / 重排模型，见 {@code KbParamCodec}）；是否重排、给模型几条属于
+ *       智能体的“出水”层，不在这里配置。</li>
  * </ul>
  * 与智能体的关系：智能体关联若干知识库（{@code Agent.knowledgeBaseIds}），
  * 从而决定该助手能看到哪些资料；这是把过去「智能体直接挂文档」提升为「智能体挂知识库」。
@@ -45,8 +47,13 @@ public class KnowledgeBase {
     private String icon;
 
     /**
-     * 检索参数（JSON：{"retrieval.vecThreshold":"0.3","retrieval.vectorTopK":"30",...}）。
-     * 空=全部继承全局检索设置；只允许检索/重排类的键（白名单在读取处校验）。
+     * 检索参数（JSON，库级“召回池”口径）：
+     * <pre>{"retrieval.vecThreshold":"0.3","retrieval.vectorWeight":"0.4",
+     *  "retrieval.keywordWeight":"0.6","rerank.model":"providerId/model"}</pre>
+     * 空=全部继承全局检索设置。白名单与归一在 {@code KbParamCodec}：越权键/已迁出的键
+     * （vectorTopK、keywordLimit、rerank.enabled）读取忽略、保存清除。
+     * <p>逐库生效：跨库一轮检索时按命中块所属库取阈值与权重；重排模型一轮只有一个，
+     * 按本轮范围内第一个绑了模型的库收敛。
      */
     private String queryParams;
 

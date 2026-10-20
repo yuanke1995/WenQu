@@ -1,6 +1,6 @@
 package com.wenqu.ai.agent.chat;
 
-// [保留] 问渠轮次台账 / 个性化提示词 —— AgentScope 框架不提供等价能力，框架引擎(agentx)与共享服务仍依赖此文件，勿当 legacy 控制流删除。
+// [保留] 问渠轮次台账 / 个性化提示词 —— AgentScope 框架不提供等价能力，框架引擎(agentx)与共享服务仍依赖此文件，勿当作已退役的控制流删除。
 
 import com.alibaba.fastjson2.JSON;
 import com.wenqu.ai.config.ConfigDefaults;
@@ -441,7 +441,7 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
             List<HybridRetrievalService.Hit> toRank = new ArrayList<>();
             for (String[] f : fresh) {
                 toRank.add(new HybridRetrievalService.Hit(null, "", f[1], f[2],
-                        List.of(), 0d, null, null, null));
+                        List.of(), 0d, null, null, null, null));
             }
             for (HybridRetrievalService.Hit h : rerankService.rankForced(toRank, question)) {
                 if (h.rerankScore() != null) scoreBySnippet.put(h.content(), h.rerankScore());
@@ -645,7 +645,7 @@ public final class TurnSourceRegistry implements WebSearchTools.WebSearchSink {
         Double rerank = src.get("rerankScore") == null ? null
                 : Double.valueOf(String.valueOf(src.get("rerankScore")));
         return new HybridRetrievalService.Hit(kid, str(src.get("docId")), str(src.get("title")),
-                str(src.get("snippet")), images, score, null, null, rerank);
+                str(src.get("snippet")), images, score, null, null, rerank, str(src.get("kbId")));
     }
 
     private static String str(Object v) {

@@ -817,7 +817,7 @@ public class GraphRagService {
             }
             added.put(chunk.getId(), new HybridRetrievalService.Hit(
                     chunk.getId(), chunk.getDocId(), chunk.getTitle(), chunk.getContent(), images,
-                    score, chunk.getChunkIndex(), chunk.getTitlePath(), null));
+                    score, chunk.getChunkIndex(), chunk.getTitlePath(), null, null));
         }
         if (added.isEmpty()) return hits;
         if (diag != null) diag.addGraphExpanded(added.size());

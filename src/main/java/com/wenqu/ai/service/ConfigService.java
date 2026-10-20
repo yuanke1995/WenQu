@@ -370,7 +370,7 @@ public class ConfigService {
         d.put("retrieval.vectorWeight", String.valueOf(properties.getRetrieval().getVectorWeight()));
         d.put("retrieval.keywordWeight", String.valueOf(properties.getRetrieval().getKeywordWeight()));
         d.put("rerank.enabled", String.valueOf(properties.getRetrieval().getRerank().isEnabled()));
-        // personalOnly：归知识库/智能体检索设置绑定，没有全局槽位。保留在 defaults() 只为
+        // personalOnly：归知识库检索设置绑定，没有全局槽位。保留在 defaults() 只为
         // snapshot/isLiveKey 能识别这个键；ensureDefaults 会跳过 personalOnly，不再往库里种全局行。
         d.put("rerank.model", "");
         // 平台默认重排模型（管理员登记，全平台兜底）：库/智能体覆盖与个人设置都为空时生效，
@@ -379,7 +379,8 @@ public class ConfigService {
         d.put("rerank.platformRef", "");
         d.put("rerank.baseUrl", properties.getRetrieval().getRerank().getBaseUrl());
         // 重排窗口两键：此前只有代码默认值（ConfigDefaults），设置页看不见、PUT 改不动，
-        // 只能直接改库——调参时等于"没有入口"，2026-10-13 登记进 schema 一并补齐
+        // 只能直接改库——调参时等于"没有入口"。2026-10-20 补齐 schema 字段（检索设置·重排服务一节），
+        // defaults() 与 schema 的 def 同为 ConfigDefaults.RERANK_MIN_HITS/MAX_HITS。
         d.put("rerank.minHits", String.valueOf(ConfigDefaults.RERANK_MIN_HITS));
         d.put("rerank.maxHits", String.valueOf(ConfigDefaults.RERANK_MAX_HITS));
         // context.safetyFactor / context.costCapTokens / context.maxOutputTokens 已退役：
@@ -403,7 +404,7 @@ public class ConfigService {
         d.put("retrieval.minFusionScore", String.valueOf(ConfigDefaults.RETRIEVAL_MIN_FUSION_SCORE));    // 融合分门槛（未启用重排时生效；2026-10-04 评测基线标定：期望块 95.7%≥0.55，无关块 70%<0.5、通过率 30%，旧 0.25 时通过率 82.7% 拦不住词面重叠噪声；调检索权重后需重标定；0=关）
         // retrieval.queryRewriteEnabled 已退役（2026-10）：多轮查询改写实现已随手写运行时删除，
         // 框架/检索链路没有第二个读取点；存量行由 schema.sql 清理。
-        d.put("retrieval.aclTopKSupplant", "true");        // 权限补采是否顶掉原 topK 尾部（2026-10-09 补：schema 早已声明，defaults 漏登记 → 设置页改了回显不出）
+        d.put("retrieval.aclTopKSupplant", "true");        // 权限补采是否顶掉原 topK 尾部（2026-10-20 补 schema 字段：此前 defaults 登记了但设置页没有这一行，改了无法回显、PUT 还会被整笔拒）
         d.put("retrieval.vectorTopK", "15");               // 向量召回 topK（调优/评估扫参用，下限 1）
         d.put("retrieval.keywordLimit", "20");             // 关键词召回上限
         d.put("retrieval.searchTimeoutMs", "8000");        // 混合检索总超时

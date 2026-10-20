@@ -112,7 +112,7 @@ public class AgentService {
         m.put("isSubagent", "用途（主/子智能体）");
         m.put("subAgentIds", "可委派的子智能体");
         m.put("subagentMode", "被委派时的执行方式");
-        m.put("queryParams", "检索参数覆盖");
+        m.put("queryParams", "检索开关覆盖（是否重排）");
         m.put("workflowId", "绑定工作流");
         VERSION_FIELDS = Collections.unmodifiableMap(m);
     }
@@ -303,40 +303,16 @@ public class AgentService {
     }
 
     /**
-     * 「可咨询助手」一整节的正文（含教模型怎么用的那两句）。
-     * <p>放在这里而不是留在问答侧：并列的第二套运行时（AgentScope 框架引擎）也必须教同一件事，
-     * 两份措辞分开写早晚会对不上——教错了的表现是模型把 id 猜错、或给通用问题乱派助手。
-     * <p>「挂得上工具才写这一节」这条判据仍由调用方把（它才知道本轮的装配上下文）。
-     */
-    public String consultGuideSection(String selfAgentId) {
-        String catalog = consultCatalog(selfAgentId);
-        if (catalog.isBlank()) return "";
-        return "\n\n## 可咨询助手\n"
-                + "遇到超出你手上资料、且明显落在某位助手职责范围内的问题，用 consultAgent 派它去查"
-                + "（可以派多次，每次一位；它会带着自己的知识库查一遍再把结论与资料交回）。"
-                + "id 必须逐字取自下面这份清单，不要猜。"
-                + "通用问题（常识、写作、建议）不要派——没有对应的助手，直接自己答。\n"
-                + catalog;
-    }
-
-    /**
-     * 渲染系统提示的「可咨询助手」一节：每行 {@code - id | 名称：职责描述}。
-     * <p>没有候选时返回空串，调用方整段不写——写一节"你可以咨询以下助手"而下面是空的，模型会照着
-     * 这个格式去猜一个不存在的 id。
+     * 一位候选助手的说明（{@code 名称：职责范围}，不带 id）。
+     * <p>它是派遣清单里那一行的正文：框架的 {@code ## Subagents} 段按 {@code - `agent_id`: 说明} 渲染，
+     * 问渠不再抄一份 id 表，但「这位管什么」只有这里说得清。
      * <p>描述为空的助手如实标"未填职责描述"：这等于告诉模型"这位不知道管什么，别派给它"，
      * 比留一行空白让它按名字联想要诚实（描述质量就是路由质量，这一行也是管理员看自己配置好没好的镜子）。
      */
-    public String consultCatalog(String selfAgentId) {
-        List<Agent> cs = consultCandidates(selfAgentId);
-        if (cs.isEmpty()) return "";
-        StringBuilder sb = new StringBuilder();
-        for (Agent a : cs) {
-            String desc = a.getDescription() == null ? "" : a.getDescription().strip();
-            sb.append("- ").append(a.getId()).append(" | ").append(a.getName()).append('：')
-                    .append(desc.isEmpty() ? "通用助手（未填职责描述，除非名称明显对口否则不要咨询）" : desc)
-                    .append('\n');
-        }
-        return sb.toString();
+    public String consultLine(Agent a) {
+        String desc = a.getDescription() == null ? "" : a.getDescription().strip();
+        String name = a.getName() == null || a.getName().isBlank() ? "未命名助手" : a.getName();
+        return name + "：" + (desc.isEmpty() ? "通用助手（未填职责描述，除非名称明显对口否则不要派）" : desc);
     }
 
 
@@ -525,7 +501,7 @@ public class AgentService {
         if (b.containsKey("isDefault")) uw.set(Agent::getIsDefault, a.getIsDefault());
         // M4：绑定的工作流（chatflow）；空串/null = 解绑（显式置空，NOT_NULL 策略下 updateById 不管）
         if (b.containsKey("workflowId")) uw.set(Agent::getWorkflowId, a.getWorkflowId());
-        // 检索参数覆盖（可清空：null = 全部继承全局设置）
+        // 检索开关覆盖（rerank.enabled；可清空：null = 全部继承全局设置）
         if (b.containsKey("queryParams")) uw.set(Agent::getQueryParams, a.getQueryParams());
         uw.set(Agent::getUpdateTime, a.getUpdateTime());
         mapper.update(null, uw);

@@ -128,7 +128,9 @@ public class KnowledgeBaseService {
             throw new com.wenqu.ai.common.BizException("问渠品牌标为默认知识库专属，其它知识库不可使用");
         }
         kb.setIcon(icon);
-        kb.setQueryParams(str(body.get("queryParams")));
+        // 库级检索参数只落白名单（阈值/两路权重/重排模型）：召回量归全局、重排开关归智能体，
+        // 写进来也一律清掉，避免又出现“表单里填了、运行时没人读”的键
+        kb.setQueryParams(KbParamCodec.normalize(str(body.get("queryParams"))));
         kb.setParseParams(str(body.get("parseParams")));
         // P1 GraphRAG 库级开关（新建时同样可带；漏了会让"新建时开开关"被静默丢弃）
         kb.setGraphEnabled(toInt(body.get("graphEnabled"), 0));
@@ -222,7 +224,13 @@ public class KnowledgeBaseService {
             }
             upd.set(KnowledgeBase::getIcon, icon);
         }
-        if (body.containsKey("queryParams")) upd.set(KnowledgeBase::getQueryParams, str(body.get("queryParams")));
+        // 库级检索参数：写入前归一（只保留 KbParamCodec.KEYS；已迁出的键随保存清除）。
+        // 必须显式 set null 才能“清空并恢复继承”——NOT_NULL 策略会跳过 null 列（本仓库踩过同款坑）。
+        String nextQueryParams = kb.getQueryParams();
+        if (body.containsKey("queryParams")) {
+            nextQueryParams = KbParamCodec.normalize(str(body.get("queryParams")));
+            upd.set(KnowledgeBase::getQueryParams, nextQueryParams);
+        }
         if (body.containsKey("parseParams")) upd.set(KnowledgeBase::getParseParams, str(body.get("parseParams")));
         if (body.containsKey("shareConfig")) upd.set(KnowledgeBase::getShareConfig, str(body.get("shareConfig")));
         if (body.containsKey("embeddingRef")) {
@@ -261,7 +269,7 @@ public class KnowledgeBaseService {
             String refOwner = kb.getCreatedBy() == null || kb.getCreatedBy().isBlank()
                     ? com.wenqu.ai.util.RequestUser.uid() : kb.getCreatedBy();
             validateChangedParamRefs(kb.getQueryParams(), kb.getParseParams(),
-                    body.containsKey("queryParams") ? str(body.get("queryParams")) : kb.getQueryParams(),
+                    nextQueryParams,
                     body.containsKey("parseParams") ? str(body.get("parseParams")) : kb.getParseParams(),
                     refOwner, com.wenqu.ai.util.RequestUser.uid(), com.wenqu.ai.util.RequestUser.role());
         }

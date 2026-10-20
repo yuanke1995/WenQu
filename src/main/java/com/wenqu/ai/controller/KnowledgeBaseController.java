@@ -91,22 +91,22 @@ public class KnowledgeBaseController {
      * 知识库参数默认值（**普通用户可读**）：新建知识库时以当前全局值为模板预填表单。
      * <p>为什么不复用 {@code GET /config}：那是管理端点（普通用户 403），而知识库自建已对普通用户开放，
      * 普通用户却看不到"当前全局值是多少"——正是"设置页写的是新建库预填、实际只有管理员能预填"的根因。
-     * 这里只回检索/解析参数（不含 gateway 地址与任何密钥），普通用户拿到也只是"知道自己库将按什么默认值跑"。
+     * 这里只回库级可覆盖的检索参数 + 解析参数（不含 gateway 地址与任何密钥）。
      */
-    @Operation(summary = "知识库参数默认值", description = "检索/解析参数的当前生效默认值（新建库模板预填 + 表单占位符展示）；"
-            + "personal/personalOnly 键返回「本人个人值（未设即空，personalOnly 无全局层）」，其余返回全局值；"
-            + "rerank.platformRef 为平台兜底层（不在库级可覆盖白名单），原样返回供前端点名默认模型")
+    @Operation(summary = "知识库参数默认值", description = "库级检索/解析参数的当前生效默认值（新建库模板预填 + 表单占位符展示）；"
+            + "重排模型返回「本人个人值（未设即空，personalOnly 无全局层）」；rerank.enabled 供智能体表单展示"
+            + "「跟随全局」的当前状态；rerank.platformRef 为平台兜底层，原样返回供前端点名默认模型")
     @GetMapping("/param-defaults")
     public ResultJson paramDefaults() {
         Map<String, String> out = new LinkedHashMap<>();
         for (String k : DocumentService.PARSE_PARAM_KEYS) out.put(k, effectiveDefault(k));
-        for (String k : com.wenqu.ai.service.ChatService.AGENT_QUERY_PARAM_KEYS) {
-            if (k.endsWith(".baseUrl")) continue;   // 网关地址不外发给普通用户（表单也没有该字段）
-            out.put(k, effectiveDefault(k));
-        }
+        // 库级唯一真源：阈值/两路权重/重排模型（召回池那一层）
+        for (String k : com.wenqu.ai.service.KbParamCodec.KEYS) out.put(k, effectiveDefault(k));
+        // 重排开关归智能体（场景性），但智能体表单要展示「跟随全局」的当前状态，故一并下发（非敏感布尔值）
+        out.put("rerank.enabled", configService.get("rerank.enabled"));
         // 平台默认重排模型：库级覆盖与个人设置都没绑重排模型时的兜底层（ModelRegistryService.rerankRoute
-        // 值链的第三跳）。不在 AGENT_QUERY_PARAM_KEYS（那是有意收窄的库级可覆盖白名单），单独补发——
-        // 前端「重排模型」槽位空值时据此点名"默认用的哪个模型"，否则用户无从得知重排到底会不会跑、用谁的模型。
+        // 值链的第三跳）。不在库级可覆盖白名单，单独补发——前端「重排模型」槽位空值时据此点名
+        // "默认用的哪个模型"，否则用户无从得知重排到底会不会跑、用谁的模型。
         // 仅模型引用串，不含网关地址与密钥，同 rerank.model 的外发口径。
         out.put("rerank.platformRef", configService.get("rerank.platformRef"));
         return ResultJson.ok(out);
@@ -138,8 +138,8 @@ public class KnowledgeBaseController {
     public ResultJson paramTips() {
         java.util.Set<String> keys = new java.util.LinkedHashSet<>();
         keys.addAll(DocumentService.PARSE_PARAM_KEYS);
-        keys.addAll(com.wenqu.ai.service.ChatService.AGENT_QUERY_PARAM_KEYS);
-        keys.remove("rerank.baseUrl");   // 表单没有该字段，无需下发
+        // 库级检索参数（阈值/两路权重/重排模型）：弹窗只展示这几项的问号文案
+        keys.addAll(com.wenqu.ai.service.KbParamCodec.KEYS);
         return ResultJson.ok(configSchemaService.tipsByKey(keys));
     }
 

@@ -127,7 +127,7 @@ public class WenquAgentxTools {
     }
 
     /**
-     * 装本轮落点袋。<b>必须在发起线程调用</b>：身份与本轮检索参数覆盖都是 ThreadLocal，
+     * 装本轮落点袋。<b>必须在发起线程调用</b>：身份与本轮检索开关覆盖都是 ThreadLocal，
      * 框架把工具派到自己的弹性线程上，不在这里取快照就拿不到（{@code KnowledgeTools} 同一口径）。
      */
     public TurnHooks newHooks(ChatCommand cmd, String modelRef, java.util.function.Supplier<String> turnId,
@@ -398,7 +398,7 @@ public class WenquAgentxTools {
      * 「这一轮会不会问人」——判据必须与手写侧 {@code ApprovalGate} 一字不差：智能体的审批档位是
      * {@code ask} 才算会问人（{@code auto}/{@code off}/未登记都算不问），档位没解析出来时按最保守的会问人处理。
      * <p>为什么单独收成一处：框架侧原先只看了「这把工具有没有副作用」，于是 auto 档也每把写操作都弹卡
-     * （双跑实测：legacy 同一智能体同一问题一句没问，框架那边 write_file 与 MCP 只读工具都要确认）。
+     * （双跑实测：同一智能体同一问题，手写侧一句没问，框架那边 write_file 与 MCP 只读工具都要确认）。
      * 卡片没人答的代价不是「多问一句」而是整轮悬到确认超时、正文什么都没有。
      */
     public static boolean asksHuman(com.wenqu.ai.agent.permission.ExecutionPolicy policy) {

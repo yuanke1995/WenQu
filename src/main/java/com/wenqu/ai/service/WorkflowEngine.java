@@ -124,6 +124,8 @@ public class WorkflowEngine {
     private final com.wenqu.ai.skill.WenquSkillRepository skillRepository;
     private final McpClientService mcpClientService;
     private final CredentialService credentialService;
+    /** 库级检索参数：重排模型按节点选中的库收敛（与问答工具同一口径） */
+    private final KbRetrievalParamService kbRetrievalParams;
 
     public WorkflowEngine(WorkflowValidator validator, ChatClient chatClient,
                           HybridRetrievalService retrievalService, ConfigService configService,
@@ -135,7 +137,8 @@ public class WorkflowEngine {
                           RerankService rerankService,
                           com.wenqu.ai.skill.WenquSkillRepository skillRepository,
                           McpClientService mcpClientService, CredentialService credentialService,
-                          com.wenqu.ai.mapper.SessionMapper sessionMapper) {
+                          com.wenqu.ai.mapper.SessionMapper sessionMapper,
+                          KbRetrievalParamService kbRetrievalParams) {
         this.validator = validator;
         this.chatClient = chatClient;
         this.retrievalService = retrievalService;
@@ -152,6 +155,7 @@ public class WorkflowEngine {
         this.skillRepository = skillRepository;
         this.mcpClientService = mcpClientService;
         this.credentialService = credentialService;
+        this.kbRetrievalParams = kbRetrievalParams;
     }
 
     /**
@@ -531,9 +535,11 @@ public class WorkflowEngine {
             // 补重排（强制窗口）：search() 只出融合分，低分门若直接比较，词面重叠的无关块（融合分 0.6+）
             // 会盖过真实重排分 ~0.000x 混进节点结果——与 searchKnowledge 工具同源的分域错配问题。
             // rankForced 不受 minHits 窗口限制；失败回退融合分序，门随之落回融合域（见下）。
-            // 与检索同因：节点线程须重放本轮参数覆盖（rerank.enabled/rerank.model 可为库级/智能体级策略）。
+            // 参数覆盖须在节点线程内重放（rerank.enabled 等）；重排模型再按节点命中的库收敛一层。
             final List<Hit> candidates = hits;
-            hits = withReplay(ctx, () -> rerankService.rankForced(candidates, query));
+            final List<String> hitKbIds = candidates.stream().map(Hit::kbId).toList();
+            hits = withReplay(ctx, () -> kbRetrievalParams.withRerankModel(kbIds, hitKbIds,
+                    () -> rerankService.rankForced(candidates, query)));
             boolean rerankActive = hits != null && hits.stream().anyMatch(h -> h.rerankScore() != null);
             double minScore = resolveMinScore(n, ctx);
             // 分域取门：重排分走节点低分门（config.minScore，未声明跟随 retrieval.minContextScore）；
@@ -1402,7 +1408,7 @@ public class WorkflowEngine {
         configService.clearOverride();
         configService.putOverrides(ctx.baseOverrides);
         // 个人覆盖同口径重放（归属人参数：不带就会读到全局值，个人层覆盖会失真；
-        // 重排归知识库/智能体检索设置，随 baseOverrides 的库级/智能体级覆盖生效）
+        // 重排开关随 baseOverrides 重放；模型按命中库收敛）
         Map<String, String> prevUv = configService.currentUserOverrides();
         configService.clearUserOverrides();
         configService.putUserOverrides(ctx.baseUserOverrides);
