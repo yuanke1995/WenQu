@@ -1158,6 +1158,10 @@ class LocalContainerProvisionerBackend:
                 # The sandbox image expects /home/gem to be writable during boot.
                 # Keep it ephemeral and mount persistent user-data underneath it.
                 "tmpfs": {"/home/gem": "rw,exec,mode=777"},
+                # 让沙盒容器能解析 host.docker.internal 回到宿主机网关(172.17.0.1)，从而回调
+                # 后端（SANDBOX_CALLBACK_BASE_URL 默认 host.docker.internal:8090/ai）。配合后端/
+                # provisioner 端口绑 172.17.0.1，可在不暴露公网的前提下打通整条链路。
+                "extra_hosts": ["host.docker.internal:host-gateway"],
             }
             if not ephemeral_storage and session_workspace is not None:
                 mount_root = (
