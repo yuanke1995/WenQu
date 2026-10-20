@@ -13,8 +13,8 @@
 | `mac/` | macOS 启动器（开发栈、后端 jar） | `bash scripts/mac/xxx.sh` |
 | `win/` | Windows 启动器（后端 jar） | `scripts\win\xxx.bat` |
 
-> 一次性 SQL（库初始化 / schema 修复 / 数据迁移 / 配置清理）已全部退役：建表与预置数据以
-> `src/main/resources/schema.sql` 为准，运行时数据变更走应用启动逻辑或管理界面，不再留 `scripts/db/`。
+> 这里不放一次性 SQL（库初始化 / schema 修复 / 数据迁移 / 配置清理）：建表与预置数据以
+> `src/main/resources/schema.sql` 为准，运行时数据变更走应用启动逻辑或管理界面。
 
 ## 统一调度器 `wenqu.sh`
 
@@ -102,11 +102,9 @@
 
 ## 说明：重排与 OCR 的部署方式
 
-按线上发布口径，本地不再保留重排 / OCR 的「本地部署脚本」：
+重排与 OCR 按线上发布口径部署，`scripts/` 下没有它们的本地启动器：
 
 - **重排（rerank）**：由外部 OpenAI 兼容 `/v1/rerank` 服务承载——在设置页配置 `rerank.baseUrl`
-  指向可用服务，或绑定供应商重排模型。无本地启动脚本。
+  指向可用服务，或绑定供应商重排模型。
 - **OCR（MinerU）**：走 `deploy/ocr/docker-compose.yml` 的 docker 部署
-  （`docker compose -f deploy/ocr/docker-compose.yml up -d --build`），不再有 `scripts/` 下的本地启动器。
-
-`dev-stack.sh` 也不再管理 `ocr` 单元。
+  （`docker compose -f deploy/ocr/docker-compose.yml up -d --build`）。

@@ -99,7 +99,7 @@ public class UserSkillStore {
     private static final int MAX_ZIP_ENTRIES = 240;
     private static final int MAX_FILES = 120;
     private static final int MAX_DEPTH = 8;
-    private static final int MAX_DESCRIPTION = 300;
+    private static final int MAX_DESCRIPTION = 1000;
     private static final int MAX_URL_BYTES = 512 * 1024;
     private static final int MAX_DISABLED = 500;
     private static final int MAX_PREVIEW_BYTES = 256 * 1024;
@@ -394,6 +394,9 @@ public class UserSkillStore {
         }
         if (doc.description() == null || doc.description().isBlank()) {
             throw new BizException("技能缺少 description——模型靠它判断何时读取该技能");
+        }
+        if (doc.description().length() > MAX_DESCRIPTION) {
+            throw new BizException("技能描述过长（最多 " + MAX_DESCRIPTION + " 字）");
         }
         writeSkill(uid, name, doc, overwrite);
         log.info("[AUDIT] URL 安装技能 uid={} skill={} url={}", uid, name, uri);

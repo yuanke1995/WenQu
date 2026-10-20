@@ -167,7 +167,7 @@ u_sandbox_down() {
   docker_ready || return 1
   u_sandbox_health || echo "  本来就没跑"
   compose "$ROOT/deploy/sandbox-provisioner/docker-compose.yml" down >/dev/null 2>&1 \
-    && echo "  已停止（沙盒容器随之移除；user-data/ 与 skill-projections/ 宿主目录未动）"
+    && echo "  已停止（沙盒容器随之移除；user-data/ 宿主目录未动）"
 }
 u_sandbox_logs() { docker_ready && compose "$ROOT/deploy/sandbox-provisioner/docker-compose.yml" logs -f; }
 

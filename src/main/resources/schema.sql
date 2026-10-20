@@ -1032,14 +1032,18 @@ DELETE FROM `c_ai_config` WHERE `config_key` IN (
     -- 解析/图谱：模型引用已回落库主默认聊天模型
     'parse.qaModel', 'graphrag.modelRef',
     -- 技能/记忆：面板与自研存储退役后留下的死配置
-    'skill.injectMaxChars', 'skill.remoteAllowedHosts', 'skill.maxFileChars',
+    -- 注意 skill.remoteAllowedHosts 不在此列：它是活配置（defaults() 登记、设置页可编辑，
+    -- UserSkillStore/SkillController 真读它做 URL 安装白名单）。曾经误列进本名单，
+    -- 而本脚本由 spring.sql.init 在建连接池时执行、早于 ConfigService.ensureDefaults()，
+    -- 于是每次重启删行→ensureDefaults 按空默认值补回＝管理员白名单每次重启被清零（远程安装静默关闭）。
+    'skill.injectMaxChars', 'skill.maxFileChars',
     'memory.maxPerUser', 'memory.maxInjectCount', 'memory.injectBudgetChars',
     'memory.dedupThreshold', 'memory.useSemanticInject', 'memory.platformEmbeddingRef',
     -- 工具：低风险工具改为随总闸启用，按智能体三态 / tool.deny 收口，不再各留平台开关
     'tool.knowledgeRetrieval.enabled', 'tool.artifact.enabled',
     'tool.builtin.enabled', 'tool.subagentConsult.enabled',
     'tool.todo.enabled', 'tool.spillEnabled', 'tool.mcpCiteEnabled',
-    -- 子智能体：旧并行编排器已删除，资料域改走 consultAgent
+    -- 子智能体：旧并行编排器已删除，资料域改走派遣（框架子智能体）
     'agent.enabled', 'agent.subAgents', 'agent.topKPerAgent', 'agent.digestEnabled',
     'agent.aggregateMode', 'agent.digestMaxChars', 'agent.aggregateMarkFailed',
     'agent.autoRoute', 'agent.routeTimeoutMs', 'agent.maxParallelSubAgents',

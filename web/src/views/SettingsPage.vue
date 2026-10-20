@@ -1180,11 +1180,11 @@ const loadSkillOptions = async (manual = false) => {
     skillLoading.value = false
   }
 }
-const SKILL_SOURCE_LABELS = { builtin: '内置技能', user: '我的技能', legacy: '历史技能', workspace: '工作区技能' }
+const SKILL_SOURCE_LABELS = { builtin: '内置技能', user: '我的技能', workspace: '工作区技能' }
 const skillTotal = computed(() => skillList.value.length)
 /** 按来源分组（内置 → 我的 → 沙盒工作区）；未知来源排在最后，原样显示来源名 */
 const skillGroups = computed(() => {
-  const order = ['builtin', 'user', 'legacy', 'workspace']
+  const order = ['builtin', 'user', 'workspace']
   const groups = new Map()
   for (const s of skillList.value) {
     const source = s.source || 'other'

@@ -30,9 +30,6 @@
         <template v-else-if="entry.source === 'user'">
           <p class="sc-hint">这是你自己安装的技能，可在「智能体 → 技能」里编辑、停用或删除；其他成员看不到它。</p>
         </template>
-        <template v-else-if="entry.source === 'legacy'">
-          <p class="sc-hint">历史版本里导入的技能，只读。想继续维护它，可在「智能体 → 技能」里重新安装一份。</p>
-        </template>
         <template v-else-if="entry.platformDisabled">
           <p class="sc-hint">这条已由平台统一停用，所有成员都用不了。本轮仍可在输入框里点名用它一次。</p>
         </template>
@@ -58,7 +55,7 @@ const props = defineProps({
 })
 const emit = defineEmits(['update:open'])
 
-const SOURCE_LABEL = { builtin: '内置技能', user: '我的技能', legacy: '历史技能', workspace: '工作区技能' }
+const SOURCE_LABEL = { builtin: '内置技能', user: '我的技能', workspace: '工作区技能' }
 
 const visible = computed({
   get: () => props.open,

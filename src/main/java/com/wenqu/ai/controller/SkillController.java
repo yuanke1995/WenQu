@@ -57,7 +57,7 @@ import java.util.Set;
 @RestController
 @RequestMapping("/api/ai/skill")
 @RequiredArgsConstructor
-@Tag(name = "技能（Skills）", description = "可插拔能力包：内置 + 用户自装 + 历史投影 + 本会话工作区，按用户隔离")
+@Tag(name = "技能（Skills）", description = "可插拔能力包：内置 + 用户自装 + 本会话工作区，按用户隔离")
 public class SkillController {
 
     private final WenquSkillRepository skills;
@@ -67,7 +67,7 @@ public class SkillController {
     // ==================== 读 ====================
 
     @Operation(summary = "可用技能清单",
-            description = "内置 + 用户自装 + 历史投影（+ 指定会话的沙盒工作区技能）；不含正文，同名只给生效那条")
+            description = "内置 + 用户自装（+ 指定会话的沙盒工作区技能）；不含正文，同名只给生效那条")
     @GetMapping("/available")
     public ResultJson available(@RequestParam(value = "sessionId", required = false) String sessionId) {
         String uid = uid();
@@ -174,7 +174,7 @@ public class SkillController {
         String content = text(body.get("content"));
         boolean overwrite = flag(body.get("overwrite"));
         UserSkillStore.InstalledSkill s = store.create(uid, name, description, content,
-                overwrite, reserved(uid));
+                overwrite, reserved());
         return ResultJson.ok(view(uid, requireEntry(uid, null, s.name()), metaOf(mine(uid), s.name()), false), "已创建");
     }
 
@@ -184,7 +184,7 @@ public class SkillController {
     public ResultJson install(@RequestBody Map<String, Object> body) {
         String uid = uid();
         UserSkillStore.InstalledSkill s = store.installUrl(uid, text(body.get("url")),
-                text(body.get("name")), flag(body.get("overwrite")), reserved(uid));
+                text(body.get("name")), flag(body.get("overwrite")), reserved());
         return ResultJson.ok(view(uid, requireEntry(uid, null, s.name()), metaOf(mine(uid), s.name()), false), "已安装");
     }
 
@@ -195,7 +195,7 @@ public class SkillController {
                                  @RequestParam(value = "name", required = false) String name,
                                  @RequestParam(value = "overwrite", required = false, defaultValue = "false") boolean overwrite) {
         String uid = uid();
-        UserSkillStore.InstalledSkill s = store.installZip(uid, file, name, overwrite, reserved(uid));
+        UserSkillStore.InstalledSkill s = store.installZip(uid, file, name, overwrite, reserved());
         return ResultJson.ok(view(uid, requireEntry(uid, null, s.name()), metaOf(mine(uid), s.name()), false), "已安装");
     }
 
@@ -211,7 +211,7 @@ public class SkillController {
         return ResultJson.ok(view(uid, requireEntry(uid, null, s.name()), metaOf(mine(uid), s.name()), false), "已保存");
     }
 
-    @Operation(summary = "删除技能", description = "只能删自己安装的技能；内置/历史投影只读，工作区技能随会话走")
+    @Operation(summary = "删除技能", description = "只能删自己安装的技能；内置技能只读，工作区技能随会话走")
     @DeleteMapping("/{name}")
     public ResultJson delete(@PathVariable("name") String name) {
         String uid = uid();
@@ -273,20 +273,14 @@ public class SkillController {
     private WenquSkillRepository.SkillEntry requireMine(String uid, String name) {
         WenquSkillRepository.SkillEntry e = requireEntry(uid, null, name);
         if (!WenquSkillRepository.SOURCE_USER.equals(e.source())) {
-            throw new BizException("只有你自己安装的技能才能修改/删除（内置与历史技能只读，工作区技能请在对话里让助手改）");
+            throw new BizException("只有你自己安装的技能才能修改/删除（内置技能只读，工作区技能请在对话里让助手改）");
         }
         return e;
     }
 
-    /** 不能被用户技能占用的名字：内置 + 该用户的历史投影（同名的存量资产不能被新装包顶掉）。 */
-    private Set<String> reserved(String uid) {
-        Set<String> out = new LinkedHashSet<>(skills.builtinNames());
-        for (WenquSkillRepository.SkillEntry e : skills.catalog(ctx(uid), null)) {
-            if (WenquSkillRepository.SOURCE_LEGACY.equals(e.source()) && e.skill().getName() != null) {
-                out.add(e.skill().getName().trim().toLowerCase(Locale.ROOT));
-            }
-        }
-        return out;
+    /** 不能被用户技能占用的名字：内置技能名（随版本分发的公共资产不能被新装包顶掉）。 */
+    private Set<String> reserved() {
+        return new LinkedHashSet<>(skills.builtinNames());
     }
 
     /** 当前用户的技能元信息，按技能名与目录名双键索引（历史手工目录两者可能不同）。 */
@@ -315,11 +309,10 @@ public class SkillController {
         String name = s.getName();
         String source = e.source();
         boolean mine = WenquSkillRepository.SOURCE_USER.equals(source);
-        boolean legacy = WenquSkillRepository.SOURCE_LEGACY.equals(source);
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("name", name);
         m.put("dirName", meta == null ? name : meta.dirName());
-        m.put("ref", (mine || legacy) ? uid + "/" + name : name);
+        m.put("ref", mine ? uid + "/" + name : name);
         m.put("description", s.getDescription());
         m.put("source", source);
         m.put("disabled", e.disabled());

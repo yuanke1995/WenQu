@@ -24,11 +24,9 @@ services:
     volumes:
       # 用 docker.sock 在宿主 daemon 上创建沙盒容器。
       - /var/run/docker.sock:/var/run/docker.sock
-      # 沙盒持久卷。容器内挂载点路径不可改——provisioner 按 /app/user-data 与
-      # /app/skill-projections 从自身 Mounts 反推宿主路径，再 bind 给沙盒的
-      # /home/gem/user-data 与 /home/gem/skills（后者只读）。
+      # 沙盒持久卷。容器内挂载点路径不可改——provisioner 按 /app/user-data 从自身 Mounts
+      # 反推宿主路径，再 bind 给沙盒的 /home/gem/user-data。
       - ../../user-data:/app/user-data
-      - ../../skill-projections:/app/skill-projections
       # 全局沙盒环境变量（部署侧维护；内容会注入每个沙盒，按不可信输入对待）。
       - ./sandbox.env:/app/sandbox.env:ro
     environment:

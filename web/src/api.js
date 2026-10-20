@@ -843,7 +843,7 @@ export const getSkillContent = (name, sessionId) =>
     + (sessionId ? '&sessionId=' + encodeURIComponent(sessionId) : ''))
 
 // ---- 技能管理（用户自助安装 / 编辑 / 删除 / 个人停用）----
-/** 管理清单：来源（我的/内置/历史）、停用标记、可否编辑删除、体积/文件数 + 远程安装开关与安装限制 */
+/** 管理清单：来源（我的/内置/工作区）、停用标记、可否编辑删除、体积/文件数 + 远程安装开关与安装限制 */
 export const listSkills = () => request('/skill/list')
 /** 详情：正文 + raw（用户自装技能的 SKILL.md 原文，编辑用）+ 附属文件清单 */
 export const getSkillDetail = (name, sessionId) =>
