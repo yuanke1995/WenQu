@@ -163,7 +163,7 @@ public class ConfigSchemaService {
     }
 
     /**
-     * 字段是否允许个人覆盖（个人设置 → 聊天模型与偏好；值存 c_ai_user_config，覆盖系统全局值）。
+     * 字段是否允许个人覆盖（个人设置 → 默认模型；值存 c_ai_user_config，覆盖系统全局值）。
      * 未定义字段按 false（fail-closed：个人保存接口只接受 schema 显式标记 personal 的键）。
      */
     public boolean isPersonal(String key) {

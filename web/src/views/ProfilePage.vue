@@ -57,7 +57,7 @@
           </div>
         </div>
 
-        <!-- 个人默认模型 + 自动提炼记忆开关（保存按钮统一提交默认模型；记忆开关即时生效不参与保存） -->
+        <!-- 个人默认聊天模型（「保存」统一提交；「自动提炼记忆」开关已挪到「我的记忆」面板） -->
         <div v-else-if="current === 'chat'" class="app-card pf-card">
           <h2 class="app-card-title">{{ panelMeta.title }}</h2>
           <p class="pf-hint">{{ panelMeta.hint }}</p>
@@ -69,7 +69,31 @@
           </div>
           <p class="pf-sub-hint">{{ panelMeta.tail }}</p>
 
-          <!-- 长期记忆的生成闸（即时生效，不参与下方「保存」）：只关「问答后自动提炼」这一步，
+          <!-- 回答偏好（原「相关建议条数 / 空态示例问题 / 默认助手 / 停用的技能 / 工具执行上限」五项
+               个人覆盖）已整体下线：连同它们在系统设置里的全局那一份一起删干净，不再有两处口径。 -->
+
+          <div class="pf-row" style="margin-top:14px">
+            <button class="app-btn" :disabled="saving" @click="save">保存</button>
+          </div>
+        </div>
+
+        <!-- 我的记忆（P5 收口）：框架负责写，这里负责让用户看得见、改得动、删得掉；
+             「自动提炼记忆」生成闸也从聊天面板挪到了这里——开关与沉淀内容同面板，边看边管。
+             阅读与编辑都按「分类 → 条目」结构化呈现（parse/serialize 见 utils/memoryDoc.js），
+             不要求用户懂 Markdown；原文编辑作为高级项保留，兼容手写/异常格式的内容。 -->
+        <div v-else-if="current === 'memory'" class="app-card pf-card mem-card">
+          <h2 class="app-card-title">
+            我的记忆
+            <span v-if="memOverview.daily && memOverview.daily.length" class="mem-count">
+              {{ memOverview.daily.length }} 天日账
+            </span>
+          </h2>
+          <p class="pf-hint">
+            助手会在问答结束后把值得长期记住的信息整理进下面的「长期记忆」，日账则是每天追加的原始记录。
+            这里的内容只有你自己能看到；日账是只读的，删除后无法恢复。
+          </p>
+
+          <!-- 长期记忆的生成闸（即时生效，不参与任何保存）：只关「问答后自动提炼」这一步，
                已沉淀的记忆在后续问答里照常被提起。关掉后下一轮起才停（正在跑的那一轮不受影响）。 -->
           <div class="mem-auto-row" style="display:flex;align-items:flex-start;gap:12px">
             <div class="mem-auto-text">
@@ -79,26 +103,6 @@
             <a-switch :checked="memAutoEnabled" :loading="memAutoSaving" @change="toggleMemAuto" />
           </div>
 
-          <!-- 回答偏好（原「相关建议条数 / 空态示例问题 / 默认助手 / 停用的技能 / 工具执行上限」五项
-               个人覆盖）已整体下线：连同它们在系统设置里的全局那一份一起删干净，不再有两处口径。 -->
-
-          <div class="pf-row" style="margin-top:14px">
-            <button class="app-btn" :disabled="saving" @click="save">保存</button>
-          </div>
-        </div>
-
-        <!-- 我的记忆（P5 收口）：框架负责写，这里负责让用户看得见、改得动、删得掉 -->
-        <div v-else-if="current === 'memory'" class="app-card pf-card mem-card">
-          <h2 class="app-card-title">
-            我的记忆
-            <span v-if="memOverview.daily && memOverview.daily.length" class="mem-count">
-              {{ memOverview.daily.length }} 天日账
-            </span>
-          </h2>
-          <p class="pf-hint">
-            助手会在问答结束后把值得长期记住的信息写进 <code>MEMORY.md</code>，日账则是每天追加的原始记录。
-            这里的内容只有你自己能看到；日账是只读的，删除后无法恢复。
-          </p>
           <a-spin :spinning="memLoading">
             <div v-if="memOverview.over" class="mem-warn">
               当前约 {{ memOverview.tokens }} token，超过硬上限 {{ memOverview.maxTokens }} token；
@@ -107,29 +111,109 @@
             </div>
 
             <div class="mem-toolbar">
-              <button class="app-btn" :disabled="memEditing || memSaving" @click="startMemEdit">编辑 MEMORY.md</button>
+              <button class="app-btn" :disabled="memEditing || memSaving" @click="startMemEdit">编辑</button>
               <button class="app-btn ghost" :disabled="!memOverview.content" @click="downloadMemory">下载</button>
               <button class="app-btn ghost mem-danger"
                       :disabled="memClearing || (!memOverview.content && !(memOverview.daily && memOverview.daily.length))"
-                      @click="onClearMemory">清空全部记忆</button>
+                      @click="onClearMemory">清除全部</button>
               <span class="mem-meta">
                 {{ memOverview.size || 0 }} 字符 · 约 {{ memOverview.tokens || 0 }} token
                 / 上限 {{ memOverview.maxTokens || 0 }}
               </span>
             </div>
 
+            <!-- 阅读态：按分类结构化呈现（用户不需要懂 Markdown） -->
+            <div v-if="!memEditing" class="mem-view">
+              <template v-if="memDocView.sections.length">
+                <div v-for="sec in memDocView.sections" :key="sec.id" class="mem-sec">
+                  <div class="mem-sec-title">{{ sec.title }}</div>
+                  <template v-for="r in secRows(sec)" :key="r.e.id">
+                    <div v-if="r.kind === 'sub'" class="mem-sub-title">{{ r.e.title }}</div>
+                    <div v-else class="mem-line" :class="{ raw: r.e.kind === 'raw', indent: r.indent }">
+                      <span v-if="r.e.kind === 'item'" class="mem-dot">•</span>
+                      <span class="mem-line-text">{{ r.e.text }}</span>
+                    </div>
+                  </template>
+                </div>
+              </template>
+              <p v-else class="mem-view-empty">（还没有沉淀任何记忆。问答几轮后，助手会把值得记住的内容写到这里。）</p>
+            </div>
+
+            <!-- 编辑态：结构化编辑（默认）+ 原文编辑（高级）。改动只在本地，保存后才落盘 -->
             <template v-if="memEditing">
-              <a-textarea v-model:value="memEditText" :rows="16"
+              <p class="pf-sub-hint mem-edit-hint">
+                按「分类 → 条目」编辑：点条目文字即可修改；删错了也不要紧，点「取消」可放弃本次全部改动，保存后才会生效。
+              </p>
+              <div v-if="!memRawMode" class="mem-edit">
+                <div v-for="sec in memDoc.sections" :key="sec.id" class="mem-sec">
+                  <div class="mem-sec-head">
+                    <template v-if="sec._renaming">
+                      <a-input v-model:value="sec._draft" size="small" class="mem-sec-input"
+                               placeholder="分类名，如 用户偏好" @pressEnter="commitSecRename(sec)" />
+                      <button class="app-link-btn" @click="commitSecRename(sec)">确定</button>
+                      <button class="app-link-btn" @click="sec._renaming = false">取消</button>
+                    </template>
+                    <template v-else>
+                      <span class="mem-sec-title" title="点击重命名" @click="startSecRename(sec)">{{ sec.title || '未命名分类' }}</span>
+                      <div class="mem-sec-acts">
+                        <button class="app-link-btn" @click="addEntry(sec)">添加一条</button>
+                        <button class="app-link-btn danger" @click="delSection(sec)">删除分类</button>
+                      </div>
+                    </template>
+                  </div>
+                  <template v-for="r in secRows(sec)" :key="r.e.id">
+                    <div v-if="r.kind === 'sub'" class="mem-sub-head">
+                      <template v-if="r.e._renaming">
+                        <a-input v-model:value="r.e._draft" size="small" class="mem-sec-input"
+                                 placeholder="小节名" @pressEnter="commitSubRename(r.e)" />
+                        <button class="app-link-btn" @click="commitSubRename(r.e)">确定</button>
+                        <button class="app-link-btn" @click="r.e._renaming = false">取消</button>
+                      </template>
+                      <template v-else>
+                        <span class="mem-sub-title" title="点击重命名" @click="startSubRename(r.e)">{{ r.e.title || '未命名小节' }}</span>
+                        <div class="mem-sec-acts">
+                          <button class="app-link-btn" @click="addSubItem(r.e)">添加一条</button>
+                          <button class="app-link-btn danger" @click="delSub(r.e)">删除小节</button>
+                        </div>
+                      </template>
+                    </div>
+                    <div v-else class="mem-line" :class="{ editing: memEditId === r.e.id, raw: r.e.kind === 'raw', indent: r.indent }">
+                      <span v-if="r.e.kind === 'item'" class="mem-dot">•</span>
+                      <template v-if="memEditId === r.e.id">
+                        <a-textarea v-model:value="memEditDraft" class="mem-line-input"
+                                    :auto-size="{ minRows: 1, maxRows: 8 }" />
+                        <div class="mem-line-acts">
+                          <button class="app-link-btn" @click="commitEntryEdit">确定</button>
+                          <button class="app-link-btn" @click="memEditId = ''">取消</button>
+                        </div>
+                      </template>
+                      <template v-else>
+                        <span class="mem-line-text" @click="startEntryEdit(r.e)">{{ r.e.text }}</span>
+                        <div class="mem-line-acts">
+                          <button class="app-link-btn" @click="startEntryEdit(r.e)">编辑</button>
+                          <button class="app-link-btn danger" @click="removeEntryById(r.e.id)">删除</button>
+                        </div>
+                      </template>
+                    </div>
+                  </template>
+                </div>
+                <button class="app-btn ghost mem-add-sec" @click="addSection">+ 添加分类</button>
+              </div>
+              <a-textarea v-else v-model:value="memEditText" :rows="16"
                           show-count class="mem-edit-area" placeholder="MEMORY.md 内容（Markdown）" />
               <div class="mem-edit-foot">
-                <span class="mem-edit-count">{{ memEditText.length }} / {{ memOverview.maxChars || 0 }} 字符</span>
-                <button class="app-btn" :disabled="memSaving" @click="saveMemory">
+                <span class="mem-edit-count" :class="{ over: memEditOver }">
+                  {{ memEditLen }} / {{ memOverview.maxChars || 0 }} 字符<template v-if="memEditOver">，已超上限</template>
+                </span>
+                <button class="app-link-btn" @click="toggleMemRaw">
+                  {{ memRawMode ? '切换为可视化编辑' : '切换为原文编辑' }}
+                </button>
+                <button class="app-btn" :disabled="memSaving || memEditOver" @click="saveMemory">
                   {{ memSaving ? '保存中…' : '保存' }}
                 </button>
                 <button class="app-btn ghost" :disabled="memSaving" @click="cancelMemEdit">取消</button>
               </div>
             </template>
-            <pre v-else class="mem-md">{{ memOverview.content || '（还没有沉淀任何记忆。问答几轮后，助手会把值得记住的内容写到这里。）' }}</pre>
 
             <div class="mem-days">
               <div class="mem-days-head">日账</div>
@@ -177,8 +261,6 @@
             <span class="pf-sub-hint" style="margin-left:10px">修改成功后需重新登录</span>
           </a-form>
         </div>
-
-        <!-- 长期记忆（跨会话个性化） -->
 
         <!-- 分享管理（会话只读分享）：链接发出后就散在各处，这里是统一的回看与停用入口。
              会话内分享面板管"这一条"，这里管"全部"——单条面板无法回答"我一共发出过哪些"。 -->
@@ -253,6 +335,7 @@ import { message, Modal } from 'ant-design-vue'
 import { clearAuth, ensureAuth } from '../utils/auth'
 import { refreshSetupGuide } from '../utils/setupGuide'
 import { copyText } from '../utils/clipboard'
+import { parseMemoryDoc, serializeMemoryDoc, nextEntryId } from '../utils/memoryDoc'
 import { shareUrlOf } from './shareSession'
 import { markSessionShared } from './store'
 import { changePasswordApi, getUserPreference, setUserPreference, updateMyProfile, uploadAvatarApi,
@@ -268,7 +351,7 @@ const route = useRoute()
 
 const navs = [
   { key: 'profile', label: '个人资料' },
-  { key: 'chat', label: '聊天模型与偏好' },
+  { key: 'chat', label: '默认模型' },
   { key: 'memory', label: '我的记忆' },
   { key: 'shares', label: '分享管理' },
   { key: 'security', label: '账号安全' }
@@ -287,9 +370,9 @@ watch(current, () => nextTick(() => {
 
 const PANELS = {
   chat: {
-    field: 'defaultModel', title: '聊天模型与偏好',
-    hint: '个人默认聊天模型：智能体未指定、会话未手动选择时使用。知识库的问答对生成、GraphRAG 抽取跟随「库主」的个人默认聊天模型——自己的库烧你这份默认，别人的库烧库主的（GraphRAG 抽取优先用库级绑定的抽取模型，未绑定才回落库主默认）。',
-    tail: '清空（选「不设默认」）后每次对话需手动选择模型。对话中上传的图片能否被理解取决于所选模型：支持读图的模型原图直发；不支持的本轮图片仅作展示、不参与回答（可换支持读图的模型重试）。文档入库的图片描述使用知识库绑定的视觉模型。'
+    field: 'defaultModel', title: '默认模型',
+    hint: '智能体未指定、会话未手动选择时，用这个模型回答。',
+    tail: '清空（选「不设默认」）后，每次对话需手动选择模型。对话上传的图片能否被理解，取决于模型是否支持读图（不支持就换个能读图的模型重试）；入库文档的图片描述用知识库绑定的视觉模型。'
   }
 }
 const panelMeta = computed(() => PANELS[current.value] || PANELS.chat)
@@ -431,11 +514,30 @@ const toggleMemAuto = async checked => {
 // ---- 我的记忆（个人设置 → 我的记忆） ----
 // 数据源是后端 user-data/agentscope/{uid}/MEMORY.md 与 memory/*.md；后端按登录 uid 解析，
 // 前端不传用户。日账只读，MEMORY.md 可编辑/清空；清空与会自动写入的后台任务互斥由后端标记实例失效。
+// 阅读与编辑都不直接暴露 Markdown：overview.content 经 utils/memoryDoc 解析成「分类 → 条目」，
+// 保存时再序列化回同一格式（round-trip 保真，见该文件的注释）；原文编辑仅作高级项保留。
 const memLoading = ref(false)
 const memSaving = ref(false)
 const memClearing = ref(false)
+// 阅读态：直接从 overview.content 解析（内容被后台任务更新时这里跟着变）
+const memDocView = computed(() => parseMemoryDoc(memOverview.value.content || ''))
 const memEditing = ref(false)
+// 原文编辑（高级项）：内容没有 ## 小节结构时直接进原文模式，结构化模式无从下手
+const memRawMode = ref(false)
+const memDoc = ref({ header: '', sections: [] })
 const memEditText = ref('')
+const memEditId = ref('')   // 正在编辑的条目 id（含小节内条目）
+const memEditDraft = ref('')
+const memEditLen = computed(() =>
+  memRawMode.value ? (memEditText.value || '').length : serializeMemoryDoc(memDoc.value).length)
+const memEditOver = computed(() => memEditLen.value > (memOverview.value.maxChars || 0))
+// 进入条目编辑时把焦点放进输入框：点文字即改，不用再点一次文本框
+watch(memEditId, async id => {
+  if (!id) return
+  await nextTick()
+  const el = document.querySelector('.mem-line.editing .mem-line-input textarea')
+  if (el && el.focus) el.focus()
+})
 const memViewOpen = ref(false)
 const memViewTitle = ref('')
 const memViewText = ref('')
@@ -463,18 +565,64 @@ const loadMemory = async () => {
   }
 }
 
+// 把小节的 entries 摊平为渲染行：子题头 + 其条目（带缩进标记），阅读态与编辑态共用
+const secRows = sec => {
+  const rows = []
+  for (const e of sec.entries || []) {
+    if (e.kind === 'sub') {
+      rows.push({ kind: 'sub', e })
+      for (const it of e.items || []) rows.push({ kind: 'item', e: it, indent: true })
+    } else {
+      rows.push({ kind: 'item', e, indent: false })
+    }
+  }
+  return rows
+}
+
 const startMemEdit = () => {
-  memEditText.value = memOverview.value.content || ''
+  const content = memOverview.value.content || ''
+  memDoc.value = parseMemoryDoc(content)
+  memEditId.value = ''
+  if (content.trim() && !memDoc.value.sections.length) {
+    // 没有 ## 小节结构（手写/异常内容）：结构化模式无从下手，直接进原文编辑
+    memRawMode.value = true
+    memEditText.value = content
+  } else {
+    memRawMode.value = false
+  }
   memEditing.value = true
 }
 const cancelMemEdit = () => {
   memEditing.value = false
+  memRawMode.value = false
   memEditText.value = ''
+  memEditId.value = ''
+}
+// 原文 ↔ 可视化：双向切换时互转内容，转不过去（没有小节结构）就留在原地并提示
+const toggleMemRaw = () => {
+  if (memRawMode.value) {
+    const doc = parseMemoryDoc(memEditText.value)
+    if (memEditText.value.trim() && !doc.sections.length) {
+      message.warning('当前内容没有可分的小节，已保留在原文编辑')
+      return
+    }
+    memDoc.value = doc
+    memRawMode.value = false
+  } else {
+    memEditText.value = serializeMemoryDoc(memDoc.value)
+    memRawMode.value = true
+  }
 }
 const saveMemory = async () => {
+  const text = memRawMode.value ? memEditText.value : serializeMemoryDoc(memDoc.value)
+  const maxChars = memOverview.value.maxChars || 0
+  if (maxChars && text.length > maxChars) {
+    message.error('内容超过上限（' + text.length + ' / ' + maxChars + ' 字符），请精简后再保存')
+    return
+  }
   memSaving.value = true
   try {
-    const r = await saveMemoryMd(memEditText.value)
+    const r = await saveMemoryMd(text)
     memOverview.value = (r && r.data) || memOverview.value
     memEditing.value = false
     message.success('记忆已保存')
@@ -483,6 +631,84 @@ const saveMemory = async () => {
   } finally {
     memSaving.value = false
   }
+}
+
+// 条目行定位：小节内的条目挂在 sub.items 上，其余挂在 sec.entries 上
+const findEntryOwner = id => {
+  for (const sec of memDoc.value.sections) {
+    for (const e of sec.entries) {
+      if (e.id === id) return { list: sec.entries, entry: e }
+      if (e.kind === 'sub') {
+        const it = (e.items || []).find(x => x.id === id)
+        if (it) return { list: e.items, entry: it }
+      }
+    }
+  }
+  return null
+}
+const startEntryEdit = entry => { memEditId.value = entry.id; memEditDraft.value = entry.text }
+const commitEntryEdit = () => {
+  const o = findEntryOwner(memEditId.value)
+  if (o) {
+    const t = (memEditDraft.value || '').replace(/[ \t]+$/g, '')
+    if (t.trim()) o.entry.text = t
+    else o.list.splice(o.list.indexOf(o.entry), 1) // 清空文本 = 删除该条
+  }
+  memEditId.value = ''
+}
+const removeEntryById = id => {
+  const o = findEntryOwner(id)
+  if (o) o.list.splice(o.list.indexOf(o.entry), 1)
+}
+const addEntry = sec => {
+  // 插到第一个子题之前：直接条目是小节的开头部分，加到尾部会跑到子题底下
+  const e = { id: nextEntryId(), kind: 'item', text: '' }
+  const idx = (sec.entries || []).findIndex(x => x.kind === 'sub')
+  if (idx >= 0) sec.entries.splice(idx, 0, e); else sec.entries.push(e)
+  startEntryEdit(e)
+}
+const addSubItem = sub => {
+  const it = { id: nextEntryId(), kind: 'item', text: '' }
+  if (!sub.items) sub.items = []
+  sub.items.push(it)
+  startEntryEdit(it)
+}
+
+// 分类 / 小节：重命名（点标题）、新增（底部按钮）、删除（有条目时确认）
+const startSecRename = sec => { sec._renaming = true; sec._draft = sec.title }
+const commitSecRename = sec => { sec.title = (sec._draft || '').trim(); sec._renaming = false }
+const startSubRename = sub => { sub._renaming = true; sub._draft = sub.title }
+const commitSubRename = sub => { sub.title = (sub._draft || '').trim(); sub._renaming = false }
+const addSection = () => {
+  memDoc.value.sections.push({ id: nextEntryId(), title: '', entries: [], _renaming: true, _draft: '' })
+}
+const delSection = sec => {
+  const drop = () => {
+    const i = memDoc.value.sections.indexOf(sec)
+    if (i >= 0) memDoc.value.sections.splice(i, 1)
+  }
+  if ((sec.entries || []).length) {
+    Modal.confirm({
+      title: '删除分类「' + (sec.title || '未命名分类') + '」？',
+      content: '分类下的所有条目会一并删除。取消编辑可放弃本次全部改动。',
+      okText: '删除', okType: 'danger', cancelText: '取消', onOk: drop
+    })
+  } else drop()
+}
+const delSub = sub => {
+  const sec = memDoc.value.sections.find(s => (s.entries || []).includes(sub))
+  const drop = () => {
+    if (!sec) return
+    const i = sec.entries.indexOf(sub)
+    if (i >= 0) sec.entries.splice(i, 1)
+  }
+  if ((sub.items || []).length) {
+    Modal.confirm({
+      title: '删除小节「' + (sub.title || '未命名小节') + '」？',
+      content: '小节下的所有条目会一并删除。取消编辑可放弃本次全部改动。',
+      okText: '删除', okType: 'danger', cancelText: '取消', onOk: drop
+    })
+  } else drop()
 }
 const onCompactMemory = async () => {
   memLoading.value = true
@@ -499,7 +725,7 @@ const onCompactMemory = async () => {
 const onClearMemory = () => {
   Modal.confirm({
     title: '清空全部长期记忆？',
-    content: '会删除 MEMORY.md、全部日账与归档，无法恢复。已经开始的问答不受影响，但之后的问答不会再记得这些内容。',
+    content: '会删除下面整理的全部记忆和所有日账，无法恢复。已经开始的问答不受影响，但之后的问答不会再记得这些内容。',
     okText: '清空', okType: 'danger', cancelText: '取消',
     onOk: async () => {
       memClearing.value = true
@@ -737,40 +963,9 @@ onMounted(() => {
 .mem-card { max-width: 720px; }
 /* 标题旁条数胶囊 */
 .mem-count { font-size: 11px; font-weight: 400; line-height: 1; color: var(--app-text3); background: var(--app-panel-2); padding: 3px 8px; border-radius: 999px; }
-/* 手动添加行：输入 + 分类 + 按钮；窄屏允许换行不挤压 */
-.mem-add-row { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
-.mem-add-input { flex: 1; min-width: 200px; }
-.mem-add-cat { width: 92px; flex: none; }
-/* 批量操作栏（与文档页 / 通知中心 batch-bar 同款）：有勾选才出现，动作收敛在这里 */
-.mem-batch {
-  display: flex; align-items: center; gap: 6px 10px; flex-wrap: wrap;
-  margin-bottom: 10px; padding: 8px 12px;
-  background: var(--app-accent-weak); border: 1px solid var(--app-accent-border); border-radius: 8px;
-  font-size: 12px; color: var(--app-accent);
-}
-.mem-batch-count { font-weight: 600; }
+/* 危险动作（清除全部 / 行内删除） */
 .mem-danger { color: var(--app-danger); }
 .mem-danger:hover:not(:disabled) { background: var(--app-danger-weak); }
-/* 记忆列表：每条一张软卡片，内容完整换行（不再单行截断省略） */
-.mem-list { display: flex; flex-direction: column; gap: 8px; }
-.mem-item {
-  display: flex; align-items: flex-start; gap: 8px;
-  border: 1px solid var(--app-border); border-radius: 8px; padding: 10px 12px;
-}
-.mem-item.sel { border-color: var(--app-accent-border); background: var(--app-accent-weak); }
-.mem-main { flex: 1; min-width: 0; }
-/* 勾选命中区：撑满「行左边界 → 正文前」整列、整行高（antd wrapper 是 label，@click.stop 只盖内层 16px，
-   所以靠负外边距吃掉行内边距与 flex gap 来放大，而不是靠 stop）。
-   内层 .ant-checkbox 自带 align-self:center，拉高后会居中下沉 → 改回 flex-start；
-   上内边距 12.5px = 行上内边距 10px + 2.5px 首行对齐偏移，勾选框与正文首行齐平 */
-.mem-item :deep(.mem-check) { align-self: stretch; align-items: flex-start; padding: 12.5px 8px 2.5px 13px; margin: -10px -8px -10px -13px; }
-.mem-item :deep(.mem-check .ant-checkbox) { align-self: flex-start; }
-.mem-content { font-size: 13px; line-height: 1.65; color: var(--app-text); white-space: pre-wrap; word-break: break-word; }
-/* 元信息行：分类/来源/使用度靠左，编辑删除靠右——独立一行，任何宽度都不变形 */
-.mem-foot { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
-.mem-tag { flex: none; font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: 4px; white-space: nowrap; background: var(--app-panel-2); color: var(--app-text3); }
-.mem-cat-project { background: var(--app-accent-weak); color: var(--app-accent); }
-.mem-cat-instruction { background: #faf3e6; color: #a3691b; }
 
 /* ---- 分享管理 ---- */
 .shm-card { max-width: 760px; }
@@ -809,9 +1004,7 @@ onMounted(() => {
   justify-content: flex-end; max-width: 320px;
 }
 .shm-off-note { font-size: 11px; color: var(--app-text3); }
-.mem-src { background: transparent; border: 1px solid var(--app-border); padding: 2px 6px; }
 .mem-meta { flex: none; font-size: 11px; color: var(--app-text3); }
-.mem-acts { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 /* 编辑态：文本域 + 底部按钮行（计数靠左、按钮靠右，互不重叠） */
 .mem-edit-foot { display: flex; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 .mem-edit-count { margin-right: auto; font-size: 11px; color: var(--app-text3); }
@@ -820,7 +1013,7 @@ onMounted(() => {
 .mem-empty-ico { font-size: 26px; line-height: 1; }
 .mem-empty-title { font-size: 13px; color: var(--app-text2); margin: 8px 0 2px; }
 .mem-empty .pf-sub-hint { margin: 0; }
-/* 自动提炼开关行：左说明右开关，与手动添加行之间留分隔 */
+/* 自动提炼开关行：左说明右开关（位于「我的记忆」面板顶部） */
 .mem-auto-row { padding: 10px 12px; margin-bottom: 14px; border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-panel-2); }
 .mem-auto-text { flex: 1; min-width: 0; }
 .mem-auto-title { font-size: 13px; color: var(--app-text); font-weight: 500; margin-bottom: 2px; }
@@ -842,6 +1035,40 @@ onMounted(() => {
   color: var(--app-text); white-space: pre-wrap; word-break: break-word;
 }
 .mem-edit-area { width: 100%; font-family: var(--app-font-mono, ui-monospace, monospace); font-size: 12px; }
+/* 阅读态：结构化呈现（分类 + 条目，不要求用户懂 Markdown） */
+.mem-view {
+  padding: 12px 14px; max-height: 480px; overflow: auto;
+  border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-panel-2);
+}
+.mem-view-empty { margin: 0; font-size: 12px; color: var(--app-text3); }
+.mem-sec + .mem-sec { margin-top: 14px; }
+.mem-sec-title { font-size: 13px; font-weight: 600; color: var(--app-text); }
+.mem-sub-title { margin: 10px 0 2px; font-size: 12px; font-weight: 500; color: var(--app-text2); }
+.mem-line { display: flex; align-items: flex-start; gap: 8px; padding: 3px 0; font-size: 12px; line-height: 1.65; color: var(--app-text); }
+.mem-line.indent { padding-left: 16px; }
+.mem-dot { flex: none; color: var(--app-text3); }
+.mem-line-text { min-width: 0; white-space: pre-wrap; word-break: break-word; }
+/* 原文段（非 '- ' 行，如裁剪说明）：等宽 + 弱化，表明不是普通条目 */
+.mem-line.raw .mem-line-text { font-family: var(--app-font-mono, ui-monospace, monospace); color: var(--app-text2); }
+/* 编辑态：结构化编辑 */
+.mem-edit { padding: 4px 14px 12px; border: 1px solid var(--app-border); border-radius: 8px; }
+.mem-edit .mem-sec { margin-top: 12px; }
+.mem-edit .mem-sec:first-child { margin-top: 8px; }
+.mem-edit-hint { margin: 0 0 8px; }
+.mem-sec-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mem-sec-head .mem-sec-title { cursor: pointer; border-radius: 4px; }
+.mem-sec-head .mem-sec-title:hover { color: var(--app-accent); }
+.mem-sec-input { max-width: 280px; }
+.mem-sec-acts { margin-left: auto; display: inline-flex; align-items: center; gap: 10px; white-space: nowrap; }
+.mem-edit .mem-line { padding: 2px 0; }
+.mem-edit .mem-line-text { cursor: pointer; border-radius: 4px; }
+.mem-edit .mem-line-text:hover { background: var(--app-accent-weak); }
+/* 行内动作：默认隐藏，hover 到该行或正在编辑时才出现（触屏无 hover，见 768 块常显） */
+.mem-line-acts { margin-left: auto; display: inline-flex; align-items: center; gap: 10px; white-space: nowrap; opacity: 0; transition: opacity .15s; }
+.mem-line:hover .mem-line-acts, .mem-line.editing .mem-line-acts { opacity: 1; }
+.mem-line-input { flex: 1; min-width: 0; }
+.mem-add-sec { margin-top: 12px; }
+.mem-edit-count.over { color: var(--app-danger); }
 .mem-days { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--app-border); }
 .mem-days-head { font-size: 12px; font-weight: 500; color: var(--app-text); margin-bottom: 6px; }
 .mem-day-row {
@@ -909,5 +1136,7 @@ onMounted(() => {
   .mem-toolbar { gap: 6px; }
   .mem-toolbar .mem-meta { width: 100%; }
   .mem-md { max-height: 300px; }
+  /* 触屏没有 hover：结构化编辑的行内「编辑/删除」常显 */
+  .mem-line-acts { opacity: 1; }
 }
 </style>

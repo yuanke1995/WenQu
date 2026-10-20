@@ -82,7 +82,7 @@ public class QaIndexService {
         String model = owner == null || owner.getDefaultModel() == null ? "" : owner.getDefaultModel().trim();
         if (model.isEmpty()) {
             throw new IllegalStateException("未配置问答对生成模型：问答对生成跟随知识库主的个人默认聊天模型，"
-                    + "请其在「个人设置 → 聊天模型与偏好」设置默认聊天模型，QA 生成跳过");
+                    + "请其在「个人设置 → 默认模型」设置默认聊天模型，QA 生成跳过");
         }
         int perChunk = Math.max(1, Math.min(5, configService.getInt("parse.qaPerChunk", 2)));
         int total = 0;
