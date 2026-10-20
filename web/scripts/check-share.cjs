@@ -328,7 +328,7 @@ const check = (ok, label, detail = '') => {
   check(streamed.turnN === 1 && streamed.turnText === '已完成，用时 12 秒',
     '收尾：整轮总览只有一条，用时读 done 带回的墙钟', `n=${streamed.turnN} "${streamed.turnText}"`)
   check(streamed.legacyN === 0 && streamed.stale.length === 0,
-    '阶段提示行与遗留文案全页为零', `legacy=${streamed.legacyN} stale=${streamed.stale.join('/')}`)
+    '阶段提示行与遗留文案全页为零', `阶段行=${streamed.legacyN} stale=${streamed.stale.join('/')}`)
   check(streamed.bubbles === 2, '一轮问答只渲染 2 条（用户 1 + AI 1，无重复的状态气泡）', `rows=${streamed.bubbles}`)
   // 灰底时代浅灰用户气泡几乎隐形（"看着不一样"的主因）——有消息后再取样比对
   const contrast = await page.evaluate(() => {
@@ -696,7 +696,7 @@ const check = (ok, label, detail = '') => {
   })
   check(during.sending, '流未结束时发送键处于「停止」态（确在生成中）')
   check(during.tipN === 1 && during.legacyN === 0,
-    '进行中：提示只出现一次（阶段提示行已退役）', `turn=${during.tipN} legacy=${during.legacyN} "${during.tipText}"`)
+    '进行中：提示只出现一次（阶段提示行已退役）', `turn=${during.tipN} 阶段行=${during.legacyN} "${during.tipText}"`)
   check(/^正在溯源，用时 \d+ 秒 …$/.test(during.tipText),
     '进行中：说的是「正在溯源」并带秒数', `"${during.tipText}"`)
   // 秒针真的在走：分享页没有问答引擎去开那张全局表，靠进行中这一行自己挂表。

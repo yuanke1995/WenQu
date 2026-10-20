@@ -211,7 +211,8 @@ const check = (ok, label, detail = '') => {
     samples: !!document.querySelector('.m-samples'),
     title: (document.querySelector('.m-welcome-title') || {}).textContent || ''
   }))
-  check(!readyState.sg && readyState.samples, '模型就绪后空态回到示例卡', JSON.stringify(readyState))
+  // 示例问题卡整块已退场（99bffde9）：就绪态两样都不该出现，出现任何一样都算失败
+  check(!readyState.sg && !readyState.samples, '模型就绪后既无配置引导卡、也无示例卡', JSON.stringify(readyState))
 
   // ---- 各 sheet 开合 ----
   const openSheet = async (sel, waitMs = 900) => {
