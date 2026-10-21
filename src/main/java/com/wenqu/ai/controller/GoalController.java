@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -110,7 +111,8 @@ public class GoalController {
             @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId) {
         Goal goal = goalService.latestGoal(sessionId);
         if (goal == null) {
-            return ResultJson.ok(Map.of("goal", null));
+            // 无目标是常态，Map.of 不接受 null 值会抛 NPE
+            return ResultJson.ok(Collections.singletonMap("goal", null));
         }
         return ResultJson.ok(goalService.view(goal, null));
     }

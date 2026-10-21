@@ -625,8 +625,11 @@ public class GoalService {
      */
     public Map<String, Object> pending(String sessionId, String uid) {
         Goal goal = activeGoal(sessionId);
-        // 形状与 /session/{id}/goal 一致：{goal:视图模型|null}（前端两处取数同源，不用各自判形状）
-        return Map.of("goal", goal == null ? null : view(goal, null));
+        // 形状与 /session/{id}/goal 一致：{goal:视图模型|null}（前端两处取数同源，不用各自判形状）。
+        // 大多数会话没有目标，这里必须容得下 null——Map.of 会抛 NPE 把端点打成 500
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("goal", goal == null ? null : view(goal, null));
+        return out;
     }
 
     /**
