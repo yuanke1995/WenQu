@@ -458,7 +458,7 @@ public class ConfigService {
         d.put("chat.askTimeoutMs", "600000");              // 人在回路提问卡等待上限(ms)（2026-10-09 补：schema 早已声明，defaults 漏登记 → 设置页改了回显不出）
         // 目标模式（Goal Mode）：总闸关时工具面不挂、任务态投影不开、界面无入口三件事同时成立。
         // 配置只留平台一档，不下放个人（个人发起目标时可在请求里在此基础上往下收，见 GoalService.start）
-        d.put("chat.goalMode.enabled", "false");           // 目标模式总闸（平台全局；智能体级 goal_enabled 三态再收一层）
+        d.put("chat.goalMode.enabled", "true");            // 目标模式总闸（平台全局；智能体级 goal_enabled 三态再收一层）：默认开（2026-10-21 由 false 改 true）
         d.put("chat.goalMode.defaultTurns", "0");          // 单目标轮数上限默认：0=不限（50 轮硬闸兜底，见 schema）
         d.put("chat.goalMode.defaultTokens", "0");         // 单目标 token 上限默认：0=不限（运行预算只留 minutes）
         d.put("chat.goalMode.defaultToolCalls", "0");      // 单目标工具调用上限默认：0=不限
