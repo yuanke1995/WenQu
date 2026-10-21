@@ -119,6 +119,17 @@ public class ConfigSchemaService {
                     throw new IllegalStateException("config-schema.json 字段 " + key
                             + " 的 group + 短键拼接不等于 backendKey（实际拼出 " + group + "." + shortKey + "）");
                 }
+                // group 还必须正好是 backendKey 首点前的那一段：snapshot() 回显时按**首个**点拆组，
+                // 拼出的是 group="chat" / 短键="goalMode.enabled"。写成 group="chat.goalMode" + key="enabled"
+                // 上面那条拼接照样成立（保存能落库），但回显查的是 data["chat.goalMode"]["enabled"]——
+                // 取不到值，开关一律显示成关、数字显示成 schema 默认，改完保存「生效了却看不到」。
+                // （chat.goalMode.* 七项实测踩到：库里 enabled=true，设置页显示关）
+                int firstDot = key.indexOf('.');
+                if (group != null && !group.isBlank() && firstDot > 0 && !key.substring(0, firstDot).equals(group)) {
+                    throw new IllegalStateException("config-schema.json 字段 " + key
+                            + " 的 group 必须是 backendKey 首点前的那一段（应为 " + key.substring(0, firstDot)
+                            + "，实际 " + group + "）：设置页回显按首点拆组，深一层的 group 永远读不到值");
+                }
                 fs.add(f);
             }
         }
