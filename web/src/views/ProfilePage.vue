@@ -1130,8 +1130,14 @@ onMounted(() => {
   .mem-add-row { gap: 8px; }
   .mem-add-input { min-width: 100%; }
   .mem-add-cat { flex: 1; width: auto; }
-  /* 分享管理：操作按钮行换行 */
-  .shm-acts { flex-wrap: wrap; }
+  /* 分享管理：一行两栏（左正文 + 右操作）在手机上必然破版——操作区是 flex:none
+     且按内容定宽（五个链接钮约 300px），336px 的行里正文只剩 2px，实测标题一字一行
+     竖排、链接框只剩一个「h」。窄屏改成纵向：正文占满整行，操作另起一行左对齐。 */
+  .shm-item { flex-direction: column; align-items: stretch; gap: 8px; }
+  .shm-acts { max-width: none; justify-content: flex-start; row-gap: 2px; column-gap: 14px;
+    border-top: 1px dashed var(--app-border); padding-top: 6px; }
+  /* 链接式小按钮原本 18px 高，手指点不准（本页其它可点元素已统一 34px 下限） */
+  .shm-acts .app-link-btn { min-height: 34px; padding: 6px 2px; }
   /* 我的记忆：按钮行换行，统计信息独占一行 */
   .mem-toolbar { gap: 6px; }
   .mem-toolbar .mem-meta { width: 100%; }

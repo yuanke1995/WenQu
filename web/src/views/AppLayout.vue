@@ -1692,8 +1692,8 @@ watch(() => route.fullPath, () => {
 .space.archived .space-head { opacity: .72; }
 /* 27 而不是 33：按钮自带 6px 左内边距（给 hover 弱底留呼吸），加上它才等于会话行的 33px 文字缩进 */
 .space-foot { display: flex; align-items: center; gap: 4px; padding-left: 27px; }
-/* 首段「会话」行已对齐到 6px，这里跟着归零（按钮自带 6px 内边距正好落到标题左缘） */
-.space.bare .space-foot { padding-left: 0; }
+/* 首段「会话」行缩进到 12px，这里跟着让 6px（按钮自带 6px 左内边距，正好落到会话行文字左缘） */
+.space.bare .space-foot { padding-left: 6px; }
 
 /* 批量操作条：独立一行贴列表上方，主题色弱底提示「处于批量模式」 */
 .sess-batch-bar {
@@ -1717,15 +1717,15 @@ watch(() => route.fullPath, () => {
 .batch-check.on { background: var(--app-accent); border-color: var(--app-accent); }
 .side-sessions { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; }
 /* 会话行缩进 33px：与工作区名的左缘对齐（6 + 20 + 7），一眼能看出它属于哪个工作区。
-   首段「会话」没有工作区头，不留这段缩进：行与分区标题对齐（标题左 padding 也是 6px），
-   否则整列空着 33px 却没有任何东西解释它。 */
+   首段「会话」没有工作区头，只比分区标题多让 6px：贴死标题左缘会让整列文字顶在侧栏边上，
+   让一点才读出「这些行属于上面这个标题」；但不能再多，多出来的缩进没有任何东西解释它。 */
 .sess-item {
   display: flex; align-items: center; gap: 3px;
   padding: 5px 6px 5px 33px; border-radius: 7px; min-height: 27px;
   font-size: 12.5px; color: var(--app-text2); cursor: pointer; min-width: 0;
   transition: background .12s;
 }
-.space.bare .sess-item { padding-left: 6px; }
+.space.bare .sess-item { padding-left: 12px; }
 .sess-item:hover { background: var(--app-panel-2); }
 /* 当前行：弱底 + 左缘主题色窄条（比纯底色多一层方位感）；批量选中行共用弱底（无窄条） */
 .sess-item.active { background: var(--app-accent-weak); color: var(--app-text); box-shadow: inset 2px 0 0 var(--app-accent); }
@@ -1807,7 +1807,7 @@ watch(() => route.fullPath, () => {
 .side-empty { padding: 2px 8px 6px; font-size: 11.5px; color: var(--app-text3); line-height: 1.6; }
 .space .side-empty { padding-left: 33px; }
 /* 首段「会话」没有工作区头：空态与分区标题左对齐（6px），不再像会话行那样多缩一次 */
-.space.bare .side-empty { padding-left: 6px; }
+.space.bare .side-empty { padding-left: 12px; }
 .side-empty.err { color: var(--app-danger); }
 .side-inline-btn {
   border: none; background: none; cursor: pointer; padding: 0 2px;

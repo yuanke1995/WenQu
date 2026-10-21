@@ -206,13 +206,20 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 - **深度思考**：思考块按轮就地嵌进消息时间线（每想一段出一行、可点开全文，段尾补 `thinking_done` 收口），前端流式渲染；**思考强度五档**（低/中/高/超高/极致，按模型登记档位过滤，经 `reasoning_effort` 等厂商方言贯通到请求；开启思考时不下发 temperature，网关本就会忽略它）；「关闭 / 开启 / 恒思考」三态与强度均按模型记忆，平台不代为路由
 - **上下文窗口档位**：模型登记「最小~最大窗口」区间后，聊天面板可在档位间下调（省 token / 提速），默认用窗口上限；未登记区间的模型不可调
 - **过程独白与消息时间线**：工具模式下模型的推理/试错独白与正文分流（`<process>` 标签整块剥离），前端灰字原位展示；整轮「文本段 + 工具段 + 产物段」编为消息时间线随消息落库——刷新页面后仍是交错的实时过程视图
-- **计划模式**（人在回路）：输入框「+」面板开「计划模式」后，每轮先产出**执行计划卡**（生成中 → 待确认），确认栏三选——**确认**（按计划执行）/ **继续对话**（修改意见作为一条用户消息在同一会话继续，本版作废、按意见重出，可反复）/ **取消**（本轮停止，卡定格「未批准」）；挂起有倒计时（默认 10 分钟，超时按未批准收尾）；没开计划模式时由模型自主判断是否调用框架 `plan_enter` 进入计划；计划卡随消息落库，刷新/换设备后可继续裁决，右栏「计划」卡可定位本会话每轮计划，卡内「修改记录」回看各版计划与意见
+- **计划模式**（人在回路）：输入框打 `/plan`（或「+」→ 快捷命令；手机在「+」→ 本轮模式拨开关）开启后，「计划」标记出现在正文里（手机压在输入框上方），每轮先产出**执行计划卡**（生成中 → 待确认），确认栏三选——**确认**（按计划执行）/ **继续对话**（修改意见作为一条用户消息在同一会话继续，本版作废、按意见重出，可反复）/ **取消**（本轮停止，卡定格「未批准」）；挂起有倒计时（默认 10 分钟，超时按未批准收尾）；没开计划模式时由模型自主判断是否调用框架 `plan_enter` 进入计划；计划卡随消息落库，刷新/换设备后可继续裁决，右栏「计划」卡可定位本会话每轮计划，卡内「修改记录」回看各版计划与意见
 - **多模态输入**：拖入/粘贴/点击上传图片（最多 5 张）；`@` 引用指定文档（被 @ 文档内最相关块前置注入上下文）；聊天模型不支持图片理解时**可见降级**（图片仅随消息展示，并向模型如实说明图片不可见，不静默丢弃）
 - **上下文容量面板**：输入框工具栏的容量圆环（占比 >80% / >95% 变色告警）悬浮展开明细——用量/窗口占比 + **七类计量**（系统提示词 / 历史对话 / 本轮提问 / 检索资料 / 工具结果 / 思考内容 / 工具声明；按 AgentScope 消息结构分类）+ **缓存命中率**（网关返回缓存命中 token 才显示；done 时按网关实测校准）
 - **下一步建议**：回答末尾给出「接下来可以」可点击追问标签，点击即发起提问（条数为平台固定值 3 条；只跟在最新一轮后面，往上翻历史不重复摆出旧建议）
 - **智能体**：会话**不锁定**智能体。不挑就用工作区或平台的默认智能体；挑了从下一问起立即生效，**不必新建会话**。资料域由模型按需经框架的子智能体派遣（`agent_spawn`）派给职责对口的助手去查（可派多位，每位带着自己的知识库跑一条子轮，结论与引用交回）；交回的资料按**父轮问题**再过一道相关度门与引用配额（与主管线同一把尺——子轮的门是子轮问题的门，管不了父轮面板），被滤掉的条数如实告知模型，不放无出处断言；作答的智能体不可用时 fail-loud 提示，不静默换人
 - **用户长期记忆**（默认开）：问答完成后异步提炼值得长期记住的用户信息（事实/偏好、明确要求记住的事），写进本人的记忆文件并在后续问答里提起；默认同一用户最多每 10 分钟提炼一次（可调，0=每轮），`MEMORY.md` 有 token 硬上限（写入落盘时自动裁剪），日账按保留期归档。`/profile → 我的记忆` 可查看/编辑/清空 `MEMORY.md`、按天查看与删除日账、按上限裁剪；系统设置里另有平台总闸，个人设置里有关（只停提炼，已记住的照常提起）。公开分享页与 MCP 游客链路**不注入也不写入**发布者记忆；子智能体/咨询轮只读不写
 - **会话管理**：置顶/收藏/重命名/搜索/批量删除/清空、导出 Markdown、重新生成（软删旧答案）、赞/踩反馈、按消息组删除与撤销删除
+
+### 工作区（`/project/{id}`）
+
+- **一个容器收三样**：一个工作目录 + 一份工作区约定（每轮注入，对该工作区所有对话生效）+ 一位默认助手；会话、产物、定时任务、工作流都按 `project_id` 归到它名下。归属不是权限边界（任何检索/可见性判定都不读它），每人另有一个 implicit 兜底容器，界面上就是侧栏「会话」栏
+- **文件栏可管理**：单层导航（面包屑 + 文件夹行）＋ 上传（按钮或拖拽，多文件、重名默认拒绝并可勾「重名时覆盖」）＋ 新建文件夹 ＋ 行内 ⋯ 菜单（重命名 / 移动到… / 删除）＋ 批量勾选（移动到… / 删除）＋ 单个下载 / 签名预览（新标签页，html 靠 CSP sandbox 才敢真渲染）＋ 整区 zip 导出
+- **写侧四道闸**（`ProjectFileService.writableProject` / `assertWritable`）：路径逐段校验并按**真实路径**比前缀（软链目录借下载口越界已被拦，2026-10-21 冒烟实测）；隐藏名（点开头、`node_modules`、`__pycache__`）不许创建也不能列出——传进去就在界面上永远找不着；归档中的工作区一概不写；改名/移动/删除在该工作区有轮次正在跑时拒绝（那一轮以为文件还在原位），上传与新建不挡
+- **未做完 / 已知边界**：① `sandbox.projectWorkdirEnabled` 默认关，关着时沙盒挂 `sessions/{会话}`、文件栏读写 `projects/{工作区}`，两边各一份——列表接口带 `agentShared` 字段，界面据此在文件栏顶部如实说明（不是静默无入口）；② 平台写进去的目录/文件属主是应用用户，provisioner 每次建容器只把**目录本身** chown 给沙盒运行时用户（uid 1000），于是 Linux 宿主上「先上传、再让模型改这一份」可能读得到、改不动，容器重建即自愈——Java NIO 取不到数字 uid，应用侧无法按同一口径 chown，放宽权限又是拿边界换功能；③ `directory_mode=linked`（关联用户已有目录）仍是保留位；④ 产物表与工作目录文件仍是两份拷贝，收成一个真源属立项级；⑤ 移动会话不搬已落盘文件；⑥ k8s 分支的挂载布局未对齐。帮助中心《工作区》篇同步 ①②，其余是工程内部账
 
 ### 知识库与检索增强（`/knowledge`）
 
@@ -325,6 +332,8 @@ docker compose up -d          # 自包含：redis-stack + meilisearch + 内置 M
 | `PUT /api/ai/session/{id}/pin`、`PUT /api/ai/session/{id}/favorite` | 置顶 / 收藏 |
 | `DELETE /api/ai/session/{id}`、`DELETE /api/ai/sessions`、`POST /api/ai/sessions/batch-delete` | 删除单会话 / 清空 / 批量删除 |
 | `DELETE /api/ai/message-group/{assistantMessageId}`、`POST /api/ai/message-group/undo` | 按消息组删除问答 / 撤销删除 |
+| `GET /api/ai/project/list`、`POST/PUT/DELETE /api/ai/project/{id}`、`PUT /{id}/status` | 工作区容器：列表（含约定与默认助手）/ 新建 / 改设置（名称·约定·默认助手）/ 删除（可 `deleteFiles=true` 连目录）/ 归档恢复 |
+| `GET /api/ai/project/{id}/files?dir=`、`POST /{id}/files`、`POST /{id}/dir`、`PUT /{id}/file`、`POST /{id}/files/batch` | 工作区目录管理：单层列表（带全区合计、文件夹清单、`agentShared`）/ 上传（multipart）/ 新建文件夹 / 改名或移动 / 批量移动·删除（`op` 必填）；另有 `GET /{id}/file` 下载与 `GET /ai/project-files/{token}` 签名预览 |
 | `GET /api/ai/kb/list`、`POST /api/ai/kb`、`PUT /api/ai/kb/{id}`、`DELETE /api/ai/kb/{id}` | 知识库 CRUD（含库级解析/检索参数稀疏覆盖） |
 | `GET /api/ai/kb/param-defaults` | 全局解析/检索参数模板（新建库预填用） |
 | `POST /api/ai/document/upload`、`/upload/batch` | 上传文档（异步解析） |
@@ -335,8 +344,7 @@ docker compose up -d          # 自包含：redis-stack + meilisearch + 内置 M
 | `GET /api/ai/knowledge/unmatched`、`POST /api/ai/knowledge` | 无命中问题 / 手动创建知识块（自动向量化） |
 | `POST /api/ai/feedback`、`GET /api/ai/analytics/summary`、`GET /api/ai/analytics/badcases` | 反馈 / 看板聚合 / 差评坏例 |
 | `GET /api/ai/stats/usage?range=7\|30` | 个人使用统计聚合（统计卡 / 热力图 / 每日趋势 / 模型用量，一次返回） |
-| `GET/PUT /api/ai/config`、`GET /api/ai/config/schema`、`POST /api/ai/config/reset` | 配置读写（脱敏）/ 设置项 schema 下发 / 恢复分组默认 |
-| `POST /api/ai/config/probe`、`GET /api/ai/config/rerank/check`、`GET /api/ai/config/keyword/check` | 连通性探测（chat/vision/embedding/rerank/keyword）/ 重排 / Meilisearch |
+| `GET/PUT /api/ai/config`、`GET /api/ai/config/schema`、`POST /api/ai/config/reset` | 配置读写（脱敏）/ 设置项 schema 下发 / 恢复分组默认 || `POST /api/ai/config/probe`、`GET /api/ai/config/rerank/check`、`GET /api/ai/config/keyword/check` | 连通性探测（chat/vision/embedding/rerank/keyword）/ 重排 / Meilisearch |
 | `GET /api/ai/config/embedding/reindex` | 全量重嵌入任务状态（含索引对账） |
 | `GET /api/ai/provider/*` | 模型供应商：登记（平台级/个人级）、启停、判权 |
 | `GET /api/ai/agent/list`、`GET /api/ai/agent/available`、`POST /api/ai/agent`、`PUT /api/ai/agent/{id}`、`DELETE /api/ai/agent/{id}`、`POST /api/ai/agent/{id}/default` | 智能体 CRUD / 对话页精简列表（普通用户可访问）/ 设默认 |
@@ -455,13 +463,13 @@ spring:
 | `tool.*` / `webSearch.*` | `tool.enabled`(true，问渠工具总开关)、`sandbox.enabled`(false)、`runcode.enabled`(false)；知识检索/产物/内置/咨询/任务清单随总闸启用，大输出留存与 MCP 引用注册为固定行为；联网搜索 `enabled`(false)、`provider`(tavily/bocha/generic)、`apiKey`(敏感)、`maxCallsPerTurn`(2)、`requireApproval`(true) | 保存即生效。低风险工具不各留平台开关，按智能体三态或 `tool.deny` 收口 |
 | `skill.*` | `disabled`(平台停用清单，从当前可用技能里多选)、`remoteAllowedHosts`(URL 安装允许的域名，逗号分隔；空=关闭远程安装)；正文读取上限为平台常量 `SKILL_MAX_FILE_CHARS`(20000)；存储目录 `wenqu.skills.users-dir`(默认 `user-data/skills-users`) | 个人停用由用户在「智能体 → 技能」自助；保存即生效 |
 | `agent.*` | `permissionPreset.default`(standard)/`.max`(autonomous)、`maxToolSteps`(15)、`consultMaxPerTurn`(3)、`consultTimeoutMs`(120000)、`subagentMode`(digest/full，子智能体分支执行形态)、`versionKeep`(20，配置版本快照保留份数) | 保存即生效。设置页位置：`maxToolSteps`/`consult*`/`subagentMode` 在「工具调用 → 执行预算与助手咨询」，`versionKeep` 在「定时任务 → 智能体配置版本」 |
-| `memory.*` | `enabled`(true)、`flushThrottleMinutes`(10，0=每轮)、`consolidationMaxTokens`(2000)、`maxMdTokens`(3000，硬上限)、`dailyRetentionDays`(90) | 长期记忆的平台总闸与预算：关掉后问答不提炼新记忆（已记住的照常提起，文件不删）；节流只限每轮收尾的提炼，压缩前/兜底提炼不受限；`maxMdTokens` 在写入落盘时强制裁剪。个人层另有自己的开关与「我的记忆」面板 |
+| `memory.*` | `enabled`(true)、`flushThrottleMinutes`(10，0=每轮)、`maxMdTokens`(3000，硬上限) | 长期记忆的平台总闸与预算：关掉后问答不再自动提炼新记忆（每轮收尾与压缩前的预提取都停；已记住的照常提起，文件不删）；节流只限每轮收尾的提炼。容量只留 `maxMdTokens` 一个旋钮：合并时给模型的目标预算按它的 2/3 推导，写入落盘时再按它强制裁剪；日账保留期沿用框架默认 90 天，不单独配置。个人层另有自己的开关与「我的记忆」面板 |
 | `artifact.*` | `retentionDays`(90，≤0 不清理)、`cleanupIntervalMs`(1d) | 产物超期清理 |
 | `web.*` | `refreshEnabled`(true)、`refreshScanIntervalMs`(60s) | 网页源定时刷新总开关与扫描间隔 |
 | `scheduled.*` | `enabled`(true)、`maxPerUser`(20)、`scanIntervalMs`(30s)、`timeoutMs`(300000) | 定时执行智能体 |
 | `workflow.*` | `maxSteps`(50)、`subagentTimeoutMs`(180000)、`runTimeoutSeconds`(600)、`maxConcurrentRuns`(4)、`runQueueCapacity`(50)、`runLogRetentionDays`(30)、`runCleanupIntervalMs`(1d)、`scheduleScanIntervalMs`(30s) | 单次运行最大图步数（超限 fail-loud）；子智能体节点等待超时；运行超时/并发与排队/运行记录保留期；定时触发扫描 |
 | `mcp.server.*` | `enabled`(**false**)、`timeoutMs`(180000)、`allowedOrigins`("") | MCP **服务端**：`allowedOrigins` 为空时仅允许本机回环（Origin 校验防 DNS rebinding） |
-| `sandbox.*` | 设置页只保留 `projectWorkdirEnabled`（false）、`commandTimeoutSeconds`(180)、`idleReleaseMinutes`(60)；连接地址/令牌/回调地址/虚拟根走 `SANDBOX_PROVISIONER_URL` / `SANDBOX_PROVISIONER_TOKEN` / `SANDBOX_CALLBACK_BASE_URL` / `SANDBOX_VIRTUAL_PATH_PREFIX`；输出上限/keepalive/删除超时/回收扫描间隔为内部默认 | 保存即生效（client 懒构建）；token 与 provisioner 侧 `SANDBOX_PROVISIONER_TOKEN` 一致且 ≥32 字符 |
+| `sandbox.*` | 设置页只保留 `projectWorkdirEnabled`（false）、`projectUploadMaxMb`(100)、`commandTimeoutSeconds`(180)、`idleReleaseMinutes`(60)；连接地址/令牌/回调地址/虚拟根走 `SANDBOX_PROVISIONER_URL` / `SANDBOX_PROVISIONER_TOKEN` / `SANDBOX_CALLBACK_BASE_URL` / `SANDBOX_VIRTUAL_PATH_PREFIX`；输出上限/keepalive/删除超时/回收扫描间隔为内部默认 | 保存即生效（client 懒构建）；token 与 provisioner 侧 `SANDBOX_PROVISIONER_TOKEN` 一致且 ≥32 字符；`projectUploadMaxMb` 服务端再钳到 256（spring multipart 上限） |
 | `oidc.*` | OIDC 面板 20 项（issuer/clientId/clientSecret(敏感)/scopes/frontendBaseUrl 等） | 保存即生效（分离部署必填 `frontendBaseUrl`） |
 | 用户/角色 | `default_model`（个人默认聊天模型）、`memory_enabled`（用户级记忆开关）、角色-菜单/角色-API 绑定（视觉模型看模型能力位、重排归知识库绑定） | 即时生效 |
 
