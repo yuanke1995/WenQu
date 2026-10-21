@@ -1,6 +1,6 @@
 package com.wenqu.ai.agent.chat;
 
-// [保留] 问渠轮次台账 / 个性化提示词 —— AgentScope 框架不提供等价能力，框架引擎(agentx)与共享服务仍依赖此文件，勿当 legacy 控制流删除。
+// [保留] 问渠轮次台账 / 个性化提示词 —— AgentScope 框架不提供等价能力，框架引擎(agentx)与共享服务仍依赖此文件，勿当作已退役的控制流删除。
 
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
@@ -69,12 +69,18 @@ public final class TurnRecorder {
                 && accountedChars < finalRoundOutput * OUTPUT_LOSS_CHAR_PER_TOKEN;
     }
 
-    /** 从 consultAgent 的入参里取被咨询那位的 id（取不到返回 null：宁可少一张卡，不拿名字去猜归属） */
+    /**
+     * 从派遣调用的入参里取被咨询那位的 id（取不到返回 null：宁可少一张卡，不拿名字去猜归属）。
+     * <p>两个键都要认：自研那把工具写的是 {@code agentId}，框架的 {@code agent_spawn} 写的是
+     * {@code agent_id}——两条运行时共用这一处判据，分两处读早晚漏一条。
+     */
     private static String consultTarget(String input) {
         if (input == null || input.isBlank()) return null;
         try {
             JSONObject j = JSON.parseObject(input);
-            return j == null ? null : j.getString("agentId");
+            if (j == null) return null;
+            String id = j.getString("agent_id");
+            return id == null || id.isBlank() ? j.getString("agentId") : id;
         } catch (Exception e) {
             return null;
         }
@@ -85,7 +91,7 @@ public final class TurnRecorder {
      * <p>公开这一个口子是因为并列的第二套运行时（AgentScope 框架引擎）也要挂同一张卡：
      * 截断长度与「只挂终态那一份」的口径分两处写，早晚一边裁了另一边没裁。
      *
-     * @param input 这次 consultAgent 调用的入参 JSON（取 agentId 用）
+     * @param input 这次派遣调用的入参 JSON（取被咨询那位的 id 用）
      * @return 子对话；本轮没有可挂的回报时返回 null
      */
     public static Map<String, Object> consultCardSubChat(

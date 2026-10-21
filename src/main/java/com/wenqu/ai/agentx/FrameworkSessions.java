@@ -72,6 +72,13 @@ public class FrameworkSessions {
     private final Map<String, AgentxFrameworkToolGate> frameworkToolGates = new ConcurrentHashMap<>();
 
     /**
+     * 每条常驻会话「交给组管理的注册名」（工具面第一刀）。
+     * <p>就是建实例那一轮注册进 Toolkit 并建了组的那批名字。每轮激活集<b>只在这份名单里增删</b>，
+     * 名单外的组一律不碰——框架的技能工具组是它自己按技能激活的，整份覆盖会把那些一起关掉。
+     */
+    private final Map<String, java.util.Set<String>> groupedSurfaces = new ConcurrentHashMap<>();
+
+    /**
      * 每条常驻会话的「当前轮」槽位。
      * <p>实例与工具表按会话常驻，而引用池/通道/轮号/咨询台账是<b>一轮</b>的——
      * 工具只能捕获这个会话级槽位，由引擎在每轮 {@code submit} 前换掉里面的 {@code Turn}。
@@ -98,7 +105,7 @@ public class FrameworkSessions {
     /**
      * 待办的持久化落点（同一张 {@code c_ai_tool_approval}）。
      * <p>不落这一行的后果是用户看得见的具体问题：<b>刷新页面后框架引擎的确认卡/提问卡/计划卡取不回来</b>
-     * ——三个 {@code /*&#47;pending} 恢复端点都是按这张表列的，legacy 有、框架原先没有。
+     * ——三个 {@code /*&#47;pending} 恢复端点都是按这张表列的，手写运行时有、框架原先没有。
      */
     private final com.wenqu.ai.agent.hitl.HitlDecisionService hitl;
 
@@ -111,10 +118,15 @@ public class FrameworkSessions {
 
     public FrameworkSessions(
             com.wenqu.ai.agent.hitl.HitlDecisionService hitl,
-            com.wenqu.ai.service.SandboxService sandboxService) {
+            com.wenqu.ai.service.SandboxService sandboxService,
+            SessionLogArchive archive) {
         this.hitl = hitl;
         this.sandboxService = sandboxService;
+        this.archive = archive;
     }
+
+    /** 会话事件日志的归档出口（框架 SessionExportSink，开关关闭时不挂） */
+    private final SessionLogArchive archive;
 
     /**
      * 进程重启后的续跑入口（由引擎在装配期登记）。
@@ -222,8 +234,9 @@ public class FrameworkSessions {
                         key, current.bindingKey(), wantBinding);
             }
         }
+        String ctxUid = cmd.getUserId() == null || cmd.getUserId().isBlank() ? "guest" : cmd.getUserId();
         RuntimeContext.Builder ctxBuilder = RuntimeContext.builder()
-                .userId(cmd.getUserId() == null || cmd.getUserId().isBlank() ? "guest" : cmd.getUserId())
+                .userId(ctxUid)
                 .sessionId(cmd.getSessionId());
         // 沙盒上下文（框架化 P1）：挂上后框架的文件工具与 ShellExecuteTool 才有沙箱可用。
         // 取不到时返回 null（沙盒不可用 / 无会话），此时本轮不挂框架沙箱，
@@ -236,17 +249,14 @@ public class FrameworkSessions {
                     io.agentscope.harness.agent.sandbox.SandboxContext sandboxCtx =
                             sandboxService.frameworkSandboxContext(sessionId, uid, /* unrestrictedWrites */ false);
                     if (sandboxCtx != null) {
+                        // 只挂 SandboxContext：文件系统由 build 期的 .abstractFilesystem(...) 那一份负责。
+                        // 框架的 FilesystemTool / ShellExecuteTool 在 build 期就绑好了文件系统，
+                        // 往这里再塞一份 AbstractFilesystem 只会多出一个「与内部消费者不同源」的第二实例
+                        // （同一个容器、两份对象）；框架自己在 ensureSessionDefaults 里会把 build 期那份
+                        // （workspaceManager.getFilesystem()）补进 ctx 供 sessionLog 等内部消费者用。
+                        // 缺 SandboxContext 才是真缺：没有 defaultSandboxContext（问渠不走声明式 spec 路线），
+                        // 框架解析不到沙箱。
                         ctxBuilder.put(io.agentscope.harness.agent.sandbox.SandboxContext.class, sandboxCtx);
-                        // 关键：工具真正用的是 AbstractFilesystem，不是 SandboxContext（真机踩出来的）。
-                        // FilesystemTool / ShellExecuteTool 解析 ctx.get(AbstractFilesystem.class)，
-                        // 而 HarnessAgent#ensureSessionDefaults(:1087) 只透传 SandboxContext。
-                        // 只挂前者时模型调 execute("pwd") 拿到的是宿主项目目录——
-                        // 工具静默跑在宿主上，看着成功实则没隔离。
-                        io.agentscope.harness.agent.filesystem.AbstractFilesystem fs =
-                                sandboxService.frameworkFilesystem(sessionId, uid, /* unrestrictedWrites */ false);
-                        if (fs != null) {
-                            ctxBuilder.put(io.agentscope.harness.agent.filesystem.AbstractFilesystem.class, fs);
-                        }
                     }
                 } catch (RuntimeException e) {
                     log.warn("[agentx] 框架沙箱上下文注入失败（session={}）：{}", sessionId, e.toString());
@@ -256,6 +266,13 @@ public class FrameworkSessions {
         // 本轮落点槽位必须进 RuntimeContext：重建实例时 buildAgent 里的工具闭包要捕获它，
         // 而工具调用发生在框架的弹性线程上，只有 ctx 里的这一份能保证「同一个会话同一个槽位」。
         ctxBuilder.put(AgentxTurnSlot.class, turnSlot(key));
+        // 事件日志归档（框架的导出 outbox）：sink 挂在 RuntimeContext 上，框架建 SessionRecorder 时
+        // 从这一份取（ReActAgent 认 SessionExportSink.CONTEXT_KEY），此后每轮心跳按持久游标增量送。
+        // 按会话各挂一个 sink：事件本身不带会话号，写哪个文件只能由 sink 自己带着归属。
+        if (archive != null && archive.enabled()) {
+            ctxBuilder.put(io.agentscope.core.session.SessionExportSink.CONTEXT_KEY,
+                    archive.sinkFor(ctxUid, cmd.getSessionId()));
+        }
         RuntimeContext ctx = ctxBuilder.build();
         HarnessAgent agent = agentFactory.apply(ctx);
         AgentSession session = agent.session(ctx);
@@ -264,6 +281,96 @@ public class FrameworkSessions {
         touch(key);
         evictOverflow();
         return session;
+    }
+
+    /** 登记这条会话本轮建了组的注册名（引擎在 buildAgent 里回调，与 stepBudget 同一套登记口）。 */
+    public void noteGroupedSurface(String sessionKey, java.util.Set<String> names) {
+        if (sessionKey == null || names == null || names.isEmpty()) return;
+        groupedSurfaces.put(sessionKey, java.util.Set.copyOf(names));
+    }
+
+    /**
+     * 把本轮的工具面写成框架的组激活集，并与老装配判据<b>双跑比对</b>（工具面第一刀）。
+     *
+     * <p><b>为什么每轮都要写</b>：激活集是持久化在会话状态里的（{@code tool_context.activated_groups}），
+     * 而实例按会话常驻、换绑重建也不重置它——只在 build 期写一次，第二轮起模型看到的就是上一任配置的
+     * 那一份面。{@code initialActiveToolGroups} 只在<b>首次</b>建态时生效，不是每轮的默认值。
+     *
+     * <p><b>为什么是相对更新</b>：只在本刀管理的名单里增删。框架的技能工具组由它自己按技能激活，
+     * 整份覆盖会把那些一并关掉。
+     *
+     * <p><b>写不动时选哪一头</b>：框架拒这次状态写入（事件日志有未结算的工具调用、或快照已过期）时，
+     * 这一轮沿用旧面并<b>说出来</b>——与改造前的形态同源（那时工具面本来就冻结在建实例那一轮），
+     * 而不是静默少一道闸，也不是把整轮打挂。
+     *
+     * @param allowed 本轮按老装配判据允许的注册名（{@code WenquAgentxTools#turnGroupedNames}）
+     * @return 需要让用户看见的问题；空表=组激活逐字复现了装配判据
+     */
+    public java.util.List<String> applyToolSurface(ChatCommand cmd, java.util.Set<String> allowed) {
+        String key = key(cmd);
+        Held h = held.get(key);
+        java.util.Set<String> managed = groupedSurfaces.get(key);
+        if (h == null || h.agent() == null || managed == null || managed.isEmpty()) return java.util.List.of();
+        String uid = cmd.getUserId() == null || cmd.getUserId().isBlank() ? "guest" : cmd.getUserId();
+        java.util.List<String> problems = new java.util.ArrayList<>();
+        java.util.List<String> activated;
+        try {
+            var state = h.agent().getDelegate().getAgentState(uid, cmd.getSessionId());
+            var toolContext = state.getToolContext();
+            java.util.Set<String> current = new java.util.LinkedHashSet<>(toolContext.getActivatedGroups());
+            java.util.List<String> toAdd = new java.util.ArrayList<>();
+            java.util.List<String> toRemove = new java.util.ArrayList<>();
+            for (String name : managed) {
+                boolean want = allowed != null && allowed.contains(name);
+                if (want && !current.contains(name)) toAdd.add(name);
+                if (!want && current.contains(name)) toRemove.add(name);
+            }
+            if (!toAdd.isEmpty() || !toRemove.isEmpty()) {
+                toolContext.replaceActivatedGroups(toRemove, toAdd);
+                h.agent().getDelegate().saveAgentState(uid, cmd.getSessionId());
+                log.info("[agentx] 会话 {} 本轮工具面：+{} -{}", key, toAdd, toRemove);
+            }
+            activated = toolContext.getActivatedGroups();
+        } catch (RuntimeException e) {
+            log.warn("[agentx] 本轮工具面写入失败（session={}）：{}", key, e.toString());
+            problems.add("本轮能力面未能按配置收窄（框架拒了这次会话状态写入），已沿用上一轮的工具面");
+            return problems;
+        }
+        // 双跑比对：框架真正下发给模型的那份 schema 与老装配判据逐名对齐。
+        // 这一步不是为了打印——它是「别名写错→建了空组、真工具无组=永远可见」唯一的能抓到的地方。
+        try {
+            io.agentscope.core.tool.Toolkit toolkit = h.agent().getToolkit();
+            if (toolkit == null) return problems;
+            java.util.Set<String> schemaNames = new java.util.LinkedHashSet<>();
+            for (var schema : toolkit.getToolSchemas(activated)) {
+                schemaNames.add(schema.getName());
+            }
+            java.util.List<String> missing = new java.util.ArrayList<>();
+            java.util.List<String> extra = new java.util.ArrayList<>();
+            for (String name : managed) {
+                boolean want = allowed != null && allowed.contains(name);
+                boolean seen = schemaNames.contains(name);
+                if (want && !seen) missing.add(name);
+                if (!want && seen) extra.add(name);
+            }
+            if (!missing.isEmpty() || !extra.isEmpty()) {
+                log.error("[agentx] 工具面双跑不一致（session={}）：应挂未挂={}，不该挂却挂着={}",
+                        key, missing, extra);
+                if (!missing.isEmpty()) {
+                    problems.add("这轮有允许的能力没挂上（配置允许、框架工具表里没有）：" + String.join("、", missing));
+                }
+                if (!extra.isEmpty()) {
+                    problems.add("这轮有已禁的能力仍出现在工具表里（配置不允许、框架工具表里有）：" + String.join("、", extra));
+                }
+            }
+            // 阳性对照：一致也要留一行，否则「没报错」分不清是「比过了」还是「压根没跑到」
+            log.info("[agentx] 工具面双跑（session={}）：组管理 {} 把、本轮允许 {} 把、下发工具表 {} 把，{}",
+                    key, managed.size(), allowed == null ? 0 : allowed.size(), schemaNames.size(),
+                    missing.isEmpty() && extra.isEmpty() ? "一致" : "不一致");
+        } catch (RuntimeException e) {
+            log.warn("[agentx] 工具面双跑比对未跑成（session={}）：{}", key, e.toString());
+        }
+        return problems;
     }
 
     /**
@@ -557,7 +664,7 @@ public class FrameworkSessions {
         if (h == null) {
             // 无活实例：回落「排到下一次建实例时压」（那一路会带上 triggerMessages(1) 强制压缩）
             requestCompact(userId, sessionId);
-            return java.util.Map.of("engine", "agentscope", "scheduled", true, "compressedTurns", 0);
+            return java.util.Map.of("scheduled", true, "compressedTurns", 0);
         }
         HarnessAgent agent = h.agent();
         RuntimeContext ctx = RuntimeContext.builder()
@@ -568,7 +675,7 @@ public class FrameworkSessions {
             AgentState state = agent.getDelegate().getAgentState(ctx);
             if (state == null) {
                 requestCompact(userId, sessionId);
-                return java.util.Map.of("engine", "agentscope", "scheduled", true, "compressedTurns", 0);
+                return java.util.Map.of("scheduled", true, "compressedTurns", 0);
             }
             // 上下文里可能混有 SYSTEM / 合成消息：压缩器只吃对话消息（与 CompactionMiddleware 的
             // 拆分一致——SYSTEM 由 HarnessContextBuilder 单独装配，不参与压缩）。
@@ -617,7 +724,6 @@ public class FrameworkSessions {
             log.info("[agentx] 手动 /compact 就地压缩完成: session={} covered={} freedTokens={}",
                     sessionId, covered, Math.max(0, before - after));
             return java.util.Map.of(
-                    "engine", "agentscope",
                     "scheduled", false,
                     "compressedTurns", Math.max(1, covered),
                     "freedTokens", Math.max(0, before - after),
@@ -627,13 +733,13 @@ public class FrameworkSessions {
             log.warn("[agentx] 手动 /compact 就地压缩失败，回落排到下一次: session={}, {}",
                     sessionId, e.toString());
             requestCompact(userId, sessionId);
-            return java.util.Map.of("engine", "agentscope", "scheduled", true, "compressedTurns", 0);
+            return java.util.Map.of("scheduled", true, "compressedTurns", 0);
         }
     }
 
     /** 「没得压」的统一返回（对话还短 / 压不动）：字段与压缩成功时同形，前端按同一套键渲染。 */
     private static Map<String, Object> noneCompacted() {
-        return java.util.Map.of("engine", "agentscope", "scheduled", false,
+        return java.util.Map.of("scheduled", false,
                 "compressedTurns", 0, "freedTokens", 0, "summary", "", "summaryTokens", 0);
     }
 
@@ -763,6 +869,32 @@ public class FrameworkSessions {
                             reason == null || reason.isBlank() ? "用户未批准" : reason);
         };
         return h.session().respond(requestId, a);
+    }
+
+    /**
+     * 把这句话插进此刻正在跑的那一轮（框架原生 steer，运行中插话）。
+     * <p><b>为什么这条能保底而旧那条不能</b>：框架只在「真的有在跑的 run 且写租约还活着」时收货
+     * （{@code SessionRecorder} 每秒续租，长工具调用期间也算活着），收下之后它在<b>下一次调模型之前</b>
+     * 被写进会话上下文并记一条 {@code inbox/applied}；而这一轮没读到这句就<b>不收尾</b>
+     * （{@code ReActAgent#settleSession} → {@code SessionExecution#continueOrClose}）。
+     * 问渠原先靠「把插话附在自家工具结果尾部」送达，框架引擎的模型直调工具不走那条守卫链，
+     * 于是那句话只进历史不进模型——这里换成框架自己的通道，收据号留给收尾对账。
+     *
+     * @return 框架的收据号（{@code InputReceipt.inputId}，与 {@code inbox/applied} 里那些 commandId 同源）；
+     *         null=这一轮不收插话：进程内没有这条会话的实例（工作流轮、重启后还没在本机答过）、
+     *         没有在跑的 run、或租约已过期
+     */
+    public String steer(String userId, String sessionId, String modelText) {
+        AgentSession session = peek(userId, sessionId);
+        if (session == null) return null;
+        try {
+            return session.steer(modelText).inputId();
+        } catch (RuntimeException e) {
+            // 框架对「没有正在跑的轮」抛 IllegalStateException：这不是失败，是插话时机没赶上，
+            // 调用方按「未接受」处理（内容退回输入框），不能让人看到 500
+            log.info("[agentx] 插话未被框架会话接收 session={}: {}", sessionId, e.toString());
+            return null;
+        }
     }
 
     public void interrupt(ChatCommand cmd) {

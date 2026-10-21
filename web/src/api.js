@@ -95,14 +95,19 @@ const CHAT_EVENT_CB = {
   retrieved: 'onRetrieved', thinking: 'onThinking', thinking_done: 'onThinkingDone',
   image: 'onImage', warn: 'onWarn', artifact: 'onArtifact',
   tool_status: 'onToolStatus', tool_output: 'onToolOutput', process: 'onProcess',
-  runcode_progress: 'onRunCodeProgress', subagent_step: 'onSubagentStep',
-  subagent: 'onSubagent', subagent_route: 'onSubagentRoute',
-  // agent_consulted 登记在表里但不配回调：咨询过程由 consultAgent 工具卡呈现，
+  runcode_progress: 'onRunCodeProgress',
+  // subagent_step 登记在表里但不配回调：分支实时帧仍照发（账本逐帧排查用），而它原来写进的那份
+  // 「编排面板」数据源（msg.subagents）随派遣路由一起退场了——咨询过程现在由工具卡那份 subChat 呈现
+  subagent_step: 'onSubagentStep',
+  // agent_consulted 登记在表里但不配回调：派遣过程由那张工具卡呈现（框架驱使后是 agent_spawn），
   // 事件仍照发（账本逐帧排查用），留名只为不被判成「未识别事件」
   agent_delegated: 'onAgentDelegated', agent_consulted: 'onAgentConsulted',
   approval_required: 'onApprovalRequired', ask_user: 'onAskUser',
   plan_delta: 'onPlanDelta', plan_approval: 'onPlanApproval', plan_cancelled: 'onPlanCancelled',
-  plan_superseded: 'onPlanSuperseded', todo: 'onTodo', snapshot: 'onSnapshot'
+  plan_superseded: 'onPlanSuperseded', todo: 'onTodo', snapshot: 'onSnapshot',
+  // steer＝这句插话被框架写进了正在跑的这一轮（下一次调模型之前那一刻），不是「用户按了发送」——
+  // 那一刻由 /chat/steer 自己回执。前端据此把队列里等它的那条撤下，并长进本轮回答的时间线里。
+  steer: 'onSteer'
 }
 
 /**
@@ -286,7 +291,7 @@ export function sendQuestion (sessionId, question, images = [], opts = {}) {
     // 新增事件只改那张表。这里只解构请求体要用的字段。
     deepThink = false, reasoningLevel = '', agentId = '', model = '', attachments = [], skills = [],
     mentions = [], historyRefs = [], regenerate = false, replaceMessageId = '',
-    contextWindow = null, editMessageId = '', planMode = false
+    contextWindow = null, editMessageId = '', planMode = false, fromSteer = false
   } = opts
   return streamChatSse(signal => fetch(`${BASE}/chat`, {
     method: 'POST',
@@ -312,7 +317,11 @@ export function sendQuestion (sessionId, question, images = [], opts = {}) {
       // 输入框 @ 引用（[{type:'kb'|'doc'|'agent', id, name}]）：kb 收窄本轮检索范围、doc 强制前置其内容、agent 临时委派本轮作答（服务端校验可见性）
       mentions: Array.isArray(mentions) && mentions.length ? mentions : undefined,
       // 输入框 # 历史引用（[{messageId}]）：服务端按会话归属校验并查库回填内容，前置进本轮上下文
-      historyRefs: Array.isArray(historyRefs) && historyRefs.length ? historyRefs : undefined
+      historyRefs: Array.isArray(historyRefs) && historyRefs.length ? historyRefs : undefined,
+      // 插话续发标记：这句话是上一轮跑到一半时补的方向。后端据此跳过用户消息重复落库，
+      // 并在那句话后面补一句上下文声明。必须在这里点名——请求体是按白名单拼的，
+      // 少这一行调用方传了也到不了后端（此前正是这样静默丢过）
+      fromSteer: fromSteer || undefined
     }),
     signal
   }), opts)
@@ -353,9 +362,6 @@ export const newSession = () => {
 
 /** 获取会话历史 */
 export const getHistory = (sid, opts) => request(`/session/${sid}`, opts)
-
-/** 清除会话（Redis 缓存） */
-export const clearSession = sid => request(`/session/${sid}`, { method: 'DELETE' })
 
 /**
  * 手动压缩会话上下文（/compact）：早期对话并入摘要，为后续提问腾出上下文空间。
@@ -431,9 +437,6 @@ export const moveArtifactProject = (id, projectId) =>
 
 /** 删除会话（MySQL 软删除 + Redis 清理） */
 export const deleteSessionApi = sid => request(`/session/${sid}`, { method: 'DELETE' })
-
-/** 清空所有会话 */
-export const clearAllSessionsApi = () => request('/sessions', { method: 'DELETE' })
 
 /** 批量删除会话（按 ID 列表，软删除） */
 export const batchDeleteSessionsApi = ids => request('/sessions/batch-delete', { method: 'POST', body: JSON.stringify({ ids }) })
@@ -834,7 +837,7 @@ export const getSkillContent = (name, sessionId) =>
     + (sessionId ? '&sessionId=' + encodeURIComponent(sessionId) : ''))
 
 // ---- 技能管理（用户自助安装 / 编辑 / 删除 / 个人停用）----
-/** 管理清单：来源（我的/内置/历史）、停用标记、可否编辑删除、体积/文件数 + 远程安装开关与安装限制 */
+/** 管理清单：来源（我的/内置/工作区）、停用标记、可否编辑删除、体积/文件数 + 远程安装开关与安装限制 */
 export const listSkills = () => request('/skill/list')
 /** 详情：正文 + raw（用户自装技能的 SKILL.md 原文，编辑用）+ 附属文件清单 */
 export const getSkillDetail = (name, sessionId) =>
@@ -1084,16 +1087,6 @@ export const submitShareFeedback = (token, payload) =>
 export const checkChatAttachmentsLive = fileIds =>
   request('/chat/attachment/live', { method: 'POST', body: JSON.stringify(fileIds || []) })
 
-/** 上传文档（onProgress 接收 0-100 百分比；visionRef 可选=文档级视觉模型覆盖，空=跟随知识库） */
-export function uploadDocument(file, description, onProgress, kbId, visionRef) {
-  const fd = new FormData()
-  fd.append('file', file)
-  if (description) fd.append('description', description)
-  if (kbId) fd.append('kbId', kbId)
-  if (visionRef) fd.append('visionRef', visionRef)
-  return upload('/document/upload', fd, onProgress)
-}
-
 /** 批量上传（onProgress 接收 0-100 百分比；description/visionRef 可选，应用到所有文件） */
 export function uploadDocumentsBatch(files, onProgress, description, kbId, visionRef) {
   const fd = new FormData()
@@ -1116,9 +1109,11 @@ export const importDocumentFromUrl = (url, description, kbId) => {
 export const batchReparseDocuments = ids =>
   request('/document/batch/reparse', { method: 'POST', body: JSON.stringify({ ids }) })
 
-/** 运行中插话（steer）：本轮还在跑时补一句方向。插话随**下一个工具步**送达模型（工具循环由框架
- *  持有，掐不断正在执行的这一步）；本轮收尾前没送出的会随 done 回落、由前端自动作为下一句发出。
- *  返回 {accepted}，false=没有在跑的轮 / 超限（单轮 3 条、单条 800 字），调用方按普通消息发送即可 */
+/** 运行中插话（steer）：本轮还在跑时补一句方向。这句话交给框架会话自己送进正在跑的那一轮，生效点是
+ *  下一次模型调用之前（工具循环由框架持有，掐不断正在执行的这一步）；本轮收尾时模型还没收上的，
+ *  会随 done 回落、由前端自动作为下一句发出。
+ *  返回 {accepted, messageId}，false=没有在跑的轮 / 不是本人的轮 / 框架不收（单条最长 800 字），
+ *  调用方把内容放回输入框即可 */
 export const steerChatTurn = (sessionId, text) =>
   request('/chat/steer', { method: 'POST', body: JSON.stringify({ sessionId, text }) })
 
@@ -1272,12 +1267,6 @@ export const getConfigSchema = () => request('/config/schema')
 /** 前端运行时配置（文档上传上限/支持格式等，与后端一致） */
 export const getRuntimeConfig = () => request('/config/public')
 
-/** 探测重排服务是否可用（设置页开启前校验） */
-export const checkRerank = () => request('/config/rerank/check')
-
-/** 探测 Meilisearch 是否可用（设置页切换关键词引擎前校验） */
-export const checkKeywordEngine = () => request('/config/keyword/check')
-
 /**
  * 通用连通性探测（设置页各地址旁的「测试连接」按钮）。
  * 用表单里尚未保存的值真实探测，实现"先测后存"；group=chat|vision|embedding|rerank|keyword|sandbox。
@@ -1285,12 +1274,6 @@ export const checkKeywordEngine = () => request('/config/keyword/check')
  */
 export const probeConnectivity = payload =>
   request('/config/probe', { method: 'POST', body: JSON.stringify(payload), timeout: 20000 })
-
-/** 关键词索引运维：引擎状态/索引统计 */
-export const getSearchIndexStats = () => request('/search-index/stats')
-
-/** 关键词索引运维：全量重建（后台执行） */
-export const reindexSearchIndex = () => request('/search-index/reindex', { method: 'POST' })
 
 /** 模型配置：保存可编辑项 {"chat":{...},"vision":{...}} */
 export const saveConfig = payload => request('/config', { method: 'PUT', body: JSON.stringify(payload) })
@@ -1307,10 +1290,6 @@ export const deleteMessageGroup = assistantMessageId =>
 // 后端把当前分支软删留档、按快照恢复目标版本；返回 {restored}，前端随后重拉会话历史刷新视图
 export const switchMessageVariant = (messageId, delta) =>
   request('/message-group/switch', { method: 'POST', body: JSON.stringify({ messageId, delta }) })
-
-/** 撤销删除一轮对话（撤销期内恢复软删消息） */
-export const undoDeleteMessageGroup = assistantMessageId =>
-  request('/message-group/undo', { method: 'POST', body: JSON.stringify({ messageId: assistantMessageId }) })
 
 /** 按文档列出知识块（知识块预览） */
 export const listKnowledgeByDoc = docId => request('/knowledge/list?docId=' + encodeURIComponent(docId))
@@ -1452,28 +1431,6 @@ export const uploadAvatarApi = file => {
   const fd = new FormData()
   fd.append('file', file)
   return upload('/user/avatar', fd)
-}
-
-// ---- 沙盒目录浏览（右栏「沙盒」卡）：只读、不创建容器；下载走字节流（带令牌 fetch 后本地保存） ----
-export const sandboxState = sessionId =>
-  request(`/sandbox/state?sessionId=${encodeURIComponent(sessionId || '')}`, { timeout: 15000 })
-export const sandboxTree = (sessionId, path) =>
-  request(`/sandbox/tree?sessionId=${encodeURIComponent(sessionId || '')}${path ? '&path=' + encodeURIComponent(path) : ''}`, { timeout: 20000 })
-/** 下载沙盒文件：带 Authorization 的 fetch → Blob（浏览器直接 window.open 不带令牌，会 401） */
-export const sandboxDownload = async (sessionId, path, filename) => {
-  const res = await fetch(`${BASE}/sandbox/download?sessionId=${encodeURIComponent(sessionId || '')}&path=${encodeURIComponent(path || '')}`,
-    { headers: { Authorization: 'Bearer ' + authToken() } })
-  if (res.status === 401) window.dispatchEvent(new CustomEvent('app:unauthorized'))
-  if (!res.ok) throw new Error(`下载失败(${res.status})`)
-  const blob = await res.blob()
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename || (path.includes('/') ? path.slice(path.lastIndexOf('/') + 1) : path) || 'download'
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  URL.revokeObjectURL(url)
 }
 /** 回答内代码块「在沙盒中运行」：与 execute 工具同一条物理通道；语言白名单/超时上限由后端把关 */
 export const sandboxRun = (sessionId, language, code) =>

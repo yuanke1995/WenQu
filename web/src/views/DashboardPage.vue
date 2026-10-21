@@ -255,10 +255,6 @@
                 </div>
               </template>
               <div v-else class="dt-block"><div class="dt-label">全过程</div><div class="dt-meta">该记录早于 trace 关联键上线（无 message_id），只有摘要视图。</div></div>
-              <div class="dt-block">
-                <div class="dt-label">分段耗时</div>
-                <pre class="dt-pre">{{ prettyStage(detail.log?.stageMs) }}</pre>
-              </div>
               <div v-if="detail.feedback" class="dt-block">
                 <div class="dt-label">用户反馈</div>
                 <pre class="dt-pre">{{ detail.feedback.rating === 1 ? '👍 好评' : '👎 差评' }}{{ detail.feedback.text ? '：' + detail.feedback.text : '' }}</pre>
@@ -439,19 +435,6 @@ const openTraceDetail = async record => {
   finally { detailLoading.value = false }
 }
 
-const prettyStage = s => {
-  if (!s) return '（无分段）'
-  try {
-    const m = JSON.parse(s)
-    const names = { rewrite: '改写', retrieve: '检索', generate: '生成', citation: '引用' }
-    const keys = Object.keys(m)
-    return keys.map((k, i) => {
-      const next = i + 1 < keys.length ? m[keys[i + 1]] : null
-      const own = next != null ? next - m[k] : null
-      return `${names[k] || k}：${own != null ? own + ' ms（累计 ' + m[k] + '）' : m[k] + ' ms'}`
-    }).join('\n')
-  } catch (e) { return s }
-}
 const prettyJson = s => {
   try { return JSON.stringify(JSON.parse(s), null, 2) } catch (e) { return s || '（无）' }
 }

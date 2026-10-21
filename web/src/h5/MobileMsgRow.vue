@@ -102,6 +102,10 @@
               </button>
               <div v-show="procOpen(m, seg)" class="card-body proc-body">{{ procSlice(m, seg) }}</div>
             </div>
+            <!-- 插话段：用户在这一轮还在跑时补的那句，长在模型真听到它的那个位置（与 PC 同形） -->
+            <div v-else-if="seg.kind === 'steer'" class="tl-steer">
+              <span class="tl-steer-txt">{{ seg.text }}</span>
+            </div>
             <div v-else-if="seg.kind === 'group'" class="tl-group" :class="{ inCluster: seg.inCluster, flat: seg.flat }">
               <button v-if="seg.tools.length > 1 && !seg.flat" class="card-head" type="button" @click.stop="seg.tools[0]._groupOpen = !seg.tools[0]._groupOpen">
                 <span v-if="groupRunning(seg)" class="spinner"></span>
@@ -126,7 +130,7 @@
                   </button>
                   <!-- askUser 问答记录：可折叠（默认展开），与 PC 同构 -->
                   <AskRecordCard v-if="t.name === 'askUser' && t.status !== 'start'" :t="t" />
-                  <SubAgentChatCard v-if="t.name === 'consultAgent' && t.subChat" :t="t" :sources="m.sources"
+                  <SubAgentChatCard v-if="t.subChat" :t="t" :sources="m.sources"
                                     :viewer="false" @citation="onBodyCitation" @preview="onBodyPreview" />
                   <div v-show="t._open" class="card-body">
                     <!-- 脚本扇出清单（P3b 过程下钻）：子调用不各占一张顶层卡片，结构收在这里 -->
@@ -187,7 +191,7 @@
             <template v-for="(t, ti) in toolCallsView(m.toolCalls)" :key="ti">
               <AskRecordCard v-if="t.name === 'askUser' && t.status !== 'start'" :t="t" />
               <!-- 咨询另一位助手：这一行整行换成子对话卡（它自带「谁 · 几步 · 多久」，再留一行是重复） -->
-              <SubAgentChatCard v-else-if="t.name === 'consultAgent' && t.subChat" :t="t" :sources="m.sources"
+              <SubAgentChatCard v-else-if="t.subChat" :t="t" :sources="m.sources"
                                 :viewer="false" @citation="onBodyCitation" @preview="onBodyPreview" />
               <div v-else class="tool-line">
                 <check-outlined v-if="t.status === 'done'" class="ic-ok" />
@@ -261,50 +265,6 @@
           </div>
         </div>
 
-        <!-- 子智能体编排（仅委派模式） -->
-        <div v-if="subagentCard(m)" class="card">
-          <button class="card-head" type="button" @click.stop="toggleSubagents(m)">
-            <robot-outlined class="ic-accent" />
-            <span class="card-title">{{ subagentCard(m).title }}</span>
-            <span class="card-dim">{{ subagentCard(m).done }}/{{ subagentCard(m).total }} 完成</span>
-            <caret-right-outlined class="caret" :class="{ open: m.saOpen }" />
-          </button>
-          <div v-show="m.saOpen" class="card-body">
-            <div v-for="b in subagentCard(m).branches" :key="b.id" class="sa-row">
-              <div class="sa-line">
-                <span v-if="b.status === 'running'" class="spinner"></span>
-                <check-outlined v-else-if="b.status === 'done'" class="ic-ok" />
-                <close-circle-outlined v-else class="ic-err" />
-                <span class="sa-name">{{ b.name }}</span>
-                <!-- 全循环分支（P3a）：这一支是自己把事办了一遍（用了工具），不是多一路检索 -->
-                <span v-if="b.mode === 'full'" class="sa-mode">全循环</span>
-                <span v-if="b.status === 'done'" class="card-dim">
-                  <template v-if="b.mode === 'full'">{{ b.steps ? `跑了 ${b.steps} 步工具 · ` : '已办完 · ' }}</template>
-                  <template v-else>{{ b.hits }} 块 · </template>
-                  {{ fmtDuration(b.elapsedMs) }}
-                </span>
-              </div>
-              <!-- 这一支正在跑的第几步（P3a 刀2 实时下钻）：移动壳只留名字与状态，一屏装得下 -->
-              <div v-if="b.live && b.live.length" class="sa-live fan-list">
-                <div v-for="(s, li) in b.live" :key="li" class="fan-row"
-                     :class="{ err: s.status === 'error', run: s.status === 'start' }">
-                  <span class="fan-idx">{{ li + 1 }}</span>
-                  <span class="fan-name">{{ toolLabel(s.name, s.label) }}</span>
-                  <span class="fan-dur">{{ fanRowState(s) }}</span>
-                  <span class="fan-brief"></span>
-                </div>
-              </div>
-              <div v-if="b.artifacts && b.artifacts.length" class="card-dim">已交付：{{ b.artifacts.join('、') }}</div>
-              <div v-if="b.description" class="card-dim">{{ b.description }}</div>
-              <div class="sa-bar"><div class="sa-fill" :style="{ width: barWidth(subagentCard(m), b) }" /></div>
-              <div v-if="b.digest" class="sa-digest">{{ b._rp && b.report ? b.report : b.digest }}</div>
-              <!-- 全循环分支的回报全文下钻（P3a）：与 PC 同构，摘要之外还能看它到底交回了什么 -->
-              <button v-if="b.report && b.report !== b.digest" class="btn-ghost sa-more" type="button"
-                      @click.stop="b._rp = !b._rp">{{ b._rp ? '只看摘要' : '看它交回的全文' }}</button>
-            </div>
-          </div>
-        </div>
-
         <!-- 追问建议：与 PC 同口径，只在最新一轮出现（更早那几轮的建议已被后面的对话取代） -->
         <div v-if="lastRound && m.related && m.related.length" class="related">
           <span class="card-dim">接下来可以：</span>
@@ -353,7 +313,7 @@ import {
   clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterProcCount,
   prettyIo, liveOutput, toolRunning, groupRunning, groupHasError,
   fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget, fanRun, runBoardText,
-  toolCallsView, executedCount, toolSearchQueries, retrievalLineTitle, subagentCard, barWidth, toggleSubagents, fmtDuration,
+  toolCallsView, executedCount, toolSearchQueries, retrievalLineTitle,
   fmtMsgTime, fmtSize, errorBrief, sourceName, canSwitchPrev, canSwitchNext, verLabel, agentBadgeOf,
   pasteTitle, pasteSub, isPastedText, usageCtxTokens
 } from '../chat/projections'
@@ -474,6 +434,13 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
   font-size: 15px; line-height: 1.7; min-width: 0; overflow-wrap: anywhere;
 }
 .tl-text { min-width: 0; }
+/* 插话段：右对齐、与用户气泡同一形状；收起过程时这一行仍然显示（那是用户自己说的话） */
+.tl-steer { display: flex; justify-content: flex-end; margin: 8px 0; }
+.tl-steer-txt {
+  max-width: 82%; padding: 8px 12px; border-radius: 12px; line-height: 1.6; font-size: 15px;
+  background: var(--app-panel-2); color: var(--app-text);
+  white-space: pre-wrap; word-break: break-word;
+}
 
 /* 折叠卡（思考 / 执行过程 / 工具 / 检索 / 编排） */
 .card { border: 1px solid var(--app-border); border-radius: 10px; background: var(--app-panel-2); overflow: hidden; }
@@ -557,14 +524,6 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
 .rt-origin { font-size: 11px; color: var(--app-accent); border: 1px solid var(--app-accent-border); border-radius: 4px; padding: 0 4px; margin-right: 4px; }
 .rt-snip { color: var(--app-text3); margin-top: 4px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 
-.sa-row { padding: 8px 0; border-top: 1px dashed var(--app-border); display: flex; flex-direction: column; gap: 4px; }
-.sa-line { display: flex; align-items: center; gap: 6px; font-size: 13px; }
-.sa-name { font-weight: 500; }
-/* 全循环分支标记：与状态色分开，只说明"这一支跑了活"，不改动原有状态语义 */
-.sa-mode { font-size: 10px; padding: 1px 5px; border-radius: 4px; border: 1px solid var(--app-accent-weak); color: var(--app-accent); }
-.sa-bar { height: 5px; border-radius: 3px; background: var(--app-accent-weak); overflow: hidden; }
-.sa-fill { height: 100%; background: var(--app-accent); }
-.sa-digest { font-size: 12px; color: var(--app-text3); }
 /* 脚本扇出清单（P3b）与分支回报全文（P3a）：窄屏一行一次子调用，摘要自己换行 */
 .fan-list { display: flex; flex-direction: column; gap: 3px; margin: 2px 0 6px; font-size: 12px; }
 .fan-row { display: grid; grid-template-columns: 18px 84px 56px 1fr; gap: 6px; align-items: baseline; }
@@ -574,14 +533,11 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
 /* 额度/并发上限/交付数一行 */
 .fan-budget { color: var(--app-text3); font-size: 11px; margin: 3px 0 6px; }
 .fan-run { color: var(--app-warn); font-size: 11px; }
-/* 分支实时步骤（P3a 刀2）：与扇出清单同一套排版 */
-.sa-live { margin: 2px 0 4px; }
 .run-board { color: var(--app-accent); font-size: 11px; }
 .fan-idx { color: var(--app-text3); text-align: right; font-variant-numeric: tabular-nums; }
 .fan-name { color: var(--app-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fan-dur { color: var(--app-text3); font-variant-numeric: tabular-nums; }
 .fan-brief { color: var(--app-text3); overflow-wrap: anywhere; }
-.sa-more { margin-top: 4px; font-size: 11px; }
 
 .related { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .related-tag { border: 1px solid var(--app-border); background: var(--app-panel); color: var(--app-accent); border-radius: 999px; padding: 6px 12px; font-size: 13px; min-height: 34px; touch-action: manipulation; }

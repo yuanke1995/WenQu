@@ -59,6 +59,7 @@ public class ApiEndpointScanner implements ApplicationRunner {
     private final ApiEndpointMapper apiEndpointMapper;
     private final MenuMapper menuMapper;
     private final MenuApiMapper menuApiMapper;
+    private final com.wenqu.ai.mapper.RoleApiMapper roleApiMapper;
     private final RoleService roleService;
 
     /**
@@ -86,7 +87,11 @@ public class ApiEndpointScanner implements ApplicationRunner {
             Map.entry("Menu", "菜单"),
             Map.entry("Ocr", "解析引擎"),
             Map.entry("Oidc", "单点登录"),
+            Map.entry("Project", "工作区"),
             Map.entry("Provider", "模型供应商"),
+            Map.entry("Credential", "工作流凭据"),
+            Map.entry("Notification", "站内通知"),
+            Map.entry("Manual", "帮助中心"),
             Map.entry("Qa", "问答看板"),
             Map.entry("RetrievalDebug", "检索调试"),
             Map.entry("Role", "角色"),
@@ -154,11 +159,13 @@ public class ApiEndpointScanner implements ApplicationRunner {
                               ApiEndpointMapper apiEndpointMapper,
                               MenuMapper menuMapper,
                               MenuApiMapper menuApiMapper,
+                              com.wenqu.ai.mapper.RoleApiMapper roleApiMapper,
                               RoleService roleService) {
         this.requestMappingHandlerMapping = requestMappingHandlerMapping;
         this.apiEndpointMapper = apiEndpointMapper;
         this.menuMapper = menuMapper;
         this.menuApiMapper = menuApiMapper;
+        this.roleApiMapper = roleApiMapper;
         this.roleService = roleService;
     }
 
@@ -198,6 +205,8 @@ public class ApiEndpointScanner implements ApplicationRunner {
         }
 
         List<ApiEndpoint> toInsert = new ArrayList<>();
+        // 本轮扫描命中的 (method path) 全集，用于收尾清理已退役端点
+        Set<String> liveKeys = new java.util.HashSet<>();
         // 默认菜单归属：新登记接口 → 插入成功后绑定；零归属内置接口 → 循环结束后幂等补齐
         Map<String, List<String>> newApiMenus = new HashMap<>();
         Map<String, List<String>> backfillMenus = new HashMap<>();
@@ -218,6 +227,7 @@ public class ApiEndpointScanner implements ApplicationRunner {
                 for (String m : ms) {
                     total++;
                     String key = m + " " + pattern;
+                    liveKeys.add(key);
                     ApiEndpoint existed = existing.get(key);
                     if (existed != null) {
                         // 幂等补齐：内置接口、当前零归属、命中默认对照 → 待绑定（已有任一归属则不动，尊重管理员调整）
@@ -278,6 +288,23 @@ public class ApiEndpointScanner implements ApplicationRunner {
         if (added > 0) roleService.invalidateApiPatterns();
         if (backfilled > 0) log.info("[ApiScan] 默认菜单归属补齐：{} 个存量接口（此前零归属）", backfillMenus.size());
         if (remapped > 0) log.info("[ApiScan] Tab 拆分迁移：{} 个内置接口归属从 menu-agents 细化到对应 Tab 菜单", remapped);
+        // 已退役端点清理：本次扫描没再命中的**内置登记**行（builtin=1）说明控制器或方法已删。
+        // 不删就是权限页上的僵尸条目——接口清单里还列着、角色还能勾，实际打过去 404。
+        // 手工登记的行（builtin=0，非 Spring 端点或管理员自建的修正）一律不动。
+        // 与 RbacSeedRunner 的 RETIRED_MENUS 同一口径：机制退场后归属数据跟着退场，不留旧副本。
+        int pruned = 0;
+        for (ApiEndpoint a : apiEndpointMapper.selectList(null)) {
+            if (!isBuiltin(a)) continue;
+            if (liveKeys.contains(a.getMethod().toUpperCase() + " " + a.getPath())) continue;
+            menuApiMapper.unbindByApi(a.getId());
+            roleApiMapper.unbindByApi(a.getId());
+            apiEndpointMapper.deleteById(a.getId());
+            pruned++;
+        }
+        if (pruned > 0) {
+            roleService.invalidateApiPatterns();
+            log.info("[ApiScan] 清理已退役端点：{} 个（扫描不再命中，行与菜单/角色归属一并删除）", pruned);
+        }
         log.info("[ApiScan] 接口扫描完成：命中 {} 个端点，新登记 {} 个，默认菜单归属 {} 条", total, added, bound);
     }
 

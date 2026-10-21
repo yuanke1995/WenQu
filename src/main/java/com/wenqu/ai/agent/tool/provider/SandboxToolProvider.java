@@ -14,12 +14,12 @@ import java.util.List;
 /**
  * 沙盒执行族。
  * <p>
- * 六个工具全部 requiresApproval=true：这是照迁移前的行为如实记录（装配处把整族回调一律计入有副作用
- * 名单）。{@code SideEffect} 的 READ/MUTATE 之分从 P2 起<b>真的参与裁剪</b>了：只读档（read-only）下
- * 只留 read_file 与 ls，execute 与三个写类工具不进模型的工具表——不是「点了被拒」，是看不见。
+ * 本族只提供 {@code run_code}（旧六把工具里的读写与列目录已由框架自带工具承担），它 requiresApproval=true：
+ * 装配处把整族回调一律计入有副作用名单。{@code SideEffect} 的 READ/MUTATE 之分从 P2 起<b>真的参与裁剪</b>：
+ * 只读档（read-only）下这一把不进模型的工具表——不是「点了被拒」，是看不见。
  * <p>
- * execute 在只读档必须一起摘掉：容器没有任何按档位收束命令的机制（provisioner 建容器时不接档位），
- * 「能跑命令」就等于「能写文件」，留着它再逐条拒绝就是静默透传。
+ * 只读档必须整族摘掉：容器没有按档位收束命令的机制（provisioner 建容器时不接档位），
+ * 「能跑代码」就等于「能写文件」，留着它再逐条拒绝就是静默透传。
  */
 @Component
 public class SandboxToolProvider implements ToolFamilyProvider {

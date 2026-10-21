@@ -14,7 +14,7 @@ import { computed, onUnmounted, ref } from 'vue'
 
 const props = defineProps({
   variant: { type: String, default: 'pc' },      // pc | mobile（只影响字号节奏，两端空态观感不同）
-  agentName: { type: String, default: '' },       // 已指定的智能体（自动派遣/默认传空）
+  agentName: { type: String, default: '' },       // 已指定的智能体（未指定时传空）
   thinkOn: { type: Boolean, default: false },
   attachCount: { type: Number, default: 0 },      // 待发送的图片 + 文件
   mentions: { type: Array, default: () => [] }    // @ 引用的知识库/文档名

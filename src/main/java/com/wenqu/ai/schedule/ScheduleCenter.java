@@ -99,6 +99,8 @@ public class ScheduleCenter {
     /** 工具大输出外溢原文的超期清理（磁盘侧文件，与聊天附件同一棵 data 目录树） */
     private final com.wenqu.ai.service.ToolSpillService toolSpillService;
     private final com.wenqu.ai.service.NotificationService notificationService;
+    /** 框架会话事件日志归档的超期清理（文件在归档目录，与产物/外溢原文同一口径） */
+    private final com.wenqu.ai.agentx.SessionLogArchive sessionLogArchive;
     private final ScheduleRunLogMapper scheduleRunLogMapper;
 
     /** 仅负责计时（daemon，随 JVM 退出），任务体都在 ThreadPoolManager 里跑 */
@@ -122,6 +124,7 @@ public class ScheduleCenter {
                           com.wenqu.ai.service.ChatUploadService chatUploadService,
                           com.wenqu.ai.service.ToolSpillService toolSpillService,
                           com.wenqu.ai.service.NotificationService notificationService,
+                          com.wenqu.ai.agentx.SessionLogArchive sessionLogArchive,
                           ScheduleRunLogMapper scheduleRunLogMapper) {
         this.configService = configService;
         this.configSchemaService = configSchemaService;
@@ -140,6 +143,7 @@ public class ScheduleCenter {
         this.chatUploadService = chatUploadService;
         this.toolSpillService = toolSpillService;
         this.notificationService = notificationService;
+        this.sessionLogArchive = sessionLogArchive;
         this.scheduleRunLogMapper = scheduleRunLogMapper;
     }
 
@@ -220,6 +224,20 @@ public class ScheduleCenter {
                     int cleaned = artifactService.cleanupExpired(days);
                     if (cleaned > 0) {
                         log.info("[ARTIFACT] 超期产物已清理 {} 件（保留 {} 天）", cleaned, days);
+                    }
+                });
+
+        // 会话日志归档超期清理：归档是按会话摊在磁盘上的一份份 JSONL，不清理就随会话数无限增长。
+        //（间隔 chat.sessionLogArchive.cleanupIntervalMs，保留期 chat.sessionLogArchive.keepDays，≤0 = 不清理）
+        register("会话日志归档清理", "删除超过保留期的框架会话事件日志归档文件（保留期 chat.sessionLogArchive.keepDays，≤0 = 不清理）",
+                "chat.sessionLogArchive.cleanupIntervalMs",
+                () -> configService.getInt("chat.sessionLogArchive.cleanupIntervalMs", 86_400_000),
+                () -> false,
+                () -> {
+                    int cleaned = sessionLogArchive.cleanupExpired();
+                    if (cleaned > 0) {
+                        log.info("[ARCHIVE] 超期归档已清理 {} 份（保留 {} 天）", cleaned,
+                                configService.getInt("chat.sessionLogArchive.keepDays", 90));
                     }
                 });
 

@@ -70,8 +70,6 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
 
     /** 沙盒内 user-data 虚拟根（可读写；新栈读 SANDBOX_VIRTUAL_PATH_PREFIX）。 */
     private final String userDataRoot;
-    /** 沙盒内 skills 只读根（参考实现硬编码，不受虚拟根配置影响）。 */
-    private final String skillsRoot;
     private static final int MAX_BINARY_BYTES = 1_000_000;
 
     private static final java.util.Set<String> IMAGE_EXTENSIONS = Set.of(
@@ -142,7 +140,6 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
         this.createIfMissing = createIfMissing;
         this.workdirPath = workdirPath == null ? "" : workdirPath.strip();
         this.userDataRoot = provider.virtualPathPrefix();
-        this.skillsRoot = provider.virtualSkillsPath();
         this.commandTimeoutSeconds = provider.commandTimeoutSeconds();
         this.maxOutputBytes = provider.maxOutputBytes();
     }
@@ -181,7 +178,7 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
     }
 
     private List<String> readableRoots() {
-        return List.of(userDataRoot, skillsRoot);
+        return List.of(userDataRoot);
     }
 
     private List<String> writableRoots() {
@@ -615,6 +612,27 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
     private static String inWorkspace(String command) {
         if (command == null || command.isBlank()) return command;
         return "cd " + WORKSPACE_ROOT + " && { " + command + "\n}";
+    }
+
+    /**
+     * 把工作区相对路径解析成容器内绝对路径，口径与 {@link #inWorkspace} 的 cd 对齐。
+     *
+     * <p><b>为什么必须显式解析</b>：框架的 {@code WorkspacePathNormalizer} 会先把
+     * {@code /home/gem/user-data/skills/x.md} 这类绝对路径<b>剥成工作区相对形式</b>
+     * （{@code skills/x.md}，剥不动才原样透传），而 shell 端点靠 {@code cd} 兜住相对路径、
+     * {@code /v1/file/*} 端点不兜（真机实测：相对路径直接 {@code not_found}，{@code "."} 落到容器根）。
+     * 不经这一层，结构化端点会把每一个工作区相对路径都报成不存在。
+     */
+    public String workspaceAbsolutePath(String path) {
+        String p = path == null ? "" : path.strip();
+        if (p.isEmpty() || p.equals(".") || p.equals("./")) {
+            return WORKSPACE_ROOT;
+        }
+        if (p.startsWith("/")) {
+            return p;
+        }
+        String rel = p.startsWith("./") ? p.substring(2) : p;
+        return WORKSPACE_ROOT + "/" + rel;
     }
 
     public ExecuteResponse execute(String command, Integer timeout) {

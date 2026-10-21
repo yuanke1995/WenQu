@@ -1,16 +1,65 @@
 <template>
   <div class="app-page">
     <div class="app-page-head">
-      <h1 class="app-page-title">
-        {{ form.name || (isImplicit ? '会话' : '未命名工作区') }}
-        <span v-if="form.status === 'archived'" class="pj-tag">已归档</span>
+      <!-- 名字只在这一处编辑：点「改名」就地换，不再单开一行输入框（此前标题/输入框/删除弹窗三份名字） -->
+      <h1 v-if="!nameEditing" class="app-page-title pj-title">
+        {{ displayName }}
+        <span v-if="isArchived" class="app-pill muted pj-state">已归档</span>
+        <button class="pj-pen" type="button" @click="startRename">改名</button>
       </h1>
+      <template v-else>
+        <a-input ref="nameInput" v-model:value="nameDraft" class="pj-name-inline" :maxlength="60"
+                 :placeholder="isImplicit ? '留空则显示「会话」' : ''"
+                 @press-enter="saveName" @keydown.esc="cancelRename" />
+        <button class="app-btn" :disabled="saving || !nameDirty" @click="saveName">{{ saving ? '保存中…' : '保存' }}</button>
+        <button class="app-btn ghost" @click="cancelRename">取消</button>
+      </template>
       <span class="head-hint-plain" :title="isImplicit ? '' : HEAD_HINT">
         {{ isImplicit ? '这里的会话与文件还没有归到任何工作区下' : HEAD_HINT }}
       </span>
-      <div class="art-tools">
-        <a-input v-model:value="kw" allow-clear placeholder="搜索会话 / 文件 / 任务…" class="pj-search" />
-        <button class="app-btn ghost" :disabled="loading" @click="load"><reload-outlined /> 刷新</button>
+      <div class="pj-tools">
+        <a-popover v-model:open="settingsOpen" trigger="click" :placement="mobileShell ? 'bottom' : 'bottomRight'"
+                   :overlay-style="{ width: mobileShell ? 'min(340px, 92vw)' : '340px' }">
+          <template #content>
+            <div class="pj-set">
+              <div class="pj-set-row">
+                <span class="pj-k">默认助手</span>
+                <a-select class="pj-v" :value="form.defaultAgentId || AGENT_NONE" :options="agentOptions" allow-clear
+                          @change="saveAgent" />
+              </div>
+              <div class="pj-set-note">助手带的知识范围与工具会一起生效；只影响这个工作区里以后的新对话</div>
+              <div class="pj-set-row pj-set-row-top">
+                <span class="pj-k">工作目录</span>
+                <div class="pj-path-cell">
+                  <div class="pj-set-path" :title="workdirLabel">{{ workdirLabel }}</div>
+                  <button class="pj-act" type="button" @click="copyPath"><copy-outlined /> 复制路径</button>
+                </div>
+              </div>
+              <div class="pj-set-note">这里写下的文件都在下面的「文件」栏里</div>
+              <div class="pj-set-div"></div>
+              <div class="pj-set-row">
+                <span class="pj-k">归档</span>
+                <button class="app-btn ghost" :disabled="archiving" @click="toggleArchive">
+                  {{ archiving ? '处理中…' : (isArchived ? '恢复工作区' : '归档工作区') }}
+                </button>
+              </div>
+              <div class="pj-set-note">归档后收进侧栏折叠区：定时任务自动暂停，恢复时重新启用；会话与产物一条不动</div>
+              <template v-if="!isImplicit">
+                <div class="pj-set-div"></div>
+                <div class="pj-set-row">
+                  <span class="pj-k">删除</span>
+                  <button class="app-btn danger" :disabled="deleting" @click="removeProject">
+                    {{ deleting ? '删除中…' : '删除工作区' }}
+                  </button>
+                </div>
+                <div class="pj-set-note pj-set-warn">只解除归属：工作目录里的文件将再也打不开，约定一起丢。此操作不可撤销。</div>
+              </template>
+            </div>
+          </template>
+          <button class="pj-sum" :class="{ on: settingsOpen }" type="button">
+            助手 <b>{{ agentName || '跟随我的' }}</b><span class="pj-sum-go">设置 ▾</span>
+          </button>
+        </a-popover>
         <button class="app-btn" :disabled="isArchived" :title="isArchived ? '工作区已归档，恢复后才能新建对话' : ''" @click="goChat">
           <plus-outlined /> 新建对话
         </button>
@@ -48,53 +97,21 @@
           </template>
         </div>
 
-        <!-- ② 工作区设置：不常改的一行摘要，展开才给表单；删除这类破坏性操作也收在这里 -->
-        <div class="app-card pj-card pj-card-tight">
-          <button class="pj-fold-head" type="button" @click="settingsOpen = !settingsOpen">
-            <span class="pj-label">工作区设置</span>
-            <span class="pj-hint">{{ settingsSummary }}</span>
-            <span v-if="settingsDirty" class="pj-dirty">未保存</span>
-            <span class="pj-caret" :class="{ open: settingsOpen }">▾</span>
-          </button>
-
-          <div v-show="settingsOpen" class="pj-settings">
-            <div class="pj-row">
-              <span class="pj-label">工作区名</span>
-              <a-input v-model:value="form.name" class="pj-name-input" :maxlength="60"
-                       :placeholder="isImplicit ? '留空则显示「会话」' : ''" />
-            </div>
-            <div class="pj-row">
-              <span class="pj-label">默认助手</span>
-              <a-select v-model:value="form.defaultAgentId" class="pj-agent-select" allow-clear
-                        placeholder="不设 = 跟随平台默认智能体" :options="agentOptions" />
-              <span class="pj-hint">助手带的知识范围与工具会一起生效</span>
-            </div>
-            <div class="pj-row">
-              <span class="pj-label">工作目录</span>
-              <code class="pj-path">{{ form.workdirPath || ('projects/' + id) }}</code>
-              <button class="app-btn ghost" @click="copyPath"><copy-outlined /> 复制</button>
-              <span class="pj-hint">这个工作区里写下的文件都在这里</span>
-            </div>
-            <div class="pj-row">
-              <span class="pj-label">状态</span>
-              <button v-if="!isImplicit" class="app-btn ghost" :disabled="archiving" @click="toggleArchive">
-                {{ form.status === 'archived' ? '恢复' : '归档' }}
-              </button>
-              <span class="pj-hint">归档后收进侧栏折叠区：定时任务自动暂停，恢复时重新启用；会话与产物一条不动</span>
-              <button v-if="!isImplicit" class="app-btn danger pj-del" :disabled="deleting" @click="removeProject">
-                {{ deleting ? '删除中…' : '删除工作区' }}
-              </button>
-            </div>
-            <div v-if="settingsDirty" class="pj-row">
-              <button class="app-btn" :disabled="saving" @click="saveSettings">
-                {{ saving ? '保存中…' : '保存设置' }}
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <!-- ③ 内容区：计数只在这里出现一次；产物并入文件（同一份内容的两个拷贝不再各列一遍） -->
+        <!-- ② 内容区：计数只在这里出现一次；产物并入文件（同一份内容的两个拷贝不再各列一遍）。
+             搜索框挨着它作用的对象——它过滤的是这四个栏的列表，不是上面那张约定卡 -->
         <a-tabs v-model:activeKey="tab" class="pj-tabs">
+          <template #rightExtra>
+            <div class="pj-filter">
+              <span v-if="jumpChips.length" class="pj-jump" role="status" aria-live="polite">
+                <span class="pj-jump-k">{{ currentHits ? '别处也有' : '这里没有，去' }}</span>
+                <button v-for="c in jumpChips" :key="c.key" class="pj-jump-chip" type="button" @click="tab = c.key">
+                  {{ c.label }} {{ c.n }}
+                </button>
+              </span>
+              <a-input v-model:value="kw" allow-clear class="pj-search"
+                       placeholder="搜文件 / 会话 / 任务 / 工作流 / 运行…" />
+            </div>
+          </template>
           <a-tab-pane key="files">
             <template #tab><span>文件 <span class="pj-count">{{ fileRows.length }}</span></span></template>
             <!-- 工具条：整区导出 + 截断提示（此前静默只列最近 300 个，看着像"就这些"） -->
@@ -106,9 +123,13 @@
                 {{ exporting ? '导出中…' : '打包导出' }}
               </button>
             </div>
+            <div v-if="artifactsError && !filesError" class="pj-hint pj-tabnote">
+              {{ artifactsError }}，下面只列了工作目录里的文件（交付成产物的那些没并进来）
+              <button class="pj-link-btn" @click="loadFiles">重试</button>
+            </div>
             <div v-if="filesError" class="pj-empty pj-err">
               {{ filesError }}
-              <button class="pj-link-btn" @click="load">重试</button>
+              <button class="pj-link-btn" @click="loadFiles">重试</button>
             </div>
             <div v-else-if="!filteredFiles.length" class="pj-empty">
               {{ kw ? '没有匹配的文件' : '还没有文件。让它在这个工作区里跑一段会写文件的命令，或把结果交付成产物，文件就会出现在这里。' }}
@@ -116,7 +137,7 @@
             </div>
             <div v-else class="pj-file-list">
               <div v-for="f in filteredFiles" :key="f.key" class="pj-item">
-                <span class="pj-item-title" :title="f.path || f.name">{{ f.name }}</span>
+                <span class="pj-item-title" :title="f.path || f.name"><Hl :text="f.name" /></span>
                 <span class="pj-badge-cell">
                   <span v-if="f.artifact" class="pj-badge" title="已作为产物交付过（与这个文件是同一次产出的两份）">已交付</span>
                 </span>
@@ -135,7 +156,11 @@
             <div v-if="sessionTotal > sessions.length" class="pj-hint pj-tabnote">
               这里只列最近 {{ sessions.length }} 条（共 {{ sessionTotal }} 条），更早的在左侧栏这个工作区里翻
             </div>
-            <div v-if="!filteredSessions.length" class="pj-empty">
+            <div v-if="sessionError" class="pj-empty pj-err">
+              {{ sessionError }}
+              <button class="pj-link-btn" @click="loadSessions">重试</button>
+            </div>
+            <div v-else-if="!filteredSessions.length" class="pj-empty">
               {{ kw ? '没有匹配的会话' : '还没有对话。' }}
               <button v-if="!kw && !isArchived" class="pj-link-btn" @click="goChat">新建一条对话</button>
               <span v-if="!kw">，就会落在这个工作区里，并自动带上上面的约定。</span>
@@ -143,7 +168,7 @@
             <div v-else class="pj-file-list">
               <a v-for="s in filteredSessions" :key="s.id" class="pj-item" :href="'/chat?sid=' + s.id"
                  @click.prevent="openProjectSession(s)">
-                <span class="pj-item-title">{{ s.title || '新对话' }}</span>
+                <span class="pj-item-title"><Hl :text="s.title || '新对话'" /></span>
                 <span class="pj-item-meta">{{ fmtAgo(toMs(s.updateTime)) }}</span>
               </a>
             </div>
@@ -152,6 +177,12 @@
           <a-tab-pane key="auto">
             <template #tab><span>自动化 <span class="pj-count">{{ jobs.length + workflows.length }}</span></span></template>
 
+            <!-- 拉取失败就说失败并给重试：留成空列表会被读成「我建的任务没生效」 -->
+            <div v-if="autoError" class="pj-empty pj-err">
+              {{ autoError }}
+              <button class="pj-link-btn" @click="loadAuto">重试</button>
+            </div>
+            <template v-else>
             <div class="pj-block">
               <div class="pj-label">
                 定时任务 <span class="pj-count">{{ jobs.length }}</span>
@@ -175,7 +206,7 @@
               </div>
               <div v-else class="pj-file-list">
                 <div v-for="j in filteredJobs" :key="j.id" class="pj-item">
-                  <span class="pj-item-title" :title="j.prompt">{{ j.name }}</span>
+                  <span class="pj-item-title" :title="j.prompt"><Hl :text="j.name" /></span>
                   <code class="pj-cron">{{ j.cron }}</code>
                   <span class="pj-item-meta">{{ j.enabled ? ('下次 ' + fmtTime(j.nextRunAt)) : '已停用' }}</span>
                   <button class="pj-act" :disabled="isArchived" :title="isArchived ? '工作区已归档，恢复后才能试跑' : ''" @click="runJob(j)">试跑</button>
@@ -196,13 +227,14 @@
               </div>
               <div v-else class="pj-file-list">
                 <div v-for="w in filteredWorkflows" :key="w.id" class="pj-item">
-                  <span class="pj-item-title">{{ w.name }}</span>
+                  <span class="pj-item-title"><Hl :text="w.name" /></span>
                   <span class="pj-item-meta">{{ w.status === 'published' ? '已发布' : '草稿' }}</span>
                   <span class="pj-item-meta">{{ fmtAgo(toMs(w.updateTime)) }}</span>
                   <button class="pj-act" :disabled="isArchived" :title="isArchived ? '工作区已归档，恢复后才能运行' : ''" @click="runWf(w)">运行</button>
                 </div>
               </div>
             </div>
+            </template>
         </a-tab-pane>
 
         <a-tab-pane key="runs">
@@ -218,7 +250,7 @@
             <div v-for="x in filteredRuns" :key="x.kind + ':' + x.id" class="pj-item">
               <span class="pj-item-title">
                 <span class="run-kind">{{ x.kind === 'scheduled' ? '定时任务' : '工作流' }}</span>
-                {{ x.name }}
+                <Hl :text="x.name" />
                 <span v-if="x.error" class="run-err-ic" :title="x.error">!</span>
               </span>
               <span class="run-status" :class="'rs-' + x.status">{{ runStatusText(x.status) }}</span>
@@ -255,10 +287,10 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, nextTick, defineComponent, h } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
-import { ReloadOutlined, PlusOutlined, CopyOutlined } from '@ant-design/icons-vue'
+import { PlusOutlined, CopyOutlined } from '@ant-design/icons-vue'
 import { getProject, updateProject, deleteProject, listArtifacts, listSessions, listAvailableAgents, listProjectFiles,
          downloadProjectFile, listScheduledJobs, createScheduledJob, runScheduledJob, listProjectWorkflows, runWorkflow,
          setProjectStatus, setNewSessionProject, getProjectRuns,
@@ -291,14 +323,19 @@ const form = ref({ name: '', instructions: '', defaultAgentId: undefined, workdi
 const sessions = ref([])
 /** 会话总数（列表接口只返回首页 50 条，计数要用 total） */
 const sessionTotal = ref(0)
+const sessionError = ref('')
 const artifacts = ref([])
 const files = ref([])
 const filesError = ref('')
+/** 产物那份数据单独报错：文件列出来了但产物没并进来，看着就像「交付的东西凭空少了」 */
+const artifactsError = ref('')
 /** 目录实际文件数与是否截断（后端给的，别再把「只列最近 300 个」当成「就这些」） */
 const filesTotal = ref(0)
 const filesTruncated = ref(false)
 const jobs = ref([])
 const workflows = ref([])
+/** 定时任务与工作流同栏：任一份拉不到就不能装作「还没有」 */
+const autoError = ref('')
 const runs = ref([])
 const runsError = ref('')
 const jobFormOpen = ref(false)
@@ -309,23 +346,28 @@ const kw = ref('')
 const loadedOnce = ref(false)
 const instrEdit = ref(false)
 const instrFull = ref(false)
+/** 页头「设置」弹层的开合。此前它是一张同页折叠卡，展开要吃掉约定与四个栏之间最贵的一段竖向空间 */
 const settingsOpen = ref(false)
+const nameEditing = ref(false)
+const nameDraft = ref('')
+const nameInput = ref(null)
 const tab = ref('files')
 
-const agentOptions = computed(() => agents.value.map(a => ({ value: a.id, label: a.name })))
+/** 清空助手这件事不能只靠 hover 才显形的小叉：触屏没有 hover，就得有一个正常可点的「不设」项 */
+const AGENT_NONE = '__none__'
+const agentOptions = computed(() => [
+  { value: AGENT_NONE, label: '不设（跟随平台默认智能体）' },
+  ...agents.value.map(a => ({ value: a.id, label: a.name }))
+])
 const firstLoad = computed(() => loading.value && !loadedOnce.value)
 /** 没写过约定时直接给输入框：第一次进来最该做的事不该藏在「编辑」后面 */
 const instrEditing = computed(() => instrEdit.value || !saved.value.instructions)
 const instrDirty = computed(() => (form.value.instructions || '').trim() !== (saved.value.instructions || '').trim())
 const instrLong = computed(() => (saved.value.instructions || '').length > 120)
-const settingsDirty = computed(() => (form.value.name || '') !== saved.value.name
-  || (form.value.defaultAgentId || '') !== (saved.value.defaultAgentId || ''))
 const agentName = computed(() => {
   const a = agents.value.find(x => x.id === (form.value.defaultAgentId || saved.value.defaultAgentId))
   return a ? a.name : ''
 })
-const settingsSummary = computed(() =>
-  `助手 ${agentName.value || '跟随我的'} · 名称 · 工作目录 · 归档与删除`)
 
 const toMs = v => {
   if (v == null) return 0
@@ -363,6 +405,49 @@ const filteredSessions = computed(() => sessions.value.filter(s => hit(s.title |
 const filteredJobs = computed(() => jobs.value.filter(j => hit(j.name, j.prompt)))
 const filteredWorkflows = computed(() => workflows.value.filter(w => hit(w.name)))
 const filteredRuns = computed(() => runs.value.filter(x => hit(x.name, x.error)))
+
+/** 搜索跨四个栏过滤，但一次只显示一个栏：命中在别的栏时必须说出来并可一键跳过去，
+    否则停在「文件」搜会话名会看到「没有匹配的文件」——用户读成搜不到，不会想到换栏 */
+const TAB_LABEL = { files: '文件', sessions: '会话', auto: '自动化', runs: '运行' }
+const tabHits = computed(() => ({
+  files: filteredFiles.value.length,
+  sessions: filteredSessions.value.length,
+  auto: filteredJobs.value.length + filteredWorkflows.value.length,
+  runs: filteredRuns.value.length
+}))
+const currentHits = computed(() => tabHits.value[tab.value])
+/** 只在真的搜了东西时才提「别处命中」——空关键词下每条记录都算命中，跳转条会常驻不放 */
+const jumpChips = computed(() => {
+  if (!kw.value.trim()) return []
+  return Object.keys(TAB_LABEL)
+    .filter(k => k !== tab.value && tabHits.value[k] > 0)
+    .map(k => ({ key: k, label: TAB_LABEL[k], n: tabHits.value[k] }))
+})
+
+const displayName = computed(() => form.value.name || (isImplicit.value ? '会话' : '未命名工作区'))
+const nameDirty = computed(() => nameDraft.value.trim() !== (form.value.name || ''))
+
+/** 命中的那几个字标出来：跳过去的那一栏里，行可能是靠指令/cron/报错中的词，不标看不出为什么是它。
+    只包 <mark>、不走 v-html——文件名与标题是用户数据，不能当 HTML 喂 */
+const Hl = defineComponent({
+  props: { text: { type: String, default: '' } },
+  setup(props) {
+    return () => {
+      const t = String(props.text)
+      const q = kw.value.trim().toLowerCase()
+      if (!q) return t
+      const low = t.toLowerCase()
+      const out = []
+      let i = 0, j, n = 0
+      while ((j = low.indexOf(q, i)) >= 0) {
+        if (j > i) out.push(t.slice(i, j))
+        out.push(h('mark', { key: 'm' + (n++) }, t.slice(j, j + q.length)))
+        i = j + q.length
+      }
+      return i < t.length ? out.concat(t.slice(i)) : out
+    }
+  }
+})
 
 // ==================== 运行记录（定时任务执行 + 工作流运行合流） ====================
 const RUN_STATUS_TEXT = {
@@ -436,16 +521,32 @@ const cancelInstr = () => {
   form.value.instructions = saved.value.instructions
   instrEdit.value = false
 }
-const saveSettings = async () => {
-  const name = (form.value.name || '').trim()
+// ==================== 改名（页头就地）与默认助手（弹层里改完即落库） ====================
+const startRename = () => {
+  nameDraft.value = form.value.name || ''
+  nameEditing.value = true
+  nextTick(() => nameInput.value && nameInput.value.focus({ cursor: 'all' }))
+}
+const cancelRename = () => { nameEditing.value = false }
+const saveName = async () => {
+  const name = nameDraft.value.trim()
   if (!name && !isImplicit.value) { message.warning('工作区名不能为空'); return }
-  await patch({ name, defaultAgentId: form.value.defaultAgentId || '' }, '设置已保存')
+  if (await patch({ name }, '名字已更新')) nameEditing.value = false
+}
+/** 这一项没有「草稿」可言：留着没生效的选择反而骗人，所以改完直接存，失败就退回服务端真值 */
+const saveAgent = async v => {
+  const next = v && v !== AGENT_NONE ? v : undefined
+  form.value.defaultAgentId = next
+  const label = (agents.value.find(a => a.id === v) || {}).name || v
+  const ok = await patch({ defaultAgentId: next || '' },
+    next ? `默认助手已设为「${label}」` : '已取消默认助手，跟随平台默认智能体')
+  if (!ok) form.value.defaultAgentId = saved.value.defaultAgentId || undefined
 }
 
+const workdirLabel = computed(() => form.value.workdirPath || ('projects/' + id.value))
 const copyPath = async () => {
-  const p = form.value.workdirPath || ('projects/' + id.value)
   try {
-    await navigator.clipboard.writeText(p)
+    await navigator.clipboard.writeText(workdirLabel.value)
     message.success('工作目录已复制')
   } catch (e) {
     message.error('复制失败，请手动选中复制')
@@ -551,22 +652,22 @@ const goChat = () => {
   router.push('/chat')
 }
 
-const loadJobs = async () => {
+/** 定时任务 + 工作流一起取：任一份没拉到，这一栏的「有几个」就说不准，必须报出来而不是留成空列表 */
+const loadAuto = async () => {
+  const errs = []
   try {
-    const r = await listScheduledJobs(id.value)
-    jobs.value = (r && r.data) || []
+    jobs.value = ((await listScheduledJobs(id.value)) || {}).data || []
   } catch (e) {
     jobs.value = []
+    errs.push('定时任务：' + (e.message || '加载失败'))
   }
-}
-
-const loadWorkflows = async () => {
   try {
-    const r = await listProjectWorkflows(id.value)
-    workflows.value = (r && r.data) || []
+    workflows.value = ((await listProjectWorkflows(id.value)) || {}).data || []
   } catch (e) {
     workflows.value = []
+    errs.push('工作流：' + (e.message || '加载失败'))
   }
+  autoError.value = errs.join('；')
 }
 
 const createJob = async () => {
@@ -583,7 +684,7 @@ const createJob = async () => {
     message.success('任务已创建并启用')
     jobForm.value = { name: '', prompt: '', cron: '0 9 * * 1' }
     jobFormOpen.value = false
-    await loadJobs()
+    await loadAuto()
   } catch (e) {
     message.error('创建失败：' + (e.message || '请检查 cron 写法'))
   } finally {
@@ -595,7 +696,7 @@ const runJob = async j => {
   try {
     await runScheduledJob(j.id)
     message.success('已触发一次，结果会落进这个工作区的会话里（稍等片刻）')
-    setTimeout(loadJobs, 4000)
+    setTimeout(loadAuto, 4000)
     setTimeout(load, 6000)
   } catch (e) {
     message.error('触发失败：' + (e.message || '请重试'))
@@ -606,11 +707,63 @@ const runWf = async w => {
   try {
     const r = await runWorkflow(w.id, {})
     message.success('已运行：' + ((r && r.data && r.data.status) || '完成'))
-    await loadWorkflows()
+    await loadAuto()
   } catch (e) {
     message.error('运行失败：' + (e.message || '请检查工作流是否已发布'))
   }
 }
+
+// ==================== 分栏取数（切栏即重拉，页头不再常驻「刷新」） ====================
+const loadSessions = async () => {
+  try {
+    const d = ((await listSessions('', '', 50, id.value)) || {}).data || {}
+    sessions.value = d.items || []
+    sessionTotal.value = d.total || sessions.value.length
+    sessionError.value = ''
+  } catch (e) {
+    sessions.value = []
+    sessionTotal.value = 0
+    sessionError.value = e.message || '会话列表加载失败'
+  }
+}
+
+/** 文件栏是两份数据的合并视图（工作目录文件 + 产物），一起取才不会一半新一半旧。
+    宿主目录读不到（如沙盒在远端）时如实提示，不伪装成空列表 */
+const loadFiles = async () => {
+  try {
+    const d = ((await listProjectFiles(id.value)) || {}).data || {}
+    files.value = d.entries || []
+    filesTotal.value = d.total || 0
+    filesTruncated.value = !!d.truncated
+    filesError.value = ''
+  } catch (e) {
+    files.value = []
+    filesTotal.value = 0
+    filesTruncated.value = false
+    filesError.value = e.message || '工作区目录暂时读不到'
+  }
+  try {
+    artifacts.value = ((await listArtifacts(undefined, id.value)) || {}).data || []
+    artifactsError.value = ''
+  } catch (e) {
+    artifacts.value = []
+    artifactsError.value = e.message || '产物列表加载失败'
+  }
+}
+
+const reloadTab = () => {
+  if (tab.value === 'files') return loadFiles()
+  if (tab.value === 'sessions') return loadSessions()
+  if (tab.value === 'auto') return loadAuto()
+  return loadRuns()
+}
+
+/** 切栏就重拉这一栏：定时任务在后台跑完、在别处新建的对话，回到这一屏就该看见 */
+let skipTabWatch = false
+watch(tab, () => {
+  if (skipTabWatch) { skipTabWatch = false; return }
+  reloadTab()
+})
 
 const load = async () => {
   loading.value = true
@@ -618,6 +771,9 @@ const load = async () => {
     const r = await getProject(id.value)
     const p = (r && r.data) || {}
     isImplicit.value = Boolean(p.isImplicit)
+    // 约定正在就地编辑时别把草稿冲掉——改助手、归档都会走这里
+    const keepDraft = instrEdit.value && instrDirty.value
+    const draft = form.value.instructions
     saved.value = {
       instructions: p.instructions || '',
       defaultAgentId: p.defaultAgentId || '',
@@ -625,39 +781,20 @@ const load = async () => {
     }
     form.value = {
       name: p.name || '',
-      instructions: p.instructions || '',
+      instructions: keepDraft ? draft : (p.instructions || ''),
       defaultAgentId: p.defaultAgentId || undefined,
       workdirPath: p.workdirPath || '',
       status: p.status || 'active'
     }
-    instrEdit.value = false
+    if (!keepDraft) instrEdit.value = false
     instrFull.value = false
-    const [sr, ar] = await Promise.all([
-      listSessions('', '', 50, id.value).catch(() => null),
-      listArtifacts(undefined, id.value).catch(() => null)
-    ])
-    sessions.value = (sr && sr.data && sr.data.items) || []
-    sessionTotal.value = (sr && sr.data && sr.data.total) || sessions.value.length
-    artifacts.value = (ar && ar.data) || []
-    // 文件单独取：宿主目录读不到（如沙盒在远端）时如实提示，不伪装成空列表
-    try {
-      const fr = await listProjectFiles(id.value)
-      const d = (fr && fr.data) || {}
-      files.value = d.entries || []
-      filesTotal.value = d.total || 0
-      filesTruncated.value = !!d.truncated
-      filesError.value = ''
-    } catch (e) {
-      files.value = []
-      filesTotal.value = 0
-      filesTruncated.value = false
-      filesError.value = e.message || '工作区目录暂时读不到'
-    }
-    await loadJobs()
-    await loadWorkflows()
-    await loadRuns()
+    await Promise.all([loadSessions(), loadFiles(), loadAuto(), loadRuns()])
     // 落点只在首次决定：文件是这个工作区的独占视图，有就先看它；空工作区则给「新建对话」的会话空态
-    if (!loadedOnce.value) tab.value = fileRows.value.length ? 'files' : 'sessions'
+    const want = fileRows.value.length ? 'files' : 'sessions'
+    if (!loadedOnce.value && want !== tab.value) {
+      skipTabWatch = true
+      tab.value = want
+    }
     loadedOnce.value = true
   } catch (e) {
     message.error('工作区加载失败：' + (e.message || '请重试'))
@@ -666,7 +803,8 @@ const load = async () => {
   }
 }
 
-const removeProject = () => { delOpen.value = true }
+/** 弹层里点删除：先收掉弹层，别让二选一弹窗压在还开着的弹层上 */
+const removeProject = () => { settingsOpen.value = false; delOpen.value = true }
 /** 删除二选一：withFiles=false 保留工作目录（默认）；true 连文件一起删（后端先删文件、失败即整单失败） */
 const doRemoveProject = async withFiles => {
   deleting.value = true
@@ -701,25 +839,80 @@ watch(id, () => {
   form.value = { name: '', instructions: '', defaultAgentId: undefined, workdirPath: '', status: 'active' }
   sessions.value = []
   sessionTotal.value = 0
+  sessionError.value = ''
   artifacts.value = []
+  artifactsError.value = ''
   files.value = []
   filesError.value = ''
   jobs.value = []
   workflows.value = []
+  autoError.value = ''
   runs.value = []
   runsError.value = ''
   instrEdit.value = false
   instrFull.value = false
   settingsOpen.value = false
+  nameEditing.value = false
   jobFormOpen.value = false
   load()
 })
 </script>
 
 <style scoped>
-.pj-search { width: 220px; }
+/* ---- 页头：名字就地改 + 归档态 + 设置弹层入口 + 唯一的主行动 ---- */
+.pj-tools { margin-left: auto; display: flex; align-items: center; gap: var(--app-sp-2); flex: none; }
+.pj-title { display: flex; align-items: center; gap: var(--app-sp-2); }
+.pj-pen {
+  border: 0; background: transparent; cursor: pointer; padding: 1px 5px; border-radius: var(--app-radius-sm);
+  color: var(--app-label-tertiary); font-size: var(--app-fs-sm); font-family: inherit;
+}
+.pj-pen:hover { color: var(--app-accent); background: var(--app-accent-weak); }
+.pj-state { flex: none; }
+.pj-name-inline { width: 240px; max-width: 46vw; }
+/* 折叠卡退场后，这个摘要就是「工作区设置」的唯一入口——它只报当前值，不再报目录 */
+.pj-sum {
+  display: inline-flex; align-items: center; gap: 5px; cursor: pointer; font: inherit;
+  font-size: var(--app-fs-sm); color: var(--app-label-secondary);
+  background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 999px;
+  padding: 3px 10px; min-height: 26px;
+}
+.pj-sum b { font-weight: 500; color: var(--app-label-primary); }
+.pj-sum:hover, .pj-sum.on { color: var(--app-accent); border-color: var(--app-accent-border); background: var(--app-accent-weak); }
+.pj-sum:hover b, .pj-sum.on b { color: var(--app-accent); }
+.pj-sum-go { color: var(--app-label-tertiary); }
+.pj-sum:hover .pj-sum-go, .pj-sum.on .pj-sum-go { color: var(--app-accent); }
+
+/* ---- 设置弹层：teleport 到 body，靠元素自身的 data-v 命中 ---- */
+.pj-set { display: flex; flex-direction: column; gap: var(--app-sp-2); }
+.pj-set-row { display: grid; grid-template-columns: 62px 1fr; align-items: center; gap: var(--app-sp-2); }
+.pj-set-row .app-btn { justify-self: start; }   /* 弹层只有 340px：按钮拉满会看着像两块板 */
+.pj-k { font-size: var(--app-fs-sm); color: var(--app-label-secondary); }
+.pj-v { width: 100%; }
+.pj-set-note { font-size: var(--app-fs-xs); line-height: 1.6; color: var(--app-label-tertiary); }
+.pj-set-warn { color: var(--app-danger-text); }
+.pj-set-div { height: 1px; background: var(--app-border-l1); margin: 2px 0; }
+/* 工作目录：路径是一串 UUID，必须整条看得见（换行而不是省略号），所以值那一格改成竖排 */
+.pj-set-row-top { align-items: start; }
+.pj-set-row-top .pj-k { line-height: 20px; }
+.pj-path-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; min-width: 0; }
+.pj-set-path {
+  font-family: ui-monospace, Menlo, Consolas, monospace; font-size: var(--app-fs-xs); line-height: 20px;
+  color: var(--app-label-secondary); word-break: break-all;
+}
+
+/* ---- 栏内过滤：搜索框与「命中在别处」并排，贴着它们真正作用的四个栏 ---- */
+.pj-filter { display: flex; align-items: center; gap: var(--app-sp-2); }
+.pj-search { width: 262px; }   /* 占位要把五个名词报全，230px 会把「运行」截掉 */
+.pj-jump { display: inline-flex; align-items: center; gap: var(--app-sp-1); font-size: var(--app-fs-sm); }
+.pj-jump-k { color: var(--app-label-tertiary); }
+.pj-jump-chip {
+  font: inherit; font-size: var(--app-fs-sm); cursor: pointer; font-family: inherit;
+  color: var(--app-accent); background: var(--app-accent-weak);
+  border: 1px solid var(--app-accent-border); border-radius: 999px; padding: 1px 8px; min-height: 24px;
+}
+.pj-jump-chip:hover { background: var(--app-accent); color: #fff; }
+
 .pj-card { padding: var(--app-sp-4); margin-bottom: var(--app-sp-3); }
-.pj-card-tight { padding: var(--app-sp-3) var(--app-sp-4); }
 .pj-label { font-weight: 600; margin-bottom: var(--app-sp-2); display: flex; align-items: center; gap: var(--app-sp-2); }
 .pj-hint { font-weight: 400; font-size: var(--app-fs-sm); color: var(--app-label-tertiary); }
 .pj-row { display: flex; align-items: center; gap: var(--app-sp-2); margin-top: var(--app-sp-3); flex-wrap: wrap; }
@@ -745,24 +938,7 @@ watch(id, () => {
   display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
 }
 
-/* ---- 工作区设置折叠 ---- */
-.pj-fold-head {
-  display: flex; align-items: center; gap: var(--app-sp-2); width: 100%;
-  background: transparent; border: 0; padding: 0; cursor: pointer; font: inherit; text-align: left;
-}
-.pj-fold-head .pj-label { margin-bottom: 0; }
-.pj-caret { margin-left: auto; color: var(--app-label-tertiary); transition: transform .15s; }
-.pj-caret.open { transform: rotate(180deg); }
-.pj-settings { margin-top: var(--app-sp-3); padding-top: var(--app-sp-3); border-top: 1px solid var(--app-border-l1); }
-.pj-agent-select { min-width: 240px; }
-.pj-name-input { max-width: 320px; }
 .pj-cron-input { max-width: 260px; }
-.pj-del { margin-left: auto; }
-.pj-path {
-  font-size: var(--app-fs-sm); color: var(--app-label-secondary); max-width: 420px;
-  background: var(--app-bg-layer-2); padding: 1px 5px; border-radius: var(--app-radius-sm);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
 
 /* ---- 内容区 ---- */
 /* 运行记录行：来源徽章 + 状态徽章（成功/失败/进行中/待审核各一色，均为弱底不抢标题） */
@@ -798,6 +974,11 @@ watch(id, () => {
 .pj-file-list .pj-item:last-child { border-bottom: none; }
 .pj-item:hover { background: var(--app-interactive-hover); }
 .pj-item-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 命中高亮由 Hl 子组件渲染，父作用域选择器够不到它内部的 mark，必须 :deep */
+.pj-item :deep(mark) {
+  background: var(--app-warn-weak); color: var(--app-label-primary);
+  border-radius: 2px; padding: 0 1px; box-shadow: inset 0 -1px 0 var(--app-warn);
+}
 .pj-item-meta { font-size: var(--app-fs-sm); color: var(--app-label-tertiary); flex-shrink: 0; min-width: 72px; text-align: right; }
 /* 角标占固定宽：不占位的行会把「大小 / 时间」整列拽偏，一屏之内看着像没对齐 */
 .pj-badge-cell { flex: none; width: 54px; display: flex; justify-content: flex-end; }
@@ -827,10 +1008,6 @@ watch(id, () => {
   font-size: var(--app-fs-xs); line-height: 16px; padding: 0 var(--app-sp-1);
   border-radius: var(--app-radius-sm); background: var(--app-accent-weak); color: var(--app-accent);
 }
-.pj-tag {
-  font-size: var(--app-fs-xs); font-weight: 400; padding: 1px 6px; border-radius: var(--app-radius-sm);
-  background: var(--app-accent-weak); color: var(--app-accent); vertical-align: middle;
-}
 
 /* 文件区工具条：截断提示 + 打包导出 */
 .pj-filebar { display: flex; align-items: center; gap: var(--app-sp-2); margin-bottom: var(--app-sp-2); }
@@ -848,21 +1025,24 @@ watch(id, () => {
 
 /* ==================== 窄屏（手机）：/project 已进守卫白名单，这里做真适配 ====================
    卡片列表形态天然适合竖排：行内元素允许换行、输入类控件收回全宽、元信息列压缩；
-   页头两组工具各自占一行（.app-page-head 的全局折行兜底 + 搜索框吃掉剩余宽度）。 */
+   页头靠 .app-page-head 的全局折行兜底，过滤行不再挤在 tab 条右侧。 */
 @media (max-width: 768px) {
+  /* 搜索框 + 「别处命中」在 tab 条右侧放不下：让 antd 的 extra 区换行独占第二排 */
+  .pj-tabs :deep(.ant-tabs-nav) { flex-wrap: wrap; }
+  .pj-tabs :deep(.ant-tabs-extra-content) { width: 100%; padding-top: 6px; }
+  .pj-filter { width: 100%; }
   .pj-search { flex: 1; width: auto; min-width: 0; }
-  /* 短标签不许折行：窄屏下「工作区设置」折成两行很难看（内容挤的是摘要，不该挤标题） */
-  .pj-label { white-space: nowrap; }
-  .pj-fold-head .pj-hint { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pj-label { white-space: nowrap; }   /* 短标签不许折行：挤的是内容，不该挤标题 */
   /* 文件/会话/任务/运行行：标题与操作换行后仍对齐，元信息不再占固定 72px */
   .pj-item { flex-wrap: wrap; row-gap: 4px; }
   .pj-item-title { flex: 1 1 100%; order: -1; }
   .pj-item-meta { min-width: 0; }
   .pj-badge-cell { width: auto; margin-left: auto; }
   .pj-act { padding: 6px 4px; }   /* 触摸热区：行内小按钮加到可点尺寸 */
-  /* 表单类控件收回全宽（cron/名称/助手选择原本都是定宽横排） */
-  .pj-cron-input, .pj-name-input, .pj-agent-select { max-width: none; width: 100%; }
-  .pj-path { max-width: 100%; }
+  /* 表单类控件收回全宽（cron 与就地改名的输入框原本都是定宽横排） */
+  .pj-cron-input { max-width: none; width: 100%; }
+  .pj-name-inline { width: 100%; max-width: none; }
+  .pj-set-row .app-btn { width: 100%; justify-self: stretch; }   /* 触屏上满宽才好点 */
   .pj-job-form .pj-row { flex-wrap: wrap; row-gap: 8px; }
   /* 删除弹窗选项说明文字在窄屏占满 */
   .dp-item .dp-d { white-space: normal; }

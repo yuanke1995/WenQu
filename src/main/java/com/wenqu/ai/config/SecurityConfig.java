@@ -129,7 +129,7 @@ public class SecurityConfig implements WebMvcConfigurer {
         // 技能与 MCP 已于 2026-09-26 从「管理员全局设置」下沉为「个人资产」：控制器统一按
         // RequestUser.uid() 过滤（看不到也改不了别人的），因此不再要求管理员；未登录请求受 require-login
         // 门禁保护（放行时归属 anonymous）。技能侧现有清单/正文/详情/**用户自助安装与管理**：
-        // 内置 + 历史投影只读，用户自装（user-data/skills-users/{uid}）可增删改，工作区那一路要求会话归属；
+        // 内置技能只读，用户自装（user-data/skills-users/{uid}）可增删改，工作区那一路要求会话归属；
         // 所有写端点的归属判定在 SkillController 内做（匿名直接 401），这里只按端点放行。
         if (path.equals("/api/ai/skill") || path.startsWith("/api/ai/skill/")) return true;
         if (path.equals("/api/ai/mcp") || path.startsWith("/api/ai/mcp/")) return true;

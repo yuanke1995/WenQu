@@ -73,20 +73,15 @@
             <a-form-item label="向量阈值" :tooltip="tip('retrieval.vecThreshold')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
               <a-input-number v-model:value="form.q.vecThreshold" :min="0" :max="1" :step="0.05" style="width:100%" :placeholder="numPh('retrieval', 'vecThreshold')" />
             </a-form-item>
-            <a-form-item label="向量召回上限" :tooltip="tip('retrieval.vectorTopK')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
-              <a-input-number v-model:value="form.q.vectorTopK" :min="1" :max="100" style="width:100%" :placeholder="numPh('retrieval', 'vectorTopK')" />
-            </a-form-item>
-            <a-form-item label="关键词召回上限" :tooltip="tip('retrieval.keywordLimit')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
-              <a-input-number v-model:value="form.q.keywordLimit" :min="1" style="width:100%" :placeholder="numPh('retrieval', 'keywordLimit')" />
-            </a-form-item>
-            <a-form-item label="重排" :tooltip="tip('rerank.enabled')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
-              <a-select v-model:value="form.q.rerankEnabled" style="width:100%" :options="triOptions" :placeholder="triPh('rerank', 'enabled')" allow-clear />
-            </a-form-item>
             <a-form-item label="重排模型" :tooltip="tip('rerank.model')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
               <ModelSelect v-model="form.q.rerankModel" type="rerank" width="100%" inherit-label="跟随默认" :placeholder="rerankPh" />
             </a-form-item>
           </div>
-          <div class="kb-hint" style="margin:2px 0 0">新建库按你当前生效的默认值预填（保存即固化）；清空某项 = 该库该项跟随系统全局默认（管理员在「系统设置」修改，改后自动生效）。</div>
+          <div class="kb-hint" style="margin:2px 0 0">
+            这里只管本库的「召回池」：阈值与两路权重<b>按库生效</b>（同一轮跨库检索时各取各的）。
+            召回量（向量 topK / 关键词上限）在系统设置统一配置；<b>是否启用重排</b>由系统设置与智能体决定，本库只负责用哪个重排模型。
+            新建库按当前生效默认值预填（保存即固化）；清空某项 = 跟随系统全局默认（管理员在「系统设置」修改，改后自动生效）。
+          </div>
         </a-collapse-panel>
         <a-collapse-panel key="p">
           <template #header>
@@ -213,16 +208,19 @@ const saving = ref(false)
 function blank () {
   return {
     name: '', description: '', icon: '', embeddingRef: '', graphEnabled: false, graphModelRef: '',
-    q: { vectorWeight: null, keywordWeight: null, vecThreshold: null, vectorTopK: null, keywordLimit: null, rerankEnabled: null, rerankModel: '' },
+    q: { vectorWeight: null, keywordWeight: null, vecThreshold: null, rerankModel: '' },
     p: { maxSize: null, overlap: null, maxChunks: null, maxImages: null, structural: null, structuralRatio: null, headingDepth: null, qaEnabled: null, qaPerChunk: null, childEnabled: null, childSize: null, ocrEngine: null, ocrMinText: null, ocrDpi: null, visionRef: '', ocrRef: '' }
   }
 }
 
-/** 库级检索参数 ↔ 表单：JSON 键（retrieval.* / rerank.*）与表单字段互转，空值=继承不写入 */
+/**
+ * 库级检索参数 ↔ 表单：只含库拥有的“召回池”键（阈值 / 两路权重 / 重排模型），空值=继承不写入。
+ * 召回量（vectorTopK / keywordLimit）与重排开关（rerank.enabled）已迁出库级：
+ * 前者归全局，后者归智能体（见后端 KbParamCodec / ChatService.AGENT_QUERY_PARAM_KEYS）。
+ */
 const QUERY_KEYS = {
   vectorWeight: 'retrieval.vectorWeight', keywordWeight: 'retrieval.keywordWeight',
-  vecThreshold: 'retrieval.vecThreshold', vectorTopK: 'retrieval.vectorTopK',
-  keywordLimit: 'retrieval.keywordLimit', rerankEnabled: 'rerank.enabled', rerankModel: 'rerank.model'
+  vecThreshold: 'retrieval.vecThreshold', rerankModel: 'rerank.model'
 }
 const PARSE_KEYS = {
   maxSize: 'chunk.maxSize', overlap: 'chunk.overlap', maxChunks: 'chunk.maxChunks',
@@ -249,8 +247,8 @@ function hydrateForm (row) {
   for (const [field, key] of Object.entries(QUERY_KEYS)) {
     const v = q[key]
     if (v === undefined || v === '') continue
-    // rerankEnabled 是 'true'/'false' 开关字符串（同解析参数的开关字段），走 Number 会得 NaN
-    f.q[field] = (field === 'rerankModel' || field === 'rerankEnabled') ? String(v) : Number(v)
+    // 重排模型是可解析引用串，不能走 Number（会得 NaN）；其余三项是数字
+    f.q[field] = field === 'rerankModel' ? String(v) : Number(v)
   }
   for (const [field, key] of Object.entries(PARSE_KEYS)) {
     const v = p[key]
@@ -269,8 +267,6 @@ function serialize (f) {
     if (v === null || v === undefined || v === '') continue
     q[key] = String(v)
   }
-  // 选了重排模型但未显式设置开关时自动开启（否则模型配了也不会执行重排）
-  if (q['rerank.model'] && q['rerank.enabled'] === undefined) q['rerank.enabled'] = 'true'
   const p = {}
   for (const [field, key] of Object.entries(PARSE_KEYS)) {
     const v = f.p[field]
@@ -356,16 +352,11 @@ const valPh = (group, key) => {
 
 // 重排模型槽位的占位点名：库未绑模型时实际生效的默认层 = 个人设置（rerank.model）→ 平台默认
 // （rerank.platformRef）→ 本地 rerank 服务（前端不可知，不展示），口径同 ModelRegistryService.rerankRoute。
-// 仅在重排生效（库覆盖或默认开）时点名，与数字项「默认 0.8」同口径——否则"跟随默认"背后
-// 到底有没有模型、用谁的模型，用户只能靠猜。模型名优先取可选列表的展示名；平台层模型可能
-// 不在本人可选列表（登记人是管理员），退回引用串的模型段（去供应商 UUID 前缀，同 ModelSelect 失配兜底）。
+// 是否启用重排由系统设置与智能体决定（库不再管开关），所以这里恒可点名默认模型——
+// 否则"跟随默认"背后到底有没有模型、用谁的模型，用户只能靠猜。模型名优先取可选列表的展示名；
+// 平台层模型可能不在本人可选列表（登记人是管理员），退回引用串的模型段（去供应商 UUID 前缀）。
 const rerankIndex = ref({})
-const rerankEnabledEffective = computed(() => {
-  const v = form.value.q.rerankEnabled
-  return v === 'true' || v === 'false' ? v === 'true' : flatVal('rerank.enabled') === 'true'
-})
 const rerankPh = computed(() => {
-  if (!rerankEnabledEffective.value) return ''
   const dref = flatVal('rerank.model') || flatVal('rerank.platformRef')
   if (!dref) return ''
   const info = rerankIndex.value[dref]
@@ -405,14 +396,11 @@ const prefillFromGlobal = async () => {
   p.ocrEngine = ocrEngine === '' ? null : ocrEngine
   p.ocrMinText = num(flatVal('parse.ocrMinText'))
   p.ocrDpi = num(flatVal('parse.ocrDpi'))
-  // 检索参数（模板）：此前只预填解析参数，检索参数要用户自己猜当前生效值
+  // 检索参数（模板）：只预填库拥有的四项（阈值/两路权重/重排模型）；
+  // 召回量与重排开关不归库，预填了反而会被后端归一清掉
   q.vectorWeight = num(flatVal('retrieval.vectorWeight'))
   q.keywordWeight = num(flatVal('retrieval.keywordWeight'))
   q.vecThreshold = num(flatVal('retrieval.vecThreshold'))
-  q.vectorTopK = num(flatVal('retrieval.vectorTopK'))
-  q.keywordLimit = num(flatVal('retrieval.keywordLimit'))
-  const rerankEnabled = flatVal('rerank.enabled')
-  q.rerankEnabled = rerankEnabled === '' ? null : rerankEnabled
   const rerankRef = flatVal('rerank.model')
   q.rerankModel = rerankRef && modelRefInfo(rerankRef) ? rerankRef : ''   // 列表外引用不预填（留空=继承：本地 rerank 服务）
 }

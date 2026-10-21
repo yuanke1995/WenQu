@@ -5,8 +5,8 @@ import java.util.Map;
 /**
  * 框架原生工具的卡片展示名（口语向）与悬停说明。
  *
- * <p><b>为什么需要这张表</b>：问渠自己的工具（{@code consultAgent}、{@code writeTodo}、
- * {@code search_knowledge}…）由 {@link com.wenqu.ai.agent.tool.ToolRegistry} 统一声明中文名，
+ * <p><b>为什么需要这张表</b>：问渠自己的工具（{@code writeTodo}、{@code search_knowledge}…）
+ * 由 {@link com.wenqu.ai.agent.tool.ToolRegistry} 统一声明中文名，
  * 两条运行时都从那里取——但框架自己挂上去的那几把（{@code PlanModeTools} 的 plan_* 三把）
  * <b>不在问渠的注册中心里</b>：它们是 {@code agentscope-harness} 的类，既没有
  * {@code @Tool} 方法可反射，也不受问渠的族开关与审批档位管。原先框架引擎下发工具卡时

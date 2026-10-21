@@ -3,8 +3,8 @@
 # 品牌词处理（三分法）：
 #   - 容器前缀与 Docker/K8s label（yuxi-sandbox / yuxi-sandbox-provisioner）→ wenqu-*：
 #     由本进程自产自销（写 label 与按 label 过滤同源），grep 参考仓库无第三方消费方。
-#   - Kubernetes 资源名默认值（K8S_NAMESPACE=yuxi-know / SKILLS_PVC=yuxi-skills /
-#     USER_DATA_PVC=yuxi-user-data）**保留原值**：它们是外部集群里已存在的资源标识，
+#   - Kubernetes 资源名默认值（K8S_NAMESPACE=yuxi-know / USER_DATA_PVC=yuxi-user-data）
+#     **保留原值**：它们是外部集群里已存在的资源标识，
 #     非自产自销，改名会指不到资源；且均为 os.getenv 默认值，部署侧可覆盖。
 #   - FastAPI title 随品牌改名（仅 OpenAPI 文档展示，无消费方）。
 
@@ -85,7 +85,6 @@ HOP_BY_HOP_HEADERS = frozenset(
     }
 )
 PERSISTENT_SANDBOX_MOUNT_ROOTS = (
-    "/home/gem/skills",
     "/home/gem/user-data",
     "/home/gem/projects",
 )
@@ -206,7 +205,6 @@ def migrate(root, parts, marker_name):
         os.close(target_fd)
 
 migrate('/mnt/user-data', {("shared", uid, "workspace")!r}, {"workspace-" + uid!r})
-migrate('/mnt/skills-data', {("skill-projections", uid)!r}, {"skills-" + uid!r})
 workdir_parts = {workdir_parts!r}
 if workdir_parts:
     workdir_fd = open_path('/mnt/user-data', {("shared", uid, "workspace")!r} + workdir_parts)
@@ -600,11 +598,7 @@ class LocalContainerProvisionerBackend:
             )
         self._network_pool = docker_network_pool()
         self._user_data_host_path = os.getenv("DOCKER_USER_DATA_HOST_PATH")
-        self._skill_projections_host_path = os.getenv(
-            "DOCKER_SKILL_PROJECTIONS_HOST_PATH"
-        )
         self._user_data_container_path = Path("/app/user-data")
-        self._skill_projections_container_path = Path("/app/skill-projections")
         self._container_prefix = os.getenv("DOCKER_SANDBOX_PREFIX", "wenqu-sandbox")
         self._health_timeout_seconds = int(
             os.getenv("SANDBOX_HEALTH_TIMEOUT_SECONDS", "300")
@@ -623,9 +617,6 @@ class LocalContainerProvisionerBackend:
         self._resolve_host_paths()
         self._user_data_host_path = self._normalize_host_bind_path(
             self._user_data_host_path
-        )
-        self._skill_projections_host_path = self._normalize_host_bind_path(
-            self._skill_projections_host_path
         )
 
     @staticmethod
@@ -687,9 +678,6 @@ class LocalContainerProvisionerBackend:
                 lock = threading.RLock()
                 self._sandbox_locks[sandbox_id] = lock
             return lock
-
-    def _user_skills_host_path(self, uid: str) -> Path:
-        return Path(self._skill_projections_host_path) / uid
 
     def _session_workspace_host_path(self, uid: str, thread_id: str) -> Path:
         """单个会话沙盒的宿主目录：shared/{uid}/workspace/sessions/{thread_id}。
@@ -810,16 +798,6 @@ class LocalContainerProvisionerBackend:
         except OSError as exc:
             raise ValueError(f"cannot create user directory {label}: {exc}") from exc
 
-    def _is_expected_skills_mount(self, container, uid: str) -> bool:
-        expected_source = str(self._user_skills_host_path(uid))
-        for mount in container.attrs.get("Mounts") or []:
-            destination = (mount.get("Destination") or "").rstrip("/")
-            if destination != "/home/gem/skills":
-                continue
-            source = str(mount.get("Source") or "").rstrip("/")
-            return source == expected_source and mount.get("RW") is False
-        return False
-
     def _has_expected_user_data_mounts(
         self,
         container,
@@ -858,7 +836,7 @@ class LocalContainerProvisionerBackend:
             actual_mounts.get(destination) == source
             for destination, source in expected_mounts.items()
         )
-        allowed_persistent_mounts = {"/home/gem/user-data", "/home/gem/skills"}
+        allowed_persistent_mounts = {"/home/gem/user-data"}
         return expected and all(
             not _is_persistent_sandbox_mount_path(destination)
             or destination in allowed_persistent_mounts
@@ -875,7 +853,7 @@ class LocalContainerProvisionerBackend:
         return True
 
     def _resolve_host_paths(self) -> None:
-        if self._user_data_host_path and self._skill_projections_host_path:
+        if self._user_data_host_path:
             return
 
         container_id = os.getenv("HOSTNAME", "").strip()
@@ -887,31 +865,16 @@ class LocalContainerProvisionerBackend:
         inspected = self._client.api.inspect_container(container_id)
         mounts = inspected.get("Mounts") or []
 
-        sources: dict[str, str] = {}
+        source: str | None = None
         for mount in mounts:
             destination = (mount.get("Destination") or "").rstrip("/")
-            source = str(mount.get("Source") or "").strip()
-            if (
-                destination
-                in {
-                    "/app/user-data",
-                    "/app/skill-projections",
-                }
-                and source
-            ):
-                sources[destination] = source
+            candidate = str(mount.get("Source") or "").strip()
+            if destination == "/app/user-data" and candidate:
+                source = candidate
 
-        if not self._user_data_host_path:
-            self._user_data_host_path = sources.get("/app/user-data")
-        if not self._skill_projections_host_path:
-            self._skill_projections_host_path = sources.get("/app/skill-projections")
-        if not all(
-            (
-                self._user_data_host_path,
-                self._skill_projections_host_path,
-            )
-        ):
-            raise RuntimeError("cannot infer explicit UserWorkspace/Skill host paths")
+        if not source:
+            raise RuntimeError("cannot infer explicit UserWorkspace host path")
+        self._user_data_host_path = source
 
     def _is_on_expected_network(self, container, sandbox_id: str) -> bool:
         networks = (container.attrs.get("NetworkSettings") or {}).get("Networks") or {}
@@ -1116,15 +1079,6 @@ class LocalContainerProvisionerBackend:
                     )
                     self.delete(sandbox_id)
                     existing = None
-                elif not ephemeral_storage and not self._is_expected_skills_mount(
-                    existing, safe_uid
-                ):
-                    logger.info(
-                        "Recreating sandbox %s because skills mount is stale",
-                        sandbox_id,
-                    )
-                    self.delete(sandbox_id)
-                    existing = None
                 elif not self._is_on_expected_network(existing, sandbox_id):
                     logger.info(
                         "Recreating sandbox %s because its network is stale", sandbox_id
@@ -1173,21 +1127,10 @@ class LocalContainerProvisionerBackend:
                     )
 
             session_workspace = None
-            user_skills = None
             if not ephemeral_storage:
-                self._ensure_directory_within(
-                    self._skill_projections_container_path,
-                    (safe_uid,),
-                )
-                self._validate_directory_without_symlinks(
-                    self._skill_projections_container_path,
-                    (safe_uid,),
-                    label="skill projection",
-                )
                 session_workspace = self._session_workspace_host_path(
                     safe_uid, safe_thread_id
                 )
-                user_skills = self._user_skills_host_path(safe_uid)
             workdir_mount_root = None
             if safe_workdir_path and session_workspace is not None:
                 # 工作区目录：建目录 + 换挂载根（详见 _prepare_project_workdir 的注释）
@@ -1215,12 +1158,11 @@ class LocalContainerProvisionerBackend:
                 # The sandbox image expects /home/gem to be writable during boot.
                 # Keep it ephemeral and mount persistent user-data underneath it.
                 "tmpfs": {"/home/gem": "rw,exec,mode=777"},
+                # 让沙盒容器能解析 host.docker.internal 回到宿主机网关(172.17.0.1)，从而回调
+                # 后端（SANDBOX_CALLBACK_BASE_URL 默认 host.docker.internal:8090/ai）。配合后端/
+                # provisioner 端口绑 172.17.0.1，可在不暴露公网的前提下打通整条链路。
+                "extra_hosts": ["host.docker.internal:host-gateway"],
             }
-            if not ephemeral_storage and user_skills is not None:
-                run_kwargs["volumes"][str(user_skills)] = {
-                    "bind": "/home/gem/skills",
-                    "mode": "ro",
-                }
             if not ephemeral_storage and session_workspace is not None:
                 mount_root = (
                     workdir_mount_root if workdir_mount_root is not None
@@ -1311,21 +1253,6 @@ class LocalContainerProvisionerBackend:
                     exc,
                 )
             return None
-        if not ephemeral_storage and not self._is_expected_skills_mount(
-            container, safe_uid
-        ):
-            logger.info(
-                "Discarding stale sandbox %s with unexpected skills mount", sandbox_id
-            )
-            try:
-                self.delete(sandbox_id)
-            except Exception as exc:
-                logger.warning(
-                    "Failed to delete stale sandbox %s during discover: %s",
-                    sandbox_id,
-                    exc,
-                )
-            return None
         if not ephemeral_storage and not self._has_expected_user_data_mounts(
             container, safe_uid, thread_id
         ):
@@ -1395,7 +1322,6 @@ class KubernetesProvisionerBackend:
             "SANDBOX_IMAGE",
             DEFAULT_SANDBOX_IMAGE,
         )
-        self._skill_pvc = os.getenv("SKILLS_PVC", "yuxi-skills")
         self._user_data_pvc = os.getenv("USER_DATA_PVC", "yuxi-user-data")
         self._node_host = os.getenv("NODE_HOST", "host.docker.internal")
         self._container_port = int(os.getenv("SANDBOX_CONTAINER_PORT", "8080"))
@@ -1497,10 +1423,6 @@ class KubernetesProvisionerBackend:
                                 name="user-data",
                                 mount_path="/mnt/user-data",
                             ),
-                            self._client.V1VolumeMount(
-                                name="skills-data",
-                                mount_path="/mnt/skills-data",
-                            ),
                         ],
                     ),
                 ],
@@ -1520,18 +1442,6 @@ class KubernetesProvisionerBackend:
                                 name="home-dir", mount_path="/home/gem"
                             ),
                             *data_mounts,
-                            *(
-                                [
-                                    self._client.V1VolumeMount(
-                                        name="skills-data",
-                                        mount_path="/home/gem/skills",
-                                        sub_path=f"skill-projections/{uid}",
-                                        read_only=True,
-                                    )
-                                ]
-                                if not ephemeral_storage
-                                else []
-                            ),
                         ],
                     )
                 ],
@@ -1542,13 +1452,6 @@ class KubernetesProvisionerBackend:
                                 name="user-data",
                                 persistent_volume_claim=self._client.V1PersistentVolumeClaimVolumeSource(
                                     claim_name=self._user_data_pvc,
-                                    read_only=False,
-                                ),
-                            ),
-                            self._client.V1Volume(
-                                name="skills-data",
-                                persistent_volume_claim=self._client.V1PersistentVolumeClaimVolumeSource(
-                                    claim_name=self._skill_pvc,
                                     read_only=False,
                                 ),
                             ),
@@ -1621,12 +1524,9 @@ class KubernetesProvisionerBackend:
         }
         if actual_claims.get("user-data") != self._user_data_pvc:
             return False
-        if actual_claims.get("skills-data") != self._skill_pvc:
-            return False
         # 注意：k8s 后端未对齐会话级沙盒目录（见 _build_pod_spec 的显式标注）
         expected_mounts = {
             "/home/gem/user-data": ("user-data", f"shared/{uid}/workspace"),
-            "/home/gem/skills": ("skills-data", f"skill-projections/{uid}"),
         }
         for container in getattr(pod.spec, "containers", []) or []:
             if getattr(container, "name", None) != "sandbox":
@@ -1644,7 +1544,6 @@ class KubernetesProvisionerBackend:
                     actual_mounts.get(path, (None, None, False))[:2] == expected
                     for path, expected in expected_mounts.items()
                 )
-                and actual_mounts.get("/home/gem/skills", (None, None, False))[2]
                 and all(
                     not _is_persistent_sandbox_mount_path(path)
                     or path in expected_mounts

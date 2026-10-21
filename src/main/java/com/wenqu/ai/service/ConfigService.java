@@ -302,7 +302,7 @@ public class ConfigService {
         d.put("chat.resumeEnabled", "true");                // 刷新/换设备后接回正在跑的那一轮
         d.put("chat.detachGraceMs", "180000");              // 没人观看多久后按中断收束本轮；-1=一律跑完，0=关掉就停
         // ---------- 问答引擎：单引擎（只保留 AgentScope 框架运行时）----------
-        // 手写 legacy 与 ab 灰度分流已下线；框架会话状态目录：AgentScope 默认写 ~/.agentscope/state/**，
+        // 手写运行时与 ab 灰度分流已下线；框架会话状态目录：AgentScope 默认写 ~/.agentscope/state/**，
         // 在问渠受管数据目录之外（容器里等于丢）
         d.put("chat.agentscopeStateDir", System.getProperty("user.dir") + "/user-data/agentscope");
         d.put("chat.agentscopeMaxIters", "12");            // 框架引擎单轮推理步数上限（ReAct 循环；框架默认 10，问渠显式 12）
@@ -320,6 +320,15 @@ public class ConfigService {
         // 连接 host/port/password 复用 spring.data.redis（REDIS_HOST/REDIS_PORT/REDIS_PASSWORD），
         // 不再作为 c_ai_config 字段；这里只保留一个 key 前缀，避免与缓存/配置广播混用命名空间。
         d.put("chat.agentscopeRedisPrefix", "agentscope:session:");
+        // 会话事件日志归档：与上面 agentscopeRedisEnabled 是同一个坑（schema 声明了、defaults() 漏登记）。
+        // 漏登记不只是「库里少一行」：snapshot() 只遍历 defaults()，这些键的值永远不回显，
+        // 页面按 schema 的 def 显示初值，而脏检测只比页面上出现过的值——于是归档开关打开后
+        // 在界面上既看不到、也关不掉（库里那行 true 一直留着）。四个键一并登记，读取点
+        // SessionLogArchive/ScheduleCenter 的形参默认值与之同口径。
+        d.put("chat.sessionLogArchive.enabled", "false");   // 归档默认关：JSONL 里有工具入参与结果，生产上等于多一份过程明细落盘
+        d.put("chat.sessionLogArchive.dir", "");             // 留空=落在 {chat.agentscopeStateDir}/session-archive；多副本必须指共享卷
+        d.put("chat.sessionLogArchive.keepDays", "90");      // 按归档文件最后写入时间判定；0=不清理
+        d.put("chat.sessionLogArchive.cleanupIntervalMs", "86400000"); // 清理任务间隔，默认 1 天；≤0 暂停该任务
         // chat.agentscopeTurnTimeoutSeconds 已取消（2026-10）：框架对单把工具有自带 5 分钟硬超时，
         // 此前用该键覆盖成 SSE 超时，默认 0=沿用 SSE 超时——框架已有限制、参数只留个默认就用不上，
         // 现由 AgentscopeChatEngine.turnSeconds() 恒定取 chat.sseTimeoutMs，不再留配置口
@@ -335,7 +344,7 @@ public class ConfigService {
         d.put("vision.prompt", properties.getVision().getPrompt());
         // vision.baseUrl / vision.apiKey 不注默认值：视觉网关统一来自「模型供应商」表（知识库
         // parse_params.visionRef 引用 → 供应商网关）。这两键既不在可编辑白名单、也没有运行时读取点，
-        // 灌进库里只会让"设置值看起来生效"（VisionService.routeFor 对无引用直接跳过，不回落 legacy）
+        // 灌进库里只会让"设置值看起来生效"（VisionService.routeFor 对无引用直接跳过，不回落这两键）
         d.put("vision.enabled", String.valueOf(properties.getVision().isEnabled())); // L12：总开关（设置页可改）
         d.put("vision.concurrency", String.valueOf(properties.getVision().getConcurrency()));
         d.put("vision.descCacheVersion", "1");                 // 图片描述缓存版本（bump 后全量重新描述）
@@ -361,7 +370,7 @@ public class ConfigService {
         d.put("retrieval.vectorWeight", String.valueOf(properties.getRetrieval().getVectorWeight()));
         d.put("retrieval.keywordWeight", String.valueOf(properties.getRetrieval().getKeywordWeight()));
         d.put("rerank.enabled", String.valueOf(properties.getRetrieval().getRerank().isEnabled()));
-        // personalOnly：归知识库/智能体检索设置绑定，没有全局槽位。保留在 defaults() 只为
+        // personalOnly：归知识库检索设置绑定，没有全局槽位。保留在 defaults() 只为
         // snapshot/isLiveKey 能识别这个键；ensureDefaults 会跳过 personalOnly，不再往库里种全局行。
         d.put("rerank.model", "");
         // 平台默认重排模型（管理员登记，全平台兜底）：库/智能体覆盖与个人设置都为空时生效，
@@ -370,7 +379,8 @@ public class ConfigService {
         d.put("rerank.platformRef", "");
         d.put("rerank.baseUrl", properties.getRetrieval().getRerank().getBaseUrl());
         // 重排窗口两键：此前只有代码默认值（ConfigDefaults），设置页看不见、PUT 改不动，
-        // 只能直接改库——调参时等于"没有入口"，2026-10-13 登记进 schema 一并补齐
+        // 只能直接改库——调参时等于"没有入口"。2026-10-20 补齐 schema 字段（检索设置·重排服务一节），
+        // defaults() 与 schema 的 def 同为 ConfigDefaults.RERANK_MIN_HITS/MAX_HITS。
         d.put("rerank.minHits", String.valueOf(ConfigDefaults.RERANK_MIN_HITS));
         d.put("rerank.maxHits", String.valueOf(ConfigDefaults.RERANK_MAX_HITS));
         // context.safetyFactor / context.costCapTokens / context.maxOutputTokens 已退役：
@@ -394,7 +404,7 @@ public class ConfigService {
         d.put("retrieval.minFusionScore", String.valueOf(ConfigDefaults.RETRIEVAL_MIN_FUSION_SCORE));    // 融合分门槛（未启用重排时生效；2026-10-04 评测基线标定：期望块 95.7%≥0.55，无关块 70%<0.5、通过率 30%，旧 0.25 时通过率 82.7% 拦不住词面重叠噪声；调检索权重后需重标定；0=关）
         // retrieval.queryRewriteEnabled 已退役（2026-10）：多轮查询改写实现已随手写运行时删除，
         // 框架/检索链路没有第二个读取点；存量行由 schema.sql 清理。
-        d.put("retrieval.aclTopKSupplant", "true");        // 权限补采是否顶掉原 topK 尾部（2026-10-09 补：schema 早已声明，defaults 漏登记 → 设置页改了回显不出）
+        d.put("retrieval.aclTopKSupplant", "true");        // 权限补采是否顶掉原 topK 尾部（2026-10-20 补 schema 字段：此前 defaults 登记了但设置页没有这一行，改了无法回显、PUT 还会被整笔拒）
         d.put("retrieval.vectorTopK", "15");               // 向量召回 topK（调优/评估扫参用，下限 1）
         d.put("retrieval.keywordLimit", "20");             // 关键词召回上限
         d.put("retrieval.searchTimeoutMs", "8000");        // 混合检索总超时
@@ -651,7 +661,7 @@ public class ConfigService {
         // 的读取点随 SubAgentOrchestrator 一起归零——见本方法上方那段「已退役」清单的统一说明。
         d.put("agent.consultMaxPerTurn", String.valueOf(ConfigDefaults.AGENT_CONSULT_MAX_PER_TURN));   // 一轮最多咨询几位助手
         d.put("agent.consultTimeoutMs", String.valueOf(ConfigDefaults.AGENT_CONSULT_TIMEOUT_MS));      // 单次咨询等那条子轮的上限
-        // tool.subagentConsult.enabled 已退役：咨询工具随总闸启用，平台级收口走 tool.deny（按工具名 consultAgent）。
+        // tool.subagentConsult.enabled 已退役：派遣随工具总闸启用，平台级收口走 tool.deny（按工具名 agent_spawn）。
         // 智能体配置版本快照保留份数（超出按版本号最小先删）；设置页挂在「定时任务 → 智能体配置版本」
         d.put("agent.versionKeep", "20");
         // mcp.enabled / mcp.servers 已移除：MCP **客户端**改为每人自己的 c_ai_user_mcp（见 McpClientService）

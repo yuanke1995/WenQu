@@ -24,10 +24,14 @@ import java.util.stream.Collectors;
  * <p>
  * 两路召回均只返回生效文档（status=0）的知识块：关键词路 SQL 过滤，向量路按命中块的 docId 批量剔除。
  * <p>
- * - 向量：topK 可配（retrieval.vectorTopK，默认 15）+ 阈值放宽（0.3），分数归一化到 0~1（(score-0.3)/(1-0.3)）
+ * - 向量：topK 全局可配（retrieval.vectorTopK，默认 15）+ <b>逐库</b>阈值（retrieval.vecThreshold），
+ *   分数按该块所属库的阈值归一化到 0~1（(score-vt)/(1-vt)）
  * - 关键词：词元 LIKE 召回 + 词频加权（tf×idf，标题词频×2，归一化 0~1）
- * - 融合：向量分 × 向量权重 + 关键词分 × 关键词权重（加权和），双命中叠加各自分量
- * 权重来自 DB 配置 retrieval.*（设置页保存即生效；默认 0.6/0.4）
+ * - 融合：向量分 × 向量权重 + 关键词分 × 关键词权重（加权和），双命中叠加各自分量；
+ *   两路权重<b>逐库</b>取自知识库检索参数（见 {@link KbParamCodec}），留空继承全局（默认 0.6/0.4）
+ * <p>
+ * 阈值与权重按“块所属库”生效，而不是按回合压成一个标量：一轮可能跨多个库，各库语料分布不同，
+ * 同一个阈值/权重不可能同时合适（法律库要关键词权重高、口语库要向量权重高）。
  *
  * @author yuanke
  */
@@ -36,10 +40,9 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class HybridRetrievalService {
 
-    /** 默认参数：检索行为参数收口到 c_ai_config（retrieval.*，设置页可调、保存即生效） */
+    /** 全局默认（召回量/超时）：库级参数只覆盖阈值与两路权重，见 {@link KbParamCodec} */
     private long keywordTimeoutMs() { return configService.getInt("retrieval.keywordTimeoutMs", 800); }
     private int keywordLimit() { return configService.getInt("retrieval.keywordLimit", 20); }
-    private double vecThreshold() { return configService.getDouble("retrieval.vecThreshold", 0.3); }
 
     private final KbVectorStoreRegistry kbVectorStores;
     private final KnowledgeMapper knowledgeMapper;
@@ -58,6 +61,8 @@ public class HybridRetrievalService {
     private final GraphRagService graphRagService;
     /** ACL 标签编译：把可见库集合 + 当前身份编译成向量索引的 filter 表达式（检索时过滤） */
     private final DocumentAclTags documentAclTags;
+    /** 库级检索参数（阈值/权重逐库生效；不依赖本服务，无环） */
+    private final KbRetrievalParamService kbRetrievalParams;
 
     /** 全量重嵌入进行中（持有分布式锁的实例正在 DROP/重建向量索引）→ 各实例向量路跳过降级关键词 */
     private boolean reembedInProgress() {
@@ -72,13 +77,37 @@ public class HybridRetrievalService {
      * 混合检索结果（titlePath 章节路径，检索侧拼装上下文用）。
      * rerankScore：重排模型相关度分（0~1，relevance_score），仅重排实际执行后由 RerankService 回填；
      * 未重排时为 null——score 始终是融合分（向量+关键词加权），两者口径不同，引用来源分别透出。
+     * kbId：命中块所属库（向量 metadata 的库门字段；关键词路经 docId→kbId 映射补上）。
+     * 库级阈值/权重按它取，重排模型也按“本轮命中库”收敛；联网/图扩展等合成命中可能为空。
      */
     public record Hit(String knowledgeId, String docId, String title, String content,
                       List<String> images, double score, Integer chunkIndex, String titlePath,
-                      Double rerankScore) {
+                      Double rerankScore, String kbId) {
         /** 回填重排分（其余字段原样拷贝；record 等值含大文本字段，重排排序直接用该分值比较） */
         public Hit withRerankScore(double rerankScore) {
-            return new Hit(knowledgeId, docId, title, content, images, score, chunkIndex, titlePath, rerankScore);
+            return new Hit(knowledgeId, docId, title, content, images, score, chunkIndex, titlePath,
+                    rerankScore, kbId);
+        }
+
+        /** 回填融合分（融合是最后一步：两路分量先按块所属库的权重合成，再落到 Hit 上） */
+        public Hit withScore(double score) {
+            return new Hit(knowledgeId, docId, title, content, images, score, chunkIndex, titlePath,
+                    rerankScore, kbId);
+        }
+    }
+
+    /** 融合中间态：两路分量分开存，最后按块所属库的权重合成（权重逐库不同，不能先加权再合并） */
+    private static final class FusedHit {
+        private Hit hit;
+        private String kbId;
+        private double vec;
+        private double kw;
+
+        FusedHit(Hit hit, String kbId, double vec, double kw) {
+            this.hit = hit;
+            this.kbId = kbId;
+            this.vec = vec;
+            this.kw = kw;
         }
     }
 
@@ -162,9 +191,10 @@ public class HybridRetrievalService {
      */
     public List<Hit> search(String query, RetrievalDiag diag, java.util.Collection<String> kbIds,
             boolean adaptiveTopK) {
-        // 权重动态读取（DB 配置，保存即生效；缺失时兜底 yml 默认值 0.6/0.4/0.1）
-        double vectorWeight = configService.getDouble("retrieval.vectorWeight");
-        double keywordWeight = configService.getDouble("retrieval.keywordWeight");
+        // 本轮库级参数逐库解析一次：阈值/权重都按“命中块所属库”取，不能压成回合级标量。
+        // 取值链见 KbRetrievalParamService：显式覆盖(评估扫参) > 库级 JSON > 全局设置。
+        Map<String, KbRetrievalParamService.Params> params = kbRetrievalParams.forScope(kbIds);
+        KbRetrievalParamService.Params defaults = kbRetrievalParams.defaults();
 
         // 可见范围过滤（资源共享范围）：当前用户不可见的文档在向量/关键词两路统一剔除
         // 1. 向量召回（放大召回率；按目标知识库的向量模型分组逐库检索后合并）
@@ -172,8 +202,8 @@ public class HybridRetrievalService {
         //    补采还受 retrieval.aclTopKSupplant 总闸约束：应急阀，管理员可在设置页关掉（见下方 KNN 成本说明）
         boolean supplement = adaptiveTopK && configService.getBoolean("retrieval.aclTopKSupplant", true);
         List<Document> vectorDocs = supplement
-                ? vectorSearch(query, diag, kbIds, Math.max(1, configService.getInt("retrieval.vectorTopK", 15)))
-                : vectorSearch(query, diag, kbIds, 0);
+                ? vectorSearch(query, diag, kbIds, Math.max(1, configService.getInt("retrieval.vectorTopK", 15)), params)
+                : vectorSearch(query, diag, kbIds, 0, params);
 
         // 2. 关键词召回（并行，超时兜底）
         List<Knowledge> kwDocs = keywordSearch(query, diag);
@@ -187,15 +217,15 @@ public class HybridRetrievalService {
         //    且 ACL 真相被复制进向量 metadata 造成两处口径（详见 DocumentAclTags 类注释）。
         //    现在只对命中块涉及的 docId 批量查一次（WHERE id IN (...)，主键索引、亚毫秒级），
         //    判定全部收敛到 ResourceVisibilityService 一处，改共享范围下次检索即生效、无需重写索引。
-        Set<String> visibleDocIds = loadVisibleDocIdsOfHits(vectorDocs, kwDocs, kidMap);
+        //    docKb 顺手带回 docId→kbId：关键词路只拿到 docId，没有它就无法按库取权重。
+        Map<String, String> docKb = new HashMap<>();
+        Set<String> visibleDocIds = loadVisibleDocIdsOfHits(vectorDocs, kwDocs, kidMap, docKb);
 
-        // 4. 合并去重 + 加权（向量权重 × 归一化向量分 + 关键词权重 × 词频加权分；双命中叠加）
-        Map<String, Hit> merged = new LinkedHashMap<>();
-
-        // 向量命中：score = 向量权重 × 归一化向量分；非生效文档（弃用/解析中/解析失败）跳过，与关键词路 status=0 语义一致
-        // 附加索引命中（QA 问法/父子子块）：向量 id 不是知识块 id，kidMap 已解析回来源块——同一块可被块向量与
-        // 多个附加向量同时命中，按 knowledgeId 合并保留最高分（与"双命中叠加"的关键词路互不干扰）
-        double vt = vecThreshold();
+        // 5. 融合：先存两路归一化分量，最后按块所属库的权重合成
+        //    向量命中：非生效文档（弃用/解析中/解析失败）跳过，与关键词路 status=0 语义一致
+        //    附加索引命中（QA 问法/父子子块）：向量 id 不是知识块 id，kidMap 已解析回来源块——同一块可被块向量与
+        //    多个附加向量同时命中，按 knowledgeId 合并保留最高向量分（与"双命中叠加"的关键词路互不干扰）
+        Map<String, FusedHit> fused = new LinkedHashMap<>();
         for (Document doc : vectorDocs) {
             Knowledge k = kidMap.get(String.valueOf(doc.getId()));
             boolean augHit = k != null && !String.valueOf(doc.getId()).equals(String.valueOf(k.getId()));
@@ -214,16 +244,22 @@ public class HybridRetrievalService {
                 log.debug("[RAG] 跳过已停用知识块: kid={}", kid);
                 continue;
             }
-            double vecScore = parseScore(doc.getScore());
-            double vecNorm = Math.max(0, (vecScore - vt) / (1.0 - vt));
-            // L8（设计保留，不扰用户）：单路为空时分数为绝对加权和——向量单飞=vectorWeight×vecNorm，
-            // 关键词单飞=keywordWeight×hitRate，两者同体系（0~0.6 / 0~0.4）可直接比较排序，无虚高问题；
-            // 仅当关键词路 hitRate 本身归一化失真时才可能偏高（MySQL LIKE 路已按命中集归一化，属已知边界）
-            double score = vectorWeight * vecNorm;
-            Hit hit = augHit ? buildAugHit(doc, k, kid, score) : buildHit(doc, k, kid, score);
-            merged.merge(kid, hit, (a, b) -> a.score() >= b.score() ? a : b);
+            // 向量的库门字段是 @kbId；RedisVectorStore 可能丢 metadata（M6），退 docId→kbId 映射
+            String kbId = metadataKbId(doc);
+            if (kbId == null || kbId.isBlank()) kbId = docId == null || docId.isBlank() ? null : docKb.get(docId);
+            double vt = params.getOrDefault(kbId, defaults).vecThreshold();
+            double vecNorm = normalizeScore(parseScore(doc.getScore()), vt);
+            Hit hit = augHit ? buildAugHit(doc, k, kid, 0, kbId) : buildHit(doc, k, kid, 0, kbId);
+            FusedHit f = fused.get(kid);
+            if (f == null) {
+                fused.put(kid, new FusedHit(hit, kbId, vecNorm, 0));
+            } else if (vecNorm > f.vec) {
+                // 同一块的多次向量命中：保留向量分更高者（权重同库相同，等价于保留融合分更高者）
+                f.hit = hit;
+                f.vec = vecNorm;
+            }
         }
-        // 关键词命中：score = 关键词权重 × 词频加权分；与向量命中叠加（相加）
+        // 关键词命中：与向量命中叠加（两路分量相加）；词频加权分 0~1
         for (Knowledge k : kwDocs) {
             // 可见范围：白名单判定（与向量路同口径；docId 为空=手动块，不在文档 ACL 管辖内）
             String kDocId = k.getDocId() == null ? "" : String.valueOf(k.getDocId());
@@ -231,19 +267,26 @@ public class HybridRetrievalService {
                 log.debug("[RAG] 跳过不可见文档命中（关键词路）: docId={} kid={}", kDocId, k.getId());
                 continue;
             }
+            String kbId = kDocId.isBlank() ? null : docKb.get(kDocId);
             double hitRate = k.getKwScore(); // 词频加权归一化分（0~1，替代原词元占比）
-            double score = keywordWeight * hitRate;
-            merged.merge(k.getId(), buildHit(k, score), (oldHit, newHit) ->
-                    new Hit(oldHit.knowledgeId(),
-                            oldHit.docId() == null || oldHit.docId().isBlank() ? newHit.docId() : oldHit.docId(),
-                            oldHit.title(), oldHit.content(), oldHit.images(),
-                            oldHit.score() + newHit.score(), // A1：双命中叠加
-                            oldHit.chunkIndex() == null ? newHit.chunkIndex() : oldHit.chunkIndex(),
-                            oldHit.titlePath() == null ? newHit.titlePath() : oldHit.titlePath(),
-                            null));
+            FusedHit f = fused.get(String.valueOf(k.getId()));
+            if (f == null) {
+                fused.put(String.valueOf(k.getId()), new FusedHit(buildHit(k, 0, kbId), kbId, 0, hitRate));
+            } else {
+                // A1：双命中叠加——保留向量侧正文/标题，补 docId 与章节路径
+                f.hit = mergeHit(f.hit, buildHit(k, 0, kbId));
+                f.kw = hitRate;
+                if (f.kbId == null) f.kbId = kbId;
+            }
         }
 
-        List<Hit> result = new ArrayList<>(merged.values());
+        List<Hit> result = new ArrayList<>(fused.size());
+        for (FusedHit f : fused.values()) {
+            KbRetrievalParamService.Params p = params.getOrDefault(f.kbId, defaults);
+            // 单路为空时分数为绝对加权和——向量单飞=vectorWeight×vecNorm，关键词单飞=keywordWeight×hitRate，
+            // 两者同体系可直接比较排序；权重逐库取自库设置，留空继承全局
+            result.add(f.hit.withScore(p.vectorWeight() * f.vec + p.keywordWeight() * f.kw));
+        }
         result.sort((a, b) -> Double.compare(b.score(), a.score()));
         // P1 GraphRAG 图扩展：按库级开关一跳补块（真实块衰减分并入，diag.graphExpanded 计数）
         try {
@@ -369,7 +412,8 @@ public class HybridRetrievalService {
                     if (count >= 2) {
                         double bonus = Math.min(count - 1, 2) * consensusBonus;
                         result.set(i, new Hit(h.knowledgeId(), h.docId(), h.title(), h.content(),
-                                h.images(), h.score() + bonus, h.chunkIndex(), h.titlePath(), h.rerankScore()));
+                                h.images(), h.score() + bonus, h.chunkIndex(), h.titlePath(),
+                                h.rerankScore(), h.kbId()));
                         log.debug("[RAG] 多路共识加分: kid={} 命中路数={} bonus={}", h.knowledgeId(), count, bonus);
                     }
                 }
@@ -412,7 +456,7 @@ public class HybridRetrievalService {
      * 补采会掩盖 topK 被权限吃掉的事实。需要生产问答的补采行为请走 {@link #search(String, RetrievalDiag, java.util.Collection, boolean)}。
      */
     public List<Document> vectorSearch(String query, RetrievalDiag diag, java.util.Collection<String> kbIds) {
-        return vectorSearch(query, diag, kbIds, 0);
+        return vectorSearch(query, diag, kbIds, 0, kbRetrievalParams.forScope(kbIds));
     }
 
     /**
@@ -440,21 +484,23 @@ public class HybridRetrievalService {
      * </ul>
      */
     private List<Document> vectorSearch(String query, RetrievalDiag diag,
-            java.util.Collection<String> kbIds, int minWantedHits) {
+            java.util.Collection<String> kbIds, int minWantedHits,
+            Map<String, KbRetrievalParamService.Params> params) {
         // 全量重嵌入期间（任一实例执行 DROP/重建索引中）：向量索引不存在或半成品，
         // 直接跳过向量路（安静降级关键词路），避免对半成品索引检索产生错误/空召回与噪音告警
         if (reembedInProgress()) {
             log.debug("[RAG] 全量重嵌入进行中，向量路本次跳过（关键词路继续）");
             return List.of();
         }
-        List<VectorStore> stores = resolveVectorStores(kbIds);
+        // 逐库：kbId → 该库的向量库实例（索引按库隔离，阈值也按库取）
+        Map<String, VectorStore> stores = resolveVectorStores(kbIds);
         if (stores.isEmpty()) return List.of();
         // 可见范围过滤条件（检索时过滤）：可见库集合 + 当前用户身份，编译成 RediSearch filter 下推。
         // 必须在 resolveVectorStores 之后、similaritySearch 之前求值——下推靠它把无权文档挡在 KNN 之外。
         String aclFilter = buildAclFilter(kbIds, diag);
         try {
             int baseTopK = Math.max(1, configService.getInt("retrieval.vectorTopK", 15));
-            List<Document> first = similaritySearchAcross(stores, query, aclFilter, baseTopK, diag);
+            List<Document> first = similaritySearchAcross(stores, query, aclFilter, baseTopK, diag, params);
             if (minWantedHits <= 0 || first.isEmpty()) return first;
 
             int visibleCount = countVisibleHits(first);
@@ -470,7 +516,7 @@ public class HybridRetrievalService {
             }
             log.info("[RAG] 权限补采：有效命中 {}/{}（keepRate={}），topK {} → {} 补采一次",
                     visibleCount, first.size(), String.format("%.2f", keepRate), baseTopK, target);
-            List<Document> second = similaritySearchAcross(stores, query, aclFilter, target, diag);
+            List<Document> second = similaritySearchAcross(stores, query, aclFilter, target, diag, params);
             return second.isEmpty() ? first : second;
         } catch (Exception e) {
             // M4 fail-loud：向量路失败不再静默空
@@ -491,7 +537,7 @@ public class HybridRetrievalService {
     private int countVisibleHits(List<Document> vectorDocs) {
         try {
             Map<String, Knowledge> kidMap = loadKnowledgeBatch(vectorDocs);
-            Set<String> visibleDocIds = loadVisibleDocIdsOfHits(vectorDocs, List.of(), kidMap);
+            Set<String> visibleDocIds = loadVisibleDocIdsOfHits(vectorDocs, List.of(), kidMap, null);
             int n = 0;
             for (Document d : vectorDocs) {
                 Knowledge k = kidMap.get(String.valueOf(d.getId()));
@@ -507,18 +553,53 @@ public class HybridRetrievalService {
         }
     }
 
-    /** 按 topK 逐库检索并合并（多库时向量空间互不相通，必须逐库查后归并） */
-    private List<Document> similaritySearchAcross(List<VectorStore> stores, String query,
-            String aclFilter, int topK, RetrievalDiag diag) {
+    /** 按 topK 逐库检索并合并（多库时向量空间互不相通，必须逐库查后归并；阈值也逐库取） */
+    private List<Document> similaritySearchAcross(Map<String, VectorStore> stores, String query,
+            String aclFilter, int topK, RetrievalDiag diag,
+            Map<String, KbRetrievalParamService.Params> params) {
+        KbRetrievalParamService.Params defaults = kbRetrievalParams.defaults();
+        // 单库（绝大多数场景：范围命中单一库）直接查，保持原行为——异常上抛由 vectorSearch 记 vectorFailed
+        if (stores.size() == 1) {
+            Map.Entry<String, VectorStore> only = stores.entrySet().iterator().next();
+            double vt = params.getOrDefault(only.getKey(), defaults).vecThreshold();
+            return only.getValue().similaritySearch(
+                    buildVectorRequest(query, topK, vt, aclFilter, diag));
+        }
+        // 多库：每库绑定的向量模型不同（向量空间互不相通），逐库检索后合并——同块保留最高分
+        Map<String, Document> merged = new LinkedHashMap<>();
+        for (Map.Entry<String, VectorStore> e : stores.entrySet()) {
+            double vt = params.getOrDefault(e.getKey(), defaults).vecThreshold();
+            try {
+                for (Document d : e.getValue().similaritySearch(
+                        buildVectorRequest(query, topK, vt, aclFilter, diag))) {
+                    merged.merge(String.valueOf(d.getId()), d, (a, b) ->
+                            parseScore(a.getScore()) >= parseScore(b.getScore()) ? a : b);
+                }
+            } catch (Exception ex) {
+                // 多库检索中单库失败：其余库继续返回，但必须把失败透传到 diag——否则用户侧降级提示被吞、
+                // 静默丢掉该库向量召回（单库整体失败走外层 vectorFailed，二者互斥）
+                if (diag != null) diag.vectorPartialFailed(ex.getMessage());
+                log.warn("[FAIL-LOUD] 向量检索失败（多库检索中某库失败，其余库继续）: {}", ex.getMessage());
+            }
+        }
+        List<Document> out = new ArrayList<>(merged.values());
+        out.sort((a, b) -> Double.compare(parseScore(b.getScore()), parseScore(a.getScore())));
+        return out;
+    }
+
+    /**
+     * 构造单库的向量检索请求：topK 取全局配置、相似度阈值取<b>该库</b>的检索参数。
+     * <p>下推失败（索引缺字段/表达式非法）时退回无过滤检索 + 事后过滤，绝不因下推失败中断检索。
+     */
+    private SearchRequest buildVectorRequest(String query, int topK, double vt,
+            String aclFilter, RetrievalDiag diag) {
         SearchRequest.Builder builder = SearchRequest.builder()
                 .query(query)
                 // topK 直接取配置（默认 15，下限 1）：评估扫参需要小于 15 的值，max(15,...) 钳制会让扫参等价
                 .topK(Math.max(1, topK))
-                // 阈值以 DB 键 retrieval.vecThreshold 为准（0~1 白名单校验，评估"应用此组"可写）；
+                // 阈值以该库的 retrieval.vecThreshold 为准（0~1 钳制在解析层完成）；
                 // 不设 yml 上限钳制——0.5+ 区间对扫参/精调是有效区间，钳制会让配置静默失效
-                .similarityThreshold(vecThreshold());
-        // 库门下推：检索时过滤的核心。放在 similarityThreshold 之后设置，两者互不影响。
-        // 下推失败（索引缺字段/表达式非法）时退回无过滤检索 + 事后过滤，绝不因下推失败中断检索。
+                .similarityThreshold(vt);
         if (aclFilter != null && !aclFilter.isBlank()) {
             try {
                 builder = builder.filterExpression(aclFilter);
@@ -528,31 +609,13 @@ public class HybridRetrievalService {
                         e.getMessage());
             }
         }
-        SearchRequest req = builder.build();
-        // 单库（绝大多数场景：无自定义向量模型库，或范围命中单一库）直接查，保持原行为
-        if (stores.size() == 1) return stores.get(0).similaritySearch(req);
-        // 多库：每库绑定的向量模型不同（向量空间互不相通），逐库检索后合并——同块保留最高分
-        Map<String, Document> merged = new LinkedHashMap<>();
-        for (VectorStore st : stores) {
-            try {
-                for (Document d : st.similaritySearch(req)) {
-                    merged.merge(String.valueOf(d.getId()), d, (a, b) ->
-                            parseScore(a.getScore()) >= parseScore(b.getScore()) ? a : b);
-                }
-            } catch (Exception e) {
-                // 多库检索中单库失败：其余库继续返回，但必须把失败透传到 diag——否则用户侧降级提示被吞、
-                // 静默丢掉该库向量召回（单库整体失败走外层 vectorFailed，二者互斥）
-                if (diag != null) diag.vectorPartialFailed(e.getMessage());
-                log.warn("[FAIL-LOUD] 向量检索失败（多库检索中某库失败，其余库继续）: {}", e.getMessage());
-            }
-        }
-        List<Document> out = new ArrayList<>(merged.values());
-        out.sort((a, b) -> Double.compare(parseScore(b.getScore()), parseScore(a.getScore())));
-        return out;
+        return builder.build();
     }
 
     /**
-     * 目标知识库集合 → 去重后的向量库实例（每库按各自绑定的向量模型路由独立索引）。
+     * 目标知识库集合 → 逐库的向量库实例（kbId → store；每库按各自绑定的向量模型路由独立索引）。
+     * <p>返回 Map 而不是 List：阈值/权重按库取，调用方必须知道每个 store 属于哪个库。
+     * <p>（去重语义仍保留：同一 store 实例只出现一次，键取该库 id。）
      *
      * <p><b>为什么必须在建实例之前按可见性收窄（2026-10-06 修）</b>：
      * 原来 kbIds 为空时直接 {@code allStores()} 展开<b>全部</b>已绑模型的库，不看当前用户能不能读。
@@ -575,12 +638,12 @@ public class HybridRetrievalService {
      * 退化成「不搜任何库」，宁可本轮无召回也不越权代打他人额度（与库门表达式同一取向：
      * 空集=什么都搜得到是最危险的写法）。
      */
-    private List<VectorStore> resolveVectorStores(java.util.Collection<String> kbIds) {
+    private Map<String, VectorStore> resolveVectorStores(java.util.Collection<String> kbIds) {
         Set<String> visibleKbIds = loadVisibleKbIds();
         if (visibleKbIds == null) {
             // 可见库判不出来 ⇒ 不猜、不放行：本轮不发起任何向量检索（fail-closed）
             log.error("[FAIL-LOUD] 可见库集合查询失败，本轮跳过向量检索（不代打无权库的向量模型）");
-            return List.of();
+            return Map.of();
         }
         // 请求范围（智能体/工具绑定）更窄时取交集：范围外的库既无权也不该被检索
         Set<String> targetKbIds = new LinkedHashSet<>();
@@ -589,15 +652,15 @@ public class HybridRetrievalService {
             if (kbIds != null && !kbIds.isEmpty() && !kbIds.contains(kb.getId())) continue;
             targetKbIds.add(kb.getId());
         }
-        java.util.LinkedHashMap<VectorStore, Boolean> out = new java.util.LinkedHashMap<>();
+        java.util.LinkedHashMap<String, VectorStore> out = new java.util.LinkedHashMap<>();
         for (String kbId : targetKbIds) {
             try {
-                out.put(kbVectorStores.storeForKb(kbId), Boolean.TRUE);
+                out.putIfAbsent(kbId, kbVectorStores.storeForKb(kbId));
             } catch (Exception e) {
                 log.warn("[FAIL-LOUD] 知识库 {} 向量库构建失败（跳过该库）: {}", kbId, e.getMessage());
             }
         }
-        return new ArrayList<>(out.keySet());
+        return out;
     }
 
     /**
@@ -798,17 +861,18 @@ public class HybridRetrievalService {
      * title/content/图片/章节路径全部取块本身（问法/切片文本不进上下文不进引用），
      * 与直接命中该块的可引用性完全一致
      */
-    private Hit buildAugHit(Document doc, Knowledge k, String kid, double score) {
+    private Hit buildAugHit(Document doc, Knowledge k, String kid, double score, String kbId) {
         String docId = metadataDocId(doc);
         if (docId == null || docId.isEmpty()) {
             docId = k.getDocId() == null ? "" : String.valueOf(k.getDocId());
         }
         List<String> images = (k.getImages() == null || k.getImages().isBlank())
                 ? List.of() : com.alibaba.fastjson2.JSON.parseArray(k.getImages(), String.class);
-        return new Hit(kid, docId, k.getTitle(), k.getContent(), images, score, k.getChunkIndex(), k.getTitlePath(), null);
+        return new Hit(kid, docId, k.getTitle(), k.getContent(), images, score, k.getChunkIndex(),
+                k.getTitlePath(), null, kbId);
     }
 
-    private Hit buildHit(Document doc, Knowledge k, String kid, double score) {        Map<String, Object> md = doc.getMetadata();
+    private Hit buildHit(Document doc, Knowledge k, String kid, double score, String kbId) {        Map<String, Object> md = doc.getMetadata();
         String docId = metadataDocId(doc);
         String title = md.get("title") == null ? "" : String.valueOf(md.get("title"));
         List<String> images = imagesFromMd(md);
@@ -829,7 +893,7 @@ public class HybridRetrievalService {
             titlePath = tp == null ? null : String.valueOf(tp);
         }
         if (docId == null) docId = "";
-        return new Hit(kid, docId, title, doc.getText(), images, score, chunkIndex, titlePath, null);
+        return new Hit(kid, docId, title, doc.getText(), images, score, chunkIndex, titlePath, null, kbId);
     }
 
     /**
@@ -1030,7 +1094,8 @@ public class HybridRetrievalService {
      * 用户重试或运维介入即可恢复，不会泄露内容。
      */
     private Set<String> loadVisibleDocIdsOfHits(List<Document> vectorDocs, List<Knowledge> kwDocs,
-                                               Map<String, Knowledge> kidMap) {
+                                               Map<String, Knowledge> kidMap,
+                                               Map<String, String> docKbOut) {
         // 汇总本轮涉及的 docId：向量路优先取块表（权威），取不到再退metadata（向量库可能丢 metadata）
         Set<String> hitDocIds = new LinkedHashSet<>();
         for (Document d : vectorDocs == null ? List.<Document>of() : vectorDocs) {
@@ -1061,6 +1126,10 @@ public class HybridRetrievalService {
             for (AiDocument d : docs) {
                 if (d == null) continue;
                 String kbId = d.getKbId();
+                // 顺手带回 docId→kbId：关键词命中只有 docId，融合时要按库取权重；手工块无文档行、取不到即走全局
+                if (docKbOut != null && kbId != null && !kbId.isBlank()) {
+                    docKbOut.put(String.valueOf(d.getId()), kbId);
+                }
                 // 未挂任何库的文档（kbId 空）按默认库判定（kb_id 空=默认库语义，与管理接口一致）
                 boolean kbVisible = kbId == null || kbId.isBlank() || visibleKbIds.contains(kbId);
                 boolean docVisible = resourceVisibilityService.canReadDocFollowKb(
@@ -1080,7 +1149,33 @@ public class HybridRetrievalService {
         return v == null ? null : String.valueOf(v);
     }
 
-    private Hit buildHit(Knowledge k, double score) {
+    /** 向量命中自带的库门字段（DocumentAclTags.FIELD_KB_ID）；RedisVectorStore 可能丢 metadata，调用方须兜底 */
+    private String metadataKbId(Document doc) {
+        Object v = doc.getMetadata().get("kbId");
+        return v == null ? null : String.valueOf(v);
+    }
+
+    /**
+     * 阈值归一化：低于该库阈值记 0，1.0 为满分。
+     * <p>{@code vt} 由参数解析层钳在 0~0.99，分母不会为 0；包级可见便于单测直接钉住口径。
+     */
+    static double normalizeScore(double score, double vt) {
+        return Math.max(0, (score - vt) / (1.0 - vt));
+    }
+
+    /** 关键词命中并入已有向量命中：保留向量侧标题/正文/图片，补 docId 与章节路径（双命中叠加） */
+    private static Hit mergeHit(Hit oldHit, Hit newHit) {
+        return new Hit(oldHit.knowledgeId(),
+                oldHit.docId() == null || oldHit.docId().isBlank() ? newHit.docId() : oldHit.docId(),
+                oldHit.title(), oldHit.content(), oldHit.images(),
+                0, // 融合分在最后一步按块所属库的权重合成
+                oldHit.chunkIndex() == null ? newHit.chunkIndex() : oldHit.chunkIndex(),
+                oldHit.titlePath() == null ? newHit.titlePath() : oldHit.titlePath(),
+                null,
+                oldHit.kbId() == null || oldHit.kbId().isBlank() ? newHit.kbId() : oldHit.kbId());
+    }
+
+    private Hit buildHit(Knowledge k, double score, String kbId) {
         List<String> images = new ArrayList<>();
         if (k.getImages() != null && !k.getImages().isBlank()) {
             try {
@@ -1090,7 +1185,7 @@ public class HybridRetrievalService {
             }
         }
         return new Hit(String.valueOf(k.getId()), String.valueOf(k.getDocId()),
-                k.getTitle(), k.getContent(), images, score, k.getChunkIndex(), k.getTitlePath(), null);
+                k.getTitle(), k.getContent(), images, score, k.getChunkIndex(), k.getTitlePath(), null, kbId);
     }
 
     private List<String> imagesFromMd(Map<String, Object> md) {

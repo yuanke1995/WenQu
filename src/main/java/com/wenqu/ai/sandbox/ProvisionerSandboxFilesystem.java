@@ -2,8 +2,13 @@ package com.wenqu.ai.sandbox;
 
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.harness.agent.filesystem.model.ExecuteResponse;
+import io.agentscope.harness.agent.filesystem.model.FileData;
 import io.agentscope.harness.agent.filesystem.model.FileDownloadResponse;
+import io.agentscope.harness.agent.filesystem.model.FileInfo;
 import io.agentscope.harness.agent.filesystem.model.FileUploadResponse;
+import io.agentscope.harness.agent.filesystem.model.GlobResult;
+import io.agentscope.harness.agent.filesystem.model.LsResult;
+import io.agentscope.harness.agent.filesystem.model.ReadResult;
 import io.agentscope.harness.agent.filesystem.sandbox.BaseSandboxFilesystem;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -21,24 +26,32 @@ import org.slf4j.LoggerFactory;
  * 框架 {@link BaseSandboxFilesystem} 的问渠实现 —— <b>这一类才让框架的工具真正落到 provisioner 沙箱</b>。
  *
  * <h3>为什么必须有它（踩过的坑）</h3>
- * 只往 {@link RuntimeContext} 里put {@code SandboxContext}（官网「自管沙箱实例」教的做法）
+ * 只往 {@link RuntimeContext} 里 put {@code SandboxContext}（官网「自管沙箱实例」教的做法）
  * <b>不足以让工具落到沙箱</b>：框架的 {@code FilesystemTool} / {@code ShellExecuteTool}
- * 解析的是 {@code ctx.get(AbstractFilesystem.class)}，而
- * {@code HarnessAgent#ensureSessionDefaults}（:1087）只透传 {@code SandboxContext}。
- * 实测后果：模型调 {@code execute("pwd")}，返回的是<b>宿主项目目录</b>而不是沙箱的
- * {@code /home/gem/user-data}——工具静默跑在宿主上，这是最危险的一种失败（看起来成功、实则没隔离）。
+ * 在 <b>build 期</b>就从 builder 字段绑好文件系统，{@code RuntimeContext} 里有没有
+ * {@code AbstractFilesystem} 它们都不看。实测后果：模型调 {@code execute("pwd")}，
+ * 返回的是<b>宿主项目目录</b>而不是沙箱的 {@code /home/gem/user-data}——
+ * 工具静默跑在宿主上，这是最危险的一种失败（看起来成功、实则没隔离）。
+ * <p>因此本类必须经 {@code HarnessAgent.Builder#abstractFilesystem} 在 build 期传入。
+ * 框架另有声明式的 {@code .filesystem(SandboxFilesystemSpec)}（官网文档口径），走那条会在
+ * {@code HarnessAgent#build} 里硬 new 一份框架自带的 {@code SandboxBackedFilesystem}，
+ * 既接不进问渠的沙箱语义、也不提供会话日志存储（接口默认实现直接抛）——两条证据见
+ * {@code docs/harness-framework-migration.md} §P1-5 复核。
  * <p>正确形态：{@code SandboxContext} 管<b>生命周期</b>（框架 stop / 应用 shutdown），
  * 本类作为 {@code AbstractFilesystem} 管<b>工具实际怎么访问沙箱</b>，两者都要出现在 RuntimeContext 里。
  *
- * <h3>为什么只实现四个方法</h3>
+ * <h3>哪些交给框架、哪些必须自己实现</h3>
  * {@link BaseSandboxFilesystem} 类注释原文：*"This class provides default implementations for all
  * {@code AbstractFilesystem} methods by delegating to shell commands via {@code execute}().
  * File listing, grep, and glob use standard Unix commands. Read uses server-side commands
  * for paginated access. Edit uses server-side commands for string replacement."*
- * ——即 read/write/edit/ls/grep/glob 全部由框架实现，问渠只提供 execute + 两个字节搬运方法。
+ * ——问渠只提供 {@code execute} + 两个字节搬运方法 + {@code sessionStorage}，{@code write}/{@code edit}/
+ * {@code grep} 沿用框架那份（实测写改后容器内字节与送进去的一致）。
+ * <b>{@code ls}、{@code glob}、{@code read}（文本）这三个必须覆盖</b>：框架那三份都靠 shell 取文本，
+ * 而沙盒 runtime 会把输出里的制表符展成空格，原因见下面各方法的说明。
  *
  * <p><b>前提</b>：沙盒镜像需满足 POSIX 工具链（已实测火山 all-in-one-sandbox:1.11.0 通过
- * {@code python3} / {@code tar} / {@code base64} / {@code stat -c} / {@code grep -rHnF --include}）。
+ * {@code python3} / {@code tar} / {@code base64} / {@code grep -rHnF --include}）。
  */
 public class ProvisionerSandboxFilesystem extends BaseSandboxFilesystem {
 
@@ -199,115 +212,147 @@ public class ProvisionerSandboxFilesystem extends BaseSandboxFilesystem {
         return DOWNLOAD_CHUNK;
     }
 
-    // ==================== ls / glob：自己实现，不用框架那份 ====================
+    // ==================== ls / glob：走结构化端点，不走 shell 文本 ====================
 
     /**
-     * 列目录。
+     * 列目录：走 runtime 的 {@code /v1/file/list}。
      *
      * <p><b>为什么要覆盖框架实现</b>：{@code BaseSandboxFilesystem#ls} 与 {@code #glob} 都靠
      * {@code printf '...%s\t%s...'} 打字段、再用 {@code split("\t")} 切回来，而本沙盒 runtime 的
-     * {@code /v1/shell/exec} 会把<b>输出里的制表符展成空格</b>（实测：同一条 {@code printf 'a\tb'}
-     * 在容器内 {@code od -c} 看到的是 {@code a \t b}，取回来的 JSON 却是 {@code "a       b"}）。
-     * 字段切不开不会报错，后果是<b>整行被当成路径</b>——{@code list_files} 交给模型的路径带着
-     * 尾巴上的大小与时间戳，模型照着读必然 {@code file_not_found}；{@code glob_files} 同理恒空
-     * （技能目录 {@code skills/**} 的扫描就死在这里）。
+     * {@code /v1/shell/exec} 会把<b>输出里的制表符展成空格</b>。丢字符的是输出侧、不是命令侧（真机实测：
+     * 同一条 {@code printf 'A\tB\n'} 在容器内 {@code | od -c} 看到的是 {@code A \t B \n}，
+     * 经 {@code /v1/shell/exec} 取回却是 {@code "A       B"}）。字段切不开不会报错，后果是<b>整行被当成路径</b>——
+     * {@code list_files} 交给模型的路径带着尾巴上的大小与时间戳，模型照着读必然 {@code file_not_found}；
+     * {@code glob_files} 同理恒空（技能目录 {@code skills/**} 的扫描就死在这里）。
      *
-     * <p>这里改用竖线分列，并把<b>路径放在最后一个字段</b>：限次切分把剩下的整段原样留作路径，
-     * 路径里真出现竖线也不丢字节。竖线与两个连续空格都实测能原样穿过
-     * runtime（被吞的只有制表符）。
+     * <p>这里<b>不再只是换个分隔符</b>（换竖线同样是在赌镜像行为），而是改用结构化 JSON 端点：
+     * 路径、类型、大小、时间各成字段，实测连文件名里带的制表符都能原样取回。
+     * <p>同一个根因还打到 {@link #read}（框架那份读文本也走 shell），见那里的说明；
+     * {@code write} / {@code edit} 不覆盖——那两份把内容做成 base64 载荷经 stdin 送进去，不回读文本通道。
      */
     @Override
-    public io.agentscope.harness.agent.filesystem.model.LsResult ls(
-            RuntimeContext runtimeContext, String path) {
-        String dir = shellArg(path == null || path.isBlank() ? "." : path);
-        String cmd = "if [ ! -e " + dir + " ]; then echo 'WQ|NOT_EXISTS';"
-                + " elif [ ! -d " + dir + " ]; then echo 'WQ|NOT_A_DIR';"
-                + " else for f in " + dir + "/*; do"
-                + "   if [ -d \"$f\" ]; then m=$(stat -c '%Y' \"$f\" 2>/dev/null || echo 0);"
-                + "     printf 'WQ|D|%s|%s\\n' \"$m\" \"$f\";"
-                + "   elif [ -f \"$f\" ]; then s=$(stat -c '%s' \"$f\" 2>/dev/null || echo 0);"
-                + "     m=$(stat -c '%Y' \"$f\" 2>/dev/null || echo 0);"
-                + "     printf 'WQ|F|%s|%s|%s\\n' \"$s\" \"$m\" \"$f\";"
-                + "   fi;"
-                + " done; fi";
-        ExecuteResponse r = execute(runtimeContext, cmd, null);
-        String out = r.output() == null ? "" : r.output().trim();
-        if (!r.isSuccess()) {
-            return io.agentscope.harness.agent.filesystem.model.LsResult.fail(
-                    "列目录失败（exit=" + r.exitCode() + "）：" + brief(out, path));
-        }
-        if ("WQ|NOT_EXISTS".equals(out)) {
-            return io.agentscope.harness.agent.filesystem.model.LsResult.fail("路径不存在：" + path);
-        }
-        if ("WQ|NOT_A_DIR".equals(out)) {
-            return io.agentscope.harness.agent.filesystem.model.LsResult.fail("不是目录：" + path);
-        }
-        List<io.agentscope.harness.agent.filesystem.model.FileInfo> entries = new ArrayList<>();
-        for (String line : out.split("\n")) {
-            if (line.startsWith("WQ|D|")) {
-                String[] f = line.substring(5).split("\\|", 2);
-                entries.add(io.agentscope.harness.agent.filesystem.model.FileInfo.ofDir(
-                        f.length > 1 ? f[1] : "", epochMs(f)));
-            } else if (line.startsWith("WQ|F|")) {
-                String[] f = line.substring(5).split("\\|", 3);
-                entries.add(io.agentscope.harness.agent.filesystem.model.FileInfo.ofFile(
-                        f.length > 2 ? f[2] : "", num(f.length > 0 ? f[0] : null), epochMs(f)));
+    public LsResult ls(RuntimeContext runtimeContext, String path) {
+        String target = backend.workspaceAbsolutePath(path);
+        try {
+            List<FileInfo> entries = new ArrayList<>();
+            for (SandboxRuntimeClient.SandboxFileEntry entry
+                    : backend.getClient().listPath(target, false, true).files()) {
+                entries.add(entry.isDirectory()
+                        ? FileInfo.ofDir(entry.path(), epochMs(entry.modifiedTime()))
+                        : FileInfo.ofFile(entry.path(), sizeOf(entry), epochMs(entry.modifiedTime())));
             }
+            return LsResult.success(entries);
+        } catch (FileNotFoundError e) {
+            return LsResult.fail("路径不存在：" + target);
+        } catch (RuntimeException e) {
+            // runtime 对「那是文件不是目录」回 HTTP 200 + success:false，
+            // 已由客户端在这一层抛出来；这里显式报给模型，不回空目录。
+            return LsResult.fail("列目录失败（path=" + target + "）：" + e.getMessage());
         }
-        return io.agentscope.harness.agent.filesystem.model.LsResult.success(entries);
     }
 
     /**
-     * 按文件名模式找文件：只需路径（框架的调用方 {@code WorkspaceSkillRepository} 就只用
-     * {@code FileInfo#path()}），所以干脆不打尺寸与时间，一行一条路径，没有可切错的字段。
+     * 读文件：走 runtime 的结构化 {@code /v1/file/read}，<b>不用框架那份</b>。
+     *
+     * <p>根因与 {@link #ls} 同一条，但后果重得多：框架 {@code BaseSandboxFilesystem#read} 只对<b>非文本</b>
+     * 文件用 base64，文本一律 {@code sed -n '<起>,<止>p'} —— 还是那条会把制表符展成空格的文本通道。
+     * 真机实测：文件里一个制表符缩进（容器内 {@code od -c} 看得到），经框架那份 {@code read} 取回后
+     * 制表符计数为 0、变成了 8 个空格。模型「读进来—改一下—写回去」一轮下来<b>源文件缩进被改写</b>，
+     * Python 混用制表符与空格就是 {@code IndentationError}。这不是显示不好看，是静默改坏用户的文件。
+     *
+     * <p>分页换算、读写权限守卫、图片与二进制判定全部复用 {@link ProvisionerSandboxBackend#read}——
+     * 同一套判据不许抄第二份，这里只做两份 {@code ReadResult} 之间的契约转换。
+     * 二进制口径沿用问渠那份（明确报「不支持直接读二进制」），不跟随框架的「回 base64 正文」：
+     * 后者会让模型把一串编码当成文件内容。
      */
     @Override
-    public io.agentscope.harness.agent.filesystem.model.GlobResult glob(
-            RuntimeContext runtimeContext, String pattern, String path) {
-        String recursive = pattern != null && pattern.startsWith("**/")
+    public ReadResult read(RuntimeContext runtimeContext, String filePath, int offset, int limit) {
+        // 框架把 limit<=0 当「不限行数」，问渠那份把 null 当不限、把 <=0 当「不请求行」，先对上口径。
+        ProvisionerSandboxBackend.ReadResult read = backend.read(
+                backend.workspaceAbsolutePath(filePath), offset, limit > 0 ? limit : null);
+        return read.error != null
+                ? ReadResult.fail(read.error)
+                : ReadResult.success(new FileData(read.fileData.content, read.fileData.encoding));
+    }
+
+    /**
+     * 按文件名模式找文件：同样走结构化端点（{@code recursive=true} 一次取全，再在 Java 侧按 basename 匹配）。
+     *
+     * <p>不用 runtime 的 {@code /v1/file/find}：实测它的 glob 只匹配同一层（在 {@code skills/} 下找
+     * {@code SKILL.md} 返回空），而框架调用方 {@code WorkspaceSkillRepository}（:619）传的是
+     * 「双星号斜杠开头 + 星号」那种跨层递归模式，只匹配同层的端点接不住。
+     *
+     * <p>匹配与结果口径对齐被替掉的 {@code find -type f -name}：只对 basename 生效（含 {@code /} 的模式
+     * 匹配不到）、只返回文件。框架调用方只取 {@code FileInfo#path()}，但尺寸与时间一并给出，
+     * 供 {@code glob_files} 的展示文案用。
+     */
+    @Override
+    public GlobResult glob(RuntimeContext runtimeContext, String pattern, String path) {
+        String target = backend.workspaceAbsolutePath(path);
+        String namePattern = pattern != null && pattern.startsWith("**/")
                 ? pattern.substring(3) : pattern;
-        String cmd = "find " + shellArg(path == null || path.isBlank() ? "." : path)
-                + " -type f -name " + shellArg(recursive == null ? "*" : recursive)
-                + " 2>/dev/null | sort";
-        ExecuteResponse r = execute(runtimeContext, cmd, null);
-        if (!r.isSuccess()) {
-            return io.agentscope.harness.agent.filesystem.model.GlobResult.fail(
-                    "列举失败（exit=" + r.exitCode() + "）：" + brief(r.output(), path));
-        }
-        String out = r.output() == null ? "" : r.output().trim();
-        List<io.agentscope.harness.agent.filesystem.model.FileInfo> matches = new ArrayList<>();
-        if (!out.isEmpty()) {
-            for (String line : out.split("\n")) {
-                String p = line.trim();
-                if (!p.isEmpty()) {
-                    matches.add(io.agentscope.harness.agent.filesystem.model.FileInfo.ofFile(p, 0, ""));
+        java.util.regex.Pattern matcher = toBasenameMatcher(namePattern);
+        try {
+            List<SandboxRuntimeClient.SandboxFileEntry> listed =
+                    backend.getClient().listPath(target, true, true).files();
+            if (listed.size() > MAX_GLOB_SCAN_ENTRIES) {
+                return GlobResult.fail("目录下条目过多（" + listed.size() + " 条，上限 "
+                        + MAX_GLOB_SCAN_ENTRIES + " 条），请把路径收窄：" + target);
+            }
+            List<FileInfo> matches = new ArrayList<>();
+            for (SandboxRuntimeClient.SandboxFileEntry entry : listed) {
+                String p = entry.path();
+                if (entry.isDirectory() || p == null || p.isEmpty()) {
+                    continue;
+                }
+                String name = p.substring(p.lastIndexOf('/') + 1);
+                if (matcher.matcher(name).matches()) {
+                    matches.add(FileInfo.ofFile(p, sizeOf(entry), epochMs(entry.modifiedTime())));
                 }
             }
+            matches.sort(java.util.Comparator.comparing(FileInfo::path));
+            return GlobResult.success(matches);
+        } catch (FileNotFoundError e) {
+            // 路径不存在不回「0 命中」：那会让上层把「目录没建起来」读成「目录是空的」。
+            return GlobResult.fail("路径不存在：" + target);
+        } catch (RuntimeException e) {
+            return GlobResult.fail("列举失败（path=" + target + "）：" + e.getMessage());
         }
-        return io.agentscope.harness.agent.filesystem.model.GlobResult.success(matches);
     }
 
-    private static String shellArg(String s) {
-        return io.agentscope.harness.agent.filesystem.util.FilesystemUtils.shellQuote(s);
+    /** 递归扫描的条目上限：超限宁可报错，也不悄悄给模型一份不完整的清单。 */
+    private static final int MAX_GLOB_SCAN_ENTRIES = 5000;
+
+    private static long sizeOf(SandboxRuntimeClient.SandboxFileEntry entry) {
+        return entry.size() == null ? 0L : entry.size();
     }
 
-    private static long num(String s) {
+    /** runtime 的 {@code modified_time} 是秒（字符串），FileInfo 要毫秒。 */
+    private static long epochMs(String epochSeconds) {
+        if (epochSeconds == null || epochSeconds.isBlank()) {
+            return 0L;
+        }
         try {
-            return s == null ? 0L : Long.parseLong(s.trim());
+            return Long.parseLong(epochSeconds.strip()) * 1000L;
         } catch (NumberFormatException e) {
             return 0L;
         }
     }
 
-    /** shell 里 {@code stat -c '%Y'} 给的是秒，FileInfo 要毫秒。 */
-    private static long epochMs(String[] fields) {
-        if (fields == null || fields.length == 0) return 0L;
-        return num(fields[0]) * 1000L;
-    }
-
-    /** 失败信息里带上命令的开头，便于判断是「路径没对上」还是「沙盒没通」。 */
-    private static String brief(String output, String path) {
-        String o = output == null ? "" : output.strip().replace('\n', ' ');
-        return "path=" + path + " output=" + (o.length() > 200 ? o.substring(0, 200) : o);
+    /** glob 模式转 basename 正则：只有 {@code *} 与 {@code ?} 是通配，其余一律按字面。 */
+    private static java.util.regex.Pattern toBasenameMatcher(String glob) {
+        String g = glob == null || glob.isBlank() ? "*" : glob;
+        StringBuilder regex = new StringBuilder();
+        for (int i = 0; i < g.length(); i++) {
+            char c = g.charAt(i);
+            if (c == '*') {
+                regex.append("[^/]*");
+            } else if (c == '?') {
+                regex.append("[^/]");
+            } else {
+                regex.append(java.util.regex.Pattern.quote(String.valueOf(c)));
+            }
+        }
+        return java.util.regex.Pattern.compile(regex.toString());
     }
 }

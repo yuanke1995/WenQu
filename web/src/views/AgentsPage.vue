@@ -131,7 +131,7 @@
             <h2 class="app-card-title"><idcard-outlined class="ap-sec-ic" />身份</h2>
             <p class="ap-block-hint">对话页下拉里展示的就是名称与描述，写清楚它适合什么场景。</p>
             <p class="ap-block-hint" style="margin:0 0 8px">
-              描述还是「自动派遣」的路由依据：用户开启自动派遣时，系统按名称+描述把每条问题派给最合适的智能体——
+              描述还是「谁来做这件事」的依据：主智能体把问题交给另一位助手时，按名称+描述决定问谁——
               各智能体的职责要互不重叠，重叠会导致派错。
             </p>
             <!-- 用途与图标对内置「问渠」是身份锁死项（后端同样 fail-loud 拒绝改动），配置页不再给入口：
@@ -167,7 +167,7 @@
             </a-form-item>
             <a-form-item label="描述" style="margin-bottom:0">
               <a-textarea v-model:value="form.description" :maxlength="500" :rows="2"
-                          placeholder="写清职责范围与典型问题（如：负责《操作手册》的界面操作与表单填写问题），自动派遣将按描述把用户问题路由到本智能体" />
+                          placeholder="写清职责范围与典型问题（如：负责《操作手册》的界面操作与表单填写问题），主智能体按描述决定要不要问这一位" />
             </a-form-item>
           </section>
 
@@ -204,7 +204,7 @@
                           placeholder="选择允许检索的知识库" />
                 <div class="ap-block-hint" style="margin:6px 0 0">
                   已选 {{ form.knowledgeBaseIds.length }} 个知识库；一个都不选则该智能体检索不到任何内容。
-                  选定后还可在下方「检索参数」覆盖该库的策略（留空即用知识库自己的配置）。
+                  各库的检索阈值/权重由知识库自己的检索参数决定，智能体不另行覆盖。
                 </div>
               </div>
               <div v-else-if="scopeMode === 'none'" class="ap-block-hint" style="margin:8px 0 0">
@@ -214,27 +214,27 @@
             </template>
           </section>
 
-          <!-- 检索参数紧跟知识库范围（库范围→库参数），宽屏双栏时与「身份/提示词」同属左栏 -->
+          <!-- 检索设置紧跟知识库范围（库范围→库参数），宽屏双栏时与「身份/提示词」同属左栏。
+               两层分工：库管“召回池”（阈值/权重/重排模型，按库生效），智能体管“这一轮怎么用”（是否重排）。 -->
           <section class="app-card" v-if="!form.isSubagent">
-            <h2 class="app-card-title"><control-outlined class="ap-sec-ic" />检索参数</h2>
+            <h2 class="app-card-title"><control-outlined class="ap-sec-ic" />检索设置</h2>
             <p class="ap-block-hint">
-              留空即继承「系统设置 → 检索设置」；只填需要为这个智能体单独调整的项
-              （例如法律类助手提高相似度阈值保精度、操作手册助手放宽阈值保召回）。
+              阈值、两路权重与召回量由<b>知识库</b>和系统设置决定（每个库按自己的资料调，跨库检索时各取各的）。
+              这里只决定这一轮<b>要不要做语义重排</b>：低延迟场景可以关闭，回答相关性下降由智能体自行承担。
             </p>
-            <div class="qp-grid">
-              <label v-for="f in QP_FIELDS" :key="f.key" class="qp-item">
-                <span class="qp-label">{{ f.label }}</span>
-                <a-input v-model:value="form.qp[f.key]" :placeholder="qpPh(f)" allow-clear />
-              </label>
-              <label class="qp-item">
-                <span class="qp-label">重排服务</span>
-                <!-- 提示独占一行放控件下方：窄栏（格宽 ~284px）下行内放不下会横向溢出、画到隔壁栏卡片上 -->
-                <span class="qp-rerank-ctl">
-                  <a-segmented v-model:value="form.qpRerank" :options="rerankOptions" />
-                  <span v-if="form.qpRerank === 'inherit' && rerankInheritHint" class="qp-inherit">{{ rerankInheritHint }}</span>
-                </span>
-              </label>
+            <div class="qp-row">
+              <span class="qp-label">重排服务</span>
+              <!-- 整行贴右：全局当前值挨在控件左侧，与下方「能力」区的行版式一致；
+                   窄栏放不下时整组换行，不会横向溢出画到隔壁栏。不用 label 包整行：
+                   点标题文字会连带选中第一个分段（把用户的覆盖悄悄改回跟随全局） -->
+              <span class="qp-ctl">
+                <span v-if="form.qpRerank === 'inherit' && rerankInheritHint" class="qp-inherit">{{ rerankInheritHint }}</span>
+                <a-segmented v-model:value="form.qpRerank" :options="rerankOptions" />
+              </span>
             </div>
+            <p class="ap-block-hint" style="margin:10px 0 0">
+              重排用哪个模型由知识库绑定（库主付费），未绑定时走平台默认模型。
+            </p>
           </section>
 
           <section class="app-card">
@@ -832,7 +832,7 @@ const skillOptions = ref([])
 // 技能清单原样留着：「指定」下拉旁要给每条已选技能一个「看正文」的出口，靠这份数据取来源与停用态
 const skillRaw = ref([])
 const skillDoc = ref('')
-const SKILL_SOURCE_SUFFIX = { builtin: '（内置）', user: '（我的）', legacy: '（历史）' }
+const SKILL_SOURCE_SUFFIX = { builtin: '（内置）', user: '（我的）' }
 const applySkillList = list => {
   skillRaw.value = list
   const seen = new Set()
@@ -906,30 +906,15 @@ const blankForm = () => ({
   isSubagent: 0, subAgentIds: [],
   // 被委派时怎么做（P3a）：null=跟随系统默认（agent.subagentMode）
   subagentMode: null,
-  // 检索参数覆盖：留空 = 继承全局「系统设置 → 检索设置」；非空的项才写入 queryParams
-  qp: blankQp(), qpRerank: 'inherit',
+  // 检索开关覆盖：只留“这一轮要不要重排”（阈值/权重/召回量归知识库或全局，不在这里配）
+  qpRerank: 'inherit',
   // M4：绑定的工作流 ID（空 = 不绑定，按模型/知识库/工具配置作答）
   workflowId: null
 })
-/** 检索参数覆盖：可覆盖的项（值即后端 ConfigService 的完整配置键） */
-const QP_FIELDS = [
-  { key: 'vectorWeight', label: '向量权重', path: 'retrieval.vectorWeight', ph: '0~1，留空继承全局' },
-  { key: 'keywordWeight', label: '关键词权重', path: 'retrieval.keywordWeight', ph: '0~1，留空继承全局' },
-  { key: 'vecThreshold', label: '相似度阈值', path: 'retrieval.vecThreshold', ph: '0~1，留空继承全局' },
-  { key: 'vectorTopK', label: '向量召回数', path: 'retrieval.vectorTopK', ph: '如 15，留空继承全局' },
-  { key: 'keywordLimit', label: '关键词召回数', path: 'retrieval.keywordLimit', ph: '如 20，留空继承全局' }
-]
-const blankQp = () => ({ vectorWeight: null, keywordWeight: null, vecThreshold: null, vectorTopK: null, keywordLimit: null })
 // 「系统设置 → 检索设置」的当前全局值（/kb/param-defaults，普通用户可读）：
-// 占位符直接展示继承的是哪个值，而不是让用户去猜/翻设置页。口径同 KnowledgeBasePage 的 numPh/triPh。
+// 只用来展示「跟随全局」时重排开关处于什么状态，避免让用户去猜/翻设置页。
 const qpDefaults = ref(null)
-/** 占位符：有全局值 → 「留空继承全局（当前 X）」；拿不到（接口异常/该项未配置）→ 回退静态提示 */
-const qpPh = f => {
-  const v = String(qpDefaults.value?.[f.path] ?? '').trim()
-  return v === '' ? f.ph : `留空继承全局（当前 ${v}）`
-}
-/** 重排三态：恒定短 label（控件宽度稳定，不再把全局状态拼进选项文案——长 label 曾把 qp-grid 轨道按
- *  min-content 撑出卡片）。全局当前状态改走 rerankInheritHint 灰字，语义对齐其他项的「留空继承全局（当前 X）」 */
+/** 重排三态：恒定短 label（控件宽度稳定）。全局当前状态走 rerankInheritHint 灰字 */
 const rerankOptions = [
   { label: '跟随全局', value: 'inherit' },
   { label: '开启', value: 'on' },
@@ -941,34 +926,23 @@ const rerankInheritHint = computed(() => {
   return v === 'true' ? '全局当前：开启' : (v === 'false' ? '全局当前：关闭' : '')
 })
 
-/** queryParams(JSON 串) → 表单（未配置的项为 null = 继承全局） */
+/**
+ * queryParams(JSON 串) → 重排三态。阈值/权重等旧键即使残留在存量 JSON 里也不再读取
+ * （后端同样忽略，保存时清除）——读进来只会让用户以为这里还能覆盖库参数。
+ */
 function parseQueryParams (json) {
-  const qp = blankQp()
   let ps = null
   try { ps = json ? JSON.parse(json) : null } catch (e) { ps = null }
-  if (ps && typeof ps === 'object') {
-    for (const f of QP_FIELDS) {
-      const v = ps[f.path]
-      if (v !== undefined && v !== null && String(v).trim() !== '') qp[f.key] = v
-    }
-  }
-  // 重排三态：显式配过才显示"已覆盖"
-  let rr = 'inherit'
   if (ps && ps['rerank.enabled'] !== undefined && ps['rerank.enabled'] !== null) {
-    rr = String(ps['rerank.enabled']) === 'true' ? 'on' : 'off'
+    return String(ps['rerank.enabled']) === 'true' ? 'on' : 'off'
   }
-  return { qp, rr }
+  return 'inherit'
 }
 
-/** 表单 → queryParams(JSON 串)；全部留空返回空串（后端存 null = 全部继承全局设置） */
-function buildQueryParams (qp, rr) {
-  const o = {}
-  for (const f of QP_FIELDS) {
-    const v = qp ? qp[f.key] : null
-    if (v !== null && v !== undefined && String(v).trim() !== '') o[f.path] = String(v).trim()
-  }
-  if (rr === 'on' || rr === 'off') o['rerank.enabled'] = rr === 'on' ? 'true' : 'false'
-  return Object.keys(o).length ? JSON.stringify(o) : ''
+/** 重排三态 → queryParams(JSON 串)；跟随全局返回空串（后端存 null = 全部继承） */
+function buildQueryParams (rr) {
+  if (rr === 'on' || rr === 'off') return JSON.stringify({ 'rerank.enabled': rr === 'on' ? 'true' : 'false' })
+  return ''
 }
 
 const form = ref(blankForm())
@@ -1491,7 +1465,8 @@ const openEdit = a => {
     subagentMode: a.subagentMode || null,
     // M4：绑定的工作流（未绑定 → null；下拉里只列已发布的工作流）
     workflowId: a.workflowId || null,
-    ...(() => { const r = parseQueryParams(a.queryParams); return { qp: r.qp, qpRerank: r.rr } })()
+    // 检索开关（只有重排三态；旧版存量的阈值/权重键由后端忽略并在下次保存时清除）
+    qpRerank: parseQueryParams(a.queryParams)
   }
   // 三档：不使用知识库 > 指定知识库（选了库）> 全部知识库
   scopeMode.value = (a.knowledgeDisabled === 1 || a.knowledgeDisabled === true)
@@ -1613,8 +1588,8 @@ const save = async () => {
     subAgentIds: f.isSubagent ? null : (f.subAgentIds || []).join(','),
     // 被委派时怎么做：主智能体没有这一项（它直接作答），切回主智能体时要显式清空而不是留着旧值
     subagentMode: f.isSubagent ? (f.subagentMode || null) : null,
-    // 检索参数覆盖：留空项不写入 → 继承全局；全空 → 空串 → 后端存 null
-    queryParams: buildQueryParams(f.qp, f.qpRerank),
+    // 检索开关覆盖：跟随全局 → 空串 → 后端存 null；开启/关闭写 rerank.enabled
+    queryParams: buildQueryParams(f.qpRerank),
     // 工作流绑定：空/未选 → 空串（后端归一为 null = 解绑）；非空必须是已发布工作流（后端校验）
     workflowId: f.isSubagent ? '' : (f.workflowId || '')
   }
@@ -1815,12 +1790,10 @@ onMounted(async () => { })
 /* 中屏回落单列（620px 柱宽下容器不足自动 1 栏），限宽 900 保证单列可读；小屏吃满宽度 */
 @media (max-width: 1440px) { .ap-form { max-width: 900px; } }
 @media (max-width: 768px) { .ap-form { max-width: none; } }
-/* 检索参数覆盖：两列网格，留空=继承全局 */
-.qp-grid { display: grid; grid-template-columns: repeat(2, minmax(220px, 1fr)); gap: 10px 18px; }
-.qp-item { display: flex; align-items: center; gap: 10px; }
-.qp-label { flex: none; width: 88px; font-size: 12.5px; color: var(--app-text2); }
-/* 重排服务的控件列：分段控件 + 下方全局状态灰字（竖排，任何栏宽都不会横向溢出格子） */
-.qp-rerank-ctl { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-width: 0; }
+/* 检索开关覆盖：单行版式，标签在左、当前值+控件整组贴右（与「能力」区的行一致）；窄栏换行也不横向溢出 */
+.qp-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; }
+.qp-label { font-size: 12.5px; color: var(--app-text2); flex: none; }
+.qp-ctl { display: flex; align-items: center; gap: 8px; margin-left: auto; min-width: 0; }
 .qp-inherit { font-size: 11px; color: var(--app-text3); }
 .ap-pick { margin-top: 12px; }
 /* 内置「问渠」的知识库范围为固定展示（无选择入口）：单行芯片，与选择器同起点对齐 */

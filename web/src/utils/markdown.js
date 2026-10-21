@@ -269,6 +269,16 @@ export const renderMd = (t, images = [], opts = {}) => {
   return html
 }
 
+// 图片标记（与 renderMdInner ① 同语法）：[图片N] / [图片N：描述]
+const IMG_MARK_SRC = '\\[图片\\s*\\d+(?:[：:][^\\]]*)?\\]'
+// 只含图片标记的括注：「（[图片1]）」「（[图片2]～[图片3]）」。
+// 括号里一旦出现汉字就整体不匹配——拆了会剩半个括号。
+const IMG_ONLY_PAREN = new RegExp(
+  `[(（][ \\t\\u3000，。、；：！？～~/.／/]*(?:${IMG_MARK_SRC})`
+  + `(?:[ \\t\\u3000，。、；：！？～~/.／/]*(?:${IMG_MARK_SRC}))*`
+  + `[ \\t\\u3000，。、；：！？～~/.／/]*[)）]`, 'g')
+const IMG_MARK_ALL = new RegExp(IMG_MARK_SRC, 'g')
+
 const renderMdInner = (t, images = [], runnable = RUNNABLE_DEFAULT, preview = PREVIEW_DEFAULT, literal = false) => {
   // literal：整段**原样**排版，不做任何标记替换（图片占位、引用角标都不碰）。
   // 给「用户提问」用：提问里的 [图片N] / [N] 是用户手打的字，替换掉会改他的原文
@@ -277,7 +287,13 @@ const renderMdInner = (t, images = [], runnable = RUNNABLE_DEFAULT, preview = PR
   // ① 预处理：图片标记 [图片N：描述]/[图片N] → markdown 图片占位（保留位置/顺序）
   // 只吞行内空白与标点，不吞换行：占位符后的空行承担"图片与后续块（表格/段落）分段"的语义，
   // 吞掉会把表格首行粘进图片行，表格永远无法成块渲染
-  let pre = literal ? t : t.replace(/\[图片\s*(\d+)(?:[：:][^\]]*)?\][，。、；：！？ \u3000]*/g, '![img](__AI_IMG_$1__)')
+  let pre = t
+  if (!literal) {
+    // 先拆纯括注：⑤ 会把图片换成整块居中的 div，div 截断 <p>/<li> 后模型写的「（[图片1]）」
+    // 就变成挂在图上下的两个孤立括号（浏览器解析时连行内文字都会被拆开）
+    pre = pre.replace(IMG_ONLY_PAREN, m => (m.match(IMG_MARK_ALL) || []).join(' '))
+    pre = pre.replace(/\[图片\s*(\d+)(?:[：:][^\]]*)?\][，。、；：！？ \u3000]*/g, '![img](__AI_IMG_$1__)')
+  }
   // ② 表格容错：表头前无空行时补空行，让表格独立渲染（已有空行不重复补）
   pre = ensureTableSpacing(pre)
   // ③ 清理末尾孤立竖线（LLM 回答结尾偶发残留" |"），避免渲染成一行竖线

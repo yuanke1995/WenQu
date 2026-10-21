@@ -1,6 +1,6 @@
 package com.wenqu.ai.agent.chat;
 
-// [保留] 问渠轮次台账 / 个性化提示词 —— AgentScope 框架不提供等价能力，框架引擎(agentx)与共享服务仍依赖此文件，勿当 legacy 控制流删除。
+// [保留] 问渠轮次台账 / 个性化提示词 —— AgentScope 框架不提供等价能力，框架引擎(agentx)与共享服务仍依赖此文件，勿当作已退役的控制流删除。
 
 import com.wenqu.ai.dto.ChatRequest;
 import lombok.Builder;
@@ -96,10 +96,12 @@ public final class ChatCommand {
     /** 计划模式：先出计划卡、批准后执行 */
     final boolean planMode;
     /**
-     * 本轮是**插话续发**：用户在这轮回答跑到一半时补了一句方向，它没赶上工具步、随 done 回落成新一轮。
+     * 本轮是**插话续发**：用户在这轮回答跑到一半时补了一句方向，框架那一轮没收下它（撞步数上限、
+     * 被叫停或提前收尾），随 done 交回前端后作为新一轮发出。
      * <p>为什么必须显式带标记：作为新一轮发出去时，模型只看到一条孤零零的新用户消息，会当成
      * 「用户又问了一遍」重新起题（实测短问答必现，模型会复述「你消息里的 X 这一段…」）。
-     * 那条上下文声明由 {@code decorateSteerQuestion} 统一拼在问题前面。
+     * 那条上下文声明由 {@link #decorateSteerQuestion(String)} 统一拼在那句话后面，与送进框架会话的
+     * 那一条同一个出口。
      */
     final boolean fromSteer;
 
@@ -141,5 +143,21 @@ public final class ChatCommand {
     /** 只带最小三要素的命令（后台续跑、子 agent、定时任务这类没有前端请求体的调用方用） */
     public static ChatCommandBuilder of(String sessionId, String question, String userId) {
         return builder().sessionId(sessionId).question(question).userId(userId);
+    }
+
+    /** 插话的身份声明（只进模型上下文，用户看不见） */
+    private static final String STEER_NOTE =
+            "（说明：这句是用户在上一轮回答还在跑的时候补的方向，不是一次新的提问。"
+                    + "请按它调整你正在做的这件事并继续，不要重新起题，也不要复述这句说明。）";
+
+    /**
+     * 给插话拼上身份声明。两条路共用这一个出口：送进框架会话的那一条，和本轮没收下、
+     * 随收尾交回前端后作为新一轮补发的那一条（{@link #fromSteer}）。
+     * <p>不带它，模型只看到一句孤零零的新用户消息，会当成「用户又问了一遍」重新起题
+     * （实测短问答必现：它复述「你消息里的 X 这一段…」开头作答），插话「改了方向立刻生效」就废了。
+     */
+    public static String decorateSteerQuestion(String text) {
+        String t = text == null ? "" : text.strip();
+        return t.isEmpty() ? STEER_NOTE : t + "\n" + STEER_NOTE;
     }
 }

@@ -49,9 +49,6 @@
           <div class="skill-tip" v-if="g.key === 'builtin'">
             随版本分发的公共技能，所有人可见。你只能停用（只对自己生效），不能修改或删除。
           </div>
-          <div class="skill-tip" v-else-if="g.key === 'legacy'">
-            历史版本里导入的技能，仍按原内容生效；建议重新安装到「我的技能」后删除旧条目（历史条目只读）。
-          </div>
           <div class="skill-tip" v-else-if="g.key === 'workspace'">
             助手在对话里沉淀到当前会话的技能，随会话走；换个会话就看不到了。
           </div>
@@ -102,7 +99,7 @@
         </a-form-item>
         <a-form-item label="描述" required>
           <a-input v-model:value="createForm.description" placeholder="一句话说明什么场景用它——模型靠这句判断要不要读取"
-                   :maxlength="300" show-count />
+                   :maxlength="1000" show-count />
         </a-form-item>
         <a-form-item label="技能正文（Markdown）">
           <a-textarea v-model:value="createForm.content" :rows="14" class="key-code-area"
@@ -120,7 +117,7 @@
     <a-modal v-model:open="installOpen" title="安装技能" :footer="null" :width="720" destroy-on-close>
       <a-tabs v-model:activeKey="installTab">
         <a-tab-pane key="zip" tab="上传 zip">
-          <a-upload-dragger :before-upload="pickZip" :show-upload-list="false" accept=".zip" :disabled="installing">
+          <a-upload-dragger class="skill-drop" :before-upload="pickZip" :show-upload-list="false" accept=".zip" :disabled="installing">
             <p class="ant-upload-drag-icon"><inbox-outlined /></p>
             <p class="ant-upload-text">点击或拖拽 zip 到这里</p>
             <p class="ant-upload-hint">
@@ -220,7 +217,7 @@
     <a-modal v-model:open="editOpen" :title="'编辑技能：' + editForm.name" :footer="null" :width="820" destroy-on-close>
       <a-form layout="vertical">
         <a-form-item label="描述" required>
-          <a-input v-model:value="editForm.description" :maxlength="300" show-count
+          <a-input v-model:value="editForm.description" :maxlength="1000" show-count
                    placeholder="一句话说明什么场景用它——模型靠这句判断要不要读取" />
         </a-form-item>
         <a-form-item label="SKILL.md 原文">
@@ -254,8 +251,8 @@ import {
 } from '../api'
 import { renderMd } from '../utils/markdown'
 
-const SOURCE_LABEL = { user: '我的技能', builtin: '内置技能', legacy: '历史技能', workspace: '工作区技能' }
-const SOURCE_ORDER = ['user', 'builtin', 'legacy', 'workspace']
+const SOURCE_LABEL = { user: '我的技能', builtin: '内置技能', workspace: '工作区技能' }
+const SOURCE_ORDER = ['user', 'builtin', 'workspace']
 
 const skills = ref([])
 const remote = ref({ enabled: false, hosts: [] })
@@ -548,6 +545,9 @@ onMounted(load)
 .skill-foot-hint { font-size: 12px; color: var(--app-text3); line-height: 1.7; margin: 4px 0 0; }
 .skill-form-hint { font-size: 12px; color: var(--app-text3); line-height: 1.7; margin: -6px 0 0; }
 .skill-zip-picked { font-size: 12px; color: var(--app-text2); margin-top: 10px; display: flex; align-items: center; gap: 8px; }
+/* antd 给拖拽区写死 height 100%：在自动高度的 Tab 面板里，容器高先按「拖拽区=内容高」算出，
+   再把 100% 解成这个值，于是拖拽区吃掉整块面板、下面的技能名与安装按钮被挤出弹窗。 */
+.skill-drop :deep(.ant-upload-drag) { height: auto; }
 .skill-upload-pct { margin-right: auto; font-size: 12px; color: var(--app-text3); }
 
 .skill-view-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-size: 12px; color: var(--app-text3); margin-bottom: 8px; }

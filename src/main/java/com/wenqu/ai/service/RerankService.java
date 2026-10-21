@@ -19,8 +19,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * 社区模型仅能经 /api/embed 近似且部分环境 embedding 被禁用，因此本仓库只支持 OpenAI 兼容协议。
  * 重排由外部 OpenAI 兼容 /v1/rerank 服务承载（供应商网关或自建服务），无本地启动脚本。
  *
-     * <p>配置经 {@link ModelRegistryService#rerankRoute} 解析（rerank.model 为引用时取对应供应商网关
-     * baseUrl/apiKey，遗留值走全局 rerank.* 配置），知识库/智能体检索设置保存即生效。
+ * <p>配置经 {@link ModelRegistryService#rerankRoute} 解析（rerank.model 为引用时取对应供应商网关
+ * baseUrl/apiKey，遗留值走全局 rerank.* 配置）：<b>模型归知识库</b>（本轮按首个绑定了模型的库收敛），
+ * <b>开关归智能体/全局</b>。
  * 未启用/探测失败/调用失败时静默回退为输入顺序（混合检索已按融合分排序）。
  * 探测/失败结果缓存，首次失败记忆禁用（进程内不再重试）；配置变更（网关/模型/超时）自动重建客户端并重置探测。
  *
@@ -243,12 +244,12 @@ public class RerankService {
      */
     public String debugUnavailableReason() {
         if (!enabled()) {
-            return "未启用：系统设置的平台默认「启用重排」未打开，知识库/智能体检索设置也未开启";
+            return "未启用：系统设置的平台默认「启用重排」未打开，智能体检索设置也未开启（开关归智能体）";
         }
-        // 未绑定重排模型（库/智能体覆盖、平台默认都为空）→ 重排直接不可用（无本地兜底）。
+        // 未绑定重排模型（库覆盖、平台默认都为空）→ 重排直接不可用（无本地兜底）。
         // 根因是"没配模型"而不是"服务没起"，给出明确的绑定指引，避免管理员去维护一个本可不必存在的本地服务。
         if (route().providerId() == null) {
-            return "未绑定重排模型：知识库/智能体检索设置与平台默认都为空，重排将不可用"
+            return "未绑定重排模型：知识库检索设置与平台默认都为空，重排将不可用"
                     + "；请在系统设置的检索面板登记「平台默认重排模型」，或在知识库检索设置里单独绑定"
                     + "（也可在设置页把 rerank.baseUrl 指向可用的 /v1/rerank 服务）";
         }

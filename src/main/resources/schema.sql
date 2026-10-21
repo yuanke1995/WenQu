@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_knowledge_base` (
     `name`         VARCHAR(200) NOT NULL COMMENT '知识库名称',
     `description`  VARCHAR(500) DEFAULT NULL COMMENT '描述',
     `icon`         VARCHAR(32)  DEFAULT NULL COMMENT '图标: wenqu=问渠品牌标 / emoji 字符; NULL=默认库图标（默认库恒为 wenqu 且不可修改，其余库空=默认库图标）',
-    `query_params` TEXT         DEFAULT NULL COMMENT '检索参数(JSON: {"retrieval.vecThreshold":"0.3",...}; 空=全部继承全局检索设置)',
+    `query_params` TEXT         DEFAULT NULL COMMENT '检索参数(库级召回池: retrieval.vecThreshold/vectorWeight/keywordWeight + rerank.model; 空=继承全局)',
     `parse_params` TEXT         DEFAULT NULL COMMENT '解析参数(JSON: chunk.maxSize/overlap/maxChunks/maxImages/structural/structuralRatio/headingDepth + visionRef; 空=全部继承全局解析设置)',
     `embedding_ref` VARCHAR(255) DEFAULT NULL COMMENT '本库绑定向量模型（引用 providerId/modelId；必填，迁移工具会把历史空值回填为退役前的全局 embedding.model）',
     `embedding_dimensions` INT DEFAULT NULL COMMENT '本库向量索引维度（绑定/切换向量模型重嵌后回写）',
@@ -46,7 +46,6 @@ CREATE TABLE IF NOT EXISTS `c_ai_document` (
     `description`  VARCHAR(500) DEFAULT NULL COMMENT '文档描述',
     `source_url`   VARCHAR(1024) DEFAULT NULL COMMENT '网页导入的源URL（file_type=url 时记录；普通上传为空）',
     `source_hash`  VARCHAR(64)  DEFAULT NULL COMMENT '源内容指纹(SHA-256 hex；官方内置库手册同步用：指纹不变跳过重建，普通上传为空)',
-    `category`     VARCHAR(100) DEFAULT NULL COMMENT '分类（前端 UI 已移除，字段保留兼容）',
     `kb_id`        VARCHAR(50)  DEFAULT NULL COMMENT '所属知识库ID（必填；启动迁移会把历史空值归入默认库）',
     `vision_ref`   VARCHAR(255) DEFAULT NULL COMMENT '文档级视觉模型覆盖（上传时指定，引用 providerId/modelId；空=跟随知识库。对本文档所有图片理解生效）',
     `version`      INT          DEFAULT 0 COMMENT '版本号（每次解析+1，用于版本管理）',
@@ -241,13 +240,11 @@ CREATE TABLE IF NOT EXISTS `c_ai_qa_log` (
     `id`              VARCHAR(50)  NOT NULL COMMENT '主键ID',
     `session_id`      VARCHAR(50)  DEFAULT NULL COMMENT '会话ID',
     `question`        TEXT         COMMENT '用户问题',
-    `rewritten_query` TEXT         DEFAULT NULL COMMENT '改写后的检索用问题',
     `deep_think`      INT          DEFAULT 0 COMMENT '是否深度思考: 0=否,1=是',
     `answer_summary`  VARCHAR(1000) DEFAULT NULL COMMENT '回答摘要(前500字)',
     `hit_doc_ids`     VARCHAR(1000) DEFAULT NULL COMMENT '命中文档ID列表(逗号分隔)',
     `has_citation`    INT          DEFAULT 0 COMMENT '是否有引用标注',
     `elapsed_ms`      INT          DEFAULT 0 COMMENT '回答耗时(ms)',
-    `stage_ms`        VARCHAR(500) DEFAULT NULL COMMENT '分段耗时JSON(rewrite/retrieve/generate/citation,距开始的累计ms)',
     `message_id`      VARCHAR(50)  DEFAULT NULL COMMENT 'P1：本轮回答消息ID（trace 详情还原 toolCalls/sources/tokens 的关联键；存量行为 NULL）',
     `agent_id`        VARCHAR(50)  DEFAULT NULL COMMENT 'P1：本轮生效智能体ID（trace 按智能体筛选；未用智能体为 NULL）',
     `created_at`      DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -275,20 +272,6 @@ CREATE TABLE IF NOT EXISTS `c_ai_image_desc` (
     PRIMARY KEY (`cache_key`),
     KEY `idx_update` (`update_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='图片描述缓存(内容寻址,持久化)';
-CREATE TABLE IF NOT EXISTS `c_ai_answer_cache` (
-    `id`          VARCHAR(50)   NOT NULL COMMENT '主键ID',
-    `question`    TEXT          NOT NULL COMMENT '原始问题',
-    `embedding`   MEDIUMTEXT    NOT NULL COMMENT '问题向量 (JSON float 数组)',
-    `answer`      MEDIUMTEXT    NOT NULL COMMENT '完整回答 (含 [N] 引用与 [图片N] 标记)',
-    `sources`     TEXT          DEFAULT NULL COMMENT '引用来源 (JSON)',
-    `images`      TEXT          DEFAULT NULL COMMENT '关联图片 URL (JSON 数组)',
-    `related`     TEXT          DEFAULT NULL COMMENT '相关建议（回答末尾 <related> 下一步建议，JSON 数组）',
-    `message_id`  VARCHAR(50)   DEFAULT NULL COMMENT '关联消息ID (反馈用)',
-    `hit_count`   INT           DEFAULT 0 COMMENT '命中次数',
-    `create_time` DATETIME      DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    PRIMARY KEY (`id`),
-    KEY `idx_create` (`create_time`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='相似问题答案缓存 (知识库变更时整体清空)';
 
 CREATE TABLE IF NOT EXISTS `c_ai_config` (
     `config_key`    VARCHAR(64)   NOT NULL COMMENT '配置键（chat.model/chat.temperature/vision.model/...）',
@@ -314,22 +297,6 @@ CREATE TABLE IF NOT EXISTS `c_ai_document_version` (
     KEY `idx_doc_version` (`doc_id`, `version`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI文档版本快照表';
 
--- ============================================
--- 2026-08-29: 知识块引用关系（交叉引用 1-hop 扩散 + 结构上下文扩展）
--- 纯派生数据：生命周期完全跟随知识块/文档，重解析按 doc_id 全量重建，不做逻辑删除
--- ============================================
-CREATE TABLE IF NOT EXISTS `c_ai_knowledge_ref` (
-    `id`                VARCHAR(50)  NOT NULL COMMENT '主键ID',
-    `doc_id`            VARCHAR(50)  NOT NULL COMMENT '所属文档ID（引用只在同文档内有效）',
-    `from_knowledge_id` VARCHAR(50)  NOT NULL COMMENT '引用来源知识块ID（A）',
-    `to_knowledge_id`   VARCHAR(50)  NOT NULL COMMENT '被引用目标知识块ID（B）',
-    `ref_text`          VARCHAR(255) DEFAULT NULL COMMENT '原文引用表达（如"详见 4.1.2 节"/"参见「数据字典」"）',
-    `create_time`       DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    PRIMARY KEY (`id`),
-    KEY `idx_from_doc` (`from_knowledge_id`, `doc_id`),
-    KEY `idx_to_doc` (`to_knowledge_id`, `doc_id`),
-    KEY `idx_doc` (`doc_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI知识块引用关系表';
 
 -- ============================================
 -- 2026-09-14: API Key（对外开放问答能力）
@@ -366,7 +333,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_agent` (
     `description`     VARCHAR(500) DEFAULT NULL COMMENT '描述',
     `created_by`   VARCHAR(64)  DEFAULT NULL COMMENT '创建人（登录用户 uid；未登录为 anonymous）',
     `share_config` TEXT         DEFAULT NULL COMMENT '共享范围(JSON: {read_scope:{access_level:global|department|user,department_ids[],user_uids[]},manage_scope:{同}}; 空=私有：仅创建者与管理员级可见（谁建归谁，2026-10）)',
-    `query_params` TEXT         DEFAULT NULL COMMENT '检索参数覆盖(JSON: {"retrieval.vectorWeight":"0.8",...}; 空=全部继承全局检索设置)',
+    `query_params` TEXT         DEFAULT NULL COMMENT '检索开关覆盖(JSON: {"rerank.enabled":"false"}; 空=继承全局; 阈值/权重/召回量归知识库或全局)',
     `system_prompt`   TEXT         DEFAULT NULL COMMENT '系统提示词覆盖（空=继承全局）',
     `knowledge_scope` VARCHAR(2000) DEFAULT NULL COMMENT '知识库范围：all 或 文档ID逗号分隔（空=all）',
     `knowledge_base_ids` VARCHAR(1000) DEFAULT NULL COMMENT '关联的知识库ID: NULL/空=默认知识库 逗号分隔=用这些库（检索作用域主路径）',
@@ -945,7 +912,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_usage_log` (
     `session_id`        VARCHAR(64)  DEFAULT NULL COMMENT '触发该次调用的会话（可空）',
     `message_id`        VARCHAR(64)  DEFAULT NULL COMMENT '触发该次调用的回答消息（可空：调用先于消息落库或无归属回答）',
     `model`             VARCHAR(190) DEFAULT NULL COMMENT '模型引用 providerId/modelId（迁移前遗留名原样）',
-    `kind`              VARCHAR(32)  NOT NULL DEFAULT 'chat' COMMENT '调用用途: chat=问答主链路 dispatch=智能体分派 subagent=子代理 memory=记忆提取 compress=历史压缩 rewrite=查询改写 citecheck=引用自检 think=深度思考 workflow=工作流节点 graphrag=图谱 index=索引 probe=探测 eval=评测 other',
+    `kind`              VARCHAR(32)  NOT NULL DEFAULT 'chat' COMMENT '调用用途: chat=问答主链路 subagent=子智能体分支 memory=记忆提取 compress=历史压缩 citecheck=引用自检 workflow=工作流节点 graphrag=图谱 index=索引 probe=探测 eval=评测 other',
     `prompt_tokens`     BIGINT       NOT NULL DEFAULT 0 COMMENT '输入 token（含缓存命中部分，与网关 usage.prompt_tokens 同口径）',
     `completion_tokens` BIGINT       NOT NULL DEFAULT 0 COMMENT '输出 token（含思考过程与工具调用参数生成）',
     `cached_tokens`     BIGINT       NOT NULL DEFAULT 0 COMMENT '命中 prompt 缓存的输入 token',
@@ -1032,14 +999,18 @@ DELETE FROM `c_ai_config` WHERE `config_key` IN (
     -- 解析/图谱：模型引用已回落库主默认聊天模型
     'parse.qaModel', 'graphrag.modelRef',
     -- 技能/记忆：面板与自研存储退役后留下的死配置
-    'skill.injectMaxChars', 'skill.remoteAllowedHosts', 'skill.maxFileChars',
+    -- 注意 skill.remoteAllowedHosts 不在此列：它是活配置（defaults() 登记、设置页可编辑，
+    -- UserSkillStore/SkillController 真读它做 URL 安装白名单）。曾经误列进本名单，
+    -- 而本脚本由 spring.sql.init 在建连接池时执行、早于 ConfigService.ensureDefaults()，
+    -- 于是每次重启删行→ensureDefaults 按空默认值补回＝管理员白名单每次重启被清零（远程安装静默关闭）。
+    'skill.injectMaxChars', 'skill.maxFileChars',
     'memory.maxPerUser', 'memory.maxInjectCount', 'memory.injectBudgetChars',
     'memory.dedupThreshold', 'memory.useSemanticInject', 'memory.platformEmbeddingRef',
     -- 工具：低风险工具改为随总闸启用，按智能体三态 / tool.deny 收口，不再各留平台开关
     'tool.knowledgeRetrieval.enabled', 'tool.artifact.enabled',
     'tool.builtin.enabled', 'tool.subagentConsult.enabled',
     'tool.todo.enabled', 'tool.spillEnabled', 'tool.mcpCiteEnabled',
-    -- 子智能体：旧并行编排器已删除，资料域改走 consultAgent
+    -- 子智能体：旧并行编排器已删除，资料域改走派遣（框架子智能体）
     'agent.enabled', 'agent.subAgents', 'agent.topKPerAgent', 'agent.digestEnabled',
     'agent.aggregateMode', 'agent.digestMaxChars', 'agent.aggregateMarkFailed',
     'agent.autoRoute', 'agent.routeTimeoutMs', 'agent.maxParallelSubAgents',
@@ -1087,6 +1058,11 @@ DELETE FROM `c_ai_config` WHERE `config_key` IN (
 );
 -- 个人层遗留的模型引用键（parse.qaModel / graphrag.modelRef / memory.embeddingRef 曾允许个人覆盖；
 -- rerank.model 的个人设置入口已下线，存量值不再被 UserConfigService 装载）
+-- 2026-10-20：语义缓存与知识块交叉引用两条机制整体退场后，它们的表既无写入方也无读取方。
+-- 建表定义已从本文件删除；这里对存量库补一次 DROP（幂等，口径同上面的 DELETE 名单：开发期直接覆盖，不留旧副本）。
+DROP TABLE IF EXISTS `c_ai_answer_cache`;
+DROP TABLE IF EXISTS `c_ai_knowledge_ref`;
+
 DELETE FROM `c_ai_user_config` WHERE `config_key` IN (
     'parse.qaModel', 'graphrag.modelRef', 'memory.embeddingRef', 'rerank.model',
     'chat.deepThinkDefault', 'chat.historyRounds', 'chat.userSystemPrompt',

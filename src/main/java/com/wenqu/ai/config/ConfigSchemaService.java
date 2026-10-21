@@ -181,7 +181,7 @@ public class ConfigSchemaService {
      *   <li>{@code ConfigService.get} 跳过全局缓存/默认值层——未装载个人值的线程一律视为未配置。</li>
      * </ul>
      * 消费面随字段而异：parse.qaModel 已退役——问答对生成回落库主默认聊天模型；
-     * rerank.model 归知识库/智能体检索设置绑定（重排项已从个人设置下线）；graphrag.modelRef
+     * rerank.model 归知识库检索设置绑定（重排项已从个人设置下线）；graphrag.modelRef
      * 亦已退役——GraphRAG 抽取回落库主默认聊天模型，不再单独配置。
      */
     public boolean isPersonalOnly(String key) {

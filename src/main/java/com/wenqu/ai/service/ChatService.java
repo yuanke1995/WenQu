@@ -9,7 +9,6 @@ import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 import com.wenqu.ai.dto.ChatRequest;
 import com.wenqu.ai.model.Agent;
-import com.wenqu.ai.model.KnowledgeBase;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -39,32 +38,28 @@ import java.util.LinkedHashMap;
 public class ChatService {
 
     /**
-     * 智能体/知识库可覆盖的检索参数白名单（只有这些键生效，防止越权改其他配置）；
-     * 与设置页「检索设置 / 重排服务」暴露的项保持一致。
-     * <p>public：知识库新建表单的"默认值模板"端点需要按同一白名单取全局值（见 KnowledgeBaseController）。
+     * 智能体可覆盖的检索参数白名单：<b>只留“出水”那一层的开关</b>。
+     *
+     * <p>两阶段分工（2026-10 收口）：知识库管“召回池”（阈值、两路权重、重排模型，见
+     * {@link KbParamCodec}），智能体管“这一轮怎么用检索”（要不要重排、给模型几条）。
+     * 同一个键只归一层——此前两层共用一份白名单，表现为同一项在两处都能填，
+     * 而运行时线程覆盖会静默压掉库级配置（库主调好的阈值实际上从没生效）。
+     *
+     * <p>{@code public}：设置页/默认值端点按同一白名单展示可配置项。
      */
-    public static final Set<String> AGENT_QUERY_PARAM_KEYS = Set.of(
+    public static final Set<String> AGENT_QUERY_PARAM_KEYS = Set.of("rerank.enabled");
+
+    /**
+     * 已迁出智能体层的键：读取时静默忽略（存量 JSON 不报错，也不每轮刷 warn），保存时不再写入。
+     * <p>阈值/权重/召回量归知识库或全局；重排模型归知识库（资源归属：谁建库谁付费）。
+     */
+    private static final Set<String> AGENT_QUERY_PARAM_MOVED = Set.of(
             "retrieval.vectorWeight", "retrieval.keywordWeight", "retrieval.vecThreshold",
             "retrieval.vectorTopK", "retrieval.keywordLimit",
-            "rerank.enabled", "rerank.model", "rerank.baseUrl");
-
-
-    /**
-     * 本轮检索参数涉及的库：kbIds 非空按其逐个取库；为空（不限库）取全部未删除库
-     * （{@code KnowledgeBaseService.list()} 已按默认库优先、创建时间升序，与"全库检索"的范围一致）。
-     */
-    private List<KnowledgeBase> resolveQueryParamKbs(java.util.Collection<String> kbIds) {
-        if (kbIds == null || kbIds.isEmpty()) return knowledgeBaseService.list();
-        List<KnowledgeBase> out = new ArrayList<>();
-        for (String kbId : kbIds) {
-            KnowledgeBase kb = knowledgeBaseService.get(kbId);
-            if (kb != null) out.add(kb);
-        }
-        return out;
-    }
+            "rerank.model", "rerank.baseUrl");
 
     /**
-     * 解析检索参数 JSON → 覆盖表；**白名单之外的键一律丢弃**（防止借参数覆盖改到无关配置），
+     * 解析智能体检索参数 JSON → 覆盖表；**白名单之外的键一律丢弃**（防止借参数覆盖改到无关配置），
      * 解析失败只忽略该来源、不中断问答。
      */
     private Map<String, String> parseQueryParams(String json) {
@@ -76,7 +71,12 @@ public class ChatService {
             for (Map.Entry<String, Object> e : m.entrySet()) {
                 if (e.getKey() == null || e.getValue() == null) continue;
                 if (!AGENT_QUERY_PARAM_KEYS.contains(e.getKey())) {
-                    log.warn("[AGENT] 检索参数键不在白名单内，已忽略: {}", e.getKey());
+                    if (AGENT_QUERY_PARAM_MOVED.contains(e.getKey())) {
+                        // 迁移期存量：这些项已归知识库/全局，静默忽略（debug 便于排查"为什么配了没变"）
+                        log.debug("[AGENT] 检索参数已迁出智能体层，忽略: {}", e.getKey());
+                    } else {
+                        log.warn("[AGENT] 检索参数键不在白名单内，已忽略: {}", e.getKey());
+                    }
                     continue;
                 }
                 String v = String.valueOf(e.getValue()).trim();
@@ -89,10 +89,11 @@ public class ChatService {
     }
 
     /**
-     * 把本轮智能体的检索参数覆盖装进 {@link ConfigService} 的线程作用域覆盖层。
-     * <p>来源是 {@code c_ai_agent.query_params}（键为 {@link #AGENT_QUERY_PARAM_KEYS} 白名单内的
-     * {@code retrieval.*} / {@code rerank.*} 全名，如 {@code {"retrieval.vecThreshold":"0.35"}}）。
-     * 解析与白名单校验复用 {@link #parseQueryParams}：越权键丢弃并记 warn，解析失败只忽略该来源。
+     * 把本轮智能体的检索开关覆盖装进 {@link ConfigService} 的线程作用域覆盖层。
+     * <p>来源是 {@code c_ai_agent.query_params}，白名单见 {@link #AGENT_QUERY_PARAM_KEYS}——
+     * 当前只有 {@code rerank.enabled}（场景性开关）。检索阈值/权重归知识库，由
+     * {@link KbRetrievalParamService} 逐库生效，<b>不再经这里装载</b>：
+     * 库级参数必须按库取用，压成回合级标量会在跨库检索时丢掉各库差异。
      * <p><b>无智能体绑定 / 参数为空时不装载</b>——留着 {@code OVERRIDE} 为空，检索便一路读全局设置，
      * 与「null/空=全部继承全局设置」的字段口径一致。清理由本轮 finally 的
      * {@code clearOverride()} 负责，本方法不自行清理（它在引擎跑完整轮之前不能撤）。
@@ -103,7 +104,7 @@ public class ChatService {
         try {
             bound = agentService.get(agentId);
         } catch (Exception e) {
-            log.warn("[AGENT] 智能体检索参数装载失败（本轮按全局设置检索）: agent={} err={}",
+            log.warn("[AGENT] 智能体检索开关装载失败（本轮按全局设置检索）: agent={} err={}",
                     agentId, e.getMessage());
             return;
         }
@@ -111,7 +112,7 @@ public class ChatService {
         Map<String, String> ov = parseQueryParams(bound.getQueryParams());
         if (ov.isEmpty()) return;
         configService.putOverrides(ov);
-        log.info("[AGENT] 本轮装载智能体检索参数覆盖: agent={} keys={}", agentId, ov.keySet());
+        log.info("[AGENT] 本轮装载智能体检索开关覆盖: agent={} keys={}", agentId, ov.keySet());
     }
 
 
@@ -483,11 +484,10 @@ public class ChatService {
                 // 这一层作为配置四档的通用机制保留，将来再有个人可覆盖项时不必重铺。
                 // 与身份同生命周期：池化线程复用，finally 必须清（否则下一轮会带着上一轮用户的偏好）
                 configService.putUserOverrides(userConfigService.overrides(userId));
-                // 智能体检索参数覆盖（c_ai_agent.query_params）：本轮绑定的智能体可按自己的场景定制检索策略
-                // （法律助手提高阈值保精度、手册助手放宽保召回）。装在与个人覆盖同一段、同一生命周期——
-                // 下面的 finally 早就在清它（见 "智能体检索参数的作用域覆盖随本轮结束清除"），此前缺的只是装载。
-                // 优先级：显式覆盖(此处) > 个人覆盖 > 全局默认。个人覆盖装的是用户自己的显式选择，
-                // 智能体参数是管理员/建设者对该助手场景的整轮口径，故置于其上。
+                // 智能体检索开关覆盖（c_ai_agent.query_params）：本轮绑定的智能体只决定“这一轮怎么用检索”
+                // （是否重排），阈值/权重归知识库、由检索层逐库生效，不在这里压成回合级标量。
+                // 装在与个人覆盖同一段、同一生命周期——下面的 finally 早就在清它。
+                // 优先级：显式覆盖(此处) > 个人覆盖 > 全局默认。
                 loadAgentQueryOverrides(agentId);
                 try {
                 // 分派点刻意放在这一段：会话轮级互斥、turnId 登记、断线总线、看门狗、身份与个人覆盖
@@ -523,8 +523,8 @@ public class ChatService {
                     runtime.endTurnMutex(sessionId);
                     if (projectId != null) projectTurnMutex.end(projectId);
                     if (identity) com.wenqu.ai.util.RequestUser.clear();
-                    // 智能体检索参数的作用域覆盖随本轮结束清除（ThreadLocal，池化线程复用必须清，
-                    // 否则下一轮请求会继承上一轮智能体的检索策略）
+                    // 智能体检索开关的作用域覆盖随本轮结束清除（ThreadLocal，池化线程复用必须清，
+                    // 否则下一轮请求会继承上一轮智能体的检索开关）
                     configService.clearOverride();
                     configService.clearUserOverrides();
                 }
@@ -555,7 +555,7 @@ public class ChatService {
      * 不带就用默认智能体（isDefault=1）；未设默认才落到纯系统设置的全局配置。
      * <p>P5 起这里<b>不再有"会话锁定"</b>。过去首问把智能体锁进会话，是为了让同一会话里人设、知识库、
      * 工具集全程一致；代价是跨主题的问题只能对着自己那套库空转——"上一轮问手册、这一轮问法律就查不到"。
-     * 现在资料域由模型经 consultAgent 主动派出去查，作答方不需要被锁，也没有"换人请新建会话"这回事。
+     * 现在资料域由模型经派遣助手（框架的 agent_spawn）主动派出去查，作答方不需要被锁，也没有"换人请新建会话"这回事。
      * <p>显式指定却解析不到（已删除或无权限）时 fail-loud：静默改用全局配置等于悄悄换人，用户无从察觉。
      */
     private Agent resolveTurnAgent(String sessionId, String requestedAgentId,

@@ -109,12 +109,15 @@ public class KnowledgeRetrievalTool {
     private final HybridRetrievalService hybridRetrievalService;
     private final ConfigService configService;
     private final RerankService rerankService;
+    /** 库级检索参数：重排模型按“本轮范围的第一个配了模型的库”收敛（一轮只有一个重排器） */
+    private final KbRetrievalParamService kbRetrievalParams;
 
     public KnowledgeRetrievalTool(HybridRetrievalService hybridRetrievalService, ConfigService configService,
-                                  RerankService rerankService) {
+                                  RerankService rerankService, KbRetrievalParamService kbRetrievalParams) {
         this.hybridRetrievalService = hybridRetrievalService;
         this.configService = configService;
         this.rerankService = rerankService;
+        this.kbRetrievalParams = kbRetrievalParams;
     }
 
     /**
@@ -190,7 +193,13 @@ public class KnowledgeRetrievalTool {
         // 与查询仅词面重叠的无关块（如"框架/使用"命中操作手册章节）融合分可达 0.6+，而真实重排分 ~0.000x，
         // 全部混进工具结果并注册进引用面板。rankForced 不受 minHits 窗口限制（工具候选可能不足 6 条），
         // 失败时回退融合分序（rerankScore=null，走下方融合门），与主链路降级语义一致。
-        hits = rerankService.rankForced(hits, query.trim());
+        // 重排模型归知识库（库主付费）：在**本轮实际命中**的库里，按范围顺序取第一个绑了模型的库；
+        // 都没绑则由平台默认兜底（rerank.platformRef）。withRerankModel 只在有库级模型时临时覆盖。
+        final List<Hit> candidates = hits;
+        final List<String> hitKbIds = candidates.stream().map(Hit::kbId).toList();
+        hits = kbRetrievalParams.withRerankModel(
+                scope == null ? null : scope.kbIds(), hitKbIds,
+                () -> rerankService.rankForced(candidates, query.trim()));
         // 最低相关分门（分域双门，与主链路上下文填充同款语义）：重排分走 retrieval.minContextScore（0.6），
         // 未重排（关闭/失败回退）的融合分走 retrieval.minFusionScore（0.5）——两个分值域分布不同，一个绝对门
         // 不可能同时对两者成立；重排本轮实际执行过时，未重排候选不得借融合门入场（单侧约束）。

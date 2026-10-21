@@ -102,11 +102,4 @@ public interface ToolTurnContext {
      */
     String decorateResult(ToolInvocation inv, String result);
 
-    /**
-     * 把用户中途插话附到本步结果尾部（<b>在观测之后</b>才附，否则卡片里会出现「用户插话」这种
-     * 不属于工具输出的文本）。循环的消息列表由框架持有，工具返回值是我们唯一能干净影响
-     * 下一轮输入的位置。附在尾部而不是开头——MCP 工具可能回严格 JSON，前置会把结构打断。
-     */
-    String appendSteers(ToolInvocation inv, String result);
-
 }

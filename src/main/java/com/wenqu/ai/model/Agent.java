@@ -204,9 +204,10 @@ public class Agent {
     private Integer published;
 
     /**
-     * 本智能体的检索参数覆盖（JSON，键为 retrieval.* / rerank.* 的短名，如
-     * {"vectorWeight":0.8,"vecThreshold":0.35}；null/空=全部继承全局设置）。
-     * 用途：不同智能体可按自己的场景定制检索策略（如法律助手提高阈值保精度、手册助手放宽保召回）。
+     * 本智能体的检索开关覆盖（JSON，如 {"rerank.enabled":"false"}；null/空=全部继承全局设置）。
+     * <p><b>只拥有“出水”这一层</b>：是否重排、给模型几条——与资料无关的场景决策。
+     * 检索阈值 / 两路权重 / 召回量 / 重排模型归知识库或全局（见 {@code KbParamCodec}），
+     * 写在这里也不会生效：库级参数必须逐库取用，压成回合级标量会在跨库检索时丢掉各库差异。
      */
     private String queryParams;
 

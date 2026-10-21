@@ -81,7 +81,9 @@
                      :attach-count="pendingImages.length + pendingFiles.length" :mentions="mentionNames" />
       </div>
 
-      <template v-for="(m, i) in messages" :key="m.messageId || i">
+      <!-- 键用消息对象本身：m.messageId 在 done 才回填，用「messageId 或下标」会让那颗回答
+           在收尾一刻换键重挂；插话插进流中间时同样会整列错位重渲染 -->
+      <template v-for="(m, i) in messages" :key="m">
         <!-- 压缩记录：这条提问上方出现分隔线=此线以上的早期对话已折进摘要（判据与 PC 同源，在引擎里） -->
         <MsgDivider v-if="compactDividerAt(m, i)" touch class="m-cdiv">
           <compress-outlined />
@@ -967,7 +969,6 @@ onUnmounted(() => {
 }
 .m-welcome { display: flex; flex-direction: column; align-items: center; padding: 20px 0 8px; }
 /* 示例卡组件自带 12px 横向内边距（PC 窄屏布局用语）；在列表已加内边距时取消，避免双层缩进 */
-.m-welcome :deep(.m-samples) { padding-left: 0; padding-right: 0; }
 .m-brand { font-size: 40px; }
 .m-welcome-title { margin-top: 12px; font-size: 19px; font-weight: 600; }
 .m-welcome-sub { margin: 6px 0 16px; font-size: 13px; color: var(--app-text3); text-align: center; }

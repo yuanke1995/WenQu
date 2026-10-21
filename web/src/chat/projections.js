@@ -259,15 +259,22 @@ const rememberAgents = list => {
   if (!Array.isArray(list)) return
   list.forEach(a => { if (a && a.id && a.name) agentNames.set(a.id, a.name) })
 }
-// ==================== consultAgent（问另一位助手）子对话 ====================
-// 一次咨询在聊天区的那份问答：我们问它什么 + 它答了什么 + 它据哪些资料。
+// ==================== 派遣助手（问另一位助手）子对话 ====================
+// 一次派遣在聊天区的那份问答：我们问它什么 + 它答了什么 + 它据哪些资料。
 // 数据来自后端随工具卡落库的 subChat（SubAgentConsultService.render 那份），所以刷新、换设备、
 // 历史回看与实时同构——刻意不依赖只活一次的 SSE。
+// 工具名两代都认：自研派遣那把叫 consultAgent（历史消息里仍是它），框架驱使后叫 agent_spawn。
+const CONSULT_TOOL_NAMES = new Set(['consultAgent', 'agent_spawn'])
 // 被咨询那位的名字：优先后端随卡带的那一份，退回按入参 id 查本轮登记过的助手清单
 const consultNameOf = t => {
   const n = t?.subChat?.agentName
   if (n) return n
-  try { return agentNames.get(JSON.parse(t?.args || 'null')?.agentId) || '' } catch (e) { return '' }
+  let id = ''
+  try {
+    const o = JSON.parse(t?.args || 'null')
+    id = o?.agent_id || o?.agentId || ''
+  } catch (e) { return '' }
+  return agentNames.get(id) || ''
 }
 /** 工具卡上的子对话视图；null = 这条记录没有子对话（老消息、或咨询没跑到出结果），退回普通工具卡 */
 const consultChatView = t => {
@@ -297,14 +304,16 @@ const consultChatView = t => {
 // 时间线随消息落库（正文区间 + 工具/产物下标），历史恢复时由 restoreTimeline 重建，
 // 刷新后仍是「正文—工具—正文」的交错过程视图；旧消息无 timeline 才走底部汇总兜底。
 // data-msg-index 仍挂在外层 .md 容器上，引用角标逻辑零改动。
-// 注：插话（steer）已不占时间线段——用户按了发送就会落成一条独立 user 消息，
-// 在消息流里和普通提问并列，不再需要夹在回答的时间线里留痕。
+// 注：插话（steer）占一条 {kind:'steer', text, messageId} 段，位置＝框架把它写进上下文的那一刻
+// （后端 inbox/applied 时机），所以它夹在正文与工具之间，而不是整段回答的上面或下面。
+// 它同时也是一条落库的用户消息（sequence 排在回答之前）：历史回显时凡 messageId 已被某条时间线
+// 段用掉的，那颗独立气泡就退场（见 useChatEngine 的 steerSegmentIds），一处留痕就够。
 
-/** 是否值得按时间线渲染：有工具段/产物段/过程段/思考段才有交错意义（纯正文段与整段渲染等价）。 */
+/** 是否值得按时间线渲染：有工具段/产物段/过程段/思考段/插话段才有交错意义（纯正文段与整段渲染等价）。 */
 const hasTimelineBlocks = m => {
   return Array.isArray(m?.timeline)
     && m.timeline.some(s => s && (s.kind === 'tool' || s.kind === 'artifact'
-      || s.kind === 'process' || s.kind === 'think'))
+      || s.kind === 'process' || s.kind === 'think' || s.kind === 'steer'))
 }
 
 const extendTimelineText = (m, from, to) => {
@@ -564,10 +573,11 @@ const turnTitle = m => {
     : '从发出提问到答完实际用的时间'
 }
 /** 顶部那条收起时只留正文行：正文各段本来就是 content 的连续切片（工具不往正文写内容），
- *  连排与全量渲染等价，零失真；展开时回到按到达顺序交错的原始时序。 */
+ *  连排与全量渲染等价，零失真；展开时回到按到达顺序交错的原始时序。
+ *  插话段例外——那是用户自己说的话，收起过程时也要看得见，不该跟着工具卡一起藏进折叠里。 */
 const turnRows = m => {
   const rows = timelineRows(m)
-  return turnOpen(m) ? rows : rows.filter(s => s.kind === 'text')
+  return turnOpen(m) ? rows : rows.filter(s => s.kind === 'text' || s.kind === 'steer')
 }
 
 // 历史消息的 processText 可能带前导换行（后端修复前落库的数据，每个 <process> 块标签后的换行
@@ -588,6 +598,16 @@ const pushTimelineArtifact = (m, index) => {
   if (!m) return
   const tl = Array.isArray(m.timeline) ? m.timeline : (m.timeline = [])
   tl.push({ kind: 'artifact', i: index })
+}
+
+// 插话段：文本自带（它同时是一条独立用户消息，但界面只许在这一处显示）。
+// 同一条收据可能被读两遍（收尾那次全量补读），按 messageId 幂等。
+const pushTimelineSteer = (m, text, messageId) => {
+  if (!m || !text) return
+  const tl = Array.isArray(m.timeline) ? m.timeline : (m.timeline = [])
+  const id = messageId || ''
+  if (id && tl.some(s => s && s.kind === 'steer' && s.messageId === id)) return
+  tl.push({ kind: 'steer', text, messageId: id })
 }
 
 /** 用后端落库/下发的段数组重建时间线：文本段直接用区间，工具段与产物段按下标取回对象。
@@ -615,6 +635,9 @@ const restoreTimeline = (m, segs) => {
       if (t) out.push({ kind: 'tool', i: Number(s.i) || 0, tool: t })
     } else if (s.kind === 'artifact') {
       out.push({ kind: 'artifact', i: Number(s.i) || 0 })
+    } else if (s.kind === 'steer') {
+      const t = String(s.text || '')
+      if (t) out.push({ kind: 'steer', text: t, messageId: String(s.messageId || '') })
     }
   }
   return out
@@ -679,6 +702,15 @@ const timelineView = m => {
       if (pt > pf) out.push({ kind: 'process', from: pf, to: pt })
       continue
     }
+    if (seg.kind === 'steer') {
+      // 插话段：用户在这一刻补的那句，就地一行（渲染成右对齐的用户话）。它既不是正文也不是工具，
+      // 必须断开半句合并窗口与工具组——被吸进下一组里，位置就又错了
+      flushMerge()
+      flushGroup()
+      const t = String(seg.text || '')
+      if (t) out.push({ kind: 'steer', text: t, messageId: seg.messageId || '' })
+      continue
+    }
     if (seg.kind === 'artifact') {
       // 产物不再按生成时刻就地渲染（统一沉底展示）：跳过该段，且不打断工具组/合并窗口
       continue
@@ -719,9 +751,9 @@ const toolBrief = t => {
   if (!t?.args) return ''
   let obj = null
   try { obj = JSON.parse(t.args) } catch (e) { return oneLine(t.args, 56) } // 非 JSON（MCP 兼容）：纯文本截断
-  // 咨询另一位助手：标题行亮出「问的是谁」——一串智能体 id 对用户没有信息量，
+  // 派遣助手：标题行亮出「问的是谁」——一串智能体 id 对用户没有信息量，
   // 完整问答就在下面那张子对话卡里
-  if (t.name === 'consultAgent') {
+  if (CONSULT_TOOL_NAMES.has(t.name)) {
     const who = consultNameOf(t)
     if (who) return oneLine(who, 56)
   }
@@ -971,50 +1003,6 @@ const usageTip = t => {
   segs.push(`输出 ${n(t.output)} tokens`)
   return segs.join(' · ') + (t.outputIsReal ? '（网关实测）' : '（估算）')
 }
-// ============ 子智能体编排卡片（仅委派模式显示） ============
-// 多视角模式（delegated=false）的分支只是把原问题换个问法，属实现细节，不展示；
-// 只有主智能体委派了真实子智能体（有名字、有职责）时，卡片才有信息价值。
-const fmtDuration = ms => ms == null ? '—' : toolDuration(ms)
-function subagentCard (m) {
-  const all = (m && Array.isArray(m.subagents)) ? m.subagents : []
-  // 只要有任一分支标记了委派，就按委派模式渲染（后端按整轮是否委派置位，全部分支一致）
-  const branches = all.filter(b => b && b.delegated)
-  if (!branches.length) return null
-  const done = branches.filter(b => b.status === 'done').length
-  const running = branches.some(b => b.status === 'running')
-  const total = branches.length
-  // 全循环分支（P3a）：这一支不是"查了资料交回来"，而是自己把事办了一遍（用了工具、可能交付了产物）。
-  // 标题要点明这件事，否则用户看到"已咨询 2 个子智能体"会以为只是多路检索，
-  // 也就不会预期这一支可能要几十秒。
-  const full = branches.filter(b => b.mode === 'full').length
-  const title = running
-    ? `并行咨询 ${total} 个子智能体${full ? `（${full} 个在执行任务）` : ''}…`
-    : `已咨询 ${total} 个子智能体${full ? `，${full} 个办完了各自的任务` : ''}`
-  // 按需委派信息：从 N 个候选中挑了 M 个（让"挑选过程"可见，解释为什么只有这几个角色）
-  const rt = m.subagentRoute
-  const routeNote = (rt && rt.candidates > rt.picked)
-    ? `从 ${rt.candidates} 个候选中挑选 ${rt.picked} 个相关的`
-    : ''
-  // 路由「挑选理由」（名称 → 理由；subagent_route 事件与 done payload 下发，旧消息无此字段不展示）
-  const reasons = (rt && rt.reasons && typeof rt.reasons === 'object' && !Array.isArray(rt.reasons)) ? rt.reasons : {}
-  // 耗时占比条基准：最慢分支（相对值，让"谁拖了后腿"一眼可见；运行中分支随进度增长）
-  const maxElapsed = Math.max(1, ...branches.map(b => b.elapsedMs || 0))
-  // 运行中默认展开（要看到实时进度），全部完成后默认收起（信息价值下降，不占版面）；
-  // 用户手动点过则尊重其选择（saTouched），不再自动改变
-  if (m.saOpen === undefined) m.saOpen = running
-  return { branches, done, total, running, title, routeNote, reasons, maxElapsed }
-}
-
-/** 分支耗时占比条宽度：相对最慢分支的百分比（下限 2% 保证可见） */
-function barWidth (card, b) {
-  return Math.max(2, Math.round((b.elapsedMs || 0) / card.maxElapsed * 100)) + '%'
-}
-
-/** 手动展开/收起编排卡片（标记 saTouched，避免生成完成后被自动收起打断阅读） */
-function toggleSubagents (m) {
-  m.saOpen = !m.saOpen
-  m.saTouched = true
-}
 /** 分组内核：入参 sources 数组，返回按 key 分好的组（外部来源 WEB/MCP 单独成组） */
 const groupSources = sources => {
   const groups = []
@@ -1136,7 +1124,6 @@ const snapshotVersion = m => ({
   timeline: m.timeline || [],
   artifacts: m.artifacts || [],
   toolCalls: m.toolCalls || [],
-  subagents: m.subagents || [],
   plan: m.plan || null,
   processText: m.processText || '',
   degradations: m.degradations || [],
@@ -1156,7 +1143,6 @@ const applyVersion = (m, v) => {
   m.timeline = v.timeline
   m.artifacts = v.artifacts
   m.toolCalls = v.toolCalls
-  m.subagents = v.subagents
   m.plan = v.plan
   m.processText = v.processText
   m.degradations = v.degradations
@@ -1181,7 +1167,7 @@ const verLabel = m => verLocal(m)
 export {
   TOOL_LABELS, TOOL_DESCS, MCP_CLIENT_PREFIXES, bareToolName, toolLabel, toolDesc, toolCallsView, executedCount,
   toolDuration, toolRunning, consultChatView, consultNameOf, rememberAgents, hasTimelineBlocks, extendTimelineText, askUserView,
-  extendTimelineProcess, procOpen, toggleProc, procSlice, pushTimelineTool, pushTimelineArtifact,
+  extendTimelineProcess, procOpen, toggleProc, procSlice, pushTimelineTool, pushTimelineArtifact, pushTimelineSteer,
   pushTimelineThink, extendTimelineThink, thinkSlice, thinkGrowing, thinkSegOpen, toggleThinkSeg, ensureThinkSegment,
   restoreTimeline, SENTENCE_END_CHARS, endsSentence, timelineView, timelineRows, TOOL_BRIEF_KEYS, oneLine,
   clusterize, clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterProcCount,
@@ -1194,7 +1180,7 @@ export {
   retrievalLineTitle,
   THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel, CTX_WINDOW_STEPS, fmtWindow,
   usageCtxTokens, usageTip,
-  fmtDuration, subagentCard, barWidth, toggleSubagents, groupSources, externalOrigin, sourceName,
+  groupSources, externalOrigin, sourceName,
   fmtSourceScore, scoreTitle, fmtSize, histItemTitle, histItemDigest, fmtMsgTime, errorBrief, agentBadgeOf,
   pasteTitle, pasteSub, isPastedText, PASTE_TEXT_BASE,
   snapshotVersion, applyVersion, verLocal, canSwitchPrev, canSwitchNext, verLabel

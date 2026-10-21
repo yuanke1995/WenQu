@@ -87,7 +87,7 @@ public class AppProperties {
         private boolean enabled = false;
         /** reranker 服务 base-url（OpenAI 兼容，POST /v1/rerank；需显式配置，无本地兜底） */
         private String baseUrl = "";
-        // 模型名与超时不再走 yml：模型引用归知识库/智能体检索设置绑定（rerank.model），
+        // 模型名与超时不再走 yml：模型引用归知识库检索设置绑定（rerank.model），
         // 超时是 DB 隐藏键 rerank.timeoutMillis。曾经在这里的 model/timeoutMillis 两个字段
         // 没有任何读取方，只会让「改了 yml 却不变」的错觉存在，已删除。
     }

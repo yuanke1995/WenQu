@@ -13,6 +13,7 @@ import com.wenqu.ai.service.RerankService;
 import com.wenqu.ai.util.RequestUser;
 import io.agentscope.core.tool.Tool;
 import io.agentscope.core.tool.ToolParam;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -22,9 +23,10 @@ import java.util.Map;
 /**
  * 问渠领域能力 → 框架工具的挂载点。
  * <p>框架没有问渠这套多路召回（向量+关键词+重排+库界+引用编号），所以检索链<b>不重造也不重写</b>：
- * 直接把现有 {@link KnowledgeRetrievalTool} 挂成框架的一等工具，工具本体、检索参数覆盖、降级登记
+ * 直接把现有 {@link KnowledgeRetrievalTool} 挂成框架的一等工具，工具本体、检索开关覆盖、降级登记
  * 全部沿用同一份实现。这里只负责按「这一轮」把库界与引用池接上。
  */
+@Slf4j
 @Component
 public class WenquAgentxTools {
 
@@ -125,7 +127,7 @@ public class WenquAgentxTools {
     }
 
     /**
-     * 装本轮落点袋。<b>必须在发起线程调用</b>：身份与本轮检索参数覆盖都是 ThreadLocal，
+     * 装本轮落点袋。<b>必须在发起线程调用</b>：身份与本轮检索开关覆盖都是 ThreadLocal，
      * 框架把工具派到自己的弹性线程上，不在这里取快照就拿不到（{@code KnowledgeTools} 同一口径）。
      */
     public TurnHooks newHooks(ChatCommand cmd, String modelRef, java.util.function.Supplier<String> turnId,
@@ -201,8 +203,8 @@ public class WenquAgentxTools {
                 continue;
             }
 
-            // 需要「本轮落点」的三族各自给出：联网的落点是本轮引用池、沙盒是档位与输出通道、
-            // 子智能体是本轮咨询台账；其余族的主链路侧不读 per-call 上下文
+            // 需要「本轮落点」的两族各自给出：联网的落点是本轮引用池、沙盒是档位与输出通道；
+            // 其余族的主链路侧不读 per-call 上下文
             // （实测 enrichments 只有 KNOWLEDGE/WEBSEARCH/SANDBOX 三条），可直接复用
             if (family == com.wenqu.ai.agent.tool.ToolFamily.WEBSEARCH) {
                 mountFrom(provider, mc, holders, cmd, slot, rawCallbacks, mcpToolNames, policy, approvalCanAsk,
@@ -214,14 +216,6 @@ public class WenquAgentxTools {
                 // 沙盒本轮落点给权限档位、输出增量、基建错误、外溢落盘与 run_code 的子调用回程
                 mountFrom(provider, mc, holders, cmd, slot, rawCallbacks, mcpToolNames, policy, approvalCanAsk,
                         name -> sandboxContext(name, slot.require()));
-                continue;
-            }
-            if (family == com.wenqu.ai.agent.tool.ToolFamily.SUBAGENT) {
-                // 咨询另一位助手：执行器按轮回传，预算/去重/回报转文本都在 SubAgentConsultService 里
-                // （与问答侧同一个实现）。子轮仍走「再起一轮」那条通路——它要的是完整问答外壳
-                // （即时落库、轮级互斥、断线续跑），不是框架引擎里再嵌一个内层循环
-                mountFrom(provider, mc, holders, cmd, slot, rawCallbacks, mcpToolNames, policy, approvalCanAsk,
-                        name -> consultContext(cmd, slot));
                 continue;
             }
             if (family == com.wenqu.ai.agent.tool.ToolFamily.BUILTIN) {
@@ -240,6 +234,106 @@ public class WenquAgentxTools {
         slot.bindSurface(new AgentxTurnSlot.Surface(List.copyOf(rawCallbacks), java.util.Set.copyOf(mcpToolNames),
                 runCodeMounted));
         return holders;
+    }
+
+    /**
+     * 本刀交给框架组管理的族。
+     * <p>沙盒与 MCP 刻意留在「无组=永远可见」那一侧：前者与审批档、权限档位耦合最深，后者按用户登记
+     * 动态合入、压根没有静态描述符，两条都要连着改档位闸才有意义（第二刀）。
+     */
+    private static final java.util.List<com.wenqu.ai.agent.tool.ToolFamily> GROUPED_FAMILIES =
+            java.util.List.of(com.wenqu.ai.agent.tool.ToolFamily.BUILTIN,
+                    com.wenqu.ai.agent.tool.ToolFamily.KNOWLEDGE,
+                    com.wenqu.ai.agent.tool.ToolFamily.WEBSEARCH,
+                    com.wenqu.ai.agent.tool.ToolFamily.ARTIFACT,
+                    com.wenqu.ai.agent.tool.ToolFamily.TODO);
+
+    /**
+     * 描述符名 → 框架 Toolkit 里的真实注册名。
+     * <p>知识族是唯一不同源的：注册中心登记的是 {@code searchKnowledge}（Spring AI 那条 @Tool 的方法名），
+     * 框架侧走 {@link #turnTools} 交出去的那把 @Tool 逐字叫 {@code search_knowledge}。组名必须对上注册名，
+     * 对不上就是「建了一条空组、真工具永远无组=永远可见」。
+     */
+    private static final Map<String, String> GROUPED_NAME_ALIASES =
+            Map.of("searchKnowledge", "search_knowledge");
+
+    private static String registeredName(String descriptorName) {
+        return GROUPED_NAME_ALIASES.getOrDefault(descriptorName, descriptorName);
+    }
+
+    /** 本刀纳入组管理的全部注册名（描述符名经别名换算）。 */
+    public java.util.Set<String> groupableNames() {
+        java.util.Set<String> out = new java.util.LinkedHashSet<>();
+        for (var family : GROUPED_FAMILIES) {
+            for (var d : toolRegistry.ofFamily(family)) out.add(registeredName(d.name()));
+        }
+        return out;
+    }
+
+    /**
+     * 按<b>老装配判据</b>算出本轮允许的注册名——这是组激活集的输入。
+     * <p>一条判据都不重写：直接问 {@code ToolRegistry#exposes}，也就是装配循环用的那一份（族开关、
+     * 智能体三态、游客可见、档位裁剪、按名黑名单、分支轮不收的人在回路工具）。另写一份就会漂移成
+     * 「提示词教了、工具表里却没有」。
+     */
+    public java.util.Set<String> turnGroupedNames(ChatCommand cmd, ExecutionPolicy policy) {
+        var mc = toolAssembly.mountContext(agentOf(cmd), cmd.getUserId(), cmd.isGuestMode(),
+                cmd.branchTurn(), (code, message) -> { }, policy);
+        java.util.Set<String> out = new java.util.LinkedHashSet<>();
+        for (var family : GROUPED_FAMILIES) {
+            for (var d : toolRegistry.ofFamily(family)) {
+                if (toolRegistry.exposes(family, d.name(), mc)) out.add(registeredName(d.name()));
+            }
+        }
+        return out;
+    }
+
+    /**
+     * 注册工具持有对象，并给本刀那批问渠工具<b>一把建一个 EXTERNAL 组</b>（组名=工具名）。
+     * <p>为什么一把一个组而不是一个族一个组：框架的组是整组开关，族粒度表达不了「一族三把里只用一把」
+     * （智能体的内置工具白名单）与逐工具黑名单。换成按名 deny 规则更糟——实测
+     * {@code Toolkit#getToolSchemas} 只按激活集过滤，<b>权限规则不过滤 schema</b>，于是那条能力会从
+     * 「模型压根看不见」退化成「看得见、调了被拒」，白烧一步工具预算与 token。
+     * <p>为什么是 EXTERNAL：{@code reset_equipped_tools} 的 enum 与 {@code getNotes()} 只列 META 组，
+     * EXTERNAL 组模型既看不见也装备不回来，这正是问渠「被禁掉的能力要与不存在不可区分」的口径。
+     *
+     * @return 本轮真正建了组的注册名（每轮激活集只会在这份名单里增删）
+     */
+    public java.util.Set<String> registerWithGroups(io.agentscope.core.tool.Toolkit toolkit,
+                                                    List<Object> holders) {
+        java.util.Set<String> before = new java.util.LinkedHashSet<>(toolkit.getToolNames());
+        for (Object holder : holders) toolkit.registerTool(holder);
+        java.util.Set<String> added = new java.util.LinkedHashSet<>(toolkit.getToolNames());
+        added.removeAll(before);
+        java.util.Set<String> groupable = groupableNames();
+        java.util.Set<String> grouped = new java.util.LinkedHashSet<>();
+        for (String name : added) {
+            if (!groupable.contains(name)) continue;
+            if (toolkit.getToolGroup(name) == null) {
+                toolkit.createToolGroup(name, "wenqu:" + name, true,
+                        io.agentscope.core.tool.ToolGroupScope.EXTERNAL);
+            }
+            toolkit.addToolToGroup(name, name);
+            grouped.add(name);
+        }
+        // 漏闸断言：属于本刀的族却没进组的注册名 = 无组 = 永远出现在模型工具表里，
+        // 档位裁剪与按名白名单一概拦不住。宁可当场说错名字，也不要留着静默漏一道闸。
+        for (String name : added) {
+            if (grouped.contains(name)) continue;
+            var family = toolRegistry.familyOf(name);
+            if (family != null && GROUPED_FAMILIES.contains(family)) {
+                log.error("[agentx] 工具 {} 属于族 {} 却没进组（登记名与注册名不同源？）："
+                        + "它将永远出现在模型工具表里，档位与白名单拦不住", name, family.code());
+            }
+        }
+        // 反向核对：名单里有、这轮却没注册进来的名字。族开关关着是正常态，所以只记 info；
+        // 但它同时是「别名写错→建了一条空组、真工具无组」唯一的可见线索。
+        for (String name : groupable) {
+            if (!added.contains(name)) {
+                log.info("[agentx] 组管理名单里的 {} 本轮未注册进 Toolkit（族开关关着、游客收窄，或别名与注册名不符）", name);
+            }
+        }
+        return grouped;
     }
 
     /**
@@ -304,7 +398,7 @@ public class WenquAgentxTools {
      * 「这一轮会不会问人」——判据必须与手写侧 {@code ApprovalGate} 一字不差：智能体的审批档位是
      * {@code ask} 才算会问人（{@code auto}/{@code off}/未登记都算不问），档位没解析出来时按最保守的会问人处理。
      * <p>为什么单独收成一处：框架侧原先只看了「这把工具有没有副作用」，于是 auto 档也每把写操作都弹卡
-     * （双跑实测：legacy 同一智能体同一问题一句没问，框架那边 write_file 与 MCP 只读工具都要确认）。
+     * （双跑实测：同一智能体同一问题，手写侧一句没问，框架那边 write_file 与 MCP 只读工具都要确认）。
      * 卡片没人答的代价不是「多问一句」而是整轮悬到确认超时、正文什么都没有。
      */
     public static boolean asksHuman(com.wenqu.ai.agent.permission.ExecutionPolicy policy) {
@@ -377,51 +471,112 @@ public class WenquAgentxTools {
     }
 
     /**
-     * 本轮的咨询落点。四样都按轮现算：台账（同一位问两次不该再花一整条子轮）、分支执行器（子轮要的是
-     * 完整问答外壳）、引用登记（子轮查到的资料进<b>父轮</b>编号空间），可见事件（「本轮咨询了谁」的徽标
-     * 不能等整轮 done）。执行时从槽位现取当轮，装配期只捕获会话级的 slot。
-     * <p>执行器与预算/去重/回报转文本全部复用 {@code SubAgentConsultService}：框架侧不另写一套咨询语义。
+     * 一位可派遣助手的登记：框架的 {@code agent_id}（逐字=问渠智能体 id）、给模型看的那一行说明、
+     * 以及每次派遣现造一个子轮实现体的口子。
      */
-    private Map<String, Object> consultContext(ChatCommand cmd, AgentxTurnSlot slot) {
-        return Map.of(com.wenqu.ai.agent.tool.SubAgentTools.CTX_CONSULT,
-                (com.wenqu.ai.agent.tool.SubAgentTools.ConsultFn) (agentId, question) -> {
-                    AgentxTurnSlot.Turn t = slot.require();
-                    TurnHooks hooks = t.hooks();
-                    com.wenqu.ai.agent.subagent.SubAgentConsultService.Ctx ctx =
-                            new com.wenqu.ai.agent.subagent.SubAgentConsultService.Ctx(
-                                    cmd.getSessionId(), t.turnId(), cmd.getUserId(), hooks.modelRef(),
-                                    cmd.isGuestMode(), cmd.getSubagentDepth(),
-                                    cmd.getAgentId() == null ? "" : cmd.getAgentId(),
-                                    // @ 提及强制咨询那一位：框架引擎这一侧没有 mentions 那一段编排，如实留空
-                                    //（后果只是「模型可以再问一次同一位」，由台账的去重兜住）
-                                    "",
-                                    (consultedId, consultedName) -> t.channel().emit(
-                                            com.wenqu.ai.engine.RunEventType.AGENT_CONSULTED,
-                                            com.alibaba.fastjson2.JSON.toJSONString(
-                                                    Map.of("id", consultedId, "name", consultedName))));
-                    com.wenqu.ai.agent.subagent.BranchRunner runner = branchTurnRunner == null ? null
-                            : branchRuntime.branchRunner(branchTurnRunner, cmd.getSessionId(), t.turnId(),
-                                    cmd.getUserId(), cmd.isGuestMode(), t.channel().emitter());
-                    // runner=null 时咨询服务自己回一句「通道未就绪」给模型（可见降级），不 NPE 也不静默。
-                    // asCaller 罩住整次咨询：子轮是在这条弹性线程上「再起一整轮」的，身份与覆盖得跟着进去
-                    return asCaller(hooks,
-                            () -> consultService.consult(hooks.consultLedger(), ctx, runner,
-                                    t.pool()::registerConsultedSources, agentId, question));
-                });
+    public record SubagentTarget(String agentId, String description,
+                                 java.util.function.Function<String, io.agentscope.core.agent.Agent> factory) {
     }
 
     /**
-     * 「可咨询助手」一节。判据与工具挂载<b>同源</b>（问的是同一份 {@code ToolRegistry#exposes}）：
-     * 教模型用一件它手上没有的能力，是本仓反复点名的错。正文与问答侧共用
-     * {@code AgentService#consultGuideSection}，两份措辞分开写早晚会对不上。
+     * 可派遣的助手（派遣改由框架的 {@code agent_spawn} 驱使，问渠不再自己挂一把咨询工具）。
+     * <p>四样都按轮现算的口径没变：台账（同一位问两次不该再花一整条子轮）、分支执行器（子轮要的是
+     * 完整问答外壳）、引用登记（子轮查到的资料进<b>父轮</b>编号空间）、可见事件（「本轮咨询了谁」的
+     * 徽标不能等整轮 done）。执行时从槽位现取当轮，闭包只捕获会话级的 slot——实例按会话常驻，
+     * 把 pool/channel/hooks 捕进去就是「第二轮起写上一轮的池子」。
+     * <p>登记时机在建实例那一轮，与退役前的清单渲染时机同一个（{@code sysPrompt} 里那节也是 build 期
+     * 拼的），所以「改了勾选要不要等重建」这件事逐字不变。
      */
-    public String consultGuide(ChatCommand cmd) {
+    public List<SubagentTarget> consultSubagentTargets(ChatCommand cmd, ExecutionPolicy policy,
+                                                       AgentxTurnSlot slot) {
+        List<Agent> candidates = dispatchAllowed(cmd, policy)
+                ? agentService.consultCandidates(cmd.getAgentId() == null ? "" : cmd.getAgentId())
+                : List.of();
+        List<SubagentTarget> out = new java.util.ArrayList<>(candidates.size());
+        for (Agent a : candidates) {
+            String name = a.getName() == null ? a.getId() : a.getName();
+            out.add(new SubagentTarget(a.getId(), agentService.consultLine(a),
+                    ignored -> new WenquConsultSubagent(a.getId(), name, consultRun(a.getId(), cmd, slot))));
+        }
+        return out;
+    }
+
+    /**
+     * 派遣的两句纪律（助手清单本体由框架渲染在「## Subagents → Available agent ids」里，问渠不再抄一份）。
+     * <p>只在真登记出了助手时写：调用方拿的是 {@link #consultSubagentTargets} 同一份结果，
+     * 「提示词教了模型、能力却没挂上」是本仓反复点名的错。
+     * <p>框架那段讲的是通用时机（什么时候值得拆一支），这两句讲的是问渠特有的路由纪律：
+     * id 逐字取自清单不要猜、通用问题不要派——派错一位的成本是一整条子轮。
+     */
+    public String dispatchDiscipline() {
+        return "\n\n## 派遣助手\n"
+                + "遇到超出你手上资料、且明显落在某位助手职责范围内的问题，用 agent_spawn 派它去查"
+                + "（agent_id 逐字取自清单里那一行，不要猜；可以派多次，每次一位；"
+                + "它会带着自己的知识库查一遍再把结论与资料交回）。"
+                + "通用问题（常识、写作、建议）不要派——没有对应的助手，直接自己答。";
+    }
+
+    /**
+     * 这一位能不能派，以及派出去跑哪条通路。返回的是「给父轮模型的回报文本」，
+     * 预算、去重、失败降级、引用编号回填都在 {@code SubAgentConsultService} 里（与问答侧同一个实现）。
+     */
+    private java.util.function.Function<String, String> consultRun(String childAgentId, ChatCommand cmd,
+                                                                   AgentxTurnSlot slot) {
+        return question -> {
+            AgentxTurnSlot.Turn t = slot.require();
+            TurnHooks hooks = t.hooks();
+            com.wenqu.ai.agent.subagent.SubAgentConsultService.Ctx ctx =
+                    new com.wenqu.ai.agent.subagent.SubAgentConsultService.Ctx(
+                            cmd.getSessionId(), t.turnId(), cmd.getUserId(), hooks.modelRef(),
+                            cmd.isGuestMode(), cmd.getSubagentDepth(),
+                            cmd.getAgentId() == null ? "" : cmd.getAgentId(),
+                            // @ 提及强制咨询那一位：框架引擎这一侧没有 mentions 那一段编排，如实留空
+                            //（后果只是「模型可以再问一次同一位」，由台账的去重兜住）
+                            "",
+                            (consultedId, consultedName) -> t.channel().emit(
+                                    com.wenqu.ai.engine.RunEventType.AGENT_CONSULTED,
+                                    com.alibaba.fastjson2.JSON.toJSONString(
+                                            Map.of("id", consultedId, "name", consultedName))));
+            com.wenqu.ai.agent.subagent.BranchRunner runner = branchTurnRunner == null ? null
+                    : branchRuntime.branchRunner(branchTurnRunner, cmd.getSessionId(), t.turnId(),
+                            cmd.getUserId(), cmd.isGuestMode(), t.channel().emitter());
+            // runner=null 时咨询服务自己回一句「通道未就绪」给模型（可见降级），不 NPE 也不静默。
+            // asCaller 罩住整次咨询：子轮是在这条弹性线程上「再起一整轮」的，身份与覆盖得跟着进去
+            return asCaller(hooks,
+                    () -> consultService.consult(hooks.consultLedger(), ctx, runner,
+                            t.pool()::registerConsultedSources, childAgentId, question));
+        };
+    }
+
+    /**
+     * 派遣这一族的装配判据（退役前分别长在三处，这里合成一处，别再让提示词与挂载各判一遍）：
+     * <ul>
+     *   <li><b>分支轮不派</b>：被派出去的那一支里再挂派遣就是乘数扇出——一支派三支、每支再各派。
+     *       原为 {@code SubAgentToolProvider#exposes} 的 {@code !mc.branchTurn()}。</li>
+     *   <li><b>游客不派</b>：免登录分享保留的是「这个被发布的智能体自己会答」的语义，让它经派遣读到
+     *       私有库与助手，等于把分享链接变成读别人资料的入口。原为描述符的 {@code guestAllowed=false}。</li>
+     *   <li><b>审批 off / 分支+ask 不派</b>：派遣起的是完整一轮问答（模型 token 与它自己的写盘能力都在
+     *       里面），与沙盒、MCP 同族待遇；分支里挂上去只会等一张永远不会来的确认卡。
+     *       原由 {@code ToolFamily.SUBAGENT#blockedWhenApprovalOff} 承担，现落在这套权限档位上。</li>
+     *   <li><b>只读档不派</b>：收窄发生在装配（模型看不见），而不是执行（点了被拒）——框架的档位闸
+     *       {@code AgentxFrameworkToolGate} 对未登记的框架工具也按写类 fail-closed 拒一次，两处同一判据。</li>
+     *   <li><b>按名黑名单</b>：以前写的是 {@code consultAgent}，现在认框架的派遣工具名 {@code agent_spawn}
+     *       （设置页「平台禁用工具名单」与智能体级 deny 都按名生效）。</li>
+     * </ul>
+     */
+    private boolean dispatchAllowed(ChatCommand cmd, ExecutionPolicy policy) {
+        if (cmd.branchTurn() || cmd.isGuestMode()) return false;
         var mc = toolAssembly.mountContext(agentOf(cmd), cmd.getUserId(), cmd.isGuestMode(),
                 cmd.branchTurn(), (code, message) -> {
-                }, null);
-        if (!toolRegistry.exposes(com.wenqu.ai.agent.tool.ToolFamily.SUBAGENT, "consultAgent", mc)) return "";
-        return agentService.consultGuideSection(cmd.getAgentId() == null ? "" : cmd.getAgentId());
+                }, policy);
+        if (!mc.masterOn() || mc.approvalOff() || (mc.branchTurn() && mc.approvalAsk())) return false;
+        var p = mc.permissionPolicy();
+        if (p != null && p.sandboxMode() == com.wenqu.ai.agent.permission.SandboxMode.READ_ONLY) return false;
+        return !mc.deniesTool(FRAMEWORK_SPAWN_TOOL);
     }
+
+    /** 框架派遣工具的裸名（问渠不注册它，只按名判黑名单） */
+    private static final String FRAMEWORK_SPAWN_TOOL = "agent_spawn";
 
     private void mountFrom(com.wenqu.ai.agent.tool.ToolFamilyProvider provider,
                            com.wenqu.ai.agent.tool.ToolMountContext mc, List<Object> holders,
@@ -747,12 +902,6 @@ public class WenquAgentxTools {
             if (surface.mcpToolNames().contains(inv.toolName())) {
                 return turn.pool().sink().registerMcpCitations(inv.toolName(), result);
             }
-            return result;
-        }
-
-        @Override
-        public String appendSteers(com.wenqu.ai.agent.tool.ToolInvocation inv, String result) {
-            // 插话是给「正在出字的这一轮」的，脚本的一条子调用不是它的受众（与守卫侧同一口径）
             return result;
         }
     }

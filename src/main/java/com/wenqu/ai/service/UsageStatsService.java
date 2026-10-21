@@ -91,12 +91,9 @@ public class UsageStatsService {
         return switch (kind) {
             case "chat" -> "对话问答";
             case "subagent" -> "子智能体分支";
-            case "think" -> "深度思考";
-            case "rewrite" -> "检索词改写";
             case "compress" -> "对话历史压缩";
             case "citecheck" -> "引用一致性自检";
             case "memory" -> "长期记忆提取";
-            case "planIntent" -> "计划意图识别";
             default -> kind;
         };
     }

@@ -142,15 +142,7 @@ public class ToolPipelineFactory {
             String note = inv.failureNote();
             boolean failed = note != null && !note.isBlank();
             turn.observe(inv, failed ? "error" : "done", failed ? note : result2);
-
-            // 4) 用户中途插话随这一步的结果一起送达模型（观测之后才附）
-            try {
-                return turn.appendSteers(inv, result2);
-            } catch (Exception e) {
-                log.warn("[TOOL] 插话附送失败（不阻塞返回，本条插话留到下一步再送）: tool={} {}",
-                        toolName, e.getMessage());
-                return result2;
-            }
+            return result2;
         }
     }
 }

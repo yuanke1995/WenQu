@@ -145,7 +145,7 @@ public class ChatflowBridge {
             }
             sessionService.persistDegradations(messageId, degradations);   // 工作流轮同样能刷新后看到降级条
             qaLogService.logAsync(sessionId, question, answer, List.of(), false,
-                    System.currentTimeMillis() - startTime, question, null, false,
+                    System.currentTimeMillis() - startTime, false,
                     messageId, agent.getId());
             Map<String, Object> donePayload = new LinkedHashMap<>();
             donePayload.put("sources", List.of());
@@ -182,8 +182,6 @@ public class ChatflowBridge {
                 donePayload.put("delegatedAgentId", delegatedAgent.getId());
                 donePayload.put("delegatedAgentName", delegatedAgent.getName() == null ? "" : delegatedAgent.getName());
             }
-            // 没赶上的插话同样交回前端（本分支没有流状态，把手还在就直接取）
-            runtime.attachLeftoverSteers(donePayload, sessionId);
             runtime.sendSseEvent(emitter, "done", JSON.toJSONString(donePayload), sessionId);
             runtime.completeEmitter(emitter);
             // 长期记忆提取已交框架（全框架化P3）：MemoryFlushManager 在上下文压缩时按 MemoryConfig

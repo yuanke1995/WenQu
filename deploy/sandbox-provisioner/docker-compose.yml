@@ -19,16 +19,19 @@ services:
     container_name: wenqu-sandbox-provisioner
     restart: unless-stopped
     ports:
-      # 只绑回环：回环地址在 macOS 系统代理的例外列表内，避免出站请求被代理劫持。
+      # 绑定 docker 网关(172.17.0.1)：仅容器网络可达、不暴露公网。后端/沙盒容器经
+      # host.docker.internal→172.17.0.1 访问本 provisioner；同时保留 127.0.0.1 便于宿主直连。
+      - "172.17.0.1:8002:8002"
       - "127.0.0.1:8002:8002"
+    # 让 provisioner 容器内也统一可解析 host.docker.internal（链路语义一致）。
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       # 用 docker.sock 在宿主 daemon 上创建沙盒容器。
       - /var/run/docker.sock:/var/run/docker.sock
-      # 沙盒持久卷。容器内挂载点路径不可改——provisioner 按 /app/user-data 与
-      # /app/skill-projections 从自身 Mounts 反推宿主路径，再 bind 给沙盒的
-      # /home/gem/user-data 与 /home/gem/skills（后者只读）。
+      # 沙盒持久卷。容器内挂载点路径不可改——provisioner 按 /app/user-data 从自身 Mounts
+      # 反推宿主路径，再 bind 给沙盒的 /home/gem/user-data。
       - ../../user-data:/app/user-data
-      - ../../skill-projections:/app/skill-projections
       # 全局沙盒环境变量（部署侧维护；内容会注入每个沙盒，按不可信输入对待）。
       - ./sandbox.env:/app/sandbox.env:ro
     environment:

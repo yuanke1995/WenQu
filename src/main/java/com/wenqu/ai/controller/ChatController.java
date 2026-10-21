@@ -376,11 +376,12 @@ public class ChatController {
         return ResultJson.ok(java.util.Map.of("stopped", stopped));
     }
 
-    @Operation(summary = "运行中插话", description = "本轮还在跑时补一句方向（steer）：插话随**下一个工具步**的"
-            + "结果送达模型——工具循环由框架持有，做不到掐掉正在执行的这一步。它同时被落成一条普通用户消息"
-            + "（用户按了发送、话是自己说的，历史里就该长成用户消息的样子），返回的 messageId 供前端挂到那颗气泡上。"
-            + "本轮收尾前仍未送出的，会随 done 事件回落由前端作为同一句话续发。单轮最多 3 条、单条 800 字；"
-            + "没有在跑的轮 / 不是本人的轮 / 超出上限时返回 accepted=false，前端按普通消息发送即可。")
+    @Operation(summary = "运行中插话", description = "本轮还在跑时补一句方向（steer）：这句话交给框架会话自己送进<b>正在跑的那一轮</b>，"
+            + "生效点是下一次模型调用之前——工具循环由框架持有，做不到掐掉正在执行的这一步。"
+            + "它同时被落成一条普通用户消息（用户按了发送、话是自己说的，历史里就该长成用户消息的样子），"
+            + "返回的 messageId 供前端挂到那颗气泡上。本轮收尾时还没被模型收上的，随 done 事件回落由前端作为同一句话续发。"
+            + "单条最长 800 字；没有在跑的轮 / 不是本人的轮 / 框架拒收（这一轮已经不在执行中）时返回 accepted=false，"
+            + "前端把内容放回输入框即可。")
     @PostMapping("/chat/steer")
     public ResultJson steerChatTurn(@RequestBody Map<String, String> body) {
         String sessionId = body == null ? null : body.get("sessionId");
@@ -460,7 +461,6 @@ public class ChatController {
                     : (item.get("askId") != null ? item.get("askId") : item.get("planApprovalId"));
             if (id != null && frameworkSessions.isLive(String.valueOf(id))) {
                 item.put("live", true);
-                item.put("engine", "agentscope");
             }
         }
         return items;

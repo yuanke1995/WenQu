@@ -67,7 +67,9 @@ function sourceTitle (m) {
 </script>
 
 <template>
-  <div v-for="(m, i) in messages" :key="i" :data-row-index="i" class="row" :class="m.role">
+  <!-- 键用消息对象本身，不用下标：插话会插到正在生成的那颗回答**前面**（顺序与刷新后一致），
+       按下标键那一颗及其后每一行都要换键重挂——长回答整段重渲染、mermaid 重画、展开态丢。 -->
+  <div v-for="(m, i) in messages" :key="m" :data-row-index="i" class="row" :class="m.role">
     <slot name="row-before" :m="m" :i="i" />
     <div class="msg-block" :class="[m.role, { editing: editingIndex === i }]">
       <div class="bubble" :class="m.role">

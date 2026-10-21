@@ -11,7 +11,7 @@ import org.springframework.context.annotation.Configuration;
  * 把框架引擎注册进分派工厂。
  * <p>用构造期回调而不是让 {@code ChatEngineFactory} 直接依赖本包：工厂是分派层，认不得具体引擎，
  * 否则「谁可选」这件事就得反过来改上层。注册动作本身无副作用——{@code HarnessAgent} 要到某一轮
- * 真走框架引擎时才建，切回 legacy 后框架代码一行不跑。
+ * 真走框架引擎时才建，注册动作本身不拉起任何框架运行时。
  */
 @Configuration
 public class AgentxConfiguration {
@@ -34,6 +34,7 @@ public class AgentxConfiguration {
                                com.wenqu.ai.service.QaLogService qaLog,
                                com.wenqu.ai.agent.tool.ToolRegistry toolRegistry,
                                com.wenqu.ai.service.ChatService chatService,
+                               com.wenqu.ai.agent.chat.ChatRunRuntime runtime,
                                com.wenqu.ai.service.ProjectService projectService,
                                com.wenqu.ai.skill.WenquSkillRepository skillRepository,
                                com.wenqu.ai.service.OrgService orgService,
@@ -48,6 +49,9 @@ public class AgentxConfiguration {
         // 重启后的待办、以及「答完时已经没有跟随者」的待办都由引擎接回：表里有归属、框架状态在
         // stateStore 里，续跑是做得到的事，不该回一句「已批准」然后什么都不发生
         sessions.bindResume(engine);
+        // 运行中插话走框架自己的会话 steer（送达点在下一次调模型之前，没收到的本轮不收尾）。
+        // 按登记方向留口而不是让 agent.chat 反过来依赖本包：引擎已经用 ChatCommand/TurnRegistry 这套上层类型
+        runtime.bindSteer(sessions::steer);
         // 咨询子轮要的是「再起一整轮」，走的是带轮级外壳的那个入口（即时落库、会话互斥、断线续跑），
         // 而不是框架引擎的内层循环。按函数注册避免 ChatService↔agentx 构造环
         tools.bindBranchTurn(chatService::chat);

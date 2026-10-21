@@ -20,22 +20,18 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
- * 问渠的技能仓库（全框架化 P3 + 用户自装技能）——四路合并交给框架。
+ * 问渠的技能仓库（全框架化 P3 + 用户自装技能）——三路合并交给框架。
  *
- * <h3>四层来源（优先级递增）</h3>
+ * <h3>三层来源（优先级递增）</h3>
  * <ol>
  *   <li><b>内置技能</b>：{@code user-data/skills-builtin/{技能名}/SKILL.md}
  *       （随 jar 里的 {@code classpath:skills/} 分发，启动时由 {@link BuiltinSkillSeeder} 落盘）；</li>
- *   <li><b>历史投影</b>：{@code skill-projections/{uid}/{技能名}/SKILL.md}（冻结的存量资产，只读）；</li>
  *   <li><b>沙盒工作区</b>：模型在对话里用 {@code skill_manage} 沉淀的技能，随会话/工作区走；</li>
  *   <li><b>用户自装</b>：{@code user-data/skills-users/{uid}/{技能名}/SKILL.md}（{@link UserSkillStore}，
  *       跨会话、不依赖沙箱，用户明确安装的版本优先级最高）。</li>
  * </ol>
  * 框架 {@code FileSystemSkillRepository} 要求的布局正是 {@code baseDir/{skill-name}/SKILL.md}，
  * 故本类不复制、不迁移任何技能文件，只做<b>选择与合并</b>。
- *
- * <p><b>{@code skill-projections/{uid}/} 是冻结的历史用户级技能库</b>（全框架化 P3 之后没有写入方）：
- * 写走用户自装目录或框架 {@code skill_manage}（沙箱工作区）；读侧继续解析它是为了不丢存量资产。
  *
  * <h3>为什么实现 RuntimeContextSkillRepository</h3>
  * 每轮的 {@code uid} 不同，能看到的技能也不同。框架为此提供了
@@ -57,7 +53,7 @@ import org.springframework.stereotype.Service;
  * 本类再读一遍等于每轮多打一趟沙盒。
  *
  * <h3>合并口径</h3>
- * 优先级递增（应用侧）：内置 → 历史投影 → 沙盒工作区 → 用户自装。同名以<b>最后那一路</b>为准：
+ * 优先级递增（应用侧）：内置 → 沙盒工作区 → 用户自装。同名以<b>最后那一路</b>为准：
  * 用户明确安装的版本压过会话里临时沉淀的同名技能。
  * <p><b>注意</b>：框架装配时还会把 {@code skill_manage} 的可写工作区仓库追加到列表末尾，
  * 所以<b>模型侧</b>同一会话内同名时仍以工作区那份为准；管理页与 {@code /available} 展示的是
@@ -70,8 +66,6 @@ public class WenquSkillRepository implements RuntimeContextSkillRepository {
 
     /** 内置技能根：由 {@link BuiltinSkillSeeder} 从 classpath 落盘到 {@code user-data/skills-builtin}。 */
     private final Path builtinRoot;
-    /** 历史用户技能投影根：{@code skill-projections/{uid}/}（冻结存量，只读）。 */
-    private final Path legacyProjectsRoot;
     /** 用户自装技能仓库（uid 级宿主目录，可读写）。 */
     private final UserSkillStore userSkillStore;
     /** 平台级停用清单（{@code skill.disabled}，管理员维护）。 */
@@ -81,14 +75,10 @@ public class WenquSkillRepository implements RuntimeContextSkillRepository {
 
     public WenquSkillRepository(
             @Value("${wenqu.skills.builtin-dir:}") String builtinDir,
-            @Value("${wenqu.skills.projects-dir:skill-projections}") String projectsDir,
             com.wenqu.ai.service.ConfigService configService,
             com.wenqu.ai.service.SandboxService sandboxService,
             UserSkillStore userSkillStore) {
         this.builtinRoot = resolveBuiltinRoot(builtinDir);
-        this.legacyProjectsRoot = (projectsDir == null || projectsDir.isBlank())
-                ? Paths.get("skill-projections")
-                : Paths.get(projectsDir);
         this.configService = configService;
         this.sandboxService = sandboxService;
         this.userSkillStore = userSkillStore;
@@ -113,15 +103,6 @@ public class WenquSkillRepository implements RuntimeContextSkillRepository {
         return uid == null || uid.isBlank() ? null : uid;
     }
 
-    /** 本轮用户可见的历史投影目录（只读；不存在就是空）。 */
-    private Path legacyDirOf(RuntimeContext ctx) {
-        String uid = uidOf(ctx);
-        if (uid == null || legacyProjectsRoot == null) return null;
-        Path dir = legacyProjectsRoot.resolve(uid).normalize();
-        if (!dir.startsWith(legacyProjectsRoot.normalize())) return null;
-        return Files.isDirectory(dir) ? dir : null;
-    }
-
     // ==================== RuntimeContextSkillRepository ====================
 
     /**
@@ -136,8 +117,6 @@ public class WenquSkillRepository implements RuntimeContextSkillRepository {
     public static final String SOURCE_BUILTIN = "builtin";
     /** 用户自装（uid 级宿主目录）。 */
     public static final String SOURCE_USER = "user";
-    /** 历史投影（{@code skill-projections/{uid}}，冻结存量）。 */
-    public static final String SOURCE_LEGACY = "legacy";
     public static final String SOURCE_WORKSPACE = "workspace";
 
     /** 停用清单的配置键（只有平台层）。 */
@@ -163,7 +142,7 @@ public class WenquSkillRepository implements RuntimeContextSkillRepository {
      * 展示它被停这件事），以及可点名会话。
      *
      * @param sessionId 点名会话时额外并上「沙盒工作区」那一路（助手在对话里沉淀下来的技能）。
-     *                  传空、或该会话沙盒不在场时只给内置 + 历史投影 + 用户自装——<b>看一眼清单不许把容器拉起来</b>
+     *                  传空、或该会话沙盒不在场时只给内置 + 用户自装——<b>看一眼清单不许把容器拉起来</b>
      *                  （与沙盒文件浏览端点同一条判据）。
      */
     public List<SkillEntry> catalog(RuntimeContext ctx, String sessionId) {
@@ -175,12 +154,6 @@ public class WenquSkillRepository implements RuntimeContextSkillRepository {
 
         for (AgentSkill s : readAll(builtinRoot)) {
             byName.put(s.getName(), entry(s, SOURCE_BUILTIN, platformDisabled, userDisabled));
-        }
-        Path legacyDir = legacyDirOf(ctx);
-        if (legacyDir != null) {
-            for (AgentSkill s : readAll(legacyDir)) {
-                byName.put(s.getName(), entry(s, SOURCE_LEGACY, platformDisabled, userDisabled));
-            }
         }
         // 沙盒工作区：随会话走，不参与个人停用（换会话本就不在）
         for (AgentSkill s : readWorkspace(ctx, sessionId)) {
