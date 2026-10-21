@@ -1598,6 +1598,23 @@ public class SessionService {
     }
 
     /**
+     * 把一条刚落库的用户提问标记为「目标指令回声」（值＝目标 id）。
+     * <p>与 {@code saveMessageWarn} 同一个形状：先按常规写口把正文落进去，再补这一列，
+     * 免得为一条标注去加长参数列（十个入参的 appendMessage 已经是第七个调用点在读）。
+     * <p>失败只告警：目标本身已经成立，回声只是对话里的一行留痕。
+     */
+    public void markGoalCommand(String messageId, String goalId) {
+        if (messageId == null || messageId.isBlank() || goalId == null || goalId.isBlank()) return;
+        try {
+            messageMapper.update(null, new LambdaUpdateWrapper<Message>()
+                    .eq(Message::getId, messageId)
+                    .set(Message::getGoalCommand, goalId));
+        } catch (Exception e) {
+            log.warn("[GOAL] 目标指令回声标记失败 (messageId={}): {}", messageId, e.getMessage());
+        }
+    }
+
+    /**
      * 编辑重发的分支手术（控制器同步段调用，先于本轮问答执行，fail-loud）：
      * 被编辑的用户消息及其后的整段可见分支软删让位（旧分支整体留档），并留下版本组键与尾部快照；
      * 返回的组键贯穿本轮挂到新用户消息上，与旧消息构成可切换的版本序列。
@@ -1944,6 +1961,10 @@ public class SessionService {
             } catch (Exception e) {
                 // plan 解析失败忽略
             }
+        }
+        // 目标指令回声（记在用户提问上）：前端据此挂命令标注并撤掉普通消息动作；NULL=普通提问
+        if (m.getGoalCommand() != null && !m.getGoalCommand().isBlank()) {
+            map.put("goalCommand", m.getGoalCommand());
         }
         if (m.getTokens() != null && !m.getTokens().isBlank()) {
             try {
