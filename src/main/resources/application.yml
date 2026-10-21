@@ -2,6 +2,10 @@ server:
   port: 8090
   servlet:
     context-path: /ai
+    # 响应统一声明 UTF-8。静态资源那条路（文档图片、产物文件）只按扩展名给 Content-Type、不带编码，
+    # 浏览器拿不到编码线索时按单字节解——实测中文 txt/log/html 产物在标签页里渲染成「# 鏍囬」这类乱码。
+    encoding:
+      force-response: true
 
 spring:
   application:

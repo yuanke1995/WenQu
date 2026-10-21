@@ -130,10 +130,25 @@ public class ArtifactService {
     }
 
     /**
-     * 返回本会话期间已生成的产物清单（done 事件汇总下发兜底）；无则空列表。不消费/清空。
+     * 返回本轮已生成的产物清单，**不消费**（接流快照用：一条流可能被多次 attach，消费会让后来者读到空）。
      * 返回的是下发副本：url 已按需重新签名（原始 URL 存内存，展示层签名——与图片同惯例）。
      */
     public List<Map<String, Object>> takeArtifacts(String sessionId) {
+        return signAll(sessionId, false);
+    }
+
+    /**
+     * 本轮结算：取出产物清单**并清空**本轮账（收尾落库与 done 帧用这一份）。
+     * <p>必须消费：清单是按会话累计的，收尾不清空的话下一轮的 {@code appendMessage} 会把上一轮的产物
+     * 再写一遍——「一个产物在同一个会话的五条回答下各挂了一张卡」就是这么来的。
+     * <p>清空走 {@code list.clear()} 而不是从 map 里摘掉整个 list：并发写入方持有的还是同一个 list 实例，
+     * 摘掉实例会让「结算瞬间正在落盘」的那条彻底丢失。
+     */
+    public List<Map<String, Object>> settleArtifacts(String sessionId) {
+        return signAll(sessionId, true);
+    }
+
+    private List<Map<String, Object>> signAll(String sessionId, boolean consume) {
         List<Map<String, Object>> list = sessionId == null ? null : SESSION_ARTIFACTS.get(sessionId);
         if (list == null || list.isEmpty()) {
             return List.of();
@@ -144,6 +159,9 @@ public class ArtifactService {
                 Map<String, Object> copy = new LinkedHashMap<>(e);
                 copy.put("url", imageUrlSigner.signUrl(String.valueOf(e.get("url"))));
                 out.add(copy);
+            }
+            if (consume) {
+                list.clear();
             }
         }
         return out;

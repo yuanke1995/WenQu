@@ -2,6 +2,9 @@ package com.wenqu.ai.config;
 
 import com.wenqu.ai.service.ImageUrlSigner;
 import lombok.RequiredArgsConstructor;
+import org.springframework.boot.web.embedded.tomcat.TomcatServletWebServerFactory;
+import org.springframework.boot.web.server.WebServerFactoryCustomizer;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry;
@@ -38,6 +41,24 @@ public class ImageWebConfig implements WebMvcConfigurer {
                 .addResourceLocations(artifactsDir);
     }
 
+    /**
+     * 文本类产物的 Content-Type。md / markdown / py 在 Tomcat 的 {@code MimeTypeMappings.properties}
+     * 与 Spring 的 {@code mime.types} 两张表里都没有条目（两个 jar 各翻过一遍），静态资源解析就不发
+     * Content-Type——浏览器对顶层导航会嗅探成纯文本显示，但没有任何编码线索时按单字节解，
+     * 实测（无头 Edge）中文产物渲染成「# 鏍囬」这类乱码。产物里 md 是主力类型，编码错等于预览是坏的。
+     * <p>只补两张表里都缺的扩展名：{@code addMimeMapping} 会覆盖同名条目，动到 java 这类已有映射的
+     * 会连带改变 /images/ 那条静态路的响应类型；已有条目的补编码靠
+     * {@code server.servlet.encoding.force-response}（见 application.yml）。
+     */
+    @Bean
+    WebServerFactoryCustomizer<TomcatServletWebServerFactory> artifactTextMimeMappings() {
+        return factory -> factory.addContextCustomizers(context -> {
+            context.addMimeMapping("md", "text/plain;charset=UTF-8");
+            context.addMimeMapping("markdown", "text/plain;charset=UTF-8");
+            context.addMimeMapping("py", "text/plain;charset=UTF-8");
+        });
+    }
+
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         registry.addInterceptor(new ImageAuthInterceptor(imageUrlSigner))
@@ -45,5 +66,10 @@ public class ImageWebConfig implements WebMvcConfigurer {
                 // 用户头像是公开展示图（不可猜 UUID，等同聊天图片的暴露级别），从图片鉴权拦截中排除：
                 // 开启 AI_IMAGES_AUTH_ENABLED 时 <img> 不带签名也能加载，避免头像 401
                 .excludePathPatterns("/images/avatar/**");
+        // 鉴权之后再打隔离头：签名不过根本到不了响应，头也就没必要发
+        // 工作区文件的预览地址（/project-files/**，签名校验在控制器里）与产物同一待遇：
+        // 模型产出的 HTML 会被顶层导航真的渲染，必须落进不透明源，否则脚本能读本域登录令牌
+        registry.addInterceptor(new ArtifactSandboxInterceptor())
+                .addPathPatterns("/artifacts/**", "/project-files/**");
     }
 }
