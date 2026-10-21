@@ -33,6 +33,9 @@ public class SessionEvent {
     /** 本轮唯一ID（一轮的多条事件按它聚成一条轨迹） */
     private String turnId;
 
+    /** 归属目标（c_ai_goal.id；目标态变更/验证/跨轮帧按它聚合，不新建表；空=非目标事件） */
+    private String goalId;
+
     /** 事件类型: tool / approval / ask_user / plan / artifact / subagent / agent / done / error / stop … */
     private String type;
 

@@ -343,6 +343,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_agent` (
     `tool_artifact`   INT          DEFAULT NULL COMMENT '产物交付工具: 1=开 0=关 NULL=继承',
     `tool_mcp`        INT          DEFAULT NULL COMMENT 'MCP 工具: 1=开 0=关 NULL=继承',
     `tool_websearch`  INT          DEFAULT NULL COMMENT '联网搜索工具(webSearch): 1=开 0=关 NULL=继承（结果为网页来源，进引用体系）',
+    `goal_enabled`    INT          DEFAULT NULL COMMENT '目标模式开关: 1=开 0=关 NULL=继承平台 chat.goalMode.enabled。与任务上下文投影/候选要求工具同源判据（关=不投影、不挂工具、界面无入口）',
     `tool_approval_mode` VARCHAR(10) DEFAULT NULL COMMENT '有副作用工具(沙盒/MCP)执行审批: auto=自动执行 ask=执行前需用户确认(off=禁用) NULL=auto',
     `permission_preset` VARCHAR(32) DEFAULT NULL COMMENT '权限档位(P2,捆沙盒执行档+审批建议值): research=只读调研 standard=常规 autonomous=全自主; NULL=跟随平台默认 agent.permissionPreset.default,高于 agent.permissionPreset.max 时按上限执行',
     `tool_deny` VARCHAR(1000) DEFAULT NULL COMMENT '工具黑名单(P2): 逗号分隔工具名,本轮这些工具不进模型工具表、被调到也拒; 与族级三态/具体项白名单并列(其余照旧、只拿掉点名这几个),也是 MCP 动态工具唯一的粒度; NULL/空=不禁',
@@ -699,6 +700,45 @@ CREATE TABLE IF NOT EXISTS `c_ai_tool_approval` (
     KEY `idx_user` (`user_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工具执行审批/智能体提问记录（人在回路：持久化 + 审计 + 进程重启后可见）';
 
+-- ============================================
+-- 2026-10-21: 目标模式（Goal Mode）
+-- MySQL 是产品面权威，框架 tasksContext（Scope/要求/验证）是模型视图，单向同步：
+-- 每轮开跑前由 GoalBridge 从本表覆盖写进框架状态，界面显示与预算判定只读本表。
+-- 同会话至多一条非终态目标；换目标 = 结束旧行起新行（taskId 永不复用）。
+-- ============================================
+CREATE TABLE IF NOT EXISTS `c_ai_goal` (
+    `id`                VARCHAR(64)  NOT NULL COMMENT '目标ID（UUID，= 框架 Scope.taskId，一次目标一个永不复用）',
+    `session_id`        VARCHAR(50)  NOT NULL COMMENT '归属会话',
+    `user_id`           VARCHAR(64)  DEFAULT NULL COMMENT '发起用户（仅本人可操作）',
+    `agent_id`          VARCHAR(50)  DEFAULT NULL COMMENT '发起时绑定的智能体（换智能体即换实例，目标照旧）',
+    `objective`         VARCHAR(4000) NOT NULL COMMENT '目标原文（逐字进框架 Scope.objective；框架帽 4000）',
+    `criteria_json`     JSON         DEFAULT NULL COMMENT '验收标准 [{id,kind,text,status,decisionSource,verifierId,verifierParams}]；id 用框架 requirementId',
+    `constraints_json`  JSON         DEFAULT NULL COMMENT '约束（同结构，kind=CONSTRAINT）',
+    `subject_version`   VARCHAR(2000) DEFAULT NULL COMMENT '工件指纹（sha256(路径+mtime+size)）；纯检索/写作类目标不钉',
+    `verifications_json` JSON        DEFAULT NULL COMMENT '每标准最新一份验证 {requirementId,outcome,verifierId,reason,actionId,binding,recordedAt}',
+    `status`            VARCHAR(32)  NOT NULL DEFAULT 'DRAFT' COMMENT '状态: DRAFT/CLARIFYING/AWAITING_CONFIRMATION/RUNNING/VERIFYING/WAITING_INPUT/PAUSED/BUDGET_EXCEEDED/ACHIEVED/ENDED_INCOMPLETE/FAILED/CANCELLED',
+    `budget_turns`      INT          NOT NULL DEFAULT 0 COMMENT '轮数上限（0=不限）',
+    `budget_tokens`     BIGINT       NOT NULL DEFAULT 0 COMMENT 'token 上限（0=不限；含 chat/compress/subagent 三种 kind）',
+    `budget_tool_calls` INT          NOT NULL DEFAULT 0 COMMENT '工具调用上限（0=不限）',
+    `budget_minutes`    INT          NOT NULL DEFAULT 0 COMMENT '机器分钟上限（0=不限；只数机器时间，人在回路等待不计）',
+    `used_turns`        INT          NOT NULL DEFAULT 0 COMMENT '已用轮数（目标区间内的问答轮）',
+    `used_tokens`       BIGINT       NOT NULL DEFAULT 0 COMMENT '已用 token（按 c_ai_usage_log 聚合）',
+    `used_tool_calls`   INT          NOT NULL DEFAULT 0 COMMENT '已用工具调用（按目标区间累计）',
+    `used_ms`           BIGINT       NOT NULL DEFAULT 0 COMMENT '已用机器毫秒（每轮 machineMs 累计）',
+    `contract_version`  BIGINT       NOT NULL DEFAULT 0 COMMENT '框架 contractVersion 水位（同步对账用）',
+    `state_revision`    BIGINT       NOT NULL DEFAULT 0 COMMENT '框架 TaskContextState.revision 水位（不一致就本轮重读再写）',
+    `first_turn_id`     VARCHAR(64)  DEFAULT NULL COMMENT '目标覆盖的首轮（过程面板按它聚合）',
+    `last_turn_id`      VARCHAR(64)  DEFAULT NULL COMMENT '目标覆盖的末轮',
+    `turn_counter`      INT          NOT NULL DEFAULT 0 COMMENT '已跑轮计数（幂等键 goal:{id}:{n} 的 n）',
+    `end_reason`        VARCHAR(32)  DEFAULT NULL COMMENT '终态原因: achieved/budget/cancelled/failed/incomplete',
+    `created_at`        DATETIME(3)  DEFAULT CURRENT_TIMESTAMP(3) COMMENT '创建时刻',
+    `started_at`        DATETIME(3)  DEFAULT NULL COMMENT '进入 RUNNING 时刻',
+    `ended_at`          DATETIME(3)  DEFAULT NULL COMMENT '终态时刻',
+    PRIMARY KEY (`id`),
+    KEY `idx_goal_session_status` (`session_id`, `status`),
+    KEY `idx_goal_user` (`user_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='目标模式：一件事做到什么算完的权威记录（产品面真源，框架任务状态由它单向同步）';
+
 CREATE TABLE IF NOT EXISTS `c_ai_mcp_call_log` (
     `id`             VARCHAR(50)  NOT NULL COMMENT '调用记录ID（UUID）',
     `channel`        VARCHAR(16)  NOT NULL COMMENT '入口渠道: agent=智能体端点/ai/mcp/{token}，platform=平台级/ai/mcp',
@@ -937,7 +977,8 @@ CREATE TABLE IF NOT EXISTS `c_ai_session_event` (
     `session_id` VARCHAR(50)  NOT NULL COMMENT '归属会话',
     `user_id`    VARCHAR(64)  DEFAULT NULL COMMENT '发起本轮的用户（数据按人隔离，仅本人可见）',
     `turn_id`    VARCHAR(50)  DEFAULT NULL COMMENT '本轮唯一ID（一轮的多条事件按它聚成一条轨迹）',
-    `type`       VARCHAR(32)  NOT NULL COMMENT '事件类型: tool/approval/ask_user/plan/artifact/subagent/agent/done/error/stop…',
+    `goal_id`    VARCHAR(64)  DEFAULT NULL COMMENT '归属目标（c_ai_goal.id；目标态变更/验证/跨轮帧按它聚合，不新建表）',
+    `type`       VARCHAR(32)  NOT NULL COMMENT '事件类型: tool/approval/ask_user/plan/artifact/subagent/agent/done/error/stop/goal_state/goal_turn/goal_verify…',
     `payload`    TEXT         DEFAULT NULL COMMENT '事件载荷摘要（工具名/状态/耗时/入参截断，上限 4000 字符）',
     `created_at` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '发生时刻',
     PRIMARY KEY (`id`),
