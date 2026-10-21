@@ -433,7 +433,7 @@
       "type": "text",
       "def": "user-data/agentscope",
       "width": 360,
-      "note": "框架引擎（AgentScope）存放个人记忆（MEMORY.md、memory/、技能、plans）的目录，相对路径按应用工作目录解析。会话状态（对话上下文、待办、续跑游标）恒存 Redis，不在这个目录里——本地文件方案已退役（容器重建即丢，会让多轮对话失忆）。容器部署务必把它指到挂载卷内（如 /app/data/agentscope），否则重建即丢记忆；多副本还要挂成共享卷（NFS/EFS/RWX PVC），否则同一用户在不同副本会看到不同记忆。改后下一轮生效",
+      "note": "框架引擎（AgentScope）存放个人记忆（MEMORY.md、memory/、技能、plans）的目录，相对路径按应用工作目录解析。会话状态（对话上下文、待办、续跑游标）恒存 Redis，不在这个目录里。容器部署务必把它指到挂载卷内（如 /app/data/agentscope），否则容器重建即丢记忆；多副本还要挂成共享卷（NFS/EFS/RWX PVC），否则同一用户在不同副本会看到不同记忆。改后下一轮生效",
       "debug": true,
       "tier": 3
     },
