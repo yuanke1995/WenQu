@@ -64,7 +64,7 @@ public class ChatRunBus {
      * <p>前端把 {@code snapshot.events} 按普通事件重放，所以这里存的必须是<b>事件原文的 content</b>，
      * 与实时下发时喂给回调的值同源（plan/todo/retrieved/usage/warn 是 JSON 串）。
      */
-    private static final List<String> MIRROR_TYPES = List.of("plan", "todo", "retrieved", "usage", "warn");
+    private static final List<String> MIRROR_TYPES = List.of("plan", "todo", "retrieved", "usage", "warn", "goal_state");
 
     private final ConfigService configService;
 
@@ -264,6 +264,20 @@ public class ChatRunBus {
         long seq = bump(run, type, null);
         if (seq < 0) return false;
         return fan(run, seq, rawFrame(type, rawJson, sessionId, seq), type);
+    }
+
+    /**
+     * 按会话发一条<b>镜像型</b>事件（目标态变更走这条：控制器侧没有通道，但迟到观众
+     * 接流时要能凭快照里的镜像重建目标面板，所以必须同时进 {@code mirror}）。
+     *
+     * @return true=本轮由总线接管（调用方不必再自己发）
+     */
+    public boolean publishMirrorToSession(String sessionId, String type, String content) {
+        Run run = running(sessionId);
+        if (run == null) return false;
+        long seq = bump(run, type, content);
+        if (seq < 0) return false;
+        return fan(run, seq, frame(type, content, sessionId, seq, null), type);
     }
 
     /** 该通道所属且仍活着的轮；null=不归总线管（游客会话、收集型通道、开关关闭、本轮已终结） */

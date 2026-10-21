@@ -38,12 +38,21 @@ public class AgentxConfiguration {
                                com.wenqu.ai.service.ProjectService projectService,
                                com.wenqu.ai.skill.WenquSkillRepository skillRepository,
                                com.wenqu.ai.service.OrgService orgService,
-                               com.wenqu.ai.service.UsageLedgerService usageLedger) {
+                               com.wenqu.ai.service.UsageLedgerService usageLedger,
+                               com.wenqu.ai.service.GoalService goalService,
+                               com.wenqu.ai.service.ChatRunBus chatRunBus,
+                               com.wenqu.ai.service.GoalVerificationRegistry goalVerificationRegistry) {
         AgentscopeChatEngine engine = new AgentscopeChatEngine(modelRegistry, configService, properties, tools,
                 sessions, sessionService, attachments, userImages, keywordExtractor, artifactService,
                 sandboxService, consultService, citations, redisProperties, qaLog, toolRegistry, projectService,
-                skillRepository, orgService, usageLedger, chatService::resolveTurnModel);
+                skillRepository, orgService, usageLedger, goalService, chatRunBus, goalVerificationRegistry,
+                chatService::resolveTurnModel);
         factory.bindFramework(engine);
+        // 目标模式跨轮续跑的发起口：控制流归框架，问渠只数预算——续跑轮由引擎 submit + 跟随
+        // （幂等键 goal:{goalId}:{n}，后台轮走收集型通道 + RESUME_POOL，前端按 goal_turn 自动接流）
+        goalService.bindTurnDriver(engine::continueGoalTurn);
+        // 验收写结论要写进引擎那一份状态存储（GoalVerificationRegistry 不自己建第二份）
+        engine.goalVerificationRegistry().bindStateStore(engine::frameworkStateStore);
         // 重启后的待办由引擎接回：表里有归属、框架状态在 stateStore 里，续跑是做得到的事，
         // 不该回一句「已批准」然后什么都不发生
         // 重启后的待办、以及「答完时已经没有跟随者」的待办都由引擎接回：表里有归属、框架状态在
@@ -58,5 +67,8 @@ public class AgentxConfiguration {
         // 启动自检：框架会话状态恒存 Redis，连不上就不该对外服务（引擎是这里 new 的，
         // 不归 Spring 管，@PostConstruct 不会跑，自检得显式做）。
         engine.requireRedisForSessionState();
+        // 配置热监听同理要显式注册（@PostConstruct 在 new 出来的实例上不执行）：
+        // memory.* 与 chat.goalMode.* 变了要标脏重建常驻实例，否则「改了没生效」
+        engine.registerMemoryConfigHotReload();
     }
 }

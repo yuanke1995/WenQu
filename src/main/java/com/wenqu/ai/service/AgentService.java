@@ -42,7 +42,8 @@ import java.util.stream.Collectors;
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class AgentService {
+@org.springframework.core.annotation.Order(1)
+public class AgentService implements org.springframework.boot.ApplicationRunner {
 
     /** 内置「问渠」智能体的固定名称（产品身份的一部分，不可修改） */
     public static final String BUILTIN_NAME = "问渠";
@@ -124,8 +125,20 @@ public class AgentService {
      * 启动时维护内置「问渠」智能体的全局唯一性：多于一个时保留「默认优先、创建最早」的一条，
      * 其余降级为普通智能体（log.warn 留痕）；一个都没有（全新环境）时播种最小配置——
      * 各维度全部继承全局，无需任何手工建档。
+     * <p>
+     * <b>为什么从 @PostConstruct 改成 ApplicationRunner(@Order(1))</b>：本方法会
+     * {@code selectList} 整张 {@code c_ai_agent}（MyBatis-Plus 带上实体全部列），
+     * 而给该表加列是 {@code SchemaMigrator} 的活——它在 {@code @Order(0)} 的
+     * ApplicationRunner 里跑，<b>比 @PostConstruct 晚</b>。列还没补上时这条查询直接
+     * SQLSyntaxErrorException（症状：启动日志一行「内置『问渠』维护失败」，且这次启动里
+     * 内置智能体的配置没被归一，下次启动才补上）。迁移器是「让后续启动任务能操作新列/新表」
+     * 的那一步，本方法就是那个「后续启动任务」。
      */
-    @jakarta.annotation.PostConstruct
+    @Override
+    public void run(org.springframework.boot.ApplicationArguments args) {
+        maintainBuiltinAgent();
+    }
+
     public void maintainBuiltinAgent() {
         try {
             List<Agent> builtins = mapper.selectList(new LambdaQueryWrapper<Agent>()
@@ -593,6 +606,8 @@ public class AgentService {
         if (body.containsKey("toolArtifact")) a.setToolArtifact(toTri(body.get("toolArtifact")));
         if (body.containsKey("toolMcp")) a.setToolMcp(toTri(body.get("toolMcp")));
         if (body.containsKey("toolWebsearch")) a.setToolWebsearch(toTri(body.get("toolWebsearch")));
+        // 目标模式（资源级三态）：与任务态投影/候选要求工具同源判据，改它要重建常驻实例
+        if (body.containsKey("goalEnabled")) a.setGoalEnabled(toTri(body.get("goalEnabled")));
         // 工具执行审批三态（auto/ask/off；null 归一为 auto）
         if (body.containsKey("toolApprovalMode")) {
             String m = body.get("toolApprovalMode") == null ? null : String.valueOf(body.get("toolApprovalMode")).trim();

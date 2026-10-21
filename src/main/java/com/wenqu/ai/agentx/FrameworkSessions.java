@@ -389,6 +389,22 @@ public class FrameworkSessions {
         return h == null ? null : h.session();
     }
 
+    /**
+     * 取这条会话当前进程里的框架实例（目标同步/验收要往<b>活状态</b>上写）。
+     * <p>与 {@link #peek} 的分工：那个给「会话在不在本进程」用，这个给「要改框架状态」用——
+     * 写活状态唯一的入口是实例上的 {@code updateAgentState}，{@code session.inspect()} 那份
+     * 快照改完即丢（见 {@code TodoBridge} 类注释同一事故）。
+     *
+     * @return null=这条会话当前不在本进程（重启过/从未在本进程答过）：调用方按「下一轮开跑前
+     *         再同步」处理，不报错——框架侧写本来就是每轮覆盖写，不缺这一笔
+     */
+    public HarnessAgent agentOf(String userId, String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) return null;
+        String uid = (userId == null || userId.isBlank()) ? "guest" : userId;
+        Held h = held.get(uid + "|" + sessionId);
+        return h == null ? null : h.agent();
+    }
+
     /** 本轮新出现的待办登记归属，供答复端点找回会话。 */
     public void notePending(String sessionKey, Map<String, SessionEvent> pending) {
         for (String requestId : pending.keySet()) {

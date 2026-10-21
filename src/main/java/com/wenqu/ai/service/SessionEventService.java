@@ -50,6 +50,16 @@ public class SessionEventService {
      * <p>开关 {@code trace.sessionEventEnabled} 默认开；关掉后一行都不写，行为回到有账本之前。
      */
     public void append(String sessionId, String userId, String turnId, String type, String payload) {
+        append(sessionId, userId, turnId, null, type, payload);
+    }
+
+    /**
+     * 记一条事件（带目标归属：目标模式的过程面板按 {@code goal_id} 聚合账本，不新建表）。
+     * <b>写失败绝不影响问答</b>：吞掉异常只留一行 warn（与产物、站内通知那类旁路同口径）。
+     * @param goalId 归属目标（c_ai_goal.id）；空=非目标事件
+     */
+    public void append(String sessionId, String userId, String turnId, String goalId,
+                       String type, String payload) {
         if (sessionId == null || sessionId.isBlank() || type == null || type.isBlank()) return;
         if (!configService.getBoolean("trace.sessionEventEnabled", true)) return;
         try {
@@ -57,6 +67,7 @@ public class SessionEventService {
             event.setSessionId(sessionId);
             event.setUserId(userId);
             event.setTurnId(turnId);
+            event.setGoalId(goalId);
             event.setType(type);
             event.setPayload(payload == null || payload.length() <= PAYLOAD_MAX
                     ? payload : payload.substring(0, PAYLOAD_MAX) + "…");
@@ -119,6 +130,28 @@ public class SessionEventService {
     private static final Duration BEFORE_FIRST_EVENT = Duration.ofMinutes(2);
     /** 回答行在最后一条事件<b>之后</b>最多容许的间隔（落库要走完引用自检与图片过滤） */
     private static final Duration AFTER_LAST_EVENT = Duration.ofMinutes(2);
+
+    /**
+     * 按目标读账本（过程面板深链：一个目标覆盖多轮，事件按 {@code goal_id} 聚合，不新建表）。
+     * <p>与 {@link #listByTurn} 的分工：那个按轮取，这个按目标取——目标区间的好几轮要能连着回放。
+     */
+    public java.util.List<SessionEvent> listByGoal(String sessionId, String userId, String goalId, int limit) {
+        if (sessionId == null || sessionId.isBlank() || goalId == null || goalId.isBlank()
+                || userId == null || userId.isBlank()) {
+            return java.util.List.of();
+        }
+        int cap = limit <= 0 ? 300 : Math.min(limit, 1000);
+        try {
+            return sessionEventMapper.selectList(new LambdaQueryWrapper<SessionEvent>()
+                    .eq(SessionEvent::getSessionId, sessionId)
+                    .eq(SessionEvent::getGoalId, goalId)
+                    .orderByAsc(SessionEvent::getId)
+                    .last("limit " + cap));
+        } catch (Exception e) {
+            log.warn("[EVENT] 按目标读取会话事件失败 session={} goal={}: {}", sessionId, goalId, e.getMessage());
+            return java.util.List.of();
+        }
+    }
 
     /**
      * 启动时按开关跑一次存量轮身份回填（默认关——见 {@code trace.turnIdBackfill} 的说明）。

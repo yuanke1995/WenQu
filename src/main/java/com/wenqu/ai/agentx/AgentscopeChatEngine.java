@@ -128,6 +128,22 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 框架调用一笔都没进 {@code c_ai_usage_log}；不补这一层，记忆与压缩的成本完全不可见。
      */
     private final com.wenqu.ai.service.UsageLedgerService usageLedger;
+
+    /** 目标模式：状态机/同步/预算/验收（问渠侧全部「目标」逻辑，见 GoalService 类注释） */
+    private final com.wenqu.ai.service.GoalService goalService;
+
+    /** 验收注册表（状态存储由装配处经 {@link #goalVerificationRegistry()} 绑进来） */
+    private final com.wenqu.ai.service.GoalVerificationRegistry goalVerificationRegistry;
+
+    /** 运行总线：后台续跑轮要登记上去，前端才能按 goal_turn 帧自动接流 */
+    private final com.wenqu.ai.service.ChatRunBus chatRunBus;
+
+    /**
+     * 此刻有后台目标续跑轮在飞的会话。
+     * <p>用来判「用户插话要不要让位」：只有后台轮在飞时插话才打断它（用户优先），
+     * 否则用户这一轮本身就是目标的一轮，打断等于「刚说完话目标就停了」。
+     */
+    private final java.util.Set<String> backgroundGoalTurns = java.util.concurrent.ConcurrentHashMap.newKeySet();
     /**
      * 工具展示名与悬停说明的解析入口（与手写侧 {@code TurnRecorder#recordToolStatus} 同一个来源）。
      * <p>框架引擎原先把工具<b>裸名</b>当 {@code label} 下发（{@code toolCard} 里的 {@code esc(name)}），
@@ -172,6 +188,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                                com.wenqu.ai.skill.WenquSkillRepository skillRepository,
                                com.wenqu.ai.service.OrgService orgService,
                                com.wenqu.ai.service.UsageLedgerService usageLedger,
+                               com.wenqu.ai.service.GoalService goalService,
+                               com.wenqu.ai.service.ChatRunBus chatRunBus,
+                               com.wenqu.ai.service.GoalVerificationRegistry goalVerificationRegistry,
                                java.util.function.Function<ChatCommand, com.wenqu.ai.service.ChatService.TurnModel> modelResolver) {
         this.modelRegistry = modelRegistry;
         this.projectService = projectService;
@@ -193,6 +212,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         this.skillRepository = skillRepository;
         this.orgService = orgService;
         this.usageLedger = usageLedger;
+        this.goalService = goalService;
+        this.chatRunBus = chatRunBus;
+        this.goalVerificationRegistry = goalVerificationRegistry;
         this.modelResolver = modelResolver;
     }
 
@@ -220,6 +242,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             if (changed.stream().anyMatch(k -> k.startsWith("memory."))) {
                 sessions.markAllConfigStale();
                 log.info("[agentx] 记忆配置已变更 {}，活跃会话下一轮重建实例", changed);
+            }
+            // 目标模式配置同理：投影参数/候选工具/预算默认都是 build 期或每轮现读的，
+            // 投影开关变了不重建就是「库里开着、实例没投影」——界面与模型看到的不是一套
+            if (changed.stream().anyMatch(k -> k.startsWith("chat.goalMode.") || k.equals("chat.goalTimeoutMs"))) {
+                sessions.markAllConfigStale();
+                log.info("[agentx] 目标模式配置已变更 {}，活跃会话下一轮重建实例", changed);
             }
         });
     }
@@ -478,6 +506,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         }
         ExecutionPolicy policy = tools.policyFor(cmd,
                 (code, message) -> channel.emit(RunEventType.WARN, message));
+        // 用户开了新的一轮：目标循环让位（用户优先）——**只有后台续跑轮在飞时**才打断它。
+        // 没有后台轮时，用户这一轮就是目标的一轮（它结束后的那一拍会由目标自己续上），
+        // 在那时把目标打断等于「用户刚说完话，目标就停了」。
+        if (backgroundGoalTurns.contains(cmd.getSessionId())) {
+            goalService.noteUserTurn(cmd.getSessionId(), cmd.getUserId(), channel);
+        }
         WenquSourcePool pool = tools.newPool(cmd, channel.emitter());
         // 本轮改过用户存过的选择（失效的会话模型已清除、改用他的默认模型）必须说出来。
         // 只登记降级、不再另发一条 WARN：降级随消息落库、刷新后仍在，WARN 是同一句话的第二份，
@@ -606,6 +640,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         for (String surfaceProblem : sessions.applyToolSurface(cmd, tools.turnGroupedNames(cmd, policy))) {
             channel.emit(RunEventType.WARN, surfaceProblem);
         }
+        // 目标模式：submit 之前把库里的目标态覆盖写进框架活状态（回显兜底那条——框架那份
+        // 可能不在本进程/可能是上一个目标的残留，而模型这一轮要看到的是库里这一份）。
+        // 同步失败不挡轮：目标还在库里，面板会出声（syncWarn），下一轮开跑前再同步。
+        goalService.syncBeforeSubmit(cmd.getSessionId(), cmd.getUserId(), cmd.getAgentId());
         AgentSession.Task current = multimodal != null
                 ? session.submit(multimodal)
                 : session.submit(modelInput);
@@ -619,6 +657,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             sessions.releaseFollower(sessionKey);
             // 收口后清掉本轮落点：之后再有工具调用会明确失败，而不是回落到这一轮的池子里
             slot.end(turnId);
+            // 本轮彻底收尾（跟随位已释放）才接目标的下一轮：放在收尾里发会被「已有跟随者」挡掉
+            goalService.continueAfterTurn(cmd.getSessionId(), cmd.getUserId());
         }
     }
 
@@ -880,13 +920,21 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 必须随行落库（历史里要有这一版计划，新一轮也靠它取上一版），所以放行到 persist。
         boolean awaiting = !timedOut && !superseded && !session.pending().isEmpty();
         long wallMs = System.currentTimeMillis() - startedAt;
+        long machineMs = Math.max(0L, wallMs - humanWaitMs);
         // 报出去的「本轮耗时」说的是机器干活用了多久，不是这一轮在墙上挂了多久：人在计划卡上读了
         // 三分钟，读成「它答了三分多钟」就是把人自己的时间记到了机器账上。同一句里把两个数都留下，
         // 截断与卡死排障要看的是墙钟，成本与性能看的是机器时间——少一个数就必然有人拿错一个数对账。
         log.info("[TURN] 本轮收口: session={} 机器耗时={}ms 墙钟={}ms 人工等待={}ms",
-                cmd.getSessionId(), Math.max(0L, wallMs - humanWaitMs), wallMs, humanWaitMs);
+                cmd.getSessionId(), machineMs, wallMs, humanWaitMs);
+        // 目标模式轮终一拍：记账（四条预算）→ 80% 预警 → 撞闸 → 验收 → 续跑。
+        // 放在 finish 之前：finish 会落库并发 done，目标态要先于那一帧定下来，前端才看得到一致的状态。
+        // 工具调用数取本轮实例自己的步数闸（taken 是判过即占一步的口径，含被拒的）。
+        int goalToolCalls = 0;
+        AgentxStepBudget turnBudget = sessions.stepBudget(sessions.key(cmd));
+        if (turnBudget != null) goalToolCalls = turnBudget.taken();
+        goalService.onTurnEnd(cmd.getSessionId(), cmd.getUserId(), turnId, machineMs, goalToolCalls, channel);
         finish(cmd, channel, pool, route, hooks.modelRef(), answer, recording, userMessageId, stopped,
-                timedOut, awaiting, Math.max(0L, wallMs - humanWaitMs), humanWaitMs, wallMs,
+                timedOut, awaiting, machineMs, humanWaitMs, wallMs,
                 session, historyBefore, turnId, planRecord);
     }
 
@@ -1113,8 +1161,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         String turnId = f.hooks().turnId().get();
         RESUME_POOL.execute(() -> {
             try {
+                // 用 hooks 里那一个轮号（openForContinuation 传入的那个），不重新问 TurnRegistry：
+                // 后台续跑轮没有轮级外壳登记，turnIdOf 会拿不到把手而回落会话号，
+                // 那一轮的账本归属就全挂错了
                 followTurn(f.session(), f.cmd(), f.channel(), f.pool(), f.route(), f.hooks(),
-                        turnIdOf(f.cmd()), f.historyBefore(), f.startCursor(), null, current,
+                        turnId, f.historyBefore(), f.startCursor(), null, current,
                         f.recording(), System.currentTimeMillis());
                 log.info("[agentx] 续跑已收尾 session={}", f.cmd().getSessionId());
             } catch (Exception e) {
@@ -1122,8 +1173,53 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             } finally {
                 sessions.releaseFollower(sessionKey);
                 slot.end(turnId);
+                // 后台目标轮跑完：从「有后台轮在飞」里摘掉这条会话（用户插话才不会再误判成让位场景）
+                if (turnId != null && turnId.startsWith("goal:")) {
+                    backgroundGoalTurns.remove(f.cmd().getSessionId());
+                    // 跟随位释放之后再接下一轮（放在收尾里发会被「已有跟随者」挡掉，目标循环走不到第三轮）
+                    goalService.continueAfterTurn(f.cmd().getSessionId(), f.cmd().getUserId());
+                }
             }
         });
+    }
+
+    /**
+     * 目标模式跨轮续跑（控制流归框架，问渠只数预算并发起下一轮）。
+     *
+     * <p>为什么复用 {@link #openForContinuation} 而不是新写一套：那一套已经解决了「无浏览器通道
+     * 怎么跑一轮」——收集型 emitter 包成 RunChannel，事件照常走 sendSseEvent（账本、镜像、落库
+     * 都不变），RESUME_POOL 单线程串行跟到尾。断线重连那一份 HTTP 响应才是观众。
+     *
+     * <p>幂等：{@code idempotencyKey = "goal:{goalId}:{n}"}，turnId 由框架按 key 派生
+     * （{@code UUID.nameUUIDFromBytes}）——进程重启后重发同一 key 不会重复起轮。
+     *
+     * <p>接流：后台轮登记上运行总线（收集型 emitter 当发起通道），goal_turn 帧随后下发，
+     * 前端据此自动 {@code GET /chat/run} 探测 + {@code GET /chat/resume} 接上下一轮。
+     */
+    public void continueGoalTurn(com.wenqu.ai.model.Goal goal, String input, int n) {
+        String sessionId = goal.getSessionId();
+        String uid = goal.getUserId();
+        String turnId = "goal:" + goal.getId() + ":" + n;
+        Following f = openForContinuation(sessionId, uid, turnId);
+        if (f == null) {
+            goalService.markContinueFailed(goal, "会话实例装配不出来（模型/路由解析失败）");
+            return;
+        }
+        try {
+            AgentSession.Task task = f.session().submit("goal:" + goal.getId() + ":" + n, input);
+            // **不另开总线 run**：这一轮是后台轮（没有浏览器通道），开了会顶掉当前轮那条 run
+            // （ChatRunBus.open 是「同会话一条」的替换语义），当前轮的 done 帧与观众全被切掉。
+            // 沿用「重启后续跑」那条既有路的做法：帧走收集型通道（账本照落、结果照入库），
+            // 目标态另有一条 goal_state 帧专门送面板——那才是跨轮要看的东西。
+            // 前端要接这一轮的实时流时按 goal_turn 帧去探测（/chat/run 探到 running 才接）。
+            goalService.emitTurn(goal, n, task.turnId(), f.channel());
+            backgroundGoalTurns.add(sessionId);
+            startFollowing(f, task);
+        } catch (RuntimeException e) {
+            log.warn("[GOAL] 续跑轮提交失败: goal={} n={} {}", goal.getId(), n, e.toString());
+            goalService.markContinueFailed(goal, e.getMessage());
+            sessions.releaseFollower(sessions.key(f.cmd()));
+        }
     }
 
     /**
@@ -1930,6 +2026,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 管理员在设置页改审批档，不能等整条会话换个模型才生效。
         key = key + "|" + (policy == null ? "" : policy.preset() + "/" + policy.sandboxMode()
                 + "/" + policy.approvalMode() + "/" + policy.deny().stream().sorted().toList());
+        // 目标模式开关同样烤在实例里（taskContext 投影参数是 build 期装配）：智能体改了
+        // goal_enabled 不重建，就会出现「库里开着、实例没投影」或反过来——界面与模型看到的不是一套
+        key = key + "|goal=" + (row != null && row.getGoalEnabled() != null ? row.getGoalEnabled() : "-");
         // 注意：思考开关/上下文窗口档也烤在实例里，但续跑入口（openForContinuation）重建的
         // ChatCommand 不带这两个值，若把它们并进 key，续跑会按默认档重建、丢掉用户原来的选择。
         // 因此这里只并入可复原的档位；思考/窗口档的变更留给后续「按调用传 GenerateOptions」那一刀。
@@ -2605,6 +2704,64 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         return b.triggerMessages(1).build();
     }
 
+    /**
+     * 目标模式的任务上下文投影参数（build 期装配，判据与界面入口同源）。
+     * <p>关时返回 {@code disabled()}——那时投影段一个字节都不出现（§16 夹具 9：关掉还喂目标进模型
+     * = 又造出一处「提示词教了、能力没挂」的漂移）。
+     * <p>{@code requirementProposals} 关时只投影不挂 {@code task_requirement_propose}：
+     * 框架 builder 里 proposals 与 requirements 有耦合，但「教了模型一件它没有的能力」这条老坑
+     * 比多一段 REQUIREMENTS 投影严重得多——投影是只读信息，工具面是能力承诺。
+     */
+    private io.agentscope.harness.agent.context.TaskContextOptions goalTaskOptions(AgentBinding binding) {
+        if (!goalService.enabledFor(binding.row())) {
+            return io.agentscope.harness.agent.context.TaskContextOptions.disabled();
+        }
+        var b = io.agentscope.harness.agent.context.TaskContextOptions.builder()
+                .includeRequirements()
+                .includeVerificationResults();
+        if (goalService.requirementProposals()) b.allowRequirementProposals();
+        return b.build();
+    }
+
+    /**
+     * 预算预警（80%）的 runtime 上下文源：每次推理前现读库，所以常驻实例也能热更。
+     * <p>与面板黄条同源（{@code GoalCopy.budgetWarnBlock}）——模型看到的和用户看到的是一句话，
+     * 不是两套口径。纯计算轮没有目标时返回空列表（不是空 Mono：那会被判成 source 故障）。
+     */
+    private io.agentscope.harness.agent.context.ContextSource goalBudgetSource() {
+        return request -> {
+            try {
+                com.wenqu.ai.model.Goal goal = goalService.activeGoal(request.sessionId());
+                if (goal == null || goalService.budgetExhausted(goal)
+                        || goalService.budgetRatio(goal) < 0.8) {
+                    return reactor.core.publisher.Mono.just(List.of());
+                }
+                int turnsLeft = goal.getBudgetTurns() > 0
+                        ? goal.getBudgetTurns() - goal.getUsedTurns() : 0;
+                long tokensLeft = goal.getBudgetTokens() > 0
+                        ? goal.getBudgetTokens() - goal.getUsedTokens() : 0;
+                return reactor.core.publisher.Mono.just(List.of(
+                        io.agentscope.harness.agent.context.ContextBlock.runtime("goal-budget",
+                                com.wenqu.ai.service.GoalCopy.budgetWarnBlock(goal.getObjective(),
+                                        goalService.remainingCriteria(goal), turnsLeft, tokensLeft))));
+            } catch (Exception e) {
+                // 上下文源失败不许把一轮打挂：当没有预警处理
+                log.warn("[GOAL] 预算上下文源读取失败: session={} {}", request.sessionId(), e.getMessage());
+                return reactor.core.publisher.Mono.just(List.of());
+            }
+        };
+    }
+
+    /** 框架状态存储（验收写结论用：GoalVerificationRegistry 不能自己建第二份）。 */
+    public io.agentscope.core.state.AgentStateStore frameworkStateStore() {
+        return stateStore();
+    }
+
+    /** 验收注册表（装配处绑状态存储用；引擎不直接用它，只转发这一手绑定）。 */
+    public com.wenqu.ai.service.GoalVerificationRegistry goalVerificationRegistry() {
+        return goalVerificationRegistry;
+    }
+
     private HarnessAgent buildAgent(ChatCommand cmd, ExecutionPolicy policy,
                                     ModelRegistryService.ModelRoute route,
                                     WenquAgentxTools.TurnHooks hooks, AgentBinding binding,
@@ -2699,6 +2856,19 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 与 chat.planAutoIntent 已删除，计划怎么执行全交框架的 plan_enter/write/exit + 只读拦截。
                 // 历史计划卡的多版本落库仍由 Recording.planVersions 负责，与意图判定无关。
                 .enablePlanMode()
+                // 目标模式（Goal Mode）：把目标/已确认要求/验证结果投进模型输入。
+                // 投影参数与框架 enableTaskList **无关**——已核实 sources：投影由 harness 侧
+                // HarnessContextBuilder 拿 ContextSources.taskContext() 独立驱动（:511-512），
+                // task_requirement_propose 由 ReActAgent.enableTaskRequirements(requirementProposals)
+                // 单独注册（HarnessAgent:2780），两者都不看 taskListEnabled。所以开着目标投影
+                // 也不会把框架 todo_write 与 in_progress/completed 词面引进模型上下文，
+                // 不会和问渠 writeTodo 的 doing/done 撞车（上面 enableTaskList 保持关的理由不变）。
+                // 判据与界面入口同源（goalService.enabledFor）——关掉就三件事同时不成立：
+                // 不投影、不挂候选工具、界面无入口，杜绝「教了模型一件它没有的能力」。
+                .taskContext(goalTaskOptions(binding))
+                // 预算预警（80%）的 runtime 上下文块：源在每次推理前现读 DB，常驻实例也能热更。
+                // 让模型下一轮自己收敛范围、停新委派、优先可交付部分（框架文档要求）。
+                .contextSource("goal-budget", goalBudgetSource())
                 // 任务清单：**不开**框架的 enableTaskList，只借它的 state 做存储。
                 // 原因：开它会同时注册 todo_write 工具并由 TaskReminderMiddleware 每轮教模型用
                 // 「in_progress/completed」这套词，而问渠挂的是 writeTodo（教的是 doing/done，

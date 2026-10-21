@@ -456,6 +456,16 @@ public class ConfigService {
         d.put("chat.planTimeoutMs", "600000");             // 计划模式：计划批准等待上限(ms)（人工等待不计入整轮预算）；超时按未批准终止本轮
         d.put("chat.sseTimeoutMs", "300000");              // H4：问答 SSE 超时(ms)
         d.put("chat.askTimeoutMs", "600000");              // 人在回路提问卡等待上限(ms)（2026-10-09 补：schema 早已声明，defaults 漏登记 → 设置页改了回显不出）
+        // 目标模式（Goal Mode）：总闸关时工具面不挂、任务态投影不开、界面无入口三件事同时成立。
+        // 配置只留平台一档，不下放个人（个人发起目标时可在请求里在此基础上往下收，见 GoalService.start）
+        d.put("chat.goalMode.enabled", "false");           // 目标模式总闸（平台全局；智能体级 goal_enabled 三态再收一层）
+        d.put("chat.goalMode.defaultTurns", "0");          // 单目标轮数上限默认：0=不限（50 轮硬闸兜底，见 schema）
+        d.put("chat.goalMode.defaultTokens", "0");         // 单目标 token 上限默认：0=不限（运行预算只留 minutes）
+        d.put("chat.goalMode.defaultToolCalls", "0");      // 单目标工具调用上限默认：0=不限
+        d.put("chat.goalMode.defaultMinutes", "120");      // 单目标机器分钟上限默认（2 小时；人在回路等待不计）——唯一保留的运行预算
+        d.put("chat.goalMode.verifyTimeoutSeconds", "60"); // 单条验收标准验证器超时(秒)→ERROR
+        d.put("chat.goalMode.requirementProposals", "true"); // 是否给模型 task_requirement_propose（候选提议；确认仍只能用户点）
+        d.put("chat.goalTimeoutMs", "600000");             // 目标确认卡等待上限(ms)：与计划卡是两回事，不复用 chat.planTimeoutMs
         // 调试显示总开关（归属徽标 / 路由提示 / 降级提示）。默认开（2026-10-18 由 false 改 true）：
         // 它管的已不只是排障项——「无命中 / 改写失败 / 图片剔除」这类降级信息默认不显示，等于系统性地
         // 不告诉用户这一轮检索没按预期发生，与「答得准、也敢被查」的定位直接冲突：产品承诺的是可被
