@@ -492,11 +492,38 @@ export const getProjectRuns = (id, limit) =>
 // 归档 / 恢复工作区（不动会话与产物，implicit 兜底容器不可归档）
 export const setProjectStatus = (id, status) =>
   request(`/project/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) })
-// 工作区目录里的文件：{entries, total, truncated}（total=实际文件数，truncated=true 表示只取了最近若干条）
-export const listProjectFiles = id => request(`/project/${id}/files`)
-// 下载工作区文件：必须走 fetch 带 Authorization（后端认 JWT，不认 cookie），再落成本地文件
-export const downloadProjectFile = async (id, path, filename) => {
-  const res = await fetch(`${BASE}/project/${id}/file?path=${encodeURIComponent(path)}`, {
+// 工作区目录里的内容（单层导航）：{dir, entries, total, truncated, files, bytes, capped, dirs, names}。
+// entries 里每条带 kind（dir/file），文件夹在前；total 是本层条目数、truncated=true 表示只回了最近若干条；
+// files/bytes 是整个目录的文件数与合计体积（capped=true 表示数到 5000 个就停），dirs 是全目录文件夹清单
+// （「移动到…」用），names 是全目录文件名（产物去重用）。可预览的文件条目带 viewUrl（签名地址，1 小时过期）。
+export const listProjectFiles = (id, dir) =>
+  request(`/project/${id}/files${dir ? '?dir=' + encodeURIComponent(dir) : ''}`)
+/** 往工作目录上传文件（dir=目标文件夹，空=根；overwrite=同名覆盖）。onProgress 收 0-100 */
+export function uploadProjectFiles(id, dir, files, overwrite, onProgress) {
+  const fd = new FormData()
+  files.forEach(f => fd.append('file', f))
+  if (dir) fd.append('dir', dir)
+  fd.append('overwrite', overwrite ? 'true' : 'false')
+  return upload(`/project/${id}/files`, fd, onProgress)
+}
+/** 新建文件夹（path=相对工作区的完整路径，父目录必须已存在） */
+export const createProjectDir = (id, path) =>
+  request(`/project/${id}/dir`, { method: 'POST', body: JSON.stringify({ path }) })
+/** 重命名或移动一个条目（文件与文件夹同一条路：换成别的文件夹＝移动，只换末段＝改名） */
+export const moveProjectEntry = (id, from, to) =>
+  request(`/project/${id}/file`, { method: 'PUT', body: JSON.stringify({ from, to }) })
+/** 批量整理工作区条目。op 必须写清（'move' / 'delete'）——一个是整理、一个是不可恢复地删文件，
+    不能靠「dir 字段留没留」来猜意图：往根目录移动时 dir 就是空串，与「没给」长得一样。 */
+export const projectBatch = (id, paths, op, dest) =>
+  request(`/project/${id}/files/batch`, {
+    method: 'POST',
+    body: JSON.stringify(op === 'move' ? { paths, op, dir: dest || '' } : { paths, op })
+  })
+// 下载工作区文件：必须走 fetch 带 Authorization（后端认 JWT，不认 cookie），再落成本地文件。
+// dir 是当前所在文件夹——签名预览地址只覆盖可预览的类型，下载走这条带凭据的路，两者可以并存。
+export const downloadProjectFile = async (id, path, filename, dir) => {
+  const q = `path=${encodeURIComponent(path)}${dir ? '&dir=' + encodeURIComponent(dir) : ''}`
+  const res = await fetch(`${BASE}/project/${id}/file?${q}`, {
     headers: authHeaders()
   })
   if (!res.ok) throw new Error(`下载失败(${res.status})`)
@@ -509,18 +536,6 @@ export const downloadProjectFile = async (id, path, filename) => {
   a.click()
   a.remove()
   setTimeout(() => URL.revokeObjectURL(url), 2000)
-}
-/** 预览工作区文件：文本回文本、图片回 objectURL（后端对 html/svg 也只发纯文本，不在应用里执行） */
-export const previewProjectFile = async (id, path) => {
-  const res = await fetch(`${BASE}/project/${id}/file/preview?path=${encodeURIComponent(path)}`, {
-    headers: authHeaders()
-  })
-  if (!res.ok) throw new Error(`预览失败(${res.status})`)
-  const ct = res.headers.get('content-type') || ''
-  if (ct.startsWith('image/')) {
-    return { kind: 'image', url: URL.createObjectURL(await res.blob()) }
-  }
-  return { kind: 'text', text: await res.text() }
 }
 /** 整区导出 zip：流式下载，文件名由服务端定（工作区名.zip） */
 export const exportProjectZip = async id => {
@@ -546,9 +561,6 @@ export const exportProjectZip = async id => {
   a.remove()
   setTimeout(() => URL.revokeObjectURL(url), 2000)
 }
-/** 删除工作区里的单个文件 */
-export const deleteProjectFile = (id, path) =>
-  request(`/project/${id}/file?path=${encodeURIComponent(path)}`, { method: 'DELETE' })
 // 更新工作区设置：传才改，空串=清空（name / instructions / defaultAgentId）
 export const updateProject = (id, body) =>
   request(`/project/${id}`, { method: 'PUT', body: JSON.stringify(body || {}) })
@@ -1131,18 +1143,18 @@ export const stopChatTurn = sessionId =>
 export const getSessionTodosApi = sessionId =>
   request(`/session/${encodeURIComponent(sessionId)}/todos`)
 
-/** 目标模式：设为目标。criteria=[{kind,text,verifierId,verifierParams}]（kind=ACCEPTANCE_CRITERION|CONSTRAINT），
- *  budget={turns,tokens,toolCalls,minutes}（只往下收：超过平台默认按默认执行）。创建后进「待确认」，
- *  用户在目标卡上逐条勾选并确认才开始。返回 {goalId,status,objective,criteria,budget,...} */
-export const startGoalApi = (sessionId, objective, criteria, budget) =>
+/** 目标模式：创建目标。criteria=[{kind,text,verifierId,verifierParams}]（kind=ACCEPTANCE_CRITERION|CONSTRAINT）。
+ *  startNow=true 立即开始（默认）：没带标准时首轮由助手起草、自动采纳，用户可改；不再弹确认卡。
+ *  没有预算入参：目标不设轮数/token/工具/时长上限。返回 {goalId,status,objective,criteria,...} */
+export const startGoalApi = (sessionId, objective, criteria, startNow = true) =>
   request('/chat/goal', {
     method: 'POST',
-    body: JSON.stringify({ sessionId, objective, criteria, budget, action: 'start' })
+    body: JSON.stringify({ sessionId, objective, criteria, startNow, action: 'start' })
   })
 
-/** 目标模式：目标动作。action=confirmCriteria|pause|resume|extendBudget|verifyNow|markManual|finish|cancel。
- *  confirmCriteria 带 criteria:[{key,status}]（逐条裁决）；extendBudget 带 extraTurns/extraTokens；
- *  markManual 带 key/outcome（PASSED|FAILED）。返回目标视图模型（右栏/目标卡直接可用） */
+/** 目标模式：目标动作。action=confirmCriteria|pause|resume|edit|verifyNow|markManual|finish|cancel。
+ *  confirmCriteria 带 criteria:[{key,status}]（逐条裁决）；edit 带 criteria:[{key,text}]（目标原文不改）；
+ *  markManual 带 key/outcome（PASSED|FAILED）。返回目标视图模型（摘要条/目标卡直接可用） */
 export const goalActionApi = (goalId, action, extra) =>
   request(`/chat/goal/${encodeURIComponent(goalId)}`, {
     method: 'POST',
@@ -1154,8 +1166,8 @@ export const goalActionApi = (goalId, action, extra) =>
 export const getPendingGoalApi = sessionId =>
   request(`/chat/goal/pending?sessionId=${encodeURIComponent(sessionId)}`)
 
-/** 目标模式：会话当前/最近一条目标（右栏「目标」面板回显，读 DB 不读框架）。
- *  返回 {goal:视图模型|null} */
+/** 目标模式：会话当前/最近一条目标（摘要条与右栏「目标」面板的终态回显，读 DB 不读框架）。
+ *  注意形状与上面那个不同：**直接返回视图模型**（没有 goal 那一层套），没有目标时 data 为 null */
 export const getSessionGoalApi = sessionId =>
   request(`/chat/session/${encodeURIComponent(sessionId)}/goal`)
 

@@ -49,27 +49,34 @@
               <file-text-outlined class="art-icon" />
               <div class="art-main">
                 <div class="art-line">
-                  <span class="art-name">{{ r.filename }}</span>
+                  <span class="art-name" :title="r.filename">{{ r.filename }}</span>
                   <span class="art-chip">{{ r.ext || 'file' }}</span>
                 </div>
+                <!-- 元信息只放不会变长的三项；说明单独一行——它和文件名一样长，
+                     挤在同一行时必然把大小/日期压得内部换行（「45.9 / KB」那种碎排） -->
                 <div class="art-sub">
                   <span>{{ fmtSize(r.size) }}</span>
                   <span class="art-dot">·</span>
                   <span>{{ fmtTime(r.createTime) }}</span>
-                  <template v-if="r.description">
-                    <span class="art-dot">·</span>
-                    <span class="art-desc">{{ r.description }}</span>
-                  </template>
                   <span class="art-dot">·</span>
                   <span :class="['art-expire', { warn: expireSoon(r.expireTime) }]"
                         :title="r.expireTime ? '预计清理时间：' + fmtTime(r.expireTime) : '产物不会被自动清理'">
                     {{ fmtExpire(r.expireTime) }}
                   </span>
                 </div>
+                <div v-if="r.description" class="art-desc" :title="r.description">{{ r.description }}</div>
               </div>
               <!-- 操作区独立成组：窄屏整组换行右对齐（见 .art-acts 的媒体查询） -->
               <div class="art-acts">
-                <a :href="r.url" :download="r.filename" class="app-btn ghost small" title="下载">
+                <!-- 预览＝把产物开成单独一个标签页。安全性靠服务端那份 CSP sandbox 头
+                     （见 ArtifactSandboxInterceptor）：产物是模型生成的 HTML，不带该头时这一跳等于
+                     让模型脚本跑在本域源上、能读登录令牌。地址仍是列表里那份签名地址，无需另换接口。
+                     哪些类型开得起来见 utils/artifactView（按真浏览器实测），聊天区产物卡共用同一份。 -->
+                <a v-if="canPreviewArtifact(r)" :href="resolveImg(r.url)" target="_blank" rel="noopener"
+                   class="app-btn ghost small" title="在新标签页打开">
+                  <eye-outlined /> 预览
+                </a>
+                <a :href="resolveImg(r.url)" :download="r.filename" class="app-btn ghost small" title="下载">
                   <download-outlined /> 下载
                 </a>
                 <button class="app-btn ghost small" title="移动到工作区" @click="askMove(r)">
@@ -100,8 +107,10 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { ReloadOutlined, FileTextOutlined, DownloadOutlined, DeleteOutlined, FolderOpenOutlined } from '@ant-design/icons-vue'
+import { ReloadOutlined, FileTextOutlined, DownloadOutlined, DeleteOutlined, FolderOpenOutlined, EyeOutlined } from '@ant-design/icons-vue'
 import { listArtifacts, listProjects, deleteArtifact, deleteArtifactsBatch, moveArtifactProject } from '../api'
+import { resolveImg } from '../utils/markdown'
+import { canPreviewArtifact } from '../utils/artifactView'
 import MoveToWorkspaceModal from '../components/MoveToWorkspaceModal.vue'
 
 const rows = ref([])
@@ -342,18 +351,26 @@ onMounted(() => {
 }
 .art-row { display: flex; align-items: center; gap: 12px; }
 .art-row.picked { border-color: var(--app-accent); }
-.art-icon { font-size: 18px; color: var(--app-accent); }
+.art-icon { flex: none; font-size: 18px; color: var(--app-accent); }
 .art-main { flex: 1; min-width: 0; }
-.art-line { display: flex; align-items: center; gap: 8px; }
-.art-name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.art-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.art-name { font-weight: 500; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .art-chip {
-  font-size: 11px; padding: 1px 6px; border-radius: 4px;
+  flex: none; font-size: 11px; padding: 1px 6px; border-radius: 4px;
   background: var(--app-accent-weak); color: var(--app-accent);
 }
-.art-sub { margin-top: 2px; font-size: 12px; color: var(--app-text3); display: flex; gap: 4px; min-width: 0; }
-.art-desc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 元信息按「整项」换行，绝不项内换行：挤不下时把「90 天后清理」整个挪到下一行，
+   而不是把「45.9 KB」劈成两截（此前每项默认可收缩，长说明一进来就出现碎排） */
+.art-sub {
+  margin-top: 2px; font-size: 12px; color: var(--app-text3);
+  display: flex; flex-wrap: wrap; gap: 0 4px; min-width: 0;
+}
+.art-sub > span { flex: none; white-space: nowrap; }
+.art-desc {
+  margin-top: 2px; font-size: 12px; color: var(--app-text3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .art-dot { opacity: 0.6; }
-.art-expire { flex-shrink: 0; }
 .art-expire.warn { color: var(--app-danger, var(--app-danger)); font-weight: 500; }
 .art-del { color: var(--app-danger, var(--app-danger)); }
 .art-empty { text-align: center; padding: 28px 16px; }
@@ -371,8 +388,12 @@ onMounted(() => {
   .art-search { flex: 1; width: auto; min-width: 0; margin-left: 0; }
   /* 搜索框与「刷新」同排；批量行只在有选中时撑到右侧 */
   .art-batch { justify-content: flex-start; }
-  .art-row { flex-wrap: wrap; row-gap: 0; }
-  .art-main { flex: 1 1 auto; }
+  .art-row { flex-wrap: wrap; row-gap: 0; column-gap: 8px; }
+  /* 图标恒为同一个文档形状（类型已由 chip 标出），手机上把这 30px 让给文件名 */
+  .art-icon { display: none; }
+  /* 基准必须是 0 而非 auto：auto 让正文按内容宽度参与换行计算，结果勾选框被单独顶成一个行盒，
+     看上去像浮在文件名上方的一块空白 */
+  .art-main { flex: 1 1 0; min-width: 0; }
   .art-acts { width: 100%; justify-content: flex-end; }
   .art-acts > .app-btn { min-height: 44px; padding: 0 14px; }
   /* 行内勾选：把点击区从 16px 撑到 30×44（antd 的 wrapper 本身就是可点区域） */
