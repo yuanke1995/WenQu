@@ -31,6 +31,11 @@ public enum RunEventType {
     PLAN_CANCELLED("plan_cancelled"),
     PLAN_SUPERSEDED("plan_superseded"),
     TODO("todo"),
+    /** 目标态变更（目标模式）：状态机迁移/标准裁决/验证结果/预算变化的唯一帧。
+     *  进镜像（断线重连要能重建目标面板）与账本（按 goal_id 聚合）。 */
+    GOAL_STATE("goal_state"),
+    /** 目标跨轮续跑开了新的一轮（后台轮）：前端据此自动接流。进账本，不进镜像（帧不是状态）。 */
+    GOAL_TURN("goal_turn"),
     RETRIEVED("retrieved"),
     USAGE("usage"),
     IMAGE("image"),
