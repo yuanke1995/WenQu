@@ -6,7 +6,7 @@
         <!-- 页名与 Tab 名重复，标题仅保留给读屏器（sr-only），视觉上从统计起头 -->
         <h1 class="app-page-title sr-only">智能体</h1>
         <span class="ap-count">共 <b>{{ agents.length }}</b> 个</span>
-        <span class="head-hint-plain" title="一个智能体就是一组对话预设：选好模型、写好角色提示词、圈定知识库范围、按需开启能力；对话时在输入框上方选用，这一轮问答就按它走">一组对话预设：模型、角色提示词、知识库范围与能力开关</span>
+        <span class="head-hint-plain" title="一个智能体就是一组对话预设：写好角色提示词、圈定知识库范围、按需开启能力；模型在对话页选择，这一轮问答就按它走">一组对话预设：角色提示词、知识库范围与能力开关（模型在对话页选）</span>
         <div class="ap-head-r">
           <a-input v-model:value="keyword" class="ap-search" size="small" allow-clear placeholder="搜索名称或描述">
             <template #prefix><search-outlined class="ap-search-ic" /></template>
@@ -36,7 +36,7 @@
         <div v-else-if="!agents.length" class="ap-empty">
           <div class="ap-empty-t">还没有智能体</div>
           <div class="ap-empty-d">
-            一个智能体就是一组预设：选好模型、写好角色提示词、圈定知识库范围、按需开启能力。
+            一个智能体就是一组预设：写好角色提示词、圈定知识库范围、按需开启能力；模型在对话页选择。
             对话时在输入框上方切换，这一轮问答就按它的配置走；没配置的维度沿用系统设置。
           </div>
           <button class="app-btn small" @click="openCreate">新建第一个智能体</button>
@@ -111,12 +111,25 @@
 
     <!-- ==================== 配置视图（独立整页，不用弹窗） ==================== -->
     <template v-else>
-      <div class="app-page-head">
+      <div class="app-page-head ap-edit-head">
         <button class="app-icon-btn" title="返回列表" aria-label="返回列表" @click="closeEdit"><arrow-left-outlined /></button>
-        <!-- 页头标题即生效摘要（纯文本）：「名称·范围·能力」随表单实时变化 -->
-        <h1 class="app-page-title ap-head-summary"><span>{{ form.name || '未命名智能体' }}</span><span class="ap-sum-tail">·{{ summaryScope }}·</span><span class="ap-sum-tail" :class="{ 'is-accent': capsTouched }">{{ summaryCaps }}</span></h1>
+        <div class="ap-head-main">
+          <h1 class="app-page-title ap-title">{{ form.name || '未命名智能体' }}</h1>
+          <div class="ap-head-chips">
+            <span v-if="runMode !== 'workflow'" class="ap-head-chip">{{ summaryScope }}</span>
+            <span v-if="modeChip" class="ap-head-chip">{{ modeChip }}</span>
+            <span v-if="runMode !== 'workflow'" class="ap-head-chip" :class="{ 'is-accent': capsOverriddenCount > 0 }">
+              {{ capsOverriddenCount ? `${capsOverriddenCount} 项能力已覆盖` : '能力全部沿用默认' }}
+            </span>
+          </div>
+        </div>
         <div class="ap-head-r">
-          <!-- 历史版本：仅已存在的智能体有（新建尚未落版）；查看每次保存的快照与 diff，可一键回滚 -->
+          <a-tooltip v-if="canShowStar" :title="form.isDefault ? '当前默认智能体' : '设为默认智能体（对话页预选）'">
+            <button class="app-icon-btn ap-star-btn" :class="{ 'is-default': form.isDefault }"
+                    :disabled="form.isDefault" aria-label="设为默认" @click="doSetDefault(editingId)">
+              <star-outlined />
+            </button>
+          </a-tooltip>
           <button v-if="editingId" class="app-btn ghost small" @click="openVersions">
             <history-outlined style="margin-right:4px" />历史版本
           </button>
@@ -126,274 +139,256 @@
       </div>
 
       <div class="app-page-body">
-        <a-form layout="vertical" class="ap-form">
-          <section class="app-card">
-            <h2 class="app-card-title"><idcard-outlined class="ap-sec-ic" />身份</h2>
-            <p class="ap-block-hint">对话页下拉里展示的就是名称与描述，写清楚它适合什么场景。</p>
-            <p class="ap-block-hint" style="margin:0 0 8px">
-              描述还是「谁来做这件事」的依据：主智能体把问题交给另一位助手时，按名称+描述决定问谁——
-              各智能体的职责要互不重叠，重叠会导致派错。
-            </p>
-            <!-- 用途与图标对内置「问渠」是身份锁死项（后端同样 fail-loud 拒绝改动），配置页不再给入口：
-                 「用途」改成子智能体会让唯一的默认智能体从对话页消失，「图标」换掉就丢了品牌标 -->
-            <a-form-item label="用途" v-if="form.isBuiltin !== 1">
-              <a-radio-group v-model:value="form.isSubagent">
-                <a-radio-button :value="0">主智能体</a-radio-button>
-                <a-radio-button :value="1">子智能体</a-radio-button>
-              </a-radio-group>
-              <div class="ap-block-hint" style="margin: 6px 0 0">
-                主智能体可在对话页直接选用；子智能体不能直接选用，只能被主智能体委派去查资料。
+        <div class="ap-layout">
+          <a-form layout="vertical" class="ap-form">
+            <!-- 运行方式 -->
+            <section class="app-card">
+              <div class="ap-sec-head">
+                <h2 class="app-card-title"><apartment-outlined class="ap-sec-ic" />运行方式</h2>
+                <span class="ap-hint">决定这个助手怎么被使用</span>
               </div>
-            </a-form-item>
-            <a-form-item label="名称" required>
-              <a-input v-model:value="form.name" :maxlength="200" :disabled="form.isBuiltin === 1"
-                       placeholder="如：合同审查助手 / 运维排障 / 产品 FAQ" />
-              <div v-if="form.isBuiltin === 1" class="ap-block-hint" style="margin:6px 0 0">
-                内置智能体「问渠」是系统默认角色：名称、用途与图标随产品固定，不可修改。
-              </div>
-            </a-form-item>
-            <a-form-item label="图标" v-if="form.isBuiltin !== 1">
-              <div class="ap-icon-pick">
-                <button v-for="opt in iconOptions" :key="opt.value || 'default'" type="button"
-                        class="ap-icon-opt" :class="{ on: (form.icon || '') === opt.value }"
-                        :title="opt.label" :aria-pressed="(form.icon || '') === opt.value"
-                        @click="form.icon = opt.value">
-                  <AgentAvatar :agent="{ icon: opt.value, isBuiltin: 0 }" :size="26" />
-                </button>
-              </div>
-              <div class="ap-block-hint" style="margin:6px 0 0">
-                展示在对话页智能体下拉与列表卡片上；不选即默认图标。
-              </div>
-            </a-form-item>
-            <a-form-item label="描述" style="margin-bottom:0">
-              <a-textarea v-model:value="form.description" :maxlength="500" :rows="2"
-                          placeholder="写清职责范围与典型问题（如：负责《操作手册》的界面操作与表单填写问题），主智能体按描述决定要不要问这一位" />
-            </a-form-item>
-          </section>
+              <a-segmented v-model:value="runMode" :options="runModeOptions" class="ap-mode-seg" @change="onRunModeChange" />
+              <p class="ap-hint ap-mode-note">{{ runModeHint }}</p>
 
-          <section class="app-card">
-            <h2 class="app-card-title"><thunderbolt-outlined class="ap-sec-ic" />提示词</h2>
-            <p class="ap-block-hint">智能体不绑定聊天模型：回答用哪套模型由用户在对话页选择或个人设置默认。</p>
-            <a-form-item label="系统提示词" style="margin-bottom:0">
-              <a-textarea v-model:value="form.systemPrompt" :rows="6"
-                          placeholder="填写后完全替换全局系统提示词；留空沿用全局" />
-            </a-form-item>
-          </section>
-
-          <section class="app-card">
-            <h2 class="app-card-title"><database-outlined class="ap-sec-ic" />知识库范围</h2>
-            <!-- 内置「问渠」：全局一只、默认库每人一个，没有可静态绑定的库——固定检索使用者自己的默认库 ＋ 官方使用手册库，
-                 不给任何选择入口（后端 update 同口径拒绝改动） -->
-            <template v-if="form.isBuiltin === 1">
-              <div class="ap-kb-fixed"><span class="ap-chip">「问渠」知识库</span><span class="ap-chip">问渠使用手册</span></div>
-              <p class="ap-block-hint" style="margin:8px 0 0">
-                固定检索你的默认知识库「问渠」与官方《问渠使用手册》：上传到「问渠」库的资料就是它的检索范围，
-                产品用法问题由使用手册解答；不可改为其它库，也不可关闭检索。
-              </p>
-            </template>
-            <template v-else>
-              <p class="ap-block-hint">限定这个智能体能检索到的内容：选择它允许使用的「知识库」（文档归属哪个库，在「文档管理」里设置）。</p>
-              <a-radio-group v-model:value="scopeMode">
-                <a-radio-button value="all">全部知识库</a-radio-button>
-                <a-radio-button value="pick">指定知识库</a-radio-button>
-                <a-radio-button value="none">不使用知识库</a-radio-button>
-              </a-radio-group>
-              <div v-if="scopeMode === 'pick'" class="ap-pick">
-                <a-select v-model:value="form.knowledgeBaseIds" mode="multiple" :options="kbOptions" allow-clear
-                          show-search option-filter-prop="label" :max-tag-count="6" style="width:100%"
-                          placeholder="选择允许检索的知识库" />
-                <div class="ap-block-hint" style="margin:6px 0 0">
-                  已选 {{ form.knowledgeBaseIds.length }} 个知识库；一个都不选则该智能体检索不到任何内容。
-                  各库的检索阈值/权重由知识库自己的检索参数决定，智能体不另行覆盖。
+              <div v-if="runMode === 'workflow'" class="ap-mode-extra">
+                <a-select v-model:value="form.workflowId" :options="workflowOptions" allow-clear show-search
+                          option-filter-prop="label" style="width:100%" placeholder="选择一个已发布的工作流" />
+                <div v-if="form.workflowId && !workflowOptions.some(w => w.value === form.workflowId)"
+                     class="ap-hint" style="color: var(--app-warn-text)">
+                  当前绑定的工作流不在已发布列表里；重新选择一个，或先到「工作流」页发布它。
+                </div>
+                <div v-if="!workflowOptions.length" class="ap-hint">
+                  还没有已发布的工作流 —— 先到「工作流」页保存并发布一个，再回来绑定。
+                </div>
+                <div v-else class="ap-hint">
+                  绑定后回答由工作流产出：人设、资料与工具配置不再参与，名称与描述仍用于列表展示。
                 </div>
               </div>
-              <div v-else-if="scopeMode === 'none'" class="ap-block-hint" style="margin:8px 0 0">
-                纯角色智能体：完全不走资料检索，仅凭系统提示词与对话上下文作答。
-                适合通用法律顾问、写作助手这类不挂资料的场景；对话中手动 @ 的文档仍会被参考。
+
+              <div v-else-if="runMode === 'sub'" class="ap-mode-extra">
+                <label class="ap-field-label">被委派时怎么做</label>
+                <a-select v-model:value="form.subagentMode" :options="branchModeOptions" allow-clear
+                          style="width:100%" placeholder="跟随系统默认" />
+                <div class="ap-hint">
+                  交要点：只查资料、把要点交回来，快也省；全循环：像一次完整对话那样把事办完，能交付文件与产物，但更慢也更花费。
+                  <template v-if="branchModeDefaultLabel">当前平台默认「{{ branchModeDefaultLabel }}」。</template>
+                  被委派的那一支不会向人提问，也不会建任务清单。
+                </div>
               </div>
-            </template>
-          </section>
+            </section>
 
-          <!-- 检索设置紧跟知识库范围（库范围→库参数），宽屏双栏时与「身份/提示词」同属左栏。
-               两层分工：库管“召回池”（阈值/权重/重排模型，按库生效），智能体管“这一轮怎么用”（是否重排）。 -->
-          <section class="app-card" v-if="!form.isSubagent">
-            <h2 class="app-card-title"><control-outlined class="ap-sec-ic" />检索设置</h2>
-            <p class="ap-block-hint">
-              阈值、两路权重与召回量由<b>知识库</b>和系统设置决定（每个库按自己的资料调，跨库检索时各取各的）。
-              这里只决定这一轮<b>要不要做语义重排</b>：低延迟场景可以关闭，回答相关性下降由智能体自行承担。
-            </p>
-            <div class="qp-row">
-              <span class="qp-label">重排服务</span>
-              <!-- 整行贴右：全局当前值挨在控件左侧，与下方「能力」区的行版式一致；
-                   窄栏放不下时整组换行，不会横向溢出画到隔壁栏。不用 label 包整行：
-                   点标题文字会连带选中第一个分段（把用户的覆盖悄悄改回跟随全局） -->
-              <span class="qp-ctl">
-                <span v-if="form.qpRerank === 'inherit' && rerankInheritHint" class="qp-inherit">{{ rerankInheritHint }}</span>
-                <a-segmented v-model:value="form.qpRerank" :options="rerankOptions" />
-              </span>
-            </div>
-            <p class="ap-block-hint" style="margin:10px 0 0">
-              重排用哪个模型由知识库绑定（库主付费），未绑定时走平台默认模型。
-            </p>
-          </section>
+            <!-- 身份与角色 -->
+            <section class="app-card">
+              <h2 class="app-card-title"><idcard-outlined class="ap-sec-ic" />身份与角色</h2>
+              <div class="ap-id-row">
+                <a-popover v-if="form.isBuiltin !== 1" v-model:open="iconOpen" trigger="click"
+                           placement="bottomLeft" :overlay-style="{ width: '300px' }">
+                  <template #content>
+                    <div class="ap-icon-grid">
+                      <button v-for="opt in iconOptions" :key="opt.value || 'default'" type="button"
+                              class="ap-icon-opt" :class="{ on: (form.icon || '') === opt.value }"
+                              :title="opt.label" :aria-pressed="(form.icon || '') === opt.value"
+                              @click="form.icon = opt.value; iconOpen = false">
+                        <AgentAvatar :agent="{ icon: opt.value, isBuiltin: 0 }" :size="26" />
+                      </button>
+                    </div>
+                  </template>
+                  <button type="button" class="ap-avatar-btn" title="更换图标">
+                    <AgentAvatar :agent="{ icon: form.icon, isBuiltin: form.isBuiltin }" :size="46" />
+                    <span class="ap-avatar-pen"><edit-outlined /></span>
+                  </button>
+                </a-popover>
+                <span v-else class="ap-avatar-btn is-locked" title="内置「问渠」图标固定">
+                  <AgentAvatar :agent="{ icon: form.icon, isBuiltin: form.isBuiltin }" :size="46" />
+                </span>
+                <div class="ap-id-name">
+                  <label class="ap-field-label">名称</label>
+                  <a-input v-model:value="form.name" :maxlength="200" :disabled="form.isBuiltin === 1"
+                           placeholder="如：合同审查助手 / 运维排障 / 产品 FAQ" />
+                  <div v-if="form.isBuiltin === 1" class="ap-hint">内置「问渠」是系统默认角色：名称、用途与图标随产品固定。</div>
+                </div>
+              </div>
 
-          <section class="app-card">
-            <h2 class="app-card-title"><control-outlined class="ap-sec-ic" />能力</h2>
-            <p class="ap-block-hint">
-              默认全部沿用系统设置里的开关；只有需要为这个智能体单独破例时，才把某一项改成「开启」或「关闭」。
-            </p>
-            <div class="ap-caps">
-              <div v-for="c in CAPS" :key="c.key" class="ap-cap-block">
-                <div class="ap-cap" :class="{ overridden: capOverridden(c) }">
+              <a-form-item label="描述" class="ap-field">
+                <a-textarea v-model:value="form.description" :maxlength="500" :rows="2"
+                            placeholder="写清职责范围与典型问题（如：负责《操作手册》的界面操作与表单填写问题）" />
+                <div class="ap-hint">主智能体按名称 + 描述决定把问题交给谁，职责互不重叠更不容易派错。</div>
+              </a-form-item>
+              <a-form-item v-if="runMode !== 'workflow'" label="系统提示词" class="ap-field ap-field-last">
+                <a-textarea v-model:value="form.systemPrompt" :rows="5"
+                            placeholder="填写后完全替换全局系统提示词；留空沿用全局" />
+                <div class="ap-hint">智能体不绑定模型：回答用哪套模型由用户在对话页选择或个人设置默认。</div>
+              </a-form-item>
+              <div v-else class="ap-hint ap-field">
+                工作流模式下不使用系统提示词；切回问答助手后这份内容仍在。
+              </div>
+            </section>
+
+            <!-- 资料范围 -->
+            <section class="app-card" v-if="runMode !== 'workflow'">
+              <h2 class="app-card-title"><database-outlined class="ap-sec-ic" />资料范围</h2>
+              <template v-if="form.isBuiltin === 1">
+                <div class="ap-kb-fixed"><span class="ap-chip">「问渠」知识库</span><span class="ap-chip">问渠使用手册</span></div>
+                <div class="ap-hint" style="margin-top:8px">
+                  固定检索你的默认知识库「问渠」与官方《问渠使用手册》：上传到「问渠」库的资料就是它的检索范围，不可改为其它库。
+                </div>
+              </template>
+              <template v-else>
+                <div class="ap-scope-cards">
+                  <button v-for="opt in scopeOptions" :key="opt.value" type="button"
+                          class="ap-scope-card" :class="{ on: scopeMode === opt.value }"
+                          :aria-pressed="scopeMode === opt.value" @click="scopeMode = opt.value">
+                    <span class="ap-scope-dot" />
+                    <span class="ap-scope-text"><b>{{ opt.label }}</b><small>{{ opt.hint }}</small></span>
+                  </button>
+                </div>
+                <div v-if="scopeMode === 'pick'" class="ap-kb-pick">
+                  <a-select v-model:value="form.knowledgeBaseIds" mode="multiple" :options="kbOptions" allow-clear
+                            show-search option-filter-prop="label" :max-tag-count="6" style="width:100%"
+                            placeholder="选择允许检索的知识库" />
+                  <div class="ap-hint">已选 {{ form.knowledgeBaseIds.length }} 个知识库；一个都不选则检索不到任何内容。</div>
+                </div>
+                <div v-else-if="scopeMode === 'none'" class="ap-hint">
+                  纯角色智能体：完全不查资料，仅凭系统提示词与对话上下文作答；对话中手动 @ 的文档仍会被参考。
+                </div>
+                <div v-else class="ap-hint">可以检索全部知识库；具体召回阈值与权重由每个知识库自己的设置决定。</div>
+              </template>
+            </section>
+
+            <!-- 能力 -->
+            <section class="app-card" v-if="runMode !== 'workflow'">
+              <div class="ap-sec-head">
+                <h2 class="app-card-title"><control-outlined class="ap-sec-ic" />能力</h2>
+                <span class="ap-hint">{{ capsOverriddenCount ? `${capsOverriddenCount} 项已覆盖` : '7 项能力全部沿用默认' }}</span>
+              </div>
+              <div class="ap-cap-list">
+                <div class="ap-cap" :class="{ overridden: form.goalEnabled === 0 }">
+                  <span class="ap-cap-ic"><aim-outlined /></span>
+                  <div class="ap-cap-l">
+                    <div class="ap-cap-name">目标模式 <span v-if="form.goalEnabled === 0" class="ap-cap-badge">已关闭</span></div>
+                    <div class="ap-cap-desc" title="允许把这个助手交出去做长任务：输入框打 /goal 即可把一件事交出去，跨轮推进；关掉时入口、目标面板与验收标准都不出现。">
+                      把长任务交出去，跨轮推进到验收通过
+                    </div>
+                  </div>
+                  <a-select :value="form.goalEnabled" :options="goalOptions" size="small" class="ap-cap-state"
+                            @change="v => form.goalEnabled = v" />
+                </div>
+                <div v-for="c in CAPS" :key="c.key" class="ap-cap" :class="{ overridden: capOverridden(c) }">
                   <span class="ap-cap-ic"><component :is="c.icon" /></span>
                   <div class="ap-cap-l">
                     <div class="ap-cap-name">
                       {{ c.label }}
                       <span v-if="capOverridden(c)" class="ap-cap-badge">已覆盖</span>
                     </div>
-                    <div class="ap-cap-desc">
+                    <div class="ap-cap-desc" :title="(c.detail || c.desc) + (globalText(c) ? '（全局' + globalText(c) + '）' : '')">
                       {{ c.desc }}<span v-if="globalText(c)" class="ap-cap-global"> · 全局{{ globalText(c) }}</span>
                     </div>
                   </div>
-                  <a-segmented v-if="c.kind === 'switch'" v-model:value="form[c.key]" :options="SEG" size="small" />
-                  <a-segmented v-else v-model:value="form[c.modeKey]" :options="SEG_MULTI" size="small" />
+                  <a-select :value="capState(c)" :options="c.kind === 'switch' ? SEG : SEG_MULTI" size="small"
+                            class="ap-cap-state" @change="v => setCapState(c, v)" />
                 </div>
-                <!-- 「指定」模式：展开具体项多选（对齐通用智能体平台的 skills / mcps 资源列表） -->
-                <div v-if="needsPick(c)" class="ap-cap-pick">
-                  <a-select v-model:value="form[c.listKey]" mode="multiple" :options="optionsOf(c)" allow-clear
-                            size="small" style="width:100%"
-                            :placeholder="'选择' + c.label + '（一项都不选则等同「不使用」）'" />
-                  <!-- 技能是逐字进提示词的正文：选了哪几条，就得能就地看到那几条写了什么 -->
-                  <div v-if="c.listKey === 'skills' && form[c.listKey].length" class="ap-pick-docs">
-                    已选正文：<button v-for="n in form[c.listKey]" :key="n" class="app-link-btn"
-                                     @click="openSkillDoc(n)">{{ String(n).split('/').pop() }}</button>
+              </div>
+
+              <div v-for="c in pickedCaps" :key="'pick-' + c.key" class="ap-cap-pick">
+                <a-select v-model:value="form[c.listKey]" mode="multiple" :options="optionsOf(c)" allow-clear
+                          size="small" style="width:100%"
+                          :placeholder="'选择' + c.label + '（一项都不选则等同「不使用」）'" />
+                <div v-if="c.listKey === 'skills' && form[c.listKey].length" class="ap-pick-docs">
+                  已选正文：<button v-for="n in form[c.listKey]" :key="n" class="app-link-btn"
+                                  @click="openSkillDoc(n)">{{ String(n).split('/').pop() }}</button>
+                </div>
+                <div v-if="!optionsOf(c).length" class="ap-pick-empty">
+                  <template v-if="c.optionsKey === 'builtinOptions' && toolCatalogError">
+                    工具名册加载失败 —— <button type="button" class="app-btn ghost small" @click="loadToolCatalog">重试</button>
+                  </template>
+                  <template v-else>当前系统里没有可选项 —— 需先在设置页配置{{ c.label }}</template>
+                </div>
+              </div>
+
+              <div class="ap-advanced" :class="{ open: advOpen }">
+                <button type="button" class="ap-adv-head" @click="advOpen = !advOpen">
+                  <setting-outlined class="ap-adv-ic" />
+                  <b>高级设置</b>
+                  <span class="ap-adv-count">{{ advancedCount }} 项</span>
+                  <span class="ap-adv-sub">权限档位 · 执行确认 · 工具黑名单 · 单轮步数 · 检索重排<template v-if="runMode === 'main'"> · 子智能体委派</template></span>
+                  <down-outlined class="ap-adv-caret" :class="{ open: advOpen }" />
+                </button>
+                <div v-if="advOpen" class="ap-adv-body">
+                  <div class="ap-adv-grid">
+                    <div class="ap-adv-field">
+                      <label class="ap-field-label">权限档位</label>
+                      <a-select v-model:value="form.permissionPreset" :options="presetOptions" allow-clear
+                                size="small" placeholder="跟随平台默认" style="width:100%" />
+                      <div v-if="presetError" class="ap-pick-empty">权限档位名册加载失败 —— <button type="button" class="app-btn ghost small" @click="loadPermissionPresets">重试</button></div>
+                      <div v-else class="ap-hint">{{ presetHint() || '只读调研 / 常规 / 全自主；平台上限由管理员控制。' }}</div>
+                    </div>
+                    <div class="ap-adv-field">
+                      <label class="ap-field-label">工具执行确认</label>
+                      <a-select v-model:value="form.toolApprovalMode" :options="approvalOptions" size="small" style="width:100%" />
+                      <div class="ap-hint">跟随档位：只读调研→逐项确认，全自主→直接执行；也可单独覆盖。</div>
+                    </div>
+                    <div class="ap-adv-field">
+                      <label class="ap-field-label">单轮工具步数</label>
+                      <a-input-number v-model:value="form.maxToolSteps" :min="0" :max="50" :step="1" size="small"
+                                      style="width:100%" :placeholder="`全局 ${globalMaxToolSteps}`" />
+                      <div class="ap-hint">留空跟随全局（{{ globalMaxToolSteps }}）；0 = 不限制。</div>
+                    </div>
+                    <div class="ap-adv-field">
+                      <label class="ap-field-label">检索重排</label>
+                      <a-select v-model:value="form.qpRerank" :options="rerankOptions" size="small" style="width:100%" />
+                      <div class="ap-hint">低延迟场景可关；阈值与权重归知识库。<template v-if="form.qpRerank === 'inherit' && rerankInheritHint">（{{ rerankInheritHint }}）</template></div>
+                    </div>
+                    <div class="ap-adv-field ap-adv-full">
+                      <label class="ap-field-label">工具黑名单</label>
+                      <a-select v-model:value="form.toolDeny" mode="tags" :options="denyOptions" allow-clear
+                                size="small" style="width:100%" :max-tag-count="6"
+                                placeholder="不禁用任何工具（可下拉选，或直接输入外部工具名）" />
+                      <div v-if="toolCatalogError" class="ap-pick-empty">工具名册加载失败 —— <button type="button" class="app-btn ghost small" @click="loadToolCatalog">重试</button></div>
+                      <div v-else class="ap-hint">只写要去掉的一两个工具名，其余照旧；与上面的「指定」不冲突。</div>
+                    </div>
+                    <div v-if="runMode === 'main'" class="ap-adv-field ap-adv-full">
+                      <label class="ap-field-label">子智能体委派</label>
+                      <a-select v-model:value="form.subAgentIds" mode="multiple" :options="subOptions" allow-clear
+                                show-search option-filter-prop="label" :max-tag-count="6" style="width:100%"
+                                :placeholder="subOptions.length ? '选择允许委派的子智能体' : '还没有子智能体 —— 先把运行方式设为「子智能体」'" />
+                      <div v-if="(form.subAgentIds || []).length" class="ap-hint" style="display:flex;align-items:center;gap:10px">
+                        <span>把这条并行编排变成可画可跑的工作流？</span>
+                        <button type="button" class="app-btn ghost small" :disabled="toWfLoading" @click="toWorkflow">
+                          <partition-outlined /> 转成工作流
+                        </button>
+                      </div>
+                      <div v-else class="ap-hint">不选则沿用系统的多视角并行检索。</div>
+                    </div>
                   </div>
-                  <div v-if="!optionsOf(c).length" class="ap-pick-empty">
-                    <template v-if="c.optionsKey === 'builtinOptions' && toolCatalogError">
-                      工具名册加载失败 —— <button class="app-btn ghost small" @click="loadToolCatalog">重试</button>
-                    </template>
-                    <template v-else>当前系统里没有可选项 —— 需先在设置页配置{{ c.label }}</template>
-                  </div>
                 </div>
               </div>
-            </div>
-            <!-- 工具黑名单（P2）：在「会挂上的那些」里点名拿掉几个，其余照旧 -->
-            <div class="ap-cap">
-              <span class="ap-cap-ic"><stop-outlined /></span>
-              <div class="ap-cap-l">
-                <div class="ap-cap-name">禁用指定工具</div>
-                <div class="ap-cap-desc">
-                  与上面「指定内置工具」是反方向：白名单要把用的那几个逐个勾全（平台新增工具时那份名单
-                  不会自动跟上），这里只写要去掉的一两个，其余照旧。被禁的工具不进模型的工具表——
-                  不是点了被拒，是本轮不提供。外部 MCP 工具可直接填名字。
-                </div>
-                <div v-if="toolCatalogError" class="ap-pick-empty">
-                  工具名册加载失败 —— <button class="app-btn ghost small" @click="loadToolCatalog">重试</button>
-                </div>
-              </div>
-            </div>
-            <div class="ap-cap-pick">
-              <a-select v-model:value="form.toolDeny" mode="tags" :options="denyOptions" allow-clear
-                        size="small" style="width:100%" :max-tag-count="6"
-                        placeholder="不禁用任何工具（可下拉选，或直接输入外部工具名）" />
-            </div>
-            <!-- 权限档位（P2）：把「沙盒能改动多少东西」与「要不要逐项问用户」捆成一句话的选择 -->
-            <div class="ap-cap" style="border-top:1px dashed var(--app-border);margin-top:10px;padding-top:12px">
-              <span class="ap-cap-ic"><safety-outlined /></span>
-              <div class="ap-cap-l">
-                <div class="ap-cap-name">权限档位</div>
-                <div class="ap-cap-desc">
-                  定这个智能体能改动多少东西。选「只读调研」时，它连「能执行命令」这件事都看不到——
-                  不是点了被拒，是本轮不提供这个能力。留空=跟随默认档，且不会超过你或管理员设的上限。
-                </div>
-                <div v-if="presetError" class="ap-pick-empty">
-                  权限档位名册加载失败 —— <button class="app-btn ghost small" @click="loadPermissionPresets">重试</button>
-                </div>
-                <div v-else-if="presetHint()" class="ap-cap-desc">{{ presetHint() }}</div>
-              </div>
-              <a-select v-model:value="form.permissionPreset" size="small" style="width:140px" allow-clear
-                        :options="presetOptions" placeholder="跟随平台默认" />
-            </div>
-            <!-- 有副作用工具（沙盒/MCP）执行审批（人在回路） -->
-            <div class="ap-cap">
-              <span class="ap-cap-ic"><safety-outlined /></span>
-              <div class="ap-cap-l">
-                <div class="ap-cap-name">工具执行确认</div>
-                <div class="ap-cap-desc">
-                  针对「沙盒执行」「MCP 外部工具」及「联网搜索」（系统设置开启其「纳入执行审批」后纳入）这几类
-                  有副作用的工具：自动执行=模型直接调用；
-                  执行前确认=每次调用先暂停等你批准（拒绝/超时后模型会收到未执行提示继续回答）；
-                  禁用=不给模型沙盒与 MCP 工具（联网搜索启停由自身开关决定，不受禁用影响）。游客分享会话本就不暴露它们。
-                </div>
-              </div>
-              <a-select v-model:value="form.toolApprovalMode" size="small" style="width:120px" :options="approvalOptions" />
-            </div>
-            <div class="ap-cap">
-              <span class="ap-cap-ic"><thunderbolt-outlined /></span>
-              <div class="ap-cap-l">
-                <div class="ap-cap-name">单轮工具步数上限</div>
-                <div class="ap-cap-desc">
-                  一轮问答里全部工具的调用总次数上限，防止模型陷入「调工具→不满意→再调」的失控循环；
-                  达到上限后模型会直接给出最终回答。留空跟随全局当前值（默认 {{ globalMaxToolSteps }}），0=不限制。
-                </div>
-              </div>
-              <a-input-number v-model:value="form.maxToolSteps" :min="0" :max="50" :step="1" size="small"
-                              style="width:120px" :placeholder="`全局 ${globalMaxToolSteps}`" />
-            </div>
-            <!-- 子智能体才有这一项：它决定的是「别人派它去做事时，它是交资料还是把事办完」 -->
-            <div v-if="form.isSubagent" class="ap-cap" style="border-top:1px dashed var(--app-border);margin-top:10px;padding-top:12px">
-              <span class="ap-cap-ic"><apartment-outlined /></span>
-              <div class="ap-cap-l">
-                <div class="ap-cap-name">被委派时怎么做</div>
-                <div class="ap-cap-desc">
-                  <b>检索要点</b>：它只查资料、把要点交回来——快也省，但它自己的工具、技能、沙盒都不参与。
-                  <b>全循环</b>：它像一次完整对话那样把这件事办完——用自己的知识库范围查、用自己的工具与沙盒做，
-                  能交付文件与产物；代价是每派一次就等于跑一轮问答，更慢也更花费。
-                  留空=跟随系统设置的默认<span v-if="branchModeDefaultLabel">（当前为「{{ branchModeDefaultLabel }}」）</span>。
-                  被委派的那一支不会向人提问，也不会建任务清单——缺信息它按资料里最合理的做法完成，并把假设写进结论。
-                </div>
-              </div>
-              <a-select v-model:value="form.subagentMode" size="small" style="width:140px" allow-clear
-                        :options="branchModeOptions" placeholder="跟随系统默认" />
-            </div>
-          </section>
+            </section>
+          </a-form>
 
-          <section class="app-card" v-if="!form.isSubagent">
-            <h2 class="app-card-title"><apartment-outlined class="ap-sec-ic" />子智能体委派</h2>
-            <p class="ap-block-hint">
-              选中后，复杂问题会并行交给这些子智能体各自处理，再汇总作答——各按自己的知识库范围与角色视角。
-              不选则沿用系统的多视角并行检索。名字后面标了它被派出去时会怎么做（交要点 / 全循环）。
-            </p>
-            <a-select v-model:value="form.subAgentIds" mode="multiple" :options="subOptions" allow-clear
-                      show-search option-filter-prop="label" :max-tag-count="6" style="width:100%"
-                      :placeholder="subOptions.length ? '选择允许委派的子智能体（并行条数在系统设置里调）'
-                        : '还没有子智能体——先在列表新建一个「用途 = 子智能体」的条目'" />
-            <!-- M5：委派编排一键转工作流（保存后转换的是已保存的委派关系） -->
-            <div v-if="(form.subAgentIds || []).length" class="ap-block-hint" style="margin:8px 0 0;display:flex;align-items:center;gap:10px">
-              <span>想把这套并行编排变成可画可跑的工作流？</span>
-              <button class="app-btn ghost small" :disabled="toWfLoading" @click="toWorkflow">
-                <partition-outlined /> 转成工作流
-              </button>
-            </div>
-          </section>
-
-          <section class="app-card" v-if="!form.isSubagent">
-            <h2 class="app-card-title"><apartment-outlined class="ap-sec-ic" />工作流编排（chatflow）</h2>
-            <p class="ap-block-hint">
-              绑定后该智能体的回答<b>由工作流产出</b>：每轮把你的问题送进图，结束节点的 answer 出参即回答；
-              智能体自带的人设/知识库/工具配置不再参与（逻辑由工作流定义）。只列出<b>已发布</b>的工作流。
-            </p>
-            <a-select v-model:value="form.workflowId" :options="workflowOptions" allow-clear
-                      show-search option-filter-prop="label" style="width:100%"
-                      placeholder="不绑定——按下面的模型/知识库/工具配置作答" />
-          </section>
-
-          <section class="app-card" v-if="!form.isSubagent">
-            <h2 class="app-card-title"><star-outlined class="ap-sec-ic" />默认</h2>
-            <a-checkbox v-model:checked="form.isDefault">设为默认智能体</a-checkbox>
-            <span class="ap-block-hint" style="margin-left:8px">对话页打开时预选它（同一时间只有一个默认）</span>
-          </section>
-        </a-form>
+          <aside class="ap-side">
+            <section class="app-card ap-side-card">
+              <h3 class="ap-side-title">生效摘要</h3>
+              <div class="ap-sum-row"><span>资料</span><b>{{ summaryScope }}</b></div>
+              <div class="ap-sum-row"><span>能力</span><b>{{ summaryCapsList }}</b></div>
+              <div class="ap-sum-row"><span>执行</span><b>{{ summaryExecution }}</b></div>
+              <div class="ap-sum-row"><span>委派</span><b>{{ summaryDelegation }}</b></div>
+              <div class="ap-sum-row"><span>默认</span><b>{{ form.isDefault ? '是' : '否' }}</b></div>
+              <div v-if="overrideCount && runMode !== 'workflow'" class="ap-diff">
+                <span>与全局不同 {{ overrideCount }} 处</span>
+                <button class="app-link-btn" @click="resetOverrides">恢复跟随</button>
+              </div>
+            </section>
+            <section class="app-card ap-side-card ap-side-tip">
+              <h3 class="ap-side-title">这页只放例外</h3>
+              <p>「跟随全局」的项不会被写进这个助手。要改全局默认，去「系统设置 → 工具与检索」。</p>
+            </section>
+            <section v-if="editingId" class="app-card ap-side-card">
+              <h3 class="ap-side-title">最近保存</h3>
+              <p class="ap-side-meta">{{ recentSavedText }}</p>
+              <button class="app-link-btn" @click="openVersions">查看历史版本</button>
+            </section>
+          </aside>
+        </div>
       </div>
     </template>
 
@@ -628,7 +623,7 @@
         <div v-for="(w, wi) in topoData.warnings" :key="wi" class="ap-topo-warn">{{ w }}</div>
       </div>
       <div v-if="!topoData.subs.length && !topoData.edges.length" class="ap-topo-empty">
-        还没有委派关系：先新建一个「用途 = 子智能体」的智能体，再到主智能体配置的「子智能体委派」里勾选它。
+        还没有委派关系：先把一个智能体的运行方式设为「子智能体」，再到主智能体的「高级设置 → 子智能体委派」里勾选它。
       </div>
       <div v-else class="ap-topo-scroll">
         <svg :viewBox="`0 0 ${TOPO_W} ${topoData.H}`" :width="TOPO_W" :height="topoData.H" class="ap-topo-svg">
@@ -678,10 +673,11 @@ import { computed, onMounted, ref } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import {
   ArrowLeftOutlined, ReloadOutlined, SearchOutlined, IdcardOutlined,
-  ThunderboltOutlined, DatabaseOutlined, ControlOutlined, StarOutlined, ApartmentOutlined,
+  DatabaseOutlined, ControlOutlined, StarOutlined, ApartmentOutlined,
   FileSearchOutlined, CalculatorOutlined, FileDoneOutlined, AppstoreOutlined, ApiOutlined,
-  SafetyOutlined, PartitionOutlined, GlobalOutlined, HistoryOutlined, DownOutlined,
-  StopOutlined,
+  PartitionOutlined, GlobalOutlined, HistoryOutlined, DownOutlined,
+  AimOutlined,
+  SettingOutlined, EditOutlined,
   CopyOutlined, ExportOutlined, LinkOutlined, ExclamationCircleOutlined
 } from '@ant-design/icons-vue'
 import { listAgents, createAgent, updateAgent, deleteAgent, batchDeleteAgents, setAgentDefault, listKnowledgeBases, getConfig,
@@ -698,25 +694,32 @@ import { loadModelIndex } from '../utils/modelRef'
 
 // ==================== 能力定义 ====================
 // path：该能力在全局配置里的开关路径；gate：还受此总闸制约（关掉总闸时能力不生效）
+// desc 只留一行给紧凑行版式；detail 是悬浮时看的完整解释（不占页面高度）
 const CAPS = [
-  { key: 'toolKnowledge', label: '知识库检索', desc: '回答过程中可自主检索知识库补充依据', icon: FileSearchOutlined,
+  { key: 'toolKnowledge', label: '知识库检索', desc: '回答时检索选定的知识库', icon: FileSearchOutlined,
+    detail: '回答过程中可自主检索知识库补充依据',
     kind: 'switch', gate: ['tool', 'enabled'] },
   // 以下三项是「多实例能力」：除总开关外，还能指定具体用哪几个（对齐通用智能体平台的资源列表语义）
-  { key: 'toolBuiltin', label: '内置高频工具', desc: '算术计算 / 当前时间 / 日期相差天数', icon: CalculatorOutlined,
+  { key: 'toolBuiltin', label: '内置高频工具', desc: '算术、时间等基础工具', icon: CalculatorOutlined,
+    detail: '算术计算 / 当前时间 / 日期相差天数；开启后可进一步指定具体工具',
     kind: 'list', modeKey: 'builtinMode', listKey: 'builtinTools', optionsKey: 'builtinOptions',
     gate: ['tool', 'enabled'] },
-  { key: 'toolArtifact', label: '产物交付', desc: '生成 Markdown / CSV / JSON / HTML 文件并附下载卡片', icon: FileDoneOutlined,
+  { key: 'toolArtifact', label: '产物交付', desc: '生成可下载的交付文件', icon: FileDoneOutlined,
+    detail: '生成 Markdown / CSV / JSON / HTML 文件并附下载卡片',
     kind: 'switch', gate: ['tool', 'enabled'] },
   // 技能与 MCP 是**个人资产**：这里选中的是「引用串」——个人资源存 {uid}/{name}，
   // 只对该资源的归属人生效（别人的同名资源不会被拿来顶替）；内置技能存裸名，对所有人按名字生效。
   // 两者都没有独立的全局开关（配置里已无 skill.enabled / mcp.enabled），只受「工具调用」总闸制约。
-  { key: 'toolSkill', label: '技能 Skills', desc: '限定用哪几个技能（内置技能对所有人生效；你名下的技能只对你生效）', icon: AppstoreOutlined,
+  { key: 'toolSkill', label: '技能 Skills', desc: '按需调用技能，正文逐字进提示词', icon: AppstoreOutlined,
+    detail: '限定用哪几个技能：内置技能对所有人生效；你名下的技能只对你生效',
     kind: 'list', modeKey: 'skillMode', listKey: 'skills', optionsKey: 'skillOptions',
     gate: ['tool', 'enabled'] },
-  { key: 'toolMcp', label: 'MCP 外部工具', desc: '限定连哪几个 MCP 服务（仅对你生效）', icon: ApiOutlined,
+  { key: 'toolMcp', label: 'MCP 外部工具', desc: '连接外部 MCP 服务', icon: ApiOutlined,
+    detail: '限定连哪几个 MCP 服务（仅对你生效）；也可以「不使用」或按名禁用其中几个',
     kind: 'list', modeKey: 'mcpMode', listKey: 'mcps', optionsKey: 'mcpOptions',
     gate: ['tool', 'enabled'] },
-  { key: 'toolWebsearch', label: '联网搜索', desc: '模型可自主联网检索；命中结果登记为网页来源，与知识库来源共用引用编号', icon: GlobalOutlined,
+  { key: 'toolWebsearch', label: '联网搜索', desc: '联网检索，结果登记为网页来源', icon: GlobalOutlined,
+    detail: '模型可自主联网检索；命中结果登记为网页来源，与知识库来源共用引用编号',
     kind: 'switch', path: ['webSearch', 'enabled'], gate: ['tool', 'enabled'] }
 ]
 // 开关型三态：''=跟随全局 / '1'=开启 / '0'=关闭（对应后端 tool_* 的 1/0/null）
@@ -725,8 +728,9 @@ const SEG = [
   { label: '开启', value: '1' },
   { label: '关闭', value: '0' }
 ]
-// 有副作用工具（沙盒/MCP）执行审批三态
+// 有副作用工具（沙盒/MCP）执行审批：''=跟随权限档位的建议值（默认）；其余为显式覆盖
 const approvalOptions = [
+  { value: '', label: '跟随档位' },
   { value: 'auto', label: '自动执行' },
   { value: 'ask', label: '执行前确认' },
   { value: 'off', label: '禁用' }
@@ -883,15 +887,33 @@ const optionsOf = c => OPTION_REFS[c.optionsKey]?.value || []
 
 const editing = ref(false)
 const editingId = ref('')
+// 侧栏「最近保存」：列表接口带回的更新时间（新建时为空，不显示该卡）
+const editingUpdatedAt = ref('')
 const scopeMode = ref('all')
+// 编辑视图的运行方式：main=问答助手 / sub=子智能体 / workflow=工作流。
+// 它只影响「哪些配置参与」与保存时写回 isSubagent/workflowId，不新增后端字段。
+const runMode = ref('main')
+const advOpen = ref(false)
+const iconOpen = ref(false)
+const scopeOptions = [
+  { value: 'all', label: '全部知识库', hint: '能检索所有资料' },
+  { value: 'pick', label: '指定知识库', hint: '只查下面这几个' },
+  { value: 'none', label: '不使用', hint: '仅凭提示词作答' }
+]
+const goalOptions = [
+  { value: 1, label: '开启' },
+  { value: 0, label: '关闭' }
+]
 const blankForm = () => ({
   name: '', description: '', systemPrompt: '', knowledgeBaseIds: [], isDefault: false,
   // 图标：''=默认展示（内置「问渠」用问渠品牌标，其余机器人）；'wenqu'=品牌标；emoji=表情
   icon: '', isBuiltin: 0,
   // 开关型：'' = 跟随全局 / '1' = 开启 / '0' = 关闭
   toolKnowledge: '', toolBuiltin: '', toolSkill: '', toolArtifact: '', toolMcp: '', toolWebsearch: '',
-  // 有副作用工具（沙盒/MCP）执行审批：auto=自动执行 ask=执行前确认 off=禁用
-  toolApprovalMode: 'auto',
+  // 目标模式（资源级二态）：1=开 0=关。平台级总闸已去掉，这一格是唯一判据；null 从旧数据来时按开处理
+  goalEnabled: 1,
+  // 有副作用工具（沙盒/MCP）执行审批：''=跟随档位（默认） auto=自动执行 ask=执行前确认 off=禁用
+  toolApprovalMode: '',
   // 权限档位：null=跟随平台默认档（agent.permissionPreset.default）；可选项来自 /agent/permission-presets
   permissionPreset: null,
   // 工具黑名单：本轮要拿掉的具体工具名（多选，选项=能力名册全族）；空=不禁用
@@ -946,6 +968,26 @@ function buildQueryParams (rr) {
 }
 
 const form = ref(blankForm())
+
+// 运行方式：决定页面里哪些配置参与，以及保存时 isSubagent / workflowId 怎么写。
+const runModeOptions = computed(() => [
+  { label: '问答助手', value: 'main' },
+  { label: '子智能体', value: 'sub', disabled: form.value.isBuiltin === 1 },
+  { label: '工作流', value: 'workflow' }
+])
+const runModeHint = computed(() => {
+  if (runMode.value === 'workflow') return '回答由工作流产出；人设、资料与工具配置不再参与。'
+  if (runMode.value === 'sub') return '不能直接选用，只能被主智能体委派去查资料或办事。'
+  return '对话页可直接选用；人设、资料与能力都按本页配置生效。'
+})
+const modeChip = computed(() => runMode.value === 'sub' ? '子智能体' : (runMode.value === 'workflow' ? '工作流' : ''))
+const onRunModeChange = v => {
+  // 内置「问渠」固定为主智能体：即便分段控件被绕过，也不让它落成子智能体
+  if (v === 'sub' && form.value.isBuiltin === 1) { runMode.value = 'main'; return }
+  form.value.isSubagent = v === 'sub' ? 1 : 0
+}
+// 页头星标：已存在的非子智能体、且管理员才有「设为默认」能力（与列表卡片同一判据）
+const canShowStar = computed(() => !!editingId.value && isAdmin.value && !form.value.isSubagent)
 
 // 图标可选集：问渠品牌标为内置「问渠」专属（后端同样强制），非内置智能体的选项里不出现。
 // 内置问渠整块「图标」已隐藏，这里恒走过滤分支
@@ -1068,13 +1110,13 @@ const toWfLoading = ref(false)
  * 并创建草稿工作流；成功后跳到「工作流」Tab，列表首行（更新时间倒序）就是它。
  */
 const toWorkflow = async () => {
-  if (!form.id) {
+  if (!editingId.value) {
     message.warning('请先保存智能体（委派关系以已保存的为准），再转换工作流')
     return
   }
   toWfLoading.value = true
   try {
-    const r = await createWorkflowFromAgent(form.id)
+    const r = await createWorkflowFromAgent(editingId.value)
     if (r && r.success) {
       message.success(`已按已保存的委派关系创建工作流「${r.data.name}」，可在画布继续调整后发布`)
       router.replace({ query: { ...route.query, tab: 'workflow' } })
@@ -1322,13 +1364,6 @@ const globalText = c => {
 }
 
 // ==================== 生效摘要（实时随表单变化） ====================
-const summaryScope = computed(() => {
-  if (form.value.isBuiltin === 1) return '「问渠」知识库'
-  if (scopeMode.value === 'none') return '不使用知识库'
-  if (scopeMode.value !== 'pick') return '全部文档'
-  const n = (form.value.knowledgeBaseIds || []).length
-  return n ? `限 ${n} 篇文档` : '未选文档（检索不到内容）'
-})
 /** 能力当前状态：开关型看三态值，多实例看模式（'1'/'pick'=开，'0'/'none'=关，其余=跟随全局） */
 const capState = c => (c.kind === 'switch' ? form.value[c.key] : form.value[c.modeKey])
 const capOn = c => { const v = capState(c); return v === '1' || v === 'pick' }
@@ -1337,17 +1372,101 @@ const capOff = c => { const v = capState(c); return v === '0' || v === 'none' }
 const capOverridden = c => capOn(c) || capOff(c)
 /** 多实例能力是否处于「指定」模式（决定要不要展开具体项多选） */
 const needsPick = c => c.kind === 'list' && form.value[c.modeKey] === 'pick'
+/** 能力行的状态控件：开关型写三态列，多实例写模式列 */
+const setCapState = (c, v) => {
+  if (c.kind === 'switch') form.value[c.key] = v
+  else form.value[c.modeKey] = v
+}
+const pickedCaps = computed(() => CAPS.filter(c => needsPick(c)))
+const capsOverriddenCount = computed(() => CAPS.filter(c => capOverridden(c)).length + (form.value.goalEnabled === 0 ? 1 : 0))
 
-const capsTouched = computed(() => CAPS.some(c => capOverridden(c)))
-const summaryCaps = computed(() => {
-  const on = CAPS.filter(c => capOn(c)).length
-  const off = CAPS.filter(c => capOff(c)).length
-  if (!on && !off) return '能力跟随全局'
-  const parts = []
-  if (on) parts.push(`${on} 项开启`)
-  if (off) parts.push(`${off} 项关闭`)
-  return parts.join(' / ')
+const recentSavedText = computed(() => {
+  const t = fmtTime(editingUpdatedAt.value)
+  return t ? t.slice(0, 16) : '尚未保存'
 })
+const summaryScope = computed(() => {
+  if (form.value.isBuiltin === 1) return '「问渠」知识库'
+  if (runMode.value === 'workflow') return '由工作流接管'
+  if (scopeMode.value === 'none') return '不使用知识库'
+  if (scopeMode.value !== 'pick') return '全部知识库'
+  const n = (form.value.knowledgeBaseIds || []).length
+  return n ? `指定 ${n} 个知识库` : '未选知识库'
+})
+/** 能力摘要只列显式覆盖的项；没有任何覆盖时说明其余跟随全局 */
+const summaryCapsList = computed(() => {
+  if (runMode.value === 'workflow') return '由工作流接管'
+  const goal = form.value.goalEnabled === 0 ? '目标模式关闭' : '目标模式'
+  const parts = []
+  for (const c of CAPS) {
+    if (capOn(c)) {
+      if (c.kind === 'list' && form.value[c.modeKey] === 'pick') {
+        const n = (form.value[c.listKey] || []).length
+        // 「指定」但一项没选，保存时会按「不使用」落库，摘要里不能算开启
+        if (!n) continue
+        parts.push(`${c.label}（${n} 个）`)
+      } else parts.push(c.label)
+    } else if (capOff(c)) {
+      parts.push(`${c.label} 关闭`)
+    }
+  }
+  if (!parts.length) return `${goal} · 其余跟随全局`
+  return [goal, ...parts].join(' · ')
+})
+const presetLabelOf = () => {
+  if (!form.value.permissionPreset) return '平台默认档'
+  return presetOptions.value.find(x => x.value === form.value.permissionPreset)?.label || form.value.permissionPreset
+}
+const approvalLabelOf = () => {
+  const v = form.value.toolApprovalMode || ''
+  return approvalOptions.find(x => x.value === v)?.label || '跟随档位'
+}
+const summaryExecution = computed(() => {
+  if (runMode.value === 'workflow') return '由工作流接管'
+  return `${presetLabelOf()} · ${approvalLabelOf()}`
+})
+const summaryDelegation = computed(() => {
+  if (runMode.value === 'workflow') return '由工作流接管'
+  if (runMode.value === 'sub') return `被委派：${BRANCH_MODE_LABELS[form.value.subagentMode] || '跟随默认'}`
+  const n = (form.value.subAgentIds || []).length
+  return n ? `${n} 个子智能体` : '未启用'
+})
+/** 与全局不同的显式覆盖数：能力 + 高级设置（不含资料范围/提示词等本页主配置） */
+const overrideCount = computed(() => {
+  let n = form.value.goalEnabled === 0 ? 1 : 0
+  n += CAPS.filter(c => capOverridden(c)).length
+  if (form.value.qpRerank !== 'inherit') n++
+  if (form.value.permissionPreset) n++
+  if (form.value.toolApprovalMode) n++
+  if ((form.value.toolDeny || []).length) n++
+  if (form.value.maxToolSteps != null && form.value.maxToolSteps !== '') n++
+  if (runMode.value === 'main' && (form.value.subAgentIds || []).length) n++
+  return n
+})
+const advancedCount = computed(() => runMode.value === 'main' ? 6 : 5)
+/** 一键把「能力 + 高级设置」恢复为跟随全局；资料范围与提示词不动 */
+const resetOverrides = () => {
+  Modal.confirm({
+    title: '恢复跟随全局？',
+    content: '会清空本页的能力覆盖、执行确认、工具黑名单、步数与委派设置；资料范围与提示词不受影响。',
+    okText: '恢复',
+    cancelText: '取消',
+    onOk: () => {
+      form.value.goalEnabled = 1
+      for (const c of CAPS) {
+        if (c.kind === 'switch') form.value[c.key] = ''
+        else { form.value[c.modeKey] = 'inherit'; form.value[c.listKey] = [] }
+      }
+      form.value.qpRerank = 'inherit'
+      form.value.permissionPreset = null
+      form.value.toolApprovalMode = ''
+      form.value.toolDeny = []
+      form.value.maxToolSteps = null
+      form.value.subAgentIds = []
+      message.success('已恢复跟随全局')
+    }
+  })
+}
+
 
 // ==================== 数据加载 ====================
 const reload = async () => {
@@ -1380,7 +1499,9 @@ const reload = async () => {
       const list = Array.isArray(dr.data) ? dr.data : (dr.data.list || [])
       kbOptions.value = list.map(k => ({
         value: k.id,
-        label: k.name + (k.docCount != null ? `（${k.docCount} 个文档）` : '')
+        // 选中后的标签只留库名：带文档数的长标签会把多选输入框撑成两三行
+        label: k.name,
+        title: k.docCount != null ? `${k.name}（${k.docCount} 个文档）` : k.name
       }))
     }
     // 技能与 MCP Server 的可选项（供「指定」模式下的多选）
@@ -1424,8 +1545,12 @@ const triStr = v => (v === null || v === undefined ? '' : String(v))
 
 const openCreate = () => {
   editingId.value = ''
+  editingUpdatedAt.value = ''
   form.value = blankForm()
   scopeMode.value = 'all'
+  runMode.value = 'main'
+  advOpen.value = false
+  iconOpen.value = false
   editing.value = true
 }
 /** 总开关三态 → 多实例能力的模式：'none' 不使用 / 'pick' 指定 / 'inherit' 跟随全局 */
@@ -1437,6 +1562,11 @@ const modeOf = tri => {
 
 const openEdit = a => {
   editingId.value = a.id
+  editingUpdatedAt.value = a.updateTime || a.createTime || ''
+  const sub = a.isSubagent === 1 || a.isSubagent === true
+  runMode.value = sub ? 'sub' : (a.workflowId ? 'workflow' : 'main')
+  advOpen.value = false
+  iconOpen.value = false
   const kbs = splitList(a.knowledgeBaseIds)
   form.value = {
     name: a.name || '',
@@ -1453,14 +1583,16 @@ const openEdit = a => {
     toolArtifact: triStr(a.toolArtifact),
     toolMcp: triStr(a.toolMcp),
     toolWebsearch: triStr(a.toolWebsearch),
-    toolApprovalMode: a.toolApprovalMode || 'auto',
+    // 目标模式：NULL/1=开，0=关（后端同口径）
+    goalEnabled: a.goalEnabled === 0 ? 0 : 1,
+    toolApprovalMode: a.toolApprovalMode || '',
     permissionPreset: a.permissionPreset || null,
     toolDeny: splitList(a.toolDeny),
     maxToolSteps: a.maxToolSteps == null ? null : Number(a.maxToolSteps),
     builtinMode: modeOf(a.toolBuiltin), builtinTools: splitList(a.builtinTools),
     skillMode: modeOf(a.toolSkill), skills: splitList(a.skills),
     mcpMode: modeOf(a.toolMcp), mcps: splitList(a.mcps),
-    isSubagent: (a.isSubagent === 1 || a.isSubagent === true) ? 1 : 0,
+    isSubagent: sub ? 1 : 0,
     subAgentIds: splitList(a.subAgentIds),
     subagentMode: a.subagentMode || null,
     // M4：绑定的工作流（未绑定 → null；下拉里只列已发布的工作流）
@@ -1558,6 +1690,9 @@ const tri = v => (v === '' || v == null ? null : Number(v))
 const save = async () => {
   const f = form.value
   if (!f.name.trim()) { message.warning('请填写名称'); return }
+  if (runMode.value === 'workflow' && !String(f.workflowId || '').trim()) {
+    message.warning('先选择一个已发布的工作流'); return
+  }
   const payload = {
     name: f.name.trim(),
     // 图标：空串 → 后端归一为 null（默认展示）；'wenqu'=问渠品牌标；emoji 原样存。
@@ -1575,23 +1710,27 @@ const save = async () => {
     toolKnowledge: tri(f.toolKnowledge),
     toolArtifact: tri(f.toolArtifact),
     toolWebsearch: tri(f.toolWebsearch),
-    toolApprovalMode: f.toolApprovalMode || 'auto',
+    // 目标模式：二态始终带上（关掉后要能落 0；NULL 只留给旧数据）
+    goalEnabled: f.goalEnabled === 0 ? 0 : 1,
+    // 执行确认留空 → null = 跟随权限档位的建议值（只读调研→逐项确认、全自主→直接执行）
+    toolApprovalMode: f.toolApprovalMode || null,
     // 权限档位：留空 → null（= 跟随平台默认档，不是「关闭档位」）；必须始终带上这个键，
     // 否则清空档位时后端收不到字段、旧值原地留着（后端按 body 出现的字段才写列）
     permissionPreset: f.permissionPreset || null,
     // 工具黑名单：始终带这个键（清空后要能落回 null，后端按 body 出现的字段才写列）
     toolDeny: (f.toolDeny || []).join(','),
     maxToolSteps: f.maxToolSteps == null || f.maxToolSteps === '' ? null : Number(f.maxToolSteps),
-    isDefault: f.isDefault ? 1 : 0,
-    isSubagent: f.isSubagent ? 1 : 0,
-    // 子智能体没有委派对象；主智能体一个都没选 → 空串（后端归一为 null → 编排走多视角策略）
-    subAgentIds: f.isSubagent ? null : (f.subAgentIds || []).join(','),
-    // 被委派时怎么做：主智能体没有这一项（它直接作答），切回主智能体时要显式清空而不是留着旧值
-    subagentMode: f.isSubagent ? (f.subagentMode || null) : null,
+    // 「设为默认」已移到页头星标（独立动作），保存不再带 isDefault：否则每次保存都会把默认位清掉
+    isSubagent: runMode.value === 'sub' ? 1 : 0,
+    // 子智能体没有委派对象；问答助手一个都没选 → 空串（后端归一为 null → 编排走多视角策略）。
+    // 工作流模式不参与委派，但仍保留已存名单：切回问答助手时不用重新配
+    subAgentIds: runMode.value === 'sub' ? null : (f.subAgentIds || []).join(','),
+    // 被委派时怎么做：只有子智能体有这一项，切回其它模式要显式清空
+    subagentMode: runMode.value === 'sub' ? (f.subagentMode || null) : null,
     // 检索开关覆盖：跟随全局 → 空串 → 后端存 null；开启/关闭写 rerank.enabled
     queryParams: buildQueryParams(f.qpRerank),
-    // 工作流绑定：空/未选 → 空串（后端归一为 null = 解绑）；非空必须是已发布工作流（后端校验）
-    workflowId: f.isSubagent ? '' : (f.workflowId || '')
+    // 工作流绑定：只有「工作流」模式保留；空串 → 后端归一为 null（解绑）
+    workflowId: runMode.value === 'workflow' ? (f.workflowId || '') : ''
   }
   // 多实例能力：模式 →（总开关三态 + 具体项）
   //   指定 → 开关置 1 + 项列表；一项都没选则等同「不使用」
@@ -1692,8 +1831,11 @@ const doBatchDelete = () => {
 const doSetDefault = async id => {
   try {
     const r = await setAgentDefault(id)
-    if (r.success) { message.success('已设为默认'); await reload() }
-    else message.error(r.msg || '操作失败')
+    if (r.success) {
+      message.success('已设为默认')
+      if (editing.value) form.value.isDefault = true
+      await reload()
+    } else message.error(r.msg || '操作失败')
   } catch (e) { message.error(e.message || '操作失败') }
 }
 
@@ -1773,34 +1915,65 @@ onMounted(async () => { })
 /* 不可管理的卡片：无点击态暗示（cursor 保持默认，区别于可点击进入配置的卡片） */
 .ap-card-readonly { cursor: default; }
 
-/* 配置视图：宽屏双栏瀑布式（>1440px 双栏，中屏回落单列居中，小屏吃满）。
-   卡片整卡不跨栏（break-inside:avoid），multicol 自动配平两栏高度；
-   卡片语义分组：左≈身份/提示词/知识库/检索参数（检索域），右≈能力/委派/工作流/默认（行为域） */
-/* 页头标题即生效摘要（纯文本）：名称是主文案，范围/能力弱化跟随其后；能力被本智能体覆盖时高亮。
-   超长单行截断，不挤右侧操作按钮 */
-.ap-head-summary { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ap-sum-tail { color: var(--app-text2); font-weight: 400; }
-.ap-sum-tail.is-accent { color: var(--app-accent); font-weight: 500; }
+/* ==================== 配置视图：主栏 + 右栏生效摘要 ==================== */
+.ap-edit-head { align-items: center; }
+.ap-head-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.ap-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
+.ap-head-chips { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; }
+.ap-head-chip {
+  font-size: 10.5px; line-height: 1; color: var(--app-text2); background: var(--app-panel-2);
+  border-radius: 999px; padding: 3px 8px; white-space: nowrap; max-width: 240px;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.ap-head-chip.is-accent { color: var(--app-accent); background: var(--app-accent-weak); }
+.ap-star-btn { color: var(--app-text3); }
+.ap-star-btn.is-default { color: var(--app-warn); }
+.ap-star-btn:disabled { cursor: default; opacity: 1; }
 
-/* multicol 不作用于 flex 容器——栏内卡片纵向排布靠 margin，不用 flex/gap */
-.ap-form { columns: 620px 2; column-gap: 12px; max-width: 1320px; margin: 0 auto; }
-.ap-form > section { break-inside: avoid; -webkit-column-break-inside: avoid; margin: 0 0 12px; }
-.ap-form :deep(.ant-form-item) { margin-bottom: 12px; }
+.ap-layout {
+  display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px;
+  max-width: 1220px; margin: 0 auto; align-items: start;
+}
+.ap-form { display: flex; flex-direction: column; gap: 12px; min-width: 0; max-width: none; margin: 0; }
+.ap-form > section { margin: 0; }
+.ap-form :deep(.ant-form-item) { margin-bottom: 0; }
+.ap-form :deep(.ant-form-item-label) { padding-bottom: 4px; }
+.ap-form :deep(.ant-form-item-label > label) { font-size: 12px; color: var(--app-text2); height: auto; }
+.ap-sec-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; min-width: 0; }
+.ap-sec-head .app-card-title { margin-bottom: 0; }
+.ap-hint { font-size: 11.5px; color: var(--app-text3); line-height: 1.6; }
 .ap-block-hint { font-size: 12px; color: var(--app-text3); line-height: 1.6; margin: -4px 0 12px; }
-/* 中屏回落单列（620px 柱宽下容器不足自动 1 栏），限宽 900 保证单列可读；小屏吃满宽度 */
-@media (max-width: 1440px) { .ap-form { max-width: 900px; } }
-@media (max-width: 768px) { .ap-form { max-width: none; } }
-/* 检索开关覆盖：单行版式，标签在左、当前值+控件整组贴右（与「能力」区的行一致）；窄栏换行也不横向溢出 */
-.qp-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; }
-.qp-label { font-size: 12.5px; color: var(--app-text2); flex: none; }
-.qp-ctl { display: flex; align-items: center; gap: 8px; margin-left: auto; min-width: 0; }
-.qp-inherit { font-size: 11px; color: var(--app-text3); }
-.ap-pick { margin-top: 12px; }
-/* 内置「问渠」的知识库范围为固定展示（无选择入口）：单行芯片，与选择器同起点对齐 */
-.ap-kb-fixed { margin-top: 4px; }
-.ap-sec-ic { font-size: 13px; color: var(--app-text3); }
+.ap-field { margin-top: 12px; }
+.ap-field-last { margin-bottom: 0; }
+.ap-field-label { display: block; font-size: 12px; color: var(--app-text2); margin: 0 0 5px; }
+
+/* 运行方式 */
+.ap-mode-seg { width: fit-content; }
+.ap-mode-seg :deep(.ant-segmented-item-label) { min-height: 26px; line-height: 26px; padding: 0 16px; font-size: 12px; }
+.ap-mode-note { margin: 9px 0 0; }
+.ap-mode-extra { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+
+/* 身份与角色 */
+.ap-id-row { display: flex; align-items: flex-start; gap: 12px; }
+.ap-id-name { flex: 1; min-width: 0; }
+.ap-avatar-btn {
+  position: relative; width: 50px; height: 50px; padding: 0; border-radius: 12px;
+  border: 1px solid var(--app-border); background: var(--app-panel); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: border-color .15s, box-shadow .15s;
+}
+.ap-avatar-btn:hover { border-color: var(--app-accent-border); box-shadow: 0 0 0 2px var(--app-accent-weak); }
+.ap-avatar-btn.is-locked { cursor: default; }
+.ap-avatar-btn.is-locked:hover { border-color: var(--app-border); box-shadow: none; }
+.ap-avatar-pen {
+  position: absolute; right: -5px; bottom: -5px; width: 18px; height: 18px; border-radius: 50%;
+  background: var(--app-panel); border: 1px solid var(--app-border-strong);
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 9px; color: var(--app-text2);
+}
+.ap-icon-grid { display: flex; flex-wrap: wrap; gap: 6px; width: 268px; }
+.ap-icon-grid .ap-icon-opt { width: 32px; height: 32px; }
 /* 图标选择器：一排可选头像块，选中态用品牌色描边 + 光圈 */
-.ap-icon-pick { display: flex; flex-wrap: wrap; gap: 6px; }
 .ap-icon-opt {
   width: 34px; height: 34px; border-radius: 9px; padding: 0;
   border: 1px solid var(--app-border); background: var(--app-panel); cursor: pointer;
@@ -1810,32 +1983,114 @@ onMounted(async () => { })
 .ap-icon-opt:hover { border-color: var(--app-accent-border); }
 .ap-icon-opt.on { border-color: var(--app-accent); box-shadow: 0 0 0 2px var(--app-accent-weak); }
 
-/* 能力行：图标块 + 名称/描述 + 三态控件；只在「已覆盖」时才高亮 */
-.ap-caps { display: flex; flex-direction: column; }
-.ap-cap-block { border-top: 1px dashed var(--app-border); }
-.ap-cap-block:first-child { border-top: none; }
-.ap-cap { display: flex; align-items: center; gap: 12px; padding: 10px 0; }
-.ap-cap-block:first-child .ap-cap { padding-top: 0; }
-/* 「指定」模式展开的具体项多选：与上方图标块左对齐 */
-.ap-cap-pick { padding: 0 0 12px 42px; }
-.ap-pick-empty { font-size: 11px; color: var(--app-text3); margin-top: 5px; }
-.ap-pick-docs { margin-top: 5px; font-size: 11px; color: var(--app-text3); }
-.ap-pick-docs .app-link-btn { font-size: 11px; margin-right: 6px; }
+/* 资料范围 */
+.ap-scope-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.ap-scope-card {
+  display: flex; align-items: flex-start; gap: 8px; text-align: left;
+  border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-panel);
+  padding: 9px 10px; cursor: pointer; font: inherit;
+  transition: border-color .15s, background .15s, box-shadow .15s;
+}
+.ap-scope-card:hover { border-color: var(--app-accent-border); }
+.ap-scope-card.on {
+  border-color: var(--app-accent); background: var(--app-info-weak);
+  box-shadow: 0 0 0 1px rgba(46, 107, 230, .06) inset;
+}
+.ap-scope-dot {
+  width: 14px; height: 14px; border: 1px solid var(--app-border-strong); border-radius: 50%;
+  flex: none; margin-top: 2px; background: var(--app-panel);
+}
+.ap-scope-card.on .ap-scope-dot { border: 4px solid var(--app-accent); }
+.ap-scope-text { min-width: 0; }
+.ap-scope-text b { display: block; font-size: 12.5px; font-weight: 500; line-height: 1.4; color: var(--app-text); }
+.ap-scope-text small { display: block; font-size: 10.5px; color: var(--app-text3); line-height: 1.4; margin-top: 1px; }
+.ap-kb-pick { margin-top: 10px; }
+.ap-kb-pick .ap-hint { margin-top: 5px; }
+/* 内置「问渠」的知识库范围为固定展示（无选择入口）：单行芯片，与选择器同起点对齐 */
+.ap-kb-fixed { margin-top: 4px; }
+.ap-sec-ic { font-size: 13px; color: var(--app-text3); }
+
+/* 能力行：图标块 + 名称/描述 + 状态下拉；只在「已覆盖」时高亮 */
+.ap-cap-list { display: flex; flex-direction: column; }
+.ap-cap { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--app-border); }
+.ap-cap-list .ap-cap:last-child { border-bottom: 0; }
 .ap-cap-ic {
-  width: 30px; height: 30px; border-radius: 8px; flex: none; font-size: 14px;
+  width: 28px; height: 28px; border-radius: 7px; flex: none; font-size: 13px;
   display: inline-flex; align-items: center; justify-content: center;
   background: var(--app-panel-2); color: var(--app-text2); transition: background .15s, color .15s;
 }
 .ap-cap.overridden .ap-cap-ic { background: var(--app-accent-weak); color: var(--app-accent); }
 .ap-cap-l { flex: 1; min-width: 0; }
-.ap-cap-name { display: flex; align-items: center; gap: 6px; font-size: 13px; }
+.ap-cap-name { display: flex; align-items: center; gap: 6px; font-size: 12.5px; line-height: 1.4; }
 .ap-cap.overridden .ap-cap-name { font-weight: 500; }
 .ap-cap-badge {
-  font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 999px;
+  font-size: 9.5px; line-height: 1; padding: 2px 5px; border-radius: 999px;
   background: var(--app-accent-weak); color: var(--app-accent);
 }
-.ap-cap-desc { font-size: 12px; color: var(--app-text3); line-height: 1.6; margin-top: 2px; }
+.ap-cap-desc {
+  font-size: 11.5px; color: var(--app-text3); line-height: 1.45; margin-top: 1px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .ap-cap-global { color: var(--app-text3); }
+.ap-cap-state { width: 92px; flex: none; }
+/* 「指定」模式展开的具体项多选：与上方图标块左对齐 */
+.ap-cap-pick { padding: 0 0 10px 38px; }
+.ap-pick-empty { font-size: 11px; color: var(--app-text3); margin-top: 5px; }
+.ap-pick-docs { margin-top: 5px; font-size: 11px; color: var(--app-text3); }
+.ap-pick-docs .app-link-btn { font-size: 11px; margin-right: 6px; }
+
+/* 高级设置：默认折叠，标题直接列出里面有什么 */
+.ap-advanced { margin-top: 10px; border-top: 1px dashed var(--app-border); }
+.ap-adv-head {
+  width: 100%; display: flex; align-items: center; gap: 8px; padding: 10px 0;
+  border: 0; background: transparent; cursor: pointer; text-align: left; font: inherit;
+}
+.ap-adv-ic { color: var(--app-text3); font-size: 13px; flex: none; }
+.ap-adv-head b { font-size: 12.5px; font-weight: 500; color: var(--app-text); flex: none; }
+.ap-adv-count {
+  font-size: 10px; line-height: 1; color: var(--app-text2); background: var(--app-panel-2);
+  border-radius: 999px; padding: 3px 7px; flex: none;
+}
+.ap-adv-sub { font-size: 10.5px; color: var(--app-text3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.ap-adv-caret { margin-left: auto; flex: none; color: var(--app-text3); transition: transform .15s; }
+.ap-adv-caret.open { transform: rotate(180deg); }
+.ap-adv-body { padding: 0 0 2px; }
+.ap-adv-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 11px 12px; padding-top: 8px; }
+.ap-adv-field { min-width: 0; }
+.ap-adv-full { grid-column: 1 / -1; }
+.ap-adv-field .ap-hint { margin-top: 3px; }
+
+/* 右栏：生效摘要 + 说明（宽屏吸附在顶部） */
+.ap-side { position: sticky; top: 16px; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.ap-side-card { margin: 0; padding: 14px 15px; }
+.ap-side-title { margin: 0 0 8px; font-size: 12.5px; font-weight: 600; color: var(--app-text); }
+.ap-sum-row {
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 10px;
+  padding: 7px 0; border-bottom: 1px dashed var(--app-border); font-size: 11.5px; line-height: 1.5;
+}
+.ap-sum-row:last-of-type { border-bottom: 0; }
+.ap-sum-row span { color: var(--app-text3); flex: none; }
+.ap-sum-row b { font-weight: 400; color: var(--app-text); text-align: right; min-width: 0; }
+.ap-diff {
+  margin-top: 8px; background: var(--app-accent-weak); border: 1px solid var(--app-accent-border);
+  border-radius: 7px; padding: 8px 9px; display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; font-size: 11px; color: var(--app-accent);
+}
+.ap-side-tip { background: linear-gradient(180deg, var(--app-panel), var(--app-panel-2)); }
+.ap-side-tip p { margin: 0; font-size: 11px; line-height: 1.65; color: var(--app-text2); }
+.ap-side-meta { margin: 0 0 6px; font-size: 11.5px; color: var(--app-text2); }
+
+@media (max-width: 1200px) {
+  .ap-layout { grid-template-columns: minmax(0, 1fr); }
+  .ap-side { display: none; }
+}
+@media (max-width: 768px) {
+  .ap-scope-cards { grid-template-columns: 1fr; }
+  .ap-adv-grid { grid-template-columns: 1fr; }
+  .ap-head-chips { display: none; }
+  .ap-cap-desc { white-space: normal; }
+}
+
 /* ==================== 公开发布弹窗 ====================
    结构：标题栏（智能体头像+名）→ 状态卡（总开关）→ 游客能力（模型 / MCP）→ 分发方式（Tab）→ 底部撤销。
    此前是一列平铺的 pub-row，输入框把「复制」「打开」两个按钮挤成竖排单字；现改为
