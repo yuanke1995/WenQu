@@ -41,6 +41,34 @@
                             :message="eventsMsg" :question="eventsQuestion" />
       </a-modal>
 
+      <!-- 目标起草弹窗（只用于「编辑目标」：点了入口按钮直接开待确认卡，不弹窗）。
+           从气泡「设为目标」进来时正文已预填，改一句就能开卡；标准默认一条人工核验
+           （机器验证方式在确认后由助手按标准类型配置，这里先不逼用户选） -->
+      <a-modal v-model:open="goalDraftOpen" title="定个目标" width="min(640px, 94vw)" :footer="null">
+        <div class="goald-box">
+          <div class="goald-label">这件事要做到什么（说清楚「什么算完成」）</div>
+          <a-textarea v-model:value="goalDraft.objective" :auto-size="{ minRows: 2, maxRows: 8 }"
+                      :maxlength="4000" show-count placeholder="例如：把竞品分析报告改到可以直接发给客户，改完自查三遍" />
+          <div class="goald-label">验收标准（可稍后补；没有标准的目标只能靠模型自报完成）</div>
+          <div v-for="(c, ci) in goalDraft.criteria" :key="ci" class="goald-criterion">
+            <a-input v-model:value="goalDraft.criteria[ci]" :maxlength="2000"
+                     placeholder="例如：报告里每个数字都标了来源" />
+            <button v-if="goalDraft.criteria.length > 1" type="button" class="app-icon-btn" title="删掉这条"
+                    @click="removeGoalDraftCriterion(ci)"><close-outlined /></button>
+          </div>
+          <button type="button" class="goald-add" @click="addGoalDraftCriterion">
+            <plus-outlined /> 加一条标准
+          </button>
+          <div class="goald-foot">
+            <span class="goald-hint"><info-circle-outlined /> 确认后开始推进；完成与否以验证凭据为准，不是模型宣布</span>
+            <span class="goald-actions">
+              <button class="app-btn ghost small" @click="goalDraftOpen = false">取消</button>
+              <button class="app-btn small" @click="submitGoalDraft">开始</button>
+            </span>
+          </div>
+        </div>
+      </a-modal>
+
       <!-- 技能正文查看：写入已交给助手，读的这一侧要能审（正文是逐字进提示词的）；移动壳用同一份组件 -->
       <SkillContentModal :open="!!skillDoc" :name="skillDoc" :entry="skillDocEntry"
                          :session-id="currentSessionId || ''"
@@ -422,6 +450,8 @@
                            与「检索调试」同一开关（chat.retrievalDebugEnabled）控制，不给普通用户露出必 403 的入口 -->
                       <a-menu-item v-if="debugEntryVisible && m.sources && m.sources.length" key="addEval"><dislike-outlined style="margin-right:8px" />加入评测集</a-menu-item>
                       <a-menu-item v-if="m.turnId" key="events"><history-outlined style="margin-right:8px" />看这一轮的过程</a-menu-item>
+                      <!-- 设为目标：把刚生成的正文里的承诺转成目标草稿（入口按钮同源；平台关着目标模式时不出现） -->
+                      <a-menu-item v-if="goalEntryVisible && m.role === 'ai' && m.content" key="setGoal"><aim-outlined style="margin-right:8px" />设为目标</a-menu-item>
                       <a-menu-item key="export"><download-outlined style="margin-right:8px" />导出 Markdown</a-menu-item>
                       <a-menu-item key="deleteRound" style="color:#cf1322"><delete-outlined style="margin-right:8px" />删除本轮对话</a-menu-item>
                     </a-menu>
@@ -575,7 +605,7 @@
         :sending="loading" steerable :can-send="canSend" :stop-armed="escArmed"
         attach-title="添加：上传文件图片 / 引用资料 / 技能 / 引用历史问答 / 快捷命令"
         :attach-on="(addOpen && !addOnEdit) || pickedSkills.length"
-        :replace-box="!!(pendingAsk || pendingPlan)"
+        :replace-box="!!(pendingAsk || pendingPlan || pendingGoal)"
         @attach="toggleAddPanel" @send="sendNow" @stop="stopNow" @files="onDropFiles"
         @paste="onComposerPaste" @keydown="onInputKeydown" @input="syncPanelQuery"
         @click="syncPanelQuery" @update:keys="onKeys" @chip-click="onChipClick" @ready="syncChips">
@@ -667,7 +697,7 @@
           编号选项：1. 确认（点即按原稿执行）2. 继续对话（光输入框，写要改什么，非空才能送出）。
           不满意就继续对话：意见作为一条用户消息发出，本版计划作废，模型接着对话按意见重做计划；
           计划正文在气泡里只读展示。底部「取消」= 提问面板的「忽略」 -->
-          <div v-if="!pendingAsk" class="ci-box planp-box">
+          <div v-if="!pendingAsk && !pendingGoal" class="ci-box planp-box">
           <div class="planp-head">
           <span class="planp-tag">执行计划</span>
           <span v-if="planExpired" class="planp-state warn">已超时，本轮将停止</span>
@@ -702,6 +732,51 @@
           <button class="app-btn ghost small" :disabled="curPlanCard.busy || planExpired" @click="submitPlanApproval(pendingPlan, 'cancel')">取消</button>
           <button class="app-btn small" :disabled="curPlanCard.busy || planExpired || !(curPlanCard.editText || '').trim()"
           @click="continuePlanConversation(pendingPlan, curPlanCard.editText)">继续对话</button>
+          </span>
+          </div>
+          </div>
+          <!-- 目标确认栏（目标模式的第五张人在回路卡）：待确认时整块顶替打字框，与提问/计划同构。
+          逐条标准「□ 采纳 / □ 不要」，每条显示谁提的与验证方式——确认只能由用户点，
+          平台没有自动放行这条路（提议不等于批准，模型自己提的候选也要你勾）。 -->
+          <div v-else-if="pendingGoal" class="ci-box goalp-box">
+          <div class="goalp-head">
+          <span class="goalp-tag">目标</span>
+          <span v-if="goalExpired" class="goalp-state warn">已超时，将按未确认收尾</span>
+          <span v-else class="goalp-state">等你确认验收标准</span>
+          <span v-if="goalCountdownText" class="goalp-timer" :class="{ warn: goalExpired }">
+          <clock-circle-outlined /> {{ goalCountdownText }}
+          </span>
+          </div>
+          <div class="goalp-objective">{{ pendingGoal.objective }}</div>
+          <div class="goalp-criteria">
+          <div v-for="(c, ci) in pendingGoal.criteria || []" :key="c.key || c.id || ci" class="goalp-criterion">
+          <label class="goalp-check">
+          <input type="checkbox" :checked="(goalPicks[c.key] || 'CONFIRMED') === 'CONFIRMED'"
+          :disabled="pendingGoal.busy || goalExpired"
+          @change="ev => { goalPicks[c.key] = ev.target.checked ? 'CONFIRMED' : 'REJECTED' }" />
+          <span class="goalp-check-txt">采纳</span>
+          </label>
+          <label class="goalp-check no">
+          <input type="checkbox" :checked="(goalPicks[c.key] || 'CONFIRMED') === 'REJECTED'"
+          :disabled="pendingGoal.busy || goalExpired"
+          @change="ev => { goalPicks[c.key] = ev.target.checked ? 'REJECTED' : 'CONFIRMED' }" />
+          <span class="goalp-check-txt">不要</span>
+          </label>
+          <span class="goalp-criterion-text">{{ c.text }}</span>
+          <span class="goalp-criterion-meta">{{ goalVerifierLabel(c) }}</span>
+          </div>
+          <div v-if="!(pendingGoal.criteria || []).length" class="goalp-empty">
+          还没有验收标准——没有标准的目标只能靠模型自报完成了，回到输入框补几条再确认。
+          </div>
+          </div>
+          <div class="goalp-foot">
+          <span class="goalp-hint">
+          <info-circle-outlined /> 确认后开始推进，完成与否以验证凭据为准（不是模型宣布）；
+          标准只是候选意向，确认不代表已验证
+          </span>
+          <span class="goalp-actions">
+          <button class="app-btn ghost small" :disabled="pendingGoal.busy || goalExpired" @click="cancelGoalFromCard">取消</button>
+          <button class="app-btn small" :disabled="pendingGoal.busy || goalExpired" @click="confirmGoalFromCard">确认并开始</button>
           </span>
           </div>
           </div>
@@ -949,6 +1024,15 @@
           <ordered-list-outlined />
           <span>{{ isNarrow ? '计划' : '计划模式' }}</span>
           </button>
+          <!-- 目标模式入口（与深度思考/计划模式同排）：点了不弹窗直接开待确认卡——
+          四张卡不许互相顶班，这张管「这件事整体做到什么算完」，不归计划/清单/提问管。
+          平台或智能体关着目标模式时整个按钮不出现（关掉还露入口=又教用户一件没有的能力） -->
+          <button v-if="goalEntryVisible" class="plan-pill goal-pill" :class="{ on: !!sessionGoal && !goalTerminal }"
+          type="button" title="设为目标：把这件事做到什么算完、验收标准与预算交给你拍板"
+          @click="openGoalDraft">
+          <aim-outlined />
+          <span>{{ isNarrow ? '目标' : '设为目标' }}</span>
+          </button>
         </template>
         <template #right>
           <!-- 上下文容量圆环：本轮真实 prompt 占窗口比（与右栏容量卡同源数据），悬浮弹明细卡；会话尚无对话（无落库 tokens）时不显示。
@@ -1021,6 +1105,38 @@
             <span class="rp-todo-txt">{{ t.content }}</span>
             <span v-if="t.status === 'doing' && loading" class="rp-todo-run-tag">执行中</span>
           </div>
+        </div>
+      </div>
+      <!-- 目标面板（与清单卡同栏、切换不并排——两档讲的是同一件事的两个层次：清单说「现在做到哪」，
+           目标说「这件事什么算完、还剩多少预算」）。有目标才显示整卡；取不到必须报错 + 重试，
+           不许空态掩盖失败（goal_state 帧与 /goal/pending 双路供数，DB 是权威）。 -->
+      <div v-if="sessionGoal" class="rp-card rp-goal">
+        <button type="button" class="rp-card-head" @click="goalOpen = !goalOpen">
+          <span class="rp-label">目标</span>
+          <span class="rp-goal-state" :class="'st-' + goalStateClass">{{ goalStateLabel }}</span>
+          <caret-right-outlined class="tl-caret" :class="{ open: goalOpen }" />
+        </button>
+        <div v-if="goalOpen" class="rp-goal-body">
+          <div class="rp-goal-objective">{{ sessionGoal.objective }}</div>
+          <GoalCard :card="sessionGoal" />
+          <!-- 进行中三键：暂停/继续/叫停常驻（分岔 1 的口径：全自动续跑也要能随时拉住） -->
+          <div v-if="!goalTerminal" class="rp-goal-actions">
+            <button class="app-btn ghost small" :disabled="sessionGoal.busy"
+                    @click="goalAct('pause')">暂停</button>
+            <button v-if="sessionGoal.status === 'PAUSED' || sessionGoal.status === 'BUDGET_EXCEEDED'"
+                    class="app-btn ghost small" :disabled="sessionGoal.busy"
+                    @click="goalAct('resume')">继续</button>
+            <button class="app-btn ghost small" :disabled="sessionGoal.busy"
+                    @click="goalAct('verifyNow')">现在验收</button>
+            <button class="app-btn ghost small" :disabled="sessionGoal.busy"
+                    @click="goalAct('finish')">就此收尾</button>
+          </div>
+          <div v-else class="rp-goal-actions">
+            <button class="app-btn ghost small" @click="openGoalDraft">另起目标</button>
+          </div>
+          <!-- 目标区间轮次跳转：按 first/last_turn_id 定位气泡（逐气泡过程入口沿用 SessionEventsPanel） -->
+          <button v-if="sessionGoal.lastTurnId" type="button" class="rp-goal-jump"
+                  @click="jumpToGoalTurn">看这一轮的过程</button>
         </div>
       </div>
       <!-- 引用来源：右栏交互最重的一张卡（点片段定位正文 / hover 高亮角标 / 分组展开），提到第二位。
@@ -1377,7 +1493,8 @@ import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, Close
          CloseOutlined, DatabaseOutlined, SearchOutlined, UpOutlined, ShareAltOutlined,
          HistoryOutlined, SwapOutlined, InfoCircleOutlined,
          AppstoreOutlined, ClockCircleOutlined, BookOutlined,
-         OrderedListOutlined, CheckCircleOutlined, LeftOutlined, FolderOpenOutlined } from '@ant-design/icons-vue'
+         OrderedListOutlined, CheckCircleOutlined, LeftOutlined, FolderOpenOutlined,
+         AimOutlined } from '@ant-design/icons-vue'
 import { debugRetrieval, deleteMessageGroup, submitFeedback as apiSubmitFeedback,
          addEvalCase, getSessionShare, enableSessionShare, disableSessionShare,
          getSessionWorkspace } from '../api'
@@ -1419,6 +1536,7 @@ import { useChatEngine } from '../chat/useChatEngine'
 import { useChatSearch } from '../chat/useChatSearch'
 import Composer from '../chat/Composer.vue'
 import PlanCard from '../components/PlanCard.vue'
+import GoalCard from '../components/GoalCard.vue'
 import { splitAtts } from '../chat/attachments'
 // 正文浮层的共享状态：右栏来源联动（hoveredRef / 点角标定位）与灯箱开关要用
 import { openImages, previewUrl, openSource, hoveredRef } from '../chat/answerViewer'
@@ -2615,6 +2733,8 @@ const onMoreAction = (key, mi) => {
   else if (key === 'addEval') addToEval(mi)
   else if (key === 'deleteRound') deleteRound(mi)
   else if (key === 'export') exportRound(mi)
+  // 把这份正文里的承诺设为目标：草稿进弹窗改一句再开卡（沿用计划卡「改一句就解决」的体验）
+  else if (key === 'setGoal') openGoalDraftFromMsg(mi)
   // 逐气泡的过程回放：会话级「过程」列最近几轮，这里按消息行的 turnId 只看这一条回答那一轮
   else if (key === 'events') {
     const ai = messages.value[mi]
@@ -3020,6 +3140,9 @@ const {
   // 计划模式（人在回路）：「+」面板开关 + 计划卡裁决动作
   planModeOn, setPlanMode, submitPlanApproval, continuePlanConversation,
   pendingPlan, curPlanCard, planExpired, planCountdownText,
+  // 目标模式（人在回路第五张卡）：会话级目标态 + 待确认卡派生态 + 全部动作
+  sessionGoal, pendingGoal, goalExpired, goalCountdownText,
+  startGoal, submitGoalConfirm, goalAct,
   // 思考能力 / 档位（悬浮面板消费）
   thinkCapsOf, reasoningLevelsOf, deepOnOf, levelOptionsOf, currentLevelOf, setThinkLevel, deepThinkOn,
   // 上下文窗口档位（面板点选 + 发送载荷）
@@ -3291,6 +3414,120 @@ const onPlanPanelKeydown = e => {
   if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
     e.preventDefault()
     continuePlanConversation(pendingPlan.value, c.editText)
+  }
+}
+
+// ==================== 目标模式（第五张人在回路卡） ====================
+// 目标卡定「这件事什么算完、还剩多少预算」——与计划卡（打算怎么做）、清单（现在做到哪）、
+// 提问卡（这一步拍不拍板）四张卡不许互相顶班。会话级一份（横跨多轮），不挂气泡。
+// 待确认卡顶替打字框（与提问/计划同契约）；进行中的状态与证据在右栏「目标」面板 + GoalCard。
+
+// 右栏面板折叠态：有待确认目标时自动展开（与计划卡同一条「藏起来会出事」的判断）
+const goalOpen = ref(false)
+watch(() => sessionGoal.value && sessionGoal.value.status, (cur, prev) => {
+  if (cur === prev) return
+  if (cur === 'AWAITING_CONFIRMATION') goalOpen.value = true
+})
+
+// 入口按钮显隐：平台开关 + 本会话没有终态目标（另起目标走面板里的按钮，不在工具条常驻）
+const goalEntryVisible = computed(() => goalModeOn.value && !sessionGoal.value)
+// 终态目标（达成/用满/收尾/取消）：面板只读 + 「另起目标」
+const goalTerminal = computed(() => !!sessionGoal.value &&
+  ['ACHIEVED', 'BUDGET_EXCEEDED', 'FAILED', 'CANCELLED', 'ENDED_INCOMPLETE'].includes(sessionGoal.value.status))
+
+const goalStateClass = computed(() => {
+  const s = sessionGoal.value?.status
+  if (s === 'ACHIEVED') return 'achieved'
+  if (s === 'BUDGET_EXCEEDED' || s === 'FAILED' || s === 'CANCELLED') return 'ended'
+  if (s === 'AWAITING_CONFIRMATION') return 'pending'
+  if (s === 'RUNNING' || s === 'VERIFYING') return 'running'
+  return 'paused'
+})
+const goalStateLabel = computed(() => {
+  const s = sessionGoal.value?.status
+  if (s === 'ACHIEVED') return '已达成'
+  if (s === 'BUDGET_EXCEEDED') return '预算用满'
+  if (s === 'AWAITING_CONFIRMATION') return '待确认'
+  if (s === 'RUNNING') return '进行中'
+  if (s === 'VERIFYING') return '核验中'
+  if (s === 'PAUSED') return '已暂停'
+  if (s === 'CANCELLED') return '已取消'
+  return '已结束'
+})
+
+// 待确认卡上逐条标准的勾选态（默认全采纳：新手主路径最小化，不勾就等于全收）
+const goalPicks = ref({})
+watch(() => pendingGoal.value, g => {
+  const picks = {}
+  for (const c of (g && g.criteria) || []) picks[c.key] = 'CONFIRMED'
+  goalPicks.value = picks
+})
+// 每条标准的验证方式中文名（命令退出码/产物结构/人工核验）：从帧里带的 verifierLabel 取，
+// 取不到按 verifierId 兜底——不露框架机制
+const goalVerifierLabel = c => c.verifierLabel ||
+  (c.verifierId === 'shell-exit' ? '命令退出码' : c.verifierId === 'json-schema' ? '产物结构' : '人工核验')
+
+/** 确认并开始：把勾选态逐条拍板（确认只能由用户点；平台没有自动放行这条路） */
+const confirmGoalFromCard = async () => {
+  const g = pendingGoal.value
+  if (!g) return
+  const decisions = (g.criteria || []).map(c => ({ key: c.key, status: goalPicks.value[c.key] || 'CONFIRMED' }))
+  await submitGoalConfirm(decisions)
+}
+/** 取消目标（待确认卡上）：结束旧目标，可重新设 */
+const cancelGoalFromCard = async () => {
+  const g = pendingGoal.value
+  if (!g) return
+  await goalAct('cancel')
+}
+
+// ---- 起草弹窗（「设为目标」/「另起目标」/气泡更多菜单共用） ----
+// 弹窗只用于「编辑目标」：点了入口按钮直接开卡（不弹窗），要从零写/改一条目标时才用它
+const goalDraftOpen = ref(false)
+const goalDraft = reactive({ objective: '', criteria: [''], fromMsg: null })
+const openGoalDraft = (prefill) => {
+  goalDraft.objective = prefill ? String(prefill).slice(0, 4000) : ''
+  goalDraft.criteria = ['']
+  goalDraft.fromMsg = null
+  goalDraftOpen.value = true
+}
+/** 从回答气泡起草：把刚生成的那份正文里的承诺转成目标草稿（沿用计划卡「改一句就解决」的体验） */
+const openGoalDraftFromMsg = mi => {
+  const m = messages.value[mi]
+  const body = m && (m.content || '')
+  openGoalDraft(body ? body.slice(0, 4000) : '')
+  goalDraft.fromMsg = m || null
+}
+const addGoalDraftCriterion = () => {
+  if (goalDraft.criteria.length < 12) goalDraft.criteria.push('')
+}
+const removeGoalDraftCriterion = i => goalDraft.criteria.splice(i, 1)
+const submitGoalDraft = async () => {
+  const obj = String(goalDraft.objective || '').trim()
+  if (!obj) { message.warning('先写一句这件事要做到什么'); return }
+  const criteria = goalDraft.criteria
+    .map(t => String(t || '').trim())
+    .filter(Boolean)
+    .map(text => ({ kind: 'ACCEPTANCE_CRITERION', text, verifierId: 'manual', verifierParams: {} }))
+  const g = await startGoal(obj, criteria, null)
+  if (g) goalDraftOpen.value = false
+}
+
+/** 目标区间轮次跳转：按 lastTurnId 找到那颗气泡并开它的过程面板（逐气泡过程入口沿用 SessionEventsPanel） */
+const jumpToGoalTurn = () => {
+  const g = sessionGoal.value
+  if (!g || !g.lastTurnId) return
+  const idx = messages.value.findIndex(m => m.turnId === g.lastTurnId)
+  if (idx >= 0) {
+    const ai = messages.value[idx]
+    // 向前配对问题（与气泡「更多 → 看这一轮的过程」同一判据）
+    let q = ''
+    for (let i = idx - 1; i >= 0; i--) {
+      if (messages.value[i].role === 'user') { q = messages.value[i].content || ''; break }
+    }
+    openEvents(g.lastTurnId, ai, q)
+  } else {
+    message.info('这一轮的气泡不在当前视图（可能被清理），可从会话过程入口查看')
   }
 }
 
@@ -4409,6 +4646,54 @@ onMounted(async () => {
 .p-stop { color: var(--app-danger-text); border-color: var(--app-danger-border); }
 .p-stop:hover:not(:disabled) { background: var(--app-danger-weak); border-color: var(--app-danger-border); }
 .ar-status.ar-err { color: var(--app-danger); }
+
+/* ==================== 目标模式 ==================== */
+/* 入口胶囊：与计划模式同排同形（plan-pill 的兄弟态），开启态用主题蓝而不是警示色——
+   目标是「交给它一件事」，不是「这轮要先审一遍」 */
+.goal-pill.on { color: var(--app-primary, #1677ff); border-color: var(--app-primary, #1677ff); }
+
+/* 目标确认栏（顶替打字框，与 askp/planp 同契约）：逐条标准勾选 + 谁提的 + 验证方式 */
+.goalp-box { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+.goalp-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.goalp-tag { flex: none; font-size: 12px; line-height: 1; padding: 5px 9px; border-radius: 999px; background: var(--app-panel-2); border: 1px solid var(--app-border); color: var(--app-text2); }
+.goalp-state { font-size: 12px; color: var(--app-text2); }
+.goalp-state.warn { color: var(--app-warn); }
+.goalp-timer { flex: none; display: inline-flex; align-items: center; gap: 4px; margin-left: auto; font-size: 12px; color: var(--app-text3); font-variant-numeric: tabular-nums; }
+.goalp-timer.warn { color: var(--app-warn); }
+.goalp-objective { font-size: 13.5px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+.goalp-criteria { display: flex; flex-direction: column; gap: 6px; max-height: 40vh; overflow: auto; }
+.goalp-criterion { display: flex; align-items: center; gap: 10px; font-size: 13px; line-height: 1.5; }
+.goalp-check { display: inline-flex; align-items: center; gap: 4px; flex: none; cursor: pointer; }
+.goalp-check input { cursor: pointer; }
+.goalp-check-txt { font-size: 12px; color: var(--app-text2); }
+.goalp-criterion-text { flex: 1; min-width: 0; }
+.goalp-criterion-meta { flex: none; font-size: 11.5px; color: var(--app-text3); }
+.goalp-empty { font-size: 12.5px; color: var(--app-text3); line-height: 1.6; }
+.goalp-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.goalp-hint { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--app-text3); }
+.goalp-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+
+/* 右栏「目标」面板：与清单卡同栏（rp-card 外壳），状态徽标 + 动作键 + 轮次跳转 */
+.rp-goal-state { font-size: 11.5px; padding: 1px 7px; border-radius: 8px; background: var(--app-panel-2); color: var(--app-text2); }
+.rp-goal-state.st-achieved { color: var(--app-ok); }
+.rp-goal-state.st-ended { color: var(--app-danger); }
+.rp-goal-state.st-pending { color: var(--app-warn-text); }
+.rp-goal-state.st-running { color: var(--app-primary, #1677ff); }
+.rp-goal-body { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
+.rp-goal-objective { font-size: 12.5px; line-height: 1.6; color: var(--app-text2); white-space: pre-wrap; word-break: break-word; }
+.rp-goal-body .goal-card { margin: 0; padding: 0; border: none; background: none; }
+.rp-goal-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.rp-goal-jump { align-self: flex-start; border: none; background: none; padding: 0; font-size: 12px; color: var(--app-primary, #1677ff); cursor: pointer; }
+
+/* 目标起草弹窗 */
+.goald-box { display: flex; flex-direction: column; gap: 8px; }
+.goald-label { font-size: 12.5px; font-weight: 600; color: var(--app-text2); margin-top: 4px; }
+.goald-criterion { display: flex; align-items: center; gap: 6px; }
+.goald-criterion .ant-input { flex: 1; }
+.goald-add { align-self: flex-start; border: none; background: none; padding: 0; font-size: 12.5px; color: var(--app-primary, #1677ff); cursor: pointer; }
+.goald-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.goald-hint { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--app-text3); }
+.goald-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 
 /* ==================== 响应式：窄屏适配 ====================
    ≤1200：状态栏由占位列改浮层（消息是主内容，需要时点「状态」按钮展开）。

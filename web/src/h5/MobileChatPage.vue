@@ -245,6 +245,44 @@
         </div>
       </div>
 
+      <!-- 目标确认栏（人在回路）：待确认期间整块顶替输入卡，与 PC 的 goalp-* 同一套引擎状态
+           （pendingGoal / goalExpired / goalCountdownText 都在 useChatEngine 里，不在此重算）。
+           逐条标准勾选 + 验证方式；确认只能由用户点（提议不等于批准） -->
+      <div v-else-if="pendingGoal" class="m-input-card m-goalp">
+        <div class="m-goalp-head">
+          <span class="m-goalp-tag">目标</span>
+          <span v-if="goalExpired" class="m-goalp-state warn">已超时</span>
+          <span v-else class="m-goalp-state">等你确认验收标准</span>
+          <span v-if="goalCountdownText" class="m-goalp-timer" :class="{ warn: goalExpired }">{{ goalCountdownText }}</span>
+        </div>
+        <div class="m-goalp-objective">{{ pendingGoal.objective }}</div>
+        <div class="m-goalp-criteria">
+          <div v-for="(c, ci) in pendingGoal.criteria || []" :key="c.key || c.id || ci" class="m-goalp-criterion">
+            <label class="m-goalp-check">
+              <input type="checkbox" :checked="(goalPicks[c.key] || 'CONFIRMED') === 'CONFIRMED'"
+                     :disabled="pendingGoal.busy || goalExpired"
+                     @change="ev => { goalPicks[c.key] = ev.target.checked ? 'CONFIRMED' : 'REJECTED' }" />
+              <span>采纳</span>
+            </label>
+            <label class="m-goalp-check no">
+              <input type="checkbox" :checked="(goalPicks[c.key] || 'CONFIRMED') === 'REJECTED'"
+                     :disabled="pendingGoal.busy || goalExpired"
+                     @change="ev => { goalPicks[c.key] = ev.target.checked ? 'REJECTED' : 'CONFIRMED' }" />
+              <span>不要</span>
+            </label>
+            <span class="m-goalp-criterion-text">{{ c.text }}</span>
+          </div>
+        </div>
+        <div class="m-goalp-foot">
+          <span class="m-goalp-actions">
+            <button class="m-rec-btn ghost" type="button" :disabled="pendingGoal.busy || goalExpired"
+                    @click="goalAct('cancel')">取消</button>
+            <button class="m-rec-btn primary" type="button" :disabled="pendingGoal.busy || goalExpired"
+                    @click="confirmGoalM">确认并开始</button>
+          </span>
+        </div>
+      </div>
+
       <div v-else class="m-input-card">
         <textarea
           ref="ta"
@@ -269,6 +307,13 @@
                   @click="setPlanMode(!planModeOn)">
             <ordered-list-outlined />
             <span class="m-tool-text">计划</span>
+          </button>
+          <!-- 目标模式入口：与 PC 同一个开关判据（goalModeOn，平台总闸）；点开底部起草 sheet -->
+          <button v-if="goalModeOn && !sessionGoal" class="m-tool" type="button"
+                  title="设为目标：这件事做到什么算完，验收标准与预算交给你拍板"
+                  @click="goalDraftOpen = true">
+            <aim-outlined />
+            <span class="m-tool-text">目标</span>
           </button>
           <button class="m-tool" type="button" title="添加：技能 / 引用 / 历史 / 附件" @click="attachOpen = true">
             <plus-circle-outlined />
@@ -302,7 +347,7 @@
                        @update:open="v => { if (!v) skillDoc = '' }" />
     <MobileRefSheet :open="refOpen" @close="refOpen = false" @source="openSourceDetail" />
     <MobileNotifSheet :open="notifOpen" @close="notifOpen = false" />
-    <MobileRoundSheet :open="roundOpen" :index="roundIdx" @close="roundOpen = false" @events="openRoundEvents" />
+    <MobileRoundSheet :open="roundOpen" :index="roundIdx" @close="roundOpen = false" @events="openRoundEvents" @goal="onRoundGoal" />
     <!-- 过程回放（事件账本）：顶栏入口看整个会话，单轮 sheet 里的那一项只看那一轮。
          取数与渲染与 PC 共用 SessionEventsPanel，两端不许各写一遍 -->
     <MobileEventsSheet :open="eventsOpen" :session-id="currentSessionId || ''" :turn-id="eventsTurnId"
@@ -399,6 +444,27 @@
       <textarea v-model="fb.text" class="m-fb-ta" rows="3" placeholder="补充说明（选填）：哪里好 / 哪里不对？"></textarea>
       <button class="m-fb-ok" type="button" :disabled="fb.busy" @click="doFeedback">提交反馈</button>
     </BottomSheet>
+
+    <!-- ==================== 目标起草 ==================== -->
+    <BottomSheet :open="goalDraftOpen" title="定个目标" max-height="78dvh" @close="goalDraftOpen = false">
+      <div class="m-goald">
+        <div class="m-goald-label">这件事要做到什么（说清楚「什么算完成」）</div>
+        <textarea v-model="goalDraft.objective" class="m-goald-ta" rows="3" maxlength="4000"
+                  placeholder="例如：把竞品分析报告改到可以直接发给客户，改完自查三遍"></textarea>
+        <div class="m-goald-label">验收标准（可稍后补；没有标准的目标只能靠模型自报完成）</div>
+        <div v-for="(c, ci) in goalDraft.criteria" :key="ci" class="m-goald-criterion">
+          <input v-model="goalDraft.criteria[ci]" class="m-goald-input" maxlength="2000"
+                 placeholder="例如：报告里每个数字都标了来源" />
+          <button v-if="goalDraft.criteria.length > 1" type="button" class="m-goald-del"
+                  @click="removeGoalDraftCriterion(ci)">×</button>
+        </div>
+        <button type="button" class="m-goald-add" @click="addGoalDraftCriterion">+ 加一条标准</button>
+        <div class="m-goald-foot">
+          <span class="m-goald-hint">确认后开始推进；完成与否以验证凭据为准，不是模型宣布</span>
+          <button class="m-rec-btn primary" type="button" @click="submitGoalDraftM">开始</button>
+        </div>
+      </div>
+    </BottomSheet>
   </div>
 </template>
 
@@ -410,7 +476,7 @@ import {
   MenuOutlined, PlusOutlined, CaretDownOutlined, ArrowUpOutlined, ArrowDownOutlined, PauseCircleOutlined,
   ThunderboltOutlined, PlusCircleOutlined, CloseOutlined, GlobalOutlined, SearchOutlined, UpOutlined, DownOutlined,
   BellOutlined, ExclamationCircleOutlined, FileTextOutlined, CopyOutlined, HistoryOutlined,
-  CompressOutlined, EditOutlined, OrderedListOutlined, LoadingOutlined
+  CompressOutlined, EditOutlined, OrderedListOutlined, LoadingOutlined, AimOutlined
 } from '@ant-design/icons-vue'
 import { pasteTitle, pasteSub } from '../chat/projections'
 import { useChatEngine } from '../chat/useChatEngine'
@@ -523,6 +589,9 @@ const {
   // 计划模式（人在回路）：开关在「添加」sheet，确认栏在本页打字框原位，卡片本体共用 PlanCard
   planModeOn, setPlanMode, submitPlanApproval, continuePlanConversation,
   pendingPlan, curPlanCard, planExpired, planCountdownText,
+  // 目标模式（人在回路第五张卡）：确认栏顶替输入卡，面板在「状态与来源」sheet，动作走引擎
+  goalModeOn, sessionGoal, pendingGoal, goalExpired, goalCountdownText,
+  startGoal, submitGoalConfirm, goalAct,
   // 手动压缩上下文（入口在「模型与思考」sheet；分隔线与摘要 sheet 在本页。
   // 「压缩中」态由 compacting 一并表达）
   compacting, compactNotice, compactContext, compactDividerAt,
@@ -532,6 +601,42 @@ const {
 
 // 空态引导用：本轮 @ 引用的资料名（欢迎副标题会说明「只在这些资料里找答案」）
 const mentionNames = computed(() => pendingMentions.value.map(m => m.name || m.id))
+
+// ==================== 目标模式（移动壳） ====================
+// 起草 sheet（PC 是弹窗，移动壳是底部 sheet：同一批字段、同一套 startGoal 出口）
+const goalDraftOpen = ref(false)
+const goalDraft = reactive({ objective: '', criteria: [''] })
+const addGoalDraftCriterion = () => { if (goalDraft.criteria.length < 12) goalDraft.criteria.push('') }
+const removeGoalDraftCriterion = i => goalDraft.criteria.splice(i, 1)
+const submitGoalDraftM = async () => {
+  const obj = String(goalDraft.objective || '').trim()
+  if (!obj) { message.warning('先写一句这件事要做到什么'); return }
+  const criteria = goalDraft.criteria.map(t => String(t || '').trim()).filter(Boolean)
+    .map(text => ({ kind: 'ACCEPTANCE_CRITERION', text, verifierId: 'manual', verifierParams: {} }))
+  const g = await startGoal(obj, criteria, null)
+  if (g) goalDraftOpen.value = false
+}
+// 待确认卡的逐条勾选态（默认全采纳：新手主路径最小化）与提交
+const goalPicks = ref({})
+watch(() => pendingGoal.value, g => {
+  const picks = {}
+  for (const c of (g && g.criteria) || []) picks[c.key] = 'CONFIRMED'
+  goalPicks.value = picks
+})
+const confirmGoalM = async () => {
+  const g = pendingGoal.value
+  if (!g) return
+  const decisions = (g.criteria || []).map(c => ({ key: c.key, status: goalPicks.value[c.key] || 'CONFIRMED' }))
+  await submitGoalConfirm(decisions)
+}
+/** 单轮菜单「设为目标」：把这一轮正文预填进起草 sheet（与 PC 的气泡「更多 → 设为目标」同源） */
+const onRoundGoal = mi => {
+  const body = (messages.value[mi] && messages.value[mi].content) || ''
+  goalDraft.objective = body.slice(0, 4000)
+  goalDraft.criteria = ['']
+  goalDraftOpen.value = true
+  roundOpen.value = false
+}
 // 技能正文弹窗：按名字现取清单里的那条（存快照会让停用/恢复后的按钮停在旧状态）
 const skillDocEntry = computed(() => skillList.value.find(s => s.name === skillDoc.value) || {})
 
@@ -1104,6 +1209,29 @@ onUnmounted(() => {
 .m-planp-foot { display: flex; flex-direction: column; gap: 8px; }
 .m-planp-hint { font-size: 12px; color: var(--app-text3); }
 .m-planp-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+/* 目标确认栏（m-goalp）：与 m-planp 同契约，逐条标准勾选 + 验证方式 */
+.m-goalp-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.m-goalp-tag { flex: none; font-size: 12px; line-height: 1; padding: 5px 9px; border-radius: 999px; background: var(--app-panel-2); border: 1px solid var(--app-border); color: var(--app-text2); }
+.m-goalp-state { font-size: 12px; color: var(--app-text2); }
+.m-goalp-state.warn { color: var(--app-warn-text); }
+.m-goalp-timer { margin-left: auto; font-size: 12px; color: var(--app-text3); font-variant-numeric: tabular-nums; }
+.m-goalp-timer.warn { color: var(--app-warn-text); }
+.m-goalp-objective { font-size: 14px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+.m-goalp-criteria { display: flex; flex-direction: column; gap: 8px; max-height: 38vh; overflow: auto; }
+.m-goalp-criterion { display: flex; align-items: center; gap: 10px; font-size: 14px; line-height: 1.5; }
+.m-goalp-check { display: inline-flex; align-items: center; gap: 4px; flex: none; font-size: 12px; color: var(--app-text2); }
+.m-goalp-criterion-text { flex: 1; min-width: 0; }
+.m-goalp-foot { display: flex; justify-content: flex-end; }
+/* 目标起草 sheet */
+.m-goald { display: flex; flex-direction: column; gap: 8px; }
+.m-goald-label { font-size: 12.5px; font-weight: 600; color: var(--app-text2); margin-top: 4px; }
+.m-goald-ta { width: 100%; box-sizing: border-box; border: 1px solid var(--app-border); border-radius: 10px; background: var(--app-panel); color: var(--app-text); font: inherit; font-size: 15px; line-height: 1.55; padding: 8px 10px; resize: none; }
+.m-goald-criterion { display: flex; align-items: center; gap: 6px; }
+.m-goald-input { flex: 1; min-width: 0; border: 1px solid var(--app-border); border-radius: 10px; background: var(--app-panel); color: var(--app-text); font-size: 14px; padding: 8px 10px; }
+.m-goald-del { flex: none; border: none; background: none; color: var(--app-text3); font-size: 16px; padding: 4px; }
+.m-goald-add { align-self: flex-start; border: none; background: none; padding: 4px 0; font-size: 13px; color: var(--app-accent); }
+.m-goald-foot { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.m-goald-hint { flex: 1; font-size: 12px; color: var(--app-text3); }
 .m-askp-rest { color: var(--app-text2); margin-left: 8px; flex: 1; min-width: 0; }
 .m-askp-custom { align-items: center; }
 .m-askp-input { flex: 1; min-width: 0; border: none; outline: none; background: transparent; font-size: 15px; color: var(--app-text); padding: 0; }

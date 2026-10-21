@@ -189,6 +189,7 @@ const EV_TYPE_LABEL = {
   agent_delegated: '委派作答', agent_consulted: '智能体咨询',
   retrieved: '检索', usage: '用量', todo: '任务清单', error: '失败', warn: '提醒',
   steer: '中途插话', stop: '用户停止', interrupted: '中断收尾', detach: '断线中止',
+  goal_state: '目标态', goal_turn: '目标续跑', goal_verify: '验收',
   done: '本轮结束'
 }
 const evTypeLabel = t => EV_TYPE_LABEL[t] || t

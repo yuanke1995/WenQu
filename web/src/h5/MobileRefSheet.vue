@@ -70,6 +70,26 @@
         </a>
       </template>
 
+      <!-- ---- 目标（PC 右栏「目标」面板的移动形态：同一份 sessionGoal，同一个 GoalCard 组件） ---- -->
+      <template v-if="sessionGoal">
+        <div class="rs-section">目标<span class="rs-n">{{ goalStateText }}</span></div>
+        <GoalCard :card="sessionGoal" />
+        <div class="rs-act-row">
+          <button v-if="!goalTerminal" class="rs-act" type="button" @click="goalAct('pause')">
+            <pause-circle-outlined class="rs-ic" /><span>暂停</span>
+          </button>
+          <button v-if="goalTerminal" class="rs-act" type="button" @click="goalAct('resume')">
+            <play-circle-outlined class="rs-ic" /><span>继续</span>
+          </button>
+          <button v-if="!goalTerminal" class="rs-act" type="button" @click="goalAct('verifyNow')">
+            <safety-certificate-outlined class="rs-ic" /><span>现在验收</span>
+          </button>
+          <button v-if="!goalTerminal" class="rs-act" type="button" @click="goalAct('finish')">
+            <stop-outlined class="rs-ic" /><span>就此收尾</span>
+          </button>
+        </div>
+      </template>
+
       <!-- ---- 这段对话：分享 / 导出 ----
            刻意排在最后而非最前：生成外发链接是不可逆的外泄动作，误触成本远高于"多滚一下"。 -->
       <div class="rs-section">这段对话</div>
@@ -117,9 +137,10 @@
 
 <script setup>
 import { computed, inject, reactive, ref, watch } from 'vue'
-import { CaretRightOutlined, FileTextOutlined, DownloadOutlined, ShareAltOutlined, FileMarkdownOutlined, CopyOutlined, SwapOutlined, StopOutlined } from '@ant-design/icons-vue'
+import { CaretRightOutlined, FileTextOutlined, DownloadOutlined, ShareAltOutlined, FileMarkdownOutlined, CopyOutlined, SwapOutlined, StopOutlined, PauseCircleOutlined, PlayCircleOutlined, SafetyCertificateOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
 import BottomSheet from './BottomSheet.vue'
+import GoalCard from '../components/GoalCard.vue'
 import { fmtTokens } from '../utils/token'
 import { fmtSourceScore, fmtWindow, usageCtxTokens } from '../chat/projections'
 import { buildSessionMd, saveMd } from '../views/exportMd'
@@ -130,8 +151,25 @@ defineProps({ open: { type: Boolean, default: false } })
 defineEmits(['close', 'source'])
 
 const engine = inject('wqChat')
+// 目标模式：与 PC 同一份 sessionGoal（会话级一份，横跨多轮），卡片本体共用 GoalCard
 const { groupedSources, lastTokens, lastSources, sessionTokens, sessionRetrieval, sessionArtifacts,
-  currentSessionId, currentSessionTitle, messages, ctxTokens, modelIndex, effectiveModel } = engine
+  currentSessionId, currentSessionTitle, messages, ctxTokens, modelIndex, effectiveModel,
+  sessionGoal, goalAct } = engine
+
+// 目标状态的中文名（与 PC 面板同一套判据，两端不许各写一份）
+const goalStateText = computed(() => {
+  const s = sessionGoal.value?.status
+  if (s === 'ACHIEVED') return '已达成'
+  if (s === 'BUDGET_EXCEEDED') return '预算用满'
+  if (s === 'AWAITING_CONFIRMATION') return '待确认'
+  if (s === 'RUNNING') return '进行中'
+  if (s === 'VERIFYING') return '核验中'
+  if (s === 'PAUSED') return '已暂停'
+  if (s === 'CANCELLED') return '已取消'
+  return '已结束'
+})
+const goalTerminal = computed(() => !!sessionGoal.value &&
+  ['ACHIEVED', 'BUDGET_EXCEEDED', 'FAILED', 'CANCELLED', 'ENDED_INCOMPLETE'].includes(sessionGoal.value.status))
 
 // 容量构成：与 PC 的 ctxCapData 同一算法（窗口取本轮 tokens.window，回落模型登记窗口；
 // 用量取 prompt，无则 context；分类占窗口比例撑填充段）。分类表是 PC 视图层的同款副本——

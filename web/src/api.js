@@ -105,6 +105,9 @@ const CHAT_EVENT_CB = {
   approval_required: 'onApprovalRequired', ask_user: 'onAskUser',
   plan_delta: 'onPlanDelta', plan_approval: 'onPlanApproval', plan_cancelled: 'onPlanCancelled',
   plan_superseded: 'onPlanSuperseded', todo: 'onTodo', snapshot: 'onSnapshot',
+  // 目标模式（Goal Mode）：goal_state 是目标态的唯一帧（状态机迁移/标准裁决/验证结果/预算变化），
+  // 进总线镜像——断线重连靠它重建目标面板；goal_turn 是跨轮续跑开了新的一轮，前端据此自动接流
+  goal_state: 'onGoalState', goal_turn: 'onGoalTurn',
   // steer＝这句插话被框架写进了正在跑的这一轮（下一次调模型之前那一刻），不是「用户按了发送」——
   // 那一刻由 /chat/steer 自己回执。前端据此把队列里等它的那条撤下，并长进本轮回答的时间线里。
   steer: 'onSteer'
@@ -1127,6 +1130,39 @@ export const stopChatTurn = sessionId =>
  *  返回 {todos:{turnId,items:[{content,status}],updatedAt}} 或 null */
 export const getSessionTodosApi = sessionId =>
   request(`/session/${encodeURIComponent(sessionId)}/todos`)
+
+/** 目标模式：设为目标。criteria=[{kind,text,verifierId,verifierParams}]（kind=ACCEPTANCE_CRITERION|CONSTRAINT），
+ *  budget={turns,tokens,toolCalls,minutes}（只往下收：超过平台默认按默认执行）。创建后进「待确认」，
+ *  用户在目标卡上逐条勾选并确认才开始。返回 {goalId,status,objective,criteria,budget,...} */
+export const startGoalApi = (sessionId, objective, criteria, budget) =>
+  request('/chat/goal', {
+    method: 'POST',
+    body: JSON.stringify({ sessionId, objective, criteria, budget, action: 'start' })
+  })
+
+/** 目标模式：目标动作。action=confirmCriteria|pause|resume|extendBudget|verifyNow|markManual|finish|cancel。
+ *  confirmCriteria 带 criteria:[{key,status}]（逐条裁决）；extendBudget 带 extraTurns/extraTokens；
+ *  markManual 带 key/outcome（PASSED|FAILED）。返回目标视图模型（右栏/目标卡直接可用） */
+export const goalActionApi = (goalId, action, extra) =>
+  request(`/chat/goal/${encodeURIComponent(goalId)}`, {
+    method: 'POST',
+    body: JSON.stringify({ action, ...(extra || {}) })
+  })
+
+/** 目标模式：待确认/进行中的目标（目标卡恢复入口，重启/换副本回 live:false + DB 那份）。
+ *  返回 {goal:视图模型|null} */
+export const getPendingGoalApi = sessionId =>
+  request(`/chat/goal/pending?sessionId=${encodeURIComponent(sessionId)}`)
+
+/** 目标模式：会话当前/最近一条目标（右栏「目标」面板回显，读 DB 不读框架）。
+ *  返回 {goal:视图模型|null} */
+export const getSessionGoalApi = sessionId =>
+  request(`/chat/session/${encodeURIComponent(sessionId)}/goal`)
+
+/** 目标模式：按 goal_id 聚合的过程账本（过程面板深链，一个目标覆盖多轮）。
+ *  返回 [{id,type,turnId,payload,at}] 正序 */
+export const getGoalEventsApi = (sessionId, goalId) =>
+  request(`/chat/session/${encodeURIComponent(sessionId)}/goal/events?goalId=${encodeURIComponent(goalId)}`)
 
 /** 工具执行审批（人在回路）：裁决 approval_required 事件下发的请求；仅本轮用户本人可批 */
 export const approveToolCall = (approvalId, approved) =>
