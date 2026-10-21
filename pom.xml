@@ -182,8 +182,9 @@
             <groupId>io.agentscope</groupId>
             <artifactId>agentscope-extensions-model-openai</artifactId>
         </dependency>
-        <!-- 多副本部署时的会话状态后端（RedisAgentStateStore / RedisDistributedStore）；
-             框架默认把状态落在 ~/.agentscope/state/**，在问渠数据目录之外，生产必须换 Redis。 -->
+        <!-- 框架会话状态与跨副本协调的存储后端（RedisAgentStateStore / RedisDistributedStore）：
+             框架默认把状态落在 ~/.agentscope/state/**（本地文件，容器重建即丢——会让多轮对话失忆，
+             2026-10-21 线上事故即由此而来），本工程恒走 Redis，连接参数复用 spring.data.redis。 -->
         <dependency>
             <groupId>io.agentscope</groupId>
             <artifactId>agentscope-extensions-redis</artifactId>

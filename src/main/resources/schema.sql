@@ -974,7 +974,9 @@ DELETE FROM `c_ai_config` WHERE `config_key` IN (
     'chat.agentscopeMaxContextTokens', 'chat.agentscopeTurnTimeoutSeconds',
     'chat.agentscopeCompactTriggerMessages', 'chat.planGenTimeoutMs', 'chat.streamRetryCount',
     'chat.planAutoIntent',
-    -- 框架状态存储复用 spring.data.redis，不再单独保存 host/port/password
+    -- 框架状态存储恒走 Redis：开关已取消（本地文件方案退役，容器重建即丢会话上下文），
+    -- 连接参数复用 spring.data.redis，不再单独保存 host/port/password
+    'chat.agentscopeRedisEnabled',
     'chat.agentscopeRedisHost', 'chat.agentscopeRedisPort', 'chat.agentscopeRedisPassword',
     -- 视觉：网关与 Ollama 专属调参无读取点
     'vision.model', 'vision.baseUrl', 'vision.apiKey',

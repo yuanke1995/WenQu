@@ -25,7 +25,6 @@ import io.agentscope.core.session.SessionProjection;
 import io.agentscope.core.session.SessionRecovery;
 import io.agentscope.core.session.SessionTurns;
 import io.agentscope.core.state.AgentStateStore;
-import io.agentscope.core.state.JsonFileAgentStateStore;
 import io.agentscope.extensions.redis.state.RedisAgentStateStore;
 import io.agentscope.extensions.model.openai.OpenAIChatModel;
 import io.agentscope.harness.agent.HarnessAgent;
@@ -198,6 +197,17 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     /**
+     * 启动自检：框架会话状态存储的 Redis 必须在服务对外之前就位。
+     * <p>为什么要在启动时炸：会话状态没有第二落点（本地文件方案已退役）。等第一轮问答才发现
+     * Redis 不通，用户看到的是「模型答得像不认识我」——那正是 2026-10-21 事故的形态，
+     * 而真正的原因（状态存储不通）被埋在日志里。现在它变成一条启动失败，信息直指 Redis。
+     */
+    @jakarta.annotation.PostConstruct
+    void requireRedisForSessionState() {
+        stateStore();
+    }
+
+    /**
      * 记忆配置热生效：{@code memory.*} 都烤在常驻 HarnessAgent 实例里（flush 节流、consolidation 上限、
      * MEMORY.md 硬上限、日账保留期），管理员改完设置页后不重建实例就等于没改。
      * <p>监听器只标「下一轮重建」，不打断正在跑的那一轮；没有活实例的会话下次 open 本来就会按新配置建。
@@ -356,38 +366,35 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     /**
-     * 解析并缓存会话状态存储。默认本地文件；仅当 {@code chat.agentscopeRedisEnabled=true} 时尝试 Redis。
-     * <p>Redis 路径全程兜底：连不上、鉴权失败、甚至 Jedis 类缺失（被仓库既有 Jedis 声明压成低版本）
-     * 都退回到本地文件并告警——绝不让「开个多副本开关」把框架引擎整体打挂。
+     * 解析并缓存会话状态存储。<b>恒走 Redis</b>——本地文件方案已退役。
+     * <p>为什么必须换掉：框架的会话状态（对话上下文、待办、续跑游标）落在本地文件时，
+     * 容器一重建就全丢。线上因此出过一场事故（2026-10-21）：模型上一轮刚把数据列成表，
+     * 下一轮却说「没有相关数据」——因为那几轮的历史压根没进过 prompt，本轮它看到的只有
+     * 当前这一个问题，等价于每轮独立问答。
+     * <p>所以 Redis 是硬依赖：连不上就抛，<b>不静默退回本地实现</b>——静默退化正是事故的成因。
      */
-    private AgentStateStore stateStore(Path stateDir) {
+    private AgentStateStore stateStore() {
         if (stateStoreResolved) return cachedStateStore;
         synchronized (this) {
             if (stateStoreResolved) return cachedStateStore;
-            cachedStateStore = resolveStateStore(stateDir);
+            cachedStateStore = RedisAgentStateStore.builder()
+                    .jedisClient(requireRedis())
+                    .keyPrefix(firstNonBlank(configService.get("chat.agentscopeRedisPrefix"), "agentscope:session:"))
+                    .build();
             stateStoreResolved = true;
             return cachedStateStore;
         }
     }
 
-    private AgentStateStore resolveStateStore(Path stateDir) {
-        UnifiedJedis jedis = redisJedis();
-        if (jedis == null) {
-            return new JsonFileAgentStateStore(stateDir);
-        }
-        String prefix = firstNonBlank(configService.get("chat.agentscopeRedisPrefix"), "agentscope:session:");
-        return RedisAgentStateStore.builder().jedisClient(jedis).keyPrefix(prefix).build();
-    }
-
     /**
-     * 全局 Redis 连接（stateStore 与 distributedStore 共用，避免一个引擎建两条连接）。
-     * <p>连不上/鉴权失败/类缺失都返回 null，由调用方退回本地实现——绝不因为开了多副本开关把引擎打挂。
+     * 全局 Redis 连接（stateStore 与 distributedStore 共用一条，避免一个引擎建两条连接）。
+     * <p>失败即抛：会话状态没有第二落点，宁可让应用起不来，也不要带着「每轮失忆」对外服务。
+     * <p>连接参数复用 {@code spring.data.redis}（{@code REDIS_HOST / REDIS_PORT / REDIS_PASSWORD}）。
      */
-    private UnifiedJedis redisJedis() {
-        if (!"true".equalsIgnoreCase(configService.get("chat.agentscopeRedisEnabled"))) return null;
-        if (jedisResolved) return cachedJedis;
+    private UnifiedJedis requireRedis() {
+        if (jedisResolved && cachedJedis != null) return cachedJedis;
         synchronized (this) {
-            if (jedisResolved) return cachedJedis;
+            if (jedisResolved && cachedJedis != null) return cachedJedis;
             String host = redisProperties.getHost() == null || redisProperties.getHost().isBlank()
                     ? "localhost" : redisProperties.getHost();
             int port = redisProperties.getPort() > 0 ? redisProperties.getPort() : 6379;
@@ -400,12 +407,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 UnifiedJedis jedis = new UnifiedJedis(new HostAndPort(host, port), cfg.build());
                 jedis.ping();
                 cachedJedis = jedis;
+                jedisResolved = true;
                 log.info("[agentx] 框架 Redis 已连接: {}:{} db={}", host, port, redisProperties.getDatabase());
             } catch (Throwable e) {
-                cachedJedis = null;
-                log.warn("[agentx] Redis 不可用（{}），框架状态/协调退回本地实现", e.toString());
-            } finally {
-                jedisResolved = true;
+                // 不置 jedisResolved：下一次调用还能重试（启动自检失败后进程退出，不靠重试兜底）
+                throw new IllegalStateException("框架会话状态存储依赖 Redis（" + host + ":" + port
+                        + "），连接失败：" + e + "。会话状态没有本地兜底（本地文件方案已退役：容器重建即丢，"
+                        + "会导致多轮对话失忆），请先恢复 Redis 再启动应用。", e);
             }
             return cachedJedis;
         }
@@ -417,28 +425,19 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * （consolidation watermark 的 CAS），否则多副本会同时合并同一个 {@code MEMORY.md}。
      * <p>它不搬记忆文件：{@code MEMORY.md} 与日账仍在 {@code chat.agentscopeStateDir} 本地目录，
      * 多副本必须把该目录挂成共享卷（NFS/EFS/RWX PVC），否则同一用户在不同副本看到不同记忆。
+     * <p>与状态存储同源：Redis 已是硬依赖，这里不再保留「退回单副本节流」的分支——
+     * 那会让同一份记忆在多副本下被并发合并。
      */
     private io.agentscope.harness.agent.DistributedStore distributedStore() {
         if (distributedStoreResolved) return cachedDistributedStore;
         synchronized (this) {
             if (distributedStoreResolved) return cachedDistributedStore;
-            try {
-                UnifiedJedis jedis = redisJedis();
-                if (jedis == null) {
-                    cachedDistributedStore = null;
-                } else {
-                    cachedDistributedStore = io.agentscope.extensions.redis.RedisDistributedStore
-                            .fromJedis(jedis, "agentscope:");
-                    log.info("[agentx] 记忆/压缩节流与 consolidation watermark 使用 Redis 跨副本协调");
-                    log.warn("[agentx] 多副本提示：记忆文件仍落本地 chat.agentscopeStateDir，"
-                            + "请确保各副本挂同一共享卷，否则同一用户在不同副本记忆不一致");
-                }
-            } catch (Throwable e) {
-                cachedDistributedStore = null;
-                log.warn("[agentx] 分布式协调装配失败（{}），退回单副本节流", e.toString());
-            } finally {
-                distributedStoreResolved = true;
-            }
+            cachedDistributedStore = io.agentscope.extensions.redis.RedisDistributedStore
+                    .fromJedis(requireRedis(), "agentscope:");
+            distributedStoreResolved = true;
+            log.info("[agentx] 记忆/压缩节流与 consolidation watermark 使用 Redis 跨副本协调");
+            log.warn("[agentx] 多副本提示：记忆文件仍落本地 chat.agentscopeStateDir，"
+                    + "请确保各副本挂同一共享卷，否则同一用户在不同副本记忆不一致");
             return cachedDistributedStore;
         }
     }
@@ -2712,9 +2711,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 压缩摘要用独立的 MeteredModel（kind=compress），成本才进得了台账。
                 .compaction(compactionConfig(cmd, baseModel, hooks.modelRef()))
                 .workspace(stateDir)
-                // 框架默认把状态写到 ~/.agentscope/state/**（在问渠数据目录之外，容器里等于丢）：
-                // 换成受管数据目录的文件实现；多副本（chat.agentscopeRedisEnabled=true）时自动切 Redis
-                .stateStore(stateStore(stateDir))
+                // 会话状态恒存 Redis：本地文件方案已退役（容器重建即丢，会让多轮对话退化成每轮独立问答）。
+                // Redis 连不上时应用起不来——宁可启动失败，也不要带着「每轮失忆」对外服务。
+                .stateStore(stateStore())
                 // 权限由框架持有：档位→模式、按名黑名单→deny 规则；工具级不可绕过的判定落在
                 // SpringAiToolAdapter#checkPermissions
                 .permissionContext(AgentxPermissions.contextOf(policy))

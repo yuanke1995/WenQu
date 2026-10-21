@@ -304,7 +304,8 @@ public class ConfigService {
         // ---------- 问答引擎：单引擎（只保留 AgentScope 框架运行时）----------
         // 手写运行时与 ab 灰度分流已下线；框架会话状态目录：AgentScope 默认写 ~/.agentscope/state/**，
         // 在问渠受管数据目录之外（容器里等于丢）
-        d.put("chat.agentscopeStateDir", System.getProperty("user.dir") + "/user-data/agentscope");
+        d.put("chat.agentscopeStateDir", env("AI_AGENTSCOPE_STATE_DIR",
+                System.getProperty("user.dir") + "/user-data/agentscope"));
         d.put("chat.agentscopeMaxIters", "12");            // 框架引擎单轮推理步数上限（ReAct 循环；框架默认 10，问渠显式 12）
         // chat.agentscopeMaxContextTokens 已取消（2026-10-18）：该键原以为能控制框架的压缩阈值，
         // 实测框架里 .maxContextTokens(...) 是 WorkspaceContextMiddleware 的「工作区材料注入预算」
@@ -312,15 +313,14 @@ public class ConfigService {
         // model.getContextWindowSize() 推导（CompactionMiddleware: window-reserved 20k）。
         // 用户的窗口档位现落 OpenAIChatModel.contextWindowSize（AgentscopeChatEngine.modelContextWindow）。
         // 数据库遗留该键不影响行为（无读取点），设置页 debug 面板若无对应 schema 行也不会显示。
-        // 框架引擎状态存 Redis（多副本部署时开：副本间共享 stateStore，待办答复/断线续跑才能落到同一副本）
-        // 登记这一行是为了与 schema 的 def=false 对齐：此前只在 schema 声明、defaults() 没登记，
-        // 读取点 `get()` 落空返回 ""，行为恰好也是关（读点用 "true".equalsIgnoreCase 判定），
-        // 所以不是静默失效；但设置页「恢复默认」无配置行可复位，三层口径不齐。默认关，保持原行为不变。
-        d.put("chat.agentscopeRedisEnabled", "false");
+        // 框架引擎状态恒存 Redis（RedisAgentStateStore），本地文件方案已退役：
+        // 容器一重建本地文件就没了，会话上下文随之丢失，多轮对话退化成每轮独立问答
+        // （2026-10-21 线上事故：模型上一轮刚给过数据，下一轮却说没有相关数据）。
+        // 因此 Redis 是硬依赖——连不上时应用启动失败，不静默退回本地实现。
         // 连接 host/port/password 复用 spring.data.redis（REDIS_HOST/REDIS_PORT/REDIS_PASSWORD），
         // 不再作为 c_ai_config 字段；这里只保留一个 key 前缀，避免与缓存/配置广播混用命名空间。
         d.put("chat.agentscopeRedisPrefix", "agentscope:session:");
-        // 会话事件日志归档：与上面 agentscopeRedisEnabled 是同一个坑（schema 声明了、defaults() 漏登记）。
+        // 会话事件日志归档：归档目录跟着 chat.agentscopeStateDir 走（留空=落在它旁边的 session-archive/）。
         // 漏登记不只是「库里少一行」：snapshot() 只遍历 defaults()，这些键的值永远不回显，
         // 页面按 schema 的 def 显示初值，而脏检测只比页面上出现过的值——于是归档开关打开后
         // 在界面上既看不到、也关不掉（库里那行 true 一直留着）。四个键一并登记，读取点

@@ -106,6 +106,11 @@ services:
       OCR_MINERU_URI: ${OCR_MINERU_URI:-}
       OCR_MINERU_BACKEND: ${OCR_MINERU_BACKEND:-pipeline}
       OCR_TIMEOUT_MS: ${OCR_TIMEOUT_MS:-600000}
+      # 框架工作区目录（个人记忆 MEMORY.md/memory/、技能、plans）：指到挂载卷内，
+      # 否则容器一重建记忆就没了（会话上下文恒存 Redis，不受此影响）。
+      AI_AGENTSCOPE_STATE_DIR: /app/data/agentscope
+      # 应用日志目录：指到挂载卷内，否则容器一重建日志就随容器没了（排障时最需要它的时候往往刚重建过）
+      LOG_DIR: /app/data/logs
     volumes:
       - app-data:/app/data
     # app 容器内存上限：防堆外/元空间增长挤占同机中间件；堆 6g + 堆外余量 ≈ 8g
