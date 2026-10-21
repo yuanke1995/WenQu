@@ -456,15 +456,13 @@ public class ConfigService {
         d.put("chat.planTimeoutMs", "600000");             // 计划模式：计划批准等待上限(ms)（人工等待不计入整轮预算）；超时按未批准终止本轮
         d.put("chat.sseTimeoutMs", "300000");              // H4：问答 SSE 超时(ms)
         d.put("chat.askTimeoutMs", "600000");              // 人在回路提问卡等待上限(ms)（2026-10-09 补：schema 早已声明，defaults 漏登记 → 设置页改了回显不出）
-        // 目标模式（Goal Mode）：总闸关时工具面不挂、任务态投影不开、界面无入口三件事同时成立。
-        // 配置只留平台一档，不下放个人（个人发起目标时可在请求里在此基础上往下收，见 GoalService.start）
-        d.put("chat.goalMode.enabled", "true");            // 目标模式总闸（平台全局；智能体级 goal_enabled 三态再收一层）：默认开（2026-10-21 由 false 改 true）
-        d.put("chat.goalMode.defaultTurns", "0");          // 单目标轮数上限默认：0=不限（50 轮硬闸兜底，见 schema）
-        d.put("chat.goalMode.defaultTokens", "0");         // 单目标 token 上限默认：0=不限（运行预算只留 minutes）
-        d.put("chat.goalMode.defaultToolCalls", "0");      // 单目标工具调用上限默认：0=不限
-        d.put("chat.goalMode.defaultMinutes", "120");      // 单目标机器分钟上限默认（2 小时；人在回路等待不计）——唯一保留的运行预算
-        d.put("chat.goalMode.verifyTimeoutSeconds", "60"); // 单条验收标准验证器超时(秒)→ERROR
-        d.put("chat.goalMode.requirementProposals", "true"); // 是否给模型 task_requirement_propose（候选提议；确认仍只能用户点）
+        // 目标模式（Goal Mode）的七个参数已全部退役（2026-10-21）：不设边界。
+        // chat.goalMode.enabled 平台总闸去掉——「这个助手能不能被交出去」只由智能体级 goal_enabled 那一格决定；
+        // 四条预算上限（轮数/token/工具调用/机器分钟）连同 BUDGET_EXCEEDED 撞闸、80% 预警、加预算动作一起退场，
+        // 目标跑不跑得完只看验收标准验没验过、以及用户什么时候按暂停或就此收尾；
+        // verifyTimeoutSeconds 降为 GoalService.VERIFY_TIMEOUT_SECONDS 常量（防验证器挂死，不是管理员旋钮）；
+        // requirementProposals 恒开（候选提议不等于批准，采纳仍只能用户逐条点）。
+        // 存量库里的旧行由 schema.sql 的退役键清理幂等删除。
         d.put("chat.goalTimeoutMs", "600000");             // 目标确认卡等待上限(ms)：与计划卡是两回事，不复用 chat.planTimeoutMs
         // 调试显示总开关（归属徽标 / 路由提示 / 降级提示）。默认开（2026-10-18 由 false 改 true）：
         // 它管的已不只是排障项——「无命中 / 改写失败 / 图片剔除」这类降级信息默认不显示，等于系统性地
@@ -616,6 +614,9 @@ public class ConfigService {
         // 远端 provisioner 部署下这里读不到，接口会如实返回「不可用」而不是假装空列表）
         d.put("sandbox.userDataHostDir", System.getProperty("user.dir") + "/user-data");
         d.put("sandbox.projectWorkdirEnabled", "false");
+        // 工作区页往目录里上传文件的单文件上限（MB）。服务端代码再钳到 256：
+        // spring 的 multipart 上限是 256MB，写更大只会让请求在容器那一层变成一句没有原因的失败。
+        d.put("sandbox.projectUploadMaxMb", "100");
         d.put("tool.sandbox.enabled", "false");                   // 沙盒 API / 工作流节点开关（不是聊天里的文件/命令工具）
         // ---------- 权限档位（P2：沙盒执行档 × 工具执行确认，捆成具名预设）----------
         // 档位取值见 PermissionPreset：research=只读调研 standard=常规 autonomous=全自主。
@@ -666,9 +667,10 @@ public class ConfigService {
         // 用户长期记忆（跨会话个性化）
         d.put("memory.enabled", "true");                   // 总开关：关掉后全平台问答不再自动提炼记忆（已沉淀的仍会注入）
         d.put("memory.flushThrottleMinutes", String.valueOf(ConfigDefaults.MEMORY_FLUSH_THROTTLE_MINUTES));
-        d.put("memory.consolidationMaxTokens", String.valueOf(ConfigDefaults.MEMORY_CONSOLIDATION_MAX_TOKENS));
         d.put("memory.maxMdTokens", String.valueOf(ConfigDefaults.MEMORY_MAX_MD_TOKENS));
-        d.put("memory.dailyRetentionDays", String.valueOf(ConfigDefaults.MEMORY_DAILY_RETENTION_DAYS));
+        // memory.consolidationMaxTokens / memory.dailyRetentionDays 已退役：容量只留硬上限一个旋钮，
+        // consolidation 的提示词目标由它按 2/3 推导；日账保留期沿用框架默认 90 天。
+        // 存量行由 schema.sql 的退役键清理幂等删除。
         // 已退役：agent.autoRoute / agent.routeTimeoutMs（派遣路由的两项）。P5 换成 agent-as-tool 后这两项
         // 的读取点随 SubAgentOrchestrator 一起归零——见本方法上方那段「已退役」清单的统一说明。
         d.put("agent.consultMaxPerTurn", String.valueOf(ConfigDefaults.AGENT_CONSULT_MAX_PER_TURN));   // 一轮最多咨询几位助手

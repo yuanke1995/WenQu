@@ -68,7 +68,7 @@ public class AgentxConfiguration {
         // 不归 Spring 管，@PostConstruct 不会跑，自检得显式做）。
         engine.requireRedisForSessionState();
         // 配置热监听同理要显式注册（@PostConstruct 在 new 出来的实例上不执行）：
-        // memory.* 与 chat.goalMode.* 变了要标脏重建常驻实例，否则「改了没生效」
+        // memory.* 与目标确认等待时间变了要标脏重建常驻实例，否则「改了没生效」
         engine.registerMemoryConfigHotReload();
     }
 }

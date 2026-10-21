@@ -51,20 +51,8 @@ public class Goal {
     /** 每标准最新一份验证 JSON {requirementId,outcome,verifierId,reason,actionId,binding,recordedAt} */
     private String verificationsJson;
 
-    /** 状态: DRAFT/CLARIFYING/AWAITING_CONFIRMATION/RUNNING/VERIFYING/WAITING_INPUT/PAUSED/BUDGET_EXCEEDED/ACHIEVED/ENDED_INCOMPLETE/FAILED/CANCELLED */
+    /** 状态: DRAFT/CLARIFYING/AWAITING_CONFIRMATION/RUNNING/VERIFYING/WAITING_INPUT/PAUSED/ACHIEVED/ENDED_INCOMPLETE/FAILED/CANCELLED */
     private String status;
-
-    /** 轮数上限（0=不限） */
-    private Integer budgetTurns;
-
-    /** token 上限（0=不限） */
-    private Long budgetTokens;
-
-    /** 工具调用上限（0=不限） */
-    private Integer budgetToolCalls;
-
-    /** 机器分钟上限（0=不限） */
-    private Integer budgetMinutes;
 
     /** 已用轮数 */
     private Integer usedTurns;
@@ -93,7 +81,7 @@ public class Goal {
     /** 已跑轮计数（幂等键 goal:{id}:{n} 的 n） */
     private Integer turnCounter;
 
-    /** 终态原因: achieved/budget/cancelled/failed/incomplete */
+    /** 终态原因: achieved/cancelled/failed/incomplete */
     private String endReason;
 
     /** 创建时刻 */

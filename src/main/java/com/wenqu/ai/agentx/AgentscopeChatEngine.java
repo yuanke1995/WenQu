@@ -243,9 +243,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 sessions.markAllConfigStale();
                 log.info("[agentx] 记忆配置已变更 {}，活跃会话下一轮重建实例", changed);
             }
-            // 目标模式配置同理：投影参数/候选工具/预算默认都是 build 期或每轮现读的，
-            // 投影开关变了不重建就是「库里开着、实例没投影」——界面与模型看到的不是一套
-            if (changed.stream().anyMatch(k -> k.startsWith("chat.goalMode.") || k.equals("chat.goalTimeoutMs"))) {
+            // 目标确认等待时间变了要重建（确认卡倒计时按它算）；目标模式本身已无平台配置项，
+            // 开关只剩智能体级那一格（改它走 agent 重建那条路）
+            if (changed.stream().anyMatch(k -> k.equals("chat.goalTimeoutMs"))) {
                 sessions.markAllConfigStale();
                 log.info("[agentx] 目标模式配置已变更 {}，活跃会话下一轮重建实例", changed);
             }
@@ -926,7 +926,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 截断与卡死排障要看的是墙钟，成本与性能看的是机器时间——少一个数就必然有人拿错一个数对账。
         log.info("[TURN] 本轮收口: session={} 机器耗时={}ms 墙钟={}ms 人工等待={}ms",
                 cmd.getSessionId(), machineMs, wallMs, humanWaitMs);
-        // 目标模式轮终一拍：记账（四条预算）→ 80% 预警 → 撞闸 → 验收 → 续跑。
+        // 目标模式轮终一拍：记账 → 验收 → 人工核验关卡 →（由 continueAfterTurn 决定）续跑。
         // 放在 finish 之前：finish 会落库并发 done，目标态要先于那一帧定下来，前端才看得到一致的状态。
         // 工具调用数取本轮实例自己的步数闸（taken 是判过即占一步的口径，含被拒的）。
         int goalToolCalls = 0;
@@ -1149,9 +1149,20 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
     /** 占到跟随位才起这一跑：同一条会话不许有两个循环对着跟（各读一份事件流就会各落一条助手消息）。 */
     private void startFollowing(Following f, AgentSession.Task current) {
+        startFollowing(f, current, () -> {
+        });
+    }
+
+    /**
+     * 同上，外加一条「这一跑没起来 / 已经跑完」的通知。
+     * <p>后台目标轮要把自己登记在运行总线上，而总线靠 {@code turnAlive} 判生死：没有这个回调，
+     * 抢位失败那一支（下面直接 return）会把登记留在总线上，前端探测到一条永远不会结束的「在跑」。
+     */
+    private void startFollowing(Following f, AgentSession.Task current, Runnable onSettled) {
         String sessionKey = sessions.key(f.cmd());
         if (!sessions.reserveFollower(sessionKey)) {
             log.info("[agentx] 这一轮已经有跟随者在跑，不重复起 session={}", f.cmd().getSessionId());
+            onSettled.run();
             return;
         }
         // 接回的那一轮也要占住槽位：工具与脚本通道读的是「当前轮」，不 begin 就会拿到上一轮
@@ -1176,7 +1187,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 后台目标轮跑完：从「有后台轮在飞」里摘掉这条会话（用户插话才不会再误判成让位场景）
                 if (turnId != null && turnId.startsWith("goal:")) {
                     backgroundGoalTurns.remove(f.cmd().getSessionId());
-                    // 跟随位释放之后再接下一轮（放在收尾里发会被「已有跟随者」挡掉，目标循环走不到第三轮）
+                }
+                onSettled.run();
+                // 跟随位释放之后再接下一轮（放在收尾里发会被「已有跟随者」挡掉，目标循环走不到第三轮）
+                if (turnId != null && turnId.startsWith("goal:")) {
                     goalService.continueAfterTurn(f.cmd().getSessionId(), f.cmd().getUserId());
                 }
             }
@@ -1207,19 +1221,44 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         }
         try {
             AgentSession.Task task = f.session().submit("goal:" + goal.getId() + ":" + n, input);
-            // **不另开总线 run**：这一轮是后台轮（没有浏览器通道），开了会顶掉当前轮那条 run
-            // （ChatRunBus.open 是「同会话一条」的替换语义），当前轮的 done 帧与观众全被切掉。
-            // 沿用「重启后续跑」那条既有路的做法：帧走收集型通道（账本照落、结果照入库），
-            // 目标态另有一条 goal_state 帧专门送面板——那才是跨轮要看的东西。
-            // 前端要接这一轮的实时流时按 goal_turn 帧去探测（/chat/run 探到 running 才接）。
-            goalService.emitTurn(goal, n, task.turnId(), f.channel());
             backgroundGoalTurns.add(sessionId);
-            startFollowing(f, task);
+            // 先登记总线再发帧：goal_turn 到浏览器时，它探测 /chat/run 必须已经探得到这一轮
+            java.util.concurrent.atomic.AtomicBoolean alive = openGoalTurnRun(f, sessionId, uid, turnId);
+            goalService.emitTurn(goal, n, task.turnId(), f.channel());
+            startFollowing(f, task, () -> alive.set(false));
         } catch (RuntimeException e) {
             log.warn("[GOAL] 续跑轮提交失败: goal={} n={} {}", goal.getId(), n, e.toString());
             goalService.markContinueFailed(goal, e.getMessage());
             sessions.releaseFollower(sessions.key(f.cmd()));
         }
+    }
+
+    /**
+     * 把后台目标续跑轮登记上运行总线——不登记的话这一轮只进账本，浏览器上什么都看不见，
+     * 用户得刷新才读得到（真机实测：目标跑了 4 轮、正文全在库里，聊天区一颗气泡都没长）。
+     *
+     * <p>当初「刻意不另开总线 run」的顾虑仍然成立：{@code ChatRunBus.open} 是同会话<b>替换</b>语义，
+     * 顶掉一条活着的用户轮会把它的 done 帧与观众一起切掉。所以这里只顶「上一轮目标轮」——那一条
+     * 已经发过 done、正等巡检回收；探到的是用户自己那一轮就照旧不登记，这一轮仍按账本回显。
+     *
+     * <p>宽限回调恒返回 false：后台轮本来就没有观众，掐它等于把用户定下的目标半路作废，
+     * 该由谁收口是目标自己的预算说了算（见 {@code GoalService#kickContinuation}）。
+     *
+     * @return 「这一轮还活着」的开关，跟随跑完由调用方落下——总线靠它回收登记
+     */
+    private java.util.concurrent.atomic.AtomicBoolean openGoalTurnRun(Following f, String sessionId,
+                                                                      String uid, String turnId) {
+        java.util.concurrent.atomic.AtomicBoolean alive = new java.util.concurrent.atomic.AtomicBoolean(true);
+        if (!chatRunBus.enabled() || uid == null || uid.isBlank()) return alive;
+        com.wenqu.ai.service.ChatRunBus.Run prev = chatRunBus.running(sessionId);
+        if (prev != null && !prev.turnId().startsWith("goal:")) {
+            log.info("[GOAL] 用户自己那一轮还在跑，后台轮不顶总线: session={}", sessionId);
+            return alive;
+        }
+        Map<String, Object> pending = Map.of("running", true);
+        chatRunBus.open(sessionId, turnId, uid, f.channel().emitter(), () -> pending,
+                () -> false, alive::get);
+        return alive;
     }
 
     /**
@@ -2029,6 +2068,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 目标模式开关同样烤在实例里（taskContext 投影参数是 build 期装配）：智能体改了
         // goal_enabled 不重建，就会出现「库里开着、实例没投影」或反过来——界面与模型看到的不是一套
         key = key + "|goal=" + (row != null && row.getGoalEnabled() != null ? row.getGoalEnabled() : "-");
+        // 个人「自动提炼记忆」开关也是 build 期装配（memoryConfig 还是 disableMemoryHooks）：不并进
+        // 指纹的话，关掉后要等下一次重建才停，与个人设置里「关掉后下一轮起才停」的说法不符。
+        key = key + "|mem=" + orgService.memoryFlushEnabled(cmd.getUserId());
         // 注意：思考开关/上下文窗口档也烤在实例里，但续跑入口（openForContinuation）重建的
         // ChatCommand 不带这两个值，若把它们并进 key，续跑会按默认档重建、丢掉用户原来的选择。
         // 因此这里只并入可复原的档位；思考/窗口档的变更留给后续「按调用传 GenerateOptions」那一刀。
@@ -2637,44 +2679,46 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     /**
-     * 记忆提炼配置：两层闸都落在这里——系统设置「用户长期记忆 → 总开关」关掉时全平台不再提炼，
-     * 个人设置里那个开关关掉时只对本人生效。关掉的都只是每轮收尾的那次提炼
-     * （框架 {@code FlushTrigger.never()} 注释原文：*"disables only the per-call flush"*），
-     * 已经沉淀下来的 {@code MEMORY.md} 仍照常注入——与两处界面「仅关生成，不关注入」的说明对齐。
+     * 记忆提炼配置：只在平台总闸与个人开关都开着时装配（见 {@code buildAgent} 的记忆闸）。
+     * 任一关掉时走框架 {@code disableMemoryHooks()}：flush 与后台维护都不注册，模型侧也不会
+     * 再收到「问答后自动提炼」的引导——只把 {@code FlushTrigger} 改成 never 会留下这句假承诺，
+     * 后台合并也照跑。已经沉淀下来的 {@code MEMORY.md} 仍照常注入，与两处界面
+     * 「仅关生成，不关注入」的说明对齐。
      *
      * <p>P5 追加三件：① default 的每轮 ALWAYS 改成可配节流（默认 10 分钟），否则每轮问答
      * 都多一次主模型提炼调用；② prompt 追加问渠规则（中文、只记持久事实、不记密钥/探针）；
      * ③ 记忆模型包 MeteredModel（kind=memory），成本进台账。{@code MEMORY.md} 的硬上限
      * 不在这里——它落在写入文件系统那一层（{@code MemoryCappedFilesystem}）。
+     *
+     * <p>容量只有一个旋钮 {@code memory.maxMdTokens}：consolidation 的提示词目标按它的 2/3
+     * 推导（默认 3000 → 2000），不再单列「目标上限」——两个数要人肉保证大小关系，配反了
+     * 每次合并都会被裁。日账保留期同理沿用框架默认 90 天，不单独配置。
      */
     private io.agentscope.harness.agent.memory.MemoryConfig memoryConfig(
             ChatCommand cmd, io.agentscope.core.model.Model baseModel, String modelRef) {
-        boolean on = configService.getBoolean("memory.enabled", true)
-                && orgService.memoryFlushEnabled(cmd.getUserId());
         io.agentscope.core.model.Model memoryModel = new MeteredModel(baseModel, usageLedger,
                 com.wenqu.ai.util.UsageAttr.of(cmd.getUserId(), cmd.getSessionId(), null, "memory"), modelRef);
-        io.agentscope.harness.agent.memory.MemoryConfig.Builder b =
-                io.agentscope.harness.agent.memory.MemoryConfig.builder()
-                        .model(memoryModel)
-                        .flushPrompt(com.wenqu.ai.memory.MemoryPrompts.flushPrompt())
-                        .consolidationPrompt(com.wenqu.ai.memory.MemoryPrompts.consolidationPrompt())
-                        .consolidationMaxTokens(Math.max(500, configService.getInt(
-                                "memory.consolidationMaxTokens",
-                                com.wenqu.ai.config.ConfigDefaults.MEMORY_CONSOLIDATION_MAX_TOKENS)))
-                        .dailyFileRetentionDays(Math.max(7, configService.getInt(
-                                "memory.dailyRetentionDays",
-                                com.wenqu.ai.config.ConfigDefaults.MEMORY_DAILY_RETENTION_DAYS)));
-        if (!on) {
-            return b.flushTrigger(
-                    io.agentscope.harness.agent.memory.MemoryConfig.FlushTrigger.never()).build();
-        }
+        int maxMdTokens = Math.max(500, configService.getInt("memory.maxMdTokens",
+                com.wenqu.ai.config.ConfigDefaults.MEMORY_MAX_MD_TOKENS));
         int minutes = configService.getInt("memory.flushThrottleMinutes",
                 com.wenqu.ai.config.ConfigDefaults.MEMORY_FLUSH_THROTTLE_MINUTES);
-        return b.flushTrigger(minutes <= 0
+        return io.agentscope.harness.agent.memory.MemoryConfig.builder()
+                .model(memoryModel)
+                .flushPrompt(com.wenqu.ai.memory.MemoryPrompts.flushPrompt())
+                .consolidationPrompt(com.wenqu.ai.memory.MemoryPrompts.consolidationPrompt())
+                // 目标值由硬上限推导（默认 3000 → 2000），留 1/3 余量；下限 500 防 0。
+                .consolidationMaxTokens(Math.max(500, maxMdTokens * 2 / 3))
+                .flushTrigger(minutes <= 0
                         ? io.agentscope.harness.agent.memory.MemoryConfig.FlushTrigger.always()
                         : io.agentscope.harness.agent.memory.MemoryConfig.FlushTrigger.throttled(
                                 java.time.Duration.ofMinutes(minutes)))
                 .build();
+    }
+
+    /** 长期记忆写入口径：平台总闸 ∧ 个人开关（游客/子轮在建实例时另有硬闸，不走这里）。 */
+    private boolean memoryOn(ChatCommand cmd) {
+        return configService.getBoolean("memory.enabled", true)
+                && orgService.memoryFlushEnabled(cmd.getUserId());
     }
 
     /**
@@ -2684,6 +2728,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 让那次点击真的在下一次提问前把旧对话折进去（框架没有「就地压一次」的入口，压缩长在推理循环前）。
      * <p>此前框架默认阈值另有可配项（chat.agentscopeCompactTriggerMessages，0＝框架默认），默认态
      * 与框架默认逐字相同，属「框架已有限制、参数只留个默认就用不上的改口」，已取消。
+     * <p>记忆关闭（平台/个人）或游客/子轮时显式 {@code flushBeforeCompact(false)}：框架的
+     * {@code FlushTrigger.never()} 只管每轮收尾，压缩触发时仍会按默认 {@code true} 提炼一次
+     * （{@code MemoryFlushMiddleware} 注释原文：*"The CompactionMiddleware and overflow-recovery
+     * paths still run their own flush when they fire."*）。压缩前的 flush 不走 MemoryConfig，
+     * 只能在这里关；溢出兜底在 CompactionMiddleware 内复制同一开关，因此一并生效。
      * <p>摘要模型包 MeteredModel（kind=compress）：压缩平时不常跑，但一跑就是一次不小的输入，
      * 不记账就永远不知道它花在哪。
      */
@@ -2694,6 +2743,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 modelRef);
         io.agentscope.harness.agent.memory.compaction.CompactionConfig.Builder b =
                 io.agentscope.harness.agent.memory.compaction.CompactionConfig.builder().model(compressModel);
+        // 只关 MemoryConfig 的 per-call flush 会漏掉压缩前这一次；游客/子轮本就不写记忆，一并关。
+        if (cmd.isGuestMode() || cmd.branchTurn() || !memoryOn(cmd)) {
+            b.flushBeforeCompact(false);
+        }
         String key = sessions.key(cmd);
         if (!sessions.takeCompactRequest(key)) {
             return b.build();
@@ -2708,48 +2761,18 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 目标模式的任务上下文投影参数（build 期装配，判据与界面入口同源）。
      * <p>关时返回 {@code disabled()}——那时投影段一个字节都不出现（§16 夹具 9：关掉还喂目标进模型
      * = 又造出一处「提示词教了、能力没挂」的漂移）。
-     * <p>{@code requirementProposals} 关时只投影不挂 {@code task_requirement_propose}：
-     * 框架 builder 里 proposals 与 requirements 有耦合，但「教了模型一件它没有的能力」这条老坑
-     * 比多一段 REQUIREMENTS 投影严重得多——投影是只读信息，工具面是能力承诺。
+     * <p>候选提议（{@code task_requirement_propose}）恒挂：它只是让助手能说「我理解这条标准是这样」，
+     * 采纳与否仍只能用户在确认卡上逐条点，没有自动放行这条路。
      */
     private io.agentscope.harness.agent.context.TaskContextOptions goalTaskOptions(AgentBinding binding) {
         if (!goalService.enabledFor(binding.row())) {
             return io.agentscope.harness.agent.context.TaskContextOptions.disabled();
         }
-        var b = io.agentscope.harness.agent.context.TaskContextOptions.builder()
+        return io.agentscope.harness.agent.context.TaskContextOptions.builder()
                 .includeRequirements()
-                .includeVerificationResults();
-        if (goalService.requirementProposals()) b.allowRequirementProposals();
-        return b.build();
-    }
-
-    /**
-     * 预算预警（80%）的 runtime 上下文源：每次推理前现读库，所以常驻实例也能热更。
-     * <p>与面板黄条同源（{@code GoalCopy.budgetWarnBlock}）——模型看到的和用户看到的是一句话，
-     * 不是两套口径。纯计算轮没有目标时返回空列表（不是空 Mono：那会被判成 source 故障）。
-     */
-    private io.agentscope.harness.agent.context.ContextSource goalBudgetSource() {
-        return request -> {
-            try {
-                com.wenqu.ai.model.Goal goal = goalService.activeGoal(request.sessionId());
-                if (goal == null || goalService.budgetExhausted(goal)
-                        || goalService.budgetRatio(goal) < 0.8) {
-                    return reactor.core.publisher.Mono.just(List.of());
-                }
-                int turnsLeft = goal.getBudgetTurns() > 0
-                        ? goal.getBudgetTurns() - goal.getUsedTurns() : 0;
-                long tokensLeft = goal.getBudgetTokens() > 0
-                        ? goal.getBudgetTokens() - goal.getUsedTokens() : 0;
-                return reactor.core.publisher.Mono.just(List.of(
-                        io.agentscope.harness.agent.context.ContextBlock.runtime("goal-budget",
-                                com.wenqu.ai.service.GoalCopy.budgetWarnBlock(goal.getObjective(),
-                                        goalService.remainingCriteria(goal), turnsLeft, tokensLeft))));
-            } catch (Exception e) {
-                // 上下文源失败不许把一轮打挂：当没有预警处理
-                log.warn("[GOAL] 预算上下文源读取失败: session={} {}", request.sessionId(), e.getMessage());
-                return reactor.core.publisher.Mono.just(List.of());
-            }
-        };
+                .includeVerificationResults()
+                .allowRequirementProposals()
+                .build();
     }
 
     /** 框架状态存储（验收写结论用：GoalVerificationRegistry 不能自己建第二份）。 */
@@ -2859,16 +2882,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 目标模式（Goal Mode）：把目标/已确认要求/验证结果投进模型输入。
                 // 投影参数与框架 enableTaskList **无关**——已核实 sources：投影由 harness 侧
                 // HarnessContextBuilder 拿 ContextSources.taskContext() 独立驱动（:511-512），
-                // task_requirement_propose 由 ReActAgent.enableTaskRequirements(requirementProposals)
+                // task_requirement_propose 由 ReActAgent.enableTaskRequirements(...)
                 // 单独注册（HarnessAgent:2780），两者都不看 taskListEnabled。所以开着目标投影
                 // 也不会把框架 todo_write 与 in_progress/completed 词面引进模型上下文，
                 // 不会和问渠 writeTodo 的 doing/done 撞车（上面 enableTaskList 保持关的理由不变）。
                 // 判据与界面入口同源（goalService.enabledFor）——关掉就三件事同时不成立：
                 // 不投影、不挂候选工具、界面无入口，杜绝「教了模型一件它没有的能力」。
                 .taskContext(goalTaskOptions(binding))
-                // 预算预警（80%）的 runtime 上下文块：源在每次推理前现读 DB，常驻实例也能热更。
-                // 让模型下一轮自己收敛范围、停新委派、优先可交付部分（框架文档要求）。
-                .contextSource("goal-budget", goalBudgetSource())
                 // 任务清单：**不开**框架的 enableTaskList，只借它的 state 做存储。
                 // 原因：开它会同时注册 todo_write 工具并由 TaskReminderMiddleware 每轮教模型用
                 // 「in_progress/completed」这套词，而问渠挂的是 writeTodo（教的是 doing/done，
@@ -2967,15 +2987,17 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 .artifactDeliveryTarget(new com.wenqu.ai.sandbox.WenquArtifactDeliveryTarget(artifactService))
                 .disableWebTools();
 
-        // 记忆闸（P5 收口）：三种轮次三种口径，必须在 build 期定——MemoryConfig 烤在常驻实例里。
+        // 记忆闸（P5 收口）：三种轮次三种口径，必须在 build 期定——MemoryConfig / disableMemoryHooks
+        // 都烤在常驻实例里。
         // ① 游客/分享/MCP：userId 是发布者（检索可见性按他执行），若不关记忆，发布者的 MEMORY.md
         //    会被注入访客对话，访客的话也会写进发布者日账。两个开关必须同时关：只关 hooks 仍会注入。
         // ② 子智能体/咨询轮：只读不写——保留 MEMORY.md 注入与 memory_* 工具（子轮要用户上下文），
         //    但关掉 flush 与后台合并；否则每派一支就多一次提炼调用，内部推演还会沉淀成用户事实。
-        // ③ 正常用户轮：平台/个人开关 + 节流 + 硬上限（见 memoryConfig）。
+        // ③ 正常用户轮：平台总闸与个人开关都开着才挂 memoryConfig；任一关掉走 disableMemoryHooks
+        //    （与②同一条路：不注册 flush/维护，模型侧也不再有「自动提炼」引导，已沉淀的仍注入）。
         if (cmd.isGuestMode()) {
             agentBuilder.disableMemoryHooks().disableMemoryTools();
-        } else if (cmd.branchTurn()) {
+        } else if (cmd.branchTurn() || !memoryOn(cmd)) {
             agentBuilder.disableMemoryHooks();
         } else {
             agentBuilder.memory(memoryConfig(cmd, baseModel, hooks.modelRef()));
@@ -3156,7 +3178,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         String lastRetrieved = retrievedJson(cmd, pool, recording);
         channel.emit(RunEventType.RETRIEVED, lastRetrieved);
         String artifactList = com.alibaba.fastjson2.JSON.toJSONString(
-                artifactService.takeArtifacts(cmd.getSessionId()));
+                artifactService.settleArtifacts(cmd.getSessionId()));
         String artifactsJson = "[]".equals(artifactList) ? null : artifactList;
         String assistantMessageId = persist ? sessionService.appendMessage(cmd.getSessionId(), "assistant",
                 body, turnImages,

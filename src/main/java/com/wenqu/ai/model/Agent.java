@@ -86,7 +86,7 @@ public class Agent {
     private Integer toolWebsearch;
 
     /**
-     * 目标模式开关（资源级三态）: 1=开 0=关 NULL=继承平台 chat.goalMode.enabled。
+     * 目标模式开关（资源级）: 1=开 0=关 NULL=开。平台级总闸已去掉，这一格就是唯一判据。
      * <p>与任务上下文投影/候选要求工具<b>同源判据</b>——关=不投影、不挂 task_requirement_propose、
      * 界面无入口（关掉还喂目标进模型 = 又造出一处「提示词教了、能力没挂」的漂移）。
      */
@@ -95,7 +95,8 @@ public class Agent {
     /**
      * 有副作用工具（沙盒/MCP）执行审批（人在回路）：auto=自动执行（默认）、
      * ask=模型每次调用前暂停等用户确认（拒绝/超时以错误结果回给模型继续）、off=禁用这两类工具。
-     * NULL=auto。游客分享会话本就不暴露这两类工具，与审批模式无关。
+     * NULL=跟随权限档位的建议值（只读调研→确认、常规→不强制、全自主→自动）。
+     * 游客分享会话本就不暴露这两类工具，与审批模式无关。
      */
     private String toolApprovalMode;
 

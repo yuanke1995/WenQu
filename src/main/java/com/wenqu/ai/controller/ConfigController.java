@@ -86,10 +86,6 @@ public class ConfigController {
         // 「检索调试」「加入评测集」这类必 403 的管理入口仍只在管理员侧单独判定，不复用本值。
         Map<String, Object> ui = new LinkedHashMap<>();
         ui.put("debugEntry", configService.getBoolean("chat.retrievalDebugEnabled"));
-        // 目标模式总闸（平台全局）：入口按钮、目标面板、待确认卡的显隐都认这一份。
-        // 与后端同源判据（GoalService.enabled）——界面露了入口而模型侧没挂能力，就是「教了用户一件
-        // 没有的能力」那种漂移；关时按钮/面板/确认卡三处同时不出现
-        ui.put("goalMode", configService.getBoolean("chat.goalMode.enabled"));
         resp.put("ui", ui);
 
         return ResultJson.ok(resp);

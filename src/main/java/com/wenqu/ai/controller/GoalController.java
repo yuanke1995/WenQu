@@ -22,7 +22,7 @@ import java.util.Map;
  * 目标模式 REST（与 tool-approval / ask-user / plan-approval 三族逐字同形）。
  *
  * <p>四张卡不许互相顶班：计划卡说「打算怎么做」，清单说「现在做到哪」，提问卡问「这一步你拍不拍板」，
- * 目标卡定「这件事什么算完、还剩多少预算」——所以它是独立的一族端点，不挂靠 ask-user。
+ * 目标卡定「这件事什么算完、凭什么算过」——所以它是独立的一族端点，不挂靠 ask-user。
  */
 @RestController
 @RequestMapping("/api/ai/chat")
@@ -34,10 +34,10 @@ public class GoalController {
         this.goalService = goalService;
     }
 
-    @Operation(summary = "设为目标", description = "把一件事设为目标：{sessionId,objective,criteria:[{kind,text,verifierId,verifierParams}],"
-            + "budget:{turns,tokens,toolCalls,minutes},action:\"start\"}。创建后进「待确认」，用户在目标卡上逐条"
-            + "勾选验收标准并确认才开始（确认只能由用户点，平台没有自动放行这条路）。预算只往下收：请求值超过"
-            + "平台默认/个人上限时按上限执行。")
+    @Operation(summary = "创建目标", description = "把一件事交给目标模式：{sessionId,objective,criteria:[{kind,text,verifierId,verifierParams}],"
+            + "startNow:true,action:\"start\"}。startNow=true 立即开始：没带标准时首轮由助手起草、自动采纳"
+            + "（可改），不再弹确认卡；startNow=false 走旧确认卡路径（逐条拍板后才开始）。"
+            + "目标不设轮数/token/工具/时长上限。")
     @PostMapping("/goal")
     public ResultJson<Map<String, Object>> start(@RequestBody Map<String, Object> body) {
         String uid = RequestUser.uid();
@@ -45,16 +45,15 @@ public class GoalController {
         if (sessionId == null || sessionId.isBlank()) {
             return ResultJson.error("缺少 sessionId");
         }
-        if (!goalService.enabled()) {
-            return ResultJson.error("目标模式未开启（平台开关 chat.goalMode.enabled 为关）");
-        }
+        boolean startNow = boolOf(body.get("startNow"));
         try {
             Goal goal = goalService.start(sessionId, uid, str(body.get("agentId")),
                     str(body.get("objective")),
                     listOf(body.get("criteria")),
-                    mapOf(body.get("budget")),
+                    startNow,
                     null);
-            return ResultJson.ok(goalService.view(goal, null), "目标已创建，等待确认验收标准");
+            return ResultJson.ok(goalService.view(goal, null),
+                    startNow ? "目标已开始" : "目标已创建，等待确认验收标准");
         } catch (IllegalArgumentException e) {
             return ResultJson.error(e.getMessage());
         } catch (IllegalStateException e) {
@@ -62,8 +61,9 @@ public class GoalController {
         }
     }
 
-    @Operation(summary = "目标动作", description = "confirmCriteria=逐条确认验收标准并开始；pause=暂停；resume=继续"
-            + "（预算仍满则拒绝）；extendBudget=加预算；verifyNow=现在验收；finish=预算内主动收尾；cancel=取消。"
+    @Operation(summary = "目标动作", description = "confirmCriteria=逐条确认验收标准并开始；pause=暂停；resume=继续；"
+            + "edit=就地改验收标准（{criteria:[{key,text}]}，目标原文不改，要换口径另起目标）；"
+            + "verifyNow=现在验收；finish=主动收尾；cancel=取消。"
             + "markManual=人工核验勾选（{key,outcome:PASSED|FAILED}）。")
     @PostMapping("/goal/{goalId}")
     public ResultJson<Map<String, Object>> act(
@@ -77,8 +77,10 @@ public class GoalController {
                         listOf(body.get("criteria")), null);
                 case "pause" -> goalService.pause(goalId, uid, null);
                 case "resume" -> goalService.resume(goalId, uid, null);
-                case "extendBudget" -> goalService.extendBudget(goalId, uid,
-                        intOf(body.get("extraTurns")), longOf(body.get("extraTokens")), null);
+                case "edit" -> goalService.edit(goalId, uid,
+                        // 没带 criteria 就是「不改标准」：listOf 的空清单会被当成「把标准全删了」
+                        body.get("criteria") instanceof List<?> ? listOf(body.get("criteria")) : null,
+                        null);
                 case "verifyNow" -> {
                     goalService.verifyNow(goalId, uid, null);
                     yield goalService.get(goalId);
@@ -129,6 +131,14 @@ public class GoalController {
 
     private static String str(Object o) {
         return o == null ? null : String.valueOf(o);
+    }
+
+    /** 兼容 true/"true"/1 三种写法：前端 JSON 给布尔，脚本/curl 常给字符串。 */
+    private static boolean boolOf(Object o) {
+        if (o instanceof Boolean b) return b;
+        if (o == null) return false;
+        String s = String.valueOf(o).trim();
+        return "true".equalsIgnoreCase(s) || "1".equals(s);
     }
 
     @SuppressWarnings("unchecked")

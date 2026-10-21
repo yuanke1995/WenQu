@@ -12,9 +12,11 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 目标模式的存储桥：<b>问渠的护栏 + 框架的 tasksContext</b>（形状照 {@link TodoBridge}，别自创第二套）。
@@ -32,7 +34,9 @@ import java.util.Map;
  *       <b>有未结算工具调用直接抛</b>，所以只能在轮外（或本轮 submit 之前）调；</li>
  *   <li><b>{@code decide} 的 {@code Decision.authority} 只允许 USER/CALLER</b>，{@code sourceRef}
  *       必填非空 ≤2000 字。用户在卡片上点批准 = {@code USER} + {@code "goal-card:"+goalId}；
- *       <b>平台自动放行一律禁止</b>——不许出现「系统替用户确认验收标准」这条路；</li>
+ *       用户用 {@code /goal} 发起、助手首轮起草的标准 = {@code CALLER} +
+ *       {@code "goal-draft:"+goalId}（用户可随时改/删，见 {@link #adoptDrafted}）。
+ *       <b>除这条用户明确授权的起草路径外，平台不得替用户确认</b>；</li>
  *   <li>{@code recordVerification} 的 {@code binding} 必须<b>逐字等于</b>
  *       {@code state.getEvidenceBinding()}，且该标准必须是 {@code ACCEPTANCE_CRITERION} +
  *       {@code CONFIRMED}，否则抛。所以顺序是死的：
@@ -54,6 +58,13 @@ public class GoalBridge {
 
     /** 用户确认的决策来源（进 {@code Decision.sourceRef}） */
     public static final String DECISION_SOURCE_PREFIX = "goal-card:";
+
+    /**
+     * 助手起草、用户发起后自动采纳的来源前缀。
+     * <p>用 {@code Authority.CALLER}（不是 USER）：拍板的是问渠，不是用户逐条点的。
+     * 只有 {@code /goal <目标>} 这种用户明确发起的路径才走这里；用户随时可以改或删。
+     */
+    public static final String DRAFT_SOURCE_PREFIX = "goal-draft:";
 
     /**
      * 写入结果。失败时带一句可回给界面的原因（{@code syncWarn} 用）；
@@ -148,14 +159,12 @@ public class GoalBridge {
                         // 新建候选的那一次也走这条：否则模型这一轮看到的是「候选」，
                         // 而用户在问渠那边早就勾了——两边对不上，标准就成了「模型说没被批准」
                         tc.decide(existing.id(), TaskRequirement.Status.CONFIRMED,
-                                new TaskRequirement.Decision(TaskRequirement.Authority.USER,
-                                        DECISION_SOURCE_PREFIX + goal.getId()),
+                                new TaskRequirement.Decision(authorityOf(c), sourceOf(c, goal)),
                                 tc.snapshot().getRevision());
                     } else if ("REJECTED".equals(c.status())
                             && existing.status() != TaskRequirement.Status.REJECTED) {
                         tc.decide(existing.id(), TaskRequirement.Status.REJECTED,
-                                new TaskRequirement.Decision(TaskRequirement.Authority.USER,
-                                        DECISION_SOURCE_PREFIX + goal.getId()),
+                                new TaskRequirement.Decision(authorityOf(c), sourceOf(c, goal)),
                                 tc.snapshot().getRevision());
                     }
                 }
@@ -172,6 +181,67 @@ public class GoalBridge {
             log.warn("[GOAL] 目标同步进框架失败: goal={} session={} {}", goal.getId(), sessionId, e.toString());
             return bat(e);
         }
+    }
+
+    /**
+     * 把助手本轮提出的候选标准自动采纳为正式标准。
+     *
+     * <p>只在这条目标由用户用 {@code /goal} 发起、且首轮还没有标准时调用：用户那一句“设为目标”
+     * 就是授权助手起草；采纳记为 {@code CALLER}（不是 USER），来源 {@code goal-draft:}。
+     * 用户随时可以改、删、否决——草案不是用户逐条点过的，但也不是平台背着用户加的。
+     *
+     * <p>只收 {@code ACCEPTANCE_CRITERION}，避免把约束混进验收清单；按原文去重，最多收满
+     * {@code maxCriteria} 条。验证方式暂统一为人工核验（提案工具不带验证器参数），
+     * 由目标卡逐条勾选；等以后提案能带验证信息再自动配。
+     *
+     * @param existing 库里已有的标准（用来去重、算已占条数）
+     * @return 本次采纳的标准（已落框架，调用方负责写回 criteria_json）；失败返回空表
+     */
+    public List<Criterion> adoptDrafted(HarnessAgent agent, String uid, String sessionId, Goal goal,
+                                        List<Criterion> existing, int maxCriteria) {
+        if (agent == null) return List.of();
+        List<Criterion> adopted = new ArrayList<>();
+        Set<String> texts = new HashSet<>();
+        Set<String> keys = new HashSet<>();
+        if (existing != null) {
+            for (Criterion c : existing) {
+                texts.add(c.text());
+                keys.add(c.key());
+            }
+        }
+        int already = existing == null ? 0 : existing.size();
+        if (already >= maxCriteria) return List.of();
+        try {
+            agent.getDelegate().updateAgentState(ctx(uid, sessionId), "goal_adopt", state -> {
+                TaskContextState tc = state.getTasksContext();
+                if (tc.getScope() == null || !goal.getId().equals(tc.getScope().taskId())) {
+                    tc.beginTask(new TaskContextState.Scope(goal.getId(), goal.getObjective(),
+                            SOURCE_PREFIX + goal.getId()), tc.snapshot().getRevision());
+                }
+                List<TaskRequirement> requirements = tc.getRequirements() == null
+                        ? List.of() : new ArrayList<>(tc.getRequirements());
+                for (TaskRequirement r : requirements) {
+                    if (already + adopted.size() >= maxCriteria) break;
+                    if (r.kind() != TaskRequirement.Kind.ACCEPTANCE_CRITERION) continue;
+                    if (r.status() != TaskRequirement.Status.CANDIDATE) continue;
+                    if (r.text() == null || r.text().isBlank() || !texts.add(r.text())) continue;
+                    String key = nextDraftKey(keys);
+                    keys.add(key);
+                    tc.decide(r.id(), TaskRequirement.Status.CONFIRMED,
+                            new TaskRequirement.Decision(TaskRequirement.Authority.CALLER,
+                                    DRAFT_SOURCE_PREFIX + goal.getId()),
+                            tc.snapshot().getRevision());
+                    adopted.add(new Criterion(key, r.id(), "ACCEPTANCE_CRITERION", r.text(), "CONFIRMED",
+                            DRAFT_SOURCE_PREFIX + goal.getId(), GoalVerificationRegistry.MANUAL,
+                            new LinkedHashMap<>()));
+                }
+            });
+        } catch (Exception e) {
+            log.warn("[GOAL] 助手起草的验收标准自动采纳失败: goal={} session={} {}",
+                    goal.getId(), sessionId, e.toString());
+            return List.of();
+        }
+        return adopted;
     }
 
     /**
@@ -196,14 +266,12 @@ public class GoalBridge {
                     if (existing == null) continue;
                     if (c.confirmed() && existing.status() == TaskRequirement.Status.CANDIDATE) {
                         tc.decide(existing.id(), TaskRequirement.Status.CONFIRMED,
-                                new TaskRequirement.Decision(TaskRequirement.Authority.USER,
-                                        DECISION_SOURCE_PREFIX + goal.getId()),
+                                new TaskRequirement.Decision(authorityOf(c), sourceOf(c, goal)),
                                 tc.snapshot().getRevision());
                     } else if ("REJECTED".equals(c.status())
                             && existing.status() != TaskRequirement.Status.REJECTED) {
                         tc.decide(existing.id(), TaskRequirement.Status.REJECTED,
-                                new TaskRequirement.Decision(TaskRequirement.Authority.USER,
-                                        DECISION_SOURCE_PREFIX + goal.getId()),
+                                new TaskRequirement.Decision(authorityOf(c), sourceOf(c, goal)),
                                 tc.snapshot().getRevision());
                     }
                 }
@@ -305,6 +373,29 @@ public class GoalBridge {
         return "CONSTRAINT".equals(kind)
                 ? TaskRequirement.Kind.CONSTRAINT
                 : TaskRequirement.Kind.ACCEPTANCE_CRITERION;
+    }
+
+    /** 助手起草的标准用 CALLER；用户卡片/编辑/`/goal` 带的标准用 USER。 */
+    private static TaskRequirement.Authority authorityOf(Criterion c) {
+        return c.decisionSource() != null && c.decisionSource().startsWith(DRAFT_SOURCE_PREFIX)
+                ? TaskRequirement.Authority.CALLER
+                : TaskRequirement.Authority.USER;
+    }
+
+    /** 决策来源：优先用那条标准自己记的来源（草稿/命令），没有就落回用户卡片。 */
+    private static String sourceOf(Criterion c, Goal goal) {
+        return c.decisionSource() == null || c.decisionSource().isBlank()
+                ? DECISION_SOURCE_PREFIX + goal.getId() : c.decisionSource();
+    }
+
+    /** 自动采纳时的本地键：避开库里已有的 key（用 d 前缀，一眼能看出是起草的） */
+    private static String nextDraftKey(Set<String> taken) {
+        int i = 1;
+        String key;
+        do {
+            key = "d" + i++;
+        } while (taken.contains(key));
+        return key;
     }
 
     /** 异常 → 失败结果（包级可见：外层类的 catch 块要用它） */

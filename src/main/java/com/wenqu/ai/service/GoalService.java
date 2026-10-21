@@ -41,7 +41,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * </ol>
  *
  * <p>轮次钩子由引擎调：{@link #syncBeforeSubmit}（submit 前覆盖写框架态）与
- * {@link #onTurnEnd}（记账 / 80% 预警 / 撞闸 / 验收 / 续跑一拍）。
+ * {@link #onTurnEnd}（记账 / 首轮采纳助手起草的标准 / 验收 / 人工核验关卡 / 续跑一拍）。
  */
 @Service
 public class GoalService {
@@ -57,13 +57,12 @@ public class GoalService {
     public static final String VERIFYING = "VERIFYING";
     public static final String WAITING_INPUT = "WAITING_INPUT";
     public static final String PAUSED = "PAUSED";
-    public static final String BUDGET_EXCEEDED = "BUDGET_EXCEEDED";
     public static final String ACHIEVED = "ACHIEVED";
     public static final String ENDED_INCOMPLETE = "ENDED_INCOMPLETE";
     public static final String FAILED = "FAILED";
     public static final String CANCELLED = "CANCELLED";
 
-    /** 非终态集合（同会话至多一条） */
+    /** 非终态集合（同会话至多一条）：就是 {@link #activeGoal} 的查询条件，摘要条回捞靠它 */
     private static final java.util.Set<String> ACTIVE = java.util.Set.of(
             DRAFT, CLARIFYING, AWAITING_CONFIRMATION, RUNNING, VERIFYING, WAITING_INPUT, PAUSED);
 
@@ -72,9 +71,6 @@ public class GoalService {
 
     /** 单目标标准条数上限（框架帽 64；问渠收到 12：一张卡看得完、写得完） */
     public static final int MAX_CRITERIA = 12;
-
-    /** 四条预算全不限时的硬闸轮数（防无限循环；到线按撞闸收尾出未完成清单） */
-    private static final int HARD_TURN_CAP = 50;
 
     private final GoalMapper goalMapper;
     private final GoalBridge goalBridge;
@@ -85,6 +81,8 @@ public class GoalService {
     private final ToolApprovalMapper toolApprovalMapper;
     private final com.wenqu.ai.service.SandboxService sandboxService;
     private final GoalVerificationRegistry verificationRegistry;
+    /** 目标指令回声要写进对话（c_ai_message），状态机本体不碰这张表 */
+    private final SessionService sessionService;
 
     /** 续跑驱动（引擎实现，构造期后绑）：跨轮循环的控制流归框架，问渠只数预算并发起下一轮 */
     private volatile GoalTurnDriver turnDriver;
@@ -96,7 +94,7 @@ public class GoalService {
                        ConfigService configService, ChatRunBus chatRunBus,
                        com.wenqu.ai.agentx.FrameworkSessions sessions, ToolApprovalMapper toolApprovalMapper,
                        com.wenqu.ai.service.SandboxService sandboxService,
-                       GoalVerificationRegistry verificationRegistry) {
+                       GoalVerificationRegistry verificationRegistry, SessionService sessionService) {
         this.goalMapper = goalMapper;
         this.goalBridge = goalBridge;
         this.sessionEventService = sessionEventService;
@@ -106,6 +104,7 @@ public class GoalService {
         this.toolApprovalMapper = toolApprovalMapper;
         this.sandboxService = sandboxService;
         this.verificationRegistry = verificationRegistry;
+        this.sessionService = sessionService;
     }
 
     /** 续跑驱动（引擎侧实现）。由装配处显式绑定——引擎是那里 new 的，不归 Spring 管。 */
@@ -118,15 +117,14 @@ public class GoalService {
         void continueTurn(Goal goal, String input, int n);
     }
 
-    // ==================== 配置与预算 ====================
+    // ==================== 配置 ====================
 
-    public boolean enabled() {
-        return configService.getBoolean("chat.goalMode.enabled", false);
-    }
-
-    /** 这个智能体开不开目标模式（三态：null=继承平台） */
+    /**
+     * 这个智能体开不开目标模式（资源级三态：null=开）。
+     * <p>平台级总闸已去掉——目标模式能不能用只由「哪个智能体开着他」决定，管理员不再有一个
+     * 「全平台一键关掉」的旋钮（要关就逐个智能体关）。
+     */
     public boolean enabledFor(com.wenqu.ai.model.Agent agent) {
-        if (!enabled()) return false;
         return agent == null || agent.getGoalEnabled() == null || agent.getGoalEnabled() == 1;
     }
 
@@ -134,39 +132,36 @@ public class GoalService {
         return configService.getLong("chat.goalTimeoutMs", 600_000L);
     }
 
-    public int verifyTimeoutSeconds() {
-        return configService.getInt("chat.goalMode.verifyTimeoutSeconds", 60);
-    }
-
-    public boolean requirementProposals() {
-        return configService.getBoolean("chat.goalMode.requirementProposals", true);
-    }
-
     /**
-     * 生效预算：平台默认值（目标模式配置不下放到个人，只留平台一档）。
-     * <p>个人发起目标时仍可在请求里在此基础上<b>往下</b>收（{@link #start} 的 budget 入参），
-     * 平台默认值本身不提供「每人一份上限」那一层。
+     * 单条验收标准的验证上限（秒）。<b>这不是管理员旋钮</b>：它只防一个卡死的验证器把整条目标
+     * 循环挂住（超时就记这一条 ERROR，其它条照验），所以不设配置项，只留这一个常量。
      */
-    public record Caps(int turns, long tokens, int toolCalls, int minutes) {}
+    public static final int VERIFY_TIMEOUT_SECONDS = 60;
 
-    public Caps capsFor(String uid) {
-        return new Caps(
-                configService.getInt("chat.goalMode.defaultTurns", 12),
-                configService.getLong("chat.goalMode.defaultTokens", 1_000_000L),
-                configService.getInt("chat.goalMode.defaultToolCalls", 120),
-                configService.getInt("chat.goalMode.defaultMinutes", 30));
+    public int verifyTimeoutSeconds() {
+        return VERIFY_TIMEOUT_SECONDS;
     }
 
     // ==================== 用户动作 ====================
 
     /**
-     * 设为目标：建行进 {@code AWAITING_CONFIRMATION}（标准草稿已成形，等用户拍板）。
+     * 设为目标。
+     *
+     * <p><b>两种入口</b>：
+     * <ul>
+     *   <li>{@code startNow=true}（{@code /goal 目标}、工具条按钮）：建行即 {@code RUNNING}，
+     *       不弹确认卡、不等用户逐条拍板。没带标准时首轮让助手起草，回来自动采纳（用户可改）；</li>
+     *   <li>{@code startNow=false}（旧确认卡路径）：建行进 {@code AWAITING_CONFIRMATION}，
+     *       标准草稿等用户拍板后才开跑。存量目标与「另起目标」仍可用。</li>
+     * </ul>
+     *
      * <p>同会话已有非终态目标时按「换目标」处理：旧的收成 {@code ENDED_INCOMPLETE} 再起新的
      * ——历史与旧验证留在旧行里可审计（框架那边也只在 beginTask 换 taskId 时清场）。
+     * <p>没有预算入参：目标不设轮数/token/工具/时长上限，跑不跑得完只看验收标准验没验过、
+     * 以及你什么时候按暂停或就此收尾。
      */
     public Goal start(String sessionId, String uid, String agentId, String objective,
-                      List<Map<String, Object>> criteriaInput, Map<String, Object> budgetInput,
-                      RunChannel channel) {
+                      List<Map<String, Object>> criteriaInput, boolean startNow, RunChannel channel) {
         if (objective == null || objective.isBlank()) throw new IllegalArgumentException("目标不能为空");
         if (objective.length() > 4000) throw new IllegalArgumentException("目标太长（上限 4000 字）");
         if (criteriaInput != null && criteriaInput.size() > MAX_CRITERIA) {
@@ -179,20 +174,26 @@ public class GoalService {
                 finish(previous, ENDED_INCOMPLETE, "incomplete", channel);
             }
             String goalId = UUID.randomUUID().toString().replace("-", "");
+            List<GoalBridge.Criterion> criteria = buildCriteria(criteriaInput);
+            if (startNow) {
+                // 用户发起 /goal 时若自己写了标准，那就是用户拍板；没写则留空，首轮由助手起草。
+                List<GoalBridge.Criterion> confirmed = new ArrayList<>();
+                for (GoalBridge.Criterion c : criteria) {
+                    confirmed.add(new GoalBridge.Criterion(c.key(), c.id(), c.kind(), c.text(), "CONFIRMED",
+                            "goal-start:" + goalId, c.verifierId(), c.verifierParams()));
+                }
+                criteria = confirmed;
+            }
             Goal goal = new Goal();
             goal.setId(goalId);
             goal.setSessionId(sessionId);
             goal.setUserId(uid);
             goal.setAgentId(agentId);
             goal.setObjective(objective.strip());
-            goal.setCriteriaJson(JSON.toJSONString(buildCriteria(criteriaInput)));
+            goal.setCriteriaJson(JSON.toJSONString(criteria));
             goal.setConstraintsJson(JSON.toJSONString(List.of()));
-            goal.setStatus(AWAITING_CONFIRMATION);
-            Caps caps = capsFor(uid);
-            goal.setBudgetTurns(applyBudget(budgetInput == null ? null : budgetInput.get("turns"), caps.turns()));
-            goal.setBudgetTokens(applyBudgetLong(budgetInput == null ? null : budgetInput.get("tokens"), caps.tokens()));
-            goal.setBudgetToolCalls(applyBudget(budgetInput == null ? null : budgetInput.get("toolCalls"), caps.toolCalls()));
-            goal.setBudgetMinutes(applyBudget(budgetInput == null ? null : budgetInput.get("minutes"), caps.minutes()));
+            goal.setStatus(startNow ? RUNNING : AWAITING_CONFIRMATION);
+            goal.setStartedAt(startNow ? LocalDateTime.now() : null);
             goal.setUsedTurns(0);
             goal.setUsedTokens(0L);
             goal.setUsedToolCalls(0);
@@ -200,13 +201,55 @@ public class GoalService {
             goal.setTurnCounter(0);
             goal.setCreatedAt(LocalDateTime.now());
             goalMapper.insert(goal);
-            // 确认卡复用 c_ai_tool_approval（tool_name=goalConfirm）：它已经是「带轮身份的持久待办 +
-            // 终态 + 答复审计」的通用表，再立一张 approval 表就是第四份平行真值源
-            openConfirmCard(goal, channel);
-            log.info("[GOAL] 目标已创建待确认: goal={} session={} 标准 {} 条", goalId, sessionId,
-                    criteriaInput == null ? 0 : criteriaInput.size());
-            emitState(goal, channel, null);
+            // 对话里留一行回声：这条目标在会话里说过什么，只有 c_ai_goal 一份的话，
+            // 换过目标之后对话就读不出「什么时候定了什么目标」。它不是提问，是一句指令——
+            // 前端据此挂命令标注，并撤掉这行的重发/重新生成（重发一句指令没有意义）
+            echoGoalCommand(sessionId, goalId, objective.strip());
+            if (!startNow) {
+                // 确认卡复用 c_ai_tool_approval（tool_name=goalConfirm）：它已经是「带轮身份的持久待办 +
+                // 终态 + 答复审计」的通用表，再立一张 approval 表就是第四份平行真值源
+                openConfirmCard(goal, channel);
+                log.info("[GOAL] 目标已创建待确认: goal={} session={} 标准 {} 条", goalId, sessionId,
+                        criteria.size());
+                emitState(goal, channel, null);
+                return goal;
+            }
+            // 创建即开始：框架侧当场落 scope/标准，不等下一轮 submit 再补
+            String syncWarn = null;
+            io.agentscope.harness.agent.HarnessAgent agent = sessions.agentOf(uid, sessionId);
+            GoalBridge.SyncResult r = goalBridge.beginOrUpdate(agent, uid, sessionId, goal,
+                    criteria, List.of(), null);
+            if (r.ok()) {
+                persistFrameworkIds(goal, criteria, List.of(), r);
+                goal.setStateRevision(r.revision());
+                goal.setContractVersion(r.contractVersion());
+            } else {
+                syncWarn = GoalCopy.SYNC_WARN + "（" + r.reason() + "）";
+            }
+            goalMapper.updateById(goal);
+            // 工件类标准钉指纹（纯检索/写作类目标用 goal:{id} 兜底：框架验证要求 binding 非空）
+            pinSubjectIfNeeded(goal);
+            // 钉完的 subjectVersion/contractVersion 也要落库：下一次 onTurnEnd 的 STALE 复判读的是库里这份
+            goalMapper.updateById(goal);
+            log.info("[GOAL] 目标已开始: goal={} session={} 标准 {} 条（{}）", goalId, sessionId,
+                    criteria.size(), criteria.isEmpty() ? "待助手起草" : "用户已给");
+            emitState(goal, channel, syncWarn);
+            // 创建即开工：首轮输入会要求助手先起草标准（见 GoalCopy.startPrompt），不等用户再问一句
+            kickContinuation(goal, channel);
             return goal;
+        }
+    }
+
+    /**
+     * 目标指令回声：把这句「设为目标」按普通用户消息落进对话，再补一列标记。
+     * <p>失败只告警不抛：目标本身已经成立，回声只是对话里的一行留痕（与确认卡落库同一个取舍）。
+     */
+    private void echoGoalCommand(String sessionId, String goalId, String objective) {
+        try {
+            String messageId = sessionService.appendMessage(sessionId, "user", objective, null, null);
+            sessionService.markGoalCommand(messageId, goalId);
+        } catch (Exception e) {
+            log.warn("[GOAL] 目标指令回声落库失败（不影响目标）: goal={} {}", goalId, e.getMessage());
         }
     }
 
@@ -243,8 +286,10 @@ public class GoalService {
             goal.setStartedAt(LocalDateTime.now());
             goalMapper.updateById(goal);
             resolveConfirmCard(goal, "APPROVED", "用户确认并开始");
-            // 工件类标准钉指纹（纯检索/写作类目标不钉：没有工件可钉，recordVerification 会拿不到 binding）
+            // 工件类标准钉指纹（纯检索/写作类目标用 goal:{id} 兜底：框架验证要求 binding 非空）
             pinSubjectIfNeeded(goal);
+            // 钉完的 subjectVersion/contractVersion 也要落库：下一次 onTurnEnd 的 STALE 复判读的是库里这份
+            goalMapper.updateById(goal);
             log.info("[GOAL] 标准已确认，目标启动: goal={} session={}", goalId, goal.getSessionId());
             emitState(goal, channel, syncWarn);
             // 确认即开工（分岔 1 取 A：全自动续跑）：不等用户再问一句，目标自己往下推
@@ -266,18 +311,12 @@ public class GoalService {
         }
     }
 
-    /** 继续：重判目标/权限/工件版本/剩余预算都在下一轮开跑前做（框架侧覆盖写同一条路）。 */
+    /** 继续：暂停或被「等你核验」拦下时都能恢复；重判目标/权限/工件版本都在下一轮开跑前做。 */
     public Goal resume(String goalId, String uid, RunChannel channel) {
         Goal goal = own(goalId, uid);
         synchronized (lockFor(goalId)) {
-            if (!java.util.Set.of(PAUSED, BUDGET_EXCEEDED).contains(goal.getStatus())) {
-                throw new IllegalStateException("这条目标不在暂停状态");
-            }
-            if (budgetExhausted(goal)) {
-                goal.setStatus(BUDGET_EXCEEDED);
-                goalMapper.updateById(goal);
-                emitState(goal, channel, null);
-                throw new IllegalStateException("预算仍然用满，请先加预算");
+            if (!PAUSED.equals(goal.getStatus()) && !WAITING_INPUT.equals(goal.getStatus())) {
+                throw new IllegalStateException("这条目标不在暂停/待核验状态");
             }
             goal.setStatus(RUNNING);
             goal.setEndReason(null);
@@ -298,7 +337,7 @@ public class GoalService {
         }
     }
 
-    /** 主动收尾（预算内）：未完成清单随终态帧给用户，不悄然截断。 */
+    /** 主动收尾：未完成清单随终态帧给用户，不悄然截断。 */
     public Goal finishIncomplete(String goalId, String uid, RunChannel channel) {
         Goal goal = own(goalId, uid);
         synchronized (lockFor(goalId)) {
@@ -308,24 +347,103 @@ public class GoalService {
         }
     }
 
-    public Goal extendBudget(String goalId, String uid, Integer extraTurns, Long extraTokens, RunChannel channel) {
+    /** 可以就地改验收标准的那几档：待确认那一档归确认卡管（卡片上逐条勾选就是它的编辑面） */
+    private static final java.util.Set<String> EDITABLE = java.util.Set.of(
+            RUNNING, VERIFYING, WAITING_INPUT, PAUSED);
+
+    /**
+     * 编辑进行中的目标：改验收标准。<b>目标原文不在这里改</b>——框架把原文钉在
+     * task 身份上（同一 taskId 换原文直接抛 "Use a new task identity when changing the objective"），
+     * 要换口径只能另起一条目标（{@link #start} 会把旧的收成「未完成收尾」）。
+     *
+     * <p>标准按整份新清单覆盖：原文一字未动的那条沿用框架 requirement 与它的验证记录；改过字句的
+     * 和新写的都算新条目（用户在编辑器里打的字本身就是拍板，不再走一遍确认卡）；从清单里去掉的
+     * 就地记 REJECTED 并留在原处——框架要读到这条 REJECTED 才不再把它当要求，验证历史也有地方挂。
+     */
+    public Goal edit(String goalId, String uid, List<Map<String, Object>> criteriaInput,
+                     RunChannel channel) {
         Goal goal = own(goalId, uid);
         synchronized (lockFor(goalId)) {
-            if (extraTurns != null && extraTurns > 0) {
-                goal.setBudgetTurns(goal.getBudgetTurns() + extraTurns);
+            if (!EDITABLE.contains(goal.getStatus())) {
+                throw new IllegalStateException("这条目标已经结束了，改不了");
             }
-            if (extraTokens != null && extraTokens > 0) {
-                goal.setBudgetTokens(goal.getBudgetTokens() + extraTokens);
+            List<GoalBridge.Criterion> existing = readCriteria(goal);
+            List<GoalBridge.Criterion> constraints = readConstraints(goal);
+            if (criteriaInput != null && criteriaInput.size() > MAX_CRITERIA) {
+                throw new IllegalArgumentException("验收标准最多 " + MAX_CRITERIA + " 条");
             }
-            if (BUDGET_EXCEEDED.equals(goal.getStatus())) {
-                goal.setStatus(RUNNING);
-                goal.setEndReason(null);
+            List<GoalBridge.Criterion> next = new ArrayList<>();
+            java.util.Set<String> taken = new java.util.HashSet<>();
+            for (GoalBridge.Criterion c : existing) taken.add(c.key());
+            if (criteriaInput != null) {
+                for (Map<String, Object> raw : criteriaInput) {
+                    if (raw == null) continue;
+                    String text = raw.get("text") == null ? "" : String.valueOf(raw.get("text")).strip();
+                    if (text.isBlank()) continue;
+                    if (text.length() > 2000) throw new IllegalArgumentException("单条标准太长（上限 2000 字）");
+                    String key = raw.get("key") == null ? null : String.valueOf(raw.get("key"));
+                    GoalBridge.Criterion prev = key == null ? null : byKey(existing, key);
+                    if (prev != null && prev.text().equals(text)) {
+                        next.add(prev);
+                        continue;
+                    }
+                    String verifierId = raw.get("verifierId") == null
+                            ? (prev == null ? null : prev.verifierId()) : String.valueOf(raw.get("verifierId"));
+                    next.add(new GoalBridge.Criterion(freshKey(taken), null, "ACCEPTANCE_CRITERION",
+                            text, "CONFIRMED", null, verifierId, new LinkedHashMap<>()));
+                }
+            }
+            for (GoalBridge.Criterion c : existing) {
+                boolean kept = next.stream().anyMatch(x -> x.key().equals(c.key()));
+                if (!kept && !"REJECTED".equals(c.status())) {
+                    next.add(new GoalBridge.Criterion(c.key(), c.id(), c.kind(), c.text(),
+                            "REJECTED", c.decisionSource(), c.verifierId(), c.verifierParams()));
+                }
+            }
+            goal.setCriteriaJson(JSON.toJSONString(next));
+            goalMapper.updateById(goal);
+            String syncWarn = null;
+            io.agentscope.harness.agent.HarnessAgent agent = sessions.agentOf(uid, goal.getSessionId());
+            GoalBridge.SyncResult r = goalBridge.beginOrUpdate(agent, uid, goal.getSessionId(),
+                    goal, next, constraints, goal.getSubjectVersion());
+            if (r.ok()) {
+                persistFrameworkIds(goal, next, constraints, r);
+                goal.setStateRevision(r.revision());
+                goal.setContractVersion(r.contractVersion());
+            } else {
+                syncWarn = GoalCopy.SYNC_WARN + "（" + r.reason() + "）";
             }
             goalMapper.updateById(goal);
-            emitState(goal, channel, null);
+            // 改完标准如果正卡在「等你核验」，用户这一次编辑就是「继续」的意思：转回进行中，
+            // 下一轮带着新标准跑；暂停态不自动恢复（暂停是用户的动作，要他自己点继续）。
+            if (WAITING_INPUT.equals(goal.getStatus())) {
+                goal.setStatus(RUNNING);
+                goalMapper.updateById(goal);
+            }
+            log.info("[GOAL] 目标已就地改订: goal={} 标准 {} 条（含作废 {} 条）", goalId, next.size(),
+                    next.stream().filter(c -> "REJECTED".equals(c.status())).count());
+            emitState(goal, channel, syncWarn);
             kickContinuation(goal, channel);
             return goal;
         }
+    }
+
+    private static GoalBridge.Criterion byKey(List<GoalBridge.Criterion> list, String key) {
+        for (GoalBridge.Criterion c : list) {
+            if (key.equals(c.key())) return c;
+        }
+        return null;
+    }
+
+    /** 标准条目的本地主键（只在 propose 进框架之前认人）：避开库里已有的那些，不靠时间戳防撞 */
+    private static String freshKey(java.util.Set<String> taken) {
+        int i = 1;
+        String k;
+        do {
+            k = "k" + i++;
+        } while (taken.contains(k));
+        taken.add(k);
+        return k;
     }
 
     // ==================== 引擎钩子 ====================
@@ -333,10 +451,9 @@ public class GoalService {
     /**
      * 每轮 submit 前：把库里的目标态覆盖写进框架活状态（设计稿 §5.2 的回显兜底那一条）。
      *
-     * @return 本轮生效的目标（null=这条会话没有进行中的目标，或目标模式关着）
+     * @return 本轮生效的目标（null=这条会话没有进行中的目标）
      */
     public Goal syncBeforeSubmit(String sessionId, String uid, String agentId) {
-        if (!enabled()) return null;
         Goal goal = activeGoal(sessionId);
         if (goal == null || !java.util.Set.of(RUNNING, VERIFYING, WAITING_INPUT).contains(goal.getStatus())) {
             return null;
@@ -361,7 +478,7 @@ public class GoalService {
     }
 
     /**
-     * 轮收尾：记账 → 80% 预警 → 撞闸 → 验收 → 续跑一拍。
+     * 轮收尾：记账 → 首轮采纳助手起草的标准 → 验收 → 人工核验关卡 → 续跑一拍。
      * <p>叫停/宽限中止时框架的 {@code ended()} 只认 completed/cancelled，{@code failed} 与挂在
      * 提问卡上的 {@code suspended} 都不算结束——所以目标循环退出前在这里自己结算，不指望框架兜。
      */
@@ -370,6 +487,7 @@ public class GoalService {
         Goal goal = activeGoal(sessionId);
         if (goal == null) return;
         synchronized (lockFor(goal.getId())) {
+            boolean firstTurn = used(goal.getTurnCounter()) == 0;
             goal.setUsedTurns((int) used(goal.getUsedTurns()) + 1);
             goal.setTurnCounter((int) used(goal.getTurnCounter()) + 1);
             goal.setUsedMs(used(goal.getUsedMs()) + Math.max(0L, machineMs));
@@ -386,27 +504,88 @@ public class GoalService {
                 goal.setContractVersion(used(goal.getContractVersion()) + 1);
                 log.info("[GOAL] 工件已变，旧验证结论作废: goal={}", goal.getId());
             }
-            if (budgetExhausted(goal)) {
-                stopForBudget(goal, channel);
-                return;
+            // 首轮起草：用户用 /goal 发起、还没有标准时，助手本轮提出的候选标准自动采纳，
+            // 记为 CALLER（不是 USER）。用户可改可删；旧确认卡路径不会走到这里（它是 AWAITING_CONFIRMATION）。
+            boolean adopted = false;
+            if (firstTurn && RUNNING.equals(goal.getStatus())) {
+                List<GoalBridge.Criterion> current = readCriteria(goal);
+                boolean noConfirmed = current.stream().noneMatch(c -> c.confirmed() && c.acceptance());
+                if (noConfirmed) {
+                    io.agentscope.harness.agent.HarnessAgent agent = sessions.agentOf(uid, sessionId);
+                    List<GoalBridge.Criterion> drafted = goalBridge.adoptDrafted(agent, uid, sessionId,
+                            goal, current, MAX_CRITERIA);
+                    if (!drafted.isEmpty()) {
+                        current.addAll(drafted);
+                        goal.setCriteriaJson(JSON.toJSONString(current));
+                        adopted = true;
+                        // decide 会推进框架的 contractVersion：库里的水位要当场跟上，
+                        // 否则下一次 syncBeforeSubmit 一更新，刚采纳的人工结论会被判成 STALE
+                        long[] wm = goalBridge.watermarks(sessions.agentOf(uid, sessionId), uid, sessionId);
+                        if (wm != null) {
+                            goal.setStateRevision(wm[0]);
+                            goal.setContractVersion(wm[1]);
+                        }
+                        log.info("[GOAL] 助手起草的验收标准已自动采纳: goal={} {} 条", goal.getId(), drafted.size());
+                    }
+                }
             }
             // 验收（轮外）：每条标准彼此独立，一条 ERROR 不打回其它条
             if (java.util.Set.of(RUNNING, VERIFYING).contains(goal.getStatus())) {
                 verifyAll(goal, uid, channel);
+            }
+            // 审核门：有标准、但剩下的全是人工核验（本轮又没有新采纳）→ 停下来等你逐条勾，
+            // 不自转。人工标准永远验不出 PASSED，继续跑就是空烧 token；「继续」仍是用户的一句话。
+            if (!adopted && RUNNING.equals(goal.getStatus())) {
+                applyReviewGate(goal);
             }
             goalMapper.updateById(goal);
             if (ACHIEVED.equals(goal.getStatus())) {
                 emitState(goal, channel, null);
                 return;
             }
-            boolean warn = budgetRatio(goal) >= 0.8;
-            emitState(goal, channel, warn ? GoalCopy.budgetWarn(remainingCriteria(goal)) : null);
-            if (warn) {
-                channel.emit(RunEventType.WARN, GoalCopy.budgetWarn(remainingCriteria(goal)));
-            }
+            emitState(goal, channel, null);
             // 续跑不在这里发起：这一轮还占着会话的跟随位（跟随位没释放时新的一轮会被「已有跟随者」挡掉）。
             // 由调用方在本轮彻底收尾之后调 {@link #continueAfterTurn}。
         }
+    }
+
+    /**
+     * 把「只剩人工核验标准」的目标停在 {@code WAITING_INPUT}，等用户勾完再继续。
+     * <p>没有标准也停：零标准目标永远验不出「完成」，自转只会变成模型每轮宣布完成、每轮再起一轮。
+     * 用户在目标卡上补一条（编辑）或点「继续」即可重新开工。
+     */
+    private void applyReviewGate(Goal goal) {
+        List<GoalBridge.Criterion> criteria = readCriteria(goal);
+        boolean anyConfirmed = criteria.stream().anyMatch(c -> c.confirmed() && c.acceptance());
+        if (!anyConfirmed) {
+            goal.setStatus(WAITING_INPUT);
+            goal.setEndReason(null);
+            return;
+        }
+        List<GoalBridge.Criterion> pending = pendingCriteria(goal);
+        if (!pending.isEmpty() && pending.stream().allMatch(GoalService::manualCriterion)) {
+            goal.setStatus(WAITING_INPUT);
+            goal.setEndReason(null);
+        }
+    }
+
+    /** 还没拿到「当前有效 PASSED」的已确认标准（未验/失败/过期都算没过）。 */
+    private List<GoalBridge.Criterion> pendingCriteria(Goal goal) {
+        List<GoalBridge.Criterion> out = new ArrayList<>();
+        for (GoalBridge.Criterion c : readCriteria(goal)) {
+            if (!c.confirmed() || !c.acceptance()) continue;
+            Map<String, Object> v = GoalRecords.latestVerification(goal, c.key());
+            if (v == null || !"PASSED".equals(String.valueOf(v.get("outcome"))) || GoalRecords.isStale(goal, v)) {
+                out.add(c);
+            }
+        }
+        return out;
+    }
+
+    /** 这条标准只能靠人工勾（没有配机器验证器）。 */
+    private static boolean manualCriterion(GoalBridge.Criterion c) {
+        return c.verifierId() == null || c.verifierId().isBlank()
+                || GoalVerificationRegistry.MANUAL.equals(c.verifierId());
     }
 
     /**
@@ -462,29 +641,29 @@ public class GoalService {
         GoalTurnDriver driver = this.turnDriver;
         if (driver == null) return;
         if (!RUNNING.equals(goal.getStatus())) return;
-        if (budgetExhausted(goal)) return;
         int n = (int) used(goal.getTurnCounter()) + 1;
-        if (used(goal.getBudgetTurns()) > 0 && n > used(goal.getBudgetTurns())) return;
-        // 四条全 0（全不限）时的硬闸：无限循环的目标会把会话线程与 token 一起烧穿。
-        // 到线停下来出未完成清单——框架文档要求「不是悄然截断」
-        if (allUnlimited(goal) && n > HARD_TURN_CAP) {
-            stopForBudget(goal, channel);
+        List<GoalBridge.Criterion> pending = pendingCriteria(goal);
+        boolean hasConfirmed = readCriteria(goal).stream().anyMatch(c -> c.confirmed() && c.acceptance());
+        // 没有一条待验的验收标准就不自转。零标准的目标永远验不出「过」，自动续跑会变成
+        // 「模型每轮都宣布完成、每轮都被再起一轮」——真机实测烧到 51 万 token、6 分钟才被我手动暂停。
+        // 首轮照跑：用户刚定下目标，这一轮先让助手起草验收标准（见 GoalCopy.startPrompt）。
+        if (pending.isEmpty() && used(goal.getTurnCounter()) > 0) {
+            // 零标准目标被「继续」拉起时不能装成进行中：没有可验的东西，再跑一轮也判不出完成。
+            // 停在「等你核验」，条子上的提示会告诉用户补一条标准（编辑后就自动继续）。
+            if (!hasConfirmed) {
+                goal.setStatus(WAITING_INPUT);
+                goalMapper.updateById(goal);
+                emitState(goal, channel, null);
+            }
+            log.info("[GOAL] 没有待验的验收标准，不再自转: goal={} 已跑 {} 轮", goal.getId(),
+                    used(goal.getTurnCounter()));
             return;
         }
-        List<String> pending = new ArrayList<>();
-        for (GoalBridge.Criterion c : readCriteria(goal)) {
-            if (!c.confirmed() || !c.acceptance()) continue;
-            Map<String, Object> v = GoalRecords.latestVerification(goal, c.key());
-            if (v == null || !"PASSED".equals(String.valueOf(v.get("outcome"))) || GoalRecords.isStale(goal, v)) {
-                pending.add(c.text());
-            }
-        }
-        int turnsLeft = used(goal.getBudgetTurns()) > 0
-                ? (int) (used(goal.getBudgetTurns()) - used(goal.getUsedTurns())) : 0;
-        long tokensLeft = used(goal.getBudgetTokens()) > 0
-                ? used(goal.getBudgetTokens()) - used(goal.getUsedTokens()) : 0;
-        String input = GoalCopy.continuation(goal.getObjective(), pending, turnsLeft, tokensLeft);
-        log.info("[GOAL] 起第 {} 轮续跑: goal={} 未过标准 {} 条", n, goal.getId(), pending.size());
+        String input = !hasConfirmed && used(goal.getTurnCounter()) == 0
+                ? GoalCopy.startPrompt(goal.getObjective())
+                : GoalCopy.continuation(goal.getObjective(), pending.stream().map(GoalBridge.Criterion::text).toList());
+        log.info("[GOAL] 起第 {} 轮续跑: goal={} 未过标准 {} 条{}", n, goal.getId(), pending.size(),
+                hasConfirmed ? "" : "（首轮先起草标准）");
         driver.continueTurn(goal, input, n);
     }
 
@@ -495,6 +674,7 @@ public class GoalService {
         Goal goal = own(goalId, uid);
         synchronized (lockFor(goalId)) {
             verifyAll(goal, uid, channel);
+            if (RUNNING.equals(goal.getStatus())) applyReviewGate(goal);
             goalMapper.updateById(goal);
             emitState(goal, channel, null);
             return view(goal, null);
@@ -525,7 +705,7 @@ public class GoalService {
                         GoalRecords.upsertVerification(goal, c.key(), result);
                         if (!"PASSED".equals(String.valueOf(result.get("outcome")))) {
                             channel.emit(RunEventType.WARN,
-                                    "有 " + remainingCriteria(goal) + " 条标准还没通过验证，继续推进");
+                                    "还有 " + remainingCriteria(goal) + " 条标准没有验证凭据");
                         }
                     }
                 } catch (Exception e) {
@@ -574,13 +754,31 @@ public class GoalService {
             if (!outcome.equals("PASSED") && !outcome.equals("FAILED")) {
                 throw new IllegalArgumentException("人工核验只能记 达成/未达成");
             }
-            GoalRecords.upsertVerification(goal, criterionKey,
-                    ManualCheckVerifier.verdict(outcome, outcome.equals("PASSED") ? "用户确认达成" : "用户标记未达成"));
+            Map<String, Object> manual = ManualCheckVerifier.verdict(outcome,
+                    outcome.equals("PASSED") ? "用户确认达成" : "用户标记未达成");
+            // 把勾选那一刻的绑定一起记下：工件/标准之后变了，这条结论要能判成 STALE，而不是一直算过
+            Map<String, Object> binding = new LinkedHashMap<>();
+            binding.put("contractVersion", goal.getContractVersion());
+            binding.put("subjectVersion", goal.getSubjectVersion());
+            manual.put("binding", binding);
+            GoalRecords.upsertVerification(goal, criterionKey, manual);
+            // 人工核验器读的是库里最新那份（freshGoal）：这一笔必须先落库再验，否则它读到的是旧行，
+            // 用户刚点的「达成」会被判成「还没勾」——这个先后顺序是死顺序。
+            goalMapper.updateById(goal);
             // 勾完立刻按当前证据重判一次：用户点「达成这条」就是在说「这条好了」，
             // 还要他再点一次「现在验收」才看到达成，是把同一次表态拆成两步
             verifyAll(goal, uid, channel);
+            boolean failed = "FAILED".equals(outcome);
+            if (RUNNING.equals(goal.getStatus()) && !failed) {
+                // 只勾了一部分：继续停在「等你核验」，别悄悄转成进行中
+                applyReviewGate(goal);
+            }
             goalMapper.updateById(goal);
             emitState(goal, channel, null);
+            // 用户说「这条没过」：这就是让他接着改，当场再起一轮；之后仍会在审核门再停
+            if (failed && RUNNING.equals(goal.getStatus())) {
+                kickContinuation(goal, channel);
+            }
             return goal;
         }
     }
@@ -659,20 +857,33 @@ public class GoalService {
         m.put("status", goal.getStatus());
         m.put("objective", goal.getObjective());
         m.put("criteria", criteriaView(goal));
-        m.put("budget", budgetView(goal));
         m.put("turnIndex", Math.max(1, used(goal.getTurnCounter())));
-        m.put("turnsMax", used(goal.getBudgetTurns()));
-        m.put("budgetWarn", budgetRatio(goal) >= 0.8 && !budgetExhausted(goal));
         m.put("syncWarn", syncWarn);
         m.put("firstTurnId", goal.getFirstTurnId() == null ? "" : goal.getFirstTurnId());
         m.put("lastTurnId", goal.getLastTurnId() == null ? "" : goal.getLastTurnId());
         m.put("live", sessions.peek(goal.getUserId(), goal.getSessionId()) != null);
         m.put("endReason", goal.getEndReason());
+        m.put("hint", hintOf(goal));
         m.put("createdAt", iso(goal.getCreatedAt()));
         m.put("startedAt", iso(goal.getStartedAt()));
         m.put("endedAt", iso(goal.getEndedAt()));
         m.put("remainingMs", confirmTimeoutMs());
         return m;
+    }
+
+    /**
+     * 条子上的那一句人话：只在「等你核验」这一档给。
+     * <p>没有标准与有标准但全是人工核验，是两种不同的停法，要说的也是两件事：
+     * 前者要用户补一条，后者要用户逐条勾；别混成一句「等你回答」。
+     */
+    private String hintOf(Goal goal) {
+        if (!WAITING_INPUT.equals(goal.getStatus())) return null;
+        boolean anyConfirmed = readCriteria(goal).stream().anyMatch(c -> c.confirmed() && c.acceptance());
+        if (!anyConfirmed) return "助手还没有提出验收标准，补一条再继续";
+        int left = pendingCriteria(goal).size();
+        return left > 0
+                ? "还有 " + left + " 条等你核验；勾完自动完成，也可以点继续再跑一轮"
+                : "等你核验";
     }
 
     private List<Map<String, Object>> criteriaView(Goal goal) {
@@ -684,6 +895,8 @@ public class GoalService {
             row.put("kind", c.kind());
             row.put("text", c.text());
             row.put("status", c.status());
+            row.put("drafted", c.decisionSource() != null
+                    && c.decisionSource().startsWith(GoalBridge.DRAFT_SOURCE_PREFIX));
             row.put("verifierId", c.verifierId());
             row.put("verifierLabel", verificationRegistry.labelOf(c.verifierId()));
             Map<String, Object> v = GoalRecords.latestVerification(goal, c.key());
@@ -699,15 +912,6 @@ public class GoalService {
         return out;
     }
 
-    private Map<String, Object> budgetView(Goal goal) {
-        Map<String, Object> b = new LinkedHashMap<>();
-        b.put("turns", dim(used(goal.getUsedTurns()), used(goal.getBudgetTurns())));
-        b.put("tokens", dim(used(goal.getUsedTokens()), used(goal.getBudgetTokens())));
-        b.put("toolCalls", dim(used(goal.getUsedToolCalls()), used(goal.getBudgetToolCalls())));
-        b.put("minutes", dim(used(goal.getUsedMs()) / 60000, used(goal.getBudgetMinutes())));
-        return b;
-    }
-
     /** 库里那一列可能是空的（历史行/手改过）：一律当 0，不让面板因为一个 null 崩掉 */
     private static long used(Integer v) {
         return v == null ? 0L : v.longValue();
@@ -715,13 +919,6 @@ public class GoalService {
 
     private static long used(Long v) {
         return v == null ? 0L : v;
-    }
-
-    private static Map<String, Object> dim(long used, long max) {
-        Map<String, Object> d = new LinkedHashMap<>();
-        d.put("used", used);
-        d.put("max", max);
-        return d;
     }
 
     // ==================== 帧 ====================
@@ -868,38 +1065,8 @@ public class GoalService {
     // 读写与「是否过期」的判据都在 GoalRecords（静态）：验收注册表也要读同一份，
     // 挂在 bean 上会与目标服务构成循环依赖（Spring 直接启动失败）。
 
-    // ==================== 内部：预算 ====================
-
-    private static boolean dimExceeded(long used, long max) {
-        return max > 0 && used >= max;
-    }
-
-    public boolean budgetExhausted(Goal goal) {
-        return dimExceeded(used(goal.getUsedTurns()), used(goal.getBudgetTurns()))
-                || dimExceeded(used(goal.getUsedTokens()), used(goal.getBudgetTokens()))
-                || dimExceeded(used(goal.getUsedToolCalls()), used(goal.getBudgetToolCalls()))
-                || dimExceeded(used(goal.getUsedMs()) / 60000, used(goal.getBudgetMinutes()));
-    }
-
-    /** 四条形里最逼近上限的那一条的比例（80% 预警判据） */
-    public double budgetRatio(Goal goal) {
-        double max = 0;
-        max = Math.max(max, ratio(used(goal.getUsedTurns()), used(goal.getBudgetTurns())));
-        max = Math.max(max, ratio(used(goal.getUsedTokens()), used(goal.getBudgetTokens())));
-        max = Math.max(max, ratio(used(goal.getUsedToolCalls()), used(goal.getBudgetToolCalls())));
-        max = Math.max(max, ratio(used(goal.getUsedMs()) / 60000, used(goal.getBudgetMinutes())));
-        return max;
-    }
-
-    private static double ratio(long used, long max) {
-        return max <= 0 ? 0 : (double) used / max;
-    }
-
-    /** 四条预算是不是全都不限（0=不限） */
-    private static boolean allUnlimited(Goal goal) {
-        return used(goal.getBudgetTurns()) <= 0 && used(goal.getBudgetTokens()) <= 0
-                && used(goal.getBudgetToolCalls()) <= 0 && used(goal.getBudgetMinutes()) <= 0;
-    }
+    // ==================== 内部：跑量账 ====================
+    // 只有「已经跑了多少」这一本账，没有「最多能跑多少」那一本：目标不设预算。
 
     private long sumTokens(String sessionId, LocalDateTime since) {
         try {
@@ -927,25 +1094,16 @@ public class GoalService {
         return n;
     }
 
-    private void stopForBudget(Goal goal, RunChannel channel) {
-        goal.setStatus(BUDGET_EXCEEDED);
-        goal.setEndReason("budget");
-        goal.setEndedAt(LocalDateTime.now());
-        goalMapper.updateById(goal);
-        // 未完成清单（框架文档要求「不是悄然截断」）
-        List<String> remaining = new ArrayList<>();
-        for (GoalBridge.Criterion c : readCriteria(goal)) {
-            if (!c.confirmed() || !c.acceptance()) continue;
-            Map<String, Object> v = GoalRecords.latestVerification(goal, c.key());
-            if (v == null || !"PASSED".equals(String.valueOf(v.get("outcome"))) || GoalRecords.isStale(goal, v)) {
-                remaining.add(c.text());
+    /** warn：与 {@link #emitState} 同一套去向。控制器侧的动作（继续/收尾）没有通道，走总线镜像。 */
+    private void emitWarn(Goal goal, RunChannel channel, String msg) {
+        if (channel != null) {
+            channel.emit(RunEventType.WARN, msg);
+            if (channel.emitter() instanceof com.wenqu.ai.service.CollectingSseEmitter) {
+                chatRunBus.publishMirrorToSession(goal.getSessionId(), "warn", msg);
             }
+        } else {
+            chatRunBus.publishMirrorToSession(goal.getSessionId(), "warn", msg);
         }
-        String msg = GoalCopy.budgetStop(remaining.isEmpty() ? "（无）" : String.join("；", remaining),
-                remaining.isEmpty() ? "（无）" : remaining.size() + " 条");
-        channel.emit(RunEventType.WARN, msg);
-        emitState(goal, channel, null);
-        log.info("[GOAL] 预算撞闸，目标停轮: goal={} 还差 {} 条", goal.getId(), remaining.size());
     }
 
     // ==================== 内部：终态与卡片 ====================
@@ -1089,19 +1247,5 @@ public class GoalService {
 
     private static String iso(LocalDateTime t) {
         return t == null ? null : t.toString();
-    }
-
-    private static int applyBudget(Object requested, int cap) {
-        if (!(requested instanceof Number n)) return cap;
-        int v = n.intValue();
-        if (v <= 0) return 0;
-        return cap <= 0 ? v : Math.min(v, cap);
-    }
-
-    private static long applyBudgetLong(Object requested, long cap) {
-        if (!(requested instanceof Number n)) return cap;
-        long v = n.longValue();
-        if (v <= 0) return 0;
-        return cap <= 0 ? v : Math.min(v, cap);
     }
 }

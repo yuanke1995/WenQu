@@ -118,8 +118,8 @@ public class SecurityConfig implements WebMvcConfigurer {
         // 卡片恢复入口（会话加载时取自己的待批准计划），同样只按 uid 过滤。
         if (("POST".equals(method) || "GET".equals(method)) && (path.equals("/api/ai/plan-approval")
                 || path.startsWith("/api/ai/plan-approval/"))) return true;
-        // 目标模式（第五张人在回路卡）：POST /chat/goal（设为目标）、POST /chat/goal/{id}（逐条确认/暂停/
-        // 继续/加预算/现在验收/人工勾选）、GET /chat/goal/pending（目标卡恢复）、GET /chat/session/{id}/goal
+        // 目标模式（第五张人在回路卡）：POST /chat/goal（设为目标，创建即开始）、POST /chat/goal/{id}（暂停/
+        // 继续/改标准/现在验收/人工勾选）、GET /chat/goal/pending（目标卡恢复）、GET /chat/session/{id}/goal
         // 与 /chat/session/{id}/goal/events（右栏面板与过程深链）——归属一律按登录 uid 严格校验
         // （目标行带 user_id，非本人一律拒）；放行是为了普通用户能用（不放行则目标模式对多数人是坏的，
         // 管理员靠直通看不出来）。会话路径挂在 /chat/session 下，不在上面的 /api/ai/session/ 白名单里，

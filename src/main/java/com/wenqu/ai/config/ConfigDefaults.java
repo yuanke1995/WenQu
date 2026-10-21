@@ -68,12 +68,11 @@ public final class ConfigDefaults {
 
     /** memory.flushThrottleMinutes：每轮收尾的自动提炼最短间隔（分钟；0=每轮都提炼） */
     public static final int MEMORY_FLUSH_THROTTLE_MINUTES = 10;
-    /** memory.consolidationMaxTokens：consolidation prompt 的目标 token 上限 */
-    public static final int MEMORY_CONSOLIDATION_MAX_TOKENS = 2_000;
-    /** memory.maxMdTokens：MEMORY.md 的硬上限（写入落盘时按 4 字符/token 裁剪） */
+    /**
+     * memory.maxMdTokens：MEMORY.md 的硬上限（写入落盘时按 4 字符/token 裁剪）。
+     * consolidation prompt 的目标值由它按 2/3 推导（默认 2000），不再单列配置项。
+     */
     public static final int MEMORY_MAX_MD_TOKENS = 3_000;
-    /** memory.dailyRetentionDays：日账归档前的保留天数 */
-    public static final int MEMORY_DAILY_RETENTION_DAYS = 90;
 
     /** sandbox.cleanupIntervalMs：沙盒空闲回收扫描间隔 */
     public static final int SANDBOX_CLEANUP_INTERVAL_MS = 600_000;

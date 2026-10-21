@@ -26,7 +26,8 @@ import java.util.function.Supplier;
 
 /**
  * 验收怎么跑（目标模式的命门）：按 {@code criteria_json.verifierId} 装配验证器，
- * <b>轮外</b>逐条验，结论写进 {@code c_ai_goal.verifications_json} 与框架任务态。
+ * <b>轮外</b>逐条验，结论写进 {@code c_ai_goal.verifications_json} 与框架任务态
+ * （人工核验例外：没有工具证据锚点，只写库并带 binding，见 {@link #verify}）。
  *
  * <p>三类验证器（设计稿 §8.1）：
  * <ul>
@@ -80,9 +81,9 @@ public class GoalVerificationRegistry {
         this.stateStoreSupplier = supplier;
     }
 
-    /** 单条验收标准的验证上限（秒）：超时记 ERROR */
+    /** 单条验收标准的验证上限（秒）：超时记 ERROR。不是管理员旋钮（防一个卡死的验证器挂住整条目标循环） */
     public int verifyTimeoutSeconds() {
-        return configService.getInt("chat.goalMode.verifyTimeoutSeconds", 60);
+        return GoalService.VERIFY_TIMEOUT_SECONDS;
     }
 
     /** 验证方式的中文名（界面显示用；不露框架机制） */
@@ -101,6 +102,24 @@ public class GoalVerificationRegistry {
      * @return {@code {outcome, reason, verifierId, actionId, binding:{contractVersion,subjectVersion}, recordedAt}}
      */
     public Map<String, Object> verify(Goal goal, GoalBridge.Criterion c, HarnessAgent agent, String uid) {
+        // 人工核验不走框架 VerificationService：它要求一条已结算的 action/end 作为证据锚点，
+        // 而纯聊天目标（没调工具）根本没有锚点；用户点的那一下就是证据本身。
+        // 结论仍带 binding（contractVersion + subjectVersion），工件改过一样判 STALE。
+        if (isManual(c)) {
+            Map<String, Object> verdict = GoalRecords.manualVerdict(goal, c.key());
+            if (verdict == null) return unknown(c, "等待人工核验：用户还没有勾选这条标准");
+            Map<String, Object> out = new LinkedHashMap<>(verdict);
+            out.put("verifierId", MANUAL);
+            // 勾选时已记下的 binding 不能覆盖：它是判 STALE 的依据（旧结论不能因为一次重验就变新）
+            if (!out.containsKey("binding")) {
+                Map<String, Object> binding = new LinkedHashMap<>();
+                binding.put("contractVersion", goal.getContractVersion());
+                binding.put("subjectVersion", goal.getSubjectVersion());
+                out.put("binding", binding);
+            }
+            out.put("recordedAt", System.currentTimeMillis());
+            return out;
+        }
         AgentStateStore store = stateStoreSupplier == null ? null : stateStoreSupplier.get();
         if (store == null || agent == null) {
             return unknown(c, "验证存储未就绪");
@@ -174,6 +193,10 @@ public class GoalVerificationRegistry {
     }
 
     // ==================== 内部 ====================
+
+    private static boolean isManual(GoalBridge.Criterion c) {
+        return c.verifierId() == null || c.verifierId().isBlank() || MANUAL.equals(c.verifierId());
+    }
 
     private static Map<String, Object> unknown(GoalBridge.Criterion c, String reason) {
         Map<String, Object> m = new LinkedHashMap<>();

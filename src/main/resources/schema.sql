@@ -221,6 +221,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_message` (
     `mentions`     TEXT         DEFAULT NULL COMMENT '@ 引用 (JSON数组字符串: [{type,id,name,kbId}])；用户消息常驻标注，刷新/历史回显均保留',
     `history_refs` TEXT         DEFAULT NULL COMMENT '# 历史引用 (JSON数组字符串: [{messageId,role,content}])；用户消息常驻标注，刷新/历史回显均保留',
     `plan`        TEXT         DEFAULT NULL COMMENT '计划批准卡 (JSON: {plan,status=approved|rejected})；助手消息落库，刷新/历史按轮重建执行计划卡；NULL=本轮未走计划模式',
+    `goal_command` VARCHAR(64) DEFAULT NULL COMMENT '目标指令回声（值=目标 id）：这条**用户提问**是把一件事设为目标，气泡上挂命令标注、不挂普通消息动作。历史与验证记录留在目标行上，这条只留「什么时候定的什么目标」；NULL=普通提问',
     `turn_id`     VARCHAR(64)  DEFAULT NULL COMMENT '本轮身份（一问一答共用一个 turnId，与 c_ai_session_event.turn_id 同源）；消息→事件账本的关联键，逐气泡「过程回放」靠它。存量行为 NULL=该轮没有过程记录可回放',
     `end_reason`  VARCHAR(16)  DEFAULT NULL COMMENT '本轮终止原因（记在**用户提问**上）：stopped=用户叫停且本轮没产出任何回答。刻意不落一条「已停止」的空回答——空的回答留在对话里比不留更碍眼；「这一问没有回答」本就是那一问的事实',
     `sequence`    INT          NOT NULL DEFAULT 0 COMMENT '消息序号 (会话内递增)',
@@ -343,8 +344,8 @@ CREATE TABLE IF NOT EXISTS `c_ai_agent` (
     `tool_artifact`   INT          DEFAULT NULL COMMENT '产物交付工具: 1=开 0=关 NULL=继承',
     `tool_mcp`        INT          DEFAULT NULL COMMENT 'MCP 工具: 1=开 0=关 NULL=继承',
     `tool_websearch`  INT          DEFAULT NULL COMMENT '联网搜索工具(webSearch): 1=开 0=关 NULL=继承（结果为网页来源，进引用体系）',
-    `goal_enabled`    INT          DEFAULT NULL COMMENT '目标模式开关: 1=开 0=关 NULL=继承平台 chat.goalMode.enabled。与任务上下文投影/候选要求工具同源判据（关=不投影、不挂工具、界面无入口）',
-    `tool_approval_mode` VARCHAR(10) DEFAULT NULL COMMENT '有副作用工具(沙盒/MCP)执行审批: auto=自动执行 ask=执行前需用户确认(off=禁用) NULL=auto',
+    `goal_enabled`    INT          DEFAULT NULL COMMENT '目标模式开关: 1=开 0=关 NULL=开（平台级总闸已去掉，这一格是唯一判据）。与任务上下文投影/候选要求工具同源判据（关=不投影、不挂工具、界面无入口）',
+    `tool_approval_mode` VARCHAR(10) DEFAULT NULL COMMENT '有副作用工具(沙盒/MCP)执行审批: auto=自动执行 ask=执行前需用户确认 off=禁用 NULL=跟随权限档位建议值(只读→确认/全自主→自动)',
     `permission_preset` VARCHAR(32) DEFAULT NULL COMMENT '权限档位(P2,捆沙盒执行档+审批建议值): research=只读调研 standard=常规 autonomous=全自主; NULL=跟随平台默认 agent.permissionPreset.default,高于 agent.permissionPreset.max 时按上限执行',
     `tool_deny` VARCHAR(1000) DEFAULT NULL COMMENT '工具黑名单(P2): 逗号分隔工具名,本轮这些工具不进模型工具表、被调到也拒; 与族级三态/具体项白名单并列(其余照旧、只拿掉点名这几个),也是 MCP 动态工具唯一的粒度; NULL/空=不禁',
     `max_tool_steps`  INT          DEFAULT NULL COMMENT '单轮工具调用步数上限(全部工具合计; NULL=用全局 agent.maxToolSteps; 0=不限制)',
@@ -716,11 +717,9 @@ CREATE TABLE IF NOT EXISTS `c_ai_goal` (
     `constraints_json`  JSON         DEFAULT NULL COMMENT '约束（同结构，kind=CONSTRAINT）',
     `subject_version`   VARCHAR(2000) DEFAULT NULL COMMENT '工件指纹（sha256(路径+mtime+size)）；纯检索/写作类目标不钉',
     `verifications_json` JSON        DEFAULT NULL COMMENT '每标准最新一份验证 {requirementId,outcome,verifierId,reason,actionId,binding,recordedAt}',
-    `status`            VARCHAR(32)  NOT NULL DEFAULT 'DRAFT' COMMENT '状态: DRAFT/CLARIFYING/AWAITING_CONFIRMATION/RUNNING/VERIFYING/WAITING_INPUT/PAUSED/BUDGET_EXCEEDED/ACHIEVED/ENDED_INCOMPLETE/FAILED/CANCELLED',
-    `budget_turns`      INT          NOT NULL DEFAULT 0 COMMENT '轮数上限（0=不限）',
-    `budget_tokens`     BIGINT       NOT NULL DEFAULT 0 COMMENT 'token 上限（0=不限；含 chat/compress/subagent 三种 kind）',
-    `budget_tool_calls` INT          NOT NULL DEFAULT 0 COMMENT '工具调用上限（0=不限）',
-    `budget_minutes`    INT          NOT NULL DEFAULT 0 COMMENT '机器分钟上限（0=不限；只数机器时间，人在回路等待不计）',
+    `status`            VARCHAR(32)  NOT NULL DEFAULT 'DRAFT' COMMENT '状态: DRAFT/CLARIFYING/AWAITING_CONFIRMATION/RUNNING/VERIFYING/WAITING_INPUT/PAUSED/ACHIEVED/ENDED_INCOMPLETE/FAILED/CANCELLED（预算用满那一档随预算机制一起退役，2026-10-21）',
+    -- 预算四列（budget_turns/budget_tokens/budget_tool_calls/budget_minutes）已随「目标不设边界」退役（2026-10-21）：
+    -- 新库不再建这四列，实体也不再映射；存量库里的列留着不删（无读取方，删列是不可逆动作，交给运维窗口）
     `used_turns`        INT          NOT NULL DEFAULT 0 COMMENT '已用轮数（目标区间内的问答轮）',
     `used_tokens`       BIGINT       NOT NULL DEFAULT 0 COMMENT '已用 token（按 c_ai_usage_log 聚合）',
     `used_tool_calls`   INT          NOT NULL DEFAULT 0 COMMENT '已用工具调用（按目标区间累计）',
@@ -1015,6 +1014,11 @@ DELETE FROM `c_ai_config` WHERE `config_key` IN (
     'chat.agentscopeMaxContextTokens', 'chat.agentscopeTurnTimeoutSeconds',
     'chat.agentscopeCompactTriggerMessages', 'chat.planGenTimeoutMs', 'chat.streamRetryCount',
     'chat.planAutoIntent',
+    -- 目标模式七个参数全部退役（2026-10-21「不设边界」）：平台总闸改由智能体级 goal_enabled 单点决定，
+    -- 四条预算上限连同撞闸/预警/加预算一起删除，验收超时降为代码常量，候选提议恒开
+    'chat.goalMode.enabled', 'chat.goalMode.defaultTurns', 'chat.goalMode.defaultTokens',
+    'chat.goalMode.defaultToolCalls', 'chat.goalMode.defaultMinutes',
+    'chat.goalMode.verifyTimeoutSeconds', 'chat.goalMode.requirementProposals',
     -- 框架状态存储恒走 Redis：开关已取消（本地文件方案退役，容器重建即丢会话上下文），
     -- 连接参数复用 spring.data.redis，不再单独保存 host/port/password
     'chat.agentscopeRedisEnabled',
@@ -1049,6 +1053,8 @@ DELETE FROM `c_ai_config` WHERE `config_key` IN (
     'skill.injectMaxChars', 'skill.maxFileChars',
     'memory.maxPerUser', 'memory.maxInjectCount', 'memory.injectBudgetChars',
     'memory.dedupThreshold', 'memory.useSemanticInject', 'memory.platformEmbeddingRef',
+    -- 2026-10-21 记忆参数收口：容量只留 memory.maxMdTokens（合并目标由它推导），日账保留期沿用框架默认 90 天
+    'memory.consolidationMaxTokens', 'memory.dailyRetentionDays',
     -- 工具：低风险工具改为随总闸启用，按智能体三态 / tool.deny 收口，不再各留平台开关
     'tool.knowledgeRetrieval.enabled', 'tool.artifact.enabled',
     'tool.builtin.enabled', 'tool.subagentConsult.enabled',
