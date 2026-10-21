@@ -42,7 +42,7 @@ public class KnowledgeToolProvider implements ToolFamilyProvider {
     @Override
     public List<ToolDescriptor> descriptors() {
         return List.of(new ToolDescriptor("searchKnowledge", ToolFamily.KNOWLEDGE,
-                "知识库精确检索", "查知识库资料", "在你上传的知识库里检索相关资料片段",
+                "知识库精确检索", "检索知识库", "在你上传的知识库里检索相关资料片段",
                 SideEffect.READ, null, true, false, null));
     }
 

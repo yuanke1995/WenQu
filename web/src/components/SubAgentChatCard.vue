@@ -1,6 +1,6 @@
 <template>
   <!-- 一次咨询在聊天区的那份「子对话」：我们问它什么、它答了什么、它据哪些资料。
-       刻意不带自己的折叠头——外层工具卡已经写了「问另一位助手 · 谁 · 多久」，再叠一个标题就是两句同样的话。 -->
+       刻意不带自己的折叠头——外层工具卡已经写了「委派助手执行 · 谁 · 多久」，再叠一个标题就是两句同样的话。 -->
   <div class="sa-chat" :class="{ failed: v.failed }">
     <div v-if="v.question" class="sac-line">
       <div class="sac-label">问它</div>

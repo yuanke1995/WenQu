@@ -52,7 +52,7 @@ public List<ToolDescriptor> descriptors() {
         // 本族只剩 run_code：框架确无对应工具（core/tool/coding 只到 ShellCommandTool）。
         return List.of(
                 new ToolDescriptor("run_code", ToolFamily.SANDBOX,
-                        "沙盒脚本（一次做完一批）", "运行脚本",
+                        "沙盒脚本（一次做完一批）", "执行脚本",
                         "在云端沙盒里跑一段 Python：脚本可以自己循环取资料、批量处理，只把结果带回来",
                         SideEffect.MUTATE, "tool.runcode.enabled", false, true, null));
     }

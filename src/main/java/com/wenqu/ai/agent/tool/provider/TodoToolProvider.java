@@ -40,7 +40,7 @@ public class TodoToolProvider implements ToolFamilyProvider {
     @Override
     public List<ToolDescriptor> descriptors() {
         return List.of(new ToolDescriptor("writeTodo", ToolFamily.TODO,
-                "任务清单", "整理任务清单", "把要做的事列成清单，看得见总共几件、还剩几件",
+                "任务清单", "更新任务清单", "把要做的事列成清单，看得见总共几件、还剩几件",
                 SideEffect.READ, null, false, false, null,
                 // viewerRequired=true：清单是给正在看这一轮的人看的进度板。子智能体分支（P3a）跑在
                 // 一条没有观众、跑完即删的临时会话里，写进去的清单谁都看不到，故分支轮不挂——

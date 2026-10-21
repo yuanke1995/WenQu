@@ -9,77 +9,78 @@ import { fmtTokens } from '../utils/token'
 // 粘贴文本附件的名字前缀：产地是取材层（./intake.js），这里借用并原样再导出。
 // 本模块只用它来「认回」这类附件（isPastedText），并不定义它
 import { PASTE_TEXT_BASE } from './intake'
-// 工具名小白向展示：标签用「动词短语」而不是术语（如 统计字数 / 查阅官方文档）。
+// 对话工具卡展示名的本地兜底：口径与后端一致——书面动宾短语写「它在干什么」
+// （检索知识库 / 读取技能正文 / 提交计划待批准），对象用站内已有名词，不用机制名与口语。
 // P1 seam 化之后**首选后端下发的名字**：工具卡与审批载荷都带 label/hint 字段（源自工具注册中心的
 // 描述符），下面的两张表退为兜底——历史消息里没有 label、免登录分享页的旧记录、以及 MCP 动态工具
 // 仍要靠本地映射。新增工具不再需要在这里补一行就能显示中文名（writeTodo 当时漏在清单里只有英文名，
 // 就是这个手抄机制的代价）。
 const TOOL_LABELS = {
-  searchKnowledge: '查知识库资料',
+  searchKnowledge: '检索知识库',
   // AgentScope 框架引擎的知识检索工具（与上面 searchKnowledge 同一能力，工具名不同）
-  search_knowledge: '查知识库资料',
-  presentArtifact: '生成文件',
-  deliver_artifact: '保存生成的文件',
-  calculate: '做算术计算',
-  currentDateTime: '查看当前时间',
-  daysBetween: '算日期相差几天',
-  addDays: '推算日期',
+  search_knowledge: '检索知识库',
+  presentArtifact: '生成产物',
+  deliver_artifact: '交付产物',
+  calculate: '数值计算',
+  currentDateTime: '查询当前时间',
+  daysBetween: '计算日期差',
+  addDays: '日期推算',
   randomNumber: '生成随机数',
-  uuid: '生成随机编号',
+  uuid: '生成 UUID',
   unitConvert: '单位换算',
-  textStats: '统计字数',
-  base64: 'Base64 转码',
-  hash: '计算哈希值',
+  textStats: '文本统计',
+  base64: 'Base64 编解码',
+  hash: '哈希计算',
   askUser: '向用户提问',
-  readSkill: '读取技能说明',
+  readSkill: '读取技能正文',
   webSearch: '联网搜索',
   execute: '执行沙盒命令',
   read_file: '读取沙盒文件',
   write_file: '写入沙盒文件',
   edit_file: '编辑沙盒文件',
-  grep_files: '在沙盒里搜内容',
-  glob_files: '按文件名模式找文件',
-  list_files: '查看沙盒目录',
-  ls: '查看文件列表',
+  grep_files: '检索沙盒内容',
+  glob_files: '按模式查找文件',
+  list_files: '列出沙盒目录',
+  ls: '列出沙盒目录',
   // ↓ 这一段是「历史消息」专用：框架引擎（AgentScope）早期把工具裸名当 label 下发，
   // 那几轮消息已经按裸名落进库里了。后端现已改为随卡下发中文名（ToolRegistry → 框架工具表），
   // 新消息不再走这里；留着是为了让刷新回来的老消息也读得懂。
   // 措辞刻意与后端 ToolDescriptor.cardLabel / FrameworkToolLabels 保持一致——两份不一致时
   // 表现是「同一张卡刷新前后换了个名字」，比少一条映射更难排查。
-  consultAgent: '问另一位助手',
-  writeTodo: '整理任务清单',
-  run_code: '运行脚本',
+  consultAgent: '委派助手咨询',
+  writeTodo: '更新任务清单',
+  run_code: '执行脚本',
   // 框架原生的计划模式三把（agentscope-harness 的 PlanModeTools，不在问渠工具注册中心里）
-  plan_enter: '开始规划方案',
-  plan_write: '把计划写下来',
-  plan_exit: '提交计划待确认',
+  plan_enter: '进入规划模式',
+  plan_write: '撰写执行计划',
+  plan_exit: '提交计划待批准',
   // 框架原生的技能、记忆与子智能体工具（全框架化 P0/P3）：同样只在后端框架工具表里登记，
   // 这张表只为已经按裸名落库的那几轮兜底。
-  load_skill_through_path: '打开技能说明书',
-  skill_manage: '改写我的技能',
-  propose_skill: '把做法草拟成技能',
-  memory_search: '翻长期记忆',
-  memory_get: '读记忆原文',
-  memory_save: '记进长期记忆',
-  session_search: '搜以前的会话',
-  session_list: '列出以前的会话',
-  session_history: '回看某次会话',
-  agent_spawn: '派个助手去做',
-  agent_send: '给助手补一句',
-  agent_list: '看看有哪些助手',
-  task_list: '查后台任务进度',
-  task_output: '取回任务结果',
-  task_cancel: '停掉后台任务',
-  wait_async_results: '等后台结果',
+  load_skill_through_path: '读取技能正文',
+  skill_manage: '管理我的技能',
+  propose_skill: '创建技能草案',
+  memory_search: '检索长期记忆',
+  memory_get: '读取记忆内容',
+  memory_save: '写入长期记忆',
+  session_search: '检索历史会话',
+  session_list: '列出历史会话',
+  session_history: '读取历史会话',
+  agent_spawn: '委派助手执行',
+  agent_send: '向助手追加消息',
+  agent_list: '查看已派助手',
+  task_list: '查询后台任务',
+  task_output: '获取任务结果',
+  task_cancel: '取消后台任务',
+  wait_async_results: '等待后台结果',
   // MCP（context7）：去前缀后按裸名匹配
-  resolve_library_id: '查找文档来源',
-  query_docs: '查阅官方文档',
+  resolve_library_id: '解析文档库',
+  query_docs: '检索官方文档',
   // MCP（deepwiki）
-  read_wiki_structure: '查看 Wiki 目录',
+  read_wiki_structure: '浏览 Wiki 目录',
   read_wiki_contents: '阅读 Wiki 内容',
   ask_wiki_question: '向 Wiki 提问',
   // deepwiki 私有模式 / 按需注册的工具，公网端点默认不出现，登记私有实例时才会命中
-  list_wiki_repos: '查看可用 Wiki 仓库',
+  list_wiki_repos: '列出 Wiki 仓库',
   generate_wiki: '生成代码 Wiki'
 }
 // 悬停一句话说明（这个工具到底在干什么；未收录的不显示 title）
@@ -115,7 +116,7 @@ const TOOL_DESCS = {
   plan_enter: '先只读地调研与设计方案，这期间不改任何东西',
   plan_write: '把想好的方案写成计划，你点开就能看',
   plan_exit: '计划写完了，请你过目；你同意后它才开始动手',
-  load_skill_through_path: '把某个技能的说明书读出来，它照着那份做',
+  load_skill_through_path: '把某条技能的正文读出来，它照着那份做',
   skill_manage: '新建、修改或删除你名下的技能',
   propose_skill: '先起草一份技能给你过目，同意后才会留下',
   memory_search: '在沉淀下来的记忆里按关键词找，看看以前记过什么',
@@ -259,7 +260,7 @@ const rememberAgents = list => {
   if (!Array.isArray(list)) return
   list.forEach(a => { if (a && a.id && a.name) agentNames.set(a.id, a.name) })
 }
-// ==================== 派遣助手（问另一位助手）子对话 ====================
+// ==================== 派遣助手（委派助手执行）子对话 ====================
 // 一次派遣在聊天区的那份问答：我们问它什么 + 它答了什么 + 它据哪些资料。
 // 数据来自后端随工具卡落库的 subChat（SubAgentConsultService.render 那份），所以刷新、换设备、
 // 历史回看与实时同构——刻意不依赖只活一次的 SSE。
@@ -1164,6 +1165,77 @@ const verLabel = m => verLocal(m)
   ? `${(m.vIndex || 0) + 1}/${m.versions.length}`
   : `${m.variantIndex || 1}/${m.variantCount || 1}`
 
+// ==================== 目标模式的状态口径 ====================
+// 摘要条、右栏/移动详情面、目标卡三处共用同一套词与同一份判据：各处各写一遍必然漂移
+// （同一条目标，条子说一个词、卡里说另一个词就是那种）。入参一律是目标文档本身，不读任何 .value。
+// 词汇收成用户结果：条子三档（进行中/已暂停/受阻），详情面多一档「等你做什么」，
+// 卡在哪靠原因那一行说，不挤进状态词里。
+// 目标不设预算：这里没有任何「上限/还剩多少」的概念，只有「已经跑到第几轮」和「还差几条没验过」。
+const GOAL_BLOCKED = ['FAILED', 'ENDED_INCOMPLETE']
+/** 与后端 GoalService 的 EDITABLE 同源：只有这几档能就地改验收标准，摆错档就是点了报错 */
+const GOAL_EDITABLE = ['RUNNING', 'VERIFYING', 'WAITING_INPUT', 'PAUSED']
+/** 不再往下推的那几档：详情面转只读 + 「另起目标」 */
+const GOAL_ENDED = ['ACHIEVED', 'CANCELLED', 'FAILED', 'ENDED_INCOMPLETE']
+/** 摘要条整条撤下的两档：已达成（做完了）与已取消（用户自己清的），都不是「还等你处理」 */
+const GOAL_DISMISSED = ['ACHIEVED', 'CANCELLED']
+const GOAL_RUNNING = ['RUNNING', 'VERIFYING', 'DRAFT', 'CLARIFYING']
+
+const goalTerminalOf = g => !!g && GOAL_ENDED.includes(g.status)
+const goalBarVisibleOf = g => !!g && g.status !== 'AWAITING_CONFIRMATION' && !GOAL_DISMISSED.includes(g.status)
+const goalPhraseOf = g => {
+  if (!g) return ''
+  if (g.status === 'PAUSED') return '已暂停的目标'
+  if (g.status === 'WAITING_INPUT') return '等你核验的目标'
+  if (GOAL_BLOCKED.includes(g.status)) return '受阻的目标'
+  return '进行中的目标'
+}
+const goalStateLabelOf = g => {
+  const s = g && g.status
+  if (s === 'ACHIEVED') return '已完成'
+  if (s === 'CANCELLED') return '已取消'
+  if (GOAL_BLOCKED.includes(s)) return '受阻'
+  if (s === 'AWAITING_CONFIRMATION') return '等你确认'
+  if (s === 'WAITING_INPUT') return '等你核验'
+  if (GOAL_RUNNING.includes(s)) return '进行中'
+  return '已暂停'
+}
+const goalStateClassOf = g => {
+  const s = g && g.status
+  if (s === 'ACHIEVED') return 'achieved'
+  if (s === 'CANCELLED') return 'ended'
+  if (GOAL_BLOCKED.includes(s)) return 'blocked'
+  if (s === 'AWAITING_CONFIRMATION' || s === 'WAITING_INPUT') return 'pending'
+  if (GOAL_RUNNING.includes(s)) return 'running'
+  return 'paused'
+}
+/** 还没验过的标准原文（未完成清单与「还差几条」的唯一数据源：过期也不算过） */
+const goalRemainingOf = g => ((g && g.criteria) || [])
+  .filter(c => c.kind !== 'CONSTRAINT' && c.status === 'CONFIRMED' &&
+    (!c.verification || c.verification.outcome !== 'PASSED' || c.verification.stale))
+  .map(c => c.text)
+/** 受阻那一档说清卡在哪：为什么停的、还差几条 */
+const goalBlockReasonOf = g => {
+  if (!g || !GOAL_BLOCKED.includes(g.status)) return ''
+  if (g.status === 'FAILED') return '未达成收尾：这一条不再往下推'
+  const left = goalRemainingOf(g).length
+  return left ? `就此收尾：还差 ${left} 条没验过` : '就此收尾'
+}
+const goalRoundLineOf = g => `执行轮次 ${g.turnIndex || 1}`
+/** 摘要条的悬浮行：条子放不下的那些数（轮次、受阻原因、同步异常）一次给全 */
+const goalBarTitleOf = g => {
+  if (!g) return ''
+  return [g.objective, goalRoundLineOf(g), g.hint, goalBlockReasonOf(g), g.syncWarn].filter(Boolean).join('\n')
+}
+/** 触屏那一版：没有 hover，同一批数压成条子下面第二行小字（不许因为「放不下」就在移动端丢掉它） */
+const goalBarMetaOf = g => {
+  if (!g) return ''
+  return [goalRoundLineOf(g), g.hint, goalBlockReasonOf(g), g.syncWarn].filter(Boolean).join(' · ')
+}
+const goalCanPauseOf = g => ['RUNNING', 'VERIFYING'].includes(g && g.status)
+const goalCanResumeOf = g => !!g && (g.status === 'PAUSED' || g.status === 'WAITING_INPUT')
+const goalCanEditOf = g => GOAL_EDITABLE.includes(g && g.status)
+
+
 export {
   TOOL_LABELS, TOOL_DESCS, MCP_CLIENT_PREFIXES, bareToolName, toolLabel, toolDesc, toolCallsView, executedCount,
   toolDuration, toolRunning, consultChatView, consultNameOf, rememberAgents, hasTimelineBlocks, extendTimelineText, askUserView,
@@ -1183,5 +1255,8 @@ export {
   groupSources, externalOrigin, sourceName,
   fmtSourceScore, scoreTitle, fmtSize, histItemTitle, histItemDigest, fmtMsgTime, errorBrief, agentBadgeOf,
   pasteTitle, pasteSub, isPastedText, PASTE_TEXT_BASE,
-  snapshotVersion, applyVersion, verLocal, canSwitchPrev, canSwitchNext, verLabel
+  snapshotVersion, applyVersion, verLocal, canSwitchPrev, canSwitchNext, verLabel,
+  goalTerminalOf, goalBarVisibleOf, goalPhraseOf, goalStateLabelOf, goalStateClassOf,
+  goalRemainingOf, goalBlockReasonOf, goalBarTitleOf, goalBarMetaOf,
+  goalCanPauseOf, goalCanResumeOf, goalCanEditOf
 }

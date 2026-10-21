@@ -3,7 +3,7 @@ package com.wenqu.ai.agentx;
 import java.util.Map;
 
 /**
- * 框架原生工具的卡片展示名（口语向）与悬停说明。
+ * 框架原生工具的卡片展示名（正式口径）与悬停说明。
  *
  * <p><b>为什么需要这张表</b>：问渠自己的工具（{@code writeTodo}、{@code search_knowledge}…）
  * 由 {@link com.wenqu.ai.agent.tool.ToolRegistry} 统一声明中文名，
@@ -20,8 +20,10 @@ import java.util.Map;
  * 换不来任何东西。它们也不该出现在管理员工具清单里：那把清单讲的是「本平台有哪些可配置的工具」，
  * 而 plan_* 是执行模式的内部机制，用户没有开关可关它。
  *
- * <p><b>取名口径</b>：与 {@code ToolDescriptor#cardLabel} 同一个口径——用动词短语写「它在干什么」，
- * 而不是把机制名翻译一遍（{@code plan_write} 不是「写计划」而是「把计划写下来给人看」）。
+ * <p><b>取名口径</b>：与 {@code ToolDescriptor#cardLabel} 同一个口径——书面动宾短语写「它在干什么」
+ * （检索 / 读取 / 写入 / 执行 / 提交），不用口语（「翻」「看看」「把…写下来」），对象一律用站内已有的
+ * 名词（技能正文、长期记忆、历史会话、执行计划、产物、助手），不用机制名（{@code plan_write} 不叫「写
+ * 计划」，叫「撰写执行计划」）。
  *
  * <p><b>覆盖范围</b>：只收<b>框架挂的、且会在工具卡上露面</b>的。问渠自己的工具一律不进这张表——
  * 它们的名字归注册中心管，两处都写就是又一处会漂移的副本。
@@ -33,11 +35,11 @@ final class FrameworkToolLabels {
     private FrameworkToolLabels() {
     }
 
-    /** 工具名 → 卡片展示名（口语向）。取不到返回 null，由调用方按「未知工具」处理，不硬造翻译。 */
+    /** 工具名 → 卡片展示名（正式口径）。取不到返回 null，由调用方按「未知工具」处理，不硬造翻译。 */
     private static final Map<String, String> LABELS = Map.ofEntries(
-            Map.entry(PlanModeToolsNames.ENTER, "开始规划方案"),
-            Map.entry(PlanModeToolsNames.WRITE, "把计划写下来"),
-            Map.entry(PlanModeToolsNames.EXIT, "提交计划待确认"),
+            Map.entry(PlanModeToolsNames.ENTER, "进入规划模式"),
+            Map.entry(PlanModeToolsNames.WRITE, "撰写执行计划"),
+            Map.entry(PlanModeToolsNames.EXIT, "提交计划待批准"),
             // 全框架化 P1：沙箱与文件系统改由框架提供后，这七把也走本表。
             // 问渠侧同名工具已退役（见 SandboxToolProvider#descriptors），模型看到的工具名不变，
             // 但执行方换成框架 FilesystemTool / ShellExecuteTool，卡片文案得跟上，否则界面上
@@ -45,31 +47,31 @@ final class FrameworkToolLabels {
             Map.entry(FilesystemToolNames.READ_FILE, "读取沙盒文件"),
             Map.entry(FilesystemToolNames.WRITE_FILE, "写入沙盒文件"),
             Map.entry(FilesystemToolNames.EDIT_FILE, "编辑沙盒文件"),
-            Map.entry(FilesystemToolNames.GREP_FILES, "在沙盒里搜内容"),
-            Map.entry(FilesystemToolNames.GLOB_FILES, "按文件名模式找文件"),
-            Map.entry(FilesystemToolNames.LIST_FILES, "查看沙盒目录"),
+            Map.entry(FilesystemToolNames.GREP_FILES, "检索沙盒内容"),
+            Map.entry(FilesystemToolNames.GLOB_FILES, "按模式查找文件"),
+            Map.entry(FilesystemToolNames.LIST_FILES, "列出沙盒目录"),
             Map.entry(FilesystemToolNames.EXECUTE, "执行沙盒命令"),
             // 全框架化 P3：技能与记忆也换成框架工具面后，这十一把同样只露裸名。
             // 技能那三把是每次用技能都会露面的一把（load_skill_through_path），漏它的表现
             // 就是界面上出现一个没人看得懂的英文函数名。
-            Map.entry("load_skill_through_path", "打开技能说明书"),
-            Map.entry("skill_manage", "改写我的技能"),
-            Map.entry("propose_skill", "把做法草拟成技能"),
-            Map.entry("memory_search", "翻长期记忆"),
-            Map.entry("memory_get", "读记忆原文"),
-            Map.entry("memory_save", "记进长期记忆"),
-            Map.entry("session_search", "搜以前的会话"),
-            Map.entry("session_list", "列出以前的会话"),
-            Map.entry("session_history", "回看某次会话"),
-            Map.entry("deliver_artifact", "保存生成的文件"),
+            Map.entry("load_skill_through_path", "读取技能正文"),
+            Map.entry("skill_manage", "管理我的技能"),
+            Map.entry("propose_skill", "创建技能草案"),
+            Map.entry("memory_search", "检索长期记忆"),
+            Map.entry("memory_get", "读取记忆内容"),
+            Map.entry("memory_save", "写入长期记忆"),
+            Map.entry("session_search", "检索历史会话"),
+            Map.entry("session_list", "列出历史会话"),
+            Map.entry("session_history", "读取历史会话"),
+            Map.entry("deliver_artifact", "交付产物"),
             // 子智能体已改为框架接管（全框架化 P0）：派活、催话、取结果这六把都在卡上露面。
-            Map.entry("agent_spawn", "派个助手去做"),
-            Map.entry("agent_send", "给助手补一句"),
-            Map.entry("agent_list", "看看有哪些助手"),
-            Map.entry("task_list", "查后台任务进度"),
-            Map.entry("task_output", "取回任务结果"),
-            Map.entry("task_cancel", "停掉后台任务"),
-            Map.entry("wait_async_results", "等后台结果"));
+            Map.entry("agent_spawn", "委派助手执行"),
+            Map.entry("agent_send", "向助手追加消息"),
+            Map.entry("agent_list", "查看已派助手"),
+            Map.entry("task_list", "查询后台任务"),
+            Map.entry("task_output", "获取任务结果"),
+            Map.entry("task_cancel", "取消后台任务"),
+            Map.entry("wait_async_results", "等待后台结果"));
 
     /** 工具名 → 悬停一句话说明（这个工具到底在干什么；未收录的不给 title）。 */
     private static final Map<String, String> HINTS = Map.ofEntries(
@@ -83,7 +85,7 @@ final class FrameworkToolLabels {
             Map.entry(FilesystemToolNames.GLOB_FILES, "按文件名规律找文件，比如「所有 .md」"),
             Map.entry(FilesystemToolNames.LIST_FILES, "列出云端沙盒里某个目录下有哪些文件"),
             Map.entry(FilesystemToolNames.EXECUTE, "在隔离的云端沙盒里跑一条命令，不影响你本机"),
-            Map.entry("load_skill_through_path", "把某个技能的说明书读出来，它照着那份做"),
+            Map.entry("load_skill_through_path", "把某条技能的正文读出来，它照着那份做"),
             Map.entry("skill_manage", "新建、修改或删除你名下的技能"),
             Map.entry("propose_skill", "先起草一份技能给你过目，同意后才会留下"),
             Map.entry("memory_search", "在沉淀下来的记忆里按关键词找，看看以前记过什么"),

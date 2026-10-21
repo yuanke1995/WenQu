@@ -41,7 +41,7 @@ public class ArtifactToolProvider implements ToolFamilyProvider {
     @Override
     public List<ToolDescriptor> descriptors() {
         return List.of(new ToolDescriptor("presentArtifact", ToolFamily.ARTIFACT,
-                "生成文件产物", "生成文件", "把内容整理成可下载的文件",
+                "生成文件产物", "生成产物", "把内容整理成可下载的文件",
                 SideEffect.MUTATE, null, false, false, null));
     }
 

@@ -43,16 +43,16 @@ public class BuiltinToolProvider implements ToolFamilyProvider {
     @Override
     public List<ToolDescriptor> descriptors() {
         return List.of(
-                desc("calculate", "算术计算", "做算术计算", "精确计算算式，避免模型心算出错"),
-                desc("currentDateTime", "当前日期时间", "查看当前时间", "获取今天的日期与时间"),
-                desc("daysBetween", "日期相差天数", "算日期相差几天", "计算两个日期之间相差多少天"),
-                desc("addDays", "日期推算", "推算日期", "从某个日期加/减 N 天，得到新日期"),
+                desc("calculate", "算术计算", "数值计算", "精确计算算式，避免模型心算出错"),
+                desc("currentDateTime", "当前日期时间", "查询当前时间", "获取今天的日期与时间"),
+                desc("daysBetween", "日期相差天数", "计算日期差", "计算两个日期之间相差多少天"),
+                desc("addDays", "日期推算", "日期推算", "从某个日期加/减 N 天，得到新日期"),
                 desc("randomNumber", "随机数", "生成随机数", "在指定范围内生成一个随机数"),
-                desc("uuid", "生成 UUID", "生成随机编号", "生成一个不会重复的随机编号（UUID）"),
+                desc("uuid", "生成 UUID", "生成 UUID", "生成一个不会重复的随机编号（UUID）"),
                 desc("unitConvert", "单位换算", "单位换算", "长度、重量、温度等单位互相换算"),
-                desc("textStats", "文本统计", "统计字数", "统计文本的字数、行数、段落数等"),
-                desc("base64", "Base64 编解码", "Base64 转码", "在文本与 Base64 编码之间互相转换"),
-                desc("hash", "哈希计算", "计算哈希值", "给文本算一个「指纹」，用于校验内容是否被改过"),
+                desc("textStats", "文本统计", "文本统计", "统计文本的字数、行数、段落数等"),
+                desc("base64", "Base64 编解码", "Base64 编解码", "在文本与 Base64 编码之间互相转换"),
+                desc("hash", "哈希计算", "哈希计算", "给文本算一个「指纹」，用于校验内容是否被改过"),
                 // 提问卡是「人在回路」那一件：分支轮（P3a）没有观众，等不到答复，故带 viewerRequired
                 desc("askUser", "向用户提问（人在回路）", "向用户提问", "向你提出问题（可多选的题会标出），点选或输入答案后继续回答", true));
     }
