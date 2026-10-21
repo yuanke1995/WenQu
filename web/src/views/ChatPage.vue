@@ -41,9 +41,8 @@
                             :message="eventsMsg" :question="eventsQuestion" />
       </a-modal>
 
-      <!-- 目标起草弹窗（只用于「编辑目标」：点了入口按钮直接开待确认卡，不弹窗）。
-           从气泡「设为目标」进来时正文已预填，改一句就能开卡；标准默认一条人工核验
-           （机器验证方式在确认后由助手按标准类型配置，这里先不逼用户选） -->
+      <!-- 目标起草弹窗（只用于「另起目标/换口径」；主入口 /goal 与工具条按钮直接取正文建目标）。
+           标准默认一条人工核验（机器验证方式在开始后按标准类型配置，这里先不逼用户选） -->
       <a-modal v-model:open="goalDraftOpen" title="定个目标" width="min(640px, 94vw)" :footer="null">
         <div class="goald-box">
           <div class="goald-label">这件事要做到什么（说清楚「什么算完成」）</div>
@@ -405,15 +404,26 @@
               </div>
               <!-- 智能体提问（askUser）的「待答」态不再渲染在气泡里：桌面壳把底部聊天输入框整块
                    替换成提问面板（见 pendingAsk / askp-*），答复后问答记录以工具卡形态留在本气泡 -->
-              <!-- 产物统一沉底展示（不再按生成时刻插在时间线中间，避免把回答切碎） -->
+              <!-- 产物统一沉底展示（不再按生成时刻插在时间线中间，避免把回答切碎）。
+                   「预览」＝开成一个浏览器标签页，与产物页、工作区文件同一待遇，安全性靠服务端那份
+                   CSP sandbox 头（见 ArtifactSandboxInterceptor）；哪些类型开得起来是 artifactView 里
+                   那份按真浏览器实测的清单，开不了的只给下载 -->
               <div v-if="m.role === 'ai' && m.artifacts && m.artifacts.length" class="artifact-list">
-                <a v-for="(a, ai) in m.artifacts" :key="ai" class="artifact-item"
-                   :href="resolveImg(a.url)" :download="a.filename" :title="'下载 ' + a.filename">
+                <div v-for="(a, ai) in m.artifacts" :key="ai" class="artifact-item">
                   <file-text-outlined class="artifact-icon" />
-                  <span class="artifact-name">{{ a.filename }}</span>
-                  <span v-if="a.description" class="artifact-desc">{{ a.description }}</span>
-                  <download-outlined class="artifact-dl" />
-                </a>
+                  <span class="artifact-name" :title="a.filename">{{ a.filename }}</span>
+                  <span v-if="a.description" class="artifact-desc" :title="a.description">{{ a.description }}</span>
+                  <span class="artifact-acts">
+                    <a v-if="canPreviewArtifact(a)" class="artifact-act" :href="resolveImg(a.url)"
+                       target="_blank" rel="noopener" :title="'在新标签页预览 ' + a.filename">
+                      <eye-outlined /> 预览
+                    </a>
+                    <a class="artifact-act" :href="resolveImg(a.url)" :download="a.filename"
+                       :title="'下载 ' + a.filename">
+                      <download-outlined /> 下载
+                    </a>
+                  </span>
+                </div>
               </div>
           </template>
           <template #sources="{ m, i }">
@@ -450,8 +460,7 @@
                            与「检索调试」同一开关（chat.retrievalDebugEnabled）控制，不给普通用户露出必 403 的入口 -->
                       <a-menu-item v-if="debugEntryVisible && m.sources && m.sources.length" key="addEval"><dislike-outlined style="margin-right:8px" />加入评测集</a-menu-item>
                       <a-menu-item v-if="m.turnId" key="events"><history-outlined style="margin-right:8px" />看这一轮的过程</a-menu-item>
-                      <!-- 设为目标：把刚生成的正文里的承诺转成目标草稿（入口按钮同源；平台关着目标模式时不出现） -->
-                      <a-menu-item v-if="goalEntryVisible && m.role === 'ai' && m.content" key="setGoal"><aim-outlined style="margin-right:8px" />设为目标</a-menu-item>
+
                       <a-menu-item key="export"><download-outlined style="margin-right:8px" />导出 Markdown</a-menu-item>
                       <a-menu-item key="deleteRound" style="color:#cf1322"><delete-outlined style="margin-right:8px" />删除本轮对话</a-menu-item>
                     </a-menu>
@@ -478,7 +487,9 @@
                  title="你离开后超过设定时间没人观看，这一轮被自动中断了，没有产出回答">
               <exclamation-circle-outlined /> 本轮已中断 · 未产生回答
             </div>
-            <div v-if="m.role === 'user'" class="msg-edit-row">
+            <!-- 目标指令回声不挂这一行：那句「把这件事做到什么算完」是一条指令，不是一等回答的提问，
+                 复制/编辑重发/重新生成对它都没有意义（与公开分享页同一口径，判据在共用外壳里） -->
+            <div v-if="m.role === 'user' && !m.goalCommand" class="msg-edit-row">
               <!-- 编辑重发的分支切换器：这一问有多个版本（历史编辑留下的旧分支）可来回切 -->
               <div v-if="m.variantCount > 1" class="ver-switch"
                    title="这个问题编辑过多个版本，可来回切换（旧版本按保留期清理）">
@@ -563,10 +574,10 @@
               </div>
               <div class="msg-inline-edit-actions">
                 <!-- 添加入口与主输入框同一个「+」分层面板（同一块面板，编辑态下 Teleport 进这张卡）：
-                     上传附件 / 引用资料 / 技能 / 引用历史问答四处共用一套候选、一套搜索与键盘导航。
+                     上传附件 / 引用资料（含技能）/ 引用历史问答共用一套候选、一套搜索与键盘导航。
                      快捷命令不进来：那些操作会改会话状态，与"改这一问"无关 -->
                 <button class="app-icon-btn add-btn" :class="{ 'toolbar-btn-on': (addOpen && addOnEdit) || editAddCount }"
-                        title="添加：上传文件图片 / 引用资料 / 技能 / 引用历史问答" @click="toggleEditAddPanel">
+                        title="添加：上传文件图片 / 引用资料 / 引用历史问答" @click="toggleEditAddPanel">
                   <plus-outlined />
                 </button>
                 <span class="msg-inline-edit-hint"><info-circle-outlined /> 编辑后将从此处重新开始对话，已有产物不会被删除</span>
@@ -599,11 +610,11 @@
 
       <!-- 输入区：卡片外壳 / 正文与 chip 同流 / 工具条 / 拖拽落点全在 chat/ChatInput.vue，
            与公开分享页共用同一份实现（改一次两页同时生效）。这里只往插槽里填本页自己的东西：
-           智能体胶囊、计划模式、模型与思考、插话队列、三块面板、以及顶替态的两张卡。 -->
+           智能体胶囊、目标入口、模型与思考、插话队列、三块面板、以及顶替态的两张卡。 -->
       <ChatInput
         ref="composerRef" v-model="text" :resolve="chipOf" :placeholder="composerPlaceholder"
         :sending="loading" steerable :can-send="canSend" :stop-armed="escArmed"
-        attach-title="添加：上传文件图片 / 引用资料 / 技能 / 引用历史问答 / 快捷命令"
+        attach-title="添加：上传文件图片 / 引用资料 / 引用历史问答 / 快捷命令"
         :attach-on="(addOpen && !addOnEdit) || pickedSkills.length"
         :replace-box="!!(pendingAsk || pendingPlan || pendingGoal)"
         @attach="toggleAddPanel" @send="sendNow" @stop="stopNow" @files="onDropFiles"
@@ -637,6 +648,66 @@
           <button class="steer-act" type="button" title="丢弃这条" @click="dropSteer(it)"><delete-outlined /></button>
           </template>
           </div>
+          </div>
+          <!-- 目标条（常驻摘要条）：横跨多轮的目标不属于哪一颗气泡，也不该只藏在右栏那块默认折叠的
+               面板里，所以它常驻在输入框正上方。一条只说三件事——现在什么状态、目标是什么、一把拉住它
+               （暂停/继续/编辑/清除四个图标动作）。状态词只有三个，全条一个观感不靠底色传状态；
+               跑了几轮、卡在哪、有没有同步异常不占版面，收在悬浮行与右栏详情面。达成/已取消整条撤下（结果在右栏看）。
+               编辑就在这一条里长开（目标原文改不了：框架把它钉在 task 身份上，换口径只能另起一条）。
+               待确认那一档不在这里：它整块顶替打字框（goalp-box），两处同现等于一件事给两个入口。 -->
+          <div v-if="goalBarVisible" class="goal-bar" :class="{ editing: goalEditing }" data-goal-bar>
+            <template v-if="!goalEditing">
+              <span class="gb-glyph"><aim-outlined /></span>
+              <span class="gb-label">{{ goalPhrase }}</span>
+              <span class="gb-objective" :title="goalBarTitle">{{ sessionGoal.objective }}</span>
+              <span v-if="goalBarError" class="gb-error" role="alert">{{ goalBarError }}</span>
+              <span class="gb-actions">
+                <button v-if="sessionGoal.status === 'WAITING_INPUT'" type="button" class="gb-icon"
+                        title="逐条核验：打开右栏目标面板" @click="goalOpen = true">
+                  <check-circle-outlined />
+                </button>
+                <button v-if="goalCanPause" type="button" class="gb-icon" :disabled="sessionGoal.busy"
+                        title="暂停目标：先停在这里，已经跑出来的部分都留着" @click="runGoalAction('pause')">
+                  <pause-circle-outlined />
+                </button>
+                <button v-else-if="goalCanResume" type="button" class="gb-icon" :disabled="sessionGoal.busy"
+                        title="恢复目标：接着往下推" @click="runGoalAction('resume')"><play-circle-outlined /></button>
+                <button v-if="goalCanEdit" type="button" class="gb-icon" title="编辑目标：改验收标准"
+                        @click="startGoalInlineEdit"><edit-outlined /></button>
+                <button type="button" class="gb-icon" :disabled="sessionGoal.busy"
+                        title="清除目标：不再往下推进，已经跑出来的内容全部保留"
+                        @click="runGoalAction('cancel')"><close-outlined /></button>
+              </span>
+            </template>
+            <!-- 就地编辑态：同一条长开，动作钉在最后一行右侧（与只读态同一块浮层，不另起弹窗） -->
+            <template v-else>
+              <div class="gb-edit-body">
+                <div class="gb-edit-objective">
+                  <span class="gb-objective-full">{{ goalEdit.objective }}</span>
+                  <button type="button" class="gb-link" @click="restartGoalFromEdit">
+                    <aim-outlined /> 换这句的口径？另起一条目标（这条按未完成收尾）
+                  </button>
+                </div>
+                <div class="gb-edit-label">验收标准（完成与否逐条验，不按模型自报）</div>
+                <div v-for="(c, ci) in goalEdit.criteria" :key="ci" class="gb-edit-criterion">
+                  <a-input v-model:value="c.text" :maxlength="2000"
+                           placeholder="例如：报告里每个数字都标了来源" />
+                  <span v-if="c.passed" class="gb-passed" title="这条已经验过">已验</span>
+                  <button v-if="goalEdit.criteria.length > 1" type="button" class="gb-icon" title="删掉这条"
+                          @click="removeGoalEditCriterion(ci)"><close-outlined /></button>
+                </div>
+                <button type="button" class="gb-link" @click="addGoalEditCriterion"><plus-outlined /> 加一条标准</button>
+                <span class="gb-hint">改完从下一轮起生效；正在跑的这一轮照旧</span>
+              </div>
+              <span v-if="goalBarError" class="gb-error" role="alert">{{ goalBarError }}</span>
+              <span class="gb-actions">
+                <button type="button" class="gb-icon" :disabled="goalEditBusy || !goalEditSaveable"
+                        title="保存目标" @click="saveGoalEdit"><check-outlined /></button>
+                <button type="button" class="gb-icon" title="取消编辑" @click="goalEditing = false">
+                  <close-outlined />
+                </button>
+              </span>
+            </template>
           </div>
         </template>
         <!-- 顶替态：挂起提问卡 / 待批计划卡整块顶替输入框（卡片样式仍由 ChatInput 提供） -->
@@ -831,11 +902,13 @@
         <div class="mention-foot">↑↓ 选择 · Enter 确认 · Esc 关闭　|　# 勾选的历史问答作为本轮上下文带给模型（只对本轮生效，最多 10 条）</div>
         </div>
         <!-- 「+」面板（分层菜单）：输入框唯一的候选面板。两个入口同一块面板——
-        点「+」先出一级轻菜单（上传文件/图片一击直达，引用/技能/历史/命令进二级列表），
+        点「+」先出一级轻菜单（上传文件/图片一击直达，引用/历史/命令进二级列表），
         输入框敲 @ 也开这里（直接落在「引用」二级，筛选词实时取「@ 到光标」之间的正文，见 syncPanelQuery）。
         就地编辑卡的「+」也开这里：同一块面板按写入目标（addTarget）决定选中结果落到
         主输入框还是编辑卡的随行内容上，编辑态下整块 Teleport 进卡内的挂载点。
-        计划模式不占面板——它是模式开关，在工具条上有独立胶囊（plan-pill）。
+        技能不占一级菜单的行，它是「引用」页的第 4 个子页签——和库/文档/智能体一样只对当轮生效。
+        计划模式在这里只占快捷命令列表的一行（/plan），不另设页签——它的开启态也不在工具条上，
+        就是正文里那颗「计划」chip（删掉 chip 等于关闭）。
         键盘：↑↓ 选择 · Enter 确认/进入 · Tab 进/退层级 · Esc 关闭（由一级进入的二级先退回一级）。
         行式交互与样式复用 .mention-panel / .mention-item -->
         <Teleport v-if="addOpen" :to="EDIT_ADD_MOUNT" :disabled="!addOnEdit">
@@ -845,7 +918,7 @@
         <span class="add-title">{{ addTab === 'root' ? '添加到本轮' : ADD_TITLES[addTab] }}</span>
         <button class="app-icon-btn add-close" title="关闭" @click="closeAddPanel"><close-outlined /></button>
         </div>
-        <!-- 引用页的三类候选各自计数（沿用原 @ 弹窗的口径）；子页签只换列表，不重置搜索词 -->
+        <!-- 引用页的四类候选各自计数（技能=可选清单长度，勾选数看行上的对勾）；子页签只换列表，不重置搜索词 -->
         <div v-if="addTab === 'ref'" class="mention-tabs add-subtabs">
         <button v-for="s in REF_SUB_TABS" :key="s.key" class="mention-tab" :class="{ on: mentionTab === s.key }"
         type="button" @click="switchRefTab(s.key)">
@@ -871,7 +944,8 @@
         </div>
         </template>
         <template v-else-if="addTab === 'ref'">
-        <div v-if="mentionLoading" class="mention-empty">加载中…</div>
+        <!-- 技能清单不走库/文档那次请求，别被它的「加载中」挡住 -->
+        <div v-if="mentionLoading && mentionTab !== 'skill'" class="mention-empty">加载中…</div>
         <template v-else-if="mentionTab === 'kb'">
         <div v-for="(k, ki) in addRefList" :key="k.id" class="mention-item"
         :class="{ on: isAddMentioned('kb', k.id), hi: addHi === ki }" @click="confirmRefRow('kb', k)">
@@ -900,6 +974,24 @@
         {{ mentionAgents.length ? '没有匹配的智能体' : '没有可见的智能体' }}
         </div>
         </template>
+        <template v-else-if="mentionTab === 'skill'">
+        <div v-if="!skillList.length" class="mention-empty">还没有可用技能</div>
+        <div v-for="(s, si) in addRefList" :key="s.name" class="mention-item"
+        :class="{ on: isAddSkillOn(s.name), hi: addHi === si, 'mi-off': s.selectable === false }"
+        @click="confirmRefRow('skill', s)">
+        <span class="mention-ava skill-ava" :style="skillAvaStyle(s.name)">{{ (s.name || '技').slice(0, 1) }}</span>
+        <div class="mention-text">
+        <span class="mention-name">{{ s.name }}
+        <span v-if="s.disabled" class="skill-flag off">已停用</span>
+        <span v-else-if="s.source === 'workspace'" class="skill-flag">工作区·只读</span>
+        </span>
+        <span v-if="s.description" class="mention-desc">{{ s.description }}</span>
+        </div>
+        <button class="app-link-btn skill-doc-btn" @click.stop="skillDoc = s.name">查看正文</button>
+        <check-outlined v-if="isAddSkillOn(s.name)" class="mention-check" />
+        </div>
+        <div v-if="skillList.length && !addRefList.length" class="mention-empty">没有匹配的技能</div>
+        </template>
         <template v-else>
         <div v-for="(d, di) in addRefList" :key="d.id" class="mention-item"
         :class="{ on: isAddMentioned('doc', d.id), hi: addHi === di }" @click="confirmRefRow('doc', d)">
@@ -914,25 +1006,6 @@
         {{ mentionDocs.length ? '没有匹配的文档' : '没有可见的文档' }}
         </div>
         </template>
-        </template>
-        <!-- 技能 -->
-        <template v-else-if="addTab === 'skill'">
-        <div v-if="!skillList.length" class="mention-empty">还没有可用技能</div>
-        <div v-for="(s, si) in addSkillList" :key="s.name" class="mention-item"
-        :class="{ on: isAddSkillOn(s.name), hi: addHi === si, 'mi-off': s.selectable === false }"
-        @click="toggleAddSkill(s.name)">
-        <span class="mention-ava skill-ava" :style="skillAvaStyle(s.name)">{{ (s.name || '技').slice(0, 1) }}</span>
-        <div class="mention-text">
-        <span class="mention-name">{{ s.name }}
-        <span v-if="s.disabled" class="skill-flag off">已停用</span>
-        <span v-else-if="s.source === 'workspace'" class="skill-flag">工作区·只读</span>
-        </span>
-        <span v-if="s.description" class="mention-desc">{{ s.description }}</span>
-        </div>
-        <button class="app-link-btn skill-doc-btn" @click.stop="skillDoc = s.name">查看正文</button>
-        <check-outlined v-if="isAddSkillOn(s.name)" class="mention-check" />
-        </div>
-        <div v-if="skillList.length && !addSkillList.length" class="mention-empty">没有匹配的技能</div>
         </template>
         <!-- 历史引用：勾选不关面板（多选），与键盘流 # 面板同一份交互；
         候选按写入目标取——编辑卡那份要排掉正在编辑的这一问（引用自己没意义） -->
@@ -955,7 +1028,7 @@
         <!-- 快捷命令：会话级动作，选中即执行（生成中拦截见 runSlashCommand） -->
         <template v-else>
         <div v-for="(c, ci) in addCmdList" :key="c.key" class="mention-item"
-        :class="{ 'mi-off': loading, hi: addHi === ci }" @click="runCmdFromAddPanel(c)">
+        :class="{ 'mi-off': loading && !c.noGate, hi: addHi === ci }" @click="runCmdFromAddPanel(c)">
         <span class="mention-ava"><component :is="c.icon" /></span>
         <div class="mention-text">
         <span class="mention-name"><code v-if="c.cmd" class="slash-cmd">/{{ c.cmd }}</code>{{ c.name }}</span>
@@ -1015,24 +1088,6 @@
           </div>
           </template>
           </a-dropdown>
-        </template>
-        <template #left>
-          <!-- 计划模式开关：独立胶囊（原来是「+」面板里的一个页签——模式开关混进候选列表，
-          找它要切页签、状态还要靠徽标转达，语义就错了）。开启态用警示色与计划 chip 同源 -->
-          <button class="plan-pill" :class="{ on: planModeOn }" type="button"
-          title="计划模式：每轮先出执行计划，你批准或修改后才开始回答" @click="setPlanMode(!planModeOn)">
-          <ordered-list-outlined />
-          <span>{{ isNarrow ? '计划' : '计划模式' }}</span>
-          </button>
-          <!-- 目标模式入口（与深度思考/计划模式同排）：点了不弹窗直接开待确认卡——
-          四张卡不许互相顶班，这张管「这件事整体做到什么算完」，不归计划/清单/提问管。
-          平台或智能体关着目标模式时整个按钮不出现（关掉还露入口=又教用户一件没有的能力） -->
-          <button v-if="goalEntryVisible" class="plan-pill goal-pill" :class="{ on: !!sessionGoal && !goalTerminal }"
-          type="button" title="设为目标：把这件事做到什么算完、验收标准与预算交给你拍板"
-          @click="openGoalDraft">
-          <aim-outlined />
-          <span>{{ isNarrow ? '目标' : '设为目标' }}</span>
-          </button>
         </template>
         <template #right>
           <!-- 上下文容量圆环：本轮真实 prompt 占窗口比（与右栏容量卡同源数据），悬浮弹明细卡；会话尚无对话（无落库 tokens）时不显示。
@@ -1108,31 +1163,26 @@
         </div>
       </div>
       <!-- 目标面板（与清单卡同栏、切换不并排——两档讲的是同一件事的两个层次：清单说「现在做到哪」，
-           目标说「这件事什么算完、还剩多少预算」）。有目标才显示整卡；取不到必须报错 + 重试，
+           目标说「这件事什么算完、跑到第几轮」）。有目标才显示整卡；取不到必须报错 + 重试，
            不许空态掩盖失败（goal_state 帧与 /goal/pending 双路供数，DB 是权威）。 -->
       <div v-if="sessionGoal" class="rp-card rp-goal">
         <button type="button" class="rp-card-head" @click="goalOpen = !goalOpen">
           <span class="rp-label">目标</span>
-          <span class="rp-goal-state" :class="'st-' + goalStateClass">{{ goalStateLabel }}</span>
           <caret-right-outlined class="tl-caret" :class="{ open: goalOpen }" />
         </button>
         <div v-if="goalOpen" class="rp-goal-body">
-          <div class="rp-goal-objective">{{ sessionGoal.objective }}</div>
-          <GoalCard :card="sessionGoal" />
-          <!-- 进行中三键：暂停/继续/叫停常驻（分岔 1 的口径：全自动续跑也要能随时拉住） -->
-          <div v-if="!goalTerminal" class="rp-goal-actions">
-            <button class="app-btn ghost small" :disabled="sessionGoal.busy"
-                    @click="goalAct('pause')">暂停</button>
-            <button v-if="sessionGoal.status === 'PAUSED' || sessionGoal.status === 'BUDGET_EXCEEDED'"
-                    class="app-btn ghost small" :disabled="sessionGoal.busy"
-                    @click="goalAct('resume')">继续</button>
+          <GoalCard :card="sessionGoal" @mark="p => goalAct('markManual', p)" />
+          <!-- 暂停/继续/取消都收在输入框上方那条目标条上（一个动作只留一个入口）。这里只放
+               面板才需要的两件事：现在自己验一遍、不等它继续推就此收尾。
+               待确认那一档两个都不给——pause 在后端只认进行中那三态，摆出来就是点了报错。 -->
+          <div v-if="!goalTerminal && !pendingGoal" class="rp-goal-actions">
             <button class="app-btn ghost small" :disabled="sessionGoal.busy"
                     @click="goalAct('verifyNow')">现在验收</button>
             <button class="app-btn ghost small" :disabled="sessionGoal.busy"
                     @click="goalAct('finish')">就此收尾</button>
           </div>
-          <div v-else class="rp-goal-actions">
-            <button class="app-btn ghost small" @click="openGoalDraft">另起目标</button>
+          <div v-else-if="goalTerminal" class="rp-goal-actions">
+            <button class="app-btn ghost small" @click="openGoalDraft()">另起目标</button>
           </div>
           <!-- 目标区间轮次跳转：按 first/last_turn_id 定位气泡（逐气泡过程入口沿用 SessionEventsPanel） -->
           <button v-if="sessionGoal.lastTurnId" type="button" class="rp-goal-jump"
@@ -1171,16 +1221,18 @@
           </div>
         </div>
       </div>
-      <!-- 本会话产物：有文件才显示整卡（空则隐藏，不占版面），点击直接下载（与消息流内下载链接同源）；更多入口跳产物页 -->
+      <!-- 本会话产物：有文件才显示整卡（空则隐藏，不占版面）。预览＝开成一个浏览器标签页（与气泡内产物卡、
+           产物页同一待遇），下载走同一份签名地址；更多入口跳产物页 -->
       <div v-if="sessionArtifacts.length" class="rp-card">
         <div class="rp-label">产物 · {{ sessionArtifacts.length }} 个</div>
-        <a v-for="(a, pi) in sessionArtifacts" :key="pi" class="rp-art"
-           :href="resolveImg(a.url)" :download="a.filename"
-           :title="'下载 ' + a.filename + (a.description ? '：' + a.description : '')">
+        <div v-for="(a, pi) in sessionArtifacts" :key="pi" class="rp-art">
           <file-text-outlined class="rp-art-ic" />
-          <span class="rp-art-name">{{ a.filename }}</span>
-          <download-outlined class="rp-art-dl" />
-        </a>
+          <span class="rp-art-name" :title="a.filename + (a.description ? '：' + a.description : '')">{{ a.filename }}</span>
+          <a v-if="canPreviewArtifact(a)" class="rp-art-act" :href="resolveImg(a.url)"
+             target="_blank" rel="noopener" :title="'在新标签页预览 ' + a.filename"><eye-outlined /></a>
+          <a class="rp-art-act" :href="resolveImg(a.url)" :download="a.filename"
+             :title="'下载 ' + a.filename"><download-outlined /></a>
+        </div>
         <div class="rp-art-all" @click="router.push('/artifacts')">在产物页查看全部 ›</div>
       </div>
       <!-- 检索与用量合并成一张卡、两态互斥（v-if/v-else）：
@@ -1488,17 +1540,19 @@ import { message } from 'ant-design-vue'
 import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, CloseCircleOutlined, FileTextOutlined, DownloadOutlined, GlobalOutlined, ApiOutlined,
          ExclamationCircleOutlined, CopyOutlined, LikeOutlined, DislikeOutlined, ReloadOutlined, MoreOutlined,
          DeleteOutlined, BugOutlined, EditOutlined, PlusOutlined, PaperClipOutlined, PauseCircleOutlined,
+         PlayCircleOutlined,
          CompressOutlined,
          RobotOutlined, SettingOutlined, ThunderboltOutlined, LockOutlined, RedoOutlined,
          CloseOutlined, DatabaseOutlined, SearchOutlined, UpOutlined, ShareAltOutlined,
          HistoryOutlined, SwapOutlined, InfoCircleOutlined,
          AppstoreOutlined, ClockCircleOutlined, BookOutlined,
          OrderedListOutlined, CheckCircleOutlined, LeftOutlined, FolderOpenOutlined,
-         AimOutlined } from '@ant-design/icons-vue'
+         AimOutlined, EyeOutlined } from '@ant-design/icons-vue'
 import { debugRetrieval, deleteMessageGroup, submitFeedback as apiSubmitFeedback,
          addEvalCase, getSessionShare, enableSessionShare, disableSessionShare,
          getSessionWorkspace } from '../api'
 import { renderMd, resolveImg, onImgError } from '../utils/markdown'
+import { canPreviewArtifact } from '../utils/artifactView'
 import { loadSessions, sessionStore } from './store'
 import { exportAnswerMd, exportSessionMarkdown } from './exportMd'
 import { fmtTokens } from '../utils/token'
@@ -1556,6 +1610,9 @@ import { toolLabel, toolDesc, toolCallsView, executedCount, toolRunning, hasTime
 
 const router = useRouter()
 const route = useRoute()
+
+// 目标模式是否已进入（还没发出去）：和计划模式一样，靠输入框里那颗 chip 表示，× 退出
+const goalArmed = ref(false)
 
 // ==================== 工具审批恢复（通知 → 会话）：按 approvalId 重建审批卡 ====================
 // 状态机与移动壳共用（src/chat/useApprovalRecovery.js）：两端「批准/拒绝 → 重取状态」口径一致
@@ -1930,6 +1987,7 @@ const composerPlaceholder = computed(() => {
       ? '补一句方向（先排到上面，点「立即发送」才送出）'
       : '补一句方向（Enter 先排到上面，点「立即发送」才送出）'
   }
+  if (goalArmed.value && !sessionGoal.value) return '写下目标，回车开始（助手会先起草验收标准）'
   return isNarrow.value
     ? '问点什么？（@ 引用资料 · / 快捷命令）'
     : '问点什么？Enter 发送，Shift+Enter 换行（@ 引用资料，/ 快捷命令，# 引用历史问答）'
@@ -2191,17 +2249,32 @@ const slashQuery = ref('')
 const slashHi = ref(0)
 // 命令一律是会话级动作，选中即执行、不往正文插任何东西
 // cmd=英文别名（打 /compact 直接命中，与主流 CLI 同一习惯），带别名的命令可跟参数：「别名 + 空格 + 要求」
-const slashCommands = [
+// 目标是工具条那颗胶囊的键盘入口，计划则以此命令为桌面唯一入口（工具条上不留胶囊，开启态只由正文里那颗 chip 说话）。
+// noGate=不碰正在跑的这一轮（翻模式、只开弹窗），生成中也照样能用；
+// 计划模式的行名按当前状态现写，用户看名字就知道这一下是开还是关
+// 目标那条与 /goal 命令共用 goalEntryVisible：智能体关着目标模式、或这条会话已有目标时，命令也不出现
+const slashCommands = computed(() => [
   { key: 'act-compact', cmd: 'compact', icon: CompressOutlined, name: '压缩上下文',
     desc: '早期对话压缩为摘要，腾出上下文空间（可附要求）',
     run: args => compactContext(args) },
+  { key: 'act-plan', cmd: 'plan', aliases: ['计划'], icon: OrderedListOutlined, noGate: true,
+    name: planModeOn.value ? '关闭计划模式' : '开启计划模式',
+    desc: '每轮先产出执行计划；可跟任务（/计划 任务），直接生成计划',
+    run: args => runPlanCommand(args) },
+  ...(goalEntryVisible.value ? [{ key: 'act-goal', cmd: 'goal', aliases: ['目标'], icon: AimOutlined, noGate: true,
+    name: '目标', desc: '进入目标模式（再发一条即开始）；也可直接跟目标原文',
+    run: args => {
+      const task = String(args || '').trim()
+      if (task) { startGoalNow(task); return }
+      goalArmed.value = !goalArmed.value
+    } }] : []),
   { key: 'act-export', icon: FileTextOutlined, name: '导出会话 Markdown',
     desc: '把当前会话全部问答导出为 .md 文件',
     run: () => { if (!currentSessionId.value) { message.warning('当前没有可导出的会话'); return } exportSessionMarkdown(currentSessionId.value, currentSessionTitle.value) } },
   { key: 'act-new', icon: PlusOutlined, name: '新建会话',
     desc: '开一个空白会话（当前会话保留在侧边栏）',
     run: () => createNewSession() }
-]
+])
 /** 只能逐个关其它面板，不能调 closeAllPanels：调用点（onInputKeydown）刚把触发字符的位置记进
  *  panelTriggerPos/Ch，closeAllPanels 会顺手抹掉它，筛选词通道就断了。 */
 const openSlashPanel = () => {
@@ -2215,32 +2288,38 @@ const openSlashPanel = () => {
 const closeSlashPanel = () => closeAllPanels()
 // slashQuery 直接来自输入框正文（「/ 到光标」之间），不再需要剥唤起键
 const slashQueryNorm = computed(() => slashQuery.value.trim())
+/** 一条命令可用的触发词：英文别名（/plan、/goal）与中文别名（/计划、/目标）共用同一行 */
+const slashAliasesOf = c => [c.cmd, ...(c.aliases || [])].filter(Boolean).map(a => String(a).toLowerCase())
 /** / 命令的带参判定（/compact 保留结论）：别名打完整后再出现的空白，是在给命令传要求，不是在结束筛选 */
 const slashArgPending = q => {
   const s = String(q || '').trimStart().toLowerCase()
-  return slashCommands.some(c => c.cmd && s.startsWith(c.cmd.toLowerCase() + ' '))
+  return slashCommands.value.some(c => slashAliasesOf(c).some(a => s.startsWith(a + ' ')))
 }
 /** 命令参数：筛选词里「别名 + 空格」之后的部分（原文切片，保留用户输入的大小写与用词） */
 const slashArgsOf = c => {
-  const cmd = (c.cmd || '').toLowerCase()
-  if (!cmd) return ''
   const raw = slashQuery.value.trim()
-  return raw.toLowerCase().startsWith(cmd) ? raw.slice(cmd.length).trim() : ''
+  const lower = raw.toLowerCase()
+  for (const a of slashAliasesOf(c)) {
+    if (lower.startsWith(a)) return raw.slice(a.length).trim()
+  }
+  return ''
 }
 const slashFiltered = computed(() => {
   const q = slashQueryNorm.value.toLowerCase()
-  if (!q) return slashCommands
-  return slashCommands.filter(c => {
-    const cmd = (c.cmd || '').toLowerCase()
+  const cmds = slashCommands.value
+  if (!q) return cmds
+  return cmds.filter(c => {
+    const aliases = slashAliasesOf(c)
     // 别名：前缀补全（/com → 压缩上下文），或「别名 + 空格 + 参数」仍命中该命令
-    if (cmd && (cmd.startsWith(q) || q.startsWith(cmd + ' '))) return true
+    if (aliases.some(a => a.startsWith(q) || q.startsWith(a + ' '))) return true
     return c.name.toLowerCase().includes(q) || c.desc.toLowerCase().includes(q)
   })
 })
 const runSlashCommand = c => {
   // 命令会改会话状态，不能和流式回答打架：/ 面板与「+」面板同一道闸。
   // 挡下时顺手摘掉触发片段，否则「/新建会话」留在正文里，下一按 Enter 就当问题发出去了
-  if (loading.value) {
+  // noGate 类（计划/目标）例外：只作用于下一轮或只开个弹窗，与正在流的这一轮不相干，胶囊也随时能点
+  if (loading.value && !c.noGate) {
     stripTriggerToken()
     closeAllPanels()
     message.info('生成中，请等这轮回答结束后再执行')
@@ -2282,7 +2361,7 @@ const openHistPanel = () => {
 }
 const closeHistPanel = () => closeAllPanels()
 
-// ==================== 「+」面板（附件 / 引用 / 技能 / 历史 / 命令） ====================
+// ==================== 「+」面板（附件 / 引用资料 / 历史 / 命令） ====================
 // 唯一的候选面板，两个入口共用同一块：主输入框点「+」或敲 @，就地编辑卡点「+」。
 // 入口决定写入目标 addTarget，选中结果、行上的勾选、一级菜单的计数全部经 addStore 这一层读写。
 // 一套交互：搜索 + 数量统计 + Tab 切页 + ↑↓ 选择 + Enter 确认 + Esc 关闭。
@@ -2291,7 +2370,6 @@ const addTab = ref('root')
 const addHi = ref(0)
 const addSearchEl = ref(null)
 const addHistQuery = ref('')
-const addSkillQuery = ref('')
 const addCmdQuery = ref('')
 /** 面板写入目标：'main'=主输入框（默认），'edit'=就地编辑卡。开面板时由入口设定，关面板不复用 */
 const addTarget = ref('main')
@@ -2328,18 +2406,14 @@ const addRootRows = computed(() => {
                  : '也可直接粘贴或拖进来：文件读出正文供模型看，图片压缩后随本轮提问（各最多 5 个）',
       badge: () => s.files.value.length + s.images.value.length, run: () => s.pickFiles() },
     { key: 'ref', name: '引用资料', icon: BookOutlined, kbd: edit ? '' : '@',
-      desc: `知识库 / 文档 / 智能体，只对${scope}生效`,
-      badge: () => s.mentions.value.length, run: () => switchAddTab('ref') },
-    { key: 'skill', name: '技能', icon: AppstoreOutlined,
-      desc: edit ? '临时增强这一问，重发时随它一起带上（一次最多 3 个）'
-                 : '临时增强本轮，下一轮自动取消（一次最多 3 个）',
-      badge: () => s.skills.value.length, run: () => switchAddTab('skill') },
+      desc: `知识库 / 文档 / 智能体 / 技能，只对${scope}生效`,
+      badge: () => s.mentions.value.length + s.skills.value.length, run: () => switchAddTab('ref') },
     { key: 'hist', name: '引用历史问答', icon: HistoryOutlined, kbd: edit ? '' : '#',
       desc: `勾选本会话的问答作为${scope}上下文（最多 10 条）`,
       badge: () => s.histPicked().length, run: () => switchAddTab('hist') }
   ]
   if (!edit) rows.push({ key: 'cmd', name: '快捷命令', icon: ThunderboltOutlined, kbd: '/',
-    desc: '压缩上下文、导出会话、新建会话', badge: () => 0, run: () => switchAddTab('cmd') })
+    desc: '压缩上下文、计划模式、目标、导出会话、新建会话', badge: () => 0, run: () => switchAddTab('cmd') })
   return rows
 })
 const addHistPool = computed(() => addStore.value.histPool.value)
@@ -2350,29 +2424,27 @@ const isAddMentioned = (t, id) => addStore.value.mentionOn(t, id)
 const toggleAddMention = (t, item) => addStore.value.toggleMention(t, item)
 const isAddHistPicked = id => addStore.value.histOn(id)
 const toggleAddHistoryRef = m => addStore.value.toggleHist(m)
-const ADD_TITLES = { ref: '引用资料', skill: '技能', hist: '引用历史问答', cmd: '快捷命令' }
+const ADD_TITLES = { ref: '引用资料', hist: '引用历史问答', cmd: '快捷命令' }
 const REF_SUB_TABS = [
   { key: 'kb', label: '知识库', icon: DatabaseOutlined, count: () => mentionKbs.value.length },
   { key: 'doc', label: '文档', icon: FileTextOutlined, count: () => mentionDocs.value.length },
-  { key: 'agent', label: '智能体', icon: RobotOutlined, count: () => mentionAgents.value.length }
+  { key: 'agent', label: '智能体', icon: RobotOutlined, count: () => mentionAgents.value.length },
+  { key: 'skill', label: '技能', icon: AppstoreOutlined, count: () => skillList.value.length }
 ]
-// 搜索框一页一词：切页签不串味（引用页那一份就是 mentionQuery，敲 @ 时由正文实时灌进来）
-const addSearchable = computed(() => ['ref', 'skill', 'hist', 'cmd'].includes(addTab.value))
+// 搜索框一页一词：切页签不串味（引用页那一份就是 mentionQuery，四个子页签共用，敲 @ 时由正文实时灌进来）
+const addSearchable = computed(() => ['ref', 'hist', 'cmd'].includes(addTab.value))
 const addQuery = computed({
   get: () => addTab.value === 'ref' ? mentionQuery.value
-    : addTab.value === 'skill' ? addSkillQuery.value
-      : addTab.value === 'hist' ? addHistQuery.value
-        : addTab.value === 'cmd' ? addCmdQuery.value : '',
+    : addTab.value === 'hist' ? addHistQuery.value
+      : addTab.value === 'cmd' ? addCmdQuery.value : '',
   set: v => {
     if (addTab.value === 'ref') mentionQuery.value = v
-    else if (addTab.value === 'skill') addSkillQuery.value = v
     else if (addTab.value === 'hist') addHistQuery.value = v
     else if (addTab.value === 'cmd') addCmdQuery.value = v
   }
 })
 const addSearchHint = computed(() => ({
-  ref: '搜索知识库、文档或智能体',
-  skill: '搜索技能',
+  ref: '搜索知识库、文档、智能体或技能',
   hist: '筛选历史问答',
   cmd: '搜索命令'
 }[addTab.value] || ''))
@@ -2386,38 +2458,44 @@ const addFootHint = computed(() => {
   }
   const nav = '↑↓ 选择 · Enter 确认 · Tab 返回 · Esc 关闭'
   const scope = edit ? '这一问' : '本轮'
-  if (t === 'ref') return nav + `　|　引用只对${scope}生效：知识库 = 检索只在这些库里找；文档 = 内容直接带入上下文；智能体 = 强制咨询它（它带自己的知识库查一遍，回答仍由当前助手汇总）`
-  if (t === 'skill') return nav + `　|　选用的技能随${scope}带上` + (edit ? '（一次最多 3 个）' : '，下一轮自动取消（一次最多 3 个）')
+  if (t === 'ref') {
+    if (mentionTab.value === 'skill') {
+      return nav + `　|　选用的技能随${scope}带上` + (edit ? '（一次最多 3 个）' : '，下一轮自动取消（一次最多 3 个）')
+    }
+    return nav + `　|　引用只对${scope}生效：知识库 = 检索只在这些库里找；文档 = 内容直接带入上下文；智能体 = 强制咨询它（它带自己的知识库查一遍，回答仍由当前助手汇总）`
+  }
   if (t === 'hist') return nav + `　|　勾选的历史问答作为${scope}上下文带给模型（最多 10 条）`
   return nav + '　|　命令立即执行，可附要求（如 /compact 保留结论）'
 })
 const addSkillList = computed(() => {
-  const s = addSkillQuery.value.trim().toLowerCase()
+  const s = mentionQuery.value.trim().toLowerCase()
   if (!s) return skillList.value
   return skillList.value.filter(x => `${x.name || ''} ${x.description || ''}`.toLowerCase().includes(s))
 })
 const addCmdList = computed(() => {
   const s = addCmdQuery.value.trim().toLowerCase()
-  if (!s) return slashCommands
-  return slashCommands.filter(c => `${c.name} ${c.desc || ''} ${c.cmd || ''}`.toLowerCase().includes(s))
+  const cmds = slashCommands.value
+  if (!s) return cmds
+  return cmds.filter(c => `${c.name} ${c.desc || ''} ${c.cmd || ''}`.toLowerCase().includes(s))
 })
 /** 引用页当前子页签的候选（点击与 Enter 都读这一份，下标才对得上） */
 const addRefList = computed(() => mentionTab.value === 'kb' ? mentionKbFiltered.value
-  : mentionTab.value === 'agent' ? mentionAgentFiltered.value : mentionDocFiltered.value)
+  : mentionTab.value === 'agent' ? mentionAgentFiltered.value
+    : mentionTab.value === 'skill' ? addSkillList.value : mentionDocFiltered.value)
 const addListSize = computed(() => addTab.value === 'root' ? addRootRows.value.length
   : addTab.value === 'ref' ? addRefList.value.length
-    : addTab.value === 'skill' ? addSkillList.value.length
-      : addTab.value === 'hist' ? addHistCandidates.value.length
-        : addTab.value === 'cmd' ? addCmdList.value.length : 0)
+    : addTab.value === 'hist' ? addHistCandidates.value.length
+      : addTab.value === 'cmd' ? addCmdList.value.length : 0)
 // 候选集变了，原高亮下标已无意义：回到第一条，并把列表滚回顶部区域
 watch(addQuery, () => { addHi.value = 0; nextTick(scrollPanelHiIntoView) })
 
 const closeAddPanel = () => { addOpen.value = false }
 /** 引用候选懒加载（首次进入引用页才拉）：库/文档走列表接口（共享范围已在后端过滤），
- *  智能体复用工具条下拉的同一份数据（挂载时已开始加载，兜底再拉一次） */
+ *  智能体复用工具条下拉的同一份数据（挂载时已开始加载，兜底再拉一次）；技能清单同理兜底 */
 const ensureRefCandidates = () => {
   if (!mentionKbs.value.length && !mentionDocs.value.length) loadMentionCandidates()
   if (!agentList.value.length) loadAgents()
+  if (!skillList.value.length) loadSkills()
 }
 /** 可搜索的页签把焦点交给面板内搜索框（打字即筛），否则交回输入框——
  *  两处键盘都走 onPanelNavKeydown，焦点在哪都能继续 ↑↓/Enter/Esc */
@@ -2460,13 +2538,14 @@ const switchRefTab = k => {
   addHi.value = 0
   nextTick(scrollPanelHiIntoView)
 }
-/** 引用行确认（Enter 与鼠标点击同一条路径）。两种入口两种收尾：
+/** 引用资料行确认（四个子页签共用，Enter 与鼠标点击同一条路径）。两种入口两种收尾：
  *  敲 @ 进来的，确认后摘掉触发片段、收面板、焦点回输入框接着打字（引用已由 chip 承载）；
- *  点「+」进来的，勾选后留在面板里继续挑——引用可多选，收面板等于逼用户反复点开。 */
+ *  点「+」进来的，勾选后留在面板里继续挑——引用与技能都可多选，收面板等于逼用户反复点开。 */
 const confirmRefRow = (type, item) => {
   const byTrigger = panelTriggerPos >= 0 && panelTriggerCh === '@'
   if (byTrigger) { stripTriggerToken(); closeAllPanels() }
-  toggleAddMention(type, item)
+  if (type === 'skill') toggleAddSkill(item.name)
+  else toggleAddMention(type, item)
   if (byTrigger) focusInput()
 }
 /** Enter 确认「+」面板当前页的高亮项。返回 false = 这一页没有可确认的候选，
@@ -2485,12 +2564,6 @@ const confirmAddHi = i => {
     confirmRefRow(mentionTab.value, item)
     return true
   }
-  if (t === 'skill') {
-    const s = addSkillList.value[i]
-    if (!s) return false
-    toggleAddSkill(s.name)
-    return true
-  }
   if (t === 'hist') {
     const m = addHistCandidates.value[i]
     if (!m) return false
@@ -2506,7 +2579,6 @@ const confirmAddHi = i => {
 const openAddPanel = target => {
   closeAllPanels()          // 与 / # 触发面板互斥，开一个收一个
   addHistQuery.value = ''   // 每次打开从干净筛选开始（一级菜单总是从头展示，不记住上次逛到哪）
-  addSkillQuery.value = ''
   addCmdQuery.value = ''
   mentionQuery.value = ''   // 引用页同理：上次敲 @ 筛剩的词不该在重开时还挂着
   addHi.value = 0
@@ -2531,7 +2603,41 @@ const runCmdFromAddPanel = c => {
   runSlashCommand(c)
 }
 /** 发送前收起「+」面板：它浮在输入区上方，留着会挡住回答 */
-const sendNow = () => { closeAddPanel(); send() }
+const runPlanCommand = args => {
+  const task = String(args || '').trim()
+  if (!task) { setPlanMode(!planModeOn.value); return }
+  if (loading.value) { message.info('生成中，请等这轮回答结束后再发送计划任务'); return }
+  if (!planModeOn.value) setPlanMode(true)
+  text.value = task
+  send()
+}
+/** 发送时兜底解析 /目标、/计划：面板没开（或命令被直接敲进来）时也能“回车即执行” */
+const inlineSlash = () => {
+  const raw = String(text.value || '').trim()
+  if (!raw.startsWith('/')) return false
+  const goal = raw.match(/^\/(?:goal|目标)(?:\s+([\s\S]*))?$/i)
+  if (goal) {
+    if (!goalModeOn.value) { message.info('这个助手没有开启目标模式'); return true }
+    text.value = ''
+    const task = (goal[1] || '').trim()
+    if (task) startGoalNow(task)
+    else goalArmed.value = !goalArmed.value
+    return true
+  }
+  const plan = raw.match(/^\/(?:plan|计划)(?:\s+([\s\S]*))?$/i)
+  if (plan) { text.value = ''; runPlanCommand(plan[1] || ''); return true }
+  return false
+}
+const sendNow = () => {
+  if (inlineSlash()) { closeAllPanels(); return }
+  if (goalModeOn.value && goalArmed.value && !sessionGoal.value && String(text.value || '').trim()) {
+    goalArmed.value = false
+    closeAllPanels()
+    startGoalNow()
+    return
+  }
+  closeAddPanel(); send()
+}
 
 // ==================== 插话队列的拖动排序 ====================
 // 队列顺序有意义：收尾结算按它依次发出，用户排的先后就是进模型的先后。
@@ -2733,8 +2839,6 @@ const onMoreAction = (key, mi) => {
   else if (key === 'addEval') addToEval(mi)
   else if (key === 'deleteRound') deleteRound(mi)
   else if (key === 'export') exportRound(mi)
-  // 把这份正文里的承诺设为目标：草稿进弹窗改一句再开卡（沿用计划卡「改一句就解决」的体验）
-  else if (key === 'setGoal') openGoalDraftFromMsg(mi)
   // 逐气泡的过程回放：会话级「过程」列最近几轮，这里按消息行的 turnId 只看这一条回答那一轮
   else if (key === 'events') {
     const ai = messages.value[mi]
@@ -3137,12 +3241,18 @@ const {
   // 提问卡的选择状态口径全在引擎（单选/多选同一形状）：面板只读这些，不自己数选中态
   pickAskOption, commitAskCustom, askOptionPicked, askCustomPicked, askQuestionAnswered,
   askAnsweredCount, askNextUnanswered, askAutoSubmittable, askHintText,
-  // 计划模式（人在回路）：「+」面板开关 + 计划卡裁决动作
+  // 计划模式（人在回路）：斜杠命令开关 + 计划卡裁决动作
   planModeOn, setPlanMode, submitPlanApproval, continuePlanConversation,
   pendingPlan, curPlanCard, planExpired, planCountdownText,
-  // 目标模式（人在回路第五张卡）：会话级目标态 + 待确认卡派生态 + 全部动作
-  sessionGoal, pendingGoal, goalExpired, goalCountdownText,
+  // 目标模式（人在回路第五张卡）：平台总闸 goalModeOn + 会话级目标态 + 待确认卡派生态 + 全部动作。
+  // 摘要条与就地编辑的词汇、显隐、可用性都在引擎侧（与移动壳共用一份），本页只画形状
+  sessionGoal, pendingGoal, goalExpired, goalCountdownText, goalModeOn,
   startGoal, submitGoalConfirm, goalAct,
+  goalTerminal, goalBarVisible, goalPhrase, goalBarTitle, goalBarError,
+  goalCanPause, goalCanResume, goalCanEdit, runGoalAction,
+  goalEditing, goalEdit, goalEditBusy, goalEditSaveable,
+  startGoalInlineEdit, addGoalEditCriterion, removeGoalEditCriterion, saveGoalEdit,
+  restartGoalFromEdit, goalRestartRequest,
   // 思考能力 / 档位（悬浮面板消费）
   thinkCapsOf, reasoningLevelsOf, deepOnOf, levelOptionsOf, currentLevelOf, setThinkLevel, deepThinkOn,
   // 上下文窗口档位（面板点选 + 发送载荷）
@@ -3179,8 +3289,8 @@ const {
   compactDividerAt
 } = useChatEngine({
   chatPath: '/chat',
-  // 计划模式（人在回路）只在 PC 壳开放入口：移动壳没有计划卡 UI，引擎侧按此开关兜底拦下
-  // （localStorage 桌面/移动同源共享，防止桌面开的开关让移动端发出没人能批准的计划问答）
+  // 计划模式（人在回路）要有裁决入口才放行：本页与移动壳都有计划确认栏，引擎侧按此开关兜底拦下
+  // （localStorage 桌面/移动同源共享，没有确认栏的壳不传，防止它发出没人能批准的计划问答）
   planModeEnabled: true,
   scrollFollow: () => nextTick(() => { updateTailSpacer(); scroll() }),
   scrollForce: () => nextTick(() => { updateTailSpacer(); scrollForce() }),
@@ -3219,10 +3329,11 @@ watch(currentSessionId, async sid => {
 
 // ==================== 输入框内联 chip（正文与引用同一条流） ====================
 // 两条单向通道，避免双向对账打转：
-//  · 数组 → DOM：任一数组变了就把「应有的 chip 集合」推给编辑区（面板勾选、上传完成、工具条开计划模式）；
+//  · 数组 → DOM：任一数组变了就把「应有的 chip 集合」推给编辑区（面板勾选、上传完成、命令开计划模式）；
 //  · DOM → 数组：用户在编辑区里删掉一颗 chip（Backspace / 点 ×）等价于取消那条引用。
 // 数据只在数组里，DOM 只管「谁在、排在哪」，所以发给模型的载荷与改造前完全一致。
 const PLAN_KEY = 'plan'
+const GOAL_KEY = 'goal'
 const fileKeyOf = f => f?.chipKey || ''
 const imgKeyOf = p => p?.chipKey || ''
 const menKeyOf = m => `m:${m.type}:${m.id}`
@@ -3236,6 +3347,7 @@ const MENTION_TIP = {
 }
 /** 数组里现在应该有的 chip（集合语义，顺序由编辑区自己保持） */
 const desiredKeys = () => [
+  ...(goalModeOn.value && goalArmed.value && !sessionGoal.value ? [GOAL_KEY] : []),
   ...pendingFiles.value.map(fileKeyOf),
   ...pendingImages.value.map(imgKeyOf),
   ...pendingMentions.value.map(menKeyOf),
@@ -3246,9 +3358,16 @@ const desiredKeys = () => [
 /** key → 画一颗 chip 所需的全部信息（fileId/dataUrl 也在这里，复制时随 text/html 外发） */
 const chipOf = key => {
   if (!key) return null
+  if (key === GOAL_KEY) {
+    return {
+      kind: 'goal', icon: 'aim', name: '目标',
+      title: '目标模式：写下目标，回车开始（助手会先起草验收标准）',
+      delTitle: '退出目标模式'
+    }
+  }
   if (key === PLAN_KEY) return {
-    kind: 'plan', icon: 'plan', name: '计划模式',
-    title: '每轮先产出执行计划，等你批准或修改后才开始回答', delTitle: '关闭计划模式'
+    kind: 'plan', icon: 'plan', name: '计划',
+    title: '计划模式：每轮先产出执行计划，等你批准或修改后才开始回答', delTitle: '关闭计划模式'
   }
   if (/^f\d+$/.test(key)) {
     const f = pendingFiles.value.find(x => fileKeyOf(x) === key)
@@ -3309,6 +3428,8 @@ const onKeys = keys => {
   if (pendingHistoryRefs.value.some(h => hit(histKeyOf(h)))) pendingHistoryRefs.value = pendingHistoryRefs.value.filter(h => !hit(histKeyOf(h)))
   if (pickedSkills.value.some(n => hit(skillKeyOf(n)))) pickedSkills.value = pickedSkills.value.filter(n => !hit(skillKeyOf(n)))
   if (planModeOn.value && gone.has(PLAN_KEY)) setPlanMode(false)
+  // 目标 chip 和计划 chip 一样是可删的模式标记：删掉它 = 退出目标模式
+  if (gone.has(GOAL_KEY)) goalArmed.value = false
 }
 /** 数组 → 编辑区：增的插到光标处、减的摘掉节点，顺带重画（上传进度/体积/失败态都在 chip 上） */
 const syncChips = () => {
@@ -3318,9 +3439,10 @@ const syncChips = () => {
   cp.repaint()
   inlineKeys.value = cp.domKeys()
 }
-watch([pendingFiles, pendingImages, pendingMentions, pickedSkills, pendingHistoryRefs, planModeOn], syncChips, { deep: true })
+watch([pendingFiles, pendingImages, pendingMentions, pickedSkills, pendingHistoryRefs, planModeOn, goalModeOn, goalArmed, goalBarVisible, () => sessionGoal.value?.status], syncChips, { deep: true })
 /** 点附件 chip：粘贴文本卡点开看全文（其余类型的点开没意义，文件名全名已在悬浮提示里） */
 const onChipClick = key => {
+  if (key === GOAL_KEY) { focusInput(); return }
   const d = chipOf(key)
   if (d && d.kind === 'file' && d.paste) openPasteView(pendingFiles.value.find(x => fileKeyOf(x) === key))
 }
@@ -3418,42 +3540,21 @@ const onPlanPanelKeydown = e => {
 }
 
 // ==================== 目标模式（第五张人在回路卡） ====================
-// 目标卡定「这件事什么算完、还剩多少预算」——与计划卡（打算怎么做）、清单（现在做到哪）、
+// 目标卡定「这件事什么算完、跑到第几轮」——与计划卡（打算怎么做）、清单（现在做到哪）、
 // 提问卡（这一步拍不拍板）四张卡不许互相顶班。会话级一份（横跨多轮），不挂气泡。
 // 待确认卡顶替打字框（与提问/计划同契约）；进行中的状态与证据在右栏「目标」面板 + GoalCard。
 
-// 右栏面板折叠态：有待确认目标时自动展开（与计划卡同一条「藏起来会出事」的判断）
+// 右栏面板折叠态：有待确认目标时自动展开（与计划卡同一条「藏起来会出事」的判断）。
+// 终态也展开：输入框上方那条在达成/取消时整条撤下（没事可管就不画），此时右栏是唯一的落点，
+// 再默认折叠就等于把「它到底做完了没」藏起来。
 const goalOpen = ref(false)
 watch(() => sessionGoal.value && sessionGoal.value.status, (cur, prev) => {
   if (cur === prev) return
-  if (cur === 'AWAITING_CONFIRMATION') goalOpen.value = true
+  if (cur === 'AWAITING_CONFIRMATION' || goalTerminal.value) goalOpen.value = true
 })
 
-// 入口按钮显隐：平台开关 + 本会话没有终态目标（另起目标走面板里的按钮，不在工具条常驻）
-const goalEntryVisible = computed(() => goalModeOn.value && !sessionGoal.value)
-// 终态目标（达成/用满/收尾/取消）：面板只读 + 「另起目标」
-const goalTerminal = computed(() => !!sessionGoal.value &&
-  ['ACHIEVED', 'BUDGET_EXCEEDED', 'FAILED', 'CANCELLED', 'ENDED_INCOMPLETE'].includes(sessionGoal.value.status))
-
-const goalStateClass = computed(() => {
-  const s = sessionGoal.value?.status
-  if (s === 'ACHIEVED') return 'achieved'
-  if (s === 'BUDGET_EXCEEDED' || s === 'FAILED' || s === 'CANCELLED') return 'ended'
-  if (s === 'AWAITING_CONFIRMATION') return 'pending'
-  if (s === 'RUNNING' || s === 'VERIFYING') return 'running'
-  return 'paused'
-})
-const goalStateLabel = computed(() => {
-  const s = sessionGoal.value?.status
-  if (s === 'ACHIEVED') return '已达成'
-  if (s === 'BUDGET_EXCEEDED') return '预算用满'
-  if (s === 'AWAITING_CONFIRMATION') return '待确认'
-  if (s === 'RUNNING') return '进行中'
-  if (s === 'VERIFYING') return '核验中'
-  if (s === 'PAUSED') return '已暂停'
-  if (s === 'CANCELLED') return '已取消'
-  return '已结束'
-})
+// 入口按钮显隐：当前智能体开着目标模式 + 本会话还没有目标（另起目标走面板里的按钮，不在工具条常驻）
+const goalEntryVisible = computed(() => goalModeOn.value && (!sessionGoal.value || goalTerminal.value))
 
 // 待确认卡上逐条标准的勾选态（默认全采纳：新手主路径最小化，不勾就等于全收）
 const goalPicks = ref({})
@@ -3481,22 +3582,27 @@ const cancelGoalFromCard = async () => {
   await goalAct('cancel')
 }
 
-// ---- 起草弹窗（「设为目标」/「另起目标」/气泡更多菜单共用） ----
-// 弹窗只用于「编辑目标」：点了入口按钮直接开卡（不弹窗），要从零写/改一条目标时才用它
+// ---- 一句话创建（/goal 与工具条按钮共用）：不弹表单，取正文直接建目标并开跑 ----
+// 没带标准时首轮由助手起草、自动采纳（用户可改）；弹窗只留「另起目标/换口径」这一条次要路径。
+const startGoalNow = async (prefill) => {
+  const obj = String(prefill != null ? prefill : (text.value || '')).trim()
+  if (!obj) {
+    message.info('先在输入框写下这件事要做到什么，或打 /goal 目标')
+    focusInput()
+    return null
+  }
+  const g = await startGoal(obj, [])
+  if (g && prefill == null) text.value = ''
+  return g
+}
+
+// ---- 起草弹窗（只用于「另起目标/换口径」：主入口 /goal 与工具条按钮直接取正文建目标） ----
 const goalDraftOpen = ref(false)
-const goalDraft = reactive({ objective: '', criteria: [''], fromMsg: null })
+const goalDraft = reactive({ objective: '', criteria: [''] })
 const openGoalDraft = (prefill) => {
   goalDraft.objective = prefill ? String(prefill).slice(0, 4000) : ''
   goalDraft.criteria = ['']
-  goalDraft.fromMsg = null
   goalDraftOpen.value = true
-}
-/** 从回答气泡起草：把刚生成的那份正文里的承诺转成目标草稿（沿用计划卡「改一句就解决」的体验） */
-const openGoalDraftFromMsg = mi => {
-  const m = messages.value[mi]
-  const body = m && (m.content || '')
-  openGoalDraft(body ? body.slice(0, 4000) : '')
-  goalDraft.fromMsg = m || null
 }
 const addGoalDraftCriterion = () => {
   if (goalDraft.criteria.length < 12) goalDraft.criteria.push('')
@@ -3512,6 +3618,15 @@ const submitGoalDraft = async () => {
   const g = await startGoal(obj, criteria, null)
   if (g) goalDraftOpen.value = false
 }
+
+// ---- 输入框上方的目标条与就地编辑态 ----
+// 词汇、显隐、动作可用性与编辑态的字段都在引擎里（projections 那份口径），移动壳共用同一份；
+// 本页只画形状。换目标原文＝另起一条时，引擎把那句交回来，由本页开自己的起草弹窗（移动壳开底部 sheet）。
+watch(goalRestartRequest, obj => {
+  if (!obj) return
+  openGoalDraft(obj)
+  goalRestartRequest.value = ''
+})
 
 /** 目标区间轮次跳转：按 lastTurnId 找到那颗气泡并开它的过程面板（逐气泡过程入口沿用 SessionEventsPanel） */
 const jumpToGoalTurn = () => {
@@ -3951,17 +4066,19 @@ onMounted(async () => {
 .tool-fail { color: var(--app-danger); }
 
 .artifact-list { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
-/* 时间线里的产物卡片（生成时刻穿插，非底部汇总）：上下留白与正文段落对齐 */
+/* 气泡底部的产物卡：文件名占可伸缩的位，预览/下载贴右，窄气泡里先让名字截断 */
 .artifact-item {
-  display: inline-flex; align-items: center; gap: 6px; max-width: 100%;
+  display: flex; align-items: center; gap: 6px; max-width: 100%;
   padding: 6px 10px; border: 1px solid var(--app-border); border-radius: 8px;
-  font-size: 12px; color: var(--app-text); text-decoration: none; background: var(--app-panel-2);
+  font-size: 12px; color: var(--app-text); background: var(--app-panel-2);
 }
 .artifact-item:hover { border-color: var(--app-accent); background: var(--app-accent-weak); }
-.artifact-icon { color: var(--app-accent); }
-.artifact-name { font-weight: 500; color: var(--app-accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.artifact-desc { color: var(--app-text3); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.artifact-dl { color: var(--app-text3); margin-left: auto; }
+.artifact-icon { color: var(--app-accent); flex: none; }
+.artifact-name { font-weight: 500; color: var(--app-accent); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.artifact-desc { color: var(--app-text3); font-size: 11px; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.artifact-acts { margin-left: auto; flex: none; display: inline-flex; align-items: center; gap: 10px; }
+.artifact-act { display: inline-flex; align-items: center; gap: 3px; color: var(--app-text3); text-decoration: none; white-space: nowrap; }
+.artifact-act:hover { color: var(--app-accent); }
 
 
 /* 手动压缩当场那条分隔线（在 v-for 外面，与上面 .row 里那几条同形） */
@@ -4272,16 +4389,6 @@ onMounted(async () => {
 .thinkp-opt-check { font-size: 12px; }
 .thinkp-foot { margin-top: 2px; padding-top: 10px; border-top: 1px solid var(--app-border); font-size: 12px; line-height: 1.6; color: var(--app-text3); }
 .toolbar-btn-on { color: var(--app-accent) !important; background: var(--app-accent-weak) !important; }
-/* 计划模式胶囊：工具条上的独立模式开关（原「+」面板「计划」页签迁出）。
-   开启态用警示色，与气泡上的计划 chip（.plan-chip）同一色源，两处状态一眼对得上 */
-.plan-pill {
-  display: inline-flex; align-items: center; gap: 5px; height: 28px; flex: none;
-  padding: 0 10px; border-radius: 999px; border: none; cursor: pointer;
-  background: transparent; color: var(--app-text3); font-size: 13px; font-weight: 400;
-  transition: background .15s, color .15s;
-}
-.plan-pill:hover { background: var(--app-panel-2); color: var(--app-text); }
-.plan-pill.on { background: var(--app-warn-weak); color: var(--app-warn-text); }
 .model-name {
   margin-left: auto; font-size: 11px; color: var(--app-text3); margin-right: 8px; user-select: none;
   max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -4459,11 +4566,12 @@ onMounted(async () => {
 .rp-exec-dur { flex: none; font-size: 11px; color: var(--app-text3); }
 
 /* 右栏产物卡 */
-.rp-art { display: flex; align-items: center; gap: 6px; padding: 4px 0; text-decoration: none; }
+.rp-art { display: flex; align-items: center; gap: 6px; padding: 4px 0; }
 .rp-art:hover .rp-art-name { color: var(--app-accent); }
 .rp-art-ic { color: var(--app-accent); font-size: 12px; flex: none; }
 .rp-art-name { flex: 1; min-width: 0; font-size: 12px; color: var(--app-text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rp-art-dl { flex: none; font-size: 11px; color: var(--app-text3); }
+.rp-art-act { flex: none; font-size: 11px; color: var(--app-text3); text-decoration: none; }
+.rp-art-act:hover { color: var(--app-accent); }
 .rp-art-all { margin-top: 4px; font-size: 11px; color: var(--app-accent); cursor: pointer; }
 .rp-art-all:hover { text-decoration: underline; }
 
@@ -4648,10 +4756,6 @@ onMounted(async () => {
 .ar-status.ar-err { color: var(--app-danger); }
 
 /* ==================== 目标模式 ==================== */
-/* 入口胶囊：与计划模式同排同形（plan-pill 的兄弟态），开启态用主题蓝而不是警示色——
-   目标是「交给它一件事」，不是「这轮要先审一遍」 */
-.goal-pill.on { color: var(--app-primary, #1677ff); border-color: var(--app-primary, #1677ff); }
-
 /* 目标确认栏（顶替打字框，与 askp/planp 同契约）：逐条标准勾选 + 谁提的 + 验证方式 */
 .goalp-box { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
 .goalp-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
@@ -4673,14 +4777,9 @@ onMounted(async () => {
 .goalp-hint { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--app-text3); }
 .goalp-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 
-/* 右栏「目标」面板：与清单卡同栏（rp-card 外壳），状态徽标 + 动作键 + 轮次跳转 */
-.rp-goal-state { font-size: 11.5px; padding: 1px 7px; border-radius: 8px; background: var(--app-panel-2); color: var(--app-text2); }
-.rp-goal-state.st-achieved { color: var(--app-ok); }
-.rp-goal-state.st-ended { color: var(--app-danger); }
-.rp-goal-state.st-pending { color: var(--app-warn-text); }
-.rp-goal-state.st-running { color: var(--app-primary, #1677ff); }
+/* 右栏「目标」面板：与清单卡同栏（rp-card 外壳）。状态词与目标原文都由 GoalCard 说一次，
+   面板头只留栏名与折叠键——同一条信息在一张卡里出现两遍，用户会读成两件事 */
 .rp-goal-body { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
-.rp-goal-objective { font-size: 12.5px; line-height: 1.6; color: var(--app-text2); white-space: pre-wrap; word-break: break-word; }
 .rp-goal-body .goal-card { margin: 0; padding: 0; border: none; background: none; }
 .rp-goal-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .rp-goal-jump { align-self: flex-start; border: none; background: none; padding: 0; font-size: 12px; color: var(--app-primary, #1677ff); cursor: pointer; }
@@ -4694,6 +4793,54 @@ onMounted(async () => {
 .goald-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 .goald-hint { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--app-text3); }
 .goald-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+
+/* 输入框上方的目标条（常驻摘要条）：与插话队列同宽同轨（都是「离输入框最近的那件事」）。
+   一行 36px 不铺第二行——状态词、目标原文、四个图标动作之外的一切（跑了几轮、卡在哪、
+   同步异常）都收进悬浮行与右栏详情面，原文长短不可控也不该把它挤成半句。
+   整条一个观感：状态靠那个词传达，不靠底色。就地编辑态在同一条长开，动作钉在最后一行右侧。 */
+.goal-bar {
+  position: relative; display: flex; align-items: center; gap: 10px;
+  box-sizing: border-box; width: 100%; max-width: var(--chat-col);
+  min-height: 36px; margin: 0 auto 6px; padding: 4px 5px 4px 12px;
+  font-size: 13px; color: var(--app-text);
+  border: 0; border-radius: 12px; background: var(--app-panel);
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 8px 20px -10px rgba(16, 24, 40, .10);
+}
+.goal-bar.editing { align-items: flex-end; }
+.gb-glyph { flex: none; display: inline-flex; align-items: center; color: var(--app-text3); }
+.gb-label { flex: none; font-size: 13px; line-height: 24px; font-weight: 500; color: var(--app-text); }
+.gb-objective {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 13px; line-height: 20px; color: var(--app-text2);
+}
+.gb-error {
+  flex: none; max-width: 40%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 12px; line-height: 20px; color: var(--app-danger);
+}
+.gb-actions { flex: none; display: flex; align-items: center; gap: 10px; }
+.gb-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; padding: 0; border: none; border-radius: 50%;
+  background: transparent; color: var(--app-text3); cursor: pointer;
+}
+.gb-icon:hover:not(:disabled) { background: var(--app-panel-2); color: var(--app-text2); }
+.gb-icon:disabled { opacity: .4; cursor: default; }
+
+/* 就地编辑态：原文只读一行 + 标准逐条 + 保存/取消（两个图标键与只读态同一位置） */
+.gb-edit-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; padding: 4px 0 6px; }
+.gb-edit-objective { display: flex; flex-direction: column; gap: 4px; }
+.gb-objective-full { font-size: 13px; line-height: 1.6; color: var(--app-text); white-space: pre-wrap; word-break: break-word; }
+.gb-edit-label { font-size: 12.5px; font-weight: 600; color: var(--app-text2); }
+.gb-edit-criterion { display: flex; align-items: center; gap: 6px; }
+.gb-edit-criterion .ant-input { flex: 1; }
+.gb-passed { flex: none; font-size: 11.5px; color: var(--app-ok); }
+.gb-link { align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; border: none; background: none; padding: 0; font-size: 12.5px; color: var(--app-primary, #1677ff); cursor: pointer; }
+.gb-hint { font-size: 12px; color: var(--app-text3); }
+
+/* 窄屏：错误行让出更多空间给动作键 */
+@media (max-width: 768px) {
+  .gb-error { max-width: 30%; }
+}
 
 /* ==================== 响应式：窄屏适配 ====================
    ≤1200：状态栏由占位列改浮层（消息是主内容，需要时点「状态」按钮展开）。

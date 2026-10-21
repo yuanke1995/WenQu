@@ -8,13 +8,13 @@
  * 现在样式与布局只有这一份，改一次两页同时生效。
  *
  * <p><b>边界：本组件只管「怎么摆」，不管「有什么」</b>。页面专属的东西全部走插槽，
- * 所以主对话页的智能体胶囊、计划模式开关、模型选择、思考开关、插话队列、+ 面板、
+ * 所以主对话页的智能体胶囊、目标入口、模型选择、思考开关、插话队列、+ 面板、
  * @ 引用面板都不需要本组件知道：
  * <ul>
  *   <li>{@code #above}      —— 卡片之外的同一列（插话队列）</li>
  *   <li>默认插槽            —— 卡片内、正文之上（+ 面板 / @ 面板 / 斜杠面板）</li>
  *   <li>{@code #left-lead}  —— 工具条左端、附件键**之前**（智能体胶囊）</li>
- *   <li>{@code #left}       —— 工具条左端、附件键**之后**（计划模式）</li>
+ *   <li>{@code #left}       —— 工具条左端、附件键**之后**（目标）</li>
  *   <li>{@code #right}      —— 工具条右端、发送键**之前**（模型 / 思考 / 用量）</li>
  * </ul>
  *
@@ -33,6 +33,9 @@ const props = defineProps({
   /** 正文（不含 chip） */
   modelValue: { type: String, default: '' },
   placeholder: { type: String, default: '' },
+  /** 富占位（透传给 Composer）：命令词 + 说明；目标/计划这类“回车即执行”的入口用 */
+  hintCmd: { type: String, default: '' },
+  hintRest: { type: String, default: '' },
   /** chip 描述解析（透传给 Composer）：key → {kind,name,sub,...} */
   resolve: { type: Function, required: true },
   /** 生成中：发送键变停止键 */
@@ -128,6 +131,7 @@ const showStop = computed(() => props.sending && !(props.steerable && props.canS
     <div v-else class="ci-box">
       <slot />
       <Composer ref="composerRef" :model-value="modelValue" :resolve="resolve" :placeholder="placeholder"
+                :hint-cmd="hintCmd" :hint-rest="hintRest"
                 @update:model-value="v => emit('update:modelValue', v)"
                 @update:keys="k => emit('update:keys', k)"
                 @keydown="e => emit('keydown', e)" @paste="e => emit('paste', e)"

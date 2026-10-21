@@ -228,15 +228,15 @@ const check = (ok, label, detail = '') => {
     const left = document.querySelector('.ci-left')
     const right = document.querySelector('.ci-right')
     const kids = left ? [...left.children] : []
-    // 「+」在左栏里的位置：主对话页的次第是「智能体胶囊 → + → 计划模式」，
+    // 「+」在左栏里的位置：主对话页的次第是「智能体胶囊 → + → 设为目标」，
     // 组件为此提供了 left-lead / left 两个插槽，接错就会跑到胶囊前面去
     const attachIdx = kids.findIndex(k => k.classList.contains('ci-attach'))
     const agentIdx = kids.findIndex(k => k.classList.contains('agent-pill'))
-    const planIdx = kids.findIndex(k => k.classList.contains('plan-pill'))
+    const goalIdx = kids.findIndex(k => k.classList.contains('goal-pill'))
     const send = right ? right.querySelector('.ci-send') : null
     return {
       hasBox: !!box, hasEdit: !!edit, hasLeft: !!left, hasRight: !!right,
-      attachIdx, agentIdx, planIdx,
+      attachIdx, agentIdx, goalIdx,
       attachInLeft: attachIdx >= 0,
       // 发送键必须是右栏最后一颗（后面再冒出按钮就说明有人往 right 插槽之后加了东西）
       sendLast: !!(right && send && right.lastElementChild === send),
@@ -256,7 +256,7 @@ const check = (ok, label, detail = '') => {
     `left=${ci.leftN} right=${ci.rightN}`)
   check(ci.agentIdx >= 0 && ci.attachInLeft && ci.agentIdx < ci.attachIdx,
     '工具条次第正确：智能体胶囊在「+」之前（left-lead / left 两个插槽没接反）',
-    `agent=${ci.agentIdx} attach=${ci.attachIdx} plan=${ci.planIdx}`)
+    `agent=${ci.agentIdx} attach=${ci.attachIdx} goal=${ci.goalIdx}`)
   check(ci.sendLast, '发送键是右栏最后一颗（right 插槽没把按钮挤到它后面）')
   check(ci.dropHidden, '未拖拽时不渲染落点提示（只有真拖着文件才亮）')
   check(ci.boxW > 0 && ci.boxW <= 880, '输入卡片限宽居中（与消息列同取 --chat-col）', `w=${ci.boxW}`)

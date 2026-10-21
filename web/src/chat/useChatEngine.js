@@ -24,6 +24,9 @@ import { THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel, CTX_WINDOW_ST
          groupSources, ensureTick, mergeDoneToolCalls, restoreTimeline, extendTimelineText, extendTimelineProcess,
          pushTimelineTool, pushTimelineArtifact, pushTimelineSteer, pushTimelineThink, extendTimelineThink, ensureThinkSegment,
          snapshotVersion, applyVersion, toolCallsView, histItemDigest,
+         goalTerminalOf, goalBarVisibleOf, goalPhraseOf, goalStateLabelOf, goalStateClassOf,
+         goalBlockReasonOf, goalBarTitleOf, goalBarMetaOf,
+         goalCanPauseOf, goalCanResumeOf, goalCanEditOf,
          rememberAgents } from './projections'
 
 export function useChatEngine (hooks = {}) {
@@ -41,7 +44,7 @@ export function useChatEngine (hooks = {}) {
 
 const text = ref('')
 /**
- * 计划模式（人在回路）入口开关：只有传 planModeEnabled=true 的壳能开启（PC 与移动壳的「+」面板都给了）。
+ * 计划模式（人在回路）入口开关：只有传 planModeEnabled=true 的壳能开启（PC 走 /plan 命令，移动壳用工具条上的「计划」按钮）。
  * 状态本身存 localStorage（桌面/移动同源共享）。这道闸留着而不是恒真：开关能让这一轮发出
  * 「没人能批准」的计划问答，所以**没有计划卡 UI 的壳**（如分享页）必须被拦在门外。
  */
@@ -845,20 +848,50 @@ const goalsMap = ref({})
 const sessionGoal = computed(() => goalsMap.value[currentSessionId.value] || null)
 function setGoal (sid, doc) { goalsMap.value = { ...goalsMap.value, [sid]: doc } }
 
-/** 目标模式总闸（平台级，/config/public 的 ui.goalMode）：入口按钮与面板显隐的唯一判据。
- *  与后端同源——界面露入口而模型侧没挂能力，就是「教了用户一件没有的能力」那种漂移 */
-const goalModeOn = ref(false)
+/** 目标模式开不开：只认当前智能体那一格（goal_enabled：1/NULL=开，0=关）。
+ *  平台级总闸已去掉——判据与后端 GoalService.enabledFor 同源，界面露入口而助手侧没挂能力
+ *  就是「教了用户一件没有的能力」那种漂移 */
+const goalModeOn = computed(() => {
+  const a = currentAgent.value
+  return !a || a.goalEnabled === undefined || a.goalEnabled === null || Number(a.goalEnabled) === 1
+})
 
 /**
- * 目标态轮询：后台续跑轮没有浏览器通道（帧只进账本），面板的实时性靠这条兜住。
- * 只在目标还在进行时走表（8 秒一跳），进终态就停。
+ * 目标态的两条兜底：面板取数 + 接回后台那一轮。
+ * <p>后台续跑轮由服务端自己起（没有浏览器发起通道），它登记在运行总线上，但「有没有人在看」
+ * 只能由这一侧决定：本地没有这一轮的流、服务端却还在跑，就开一条接流通道。不接的表现为
+ * 目标自己跑了好几轮、聊天区一颗气泡都没长——真机实测过：正文全在库里，刷新才读得到。
+ * <p>接流探测要勤（2.5 秒一跳，一轮通常跑一两分钟，太慢就等于没接上），面板取数不必（每三跳一次）。
  * 有动作在飞时不覆盖（busy 态是本地的乐观锁，被轮询冲掉会让人以为按钮没生效）。
  */
 const goalActive = computed(() => {
   const s = sessionGoal.value?.status
-  return !!s && ['RUNNING', 'VERIFYING', 'AWAITING_CONFIRMATION', 'PAUSED', 'BUDGET_EXCEEDED'].includes(s)
+  return !!s && ['RUNNING', 'VERIFYING', 'AWAITING_CONFIRMATION', 'WAITING_INPUT', 'PAUSED'].includes(s)
 })
+/** 只有这两档服务端才真的可能有轮在飞：暂停/待确认/等你核验都不许去探测（白跑请求） */
+const goalTurnPossible = computed(() => ['RUNNING', 'VERIFYING'].includes(sessionGoal.value?.status))
 let goalPollTimer = null
+let goalTick = 0
+const watchGoalTurn = sid => {
+  if (chatStreams.has(sid)) return      // 这一轮本地已经在看了，别另起一颗气泡
+  getChatRun(sid).then(r => {
+    if (!r || !r.success || !r.data || !r.data.running) return
+    if (currentSessionId.value !== sid) return
+    attachRunningTurn(sid).catch(() => {})
+  }).catch(() => { /* 探测失败不提示：下一跳再试 */ })
+}
+/** 切会话时的目标回捞：先取「待确认/进行中」（带 remainingMs 与 live 判定），
+ *  没有再取「最近一条」——达成/取消后摘要条按设计撤下，右栏面板是唯一的落点，
+ *  回捞只认前者的话，刷新一次那份结果就没了（真机实测）。
+ *  两个口的形状不同：/goal/pending 套一层 goal，/session/{id}/goal 直接给视图。 */
+const loadGoalFor = async sid => {
+  const r = await getPendingGoalApi(sid).catch(() => null)
+  if (r && r.success && r.data && r.data.goal) return { ...r.data.goal, receivedAt: Date.now() }
+  if (!r || !r.success) return null      // 拉取失败≠没有目标：不许拿「最近一条」把失败盖成空态
+  const g = await getSessionGoalApi(sid).catch(() => null)
+  if (g && g.success && g.data && g.data.goalId) return { ...g.data, receivedAt: Date.now() }
+  return null
+}
 const pollGoal = () => {
   const sid = currentSessionId.value
   if (!sid) return
@@ -871,12 +904,20 @@ const pollGoal = () => {
     if (!g) return
     const prev = goalsMap.value[sid]
     if (prev && prev.busy) return
-    if (prev && prev.goalId === g.goalId && prev.status === g.status && !g.budgetWarn) return
+    if (prev && prev.goalId === g.goalId && prev.status === g.status) return
     setGoal(sid, { ...g, receivedAt: Date.now() })
   }).catch(() => { /* 拉不动不提示：目标面板下次帧/下次轮询再试 */ })
 }
 watch(goalActive, v => {
-  if (v && !goalPollTimer) goalPollTimer = setInterval(pollGoal, 8000)
+  if (v && !goalPollTimer) {
+    goalTick = 2   // 第一跳就取一次面板（接流探测不必等）
+    goalPollTimer = setInterval(() => {
+      const sid = currentSessionId.value
+      if (!sid) return
+      if (goalTurnPossible.value) watchGoalTurn(sid)
+      if (goalTick++ % 3 === 0) pollGoal()
+    }, 2500)
+  }
   if (!v && goalPollTimer) { clearInterval(goalPollTimer); goalPollTimer = null }
 })
 onUnmounted(() => { if (goalPollTimer) clearInterval(goalPollTimer) })
@@ -908,11 +949,14 @@ const switchSession = async sid => {
       if (r && r.success && r.data?.todos && !(sid in todosMap.value)) setTodos(sid, r.data.todos)
     }).catch(() => {})
   }
-  // 目标模式：该会话没拉过才捞一次（右栏「目标」面板与待确认卡据此回显）。
+  // 目标模式：该会话没拉过才捞一次（摘要条、待确认卡与右栏「目标」面板共用这一份）。
   // 拉不到必须让界面知道——空态掩盖失败会让「设了目标但面板什么都没有」看起来像没设过
   if (sid && !(sid in goalsMap.value)) {
-    getPendingGoalApi(sid).then(r => {
-      if (r && r.success && r.data && !(sid in goalsMap.value)) setGoal(sid, r.data.goal || null)
+    loadGoalFor(sid).then(doc => {
+      // receivedAt 必须一起给：倒计时按「收到的那一刻 + remainingMs」现算，缺了它 deadline 会算到
+      // 1970 年——刷新一次，待确认卡直接显示「已超时，将按未确认收尾」并且两个按钮都点不动（真机实测）
+      if (currentSessionId.value !== sid || (sid in goalsMap.value)) return
+      setGoal(sid, doc)
     }).catch(() => {})
   }
   // 同步 URL query：侧边栏高亮与刷新恢复都依赖 sid 在地址上。
@@ -959,6 +1003,8 @@ const switchSession = async sid => {
             historyRefs: Array.isArray(m.historyRefs) ? m.historyRefs : [],
             // 本轮终止原因（叫停且该轮没产出回答时记在用户提问上）：刷新后据此在问题下补一行说明
             endReason: m.endReason || '',
+            // 目标指令回声（记在用户提问上）：气泡挂 /goal 命令标注、不挂普通消息动作
+            goalCommand: typeof m.goalCommand === 'string' ? m.goalCommand : '',
             thinking: m.thinking || '',
             time: m.createTime ? new Date(m.createTime).getTime() : null,
             artifacts: Array.isArray(m.artifacts) ? m.artifacts : [],
@@ -1281,24 +1327,34 @@ const goalCountdownText = computed(() => {
 })
 
 /**
- * 设为目标（入口按钮 / 气泡「更多 → 设为目标」）：建行并进待确认卡。
- * objective 优先用气泡正文里截出来的承诺段（沿用计划卡「改一句就解决」的编辑体验）。
+ * 目标入口（工具条按钮 /goal 命令共用这一出口）：建行即开跑，不再弹确认卡。
+ * 没带标准时首轮由助手起草、自动采纳（用户可改）；带标准就是用户自己拍板的那几条。
  */
-async function startGoal (objective, criteria, budget) {
+async function startGoal (objective, criteria) {
   const sid = currentSessionId.value
   if (!sid) return null
   const obj = String(objective || '').trim()
   if (!obj) { message.warning('先写一句这件事要做到什么'); return null }
   try {
-    const r = await startGoalApi(sid, obj, criteria || [], budget || null)
-    if (r && r.success === false) { message.warning(r.msg || '设为目标失败'); return null }
+    const r = await startGoalApi(sid, obj, criteria || [], true)
+    if (r && r.success === false) { message.warning(r.msg || '目标创建失败'); return null }
     if (r && r.data) {
       setGoal(sid, { ...r.data, receivedAt: Date.now() })
+      // 对话里当场留一行回声（服务端同一条已落库，刷新/切会话读的是库里那份）：
+      // 目标横跨多轮，状态在摘要条与详情面，但「什么时候定了什么目标」得能在对话里读出来
+      messages.value.push(reactive({ role: 'user', content: obj, goalCommand: r.data.goalId || '',
+                                     images: [], attachments: [], attachData: [],
+                                     skills: [], mentions: [], historyRefs: [], deepThink: false,
+                                     time: Date.now(), messageId: null }))
+      // 侧栏要立刻看得见这条会话：目标会话在第一条回答落地之前 message_count 一直是 0，而会话列表
+      // 隐藏空会话——用户在工作区里定了目标，回头看那个工作区读到的是「暂无会话」（真机实测）。
+      // 标题用目标原文：这条会话讲的就是这件事，比「新对话」认得出来。
+      markSessionActive(sid, obj)
       return r.data
     }
     return null
   } catch (e) {
-    message.error(e.message || '设为目标失败')
+    message.error(e.message || '目标创建失败')
     return null
   }
 }
@@ -1319,6 +1375,8 @@ async function submitGoalConfirm (decisions) {
       return false
     }
     if (r && r.data) setGoal(currentSessionId.value, { ...r.data, receivedAt: Date.now() })
+    // 确认即开工：服务端在这次 POST 返回之前就已经把那一轮登记上总线了，不必等探测那一跳
+    watchGoalTurn(currentSessionId.value)
     hooks.scrollSoft?.()
     return true
   } catch (e) {
@@ -1328,23 +1386,30 @@ async function submitGoalConfirm (decisions) {
   }
 }
 
-/** 目标面板/目标卡上的动作：pause/resume/extendBudget/verifyNow/markManual/finish/cancel */
+/** 目标条/面板上的动作：pause/resume/edit/verifyNow/markManual/finish/cancel。
+ *  失败先落在目标文档的 actionError 上（摘要条就地内联一行，不弹层——条子本来就在眼睛前面），
+ *  只有那条画不出来的时候（待确认顶替态、终态、移动壳的 sheet）才退回提示层，绝不静默。 */
 async function goalAct (action, extra) {
   const g = sessionGoal.value
   if (!g || !g.goalId) return null
   if (g.busy) return null
   g.busy = true
+  g.actionError = ''
   try {
     const r = await goalActionApi(g.goalId, action, extra || {})
     if (r && r.success === false) {
-      message.warning(r.msg || '操作失败')
+      g.actionError = r.msg || '操作失败'
+      if (!goalBarVisible.value) message.warning(g.actionError)
       g.busy = false
       return null
     }
     if (r && r.data) setGoal(currentSessionId.value, { ...r.data, receivedAt: Date.now() })
+    // 继续/改订都可能当场起一轮：接流不等探测那一跳
+    if (action === 'resume' || action === 'edit') watchGoalTurn(currentSessionId.value)
     return r && r.data ? r.data : null
   } catch (e) {
-    message.error(e.message || '操作失败')
+    g.actionError = e.message || '操作失败'
+    if (!goalBarVisible.value) message.error(g.actionError)
     g.busy = false
     return null
   } finally {
@@ -1352,6 +1417,82 @@ async function goalAct (action, extra) {
     if (cur) cur.busy = false
   }
 }
+
+// ==================== 目标条与详情面的状态口径 ====================
+// 词汇与判据本体在 projections.js（目标卡也读它），这里只把它包成响应式的一份，
+// 供摘要条（PC 与移动壳）与右栏面板用——同一条目标在三处说的必须是同一句话。
+const goalTerminal = computed(() => goalTerminalOf(sessionGoal.value))
+const goalBarVisible = computed(() => goalBarVisibleOf(sessionGoal.value))
+const goalPhrase = computed(() => goalPhraseOf(sessionGoal.value))
+const goalStateLabel = computed(() => goalStateLabelOf(sessionGoal.value))
+const goalStateClass = computed(() => goalStateClassOf(sessionGoal.value))
+const goalBlockReason = computed(() => goalBlockReasonOf(sessionGoal.value))
+const goalBarTitle = computed(() => goalBarTitleOf(sessionGoal.value))
+const goalBarMeta = computed(() => goalBarMetaOf(sessionGoal.value))
+const goalCanPause = computed(() => goalCanPauseOf(sessionGoal.value))
+const goalCanResume = computed(() => goalCanResumeOf(sessionGoal.value))
+const goalCanEdit = computed(() => goalCanEditOf(sessionGoal.value))
+/** 条子里那一行红字：先是动作失败的原文，没有动作失败时给同步异常（那条以前靠一颗按钮透出，
+ *  现在条子上只留一行字——细节在详情面，悬浮行也带着） */
+const goalBarError = computed(() => sessionGoal.value?.actionError || sessionGoal.value?.syncWarn || '')
+const runGoalAction = action => goalAct(action)
+
+// ---- 就地编辑态（PC 在条子里长开，移动壳在底部 sheet 里开：同一批字段、同一保存出口）----
+// 只开放验收标准一样：框架把目标原文钉在 task 身份上，同一条目标换原文会被直接拒，
+// 想换口径只能另起一条（旧的那条收成「未完成收尾」，历史与验证记录留在旧行上可查）。
+const goalEditing = ref(false)
+const goalEditBusy = ref(false)
+const goalEdit = reactive({ goalId: '', objective: '', criteria: [] })
+/** 一条标准都不剩时保存是空的：与只读态一样，没有正文就不给点保存 */
+const goalEditSaveable = computed(() => goalEdit.criteria.some(c => String(c.text || '').trim()))
+const startGoalInlineEdit = () => {
+  const g = sessionGoal.value
+  if (!g) return false
+  goalEdit.goalId = g.goalId
+  goalEdit.objective = g.objective || ''
+  // 已作废的那条不进编辑器：它留在目标记录里，但「再要回来」应当是新写一条，
+  // 否则改一个字就会把旧那条的验证记录一起继承过来
+  goalEdit.criteria = (g.criteria || [])
+    .filter(c => c.status !== 'REJECTED')
+    .map(c => ({
+      key: c.key, text: c.text,
+      passed: !!(c.verification && c.verification.outcome === 'PASSED' && !c.verification.stale)
+    }))
+  if (!goalEdit.criteria.length) goalEdit.criteria = [{ key: null, text: '', passed: false }]
+  goalEditing.value = true
+  return true
+}
+const addGoalEditCriterion = () => {
+  if (goalEdit.criteria.length < 12) goalEdit.criteria.push({ key: null, text: '', passed: false })
+}
+const removeGoalEditCriterion = i => goalEdit.criteria.splice(i, 1)
+const saveGoalEdit = async () => {
+  if (goalEditBusy.value) return false
+  const criteria = goalEdit.criteria
+    .map(c => ({ key: c.key, text: String(c.text || '').trim() }))
+    .filter(c => c.text)
+  goalEditBusy.value = true
+  try {
+    const r = await goalAct('edit', { criteria })
+    if (r) goalEditing.value = false
+    return !!r
+  } finally {
+    goalEditBusy.value = false
+  }
+}
+// 换目标原文＝另起一条：起草弹窗是壳自己的东西（PC 是弹窗、移动壳是底部 sheet），
+// 引擎只负责把这句交出去并撤下编辑态，页面 watch 这个值去开自己的起草面。
+const goalRestartRequest = ref('')
+const restartGoalFromEdit = () => {
+  goalEditing.value = false
+  goalRestartRequest.value = goalEdit.objective || ''
+}
+// 目标换了（另起/清除）或状态迁出可编辑那几档，就地编辑态必须撤下：
+// 留着草稿会在下一条目标上按 Enter 写花它（与 DSH 的 goalId 变化重置同一件事）
+watch(() => sessionGoal.value && (sessionGoal.value.goalId + ':' + sessionGoal.value.status), (cur, prev) => {
+  if (cur !== prev) goalEditing.value = false
+})
+
 /**
  * 计划模式（人在回路）：裁决当前气泡挂起的执行计划——批准 / 取消本轮。
  *  action='approve' 批准执行（后端仍兼容带改稿批准，前端不再提供该入口）；
@@ -2165,12 +2306,11 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       } catch (e) { /* 载荷异常：保留上一份，不清空界面 */ }
     },
     onGoalState: payload => {
-      // 目标态唯一帧（状态机迁移/标准裁决/验证结果/预算变化）：整份视图模型覆盖写。
+      // 目标态唯一帧（状态机迁移/标准裁决/验证结果）：整份视图模型覆盖写。
       // 同步异常（syncWarn）不静默：面板上出声，本轮以库里那份为准重新同步
       try {
         const j = typeof payload === 'string' ? JSON.parse(payload) : payload
         if (j && j.goalId) setGoal(sid, { ...j, receivedAt: Date.now() })
-        if (j && j.budgetWarn) message.warning('目标预算快用完了，会先把能交付的部分收口')
       } catch (e) { /* 载荷异常：保留上一份，不清空面板 */ }
     },
     onGoalTurn: payload => {
@@ -2981,8 +3121,6 @@ const ready = async () => {
   getRuntimeConfig().then(r => {
     if (!r.success) return
     debugDisplayVisible.value = r.data?.ui?.debugEntry === true
-    // 目标模式总闸（平台）：入口按钮与面板的显隐认这一份，与后端同源判据
-    goalModeOn.value = r.data?.ui?.goalMode === true
   }).catch(() => {})
   getUserPreference().then(r => {
     userDefaultModel.value = (r && r.data && r.data.defaultModel) || ''
@@ -3015,13 +3153,19 @@ if (typeof window !== 'undefined') {
     // 提问卡的选择状态口径收在引擎一处（单选/多选同一形状），两端面板只读这些、不各自数选中态
     pickAskOption, commitAskCustom, askOptionPicked, askCustomPicked, askQuestionAnswered,
     askAnsweredCount, askNextUnanswered, askAnswerText, askAutoSubmittable, askHintText,
-    // 计划模式（人在回路）：开关（「+」面板）与计划卡裁决动作；hydrate 供通知深链/切会话点名
+    // 计划模式（人在回路）：开关（/plan 命令）与计划卡裁决动作；hydrate 供通知深链/切会话点名
     planModeOn, setPlanMode, submitPlanApproval, continuePlanConversation, hydratePendingPlans,
     // 待批准卡的派生态与倒计时（确认栏顶替打字框的判据，两端共用）
     pendingPlan, curPlanCard, planExpired, planCountdownText,
     // 目标模式：会话级目标态、待确认卡派生态与倒计时、全部动作
     sessionGoal, pendingGoal, goalExpired, goalCountdownText,
     startGoal, submitGoalConfirm, goalAct, goalDeadline, goalModeOn,
+    // 目标条与详情面的状态口径（词汇、显隐、动作可用性）＋就地编辑态：两端共用一份，不在页面里各写一遍
+    goalTerminal, goalBarVisible, goalPhrase, goalBarTitle, goalBarMeta, goalBarError, goalBlockReason,
+    goalStateLabel, goalStateClass, goalCanPause, goalCanResume, goalCanEdit, runGoalAction,
+    goalEditing, goalEdit, goalEditBusy, goalEditSaveable,
+    startGoalInlineEdit, addGoalEditCriterion, removeGoalEditCriterion, saveGoalEdit,
+    restartGoalFromEdit, goalRestartRequest,
     // 思考能力 / 档位
     thinkCapsOf, reasoningLevelsOf, deepThinkMap, deepOnOf, deepThinkOn, levelOptionsOf, currentLevelOf,
     levelMap, setThinkLevel, currentThinkLevel, reasoningLevelParam,

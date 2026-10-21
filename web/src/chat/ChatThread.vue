@@ -73,6 +73,11 @@ function sourceTitle (m) {
     <slot name="row-before" :m="m" :i="i" />
     <div class="msg-block" :class="[m.role, { editing: editingIndex === i }]">
       <div class="bubble" :class="m.role">
+        <!-- 目标指令回声：句首挂一枚 /goal 命令标记，目标原文照旧是正文。
+             这行不是一等回答的提问，复制/编辑重发/重新生成对它没有意义，动作行由页面按 m.goalCommand 撤掉 -->
+        <div v-if="m.role === 'user' && m.goalCommand" class="cmd-line">
+          <code class="cmd-token">/goal</code><span class="cmd-name">目标</span>
+        </div>
         <!-- 提问随行材料（图片/附件）：与主对话页、分享页共用同一个叶子 -->
         <UserBubble v-if="m.role === 'user'" :images="m.images" :attachments="m.attachments"
                     @paste-view="a => emit('paste-view', a)">
@@ -142,6 +147,13 @@ function sourceTitle (m) {
 }
 /* 气泡里的 markdown 段落不留外边距，否则段落 margin 会把气泡顶得比文字高出一圈 */
 .bubble.user :deep(.md > p) { margin: 0; }
+/* 命令回声的标记行：一枚命令 token + 它做什么，压在正文上方（token 用等宽，读得出那是敲进去的） */
+.cmd-line { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.cmd-token {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; line-height: 1;
+  padding: 3px 6px; border-radius: 6px; background: var(--app-panel-2); color: var(--app-text2);
+}
+.cmd-name { font-size: 11.5px; line-height: 1; color: var(--app-text3); }
 /* AI 侧无气泡：正文直接排版，不画边框不画底 */
 .bubble.ai { background: transparent; padding: 0; }
 

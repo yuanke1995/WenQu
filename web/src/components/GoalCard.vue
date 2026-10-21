@@ -1,9 +1,9 @@
 <template>
   <!--
-    目标卡（目标模式的第五张人在回路卡的「记录面」）：与 PlanCard.vue / AskRecordCard.vue 同族，
+    目标卡（目标模式的「详情面」）：与 PlanCard.vue / AskRecordCard.vue 同族，
     裁决区在底部输入框顶替位（goalp-*，见 ChatPage.vue），这张卡只讲状态与证据。
-    两端共用：PC 挂在 AI 气泡下（ChatThread），移动壳挂在 MobileMsgRow；右栏「目标」面板
-    复用同一组件（外壳不同、取数同源——SessionEventsPanel 那套「渲染与取数共用」的做法）。
+    两端共用：PC 挂在右栏「目标」面板里，移动壳挂在「状态与来源」sheet 的目标小节
+    （外壳不同、取数同源）。进行中的操作面不在这张卡上，在输入框正上方那条摘要条。
     文案只讲用户结果，不露框架机制（TASK_STATE/beginTask/verifier 这类词不许出现）。
   -->
   <div class="goal-card" :class="'goal-' + (card.status || '').toLowerCase()">
@@ -11,8 +11,8 @@
       <aim-outlined class="goal-card-ic" />
       <span class="goal-card-title">目标</span>
       <span class="goal-state" :class="'st-' + stateClass">{{ stateLabel }}</span>
-      <span v-if="card.turnIndex && card.turnsMax" class="goal-turn">
-        第 {{ card.turnIndex }}/{{ card.turnsMax }} 轮
+      <span v-if="card.turnIndex" class="goal-turn">
+        执行轮次 {{ card.turnIndex }}
       </span>
     </div>
 
@@ -22,23 +22,27 @@
       {{ open ? '收起' : '展开' }}
     </button>
 
-    <!-- 预算条：四条一行的「已用/上限」 -->
-    <div v-if="card.budget" class="goal-budget">
-      <div v-for="d in budgetDims" :key="d.key" class="goal-budget-dim" :class="{ warn: d.ratio >= 0.8, over: d.ratio >= 1 }">
-        <span class="goal-budget-label">{{ d.label }}</span>
-        <span class="goal-budget-bar"><i :style="{ width: Math.min(100, d.ratio * 100) + '%' }" /></span>
-        <span class="goal-budget-num">{{ d.used }}{{ d.max ? '/' + d.max : '' }}</span>
-      </div>
+    <!-- 「等你核验」那一档的一句人话：没有标准 vs 有标准待勾，是两件事 -->
+    <div v-if="card.hint" class="goal-hint">{{ card.hint }}</div>
+
+    <!-- 受阻原因：状态词收成「受阻」之后，卡在哪全靠这一行说（不点进标准清单也读得到） -->
+    <div v-if="blockReason" class="goal-block-reason">
+      <exclamation-circle-outlined /> {{ blockReason }}
     </div>
 
-    <!-- 验收标准逐条：未验/通过/失败/已过期 -->
+    <!-- 验收标准逐条：未验/通过/失败/已过期；人工核验的直接在行上勾 -->
     <div v-if="card.criteria && card.criteria.length" class="goal-criteria">
       <div v-for="c in card.criteria" :key="c.key || c.id" class="goal-criterion" :class="'cv-' + criterionClass(c)">
         <span class="goal-criterion-box">{{ criterionMark(c) }}</span>
         <span class="goal-criterion-text">{{ c.text }}</span>
+        <span v-if="c.drafted" class="goal-criterion-drafted">助手起草</span>
         <span v-if="c.verification && c.verification.stale" class="goal-criterion-stale">已过期</span>
         <span v-else-if="c.verification" class="goal-criterion-outcome">{{ outcomeLabel(c.verification.outcome) }}</span>
         <span v-else class="goal-criterion-outcome muted">未验</span>
+        <span v-if="canMark(c)" class="goal-criterion-acts">
+          <button type="button" @click="$emit('mark', { key: c.key, outcome: 'PASSED' })">达成</button>
+          <button type="button" @click="$emit('mark', { key: c.key, outcome: 'FAILED' })">没过</button>
+        </span>
       </div>
     </div>
 
@@ -47,8 +51,8 @@
       <exclamation-circle-outlined /> {{ card.syncWarn }}
     </div>
 
-    <!-- 未完成清单（预算用满/主动收尾时：不悄然截断） -->
-    <div v-if="terminal && remaining.length" class="goal-remaining">
+    <!-- 未完成清单（不再往前推的那几档：不悄然截断，说清还差哪几条） -->
+    <div v-if="stopped && remaining.length" class="goal-remaining">
       <div class="goal-remaining-head">还差 {{ remaining.length }} 条没验过：</div>
       <div v-for="(t, i) in remaining" :key="i" class="goal-remaining-item">{{ t }}</div>
     </div>
@@ -58,70 +62,30 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { AimOutlined, ExclamationCircleOutlined } from '@ant-design/icons-vue'
+import { goalStateLabelOf, goalStateClassOf, goalBlockReasonOf, goalRemainingOf } from '../chat/projections'
 
-// 只读展示卡：全部裁决动作在输入框顶替面板（待确认）与右栏面板（进行中）上，
-// 这里不 emit 任何东西——与 PlanCard.vue 同一条契约（props 进、零 emits）。
+// 只读展示卡：除「人工核验」逐条勾选外不出动作；其余裁决动作在输入框顶替面板（待确认）
+// 与输入框上方那条摘要条（进行中）上。人工核验必须留一个入口，否则这种标准永远验不出 PASSED。
 const props = defineProps({
-  /** 目标视图模型（goal_state 帧/右栏回显同一份）：{goalId,status,objective,criteria,budget,turnIndex,turnsMax,syncWarn,endReason,...} */
+  /** 目标视图模型（goal_state 帧/右栏回显同一份）：{goalId,status,objective,criteria,turnIndex,syncWarn,hint,endReason,...} */
   card: { type: Object, required: true }
 })
+defineEmits(['mark'])
 
 const open = ref(false)
 const needsFold = computed(() => (props.card.objective || '').length > 120)
 
-const stateClass = computed(() => {
-  switch (props.card.status) {
-    case 'AWAITING_CONFIRMATION': return 'pending'
-    case 'RUNNING': return 'running'
-    case 'VERIFYING': return 'verifying'
-    case 'WAITING_INPUT': return 'waiting'
-    case 'PAUSED': return 'paused'
-    case 'BUDGET_EXCEEDED': return 'budget'
-    case 'ACHIEVED': return 'achieved'
-    default: return 'ended'
-  }
-})
+// 状态词与判据一律走共享口径（摘要条、右栏头、这张卡说的是同一句话）；
+// 「受阻」这一档卡在哪由 goalBlockReasonOf 那行原因说，不在状态词里挤第二层意思
+const stateClass = computed(() => goalStateClassOf(props.card))
+const stateLabel = computed(() => goalStateLabelOf(props.card))
+const blockReason = computed(() => goalBlockReasonOf(props.card))
 
-const stateLabel = computed(() => {
-  switch (props.card.status) {
-    case 'DRAFT': return '起草中'
-    case 'CLARIFYING': return '补充中'
-    case 'AWAITING_CONFIRMATION': return '等你确认验收标准'
-    case 'RUNNING': return '进行中'
-    case 'VERIFYING': return '正在核验'
-    case 'WAITING_INPUT': return '等你回答'
-    case 'PAUSED': return '已暂停'
-    case 'BUDGET_EXCEEDED': return '预算用满'
-    case 'ACHIEVED': return '已达成'
-    case 'FAILED': return '未达成收尾'
-    case 'CANCELLED': return '已取消'
-    default: return '已结束'
-  }
-})
+/** 这一条不再自己往前推了——未完成清单就在这时候给 */
+const stopped = computed(() => ['ACHIEVED', 'FAILED', 'CANCELLED', 'ENDED_INCOMPLETE'].includes(props.card.status))
 
-const terminal = computed(() => ['ACHIEVED', 'BUDGET_EXCEEDED', 'FAILED', 'CANCELLED', 'ENDED_INCOMPLETE'].includes(props.card.status))
-
-/** 还没通过验证的标准（未完成清单的数据源：过期也不算过） */
-const remaining = computed(() => (props.card.criteria || []).filter(c =>
-  c.kind !== 'CONSTRAINT' && c.status === 'CONFIRMED' && (!c.verification || c.verification.outcome !== 'PASSED' || c.verification.stale)))
-
-const budgetDims = computed(() => {
-  const b = props.card.budget || {}
-  const dim = (key, label, fmt) => {
-    const d = b[key]
-    if (!d) return null
-    const used = Number(d.used) || 0
-    const max = Number(d.max) || 0
-    return { key, label, used: fmt(used), max: max ? fmt(max) : 0, ratio: max > 0 ? used / max : 0 }
-  }
-  const fmtInt = v => v >= 10000 ? (v / 10000).toFixed(1).replace(/\.0$/, '') + ' 万' : String(v)
-  return [
-    dim('turns', '轮', v => String(v)),
-    dim('tokens', 'token', fmtInt),
-    dim('toolCalls', '工具', v => String(v)),
-    dim('minutes', '分钟', v => String(v))
-  ].filter(Boolean)
-})
+/** 还没通过验证的标准文字（必须 map 成 text——直接留对象，模板里会把整条标准打成一份 JSON 给用户读） */
+const remaining = computed(() => goalRemainingOf(props.card))
 
 function criterionClass (c) {
   if (c.verification && c.verification.stale) return 'stale'
@@ -133,6 +97,18 @@ function criterionClass (c) {
   }
   if (c.status === 'REJECTED') return 'rejected'
   return 'pending'
+}
+
+/**
+ * 这条能在卡上直接勾吗：只给「已确认 + 人工核验 + 还没通过」的条目。
+ * 机器验证器（命令退出码/产物结构）不给人勾——那等于让用户替机器出证据。
+ */
+function canMark (c) {
+  if (stopped.value || !c) return false
+  if (!['WAITING_INPUT', 'RUNNING', 'VERIFYING'].includes(props.card.status)) return false
+  if (c.kind === 'CONSTRAINT' || c.status !== 'CONFIRMED') return false
+  if (c.verifierId && c.verifierId !== 'manual') return false
+  return !(c.verification && c.verification.outcome === 'PASSED' && !c.verification.stale)
 }
 
 function criterionMark (c) {
@@ -160,24 +136,19 @@ function outcomeLabel (o) {
 .goal-card-head { display: flex; align-items: center; gap: 8px; }
 .goal-card-ic { color: var(--app-accent); }
 .goal-card-title { font-weight: 600; font-size: 13px; }
-.goal-state { font-size: 12px; padding: 1px 8px; border-radius: 8px; background: #f0f1f3; color: #555; }
+.goal-state { font-size: 12px; padding: 1px 8px; border-radius: 8px; background: #f0f1f3; color: #555; white-space: nowrap; }
 .goal-state.st-achieved { background: var(--app-ok-weak); color: var(--app-ok); }
-.goal-state.st-budget, .goal-state.st-ended { background: var(--app-danger-weak); color: var(--app-danger); }
+.goal-state.st-ended { background: var(--app-danger-weak); color: var(--app-danger); }
+/* 受阻：卡住但还归用户管，用警示色而不是「已终结」的红 */
+.goal-state.st-blocked { background: var(--app-warn-weak); color: var(--app-warn-text); }
 .goal-state.st-pending { background: var(--app-warn-weak); color: var(--app-warn-text); }
-.goal-state.st-running, .goal-state.st-verifying { background: var(--app-info-weak); color: #1456b8; }
-.goal-turn { margin-left: auto; font-size: 12px; color: #888; }
+.goal-state.st-running { background: var(--app-info-weak); color: #1456b8; }
+.goal-turn { margin-left: auto; font-size: 12px; color: var(--app-text3, #888); }
+.goal-block-reason { margin-top: 8px; display: flex; align-items: flex-start; gap: 6px; font-size: 12.5px; line-height: 1.5; color: var(--app-warn-text); }
 .goal-objective { margin-top: 8px; font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
 .goal-objective.clamped { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .goal-more { margin-top: 2px; border: none; background: none; color: var(--app-accent); font-size: 12px; cursor: pointer; padding: 0; }
-.goal-budget { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
-.goal-budget-dim { display: flex; align-items: center; gap: 6px; font-size: 12px; color: #666; min-width: 130px; }
-.goal-budget-dim.warn .goal-budget-num { color: var(--app-warn-text); }
-.goal-budget-dim.over .goal-budget-num { color: var(--app-danger); }
-.goal-budget-bar { width: 56px; height: 4px; border-radius: 2px; background: #eceef1; overflow: hidden; }
-.goal-budget-bar i { display: block; height: 100%; background: var(--app-accent); }
-.goal-budget-dim.warn .goal-budget-bar i { background: var(--app-warn); }
-.goal-budget-dim.over .goal-budget-bar i { background: var(--app-danger); }
-.goal-budget-num { font-variant-numeric: tabular-nums; }
+.goal-hint { margin-top: 8px; font-size: 12.5px; line-height: 1.5; color: var(--app-text2, #555); background: var(--app-panel-2); border-radius: 6px; padding: 6px 8px; }
 .goal-criteria { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
 .goal-criterion { display: flex; align-items: baseline; gap: 8px; font-size: 12.5px; line-height: 1.5; }
 .goal-criterion-box { flex: none; width: 15px; height: 15px; border-radius: 4px; border: 1px solid #c9ccd1; display: inline-flex; align-items: center; justify-content: center; font-size: 11px; transform: translateY(2px); }
@@ -189,6 +160,10 @@ function outcomeLabel (o) {
 .goal-criterion-text { flex: 1; }
 .goal-criterion-outcome { flex: none; font-size: 11.5px; color: var(--app-ok); }
 .goal-criterion-outcome.muted { color: #999; }
+.goal-criterion-drafted { flex: none; font-size: 10.5px; color: var(--app-text3); border: 1px solid var(--border-color, #e5e6eb); border-radius: 4px; padding: 0 4px; line-height: 1.5; }
+.goal-criterion-acts { flex: none; display: inline-flex; gap: 4px; }
+.goal-criterion-acts button { border: 1px solid var(--border-color, #e5e6eb); background: transparent; border-radius: 4px; font-size: 11px; line-height: 1.6; padding: 0 6px; cursor: pointer; color: var(--app-text2, #555); }
+.goal-criterion-acts button:hover { border-color: var(--app-accent); color: var(--app-accent); }
 .goal-criterion-stale { flex: none; font-size: 11.5px; color: var(--app-warn-text); }
 .goal-sync-warn { margin-top: 8px; font-size: 12px; color: var(--app-warn-text); background: var(--app-warn-weak); border-radius: 6px; padding: 6px 8px; }
 .goal-remaining { margin-top: 10px; font-size: 12.5px; color: var(--app-danger); }

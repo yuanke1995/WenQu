@@ -19,19 +19,23 @@ import { onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 // 图标必须显式具名导入：unplugin-vue-components 的 AntDesignVueResolver 只管 antd 的 a-xxx，
 // icons-vue 不在它的解析表里——不 import 就退化成运行期 resolveComponent，找不到组件时既不报错也不画图标
 import { FileTextOutlined, DatabaseOutlined, RobotOutlined, HistoryOutlined,
-         OrderedListOutlined, PictureOutlined } from '@ant-design/icons-vue'
+         OrderedListOutlined, PictureOutlined, AimOutlined } from '@ant-design/icons-vue'
 
 const props = defineProps({
   /** 正文（不含 chip） */
   modelValue: { type: String, default: '' },
   /** 占位文案 */
   placeholder: { type: String, default: '' },
-  /** key → 描述对象 {kind,name,sub,title,delTitle,state,thumb,avatar}；父级持有数据，这里只管画 */
-  resolve: { type: Function, required: true }
+  /** key → 描述对象 {kind,name,sub,title,delTitle,state,thumb,avatar,fixed}；fixed=状态 chip（无 ×、不归输入框删） */
+  resolve: { type: Function, required: true },
+  /** 富占位：命令词（蓝色）与说明（灰色）。空输入时覆盖在正文起始处；不参与正文 */
+  hintCmd: { type: String, default: '' },
+  hintRest: { type: String, default: '' }
 })
 const emit = defineEmits(['update:modelValue', 'update:keys', 'input', 'keydown', 'paste', 'click', 'focus', 'blur', 'chip-click', 'ready'])
 
 const rootEl = ref(null)
+const empty = ref(true)
 const icHost = ref(null)
 const composing = ref(false)
 const hover = reactive({ on: false, src: '', name: '', x: 0, y: 0 })
@@ -88,11 +92,15 @@ const caretIndex = () => {
   return found < 0 ? i : found
 }
 
-/** 正文下标 → DOM 位置；越过 chip 边界时落在它前面（chip 不可切入内部） */
+/** 正文下标 → DOM 位置；越过 chip 边界时落在它后面（chip 不可切入内部） */
 const posToPoint = pos => {
   const el = rootEl.value
   let left = Math.max(0, pos)
   let hit = null
+  // chip 在正文里是零宽的，「下标 0」既在 chip 前也在 chip 后。锚到 chip 前面就会把 chip 一起删掉
+  // （执行 /plan 时把「计划」那颗 chip 摘走，chip→数组 通道跟着把开关关掉，命令再一翻就翻回原地），
+  // 而且光标看着跑到整行最左、下一个字打到 chip 左边。所以取不到文本节点起点时一律锚到这段 chip 串**之后**。
+  let chipTail = null
   const walk = n => {
     for (const c of n.childNodes) {
       if (hit) return
@@ -101,9 +109,13 @@ const posToPoint = pos => {
         if (left <= len) { hit = { node: c, offset: left }; return }
         left -= len
       } else if (c.nodeType === 1) {
-        if (isChip(c) || c.nodeName === 'BR') {
+        if (isChip(c)) {
+          if (left <= 0) chipTail = c
+          continue
+        }
+        if (c.nodeName === 'BR') {
           if (left <= 0) { hit = { before: c }; return }
-          if (c.nodeName === 'BR') left -= 1
+          left -= 1
           continue
         }
         walk(c)
@@ -111,7 +123,7 @@ const posToPoint = pos => {
     }
   }
   walk(el)
-  return hit
+  return hit || (chipTail ? { after: chipTail } : null)
 }
 const setCaret = pos => {
   const el = rootEl.value
@@ -119,6 +131,7 @@ const setCaret = pos => {
   const p = posToPoint(pos)
   const range = document.createRange()
   if (p && p.node) range.setStart(p.node, p.offset)
+  else if (p && p.after) range.setStartAfter(p.after)
   else if (p && p.before) range.setStartBefore(p.before)
   else { range.selectNodeContents(el); range.collapse(false) }
   range.collapse(true)
@@ -136,8 +149,8 @@ const replaceRange = (from, to, str) => {
   const b = posToPoint(to)
   if (a && b) {
     const range = document.createRange()
-    if (a.node) range.setStart(a.node, a.offset); else range.setStartBefore(a.before)
-    if (b.node) range.setEnd(b.node, b.offset); else range.setEndBefore(b.before)
+    if (a.node) range.setStart(a.node, a.offset); else if (a.after) range.setStartAfter(a.after); else range.setStartBefore(a.before)
+    if (b.node) range.setEnd(b.node, b.offset); else if (b.after) range.setEndAfter(b.after); else range.setEndBefore(b.before)
     const sel = window.getSelection()
     sel.removeAllRanges()
     sel.addRange(range)
@@ -212,12 +225,16 @@ const buildChip = key => {
   sub.className = 'cchip-sub'
   sub.textContent = d.sub || ''
   el.appendChild(sub)
-  const del = document.createElement('span')
-  del.className = 'cchip-del'
-  del.dataset.del = key
-  del.title = d.delTitle || '移除'
-  del.textContent = '×'
-  el.appendChild(del)
+  // fixed 是状态 chip（目标这种会话级状态）：不给 ×，也不让退格删——删了就等于
+  // 在输入框里做了一个用户没想做的领域动作。要停/清走条子或面板。
+  if (!d.fixed) {
+    const del = document.createElement('span')
+    del.className = 'cchip-del'
+    del.dataset.del = key
+    del.title = d.delTitle || '移除'
+    del.textContent = '×'
+    el.appendChild(del)
+  }
   return el
 }
 /** 数据变了（上传进度/失败/体积回来）只重画内部，不动节点位置——换节点会把光标弹走 */
@@ -251,7 +268,8 @@ const sync = wantKeys => {
       r.setStart(point.node, Math.min(point.offset, point.node.nodeValue.length))
       r.collapse(true)
       r.insertNode(node)
-    } else el.insertBefore(node, point.before)
+    } else if (point.after) point.after.insertAdjacentElement('afterend', node)
+    else el.insertBefore(node, point.before)
     last = node
   })
   // 光标跟到最后一颗之后：否则用户接着打字会打到 chip 前面去（实测踩过：附件 chip 后面的字跑到了它左边）
@@ -284,7 +302,9 @@ const syncEmpty = () => {
   const el = rootEl.value
   if (!el) return
   pruneTrailingBreak()
-  el.classList.toggle('is-empty', !serialize() && !chipNodes().length)
+  const e = !serialize() && !chipNodes().length
+  el.classList.toggle('is-empty', e)
+  empty.value = e
 }
 
 /** 光标紧邻的那颗 chip（前向/后向各一个方向）。空文本节点要跳过——execCommand 与粘贴会在 chip 旁边
@@ -308,6 +328,8 @@ const chipAdjacent = dir => {
 const deleteAdjacentChip = dir => {
   const node = chipAdjacent(dir)
   if (!node) return false
+  const d = props.resolve(node.dataset.key)
+  if (d && d.fixed) return false    // 状态 chip 不归输入框删
   node.remove()
   afterEdit()
   return true
@@ -333,6 +355,23 @@ const pruneEmptyText = () => {
   const anchor = window.getSelection()?.anchorNode
   Array.from(el.childNodes).forEach(n => { if (n.nodeType === 3 && !n.nodeValue && n !== anchor) n.remove() })
 }
+/** 正文删空后 Chrome 会把光标丢到编辑区最左（chip 的左边），下一个字就打到 chip 前面去，
+ *  看着像光标自己跑到了句首。正文为空时「下标 0」对每颗 chip 都成立，所以统一贴到最后一颗之后
+ *  （与 sync 插完 chip 的落点同一口径）。只在改动路径上跑，用户点选到 chip 左边不去纠正。 */
+const parkCaretPastChips = () => {
+  const el = rootEl.value
+  if (!el || serialize() || document.activeElement !== el) return
+  const chips = chipNodes()
+  if (!chips.length) return
+  const sel = window.getSelection()
+  const r = sel && sel.rangeCount ? sel.getRangeAt(0) : null
+  if (!r || !r.collapsed || !el.contains(r.startContainer)) return
+  const after = document.createRange()
+  after.setStartAfter(chips[chips.length - 1])
+  after.collapse(true)
+  sel.removeAllRanges()
+  sel.addRange(after)
+}
 /** 一切改动之后：把正文与 key 顺序报给父级，并转一个 input 事件（面板筛选词靠它实时取） */
 const afterEdit = () => {
   const el = rootEl.value
@@ -341,6 +380,7 @@ const afterEdit = () => {
   for (let i = 0; i < 3 && flattenBlocks(); i++) { /* 继续摊 */ }
   pruneEmptyText()
   syncEmpty()          // 顺带扫掉 Chrome 的空行占位 <br>：先扫再序列化，t 才是真正文
+  parkCaretPastChips()
   const t = serialize()
   const empty = !t && !chipNodes().length
   if (empty && el.firstChild) el.innerHTML = ''   // 清干净，否则 :empty 兜不住浏览器留下的结构，占位文案不出来
@@ -395,6 +435,8 @@ const onCopy = e => {
       } else if (c.nodeType === 1) {
         if (isChip(c)) {
           if (!r.intersectsNode(c)) continue
+          const d = props.resolve(c.dataset.key)
+          if (d && d.fixed) continue     // 状态 chip 不进复制内容（目标不是这轮正文的一部分）
           const one = chipToHtml(c.dataset.key)
           if (one) { html += one; touched = true }
           continue
@@ -426,7 +468,7 @@ const chipToHtml = key => {
   } else if (d.kind === 'mention') p.push(`data-wenqu-mtype="${attr(d.mtype)}"`, `data-wenqu-id="${attr(d.id)}"`, `data-wenqu-name="${attr(d.name)}"`)
   else if (d.kind === 'skill') p.push(`data-wenqu-name="${attr(d.name)}"`)
   else if (d.kind === 'hist') p.push(`data-wenqu-id="${attr(d.messageId)}"`, `data-wenqu-name="${attr(d.name)}"`)
-  else if (d.kind === 'plan') p.push('data-wenqu-name="计划模式"')
+  else if (d.kind === 'plan') p.push(`data-wenqu-name="${attr(d.name)}"`)
   return `<span class="wenqu-chip" ${p.join(' ')}>${esc(d.name || '')}</span>`
 }
 
@@ -463,7 +505,7 @@ const onClick = e => {
     return
   }
   const chip = e.target && e.target.closest ? e.target.closest('.cchip') : null
-  if (chip && chip.dataset.kind === 'file') emit('chip-click', chip.dataset.key)
+  if (chip && (chip.dataset.kind === 'file' || chip.dataset.kind === 'goal')) emit('chip-click', chip.dataset.key)
   emit('click', e)
 }
 /** 粘贴一律拦下来自己处理：浏览器的默认粘贴会把外部 HTML 连样式一起搬进编辑区 */
@@ -536,9 +578,14 @@ defineExpose({
       <robot-outlined data-ic="agent" />
       <history-outlined data-ic="hist" />
       <ordered-list-outlined data-ic="plan" />
+      <aim-outlined data-ic="aim" />
       <picture-outlined data-ic="img" />
     </div>
-    <div ref="rootEl" class="composer-edit" contenteditable="true" spellcheck="false" role="textbox"
+    <div v-if="empty && hintCmd" class="composer-rich-hint" aria-hidden="true">
+      <span class="crh-cmd">{{ hintCmd }}</span><span class="crh-rest">{{ hintRest }}</span>
+    </div>
+    <div ref="rootEl" class="composer-edit" :class="{ 'has-rich-hint': empty && hintCmd }"
+         contenteditable="true" spellcheck="false" role="textbox"
          aria-multiline="true" enterkeyhint="send" :data-ph="placeholder" :style="{ maxHeight: 'calc(1.6em * 6)' }"
          @keydown="onKeydown" @input="onInput" @click="onClick" @paste="onPaste" @copy="onCopy"
          @compositionstart="onCompositionstart" @compositionend="onCompositionend"
@@ -565,6 +612,13 @@ defineExpose({
 .composer-edit.is-empty::before {
   content: attr(data-ph); color: var(--app-text3); pointer-events: none; user-select: none;
 }
+.composer-rich-hint {
+  position: absolute; left: 4px; top: 6px; right: 4px; display: flex; align-items: baseline; gap: 6px;
+  font-size: 14px; line-height: 1.6; white-space: nowrap; overflow: hidden; pointer-events: none;
+}
+.crh-cmd { flex: none; color: var(--app-accent); }
+.crh-rest { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--app-text3); }
+.composer-edit.is-empty.has-rich-hint::before { content: none; }
 :deep(.cchip) {
   display: inline-flex; align-items: center; gap: 4px; max-width: 240px; vertical-align: middle;
   margin: 1px 3px 1px 0; padding: 1px 5px; border-radius: 6px; font-size: 12px; line-height: 18px;
