@@ -134,6 +134,11 @@
     <footer class="m-composer">
       <!-- 本轮随行内容 chips -->
       <div v-if="hasChips" class="m-chips">
+        <!-- 计划模式开启态：工具条上不再有那颗药丸，这一排就是唯一会说「下一轮先出计划」的地方。
+             名字与 PC 正文里那颗 chip 同一个词（「计划」），× 即关闭。 -->
+        <span v-if="planModeOn" class="m-chip m-chip-plan">
+          计划<button class="m-chip-del" type="button" title="关闭计划模式" @click="setPlanMode(false)">×</button>
+        </span>
         <span v-for="(p, i) in pendingImages" :key="'img' + i" class="m-chip m-chip-img">
           <img :src="p.dataUrl" alt="" @click="openPreview(pendingImages.map(x => x.dataUrl), i)" />
           <button class="m-chip-del" type="button" title="移除" @click="removePendingImage(i)">×</button>
@@ -160,6 +165,34 @@
         <span v-for="(h, i) in pendingHistoryRefs" :key="'h' + i" class="m-chip">
           历史 · {{ (h.digest || h.messageId).slice(0, 8) }}<button class="m-chip-del" type="button" title="移除" @click="removeHistoryRef(i)">×</button>
         </span>
+      </div>
+
+      <!-- 目标条（常驻摘要条，与 PC 那一条同一套词汇与判据）：横跨多轮的目标不属于哪一颗气泡，
+           所以常驻在输入卡正上方。一行说不完的（跑了几轮、卡在哪）压成第二行小字——
+           触屏没有 hover，PC 收在悬浮里的东西在这儿必须落在地上。
+           动作只有图标：暂停/继续、编辑（开底部 sheet）、清除。待确认那一档整块顶替输入卡，不进这条。 -->
+      <div v-if="goalBarVisible" class="m-goalbar" data-goal-bar>
+        <div class="m-gb-row">
+          <aim-outlined class="m-gb-ic" />
+          <span class="m-gb-label">{{ goalPhrase }}</span>
+          <span class="m-gb-objective">{{ sessionGoal.objective }}</span>
+          <span class="m-gb-acts">
+            <button v-if="sessionGoal.status === 'WAITING_INPUT'" type="button" class="m-gb-btn"
+                    title="逐条核验：打开状态与来源" @click="refOpen = true"><check-circle-outlined /></button>
+            <button v-if="goalCanPause" type="button" class="m-gb-btn" :disabled="sessionGoal.busy"
+                    title="暂停目标" @click="runGoalAction('pause')"><pause-circle-outlined /></button>
+            <button v-else-if="goalCanResume" type="button" class="m-gb-btn" :disabled="sessionGoal.busy"
+                    title="恢复目标" @click="runGoalAction('resume')"><play-circle-outlined /></button>
+            <button v-if="goalCanEdit" type="button" class="m-gb-btn"
+                    title="编辑目标：改验收标准" @click="startGoalInlineEdit">
+              <edit-outlined />
+            </button>
+            <button type="button" class="m-gb-btn" :disabled="sessionGoal.busy"
+                    title="清除目标" @click="runGoalAction('cancel')"><close-outlined /></button>
+          </span>
+        </div>
+        <div v-if="goalBarError" class="m-gb-error" role="alert">{{ goalBarError }}</div>
+        <div v-else-if="goalBarMeta" class="m-gb-meta">{{ goalBarMeta }}</div>
       </div>
 
       <!-- 智能体提问面板（一卡多问）：当前会话有挂起提问时整块替换输入卡。
@@ -297,25 +330,12 @@
         <div class="m-tools">
           <button class="m-tool" type="button" title="模型与思考" @click="modelOpen = true">
             <thunderbolt-outlined :class="{ 'm-tool-on': deepThinkOn }" />
-            <span class="m-tool-text">{{ modelShort }}</span>
+            <span class="m-tool-text">{{ effectiveModelLabel }}</span>
           </button>
-          <!-- 计划模式开关：与 PC 同一个独立控件（PC 那条注释记着它为什么不在「+」页签里——
-               模式开关混进候选列表，找它要切页签、状态还得靠徽标转达）。触屏没有 hover，
-               开启态直接换色并把「计划」两字点出来 -->
-          <button class="m-tool" :class="{ 'm-tool-plan-on': planModeOn }" type="button"
-                  title="计划模式：每轮先出执行计划，你批准或修改后才开始回答"
-                  @click="setPlanMode(!planModeOn)">
-            <ordered-list-outlined />
-            <span class="m-tool-text">计划</span>
-          </button>
-          <!-- 目标模式入口：与 PC 同一个开关判据（goalModeOn，平台总闸）；点开底部起草 sheet -->
-          <button v-if="goalModeOn && !sessionGoal" class="m-tool" type="button"
-                  title="设为目标：这件事做到什么算完，验收标准与预算交给你拍板"
-                  @click="goalDraftOpen = true">
-            <aim-outlined />
-            <span class="m-tool-text">目标</span>
-          </button>
-          <button class="m-tool" type="button" title="添加：技能 / 引用 / 历史 / 附件" @click="attachOpen = true">
+          <!-- 工具条只留这两颗：模型名要占位，「+」是唯一的收口入口。计划/目标两颗药丸原先把这一排
+               撑到 360px 固定宽（药丸缩不动，见 .m-tool 的 min-width），360px 屏上送出键直接画到卡外，
+               现在收进「+」的「本轮模式」区，开启态改由输入框上方那颗 chip 说话。 -->
+          <button class="m-tool" type="button" title="添加：模式 / 技能 / 引用 / 历史 / 附件" @click="attachOpen = true">
             <plus-circle-outlined />
           </button>
           <span class="m-tools-sp" />
@@ -339,7 +359,7 @@
                         @artifacts="() => onGoPage('/artifacts')"
                         @knowledge="() => onGoPage('/knowledge')" />
     <MobileModelSheet :open="modelOpen" @close="modelOpen = false" />
-    <MobileAttachSheet :open="attachOpen" @close="attachOpen = false" />
+    <MobileAttachSheet :open="attachOpen" @close="attachOpen = false" @goal="onGoalFromSheet" />
 
     <!-- 技能正文查看：与 PC 端同一个组件（sheet 关掉也留着，读正文不该被「+」面板的生命周期带走） -->
     <SkillContentModal :open="!!skillDoc" :name="skillDoc" :entry="skillDocEntry"
@@ -347,7 +367,7 @@
                        @update:open="v => { if (!v) skillDoc = '' }" />
     <MobileRefSheet :open="refOpen" @close="refOpen = false" @source="openSourceDetail" />
     <MobileNotifSheet :open="notifOpen" @close="notifOpen = false" />
-    <MobileRoundSheet :open="roundOpen" :index="roundIdx" @close="roundOpen = false" @events="openRoundEvents" @goal="onRoundGoal" />
+    <MobileRoundSheet :open="roundOpen" :index="roundIdx" @close="roundOpen = false" @events="openRoundEvents" />
     <!-- 过程回放（事件账本）：顶栏入口看整个会话，单轮 sheet 里的那一项只看那一轮。
          取数与渲染与 PC 共用 SessionEventsPanel，两端不许各写一遍 -->
     <MobileEventsSheet :open="eventsOpen" :session-id="currentSessionId || ''" :turn-id="eventsTurnId"
@@ -465,6 +485,32 @@
         </div>
       </div>
     </BottomSheet>
+
+    <!-- ==================== 目标改订（与 PC 摘要条的就地编辑态同一批字段、同一个保存出口） ====================
+         只开放验收标准一样：目标原文改不了，要换口径只能另起一条（旧的那条按未完成收尾）。 -->
+    <BottomSheet :open="goalEditing" title="改目标" max-height="78dvh" @close="goalEditing = false">
+      <div class="m-goald">
+        <div class="m-goald-label">这件事要做到什么</div>
+        <div class="m-goale-objective">{{ goalEdit.objective }}</div>
+        <button type="button" class="m-goale-restart" @click="restartGoalFromEdit">
+          <aim-outlined /> 换这句的口径？另起一条目标（这条按未完成收尾）
+        </button>
+        <div class="m-goald-label">验收标准（完成与否逐条验，不按模型自报）</div>
+        <div v-for="(c, ci) in goalEdit.criteria" :key="ci" class="m-goald-criterion">
+          <input v-model="c.text" class="m-goald-input" maxlength="2000"
+                 placeholder="例如：报告里每个数字都标了来源" />
+          <span v-if="c.passed" class="m-goale-passed">已验</span>
+          <button v-if="goalEdit.criteria.length > 1" type="button" class="m-goald-del"
+                  @click="removeGoalEditCriterion(ci)">×</button>
+        </div>
+        <button type="button" class="m-goald-add" @click="addGoalEditCriterion">+ 加一条标准</button>
+        <div class="m-goald-foot">
+          <span class="m-goald-hint">改完从下一轮起生效；正在跑的这一轮照旧</span>
+          <button class="m-rec-btn primary" type="button" :disabled="goalEditBusy || !goalEditSaveable"
+                  @click="saveGoalEdit">保存</button>
+        </div>
+      </div>
+    </BottomSheet>
   </div>
 </template>
 
@@ -474,9 +520,10 @@ import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import {
   MenuOutlined, PlusOutlined, CaretDownOutlined, ArrowUpOutlined, ArrowDownOutlined, PauseCircleOutlined,
+  PlayCircleOutlined,
   ThunderboltOutlined, PlusCircleOutlined, CloseOutlined, GlobalOutlined, SearchOutlined, UpOutlined, DownOutlined,
   BellOutlined, ExclamationCircleOutlined, FileTextOutlined, CopyOutlined, HistoryOutlined,
-  CompressOutlined, EditOutlined, OrderedListOutlined, LoadingOutlined, AimOutlined
+  CompressOutlined, EditOutlined, LoadingOutlined, AimOutlined, CheckCircleOutlined
 } from '@ant-design/icons-vue'
 import { pasteTitle, pasteSub } from '../chat/projections'
 import { useChatEngine } from '../chat/useChatEngine'
@@ -586,12 +633,19 @@ const {
   skillDoc, loadSkills, skillList,
   takePastedFiles, takePastedText,
   ignoreAsk,
-  // 计划模式（人在回路）：开关在「添加」sheet，确认栏在本页打字框原位，卡片本体共用 PlanCard
+  // 计划模式（人在回路）：开关在「添加」sheet 的本轮模式区，开启态回显在输入框上方那颗 chip，
+  // 确认栏在本页打字框原位，卡片本体共用 PlanCard
   planModeOn, setPlanMode, submitPlanApproval, continuePlanConversation,
   pendingPlan, curPlanCard, planExpired, planCountdownText,
-  // 目标模式（人在回路第五张卡）：确认栏顶替输入卡，面板在「状态与来源」sheet，动作走引擎
+  // 目标模式（人在回路第五张卡）：确认栏顶替输入卡，摘要条常驻在输入卡上方，面板在「状态与来源」sheet。
+  // 词汇、显隐、动作可用性与就地编辑的字段全在引擎侧（与 PC 共用一份），本页只画形状
   goalModeOn, sessionGoal, pendingGoal, goalExpired, goalCountdownText,
   startGoal, submitGoalConfirm, goalAct,
+  goalBarVisible, goalPhrase, goalBarMeta, goalBarError,
+  goalCanPause, goalCanResume, goalCanEdit, runGoalAction,
+  goalEditing, goalEdit, goalEditBusy, goalEditSaveable,
+  startGoalInlineEdit, addGoalEditCriterion, removeGoalEditCriterion, saveGoalEdit,
+  restartGoalFromEdit, goalRestartRequest,
   // 手动压缩上下文（入口在「模型与思考」sheet；分隔线与摘要 sheet 在本页。
   // 「压缩中」态由 compacting 一并表达）
   compacting, compactNotice, compactContext, compactDividerAt,
@@ -603,6 +657,20 @@ const {
 const mentionNames = computed(() => pendingMentions.value.map(m => m.name || m.id))
 
 // ==================== 目标模式（移动壳） ====================
+// 一句话创建：输入框有正文就直接建目标并开跑；没有才开起草 sheet（PC 是按钮取正文，同一条口径）
+const startGoalNowM = async () => {
+  const obj = String(text.value || '').trim()
+  if (!obj) { goalDraftOpen.value = true; return null }
+  const g = await startGoal(obj, [])
+  if (g) text.value = ''
+  return g
+}
+/** 「+」→ 本轮模式里那颗「定为目标」：先把 sheet 收掉再走同一条创建口——建目标会把输入卡顶成待确认栏，
+ *  sheet 压在上面正好挡住要看的那张卡；没正文时它照旧开起草 sheet。 */
+const onGoalFromSheet = async () => {
+  attachOpen.value = false
+  return startGoalNowM()
+}
 // 起草 sheet（PC 是弹窗，移动壳是底部 sheet：同一批字段、同一套 startGoal 出口）
 const goalDraftOpen = ref(false)
 const goalDraft = reactive({ objective: '', criteria: [''] })
@@ -616,6 +684,14 @@ const submitGoalDraftM = async () => {
   const g = await startGoal(obj, criteria, null)
   if (g) goalDraftOpen.value = false
 }
+// 「换这句的口径」/「另起目标」：引擎把那句交回来，由本壳开自己的起草 sheet（PC 开弹窗）
+watch(goalRestartRequest, obj => {
+  if (!obj) return
+  goalDraft.objective = String(obj).slice(0, 4000)
+  goalDraft.criteria = ['']
+  goalDraftOpen.value = true
+  goalRestartRequest.value = ''
+})
 // 待确认卡的逐条勾选态（默认全采纳：新手主路径最小化）与提交
 const goalPicks = ref({})
 watch(() => pendingGoal.value, g => {
@@ -628,14 +704,6 @@ const confirmGoalM = async () => {
   if (!g) return
   const decisions = (g.criteria || []).map(c => ({ key: c.key, status: goalPicks.value[c.key] || 'CONFIRMED' }))
   await submitGoalConfirm(decisions)
-}
-/** 单轮菜单「设为目标」：把这一轮正文预填进起草 sheet（与 PC 的气泡「更多 → 设为目标」同源） */
-const onRoundGoal = mi => {
-  const body = (messages.value[mi] && messages.value[mi].content) || ''
-  goalDraft.objective = body.slice(0, 4000)
-  goalDraft.criteria = ['']
-  goalDraftOpen.value = true
-  roundOpen.value = false
 }
 // 技能正文弹窗：按名字现取清单里的那条（存快照会让停用/恢复后的按钮停在旧状态）
 const skillDocEntry = computed(() => skillList.value.find(s => s.name === skillDoc.value) || {})
@@ -744,13 +812,10 @@ const applyRecompact = async () => {
   if (await recompactWith(csumInstr.value.trim())) csumInstrOpen.value = false
 }
 
-// 模型短名（工具条展示）：优先模型库友好名，缩到 10 字以内
-const modelShort = computed(() => {
-  const v = effectiveModelLabel.value || ''
-  return v.length > 10 ? v.slice(0, 10) + '…' : v
-})
-const hasChips = computed(() => pendingImages.value.length || pendingFiles.value.length || pickedSkills.value.length
-  || pendingMentions.value.length || pendingHistoryRefs.value.length)
+// 工具条那颗模型名不再在 JS 里硬截：过去截到 10 字让药丸宽度恒定，也把 CSS 那颗省略号
+// 变成从不生效的死代码（缩不动的是药丸本身，见 .m-tool 的 min-width）。宽度交给 CSS 收。
+const hasChips = computed(() => planModeOn.value || pendingImages.value.length || pendingFiles.value.length
+  || pickedSkills.value.length || pendingMentions.value.length || pendingHistoryRefs.value.length)
 
 const ask = q => { text.value = q; nextTick(send) }
 
@@ -1130,6 +1195,9 @@ onUnmounted(() => {
 }
 .m-chip-skill { background: var(--app-info-weak); border-color: var(--app-info-border); color: var(--app-accent); }
 .m-chip-mention { background: var(--app-accent-weak); border-color: var(--app-accent-border); color: var(--app-accent); }
+/* 计划模式开启态：警示色——它改变的是这一轮要不要先出计划，不是「又一个开关」，
+   与底部计划确认栏的「待确认」标同一色源（原来收在工具条药丸上时也是这个色） */
+.m-chip-plan { background: var(--app-warn-weak); border-color: var(--app-warn-border); color: var(--app-warn-text); }
 .m-chip-img { padding: 0 0 0 0; border: none; background: transparent; position: relative; }
 .m-chip-img img { width: 46px; height: 46px; object-fit: cover; border-radius: 8px; display: block; }
 .m-chip-del {
@@ -1223,8 +1291,36 @@ onUnmounted(() => {
 .m-goalp-criterion-text { flex: 1; min-width: 0; }
 .m-goalp-foot { display: flex; justify-content: flex-end; }
 /* 目标起草 sheet */
-.m-goald { display: flex; flex-direction: column; gap: 8px; }
-.m-goald-label { font-size: 12.5px; font-weight: 600; color: var(--app-text2); margin-top: 4px; }
+/* 目标条（常驻摘要条，与 PC 那一条同一套词汇与判据）：压在输入卡正上方，两行——
+   第一行状态词＋目标原文（单行截断）＋三个图标动作，第二行是 PC 收在悬浮里的那些数（触屏没有 hover）。 */
+.m-goalbar {
+  display: flex; flex-direction: column; gap: 2px;
+  border: 0; border-radius: 12px; background: var(--app-panel);
+  padding: 6px 6px 6px 10px; margin-bottom: 8px;
+  box-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 8px 20px -10px rgba(16, 24, 40, .10);
+}
+.m-gb-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.m-gb-ic { flex: none; color: var(--app-text3); font-size: 14px; }
+.m-gb-label { flex: none; font-size: 13px; line-height: 22px; font-weight: 500; color: var(--app-text); }
+.m-gb-objective { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; line-height: 22px; color: var(--app-text2); }
+.m-gb-acts { flex: none; display: flex; align-items: center; gap: 2px; }
+/* 触屏热区按 36px 起（PC 是 28px 圆形幽灵键，这里不照抄尺寸只照抄语义） */
+.m-gb-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 36px; height: 36px; padding: 0; border: none; border-radius: 50%;
+  background: transparent; color: var(--app-text3); font-size: 15px;
+}
+.m-gb-btn:active:not(:disabled) { background: var(--app-panel-2); color: var(--app-text2); }
+.m-gb-btn:disabled { opacity: .4; }
+.m-gb-meta { font-size: 11.5px; line-height: 16px; color: var(--app-text3); font-variant-numeric: tabular-nums; padding-left: 22px; }
+.m-gb-error { font-size: 11.5px; line-height: 16px; color: var(--app-danger); padding-left: 22px; word-break: break-word; }
+
+/* 目标改订 sheet：与起草 sheet 同一套控件，只多「原文只读一行 + 换口径另起」 */
+.m-goale-objective { font-size: 14px; line-height: 1.6; color: var(--app-text2); white-space: pre-wrap; word-break: break-word; padding: 8px 10px; border: 1px solid var(--app-border); border-radius: 10px; background: var(--app-panel-2); }
+.m-goale-restart { align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; border: none; background: none; padding: 4px 0; font-size: 13px; color: var(--app-accent); }
+.m-goale-passed { flex: none; font-size: 12px; color: var(--app-ok); }
+
+.m-goald { display: flex; flex-direction: column; gap: 8px; }.m-goald-label { font-size: 12.5px; font-weight: 600; color: var(--app-text2); margin-top: 4px; }
 .m-goald-ta { width: 100%; box-sizing: border-box; border: 1px solid var(--app-border); border-radius: 10px; background: var(--app-panel); color: var(--app-text); font: inherit; font-size: 15px; line-height: 1.55; padding: 8px 10px; resize: none; }
 .m-goald-criterion { display: flex; align-items: center; gap: 6px; }
 .m-goald-input { flex: 1; min-width: 0; border: 1px solid var(--app-border); border-radius: 10px; background: var(--app-panel); color: var(--app-text); font-size: 14px; padding: 8px 10px; }
@@ -1245,15 +1341,17 @@ onUnmounted(() => {
   max-height: 132px; outline: none; font-family: inherit;
 }
 .m-tools { display: flex; align-items: center; gap: 6px; padding: 2px 0 0; }
+/* min-width:0 是这一排不溢出的唯一保证：药丸里的文字是 nowrap，不写这条则 flex-shrink 整个失效
+   （每颗都按全文宽占位），max-width 与省略号沦为摆设。实测四颗药丸固定要 360px，
+   360px 屏上送出键画到输入卡外 29px、390px 屏上仍溢 8px。 */
 .m-tool {
   display: inline-flex; align-items: center; gap: 5px; min-height: 36px; padding: 0 10px;
   border: 1px solid var(--app-border); border-radius: 999px; background: var(--app-panel);
-  color: var(--app-text2); font-size: 13px; touch-action: manipulation; max-width: 46%;
+  color: var(--app-text2); font-size: 13px; touch-action: manipulation;
+  flex: 0 1 auto; min-width: 0; max-width: 62%;
 }
-.m-tool-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.m-tool-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .m-tool-on { color: var(--app-accent); }
-/* 计划模式开启态：与 PC 的计划胶囊同源用警示色（它改变的是这一轮要不要先出计划，不是「又一个开关」） */
-.m-tool-plan-on { color: var(--app-warn-text); background: var(--app-warn-weak); border-color: var(--app-warn-border); }
 .m-tools-sp { flex: 1; }
 .m-send {
   width: 42px; height: 42px; flex: none; border: none; border-radius: 50%;

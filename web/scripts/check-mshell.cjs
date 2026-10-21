@@ -483,21 +483,37 @@ const check = (ok, label, detail = '') => {
   // ---- 计划模式（人在回路）在移动壳不是残废版 ----
   // 背景：卡片数据两端都挂（引擎 hydratePendingPlans），渲染处过去只有 PC 一份——
   // 手机上的现象是「出了一轮计划，界面一个字不显示」，只能干等到超时。这段验真渲染与真裁决。
+  // 入口在「+」→ 本轮模式：工具条那一排装不下（四颗药丸固定要 360px，360px 屏把送出键挤出输入卡），
+  // 开启态改由输入框上方那颗 chip 回显——所以这里验的是「开关在 sheet 里拨、留痕在 sheet 外看」。
   await page.goto(ORIGIN + '/m/chat?sid=s-round', { waitUntil: 'networkidle' })
   await page.waitForTimeout(900)
-  check(await page.evaluate(() => [...document.querySelectorAll('.m-tool')]
-    .some(x => x.textContent.includes('计划'))), '移动壳工具条有「计划」开关（与 PC 同一个独立控件）')
-  await page.locator('.m-tool', { hasText: '计划' }).first().dispatchEvent('click')
+  check(await page.evaluate(() => {
+    const tools = document.querySelector('.m-tools')
+    return !!tools && tools.scrollWidth <= tools.clientWidth
+      && ![...tools.querySelectorAll('.m-tool')].some(x => /计划|目标/.test(x.textContent))
+  }), '工具条不溢出、且不再挂计划/目标药丸', await page.evaluate(() => {
+    const t = document.querySelector('.m-tools')
+    return t ? `需 ${t.scrollWidth} / 可用 ${t.clientWidth}` : 'no .m-tools'
+  }))
+  check(await openSheet('.m-tool[title^="添加"]'), '「+」内容 sheet 可打开')
+  const planRow = await page.locator('.as-mode .as-row', { hasText: '计划模式' }).first()
+  check(await planRow.isVisible(), '「+」sheet 顶部有「计划模式」开关行')
+  await planRow.dispatchEvent('click')
   await page.waitForTimeout(400)
   const planOn = await page.evaluate(() => ({
-    on: (([...document.querySelectorAll('.m-tool')].find(x => x.textContent.includes('计划')) || {}).className || '')
-      .includes('m-tool-plan-on'),
+    sw: !!document.querySelector('.as-sw.on'),
     ls: localStorage.getItem('ai_plan_mode')
   }))
-  check(planOn.on === true && planOn.ls === '1', '点一下进开启态（警示色 + 与 PC 同源的那份存储）', JSON.stringify(planOn))
-  await page.locator('.m-tool', { hasText: '计划' }).first().dispatchEvent('click')
+  check(planOn.sw === true && planOn.ls === '1', '点一下进开启态（滑块 + 与 PC 同源的那份存储）', JSON.stringify(planOn))
+  await page.locator('.bs-close').first().dispatchEvent('click'); await page.waitForTimeout(500)
+  check(await page.evaluate(() => {
+    const c = document.querySelector('.m-chip-plan')
+    return !!c && c.firstChild.textContent.trim() === '计划' && !!c.querySelector('.m-chip-del')
+  }), '关掉 sheet 后输入框上方回显「计划」chip（与 PC 那颗同一个词，工具条已无别处说这件事）')
+  await page.locator('.m-chip-plan .m-chip-del').first().dispatchEvent('click')
   await page.waitForTimeout(400)
-  check(await page.evaluate(() => localStorage.getItem('ai_plan_mode') === '0'), '再点一下关得掉')
+  check(await page.evaluate(() => localStorage.getItem('ai_plan_mode') === '0'
+    && !document.querySelector('.m-chip-plan')), '点 chip 的 × 关得掉（chip 与存储一起退场）')
 
   await page.goto(ORIGIN + '/m/chat?sid=s-plan', { waitUntil: 'networkidle' })
   await page.waitForTimeout(1500)

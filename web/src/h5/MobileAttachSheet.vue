@@ -1,9 +1,32 @@
 <template>
-  <!-- 「+」菜单 sheet：技能 / 引用(@) / 历史(#) / 附件 四个分页。
-       PC 上 @ 与 # 由输入框敲字符唤起（桌面习惯）；移动端统一收进这里，触屏不用敲符号。
-       选中项以 chip 形式回显在输入框上方（由主壳渲染），本 sheet 只管挑选。 -->
+  <!-- 「+」菜单 sheet：顶部一块「本轮模式」（计划开关 / 定为目标），下面技能 / 引用(@) / 历史(#) / 附件
+       四个分页。PC 上 @ 与 # 由输入框敲字符唤起（桌面习惯），计划走 /plan、目标走 /goal；移动端这些
+       键盘路径都没有，这些入口统一收进这里。选中项与计划开启态以 chip 形式回显在输入框上方
+       （由主壳渲染），本 sheet 只管挑选。 -->
   <BottomSheet :open="open" :title="TABS.find(t => t.key === tab).title" max-height="78dvh" @close="$emit('close')">
     <div class="as">
+      <!-- ==================== 本轮模式 ====================
+           计划是一颗开关（只管下一轮起要不要先出计划，开启态由主壳那颗 chip 回显）；目标是一行动作
+           （点了就把输入框那句交出去建目标开跑，没正文则回落到起草 sheet）。工具条上不放它们——
+           四颗药丸固定要 360px，360px 屏会把送出键挤出输入卡。 -->
+      <div class="as-mode">
+        <button class="as-row" type="button" @click="setPlanMode(!planModeOn)">
+          <ordered-list-outlined class="as-ic" />
+          <span class="as-main">
+            <span class="as-name">计划模式</span>
+            <span class="as-desc">每轮先出计划，你批准后才开始回答</span>
+          </span>
+          <span class="as-sw" :class="{ on: planModeOn }" aria-hidden="true" />
+        </button>
+        <button v-if="goalModeOn && !sessionGoal" class="as-row" type="button" @click="$emit('goal')">
+          <aim-outlined class="as-ic" />
+          <span class="as-main">
+            <span class="as-name">定为目标</span>
+            <span class="as-desc">把输入框这句交出去开跑；验收标准由助手起草，可改</span>
+          </span>
+        </button>
+      </div>
+
       <div class="as-tabs">
         <button v-for="t in TABS" :key="t.key" class="as-tab" :class="{ on: tab === t.key }" type="button" @click="switchTab(t.key)">
           {{ t.label }}<span v-if="t.count()" class="as-tab-n">{{ t.count() }}</span>
@@ -108,7 +131,10 @@
           </div>
         </template>
         <input ref="fileInput" type="file" multiple style="display:none" @change="onFile" />
-        <input ref="imgInput" type="file" accept="image/*" multiple style="display:none" @change="onImg" />
+        <!-- 这里刻意不写「image 加斜线加星号」那种通配写法：星号紧跟斜线会被 check-h5 剥注释的正则
+             当成块注释收尾，把这个文件后半截（含 script 与 style）整块吞掉，断言读到假阴性。
+             列出来的这四个也正是能进 canvas 压缩通道、真能随问发送的格式（与个人设置页头像同口径）。 -->
+        <input ref="imgInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple style="display:none" @change="onImg" />
       </template>
     </div>
 
@@ -121,12 +147,13 @@
 <script setup>
 import { computed, inject, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
-import { CheckOutlined, DatabaseOutlined, FileTextOutlined, RobotOutlined, PaperClipOutlined, PictureOutlined } from '@ant-design/icons-vue'
+import { CheckOutlined, DatabaseOutlined, FileTextOutlined, RobotOutlined, PaperClipOutlined, PictureOutlined,
+  OrderedListOutlined, AimOutlined } from '@ant-design/icons-vue'
 import BottomSheet from './BottomSheet.vue'
 import { fmtSize, histItemTitle } from '../chat/projections'
 
 const props = defineProps({ open: { type: Boolean, default: false } })
-defineEmits(['close'])
+defineEmits(['close', 'goal'])
 
 const engine = inject('wqChat')
 const {
@@ -135,7 +162,9 @@ const {
   mentionDocStatus, isMentioned, toggleMention, switchMentionTab, loadMentionCandidates, agentList, loadAgents,
   histPool, isHistPicked, toggleHistoryRef,
   pendingFiles, pendingImages, addFiles, removePendingFile, removePendingImage,
-  pendingHistoryRefs, pendingMentions
+  pendingHistoryRefs, pendingMentions,
+  // 本轮模式：计划开关与目标入口都吃引擎那份共享状态（ai_plan_mode 两端同源，见主壳 chip）
+  planModeOn, setPlanMode, goalModeOn, sessionGoal
 } = engine
 
 // 历史引用候选：PC 侧在视图层（histQuery/histCandidates 未进引擎），移动壳按同一口径本地实现
@@ -191,7 +220,16 @@ const onImg = e => {
 
 <style scoped>
 .as { display: flex; flex-direction: column; gap: 2px; }
-.as-tabs { display: flex; gap: 6px; padding: 2px 0 8px; position: sticky; top: 0; background: var(--app-panel); z-index: 1; }
+/* 本轮模式：压在页签条上方、切页签不消失——它管的是「这一轮怎么答」，不是「加什么内容」，
+   所以不给它一个页签（页签条那四条是并列的内容来源，混进一条状态开关会读成「选一种模式」）。 */
+.as-mode { padding-bottom: 8px; border-bottom: 1px solid var(--app-border); }
+.as-mode .as-desc { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; }
+/* 开关：触屏没有 hover，开启态必须落在形状上——整行只换个底色说明不了「这是个可以拨的开关」 */
+.as-sw { flex: none; width: 44px; height: 26px; border-radius: 999px; position: relative; background: var(--app-border); }
+.as-sw::after { content: ''; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; transition: transform .15s; }
+.as-sw.on { background: var(--app-warn-text); }
+.as-sw.on::after { transform: translateX(18px); }
+.as-tabs { display: flex; gap: 6px; padding: 8px 0 8px; position: sticky; top: 0; background: var(--app-panel); z-index: 1; }
 .as-tab {
   flex: 1; min-height: 38px; border: 1px solid var(--app-border); border-radius: 10px;
   background: var(--app-panel); color: var(--app-text2); font-size: 13px; touch-action: manipulation;

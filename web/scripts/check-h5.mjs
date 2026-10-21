@@ -110,6 +110,11 @@ const check = (ok, label, detail = '') => {
   check(/if \(isChip\(c\)\) continue/.test(stripComments(cp)), 'Composer 序列化跳过 chip（chip 不产出字符）')
   // 复制靠 copy 事件的 setData：ClipboardItem 写文件受 MIME 白名单限制，走错一条路就静默丢附件
   check(/clipboardData\.setData\('text\/html'/.test(stripComments(cp)), '复制走 clipboardData.setData 外发 chip 凭据')
+  // 正文为空时「下标 0」对每颗 chip 都成立：锚到 chip 前面＝光标看着跑到整行最左、下一个字打到 chip 左边
+  check(/return hit \|\| \(chipTail \? \{ after: chipTail \} : null\)/.test(stripComments(cp)),
+    'posToPoint 的零宽退路锚在 chip 串之后（锚回 chip 前面就会把光标丢到句首）')
+  check(/syncEmpty\(\)[\s\S]{0,80}parkCaretPastChips\(\)/.test(stripComments(cp)),
+    'afterEdit 里补一次 parkCaretPastChips（Chrome 删空正文时把光标丢到编辑区最左）')
 }
 
 // ---- ③ 同一功能不得混用两套判据（isCoarse 与 @media(hover:hover)） ----
@@ -407,8 +412,15 @@ console.log(bad ? `\n${bad} 项不符` : '\n全部通过')
   check(/pendingPlan, curPlanCard, planExpired, planCountdownText/.test(read('src/views/ChatPage.vue')),
     'PC 已把这四个名字加进引擎解构（漏一个要到那条分支才炸）')
   const h5Raw = read('src/h5/MobileChatPage.vue')
-  check(/<ordered-list-outlined/.test(h5Raw) && /OrderedListOutlined/.test(h5Raw),
-    '移动壳计划开关的图标已显式 import（kebab 名映射不到导入名就什么都不画）')
+  const sheet = stripComments(read('src/h5/MobileAttachSheet.vue'))
+  check(/<ordered-list-outlined/.test(sheet) && /OrderedListOutlined/.test(sheet),
+    '「+」sheet 里计划开关的图标已显式 import（kebab 名映射不到导入名就什么都不画）')
+  check(/planModeOn, setPlanMode/.test(sheet), '「+」sheet 的计划开关吃引擎那份状态（与主壳那颗 chip 同源）')
+  // 入口从工具条收进「+」之后，开启态只剩输入框上方那颗 chip——开关与留痕必须同时在场，
+  // 缺一半就是「拨了看不见」（工具条那一排装不下：四颗药丸固定要 360px，360px 屏把送出键挤出输入卡）。
+  check(/m-chip-plan/.test(h5Raw) && /v-if="planModeOn"/.test(h5Raw),
+    '移动壳计划开启态在输入框上方回显 chip（开关已不在工具条上，别把状态说丢）')
+  check(!/<ordered-list-outlined/.test(h5Raw), '移动壳工具条不再挂计划药丸（要挪就挪干净，两处都有会撞回去）')
 }
 
 // ---- ⑫ 移动壳不许有「点了撞守卫」的入口，知识库只读承诺要说真话 ----
@@ -422,6 +434,40 @@ console.log(bad ? `\n${bad} 项不符` : '\n全部通过')
     '工作区页「去画布」在移动壳不渲染（raw href 会整页重载撞引导卡）')
   check(/x\.kind === 'workflow' && !mobileShell/.test(pjRaw),
     '工作区页「运行详情」在移动壳不渲染（同上）')
+  // 工作区文件的「预览」＝把工作目录里那个文件开成单独一个标签页（与产物页同一待遇，
+  // 安全性靠服务端那份 CSP sandbox 头）。退回应用内弹层会把这条签名地址的路废掉，
+  // 也会在移动端造出壳中壳，所以两端都必须是一个 <a target="_blank">。
+  check(/class="pj-act" :href="resolveImg\(f\.viewUrl\)" target="_blank"/.test(pjRaw),
+    '工作区页「预览」是新标签页链接（不开应用内弹层）')
+  check(!/previewProjectFile|previewState/.test(pjRaw),
+    '应用内预览弹层与那条取字节的预览接口已退役（不留第二条路）')
+  // ---- 文件栏可管理：下面每条都是真机点验当场抓到的失效形态，不是假想 ----
+  const pjCode = stripComments(pjRaw)
+  // a-menu 的 click 载荷是对象（key/keyPath/item/domEvent）。当裸 key 用会得到 "[object Object]"，
+  // 三个行内动作全静默失效——菜单能弹开、点了没反应、控制台干净，静态编译也看不出来。
+  check(/rowAction\(String\(info && info\.key\)/.test(pjCode), '行菜单按载荷对象的 key 派发（裸 key 那条路已死）')
+  check(!/@click="key =>/.test(pjCode), '行菜单不许把 click 载荷当裸 key')
+  // #overlay 这个 slot 里多出注释节点，弹层会渲染成空的（下拉框展开了但 0 项）。
+  // 所以注释必须待在 <template #overlay> 外面——这条被真机抓到过一次。
+  check(/<template #overlay>\s*<a-menu/.test(pjRaw), '#overlay 里第一个节点就是 a-menu')
+  // 命中区铺满左侧之后，16px 的框自己得接住那次点击：它带 @click.stop，只把 toggle 挂在外层
+  // span 上时，正中间那一下被 stop 掉、点了没反应（用户第一下通常就点在框上）。
+  check(/<a-checkbox[^>]*@click\.stop="toggleSel\(f\)"/.test(pjRaw), '勾选框自带 toggleSel')
+  check(/askDeletePaths\(sel\)|openMove\(sel\)/.test(pjCode), '批量栏走当前勾选那一批路径')
+  const apiCode = stripComments(read('src/api.js'))
+  check(/body: JSON\.stringify\(op === 'move' \? \{ paths, op, dir: dest \|\| '' \} : \{ paths, op \}\)/.test(apiCode),
+    '批量调用总把 op 带上（move 时 dir 允许是空串＝根目录）')
+  const pjCtrl = stripComments(read('../src/main/java/com/wenqu/ai/controller/ProjectController.java'))
+  check(/"move"\.equals\(op\)/.test(pjCtrl) && /"delete"\.equals\(op\)/.test(pjCtrl)
+    && /op 只能是 move 或 delete/.test(pjCtrl),
+    '后端批量按 op 分派、没给 op 就拒——不能靠 dir 留没留猜意图（空串 dir 就是根目录）')
+  const pjSvc = stripComments(read('../src/main/java/com/wenqu/ai/service/ProjectFileService.java'))
+  check(/STATUS_ARCHIVED\.equals\(p\.getStatus\(\)\)/.test(pjSvc) && /projectTurnMutex\.isBusy\(p\.getId\(\)\)/.test(pjSvc),
+    '写侧两道闸在服务层（归档拒写、有轮次在跑时不删不移），不只靠前端 disabled')
+  // 两处都要比真实路径：下载/预览那条（resolveIn）与目录那条（existingDir）。
+  // 只断言「出现过一次」会被另一处蒙过——阳性对照跑出来过这个盲区。
+  const realPathSites = (pjSvc.match(/toRealPath\(\)\.startsWith\(base\.toRealPath\(\)\)/g) || []).length
+  check(realPathSites >= 2, '下载口与目录口两处都比真实路径前缀（软链借下载口越界那条路已堵）', '命中 ' + realPathSites + ' 处')
   const kb = stripComments(read('src/views/KnowledgeBasePage.vue'))
   check(/v-if="!mobileShell" class="app-btn"[^>]*@click="openCreate"/.test(kb),
     '库页「新建知识库」在移动壳不渲染（兑现守卫的只读承诺）')
@@ -431,6 +477,109 @@ console.log(bad ? `\n${bad} 项不符` : '\n全部通过')
     '文档页把移动壳收进 canManageCurrentKb 根判据（逐按钮加 v-if 必漏）')
   check(/const canManageDoc = d => !mobileShell\.value/.test(dp),
     '文档行内写动作走 canManageDoc，同一判据收口')
+
+  // 产物的「预览」与上面同一待遇：开成单独一个标签页（服务端 CSP sandbox 兜底），两端四个面都不例外
+  // ——气泡底部产物卡、PC 右栏「产物」卡、H5 消息行、H5「状态与来源」面板。判据（哪些类型开得起来）
+  // 只有 utils/artifactView.js 那一份：各页各留一张清单时，同一份产物在两个页面给出不同按钮集。
+  const cp = read('src/views/ChatPage.vue')
+  const mr = read('src/h5/MobileMsgRow.vue')
+  const rs = read('src/h5/MobileRefSheet.vue')
+  const ap = read('src/views/ArtifactsPage.vue')
+  for (const [name, src] of [['ChatPage', cp], ['MobileMsgRow', mr], ['MobileRefSheet', rs], ['ArtifactsPage', ap]]) {
+    check(/canPreviewArtifact/.test(src), `${name} 用 artifactView 那份可预览判据`)
+    check(/target="_blank" rel="noopener"/.test(src), `${name} 的预览是新标签页链接（不开应用内弹层）`)
+  }
+  check(!/NO_PREVIEW|DOWNLOAD_ONLY|const previewable\s*=/
+    .test(cp + mr + rs + ap), '四个面没有第二份「哪些类型开得了」清单')
+  // 行本身不再是「点整行=下载」的锚：预览与下载必须各自成钮，否则手机上根本点不到预览
+  // （阳性对照：拿改动前那份 `<a v-for=… class="artifact-item" … :download=…>` 喂这两条，两条都得红）
+  check(/<div v-for="\(a, ai\) in m\.artifacts" :key="ai" class="artifact-item">/.test(cp),
+    '气泡产物行是容器不是下载锚（预览/下载各有入口）')
+  check(/<div v-for="\(a, pi\) in sessionArtifacts" :key="pi" class="rp-art">/.test(cp),
+    '右栏「产物」行同上')
+}
+
+// ---- ⑬ 目标摘要条：一条常驻条 + 一处详情面，词汇与判据只有一份 ----
+// 背景：目标模式抄的是「常驻在输入框上方那一条」的形状（状态词三档、图标动作、就地编辑），
+// 而它的状态词/显隐判据一度在 PC、移动壳、目标卡、「状态与来源」sheet 各写一份——
+// 同一条目标在四个地方说成「预算用满 / 已结束 / 受阻」三种话。这里的断言只认结构，不认文案。
+{
+  const proj = read('src/chat/projections.js')
+  const pc = read('src/views/ChatPage.vue')
+  const h5 = read('src/h5/MobileChatPage.vue')
+  const row = read('src/h5/MobileMsgRow.vue')
+  const ref = read('src/h5/MobileRefSheet.vue')
+  const card = read('src/components/GoalCard.vue')
+  const eng = stripComments(read('src/chat/useChatEngine.js'))
+
+  // 定义处：三档词、显隐、动作可用性都只在 projections 算一次
+  check(/const goalPhraseOf = /.test(proj) && /const goalBarVisibleOf = /.test(proj)
+    && /const goalCanEditOf = /.test(proj), 'projections 是三档状态词与条子判据的定义处')
+  for (const [label, s] of [['PC', pc], ['移动壳', h5], ['目标卡', card], ['状态与来源', ref]]) {
+    check(!/const goalPhrase =/.test(s) && !/const goalStateLabel =/.test(s)
+      && !/const goalBarVisible =/.test(s) && !/const goalTerminal =/.test(s),
+      `${label} 不自算状态词与显隐判据（归 projections 那一份）`)
+  }
+  check(/const goalStateLabelOf = /.test(proj), '详情面的状态词与条子同源')
+
+  // 两壳都画这条，且绑的是同一个判据
+  check(/v-if="goalBarVisible"[^>]*data-goal-bar/.test(pc), 'PC 摘要条绑 goalBarVisible 且带 data-goal-bar')
+  check(/v-if="goalBarVisible"[^>]*data-goal-bar/.test(h5), '移动壳有同一条摘要条（不只 PC）')
+
+  // 动作只有一个入口：暂停/继续/编辑/清除都走条子，别处不许再摆一套
+  const pcCode = stripComments(pc)
+  const h5Code = stripComments(h5)
+  const refCode = stripComments(ref)
+  check(/runGoalAction\('pause'\)/.test(pcCode) && /runGoalAction\('pause'\)/.test(h5Code),
+    '两壳的暂停都走 runGoalAction（不各自调 goalAct）')
+  check(!/goalAct\('pause'\)|goalAct\('resume'\)/.test(refCode),
+    '「状态与来源」sheet 不再重复摆暂停/继续')
+  check(/@click="startGoalInlineEdit"/.test(pcCode) && /@click="startGoalInlineEdit"/.test(h5Code),
+    '两壳的编辑键都开就地编辑态（同一批字段）')
+  check(!/v-model:open="goalEditOpen"/.test(pc), 'PC 的改订弹窗已退役（编辑只在条子里长开）')
+
+  // 图标 kebab 名与显式 import 必须成对（映射不到就什么都不画，界面看着像「按钮没出现」）
+  check(/<pause-circle-outlined/.test(pc) && /PauseCircleOutlined/.test(pc),
+    'PC 摘要条的暂停图标已显式 import')
+  check(/<play-circle-outlined/.test(h5) && /PlayCircleOutlined/.test(h5),
+    '移动壳摘要条的继续图标已显式 import')
+
+  // 命令回声：库里那列、历史那份投影、两壳那枚标记，三处必须同形
+  check(/`goal_command`/.test(read('../src/main/resources/schema.sql')),
+    'schema.sql 有 goal_command 列（缺列时补列靠它，前端才会读到）')
+  check(/private String goalCommand/.test(read('../src/main/java/com/wenqu/ai/model/Message.java')),
+    'Message 实体带 goalCommand 字段')
+  check(/map\.put\("goalCommand"/.test(read('../src/main/java/com/wenqu/ai/service/SessionService.java')),
+    '历史接口把 goalCommand 带出（不落这行就永远读不到）')
+  check(/goalCommand: typeof m\.goalCommand === 'string'/.test(eng), '引擎把库里的 goalCommand 映射进气泡')
+  check(/m\.goalCommand/.test(read('src/chat/ChatThread.vue')) && /m\.goalCommand/.test(row),
+    '两壳都在回声行上画 /goal 标记')
+  check(/!m\.goalCommand/.test(pcCode) && /!props\.m\.goalCommand/.test(row),
+    '回声行撤掉普通消息动作（指令不是一等回答的提问）')
+  check(/echoGoalCommand\(/.test(read('../src/main/java/com/wenqu/ai/service/GoalService.java')),
+    '后端建目标时落那句回声（只在前端 push 会刷新即丢）')
+}
+
+// ---- ⑭ 个人设置「分享管理」行：窄屏必须纵向堆叠（一行两栏在手机上破版） ----
+// 背景：这条卡片是「左正文 + 右操作」的一行两栏，操作区 flex:none 且按内容定宽（五个链接钮
+// 约 300px）。390px 视口上正文只剩 2px —— 实测标题一字一行竖排、整卡 599px 高、链接框里
+// 只画出一个「h」。原窄屏块里那句 flex-wrap 是空操作（基线规则本来就 wrap），所以静态看着
+// "有适配"，真机全是垃圾。断言只认这三条结构，PC 侧（媒体查询外）必须仍是横排。
+{
+  // 只剥 <style> 之后那份：本文件脚本区有一行注释写了「memory 斜杠星点 md」这种字面量，
+  // 其中的注释起始符会让块注释剥离一路吞到下一个结束符（约 570 行样式凭空消失，
+  // 断言随之误报——check-h5 的老坑，别再踩）。
+  const raw = read('src/views/ProfilePage.vue')
+  const s = stripComments(raw.slice(raw.indexOf('<style')))
+  const narrow = s.slice(s.indexOf('@media (max-width: 768px)'))
+  check(/\.shm-item\s*\{[^}]*flex-direction:\s*column/.test(narrow), '分享卡窄屏改纵向堆叠（正文不再被压成 2px）')
+  check(/\.shm-acts\s*\{[^}]*max-width:\s*none/.test(narrow), '窄屏操作区不再按内容定宽（max-width 已放开）')
+  check(/\.shm-acts \.app-link-btn\s*\{[^}]*min-height:\s*34px/.test(narrow), '窄屏链接按钮 34px 热区下限')
+  // PC 侧基线：横排 + 操作区靠右定宽，窄屏改动不许把它一起改掉
+  // （只看 .shm-item 那一条规则本体：.shm-list 也是 column，拿整段基线区判会误报）
+  const itemBase = (s.match(/\.shm-item\s*\{[^}]*\}/) || [''])[0]
+  check(/display:\s*flex/.test(itemBase) && !/flex-direction/.test(itemBase),
+    'PC 基线仍是横排（窄屏只改媒体查询里那份）')
 }
 
 process.exit(bad ? 1 : 0)

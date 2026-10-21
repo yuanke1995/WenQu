@@ -56,10 +56,6 @@
       <button v-if="m && m.turnId" class="rd-btn" type="button" @click="$emit('events', m.turnId)">
         <history-outlined /><span>看这一轮的过程</span>
       </button>
-      <!-- 设为目标：把这一轮正文里的承诺转成目标草稿（PC 是气泡「更多 → 设为目标」，同一出口） -->
-      <button v-if="goalEntryVisible && m && m.role === 'ai' && m.content" class="rd-btn" type="button" @click="setGoal">
-        <aim-outlined /><span>设为目标</span>
-      </button>
       <button class="rd-btn danger" type="button" @click="doDelete">
         <delete-outlined /><span>删除本轮对话</span>
       </button>
@@ -71,7 +67,7 @@
 <script setup>
 import { computed, inject, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { BugOutlined, CopyOutlined, DeleteOutlined, DislikeOutlined, DownloadOutlined, FileMarkdownOutlined, HistoryOutlined, AimOutlined } from '@ant-design/icons-vue'
+import { BugOutlined, CopyOutlined, DeleteOutlined, DislikeOutlined, DownloadOutlined, FileMarkdownOutlined, HistoryOutlined } from '@ant-design/icons-vue'
 import BottomSheet from './BottomSheet.vue'
 import { buildAnswerMd, saveMd } from '../views/exportMd'
 import { addEvalCase, debugRetrieval, deleteMessageGroup } from '../api'
@@ -83,15 +79,10 @@ const props = defineProps({
   /** 目标 AI 消息在 messages 里的下标 */
   index: { type: Number, default: -1 }
 })
-const emit = defineEmits(['close', 'events', 'goal'])
+const emit = defineEmits(['close', 'events'])
 
 const engine = inject('wqChat')
-const { messages, currentSessionTitle, debugEntryVisible, goalModeOn, sessionGoal } = engine
-
-/** 设为目标入口的显隐：平台总闸开着 + 本会话还没有目标（与 PC 同一判据） */
-const goalEntryVisible = computed(() => goalModeOn.value && !sessionGoal.value)
-/** 设为目标：把这一轮正文交给页面去起草（PC 是弹窗，移动壳是底部 sheet） */
-const setGoal = () => emit('goal', props.index)
+const { messages, currentSessionTitle, debugEntryVisible } = engine
 
 const m = computed(() => messages.value[props.index] || null)
 /** 本轮提问与前一条回答配对：向前找最近的用户消息，遇更早的回答即停（与 PC 的配对口径一致） */

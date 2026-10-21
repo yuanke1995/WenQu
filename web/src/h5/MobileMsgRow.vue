@@ -11,6 +11,10 @@
       <!-- ==================== 用户消息 ==================== -->
       <template v-if="m.role === 'user'">
         <div class="ububble">
+          <!-- 目标指令回声：句首一枚 /goal 命令标记，目标原文照旧是正文（与 PC 共用外壳同一口径） -->
+          <div v-if="m.goalCommand" class="cmd-line">
+            <code class="cmd-token">/goal</code><span class="cmd-name">目标</span>
+          </div>
           <div v-if="m.content" class="u-text">{{ m.content }}</div>
           <div v-if="m.images && m.images.length" class="u-imgs">
             <img v-for="(u, ii) in m.images" :key="ii" :src="resolveImg(u)" alt="图片" @click.stop="$emit('preview', m.images.map(resolveImg), ii)">
@@ -233,11 +237,18 @@
           <div class="card-dim">未处理将在 {{ Math.round((m.approval.timeoutMs || 120000) / 1000) }} 秒后按拒绝处理</div>
         </div>
 
-        <!-- 产物 -->
+        <!-- 产物：预览＝开成一个浏览器标签页（与产物页、工作区文件同一待遇），下载走同一份签名地址。
+             两个入口各占一块触屏热区，不靠长按之类的隐藏手势 -->
         <div v-if="m.artifacts && m.artifacts.length" class="artifacts">
-          <a v-for="(a, ai) in m.artifacts" :key="ai" class="artifact" :href="resolveImg(a.url)" :download="a.filename">
-            <file-text-outlined /><span class="artifact-name">{{ a.filename }}</span><download-outlined class="artifact-dl" />
-          </a>
+          <div v-for="(a, ai) in m.artifacts" :key="ai" class="artifact">
+            <file-text-outlined class="artifact-ic" /><span class="artifact-name">{{ a.filename }}</span>
+            <span class="artifact-acts">
+              <a v-if="canPreviewArtifact(a)" class="artifact-act" :href="resolveImg(a.url)"
+                 target="_blank" rel="noopener" title="在新标签页预览"><eye-outlined />预览</a>
+              <a class="artifact-act" :href="resolveImg(a.url)" :download="a.filename"
+                 title="下载"><download-outlined />下载</a>
+            </span>
+          </div>
         </div>
 
         <!-- 降级/警告 -->
@@ -301,9 +312,10 @@ import {
   CaretRightOutlined, CheckOutlined, CloseCircleOutlined, CopyOutlined, EditOutlined, LikeOutlined,
   DislikeOutlined, ReloadOutlined, RedoOutlined, RobotOutlined, ThunderboltOutlined, SearchOutlined,
   FileTextOutlined, DownloadOutlined, PaperClipOutlined, ExclamationCircleOutlined, MoreOutlined,
-  QuestionCircleOutlined, CheckCircleOutlined, PauseCircleOutlined
+  QuestionCircleOutlined, CheckCircleOutlined, PauseCircleOutlined, EyeOutlined
 } from '@ant-design/icons-vue'
 import { resolveImg } from '../utils/markdown'
+import { canPreviewArtifact } from '../utils/artifactView'
 import AnswerBody from '../components/AnswerBody.vue'
 import { fmtTokens } from '../utils/token'
 import {
@@ -344,7 +356,9 @@ const props = defineProps({
 const emit = defineEmits(['activate', 'preview', 'paste-view', 'source', 'retry', 'edit', 'feedback', 'approve',
   'switch-version', 'ask', 'copy', 'copy-user', 'more'])
 
-const showActions = computed(() => props.active || (props.m.role === 'ai' && props.isLast))
+// 目标指令回声不挂操作行：那句「把这件事做到什么算完」是一条指令，不是一等回答的提问，
+// 复制/编辑重发对它没有意义（与 PC 端 msg-edit-row 撤动作同一条判据）
+const showActions = computed(() => !props.m.goalCommand && (props.active || (props.m.role === 'ai' && props.isLast)))
 // 归属徽标去重（与 PC 的 showAgentTag 同口径，但简化：只在首条或归属变化时显示）
 const showAgentTag = computed(() => {
   const m = props.m
@@ -383,6 +397,13 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
   padding: 10px 12px;
 }
 .u-text { white-space: pre-wrap; word-break: break-word; font-size: 15px; line-height: 1.6; }
+/* 命令回声的标记行（与 PC 共用外壳同一形状，token 用等宽读得出是敲进去的命令） */
+.cmd-line { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.cmd-token {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; line-height: 1;
+  padding: 3px 6px; border-radius: 6px; background: var(--app-panel); color: var(--app-text2);
+}
+.cmd-name { font-size: 11.5px; line-height: 1; color: var(--app-text3); }
 .u-imgs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .u-imgs img { width: 88px; height: 88px; object-fit: cover; border-radius: 8px; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
@@ -512,9 +533,12 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
 .btn-ghost:active { color: var(--app-accent); border-color: var(--app-accent); }
 
 .artifacts { display: flex; flex-direction: column; gap: 6px; }
-.artifact { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border: 1px solid var(--app-border); border-radius: 10px; background: var(--app-panel); color: var(--app-text2); text-decoration: none; font-size: 13px; }
+.artifact { display: flex; align-items: center; gap: 8px; padding: 4px 12px; border: 1px solid var(--app-border); border-radius: 10px; background: var(--app-panel); color: var(--app-text2); font-size: 13px; }
+.artifact-ic { flex: none; }
 .artifact-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.artifact-dl { color: var(--app-text3); }
+.artifact-acts { flex: none; display: flex; align-items: center; }
+/* 触屏热区：预览/下载各自够 44px 高，图标加两字标签就是最小可用宽度 */
+.artifact-act { display: inline-flex; align-items: center; gap: 3px; min-height: 44px; padding: 0 6px; color: var(--app-text3); text-decoration: none; font-size: 12px; }
 
 .warn-bar { border: 1px solid var(--app-warn-border); background: var(--app-warn-weak); color: var(--app-warn-text); border-radius: 8px; padding: 8px 10px; font-size: 12px; display: flex; flex-direction: column; gap: 4px; }
 

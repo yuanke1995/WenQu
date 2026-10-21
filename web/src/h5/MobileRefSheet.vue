@@ -63,30 +63,34 @@
       <!-- ---- 产物 ---- -->
       <template v-if="artifacts.length">
         <div class="rs-section">本会话产物<span class="rs-n">{{ artifacts.length }}</span></div>
-        <a v-for="(a, i) in artifacts" :key="i" class="rs-art" :href="a.url" :download="a.filename">
+        <div v-for="(a, i) in artifacts" :key="i" class="rs-art">
           <file-text-outlined class="rs-ic" />
           <span class="rs-art-name">{{ a.filename }}</span>
-          <download-outlined class="rs-ic" />
-        </a>
+          <span class="rs-art-acts">
+            <a v-if="canPreviewArtifact(a)" class="rs-art-act" :href="resolveImg(a.url)"
+               target="_blank" rel="noopener" title="在新标签页预览"><eye-outlined />预览</a>
+            <a class="rs-art-act" :href="resolveImg(a.url)" :download="a.filename"
+               title="下载"><download-outlined />下载</a>
+          </span>
+        </div>
       </template>
 
       <!-- ---- 目标（PC 右栏「目标」面板的移动形态：同一份 sessionGoal，同一个 GoalCard 组件） ---- -->
       <template v-if="sessionGoal">
-        <div class="rs-section">目标<span class="rs-n">{{ goalStateText }}</span></div>
-        <GoalCard :card="sessionGoal" />
-        <div class="rs-act-row">
-          <button v-if="!goalTerminal" class="rs-act" type="button" @click="goalAct('pause')">
-            <pause-circle-outlined class="rs-ic" /><span>暂停</span>
-          </button>
-          <button v-if="goalTerminal" class="rs-act" type="button" @click="goalAct('resume')">
-            <play-circle-outlined class="rs-ic" /><span>继续</span>
-          </button>
-          <button v-if="!goalTerminal" class="rs-act" type="button" @click="goalAct('verifyNow')">
+        <div class="rs-section">目标</div>
+        <GoalCard :card="sessionGoal" @mark="p => goalAct('markManual', p)" />
+        <!-- 暂停/继续/编辑/清除都在输入框上方那条摘要条上（一个动作只留一个入口）。
+             这里只放这个面板才需要的两件事：不等它自己停、先手动验一遍；主动收尾。 -->
+        <div v-if="!goalTerminal && !pendingGoal" class="rs-act-row">
+          <button class="rs-act" type="button" @click="goalAct('verifyNow')">
             <safety-certificate-outlined class="rs-ic" /><span>现在验收</span>
           </button>
-          <button v-if="!goalTerminal" class="rs-act" type="button" @click="goalAct('finish')">
+          <button class="rs-act" type="button" @click="goalAct('finish')">
             <stop-outlined class="rs-ic" /><span>就此收尾</span>
           </button>
+        </div>
+        <div v-else-if="goalTerminal" class="rs-act-row">
+          <button class="rs-act" type="button" @click="restartGoalDraft">另起目标</button>
         </div>
       </template>
 
@@ -137,12 +141,15 @@
 
 <script setup>
 import { computed, inject, reactive, ref, watch } from 'vue'
-import { CaretRightOutlined, FileTextOutlined, DownloadOutlined, ShareAltOutlined, FileMarkdownOutlined, CopyOutlined, SwapOutlined, StopOutlined, PauseCircleOutlined, PlayCircleOutlined, SafetyCertificateOutlined } from '@ant-design/icons-vue'
+import { CaretRightOutlined, FileTextOutlined, DownloadOutlined, ShareAltOutlined, FileMarkdownOutlined, CopyOutlined, SwapOutlined, StopOutlined, SafetyCertificateOutlined, EyeOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
 import BottomSheet from './BottomSheet.vue'
 import GoalCard from '../components/GoalCard.vue'
 import { fmtTokens } from '../utils/token'
 import { fmtSourceScore, fmtWindow, usageCtxTokens } from '../chat/projections'
+// 产物地址必须过 resolveImg：后端给的是 /ai/artifacts/**，不经媒体前缀在开发态会落到 SPA 回退（下载到 index.html）
+import { resolveImg } from '../utils/markdown'
+import { canPreviewArtifact } from '../utils/artifactView'
 import { buildSessionMd, saveMd } from '../views/exportMd'
 import { copyText } from '../utils/clipboard'
 import { useSessionShare } from '../views/shareSession'
@@ -151,25 +158,14 @@ defineProps({ open: { type: Boolean, default: false } })
 defineEmits(['close', 'source'])
 
 const engine = inject('wqChat')
-// 目标模式：与 PC 同一份 sessionGoal（会话级一份，横跨多轮），卡片本体共用 GoalCard
+// 目标模式：与 PC 同一份 sessionGoal（会话级一份，横跨多轮），卡片本体共用 GoalCard，
+// 状态词与「还算不算终态」的判据也共用引擎那一份（两端各写一套就会出现「条子说受阻、这里说等你核验」）
 const { groupedSources, lastTokens, lastSources, sessionTokens, sessionRetrieval, sessionArtifacts,
   currentSessionId, currentSessionTitle, messages, ctxTokens, modelIndex, effectiveModel,
-  sessionGoal, goalAct } = engine
+  sessionGoal, goalAct, pendingGoal, goalTerminal, goalRestartRequest } = engine
 
-// 目标状态的中文名（与 PC 面板同一套判据，两端不许各写一份）
-const goalStateText = computed(() => {
-  const s = sessionGoal.value?.status
-  if (s === 'ACHIEVED') return '已达成'
-  if (s === 'BUDGET_EXCEEDED') return '预算用满'
-  if (s === 'AWAITING_CONFIRMATION') return '待确认'
-  if (s === 'RUNNING') return '进行中'
-  if (s === 'VERIFYING') return '核验中'
-  if (s === 'PAUSED') return '已暂停'
-  if (s === 'CANCELLED') return '已取消'
-  return '已结束'
-})
-const goalTerminal = computed(() => !!sessionGoal.value &&
-  ['ACHIEVED', 'BUDGET_EXCEEDED', 'FAILED', 'CANCELLED', 'ENDED_INCOMPLETE'].includes(sessionGoal.value.status))
+/** 另起目标：把这句交回起草通道（MobileChatPage watch 它开底部 sheet），当前这条由后端收成「未完成收尾」 */
+const restartGoalDraft = () => { goalRestartRequest.value = sessionGoal.value?.objective || '' }
 
 // 容量构成：与 PC 的 ctxCapData 同一算法（窗口取本轮 tokens.window，回落模型登记窗口；
 // 用量取 prompt，无则 context；分类占窗口比例撑填充段）。分类表是 PC 视图层的同款副本——
@@ -297,8 +293,11 @@ watch(currentSessionId, () => { built.value = null; shareOpen.value = false; res
 .cap-meta { font-size: 12px; color: var(--app-text3); padding: 6px 2px 2px; }
 .cap-label { display: inline-flex; align-items: center; gap: 6px; }
 .cap-dot { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
-.rs-art { display: flex; align-items: center; gap: 8px; padding: 11px 12px; border: 1px solid var(--app-border); border-radius: 10px; margin-bottom: 6px; color: var(--app-text2); text-decoration: none; font-size: 13px; }
+.rs-art { display: flex; align-items: center; gap: 8px; padding: 4px 12px; border: 1px solid var(--app-border); border-radius: 10px; margin-bottom: 6px; color: var(--app-text2); font-size: 13px; }
 .rs-art-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rs-art-acts { flex: none; display: flex; align-items: center; }
+/* 触屏热区：与消息流里的产物行同一口径（预览/下载各自 ≥44px） */
+.rs-art-act { display: inline-flex; align-items: center; gap: 3px; min-height: 44px; padding: 0 6px; color: var(--app-text3); text-decoration: none; font-size: 12px; }
 /* 「这段对话」的操作块：44px 触摸热区，危险动作（停止分享）单独占一行不与常用动作挤在一起 */
 .rs-act-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .rs-act {
