@@ -55,5 +55,8 @@ public class AgentxConfiguration {
         // 咨询子轮要的是「再起一整轮」，走的是带轮级外壳的那个入口（即时落库、会话互斥、断线续跑），
         // 而不是框架引擎的内层循环。按函数注册避免 ChatService↔agentx 构造环
         tools.bindBranchTurn(chatService::chat);
+        // 启动自检：框架会话状态恒存 Redis，连不上就不该对外服务（引擎是这里 new 的，
+        // 不归 Spring 管，@PostConstruct 不会跑，自检得显式做）。
+        engine.requireRedisForSessionState();
     }
 }

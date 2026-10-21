@@ -201,8 +201,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * <p>为什么要在启动时炸：会话状态没有第二落点（本地文件方案已退役）。等第一轮问答才发现
      * Redis 不通，用户看到的是「模型答得像不认识我」——那正是 2026-10-21 事故的形态，
      * 而真正的原因（状态存储不通）被埋在日志里。现在它变成一条启动失败，信息直指 Redis。
+     * <p><b>注意调用方</b>：本引擎是 {@link AgentxConfiguration} 构造器里 {@code new} 出来的，
+     * 不归 Spring 管，{@code @PostConstruct} 不会执行——所以由装配处显式调本方法。
      */
-    @jakarta.annotation.PostConstruct
     void requireRedisForSessionState() {
         stateStore();
     }
