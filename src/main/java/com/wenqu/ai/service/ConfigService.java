@@ -325,7 +325,9 @@ public class ConfigService {
         // 页面按 schema 的 def 显示初值，而脏检测只比页面上出现过的值——于是归档开关打开后
         // 在界面上既看不到、也关不掉（库里那行 true 一直留着）。四个键一并登记，读取点
         // SessionLogArchive/ScheduleCenter 的形参默认值与之同口径。
-        d.put("chat.sessionLogArchive.enabled", "false");   // 归档默认关：JSONL 里有工具入参与结果，生产上等于多一份过程明细落盘
+        d.put("chat.sessionLogArchive.enabled", "true");    // 归档默认开：保留策略（keepDays=90 + 每日清理）随默认值出厂，盘占用有界；
+                                                            // 且正文之外的过程明细（工具入参/结果、思考段、压缩留痕）只存在于事件日志，
+                                                            // 不归档则容器重建即丢（2026-10-21 Redis 会话事故若有归档会好查得多）
         d.put("chat.sessionLogArchive.dir", "");             // 留空=落在 {chat.agentscopeStateDir}/session-archive；多副本必须指共享卷
         d.put("chat.sessionLogArchive.keepDays", "90");      // 按归档文件最后写入时间判定；0=不清理
         d.put("chat.sessionLogArchive.cleanupIntervalMs", "86400000"); // 清理任务间隔，默认 1 天；≤0 暂停该任务

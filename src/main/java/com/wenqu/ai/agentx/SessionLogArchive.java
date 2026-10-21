@@ -60,7 +60,7 @@ public class SessionLogArchive {
         this.configService = configService;
     }
 
-    /** 总开关（默认关）：归档是逐事件追加写盘，没配保留策略就常开会慢慢吃盘 */
+    /** 总开关（默认开）：保留策略随默认值出厂（keepDays=90 + 每日清理），盘占用有界；关闭即放弃正文之外的全部过程明细 */
     public boolean enabled() {
         return configService.getBoolean("chat.sessionLogArchive.enabled");
     }
