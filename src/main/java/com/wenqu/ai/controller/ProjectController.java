@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -29,7 +30,8 @@ import java.util.Map;
  * 工作区容器接口：把「一个工作目录 + 若干次会话 + 若干份产物」收在一个可持续的根下。
  *
  * <p>能力面：列表 / 详情 / 设置（名称·约定·默认助手）/ 归档恢复 / 新建 / 删除（可连目录）、
- * 工作区文件浏览与下载、本工作区的工作流。会话与产物的移动归属在
+ * 工作区目录的分层浏览与文件管理（上传 / 新建文件夹 / 改名移动 / 删除 / 批量）/ 下载 / 整区导出、
+ * 本工作区的工作流与运行记录。会话与产物的移动归属在
  * {@code /session/{id}/project} 与 {@code /artifact/{id}/project}（那两个端点管归属，这里管容器）。
  *
  * <p><b>归属口径</b>：一律按 {@link RequestUser#uid()} 过滤，与产物同口径。
@@ -128,13 +130,18 @@ public class ProjectController {
     }
 
     @Operation(summary = "工作区文件列表",
-            description = "工作区目录下的文件（相对路径/大小/修改时间，按时间倒序）；"
-                    + "返回 {entries, total, truncated}——total 是实际文件数、truncated=true 表示只返回了最近若干条。"
+            description = "列出工作区目录里的<b>一层</b>内容（文件夹在前、文件按修改时间倒序）；dir 为空=根目录。"
+                    + "返回 {dir, entries, total, truncated, files, bytes, capped, dirs, names}——"
+                    + "total 是本层条目数（truncated=true 表示只返回了最近若干条），"
+                    + "files/bytes 是整个目录的文件数与合计体积（capped=true 表示统计到 5000 个就停），"
+                    + "dirs 是全目录的文件夹清单（「移动到…」用），names 是全目录的文件名（产物去重用）。"
+                    + "可预览的条目另带 viewUrl：一条签名地址（默认 1 小时有效），前端直接开成浏览器标签页。"
                     + "目录不存在=正常空态；宿主目录读不到（如沙盒在另一台机器）如实返回不可用")
     @GetMapping("/{id}/files")
-    public ResultJson files(@PathVariable("id") String id) {
+    public ResultJson files(@PathVariable("id") String id,
+                            @RequestParam(value = "dir", required = false) String dir) {
         try {
-            return ResultJson.ok(projectFileService.listWithMeta(RequestUser.uid(), id));
+            return ResultJson.ok(projectFileService.listWithMeta(RequestUser.uid(), id, dir));
         } catch (IllegalArgumentException e) {
             return ResultJson.error(400, e.getMessage());
         } catch (IllegalStateException e) {
@@ -142,28 +149,99 @@ public class ProjectController {
         }
     }
 
-    @Operation(summary = "预览工作区文件",
-            description = "文本按 text/plain、图片按原类型内联返回；其余类型拒绝并提示下载。"
-                    + "html/svg 一律按纯文本发（工作区文件来源不可控，不在应用里执行）")
-    @GetMapping("/{id}/file/preview")
-    public org.springframework.http.ResponseEntity<byte[]> preview(@PathVariable("id") String id,
-                                           @RequestParam("path") String path) {
+    @Operation(summary = "上传文件到工作区",
+            description = "multipart：file 可多份（一次最多 50 个）、dir=落进哪个文件夹（空=根目录）、"
+                    + "overwrite=true 时同名覆盖（默认拒绝并报出那个名字）。"
+                    + "单文件上限见系统设置「工作区上传单文件上限」；归档中的工作区不收文件")
+    @PostMapping("/{id}/files")
+    public ResultJson uploadFiles(@PathVariable("id") String id,
+                                  @RequestParam("file") List<MultipartFile> files,
+                                  @RequestParam(value = "dir", required = false) String dir,
+                                  @RequestParam(value = "overwrite", required = false, defaultValue = "false") boolean overwrite) {
         try {
-            ProjectFileService.PreviewFile f = projectFileService.preview(RequestUser.uid(), id, path);
-            String encoded = java.net.URLEncoder.encode(f.name(), java.nio.charset.StandardCharsets.UTF_8)
-                    .replace("+", "%20");
-            return org.springframework.http.ResponseEntity.ok()
-                    .header("Content-Type", f.contentType())
-                    .header("Content-Disposition", "inline; filename=\"" + encoded + "\"; filename*=UTF-8''" + encoded)
-                    // 文本按 UTF-8 发但浏览器可能按别的方式解，显式声明；同时禁掉嗅探
-                    .header("X-Content-Type-Options", "nosniff")
-                    .header("Cache-Control", "no-store")
-                    .body(f.bytes());
+            List<Map<String, Object>> saved =
+                    projectFileService.upload(RequestUser.uid(), id, dir, files, overwrite);
+            String msg = saved.size() == 1
+                    ? "已上传「" + saved.get(0).get("name") + "」"
+                    : "已上传 " + saved.size() + " 个文件";
+            return ResultJson.ok(saved, msg);
         } catch (IllegalArgumentException e) {
-            return org.springframework.http.ResponseEntity.badRequest().build();
+            return ResultJson.error(400, e.getMessage());
         } catch (IllegalStateException e) {
-            return org.springframework.http.ResponseEntity.status(503).build();
+            return ResultJson.error(503, e.getMessage());
         }
+    }
+
+    @Operation(summary = "在工作区里新建文件夹", description = "body: {path: 相对路径}，父目录必须已存在；名称不能以点开头（这里不显示隐藏文件）")
+    @PostMapping("/{id}/dir")
+    public ResultJson createDir(@PathVariable("id") String id, @RequestBody DirReq req) {
+        try {
+            String path = projectFileService.createDir(RequestUser.uid(), id, req == null ? null : req.path());
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("path", path);
+            return ResultJson.ok(out, "已新建文件夹");
+        } catch (IllegalArgumentException e) {
+            return ResultJson.error(400, e.getMessage());
+        } catch (IllegalStateException e) {
+            return ResultJson.error(503, e.getMessage());
+        }
+    }
+
+    public record DirReq(String path) {
+    }
+
+    @Operation(summary = "重命名或移动工作条目",
+            description = "body: {from, to}（都是相对工作区的 POSIX 路径）。文件和文件夹都走这一条；"
+                    + "目标父目录必须已存在、位置上不能有同名条目，也不能把文件夹挪进它自己里面。"
+                    + "工作区里有任务正在跑时拒绝（那一轮以为文件还在原位）")
+    @PutMapping("/{id}/file")
+    public ResultJson moveFile(@PathVariable("id") String id, @RequestBody MoveReq req) {
+        try {
+            String to = projectFileService.move(RequestUser.uid(), id,
+                    req == null ? null : req.from(), req == null ? null : req.to());
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("path", to);
+            return ResultJson.ok(out, "已保存新名字");
+        } catch (IllegalArgumentException e) {
+            return ResultJson.error(400, e.getMessage());
+        } catch (IllegalStateException e) {
+            return ResultJson.error(503, e.getMessage());
+        }
+    }
+
+    public record MoveReq(String from, String to) {
+    }
+
+    @Operation(summary = "批量整理工作区条目",
+            description = "body: {paths:[...], op: move|delete, dir?}。op 必须写——「移动」和「删除」两个分支一个是整理、"
+                    + "一个是不可恢复地删文件，不能靠某个字段留没留下来猜意图。op=move 时 dir 是目标文件夹（空串＝根目录）；"
+                    + "删除文件夹会连里面的内容一起删；已经不在了的条目算成功。一次最多 500 项")
+    @PostMapping("/{id}/files/batch")
+    public ResultJson batch(@PathVariable("id") String id, @RequestBody BatchReq req) {
+        try {
+            String uid = RequestUser.uid();
+            List<String> paths = req == null ? null : req.paths();
+            String op = req == null || req.op() == null ? "" : req.op().trim().toLowerCase();
+            Map<String, Object> out = new LinkedHashMap<>();
+            if ("move".equals(op)) {
+                int moved = projectFileService.batchMove(uid, id, paths, req.dir() == null ? "" : req.dir());
+                out.put("moved", moved);
+                return ResultJson.ok(out, "已移动 " + moved + " 项");
+            }
+            if ("delete".equals(op)) {
+                int deleted = projectFileService.deleteEntries(uid, id, paths);
+                out.put("deleted", deleted);
+                return ResultJson.ok(out, "已删除 " + deleted + " 项");
+            }
+            return ResultJson.error(400, "op 只能是 move 或 delete");
+        } catch (IllegalArgumentException e) {
+            return ResultJson.error(400, e.getMessage());
+        } catch (IllegalStateException e) {
+            return ResultJson.error(503, e.getMessage());
+        }
+    }
+
+    public record BatchReq(List<String> paths, String op, String dir) {
     }
 
     @Operation(summary = "打包导出工作区目录",
@@ -195,20 +273,6 @@ public class ProjectController {
         resp.setContentType("application/zip");
         resp.setHeader("Content-Disposition", "attachment; filename=\"" + encoded + "\"; filename*=UTF-8''" + encoded);
         projectFileService.writeZip(uid, id, files, resp.getOutputStream());
-    }
-
-    @Operation(summary = "删除工作区文件", description = "删单个普通文件（路径校验与下载同口径；不支持删目录）")
-    @DeleteMapping("/{id}/file")
-    public ResultJson deleteFile(@PathVariable("id") String id,
-                                 @RequestParam("path") String path) {
-        try {
-            projectFileService.deleteFile(RequestUser.uid(), id, path);
-            return ResultJson.ok(null, "已删除");
-        } catch (IllegalArgumentException e) {
-            return ResultJson.error(400, e.getMessage());
-        } catch (IllegalStateException e) {
-            return ResultJson.error(503, e.getMessage());
-        }
     }
 
     @Operation(summary = "下载工作区文件", description = "按工作区目录内的相对路径下载；越界路径（../、绝对路径）一律 400")

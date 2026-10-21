@@ -56,6 +56,20 @@ public class ImageUrlSigner {
         if (!isEnabled()) {
             return url;
         }
+        return doSignUrl(url);
+    }
+
+    /**
+     * 与 {@link #signUrl} 同一套签名，但<b>不受 {@code images.authEnabled} 开关影响</b>——总是签出 {@code ?expire=&sig=}。
+     * <p>给「没有有效签名就一律不读」的端点用（工作区文件预览）。这类内容比图片/产物更敏感：它落在整个
+     * 沙盒用户目录下，开关一关就变成可按路径试探的公开读文件口子。{@link #verify} 本来就不看开关，
+     * 所以签发侧也必须有一条不看开关的路，否则关掉开关时这条端点要么裸奔、要么永远 401。
+     */
+    public String signUrlRequired(String url) {
+        return doSignUrl(url);
+    }
+
+    private String doSignUrl(String url) {
         long expire = Instant.now().getEpochSecond() + properties.getImages().getAuthExpireSeconds();
         // 签名基准 = 纯路径（剥掉**整个** query）。必须是纯路径：拦截器验签时拿到的是
         // request.getRequestURI()，它按定义不含 query；若把业务参数也算进基准，带参文件
