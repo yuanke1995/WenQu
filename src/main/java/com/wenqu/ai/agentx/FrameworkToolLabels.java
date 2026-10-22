@@ -71,7 +71,10 @@ final class FrameworkToolLabels {
             Map.entry("task_list", "查询后台任务"),
             Map.entry("task_output", "获取任务结果"),
             Map.entry("task_cancel", "取消后台任务"),
-            Map.entry("wait_async_results", "等待后台结果"));
+            Map.entry("wait_async_results", "等待后台结果"),
+            // 目标模式的候选提议工具（框架 ReActAgent.enableTaskRequirements 注册）：目标模式开着就会挂，
+            // 每次提议都在卡上露面——漏了它就是界面上一个没人看得懂的英文函数名（2026-10-22 实测）。
+            Map.entry("task_requirement_propose", "提议候选要求"));
 
     /** 工具名 → 悬停一句话说明（这个工具到底在干什么；未收录的不给 title）。 */
     private static final Map<String, String> HINTS = Map.ofEntries(
@@ -101,7 +104,10 @@ final class FrameworkToolLabels {
             Map.entry("task_list", "看看派出去的任务跑到哪一步了"),
             Map.entry("task_output", "把后台任务跑出来的结果读回来"),
             Map.entry("task_cancel", "让一个还没跑完的后台任务停下来"),
-            Map.entry("wait_async_results", "派出去的活还没回来，在这儿等一会儿"));
+            Map.entry("wait_async_results", "派出去的活还没回来，在这儿等一会儿"),
+            // 与 LABELS 同一条注释：目标模式开着就会露面的那把候选提议工具。
+            Map.entry("task_requirement_propose",
+                    "助手把它对验收标准的理解作为候选提交，是否采纳由你逐条确认，不会自动生效"));
 
     /** 框架文件工具与命令工具的名字（沙箱/文件系统改由框架提供后，问渠不再自定义这七把）。 */
     static final class FilesystemToolNames {

@@ -72,6 +72,8 @@ const TOOL_LABELS = {
   task_output: '获取任务结果',
   task_cancel: '取消后台任务',
   wait_async_results: '等待后台结果',
+  // 目标模式的候选提议工具（目标模式开着就会挂）：措辞与后端 FrameworkToolLabels 保持一致
+  task_requirement_propose: '提议候选要求',
   // MCP（context7）：去前缀后按裸名匹配
   resolve_library_id: '解析文档库',
   query_docs: '检索官方文档',
@@ -132,6 +134,7 @@ const TOOL_DESCS = {
   task_output: '把后台任务跑出来的结果读回来',
   task_cancel: '让一个还没跑完的后台任务停下来',
   wait_async_results: '派出去的活还没回来，在这儿等一会儿',
+  task_requirement_propose: '助手把它对验收标准的理解作为候选提交，是否采纳由你逐条确认，不会自动生效',
   resolve_library_id: '先确定要查阅哪个库的官方文档',
   query_docs: '到对应库的官方文档里查找相关内容',
   read_wiki_structure: '浏览开源仓库 Wiki 的目录结构',
@@ -1169,7 +1172,8 @@ const verLabel = m => verLocal(m)
 // 摘要条、右栏/移动详情面、目标卡三处共用同一套词与同一份判据：各处各写一遍必然漂移
 // （同一条目标，条子说一个词、卡里说另一个词就是那种）。入参一律是目标文档本身，不读任何 .value。
 // 词汇收成用户结果：条子三档（进行中/已暂停/受阻），详情面多一档「等你做什么」，
-// 卡在哪靠原因那一行说，不挤进状态词里。
+// 「等你核验」再分两种口气：有标准=停下来是让人拿着交付物做检查（等你检查），
+// 没有标准=先补一条再说（等你核验）。卡在哪靠原因那一行说，不挤进状态词里。
 // 目标不设预算：这里没有任何「上限/还剩多少」的概念，只有「已经跑到第几轮」和「还差几条没验过」。
 const GOAL_BLOCKED = ['FAILED', 'ENDED_INCOMPLETE']
 /** 与后端 GoalService 的 EDITABLE 同源：只有这几档能就地改验收标准，摆错档就是点了报错 */
@@ -1180,12 +1184,16 @@ const GOAL_ENDED = ['ACHIEVED', 'CANCELLED', 'FAILED', 'ENDED_INCOMPLETE']
 const GOAL_DISMISSED = ['ACHIEVED', 'CANCELLED']
 const GOAL_RUNNING = ['RUNNING', 'VERIFYING', 'DRAFT', 'CLARIFYING']
 
+/** 验收态（等你核验）里有没有已确认的标准：有=停下来是让人拿着交付物做检查，没有=要人先补一条 */
+const goalAcceptanceOf = g => !!g && g.status === 'WAITING_INPUT' &&
+  ((g.criteria || []).some(c => c.kind !== 'CONSTRAINT' && c.status === 'CONFIRMED'))
+
 const goalTerminalOf = g => !!g && GOAL_ENDED.includes(g.status)
 const goalBarVisibleOf = g => !!g && g.status !== 'AWAITING_CONFIRMATION' && !GOAL_DISMISSED.includes(g.status)
 const goalPhraseOf = g => {
   if (!g) return ''
   if (g.status === 'PAUSED') return '已暂停的目标'
-  if (g.status === 'WAITING_INPUT') return '等你核验的目标'
+  if (g.status === 'WAITING_INPUT') return goalAcceptanceOf(g) ? '等你检查的目标' : '等你核验的目标'
   if (GOAL_BLOCKED.includes(g.status)) return '受阻的目标'
   return '进行中的目标'
 }
@@ -1195,7 +1203,7 @@ const goalStateLabelOf = g => {
   if (s === 'CANCELLED') return '已取消'
   if (GOAL_BLOCKED.includes(s)) return '受阻'
   if (s === 'AWAITING_CONFIRMATION') return '等你确认'
-  if (s === 'WAITING_INPUT') return '等你核验'
+  if (s === 'WAITING_INPUT') return goalAcceptanceOf(g) ? '等你检查' : '等你核验'
   if (GOAL_RUNNING.includes(s)) return '进行中'
   return '已暂停'
 }
@@ -1257,6 +1265,6 @@ export {
   pasteTitle, pasteSub, isPastedText, PASTE_TEXT_BASE,
   snapshotVersion, applyVersion, verLocal, canSwitchPrev, canSwitchNext, verLabel,
   goalTerminalOf, goalBarVisibleOf, goalPhraseOf, goalStateLabelOf, goalStateClassOf,
-  goalRemainingOf, goalBlockReasonOf, goalBarTitleOf, goalBarMetaOf,
+  goalRemainingOf, goalBlockReasonOf, goalBarTitleOf, goalBarMetaOf, goalRoundLineOf,
   goalCanPauseOf, goalCanResumeOf, goalCanEditOf
 }

@@ -60,7 +60,7 @@ public final class AgentxFrameworkToolGate implements MiddlewareBase {
      * 框架若改名，这里取不到值即按<b>写类</b>处理（fail-closed：漏判成只读比误判成写更危险）。
      */
     private static final Map<String, Boolean> FRAMEWORK_TOOL_WRITES =
-            // Map.of 最多 10 对；这里 11 对（记忆四把补齐后超了），用 ofEntries 保序
+            // Map.of 最多 10 对；这里超了，用 ofEntries 保序
             Map.ofEntries(
                     Map.entry("read_file", false),
                     Map.entry("grep_files", false),
@@ -74,7 +74,11 @@ public final class AgentxFrameworkToolGate implements MiddlewareBase {
                     Map.entry("memory_search", false),
                     Map.entry("memory_get", false),
                     Map.entry("session_search", false),
-                    Map.entry("memory_save", true));
+                    Map.entry("memory_save", true),
+                    // 目标模式的候选提议工具：只在任务上下文里记一条候选，采纳与否只能用户逐条点
+                    // （框架注释原文：cannot confirm requirements, change confirmed text, or mark
+                    // criteria satisfied）——本体没有外部副作用，按读类放行，只读档下才还能提议。
+                    Map.entry("task_requirement_propose", false));
 
     /** 拒时的回话。措辞与问渠守卫同族：说清「为什么不能」与「接下来怎么办」，模型才能改道。 */
     private static final String DENY_TEMPLATE =
