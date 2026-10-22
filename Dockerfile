@@ -17,7 +17,10 @@ COPY --from=build /app/target/wenqu.jar app.jar
 RUN apt-get update && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/* \
     # 图片存储目录（挂载卷；非 root 用户需要写权限）
-    && mkdir -p /app/data/images \
+    # user-data 也必须在这里建好：技能落盘根（skills-builtin / skills-users）挂的是命名卷，
+    # 而命名卷首次创建时按镜像里挂载点的属主初始化——镜像里没这个目录就是 root:root 755，
+    # 应用以 appuser 跑，BuiltinSkillSeeder 直接 AccessDeniedException（实测踩过：内置技能整批不可用）。
+    && mkdir -p /app/data/images /app/user-data \
     && useradd -r -m appuser \
     && chown -R appuser:appuser /app
 USER appuser
