@@ -1172,50 +1172,62 @@
         </button>
         <div v-if="goalOpen" class="rp-goal-body">
           <GoalCard :card="sessionGoal" @mark="p => goalAct('markManual', p)" />
+          <!-- 验收态把交付物指到眼前：目标卡说「检查交付物」，产物卡就在这一栏下方——
+               不指这一行，用户被叫回来验收时要在满屏里自己找做出来的东西（真机提过这个问题）。 -->
+          <div v-if="sessionGoal.status === 'WAITING_INPUT' && sessionArtifacts.length" class="rp-goal-deliver">
+            <span>本会话交付物 {{ sessionArtifacts.length }} 个，在下方「产物」卡里预览</span>
+            <button type="button" class="rp-goal-deliver-link" @click="router.push('/artifacts')">去产物页 ›</button>
+          </div>
           <!-- 暂停/继续/取消都收在输入框上方那条目标条上（一个动作只留一个入口）。这里只放
                面板才需要的两件事：现在自己验一遍、不等它继续推就此收尾。
                待确认那一档两个都不给——pause 在后端只认进行中那三态，摆出来就是点了报错。 -->
           <div v-if="!goalTerminal && !pendingGoal" class="rp-goal-actions">
             <button class="app-btn ghost small" :disabled="sessionGoal.busy"
-                    @click="goalAct('verifyNow')">现在验收</button>
+                    @click="goalAct('verifyNow')"><safety-certificate-outlined /> 现在验收</button>
             <button class="app-btn ghost small" :disabled="sessionGoal.busy"
-                    @click="goalAct('finish')">就此收尾</button>
+                    @click="goalAct('finish')"><stop-outlined /> 就此收尾</button>
           </div>
           <div v-else-if="goalTerminal" class="rp-goal-actions">
             <button class="app-btn ghost small" @click="openGoalDraft()">另起目标</button>
           </div>
           <!-- 目标区间轮次跳转：按 first/last_turn_id 定位气泡（逐气泡过程入口沿用 SessionEventsPanel） -->
           <button v-if="sessionGoal.lastTurnId" type="button" class="rp-goal-jump"
-                  @click="jumpToGoalTurn">看这一轮的过程</button>
+                  @click="jumpToGoalTurn"><history-outlined /> 看这一轮的过程</button>
         </div>
       </div>
       <!-- 引用来源：右栏交互最重的一张卡（点片段定位正文 / hover 高亮角标 / 分组展开），提到第二位。
            原先排在末尾，等于把「核查答案」这个最高频动作排到最需要滚动才看得到的位置——
            正文里刚亮起的角标，用户得点开侧栏再往下翻。移动端 sheet 一直把它排第一，这里对齐。
-           有引用才显示整卡（空则隐藏，不占版面，与产物/沙盒卡同规则）。 -->
+           有引用才显示整卡（空则隐藏，不占版面，与产物/沙盒卡同规则）。
+           卡头可折叠：来源多时（11 个来源就是 11 个分组行）整卡会把清单/目标卡顶出首屏。 -->
       <div v-if="groupedSources.length" class="rp-card">
-        <div class="rp-label">引用来源 · {{ groupedSources.length }} 个来源</div>
-        <div v-for="g in groupedSources" :key="g.key" class="rp-group">
-          <div class="rp-group-head" @click="toggleSrc(g)" :title="srcOpenOf(g) ? '收起片段' : '展开片段'">
-            <global-outlined v-if="g.icon === 'web'" class="rp-src-ic" />
-            <api-outlined v-else-if="g.icon === 'mcp'" class="rp-src-ic" />
-            <file-text-outlined v-else class="rp-src-ic" />
-            <span class="rp-src-name">{{ g.fileName }}</span>
-            <span class="rp-count">{{ g.items.length }} 段</span>
-            <caret-right-outlined class="tl-caret" :class="{ open: srcOpenOf(g) }" />
-          </div>
-          <div class="rp-group-body" :class="{ open: srcOpenOf(g) }">
-            <!-- 0fr→1fr 只对**唯一直接子元素**生效：多个直接子元素会落到 auto 隐式行不参与收缩，故统一包一层 -->
-            <div class="rp-group-body-in">
-              <div v-for="(s, si) in g.items" :key="si" class="rp-src rp-src-sub"
-                   :class="{ hl: hoveredRef === s.ref }"
-                   title="点击查看原文；有对应角标的来源会在正文中定位"
-                   @click.stop="locateSource(s)"
-                   @mouseenter="hoverSource(s)" @mouseleave="unhoverSource(s)">
-                <span class="rp-src-ref">[{{ s.ref }}]</span>
-                <span v-if="s.origin === 'MENTION'" class="rp-src-mine" title="本轮你 @ 引用的资料">引用</span>
-                <span class="rp-src-name">{{ s.title ? '§ ' + s.title : '片段 ' + (si + 1) }}</span>
-                <span v-if="debugDisplayVisible && fmtSourceScore(s)" class="rp-src-score" :title="scoreTitle(s)">{{ fmtSourceScore(s) }}</span>
+        <button type="button" class="rp-card-head" @click="srcCardOpen = !srcCardOpen">
+          <span class="rp-label">引用来源 · {{ groupedSources.length }} 个来源</span>
+          <caret-right-outlined class="tl-caret" :class="{ open: srcCardOpen }" />
+        </button>
+        <div v-if="srcCardOpen">
+          <div v-for="g in groupedSources" :key="g.key" class="rp-group">
+            <div class="rp-group-head" @click="toggleSrc(g)" :title="srcOpenOf(g) ? '收起片段' : '展开片段'">
+              <global-outlined v-if="g.icon === 'web'" class="rp-src-ic" />
+              <api-outlined v-else-if="g.icon === 'mcp'" class="rp-src-ic" />
+              <file-text-outlined v-else class="rp-src-ic" />
+              <span class="rp-src-name">{{ g.fileName }}</span>
+              <span class="rp-count">{{ g.items.length }} 段</span>
+              <caret-right-outlined class="tl-caret" :class="{ open: srcOpenOf(g) }" />
+            </div>
+            <div class="rp-group-body" :class="{ open: srcOpenOf(g) }">
+              <!-- 0fr→1fr 只对**唯一直接子元素**生效：多个直接子元素会落到 auto 隐式行不参与收缩，故统一包一层 -->
+              <div class="rp-group-body-in">
+                <div v-for="(s, si) in g.items" :key="si" class="rp-src rp-src-sub"
+                     :class="{ hl: hoveredRef === s.ref }"
+                     title="点击查看原文；有对应角标的来源会在正文中定位"
+                     @click.stop="locateSource(s)"
+                     @mouseenter="hoverSource(s)" @mouseleave="unhoverSource(s)">
+                  <span class="rp-src-ref">[{{ s.ref }}]</span>
+                  <span v-if="s.origin === 'MENTION'" class="rp-src-mine" title="本轮你 @ 引用的资料">引用</span>
+                  <span class="rp-src-name">{{ s.title ? '§ ' + s.title : '片段 ' + (si + 1) }}</span>
+                  <span v-if="debugDisplayVisible && fmtSourceScore(s)" class="rp-src-score" :title="scoreTitle(s)">{{ fmtSourceScore(s) }}</span>
+                </div>
               </div>
             </div>
           </div>
@@ -1547,7 +1559,8 @@ import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, Close
          HistoryOutlined, SwapOutlined, InfoCircleOutlined,
          AppstoreOutlined, ClockCircleOutlined, BookOutlined,
          OrderedListOutlined, CheckCircleOutlined, LeftOutlined, FolderOpenOutlined,
-         AimOutlined, EyeOutlined } from '@ant-design/icons-vue'
+         AimOutlined, EyeOutlined,
+         SafetyCertificateOutlined, StopOutlined } from '@ant-design/icons-vue'
 import { debugRetrieval, deleteMessageGroup, submitFeedback as apiSubmitFeedback,
          addEvalCase, getSessionShare, enableSessionShare, disableSessionShare,
          getSessionWorkspace } from '../api'
@@ -3478,6 +3491,10 @@ const restoreWenquChips = html => {
 
 // 右栏「任务清单」卡：有清单就默认展开（用户开这个功能就是为了看见还剩几步，收着没意义）
 const todoOpen = ref(true)
+
+// 右栏「引用来源」卡折叠态：同任务清单默认展开（核查答案是最高频动作，保持现状不变，
+// 只是给来源多时一个收起整卡的出口）
+const srcCardOpen = ref(true)
 const todoDone = computed(() => (sessionTodos.value?.items || []).filter(i => i.status === 'done').length)
 
 // ===== 右栏「计划」折叠态 =====
@@ -4611,7 +4628,9 @@ onMounted(async () => {
 
 /* 右栏统计口径切换 + 上下文占用条 */
 /* 口径切换器现在贴在「检索与用量」卡的标题行右侧（不再独占栏首） */
-.rp-card-head { display: flex; align-items: center; gap: 6px; }
+/* 卡头：div（统计卡）与 button（目标/引用来源卡的折叠头）共用。button 需要自带重置
+   （antd reset 不清 button 底色边框），div 上这些属性是空操作，故统一写在这里 */
+.rp-card-head { display: flex; align-items: center; gap: 6px; width: 100%; background: none; border: 0; padding: 0; text-align: left; cursor: pointer; font: inherit; }
 .rp-card-head .rp-label-h { margin-bottom: 0; }
 .rp-card-head .rp-scope { margin-left: auto; flex: none; }
 .rp-scope { display: inline-flex; border: 1px solid var(--app-border); border-radius: 7px; overflow: hidden; background: var(--app-panel); }
@@ -4781,8 +4800,18 @@ onMounted(async () => {
    面板头只留栏名与折叠键——同一条信息在一张卡里出现两遍，用户会读成两件事 */
 .rp-goal-body { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
 .rp-goal-body .goal-card { margin: 0; padding: 0; border: none; background: none; }
+/* 两个动作键与移动壳 rs-act 同形：图标 + 文案横排，图标压到 12px 才不撑高 26px 的小按钮 */
 .rp-goal-actions { display: flex; flex-wrap: wrap; gap: 6px; }
-.rp-goal-jump { align-self: flex-start; border: none; background: none; padding: 0; font-size: 12px; color: var(--app-primary, #1677ff); cursor: pointer; }
+.rp-goal-actions .app-btn { display: inline-flex; align-items: center; gap: 5px; }
+.rp-goal-actions .anticon { font-size: 12px; }
+.rp-goal-jump { align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; border: none; background: none; padding: 0; font-size: 12px; color: var(--app-accent); cursor: pointer; }
+.rp-goal-jump .anticon { font-size: 12px; }
+/* 验收态的交付物指引：一条小字 + 一个去产物页的口子，不抢目标卡的动作 */
+.rp-goal-deliver { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  font-size: 12px; color: var(--app-text2); background: var(--app-panel-2);
+  border-radius: 6px; padding: 6px 8px; }
+.rp-goal-deliver-link { border: none; background: none; color: var(--app-accent); font-size: 12px;
+  cursor: pointer; padding: 0; white-space: nowrap; }
 
 /* 目标起草弹窗 */
 .goald-box { display: flex; flex-direction: column; gap: 8px; }
