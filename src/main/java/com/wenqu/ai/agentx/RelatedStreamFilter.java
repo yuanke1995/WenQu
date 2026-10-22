@@ -4,7 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * {@code <related>}／{@code <process>} 两个推荐块的流式剥离器（框架引擎侧）。
+ * {@code <related>}／{@code <process>} 两个推荐块的流式剥离器（框架引擎侧），外加一道内部标记闸。
  *
  * <p>为什么框架侧要有自己的这一份：主链路的系统提示词里带一句「回答末尾用 &lt;related&gt;…&lt;/related&gt;
  * 输出 N 条下一步建议」（条数与文本走 {@code RelatedPrompt} 同一处，两条运行时不改两份）。模型照做之后，
@@ -18,6 +18,12 @@ import java.util.List;
  *
  * <p>{@code <process>} 一并处理：块内内容进 {@link #process()}（落库的过程独白列 + 实时 {@code process} 帧），
  * 不混进正文。
+ *
+ * <p><b>内部标记闸</b>（{@link #dsml()}）：DeepSeek 系模型的工具调用标记（{@code <｜｜DSML｜｜…}，
+ * 竖线是 U+FF5C 全角）本该只出现在结构化的 {@code tool_calls} 里，上游偶发把它当正文吐进 content。
+ * 真机 2026-10-22 20:54 那一轮（deepseek-v4-1-flash）整条回答 375 字符全是这样一段调用文本，
+ * 而它想执行的那一步并没有执行。这里从标记处整段吞到流尾（模型把调用写成文本时这一跑就说完了），
+ * 脏文本不进正文、不落库；吞掉的量由调用方记一条降级说明与日志，别让它静默消失。
  */
 public final class RelatedStreamFilter {
 
@@ -25,15 +31,22 @@ public final class RelatedStreamFilter {
     private static final String REL_CLOSE = "</related>";
     private static final String PROC_OPEN = "<process>";
     private static final String PROC_CLOSE = "</process>";
+    /** 工具调用内部标记的前缀（闭合形是 {@code </｜｜DSML｜｜…>}，不会撞这个前缀）。 */
+    private static final String DSML_OPEN = "<｜｜DSML｜｜";
 
     private final StringBuilder body = new StringBuilder();
     private final StringBuilder related = new StringBuilder();
     private final StringBuilder process = new StringBuilder();
+    private final StringBuilder dsml = new StringBuilder();
     /** 尚未定性的一段尾巴：可能是标签的一部分，留着等下一个增量。 */
     private final StringBuilder pending = new StringBuilder();
     private Mode mode = Mode.BODY;
 
-    private enum Mode {BODY, RELATED, PROCESS}
+    private enum Mode {BODY, RELATED, PROCESS, DSML}
+
+    /** 三个开标签里最长的那个减去一：尾巴最多可能像它这么长。 */
+    private static final int MAX_PREFIX =
+            Math.max(DSML_OPEN.length(), Math.max(REL_OPEN.length(), PROC_OPEN.length())) - 1;
 
     /**
      * 吃进一段正文增量，返回此刻可以下发的部分（可能为空）。
@@ -47,7 +60,8 @@ public final class RelatedStreamFilter {
             if (mode == Mode.BODY) {
                 int r = s.indexOf(REL_OPEN);
                 int p = s.indexOf(PROC_OPEN);
-                int cut = firstHit(r, p);
+                int d = s.indexOf(DSML_OPEN);
+                int cut = firstHit(firstHit(r, p), d);
                 if (cut < 0) {
                     // 没有完整开标签：能确定不是标签前缀的部分立刻走，其余留着
                     int hold = prefixHoldLen(s);
@@ -59,11 +73,22 @@ public final class RelatedStreamFilter {
                     pending.append(s.substring(s.length() - hold));
                     return out.toString();
                 }
-                boolean isRelated = r >= 0 && (p < 0 || r <= p);
+                boolean isRelated = r >= 0 && cut == r;
+                boolean isDsml = d >= 0 && cut == d;
                 out.append(s, 0, cut);
                 pending.setLength(0);
+                if (isDsml) {
+                    // 吞到流尾：调用标记写成文本时这一跑就是说完了，后面不会再有人话
+                    dsml.append(s.substring(d));
+                    mode = Mode.DSML;
+                    return out.toString();
+                }
                 pending.append(s.substring(cut + (isRelated ? REL_OPEN.length() : PROC_OPEN.length())));
                 mode = isRelated ? Mode.RELATED : Mode.PROCESS;
+            } else if (mode == Mode.DSML) {
+                dsml.append(s);
+                pending.setLength(0);
+                return out.toString();
             } else if (mode == Mode.RELATED) {
                 int end = s.indexOf(REL_CLOSE);
                 if (end < 0) {
@@ -105,6 +130,10 @@ public final class RelatedStreamFilter {
     public String finish() {
         String tail = pending.toString();
         pending.setLength(0);
+        if (mode == Mode.DSML) {
+            dsml.append(tail);
+            return "";
+        }
         if (mode == Mode.RELATED) {
             related.append(tail);
             return "";
@@ -117,6 +146,7 @@ public final class RelatedStreamFilter {
         if (looksLikeTagStart(tail)) {
             if (tail.startsWith(REL_OPEN)) return feed(tail.substring(REL_OPEN.length()));
             if (tail.startsWith(PROC_OPEN)) return feed(tail.substring(PROC_OPEN.length()));
+            if (tail.startsWith(DSML_OPEN)) return feed(tail.substring(DSML_OPEN.length()));
             return "";
         }
         body.append(tail);
@@ -131,6 +161,11 @@ public final class RelatedStreamFilter {
     /** 已剥出的过程独白。 */
     public String process() {
         return process.toString();
+    }
+
+    /** 被吞掉的工具调用内部标记（正常恒为空；非空即这一轮有一步没真跑）。 */
+    public String dsml() {
+        return dsml.toString();
     }
 
     /**
@@ -194,10 +229,10 @@ public final class RelatedStreamFilter {
 
     /** 尾巴里「可能是标签真前缀」的那段长度；返回 -1 表示整段都在疑似状态。 */
     private int prefixHoldLen(String s) {
-        int max = REL_OPEN.length() - 1;
-        for (int i = Math.max(0, s.length() - max); i < s.length(); i++) {
+        for (int i = Math.max(0, s.length() - MAX_PREFIX); i < s.length(); i++) {
             String tail = s.substring(i);
-            if (isProperPrefix(tail, REL_OPEN) || isProperPrefix(tail, PROC_OPEN)) {
+            if (isProperPrefix(tail, REL_OPEN) || isProperPrefix(tail, PROC_OPEN)
+                    || isProperPrefix(tail, DSML_OPEN)) {
                 return s.length() - i;
             }
         }
@@ -219,6 +254,7 @@ public final class RelatedStreamFilter {
 
     private static boolean looksLikeTagStart(String tail) {
         return tail.startsWith("<") && (isProperPrefix(tail, REL_OPEN) || isProperPrefix(tail, PROC_OPEN)
-                || tail.startsWith(REL_OPEN) || tail.startsWith(PROC_OPEN));
+                || isProperPrefix(tail, DSML_OPEN)
+                || tail.startsWith(REL_OPEN) || tail.startsWith(PROC_OPEN) || tail.startsWith(DSML_OPEN));
     }
 }
