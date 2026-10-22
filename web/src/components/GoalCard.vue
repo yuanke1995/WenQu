@@ -11,8 +11,9 @@
   -->
   <div class="goal-card" :class="'goal-' + (card.status || '').toLowerCase()">
     <div class="goal-card-head">
+      <!-- 「目标」二字不在这里说：PC 挂在右栏「目标」面板下、移动壳挂在「目标」小节下，
+           外壳已报过卡名，卡头再说一遍就是同一个词出现两回。图标只做视觉锚点。 -->
       <aim-outlined class="goal-card-ic" />
-      <span class="goal-card-title">目标</span>
       <span class="goal-state" :class="'st-' + stateClass">
         <i class="goal-state-dot" />{{ stateLabel }}
       </span>
@@ -149,8 +150,7 @@ function outcomeLabel (o) {
 <style scoped>
 .goal-card { border: 1px solid var(--border-color, #e5e6eb); border-radius: 10px; padding: 10px 12px; margin: 8px 0; background: var(--bg-color, #fff); }
 .goal-card-head { display: flex; align-items: center; gap: 8px; }
-.goal-card-ic { color: var(--app-accent); }
-.goal-card-title { font-weight: 600; font-size: 13px; }
+.goal-card-ic { color: var(--app-accent); flex: none; }
 /* 状态词：色点 + 词，各档一色。进行中那一档的点轻呼吸——静态的蓝点和灰点分不出「在跑」和「挂着」 */
 .goal-state { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 1px 8px; border-radius: 8px; background: #f0f1f3; color: #555; white-space: nowrap; }
 .goal-state-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }

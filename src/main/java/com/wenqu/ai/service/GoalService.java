@@ -550,13 +550,8 @@ public class GoalService {
                     if (!drafted.isEmpty()) {
                         current.addAll(drafted);
                         goal.setCriteriaJson(JSON.toJSONString(current));
-                        // decide 会推进框架的 contractVersion：库里的水位要当场跟上，
-                        // 否则下一次 syncBeforeSubmit 一更新，刚采纳的人工结论会被判成 STALE
-                        long[] wm = goalBridge.watermarks(sessions.agentOf(uid, sessionId), uid, sessionId);
-                        if (wm != null) {
-                            goal.setStateRevision(wm[0]);
-                            goal.setContractVersion(wm[1]);
-                        }
+                        // 框架侧的 decide(CONFIRMED) 由下一轮开跑前 beginOrUpdate（轮外）补上，这里只落库。
+                        // 不读水位、不抢写锁——contractVersion 的推进统一发生在 syncBeforeSubmit。
                         log.info("[GOAL] 助手起草的验收标准已自动采纳: goal={} {} 条", goal.getId(), drafted.size());
                     }
                 }

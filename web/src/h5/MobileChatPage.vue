@@ -661,8 +661,12 @@ const mentionNames = computed(() => pendingMentions.value.map(m => m.name || m.i
 const startGoalNowM = async () => {
   const obj = String(text.value || '').trim()
   if (!obj) { goalDraftOpen.value = true; return null }
+  // 先清框、后建目标（与 PC 同口径）：建目标是一次异步请求（建行 + 框架同步 + 起首轮），
+  // 等它回来再清，用户会盯着满框文字以为没发出去
+  text.value = ''
   const g = await startGoal(obj, [])
-  if (g) text.value = ''
+  // 建失败就把那句还回来（这期间没打新字才还，不覆盖用户新写的东西）
+  if (!g && !String(text.value || '').trim()) text.value = obj
   return g
 }
 /** 「+」→ 本轮模式里那颗「定为目标」：先把 sheet 收掉再走同一条创建口——建目标会把输入卡顶成待确认栏，

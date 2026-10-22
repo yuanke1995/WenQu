@@ -244,18 +244,26 @@ public class GoalBridge {
     }
 
     /**
-     * 把助手本轮提出的候选标准自动采纳为正式标准。
+     * 读出助手本轮提出的候选标准（只读发现）。
      *
      * <p>只在这条目标由用户用 {@code /goal} 发起、且首轮还没有标准时调用：用户那一句“设为目标”
      * 就是授权助手起草；采纳记为 {@code CALLER}（不是 USER），来源 {@code goal-draft:}。
      * 用户随时可以改、删、否决——草案不是用户逐条点过的，但也不是平台背着用户加的。
+     *
+     * <p><b>只读，不写框架</b>：本方法只从框架活状态读出助手起草的 {@code CANDIDATE} 候选要求，
+     * 返回给调用方落库（写 {@code criteria_json}）。框架侧的 {@code decide(CONFIRMED)} 不在这里做——
+     * 本方法在 {@code onTurnEnd} 里被调，而那一刻本轮回话仍持着会话日志写锁（2 分钟租约，
+     * recorder 收尾才放），轮内写会抛 {@code SessionLogException: active writer}（2026-10-22 线上连踩两次：
+     * 采纳全失败 → 目标带着空标准停下、用户无标准可验）。CONFIRMED 的采纳由下一轮开跑前的
+     * {@link #beginOrUpdate}（轮外、submit 之前，唯一合法写点）统一补上，这里无需抢锁。
      *
      * <p>只收 {@code ACCEPTANCE_CRITERION}，避免把约束混进验收清单；按原文去重，最多收满
      * {@code maxCriteria} 条。验证方式暂统一为人工核验（提案工具不带验证器参数），
      * 由目标卡逐条勾选；等以后提案能带验证信息再自动配。
      *
      * @param existing 库里已有的标准（用来去重、算已占条数）
-     * @return 本次采纳的标准（已落框架，调用方负责写回 criteria_json）；失败返回空表
+     * @return 本次采纳的标准（已读出候选，调用方负责写回 criteria_json；框架侧标记下一轮补齐）；
+     *         读取失败或实例不在本进程返回空表
      */
     public List<Criterion> adoptDrafted(HarnessAgent agent, String uid, String sessionId, Goal goal,
                                         List<Criterion> existing, int maxCriteria) {
@@ -271,13 +279,12 @@ public class GoalBridge {
         }
         int already = existing == null ? 0 : existing.size();
         if (already >= maxCriteria) return List.of();
+        // 只读发现：getAgentState 是读、不需要写锁，绝不会抛 active writer。框架侧的
+        // decide(CONFIRMED) 由下一轮开跑前的 beginOrUpdate（轮外）统一补上，这里只读出候选落库。
         try {
-            updateStateWithRetry(agent, uid, sessionId, goal.getId(), "goal_adopt", state -> {
+            AgentState state = agent.getDelegate().getAgentState(ctx(uid, sessionId));
+            if (state != null) {
                 TaskContextState tc = state.getTasksContext();
-                if (tc.getScope() == null || !goal.getId().equals(tc.getScope().taskId())) {
-                    tc.beginTask(new TaskContextState.Scope(goal.getId(), goal.getObjective(),
-                            SOURCE_PREFIX + goal.getId()), tc.snapshot().getRevision());
-                }
                 List<TaskRequirement> requirements = tc.getRequirements() == null
                         ? List.of() : new ArrayList<>(tc.getRequirements());
                 for (TaskRequirement r : requirements) {
@@ -287,17 +294,14 @@ public class GoalBridge {
                     if (r.text() == null || r.text().isBlank() || !texts.add(r.text())) continue;
                     String key = nextDraftKey(keys);
                     keys.add(key);
-                    tc.decide(r.id(), TaskRequirement.Status.CONFIRMED,
-                            new TaskRequirement.Decision(TaskRequirement.Authority.CALLER,
-                                    DRAFT_SOURCE_PREFIX + goal.getId()),
-                            tc.snapshot().getRevision());
+                    // 只读出候选、记下框架 requirementId 落库；decide(CONFIRMED) 留给下一轮 beginOrUpdate。
                     adopted.add(new Criterion(key, r.id(), "ACCEPTANCE_CRITERION", r.text(), "CONFIRMED",
                             DRAFT_SOURCE_PREFIX + goal.getId(), GoalVerificationRegistry.MANUAL,
                             new LinkedHashMap<>()));
                 }
-            });
+            }
         } catch (Exception e) {
-            log.warn("[GOAL] 助手起草的验收标准自动采纳失败: goal={} session={} {}",
+            log.warn("[GOAL] 读取助手起草的验收标准失败: goal={} session={} {}",
                     goal.getId(), sessionId, e.toString());
             return List.of();
         }

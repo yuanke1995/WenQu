@@ -1626,6 +1626,9 @@ const route = useRoute()
 
 // 目标模式是否已进入（还没发出去）：和计划模式一样，靠输入框里那颗 chip 表示，× 退出
 const goalArmed = ref(false)
+// 建目标的请求在飞（startGoal 是异步的：建行 + 框架同步 + 起首轮）。这一窗口里要挡住
+// 重复触发——否则连按第二下 Enter/发送键会落到普通发送，把残留的附件当成普通问题发出去
+const goalStarting = ref(false)
 
 // ==================== 工具审批恢复（通知 → 会话）：按 approvalId 重建审批卡 ====================
 // 状态机与移动壳共用（src/chat/useApprovalRecovery.js）：两端「批准/拒绝 → 重取状态」口径一致
@@ -2641,14 +2644,19 @@ const inlineSlash = () => {
   if (plan) { text.value = ''; runPlanCommand(plan[1] || ''); return true }
   return false
 }
-const sendNow = () => {
+const sendNow = async () => {
   if (inlineSlash()) { closeAllPanels(); return }
   if (goalModeOn.value && goalArmed.value && !sessionGoal.value && String(text.value || '').trim()) {
     goalArmed.value = false
     closeAllPanels()
-    startGoalNow()
+    const g = await startGoalNow()
+    // 目标没立成（网络失败/服务端拒绝）：重新上膛，用户再按 Enter 仍走目标这条路
+    // （那句原文已由 startGoalNow 还回输入框）
+    if (!g) goalArmed.value = true
     return
   }
+  // 目标创建中：这一下是重复触发（连按 Enter / 发送键），不落到普通发送
+  if (goalStarting.value) return
   closeAddPanel(); send()
 }
 
@@ -3608,9 +3616,21 @@ const startGoalNow = async (prefill) => {
     focusInput()
     return null
   }
-  const g = await startGoal(obj, [])
-  if (g && prefill == null) text.value = ''
-  return g
+  // 先清框、后建目标：建目标是一次异步请求（建行 + 框架同步 + 起首轮，冷启动要几秒），
+  // 等它回来再清，用户会盯着满框文字和一颗亮着的发送键，以为这一句没发出去。
+  // 与普通发送同口径：text 在请求发出前就清掉。prefill 路径（/goal 目标、工具条按钮）的
+  // 正文已由触发处摘走，这里不重复清。
+  if (prefill == null) text.value = ''
+  goalStarting.value = true
+  try {
+    const g = await startGoal(obj, [])
+    // 建失败就把那句还回来：目标没立成框却空了，用户只能凭记忆重打。
+    // 这期间用户又打了字就不还——不覆盖他新写的东西
+    if (!g && prefill == null && !String(text.value || '').trim()) text.value = obj
+    return g
+  } finally {
+    goalStarting.value = false
+  }
 }
 
 // ---- 起草弹窗（只用于「另起目标/换口径」：主入口 /goal 与工具条按钮直接取正文建目标） ----
