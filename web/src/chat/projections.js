@@ -541,6 +541,29 @@ const resumedStartAt = (elapsedMs, clientNow) => {
   const ran = Number(elapsedMs) || 0
   return ran > 0 ? Math.max(0, now - ran) : now
 }
+/** 两个起表点取更早的那一个（0/缺 = 没有那一份，直接取另一份）。
+ *  接流时服务端换算出的起表点与本地已有的起表点谁早用谁：目标排队那颗占位气泡从按下回车起表，
+ *  比「总线登记那一刻」还早——取新的会让跳着的秒数往回跳，用户读成计时坏了。 */
+const earlierStart = (had, candidate) => {
+  const a = Number(had) || 0
+  const b = Number(candidate) || 0
+  if (a <= 0) return b
+  if (b <= 0) return a
+  return Math.min(a, b)
+}
+/** 收尾那一刻写回气泡的「机器时间」那一份：让 turnMs + 等人时间 等于本地钟量到的整轮墙钟。
+ *  目标模式那一轮的本地钟从「按下回车」起表，中间还含着调度排队与实例冷启动那几秒，而服务端那份
+ *  从登记上运行总线才开始算——照抄会让跳着的「正在溯源，用时 8 秒」在答完那一刻变成
+ *  「已完成，用时 5 秒」，数字变小读成计时坏了（顶部这条一直报墙钟，同一条理由）。
+ *  没有本地起表点（历史消息）时原样返回服务端那份，不拿库里的创建时刻凑。 */
+const settledTurnMs = (serverMs, waitMs, startedAt, settledAt) => {
+  const machine = Math.max(0, Number(serverMs) || 0)
+  const wait = Math.max(0, Number(waitMs) || 0)
+  const a = Number(startedAt) || 0
+  const b = Number(settledAt) || 0
+  const wall = a > 0 && b > a ? b - a : 0
+  return Math.max(machine, wall - wait)
+}
 /** 过程块折叠态：与思考段/簇同一套约定——用户点过就认点过的，没点过时收场收起、历史消息天然收起。
  *  跑着的时候恒展开且**不认用户点过的那一次**：这一条此刻只是跟着秒走的计时器，把正在长的过程
  *  收起来既没有可读的东西、又会把「答案写完之前看不到它在干什么」变成常态。
@@ -1006,14 +1029,16 @@ const fmtWindow = n => {
  *  反复送进去，几轮下来能到占用的两三倍。拿它当「这一轮用了多少」摆在「上下文 · 输出」旁边，
  *  两个数永远加不上，用户只会读成数字算错了。 */
 const usageCtxTokens = t => (!t || typeof t !== 'object') ? 0 : (Number(t.context) || Number(t.prompt) || 0)
-/** 用量悬停明细：三个数各起各的名，谁也不跟谁相加（占用 ≠ 累计送入 ≠ 输出）。 */
+/** 用量悬停明细：三个数各起各的名、各占一行，谁也不跟谁相加（占用 ≠ 累计送入 ≠ 输出）。
+ *  只报名字和数，不写解释——消费方要把 tooltip 渲染成多行：antd 的 title 是纯文本，
+ *  需 overlay-inner-style 的 pre-line。 */
 const usageTip = t => {
   if (!t || typeof t !== 'object') return ''
   const n = v => fmtTokens(Number(v) || 0)
   const segs = [`上下文占用 ${n(usageCtxTokens(t))} tokens`]
-  if (Number(t.prompt) > 0) segs.push(`本轮累计送入 ${n(t.prompt)}（含每次工具往返重发）`)
+  if (Number(t.prompt) > 0) segs.push(`本轮累计送入 ${n(t.prompt)} tokens`)
   segs.push(`输出 ${n(t.output)} tokens`)
-  return segs.join(' · ') + (t.outputIsReal ? '（网关实测）' : '（估算）')
+  return segs.join('\n')
 }
 /** 分组内核：入参 sources 数组，返回按 key 分好的组（外部来源 WEB/MCP 单独成组） */
 const groupSources = sources => {
@@ -1181,17 +1206,23 @@ const verLabel = m => verLocal(m)
 // 没有逐条核验、没有倒计时。用户的动作只剩三个：改目标原文、停止/继续、删除。
 // 摘要条、右栏/移动详情面、目标卡三处共用同一套词与同一份判据：各处各写一遍必然漂移
 // （同一条目标，条子说一个词、卡里说另一个词就是那种）。入参一律是目标视图模型本身，不读任何 .value。
-// 后端只给四档状态：RUNNING / PAUSED / ACHIEVED / CANCELLED（老行的其余状态读取时已归一）。
+// 后端状态（2026-10-22 任务运行时）：QUEUED/RUNNING/PAUSED/VERIFYING/WAITING_APPROVAL/
+// WAITING_EVENT/ACHIEVED/FAILED/CANCELLED。老行的其余状态读取时已归一。
 /** 不再往下推的那几档：详情面转只读，条子也不再露 */
 const GOAL_ENDED = ['ACHIEVED', 'CANCELLED', 'FAILED', 'ENDED_INCOMPLETE']
-/** 还活着的两档：条子只在这两档上出现（暂停也是「用户可以接着处理」的活目标） */
-const GOAL_LIVE = ['RUNNING', 'PAUSED']
+/** 还归用户管的几档：条子在这些档上出现（暂停/等待也是「用户可以接着处理」的活目标） */
+const GOAL_LIVE = ['QUEUED', 'RUNNING', 'PAUSED', 'VERIFYING', 'WAITING_APPROVAL', 'WAITING_EVENT']
+/** 条子可见的范围：FAILED 也要能看见（否则用户没有入口点「继续」把预算/核验失败的目标救回来） */
+const GOAL_VISIBLE = [...GOAL_LIVE, 'FAILED']
+/** 正在往前的几档：暂停/等待不算「在跑」，但都还是活目标 */
+const GOAL_MOVING = ['QUEUED', 'RUNNING', 'VERIFYING', 'WAITING_APPROVAL', 'WAITING_EVENT']
 
 const goalTerminalOf = g => !!g && GOAL_ENDED.includes(g.status)
-const goalBarVisibleOf = g => !!g && GOAL_LIVE.includes(g.status)
+const goalBarVisibleOf = g => !!g && GOAL_VISIBLE.includes(g.status)
 const goalPhraseOf = g => {
   const s = g && g.status
-  if (s === 'RUNNING') return '进行中的目标'
+  if (g && g.phase === 'COMPLETION_CHECK') return '确认中的目标'
+  if (GOAL_MOVING.includes(s)) return '进行中的目标'
   if (s === 'PAUSED') return '已暂停的目标'
   if (s === 'ACHIEVED') return '已完成的目标'
   if (GOAL_ENDED.includes(s)) return '已结束的目标'
@@ -1199,7 +1230,12 @@ const goalPhraseOf = g => {
 }
 const goalStateLabelOf = g => {
   const s = g && g.status
-  if (s === 'RUNNING') return '进行中'
+  if (g && g.stale && GOAL_LIVE.includes(s)) return '待恢复'
+  if (g && g.phase === 'COMPLETION_CHECK') return '确认中'
+  if (s === 'VERIFYING') return '核验中'
+  if (s === 'WAITING_APPROVAL') return '待确认'
+  if (s === 'WAITING_EVENT') return '等待中'
+  if (s === 'QUEUED' || s === 'RUNNING') return '进行中'
   if (s === 'PAUSED') return '已暂停'
   if (s === 'ACHIEVED') return '已完成'
   if (GOAL_ENDED.includes(s)) return '已结束'
@@ -1207,7 +1243,8 @@ const goalStateLabelOf = g => {
 }
 const goalStateClassOf = g => {
   const s = g && g.status
-  if (s === 'RUNNING') return 'running'
+  if (g && g.stale && GOAL_LIVE.includes(s)) return 'paused'
+  if (GOAL_MOVING.includes(s)) return 'running'
   if (s === 'PAUSED') return 'paused'
   if (s === 'ACHIEVED') return 'achieved'
   if (GOAL_ENDED.includes(s)) return 'ended'
@@ -1218,6 +1255,7 @@ const goalStateClassOf = g => {
 const goalRoundLineOf = g => {
   if (!g) return ''
   const round = Number(g.round) || 0
+  if (round <= 0) return '准备开始'
   return `第 ${round} 轮`
 }
 /** 停下来的原因：只说「为什么在这儿停住」，与用户自己按的暂停分开说（后者不给原因行）。
@@ -1229,6 +1267,12 @@ const goalBlockReasonOf = g => {
     return g.status === 'PAUSED' ? `已到自动推进上限（${goalRoundLineOf(g)}），先停在这里` : ''
   }
   if (reason === 'blocked') return `受阻：${String(g.blockedReason || '').trim() || '助手报告目标无法继续'}`
+  if (reason === 'budget') return '已达到本次目标的预算上限，先停在这里'
+  if (reason === 'no-progress') return '连续几轮没有实质进展，先停在这里'
+  if (reason === 'verification-failed') return '连续提交的证据都没通过核验，先停在这里'
+  if (reason === 'completion-unconfirmed') return '连续完成检查仍未提交完成或剩余项，先停在这里'
+  if (reason === 'orphaned') return '上一次执行中断，已停下；可以继续恢复'
+  if (reason === 'turn-failed' && g.blockedReason) return `这一轮没跑完：${String(g.blockedReason).trim()}`
   return ''
 }
 /** 摘要条的悬浮行：条子放不下的那些字（目标原文、轮次、后端给的那句提示、停因）一次给全 */
@@ -1241,9 +1285,35 @@ const goalBarMetaOf = g => {
   if (!g) return ''
   return [goalRoundLineOf(g), g.hint, goalBlockReasonOf(g)].filter(Boolean).join(' · ')
 }
-const goalCanPauseOf = g => !!g && g.status === 'RUNNING'
-const goalCanResumeOf = g => !!g && g.status === 'PAUSED'
+const goalCanPauseOf = g => !!g && GOAL_MOVING.includes(g.status)
+const goalCanResumeOf = g => !!g && (g.status === 'PAUSED' || g.status === 'FAILED' || (g.stale && GOAL_LIVE.includes(g.status)))
 const goalCanEditOf = g => !!g && GOAL_LIVE.includes(g.status)
+/** 完成申请的核验结果那一句：只在这份事实面上出现，两端（详情卡 / 回声悬浮）同一个出口 */
+const goalOutcomeLineOf = g => {
+  const o = g && g.outcome
+  if (!o) return ''
+  if (o.state === 'COMPLETED') {
+    const n = (o.evidence || []).length
+    return n > 0 ? `证据已核验（${n} 条）` : '已完成'
+  }
+  if (o.remaining && o.remaining.length) return `未完成 ${o.remaining.length} 项`
+  return ''
+}
+/** 回声气泡那颗胶囊的状态词。
+ *  <p>只给「这一条回声就是当前那个目标」说状态：库里那列存的是 goalId，旧目标的态没有读端，
+ *  换过目标之后旧回声退回只标身份——不拿别的目标的态去给这一行编一个状态。
+ *  <p>goalId 为空（乐观气泡那几秒、服务端还没回目标号）同样不给词，只给身份。 */
+const goalEchoStateOf = (g, goalId) => {
+  if (!g || !goalId || g.goalId !== goalId) return null
+  const label = goalStateLabelOf(g)
+  return label ? { label, cls: goalStateClassOf(g) } : null
+}
+/** 回声的悬浮行：命令原文（界面上不再露出 /goal 那串字）+ 条子放不下的那些数 */
+const goalEchoTipOf = (g, goalId) => {
+  const head = '/goal 目标指令：这一句被设成了本会话的目标，助手会自己接着推进直到宣布完成'
+  if (!g || !goalId || g.goalId !== goalId) return head
+  return [head, goalRoundLineOf(g), g.hint, goalBlockReasonOf(g), goalOutcomeLineOf(g)].filter(Boolean).join('\n')
+}
 
 
 export {
@@ -1254,7 +1324,7 @@ export {
   restoreTimeline, SENTENCE_END_CHARS, endsSentence, timelineView, timelineRows, TOOL_BRIEF_KEYS, oneLine,
   clusterize, clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterProcCount,
   turnRows, turnOpen, toggleTurn, turnShow, turnWarn, turnExpandable, turnHead, turnTitle, turnElapsedMs, turnWaitMs,
-  resumedStartAt,
+  resumedStartAt, earlierStart, settledTurnMs,
   turnTop, turnBottom, turnToggleable,
   durZh,
   toolBrief, prettyIo, LIVE_TAIL_CHARS, liveOutput, groupRunning, groupHasError,
@@ -1269,5 +1339,6 @@ export {
   snapshotVersion, applyVersion, verLocal, canSwitchPrev, canSwitchNext, verLabel,
   goalTerminalOf, goalBarVisibleOf, goalPhraseOf, goalStateLabelOf, goalStateClassOf,
   goalBlockReasonOf, goalBarTitleOf, goalBarMetaOf, goalRoundLineOf,
-  goalCanPauseOf, goalCanResumeOf, goalCanEditOf
+  goalCanPauseOf, goalCanResumeOf, goalCanEditOf,
+  goalOutcomeLineOf, goalEchoStateOf, goalEchoTipOf
 }

@@ -13,7 +13,7 @@ import { sendQuestion, resumeChat, getChatRun, newSession, getHistory, deleteSes
          listKnowledgeBases, listDocuments, uploadChatAttachment, getSessionTodosApi,
          startGoalApi, goalActionApi, getPendingGoalApi, getSessionGoalApi, getGoalEventsApi,
          refreshArtifactSigns as refreshArtifactSignsApi } from '../api'
-import { sessionStore, loadSessions, chatStreams, markSessionActive } from '../views/store'
+import { sessionStore, loadSessions, chatStreams, todosMap, markSessionActive } from '../views/store'
 import { markLive, splitAtts } from './attachments'
 // 取材判定层：图片压缩参数、附件白名单与各项限额都在这里（分享页共用同一份，见 ./intake.js）
 import { MAX_IMAGES, MAX_FILES, classifyIntake, rejectText, REJECT, compressImage, pasteFilesOf,
@@ -23,8 +23,8 @@ import { loadModelIndex } from '../utils/modelRef'
 import { THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel, CTX_WINDOW_STEPS, fmtWindow,
          groupSources, ensureTick, mergeDoneToolCalls, restoreTimeline, extendTimelineText, extendTimelineProcess,
          pushTimelineTool, pushTimelineArtifact, pushTimelineSteer, pushTimelineThink, extendTimelineThink, ensureThinkSegment,
-         snapshotVersion, applyVersion, toolCallsView, histItemDigest,
-         resumedStartAt,
+         snapshotVersion, applyVersion, histItemDigest,
+         resumedStartAt, earlierStart, settledTurnMs,
          goalTerminalOf, goalBarVisibleOf, goalPhraseOf, goalStateLabelOf, goalStateClassOf,
          goalBlockReasonOf, goalBarTitleOf, goalBarMetaOf, goalRoundLineOf,
          goalCanPauseOf, goalCanResumeOf, goalCanEditOf,
@@ -358,7 +358,6 @@ const currentSessionTitle = computed(() => {
   const s = sessionStore.list.find(x => x.id === currentSessionId.value)
   return s?.title || '新对话'
 })
-const roundCount = computed(() => messages.value.filter(m => m.role === 'ai' && !m.loading).length)
 // ==================== 模型切换：会话级覆盖 > 智能体 > 个人默认 > 全局 ====================
 const modelMap = ref({})            // 会话ID → 用户手动选择的模型引用（按会话记忆；空=跟随）
 // 会话ID → 那个引用此刻还能不能用（后端判据随会话列表下发：停用供应商、把模型从列表移除
@@ -434,10 +433,9 @@ const debugEntryVisible = ref(false)
 // 值必须走 /config/public（管理员/普通用户都能读）——这些是"给不给用户看"的显隐，普通用户也要拿到同一个开关值；
 // /config 是管理端点，普通用户调它 403 并触发全局 403 提示（角色未授权），故不复用。
 const debugDisplayVisible = ref(false)
-// 右栏「最近一次检索/本次用量」的锚定轮。带计划卡的行也算：被「继续对话」取代那轮正文留空，
-// 但它确实检索过，不算进来右栏就会退回更早那一轮
+// 右栏「引用来源」卡与输入框容量圆环锚定的轮。带计划卡的行也算：被「继续对话」取代那轮正文留空，
+// 但它确实检索过，不算进来这两处就会退回更早那一轮
 const lastAi = computed(() => [...messages.value].reverse().find(m => m.role === 'ai' && !m.loading && (m.content || m.sources?.length || m.planCard)))
-const lastRetrieved = computed(() => lastAi.value?.retrieved || null)
 const lastSources = computed(() => lastAi.value?.sources || [])
 // 引用来源按文档分组：先看到"引用了哪几个文档、各几段"，再按需展开看具体片段
 // （平铺 N 行时同一文档的片段会重复出现文件名，反而看不出引用了几个来源）
@@ -511,23 +509,15 @@ const ctxRingDash = computed(() => {
   return `${(p / 100 * CTX_RING_C).toFixed(2)} ${CTX_RING_C.toFixed(2)}`
 })
 const ctxRingLevel = computed(() => ctxCapData.value.pct >= 95 ? 'danger' : ctxCapData.value.pct >= 80 ? 'warn' : '')
-// ==================== 右栏：运行控制 / 本会话产物（执行过程卡已移除：消息流内已有完整执行明细） ====================
-// panelAi = 最后一轮 AI 消息（含进行中）——供「运行控制」卡（停止/重试本轮）定位重发目标，
-// 与「最近一次检索/本次用量」用的 lastAi（仅已完成轮）口径不同
+// ==================== 右栏：本会话产物（执行过程卡已移除：消息流内已有完整执行明细） ====================
+// panelAi = 最后一轮 AI 消息（含进行中）——供正文「接下来可以」只挂在最新一轮、移动壳末轮标记定位，
+// 与「本次用量」用的 lastAi（仅已完成轮）口径不同
 const panelAi = computed(() => {
   for (let i = messages.value.length - 1; i >= 0; i--) {
     if (messages.value[i].role === 'ai') return messages.value[i]
   }
   return null
 })
-// 右栏「重试本轮」：与消息流内重试同源——regenerate 向前配对用户问题后整轮重发；
-// 工具级单步重试需要后端重执行机制，暂未实现
-const retryPanelRound = () => {
-  const m = panelAi.value
-  if (!m) return
-  const idx = messages.value.indexOf(m)
-  if (idx >= 0) regenerate(idx)
-}
 // 本会话产物：汇总所有轮次的 artifact（历史恢复的消息同样带 artifacts），最新一轮在前
 const sessionArtifacts = computed(() => {
   const out = []
@@ -566,34 +556,29 @@ const refreshArtifactSigns = async () => {
     }
   } catch (e) { /* 换签失败静默降级：仍可沿用旧签名，不阻断浏览 */ }
 }
-// 会话累计：只累加消息里真实记录的用量（历史恢复的轮没有该字段——不计入，也不冒充 0）。
-// 主数取「累计送入」（本轮内每次模型调用输入之和的会话总和，账单口径），不取输入+输出之和：
-// 输出在下面单列，再算进主数就是把同一笔钱报两遍。
+// 会话累计用量（手机「状态与来源」面板的「本会话累计」）：只累加消息里真实记录的用量，
+// 历史恢复的轮没有该字段——不计入，也不冒充 0。主数取「累计送入」（本轮内每次模型调用输入之和的
+// 会话总和，账单口径），不取输入+输出之和：再算上输出就是把同一笔钱报两遍。
 const sessionTokens = computed(() => {
-  let prompt = 0, output = 0, rounds = 0
+  let prompt = 0, rounds = 0
   for (const m of messages.value) {
     if (m.role !== 'ai' || !m.tokens || typeof m.tokens !== 'object') continue
     rounds++
     prompt += Number(m.tokens.prompt) || 0
-    output += Number(m.tokens.output) || 0
   }
-  return { prompt, output, rounds }
+  return { prompt, rounds }
 })
-const sessionTokensLabel = computed(() => sessionTokens.value.rounds ? `累计送入 ${fmtTokens(sessionTokens.value.prompt)} tokens` : '用量未记录')
-// 会话累计检索/工具：检索轮数按「该轮有检索行或引用」计；精确检索次数按 searchKnowledge 终态记录计
+// 会话累计检索：检索轮数按「该轮有检索行或引用」计
 const sessionRetrieval = computed(() => {
-  let rounds = 0, refs = 0, search = 0, tools = 0
+  let rounds = 0, refs = 0
   for (const m of messages.value) {
     if (m.role !== 'ai') continue
-    const list = toolCallsView(m.toolCalls)
-    tools += list.length
-    for (const t of list) if (t.name === 'searchKnowledge' && t.status !== 'start') search++
     if (m.retrieved || (Array.isArray(m.sources) && m.sources.length)) {
       rounds++
       refs += Array.isArray(m.sources) ? m.sources.length : 0
     }
   }
-  return { rounds, refs, search, tools }
+  return { rounds, refs }
 })
 // 上下文占用条（context/budget）已删：budget 是手写引擎时代的检索配额（窗口×安全系数−最大输出），
 // 框架引擎下这套分配不存在，报上来只会让「上下文 3.4K / 预算 120K」里的 120K 无人认领。
@@ -834,8 +819,9 @@ let sessionRecovering = false
 /**
  * 各会话当前任务清单：sid → {turnId, items:[{content,status}], updatedAt}。
  * 实时由 SSE 的 todo 事件写入，切会话/刷新按需回捞（后端整表覆盖，只存最新一份）。
+ * 数据本身是模块单例（store.js）：轮内切走路由再回来会重建这个引擎，清单挂在实例上就会
+ * 只剩切走那一刻的旧值、且再也不更新（见 store.js 里 todosMap 的注释）。
  */
-const todosMap = ref({})
 const sessionTodos = computed(() => todosMap.value[currentSessionId.value] || null)
 function setTodos (sid, doc) { todosMap.value = { ...todosMap.value, [sid]: doc } }
 
@@ -869,8 +855,52 @@ const goalModeOn = computed(() => {
 const goalRunning = computed(() => sessionGoal.value?.status === 'RUNNING')
 let goalPollTimer = null
 let goalTick = 0
+/**
+ * 目标轮的占位气泡。从「按下回车」到「总线上探得到这一轮」之间有一段真空：调度器一拍 2 秒，
+ * 加上实例冷启动装配（模型客户端 / MCP / 记忆 / 沙盒供给）实测 5 秒起、可拖到数十秒，
+ * 那几秒里聊天区只有用户那句话——看着像根本没发出去（2026-10-22 用户点名，继续目标同一条路径）。
+ * <p>这颗气泡只带 loading，TurnBar 当场说「正在溯源」；总线一登记上就把**同一颗**交给接流通道
+ * （attachRunningTurn 的 reuseMsg），不另起一颗、秒数也不倒回去。它不是那一轮本身，所以目标一停下
+ * 或转终态就撤——没有真轮接上时不许留一行呼吸中的假状态。
+ */
+let goalPlaceholder = null
+// 占位气泡挂在哪条会话上：同一会话的历史重铺（新建后补 sid、侧栏回填都会触发一次）不许把它抹掉
+let goalPlaceholderSid = null
+const ensureGoalPlaceholder = () => {
+  const sid = currentSessionId.value
+  if (!sid || !goalRunning.value) return
+  if (chatStreams.has(sid)) return                          // 真流已经接上，不缺这一颗
+  if (goalPlaceholder && messages.value.includes(goalPlaceholder)) return
+  if (messages.value.some(m => m && m.loading)) return      // 已有在跑的气泡，别叠第二行状态
+  goalPlaceholder = reactive({ role: 'ai', content: '', images: [], sources: [], related: [],
+    degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkLoading: false,
+    time: Date.now(), turnMs: 0, humanWaitMs: 0, artifacts: [], toolCalls: [], plan: null,
+    planCard: null, timeline: [], errorCard: null, model: '', messageId: null, goalWaiting: true })
+  goalPlaceholderSid = sid
+  messages.value.push(goalPlaceholder)
+  ensureTick()   // 秒针：这一行是跟着秒走的计时器，不挂表数字停在 0 秒不动
+  hooks.scrollFollow?.()
+}
+/** 撤下占位气泡（目标停了/终态/用户自己发了一轮）；已经交给接流通道的那颗不归这里管 */
+const dropGoalPlaceholder = () => {
+  const m = goalPlaceholder
+  goalPlaceholder = null
+  goalPlaceholderSid = null
+  if (!m) return
+  const i = messages.value.indexOf(m)
+  if (i >= 0) { m.loading = false; messages.value.splice(i, 1) }
+}
+/** 把占位气泡交给接流通道：交接即脱手，之后它是一颗普通 live 气泡 */
+const takeGoalPlaceholder = sid => {
+  const m = goalPlaceholder
+  if (!m || sid !== currentSessionId.value || !messages.value.includes(m)) return null
+  goalPlaceholder = null
+  goalPlaceholderSid = null
+  return m
+}
 const watchGoalTurn = sid => {
   if (chatStreams.has(sid)) return      // 这一轮本地已经在看了，别另起一颗气泡
+  ensureGoalPlaceholder()               // 探测那一跳（几百毫秒）也别让聊天区空着
   getChatRun(sid).then(r => {
     if (!r || !r.success || !r.data || !r.data.running) return
     if (currentSessionId.value !== sid) return
@@ -897,7 +927,20 @@ const pollGoal = () => {
     if (!r || !r.success || !r.data) return
     if (currentSessionId.value !== sid) return
     const g = r.data.goal
-    if (!g) return
+    if (!g) {
+      // 服务端已经没有「还归用户管」的这一条了（跑完/失败/被删），本地那份 RUNNING 是陈的：
+      // 不结算的话目标条永远「进行中」、占位气泡的秒数永远涨。后台标签页回来必现——
+      // setInterval 被浏览器掐住的那几分钟里终态那帧 goal_state 没人收，只能靠这一跳对账。
+      const prev = goalsMap.value[sid]
+      if (!prev || !prev.goalId) return
+      getSessionGoalApi(sid).then(t => {
+        if (!t || !t.success) return                       // 拉取失败≠没有目标：不许盖成空态
+        if (currentSessionId.value !== sid) return
+        const term = t.data && t.data.goalId === prev.goalId ? t.data : null
+        setGoal(sid, term)                                 // 库里真没这条了就直接撤下（term=null）
+      }).catch(() => {})
+      return
+    }
     const prev = goalsMap.value[sid]
     if (prev && prev.busy) return
     // 同一目标同一档不重写，避免无谓的响应式抖动；轮次/提示/停因变了是实质进展，要收下
@@ -917,6 +960,7 @@ watch(goalRunning, v => {
     }, 2500)
   }
   if (!v && goalPollTimer) { clearInterval(goalPollTimer); goalPollTimer = null }
+  if (!v) dropGoalPlaceholder()   // 不再自动推进＝这一轮不会再来了，占位那一行必须跟着撤
 })
 onUnmounted(() => { if (goalPollTimer) clearInterval(goalPollTimer) })
 
@@ -930,6 +974,9 @@ const historyLoads = new Map()
 const switchSession = async sid => {
   // 不再被"正在回答"拦截：流式回调改写的是 chatStreams 里的消息对象，切走不影响后台流
   currentSessionId.value = sid
+  // 换到别的会话：上一会话那颗占位气泡随旧数组一起作废（留着会在错误的气泡上撤/交接）。
+  // 同一会话的重铺不清（下面 list 里原样带回去）——清了那一行的秒表就从头跳一遍
+  if (goalPlaceholderSid !== sid) { goalPlaceholder = null; goalPlaceholderSid = null }
   // 该会话已存的模型覆盖：列表已加载的会话由 sessionStore.list 的 watch 回填；
   // 列表外的会话（通知/分享深链进老会话，或侧栏尚未翻到）在这里按需拉一次——
   // 否则选择器会显示个人默认，而后端仍按会话已存模型作答，界面与真实不符
@@ -941,7 +988,7 @@ const switchSession = async sid => {
       }
     }).catch(() => {})
   }
-  // 任务清单：该会话没拉过才捞一次（右栏卡据此回显；正在跑的那轮由 todo 事件实时覆盖）
+  // 任务清单：该会话没拉过才捞一次（输入框上方那条清单据此回显；正在跑的那轮由 todo 事件实时覆盖）
   if (sid && !(sid in todosMap.value)) {
     getSessionTodosApi(sid).then(r => {
       if (r && r.success && r.data?.todos && !(sid in todosMap.value)) setTodos(sid, r.data.todos)
@@ -1034,6 +1081,10 @@ const switchSession = async sid => {
       // （已被中断的轮次后端会把半程回答按截断态兜底落库——那类轮不再有 live 消息，走上面列表正常回显）
       const st = chatStreams.get(sid)
       if (st && st.msg.loading) list.push(st.msg)
+      // 目标排队那颗占位气泡原样带回去：同一会话的历史重铺（新建后补 sid / 侧栏回填触发）会把整表换掉，
+      // 换掉就等于把那一行撤了再挂一颗新的——秒表从 0 重跳，用户读成计时坏了（真机 2026-10-22 拍到）
+      if (!st && goalPlaceholder && goalPlaceholderSid === sid && goalRunning.value
+          && !list.includes(goalPlaceholder)) list.push(goalPlaceholder)
       // 插话在库里同时是两样东西：一条独立用户消息（sequence 排在当轮回答之前）＋当轮时间线里的一段
       // （后端在框架把它写进上下文的那一刻留的痕，位置就是模型真听到它的地方）。界面只认后面那个，
       // 这条用户行就此退场——一句不许显示两遍。没被任何时间线用掉的那些（没赶上这一轮、或本轮
@@ -1199,6 +1250,8 @@ const send = async () => {
   if (loading.value) {
     if (!stageSteer({ text: q, images: imgs, atts, attsMeta, skills, mentions, historyRefs,
                       deepThink: deepThinkOn.value, planMode: planModeOn.value })) return
+    // 计划模式跟着这条插话走（载荷里已带走），开关本身同样当场消费掉
+    setPlanMode(false)
     text.value = ''
     hooks.closePanels?.()
     pendingImages.value = []
@@ -1225,6 +1278,10 @@ const send = async () => {
   pendingHistoryRefs.value = []
   const deep = deepThinkOn.value
   const planMode = planModeOn.value
+  // 计划模式是本轮模式，不是常驻档位：这一轮的载荷已经带走它，开关当场消费掉，
+  // 否则下一句随便的追问也会先被塞进计划闸门（chip 会一直赖在输入框里）。
+  // 改计划的每一版由 continuePlanConversation 强制带上，不靠这颗开关留着。
+  if (planMode) setPlanMode(false)
   // attachData 留在内存消息上：重新生成/自动重试时可原样重发（历史回放无数据，行为与图片 data: 口径一致）
   const userMsg = reactive({ role: 'user', content: q, images: imgs, attachments: attsMeta, attachData: atts,
                         skills, mentions, historyRefs, deepThink: deep, planMode, time: Date.now(), messageId: null })
@@ -1306,12 +1363,16 @@ async function startGoal (objective) {
   // 等 POST 回来再 push 的话，输入框已被 startGoalNow 清空、聊天区空空如也，用户以为这句话
   // 根本没发出去。与普通发送同口径（send() 也是先 push 气泡再开流）：goalCommand 等 goalId
   // 回来补上，失败再把这条 optimistic 气泡撤掉（startGoalNow 会把原文还回输入框）。
-  const echo = reactive({ role: 'user', content: obj, goalCommand: '',
+  // goalPending 补的是那几秒的空窗：两壳的身份胶囊与「撤动作键」都按 goalCommand 判，
+  // 只等 goalId 的话这条回声在响应回来前长得跟普通提问一模一样，编辑重发能把目标指令重跑一轮。
+  const echo = reactive({ role: 'user', content: obj, goalCommand: '', goalPending: true,
                           images: [], attachments: [], attachData: [],
                           skills: [], mentions: [], historyRefs: [], deepThink: false,
                           time: Date.now(), messageId: null })
   messages.value.push(echo)
-  hooks.scrollSoft?.()
+  // 与普通提问同一落点：补尾随留白再贴底（=本轮问题置顶）。这里不能用 scrollSoft——它只跟着
+  // 「还在贴底」走，用户上翻过就什么都不做，目标这句话既不留白也不归位，要等助手气泡接上才跳
+  hooks.scrollForce?.()
   // 失败摘除：只发生在「服务端没写库」与「写库了但响应丢了」两种情形，后者由 catch 里的
   // 回读兜底先判掉，剩下的确实是没建成——气泡撤掉后界面回到发送前的样子
   const dropEcho = () => {
@@ -1323,15 +1384,16 @@ async function startGoal (objective) {
     if (r && r.success === false) { dropEcho(); message.warning(r.msg || '目标创建失败'); return null }
     if (r && r.data) {
       setGoal(sid, { ...r.data })
-      // 建目标即开跑：后端把首轮登记进运行总线后才回包，POST 返回的此刻通常已能接流。
-      // 不等目标态轮询那一跳（2.5s），也不依赖首帧 goal_turn（POST 期间浏览器还没有这条会话的 SSE，
-      // 帧会丢）——直接尝试接回在跑的那一轮；接不上（极少见的时序差）由 2.5s 轮询兜底继续探，
-      // 不让「助手气泡」迟迟不出现（与断线重连 attachRunningTurn 同一条路径）。
-      if (goalRunning.value) attachRunningTurn(sid).catch(() => {})
+      // 建目标即开跑：首轮由调度器起（一拍 2 秒）+ 实例冷启动装配，POST 回来的这一刻总线上
+      // 通常还探不到。走 watchGoalTurn 而不是直接 attachRunningTurn：先挂占位气泡（「正在溯源」
+      // 当场出现），探测到那一轮登记上总线再接流；接不上由 2.5s 轮询继续探（同 attachRunningTurn
+      // 那条路径），不许让聊天区在那几秒里空着。
+      if (goalRunning.value) watchGoalTurn(sid)
       // 对话里那一行回声服务端同一条已落库（echoGoalCommand），刷新/切会话读的是库里那份；
       // 这里只补命令标注。目标横跨多轮，状态在摘要条与详情面，但「什么时候定了什么目标」
       // 得能在对话里读出来
       echo.goalCommand = r.data.goalId || ''
+      echo.goalPending = !echo.goalCommand
       // 侧栏要立刻看得见这条会话：目标会话在第一条回答落地之前 message_count 一直是 0，而会话列表
       // 隐藏空会话——用户在工作区里定了目标，回头看那个工作区读到的是「暂无会话」（真机实测）。
       // 标题用目标原文：这条会话讲的就是这件事，比「新对话」认得出来。
@@ -1351,6 +1413,7 @@ async function startGoal (objective) {
     if (created) {
       setGoal(sid, { ...g.data })
       echo.goalCommand = g.data.goalId || ''
+      echo.goalPending = !echo.goalCommand
       markSessionActive(sid, obj)
       message.warning('响应中断，但已从服务端确认目标创建成功')
       return g.data
@@ -2016,6 +2079,24 @@ const finishResumedShell = (msg, st, sid, reload = true) => {
 
 /** 接流的重连计数（按会话；接上即归零）。用法见 streamAnswer 的 onError 分支 */
 const resumeRetryOf = new Map()
+/** 接流探测在飞的会话：这一跳里 chatStreams 还没登记，光靠它挡不住第二个入口
+ *  （2.5 秒轮询 / goal_turn 帧 / 通道断了要再接，谁都可能同时来）。两份都探到 running:true
+ *  就会为同一轮长出两颗「正在溯源」气泡——真机 2026-10-22 继续目标那一拍拍到。 */
+const attachProbing = new Set()
+/**
+ * 这一页已经收过场的那些轮（{@code sid|turnId}）。
+ * <p>总线上一条登记的回收要等巡检那一拍（5 秒），这一轮已经答完了、{@code GET /chat/run} 却还回
+ * running:true。目标模式点「继续」正好撞进这个窗口：接上的是刚停掉那一轮的鬼魂，把它的旧答案
+ * 当新一轮重播一遍，占位气泡也被它吃掉（真机 2026-10-22 拍到：那一行的秒数在交接后归零重跳）。
+ * <p>认 turnId 挡掉：总线回的那个与 done、与落库那行同源于一个字符串（实测 goal:<goalId>:<n>）。
+ */
+const settledTurns = new Set()
+const rememberSettledTurn = (sid, turnId) => {
+  if (!sid || !turnId) return
+  settledTurns.add(sid + '|' + turnId)
+  // 只留最近这些：够覆盖「答完 → 巡检回收」那 5 秒的窗口，又不会一会长会话翻下来占着内存
+  while (settledTurns.size > 80) settledTurns.delete(settledTurns.values().next().value)
+}
 
 /**
  * 接回该会话正在跑的这一轮（P0 断线重连接流的入口）。
@@ -2027,16 +2108,31 @@ const resumeRetryOf = new Map()
  */
 const attachRunningTurn = async (sid, reuseMsg) => {
   if (!sid) return false
-  if (chatStreams.has(sid)) return false      // 本设备已有这一轮的流（自己发的，或已经接上的）
+  if (chatStreams.has(sid) || attachProbing.has(sid)) return false   // 本设备已有这一轮的流，或已有人在探
   let running = false
+  let runTurnId = ''
+  attachProbing.add(sid)
   try {
     const r = await getChatRun(sid)
     running = !!(r && r.data && r.data.running)
+    runTurnId = r && r.data && typeof r.data.turnId === 'string' ? r.data.turnId : ''
   } catch (e) {
     return false      // 探测失败不烦用户：这一轮按历史回显，下次进会话仍会再探
+  } finally {
+    attachProbing.delete(sid)
   }
-  if (!running || currentSessionId.value !== sid) return false
-  streamAnswer('', [], reuseMsg || null, false, 0, false, [], [], [], null, [], '', null, false, true)
+  // 总线上挂着的那一条其实已经收过场（巡检还没回收，最长 5 秒）：不接它，
+  // 接了就等于把上一轮的旧答案当新一轮重播一遍
+  if (running && runTurnId && settledTurns.has(sid + '|' + runTurnId)) running = false
+  if (!running) {
+    // 探不到在飞的轮：目标还在推进的话这就是「排队 + 实例冷启动」那段真空，
+    // 用占位气泡顶上，别等下一跳（2.5 秒）才让人看见它在动
+    ensureGoalPlaceholder()
+    return false
+  }
+  if (currentSessionId.value !== sid) return false
+  // 已有占位气泡时把同一颗交给这条流（不另起一颗），没有则新建（reuseMsg 是通道断了要再接的残影）
+  streamAnswer('', [], reuseMsg || takeGoalPlaceholder(sid), false, 0, false, [], [], [], null, [], '', null, false, true)
   return true
 }
 
@@ -2075,8 +2171,10 @@ const applyTurnSnapshot = (msg, snap, sid) => {
   if (snap.agentName) msg.agentName = snap.agentName
   if (snap.agentId) msg.agentId = snap.agentId
   // 起表点：这一轮在服务端已经跑掉的毫秒换算成本地钟——刷新接上的这一轮本地 time 记的是接上
-  // 那一刻，不换算的话顶部秒表从 0 重新起跳，跑掉的那段在用户眼里不算数
-  msg.time = resumedStartAt(snap.elapsedMs, Date.now())
+  // 那一刻，不换算的话顶部秒表从 0 重新起跳，跑掉的那段在用户眼里不算数。
+  // 与本地已有的起表点取**更早**那一份：目标排队那颗占位气泡从按下回车起表，比服务端那份还早，
+  // 取新的会让秒数往回跳（占位气泡交接时已把 time 带过来，见 streamAnswer 的 heldStartAt）
+  msg.time = earlierStart(msg.time, resumedStartAt(snap.elapsedMs, Date.now()))
   if (snap.planRecord) msg.planCard = planCardFromRecord(snap.planRecord)
   // 时间线必须在 toolCalls/artifacts 之后重建：段里的下标指向这两份清单，清单没铺好就先建会指空
   if (Array.isArray(snap.timeline) && snap.timeline.length) msg.timeline = restoreTimeline(msg, snap.timeline)
@@ -2131,8 +2229,14 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
   // model 留空，等 done/接流快照带后端那份权威值回来：前端预填的是「生效引用」（覆盖>个人默认），
   // 后端落库的是模型名那一段，两边写法不同却都叫 model——拿引用去和上一条的落库值比，
   // 同一个模型会被判成「已切换」，done 一到又自己消失（刷新后更是从来没有过这条线）
-  const fresh = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkLoading: false, time: Date.now(), turnMs: 0, humanWaitMs: 0, artifacts: [], toolCalls: [], plan: null, planCard: null, timeline: [], errorCard: null, model: '' }
+  const fresh = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkLoading: false, time: Date.now(), turnMs: 0, humanWaitMs: 0, artifacts: [], toolCalls: [], plan: null, planCard: null, timeline: [], errorCard: null, model: '', goalWaiting: false }
+  // 目标排队那颗占位气泡交给接流通道时，起表点留在用户按下回车那一刻：服务端那份 elapsedMs
+  // 从登记总线才算起，直接铺会让「用时 8 秒」在接上的一瞬跳回 1 秒——数字变小读成计时坏了
+  const heldStartAt = resume && replaceMsg && replaceMsg.goalWaiting ? Number(replaceMsg.time) || 0 : 0
   const msg = replaceMsg ? Object.assign(replaceMsg, fresh, { messageId: null, fb: null }) : reactive(fresh)
+  if (heldStartAt) msg.time = heldStartAt
+  // 用户自己发起一轮（非接流）：占位那一行让位给它，一屏不许有两颗「正在溯源」
+  if (!resume) dropGoalPlaceholder()
   if (!replaceMsg) messages.value.push(msg)
   const viewing = () => currentSessionId.value === sid  // 只有正在看这个会话才滚动/贴底
   // 流式期间：先按新高度重算留白、等它落屏，再贴底——留白让贴底落点停在本轮问题置顶处，
@@ -2493,11 +2597,15 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         if (editUserMsg && p.userMessageId) editUserMsg.messageId = p.userMessageId
         // 本轮身份：done 带回的 turnId 与刚落库的消息行同源——「过程」入口不该是刷新后才有的东西
         if (p.turnId) msg.turnId = String(p.turnId)
+        // 记一笔「这一轮在本页已经收场」：总线那条登记要等巡检回收，别让它被当成还在跑的轮再接一遍
+        rememberSettledTurn(sid, msg.turnId)
         if (p.tokens && typeof p.tokens === 'object') msg.tokens = p.tokens
         // 整轮用时（气泡顶部那一条读的数）：done 这份是后端算好的机器时间（墙钟扣掉人在回路的
-        // 等待），与看板、台账同一个数；历史恢复读 tokens 里落库的那一份，两条路同源
-        if (typeof p.elapsedMs === 'number') msg.turnMs = p.elapsedMs
+        // 等待），与看板、台账同一个数；历史恢复读 tokens 里落库的那一份，两条路同源。
+        // 写回时和本地钟对一次账取更大的一份：目标模式那一轮从按下回车起表（含排队与实例冷启动
+        // 那几秒），服务端那份从登记总线才算起——照抄会让数字在答完那一刻变小（见 settledTurnMs）
         if (typeof p.humanWaitMs === 'number') msg.humanWaitMs = p.humanWaitMs
+        if (typeof p.elapsedMs === 'number') msg.turnMs = settledTurnMs(p.elapsedMs, msg.humanWaitMs, msg.time, Date.now())
         // 本轮作答方归属（P5：不再有会话锁定，done 的 agentId/agentName 就是这一轮实际作答的智能体）
         if (p.agentId) msg.agentId = p.agentId
         if (p.agentName) msg.agentName = p.agentName
@@ -2572,6 +2680,16 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       }
     },
     onWarn: w => { msg.warnMsg = w; liveScroll() },
+    // 轮内自动压缩（框架在推理前把早期对话折进摘要）：那两次摘要模型调用的字全被按 purpose 滤掉，
+    // 不带这一帧就是二十多秒纯静默（实测 24.7s 一个字没出），用户只能读成「卡住了」。
+    // 点亮的就是流尾那条现成的「正在压缩上下文」分隔线，与手动 /compact 同一条线、同一个位子。
+    onCompactState: payload => {
+      try {
+        const p = typeof payload === 'string' ? JSON.parse(payload) : (payload || {})
+        autoCompactSid.value = p.phase === 'start' ? sid : null
+        liveScroll()
+      } catch (e) { /* 帧形状变了就什么也不做：这条线的退场由 loading 兜底，不会挂死 */ }
+    },
     onError: (e, kind) => {
       // 自动重试收紧到「连接压根没建起来」这一种：原条件 `!gotToken` 不区分网络错误与
       // 服务端 5xx/限流 —— 移动端网络抖动频繁，用户会看到「消息发出去，卡 2.5 秒，
@@ -2807,7 +2925,6 @@ function stageSteer (payload) {
   const sid = currentSessionId.value
   if (!sid || !chatStreams.has(sid)) return false
   steerQueue.value = [...steerQueue.value, reactive({ ...payload, text: content, sending: false })]
-  message.success('已加入排队，点「立即发送」才发给模型')
   return true
 }
 
@@ -2957,7 +3074,13 @@ function flushPendingSteers (backendLeft = []) {
 // ==================== 手动压缩会话上下文（/compact） ====================
 // 后端一律走 AgentScope 框架的 ConversationCompactor（FrameworkSessions.compactNow），
 // 问渠侧不再有第二套摘要阈值/开关；这里只负责显式发起并展示当场结果。
-const compacting = ref(false)
+const manualCompacting = ref(false)
+/** 轮内自动压缩进行中的那条会话（框架压缩起止帧带回来，见 streamAnswer 的 onCompactState） */
+const autoCompactSid = ref(null)
+// 自动那一路必须再 AND 上 loading：压缩只可能长在跑着的那一轮里，轮一结束这条线就该退场——
+// 只认 end 帧的话，断线/收尾竞态漏掉那一帧就留下一条永远挂着的「正在压缩上下文」。
+const compacting = computed(() => manualCompacting.value
+  || (!!autoCompactSid.value && autoCompactSid.value === currentSessionId.value && loading.value))
 /**
  * 当场这一次的结果（本地状态、不落库，下一轮发送即退场）。
  * <p>持久的那份是「已压缩上下文」分隔线（靠消息行上的摘要覆盖点算出来，见 compactDividerAt）；
@@ -2978,7 +3101,7 @@ const compactContext = async (instruction = '') => {
   // 正在回答时不允许压缩：本轮正在读/写同一份摘要，交叉会互相覆盖
   if (loading.value) { message.warning('正在生成回答，等本轮结束后再压缩'); return null }
   if (compacting.value) return null
-  compacting.value = true
+  manualCompacting.value = true
   // 进行中不给常驻 toast：流尾那条「正在压缩上下文」分隔线就是进度（压完原地换成结果那条）
   try {
     // 不随请求带 model：压缩就该用这条会话本身在用的那个模型（后端按会话存的覆盖→个人默认解析）。
@@ -3006,7 +3129,7 @@ const compactContext = async (instruction = '') => {
     message.error(e?.message || '压缩失败，请稍后重试')
     return null
   } finally {
-    compacting.value = false
+    manualCompacting.value = false
   }
 }
 
@@ -3140,15 +3263,15 @@ if (typeof window !== 'undefined') {
     currentAgentId, isAdmin, agentPickerOpen, currentAgentName, currentAgent, pickAgent,
     showAgentTag, modelLabelOf, modelSwitchInfo, compactDividerAt, loadAgents,
     // 会话与消息
-    currentSessionId, loading, messages, currentSessionTitle, roundCount,
+    currentSessionId, loading, messages, currentSessionTitle,
     // 模型
     modelMap, currentOverrideModel, userDefaultModel, modelIndex, effectiveModel, effectiveModelLabel,
     effectiveModelIcon, effectiveModelProvider, modelSourceLabel, effectiveModelIssue,
     debugEntryVisible, debugDisplayVisible,
     // 检索 / 用量 / 来源 / 上下文容量
-    lastAi, lastRetrieved, lastSources, groupedSources, lastTokens, liveTokensPreview, ctxTokens,
-    ctxCapData, ctxRingDash, ctxRingLevel, panelAi, retryPanelRound, sessionArtifacts,
-    sessionTokens, sessionTokensLabel, sessionRetrieval, sessionTodos,
+    lastAi, lastSources, groupedSources, lastTokens, liveTokensPreview, ctxTokens,
+    ctxCapData, ctxRingDash, ctxRingLevel, panelAi, sessionArtifacts,
+    sessionTokens, sessionRetrieval, sessionTodos,
     // 图片与附件
     pendingImages, removePendingImage, MAX_FILES, pendingFiles, hasUploadingFile,
     addFiles, removePendingFile, attachUploaded, attachImage,

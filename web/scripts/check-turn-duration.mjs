@@ -22,6 +22,8 @@ const code = [
   /const turnElapsedMs = m => \{[\s\S]*?\n\}/,
   /const turnWaitMs = m => \{[\s\S]*?\n\}/,
   /const resumedStartAt = \(elapsedMs, clientNow\) => \{[\s\S]*?\n\}/,
+  /const earlierStart = \(had, candidate\) => \{[\s\S]*?\n\}/,
+  /const settledTurnMs = \(serverMs, waitMs, startedAt, settledAt\) => \{[\s\S]*?\n\}/,
   /const turnOpen = m => \{[\s\S]*?\n\}/,
   /const turnHead = m => \{[\s\S]*?\n\}/,
   /const turnTitle = m => \{[\s\S]*?\n\}/,
@@ -34,7 +36,7 @@ const ck = (ok, label, got) => { if (!ok) bad++; console.log(`${ok ? 'PASS' : 'F
 
 // nowTick 由调用方注入：跑着的那一份读数靠它，客户端钟准不准都在这一个入口上
 const api = clientNow => new Function('nowTick',
-  `${code}; return { durZh, turnElapsedMs, turnOpen, turnShow, turnWarn, turnTop, turnBottom, turnToggleable, turnHead, turnTitle, executedCount, toolCallsView, resumedStartAt }`)
+  `${code}; return { durZh, turnElapsedMs, turnOpen, turnShow, turnWarn, turnTop, turnBottom, turnToggleable, turnHead, turnTitle, executedCount, toolCallsView, resumedStartAt, earlierStart, settledTurnMs }`)
   ({ value: clientNow })
 
 const T0 = 1792080129885
@@ -118,6 +120,37 @@ const done = ms => ({ role: 'ai', loading: false, time: T0, turnMs: ms })
   ck(resumedStartAt(0, T0) === T0, '快照没带这个数（旧服务端/空快照）维持从接上起表，不编一个过去时刻')
   ck(resumedStartAt(undefined, T0) === T0 && resumedStartAt(null, T0) === T0, '字段缺失同样不猜')
   ck(resumedStartAt(5000, 1000) === 0, '换算夹到 0：不许报负数秒')
+}
+
+// ⑤c 目标排队占位气泡交给接流通道：起表点留在按下回车那一刻。
+//    总线那份 elapsedMs 从「登记上总线」才算起，前面那几秒（调度一拍 + 实例冷启动装配）
+//    是真真实实跑掉的——取服务端那份会让跳着的数字往回跳（8 秒 → 1 秒），读成计时坏了。
+{
+  const { resumedStartAt, earlierStart, turnElapsedMs, turnHead } = api(T0 + 90000)
+  const waited = T0                                   // 用户按下回车那一刻（占位气泡的 time）
+  const serverStart = resumedStartAt(88000, T0 + 90000)   // 服务端换算：比按下回车还晚 2 秒
+  ck(serverStart > waited, '夹具成立：占位气泡确实比总线起表点更早（否则这条断言是假绿）')
+  ck(earlierStart(waited, serverStart) === waited, '取更早那一份：从按下回车起表')
+  ck(earlierStart(0, serverStart) === serverStart && earlierStart(waited, 0) === waited,
+    '没有那一份（0/缺）时取另一份，不编一个 1970 年出来')
+  const handed = { role: 'ai', loading: true, time: earlierStart(waited, serverStart) }
+  ck(turnElapsedMs(handed) === 90000, '交接后数字连续：接上那一刻报的是 90 秒而不是 88 秒',
+    String(turnElapsedMs(handed)))
+  ck(turnHead(handed) === '正在溯源，用时 1 分 30 秒 …', '交接那一瞬标题不许往回跳', turnHead(handed))
+}
+
+// ⑤d 收尾那一刻：done 的机器时间要与本地钟对一次账，取更大的一份。
+//    症状（真机 2026-10-22 目标模式）：占位气泡数到「正在溯源，用时 8 秒」，done 回来变成
+//    「已完成，用时 5 秒」——服务端那份从登记运行总线才算起，排队与实例冷启动那几秒不在账上。
+{
+  const { settledTurnMs } = api(T0)
+  ck(settledTurnMs(5000, 0, T0, T0 + 8000) === 8000, '本地钟更长时收尾报 8 秒，不是服务端那份 5 秒',
+    String(settledTurnMs(5000, 0, T0, T0 + 8000)))
+  ck(settledTurnMs(5000, 2000, T0, T0 + 8000) === 6000, '等人那一段不重复计（turnMs + 等待 = 墙钟 8 秒）')
+  ck(settledTurnMs(9000, 0, T0, T0 + 8000) === 9000, '服务端那份更大时原样用，不拿本地钟把数改小')
+  ck(settledTurnMs(5000, 0, 0, T0 + 8000) === 5000 && settledTurnMs(5000, 0, T0, 0) === 5000,
+    '没有本地起表点/收尾时刻（历史消息）时不猜，照服务端那份')
+  ck(settledTurnMs(5000, 0, T0 + 8000, T0) === 5000, '两个钟倒挂（时钟被改过）也不许报负数')
 }
 
 // ⑥ 折叠默认态与「什么时候点得动」

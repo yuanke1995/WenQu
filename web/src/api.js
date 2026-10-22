@@ -126,6 +126,9 @@ const CHAT_EVENT_CB = {
   approval_required: 'onApprovalRequired', ask_user: 'onAskUser',
   plan_delta: 'onPlanDelta', plan_approval: 'onPlanApproval', plan_cancelled: 'onPlanCancelled',
   plan_superseded: 'onPlanSuperseded', todo: 'onTodo', snapshot: 'onSnapshot',
+  // compact_state＝轮内框架自动压缩的开始/结束：那两次摘要模型调用的内容全被按 purpose 滤掉，
+  // 不带这一帧，压缩那二十多秒界面上一个字都没有，用户读成「卡住了」
+  compact_state: 'onCompactState',
   // 目标模式（Goal Mode）：goal_state 是目标态的唯一帧（阶段迁移/轮次推进/停因），
   // 进总线镜像——断线重连靠它重建目标面板；goal_turn 是跨轮续跑开了新的一轮，前端据此自动接流
   goal_state: 'onGoalState', goal_turn: 'onGoalTurn',

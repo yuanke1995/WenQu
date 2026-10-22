@@ -4,7 +4,7 @@
        耗时只在这一处报——原先簇头、组条、每张工具卡各挂一个数，一屏六个读数读不出重点。
        它同时是一轮里唯一的进行中提示：底下不再另挂一行阶段文案（两句「正在…」上下同屏）。 -->
   <div v-if="turnShow(m)" class="turn-bar" :class="{ 'is-m': mobile }">
-    <button v-if="turnToggleable(m)" class="tb-btn" type="button" :title="turnTitle(m)" @click.stop="toggleTurn(m)">
+    <button v-if="turnToggleable(m)" class="tb-btn" :class="{ 'is-open': turnOpen(m) }" type="button" :title="turnTitle(m)" @click.stop="toggleTurn(m)">
       <span class="tb-text" :class="{ running: m.loading, warn: turnWarn(m) }">{{ turnHead(m) }}</span>
       <caret-right-outlined class="tb-caret" :class="{ open: turnOpen(m) }" />
     </button>
@@ -51,6 +51,15 @@ onBeforeUnmount(() => { if (releaseTick) releaseTick() })
   width: 100%; min-height: 40px; flex-wrap: wrap; padding: 10px 12px;
   font-size: 13px; border-radius: 10px; background: var(--app-panel-2); touch-action: manipulation;
 }
+/* 展开态：点过之后这一条要留在「我把过程摊开了」那一档上。此前它只有三角转 90°，
+   而悬停比点开后还强（边框从常规描边跳到主色，鼠标一移开又退回去），读起来像那一下没生效。
+   底走站内现成的「选中态」令牌，不走主色描边：一屏里几轮同时展开时描边会成排跟正文抢。
+   触屏那条不是重复——上面 .is-m .tb-btn 自带底色，同特异度下压不住它。 */
+.tb-btn.is-open, .is-m .tb-btn.is-open {
+  border-color: var(--app-accent-border); background: var(--app-accent-weak); color: var(--app-text);
+}
+/* 展开中的药丸仍要答应用户「还能再点一下收起来」：悬停照旧提回主色描边 */
+.tb-btn.is-open:hover { border-color: var(--app-accent); }
 .tb-caret { flex: none; font-size: 10px; color: var(--app-text3); transition: transform .15s; line-height: 1; }
 .tb-caret.open { transform: rotate(90deg); }
 .is-m .tb-caret { margin-left: auto; font-size: 12px; }
