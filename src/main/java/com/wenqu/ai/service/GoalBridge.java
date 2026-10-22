@@ -1,6 +1,7 @@
 package com.wenqu.ai.service;
 
 import io.agentscope.core.agent.RuntimeContext;
+import io.agentscope.core.session.SessionLogException;
 import io.agentscope.core.state.AgentState;
 import io.agentscope.core.state.TaskContextState;
 import io.agentscope.core.state.TaskRequirement;
@@ -17,6 +18,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 
 /**
  * 目标模式的存储桥：<b>问渠的护栏 + 框架的 tasksContext</b>（形状照 {@link TodoBridge}，别自创第二套）。
@@ -47,6 +49,11 @@ import java.util.Set;
  * <p>乐观锁：所有写都要 {@code expectedRevision}，冲突抛
  * {@link java.util.ConcurrentModificationException}。本类的写法是「每次变异前重读快照取水位」——
  * 一次回调里连着改好几处，水位每次都在变，拿开头那个旧值去改第二处必抛。
+ *
+ * <p><b>第四条实测事实</b>：会话日志的写锁是 2 分钟租约，轮终钩子（首轮采纳、目标同步）
+ * 常落在「上一轮 recorder 还没放锁」的窗口里，直接写抛
+ * {@code SessionLogException: Session already has an active writer}（2026-10-22 线上连踩两次）。
+ * 所有写入口走 {@link #updateStateWithRetry}：租约会被释放，退避重试即可接住。
  */
 @Service
 public class GoalBridge {
@@ -55,6 +62,18 @@ public class GoalBridge {
 
     /** 目标来源引用前缀（进 {@code Scope.sourceRef}；用户可读，不露框架机制） */
     public static final String SOURCE_PREFIX = "wenqu-goal:";
+
+    /**
+     * 会话日志写锁竞争的退避重试参数。
+     * <p><b>为什么需要</b>：框架的会话日志是一把 2 分钟租约的写锁（{@code JournalSessionLog}），
+     * 一轮跑完到它的 recorder 释放之间有个窗口——轮终钩子（采纳草稿、同步目标）正落在这个
+     * 窗口里，直接写会抛 {@code SessionLogException: Session already has an active writer}。
+     * 真机 2026-10-22 连踩两次（首轮采纳失败 → 目标带着空标准停下来；编辑保存同步失败）。
+     * 租约是会被释放的（recorder close 即放），所以有界退避重试就能接住，不需要改框架。
+     */
+    private static final int WRITER_RETRY_ATTEMPTS = 8;
+    private static final long WRITER_RETRY_BASE_MS = 400L;
+    private static final long WRITER_RETRY_MAX_MS = 3_000L;
 
     /** 用户确认的决策来源（进 {@code Decision.sourceRef}） */
     public static final String DECISION_SOURCE_PREFIX = "goal-card:";
@@ -117,6 +136,47 @@ public class GoalBridge {
                 .build();
     }
 
+    /**
+     * 带写锁退避重试的状态写入（五个写入口都走这里）。
+     * <p>轮终钩子落在「上一轮 recorder 还没释放写锁」的窗口里时不硬闯：等一等再试
+     * （参数见 {@link #WRITER_RETRY_ATTEMPTS}）。consumer 整体重跑是安全的——框架那一次
+     * 状态更新要么整笔生效要么整笔不生效，不存在半笔。重试耗尽原样抛出，由各入口的
+     * catch 落 warning（目标还在库里，下一轮开跑前还会再同步）。
+     */
+    private void updateStateWithRetry(HarnessAgent agent, String uid, String sessionId,
+                                      String goalId, String reason, Consumer<AgentState> consumer) {
+        long backoff = WRITER_RETRY_BASE_MS;
+        for (int attempt = 1; ; attempt++) {
+            try {
+                agent.getDelegate().updateAgentState(ctx(uid, sessionId), reason, consumer);
+                return;
+            } catch (RuntimeException e) {
+                if (attempt >= WRITER_RETRY_ATTEMPTS || !writerBusy(e)) throw e;
+                log.info("[GOAL] 会话写锁被占，退避重试 {}/{}: goal={} reason={}",
+                        attempt, WRITER_RETRY_ATTEMPTS, goalId, reason);
+                try {
+                    Thread.sleep(backoff);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    throw e;
+                }
+                backoff = Math.min(backoff * 2, WRITER_RETRY_MAX_MS);
+            }
+        }
+    }
+
+    /** 这一枪是不是「会话写锁被别人占着」：租约未释放/争抢失败都算，别的异常不当成这档 */
+    private static boolean writerBusy(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof SessionLogException) {
+                String m = String.valueOf(t.getMessage());
+                if (m.contains("active writer") || m.contains("Writer acquisition contention")) return true;
+            }
+            if (t.getCause() == t) break;
+        }
+        return false;
+    }
+
     // ==================== 三个写入口 ====================
 
     /**
@@ -138,7 +198,7 @@ public class GoalBridge {
         Map<String, String> newIds = new LinkedHashMap<>();
         try {
             long[] out = {-1, -1};
-            agent.getDelegate().updateAgentState(ctx(uid, sessionId), "goal_sync", state -> {
+            updateStateWithRetry(agent, uid, sessionId, goal.getId(), "goal_sync", state -> {
                 TaskContextState tc = state.getTasksContext();
                 if (tc.getScope() == null || !goal.getId().equals(tc.getScope().taskId())) {
                     tc.beginTask(new TaskContextState.Scope(goal.getId(), goal.getObjective(),
@@ -212,7 +272,7 @@ public class GoalBridge {
         int already = existing == null ? 0 : existing.size();
         if (already >= maxCriteria) return List.of();
         try {
-            agent.getDelegate().updateAgentState(ctx(uid, sessionId), "goal_adopt", state -> {
+            updateStateWithRetry(agent, uid, sessionId, goal.getId(), "goal_adopt", state -> {
                 TaskContextState tc = state.getTasksContext();
                 if (tc.getScope() == null || !goal.getId().equals(tc.getScope().taskId())) {
                     tc.beginTask(new TaskContextState.Scope(goal.getId(), goal.getObjective(),
@@ -254,7 +314,7 @@ public class GoalBridge {
         if (agent == null) return SyncResult.bad("会话实例不在本进程，确认结果将在下一轮开跑前同步");
         try {
             long[] out = {-1, -1};
-            agent.getDelegate().updateAgentState(ctx(uid, sessionId), "goal_confirm", state -> {
+            updateStateWithRetry(agent, uid, sessionId, goal.getId(), "goal_confirm", state -> {
                 TaskContextState tc = state.getTasksContext();
                 if (tc.getScope() == null || !goal.getId().equals(tc.getScope().taskId())) {
                     tc.beginTask(new TaskContextState.Scope(goal.getId(), goal.getObjective(),
@@ -295,7 +355,7 @@ public class GoalBridge {
         if (version == null || version.isBlank()) return SyncResult.good(-1, -1, Map.of());
         try {
             long[] out = {-1, -1};
-            agent.getDelegate().updateAgentState(ctx(uid, sessionId), "goal_subject", state -> {
+            updateStateWithRetry(agent, uid, sessionId, null, "goal_subject", state -> {
                 TaskContextState tc = state.getTasksContext();
                 if (tc.getScope() == null) return;   // 没有目标就没有证据主体，跳过
                 if (!version.equals(tc.getSubjectVersion())) {
@@ -320,7 +380,7 @@ public class GoalBridge {
         if (agent == null) return SyncResult.bad("会话实例不在本进程");
         try {
             long[] out = {-1, -1};
-            agent.getDelegate().updateAgentState(ctx(uid, sessionId), "goal_invalidate", state -> {
+            updateStateWithRetry(agent, uid, sessionId, null, "goal_invalidate", state -> {
                 TaskContextState tc = state.getTasksContext();
                 if (tc.getScope() == null || tc.getSubjectVersion() == null) return;
                 tc.invalidateSubject(tc.snapshot().getRevision());

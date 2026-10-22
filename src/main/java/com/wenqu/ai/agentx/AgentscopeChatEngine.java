@@ -926,13 +926,17 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 截断与卡死排障要看的是墙钟，成本与性能看的是机器时间——少一个数就必然有人拿错一个数对账。
         log.info("[TURN] 本轮收口: session={} 机器耗时={}ms 墙钟={}ms 人工等待={}ms",
                 cmd.getSessionId(), machineMs, wallMs, humanWaitMs);
-        // 目标模式轮终一拍：记账 → 验收 → 人工核验关卡 →（由 continueAfterTurn 决定）续跑。
+        // 目标模式轮终一拍：记账 → 验收 → 收尾判定（模型自报做完/没有标准才停下叫人）→（由 continueAfterTurn 决定）续跑。
         // 放在 finish 之前：finish 会落库并发 done，目标态要先于那一帧定下来，前端才看得到一致的状态。
         // 工具调用数取本轮实例自己的步数闸（taken 是判过即占一步的口径，含被拒的）。
+        // 本轮正文一起交给目标服务：助手在末尾写【目标完成】才是平台停下来验收的信号（见 GoalCopy.DONE_MARKER）。
         int goalToolCalls = 0;
         AgentxStepBudget turnBudget = sessions.stepBudget(sessions.key(cmd));
         if (turnBudget != null) goalToolCalls = turnBudget.taken();
-        goalService.onTurnEnd(cmd.getSessionId(), cmd.getUserId(), turnId, machineMs, goalToolCalls, channel);
+        // 没正常跑完的轮（额度/网关/没启动）不进目标续跑链：否则一次失败会被滚成无限重试
+        boolean goalTurnHealthy = failure == null && !neverLaunched;
+        goalService.onTurnEnd(cmd.getSessionId(), cmd.getUserId(), turnId, machineMs, goalToolCalls, channel,
+                answer, goalTurnHealthy);
         finish(cmd, channel, pool, route, hooks.modelRef(), answer, recording, userMessageId, stopped,
                 timedOut, awaiting, machineMs, humanWaitMs, wallMs,
                 session, historyBefore, turnId, planRecord);

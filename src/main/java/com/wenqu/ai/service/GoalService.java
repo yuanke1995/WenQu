@@ -41,7 +41,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * </ol>
  *
  * <p>轮次钩子由引擎调：{@link #syncBeforeSubmit}（submit 前覆盖写框架态）与
- * {@link #onTurnEnd}（记账 / 首轮采纳助手起草的标准 / 验收 / 人工核验关卡 / 续跑一拍）。
+ * {@link #onTurnEnd}（记账 / 首轮采纳助手起草的标准 / 验收 / 收尾判定 / 续跑一拍）。
+ * 收尾判定只做两件事：没有可验的标准时停下让人补；助手自报做完（或撞安全帽
+ * {@link #MAX_GOAL_TURNS}）时停下，带着交付物一次性交给人验收——途中不因人工核验打断。
  */
 @Service
 public class GoalService {
@@ -71,6 +73,13 @@ public class GoalService {
 
     /** 单目标标准条数上限（框架帽 64；问渠收到 12：一张卡看得完、写得完） */
     public static final int MAX_CRITERIA = 12;
+
+    /**
+     * 续跑轮数安全帽。<b>不是预算旋钮</b>——目标依旧不设轮数/token/时长上限，这只是一个兜底：
+     * 模型忘了写完成标记、又迟迟收不了口时，到此停下把人叫回来验收（而不是没完没了地烧）。
+     * 正常路径靠模型自报完成收尾（见 {@link GoalCopy#DONE_MARKER}）。
+     */
+    public static final int MAX_GOAL_TURNS = 8;
 
     private final GoalMapper goalMapper;
     private final GoalBridge goalBridge;
@@ -485,12 +494,19 @@ public class GoalService {
     }
 
     /**
-     * 轮收尾：记账 → 首轮采纳助手起草的标准 → 验收 → 人工核验关卡 → 续跑一拍。
+     * 轮收尾：记账 → 首轮采纳助手起草的标准 → 验收 → 收尾判定 → 续跑一拍。
      * <p>叫停/宽限中止时框架的 {@code ended()} 只认 completed/cancelled，{@code failed} 与挂在
      * 提问卡上的 {@code suspended} 都不算结束——所以目标循环退出前在这里自己结算，不指望框架兜。
+     * <p><b>人只在两种情况下被叫回来</b>：① 一条可验的标准都没有（不停就是没完没了地空跑）；
+     * ② 助手自报做完了（或撞了安全帽）——带着交付物一次性验收。逐轮「还剩人工核验」的关卡
+     * 已经去掉：那会让每轮结束都把人拽回来勾一次，交付物还没齐就验收，纯打扰。
+     *
+     * @param answer 本轮助手的最终正文（判「自报做完了」用；失败轮可能是空串）
+     * @param turnHealthy 这一轮是不是正常跑完的（额度/网关/没启动都算不正常）——不正常就不顺链续跑，
+     *                     转暂停等人来处理，否则每轮失败再起一轮会把一次配额错误滚成无限重试
      */
     public void onTurnEnd(String sessionId, String uid, String turnId, long machineMs, int toolCalls,
-                          RunChannel channel) {
+                          RunChannel channel, String answer, boolean turnHealthy) {
         Goal goal = activeGoal(sessionId);
         if (goal == null) return;
         synchronized (lockFor(goal.getId())) {
@@ -502,6 +518,17 @@ public class GoalService {
             if (goal.getFirstTurnId() == null) goal.setFirstTurnId(turnId);
             goal.setLastTurnId(turnId);
             goal.setUsedTokens(sumTokens(sessionId, goal.getStartedAt()));
+            if (!turnHealthy) {
+                // 没正常跑完（上游额度/网关异常/框架没启动）：目标转暂停——续跑由用户点「继续」发起，
+                // 不在这条链上自动再起一轮（那会把一次 402 滚成每三分钟一次的无限重试）
+                if (java.util.Set.of(RUNNING, VERIFYING).contains(goal.getStatus())) {
+                    goal.setStatus(PAUSED);
+                    log.warn("[GOAL] 本轮未正常收尾，目标转暂停（续跑等你点继续）: goal={}", goal.getId());
+                }
+                goalMapper.updateById(goal);
+                emitState(goal, channel, null);
+                return;
+            }
             // 工件指纹复判：变了就作废旧结论（ACHIEVED 回落到 RUNNING，投影显示 STALE）
             String fp = fingerprint(sessionId, uid);
             if (fp != null && goal.getSubjectVersion() != null && !fp.equals(goal.getSubjectVersion())) {
@@ -513,7 +540,6 @@ public class GoalService {
             }
             // 首轮起草：用户用 /goal 发起、还没有标准时，助手本轮提出的候选标准自动采纳，
             // 记为 CALLER（不是 USER）。用户可改可删；旧确认卡路径不会走到这里（它是 AWAITING_CONFIRMATION）。
-            boolean adopted = false;
             if (firstTurn && RUNNING.equals(goal.getStatus())) {
                 List<GoalBridge.Criterion> current = readCriteria(goal);
                 boolean noConfirmed = current.stream().noneMatch(c -> c.confirmed() && c.acceptance());
@@ -524,7 +550,6 @@ public class GoalService {
                     if (!drafted.isEmpty()) {
                         current.addAll(drafted);
                         goal.setCriteriaJson(JSON.toJSONString(current));
-                        adopted = true;
                         // decide 会推进框架的 contractVersion：库里的水位要当场跟上，
                         // 否则下一次 syncBeforeSubmit 一更新，刚采纳的人工结论会被判成 STALE
                         long[] wm = goalBridge.watermarks(sessions.agentOf(uid, sessionId), uid, sessionId);
@@ -540,10 +565,11 @@ public class GoalService {
             if (java.util.Set.of(RUNNING, VERIFYING).contains(goal.getStatus())) {
                 verifyAll(goal, uid, channel);
             }
-            // 审核门：有标准、但剩下的全是人工核验（本轮又没有新采纳）→ 停下来等你逐条勾，
-            // 不自转。人工标准永远验不出 PASSED，继续跑就是空烧 token；「继续」仍是用户的一句话。
-            if (!adopted && RUNNING.equals(goal.getStatus())) {
-                applyReviewGate(goal);
+            // 收尾判定（只在还进行中时才判）：① 一条可验的标准都没有 → 停下让人补；
+            // ② 助手自报做完（完成标记）或撞了安全帽 → 停下，带着交付物一次性验收。
+            // 注意不再有「只剩人工核验就停」：人工标准等做完了再一起交给人，途中不打断。
+            if (RUNNING.equals(goal.getStatus())) {
+                applyReviewGate(goal, declaresDone(answer));
             }
             goalMapper.updateById(goal);
             if (ACHIEVED.equals(goal.getStatus())) {
@@ -557,22 +583,43 @@ public class GoalService {
     }
 
     /**
-     * 把「只剩人工核验标准」的目标停在 {@code WAITING_INPUT}，等用户勾完再继续。
-     * <p>没有标准也停：零标准目标永远验不出「完成」，自转只会变成模型每轮宣布完成、每轮再起一轮。
-     * 用户在目标卡上补一条（编辑）或点「继续」即可重新开工。
+     * 助手有没有在这一轮自报「做完了」：回答最后一行是完成标记（{@link GoalCopy#DONE_MARKER}）算。
+     * <p>只认最后一行：模型中途解释「等会儿我会写【目标完成】」不算数。归一化时剥掉空白、
+     * markdown 强调符和句读——模型经常给标记加个句号或包一层加粗。
      */
-    private void applyReviewGate(Goal goal) {
-        List<GoalBridge.Criterion> criteria = readCriteria(goal);
-        boolean anyConfirmed = criteria.stream().anyMatch(c -> c.confirmed() && c.acceptance());
+    static boolean declaresDone(String answer) {
+        if (answer == null || answer.isBlank()) return false;
+        String last = null;
+        for (String line : answer.lines().toList()) {
+            if (!line.isBlank()) last = line;
+        }
+        if (last == null) return false;
+        String norm = last.replaceAll("[\\s*`#>_-]+", "")
+                .replaceAll("[。！!，,；;..]+$", "");
+        return norm.equals(GoalCopy.DONE_MARKER);
+    }
+
+    /**
+     * 收尾判定：把该停下人的那几档停住，其余保持进行中（由调用方决定要不要续跑）。
+     * <p>两条停因：没有可验的标准（不停就是空转，见 {@link #kickContinuation} 的同款守卫），
+     * 和「做完了该验收了」（模型自报完成或撞安全帽）。没有标准也停：零标准目标永远验不出
+     * 「完成」，自转只会变成模型每轮宣布完成、每轮再起一轮——真机实测烧到 51 万 token。
+     */
+    private void applyReviewGate(Goal goal, boolean modelDone) {
+        boolean anyConfirmed = readCriteria(goal).stream().anyMatch(c -> c.confirmed() && c.acceptance());
         if (!anyConfirmed) {
             goal.setStatus(WAITING_INPUT);
             goal.setEndReason(null);
             return;
         }
-        List<GoalBridge.Criterion> pending = pendingCriteria(goal);
-        if (!pending.isEmpty() && pending.stream().allMatch(GoalService::manualCriterion)) {
+        boolean capped = used(goal.getTurnCounter()) >= MAX_GOAL_TURNS;
+        if (modelDone || capped) {
             goal.setStatus(WAITING_INPUT);
             goal.setEndReason(null);
+            if (capped) {
+                log.info("[GOAL] 续跑轮数到帽，停下等人验收: goal={} 已跑 {} 轮", goal.getId(),
+                        used(goal.getTurnCounter()));
+            }
         }
     }
 
@@ -587,12 +634,6 @@ public class GoalService {
             }
         }
         return out;
-    }
-
-    /** 这条标准只能靠人工勾（没有配机器验证器）。 */
-    private static boolean manualCriterion(GoalBridge.Criterion c) {
-        return c.verifierId() == null || c.verifierId().isBlank()
-                || GoalVerificationRegistry.MANUAL.equals(c.verifierId());
     }
 
     /**
@@ -681,7 +722,8 @@ public class GoalService {
         Goal goal = own(goalId, uid);
         synchronized (lockFor(goalId)) {
             verifyAll(goal, uid, channel);
-            if (RUNNING.equals(goal.getStatus())) applyReviewGate(goal);
+            // 手动验收只补「没有标准」这一档的停因；做没做完由下一轮收尾判定，不在这里替模型宣布
+            if (RUNNING.equals(goal.getStatus())) applyReviewGate(goal, false);
             goalMapper.updateById(goal);
             emitState(goal, channel, null);
             return view(goal, null);
@@ -778,11 +820,11 @@ public class GoalService {
             boolean failed = "FAILED".equals(outcome);
             if (RUNNING.equals(goal.getStatus()) && !failed) {
                 // 只勾了一部分：继续停在「等你核验」，别悄悄转成进行中
-                applyReviewGate(goal);
+                applyReviewGate(goal, false);
             }
             goalMapper.updateById(goal);
             emitState(goal, channel, null);
-            // 用户说「这条没过」：这就是让他接着改，当场再起一轮；之后仍会在审核门再停
+            // 用户说「这条没过」：这就是让他接着改，当场再起一轮；改完仍会等他自报完成再收
             if (failed && RUNNING.equals(goal.getStatus())) {
                 kickContinuation(goal, channel);
             }
@@ -880,17 +922,14 @@ public class GoalService {
 
     /**
      * 条子上的那一句人话：只在「等你核验」这一档给。
-     * <p>没有标准与有标准但全是人工核验，是两种不同的停法，要说的也是两件事：
-     * 前者要用户补一条，后者要用户逐条勾；别混成一句「等你回答」。
+     * <p>没有标准与做完了等检查，是两种不同的停法，要说的也是两件事：
+     * 前者要用户补一条，后者是拿着交付物逐条验收；别混成一句「等你回答」。
      */
     private String hintOf(Goal goal) {
         if (!WAITING_INPUT.equals(goal.getStatus())) return null;
         boolean anyConfirmed = readCriteria(goal).stream().anyMatch(c -> c.confirmed() && c.acceptance());
         if (!anyConfirmed) return "助手还没有提出验收标准，补一条再继续";
-        int left = pendingCriteria(goal).size();
-        return left > 0
-                ? "还有 " + left + " 条等你核验；勾完自动完成，也可以点继续再跑一轮"
-                : "等你核验";
+        return GoalCopy.acceptHint(pendingCriteria(goal).size());
     }
 
     private List<Map<String, Object>> criteriaView(Goal goal) {
