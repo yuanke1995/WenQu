@@ -456,14 +456,10 @@ public class ConfigService {
         d.put("chat.planTimeoutMs", "600000");             // 计划模式：计划批准等待上限(ms)（人工等待不计入整轮预算）；超时按未批准终止本轮
         d.put("chat.sseTimeoutMs", "300000");              // H4：问答 SSE 超时(ms)
         d.put("chat.askTimeoutMs", "600000");              // 人在回路提问卡等待上限(ms)（2026-10-09 补：schema 早已声明，defaults 漏登记 → 设置页改了回显不出）
-        // 目标模式（Goal Mode）的七个参数已全部退役（2026-10-21）：不设边界。
-        // chat.goalMode.enabled 平台总闸去掉——「这个助手能不能被交出去」只由智能体级 goal_enabled 那一格决定；
-        // 四条预算上限（轮数/token/工具调用/机器分钟）连同 BUDGET_EXCEEDED 撞闸、80% 预警、加预算动作一起退场，
-        // 目标跑不跑得完只看验收标准验没验过、以及用户什么时候按暂停或就此收尾；
-        // verifyTimeoutSeconds 降为 GoalService.VERIFY_TIMEOUT_SECONDS 常量（防验证器挂死，不是管理员旋钮）；
-        // requirementProposals 恒开（候选提议不等于批准，采纳仍只能用户逐条点）。
+        // 目标模式（Goal Mode）已无任何平台参数（2026-10-22 对齐 DSH）：
+        // 不设预算/轮数旋钮，也没有确认卡等待——目标建好就自己往下跑，助手自报完成即停；
+        // 开关只剩智能体级 goal_enabled 那一格，自动续跑上限是 GoalService.MAX_GOAL_ROUNDS 常量。
         // 存量库里的旧行由 schema.sql 的退役键清理幂等删除。
-        d.put("chat.goalTimeoutMs", "600000");             // 目标确认卡等待上限(ms)：与计划卡是两回事，不复用 chat.planTimeoutMs
         // 调试显示总开关（归属徽标 / 路由提示 / 降级提示）。默认开（2026-10-18 由 false 改 true）：
         // 它管的已不只是排障项——「无命中 / 改写失败 / 图片剔除」这类降级信息默认不显示，等于系统性地
         // 不告诉用户这一轮检索没按预期发生，与「答得准、也敢被查」的定位直接冲突：产品承诺的是可被

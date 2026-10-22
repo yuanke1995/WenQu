@@ -221,7 +221,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_message` (
     `mentions`     TEXT         DEFAULT NULL COMMENT '@ 引用 (JSON数组字符串: [{type,id,name,kbId}])；用户消息常驻标注，刷新/历史回显均保留',
     `history_refs` TEXT         DEFAULT NULL COMMENT '# 历史引用 (JSON数组字符串: [{messageId,role,content}])；用户消息常驻标注，刷新/历史回显均保留',
     `plan`        TEXT         DEFAULT NULL COMMENT '计划批准卡 (JSON: {plan,status=approved|rejected})；助手消息落库，刷新/历史按轮重建执行计划卡；NULL=本轮未走计划模式',
-    `goal_command` VARCHAR(64) DEFAULT NULL COMMENT '目标指令回声（值=目标 id）：这条**用户提问**是把一件事设为目标，气泡上挂命令标注、不挂普通消息动作。历史与验证记录留在目标行上，这条只留「什么时候定的什么目标」；NULL=普通提问',
+    `goal_command` VARCHAR(64) DEFAULT NULL COMMENT '目标指令回声（值=目标 id）：这条**用户提问**是把一件事设为目标，气泡上挂命令标注、不挂普通消息动作。目标行只留「什么时候定的什么目标」；NULL=普通提问',
     `turn_id`     VARCHAR(64)  DEFAULT NULL COMMENT '本轮身份（一问一答共用一个 turnId，与 c_ai_session_event.turn_id 同源）；消息→事件账本的关联键，逐气泡「过程回放」靠它。存量行为 NULL=该轮没有过程记录可回放',
     `end_reason`  VARCHAR(16)  DEFAULT NULL COMMENT '本轮终止原因（记在**用户提问**上）：stopped=用户叫停且本轮没产出任何回答。刻意不落一条「已停止」的空回答——空的回答留在对话里比不留更碍眼；「这一问没有回答」本就是那一问的事实',
     `sequence`    INT          NOT NULL DEFAULT 0 COMMENT '消息序号 (会话内递增)',
@@ -344,7 +344,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_agent` (
     `tool_artifact`   INT          DEFAULT NULL COMMENT '产物交付工具: 1=开 0=关 NULL=继承',
     `tool_mcp`        INT          DEFAULT NULL COMMENT 'MCP 工具: 1=开 0=关 NULL=继承',
     `tool_websearch`  INT          DEFAULT NULL COMMENT '联网搜索工具(webSearch): 1=开 0=关 NULL=继承（结果为网页来源，进引用体系）',
-    `goal_enabled`    INT          DEFAULT NULL COMMENT '目标模式开关: 1=开 0=关 NULL=开（平台级总闸已去掉，这一格是唯一判据）。与任务上下文投影/候选要求工具同源判据（关=不投影、不挂工具、界面无入口）',
+    `goal_enabled`    INT          DEFAULT NULL COMMENT '目标模式开关: 1=开 0=关 NULL=开（平台级总闸已去掉，这一格是唯一判据）。关=界面无入口、引擎不接目标上下文、续跑不接管',
     `tool_approval_mode` VARCHAR(10) DEFAULT NULL COMMENT '有副作用工具(沙盒/MCP)执行审批: auto=自动执行 ask=执行前需用户确认 off=禁用 NULL=跟随权限档位建议值(只读→确认/全自主→自动)',
     `permission_preset` VARCHAR(32) DEFAULT NULL COMMENT '权限档位(P2,捆沙盒执行档+审批建议值): research=只读调研 standard=常规 autonomous=全自主; NULL=跟随平台默认 agent.permissionPreset.default,高于 agent.permissionPreset.max 时按上限执行',
     `tool_deny` VARCHAR(1000) DEFAULT NULL COMMENT '工具黑名单(P2): 逗号分隔工具名,本轮这些工具不进模型工具表、被调到也拒; 与族级三态/具体项白名单并列(其余照旧、只拿掉点名这几个),也是 MCP 动态工具唯一的粒度; NULL/空=不禁',
@@ -703,40 +703,43 @@ CREATE TABLE IF NOT EXISTS `c_ai_tool_approval` (
 
 -- ============================================
 -- 2026-10-21: 目标模式（Goal Mode）
--- MySQL 是产品面权威，框架 tasksContext（Scope/要求/验证）是模型视图，单向同步：
--- 每轮开跑前由 GoalBridge 从本表覆盖写进框架状态，界面显示与预算判定只读本表。
--- 同会话至多一条非终态目标；换目标 = 结束旧行起新行（taskId 永不复用）。
+-- 2026-10-22 对齐 DSH：目标 = 一句跨轮的完成目标 + 一个阶段，不再有验收标准/人工确认/逐条核验。
+-- 用户输入目标后系统自己续跑，助手自报完成（回答最后一行「【目标完成】」）即停；
+-- 受阻写「【目标受阻】原因」，目标转 PAUSED 并保留原因。用户只剩改目标/停止/继续/删除四个动作。
+-- 同会话至多一条未结束目标（RUNNING/PAUSED）。
 -- ============================================
 CREATE TABLE IF NOT EXISTS `c_ai_goal` (
-    `id`                VARCHAR(64)  NOT NULL COMMENT '目标ID（UUID，= 框架 Scope.taskId，一次目标一个永不复用）',
+    `id`                VARCHAR(64)  NOT NULL COMMENT '目标ID（UUID，续跑幂等键 goal:{id}:{n} 用它，永不复用）',
     `session_id`        VARCHAR(50)  NOT NULL COMMENT '归属会话',
     `user_id`           VARCHAR(64)  DEFAULT NULL COMMENT '发起用户（仅本人可操作）',
     `agent_id`          VARCHAR(50)  DEFAULT NULL COMMENT '发起时绑定的智能体（换智能体即换实例，目标照旧）',
-    `objective`         VARCHAR(4000) NOT NULL COMMENT '目标原文（逐字进框架 Scope.objective；框架帽 4000）',
-    `criteria_json`     JSON         DEFAULT NULL COMMENT '验收标准 [{id,kind,text,status,decisionSource,verifierId,verifierParams}]；id 用框架 requirementId',
-    `constraints_json`  JSON         DEFAULT NULL COMMENT '约束（同结构，kind=CONSTRAINT）',
-    `subject_version`   VARCHAR(2000) DEFAULT NULL COMMENT '工件指纹（sha256(路径+mtime+size)）；纯检索/写作类目标不钉',
-    `verifications_json` JSON        DEFAULT NULL COMMENT '每标准最新一份验证 {requirementId,outcome,verifierId,reason,actionId,binding,recordedAt}',
-    `status`            VARCHAR(32)  NOT NULL DEFAULT 'DRAFT' COMMENT '状态: DRAFT/CLARIFYING/AWAITING_CONFIRMATION/RUNNING/VERIFYING/WAITING_INPUT/PAUSED/ACHIEVED/ENDED_INCOMPLETE/FAILED/CANCELLED（预算用满那一档随预算机制一起退役，2026-10-21）',
-    -- 预算四列（budget_turns/budget_tokens/budget_tool_calls/budget_minutes）已随「目标不设边界」退役（2026-10-21）：
-    -- 新库不再建这四列，实体也不再映射；存量库里的列留着不删（无读取方，删列是不可逆动作，交给运维窗口）
-    `used_turns`        INT          NOT NULL DEFAULT 0 COMMENT '已用轮数（目标区间内的问答轮）',
+    `objective`         VARCHAR(4000) NOT NULL COMMENT '目标原文（续跑提示词逐字带上；产品上限 4000）',
+    -- 下面四列是上一版「验收标准/验证」范式的遗留（2026-10-22 退役）：不再读写，存量库保留不删
+    `criteria_json`     JSON         DEFAULT NULL COMMENT '【已退役】旧的验收标准快照',
+    `constraints_json`  JSON         DEFAULT NULL COMMENT '【已退役】旧的约束快照',
+    `subject_version`   VARCHAR(2000) DEFAULT NULL COMMENT '【已退役】旧的工件指纹',
+    `verifications_json` JSON        DEFAULT NULL COMMENT '【已退役】旧的验证记录',
+    `status`            VARCHAR(32)  NOT NULL DEFAULT 'PAUSED' COMMENT '阶段: RUNNING=自动推进/PAUSED=停下可继续/ACHIEVED=已完成/CANCELLED=已删除（老行其余状态读取时归一）',
+    -- 预算四列（budget_turns/budget_tokens/budget_tool_calls/budget_minutes）已退役（2026-10-21）；
+    -- 存量库里的列留着不删（无读取方，删列是不可逆动作，交给运维窗口）
+    `used_turns`        INT          NOT NULL DEFAULT 0 COMMENT '目标区间内的问答轮数（含用户插话轮）',
     `used_tokens`       BIGINT       NOT NULL DEFAULT 0 COMMENT '已用 token（按 c_ai_usage_log 聚合）',
     `used_tool_calls`   INT          NOT NULL DEFAULT 0 COMMENT '已用工具调用（按目标区间累计）',
     `used_ms`           BIGINT       NOT NULL DEFAULT 0 COMMENT '已用机器毫秒（每轮 machineMs 累计）',
-    `contract_version`  BIGINT       NOT NULL DEFAULT 0 COMMENT '框架 contractVersion 水位（同步对账用）',
-    `state_revision`    BIGINT       NOT NULL DEFAULT 0 COMMENT '框架 TaskContextState.revision 水位（不一致就本轮重读再写）',
+    `contract_version`  BIGINT       NOT NULL DEFAULT 0 COMMENT '【已退役】框架 contractVersion 水位',
+    `state_revision`    BIGINT       NOT NULL DEFAULT 0 COMMENT '【已退役】框架 TaskContextState.revision 水位',
     `first_turn_id`     VARCHAR(64)  DEFAULT NULL COMMENT '目标覆盖的首轮（过程面板按它聚合）',
     `last_turn_id`      VARCHAR(64)  DEFAULT NULL COMMENT '目标覆盖的末轮',
-    `turn_counter`      INT          NOT NULL DEFAULT 0 COMMENT '已跑轮计数（幂等键 goal:{id}:{n} 的 n）',
-    `end_reason`        VARCHAR(32)  DEFAULT NULL COMMENT '终态原因: achieved/budget/cancelled/failed/incomplete',
+    `turn_counter`      INT          NOT NULL DEFAULT 0 COMMENT '自动续跑已起的轮数（幂等键 goal:{id}:{n} 的 n）',
+    `end_reason`        VARCHAR(32)  DEFAULT NULL COMMENT '停下的原因: achieved/paused/preempted/round-limit/blocked/turn-failed/cleared',
+    `blocked_reason`    VARCHAR(1000) DEFAULT NULL COMMENT '助手报告的受阻原因（end_reason=blocked 时有值）',
     `created_at`        DATETIME(3)  DEFAULT CURRENT_TIMESTAMP(3) COMMENT '创建时刻',
     `started_at`        DATETIME(3)  DEFAULT NULL COMMENT '进入 RUNNING 时刻',
     `ended_at`          DATETIME(3)  DEFAULT NULL COMMENT '终态时刻',
     PRIMARY KEY (`id`),
     KEY `idx_goal_session_status` (`session_id`, `status`),
     KEY `idx_goal_user` (`user_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='目标模式：一件事做到什么算完的权威记录（产品面真源，框架任务状态由它单向同步）';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='目标模式：一个跨轮目标 + 一个阶段（对齐 DSH，无验收标准/无人工确认）';
 
 CREATE TABLE IF NOT EXISTS `c_ai_mcp_call_log` (
     `id`             VARCHAR(50)  NOT NULL COMMENT '调用记录ID（UUID）',
@@ -1019,6 +1022,8 @@ DELETE FROM `c_ai_config` WHERE `config_key` IN (
     'chat.goalMode.enabled', 'chat.goalMode.defaultTurns', 'chat.goalMode.defaultTokens',
     'chat.goalMode.defaultToolCalls', 'chat.goalMode.defaultMinutes',
     'chat.goalMode.verifyTimeoutSeconds', 'chat.goalMode.requirementProposals',
+    -- 目标确认卡等待时间随「对齐 DSH：没有确认步骤」退役（2026-10-22）：确认卡整族已删
+    'chat.goalTimeoutMs',
     -- 框架状态存储恒走 Redis：开关已取消（本地文件方案退役，容器重建即丢会话上下文），
     -- 连接参数复用 spring.data.redis，不再单独保存 host/port/password
     'chat.agentscopeRedisEnabled',

@@ -40,19 +40,16 @@ public class AgentxConfiguration {
                                com.wenqu.ai.service.OrgService orgService,
                                com.wenqu.ai.service.UsageLedgerService usageLedger,
                                com.wenqu.ai.service.GoalService goalService,
-                               com.wenqu.ai.service.ChatRunBus chatRunBus,
-                               com.wenqu.ai.service.GoalVerificationRegistry goalVerificationRegistry) {
+                               com.wenqu.ai.service.ChatRunBus chatRunBus) {
         AgentscopeChatEngine engine = new AgentscopeChatEngine(modelRegistry, configService, properties, tools,
                 sessions, sessionService, attachments, userImages, keywordExtractor, artifactService,
                 sandboxService, consultService, citations, redisProperties, qaLog, toolRegistry, projectService,
-                skillRepository, orgService, usageLedger, goalService, chatRunBus, goalVerificationRegistry,
+                skillRepository, orgService, usageLedger, goalService, chatRunBus,
                 chatService::resolveTurnModel);
         factory.bindFramework(engine);
-        // 目标模式跨轮续跑的发起口：控制流归框架，问渠只数预算——续跑轮由引擎 submit + 跟随
+        // 目标模式跨轮续跑的发起口：控制流归框架，问渠只数轮数——续跑轮由引擎 submit + 跟随
         // （幂等键 goal:{goalId}:{n}，后台轮走收集型通道 + RESUME_POOL，前端按 goal_turn 自动接流）
         goalService.bindTurnDriver(engine::continueGoalTurn);
-        // 验收写结论要写进引擎那一份状态存储（GoalVerificationRegistry 不自己建第二份）
-        engine.goalVerificationRegistry().bindStateStore(engine::frameworkStateStore);
         // 重启后的待办由引擎接回：表里有归属、框架状态在 stateStore 里，续跑是做得到的事，
         // 不该回一句「已批准」然后什么都不发生
         // 重启后的待办、以及「答完时已经没有跟随者」的待办都由引擎接回：表里有归属、框架状态在

@@ -1,115 +1,78 @@
 package com.wenqu.ai.service;
 
-import java.util.List;
-
 /**
  * 目标模式的用户可见文案（唯一出口，与 {@code PlanCopy} 同规矩）。
  *
- * <p>纪律：<b>只讲用户结果，不写内部机制</b>——禁止出现 TASK_STATE / scope / beginTask /
- * verifier / evidenceBinding / revision / 框架名。模型下一轮输入也走这里
- * （{@link #continuation}），正文不写沙盒路径、工具名、命令（与 PlanCopy.guidance() 同一条）。
+ * <p>纪律：<b>只讲用户结果，不写内部机制</b>——禁止出现 TASK_STATE / scope / verifier / revision /
+ * 框架名。续跑提示词也走这里：正文不写沙盒路径、工具名、命令。
+ *
+ * <p>目标模式对齐 DSH：用户只负责说出目标，推进与收尾由助手自己判断。助手用两个标记收尾——
+ * {@link #DONE_MARKER} 表示整件事做完了，{@link #BLOCKED_MARKER} 表示遇到了自己解决不了的阻塞。
+ * 没有第三个标记、也没有让人逐条确认的中间态。
  */
 public final class GoalCopy {
 
     private GoalCopy() {}
 
-    // ---- 入口与面板 ----
-
-    /** 入口按钮 */
+    /** 入口按钮 / 右栏面板标题 */
     public static final String ENTRY_BUTTON = "目标";
 
     /** 右栏面板标题 */
     public static final String PANEL_TITLE = "目标";
 
-    /** 起草态标题 */
-    public static final String DRAFT_TITLE = "定个目标";
-
-    /** 待确认态标题 */
-    public static final String CONFIRM_TITLE = "等你确认验收标准";
-
-    /** 验收中标题 */
-    public static String verifyingTitle(int total) {
-        return "正在核验 " + total + " 条标准";
-    }
-
-    /** 达成标题 */
-    public static String achievedTitle(int n) {
-        return "已完成，" + n + " 条验收标准都有凭据。";
-    }
-
-    /** 已取消 / 未达成收尾 */
-    public static String endedTitle(String endReason) {
-        return switch (endReason == null ? "" : endReason) {
-            case "cancelled" -> "已取消";
-            case "failed" -> "未达成收尾";
-            default -> "已结束";
-        };
-    }
-
-    /** 过期（STALE） */
-    public static final String STALE_HINT = "这条结论是在旧版本产物上验的，需要重新验。";
-
-    /** 暂停 */
-    public static final String PAUSED_HINT = "已暂停，随时可以继续。";
-
-    /** 同步异常（不许静默） */
-    public static final String SYNC_WARN = "目标和助手看到的不一致，本轮以这份为准重新同步。";
-
-    // ---- 下一轮输入（两件套：当前目标 + 未通过/未验证的标准） ----
-
     /**
-     * 模型自报做完了的标记：回答最后单独一行写这个，平台才停下来把人叫回来验收。
-     * <p>为什么靠标记而不是靠「工具不调了」判断：后者分不清「做完了」和「这轮不知道干啥」。
-     * 没写这行就继续跑（有安全帽兜底），写了就停——早写早验收，用户标「没过」再接着改。
+     * 助手自报完成的标记：回答最后单独一行写这个，平台就停下（不再续跑）。
+     * <p>为什么靠标记而不是「工具不调了」：后者分不清「做完了」和「这一轮不知道干啥」。
+     * 只认最后一行：中途解释「等会儿我会写【目标完成】」不算数。
      */
     public static final String DONE_MARKER = "【目标完成】";
 
     /**
-     * 首轮输入：目标刚定下、一条验收标准都还没有。
-     * <p>为什么不复用 {@link #continuation}：那边会说「所有标准都已有验证结果，请收口」——
-     * 目标刚开跑就收到这句话，等于第一轮就让它宣布结束。这里让它先把「什么算完成」提出来，
-     * 再往下做；标准由用户发起、助手起草，提出后即被采纳（用户可改）。
+     * 助手自报受阻的标记：回答最后单独一行以它开头，后面跟一句具体原因。
+     * <p>受阻不是完成：目标停下等人（暂停态），用户可改目标、继续或删除。没有这个出口，
+     * 助手遇到缺权限/缺资料时只能在「假装做完」与「无限空转」之间二选一。
      */
-    public static String startPrompt(String objective) {
-        return "开始推进这个目标：" + objective + "\n"
-                + "这个目标还没有验收标准。请先提出 1–3 条「什么算完成」的验收标准，作为候选要求提交给系统"
-                + "（不要只写在回答正文里），再往下做：\n"
-                + "每条都要能被核对（做到什么、看到什么算过），不要写「做得好」「令人满意」这类无法判定的句子。\n"
-                + "提出后会作为本次目标的验收标准，用户可以修改。\n"
-                + "全部标准都满足时，在回答最后单独一行写「" + DONE_MARKER + "」收尾，并列出本次的交付物"
-                + "（文件名/页面/链接）；做出来/改好的交付物（网页、文件、表格等）请同时用「生成产物」工具登记，"
-                + "用户会在右栏「产物」卡里查看与下载；没做完不要写这行。";
+    public static final String BLOCKED_MARKER = "【目标受阻】";
+
+    /**
+     * 一轮续跑/首轮的完整输入（包成 {@code <goal_round>}，与 DSH 的续跑提示词同形）。
+     * <p>每一轮都把目标原文、轮次带全：压缩可能把更早的轮次遮掉，模型必须每一轮都知道要做到什么。
+     *
+     * @param objective 目标原文
+     * @param round     本次是第几轮（从 1 起）
+     * @param maxRounds 自动续跑的安全上限（只兜底，不是给用户的预算）
+     */
+    public static String roundPrompt(String objective, int round, int maxRounds) {
+        return "<goal_round>\n"
+                + "目标：" + objective + "\n"
+                + "轮次：" + round + "/" + maxRounds + "\n\n"
+                + "在同一会话里继续推进这个目标。以当前工作区、工具结果和会话里已经落地的事实为准，"
+                + "不要只凭之前的叙述判断进度；需要时先检查工作区再动手。\n"
+                + "这一轮要有实际进展，并自己核对做出来的结果。全部目标真正完成时，在回答最后单独一行写「"
+                + DONE_MARKER + "」，并列出本次的交付物（文件名/页面/链接）；做出来或改好的网页、文件、"
+                + "表格等请同时用「交付产物」工具登记，用户会在右栏「产物」卡里查看与下载。"
+                + "没做完不要写这一行，系统会自动开始下一轮。\n"
+                + "如果遇到靠你自己无法解决的阻塞（缺权限、缺资料、外部依赖不可用），在回答最后单独一行写「"
+                + BLOCKED_MARKER + "具体原因」；不要为了收尾把没做完的事说成做完了。\n"
+                + "不要为了等用户拍板而停下，也不要向用户确认是否继续——按你的判断推进即可。\n"
+                + "</goal_round>";
     }
 
     /**
-     * 组下一轮的输入。<b>不带「请你继续」这类空话</b>——带当前目标与未通过/未验证的标准，
-     * 模型才知道这一轮该收敛到什么上。没有剩余预算那一件：目标不设预算。
+     * 用户自己那一轮里注入的一句目标上下文：让助手在用户插话时仍然记得当前目标。
+     * <p>续跑轮不需要它（{@link #roundPrompt} 已经带全），所以只在交互轮拼进模型输入。
      */
-    public static String continuation(String objective, List<String> pendingCriteria) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("继续推进这个目标：").append(objective).append('\n');
-        if (pendingCriteria != null && !pendingCriteria.isEmpty()) {
-            sb.append("还没有通过验证的标准：\n");
-            for (String c : pendingCriteria) {
-                sb.append("- ").append(c).append('\n');
-            }
-        } else {
-            sb.append("所有标准都已有验证结果，请收口并给出结论。\n");
-        }
-        sb.append("请基于当前进展继续，不要重复已完成的部分。\n");
-        sb.append("全部标准都满足时，在回答最后单独一行写「" + DONE_MARKER + "」收尾，并列出本次的交付物"
-                + "（文件名/页面/链接）；做出来/改好的交付物（网页、文件、表格等）请同时用「生成产物」工具登记，"
-                + "用户会在右栏「产物」卡里查看与下载；没做完不要写这行。\n");
-        return sb.toString();
+    public static String contextNote(String objective) {
+        return "\n\n【当前目标】" + objective
+                + "\n（这是你在本会话里持续推进的目标。完成时在回答最后单独一行写「" + DONE_MARKER
+                + "」；遇到解决不了的阻塞写「" + BLOCKED_MARKER + "具体原因」。不需要向用户确认是否继续。）";
     }
 
-    /**
-     * 「等你核验」那一档的一句人话（ GoalService.hintOf 用）：
-     * 助手自报做完（或撞安全帽）才停下来，这一次停下来就是让人拿着交付物做检查的。
-     */
-    public static String acceptHint(int left) {
-        return left > 0
-                ? "请检查交付物（右栏「产物」卡）后逐条核验：勾「达成」即通过，标「没过」我会接着改"
-                : "请检查交付物（右栏「产物」卡）后逐条核验";
+    /** 条子上「已暂停」那一档的一句人话（受阻原因另有一行，不混在这句里） */
+    public static String pausedHint(String endReason) {
+        if ("turn-failed".equals(endReason)) return "这一轮没有正常跑完，先停在这里；可以继续。";
+        if ("stopped".equals(endReason)) return "已按你的要求停下；可以继续。";
+        if ("preempted".equals(endReason)) return "你先说了别的，目标停在原地；可以继续。";
+        return null;
     }
 }

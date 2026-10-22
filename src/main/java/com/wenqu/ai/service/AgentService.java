@@ -276,8 +276,8 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
             m.put("icon", a.getIcon());
             m.put("isBuiltin", Integer.valueOf(1).equals(a.getIsBuiltin()) ? 1 : 0);
             // 目标模式开关（资源级三态）：1/NULL=开，0=关。平台级总闸已去掉，「这个助手能不能被交出去」
-            // 只由这一格决定；前端入口判据与后端工具挂载判据（GoalService.enabledFor）必须同源，
-            // 否则会出现「界面上有按钮、助手那边根本没挂能力」那种漂移
+            // 只由这一格决定；前端入口判据与引擎注入目标上下文的判据（GoalService.enabledFor）同源。
+            // 关掉不会杀掉已经在跑的目标（用户可能只是不想再起新的），但不会再往模型输入里带目标上下文。
             m.put("goalEnabled", a.getGoalEnabled() == null ? 1 : a.getGoalEnabled());
             out.add(m);
         }
