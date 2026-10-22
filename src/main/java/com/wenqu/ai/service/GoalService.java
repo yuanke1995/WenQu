@@ -365,7 +365,14 @@ public class GoalService {
         Goal goal = own(goalId, uid);
         synchronized (lockFor(goalId)) {
             if (!EDITABLE.contains(goal.getStatus())) {
-                throw new IllegalStateException("这条目标已经结束了，改不了");
+                // 还没开跑的那三档不叫「已经结束」：它们的编辑面是确认卡（逐条拍板就是改标准），
+                // 拿终态那句话去搪塞，读起来像目标早没了
+                boolean notStarted = DRAFT.equals(goal.getStatus())
+                        || CLARIFYING.equals(goal.getStatus())
+                        || AWAITING_CONFIRMATION.equals(goal.getStatus());
+                throw new IllegalStateException(notStarted
+                        ? "这条目标还没开始，验收标准请在目标卡上逐条拍板"
+                        : "这条目标已经结束了，改不了");
             }
             List<GoalBridge.Criterion> existing = readCriteria(goal);
             List<GoalBridge.Criterion> constraints = readConstraints(goal);
