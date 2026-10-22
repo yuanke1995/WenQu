@@ -736,6 +736,7 @@
             </span>
             <template v-if="!goalEditing">
               <span class="gb-objective" :title="goalBarTitle">{{ sessionGoal.objective }}</span>
+              <span v-if="goalRoundLine" class="gb-round">{{ goalRoundLine }}</span>
               <span class="gb-state" :class="'st-' + goalStateClass" :title="goalBarMeta">{{ goalStateLabel }}</span>
               <span class="gb-actions">
                 <button v-if="goalCanPause" type="button" class="gb-icon"
@@ -1071,21 +1072,6 @@
             <span class="rp-todo-txt">{{ t.content }}</span>
             <span v-if="t.status === 'doing' && loading" class="rp-todo-run-tag">执行中</span>
           </div>
-        </div>
-      </div>
-      <!-- 目标面板：只读详情面。有没有目标、什么状态、跑到第几轮、为什么停在这里都在卡里说；
-           暂停/继续/改原文/删除四个动作只留输入框顶部那条目标条一处（一个动作只有一个入口）。
-           终态也展开：条子这时已经撤下，这里是唯一还能回看「它最后怎么样」的地方。 -->
-      <div v-if="sessionGoal" class="rp-card rp-goal">
-        <button type="button" class="rp-card-head" @click="goalOpen = !goalOpen">
-          <span class="rp-label">目标</span>
-          <caret-right-outlined class="tl-caret" :class="{ open: goalOpen }" />
-        </button>
-        <div v-if="goalOpen" class="rp-goal-body">
-          <GoalCard :card="sessionGoal" />
-          <!-- 目标区间轮次跳转：按 first/last_turn_id 定位气泡（逐气泡过程入口沿用 SessionEventsPanel） -->
-          <button v-if="sessionGoal.lastTurnId" type="button" class="rp-goal-jump"
-                  @click="jumpToGoalTurn"><history-outlined /> 看这一轮的过程</button>
         </div>
       </div>
       <!-- 引用来源：右栏交互最重的一张卡（点片段定位正文 / hover 高亮角标 / 分组展开），提到第二位。
@@ -1495,7 +1481,6 @@ import { useChatEngine } from '../chat/useChatEngine'
 import { useChatSearch } from '../chat/useChatSearch'
 import Composer from '../chat/Composer.vue'
 import PlanCard from '../components/PlanCard.vue'
-import GoalCard from '../components/GoalCard.vue'
 import { splitAtts } from '../chat/attachments'
 // 正文浮层的共享状态：右栏来源联动（hoveredRef / 点角标定位）与灯箱开关要用
 import { openImages, previewUrl, openSource, hoveredRef } from '../chat/answerViewer'
@@ -3160,7 +3145,7 @@ const {
   // 目标模式：平台总闸 goalModeOn + 会话级目标态 + 全部动作。
   // 摘要条与就地编辑的词汇、显隐、可用性都在引擎侧（与移动壳共用一份），本页只画形状
   sessionGoal, goalModeOn, startGoal, runGoalAction,
-  goalTerminal, goalBarVisible, goalStateLabel, goalStateClass,
+  goalTerminal, goalBarVisible, goalStateLabel, goalStateClass, goalRoundLine,
   goalBarTitle, goalBarMeta, goalBarError,
   goalCanPause, goalCanResume, goalCanEdit,
   goalEditing, goalEdit, goalEditBusy, goalEditSaveable,
@@ -3458,16 +3443,7 @@ const onPlanPanelKeydown = e => {
 // ==================== 目标模式 ====================
 // 目标是一句跨轮自动推进的原文：助手自己接着跑，宣布完成后自动停。
 // 用户能做的只有改原文、停止/继续、删除（都在输入框顶部那条目标条上）。
-// 会话级一份（横跨多轮），不挂气泡；状态与轮次在右栏「目标」面板 + GoalCard 里只读展示。
-
-// 右栏面板折叠态：终态自动展开。
-// 条子在达成/取消时整条撤下（没事可管就不画），此时右栏是唯一还能回看结果的地方，
-// 再默认折叠就等于把「它最后怎么样」藏起来。
-const goalOpen = ref(false)
-watch(() => sessionGoal.value && sessionGoal.value.status, (cur, prev) => {
-  if (cur === prev) return
-  if (goalTerminal.value) goalOpen.value = true
-})
+// 会话级一份（横跨多轮），不挂气泡；状态与轮次都在输入框顶部那条目标条上说，右栏不再单列目标卡。
 
 // 入口显隐：当前智能体开着目标模式 + 本会话还没有目标（终态后允许再起一条）
 const goalEntryVisible = computed(() => goalModeOn.value && (!sessionGoal.value || goalTerminal.value))
@@ -3495,24 +3471,6 @@ const startGoalNow = async (prefill) => {
     return g
   } finally {
     goalStarting.value = false
-  }
-}
-
-/** 目标区间轮次跳转：按 lastTurnId 找到那颗气泡并开它的过程面板（逐气泡过程入口沿用 SessionEventsPanel） */
-const jumpToGoalTurn = () => {
-  const g = sessionGoal.value
-  if (!g || !g.lastTurnId) return
-  const idx = messages.value.findIndex(m => m.turnId === g.lastTurnId)
-  if (idx >= 0) {
-    const ai = messages.value[idx]
-    // 向前配对问题（与气泡「更多 → 看这一轮的过程」同一判据）
-    let q = ''
-    for (let i = idx - 1; i >= 0; i--) {
-      if (messages.value[i].role === 'user') { q = messages.value[i].content || ''; break }
-    }
-    openEvents(g.lastTurnId, ai, q)
-  } else {
-    message.info('这一轮的气泡不在当前视图（可能被清理），可从会话过程入口查看')
   }
 }
 
@@ -4656,6 +4614,8 @@ onMounted(async () => {
 .gb-state { flex: none; font-size: 12px; line-height: 18px; padding: 0 6px; border-radius: 6px; color: var(--app-text3); white-space: nowrap; }
 .gb-state.st-running { color: var(--app-accent); background: var(--app-accent-weak); }
 .gb-state.st-paused { color: var(--app-warn-text); background: var(--app-warn-weak); }
+/* 轮次弱标签：坐在状态词左边（「第 3 轮」+「进行中」），只报跑到第几轮，不抢状态词的色 */
+.gb-round { flex: none; font-size: 11px; line-height: 18px; padding: 0 6px; border-radius: 6px; border: 1px solid var(--app-border); color: var(--app-text3); white-space: nowrap; }
 .gb-actions { flex: none; display: flex; align-items: center; gap: 2px; }
 .gb-icon {
   display: inline-flex; align-items: center; justify-content: center;
@@ -4669,17 +4629,10 @@ onMounted(async () => {
 .gb-edit-input.ant-input { font-size: 13px; line-height: 1.55; padding: 2px 0; min-height: 0; resize: none; }
 .gb-error { font-size: 12px; line-height: 18px; color: var(--app-danger); word-break: break-word; }
 
-/* 右栏「目标」面板：与清单卡同栏（rp-card 外壳）。状态词、轮次与目标原文都由 GoalCard 说一次，
-   面板头只留栏名与折叠键——同一条信息在一张卡里出现两遍，用户会读成两件事 */
-.rp-goal-body { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; }
-.rp-goal-body .goal-card { margin: 0; padding: 0; border: none; background: none; }
-.rp-goal-jump { align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; border: none; background: none; padding: 0; font-size: 12px; color: var(--app-accent); cursor: pointer; }
-.rp-goal-jump .anticon { font-size: 12px; }
-
 /* 窄屏：状态词让位给原文与动作键（触屏点右栏看状态），图标键放大到触控热区 */
 @media (max-width: 768px) {
   .gb-row { gap: 6px; }
-  .gb-state { display: none; }
+  .gb-state, .gb-round { display: none; }
   .gb-icon { width: 32px; height: 32px; }
 }
 

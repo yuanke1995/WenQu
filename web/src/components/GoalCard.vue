@@ -3,9 +3,9 @@
     目标卡：只读详情面（目标模式的「事实面」）。
     两端共用：PC 挂在右栏「目标」面板里，移动壳挂在「状态与来源」sheet 的目标小节
     （外壳不同、取数同源）。动作面不在这张卡上——改原文 / 停止 / 继续 / 删除只在输入框顶部那条
-    目标条上，这里只回答三件事：现在什么状态、跑到第几轮、为什么停在这里。
+    目标条上，这里只回答两件事：现在什么状态、为什么停在这里（跑到第几轮由目标条说）。
     文案只讲用户结果，不露框架机制（TASK_STATE/beginTask 这类词不许出现）。
-    版面硬约束：右栏只有 ~260px，所以原文超过三行折起来，轮次收成弱标签，不铺清单。
+    版面硬约束：右栏只有 ~260px，所以原文超过三行折起来，不铺清单。
   -->
   <div class="goal-card" :class="'goal-' + (card.status || '').toLowerCase()">
     <div class="goal-card-head">
@@ -15,7 +15,6 @@
       <span class="goal-state" :class="'st-' + stateClass">
         <i class="goal-state-dot" />{{ stateLabel }}
       </span>
-      <span v-if="roundLine" class="goal-turn">{{ roundLine }}</span>
     </div>
 
     <!-- 目标原文：超过三行折叠，展开入口放在原文下面，长目标也能一眼读到状态与轮次 -->
@@ -37,7 +36,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { AimOutlined, ExclamationCircleOutlined } from '@ant-design/icons-vue'
-import { goalStateLabelOf, goalStateClassOf, goalBlockReasonOf, goalRoundLineOf } from '../chat/projections'
+import { goalStateLabelOf, goalStateClassOf, goalBlockReasonOf } from '../chat/projections'
 
 // 纯展示卡：没有动作、没有事件、不改状态——目标的四个动作只在输入框顶部那条目标条上。
 const props = defineProps({
@@ -50,10 +49,9 @@ const needsFold = computed(() => (props.card.objective || '').length > 120)
 
 // 状态词与判据一律走共享口径（摘要条、右栏头、这张卡说的是同一句话）；
 // 停在哪由 goalBlockReasonOf 那行原因说，不在状态词里挤第二层意思。
-// 轮次文案同理（goalRoundLineOf）——它同时在摘要条的悬浮行里，两处各写一份就会漂。
+// 轮次不在这张卡上：跑到了第几轮由输入框顶部那条目标条说（第 x 轮坐在「进行中」前面）。
 const stateClass = computed(() => goalStateClassOf(props.card))
 const stateLabel = computed(() => goalStateLabelOf(props.card))
-const roundLine = computed(() => goalRoundLineOf(props.card))
 const blockReason = computed(() => goalBlockReasonOf(props.card))
 </script>
 
@@ -72,8 +70,6 @@ const blockReason = computed(() => goalBlockReasonOf(props.card))
 .goal-state.st-running .goal-state-dot { animation: goal-dot-breathe 1.6s ease-in-out infinite; }
 @keyframes goal-dot-breathe { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
 @media (prefers-reduced-motion: reduce) { .goal-state.st-running .goal-state-dot { animation: none; } }
-/* 轮次是背景信息，收成弱标签：不抢状态词的色，也不像原来那样一行灰字滑到右边 */
-.goal-turn { margin-left: auto; flex: none; font-size: 11px; line-height: 17px; padding: 0 6px; border-radius: 6px; border: 1px solid var(--border-color, #e5e6eb); background: var(--app-panel-2); color: var(--app-text3, #888); white-space: nowrap; }
 .goal-block-reason { margin-top: 8px; display: flex; align-items: flex-start; gap: 6px; font-size: 12.5px; line-height: 1.5; color: var(--app-warn-text); }
 /* 原文是这张卡里最该被读到的字：比正文大半号、加半档字重 */
 .goal-objective { margin-top: 8px; font-size: 13.5px; font-weight: 500; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }

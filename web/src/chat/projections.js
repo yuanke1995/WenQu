@@ -1213,13 +1213,12 @@ const goalStateClassOf = g => {
   if (GOAL_ENDED.includes(s)) return 'ended'
   return ''
 }
-/** 条子上那一行轮次：自动续跑已经跑到第几轮 / 安全上限是几轮（上限只兜底，不是给用户的预算）。
- *  maxRounds 缺省（老服务端/空视图）时只报已跑轮次，不编一个上限出来。 */
+/** 条子上那一行轮次：只说自动续跑已经跑到第几轮。
+ *  安全上限（maxRounds）是兜底机制、不是给用户的预算，不对用户展示——到了上限由停因那行说。 */
 const goalRoundLineOf = g => {
   if (!g) return ''
   const round = Number(g.round) || 0
-  const max = Number(g.maxRounds) || 0
-  return max > 0 ? `第 ${round} 轮 / 最多 ${max} 轮` : `第 ${round} 轮`
+  return `第 ${round} 轮`
 }
 /** 停下来的原因：只说「为什么在这儿停住」，与用户自己按的暂停分开说（后者不给原因行）。
  *  轮数上限那条只在真停住（PAUSED）时才说：继续跑之后 endReason 清掉之前，这句话不该挂在一个正在跑的目标上。 */

@@ -26,7 +26,7 @@ import { THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel, CTX_WINDOW_ST
          snapshotVersion, applyVersion, toolCallsView, histItemDigest,
          resumedStartAt,
          goalTerminalOf, goalBarVisibleOf, goalPhraseOf, goalStateLabelOf, goalStateClassOf,
-         goalBlockReasonOf, goalBarTitleOf, goalBarMetaOf,
+         goalBlockReasonOf, goalBarTitleOf, goalBarMetaOf, goalRoundLineOf,
          goalCanPauseOf, goalCanResumeOf, goalCanEditOf,
          rememberAgents } from './projections'
 
@@ -1406,6 +1406,7 @@ const goalBarVisible = computed(() => goalBarVisibleOf(sessionGoal.value))
 const goalPhrase = computed(() => goalPhraseOf(sessionGoal.value))
 const goalStateLabel = computed(() => goalStateLabelOf(sessionGoal.value))
 const goalStateClass = computed(() => goalStateClassOf(sessionGoal.value))
+const goalRoundLine = computed(() => goalRoundLineOf(sessionGoal.value))
 const goalBlockReason = computed(() => goalBlockReasonOf(sessionGoal.value))
 const goalBarTitle = computed(() => goalBarTitleOf(sessionGoal.value))
 const goalBarMeta = computed(() => goalBarMetaOf(sessionGoal.value))
@@ -3125,7 +3126,7 @@ if (typeof window !== 'undefined') {
     sessionGoal, goalModeOn, startGoal, goalAct, runGoalAction,
     // 目标条与详情面的状态口径（词汇、显隐、动作可用性）＋就地编辑态：两端共用一份，不在页面里各写一遍
     goalTerminal, goalBarVisible, goalPhrase, goalBarTitle, goalBarMeta, goalBarError, goalBlockReason,
-    goalStateLabel, goalStateClass, goalCanPause, goalCanResume, goalCanEdit,
+    goalStateLabel, goalStateClass, goalRoundLine, goalCanPause, goalCanResume, goalCanEdit,
     goalEditing, goalEdit, goalEditBusy, goalEditSaveable, startGoalInlineEdit, saveGoalEdit,
     // 思考能力 / 档位
     thinkCapsOf, reasoningLevelsOf, deepThinkMap, deepOnOf, deepThinkOn, levelOptionsOf, currentLevelOf,
