@@ -752,7 +752,7 @@ public class ChatController {
     }
 
     @Operation(summary = "任务清单", description = "取本会话当前任务清单：返回 "
-            + "{todos:{turnId,items:[{content,status}],updatedAt}} 或 null。切会话/刷新后右栏「任务清单」卡据此回显；"
+            + "{todos:{turnId,items:[{content,status}],updatedAt}} 或 null。切会话/刷新后输入框上方那条「任务清单」据此回显；"
             + "校验会话归属。清单的权威存储是框架 AgentState（todo_write 工具的同一份），"
             + "本进程内没有该会话实例时回落会话表里最后落的那份（服务重启后的兜底）。")
     @GetMapping("/session/{sessionId}/todos")

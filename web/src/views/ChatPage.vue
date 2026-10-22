@@ -445,10 +445,11 @@
                 </a-dropdown>
           </template>
           <template #actions-extra="{ m, i }">
-                  <!-- 那一个数=本轮结束时的上下文占用（与输入框容量圆环、右栏用量同一个分子）。
-                       悬停里把三个口径分开报名，不并列成能相加的样子：占用 ≠ 累计送入 ≠ 输出。
+                  <!-- 那一个数=本轮结束时的上下文占用（与输入框容量圆环同一个分子）。
+                       悬停里把三个口径分开报名、一行一个，不并列成能相加的样子：占用 ≠ 累计送入 ≠ 输出。
                        占用为 0 的历史轮整块不显示——不拿别的数凑一个「这一轮用了多少」出来。 -->
-                  <a-tooltip v-if="usageCtxTokens(m.tokens)" :title="usageTip(m.tokens)">
+                  <a-tooltip v-if="usageCtxTokens(m.tokens)" :title="usageTip(m.tokens)"
+                             :overlay-inner-style="{ whiteSpace: 'pre-line' }">
                     <span class="msg-tokens">上下文{{ m.tokens.outputIsReal ? ' ' : ' ≈' }}{{ fmtTokens(usageCtxTokens(m.tokens)) }} tokens</span>
                   </a-tooltip>
                   <span v-if="m.time" class="msg-time-inline">{{ fmtMsgTime(m.time) }}</span>
@@ -587,7 +588,11 @@
         </MsgDivider>
         <!-- 尾随留白：本轮问题下方补足一屏，使贴底落点=问题置顶（回答长过一屏后归零，恢复正常贴底跟尾） -->
         <div v-if="tailSpacer > 0" class="tail-spacer" :style="{ height: tailSpacer + 'px' }" aria-hidden="true"></div>
-        <div v-if="!stickToBottom && messages.length" class="jump-latest" title="回到底部" @click.stop="scrollForce">↓</div>
+        <!-- 回到底部：贴在消息列右下角、输入区卡片（任务清单/目标条/插话队列…）正上方。
+             放在消息流末尾 + sticky，卡片长多高都不会被压住；右对齐到 --chat-col 那一条右边 -->
+        <div v-if="!stickToBottom && messages.length" class="jump-latest-wrap">
+          <button type="button" class="jump-latest" title="回到底部" @click.stop="scrollForce">↓</button>
+        </div>
       </div>
 
       <!-- 输入区：卡片外壳 / 正文与 chip 同流 / 工具条 / 拖拽落点全在 chat/ChatInput.vue，
@@ -606,6 +611,37 @@
         <template #above>
           <!-- 附件/图片/技能/@ 引用/# 历史引用/计划模式全部内联进正文那一条流（见 chat/Composer.vue），
           这里不再各起一行 chip 轨；「引用只对本轮生效」这类说明收进 chip 的悬浮提示。 -->
+          <!-- 任务清单：本会话最近一次 writeTodo 的整表快照。坐在输入框正上方、
+               目标条之上——先看还差几步，再看整件事推到哪。全 done 后不立刻撤：留到下一轮开始
+               给人看最后一眼这份清单（去留判据见 todoBarVisible）。原先挂在右侧状态栏，但那一栏
+               ≤1200 默认收起，长任务里最该常驻的一眼可见的东西不该在折叠栏里；提到输入区上方后，
+               提问/计划面板顶替打字框时它也还在（面板顶替的是卡片，不是卡片之上这一列）。
+               插话队列仍排在它下面：那是「还没发出去的话」，要离输入框最近。 -->
+          <div v-if="todoBarVisible"
+               class="todo-bar" :class="{ collapsed: !todoOpen }">
+            <button type="button" class="tb-head" @click="todoOpen = !todoOpen"
+                    :title="todoOpen ? '收起任务清单' : '展开任务清单'">
+              <ordered-list-outlined class="tb-ico" />
+              <span class="tb-label">任务清单</span>
+              <span class="tb-count">{{ todoSummary }}</span>
+              <caret-right-outlined class="tl-caret" :class="{ open: todoOpen }" />
+            </button>
+            <div v-show="todoOpen" class="tb-list">
+              <div v-for="(t, ti) in sessionTodos.items" :key="ti" class="tb-item" :class="t.status">
+                <!-- 进行中且本轮还在跑：框里换成转圈 + 整行底色 + 「执行中」文字。三者一起上是因为
+                     单独任何一个都不够——14px 的框里换个符号在五条长句子中等同没换，而只有转圈没有
+                     文字时用户会以为那是页面在加载。转圈仍要坐在这个框里：这一列其余行都是 14px 方框，
+                     裸图标会在框的位置留一个洞，读起来像那一行缺了一格。本轮已停时不给转圈：清单是
+                     快照，停掉的那一项再转下去就是撒谎。 -->
+                <span class="tb-box" :class="{ run: t.status === 'doing' && loading }">
+                  <loading-outlined v-if="t.status === 'doing' && loading" spin />
+                  <template v-else>{{ t.status === 'done' ? '✓' : '' }}</template>
+                </span>
+                <span class="tb-txt">{{ t.content }}</span>
+                <span v-if="t.status === 'doing' && loading" class="tb-run-tag">执行中</span>
+              </div>
+            </div>
+          </div>
           <!-- 插话队列：生成中你在输入框里按发送，先落到这里排队，点「立即发送」才真发给模型。
           没点之前它是**纯本地的**——删掉/改掉/拖动排序都只是改数组，所以反悔是白拿的。
           拖动排序有意义：收尾结算按这个顺序依次发出，用户排的先后就是进模型的先后。
@@ -1051,7 +1087,7 @@
       <input ref="attachInput" type="file" multiple style="display:none" @click.stop @change="onAttachChange" />
     </div>
 
-    <!-- 右侧状态栏（可收起）：计划 / 运行控制 / 产物 / 检索·用量（本轮|会话口径切换）/ 引用来源（有引用才显示）
+    <!-- 右侧状态栏（可收起）：引用来源 / 产物 / 计划（各自有条件才显示）
          宽窄两态共用这一份 DOM：宽屏由 panelOpen 控制（占位列），窄屏由 mPanelOpen 控制
          （浮层/底部 sheet，默认收起）。两态只靠 .as-sheet 类 + CSS 媒体查询区分。 -->
     <aside v-if="panelOpen || mPanelOpen" class="right-panel" :class="{ 'as-sheet': isNarrow }">
@@ -1060,38 +1096,12 @@
       <button v-if="isNarrow" class="rp-sheet-close" type="button" title="关闭" @click="mPanelOpen = false">
         <close-outlined />
       </button>
-      <!-- 运行控制：最近一轮失败可整轮重试（复用消息流 regenerate）；停止生成只在发送键/ESC 提供，右栏不重复。
-           失败态提到首位：右栏其余卡都是只读信息，不该挡在一个待操作的动作前面。 -->
-      <div v-if="panelAi && panelAi.failed" class="rp-card rp-ctrl">
-        <button class="rp-ctrl-btn" @click="retryPanelRound()"><reload-outlined /> 重试本轮</button>
-      </div>
-      <!-- 任务清单：本会话最近一次 writeTodo 的整表快照（有清单才显示，与产物/计划卡同规则）。
-           放在信息卡首位：工具卡只能看出「做过什么」，看不出「还差几步」——后者才是长任务里
-           用户真正要瞄一眼的东西 -->
-      <div v-if="sessionTodos && sessionTodos.items && sessionTodos.items.length" class="rp-card rp-todo">
-        <button type="button" class="rp-card-head rp-todo-head" @click="todoOpen = !todoOpen">
-          <span class="rp-label">任务清单</span>
-          <span class="rp-todo-progress">{{ todoDone }}/{{ sessionTodos.items.length }}</span>
-          <caret-right-outlined class="tl-caret" :class="{ open: todoOpen }" />
-        </button>
-        <div v-if="todoOpen" class="rp-todo-list">
-          <div v-for="(t, ti) in sessionTodos.items" :key="ti" class="rp-todo-item" :class="t.status">
-            <!-- 进行中且本轮还在跑：方框换成转圈 + 整行底色 + 「执行中」文字。
-                 三者一起上是因为单独任何一个都不够——14px 的框里换个符号在五条长句子中等同没换，
-                 而只有转圈没有文字时用户会以为那是页面在加载。本轮已停时不给转圈：清单是快照，
-                 停掉的那一项再转下去就是撒谎。 -->
-            <span v-if="t.status === 'doing' && loading" class="rp-todo-run"><loading-outlined spin /></span>
-            <span v-else class="rp-todo-box">{{ t.status === 'done' ? '✓' : '' }}</span>
-            <span class="rp-todo-txt">{{ t.content }}</span>
-            <span v-if="t.status === 'doing' && loading" class="rp-todo-run-tag">执行中</span>
-          </div>
-        </div>
-      </div>
-      <!-- 引用来源：右栏交互最重的一张卡（点片段定位正文 / hover 高亮角标 / 分组展开），提到第二位。
+      <!-- 引用来源：右栏交互最重的一张卡（点片段定位正文 / hover 高亮角标 / 分组展开），排首位。
            原先排在末尾，等于把「核查答案」这个最高频动作排到最需要滚动才看得到的位置——
            正文里刚亮起的角标，用户得点开侧栏再往下翻。移动端 sheet 一直把它排第一，这里对齐。
-           有引用才显示整卡（空则隐藏，不占版面，与产物/沙盒卡同规则）。
-           卡头可折叠：来源多时（11 个来源就是 11 个分组行）整卡会把清单/目标卡顶出首屏。 -->
+           有引用才显示整卡（空则隐藏，不占版面，与产物卡同规则）。
+           卡头可折叠：来源多时（11 个来源就是 11 个分组行）整卡会把下面的卡顶出首屏。
+           任务清单原先在本栏首位，2026-10-22 挪到输入框上方常驻（见 #above 的 .todo-bar）。 -->
       <div v-if="groupedSources.length" class="rp-card">
         <button type="button" class="rp-card-head" @click="srcCardOpen = !srcCardOpen">
           <span class="rp-label">引用来源 · {{ groupedSources.length }} 个来源</span>
@@ -1399,7 +1409,7 @@ import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from
 import { useRouter, useRoute } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, CloseCircleOutlined, FileTextOutlined, DownloadOutlined, GlobalOutlined, ApiOutlined,
-         ExclamationCircleOutlined, CopyOutlined, LikeOutlined, DislikeOutlined, ReloadOutlined, MoreOutlined,
+         ExclamationCircleOutlined, CopyOutlined, LikeOutlined, DislikeOutlined, MoreOutlined,
          DeleteOutlined, BugOutlined, EditOutlined, PlusOutlined, PaperClipOutlined, PauseCircleOutlined,
          PlayCircleOutlined,
          CompressOutlined,
@@ -1715,9 +1725,6 @@ const onCtxCapEnter = () => { ctxCapHovered = true; clearTimeout(ctxCapTimer) }
 const onCtxCapLeave = () => { ctxCapHovered = false; hideCtxCap() }
 // 「在沙盒中运行」按钮的开关不再由本页持有：正文统一走 AnswerBody，runnable 直接写在调用点上
 // （问答页是唯一有会话上下文的消费方；其它页面默认不开——没有会话，按钮点了必然失败）。
-// ===== 右栏统计口径切换（P0 #4）：本轮=最近完成轮明细；会话=全量累计（选择持久化） =====
-const panelScope = ref(localStorage.getItem('app_panel_scope') === 'session' ? 'session' : 'round')
-watch(panelScope, v => { try { localStorage.setItem('app_panel_scope', v) } catch (e) { /* 存储不可用忽略 */ } })
 // ===== 右栏「计划」：本会话每轮出过的计划各列一条（最新在前，点击定位到那一轮气泡） =====
 // 标签取该轮的用户问题——计划卡没有标题，问题最能认出是哪一份；状态口径与气泡里的计划卡一致
 const sessionPlans = computed(() => {
@@ -2122,7 +2129,7 @@ const slashCommands = computed(() => [
     run: args => compactContext(args) },
   { key: 'act-plan', cmd: 'plan', aliases: ['计划'], icon: OrderedListOutlined, noGate: true,
     name: planModeOn.value ? '关闭计划模式' : '开启计划模式',
-    desc: '每轮先产出执行计划；可跟任务（/计划 任务），直接生成计划',
+    desc: '这一轮先产出执行计划；可跟任务（/计划 任务），直接生成计划',
     run: args => runPlanCommand(args) },
   ...(goalEntryVisible.value ? [{ key: 'act-goal', cmd: 'goal', aliases: ['目标'], icon: AimOutlined, noGate: true,
     name: '目标', desc: '进入目标模式（再发一条即开始）；也可直接跟目标原文',
@@ -3130,14 +3137,13 @@ const {
   agentList, hasDefaultAgent, currentAgentId, isAdmin, agentPickerOpen,
   currentAgentName, currentAgent, pickAgent, showAgentTag, modelSwitchInfo, loadAgents,
   // 会话与消息
-  currentSessionId, loading, messages, currentSessionTitle, roundCount,
+  currentSessionId, loading, messages, currentSessionTitle,
   // 模型
   currentOverrideModel, modelIndex, effectiveModel, effectiveModelLabel, effectiveModelIcon,
   effectiveModelProvider, debugEntryVisible, debugDisplayVisible, effectiveModelIssue,
   // 检索 / 用量 / 来源
-  lastAi, lastRetrieved, lastSources, groupedSources, lastTokens, ctxTokens, ctxCapData, ctxRingDash,
-  ctxRingLevel, panelAi, retryPanelRound, sessionArtifacts, sessionTokens, sessionTokensLabel, sessionTodos,
-  sessionRetrieval,
+  lastAi, groupedSources, ctxTokens, ctxCapData, ctxRingDash,
+  ctxRingLevel, panelAi, sessionArtifacts, sessionTodos,
   // 图片与附件（chip 的删除走编辑区 → onKeys 剪枝，不再需要按下标移除）
   pendingImages, MAX_FILES, pendingFiles, hasUploadingFile, addFiles,
   takePastedFiles, takePastedText, attachUploaded, attachImage,
@@ -3165,6 +3171,12 @@ const {
   closePanels: closeAllPanels,
   focusInput
 })
+
+/* 列表换人（新建会话、切会话、拉历史失败清空）必须把视角一起换掉：贴底标志与尾随留白量的都是
+   上一会话的内容。前者留着会让「回到底部」那颗 ↓ 掉进新会话的正文流里——不满一屏时 sticky
+   抬不起来，它只能长在最后一行下面；后者不重置会把上一会话那一截留白带进空会话（留白算不出的
+   时候还会自己钉在原位：内容不溢出时 scrollHeight 被夹成 clientHeight，公式两头都对着旧值）。 */
+watch(() => messages.value, () => nextTick(() => { updateTailSpacer(); scrollForce() }))
 
 // ==================== 当前工作区标识（聊天页头部） ====================
 // 约定对该工作区所有会话生效（每轮注入 system prompt）——老会话被无声改约定是最糟的透明度，
@@ -3343,13 +3355,60 @@ const restoreWenquChips = html => {
   return n > 0
 }
 
-// 右栏「任务清单」卡：有清单就默认展开（用户开这个功能就是为了看见还剩几步，收着没意义）
-const todoOpen = ref(true)
+// 输入框上方那条「任务清单」：默认收起，只留卡头那行计数（几已完成/几待处理一眼可见），
+// 逐条内容点开再看。长任务里清单常有十行，摊开会常驻占掉输入区上方一整块。
+const todoOpen = ref(false)
 
-// 右栏「引用来源」卡折叠态：同任务清单默认展开（核查答案是最高频动作，保持现状不变，
+/** 清单计数行：只报非零的几档（「3 已完成 · 1 进行中 · 5 待处理」）。
+ *  不报「x/y」那种分数：它看不出进行中那一项是谁，而长任务里用户问的正是「现在卡在哪」。 */
+const todoSummary = computed(() => {
+  const items = (sessionTodos.value && sessionTodos.value.items) || []
+  const n = s => items.filter(i => i.status === s).length
+  const done = n('done')
+  const doing = n('doing')
+  const parts = []
+  if (done) parts.push(`${done} 已完成`)
+  if (doing) parts.push(`${doing} 进行中`)
+  if (items.length - done - doing > 0) parts.push(`${items.length - done - doing} 待处理`)
+  return parts.length ? parts.join(' · ') : `${items.length} 项`
+})
+
+/** 清单是否全部收口：全 done 之后它就从「还剩几步」变成「这一轮做成了什么」，
+ *  不再是进行中的进度板，去留按「还看不看得到最后一轮」来定（见 todoBarVisible）。 */
+const todoAllDone = computed(() => {
+  const items = (sessionTodos.value && sessionTodos.value.items) || []
+  return items.length > 0 && items.every(i => i.status === 'done')
+})
+
+/** 任务清单何时露：
+ *  - 未完成：照常跨轮保留（目标模式/长任务靠它接着推，新一轮不自动清）；
+ *  - 全 done：留在它自己那一轮里给人看最后一眼，**下一次用户发话（新一轮开始）收场**。
+ *  判据是「清单所属轮之后是否已出现用户消息」：轮身份用清单的 turnId 去消息流里认——
+ *  实时 done/接流快照与历史回放都会给用户行和回答行盖上同一个 turnId（与落库同源）。
+ *  认不出来（存量清单没 turnId、或那一轮的消息已被过滤）按「还没开始新一轮」处理：
+ *  宁可多留一条，也不能把正在推进的清单藏掉。 */
+const todoBarVisible = computed(() => {
+  const doc = sessionTodos.value
+  const items = (doc && doc.items) || []
+  if (!items.length) return false
+  if (!todoAllDone.value) return true
+  const tid = doc.turnId
+  if (!tid) return true
+  const list = messages.value
+  let idx = -1
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i] && list[i].turnId === tid) { idx = i; break }
+  }
+  if (idx < 0) return true
+  for (let i = idx + 1; i < list.length; i++) {
+    if (list[i] && list[i].role === 'user') return false
+  }
+  return true
+})
+
+// 右栏「引用来源」卡折叠态：默认展开（核查答案是最高频动作，保持现状不变，
 // 只是给来源多时一个收起整卡的出口）
 const srcCardOpen = ref(true)
-const todoDone = computed(() => (sessionTodos.value?.items || []).filter(i => i.status === 'done').length)
 
 // ===== 右栏「计划」折叠态 =====
 // **必须声明在 useChatEngine 解构之后**：下面的 watch 会立即求值 sessionPlans 的 getter，
@@ -4060,13 +4119,60 @@ onMounted(async () => {
 .msg-inline-edit-actions .app-btn.ghost { background: var(--app-panel); }
 .msg-time-inline { font-size: 11px; color: var(--app-text3); margin-left: 8px; white-space: nowrap; user-select: none; }
 .msg-tokens { font-size: 11px; color: var(--app-text3); white-space: nowrap; cursor: default; }
+/* 回到底部：与消息列/输入卡同宽同基准（--chat-col），右对齐、贴在卡片正上方。
+   wrapper 铺满列宽只为拿对齐基准，pointer-events 关掉免得挡住正文末尾那 28px 的点击 */
+.jump-latest-wrap {
+  position: sticky; bottom: 12px; z-index: 5;
+  box-sizing: border-box; max-width: var(--chat-col); margin: 0 auto 4px;
+  padding-right: 16px; display: flex; justify-content: flex-end;
+  pointer-events: none;
+}
 .jump-latest {
-  position: sticky; bottom: 12px; z-index: 5; width: 28px; height: 28px; line-height: 26px; text-align: center;
-  margin: 0 auto 4px; padding: 0; background: var(--app-panel); color: var(--app-text); font-size: 14px;
+  width: 28px; height: 28px; line-height: 26px; text-align: center;
+  padding: 0; background: var(--app-panel); color: var(--app-text); font-size: 14px;
   border: 1px solid var(--app-border); border-radius: 999px; cursor: pointer; user-select: none;
   box-shadow: var(--app-shadow-sm); transition: border-color .15s, box-shadow .15s;
+  pointer-events: auto;
 }
 .jump-latest:hover { border-color: var(--app-border-strong); box-shadow: var(--app-shadow); }
+
+/* 任务清单（输入框正上方、目标条之上）：本会话最近一次 writeTodo 的整表快照。
+   与输入卡片同宽同基准（--chat-col），独立成一张卡：它说的是「这件事推到哪了」，不是要发出去的话，
+   所以不进卡片内部——那里已被目标条/正文/工具条占满，且提问与计划面板顶替打字框时整块会换掉。
+   列表区有最高上限（约五行），超出只在卡内滚：十项清单就是十行长句，不设帽会把输入区顶出屏幕，
+   用户为了打字还得先滚页面——那比原先藏在右栏更糟。卡头不参与滚动，收起/展开入口要一直在。 */
+.todo-bar {
+  box-sizing: border-box; max-width: var(--chat-col); margin: 0 auto 8px;
+  padding: 0 12px; border: 1px solid var(--app-border); border-radius: 14px;
+  background: var(--app-panel); box-shadow: var(--app-shadow-sm);
+}
+.tb-head {
+  display: flex; align-items: center; gap: 8px; width: 100%; padding: 9px 6px;
+  background: none; border: none; cursor: pointer; text-align: left;
+}
+.todo-bar:not(.collapsed) .tb-head { border-bottom: 1px solid var(--app-border); }
+.tb-ico { flex: none; font-size: 14px; color: var(--app-text3); }
+.tb-label { flex: none; font-size: 13px; font-weight: 600; color: var(--app-text); }
+.tb-count {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 12px; font-variant-numeric: tabular-nums; color: var(--app-text3);
+}
+/* 列表两侧各留 6px：.tb-item 用 -6px 负 margin 把高亮带外扩，而 overflow-y:auto 会把
+   overflow-x 一起变成裁剪，裁切线就是这个内边距盒——不给这 6px，色带两端被切平、圆角消失，
+   左边缘还会正好压在勾选框上（卡头同宽内缩 6px，图标与勾选框才仍然对齐）。 */
+.tb-list { max-height: 168px; overflow-y: auto; padding: 4px 6px 8px; }
+.tb-item {
+  display: flex; align-items: flex-start; gap: 6px; font-size: 12.5px; line-height: 1.5;
+  padding: 4px 6px; margin: 0 -6px; border-radius: 7px;
+}
+.tb-item.doing { background: var(--app-accent-weak); }
+.tb-box { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; margin-top: 2px; border: 1px solid var(--app-border); border-radius: 4px; font-size: 10px; line-height: 1; color: var(--app-panel); }
+.tb-box.run { border-color: var(--app-accent); color: var(--app-accent); font-size: 11px; }
+.tb-run-tag { flex: none; margin-left: 2px; font-size: 11px; line-height: 18px; color: var(--app-accent); }
+.tb-item.done .tb-box { background: var(--app-ok); border-color: var(--app-ok); }
+.tb-item.done .tb-txt { color: var(--app-text3); text-decoration: line-through; }
+.tb-item.doing .tb-txt { color: var(--app-accent); font-weight: 500; }
+.tb-txt { min-width: 0; word-break: break-word; }
 
 /* 插话队列（输入框正上方）：生成中按发送先落到这里排队，点「立即发送」才真发给模型。
    没点之前是纯本地的，所以「删除/修改」是白拿的反悔窗口；拖动可排序。
@@ -4359,14 +4465,6 @@ onMounted(async () => {
 }
 .rp-card { background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 10px; padding: 10px 12px; }
 .rp-label { font-size: 11px; color: var(--app-text3); margin-bottom: 4px; }
-.rp-strong { font-size: 14px; font-weight: 500; word-break: break-all; }
-.rp-meta { font-size: 11px; color: var(--app-text3); margin-top: 4px; }
-.rp-row { display: flex; justify-content: space-between; font-size: 12px; color: var(--app-text2); }
-.rp-dim { font-size: 11px; color: var(--app-text3); }
-.rp-terms { font-size: 11px; color: var(--app-text3); margin-top: 5px; line-height: 1.6; word-break: break-all; }
-.rp-divider { border-top: 1px dashed var(--app-border); margin: 8px 0 6px; }
-.rp-tool-label { font-size: 11px; color: var(--app-accent); font-weight: 500; }
-.rp-tool-q { color: var(--app-text2); margin-top: 3px; }
 .rp-src { display: flex; align-items: center; gap: 6px; padding: 4px 0; cursor: pointer; }
 /* 引用来源：按文档分组 + 片段可折叠（0fr→1fr 高度动画，与全站展开节奏一致） */
 .rp-group { margin-bottom: 2px; }
@@ -4381,11 +4479,6 @@ onMounted(async () => {
 .rp-src:hover .rp-src-name { color: var(--app-accent); }
 .rp-src-ic { color: var(--app-accent); font-size: 12px; flex: none; }
 .rp-src-name { font-size: 12px; color: var(--app-text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-/* 右栏卡片头部（沙盒等折叠卡共用） */
-.rp-exec-head { display: flex; align-items: center; justify-content: space-between; cursor: pointer; }
-.rp-exec-sum { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--app-text3); }
-.rp-exec-dur { flex: none; font-size: 11px; color: var(--app-text3); }
 
 /* 右栏产物卡 */
 .rp-art { display: flex; align-items: center; gap: 6px; padding: 4px 0; }
@@ -4406,23 +4499,6 @@ onMounted(async () => {
 .rp-plan-row:hover { background: var(--app-panel-2); }
 .rp-plan-row:hover .rp-plan-t { color: var(--app-accent); }
 .rp-plan-ic { flex: none; font-size: 12px; color: var(--app-text3); }
-/* 右栏任务清单卡：进度比条目先说话（「3/7」一眼看出还剩几步），完成态用绿色勾 + 删除线，
-   进行态用整行底色 + 转圈 + 文字标签（暗色主题下只靠颜色对比不稳，故三样一起给） */
-.rp-todo-head { display: flex; align-items: center; gap: 8px; width: 100%; background: none; border: none; cursor: pointer; }
-.rp-todo-progress { margin-left: auto; font-variant-numeric: tabular-nums; font-size: 11px; color: var(--app-text3); }
-.rp-todo-list { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
-.rp-todo-item {
-  display: flex; align-items: flex-start; gap: 6px; font-size: 12px; line-height: 1.5;
-  padding: 3px 6px; margin: 0 -6px; border-radius: 7px;
-}
-.rp-todo-item.doing { background: var(--app-accent-weak); }
-.rp-todo-box { flex: none; width: 14px; height: 14px; margin-top: 2px; border: 1px solid var(--app-border); border-radius: 4px; font-size: 10px; line-height: 12px; text-align: center; color: var(--app-panel); }
-.rp-todo-run { flex: none; width: 14px; margin-top: 2px; font-size: 12px; line-height: 14px; color: var(--app-accent); }
-.rp-todo-run-tag { flex: none; margin-left: 2px; font-size: 11px; line-height: 16px; color: var(--app-accent); }
-.rp-todo-item.done .rp-todo-box { background: var(--app-ok); border-color: var(--app-ok); }
-.rp-todo-item.done .rp-todo-txt { color: var(--app-text3); text-decoration: line-through; }
-.rp-todo-item.doing .rp-todo-txt { color: var(--app-accent); font-weight: 500; }
-.rp-todo-txt { min-width: 0; word-break: break-word; }
 .rp-plan-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rp-plan-st { flex: none; font-size: 11px; color: var(--app-text3); }
 .rp-plan-st.is-pending { color: var(--app-warn-text); }
@@ -4431,16 +4507,9 @@ onMounted(async () => {
 .row.plan-jump { animation: planJumpFlash 1.5s ease; }
 @keyframes planJumpFlash { 0% { background: var(--app-accent-weak); } 100% { background: transparent; } }
 
-/* 右栏统计口径切换 + 上下文占用条 */
-/* 口径切换器现在贴在「检索与用量」卡的标题行右侧（不再独占栏首） */
-/* 卡头：div（统计卡）与 button（目标/引用来源卡的折叠头）共用。button 需要自带重置
-   （antd reset 不清 button 底色边框），div 上这些属性是空操作，故统一写在这里 */
+/* 卡头：引用来源与计划两张卡的折叠头（button 需要自带重置，antd reset 不清 button 底色边框） */
 .rp-card-head { display: flex; align-items: center; gap: 6px; width: 100%; background: none; border: 0; padding: 0; text-align: left; cursor: pointer; font: inherit; }
 .rp-card-head .rp-label-h { margin-bottom: 0; }
-.rp-card-head .rp-scope { margin-left: auto; flex: none; }
-.rp-scope { display: inline-flex; border: 1px solid var(--app-border); border-radius: 7px; overflow: hidden; background: var(--app-panel); }
-.rp-scope span { padding: 3px 10px; font-size: 11px; color: var(--app-text3); cursor: pointer; user-select: none; }
-.rp-scope span.on { background: var(--app-accent-weak); color: var(--app-accent); font-weight: 500; }
 /* 计划卡头：整行可点开合，摘要徽标在中间，箭头在尾 */
 .rp-plan-head { width: 100%; background: none; border: 0; padding: 0; text-align: left; cursor: pointer; font: inherit; }
 .rp-plan-head:hover .rp-label-h { color: var(--app-text2); }
@@ -4459,15 +4528,6 @@ onMounted(async () => {
 .rp-src-score { flex: none; font-size: 11px; color: var(--app-accent); }
 .rp-src-sub .rp-src-name { flex: 1; min-width: 0; }
 .rp-src-sub.hl { background: var(--app-accent-weak); border-radius: 4px; }
-
-/* 右栏运行控制（重试本轮） */
-.rp-ctrl { display: flex; }
-.rp-ctrl-btn {
-  flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 5px;
-  padding: 6px 0; border: 1px solid var(--app-border); border-radius: 8px;
-  background: var(--app-panel); color: var(--app-text2); font-size: 12px; cursor: pointer;
-}
-.rp-ctrl-btn:hover { color: var(--app-accent); border-color: var(--app-accent); }
 
 /* 检索调试面板 */
 .dbg-item { padding: 6px 8px; margin-bottom: 6px; border: 1px solid var(--app-border); border-radius: 6px; background: var(--app-panel-2); }

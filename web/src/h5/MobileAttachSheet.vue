@@ -6,7 +6,8 @@
   <BottomSheet :open="open" :title="TABS.find(t => t.key === tab).title" max-height="78dvh" @close="$emit('close')">
     <div class="as">
       <!-- ==================== 本轮模式 ====================
-           计划是一颗开关（只管下一轮起要不要先出计划，开启态由主壳那颗 chip 回显）；目标是一行动作
+           计划是一颗开关（只管下一轮要不要先出计划，开启态由主壳那颗 chip 回显；发出去即消费，
+           chip 跟着输入框里的其它本轮内容一起消失）；目标是一行动作
            （点了就把输入框那句交出去建目标开跑，没有正文就在主壳里提示先写一句）。工具条上不放它们——
            四颗药丸固定要 360px，360px 屏会把送出键挤出输入卡。 -->
       <div class="as-mode">
@@ -14,7 +15,7 @@
           <ordered-list-outlined class="as-ic" />
           <span class="as-main">
             <span class="as-name">计划模式</span>
-            <span class="as-desc">每轮先出计划，你批准后才开始回答</span>
+            <span class="as-desc">这一轮先出计划，你批准后才开始回答（发出去就取消）</span>
           </span>
           <span class="as-sw" :class="{ on: planModeOn }" aria-hidden="true" />
         </button>

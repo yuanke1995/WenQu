@@ -80,9 +80,22 @@ export const sessionStore = reactive({
 // 已是 reactive(fresh)，模板响应性不受影响。
 export const chatStreams = shallowReactive(new Map())
 
+// ==================== 任务清单快照（模块级单例，跨路由存活） ====================
+// sid → { turnId, items:[{content,status}], updatedAt }：writeTodo 每次整表覆盖，后端只存最新一份。
+// 为什么必须挂在这里而不是 useChatEngine 里（2026-10-22 真机复现）：清单是「这一轮跑到哪了」的
+// 会话级状态，而这一轮的流是 chatStreams 的单例。轮内切走路由再回来会重建页面与它那份引擎：
+// 流还挂在旧实例上继续收 todo 帧（写进旧实例自己的 map），新实例既接不上流（chatStreams.has 拦着）、
+// 也再收不到 todo 帧 —— 卡片就冻结在切走那一刻，而正文与工具卡照常长（它们在 chatStreams 的 msg 里），
+// 只有整页刷新能救。放进模块级后，谁在渲染读的都是同一份。
+export const todosMap = ref({})
+
 // 加载代次：整表刷新与增量加载并发时，旧代次的迟到响应直接丢弃；
 // 也让「搜索词刚变、旧词的结果才回来」这种竞态不会把新结果覆盖掉。
 let loadGen = 0
+
+// 上一次拿到权威列表的时刻（前台整表刷新与后台静默对齐都写它）。
+// 跨页签喊话会整段漏给被浏览器挂起（bfcache）的页签，所以「切回前台且这份数据已经老了」要自己补一次。
+let lastSyncAt = 0
 
 // 工作区列表的模块级缓存：会话刷新（发完一条、置顶、删除）不该每次都重拉一次工作区。
 // 工作区 CRUD 后调用 loadSessions(undefined, { refreshProjects: true }) 显式失效。

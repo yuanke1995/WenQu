@@ -3,7 +3,7 @@
        流式产出 drafting → 待确认 pending → 已批准 / 未批准 / 已被取代。
        裁决动作不在这里：打字框整块顶替成确认栏（PC 的 planp-*、移动壳的 m-planp-*），
        两端共用引擎里的 pendingPlan / curPlanCard / planExpired / planCountdownText。 -->
-  <div class="plan-card" :class="'plan-' + card.status">
+  <div ref="rootEl" class="plan-card" :class="'plan-' + card.status">
     <div class="plan-card-head">
       <ordered-list-outlined class="plan-card-ic" />
       <span class="plan-card-title">执行计划</span>
@@ -22,7 +22,7 @@
     <div v-if="card.status !== 'rejected'" class="plan-wrap"
          :class="{ 'is-clamped': needsFold(card.plan) && !card.open }">
       <div class="md plan-body" v-html="renderMd(card.plan || '（计划为空）', [])"></div>
-      <button v-if="needsFold(card.plan)" type="button" class="plan-more" @click="card.open = !card.open">
+      <button v-if="needsFold(card.plan)" type="button" class="plan-more" @click="toggleFold(card)">
         {{ card.open ? '收起' : '查看完整计划' }}
       </button>
     </div>
@@ -33,7 +33,7 @@
         <div class="plan-hist-no">第 {{ vi + 1 }} 版{{ versionTag(vi) }}</div>
         <div class="plan-wrap" :class="{ 'is-clamped': needsFold(v.plan) && !v.open }">
           <div class="md plan-body" v-html="renderMd(v.plan || '（计划为空）', [])"></div>
-          <button v-if="needsFold(v.plan)" type="button" class="plan-more" @click="v.open = !v.open">
+          <button v-if="needsFold(v.plan)" type="button" class="plan-more" @click="toggleFold(v)">
             {{ v.open ? '收起' : '查看完整计划' }}
           </button>
         </div>
@@ -43,7 +43,7 @@
 </template>
 
 <script setup>
-import { computed } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import { OrderedListOutlined, UpOutlined, DownOutlined } from '@ant-design/icons-vue'
 import { renderMd } from '../utils/markdown'
 
@@ -51,6 +51,28 @@ const props = defineProps({
   /** 引擎挂在这一轮助手消息上的计划卡记录：{plan,status,versions,feedback,open,histOpen} */
   card: { type: Object, required: true }
 })
+
+const rootEl = ref(null)
+// 折叠会让卡片以下的内容整体位移（贴底时还会被夹到新的底部），点「收起」后视角就滑到计划下面去了。
+// 按「点按点」补滚动量：收起锚卡片底边（按钮原地不动，整张卡留在眼前），展开锚卡片顶边（从卡头往下读）。
+const scrollParentOf = el => {
+  for (let n = el?.parentElement; n; n = n.parentElement) {
+    const oy = getComputedStyle(n).overflowY
+    if ((oy === 'auto' || oy === 'scroll' || oy === 'overlay') && n.scrollHeight > n.clientHeight) return n
+  }
+  return document.scrollingElement || document.documentElement
+}
+const toggleFold = async target => {
+  const root = rootEl.value
+  if (!root) { target.open = !target.open; return }
+  const scroller = scrollParentOf(root)
+  const before = root.getBoundingClientRect()
+  target.open = !target.open
+  await nextTick()
+  const after = root.getBoundingClientRect()
+  const delta = target.open ? after.top - before.top : after.bottom - before.bottom
+  if (delta) scroller.scrollTop += delta
+}
 
 // 版本链 = 已被改掉的各版（card.versions，feedback=产出该版的意见）+ 当前版（主体，链尾也列一份）
 const chain = computed(() => {

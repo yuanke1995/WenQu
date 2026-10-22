@@ -26,7 +26,8 @@ const props = defineProps({
   modelValue: { type: String, default: '' },
   /** 占位文案 */
   placeholder: { type: String, default: '' },
-  /** key → 描述对象 {kind,name,sub,title,delTitle,state,thumb,avatar,fixed}；fixed=状态 chip（无 ×、不归输入框删） */
+  /** key → 描述对象 {kind,name,sub,title,delTitle,state,thumb,avatar,fixed,head}；
+   *  fixed=状态 chip（无 ×、不归输入框删）；head=模式 chip，一律钉在正文最前而不是跟在光标后 */
   resolve: { type: Function, required: true },
   /** 富占位：命令词（蓝色）与说明（灰色）。空输入时覆盖在正文起始处；不参与正文 */
   hintCmd: { type: String, default: '' },
@@ -193,6 +194,8 @@ const iconOf = kind => {
   node.classList.add('cchip-ic')
   return node
 }
+/** 「本轮怎么跑」的模式 chip（目标/计划）：它不挨着任何一个字，所以不参与光标落点，永远钉在正文最前 */
+const headOf = key => !!(props.resolve(key) || {}).head
 const buildChip = key => {
   const d = props.resolve(key) || { kind: 'file', name: key }
   const el = document.createElement('span')
@@ -255,11 +258,19 @@ const sync = wantKeys => {
   const add = (wantKeys || []).filter(k => !have.has(k))
   if (!add.length) return domKeys()
   const i = caretIndex()
+  const head = add.filter(headOf)
+  const rest = add.filter(k => !headOf(k))
+  // 模式 chip 先落到正文之前：跟着光标走会出现「打完字才开目标 → chip 落在句尾」，
+  // 看着像在指前面那句话。多颗按数组给的顺序排（锚点=第一条非模式 chip 的节点）。
+  head.forEach(k => {
+    const anchor = Array.from(el.childNodes).find(n => !(isChip(n) && headOf(n.dataset.key))) || null
+    el.insertBefore(buildChip(k), anchor)
+  })
   // 有光标就插在光标处，没有（焦点在面板搜索框上）就接到末尾；连插多颗逐颗往后接，
   // 否则第二颗会插到第一颗前面，顺序与数组相反
   const point = i < 0 ? null : posToPoint(i)
   let last = null
-  add.forEach(k => {
+  rest.forEach(k => {
     const node = buildChip(k)
     if (last) last.insertAdjacentElement('afterend', node)
     else if (!point) el.appendChild(node)
@@ -280,6 +291,10 @@ const sync = wantKeys => {
     const sel = window.getSelection()
     sel.removeAllRanges()
     sel.addRange(r)
+  } else if (i >= 0 && head.length) {
+    // 只插了模式 chip：空框时光标是「编辑区第 0 个子节点」，chip 一插就成了光标的右边，
+    // 下一个字打到 chip 左边。按正文下标重新锚一次，落点自然回到 chip 之后
+    setCaret(i)
   }
   syncEmpty()
   return domKeys()
@@ -621,7 +636,13 @@ defineExpose({
 .composer-edit.is-empty.has-rich-hint::before { content: none; }
 :deep(.cchip) {
   display: inline-flex; align-items: center; gap: 4px; max-width: 240px; vertical-align: middle;
-  margin: 1px 3px 1px 0; padding: 1px 5px; border-radius: 6px; font-size: 12px; line-height: 18px;
+  /* vertical-align:middle 锚的是拉丁 x-height 中点，中文正文旁 chip 会看着沉半格。实测（14px 正文/行盒 22.4px）：
+     不抬时 chip 盒中心 18.31，正文墨迹中心 16.75、光标中心（=行盒）17.2 → 各低 1.56 / 1.11px。
+     抬 1px 落在两者之间（离正文 0.56、离光标 0.11）；抬 2px 反过来——光标比 chip 低半格，
+     看着像光标自己跑偏了（用户两次点的正是这两端）。
+     用相对偏移而不是改 vertical-align 长度：后者会撑高行盒，开关 chip 时正文要上下跳 1.5px。 */
+  position: relative; top: -1px;
+  margin: 1px 6px 1px 0; padding: 1px 5px; border-radius: 6px; font-size: 12px; line-height: 18px;
   background: var(--app-accent-weak); color: var(--app-accent); user-select: none; cursor: default;
   border: 1px solid transparent;
 }

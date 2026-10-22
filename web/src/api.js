@@ -1172,7 +1172,7 @@ export const steerChatTurn = (sessionId, text) =>
 export const stopChatTurn = sessionId =>
   request('/chat/stop', { method: 'POST', body: JSON.stringify({ sessionId }) })
 
-/** 会话当前任务清单（writeTodo 整表覆盖的那一份）：切会话/刷新后右栏「任务清单」卡据此回显。
+/** 会话当前任务清单（writeTodo 整表覆盖的那一份）：切会话/刷新后输入框上方那条「任务清单」据此回显。
  *  返回 {todos:{turnId,items:[{content,status}],updatedAt}} 或 null */
 export const getSessionTodosApi = sessionId =>
   request(`/session/${encodeURIComponent(sessionId)}/todos`)

@@ -135,7 +135,8 @@
       <!-- 本轮随行内容 chips -->
       <div v-if="hasChips" class="m-chips">
         <!-- 计划模式开启态：工具条上不再有那颗药丸，这一排就是唯一会说「下一轮先出计划」的地方。
-             名字与 PC 正文里那颗 chip 同一个词（「计划」），× 即关闭。 -->
+             名字与 PC 正文里那颗 chip 同一个词（「计划」），× 即关闭。发送即消费，chip 与这一排
+             其它本轮内容一起退场（见引擎 send）。 -->
         <span v-if="planModeOn" class="m-chip m-chip-plan">
           计划<button class="m-chip-del" type="button" title="关闭计划模式" @click="setPlanMode(false)">×</button>
         </span>
