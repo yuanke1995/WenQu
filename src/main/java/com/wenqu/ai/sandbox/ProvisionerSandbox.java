@@ -99,9 +99,11 @@ public class ProvisionerSandbox implements Sandbox {
      */
     @Override
     public ExecResult exec(RuntimeContext runtimeContext, String command, Integer timeoutSeconds) {
-        ProvisionerSandboxBackend.ExecuteResponse r = backend.execute(command, timeoutSeconds);
+        ProvisionerSandboxBackend.ExecuteResponse r =
+                backend.execute(command, ProvisionerSandboxBackend.floorToolTimeout(timeoutSeconds));
         String output = r.output == null ? "" : r.output;
-        int exitCode = r.exitCode == null ? 0 : r.exitCode;
+        // 与 ProvisionerSandboxFilesystem#execute 同一口径：没拿到退出码记 124，不映射成 0
+        int exitCode = r.exitCode == null ? ProvisionerSandboxBackend.EXIT_NOT_COMPLETED : r.exitCode;
         return new ExecResult(exitCode, output, "", r.truncated);
     }
 

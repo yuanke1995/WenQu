@@ -601,6 +601,41 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
      */
     private static final String WORKSPACE_ROOT = "/home/gem/user-data";
 
+    /**
+     * 「这一步没拿到退出码」用的退出码：{@code timeout(1)} 的约定数，框架自己就认它
+     * （{@code BaseSandboxFilesystem#read} 拿 124 区分「没跑完」和「命令跑了但读不到文件」）。
+     * <p>为什么不给 0：0 = 成功，会把「沙盒没通」「命令还在跑」记成绿色对勾的空输出。
+     * 为什么不给 null：框架 {@code delete}/{@code move} 那两处直接对 Integer 拆箱，null 会 NPE。
+     */
+    public static final int EXIT_NOT_COMPLETED = 124;
+
+    /**
+     * 模型那把 {@code execute} 工具传下来的 {@code timeout} 的下界。
+     * <p>为什么不设成 30（框架 {@code ShellExecuteTool} schema 里那句 "default: 30"）：低于 30 的数
+     * 几乎不是模型算出来的判断，而是随手填的（真机 2026-10-22 那次 {@code pip install} 填了 5，
+     * 命令还在容器里跑着，卡片就已经报「没跑完」）。
+     * <p>代价只落在「命令真挂住」那一类：一次 HTTP 读要等满 {@code 60 + EXEC_READ_SLACK} 才拿到
+     * 「没跑完」。timeout 本身是上限不是固定 sleep，{@code ls} 传 60 照样秒回。
+     * <p>为什么不用 {@code sandbox.commandTimeoutSeconds}（180）那份：那是「不传时」的缺省档，
+     * 当下限等于让这个参数只能往上调、模型显式传什么都白传。
+     */
+    private static final int MIN_TOOL_TIMEOUT_SECONDS = 60;
+
+    /**
+     * 把模型工具的 {@code timeout} 钳到 {@link #MIN_TOOL_TIMEOUT_SECONDS}。
+     *
+     * <p><b>只给框架那两个适配器用</b>（{@link ProvisionerSandbox#exec} /
+     * {@link ProvisionerSandboxFilesystem#execute}），不放进 {@link #execute(String, Integer)}：
+     * 后者还有三个非模型调用方——工作流代码节点（{@code timeoutSeconds} 可配到 1 秒）、
+     * 沙盒运行代码接口、{@code run_code}——在那里钳会把用户显式配的小值悄悄改掉。
+     *
+     * <p>{@code null} 原样透传：那是框架文件工具（读文件、列目录）那批不带超时的调用，
+     * 归 runtime 缺省管，不属于「模型随手填了个小数字」这一类。
+     */
+    public static Integer floorToolTimeout(Integer timeout) {
+        return timeout == null ? null : Math.max(timeout, MIN_TOOL_TIMEOUT_SECONDS);
+    }
+
 
     /**
      * 把命令包成「先进入工作目录再执行」。
@@ -640,6 +675,13 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
             SandboxRuntimeClient client = getClient();
             Duration t = timeout == null ? null : Duration.ofSeconds(timeout);
             SandboxRuntimeClient.SandboxExecResult result = client.execCommand(inWorkspace(command), t, false);
+            if (result.notCompleted()) {
+                // runtime 到点说的是「这一趟没等到结果」：命令仍在容器里活着（实测——被 no_change
+                // 闸放弃的那条，130 秒的 touch 照样落盘），只是它不再等了。所以这句话必须同时
+                // 劝住「当成失败重跑」：重跑等于把同一件事做两遍，还会和活着的那条互相覆盖产物。
+                return new ExecuteResponse(notCompletedText(timeout, result.status()), null, false);
+            }
+
             String output = result.output() == null ? "" : result.output();
             Integer exitCode = result.exitCode();
             boolean truncated = false;
@@ -653,14 +695,42 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
             return new ExecuteResponse(output, exitCode, truncated, false, fullOutput);
         } catch (RuntimeException exc) {
             // infraError=true：异常来自「连不上/调用沙盒失败」这层，而非命令本身跑失败
+            // 退出码留 null（这一步根本没执行，报 1 会被读成「命令跑了、返回 1」）；
+            // 语义由下面这句话承担，工具层把 null 统一记成「没跑完」。
             System.err.println("Sandbox execute failed for thread " + threadId + ": " + exc);
-            return new ExecuteResponse("Error: " + exc, 1, false, true);
+            return new ExecuteResponse("沙盒不可达，这条命令没有真正执行（不是命令本身失败，重试这条命令也没用）："
+                    + exc, null, false, true);
         }
     }
 
-    /** 等价 {@code execute(command)}（对应 Python 单参签名，无显式超时）。 */
+    /** 等价 {@code execute(command)}（对应框架文件工具那批不带超时的调用：读文件、列目录等）。 */
     public ExecuteResponse execute(String command) {
         return execute(command, null);
+    }
+
+    /**
+     * 「这一趟没等到结果」这句话（给模型看的，也是工具卡上唯一的解释）。
+     *
+     * <p>按 runtime 的原词分档：两种到点的原因不同、下一步该怎么走也不同。合成一句
+     * 「命令没跑完」的话，模型只能猜——真机那次它猜成「被打断了」，于是收工，
+     * 把已经跑成功的命令当成失败重跑了一遍。
+     */
+    private String notCompletedText(Integer timeout, String status) {
+        if ("no_change_timeout".equalsIgnoreCase(status)) {
+            // timeout 为 null 时是框架文件工具那批不带超时的调用，此时生效的是 runtime 缺省的 120 秒。
+            return "命令静默了 " + (timeout == null ? "120" : timeout)
+                    + " 秒（一个新字节都没吐），沙盒放弃了等待；这一步没拿到退出码。"
+                    + "命令本身仍在容器里继续跑，不是失败、也没被杀掉——别整条重跑，重跑会和还活着的那条互相覆盖产物。"
+                    + "要拿到结果：让它边跑边吐进度（python 加 -u、print 后 flush，别用 `| tail`、`| grep` 这类把输出攒到进程结束才吐的管道），"
+                    + "或者放到后台跑、再轮询它落盘的产物。";
+        }
+        if ("running".equalsIgnoreCase(status)) {
+            return "命令未在 " + (timeout == null ? "追踪窗口" : timeout + " 秒")
+                    + "内跑完，这一步没拿到退出码。命令仍在容器里继续跑（没被杀），别整条重跑。"
+                    + "要么把 timeout 传大一点再等它，要么放到后台跑、再轮询它落盘的产物。";
+        }
+        return "沙盒没等到这条命令的结果（status=" + status + "），这一步没拿到退出码。"
+                + "命令可能仍在容器里跑，先查它已经落盘的产物，别急着重跑整条。";
     }
 
     // ==================== 流式执行（实时输出） ====================
@@ -1251,7 +1321,8 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
                 + "raise SystemExit(0 if stat.S_ISREG(st.st_mode) and inside else 2)\"";
         try {
             ExecuteResponse result = execute(command);
-            return result.exitCode() == null || result.exitCode() == 0;
+            // 只认真拿到的 0：没拿到退出码（沙盒不可达 / 到点没跑完）不等于「这文件在」
+            return result.exitCode() != null && result.exitCode() == 0;
         } catch (RuntimeException exc) {
             return false;
         }
@@ -1875,9 +1946,10 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
         public final String fullOutput;
         /**
          * 本次失败是「基础设施故障」而非「命令本身执行失败」：连接不上沙盒 / 鉴权被拒 /
-         * provisioner 不可达等。两者都是 exitCode=1 + 文本，但语义完全不同——
-         * 前者重试与改命令都无意义（要让运维把 provisioner 拉起来），后者是正常的业务结果
-         * （命令跑了、退出码非 0，模型据此调整即可）。
+         * provisioner 不可达等。两者的区别在退出码上：命令真跑了就带真退出码，
+         * 根本没跑成则退出码为 null（配合 output 里那句「沙盒不可达」）。
+         * <p>语义完全不同——前者重试与改命令都无意义（要让运维把 provisioner 拉起来），
+         * 后者是正常的业务结果（命令跑了、退出码非 0，模型据此调整即可）。
          * <p>工具层据此把记录状态记成 error 而非 done，失败在聊天区一眼可见（否则失败轮
          * 会显示成绿色对勾的"成功"，排查时极难发现沙盒压根没通）。
          */

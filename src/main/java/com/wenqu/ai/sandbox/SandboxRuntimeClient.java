@@ -66,6 +66,14 @@ public interface SandboxRuntimeClient {
     /** find_files 结果。 */
     record SandboxFindFilesResult(List<String> files) {}
 
-    /** exec_command 结果：output 为合并后的 stdout/stderr，exitCode 为进程退出码。 */
-    record SandboxExecResult(String output, Integer exitCode) {}
+    /**
+     * exec_command 结果：output 为合并后的 stdout/stderr，exitCode 为进程退出码。
+     * <p>{@code notCompleted} 单独成一个字段：runtime 到点没跑完回的是 HTTP 200 +
+     * {@code status:"running"} + output/exit_code 双 null（实测），和「跑完了但没有任何输出」
+     * 是同一个形状，只看后两个字段就会把前者当成后者。
+     * <p>{@code status} 带 runtime 的原词（实测有 {@code completed} / {@code running} /
+     * {@code no_change_timeout}），因为这几条到点原因不同、给模型的劝法也不同，
+     * 收敛成一个布尔就把「为什么没跑完」丢了。
+     */
+    record SandboxExecResult(String output, Integer exitCode, boolean notCompleted, String status) {}
 }

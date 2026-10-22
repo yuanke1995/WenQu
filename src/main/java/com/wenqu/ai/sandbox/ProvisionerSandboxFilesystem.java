@@ -122,11 +122,16 @@ public class ProvisionerSandboxFilesystem extends BaseSandboxFilesystem {
      */
     @Override
     public ExecuteResponse execute(RuntimeContext runtimeContext, String command, Integer timeoutSeconds) {
-        ProvisionerSandboxBackend.ExecuteResponse r = backend.execute(command, timeoutSeconds);
+        // 模型那把 execute 工具的 timeout 有下界：它 schema 里的 30 只是「不传时」的缺省，
+        // 显式传 5 也照样收（真机 2026-10-22 那条 pip 就是这么被掐断的）。
+        ProvisionerSandboxBackend.ExecuteResponse r =
+                backend.execute(command, ProvisionerSandboxBackend.floorToolTimeout(timeoutSeconds));
         String output = r.output == null ? "" : r.output;
-        int exitCode = r.exitCode == null ? 0 : r.exitCode;
-        // infraError 表示「沙盒压根没通」而非命令跑失败：此时 exitCode 已被置 1，
-        // 这里把输出原样带回，让模型看见「连不上沙盒」而不是一句空的成功。
+        // 没拿到退出码（沙盒不可达 / 到点还在跑）一律记 124，绝不映射成 0：
+        // 0 在这条链路上等于「成功」，卡片会变绿色对勾、输出是空的，模型据此以为这步做完了。
+        int exitCode = r.exitCode == null ? ProvisionerSandboxBackend.EXIT_NOT_COMPLETED : r.exitCode;
+        // infraError 表示「沙盒压根没通」而非命令跑失败：输出里那句「沙盒不可达」原样带回，
+        // 让模型看见「连不上沙盒」而不是一句空的成功。
         return new ExecuteResponse(output, exitCode, r.truncated);
     }
 
