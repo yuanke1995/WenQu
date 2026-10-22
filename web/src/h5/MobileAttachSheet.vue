@@ -7,7 +7,7 @@
     <div class="as">
       <!-- ==================== 本轮模式 ====================
            计划是一颗开关（只管下一轮起要不要先出计划，开启态由主壳那颗 chip 回显）；目标是一行动作
-           （点了就把输入框那句交出去建目标开跑，没正文则回落到起草 sheet）。工具条上不放它们——
+           （点了就把输入框那句交出去建目标开跑，没有正文就在主壳里提示先写一句）。工具条上不放它们——
            四颗药丸固定要 360px，360px 屏会把送出键挤出输入卡。 -->
       <div class="as-mode">
         <button class="as-row" type="button" @click="setPlanMode(!planModeOn)">
@@ -18,11 +18,11 @@
           </span>
           <span class="as-sw" :class="{ on: planModeOn }" aria-hidden="true" />
         </button>
-        <button v-if="goalModeOn && !sessionGoal" class="as-row" type="button" @click="$emit('goal')">
+        <button v-if="goalModeOn && (!sessionGoal || goalTerminal)" class="as-row" type="button" @click="$emit('goal')">
           <aim-outlined class="as-ic" />
           <span class="as-main">
             <span class="as-name">定为目标</span>
-            <span class="as-desc">把输入框这句交出去开跑；验收标准由助手起草，可改</span>
+            <span class="as-desc">把输入框这句交出去开跑；助手会自己往下推进，随时可以在上面那条停掉</span>
           </span>
         </button>
       </div>
@@ -163,8 +163,10 @@ const {
   histPool, isHistPicked, toggleHistoryRef,
   pendingFiles, pendingImages, addFiles, removePendingFile, removePendingImage,
   pendingHistoryRefs, pendingMentions,
-  // 本轮模式：计划开关与目标入口都吃引擎那份共享状态（ai_plan_mode 两端同源，见主壳 chip）
-  planModeOn, setPlanMode, goalModeOn, sessionGoal
+  // 本轮模式：计划开关与目标入口都吃引擎那份共享状态（ai_plan_mode 两端同源，见主壳 chip）。
+  // 目标入口的显隐与 PC 同一条判据：这一条会话已有活目标时不再出现（换目标走条子上的编辑/删除），
+  // 目标结束后可以再定一条新的。
+  planModeOn, setPlanMode, goalModeOn, sessionGoal, goalTerminal
 } = engine
 
 // 历史引用候选：PC 侧在视图层（histQuery/histCandidates 未进引擎），移动壳按同一口径本地实现

@@ -72,8 +72,6 @@ const TOOL_LABELS = {
   task_output: '获取任务结果',
   task_cancel: '取消后台任务',
   wait_async_results: '等待后台结果',
-  // 目标模式的候选提议工具（目标模式开着就会挂）：措辞与后端 FrameworkToolLabels 保持一致
-  task_requirement_propose: '提议候选要求',
   // MCP（context7）：去前缀后按裸名匹配
   resolve_library_id: '解析文档库',
   query_docs: '检索官方文档',
@@ -134,7 +132,6 @@ const TOOL_DESCS = {
   task_output: '把后台任务跑出来的结果读回来',
   task_cancel: '让一个还没跑完的后台任务停下来',
   wait_async_results: '派出去的活还没回来，在这儿等一会儿',
-  task_requirement_propose: '助手把它对验收标准的理解作为候选提交，是否采纳由你逐条确认，不会自动生效',
   resolve_library_id: '先确定要查阅哪个库的官方文档',
   query_docs: '到对应库的官方文档里查找相关内容',
   read_wiki_structure: '浏览开源仓库 Wiki 的目录结构',
@@ -1180,79 +1177,74 @@ const verLabel = m => verLocal(m)
   : `${m.variantIndex || 1}/${m.variantCount || 1}`
 
 // ==================== 目标模式的状态口径 ====================
+// 形状对齐 DSH 的目标：一个跨轮自动推进的目标 + 一个阶段，没有验收标准、没有人工确认、
+// 没有逐条核验、没有倒计时。用户的动作只剩三个：改目标原文、停止/继续、删除。
 // 摘要条、右栏/移动详情面、目标卡三处共用同一套词与同一份判据：各处各写一遍必然漂移
-// （同一条目标，条子说一个词、卡里说另一个词就是那种）。入参一律是目标文档本身，不读任何 .value。
-// 词汇收成用户结果：条子三档（进行中/已暂停/受阻），详情面多一档「等你做什么」，
-// 「等你核验」再分两种口气：有标准=停下来是让人拿着交付物做检查（等你检查），
-// 没有标准=先补一条再说（等你核验）。卡在哪靠原因那一行说，不挤进状态词里。
-// 目标不设预算：这里没有任何「上限/还剩多少」的概念，只有「已经跑到第几轮」和「还差几条没验过」。
-const GOAL_BLOCKED = ['FAILED', 'ENDED_INCOMPLETE']
-/** 与后端 GoalService 的 EDITABLE 同源：只有这几档能就地改验收标准，摆错档就是点了报错 */
-const GOAL_EDITABLE = ['RUNNING', 'VERIFYING', 'WAITING_INPUT', 'PAUSED']
-/** 不再往下推的那几档：详情面转只读 + 「另起目标」 */
+// （同一条目标，条子说一个词、卡里说另一个词就是那种）。入参一律是目标视图模型本身，不读任何 .value。
+// 后端只给四档状态：RUNNING / PAUSED / ACHIEVED / CANCELLED（老行的其余状态读取时已归一）。
+/** 不再往下推的那几档：详情面转只读，条子也不再露 */
 const GOAL_ENDED = ['ACHIEVED', 'CANCELLED', 'FAILED', 'ENDED_INCOMPLETE']
-/** 摘要条整条撤下的两档：已达成（做完了）与已取消（用户自己清的），都不是「还等你处理」 */
-const GOAL_DISMISSED = ['ACHIEVED', 'CANCELLED']
-const GOAL_RUNNING = ['RUNNING', 'VERIFYING', 'DRAFT', 'CLARIFYING']
-
-/** 验收态（等你核验）里有没有已确认的标准：有=停下来是让人拿着交付物做检查，没有=要人先补一条 */
-const goalAcceptanceOf = g => !!g && g.status === 'WAITING_INPUT' &&
-  ((g.criteria || []).some(c => c.kind !== 'CONSTRAINT' && c.status === 'CONFIRMED'))
+/** 还活着的两档：条子只在这两档上出现（暂停也是「用户可以接着处理」的活目标） */
+const GOAL_LIVE = ['RUNNING', 'PAUSED']
 
 const goalTerminalOf = g => !!g && GOAL_ENDED.includes(g.status)
-const goalBarVisibleOf = g => !!g && g.status !== 'AWAITING_CONFIRMATION' && !GOAL_DISMISSED.includes(g.status)
+const goalBarVisibleOf = g => !!g && GOAL_LIVE.includes(g.status)
 const goalPhraseOf = g => {
-  if (!g) return ''
-  if (g.status === 'PAUSED') return '已暂停的目标'
-  if (g.status === 'WAITING_INPUT') return goalAcceptanceOf(g) ? '等你检查的目标' : '等你核验的目标'
-  if (GOAL_BLOCKED.includes(g.status)) return '受阻的目标'
-  return '进行中的目标'
+  const s = g && g.status
+  if (s === 'RUNNING') return '进行中的目标'
+  if (s === 'PAUSED') return '已暂停的目标'
+  if (s === 'ACHIEVED') return '已完成的目标'
+  if (GOAL_ENDED.includes(s)) return '已结束的目标'
+  return ''
 }
 const goalStateLabelOf = g => {
   const s = g && g.status
+  if (s === 'RUNNING') return '进行中'
+  if (s === 'PAUSED') return '已暂停'
   if (s === 'ACHIEVED') return '已完成'
-  if (s === 'CANCELLED') return '已取消'
-  if (GOAL_BLOCKED.includes(s)) return '受阻'
-  if (s === 'AWAITING_CONFIRMATION') return '等你确认'
-  if (s === 'WAITING_INPUT') return goalAcceptanceOf(g) ? '等你检查' : '等你核验'
-  if (GOAL_RUNNING.includes(s)) return '进行中'
-  return '已暂停'
+  if (GOAL_ENDED.includes(s)) return '已结束'
+  return ''
 }
 const goalStateClassOf = g => {
   const s = g && g.status
+  if (s === 'RUNNING') return 'running'
+  if (s === 'PAUSED') return 'paused'
   if (s === 'ACHIEVED') return 'achieved'
-  if (s === 'CANCELLED') return 'ended'
-  if (GOAL_BLOCKED.includes(s)) return 'blocked'
-  if (s === 'AWAITING_CONFIRMATION' || s === 'WAITING_INPUT') return 'pending'
-  if (GOAL_RUNNING.includes(s)) return 'running'
-  return 'paused'
+  if (GOAL_ENDED.includes(s)) return 'ended'
+  return ''
 }
-/** 还没验过的标准原文（未完成清单与「还差几条」的唯一数据源：过期也不算过） */
-const goalRemainingOf = g => ((g && g.criteria) || [])
-  .filter(c => c.kind !== 'CONSTRAINT' && c.status === 'CONFIRMED' &&
-    (!c.verification || c.verification.outcome !== 'PASSED' || c.verification.stale))
-  .map(c => c.text)
-/** 受阻那一档说清卡在哪：为什么停的、还差几条 */
+/** 条子上那一行轮次：自动续跑已经跑到第几轮 / 安全上限是几轮（上限只兜底，不是给用户的预算）。
+ *  maxRounds 缺省（老服务端/空视图）时只报已跑轮次，不编一个上限出来。 */
+const goalRoundLineOf = g => {
+  if (!g) return ''
+  const round = Number(g.round) || 0
+  const max = Number(g.maxRounds) || 0
+  return max > 0 ? `第 ${round} 轮 / 最多 ${max} 轮` : `第 ${round} 轮`
+}
+/** 停下来的原因：只说「为什么在这儿停住」，与用户自己按的暂停分开说（后者不给原因行）。
+ *  轮数上限那条只在真停住（PAUSED）时才说：继续跑之后 endReason 清掉之前，这句话不该挂在一个正在跑的目标上。 */
 const goalBlockReasonOf = g => {
-  if (!g || !GOAL_BLOCKED.includes(g.status)) return ''
-  if (g.status === 'FAILED') return '未达成收尾：这一条不再往下推'
-  const left = goalRemainingOf(g).length
-  return left ? `就此收尾：还差 ${left} 条没验过` : '就此收尾'
+  if (!g) return ''
+  const reason = g.endReason || ''
+  if (reason === 'round-limit') {
+    return g.status === 'PAUSED' ? `已到自动推进上限（${goalRoundLineOf(g)}），先停在这里` : ''
+  }
+  if (reason === 'blocked') return `受阻：${String(g.blockedReason || '').trim() || '助手报告目标无法继续'}`
+  return ''
 }
-const goalRoundLineOf = g => `执行轮次 ${g.turnIndex || 1}`
-/** 摘要条的悬浮行：条子放不下的那些数（轮次、受阻原因、同步异常）一次给全 */
+/** 摘要条的悬浮行：条子放不下的那些字（目标原文、轮次、后端给的那句提示、停因）一次给全 */
 const goalBarTitleOf = g => {
   if (!g) return ''
-  return [g.objective, goalRoundLineOf(g), g.hint, goalBlockReasonOf(g), g.syncWarn].filter(Boolean).join('\n')
+  return [g.objective, goalRoundLineOf(g), g.hint, goalBlockReasonOf(g)].filter(Boolean).join('\n')
 }
 /** 触屏那一版：没有 hover，同一批数压成条子下面第二行小字（不许因为「放不下」就在移动端丢掉它） */
 const goalBarMetaOf = g => {
   if (!g) return ''
-  return [goalRoundLineOf(g), g.hint, goalBlockReasonOf(g), g.syncWarn].filter(Boolean).join(' · ')
+  return [goalRoundLineOf(g), g.hint, goalBlockReasonOf(g)].filter(Boolean).join(' · ')
 }
-const goalCanPauseOf = g => ['RUNNING', 'VERIFYING'].includes(g && g.status)
-const goalCanResumeOf = g => !!g && (g.status === 'PAUSED' || g.status === 'WAITING_INPUT')
-const goalCanEditOf = g => GOAL_EDITABLE.includes(g && g.status)
+const goalCanPauseOf = g => !!g && g.status === 'RUNNING'
+const goalCanResumeOf = g => !!g && g.status === 'PAUSED'
+const goalCanEditOf = g => !!g && GOAL_LIVE.includes(g.status)
 
 
 export {
@@ -1277,6 +1269,6 @@ export {
   pasteTitle, pasteSub, isPastedText, PASTE_TEXT_BASE,
   snapshotVersion, applyVersion, verLocal, canSwitchPrev, canSwitchNext, verLabel,
   goalTerminalOf, goalBarVisibleOf, goalPhraseOf, goalStateLabelOf, goalStateClassOf,
-  goalRemainingOf, goalBlockReasonOf, goalBarTitleOf, goalBarMetaOf, goalRoundLineOf,
+  goalBlockReasonOf, goalBarTitleOf, goalBarMetaOf, goalRoundLineOf,
   goalCanPauseOf, goalCanResumeOf, goalCanEditOf
 }

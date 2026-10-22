@@ -170,25 +170,26 @@
       <!-- 目标条（常驻摘要条，与 PC 那一条同一套词汇与判据）：横跨多轮的目标不属于哪一颗气泡，
            所以常驻在输入卡正上方。一行说不完的（跑了几轮、卡在哪）压成第二行小字——
            触屏没有 hover，PC 收在悬浮里的东西在这儿必须落在地上。
-           动作只有图标：暂停/继续、编辑（开底部 sheet）、清除。待确认那一档整块顶替输入卡，不进这条。 -->
+           用户在这里能做的只有三件事：停/继续、改目标原文（开底部 sheet）、删掉目标。
+           验收、收尾这类裁决动作已经全部退役——目标跑到头由助手自己停，不需要人拍板。 -->
       <div v-if="goalBarVisible" class="m-goalbar" data-goal-bar>
         <div class="m-gb-row">
-          <aim-outlined class="m-gb-ic" />
-          <span class="m-gb-label">{{ goalPhrase }}</span>
+          <!-- 状态药丸读的就是引擎那一份词（只读，不可点）：在跑还是停住，一眼分得开 -->
+          <span class="m-gb-pill" :class="'st-' + goalStateClass">
+            <aim-outlined class="m-gb-ic" />{{ goalPhrase }}
+          </span>
           <span class="m-gb-objective">{{ sessionGoal.objective }}</span>
           <span class="m-gb-acts">
-            <button v-if="sessionGoal.status === 'WAITING_INPUT'" type="button" class="m-gb-btn"
-                    title="逐条核验：打开状态与来源" @click="refOpen = true"><check-circle-outlined /></button>
             <button v-if="goalCanPause" type="button" class="m-gb-btn" :disabled="sessionGoal.busy"
-                    title="暂停目标" @click="runGoalAction('pause')"><pause-circle-outlined /></button>
+                    title="停止目标（可以再继续）" @click="runGoalAction('pause')"><pause-circle-outlined /></button>
             <button v-else-if="goalCanResume" type="button" class="m-gb-btn" :disabled="sessionGoal.busy"
-                    title="恢复目标" @click="runGoalAction('resume')"><play-circle-outlined /></button>
+                    title="继续目标" @click="runGoalAction('resume')"><play-circle-outlined /></button>
             <button v-if="goalCanEdit" type="button" class="m-gb-btn"
-                    title="编辑目标：改验收标准" @click="startGoalInlineEdit">
+                    title="编辑目标" @click="startGoalInlineEdit">
               <edit-outlined />
             </button>
             <button type="button" class="m-gb-btn" :disabled="sessionGoal.busy"
-                    title="清除目标" @click="runGoalAction('cancel')"><close-outlined /></button>
+                    title="删除目标" @click="runGoalAction('clear')"><close-outlined /></button>
           </span>
         </div>
         <div v-if="goalBarError" class="m-gb-error" role="alert">{{ goalBarError }}</div>
@@ -274,44 +275,6 @@
             <button class="m-rec-btn primary" type="button"
                     :disabled="curPlanCard.busy || planExpired || !(curPlanCard.editText || '').trim()"
                     @click="continuePlanConversation(pendingPlan, curPlanCard.editText)">继续对话</button>
-          </span>
-        </div>
-      </div>
-
-      <!-- 目标确认栏（人在回路）：待确认期间整块顶替输入卡，与 PC 的 goalp-* 同一套引擎状态
-           （pendingGoal / goalExpired / goalCountdownText 都在 useChatEngine 里，不在此重算）。
-           逐条标准勾选 + 验证方式；确认只能由用户点（提议不等于批准） -->
-      <div v-else-if="pendingGoal" class="m-input-card m-goalp">
-        <div class="m-goalp-head">
-          <span class="m-goalp-tag">目标</span>
-          <span v-if="goalExpired" class="m-goalp-state warn">已超时</span>
-          <span v-else class="m-goalp-state">等你确认验收标准</span>
-          <span v-if="goalCountdownText" class="m-goalp-timer" :class="{ warn: goalExpired }">{{ goalCountdownText }}</span>
-        </div>
-        <div class="m-goalp-objective">{{ pendingGoal.objective }}</div>
-        <div class="m-goalp-criteria">
-          <div v-for="(c, ci) in pendingGoal.criteria || []" :key="c.key || c.id || ci" class="m-goalp-criterion">
-            <label class="m-goalp-check">
-              <input type="checkbox" :checked="(goalPicks[c.key] || 'CONFIRMED') === 'CONFIRMED'"
-                     :disabled="pendingGoal.busy || goalExpired"
-                     @change="ev => { goalPicks[c.key] = ev.target.checked ? 'CONFIRMED' : 'REJECTED' }" />
-              <span>采纳</span>
-            </label>
-            <label class="m-goalp-check no">
-              <input type="checkbox" :checked="(goalPicks[c.key] || 'CONFIRMED') === 'REJECTED'"
-                     :disabled="pendingGoal.busy || goalExpired"
-                     @change="ev => { goalPicks[c.key] = ev.target.checked ? 'REJECTED' : 'CONFIRMED' }" />
-              <span>不要</span>
-            </label>
-            <span class="m-goalp-criterion-text">{{ c.text }}</span>
-          </div>
-        </div>
-        <div class="m-goalp-foot">
-          <span class="m-goalp-actions">
-            <button class="m-rec-btn ghost" type="button" :disabled="pendingGoal.busy || goalExpired"
-                    @click="goalAct('cancel')">取消</button>
-            <button class="m-rec-btn primary" type="button" :disabled="pendingGoal.busy || goalExpired"
-                    @click="confirmGoalM">确认并开始</button>
           </span>
         </div>
       </div>
@@ -465,47 +428,16 @@
       <button class="m-fb-ok" type="button" :disabled="fb.busy" @click="doFeedback">提交反馈</button>
     </BottomSheet>
 
-    <!-- ==================== 目标起草 ==================== -->
-    <BottomSheet :open="goalDraftOpen" title="定个目标" max-height="78dvh" @close="goalDraftOpen = false">
-      <div class="m-goald">
-        <div class="m-goald-label">这件事要做到什么（说清楚「什么算完成」）</div>
-        <textarea v-model="goalDraft.objective" class="m-goald-ta" rows="3" maxlength="4000"
-                  placeholder="例如：把竞品分析报告改到可以直接发给客户，改完自查三遍"></textarea>
-        <div class="m-goald-label">验收标准（可稍后补；没有标准的目标只能靠模型自报完成）</div>
-        <div v-for="(c, ci) in goalDraft.criteria" :key="ci" class="m-goald-criterion">
-          <input v-model="goalDraft.criteria[ci]" class="m-goald-input" maxlength="2000"
-                 placeholder="例如：报告里每个数字都标了来源" />
-          <button v-if="goalDraft.criteria.length > 1" type="button" class="m-goald-del"
-                  @click="removeGoalDraftCriterion(ci)">×</button>
-        </div>
-        <button type="button" class="m-goald-add" @click="addGoalDraftCriterion">+ 加一条标准</button>
-        <div class="m-goald-foot">
-          <span class="m-goald-hint">确认后开始推进；完成与否以验证凭据为准，不是模型宣布</span>
-          <button class="m-rec-btn primary" type="button" @click="submitGoalDraftM">开始</button>
-        </div>
-      </div>
-    </BottomSheet>
-
-    <!-- ==================== 目标改订（与 PC 摘要条的就地编辑态同一批字段、同一个保存出口） ====================
-         只开放验收标准一样：目标原文改不了，要换口径只能另起一条（旧的那条按未完成收尾）。 -->
+    <!-- ==================== 目标改订（与 PC 条子里的就地编辑同一批字段、同一个保存出口） ====================
+         只改「这件事要做到什么」：目标没有验收标准那套东西要维护，也不提供另起一条的口径
+         ——换一句就地把原文改掉，保存后从下一轮起按新的继续跑。 -->
     <BottomSheet :open="goalEditing" title="改目标" max-height="78dvh" @close="goalEditing = false">
-      <div class="m-goald">
-        <div class="m-goald-label">这件事要做到什么</div>
-        <div class="m-goale-objective">{{ goalEdit.objective }}</div>
-        <button type="button" class="m-goale-restart" @click="restartGoalFromEdit">
-          <aim-outlined /> 换这句的口径？另起一条目标（这条按未完成收尾）
-        </button>
-        <div class="m-goald-label">验收标准（完成与否逐条验，不按模型自报）</div>
-        <div v-for="(c, ci) in goalEdit.criteria" :key="ci" class="m-goald-criterion">
-          <input v-model="c.text" class="m-goald-input" maxlength="2000"
-                 placeholder="例如：报告里每个数字都标了来源" />
-          <span v-if="c.passed" class="m-goale-passed">已验</span>
-          <button v-if="goalEdit.criteria.length > 1" type="button" class="m-goald-del"
-                  @click="removeGoalEditCriterion(ci)">×</button>
-        </div>
-        <button type="button" class="m-goald-add" @click="addGoalEditCriterion">+ 加一条标准</button>
-        <div class="m-goald-foot">
-          <span class="m-goald-hint">改完从下一轮起生效；正在跑的这一轮照旧</span>
+      <div class="m-goale">
+        <div class="m-goale-label">这件事要做到什么</div>
+        <textarea v-model="goalEdit.objective" class="m-goale-ta" rows="4" maxlength="4000"
+                  placeholder="写清楚要达成什么；助手会自己一轮轮往下推进"></textarea>
+        <div class="m-goale-foot">
+          <span class="m-goale-hint">保存后从下一轮起按新目标继续</span>
           <button class="m-rec-btn primary" type="button" :disabled="goalEditBusy || !goalEditSaveable"
                   @click="saveGoalEdit">保存</button>
         </div>
@@ -523,7 +455,7 @@ import {
   PlayCircleOutlined,
   ThunderboltOutlined, PlusCircleOutlined, CloseOutlined, GlobalOutlined, SearchOutlined, UpOutlined, DownOutlined,
   BellOutlined, ExclamationCircleOutlined, FileTextOutlined, CopyOutlined, HistoryOutlined,
-  CompressOutlined, EditOutlined, LoadingOutlined, AimOutlined, CheckCircleOutlined
+  CompressOutlined, EditOutlined, LoadingOutlined, AimOutlined
 } from '@ant-design/icons-vue'
 import { pasteTitle, pasteSub } from '../chat/projections'
 import { useChatEngine } from '../chat/useChatEngine'
@@ -637,15 +569,14 @@ const {
   // 确认栏在本页打字框原位，卡片本体共用 PlanCard
   planModeOn, setPlanMode, submitPlanApproval, continuePlanConversation,
   pendingPlan, curPlanCard, planExpired, planCountdownText,
-  // 目标模式（人在回路第五张卡）：确认栏顶替输入卡，摘要条常驻在输入卡上方，面板在「状态与来源」sheet。
-  // 词汇、显隐、动作可用性与就地编辑的字段全在引擎侧（与 PC 共用一份），本页只画形状
-  goalModeOn, sessionGoal, pendingGoal, goalExpired, goalCountdownText,
-  startGoal, submitGoalConfirm, goalAct,
+  // 目标模式：摘要条常驻在输入卡上方，改原文开底部 sheet，目标卡在「状态与来源」sheet。
+  // 词汇、显隐、动作可用性与编辑字段全在引擎侧（与 PC 共用一份），本页只画形状。
+  // 没有待确认/验收/倒计时那一档——目标建好就直接跑，跑到头由助手自己停。
+  sessionGoal, goalStateClass, startGoal,
   goalBarVisible, goalPhrase, goalBarMeta, goalBarError,
   goalCanPause, goalCanResume, goalCanEdit, runGoalAction,
   goalEditing, goalEdit, goalEditBusy, goalEditSaveable,
-  startGoalInlineEdit, addGoalEditCriterion, removeGoalEditCriterion, saveGoalEdit,
-  restartGoalFromEdit, goalRestartRequest,
+  startGoalInlineEdit, saveGoalEdit,
   // 手动压缩上下文（入口在「模型与思考」sheet；分隔线与摘要 sheet 在本页。
   // 「压缩中」态由 compacting 一并表达）
   compacting, compactNotice, compactContext, compactDividerAt,
@@ -657,57 +588,24 @@ const {
 const mentionNames = computed(() => pendingMentions.value.map(m => m.name || m.id))
 
 // ==================== 目标模式（移动壳） ====================
-// 一句话创建：输入框有正文就直接建目标并开跑；没有才开起草 sheet（PC 是按钮取正文，同一条口径）
+// 一句话创建：输入框有正文就直接建目标并开跑（PC 是按钮/命令取正文，同一条口径）。
+// 建目标只有「这件事要做到什么」这一件事，没有验收标准草案要审——建完就往下跑。
 const startGoalNowM = async () => {
   const obj = String(text.value || '').trim()
-  if (!obj) { goalDraftOpen.value = true; return null }
+  if (!obj) { message.warning('先在输入框写一句这件事要做到什么'); return null }
   // 先清框、后建目标（与 PC 同口径）：建目标是一次异步请求（建行 + 框架同步 + 起首轮），
   // 等它回来再清，用户会盯着满框文字以为没发出去
   text.value = ''
-  const g = await startGoal(obj, [])
+  const g = await startGoal(obj)
   // 建失败就把那句还回来（这期间没打新字才还，不覆盖用户新写的东西）
   if (!g && !String(text.value || '').trim()) text.value = obj
   return g
 }
-/** 「+」→ 本轮模式里那颗「定为目标」：先把 sheet 收掉再走同一条创建口——建目标会把输入卡顶成待确认栏，
- *  sheet 压在上面正好挡住要看的那张卡；没正文时它照旧开起草 sheet。 */
+/** 「+」→ 本轮模式里那颗「定为目标」：先把 sheet 收掉再走同一条创建口——
+ *  接下来要看的是消息流和输入卡上方那条目标条，sheet 压在上面正好挡住。 */
 const onGoalFromSheet = async () => {
   attachOpen.value = false
   return startGoalNowM()
-}
-// 起草 sheet（PC 是弹窗，移动壳是底部 sheet：同一批字段、同一套 startGoal 出口）
-const goalDraftOpen = ref(false)
-const goalDraft = reactive({ objective: '', criteria: [''] })
-const addGoalDraftCriterion = () => { if (goalDraft.criteria.length < 12) goalDraft.criteria.push('') }
-const removeGoalDraftCriterion = i => goalDraft.criteria.splice(i, 1)
-const submitGoalDraftM = async () => {
-  const obj = String(goalDraft.objective || '').trim()
-  if (!obj) { message.warning('先写一句这件事要做到什么'); return }
-  const criteria = goalDraft.criteria.map(t => String(t || '').trim()).filter(Boolean)
-    .map(text => ({ kind: 'ACCEPTANCE_CRITERION', text, verifierId: 'manual', verifierParams: {} }))
-  const g = await startGoal(obj, criteria, null)
-  if (g) goalDraftOpen.value = false
-}
-// 「换这句的口径」/「另起目标」：引擎把那句交回来，由本壳开自己的起草 sheet（PC 开弹窗）
-watch(goalRestartRequest, obj => {
-  if (!obj) return
-  goalDraft.objective = String(obj).slice(0, 4000)
-  goalDraft.criteria = ['']
-  goalDraftOpen.value = true
-  goalRestartRequest.value = ''
-})
-// 待确认卡的逐条勾选态（默认全采纳：新手主路径最小化）与提交
-const goalPicks = ref({})
-watch(() => pendingGoal.value, g => {
-  const picks = {}
-  for (const c of (g && g.criteria) || []) picks[c.key] = 'CONFIRMED'
-  goalPicks.value = picks
-})
-const confirmGoalM = async () => {
-  const g = pendingGoal.value
-  if (!g) return
-  const decisions = (g.criteria || []).map(c => ({ key: c.key, status: goalPicks.value[c.key] || 'CONFIRMED' }))
-  await submitGoalConfirm(decisions)
 }
 // 技能正文弹窗：按名字现取清单里的那条（存快照会让停用/恢复后的按钮停在旧状态）
 const skillDocEntry = computed(() => skillList.value.find(s => s.name === skillDoc.value) || {})
@@ -1281,22 +1179,8 @@ onUnmounted(() => {
 .m-planp-foot { display: flex; flex-direction: column; gap: 8px; }
 .m-planp-hint { font-size: 12px; color: var(--app-text3); }
 .m-planp-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
-/* 目标确认栏（m-goalp）：与 m-planp 同契约，逐条标准勾选 + 验证方式 */
-.m-goalp-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.m-goalp-tag { flex: none; font-size: 12px; line-height: 1; padding: 5px 9px; border-radius: 999px; background: var(--app-panel-2); border: 1px solid var(--app-border); color: var(--app-text2); }
-.m-goalp-state { font-size: 12px; color: var(--app-text2); }
-.m-goalp-state.warn { color: var(--app-warn-text); }
-.m-goalp-timer { margin-left: auto; font-size: 12px; color: var(--app-text3); font-variant-numeric: tabular-nums; }
-.m-goalp-timer.warn { color: var(--app-warn-text); }
-.m-goalp-objective { font-size: 14px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
-.m-goalp-criteria { display: flex; flex-direction: column; gap: 8px; max-height: 38vh; overflow: auto; }
-.m-goalp-criterion { display: flex; align-items: center; gap: 10px; font-size: 14px; line-height: 1.5; }
-.m-goalp-check { display: inline-flex; align-items: center; gap: 4px; flex: none; font-size: 12px; color: var(--app-text2); }
-.m-goalp-criterion-text { flex: 1; min-width: 0; }
-.m-goalp-foot { display: flex; justify-content: flex-end; }
-/* 目标起草 sheet */
 /* 目标条（常驻摘要条，与 PC 那一条同一套词汇与判据）：压在输入卡正上方，两行——
-   第一行状态词＋目标原文（单行截断）＋三个图标动作，第二行是 PC 收在悬浮里的那些数（触屏没有 hover）。 */
+   第一行状态药丸＋目标原文（单行截断）＋三颗图标动作，第二行是 PC 收在悬浮里的那些数（触屏没有 hover）。 */
 .m-goalbar {
   display: flex; flex-direction: column; gap: 2px;
   border: 0; border-radius: 12px; background: var(--app-panel);
@@ -1304,8 +1188,17 @@ onUnmounted(() => {
   box-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 8px 20px -10px rgba(16, 24, 40, .10);
 }
 .m-gb-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.m-gb-ic { flex: none; color: var(--app-text3); font-size: 14px; }
-.m-gb-label { flex: none; font-size: 13px; line-height: 22px; font-weight: 500; color: var(--app-text); }
+/* 状态药丸是只读的：状态词由引擎那一份给出，颜色只表达「在跑 / 停住」，不接受点按
+   （验收、收尾这些裁决动作已经退役，别把状态显示做成按钮） */
+.m-gb-pill {
+  flex: none; display: inline-flex; align-items: center; gap: 4px;
+  font-size: 11.5px; line-height: 1; padding: 4px 8px; border-radius: 999px;
+  background: var(--app-panel-2); border: 1px solid var(--app-border); color: var(--app-text2);
+  white-space: nowrap;
+}
+.m-gb-pill.st-running { background: var(--app-accent-weak); border-color: var(--app-accent-border); color: var(--app-accent); }
+.m-gb-pill.st-paused { background: var(--app-warn-weak); border-color: var(--app-warn-border); color: var(--app-warn-text); }
+.m-gb-ic { flex: none; font-size: 12px; }
 .m-gb-objective { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; line-height: 22px; color: var(--app-text2); }
 .m-gb-acts { flex: none; display: flex; align-items: center; gap: 2px; }
 /* 触屏热区按 36px 起（PC 是 28px 圆形幽灵键，这里不照抄尺寸只照抄语义） */
@@ -1316,22 +1209,16 @@ onUnmounted(() => {
 }
 .m-gb-btn:active:not(:disabled) { background: var(--app-panel-2); color: var(--app-text2); }
 .m-gb-btn:disabled { opacity: .4; }
-.m-gb-meta { font-size: 11.5px; line-height: 16px; color: var(--app-text3); font-variant-numeric: tabular-nums; padding-left: 22px; }
-.m-gb-error { font-size: 11.5px; line-height: 16px; color: var(--app-danger); padding-left: 22px; word-break: break-word; }
+.m-gb-meta { font-size: 11.5px; line-height: 16px; color: var(--app-text3); font-variant-numeric: tabular-nums; padding-left: 2px; }
+.m-gb-error { font-size: 11.5px; line-height: 16px; color: var(--app-danger); padding-left: 2px; word-break: break-word; }
 
-/* 目标改订 sheet：与起草 sheet 同一套控件，只多「原文只读一行 + 换口径另起」 */
-.m-goale-objective { font-size: 14px; line-height: 1.6; color: var(--app-text2); white-space: pre-wrap; word-break: break-word; padding: 8px 10px; border: 1px solid var(--app-border); border-radius: 10px; background: var(--app-panel-2); }
-.m-goale-restart { align-self: flex-start; display: inline-flex; align-items: center; gap: 5px; border: none; background: none; padding: 4px 0; font-size: 13px; color: var(--app-accent); }
-.m-goale-passed { flex: none; font-size: 12px; color: var(--app-ok); }
-
-.m-goald { display: flex; flex-direction: column; gap: 8px; }.m-goald-label { font-size: 12.5px; font-weight: 600; color: var(--app-text2); margin-top: 4px; }
-.m-goald-ta { width: 100%; box-sizing: border-box; border: 1px solid var(--app-border); border-radius: 10px; background: var(--app-panel); color: var(--app-text); font: inherit; font-size: 15px; line-height: 1.55; padding: 8px 10px; resize: none; }
-.m-goald-criterion { display: flex; align-items: center; gap: 6px; }
-.m-goald-input { flex: 1; min-width: 0; border: 1px solid var(--app-border); border-radius: 10px; background: var(--app-panel); color: var(--app-text); font-size: 14px; padding: 8px 10px; }
-.m-goald-del { flex: none; border: none; background: none; color: var(--app-text3); font-size: 16px; padding: 4px; }
-.m-goald-add { align-self: flex-start; border: none; background: none; padding: 4px 0; font-size: 13px; color: var(--app-accent); }
-.m-goald-foot { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
-.m-goald-hint { flex: 1; font-size: 12px; color: var(--app-text3); }
+/* 目标改订 sheet（PC 在条子里就地长开，移动壳开底部 sheet）：只有一个目标原文输入框——
+   没有验收标准要维护，也没有「另起一条」这条岔路 */
+.m-goale { display: flex; flex-direction: column; gap: 8px; }
+.m-goale-label { font-size: 12.5px; font-weight: 600; color: var(--app-text2); margin-top: 4px; }
+.m-goale-ta { width: 100%; box-sizing: border-box; border: 1px solid var(--app-border); border-radius: 10px; background: var(--app-panel); color: var(--app-text); font: inherit; font-size: 15px; line-height: 1.55; padding: 8px 10px; resize: none; }
+.m-goale-foot { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.m-goale-hint { flex: 1; font-size: 12px; color: var(--app-text3); }
 .m-askp-rest { color: var(--app-text2); margin-left: 8px; flex: 1; min-width: 0; }
 .m-askp-custom { align-items: center; }
 .m-askp-input { flex: 1; min-width: 0; border: none; outline: none; background: transparent; font-size: 15px; color: var(--app-text); padding: 0; }

@@ -266,8 +266,8 @@
                   <span class="ap-cap-ic"><aim-outlined /></span>
                   <div class="ap-cap-l">
                     <div class="ap-cap-name">目标模式 <span v-if="form.goalEnabled === 0" class="ap-cap-badge">已关闭</span></div>
-                    <div class="ap-cap-desc" title="允许把这个助手交出去做长任务：输入框打 /goal 即可把一件事交出去，跨轮推进；关掉时入口、目标面板与验收标准都不出现。">
-                      把长任务交出去，跨轮推进到验收通过
+                    <div class="ap-cap-desc" title="允许把这个助手交出去做长任务：输入框打 /goal 即可把一件事交出去，助手会自己跨轮推进、做完就停；关掉时入口与目标面板都不出现。">
+                      把长任务交出去，助手自己推进、做完就停
                     </div>
                   </div>
                   <a-select :value="form.goalEnabled" :options="goalOptions" size="small" class="ap-cap-state"

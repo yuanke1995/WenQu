@@ -75,23 +75,12 @@
         </div>
       </template>
 
-      <!-- ---- 目标（PC 右栏「目标」面板的移动形态：同一份 sessionGoal，同一个 GoalCard 组件） ---- -->
+      <!-- ---- 目标（PC 右栏「目标」面板的移动形态：同一份 sessionGoal，同一个 GoalCard 组件） ----
+           卡片只读：状态、轮次、目标原文与卡住的原因。暂停/继续/改原文/删除都只在输入框上方
+           那条摘要条上（一个动作只留一个入口），这里不再摆验收/收尾/另起目标那一套。 -->
       <template v-if="sessionGoal">
         <div class="rs-section">目标</div>
-        <GoalCard :card="sessionGoal" @mark="p => goalAct('markManual', p)" />
-        <!-- 暂停/继续/编辑/清除都在输入框上方那条摘要条上（一个动作只留一个入口）。
-             这里只放这个面板才需要的两件事：不等它自己停、先手动验一遍；主动收尾。 -->
-        <div v-if="!goalTerminal && !pendingGoal" class="rs-act-row">
-          <button class="rs-act" type="button" @click="goalAct('verifyNow')">
-            <safety-certificate-outlined class="rs-ic" /><span>现在验收</span>
-          </button>
-          <button class="rs-act" type="button" @click="goalAct('finish')">
-            <stop-outlined class="rs-ic" /><span>就此收尾</span>
-          </button>
-        </div>
-        <div v-else-if="goalTerminal" class="rs-act-row">
-          <button class="rs-act" type="button" @click="restartGoalDraft">另起目标</button>
-        </div>
+        <GoalCard :card="sessionGoal" />
       </template>
 
       <!-- ---- 这段对话：分享 / 导出 ----
@@ -141,7 +130,7 @@
 
 <script setup>
 import { computed, inject, reactive, ref, watch } from 'vue'
-import { CaretRightOutlined, FileTextOutlined, DownloadOutlined, ShareAltOutlined, FileMarkdownOutlined, CopyOutlined, SwapOutlined, StopOutlined, SafetyCertificateOutlined, EyeOutlined } from '@ant-design/icons-vue'
+import { CaretRightOutlined, FileTextOutlined, DownloadOutlined, ShareAltOutlined, FileMarkdownOutlined, CopyOutlined, SwapOutlined, StopOutlined, EyeOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
 import BottomSheet from './BottomSheet.vue'
 import GoalCard from '../components/GoalCard.vue'
@@ -158,14 +147,11 @@ defineProps({ open: { type: Boolean, default: false } })
 defineEmits(['close', 'source'])
 
 const engine = inject('wqChat')
-// 目标模式：与 PC 同一份 sessionGoal（会话级一份，横跨多轮），卡片本体共用 GoalCard，
-// 状态词与「还算不算终态」的判据也共用引擎那一份（两端各写一套就会出现「条子说受阻、这里说等你核验」）
+// 目标模式：与 PC 同一份 sessionGoal（会话级一份，横跨多轮），卡片本体共用 GoalCard——状态词、
+// 轮次与「为什么停在这儿」都由它按 projections 那一份算，本 sheet 只负责把卡片摆上去。
 const { groupedSources, lastTokens, lastSources, sessionTokens, sessionRetrieval, sessionArtifacts,
   currentSessionId, currentSessionTitle, messages, ctxTokens, modelIndex, effectiveModel,
-  sessionGoal, goalAct, pendingGoal, goalTerminal, goalRestartRequest } = engine
-
-/** 另起目标：把这句交回起草通道（MobileChatPage watch 它开底部 sheet），当前这条由后端收成「未完成收尾」 */
-const restartGoalDraft = () => { goalRestartRequest.value = sessionGoal.value?.objective || '' }
+  sessionGoal } = engine
 
 // 容量构成：与 PC 的 ctxCapData 同一算法（窗口取本轮 tokens.window，回落模型登记窗口；
 // 用量取 prompt，无则 context；分类占窗口比例撑填充段）。分类表是 PC 视图层的同款副本——

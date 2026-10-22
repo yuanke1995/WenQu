@@ -105,7 +105,7 @@ const CHAT_EVENT_CB = {
   approval_required: 'onApprovalRequired', ask_user: 'onAskUser',
   plan_delta: 'onPlanDelta', plan_approval: 'onPlanApproval', plan_cancelled: 'onPlanCancelled',
   plan_superseded: 'onPlanSuperseded', todo: 'onTodo', snapshot: 'onSnapshot',
-  // 目标模式（Goal Mode）：goal_state 是目标态的唯一帧（状态机迁移/标准裁决/验证结果/预算变化），
+  // 目标模式（Goal Mode）：goal_state 是目标态的唯一帧（阶段迁移/轮次推进/停因），
   // 进总线镜像——断线重连靠它重建目标面板；goal_turn 是跨轮续跑开了新的一轮，前端据此自动接流
   goal_state: 'onGoalState', goal_turn: 'onGoalTurn',
   // steer＝这句插话被框架写进了正在跑的这一轮（下一次调模型之前那一刻），不是「用户按了发送」——
@@ -1143,30 +1143,30 @@ export const stopChatTurn = sessionId =>
 export const getSessionTodosApi = sessionId =>
   request(`/session/${encodeURIComponent(sessionId)}/todos`)
 
-/** 目标模式：创建目标。criteria=[{kind,text,verifierId,verifierParams}]（kind=ACCEPTANCE_CRITERION|CONSTRAINT）。
- *  startNow=true 立即开始（默认）：没带标准时首轮由助手起草、自动采纳，用户可改；不再弹确认卡。
- *  没有预算入参：目标不设轮数/token/工具/时长上限。返回 {goalId,status,objective,criteria,...} */
-export const startGoalApi = (sessionId, objective, criteria, startNow = true) =>
+/** 目标模式：创建目标（对齐 DSH：只有一句目标原文，没有验收标准、没有启动策略）。
+ *  建行即开跑，系统自己跨轮推进到完成；轮数上限只是兜底安全阈值，不是给用户的预算。
+ *  返回目标视图模型 {goalId,status,objective,round,maxRounds,hint,endReason,blockedReason,live,createdAt,startedAt,endedAt}。
+ *  多余的入参忽略：老调用方还会多传两个，保持调用点可平滑迁移。 */
+export const startGoalApi = (sessionId, objective) =>
   request('/chat/goal', {
     method: 'POST',
-    body: JSON.stringify({ sessionId, objective, criteria, startNow, action: 'start' })
+    body: JSON.stringify({ sessionId, objective })
   })
 
-/** 目标模式：目标动作。action=confirmCriteria|pause|resume|edit|verifyNow|markManual|finish|cancel。
- *  confirmCriteria 带 criteria:[{key,status}]（逐条裁决）；edit 带 criteria:[{key,text}]（目标原文不改）；
- *  markManual 带 key/outcome（PASSED|FAILED）。返回目标视图模型（摘要条/目标卡直接可用） */
+/** 目标模式：目标动作。action=pause（停止）|resume（继续）|edit（改目标原文，带 objective）|clear（删除）。
+ *  返回目标视图模型（摘要条/目标卡直接可用；clear 成功时可能没有返回值，前端按删除处理） */
 export const goalActionApi = (goalId, action, extra) =>
   request(`/chat/goal/${encodeURIComponent(goalId)}`, {
     method: 'POST',
     body: JSON.stringify({ action, ...(extra || {}) })
   })
 
-/** 目标模式：待确认/进行中的目标（目标卡恢复入口，重启/换副本回 live:false + DB 那份）。
- *  返回 {goal:视图模型|null} */
+/** 目标模式：会话里还活着的目标（RUNNING/PAUSED；切会话、刷新时条子与目标卡的回捞入口，
+ *  重启/换副本后 live:false + DB 那份）。返回 {goal:视图模型|null} */
 export const getPendingGoalApi = sessionId =>
   request(`/chat/goal/pending?sessionId=${encodeURIComponent(sessionId)}`)
 
-/** 目标模式：会话当前/最近一条目标（摘要条与右栏「目标」面板的终态回显，读 DB 不读框架）。
+/** 目标模式：会话当前/最近一条目标（含已达成/已删除的终态记录；读 DB 不读框架）。
  *  注意形状与上面那个不同：**直接返回视图模型**（没有 goal 那一层套），没有目标时 data 为 null */
 export const getSessionGoalApi = sessionId =>
   request(`/chat/session/${encodeURIComponent(sessionId)}/goal`)
