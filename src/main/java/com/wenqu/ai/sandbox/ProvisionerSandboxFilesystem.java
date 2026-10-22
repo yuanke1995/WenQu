@@ -135,6 +135,14 @@ public class ProvisionerSandboxFilesystem extends BaseSandboxFilesystem {
      *
      * <p>框架协议是 {@code Map.Entry<相对路径, 字节数组>}，问渠 client 要的是 {@link File}，
      * 故先落一份临时文件再交给 client；传完即删（不留痕、不落沙盒工作区）。
+     *
+     * <p><b>路径必须转绝对（真机实测踩坑）</b>：框架的 {@code WorkspacePathNormalizer} 会把
+     * {@code /home/gem/user-data/xxx} 剥成工作区相对形式（{@code xxx}），而 runtime 的
+     * {@code /v1/file/upload} 端点<b>不认相对路径</b>——它按容器根解析相对路径，实测报
+     * {@code Permission denied: 'wenqu-website'}（父目录不存在时）或
+     * {@code No such file or directory: ''}（裸文件名，dirname 为空）。故这里统一经
+     * {@link ProvisionerSandboxBackend#workspaceAbsolutePath(String)} 落到
+     * {@code /home/gem/user-data/...}，与 {@link #read} / {@link #ls} / {@link #glob} 同一口径。
      */
     @Override
     public List<FileUploadResponse> uploadFiles(
@@ -146,12 +154,13 @@ public class ProvisionerSandboxFilesystem extends BaseSandboxFilesystem {
         for (Map.Entry<String, byte[]> entry : files) {
             String path = entry.getKey();
             byte[] content = entry.getValue();
+            String target = backend.workspaceAbsolutePath(path);
             File tmp = null;
             try {
                 tmp = File.createTempFile("wq-upload-", ".bin", new File(UPLOAD_TMP_DIR));
                 Files.write(tmp.toPath(), content == null ? new byte[0] : content);
                 SandboxRuntimeClient.SandboxWriteResult r =
-                        backend.getClient().uploadFile(tmp, path);
+                        backend.getClient().uploadFile(tmp, target);
                 results.add(r.success()
                         ? FileUploadResponse.success(path)
                         : FileUploadResponse.fail(path, r.message()));
@@ -173,6 +182,9 @@ public class ProvisionerSandboxFilesystem extends BaseSandboxFilesystem {
      * <p>问渠 client 返回分块流（{@code Iterable<byte[]>}），框架要单个 byte[]，
      * 故按块拼装后再返回。单文件上限沿用后端既有的二进制预览上限，
      * 超过即返回明确错误而不是把内存吃穿。
+     *
+     * <p><b>路径同样要转绝对</b>：理由同 {@link #uploadFiles}——{@code /v1/file/download}
+     * 端点不认工作区相对路径。
      */
     @Override
     public List<FileDownloadResponse> downloadFiles(RuntimeContext runtimeContext, List<String> paths) {
@@ -183,7 +195,8 @@ public class ProvisionerSandboxFilesystem extends BaseSandboxFilesystem {
         for (String path : paths) {
             try {
                 ByteArrayOutputStream buf = new ByteArrayOutputStream();
-                for (byte[] chunk : backend.getClient().downloadFile(path, DOWNLOAD_TIMEOUT)) {
+                for (byte[] chunk : backend.getClient().downloadFile(
+                        backend.workspaceAbsolutePath(path), DOWNLOAD_TIMEOUT)) {
                     if (chunk == null || chunk.length == 0) continue;
                     if (buf.size() + chunk.length > MaxDownloadBytes) {
                         results.add(FileDownloadResponse.fail(path,

@@ -10,8 +10,13 @@
 #
 # 网络链路：沙盒各自建一个 bridge 网络（{DOCKER_NETWORK_PREFIX}-{sandbox_id}），
 # provisioner 把自己接入该网络，因此它按容器名访问沙盒；而对外 HTTP 接口统一返回
-# proxy 地址（sandbox_response() 里的 sandbox_proxy_url），API 侧只需访问
-# http://127.0.0.1:8002/api/sandboxes/<id>/proxy/... 即可，无需能解析沙盒容器名。
+# proxy 地址（sandbox_response() 里的 sandbox_proxy_url），API 侧（app 容器）据此访问
+# /api/sandboxes/<id>/proxy/... 即可，无需能解析沙盒容器名。
+#
+# PROVISIONER_PUBLIC_URL 必须是「app 容器真能连上」的地址：app 跑在容器里，它自己的
+# 127.0.0.1 指向 app 容器自身，故不能用 127.0.0.1。统一用 host.docker.internal:8002——
+# 它经 docker 网关(172.17.0.1)回指到本 provisioner 的发布端口，app 容器已实测可达
+# （管理面 SANDBOX_PROVISIONER_URL 同址），沙盒镜像内/外的 app 都适用。
 services:
   sandbox-provisioner:
     build: .
@@ -36,8 +41,10 @@ services:
       - ./sandbox.env:/app/sandbox.env:ro
     environment:
       PROVISIONER_BACKEND: docker
-      # 对外暴露的地址：API 侧据此访问 proxy 端点，必须是它真能连上的地址。
-      PROVISIONER_PUBLIC_URL: http://127.0.0.1:8002
+      # 对外暴露的地址：API 侧（app 容器）据此访问 proxy 端点，必须是它真能连上的地址。
+      # 不能用 127.0.0.1（那是 app 容器自己）；host.docker.internal 经网关回指本 provisioner，
+      # 已实测从 app 容器可达。
+      PROVISIONER_PUBLIC_URL: http://host.docker.internal:8002
       SANDBOX_PROVISIONER_TOKEN: ${SANDBOX_PROVISIONER_TOKEN:-wenqu-local-dev-sandbox-provisioner-token}
       # docker 后端的必需项：每个沙盒会建 {prefix}-{sandbox_id} 网络。
       DOCKER_NETWORK_PREFIX: wenqu-sandbox-net
