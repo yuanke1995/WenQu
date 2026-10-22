@@ -30,7 +30,8 @@ import DegradationBar from './DegradationBar.vue'
 import SourceList from './SourceList.vue'
 import AnswerActions from './AnswerActions.vue'
 import TurnBar from '../components/TurnBar.vue'
-import { retrievalLineTitle } from './projections'
+import { AimOutlined } from '@ant-design/icons-vue'
+import { retrievalLineTitle, goalEchoStateOf, goalEchoTipOf } from './projections'
 
 const props = defineProps({
   /** 消息数组（两页的形状一致：role/content/images/sources/messageId/fb/degradations…） */
@@ -45,9 +46,14 @@ const props = defineProps({
    * 是否给某一轮「重新生成」。默认每轮都给（主对话页口径）；
    * 公开分享页只给最后一轮——中间那轮重跑会与后面几轮的历史错位。
    */
-  canRegenerate: { type: Function, default: () => () => true }
+  canRegenerate: { type: Function, default: () => () => true },
+  /** 会话当前目标（回声胶囊的状态词只认它那一条 goalId；分享页不给就只标身份） */
+  goal: { type: Object, default: null }
 })
 const emit = defineEmits(['paste-view', 'feedback', 'regenerate'])
+
+/** 这一条回声的状态词（身份词「目标」恒在，状态词只在它=当前目标时才有） */
+const cmdState = m => goalEchoStateOf(props.goal, m.goalCommand)
 
 /** 动作行的出现条件：不在生成中，且至少有一样可展开的东西（落库凭据 / 时间 / 正文）。
  *  <p>"有正文"这一档是给失败轮留的：那一轮没有 messageId 也没有 time，
@@ -72,12 +78,16 @@ function sourceTitle (m) {
   <div v-for="(m, i) in messages" :key="m" :data-row-index="i" class="row" :class="m.role">
     <slot name="row-before" :m="m" :i="i" />
     <div class="msg-block" :class="[m.role, { editing: editingIndex === i }]">
+      <!-- 目标指令回声：身份胶囊压在气泡上方，不占正文那一行（与输入框上方那条目标条同源）。
+           这行不是一等回答的提问，复制/编辑重发/重新生成对它没有意义，动作行里的按键由页面按 m.goalCommand 撤掉
+           （时间不撤——「什么时候定的这个目标」得能在对话里读出来）。
+           /goal 那串字不再露在界面上，收进悬浮行；状态词只在这一条就是当前目标时才给（见 goalEchoStateOf）。 -->
+      <div v-if="m.role === 'user' && (m.goalCommand || m.goalPending)"
+           class="cmd-pill" :class="cmdState(m) ? 'st-' + cmdState(m).cls : ''"
+           :title="goalEchoTipOf(goal, m.goalCommand)">
+        <aim-outlined class="cmd-ic" /><span>目标</span><span v-if="cmdState(m)"> · {{ cmdState(m).label }}</span>
+      </div>
       <div class="bubble" :class="m.role">
-        <!-- 目标指令回声：句首挂一枚 /goal 命令标记，目标原文照旧是正文。
-             这行不是一等回答的提问，复制/编辑重发/重新生成对它没有意义，动作行由页面按 m.goalCommand 撤掉 -->
-        <div v-if="m.role === 'user' && m.goalCommand" class="cmd-line">
-          <code class="cmd-token">/goal</code><span class="cmd-name">目标</span>
-        </div>
         <!-- 提问随行材料（图片/附件）：与主对话页、分享页共用同一个叶子 -->
         <UserBubble v-if="m.role === 'user'" :images="m.images" :attachments="m.attachments"
                     @paste-view="a => emit('paste-view', a)">
@@ -147,13 +157,19 @@ function sourceTitle (m) {
 }
 /* 气泡里的 markdown 段落不留外边距，否则段落 margin 会把气泡顶得比文字高出一圈 */
 .bubble.user :deep(.md > p) { margin: 0; }
-/* 命令回声的标记行：一枚命令 token + 它做什么，压在正文上方（token 用等宽，读得出那是敲进去的） */
-.cmd-line { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
-.cmd-token {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; line-height: 1;
-  padding: 3px 6px; border-radius: 6px; background: var(--app-panel-2); color: var(--app-text2);
+/* 目标指令回声的身份胶囊：与输入框上方那条目标条的 .gb-pill 同尺寸同色（同一个视觉锚点），
+   状态词坐在同一颗里、整颗跟着状态换色。进行中那一档就是基础蓝——它和「这是一条目标」同色，
+   不给它另起一色，否则活目标每换一档就整颗跳一次色。 */
+.cmd-pill {
+  display: inline-flex; align-items: center; gap: 4px; margin-bottom: 5px;
+  font-size: 12px; line-height: 20px; padding: 0 8px; border-radius: 999px;
+  background: var(--app-accent-weak); color: var(--app-accent); font-weight: 500; white-space: nowrap;
 }
-.cmd-name { font-size: 11.5px; line-height: 1; color: var(--app-text3); }
+.cmd-ic { flex: none; font-size: 12px; }
+/* 已暂停：用户自己踩的刹车，用警示色而不是「已终结」的红（与目标条 .gb-state 同一档一色） */
+.cmd-pill.st-paused { background: var(--app-warn-weak); color: var(--app-warn-text); }
+.cmd-pill.st-achieved { background: var(--app-ok-weak); color: var(--app-ok); }
+.cmd-pill.st-ended { background: var(--app-danger-weak); color: var(--app-danger-text); }
 /* AI 侧无气泡：正文直接排版，不画边框不画底 */
 .bubble.ai { background: transparent; padding: 0; }
 

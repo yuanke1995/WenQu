@@ -95,7 +95,7 @@
           :m="m" :index="i" :active="activeIdx === i" :is-last="i === messages.length - 1"
           :last-round="m === panelAi"
           :debug-display="debugDisplayVisible" :session-id="currentSessionId || ''" :loading="loading"
-          :variant-switching="variantSwitching"
+          :variant-switching="variantSwitching" :goal="sessionGoal"
           @activate="activeIdx = $event"
           @preview="openPreview"
           @paste-view="openPasteView"

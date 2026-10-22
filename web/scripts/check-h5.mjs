@@ -594,10 +594,31 @@ console.log(bad ? `\n${bad} 项不符` : '\n全部通过')
   check(/map\.put\("goalCommand"/.test(read('../src/main/java/com/wenqu/ai/service/SessionService.java')),
     '历史接口把 goalCommand 带出（不落这行就永远读不到）')
   check(/goalCommand: typeof m\.goalCommand === 'string'/.test(eng), '引擎把库里的 goalCommand 映射进气泡')
-  check(/m\.goalCommand/.test(read('src/chat/ChatThread.vue')) && /m\.goalCommand/.test(row),
-    '两壳都在回声行上画 /goal 标记')
+  // 回声那枚胶囊：形状两端同形、状态词同源、界面上不再露命令字面量
+  // 模板切片要按「第一个 <template 到最后一个 </template>」取：ChatThread 是 script 在前、
+  // template 在后，按「文件头到 <script」切会得到空串——空串让下面三条断言全部假绿
+  const thread = read('src/chat/ChatThread.vue')
+  const tplOf = s => s.slice(s.indexOf('<template'), s.lastIndexOf('</template>') + 11)
+  const pillOf = s => { const x = /class="cmd-pill"[\s\S]*?<\/div>/.exec(s); return x ? x[0] : '' }
+  const threadTpl = tplOf(thread)
+  const rowTpl = tplOf(row)
+  const threadPill = pillOf(threadTpl)
+  const rowPill = pillOf(rowTpl)
+  check(threadPill.length > 40 && rowPill.length > 40 && /class="cmd-pill"/.test(threadPill) && /class="cmd-pill"/.test(rowPill),
+    '两壳都在气泡上方画那枚身份胶囊（不再压在正文那一行里）')
+  check(/goalEchoStateOf/.test(thread) && /goalEchoStateOf/.test(row),
+    '两壳的状态词都走 goalEchoStateOf（旧目标的回声不替它编一个状态）')
+  check(!/进行中|已暂停|已完成|已结束|核验中|待确认/.test(threadPill) && !/进行中|已暂停|已完成|已结束|核验中|待确认/.test(rowPill),
+    '胶囊那段不自己写状态词（词汇只有 goalStateLabelOf 那一份）')
+  check(!/>\s*\/goal\s*</.test(threadTpl) && !/>\s*\/goal\s*</.test(rowTpl),
+    '/goal 字面量不再露出（收进 goalEchoTipOf 那行悬浮，界面上只留人话）')
+  check(/goalPending: true/.test(eng) && /!m\.goalCommand && !m\.goalPending/.test(pcCode)
+      && /!props\.m\.goalCommand && !props\.m\.goalPending/.test(row),
+    '乐观气泡那几秒也算回声：goalId 未回时不露复制/编辑重发（否则能把目标指令重跑成普通提问）')
   check(/!m\.goalCommand/.test(pcCode) && /!props\.m\.goalCommand/.test(row),
     '回声行撤掉普通消息动作（指令不是一等回答的提问）')
+  check(/v-if="m\.role === 'user'" class="msg-edit-row"/.test(pcCode) && /v-if="showActions" class="u-actions"/.test(row),
+    '回声行仍挂动作行容器：撤的只是复制/编辑键，时间要看得见（整行撤掉会把「何时定的目标」一起抹掉）')
   check(/echoGoalCommand\(/.test(read('../src/main/java/com/wenqu/ai/service/GoalService.java')),
     '后端建目标时落那句回声（只在前端 push 会刷新即丢）')
 }

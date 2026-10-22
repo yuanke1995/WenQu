@@ -1,16 +1,16 @@
 <template>
   <!--
     目标卡：只读详情面（目标模式的「事实面」）。
-    两端共用：PC 挂在右栏「目标」面板里，移动壳挂在「状态与来源」sheet 的目标小节
-    （外壳不同、取数同源）。动作面不在这张卡上——改原文 / 停止 / 继续 / 删除只在输入框顶部那条
+    只挂在移动壳「状态与来源」sheet 的目标小节（PC 右栏的目标卡已整删，状态只看输入框顶部那条目标条）。
+    动作面不在这张卡上——改原文 / 停止 / 继续 / 删除只在输入框顶部那条
     目标条上，这里只回答两件事：现在什么状态、为什么停在这里（跑到第几轮由目标条说）。
     文案只讲用户结果，不露框架机制（TASK_STATE/beginTask 这类词不许出现）。
-    版面硬约束：右栏只有 ~260px，所以原文超过三行折起来，不铺清单。
+    版面硬约束：容器很窄，所以原文超过三行折起来，不铺清单。
   -->
   <div class="goal-card" :class="'goal-' + (card.status || '').toLowerCase()">
     <div class="goal-card-head">
-      <!-- 「目标」二字不在这里说：PC 挂在右栏「目标」面板下、移动壳挂在「目标」小节下，
-           外壳已报过卡名，卡头再说一遍就是同一个词出现两回。图标只做视觉锚点。 -->
+      <!-- 「目标」二字不在这里说：外壳的「目标」小节标题已报过卡名，
+           卡头再说一遍就是同一个词出现两回。图标只做视觉锚点。 -->
       <aim-outlined class="goal-card-ic" />
       <span class="goal-state" :class="'st-' + stateClass">
         <i class="goal-state-dot" />{{ stateLabel }}
@@ -26,6 +26,11 @@
     <!-- 后端给的那句人话提示（如「第 3 轮自动接着推进」），只展示结果，不解释机制 -->
     <div v-if="card.hint" class="goal-hint">{{ card.hint }}</div>
 
+    <!-- 任务运行时（2026-10-22）：阶段/等待/核验中说人话；预算与结果只在这张事实面上出现 -->
+    <div v-if="phaseLine" class="goal-phase">{{ phaseLine }}</div>
+    <div v-if="budgetLine" class="goal-budget">{{ budgetLine }}</div>
+    <div v-if="outcomeLine" class="goal-outcome">{{ outcomeLine }}</div>
+
     <!-- 停下来的原因：状态词只说「已结束 / 已暂停」，卡在哪全靠这一行说（不点进任何清单也读得到） -->
     <div v-if="blockReason" class="goal-block-reason">
       <exclamation-circle-outlined /> {{ blockReason }}
@@ -36,7 +41,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { AimOutlined, ExclamationCircleOutlined } from '@ant-design/icons-vue'
-import { goalStateLabelOf, goalStateClassOf, goalBlockReasonOf } from '../chat/projections'
+import { goalStateLabelOf, goalStateClassOf, goalBlockReasonOf, goalOutcomeLineOf } from '../chat/projections'
 
 // 纯展示卡：没有动作、没有事件、不改状态——目标的四个动作只在输入框顶部那条目标条上。
 const props = defineProps({
@@ -53,6 +58,29 @@ const needsFold = computed(() => (props.card.objective || '').length > 120)
 const stateClass = computed(() => goalStateClassOf(props.card))
 const stateLabel = computed(() => goalStateLabelOf(props.card))
 const blockReason = computed(() => goalBlockReasonOf(props.card))
+
+const phaseLine = computed(() => {
+  const c = props.card
+  if (['ACHIEVED', 'FAILED', 'CANCELLED'].includes(c.status)) return ''
+  if (c.stale) return '执行进程已中断，点「继续」会先核对状态再接着跑'
+  if (c.phase === 'COMPLETION_CHECK') return '正在确认是否完成：这一轮不会做新工作'
+  if (c.status === 'WAITING_APPROVAL') return '有一项操作在等你确认'
+  if (c.status === 'WAITING_EVENT') return '在等外部结果，条件满足后会自动继续'
+  if (c.status === 'VERIFYING') return '正在按证据核验完成申请'
+  if (c.phase === 'QUEUED' && (c.status === 'RUNNING' || c.status === 'QUEUED')) return '已排队，下一拍开始'
+  const stage = { EXPLORE: '探索', PLAN: '规划', EXECUTE: '执行', VERIFY: '核验', DELIVER: '交付' }[c.stage]
+  return stage ? `阶段：${stage}` : ''
+})
+
+const budgetLine = computed(() => {
+  const b = props.card.budget
+  if (!b || !b.maxRounds) return ''
+  if (props.card.status === 'ACHIEVED') return `共 ${b.rounds} 轮完成`
+  const pct = Math.round((Number(b.percent) || 0) * 100)
+  return `预算：${b.rounds}/${b.maxRounds} 轮 · ${pct}%`
+})
+
+const outcomeLine = computed(() => goalOutcomeLineOf(props.card))
 </script>
 
 <style scoped>
@@ -76,4 +104,7 @@ const blockReason = computed(() => goalBlockReasonOf(props.card))
 .goal-objective.clamped { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .goal-more { margin-top: 2px; border: none; background: none; color: var(--app-accent); font-size: 12px; cursor: pointer; padding: 0; }
 .goal-hint { margin-top: 8px; font-size: 12.5px; line-height: 1.5; color: var(--app-text2, #555); background: var(--app-panel-2); border-radius: 6px; padding: 6px 8px; }
+.goal-phase { margin-top: 8px; font-size: 12px; line-height: 1.5; color: var(--app-text2, #555); }
+.goal-budget { margin-top: 4px; font-size: 12px; color: var(--app-text3); font-variant-numeric: tabular-nums; }
+.goal-outcome { margin-top: 4px; font-size: 12px; color: var(--app-ok); }
 </style>

@@ -100,6 +100,7 @@
              消息分隔线、@引用/#历史引用、时间线与工具卡、错误卡、计划与审批卡、产物、
              版本切换器与更多菜单、就地编辑卡。次第换不掉，能换的只是「画什么」。 -->
         <ChatThread :messages="messages" :editing-index="editingIdx" :can-regenerate="() => true"
+                    :goal="sessionGoal"
                     runnable :session-id="currentSessionId" @paste-view="openPasteView"
                     @feedback="(m, i, r) => openFeedback(m, r)"
                     @regenerate="(m, i) => regenerate(i)">
@@ -463,22 +464,27 @@
                  title="你离开后超过设定时间没人观看，这一轮被自动中断了，没有产出回答">
               <exclamation-circle-outlined /> 本轮已中断 · 未产生回答
             </div>
-            <!-- 目标指令回声不挂这一行：那句「把这件事做到什么算完」是一条指令，不是一等回答的提问，
-                 复制/编辑重发/重新生成对它都没有意义（与公开分享页同一口径，判据在共用外壳里） -->
-            <div v-if="m.role === 'user' && !m.goalCommand" class="msg-edit-row">
-              <!-- 编辑重发的分支切换器：这一问有多个版本（历史编辑留下的旧分支）可来回切 -->
-              <div v-if="m.variantCount > 1" class="ver-switch"
-                   title="这个问题编辑过多个版本，可来回切换（旧版本按保留期清理）">
-                <button class="ver-btn" :disabled="(m.variantIndex || 1) <= 1 || variantSwitching" @click="switchBranch(i, -1)">‹</button>
-                <span class="ver-idx">{{ m.variantIndex || 1 }}/{{ m.variantCount }}</span>
-                <button class="ver-btn" :disabled="(m.variantIndex || 1) >= m.variantCount || variantSwitching" @click="switchBranch(i, 1)">›</button>
-              </div>
-              <a-tooltip title="复制问题" placement="top">
-                <copy-outlined class="app-icon-btn" @click="copyUserMessage(m)" />
-              </a-tooltip>
-              <a-tooltip title="编辑此问题，从这一轮重新生成" placement="top">
-                <edit-outlined class="app-icon-btn" @click="editMessage(i)" />
-              </a-tooltip>
+            <!-- 目标指令回声只撤这一行的动作键：那句「把这件事做到什么算完」是一条指令，
+                 不是一等回答的提问，复制/编辑重发对它没有意义（与公开分享页同一口径）。
+                 goalPending 那一档是同一条判据：乐观气泡先落地、goalId 要等建目标的 POST 回来才补上
+                 （冷启动要几秒），那几秒里若只看 goalCommand，编辑重发会亮着——点下去就把一条目标
+                 指令当普通提问重跑一轮。时间照挂——「什么时候定的这个目标」要能在对话里读出来 -->
+            <div v-if="m.role === 'user'" class="msg-edit-row">
+              <template v-if="!m.goalCommand && !m.goalPending">
+                <!-- 编辑重发的分支切换器：这一问有多个版本（历史编辑留下的旧分支）可来回切 -->
+                <div v-if="m.variantCount > 1" class="ver-switch"
+                     title="这个问题编辑过多个版本，可来回切换（旧版本按保留期清理）">
+                  <button class="ver-btn" :disabled="(m.variantIndex || 1) <= 1 || variantSwitching" @click="switchBranch(i, -1)">‹</button>
+                  <span class="ver-idx">{{ m.variantIndex || 1 }}/{{ m.variantCount }}</span>
+                  <button class="ver-btn" :disabled="(m.variantIndex || 1) >= m.variantCount || variantSwitching" @click="switchBranch(i, 1)">›</button>
+                </div>
+                <a-tooltip title="复制问题" placement="top">
+                  <copy-outlined class="app-icon-btn" @click="copyUserMessage(m)" />
+                </a-tooltip>
+                <a-tooltip title="编辑此问题，从这一轮重新生成" placement="top">
+                  <edit-outlined class="app-icon-btn" @click="editMessage(i)" />
+                </a-tooltip>
+              </template>
               <span v-if="m.time" class="msg-time-inline">{{ fmtMsgTime(m.time) }}</span>
             </div>
             <!-- 就地编辑卡：原位替换该气泡的紧凑右对齐卡。除正文外，图片/附件可增删、@ 引用可移除
@@ -730,11 +736,13 @@
         <!-- 目标条（DSH 式的一行目标 chip）：渲染在输入卡片内部、正文之上，与正文之间只用一条
              极浅的分隔线分开——它已经是卡片的一部分，外面再套一层边框/底色就成了卡里套卡。
              只做三件事：看清目标（原文单行省略，跑了几轮/停因收进悬浮行）、改目标原文、
-             停止(pause)/继续(resume)/删除(clear)。达成或取消后整条撤下，结果在右栏「目标」卡里看，
-             其余状态一律只读。就地编辑也在同一行长开（原文换成自适应高文本域）。 -->
+             停止(pause)/继续(resume)/删除(clear)。达成或取消后整条撤下（结果只在消息流里看，右栏不单列目标卡），
+             其余状态一律只读。就地编辑也在同一行长开：原文换成自适应高文本域（去框，与计划面板
+             的自定义输入行同一口径），保存/取消用文字按钮——只读行那颗 ✕ 是「删除目标」，
+             编辑行不能再拿 ✕ 表示「取消」，同一个字形两种含义会点错。 -->
         <div v-if="goalBarVisible" class="goal-bar" :class="{ editing: goalEditing }" data-goal-bar>
           <div class="gb-row">
-            <span class="gb-pill" title="目标模式：助手会自己接着往下推进，直到宣布完成">
+            <span v-if="!goalEditing" class="gb-pill" title="目标模式：助手会自己接着往下推进，直到宣布完成">
               <aim-outlined /><span>目标</span>
             </span>
             <template v-if="!goalEditing">
@@ -757,14 +765,16 @@
             </template>
             <template v-else>
               <a-textarea v-model:value="goalEdit.objective" class="gb-edit-input"
-                          :auto-size="{ minRows: 1, maxRows: 6 }" :maxlength="4000"
-                          placeholder="写下这件事要做到什么" />
-              <span class="gb-actions">
-                <button type="button" class="gb-icon" :disabled="goalEditBusy || !goalEditSaveable"
-                        title="保存目标" @click="saveGoalEdit"><check-outlined /></button>
-                <button type="button" class="gb-icon" title="取消编辑" @click="goalEditing = false">
-                  <close-outlined />
-                </button>
+                          :bordered="false" :auto-size="{ minRows: 1, maxRows: 6 }" :maxlength="4000"
+                          placeholder="写下这件事要做到什么"
+                          title="Enter 保存 · Shift+Enter 换行 · Esc 取消"
+                          @keydown="onGoalEditKeydown" />
+              <span class="gb-actions gb-edit-actions">
+                <button type="button" class="gb-btn ghost" :disabled="goalEditBusy"
+                        title="放弃这次修改，目标原文不变（Esc）" @click="goalEditing = false">取消</button>
+                <button type="button" class="gb-btn primary" :disabled="goalEditBusy || !goalEditSaveable"
+                        :title="goalEditSaveable ? '保存目标（Enter）' : '改几个字才能保存'"
+                        @click="saveGoalEdit">{{ goalEditBusy ? '保存中…' : '保存' }}</button>
               </span>
             </template>
           </div>
@@ -3217,14 +3227,14 @@ const chipOf = key => {
   if (!key) return null
   if (key === GOAL_KEY) {
     return {
-      kind: 'goal', icon: 'aim', name: '目标',
+      kind: 'goal', icon: 'aim', name: '目标', head: true,
       title: '目标模式：写下目标，回车开始（助手会自己接着往下推进）',
       delTitle: '退出目标模式'
     }
   }
   if (key === PLAN_KEY) return {
-    kind: 'plan', icon: 'plan', name: '计划',
-    title: '计划模式：每轮先产出执行计划，等你批准或修改后才开始回答', delTitle: '关闭计划模式'
+    kind: 'plan', icon: 'plan', name: '计划', head: true,
+    title: '计划模式：这一轮先产出执行计划，等你批准或修改后才开始回答（发出去就取消，下一轮要用再开）', delTitle: '关闭计划模式'
   }
   if (/^f\d+$/.test(key)) {
     const f = pendingFiles.value.find(x => fileKeyOf(x) === key)
@@ -3433,6 +3443,30 @@ const startGoalNow = async (prefill) => {
     goalStarting.value = false
   }
 }
+
+// ---- 就地编辑的键盘与聚焦：Enter 保存、Shift+Enter 换行、Esc 取消（与计划面板同一套键）----
+// Esc 要 stopPropagation：目标在跑时全局那条 Esc 是「两下停止本轮」，取消一次编辑不该顺手把它 armed。
+const onGoalEditKeydown = e => {
+  if (e.isComposing || e.keyCode === 229) return
+  if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    e.preventDefault()
+    saveGoalEdit()
+  } else if (e.key === 'Escape') {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!goalEditBusy.value) goalEditing.value = false
+  }
+}
+// 点「编辑」就是要改这句话：聚焦并把插入点放到文末（停在句首看着像框没接上）
+watch(goalEditing, on => {
+  if (!on) return
+  nextTick(() => {
+    const el = document.querySelector('[data-goal-bar] textarea')
+    if (!(el instanceof HTMLTextAreaElement)) return
+    el.focus()
+    el.setSelectionRange(el.value.length, el.value.length)
+  })
+})
 
 // ==================== 智能体提问面板（替换聊天输入框） ====================
 // 当前会话存在挂起中的提问时，底部聊天输入框整块替换为提问面板（模型在等答案，此刻也没法发新消息）；
@@ -4549,7 +4583,7 @@ onMounted(async () => {
 /* 目标条坐在输入卡片内部、正文之上：它已经是卡片的一部分，不再画第二层边框/底色/阴影，
    只用一条极浅的下分隔线把自己和正文分开。一行放下：目标 pill、原文（单行省略）、
    只读状态（进行中/已暂停）、图标动作（暂停/继续/编辑/删除）。
-   跑了几轮、停在哪、后端给的那句提示都收进悬浮行与右栏「目标」卡，不占版面。
+   跑了几轮、停在哪、后端给的那句提示都收进悬浮行，不占版面。
    就地编辑就在同一行长开：原文换成自适应高文本域，保存/取消钉在行尾。 */
 .goal-bar {
   display: flex; flex-direction: column; gap: 4px;
@@ -4559,7 +4593,8 @@ onMounted(async () => {
 }
 .gb-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .goal-bar.editing .gb-row { align-items: flex-start; }
-/* 目标 pill：这一行讲的是「目标」而不是普通正文，给一个弱强调的胶囊做锚点 */
+/* 目标 pill：这一行讲的是「目标」而不是普通正文，给一个弱强调的胶囊做锚点。
+   编辑态不留它——那一行整行都是目标原文，胶囊只会把文本域往右挤 */
 .gb-pill {
   flex: none; display: inline-flex; align-items: center; gap: 4px;
   font-size: 12px; line-height: 20px; padding: 0 8px; border-radius: 999px;
@@ -4584,9 +4619,31 @@ onMounted(async () => {
 }
 .gb-icon:hover:not(:disabled) { background: var(--app-panel-2); color: var(--app-text2); }
 .gb-icon:disabled { opacity: .4; cursor: default; }
-/* 就地编辑：高文本域吃掉剩余宽度（1~6 行自适应），动作留在行尾同一位置 */
+/* 就地编辑：文本域去框（:bordered="false"）吃掉剩余宽度，1~6 行自适应。
+   这一条已经在卡片里，再套一圈 antd 默认描边就是卡里套卡。
+   字号/行高与只读原文完全一致，点「编辑」时文字不跳位；上下各 4px 内边距把首行撑成 28px，
+   pill 与动作键都取 28px 高，于是字段长到 6 行时它们仍钉在第一行，不会跟着往下漂。 */
 .gb-edit-input { flex: 1; min-width: 0; }
-.gb-edit-input.ant-input { font-size: 13px; line-height: 1.55; padding: 2px 0; min-height: 0; resize: none; }
+.gb-edit-input.ant-input {
+  font-size: 13px; line-height: 20px; padding: 4px 0; min-height: 0;
+  background: transparent; color: var(--app-text); resize: none;
+}
+/* antd 给文本域写死了近黑正文色与 25% 黑占位色：去框之后底下就是卡片自己的深色面，
+   深色主题下这两样都等于隐形，必须跟着主题走 */
+.gb-edit-input.ant-input::placeholder { color: var(--app-text3); opacity: 1; }
+.gb-edit-actions { gap: 6px; }
+.gb-btn {
+  height: 28px; display: inline-flex; align-items: center; padding: 0 10px;
+  border: 1px solid transparent; border-radius: 8px;
+  font-size: 12px; line-height: 1; cursor: pointer;
+}
+.gb-btn.primary { background: var(--app-accent); color: #fff; }
+.gb-btn.primary:hover:not(:disabled) { background: var(--app-accent-hover); }
+/* 禁用态照发送键那条口径：浅蓝底压白字对比度太低，看着像按钮坏了 —— 改灰底灰字让它「退后」 */
+.gb-btn.primary:disabled { background: var(--app-border); color: var(--app-text3); cursor: default; }
+.gb-btn.ghost { background: transparent; color: var(--app-text3); border-color: var(--app-border); }
+.gb-btn.ghost:hover:not(:disabled) { color: var(--app-accent); border-color: var(--app-accent); background: var(--app-accent-weak); }
+.gb-btn.ghost:disabled { opacity: .55; cursor: default; }
 .gb-error { font-size: 12px; line-height: 18px; color: var(--app-danger); word-break: break-word; }
 
 /* 窄屏：状态词让位给原文与动作键（触屏点右栏看状态），图标键放大到触控热区 */

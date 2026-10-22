@@ -10,11 +10,13 @@
     <div class="mrow-inner" @click="onRowTap">
       <!-- ==================== 用户消息 ==================== -->
       <template v-if="m.role === 'user'">
+        <!-- 目标指令回声的身份胶囊：压在气泡上方，不占正文那行（与 PC 共用外壳同一形状、
+             与输入框上方那条目标条同源）。/goal 那串字收进悬浮行；状态词只在这一条就是当前目标时才给 -->
+        <div v-if="m.goalCommand || m.goalPending" class="cmd-pill"
+             :class="cmdState ? 'st-' + cmdState.cls : ''" :title="goalEchoTipOf(goal, m.goalCommand)">
+          <aim-outlined class="cmd-ic" /><span>目标</span><span v-if="cmdState"> · {{ cmdState.label }}</span>
+        </div>
         <div class="ububble">
-          <!-- 目标指令回声：句首一枚 /goal 命令标记，目标原文照旧是正文（与 PC 共用外壳同一口径） -->
-          <div v-if="m.goalCommand" class="cmd-line">
-            <code class="cmd-token">/goal</code><span class="cmd-name">目标</span>
-          </div>
           <div v-if="m.content" class="u-text">{{ m.content }}</div>
           <div v-if="m.images && m.images.length" class="u-imgs">
             <img v-for="(u, ii) in m.images" :key="ii" :src="resolveImg(u)" alt="图片" @click.stop="$emit('preview', m.images.map(resolveImg), ii)">
@@ -49,13 +51,15 @@
           <exclamation-circle-outlined /> 本轮已中断 · 未产生回答
         </div>
         <div v-if="showActions" class="u-actions">
-          <div v-if="m.variantCount > 1" class="ver-switch">
-            <button class="ver-btn" :disabled="(m.variantIndex || 1) <= 1 || variantSwitching" @click.stop="$emit('switch-version', index, -1)">‹</button>
-            <span class="ver-idx">{{ m.variantIndex || 1 }}/{{ m.variantCount }}</span>
-            <button class="ver-btn" :disabled="(m.variantIndex || 1) >= m.variantCount || variantSwitching" @click.stop="$emit('switch-version', index, 1)">›</button>
-          </div>
-          <button class="act-btn" title="复制问题" @click.stop="$emit('copy-user', m)"><copy-outlined /></button>
-          <button class="act-btn" title="编辑此问题，从这一轮重新生成" @click.stop="$emit('edit', index)"><edit-outlined /></button>
+          <template v-if="showUserActs">
+            <div v-if="m.variantCount > 1" class="ver-switch">
+              <button class="ver-btn" :disabled="(m.variantIndex || 1) <= 1 || variantSwitching" @click.stop="$emit('switch-version', index, -1)">‹</button>
+              <span class="ver-idx">{{ m.variantIndex || 1 }}/{{ m.variantCount }}</span>
+              <button class="ver-btn" :disabled="(m.variantIndex || 1) >= m.variantCount || variantSwitching" @click.stop="$emit('switch-version', index, 1)">›</button>
+            </div>
+            <button class="act-btn" title="复制问题" @click.stop="$emit('copy-user', m)"><copy-outlined /></button>
+            <button class="act-btn" title="编辑此问题，从这一轮重新生成" @click.stop="$emit('edit', index)"><edit-outlined /></button>
+          </template>
           <span v-if="m.time" class="act-time">{{ fmtMsgTime(m.time) }}</span>
         </div>
       </template>
@@ -237,14 +241,17 @@
           <div class="card-dim">未处理将在 {{ Math.round((m.approval.timeoutMs || 120000) / 1000) }} 秒后按拒绝处理</div>
         </div>
 
-        <!-- 产物：预览＝开成一个浏览器标签页（与产物页、工作区文件同一待遇），下载走同一份签名地址。
+        <!-- 产物：预览＝进预览台（与 PC 气泡、产物页、工作区文件同一判据同一待遇），下载走同一份签名地址。
              两个入口各占一块触屏热区，不靠长按之类的隐藏手势 -->
         <div v-if="m.artifacts && m.artifacts.length" class="artifacts">
           <div v-for="(a, ai) in m.artifacts" :key="ai" class="artifact">
             <file-text-outlined class="artifact-ic" /><span class="artifact-name">{{ a.filename }}</span>
             <span class="artifact-acts">
-              <a v-if="canPreviewArtifact(a)" class="artifact-act" :href="resolveImg(a.url)"
-                 target="_blank" rel="noopener" title="在新标签页预览"><eye-outlined />预览</a>
+              <a v-if="canPreview(a)" class="artifact-act" :href="resolveImg(a.url)"
+                 target="_blank" rel="noopener" data-pv
+                 :data-pv-name="a.filename" :data-pv-ext="artifactExt(a)"
+                 :data-pv-size="a.size" :data-pv-id="a.id"
+                 title="预览"><eye-outlined />预览</a>
               <a class="artifact-act" :href="resolveImg(a.url)" :download="a.filename"
                  title="下载"><download-outlined />下载</a>
             </span>
@@ -312,10 +319,10 @@ import {
   CaretRightOutlined, CheckOutlined, CloseCircleOutlined, CopyOutlined, EditOutlined, LikeOutlined,
   DislikeOutlined, ReloadOutlined, RedoOutlined, RobotOutlined, ThunderboltOutlined, SearchOutlined,
   FileTextOutlined, DownloadOutlined, PaperClipOutlined, ExclamationCircleOutlined, MoreOutlined,
-  QuestionCircleOutlined, CheckCircleOutlined, PauseCircleOutlined, EyeOutlined
+  QuestionCircleOutlined, CheckCircleOutlined, PauseCircleOutlined, EyeOutlined, AimOutlined
 } from '@ant-design/icons-vue'
 import { resolveImg } from '../utils/markdown'
-import { canPreviewArtifact } from '../utils/artifactView'
+import { canPreview, artifactExt } from '../utils/artifactView'
 import AnswerBody from '../components/AnswerBody.vue'
 import { fmtTokens } from '../utils/token'
 import {
@@ -327,7 +334,7 @@ import {
   fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget, fanRun, runBoardText,
   toolCallsView, executedCount, toolSearchQueries, retrievalLineTitle,
   fmtMsgTime, fmtSize, errorBrief, sourceName, canSwitchPrev, canSwitchNext, verLabel, agentBadgeOf,
-  pasteTitle, pasteSub, isPastedText, usageCtxTokens
+  pasteTitle, pasteSub, isPastedText, usageCtxTokens, goalEchoStateOf, goalEchoTipOf
 } from '../chat/projections'
 import AskRecordCard from '../components/AskRecordCard.vue'
 import PlanCard from '../components/PlanCard.vue'
@@ -351,14 +358,22 @@ const props = defineProps({
   sessionId: { type: String, default: '' },
   /** 本轮是否正在生成（禁用重新生成入口） */
   loading: { type: Boolean, default: false },
-  variantSwitching: { type: Boolean, default: false }
+  variantSwitching: { type: Boolean, default: false },
+  /** 会话当前目标：回声胶囊的状态词只认它那一条 goalId（与 PC 共用外壳同一判据） */
+  goal: { type: Object, default: null }
 })
 const emit = defineEmits(['activate', 'preview', 'paste-view', 'source', 'retry', 'edit', 'feedback', 'approve',
   'switch-version', 'ask', 'copy', 'copy-user', 'more'])
 
-// 目标指令回声不挂操作行：那句「把这件事做到什么算完」是一条指令，不是一等回答的提问，
-// 复制/编辑重发对它没有意义（与 PC 端 msg-edit-row 撤动作同一条判据）
-const showActions = computed(() => !props.m.goalCommand && (props.active || (props.m.role === 'ai' && props.isLast)))
+// 操作行的出现条件（触屏没有 hover）：选中那条、或最后一条回答。
+// 目标指令回声撤的只是里面的动作键（见 showUserActs），行本身照挂——时间要看得见
+const showActions = computed(() => props.active || (props.m.role === 'ai' && props.isLast))
+// 目标指令回声不挂复制/编辑重发：那句「把这件事做到什么算完」是一条指令，
+// 不是一等回答的提问（与 PC 端 msg-edit-row 撤动作同一条判据）。
+// goalPending 是同一条判据的空窗补丁：乐观气泡先落地、goalId 要等建目标的响应回来才补上
+const showUserActs = computed(() => !props.m.goalCommand && !props.m.goalPending)
+// 回声胶囊的状态词（身份词「目标」恒在，状态词只在这一条就是当前目标时才给）
+const cmdState = computed(() => goalEchoStateOf(props.goal, props.m.goalCommand))
 // 归属徽标去重（与 PC 的 showAgentTag 同口径，但简化：只在首条或归属变化时显示）
 const showAgentTag = computed(() => {
   const m = props.m
@@ -397,13 +412,18 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
   padding: 10px 12px;
 }
 .u-text { white-space: pre-wrap; word-break: break-word; font-size: 15px; line-height: 1.6; }
-/* 命令回声的标记行（与 PC 共用外壳同一形状，token 用等宽读得出是敲进去的命令） */
-.cmd-line { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
-.cmd-token {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; line-height: 1;
-  padding: 3px 6px; border-radius: 6px; background: var(--app-panel); color: var(--app-text2);
+/* 目标指令回声的身份胶囊（与 PC 共用外壳同一形状、与输入框上方那条目标条同源）：
+   坐在气泡上方，`.mrow-inner` 的 gap 已经管间距，这里不再另加 margin */
+.cmd-pill {
+  align-self: flex-end; display: inline-flex; align-items: center; gap: 4px;
+  font-size: 12px; line-height: 20px; padding: 0 8px; border-radius: 999px;
+  background: var(--app-accent-weak); color: var(--app-accent); font-weight: 500; white-space: nowrap;
 }
-.cmd-name { font-size: 11.5px; line-height: 1; color: var(--app-text3); }
+.cmd-ic { flex: none; font-size: 12px; }
+/* 已暂停：用户自己踩的刹车，用警示色而不是「已终结」的红（与目标条 .gb-state 同一档一色） */
+.cmd-pill.st-paused { background: var(--app-warn-weak); color: var(--app-warn-text); }
+.cmd-pill.st-achieved { background: var(--app-ok-weak); color: var(--app-ok); }
+.cmd-pill.st-ended { background: var(--app-danger-weak); color: var(--app-danger-text); }
 .u-imgs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .u-imgs img { width: 88px; height: 88px; object-fit: cover; border-radius: 8px; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
