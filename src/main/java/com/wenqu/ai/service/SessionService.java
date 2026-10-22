@@ -1253,6 +1253,14 @@ public class SessionService {
                                  String processText, String agentId, String agentName, String model,
                                  String related, String mentions, String historyRefs, String plan,
                                  String turnId) {
+        // 列宽护栏：c_ai_message 的 TEXT 列容量 64KB（utf8mb4 按字节算，中文约 2.1 万字）。
+        // 超长的直接后果不是「存一半」——是 MysqlDataTruncation 让**整条消息**（正文/工具卡/时间线/用量）
+        // 一起落库失败（2026-10-22 线上实测：一轮异常长的思考把 thinking 列撑爆，助手消息整体没存进库）。
+        // 落库侧截断兜底而不是只靠源头自律：思考与过程独白是回放性内容，截掉尾部只少看一点过程；
+        // 消息本体丢了才是不可逆的。content 的护栏在 Java 侧判一次（TEXT 装不下的回答同样会让全行失败）。
+        final String contentCapped = capForTextColumn(content);
+        final String thinkingCapped = capForTextColumn(thinking);
+        final String processTextCapped = capForTextColumn(processText);
         return transactionTemplate.execute(status -> {
             Session locked = sessionMapper.selectForUpdate(sessionId);
             if (locked == null) {
@@ -1274,8 +1282,8 @@ public class SessionService {
             Message msg = new Message();
             msg.setSessionId(sessionId);
             msg.setRole(role);
-            msg.setContent(content);
-            msg.setThinking(thinking);
+            msg.setContent(contentCapped);
+            msg.setThinking(thinkingCapped);
             msg.setImages(images != null && !images.isEmpty() ? JSON.toJSONString(images) : null);
             msg.setSources(sources);
             msg.setRetrieved(retrieved);
@@ -1286,7 +1294,7 @@ public class SessionService {
             msg.setTokens(tokens);
             msg.setModel(model);
             msg.setTimeline(timeline);
-            msg.setProcessText(processText);
+            msg.setProcessText(processTextCapped);
             msg.setAgentId(agentId);
             msg.setAgentName(agentName);
             msg.setMentions(mentions);         // @ 引用（轮级注入 → 消息级常驻标注，刷新/历史回显保留）
@@ -1310,6 +1318,17 @@ public class SessionService {
             sessionMapper.updateById(update);
             return msg.getId();
         });
+    }
+
+    /**
+     * TEXT 列的字符数护栏（64KB 字节容量；utf8mb4 中文最多 3 字节/字，取 2 万字留足余量）。
+     * 超长截尾并带省略标注——只丢回放性内容，不让整条消息因 MysqlDataTruncation 落库失败。
+     */
+    private static final int TEXT_COLUMN_MAX_CHARS = 20_000;
+
+    private static String capForTextColumn(String s) {
+        if (s == null || s.length() <= TEXT_COLUMN_MAX_CHARS) return s;
+        return s.substring(0, TEXT_COLUMN_MAX_CHARS) + "\n…（超过单列容量，已截断）";
     }
 
     /**

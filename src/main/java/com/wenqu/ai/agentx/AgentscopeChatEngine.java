@@ -155,6 +155,20 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 return t;
             });
 
+    /**
+     * 目标轮异步发起池：把 {@link #continueGoalTurn} 的同步重活（openForContinuation 重建整个 AgentScope
+     * 实例——模型客户端 / MCP / 记忆 / 153 篇索引 / 沙盒供给，冷启动可达数十秒）从调用方线程挪走。
+     * <p>不归 Spring 管的引擎自己起一个固定池：POST /goal 建行即回包（目标条 / 角标 / 左侧会话列表立刻出现），
+     * 后台轮在实例就绪后登记运行总线，由前端 2.5s 轮询接流。池宽 4：单条冷启动装配很慢，但不能让一条新目标的
+     * 实例重建堵住其它目标/会话的续跑——同一会话的并发由 {@code reserveFollower} 挡住（抢不到走 GOAL_RETRY）。
+     */
+    private static final java.util.concurrent.ExecutorService GOAL_KICK =
+            java.util.concurrent.Executors.newFixedThreadPool(4, r -> {
+                Thread t = new Thread(r, "agentx-goal-kick");
+                t.setDaemon(true);
+                return t;
+            });
+
     /** 重试间隔与次数：旧目标轮被打断后通常在几秒内释放跟随位，30 秒仍抢不到就如实转暂停。 */
     private static final long GOAL_RETRY_DELAY_MS = 1_500L;
     private static final int GOAL_RETRY_MAX = 20;
@@ -1255,6 +1269,21 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      */
     public void continueGoalTurn(com.wenqu.ai.model.Goal goal, String input, int n) {
         continueGoalTurn(goal, input, n, 0);
+    }
+
+    /**
+     * 目标轮异步发起入口（目标续跑驱动 {@code GoalTurnDriver} 绑定的就是它）：把 {@link #continueGoalTurn} 的
+     * 同步重活（实例冷启动装配）挪出调用方线程——POST /goal 建行即回包，目标条 / 角标 / 左侧会话列表立即出现，
+     * 后台轮在实例就绪后登记总线、由前端轮询接流。内部重试（reserveFollower 抢不到）仍走 GOAL_RETRY 调度，不经此池。
+     */
+    public void submitGoalTurn(com.wenqu.ai.model.Goal goal, String input, int n) {
+        GOAL_KICK.execute(() -> {
+            try {
+                continueGoalTurn(goal, input, n, 0);
+            } catch (RuntimeException e) {
+                log.warn("[GOAL] 目标轮异步发起失败: goal={} n={} {}", goal.getId(), n, e.toString());
+            }
+        });
     }
 
     private void continueGoalTurn(com.wenqu.ai.model.Goal goal, String input, int n, int attempt) {
@@ -2396,6 +2425,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         Map<String, Object> data = event.data() == null ? Map.of() : event.data();
         switch (event.type()) {
             case "model/chunk" -> {
+                // 辅助模型调用（记忆提炼 / 压缩摘要，payload.purpose=SUMMARY）与主推理走同一条
+                // Session Log：框架的 SessionModels.Recorded 把 purpose 放进每个 chunk 载荷，不认它
+                // 的表现是提炼/摘要的正文（「## Memory Flush —（本轮新增）」「## SESSION INTENT /
+                // SUMMARY / ARTIFACTS / NEXT STEPS」）被当成用户正文发 TOKEN 帧并落库（2026-10-22
+                // 线上实测），其 thinking 块同时把本轮思考撑爆 TEXT 列 → 整条消息落库失败。只透传
+                // 主推理（REASONING）；SUMMARY 的账另有去处（记忆文件/压缩摘要消息），不进聊天流。
+                if (!"REASONING".equals(String.valueOf(data.get("purpose")))) return;
                 if (!(data.get("chunk") instanceof Map<?, ?> chunk)) return;
                 if (!(chunk.get("content") instanceof List<?> blocks)) return;
                 for (Object block : blocks) {

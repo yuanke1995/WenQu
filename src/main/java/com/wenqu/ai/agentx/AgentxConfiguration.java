@@ -48,8 +48,11 @@ public class AgentxConfiguration {
                 chatService::resolveTurnModel);
         factory.bindFramework(engine);
         // 目标模式跨轮续跑的发起口：控制流归框架，问渠只数轮数——续跑轮由引擎 submit + 跟随
-        // （幂等键 goal:{goalId}:{n}，后台轮走收集型通道 + RESUME_POOL，前端按 goal_turn 自动接流）
-        goalService.bindTurnDriver(engine::continueGoalTurn);
+        // （幂等键 goal:{goalId}:{n}，后台轮走收集型通道 + RESUME_POOL，前端按 goal_turn 自动接流）。
+        // 走 submitGoalTurn 而非 continueGoalTurn 直接绑：把实例冷启动装配（sessions.open 同步重建
+        // AgentScope 实例，沙盒供给/MCP/索引可达数十秒）挪出 POST /goal 请求线程，建行即回包、界面立刻可见，
+        // 后台轮就绪后登记总线、前端 2.5s 轮询接流
+        goalService.bindTurnDriver(engine::submitGoalTurn);
         // 重启后的待办由引擎接回：表里有归属、框架状态在 stateStore 里，续跑是做得到的事，
         // 不该回一句「已批准」然后什么都不发生
         // 重启后的待办、以及「答完时已经没有跟随者」的待办都由引擎接回：表里有归属、框架状态在
