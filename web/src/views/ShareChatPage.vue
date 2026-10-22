@@ -117,7 +117,7 @@ import ChatInput from '../chat/ChatInput.vue'
 // 消息列表外壳（与主对话页同一份）：行/块/气泡布局 + 提问随行材料 + 降级条 + 引用来源 + 动作行
 import ChatThread from '../chat/ChatThread.vue'
 import { openImages } from '../chat/answerViewer'
-import { fmtSize } from '../chat/projections'
+import { fmtSize, resumedStartAt } from '../chat/projections'
 // 取材判定层与主聊天页同源（白名单/限额/被拒文案只有一份，改一处两页同时生效）
 import { MAX_IMAGES, MAX_FILES, MAX_FILE_MB, SUPPORTED_EXTS, REJECT, classifyIntake, rejectText,
          compressImage, pasteFilesOf, isLongPaste, pasteNameOf, isImageFile } from '../chat/intake'
@@ -641,6 +641,8 @@ async function attachRunning () {
       if (typeof snap.content === 'string') ai.content = snap.content
       if (Array.isArray(snap.images)) ai.images = snap.images
       if (Array.isArray(snap.sources)) ai.sources = snap.sources
+      // 同主对话页：接上的这一轮按服务端已跑时长续表，不从 0 重新起跳
+      ai.time = resumedStartAt(snap.elapsedMs, Date.now())
       scrollBottom()
     }
   })

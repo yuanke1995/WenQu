@@ -533,6 +533,17 @@ const turnWaitMs = m => {
   if (!m) return 0
   return Number(m.humanWaitMs) || Number(m.tokens && m.tokens.humanWaitMs) || 0
 }
+/** 接流起表点：把服务端快照里「这一轮到此刻已经跑掉的毫秒」换算成本地钟上的开轮时刻。
+ *  刷新接上的那一轮，本地 time 记的是接上那一刻，不换算的话秒表从 0 重新起跳——已经跑掉的
+ *  那段在用户眼里不算数（症状：「正在溯源，用时 2 秒」在刷新后从头再跳一遍）。
+ *  给的是时长而不是绝对时刻：nowTick 与本地开轮时刻都在客户端钟上，拿服务端绝对时刻相减会把
+ *  两边的钟偏差直接算进用户眼里；时长只差快照那一帧在路上的时间。缺这个数（旧服务端/空快照）
+ *  时返回 clientNow，即维持「从接上起表」的老行为，不编一个过去时刻出来。 */
+const resumedStartAt = (elapsedMs, clientNow) => {
+  const now = Number(clientNow) || 0
+  const ran = Number(elapsedMs) || 0
+  return ran > 0 ? Math.max(0, now - ran) : now
+}
 /** 过程块折叠态：与思考段/簇同一套约定——用户点过就认点过的，没点过时收场收起、历史消息天然收起。
  *  跑着的时候恒展开且**不认用户点过的那一次**：这一条此刻只是跟着秒走的计时器，把正在长的过程
  *  收起来既没有可读的东西、又会把「答案写完之前看不到它在干什么」变成常态。
@@ -1252,6 +1263,7 @@ export {
   restoreTimeline, SENTENCE_END_CHARS, endsSentence, timelineView, timelineRows, TOOL_BRIEF_KEYS, oneLine,
   clusterize, clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterProcCount,
   turnRows, turnOpen, toggleTurn, turnShow, turnWarn, turnExpandable, turnHead, turnTitle, turnElapsedMs, turnWaitMs,
+  resumedStartAt,
   turnTop, turnBottom, turnToggleable,
   durZh,
   toolBrief, prettyIo, LIVE_TAIL_CHARS, liveOutput, groupRunning, groupHasError,

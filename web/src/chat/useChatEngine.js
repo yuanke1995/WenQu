@@ -24,6 +24,7 @@ import { THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel, CTX_WINDOW_ST
          groupSources, ensureTick, mergeDoneToolCalls, restoreTimeline, extendTimelineText, extendTimelineProcess,
          pushTimelineTool, pushTimelineArtifact, pushTimelineSteer, pushTimelineThink, extendTimelineThink, ensureThinkSegment,
          snapshotVersion, applyVersion, toolCallsView, histItemDigest,
+         resumedStartAt,
          goalTerminalOf, goalBarVisibleOf, goalPhraseOf, goalStateLabelOf, goalStateClassOf,
          goalBlockReasonOf, goalBarTitleOf, goalBarMetaOf,
          goalCanPauseOf, goalCanResumeOf, goalCanEditOf,
@@ -2112,6 +2113,9 @@ const applyTurnSnapshot = (msg, snap, sid) => {
   if (typeof snap.turnId === 'string' && snap.turnId) msg.turnId = snap.turnId
   if (snap.agentName) msg.agentName = snap.agentName
   if (snap.agentId) msg.agentId = snap.agentId
+  // 起表点：这一轮在服务端已经跑掉的毫秒换算成本地钟——刷新接上的这一轮本地 time 记的是接上
+  // 那一刻，不换算的话顶部秒表从 0 重新起跳，跑掉的那段在用户眼里不算数
+  msg.time = resumedStartAt(snap.elapsedMs, Date.now())
   if (snap.planRecord) msg.planCard = planCardFromRecord(snap.planRecord)
   // 时间线必须在 toolCalls/artifacts 之后重建：段里的下标指向这两份清单，清单没铺好就先建会指空
   if (Array.isArray(snap.timeline) && snap.timeline.length) msg.timeline = restoreTimeline(msg, snap.timeline)

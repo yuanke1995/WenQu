@@ -21,6 +21,7 @@ const code = [
   /const hasTimelineBlocks = m => \{[\s\S]*?\n\}/,
   /const turnElapsedMs = m => \{[\s\S]*?\n\}/,
   /const turnWaitMs = m => \{[\s\S]*?\n\}/,
+  /const resumedStartAt = \(elapsedMs, clientNow\) => \{[\s\S]*?\n\}/,
   /const turnOpen = m => \{[\s\S]*?\n\}/,
   /const turnHead = m => \{[\s\S]*?\n\}/,
   /const turnTitle = m => \{[\s\S]*?\n\}/,
@@ -33,7 +34,7 @@ const ck = (ok, label, got) => { if (!ok) bad++; console.log(`${ok ? 'PASS' : 'F
 
 // nowTick 由调用方注入：跑着的那一份读数靠它，客户端钟准不准都在这一个入口上
 const api = clientNow => new Function('nowTick',
-  `${code}; return { durZh, turnElapsedMs, turnOpen, turnShow, turnWarn, turnTop, turnBottom, turnToggleable, turnHead, turnTitle, executedCount, toolCallsView }`)
+  `${code}; return { durZh, turnElapsedMs, turnOpen, turnShow, turnWarn, turnTop, turnBottom, turnToggleable, turnHead, turnTitle, executedCount, toolCallsView, resumedStartAt }`)
   ({ value: clientNow })
 
 const T0 = 1792080129885
@@ -102,6 +103,21 @@ const done = ms => ({ role: 'ai', loading: false, time: T0, turnMs: ms })
     '没等过就不提「等你答题」（无中生有会让用户去找那张没出现过的卡）')
   ck(turnElapsedMs({ role: 'ai', loading: false, tokens: { turnElapsedMs: 386000 } }) === 386000,
     '刷新后读 tokens 里落库的那一份（done 那帧早没了）')
+}
+
+// ⑤b 接流起表点：刷新接上的那一轮按服务端「已跑掉的毫秒」换算成本地钟，不从 0 重新起跳。
+//    真机 2026-10-22：生成中刷新，「正在溯源，用时 2 秒」从头再跳一遍，已经跑掉的那段不算数了。
+//    给时长而不给绝对开轮时刻：nowTick 与本地 time 都在客户端钟上，跨钟相减会把两边的
+//    钟偏差直接算进用户眼里（与 ③ 同一条理由）。
+{
+  const { resumedStartAt, turnElapsedMs, turnHead } = api(T0 + 90000)   // 接上时本地钟
+  const resumed = { role: 'ai', loading: true, time: resumedStartAt(88000, T0 + 90000) }
+  ck(turnElapsedMs(resumed) === 88000, '接流的这一轮从服务端已跑时长起表（不是从接上那一刻归零）',
+    String(turnElapsedMs(resumed)))
+  ck(turnHead(resumed) === '正在溯源，用时 1 分 28 秒 …', '刷新后标题接着报真实用时', turnHead(resumed))
+  ck(resumedStartAt(0, T0) === T0, '快照没带这个数（旧服务端/空快照）维持从接上起表，不编一个过去时刻')
+  ck(resumedStartAt(undefined, T0) === T0 && resumedStartAt(null, T0) === T0, '字段缺失同样不猜')
+  ck(resumedStartAt(5000, 1000) === 0, '换算夹到 0：不许报负数秒')
 }
 
 // ⑥ 折叠默认态与「什么时候点得动」
