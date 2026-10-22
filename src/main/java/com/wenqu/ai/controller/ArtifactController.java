@@ -95,6 +95,22 @@ public class ArtifactController {
         return ResultJson.ok(artifactService.refreshSignatures(RequestUser.uid(), req.ids()));
     }
 
+    /**
+     * 读一份产物的文本原文（预览台里「读字」那一档：Markdown / 代码 / 分隔符表）。
+     * <p>入参是 id 而不是路径，与 {@link #refreshSign} 同一口径：给路径等于开放「读任意文件」。
+     * 类型闸与体积帽都在 {@code PreviewTypes}（服务端一份），前端不另列清单。
+     */
+    @Operation(summary = "读产物文本原文", description = "按产物 id 取文本内容，只回前一段并带 truncated 标记；"
+            + "非文本类型/无权/文件已清理回可读错误")
+    @GetMapping("/{id}/content")
+    public ResultJson content(@PathVariable("id") String id) {
+        try {
+            return ResultJson.ok(artifactService.readContent(RequestUser.uid(), id));
+        } catch (IllegalArgumentException e) {
+            return ResultJson.error(400, e.getMessage());
+        }
+    }
+
     /** 批量删除请求体 */
     public record BatchDeleteReq(List<String> ids) {
     }

@@ -67,15 +67,18 @@
           <file-text-outlined class="rs-ic" />
           <span class="rs-art-name">{{ a.filename }}</span>
           <span class="rs-art-acts">
-            <a v-if="canPreviewArtifact(a)" class="rs-art-act" :href="resolveImg(a.url)"
-               target="_blank" rel="noopener" title="在新标签页预览"><eye-outlined />预览</a>
+            <a v-if="canPreview(a)" class="rs-art-act" :href="resolveImg(a.url)"
+               target="_blank" rel="noopener" data-pv
+               :data-pv-name="a.filename" :data-pv-ext="artifactExt(a)"
+               :data-pv-size="a.size" :data-pv-id="a.id"
+               title="预览"><eye-outlined />预览</a>
             <a class="rs-art-act" :href="resolveImg(a.url)" :download="a.filename"
                title="下载"><download-outlined />下载</a>
           </span>
         </div>
       </template>
 
-      <!-- ---- 目标（PC 右栏「目标」面板的移动形态：同一份 sessionGoal，同一个 GoalCard 组件） ----
+      <!-- ---- 目标（与 PC 摘要条同一份 sessionGoal，同一个 GoalCard 组件；PC 右栏不单列目标卡） ----
            卡片只读：状态、轮次、目标原文与卡住的原因。暂停/继续/改原文/删除都只在输入框上方
            那条摘要条上（一个动作只留一个入口），这里不再摆验收/收尾/另起目标那一套。 -->
       <template v-if="sessionGoal">
@@ -138,7 +141,7 @@ import { fmtTokens } from '../utils/token'
 import { fmtSourceScore, fmtWindow, usageCtxTokens } from '../chat/projections'
 // 产物地址必须过 resolveImg：后端给的是 /ai/artifacts/**，不经媒体前缀在开发态会落到 SPA 回退（下载到 index.html）
 import { resolveImg } from '../utils/markdown'
-import { canPreviewArtifact } from '../utils/artifactView'
+import { canPreview, artifactExt } from '../utils/artifactView'
 import { buildSessionMd, saveMd } from '../views/exportMd'
 import { copyText } from '../utils/clipboard'
 import { useSessionShare } from '../views/shareSession'

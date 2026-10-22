@@ -68,12 +68,15 @@
               </div>
               <!-- 操作区独立成组：窄屏整组换行右对齐（见 .art-acts 的媒体查询） -->
               <div class="art-acts">
-                <!-- 预览＝把产物开成单独一个标签页。安全性靠服务端那份 CSP sandbox 头
-                     （见 ArtifactSandboxInterceptor）：产物是模型生成的 HTML，不带该头时这一跳等于
-                     让模型脚本跑在本域源上、能读登录令牌。地址仍是列表里那份签名地址，无需另换接口。
-                     哪些类型开得起来见 utils/artifactView（按真浏览器实测），聊天区产物卡共用同一份。 -->
-                <a v-if="canPreviewArtifact(r)" :href="resolveImg(r.url)" target="_blank" rel="noopener"
-                   class="app-btn ghost small" title="在新标签页打开">
+                <!-- 预览＝进预览台：页面设计档给真实视口（可切 375/768/1440 与自定义宽），读字档把
+                     Markdown/表格/代码在应用里排好版。安全性仍靠服务端那份 CSP sandbox 头
+                     （见 ArtifactSandboxInterceptor）：产物是模型生成的 HTML，不带该头时这一份内容等于
+                     让模型脚本跑在本域源上、能读登录令牌。哪些类型怎么摆见 utils/artifactView（一份判据），
+                     聊天区与工作区页共用。href 是真签名地址，Ctrl/中键点击照旧开成新标签页。 -->
+                <a v-if="canPreview(r)" :href="resolveImg(r.url)" target="_blank" rel="noopener"
+                   data-pv :data-pv-name="r.filename" :data-pv-ext="artifactExt(r)"
+                   :data-pv-size="r.size" :data-pv-id="r.id"
+                   class="app-btn ghost small" title="预览（按住 Ctrl 或中键开成新标签页）">
                   <eye-outlined /> 预览
                 </a>
                 <a :href="resolveImg(r.url)" :download="r.filename" class="app-btn ghost small" title="下载">
@@ -110,7 +113,7 @@ import { message, Modal } from 'ant-design-vue'
 import { ReloadOutlined, FileTextOutlined, DownloadOutlined, DeleteOutlined, FolderOpenOutlined, EyeOutlined } from '@ant-design/icons-vue'
 import { listArtifacts, listProjects, deleteArtifact, deleteArtifactsBatch, moveArtifactProject } from '../api'
 import { resolveImg } from '../utils/markdown'
-import { canPreviewArtifact } from '../utils/artifactView'
+import { canPreview, artifactExt } from '../utils/artifactView'
 import MoveToWorkspaceModal from '../components/MoveToWorkspaceModal.vue'
 
 const rows = ref([])

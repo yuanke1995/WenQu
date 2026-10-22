@@ -296,6 +296,19 @@ public class ProjectController {
         }
     }
 
+    @Operation(summary = "读工作区文件的文本原文",
+            description = "预览台里「读字」那一档用（Markdown / 代码 / 分隔符表）：按 uid + 工作区 + 相对路径逐条校归属，"
+                    + "非文本类型与越界路径回可读错误；超过上限只回前一段并带 truncated 标记，不假装是全文")
+    @GetMapping("/{id}/file/content")
+    public ResultJson fileContent(@PathVariable("id") String id,
+                                  @RequestParam("path") String path) {
+        try {
+            return ResultJson.ok(projectFileService.readText(RequestUser.uid(), id, path));
+        } catch (IllegalArgumentException e) {
+            return ResultJson.error(400, e.getMessage());
+        }
+    }
+
     @Operation(summary = "工作区的工作流", description = "本工作区下本人的工作流（名称/状态/更新时间）；触发仍走 /workflow/{id}/run")
     @GetMapping("/{id}/workflows")
     public ResultJson workflows(@PathVariable("id") String id) {

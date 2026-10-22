@@ -434,13 +434,27 @@ console.log(bad ? `\n${bad} 项不符` : '\n全部通过')
     '工作区页「去画布」在移动壳不渲染（raw href 会整页重载撞引导卡）')
   check(/x\.kind === 'workflow' && !mobileShell/.test(pjRaw),
     '工作区页「运行详情」在移动壳不渲染（同上）')
-  // 工作区文件的「预览」＝把工作目录里那个文件开成单独一个标签页（与产物页同一待遇，
-  // 安全性靠服务端那份 CSP sandbox 头）。退回应用内弹层会把这条签名地址的路废掉，
-  // 也会在移动端造出壳中壳，所以两端都必须是一个 <a target="_blank">。
-  check(/class="pj-act" :href="resolveImg\(f\.viewUrl\)" target="_blank"/.test(pjRaw),
-    '工作区页「预览」是新标签页链接（不开应用内弹层）')
+  // 工作区文件的「预览」＝进预览台（utils/previewStage）。锚点必须还是 <a target="_blank">：href 就是
+  // 那份真签名地址，Ctrl/中键点击照旧开成真标签——预览台接管的是普通左键，不是把这条路废掉。
+  check(/class="pj-act"\s+:href="resolveImg\(f\.viewUrl \|\| f\.artifact\.url\)" target="_blank" rel="noopener"\s+data-pv/.test(pjRaw),
+    '工作区页「预览」带 data-pv 且 href 仍是签名地址（左键进预览台，Ctrl/中键开真标签）')
+  // 取原文走登录态接口，不复用签名地址：那条地址 1 小时过期 + 响应带 CSP sandbox，
+  // 两样都会变成预览台要处理的异常，而用户看到的只是「点开是空白」。
+  check(/'data-pv-project': id\.value, 'data-pv-path': f\.path/.test(pjRaw),
+    '工作区文件行按「工作区 id + 相对路径」取原文（不 fetch 签名地址）')
+  // 同一行既在目录里又有产物记录时必须只传路径那一份：都传会让读字档优先拿产物旧副本顶掉目录当前内容
+  check(/f\.path\s*\?\s*\{[^}]*'data-pv-project'/.test(pjRaw),
+    '预览台取址按行来源二分（文件行不连带传产物 id）')
+  // 没落进工作目录的那一行只有产物记录，此前它写死 viewUrl:'' → 同一份 html 在聊天区能预览、
+  // 在这个页只有下载（线上实测）。判据必须继续是 artifactView 那一份，别在这儿重抄扩展名清单。
+  check(/v-if="f\.viewUrl \|\| canPreview\(f\.artifact\)"/.test(pjRaw),
+    '工作区页产物行走 artifactView 那份判据（与聊天区/产物页同一颗按钮）')
+  // 模板里引用了却没 import 是最坏的一种静默：Vue 不报错，v-if 恒假 → 按钮整排消失，
+  // 与「这个类型不给预览」看起来一模一样（就是这次线上那次的症状形状）。
+  check(/import \{ canPreview, artifactExt \} from '\.\.\/utils\/artifactView'/.test(pjRaw),
+    '工作区页 import 了 canPreview 与 artifactExt（漏 import 会让预览按钮静默不渲染）')
   check(!/previewProjectFile|previewState/.test(pjRaw),
-    '应用内预览弹层与那条取字节的预览接口已退役（不留第二条路）')
+    '那条按 projectId+path 取字节的老预览端点没有复活（读原文走 /file/content）')
   // ---- 文件栏可管理：下面每条都是真机点验当场抓到的失效形态，不是假想 ----
   const pjCode = stripComments(pjRaw)
   // a-menu 的 click 载荷是对象（key/keyPath/item/domEvent）。当裸 key 用会得到 "[object Object]"，
@@ -478,19 +492,47 @@ console.log(bad ? `\n${bad} 项不符` : '\n全部通过')
   check(/const canManageDoc = d => !mobileShell\.value/.test(dp),
     '文档行内写动作走 canManageDoc，同一判据收口')
 
-  // 产物的「预览」与上面同一待遇：开成单独一个标签页（服务端 CSP sandbox 兜底），两端四个面都不例外
-  // ——气泡底部产物卡、PC 右栏「产物」卡、H5 消息行、H5「状态与来源」面板。判据（哪些类型开得起来）
-  // 只有 utils/artifactView.js 那一份：各页各留一张清单时，同一份产物在两个页面给出不同按钮集。
+  // 产物的「预览」与上面同一待遇：进预览台（utils/previewStage），两端六个面都不例外——
+  // 气泡底部产物卡、PC 右栏「产物」卡、H5 消息行、H5「状态与来源」面板、产物页、工作区页。
+  // 判据（哪一类怎么摆）只有 utils/artifactView.js 那一份：各页各留一张清单时，
+  // 同一份产物在两个页面会给出不同按钮集，用户只会当成随机行为。
   const cp = read('src/views/ChatPage.vue')
   const mr = read('src/h5/MobileMsgRow.vue')
   const rs = read('src/h5/MobileRefSheet.vue')
   const ap = read('src/views/ArtifactsPage.vue')
   for (const [name, src] of [['ChatPage', cp], ['MobileMsgRow', mr], ['MobileRefSheet', rs], ['ArtifactsPage', ap]]) {
-    check(/canPreviewArtifact/.test(src), `${name} 用 artifactView 那份可预览判据`)
-    check(/target="_blank" rel="noopener"/.test(src), `${name} 的预览是新标签页链接（不开应用内弹层）`)
+    check(/canPreview\(/.test(src), `${name} 用 artifactView 那份可预览判据`)
+    check(/data-pv(?![\w-])/.test(src), `${name} 的预览锚点接在预览台上（漏 data-pv＝退回纯开新标签，症状与「这版没做预览台」同形）`)
+    check(/target="_blank" rel="noopener"/.test(src), `${name} 保留 href 真签名地址（Ctrl/中键仍可开成真正视口）`)
   }
-  check(!/NO_PREVIEW|DOWNLOAD_ONLY|const previewable\s*=/
-    .test(cp + mr + rs + ap), '四个面没有第二份「哪些类型开得了」清单')
+  check(!/NO_PREVIEW|DOWNLOAD_ONLY|const previewable\s*=|const PREVIEW_EXTS\s*=/
+    .test(cp + mr + rs + ap + pjRaw), '六个面都没有第二份「哪些类型怎么预览」清单')
+  // 委托与样式只在入口装一次：漏了 main.js 那行 side-effect import，六个面的按钮全部退化成
+  // 「只会开新标签」，页面不报错、构建也过——正是上一轮「某页忘了挂委托」那类静默故障的放大版。
+  // 判据跑在剥注释后的源码上：只把 import 注释掉同样会静默退化，拿原文判就测不出那种坏法。
+  const mainSrc = stripComments(read('src/main.js'))
+  check(/import '\.\/utils\/previewStage'/.test(mainSrc), '入口装了预览台的 document 级委托')
+  check(/import '\.\/previewStage\.css'/.test(mainSrc), '入口装了预览台样式（漏了会拿到一堆无样式裸元素）')
+  // 前端那张表说「能预览」的每一类，服务端必须真发得出内容类型；对不上就是给用户一颗点了掉下载的按钮。
+  const avSrc = read('src/utils/artifactView.js')
+  const ptSrc = read('../src/main/java/com/wenqu/ai/util/PreviewTypes.java')
+  const clientExts = new Set([...avSrc.matchAll(/([a-z0-9]+): PV\.(PAGE|IMAGE|PDF|MD|TABLE|TEXT)/g)].map(m => m[1]))
+  const serverExts = new Set(['PAGE_EXTS', 'IMAGE_EXTS', 'READABLE_EXTS', 'PDF_EXTS'].flatMap(s => {
+    const m = ptSrc.match(new RegExp(s + '[^=]*=\\s*Set\\.of\\(([^(]*)\\)'))
+    if (!m) throw new Error('PreviewTypes 里没找到 ' + s + '——对账判据失效，先去补再看这条为什么红')
+    return [...m[1].matchAll(/"([^"]+)"/g)].map(x => x[1])
+  }))
+  const onlyClient = [...clientExts].filter(x => !serverExts.has(x))
+  const onlyServer = [...serverExts].filter(x => !clientExts.has(x))
+  check(clientExts.size > 0 && serverExts.size > 0 && !onlyClient.length && !onlyServer.length,
+    '前后端两份预览扩展名逐条对账', `前端多 ${onlyClient.join('/') || '无'} / 服务端多 ${onlyServer.join('/') || '无'}`)
+  // 取原文的端点必须按 id / 工作区+路径入参：给路径或 URL 等于开放「读任意文件」，与换签那条同口径
+  const artCtrl = stripComments(read('../src/main/java/com/wenqu/ai/controller/ArtifactController.java'))
+  check(/@GetMapping\("\/\{id\}\/content"\)/.test(artCtrl) && /readContent\(RequestUser\.uid\(\), id\)/.test(artCtrl),
+    '产物原文按 id + 登录 uid 取（不接收调用方给的路径）')
+  const pjCtrlCode = stripComments(read('../src/main/java/com/wenqu/ai/controller/ProjectController.java'))
+  check(/"\/\{id\}\/file\/content"/.test(pjCtrlCode) && /readText\(RequestUser\.uid\(\), id, path\)/.test(pjCtrlCode),
+    '工作区原文按工作区 id + 登录 uid 取（越界与归属在 resolveDownload 内判）')
   // 行本身不再是「点整行=下载」的锚：预览与下载必须各自成钮，否则手机上根本点不到预览
   // （阳性对照：拿改动前那份 `<a v-for=… class="artifact-item" … :download=…>` 喂这两条，两条都得红）
   check(/<div v-for="\(a, ai\) in m\.artifacts" :key="ai" class="artifact-item">/.test(cp),

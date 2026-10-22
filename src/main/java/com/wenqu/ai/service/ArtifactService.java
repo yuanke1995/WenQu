@@ -9,6 +9,7 @@ import com.wenqu.ai.mapper.ArtifactMapper;
 import com.wenqu.ai.mapper.SessionMapper;
 import com.wenqu.ai.model.Artifact;
 import com.wenqu.ai.model.Session;
+import com.wenqu.ai.util.PreviewTypes;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -367,6 +368,28 @@ public class ArtifactService {
         return list(uid, keyword, null);
     }
 
+    /**
+     * 某个会话在指定时刻之后生成的产物（目标模式的进展检测与证据自动收集）。
+     * <p>只按 uid 校验归属，不暴露别人的产物；{@code since} 为空则不限时间。
+     */
+    public List<Artifact> listBySession(String uid, String sessionId, LocalDateTime since) {
+        if (uid == null || uid.isBlank() || sessionId == null || sessionId.isBlank()) {
+            return List.of();
+        }
+        try {
+            LambdaQueryWrapper<Artifact> w = new LambdaQueryWrapper<Artifact>()
+                    .eq(Artifact::getUid, uid)
+                    .eq(Artifact::getSessionId, sessionId)
+                    .eq(Artifact::getDeleted, 0)
+                    .orderByAsc(Artifact::getCreateTime);
+            if (since != null) w.ge(Artifact::getCreateTime, since);
+            return artifactMapper.selectList(w);
+        } catch (Exception e) {
+            log.warn("[ARTIFACT] 按会话读取产物失败 session={}: {}", sessionId, e.getMessage());
+            return List.of();
+        }
+    }
+
     /** 没挂工作区这一档的查询占位符（比空串更明确：null 在 MyBatis wrapper 里会被当成"不传"） */
     public static final String UNASSIGNED_PROJECT = "__unassigned__";
 
@@ -438,6 +461,61 @@ public class ArtifactService {
             out.add(m);
         }
         return out;
+    }
+
+    /**
+     * 读一份产物的<b>原文</b>，给预览台里「读字」那一档（Markdown / 代码 / 分隔符表）用。
+     *
+     * <p><b>入参是产物 id，不是路径也不是 URL</b>：与 {@link #refreshSignatures} 同一口径——
+     * 给路径就等于开放「读任意文件」的能力（产物根目录之外也在内）。id 归属在库里逐条 fail-closed。
+     *
+     * <p><b>类型闸在 {@link PreviewTypes}（服务端那一份）</b>：xlsx/zip 这类不按文本读，
+     * 前端也不该来问；两边清单对不上时前端会拿到一句人话的错误而不是半截二进制。
+     *
+     * <p><b>只读前 {@link PreviewTypes#TEXT_BODY_CAP} 字节</b>：产物本身有 1MB 落盘帽，
+     * 但一次「看一眼」不该把 1MB 塞进 markdown-it；截断由前端显式说明并引导下载。
+     *
+     * @return { filename, ext, size, cap, truncated, content }
+     * @throws IllegalArgumentException 产物不存在/已删/无权/类型不支持文本预览/文件已被清理
+     */
+    public Map<String, Object> readContent(String uid, String artifactId) {
+        Artifact row = getOwned(artifactId, uid);
+        if (row == null) {
+            throw new IllegalArgumentException("产物不存在或已删除");
+        }
+        String ext = PreviewTypes.extOf(row.getFilename());
+        if (!PreviewTypes.isReadable(ext)) {
+            throw new IllegalArgumentException("该产物不按文本预览，请下载后查看");
+        }
+        Path file = baseDir().resolve(row.getObjectKey()).normalize();
+        if (!file.startsWith(baseDir()) || !Files.isRegularFile(file)) {
+            throw new IllegalArgumentException("产物文件已被清理，无法预览");
+        }
+        try {
+            long size = Files.size(file);
+            byte[] buf = new byte[(int) Math.min(size, PreviewTypes.TEXT_BODY_CAP)];
+            int got;
+            try (java.io.InputStream in = Files.newInputStream(file)) {
+                got = in.readNBytes(buf, 0, buf.length);
+            }
+            boolean truncated = size > buf.length;
+            String content = new String(buf, 0, got, StandardCharsets.UTF_8);
+            // 截在半个汉字中间时末尾会剩一个替换符，留着像文件坏了
+            if (truncated && !content.isEmpty()
+                    && content.charAt(content.length() - 1) == '\uFFFD') {
+                content = content.substring(0, content.length() - 1);
+            }
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("filename", row.getFilename());
+            m.put("ext", ext);
+            m.put("size", size);
+            m.put("cap", (long) PreviewTypes.TEXT_BODY_CAP);
+            m.put("truncated", truncated);
+            m.put("content", content);
+            return m;
+        } catch (IOException e) {
+            throw new IllegalArgumentException("读取产物失败：" + e.getMessage());
+        }
     }
 
     /**

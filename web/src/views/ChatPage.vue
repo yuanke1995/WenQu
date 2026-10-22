@@ -378,17 +378,20 @@
               <!-- 智能体提问（askUser）的「待答」态不再渲染在气泡里：桌面壳把底部聊天输入框整块
                    替换成提问面板（见 pendingAsk / askp-*），答复后问答记录以工具卡形态留在本气泡 -->
               <!-- 产物统一沉底展示（不再按生成时刻插在时间线中间，避免把回答切碎）。
-                   「预览」＝开成一个浏览器标签页，与产物页、工作区文件同一待遇，安全性靠服务端那份
-                   CSP sandbox 头（见 ArtifactSandboxInterceptor）；哪些类型开得起来是 artifactView 里
-                   那份按真浏览器实测的清单，开不了的只给下载 -->
+                   「预览」＝进预览台（整屏 + 可控视口，见 utils/previewStage）：页面设计档给真实视口，
+                   读字档把 Markdown/表格/代码在应用里排好版；锚点的 href 仍是那份签名地址，
+                   所以 Ctrl/中键点击照旧开真标签。哪些类型怎么摆是 artifactView 里那一份判据，开不了的只给下载 -->
               <div v-if="m.role === 'ai' && m.artifacts && m.artifacts.length" class="artifact-list">
                 <div v-for="(a, ai) in m.artifacts" :key="ai" class="artifact-item">
                   <file-text-outlined class="artifact-icon" />
                   <span class="artifact-name" :title="a.filename">{{ a.filename }}</span>
                   <span v-if="a.description" class="artifact-desc" :title="a.description">{{ a.description }}</span>
                   <span class="artifact-acts">
-                    <a v-if="canPreviewArtifact(a)" class="artifact-act" :href="resolveImg(a.url)"
-                       target="_blank" rel="noopener" :title="'在新标签页预览 ' + a.filename">
+                    <a v-if="canPreview(a)" class="artifact-act" :href="resolveImg(a.url)"
+                       target="_blank" rel="noopener" data-pv
+                       :data-pv-name="a.filename" :data-pv-ext="artifactExt(a)"
+                       :data-pv-size="a.size" :data-pv-id="a.id"
+                       :title="'预览 ' + a.filename + '（按住 Ctrl 或中键开成新标签页）'">
                       <eye-outlined /> 预览
                     </a>
                     <a class="artifact-act" :href="resolveImg(a.url)" :download="a.filename"
@@ -1112,65 +1115,22 @@
           </div>
         </div>
       </div>
-      <!-- 本会话产物：有文件才显示整卡（空则隐藏，不占版面）。预览＝开成一个浏览器标签页（与气泡内产物卡、
-           产物页同一待遇），下载走同一份签名地址；更多入口跳产物页 -->
+      <!-- 本会话产物：有文件才显示整卡（空则隐藏，不占版面）。预览＝进预览台（与气泡内产物卡、产物页
+           同一判据同一待遇），下载走同一份签名地址；更多入口跳产物页 -->
       <div v-if="sessionArtifacts.length" class="rp-card">
         <div class="rp-label">产物 · {{ sessionArtifacts.length }} 个</div>
         <div v-for="(a, pi) in sessionArtifacts" :key="pi" class="rp-art">
           <file-text-outlined class="rp-art-ic" />
           <span class="rp-art-name" :title="a.filename + (a.description ? '：' + a.description : '')">{{ a.filename }}</span>
-          <a v-if="canPreviewArtifact(a)" class="rp-art-act" :href="resolveImg(a.url)"
-             target="_blank" rel="noopener" :title="'在新标签页预览 ' + a.filename"><eye-outlined /></a>
+          <a v-if="canPreview(a)" class="rp-art-act" :href="resolveImg(a.url)"
+             target="_blank" rel="noopener" data-pv
+             :data-pv-name="a.filename" :data-pv-ext="artifactExt(a)"
+             :data-pv-size="a.size" :data-pv-id="a.id"
+             title="预览（按住 Ctrl 或中键开成新标签页）"><eye-outlined /></a>
           <a class="rp-art-act" :href="resolveImg(a.url)" :download="a.filename"
              :title="'下载 ' + a.filename"><download-outlined /></a>
         </div>
         <div class="rp-art-all" @click="router.push('/artifacts')">在产物页查看全部 ›</div>
-      </div>
-      <!-- 检索与用量合并成一张卡、两态互斥（v-if/v-else）：
-           两者原本被拆成两张卡夹在「来源」和「汇总」之间，但它们服务的都是同一个问题——「这轮为什么这么答、花了多少」。
-           合并后口径切换器贴到卡内标题行，只作用于它真正管辖的内容，不再独占栏首让人误以为整栏都跟着切。 -->
-      <div class="rp-card">
-        <div class="rp-card-head">
-          <span class="rp-label rp-label-h">{{ panelScope === 'round' ? '本轮检索与用量' : '会话汇总' }}</span>
-          <!-- 统计口径切换（持久化）：本轮=最近完成轮明细；会话=全量累计 -->
-          <span class="rp-scope">
-            <span :class="{ on: panelScope === 'round' }" @click="panelScope = 'round'">本轮</span>
-            <span :class="{ on: panelScope === 'session' }" @click="panelScope = 'session'">会话</span>
-          </span>
-        </div>
-        <template v-if="panelScope === 'round'">
-          <template v-if="lastRetrieved || lastSources.length">
-            <div class="rp-row"><span v-if="lastRetrieved?.keywords > 0">检索词 {{ lastRetrieved.keywords }} 个</span><span v-if="(lastRetrieved?.refs ?? lastSources.length) > 0" class="rp-dim">引用 {{ lastRetrieved?.refs ?? lastSources.length }} 条</span><span v-if="!(lastRetrieved?.keywords > 0) && (lastRetrieved?.refs ?? lastSources.length) > 0" class="rp-dim">未提取到关键词（纯向量召回）</span><span v-if="!(lastRetrieved?.keywords > 0) && !(lastRetrieved?.refs ?? lastSources.length)" class="rp-dim">本轮未检索到相关资料</span></div>
-            <div v-if="lastTokens && lastTokens.hits != null && lastTokens.hits > 0 && lastTokens.hits !== (lastRetrieved?.refs ?? lastSources.length)" class="rp-meta">其中 {{ lastTokens.hits }} 条实际填入上下文（其余为模型中途补充/未入上下文）</div>
-            <div v-if="lastRetrieved?.terms?.length" class="rp-terms">{{ lastRetrieved.terms.join('、') }}</div>
-            <template v-if="toolSearchQueries(lastAi).length">
-              <div class="rp-divider"></div>
-              <div class="rp-tool-label">精确检索（模型主动补充）</div>
-              <div v-for="(q, qi) in toolSearchQueries(lastAi)" :key="qi" class="rp-terms rp-tool-q">{{ qi + 1 }}. {{ q }}</div>
-            </template>
-          </template>
-          <div v-else class="rp-dim">本轮尚无检索记录</div>
-          <!-- 用量（1.9 Token 消耗可视化）：主数=本轮结束时的上下文占用，与气泡、容量圆环同一个数。
-               账单口径那份（本轮每次模型调用输入之和）沉到第三行并写明含工具往返重发——
-               它比占用大两三倍是正常账，但摆成主数会让人以为窗口被吃掉这么多。 -->
-          <template v-if="lastTokens">
-            <div class="rp-divider"></div>
-            <div class="rp-strong">上下文{{ lastTokens.outputIsReal ? ' ' : ' ≈' }}{{ fmtTokens(usageCtxTokens(lastTokens)) }} tokens</div>
-            <div v-if="ctxCapData.window > 0" class="rp-row"><span>占窗口 {{ ctxCapData.pct }}%</span><span class="rp-dim">窗口 {{ fmtTokens(ctxCapData.window) }}</span></div>
-            <div class="rp-meta"><template v-if="lastTokens.prompt > 0">本轮累计送入 {{ fmtTokens(lastTokens.prompt) }}（含工具往返重发）· </template>输出 {{ fmtTokens(lastTokens.output) }}<template v-if="lastTokens.hits > 0"> · 上下文填入 {{ lastTokens.hits }} 块</template><template v-if="!lastTokens.outputIsReal"> · 估算值</template></div>
-          </template>
-        </template>
-        <!-- 会话态：全量累计，只按真实记录的数据统计（c_ai_message 未落库 tokens，历史恢复的轮没有该字段，不冒充 0） -->
-        <template v-else>
-          <div class="rp-strong">{{ sessionTokensLabel }}</div>
-          <div v-if="sessionTokens.rounds" class="rp-meta">输出 {{ fmtTokens(sessionTokens.output) }} · 按已记录 {{ sessionTokens.rounds }}/{{ roundCount }} 轮累计</div>
-          <div v-else-if="roundCount" class="rp-meta">恢复的历史轮次不含用量记录</div>
-          <div v-else class="rp-meta">发送问题后统计</div>
-          <div class="rp-divider"></div>
-          <div class="rp-row"><span>问答 {{ roundCount }} 轮</span><span v-if="sessionArtifacts.length > 0" class="rp-dim">产物 {{ sessionArtifacts.length }} 个</span></div>
-          <div v-if="sessionRetrieval.rounds > 0" class="rp-row" style="margin-top:4px"><span>检索 {{ sessionRetrieval.rounds }} 轮<template v-if="sessionRetrieval.refs > 0"> · 引用 {{ sessionRetrieval.refs }} 段</template></span><span v-if="sessionRetrieval.search > 0" class="rp-dim">精确检索 {{ sessionRetrieval.search }} 次</span></div>
-          <div v-if="sessionRetrieval.tools > 0" class="rp-meta">工具调用 {{ sessionRetrieval.tools }} 次</div>
-        </template>
       </div>
       <!-- 计划：本会话每轮出过的计划各列一条（继续对话后每次重做都算一份），点击定位到那一轮气泡。
            默认折叠沉底：它的条数随会话长度无上限增长，而动作只是「跳回历史某一轮」——低频导航不该占顶部固定槽位，
@@ -1443,7 +1403,7 @@ import { debugRetrieval, deleteMessageGroup, submitFeedback as apiSubmitFeedback
          addEvalCase, getSessionShare, enableSessionShare, disableSessionShare,
          getSessionWorkspace } from '../api'
 import { renderMd, resolveImg, onImgError } from '../utils/markdown'
-import { canPreviewArtifact } from '../utils/artifactView'
+import { canPreview, artifactExt } from '../utils/artifactView'
 import { loadSessions, sessionStore } from './store'
 import { exportAnswerMd, exportSessionMarkdown } from './exportMd'
 import { fmtTokens } from '../utils/token'

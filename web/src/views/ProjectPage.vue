@@ -200,11 +200,15 @@
                   </span>
                   <span class="pj-item-meta">{{ f.kind === 'dir' ? '文件夹' : fmtSize(f.size) }}</span>
                   <span class="pj-item-meta">{{ fmtAgo(f.at) }}</span>
-                  <!-- 预览＝把工作目录里的这个文件开成单独一个标签页（与产物页同一待遇）。
-                       地址是列表接口现签的，安全性靠服务端那份 CSP sandbox 头：工作区里的 HTML 是模型
-                       产出的，不带该头时这一跳等于让模型脚本跑在本域源上、能读登录令牌。 -->
-                  <a v-if="f.viewUrl" class="pj-act" :href="resolveImg(f.viewUrl)" target="_blank"
-                     rel="noopener" title="在新标签页打开">预览</a>
+                  <!-- 预览＝进预览台（与产物页、聊天区四个产物面同一待遇）：页面设计档给真实视口，读字档在应用里排版。
+                       落进工作目录的那一行用列表接口现签的地址；没落进来的那一行只有产物记录那份签名地址，
+                       判据共用 artifactView 那一份——同一份东西在这个页和聊天区给出不同的按钮集，用户只会当成随机行为。
+                       安全性靠服务端那份 CSP sandbox 头：这里的 HTML 是模型产出的，不带该头时这一跳等于
+                       让模型脚本跑在本域源上、能读登录令牌。Ctrl/中键点击照旧开成真标签页。 -->
+                  <a v-if="f.viewUrl || canPreview(f.artifact)" class="pj-act"
+                     :href="resolveImg(f.viewUrl || f.artifact.url)" target="_blank" rel="noopener"
+                     data-pv v-bind="pvAttrs(f)"
+                     title="预览（按住 Ctrl 或中键开成新标签页）">预览</a>
                   <button v-if="f.kind === 'file'" class="pj-act" type="button" @click="download(f)">下载</button>
                   <a v-else-if="f.artifact" :href="resolveImg(f.artifact.url)" :download="f.name" class="pj-act">下载</a>
                   <!-- 行菜单：三个写动作收在 ⋯ 里，行宽才不会被按钮挤掉。
@@ -392,6 +396,7 @@ import DeleteProjectModal from '../components/DeleteProjectModal.vue'
 import { sessionStore, rememberSession } from './store'
 // 产物地址要过 resolveImg：后端给的是 /ai/artifacts/**，开发态不经媒体前缀会落到 SPA 回退，下载到的是 index.html
 import { resolveImg } from '../utils/markdown'
+import { canPreview, artifactExt } from '../utils/artifactView'
 // 移动壳下不给跳往桌面专属页的入口（/agents 被 DesktopOnlyGuard 挡着，点了只会撞引导卡）
 import { mobileShell } from '../h5/mobile'
 
@@ -401,6 +406,19 @@ const route = useRoute()
 const router = useRouter()
 /** 必须跟着路由走：/project/A → /project/B 复用同一个组件实例，取一次快照会让第二个工作区打不开 */
 const id = computed(() => String(route.params.id || ''))
+/**
+ * 预览台要的取址信息，按行的来源二分：
+ * 落进工作目录的那一行按「工作区 id + 相对路径」取原文；没落进来的那一行只有产物记录，按产物 id 取。
+ * 两者都传会让读字档优先走产物那一份——同一行显示的是目录里的当前内容，不能被产物的旧副本顶掉。
+ */
+const pvAttrs = f => f.path
+  ? { 'data-pv-project': id.value, 'data-pv-path': f.path, 'data-pv-name': f.name }
+  : {
+      'data-pv-id': (f.artifact && f.artifact.id) || '',
+      'data-pv-name': (f.artifact && f.artifact.filename) || f.name,
+      'data-pv-ext': artifactExt(f.artifact),
+      'data-pv-size': (f.artifact && f.artifact.size) || ''
+    }
 const loading = ref(false)
 const saving = ref(false)
 const deleting = ref(false)

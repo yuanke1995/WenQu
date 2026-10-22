@@ -2,6 +2,7 @@ package com.wenqu.ai.service;
 
 import com.wenqu.ai.model.Project;
 import com.wenqu.ai.sandbox.SandboxPaths;
+import com.wenqu.ai.util.PreviewTypes;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
@@ -74,20 +75,9 @@ public class ProjectFileService {
     /** 全区文件名单的上限：只用来判断「产物那份拷贝是否已经在目录里」，太多也点不过来 */
     private static final int MAX_NAME_SET = 2000;
 
-    /**
-     * 可预览的文本类扩展名（除 html 外一律按 {@code text/plain} 下发，见 {@link #viewContentType}）。
-     */
-    private static final java.util.Set<String> TEXT_PREVIEW_EXTS = java.util.Set.of(
-            "md", "markdown", "txt", "log", "csv", "tsv", "json", "yaml", "yml", "xml", "toml", "ini", "conf", "properties",
-            "py", "js", "mjs", "ts", "jsx", "tsx", "java", "go", "rs", "sql", "sh", "bash", "zsh", "html", "htm",
-            "css", "scss", "vue");
-    /** 可预览的图片类型：浏览器直接渲染 */
-    private static final java.util.Set<String> IMAGE_PREVIEW_EXTS =
-            java.util.Set.of("png", "jpg", "jpeg", "gif", "webp", "bmp", "svg");
-    /** 文本预览大小上限（2MB）：再大就不是"看一眼"，该下载 */
-    private static final long MAX_TEXT_PREVIEW = 2L * 1024 * 1024;
-    /** 图片与页面预览大小上限（10MB）：整页 HTML 常把图片内联成 base64，套 2MB 会把能看的页面判成看不了 */
-    private static final long MAX_DOC_PREVIEW = 10L * 1024 * 1024;
+    // 「哪些类型能预览、发什么内容类型、多大算太大」收在 com.wenqu.ai.util.PreviewTypes——
+    // 产物那条路也读同一份，两边各留一张清单时，同一份文件在两个页面会给出不同的按钮集。
+
     /** 整区导出：条数与总量上限（流式写盘，不进内存） */
     private static final int MAX_EXPORT_FILES = 2000;
     private static final long MAX_EXPORT_BYTES = 100L * 1024 * 1024;
@@ -257,11 +247,11 @@ public class ProjectFileService {
         Path file = resolveIn(baseDirOf(p), parts[1]);
         String name = file.getFileName().toString();
         String ext = extOf(name);
-        String contentType = viewContentType(ext);
+        String contentType = PreviewTypes.viewContentType(ext);
         if (contentType == null) {
             throw new IllegalArgumentException("该文件类型不支持预览，请下载后查看");
         }
-        String capError = viewCapError(ext, sizeOf(file));
+        String capError = PreviewTypes.viewCapError(ext, sizeOf(file));
         if (capError != null) {
             throw new IllegalArgumentException(capError);
         }
@@ -272,40 +262,55 @@ public class ProjectFileService {
         }
     }
 
+    /**
+     * 读一个工作区文件的<b>原文</b>，给预览台里「读字」那一档（Markdown / 代码 / 分隔符表）用。
+     *
+     * <p><b>为什么不走 {@link #openView} 那条签名地址</b>：预览台是应用内的一层，它拿得到登录态，
+     * 按 {@code uid + projectId + 相对路径} 逐条校归属即可；让前端去 fetch 那份签名地址，
+     * 等于把「签名 1 小时过期」和响应上那份 CSP sandbox 一起变成前端要处理的异常，
+     * 而用户看到的只是「点开是空白」。
+     *
+     * <p><b>只读前 {@link PreviewTypes#TEXT_BODY_CAP} 字节</b>：读满整份再截断会让一次预览吃掉几十兆堆，
+     * 截断标记由前端显式写成一句人话，不假装那是全文。
+     *
+     * @throws IllegalArgumentException 归属不符/路径越界/不是可读文本类型
+     */
+    public Map<String, Object> readText(String uid, String projectId, String relPath) {
+        Path file = resolveDownload(uid, projectId, relPath);
+        String name = file.getFileName().toString();
+        String ext = extOf(name);
+        if (!PreviewTypes.isReadable(ext)) {
+            throw new IllegalArgumentException("该文件类型不按文本预览，请下载后查看");
+        }
+        long size = sizeOf(file);
+        try {
+            byte[] buf = new byte[(int) Math.min(size, PreviewTypes.TEXT_BODY_CAP)];
+            int got;
+            try (InputStream in = Files.newInputStream(file)) {
+                got = in.readNBytes(buf, 0, buf.length);
+            }
+            boolean truncated = size > buf.length;
+            String content = new String(buf, 0, got, StandardCharsets.UTF_8);
+            // 截在半个汉字中间时末尾会剩一个替换符，留着像文件坏了
+            if (truncated && !content.isEmpty()
+                    && content.charAt(content.length() - 1) == '\uFFFD') {
+                content = content.substring(0, content.length() - 1);
+            }
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("filename", name);
+            m.put("ext", ext);
+            m.put("size", size);
+            m.put("cap", (long) PreviewTypes.TEXT_BODY_CAP);
+            m.put("truncated", truncated);
+            m.put("content", content);
+            return m;
+        } catch (IOException e) {
+            throw new IllegalArgumentException("读取文件失败：" + e.getMessage());
+        }
+    }
+
     /** 预览结果：内容类型 + 字节 + 文件名（控制器设 Content-Disposition: inline；CSP sandbox 与 nosniff 归拦截器） */
     public record ViewFile(String contentType, byte[] bytes, String name) {
-    }
-
-    /**
-     * 预览时下发什么内容类型：图片按原类型、html 按 {@code text/html}（页面真的渲染出来）、
-     * 其余文本按 {@code text/plain}；不可预览的类型返回 {@code null}（列表不给按钮）。
-     *
-     * <p><b>html 为什么敢发 text/html</b>：这条响应带 {@code Content-Security-Policy: sandbox}
-     * （见 {@code ArtifactSandboxInterceptor} 的挂载路径），顶层导航落进不透明源——脚本照跑，
-     * 但碰不到本域的登录令牌与存储。早先它在应用里按纯文本发，正是因为同源内联会把登录态交给它。
-     */
-    private static String viewContentType(String ext) {
-        if ("html".equals(ext) || "htm".equals(ext)) {
-            return "text/html; charset=UTF-8";
-        }
-        if (IMAGE_PREVIEW_EXTS.contains(ext)) {
-            return sniffImageType(ext);
-        }
-        if (TEXT_PREVIEW_EXTS.contains(ext)) {
-            return "text/plain; charset=UTF-8";
-        }
-        return null;
-    }
-
-    /** 体积上限：图片与页面 10MB、其余文本 2MB；超限给出可读原因，没超限返回 {@code null} */
-    private static String viewCapError(String ext, long size) {
-        boolean doc = IMAGE_PREVIEW_EXTS.contains(ext) || "html".equals(ext) || "htm".equals(ext);
-        long cap = doc ? MAX_DOC_PREVIEW : MAX_TEXT_PREVIEW;
-        if (size <= cap) {
-            return null;
-        }
-        return (doc ? "图片/页面" : "文件") + "太大（" + (size / 1024 / 1024) + "MB），超过 "
-                + (cap / 1024 / 1024) + "MB 预览上限，请下载后查看";
     }
 
     /** token = base64url(工作区 id + 换行 + 相对路径)：整段 ASCII，浏览器不再对路径做百分号编码，签发与验签的字节必然一致 */
@@ -762,19 +767,7 @@ public class ProjectFileService {
     }
 
     private static String extOf(String name) {
-        int dot = name.lastIndexOf('.');
-        return dot < 0 ? "" : name.substring(dot + 1).toLowerCase(java.util.Locale.ROOT);
-    }
-
-    private static String sniffImageType(String ext) {
-        return switch (ext) {
-            case "png" -> "image/png";
-            case "gif" -> "image/gif";
-            case "webp" -> "image/webp";
-            case "bmp" -> "image/bmp";
-            case "svg" -> "image/svg+xml";
-            default -> "image/jpeg";
-        };
+        return PreviewTypes.extOf(name);
     }
 
     /**
@@ -913,7 +906,7 @@ public class ProjectFileService {
         m.put("mtime", lastModifiedMillis(file));
         // 预览地址：只有「点得开」的类型才给，其余仅下载（点了掉出一份下载比不给按钮更糊弄人）
         String ext = extOf(name);
-        if (viewContentType(ext) != null && viewCapError(ext, size) == null) {
+        if (PreviewTypes.viewContentType(ext) != null && PreviewTypes.viewCapError(ext, size) == null) {
             m.put("viewUrl", imageUrlSigner.signUrlRequired(VIEW_PATH_PREFIX + encodeViewToken(projectId, rel)));
         }
         return m;

@@ -5,6 +5,9 @@ import { createApp } from 'vue'
 import { message } from 'ant-design-vue'
 import 'ant-design-vue/dist/reset.css'
 import './md.css'
+// 预览台样式与 document 级委托：样式在这里全局加载，委托靠下面那行 side-effect import 装上
+// （六个产物入口面只给锚点加 data-pv，不各自接事件——某页忘了接就会留一颗点了没反应的按钮）
+import './previewStage.css'
 // 设计令牌全局唯一来源（app.css）：此前只在 AppLayout 里 import——登录页/分享页等
 // 不经布局的页面拿不到 --app-* 变量，这里提到入口统一加载
 import './views/app.css'
@@ -18,6 +21,8 @@ import { initTheme } from './utils/theme'
 import { installKeyboardInset } from './h5/keyboard'
 // PWA 安装提示：必须在顶层就接住 beforeinstallprompt（事件在页面加载后不久就可能触发）
 import { registerPwa } from './h5/pwa'
+// 产物/工作区文件的预览台：本行只为装它那两个 document 级委托（预览入口 + 正文复制按钮）
+import './utils/previewStage'
 
 // ==================== Edge「窗口无法最小化」兼容修复 ====================
 // 现象：Edge 中当「本页是激活标签」时最小化浏览器窗口，窗口缩下去后立即自动弹回；

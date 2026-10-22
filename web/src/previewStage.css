@@ -1,0 +1,108 @@
+/* 预览台（utils/previewStage.js 自建，挂在 body 上，与 md.css 那套 .md-preview-* 同惯例）。
+   分档判据见 utils/artifactView.js：页面档要的是可控视口，读字档要的是排版，别把两者混成一个尺寸固定的弹窗。 */
+body.ps-lock { overflow: hidden; }
+
+.ps-mask {
+  position: fixed; inset: 0; z-index: 2300;
+  display: flex; align-items: stretch; justify-content: center;
+  background: rgba(0, 0, 0, .55);
+}
+/* 整屏舞台：页面设计要看首屏与断点，套在居中弹窗里等于把这两样都废掉 */
+.ps-modal {
+  display: flex; flex-direction: column; overflow: hidden;
+  width: 100vw; height: 100dvh;
+  background: var(--app-panel);
+}
+.ps-bar {
+  display: flex; align-items: center; gap: 10px; flex: none;
+  min-height: 44px; padding: 0 10px 0 14px;
+  background: var(--app-panel-2); border-bottom: 1px solid var(--app-border);
+}
+.ps-title { display: flex; align-items: baseline; gap: 8px; min-width: 0; flex: 0 1 auto; }
+.ps-name {
+  font-size: var(--app-fs-md); font-weight: 600; color: var(--app-text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ps-meta { font-size: var(--app-fs-sm); color: var(--app-text3); white-space: nowrap; }
+
+.ps-tiers { display: flex; align-items: center; gap: 4px; flex: none; }
+.ps-tier {
+  height: 26px; padding: 0 9px;
+  font-size: var(--app-fs-sm); color: var(--app-text2);
+  background: transparent; border: 1px solid var(--app-border); border-radius: 4px; cursor: pointer;
+}
+.ps-tier:hover { color: var(--app-accent); border-color: var(--app-border-strong); }
+.ps-tier.on { color: var(--app-accent); background: var(--app-accent-weak); border-color: var(--app-accent-border); }
+.ps-width {
+  width: 62px; height: 26px; padding: 0 6px;
+  font-size: var(--app-fs-sm); color: var(--app-text);
+  background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 4px;
+}
+.ps-zoom-wrap { display: flex; align-items: center; gap: 6px; flex: none; }
+.ps-zoom {
+  height: 26px; padding: 0 4px;
+  font-size: var(--app-fs-sm); color: var(--app-text2);
+  background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 4px; cursor: pointer;
+}
+
+.ps-acts { display: flex; align-items: center; gap: 6px; margin-left: auto; flex: none; }
+.ps-btn {
+  display: inline-flex; align-items: center; height: 26px; padding: 0 10px;
+  font-size: var(--app-fs-sm); color: var(--app-text2); text-decoration: none; white-space: nowrap;
+  background: transparent; border: 1px solid var(--app-border); border-radius: 4px; cursor: pointer;
+}
+.ps-btn:hover { color: var(--app-accent); border-color: var(--app-border-strong); }
+.ps-close {
+  width: 28px; height: 28px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 16px; line-height: 1; color: var(--app-text2);
+  background: transparent; border: 1px solid transparent; border-radius: 4px; cursor: pointer;
+}
+.ps-close:hover { color: var(--app-accent); border-color: var(--app-border); }
+
+.ps-body { flex: 1; min-height: 0; overflow: auto; background: var(--app-panel); }
+/* 非满宽档位时给一层中性底衬，白页才看得出边界；不用深黑遮罩——那会把页面自己的配色判断带偏 */
+.ps-body.ps-framed { background: var(--app-bg-layer-3); }
+.ps-canvas { margin: 0 auto; overflow: hidden; background: #fff; }
+.ps-canvas.ps-canvas-framed { box-shadow: 0 2px 14px rgba(0, 0, 0, .12); }
+.ps-frame { display: block; border: none; background: #fff; transform-origin: 0 0; }
+
+.ps-img-wrap { min-height: 100%; display: flex; align-items: center; justify-content: center; cursor: zoom-in; }
+.ps-img { max-width: 100%; max-height: 88vh; height: auto; display: block; }
+/* 实际大小：设计稿要看字号与锯齿，适合屏幕那档看不出像素级问题 */
+.ps-img-wrap.ps-img-actual { display: block; cursor: zoom-out; }
+.ps-img-wrap.ps-img-actual .ps-img { max-width: none; max-height: none; }
+
+/* 读字档：正文宽度收在可读区间，不铺满 4K 屏 */
+.ps-doc { max-width: 920px; margin: 0 auto; padding: 22px 26px 40px; }
+.ps-note {
+  padding: 8px 0; font-size: var(--app-fs-sm); color: var(--app-text2);
+  border-top: 1px solid var(--app-border); margin-top: 14px;
+}
+.ps-note-foot { max-width: 920px; margin: 0 auto; padding: 10px 26px; }
+.ps-error { padding: 40px 26px; font-size: var(--app-fs-md); color: var(--app-danger-text); }
+.ps-error-acts { padding: 0 26px; }
+
+.ps-table-wrap { overflow: auto; border: 1px solid var(--app-border); border-radius: var(--app-radius); }
+.ps-table { border-collapse: collapse; width: 100%; font-size: var(--app-fs-sm); }
+.ps-table th, .ps-table td {
+  padding: 6px 10px; text-align: left; white-space: nowrap;
+  border-bottom: 1px solid var(--app-border); border-right: 1px solid var(--app-border);
+}
+.ps-table th {
+  position: sticky; top: 0; z-index: 1;
+  font-weight: 600; background: var(--app-panel-2); color: var(--app-text);
+}
+.ps-table td { color: var(--app-text); }
+.ps-table tbody tr:hover td { background: var(--app-panel-2); }
+
+/* 窄屏：顶栏换两行，档位条横向滚，按钮热区抬到 34px */
+@media (max-width: 720px) {
+  .ps-bar { flex-wrap: wrap; align-items: flex-start; padding: 6px 8px; }
+  .ps-title { width: 100%; }
+  .ps-acts { margin-left: auto; }
+  .ps-tiers { overflow-x: auto; max-width: 100%; }
+  .ps-btn, .ps-close { min-height: 34px; }
+  .ps-doc { padding: 16px 14px 32px; }
+  .ps-note-foot { padding: 10px 14px; }
+}

@@ -333,7 +333,7 @@ docker compose up -d          # 自包含：redis-stack + meilisearch + 内置 M
 | `DELETE /api/ai/session/{id}`、`DELETE /api/ai/sessions`、`POST /api/ai/sessions/batch-delete` | 删除单会话 / 清空 / 批量删除 |
 | `DELETE /api/ai/message-group/{assistantMessageId}`、`POST /api/ai/message-group/undo` | 按消息组删除问答 / 撤销删除 |
 | `GET /api/ai/project/list`、`POST/PUT/DELETE /api/ai/project/{id}`、`PUT /{id}/status` | 工作区容器：列表（含约定与默认助手）/ 新建 / 改设置（名称·约定·默认助手）/ 删除（可 `deleteFiles=true` 连目录）/ 归档恢复 |
-| `GET /api/ai/project/{id}/files?dir=`、`POST /{id}/files`、`POST /{id}/dir`、`PUT /{id}/file`、`POST /{id}/files/batch` | 工作区目录管理：单层列表（带全区合计、文件夹清单、`agentShared`）/ 上传（multipart）/ 新建文件夹 / 改名或移动 / 批量移动·删除（`op` 必填）；另有 `GET /{id}/file` 下载与 `GET /ai/project-files/{token}` 签名预览 |
+| `GET /api/ai/project/{id}/files?dir=`、`POST /{id}/files`、`POST /{id}/dir`、`PUT /{id}/file`、`POST /{id}/files/batch` | 工作区目录管理：单层列表（带全区合计、文件夹清单、`agentShared`）/ 上传（multipart）/ 新建文件夹 / 改名或移动 / 批量移动·删除（`op` 必填）；另有 `GET /{id}/file` 下载、`GET /{id}/file/content` 读文本原文（预览台里 Markdown/代码/表格那一档用，按 uid+工作区+路径校归属，只回前 256KB 带 `truncated`）、`GET /ai/project-files/{token}` 签名预览 |
 | `GET /api/ai/kb/list`、`POST /api/ai/kb`、`PUT /api/ai/kb/{id}`、`DELETE /api/ai/kb/{id}` | 知识库 CRUD（含库级解析/检索参数稀疏覆盖） |
 | `GET /api/ai/kb/param-defaults` | 全局解析/检索参数模板（新建库预填用） |
 | `POST /api/ai/document/upload`、`/upload/batch` | 上传文档（异步解析） |
