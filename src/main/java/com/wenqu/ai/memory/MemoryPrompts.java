@@ -52,4 +52,21 @@ public final class MemoryPrompts {
     public static String consolidationPrompt() {
         return MemoryConsolidator.DEFAULT_CONSOLIDATION_PROMPT + CONSOLIDATION_RULES;
     }
+
+    /**
+     * 挂进主对话 sysPrompt 的一条口径：记忆维护对用户不可见。
+     *
+     * <p><b>为什么要有这一处</b>：框架往 SYSTEM 注入「Update MEMORY.md proactively」引导，
+     * {@code memory_search} 又能看到日账里「## Memory Flush — …」的标题样式，弱模型会把
+     * 「维护记忆」理解成「在回复里打印一份 Memory Flush 报告」（2026-10-22 线上实测，
+     * glm-5.3-flash 在问答回复里输出 20+ 条记忆簿记）。上面 {@link #FLUSH_RULES} 那套
+     * 「记什么、记几条」只约束后台提炼调用，管不到主模型——主模型缺的是对偶的那半句：
+     * 「要记就用工具静默记，别在回复里演」。
+     */
+    public static String replyDiscipline() {
+        return "\n【记忆维护不可见】记忆沉淀由系统在对话结束后自动完成；确有需要主动记的内容，"
+                + "调用 memory_save 工具静默完成即可。回复正文里严禁出现「Memory Flush」「记忆提炼/固化/整理」"
+                + "等记忆维护过程及其格式，也不要向用户复述你记了什么——记忆簿记是内部过程，"
+                + "用户既不需要也没要求看。回复里只放对他提问的回答。\n";
+    }
 }

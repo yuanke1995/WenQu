@@ -1323,6 +1323,11 @@ async function startGoal (objective) {
     if (r && r.success === false) { dropEcho(); message.warning(r.msg || '目标创建失败'); return null }
     if (r && r.data) {
       setGoal(sid, { ...r.data })
+      // 建目标即开跑：后端把首轮登记进运行总线后才回包，POST 返回的此刻通常已能接流。
+      // 不等目标态轮询那一跳（2.5s），也不依赖首帧 goal_turn（POST 期间浏览器还没有这条会话的 SSE，
+      // 帧会丢）——直接尝试接回在跑的那一轮；接不上（极少见的时序差）由 2.5s 轮询兜底继续探，
+      // 不让「助手气泡」迟迟不出现（与断线重连 attachRunningTurn 同一条路径）。
+      if (goalRunning.value) attachRunningTurn(sid).catch(() => {})
       // 对话里那一行回声服务端同一条已落库（echoGoalCommand），刷新/切会话读的是库里那份；
       // 这里只补命令标注。目标横跨多轮，状态在摘要条与详情面，但「什么时候定了什么目标」
       // 得能在对话里读出来

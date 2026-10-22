@@ -2899,6 +2899,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 .sysPrompt(rolePrompt(binding.row()) + projectContext(cmd)
                         + (subagentTargets.isEmpty() ? "" : tools.dispatchDiscipline())
                         + PlanCopy.guidance()
+                        + com.wenqu.ai.memory.MemoryPrompts.replyDiscipline()
                         + com.wenqu.ai.agent.chat.RelatedPrompt.line())
                 // 问渠所有供应商都是 OpenAI 兼容网关（c_ai_provider.base_url 实测全是 compatible-mode）。
                 // 用户在界面选的上下文窗口（contextWindow 档位）落到 model 的 contextWindowSize：
