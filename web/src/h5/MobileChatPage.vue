@@ -466,6 +466,7 @@ import { submitFeedback as apiSubmitFeedback, getKnowledgeDetail } from '../api'
 import { renderMd, prepKnowledgeContent, enhanceDiagrams } from '../utils/markdown'
 import { fmtTokens } from '../utils/token'
 import { preferMobileShell } from './mobile'
+import { startSessionTabSync, stopSessionTabSync } from '../views/store'
 import BottomSheet from './BottomSheet.vue'
 import MobileMsgRow from './MobileMsgRow.vue'
 import MobileSessionSheet from './MobileSessionSheet.vue'
@@ -939,12 +940,16 @@ const onViewportChange = () => { if (!preferMobileShell()) router.replace({ path
 
 onMounted(async () => {
   window.addEventListener('resize', onViewportChange, { passive: true })
+  // 移动壳不挂 AppLayout 工作台外壳，跨页签订阅得自己挂一份（幂等）：
+  // 不挂的话同一个浏览器里 PC 页签改了列表，手机形态这一栏要刷新才跟得上
+  startSessionTabSync()
   refreshSetupGuide()   // 空态引导卡状态（TTL 15s 去重；PC 由 AppLayout/ChatPage 触发，移动壳不经那边）
   await ready()
   autosize()
 })
 onUnmounted(() => {
   window.removeEventListener('resize', onViewportChange)
+  stopSessionTabSync()
 })
 </script>
 

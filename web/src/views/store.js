@@ -7,9 +7,10 @@
 //   聊天页（autoPick / 模型回填）与移动端会话 sheet 读的都是这份 list；
 //   两处各拉一份必然在「新建/删除/置顶/首条消息」这些动作后漂移。
 //   store 负责「按工作区取数 + 重新摊平」，视图只决定怎么渲染。
-import { reactive, shallowReactive } from 'vue'
+import { ref, reactive, shallowReactive } from 'vue'
 import { message } from 'ant-design-vue'
 import { listSessions, listProjects, listScheduledJobs, getNewSessionProject } from '../api'
+import { announce, onAnnounce } from '../utils/tabSync'
 
 // 每个工作区首屏铺几条。4 条与基准稿（任务/工作区各 4 条后接「查看更多」）一致：
 // 再多一进来就是长列表，再少又看不出这个工作区最近在聊什么。
@@ -192,6 +193,15 @@ const timeOf = v => {
   return 0
 }
 
+/** 行的排序口径：置顶在前，其余按更新时间倒序。摊平视图与工作区内重排共用这一份，
+    否则跨页签补丁在区里排好的序会和摊平后的序各说各话。 */
+const rowOrder = (a, b) => {
+  const pa = a.isPinned === 1 ? 1 : 0
+  const pb = b.isPinned === 1 ? 1 : 0
+  if (pa !== pb) return pb - pa
+  return timeOf(b.updateTime) - timeOf(a.updateTime)
+}
+
 /**
  * 重新摊平：spaces 里每个工作区各自只加载了一部分，聊天页需要的是一条按
  * 置顶→更新时间排序的全局列表（autoPick 取第一条）。去重按 id——
@@ -210,12 +220,7 @@ function rebuildFlat () {
       items.push(s)
     }
   }
-  items.sort((a, b) => {
-    const pa = a.isPinned === 1 ? 1 : 0
-    const pb = b.isPinned === 1 ? 1 : 0
-    if (pa !== pb) return pb - pa
-    return timeOf(b.updateTime) - timeOf(a.updateTime)
-  })
+  items.sort(rowOrder)
   sessionStore.list = items
   sessionStore.total = sessionStore.spaces.reduce((n, s) => n + (s.count || 0), 0)
   sessionStore.hasMore = sessionStore.spaces.some(s => s.hasMore)
@@ -281,6 +286,7 @@ export async function loadSessions (keyword, { refreshProjects = false } = {}) {
     })
     sessionStore.archived = projects.filter(p => p.status === 'archived' && !p.isImplicit).map(spaceOfProject)
     sessionStore.archivedLoaded = false
+    lastSyncAt = Date.now()
     rebuildFlat()
 
     // 已归档分区如果是展开态，按新数据重新取一遍（搜索态不显示归档，也就没必要取）
@@ -381,6 +387,238 @@ export function toggleArchived () {
   if (sessionStore.archivedOpen && !sessionStore.archivedLoaded) loadArchived()
 }
 
+// ---------- 跨页签对齐 ----------
+// 别的页签改了列表时这一栏该做什么。判据只有一条：**能定点补的就别重拉**。
+// 整表重拉会连着坏三件事（都是 loadSessions 的既有行为，用在后台对齐上就成了打架）：
+//   1. 它抬 loadGen —— 用户刚点的「查看更多」还在路上，响应回来发现代次不对就被静默丢掉，
+//      表现为「点了没反应」；
+//   2. 它把每个工作区重建回首屏 —— 用户铺开的那二十几条折回 4 条，滚动位置跟着跳；
+//   3. 它置 loading —— 用户什么都没做，整栏先闪一次转圈。
+// 所以删除/改名/置顶/移动/新会话这些「喊话里就带着答案」的走补丁；
+// 只有工作区结构变了、或收到认不出的喊话，才走 resyncSessions 的静默对齐。
+
+/** 本地补进去的行：乐观抬进列表的新会话、从工作区页点进来的旧会话、别的页签喊来的新行。
+    服务端那一窗里可能还没有它们（首条消息还没落库 / 本来就排在窗口之外），
+    静默对齐不许把它们抹掉——行一没，转圈状态和高亮跟着没。服务端认账后即从这份名单里划掉。 */
+const localRows = new Set()
+
+/** 某条会话此刻躺在哪个工作区的已加载行里（含已归档区：它展开时同样有行） */
+function locateRow (sid) {
+  for (const space of [...sessionStore.spaces, ...sessionStore.archived]) {
+    const idx = space.items.findIndex(s => s.id === sid)
+    if (idx >= 0) return { space, idx }
+  }
+  return null
+}
+
+/** 按归属找已加载出来的工作区；空归属 = 侧栏第一段「会话」 */
+function findSpace (projectId) {
+  const key = projectId || NO_SPACE_KEY
+  return [...sessionStore.spaces, ...sessionStore.archived]
+    .find(s => s.key === key || (projectId && s.id === projectId))
+}
+
+/**
+ * 从某个工作区的两份视图里摘掉一行。首屏快照必须一起摘，
+ * 否则「收起」会把刚删掉的会话原样放回来（收起走的是快照，不发请求）。
+ */
+function detachRow (space, sid) {
+  const i = space.items.findIndex(s => s.id === sid)
+  if (i < 0) return false
+  space.items.splice(i, 1)
+  const j = space.firstItems.findIndex(s => s.id === sid)
+  if (j >= 0) space.firstItems.splice(j, 1)
+  space.count = Math.max(0, (space.count || 0) - 1)
+  localRows.delete(sid)
+  return true
+}
+
+/** 把本地补的行抬回这一窗：按 rowOrder 归位，并把它算进段首计数（服务端那份计数还不认它） */
+function carryLocalRows (space, prevItems) {
+  const missing = prevItems.filter(s => localRows.has(s.id) && !space.items.some(x => x.id === s.id))
+  if (!missing.length) return
+  space.items = [...missing, ...space.items].sort(rowOrder)
+  space.firstItems = [...missing, ...space.firstItems].sort(rowOrder)
+  space.count = (space.count || 0) + missing.length
+}
+
+/**
+ * 别的页签改了一行：只改它喊出来的那几个字段。
+ * 「只改带了的那几个」是重点——重命名的喊话不带置顶标记，照单全收等于把别人的置顶抹了。
+ */
+function applyRemoteRow (p) {
+  const sid = String(p.sid || '')
+  if (!sid) return
+  const hit = locateRow(sid)
+  if (hit) {
+    const patch = {}
+    for (const k of ['title', 'updateTime', 'isPinned', 'isFavorite', 'shared', 'messageCount']) {
+      if (p[k] !== undefined) patch[k] = p[k]
+    }
+    Object.assign(hit.space.items[hit.idx], patch)
+    const snap = hit.space.firstItems.find(s => s.id === sid)
+    if (snap) Object.assign(snap, patch)
+    if (p.projectId !== undefined && (hit.space.id || '') !== (p.projectId || '')) {
+      // 换了归属：从旧区摘掉、插进新区头部。新区还没加载出来（例如归档区折着）就只摘不插，
+      // 下次整表刷新会把它放回该在的地方——比凭空造一个计数不对的工作区诚实。
+      const row = hit.space.items[hit.idx]
+      detachRow(hit.space, sid)
+      const to = findSpace(p.projectId)
+      if (to) {
+        row.projectId = to.id || ''
+        to.items.unshift(row)
+        to.firstItems.unshift(row)
+        to.count = (to.count || 0) + 1
+      }
+    } else if (patch.updateTime !== undefined || patch.isPinned !== undefined) {
+      hit.space.items.sort(rowOrder)
+      hit.space.firstItems.sort(rowOrder)
+    }
+    rebuildFlat()
+    return
+  }
+  // 本地还没有这一行。只有「新会话抬进列表」那种喊话补得出来——标题和归属得到齐一样，
+  // 缺一样就不知道该插进哪个区、显示什么，宁可等静默对齐去服务端取权威的那一份。
+  if (p.title === undefined || p.projectId === undefined || sessionStore.keyword) return
+  const space = findSpace(p.projectId)
+  if (!space) return
+  const row = {
+    id: sid,
+    title: p.title,
+    messageCount: p.messageCount ?? 1,
+    updateTime: p.updateTime || new Date().toISOString(),
+    isPinned: p.isPinned ?? 0,
+    isFavorite: p.isFavorite ?? 0,
+    shared: p.shared ?? 0,
+    projectId: space.id || ''
+  }
+  space.items.unshift(row)
+  space.firstItems.unshift(row)
+  space.count = (space.count || 0) + 1
+  localRows.add(sid)
+  rebuildFlat()
+}
+
+/** 别的页签删了会话：按 id 摘行，段首计数与摊平视图一起结算，不留「行没了但 (N) 还是旧的」 */
+function applyRemoteDrop (ids) {
+  let changed = false
+  for (const sid of (ids || []).map(String).filter(Boolean)) {
+    for (const space of [...sessionStore.spaces, ...sessionStore.archived]) {
+      if (detachRow(space, sid)) { changed = true; break }
+    }
+  }
+  if (changed) rebuildFlat()
+}
+
+const RESYNC_DEBOUNCE_MS = 1200
+// 页签被浏览器挂起（bfcache）期间喊话会整段丢，切回前台按这条判据自己补一次
+const STALE_AFTER_MS = 30000
+let resyncInFlight = false
+let resyncQueued = false
+let resyncTimer = null
+let stopAnnounce = null
+let onTabVisible = null
+
+/** 排一次静默对齐：合并窗口内的重复喊话（批量删除连着喊好几条，一次对齐就够） */
+function queueResync ({ withProjects = false } = {}) {
+  clearTimeout(resyncTimer)
+  resyncTimer = setTimeout(() => resyncSessions({ withProjects }), RESYNC_DEBOUNCE_MS)
+}
+
+/**
+ * 后台静默对齐一次——收不懂的喊话、以及切回前台发现数据老了才走这里。
+ * 与 loadSessions 的三条区别就是它不打架的原因：
+ *   1. 不抬 loadGen：用户主动发起的在途请求照常落地，且它一落地本次结果立即作废；
+ *   2. 不置 loading：整栏不闪转圈、不出现「加载中」空态；
+ *   3. 工作区对象复用 + 按**当前已铺开的条数**取数并整窗替换：点过的「查看更多」不折回首屏，
+ *      游标换成这一窗之后的新游标，接着往下翻仍然接得上。
+ * 单个区取数失败时保留上一次的数据、不弹错也不挂「加载失败」：用户没做这个动作，
+ * 后台对齐失败冒出来的红字只会把人吓到；真该报错的是他自己点的那一次刷新。
+ */
+export async function resyncSessions ({ withProjects = false } = {}) {
+  if (resyncInFlight) { resyncQueued = true; return }
+  // 前台整表刷新正在跑：它拿的就是权威数据，等它落地后再决定要不要补
+  if (sessionStore.loading) {
+    clearTimeout(resyncTimer)
+    resyncTimer = setTimeout(() => resyncSessions({ withProjects }), RESYNC_DEBOUNCE_MS)
+    return
+  }
+  const gen = loadGen
+  const kw = sessionStore.keyword
+  resyncInFlight = true
+  try {
+    let projects = projectsCache
+    if (withProjects || !projectsLoaded) {
+      try {
+        projects = ((await listProjects()) || {}).data || []
+        projectsCache = projects
+        projectsLoaded = true
+      } catch (e) { /* 工作区结构这一轮对不了，会话行照常补 */ }
+    }
+    if (gen !== loadGen) return
+    const defs = projects.length
+      ? [noSpaceSpace(), ...projects.filter(p => p.status !== 'archived' && !p.isImplicit).map(spaceOfProject)]
+      : [allSessionsSpace()]
+    // 结构没变的工作区一律沿用原对象：换成新对象等于把展开态与已加载行一起丢掉
+    sessionStore.spaces = defs.map(def => sessionStore.spaces.find(s => s.key === def.key) || def)
+    const archivedDefs = projects.filter(p => p.status === 'archived' && !p.isImplicit).map(spaceOfProject)
+    sessionStore.archived = archivedDefs.map(def => sessionStore.archived.find(s => s.key === def.key) || def)
+    const targets = [...sessionStore.spaces, ...(sessionStore.archivedOpen ? sessionStore.archived : [])]
+    await Promise.all(targets.map(async space => {
+      const head = firstPageSize(space, kw)
+      const prevItems = space.items
+      try {
+        const page = await fetchSpacePage(space, kw, Math.max(head, prevItems.length))
+        if (gen !== loadGen) return
+        page.items.forEach(s => localRows.delete(s.id))
+        space.items = page.items
+        space.firstItems = page.items.slice(0, head)
+        space.count = page.count
+        space.hasMore = page.hasMore
+        space.nextCursor = page.nextCursor
+        // 收起态下首屏快照就是全部，它的游标跟着一起换；已展开的保留原快照游标，
+        // 与既有的「查看更多 → 收起」同口径（那条路本来也不重新请求）
+        if (!space.expanded) { space.firstNextCursor = page.nextCursor; space.firstHasMore = page.hasMore }
+        carryLocalRows(space, prevItems)
+        space.error = ''
+        space.loaded = true
+      } catch (e) { /* 保留上一次的数据 */ }
+    }))
+    if (gen !== loadGen) return
+    lastSyncAt = Date.now()
+    rebuildFlat()
+    if (!sessionStore.tasksLoaded) loadTasks()
+  } finally {
+    resyncInFlight = false
+    if (resyncQueued) { resyncQueued = false; queueResync({ withProjects }) }
+  }
+}
+
+/**
+ * 挂上跨页签订阅。壳层（AppLayout）挂载时调一次就够——PC 侧栏与 H5 会话 sheet 读的是同一份 store，
+ * 补丁打在 store 上，两端一起跟上。
+ */
+export function startSessionTabSync () {
+  if (stopAnnounce) return
+  stopAnnounce = onAnnounce(m => {
+    if (m.k === 'row') applyRemoteRow(m)
+    else if (m.k === 'drop') applyRemoteDrop(m.ids)
+    else if (m.k === 'spaces') queueResync({ withProjects: true })
+    else queueResync({})    // 认不出的喊话一律按「列表大概变了」兜底，宁可多对齐一次
+  })
+  onTabVisible = () => {
+    if (document.visibilityState !== 'visible') return
+    if (Date.now() - lastSyncAt > STALE_AFTER_MS) resyncSessions({ withProjects: true })
+  }
+  document.addEventListener('visibilitychange', onTabVisible)
+}
+
+export function stopSessionTabSync () {
+  if (stopAnnounce) { stopAnnounce(); stopAnnounce = null }
+  if (onTabVisible) { document.removeEventListener('visibilitychange', onTabVisible); onTabVisible = null }
+  clearTimeout(resyncTimer)
+}
+
 // ---------- 定时任务 ----------
 
 /** 拉本人的定时任务：侧栏「任务」分区 + 会话行时钟标记共用 */
@@ -445,6 +683,7 @@ export function markSessionActive (sid, question) {
     existing.messageCount = Math.max(existing.messageCount ?? 0, 1)
     existing.updateTime = now
     rebuildFlat()
+    announce({ k: 'row', sid, title: existing.title, updateTime: now, messageCount: existing.messageCount })
     return
   }
   const pid = getNewSessionProject()
@@ -465,7 +704,11 @@ export function markSessionActive (sid, question) {
   space.items.unshift(item)
   space.firstItems.unshift(item)
   space.count = (space.count || 0) + 1
+  localRows.add(sid)
   rebuildFlat()
+  // 喊给别的页签：这是「新会话出现在侧栏」的唯一时刻——空会话列表里本来就不露，
+  // 等首条消息落库再靠别的页签自己去拉，用户在那个页签里看到的就是「我新建的会话没了」。
+  announce({ k: 'row', sid, projectId: space.id || '', title: item.title, updateTime: now, messageCount: 1 })
 }
 
 /**
@@ -492,5 +735,6 @@ export function rememberSession (session, projectId) {
   space.items.splice(pinnedCount, 0, item)
   // 首屏快照也带上：用户点「收起」时当前会话不该跟着消失
   space.firstItems.splice(pinnedCount, 0, item)
+  localRows.add(session.id)
   rebuildFlat()
 }

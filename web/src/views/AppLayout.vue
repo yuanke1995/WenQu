@@ -470,7 +470,7 @@ import { themeState, toggleTheme } from '../utils/theme'
 import { authUser, ensureAuth, isAdminSync, clearAuth } from '../utils/auth'
 import { chatDone, chatReady, defaultReady, embeddingReady, pendingCount, refreshSetupGuide, setupGuide,
          advPendingCount } from '../utils/setupGuide'
-import { sessionStore, loadSessions, loadTasks, loadSpaceMore, collapseSpace, reloadSpace, toggleArchived, visibleSessions, chatStreams, NO_SPACE_KEY } from './store'
+import { sessionStore, loadSessions, loadTasks, loadSpaceMore, collapseSpace, reloadSpace, toggleArchived, visibleSessions, chatStreams, NO_SPACE_KEY, startSessionTabSync, stopSessionTabSync } from './store'
 import { isNarrow, mobileShell } from '../h5/mobile'
 import BrandMark from '../components/BrandMark.vue'
 import HelpFab from '../components/HelpFab.vue'
@@ -1251,7 +1251,10 @@ const clearSearch = () => {
   loadSessions('')
   scrollSessionsTop()
 }
-onUnmounted(() => clearTimeout(searchTimer))
+onUnmounted(() => {
+  clearTimeout(searchTimer)
+  stopSessionTabSync()
+})
 
 const delSession = async sid => {
   try {
@@ -1392,6 +1395,8 @@ const openNotif = async n => {
 // 铃铛 → 通知中心页
 const goNotifCenter = () => { notifOpen.value = false; router.push('/notifications') }
 onMounted(async () => {
+  // 先挂跨页签订阅再拉列表：拉取在途的那几百毫秒里，别的页签改了一次列表不该就这次刷新丢掉
+  startSessionTabSync()
   const info = await ensureAuth(true)
   isAdmin.value = Boolean(info && info.admin)
   // 侧栏只渲染 sidebar + group；tab 由宿主页（AgentsHubPage 等）按 parentId 取用，hidden 纯权限容器

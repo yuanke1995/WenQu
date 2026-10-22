@@ -5,6 +5,8 @@
  * - SSE：fetch + AbortController（支持停止生成）
  * - 环境配置：VITE_API_BASE 接口前缀
  */
+import { announce } from './utils/tabSync'
+
 const BASE = import.meta.env.VITE_API_BASE || '/proxy/api/ai'
 
 // 登录令牌（本地登录后写入 localStorage('ai_token')；请求头 Authorization: Bearer <token>）
@@ -51,6 +53,25 @@ async function request(path, { method = 'GET', body, timeout = 30000, silentForb
     clearTimeout(timer)
   }
 }
+
+/**
+ * 写成功后喊一句给同源其它页签的侧栏（通道见 utils/tabSync.js，收到后怎么补丁见 views/store.js）。
+ * 集中挂在接口层而不是每个调用点：会话的写操作有侧栏、聊天页、H5 sheet、工作区页四个入口，
+ * 挨个点喊必漏——漏掉的那个入口就退化成「另一个页签要刷新页面才看得见」。
+ * 只在成功时喊：请求失败时服务端根本没变，别的页签跟着动一次就是跟着错一次。
+ * 返回原 Promise（不改调用方的成败语义），广播这条链自己吃掉异常。
+ */
+const said = (promise, msg) => {
+  promise.then(() => announce(msg), () => {})
+  return promise
+}
+
+export const artifactContent = id => request(`/artifact/${encodeURIComponent(id)}/content`)
+// 工作区文件的文本原文：预览台里「读字」那一档（Markdown / 代码 / 分隔符表）用。
+// 不复用那份签名地址去 fetch：签名 1 小时过期 + 响应带 CSP sandbox，两样都会变成前端要处理的异常，
+// 而用户看到的只是「点开是空白」。这一条走登录态，归属按 uid + 工作区 + 相对路径逐条校。
+export const projectFileContent = (id, path) =>
+  request(`/project/${encodeURIComponent(id)}/file/content?path=${encodeURIComponent(path)}`)
 
 /**
  * XHR 上传（multipart，支持进度百分比回调）
@@ -383,15 +404,18 @@ export const sessionHistorySummaryApi = sid => request(`/session/${sid}/history-
 /** 查询分享状态（仅会话所有者）：{enabled, token, visitCount, lastVisitAt} */
 export const getSessionShare = sid => request(`/session/${sid}/share`)
 /** 开启（或重新生成）分享链接：停止后重新开启会换新 token，旧链接立即失效 */
-export const enableSessionShare = sid => request(`/session/${sid}/share`, { method: 'POST' })
+export const enableSessionShare = sid =>
+  said(request(`/session/${sid}/share`, { method: 'POST' }), { k: 'row', sid, shared: 1 })
 /** 停止分享：链接立即失效 */
-export const disableSessionShare = sid => request(`/session/${sid}/share`, { method: 'DELETE' })
+export const disableSessionShare = sid =>
+  said(request(`/session/${sid}/share`, { method: 'DELETE' }), { k: 'row', sid, shared: 0 })
 /** 公开只读页（免登录）：按 token 取会话标题与消息 */
 export const getSharedSession = token => request(`/share/session/${encodeURIComponent(token)}`)
 /** 我分享过的全部会话（分享管理页）：含 enabled/orphaned/visitCount/lastVisitAt */
 export const listMySessionShares = () => request('/session-shares')
 /** 按会话停用分享（分享管理页用；会话已删除的悬空记录同样可停，故不走 /session/{id}/share） */
-export const stopShareBySession = sid => request(`/session-shares/${encodeURIComponent(sid)}`, { method: 'DELETE' })
+export const stopShareBySession = sid =>
+  said(request(`/session-shares/${encodeURIComponent(sid)}`, { method: 'DELETE' }), { k: 'row', sid, shared: 0 })
 /** 彻底清除一条**已停止**的分享记录（生效中的后端会拒 400，须先停止分享） */
 export const purgeShareRecord = sid =>
   request(`/session-shares/${encodeURIComponent(sid)}/record`, { method: 'DELETE' })
@@ -413,15 +437,18 @@ export const listSessions = (keyword = '', cursor = '', size, projectId = '') =>
 
 /** 置顶/取消置顶会话 */
 export const pinSession = (sid, pinned) =>
-  request(`/session/${sid}/pin`, { method: 'PUT', body: JSON.stringify({ pinned }) })
+  said(request(`/session/${sid}/pin`, { method: 'PUT', body: JSON.stringify({ pinned }) }),
+    { k: 'row', sid, isPinned: pinned ? 1 : 0 })
 
 /** 收藏/取消收藏会话 */
 export const favoriteSession = (sid, favorite) =>
-  request(`/session/${sid}/favorite`, { method: 'PUT', body: JSON.stringify({ favorite }) })
+  said(request(`/session/${sid}/favorite`, { method: 'PUT', body: JSON.stringify({ favorite }) }),
+    { k: 'row', sid, isFavorite: favorite ? 1 : 0 })
 
 /** 重命名会话 */
 export const renameSessionApi = (sid, title) =>
-  request(`/session/${sid}/rename`, { method: 'PUT', body: JSON.stringify({ title }) })
+  said(request(`/session/${sid}/rename`, { method: 'PUT', body: JSON.stringify({ title }) }),
+    { k: 'row', sid, title })
 
 /** 会话级模型覆盖（聊天页切换模型即存；model 传空串=清除覆盖回到个人默认） */
 export const updateSessionModelApi = (sid, model) =>
@@ -433,16 +460,19 @@ export const getSessionModelApi = sid => request(`/session/${sid}/model`)
 export const getSessionWorkspace = sid => request(`/session/${sid}/workspace`)
 /** 移动会话到其他工作区（连同其产物一起改归属）；projectId 空串 = 摘掉归属 */
 export const moveSessionProject = (sid, projectId) =>
-  request(`/session/${sid}/project`, { method: 'PUT', body: JSON.stringify({ projectId: projectId || '' }) })
+  said(request(`/session/${sid}/project`, { method: 'PUT', body: JSON.stringify({ projectId: projectId || '' }) }),
+    { k: 'row', sid, projectId: projectId || '' })
 /** 移动单个产物到其他工作区；projectId 空串 = 摘掉归属 */
 export const moveArtifactProject = (id, projectId) =>
   request(`/artifact/${id}/project`, { method: 'PUT', body: JSON.stringify({ projectId: projectId || '' }) })
 
 /** 删除会话（MySQL 软删除 + Redis 清理） */
-export const deleteSessionApi = sid => request(`/session/${sid}`, { method: 'DELETE' })
+export const deleteSessionApi = sid =>
+  said(request(`/session/${sid}`, { method: 'DELETE' }), { k: 'drop', ids: [sid] })
 
 /** 批量删除会话（按 ID 列表，软删除） */
-export const batchDeleteSessionsApi = ids => request('/sessions/batch-delete', { method: 'POST', body: JSON.stringify({ ids }) })
+export const batchDeleteSessionsApi = ids =>
+  said(request('/sessions/batch-delete', { method: 'POST', body: JSON.stringify({ ids }) }), { k: 'drop', ids })
 
 /** 文档列表 */
 export const listDocuments = kbId => request('/document/list' + (kbId ? '?kbId=' + encodeURIComponent(kbId) : ''))
@@ -478,10 +508,11 @@ export const listArtifacts = (keyword, projectId) => {
 // 我的工作区容器（implicit 兜底容器在前，前端会过滤掉）；首次调用会懒创建 implicit 行
 export const listProjects = () => request('/project/list')
 // 新建工作区（selectable）；implicit 兜底容器由后端懒建，不需要也不允许前端创建
-export const createProject = name => request('/project', { method: 'POST', body: JSON.stringify({ name }) })
+export const createProject = name =>
+  said(request('/project', { method: 'POST', body: JSON.stringify({ name }) }), { k: 'spaces' })
 // 删除工作区：只摘归属，其下会话与产物仍然保留（后端语义）
 export const deleteProject = (id, deleteFiles = false) =>
-  request(`/project/${id}${deleteFiles ? '?deleteFiles=true' : ''}`, { method: 'DELETE' })
+  said(request(`/project/${id}${deleteFiles ? '?deleteFiles=true' : ''}`, { method: 'DELETE' }), { k: 'spaces' })
 // 工作区详情：名称 / 工作区约定（对该工作区所有会话生效）/ 默认助手
 export const getProject = id => request(`/project/${id}`)
 // 工作区下的工作流（本人）
@@ -491,7 +522,7 @@ export const getProjectRuns = (id, limit) =>
   request(`/project/${id}/runs${limit ? '?limit=' + limit : ''}`)
 // 归档 / 恢复工作区（不动会话与产物，implicit 兜底容器不可归档）
 export const setProjectStatus = (id, status) =>
-  request(`/project/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) })
+  said(request(`/project/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) }), { k: 'spaces' })
 // 工作区目录里的内容（单层导航）：{dir, entries, total, truncated, files, bytes, capped, dirs, names}。
 // entries 里每条带 kind（dir/file），文件夹在前；total 是本层条目数、truncated=true 表示只回了最近若干条；
 // files/bytes 是整个目录的文件数与合计体积（capped=true 表示数到 5000 个就停），dirs 是全目录文件夹清单
@@ -563,7 +594,7 @@ export const exportProjectZip = async id => {
 }
 // 更新工作区设置：传才改，空串=清空（name / instructions / defaultAgentId）
 export const updateProject = (id, body) =>
-  request(`/project/${id}`, { method: 'PUT', body: JSON.stringify(body || {}) })
+  said(request(`/project/${id}`, { method: 'PUT', body: JSON.stringify(body || {}) }), { k: 'spaces' })
 export const deleteArtifact = id => request(`/artifact/${id}`, { method: 'DELETE' })
 // 换发产物签名：产物签名 1 小时过期，对话页卡片上的 URL 是 SSE 下发/历史接口里那一份「签好就不变」的，
 // 页面开久后点下载必然 401（「我的产物」页因每次进页面都重签而始终正常）。渲染卡片前调它换一批新签名。
