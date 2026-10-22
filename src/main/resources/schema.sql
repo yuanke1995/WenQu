@@ -703,10 +703,10 @@ CREATE TABLE IF NOT EXISTS `c_ai_tool_approval` (
 
 -- ============================================
 -- 2026-10-21: 目标模式（Goal Mode）
--- 2026-10-22 对齐 DSH：目标 = 一句跨轮的完成目标 + 一个阶段，不再有验收标准/人工确认/逐条核验。
--- 用户输入目标后系统自己续跑，助手自报完成（回答最后一行「【目标完成】」）即停；
--- 受阻写「【目标受阻】原因」，目标转 PAUSED 并保留原因。用户只剩改目标/停止/继续/删除四个动作。
--- 同会话至多一条未结束目标（RUNNING/PAUSED）。
+-- 2026-10-22 任务运行时重构：目标 = 一句跨轮的完成目标 + 一个阶段；控制面由
+-- 「GoalScheduler 租约 + c_ai_goal_round 轮次 + GoalContinuation 续跑上下文 + GoalVerifier 证据核验」
+-- 承载。用户只剩改目标/停止/继续/删除四个动作；同会话至多一条未结束目标。
+-- 完成不再由回答最后一行直接决定：marker 只生成「完成申请」，证据核验通过才落 ACHIEVED。
 -- ============================================
 CREATE TABLE IF NOT EXISTS `c_ai_goal` (
     `id`                VARCHAR(64)  NOT NULL COMMENT '目标ID（UUID，续跑幂等键 goal:{id}:{n} 用它，永不复用）',
@@ -731,15 +731,86 @@ CREATE TABLE IF NOT EXISTS `c_ai_goal` (
     `first_turn_id`     VARCHAR(64)  DEFAULT NULL COMMENT '目标覆盖的首轮（过程面板按它聚合）',
     `last_turn_id`      VARCHAR(64)  DEFAULT NULL COMMENT '目标覆盖的末轮',
     `turn_counter`      INT          NOT NULL DEFAULT 0 COMMENT '自动续跑已起的轮数（幂等键 goal:{id}:{n} 的 n）',
-    `end_reason`        VARCHAR(32)  DEFAULT NULL COMMENT '停下的原因: achieved/paused/preempted/round-limit/blocked/turn-failed/cleared',
+    `end_reason`        VARCHAR(32)  DEFAULT NULL COMMENT '停下的原因: achieved/paused/preempted/round-limit/blocked/turn-failed/budget/no-progress/orphaned/cleared',
     `blocked_reason`    VARCHAR(1000) DEFAULT NULL COMMENT '助手报告的受阻原因（end_reason=blocked 时有值）',
+    -- 任务运行时（2026-10-22）：控制面从进程内回调链搬到「租约 + 调度器 + 轮次表」。
+    -- phase 是内部阶段；status 仍是对外阶段（RUNNING/PAUSED/ACHIEVED/CANCELLED + FAILED/等待态）。
+    `phase`             VARCHAR(32)  NOT NULL DEFAULT 'QUEUED' COMMENT '内部阶段: QUEUED/EXECUTING/VERIFYING/WAITING_APPROVAL/WAITING_EVENT/RECOVERING/DONE',
+    `objective_version` INT          NOT NULL DEFAULT 0 COMMENT '目标原文版本（edit 递增；轮次输入快照按版本取）',
+    `lease_owner`       VARCHAR(64)  DEFAULT NULL COMMENT '当前执行者（实例ID）：同一目标同一时刻只允许一个 worker',
+    `lease_until`       DATETIME(3)  DEFAULT NULL COMMENT '执行租约到期时刻（崩溃后由调度器回收）',
+    `heartbeat_at`      DATETIME(3)  DEFAULT NULL COMMENT '执行者心跳时刻',
+    `next_run_at`       DATETIME(3)  DEFAULT NULL COMMENT '下一轮最早可开始时刻（NULL=有轮在飞，不可调度）',
+    `continuation_json` JSON         DEFAULT NULL COMMENT '续跑上下文：目标/阶段/计划/事实/产物/失败尝试/缺口/预算/权限',
+    `outcome_json`      JSON         DEFAULT NULL COMMENT '完成或失败的结构化结果（state/code/summary/evidence/remaining）',
+    `last_event_id`     BIGINT       DEFAULT NULL COMMENT '最近一条 goal 事件的账本ID（前端断线重连游标）',
+    `error_class`       VARCHAR(32)  DEFAULT NULL COMMENT '最近一次失败分类: TRANSIENT/CONFIG/ENVIRONMENT/PERMISSION/BUSINESS/UNKNOWN/ORPHANED',
+    `attempt`           INT          NOT NULL DEFAULT 0 COMMENT '连续失败次数（成功一轮清零）',
+    `no_progress_rounds` INT         NOT NULL DEFAULT 0 COMMENT '连续无进展轮数（产物/事实/计划/缺口都没变）',
+    `recovery_count`    INT          NOT NULL DEFAULT 0 COMMENT '崩溃恢复次数（超过阈值转 PAUSED，避免无限重跑）',
+    `last_progress_at`  DATETIME(3)  DEFAULT NULL COMMENT '最近一次有进展的时刻',
+    `waiting_reason`    VARCHAR(500) DEFAULT NULL COMMENT 'WAITING_* 阶段在等什么（审批/外部事件/用户输入）',
+    `budget_tokens`     BIGINT       NOT NULL DEFAULT 0 COMMENT 'Token 硬预算（0=用配置默认）',
+    `budget_ms`         BIGINT       NOT NULL DEFAULT 0 COMMENT '机器毫秒硬预算（0=用配置默认）',
+    `budget_tool_calls` INT          NOT NULL DEFAULT 0 COMMENT '工具调用硬预算（0=用配置默认）',
+    `budget_rounds`     INT          NOT NULL DEFAULT 0 COMMENT '轮次硬预算（0=用配置默认）',
+    `row_version`       BIGINT       NOT NULL DEFAULT 0 COMMENT '乐观锁版本（状态迁移与调度竞争用）',
     `created_at`        DATETIME(3)  DEFAULT CURRENT_TIMESTAMP(3) COMMENT '创建时刻',
     `started_at`        DATETIME(3)  DEFAULT NULL COMMENT '进入 RUNNING 时刻',
     `ended_at`          DATETIME(3)  DEFAULT NULL COMMENT '终态时刻',
     PRIMARY KEY (`id`),
     KEY `idx_goal_session_status` (`session_id`, `status`),
-    KEY `idx_goal_user` (`user_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='目标模式：一个跨轮目标 + 一个阶段（对齐 DSH，无验收标准/无人工确认）';
+    KEY `idx_goal_user` (`user_id`),
+    KEY `idx_goal_ready` (`status`, `next_run_at`),
+    KEY `idx_goal_lease` (`lease_until`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='目标模式：一个跨轮目标 + 阶段（任务运行时：权威状态/租约/续跑/证据）';
+
+-- ============================================
+-- 2026-10-22: 目标轮次表（每一轮是任务运行时的一次 attempt）
+-- 为什么单独一张：续跑幂等键 goal:{id}:{n} 需要一个可审计的落点；崩溃恢复要判断
+-- 「这一轮到底跑没跑、跑到了哪」，不能只看 goal 的 turn_counter。
+-- ============================================
+CREATE TABLE IF NOT EXISTS `c_ai_goal_round` (
+    `id`              BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `goal_id`         VARCHAR(64)  NOT NULL COMMENT '归属目标',
+    `n`               INT          NOT NULL COMMENT '第几轮（从 1 起，幂等键 goal:{id}:{n} 的 n）',
+    `status`          VARCHAR(32)  NOT NULL DEFAULT 'RUNNING' COMMENT 'RUNNING/SETTLED/FAILED/INTERRUPTED',
+    `turn_id`         VARCHAR(64)  DEFAULT NULL COMMENT '应用层轮号 goal:{id}:{n}',
+    `lease_owner`     VARCHAR(64)  DEFAULT NULL COMMENT '起这一轮的执行者（fencing：租约被接管后旧回调不得写状态）',
+    `input_hash`      VARCHAR(64)  DEFAULT NULL COMMENT '本轮输入快照的 sha256（幂等：同 key 不同输入即冲突）',
+    `prompt`          TEXT         DEFAULT NULL COMMENT '本轮完整输入（审计/恢复用，不参与模型上下文）',
+    `started_at`      DATETIME(3)  DEFAULT NULL COMMENT '开跑时刻',
+    `ended_at`        DATETIME(3)  DEFAULT NULL COMMENT '收尾时刻',
+    `error_class`     VARCHAR(32)  DEFAULT NULL COMMENT '失败分类',
+    `used_tokens`     BIGINT       NOT NULL DEFAULT 0 COMMENT '本轮 token（按用量台账时间窗聚合）',
+    `used_ms`         BIGINT       NOT NULL DEFAULT 0 COMMENT '本轮机器毫秒',
+    `used_tool_calls` INT          NOT NULL DEFAULT 0 COMMENT '本轮工具调用数',
+    `summary`         TEXT         DEFAULT NULL COMMENT '本轮交付说明（报告正文或 goal_submit.summary）',
+    `proposal_json`   JSON         DEFAULT NULL COMMENT '模型提交的完成申请（goal_submit）',
+    `evidence_json`   JSON         DEFAULT NULL COMMENT '本轮证据快照',
+    `created_at`      DATETIME(3)  DEFAULT CURRENT_TIMESTAMP(3) COMMENT '创建时刻',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_goal_round` (`goal_id`, `n`),
+    KEY `idx_round_goal` (`goal_id`, `n`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='目标轮次：任务运行时的 attempt 记录（幂等/恢复/审计）';
+
+-- ============================================
+-- 2026-10-22: 目标证据表（Verifier 的输入与 Outcome 的引用）
+-- 模型只能「申请完成」，证据落在这里，Verifier 逐条核验后才允许 COMPLETED。
+-- ============================================
+CREATE TABLE IF NOT EXISTS `c_ai_goal_evidence` (
+    `id`         BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
+    `goal_id`    VARCHAR(64)  NOT NULL COMMENT '归属目标',
+    `round_n`    INT          NOT NULL DEFAULT 0 COMMENT '产生/引用该证据的轮次',
+    `kind`       VARCHAR(32)  NOT NULL COMMENT 'artifact/file/command/test/url/text',
+    `ref`        VARCHAR(1000) DEFAULT NULL COMMENT '证据引用（产物ID/文件名/路径/URL/命令）',
+    `note`       VARCHAR(2000) DEFAULT NULL COMMENT '说明',
+    `hash`       VARCHAR(128) DEFAULT NULL COMMENT '内容指纹（可选）',
+    `verified`   TINYINT      NOT NULL DEFAULT 0 COMMENT '0=未核验 1=通过 2=失败',
+    `created_at` DATETIME(3)  DEFAULT CURRENT_TIMESTAMP(3) COMMENT '创建时刻',
+    PRIMARY KEY (`id`),
+    KEY `idx_evidence_goal` (`goal_id`, `round_n`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='目标证据：Verifier 依据环境事实核验完成申请';
 
 CREATE TABLE IF NOT EXISTS `c_ai_mcp_call_log` (
     `id`             VARCHAR(50)  NOT NULL COMMENT '调用记录ID（UUID）',

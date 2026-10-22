@@ -1,6 +1,8 @@
 package com.wenqu.ai.model;
 
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
@@ -69,10 +71,85 @@ public class Goal {
     private String lastTurnId;
 
     /** 停下来的原因: achieved/paused/preempted/round-limit/blocked/turn-failed/cleared */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String endReason;
 
     /** 助手报告的受阻原因（endReason=blocked 时有值；自由文本，界面上原样显示） */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String blockedReason;
+
+    // ==================== 任务运行时（2026-10-22） ====================
+
+    /**
+     * 内部阶段：QUEUED / EXECUTING / VERIFYING / WAITING_APPROVAL / WAITING_EVENT / RECOVERING / DONE。
+     * <p>{@link #status} 是对外阶段（四档 + FAILED/等待态），phase 只描述「控制面此刻在做什么」。
+     */
+    private String phase;
+
+    /** 目标原文版本：edit 递增；轮次输入快照带版本，改目标不会污染在飞那一轮 */
+    private Integer objectiveVersion;
+
+    /** 当前执行者（实例ID）；同一目标同一时刻只允许一个 worker */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private String leaseOwner;
+
+    /** 执行租约到期时刻（崩溃后由调度器回收） */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private LocalDateTime leaseUntil;
+
+    /** 执行者心跳时刻 */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private LocalDateTime heartbeatAt;
+
+    /** 下一轮最早可开始时刻；NULL=有轮在飞，不可调度 */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private LocalDateTime nextRunAt;
+
+    /** 续跑上下文 JSON（GoalContinuation）：目标/阶段/计划/事实/产物/失败尝试/缺口/预算 */
+    private String continuationJson;
+
+    /** 结构化结果 JSON（GoalOutcome）：state/code/summary/evidence/remaining */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private String outcomeJson;
+
+    /** 最近一条 goal 事件的账本ID（断线重连游标） */
+    private Long lastEventId;
+
+    /** 最近一次失败分类：TRANSIENT/CONFIG/ENVIRONMENT/PERMISSION/BUSINESS/UNKNOWN/ORPHANED */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private String errorClass;
+
+    /** 连续失败次数（成功一轮清零） */
+    private Integer attempt;
+
+    /** 连续无进展轮数（产物/事实/计划/缺口都没变） */
+    private Integer noProgressRounds;
+
+    /** 崩溃恢复次数（超过阈值转 PAUSED，避免无限重跑） */
+    private Integer recoveryCount;
+
+    /** 最近一次有进展的时刻 */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private LocalDateTime lastProgressAt;
+
+    /** WAITING_* 阶段在等什么（审批/外部事件/用户输入） */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private String waitingReason;
+
+    /** Token 硬预算（0=用配置默认） */
+    private Long budgetTokens;
+
+    /** 机器毫秒硬预算（0=用配置默认） */
+    private Long budgetMs;
+
+    /** 工具调用硬预算（0=用配置默认） */
+    private Integer budgetToolCalls;
+
+    /** 轮次硬预算（0=用配置默认） */
+    private Integer budgetRounds;
+
+    /** 乐观锁版本（状态迁移与调度竞争用） */
+    private Long rowVersion;
 
     /** 创建时刻 */
     private LocalDateTime createdAt;
@@ -81,5 +158,6 @@ public class Goal {
     private LocalDateTime startedAt;
 
     /** 终态时刻 */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private LocalDateTime endedAt;
 }

@@ -35,7 +35,7 @@ public class GoalController {
     }
 
     @Operation(summary = "创建目标", description = "把一件事交给目标模式：{sessionId,objective}。"
-            + "建行即开始推进，不弹确认卡、不要验收标准；助手完成后自动停下。"
+            + "建行即入队，由调度器起轮；助手提交的证据通过核验后才自动停下。"
             + "同会话已有未结束目标时拒绝（先改它、继续它或删除它）。")
     @PostMapping("/goal")
     public ResultJson<Map<String, Object>> start(@RequestBody Map<String, Object> body) {
@@ -55,7 +55,7 @@ public class GoalController {
 
     @Operation(summary = "目标动作", description = "pause=停止（可再继续）；resume=继续；"
             + "edit=改目标原文（{objective}）；clear=删除（界面撤下，历史保留）。"
-            + "确认验收标准/现在验收/人工勾选一律退役——目标模式没有这些步骤。")
+            + "完成由模型 goal_submit 提交证据、平台核验；不需要用户逐条勾选验收标准。")
     @PostMapping("/goal/{goalId}")
     public ResultJson<Map<String, Object>> act(
             @Parameter(description = "目标 ID") @PathVariable("goalId") String goalId,
@@ -97,12 +97,15 @@ public class GoalController {
         return ResultJson.ok(goalService.view(goal));
     }
 
-    @Operation(summary = "目标过程账本", description = "按 goal_id 聚合的事件（过程面板深链：一个目标覆盖多轮）。")
+    @Operation(summary = "目标过程账本", description = "按 goal_id 聚合的事件（过程面板深链：一个目标覆盖多轮）；"
+            + "afterId 用于断线增量读取。")
     @GetMapping("/session/{sessionId}/goal/events")
     public ResultJson<List<Map<String, Object>>> goalEvents(
             @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId,
-            @Parameter(description = "目标 ID") @RequestParam("goalId") String goalId) {
-        return ResultJson.ok(goalService.goalEvents(sessionId, RequestUser.uid(), goalId));
+            @Parameter(description = "目标 ID") @RequestParam("goalId") String goalId,
+            @Parameter(description = "增量游标：只返回 id 大于它的账本行（断线重连用）")
+            @RequestParam(value = "afterId", required = false, defaultValue = "0") long afterId) {
+        return ResultJson.ok(goalService.goalEvents(sessionId, RequestUser.uid(), goalId, afterId));
     }
 
     // ==================== 内部：请求体取数（与 answersFromBody 同形的纯函数） ====================

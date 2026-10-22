@@ -49,19 +49,21 @@ public class SessionEventService {
      * 记一条事件。<b>写失败绝不影响问答</b>：吞掉异常只留一行 warn（与产物、站内通知那类旁路同口径）。
      * <p>开关 {@code trace.sessionEventEnabled} 默认开；关掉后一行都不写，行为回到有账本之前。
      */
-    public void append(String sessionId, String userId, String turnId, String type, String payload) {
-        append(sessionId, userId, turnId, null, type, payload);
+    public Long append(String sessionId, String userId, String turnId, String type, String payload) {
+        return append(sessionId, userId, turnId, null, type, payload);
     }
 
     /**
      * 记一条事件（带目标归属：目标模式的过程面板按 {@code goal_id} 聚合账本，不新建表）。
      * <b>写失败绝不影响问答</b>：吞掉异常只留一行 warn（与产物、站内通知那类旁路同口径）。
      * @param goalId 归属目标（c_ai_goal.id）；空=非目标事件
+     * @return 账本行ID（自增即游标）；未写入时 null。目标态把它记进 {@code last_event_id}，
+     *         前端刷新后可以从这个游标续读，而不是整段重放。
      */
-    public void append(String sessionId, String userId, String turnId, String goalId,
+    public Long append(String sessionId, String userId, String turnId, String goalId,
                        String type, String payload) {
-        if (sessionId == null || sessionId.isBlank() || type == null || type.isBlank()) return;
-        if (!configService.getBoolean("trace.sessionEventEnabled", true)) return;
+        if (sessionId == null || sessionId.isBlank() || type == null || type.isBlank()) return null;
+        if (!configService.getBoolean("trace.sessionEventEnabled", true)) return null;
         try {
             SessionEvent event = new SessionEvent();
             event.setSessionId(sessionId);
@@ -73,8 +75,10 @@ public class SessionEventService {
                     ? payload : payload.substring(0, PAYLOAD_MAX) + "…");
             event.setCreatedAt(LocalDateTime.now());
             sessionEventMapper.insert(event);
+            return event.getId();
         } catch (Exception e) {
             log.warn("[EVENT] 会话事件落库失败（不影响问答）: type={} session={} {}", type, sessionId, e.getMessage());
+            return null;
         }
     }
 
@@ -136,6 +140,15 @@ public class SessionEventService {
      * <p>与 {@link #listByTurn} 的分工：那个按轮取，这个按目标取——目标区间的好几轮要能连着回放。
      */
     public java.util.List<SessionEvent> listByGoal(String sessionId, String userId, String goalId, int limit) {
+        return listByGoalAfter(sessionId, userId, goalId, 0, limit);
+    }
+
+    /**
+     * 按目标 + 游标读取事件（断线重连/增量刷新）：只返回 {@code id > afterId} 的行，正序。
+     * <p>没有游标时等价于 {@link #listByGoal}；有了游标，前端刷新不必整段重放。
+     */
+    public java.util.List<SessionEvent> listByGoalAfter(String sessionId, String userId, String goalId,
+                                                        long afterId, int limit) {
         if (sessionId == null || sessionId.isBlank() || goalId == null || goalId.isBlank()
                 || userId == null || userId.isBlank()) {
             return java.util.List.of();
@@ -145,6 +158,8 @@ public class SessionEventService {
             return sessionEventMapper.selectList(new LambdaQueryWrapper<SessionEvent>()
                     .eq(SessionEvent::getSessionId, sessionId)
                     .eq(SessionEvent::getGoalId, goalId)
+                    .eq(SessionEvent::getUserId, userId)
+                    .gt(afterId > 0, SessionEvent::getId, afterId)
                     .orderByAsc(SessionEvent::getId)
                     .last("limit " + cap));
         } catch (Exception e) {

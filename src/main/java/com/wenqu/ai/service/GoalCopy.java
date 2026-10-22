@@ -6,9 +6,9 @@ package com.wenqu.ai.service;
  * <p>纪律：<b>只讲用户结果，不写内部机制</b>——禁止出现 TASK_STATE / scope / verifier / revision /
  * 框架名。续跑提示词也走这里：正文不写沙盒路径、工具名、命令。
  *
- * <p>目标模式对齐 DSH：用户只负责说出目标，推进与收尾由助手自己判断。助手用两个标记收尾——
- * {@link #DONE_MARKER} 表示整件事做完了，{@link #BLOCKED_MARKER} 表示遇到了自己解决不了的阻塞。
- * 没有第三个标记、也没有让人逐条确认的中间态。
+ * <p>2026-10-22 任务运行时之后：正式收尾走 {@code goal_submit} 工具（带证据），平台由
+ * {@code GoalVerifier} 核验后才算完成；下面两个标记保留为<b>兼容入口</b>——模型没调工具时，
+ * 标记只生成一份「完成申请」，不会直接改终态。
  */
 public final class GoalCopy {
 
@@ -21,16 +21,16 @@ public final class GoalCopy {
     public static final String PANEL_TITLE = "目标";
 
     /**
-     * 助手自报完成的标记：回答最后单独一行写这个，平台就停下（不再续跑）。
-     * <p>为什么靠标记而不是「工具不调了」：后者分不清「做完了」和「这一轮不知道干啥」。
-     * 只认最后一行：中途解释「等会儿我会写【目标完成】」不算数。
+     * 兼容标记：回答最后单独一行写这个，平台会生成一份完成申请并走证据核验。
+     * <p><b>不再直接算完成</b>：没有证据的 marker 会被 Verifier 判缺口并排下一轮。
+     * 正式路径是 {@code goal_submit}；保留它只是为了不让旧提示词/旧模型立刻断掉。
      */
     public static final String DONE_MARKER = "【目标完成】";
 
     /**
-     * 助手自报受阻的标记：回答最后单独一行以它开头，后面跟一句具体原因。
-     * <p>受阻不是完成：目标停下等人（暂停态），用户可改目标、继续或删除。没有这个出口，
-     * 助手遇到缺权限/缺资料时只能在「假装做完」与「无限空转」之间二选一。
+     * 兼容标记：回答最后单独一行以它开头，后面跟一句具体原因。
+     * <p>受阻不是完成：目标停下等人（暂停态），用户可改目标、继续或删除。
+     * 正式路径是 {@code goal_submit} 的 blocked 分支。
      */
     public static final String BLOCKED_MARKER = "【目标受阻】";
 
@@ -73,6 +73,11 @@ public final class GoalCopy {
         if ("turn-failed".equals(endReason)) return "这一轮没有正常跑完，先停在这里；可以继续。";
         if ("stopped".equals(endReason)) return "已按你的要求停下；可以继续。";
         if ("preempted".equals(endReason)) return "你先说了别的，目标停在原地；可以继续。";
+        if ("budget".equals(endReason)) return "已达到本次目标的预算上限，先停在这里；可以改目标或继续。";
+        if ("no-progress".equals(endReason)) return "连续几轮没有实质进展，先停在这里；可以改目标或继续。";
+        if ("verification-failed".equals(endReason)) return "连续提交的证据都没通过核验，先停在这里；可以改目标或继续。";
+        if ("completion-unconfirmed".equals(endReason)) return "连续完成检查仍未确认完成，先停在这里；可以改目标或继续。";
+        if ("orphaned".equals(endReason)) return "上一次执行中断，已停下；点继续会先核对状态再接着跑。";
         return null;
     }
 }

@@ -71,7 +71,10 @@ final class FrameworkToolLabels {
             Map.entry("task_list", "查询后台任务"),
             Map.entry("task_output", "获取任务结果"),
             Map.entry("task_cancel", "取消后台任务"),
-            Map.entry("wait_async_results", "等待后台结果"));
+            Map.entry("wait_async_results", "等待后台结果"),
+            // 目标模式的控制工具（2026-10-22 任务运行时）：模型每轮都会用，卡片上不能是英文裸名。
+            Map.entry("goal_note", "记录目标进展"),
+            Map.entry("goal_submit", "提交目标完成申请"));
 
     /** 工具名 → 悬停一句话说明（这个工具到底在干什么；未收录的不给 title）。 */
     private static final Map<String, String> HINTS = Map.ofEntries(
@@ -101,7 +104,9 @@ final class FrameworkToolLabels {
             Map.entry("task_list", "看看派出去的任务跑到哪一步了"),
             Map.entry("task_output", "把后台任务跑出来的结果读回来"),
             Map.entry("task_cancel", "让一个还没跑完的后台任务停下来"),
-            Map.entry("wait_async_results", "派出去的活还没回来，在这儿等一会儿"));
+            Map.entry("wait_async_results", "派出去的活还没回来，在这儿等一会儿"),
+            Map.entry("goal_note", "把计划、已确认事实、产物写进跨轮续跑的权威状态"),
+            Map.entry("goal_submit", "申请完成并附证据；平台核验通过才算完成"));
 
     /** 框架文件工具与命令工具的名字（沙箱/文件系统改由框架提供后，问渠不再自定义这七把）。 */
     static final class FilesystemToolNames {

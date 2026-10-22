@@ -280,6 +280,29 @@ public class ConfigService {
     /** 从 yml/env 读取默认值 */
     private Map<String, String> defaults() {
         Map<String, String> d = new LinkedHashMap<>();
+        // 目标模式（2026-10-22）：与 GoalSettings 的默认值/钳制范围同源；schema 已挂「目标模式」面板。
+        // 为什么必须在这里登记：snapshot() 只遍历 defaults()，漏登记的表单能保存但重开读不回，
+        // 表现就是「改了没生效」。20 个键一一对应 GoalSettings 的 getter。
+        d.put("chat.goal.maxRounds", "40");
+        d.put("chat.goal.nextRoundDelayMs", "2000");
+        d.put("chat.goal.maxCompletionChecks", "2");
+        d.put("chat.goal.maxVerifyFailures", "5");
+        d.put("chat.goal.maxTokens", "2000000");
+        d.put("chat.goal.maxMs", "7200000");
+        d.put("chat.goal.maxToolCalls", "400");
+        d.put("chat.goal.maxRetries", "2");
+        d.put("chat.goal.maxRecoveries", "3");
+        d.put("chat.goal.retryBaseSeconds", "15");
+        d.put("chat.goal.retryMaxSeconds", "120");
+        d.put("chat.goal.softBudgetRatio", "0.8");
+        d.put("chat.goal.claimBatch", "5");
+        d.put("chat.goal.workers", "4");
+        d.put("chat.goal.initialTickDelayMs", "1000");
+        d.put("chat.goal.tickMs", "2000");
+        d.put("chat.goal.leaseSeconds", "300");
+        d.put("chat.goal.heartbeatStaleSeconds", "90");
+        d.put("chat.goal.staleGraceSeconds", "90");
+        d.put("chat.goal.verifyLocalFiles", "false");
         // chat.model 已退役（全局兜底移除）：不再注入默认值，存量库中的旧行成为孤儿数据（无读取方）。
         // chat.baseUrl / chat.apiKey / chat.completionsPath 同步退役：聊天网关统一来自「模型供应商」表
         // （模型引用 → 供应商网关），DynamicOpenAiChatModel 对解析不出的引用 fail-loud，无全局兜底
@@ -458,7 +481,7 @@ public class ConfigService {
         d.put("chat.askTimeoutMs", "600000");              // 人在回路提问卡等待上限(ms)（2026-10-09 补：schema 早已声明，defaults 漏登记 → 设置页改了回显不出）
         // 目标模式（Goal Mode）已无任何平台参数（2026-10-22 对齐 DSH）：
         // 不设预算/轮数旋钮，也没有确认卡等待——目标建好就自己往下跑，助手自报完成即停；
-        // 开关只剩智能体级 goal_enabled 那一格，自动续跑上限是 GoalService.MAX_GOAL_ROUNDS 常量。
+        // 开关只剩智能体级 goal_enabled 那一格，自动续跑上限由 GoalSettings 的 chat.goal.maxRounds 控制（默认 40）。
         // 存量库里的旧行由 schema.sql 的退役键清理幂等删除。
         // 调试显示总开关（归属徽标 / 路由提示 / 降级提示）。默认开（2026-10-18 由 false 改 true）：
         // 它管的已不只是排障项——「无命中 / 改写失败 / 图片剔除」这类降级信息默认不显示，等于系统性地

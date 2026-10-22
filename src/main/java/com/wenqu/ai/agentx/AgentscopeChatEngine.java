@@ -18,6 +18,9 @@ import com.wenqu.ai.service.ModelRegistryService;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.message.GenerateReason;
 import io.agentscope.core.message.Msg;
+import io.agentscope.core.message.TextBlock;
+import io.agentscope.core.message.ToolResultBlock;
+import io.agentscope.core.message.ToolResultState;
 import io.agentscope.core.session.SessionEvent;
 import io.agentscope.core.session.SessionInbox;
 import io.agentscope.core.session.SessionLog;
@@ -270,7 +273,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 log.info("[agentx] 记忆配置已变更 {}，活跃会话下一轮重建实例", changed);
             }
             // 目标模式已无平台配置项：开关只剩智能体级 goal_enabled 那一格（改它走 agent 重建那条路），
-            // 续跑轮数上限是代码常量（GoalService.MAX_GOAL_ROUNDS）。
+            // 续跑轮数上限是 GoalSettings（chat.goal.maxRounds，默认 40）。
         });
     }
 
@@ -968,8 +971,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 没正常跑完的轮（额度/网关/没启动）不进目标续跑链：否则一次失败会被滚成无限重试。
         // 用户按了停止同理：停止就是「这一轮到此为止」的意思，不能自动再起一轮把停止撤销掉。
         boolean goalTurnHealthy = failure == null && !neverLaunched;
-        goalService.onTurnEnd(cmd.getSessionId(), cmd.getUserId(), turnId, machineMs, goalToolCalls, channel,
-                answer, goalTurnHealthy, stopped);
+        goalService.onRoundSettled(cmd.getSessionId(), cmd.getUserId(), turnId, machineMs, goalToolCalls,
+                channel, answer, goalTurnHealthy, stopped, failure);
         // 收尾标记（【目标完成】/【目标受阻】…）是平台控制信号，落库与下发的正文里不出现：
         // 摘在 onTurnEnd 之后、finish 之前，用户读到的最后一条就是干净的交付说明。
         answer = com.wenqu.ai.service.GoalService.stripMarkers(answer);
@@ -1027,6 +1030,48 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 卡片还挂在 PENDING = 真的在等人，不碰；卡片已随叫停/超时落终态 = 没人会再答它，
      * 那一轮同样永远不会结束（{@code run/end status=suspended}），照归。
      */
+    /**
+     * 恢复轮开始前处理上一个进程留下的会话状态：
+     * <ol>
+     *   <li>封存上一进程的 journal writer——它的 2 分钟租约可能还没到期，但进程已经死了；
+     *       不封存，框架的 inbox 会一直报 "Session already has an active writer"；</li>
+     *   <li>把「工具已发出、结果没回来」的调用标成 UNKNOWN/INTERRUPTED——不编造成功，
+     *       也不让恢复轮重复执行有副作用的写操作；</li>
+     * </ol>
+     * 这两步只对恢复轮做，正常轮不会碰活着的 writer。
+     */
+    private void recoverInterruptedSession(AgentSession session, String turnId) {
+        try {
+            SessionLog journal = session.log();
+            SessionLog.Head head = journal.head();
+            if (head != null && head.owner() != null) {
+                journal.sealWriter(head.owner());
+                log.warn("[GOAL] 已封存中断进程的会话写者: owner={} turn={}", head.owner(), turnId);
+            }
+            SessionProjection view = session.inspect();
+            Set<String> uncertain = view.uncertainToolCalls();
+            boolean active = !view.activeRuns().isEmpty();
+            if (!uncertain.isEmpty() || active) {
+                Map<String, ToolResultBlock> outcomes = new java.util.LinkedHashMap<>();
+                for (String id : uncertain) {
+                    outcomes.put(id, new ToolResultBlock(id, "unknown",
+                            TextBlock.builder().text(
+                                    "执行进程中断，工具结果未知；恢复轮必须先在真实环境中核对，"
+                                            + "不要重复执行有副作用的操作。").build())
+                            .withState(ToolResultState.INTERRUPTED));
+                }
+                // 即使没有未决工具，reconcile 也会把 activeRuns 标成 interrupted；
+                // 不标，SessionTurns.latest() 永远不是 ended，submit 会一直等下去。
+                SessionRecovery.reconcile(journal, outcomes,
+                        "目标执行中断恢复：未决工具结果按未知处理");
+                log.warn("[GOAL] 恢复会话：未决工具 {} 个，活动运行 {} 个已归档: turn={}",
+                        outcomes.size(), view.activeRuns().size(), turnId);
+            }
+        } catch (RuntimeException e) {
+            log.warn("[GOAL] 恢复会话残留状态失败（继续尝试归档）: turn={} {}", turnId, e.toString());
+        }
+    }
+
     private void reconcileStalledTurn(AgentSession session, ChatCommand cmd) {
         SessionLog journal = session.log();
         SessionTurns.Turn latest;
@@ -1106,6 +1151,15 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * @return null = 装配不动（模型解析不出来、实例建不起来），调用方按「接不动」处理
      */
     private Following openForContinuation(String sessionId, String userId, String turnId) {
+        return openForContinuation(sessionId, userId, turnId, false);
+    }
+
+    /**
+     * @param recover 这是不是「进程中断后的恢复轮」：恢复轮要先封存上一进程残留的会话写者、
+     *                把未决工具结果标成未知，再归档遗留轮；否则框架的 inbox 会一直等那个
+     *                已经不存在的 writer（2 分钟租约），表现为「目标卡在 EXECUTING 不动」。
+     */
+    private Following openForContinuation(String sessionId, String userId, String turnId, boolean recover) {
         if (sessionId == null || sessionId.isBlank()) return null;
         ChatCommand cmd = ChatCommand.builder().sessionId(sessionId).question("")
                 .userId(userId == null || userId.isBlank() ? "guest" : userId)
@@ -1141,6 +1195,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 它可能刚好有一轮进了收件箱还没启动；不归档，新目标的第一轮会一直排在那条死轮后面
         // （实测：submit 空等 30 秒后转暂停，界面看起来目标在跑却一动不动）。
         if (turnId != null && turnId.startsWith("goal:")) {
+            if (recover) recoverInterruptedSession(session, turnId);
             reconcileStalledTurn(session, cmd);
         }
         AgentxStepBudget stepBudget = sessions.stepBudget(sessions.key(cmd));
@@ -1152,6 +1207,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         AgentxFrameworkToolGate toolGate = sessions.frameworkToolGate(sessions.key(cmd));
         if (toolGate != null) {
             toolGate.beginTurn(turnId);
+            // 完成检查轮只允许读工具 + goal_submit/goal_note：不靠 prompt 自觉，直接在工具闸上收口。
+            toolGate.setCompletionCheck(goalService.isCompletionCheck(turnId));
         }
         Recording recording = new Recording(spills, hooks.consultLedger(), tools, hooks, displayNames);
         bindFrameworkToolGate(cmd, recording);
@@ -1237,6 +1294,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 log.info("[agentx] 续跑已收尾 session={}", f.cmd().getSessionId());
             } catch (Exception e) {
                 log.warn("[agentx] 续跑中断 session={}: {}", f.cmd().getSessionId(), e.toString());
+                goalService.onRoundSettled(f.cmd().getSessionId(), f.cmd().getUserId(), turnId,
+                        0, 0, f.channel(), "", false, false, "跟随循环中断: " + e.getMessage());
             } finally {
                 sessions.releaseFollower(sessionKey);
                 slot.end(turnId);
@@ -1282,6 +1341,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 continueGoalTurn(goal, input, n, 0);
             } catch (RuntimeException e) {
                 log.warn("[GOAL] 目标轮异步发起失败: goal={} n={} {}", goal.getId(), n, e.toString());
+                // 不把目标留在 EXECUTING 等租约过期：起轮阶段就失败，立刻转暂停让用户看见。
+                goalService.markContinueFailed(goal, e.getMessage());
             }
         });
     }
@@ -1296,7 +1357,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             log.info("[GOAL] 目标已不在进行中，取消这一轮续跑: goal={} n={}", goal.getId(), n);
             return;
         }
-        Following f = openForContinuation(sessionId, uid, turnId);
+        boolean recover = "ORPHANED".equals(goal.getErrorClass());
+        Following f = openForContinuation(sessionId, uid, turnId, recover);
         if (f == null) {
             goalService.markContinueFailed(goal, "会话实例装配不出来（模型/路由解析失败）");
             return;
@@ -1322,7 +1384,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             backgroundGoalTurns.add(sessionId + "|" + turnId);
             // 先登记总线再发帧：goal_turn 到浏览器时，它探测 /chat/run 必须已经探得到这一轮
             java.util.concurrent.atomic.AtomicBoolean alive = openGoalTurnRun(f, sessionId, uid, turnId);
-            goalService.emitTurn(goal, n, task.turnId(), f.channel());
+            goalService.emitTurn(goal, n, turnId, f.channel());
             startFollowing(f, task, () -> alive.set(false), true);
         } catch (RuntimeException e) {
             log.warn("[GOAL] 续跑轮提交失败: goal={} n={} {}", goal.getId(), n, e.toString());
@@ -1658,8 +1720,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             boolean ask = AskUserTool.NAME.equals(name);
             String status = ask ? "done" : "error";
             String result = ask ? "（用户未回答这一题（" + why + "））" : why + "，这一步没有执行";
-            // 落库那份先写、无条件：刷新读的就是它
-            recording.toolCall(name, status, args, elapsed, beganAt, charged);
+            // 落库那份先写、无条件：刷新读的就是它（那句解释也要一起落，刷新后卡片才说得出为什么没跑）
+            recording.toolCall(name, status, args, elapsed, beganAt, charged, result);
             try {
                 emit(channel, RunEventType.TOOL_STATUS,
                         toolCard(name, status, elapsed, beganAt, charged, args, result));
@@ -1990,8 +2052,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
          * @param beganAtMs 服务端开始时刻；0 = 配不上 start，落库那份改记当下
          * @param waitedMs  这段等待<b>记本账的那一笔</b>：只有挂卡那一张拿到非零值，整段跨度按它减一次；
          *                  0 = 这张不是挂卡那张（它的等待已经体现在 elapsedMs 里，但跨度不该重复减）
+         * @param result    这一步的输出文本（{@link #toolResultText} 那份，已按 2000 字截断）。
+         *                  <b>必须和 SSE 那一帧同形落库</b>：以前只有流里带 result，刷新后读落库那份
+         *                  就只剩入参——工具卡上是一个看不出原因的红叉，「这步为什么失败」只能回去翻服务端日志
          */
-        void toolCall(String name, String status, String args, long elapsedMs, long beganAtMs, long waitedMs) {
+        void toolCall(String name, String status, String args, long elapsedMs, long beganAtMs, long waitedMs,
+                      String result) {
             if (name == null || name.isBlank()) return;
             boolean runCode = com.wenqu.ai.service.SandboxTools.RUN_CODE_TOOL_NAME.equals(name);
             for (int i = toolCalls.size() - 1; i >= 0; i--) {
@@ -1999,6 +2065,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 if (name.equals(prior.get("name")) && "start".equals(prior.get("status"))) {
                     prior.put("status", status);
                     putTiming(prior, elapsedMs, beganAtMs, waitedMs);
+                    if (result != null && !result.isBlank()) prior.put("result", result);
                     String spill = takeSpill(name);
                     if (spill != null) prior.put("spill", spill);
                     // 咨询卡片挂那一问一答（与手写侧同一个实现与同一把长度尺）：刷新后仍点得开。
@@ -2022,6 +2089,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             // 入参随卡片落库：前端刷新后的工具卡、咨询卡「被咨询那一位的名字」、
             // 以及暗截断对账里的「工具入参字符数」都读这一列（缺它等于三处一起退化）
             if (args != null && !args.isBlank()) entry.put("args", args);
+            // 输出与入参同一条规则：只在有内容时写，且与 SSE 帧同一个键名（前端读 t.result）
+            if (result != null && !result.isBlank()) entry.put("result", result);
             // 耗时与开始时刻同样落库：此前只有 SSE 那一帧带 elapsedMs，刷新后每张卡都没有数，
             // 「执行了 N 个操作」后面跟着的是各张卡之和（全为 0）——当场看着有、回头读成 0ms。
             putTiming(entry, elapsedMs, beganAtMs > 0L ? beganAtMs : System.currentTimeMillis(), waitedMs);
@@ -2486,7 +2555,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                     }
                 }
                 long beganAt = recording.markToolStart(callKey);
-                recording.toolCall(recording.lastToolName, "start", recording.lastToolInput, 0L, beganAt, 0L);
+                recording.toolCall(recording.lastToolName, "start", recording.lastToolInput, 0L, beganAt, 0L, null);
                 // 进行中必须是 "start"（不是 "running"）：前端 onToolStatus 只认 status==='start' 才建/合并
                 // 实时工具卡。发 "running" 会让前端把这张当终态卡 push 出去，随后的 done 又找不到可合并的
                 // start 卡再 push 一张——一次调用渲染成两张，其中停在 "running" 的那张显示为失败(❌)。
@@ -2503,6 +2572,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 失败判定：优先读 ToolResultBlock 结构化的 state 字段（JSON 值 "error"），
                 // 不再依赖 Map.toString() 拼出的 "STATE=ERROR" 字符串形状（序列化一变就漏判）。
                 boolean failed = toolResultFailed(data);
+                // 输出文本只取一次：落库那份和 SSE 那一帧必须是同一串，否则刷新前后两张卡说的不是一件事
+                String resultText = toolResultText(data);
                 // 耗时＝墙钟窗口扣掉这段等待：提问卡挂三分钟不是「这个工具跑三分钟」，是「用户读了三分钟」。
                 // 扣掉的那段另发一份 waitedMs：整段跨度减它才剩机器时间，只在单卡上扣会留在区间中间出不去。
                 long beganAt = recording.takeToolStart(callKey);
@@ -2512,9 +2583,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 long charged = recording.takeToolCharge(callKey);
                 long elapsed = beganAt <= 0L ? 0L
                         : Math.max(0L, System.currentTimeMillis() - beganAt - covered);
-                recording.toolCall(name, failed ? "error" : "done", args, elapsed, beganAt, charged);
+                recording.toolCall(name, failed ? "error" : "done", args, elapsed, beganAt, charged, resultText);
                 emit(channel, RunEventType.TOOL_STATUS, toolCard(name, failed ? "error" : "done",
-                        elapsed, beganAt, charged, args, toolResultText(data)));
+                        elapsed, beganAt, charged, args, resultText));
             }
             case "tool/decision" -> {
                 // 权限判定由框架说出（实测字段 decision=allowed|denied）：拒绝必须让用户看见，
@@ -2556,6 +2627,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 }
             }
             case "turn/interrupted" -> channel.emit(RunEventType.WARN, "本轮已被中断");
+            // 轮内自动压缩：它跑的是两次 SUMMARY 用途的模型调用，思考与正文都被上面的 purpose 闸
+            // 滤掉，不补这两帧，那二十多秒在界面上就是纯静默（实测 24.7s 一个字没出）。
+            case "compaction/start" -> channel.emit(RunEventType.COMPACT_STATE, "{\"phase\":\"start\"}");
+            case "compaction/end" -> channel.emit(RunEventType.COMPACT_STATE, "{\"phase\":\"end\"}");
             default -> {
             }
         }
@@ -2880,13 +2955,17 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         io.agentscope.core.tool.Toolkit toolkit = new io.agentscope.core.tool.Toolkit();
         // 框架把工具派到自己的弹性线程：身份与本轮检索开关覆盖必须在发起线程取快照、在工具内重放，
         // 不重放就是检索恒空且不报错（Phase 0 与本刀都实测过这个形状）
-        java.util.Set<String> groupedNames = tools.registerWithGroups(toolkit, tools.frameworkTools(cmd, policy, slot, (code, message) -> {
+        java.util.List<Object> holders = tools.frameworkTools(cmd, policy, slot, (code, message) -> {
             log.info("[agentx] 降级 {}: {}", code, message);
             // 未接入的能力必须让用户看见：静默少挂一个族会被读成「配了没生效」。
             // 降级出口也按轮走：实例复用后这里的 channel 是建实例那一轮的，必须从槽位现取。
             AgentxTurnSlot.Turn t = slot.current();
             if (t != null) t.channel().emit(RunEventType.WARN, message);
-        }, true));
+        }, true);
+        // 目标模式的控制工具常驻注册：实例按会话常驻，目标可能在建实例之后才建立，
+        // 不能等到目标建立再往 Toolkit 里加工具（那需要重建实例）。非目标轮调用会落空返回。
+        holders.add(new GoalTools(goalService, slot));
+        java.util.Set<String> groupedNames = tools.registerWithGroups(toolkit, holders);
         // 这一轮建了组的名单按会话记下来：每轮的激活集只在这份名单里增删，名单外的组（框架技能带出来的）不碰
         sessions.noteGroupedSurface(sessions.key(cmd), groupedNames);
         AgentxStepBudget stepBudget = new AgentxStepBudget();
@@ -3175,6 +3254,17 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                     relatedProse.size(), merged.length(), cmd.getSessionId());
         }
         List<String> relatedChips = recording.related.chips(RELATED_PROSE_MIN_CHARS, relatedMaxChips);
+        // 内部标记闸：上游偶发把工具调用当正文吐出来（本该进 tool_calls 的那一截进了 content）。
+        // 剥离器已经把脏文本吞了，这里补的是「别让它静默」——这一步系统真的没执行，用户有权知道
+        // 内容是缺的，而不是读到一个凭空短了一截的回答（真机 2026-10-22 20:54 整条回答只有一段调用文本）。
+        // 日志只报字数不报内容：调用入参里常带 URL 与令牌，抄进日志等于换个地方泄露。
+        String leakedCall = recording.related.dsml();
+        if (!leakedCall.isEmpty()) {
+            pool.registrar().degrade("toolCallAsText",
+                    "模型把一步操作写成了文本，系统没能执行它，这一步的内容可能缺失");
+            log.warn("[FAIL-LOUD] 模型把工具调用写成正文 {} 字（已剥离、未执行）: session={}",
+                    leakedCall.length(), cmd.getSessionId());
+        }
         boolean realAnswer = !body.isBlank();
         // 半程轮有过程就落库、连过程都没有就不落（与手写侧 persistPartialAnswer 同一道守卫）：
         // 「正文非空」单独判会让只跑了工具的轮整条蒸发，而真空轮落一条空消息只是污染历史——

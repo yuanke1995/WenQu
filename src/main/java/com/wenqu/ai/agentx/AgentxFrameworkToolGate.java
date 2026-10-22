@@ -92,6 +92,15 @@ public final class AgentxFrameworkToolGate implements MiddlewareBase {
             "当前是只读档，不能写长期记忆（memory_save 本轮不执行）。"
                     + "请基于已有信息作答；确实需要记住时，请提示用户把权限档位调到可写。";
 
+    /** 完成检查轮：只允许核对已有产物并提交/记录，不允许做新工作。 */
+    private static final String DENY_COMPLETION_CHECK =
+            "当前是目标完成检查轮，只允许 read_file / grep_files / glob_files / list_files 与 "
+                    + "goal_submit / goal_note；%s 会做新工作，本轮不执行。"
+                    + "请直接核对已有产物后调用 goal_submit，或用 goal_note 的 remaining 写清缺口。";
+
+    private static final Set<String> COMPLETION_CHECK_ALLOWED = Set.of(
+            "read_file", "grep_files", "glob_files", "list_files", "goal_submit", "goal_note");
+
     private final Set<ExtensionPoint> points = EnumSet.of(ExtensionPoint.ON_ACTING);
 
     /** 本轮策略；按轮取，故用 Supplier 而不是构造期固定。 */
@@ -105,6 +114,12 @@ public final class AgentxFrameworkToolGate implements MiddlewareBase {
      * 没有「只摘写」的开关；而 disableMemoryTools 会连 MEMORY.md 注入一起关掉（只读也读不到）。
      */
     private volatile boolean denyMemoryWrites = false;
+
+    /**
+     * 本轮是不是「目标完成检查轮」：只放行读工具 + goal_submit/goal_note。
+     * 由引擎在开轮时按 goal.continuation.completionCheck 设置；beginTurn 默认清零。
+     */
+    private volatile boolean completionCheck = false;
 
     public void denyMemoryWrites(boolean deny) {
         this.denyMemoryWrites = deny;
@@ -141,6 +156,12 @@ public final class AgentxFrameworkToolGate implements MiddlewareBase {
      */
     public void beginTurn(String turnLabel) {
         this.turnLabel = turnLabel == null ? "" : turnLabel;
+        this.completionCheck = false;
+    }
+
+    /** 开一轮时设置：这是不是完成检查轮（只读 + goal_submit/goal_note）。 */
+    public void setCompletionCheck(boolean completionCheck) {
+        this.completionCheck = completionCheck;
     }
 
     @Override
@@ -174,17 +195,24 @@ public final class AgentxFrameworkToolGate implements MiddlewareBase {
             return next.apply(input);
         }
 
-        String message = denied.stream().allMatch(c -> "memory_save".equals(c.getName()))
-                ? (denyMemoryWrites ? DENY_MEMORY_WRITE : DENY_MEMORY_READONLY)
-                : String.format(DENY_TEMPLATE, policy.sandboxMode().label(), denied.get(0).getName());
-        log.info("[agentx] 档位拒绝框架工具 turn={} mode={} tools={}",
-                turnLabel, policy.sandboxMode().code(), denied.stream().map(ToolUseBlock::getName).toList());
+        String message;
+        if (completionCheck) {
+            message = String.format(DENY_COMPLETION_CHECK, denied.get(0).getName());
+        } else if (denied.stream().allMatch(c -> "memory_save".equals(c.getName()))) {
+            message = denyMemoryWrites ? DENY_MEMORY_WRITE : DENY_MEMORY_READONLY;
+        } else {
+            message = String.format(DENY_TEMPLATE, policy.sandboxMode().label(), denied.get(0).getName());
+        }
+        log.info("[agentx] 工具闸拒绝 turn={} completionCheck={} mode={} tools={}",
+                turnLabel, completionCheck, policy.sandboxMode().code(),
+                denied.stream().map(ToolUseBlock::getName).toList());
 
         AgentscopeChatEngine.Recording rec = currentRecording();
         if (rec != null) {
             // 被拒的也要有卡：status=error 让界面显示成红色失败，而不是「调了个工具，什么都没发生」。
+            // 拒绝理由一并落库（只发帧不落库的话，刷新后这张红叉卡就说不清为什么红）
             for (ToolUseBlock call : denied) {
-                rec.toolCall(call.getName(), "error", argsOf(call), 0L, System.currentTimeMillis(), 0L);
+                rec.toolCall(call.getName(), "error", argsOf(call), 0L, System.currentTimeMillis(), 0L, message);
             }
         }
 
@@ -236,8 +264,12 @@ public final class AgentxFrameworkToolGate implements MiddlewareBase {
      * 非框架工具（问渠自己的族）一律放行——它们已经过装配链的 {@code allowsTool}，
      * 在这里再判一次就是第二套口径。
      */
-    private boolean permits(ExecutionPolicy policy, String toolName) {
+    boolean permits(ExecutionPolicy policy, String toolName) {
         if (toolName == null || toolName.isBlank()) return true;
+        if (completionCheck) {
+            // 检查轮只做核对：读工具 + goal_submit/goal_note。业务工具的 policy.denies 仍然生效。
+            return COMPLETION_CHECK_ALLOWED.contains(toolName) && !policy.denies(toolName);
+        }
         if (denyMemoryWrites && "memory_save".equals(toolName)) return false;
         if (policy.denies(toolName)) return false;
         Boolean writes = FRAMEWORK_TOOL_WRITES.get(toolName);

@@ -38,6 +38,10 @@ public enum RunEventType {
     GOAL_TURN("goal_turn"),
     RETRIEVED("retrieved"),
     USAGE("usage"),
+    /** 轮内自动压缩的开始/结束（框架 {@code compaction/start|end}）。
+     *  不发这一帧，压缩那二十多秒在界面上是纯静默：压缩走的是 SUMMARY 用途的模型调用，
+     *  它的思考与正文都被按 purpose 滤掉，没有一帧到达前端。 */
+    COMPACT_STATE("compact_state"),
     IMAGE("image"),
     ARTIFACT("artifact"),
     /** 运行中插话<b>被模型听到</b>的那一刻（框架 {@code inbox/applied}）。不是「用户按了发送」——
