@@ -113,6 +113,9 @@ services:
       LOG_DIR: /app/data/logs
     volumes:
       - app-data:/app/data
+      # 技能落盘根（user-data/skills-users/{uid} 是用户自装的唯一一份，skills-builtin 每次启动重播）：
+      # 不挂卷就写在容器可写层上，`compose up --build` 一次就把人装过的技能清空了。
+      - user-data:/app/user-data
     # app 容器内存上限：防堆外/元空间增长挤占同机中间件；堆 6g + 堆外余量 ≈ 8g
     mem_limit: ${APP_MEM_LIMIT:-8g}
     depends_on:
@@ -126,5 +129,6 @@ services:
 volumes:
   redis-data:
   app-data:
+  user-data:
   meili-data:
   mysql-data:
