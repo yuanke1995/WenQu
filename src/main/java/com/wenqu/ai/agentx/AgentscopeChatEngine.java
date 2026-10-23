@@ -221,6 +221,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                                com.wenqu.ai.service.UsageLedgerService usageLedger,
                                com.wenqu.ai.service.GoalService goalService,
                                com.wenqu.ai.service.ChatRunBus chatRunBus,
+                               com.wenqu.ai.service.McpToolLabelService mcpToolLabelService,
                                java.util.function.Function<ChatCommand, com.wenqu.ai.service.ChatService.TurnModel> modelResolver) {
         this.modelRegistry = modelRegistry;
         this.projectService = projectService;
@@ -238,7 +239,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         this.citations = citations;
         this.redisProperties = redisProperties;
         this.qaLog = qaLog;
-        this.displayNames = new ToolDisplayNames(toolRegistry);
+        this.displayNames = new ToolDisplayNames(toolRegistry, mcpToolLabelService);
         this.skillRepository = skillRepository;
         this.orgService = orgService;
         this.usageLedger = usageLedger;
@@ -635,7 +636,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         mentionsJson(cmd.getMentions()),
                         historyRefsJson(cmd.getHistoryRefs()),
                         null, turnId);
-        Recording recording = new Recording(spills, hooks.consultLedger(), tools, hooks, displayNames);
+        Recording recording = new Recording(spills, hooks.consultLedger(), tools, hooks, displayNames,
+                cmd.getUserId());
         bindFrameworkToolGate(cmd, recording);
 
         // 计划模式（框架原生 plan_enter/plan_write/plan_exit）按轮进入，跑完必须退出。
@@ -1210,7 +1212,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             // 完成检查轮只允许读工具 + goal_submit/goal_note：不靠 prompt 自觉，直接在工具闸上收口。
             toolGate.setCompletionCheck(goalService.isCompletionCheck(turnId));
         }
-        Recording recording = new Recording(spills, hooks.consultLedger(), tools, hooks, displayNames);
+        Recording recording = new Recording(spills, hooks.consultLedger(), tools, hooks, displayNames,
+                cmd.getUserId());
         bindFrameworkToolGate(cmd, recording);
         return new Following(cmd, channel, pool, route, hooks, policy, session,
                 session.transcript().messages().size(), session.log().head().seq(), recording);
@@ -1724,7 +1727,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             recording.toolCall(name, status, args, elapsed, beganAt, charged, result);
             try {
                 emit(channel, RunEventType.TOOL_STATUS,
-                        toolCard(name, status, elapsed, beganAt, charged, args, result));
+                        toolCard(recording.uid, name, status, elapsed, beganAt, charged, args, result));
             } catch (RuntimeException gone) {
                 log.info("[agentx] 待办终态帧没发出去（通道已收），落库那份仍在: session={} tool={}",
                         cmd.getSessionId(), name);
@@ -1778,6 +1781,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
          * 展示名一旦分开取，两边迟早漂移。
          */
         private final ToolDisplayNames displayNames;
+        /**
+         * 本轮归属用户：MCP 动态工具的中文名按它查（MCP 是个人资产，翻译缓存跟着归属走）。
+         * 记在轮上而不是引擎实例上，与 {@link #lastToolName} 同一条纪律——引擎是单例，
+         * 挂实例上就是甲轮的卡查了乙户的缓存。
+         */
+        private final String uid;
         /**
          * tool/decision 与 tool/result 的载荷不一定再带工具名，从 requested 帧沿用（实测）。
          * <p>记在这里而不是引擎字段上：引擎 bean 是单例、两条会话可以同时在跑，挂在实例上就是
@@ -2001,12 +2010,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         Recording(java.util.Queue<String> spills,
                   com.wenqu.ai.agent.subagent.SubAgentConsultService.Ledger consultLedger,
                   WenquAgentxTools tools, WenquAgentxTools.TurnHooks hooks,
-                  ToolDisplayNames displayNames) {
+                  ToolDisplayNames displayNames, String uid) {
             this.spills = spills;
             this.consultLedger = consultLedger;
             this.tools = tools;
             this.hooks = hooks;
             this.displayNames = displayNames;
+            this.uid = uid;
         }
 
         void thinking(String delta) {
@@ -2084,7 +2094,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             entry.put("name", name);
             // 展示名与悬停说明随后端下发（与手写侧 TurnRecorder#recordToolStatus 同源）：
             // 落库的这份是刷新后重建工具卡的唯一依据，写裸名等于把中文名全押在前端那份手抄映射上
-            displayNames.putDisplayFields(entry, name);
+            displayNames.putDisplayFields(entry, uid, name);
             entry.put("status", status);
             // 入参随卡片落库：前端刷新后的工具卡、咨询卡「被咨询那一位的名字」、
             // 以及暗截断对账里的「工具入参字符数」都读这一列（缺它等于三处一起退化）
@@ -2560,7 +2570,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 实时工具卡。发 "running" 会让前端把这张当终态卡 push 出去，随后的 done 又找不到可合并的
                 // start 卡再 push 一张——一次调用渲染成两张，其中停在 "running" 的那张显示为失败(❌)。
                 emit(channel, RunEventType.TOOL_STATUS,
-                        toolCard(recording.lastToolName, "start", 0L, beganAt, 0L, recording.lastToolInput, null));
+                        toolCard(recording.uid, recording.lastToolName, "start", 0L, beganAt, 0L, recording.lastToolInput, null));
             }
             case "tool/result" -> {
                 String name = toolNameOf(data.get("message"));
@@ -2584,7 +2594,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 long elapsed = beganAt <= 0L ? 0L
                         : Math.max(0L, System.currentTimeMillis() - beganAt - covered);
                 recording.toolCall(name, failed ? "error" : "done", args, elapsed, beganAt, charged, resultText);
-                emit(channel, RunEventType.TOOL_STATUS, toolCard(name, failed ? "error" : "done",
+                emit(channel, RunEventType.TOOL_STATUS, toolCard(recording.uid, name, failed ? "error" : "done",
                         elapsed, beganAt, charged, args, resultText));
             }
             case "tool/decision" -> {
@@ -2754,7 +2764,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             approvalCard.put("tool", tool);
             approvalCard.put("args", args);
             approvalCard.put("timeoutMs", configService.getInt("chat.approvalTimeoutMs", 120000));
-            displayNames.putDisplayFields(approvalCard, tool);
+            displayNames.putDisplayFields(approvalCard, cmd.getUserId(), tool);
             // 工具表没收过这个名字（MCP 动态工具常见）：补一句说明，让用户至少知道这张卡在问什么，
             // 而不是光秃秃一个英文名——但绝不拿工具名冒充展示名（前端会把它当「后端认真取过」）
             if (!approvalCard.containsKey("hint")) {
@@ -3720,12 +3730,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * <p>{@code startedAtMs} 用<b>服务端</b>墙上时刻：并发派发时各张卡的起止只有落在同一个钟上才减得出
      * 「从第一个操作到最后一个操作」的真实跨度；拿前端收到帧的本地时刻去减，接流/后台节流就会把跨度算歪。
      */
-    private String toolCard(String name, String status, long elapsedMs, long startedAtMs, long waitedMs,
+    private String toolCard(String uid, String name, String status, long elapsedMs, long startedAtMs, long waitedMs,
                             String args, String result) {
         StringBuilder sb = new StringBuilder("{\"name\":\"").append(esc(name)).append("\"");
-        String label = displayNames.label(name);
+        String label = displayNames.label(uid, name);
         if (label != null) sb.append(",\"label\":\"").append(esc(label)).append("\"");
-        String hint = displayNames.hint(name);
+        String hint = displayNames.hint(uid, name);
         if (hint != null) sb.append(",\"hint\":\"").append(esc(hint)).append("\"");
         sb.append(",\"status\":\"").append(status)
                 .append("\",\"elapsedMs\":").append(elapsedMs);

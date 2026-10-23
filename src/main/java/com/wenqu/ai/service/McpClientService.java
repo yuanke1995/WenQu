@@ -16,9 +16,11 @@ import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -81,6 +83,8 @@ public class McpClientService {
     private static final long[] RETRY_DELAYS_SECONDS = {30, 60, 120, 300, 600};
 
     private final UserMcpMapper userMcpMapper;
+    /** 工具中文名的自动翻译与解析：连接成功后触发指纹比对刷新，状态清单随工具条目带中文名 */
+    private final McpToolLabelService labelService;
 
     /** 连接池按用户隔离：uid → 该用户的连接与状态 */
     private final Map<String, UserPool> pools = new ConcurrentHashMap<>();
@@ -103,8 +107,9 @@ public class McpClientService {
         return t;
     });
 
-    public McpClientService(UserMcpMapper userMcpMapper) {
+    public McpClientService(UserMcpMapper userMcpMapper, McpToolLabelService labelService) {
         this.userMcpMapper = userMcpMapper;
+        this.labelService = labelService;
     }
 
     @PreDestroy
@@ -240,7 +245,12 @@ public class McpClientService {
             try {
                 List<Map<String, String>> tools = new ArrayList<>();
                 for (McpSchema.Tool t : c.listTools().tools()) {
-                    tools.add(Map.of("name", t.name(), "description", brief(t.description())));
+                    Map<String, String> m = new LinkedHashMap<>();
+                    m.put("name", t.name());
+                    // 中文名（缓存里翻译过的）：管理页工具清单与管理页同源展示；没有就写裸名
+                    m.put("label", java.util.Objects.requireNonNullElse(labelService.label(uid, t.name()), t.name()));
+                    m.put("description", brief(t.description()));
+                    tools.add(m);
                 }
                 toolsOk.put(row.getName(), tools);
             } catch (Exception e) {
@@ -569,7 +579,13 @@ public class McpClientService {
         }
         int toolCount = -1;
         try {
-            toolCount = client.listTools().tools().size();
+            List<McpSchema.Tool> tools = client.listTools().tools();
+            toolCount = tools.size();
+            // 连接成功的顺手活：指纹比对后按需把工具清单交给 LLM 译中文名（后台线程，绝不阻塞）。
+            // listTools 在这里本来就要发一次（数工具数），翻译触发挂在同一次结果上，不多花一次远程 IO
+            labelService.refreshAsync(uid, name, tools.stream()
+                    .map(t -> new McpToolLabelService.McpSchemaTool(t.name(), t.description()))
+                    .toList());
         } catch (Exception e) {
             // 仅影响日志的工具数展示；连接已建立、状态已落。远端若真死了，/status 的
             // 在线校验或下一次取工具会把状态翻成 failed
