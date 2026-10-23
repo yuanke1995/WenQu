@@ -416,7 +416,8 @@ CREATE TABLE IF NOT EXISTS `c_ai_user` (
     `memory_enabled` INT DEFAULT 1 COMMENT '用户级长期记忆自动提炼开关（个人设置可改）: 1=开, 0=关；历史行加列时按默认 1（保持原行为）',
     -- default_rerank_model 已随「重排归知识库检索设置」退役（存量库该列无害保留）
     -- default_vision_model 已随「聊天图片理解只看模型能力位」下线（存量库该列无害保留）
-    `oidc_sub`     VARCHAR(255) DEFAULT NULL COMMENT 'OIDC 身份标识（IdP 的 sub；空=未绑定单点登录。唯一索引：一个 sub 只能绑一个账号，防冒用）',
+    `oidc_sub`     VARCHAR(255) DEFAULT NULL COMMENT 'OIDC 身份标识（IdP 的 sub；空=未绑定单点登录）',
+    `oidc_provider` VARCHAR(50) DEFAULT NULL COMMENT 'OIDC 认证源（c_ai_oidc_provider.id）。与 oidc_sub 组成复合唯一：一个 sub 在同一认证源下只能绑一个账号，防冒用；两个不同 IdP 签发相同 sub 不再冲突（空=未绑定）',
     `menu_pref`    TEXT        DEFAULT NULL COMMENT '个人侧栏偏好 JSON：{"order":[menuId...],"hidden":[menuId...]}。仅重排/隐藏「本人有权看到」的菜单，不越权；空=未自定义（走菜单表默认顺序与显隐）',
     `avatar`       VARCHAR(512) DEFAULT NULL COMMENT '用户头像：空=昵称首字；emoji=表情头像；以 / 开头=上传图片 URL（/ai/images/avatar/...）',
     `create_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -424,9 +425,44 @@ CREATE TABLE IF NOT EXISTS `c_ai_user` (
     PRIMARY KEY (`uid`),
     UNIQUE KEY `uk_username` (`username`),
     -- MySQL 唯一索引允许多行 NULL ⇒ 未绑定 OIDC 的本地账号不受影响
-    UNIQUE KEY `uk_oidc_sub` (`oidc_sub`),
+    UNIQUE KEY `uk_oidc_provider_sub` (`oidc_provider`, `oidc_sub`),
     KEY `idx_department` (`department_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 用户表（画像/归属 + 本地登录凭据）';
+
+-- ============================================
+-- 2026-10：OIDC 多认证源（多 IdP）
+-- 把原先 c_ai_config 里 20 个扁平 oidc.* 键搬成「每行一个认证源」的表，
+-- 照搬模型供应商 c_ai_provider 的形状（逐行 RSA 加密 client_secret + 掩码脱敏 + 管理页 CRUD）。
+-- 存量库由 OidcMigrationRunner 自动组装 default 行；新库直接建表。
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS `c_ai_oidc_provider` (
+    `id`                    VARCHAR(50)  NOT NULL COMMENT '主键ID (UUID)',
+    `name`                  VARCHAR(100) NOT NULL COMMENT '认证源名称（登录按钮文案，如「企业微信登录」）',
+    `enabled`               INT          DEFAULT 1 COMMENT '启用: 1=启用 0=停用（停用后登录页不显示该入口）',
+    `issuer_url`            VARCHAR(512) DEFAULT NULL COMMENT 'IdP issuer（discovery 源：/.well-known/openid-configuration）',
+    `client_id`             VARCHAR(255) DEFAULT NULL COMMENT '客户端 ID',
+    `client_secret`         TEXT         DEFAULT NULL COMMENT '客户端密钥（RSA 加密存储，RSA: 前缀）',
+    `redirect_uri`          VARCHAR(512) DEFAULT NULL COMMENT '回调地址（空=按访问来源推导 /api/ai/auth/oidc/callback）',
+    `frontend_base_url`     VARCHAR(512) DEFAULT NULL COMMENT '登录后前端跳转基地址（空=同源相对路径）',
+    `authorization_endpoint` VARCHAR(512) DEFAULT NULL COMMENT '授权端点（空=discovery）',
+    `token_endpoint`        VARCHAR(512) DEFAULT NULL COMMENT '令牌端点（空=discovery）',
+    `userinfo_endpoint`     VARCHAR(512) DEFAULT NULL COMMENT '用户信息端点（空=discovery）',
+    `scopes`                VARCHAR(255) DEFAULT 'openid profile email' COMMENT '请求 scope（空格分隔）',
+    `force_prompt_login`    INT          DEFAULT 0 COMMENT '授权请求带 prompt=login（强制重新认证）',
+    `username_claim`        VARCHAR(100) DEFAULT 'preferred_username' COMMENT '用户名字段',
+    `name_claim`            VARCHAR(100) DEFAULT 'name' COMMENT '显示名字段',
+    `use_raw_username`      INT          DEFAULT 0 COMMENT '用 IdP 用户名当账号标识（便于与本地账号对齐）',
+    `auto_create_user`      INT          DEFAULT 1 COMMENT '首次登录自动建号（关闭则须管理员预先建好并绑定）',
+    `default_role`          VARCHAR(64)  DEFAULT 'user' COMMENT '自动建档默认角色（须是权限管理中已启用的角色）',
+    `default_department`    VARCHAR(50)  DEFAULT NULL COMMENT '自动建档默认部门（不存在则按名称创建）',
+    `fetch_department_info` INT          DEFAULT 0 COMMENT '从 userinfo 同步部门',
+    `department_claim`      VARCHAR(100) DEFAULT 'department' COMMENT '部门映射字段',
+    `sort_order`            INT          DEFAULT 0 COMMENT '排序（小在前，决定登录页按钮顺序）',
+    `create_time`           DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time`           DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='OIDC 认证源表（多 IdP）';
 
 -- ============================================
 -- 2026-09-25: 模型供应商管理（多供应商 + 模型库分类型）
