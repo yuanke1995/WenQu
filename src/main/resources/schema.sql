@@ -536,6 +536,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_user_mcp` (
     `url`         VARCHAR(512) NOT NULL COMMENT '服务地址（可含路径；streamable 默认端点 /mcp、sse 默认 /sse）',
     `type`        VARCHAR(16)  DEFAULT 'streamable' COMMENT '传输类型: streamable | sse',
     `enabled`     INT          DEFAULT 1 COMMENT '启用: 1=启用 0=停用（停用后不建立连接、不暴露其工具）',
+    `tool_labels` TEXT COMMENT '工具中文名缓存（JSON）：{fp:工具集指纹, items:{裸工具名:{label,hint}}}。连接成功后由 LLM 批量翻译写入，指纹未变不重译',
     `create_time` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time` DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
