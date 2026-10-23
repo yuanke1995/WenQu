@@ -261,6 +261,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 ### MCP 双向互联
 
 - **Client（接进来）**：接入任意 MCP Server（streamable/sse），连接状态、整体重连、临时连通性探测；按用户隔离连接池（每个用户在「MCP 外部工具」登记自己的 Server，无全局配置）
+- **附带本地统计 Server**：`scripts/mcp-stats/server.py` 是一个只读 MCP Server（streamable HTTP @ `127.0.0.1:8765`），暴露 `sql_query`/`db_overview` 两个工具，对本地 `wenqu_ai` 库做白名单只读查询（`SELECT/SHOW/DESC/EXPLAIN` + 强制 `LIMIT` + 结果限量），供「取数助手」类对话直接查真实数据。需在「MCP 外部工具」自行登记后挂到智能体（见手册《MCP 与开放能力》）
 - **Server（送出去）**：智能体发布时可开启 **MCP 端点 `/ai/mcp/{token}`**（Streamable HTTP，无状态）——Claude Desktop / Cursor 等客户端粘贴地址即可调用该智能体；token 即凭据（与网页分享同源，停用/撤销立即失效），按发布者身份检索、能力收窄同游客模式；总开关 `mcp.server.enabled` 默认关
 - **平台级入口 `/ai/mcp`**：一个地址暴露整套能力（检索知识库 / 提问 / 列可见知识库 / 列可用智能体），凭据为 API Key（需在「API 密钥」中打开该 Key 的「MCP」开关），可见范围与 Key 创建者在网页上看到的完全一致
 
