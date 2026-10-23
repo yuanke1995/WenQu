@@ -9,10 +9,6 @@
     </header>
 
     <div v-if="loading" class="sh-state">加载中…</div>
-    <div v-else-if="error" class="sh-state err">
-      <div class="sh-err-t">{{ error }}</div>
-      <div class="sh-err-d">链接可能已被停止分享或已失效，请联系分享给你的人。</div>
-    </div>
     <div v-else-if="!info.messages.length" class="sh-state">这段对话还没有内容。</div>
 
     <div v-else class="sh-list">
@@ -68,15 +64,15 @@
 
 <script setup>
 import { onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { getSharedSession } from '../api'
 // 正文与图片灯箱与主聊天页同源（mermaid 补画也已下沉到 AnswerBody，不再由本页整容器扫一遍）
 import AnswerBody from '../components/AnswerBody.vue'
 import AnswerViewerHost from '../components/AnswerViewerHost.vue'
 
 const route = useRoute()
+const router = useRouter()
 const loading = ref(true)
-const error = ref('')
 const info = ref({ title: '', messages: [], sharedAt: null })
 
 /** 外部来源（联网 WEB / MCP）：没有库内文档名，展示名用站点名——与对话页 externalOrigin 同口径。
@@ -115,7 +111,10 @@ onMounted(async () => {
     const r = await getSharedSession(String(route.params.token || ''))
     info.value = r?.data || { title: '', messages: [] }
   } catch (e) {
-    error.value = e.message || '分享链接无效或已停止访问'
+    // 分享不存在/已停用：与智能体分享页同口径——整页跳独立 401 页（原因经 ?msg= 带过去），
+    // 不再在本页留一个错误态（error ref 与配套样式随之退役）
+    router.replace({ path: '/error', query: { code: '401', msg: e.message || '分享链接无效或已停止访问' } })
+    return
   } finally {
     loading.value = false
   }
@@ -135,9 +134,6 @@ onMounted(async () => {
 .sh-title { font-size: 20px; font-weight: 600; margin: 0 0 6px; line-height: 1.4; }
 .sh-sub { font-size: 12px; color: var(--app-text3); }
 .sh-state { width: 100%; max-width: 820px; padding: 40px 0; text-align: center; color: var(--app-text3); font-size: 13px; }
-.sh-state.err { color: var(--app-text2); }
-.sh-err-t { font-size: 15px; color: var(--app-danger-text); margin-bottom: 6px; }
-.sh-err-d { font-size: 12px; color: var(--app-text3); }
 .sh-list { width: 100%; max-width: 820px; display: flex; flex-direction: column; gap: 18px; }
 .sh-row { display: flex; }
 .sh-row.user { justify-content: flex-end; }

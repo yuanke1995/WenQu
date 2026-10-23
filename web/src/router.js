@@ -19,6 +19,9 @@ const routes = [
   // pageFlow：内容按文档流自然增高的独立页（不经 AppLayout 工作台外壳）——App.vue 据此
   // 绕开 .content-app 的 height:100vh + overflow:hidden，否则超出一屏的部分既滚不动也不显示。
   { path: '/shared/:token', component: page(() => import('./views/SharedSessionPage.vue')), meta: { title: '对话分享', public: true, pageFlow: true } },
+  // 通用 HTTP 错误页（/error?code=401&msg=...）：免登录（链接失效的访客本就没有登录态）。
+  // 支持任意 3 位状态码，code 决定兜底文案与是否给「去登录」入口；跳转方经 ?msg= 带具体原因优先展示。
+  { path: '/error', component: page(() => import('./views/HttpErrorPage.vue')), meta: { title: '出错了', public: true } },
   { path: '/chat', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/ChatPage.vue')) }] },
   // 移动原生壳（M2）：不经 AppLayout 工作台外壳，独立布局；手机访问 /chat 由守卫重定向到这里。
   // 与管理页的 DesktopOnlyGuard 白名单无关（那套只管 AppLayout 子路由）。

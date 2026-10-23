@@ -102,7 +102,7 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 // 只留本页自己画的两个图标：发送/停止、引用箭头、复制/评价/重生成、降级感叹号、附件图标
 // 都已随对应叶子进各自组件（这里留着就成了「看着像在用」的死导入）
 import { HistoryOutlined, PlusOutlined } from '@ant-design/icons-vue'
@@ -124,6 +124,7 @@ import { MAX_IMAGES, MAX_FILES, MAX_FILE_MB, SUPPORTED_EXTS, REJECT, classifyInt
 import { resolveImg } from '../utils/markdown'
 
 const route = useRoute()
+const router = useRouter()
 const token = computed(() => String(route.params.token || ''))
 const isEmbed = computed(() => route.query.embed === '1')
 
@@ -324,7 +325,9 @@ onMounted(async () => {
       }
     }
   } catch (e) {
-    message.error(e.message || '分享链接无效或已停止访问')
+    // 分享不存在/已停用：不留在本页弹 toast（游客面对的是半空的对话壳），
+    // 整页跳独立 401 页，后端给的具体原因带过去展示
+    router.replace({ path: '/error', query: { code: '401', msg: e.message || '分享链接无效或已停止访问' } })
     return
   }
   // 刷新恢复：有会话则拉最近历史（只能取到自己的会话，后端按访客 uid 校验）
