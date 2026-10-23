@@ -175,18 +175,22 @@ const cap = computed(() => {
   // 旧的 tokens.budget 回落已删——那是手写引擎时代的检索配额，框架引擎下不存在
   const win = (t && Number(t.window)) || Number(modelIndex.value[effectiveModel.value]?.contextWindow) || 0
   // 用量与缓存命中都与 PC 侧同口径：分母取 context（本轮结束时的上下文占用）而非 prompt
-  // （各轮输入之和的账单口径），分子取 cachedLast（末轮命中）——否则命中率能算出 >100%。
+  // （各轮输入之和的账单口径），分子只认 cachedLast——0 是真实的「末轮没命中」，
+  // 拿 || 回落到 cached（各轮命中之和）会算出千分位的命中率。
+  // 是否显示这一档看 cached（网关报没报过缓存 token）：不支持缓存的模型整条不出现，
+  // 支持但末轮全丢就照实报 0%；各轮命中之和上面「缓存命中 N tokens」那一行已经在说。
   const used = t ? (Number(t.context) || Number(t.prompt) || 0) : 0
   const parts = (t && t.parts && typeof t.parts === 'object') ? t.parts : null
   const rows = parts
     ? CTX_PART_META.filter(x => Number(parts[x.key]) > 0).map(x => ({ ...x, tokens: Number(parts[x.key]) }))
     : []
-  const cached = t ? (Number(t.cachedLast) || Number(t.cached) || 0) : 0
+  const cachedLast = t && t.cachedLast != null ? Number(t.cachedLast) : null
   return {
     window: win, used, rows,
     pct: win > 0 ? Math.min(100, Math.round(used / win * 1000) / 10) : 0,
     segW: r => win > 0 ? Math.min(100, r.tokens / win * 100).toFixed(2) + '%' : '0%',
-    cacheRate: (cached > 0 && used > 0) ? Math.round(cached / used * 1000) / 10 : null
+    cacheRate: (cachedLast != null && used > 0 && Number(t.cached) > 0)
+      ? Math.round(cachedLast / used * 1000) / 10 : null
   }
 })
 

@@ -84,8 +84,11 @@ function serveStatic (page) {
         { messageId: 'q-1', role: 'user', content: '登录步骤是什么？', createTime: Date.now() - 120000 },
         { messageId: 'a-1', role: 'assistant', content: '按下面三步登录：① 打开登录页 ② 输入账号 ③ 提交。', createTime: Date.now() - 60000,
           sources: [{ knowledgeId: 'k-1', ref: '1', fileName: '操作手册.pdf', title: '登录', snippet: '登录流程说明…', score: 0.82 }],
-          tokens: { prompt: 1200, context: 8, budget: 8000, window: 8000, output: 300, total: 1500, cached: 600,
-                    parts: { messages: 900, system: 200, input: 100 } } }
+          tokens: { prompt: 12000, context: 4000, window: 8000, output: 300, finalOutput: 300, total: 12300,
+                    // 照真实坏数据摆：本轮压过上下文后末轮 cachedLast 是真 0，而 cached（各轮命中之和）远大于 context。
+                    // 命中率只认 cachedLast → 0%；一旦退回「0 就回落 cached」的算法会算出 225%，断言当场红
+                    cached: 9000, cachedLast: 0, outputIsReal: true, hits: 1,
+                    parts: { system: 1200, history: 1800, input: 400, toolOutput: 600 } } }
       ])
     }
     if (u.pathname === '/api/ai/debug/retrieval') {
@@ -429,16 +432,19 @@ const check = (ok, label, detail = '') => {
   check(loaded.rows === 2, 'mock 历史渲染出两行消息', `rows=${loaded.rows}`)
   check(loaded.more, '最新一条 AI 消息的操作行有「更多操作」入口')
 
-  // ---- 上下文容量（P2）：填充段 + 窗口占用 + 缓存命中率（mock tokens 带 parts/window/cached）----
+  // ---- 上下文容量（P2）：填充段 + 窗口占用 + 缓存命中率 ----
+  // 夹具按框架真实 tokens 形状给（context=分类之和、cached=各轮命中之和、cachedLast=末轮命中）。
+  // 命中率只认 cachedLast：末轮真 0 命中就照实显示 0%，回落 cached 会是 225%
   check(await openSheet('.m-bar-title'), '状态与来源 sheet 可打开（容量断言用）')
   const capState = await page.evaluate(() => ({
     segs: document.querySelectorAll('.cap-bar .cap-seg').length,
     meta: (document.querySelector('.cap-meta') || {}).textContent.replace(/\s+/g, ' ').trim(),
     rows: [...document.querySelectorAll('.rs-kv .cap-label')].map(x => x.textContent.trim()).join('/')
   }))
-  check(capState.segs === 3, '容量填充条按分类分段（mock 三类）', `segs=${capState.segs}`)
-  check(/缓存命中 50%/.test(capState.meta), '窗口用量与缓存命中率已展示', capState.meta)
-  check(capState.rows.includes('消息') && capState.rows.includes('系统提示词'), '分类明细带标签', capState.rows)
+  check(capState.segs === 4, '容量填充条按分类分段（mock 四类）', `segs=${capState.segs}`)
+  check(/缓存命中 0%/.test(capState.meta), '末轮 0 命中照实显示，不回落到各轮命中之和', capState.meta)
+  check(!/225%/.test(capState.meta), '命中率没吃进 cached（各轮之和除当下上下文）', capState.meta)
+  check(capState.rows.includes('历史对话') && capState.rows.includes('系统提示词'), '分类明细带标签', capState.rows)
   await page.locator('.bs-close').first().dispatchEvent('click')
   await page.waitForTimeout(500)
   await page.locator('.ai-actions .act-btn[title="更多操作"]').dispatchEvent('click')

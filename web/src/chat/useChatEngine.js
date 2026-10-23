@@ -525,16 +525,21 @@ const ctxCapData = computed(() => {
     : []
   const sum = rows.reduce((a, r) => a + r.tokens, 0)
   const pct = window_ > 0 ? Math.min(100, Math.round(used / window_ * 1000) / 10) : 0
-  // 缓存命中：优先 cachedLast（末轮命中量，与上面的 used 同为「此刻上下文」口径）。
-  // 没有它才回落 cached（各轮命中之和）——那是账单口径，配上 context 当分母能算出 >100% 的命中率。
-  const cached = t ? (Number(t.cachedLast) || Number(t.cached) || 0) : 0
+  // 缓存命中：分子只认 cachedLast（末轮命中量，与上面的 used 同为「此刻上下文」口径）。
+  // 不能回落 cached（各轮命中之和，账单口径）：实测本轮压过上下文时末轮是真 0 命中，
+  // 而 0 在 || 眼里等于「没这个字段」，会拿 54.9 万的历史命中之和去除 3 万的当下上下文，
+  // 报出 1791% 这种数。
+  // 显示与否看 cached（本轮网关报没报过缓存命中 token）：不支持缓存的模型两个值都是 0，整行不出现；
+  // 支持缓存但末轮全丢就照实报 0%——那是「上下文被压过、前缀失效」的信号，不是缺数据。
+  const cachedLast = t && t.cachedLast != null ? Number(t.cachedLast) : null
   return {
     window: window_, used, pct, rows, sum,
     // 填充条宽=用量/窗口（不取整：窗口大用量小时 pct 取整会成 0 宽），填充内段宽按构成比分
     fillPct: window_ > 0 ? Math.min(100, used / window_ * 100) : 0,
     // 分类占比以分类之和为分母（后端按 context 校准后两者相等；无 parts 时退化为空列表）
     pctOf: r => sum > 0 ? (r.tokens / sum * 100) : 0,
-    cached, cacheRate: (cached > 0 && used > 0) ? Math.round(cached / used * 1000) / 10 : null
+    cacheRate: (cachedLast != null && used > 0 && Number(t.cached) > 0)
+      ? Math.round(cachedLast / used * 1000) / 10 : null
   }
 })
 // 工具栏容量圆环：r=7.5 周长固定，按 pct 撑 stroke-dasharray；告警档位与右栏占用条一致
