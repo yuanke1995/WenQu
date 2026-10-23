@@ -57,7 +57,8 @@ def _query(sql: str, max_rows: int = MAX_ROWS) -> dict:
 def sql_query(sql: str) -> str:
     """对问渠本地库（wenqu_ai）执行一条只读查询，返回 {columns, rows, row_count}。
 
-    参数 sql 必须是单条 SELECT/SHOW/DESC/EXPLAIN 语句；不带 LIMIT 时自动补 LIMIT 200。
+    参数 sql 必须是单条 SELECT/SHOW/DESC/EXPLAIN 语句；SELECT 不带 LIMIT 时自动补 LIMIT 200
+    （SHOW/DESC/EXPLAIN 结果集本就很小，不补 LIMIT）。
     库里有什么先调 db_overview 摸底；不认识的表用 SHOW COLUMNS 看结构，不要猜列名。
     """
     one = sql.strip().rstrip(";")
@@ -67,7 +68,8 @@ def sql_query(sql: str) -> str:
         raise ValueError("只允许只读查询（SELECT/SHOW/DESC/EXPLAIN）")
     if FORBIDDEN.search(one):
         raise ValueError("语句包含写操作或被禁用的关键字")
-    if not re.search(r"\blimit\b", one, re.IGNORECASE):
+    # 只对 SELECT/WITH 自动补 LIMIT：SHOW/DESC/EXPLAIN 不接受 LIMIT 子句，原样执行
+    if re.match(r"^\s*(select|with)\b", one, re.IGNORECASE) and not re.search(r"\blimit\b", one, re.IGNORECASE):
         one += f" LIMIT {MAX_ROWS}"
     return json.dumps(_query(one), ensure_ascii=False)
 

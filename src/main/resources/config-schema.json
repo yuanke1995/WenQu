@@ -2001,7 +2001,7 @@
       "label": "单次咨询超时(ms)",
       "type": "number",
       "tips": "agentConsultTimeout",
-      "def": 120000,
+      "def": 300000,
       "min": 5000,
       "note": "等那条子轮跑完的上限。超时按失败回报给模型，它会换一位助手或改为自己作答，不会把整轮吊住",
       "tier": 2

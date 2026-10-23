@@ -631,6 +631,35 @@ const markDiagramPending = el => {
  * <p>安全口径：只走 JSON.parse（不 eval），option 里不可能有可执行代码；
  * 图表画在 canvas 上，文本都进 echarts 自己的绘制层，不产生可注入的 HTML。
  */
+
+/**
+ * 渲染前对 option 做一次「不破坏意图」的版式校正。
+ *
+ * <p>模型生成的图经常把 title（含 subtext 日期行）和 legend 都顶在 top 边缘
+ * （ECharts 默认 title.top='top'、legend.top='top'，都等于 y≈0），两者在画布
+ * 顶部直接叠字、显得拥挤。这里只在「双方都没显式指定 top、且确实会叠」时，把
+ * 标题下压一点、图例挪到标题（含副标题）下方，并给绘图区让出顶部空间。
+ *
+ * <p>凡是用户/模型显式写过 top 或某个具体位置的，一律不动，避免改掉本来有意的布局。
+ */
+const dedupeEChartTitleLegend = (opt) => {
+  if (!opt || typeof opt !== 'object' || Array.isArray(opt)) return opt
+  const t = !Array.isArray(opt.title) ? opt.title : null
+  const l = !Array.isArray(opt.legend) ? opt.legend : null
+  if (!t || !l) return opt
+  const isAuto = v => v == null || v === 'top' || v === 'center' || v === 0
+  if (!isAuto(t.top) || !isAuto(l.top)) return opt
+  const hasSub = !!(t.subtext && String(t.subtext).trim())
+  t.top = 6
+  l.top = hasSub ? 40 : 32
+  if (!opt.grid) {
+    opt.grid = { top: hasSub ? 76 : 68 }
+  } else if (!Array.isArray(opt.grid) && opt.grid.top == null) {
+    opt.grid.top = hasSub ? 76 : 68
+  }
+  return opt
+}
+
 const paintEChart = async (el, code) => {
   el.dataset.state = 'loading'
   const srcPre = el.querySelector('.md-diagram-src-code')
@@ -648,6 +677,7 @@ const paintEChart = async (el, code) => {
     showDiagramError(el, code, new Error('option 不是合法 JSON：' + (e && e.message ? String(e.message).split('\n')[0] : '解析失败')))
     return
   }
+  opt = dedupeEChartTitleLegend(opt)
   if (!opt || typeof opt !== 'object' || Array.isArray(opt) || !opt.series) {
     if (chartOptionTruncated(code)) {
       el.dataset.state = 'pending'

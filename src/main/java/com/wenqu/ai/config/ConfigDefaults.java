@@ -62,7 +62,7 @@ public final class ConfigDefaults {
     /** agent.consultMaxPerTurn：一轮最多把几问交给别的助手去查（P5 咨询工具；超出如实回给模型，不静默少问） */
     public static final int AGENT_CONSULT_MAX_PER_TURN = 3;
     /** agent.consultTimeoutMs：单次咨询要等那条子轮跑完的上限（超时按失败回报，不拖垮父轮） */
-    public static final int AGENT_CONSULT_TIMEOUT_MS = 120_000;
+    public static final int AGENT_CONSULT_TIMEOUT_MS = 300_000;
 
     // ---- 长期记忆 ----
 
