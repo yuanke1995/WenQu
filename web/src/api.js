@@ -791,11 +791,23 @@ export const getMcpStatus = (retry, verifyOnline, withTools) => {
   return request('/mcp/status' + (qs.length ? '?' + qs.join('&') : ''))
 }
 export const reloadMcp = () => request('/mcp/reload', { method: 'POST' })
-export const probeMcp = (url, type) => request('/mcp/probe', { method: 'POST', body: JSON.stringify({ url, type }) })
+/** 测试连接：headers 传 undefined = 不带（编辑态用 serverId 让后端取已保存凭据）；传 {} = 明确不带凭据 */
+export const probeMcp = (url, type, headers, serverId) => {
+  const body = { url, type }
+  if (headers !== undefined) body.headers = headers
+  if (serverId) body.serverId = serverId
+  return request('/mcp/probe', { method: 'POST', body: JSON.stringify(body) })
+}
 export const addMcpServer = body => request('/mcp/servers', { method: 'POST', body: JSON.stringify(body) })
 export const updateMcpServer = (id, body) => request('/mcp/servers/' + id, { method: 'PUT', body: JSON.stringify(body) })
+/** 批量导入：一次校验、只重连一次；返回 {added:[{id,name}], skipped:[{name,reason}]} */
+export const importMcpServers = servers =>
+  request('/mcp/servers/import', { method: 'POST', body: JSON.stringify({ servers }) })
 export const setMcpServerEnabled = (id, enabled) =>
   request(`/mcp/servers/${id}/enabled`, { method: 'POST', body: JSON.stringify({ enabled }) })
+/** 手工起工具中文名（label 传空串 = 恢复展示原名）；返回 {tool, label} */
+export const setMcpToolLabel = (id, tool, label) =>
+  request(`/mcp/servers/${id}/tool-label`, { method: 'PUT', body: JSON.stringify({ tool, label }) })
 export const deleteMcpServer = id => request('/mcp/servers/' + id, { method: 'DELETE' })
 // 批量（只碰自己的）：返回 {succeeded:[id], failed:[{id,name,error}]}；改完连接池统一重建
 export const batchDeleteMcpServers = ids =>

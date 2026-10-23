@@ -92,8 +92,24 @@
           </div>
           <div v-if="expanded === s.id" class="mcp-tools">
             <div v-for="t in s.tools" :key="t.name" class="mcp-tool">
-              <code>{{ t.label && t.label !== t.name ? t.label : t.name }}</code>
-              <span class="mcp-tool-desc">{{ t.description || '（无描述）' }}</span>
+              <template v-if="toolEditing === s.id + '|' + t.name">
+                <input v-model="toolDraft" class="app-input mcp-tool-name-input" maxlength="16"
+                       :placeholder="'留空恢复原名 ' + t.name"
+                       @keyup.enter="saveToolLabel(s, t)" @keyup.esc="cancelToolEdit" />
+                <button class="app-link-btn" :disabled="toolSaving" @click="saveToolLabel(s, t)">
+                  {{ toolSaving ? '保存中…' : '保存' }}
+                </button>
+                <button class="app-link-btn" @click="cancelToolEdit">取消</button>
+              </template>
+              <template v-else>
+                <code class="mcp-tool-label" :class="{ named: t.label && t.label !== t.name }"
+                      :title="t.name">{{ t.label && t.label !== t.name ? t.label : t.name }}</code>
+                <code v-if="t.label && t.label !== t.name" class="mcp-tool-raw" title="工具原名">{{ t.name }}</code>
+                <span class="mcp-tool-desc">{{ t.description || '（无描述）' }}</span>
+                <button class="app-link-btn mcp-tool-rename" @click="startToolEdit(s, t)">
+                  {{ t.label && t.label !== t.name ? '改名' : '起中文名' }}
+                </button>
+              </template>
             </div>
             <div v-if="!s.tools.length" class="key-dim">该服务未提供任何工具</div>
           </div>
@@ -102,7 +118,11 @@
     </div>
 
     <!-- 添加 / 编辑弹窗：先测再存（地址填错当场就能发现，不用先存再回来删） -->
-    <a-modal v-model:open="formOpen" :title="form.id ? '编辑 MCP 服务' : '添加 MCP 服务'" :footer="null" :width="580">
+    <a-modal v-model:open="formOpen" :footer="null" :width="580">
+      <template #title>
+        <span>{{ form.id ? '编辑 MCP 服务' : '添加 MCP 服务' }}</span>
+        <button v-if="!form.id" class="app-link-btn import-entry" @click="openImport">粘贴 JSON 导入</button>
+      </template>
       <a-form layout="vertical">
         <a-form-item label="名称" required>
           <a-input v-model:value="form.name" placeholder="如：时间工具 / 内部系统查询" :maxlength="40" />
@@ -116,6 +136,43 @@
             <a-radio-button value="sse">SSE</a-radio-button>
           </a-radio-group>
         </a-form-item>
+        <a-collapse ghost class="adv-collapse">
+          <a-collapse-panel key="auth" header="认证与请求头（一般保持默认即可）">
+            <div v-if="form.id && form.hasHeaders && !headerEditing && !clearHeaders" class="hdr-saved">
+              <div class="hdr-saved-line">
+                <span class="key-dim">已保存请求头：</span>
+                <code v-for="k in savedHeaderKeys" :key="k" class="hdr-chip">{{ k }}</code>
+              </div>
+              <div class="hdr-saved-actions">
+                <button class="app-link-btn" @click="startReplaceHeaders">替换为新的请求头</button>
+                <button class="app-link-btn danger" @click="clearHeaders = true">清除凭据</button>
+              </div>
+            </div>
+            <div v-if="clearHeaders" class="hdr-clear">
+              保存后将清除已保存的请求头（连接会按无凭据重建）。
+              <button class="app-link-btn" @click="clearHeaders = false">取消清除</button>
+            </div>
+            <template v-if="headersEditorVisible">
+              <div v-for="(row, i) in headerRows" :key="i" class="hdr-row">
+                <a-input v-model:value="row.key" placeholder="键名，如 Authorization" class="hdr-key"
+                         autocomplete="off" />
+                <a-input-password v-model:value="row.value" placeholder="值" class="hdr-value"
+                                  autocomplete="new-password" />
+                <button class="app-icon-btn" aria-label="删除这一行" title="删除这一行" @click="headerRows.splice(i, 1)">
+                  <delete-outlined />
+                </button>
+              </div>
+              <div class="hdr-actions">
+                <button class="app-link-btn" @click="addHeaderRow()">+ 添加一行</button>
+                <a-select :value="null" size="small" placeholder="常用预设" style="width: 150px" @change="applyPreset">
+                  <a-select-option value="bearer">Bearer Token</a-select-option>
+                  <a-select-option value="apikey">X-Api-Key</a-select-option>
+                </a-select>
+              </div>
+              <div class="hdr-extra">值只写不回显；编辑时不动这里 = 保持原凭据，填写 = 整块替换。</div>
+            </template>
+          </a-collapse-panel>
+        </a-collapse>
         <a-form-item v-if="probe.done" label="测试结果">
           <div v-if="probe.available" class="mcp-probe-ok">连接正常，提供 {{ probe.tools.length }} 个工具</div>
           <div v-else class="mcp-probe-bad">连接失败：{{ probe.error }}</div>
@@ -136,15 +193,41 @@
         </button>
       </div>
     </a-modal>
+
+    <!-- JSON 粘贴导入：Claude/Cursor 的 mcpServers 片段，先预览再一次性导入 -->
+    <a-modal v-model:open="importOpen" title="粘贴 JSON 导入" :width="640" :footer="null">
+      <a-form layout="vertical">
+        <a-form-item label="mcpServers 片段" extra="只导入 http(s) 地址型条目；本地进程（command / stdio）型会跳过并说明原因">
+          <a-textarea v-model:value="importText" :rows="7"
+                      placeholder='{"mcpServers":{"github":{"url":"https://api.githubcopilot.com/mcp/","headers":{"Authorization":"Bearer xxx"}}}}' />
+        </a-form-item>
+      </a-form>
+      <div class="import-actions">
+        <button class="app-btn ghost" :disabled="importBusy" @click="parseImportText">解析预览</button>
+      </div>
+      <div v-if="importPreview.length" class="import-list">
+        <div v-for="it in importPreview" :key="it.key" class="import-item" :class="{ bad: !it.ok }">
+          <span class="import-mark">{{ it.ok ? '可导入' : '跳过' }}</span>
+          <span class="import-name">{{ it.name || '（未命名）' }}</span>
+          <span class="import-reason">{{ it.ok ? it.url : it.reason }}</span>
+        </div>
+      </div>
+      <div v-if="importPreview.length" class="key-modal-foot">
+        <button class="app-btn ghost" @click="importOpen = false">取消</button>
+        <button class="app-btn" :disabled="importBusy || !importable.length" @click="doImport">
+          {{ importBusy ? '导入中…' : `导入 ${importable.length} 个` }}
+        </button>
+      </div>
+    </a-modal>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { SearchOutlined, ReloadOutlined, PlusOutlined } from '@ant-design/icons-vue'
+import { SearchOutlined, ReloadOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons-vue'
 import { getMcpStatus, reloadMcp, probeMcp, addMcpServer, updateMcpServer, setMcpServerEnabled, deleteMcpServer,
-         batchDeleteMcpServers, batchSetMcpServersEnabled } from '../api'
+         batchDeleteMcpServers, batchSetMcpServersEnabled, importMcpServers, setMcpToolLabel } from '../api'
 
 const servers = ref([])
 const toolsEnabled = ref(true)   // 平台「工具调用」总开关（管理员控制），关了连上也没用
@@ -156,8 +239,22 @@ const expanded = ref('')
 const togglingId = ref('')
 const saving = ref(false)
 const formOpen = ref(false)
-const form = ref({ id: '', name: '', url: '', type: 'streamable' })
+const form = ref({ id: '', name: '', url: '', type: 'streamable', hasHeaders: false })
 const probe = ref({ loading: false, done: false, available: false, error: '', tools: [] })
+// 认证区：编辑态默认只显示已保存的键名；「替换」打开空白行，保存时整块替换
+const savedHeaderKeys = ref([])
+const headerRows = ref([])
+const headerEditing = ref(false)
+const clearHeaders = ref(false)
+const headersEditorVisible = computed(() =>
+  !form.value.id || headerEditing.value || !form.value.hasHeaders)
+// JSON 导入
+const MAX_MCP_SERVERS = 10
+const importOpen = ref(false)
+const importText = ref('')
+const importPreview = ref([])
+const importBusy = ref(false)
+const importable = computed(() => importPreview.value.filter(x => x.ok))
 
 const connectedCount = computed(() => servers.value.filter(s => s.connected).length)
 const filtered = computed(() => {
@@ -305,21 +402,87 @@ const doReload = async () => {
 }
 
 const toggleTools = s => { expanded.value = expanded.value === s.id ? '' : s.id }
-const openAdd = () => {
-  form.value = { id: '', name: '', url: '', type: 'streamable' }
+
+// ---- 工具中文名：手工逐条起名（后端不再自动翻译；没起名就展示工具原名） ----
+const toolEditing = ref('')   // `${serverId}|${toolName}`
+const toolDraft = ref('')
+const toolSaving = ref(false)
+const startToolEdit = (s, t) => {
+  toolEditing.value = s.id + '|' + t.name
+  toolDraft.value = t.label && t.label !== t.name ? t.label : ''
+}
+const cancelToolEdit = () => { toolEditing.value = ''; toolDraft.value = '' }
+const saveToolLabel = async (s, t) => {
+  if (toolSaving.value) return
+  toolSaving.value = true
+  try {
+    const r = await setMcpToolLabel(s.id, t.name, toolDraft.value.trim())
+    if (!r.success) { message.error(r.msg || '保存失败'); return }
+    t.label = r.data?.label || t.name
+    cancelToolEdit()
+    message.success(t.label === t.name ? '已恢复原名' : '已保存名字')
+  } catch (e) {
+    message.error(e.message || '保存失败')
+  } finally {
+    toolSaving.value = false
+  }
+}
+const resetProbe = () => {
   probe.value = { loading: false, done: false, available: false, error: '', tools: [] }
+}
+const resetHeaderState = () => {
+  savedHeaderKeys.value = []
+  headerRows.value = []
+  headerEditing.value = false
+  clearHeaders.value = false
+}
+const addHeaderRow = (key = '', value = '') => headerRows.value.push({ key, value })
+const applyPreset = kind => {
+  if (kind === 'bearer') addHeaderRow('Authorization', 'Bearer ')
+  else if (kind === 'apikey') addHeaderRow('X-Api-Key', '')
+}
+const startReplaceHeaders = () => {
+  clearHeaders.value = false
+  headerEditing.value = true
+  headerRows.value = []
+  addHeaderRow()
+}
+/** 编辑行 → 请求头对象；没有任何键时返回 null（新增态=不带凭据） */
+const headersObject = () => {
+  const out = {}
+  let any = false
+  for (const r of headerRows.value) {
+    const k = String(r.key || '').trim()
+    if (!k) continue
+    out[k] = String(r.value == null ? '' : r.value)
+    any = true
+  }
+  return any ? out : null
+}
+const openAdd = () => {
+  form.value = { id: '', name: '', url: '', type: 'streamable', hasHeaders: false }
+  resetHeaderState()
+  resetProbe()
   formOpen.value = true
 }
 const openEdit = s => {
-  form.value = { id: s.id, name: s.name, url: s.url || '', type: s.type || 'streamable' }
-  probe.value = { loading: false, done: false, available: false, error: '', tools: [] }
+  form.value = { id: s.id, name: s.name, url: s.url || '', type: s.type || 'streamable', hasHeaders: !!s.hasHeaders }
+  resetHeaderState()
+  savedHeaderKeys.value = Array.isArray(s.headerKeys) ? [...s.headerKeys] : []
+  resetProbe()
   formOpen.value = true
 }
 const testForm = async () => {
   if (!form.value.url.trim()) { message.warning('请先填写服务地址'); return }
+  // 编辑态没动认证区 = 用已保存凭据（只传 serverId）；动了 = 用当前编辑行；清除 = 显式不带
+  let headers
+  if (!form.value.id) headers = headersObject() || undefined
+  else if (clearHeaders.value) headers = {}
+  else if (headerEditing.value) headers = headersObject() || {}
+  else headers = undefined
   probe.value = { loading: true, done: false, available: false, error: '', tools: [] }
   try {
-    const r = await probeMcp(form.value.url.trim(), form.value.type)
+    const r = await probeMcp(form.value.url.trim(), form.value.type, headers, form.value.id || undefined)
     const d = r.success ? r.data : null
     probe.value = { loading: false, done: true, available: !!(d && d.available),
       error: (d && d.error) || '未知错误', tools: (d && d.tools) || [] }
@@ -332,11 +495,19 @@ const submitForm = async () => {
   const url = form.value.url.trim()
   if (!name) { message.warning('请填写名称'); return }
   if (!url) { message.warning('请填写服务地址'); return }
+  const payload = { name, url, type: form.value.type }
+  if (form.value.id) {
+    if (clearHeaders.value) payload.clearHeaders = true
+    else if (headerEditing.value) payload.headers = headersObject() || {}
+  } else {
+    const headers = headersObject()
+    if (headers) payload.headers = headers
+  }
   saving.value = true
   try {
     const r = form.value.id
-      ? await updateMcpServer(form.value.id, { name, url, type: form.value.type })
-      : await addMcpServer({ name, url, type: form.value.type, enabled: true })
+      ? await updateMcpServer(form.value.id, payload)
+      : await addMcpServer({ ...payload, enabled: true })
     if (r.success) {
       message.success(form.value.id ? '已保存，后台连接中' : '已添加，后台连接中')
       formOpen.value = false
@@ -344,6 +515,94 @@ const submitForm = async () => {
     } else message.error(r.msg || '保存失败')
   } catch (e) { message.error(e.message || '保存失败') }
   finally { saving.value = false }
+}
+
+// ---- JSON 粘贴导入 ----
+const openImport = () => {
+  importText.value = ''
+  importPreview.value = []
+  importOpen.value = true
+}
+const guessType = (cfg, url) => {
+  const t = String((cfg && cfg.type) || '').trim().toLowerCase()
+  if (t === 'sse') return 'sse'
+  if (t) return 'streamable' // http / streamable / streamable-http 统一按 streamable
+  try {
+    const path = new URL(url).pathname.replace(/\/+$/, '')
+    return /\/sse$/i.test(path) ? 'sse' : 'streamable'
+  } catch (e) { return 'streamable' }
+}
+const parseImportText = () => {
+  let obj
+  try { obj = JSON.parse(importText.value) } catch (e) {
+    message.error('JSON 解析失败：' + (e.message || ''))
+    return
+  }
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) {
+    message.error('JSON 顶层应为对象（或含 mcpServers 的对象）')
+    return
+  }
+  const src = obj.mcpServers && typeof obj.mcpServers === 'object' ? obj.mcpServers : obj
+  const existing = new Set(servers.value.map(s => s.name))
+  let quota = Math.max(0, MAX_MCP_SERVERS - servers.value.length)
+  const seen = new Set()
+  const out = []
+  let idx = 0
+  const bad = (name, reason) => out.push({ key: ++idx, name, ok: false, reason })
+  for (const [rawName, cfg] of Object.entries(src)) {
+    const name = String(rawName || '').trim()
+    if (!cfg || typeof cfg !== 'object') { bad(name, '配置不是对象'); continue }
+    if (!cfg.url) {
+      bad(name, cfg.command ? '平台暂不支持本地进程（stdio）型服务' : '缺少 url')
+      continue
+    }
+    const url = String(cfg.url).trim()
+    if (!/^https?:\/\//i.test(url)) { bad(name, '只支持 http(s) 地址'); continue }
+    if (!name) { bad(name, '缺少名称'); continue }
+    if (name.includes('/')) { bad(name, '名称不能包含 /'); continue }
+    if (name.length > 40) { bad(name, '名称不能超过 40 个字符'); continue }
+    if (existing.has(name) || seen.has(name)) { bad(name, '已存在同名服务'); continue }
+    if (quota <= 0) { bad(name, `已达上限（每人最多 ${MAX_MCP_SERVERS} 个）`); continue }
+    quota--
+    seen.add(name)
+    out.push({
+      key: ++idx, name, ok: true, url, type: guessType(cfg, url),
+      headers: cfg.headers && typeof cfg.headers === 'object' && !Array.isArray(cfg.headers) ? cfg.headers : undefined
+    })
+  }
+  importPreview.value = out
+  if (!out.length) message.warning('没有解析到任何条目')
+}
+const doImport = async () => {
+  const payload = importable.value.map(x => ({ name: x.name, url: x.url, type: x.type, headers: x.headers }))
+  importBusy.value = true
+  try {
+    const r = await importMcpServers(payload)
+    if (!r.success) { message.error(r.msg || '导入失败'); return }
+    const data = r.data || {}
+    const added = data.added || []
+    const backendSkipped = data.skipped || []
+    const localSkipped = importPreview.value.filter(x => !x.ok)
+    const reasons = [
+      ...localSkipped.map(x => `「${x.name || '未命名'}」：${x.reason}`),
+      ...backendSkipped.map(x => `「${x.name || '未命名'}」：${x.reason}`)
+    ]
+    if (reasons.length) {
+      Modal.warning({
+        title: `已导入 ${added.length} 个，跳过 ${reasons.length} 个`,
+        content: reasons.join('；'),
+        okText: '知道了'
+      })
+    } else {
+      message.success(`已导入 ${added.length} 个服务，后台连接中`)
+    }
+    importOpen.value = false
+    formOpen.value = false
+    importText.value = ''
+    importPreview.value = []
+    await loadStatus()
+  } catch (e) { message.error(e.message || '导入失败') }
+  finally { importBusy.value = false }
 }
 const toggleEnabled = async (s, on) => {
   togglingId.value = s.id
@@ -402,9 +661,40 @@ onBeforeUnmount(stopPoll) // 离开页面就别再轮询了
 .mcp-tools { margin-top: 8px; border-top: 1px dashed var(--app-border); padding-top: 6px; }
 .mcp-tool { display: flex; gap: 8px; font-size: 12px; padding: 2px 0; align-items: baseline; }
 .mcp-tool code { flex: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; background: var(--app-panel-2); padding: 1px 5px; border-radius: 4px; }
+.mcp-tool-label.named { color: var(--app-text); }
+.mcp-tool-raw { color: var(--app-text3); background: none !important; padding-left: 0 !important; }
+.mcp-tool-rename { margin-left: auto; flex: none; font-size: 12px; }
+.mcp-tool-name-input { width: 180px; flex: none; }
 .mcp-tool-desc { min-width: 0; color: var(--app-text3); }
 .mcp-probe-ok { font-size: 12px; color: var(--app-ok); }
 .mcp-probe-bad { font-size: 12px; color: var(--app-danger); word-break: break-all; }
+
+/* 添加弹窗标题行的 JSON 导入入口 */
+.import-entry { margin-left: 12px; font-size: 12px; font-weight: 400; }
+
+/* 认证与请求头折叠区 */
+.adv-collapse { margin-top: -6px; }
+.hdr-saved { padding: 4px 0; }
+.hdr-saved-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.hdr-chip { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; background: var(--app-panel-2); color: var(--app-text2); padding: 1px 6px; border-radius: 4px; }
+.hdr-saved-actions { display: flex; gap: 12px; margin-top: 8px; }
+.hdr-saved-actions .danger { color: var(--app-danger); }
+.hdr-clear { font-size: 12px; color: var(--app-warn); line-height: 1.8; }
+.hdr-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.hdr-key { flex: 0 0 42%; }
+.hdr-value { flex: 1; min-width: 0; }
+.hdr-actions { display: flex; align-items: center; gap: 12px; }
+.hdr-extra { margin-top: 8px; font-size: 12px; color: var(--app-text3); line-height: 1.7; }
+
+/* JSON 导入弹窗 */
+.import-actions { display: flex; justify-content: flex-end; }
+.import-list { margin-top: 12px; max-height: 240px; overflow: auto; border-top: 1px dashed var(--app-border); }
+.import-item { display: flex; align-items: baseline; gap: 8px; font-size: 12px; padding: 6px 0; border-bottom: 1px dashed var(--app-border); }
+.import-mark { flex: none; color: var(--app-ok); }
+.import-item.bad .import-mark { color: var(--app-text3); }
+.import-name { flex: none; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.import-reason { min-width: 0; color: var(--app-text3); word-break: break-all; }
+.import-item.bad .import-reason { color: var(--app-warn); }
 .mcp-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; }
 .mcp-dot.ok { background: var(--app-ok); }
 .mcp-dot.bad { background: var(--app-danger); }

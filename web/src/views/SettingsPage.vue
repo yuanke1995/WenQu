@@ -251,11 +251,11 @@
                   </div>
                 </div>
 
-                <!-- MCP 调用审计（仅管理员）：外部客户端调用 /ai/mcp 两类端点的每次工具执行 -->
+                <!-- MCP 调用审计（仅管理员）：入站=外部客户端调平台端点，出站=平台调用户接入的外部工具 -->
                 <div class="key-usage">
                   <div class="fold-head" @click="toggleAudit">
                     <span class="fold-caret">{{ auditOpen ? '▾' : '▸' }}</span> MCP 调用审计
-                    <span class="key-dim">（外部客户端经 MCP 端点调用平台能力的全量记录）</span>
+                    <span class="key-dim">（入站：外部客户端调用平台能力；出站：模型调用你接入的外部工具）</span>
                   </div>
                   <div v-if="auditOpen" class="key-usage-body">
                     <div class="audit-summary">
@@ -272,6 +272,7 @@
                                 allow-clear placeholder="全部渠道" @change="loadAudit(true)">
                         <a-select-option value="agent">智能体端点</a-select-option>
                         <a-select-option value="platform">平台级入口</a-select-option>
+                        <a-select-option value="outbound">出站（外部工具）</a-select-option>
                       </a-select>
                       <a-select v-model:value="auditFilter.success" size="small" style="width: 100px"
                                 allow-clear placeholder="全部结果" @change="loadAudit(true)">
@@ -293,7 +294,7 @@
                       </a-table-column>
                       <a-table-column title="渠道" key="channel" width="100">
                         <template #default="{ record }">
-                          <span class="audit-chip" :class="record.channel">{{ record.channel === 'agent' ? '智能体端点' : '平台级' }}</span>
+                          <span class="audit-chip" :class="record.channel">{{ auditChannelText(record.channel) }}</span>
                         </template>
                       </a-table-column>
                       <a-table-column title="工具" key="tool" width="180" ellipsis>
@@ -1213,6 +1214,9 @@ const auditPage = ref(1)
 const auditSize = 20
 const auditSummary = ref(null)
 const auditFilter = ref({ channel: null, success: null, tool: '' })
+/** 渠道中文名：入站两类 + 出站（平台调用户接入的外部 MCP 工具） */
+const auditChannelText = c =>
+  c === 'agent' ? '智能体端点' : (c === 'outbound' ? '出站工具' : (c === 'platform' ? '平台级' : (c || '—')))
 const auditTopTool = computed(() => {
   const list = auditSummary.value?.byTool || []
   return list.length ? list[0] : null
@@ -1681,6 +1685,7 @@ onMounted(() => { fetchAndFill(); loadToolInventory(); loadSkillOptions() })
 .audit-chip { font-size: 11px; border-radius: 999px; padding: 2px 8px; white-space: nowrap; }
 .audit-chip.agent { color: var(--app-accent); background: var(--app-accent-weak); }
 .audit-chip.platform { color: var(--app-warn-text); background: var(--app-warn-weak); }
+.audit-chip.outbound { color: var(--app-text2); background: var(--app-panel-2); }
 .audit-chip.pass { color: var(--app-ok); background: var(--app-ok-weak); }
 .audit-chip.fail { color: var(--app-danger); background: var(--app-danger-weak); }
 /* 定时任务卡片：状态徽标与辅助信息 */

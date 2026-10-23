@@ -260,7 +260,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 
 ### MCP 双向互联
 
-- **Client（接进来）**：接入任意 MCP Server（streamable/sse），连接状态、整体重连、临时连通性探测；按用户隔离连接池（每个用户在「MCP 外部工具」登记自己的 Server，无全局配置）
+- **Client（接进来）**：接入任意 MCP Server（streamable/sse），连接状态、整体重连、临时连通性探测；**自定义请求头**（Bearer Token / API Key 型服务，整块加密入库、只回显键名）、**粘贴 JSON 批量导入**（Claude/Cursor 的 `mcpServers` 片段，stdio 型自动跳过）；工具清单缓存 5 分钟，问答不再每轮远程拉取；按用户隔离连接池（每个用户在「MCP 外部工具」登记自己的 Server，无全局配置）。出站调用与入站一样进审计（渠道「出站工具」）
 - **附带本地统计 Server**：`scripts/mcp-stats/server.py` 是一个只读 MCP Server（streamable HTTP @ `127.0.0.1:8765`），暴露 `sql_query`/`db_overview` 两个工具，对本地 `wenqu_ai` 库做白名单只读查询（`SELECT/SHOW/DESC/EXPLAIN` + 强制 `LIMIT` + 结果限量），供「取数助手」类对话直接查真实数据。需在「MCP 外部工具」自行登记后挂到智能体（见手册《MCP 与开放能力》）
 - **Server（送出去）**：智能体发布时可开启 **MCP 端点 `/ai/mcp/{token}`**（Streamable HTTP，无状态）——Claude Desktop / Cursor 等客户端粘贴地址即可调用该智能体；token 即凭据（与网页分享同源，停用/撤销立即失效），按发布者身份检索、能力收窄同游客模式；总开关 `mcp.server.enabled` 默认关
 - **平台级入口 `/ai/mcp`**：一个地址暴露整套能力（检索知识库 / 提问 / 列可见知识库 / 列可用智能体），凭据为 API Key（需在「API 密钥」中打开该 Key 的「MCP」开关），可见范围与 Key 创建者在网页上看到的完全一致
@@ -355,7 +355,8 @@ docker compose up -d          # 自包含：redis-stack + meilisearch + 内置 M
 | `POST /api/ai/skill`、`PUT /api/ai/skill/{name}`、`DELETE /api/ai/skill/{name}` | 用户自装技能：新建 / 编辑 / 删除（仅本人；内置与历史只读） |
 | `POST /api/ai/skill/install`、`POST /api/ai/skill/install/zip` | 安装：URL（白名单域名 + 逐跳公网校验）/ zip（逐条目路径与体积校验） |
 | `GET /api/ai/skill/detail`、`GET /api/ai/skill/file`、`GET /api/ai/skill/download`、`PUT /api/ai/skill/{name}/disabled` | 详情（正文 + 文件清单）/ 附属文件预览 / 下载 zip / 个人停用启用 |
-| `GET /api/ai/mcp/status`、`POST /api/ai/mcp/reload`、`POST /api/ai/mcp/probe` | MCP Client：状态 / 重连 / 临时探测 |
+| `GET /api/ai/mcp/status`、`POST /api/ai/mcp/reload`、`POST /api/ai/mcp/probe` | MCP Client：状态 / 重连 / 临时探测（probe 可带 headers，或用 serverId 复用已保存凭据） |
+| `POST /api/ai/mcp/servers/import` | MCP Client：批量导入（逐条校验、只重连一次） |
 | `POST /ai/mcp/{token}`（`GET` 同路径；**不在 `/api` 之下**，token 即凭据） | MCP Server·per-agent 端点：一个智能体一个工具 |
 | `POST /ai/mcp`（`GET` 同路径；凭据走 `Authorization: Bearer sk-…` 或 `X-Api-Key`） | MCP Server·平台级入口：固定元工具集（检索 / 提问 / 列库 / 列智能体） |
 | `PUT /api/ai/api-key/{id}/mcp` | 授权某把 API Key 访问平台级 MCP 入口 |

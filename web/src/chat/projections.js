@@ -72,9 +72,9 @@ const TOOL_LABELS = {
   task_output: '获取任务结果',
   task_cancel: '取消后台任务',
   wait_async_results: '等待后台结果',
-  // MCP：新工具的中文名由后端自动翻译并随卡下发（连接成功后 LLM 译好落库，ToolDisplayNames 解析链
-  // 第三档），这里**不再为新的 MCP 服务补条目**。下面这几条只是历史兜底——早期消息按裸名落库、
-  // 载荷里没有 label 字段，刷新回来仍要靠本地映射才读得懂。
+  // MCP：中文名由用户在「智能体 → MCP 外部工具」的工具清单里手工起名（落库并随卡下发，
+  // ToolDisplayNames 解析链第三档），这里**不再为新的 MCP 服务补条目**。下面这几条只是历史兜底——
+  // 早期消息按裸名落库、载荷里没有 label 字段，刷新回来仍要靠本地映射才读得懂。
   // MCP（context7）：去前缀后按裸名匹配
   resolve_library_id: '解析文档库',
   query_docs: '检索官方文档',
