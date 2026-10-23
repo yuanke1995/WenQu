@@ -169,13 +169,29 @@ const loadEcharts = async () => {
 // 实例清扫与窗口缩放：消息 DOM 会被 v-html 整棵重建，echarts 全局注册表对实例是**强引用**，
 // 不 dispose 就一直滞留（长会话越聊越占内存）。这里只留 WeakRef，每次画图前把已脱离文档的实例收掉。
 const ecLive = new Set()
+
+// 画好的 echarts 宿主节点按源码缓存（宿主 + canvas 位图 + 实例一起复用）。
+// 为什么需要：流式期间/折叠思考块都会让 v-html 把整棵消息 DOM 重建一遍，容器每次都是
+// 全新节点，只能重新 init+setOption 整幅重画——这就是「图表一直闪到输出完」「展开收缩
+// 一下重画一遍」的根因。mermaid 靠缓存 svg 串躲过了；echarts 把画好的宿主节点缓存起来，
+// 重渲染时直接搬回新 DOM（移动节点不清 canvas 位图），零重画零闪烁。
+// LRU 上限防长会话无限囤 canvas；主题切换时整体作废重画（配色烘死在 canvas 里）。
+const ecNodeCache = new Map()
+const EC_NODE_CACHE_MAX = 16
+const ecCacheDispose = host => {
+  try { echartsMod?.getInstanceByDom(host)?.dispose() } catch (e) { /* 尽力而为 */ }
+}
+
 const sweepDetachedCharts = () => {
   if (!echartsMod) return
   for (const ref of ecLive) {
     const dom = ref.deref()
     if (!dom) { ecLive.delete(ref); continue }
     if (!dom.isConnected) {
-      try { echartsMod.getInstanceByDom(dom)?.dispose() } catch (e) { /* 已被外部 dispose 也无妨 */ }
+      // 在节点缓存里的宿主只是暂时离场（等着被下一帧搬回去），不能 dispose
+      if (!(dom.dataset.ecCode && ecNodeCache.get(dom.dataset.ecCode) === dom)) {
+        try { echartsMod.getInstanceByDom(dom)?.dispose() } catch (e) { /* 已被外部 dispose 也无妨 */ }
+      }
       ecLive.delete(ref)
     }
   }
@@ -200,8 +216,13 @@ const installChartResize = () => {
  */
 export const redrawDiagrams = root => {
   applyMermaidTheme()
-  // echarts 配色同样烘死在 canvas 里：主题变量值变了，重注册主题后再统一重画
-  if (echartsMod) registerEchartsTheme()
+  // echarts 配色同样烘死在 canvas 里：主题变量值变了，重注册主题后再统一重画。
+  // 节点缓存里的位图全是旧配色，必须整体作废（dispose 实例）后按新主题重画。
+  if (echartsMod) {
+    for (const host of ecNodeCache.values()) ecCacheDispose(host)
+    registerEchartsTheme()
+  }
+  ecNodeCache.clear()
   root.querySelectorAll('.md-diagram[data-md-diagram][data-done]').forEach(el => { delete el.dataset.done })
   mermaidCache.clear()
   enhanceDiagrams(root)
@@ -691,6 +712,29 @@ const paintEChart = async (el, code) => {
   }
   const echarts = await loadEcharts()
   el.textContent = ''
+  // 节点复用：同源码的图刚画过（宿主+canvas+实例都活着、且不在当前文档里——
+  // 正是被 v-html 重建挤出去的那份）就直接搬回来，不重画。流式每帧 / 折叠展开
+  // 都走这条路，图表不再闪。若实例已没了（被清扫/淘汰）则按无缓存重新画。
+  const cachedHost = ecNodeCache.get(code)
+  if (cachedHost && cachedHost.dataset.ecCode === code && !cachedHost.isConnected) {
+    const kept = echarts.getInstanceByDom(cachedHost)
+    if (kept) {
+      el.appendChild(cachedHost)
+      // 容器宽度可能变了（换端/改窗/气泡宽窄）：canvas 尺寸和新容器不一致才 resize
+      const cv = cachedHost.querySelector('canvas')
+      if (cv && (Math.abs(cv.clientWidth - cachedHost.clientWidth) > 1 || Math.abs(cv.clientHeight - cachedHost.clientHeight) > 1)) {
+        try { kept.resize() } catch (e) { /* 忽略 */ }
+      }
+      el.dataset.state = 'ok'
+      el.dataset.done = code
+      el.appendChild(diagramSource(code, false, srcPre))
+      ecLive.add(new WeakRef(cachedHost))
+      ecNodeCache.delete(code)
+      ecNodeCache.set(code, cachedHost)   // LRU touch
+      return
+    }
+    ecNodeCache.delete(code)
+  }
   const host = document.createElement('div')
   host.className = 'md-echart-canvas'
   el.appendChild(host)
@@ -707,6 +751,15 @@ const paintEChart = async (el, code) => {
   el.dataset.state = 'ok'
   el.dataset.done = code
   el.appendChild(diagramSource(code, false, srcPre))
+  // 入节点缓存（同 code 覆盖旧值）：LRU 满时淘汰最老的一张并 dispose 其实例
+  host.dataset.ecCode = code
+  ecNodeCache.set(code, host)
+  if (ecNodeCache.size > EC_NODE_CACHE_MAX) {
+    const oldestKey = ecNodeCache.keys().next().value
+    const oldestHost = ecNodeCache.get(oldestKey)
+    ecNodeCache.delete(oldestKey)
+    if (oldestHost && !oldestHost.isConnected) ecCacheDispose(oldestHost)
+  }
   ecLive.add(new WeakRef(host))
 }
 
