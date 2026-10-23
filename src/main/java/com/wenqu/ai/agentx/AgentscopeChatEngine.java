@@ -1820,6 +1820,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
          * 甲轮的工具卡收了乙轮的尾巴。
          */
         private String lastToolName = "";
+        /**
+         * 本轮内框架自动压缩<b>完成</b>过（{@code compaction/end} 且 status=completed）。
+         * <p>收尾要拿它往消息行的 tokens 里落一个标记：那条「已压缩上下文」分隔线只有这一个数据源，
+         * 不落库就只在流里闪一下——刷新即无痕，用户回头看不出这一轮压过上下文。
+         * 失败/取消的压缩不算：那一次什么都没折进摘要，留痕就是留假痕。
+         */
+        private volatile boolean compactedThisTurn;
         private String lastToolInput = "";
         /**
          * 每次调用的入参，按 {@link #toolCallKey} 配回<b>它自己那一次</b>调用。
@@ -2667,7 +2674,18 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             // 轮内自动压缩：它跑的是两次 SUMMARY 用途的模型调用，思考与正文都被上面的 purpose 闸
             // 滤掉，不补这两帧，那二十多秒在界面上就是纯静默（实测 24.7s 一个字没出）。
             case "compaction/start" -> channel.emit(RunEventType.COMPACT_STATE, "{\"phase\":\"start\"}");
-            case "compaction/end" -> channel.emit(RunEventType.COMPACT_STATE, "{\"phase\":\"end\"}");
+            case "compaction/end" -> {
+                // status 必须带给前端：压完了那条线要原地换成「已压缩上下文」，压砸了则整条退场——
+                // 只发「结束」不发「结束得怎么样」，界面上就只能一律报喜。
+                // 框架实测载荷是 {compactionId, status=completed|failed|cancelled}，缺键按 failed 处理。
+                String status = str(data.get("status"));
+                boolean done = "completed".equalsIgnoreCase(status);
+                if (done) recording.compactedThisTurn = true;
+                Map<String, Object> frame = new java.util.LinkedHashMap<>();
+                frame.put("phase", "end");
+                frame.put("status", done ? "completed" : (status.isBlank() ? "failed" : status));
+                channel.emit(RunEventType.COMPACT_STATE, com.alibaba.fastjson2.JSON.toJSONString(frame));
+            }
             default -> {
             }
         }
@@ -3382,6 +3400,14 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                     recording.thinking.length(), toolArgChars);
         }
         if (!tokens.isEmpty()) channel.emit(RunEventType.USAGE, com.alibaba.fastjson2.JSON.toJSONString(tokens));
+        // 本轮压过上下文 → 消息行落一个标记：流里那条线只是进度，刷新后「已压缩上下文」分隔线
+        // 只有这一个数据源（自研压缩交回框架那次改动把写侧删了、判据留在读空键，线从此再不出现）。
+        // 挂在 usage 帧之后：预览那份只认用量，多一个非用量键会让容量面板读到一本空账。
+        if (recording.compactedThisTurn) {
+            tokens.put("compacted", 1);
+            // 摘要文本也要落库：分隔线上的「查看摘要」按会话读，不落就是压完刷新点进去报「还没有摘要」
+            persistCompactionSummary(cmd.getSessionId(), session);
+        }
         // 状态行既下发也落库：只随 done 发的话，刷新后「搜索 N 个关键词，参考 M 段资料」整块消失
         String lastRetrieved = retrievedJson(cmd, pool, recording);
         channel.emit(RunEventType.RETRIEVED, lastRetrieved);
@@ -3643,6 +3669,34 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         Map<String, Integer> parts = FrameworkCtxParts.of(messages, historyBefore, toolSchemasOf(cmd), lastInput);
         if (!parts.isEmpty()) tokens.put("parts", parts);
         return tokens;
+    }
+
+    /**
+     * 把框架那份滚动摘要落进会话行（{@code c_ai_session.history_summary}）。
+     * <p>压缩交回 AgentScope 之后摘要只活在框架自己的会话状态里，问渠这两列再没人写——而分隔线上那条
+     * 「查看摘要」读的就是这两列，于是压完刷新点进去报「这个会话还没有生成过摘要」。
+     * <p>只认上下文头部那条摘要消息（框架压缩产物恒在首位，name={@code __compaction_summary__}）；
+     * 取不到就一行不写——宁可让面板报空，也不落一份来历不明的摘要。
+     */
+    private void persistCompactionSummary(String sessionId, AgentSession session) {
+        try {
+            List<Msg> messages = session.transcript().messages();
+            if (messages.isEmpty()) return;
+            Msg head = messages.get(0);
+            if (head == null || !io.agentscope.harness.agent.memory.compaction.ConversationCompactor
+                    .SUMMARY_MSG_NAME.equals(head.getName())) return;
+            String summary = head.getTextContent();
+            if (summary == null || summary.isBlank()) return;
+            long covered = 0;
+            if (head.getMetadata() != null
+                    && head.getMetadata().get("context.covered_messages") instanceof List<?> ids) {
+                covered = ids.size();
+            }
+            sessionService.updateHistorySummary(sessionId, summary, covered);
+        } catch (Exception e) {
+            // 落不进会话不打断这一轮回答：分隔线照画，只是摘要面板这一次读不到全文
+            log.warn("[agentx] 压缩摘要落库失败 (session={}): {}", sessionId, e.toString());
+        }
     }
 
     /**

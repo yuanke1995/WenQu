@@ -84,8 +84,9 @@
       <!-- 键用消息对象本身：m.messageId 在 done 才回填，用「messageId 或下标」会让那颗回答
            在收尾一刻换键重挂；插话插进流中间时同样会整列错位重渲染 -->
       <template v-for="(m, i) in messages" :key="m">
-        <!-- 压缩记录：这条提问上方出现分隔线=此线以上的早期对话已折进摘要（判据与 PC 同源，在引擎里） -->
-        <MsgDivider v-if="compactDividerAt(m, i)" touch class="m-cdiv">
+        <!-- 压缩记录：这条提问上方出现分隔线=本轮开始前压过一次早期对话（判据与 PC 同源，在引擎里；
+             本轮刚压完、回答还没落库的那一档由 liveCompactAt 顶上，两条共用同一个位子不空窗） -->
+        <MsgDivider v-if="compactDividerAt(m, i) || liveCompactAt(m, i)" touch class="m-cdiv">
           <compress-outlined />
           <span>已压缩上下文</span>
           <button class="app-link-btn" type="button" :disabled="compactSummaryLoading"
@@ -117,8 +118,9 @@
       <arrow-down-outlined />
     </button>
 
-    <!-- 压缩进行中：占的就是压完那条线的位子，只换文案（与 PC 同一条状态、同一处落点） -->
-    <MsgDivider v-if="compacting" touch class="m-cdiv-tail">
+    <!-- 手动 /compact 的进行中：只认手动那一路（与 PC 同一条状态、同一处落点）。
+         轮内自动压缩的进度说在气泡那条状态行上，不在这再挂一条会反复弹出的线 -->
+    <MsgDivider v-if="manualCompacting" touch class="m-cdiv-tail">
       <loading-outlined spin />
       <span>正在压缩上下文</span>
     </MsgDivider>
@@ -580,8 +582,8 @@ const {
   goalEditing, goalEdit, goalEditBusy, goalEditSaveable,
   startGoalInlineEdit, saveGoalEdit,
   // 手动压缩上下文（入口在「模型与思考」sheet；分隔线与摘要 sheet 在本页。
-  // 「压缩中」态由 compacting 一并表达）
-  compacting, compactNotice, compactContext, compactDividerAt,
+  // 「压缩中」态由 compacting 一并表达；流尾那行进度只认手动那一路 manualCompacting）
+  compacting, manualCompacting, compactNotice, compactContext, compactDividerAt, liveCompactAt,
   compactSummaryOpen, compactSummary, compactSummaryLoading, openCompactSummary, recompactWith,
   ready
 } = engine

@@ -105,9 +105,9 @@
                     @feedback="(m, i, r) => openFeedback(m, r)"
                     @regenerate="(m, i) => regenerate(i)">
           <template #row-before="{ m, i }">
-          <!-- 压缩记录：画在这条提问上方=此线以上的早期对话已折进摘要，以下逐字在场。
-               手动 /compact 与自动压缩共用这一条判据（摘要覆盖点相对上一轮推进了），不做两套状态 -->
-          <MsgDivider v-if="compactDividerAt(m, i)" class="cdiv">
+          <!-- 压缩记录：画在这条提问上方＝本轮开始前框架把早期对话折进了一次摘要，点「查看摘要」读那份全文。
+               两个数据源共用这一个位子：落库的轮标记（刷新后还在）＋本轮刚压完的那一档（等回答落库前不空窗） -->
+          <MsgDivider v-if="compactDividerAt(m, i) || liveCompactAt(m, i)" class="cdiv">
             <compress-outlined />
             <span>已压缩上下文</span>
             <button class="app-link-btn" type="button" :disabled="compactSummaryLoading"
@@ -573,9 +573,10 @@
             </div>
           </template>
         </ChatThread>
-        <!-- 压缩进行中：占的就是压完那条线的位子，只换文案——压一次是一次模型调用，进度由这条线
-             自己在流尾说，不再挂一条常驻的 loading 提示（那条飘在页面上，说的却不是这个位置的事） -->
-        <MsgDivider v-if="compacting" class="cn-tail">
+        <!-- 手动 /compact 的进行中：只认手动那一路。轮内自动压缩的进度说在气泡那条状态行上
+             （一轮里框架可以压好几次，在这儿挂一条每压完撤走、下次又长出来的线，就是反复弹出），
+             手动这一路没有正在跑的那一轮、没有状态行可借，当场这一行是它唯一的进度 -->
+        <MsgDivider v-if="manualCompacting" class="cn-tail">
           <loading-outlined spin />
           <span>正在压缩上下文</span>
         </MsgDivider>
@@ -3228,10 +3229,10 @@ const {
   // 会话生命周期 / 重新生成 / 分支 / 初始化
   switchSession, createNewSession, regenerate, variantSwitching, switchBranch, ready,
   // 手动压缩上下文（/compact：命令面板、分隔线与摘要弹窗）
-  compacting, compactNotice, compactContext,
+  compacting, manualCompacting, compactNotice, compactContext,
   compactSummaryOpen, compactSummary, compactSummaryLoading, openCompactSummary, recompactWith,
-  // 「已压缩上下文」分隔线的判据（引擎里，与 H5 共用）
-  compactDividerAt
+  // 「已压缩上下文」分隔线的判据（引擎里，与 H5 共用）：持久那份按消息行标记，另一档补本轮压完到落库之间
+  compactDividerAt, liveCompactAt
 } = useChatEngine({
   chatPath: '/chat',
   // 计划模式（人在回路）要有裁决入口才放行：本页与移动壳都有计划确认栏，引擎侧按此开关兜底拦下
@@ -4573,9 +4574,12 @@ onMounted(async () => {
 }
 /* 徽标内的智能体头像：AgentAvatar 自带圆角块，这里只保证不被 flex 压扁 */
 .agent-tag-ava { flex: none; }
-/* 三条消息分隔线（压缩点 / 模型切换 / 流尾当场那条）共用的宽度约定：收到消息列（--chat-col），
-   线才与正文两端对齐。铺满滚动容器会在宽屏下比正文探出去一截，读起来像页面分隔栏而不是这一轮的留痕 */
-.cdiv, .msd, .cn-tail { max-width: var(--chat-col); margin-inline: auto; }
+/* 三条消息分隔线（压缩点 / 模型切换 / 流尾当场那条）共用的宽度约定：列宽收进**内边距**，
+   不给这条 flex 项本身设 max-width——组件靠 flex-basis:100% 独占一行，而 max-width 会把
+   100% 的基准宽压到 860，于是行内容器一旦宽过两倍列宽，分隔线就和消息块挤进同一条 flex 行：
+   线探进左侧留白、气泡被推到右缘外、还被拉成整条消息那么高（2434 宽视口实测偏 430px）。
+   收进 padding 后基准宽仍是满行（照旧独占一行），墨迹两端与正文列对齐。 */
+.cdiv, .msd, .cn-tail { padding-inline: max(0px, calc((100% - var(--chat-col)) / 2)); }
 /* 模型切换那条贴气泡更紧（组件默认 6px 上下等距偏松） */
 .msd { margin-block: 2px 10px; }
 /* 压缩那条在这条提问上方，上下都要跟前后两轮拉开 */

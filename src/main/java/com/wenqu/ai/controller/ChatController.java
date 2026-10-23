@@ -820,6 +820,12 @@ public class ChatController {
         // instruction/model 参数，压缩语义只有框架这一份。
         Map<String, Object> r = frameworkSessions.compactNow(userId, sessionId);
         boolean scheduled = Boolean.TRUE.equals(r.get("scheduled"));
+        // 摘要落进会话行：框架只把压缩产物写在自己的会话状态里，而分隔线上「查看摘要」读的是
+        // c_ai_session 那两列——不落库就是当场看得见、刷新再点进去报「这个会话还没有生成过摘要」
+        if (r.get("summary") instanceof String summary && !summary.isBlank()) {
+            sessionService.updateHistorySummary(sessionId, summary,
+                    r.get("compressedTurns") instanceof Number n ? n.longValue() : 0L);
+        }
         return ResultJson.ok(r, scheduled ? "已排到下一次提问前压缩" : "压缩完成");
     }
 

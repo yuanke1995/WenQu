@@ -332,28 +332,34 @@ const modelSwitchInfo = (m, i) => {
   return null
 }
 /**
- * 「已压缩上下文」分隔记录：本轮回答装配历史时，摘要覆盖点比上一轮更靠后 → 分隔线画在这条提问<b>上方</b>，
- * 读作「此线以上的早期对话已折进摘要，以下逐字在场」。
- * <p>手动 /compact 与自动压缩共用这一条判据：手动压缩当场推后了覆盖点，但它不产生消息行，
- * 于是下一轮装配读到的就是那个新值——相对上一轮仍是推进，线正好落在压缩发生的那个缝上
- * （手动压缩当时挂在流尾的临时条也在同一个位置，两者不会同时出现）。
- * <p>落库前那批旧消息没有 summaryUntil：无从判定，不画——线放错位置比不放更坏。
+ * 「已压缩上下文」分隔记录：这一轮回答落库的 tokens 带着 {@code compacted} 标记
+ * （框架在这一轮里自动压过一次上下文）→ 分隔线画在这条提问<b>上方</b>，读作「压缩发生在这个缝上」。
+ * <p>标记由后端在收尾时随消息行落库。此前它读的是自研压缩那份 {@code summaryUntil} 覆盖点，
+ * 压缩交回 AgentScope 后写侧断了、判据留在读一个没人写的键，于是这条线只在流里闪一下、刷新即无痕。
+ * <p>手动 /compact 不产生消息行，它当场那条线走 {@code compactNotice}（挂在流尾，同一个缝）。
  */
 const compactDividerAt = (m, i) => {
   if (m.role !== 'user') return false
   for (let k = i + 1; k < messages.value.length; k++) {
     const cur = messages.value[k]
     if (cur.role === 'user') continue
-    const until = Number(cur.tokens?.summaryUntil) || 0
-    if (until <= 0) return false
-    for (let j = k - 1; j >= 0; j--) {
-      const prev = messages.value[j]
-      if (prev.role !== 'ai' || prev === cur) continue
-      return until > (Number(prev.tokens?.summaryUntil) || 0)
-    }
-    return true   // 本会话第一条回答就带着覆盖点：说明压缩发生在它之前
+    return !!cur.tokens?.compacted
   }
   return false
+}
+/**
+ * 正在跑的这一轮：压缩<b>已经压完</b>、但这条提问的分隔线还要等本轮收场才由 {@link compactDividerAt}
+ * 接管（收尾那一刻才拿到 tokens 那一份，见 onDone 里补的 compacted）。没有这一档，从压完到答完
+ * 那几分钟界面上没有任何压缩留痕，用户读成刚才那下没压。
+ * <p>认的是「本轮最后一条提问」：与持久判据同一个位子，交接时线不跳。
+ */
+const liveCompactAt = (m, i) => {
+  if (m.role !== 'user' || !loading.value) return false
+  if (liveCompactedSid.value !== currentSessionId.value) return false
+  for (let k = i + 1; k < messages.value.length; k++) {
+    if (messages.value[k].role === 'user') return false
+  }
+  return true
 }
 const loadAgents = async () => {
   try {
@@ -1316,6 +1322,9 @@ const send = async () => {
   // 压缩结果条随下一轮退场：它记录的是「刚才压了什么」，继续对话后仍摆在消息流最下方，
   // 会被读成「本轮压缩了 N 轮」（与气泡上的自动压缩提示条混淆）
   compactNotice.value = null
+  // 本轮那条压缩留痕同理：它是「这一轮」的状态，开新一轮就得作废，
+  // 否则上一轮压过的线会跟着挂在这一轮的提问上方（持久判据要等落库才接管，中间这段是空的）
+  liveCompactedSid.value = null
   pendingImages.value = []
   pendingFiles.value = []
   pickedSkills.value = []
@@ -2245,6 +2254,16 @@ const applyTurnSnapshot = (msg, snap, sid) => {
   }
   // 本轮警示条（沙盒基建异常这类）：实时是后发的盖前发的，镜像留的就是最后那一条，口径一致
   if (typeof ev.warn === 'string' && ev.warn) msg.warnMsg = ev.warn
+  // 压缩进度也按镜像重建：接上一条正在压缩的轮，不补这一帧就是「生成中却一个字没有」，
+  // 而它其实还在跑那两次摘要调用（二十多秒）；刚压完就刷新的，补的是那条留痕。
+  // 逐帧按序回放，最后那一帧就是此刻的真态——状态行与留痕两头都要跟上，别只补会话级那一份
+  if (ev.compact_state) {
+    try {
+      const j = JSON.parse(ev.compact_state)
+      if (j?.phase === 'start') { autoCompactSid.value = sid; msg.compacting = true }
+      else if (j?.status === 'completed') { liveCompactedSid.value = sid; msg.compacting = false }
+    } catch (e) { /* 载荷异常：不补，退场仍由 loading 兜底 */ }
+  }
   return true
 }
 
@@ -2649,6 +2668,11 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         // 记一笔「这一轮在本页已经收场」：总线那条登记要等巡检回收，别让它被当成还在跑的轮再接一遍
         rememberSettledTurn(sid, msg.turnId)
         if (p.tokens && typeof p.tokens === 'object') msg.tokens = p.tokens
+        // 本轮压过上下文：按当场收到的压缩起止帧给这一行补上留痕标记。usage/done 两帧都不带
+        // compacted（那是非用量键，混进 usage 会让容量面板读到一本空账），只落在库那份里——
+        // 不补这一笔，提问上方那条线在答完那一刻（liveCompactAt 的 loading 落了）就消失，
+        // 刷新读库才回来，用户读成「压没压过要看运气」。
+        if (liveCompactedSid.value === sid) msg.tokens = { ...(msg.tokens || {}), compacted: 1 }
         // 整轮用时（气泡顶部那一条读的数）：done 这份是后端算好的机器时间（墙钟扣掉人在回路的
         // 等待），与看板、台账同一个数；历史恢复读 tokens 里落库的那一份，两条路同源。
         // 写回时和本地钟对一次账取更大的一份：目标模式那一轮从按下回车起表（含排队与实例冷启动
@@ -2731,13 +2755,23 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
     onWarn: w => { msg.warnMsg = w; liveScroll() },
     // 轮内自动压缩（框架在推理前把早期对话折进摘要）：那两次摘要模型调用的字全被按 purpose 滤掉，
     // 不带这一帧就是二十多秒纯静默（实测 24.7s 一个字没出），用户只能读成「卡住了」。
-    // 点亮的就是流尾那条现成的「正在压缩上下文」分隔线，与手动 /compact 同一条线、同一个位子。
+    // 进度说在气泡那条本来就在走的状态行上（本轮唯一那一条状态文案），不另起一行：
+    // 一轮里框架可以压好几次，另起的那条每压完一次撤走、下一次又长出来，还和提问上方的留痕同时挂着。
     onCompactState: payload => {
       try {
         const p = typeof payload === 'string' ? JSON.parse(payload) : (payload || {})
-        autoCompactSid.value = p.phase === 'start' ? sid : null
+        if (p.phase === 'start') {
+          autoCompactSid.value = sid
+          msg.compacting = true
+        } else {
+          autoCompactSid.value = null
+          msg.compacting = false
+          // 压完了当场就把留痕补上，不等回答落库：否则这条线在输出流开始那一刻撤走、
+          // 整轮答完才回来，中间几分钟界面上像「刚才那下什么都没压」
+          if (p.status === 'completed') liveCompactedSid.value = sid
+        }
         liveScroll()
-      } catch (e) { /* 帧形状变了就什么也不做：这条线的退场由 loading 兜底，不会挂死 */ }
+      } catch (e) { /* 帧形状变了就什么也不做：这一行的退场由 loading 兜底，不会挂死 */ }
     },
     onError: (e, kind) => {
       // 自动重试收紧到「连接压根没建起来」这一种：原条件 `!gotToken` 不区分网络错误与
@@ -3165,15 +3199,22 @@ function settleSteerOnLeave () {
 const manualCompacting = ref(false)
 /** 轮内自动压缩进行中的那条会话（框架压缩起止帧带回来，见 streamAnswer 的 onCompactState） */
 const autoCompactSid = ref(null)
-// 自动那一路必须再 AND 上 loading：压缩只可能长在跑着的那一轮里，轮一结束这条线就该退场——
-// 只认 end 帧的话，断线/收尾竞态漏掉那一帧就留下一条永远挂着的「正在压缩上下文」。
+/**
+ * 本轮已经压完、但分隔线还没拿到落库标记的那条会话（见 liveCompactAt）。
+ * <p>只在当场有效：回答落库后持久判据接管，下一轮发送即清——它是那条线从「进度」换成「留痕」
+ * 之间的一段桥，不是第二份状态。
+ */
+const liveCompactedSid = ref(null)
+// 这一份只用来闸「再来一次」的入口（摘要面板的重新压缩、模型面板的压缩上下文）：自动那一路
+// 必须再 AND 上 loading，压缩只可能长在跑着的那一轮里，轮一结束就该松闸——只认 end 帧的话，
+// 断线/收尾竞态漏掉那一帧就永远压着不让再压。进度文案不在这里，在气泡那条状态行上。
 const compacting = computed(() => manualCompacting.value
   || (!!autoCompactSid.value && autoCompactSid.value === currentSessionId.value && loading.value))
 /**
- * 当场这一次的结果（本地状态、不落库，下一轮发送即退场）。
- * <p>持久的那份是「已压缩上下文」分隔线（靠消息行上的摘要覆盖点算出来，见 compactDividerAt）；
- * 这里只负责两件事：压缩完立刻在流尾补一条线（不等下一轮），以及给摘要面板带上
- * 「本次腾出多少」——这个数只在当场拿得到，事后会话里只剩那份滚动摘要本身。
+ * 手动 /compact 当场这一次的结果（本地状态、下一轮发送即退场）。
+ * <p>持久的那份是「已压缩上下文」分隔线：自动压缩在消息行上留 compacted 标记（见 compactDividerAt），
+ * 手动压缩不产生消息行，所以它只有当场挂在流尾的这一条。
+ * <p>摘要全文两种压缩都会落进会话行，所以刷新后从分隔线点「查看摘要」仍然读得到——丢的只是线，不是摘要。
  * <p>带 sid：会话切走后不再显示，否则会把别的会话的结论挂在当前会话下。
  */
 const compactNotice = ref(null)
@@ -3349,7 +3390,7 @@ if (typeof window !== 'undefined') {
     // 智能体
     agentList, agentMap, defaultAgentId, hasDefaultAgent,
     currentAgentId, isAdmin, agentPickerOpen, currentAgentName, currentAgent, pickAgent,
-    showAgentTag, modelLabelOf, modelSwitchInfo, compactDividerAt, loadAgents,
+    showAgentTag, modelLabelOf, modelSwitchInfo, compactDividerAt, liveCompactAt, loadAgents,
     // 会话与消息
     currentSessionId, loading, messages, currentSessionTitle,
     // 模型
@@ -3379,7 +3420,8 @@ if (typeof window !== 'undefined') {
     // 断线重连接流（切换会话自动跑；网络恢复或从后台回到前台时页面可再点名一次）
     attachRunningTurn,
     // 手动压缩上下文（/compact：PC 斜杠命令与移动端模型面板共用）
-    compacting, compactNotice, compactContext,
+    // manualCompacting 只管手动那一路：轮内自动压缩的进度说在状态行上，不再占流尾那一行
+    compacting, manualCompacting, compactNotice, compactContext,
     // 早期对话摘要面板（PC 弹窗与移动端 sheet 共用的数据源）
     compactSummaryOpen, compactSummary, compactSummaryLoading, openCompactSummary, recompactWith,
     // 重新生成 / 分支切换 / 挂载初始化

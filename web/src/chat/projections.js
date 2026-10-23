@@ -596,7 +596,9 @@ const turnWarn = m => !!(m && m.loading && m.retrying)
 const turnHead = m => {
   const ms = turnElapsedMs(m)
   const dur = ms ? '，用时 ' + durZh(ms) : ''
-  if (m && m.loading) return (m.retrying ? '连接中断，正在自动重试' : '正在溯源') + dur + ' …'
+  // 进行中这一句是本轮唯一的状态行，压缩那二十多秒也说在这儿（不再另起一条分隔线——一轮里
+  // 框架可以压好几次，另起的那条每压完一次撤走、下一次又长出来，看着就是反复弹出）
+  if (m && m.loading) return (m.retrying ? '连接中断，正在自动重试' : m.compacting ? '正在压缩上下文' : '正在溯源') + dur + ' …'
   if (m && (m.errorCard || m.failed)) return '这一轮中断' + dur
   return '已完成' + dur
 }
