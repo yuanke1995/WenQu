@@ -1438,10 +1438,23 @@ export const logoutApi = () => request('/auth/logout', { method: 'POST' })
 // ---- 单点登录（OIDC）：登录页探测 → 取授权地址 → 回调页兑换一次性 code ----
 // 三者都在「还没有本系统登录令牌」阶段调用（后端已放行登录门禁）。
 export const getOidcConfig = () => request('/auth/oidc/config')
-export const getOidcLoginUrl = redirectPath =>
-  request(`/auth/oidc/login-url?redirectPath=${encodeURIComponent(redirectPath || '/')}`)
+export const getOidcLoginUrl = (providerId, redirectPath) =>
+  request(`/auth/oidc/login-url?providerId=${encodeURIComponent(providerId || '')}&redirectPath=${encodeURIComponent(redirectPath || '/')}`)
 export const exchangeOidcCode = code =>
   request('/auth/oidc/exchange-code', { method: 'POST', body: JSON.stringify({ code }) })
+
+// ---- 单点登录认证源管理（多 IdP，管理员）----
+export const listOidcProviders = () => request('/oidc/list')
+export const createOidcProvider = payload =>
+  request('/oidc', { method: 'POST', body: JSON.stringify(payload) })
+export const updateOidcProvider = (id, payload) =>
+  request(`/oidc/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(payload) })
+export const deleteOidcProvider = id =>
+  request(`/oidc/${encodeURIComponent(id)}`, { method: 'DELETE' })
+export const setOidcProviderEnabled = (id, enabled) =>
+  request(`/oidc/${encodeURIComponent(id)}/enabled`, { method: 'PUT', body: JSON.stringify({ enabled }) })
+export const unbindOidc = uid =>
+  request(`/user/${encodeURIComponent(uid)}/oidc-binding`, { method: 'DELETE' })
 export const changePasswordApi = (oldPassword, newPassword) =>
   request('/auth/password', { method: 'POST', body: JSON.stringify({ oldPassword, newPassword }) })
 export const resetUserPassword = (uid, password) =>

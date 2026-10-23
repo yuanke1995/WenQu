@@ -11,7 +11,13 @@
 | `POST /api/ai/plan-approval/{planApprovalId}` | 执行计划裁决（计划模式）：批准（可带修改后计划全文）/ 取消 / `supersede` 取代（继续对话重做计划） |
 | `GET /api/ai/plan-approval/pending?sessionId=` | 待批准计划卡（刷新/换设备后的恢复入口） |
 | `GET /api/ai/auth/me` | 当前身份、权限与菜单树 |
-| `POST /api/ai/auth/login` | 本地登录；OIDC 四端点见 `/api/ai/auth/oidc/*` |
+| `POST /api/ai/auth/login` | 本地登录；OIDC 见下方「单点登录（OIDC）」分组 |
+| `GET /api/ai/oidc/list`、`POST /api/ai/oidc`、`PUT /api/ai/oidc/{id}`、`PUT /api/ai/oidc/{id}/enabled`、`DELETE /api/ai/oidc/{id}` | OIDC 认证源（多 IdP）管理（平台级，管理员）：列表（clientSecret 仅回显后 4 位）/ 新建 / 更新 / 启用停用 / 删除（仍有账号绑定时拒绝） |
+| `DELETE /api/ai/user/{uid}/oidc-binding` | 解绑指定账号的单点登录 |
+| `GET /api/ai/auth/oidc/config` | 登录页公开清单（仅 enabled 且配置完整的认证源，回 `{id,name}`） |
+| `GET /api/ai/auth/oidc/login-url?providerId=&redirectPath=` | 生成指定认证源的授权跳转地址 |
+| `GET /api/ai/auth/oidc/callback` | IdP 回调（state 携带 providerId 路由；URL 不变） |
+| `POST /api/ai/auth/oidc/exchange-code` | 用授权码换身份（前端跨域拿 code 时走此端点） |
 | `GET /api/ai/sessions` 等 | 会话列表/新建/重命名/置顶/收藏/删除/批量删除 |
 | `GET/POST/PUT/DELETE /api/ai/kb` | 知识库 CRUD；`GET /kb/list` 列表、`GET /kb/param-defaults` 参数模板 |
 | `POST /api/ai/document/upload`、`/upload/batch`、`/import-url` | 上传（异步解析）/ 批量上传 / 网页导入 |

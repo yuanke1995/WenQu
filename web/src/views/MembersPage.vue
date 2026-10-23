@@ -57,9 +57,24 @@
                 <span class="role-pill" :class="'r-' + (record.role || 'user')">{{ roleLabel(record.role) }}</span>
               </template>
             </a-table-column>
+            <a-table-column title="单点登录" key="oidc" width="200">
+              <template #default="{ record }">
+                <span v-if="record.oidcProvider && record.oidcSub" class="mem-oidc">
+                  <span class="mem-oidc-name">{{ providerName(record.oidcProvider) }}</span>
+                  <code class="mem-oidc-sub" :title="record.oidcSub">{{ record.oidcSub }}</code>
+                </span>
+                <span v-else class="mem-none">本地账号</span>
+              </template>
+            </a-table-column>
             <a-table-column title="状态" key="status" width="100">
               <template #default="{ record }">
                 <span class="app-pill" :class="record.status === 0 ? 'warn' : 'ok'">{{ record.status === 0 ? '已禁用' : '启用' }}</span>
+              </template>
+            </a-table-column>
+            <a-table-column title="最近登录时间" key="lastLoginTime" width="160">
+              <template #default="{ record }">
+                <span v-if="record.lastLoginTime" class="mem-login-time" :title="fullTime(record.lastLoginTime)">{{ fmtLoginTime(record.lastLoginTime) }}</span>
+                <span v-else class="mem-none">从未登录</span>
               </template>
             </a-table-column>
             <a-table-column title="操作" key="action" width="140">
@@ -67,6 +82,11 @@
                 <span class="mem-inline">
                   <button class="app-link-btn" @click="openUserEdit(record)">编辑</button>
                   <button class="app-link-btn" @click="openResetPwd(record)">重置密码</button>
+                  <a-popconfirm v-if="record.oidcProvider && record.oidcSub"
+                                title="解绑后该用户须重新走对应 IdP 登录才能再次绑定" ok-text="解绑" cancel-text="取消"
+                                @confirm="unbind(record.uid)">
+                    <button class="app-link-btn danger">解绑</button>
+                  </a-popconfirm>
                   <a-popconfirm title="删除后该用户将失去部门与角色归属（不影响其历史会话）" ok-text="删除" cancel-text="取消" @confirm="delUser(record.uid)">
                     <button class="app-link-btn danger">删除</button>
                   </a-popconfirm>
@@ -202,7 +222,7 @@ import { message } from 'ant-design-vue'
 import { SearchOutlined, PlusOutlined, ApartmentOutlined } from '@ant-design/icons-vue'
 import { listUsers, createUser, updateUser, deleteUser, resetUserPassword,
          listDepartments, createDepartment, updateDepartment, deleteDepartment,
-         listRoleOptions } from '../api'
+         listRoleOptions, listOidcProviders, unbindOidc } from '../api'
 import UserAvatar from '../components/UserAvatar.vue'
 
 /* ==================== 页签：状态落 URL / 数据懒加载 / 各页签独立记忆筛选 ==================== */
@@ -229,6 +249,7 @@ const saving = ref(false)
 const users = ref([])
 const departments = ref([])
 const roles = ref([]) // 角色下拉选项（RBAC：{code,name,adminFlag,builtin}）
+const providers = ref([]) // OIDC 认证源清单（平台级）：用于「单点登录」列把 providerId 解析成可读名称
 
 // 用户页签：部门 / 角色筛选（与搜索协同；角色选项来自角色表，动态）
 const deptFilter = computed({
@@ -281,6 +302,12 @@ const roleName = code => (roles.value.find(r => r.code === code) || {}).name
 const roleLabel = r => roleName(r) || ({ superadmin: '超级管理员', admin: '管理员', user: '成员' }[r] || r)
 const deptName = id => (departments.value.find(d => d.id === id) || {}).name || '—'
 const deptUserCount = id => users.value.filter(u => u.departmentId === id).length
+// 单点登录列：providerId → 认证源名称（解析失败兜底回显原 id，避免列空白）
+const providerName = id => (providers.value.find(p => p.id === id) || {}).name || id
+
+/** 最近登录时间：后端 ISO 串 → 'YYYY-MM-DD HH:mm'；空=从未登录（文案由模板兜底） */
+const fmtLoginTime = s => (s ? String(s).replace('T', ' ').slice(0, 16) : '')
+const fullTime = s => (s ? String(s).replace('T', ' ') : '')
 
 const deptOptions = computed(() => departments.value.map(d => ({ label: d.name, value: d.id })))
 const roleOptions = computed(() => roles.value.map(r => ({ label: r.name, value: r.code })))
@@ -306,11 +333,15 @@ async function loadRoles () {
   const r = await listRoleOptions()
   roles.value = (r && r.data) || []
 }
-const LOADERS = { users: loadUsers, departments: loadDepartments, roles: loadRoles }
+async function loadProviders () {
+  const r = await listOidcProviders()
+  providers.value = (r && r.data) || []
+}
+const LOADERS = { users: loadUsers, departments: loadDepartments, roles: loadRoles, providers: loadProviders }
 
-/** 页签 → 该页签渲染真正要用的数据：用户表要部门名/角色名，部门表的「人数」列要用户 */
+/** 页签 → 该页签渲染真正要用的数据：用户表要部门名/角色名/认证源名，部门表的「人数」列要用户 */
 const TAB_DEPS = {
-  users: ['users', 'departments', 'roles'],
+  users: ['users', 'departments', 'roles', 'providers'],
   departments: ['departments', 'users']
 }
 
@@ -380,6 +411,14 @@ async function delUser (uid) {
     if (r.success) { message.success('已删除'); await loadData(['users'], { force: true }) }
     else message.error(r.msg || '删除失败')
   } catch (e) { message.error(e.message || '删除失败') }
+}
+/** 解绑单点登录：清除该账号的 oidc_sub / oidc_provider 绑定 */
+async function unbind (uid) {
+  try {
+    const r = await unbindOidc(uid)
+    if (r.success) { message.success('已解绑单点登录'); await loadData(['users'], { force: true }) }
+    else message.error(r.msg || '解绑失败')
+  } catch (e) { message.error(e.message || '解绑失败') }
 }
 
 // ---------- 重置密码 ----------
@@ -475,6 +514,10 @@ async function delDept (id) {
 .mem-uid { font-size: 11px; color: var(--app-text3); }
 .mem-dept { color: var(--app-text2); }
 .mem-desc { color: var(--app-text2); }
+.mem-oidc { display: inline-flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mem-oidc-name { color: var(--app-text); font-size: 12px; }
+.mem-oidc-sub { font-size: 11px; color: var(--app-text3); max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mem-login-time { color: var(--app-text2); font-size: 12px; white-space: nowrap; }
 .mem-none { color: var(--app-text3); }
 .mem-inline { display: inline-flex; align-items: center; gap: 8px; }
 

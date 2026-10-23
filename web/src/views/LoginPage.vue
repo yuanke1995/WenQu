@@ -78,10 +78,11 @@
             </button>
           </a-form>
 
-          <template v-if="!isInit && oidc.enabled">
+          <template v-if="!isInit && oidcProviders.length">
             <div class="login-divider"><span>或</span></div>
-            <button class="app-btn login-btn login-oidc" :disabled="oidcLoading" @click="submitOidc">
-              {{ oidcLoading ? '正在跳转…' : `使用 ${oidc.providerName} 登录` }}
+            <button v-for="p in oidcProviders" :key="p.id" class="app-btn login-btn login-oidc"
+                    :disabled="oidcLoading === p.id" @click="submitOidc(p.id)">
+              {{ oidcLoading === p.id ? '正在跳转…' : `使用 ${p.name} 登录` }}
             </button>
           </template>
 
@@ -110,9 +111,9 @@ const loading = ref(false)
 const error = ref('')
 const form = ref({ identifier: '', uid: '', username: '', password: '', confirm: '' })
 
-// 单点登录：入口只在后端回报「已启用且配置完整」时出现（配置只填一半就显示按钮，点下去必然撞错误页）
-const oidc = ref({ enabled: false, providerName: 'OIDC登录' })
-const oidcLoading = ref(false)
+// 单点登录：入口只在后端回报「已启用且配置完整」的认证源时出现（配置只填一半就显示按钮，点下去必然撞错误页）
+const oidcProviders = ref([])
+const oidcLoading = ref('')
 
 onMounted(async () => {
   // 单点登录失败时后端会 302 回 /login?oidc_error=...，把原因直接摊开（比只回登录页更可诊断）
@@ -124,27 +125,24 @@ onMounted(async () => {
   } catch (e) { /* 探测失败按普通登录页处理 */ }
   try {
     const r = await getOidcConfig()
-    if (r && r.success && r.data) {
-      oidc.value = {
-        enabled: Boolean(r.data.enabled),
-        providerName: r.data.providerName || 'OIDC登录'
-      }
+    if (r && r.success && r.data && Array.isArray(r.data.providers)) {
+      oidcProviders.value = r.data.providers
     }
   } catch (e) { /* 探测失败则不显示入口（本地登录不受影响） */ }
 })
 
-async function submitOidc () {
+async function submitOidc (providerId) {
   error.value = ''
-  oidcLoading.value = true
+  oidcLoading.value = providerId
   try {
-    const r = await getOidcLoginUrl('/chat')
+    const r = await getOidcLoginUrl(providerId, '/chat')
     const url = r && r.data && r.data.loginUrl
     if (!url) { error.value = (r && r.msg) || '单点登录暂不可用'; return }
     // 跳转到 IdP：整页跳转（授权码流程必须由浏览器完成重定向）
     window.location.href = url
   } catch (e) {
     error.value = e.message || '单点登录暂不可用'
-    oidcLoading.value = false
+    oidcLoading.value = ''
   }
 }
 

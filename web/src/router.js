@@ -47,6 +47,7 @@ const routes = [
   { path: '/permissions', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/PermissionsPage.vue')) }], meta: { requiresAdmin: true, title: '权限管理' } },
   { path: '/dashboard', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/DashboardPage.vue')) }], meta: { requiresAdmin: true, title: '数据看板' } },
   { path: '/settings', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/SettingsPage.vue')) }], meta: { requiresAdmin: true, title: '系统设置' } },
+  { path: '/oidc-providers', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/OidcProvidersPage.vue')) }], meta: { requiresAdmin: true, title: '单点登录' } },
   { path: '/evaluation', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/EvaluationPage.vue')) }], meta: { requiresAdmin: true, title: '检索评估' } },
   // 兜底：未知路径（含历史遗留的旧链接）统一回到对话页
   { path: '/:pathMatch(.*)*', redirect: '/chat' }
