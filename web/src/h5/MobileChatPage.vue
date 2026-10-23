@@ -595,6 +595,8 @@ const mentionNames = computed(() => pendingMentions.value.map(m => m.name || m.i
 const startGoalNowM = async () => {
   const obj = String(text.value || '').trim()
   if (!obj) { message.warning('先在输入框写一句这件事要做到什么'); return null }
+  // 计划 × 目标互斥（每一轮只能一个模式提问）：定为目标这一句走目标模式，挂着的计划标记当场收掉（静默）
+  if (planModeOn.value) setPlanMode(false)
   // 先清框、后建目标（与 PC 同口径）：建目标是一次异步请求（建行 + 框架同步 + 起首轮），
   // 等它回来再清，用户会盯着满框文字以为没发出去
   text.value = ''

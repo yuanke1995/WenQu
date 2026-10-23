@@ -1,5 +1,5 @@
 <template>
-  <div class="chat2">
+  <div class="chat2" @mouseenter="railVis = true" @mouseleave="railVis = false; railHoverIdx = -1">
     <!-- 中间：标题栏 + 消息流 + 输入区 -->
     <div class="chat-col">
       <!-- PC 标题栏：窄屏隐藏（与移动顶栏形成双顶栏，图里很明显），
@@ -1007,7 +1007,7 @@
         <template #left-lead>
           <a-dropdown v-model:open="agentPickerOpen" :trigger="['click']" placement="topLeft">
           <button class="agent-pill" :class="{ on: !!currentAgentId, open: agentPickerOpen, 'as-icon': isNarrow }"
-          title="选择作答的智能体：换人立即生效（下一问起就是它）；不挑就用默认助手。模型在右侧选择">
+          title="选择作答的智能体：换人立即生效（下一问起就是它）；不挑就沿用本会话上一问的智能体，新会话用默认助手。模型在右侧选择">
           <AgentAvatar v-if="currentAgent" :agent="currentAgent" :size="16" />
           <!-- 窄屏只留头像：智能体名 + 模型名会把工具条撑破，完整名称由 title 与下拉面板承载 -->
           <span v-if="!isNarrow" class="agent-pill-name">{{ currentAgentName }}</span>
@@ -1085,6 +1085,24 @@
         </template>
       </ChatInput>
       <input ref="attachInput" type="file" multiple style="display:none" @click.stop @change="onAttachChange" />
+    </div>
+
+    <!-- 左侧问题锚点轨：一条刻度 = 一轮提问。不常驻——鼠标进聊天区才淡入（离开即收）；
+         刻度默认 14px 短条，悬浮或滚到当前轮才伸长到 24px 并亮主色。点击把那一轮滚到视区顶部。
+         预览概览卡在轨外的 .qa-pop（fixed 弹层，轨的 overflow 滚动会裁掉轨内悬浮卡），
+         由 showAnchor 按触发刻度的屏幕坐标定位；至少两轮才出现，窄屏不渲染。 -->
+    <nav v-if="!isNarrow && qaAnchors.length >= 2" class="qa-rail" :class="{ vis: railVis }"
+         aria-label="问答锚点" @mouseleave="railHoverIdx = -1">
+      <div v-for="a in qaAnchors" :key="a.idx" class="qa-item"
+           :class="{ on: railActiveIdx === a.idx }"
+           @mouseenter="showAnchor(a, $event)" @click="gotoAnchor(a)">
+        <span class="qa-tick"></span>
+      </div>
+    </nav>
+    <!-- 预览概览卡（轨外弹层）：问题深色一行 + 回答摘录灰字；pointer-events:none 不挡鼠标 -->
+    <div v-if="railHoverAnchor" class="qa-pop" :style="railPopStyle" role="tooltip">
+      <div class="qa-q">{{ anchorQ(railHoverAnchor) }}</div>
+      <div v-if="anchorA(railHoverAnchor)" class="qa-a">{{ anchorA(railHoverAnchor) }}</div>
     </div>
 
     <!-- 右侧状态栏（可收起）：引用来源 / 产物 / 计划（各自有条件才显示）
@@ -1654,6 +1672,7 @@ const onMessagesScroll = () => {
   const el = box.value
   if (!el) return
   stickToBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < AUTO_SCROLL_MARGIN
+  updateRailActive()
 }
 
 // 右侧状态栏：默认展开（持久化），数据全部来自已有消息/配置，不造数
@@ -1677,6 +1696,7 @@ const processMsg = computed(() => {
   for (let i = list.length - 1; i >= 0; i--) if (list[i].role === 'ai') return list[i]
   return null
 })
+
 
 
 // ==================== 执行过程（事件账本回放） ====================
@@ -2142,7 +2162,7 @@ const slashCommands = computed(() => [
     desc: '早期对话压缩为摘要，腾出上下文空间（可附要求）',
     run: args => compactContext(args) },
   { key: 'act-plan', cmd: 'plan', aliases: ['计划'], icon: OrderedListOutlined, noGate: true,
-    name: planModeOn.value ? '关闭计划模式' : '开启计划模式',
+    name: planModeOn.value ? '关闭计划' : '计划',
     desc: '这一轮先产出执行计划；可跟任务（/计划 任务），直接生成计划',
     run: args => runPlanCommand(args) },
   ...(goalEntryVisible.value ? [{ key: 'act-goal', cmd: 'goal', aliases: ['目标'], icon: AimOutlined, noGate: true,
@@ -2150,7 +2170,7 @@ const slashCommands = computed(() => [
     run: args => {
       const task = String(args || '').trim()
       if (task) { startGoalNow(task); return }
-      goalArmed.value = !goalArmed.value
+      armGoal(!goalArmed.value)
     } }] : []),
   { key: 'act-export', icon: FileTextOutlined, name: '导出会话 Markdown',
     desc: '把当前会话全部问答导出为 .md 文件',
@@ -2360,7 +2380,7 @@ const addCmdList = computed(() => {
   const s = addCmdQuery.value.trim().toLowerCase()
   const cmds = slashCommands.value
   if (!s) return cmds
-  return cmds.filter(c => `${c.name} ${c.desc || ''} ${c.cmd || ''}`.toLowerCase().includes(s))
+  return cmds.filter(c => `${c.name} ${c.desc || ''} ${slashAliasesOf(c).join(' ')}`.toLowerCase().includes(s))
 })
 /** 引用页当前子页签的候选（点击与 Enter 都读这一份，下标才对得上） */
 const addRefList = computed(() => mentionTab.value === 'kb' ? mentionKbFiltered.value
@@ -2487,11 +2507,25 @@ const runCmdFromAddPanel = c => {
   runSlashCommand(c)
 }
 /** 发送前收起「+」面板：它浮在输入区上方，留着会挡住回答 */
+// ==================== 计划 × 目标互斥（每一轮只能一个模式提问） ====================
+// 两个开关互不知晓时会同时挂着两颗模式 chip，而发送只走其中一条线（目标优先）——
+// 另一颗就成了「看着生效、实际没生效」的漂移。所以互斥在开关时刻做：开启一边当场收掉另一边，
+// 提交路径（startGoalNow）再兜一次底。包装函数只包「开启」，关闭不涉及冲突。
+const setPlanModeM = v => {
+  setPlanMode(v)
+  // 静默互斥：收掉目标标记即可，不弹提示
+  if (v && goalArmed.value) goalArmed.value = false
+}
+/** 目标上膛统一出口：/goal 命令 toggle 用它，开启时收掉挂着的计划标记 */
+const armGoal = v => {
+  goalArmed.value = !!v
+  if (v && planModeOn.value) setPlanMode(false)
+}
 const runPlanCommand = args => {
   const task = String(args || '').trim()
-  if (!task) { setPlanMode(!planModeOn.value); return }
+  if (!task) { setPlanModeM(!planModeOn.value); return }
   if (loading.value) { message.info('生成中，请等这轮回答结束后再发送计划任务'); return }
-  if (!planModeOn.value) setPlanMode(true)
+  if (!planModeOn.value) setPlanModeM(true)
   text.value = task
   send()
 }
@@ -2505,7 +2539,7 @@ const inlineSlash = () => {
     text.value = ''
     const task = (goal[1] || '').trim()
     if (task) startGoalNow(task)
-    else goalArmed.value = !goalArmed.value
+    else armGoal(!goalArmed.value)
     return true
   }
   const plan = raw.match(/^\/(?:plan|计划)(?:\s+([\s\S]*))?$/i)
@@ -2516,6 +2550,8 @@ const sendNow = async () => {
   if (inlineSlash()) { closeAllPanels(); return }
   if (goalModeOn.value && goalArmed.value && !sessionGoal.value && String(text.value || '').trim()) {
     goalArmed.value = false
+    // 互斥兜底（开启点已保证收掉，防 localStorage 恢复等边缘残留）：目标这轮带不走计划标记
+    if (planModeOn.value) setPlanMode(false)
     closeAllPanels()
     const g = await startGoalNow()
     // 目标没立成（网络失败/服务端拒绝）：重新上膛，用户再按 Enter 仍走目标这条路
@@ -3186,6 +3222,64 @@ const {
   focusInput
 })
 
+// ---- 左侧问题锚点轨：一条刻度对应一轮提问，悬浮出问答预览、点击滚到那一轮 ----
+// 长会话里「翻回前面问过什么」只能靠滚动条盲摸，锚点轨给对话一个可点目录。
+// 刻度只画提问行（role=user）；预览卡两行口径照参考样式：问题深色在上、回答摘录灰字在下。
+// ⚠️ 必须放在引擎解构之后：下面的 watch 会在 setup 当场求值 qaAnchors，而 messages 的
+// const 在解构处才初始化——排在解构之前就是本项目笔记里记过的 TDZ「Cannot access before
+// initialization」（render 期表现为 messages undefined，挂在不相干的 messages.length 上）。
+const qaAnchors = computed(() => {
+  const list = messages.value || []
+  const out = []
+  for (let i = 0; i < list.length; i++) {
+    const m = list[i]
+    if (m.role !== 'user') continue
+    let ai = null
+    for (let j = i + 1; j < list.length; j++) { if (list[j].role === 'ai') { ai = list[j]; break } }
+    out.push({ idx: i, q: m.content || '', a: ai ? (ai.content || '') : '', loading: !!(ai && ai.loading), hasAi: !!ai })
+  }
+  return out
+})
+/** 预览卡第一行：问题截一行（纯提问为空 = 图片/附件提问，照实说，不装有一行字） */
+const anchorQ = a => oneLine(a.q, 64) || '（随行图片 / 附件提问）'
+/** 预览卡第二行：回答摘录；回答还在跑就说在跑，没有回答行就不占字 */
+const anchorA = a => (a.loading ? '回答生成中…' : (a.hasAi ? oneLine(a.a, 120) : ''))
+const gotoAnchor = a => {
+  box.value?.querySelector(`[data-row-index="${a.idx}"]`)
+    ?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+}
+/** 轨不常驻：鼠标进聊天区才浮现（.chat2 上的 mouseenter/mouseleave 驱动，轨自己是 chat2 的孩子，
+ *  悬到刻度上不会触发 leave）。预览卡渲染在轨外——轨有 overflow 滚动，卡放里面会被横向裁掉
+ *  （第一版「悬浮没概览」就是这个原因），改成 fixed 弹层按触发刻度的屏幕坐标定位。 */
+const railVis = ref(false)
+const railHoverIdx = ref(-1)
+const railPopStyle = ref({})
+const railHoverAnchor = computed(() => (railHoverIdx.value >= 0 ? qaAnchors.value[railHoverIdx.value] : null))
+const showAnchor = (a, evt) => {
+  railHoverIdx.value = qaAnchors.value.indexOf(a)
+  const r = evt.currentTarget.getBoundingClientRect()
+  // 卡高最多约 130px：贴着刻度垂直居中摆，顶/底出屏就夹回视区内
+  const top = Math.min(Math.max(r.top - 18, 12), window.innerHeight - 150)
+  railPopStyle.value = { left: (r.right + 12) + 'px', top: top + 'px' }
+}
+/** 当前视区落在哪一轮（轨上点亮）：取「行顶已越过视区上三分之一」的最后一条提问。
+ *  激活只变色不加长——长度是「被指到」（悬浮）的反馈，滚动位置是常驻信息，两者分开。 */
+const railActiveIdx = ref(-1)
+const updateRailActive = () => {
+  const el = box.value
+  if (!el || !qaAnchors.value.length) { railActiveIdx.value = -1; return }
+  const base = el.getBoundingClientRect().top
+  const probe = base + el.clientHeight / 3
+  let cur = -1
+  for (const a of qaAnchors.value) {
+    const node = el.querySelector(`[data-row-index="${a.idx}"]`)
+    if (node && node.getBoundingClientRect().top <= probe) cur = a.idx
+    else if (cur >= 0) break
+  }
+  railActiveIdx.value = cur
+}
+watch(qaAnchors, () => nextTick(updateRailActive), { deep: false })
+
 /* 列表换人（新建会话、切会话、拉历史失败清空）必须把视角一起换掉：贴底标志与尾随留白量的都是
    上一会话的内容。前者留着会让「回到底部」那颗 ↓ 掉进新会话的正文流里——不满一屏时 sticky
    抬不起来，它只能长在最后一行下面；后者不重置会把上一会话那一截留白带进空会话（留白算不出的
@@ -3364,7 +3458,7 @@ const restoreWenquChips = html => {
       const id = el.getAttribute('data-wenqu-id')
       const hit = id && histPool.value.find(m => String(m.messageId) === String(id))
       if (hit && !isHistPicked(hit.messageId)) { toggleHistoryRef(hit); n++ }
-    } else if (k === 'plan' && !planModeOn.value) { setPlanMode(true); n++ }
+    } else if (k === 'plan' && !planModeOn.value) { setPlanModeM(true); n++ }
   }
   return n > 0
 }
@@ -3500,6 +3594,9 @@ const startGoalNow = async (prefill) => {
     focusInput()
     return null
   }
+  // 计划 × 目标互斥（每一轮只能一个模式提问）：建目标这一句走目标模式，挂着的计划标记当场收掉。
+  // /goal 命令、sendNow 都汇到这一个出口，在这里收一遍就全覆盖；静默收掉，不弹提示
+  if (planModeOn.value) setPlanMode(false)
   // 先清框、后建目标：建目标是一次异步请求（建行 + 框架同步 + 起首轮，冷启动要几秒），
   // 等它回来再清，用户会盯着满框文字和一颗亮着的发送键，以为这一句没发出去。
   // 与普通发送同口径：text 在请求发出前就清掉。prefill 路径（/goal 目标）的
@@ -3721,8 +3818,9 @@ watch(messages, () => {
   if (editingIdx.value == null) return
   if ((messages.value[editingIdx.value] || {}).messageId !== editingMessageId.value) cancelEdit()
 })
-// Mermaid 图表的补画已随正文下沉到 AnswerBody（每个 .md 容器画自己那份，且同样只在非流式态画：
-// 流式期间 ```mermaid 围栏是半截代码，画必然失败，每个 token 重试一次纯属浪费）。
+// Mermaid/ECharts 图表的补画已随正文下沉到 AnswerBody（每个 .md 容器画自己那份）：
+// 流式期间也画——echarts 半截 JSON 有截断探测兜底（pending→补全自愈），mermaid 落
+// 「接收中」提示等流结束补画，节流与流结束边沿的处理都在 AnswerBody 的 watch 里。
 
 onMounted(async () => {
   window.addEventListener('keydown', onGlobalKeydown)
@@ -3750,6 +3848,43 @@ onMounted(async () => {
   display: flex; height: 100%; min-width: 0; background: var(--app-panel); position: relative;
 }
 .chat-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+
+/* -- 左侧问题锚点轨 --------------------------------------------------
+   不常驻：默认 opacity:0 + pointer-events:none，鼠标进聊天区（.chat2）才淡入。
+   刻度列本身超长可滚（长会话几十轮不能顶出屏），滚动条藏掉；预览卡渲染在轨外
+   （.qa-pop，fixed 定位）——overflow 容器会把轨内悬浮卡横向裁掉。 */
+.qa-rail {
+  position: absolute; left: 8px; top: 50%; transform: translateY(-50%);
+  display: flex; flex-direction: column; gap: 10px; z-index: 6;
+  max-height: min(60vh, 480px); overflow-y: auto; padding: 4px 0;
+  scrollbar-width: none;
+  opacity: 0; pointer-events: none; transition: opacity .18s ease;
+}
+.qa-rail.vis { opacity: 1; pointer-events: auto; }
+.qa-rail::-webkit-scrollbar { display: none; }
+.qa-item { position: relative; display: flex; align-items: center; width: 10px; height: 14px; cursor: pointer; }
+.qa-tick {
+  flex: none; width: 6px; height: 3px; border-radius: 2px;
+  background: var(--app-border); transition: width .15s, background .15s;
+}
+/* 悬浮才加长（+变深）；当前轮激活只点亮（变深）不加长——长度是「被指到」的反馈 */
+.qa-item:hover .qa-tick { width: 10px; background: var(--app-text3); }
+.qa-item.on .qa-tick { background: var(--app-text3); }
+/* 预览概览卡：fixed 弹层，坐标由 showAnchor 按触发刻度算（贴刻度右侧、垂直居中、顶底夹回视口） */
+.qa-pop {
+  position: fixed; z-index: 40; width: 320px; padding: 10px 12px; pointer-events: none;
+  background: var(--app-panel); border: 1px solid var(--app-border);
+  border-radius: 10px; box-shadow: var(--app-shadow);
+}
+.qa-q {
+  font-size: 13px; font-weight: 500; color: var(--app-text); line-height: 1.5; word-break: break-word;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.qa-a {
+  margin-top: 4px; font-size: 12px; color: var(--app-text3); line-height: 1.55; word-break: break-word;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+
 .chat-head {
   display: flex; align-items: center; gap: 12px; padding: 10px 20px;
   border-bottom: 1px solid var(--app-border); flex: none; background: var(--app-panel);
@@ -4523,7 +4658,12 @@ onMounted(async () => {
 
 /* 卡头：引用来源与计划两张卡的折叠头（button 需要自带重置，antd reset 不清 button 底色边框） */
 .rp-card-head { display: flex; align-items: center; gap: 6px; width: 100%; background: none; border: 0; padding: 0; text-align: left; cursor: pointer; font: inherit; }
-.rp-card-head .rp-label-h { margin-bottom: 0; }
+/* 卡头里的 label 一律清掉自带的 margin-bottom（它是给卡片静态头用的），
+   否则文字块带下边距参与 flex 居中，旁边的箭头会对不齐 */
+.rp-card-head .rp-label { margin-bottom: 0; }
+/* 箭头统一起到卡片最右（与「过程」卡 rpc-caret 的 margin-left:auto 同一口径），
+   不然折叠头收起时箭头贴着文案，两张卡并排看形态对不上 */
+.rp-card-head .tl-caret { margin-left: auto; }
 /* 计划卡头：整行可点开合，摘要徽标在中间，箭头在尾 */
 .rp-plan-head { width: 100%; background: none; border: 0; padding: 0; text-align: left; cursor: pointer; font: inherit; }
 .rp-plan-head:hover .rp-label-h { color: var(--app-text2); }
