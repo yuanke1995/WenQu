@@ -57,13 +57,16 @@ const md = new MarkdownIt({
 md.renderer.rules.heading_open = t => `<h${Math.min(+t[0].tag[1] + 1, 6)}>`
 md.renderer.rules.heading_close = t => `</h${Math.min(+t[0].tag[1] + 1, 6)}>`
 
-// ==================== 富渲染：Mermaid / HTML·SVG 预览 / 沙盒运行 ====================
-// 三个能力都挂在 fence 上（语言标签决定），渲染分两段：
+// ==================== 富渲染：Mermaid / ECharts / HTML·SVG 预览 / 沙盒运行 ====================
+// 能力都挂在 fence 上（语言标签决定），渲染分两段：
 //   ① 本模块同步产出**占位结构**（围栏 + 按钮 + 数据属性），不碰 mermaid/iframe 这些重活；
-//   ② 异步部分（mermaid 绘图、iframe 预览、点击运行）由 enhanceMd / handleMdAction 驱动，
-//      因为 v-html 只能同步塞字符串，且 mermaid 本身是 ~1MB 的懒加载依赖。
+//   ② 异步部分（mermaid 绘图、echarts 绘图、iframe 预览、点击运行）由 enhanceMd / handleMdAction 驱动，
+//      因为 v-html 只能同步塞字符串，且 mermaid/echarts 本身都是 ~1MB 的懒加载依赖。
 // 三条语言白名单与后端 SandboxController.LANGS 保持一致（前端不给按钮，后端也会拒）。
 const MERMAID_LANG = 'mermaid'
+// ECharts：围栏里放一份完整的 option JSON，enhanceDiagrams 解析后用 echarts 渲染成交互图表。
+// 只认 JSON（不 eval）：option 里不能带函数/注释，模型给的 formatter 只能用 '{b}: {c}' 字符串模板。
+const ECHARTS_LANG = 'echarts'
 const PREVIEW_LANGS = new Set(['html', 'htm', 'xml', 'svg'])
 const RUNNABLE_LANGS = new Set(['python', 'python3', 'node', 'javascript', 'js', 'bash', 'sh', 'shell'])
 
@@ -91,6 +94,105 @@ const loadMermaid = async () => {
   return mermaidMod
 }
 
+// ---- ECharts（统计图围栏）----
+// 懒加载整包 echarts：回答里的图什么类型都可能出现（折线/柱/饼/散点…），按需分包省下的体积
+// 远抵不上「模型用了没注册的图类型白画布」的排查成本；与 mermaid 同策略，首屏不为它付钱。
+let echartsMod = null
+let echartsThemeName = null
+
+// echarts 走 canvas，不解析 CSS 变量——配色必须从 CSS 变量读**实际值**烘进主题（与知识图谱弹窗同一铁律）。
+// 色值本体全部住在 app.css 的 token 层（--app-chart-* 与基础面变量），这里只做读取，不写死 hex
+// （仓库守卫 verify-sfc：改动 JS 里的新增裸色值一律报警）。
+const cssVar = name => {
+  try {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || ''
+  } catch (e) { return '' }
+}
+// 依次取第一个非空变量值；全空返回 undefined（交给 echarts 默认值，不猜色）
+const pickVar = (...names) => {
+  for (const n of names) {
+    const v = cssVar(n)
+    if (v) return v
+  }
+  return undefined
+}
+// hex → rgba：splitLine/网格线要半透明，直接用实色描边在浅色面板上会显脏
+const withAlpha = (color, a) => {
+  const m = /^#([0-9a-f]{6})$/i.exec(color || '')
+  if (!m) return color
+  const n = parseInt(m[1], 16)
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`
+}
+const registerEchartsTheme = () => {
+  if (!echartsMod) return
+  const text = pickVar('--app-text', '--app-text2')
+  const text2 = pickVar('--app-text2', '--app-text3')
+  const border = pickVar('--app-border', '--app-border-strong')
+  const panel = pickVar('--app-panel')
+  const palette = ['--app-chart-1', '--app-chart-2', '--app-chart-3', '--app-chart-4',
+    '--app-chart-5', '--app-chart-6', '--app-chart-7'].map(pickVar).filter(Boolean)
+  echartsThemeName = 'wenqu-md'
+  echartsMod.registerTheme(echartsThemeName, {
+    backgroundColor: 'transparent',
+    color: palette.length ? palette : undefined,
+    textStyle: { color: text },
+    title: { textStyle: { color: text } },
+    legend: { textStyle: { color: text2 } },
+    tooltip: {
+      backgroundColor: panel, borderWidth: 1, borderColor: border,
+      textStyle: { color: text }, extraCssText: 'box-shadow:none;'
+    },
+    categoryAxis: {
+      axisLine: { lineStyle: { color: border } },
+      axisTick: { lineStyle: { color: border } },
+      axisLabel: { color: text2 },
+      splitLine: { show: false }
+    },
+    valueAxis: {
+      axisLine: { show: false },
+      axisTick: { show: false },
+      axisLabel: { color: text2 },
+      splitLine: { lineStyle: { color: withAlpha(border, 0.85) } }
+    }
+  })
+  return echartsThemeName
+}
+const loadEcharts = async () => {
+  if (!echartsMod) {
+    echartsMod = await import('echarts')
+    registerEchartsTheme()
+    installChartResize()
+  }
+  return echartsMod
+}
+
+// 实例清扫与窗口缩放：消息 DOM 会被 v-html 整棵重建，echarts 全局注册表对实例是**强引用**，
+// 不 dispose 就一直滞留（长会话越聊越占内存）。这里只留 WeakRef，每次画图前把已脱离文档的实例收掉。
+const ecLive = new Set()
+const sweepDetachedCharts = () => {
+  if (!echartsMod) return
+  for (const ref of ecLive) {
+    const dom = ref.deref()
+    if (!dom) { ecLive.delete(ref); continue }
+    if (!dom.isConnected) {
+      try { echartsMod.getInstanceByDom(dom)?.dispose() } catch (e) { /* 已被外部 dispose 也无妨 */ }
+      ecLive.delete(ref)
+    }
+  }
+}
+let ecResizeInstalled = false
+const installChartResize = () => {
+  if (ecResizeInstalled) return
+  ecResizeInstalled = true
+  window.addEventListener('resize', () => {
+    if (!echartsMod) return
+    for (const ref of ecLive) {
+      const dom = ref.deref()
+      if (dom && dom.isConnected) { try { echartsMod.getInstanceByDom(dom)?.resize() } catch (e) { /* 忽略 */ } }
+    }
+  })
+}
+
 /**
  * 主题切换后重画已渲染的图表（mermaid 配色烘进 svg，改 CSS 变量没用，必须重画）。
  * 容器上的 data-code/data-done 就是重画依据：清掉 done 即触发 enhanceDiagrams 再画一遍。
@@ -98,6 +200,8 @@ const loadMermaid = async () => {
  */
 export const redrawDiagrams = root => {
   applyMermaidTheme()
+  // echarts 配色同样烘死在 canvas 里：主题变量值变了，重注册主题后再统一重画
+  if (echartsMod) registerEchartsTheme()
   root.querySelectorAll('.md-diagram[data-md-diagram][data-done]').forEach(el => { delete el.dataset.done })
   mermaidCache.clear()
   enhanceDiagrams(root)
@@ -106,7 +210,7 @@ export const redrawDiagrams = root => {
 // 主题切换自动重画：图表可能挂在任意消费方的容器里（本模块拿不到那些 ref），
 // 所以监听全局主题状态后扫描 document——图表容器数量是消息级的小量，扫一遍可接受。
 watch(() => themeState.value, () => {
-  if (!mermaidMod) return          // 本次会话还没画过图，无需处理
+  if (!mermaidMod && !echartsMod) return   // 本次会话还没画过图，无需处理
   redrawDiagrams(document.body)
 })
 
@@ -128,12 +232,14 @@ const fence = (tokens, idx) => {
   const info = (token.info || '').trim()
   const lang = info.split(/\s+/)[0].toLowerCase()
   const code = token.content
-  // Mermaid：源码放**文本子节点**（pre>code），不放 data-code 属性。
+  // Mermaid / ECharts：源码放**文本子节点**（pre>code），不放 data-code 属性。
   // 原因（实测定位，不是猜）：DOMPurify 的 mXSS 守卫（SAFE_FOR_XML，分支 /((--!?|])>)|<\/(style|script|…)/i）
   // 会剥掉任何**值里含 `-->` / `]>`** 的属性，而 mermaid 源码恰恰满屏 `A --> B`、`A -.-> B`，
   // 放属性里等于属性必被剥光。文本节点不受该守卫影响，故源码走 pre>code，由 enhanceDiagrams 取 textContent。
-  if (lang === MERMAID_LANG) {
-    return `<div class="md-diagram" data-md-diagram>`
+  // echarts 的 option JSON 里也有 `}]`、字符串里可能有 `-->`，同一条路走文本子节点。
+  if (lang === MERMAID_LANG || lang === ECHARTS_LANG) {
+    const attr = lang === ECHARTS_LANG ? ' data-md-echart' : ''
+    return `<div class="md-diagram"${attr} data-md-diagram>`
       + `<pre class="md-diagram-src-code"><code>${md.utils.escapeHtml(code)}</code></pre>`
       + `</div>`
   }
@@ -402,16 +508,33 @@ const actBtn = (cls, title, icon, label) => {
  * mermaidCache 的 svg 串不再画一遍。
  * <p>失败也写 data-done：同一段源码画挂了就是挂了（幂等），重试留给「源码变了」的情形——
  * 这正是流式补全后能自愈、而已渲染完的坏图不反复刷解析错误的原因。
+ *
+ * @param {object} [opts] 可选开关
+ * @param {boolean} [opts.streaming] 正在流式输出。此时 mermaid **不尝试画**——半截围栏画必失败，
+ *   且源码没有可靠的「写全了没有」判据，与其每帧闪解析错误不如就地落「接收中」提示，
+ *   流结束后由调用方再跑一遍本函数补画；echarts 不受此开关影响（半截 JSON 自有截断探测兜底）。
  */
-export const enhanceDiagrams = async root => {
+export const enhanceDiagrams = async (root, opts = {}) => {
+  const streaming = !!opts.streaming
   const list = Array.from(root.querySelectorAll('.md-diagram[data-md-diagram]'))
   if (!list.length) return
-  // 先取源码（还在 pre>code 里），再逐个画
-  const jobs = list.map(el => ({ el, code: el.querySelector('.md-diagram-src-code code')?.textContent || '' }))
-    .filter(j => j.el.dataset.done !== j.code)
+  sweepDetachedCharts()
+  // 先取源码（还在 pre>code 里），再逐个画；echart 容器走另一条绘制线
+  const jobs = list.map(el => ({
+    el,
+    code: el.querySelector('.md-diagram-src-code code')?.textContent || '',
+    echart: el.hasAttribute('data-md-echart')
+  })).filter(j => j.el.dataset.done !== j.code)
   if (!jobs.length) return
-  const mermaid = await loadMermaid()
-  for (const j of jobs) await paintDiagram(mermaid, j.el, j.code)
+  const mmJobs = jobs.filter(j => !j.echart)
+  const ecJobs = jobs.filter(j => j.echart)
+  if (streaming) for (const j of mmJobs) markDiagramPending(j.el)
+  // 只在真有 mermaid 图时才加载 mermaid：echart-only 的回答不必为 1MB 依赖买单
+  if (!streaming && mmJobs.length) {
+    const mermaid = await loadMermaid()
+    for (const j of mmJobs) await paintDiagram(mermaid, j.el, j.code)
+  }
+  for (const j of ecJobs) await paintEChart(j.el, j.code)
 }
 
 // 源码 → svg 串（成功才留；LRU 上限防长会话无限增长）
@@ -467,6 +590,94 @@ const diagramSource = (code, open, reusePre) => {
   }
   det.append(sum, pre)
   return det
+}
+
+// ==================== ECharts 统计图围栏 ====================
+
+/**
+ * 半截 JSON 探测：strip 掉字符串字面量后数花括号配平，再要求结尾是 `}`/`]`。
+ * 流式补全/重生成期间源码经常先到一半——这种情况**不写 data-done**，
+ * 下一轮 enhance（源码长全后）自动重画；写 done 反而把半截图钉死成错误。
+ */
+const chartOptionTruncated = code => {
+  const bare = code.replace(/"(?:[^"\\]|\\.)*"/g, '""').replace(/'(?:[^'\\]|\\.)*'/g, "''")
+  let depth = 0
+  for (const c of bare) {
+    if (c === '{' || c === '[') depth++
+    else if (c === '}' || c === ']') depth--
+  }
+  return depth > 0 || !/[}\]]\s*$/.test(code)
+}
+
+const chartPendingTip = text => {
+  const tip = document.createElement('div')
+  tip.className = 'md-diagram-pending'
+  tip.textContent = text
+  return tip
+}
+
+/** 流式占位：mermaid 半截源码画必失败（且无完整性判据），先落个明确的「准备中」提示，流结束由调用方补画。
+ *  文案与 md.css 的 :not([data-state])::after 初始占位一致——两拍之间容器重建由 CSS 兜住，不闪变 */
+const markDiagramPending = el => {
+  el.dataset.state = 'pending'
+  el.textContent = ''
+  el.appendChild(chartPendingTip('图表准备中…'))
+}
+
+/**
+ * 解析并渲染一份 ECharts option（```echarts 围栏）。与 mermaid 同一套幂等语义：
+ * 成功/失败都写 data-done（源码不变不重画），唯独「半截 JSON」不写——等源码补全后自愈。
+ *
+ * <p>安全口径：只走 JSON.parse（不 eval），option 里不可能有可执行代码；
+ * 图表画在 canvas 上，文本都进 echarts 自己的绘制层，不产生可注入的 HTML。
+ */
+const paintEChart = async (el, code) => {
+  el.dataset.state = 'loading'
+  const srcPre = el.querySelector('.md-diagram-src-code')
+  let opt
+  try {
+    opt = JSON.parse(code)
+  } catch (e) {
+    if (chartOptionTruncated(code)) {
+      el.dataset.state = 'pending'
+      el.textContent = ''
+      el.appendChild(chartPendingTip('图表准备中…'))
+      return
+    }
+    el.textContent = ''
+    showDiagramError(el, code, new Error('option 不是合法 JSON：' + (e && e.message ? String(e.message).split('\n')[0] : '解析失败')))
+    return
+  }
+  if (!opt || typeof opt !== 'object' || Array.isArray(opt) || !opt.series) {
+    if (chartOptionTruncated(code)) {
+      el.dataset.state = 'pending'
+      el.textContent = ''
+      el.appendChild(chartPendingTip('图表准备中…'))
+      return
+    }
+    el.textContent = ''
+    showDiagramError(el, code, new Error('option 缺少 series 字段（至少要有一组 series 才有东西可画）'))
+    return
+  }
+  const echarts = await loadEcharts()
+  el.textContent = ''
+  const host = document.createElement('div')
+  host.className = 'md-echart-canvas'
+  el.appendChild(host)
+  let inst
+  try {
+    inst = echarts.init(host, echartsThemeName, { renderer: 'canvas' })
+    inst.setOption(opt)
+  } catch (e) {
+    try { inst?.dispose() } catch (e2) { /* 尽力而为 */ }
+    el.textContent = ''
+    showDiagramError(el, code, e)
+    return
+  }
+  el.dataset.state = 'ok'
+  el.dataset.done = code
+  el.appendChild(diagramSource(code, false, srcPre))
+  ecLive.add(new WeakRef(host))
 }
 
 /**

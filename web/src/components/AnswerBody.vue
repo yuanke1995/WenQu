@@ -29,7 +29,8 @@ const props = defineProps({
   sessionId: { type: String, default: '' },
   /** 整条消息的序号（-1 = 不参与页面级角标联动） */
   msgIndex: { type: Number, default: -1 },
-  /** 正在流式输出：**不补画 mermaid**（半截围栏必画失败） */
+  /** 正在流式输出：正文每 120ms 刷一帧。echarts 半截 JSON 有截断探测（pending→补全自愈）照画，
+   *  mermaid 半截必失败 → enhanceDiagrams 落「接收中」提示、流结束后自动补画（见下方 watch） */
   streaming: { type: Boolean, default: false },
   /**
    * true（默认）：点角标/图片走共用浮层（chat/answerViewer 的来源弹窗与灯箱），悬浮出角标卡。
@@ -75,9 +76,29 @@ const onClick = e => handleBodyClick(e, {
 })
 const onHover = e => { if (props.viewer && props.citations) handleBodyHover(e, props.sources) }
 
-watch([html, () => props.streaming], async () => {
-  if (props.streaming) return
+// 图表补画：流式期间**也画**——echarts 半截 JSON 有截断探测兜底（pending 提示、补全自愈），
+// 用户能看着图在回答中途长出来；只有 mermaid 因「半截必失败」延迟到流结束（enhanceDiagrams
+// 的 streaming 开关内部处理）。流式 content 每 120ms 刷一帧、每帧 v-html 整棵重建（data-done
+// 随之丢失 → 已画过的图也会重画），所以流式路径按 300ms 节流；流结束边沿落掉节流立即画最终版。
+// 历史消息 streaming 恒 false，直接走立即路径（与旧行为一致）。
+const ENHANCE_GAP = 300
+let enhanceLast = 0
+let enhanceTimer = null
+const enhanceNow = async () => {
+  enhanceLast = Date.now()
   await nextTick()
-  if (rootEl.value) enhanceDiagrams(rootEl.value).catch(() => { /* 绘图失败已在容器内就地提示，不外抛 */ })
+  if (rootEl.value) enhanceDiagrams(rootEl.value, { streaming: props.streaming })
+    .catch(() => { /* 绘图失败已在容器内就地提示，不外抛 */ })
+}
+const scheduleEnhance = () => {
+  if (enhanceTimer) return   // 已挂着：最迟 enhanceLast+300 必执行，重排只是白忙
+  const wait = Math.max(0, enhanceLast + ENHANCE_GAP - Date.now())
+  enhanceTimer = setTimeout(() => { enhanceTimer = null; enhanceNow() }, wait)
+}
+watch([html, () => props.streaming], () => {
+  if (props.streaming) { scheduleEnhance(); return }
+  // 流结束（或非流式更新）：落掉挂着的流式节流，立即画最终版
+  if (enhanceTimer) { clearTimeout(enhanceTimer); enhanceTimer = null }
+  enhanceNow()
 }, { immediate: true })
 </script>

@@ -36,6 +36,16 @@
   --app-code-bg: #f6f8fa;         /* 代码块底 */
   --app-code-inline-bg: #f0f0f0;  /* 行内代码底 */
   --app-scrollbar: rgba(0, 0, 0, .18);
+  /* ---- 回答正文 ECharts 图表的分类调色板 ----
+     echarts 画 canvas，读不到 CSS 变量；运行时由 markdown.js 取各变量的实际值烘进图表主题。
+     首色接主色保证图表与界面一家，其余是与之协调的通用分类色；换主题/调色只改这里。 */
+  --app-chart-1: var(--app-accent);
+  --app-chart-2: #36b3f1;
+  --app-chart-3: #f0a132;
+  --app-chart-4: #5ec48a;
+  --app-chart-5: #a97fe6;
+  --app-chart-6: #ed6f8e;
+  --app-chart-7: #8fa3bf;
   /* ---- 语义别名层（借鉴 deepseek-harness 的 design-platform 两层结构：静态值 → 语义名）----
      目的：页面按**意图**取色/取尺寸，而不是按"这是第几号灰"。换主题/调色只改这一层。
      这是新增层，旧变量全部保留，现有页面零改动、零视觉变化。 */
@@ -126,6 +136,17 @@ html[data-theme='dark'] {
   --app-code-bg: #22262c;
   --app-code-inline-bg: #2a2f36;
   --app-scrollbar: rgba(255, 255, 255, .18);
+  /* ECharts 分类调色板暗色值：整体提亮一档，深底上保持对比（首色仍接暗色主色） */
+  --app-chart-1: var(--app-accent);
+  --app-chart-2: #4cc3f7;
+  --app-chart-3: #ffb84d;
+  --app-chart-4: #6fd69f;
+  --app-chart-5: #bd96f2;
+  --app-chart-6: #f28aa4;
+  --app-chart-7: #a3b5cc;
+  /* 别名层第三级（悬浮/选中底）暗色值：比 panel-2 亮一档，暗底上清晰可辨。
+     不补这条会漏用 :root 的浅色 #f2f4f7——暗色下拉行悬浮/预览台 framed 底会泛白 */
+  --app-bg-layer-3: #2a3038;
   --app-shadow-sm: 0 1px 2px rgba(0, 0, 0, .3);
   --app-shadow: 0 3px 12px rgba(0, 0, 0, .4);
   --app-shadow-lg: 0 12px 32px rgba(0, 0, 0, .5);

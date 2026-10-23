@@ -129,6 +129,14 @@ body.md-preview-lock { overflow: hidden; }
   background: var(--app-panel-2);
 }
 .md .md-diagram[data-state="loading"] { color: var(--app-text2); font-size: var(--app-fs-sm); padding: 18px; text-align: center; }
+/* enhanceDiagrams 尚未处理到的占位（伪元素随 DOM 即时出现，不等 JS 的节流拍点）：
+   流式期间容器每帧重建，JS 提示只在节流拍点挂上，间隙里靠这里兜住空白；
+   历史消息「渲染完成 → 画图完成」的间隙也由它兜底。挂上 data-state 后自动消失 */
+.md .md-diagram[data-md-diagram]:not([data-state])::after {
+  content: '图表准备中…';
+  display: block; padding: 8px 0; text-align: center;
+  color: var(--app-text3); font-size: var(--app-fs-sm);
+}
 /* 渲染层的源码 pre 只是「给绘图读的载体」，绘图成功后被移进 details 折叠区；
    加载中先藏起来，避免用户看到一份裸源码再看到图（闪一下）。
    只藏「还没进 details 的那份」（:scope > ），进了 details 的正是用户要展开看的源码，不能藏 */
@@ -146,6 +154,12 @@ body.md-preview-lock { overflow: hidden; }
 }
 .md .md-diagram-src > summary:hover { color: var(--app-accent); }
 .md .md-diagram-src > pre { margin: 6px 0 0; max-height: 260px; }
+
+/* ECharts 统计图围栏：echarts 画 canvas，必须给定像素高度才有布局；宽度吃满容器（气泡宽），
+   窗口缩放由 markdown.js 里的 resize 监听驱动实例 resize */
+.md .md-echart-canvas { width: 100%; height: 300px; }
+/* 半截 option（流式补全中）：与 loading 同款的居中弱提示，但语义不同——它不是失败，不写 data-done */
+.md .md-diagram[data-state="pending"] { color: var(--app-text3); font-size: var(--app-fs-sm); padding: 18px; text-align: center; }
 
 /* 代码块复制按钮（渲染层动态创建，页面级委托点击）。
    有语言标题栏时它就是标题栏里的一个动作按钮（吃 .md-act 那套尺寸/透明底，常驻可见）；
