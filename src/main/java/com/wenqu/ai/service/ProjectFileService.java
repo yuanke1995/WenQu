@@ -240,11 +240,28 @@ public class ProjectFileService {
      */
     public ViewFile openView(String token) {
         String[] parts = decodeViewToken(token);
-        Project p = projectService.byId(parts[0]);
-        if (p == null) {
-            throw new IllegalArgumentException("工作区不存在或已删除");
+        Path file;
+        if (SESSION_VIEW_MARK.equals(parts[0])) {
+            // 会话沙盒那一份：token 的剩余段是「会话 id + 换行 + 相对路径」，再拆一次
+            String rest = parts[1];
+            int sep = rest.indexOf(TOKEN_SEP);
+            if (sep <= 0 || sep == rest.length() - 1) {
+                throw new IllegalArgumentException("预览地址无效");
+            }
+            String sessionId = rest.substring(0, sep);
+            // 归属从会话行反推——与工作区那一份同一做法：token 里只有 id，uid 由库里那一行给
+            String owner = projectService.uidOfSession(sessionId);
+            if (owner == null || owner.isBlank()) {
+                throw new IllegalArgumentException("会话不存在或已删除");
+            }
+            file = resolveIn(sessionBase(owner, sessionId), rest.substring(sep + 1));
+        } else {
+            Project p = projectService.byId(parts[0]);
+            if (p == null) {
+                throw new IllegalArgumentException("工作区不存在或已删除");
+            }
+            file = resolveIn(baseDirOf(p), parts[1]);
         }
-        Path file = resolveIn(baseDirOf(p), parts[1]);
         String name = file.getFileName().toString();
         String ext = extOf(name);
         String contentType = PreviewTypes.viewContentType(ext);
@@ -319,7 +336,12 @@ public class ProjectFileService {
                 .encodeToString((projectId + TOKEN_SEP + relPath).getBytes(StandardCharsets.UTF_8));
     }
 
-    /** 解 token → [工作区 id, 相对路径]；解不开一律按「预览地址无效」拒掉（不区分细节，免得给探测者回话） */
+    /**
+     * 解 token → 首段 + 剩余段（只按<b>第一个</b>换行拆）。两种形态共用一条签名路：
+     * 工作区＝{@code [工作区 id, 相对路径]}；会话沙盒＝{@code ["s", 会话 id + 换行 + 相对路径]}，
+     * 剩余段由 {@link #openView} 再拆一次。工作区 id 是 UUID 十六进制，永远不会是 {@code s}。
+     * <p>解不开一律按「预览地址无效」拒掉（不区分细节，免得给探测者回话）
+     */
     private static String[] decodeViewToken(String token) {
         String raw;
         try {
@@ -829,20 +851,132 @@ public class ProjectFileService {
         if (workdir == null || workdir.isBlank()) {
             workdir = "projects/" + p.getId();
         }
-        String root = configService.get("sandbox.userDataHostDir");
-        if (root == null || root.isBlank()) {
-            root = System.getProperty("user.dir") + "/user-data";
-        }
-        Path base = Path.of(root, "shared", SandboxPaths.uidDirname(p.getUid()), "workspace")
-                .resolve(workdir).toAbsolutePath().normalize();
+        Path workspaceRoot = workspaceRootOf(p.getUid());
+        Path base = workspaceRoot.resolve(workdir).toAbsolutePath().normalize();
         // workdir 来自库里的 workdir_path（形如 projects/{id}），仍然过一遍越界校验
-        Path workspaceRoot = Path.of(root, "shared", SandboxPaths.uidDirname(p.getUid()), "workspace")
-                .toAbsolutePath().normalize();
         if (!base.startsWith(workspaceRoot)) {
             throw new IllegalArgumentException("工作区目录配置异常");
         }
         return base;
     }
+
+    // ==================== 会话沙盒目录（没挂工作区的那一路） ====================
+
+    /**
+     * 会话沙盒目录的宿主路径：{@code user-data/shared/{uidDirname}/workspace/sessions/{sessionId}}。
+     *
+     * <p><b>为什么要单独开这一路</b>：沙盒的工作目录按会话切分时（会话没挂工作区，或
+     * {@code sandbox.projectWorkdirEnabled} 关着），模型写出来的文件躺在 {@code sessions/{会话}} 下，
+     * 而工作区文件接口读的是 {@code projects/{工作区}}——两边各一份，界面上<b>没有任何一处</b>能看到它。
+     * 真机 2026-10-23 21:04 那一轮做好的 20.7 KB 看板页就是这么躺在盘上、用户在应用里取不出来的。
+     *
+     * <p><b>归属为什么不用查库</b>：目录名用的是<b>请求者自己的</b> uid（{@code RequestUser.uid()}），
+     * 别人的会话根本不在同一个人的 shared 目录下；会话 id 再过一个路径安全字符集（与
+     * {@link SandboxPaths} 给 uid 用的那道同一判据），拼出来的路径出不了本人 workspace 根。
+     */
+    private Path sessionBase(String uid, String sessionId) {
+        Path workspaceRoot = workspaceRootOf(uid);
+        String id = sessionId == null ? "" : sessionId.strip();
+        if (id.isEmpty()) {
+            throw new IllegalArgumentException("缺少会话标识");
+        }
+        if (!SESSION_ID_RE.matcher(id).matches()) {
+            throw new IllegalArgumentException("非法会话标识");
+        }
+        Path base = workspaceRoot.resolve("sessions").resolve(id).toAbsolutePath().normalize();
+        if (!base.startsWith(workspaceRoot)) {
+            throw new IllegalArgumentException("非法会话标识");
+        }
+        return base;
+    }
+
+    /** 本人 workspace 根（工作区目录与会话沙盒目录共同的上级，越界校验以它为基准） */
+    private Path workspaceRootOf(String uid) {
+        String root = configService.get("sandbox.userDataHostDir");
+        if (root == null || root.isBlank()) {
+            root = System.getProperty("user.dir") + "/user-data";
+        }
+        return Path.of(root, "shared", SandboxPaths.uidDirname(uid), "workspace").toAbsolutePath().normalize();
+    }
+
+    /**
+     * 列出本会话沙盒目录里的<b>文件</b>（递归、按修改时间倒序，最新那份在最前面）。
+     *
+     * <p>刻意与工作区那份不同形：这里不做单层导航，也不列文件夹。它回答的是「助手刚才做出来的东西在哪」
+     * 这一个问题，不是一台文件管理器——所以中间产物所在的文件夹（如 {@code outputs/build}）会作为
+     * 文件的路径前缀原样露出来，让人认得出哪份是成品。
+     *
+     * <p><b>空与读不到分开报</b>：目录不存在＝这一轮确实还没写过东西（正常空态）；而连本人 workspace 根
+     * 都摸不到（沙盒在另一台机器上）要抛错——把故障写成「暂无文件」，用户读到的就是「我的文件没了」。
+     */
+    public Map<String, Object> listSessionFiles(String uid, String sessionId) {
+        Path base = sessionBase(uid, sessionId);
+        Path workspaceRoot = base.getParent().getParent();   // .../workspace
+        Map<String, Object> m = new LinkedHashMap<>();
+        if (!Files.isDirectory(workspaceRoot)) {
+            throw new IllegalStateException("沙盒目录暂时读不到（沙盒可能部署在另一台机器上）");
+        }
+        List<Map<String, Object>> files = new ArrayList<>();
+        if (Files.isDirectory(base)) {
+            try (Stream<Path> walk = Files.walk(base, MAX_TREE_DEPTH)) {
+                walk.filter(Files::isRegularFile)
+                        .filter(p -> !isHiddenRelative(base, p))
+                        .sorted(Comparator.comparingLong(ProjectFileService::lastModifiedMillis).reversed())
+                        .forEach(p -> files.add(toSessionEntry(base, p, sessionId)));
+            } catch (IOException | RuntimeException e) {
+                log.warn("[PROJECT] 会话沙盒目录读取失败 uid={} session={} base={}: {}",
+                        uid, sessionId, base, e.getMessage());
+                throw new IllegalStateException("沙盒目录暂时读不到（沙盒可能部署在另一台机器上）");
+            }
+        }
+        int total = files.size();
+        m.put("files", total > MAX_ENTRIES ? new ArrayList<>(files.subList(0, MAX_ENTRIES)) : files);
+        m.put("total", total);
+        m.put("truncated", total > MAX_ENTRIES);
+        return m;
+    }
+
+    /** 会话沙盒里一个文件的下载路径（归属由请求者自己的 uid 目录保证，见 {@link #sessionBase}） */
+    public Path resolveSessionDownload(String uid, String sessionId, String relPath) {
+        return resolveIn(sessionBase(uid, sessionId), relPath);
+    }
+
+    private static final java.util.regex.Pattern SESSION_ID_RE =
+            java.util.regex.Pattern.compile("^[A-Za-z0-9_-]{1,64}$");
+
+    private Map<String, Object> toSessionEntry(Path base, Path file, String sessionId) {
+        String rel = relOf(base, file);
+        String name = nameOf(file);
+        long size = sizeOf(file);
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("kind", "file");
+        m.put("path", rel);
+        m.put("name", name);
+        m.put("ext", extOf(name));
+        m.put("size", size);
+        m.put("mtime", lastModifiedMillis(file));
+        // 与工作区同一判据：只有「点得开」的类型才给预览地址，其余只下载（点开掉出一份下载比不给按钮更糊弄人）
+        if (PreviewTypes.viewContentType(extOf(name)) != null && PreviewTypes.viewCapError(extOf(name), size) == null) {
+            m.put("viewUrl", imageUrlSigner.signUrlRequired(
+                    VIEW_PATH_PREFIX + encodeSessionViewToken(sessionId, rel)));
+        }
+        return m;
+    }
+
+    /**
+     * 会话作用域的预览 token：{@code "s" + 换行 + 会话 id + 换行 + 相对路径}。
+     * <p>比工作区那份多一个作用域标记、多带一个 uid 之外的定位段——顶层导航没有登录态，
+     * 凭据就是这条地址自己的签名（与工作区那条同一口径，见类注释边界 1 的唯一例外）。
+     * 工作区的 id 是 UUID 十六进制，永远不会等于标记 {@code s}，两种形态共存不需要改老地址。
+     */
+    private static String encodeSessionViewToken(String sessionId, String relPath) {
+        return java.util.Base64.getUrlEncoder().withoutPadding()
+                .encodeToString((SESSION_VIEW_MARK + TOKEN_SEP + sessionId + TOKEN_SEP + relPath)
+                        .getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static final String SESSION_VIEW_MARK = "s";
+
 
     /**
      * 删除整个工作区目录（删工作区时用户显式选择「连文件一起删」才走这里）。

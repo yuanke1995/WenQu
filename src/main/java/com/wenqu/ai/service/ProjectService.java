@@ -150,6 +150,24 @@ public class ProjectService {
     }
 
     /**
+     * 由会话反推归属用户 uid。
+     * <p>会话沙盒目录的预览地址（{@code ProjectFileService#openView}）要用：那条路是浏览器顶层导航，
+     * 带不上登录头，凭据只有地址自己的签名——与工作区那一份同一做法（token 里只放 id，uid 由库里那一行给）。
+     *
+     * @return 归属 uid；会话不存在或查询失败一律 null
+     */
+    public String uidOfSession(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) return null;
+        try {
+            Session s = sessionMapper.selectById(sessionId);
+            return s == null ? null : s.getUserId();
+        } catch (Exception e) {
+            log.warn("[PROJECT] 会话归属用户解析失败 session={}: {}", sessionId, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
      * 由会话反推所属工作区行（沙盒要同时拿 id 与 workdir_path，故除 {@link #projectIdOfSession} 外再给一条）。
      *
      * @return 工作区；会话不存在/没挂工作区/工作区已删/查询失败一律 null

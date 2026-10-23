@@ -3,8 +3,11 @@ package com.wenqu.ai.controller;
 import com.wenqu.ai.dto.ResultJson;
 import com.wenqu.ai.sandbox.ProvisionerSandboxBackend;
 import com.wenqu.ai.sandbox.SandboxFsBackend;
+import com.wenqu.ai.service.ArtifactService;
 import com.wenqu.ai.service.ConfigService;
+import com.wenqu.ai.service.ProjectFileService;
 import com.wenqu.ai.service.SandboxService;
+import com.wenqu.ai.service.SessionService;
 import com.wenqu.ai.util.RequestUser;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -65,6 +68,9 @@ public class SandboxController {
 
     private final SandboxService sandboxService;
     private final ConfigService configService;
+    private final ProjectFileService projectFileService;
+    private final ArtifactService artifactService;
+    private final SessionService sessionService;
 
     /** 与工作流沙盒节点同一开关：关闭时沙盒 API 的浏览/运行端点 fail-closed 拒绝。 */
     private boolean enabled() {
@@ -150,6 +156,116 @@ public class SandboxController {
         } catch (Exception e) {
             log.debug("[SANDBOX] 下载失败 (session={}, path={}): {}", sessionId, path, e.getMessage());
             return ResultJson.error("下载失败：" + (e.getMessage() == null ? "沙盒不可用" : e.getMessage()));
+        }
+    }
+
+    // ==================== 会话沙盒目录的宿主侧读口 ====================
+
+    /**
+     * 列本会话沙盒目录里的文件——<b>读宿主目录，不要求容器还在跑</b>。
+     *
+     * <p><b>为什么不复用上面那条 {@code /tree}</b>：{@code /tree} 走的是活容器的 backend
+     * （{@code backendIfPresent}），空闲回收后只会回 {@code available:false}。而用户恰恰是在
+     * 「活干完、容器早就回收了、我去找那份文件」的时刻用它——那时文件好好躺在宿主盘上，
+     * 界面却因为容器没了而说「没有」。工作区页早就是直接读宿主目录的（同一份数据），这一条补齐会话那一路。
+     *
+     * <p>归属：先 {@code assertOwned} 过一道（会话不存在 404、不是你的 403），目录本身又只按
+     * <b>请求者自己的 uid</b> 拼路径，别人的会话根本不在同一个 shared 目录下。
+     */
+    @Operation(summary = "会话沙盒文件清单", description = "列出本会话沙盒目录里的文件（递归、按修改时间倒序，"
+            + "隐藏项与依赖目录不列）；读宿主目录，容器回收后照样取得到。可预览的条目另带签名 viewUrl")
+    @GetMapping("/files")
+    public ResultJson files(@RequestParam("sessionId") String sessionId) {
+        if (!enabled()) {
+            return ResultJson.error("沙盒未开启");
+        }
+        String uid = RequestUser.uid();
+        sessionService.assertOwned(sessionId, uid);
+        try {
+            return ResultJson.ok(projectFileService.listSessionFiles(uid, sessionId));
+        } catch (IllegalArgumentException e) {
+            return ResultJson.error(400, e.getMessage());
+        } catch (IllegalStateException e) {
+            return ResultJson.error(503, e.getMessage());
+        }
+    }
+
+    @Operation(summary = "下载会话沙盒文件", description = "按会话目录内的相对路径取一个文件（字节流）；"
+            + "越界、隐藏项、不存在按错误回")
+    @GetMapping("/files/download")
+    public Object downloadFile(@RequestParam("sessionId") String sessionId, @RequestParam("path") String path,
+                               jakarta.servlet.http.HttpServletResponse response) {
+        if (!enabled()) {
+            return ResultJson.error("沙盒未开启");
+        }
+        String uid = RequestUser.uid();
+        try {
+            sessionService.assertOwned(sessionId, uid);
+            java.nio.file.Path file = projectFileService.resolveSessionDownload(uid, sessionId, path);
+            String filename = file.getFileName().toString();
+            String encoded = URLEncoder.encode(filename, StandardCharsets.UTF_8).replace("+", "%20");
+            response.setContentType("application/octet-stream");
+            response.setHeader("Content-Disposition",
+                    "attachment; filename=\"" + encoded + "\"; filename*=UTF-8''" + encoded);
+            response.setContentLength((int) java.nio.file.Files.size(file));
+            java.nio.file.Files.copy(file, response.getOutputStream());
+            response.getOutputStream().flush();
+            return null;
+        } catch (com.wenqu.ai.common.BizException e) {
+            throw e;
+        } catch (IllegalArgumentException e) {
+            return ResultJson.error(400, e.getMessage());
+        } catch (IllegalStateException e) {
+            return ResultJson.error(503, e.getMessage());
+        } catch (java.io.IOException e) {
+            log.warn("[SANDBOX] 会话文件下载失败 session={} path={}: {}", sessionId, path, e.getMessage());
+            return ResultJson.error("下载失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 把沙盒目录里的一个文件<b>取回成产物</b>。
+     *
+     * <p><b>为什么要人手动点这一下</b>：交付本应由模型自己调 {@code deliver_artifact} 完成（框架的
+     * 沙盒说明里那句 "you **must** call deliver_artifact" 确实进了每一步的系统提示词）。但一轮被
+     * 步数上限掐掉时它就是没机会调——真机 2026-10-23 21:04 那一轮做好的 20.7 KB 看板页就这么烂在盘上。
+     * 刻意<b>不做</b>「轮末自动扫描收编」：那一支会把 {@code outputs/build} 里的探针页与截图一起倒进
+     * 产物页，而框架自己就写着「不要交付临时文件与工作副本」。谁算成品由人指一下，代价是一个按钮。
+     */
+    @Operation(summary = "沙盒文件取回为产物", description = "把本会话沙盒目录里的一个文件登记进「我的产物」"
+            + "（与模型交付同一条落库路：写盘 + 登记 + 实时下发产物卡片）。"
+            + "受产物侧既有约束：扩展名白名单、单文件 1MB 上限")
+    @PostMapping("/files/artifact")
+    public ResultJson deliverFile(@RequestBody Map<String, Object> body) {
+        if (!enabled()) {
+            return ResultJson.error("沙盒未开启");
+        }
+        String sessionId = str(body, "sessionId");
+        String path = str(body, "path");
+        String uid = RequestUser.uid();
+        if (sessionId.isBlank() || path.isBlank()) {
+            return ResultJson.error("缺少会话或文件路径");
+        }
+        try {
+            sessionService.assertOwned(sessionId, uid);
+            java.nio.file.Path file = projectFileService.resolveSessionDownload(uid, sessionId, path);
+            Map<String, Object> info = artifactService.writeBytes(sessionId, file.getFileName().toString(),
+                    java.nio.file.Files.readAllBytes(file), str(body, "description").isBlank()
+                            ? null : str(body, "description").strip());
+            // 产物卡片当场出现：只落库不推的话，右栏「产物」要等下一轮或刷新才认得到这份新产物
+            artifactService.publish(sessionId, "artifact", com.alibaba.fastjson2.JSON.toJSONString(info));
+            log.info("[SANDBOX] 沙盒文件已取回为产物 session={} file={} size={}",
+                    sessionId, info.get("filename"), info.get("size"));
+            return ResultJson.ok(info);
+        } catch (com.wenqu.ai.common.BizException e) {
+            throw e;
+        } catch (IllegalArgumentException e) {
+            return ResultJson.error(400, e.getMessage());
+        } catch (IllegalStateException e) {
+            return ResultJson.error(503, e.getMessage());
+        } catch (java.io.IOException e) {
+            log.warn("[SANDBOX] 沙盒文件取回失败 session={} path={}: {}", sessionId, path, e.getMessage());
+            return ResultJson.error("取回失败：" + e.getMessage());
         }
     }
 
