@@ -58,3 +58,4 @@ config/application-local.yml
 /.mockup/
 /skill-projections/
 /docs/
+/web/scripts/
