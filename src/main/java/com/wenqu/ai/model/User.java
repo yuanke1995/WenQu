@@ -43,6 +43,9 @@ public class User {
     /** 锁定至（失败过多时；空=未锁定） */
     private LocalDateTime lockedUntil;
 
+    /** 最近一次登录成功时间（本地登录与 OIDC 回调均记；空=从未登录） */
+    private LocalDateTime lastLoginTime;
+
     /** 个人默认聊天模型（引用 providerId/modelId；空=不设默认，对话时手动选择）。
      *  updateStrategy=ALWAYS：清空默认需把该列置 null，MP 默认策略会跳过 null 字段导致清空失效 */
     @com.baomidou.mybatisplus.annotation.TableField(updateStrategy = com.baomidou.mybatisplus.annotation.FieldStrategy.ALWAYS)

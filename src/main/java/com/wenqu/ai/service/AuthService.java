@@ -124,11 +124,14 @@ public class AuthService {
             registerFailure(user);
             throw new BizException("账号或密码不正确");
         }
-        if ((user.getLoginFailCount() != null && user.getLoginFailCount() > 0) || user.getLockedUntil() != null) {
+        boolean lockDirty = (user.getLoginFailCount() != null && user.getLoginFailCount() > 0) || user.getLockedUntil() != null;
+        if (lockDirty) {
             user.setLoginFailCount(0);
             user.setLockedUntil(null);
-            userMapper.updateById(user);
         }
+        // 最近登录时间：每次登录成功都落库（成员管理「最近登录时间」列的数据源；OIDC 回调在 OidcService 同口径记）
+        user.setLastLoginTime(LocalDateTime.now());
+        userMapper.updateById(user);
         String token = AuthCrypto.issueToken(secret(), issuer(), audience(),
                 user.getUid(), user.getRole(), ttlSeconds());
         Map<String, Object> out = new LinkedHashMap<>();

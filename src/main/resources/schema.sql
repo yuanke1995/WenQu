@@ -411,6 +411,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_user` (
     `password_hash` VARCHAR(255) DEFAULT NULL COMMENT '密码哈希（PBKDF2；空=未设置，不能本地登录）',
     `login_fail_count` INT      DEFAULT 0 COMMENT '连续登录失败次数',
     `locked_until` DATETIME     DEFAULT NULL COMMENT '锁定至（失败过多时；空=未锁定）',
+    `last_login_time` DATETIME  DEFAULT NULL COMMENT '最近一次登录成功时间（本地登录与 OIDC 回调均记；空=从未登录）',
     `default_model` VARCHAR(255) DEFAULT NULL COMMENT '个人默认聊天模型（引用 providerId/modelId；空=不设默认，对话时手动选择）',
     `memory_enabled` INT DEFAULT 1 COMMENT '用户级长期记忆自动提炼开关（个人设置可改）: 1=开, 0=关；历史行加列时按默认 1（保持原行为）',
     -- default_rerank_model 已随「重排归知识库检索设置」退役（存量库该列无害保留）
