@@ -149,12 +149,21 @@ const ctxRangeOf = ref => {
   if (!max || max <= 0 || !min || min <= 0 || min >= max) return null
   return { min, max }
 }
-/** 档位选项：区间内的 2 的幂点 + 两端（下限不在幂上时补头，上限同理补尾） */
+/** 档位选项：区间内的 2 的幂点 + 两端（下限不在幂上时补头，上限同理补尾）。
+ *  标签去重：登记值十进制（如 glm 下限 128000）与幂点（131072）都会格式化成「128K」，
+ *  不筛会出现两个同名 128K——两端保留（min 是官方口径下限、max 是实际生效上限），
+ *  中间幂点与两端或彼此撞名时丢弃。 */
 const ctxWindowOptionsOf = ref => {
   const range = ctxRangeOf(ref)
   if (!range) return []
-  const mids = CTX_WINDOW_STEPS.filter(v => v > range.min && v < range.max)
-  return [range.min, ...mids, range.max].map(v => ({ value: v, label: fmtWindow(v) }))
+  const minLabel = fmtWindow(range.min)
+  const maxLabel = fmtWindow(range.max)
+  const seen = new Set([minLabel, maxLabel])
+  const mids = CTX_WINDOW_STEPS
+    .filter(v => v > range.min && v < range.max)
+    .map(v => ({ value: v, label: fmtWindow(v) }))
+    .filter(o => !seen.has(o.label) && seen.add(o.label))
+  return [{ value: range.min, label: minLabel }, ...mids, { value: range.max, label: maxLabel }]
 }
 /** 按模型记忆的窗口档位选择（与思考强度同一套 per-model localStorage 记忆风格；未记忆=上限） */
 const ctxWindowMap = ref((() => {
@@ -223,11 +232,29 @@ const defaultAgentId = ref('')                  // 默认智能体（isDefault�
 // 是否存在「默认智能体」（isDefault=1）：有则后端把空 agentId（全局配置）解析为它——
 // 「默认（全局配置）」与默认智能体是同一套配置，菜单里只留默认智能体一项，避免两行同义的重复项
 const hasDefaultAgent = computed(() => agentList.value.some(a => a.isDefault === 1 || a.isDefault === true))
-/** 本会话下一问的作答智能体（''=默认助手：后端解析为 isDefault 那一个，未设默认则走全局配置） */
+/** 本会话最近一次作答的智能体（取最后一条带归属快照的助手消息；没有=null）。
+ *  打开旧会话时输入框的待选值跟随它：接着问下去，多半还是想问同一位——而不是刷新后
+ *  被拉回全局默认。它只是"下一问用谁"的预填（P5 每轮按请求解析，会话本就不锁定），
+ *  用户在胶囊上显式选过人（agentMap 有本会话的键）时仍以显式选择优先。
+ *  messages 声明在本段之后：computed 惰性求值（首次读取在装配完成后），无 TDZ 问题。 */
+const lastTurnAgent = computed(() => {
+  for (let i = messages.value.length - 1; i >= 0; i--) {
+    const m = messages.value[i]
+    if (m && m.role === 'ai' && m.agentId) return { id: m.agentId, name: m.agentName || '' }
+  }
+  return null
+})
+/** 本会话下一问的作答智能体（''=默认助手：后端解析为 isDefault 那一个，未设默认则走全局配置）。
+ *  待选优先级：用户显式选的 > 本会话上一问的智能体 > 平台默认智能体。
+ *  上一问的那位已不在清单里（被删/不再可见，且清单已加载）时不预填它——钉着已消失的人，
+ *  每问一轮都要撞一次「智能体不可用」的降级条；回默认助手，与后端降级的去向一致。 */
 const currentAgentId = computed({
   get: () => {
     const memo = agentMap.value[currentSessionId.value]
     if (memo !== undefined) return memo
+    const last = lastTurnAgent.value
+    if (last && last.id
+        && (!agentList.value.length || agentList.value.some(a => a.id === last.id))) return last.id
     return defaultAgentId.value || ''
   },
   set: v => { agentMap.value = { ...agentMap.value, [currentSessionId.value]: v || '' } }
@@ -241,12 +268,17 @@ const pickAgent = id => {
     if (a) message.success(`已切换为「${a.name}」，下一问起由它作答`)
   }
 }
-/** 当前生效的智能体名（空 = 默认助手；P5 起没有"锁定"这一说，换人立即生效） */
+/** 当前生效的智能体名（空=默认助手；P5 起没有"锁定"这一说，换人立即生效） */
 const currentAgentName = computed(() => {
   const id = currentAgentId.value
   if (!id) return '默认助手'
   const a = agentList.value.find(x => x.id === id)
-  return a ? a.name : '默认助手'
+  if (a) return a.name
+  // 智能体已删除/不再可见，或清单还没拉回来：回退最后一条回答上的名字快照，
+  // 别把还挂在待选位上的那位冒充成「默认助手」（发出去后端会降级并明说）
+  const last = lastTurnAgent.value
+  if (last && last.id === id && last.name) return last.name
+  return '默认助手'
 })
 /** 当前生效的智能体对象（仅用于 agent-pill 头像；默认助手 = null，不显示头像） */
 const currentAgent = computed(() => {
@@ -359,7 +391,10 @@ const currentSessionTitle = computed(() => {
   return s?.title || '新对话'
 })
 // ==================== 模型切换：会话级覆盖 > 智能体 > 个人默认 > 全局 ====================
-const modelMap = ref({})            // 会话ID → 用户手动选择的模型引用（按会话记忆；空=跟随）
+const modelMap = ref({})            // 会话ID → 会话行上的模型引用（按会话记忆；空=跟随）。
+                                    // 这份现在有两处来路：聊天页手动切换即时 PUT 落库；后端每轮把
+                                    // 实际生效的引用补记一份（recordTurnModel）——所以刷新/隔天打开
+                                    // 旧会话，右下角回显的是这个会话上一轮真用的模型，不是"现在的"个人默认
 // 会话ID → 那个引用此刻还能不能用（后端判据随会话列表下发：停用供应商、把模型从列表移除
 // 都不会让会话里钉着的历史值自己消失，界面必须报出来，而不是等回答时撞一句网关错）
 const modelIssueMap = ref({})
@@ -972,6 +1007,9 @@ onUnmounted(() => { if (goalPollTimer) clearInterval(goalPollTimer) })
 const historyLoads = new Map()
 
 const switchSession = async sid => {
+  // 真正换会话先结算上一会话的插话队列（见 settleSteerOnLeave）：队列是模块级单例，不清会以
+  // 「上一会话那轮的话」挂在新区块的输入框上；同会话重铺（计划/提问卡 restored 后的重拉）不清
+  if (currentSessionId.value !== sid) settleSteerOnLeave()
   // 不再被"正在回答"拦截：流式回调改写的是 chatStreams 里的消息对象，切走不影响后台流
   currentSessionId.value = sid
   // 换到别的会话：上一会话那颗占位气泡随旧数组一起作废（留着会在错误的气泡上撤/交接）。
@@ -1151,6 +1189,8 @@ const creatingSession = ref(false)
  */
 const createNewSession = async presetAgentId => {
   if (creatingSession.value) return
+  // 落到空/新会话同样是一次「离开」：上一会话排队中的插话对新会话不生效（见 settleSteerOnLeave）
+  settleSteerOnLeave()
   // 空会话复用排除正在流式的会话：列表里的 messageCount 是快照（首条消息 done 后才刷新），
   // 流式中的会话可能仍记 0——命中它会把当前视图清空而不是开新会话
   const emptySid = sessionStore.list.find(s => (s.messageCount ?? 0) === 0
@@ -1216,7 +1256,7 @@ const handleDeleteSession = async sid => {
     if (sid === currentSessionId.value) {
       const remaining = sessionStore.list.filter(s => s.id !== sid && (s.messageCount ?? 0) > 0)
       if (remaining.length > 0) await switchSession(remaining[0].id)
-      else { messages.value = []; currentSessionId.value = null; router.replace(hooks.chatPath) }
+      else { settleSteerOnLeave(); messages.value = []; currentSessionId.value = null; router.replace(hooks.chatPath) }
     }
     await loadSessions()
   } catch (e) { message.error(e.message || '删除失败') }
@@ -2237,7 +2277,9 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
   if (heldStartAt) msg.time = heldStartAt
   // 用户自己发起一轮（非接流）：占位那一行让位给它，一屏不许有两颗「正在溯源」
   if (!resume) dropGoalPlaceholder()
-  if (!replaceMsg) messages.value.push(msg)
+  // 气泡只长在「正在看的会话」上：后台补发的插话（prev 指向别的会话）由 chatStreams 持有，
+  // 切回去时 switchSession 接回视图尾部——直接 push 会把旧会话的气泡推进当前会话的列表
+  if (!replaceMsg && currentSessionId.value === sid) messages.value.push(msg)
   const viewing = () => currentSessionId.value === sid  // 只有正在看这个会话才滚动/贴底
   // 流式期间：先按新高度重算留白、等它落屏，再贴底——留白让贴底落点停在本轮问题置顶处，
   // 回答长过一屏后留白归零，贴底就自然变成跟着最新内容走（用户上翻仍会解除跟随）
@@ -2590,8 +2632,10 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         // 自动作为新一轮发出（本轮已结束，"插进去"没有对象了），纯文字没赶上工具步的由后端回
         // pendingSteers。用户说过的话不许静默丢掉，这是插话机制的底线。
         // 接来的那条流不结算：那些插话是**发起设备**上的人说的，由它自己续发；
-        // 在这台只来「看一眼」的设备上自动发出去，等于替别人又问了一遍
-        if (!resume) setTimeout(() => flushPendingSteers(Array.isArray(p.pendingSteers) ? p.pendingSteers : []), 0)
+        // 在这台只来「看一眼」的设备上自动发出去，等于替别人又问了一遍。
+        // origin = 本轮的会话与作答智能体：收尾结算派发的新一轮必须回到发起那一轮的会话——
+        // 收尾是异步的（setTimeout），用户此刻可能已经切到别的会话
+        if (!resume) setTimeout(() => flushPendingSteers(Array.isArray(p.pendingSteers) ? p.pendingSteers : [], { sid, agentId }), 0)
         // 编辑重发：done 带回本轮用户消息的落库 ID——回填到本地新用户消息上，
         // 该消息的 ‹ n/N › 分支切换器与「再次编辑」从此可用
         if (editUserMsg && p.userMessageId) editUserMsg.messageId = p.userMessageId
@@ -3005,15 +3049,19 @@ function moveSteer (from, to) {
  *  `fromSteer` 让后端在那句话后面补一句身份声明（"这是上一轮还没答完时补的方向，不是新提问"）——
  *  不带它，模型会当成用户又问了一遍（实测短问答必现：它会复述「你消息里的 X 这一段…」），
  *  插话最核心的「改了方向立刻生效」就废了。 */
-function sendSteerRound (s) {
+function sendSteerRound (s, origin = null) {
+  // origin：发起那一轮的会话与作答智能体（收尾自动派发时用户可能已切走，新一轮必须回到原会话）。
+  // 复用自动重试的 prev 通道：「沿用原会话，不读当前 UI 态」。atHome=人还看着这个会话才进气泡列表
+  const back = origin ? { sid: origin.sid, agentId: origin.agentId || '', model: '' } : null
+  const atHome = !back || back.sid === currentSessionId.value
   const userMsg = reactive({ role: 'user', content: s.text, images: s.images || [],
                         attachments: s.attsMeta || [], attachData: s.atts || [],
                         skills: s.skills || [], mentions: s.mentions || [], historyRefs: s.historyRefs || [],
                         deepThink: !!s.deepThink, planMode: !!s.planMode, fromSteer: true,
                         time: Date.now(), messageId: null })
-  messages.value.push(userMsg)
-  streamAnswer(s.text, s.images || [], null, messages.value.length === 1, 1, !!s.deepThink,
-               s.atts || [], s.skills || [], s.mentions || [], null, s.historyRefs || '', '', userMsg,
+  if (atHome) messages.value.push(userMsg)
+  streamAnswer(s.text, s.images || [], null, atHome && messages.value.length === 1, 1, !!s.deepThink,
+               s.atts || [], s.skills || [], s.mentions || [], back, s.historyRefs || '', '', userMsg,
                !!s.planMode, false, true)
 }
 
@@ -3023,7 +3071,9 @@ function sendSteerRound (s) {
  * <p>库里它仍是点「立即发送」那一刻落的同一条用户消息：后端带 fromSteer 时跳过重复落库，
  * 这颗新气泡直接挂上那个 messageId，刷新后也只有这一条。
  */
-function resendSteer (t) {
+function resendSteer (t, origin = null) {
+  const back = origin ? { sid: origin.sid, agentId: origin.agentId || '', model: '' } : null
+  const atHome = !back || back.sid === currentSessionId.value
   const existing = t.messageId
           ? messages.value.find(m => m.role === 'user' && m.messageId === t.messageId)
           : null
@@ -3031,8 +3081,8 @@ function resendSteer (t) {
                         attachments: [], attachData: [], skills: [], mentions: [], historyRefs: [],
                         deepThink: false, planMode: false, fromSteer: true,
                         time: Date.now(), messageId: t.messageId || null })
-  if (!existing) messages.value.push(userMsg)
-  streamAnswer(t.text, [], null, false, 1, false, [], [], [], null, '', '', userMsg,
+  if (atHome && !existing) messages.value.push(userMsg)
+  streamAnswer(t.text, [], null, false, 1, false, [], [], [], back, '', '', userMsg,
                false, false, true)
 }
 
@@ -3047,14 +3097,18 @@ const steerResend = ref([])
  * <p>一次只派一条（同一会话同时只能跑一轮），剩下的等它结束再派——done 会再次走到这里。
  * @param backendLeft 后端 done 里回来的 pendingSteers：[{ text, messageId }]
  */
-function flushPendingSteers (backendLeft = []) {
+function flushPendingSteers (backendLeft = [], origin = null) {
   for (const raw of backendLeft) {
     const t = typeof raw === 'string' ? { text: raw, messageId: '' } : (raw || {})
     if (!t.text) continue
     // 本地队列里同文那条撤下（用户点了发送、又在这句还没退场时手动重打一遍）：补发已经带上它了，
     // 发两遍等于替用户把同一句话讲两次
     steerQueue.value = steerQueue.value.filter(s => s.text !== t.text)
-    if (!steerResend.value.some(x => x.text === t.text)) steerResend.value.push(t)
+    // 条目带上 origin：补发可能隔了别的轮才轮到（if (loading) return 的排队），到时当前会话
+    // 已换人——发回原会话靠条目自己记的那份，不靠当时的 currentSessionId
+    if (!steerResend.value.some(x => x.text === t.text)) {
+      steerResend.value.push({ ...t, sid: origin?.sid || '', agentId: origin?.agentId || '' })
+    }
   }
   // 本轮已经收尾，队列里还挂着「等这一轮听到」的那几条没有对象可插了：上面没被补发接走的，
   // 就是模型已经收到过的（那一帧的留痕长在回答里，或刷新后由库里那条用户消息回显）——
@@ -3063,13 +3117,42 @@ function flushPendingSteers (backendLeft = []) {
   if (loading.value) return   // 已经有人在跑了（用户抢先发了新消息）：留着，下轮结束再结算
   const left = steerResend.value.shift()
   if (left) {
-    resendSteer(left)
+    resendSteer(left, left.sid ? { sid: left.sid, agentId: left.agentId } : null)
     return
   }
   const next = steerQueue.value.find(s => !s.sending)
   if (!next) return
   steerQueue.value = steerQueue.value.filter(s => s !== next)
-  sendSteerRound(next)
+  sendSteerRound(next, origin)
+}
+
+/**
+ * 离开一个会话（切换/新建/删除当前会话）时结算插话队列。steerQueue 与 steerResend 都是
+ * 模块级单例、不分会话：不清的话，条目会以「上一会话那轮还没说完的话」的样子挂在新会话的
+ * 输入框上（用户读成新会话的事），旧会话后台轮收尾时更会按当时的 currentSessionId 派发——串话。
+ * <p>结算口径：
+ * <ul>
+ * <li>已送出/在途的（awaiting/sending）：效果已经落在旧会话那一轮里，条目直接撤下。旧会话收尾时
+ *     后端按 pendingSteers 交给收尾结算，不依赖这两份本地数组。</li>
+ * <li>没发出去的草稿（含带材料等下一轮的 deferred）：文字放回输入框（不覆盖正在打的字，多条按行
+ *     合并），材料跟随 editSteer 同一口径不还原——用户自己决定重发还是删掉，说什么都不静默丢。</li>
+ * <li>steerResend（后端交回「说过、模型没收到」的）：内容已随 messageId 落在旧会话库里，不丢；
+ *     不在这里补发——补发目标是旧会话，而用户已经离开了，轮到它时由带 origin 的收尾结算处理。</li>
+ * </ul>
+ */
+function settleSteerOnLeave () {
+  if (!steerQueue.value.length && !steerResend.value.length) return
+  const drafts = steerQueue.value
+    .filter(s => !s.awaiting && !s.sending)
+    .map(s => String(s.text || '').trim())
+    .filter(Boolean)
+  steerQueue.value = []
+  steerResend.value = []
+  if (!drafts.length) return
+  const add = drafts.join('\n')
+  const cur = String(text.value || '').trim()
+  text.value = !cur ? add : (cur.includes(add) ? cur : cur + ' ' + add)
+  message.info('没发出的插话已放回输入框（它属于上一个会话）')
 }
 // ==================== 手动压缩会话上下文（/compact） ====================
 // 后端一律走 AgentScope 框架的 ConversationCompactor（FrameworkSessions.compactNow），
