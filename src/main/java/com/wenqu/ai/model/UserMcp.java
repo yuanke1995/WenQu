@@ -35,14 +35,19 @@ public class UserMcp {
     /** 传输类型：streamable | sse */
     private String type;
 
+    /**
+     * 自定义请求头（JSON 对象，整块 RSA 加密存储，{@code RSA:} 前缀）。
+     * <p>实体层只存密文：加解密只在 service 层进出边界发生，接口回显只给键名。
+     */
+    private String headers;
+
     /** 启用：1=启用 0=停用 */
     private Integer enabled;
 
     /**
-     * 工具中文名缓存（JSON 文本）：{@code {fp, items:{裸工具名:{label,hint}}}}。
-     * <p>写入方是 {@code McpToolLabelService}：连接成功拿到工具清单后按指纹比对，
-     * 变了才调 LLM 批量翻译一次。读取方是工具卡展示名解析链——MCP 动态工具不在
-     * 注册中心登记，中文名只能落在这张表里随卡下发。
+     * 工具中文名（JSON 文本）：{@code {"items":{"裸工具名":"中文名"}}}。
+     * <p>由用户在 MCP 页的工具清单里逐条手工起名（写 {@code McpToolLabelService}），
+     * 没起名的工具展示原名。MCP 动态工具不在注册中心登记，中文名只能落在这张表里随卡下发。
      */
     private String toolLabels;
 

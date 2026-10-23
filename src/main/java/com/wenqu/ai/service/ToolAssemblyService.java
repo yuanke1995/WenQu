@@ -69,6 +69,11 @@ public class ToolAssemblyService {
             }
 
             @Override
+            public String agentId() {
+                return agent == null || agent.getId() == null ? "" : agent.getId();
+            }
+
+            @Override
             public boolean guestMode() {
                 return guestMode;
             }

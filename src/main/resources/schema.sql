@@ -535,8 +535,9 @@ CREATE TABLE IF NOT EXISTS `c_ai_user_mcp` (
     `name`        VARCHAR(60)  NOT NULL COMMENT '服务显示名（个人维度唯一；同时作为工具名前缀防冲突）',
     `url`         VARCHAR(512) NOT NULL COMMENT '服务地址（可含路径；streamable 默认端点 /mcp、sse 默认 /sse）',
     `type`        VARCHAR(16)  DEFAULT 'streamable' COMMENT '传输类型: streamable | sse',
+    `headers`     TEXT         COMMENT '自定义请求头（JSON 对象，整块 RSA 加密存储；RSA: 前缀）',
     `enabled`     INT          DEFAULT 1 COMMENT '启用: 1=启用 0=停用（停用后不建立连接、不暴露其工具）',
-    `tool_labels` TEXT COMMENT '工具中文名缓存（JSON）：{fp:工具集指纹, items:{裸工具名:{label,hint}}}。连接成功后由 LLM 批量翻译写入，指纹未变不重译',
+    `tool_labels` TEXT COMMENT '工具中文名（JSON）：{items:{裸工具名:中文名}}。用户在 MCP 页逐条手工起名，没起名的展示原名',
     `create_time` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time` DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
@@ -852,7 +853,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_goal_evidence` (
 
 CREATE TABLE IF NOT EXISTS `c_ai_mcp_call_log` (
     `id`             VARCHAR(50)  NOT NULL COMMENT '调用记录ID（UUID）',
-    `channel`        VARCHAR(16)  NOT NULL COMMENT '入口渠道: agent=智能体端点/ai/mcp/{token}，platform=平台级/ai/mcp',
+    `channel`        VARCHAR(16)  NOT NULL COMMENT '渠道: agent=智能体端点/ai/mcp/{token}，platform=平台级/ai/mcp，outbound=平台调用用户接入的外部工具',
     `tool_name`      VARCHAR(128) DEFAULT NULL COMMENT '被调用的工具名（ask-{slug} / wenqu_*）',
     `owner_uid`      VARCHAR(64)  DEFAULT NULL COMMENT '身份归属：端点=发布者uid，平台级=Key创建者uid',
     `credential_ref` VARCHAR(128) DEFAULT NULL COMMENT '凭据指代（脱敏）：token:前6位 / key:{id}，不存明文',
@@ -868,7 +869,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_mcp_call_log` (
     KEY `idx_channel_time` (`channel`, `created_at`),
     KEY `idx_tool` (`tool_name`),
     KEY `idx_owner` (`owner_uid`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='MCP 服务端调用审计日志（外部客户端调用 wenqu MCP 端点的每次工具执行）';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='MCP 调用审计日志（入站：外部客户端调 wenqu 端点；出站：模型调用户接入的外部 MCP 工具）';
 
 CREATE TABLE IF NOT EXISTS `c_ai_workflow` (
     `id`           VARCHAR(50)   NOT NULL COMMENT '工作流ID（UUID）',

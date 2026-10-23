@@ -17,8 +17,8 @@ import java.util.Map;
  * <ol>
  *   <li>{@link ToolRegistry}——问渠工具的唯一真源；</li>
  *   <li>{@link FrameworkToolLabels}——框架原生工具（注册中心管不着它们，原因见该类注释）；</li>
- *   <li>{@link McpToolLabelService}——MCP 动态工具（连接成功后 LLM 自动翻译的缓存，
- *       按用户归属隔离，取不到再退它自己的规则词典）；</li>
+ *   <li>{@link McpToolLabelService}——MCP 动态工具（用户在 MCP 页手工起的中文名，
+ *       按用户归属隔离；没起名返回 null 走下一档）；</li>
  *   <li>都没有 ⇒ 返回 {@code null}，<b>调用方据此不写 label 字段</b>。</li>
  * </ol>
  * 最后一档刻意不回落成工具裸名：前端 {@code toolLabel(n, label)} 把「label 等于名字」判定为
@@ -60,9 +60,8 @@ final class ToolDisplayNames {
         if (toolName == null || toolName.isBlank()) return null;
         String fromRegistry = registry == null ? null : registry.cardHint(toolName);
         if (fromRegistry != null) return fromRegistry;
-        String framework = FrameworkToolLabels.hint(toolName);
-        if (framework != null) return framework;
-        return mcpLabels == null ? null : mcpLabels.hint(uid, toolName);
+        // MCP 工具没有说明源：名字是用户手工起的，悬停不编解释
+        return FrameworkToolLabels.hint(toolName);
     }
 
     /**

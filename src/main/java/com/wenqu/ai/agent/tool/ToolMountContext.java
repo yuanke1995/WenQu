@@ -20,6 +20,15 @@ public interface ToolMountContext {
     /** 本轮提问用户（技能/MCP 这类个人资产按人取） */
     String userId();
 
+    /**
+     * 本轮生效的智能体 id（没有绑定智能体时为空串）。
+     * <p>用途：出站 MCP 调用的审计要回答「谁在哪个智能体里调了外部工具」——装配层能拿到 agent，
+     * 但 MCP 回调是通用的，只能由装配处把身份显式传下去。工作流节点没有智能体维度，恒为空。
+     */
+    default String agentId() {
+        return "";
+    }
+
     /** 免登录分享会话（公开链接 /s/{token}）：身份敏感的能力对匿名访客不暴露 */
     boolean guestMode();
 

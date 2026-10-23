@@ -1,12 +1,15 @@
 package com.wenqu.ai.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.wenqu.ai.mapper.McpCallLogMapper;
 import com.wenqu.ai.mapper.UserMcpMapper;
 import com.wenqu.ai.model.UserMcp;
+import com.wenqu.ai.util.McpHeaders;
 import io.modelcontextprotocol.client.McpClient;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.client.transport.HttpClientSseClientTransport;
 import io.modelcontextprotocol.client.transport.HttpClientStreamableHttpTransport;
+import io.modelcontextprotocol.client.transport.customizer.McpSyncHttpClientRequestCustomizer;
 import io.modelcontextprotocol.spec.McpSchema;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
@@ -18,9 +21,11 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -43,7 +48,8 @@ import java.util.concurrent.TimeUnit;
  *   自动重试（{@link #RETRY_DELAYS_SECONDS}），远端抖动类瞬时故障无需用户手动刷新；
  * - 问答链路取工具（{@link #toolCallbacks}）前会等待在途连接收敛——聊天拿到的工具集合
  *   与旧的同步行为一致，等待开销也收敛（initialize 最长 30s 必然返回）；
- * - 该用户的配置发生变化（增删改/启停）由指纹比对自动重建连接（旧连接 closeGracefully）；
+ * - 配置变化（增删改/启停）按<b>单服务增量</b>对齐：只断开/重连受影响的那个服务，其余健康连接、
+ *   在途建连与失败退避都不受牵连——任一开关只动它自己；「全部重连」才整池重建；
  * - 某个用户长时间不用（{@link #IDLE_EVICT_MILLIS}）其连接池会被关闭回收，避免长连接无限堆积。
  * <p>
  * 工具暴露：每个成功连接的 server 的工具列表转 {@link SyncMcpToolCallback}（Spring AI ToolCallback），
@@ -77,14 +83,24 @@ public class McpClientService {
     private static final long IDLE_EVICT_MILLIS = Duration.ofHours(6).toMillis();
     /**
      * 连接失败的后台重试退避序列（秒）。远端"间歇性掐握手"（Remote host terminated the
-     * handshake）类瞬时故障多数在一两轮内恢复；全部用尽后停在 failed，等用户点「刷新」
-     * 或改配置触发整池重建。只在后台跑，绝不占 HTTP 请求线程。
+     * handshake）类瞬时故障多数在一两轮内恢复；全部用尽后停在 failed，等用户点「刷新」或
+     * 重新启用/改配置（该服务重新对齐）。只在后台跑，绝不占 HTTP 请求线程。
      */
     private static final long[] RETRY_DELAYS_SECONDS = {30, 60, 120, 300, 600};
+    /**
+     * 工具清单缓存 TTL：问答/工作流每轮都要工具表，而每次 {@code listTools()} 都是远程往返
+     * （实测 1~3.5s+，还会分页）。连接成功时已经拉过一次，先把那次结果预热进缓存；
+     * 过期的旧清单先照常用、后台刷新，避免每 5 分钟固定卡一轮。
+     */
+    private static final long TOOLS_CACHE_TTL_MILLIS = Duration.ofMinutes(5).toMillis();
 
     private final UserMcpMapper userMcpMapper;
-    /** 工具中文名的自动翻译与解析：连接成功后触发指纹比对刷新，状态清单随工具条目带中文名 */
+    /** 工具中文名（用户在 MCP 页手工起名）的解析：状态清单随工具条目带中文名，没起名带原名 */
     private final McpToolLabelService labelService;
+    /** 自定义请求头的加解密：实体层只存密文，进出边界在 connect/probe/status 三处 */
+    private final ConfigCryptoService cryptoService;
+    /** 出站调用审计（channel=outbound）：外部工具每次执行落一行，写失败不影响调用 */
+    private final McpCallLogMapper mcpCallLogMapper;
 
     /** 连接池按用户隔离：uid → 该用户的连接与状态 */
     private final Map<String, UserPool> pools = new ConcurrentHashMap<>();
@@ -107,9 +123,12 @@ public class McpClientService {
         return t;
     });
 
-    public McpClientService(UserMcpMapper userMcpMapper, McpToolLabelService labelService) {
+    public McpClientService(UserMcpMapper userMcpMapper, McpToolLabelService labelService,
+                            ConfigCryptoService cryptoService, McpCallLogMapper mcpCallLogMapper) {
         this.userMcpMapper = userMcpMapper;
         this.labelService = labelService;
+        this.cryptoService = cryptoService;
+        this.mcpCallLogMapper = mcpCallLogMapper;
     }
 
     @PreDestroy
@@ -142,6 +161,16 @@ public class McpClientService {
      * @param onlyServers null=不筛选（该用户全部已启用服务）；空集合=一个都不取；非空=只取这些（按服务名）
      */
     public List<ToolCallback> toolCallbacks(String uid, java.util.Set<String> onlyServers) {
+        return toolCallbacks(uid, onlyServers, null);
+    }
+
+    /**
+     * 同上，附带调用方智能体（出站审计用；工作流节点没有智能体维度，传 null）。
+     * <p>审计包装必须放在这一层而不是 {@code McpToolProvider}：工作流节点直接调本方法取回调，
+     * 走 provider 那层会漏掉工作流；而普通 delegate 又会破坏工作流按裸名找工具的判据，
+     * 所以用 {@link SyncMcpToolCallback} 子类包装。
+     */
+    public List<ToolCallback> toolCallbacks(String uid, java.util.Set<String> onlyServers, String agentId) {
         if (onlyServers != null && onlyServers.isEmpty()) {
             return List.of(); // 智能体显式"不使用任何 MCP"：连接都不必建立
         }
@@ -153,18 +182,32 @@ public class McpClientService {
         // 60s 请求超时）若持着池锁，会把 /status 这类只读本地快照的消费方一起堵在锁上
         // （智能体列表转圈的同一根因）。临界区纪律见 {@link UserPool}。
         Map<String, McpSyncClient> snap;
+        Map<String, CachedTools> cacheSnap;
         synchronized (pool) {
             snap = new LinkedHashMap<>(pool.clients);
+            cacheSnap = new LinkedHashMap<>(pool.toolsCache);
         }
         List<ToolCallback> callbacks = new ArrayList<>();
         Map<String, String> failed = new LinkedHashMap<>();
+        long now = System.currentTimeMillis();
         for (Map.Entry<String, McpSyncClient> entry : snap.entrySet()) {
             if (onlyServers != null && !onlyServers.contains(entry.getKey())) continue;
             McpSyncClient client = entry.getValue();
+            CachedTools cached = cacheSnap.get(entry.getKey());
+            if (cached != null && cached.fresh(now)) {
+                for (McpSchema.Tool tool : cached.tools) callbacks.add(auditCallback(client, tool, uid, entry.getKey(), agentId));
+                continue;
+            }
+            if (cached != null) {
+                // 过期：旧清单先照常返回（问答不被远程列表拖住），后台单飞刷新，下一轮拿新的
+                for (McpSchema.Tool tool : cached.tools) callbacks.add(auditCallback(client, tool, uid, entry.getKey(), agentId));
+                refreshToolsAsync(pool, uid, entry.getKey(), client);
+                continue;
+            }
             try {
-                for (McpSchema.Tool tool : client.listTools().tools()) {
-                    callbacks.add(new SyncMcpToolCallback(client, tool));
-                }
+                List<McpSchema.Tool> tools = client.listTools().tools();
+                for (McpSchema.Tool tool : tools) callbacks.add(auditCallback(client, tool, uid, entry.getKey(), agentId));
+                putCacheIfCurrent(pool, entry.getKey(), client, tools);
             } catch (Exception e) {
                 log.warn("[MCP] uid={} 拉取 server {} 工具列表失败（跳过该 server）: {}",
                         uid, entry.getKey(), e.getMessage());
@@ -180,6 +223,45 @@ public class McpClientService {
             }
         }
         return callbacks;
+    }
+
+    /** 回调统一走审计包装（SyncMcpToolCallback 子类：保留裸名，工作流按裸名找工具不受影响） */
+    private ToolCallback auditCallback(McpSyncClient client, McpSchema.Tool tool, String uid, String server,
+                                       String agentId) {
+        return new McpOutboundAuditCallback(client, tool, mcpCallLogMapper, uid, server, agentId);
+    }
+
+    /** 写入工具缓存：连接已换代（快照时的 client 不在池里了）就丢弃，避免旧连接的清单盖到新连接上 */
+    private static void putCacheIfCurrent(UserPool pool, String name, McpSyncClient client,
+                                          List<McpSchema.Tool> tools) {
+        synchronized (pool) {
+            if (pool.clients.get(name) != client) return;
+            pool.toolsCache.put(name, new CachedTools(List.copyOf(tools), System.currentTimeMillis()));
+        }
+    }
+
+    /** 过期清单的后台刷新（每服务单飞）：失败继续用旧清单，下一轮再试 */
+    private void refreshToolsAsync(UserPool pool, String uid, String name, McpSyncClient client) {
+        synchronized (pool) {
+            if (!pool.toolsRefreshing.add(name)) return; // 已有刷新在跑，别堆任务
+        }
+        try {
+            connectExecutor.submit(() -> {
+                try {
+                    List<McpSchema.Tool> tools = client.listTools().tools();
+                    putCacheIfCurrent(pool, name, client, tools);
+                    log.debug("[MCP] uid={} server {} 工具清单后台刷新完成（{} 个）", uid, name, tools.size());
+                } catch (Exception e) {
+                    log.debug("[MCP] uid={} server {} 工具清单后台刷新失败（继续用旧清单）: {}",
+                            uid, name, e.getMessage());
+                } finally {
+                    synchronized (pool) { pool.toolsRefreshing.remove(name); }
+                }
+            });
+        } catch (Exception e) {
+            // 调度器已 shutdown（应用关闭中）：清掉标记，不影响本轮
+            synchronized (pool) { pool.toolsRefreshing.remove(name); }
+        }
     }
 
     /**
@@ -243,11 +325,14 @@ public class McpClientService {
                 continue;
             }
             try {
+                List<McpSchema.Tool> fresh = c.listTools().tools();
+                // 管理页/画布这一档本来就是实时远程，顺手回填缓存（下一次问答不用再等）
+                putCacheIfCurrent(pool, row.getName(), c, fresh);
                 List<Map<String, String>> tools = new ArrayList<>();
-                for (McpSchema.Tool t : c.listTools().tools()) {
+                for (McpSchema.Tool t : fresh) {
                     Map<String, String> m = new LinkedHashMap<>();
                     m.put("name", t.name());
-                    // 中文名（缓存里翻译过的）：管理页工具清单与管理页同源展示；没有就写裸名
+                    // 手工中文名（管理页工具清单里改的）；没起名就写裸名，前端按裸名展示
                     m.put("label", java.util.Objects.requireNonNullElse(labelService.label(uid, t.name()), t.name()));
                     m.put("description", brief(t.description()));
                     tools.add(m);
@@ -286,6 +371,9 @@ public class McpClientService {
             m.put("ref", row.getUid() + "/" + row.getName());
             m.put("url", row.getUrl());
             m.put("type", row.getType());
+            // 脱敏回显：只给「有没有凭据」与键名，值永不出服务端
+            m.put("hasHeaders", row.getHeaders() != null && !row.getHeaders().isBlank());
+            m.put("headerKeys", McpHeaders.keys(cryptoService.decrypt(row.getHeaders())));
             m.put("enabled", Integer.valueOf(1).equals(row.getEnabled()));
             String st = statesSnap.get(row.getName());
             // 停用不建立连接，也不该报"失败"——给出明确语义
@@ -325,10 +413,9 @@ public class McpClientService {
     /**
      * 对未连上的服务补一次重连（仅 enabled 且状态非 connected 的，健康连接一律不动）。
      * <p>{@link #serverStatuses} 只做「已连接 → 在线校验」的单向翻转：远端恢复后，失败状态会
-     * 一直停在 failed 上，必须整池重建（reload）才能恢复。而「刷新」的语义是把列表刷成当前
-     * 真实状态，所以显式刷新时先补一次重连（只碰坏连接，代价与失败服务数成正比），
-     * 再由 serverStatuses 正常出列表。只在用户点「刷新」时调用——进页面拉状态不重试，
-     * 避免挂着几个死服务把首屏状态请求拖到超时。
+     * 一直停在 failed 上，等不到自动恢复。而「刷新」的语义是把列表刷成当前真实状态，所以显式
+     * 刷新时先补一次重连（只碰坏连接，代价与失败服务数成正比），再由 serverStatuses 正常出列表。
+     * 只在用户点「刷新」时调用——进页面拉状态不重试，避免挂着几个死服务把首屏状态请求拖到超时。
      */
     public void retryBroken(String uid) {
         if (uid == null || uid.isBlank()) return;
@@ -337,21 +424,19 @@ public class McpClientService {
         // 锁内只做三件事：挑出要重连的目标、摘掉旧连接、置 connecting。connect+initialize 是
         // 秒级远程 IO（单服务最长 30s），持锁做会把 /status 等只读消费方堵在池锁上——此前
         // "刷新"期间切到智能体页，列表就被这把锁拖住转圈。临界区纪律见 {@link UserPool}。
-        List<UserMcp> targets = new ArrayList<>();
+        List<ConnectTarget> targets = new ArrayList<>();
         List<McpSyncClient> stale = new ArrayList<>();
-        final int gen;
         synchronized (pool) {
-            gen = pool.gen;
             for (UserMcp row : pool.rows) {
                 if (!Integer.valueOf(1).equals(row.getEnabled())) continue;
                 String name = row.getName();
                 if (name == null || name.isBlank() || row.getUrl() == null || row.getUrl().isBlank()) continue;
                 if ("connected".equals(pool.states.get(name)) && pool.clients.get(name) != null) continue;
                 if ("connecting".equals(pool.states.get(name))) continue; // 后台任务正在连，别重复建连（会互踩+泄漏连接）
-                McpSyncClient old = pool.clients.remove(name);
-                if (old != null) stale.add(old);
+                stale.addAll(detachServer(pool, name));
                 pool.states.put(name, "connecting");
-                targets.add(row);
+                pool.specs.put(name, specOf(row));
+                targets.add(new ConnectTarget(row, bumpToken(pool, name)));
             }
         }
         closeQuietly(stale); // 旧连接的 closeGracefully 是远程 IO，锁外关闭
@@ -359,12 +444,13 @@ public class McpClientService {
         // 锁外逐个重连（与后台 connectAsync 同为慢 IO；只碰坏连接，代价与失败服务数成正比）
         Map<String, McpSyncClient> ok = new LinkedHashMap<>();
         Map<String, String> bad = new LinkedHashMap<>();
-        for (UserMcp row : targets) {
+        for (ConnectTarget target : targets) {
+            UserMcp row = target.row();
             String name = row.getName();
             String type = row.getType() == null || row.getType().isBlank() ? "streamable" : row.getType();
             McpSyncClient client = null;
             try {
-                client = connect(name, row.getUrl(), type);
+                client = connect(name, row.getUrl(), type, headersOf(row));
                 client.initialize();
                 ok.put(name, client);
                 log.info("[MCP] uid={} server {} 刷新时重连成功", uid, name);
@@ -381,38 +467,64 @@ public class McpClientService {
             }
         }
 
-        // 锁内回写：期间配置又变过（gen 前进）就整批丢弃，交给新一代任务接管
+        // 锁内回写：期间配置又变过（该服务的建连代次前进）就丢弃，交给新的对齐流程接管
+        List<McpSyncClient> discard = new ArrayList<>();
         synchronized (pool) {
-            if (pool.gen != gen) {
-                closeQuietly(new ArrayList<>(ok.values()));
-                return;
+            for (ConnectTarget target : targets) {
+                String name = target.row().getName();
+                if (!tokenCurrent(pool, name, target.token())) {
+                    McpSyncClient c = ok.remove(name);
+                    if (c != null) discard.add(c);
+                    bad.remove(name);
+                    continue;
+                }
+                McpSyncClient c = ok.get(name);
+                if (c != null) {
+                    pool.clients.put(name, c);
+                    pool.states.put(name, "connected");
+                }
             }
-            ok.forEach((name, c) -> {
-                pool.clients.put(name, c);
-                pool.states.put(name, "connected");
-            });
             bad.forEach(pool.states::put);
         }
+        closeQuietly(discard);
     }
 
     /**
-     * 重连某个用户的全部服务（增删/改地址后想立刻生效时用；不重建也会在下一次取工具时按指纹自动生效）。
-     * 只清指纹触发后台重建，立即返回——期间各服务状态为 connecting，由轮询看到最终结果。
+     * 配置变更（增删改/启停）后立刻对齐连接。按单服务增量：只连新增/被改动的服务、只断已删/
+     * 已停用/地址变了的那一个，其余健康连接与在途建连原样保留——任一开关只影响它自己。
+     * 立即返回，新建连在后台进行，最终状态由 /status 轮询看到。
+     */
+    public void refresh(String uid) {
+        if (uid == null || uid.isBlank()) return;
+        ensureConnections(uid);
+    }
+
+    /**
+     * 重连某个用户的<b>全部</b>服务（「全部重连」按钮）：整池拆掉按当前配置重建。
+     * 立即返回——期间各服务状态为 connecting，由轮询看到最终结果。
      */
     public void reload(String uid) {
         if (uid == null || uid.isBlank()) return;
         UserPool pool = pools.computeIfAbsent(uid, k -> new UserPool());
+        List<McpSyncClient> stale;
         synchronized (pool) {
-            pool.fingerprint = ""; // 清指纹 → ensureConnections 重建
+            stale = detachPool(pool); // 摘掉全部连接并作废在途任务
+            pool.fingerprint = "";    // 清指纹 → ensureConnections 按当前配置整池重连
         }
+        closeQuietly(stale);
         ensureConnections(uid);
     }
 
     /**
      * 临时连接测试（"添加服务"弹窗里用）：**不落配置、不进该用户的连接池**，连上取工具清单即关闭。
      * 用于"先测再存"，避免填错地址还得先保存再回来删。
+     *
+     * @param headersJson 本次显式填写的请求头（明文 JSON，已由 Controller 校验）；为空时若给了
+     *                    {@code serverId} 则取该服务已保存的凭据——编辑态回显只有键名、拿不到明文，
+     *                    不这样「测试连接」会对已存凭据的服务必然失败
      */
-    public Map<String, Object> probe(String url, String type) {
+    public Map<String, Object> probe(String url, String type, String headersJson, boolean headersExplicit,
+                                     String uid, String serverId) {
         Map<String, Object> out = new LinkedHashMap<>();
         if (url == null || url.isBlank()) {
             out.put("available", false);
@@ -422,7 +534,8 @@ public class McpClientService {
         String t = (type == null || type.isBlank()) ? "streamable" : type;
         McpSyncClient client = null;
         try {
-            client = connect("probe", url.trim(), t);
+            client = connect("probe", url.trim(), t,
+                    resolveProbeHeaders(headersJson, headersExplicit, uid, serverId));
             client.initialize();
             List<Map<String, String>> tools = new ArrayList<>();
             for (McpSchema.Tool tool : client.listTools().tools()) {
@@ -445,6 +558,37 @@ public class McpClientService {
                 }
             }
         }
+    }
+
+    /**
+     * 探测用的请求头：显式传了 headers 就以它为准（空对象=明确不带凭据），
+     * 没传才回落到本人已保存的服务凭据。
+     */
+    private Map<String, String> resolveProbeHeaders(String headersJson, boolean headersExplicit,
+                                                    String uid, String serverId) {
+        if (headersExplicit) return headersJson == null ? Map.of() : McpHeaders.parse(headersJson);
+        if (serverId == null || serverId.isBlank() || uid == null || uid.isBlank()) return Map.of();
+        try {
+            UserMcp row = userMcpMapper.selectById(serverId);
+            return row == null || !uid.equals(row.getUid()) ? Map.of() : headersOf(row);
+        } catch (Exception e) {
+            return Map.of();
+        }
+    }
+
+    /**
+     * 服务已保存的请求头（解密 → 宽松解析）。解密/解析失败按「无凭据」处理并告警：
+     * 连接会因 401 变红，这比抛异常打断建连更符合「MCP 故障不影响主链路」。
+     */
+    private Map<String, String> headersOf(UserMcp row) {
+        String stored = row.getHeaders();
+        if (stored == null || stored.isBlank()) return Map.of();
+        Map<String, String> headers = McpHeaders.parse(cryptoService.decrypt(stored));
+        if (headers.isEmpty()) {
+            log.warn("[MCP] uid={} server {} 的请求头无法解密或格式非法，本次按无凭据连接",
+                    row.getUid(), row.getName());
+        }
+        return headers;
     }
 
     /** 工具描述截断（界面展开用，避免超长描述撑坏卡片） */
@@ -470,7 +614,7 @@ public class McpClientService {
     }
 
     /**
-     * 按该用户当前配置对齐连接（懒加载；配置指纹变化才重建）。<b>只对齐清单、立即返回</b>：
+     * 按该用户当前配置对齐连接（懒加载；配置指纹变化才做增量对齐）。<b>只对齐清单、立即返回</b>：
      * 具体连接丢给后台线程（{@link #connectAsync}），调用方拿到池时未连上的服务状态是
      * {@code connecting}。这样 /status 之类只需清单的调用不再被 30s 级的握手拖住
      * （MCP 页面首屏曾要等全部服务连完才出列表）；需要工具的调用方（问答链路）再显式
@@ -481,7 +625,7 @@ public class McpClientService {
      */
     private UserPool ensureConnections(String uid) {
         UserPool pool = pools.computeIfAbsent(uid, k -> new UserPool());
-        List<McpSyncClient> stale;
+        List<McpSyncClient> stale = List.of();
         synchronized (pool) {
             pool.lastAccess = System.currentTimeMillis();
             List<UserMcp> rows = userMcpMapper.selectList(new LambdaQueryWrapper<UserMcp>()
@@ -494,26 +638,18 @@ public class McpClientService {
             if (fingerprint.equals(pool.fingerprint)) {
                 return pool; // 配置未变，沿用现有连接（空闲回收统一在锁外做，见方法尾）
             }
-            stale = detachPool(pool);
-            pool.gen++; // 新一代连接任务：旧后台任务回写前校验代次，过期结果直接丢弃
+            // 配置变了：按单服务比对，只动受影响的那个（健康连接、在途建连、失败退避都不牵连）
+            List<ConnectTarget> toConnect = new ArrayList<>();
+            stale = reconcile(pool, rows, toConnect);
             pool.fingerprint = fingerprint;
             pool.rows = new ArrayList<>(rows);
-            List<UserMcp> toConnect = new ArrayList<>();
-            for (UserMcp row : rows) {
-                String name = row.getName();
-                if (name == null || name.isBlank() || row.getUrl() == null || row.getUrl().isBlank()) continue;
-                if (!Integer.valueOf(1).equals(row.getEnabled())) {
-                    pool.states.put(name, "disabled");   // 停用的服务直接跳过连接
-                    continue;
-                }
-                pool.states.put(name, "connecting");
-                toConnect.add(row);
+            if (!toConnect.isEmpty()) {
+                final String fuid = uid;
+                final UserPool p = pool;
+                final List<ConnectTarget> targets = List.copyOf(toConnect);
+                pool.tasks.removeIf(Future::isDone);
+                pool.tasks.add(connectExecutor.submit(() -> connectAsync(fuid, p, targets)));
             }
-            final String fuid = uid;
-            final UserPool p = pool;
-            final int gen = pool.gen;
-            final List<UserMcp> targets = List.copyOf(toConnect);
-            pool.task = connectExecutor.submit(() -> connectAsync(fuid, p, gen, targets));
         }
         // 旧连接的 closeGracefully 是远程 IO（streamable 会发 DELETE 关会话），锁外关闭——
         // 放在临界区里曾让重建路径把池锁握在手里等网络
@@ -525,14 +661,90 @@ public class McpClientService {
     }
 
     /**
-     * 后台逐个建连（单用户内串行，与旧的同步行为一致）。每个 server 连完立刻在锁内落状态，
-     * 让轮询中的 /status 尽快看到。回写前校验代次：期间配置又变了（gen 已前进）就丢弃结果
-     * 并关掉刚建好的连接——新任务会按新配置重建。
+     * 把池内连接对齐到最新配置，返回需要锁外关闭的旧连接（调用方持池锁）。
+     * <p>
+     * 逐服务判定：已删除/已停用/地址或类型变了 → 摘连接；新增/重新启用/配置变了 → 排进待连清单；
+     * 配置没变的健康连接与在途任务原样保留。这就是「任一开关只动它自己」的落点——
+     * 每次变化都整池重建时，任何一个服务的启停都会把所有服务断开重握手（坏服务还要再失败一轮）。
      */
-    private void connectAsync(String uid, UserPool pool, int gen, List<UserMcp> targets) {
-        for (UserMcp row : targets) {
+    private List<McpSyncClient> reconcile(UserPool pool, List<UserMcp> rows, List<ConnectTarget> toConnect) {
+        List<McpSyncClient> stale = new ArrayList<>();
+        Set<String> alive = new LinkedHashSet<>();
+        for (UserMcp row : rows) {
+            String name = row.getName();
+            if (name == null || name.isBlank() || row.getUrl() == null || row.getUrl().isBlank()) continue;
+            alive.add(name);
+            String spec = specOf(row);
+            if (!Integer.valueOf(1).equals(row.getEnabled())) {
+                stale.addAll(detachServer(pool, name));
+                pool.states.put(name, "disabled"); // 停用的服务直接跳过连接
+                continue;
+            }
+            if (pool.clients.containsKey(name) && spec.equals(pool.specs.get(name))) {
+                // 失败态不在这一步「复活」：在线校验判死的连接还挂在池里，改别的服务不能把它刷回绿点
+                String st = pool.states.get(name);
+                if (st == null || !st.startsWith("failed")) pool.states.put(name, "connected");
+                continue;
+            }
+            if ("connecting".equals(pool.states.get(name)) && spec.equals(pool.specs.get(name))) {
+                continue; // 同一配置已有在途任务，别重复建连（会互踩+泄漏连接）
+            }
+            stale.addAll(detachServer(pool, name)); // 旧配置的连接与在途任务一并作废
+            pool.states.put(name, "connecting");
+            pool.specs.put(name, spec);
+            toConnect.add(new ConnectTarget(row, bumpToken(pool, name)));
+        }
+        // 清单里已不存在的服务：摘连接、作废在途任务、清状态
+        Set<String> known = new LinkedHashSet<>(pool.states.keySet());
+        known.addAll(pool.clients.keySet());
+        known.addAll(pool.specs.keySet());
+        for (String name : known) {
+            if (alive.contains(name)) continue;
+            stale.addAll(detachServer(pool, name));
+            pool.states.remove(name);
+        }
+        pool.states.keySet().retainAll(alive);
+        pool.specs.keySet().retainAll(alive);
+        pool.tokens.keySet().retainAll(alive);
+        return stale;
+    }
+
+    /** 服务连接配置（地址+类型+请求头摘要）：变了就必须重连，没变就沿用现有连接 */
+    private static String specOf(UserMcp row) {
+        String url = row.getUrl() == null ? "" : row.getUrl().trim();
+        String type = row.getType() == null || row.getType().isBlank() ? "streamable" : row.getType().trim();
+        return url + "|" + type.toLowerCase() + "|h:" + McpHeaders.digest(row.getHeaders());
+    }
+
+    /** 摘掉某服务的连接并清其目标配置（调用方持池锁）；返回的 client 由调用方锁外关闭 */
+    private static List<McpSyncClient> detachServer(UserPool pool, String name) {
+        McpSyncClient c = pool.clients.remove(name);
+        pool.specs.remove(name);
+        pool.toolsCache.remove(name);
+        pool.toolsRefreshing.remove(name);
+        bumpToken(pool, name); // 作废该服务的在途建连任务
+        return c == null ? List.of() : List.of(c);
+    }
+
+    /** 该服务的建连代次 +1（持有池锁时调用） */
+    private static int bumpToken(UserPool pool, String name) {
+        return pool.tokens.merge(name, 1, Integer::sum);
+    }
+
+    /** 在途任务是否仍代表该服务的当前意图（持有池锁时调用） */
+    private static boolean tokenCurrent(UserPool pool, String name, int token) {
+        return Integer.valueOf(token).equals(pool.tokens.get(name));
+    }
+
+    /**
+     * 后台逐个建连（单用户内串行，与旧的同步行为一致）。每个 server 连完立刻在锁内落状态，
+     * 让轮询中的 /status 尽快看到。回写前校验该服务的建连代次：期间它被停用/删除/改配置
+     * （代次已前进）就丢弃结果并关掉刚建好的连接——新的对齐流程会按新配置重连。
+     */
+    private void connectAsync(String uid, UserPool pool, List<ConnectTarget> targets) {
+        for (ConnectTarget target : targets) {
             if (Thread.currentThread().isInterrupted()) return;
-            connectOne(uid, pool, gen, row);
+            connectOne(uid, pool, target, 0);
         }
     }
 
@@ -544,13 +756,16 @@ public class McpClientService {
      * "Remote host terminated the handshake"是间歇性的，握手能过、下一个请求被掐）时异常
      * 直接炸掉整个建连任务：该服务永远停在 connecting、排在后面的服务再也不连、也没人重试，
      * 用户看到的就是"每次点开都在连接中"。
+     *
+     * @param attempt 已用掉的重试次数（0=首次连接）；失败后按它推进退避序列
      */
-    private void connectOne(String uid, UserPool pool, int gen, UserMcp row) {
+    private void connectOne(String uid, UserPool pool, ConnectTarget target, int attempt) {
+        UserMcp row = target.row();
         String name = row.getName();
         String type = row.getType() == null || row.getType().isBlank() ? "streamable" : row.getType();
         McpSyncClient client = null;
         try {
-            client = connect(name, row.getUrl(), type);
+            client = connect(name, row.getUrl(), type, headersOf(row));
             client.initialize();
         } catch (Exception e) {
             if (client != null) {
@@ -561,31 +776,33 @@ public class McpClientService {
                 }
             }
             synchronized (pool) {
-                if (pool.gen != gen) return; // 配置已又变，本轮全部作废
+                if (!tokenCurrent(pool, name, target.token())) return; // 该服务已停用/删除/改配置，本轮作废
                 pool.states.put(name, "failed:" + rootMessage(e));
             }
             log.warn("[MCP] uid={} server {} ({}) 连接失败（跳过，不影响问答）: {}",
                     uid, name, type, rootMessage(e));
-            scheduleRetry(uid, pool, gen, row, 1);
+            scheduleRetry(uid, pool, target, attempt + 1);
             return;
         }
+        boolean keep;
         synchronized (pool) {
-            if (pool.gen != gen) { // 同上：过期任务，关掉刚建的连接直接收工
-                closeQuietly(List.of(client));
-                return;
+            keep = tokenCurrent(pool, name, target.token());
+            if (keep) {
+                pool.clients.put(name, client);
+                pool.specs.put(name, specOf(row));
+                pool.states.put(name, "connected");
             }
-            pool.clients.put(name, client);
-            pool.states.put(name, "connected");
+        }
+        if (!keep) {
+            closeQuietly(List.of(client)); // 过期任务：关掉刚建的连接直接收工（锁外关，远程 IO）
+            return;
         }
         int toolCount = -1;
         try {
             List<McpSchema.Tool> tools = client.listTools().tools();
             toolCount = tools.size();
-            // 连接成功的顺手活：指纹比对后按需把工具清单交给 LLM 译中文名（后台线程，绝不阻塞）。
-            // listTools 在这里本来就要发一次（数工具数），翻译触发挂在同一次结果上，不多花一次远程 IO
-            labelService.refreshAsync(uid, name, tools.stream()
-                    .map(t -> new McpToolLabelService.McpSchemaTool(t.name(), t.description()))
-                    .toList());
+            // 同一次结果直接预热工具缓存：连接后的第一轮问答不必再付一次远程 listTools
+            putCacheIfCurrent(pool, name, client, tools);
         } catch (Exception e) {
             // 仅影响日志的工具数展示；连接已建立、状态已落。远端若真死了，/status 的
             // 在线校验或下一次取工具会把状态翻成 failed
@@ -596,23 +813,23 @@ public class McpClientService {
 
     /**
      * 连接失败后的后台退避重试：按 {@link #RETRY_DELAYS_SECONDS} 逐轮加间隔，全部用尽停在
-     * failed。执行前校验池代次与服务状态——只重试仍停在 failed 的服务：整池重建（gen 前进）
-     * 或手动「刷新」（置 connecting）已接管的不碰，避免互踩建连。
+     * failed。执行前校验该服务的建连代次与服务状态——只重试仍停在 failed 的服务：被停用/删除/
+     * 改配置（代次前进）或手动「刷新」（置 connecting）已接管的不碰，避免互踩建连。
      */
-    private void scheduleRetry(String uid, UserPool pool, int gen, UserMcp row, int attempt) {
+    private void scheduleRetry(String uid, UserPool pool, ConnectTarget target, int attempt) {
         if (attempt > RETRY_DELAYS_SECONDS.length) return;
         long delay = RETRY_DELAYS_SECONDS[attempt - 1];
-        String name = row.getName();
+        String name = target.row().getName();
         try {
             retryScheduler.schedule(() -> {
                 synchronized (pool) {
-                    if (pool.gen != gen) return;
+                    if (!tokenCurrent(pool, name, target.token())) return;
                     String st = pool.states.get(name);
                     if (st == null || !st.startsWith("failed")) return;
                     pool.states.put(name, "connecting");
                 }
                 log.info("[MCP] uid={} server {} 第 {} 次后台重试", uid, name, attempt);
-                connectOne(uid, pool, gen, row);
+                connectOne(uid, pool, target, attempt);
             }, delay, TimeUnit.SECONDS);
         } catch (Exception e) {
             // 调度器已 shutdown（应用关闭中）等情况：保持 failed 即可，不影响主流程
@@ -624,14 +841,24 @@ public class McpClientService {
      * initialize 有 30s 硬超时，任务必然结束；上限给 120s 只是防御性封顶（多 server 串行）。
      */
     private void awaitConnect(UserPool pool) {
-        Future<?> t = pool.task;
-        if (t == null) return;
-        try {
-            t.get(120, TimeUnit.SECONDS);
-        } catch (InterruptedException ie) {
-            Thread.currentThread().interrupt();
-        } catch (Exception e) {
-            log.warn("[MCP] 等待连接任务收敛异常（按当前已连状态继续）: {}", e.getMessage());
+        List<Future<?>> pending;
+        synchronized (pool) {
+            pool.tasks.removeIf(Future::isDone); // 已完成的任务不必再等，也顺带清掉引用
+            pending = new ArrayList<>(pool.tasks);
+        }
+        if (pending.isEmpty()) return;
+        long deadline = System.currentTimeMillis() + 120_000;
+        for (Future<?> t : pending) {
+            try {
+                long left = deadline - System.currentTimeMillis();
+                if (left <= 0) return;
+                t.get(left, TimeUnit.MILLISECONDS);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return;
+            } catch (Exception e) {
+                log.warn("[MCP] 等待连接任务收敛异常（按当前已连状态继续）: {}", e.getMessage());
+            }
         }
     }
 
@@ -644,7 +871,12 @@ public class McpClientService {
         List<McpSyncClient> stale = new ArrayList<>(pool.clients.values());
         pool.clients.clear();
         pool.states.clear();
+        pool.specs.clear();
+        pool.toolsCache.clear();
+        pool.toolsRefreshing.clear();
         pool.rows = List.of();
+        // 作废全部在途任务：整池重建后旧任务的连接不能再回写
+        pool.tokens.replaceAll((name, token) -> token + 1);
         return stale;
     }
 
@@ -684,28 +916,33 @@ public class McpClientService {
         closeQuietly(stale); // 锁外关闭：closeGracefully 是远程 IO，不进临界区
     }
 
-    /** 配置指纹：服务名/地址/类型/启停任一变化都要重建连接 */
+    /** 配置指纹：服务名/地址/类型/启停/请求头任一变化都要重建连接（请求头只比摘要，不把凭据塞进指纹串） */
     private String fingerprintOf(List<UserMcp> rows) {
         StringBuilder sb = new StringBuilder();
         for (UserMcp r : rows) {
             sb.append(r.getName()).append('|').append(r.getUrl()).append('|')
-                    .append(r.getType()).append('|').append(r.getEnabled()).append(";");
+                    .append(r.getType()).append('|').append(r.getEnabled())
+                    .append("|h:").append(McpHeaders.digest(r.getHeaders())).append(';');
         }
         return sb.toString();
     }
 
     /** 按类型构建传输层并创建同步客户端（未 initialize） */
-    private McpSyncClient connect(String name, String url, String type) {
+    private McpSyncClient connect(String name, String url, String type, Map<String, String> headers) {
         McpSchema.Implementation clientInfo = new McpSchema.Implementation("wen-qu", "1.0.0");
-        McpClient.SyncSpec spec = McpClient.sync(buildTransport(url, type))
+        McpClient.SyncSpec spec = McpClient.sync(buildTransport(url, type, headers))
                 .clientInfo(clientInfo)
                 .requestTimeout(REQUEST_TIMEOUT)
                 .initializationTimeout(CONNECT_TIMEOUT);
         return spec.build();
     }
 
-    /** streamable（默认）与 sse 两种传输；其余值按 streamable 处理 */
-    private io.modelcontextprotocol.spec.McpClientTransport buildTransport(String url, String type) {
+    /** streamable（默认）与 sse 两种传输；其余值按 streamable 处理。请求头由 customizer 逐请求注入 */
+    private io.modelcontextprotocol.spec.McpClientTransport buildTransport(String url, String type,
+                                                                           Map<String, String> headers) {
+        // 0.18.3 的签名是 (builder, method, uri, body, ctx)——第 4 参是请求体，不是 userAgent
+        McpSyncHttpClientRequestCustomizer customizer = headers == null || headers.isEmpty() ? null
+                : (reqBuilder, method, uri, body, ctx) -> headers.forEach(reqBuilder::header);
         if ("sse".equalsIgnoreCase(type)) {
             // SSE：url 拆 base + sse 端点（默认 /sse）
             String base = url, ssePath = "/sse";
@@ -720,7 +957,10 @@ public class McpClientService {
                 }
             }
             String finalBase = base;
-            return HttpClientSseClientTransport.builder(finalBase).sseEndpoint(ssePath).build();
+            HttpClientSseClientTransport.Builder builder =
+                    HttpClientSseClientTransport.builder(finalBase).sseEndpoint(ssePath);
+            if (customizer != null) builder.httpRequestCustomizer(customizer);
+            return builder.build();
         }
         // streamable（默认）：builder 拆 baseUri + endpoint(path)，二者拼接为完整请求地址；
         // url 可能带路径（http://host:port/mcp）也可能不带（http://host:port，默认端点 /mcp）
@@ -732,11 +972,12 @@ public class McpClientService {
             baseUri = url.substring(0, pathStart);
             endpoint = url.substring(pathStart);
         }
-        return HttpClientStreamableHttpTransport.builder(baseUri)
+        HttpClientStreamableHttpTransport.Builder builder = HttpClientStreamableHttpTransport.builder(baseUri)
                 .endpoint(endpoint)
                 .resumableStreams(false)
-                .openConnectionOnStartup(false)
-                .build();
+                .openConnectionOnStartup(false);
+        if (customizer != null) builder.httpRequestCustomizer(customizer);
+        return builder.build();
     }
 
     /**
@@ -746,22 +987,39 @@ public class McpClientService {
      * 一切远程 IO（initialize / listTools / closeGracefully）都在锁外做——否则持锁等网络
      * （远端挂起时 listTools 60s、重连握手 30s/服务）会把 /status、问答取工具这些只读消费方
      * 一起堵在锁上（智能体列表被 MCP 页在线校验/刷新拖住转圈的根因）。锁外操作的回写必须
-     * 校验代次（gen）或比对 client 引用，防止过期结果覆盖新一轮的状态。
+     * 比对该服务的建连代次（{@code tokens}）或 client 引用，防止过期结果覆盖新一轮的状态。
      */
     private static final class UserPool {
-        /** 本次对齐的配置指纹（变化即重建） */
+        /** 本次对齐的配置指纹（变化才做增量对齐） */
         String fingerprint = "";
-        /** 连接代次：每次按新配置重建时 +1；后台任务回写前校验，过期结果丢弃 */
-        int gen;
-        /** 在途的后台连接任务（取工具前 join 它；配置重建后指向新任务，旧任务靠 gen 校验作废） */
-        volatile Future<?> task;
+        /** name → 建连代次：该服务每次被重新调度（启停/改配置/删除/整池重建）时 +1，旧任务回写前比对 */
+        final Map<String, Integer> tokens = new LinkedHashMap<>();
+        /** name → 当前连接/在途任务对应的配置（地址+类型+请求头摘要）；与实际不符即需断开重连 */
+        final Map<String, String> specs = new LinkedHashMap<>();
+        /** 在途的后台连接任务（取工具前逐个 join；完成即被清理） */
+        final List<Future<?>> tasks = new ArrayList<>();
         /** 最近一次被使用的时间（闲置回收用） */
         long lastAccess = System.currentTimeMillis();
         /** name → 已连接客户端 */
         final Map<String, McpSyncClient> clients = new LinkedHashMap<>();
         /** name → 连接状态（connected / failed:原因 / disabled） */
         final Map<String, String> states = new LinkedHashMap<>();
+        /** name → 工具清单缓存（连接成功时预热；TTL 内问答/工作流不再远程 listTools） */
+        final Map<String, CachedTools> toolsCache = new LinkedHashMap<>();
+        /** name → 是否有过期清单的后台刷新在跑（单飞：TTL 到期只发一次远程） */
+        final java.util.Set<String> toolsRefreshing = new LinkedHashSet<>();
         /** 本次对齐的服务清单（状态展示按此顺序） */
         List<UserMcp> rows = new ArrayList<>();
+    }
+
+    /** 一份工具清单缓存：工具对象不可变，缓存本身只记拉取时刻 */
+    private record CachedTools(List<McpSchema.Tool> tools, long fetchedAt) {
+        boolean fresh(long now) {
+            return now - fetchedAt < TOOLS_CACHE_TTL_MILLIS;
+        }
+    }
+
+    /** 一次建连任务：目标服务 + 调度时的建连代次（回写前校验，过期即丢弃） */
+    private record ConnectTarget(UserMcp row, int token) {
     }
 }

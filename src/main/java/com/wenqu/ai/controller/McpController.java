@@ -2,6 +2,7 @@ package com.wenqu.ai.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.config.AdminGuard;
 import com.wenqu.ai.dto.ResultJson;
@@ -9,9 +10,12 @@ import com.wenqu.ai.mapper.McpCallLogMapper;
 import com.wenqu.ai.mapper.UserMcpMapper;
 import com.wenqu.ai.model.McpCallLog;
 import com.wenqu.ai.model.UserMcp;
+import com.wenqu.ai.service.ConfigCryptoService;
 import com.wenqu.ai.service.ConfigService;
 import com.wenqu.ai.service.McpClientService;
+import com.wenqu.ai.service.McpToolLabelService;
 import com.wenqu.ai.util.BatchResults;
+import com.wenqu.ai.util.McpHeaders;
 import com.wenqu.ai.util.RequestUser;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -56,10 +60,12 @@ public class McpController {
     private static final int MAX_SERVERS = 10;
 
     private final McpClientService mcpClientService;
+    private final McpToolLabelService labelService;
     private final ConfigService configService;
     private final UserMcpMapper userMcpMapper;
     private final McpCallLogMapper mcpCallLogMapper;
     private final AdminGuard adminGuard;
+    private final ConfigCryptoService cryptoService;
 
     @Operation(summary = "连接状态一览", description = "工具调用总开关 + 本人每个 server 的地址/类型/启停/连接状态/可用工具数（连接失败带原因）；立即返回，尚未连上的服务状态为 connecting（后台建连中，前端轮询到收敛）；retryBroken=true 时先对未连上的服务补一次同步重连（点「刷新」用，连接中的服务会跳过）")
     @GetMapping("/status")
@@ -79,7 +85,7 @@ public class McpController {
         return ResultJson.ok(data);
     }
 
-    @Operation(summary = "新增 MCP 服务", description = "body: {name, url, type?, enabled?}；保存即尝试连接，失败不阻断（状态可在 /status 查看）")
+    @Operation(summary = "新增 MCP 服务", description = "body: {name, url, type?, enabled?, headers?}；headers 为键值对象（整块 RSA 加密入库）；保存即尝试连接，失败不阻断（状态可在 /status 查看）")
     @PostMapping("/servers")
     public ResultJson add(@RequestBody Map<String, Object> body) {
         String uid = RequestUser.uid();
@@ -95,19 +101,22 @@ public class McpController {
                 .eq(UserMcp::getUid, uid).eq(UserMcp::getName, name)) > 0) {
             throw new BizException("已存在同名 MCP 服务（" + name + "）");
         }
+        String headers = McpHeaders.normalize(body.get("headers"));
         UserMcp row = new UserMcp();
         row.setId(UUID.randomUUID().toString());
         row.setUid(uid);
         row.setName(name);
         row.setUrl(url);
         row.setType(type);
+        row.setHeaders(headers == null ? null : cryptoService.encrypt(headers));
         row.setEnabled(body.get("enabled") == null ? 1 : (Boolean.TRUE.equals(body.get("enabled")) ? 1 : 0));
         userMcpMapper.insert(row);
-        mcpClientService.reload(uid);
+        mcpClientService.refresh(uid); // 增量对齐：只连这一个新服务，其余连接不动
         return ResultJson.ok(Map.of("id", row.getId(), "name", row.getName()));
     }
 
-    @Operation(summary = "编辑 MCP 服务", description = "body: {name?, url?, type?, enabled?}；只传要改的字段，改完自动重连")
+    @Operation(summary = "编辑 MCP 服务", description = "body: {name?, url?, type?, enabled?, headers?, clearHeaders?}；只传要改的字段。"
+            + "headers 不传 = 保持原值，传对象 = 整块替换，clearHeaders=true = 清除凭据；改完自动重连")
     @PutMapping("/servers/{id}")
     public ResultJson update(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         UserMcp row = own(id);
@@ -123,9 +132,22 @@ public class McpController {
         if (body.containsKey("url")) row.setUrl(trim(text(body, "url")));
         if (body.containsKey("type")) row.setType(normalizeType(text(body, "type")));
         if (body.containsKey("enabled")) row.setEnabled(Boolean.TRUE.equals(body.get("enabled")) ? 1 : 0);
+        boolean clearHeaders = Boolean.TRUE.equals(body.get("clearHeaders"));
+        if (!clearHeaders && body.containsKey("headers")) {
+            String headers = McpHeaders.normalize(body.get("headers"));
+            // 「替换为空」与「清除」同义：都要求把可空列显式置 null（updateById 会跳过 null）
+            if (headers == null) clearHeaders = true;
+            else row.setHeaders(cryptoService.encrypt(headers));
+        }
         validate(row.getName(), row.getUrl());
         userMcpMapper.updateById(row);
-        mcpClientService.reload(row.getUid());
+        if (clearHeaders) {
+            // updateById 默认跳过 null（可空列清空不落库）：清除凭据必须显式 set null
+            userMcpMapper.update(null, new LambdaUpdateWrapper<UserMcp>()
+                    .eq(UserMcp::getId, row.getId())
+                    .set(UserMcp::getHeaders, null));
+        }
+        mcpClientService.refresh(row.getUid()); // 增量对齐：只有改动的这个服务会重连
         return ResultJson.ok(Map.of("id", row.getId(), "name", row.getName()));
     }
 
@@ -135,8 +157,20 @@ public class McpController {
         UserMcp row = own(id);
         row.setEnabled(Boolean.TRUE.equals(body.get("enabled")) ? 1 : 0);
         userMcpMapper.updateById(row);
-        mcpClientService.reload(row.getUid());
+        mcpClientService.refresh(row.getUid()); // 增量对齐：开关只动它自己，不牵连其他服务
         return ResultJson.ok(Map.of("id", row.getId(), "enabled", Integer.valueOf(1).equals(row.getEnabled())));
+    }
+
+    @Operation(summary = "设置工具中文名", description = "body: {tool: 工具名, label: 中文名}；label 传空串 = 恢复展示原名。"
+            + "MCP 工具的中文名只由用户手工维护（不自动翻译），只改自己的服务")
+    @PutMapping("/servers/{id}/tool-label")
+    public ResultJson setToolLabel(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
+        UserMcp row = own(id);
+        String tool = text(body, "tool");
+        String stored = labelService.save(row, tool, text(body, "label"));
+        String bare = tool.strip();
+        return ResultJson.ok(Map.of("id", row.getId(), "tool", bare,
+                "label", stored == null ? bare : stored));
     }
 
     @Operation(summary = "删除 MCP 服务", description = "连带关闭该连接（只删自己的）")
@@ -144,7 +178,7 @@ public class McpController {
     public ResultJson delete(@PathVariable("id") String id) {
         UserMcp row = own(id);
         userMcpMapper.deleteById(row.getId());
-        mcpClientService.reload(row.getUid());
+        mcpClientService.refresh(row.getUid()); // 增量对齐：只断开被删的这一个
         return ResultJson.ok(Map.of("id", id));
     }
 
@@ -171,7 +205,7 @@ public class McpController {
                 failed.add(BatchResults.failItem(id, null, BatchResults.errMsg(e)));
             }
         }
-        if (!succeeded.isEmpty()) mcpClientService.reload(uid);
+        if (!succeeded.isEmpty()) mcpClientService.refresh(uid); // 增量对齐：批量里每条只动自己
         return ResultJson.ok(BatchResults.result(ids, succeeded, failed));
     }
 
@@ -195,7 +229,7 @@ public class McpController {
                 failed.add(BatchResults.failItem(id, null, BatchResults.errMsg(e)));
             }
         }
-        if (!succeeded.isEmpty()) mcpClientService.reload(uid);
+        if (!succeeded.isEmpty()) mcpClientService.refresh(uid); // 增量对齐：批量里每条只动自己
         return ResultJson.ok(BatchResults.result(ids, succeeded, failed));
     }
 
@@ -207,15 +241,76 @@ public class McpController {
         return status(null, null, null); // 重连刚整池重建过，无需再补重连
     }
 
-    @Operation(summary = "测试连接", description = "临时连接一个 MCP 服务（不落配置），返回是否可达与工具清单；用于\"先测再存\"")
+    @Operation(summary = "测试连接", description = "临时连接一个 MCP 服务（不落配置），返回是否可达与工具清单；用于\"先测再存\"。"
+            + "headers 不传且给了 serverId 时，使用该服务已保存的凭据（编辑态回显只有键名，拿不到明文）")
     @PostMapping("/probe")
-    public ResultJson probe(@RequestBody Map<String, String> body) {
-        return ResultJson.ok(mcpClientService.probe(body.get("url"), body.get("type")));
+    public ResultJson probe(@RequestBody Map<String, Object> body) {
+        // 是否「显式给了 headers」要和「给了但为空」分开：后者是明确不带凭据（清除后测试），
+        // 前者没给才回落到已保存凭据（编辑态回显只有键名，拿不到明文）
+        boolean headersExplicit = body.containsKey("headers");
+        String headersJson = headersExplicit ? McpHeaders.normalize(body.get("headers")) : null;
+        return ResultJson.ok(mcpClientService.probe(text(body, "url"), text(body, "type"), headersJson,
+                headersExplicit, RequestUser.uid(), text(body, "serverId")));
+    }
+
+    @Operation(summary = "批量导入 MCP 服务", description = "body: {servers:[{name,url,type?,headers?}]}；逐条按单条口径校验"
+            + "（名称/地址/重名/配额），只重连一次；返回 {added:[{id,name}], skipped:[{name,reason}]}")
+    @PostMapping("/servers/import")
+    public ResultJson importServers(@RequestBody Map<String, Object> body) {
+        Object raw = body.get("servers");
+        if (!(raw instanceof List<?> list) || list.isEmpty()) {
+            throw new BizException("没有可导入的服务");
+        }
+        if (list.size() > 50) {
+            throw new BizException("一次最多导入 50 个服务");
+        }
+        String uid = RequestUser.uid();
+        List<UserMcp> existing = userMcpMapper.selectList(
+                new LambdaQueryWrapper<UserMcp>().eq(UserMcp::getUid, uid));
+        java.util.Set<String> names = new java.util.HashSet<>();
+        for (UserMcp r : existing) names.add(r.getName());
+        int remaining = MAX_SERVERS - existing.size();
+
+        List<Map<String, Object>> added = new ArrayList<>();
+        List<Map<String, Object>> skipped = new ArrayList<>();
+        for (Object o : list) {
+            if (!(o instanceof Map<?, ?> item)) continue;
+            String name = trim(text(item, "name"));
+            String url = trim(text(item, "url"));
+            try {
+                if (remaining <= 0) throw new BizException("已达上限（每人最多 " + MAX_SERVERS + " 个服务）");
+                if ((url == null || url.isBlank()) && item.get("command") != null) {
+                    throw new BizException("平台暂不支持本地进程（stdio）型服务");
+                }
+                validate(name, url);
+                if (names.contains(name)) throw new BizException("已存在同名服务");
+                String headers = McpHeaders.normalize(item.get("headers"));
+                UserMcp row = new UserMcp();
+                row.setId(UUID.randomUUID().toString());
+                row.setUid(uid);
+                row.setName(name);
+                row.setUrl(url);
+                row.setType(normalizeType(text(item, "type")));
+                row.setHeaders(headers == null ? null : cryptoService.encrypt(headers));
+                row.setEnabled(1);
+                userMcpMapper.insert(row);
+                names.add(name);
+                remaining--;
+                added.add(Map.of("id", row.getId(), "name", row.getName()));
+            } catch (Exception e) {
+                skipped.add(Map.of("name", name == null ? "" : name, "reason", BatchResults.errMsg(e)));
+            }
+        }
+        if (!added.isEmpty()) mcpClientService.refresh(uid); // 增量对齐：只连新增的这几个，其余连接不动
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("added", added);
+        data.put("skipped", skipped);
+        return ResultJson.ok(data);
     }
 
     // ==================== MCP 调用审计（仅管理员） ====================
 
-    @Operation(summary = "MCP 调用审计-明细", description = "外部客户端调用 wenqu MCP 端点（智能体端点 /ai/mcp/{token} 与平台级 /ai/mcp）的每次工具执行记录：渠道/工具/凭据指代/归属/IP/耗时/结果。仅管理员；按时间倒序分页，支持渠道/工具/结果筛选")
+    @Operation(summary = "MCP 调用审计-明细", description = "两个方向的全量记录：入站（外部客户端调 /ai/mcp/{token} 与 /ai/mcp）与出站（模型调用用户接入的外部工具）。字段：渠道/工具/凭据指代/归属/IP/耗时/结果。仅管理员；按时间倒序分页，支持渠道/工具/结果筛选")
     @GetMapping("/audit/logs")
     public ResultJson auditLogs(@RequestParam(value = "channel", required = false) String channel,
                                 @RequestParam(value = "tool", required = false) String tool,
@@ -243,7 +338,7 @@ public class McpController {
         return ResultJson.ok(data);
     }
 
-    @Operation(summary = "MCP 调用审计-汇总", description = "总调用/成功/失败/平均耗时 + 按工具×渠道分组统计（调用量倒序前 20）。仅管理员")
+    @Operation(summary = "MCP 调用审计-汇总", description = "总调用/成功/失败/平均耗时 + 按工具×渠道分组统计（调用量倒序前 20；含出站渠道）。仅管理员")
     @GetMapping("/audit/summary")
     public ResultJson auditSummary(HttpServletRequest httpRequest) {
         requireAdmin(httpRequest);
@@ -301,7 +396,7 @@ public class McpController {
         return "sse".equalsIgnoreCase(type.trim()) ? "sse" : "streamable";
     }
 
-    private static String text(Map<String, ?> body, String key) {
+    private static String text(Map<?, ?> body, String key) {
         Object v = body.get(key);
         return v == null ? null : String.valueOf(v);
     }

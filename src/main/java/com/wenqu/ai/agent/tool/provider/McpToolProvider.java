@@ -91,7 +91,8 @@ public class McpToolProvider implements ToolFamilyProvider {
             }
         }
         try {
-            List<ToolCallback> out = new ArrayList<>(mcpClientService.toolCallbacks(mc.userId(), onlyServers));
+            List<ToolCallback> out = new ArrayList<>(
+                    mcpClientService.toolCallbacks(mc.userId(), onlyServers, mc.agentId()));
             // 按名黑名单：本族没有静态描述符，档位裁剪不到它，唯一的粒度就是这里按名字逐字剔
             int before = out.size();
             out.removeIf(cb -> mc.deniesTool(cb.getToolDefinition().name()));
