@@ -86,7 +86,8 @@ const onResizeStart = e => {
   document.body.style.cursor = 'ns-resize'
   const move = ev => {
     const dy = ev.clientY - startY
-    boxHeight.value = Math.min(maxH, Math.max(minH, startH + dy))
+    // 抓手在卡片上沿、卡片底边固定：往下拖 = 上沿跟着往下 = 变矮，所以是 startH - dy
+    boxHeight.value = Math.min(maxH, Math.max(minH, startH - dy))
   }
   const up = () => {
     document.body.style.userSelect = ''
@@ -160,7 +161,7 @@ const showStop = computed(() => props.sending && !(props.steerable && props.canS
     <!-- 顶替态（挂起提问卡 / 待批计划卡）：页面给整块面板，卡片样式仍由本组件提供 -->
     <slot v-if="replaceBox" name="replace" />
     <div v-else class="ci-box" ref="boxRef" :class="{ 'ci-resized': boxHeight != null }" :style="boxStyle">
-      <!-- 顶部拖拽抓手：按住向下拖放大、向上拖缩小；双击还原自适应。窄屏隐藏（触屏不需要拖拽） -->
+      <!-- 顶部拖拽热区：不画图标，光标到卡片上沿变 ns-resize 即是入口；按住向上拖放大、向下拖缩小（上沿跟着鼠标走）；双击还原自适应。窄屏隐藏（触屏不需要拖拽） -->
       <div class="ci-grip" @mousedown.prevent="onResizeStart" @dblclick="resetHeight"
            title="拖动调整输入框高度 · 双击还原"></div>
       <slot />
@@ -237,14 +238,11 @@ const showStop = computed(() => props.sending && !(props.steerable && props.canS
   box-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 8px 20px -10px rgba(16, 24, 40, .10);
   transition: border-color .2s, box-shadow .2s;
 }
-/* 顶部拖拽抓手：半透明横条，悬浮/拖拽时提亮。绝对定位于卡片上沿，不占内容流 */
+/* 顶部拖拽热区：不画任何图标（用户要求去掉常驻/悬浮横条），只留卡片上沿一条 10px 的
+   隐形热区——光标到这变 ns-resize 即可发现，按住拖动改高、双击还原。窄屏隐藏（触屏不需要） */
 .ci-grip {
   position: absolute; top: -4px; left: 0; right: 0; height: 10px; z-index: 5;
-  cursor: ns-resize; display: flex; align-items: center; justify-content: center;
-}
-.ci-grip::before {
-  content: ''; width: 38px; height: 3px; border-radius: 999px;
-  background: var(--app-border); transition: background .15s;
+  cursor: ns-resize;
 }
 .ci-grip:hover::before { background: var(--app-accent); }
 /* 编辑区包裹层：自适应时按内容撑高；手动拖高时 flex 撑满，editor 内部滚动 */

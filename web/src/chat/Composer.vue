@@ -370,22 +370,35 @@ const pruneEmptyText = () => {
   const anchor = window.getSelection()?.anchorNode
   Array.from(el.childNodes).forEach(n => { if (n.nodeType === 3 && !n.nodeValue && n !== anchor) n.remove() })
 }
-/** 正文删空后 Chrome 会把光标丢到编辑区最左（chip 的左边），下一个字就打到 chip 前面去，
- *  看着像光标自己跑到了句首。正文为空时「下标 0」对每颗 chip 都成立，所以统一贴到最后一颗之后
- *  （与 sync 插完 chip 的落点同一口径）。只在改动路径上跑，用户点选到 chip 左边不去纠正。 */
+/** 光标落进开头 chip 串之前（编辑区最左）就把它挪到串之后。两个理由：
+ *  ① chip 有不透明背景又是 relative 定位，画在光标上层——光标停在它底下就是看不见（「chip 遮挡光标」）；
+ *  ② 正文下标 0 的口径本来就是「chip 串之后」（posToPoint 对下标 0 一律锚到 chip 串后面），
+ *     串前面没有可打字的位置，光标停在那儿与序列化口径也是分叉的。
+ *  串=从第一个子节点连续排下去的 chip（head chip 钉在最前，正文中间的 chip 不在串里，点它们不受影响）。
+ *  触发点：selectionchange（覆盖聚焦、点击、方向键）与一切改动路径。 */
 const parkCaretPastChips = () => {
   const el = rootEl.value
-  if (!el || serialize() || document.activeElement !== el) return
-  const chips = chipNodes()
-  if (!chips.length) return
+  if (!el || document.activeElement !== el) return
   const sel = window.getSelection()
   const r = sel && sel.rangeCount ? sel.getRangeAt(0) : null
   if (!r || !r.collapsed || !el.contains(r.startContainer)) return
+  const run = []
+  for (const c of el.childNodes) { if (isChip(c)) run.push(c); else break }
+  if (!run.length) return
+  let before = false
+  if (r.startContainer === el) before = r.startOffset < run.length
+  else before = !!(run[0].compareDocumentPosition(r.startContainer) & Node.DOCUMENT_POSITION_PRECEDING)
+  if (!before) return
   const after = document.createRange()
-  after.setStartAfter(chips[chips.length - 1])
+  after.setStartAfter(run[run.length - 1])
   after.collapse(true)
   sel.removeAllRanges()
   sel.addRange(after)
+}
+/** 光标在哪变了就纠一次：聚焦、点击、方向键各自的落点时序不一样，与其逐个路径去追，
+ *  不如统一听浏览器的 selectionchange（它在选区变更之后才发，时序天然正确）。 */
+const onSelectionChange = () => {
+  if (document.activeElement === rootEl.value) parkCaretPastChips()
 }
 /** 一切改动之后：把正文与 key 顺序报给父级，并转一个 input 事件（面板筛选词靠它实时取） */
 const afterEdit = () => {
@@ -543,9 +556,13 @@ onMounted(() => {
   if (!el) return
   if (props.modelValue) setText(props.modelValue)
   else syncEmpty()
+  document.addEventListener('selectionchange', onSelectionChange)
   emit('ready')
 })
-onBeforeUnmount(() => { hover.on = false })
+onBeforeUnmount(() => {
+  document.removeEventListener('selectionchange', onSelectionChange)
+  hover.on = false
+})
 
 const focus = () => { const el = rootEl.value; if (el) el.focus() }
 const isFocused = () => document.activeElement === rootEl.value
@@ -642,9 +659,15 @@ defineExpose({
      看着像光标自己跑偏了（用户两次点的正是这两端）。
      用相对偏移而不是改 vertical-align 长度：后者会撑高行盒，开关 chip 时正文要上下跳 1.5px。 */
   position: relative; top: -1px;
-  margin: 1px 6px 1px 0; padding: 1px 5px; border-radius: 6px; font-size: 12px; line-height: 18px;
+  /* 与右邻的间隙用透明右 border 承担而不用 margin：正文为空时 Chrome 把行尾光标画在最后一个
+     原子内联的 border-box 右缘，margin 吃不到——margin 6px 时光标紧贴 chip（实测截图）。
+     背景裁到 padding-box 后可见背景止于 padding 缘，光标落在透明 border 里，与 chip 之间有
+     6px 视觉间隙；打字落点（border 缘之后）与光标位置也从此一致。 */
+  margin: 1px 0; padding: 1px 5px; font-size: 12px; line-height: 18px;
   background: var(--app-accent-weak); color: var(--app-accent); user-select: none; cursor: default;
-  border: 1px solid transparent;
+  border: 1px solid transparent; border-right-width: 7px; background-clip: padding-box;
+  /* 内圆角 = 外圆角 - 该侧 border 宽（左 7-1=6、右 13-7=6）：可见背景四角仍是 6px 圆角 */
+  border-radius: 7px 13px 13px 7px;
 }
 :deep(.cchip-name) { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 :deep(.cchip-sub) { flex: none; font-size: 11px; opacity: .75; }
@@ -656,13 +679,15 @@ defineExpose({
   flex: none; width: 15px; height: 15px; border-radius: 4px; font-size: 10px; line-height: 15px;
   text-align: center; background: var(--app-accent); color: var(--app-panel);
 }
-/* @ 引用三类（知识库/文档/智能体）与气泡上的 chip 同一套配色，靠图标与底色区隔 */
+/* @ 引用三类（知识库/文档/智能体）与气泡上的 chip 同一套配色，靠图标与底色区隔。
+   描边一律用 box-shadow 外圈而不是 border-color：基类的右 border 有 7px 宽（给光标让位），
+   border-color 会把整条右边画成 7px 实色。 */
 :deep(.cchip.m-kb) { background: var(--app-accent-weak); }
 :deep(.cchip.m-doc) { background: var(--app-warn-weak); color: var(--app-warn-text); }
-:deep(.cchip.m-agent) { border-color: var(--app-accent); }
-:deep(.cchip-hist) { background: var(--app-info-weak); color: var(--app-accent); border-color: var(--app-info-border); }
-:deep(.cchip-skill) { background: var(--app-panel-2); color: var(--app-text2); border-color: var(--app-border); }
-:deep(.cchip-file.is-err) { background: var(--app-danger-weak); border-color: var(--app-danger-border); color: var(--app-danger-text); }
+:deep(.cchip.m-agent) { box-shadow: 0 0 0 1px var(--app-accent); }
+:deep(.cchip-hist) { background: var(--app-info-weak); color: var(--app-accent); box-shadow: 0 0 0 1px var(--app-info-border); }
+:deep(.cchip-skill) { background: var(--app-panel-2); color: var(--app-text2); box-shadow: 0 0 0 1px var(--app-border); }
+:deep(.cchip-file.is-err) { background: var(--app-danger-weak); box-shadow: 0 0 0 1px var(--app-danger-border); color: var(--app-danger-text); }
 :deep(.cchip-file.is-expired) { opacity: .6; color: var(--app-text3); }
 :deep(.cchip-file.is-uploading) { opacity: .75; }
 :deep(.cchip-img) { padding: 1px; background: var(--app-panel-2); }
