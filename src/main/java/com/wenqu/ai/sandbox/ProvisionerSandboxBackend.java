@@ -619,7 +619,7 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
      * <p>为什么不用 {@code sandbox.commandTimeoutSeconds}（180）那份：那是「不传时」的缺省档，
      * 当下限等于让这个参数只能往上调、模型显式传什么都白传。
      */
-    private static final int MIN_TOOL_TIMEOUT_SECONDS = 60;
+    private static final int MIN_TOOL_TIMEOUT_SECONDS = 300;
 
     /**
      * 把模型工具的 {@code timeout} 钳到 {@link #MIN_TOOL_TIMEOUT_SECONDS}。

@@ -930,6 +930,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 流末尾留着没定性的尾巴先归位（它可能只是正文的最后几个字）
         recording.answer(recording.related.finish());
         String answer = recording.answerText();
+        // 这一轮到底有没有真的流出过正文——下面撞步数上限那一段要靠它决定「补一段收尾」还是「别补」：
+        // 空正文时下面那条回退取的就是框架收尾消息本身，再补一遍等于把同一段话印两次
+        final boolean streamedBody = !answer.isBlank();
         // 失败判据必须排在回填前面：回填不问这一轮是不是失败的那一跑，上游 401 的轮因此会顶着
         // 「答好了」的样子把上一轮的正文存进历史——真机 2026-10-15 20:00:49 那轮 401，库里多出一条
         // 597 字助手行、model 记的正是失败那个模型，界面上只收到一个正常 done，失败一个字没提。
@@ -948,6 +951,30 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                     cmd.getSessionId(), turnId, System.currentTimeMillis() - startedAt);
         } else if (!stopped && failure != null && answer.isBlank()) {
             emitRunFailure(pool, channel, failure);
+        }
+        // 框架撞步数上限时补的那条收尾正文要接回来：它走 SUMMARY 用途，被 translate() 那道
+        // 「只透传 REASONING」的闸挡在流外（那道闸是为压缩摘要与记忆提炼加的，那两样确实不该进聊天流）。
+        // 不接的表现（真机 2026-10-23 21:04 那一轮）：正文停在半句「接下来做像素级复核…」，气泡照报
+        // 「已完成，用时 5 分 47 秒」，而它其实一步都没做完——沙盒里已经生成的文件也没机会交付出去。
+        // 只在<b>流里确有正文</b>时补：空正文那一支上面已经把这条收尾消息回退取走了（同一个
+        // RelatedStreamFilter 喂两遍还会把推荐芯片数成两份）。真机 2026-10-23 21:44 那一轮走的就是
+        // 空正文那一支——模型把整段收尾写成了工具调用文本，被 DSML 闸吞掉，正文只剩截断标记。
+        String wrapUp = maxIterationsWrapUp(session);
+        boolean cutByMaxIters = wrapUp != null && !stopped && !timedOut && !neverLaunched && failure == null;
+        if (cutByMaxIters && streamedBody) {
+            // 过同一个剥离器：这条收尾正文同样可能被模型塞进 <related>／<process>，
+            // 而推荐芯片只在 related 那一份状态上算，绕过它等于这一轮最后那颗芯片凭空少一源
+            String extra = stripFallbackBody(recording, wrapUp).strip();
+            if (!extra.isEmpty() && !answer.contains(extra)) {
+                String tail = "\n\n" + extra;
+                answer = answer + tail;
+                recording.answer(tail);
+            }
+        }
+        if (cutByMaxIters) {
+            channel.emit(RunEventType.WARN, "这一轮的推理步数已用满（上限 "
+                    + configService.getInt("chat.agentscopeMaxIters", 12)
+                    + " 步），活没干完就停了。发一句「继续」可以接着做");
         }
         // 卡片还开着、且没有被判超时：这一轮只是暂时没人跟——用户答了会有新的跟随者把它跑完并落库。
         // 这时候落一条「已中断」就是两件坏事：它说的话是假的（这轮并没有结束），等真正的答案
@@ -3667,6 +3694,27 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             if (text != null && !text.isBlank()) return text;
         }
         return "";
+    }
+
+    /**
+     * 框架因<b>步数上限</b>收场时补的那条收尾正文（会话记录里最后一条助手消息带
+     * {@code generateReason=MAX_ITERATIONS}）；这一轮不是撞上限收场就返回 null。
+     * <p>判据只用框架自己留在消息上的 generateReason，不比对文案——那句
+     * "You have failed to generate response within the maximum iterations" 是框架的内部提示词，
+     * 跟着文案走等于把判据挂在别人会改的东西上。
+     * <p>只看<b>最后一条</b>助手消息、不往前翻：往前翻会把上一轮撞上限的那条捞给这一轮存档
+     * （{@link #lastAssistantText} 的注释记过同一类串轮坑）。
+     */
+    private static String maxIterationsWrapUp(AgentSession session) {
+        List<Msg> messages = session.transcript().messages();
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            Msg m = messages.get(i);
+            if (!"ASSISTANT".equals(String.valueOf(m.getRole()))) continue;
+            if (GenerateReason.MAX_ITERATIONS != m.getGenerateReason()) return null;
+            String text = m.getTextContent();
+            return text == null || text.isBlank() ? null : text.strip();
+        }
+        return null;
     }
 
     /**
