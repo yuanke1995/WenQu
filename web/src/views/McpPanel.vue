@@ -92,7 +92,7 @@
           </div>
           <div v-if="expanded === s.id" class="mcp-tools">
             <div v-for="t in s.tools" :key="t.name" class="mcp-tool">
-              <code>{{ t.name }}</code>
+              <code>{{ t.label && t.label !== t.name ? t.label : t.name }}</code>
               <span class="mcp-tool-desc">{{ t.description || '（无描述）' }}</span>
             </div>
             <div v-if="!s.tools.length" class="key-dim">该服务未提供任何工具</div>
