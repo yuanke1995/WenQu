@@ -125,7 +125,7 @@
               </button>
               <div v-if="seg.tools.length === 1 || seg.flat || seg.tools[0]._groupOpen" class="tl-group-body">
                 <div v-for="(t, ti) in seg.tools" :key="ti" class="card tool-card" :class="{ run: t.status === 'start', err: t.status === 'error' }">
-                  <button class="card-head" type="button" @click.stop="t._open = !t._open">
+                  <button class="card-head" type="button" @click.stop="toggleToolCard(t)">
                     <span v-if="t.status === 'start'" class="spinner"></span>
                     <check-outlined v-else-if="t.status === 'done'" class="ic-ok" />
                     <close-circle-outlined v-else class="ic-err" />
@@ -134,11 +134,11 @@
                     <span v-if="t.attempts > 1" class="card-dim">重试 {{ t.attempts - 1 }} 次</span>
                     <span v-if="fanHasBoard(t.fanOut)" class="card-dim">{{ fanHead(t) }}</span>
                     <span v-if="fanRun(t)" class="fan-run">{{ fanRun(t) }}</span>
-                    <caret-right-outlined class="caret" :class="{ open: t._open }" />
+                    <caret-right-outlined class="caret" :class="{ open: toolCardOpen(t) }" />
                   </button>
                   <!-- askUser 问答记录：可折叠（默认展开），与 PC 同构 -->
                   <AskRecordCard v-if="t.name === 'askUser' && t.status !== 'start'" :t="t" />
-                  <SubAgentChatCard v-if="t.subChat" :t="t" :sources="m.sources"
+                  <SubAgentChatCard v-if="t.subChat && toolCardOpen(t)" :t="t" :sources="m.sources"
                                     :viewer="false" @citation="onBodyCitation" @preview="onBodyPreview" />
                   <div v-show="t._open" class="card-body">
                     <!-- 脚本扇出清单（P3b 过程下钻）：子调用不各占一张顶层卡片，结构收在这里 -->
@@ -334,7 +334,8 @@ import {
   fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget, fanRun, runBoardText,
   toolCallsView, executedCount, toolSearchQueries, retrievalLineTitle,
   fmtMsgTime, fmtSize, errorBrief, sourceName, canSwitchPrev, canSwitchNext, verLabel, agentBadgeOf,
-  pasteTitle, pasteSub, isPastedText, usageCtxTokens, goalEchoStateOf, goalEchoTipOf
+  pasteTitle, pasteSub, isPastedText, usageCtxTokens, goalEchoStateOf, goalEchoTipOf,
+  toolCardOpen, toggleToolCard
 } from '../chat/projections'
 import AskRecordCard from '../components/AskRecordCard.vue'
 import PlanCard from '../components/PlanCard.vue'

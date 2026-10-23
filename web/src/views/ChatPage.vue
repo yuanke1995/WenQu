@@ -206,7 +206,7 @@
                     </button>
                     <div v-if="seg.tools.length === 1 || seg.flat || seg.tools[0]._groupOpen" class="tl-group-body" :class="{ solo: seg.tools.length === 1 }">
                       <div v-for="(t, ti) in seg.tools" :key="ti" class="tl-card" :class="{ run: t.status === 'start', err: t.status === 'error' }">
-                        <button class="tl-card-head" type="button" @click="t._open = !t._open">
+                        <button class="tl-card-head" type="button" @click="toggleToolCard(t)">
                           <loading-outlined v-if="t.status === 'start'" spin class="tool-ic tool-ic-run" />
                           <check-outlined v-else-if="t.status === 'done'" class="tool-ic tool-ic-ok" />
                           <close-circle-outlined v-else class="tool-ic tool-ic-err" />
@@ -217,13 +217,13 @@
                       <span v-if="fanHasBoard(t.fanOut)" class="tool-dur">{{ fanHead(t) }}</span>
                       <span v-if="fanRun(t)" class="fan-run">{{ fanRun(t) }}</span>
                           <span v-if="t.status === 'error'" class="tool-fail">失败</span>
-                          <span class="tl-caret" :class="{ open: t._open }"><caret-right-outlined /></span>
+                          <span class="tl-caret" :class="{ open: toolCardOpen(t) }"><caret-right-outlined /></span>
                         </button>
                         <!-- askUser 问答记录：可折叠（默认展开），刷新/历史恢复同构 -->
                         <AskRecordCard v-if="t.name === 'askUser' && t.status !== 'start'" :t="t" />
                         <!-- 咨询另一位助手：这一问一答就地成卡（那份 subChat 随后端工具卡一起落库，
                              所以刷新/换设备与实时同构）；老消息没这份就不渲染，退回上面的普通工具卡 -->
-                        <SubAgentChatCard v-if="t.subChat" :t="t"
+                        <SubAgentChatCard v-if="t.subChat && toolCardOpen(t)" :t="t"
                                           :agent="agentBadgeOf(agentList, t.subChat.agentId, t.subChat.agentName)"
                                           :sources="m.sources" />
                         <div v-if="t._open" class="tl-card-body">
@@ -306,7 +306,7 @@
                 </button>
                 <div v-if="m._fbOpen" class="tl-group-body">
                   <div v-for="(t, ti) in toolCallsView(m.toolCalls)" :key="ti" class="tl-card" :class="{ run: t.status === 'start', err: t.status === 'error' }">
-                    <button class="tl-card-head" type="button" @click="t._open = !t._open">
+                    <button class="tl-card-head" type="button" @click="toggleToolCard(t)">
                       <loading-outlined v-if="t.status === 'start'" spin class="tool-ic tool-ic-run" />
                       <check-outlined v-else-if="t.status === 'done'" class="tool-ic tool-ic-ok" />
                       <close-circle-outlined v-else class="tool-ic tool-ic-err" />
@@ -317,11 +317,11 @@
                       <span v-if="fanHasBoard(t.fanOut)" class="tool-dur">{{ fanHead(t) }}</span>
                       <span v-if="fanRun(t)" class="fan-run">{{ fanRun(t) }}</span>
                       <span v-if="t.status === 'error'" class="tool-fail">失败</span>
-                      <span class="tl-caret" :class="{ open: t._open }"><caret-right-outlined /></span>
+                      <span class="tl-caret" :class="{ open: toolCardOpen(t) }"><caret-right-outlined /></span>
                     </button>
                     <!-- askUser 问答记录：可折叠（默认展开），刷新/历史恢复同构 -->
                     <AskRecordCard v-if="t.name === 'askUser' && t.status !== 'start'" :t="t" />
-                    <SubAgentChatCard v-if="t.subChat" :t="t"
+                    <SubAgentChatCard v-if="t.subChat && toolCardOpen(t)" :t="t"
                                       :agent="agentBadgeOf(agentList, t.subChat.agentId, t.subChat.agentName)"
                                       :sources="m.sources" />
                     <div v-if="t._open" class="tl-card-body">
@@ -1481,7 +1481,7 @@ import { toolLabel, toolDesc, toolCallsView, executedCount, toolRunning, hasTime
          fmtMsgTime, fmtSize, errorBrief, histItemTitle, histItemDigest, verLocal, canSwitchPrev, canSwitchNext, verLabel,
          pasteTitle, pasteSub, isPastedText,
          THINK_LEVEL_ON, levelLabel, stopTick, agentBadgeOf,
-         usageCtxTokens, usageTip } from '../chat/projections'
+         usageCtxTokens, usageTip, oneLine, toolCardOpen, toggleToolCard } from '../chat/projections'
 
 const router = useRouter()
 const route = useRoute()

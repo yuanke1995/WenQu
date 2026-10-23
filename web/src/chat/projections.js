@@ -818,6 +818,21 @@ const liveOutput = t => {
   }
   return t.result != null ? t.result : (t.output || '')
 }
+// ==================== 工具卡折叠：头部那颗开关到底管到哪些块 ====================
+/* 普通卡：头部只管下面的入参/输出原文（默认收起，点开才见）。
+ * 派遣卡（带 subChat）：一问一答就挂在头部正下方、且默认展开——它是这张卡的正文；
+ * 若头部只管原文，长回答的卡点头部等于没反应（原文区远在回答末尾、多半在视口外），
+ * 用户读成「展开/收缩坏了」，而且角标收着、底下却挂着一坨展开内容，开关在说谎。
+ * 口径：派遣卡的折叠态默认算「开」（子对话可见），首次点击是收起；显式点开（true）那一份
+ * 连入参/输出原文一起给——默认给排版好的正文，「展开」给全量，两层不打架。 */
+const toolCardOpen = t => {
+  if (!t) return false
+  return t.subChat ? t._open !== false : !!t._open
+}
+const toggleToolCard = t => {
+  if (!t) return
+  t._open = t.subChat ? t._open === false : !t._open
+}
 /**
  * run_code 的扇出看板（P3b）：实时帧与终态清单同一个形状（后端 buildFanOut 一处组），
  * 所以这几条判据只写一遍，PC 与移动壳的模板都走它们。
@@ -1328,6 +1343,7 @@ export {
   turnTop, turnBottom, turnToggleable,
   durZh,
   toolBrief, prettyIo, LIVE_TAIL_CHARS, liveOutput, groupRunning, groupHasError,
+  toolCardOpen, toggleToolCard,
   fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget, fanRun, runBoardText,
   mergeDoneToolCalls, nowTick, ensureTick, holdTick, stopTick, toolSearchQueries,
   retrievalLineTitle,
