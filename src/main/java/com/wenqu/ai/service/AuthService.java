@@ -175,6 +175,9 @@ public class AuthService {
         m.put("role", u.getRole() == null ? "user" : u.getRole());
         m.put("departmentId", u.getDepartmentId());
         m.put("admin", roleService.isAdminCode(u.getRole()));
+        // OIDC 绑定（成员管理展示用）：认证源 id 与 sub；未绑定则均为 null
+        m.put("oidcProvider", u.getOidcProvider());
+        m.put("oidcSub", u.getOidcSub());
         return m;
     }
 

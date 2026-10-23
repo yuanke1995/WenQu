@@ -166,6 +166,17 @@ public class OrgService {
         log.info("[AUDIT] 删除用户 uid={}", uid);
     }
 
+    /** 解绑 OIDC 单点登录：清掉 oidc_sub / oidc_provider（复合唯一约束允许重复绑定）。解绑后须重新走对应 IdP 登录才能再次绑定 */
+    public void unbindOidc(String uid) {
+        User user = userMapper.selectById(uid);
+        if (user == null) throw new BizException("用户不存在");
+        userMapper.update(null, new LambdaUpdateWrapper<User>()
+                .eq(User::getUid, uid)
+                .set(User::getOidcSub, null)
+                .set(User::getOidcProvider, null));
+        log.info("[AUDIT] 解绑 OIDC uid={}", uid);
+    }
+
     // ==================== 个人偏好（个人设置） ====================
 
     /**

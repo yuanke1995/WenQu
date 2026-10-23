@@ -575,30 +575,6 @@ public class ConfigService {
         // 服务端仍会逐跳做公网校验（SsrfGuard），这里只回答「允许从哪儿拉」。
         d.put("skill.remoteAllowedHosts", "");
 
-        // ---------- 单点登录（OIDC）----------
-        // 语义与平台版 config/options.py 的 OIDCConfig 一致（字段名改成 camelCase 落 c_ai_config）：
-        // client_id + (issuerUrl 或 authorizationEndpoint) 即可生成登录链接；回调换 token 还需 clientSecret。
-        // clientSecret 走敏感项（RSA 密文入库 + 快照掩码），与 *.apiKey 同一机制。
-        d.put("oidc.enabled", "false");                                 // 总开关（关闭时登录页不显示按钮）
-        d.put("oidc.providerName", "OIDC登录");                          // 登录按钮上的认证源名称
-        d.put("oidc.issuerUrl", "");                                    // 走 discovery（/.well-known/openid-configuration）
-        d.put("oidc.clientId", "");
-        d.put("oidc.clientSecret", "");
-        d.put("oidc.redirectUri", "");                                  // 空=按当前站点推导 /api/ai/auth/oidc/callback
-        d.put("oidc.frontendBaseUrl", "");                              // 空=相对路径跳转（同源部署）；前后端分离时填前端地址
-        d.put("oidc.authorizationEndpoint", "");                        // 手填端点优先于 discovery（IdP 无 discovery 时用）
-        d.put("oidc.tokenEndpoint", "");
-        d.put("oidc.userinfoEndpoint", "");
-        d.put("oidc.scopes", "openid profile email");
-        d.put("oidc.autoCreateUser", "true");                           // 首次登录自动建号（关闭则须管理员预先建好并绑定）
-        d.put("oidc.defaultRole", "user");
-        d.put("oidc.defaultDepartment", "OIDC用户");
-        d.put("oidc.usernameClaim", "preferred_username");
-        d.put("oidc.nameClaim", "name");
-        d.put("oidc.useRawUsername", "false");                          // 用 IdP 的用户名当 uid（便于与本地账号对齐）
-        d.put("oidc.fetchDepartmentInfo", "false");                     // 从 userinfo 取部门名并自动建部门
-        d.put("oidc.departmentClaim", "department");
-        d.put("oidc.forcePromptLogin", "false");                        // 授权请求带 prompt=login（强制重新认证）
         // ---------- 沙盒（隔离执行环境）----------
         // 语义与问渠新栈的环境变量一一对应（SANDBOX_PROVISIONER_URL / TOKEN / DELETE_TIMEOUT_SECONDS /
         // KEEPALIVE_INTERVAL_SECONDS / VIRTUAL_PATH_PREFIX / EXEC_TIMEOUT_SECONDS / MAX_OUTPUT_BYTES），

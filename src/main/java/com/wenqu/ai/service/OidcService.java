@@ -7,6 +7,7 @@ import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.mapper.DepartmentMapper;
 import com.wenqu.ai.mapper.UserMapper;
 import com.wenqu.ai.model.Department;
+import com.wenqu.ai.model.OidcProvider;
 import com.wenqu.ai.model.User;
 import com.wenqu.ai.util.AuthCrypto;
 import jakarta.servlet.http.HttpServletRequest;
@@ -23,29 +24,24 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.Base64;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 
 /**
- * 单点登录（OIDC 授权码流程）。
+ * 单点登录（OIDC 授权码流程）—— 多认证源（多 IdP）版本。
  * <p>
- * 对应平台版 {@code backend/package/yuxi/services/oidc_service.py}。流程与语义照搬，差异集中在两点：
- * <ul>
- *   <li><b>配置来源</b>：蓝本用环境变量（{@code OIDCConfig.from_env()}，进程启动读一次）；
- *       本工程配置的唯一来源是 {@code config-schema.json} + {@code ConfigService}，
- *       故取值走 {@code configService.get("oidc.*")}，改配置即时生效、设置页可编辑，
- *       {@code clientSecret} 沿用敏感项机制（RSA 密文入库 + 快照只回显后 4 位）。</li>
- *   <li><b>身份绑定</b>：蓝本用「占位用户 {@code oidc:{sub}:{userId}}（标记已删除）」记录 sub 与账号的绑定，
- *       其注释自述原因是"在不修改表结构的前提下"保存绑定关系；本工程有 {@code SchemaMigrator} 可自动加列，
- *       故直接用 {@code c_ai_user.oidc_sub}（唯一索引）承载，不制造假用户行。</li>
- * </ul>
+ * 与平台版 {@code backend/package/yuxi/services/oidc_service.py} 同构；配置来源从原先的
+ * {@code c_ai_config} 扁平键改为 {@code c_ai_oidc_provider} 表（每行一个认证源，照模型供应商形态：
+ * client_secret 逐行 RSA 加密）。登录入口按 state 携带的 providerId 路由；回调 URL 保持不变
+ * （多个 client 在各自 IdP 登记同一回调地址即可）。
  * <p>
- * 未搬的部分（显式标注，不是遗漏）：蓝本的「已注销账号恢复」依赖其 {@code User.is_deleted} + {@code phone_number}/
- * {@code avatar} 列，本工程 {@code c_ai_user} 无软删与这两列 ⇒ 该路径不适用（按未注册处理）；{@code end_session_endpoint}
- * 与登出联动未接，故不落配置项（避免死配置）。
+ * 身份绑定落在 {@code c_ai_user.oidc_sub} + {@code c_ai_user.oidc_provider} 复合唯一索引上——
+ * 一个 sub 在同一认证源下只能绑一个账号（防冒用），两个不同 IdP 签发相同 sub 值不再冲突。
  *
  * @author yuanke
  */
@@ -54,7 +50,7 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 public class OidcService {
 
-    private final ConfigService configService;
+    private final OidcProviderService providerService;
     private final UserMapper userMapper;
     private final DepartmentMapper departmentMapper;
     private final OrgService orgService;
@@ -88,55 +84,50 @@ public class OidcService {
             .followRedirects(HttpClient.Redirect.NORMAL)
             .build();
 
-    /** state → 授权上下文（一次性，消费即删） */
+    /** state → 授权上下文（一次性，消费即删）；state 携带 providerId 以路由回调 */
     private final Map<String, StateEntry> states = new ConcurrentHashMap<>();
     /** 一次性登录 code → 登录响应（一次性，消费即删） */
     private final Map<String, CodeEntry> codes = new ConcurrentHashMap<>();
 
-    private volatile Metadata metadata;
-    private volatile String metadataKey;
-    private volatile long metadataAt;
-    private volatile String lastMetadataError;
+    /** 元数据缓存（按 providerId）：键含配置值，改配置即失效 */
+    private final Map<String, MetadataCache> metadataCache = new ConcurrentHashMap<>();
 
     // ==================== 对外 ====================
 
     /**
-     * 前端登录页用的公开配置：**只回「是否可用 + 认证源名称」**。
-     * <p>与蓝本一致：未启用或配置不完整时返回 {@code enabled=false}，前端据此隐藏入口——
-     * 只配了一半就显示按钮，用户点下去必然撞错误页。</p>
+     * 前端登录页用的公开配置：**只回「可登录的认证源清单」**。
+     * <p>只回 enabled 且配置完整的认证源 {id, name}；配置未填完的认证源不出现，避免按钮点下去撞错误页。</p>
      */
     public Map<String, Object> publicConfig() {
         Map<String, Object> m = new LinkedHashMap<>();
-        m.put("enabled", configured());
-        m.put("providerName", providerName());
+        m.put("providers", providerService.listPublic());
         return m;
     }
 
     /**
-     * 生成授权地址（含一次性 state）。
+     * 生成某认证源的授权地址（含一次性 state，state 内携带 providerId）。
      *
+     * @param providerId   认证源 ID（前端从 publicConfig 的 providers 拿）
      * @param redirectPath 登录成功后前端要去的路径（随 state 暂存，回调时带回）
      */
-    public String loginUrl(String redirectPath, HttpServletRequest request) {
-        if (!configured()) {
-            throw new BizException("OIDC 登录暂不可用：请先在系统设置里启用并填写 Issuer / Client ID");
-        }
-        Metadata m = metadata();
+    public String loginUrl(String providerId, String redirectPath, HttpServletRequest request) {
+        OidcProvider p = loadUsable(providerId);
+        Metadata m = metadata(p);
         if (m == null || blank(m.authorizationEndpoint())) {
-            throw new BizException("生成登录链接失败：" + (lastMetadataError == null ? "授权端点不可用" : lastMetadataError));
+            throw new BizException("生成登录链接失败：" + (lastMetadataError(p.getId()) == null ? "授权端点不可用" : lastMetadataError(p.getId())));
         }
         String state = newToken();
-        states.put(state, new StateEntry(redirectPath == null || redirectPath.isBlank() ? "/" : redirectPath,
+        states.put(state, new StateEntry(providerId, redirectPath == null || redirectPath.isBlank() ? "/" : redirectPath,
                 System.currentTimeMillis() + STATE_TTL_MS));
         sweep();
 
         StringBuilder q = new StringBuilder();
         appendQuery(q, "response_type", "code");
-        appendQuery(q, "client_id", cfg("oidc.clientId"));
-        appendQuery(q, "scope", blank(cfg("oidc.scopes")) ? "openid profile email" : cfg("oidc.scopes"));
-        appendQuery(q, "redirect_uri", redirectUri(request));
+        appendQuery(q, "client_id", p.getClientId());
+        appendQuery(q, "scope", blank(p.getScopes()) ? "openid profile email" : p.getScopes());
+        appendQuery(q, "redirect_uri", redirectUri(p, request));
         appendQuery(q, "state", state);
-        if (configService.getBoolean("oidc.forcePromptLogin")) appendQuery(q, "prompt", "login");
+        if (p.getForcePromptLogin() != null && p.getForcePromptLogin() == 1) appendQuery(q, "prompt", "login");
         String auth = m.authorizationEndpoint();
         return auth + (auth.contains("?") ? "&" : "?") + q;
     }
@@ -148,26 +139,30 @@ public class OidcService {
      * @return 要让浏览器跳转的目标地址（成功=前端回调页，失败=前端登录页带 oidc_error）
      */
     public String handleCallback(String code, String state, HttpServletRequest request) {
-        if (!tokenExchangeConfigured()) {
-            return loginWithError("OIDC 配置不完整（缺少 Client Secret 或令牌端点），请联系管理员");
-        }
         StateEntry se = state == null ? null : states.remove(state);
         if (se == null || se.expiresAt() < System.currentTimeMillis()) {
             return loginWithError("登录会话已过期，请返回登录页重试");
         }
+        String providerId = se.providerId();
+        OidcProvider p = providerService.getById(providerId);
+        if (p == null || p.getEnabled() == null || p.getEnabled() != 1) {
+            return loginWithError("认证源已下架或停用，请联系管理员");
+        }
+        if (!tokenExchangeConfigured(p)) {
+            return loginWithError("OIDC 配置不完整（缺少 Client Secret 或令牌端点），请联系管理员");
+        }
         if (blank(code)) return loginWithError("IdP 未返回授权码（可能被拒绝授权），请返回登录页重试");
-
-        Metadata m = metadata();
+        Metadata m = metadata(p);
         if (m == null || blank(m.tokenEndpoint())) {
-            return loginWithError("令牌端点不可用：" + (lastMetadataError == null ? "请检查 Issuer 配置" : lastMetadataError));
+            return loginWithError("令牌端点不可用：" + (lastMetadataError(providerId) == null ? "请检查 Issuer 配置" : lastMetadataError(providerId)));
         }
 
         Map<String, String> form = new LinkedHashMap<>();
         form.put("grant_type", "authorization_code");
         form.put("code", code);
-        form.put("redirect_uri", redirectUri(request));
-        form.put("client_id", cfg("oidc.clientId"));
-        form.put("client_secret", cfg("oidc.clientSecret"));
+        form.put("redirect_uri", redirectUri(p, request));
+        form.put("client_id", p.getClientId());
+        form.put("client_secret", providerService.decryptSecret(p));
         JsonNode token = postForm(m.tokenEndpoint(), form);
         String accessToken = token == null ? null : text(token, "access_token");
         if (blank(accessToken)) return loginWithError("无法获取访问令牌，请返回登录页重试");
@@ -176,15 +171,19 @@ public class OidcService {
         JsonNode userinfo = getJson(m.userinfoEndpoint(), Map.of("Authorization", "Bearer " + accessToken));
         if (userinfo == null) return loginWithError("无法获取用户信息，请返回登录页重试");
 
-        Extracted ex = extract(userinfo);
+        Extracted ex = extract(p, userinfo);
         if (blank(ex.sub())) return loginWithError("无法获取用户标识（sub），请返回登录页重试");
 
         User user;
         try {
-            user = resolveUser(ex);
+            user = resolveUser(p, ex);
         } catch (BizException e) {
             return loginWithError(e.getMessage());
         }
+
+        // 最近登录时间：OIDC 回调登录成功也记（与本地登录同口径，成员管理「最近登录时间」列同源）
+        user.setLastLoginTime(LocalDateTime.now());
+        userMapper.updateById(user);
 
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("token", issue(user));
@@ -194,8 +193,8 @@ public class OidcService {
         String oneTime = newToken();
         codes.put(oneTime, new CodeEntry(payload, System.currentTimeMillis() + LOGIN_CODE_TTL_MS));
         sweep();
-        log.info("[AUDIT] OIDC 登录成功 uid={} sub={} role={}", user.getUid(), ex.sub(), user.getRole());
-        return frontBase() + FRONTEND_CALLBACK_PATH + "?code=" + enc(oneTime);
+        log.info("[AUDIT] OIDC 登录成功 provider={} uid={} sub={} role={}", providerId, user.getUid(), ex.sub(), user.getRole());
+        return frontBase(p) + FRONTEND_CALLBACK_PATH + "?code=" + enc(oneTime);
     }
 
     /** 用一次性 code 兑换登录结果（兑换即失效，避免令牌留在浏览器历史/日志里） */
@@ -212,25 +211,26 @@ public class OidcService {
     /**
      * 把 OIDC 身份落到本地账号：
      * <ol>
-     *   <li>已绑定（{@code oidc_sub} 命中）→ 直接登录；</li>
+     *   <li>已绑定（providerId + sub 命中）→ 直接登录；</li>
      *   <li>{@code useRawUsername} 且 IdP 用户名对应的账号存在且**未被其他 sub 绑定** → 绑定后登录
      *       （绑定冲突一律拒绝，不覆盖，防冒用）；</li>
      *   <li>否则按 {@code autoCreateUser} 自动建档，或拒绝并提示联系管理员。</li>
      * </ol>
      */
-    private User resolveUser(Extracted ex) {
-        User bound = findByOidcSub(ex.sub());
+    private User resolveUser(OidcProvider p, Extracted ex) {
+        User bound = findByOidcSub(p.getId(), ex.sub());
         if (bound != null) return assertUsable(bound);
 
-        if (configService.getBoolean("oidc.useRawUsername") && !blank(ex.username())) {
+        if (p.getUseRawUsername() != null && p.getUseRawUsername() == 1 && !blank(ex.username())) {
             String uid = rawUid(ex.username());
             if (uid != null) {
                 User exist = userMapper.selectById(uid);
                 if (exist != null) {
                     if (blank(exist.getOidcSub())) {
                         exist.setOidcSub(ex.sub());
+                        exist.setOidcProvider(p.getId());
                         userMapper.updateById(exist);
-                        log.info("[AUDIT] OIDC 身份绑定到既有账号 uid={} sub={}", uid, ex.sub());
+                        log.info("[AUDIT] OIDC 身份绑定到既有账号 uid={} provider={} sub={}", uid, p.getId(), ex.sub());
                         return assertUsable(exist);
                     }
                     throw new BizException("账号 " + uid + " 已绑定其他 OIDC 身份，请联系管理员处理绑定冲突");
@@ -238,18 +238,18 @@ public class OidcService {
             }
         }
 
-        if (!configService.getBoolean("oidc.autoCreateUser")) {
+        if (p.getAutoCreateUser() == null || p.getAutoCreateUser() != 1) {
             throw new BizException("用户未注册，请联系管理员开通账号");
         }
-        return createUser(ex);
+        return createUser(p, ex);
     }
 
-    private User createUser(Extracted ex) {
-        String base = configService.getBoolean("oidc.useRawUsername") ? rawUid(ex.username()) : null;
+    private User createUser(OidcProvider p, Extracted ex) {
+        String base = (p.getUseRawUsername() != null && p.getUseRawUsername() == 1) ? rawUid(ex.username()) : null;
         String uid = ensureUniqueUid(base == null ? sanitizeUid(ex.sub()) : base, ex.sub());
         String username = ensureUniqueUsername(blank(ex.name()) ? ex.username() : ex.name(), ex.sub());
-        String role = normalizeRole(cfg("oidc.defaultRole"));
-        String deptId = resolveDepartmentId(ex);
+        String role = normalizeRole(p.getDefaultRole());
+        String deptId = resolveDepartmentId(p, ex);
 
         User u = new User();
         u.setUid(uid);
@@ -259,22 +259,23 @@ public class OidcService {
         u.setStatus(1);
         u.setLoginFailCount(0);
         u.setOidcSub(ex.sub());
+        u.setOidcProvider(p.getId());
         // 刻意不设密码：OIDC 账号不能走本地密码登录；同时不干扰「首次运行初始化管理员」的判定
         // （needsInitialize() 数的是"已设置密码的用户"，给随机密码会让初始化流程消失）。
         try {
             userMapper.insert(u);
         } catch (org.springframework.dao.DuplicateKeyException e) {
-            User raced = findByOidcSub(ex.sub());
+            User raced = findByOidcSub(p.getId(), ex.sub());
             if (raced != null) return assertUsable(raced);
             throw new BizException("创建 OIDC 账号失败（登录账号或昵称冲突），请重试或联系管理员");
         }
-        log.info("[AUDIT] OIDC 自动建档 uid={} username={} role={} dept={}", uid, username, role, deptId);
+        log.info("[AUDIT] OIDC 自动建档 provider={} uid={} username={} role={} dept={}", p.getId(), uid, username, role, deptId);
         return u;
     }
 
-    private User findByOidcSub(String sub) {
+    private User findByOidcSub(String providerId, String sub) {
         return userMapper.selectOne(new LambdaQueryWrapper<User>()
-                .eq(User::getOidcSub, sub).last("LIMIT 1"));
+                .eq(User::getOidcSub, sub).eq(User::getOidcProvider, providerId).last("LIMIT 1"));
     }
 
     private User assertUsable(User u) {
@@ -347,9 +348,10 @@ public class OidcService {
      * 部门归属：优先用 IdP 给的部门名（需开启「从 IdP 同步部门」），否则用配置的默认部门；
      * 部门不存在则按名称创建（与蓝本同语义：按名称匹配，不维护层级）。
      */
-    private String resolveDepartmentId(Extracted ex) {
-        String name = configService.getBoolean("oidc.fetchDepartmentInfo") ? trimToNull(ex.departmentName()) : null;
-        if (name == null) name = trimToNull(cfg("oidc.defaultDepartment"));
+    private String resolveDepartmentId(OidcProvider p, Extracted ex) {
+        String name = (p.getFetchDepartmentInfo() != null && p.getFetchDepartmentInfo() == 1)
+                ? trimToNull(ex.departmentName()) : null;
+        if (name == null) name = trimToNull(p.getDefaultDepartment());
         if (name == null) return null;
         if (name.length() > DEPT_NAME_MAX) name = name.substring(0, DEPT_NAME_MAX);
 
@@ -371,18 +373,18 @@ public class OidcService {
     // ==================== 用户信息映射 ====================
 
     /** 用户信息 → 本地字段（回落链与蓝本一致） */
-    private Extracted extract(JsonNode ui) {
+    private Extracted extract(OidcProvider p, JsonNode ui) {
         String sub = text(ui, "sub");
-        String username = firstNonBlank(text(ui, cfg("oidc.usernameClaim")), text(ui, "preferred_username"));
+        String username = firstNonBlank(text(ui, p.getUsernameClaim()), text(ui, "preferred_username"));
         if (username == null) {
             String email = text(ui, "email");
             username = email == null ? null : email.split("@")[0];
         }
         if (username == null && sub != null) username = sub.substring(0, Math.min(20, sub.length()));
-        String name = firstNonBlank(text(ui, cfg("oidc.nameClaim")), text(ui, "name"), username);
+        String name = firstNonBlank(text(ui, p.getNameClaim()), text(ui, "name"), username);
         String deptName = null;
-        if (configService.getBoolean("oidc.fetchDepartmentInfo")) {
-            deptName = firstNonBlank(text(ui, cfg("oidc.departmentClaim")), text(ui, "department"));
+        if (p.getFetchDepartmentInfo() != null && p.getFetchDepartmentInfo() == 1) {
+            deptName = firstNonBlank(text(ui, p.getDepartmentClaim()), text(ui, "department"));
         }
         return new Extracted(sub, username, name, deptName);
     }
@@ -393,47 +395,49 @@ public class OidcService {
      * 端点来源：手填端点优先（IdP 不支持 discovery 时用），否则读 Issuer 的
      * {@code /.well-known/openid-configuration}。缓存键含全部配置值 ⇒ 改配置立即重新加载。
      */
-    private Metadata metadata() {
-        String auth = trimToNull(cfg("oidc.authorizationEndpoint"));
-        String token = trimToNull(cfg("oidc.tokenEndpoint"));
-        String ui = trimToNull(cfg("oidc.userinfoEndpoint"));
-        String key = cfg("oidc.issuerUrl") + "|" + auth + "|" + token + "|" + ui;
-        Metadata cached = metadata;
-        if (cached != null && key.equals(metadataKey) && System.currentTimeMillis() - metadataAt < METADATA_TTL_MS) {
-            return cached;
+    private Metadata metadata(OidcProvider p) {
+        String pid = p.getId();
+        String auth = trimToNull(p.getAuthorizationEndpoint());
+        String token = trimToNull(p.getTokenEndpoint());
+        String ui = trimToNull(p.getUserinfoEndpoint());
+        String key = trimToNull(p.getIssuerUrl()) + "|" + auth + "|" + token + "|" + ui;
+        MetadataCache cached = metadataCache.get(pid);
+        if (cached != null && key.equals(cached.key()) && System.currentTimeMillis() - cached.at() < METADATA_TTL_MS) {
+            return cached.metadata();
         }
         Metadata loaded;
         if (auth != null) {
             loaded = new Metadata(auth, token, ui);
-            lastMetadataError = null;
-        } else {
-            String issuer = trimToNull(cfg("oidc.issuerUrl"));
-            if (issuer == null) {
-                lastMetadataError = "未配置 Issuer URL 且未手填授权端点";
-                return null;
-            }
-            String url = issuer.replaceAll("/+$", "") + "/.well-known/openid-configuration";
-            JsonNode doc = getJson(url, Map.of());
-            if (doc == null) {
-                lastMetadataError = "OIDC discovery 加载失败（" + url + "）";
-                return null;
-            }
-            auth = text(doc, "authorization_endpoint");
-            token = text(doc, "token_endpoint");
-            ui = text(doc, "userinfo_endpoint");
-            if (blank(auth)) {
-                lastMetadataError = "discovery 响应缺少 authorization_endpoint";
-                return null;
-            }
-            loaded = new Metadata(auth, token, ui);
-            lastMetadataError = null;
+            metadataCache.put(pid, new MetadataCache(loaded, key, System.currentTimeMillis(), null));
+            return loaded;
         }
-        metadata = loaded;
-        metadataKey = key;
-        metadataAt = System.currentTimeMillis();
-        log.info("[OIDC] 元数据已加载 auth={} token={} userinfo={}", loaded.authorizationEndpoint(),
-                loaded.tokenEndpoint(), loaded.userinfoEndpoint());
+        String issuer = trimToNull(p.getIssuerUrl());
+        if (issuer == null) {
+            metadataCache.put(pid, new MetadataCache(null, key, System.currentTimeMillis(), "未配置 Issuer URL 且未手填授权端点"));
+            return null;
+        }
+        String url = issuer.replaceAll("/+$", "") + "/.well-known/openid-configuration";
+        JsonNode doc = getJson(url, Map.of());
+        if (doc == null) {
+            metadataCache.put(pid, new MetadataCache(null, key, System.currentTimeMillis(), "OIDC discovery 加载失败（" + url + "）"));
+            return null;
+        }
+        auth = text(doc, "authorization_endpoint");
+        token = text(doc, "token_endpoint");
+        ui = text(doc, "userinfo_endpoint");
+        if (blank(auth)) {
+            metadataCache.put(pid, new MetadataCache(null, key, System.currentTimeMillis(), "discovery 响应缺少 authorization_endpoint"));
+            return null;
+        }
+        loaded = new Metadata(auth, token, ui);
+        metadataCache.put(pid, new MetadataCache(loaded, key, System.currentTimeMillis(), null));
+        log.info("[OIDC] 元数据已加载 provider={} auth={} token={} userinfo={}", pid, auth, token, ui);
         return loaded;
+    }
+
+    private String lastMetadataError(String providerId) {
+        MetadataCache c = metadataCache.get(providerId);
+        return c == null ? null : c.error();
     }
 
     // ==================== HTTP ====================
@@ -482,28 +486,27 @@ public class OidcService {
 
     // ==================== 杂项 ====================
 
-    private boolean enabled() {
-        return configService.getBoolean("oidc.enabled");
+    private OidcProvider loadUsable(String providerId) {
+        if (blank(providerId)) throw new BizException("缺少认证源参数");
+        OidcProvider p = providerService.getById(providerId);
+        if (p == null || p.getEnabled() == null || p.getEnabled() != 1) {
+            throw new BizException("该认证源不可用或已停用，请联系管理员");
+        }
+        if (!providerService.configured(p)) {
+            throw new BizException("OIDC 登录暂不可用：请先在单点登录管理中启用并填写 Issuer / Client ID");
+        }
+        return p;
     }
 
-    /** 生成登录链接的必要条件（与蓝本 is_configured 同口径） */
-    private boolean configured() {
-        return enabled() && !blank(cfg("oidc.clientId"))
-                && (!blank(cfg("oidc.issuerUrl")) || !blank(cfg("oidc.authorizationEndpoint")));
+    /** 换 token 的必要条件（与蓝本 is_token_exchange_configured 同口径）：clientSecret 已配置，且令牌端点可解析（手填或 discovery 源在） */
+    private boolean tokenExchangeConfigured(OidcProvider p) {
+        return p != null && !blank(p.getClientSecret())
+                && (!blank(p.getIssuerUrl()) || !blank(p.getTokenEndpoint()));
     }
 
-    /** 换 token 的必要条件（与蓝本 is_token_exchange_configured 同口径） */
-    private boolean tokenExchangeConfigured() {
-        return configured() && !blank(cfg("oidc.clientSecret"))
-                && (!blank(cfg("oidc.issuerUrl")) || !blank(cfg("oidc.tokenEndpoint")));
-    }
-
-    /**
-     * 回调地址：配置优先；留空则按本次请求的来源推导（Host 头 + 上下文路径）。
-     * 反向代理改写了 Host 或一个 IdP 接多个域名时必须显式配置，否则把推导值登记到 IdP 侧即可。
-     */
-    private String redirectUri(HttpServletRequest request) {
-        String configured = trimToNull(cfg("oidc.redirectUri"));
+    /** 回调地址：配置优先；留空则按本次请求的来源推导（Host 头 + 上下文路径）。 */
+    private String redirectUri(OidcProvider p, HttpServletRequest request) {
+        String configured = trimToNull(p.getRedirectUri());
         if (configured != null) return configured;
         if (request == null) return CALLBACK_PATH;
         String proto = firstNonBlank(request.getHeader("X-Forwarded-Proto"), request.getScheme());
@@ -512,8 +515,8 @@ public class OidcService {
         return proto + "://" + host + request.getContextPath() + CALLBACK_PATH;
     }
 
-    private String frontBase() {
-        String base = trimToNull(cfg("oidc.frontendBaseUrl"));
+    private String frontBase(OidcProvider p) {
+        String base = trimToNull(p.getFrontendBaseUrl());
         return base == null ? "" : base.replaceAll("/+$", "");
     }
 
@@ -523,22 +526,20 @@ public class OidcService {
 
     /** 失败时跳回登录页并带 oidc_error（供 Controller 在 IdP 直接回绝时复用） */
     public String loginErrorRedirect(String message) {
-        return frontBase() + FRONTEND_LOGIN_PATH + "?oidc_error=" + enc(message);
+        return frontBaseFallback() + FRONTEND_LOGIN_PATH + "?oidc_error=" + enc(message);
+    }
+
+    /**
+     * 失败跳转的 frontBase 回落：回调时若 provider 已不可用无法取 frontBase，回落到相对路径
+     * （同源部署场景下仍能带回登录页）。正常登录跳转由各 provider 的 frontBase 决定。
+     */
+    private String frontBaseFallback() {
+        return "";
     }
 
     private String issue(User u) {
         return AuthCrypto.issueToken(authService.secret(), authService.issuer(), authService.audience(),
                 u.getUid(), u.getRole(), authService.ttlSeconds());
-    }
-
-    private String providerName() {
-        String n = trimToNull(cfg("oidc.providerName"));
-        return n == null ? "OIDC登录" : n;
-    }
-
-    private String cfg(String key) {
-        String v = configService.get(key);
-        return v == null ? "" : v;
     }
 
     private String newToken() {
@@ -549,8 +550,8 @@ public class OidcService {
 
     private void sweep() {
         long now = System.currentTimeMillis();
-        states.entrySet().removeIf(e -> e.getValue().expiresAt < now);
-        codes.entrySet().removeIf(e -> e.getValue().expiresAt < now);
+        states.entrySet().removeIf(e -> e.getValue().expiresAt() < now);
+        codes.entrySet().removeIf(e -> e.getValue().expiresAt() < now);
     }
 
     private static String text(JsonNode node, String field) {
@@ -607,12 +608,16 @@ public class OidcService {
     private record Metadata(String authorizationEndpoint, String tokenEndpoint, String userinfoEndpoint) {
     }
 
-    /** 授权上下文（state → 前端目标路径） */
-    private record StateEntry(String redirectPath, long expiresAt) {
+    /** 授权上下文（state → 认证源 + 前端目标路径） */
+    private record StateEntry(String providerId, String redirectPath, long expiresAt) {
     }
 
     /** 一次性登录结果 */
     private record CodeEntry(Map<String, Object> payload, long expiresAt) {
+    }
+
+    /** 元数据缓存（按 providerId） */
+    private record MetadataCache(Metadata metadata, String key, long at, String error) {
     }
 
     /** 从用户信息里提取出的本地字段 */

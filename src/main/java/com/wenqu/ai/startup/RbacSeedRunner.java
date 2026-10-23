@@ -69,7 +69,8 @@ public class RbacSeedRunner implements ApplicationRunner {
             new String[]{"menu-dashboard", "数据看板", "BarChartOutlined", "/dashboard", "50", "1"},
             new String[]{"menu-evaluation", "检索评估", "ExperimentOutlined", "/evaluation", "60", "1"},
             new String[]{"menu-permissions", "权限管理", "SafetyOutlined", "/permissions", "70", "1"},
-            new String[]{"menu-settings", "系统设置", "SettingOutlined", "/settings", "80", "1"}
+            new String[]{"menu-settings", "系统设置", "SettingOutlined", "/settings", "80", "1"},
+            new String[]{"menu-oidc-providers", "单点登录", "SafetyOutlined", "/oidc-providers", "82", "1"}
     );
 
     /**

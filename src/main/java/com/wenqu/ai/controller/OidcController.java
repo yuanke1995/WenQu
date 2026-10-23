@@ -30,17 +30,18 @@ public class OidcController {
 
     private final OidcService oidcService;
 
-    @Operation(summary = "OIDC 是否可用", description = "只回 {enabled, providerName}；未启用或配置不完整时 enabled=false，前端据此隐藏登录入口")
+    @Operation(summary = "OIDC 可用认证源清单", description = "回 {providers:[{id,name}…]}：仅 enabled 且配置完整的认证源；清单为空时前端不显示单点登录入口")
     @GetMapping("/config")
     public ResultJson config() {
         return ResultJson.ok(oidcService.publicConfig());
     }
 
-    @Operation(summary = "获取授权地址", description = "返回 {loginUrl}（已带一次性 state）；redirectPath 为登录成功后前端要去的路径")
+    @Operation(summary = "获取授权地址", description = "返回 {loginUrl}（已带一次性 state，state 内携带 providerId）；providerId 为认证源 ID，redirectPath 为登录成功后前端要去的路径")
     @GetMapping("/login-url")
-    public ResultJson loginUrl(@RequestParam(value = "redirectPath", required = false) String redirectPath,
+    public ResultJson loginUrl(@RequestParam(value = "providerId", required = false) String providerId,
+                               @RequestParam(value = "redirectPath", required = false) String redirectPath,
                                HttpServletRequest request) {
-        return ResultJson.ok(Map.of("loginUrl", oidcService.loginUrl(redirectPath, request)));
+        return ResultJson.ok(Map.of("loginUrl", oidcService.loginUrl(providerId, redirectPath, request)));
     }
 
     /**
