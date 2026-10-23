@@ -25,10 +25,7 @@ config/application-local.yml
 # 两个名字相近但语义完全不同，容易误改，这里显式区分。
 /data/
 /data.ms/
-# 个人自学记录：纯私人笔记，不入库（体积小也入库会污染开源仓库的文档面）。
 # 部署手册等正式文档随仓走，需要更完整的部署说明见 docs/deployment-guide.html。
-/docs/自学记录.csv
-/docs/自学记录.tsv
 /dumps/
 /dump/
 /user-data/
@@ -59,3 +56,5 @@ config/application-local.yml
 # 已入库的那批用 `git rm -r --cached src/test` 摘掉跟踪，文件仍在磁盘上。
 /src/test/
 /.mockup/
+/skill-projections/
+/docs/

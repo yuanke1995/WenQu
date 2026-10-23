@@ -281,7 +281,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 
 ## 生产部署
 
-> **完整部署步骤见 [`docs/deployment-guide.html`](docs/deployment-guide.html)**（Docker Compose 全栈自包含：环境变量清单、密钥生成、备份还原、升级与回滚、常见故障排查）。本节只给骨架。
+> **完整部署步骤见 [`deploy/deployment-guide.html`](deploy/deployment-guide.html)**（Docker Compose 全栈自包含：环境变量清单、密钥生成、备份还原、升级与回滚、常见故障排查）。本节只给骨架。
 
 ### Docker Compose
 
