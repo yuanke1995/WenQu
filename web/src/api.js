@@ -1542,6 +1542,33 @@ export const uploadAvatarApi = file => {
 /** 回答内代码块「在沙盒中运行」：与 execute 工具同一条物理通道；语言白名单/超时上限由后端把关 */
 export const sandboxRun = (sessionId, language, code) =>
   request('/sandbox/run', { method: 'POST', timeout: 90000, body: JSON.stringify({ sessionId, language, code }) })
+// ---------- 本会话沙盒目录（宿主侧读口，容器回收后照样列得出来） ----------
+// 模型写进沙盒却没交付的文件，此前在应用里没有出口：工作区文件栏只读 projects/{工作区}，
+// 会话没挂工作区时那份文件躺在 sessions/{会话} 下，界面上看不见也取不出来。
+/** 列本会话沙盒目录里的文件：{files:[{path,name,ext,size,mtime,viewUrl?}], total, truncated}，按修改时间倒序 */
+export const listSandboxFiles = sessionId =>
+  request(`/sandbox/files?sessionId=${encodeURIComponent(sessionId)}`)
+/** 取回成产物（登记进「我的产物」，与模型交付同一条落库路）：返回产物 {id,url,filename,ext,size} */
+export const sandboxFileToArtifact = (sessionId, path, description) =>
+  request('/sandbox/files/artifact', {
+    method: 'POST',
+    body: JSON.stringify({ sessionId, path, description: description || '' })
+  })
+/** 下载沙盒文件：与工作区那份同一条路——必须走 fetch 带 Authorization（后端认 JWT，不认 cookie） */
+export const downloadSandboxFile = async (sessionId, path, filename) => {
+  const q = `sessionId=${encodeURIComponent(sessionId)}&path=${encodeURIComponent(path)}`
+  const res = await fetch(`${BASE}/sandbox/files/download?${q}`, { headers: authHeaders() })
+  if (!res.ok) throw new Error(`下载失败(${res.status})`)
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename || 'download'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 2000)
+}
 
 // ---------- P1 GraphRAG（知识图谱；管理员） ----------
 export const graphBuild = kbId => request(`/graph/${kbId}/build`, { method: 'POST' })

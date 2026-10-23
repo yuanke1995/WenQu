@@ -1173,6 +1173,28 @@
         </div>
         <div class="rp-art-all" @click="router.push('/artifacts')">在产物页查看全部 ›</div>
       </div>
+      <!-- 本会话沙盒目录：助手在沙盒里做出、却没交付成产物的文件（产物卡只管已交付的那一份）。
+           有文件才显示整卡，与产物卡同一判据；读不到要报错带重试——静默成空列表会被读成「我让它做的文件没了」。
+           预览＝签名地址开新标签（与工作区文件栏同一条路、同一批类型判据，服务端只给点得开的条目配 viewUrl） -->
+      <div v-if="sandboxFiles.length || sandboxErr || sandboxLoading" class="rp-card">
+        <div class="rp-label">沙盒文件 · {{ sandboxFiles.length }} 个</div>
+        <div v-if="sandboxLoading" class="rp-sb-hint">正在读取沙盒目录…</div>
+        <div v-else-if="sandboxErr" class="rp-sb-err">
+          <span>{{ sandboxErr }}</span>
+          <button type="button" class="rp-sb-retry" @click="loadSandboxFiles">重试</button>
+        </div>
+        <div v-for="f in sandboxFiles" :key="f.path" class="rp-art">
+          <file-text-outlined class="rp-art-ic" />
+          <span class="rp-art-name" :title="f.path + '（' + sandboxSize(f.size) + '）'">{{ f.path }}</span>
+          <a v-if="f.viewUrl" class="rp-art-act" :href="resolveImg(f.viewUrl)" target="_blank" rel="noopener"
+             title="在新标签页打开"><eye-outlined /></a>
+          <button type="button" class="rp-art-act rp-sb-btn" :title="'下载 ' + f.name"
+                  @click="onSandboxDownload(f)"><download-outlined /></button>
+          <button v-if="!sandboxTaken.has(f.path)" type="button" class="rp-art-act rp-sb-btn"
+                  title="存为产物（进「我的产物」，可预览可下载）" @click="onSandboxTake(f)"><save-outlined /></button>
+          <span v-else class="rp-sb-taken" title="已存为产物"><check-outlined /></span>
+        </div>
+      </div>
       <!-- 计划：本会话每轮出过的计划各列一条（继续对话后每次重做都算一份），点击定位到那一轮气泡。
            默认折叠沉底：它的条数随会话长度无上限增长，而动作只是「跳回历史某一轮」——低频导航不该占顶部固定槽位，
            更不该把上面几张交互卡挤出首屏。有待确认的计划时自动展开，避免「计划要批」这件事被藏住。 -->
@@ -1439,10 +1461,10 @@ import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, Close
          HistoryOutlined, SwapOutlined, InfoCircleOutlined,
          AppstoreOutlined, ClockCircleOutlined, BookOutlined,
          OrderedListOutlined, LeftOutlined, FolderOpenOutlined,
-         AimOutlined, EyeOutlined } from '@ant-design/icons-vue'
+         AimOutlined, EyeOutlined, SaveOutlined, ReloadOutlined } from '@ant-design/icons-vue'
 import { debugRetrieval, deleteMessageGroup, submitFeedback as apiSubmitFeedback,
          addEvalCase, getSessionShare, enableSessionShare, disableSessionShare,
-         getSessionWorkspace } from '../api'
+         getSessionWorkspace, listSandboxFiles, downloadSandboxFile, sandboxFileToArtifact } from '../api'
 import { renderMd, resolveImg, onImgError } from '../utils/markdown'
 import { canPreview, artifactExt } from '../utils/artifactView'
 import { loadSessions, sessionStore } from './store'
@@ -3303,8 +3325,68 @@ const wsTitle = computed(() => {
   if (w.archived) t += '（已归档）'
   return t + '（点击进入工作区）'
 })
+// ==================== 本会话沙盒目录 ====================
+// 模型写进沙盒、却没交付成产物的文件，此前在应用里没有任何出口：工作区文件栏只读 projects/{工作区}，
+// 会话没挂工作区时那份文件躺在 sessions/{会话} 下看不见（真机 2026-10-23 21:04 那一轮做好的
+// 20.7 KB 看板页就是这么烂在盘上的）。读的是宿主目录，容器空闲回收后照样列得出来。
+const sandboxFiles = ref([])
+const sandboxErr = ref('')
+const sandboxLoading = ref(false)
+/** 本轮已取回成产物的路径：按钮点过一次就改口，不邀请重复点（重复点会落出一条同名重复产物） */
+const sandboxTaken = ref(new Set())
+async function loadSandboxFiles() {
+  const sid = currentSessionId.value
+  sandboxTaken.value = new Set()
+  if (!sid) {
+    sandboxFiles.value = []
+    sandboxErr.value = ''
+    return
+  }
+  sandboxLoading.value = true
+  sandboxErr.value = ''
+  try {
+    const r = await listSandboxFiles(sid)
+    sandboxFiles.value = (r && r.data && r.data.files) || []
+  } catch (e) {
+    // 失败必须说出来并给重试：静默成空列表，用户读到的是「我让它做的文件没了」
+    sandboxFiles.value = []
+    sandboxErr.value = e?.message || '沙盒目录读取失败'
+  } finally {
+    sandboxLoading.value = false
+  }
+}
+/** 一轮跑完就重列：交付物是那一轮做出来的，不重拉就要刷新页面才看得见 */
+watch(() => loading.value, (v, prev) => { if (prev && !v) loadSandboxFiles() })
+async function onSandboxDownload(f) {
+  const sid = currentSessionId.value
+  if (!sid) return
+  try {
+    await downloadSandboxFile(sid, f.path, f.name)
+  } catch (e) {
+    message.warning(`下载失败：${e?.message || '沙盒目录读不到这个文件'}`)
+  }
+}
+async function onSandboxTake(f) {
+  const sid = currentSessionId.value
+  if (!sid) return
+  try {
+    await sandboxFileToArtifact(sid, f.path)
+    sandboxTaken.value = new Set([...sandboxTaken.value, f.path])
+    message.success('已存为产物，可在「我的产物」里查看')
+  } catch (e) {
+    message.warning(`存为产物失败：${e?.message || '文件过大或该类型不支持作为产物'}`)
+  }
+}
+/** 沙盒里的文件条目按名字认不出哪份是成品，所以整条相对路径都露出来（outputs/build/shot.html 一眼是中间件） */
+const sandboxSize = n => {
+  const v = Number(n) || 0
+  return v >= 1024 * 1024 ? (v / 1024 / 1024).toFixed(1) + ' MB'
+    : v >= 1024 ? Math.round(v / 1024) + ' KB' : v + ' B'
+}
+
 watch(currentSessionId, async sid => {
   sessionWorkspace.value = null
+  loadSandboxFiles()
   if (!sid) return
   try {
     const r = await getSessionWorkspace(sid)
@@ -4638,6 +4720,13 @@ onMounted(async () => {
 .rp-art-act:hover { color: var(--app-accent); }
 .rp-art-all { margin-top: 4px; font-size: 11px; color: var(--app-accent); cursor: pointer; }
 .rp-art-all:hover { text-decoration: underline; }
+/* 沙盒文件卡：行内动作沿用 .rp-art-act 的字号与配色，只是那两枚是按钮不是链接（没有 href 可给） */
+.rp-sb-btn { background: none; border: 0; padding: 0; cursor: pointer; line-height: 1; }
+.rp-sb-hint { font-size: 11px; color: var(--app-text3); padding: 4px 0; }
+.rp-sb-err { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--app-warn-text); padding: 4px 0; }
+.rp-sb-retry { background: none; border: 0; padding: 0; cursor: pointer; font-size: 11px; color: var(--app-accent); }
+.rp-sb-retry:hover { text-decoration: underline; }
+.rp-sb-taken { flex: none; font-size: 11px; color: var(--app-accent); }
 
 /* 右栏计划卡：本会话出过的计划列表（问题为标签 + 状态角标；点击定位到那一轮并闪一下） */
 .rp-plan-row {
