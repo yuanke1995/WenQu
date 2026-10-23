@@ -273,36 +273,38 @@
                   <a-select :value="form.goalEnabled" :options="goalOptions" size="small" class="ap-cap-state"
                             @change="v => form.goalEnabled = v" />
                 </div>
-                <div v-for="c in CAPS" :key="c.key" class="ap-cap" :class="{ overridden: capOverridden(c) }">
-                  <span class="ap-cap-ic"><component :is="c.icon" /></span>
-                  <div class="ap-cap-l">
-                    <div class="ap-cap-name">
-                      {{ c.label }}
-                      <span v-if="capOverridden(c)" class="ap-cap-badge">已覆盖</span>
+                <template v-for="c in CAPS" :key="c.key">
+                  <div class="ap-cap" :class="{ overridden: capOverridden(c) }">
+                    <span class="ap-cap-ic"><component :is="c.icon" /></span>
+                    <div class="ap-cap-l">
+                      <div class="ap-cap-name">
+                        {{ c.label }}
+                        <span v-if="capOverridden(c)" class="ap-cap-badge">已覆盖</span>
+                      </div>
+                      <div class="ap-cap-desc" :title="(c.detail || c.desc) + (globalText(c) ? '（全局' + globalText(c) + '）' : '')">
+                        {{ c.desc }}<span v-if="globalText(c)" class="ap-cap-global"> · 全局{{ globalText(c) }}</span>
+                      </div>
                     </div>
-                    <div class="ap-cap-desc" :title="(c.detail || c.desc) + (globalText(c) ? '（全局' + globalText(c) + '）' : '')">
-                      {{ c.desc }}<span v-if="globalText(c)" class="ap-cap-global"> · 全局{{ globalText(c) }}</span>
+                    <a-select :value="capState(c)" :options="c.kind === 'switch' ? SEG : SEG_MULTI" size="small"
+                              class="ap-cap-state" @change="v => setCapState(c, v)" />
+                  </div>
+                  <!-- 「指定」的多选贴在自己那行下面；不要 pooled 到列表尾，否则看起来像挂在最后一行能力上 -->
+                  <div v-if="needsPick(c)" class="ap-cap-pick">
+                    <a-select v-model:value="form[c.listKey]" mode="multiple" :options="optionsOf(c)" allow-clear
+                              size="small" style="width:100%"
+                              :placeholder="'选择' + c.label + '（一项都不选则等同「不使用」）'" />
+                    <div v-if="c.listKey === 'skills' && form[c.listKey].length" class="ap-pick-docs">
+                      已选正文：<button v-for="n in form[c.listKey]" :key="n" class="app-link-btn"
+                                      @click="openSkillDoc(n)">{{ String(n).split('/').pop() }}</button>
+                    </div>
+                    <div v-if="!optionsOf(c).length" class="ap-pick-empty">
+                      <template v-if="c.optionsKey === 'builtinOptions' && toolCatalogError">
+                        工具名册加载失败 —— <button type="button" class="app-btn ghost small" @click="loadToolCatalog">重试</button>
+                      </template>
+                      <template v-else>当前系统里没有可选项 —— 需先在设置页配置{{ c.label }}</template>
                     </div>
                   </div>
-                  <a-select :value="capState(c)" :options="c.kind === 'switch' ? SEG : SEG_MULTI" size="small"
-                            class="ap-cap-state" @change="v => setCapState(c, v)" />
-                </div>
-              </div>
-
-              <div v-for="c in pickedCaps" :key="'pick-' + c.key" class="ap-cap-pick">
-                <a-select v-model:value="form[c.listKey]" mode="multiple" :options="optionsOf(c)" allow-clear
-                          size="small" style="width:100%"
-                          :placeholder="'选择' + c.label + '（一项都不选则等同「不使用」）'" />
-                <div v-if="c.listKey === 'skills' && form[c.listKey].length" class="ap-pick-docs">
-                  已选正文：<button v-for="n in form[c.listKey]" :key="n" class="app-link-btn"
-                                  @click="openSkillDoc(n)">{{ String(n).split('/').pop() }}</button>
-                </div>
-                <div v-if="!optionsOf(c).length" class="ap-pick-empty">
-                  <template v-if="c.optionsKey === 'builtinOptions' && toolCatalogError">
-                    工具名册加载失败 —— <button type="button" class="app-btn ghost small" @click="loadToolCatalog">重试</button>
-                  </template>
-                  <template v-else>当前系统里没有可选项 —— 需先在设置页配置{{ c.label }}</template>
-                </div>
+                </template>
               </div>
 
               <div class="ap-advanced" :class="{ open: advOpen }">
@@ -1377,7 +1379,6 @@ const setCapState = (c, v) => {
   if (c.kind === 'switch') form.value[c.key] = v
   else form.value[c.modeKey] = v
 }
-const pickedCaps = computed(() => CAPS.filter(c => needsPick(c)))
 const capsOverriddenCount = computed(() => CAPS.filter(c => capOverridden(c)).length + (form.value.goalEnabled === 0 ? 1 : 0))
 
 const recentSavedText = computed(() => {
@@ -2033,8 +2034,8 @@ onMounted(async () => { })
 }
 .ap-cap-global { color: var(--app-text3); }
 .ap-cap-state { width: 92px; flex: none; }
-/* 「指定」模式展开的具体项多选：与上方图标块左对齐 */
-.ap-cap-pick { padding: 0 0 10px 38px; }
+/* 「指定」模式展开的具体项多选：跟在自己那行能力下面，与上方图标块左对齐 */
+.ap-cap-pick { padding: 2px 0 10px 38px; }
 .ap-pick-empty { font-size: 11px; color: var(--app-text3); margin-top: 5px; }
 .ap-pick-docs { margin-top: 5px; font-size: 11px; color: var(--app-text3); }
 .ap-pick-docs .app-link-btn { font-size: 11px; margin-right: 6px; }
