@@ -10,6 +10,7 @@ import 'highlight.js/styles/github.css'
 import { message } from 'ant-design-vue'
 import { watch } from 'vue'
 import { themeState } from './theme'
+import { fixChartHeader } from './chartLayout'
 import { sandboxRun } from '../api.js'
 
 // 媒体（文档图片/产物）URL 前缀，与后端返回的 /ai/** 路径配套：
@@ -615,6 +616,11 @@ const diagramSource = (code, open, reusePre) => {
 
 // ==================== ECharts 统计图围栏 ====================
 
+// 导出快照的画布尺寸：宽够放 30 个类目轴的日期，高比屏上那 300px 松一点，
+// 免得图例被标题挤过后显得局促（pixelRatio 2 出图，位图 1720×680）。
+const EC_SNAPSHOT_W = 860
+const EC_SNAPSHOT_H = 340
+
 /**
  * 半截 JSON 探测：strip 掉字符串字面量后数花括号配平，再要求结尾是 `}`/`]`。
  * 流式补全/重生成期间源码经常先到一半——这种情况**不写 data-done**，
@@ -651,34 +657,26 @@ const markDiagramPending = el => {
  *
  * <p>安全口径：只走 JSON.parse（不 eval），option 里不可能有可执行代码；
  * 图表画在 canvas 上，文本都进 echarts 自己的绘制层，不产生可注入的 HTML。
- */
-
-/**
- * 渲染前对 option 做一次「不破坏意图」的版式校正。
  *
- * <p>模型生成的图经常把 title（含 subtext 日期行）和 legend 都顶在 top 边缘
- * （ECharts 默认 title.top='top'、legend.top='top'，都等于 y≈0），两者在画布
- * 顶部直接叠字、显得拥挤。这里只在「双方都没显式指定 top、且确实会叠」时，把
- * 标题下压一点、图例挪到标题（含副标题）下方，并给绘图区让出顶部空间。
- *
- * <p>凡是用户/模型显式写过 top 或某个具体位置的，一律不动，避免改掉本来有意的布局。
+ * <p>绘制前的版式校正在 utils/chartLayout.js：标题块（含副标题）实际比模型给的
+ * legend.top 高时把图例往下让，必要时一起下压 grid.top。
  */
-const dedupeEChartTitleLegend = (opt) => {
-  if (!opt || typeof opt !== 'object' || Array.isArray(opt)) return opt
-  const t = !Array.isArray(opt.title) ? opt.title : null
-  const l = !Array.isArray(opt.legend) ? opt.legend : null
-  if (!t || !l) return opt
-  const isAuto = v => v == null || v === 'top' || v === 'center' || v === 0
-  if (!isAuto(t.top) || !isAuto(l.top)) return opt
-  const hasSub = !!(t.subtext && String(t.subtext).trim())
-  t.top = 6
-  l.top = hasSub ? 40 : 32
-  if (!opt.grid) {
-    opt.grid = { top: hasSub ? 76 : 68 }
-  } else if (!Array.isArray(opt.grid) && opt.grid.top == null) {
-    opt.grid.top = hasSub ? 76 : 68
+/** 把画好的宿主搬回容器：移动节点不清 canvas 位图，所以零重画。宽度可能变了
+ *  （换端/改窗/气泡宽窄）才 resize，不一致才动，否则连布局都不碰。 */
+const adoptEChartHost = (el, host, code, srcPre) => {
+  el.textContent = ''
+  el.appendChild(host)
+  const inst = echartsMod?.getInstanceByDom(host)
+  const cv = host.querySelector('canvas')
+  if (inst && cv && (Math.abs(cv.clientWidth - host.clientWidth) > 1 || Math.abs(cv.clientHeight - host.clientHeight) > 1)) {
+    try { inst.resize() } catch (e) { /* 忽略 */ }
   }
-  return opt
+  el.dataset.state = 'ok'
+  el.dataset.done = code
+  el.appendChild(diagramSource(code, false, srcPre))
+  ecLive.add(new WeakRef(host))
+  ecNodeCache.delete(code)
+  ecNodeCache.set(code, host)   // LRU touch
 }
 
 const paintEChart = async (el, code) => {
@@ -698,7 +696,6 @@ const paintEChart = async (el, code) => {
     showDiagramError(el, code, new Error('option 不是合法 JSON：' + (e && e.message ? String(e.message).split('\n')[0] : '解析失败')))
     return
   }
-  opt = dedupeEChartTitleLegend(opt)
   if (!opt || typeof opt !== 'object' || Array.isArray(opt) || !opt.series) {
     if (chartOptionTruncated(code)) {
       el.dataset.state = 'pending'
@@ -717,20 +714,8 @@ const paintEChart = async (el, code) => {
   // 都走这条路，图表不再闪。若实例已没了（被清扫/淘汰）则按无缓存重新画。
   const cachedHost = ecNodeCache.get(code)
   if (cachedHost && cachedHost.dataset.ecCode === code && !cachedHost.isConnected) {
-    const kept = echarts.getInstanceByDom(cachedHost)
-    if (kept) {
-      el.appendChild(cachedHost)
-      // 容器宽度可能变了（换端/改窗/气泡宽窄）：canvas 尺寸和新容器不一致才 resize
-      const cv = cachedHost.querySelector('canvas')
-      if (cv && (Math.abs(cv.clientWidth - cachedHost.clientWidth) > 1 || Math.abs(cv.clientHeight - cachedHost.clientHeight) > 1)) {
-        try { kept.resize() } catch (e) { /* 忽略 */ }
-      }
-      el.dataset.state = 'ok'
-      el.dataset.done = code
-      el.appendChild(diagramSource(code, false, srcPre))
-      ecLive.add(new WeakRef(cachedHost))
-      ecNodeCache.delete(code)
-      ecNodeCache.set(code, cachedHost)   // LRU touch
+    if (echarts.getInstanceByDom(cachedHost)) {
+      adoptEChartHost(el, cachedHost, code, srcPre)
       return
     }
     ecNodeCache.delete(code)
@@ -738,6 +723,8 @@ const paintEChart = async (el, code) => {
   const host = document.createElement('div')
   host.className = 'md-echart-canvas'
   el.appendChild(host)
+  // 顶部排版校正放在宿主节点挂上之后：百分比定位要按真实画布高度换算
+  fixChartHeader(opt, host.clientHeight)
   let inst
   try {
     inst = echarts.init(host, echartsThemeName, { renderer: 'canvas' })
@@ -761,6 +748,71 @@ const paintEChart = async (el, code) => {
     if (oldestHost && !oldestHost.isConnected) ecCacheDispose(oldestHost)
   }
   ecLive.add(new WeakRef(host))
+}
+
+/**
+ * 把一份 ECharts option 离屏画成 PNG，返回 data URL；画不出来返回 null。
+ *
+ * <p>给 Markdown 导出用：```echarts 围栏只有本项目的渲染器认得，导出的 .md 交给别的阅读器
+ * 就是一份裸 JSON。所以导出前重画一份位图内嵌进去（与图片转 base64 同一口径：文件自包含）。
+ * <p>尺寸写死而不读屏上的宿主：一次导出里几张图宽窄要一致，而且会话导出时大部分消息根本不在
+ * DOM 里，量到的会是 0 高。背景烘成图表卡片的面板色而不是透明——深色主题下文字是浅色，
+ * 透明位图贴进白底阅读器等于隐形。
+ * <p>非法/半截 JSON、绘制异常一律 null，由调用方把原围栏留在原位：导出数据不能因为快照失败而丢。
+ */
+export const snapshotEChart = async code => {
+  let opt
+  try { opt = JSON.parse(code) } catch (e) { return null }
+  if (!opt || typeof opt !== 'object' || Array.isArray(opt) || !opt.series) return null
+  let host
+  let inst
+  try {
+    const echarts = await loadEcharts()
+    host = document.createElement('div')
+    host.style.cssText = `position:fixed;left:-10000px;top:0;width:${EC_SNAPSHOT_W}px;height:${EC_SNAPSHOT_H}px;`
+    document.body.appendChild(host)
+    fixChartHeader(opt, EC_SNAPSHOT_H)
+    // 动画必须关：setOption 后同步取位图拿到的是第 0 帧——柱子和扇形还从 0 长起来，
+    // 导出的图就只剩坐标轴和图例（实测柱状图差异像素 4.6%、饼图 0.1%）。
+    opt.animation = false
+    inst = echarts.init(host, echartsThemeName, { renderer: 'canvas', width: EC_SNAPSHOT_W, height: EC_SNAPSHOT_H })
+    inst.setOption(opt)
+    return inst.getDataURL({
+      type: 'png', pixelRatio: 2,
+      backgroundColor: pickVar('--app-panel-2', '--app-panel')
+    })
+  } catch (e) {
+    return null
+  } finally {
+    try { inst?.dispose() } catch (e) { /* 尽力而为 */ }
+    host?.remove()
+  }
+}
+
+/**
+ * 同步把已画好的图表搬回**当前**容器——流式期间每帧都要调一次，否则图表会闪。
+ *
+ * <p>为什么画图那套幂等不够：v-html 每 120ms 换掉整棵正文，图表容器随之变成空节点；
+ * 而补画走 300ms 节流（实测约 600ms 才落一拍）。中间这段窗口里图表根本不在屏上，
+ * 用户看到的就是「图一闪一闪」——实测一屏只有 12% 的帧画着图，canvas 自始至终只有一个，
+ * 说明闪的不是重画，是**离场**。
+ *
+ * <p>所以搬回必须和 DOM 更新在同一个任务里（渲染后、浏览器绘制前）做完，绘制时才带着图出场；
+ * 顺带写上 data-done，节流那一拍再跑到时直接跳过，不会再 init 一遍。
+ */
+export const reattachCharts = root => {
+  if (!root || !echartsMod || !ecNodeCache.size) return
+  for (const el of root.querySelectorAll('.md-diagram[data-md-echart]')) {
+    if (el.dataset.done) continue
+    const srcPre = el.querySelector('.md-diagram-src-code')
+    const code = srcPre?.querySelector('code')?.textContent || ''
+    if (!code) continue
+    const host = ecNodeCache.get(code)
+    // 只搬「已离场」的宿主：还在别的容器里连着（同一份源码画了两处）就不抢，交给补画那拍处理
+    if (!host || host.dataset.ecCode !== code || host.isConnected) continue
+    if (!echartsMod.getInstanceByDom(host)) { ecNodeCache.delete(code); continue }
+    adoptEChartHost(el, host, code, srcPre)
+  }
 }
 
 /**

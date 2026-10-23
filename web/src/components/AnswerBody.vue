@@ -13,7 +13,7 @@
 // 图片、引用角标、代码复制、沙盒运行按钮的**行为**都在 chat/answerViewer.js 与 AnswerViewerHost.vue，
 // 所以新增一种正文内交互不必在聊天页和分享页各补一遍——分享页此前看不到图与引用，就是少了这层共用。
 import { computed, nextTick, ref, watch } from 'vue'
-import { renderMd, enhanceDiagrams } from '../utils/markdown'
+import { renderMd, enhanceDiagrams, reattachCharts } from '../utils/markdown'
 import { handleBodyClick, handleBodyHover, scheduleCloseRefTip } from '../chat/answerViewer'
 
 const props = defineProps({
@@ -101,4 +101,9 @@ watch([html, () => props.streaming], () => {
   if (enhanceTimer) { clearTimeout(enhanceTimer); enhanceTimer = null }
   enhanceNow()
 }, { immediate: true })
+
+// 每帧 v-html 之后、浏览器绘制之前，把画好的 echarts 宿主同步搬回新容器（见 markdown.js 的
+// reattachCharts）。补画走 300ms 节流，搬回不能跟着一起等——否则节流那一拍之间图表是离场
+// 状态，屏幕上图一闪一闪。post 监视器和 DOM 更新同属一个任务，绘制时图已经在场。
+watch(html, () => { if (rootEl.value) reattachCharts(rootEl.value) }, { flush: 'post' })
 </script>

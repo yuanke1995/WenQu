@@ -1,9 +1,10 @@
 // ==================== Markdown 导出（V1 Chat.vue 移植，单轮 + 整会话共用） ====================
 // 图片策略：data URL 原样；服务内图片经 fetch 转 base64 内嵌（导出文件自包含）；
 // 抓取失败（签名过期/跨域被拦）返回 null → 正文保留 [图片N] 占位。
+// 图表策略见 embedMdCharts：echarts 围栏换成位图快照，mermaid 围栏原样保留。
 import { message } from 'ant-design-vue'
 import { getHistory } from '../api'
-import { resolveImg } from '../utils/markdown'
+import { resolveImg, snapshotEChart } from '../utils/markdown'
 
 const imgToDataUri = async u => {
   if (!u) return null
@@ -31,6 +32,49 @@ const embedMdImages = async (content, imgs) => {
     const uri = uris[Number(num) - 1]
     return uri ? `![图片${num}${desc && desc.trim() ? '：' + desc.trim() : ''}](${uri})` : all
   })
+}
+
+/**
+ * 把正文里的 ```echarts 围栏换成图表快照（`![图表N](data:image/png;base64,…)`）。
+ *
+ * <p>为什么只处理 echarts 不处理 mermaid：mermaid 围栏在 GitHub、IDEA、Typora 这些主流阅读器里
+ * 本来就能原生画出来，我们画反而降级成静态图；echarts 是我们自己发明的语言标，出了本项目就没人认。
+ * <p>围栏不就地删掉，而是挪到文末「图表源码」一节：图是给人看的，那份 option JSON 是数据的唯一出处。
+ * 同一份配置在正文里出现两次只留一条源码、一张图各就各位。快照失败（JSON 非法/绘制异常）时
+ * 原围栏原地不动——导出数据不能因为画不出图而丢。
+ */
+const ECHARTS_FENCE = /```[ \t]*echarts([ \t][^\n]*)?[ \t]*\n([\s\S]*?)\n[ \t]*```/gi
+
+/** 一次导出一份上下文：整会话要跨消息统一编号、同一份配置只画一次 */
+const newChartCtx = () => ({ drawn: new Map() })
+
+const embedMdCharts = async (content, ctx) => {
+  const matches = [...content.matchAll(ECHARTS_FENCE)]
+  if (!matches.length) return content
+  let md = ''
+  let cursor = 0
+  for (const m of matches) {
+    md += content.slice(cursor, m.index)
+    cursor = m.index + m[0].length
+    const code = m[2]
+    let hit = ctx.drawn.get(code)
+    if (!hit) {
+      hit = { no: ctx.drawn.size + 1, code, url: await snapshotEChart(code) }
+      ctx.drawn.set(code, hit)
+    }
+    md += hit.url ? `![图表${hit.no}](${hit.url})` : m[0]
+  }
+  return md + content.slice(cursor)
+}
+
+/** 文末的图表源码区；没有一张图快照成功就不产生这一节 */
+const chartAppendix = ctx => {
+  const sources = [...ctx.drawn.values()].filter(h => h.url).sort((a, b) => a.no - b.no)
+  if (!sources.length) return []
+  const lines = ['', '## 图表源码', '',
+    '> 上面每张图对应下面一份 ECharts 配置。它在问渠里会渲染成图，在别的 Markdown 阅读器里是一份代码。', '']
+  for (const s of sources) lines.push(`### 图表${s.no}`, '', '```echarts', s.code.trim(), '```', '')
+  return lines
 }
 
 const downloadMd = (md, fileName) => {
@@ -108,11 +152,13 @@ export const buildAnswerMd = async ({ answer, question, title }) => {
   if (question?.content) parts.push('## 问题\n' + question.content.trim() + '\n')
   // @ 引用 / # 历史问答（用户消息携带，消息级常驻）
   parts.push(...refBlock(question))
-  const body = await embedMdImages(answer.content.trim(), imgs)
+  const charts = newChartCtx()
+  const body = await embedMdCharts(await embedMdImages(answer.content.trim(), imgs), charts)
   parts.push('## 回答\n' + body + '\n')
   if (answer.sources && answer.sources.length) {
     parts.push('## 引用来源\n' + answer.sources.map((s, si) => sourceLine(s, si + 1)).join('\n') + '\n')
   }
+  parts.push(...chartAppendix(charts))
   return { md: parts.join('\n'), fileName: safeFileName(title) + '.md' }
 }
 
@@ -134,6 +180,7 @@ export const buildSessionMd = async (sid, title) => {
     const parts = [`# ${title || 'AI对话'}`, '', `> 导出时间：${now.toLocaleString('zh-CN', { hour12: false })} · 共 ${roundCount} 轮问答`, '']
     let qn = 0
     let first = true
+    const charts = newChartCtx()
     for (const m of rows) {
       if (!first) parts.push('---', '')
       first = false
@@ -149,8 +196,8 @@ export const buildSessionMd = async (sid, title) => {
         // @ 引用 / # 历史问答（用户消息携带，消息级常驻）
         parts.push(...refBlock(m))
       } else {
-        const body = await embedMdImages((m.content || '').trim(), Array.isArray(m.images) ? m.images : [])
-        parts.push('**回答**', '', body, '')
+        const withImgs = await embedMdImages((m.content || '').trim(), Array.isArray(m.images) ? m.images : [])
+        parts.push('**回答**', '', await embedMdCharts(withImgs, charts), '')
         if (m.sources && m.sources.length) {
           parts.push('**引用来源**', m.sources.map((s, si) => sourceLine(s, si + 1)).join('\n'), '')
         }
@@ -163,13 +210,14 @@ export const buildSessionMd = async (sid, title) => {
       }
     }
     if (parts.length <= 3) { message.warning('会话为空，无可导出内容'); return null }
+    parts.push(...chartAppendix(charts))
     return { md: parts.join('\n'), fileName: safeFileName(title) + '.md' }
 }
 
-/** 导出整个会话为 .md（按轮次：问题（含用户图）→ 回答（含引用图）→ 引用来源）；无需先打开会话 */
+/** 导出整个会话为 .md（按轮次：问题（含用户图）→ 回答（含引用图与图表快照）→ 引用来源，文末统一挂图表源码）；无需先打开会话 */
 export const exportSessionMarkdown = async (sid, title) => {
   if (!sid) return
-  const hide = message.loading('正在导出整个会话（含图片抓取转码）…', 0)
+  const hide = message.loading('正在导出整个会话（含图片抓取与图表绘制）…', 0)
   try {
     const built = await buildSessionMd(sid, title)
     if (built) downloadMd(built.md, built.fileName)
