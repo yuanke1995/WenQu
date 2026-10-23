@@ -69,6 +69,37 @@ const emit = defineEmits(['update:modelValue', 'send', 'stop', 'attach', 'files'
 
 const composerRef = ref(null)
 const fileInput = ref(null)
+const boxRef = ref(null)
+/** 手动拖拽高度（px）。null = 自适应（editor 自身 6 行上限 + 滚动）。
+ *  赋值后卡片切到固定高度、editor 改为 flex 撑满并在内部滚动，让多行输入有更大的编辑区。 */
+const boxHeight = ref(null)
+const onResizeStart = e => {
+  if (e.button !== 0) return
+  const box = boxRef.value
+  if (!box) return
+  const startY = e.clientY
+  const startH = box.getBoundingClientRect().height
+  // 最小高度：容纳一行正文 + 工具条 + 上下内边距；最大高度：屏高的 6 成，避免盖住消息区
+  const minH = 92
+  const maxH = Math.max(minH, window.innerHeight * 0.6)
+  document.body.style.userSelect = 'none'
+  document.body.style.cursor = 'ns-resize'
+  const move = ev => {
+    const dy = ev.clientY - startY
+    boxHeight.value = Math.min(maxH, Math.max(minH, startH + dy))
+  }
+  const up = () => {
+    document.body.style.userSelect = ''
+    document.body.style.cursor = ''
+    window.removeEventListener('mousemove', move)
+    window.removeEventListener('mouseup', up)
+  }
+  window.addEventListener('mousemove', move)
+  window.addEventListener('mouseup', up)
+}
+/** 双击抓手还原为自适应高度 */
+const resetHeight = () => { boxHeight.value = null }
+const boxStyle = computed(() => boxHeight.value != null ? { height: boxHeight.value + 'px' } : null)
 const dragOver = ref(false)
 /** 拖拽进入/离开会在子元素之间反复触发（dragleave 先于下一个 dragenter），用计数抵消，
  *  否则鼠标划过子元素时提示会闪 */
@@ -128,17 +159,22 @@ const showStop = computed(() => props.sending && !(props.steerable && props.canS
     <slot name="above" />
     <!-- 顶替态（挂起提问卡 / 待批计划卡）：页面给整块面板，卡片样式仍由本组件提供 -->
     <slot v-if="replaceBox" name="replace" />
-    <div v-else class="ci-box">
+    <div v-else class="ci-box" ref="boxRef" :class="{ 'ci-resized': boxHeight != null }" :style="boxStyle">
+      <!-- 顶部拖拽抓手：按住向下拖放大、向上拖缩小；双击还原自适应。窄屏隐藏（触屏不需要拖拽） -->
+      <div class="ci-grip" @mousedown.prevent="onResizeStart" @dblclick="resetHeight"
+           title="拖动调整输入框高度 · 双击还原"></div>
       <slot />
-      <Composer ref="composerRef" :model-value="modelValue" :resolve="resolve" :placeholder="placeholder"
-                :hint-cmd="hintCmd" :hint-rest="hintRest"
-                @update:model-value="v => emit('update:modelValue', v)"
-                @update:keys="k => emit('update:keys', k)"
-                @keydown="e => emit('keydown', e)" @paste="e => emit('paste', e)"
-                @input="e => emit('input', e)" @click="e => emit('click', e)"
-                @focus="e => emit('focus', e)" @blur="e => emit('blur', e)"
-                @chip-click="k => emit('chip-click', k)"
-                @ready="() => emit('ready')" />
+      <div class="ci-composer-wrap">
+        <Composer ref="composerRef" :model-value="modelValue" :resolve="resolve" :placeholder="placeholder"
+                  :hint-cmd="hintCmd" :hint-rest="hintRest"
+                  @update:model-value="v => emit('update:modelValue', v)"
+                  @update:keys="k => emit('update:keys', k)"
+                  @keydown="e => emit('keydown', e)" @paste="e => emit('paste', e)"
+                  @input="e => emit('input', e)" @click="e => emit('click', e)"
+                  @focus="e => emit('focus', e)" @blur="e => emit('blur', e)"
+                  @chip-click="k => emit('chip-click', k)"
+                  @ready="() => emit('ready')" />
+      </div>
       <div class="ci-toolbar">
         <div class="ci-left">
           <slot name="left-lead" />
@@ -197,9 +233,27 @@ const showStop = computed(() => props.sending && !(props.steerable && props.canS
   position: relative; max-width: var(--chat-col, 860px); margin: 0 auto;
   border: 1px solid var(--app-border); border-radius: 16px; background: var(--app-panel);
   padding: 10px 12px 8px;
+  display: flex; flex-direction: column;
   box-shadow: 0 1px 2px rgba(16, 24, 40, .04), 0 8px 20px -10px rgba(16, 24, 40, .10);
   transition: border-color .2s, box-shadow .2s;
 }
+/* 顶部拖拽抓手：半透明横条，悬浮/拖拽时提亮。绝对定位于卡片上沿，不占内容流 */
+.ci-grip {
+  position: absolute; top: -4px; left: 0; right: 0; height: 10px; z-index: 5;
+  cursor: ns-resize; display: flex; align-items: center; justify-content: center;
+}
+.ci-grip::before {
+  content: ''; width: 38px; height: 3px; border-radius: 999px;
+  background: var(--app-border); transition: background .15s;
+}
+.ci-grip:hover::before { background: var(--app-accent); }
+/* 编辑区包裹层：自适应时按内容撑高；手动拖高时 flex 撑满，editor 内部滚动 */
+.ci-composer-wrap { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.ci-composer-wrap > .composer,
+.ci-composer-wrap :deep(.composer) { flex: 1 1 auto; min-height: 0; height: 100%; }
+/* 手动高度态：撤掉 editor 的 6 行上限，改为撑满并内部滚动 */
+.ci-resized .composer-edit,
+.ci-resized :deep(.composer-edit) { max-height: none; flex: 1 1 auto; }
 .ci-box:focus-within,
 .ci :deep(.ci-box:focus-within) {
   border-color: var(--app-accent);
@@ -234,6 +288,8 @@ const showStop = computed(() => props.sending && !(props.steerable && props.canS
   .ci-drop { inset: 6px calc(10px + var(--chat-sbw, 0px)) calc(6px + var(--sab, 0px)) 10px; }
   .ci-box,
   .ci :deep(.ci-box) { padding: 6px 6px 6px 10px; border-radius: 12px; }
+  /* 触屏无拖拽：隐藏抓手，卡片回归自适应 */
+  .ci-grip { display: none; }
   .ci-toolbar { flex-wrap: nowrap; gap: 2px; }
   .ci-left, .ci-right { min-width: 0; }
   .ci-right { margin-left: auto; }

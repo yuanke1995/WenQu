@@ -354,6 +354,13 @@ watch([() => props.modelValue, () => groups.value, () => props.inheritLabel,
 .ms-pill.ant-select-open {
   background: var(--app-panel-2);
 }
+/* 悬浮显示手型：show-search 会在 selector 里注入搜索输入框，antd 默认给文本光标（I 形），
+   胶囊是点击打开下拉的按钮语义，统一强制 pointer（含内部 input 与 item/placeholder） */
+.ms-pill,
+.ms-pill :deep(.ant-select-selector),
+.ms-pill :deep(.ant-select-selection-search-input) {
+  cursor: pointer !important;
+}
 .ms-pill :deep(.ant-select-selector) {
   height: 28px !important;
   border: none !important;

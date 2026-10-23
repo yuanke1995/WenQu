@@ -616,7 +616,7 @@ defineExpose({
 <style scoped>
 /* chip 是命令式建出来的节点，拿不到 scoped 的 data-v 标记，所以它们的全部样式都包在 :deep() 里
    （挂在这个组件的模板元素之下）。写成普通选择器会静默不生效：颜色、圆角、删除键一个都不长。 */
-.composer { position: relative; }
+.composer { position: relative; display: flex; flex-direction: column; min-height: 0; height: 100%; }
 .cchip-src { display: none; }
 /* 正文与 chip 同一条流：pre-wrap 让我们自己插进去的 \n 直接成行，不需要 <br> 结构 */
 .composer-edit {

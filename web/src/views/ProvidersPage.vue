@@ -265,7 +265,7 @@
                   <question-circle-outlined class="pm-q" />
                 </a-tooltip>
               </div>
-              <a-select v-model:value="editForm.modelType" :options="typeOptions" />
+              <a-select v-model:value="editForm.modelType" :options="typeOptions" :popup-match-select-width="false" />
             </div>
           </div>
           <div class="pm-grid">
