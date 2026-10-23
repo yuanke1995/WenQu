@@ -1096,7 +1096,10 @@
       <button v-if="isNarrow" class="rp-sheet-close" type="button" title="关闭" @click="mPanelOpen = false">
         <close-outlined />
       </button>
-      <!-- 引用来源：右栏交互最重的一张卡（点片段定位正文 / hover 高亮角标 / 分组展开），排首位。
+      <!-- 过程卡（常驻首位）：跑轮时实时滚动工具步，空闲时收成上一轮摘要。
+           会话里还没有 AI 消息时整卡不渲染（新会话不占位）。其余三卡仍是「有数据才显示」。 -->
+      <RightProcessCard :msg="processMsg" @open-events="openEvents()" />
+      <!-- 引用来源：右栏交互最重的一张卡（点片段定位正文 / hover 高亮角标 / 分组展开），过程卡之后的第一张。
            原先排在末尾，等于把「核查答案」这个最高频动作排到最需要滚动才看得到的位置——
            正文里刚亮起的角标，用户得点开侧栏再往下翻。移动端 sheet 一直把它排第一，这里对齐。
            有引用才显示整卡（空则隐藏，不占版面，与产物卡同规则）。
@@ -1451,6 +1454,8 @@ import SubAgentChatCard from '../components/SubAgentChatCard.vue'
 import MsgDivider from '../components/MsgDivider.vue'
 import ToolSpillButton from '../components/ToolSpillButton.vue'
 import SessionEventsPanel from '../components/SessionEventsPanel.vue'
+// 右栏「过程」卡：跑轮时实时滚动工具步（数据就是引擎那份消息对象，不另取数）
+import RightProcessCard from '../components/RightProcessCard.vue'
 import SkillContentModal from '../components/SkillContentModal.vue'
 // 回答正文与它的浮层宿主：与两个分享页共用同一份实现（详见 src/chat/answerViewer.js 顶部说明）
 import AnswerBody from '../components/AnswerBody.vue'
@@ -1664,6 +1669,15 @@ const togglePanel = () => {
   panelStored.value = !panelStored.value
   localStorage.setItem('app_panel', panelStored.value ? '1' : '0')
 }
+
+// 右栏「过程」卡的数据：最近一条 AI 消息（含跑轮中 loading 的那条，别用 lastAi——它刻意跳过 loading）。
+// getter 体懒执行，引擎解构在本文件更后面也不影响。
+const processMsg = computed(() => {
+  const list = messages.value || []
+  for (let i = list.length - 1; i >= 0; i--) if (list[i].role === 'ai') return list[i]
+  return null
+})
+
 
 // ==================== 执行过程（事件账本回放） ====================
 // 「这一轮是怎么跑出来的」此前只有两种看法：正开着页面时看实时过程簇，或事后翻通知/产物倒推。

@@ -215,6 +215,12 @@
                 </button>
                 <button class="side-sec-op" title="新建工作区" @click.stop="openCreateSpace"><plus-outlined /></button>
               </span>
+              <!-- 「会话」段同样给一个 +（不挂工作区的新对话）：两段表头的操作位对齐，
+                   新建对话不必绕去顶栏。动作就是 newChat() 不带 projectId——与顶栏「新建对话」同一入口，
+                   不再另设第二个说法。.stop 同上：表头整段可点，冒泡会顺手把整段折叠。 -->
+              <span v-else-if="sec.key === 'solo'" class="side-sec-ops">
+                <button class="side-sec-op" title="新建会话" @click.stop="newChat()"><plus-outlined /></button>
+              </span>
             </div>
 
             <template v-if="!secHidden(sec)">
