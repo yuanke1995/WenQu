@@ -191,10 +191,19 @@ public class ChatRunRuntime {
      * 到点先发 warn（此刻 emitter 还活着，前端气泡真能看到「回答超时已截断」），再 dispose 停流
      * （半程正文按截断态落库）并 complete。失联兜底另有 15s 心跳、前端 120s 空闲看门狗与各阶段自身
      * 超时，本看门狗只管「整轮做机器工作太久」。
+     * <p>每个 tick 先认一次「这一轮还是不是我登记的那一轮」（见 {@link TurnDeadline#turnId}）：
+     * 台账刻意比通道活得久的路不止一条，而它一旦越不过本轮终态就再没有停它的地方——真机 2026-10-23
+     * 一个会话里四条，每轮收口后整 600 秒补一条假超时 warn（其中一条还挂到了<b>下一轮</b>的 turnId 上，
+     * 因为账本按「当时在跑的那一轮」记）。预算是给正在干活的轮设的天花板，不是给历史轮开的闹钟。
      */
     public java.util.concurrent.ScheduledFuture<?> startTurnWatchdog(SseEmitter emitter, String sessionId,
                                                                       TurnDeadline d) {
         java.util.concurrent.ScheduledFuture<?> f = TURN_WATCHDOG_POOL.scheduleWithFixedDelay(() -> {
+            TurnHandle now = sessionId == null ? null : TurnRegistry.handle(sessionId);
+            if (now == null || (d.turnId != null && !d.turnId.equals(now.turnId()))) {
+                TurnRegistry.stopDeadline(emitter);   // 本轮已收口（或已被新一轮顶替）：看门狗到此为止
+                return;
+            }
             long machineMs = d.machineMs();
             if (machineMs <= d.budgetMs) return;
             if (!d.fired.compareAndSet(false, true)) return;

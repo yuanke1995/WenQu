@@ -461,7 +461,7 @@ public class ChatService {
         // 收集型通道（定时任务/MCP/子智能体节点）不挂：它没有真实响应、节奏由调用方 awaitDone 控制。
         TurnDeadline ledger = null;
         if (!(emitter instanceof CollectingSseEmitter)) {
-            ledger = new TurnDeadline(runtime.turnMachineBudgetMs());
+            ledger = new TurnDeadline(runtime.turnMachineBudgetMs(), turnId);
             TurnRegistry.registerDeadline(emitter, ledger);
             runtime.startTurnWatchdog(emitter, sessionId, ledger);
         }

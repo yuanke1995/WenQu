@@ -31,9 +31,16 @@ public final class TurnDeadline {
     /** 只截断一次：到点后并发 tick 不重复发 warn/complete */
     public final AtomicBoolean fired = new AtomicBoolean();
     public volatile ScheduledFuture<?> watchdog;
+    /**
+     * 这一份台账属于哪一轮。看门狗是<b>池线程</b>上的周期任务，它比本轮活得久的路不止一条
+     * （断线时本轮还挂在运行总线上 → 台账刻意保留，而宽限期到点回收总线时没人回头停它），
+     * 于是会在本轮收口十分钟后补发一条「回答超时已截断」。tick 先认这个 turnId 就能自愈。
+     */
+    public final String turnId;
 
-    public TurnDeadline(long budgetMs) {
+    public TurnDeadline(long budgetMs, String turnId) {
         this.budgetMs = budgetMs;
+        this.turnId = turnId;
     }
 
     public void beginWait() {
