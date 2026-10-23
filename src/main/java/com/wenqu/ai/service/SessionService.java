@@ -1399,6 +1399,26 @@ public class SessionService {
     }
 
     /**
+     * 记下本轮实际生效的模型引用（轮首解析出可用模型后顺手落一份，与 {@link #recordTurnAgent} 同风格）。
+     * <p>为什么要写：会话行上的 model 原本只在聊天页<b>手动切换</b>时写入，靠个人默认作答的会话永远
+     * 没有这份记录——隔天打开旧会话，右下角模型选择器回显的是"现在的"个人默认，而不是这个会话
+     * 上一轮真正用的那个。每轮把生效值落一份后，回显与下一轮解析（会话固定优先于个人默认）都钉在
+     * 会话实际用的模型上，个人默认的改动只影响新会话。
+     * <p>best-effort：写失败只影响回显，不影响这一轮回答。手动切换仍走 {@link #updateModel}
+     * （带归属校验与 fail-loud）；这里记录的是本轮解析链的结论，不再重复校验。
+     */
+    public void recordTurnModel(String sessionId, String modelRef) {
+        if (sessionId == null || sessionId.isBlank() || modelRef == null || modelRef.isBlank()) return;
+        try {
+            sessionMapper.update(null, new LambdaUpdateWrapper<Session>()
+                    .eq(Session::getId, sessionId)
+                    .set(Session::getModel, modelRef));
+        } catch (Exception e) {
+            log.warn("记录本轮生效模型失败 (session={}): {}", sessionId, e.getMessage());
+        }
+    }
+
+    /**
      * 会话级模型覆盖（聊天页切换模型即存，刷新/换端后选择不丢）。
      * model 空白 = 清除覆盖回到跟随个人默认；非空去空白、限长 190（与 c_ai_message.model 列同宽）。
      * 引用值的有效性（可解析/可用）由控制器先行 fail-loud 校验，这里只管归属与落库。

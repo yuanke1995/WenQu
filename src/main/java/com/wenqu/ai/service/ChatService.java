@@ -685,7 +685,19 @@ public class ChatService {
         }
     }
 
+    /**
+     * 本轮模型解析入口（两条运行时按轮各问一次）。解析交给 {@link #doResolveTurnModel}；
+     * 解析出可用引用时顺手把它补记为会话的模型（{@link SessionService#recordTurnModel}）——
+     * 会话行上的 model 从此兼有"上一轮实际生效"的语义，右下角选择器隔天回显的就是它，
+     * 下一轮解析也优先钉在它上；补记是 best-effort，写失败不影响本轮。
+     */
     public TurnModel resolveTurnModel(ChatCommand cmd) {
+        TurnModel turn = doResolveTurnModel(cmd);
+        if (turn.usable()) sessionService.recordTurnModel(cmd.getSessionId(), turn.ref());
+        return turn;
+    }
+
+    private TurnModel doResolveTurnModel(ChatCommand cmd) {
         String uid = cmd.getUserId();
         com.wenqu.ai.model.User prefUser = loadPrefUser(uid);
         // 归属这条判据只在「问的就是请求者自己能不能用这个供应商」时才成立：游客对话用的是分享主登记的

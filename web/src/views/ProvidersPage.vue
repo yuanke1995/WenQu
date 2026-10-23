@@ -134,8 +134,8 @@
     </a-modal>
 
     <!-- 模型管理 -->
-    <a-modal v-model:open="showModels" :title="`管理模型 — ${modelProvider ? modelProvider.name : ''}`"
-             :width="960" :footer="null" @cancelled="showModels = false">
+    <a-modal :open="showModels" :title="`管理模型 — ${modelProvider ? modelProvider.name : ''}`"
+             :width="960" :footer="null" @cancel="onModelsCancel">
       <div class="pv-models-toolbar">
         <button class="app-btn" :disabled="fetching" @click="onFetch">
           <cloud-download-outlined /> {{ fetching ? '拉取中…' : '从服务拉取' }}
@@ -183,7 +183,7 @@
             <!-- 多个 tag 用 flex 容器承载：a-tag 是 inline-block，裸放单元格内换行会因 line-height < 高度而上下压叠 -->
             <div class="pv-tags">
               <a-tag :color="TYPE_META[record.modelType]?.color" class="pv-type-tag">{{ TYPE_META[record.modelType]?.label }}</a-tag>
-              <a-tag v-if="record.isNew" color="default" class="pv-type-tag">待保存</a-tag>
+              <a-tag v-if="record.isNew || rowChanged(record)" color="default" class="pv-type-tag">待保存</a-tag>
             </div>
           </template>
           <template v-else-if="column.key === 'caps'">
@@ -226,12 +226,12 @@
     </a-modal>
 
     <!-- 添加/编辑模型配置：全宽表单 + ? 悬浮说明 + 高级配置折叠 + 重置表单（对齐 ZCode 的模型配置交互） -->
-    <a-modal v-model:open="editOpen" :title="editIsNew ? '添加模型' : '编辑模型配置'" :width="600" :mask-closable="false">
+    <a-modal :open="editOpen" :title="editIsNew ? '添加模型' : '编辑模型配置'" :width="600" :mask-closable="false" @cancel="onEditCancel">
       <template #footer>
         <div class="pm-footer">
           <button class="app-link-btn" type="button" @click="resetEditForm">重置表单</button>
           <div class="pm-footer-actions">
-            <button class="app-btn" type="button" @click="editOpen = false">取消</button>
+            <button class="app-btn" type="button" @click="onEditCancel">取消</button>
             <button class="app-btn primary" type="button" @click="applyModelEdit">确定</button>
           </div>
         </div>
@@ -277,7 +277,7 @@
                 </a-tooltip>
               </div>
               <a-input-number v-model:value="editForm.contextWindow" :min="1" :step="1024"
-                              placeholder="对话类必填，如 131072" style="width:100%" />
+                              placeholder="对话类必填，如 131072" style="width:100%" @press-enter="applyModelEdit" />
               <div class="pm-presets">
                 <button v-for="q in inputPresets" :key="q" class="app-link-btn" @click="editForm.contextWindow = q">{{ fmtK(q) }}</button>
               </div>
@@ -290,7 +290,7 @@
                 </a-tooltip>
               </div>
               <a-input-number v-model:value="editForm.maxOutput" :min="1" :step="1024"
-                              placeholder="留空=不限制（按厂商默认）" style="width:100%" />
+                              placeholder="留空=不限制（按厂商默认）" style="width:100%" @press-enter="applyModelEdit" />
               <div class="pm-presets">
                 <button v-for="q in outputPresets" :key="q" class="app-link-btn" @click="editForm.maxOutput = q">{{ fmtK(q) }}</button>
               </div>
@@ -303,7 +303,7 @@
                 </a-tooltip>
               </div>
               <a-input-number v-model:value="editForm.contextWindowMin" :min="1" :step="1024"
-                              placeholder="留空=不可调" style="width:100%" />
+                              placeholder="留空=不可调" style="width:100%" @press-enter="applyModelEdit" />
               <div class="pm-presets">
                 <button v-for="q in inputPresets" :key="q" class="app-link-btn" @click="editForm.contextWindowMin = q">{{ fmtK(q) }}</button>
               </div>
@@ -945,6 +945,27 @@ const editForm = ref(null)
 const editSourceKey = ref('')
 /** 编辑副本的档位集合（勾选项，与 record.reasoningLevels 数组同步） */
 const editLevels = ref([])
+/** 打开弹窗时的表单快照：关闭（X/Esc/取消）时对比，有改动先确认再丢弃——
+ *  修改过的值静默丢失会表现为「配置老是不生效」（2026-10-23） */
+const editBaseline = ref('')
+const editSnapshot = () => editForm.value
+  ? JSON.stringify([editForm.value, [...(editLevels.value || [])]])
+  : ''
+/** 关闭编辑弹窗（X / Esc / 取消共用）：表单相对打开时有改动 → 先确认再丢弃 */
+const onEditCancel = () => {
+  if (editForm.value && editSnapshot() !== editBaseline.value) {
+    Modal.confirm({
+      title: '有未应用的修改',
+      content: '关闭将放弃本次修改。注意：点「确定」只是写回下方列表，还需点「保存（N 个启用）」才会真正生效。',
+      okText: '放弃修改并关闭',
+      okButtonProps: { danger: true },
+      cancelText: '继续编辑',
+      onOk: () => { editOpen.value = false }
+    })
+    return
+  }
+  editOpen.value = false
+}
 
 /** 能力三态选项（图片输入/工具调用共用）：auto=按类型与模型名自动判定 */
 const triOptions = [
@@ -994,6 +1015,7 @@ const openModelAdd = () => {
   editSourceKey.value = ''
   editForm.value = blankEditForm()
   editLevels.value = []
+  editBaseline.value = editSnapshot()
   editOpen.value = true
 }
 
@@ -1016,6 +1038,7 @@ const openModelEdit = record => {
     outputPrice: record.outputPrice ?? null
   }
   editLevels.value = Array.isArray(record.reasoningLevels) ? [...record.reasoningLevels] : []
+  editBaseline.value = editSnapshot()
   editOpen.value = true
 }
 
@@ -1239,12 +1262,60 @@ const openModels = async p => {
       defaultReasoningLevel: m.defaultReasoningLevel || null,
       contextWindow: m.contextWindow ?? null, contextWindowMin: m.contextWindowMin ?? null,
       maxOutput: m.maxOutput ?? null,
+      inputPrice: m.inputPrice ?? null, outputPrice: m.outputPrice ?? null,
+      remark: m.remark || '',
       enabled: m.enabled !== false, isNew: false
     }))
+    modelsBaseline.value = Object.fromEntries(models.value.map(m => [m.rowKey, rowSnapshot(m)]))
   } catch (e) {
     message.error(e.message || '模型列表加载失败')
     models.value = []
   }
+}
+
+// ---- 未保存改动守卫：本弹窗是「暂存区」语义（确定只写回列表，保存才入库），------------
+// ---- 关闭即丢弃暂存改动，必须先问一声，否则就是「配置改了老是不生效」 ---------------
+/** 行的可比快照（与保存 payload 的字段口径一致） */
+const rowSnapshot = m => JSON.stringify({
+  modelId: m.modelId, displayName: m.displayName || '', modelType: m.modelType || 'chat',
+  thinking: m.modelType === 'chat' ? (m.thinking || 'auto') : 'auto',
+  visionCapable: visionApplies(m) ? (m.visionCapable || 'auto') : 'auto',
+  toolCapable: visionApplies(m) ? (m.toolCapable || 'auto') : 'auto',
+  reasoningLevels: visionApplies(m) ? (m.reasoningLevels || []) : [],
+  defaultReasoningLevel: visionApplies(m) ? (m.defaultReasoningLevel || null) : null,
+  contextWindow: m.contextWindow || null, contextWindowMin: m.contextWindowMin || null,
+  maxOutput: m.maxOutput || null,
+  inputPrice: m.inputPrice ?? null, outputPrice: m.outputPrice ?? null,
+  remark: m.remark || '', enabled: m.enabled !== false
+})
+/** 打开弹窗时从库里拉到的行基线（rowKey → 快照） */
+const modelsBaseline = ref({})
+/** 某行相对库中登记是否有未保存改动（新行恒为改动） */
+const rowChanged = record => {
+  if (record.isNew) return true
+  const base = modelsBaseline.value[record.rowKey]
+  return base === undefined || base !== rowSnapshot(record)
+}
+/** 暂存区是否有未保存改动：改过的行 + 被移除的行 */
+const stagingDirty = computed(() => {
+  if (models.value.some(rowChanged)) return true
+  const keys = new Set(models.value.filter(m => !m.isNew).map(m => m.rowKey))
+  return Object.keys(modelsBaseline.value).some(k => !keys.has(k))
+})
+/** 关闭管理弹窗（X / Esc / 点遮罩共用） */
+const onModelsCancel = () => {
+  if (stagingDirty.value) {
+    Modal.confirm({
+      title: '有未保存的模型配置',
+      content: '关闭弹窗会丢弃这些修改。点「确定」的改动只是写回了列表，需点「保存（N 个启用）」才会生效。',
+      okText: '仍要关闭',
+      okButtonProps: { danger: true },
+      cancelText: '留下来保存',
+      onOk: () => { showModels.value = false }
+    })
+    return
+  }
+  showModels.value = false
 }
 
 const onFetch = async () => {
@@ -1310,6 +1381,10 @@ const saveModels = async () => {
       contextWindow: m.contextWindow || null,
       contextWindowMin: m.contextWindowMin || null,
       maxOutput: m.maxOutput || null,
+      // 单价/备注必须随全量同步带上：缺了会被后端归一为未配置，每次保存把单价清空（2026-10-23）
+      inputPrice: m.inputPrice ?? null,
+      outputPrice: m.outputPrice ?? null,
+      remark: m.remark ?? null,
       enabled: m.enabled !== false
     }))
   savingModels.value = true

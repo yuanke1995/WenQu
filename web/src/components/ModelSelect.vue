@@ -422,13 +422,18 @@ watch([() => props.modelValue, () => groups.value, () => props.inheritLabel,
 .ms-dropdown .ant-select-item-option .ms-option {
   font-size: 13px;
 }
-.ms-dropdown .ant-select-item-option-active {
-  background: var(--app-panel-2) !important;
-}
+/* 选中行：不加底色（antd 默认的灰底会被这两条盖掉），蓝字+加重即选中标记 */
 .ms-dropdown .ant-select-item-option-selected {
   background: transparent !important;
   font-weight: 500 !important;
   color: var(--app-accent) !important;
+}
+/* 行悬浮/键盘导航高亮：必须排在 selected 之后——悬浮中的行同时带 selected+active 两个类，
+   同权重 !important 按源序取胜，active 在后才能让悬浮底盖过 selected 的透明底。
+   底色用别名层第三级 --app-bg-layer-3（悬浮/选中底）：--app-panel-2（近白）在纯白
+   面板上只暗 ~2%，观感是一层擦不干净的脏影子而非高亮（用户反馈过），这里要清晰可辨 */
+.ms-dropdown .ant-select-item-option-active {
+  background: var(--app-bg-layer-3) !important;
 }
 /* 引用失配兜底选项：只参与触发器文案解析，不在下拉里出现 */
 .ms-dropdown .ms-orphan {

@@ -54,8 +54,11 @@ public class Session {
     private String agentName;
 
     /**
-     * 会话级模型覆盖（聊天页手动切换模型时写入，引用 providerId/modelId 或遗留模型名）。
-     * NULL=未切换过（跟随个人默认）。与智能体绑定不同：模型可随时切回，后续轮次均以会话已存覆盖优先。
+     * 会话当前生效的模型引用（providerId/modelId 或遗留模型名）。两处来路：
+     * 聊天页手动切换时写入（updateModel）；每轮解析出可用模型后由后端补记一份
+     * （recordTurnModel，兼作"上一轮实际生效"的回显源）。
+     * NULL=尚未用过任何模型（新会话未发过消息）。后续轮次以这里存的值优先于个人默认，
+     * 所以个人默认的改动只影响新会话；清除覆盖（置 NULL）后下一轮改跟个人默认并再次补记。
      */
     private String model;
 

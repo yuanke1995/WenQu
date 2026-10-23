@@ -692,7 +692,8 @@ public class ChatController {
     }
 
     @Operation(summary = "读取会话模型",
-            description = "返回该会话已存的模型覆盖（空串=跟随个人默认）与它当前能不能用"
+            description = "返回该会话当前生效的模型引用（手动切换与每轮补记共用一列；空串=尚未用过，跟随个人默认）"
+                    + "与它当前能不能用"
                     + "（modelIssue 非空=已停用/已被移除，界面据此标出失效态）。聊天页切到列表未加载的会话"
                     + "（通知/分享深链进老会话）时按需拉取，保证选择器显示与实际作答模型一致")
     @GetMapping("/session/{sessionId}/model")
