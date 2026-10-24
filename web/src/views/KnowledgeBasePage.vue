@@ -6,7 +6,8 @@
       <button v-if="!mobileShell" class="app-btn" style="margin-left:auto" @click="openCreate">
         <plus-outlined /> 新建知识库
       </button>
-      <!-- 导入：上传导出包到已有库（解析/向量化走既有管线）。放页头而不是卡片内——导入目标选库，和导出对称 -->
+      <!-- 导入：先弹说明窗（格式/去向/同名语义），确认后再选文件。直接弹文件选择器会让用户
+           不知道要什么格式、会导到哪 -->
       <button v-if="!mobileShell" class="app-btn ghost" @click="openImport">
         <import-outlined /> 导入文档包
       </button>
@@ -160,21 +161,23 @@ const doExport = async kb => {
 const importFileInput = ref(null)
 const importing = ref(false)
 let importTargetKb = ''
-const openImport = () => importFileInput.value?.click()
-const onImportFile = e => {
-  const file = e.target.files?.[0]
-  e.target.value = ''
-  if (!file) return
+// 两段式：说明窗（格式/去向/同名语义 + 选目标库）→ 确认后开文件选择器 → 选完直接导入。
+// 反过来「先选文件」会让用户在不知道要什么格式、导到哪的情况下点开系统文件框
+const openImport = () => {
   const options = list.value
     .filter(kb => kb.builtin !== 1)
     .map(kb => ({ value: kb.id, label: kb.name + (kb.embeddingRef ? '' : '（未绑定向量模型）') }))
-  if (!options.length) { message.warning('没有可导入的知识库，请先新建'); return }
+  if (!options.length) { message.warning('没有可导入的知识库（官方内置库不接受导入），请先新建'); return }
   importTargetKb = options[0].value
   Modal.confirm({
-    title: '导入文档包到哪个知识库？',
-    content: h('div', null, [
-      h('p', { style: 'font-size:12px;color:#888;margin:0 0 8px' },
-        `将解析 ${file.name}（${(file.size / 1024 / 1024).toFixed(1)} MB）内的全部文档到目标库：解析、分块、向量化按目标库配置重算；同名文档替换，重复导入安全。`),
+    title: '导入文档包',
+    width: 520,
+    content: h('div', { style: 'margin-top:8px' }, [
+      h('p', { style: 'font-size:12px;color:#666;margin:0 0 10px;line-height:1.8' }, [
+        '导入的是「知识库导出」生成的 zip 包（内含 manifest.json 与各文档源文件）。导入后：解析、分块、向量化按目标库配置全部重算；',
+        h('b', null, '同名文档会被替换'), '，重复导入安全；单文件上限 200MB、单包 500 个文档。',
+      ]),
+      h('p', { style: 'font-size:12px;color:#888;margin:0 0 6px' }, '导入到哪个知识库？'),
       h(Select, {
         value: importTargetKb,
         options,
@@ -182,22 +185,30 @@ const onImportFile = e => {
         'onUpdate:value': v => { importTargetKb = v }
       }),
     ]),
-    okText: '开始导入', cancelText: '取消',
-    onOk: async () => {
-      if (!importTargetKb) { message.warning('请选择目标知识库'); return Promise.reject() }
-      importing.value = true
-      try {
-        const r = await importKnowledgeBase(importTargetKb, file)
-        if (r.success) {
-          const d = r.data || {}
-          const fails = (d.results || []).filter(x => !x.success)
-          message.success(`导入完成：成功 ${d.ok}/${d.total}` + (fails.length ? `，失败 ${fails.length} 个（${fails.map(x => `${x.fileName}: ${x.msg}`).join('；').slice(0, 120)}…）` : ''))
-          await load()
-        } else message.error(r.msg || '导入失败')
-      } catch (err) { message.error(err.message || '导入失败') }
-      finally { importing.value = false }
-    }
+    okText: '选择文件并导入', cancelText: '取消',
+    onOk: () => new Promise(resolve => {
+      if (!importTargetKb) { message.warning('请选择目标知识库'); resolve(false); return }
+      // 打开系统文件选择器；用户取消（无文件）时什么也不发生
+      importFileInput.value?.click()
+      resolve(true)
+    })
   })
+}
+const onImportFile = async e => {
+  const file = e.target.files?.[0]
+  e.target.value = ''
+  if (!file || !importTargetKb) return
+  importing.value = true
+  try {
+    const r = await importKnowledgeBase(importTargetKb, file)
+    if (r.success) {
+      const d = r.data || {}
+      const fails = (d.results || []).filter(x => !x.success)
+      message.success(`导入完成：成功 ${d.ok}/${d.total}` + (fails.length ? `，失败 ${fails.length} 个（${fails.map(x => `${x.fileName}: ${x.msg}`).join('；').slice(0, 120)}…）` : ''))
+      await load()
+    } else message.error(r.msg || '导入失败')
+  } catch (err) { message.error(err.message || '导入失败') }
+  finally { importing.value = false }
 }
 
 onMounted(() => {
