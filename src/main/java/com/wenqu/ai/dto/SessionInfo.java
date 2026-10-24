@@ -40,4 +40,9 @@ public class SessionInfo {
     @Schema(description = "上面这个模型已经不能用了的原因（一句话文案；能用或未设置时为空）。"
             + "界面据此把选择器标成失效态，而不是等回答时撞上上游报错")
     private String modelIssue;
+
+    @Schema(description = "最后一句提问的摘录（≤80 字，一行）：工作区页的会话行与动态时间线用它"
+            + "说清「这条聊到了哪」。只认用户消息——回答可能又长又是排版过的，一句提问才是这条对话"
+            + "在做什么的最短概括。取不到（异常/空会话）为 null，前端按无预览处理")
+    private String lastMessage;
 }

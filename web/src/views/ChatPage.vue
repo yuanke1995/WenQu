@@ -7,13 +7,43 @@
       <div v-if="!isNarrow" class="chat-head">
         <span class="chat-title">{{ currentSessionTitle }}</span>
         <!-- 当前工作区标识：约定每轮注入 system prompt，用户有权在聊天的当场看见它在生效；
-             没有工作区/非本人会话时接口返回 null，标识不显示（不编名字） -->
-        <button v-if="sessionWorkspace" class="head-ws" :class="{ 'head-ws-archived': sessionWorkspace.archived }"
-                :title="wsTitle" @click="router.push('/project/' + sessionWorkspace.projectId)">
-          <folder-open-outlined class="head-ws-ic" />
-          <span class="head-ws-name">{{ sessionWorkspace.name }}</span>
-          <span v-if="sessionWorkspace.hasInstructions" class="head-ws-tag">约定生效</span>
-        </button>
+             没有工作区/非本人会话时接口返回 null，标识不显示（不编名字）。
+             点开不是跳走，是本区的会话语境：最近的对话就地切、「新建对话」落在本区——
+             在一个场子里干活不该每次都绕回侧栏或工作区页 -->
+        <a-popover v-if="sessionWorkspace" v-model:open="wsPanelOpen" trigger="click" placement="bottomLeft">
+          <template #content>
+            <div class="ws-panel">
+              <div class="ws-panel-head">
+                <span class="ws-panel-name">{{ sessionWorkspace.name }}</span>
+                <span v-if="sessionWorkspace.hasInstructions" class="head-ws-tag">约定生效</span>
+                <span v-if="sessionWorkspace.archived" class="head-ws-tag ws-arch">已归档</span>
+              </div>
+              <div class="ws-panel-sec">本区最近的对话</div>
+              <div v-if="wsSessionsLoading" class="ws-panel-empty">加载中…</div>
+              <div v-else-if="!wsSessions.length" class="ws-panel-empty">这个工作区还没有对话</div>
+              <template v-else>
+                <button v-for="s in wsSessions" :key="s.id" class="ws-panel-row"
+                        :class="{ on: s.id === currentSessionId }" type="button" @click="openWsSession(s)">
+                  <span class="ws-panel-row-title">{{ s.title || '新对话' }}</span>
+                  <span v-if="s.lastMessage" class="ws-panel-row-sub">{{ s.lastMessage }}</span>
+                </button>
+              </template>
+              <div class="ws-panel-acts">
+                <button class="app-btn" type="button" :disabled="sessionWorkspace.archived"
+                        :title="sessionWorkspace.archived ? '工作区已归档，恢复后才能新建对话' : ''"
+                        @click="newChatInWs">新建对话</button>
+                <button class="app-btn ghost" type="button"
+                        @click="router.push('/project/' + sessionWorkspace.projectId)">打开工作区</button>
+              </div>
+            </div>
+          </template>
+          <button class="head-ws" :class="{ 'head-ws-archived': sessionWorkspace.archived }"
+                  :title="wsTitle">
+            <folder-open-outlined class="head-ws-ic" />
+            <span class="head-ws-name">{{ sessionWorkspace.name }}</span>
+            <span v-if="sessionWorkspace.hasInstructions" class="head-ws-tag">约定生效</span>
+          </button>
+        </a-popover>
         <span class="head-tip" title="查看免责声明" @click="disclaimerVisible = true">AI 回答可能有误，重要信息请核实</span>
         <!-- 头部动作区：右对齐一组，图标按钮无框安静（此前每个按钮各自 margin-left:auto 散落标题栏中间，视觉突兀） -->
         <div class="head-actions">
@@ -1495,7 +1525,8 @@ import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, Close
          AimOutlined, EyeOutlined, SaveOutlined, ReloadOutlined } from '@ant-design/icons-vue'
 import { debugRetrieval, deleteMessageGroup, submitFeedback as apiSubmitFeedback,
          addEvalCase, getSessionShare, enableSessionShare, disableSessionShare,
-         getSessionWorkspace, listSandboxFiles, downloadSandboxFile, sandboxFileToArtifact } from '../api'
+         getSessionWorkspace, listSandboxFiles, downloadSandboxFile, sandboxFileToArtifact,
+         listSessions, setNewSessionProject } from '../api'
 import { renderMd, resolveImg, onImgError } from '../utils/markdown'
 import { canPreview, artifactExt } from '../utils/artifactView'
 import { loadSessions, sessionStore } from './store'
@@ -3412,8 +3443,32 @@ const wsTitle = computed(() => {
   let t = '当前工作区：' + w.name
   if (w.hasInstructions) t += '，其约定对本次对话生效'
   if (w.archived) t += '（已归档）'
-  return t + '（点击进入工作区）'
+  return t + '（点开看本区会话）'
 })
+// ---------- 工作区会话面板（点开标识才取数：聊天页首屏不多一条请求） ----------
+const wsPanelOpen = ref(false)
+const wsSessions = ref([])
+const wsSessionsLoading = ref(false)
+watch(wsPanelOpen, open => {
+  if (!open || !sessionWorkspace.value) return
+  wsSessionsLoading.value = true
+  listSessions('', '', 10, sessionWorkspace.value.projectId)
+    .then(r => { wsSessions.value = ((r && r.data) || {}).items || [] })
+    .catch(() => { wsSessions.value = [] })   // 面板是增强信息：拉不到就空着，不打扰聊天
+    .finally(() => { wsSessionsLoading.value = false })
+})
+/** 面板内切会话：与侧栏同一条路（带 sid 的 SPA 导航），先收面板再走 */
+const openWsSession = s => {
+  wsPanelOpen.value = false
+  router.push({ path: '/chat', query: { sid: s.id } })
+}
+/** 在本工作区新建对话：与工作区页「新建对话」同一套路——先写落点、再发跨页新建信号、最后切路由 */
+const newChatInWs = () => {
+  wsPanelOpen.value = false
+  setNewSessionProject(sessionWorkspace.value.projectId)
+  sessionStore.newChatTick++
+  router.push('/chat')
+}
 // ==================== 本会话沙盒目录 ====================
 // 模型写进沙盒、却没交付成产物的文件，此前在应用里没有任何出口：工作区文件栏只读 projects/{工作区}，
 // 会话没挂工作区时那份文件躺在 sessions/{会话} 下看不见（真机 2026-10-23 21:04 那一轮做好的
@@ -4135,9 +4190,9 @@ onMounted(async () => {
   border-bottom: 1px solid var(--app-border); flex: none; background: var(--app-panel);
 }
 .chat-title { font-size: 13px; font-weight: 500; max-width: 40%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* 当前工作区标识：安静的一颗 chip（图标 + 工作区名 [+ 约定生效]），点进工作区页。
-   不用强调色描边——它是状态不是动作；「约定生效」才用弱强调底，让人一眼看出
-   「这个会话有额外规矩在跑」（与侧栏工作区行的存在感同级，不抢标题）。 */
+/* 当前工作区标识：安静的一颗 chip（图标 + 工作区名 [+ 约定生效]），点开是本区会话面板
+   （就近切会话/新建对话/回工作区页）。不用强调色描边——它是状态不是动作；「约定生效」
+   才用弱强调底，让人一眼看出「这个会话有额外规矩在跑」（与侧栏工作区行的存在感同级，不抢标题）。 */
 .head-ws {
   display: inline-flex; align-items: center; gap: 5px; flex: none;
   max-width: 220px; height: 22px; padding: 0 8px;
@@ -4153,6 +4208,26 @@ onMounted(async () => {
 }
 .head-ws-archived { opacity: 0.65; }
 .head-ws-archived .head-ws-name { text-decoration: line-through; }
+/* 工作区会话面板（chip 的 popover）：本区最近的对话就地切。双行行卡（标题+最后一句），
+   当前行用弱强调底标出——「我现在在哪条」必须看得见，否则切错会话只会觉得内容莫名变了 */
+.ws-panel { display: flex; flex-direction: column; gap: 6px; width: 300px; max-width: 86vw; }
+.ws-panel-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.ws-panel-name { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-arch { background: var(--app-warn-weak); color: var(--app-warn-text); }
+.ws-panel-sec { font-size: 11px; color: var(--app-text3); }
+.ws-panel-empty { font-size: 12px; color: var(--app-text3); padding: 4px 0; }
+.ws-panel-row {
+  display: flex; flex-direction: column; gap: 1px; text-align: left; cursor: pointer;
+  border: 0; background: transparent; font: inherit; padding: 6px 8px; border-radius: 6px; min-width: 0;
+}
+.ws-panel-row:hover { background: var(--app-interactive-hover); }
+.ws-panel-row.on { background: var(--app-accent-weak); }
+.ws-panel-row-title { font-size: 12px; color: var(--app-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ws-panel-row-sub {
+  font-size: 11px; color: var(--app-text3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ws-panel-acts { display: flex; gap: 8px; border-top: 1px solid var(--app-border-l1); padding-top: 8px; }
+.ws-panel-acts .app-btn { flex: 1; justify-content: center; }
 .head-tip { font-size: 11px; color: var(--app-text3); cursor: pointer; user-select: none; }
 .head-tip:hover { color: var(--app-accent); }
 /* 会话内查找条：标题栏与消息流之间的一条，随查找开关出现/消失 */

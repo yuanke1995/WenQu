@@ -123,7 +123,7 @@
                 </button>
               </span>
               <a-input v-model:value="kw" allow-clear class="pj-search"
-                       placeholder="搜文件 / 会话 / 任务 / 工作流 / 运行…" />
+                       placeholder="搜文件 / 会话 / 任务 / 工作流 / 动态…" />
             </div>
           </template>
           <a-tab-pane key="files">
@@ -264,7 +264,10 @@
             <div v-else class="pj-file-list">
               <a v-for="s in filteredSessions" :key="s.id" class="pj-item" :href="'/chat?sid=' + s.id"
                  @click.prevent="openProjectSession(s)">
-                <span class="pj-item-title"><Hl :text="s.title || '新对话'" /></span>
+                <span class="pj-item-title pj-has-sub">
+                  <span class="pj-item-line"><Hl :text="s.title || '新对话'" /></span>
+                  <span v-if="s.lastMessage" class="pj-item-sub"><Hl :text="s.lastMessage" /></span>
+                </span>
                 <span class="pj-item-meta">{{ fmtAgo(toMs(s.updateTime)) }}</span>
               </a>
             </div>
@@ -333,28 +336,54 @@
             </template>
         </a-tab-pane>
 
-        <a-tab-pane key="runs">
-          <template #tab><span>运行 <span class="pj-count">{{ runs.length }}</span></span></template>
+        <a-tab-pane key="activity">
+          <template #tab><span>动态 <span class="pj-count">{{ activityRows.length }}</span></span></template>
+          <!-- 合流时间线：会话（带最后一句）+ 交付的产物 + 任务/工作流运行，按发生时刻倒序——
+               这个工作区最近发生过什么，一栏看完，不再只覆盖自动化那一角 -->
           <div v-if="runsError" class="pj-empty pj-err">
             {{ runsError }}
             <button class="pj-link-btn" @click="loadRuns">重试</button>
           </div>
-          <div v-else-if="!filteredRuns.length" class="pj-empty">
-            {{ kw ? '没有匹配的运行记录' : '还没有运行记录。定时任务到点自己跑、工作流手动或定时触发，记录都会落在这里。' }}
+          <div v-else-if="!filteredActivity.length" class="pj-empty">
+            {{ kw ? '没有匹配的记录' : '这个工作区还没有动静。对话、交付的产物、任务与工作流的运行都会落在这里。' }}
+            <button v-if="!kw && !isArchived" class="pj-link-btn" @click="goChat">新建一条对话</button>
           </div>
           <div v-else class="pj-file-list">
-            <div v-for="x in filteredRuns" :key="x.kind + ':' + x.id" class="pj-item">
-              <span class="pj-item-title">
-                <span class="run-kind">{{ x.kind === 'scheduled' ? '定时任务' : '工作流' }}</span>
-                <Hl :text="x.name" />
-                <span v-if="x.error" class="run-err-ic" :title="x.error">!</span>
-              </span>
-              <span class="run-status" :class="'rs-' + x.status">{{ runStatusText(x.status) }}</span>
-              <span class="pj-item-meta">{{ runTriggerText(x.trigger) }}</span>
-              <span class="pj-item-meta">{{ fmtAgo(toMs(x.startedAt)) }}</span>
-              <span v-if="x.kind === 'scheduled' && x.sessionId" class="pj-act" @click="openRunSession(x.sessionId)">结果会话</span>
-              <span v-else-if="x.kind === 'workflow' && !mobileShell" class="pj-act" @click="openWfRun(x)">运行详情</span>
-            </div>
+            <template v-for="x in filteredActivity" :key="x.key">
+              <!-- 会话：点开进对话；最后一句作摘要行——标题只说「这条叫什么」，摘要才说「聊到了哪」 -->
+              <a v-if="x.k === 'session'" class="pj-item" :href="'/chat?sid=' + x.id"
+                 @click.prevent="openProjectSession(x)">
+                <span class="run-kind">会话</span>
+                <span class="pj-item-title pj-has-sub">
+                  <span class="pj-item-line"><Hl :text="x.title" /></span>
+                  <span v-if="x.preview" class="pj-item-sub"><Hl :text="x.preview" /></span>
+                </span>
+                <span class="pj-item-meta">{{ fmtAgo(x.at) }}</span>
+              </a>
+              <!-- 产物：交付即一条动态，预览与文件栏同一待遇 -->
+              <a v-else-if="x.k === 'artifact'" class="pj-item"
+                 :href="resolveImg(x.artifact.url)" target="_blank" rel="noopener"
+                 data-pv v-bind="pvAttrs({ artifact: x.artifact })" :title="'预览 ' + x.title">
+                <span class="run-kind">产物</span>
+                <span class="pj-item-title"><Hl :text="x.title" /></span>
+                <span class="pj-item-meta">交付 · {{ fmtAgo(x.at) }}</span>
+              </a>
+              <!-- 运行：定时任务/工作流，状态徽章与深链照旧 -->
+              <div v-else class="pj-item">
+                <span class="pj-item-title">
+                  <span class="run-kind">{{ x.run.kind === 'scheduled' ? '定时任务' : '工作流' }}</span>
+                  <Hl :text="x.run.name" />
+                  <span v-if="x.run.error" class="run-err-ic" :title="x.run.error">!</span>
+                </span>
+                <span class="run-status" :class="'rs-' + x.run.status">{{ runStatusText(x.run.status) }}</span>
+                <span class="pj-item-meta">{{ runTriggerText(x.run.trigger) }}</span>
+                <span class="pj-item-meta">{{ fmtAgo(x.at) }}</span>
+                <span v-if="x.run.kind === 'scheduled' && x.run.sessionId" class="pj-act"
+                      @click="openRunSession(x.run.sessionId)">结果会话</span>
+                <span v-else-if="x.run.kind === 'workflow' && !mobileShell" class="pj-act"
+                      @click="openWfRun(x.run)">运行详情</span>
+              </div>
+            </template>
           </div>
         </a-tab-pane>
       </a-tabs>
@@ -598,19 +627,37 @@ const hit = (...texts) => {
   return texts.some(t => String(t || '').toLowerCase().includes(q))
 }
 const filteredFiles = computed(() => fileRows.value.filter(f => hit(f.name, f.path)))
-const filteredSessions = computed(() => sessions.value.filter(s => hit(s.title || '新对话')))
+const filteredSessions = computed(() => sessions.value.filter(s => hit(s.title || '新对话', s.lastMessage)))
 const filteredJobs = computed(() => jobs.value.filter(j => hit(j.name, j.prompt)))
 const filteredWorkflows = computed(() => workflows.value.filter(w => hit(w.name)))
-const filteredRuns = computed(() => runs.value.filter(x => hit(x.name, x.error)))
+/** 动态时间线 = 会话（带最后一句）∪ 交付的产物 ∪ 任务/工作流运行，按发生时刻倒序。
+    三份来源都是页面已取过的数据（loadSessions/loadFiles/loadRuns），这里纯组装、零新增请求 */
+const activityRows = computed(() => {
+  const rows = []
+  for (const s of sessions.value) {
+    rows.push({ k: 'session', key: 's:' + s.id, id: s.id, title: s.title || '新对话',
+                preview: s.lastMessage || '', at: toMs(s.updateTime) })
+  }
+  for (const a of artifacts.value) {
+    rows.push({ k: 'artifact', key: 'a:' + a.id, title: String(a.filename || '').split('/').pop(),
+                artifact: a, at: toMs(a.createTime) })
+  }
+  for (const r of runs.value) {
+    rows.push({ k: 'run', key: 'r:' + r.kind + ':' + r.id, run: r, at: toMs(r.startedAt) })
+  }
+  return rows.sort((a, b) => b.at - a.at)
+})
+const filteredActivity = computed(() =>
+  activityRows.value.filter(x => hit(x.title, x.preview, x.run && x.run.error)))
 
 /** 搜索跨四个栏过滤，但一次只显示一个栏：命中在别的栏时必须说出来并可一键跳过去，
     否则停在「文件」搜会话名会看到「没有匹配的文件」——用户读成搜不到，不会想到换栏 */
-const TAB_LABEL = { files: '文件', sessions: '会话', auto: '自动化', runs: '运行' }
+const TAB_LABEL = { files: '文件', sessions: '会话', auto: '自动化', activity: '动态' }
 const tabHits = computed(() => ({
   files: filteredFiles.value.length,
   sessions: filteredSessions.value.length,
   auto: filteredJobs.value.length + filteredWorkflows.value.length,
-  runs: filteredRuns.value.length
+  activity: filteredActivity.value.length
 }))
 const currentHits = computed(() => tabHits.value[tab.value])
 /** 只在真的搜了东西时才提「别处命中」——空关键词下每条记录都算命中，跳转条会常驻不放 */
@@ -1109,7 +1156,8 @@ const reloadTab = () => {
   if (tab.value === 'files') return loadFiles()
   if (tab.value === 'sessions') return loadSessions()
   if (tab.value === 'auto') return loadAuto()
-  return loadRuns()
+  // 动态：会话与运行两份都重取（产物随文件栏已在取数路径里）
+  return Promise.all([loadRuns(), loadSessions()])
 }
 
 /** 切栏就重拉这一栏：定时任务在后台跑完、在别处新建的对话，回到这一屏就该看见 */
@@ -1147,8 +1195,10 @@ const load = async () => {
     if (!keepDraft) instrEdit.value = false
     instrFull.value = false
     await Promise.all([loadSessions(), loadFiles(), loadAuto(), loadRuns()])
-    // 落点只在首次决定：文件是这个工作区的独占视图，有就先看它；空工作区则给「新建对话」的会话空态
-    const want = fileRows.value.length ? 'files' : 'sessions'
+    // 落点只在首次决定：有动静先看动态（这个场子最近发生过什么）；空工作区则给「新建对话」的会话空态，
+    // 有文件没动静（刚传完材料还没聊）给文件栏
+    const want = activityRows.value.length ? 'activity'
+      : (fileRows.value.length ? 'files' : 'sessions')
     if (!loadedOnce.value && want !== tab.value) {
       skipTabWatch = true
       tab.value = want
@@ -1356,6 +1406,14 @@ watch(id, () => {
 .pj-file-list .pj-item:last-child { border-bottom: none; }
 .pj-item:hover { background: var(--app-interactive-hover); }
 .pj-item-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 双行标题：标题行 + 「最后一句」摘要行（会话栏与动态栏的会话行）。
+   摘要说「聊到了哪」，标题只说「这条叫什么」——只有标题时看不出该不该点回去 */
+.pj-item-title.pj-has-sub { display: flex; flex-direction: column; gap: 1px; justify-content: center; overflow: hidden; }
+.pj-item-line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pj-item-sub {
+  font-size: var(--app-fs-xs); color: var(--app-label-tertiary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 /* 命中高亮由 Hl 子组件渲染，父作用域选择器够不到它内部的 mark，必须 :deep */
 .pj-item :deep(mark) {
   background: var(--app-warn-weak); color: var(--app-label-primary);

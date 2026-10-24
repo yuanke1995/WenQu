@@ -492,6 +492,7 @@ public class SessionService {
         if (hasMore) rows = rows.subList(0, pageSize);
         rows.forEach(s -> items.add(toInfo(s)));
         markShared(items);
+        fillLastMessage(items);
 
         SessionPage page = new SessionPage();
         page.setItems(items);
@@ -570,6 +571,56 @@ public class SessionService {
         } catch (Exception e) {
             log.warn("会话列表分享标记查询失败（降级为无标记）: {}", e.getMessage());
         }
+    }
+
+    /**
+     * 给本页会话补「最后一句」预览（工作区页的会话行与动态时间线用它说清「这条聊到了哪」）。
+     *
+     * <p>两步批量：先按 session_id 分组取每会话最大 sequence，再按 (session_id, sequence) 精确取
+     * 那几条正文——整页固定两条 SQL，不逐行查（列表是首屏必走的路径，逐行就是 N+1）。
+     * 只认**用户**最后一句：回答可能又长又是排版过的，一句提问才是「这条在做什么」的最短概括。
+     * 失败按无预览处理：辅助信息，不该让整个列表打不开。
+     */
+    private void fillLastMessage(List<SessionInfo> items) {
+        if (items == null || items.isEmpty()) return;
+        try {
+            List<String> ids = items.stream().map(SessionInfo::getId).filter(Objects::nonNull).toList();
+            if (ids.isEmpty()) return;
+            com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Message> seqQ =
+                    new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<>();
+            seqQ.select("session_id", "MAX(sequence) AS seq")
+                    .eq("deleted", 0).eq("role", "user")
+                    .in("session_id", ids).groupBy("session_id");
+            Map<String, Object> lastSeq = new LinkedHashMap<>();
+            for (Map<String, Object> row : messageMapper.selectMaps(seqQ)) {
+                Object sid = row.get("session_id");
+                Object seq = row.get("seq");
+                if (sid != null && seq != null) lastSeq.put(String.valueOf(sid), seq);
+            }
+            if (lastSeq.isEmpty()) return;
+            com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Message> contentQ =
+                    new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<>();
+            contentQ.select("session_id", "content").eq("deleted", 0).eq("role", "user");
+            contentQ.and(w -> {
+                for (Map.Entry<String, Object> e : lastSeq.entrySet()) {
+                    w.or(w2 -> w2.eq("session_id", e.getKey()).eq("sequence", e.getValue()));
+                }
+            });
+            Map<String, String> preview = new HashMap<>();
+            for (Message m : messageMapper.selectList(contentQ)) {
+                if (m.getContent() == null || m.getContent().isBlank()) continue;
+                preview.put(m.getSessionId(), excerptOf(m.getContent()));
+            }
+            for (SessionInfo info : items) info.setLastMessage(preview.get(info.getId()));
+        } catch (Exception e) {
+            log.warn("会话列表「最后一句」预览填充失败（按无预览处理）: {}", e.getMessage());
+        }
+    }
+
+    /** 预览摘句：压成一行（换行与连续空白折成单空格）、上限 80 字 */
+    private static String excerptOf(String raw) {
+        String one = raw.replaceAll("\\s+", " ").trim();
+        return one.length() <= 80 ? one : one.substring(0, 80) + "…";
     }
 
     /** 实体 → 列表项 DTO（含会话级智能体绑定：NULL=未绑定不发字段） */
