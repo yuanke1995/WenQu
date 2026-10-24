@@ -6,6 +6,11 @@
       <button v-if="!mobileShell" class="app-btn" style="margin-left:auto" @click="openCreate">
         <plus-outlined /> 新建知识库
       </button>
+      <!-- 导入：上传导出包到已有库（解析/向量化走既有管线）。放页头而不是卡片内——导入目标选库，和导出对称 -->
+      <button v-if="!mobileShell" class="app-btn ghost" @click="openImport">
+        <import-outlined /> 导入文档包
+      </button>
+      <input ref="importFileInput" type="file" accept=".zip" style="display:none" @change="onImportFile" />
     </div>
 
     <div class="app-page-body">
@@ -44,6 +49,10 @@
                 <button class="app-link-btn" @click="openEdit(kb)">编辑</button>
                 <template v-if="kb.builtin !== 1">
                   <button class="app-link-btn" @click="openGraph(kb)">图谱</button>
+                  <!-- 导出：zip 打包源文件+清单（迁移/备份用，向量按导入库重嵌） -->
+                  <button class="app-link-btn" :disabled="exportingId === kb.id" @click="doExport(kb)">
+                    {{ exportingId === kb.id ? '导出中…' : '导出' }}
+                  </button>
                   <!-- 默认库是兜底归属（不可删），删除按钮直接不渲染，只留 disabled 样式会误导可点 -->
                   <button v-if="kb.isDefault !== 1" class="app-link-btn danger" @click="onDelete(kb)">删除</button>
                 </template>
@@ -65,11 +74,11 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
-import { message, Modal } from 'ant-design-vue'
+import { ref, onMounted, h } from 'vue'
+import { message, Modal, Select } from 'ant-design-vue'
 import { useRouter } from 'vue-router'
-import { PlusOutlined } from '@ant-design/icons-vue'
-import { listKnowledgeBases, deleteKnowledgeBase } from '../api'
+import { PlusOutlined, ImportOutlined } from '@ant-design/icons-vue'
+import { listKnowledgeBases, deleteKnowledgeBase, exportKnowledgeBase, importKnowledgeBase } from '../api'
 import KnowledgeGraphModal from '../components/KnowledgeGraphModal.vue'
 import KnowledgeBaseEditModal from '../components/KnowledgeBaseEditModal.vue'
 import KbIcon from '../components/KbIcon.vue'
@@ -133,6 +142,60 @@ const onDelete = row => {
       }
       message.success('已删除（关联智能体已同步摘除该库）')
       await load()
+    }
+  })
+}
+
+// ── 导出 / 导入（迁移与备份）：导出 zip=源文件+清单（向量按导入库重嵌）；导入走既有解析管线 ──
+const exportingId = ref('')
+const doExport = async kb => {
+  exportingId.value = kb.id
+  try {
+    await exportKnowledgeBase(kb.id, kb.name)
+    message.success('导出完成（浏览器下载中）')
+  } catch (e) { message.error(e.message || '导出失败') }
+  finally { exportingId.value = '' }
+}
+
+const importFileInput = ref(null)
+const importing = ref(false)
+let importTargetKb = ''
+const openImport = () => importFileInput.value?.click()
+const onImportFile = e => {
+  const file = e.target.files?.[0]
+  e.target.value = ''
+  if (!file) return
+  const options = list.value
+    .filter(kb => kb.builtin !== 1)
+    .map(kb => ({ value: kb.id, label: kb.name + (kb.embeddingRef ? '' : '（未绑定向量模型）') }))
+  if (!options.length) { message.warning('没有可导入的知识库，请先新建'); return }
+  importTargetKb = options[0].value
+  Modal.confirm({
+    title: '导入文档包到哪个知识库？',
+    content: h('div', null, [
+      h('p', { style: 'font-size:12px;color:#888;margin:0 0 8px' },
+        `将解析 ${file.name}（${(file.size / 1024 / 1024).toFixed(1)} MB）内的全部文档到目标库：解析、分块、向量化按目标库配置重算；同名文档替换，重复导入安全。`),
+      h(Select, {
+        value: importTargetKb,
+        options,
+        style: 'width:100%',
+        'onUpdate:value': v => { importTargetKb = v }
+      }),
+    ]),
+    okText: '开始导入', cancelText: '取消',
+    onOk: async () => {
+      if (!importTargetKb) { message.warning('请选择目标知识库'); return Promise.reject() }
+      importing.value = true
+      try {
+        const r = await importKnowledgeBase(importTargetKb, file)
+        if (r.success) {
+          const d = r.data || {}
+          const fails = (d.results || []).filter(x => !x.success)
+          message.success(`导入完成：成功 ${d.ok}/${d.total}` + (fails.length ? `，失败 ${fails.length} 个（${fails.map(x => `${x.fileName}: ${x.msg}`).join('；').slice(0, 120)}…）` : ''))
+          await load()
+        } else message.error(r.msg || '导入失败')
+      } catch (err) { message.error(err.message || '导入失败') }
+      finally { importing.value = false }
     }
   })
 }

@@ -750,6 +750,32 @@ export const createKnowledgeBase = body => request('/kb', { method: 'POST', body
 export const updateKnowledgeBase = (id, body) => request(`/kb/${id}`, { method: 'PUT', body: JSON.stringify(body) })
 /** 删除知识库（默认库或库内仍有文档时后端会拒绝并返回原因） */
 export const deleteKnowledgeBase = id => request(`/kb/${id}`, { method: 'DELETE' })
+
+/** 导出知识库为 zip（manifest + 各文档源文件；url 文档带源地址）并触发浏览器下载 */
+export async function exportKnowledgeBase (id, kbName) {
+  const r = await fetch(`${BASE}/kb/${id}/export`, { headers: authHeaders() })
+  if (!r.ok) {
+    let msg = '导出失败'
+    try { const j = await r.json(); if (j && j.msg) msg = j.msg } catch (e) { /* 非 JSON 响应保留默认文案 */ }
+    throw new Error(msg)
+  }
+  const blob = await r.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = (kbName || '知识库') + '.zip'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
+/** 导入文档包（导出 zip）到目标知识库：逐文档走既有解析管线，返回逐条结果 */
+export function importKnowledgeBase (kbId, file) {
+  const fd = new FormData()
+  fd.append('file', file)
+  return upload(`/kb/${encodeURIComponent(kbId)}/import`, fd)
+}
 /** 移动文档到知识库；kbId 传空表示移回默认库 */
 export const moveDocToKb = (docId, kbId) => request(`/kb/doc/${docId}`, { method: 'PUT', body: JSON.stringify({ kbId: kbId || null }) })
 
@@ -1319,6 +1345,12 @@ export const purgeDocument = id => request(`/document/${encodeURIComponent(id)}/
 /** 清空回收站（按库；无管理权限的文档后端跳过并计数） */
 export const purgeRecycleBin = kbId =>
   request(`/document/recycle/purge?kbId=${encodeURIComponent(kbId)}`, { method: 'POST', timeout: 120000 })
+/** 批量恢复（逐个校验，失败项回传原因） */
+export const batchRestoreRecycled = ids =>
+  request('/document/recycle/batch/restore', { method: 'POST', body: JSON.stringify({ ids }), timeout: 120000 })
+/** 批量彻底删除（只认回收站行，生效文档不会被删） */
+export const batchPurgeRecycled = ids =>
+  request('/document/recycle/batch/purge', { method: 'POST', body: JSON.stringify({ ids }), timeout: 120000 })
 
 /** 删除文档 */
 export const deleteDocument = id => request(`/document/${id}`, { method: 'DELETE' })

@@ -51,6 +51,8 @@ public class KnowledgeBaseController {
     private final RoleService roleService;
     /** 读取知识库参数的当前全局值（/param-defaults 模板预填用） */
     private final com.wenqu.ai.service.ConfigService configService;
+
+    private final com.wenqu.ai.service.KbTransferService kbTransferService;
     /** 参数问号文案（/param-tips；与系统设置页同一份定义源，防两处解释漂移） */
     private final com.wenqu.ai.config.ConfigSchemaService configSchemaService;
     /** 个人设置值（/param-defaults 对 personal 键取「本人生效值」预填，与检索实际生效口径一致） */
@@ -209,6 +211,29 @@ public class KnowledgeBaseController {
         String reason = kbService.delete(id);
         if (reason != null) return ResultJson.error(reason);
         return ResultJson.ok(Map.of("id", id));
+    }
+
+    @Operation(summary = "导出知识库", description = "打包为 zip（manifest.json + 各文档源文件；url 文档带源地址不带文件）。"
+            + "只带源料不带产物——向量按导入库的绑定重嵌，知识块随解析重算。仅创建者/被授权人/管理员可导")
+    @GetMapping("/{id}/export")
+    public void export(@PathVariable("id") String id, jakarta.servlet.http.HttpServletResponse response) throws java.io.IOException {
+        var kb = mustGet(id);
+        requireManage(kb);
+        String safeName = (kb.getName() == null ? "kb" : kb.getName()).replaceAll("[\\\\/:*?\"<>|\\s]+", "_");
+        response.setContentType("application/zip");
+        response.setHeader("Content-Disposition", "attachment; filename*=UTF-8''" +
+                java.net.URLEncoder.encode(safeName + "-" + id.substring(0, 8) + ".zip", java.nio.charset.StandardCharsets.UTF_8));
+        String summary = kbTransferService.exportZip(id, response.getOutputStream());
+        response.setHeader("X-Export-Summary", java.net.URLEncoder.encode(summary, java.nio.charset.StandardCharsets.UTF_8));
+    }
+
+    @Operation(summary = "导入文档包到知识库", description = "上传导出 zip → 目标库逐文档走既有上传/URL 导入管线（解析/分块/向量化/索引全自动，"
+            + "向量按目标库绑定重嵌）；同名 upsert，重复导入安全。仅创建者/被授权人/管理员可导")
+    @PostMapping("/{id}/import")
+    public ResultJson importZip(@PathVariable("id") String id,
+                                @org.springframework.web.bind.annotation.RequestParam("file") org.springframework.web.multipart.MultipartFile file) {
+        requireManage(mustGet(id));
+        return ResultJson.ok(kbTransferService.importZip(file, id));
     }
 
     @Operation(summary = "移动文档到知识库", description = "body: {kbId}——传空表示移回自己的默认知识库（问渠）；"
