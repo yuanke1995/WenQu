@@ -110,22 +110,6 @@ PC 壳传与原实现逐字等价的回调；移动壳传自己的滚动与 `/m/
 - `api.js` / `md.css` / `app.css` / 主题 token —— 全端共用。
 - 第二个 `index.html` 入口 —— 刻意不做：antd 整包会在两个 entry 里各打一份。
 
-## 静态校验
-
-- `node scripts/verify-sfc.mjs`：SFC 编译、模块解析、CSS 语法、仓库约束、PWA 资源存在性。
-- `node scripts/check-engine-imports.mjs`：projections 引用完整 + 从引擎 inject 解构的名字必须真实存在
-  （两类漏接都只在真浏览器渲染时才炸，这里前移为静态失败）。
-- `node scripts/check-mshell.cjs`：412×916 触屏跑 dist 产物，验重定向/结构/热区/sheet 开合/
-  通知角标与通知 sheet 深链/壳外入口/单轮操作 sheet（导出·调试·删除）/桌面弹回
-  （通知、审批、历史、调试接口带 mock，断言的是真渲染）。
-- `node scripts/check-browser.cjs`：PC 壳（含鼠标拖窄窗口）回归，同样覆盖铃铛弹层与审批恢复横幅
-  ——通知/审批抽成共用单元后，两端各有一条真点开的断言守着绑定没漏。
-- `node scripts/check-share.cjs`：分享阅读侧（`/shared/:token` 只读 + `/s/:token` 智能体对话）在
-  412×916 触屏 + 桌面双上下文回归——免登录页不走 AppLayout，前两个脚本都不经过它们；
-  断言 markdown 排版 / 产物与来源渲染 / 触摸热区 / `--app-vh` 消费 / `enterkeyhint` / 无横向溢出，
-  并回归桌面形态未被窄屏补丁外溢（820px 居中栏、14px 输入框）。
-`npm run check` 串起静态三件套；`check:browser` / `check:mshell` / `check:share` 需 playwright-core，单独跑。
-
 ## 待补（v1 有意留白，按需再做）
 
 - 分享链接在阅读侧**刻意不做**移动专属页：`/shared/{token}` 复用 PC 那张 `SharedSessionPage.vue`

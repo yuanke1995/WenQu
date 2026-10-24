@@ -5,8 +5,8 @@ package com.wenqu.ai.engine;
 /**
  * 问答这一轮往前端推的事件词汇表。
  * <p>名字与 {@code ChatRunRuntime.sendSseEvent} 的 type 实参一一对应，是<b>前端契约</b>而不是内部枚举：
- * 改名等于断约，所以每条都钉死 SSE 事件名，由 {@code web/scripts/check-sse-contract.mjs} 与
- * {@code web/src/api.js} 的 CHAT_EVENT_CB 双向核对（多一条、少一条、拼错都判红）。
+ * 改名等于断约，所以每条都钉死 SSE 事件名，与 {@code ChatRunRuntime.sendSseEvent} 的 type 实参、
+ * {@code web/src/api.js} 的 CHAT_EVENT_CB 三处对账（多一条、少一条、拼错都判红）。
  * <p>这张表存在的原因：框架引擎产出的是 AgentScope 的 30 类 SessionLog 事件，必须在适配层
  * 收敛到同一张表上，前端才不用跟着框架的事件名走。手写运行时与灰度分流已随平移下线。
  */

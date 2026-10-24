@@ -1479,7 +1479,7 @@ watch(() => route.fullPath, () => {
   }
   /* 显形三条路，选择器都必须带上 .side:not(.collapsed) 前缀：
      隐身规则的 specificity 是 (0,3,0)，写成 .side-logo-ops.pinned 这种 (0,2,0) 会被它压住——
-     编辑态里鼠标一移开图标就消失，连「保存」都点不到（实测踩过，见 check-sidebar-ops.cjs）。
+     编辑态里鼠标一移开图标就消失，连「保存」都点不到（实测踩过）。
      · hover：鼠标移到 logo 行；
      · :has(:focus-visible)：**键盘** Tab 到按钮（pointer-events:none 挡不住焦点，
        看不见的按钮等于没入口）。这里刻意不用 :focus-within —— 鼠标点完按钮后焦点仍留在它身上

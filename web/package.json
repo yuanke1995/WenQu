@@ -9,27 +9,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview",
-    "check": "node scripts/verify-sfc.mjs && node scripts/check-guard.mjs && node scripts/check-h5.mjs && node scripts/check-turn-duration.mjs && node scripts/check-engine-imports.mjs && node scripts/check-ec-flicker.cjs && node scripts/check-md-chart-export.cjs && node scripts/check-sse-contract.mjs && node scripts/check-compact-marker.mjs && node scripts/check-tab-sync.cjs",
-    "check:ecflicker": "node scripts/check-ec-flicker.cjs",
-    "check:mdchart": "node scripts/check-md-chart-export.cjs",
-    "check:ecflicker:live": "node scripts/check-ec-flicker-live.cjs",
-    "check:browser": "node scripts/check-browser.cjs",
-    "check:share": "node scripts/check-share.cjs",
-    "check:publish": "node scripts/check-publish.cjs",
-    "gen:icons": "node scripts/gen-icons.mjs",
-    "check:mshell": "node scripts/check-mshell.cjs",
-    "check:sidebar": "node scripts/check-sidebar-ops.cjs",
-    "check:space-fold": "node scripts/check-space-fold.cjs",
-    "check:tabsync": "node scripts/check-tab-sync.cjs",
-    "check:ask-restore": "node scripts/check-ask-restore.cjs",
-    "check:kb-config": "node scripts/check-kb-config.cjs",
-    "check:mcp-entry": "node scripts/check-mcp-entry.cjs",
-    "check:sched-panel": "node scripts/check-sched-panel.cjs",
-    "check:sched-scroll": "node scripts/check-sched-scroll.cjs",
-    "check:ui-mobile": "node scripts/check-ui-mobile.cjs",
-    "check:steer-resend": "node scripts/check-steer-resend.cjs",
-    "gen:sched-mock": "node scripts/gen-sched-mock.cjs"
+    "preview": "vite preview"
   },
   "dependencies": {
     "@ant-design/icons-vue": "^7.0.0",

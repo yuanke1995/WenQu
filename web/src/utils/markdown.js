@@ -102,8 +102,7 @@ let echartsMod = null
 let echartsThemeName = null
 
 // echarts 走 canvas，不解析 CSS 变量——配色必须从 CSS 变量读**实际值**烘进主题（与知识图谱弹窗同一铁律）。
-// 色值本体全部住在 app.css 的 token 层（--app-chart-* 与基础面变量），这里只做读取，不写死 hex
-// （仓库守卫 verify-sfc：改动 JS 里的新增裸色值一律报警）。
+// 色值本体全部住在 app.css 的 token 层（--app-chart-* 与基础面变量），这里只做读取，不写死 hex。
 const cssVar = name => {
   try {
     return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || ''

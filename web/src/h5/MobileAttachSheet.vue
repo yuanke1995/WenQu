@@ -132,9 +132,7 @@
           </div>
         </template>
         <input ref="fileInput" type="file" multiple style="display:none" @change="onFile" />
-        <!-- 这里刻意不写「image 加斜线加星号」那种通配写法：星号紧跟斜线会被 check-h5 剥注释的正则
-             当成块注释收尾，把这个文件后半截（含 script 与 style）整块吞掉，断言读到假阴性。
-             列出来的这四个也正是能进 canvas 压缩通道、真能随问发送的格式（与个人设置页头像同口径）。 -->
+        <!-- accept 列出的这四个是能进 canvas 压缩通道、真能随问发送的格式（与个人设置页头像同口径）。 -->
         <input ref="imgInput" type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple style="display:none" @change="onImg" />
       </template>
     </div>
