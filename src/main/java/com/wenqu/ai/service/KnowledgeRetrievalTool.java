@@ -73,11 +73,17 @@ public class KnowledgeRetrievalTool {
      * kbFilter 是 @ 知识库提及的收窄后过滤（null/空=不收窄）：命中块的所属库必须落在
      * 用户本轮点名的库集合里——它只收窄、不放宽（向量路的 kbIds 原样保留智能体资料域，
      * 域外被点名的库不会因提及而越界检索）。
+     * tags 是智能体级标签收窄（null/空=不过滤）：命中块的所属文档必须带其中任一标签
+     * （文档在 c_ai_document.tags 打标，回表比对，late-binding 与 docIds 同口径）。
      */
     public record KbScope(java.util.Collection<String> kbIds, java.util.Set<String> docIds,
-                          java.util.Set<String> kbFilter) {
+                          java.util.Set<String> kbFilter, java.util.Set<String> tags) {
         public KbScope(java.util.Collection<String> kbIds, java.util.Set<String> docIds) {
-            this(kbIds, docIds, null);
+            this(kbIds, docIds, null, null);
+        }
+
+        public KbScope(java.util.Collection<String> kbIds, java.util.Set<String> docIds, java.util.Set<String> kbFilter) {
+            this(kbIds, docIds, kbFilter, null);
         }
     }
 
@@ -207,6 +213,12 @@ public class KnowledgeRetrievalTool {
                     .toList();
             log.info("[TOOL-DIAG] @kb 收窄后过滤：{} → {} 条（kbFilter={}）", before, hits.size(),
                     scope.kbFilter());
+        }
+        // 智能体级标签收窄：命中块的所属文档必须带 knowledgeTags 之一（文档表打标，回表比对）
+        if (scope != null && scope.tags() != null && !scope.tags().isEmpty()) {
+            int before = hits.size();
+            hits = hybridRetrievalService.filterByDocTags(hits, scope.tags());
+            log.info("[TOOL-DIAG] 标签收窄后过滤：{} → {} 条（tags={}）", before, hits.size(), scope.tags());
         }
         // 补重排（强制窗口）：search() 只出融合分，本工具此前从未重排，相关分门发生在两个分值域上——
         // 与查询仅词面重叠的无关块（如"框架/使用"命中操作手册章节）融合分可达 0.6+，而真实重排分 ~0.000x，

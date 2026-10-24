@@ -11,6 +11,9 @@
         <span class="app-pill warn queue-chip">{{ queueText }}</span>
       </a-tooltip>
       <div class="doc-tools">
+        <!-- 标签筛选（本库内按文档标签过滤列表）：标签即智能体检索收窄与文档治理的同一套元数据 -->
+        <a-select v-if="tagOptions.length" v-model:value="tagFilter" allow-clear :options="tagOptions"
+                  placeholder="按标签筛选" style="width:150px" size="small" :dropdown-match-select-width="false" />
         <!-- 知识库配置直达：解析/检索参数与向量模型就地改，不用回知识库列表页。
              内置库对管理员开放（内容只读但配置可改，与后端内置库白名单同口径） -->
         <button v-if="canConfigKb" class="app-btn ghost" @click="openKbConfig">
@@ -109,13 +112,16 @@
           <span class="col-act">操作</span>
         </div>
         <a-spin :spinning="loading">
-          <div v-for="d in list" :key="d.id" class="doc-row">
+          <div v-for="d in shownList" :key="d.id" class="doc-row">
             <span class="col-check" v-if="canManageCurrentKb"><a-checkbox :checked="selectedKeys.includes(d.id)" @change="e => toggleSelect(d.id, e)" /></span>
             <span v-else class="col-check"></span>
             <span class="col-name">
               <span class="file-ic" :style="{ background: typeColor(d.fileType).bg, color: typeColor(d.fileType).fg }">{{ (d.fileType || '?').toUpperCase().slice(0, 4) }}</span>
               <span class="file-name" :title="d.fileName + (d.description ? ' · ' + d.description : '') + (d.sourceUrl ? ' · 来源: ' + d.sourceUrl : '')">{{ d.fileName }}<i v-if="d.description" class="file-desc">{{ d.description }}</i></span>
               <span v-if="scopeLabel(d)" class="app-pill warn scope-tag" title="已限制共享范围，点「共享」查看或修改">{{ scopeLabel(d) }}</span>
+              <span v-if="docTags(d).length" class="doc-tags">
+                <a-tag v-for="t in docTags(d)" :key="t" class="doc-tag-chip">{{ t }}</a-tag>
+              </span>
             </span>
             <span class="col-kb">
               <!-- 移动库 = 写操作：仅对文档有管理权的人开放，其他人显示为纯文本 -->
@@ -154,6 +160,20 @@
               <a-tooltip v-if="d.status === 0 && canManageDoc(d)" title="对解析时未描述成功的图片后台补描述并回写知识块（重新向量化+索引同步）">
                 <button class="app-link-btn" :disabled="backfillingId === d.id" @click="backfillDesc(d.id)">补图描述</button>
               </a-tooltip>
+              <!-- 标签编辑：即改即存（late-binding，检索侧直接生效，无需重建索引） -->
+              <a-popover v-if="canManageDoc(d)" trigger="click" placement="leftTop" @open-change="v => openTagEdit(d, v)">
+                <button class="app-link-btn">标签{{ docTags(d).length ? '·' + docTags(d).length : '' }}</button>
+                <template #content>
+                  <div style="width:280px" @click.stop>
+                    <a-select v-model:value="tagDraft" mode="tags" style="width:100%" :token-separators="[',', '，']"
+                              placeholder="输入后回车添加标签" />
+                    <div style="font-size:12px;color:var(--app-text3);margin-top:6px">
+                      供智能体「检索标签收窄」与列表筛选；检索侧即时生效，无需重建索引
+                    </div>
+                    <button class="app-btn primary sm" style="margin-top:8px" @click="saveTags(d)">保存</button>
+                  </div>
+                </template>
+              </a-popover>
               <a-popover v-if="d.fileType === 'url' && canManageDoc(d)" title="自动刷新网页源" trigger="click" placement="leftTop">
                 <button class="app-link-btn" :class="{ active: d.autoRefresh === 1 }">自动刷新{{ d.autoRefresh === 1 ? '·开' : '' }}</button>
                 <template #content>
@@ -413,7 +433,7 @@ import { listDocuments, uploadDocumentsBatch, updateDocumentStatus, reparseDocum
          updateKnowledge, deleteKnowledge, listDocumentVersions, rollbackDocument,
          getRuntimeConfig, batchReparseDocuments, updateKnowledgeStatus, searchKnowledge,
          downloadDocumentSource, updateDocumentShare, listKnowledgeBases, moveDocToKb, importDocumentFromUrl, refreshConfigDocument,
-         getDocumentQueueStats, listAvailableModels, backfillDescriptions } from '../api'
+         getDocumentQueueStats, listAvailableModels, backfillDescriptions, setDocumentTags } from '../api'
 import ShareScopeModal from './ShareScopeModal.vue'
 import KnowledgeBaseEditModal from '../components/KnowledgeBaseEditModal.vue'
 import KnowledgeGraphModal from '../components/KnowledgeGraphModal.vue'
@@ -865,6 +885,31 @@ async function backfillDesc (id) {
     else message.error(r.msg || '操作失败')
   } catch (e) { message.error(e.message || '操作失败') }
   finally { backfillingId.value = '' }
+}
+
+// ── 文档标签：展示/编辑/筛选（与智能体「检索标签收窄」同一套元数据） ──
+const docTags = d => String(d.tags || '').split(',').map(s => s.trim()).filter(Boolean)
+const tagFilter = ref('')
+const tagOptions = computed(() => {
+  const s = new Set()
+  for (const d of list.value) for (const t of docTags(d)) s.add(t)
+  return [...s].map(t => ({ value: t, label: t }))
+})
+const shownList = computed(() =>
+  tagFilter.value ? list.value.filter(d => docTags(d).includes(tagFilter.value)) : list.value)
+const tagDraft = ref([])
+const tagEditId = ref('')
+function openTagEdit (d, open) {
+  if (open) { tagEditId.value = d.id; tagDraft.value = docTags(d) }
+  else if (tagEditId.value === d.id) tagEditId.value = ''
+}
+/** 保存标签：成功后就地回写行数据（免整表重拉；标签筛选选项随之自动更新） */
+async function saveTags (d) {
+  try {
+    const r = await setDocumentTags(d.id, tagDraft.value.join(','))
+    if (r.success) { message.success('已更新标签'); d.tags = tagDraft.value.join(',') }
+    else message.error(r.msg || '保存失败')
+  } catch (e) { message.error(e.message || '保存失败') }
 }
 function onRefreshToggle (d, val) { d.autoRefresh = val ? 1 : 0 }
 function onRefreshCronInput (d, v) { d.refreshCron = v }
@@ -1436,6 +1481,9 @@ const fmtTime = t => {
 .queue-chip { flex: none; cursor: default; }
 /* 共享范围列表标记（弹窗两区表单已抽为公共组件 ShareScopeModal） */
 .scope-tag { flex: none; }
+/* 文档标签：贴在文件名后的小号 chip；标签多时行内收起（悬浮 title 仍全量可见） */
+.doc-tags { display: inline-flex; gap: 4px; flex-wrap: wrap; margin-left: 8px; max-width: 260px; overflow: hidden; max-height: 22px; }
+.doc-tag-chip { margin-inline-end: 0; font-size: 11px; line-height: 16px; padding: 0 6px; border-radius: 4px; }
 .drag-mask {
   position: fixed; inset: 0; z-index: 1000;
   background: rgba(46,107,230,.08);

@@ -303,6 +303,17 @@ public class DocumentController {
         return ResultJson.ok("已提交图片描述补齐任务");
     }
 
+    @Operation(summary = "设置文档标签", description = "tags：逗号分隔（如 部门A,合同,2026），空串=清空；"
+            + "规范化去重后落库。供智能体检索标签收窄（knowledgeTags）与文档筛选用，late-binding 即时生效无需重建索引")
+    @PutMapping("/{id}/tags")
+    public ResultJson setTags(
+            @Parameter(description = "文档 ID") @PathVariable("id") String id,
+            @Parameter(description = "逗号分隔标签，空串=清空") @RequestParam("tags") String tags) {
+        requireDocManage(documentService.getDoc(id));
+        documentService.setTags(id, tags);
+        return ResultJson.ok("已更新标签");
+    }
+
     @Operation(summary = "批量删除文档", description = "批量删除多个文档")
     @PostMapping("/batch/delete")
     public ResultJson batchDelete(

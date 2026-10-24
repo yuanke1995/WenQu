@@ -52,6 +52,13 @@ public class Agent {
     private String knowledgeBaseIds;
 
     /**
+     * 检索标签收窄（逗号分隔的文档标签）：非空时，检索只收所属文档带其中任一标签的命中块——
+     * 与 {@link #knowledgeBaseIds} 叠加生效（先按库界检索，再按标签后过滤，late-binding 与文档级
+     * ACL 同口径）。用于「同一批库、只答某个主题/密级」的智能体分工；空/NULL=不按标签过滤。
+     */
+    private String knowledgeTags;
+
+    /**
      * 不使用知识库：0=使用（默认，按 knowledgeScope 约束范围）；1=纯角色智能体，整条跳过检索链路
      * （改写/深度思考检索/命中填充/子代理编排都不跑；用户手动 @ 的文档仍会被前置——手动指定优先于配置）。
      * 用于「通用法律顾问 / 写作助手」这类不挂资料的角色；与 knowledgeScope 互斥，开启时忽略范围。

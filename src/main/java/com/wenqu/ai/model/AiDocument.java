@@ -59,6 +59,9 @@ public class AiDocument {
     /** 文档级视觉模型覆盖（上传时指定，引用 {providerId}/{modelId}；空=跟随知识库配置。对该文档所有图片理解生效） */
     private String visionRef;
 
+    /** 文档标签（逗号分隔；空=无标签。供智能体检索标签收窄 knowledgeTags 与文档筛选用） */
+    private String tags;
+
     @TableLogic
     private Integer deleted;
 

@@ -96,6 +96,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         m.put("systemPrompt", "系统提示词");
         m.put("knowledgeScope", "文档范围");
         m.put("knowledgeBaseIds", "关联知识库");
+        m.put("knowledgeTags", "检索标签收窄");
         m.put("knowledgeDisabled", "不使用知识库");
         m.put("toolKnowledge", "知识库检索");
         m.put("toolBuiltin", "内置工具");
@@ -493,6 +494,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         if (b.containsKey("systemPrompt")) uw.set(Agent::getSystemPrompt, a.getSystemPrompt());
         if (b.containsKey("knowledgeScope")) uw.set(Agent::getKnowledgeScope, a.getKnowledgeScope());
         if (b.containsKey("knowledgeBaseIds")) uw.set(Agent::getKnowledgeBaseIds, a.getKnowledgeBaseIds());
+        if (b.containsKey("knowledgeTags")) uw.set(Agent::getKnowledgeTags, a.getKnowledgeTags());
         if (b.containsKey("knowledgeDisabled")) uw.set(Agent::getKnowledgeDisabled, a.getKnowledgeDisabled());
         if (b.containsKey("toolKnowledge")) uw.set(Agent::getToolKnowledge, a.getToolKnowledge());
         if (b.containsKey("toolBuiltin")) uw.set(Agent::getToolBuiltin, a.getToolBuiltin());
@@ -602,6 +604,8 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         if (body.containsKey("systemPrompt")) a.setSystemPrompt(asText(body.get("systemPrompt"), 60000));
         if (body.containsKey("knowledgeScope")) a.setKnowledgeScope(asText(body.get("knowledgeScope"), 2000));
         if (body.containsKey("knowledgeBaseIds")) a.setKnowledgeBaseIds(asText(body.get("knowledgeBaseIds"), 1000));
+        // 检索标签收窄：逗号分隔文档标签，检索只收命中其一的文档（空=不过滤）
+        if (body.containsKey("knowledgeTags")) a.setKnowledgeTags(asText(body.get("knowledgeTags"), 500));
         // 「不使用知识库」：纯角色智能体（法律顾问/写作助手等）——1=跳过检索链路；null 视为 0
         if (body.containsKey("knowledgeDisabled")) a.setKnowledgeDisabled(toTri(body.get("knowledgeDisabled")));
         if (body.containsKey("toolKnowledge")) a.setToolKnowledge(toTri(body.get("toolKnowledge")));
@@ -911,6 +915,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         uw.set(Agent::getSystemPrompt, raw(cfg.get("systemPrompt")));
         uw.set(Agent::getKnowledgeScope, raw(cfg.get("knowledgeScope")));
         uw.set(Agent::getKnowledgeBaseIds, raw(cfg.get("knowledgeBaseIds")));
+        uw.set(Agent::getKnowledgeTags, raw(cfg.get("knowledgeTags")));
         uw.set(Agent::getKnowledgeDisabled, asInt(cfg.get("knowledgeDisabled")));
         uw.set(Agent::getToolKnowledge, asInt(cfg.get("toolKnowledge")));
         uw.set(Agent::getToolBuiltin, asInt(cfg.get("toolBuiltin")));

@@ -184,6 +184,32 @@ public class HybridRetrievalService {
     }
 
     /**
+     * 按文档标签过滤命中（智能体级标签收窄）：命中块回表比对所属文档的 tags（逗号分隔），
+     * 任一标签命中即保留。late-binding 与文档级 ACL 同口径——打标改 MySQL 即时生效，
+     * 不动向量/关键词索引；代价是过滤发生在补采之后，命中池被标签削薄时本轮结果变少。
+     * 文档无标签 = 收窄语义下不放行（宁少不滥，与 kbFilter 同判据）。
+     */
+    public List<Hit> filterByDocTags(List<Hit> hits, java.util.Collection<String> tags) {
+        if (hits == null || hits.isEmpty() || tags == null || tags.isEmpty()) return hits;
+        Set<String> wanted = tags.stream().map(String::trim).filter(s -> !s.isEmpty()).collect(Collectors.toSet());
+        if (wanted.isEmpty()) return hits;
+        Set<String> docIds = hits.stream().map(Hit::docId).filter(Objects::nonNull).collect(Collectors.toSet());
+        if (docIds.isEmpty()) return List.of();
+        Set<String> matched = new HashSet<>();
+        for (AiDocument doc : documentMapper.selectBatchIds(docIds)) {
+            String t = doc.getTags();
+            if (t == null || t.isBlank() || doc.getId() == null) continue;
+            for (String part : t.split(",")) {
+                if (wanted.contains(part.trim())) {
+                    matched.add(doc.getId());
+                    break;
+                }
+            }
+        }
+        return hits.stream().filter(h -> h.docId() != null && matched.contains(h.docId())).toList();
+    }
+
+    /**
      * @param kbIds 限定检索的知识库（空=全部）
      * @param adaptiveTopK 是否启用「权限有效召回」补采（见 {@link #vectorSearch}）。
      *        <b>{@code false} 时严格按配置 topK 取一次</b>——量化评估与检索调试必须走此路。

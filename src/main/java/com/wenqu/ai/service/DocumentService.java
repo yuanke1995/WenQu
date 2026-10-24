@@ -99,6 +99,27 @@ public class DocumentService {
                 .sorted()
                 .collect(java.util.stream.Collectors.joining("/"));
     }
+
+    /** 设置文档标签（逗号分隔，中英文逗号都收）：规范化（去重/限长/限数）后落库；空串=清空 */
+    public void setTags(String docId, String tags) {
+        documentMapper.update(null, new LambdaUpdateWrapper<AiDocument>()
+                .eq(AiDocument::getId, docId)
+                .set(AiDocument::getTags, normalizeTags(tags))
+                .set(AiDocument::getUpdateTime, java.time.LocalDateTime.now()));
+    }
+
+    /** 标签规范化：按中英文逗号拆分、去空白、去重、单个限 30 字、最多 20 个 */
+    private String normalizeTags(String tags) {
+        if (tags == null || tags.isBlank()) return "";
+        java.util.LinkedHashSet<String> out = new java.util.LinkedHashSet<>();
+        for (String p : tags.split("[,，]")) {
+            String t = p.trim();
+            if (t.isEmpty()) continue;
+            out.add(t.length() > 30 ? t.substring(0, 30) : t);
+            if (out.size() >= 20) break;
+        }
+        return String.join(",", out);
+    }
     private final ConfigService configService;
     private final KeywordIndexService keywordIndexService;
     /** 知识块引用关系（交叉引用识别 + 1-hop 扩散）：与块/文档同生命周期重建 */

@@ -1298,6 +1298,9 @@ export const rebuildKbVectors = kbId =>
 /** 补齐文档图片描述：解析时未描述成功的图片后台补描述并回写知识块（重新向量化+索引同步） */
 export const backfillDescriptions = id =>
   request(`/document/${encodeURIComponent(id)}/backfill-descriptions`, { method: 'POST', timeout: 120000 })
+/** 设置文档标签（逗号分隔；空串=清空）。供智能体检索标签收窄（knowledgeTags）与文档筛选用 */
+export const setDocumentTags = (id, tags) =>
+  request(`/document/${encodeURIComponent(id)}/tags?tags=${encodeURIComponent(tags)}`, { method: 'PUT' })
 
 /** 删除文档 */
 export const deleteDocument = id => request(`/document/${id}`, { method: 'DELETE' })

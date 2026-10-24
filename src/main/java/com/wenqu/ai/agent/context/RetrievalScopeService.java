@@ -39,7 +39,15 @@ public class RetrievalScopeService {
     /** 一次解析出库级与文档级两层范围（工具与主链路共用同一个对象，避免两次解析走出分歧）。 */
     public KnowledgeRetrievalTool.KbScope resolve(Agent agent, String userId, boolean walled) {
         return new KnowledgeRetrievalTool.KbScope(scopeKbIdsOf(agent, userId, walled),
-                resolveScopeDocIds(agent, userId, walled));
+                resolveScopeDocIds(agent, userId, walled), null, tagFilterOf(agent));
+    }
+
+    /** 智能体级标签收窄（knowledgeTags 逗号分隔）：空=不过滤。文档打标见 c_ai_document.tags */
+    private Set<String> tagFilterOf(Agent agent) {
+        if (agent == null || agent.getKnowledgeTags() == null || agent.getKnowledgeTags().isBlank()) return null;
+        Set<String> tags = Arrays.stream(agent.getKnowledgeTags().split(","))
+                .map(String::trim).filter(s -> !s.isEmpty()).collect(Collectors.toSet());
+        return tags.isEmpty() ? null : tags;
     }
 
     private Collection<String> scopeKbIdsOf(Agent agent, String userId, boolean walled) {

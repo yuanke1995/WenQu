@@ -247,6 +247,9 @@
                             show-search option-filter-prop="label" :max-tag-count="6" style="width:100%"
                             placeholder="选择允许检索的知识库" />
                   <div class="ap-hint">已选 {{ form.knowledgeBaseIds.length }} 个知识库；一个都不选则检索不到任何内容。</div>
+                  <a-select v-model:value="form.knowledgeTags" mode="tags" :max-tag-count="8" allow-clear
+                            style="width:100%;margin-top:8px" placeholder="检索标签收窄（可选）：如 部门A、合同——只检索打了这些标签的文档" />
+                  <div class="ap-hint">按文档标签进一步收窄：标签在「知识库」文档列表给文档打，这里填了则只召回带其中任一标签的文档；留空=不过滤。</div>
                 </div>
                 <div v-else-if="scopeMode === 'none'" class="ap-hint">
                   纯角色智能体：完全不查资料，仅凭系统提示词与对话上下文作答；对话中手动 @ 的文档仍会被参考。
@@ -907,7 +910,7 @@ const goalOptions = [
   { value: 0, label: '关闭' }
 ]
 const blankForm = () => ({
-  name: '', description: '', systemPrompt: '', knowledgeBaseIds: [], isDefault: false,
+  name: '', description: '', systemPrompt: '', knowledgeBaseIds: [], knowledgeTags: [], isDefault: false,
   // 图标：''=默认展示（内置「问渠」用问渠品牌标，其余机器人）；'wenqu'=品牌标；emoji=表情
   icon: '', isBuiltin: 0,
   // 开关型：'' = 跟随全局 / '1' = 开启 / '0' = 关闭
@@ -1577,6 +1580,7 @@ const openEdit = a => {
     isBuiltin: isBuiltin(a) ? 1 : 0,
     icon: a.icon || (isBuiltin(a) ? 'wenqu' : ''),
     knowledgeBaseIds: kbs,
+    knowledgeTags: splitList(a.knowledgeTags),
     isDefault: isDefault(a),
     toolKnowledge: triStr(a.toolKnowledge),
     toolBuiltin: triStr(a.toolBuiltin),
@@ -1706,6 +1710,7 @@ const save = async () => {
     // 「不使用知识库」置 knowledgeDisabled=1 并清空（两者互斥，后端以开关为准）
     ...(f.isBuiltin === 1 ? {} : {
       knowledgeBaseIds: scopeMode.value === 'pick' ? (f.knowledgeBaseIds || []).join(',') : '',
+      knowledgeTags: scopeMode.value === 'pick' ? (f.knowledgeTags || []).join(',') : '',
       knowledgeDisabled: scopeMode.value === 'none' ? 1 : 0
     }),
     toolKnowledge: tri(f.toolKnowledge),
