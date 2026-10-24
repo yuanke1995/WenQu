@@ -66,7 +66,7 @@ import java.time.LocalDateTime;
 
 /**
  * 文档管理服务
- * 上传（docx/pdf/xlsx）→ 异步解析分块 → 向量化存 Redis → 元数据存 MySQL
+ * 上传（解析器声明格式：docx/pdf/xlsx/ppt/pptx/txt/md/csv 等）→ 异步解析分块 → 向量化存 Redis → 元数据存 MySQL
  * 状态流转：2 解析中 → 0 生效 / 3 解析失败（fail_reason）
  * 一致性：解析/向量失败主动补偿清理（删向量+MySQL+图片），避免孤儿数据
  *
@@ -90,6 +90,15 @@ public class DocumentService {
     private final DocumentAclTags documentAclTags;
     private final com.wenqu.ai.mapper.QaLogMapper qaLogMapper;
     private final List<DocumentParser> parsers;
+
+    /** 上传支持格式清单（聚合全部解析器声明；解析器增删后报错文案自动跟上，不再写死过期） */
+    private String supportedExtsCsv() {
+        return parsers.stream()
+                .flatMap(p -> p.supportedExts().stream())
+                .distinct()
+                .sorted()
+                .collect(java.util.stream.Collectors.joining("/"));
+    }
     private final ConfigService configService;
     private final KeywordIndexService keywordIndexService;
     /** 知识块引用关系（交叉引用识别 + 1-hop 扩散）：与块/文档同生命周期重建 */
@@ -220,7 +229,7 @@ public class DocumentService {
         DocumentParser parser = parsers.stream()
                 .filter(p -> p.supports(ext))
                 .findFirst()
-                .orElseThrow(() -> new BizException("不支持的文件格式: ." + ext + "（支持 docx/pdf/xlsx）"));
+                .orElseThrow(() -> new BizException("不支持的文件格式: ." + ext + "（支持 " + supportedExtsCsv() + "）"));
         if (file.isEmpty()) {
             throw new BizException("请选择文件");
         }
@@ -2219,7 +2228,8 @@ public class DocumentService {
      */
     private void validateMagicBytes(MultipartFile file, String ext) {
         byte[] expected = switch (ext) {
-            case "docx", "xlsx", "doc", "xls" -> new byte[]{0x50, 0x4B, 0x03, 0x04}; // PK.. (zip 容器)
+            case "docx", "xlsx", "doc", "xls", "pptx" -> new byte[]{0x50, 0x4B, 0x03, 0x04}; // PK.. (zip 容器)
+            case "ppt" -> new byte[]{(byte) 0xD0, (byte) 0xCF, 0x11, (byte) 0xE0, (byte) 0xA1, (byte) 0xB1, 0x1A, (byte) 0xE1}; // OLE2
             case "pdf" -> new byte[]{0x25, 0x50, 0x44, 0x46};                        // %PDF
             default -> null; // 其余格式无魔数约定，跳过
         };

@@ -27,7 +27,7 @@
         <!-- MCP Java SDK 版本：与 spring-ai-mcp 1.1.8 内部对齐的 0.18.3
              （spring-ai-alibaba-graph-core 传递的 0.14.0 已被仲裁掉：本地只有其 pom 没下载 jar） -->
         <mcp.version>0.18.3</mcp.version>
-        <poi.version>5.2.3</poi.version>
+        <poi.version>5.5.1</poi.version>
         <lombok.version>1.18.46</lombok.version>
         <!-- AgentScope Java：agentx 运行时的宿主框架（Phase 0 实测定案（结论账已并入知识卡与 README 的框架平移章节））。
              刻意选 2.1.0-BETA1 而非稳定版 2.0.4：AgentSession（后台续跑/运行中插话/HITL 待办持久化/
@@ -109,10 +109,15 @@
             <scope>runtime</scope>
         </dependency>
 
-        <!-- Apache POI 解析 Word/Excel -->
+        <!-- Apache POI 解析 Word/Excel/PPT（scratchpad 承载旧版二进制 .ppt 的 HSLF） -->
         <dependency>
             <groupId>org.apache.poi</groupId>
             <artifactId>poi-ooxml</artifactId>
+            <version>${poi.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-scratchpad</artifactId>
             <version>${poi.version}</version>
         </dependency>
         <!-- PDFBox 解析 PDF（纯文本抽取） -->

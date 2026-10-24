@@ -171,7 +171,7 @@
               </a-popconfirm>
             </span>
           </div>
-          <a-empty v-if="!loading && !list.length" description="暂无文档，点击右上角上传 .docx / .pdf / .xlsx 或导入网页" style="padding:40px 0" />
+          <a-empty v-if="!loading && !list.length" :description="`暂无文档，点击右上角上传 ${uploadCfg.allowedExts.join(' / ')} 或导入网页`" style="padding:40px 0" />
         </a-spin>
       </div>
     </div>
@@ -422,7 +422,7 @@ import { mobileShell } from '../h5/mobile'
 
 // 上传限制（启动时从 /config/public 动态获取）
 const MAX_SIZE = 200 * 1024 * 1024
-const uploadCfg = ref({ maxFileSize: MAX_SIZE, maxFileSizeLabel: '200MB', allowedExts: ['docx', 'pdf', 'xlsx'] })
+const uploadCfg = ref({ maxFileSize: MAX_SIZE, maxFileSizeLabel: '200MB', allowedExts: ['csv', 'docx', 'markdown', 'md', 'pdf', 'ppt', 'pptx', 'txt', 'xlsx'] })
 const loadUploadCfg = async () => {
   try {
     const r = await getRuntimeConfig()

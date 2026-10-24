@@ -110,7 +110,7 @@ public class DocumentController {
         return String.format("%.0fMB", bytes / (1024.0 * 1024));
     }
 
-    @Operation(summary = "上传文档", description = "上传单个文档（docx/pdf/xlsx），异步解析，返回文档 ID 和解析状态；按用户限频（ratelimit.uploadPerMinute）。visionRef 可选：文档级视觉模型覆盖（引用 {providerId}/{modelId}），对该文档所有图片理解生效；空=跟随知识库")
+    @Operation(summary = "上传文档", description = "上传单个文档（docx/pdf/xlsx/ppt/pptx/txt/md/csv），异步解析，返回文档 ID 和解析状态；按用户限频（ratelimit.uploadPerMinute）。visionRef 可选：文档级视觉模型覆盖（引用 {providerId}/{modelId}），对该文档所有图片理解生效；空=跟随知识库")
     @PostMapping("/upload")
     public ResultJson upload(
             @Parameter(description = "文档文件") @RequestParam("file") MultipartFile file,

@@ -23,7 +23,7 @@ public class AiDocument {
     /** 文件名 */
     private String fileName;
 
-    /** 文件类型: docx/pdf/xlsx/url（url=网页导入，源文件为 HTML 快照） */
+    /** 文件类型: docx/pdf/xlsx/ppt/pptx/txt/md/markdown/csv/url（url=网页导入，源文件为 HTML 快照） */
     private String fileType;
 
     /** 分块数量 */
