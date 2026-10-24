@@ -3062,6 +3062,15 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 .apiKey(route.apiKey())
                 .modelName(route.modelId())
                 .stream(true)
+                // 连接超时从框架默认的 30 秒收到 8 秒：真机 2026-10-23 22:24 那一轮，第一次模型调用
+                // 挂满 33.7 秒以「SSE/NDJSON stream failed: java.io.IOException: Operation timed out」收场，
+                // 框架随即重试且第二次 5.8 秒就出了字——那 30 秒是一条已经死掉的连接在慢慢超时。
+                // 只收连接这一档：读超时/流空闲仍是 5 分钟，长思考与长流式不该被掐。
+                .httpTransport(io.agentscope.core.model.transport.OkHttpTransport.builder()
+                        .config(io.agentscope.core.model.transport.HttpTransportConfig.builder()
+                                .connectTimeout(java.time.Duration.ofSeconds(8))
+                                .build())
+                        .build())
                 .generateOptions(generateOptions(cmd, hooks.modelRef()))
                 .endpointPath(route.completionsPath() == null || route.completionsPath().isBlank()
                         ? "/v1/chat/completions" : route.completionsPath())
