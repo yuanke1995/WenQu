@@ -3,9 +3,11 @@ package com.wenqu.ai.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenqu.ai.mapper.ArtifactMapper;
 import com.wenqu.ai.mapper.ProjectMapper;
+import com.wenqu.ai.mapper.ProjectNoteLogMapper;
 import com.wenqu.ai.mapper.SessionMapper;
 import com.wenqu.ai.model.Artifact;
 import com.wenqu.ai.model.Project;
+import com.wenqu.ai.model.ProjectNoteLog;
 import com.wenqu.ai.model.Session;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DuplicateKeyException;
@@ -38,6 +40,8 @@ public class ProjectService {
     private final ProjectMapper projectMapper;
     private final SessionMapper sessionMapper;
     private final ArtifactMapper artifactMapper;
+    /** 约定留痕：update() 改约定时把被替换的旧版抄一行进来（leaf mapper，直接注入无环） */
+    private final ProjectNoteLogMapper noteLogMapper;
     /**
      * 校验「工作区默认助手」确实是本人可读的助手。
      * <p><b>必须惰性取</b>：直接注入 AgentService 会形成
@@ -70,7 +74,7 @@ public class ProjectService {
     private final org.springframework.beans.factory.ObjectProvider<KnowledgeBaseService> kbProvider;
 
     public ProjectService(ProjectMapper projectMapper, SessionMapper sessionMapper,
-                          ArtifactMapper artifactMapper,
+                          ArtifactMapper artifactMapper, ProjectNoteLogMapper noteLogMapper,
                           org.springframework.beans.factory.ObjectProvider<AgentService> agentProvider,
                           org.springframework.beans.factory.ObjectProvider<ScheduledJobService> scheduledJobProvider,
                           org.springframework.beans.factory.ObjectProvider<ProjectFileService> projectFileProvider,
@@ -79,6 +83,7 @@ public class ProjectService {
         this.projectMapper = projectMapper;
         this.sessionMapper = sessionMapper;
         this.artifactMapper = artifactMapper;
+        this.noteLogMapper = noteLogMapper;
         this.agentProvider = agentProvider;
         this.scheduledJobProvider = scheduledJobProvider;
         this.projectFileProvider = projectFileProvider;
@@ -246,11 +251,14 @@ public class ProjectService {
     /**
      * 用户显式新建一个工作区（{@code selection_status=selectable}）。
      *
-     * @param name 工作区名；空白拒绝（用户自建工作区必须有名字，否则和 implicit 无法区分）
+     * @param name          工作区名；空白拒绝（用户自建工作区必须有名字，否则和 implicit 无法区分）
+     * @param fromProjectId 可选模板：从「我的」另一个工作区复制<em>设置</em>（约定/绑定资料域/
+     *                      共用目录/记忆隔离）——写一套好约定的经验该能复用；会话、文件、事项、
+     *                      运行记录一概不带（那是那个场子的历史，不是配置）
      * @return 新建的工作区
-     * @throws IllegalArgumentException 名字非法（控制器转成可读错误）
+     * @throws IllegalArgumentException 名字非法或模板工作区不存在/不属于该用户
      */
-    public Project create(String uid, String name) {
+    public Project create(String uid, String name, String fromProjectId) {
         if (uid == null || uid.isBlank() || com.wenqu.ai.util.RequestUser.ANONYMOUS.equals(uid)) {
             throw new IllegalArgumentException("请先登录后再新建工作区");
         }
@@ -260,6 +268,10 @@ public class ProjectService {
         }
         if (trimmed.length() > MAX_NAME_LEN) {
             throw new IllegalArgumentException("工作区名过长（最多 " + MAX_NAME_LEN + " 字）");
+        }
+        Project tpl = null;
+        if (fromProjectId != null && !fromProjectId.isBlank()) {
+            tpl = ownedProject(uid, fromProjectId);
         }
         Project p = new Project();
         // 同 ensureImplicit：id 必须先自己生成，workdir 要用它分片
@@ -272,12 +284,25 @@ public class ProjectService {
         // 新建工作区默认共用目录：工作区的核心承诺就是「传进来的材料这个场子里的对话都看得见」，
         // 默认关等于每个新场子都要先撞一次「模型说查无此文件」。不想要的场子在设置里一键关回会话级
         p.setSharedWorkdir(1);
+        if (tpl != null) {
+            // 模板复制只抄「规矩」不抄「历史」：约定/资料域/两个开关；目录模式不抄（linked 位未实现）
+            p.setInstructions(tpl.getInstructions());
+            p.setKbIds(tpl.getKbIds());
+            p.setSharedWorkdir(tpl.getSharedWorkdir() == null ? 1 : tpl.getSharedWorkdir());
+            p.setMemoryIsolated(tpl.getMemoryIsolated() == null ? 0 : tpl.getMemoryIsolated());
+        }
         p.setDeleted(0);
         p.setCreateTime(java.time.LocalDateTime.now());
         p.setWorkdirPath(p.resolveWorkdirPath());
         projectMapper.insert(p);
-        log.info("[PROJECT] 新建工作区 uid={} id={} name={}", uid, p.getId(), trimmed);
+        log.info("[PROJECT] 新建工作区 uid={} id={} name={} fromTemplate={}",
+                uid, p.getId(), trimmed, tpl != null ? tpl.getId() : "-");
         return p;
+    }
+
+    /** 保持旧签名（不带模板） */
+    public Project create(String uid, String name) {
+        return create(uid, name, null);
     }
 
     /**
@@ -367,13 +392,16 @@ public class ProjectService {
     }
 
     /**
-     * 更新工作区设置：名称 / 工作区约定 / 默认助手 / 绑定知识库 / 共用工作目录。
+     * 更新工作区设置：名称 / 工作区约定 / 默认助手 / 绑定知识库 / 共用工作目录 / 记忆隔离。
      *
      * <p>各参数都是「传才改」（null = 不动）；空串/空列表表示清空。默认助手与绑定的库
      * 都必须本人可用，否则抛 IllegalArgumentException——静默忽略会让用户以为绑定生效了。
+     * <p>约定被替换（值真的变了）时把<b>旧版</b>抄进留痕表：聊天页只报「约定生效」不报内容，
+     * 「当时生效的是哪版」必须可查（恢复=把旧值再存一版，不另做回滚通道）。
      */
     public Project update(String uid, String projectId, String name, String instructions,
-                          String defaultAgentId, List<String> kbIds, Boolean sharedWorkdir) {
+                          String defaultAgentId, List<String> kbIds, Boolean sharedWorkdir,
+                          Boolean memoryIsolated) {
         Project p = ownedProject(uid, projectId);
         boolean changed = false;
         if (name != null) {
@@ -392,7 +420,17 @@ public class ProjectService {
             if (ins.length() > MAX_INSTRUCTIONS_LEN) {
                 throw new IllegalArgumentException("工作区约定过长（最多 " + MAX_INSTRUCTIONS_LEN + " 字）");
             }
-            p.setInstructions(ins.isEmpty() ? null : ins);
+            String old = p.getInstructions();
+            String next = ins.isEmpty() ? null : ins;
+            if (!java.util.Objects.equals(old, next)) {
+                // 只在值真的变了时留痕：空保存（同值重存）不制造一排无意义的历史行
+                ProjectNoteLog logRow = new ProjectNoteLog();
+                logRow.setProjectId(p.getId());
+                logRow.setContent(old);
+                logRow.setCreateTime(java.time.LocalDateTime.now());
+                noteLogMapper.insert(logRow);
+            }
+            p.setInstructions(next);
             changed = true;
         }
         if (defaultAgentId != null) {
@@ -437,6 +475,13 @@ public class ProjectService {
             p.setSharedWorkdir(Boolean.TRUE.equals(sharedWorkdir) ? 1 : 0);
             changed = true;
         }
+        if (memoryIsolated != null) {
+            if (Project.SELECTION_IMPLICIT.equals(p.getSelectionStatus())) {
+                throw new IllegalArgumentException("「会话」栏不是一个工作区，没有记忆隔离可开");
+            }
+            p.setMemoryIsolated(Boolean.TRUE.equals(memoryIsolated) ? 1 : 0);
+            changed = true;
+        }
         if (changed) {
             p.setUpdateTime(java.time.LocalDateTime.now());
             // 走显式列集而不是 updateById：后者的字段策略会跳过 null，「清空约定 / 取消默认助手」
@@ -448,10 +493,11 @@ public class ProjectService {
                     .set(Project::getDefaultAgentId, p.getDefaultAgentId())
                     .set(Project::getKbIds, p.getKbIds())
                     .set(Project::getSharedWorkdir, p.getSharedWorkdir())
+                    .set(Project::getMemoryIsolated, p.getMemoryIsolated())
                     .set(Project::getUpdateTime, p.getUpdateTime()));
-            log.info("[PROJECT] 更新工作区设置 uid={} id={} name={} hasInstructions={} defaultAgent={} kbIds={} sharedWorkdir={}",
+            log.info("[PROJECT] 更新工作区设置 uid={} id={} name={} hasInstructions={} defaultAgent={} kbIds={} sharedWorkdir={} memoryIsolated={}",
                     uid, p.getId(), p.getName(), p.getInstructions() != null, p.getDefaultAgentId(),
-                    p.getKbIds(), p.getSharedWorkdir());
+                    p.getKbIds(), p.getSharedWorkdir(), p.getMemoryIsolated());
         }
         return p;
     }
@@ -534,6 +580,29 @@ public class ProjectService {
     public boolean workdirShared(Project p) {
         if (p == null || p.getSharedWorkdir() == null || p.getSharedWorkdir() != 1) return false;
         return configService.getBoolean("sandbox.projectWorkdirEnabled");
+    }
+
+    /**
+     * 该会话所属工作区是否开了「记忆隔离」（干净房间：不注入本人个人记忆、也不写入）。
+     * <p>消费方只有引擎的记忆闸（{@code AgentscopeChatEngine} 装配期）——按游客档全关
+     * （hooks 与 memory_* 工具同关）：只关 hooks 仍会注入 MEMORY.md，那就不是隔离。
+     * 会话不挂工作区一律 false（「会话」栏照常共用个人记忆）。
+     */
+    public boolean memoryIsolatedOfSession(String sessionId) {
+        Project p = projectOfSession(sessionId);
+        return p != null && p.getMemoryIsolated() != null && p.getMemoryIsolated() == 1;
+    }
+
+    /**
+     * 约定留痕（被替换的旧版），按被替换时刻倒序，最多 20 条。
+     * content 为 null 表示当时约定为空（首次写入前的状态）。
+     */
+    public List<ProjectNoteLog> instructionHistory(String uid, String projectId) {
+        detail(uid, projectId);   // 归属校验（不存在/他人/已删一律抛）
+        return noteLogMapper.selectList(new LambdaQueryWrapper<ProjectNoteLog>()
+                .eq(ProjectNoteLog::getProjectId, projectId)
+                .orderByDesc(ProjectNoteLog::getCreateTime)
+                .last("LIMIT 20"));
     }
 
     /**

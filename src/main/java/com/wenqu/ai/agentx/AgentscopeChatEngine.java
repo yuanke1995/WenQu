@@ -3339,7 +3339,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         //    但关掉 flush 与后台合并；否则每派一支就多一次提炼调用，内部推演还会沉淀成用户事实。
         // ③ 正常用户轮：平台总闸与个人开关都开着才挂 memoryConfig；任一关掉走 disableMemoryHooks
         //    （与②同一条路：不注册 flush/维护，模型侧也不再有「自动提炼」引导，已沉淀的仍注入）。
-        if (cmd.isGuestMode()) {
+        // ④ 工作区记忆隔离（Project.memoryIsolated，干净房间）：本区会话不注入本人已沉淀的个人记忆、
+        //    也不往里写——按①同款全关。给敏感项目/客户现场一个不串味的场子；工作区自己的上下文由
+        //    约定+绑定资料域+目录文件承担（2026-10-24，A4 记忆分域的落地口径）。
+        if (cmd.isGuestMode() || projectService.memoryIsolatedOfSession(cmd.getSessionId())) {
             agentBuilder.disableMemoryHooks().disableMemoryTools();
         } else if (cmd.branchTurn() || !memoryOn(cmd)) {
             agentBuilder.disableMemoryHooks();

@@ -671,6 +671,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_project` (
     `default_agent_id` VARCHAR(50)  DEFAULT NULL COMMENT '工作区默认助手：会话归属该工作区且用户没显式选助手时用它作答，其知识库范围随助手生效（工作区因此有自己的资料域）',
     `kb_ids`           VARCHAR(512) DEFAULT NULL COMMENT '工作区绑定知识库（逗号分隔，c_ai_knowledge_base.id；空=不收窄）。这是**默认检索域**不是权限墙：本区会话没有显式域（助手未绑库且未 @ 库）时只搜这些库，@ 提及其他库仍可越出（显式动作优先于默认值），助手绑定的库也优先于它',
     `shared_workdir`   INT          NOT NULL DEFAULT 0 COMMENT '共用工作目录: 1=本工作区所有会话的沙盒挂 projects/{id}（跨会话互见文件、上传的材料模型直接可读）0=各会话各自 sessions/{会话}。存量行与 implicit 兜底容器一律 0（不共享），只有 create() 显式给新建工作区置 1；另受全局总闸 sandbox.projectWorkdirEnabled 约束（应急时一键全退回会话级）',
+    `memory_isolated`  INT          NOT NULL DEFAULT 0 COMMENT '记忆隔离: 1=本区会话是「干净房间」——不注入本人已沉淀的个人记忆（MEMORY.md/记忆工具全关），也不往里写；工作区的上下文由约定+绑定资料域+目录文件承担。0=照常共用个人记忆。给敏感项目/客户现场一个不串味的场子',
     `status`           VARCHAR(20)  NOT NULL DEFAULT 'active' COMMENT 'active=正常 / archived=归档（只读保留，二期）',
     `deleted`          INT          NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0=正常, 1=已删除（删工作区不删其下会话与产物，只把它们的 project_id 置 NULL）',
     `idempotency_key`  VARCHAR(128) DEFAULT NULL COMMENT '幂等创建键（自动建 implicit 容器时防并发重复插）',
@@ -702,6 +703,23 @@ CREATE TABLE IF NOT EXISTS `c_ai_project_todo` (
     PRIMARY KEY (`id`),
     KEY `idx_project_status` (`project_id`, `deleted`, `status`, `create_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工作区事项（要做的事；「记下→去做→勾掉」的最短闭环）';
+
+-- ============================================
+-- 2026-10-24: 工作区约定留痕
+-- 每次约定发生变化（保存新值/清空）前，把**被替换掉的那一版**抄一行进来：
+-- 老会话无法回看「我当时生效的是哪版约定」是最糟的透明度（聊天页 chip 只报「约定生效」，
+-- 不报内容）；留痕让「谁在什么时候改过规矩」有账可查，恢复=把旧值再存一版（与智能体配置
+-- 版本管理同一条思路：最新版=当前配置，回滚即再存）。
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS `c_ai_project_note_log` (
+    `id`          VARCHAR(50)  NOT NULL COMMENT '主键ID (UUID)',
+    `project_id`  VARCHAR(64)  NOT NULL COMMENT '所属工作区（c_ai_project.id）',
+    `content`     TEXT         DEFAULT NULL COMMENT '被替换掉的那一版约定全文（NULL=当时约定为空，即本次是首次写入）',
+    `create_time` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '被替换的时刻',
+    PRIMARY KEY (`id`),
+    KEY `idx_project_time` (`project_id`, `create_time` DESC)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工作区约定留痕（被替换的旧版；恢复=再存一版）';
 
 -- ============================================
 -- 2026-09-26: 定时执行智能体（用户自建的计划任务）

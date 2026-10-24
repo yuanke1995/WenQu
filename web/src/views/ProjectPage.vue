@@ -41,6 +41,17 @@
                   <a-switch :checked="form.sharedWorkdir === 1" :disabled="archiving" @change="saveShared" />
                 </div>
                 <div class="pj-set-note">开启后本区所有对话共用一个工作目录：这里放的文件模型直接可读、跨对话互相可见；关闭则每条对话各自一份目录，互相看不见</div>
+                <div class="pj-set-row">
+                  <span class="pj-k">记忆隔离</span>
+                  <a-switch :checked="form.memoryIsolated === 1" :disabled="archiving" @change="saveMemoryIsolated" />
+                </div>
+                <div class="pj-set-note">开启后这是个「干净房间」：对话不带入也不写入你的个人记忆（改设置后新开轮次生效），上下文全靠约定、资料域和目录里的文件；给敏感项目用</div>
+                <div class="pj-set-div"></div>
+                <div class="pj-set-row">
+                  <span class="pj-k">复用</span>
+                  <button class="app-btn ghost" @click="openTpl">按这个场子的设置再建一个</button>
+                </div>
+                <div class="pj-set-note">新工作区带上这里的约定、资料域与开关；对话、文件、事项不带过去</div>
               </template>
               <div class="pj-set-row pj-set-row-top">
                 <span class="pj-k">工作目录</span>
@@ -97,7 +108,10 @@
                   {{ saving ? '保存中…' : '保存约定' }}
                 </button>
               </template>
-              <button v-else class="app-btn ghost" @click="instrEdit = true">编辑</button>
+              <template v-else>
+                <button class="app-btn ghost" @click="openHistory">历史</button>
+                <button class="app-btn ghost" @click="instrEdit = true">编辑</button>
+              </template>
             </div>
           </div>
 
@@ -340,16 +354,19 @@
           <template #tab><span>动态 <span class="pj-count">{{ activityRows.length }}</span></span></template>
           <!-- 合流时间线：会话（带最后一句）+ 交付的产物 + 任务/工作流运行，按发生时刻倒序——
                这个工作区最近发生过什么，一栏看完，不再只覆盖自动化那一角 -->
+          <!-- 进入即推进：欠着的事、上次聊到哪、哪次跑挂了、下一趟任务——
+               都是页面已取数据的组装，一条建议一个动作，不给泛泛的「欢迎回来」 -->
+          <div v-if="hintChips.length" class="pj-next" role="status">
+            <span class="pj-next-k">接下来</span>
+            <button v-for="c in hintChips" :key="c.key" class="pj-next-chip" type="button" @click="c.go()">
+              <b>{{ c.title }}</b><span v-if="c.sub" class="pj-next-sub">{{ c.sub }}</span>
+            </button>
+          </div>
           <div v-if="runsError" class="pj-empty pj-err">
             {{ runsError }}
             <button class="pj-link-btn" @click="loadRuns">重试</button>
           </div>
-          <!-- 进入即推进：还没做完的事摆在时间线上面，不该翻到事项栏才知道欠着活 -->
-          <div v-if="openTodoCount" class="pj-todo-strip">
-            <span>这个场子还有 <b>{{ openTodoCount }}</b> 件事没做完</span>
-            <button class="pj-link-btn" @click="tab = 'todos'">去事项栏</button>
-          </div>
-          <div v-else-if="!runsError && !filteredActivity.length" class="pj-empty">
+          <div v-else-if="!filteredActivity.length" class="pj-empty">
             {{ kw ? '没有匹配的记录' : '这个工作区还没有动静。对话、交付的产物、任务与工作流的运行都会落在这里。' }}
             <button v-if="!kw && !isArchived" class="pj-link-btn" @click="goChat">新建一条对话</button>
           </div>
@@ -472,6 +489,29 @@
       </div>
       <div v-if="dirChoices.length < 2" class="pj-mnote">这个工作区只有根目录。想分类存放，先「新建文件夹」再回来挪。</div>
     </a-modal>
+
+    <!-- 以此工作区为模板再建一个：只带设置（约定/资料域/开关），不带历史 -->
+    <a-modal v-model:open="tplOpen" title="按这个场子的设置新建工作区" :confirm-loading="tplSaving"
+             ok-text="创建" cancel-text="取消" :width="modalWidth" @ok="doCreateFromTpl">
+      <a-input v-model:value="tplName" :maxlength="60" placeholder="新工作区名" @press-enter="doCreateFromTpl" />
+      <div class="pj-mnote">会带上：约定、绑定的资料域、共用目录与记忆隔离开关。对话、文件、事项、运行记录不带过去。</div>
+    </a-modal>
+
+    <!-- 约定历史：被替换掉的旧版（留痕），恢复=把旧值再存一版（同样留痕） -->
+    <a-modal v-model:open="histOpen" title="约定改动历史" :footer="null" :width="modalWidth">
+      <div v-if="histLoading" class="pj-mnote">加载中…</div>
+      <div v-else-if="!histRows.length" class="pj-mnote">还没有改动记录。约定第一次保存后，每次变化都会在这里留一条。</div>
+      <div v-else class="pj-hist-list">
+        <div v-for="(h, i) in histRows" :key="h.id || i" class="pj-hist-row">
+          <div class="pj-hist-meta">
+            <span>第 {{ histRows.length - i }} 版 · {{ fmtTime(toMs(h.createTime)) }} 被替换</span>
+            <button class="pj-link-btn" @click="restoreNote(h)">恢复这版</button>
+          </div>
+          <div class="pj-hist-body">{{ h.content || '（当时约定为空）' }}</div>
+        </div>
+      </div>
+      <div class="pj-mnote">恢复会把这一版存回约定（当前版本同时留痕）。</div>
+    </a-modal>
   </div>
 </template>
 
@@ -484,7 +524,8 @@ import { getProject, updateProject, deleteProject, listArtifacts, listSessions, 
          downloadProjectFile, listScheduledJobs, createScheduledJob, runScheduledJob, listProjectWorkflows, runWorkflow,
          setProjectStatus, setNewSessionProject, getProjectRuns,
          exportProjectZip, uploadProjectFiles, createProjectDir, moveProjectEntry, projectBatch,
-         listProjectTodos, createProjectTodo, updateProjectTodo, deleteProjectTodo } from '../api'
+         listProjectTodos, createProjectTodo, updateProjectTodo, deleteProjectTodo,
+         listInstructionHistory } from '../api'
 import DeleteProjectModal from '../components/DeleteProjectModal.vue'
 import { sessionStore, rememberSession } from './store'
 // 产物地址要过 resolveImg：后端给的是 /ai/artifacts/**，开发态不经媒体前缀会落到 SPA 回退，下载到的是 index.html
@@ -522,9 +563,9 @@ const isImplicit = ref(false)
 /** 归档=收工：新建对话/任务/运行一律禁用（后端同样拒绝，双保险；这里先给可见的反馈） */
 const isArchived = computed(() => form.value.status === 'archived')
 /** saved = 服务端当前值（读态显示它）；form = 编辑中的副本。分开才判得出「未保存」 */
-const saved = ref({ instructions: '', defaultAgentId: '', name: '', kbIds: [], sharedWorkdir: 0 })
+const saved = ref({ instructions: '', defaultAgentId: '', name: '', kbIds: [], sharedWorkdir: 0, memoryIsolated: 0 })
 const form = ref({ name: '', instructions: '', defaultAgentId: undefined, workdirPath: '', status: 'active',
-                   kbIds: [], sharedWorkdir: 0 })
+                   kbIds: [], sharedWorkdir: 0, memoryIsolated: 0 })
 const sessions = ref([])
 /** 会话总数（列表接口只返回首页 50 条，计数要用 total） */
 const sessionTotal = ref(0)
@@ -707,6 +748,38 @@ const openTodos = computed(() => todos.value.filter(t => t.status !== 'done'))
 const doneTodos = computed(() => todos.value.filter(t => t.status === 'done'))
 const openTodoCount = computed(() => openTodos.value.length)
 const filteredTodos = computed(() => todos.value.filter(t => hit(t.title)))
+/** 「接下来」建议条：欠着的事 / 上次聊到哪 / 最近哪次跑挂了 / 下一趟任务什么时候。
+    全部来自页面已取数据，最多三条——建议超过三条就没人看了 */
+const hintChips = computed(() => {
+  const out = []
+  if (openTodoCount.value) {
+    out.push({ key: 'todo', title: openTodoCount.value + ' 件没做完', go: () => { tab.value = 'todos' } })
+  }
+  const last = sessions.value.find(s => s.lastMessage)
+  if (last) {
+    const m = last.lastMessage
+    out.push({ key: 'last', title: '上次聊到', sub: m.length > 24 ? m.slice(0, 24) + '…' : m,
+               go: () => openProjectSession(last) })
+  }
+  const failed = runs.value.find(r => r.status === 'failed' || r.status === 'timeout')
+  if (failed) {
+    out.push({
+      key: 'fail', title: '最近跑挂了', sub: failed.name,
+      go: () => {
+        if (failed.kind === 'scheduled' && failed.sessionId) openRunSession(failed.sessionId)
+        else if (failed.kind === 'workflow' && !mobileShell.value) openWfRun(failed)
+        else if (failed.kind === 'workflow') router.push('/agents?tab=workflow&wf=' + failed.workflowId + '&run=' + failed.id)
+      }
+    })
+  }
+  const nextJob = jobs.value.filter(j => j.enabled && j.nextRunAt)
+    .sort((a, b) => String(a.nextRunAt).localeCompare(String(b.nextRunAt)))[0]
+  if (nextJob) {
+    out.push({ key: 'job', title: '下一趟 ' + fmtTime(nextJob.nextRunAt), sub: nextJob.name,
+               go: () => { tab.value = 'auto' } })
+  }
+  return out.slice(0, 3)
+})
 
 /** 搜索跨四个栏过滤，但一次只显示一个栏：命中在别的栏时必须说出来并可一键跳过去，
     否则停在「文件」搜会话名会看到「没有匹配的文件」——用户读成搜不到，不会想到换栏 */
@@ -860,6 +933,59 @@ const saveShared = async v => {
   const ok = await patch({ sharedWorkdir: next },
     next ? '已开启：之后的对话共用这个工作目录' : '已关闭：每条对话各自一份目录')
   if (!ok) form.value.sharedWorkdir = saved.value.sharedWorkdir || 0
+}
+/** 记忆隔离：引擎在实例重建后生效（下一轮按新档装配），提示里说清这一点 */
+const saveMemoryIsolated = async v => {
+  const next = v === true || v === 1 ? 1 : 0
+  form.value.memoryIsolated = next
+  const ok = await patch({ memoryIsolated: next },
+    next ? '已开启：这个场子的对话不带入也不写入你的个人记忆' : '已关闭：对话照常使用你的个人记忆')
+  if (!ok) form.value.memoryIsolated = saved.value.memoryIsolated || 0
+}
+// ---------- 以此为模板再建一个（只带设置，不带历史） ----------
+const tplOpen = ref(false)
+const tplName = ref('')
+const tplSaving = ref(false)
+const openTpl = () => {
+  tplName.value = (form.value.name || '工作区') + ' · 副本'
+  tplOpen.value = true
+}
+const doCreateFromTpl = async () => {
+  const n = tplName.value.trim()
+  if (!n) { message.warning('给新工作区起个名'); return }
+  tplSaving.value = true
+  try {
+    const r = await createProject(n, id.value)
+    tplOpen.value = false
+    settingsOpen.value = false
+    message.success('已按这个场子的设置创建')
+    const created = (r && r.data && r.data.id) || ''
+    if (created) router.push('/project/' + created)
+  } catch (e) {
+    message.error(e.message || '创建失败，请重试')
+  } finally {
+    tplSaving.value = false
+  }
+}
+// ---------- 约定历史（被替换的旧版） ----------
+const histOpen = ref(false)
+const histLoading = ref(false)
+const histRows = ref([])
+const openHistory = async () => {
+  histOpen.value = true
+  histLoading.value = true
+  try {
+    histRows.value = ((await listInstructionHistory(id.value)) || {}).data || []
+  } catch (e) {
+    histRows.value = []
+    message.error(e.message || '历史加载失败，请重试')
+  } finally {
+    histLoading.value = false
+  }
+}
+const restoreNote = async row => {
+  const ok = await patch({ instructions: row.content || '' }, '已恢复该版约定（当前版本同时留痕）')
+  if (ok) histOpen.value = false
 }
 
 const workdirLabel = computed(() => form.value.workdirPath || ('projects/' + id.value))
@@ -1291,7 +1417,8 @@ const load = async () => {
       defaultAgentId: p.defaultAgentId || '',
       name: p.name || '',
       kbIds: Array.isArray(p.kbIds) ? p.kbIds : [],
-      sharedWorkdir: p.sharedWorkdir || 0
+      sharedWorkdir: p.sharedWorkdir || 0,
+      memoryIsolated: p.memoryIsolated || 0
     }
     form.value = {
       name: p.name || '',
@@ -1300,7 +1427,8 @@ const load = async () => {
       workdirPath: p.workdirPath || '',
       status: p.status || 'active',
       kbIds: Array.isArray(p.kbIds) ? [...p.kbIds] : [],
-      sharedWorkdir: p.sharedWorkdir || 0
+      sharedWorkdir: p.sharedWorkdir || 0,
+      memoryIsolated: p.memoryIsolated || 0
     }
     if (!keepDraft) instrEdit.value = false
     instrFull.value = false
@@ -1362,9 +1490,9 @@ onUnmounted(() => document.removeEventListener('visibilitychange', onAppVisible)
 watch(id, () => {
   loadedOnce.value = false
   kw.value = ''
-  saved.value = { instructions: '', defaultAgentId: '', name: '', kbIds: [], sharedWorkdir: 0 }
+  saved.value = { instructions: '', defaultAgentId: '', name: '', kbIds: [], sharedWorkdir: 0, memoryIsolated: 0 }
   form.value = { name: '', instructions: '', defaultAgentId: undefined, workdirPath: '', status: 'active',
-                 kbIds: [], sharedWorkdir: 0 }
+                 kbIds: [], sharedWorkdir: 0, memoryIsolated: 0 }
   sessions.value = []
   sessionTotal.value = 0
   sessionError.value = ''
@@ -1394,6 +1522,8 @@ watch(id, () => {
   todos.value = []
   todosError.value = ''
   todoDraft.value = ''
+  tplOpen.value = false
+  histOpen.value = false
   instrEdit.value = false
   instrFull.value = false
   settingsOpen.value = false
@@ -1499,6 +1629,32 @@ watch(id, () => {
   background: var(--app-warn-weak); font-size: var(--app-fs-sm); color: var(--app-warn-text);
 }
 .pj-todo-strip b { font-weight: 600; }
+/* ---- 动态栏「接下来」建议条：弱底 chip，一条一个动作 ---- */
+.pj-next {
+  display: flex; align-items: center; flex-wrap: wrap; gap: var(--app-sp-2); margin-bottom: var(--app-sp-2);
+}
+.pj-next-k { font-size: var(--app-fs-sm); color: var(--app-label-tertiary); flex: none; }
+.pj-next-chip {
+  display: inline-flex; align-items: baseline; gap: 6px; max-width: 100%; cursor: pointer; font: inherit;
+  font-size: var(--app-fs-sm); padding: 3px 10px; min-height: 26px; border-radius: 999px;
+  color: var(--app-label-primary); background: var(--app-accent-weak); border: 1px solid var(--app-accent-border);
+}
+.pj-next-chip b { font-weight: 500; color: var(--app-accent); flex: none; }
+.pj-next-sub { font-size: var(--app-fs-xs); color: var(--app-label-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pj-next-chip:hover { background: var(--app-accent); }
+.pj-next-chip:hover b, .pj-next-chip:hover .pj-next-sub { color: #fff; }
+/* ---- 约定历史弹窗 ---- */
+.pj-hist-list { display: flex; flex-direction: column; gap: var(--app-sp-3); max-height: 52vh; overflow: auto; }
+.pj-hist-row { border: 1px solid var(--app-border-l1); border-radius: var(--app-radius-sm); padding: var(--app-sp-2); }
+.pj-hist-meta {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--app-sp-2);
+  font-size: var(--app-fs-xs); color: var(--app-label-tertiary); margin-bottom: 4px;
+}
+.pj-hist-body {
+  font-size: var(--app-fs-sm); line-height: 1.6; color: var(--app-label-secondary);
+  white-space: pre-wrap; word-break: break-word;
+  display: -webkit-box; -webkit-line-clamp: 4; line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
+}
 
 /* ---- 内容区 ---- */
 /* 运行记录行：来源徽章 + 状态徽章（成功/失败/进行中/待审核各一色，均为弱底不抢标题） */

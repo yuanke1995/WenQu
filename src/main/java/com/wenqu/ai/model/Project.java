@@ -92,6 +92,14 @@ public class Project {
      */
     private Integer sharedWorkdir;
 
+    /**
+     * 记忆隔离：1=本区会话是「干净房间」——不注入本人已沉淀的个人记忆，也不往里写
+     * （引擎记忆闸按游客档全关：hooks 与 memory_* 工具同关，只关 hooks 仍会注入）。
+     * <p>为什么默认 0：记忆跨场子沉淀是「个人助理」的基本盘；给敏感项目/客户现场一个
+     * 不串味的场子，是显式选择而不是默认。工作区自己的上下文由约定+绑定资料域+目录文件承担。
+     */
+    private Integer memoryIsolated;
+
     /** active=正常 / archived=归档（只读保留，二期） */
     private String status;
 

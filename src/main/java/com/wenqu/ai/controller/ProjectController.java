@@ -81,10 +81,11 @@ public class ProjectController {
         // 工作区约定与默认助手：工作区页编辑、每轮注入/解析用；列表里也返回，省一次请求
         m.put("instructions", p.getInstructions() == null ? "" : p.getInstructions());
         m.put("defaultAgentId", p.getDefaultAgentId() == null ? "" : p.getDefaultAgentId());
-        // 默认检索域（绑定知识库）与共用目录开关：工作区页设置弹层编辑，检索收敛与沙盒挂载用
+        // 默认检索域（绑定知识库）与两个开关：工作区页设置弹层编辑，检索收敛/沙盒挂载/记忆闸用
         m.put("kbIds", p.getKbIds() == null || p.getKbIds().isBlank()
                 ? List.of() : new java.util.ArrayList<>(java.util.Arrays.asList(p.getKbIds().split(","))));
         m.put("sharedWorkdir", p.getSharedWorkdir() == null ? 0 : p.getSharedWorkdir());
+        m.put("memoryIsolated", p.getMemoryIsolated() == null ? 0 : p.getMemoryIsolated());
         m.put("isImplicit", Project.SELECTION_IMPLICIT.equals(p.getSelectionStatus()));
         m.put("workdirPath", p.getWorkdirPath());
         m.put("createTime", p.getCreateTime() == null ? null : p.getCreateTime().toString());
@@ -107,8 +108,9 @@ public class ProjectController {
      * kbIds 是默认检索域（绑定的知识库），sharedWorkdir 是共用工作目录开关（再受全局总闸约束）。
      */
     @Operation(summary = "更新工作区设置",
-            description = "name / instructions（工作区约定，对该工作区所有会话生效）/ defaultAgentId（工作区默认助手）/ "
-                    + "kbIds（绑定知识库清单=默认检索域，传空数组清空）/ sharedWorkdir（共用工作目录开关）。传才改，空=清空")
+            description = "name / instructions（工作区约定，对该工作区所有会话生效，变更自动留痕）/ defaultAgentId（工作区默认助手）/ "
+                    + "kbIds（绑定知识库清单=默认检索域，传空数组清空）/ sharedWorkdir（共用工作目录开关）/ "
+                    + "memoryIsolated（记忆隔离：本区会话不注入也不写入个人记忆）。传才改，空=清空")
     @PutMapping("/{id}")
     public ResultJson update(@PathVariable("id") String id, @RequestBody UpdateReq req) {
         try {
@@ -117,7 +119,8 @@ public class ProjectController {
                     req == null ? null : req.instructions(),
                     req == null ? null : req.defaultAgentId(),
                     req == null ? null : req.kbIds(),
-                    req == null ? null : req.sharedWorkdir());
+                    req == null ? null : req.sharedWorkdir(),
+                    req == null ? null : req.memoryIsolated());
             return ResultJson.ok(toDto(updated), "已保存");
         } catch (IllegalArgumentException e) {
             return ResultJson.error(400, e.getMessage());
@@ -125,7 +128,7 @@ public class ProjectController {
     }
 
     public record UpdateReq(String name, String instructions, String defaultAgentId,
-                            List<String> kbIds, Boolean sharedWorkdir) {
+                            List<String> kbIds, Boolean sharedWorkdir, Boolean memoryIsolated) {
     }
 
     @Operation(summary = "归档 / 恢复工作区", description = "body: {status: active|archived}。归档不动会话与产物，implicit 兜底容器不可归档")
@@ -359,18 +362,33 @@ public class ProjectController {
         return ResultJson.ok(out.size() > n ? out.subList(0, n) : out);
     }
 
-    @Operation(summary = "新建工作区", description = "用户显式创建一个工作区；其下可继续积累会话与产物。implicit 兜底容器不用建、也不可删")
+    @Operation(summary = "新建工作区",
+            description = "用户显式创建一个工作区。fromProjectId 可选：从本人另一个工作区复制设置"
+                    + "（约定/绑定资料域/共用目录/记忆隔离），会话与文件一概不带。implicit 兜底容器不用建、也不可删")
     @PostMapping
     public ResultJson create(@RequestBody CreateReq req) {
         try {
-            Project p = projectService.create(RequestUser.uid(), req == null ? null : req.name());
+            Project p = projectService.create(RequestUser.uid(),
+                    req == null ? null : req.name(), req == null ? null : req.fromProjectId());
             return ResultJson.ok(toDto(p), "已创建");
         } catch (IllegalArgumentException e) {
             return ResultJson.error(400, e.getMessage());
         }
     }
 
-    public record CreateReq(String name) {
+    public record CreateReq(String name, String fromProjectId) {
+    }
+
+    @Operation(summary = "约定留痕",
+            description = "本工作区约定被替换掉的旧版（按被替换时刻倒序，最多 20 条）；"
+                    + "content=null 表示当时约定为空。恢复=把旧值存回约定（走更新接口，会再次留痕）")
+    @GetMapping("/{id}/instruction-history")
+    public ResultJson instructionHistory(@PathVariable("id") String id) {
+        try {
+            return ResultJson.ok(projectService.instructionHistory(RequestUser.uid(), id));
+        } catch (IllegalArgumentException e) {
+            return ResultJson.error(400, e.getMessage());
+        }
     }
 
     // ==================== 工作区事项（这个场子要做的事：记下 → 去做 → 勾掉） ====================
