@@ -34,6 +34,8 @@ import java.util.Map;
  *   <li>他人 → 仅按库显式配置的 share_config 共享范围可见；普通用户对别人的库**封顶只读**（看文档、检索引用），不能改；</li>
  *   <li>个人默认知识库（问渠，每人一张、系统懒创建）是归属人的私有库：仅创建者与管理员级可见可管。</li>
  * </ul>
+ * 官方内置库（问渠使用手册，builtin=1）例外：管理页（列表/详情/文档/知识块/回收站）仅管理员级可见——
+ * 普通用户的消费入口是帮助中心（/manual 独立只读端点）与对话检索（read_scope=global），不受影响。
  * 管理员照旧全量可见可管。检索链路的可见性过滤由既有检索层负责，与本接口口径同源。
  *
  * @author yuanke
@@ -157,6 +159,12 @@ public class KnowledgeBaseController {
         all = all.stream().filter(m -> visibility.canRead(p,
                 (String) m.get("shareConfig"), (String) m.get("createdBy"),
                 ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)).toList();
+        // 官方内置库（问渠使用手册）：知识库管理页仅管理员可见——它是系统资源而非用户资产，
+        // 普通用户在这里看到只会误以为可翻可改。消费入口不受影响：帮助中心（/manual 独立只读端点）
+        // 与对话检索链路（read_scope=global）仍全员可读。
+        if (!roleService.isAdminCode(RequestUser.role())) {
+            all = all.stream().filter(m -> !Integer.valueOf(1).equals(m.get("builtin"))).toList();
+        }
         return ResultJson.ok(all);
     }
 
@@ -165,6 +173,11 @@ public class KnowledgeBaseController {
     public ResultJson get(@PathVariable("id") String id) {
         KnowledgeBase kb = kbService.get(id);
         if (kb == null) return ResultJson.error("知识库不存在");
+        // 官方内置库：详情与列表同口径仅管理员（不可见按不存在处理，不泄露存在性）
+        if (kb.getBuiltin() != null && kb.getBuiltin() == 1
+                && !roleService.isAdminCode(RequestUser.role())) {
+            return ResultJson.error("知识库不存在");
+        }
         if (!visibility.canRead(principal(), kb.getShareConfig(), kb.getCreatedBy(),
                 ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
             return ResultJson.error("知识库不存在");

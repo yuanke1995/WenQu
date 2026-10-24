@@ -90,6 +90,11 @@ public class DocumentController {
             if (kb == null || !visibility.canRead(p, kb.getShareConfig(), kb.getCreatedBy(), kind)) {
                 throw new BizException("文档不存在");
             }
+            // 官方内置库文档（手册篇目）：管理侧仅管理员可读——普通用户的消费入口在帮助中心
+            // （ManualController 独立只读端点），不经本接口
+            if (kb.getBuiltin() != null && kb.getBuiltin() == 1 && !admin()) {
+                throw new BizException("文档不存在");
+            }
         }
     }
 
@@ -213,9 +218,15 @@ public class DocumentController {
             if (kb == null || !visibility.canRead(p, kb.getShareConfig(), kb.getCreatedBy(), kind)) {
                 return ResultJson.ok(List.of());
             }
+            // 官方内置库：与 /kb 列表同口径仅管理员可见——不可见按空列表处理，不泄露存在性
+            if (kb.getBuiltin() != null && kb.getBuiltin() == 1 && !admin()) {
+                return ResultJson.ok(List.of());
+            }
         }
         var visibleKbIds = new java.util.HashSet<String>();
         for (var kb : kbService.list()) {
+            // 全量视图同样剔除：官方内置库不进普通用户的可见库集合（手册篇目不混进「全部文档」）
+            if (kb.getBuiltin() != null && kb.getBuiltin() == 1 && !admin()) continue;
             if (visibility.canRead(p, kb.getShareConfig(), kb.getCreatedBy(), kind)) {
                 visibleKbIds.add(kb.getId());
             }
@@ -258,11 +269,18 @@ public class DocumentController {
         return ResultJson.ok("已移入回收站");
     }
 
-    @Operation(summary = "回收站列表", description = "软删文档（内容保留可恢复）；kbId 过滤时默认库并入 kb_id 为空的历史行，最近 500 条")
+    @Operation(summary = "回收站列表", description = "软删文档（内容保留可恢复）；kbId 过滤时默认库并入 kb_id 为空的历史行，最近 500 条；"
+            + "管理员全量，普通用户仅自己上传/被授权管理的行（官方内置库的旧篇目CreatedBy=system，无 manage 授予，天然不可见）")
     @GetMapping("/recycle")
     public ResultJson recycle(@Parameter(description = "知识库 ID（空=全部）")
                               @RequestParam(value = "kbId", required = false) String kbId) {
-        return ResultJson.ok(documentService.recycleList(kbId));
+        // 原先这里不过滤任何权限：普通用户不传 kbId 能翻到全平台（含官方手册库同步替换下来的
+        // 旧篇目）的软删内容。可见口径与操作权对齐（restore/purge 走 canManage）：
+        // 管理员全量（页头回收站徽标语义），普通用户按行判管理权。
+        var kind = com.wenqu.ai.service.ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE;
+        return ResultJson.ok(documentService.recycleList(kbId).stream()
+                .filter(d -> admin() || visibility.canManage(principal(), d.getShareConfig(), d.getCreatedBy(), kind))
+                .toList());
     }
 
     @Operation(summary = "从回收站恢复", description = "同名生效文档冲突或所属知识库已删除时拒绝；向量未动，恢复即检索可用")

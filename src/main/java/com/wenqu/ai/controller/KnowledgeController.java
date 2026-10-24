@@ -52,6 +52,8 @@ public class KnowledgeController {
     private final KeywordIndexService keywordIndexService;
     private final com.wenqu.ai.service.ResourceVisibilityService visibility;
     private final com.wenqu.ai.service.KnowledgeBaseService kbService;
+    /** 官方内置库的知识块在管理侧仅管理员可读（判定用） */
+    private final com.wenqu.ai.service.RoleService roleService;
 
     private com.wenqu.ai.service.ResourceVisibilityService.Principal principal() {
         return new com.wenqu.ai.service.ResourceVisibilityService.Principal(
@@ -67,6 +69,12 @@ public class KnowledgeController {
         if (doc.getKbId() != null) {
             var kb = kbService.get(doc.getKbId());
             if (kb == null || !visibility.canRead(principal(), kb.getShareConfig(), kb.getCreatedBy(), kind)) {
+                throw new BizException("无权访问该文档的知识块");
+            }
+            // 官方内置库（手册篇目）：管理侧知识块仅管理员可读（/list 与 /search 共用此门槛）；
+            // 普通用户看手册走帮助中心（ManualController 独立只读端点），对话检索也不经本接口
+            if (kb.getBuiltin() != null && kb.getBuiltin() == 1
+                    && !roleService.isAdminCode(RequestUser.role())) {
                 throw new BizException("无权访问该文档的知识块");
             }
         }
