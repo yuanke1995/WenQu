@@ -500,6 +500,7 @@ public class ConfigService {
         d.put("ratelimit.uploadPerMinute", String.valueOf(properties.getRatelimit().getUploadPerMinute()));
         d.put("eval.judgeEnabled", "false");   // 自动体检 LLM 评判（默认关，评估集大时耗时/成本明显）
         d.put("eval.judgeModel", "");              // 评判用独立模型（留空=跳过 LLM 自动评判）
+        d.put("eval.answerModel", "");             // 答案级评测的生成模型（留空=复用评判模型）
         d.put("eval.autoIntervalMs", "86400000");  // 自动体检周期(ms，≤0=暂停)
         d.put("eval.autoThresholdPct", "10");      // 退化判定：指标相对跌幅百分比阈值
         // 定时任务（schedule 包读取；≤0=暂停对应任务）

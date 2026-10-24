@@ -2943,6 +2943,23 @@
       "tier": 3
     },
     {
+      "backendKey": "notification.dedupWindow",
+      "panel": "maintenance",
+      "section": 12,
+      "group": "notification",
+      "key": "dedupWindow",
+      "path": "notification.dedupWindow",
+      "label": "同类通知合并窗口(分钟)",
+      "type": "number",
+      "def": 1440,
+      "min": 0,
+      "max": 10080,
+      "step": 60,
+      "width": 240,
+      "note": "同一目标在窗口内重复发生、且仍未读的同类通知合并为一条（命中次数累加、内容刷新到最新），避免刷屏；0=关闭合并（逐条保留）",
+      "tier": 3
+    },
+    {
       "backendKey": "notification.cleanupIntervalMs",
       "panel": "maintenance",
       "section": 12,
@@ -3180,6 +3197,57 @@
           "30 分钟"
         ]
       ]
+    },
+    {
+      "backendKey": "parse.taskLeaseSeconds",
+      "panel": "maintenance",
+      "section": 9,
+      "group": "parse",
+      "key": "taskLeaseSeconds",
+      "path": "parse.taskLeaseSeconds",
+      "label": "任务租约(秒)",
+      "type": "number",
+      "def": 0,
+      "min": 0,
+      "max": 3600,
+      "step": 60,
+      "width": 140,
+      "note": "崩溃兜底：占用中的任务超过租约仍未完成，收回重排队（覆盖进程崩溃/线程卡死）；0=按解析超时+300秒自动算。手动改小于解析超时会把在跑的任务误判成失联",
+      "tier": 3
+    },
+    {
+      "backendKey": "parse.embedConcurrency",
+      "panel": "maintenance",
+      "section": 9,
+      "group": "parse",
+      "key": "embedConcurrency",
+      "path": "parse.embedConcurrency",
+      "label": "向量化并发数",
+      "type": "number",
+      "def": 2,
+      "min": 1,
+      "max": 8,
+      "step": 1,
+      "width": 140,
+      "note": "同一时刻允许提交的向量化批次并发数，防止 embedding 服务被打爆",
+      "tier": 3
+    },
+    {
+      "backendKey": "parse.ocrGateConcurrency",
+      "panel": "maintenance",
+      "section": 9,
+      "group": "parse",
+      "key": "ocrGateConcurrency",
+      "path": "parse.ocrGateConcurrency",
+      "label": "OCR 并发闸门",
+      "type": "number",
+      "def": 1,
+      "min": 1,
+      "max": 8,
+      "step": 1,
+      "width": 140,
+      "note": "每个 OCR 引擎同时处理的图片数；多线解析时必须同步放开此闸门",
+      "tier": 3
     },
     {
       "backendKey": "parse.retryMaxAttempts",
