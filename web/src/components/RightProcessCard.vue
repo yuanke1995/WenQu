@@ -21,8 +21,10 @@
           </span>
           <span class="rpc-name" :title="toolDesc(t.name, t.hint)">{{ toolLabel(t.name, t.label) }}</span>
           <span v-if="t.denied" class="rpc-dur" title="被守卫挡下，没有真正执行">被挡下</span>
-          <span v-else-if="t.elapsedMs != null" class="rpc-dur">{{ toolDuration(Number(t.elapsedMs) || 0) }}</span>
+          <!-- 在跑的排在前：start 那一份帧带的是 elapsedMs=0，按耗时先判会给正在跑的那一步报「0ms」，
+               而「进行中」这一条永远轮不到——并发派遣一屏三行 0ms，读起来像三步都跑完了 -->
           <span v-else-if="t.status === 'start'" class="rpc-dur is-run">进行中</span>
+          <span v-else-if="t.elapsedMs != null" class="rpc-dur">{{ toolDuration(Number(t.elapsedMs) || 0) }}</span>
         </div>
         <div v-if="omitted" class="rpc-more">前面还有 {{ omitted }} 步</div>
       </div>
