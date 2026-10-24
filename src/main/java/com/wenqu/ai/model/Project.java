@@ -17,14 +17,15 @@ import java.time.LocalDateTime;
  * 于是「换个会话 = 换一个世界」——文件不跟过去、成果回不到上下文。
  * 本类补的是中间那个缺失的聚合根。
  *
- * <p><b>三条设计边界</b>（与 {@code schema.sql} 的建表注释同源，改一处必须改另一处）：
- * <ol>
- *   <li>归属 {@code uid}，<b>不是租户也不是部门</b>：问渠是单公司私有化产品
- *       （{@code tenantId} 全仓 0 命中），引入共享工作区等于引入一套新权限模型；</li>
- *   <li><b>不是权限边界</b>：{@link #id} 只做归属与过滤，任何检索/可见性判定都不读它；</li>
- *   <li><b>不是必填概念</b>：每人一个 {@code implicit} 兜底容器由后台懒创建，
- *       用户不建工作区也能照常问答，只是产物开始有归属。</li>
- * </ol>
+   * <p><b>三条设计边界</b>（与 {@code schema.sql} 的建表注释同源，改一处必须改另一处）：
+   * <ol>
+   *   <li>归属 {@code uid}，<b>不是租户也不是部门</b>：问渠是单公司私有化产品
+   *       （{@code tenantId} 全仓 0 命中），引入共享工作区等于引入一套新权限模型；</li>
+   *   <li><b>不是权限边界</b>：{@link #id} 只做归属与过滤；检索读 {@link #kbIds} 是「用户给本区
+   *       配的默认检索域」（显式 @ 库 / 助手绑定优先于它），不是按归属判定允许看什么的墙；</li>
+   *   <li><b>不是必填概念</b>：每人一个 {@code implicit} 兜底容器由后台懒创建，
+   *       用户不建工作区也能照常问答，只是产物开始有归属。</li>
+   * </ol>
  *
  * <p><b>删除语义</b>：删工作区<b>不删</b>其下会话与产物，只把它们的 {@code project_id} 置 {@code NULL}
  * ——{@code Artifact} 的类注释写着「会话可以删…但产出的成果仍归人生」，级联删除会直接违反它。
@@ -73,6 +74,23 @@ public class Project {
      * <p>可空：空 = 沿用平台默认智能体。
      */
     private String defaultAgentId;
+
+    /**
+     * 工作区绑定知识库（逗号分隔，与 {@code Agent.knowledgeBaseIds} 同一口径）：
+     * <b>默认检索域</b>——本区会话在没有显式域（助手未绑库且未 @ 库）时只搜这些库。
+     * <p>为什么是「默认域」而不是墙：@ 提及是用户当轮的显式动作、优先于默认值；助手绑定的库
+     * 是显式配置、也优先于默认值。两者都不在时它才说话——没有它，「进了这个工作区，
+     * 模型就该围绕本区的资料干活」只是一句约定里的空话。
+     */
+    private String kbIds;
+
+    /**
+     * 共用工作目录：1=本区所有会话的沙盒挂 {@code projects/{id}}（跨会话互见文件、
+     * 上传的材料模型直接可读）；0=各会话各自 {@code sessions/{会话}}。
+     * <p>再受全局总闸 {@code sandbox.projectWorkdirEnabled} 约束（应急时一键全退回会话级），
+     * 生效判据统一走 {@code ProjectService#workdirShared}——三处读点各写一份迟早漂移。
+     */
+    private Integer sharedWorkdir;
 
     /** active=正常 / archived=归档（只读保留，二期） */
     private String status;

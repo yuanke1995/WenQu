@@ -28,6 +28,20 @@
                           @change="saveAgent" />
               </div>
               <div class="pj-set-note">助手带的知识范围与工具会一起生效；只影响这个工作区里以后的新对话</div>
+              <template v-if="!isImplicit">
+                <div class="pj-set-row pj-set-row-top">
+                  <span class="pj-k">工作区资料</span>
+                  <a-select class="pj-v" mode="multiple" :value="form.kbIds" :options="kbOptions"
+                            placeholder="不绑定：检索沿用我的全部知识库" :max-tag-count="3" allow-clear
+                            :loading="kbLoading" @change="saveKb" />
+                </div>
+                <div class="pj-set-note">绑定后，这个场子里的对话没点名别的库、助手也没绑库时，检索只搜这里选的库——进了场子就搜场子里的资料；@ 某个别的库仍可临时越出</div>
+                <div class="pj-set-row">
+                  <span class="pj-k">共用目录</span>
+                  <a-switch :checked="form.sharedWorkdir === 1" :disabled="archiving" @change="saveShared" />
+                </div>
+                <div class="pj-set-note">开启后本区所有对话共用一个工作目录：这里放的文件模型直接可读、跨对话互相可见；关闭则每条对话各自一份目录，互相看不见</div>
+              </template>
               <div class="pj-set-row pj-set-row-top">
                 <span class="pj-k">工作目录</span>
                 <div class="pj-path-cell">
@@ -148,11 +162,13 @@
                    @change="onPickFiles" @click="onInputClick" />
 
             <div v-if="uploading" class="pj-hint pj-tabnote" role="status" aria-live="polite">{{ uploading }}</div>
-            <!-- 目录不同步这件事必须在这里说出来：关着时沙盒挂的是每条对话各自的目录，用户传完去对话里
-                 问「读一下我传的文件」只会得到「查无此文件」。判据由服务端随列表给，前端不猜配置。 -->
+            <!-- 目录不同步这件事必须在这里说出来：模型用的是每条对话各自的沙盒目录时，用户传完去对话里
+                 问「读一下我传的文件」只会得到「查无此文件」。没共用有两种原因（本区开关没开 / 管理员关了
+                 总闸），各自的解法不同，提示必须分开说——判据由服务端随列表给，前端不猜配置。 -->
             <div v-if="!agentShared && !filesError" class="pj-hint pj-tabnote">
-              模型现在用的是每条对话各自的沙盒目录，这里放的文件它看不到；要让对话跟着这个目录干活，
-              需要管理员在系统设置里开启「工作区共用目录」。
+              {{ sharedHint }}
+              <button v-if="form.sharedWorkdir !== 1 && !isArchived" class="pj-link-btn"
+                      @click="saveShared(true)">打开共用目录</button>
             </div>
             <!-- 截断：本层只列了最近这些，更早的要靠导出或新建文件夹把它们分开 -->
             <div v-if="filesTruncated && !filesError" class="pj-hint pj-tabnote">
@@ -388,7 +404,7 @@ import { ref, computed, onMounted, onUnmounted, watch, nextTick, defineComponent
 import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { PlusOutlined, CopyOutlined, UploadOutlined, FolderAddOutlined, FolderFilled, MoreOutlined } from '@ant-design/icons-vue'
-import { getProject, updateProject, deleteProject, listArtifacts, listSessions, listAvailableAgents, listProjectFiles,
+import { getProject, updateProject, deleteProject, listArtifacts, listSessions, listAvailableAgents, listKnowledgeBases, listProjectFiles,
          downloadProjectFile, listScheduledJobs, createScheduledJob, runScheduledJob, listProjectWorkflows, runWorkflow,
          setProjectStatus, setNewSessionProject, getProjectRuns,
          exportProjectZip, uploadProjectFiles, createProjectDir, moveProjectEntry, projectBatch } from '../api'
@@ -429,8 +445,9 @@ const isImplicit = ref(false)
 /** 归档=收工：新建对话/任务/运行一律禁用（后端同样拒绝，双保险；这里先给可见的反馈） */
 const isArchived = computed(() => form.value.status === 'archived')
 /** saved = 服务端当前值（读态显示它）；form = 编辑中的副本。分开才判得出「未保存」 */
-const saved = ref({ instructions: '', defaultAgentId: '', name: '' })
-const form = ref({ name: '', instructions: '', defaultAgentId: undefined, workdirPath: '', status: 'active' })
+const saved = ref({ instructions: '', defaultAgentId: '', name: '', kbIds: [], sharedWorkdir: 0 })
+const form = ref({ name: '', instructions: '', defaultAgentId: undefined, workdirPath: '', status: 'active',
+                   kbIds: [], sharedWorkdir: 0 })
 const sessions = ref([])
 /** 会话总数（列表接口只返回首页 50 条，计数要用 total） */
 const sessionTotal = ref(0)
@@ -482,6 +499,8 @@ const jobFormOpen = ref(false)
 const jobSaving = ref(false)
 const jobForm = ref({ name: '', prompt: '', cron: '0 9 * * 1' })
 const agents = ref([])
+const kbList = ref([])
+const kbLoading = ref(false)
 const kw = ref('')
 const loadedOnce = ref(false)
 const instrEdit = ref(false)
@@ -510,6 +529,14 @@ const agentName = computed(() => {
   const a = agents.value.find(x => x.id === (form.value.defaultAgentId || saved.value.defaultAgentId))
   return a ? a.name : ''
 })
+/** 绑定候选 = 我的知识库（内置手册库没有名字场景，过滤掉 builtin，避免可选不可用的项） */
+const kbOptions = computed(() => kbList.value
+  .filter(k => !k.builtin)
+  .map(k => ({ value: k.id, label: k.name || k.id })))
+/** 没共用有两种原因，解法不同：本区开关没开（就地打开）/ 管理员关了总闸（只能去找管理员） */
+const sharedHint = computed(() => form.value.sharedWorkdir === 1
+  ? '管理员在系统设置里关掉了「工作区共用目录」总闸：模型现在用的是每条对话各自的沙盒目录，这里放的文件它看不到。'
+  : '这个工作区没开「共用目录」：模型用的是每条对话各自的沙盒目录，这里放的文件它看不到。打开后对话就能跟着这个目录干活。')
 
 const toMs = v => {
   if (v == null) return 0
@@ -711,6 +738,22 @@ const saveAgent = async v => {
   const ok = await patch({ defaultAgentId: next || '' },
     next ? `默认助手已设为「${label}」` : '已取消默认助手，跟随平台默认智能体')
   if (!ok) form.value.defaultAgentId = saved.value.defaultAgentId || undefined
+}
+/** 绑定知识库＝默认检索域，改完即存（同一理由：留着没生效的选择骗人）；失败退回服务端真值 */
+const saveKb = async list => {
+  const next = Array.isArray(list) ? list.filter(Boolean) : []
+  form.value.kbIds = next
+  const ok = await patch({ kbIds: next },
+    next.length ? '已绑定，这个场子里的对话默认检索这些库' : '已解绑，检索沿用我的全部知识库')
+  if (!ok) form.value.kbIds = [...(saved.value.kbIds || [])]
+}
+/** 共用目录开关：后端立即生效（新开轮次按新值挂目录），前端顺手重拉文件列表刷新「模型看得见吗」 */
+const saveShared = async v => {
+  const next = v === true || v === 1 ? 1 : 0
+  form.value.sharedWorkdir = next
+  const ok = await patch({ sharedWorkdir: next },
+    next ? '已开启：之后的对话共用这个工作目录' : '已关闭：每条对话各自一份目录')
+  if (!ok) form.value.sharedWorkdir = saved.value.sharedWorkdir || 0
 }
 
 const workdirLabel = computed(() => form.value.workdirPath || ('projects/' + id.value))
@@ -1088,14 +1131,18 @@ const load = async () => {
     saved.value = {
       instructions: p.instructions || '',
       defaultAgentId: p.defaultAgentId || '',
-      name: p.name || ''
+      name: p.name || '',
+      kbIds: Array.isArray(p.kbIds) ? p.kbIds : [],
+      sharedWorkdir: p.sharedWorkdir || 0
     }
     form.value = {
       name: p.name || '',
       instructions: keepDraft ? draft : (p.instructions || ''),
       defaultAgentId: p.defaultAgentId || undefined,
       workdirPath: p.workdirPath || '',
-      status: p.status || 'active'
+      status: p.status || 'active',
+      kbIds: Array.isArray(p.kbIds) ? [...p.kbIds] : [],
+      sharedWorkdir: p.sharedWorkdir || 0
     }
     if (!keepDraft) instrEdit.value = false
     instrFull.value = false
@@ -1138,6 +1185,13 @@ onMounted(async () => {
     const r = await listAvailableAgents()
     agents.value = (r && r.data) || []
   } catch (e) { agents.value = [] }
+  // 绑定候选：拉取失败只影响设置弹层里的候选清单，不影响本页其他功能
+  kbLoading.value = true
+  try {
+    const r = await listKnowledgeBases()
+    kbList.value = (r && r.data) || []
+  } catch (e) { kbList.value = [] }
+  finally { kbLoading.value = false }
 })
 onUnmounted(() => document.removeEventListener('visibilitychange', onAppVisible))
 
@@ -1148,8 +1202,9 @@ onUnmounted(() => document.removeEventListener('visibilitychange', onAppVisible)
 watch(id, () => {
   loadedOnce.value = false
   kw.value = ''
-  saved.value = { instructions: '', defaultAgentId: '', name: '' }
-  form.value = { name: '', instructions: '', defaultAgentId: undefined, workdirPath: '', status: 'active' }
+  saved.value = { instructions: '', defaultAgentId: '', name: '', kbIds: [], sharedWorkdir: 0 }
+  form.value = { name: '', instructions: '', defaultAgentId: undefined, workdirPath: '', status: 'active',
+                 kbIds: [], sharedWorkdir: 0 }
   sessions.value = []
   sessionTotal.value = 0
   sessionError.value = ''

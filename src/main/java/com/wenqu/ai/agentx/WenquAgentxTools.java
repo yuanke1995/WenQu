@@ -32,6 +32,8 @@ public class WenquAgentxTools {
 
     private final KnowledgeRetrievalTool knowledgeRetrieval;
     private final RetrievalScopeService retrievalScope;
+    /** 工作区容器的服务：本轮检索域要读会话所属工作区绑定的知识库（默认检索域，见 {@link #newTurn}） */
+    private final com.wenqu.ai.service.ProjectService projectService;
     private final AgentService agentService;
     private final ChatRunRuntime runtime;
     private final ConfigService configService;
@@ -56,6 +58,7 @@ public class WenquAgentxTools {
     private volatile com.wenqu.ai.agent.subagent.SubAgentBranchRuntime.TurnRunner branchTurnRunner;
 
     public WenquAgentxTools(KnowledgeRetrievalTool knowledgeRetrieval, RetrievalScopeService retrievalScope,
+                            com.wenqu.ai.service.ProjectService projectService,
                             AgentService agentService, ChatRunRuntime runtime, ConfigService configService,
                             RerankService rerankService, ImageUrlSigner imageUrlSigner,
                             com.wenqu.ai.service.ToolAssemblyService toolAssembly,
@@ -70,6 +73,7 @@ public class WenquAgentxTools {
                             com.wenqu.ai.service.DocumentMetaCache documentMetaCache) {
         this.knowledgeRetrieval = knowledgeRetrieval;
         this.retrievalScope = retrievalScope;
+        this.projectService = projectService;
         this.agentService = agentService;
         this.runtime = runtime;
         this.configService = configService;
@@ -345,11 +349,26 @@ public class WenquAgentxTools {
                                        ExecutionPolicy policy, TurnHooks hooks) {
         KnowledgeRetrievalTool.KbScope scope =
                 retrievalScope.resolve(agentOf(cmd), cmd.getUserId(), cmd.isGuestMode());
+        java.util.Set<String> mentionedKbIds = mentionedKbIdsOf(cmd);
+        // 工作区的**默认检索域**：工作区绑定了知识库、且本轮没有任何显式域（助手未绑库、未 @ 库）
+        // 时，把 kbIds 收成绑定库——「进了这个场子，没说就搜这里的资料」。它是默认值不是墙：
+        // @ 提他与助手绑定都是显式动作、优先于它——@ 在场就整段跳过（下面的提及块把 kbIds 收成
+        // 点名的库，不能被默认域抢在前面顶掉），助手绑定则体现在 kbIds 已非 null。解析失败不挡轮。
+        if (scope.kbIds() == null && mentionedKbIds.isEmpty()) {
+            try {
+                List<String> projectKbIds = projectService.kbIdsOfSession(cmd.getSessionId());
+                if (!projectKbIds.isEmpty()) {
+                    scope = new KnowledgeRetrievalTool.KbScope(projectKbIds, scope.docIds(), null, scope.tags());
+                }
+            } catch (Exception e) {
+                log.warn("[agentx] 工作区检索域解析失败（本轮按原口径检索）session={}: {}",
+                        cmd.getSessionId(), e.getMessage());
+            }
+        }
         // @ 知识库提及的收窄（此前 mentions 里 kb 类型全仓无消费方，@ 了只留一行名字）：
         // 向量路的 kbIds 只在「没有围墙域」时收成点名的库——围墙域原样保留，域外被点名的库
         // 不因提及越界；kbFilter 恒等设置，命中块的所属库必须落在点名集合里（关键词路本就
         // 不按库界走，不设这道后过滤会留一半口子，见 KnowledgeRetrievalTool 的同名过滤段）。
-        java.util.Set<String> mentionedKbIds = mentionedKbIdsOf(cmd);
         if (!mentionedKbIds.isEmpty()) {
             scope = new KnowledgeRetrievalTool.KbScope(
                     scope.kbIds() == null ? mentionedKbIds : scope.kbIds(),

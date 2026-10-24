@@ -653,8 +653,9 @@ CREATE TABLE IF NOT EXISTS `c_ai_artifact` (
 -- 三条设计边界（写下来是为了挡住下一轮"顺手也做了吧"）：
 --   1. 归属 uid，**不是租户也不是部门**：问渠是单公司私有化产品（tenantId 全仓 0 命中），
 --      引入共享工作区等于引入一套新权限模型，不在本表范围；
---   2. **不是权限边界**：project_id 只做归属与过滤，任何检索/可见性判定都不读它
---      （walled 口径维持 P5 的解绑决定，别顺手加回来）；
+--   2. **不是权限边界**：project_id 只做归属与过滤；walled 口径维持 P5 的解绑决定。
+--      2026-10-24 起检索会读 kb_ids——但那是**默认检索域**（用户自己给本区配的资料范围，
+--      显式 @ 库 / 助手绑定都优先于它），不是按归属判定"允许看什么"的墙，边界不破；
 --   3. **不是必填概念**：每人一个 implicit 兜底容器由后台懒创建，用户不建工作区也能照常问答，
 --      只是产物开始有归属。
 -- ============================================
@@ -668,6 +669,8 @@ CREATE TABLE IF NOT EXISTS `c_ai_project` (
     `directory_mode`   VARCHAR(20)  NOT NULL DEFAULT 'managed' COMMENT 'managed=平台托管目录 / linked=关联用户已有目录（暂未实现，保留位）',
     `instructions`     TEXT         DEFAULT NULL COMMENT '工作区约定：写一次即对该工作区**所有会话**生效（每轮注入 system prompt 的工作背景段）。这是「工作区」与「分类标签」的分界——没有它，每条对话都得重新交代背景',
     `default_agent_id` VARCHAR(50)  DEFAULT NULL COMMENT '工作区默认助手：会话归属该工作区且用户没显式选助手时用它作答，其知识库范围随助手生效（工作区因此有自己的资料域）',
+    `kb_ids`           VARCHAR(512) DEFAULT NULL COMMENT '工作区绑定知识库（逗号分隔，c_ai_knowledge_base.id；空=不收窄）。这是**默认检索域**不是权限墙：本区会话没有显式域（助手未绑库且未 @ 库）时只搜这些库，@ 提及其他库仍可越出（显式动作优先于默认值），助手绑定的库也优先于它',
+    `shared_workdir`   INT          NOT NULL DEFAULT 0 COMMENT '共用工作目录: 1=本工作区所有会话的沙盒挂 projects/{id}（跨会话互见文件、上传的材料模型直接可读）0=各会话各自 sessions/{会话}。存量行与 implicit 兜底容器一律 0（不共享），只有 create() 显式给新建工作区置 1；另受全局总闸 sandbox.projectWorkdirEnabled 约束（应急时一键全退回会话级）',
     `status`           VARCHAR(20)  NOT NULL DEFAULT 'active' COMMENT 'active=正常 / archived=归档（只读保留，二期）',
     `deleted`          INT          NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0=正常, 1=已删除（删工作区不删其下会话与产物，只把它们的 project_id 置 NULL）',
     `idempotency_key`  VARCHAR(128) DEFAULT NULL COMMENT '幂等创建键（自动建 implicit 容器时防并发重复插）',

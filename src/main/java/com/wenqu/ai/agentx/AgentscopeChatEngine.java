@@ -98,6 +98,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private final ModelRegistryService modelRegistry;
     /** 工作区约定：注入 system prompt 的工作背景段（无工作区/无约定时为空） */
     private final com.wenqu.ai.service.ProjectService projectService;
+    /** 工作目录简报的来源：工作背景段旁边再给模型一份「目录里有什么」的清单（见 {@link #projectContext}） */
+    private final com.wenqu.ai.service.ProjectFileService projectFileService;
     private final ConfigService configService;
     private final AppProperties properties;
     private final WenquAgentxTools tools;
@@ -236,6 +238,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                                com.wenqu.ai.service.QaLogService qaLog,
                                com.wenqu.ai.agent.tool.ToolRegistry toolRegistry,
                                com.wenqu.ai.service.ProjectService projectService,
+                               com.wenqu.ai.service.ProjectFileService projectFileService,
                                com.wenqu.ai.skill.WenquSkillRepository skillRepository,
                                com.wenqu.ai.service.OrgService orgService,
                                com.wenqu.ai.service.UsageLedgerService usageLedger,
@@ -248,6 +251,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                                java.util.function.Function<ChatCommand, com.wenqu.ai.service.ChatService.TurnModel> modelResolver) {
         this.modelRegistry = modelRegistry;
         this.projectService = projectService;
+        this.projectFileService = projectFileService;
         this.configService = configService;
         this.properties = properties;
         this.tools = tools;
@@ -2466,14 +2470,16 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     /**
-     * 本轮的**工作背景段**：该工作区在工作区页写的约定，对工作区内所有会话全程有效。
-     * <p>取不到/没写约定一律返回空串——不能因为工作背景读失败就把整轮打挂，
-     * 也不能凭空塞一段「这是兜底容器」的噪声（每轮都是纯 token 成本）。
+     * 本轮的**工作背景段**：该工作区在工作区页写的约定（对所有会话全程有效）
+     * ＋ 工作区目录的文件简报（目录里有什么，模型才知道该去读哪份）。
+     * <p>两段各自取不到就各自缺席：没写约定不编一段空话，目录不共用/读失败不注入读不到的清单
+     * ——不能因为工作背景读失败就把整轮打挂，也不能凭空塞「这是兜底容器」的噪声（每轮都是纯 token 成本）。
      */
     private String projectContext(ChatCommand cmd) {
         try {
             String ctx = projectService.projectContextOfSession(cmd.getSessionId());
-            return ctx == null ? "" : ctx;
+            String files = projectFileService.promptBriefOfSession(cmd.getSessionId());
+            return (ctx == null ? "" : ctx) + (files == null ? "" : files);
         } catch (Exception e) {
             log.warn("[agentx] 工作背景读取失败（本轮不注入）session={}: {}", cmd.getSessionId(), e.getMessage());
             return "";

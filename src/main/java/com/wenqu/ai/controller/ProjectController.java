@@ -79,6 +79,10 @@ public class ProjectController {
         // 工作区约定与默认助手：工作区页编辑、每轮注入/解析用；列表里也返回，省一次请求
         m.put("instructions", p.getInstructions() == null ? "" : p.getInstructions());
         m.put("defaultAgentId", p.getDefaultAgentId() == null ? "" : p.getDefaultAgentId());
+        // 默认检索域（绑定知识库）与共用目录开关：工作区页设置弹层编辑，检索收敛与沙盒挂载用
+        m.put("kbIds", p.getKbIds() == null || p.getKbIds().isBlank()
+                ? List.of() : new java.util.ArrayList<>(java.util.Arrays.asList(p.getKbIds().split(","))));
+        m.put("sharedWorkdir", p.getSharedWorkdir() == null ? 0 : p.getSharedWorkdir());
         m.put("isImplicit", Project.SELECTION_IMPLICIT.equals(p.getSelectionStatus()));
         m.put("workdirPath", p.getWorkdirPath());
         m.put("createTime", p.getCreateTime() == null ? null : p.getCreateTime().toString());
@@ -96,25 +100,30 @@ public class ProjectController {
     }
 
     /**
-     * 更新工作区设置。三个字段都是「传才改」：不传保持原值，传空串表示清空。
+     * 更新工作区设置。各字段都是「传才改」：不传保持原值，传空串/空列表表示清空。
      * <p>工作区约定与默认助手是「真实工作区」与「分类标签」的分界，故这里单独成端点而不是混在重命名里。
+     * kbIds 是默认检索域（绑定的知识库），sharedWorkdir 是共用工作目录开关（再受全局总闸约束）。
      */
     @Operation(summary = "更新工作区设置",
-            description = "name / instructions（工作区约定，对该工作区所有会话生效）/ defaultAgentId（工作区默认助手）。传才改，空串=清空")
+            description = "name / instructions（工作区约定，对该工作区所有会话生效）/ defaultAgentId（工作区默认助手）/ "
+                    + "kbIds（绑定知识库清单=默认检索域，传空数组清空）/ sharedWorkdir（共用工作目录开关）。传才改，空=清空")
     @PutMapping("/{id}")
     public ResultJson update(@PathVariable("id") String id, @RequestBody UpdateReq req) {
         try {
             Project updated = projectService.update(RequestUser.uid(), id,
                     req == null ? null : req.name(),
                     req == null ? null : req.instructions(),
-                    req == null ? null : req.defaultAgentId());
+                    req == null ? null : req.defaultAgentId(),
+                    req == null ? null : req.kbIds(),
+                    req == null ? null : req.sharedWorkdir());
             return ResultJson.ok(toDto(updated), "已保存");
         } catch (IllegalArgumentException e) {
             return ResultJson.error(400, e.getMessage());
         }
     }
 
-    public record UpdateReq(String name, String instructions, String defaultAgentId) {
+    public record UpdateReq(String name, String instructions, String defaultAgentId,
+                            List<String> kbIds, Boolean sharedWorkdir) {
     }
 
     @Operation(summary = "归档 / 恢复工作区", description = "body: {status: active|archived}。归档不动会话与产物，implicit 兜底容器不可归档")

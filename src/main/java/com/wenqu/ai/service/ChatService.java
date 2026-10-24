@@ -422,11 +422,13 @@ public class ChatService {
             runtime.completeEmitter(emitter);
             return;
         }
-        // 工作区级轮次互斥：同一工作区共用一个沙盒容器与同一个工作目录（projectWorkdirEnabled 开启后），
-        // 用户对话 / 到点的定时任务 / 跑着的工作流三方并发写会互相覆盖。与会话锁同一风格：快速失败，
-        // 不让人对着输入框等几分钟；抢不到就立刻说清是谁在跑。
-        final String projectId = projectService.projectIdOfSession(sessionId);
-        if (projectId != null && !projectTurnMutex.tryBegin(projectId)) {
+        // 工作区级轮次互斥：仅在**实际共用**工作目录的工作区里需要（共用判据 ProjectService#workdirShared：
+        // 本区开关＋全局总闸）——同一份目录里，用户对话 / 到点的定时任务 / 跑着的工作流三方并发写会互相
+        // 覆盖。目录各一份的工作区没有这个风险，也不再陪着锁：两条对话可以同时跑。与会话锁同一风格：
+        // 快速失败，不让人对着输入框等几分钟；抢不到就立刻说清是谁在跑。
+        final com.wenqu.ai.model.Project turnProject = projectService.projectOfSession(sessionId);
+        final String projectId = turnProject == null ? null : turnProject.getId();
+        if (projectId != null && projectService.workdirShared(turnProject) && !projectTurnMutex.tryBegin(projectId)) {
             log.warn("[FAIL-LOUD] 同工作区并发轮次被拒: project={} session={}", projectId, sessionId);
             runtime.sendSseEvent(emitter, "error",
                     "这个工作区里已有任务在跑（另一条对话、定时任务或工作流），等它结束或先停掉它再发送", sessionId);

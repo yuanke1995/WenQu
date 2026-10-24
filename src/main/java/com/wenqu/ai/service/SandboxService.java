@@ -87,17 +87,18 @@ public class SandboxService {
      * <p>解析失败一律退回会话级——沙盒是"能干活"的能力，不该因为工作区归属读不到而整轮不可用。
      */
     private SandboxScope scopeOf(String sessionId) {
-        // 工作区目录默认关闭：想让新装的用户「什么都不配」也能用，回会话级目录的行为与引入工作区之前逐字相同。
-        // 开关本身已在「系统设置 → 沙盒 → 工作区共用目录」暴露给管理员，需要跨会话共用文件时自行开启。
-        // 历史记录：2026-10-17 曾因真机遇到「带 workdir 建沙盒 404」而收成开关，2026-10-18 端到端复验
-        // 未再复现（建沙盒 / 落盘 / 删容器重建 / 跨会话互读 四项均通过），404 未复现的原因尚未定位，
-        // 故保留开关而非直接写死开启——真出问题时还能一键退回会话级作用域。
+        // 共用目录按**工作区各自**决定（Project.sharedWorkdir，新建工作区默认开、「会话」栏恒关），
+        // 全局那个键降级为应急总闸：一键把所有工作区退回会话级作用域。
+        // 历史记录：2026-10-17 曾因真机遇到「带 workdir 建沙盒 404」而收成全局开关，2026-10-18 端到端
+        // 复验未再复现（建沙盒 / 落盘 / 删容器重建 / 跨会话互读 四项均通过）；2026-10-24 起默认值
+        // 翻转为开——「传进来的材料模型看不见」这个更大的坑压过了那个未复现的 404，总闸保留作退路。
         if (!configService.getBoolean("sandbox.projectWorkdirEnabled")) {
             return new SandboxScope(sessionId, null);
         }
         try {
             Project project = projectService.projectOfSession(sessionId);
-            if (project != null && project.getId() != null && !project.getId().isBlank()) {
+            // 生效判据统一走 ProjectService#workdirShared（本区开关＋总闸一份实现，别在这里再抄一份）
+            if (project != null && projectService.workdirShared(project)) {
                 return new SandboxScope(project.getId(), project.getWorkdirPath());
             }
         } catch (Exception e) {

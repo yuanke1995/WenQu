@@ -57,18 +57,33 @@ public class ProjectService {
      * <p>同样惰性取：{@code ProjectFileService} 的构造器依赖本类（{@code baseDir} 里的归属校验）。
      */
     private final org.springframework.beans.factory.ObjectProvider<ProjectFileService> projectFileProvider;
+    /**
+     * 共用工作目录的全局总闸（{@code sandbox.projectWorkdirEnabled}）。
+     * <p>直接注入安全：ConfigService 只依赖配置侧的 mapper/redis/schema，不反向依赖本类。
+     */
+    private final ConfigService configService;
+
+    /**
+     * 校验「工作区绑定知识库」确实存在且对本人可见。
+     * <p><b>必须惰性取</b>：与 AgentService 同理，直接注入会构成构造器环，绑定是低频动作。
+     */
+    private final org.springframework.beans.factory.ObjectProvider<KnowledgeBaseService> kbProvider;
 
     public ProjectService(ProjectMapper projectMapper, SessionMapper sessionMapper,
                           ArtifactMapper artifactMapper,
                           org.springframework.beans.factory.ObjectProvider<AgentService> agentProvider,
                           org.springframework.beans.factory.ObjectProvider<ScheduledJobService> scheduledJobProvider,
-                          org.springframework.beans.factory.ObjectProvider<ProjectFileService> projectFileProvider) {
+                          org.springframework.beans.factory.ObjectProvider<ProjectFileService> projectFileProvider,
+                          ConfigService configService,
+                          org.springframework.beans.factory.ObjectProvider<KnowledgeBaseService> kbProvider) {
         this.projectMapper = projectMapper;
         this.sessionMapper = sessionMapper;
         this.artifactMapper = artifactMapper;
         this.agentProvider = agentProvider;
         this.scheduledJobProvider = scheduledJobProvider;
         this.projectFileProvider = projectFileProvider;
+        this.configService = configService;
+        this.kbProvider = kbProvider;
     }
 
     /**
@@ -96,6 +111,9 @@ public class ProjectService {
         p.setSelectionStatus(Project.SELECTION_IMPLICIT);
         p.setDirectoryMode(Project.MODE_MANAGED);
         p.setStatus(Project.STATUS_ACTIVE);
+        // 兜底容器不是工作区：「会话」栏那批对话保持各自一份目录（引入工作区前的行为），
+        // 共用目录只对用户显式建的场子生效——随口一问的两次聊天不该互相看得见对方的中间文件
+        p.setSharedWorkdir(0);
         p.setDeleted(0);
         // 显式给时间：insert 不会回读 DB 默认值，不设的话创建响应里 createTime 是 null（列表里又有值，前后不一致）
         p.setCreateTime(java.time.LocalDateTime.now());
@@ -251,6 +269,9 @@ public class ProjectService {
         p.setSelectionStatus(Project.SELECTION_SELECTABLE);
         p.setDirectoryMode(Project.MODE_MANAGED);
         p.setStatus(Project.STATUS_ACTIVE);
+        // 新建工作区默认共用目录：工作区的核心承诺就是「传进来的材料这个场子里的对话都看得见」，
+        // 默认关等于每个新场子都要先撞一次「模型说查无此文件」。不想要的场子在设置里一键关回会话级
+        p.setSharedWorkdir(1);
         p.setDeleted(0);
         p.setCreateTime(java.time.LocalDateTime.now());
         p.setWorkdirPath(p.resolveWorkdirPath());
@@ -346,13 +367,13 @@ public class ProjectService {
     }
 
     /**
-     * 更新工作区设置：名称 / 工作区约定 / 默认助手。
+     * 更新工作区设置：名称 / 工作区约定 / 默认助手 / 绑定知识库 / 共用工作目录。
      *
-     * <p>三个参数都是「传才改」（null = 不动），空串表示清空。默认助手必须本人可读，
-     * 否则抛 IllegalArgumentException——静默忽略会让用户以为绑定生效了。
+     * <p>各参数都是「传才改」（null = 不动）；空串/空列表表示清空。默认助手与绑定的库
+     * 都必须本人可用，否则抛 IllegalArgumentException——静默忽略会让用户以为绑定生效了。
      */
     public Project update(String uid, String projectId, String name, String instructions,
-                          String defaultAgentId) {
+                          String defaultAgentId, List<String> kbIds, Boolean sharedWorkdir) {
         Project p = ownedProject(uid, projectId);
         boolean changed = false;
         if (name != null) {
@@ -388,6 +409,34 @@ public class ProjectService {
             }
             changed = true;
         }
+        if (kbIds != null) {
+            KnowledgeBaseService kbService = kbProvider.getIfAvailable();
+            if (kbService == null) {
+                throw new IllegalStateException("知识库组件暂不可用，暂时无法保存绑定，请稍后重试");
+            }
+            java.util.LinkedHashSet<String> clean = new java.util.LinkedHashSet<>();
+            for (String raw : kbIds) {
+                String id = raw == null ? "" : raw.trim();
+                if (id.isEmpty()) continue;
+                // fail-loud：绑一个不存在/别人的库，用户只会在下一次对话里发现"检索还是不搜它"
+                com.wenqu.ai.model.KnowledgeBase kb = kbService.get(id);
+                boolean usable = kb != null
+                        && (uid.equals(kb.getCreatedBy()) || Integer.valueOf(1).equals(kb.getBuiltin()));
+                if (!usable) {
+                    throw new IllegalArgumentException("绑定的知识库不可用（不存在或你没有访问权限）");
+                }
+                clean.add(id);
+            }
+            p.setKbIds(clean.isEmpty() ? null : String.join(",", clean));
+            changed = true;
+        }
+        if (sharedWorkdir != null) {
+            if (Project.SELECTION_IMPLICIT.equals(p.getSelectionStatus())) {
+                throw new IllegalArgumentException("「会话」栏不是一个工作区，没有共用目录可开");
+            }
+            p.setSharedWorkdir(Boolean.TRUE.equals(sharedWorkdir) ? 1 : 0);
+            changed = true;
+        }
         if (changed) {
             p.setUpdateTime(java.time.LocalDateTime.now());
             // 走显式列集而不是 updateById：后者的字段策略会跳过 null，「清空约定 / 取消默认助手」
@@ -397,9 +446,12 @@ public class ProjectService {
                     .set(Project::getName, p.getName())
                     .set(Project::getInstructions, p.getInstructions())
                     .set(Project::getDefaultAgentId, p.getDefaultAgentId())
+                    .set(Project::getKbIds, p.getKbIds())
+                    .set(Project::getSharedWorkdir, p.getSharedWorkdir())
                     .set(Project::getUpdateTime, p.getUpdateTime()));
-            log.info("[PROJECT] 更新工作区设置 uid={} id={} name={} hasInstructions={} defaultAgent={}",
-                    uid, p.getId(), p.getName(), p.getInstructions() != null, p.getDefaultAgentId());
+            log.info("[PROJECT] 更新工作区设置 uid={} id={} name={} hasInstructions={} defaultAgent={} kbIds={} sharedWorkdir={}",
+                    uid, p.getId(), p.getName(), p.getInstructions() != null, p.getDefaultAgentId(),
+                    p.getKbIds(), p.getSharedWorkdir());
         }
         return p;
     }
@@ -449,6 +501,39 @@ public class ProjectService {
         Project p = projectOfSession(sessionId);
         return (p == null || p.getDefaultAgentId() == null || p.getDefaultAgentId().isBlank())
                 ? null : p.getDefaultAgentId();
+    }
+
+    /**
+     * 该会话所属工作区的<b>默认检索域</b>：工作区绑定的知识库 id 清单（保序）。
+     *
+     * <p>只在本轮没有任何显式域时被消费（助手未绑库且未 @ 库，见 {@code WenquAgentxTools#newTurn}）
+     * ——它是「没说就搜这里」的默认值，不是权限墙；@ 提他与助手绑定都会盖过它。
+     *
+     * @return 绑定库 id；无工作区/未绑定返回空清单（调用方按「没有默认域」继续，行为不变）
+     */
+    public List<String> kbIdsOfSession(String sessionId) {
+        Project p = projectOfSession(sessionId);
+        if (p == null || p.getKbIds() == null || p.getKbIds().isBlank()) return List.of();
+        // 保序切分（不用 KnowledgeBaseService.splitIds：它返回 HashSet，绑定顺序=检索优先级要保住）
+        java.util.List<String> out = new java.util.ArrayList<>();
+        for (String part : p.getKbIds().split(",")) {
+            String t = part.trim();
+            if (!t.isEmpty()) out.add(t);
+        }
+        return out;
+    }
+
+    /**
+     * 该工作区是否与沙盒<b>实际共用</b>工作目录 = 本区开关（{@code sharedWorkdir}）
+     * ＋ 全局总闸（{@code sandbox.projectWorkdirEnabled}，应急时一键全退回会话级）。
+     *
+     * <p>全仓唯一的生效判据：沙盒作用域（{@code SandboxService}）、工作区页的「模型看得见吗」提示
+     * （{@code ProjectFileService}）与工作区轮次互斥（{@code ChatService}）都读这里，
+     * 三处各写一份迟早漂移成「提示说看得见、沙盒却挂的会话目录」。
+     */
+    public boolean workdirShared(Project p) {
+        if (p == null || p.getSharedWorkdir() == null || p.getSharedWorkdir() != 1) return false;
+        return configService.getBoolean("sandbox.projectWorkdirEnabled");
     }
 
     /**

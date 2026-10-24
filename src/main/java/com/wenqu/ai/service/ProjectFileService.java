@@ -130,7 +130,7 @@ public class ProjectFileService {
             m.put("capped", false);
             m.put("dirs", List.of());
             m.put("names", List.of());
-            m.put("agentShared", configService.getBoolean("sandbox.projectWorkdirEnabled"));
+            m.put("agentShared", workdirSharedOf(projectId));
             return m;   // 目录不存在 = 正常空态，不是故障
         }
         Path at = existingDir(base, dir);
@@ -160,12 +160,78 @@ public class ProjectFileService {
         m.put("capped", tree.capped);
         m.put("dirs", tree.dirPaths);
         m.put("names", tree.names);
-        // 这个目录是不是沙盒正在用的那一份，由 sandbox.projectWorkdirEnabled 决定：关着的时候沙盒挂
-        // sessions/{会话}，这里读写的是 projects/{工作区}，两边各一份。界面必须说实话，否则用户
-        // 传完材料去对话里问「读一下我传的 X」，模型只会说查无此文件（2026-10-21 复核确认的边界）。
-        m.put("agentShared", configService.getBoolean("sandbox.projectWorkdirEnabled"));
+        // 这个目录是不是沙盒正在用的那一份，由统一判据（本区开关＋全局总闸，见
+        // ProjectService#workdirShared）决定：不共用的时候沙盒挂 sessions/{会话}，这里读写的是
+        // projects/{工作区}，两边各一份。界面必须说实话，否则用户传完材料去对话里问
+        // 「读一下我传的 X」，模型只会说查无此文件（2026-10-21 复核确认的边界）。
+        m.put("agentShared", workdirSharedOf(projectId));
         return m;
     }
+
+    /** 共用目录的生效判据（项目行现查；调用方都已先过归属校验） */
+    private boolean workdirSharedOf(String projectId) {
+        return projectService.workdirShared(projectService.byId(projectId));
+    }
+
+    /**
+     * 会话所属工作区的<b>文件简报</b>：一行式顶层清单，随工作背景段一起注入 system prompt。
+     *
+     * <p><b>为什么要有它</b>：检索域（kb_ids）解决「资料库里有什么」，这段解决「目录里有什么」
+     * ——没有它，模型不知道工作区里躺着《考勤制度.pdf》，要么答「没有这个文件」，要么盲猜文件名。
+     * 模型对工作区文件的「知道有什么」与「摸得着」（共用目录挂载）必须同时成立，
+     * 所以只在 {@link ProjectService#workdirShared} 为真时注入——目录不共用时给模型看一份
+     * 它读不到的清单，等于教它对着用户说谎。
+     *
+     * <p><b>任何失败都返回 null</b>：目录读不到（远端 provisioner）、会话没挂工作区、统计异常，
+     * 一律当「这段不注入」处理——它是增益信息，不能因为读失败把整轮打挂，也不能注入半截清单。
+     *
+     * @return 可直接拼接的文本段；无工作区/未共用/空目录/读取失败返回 null
+     */
+    public String promptBriefOfSession(String sessionId) {
+        try {
+            Project project = projectService.projectOfSession(sessionId);
+            if (project == null || !projectService.workdirShared(project)) return null;
+            Path base = baseDir(project.getUid(), project.getId());
+            if (!Files.isDirectory(base)) return null;
+            // 顶层一层：文件夹在前（名字序）、文件按修改时间倒序——与工作区页文件栏同一排法，
+            // 用户对着页面看到的顺序和模型读到的一致，引用哪个名字不会对不上
+            List<String> shown = new ArrayList<>();
+            int total = 0;
+            try (Stream<Path> kids = Files.list(base)) {
+                List<Path> visible = kids.filter(ProjectFileService::isShown).toList();
+                total = visible.size();
+                if (total == 0) return null;
+                List<Path> dirs = new ArrayList<>(), files = new ArrayList<>();
+                for (Path p : visible) (Files.isDirectory(p) ? dirs : files).add(p);
+                dirs.sort(Comparator.comparing(p -> nameOf(p).toLowerCase(java.util.Locale.ROOT)));
+                files.sort(Comparator.comparingLong(ProjectFileService::lastModifiedMillis).reversed());
+                int budget = BRIEF_MAX_ENTRIES;
+                for (Path p : dirs) {
+                    if (budget-- <= 0) break;
+                    shown.add(nameOf(p) + "/");
+                }
+                for (Path p : files) {
+                    if (budget-- <= 0) break;
+                    shown.add(nameOf(p));
+                }
+            } catch (IOException | RuntimeException e) {
+                log.warn("[PROJECT] 工作区文件简报读取失败（本轮不注入）project={}: {}", project.getId(), e.getMessage());
+                return null;
+            }
+            StringBuilder sb = new StringBuilder("\n\n【工作区文件】本工作区目录里现有：");
+            sb.append(String.join("、", shown));
+            if (total > shown.size()) sb.append(" 等（共 ").append(total).append(" 项）");
+            else sb.append("（共 ").append(total).append(" 项）");
+            sb.append("。需要哪个文件的内容，按文件名用文件工具读取即可。");
+            return sb.toString();
+        } catch (Exception e) {
+            log.warn("[PROJECT] 工作区文件简报构建失败（本轮不注入）session={}: {}", sessionId, e.getMessage());
+            return null;
+        }
+    }
+
+    /** 文件简报最多点多少个名字：它是每轮的 token 成本，清单长了挤掉真实上下文，超了给「等共 N 项」 */
+    private static final int BRIEF_MAX_ENTRIES = 20;
 
     /** 全区统计的中间结果（一次遍历同时凑齐计数、体积、文件夹清单与文件名集合） */
     private static final class Tree {

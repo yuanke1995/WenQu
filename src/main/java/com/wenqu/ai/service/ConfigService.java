@@ -608,13 +608,14 @@ public class ConfigService {
         d.put("tool.runcode.timeoutSeconds", "120");        // 单次脚本运行上限（沙盒命令超时）
         d.put("tool.runcode.subCallTimeoutMs", "60000");    // 单个子调用的等待上限（脚本侧 HTTP 超时）
         // 工作区目录（沙盒挂 shared/{uid}/workspace 的 projects/{id} 而非会话目录）
-        // 默认关：想让新装的用户「什么都不配」也能用，回会话级目录的行为与引入工作区之前逐字一致。
-        // 端到端已真机验证通过（2026-10-18）：带 workdir 建沙盒正常、文件落宿主机工作区目录、
-        // 删容器后重建文件仍在、会话 A 写入会话 B 可读——历史记录的 404 未复现，当前环境可放心开启。
+        // 这个键自 2026-10-24 起降级为**应急总闸**：共用与否按工作区各自的 sharedWorkdir 决定
+        // （新建工作区默认开、「会话」栏恒关，见 ProjectService#workdirShared）。总闸默认开——
+        // 它关掉时所有工作区一键退回会话级目录。端到端已真机验证通过（2026-10-18）：带 workdir
+        // 建沙盒正常、文件落宿主机工作区目录、删容器后重建文件仍在、会话 A 写入会话 B 可读。
         // 工作区目录在**宿主**上的根：工作区页的文件浏览直接读它（沙盒与后端同机部署时成立；
         // 远端 provisioner 部署下这里读不到，接口会如实返回「不可用」而不是假装空列表）
         d.put("sandbox.userDataHostDir", System.getProperty("user.dir") + "/user-data");
-        d.put("sandbox.projectWorkdirEnabled", "false");
+        d.put("sandbox.projectWorkdirEnabled", "true");
         // 工作区页往目录里上传文件的单文件上限（MB）。服务端代码再钳到 256：
         // spring 的 multipart 上限是 256MB，写更大只会让请求在容器那一层变成一句没有原因的失败。
         d.put("sandbox.projectUploadMaxMb", "100");
