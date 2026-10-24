@@ -91,17 +91,17 @@ public class ProjectFileService {
     private final ConfigService configService;
     private final ImageUrlSigner imageUrlSigner;
     /**
-     * 「这个工作区里有轮次正在跑」的判据，用来挡住改名与删除。
-     * <p>它自己没有任何依赖，直接注入不构成环（{@code ProjectService} 那边才是惰性取的一头）。
+     * 「这个工作区里有轮次正在跑」的判据，用来挡住改名与删除、挡住跑轮时的覆盖上传。
+     * <p>直接注入不构成环（{@code ProjectService} 那边才是惰性取的一头）。
      */
-    private final ProjectTurnMutex projectTurnMutex;
+    private final ProjectTurnGuard projectTurnGuard;
 
     public ProjectFileService(ProjectService projectService, ConfigService configService,
-                              ImageUrlSigner imageUrlSigner, ProjectTurnMutex projectTurnMutex) {
+                              ImageUrlSigner imageUrlSigner, ProjectTurnGuard projectTurnGuard) {
         this.projectService = projectService;
         this.configService = configService;
         this.imageUrlSigner = imageUrlSigner;
-        this.projectTurnMutex = projectTurnMutex;
+        this.projectTurnGuard = projectTurnGuard;
     }
 
     /**
@@ -520,6 +520,14 @@ public class ProjectFileService {
                 if (Files.exists(target) && !overwrite) {
                     throw new IllegalArgumentException("「" + name + "」已经在这里，要换掉请勾上「重名时覆盖」");
                 }
+                // 覆盖上传是唯一不取轮次锁还能改写已有文件的口子：轮次跑着时模型可能正读写这份文件，
+                // 静默替换会让它读到前后两个版本甚至半截。增补新材料（不覆盖）仍然放行——那是合法动作。
+                if (Files.exists(target) && overwrite && projectTurnGuard.isBusy(projectId)) {
+                    TurnLease holder = projectTurnGuard.current(projectId);
+                    String who = holder == null ? "某个任务" : holder.describe();
+                    throw new IllegalStateException(
+                            "工作区里" + who + "正在跑，「" + name + "」可能正被它使用——等任务结束再覆盖，或换一个文件名上传");
+                }
                 Files.move(tmp, target, StandardCopyOption.REPLACE_EXISTING);
                 Map<String, Object> e = new LinkedHashMap<>();
                 e.put("name", name);
@@ -692,7 +700,7 @@ public class ProjectFileService {
         if (Project.STATUS_ARCHIVED.equals(p.getStatus())) {
             throw new IllegalArgumentException("工作区已归档：恢复后才能整理这里的文件");
         }
-        if (relocation && projectTurnMutex.isBusy(p.getId())) {
+        if (relocation && projectTurnGuard.isBusy(p.getId())) {
             throw new IllegalStateException("这个工作区里有任务正在跑，等它结束后再改名或删除文件");
         }
         return p;

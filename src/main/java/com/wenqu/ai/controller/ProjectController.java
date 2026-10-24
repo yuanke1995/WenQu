@@ -5,7 +5,9 @@ import com.wenqu.ai.model.Project;
 import com.wenqu.ai.service.ProjectFileService;
 import com.wenqu.ai.service.ProjectService;
 import com.wenqu.ai.service.ProjectTodoService;
+import com.wenqu.ai.service.ProjectTurnGuard;
 import com.wenqu.ai.service.ScheduledJobService;
+import com.wenqu.ai.service.TurnLease;
 import com.wenqu.ai.service.WorkflowService;
 import com.wenqu.ai.util.RequestUser;
 import io.swagger.v3.oas.annotations.Operation;
@@ -51,6 +53,7 @@ public class ProjectController {
     private final WorkflowService workflowService;
     private final ScheduledJobService scheduledJobService;
     private final ProjectTodoService projectTodoService;
+    private final ProjectTurnGuard projectTurnGuard;
 
     @Operation(summary = "我的工作区列表",
             description = "implicit 兜底容器在前（每人一个、后台懒创建），其余按创建时间倒序。"
@@ -97,6 +100,36 @@ public class ProjectController {
     public ResultJson detail(@PathVariable("id") String id) {
         try {
             return ResultJson.ok(toDto(projectService.detail(RequestUser.uid(), id)));
+        } catch (IllegalArgumentException e) {
+            return ResultJson.error(400, e.getMessage());
+        }
+    }
+
+    /**
+     * 工作区轮次占用状态：共用目录的工作区当前有没有轮次在跑、是谁在跑（会话标题 / 定时任务名 /
+     * 工作流子智能体名）与跑了多久。工作区页的占用条轮询它；被拒消息的「指名道姓」与这里同源
+     * （都出自租约的 {@code describe()}），两处口径不会漂移。
+     */
+    @Operation(summary = "工作区轮次占用状态",
+            description = "busy=true 时返回占用者（kind: user/scheduled/workflow，name，sessionId，startedAt，elapsedMs）；"
+                    + "workdirShared=false 的工作区不取轮次锁，恒为空闲")
+    @GetMapping("/{id}/turn-guard")
+    public ResultJson turnGuard(@PathVariable("id") String id) {
+        try {
+            Project p = projectService.detail(RequestUser.uid(), id);
+            TurnLease lease = projectTurnGuard.current(p.getId());
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("busy", lease != null);
+            if (lease != null) {
+                m.put("kind", lease.kind());
+                m.put("name", lease.name());
+                m.put("sessionId", lease.sessionId());
+                m.put("startedAt", lease.startedAt());
+                m.put("elapsedMs", System.currentTimeMillis() - lease.startedAt());
+                m.put("describe", lease.describe());
+            }
+            m.put("workdirShared", projectService.workdirShared(p));
+            return ResultJson.ok(m);
         } catch (IllegalArgumentException e) {
             return ResultJson.error(400, e.getMessage());
         }

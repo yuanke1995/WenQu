@@ -32,7 +32,7 @@ import org.slf4j.LoggerFactory;
  *
  * <h3>并发</h3>
  * 官方 {@code IsolationScope} 在并发下是 *sequential-reuse*（并发同scope 各拿独立容器，
- * 末次快照收敛），与问渠「同 scope 共享一个活容器 + ProjectTurnMutex 轮次互斥」不同，
+ * 末次快照收敛），与问渠「同 scope 共享一个活容器 + ProjectTurnGuard 轮次互斥」不同，
  * 故问渠<b>不使用</b> isolationScope，由provider 的 scope 缓存保证单活容器。
  */
 public class ProvisionerSandboxClient implements SandboxClient<ProvisionerSandboxClientOptions> {

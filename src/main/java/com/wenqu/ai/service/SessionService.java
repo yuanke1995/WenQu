@@ -734,6 +734,23 @@ public class SessionService {
     }
 
     /**
+     * 会话标题（系统侧读取，不校验归属）：工作区轮次守卫用它把「谁在跑」说成
+     * 「会话『XX』的一轮对话」。查不到/没标题返回 {@code null}，由调用方退回泛称——
+     * 不编名字（与 {@code workspaceOfSession} 同一口径）。
+     */
+    public String titleOf(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) return null;
+        try {
+            Session s = sessionMapper.selectById(sessionId);
+            String t = s == null ? null : s.getTitle();
+            return t == null || t.isBlank() ? null : t;
+        } catch (Exception e) {
+            log.warn("[SESSION] 会话标题读取失败（按无标题处理）session={}: {}", sessionId, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
      * 通用布尔标志更新（置顶/收藏）
      */
     private void updateFlag(String sessionId, boolean flag, String fieldName,

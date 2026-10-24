@@ -1083,6 +1083,8 @@ public class WorkflowEngine {
                             .sessionId(sessionId).question(prompt).userId(ctx.uid)
                             .userImages(List.of()).attachments(List.of()).skills(List.of())
                             .agentId(agentId).modelOverride(modelRef)
+                            // 子智能体节点身份进工作区轮次租约：占用展示与撞锁文案指名到节点用的智能体
+                            .source(TurnLease.KIND_WORKFLOW).sourceName(agent.getName())
                             .build(), sink);
                     return null;
                 });

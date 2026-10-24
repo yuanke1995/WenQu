@@ -127,6 +127,19 @@ public final class ChatCommand {
     /** 派出这一支的父会话 id（日志关联用；产物收养在分支执行器内直接按它落，不经本字段传递语义） */
     final String parentSessionId;
 
+    /**
+     * 本轮的<b>发起方身份</b>（工作区轮次守卫展示用）：{@code user}=网页问答（缺省）、
+     * {@code scheduled}=定时任务、{@code workflow}=工作流子智能体节点。
+     * 只进租约与报错文案，不参与任何路由/权限判断。
+     */
+    final String source;
+    /**
+     * 发起方的展示名（定时任务名 / 工作流子智能体名）。网页问答不传——守卫侧按会话标题展示。
+     * 有了它，工作区被占时的报错才能从含糊的「另一个任务在跑」变成「定时任务『周报』正在跑」。
+     */
+    final String sourceName;
+
+
     /** 是否处于子智能体分支里（{@link #subagentDepth} &gt; 0 的唯一判定点，别在调用方各写一遍） */
     public boolean branchTurn() {
         return subagentDepth > 0;

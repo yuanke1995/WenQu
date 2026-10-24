@@ -83,6 +83,8 @@ public class ScheduledJobService {
     private final com.wenqu.ai.mapper.SessionMapper sessionMapper;
     /** 站内通知：定时任务终态（完成/失败）通知归属人。旁路语义，create 内部已全捕获 */
     private final NotificationService notificationService;
+    /** 工作区轮次守卫：触发时刻撞上用户对话/工作流在跑时退避重试，而不是把那一轮记成失败 */
+    private final ProjectTurnGuard projectTurnGuard;
 
     /** 正在执行的任务 id（防同一任务上轮未跑完又被触发；单实例内有效） */
     private final Set<String> runningJobs = ConcurrentHashMap.newKeySet();
@@ -92,7 +94,8 @@ public class ScheduledJobService {
                                SessionService sessionService, AgentMapper agentMapper,
                                NotificationService notificationService,
                                ProjectService projectService,
-                               com.wenqu.ai.mapper.SessionMapper sessionMapper) {
+                               com.wenqu.ai.mapper.SessionMapper sessionMapper,
+                               ProjectTurnGuard projectTurnGuard) {
         this.jobMapper = jobMapper;
         this.runMapper = runMapper;
         this.configService = configService;
@@ -102,6 +105,7 @@ public class ScheduledJobService {
         this.notificationService = notificationService;
         this.projectService = projectService;
         this.sessionMapper = sessionMapper;
+        this.projectTurnGuard = projectTurnGuard;
     }
 
     // ==================== CRUD ====================
@@ -388,6 +392,27 @@ public class ScheduledJobService {
         return true;
     }
 
+    /** 工作区被占则退避等待（30s/2min＋抖动）；等完仍被占返回一句 skipped 文案，空了即放行 */
+    private String awaitWorkspaceFree(ScheduledJob job) {
+        if (job.getProjectId() == null || job.getProjectId().isBlank()) return null;
+        Project p = projectService.byId(job.getProjectId());
+        if (p == null || !projectService.workdirShared(p)) return null;   // 不共用目录的工作区没有这把锁
+        long[] backoffs = {30_000L, 120_000L};
+        TurnLease holder = projectTurnGuard.current(p.getId());
+        for (long backoff : backoffs) {
+            if (holder == null) return null;
+            try {
+                Thread.sleep(backoff + java.util.concurrent.ThreadLocalRandom.current().nextLong(10_000L));
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return "工作区里" + holder.describe() + "正在跑，等待被打断，本轮跳过";
+            }
+            holder = projectTurnGuard.current(p.getId());
+        }
+        if (holder == null) return null;
+        return "工作区里" + holder.describe() + "正在跑，顺延重试 2 次仍占用，本轮跳过（下个周期照常触发）";
+    }
+
     /**
      * 跑一轮：懒创建结果会话 → 用收集型通道调问答流水线 → 等结束 → 记录状态。
      * <p>归属身份走参数（{@code userId}）而不是 {@code RequestUser}——流水线跑在独立线程池里，
@@ -395,6 +420,15 @@ public class ScheduledJobService {
      */
     private void execute(ScheduledJob job, String trigger) {
         long t0 = System.currentTimeMillis();
+        // 触发时刻撞上工作区被占（用户对话/工作流在跑）：退避重试而不是把这一轮记成失败——
+        // cron 已按分钟随机错峰，撞锁是小概率瞬时态，等一拍大概率就过去了；实在等不到按既有
+        // skipped 语义落记录（下个周期照常触发）。终判与问答管线取锁之间仍有毫秒级窗口
+        // （判完才被占上），那一次会随管线报错记 failed，属可接受残余。
+        String busyNote = awaitWorkspaceFree(job);
+        if (busyNote != null) {
+            insertRun(job, trigger, "skipped", busyNote, null, null);
+            return;
+        }
         ScheduledRun run = insertRun(job, trigger, "running", null, null, null);
         try {
             // 一个任务一个会话：首轮创建并按任务名命名，之后每轮追加（历史执行连起来看）
@@ -424,6 +458,8 @@ public class ScheduledJobService {
                         .sessionId(sessionId).question(job.getPrompt()).userId(job.getUid())
                         .deepThink(Integer.valueOf(1).equals(job.getDeepThink()))
                         .agentId(job.getAgentId()).modelOverride(job.getModelRef())
+                        // 发起方身份进工作区轮次租约：撞锁被拒/工作区页占用条都按「定时任务『名』」指名道姓
+                        .source(TurnLease.KIND_SCHEDULED).sourceName(job.getName())
                         .build(), sink);
                 if (!sink.awaitDone(timeoutMs)) {
                     throw new IllegalStateException("执行超时（" + timeoutMs + " ms 内未收到完成事件）");

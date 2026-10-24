@@ -139,8 +139,8 @@ public class ChatService {
     private final UserConfigService userConfigService;
     /** 工作区：默认助手解析（工作区页配的助手优先于平台默认智能体） */
     private final ProjectService projectService;
-    /** 工作区级轮次互斥：同一工作区共用一个沙盒目录，并发写会互相覆盖（用户对话 / 定时任务 / 工作流三方） */
-    private final ProjectTurnMutex projectTurnMutex;
+    /** 工作区级轮次守卫：同一工作区共用一个沙盒目录，并发写会互相覆盖（用户对话 / 定时任务 / 工作流三方）；租约带身份，撞锁文案指名道姓 */
+    private final ProjectTurnGuard projectTurnGuard;
     /** 智能体配置（4.1）：对话页下拉选中后，按智能体覆盖模型/提示词/工具/知识库范围 */
     private final AgentService agentService;
     private final ModelRegistryService modelRegistryService;
@@ -371,7 +371,7 @@ public class ChatService {
                       ModelRegistryService modelRegistryService,
                       UserConfigService userConfigService,
                       ProjectService projectService,
-                      ProjectTurnMutex projectTurnMutex,
+                      ProjectTurnGuard projectTurnGuard,
                       SessionEventService sessionEventService,
                       ChatRunBus chatRunBus,
                       ChatRunRuntime runtime,
@@ -387,7 +387,7 @@ public class ChatService {
         this.userMapper = userMapper;
         this.userConfigService = userConfigService;
         this.projectService = projectService;
-        this.projectTurnMutex = projectTurnMutex;
+        this.projectTurnGuard = projectTurnGuard;
         this.modelRegistryService = modelRegistryService;
         this.sessionEventService = sessionEventService;
         this.chatRunBus = chatRunBus;
@@ -422,22 +422,36 @@ public class ChatService {
             runtime.completeEmitter(emitter);
             return;
         }
-        // 工作区级轮次互斥：仅在**实际共用**工作目录的工作区里需要（共用判据 ProjectService#workdirShared：
+        // 本轮身份在这一刻起可用（早于工作区取锁与流状态构造）：账本的每条事件都挂得到同一个 turnId
+        final String turnId = java.util.UUID.randomUUID().toString().replace("-", "");
+        // 工作区级轮次守卫：仅在**实际共用**工作目录的工作区里需要（共用判据 ProjectService#workdirShared：
         // 本区开关＋全局总闸）——同一份目录里，用户对话 / 到点的定时任务 / 跑着的工作流三方并发写会互相
         // 覆盖。目录各一份的工作区没有这个风险，也不再陪着锁：两条对话可以同时跑。与会话锁同一风格：
-        // 快速失败，不让人对着输入框等几分钟；抢不到就立刻说清是谁在跑。
+        // 快速失败，不让人对着输入框等几分钟；租约记下占用者，抢不到就立刻说清是谁在跑。
         final com.wenqu.ai.model.Project turnProject = projectService.projectOfSession(sessionId);
         final String projectId = turnProject == null ? null : turnProject.getId();
-        if (projectId != null && projectService.workdirShared(turnProject) && !projectTurnMutex.tryBegin(projectId)) {
-            log.warn("[FAIL-LOUD] 同工作区并发轮次被拒: project={} session={}", projectId, sessionId);
-            runtime.sendSseEvent(emitter, "error",
-                    "这个工作区里已有任务在跑（另一条对话、定时任务或工作流），等它结束或先停掉它再发送", sessionId);
-            runtime.endTurnMutex(sessionId);
-            runtime.completeEmitter(emitter);
-            return;
+        if (projectId != null && projectService.workdirShared(turnProject)) {
+            String kind = cmd.getSource();
+            String name = cmd.getSourceName();
+            if (name == null || name.isBlank()) {
+                // 网页问答不带展示名：按会话标题说「谁在跑」，新建会话首轮查不到标题就退回泛称
+                String t = sessionService.titleOf(sessionId);
+                name = t == null || t.isBlank() ? null : t;
+            }
+            TurnLease lease = new TurnLease(turnId, sessionId,
+                    kind == null || kind.isBlank() ? TurnLease.KIND_USER : kind,
+                    name, userId, System.currentTimeMillis(), 0);
+            if (!projectTurnGuard.tryBegin(projectId, lease)) {
+                TurnLease holder = projectTurnGuard.current(projectId);
+                String who = holder == null ? "另一个任务" : holder.describe();
+                log.warn("[FAIL-LOUD] 同工作区并发轮次被拒: project={} session={} 占用者={}", projectId, sessionId, who);
+                runtime.sendSseEvent(emitter, "error",
+                        "这个工作区里" + who + "正在跑，等它结束或先停掉它再发送", sessionId);
+                runtime.endTurnMutex(sessionId);
+                runtime.completeEmitter(emitter);
+                return;
+            }
         }
-        // 本轮身份从这一刻起可用（早于流状态构造）：账本的每条事件都挂得到同一个 turnId
-        final String turnId = java.util.UUID.randomUUID().toString().replace("-", "");
         TurnRegistry.registerHandle(sessionId, new TurnHandle(turnId, userId, emitter));
         // 断开跟踪：登记查表项并绑定生命周期回调清理；发送失败也会打标（见 runtime.sendSseEvent），各等待点据此短路后续 LLM/检索开销
         runtime.trackChannel(emitter);
@@ -547,7 +561,7 @@ public class ChatService {
                         sessionService.markTurnStopped(sessionId, "stopped");
                     }
                     runtime.endTurnMutex(sessionId);
-                    if (projectId != null) projectTurnMutex.end(projectId);
+                    if (projectId != null) projectTurnGuard.end(projectId, turnId);
                     if (identity) com.wenqu.ai.util.RequestUser.clear();
                     // 智能体检索开关的作用域覆盖随本轮结束清除（ThreadLocal，池化线程复用必须清，
                     // 否则下一轮请求会继承上一轮智能体的检索开关）
@@ -560,7 +574,7 @@ public class ChatService {
             TurnRegistry.removeHandle(sessionId);
             runtime.endTurnMutex(sessionId);
             // 工作区锁同理：流水线压根没跑，锁必须在这放掉，否则那个工作区从此再也发不出消息
-            if (projectId != null) projectTurnMutex.end(projectId);
+            if (projectId != null) projectTurnGuard.end(projectId, turnId);
             // L7 fail-loud：繁忙拒绝时告知当前队列长度（用户可感知拥堵程度）
             int queued = pipelineExecutor == null ? 0 : pipelineExecutor.getQueue().size();
             log.warn("[FAIL-LOUD] 问答流水线繁忙，拒绝请求（排队 {}）: session={}", queued, sessionId);
