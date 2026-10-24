@@ -376,6 +376,10 @@ public class HybridRetrievalService {
             // 本轮参数覆盖（全局 < 知识库 < 智能体的合并结果）：ThreadLocal 不随任务提交跨线程继承，
             // 必须在提交前取快照、在子线程内重放；否则多路并行检索静默退化为全局配置（库级/智能体级策略全丢）
             Map<String, String> runOverrides = configService.currentOverrides();
+            // 身份同理不跨线程：RequestUser 是裸 ThreadLocal，池线程里 loadVisibleKbIds 按匿名判定
+            // → 私有/部门共享库静默搜不到（评测基线与单路口径不一致的根源）。发起线程取快照、
+            // 子线程 callAs 重放；调用线程没装载身份时重放的就是匿名，与现状等价、不会更差
+            RequestUser.Snapshot identity = RequestUser.snapshot();
             // 多路是否开补采：按「路数 × 补采倍数」的总 KNN 成本设闸。
             // 补采只补 1 次但 topK 最高放大到 MAX_TOPK_CAP(=60)，即单路最坏 2 倍 KNN；
             // N 路并行时总成本是 N×2 倍，而 multiSearchPool 只有 4 线程——4 路开补采等于把
@@ -384,7 +388,8 @@ public class HybridRetrievalService {
             boolean multiSupplement = adaptiveTopK && qs.size() <= 2;
             List<CompletableFuture<List<Hit>>> futures = qs.stream()
                     .map(q -> CompletableFuture.supplyAsync(
-                            () -> runWithOverrides(runOverrides, () -> search(q, diag, kbIds, multiSupplement)),
+                            () -> RequestUser.callAs(identity, () ->
+                                    runWithOverrides(runOverrides, () -> search(q, diag, kbIds, multiSupplement))),
                             multiSearchPool))
                     .toList();
             CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
