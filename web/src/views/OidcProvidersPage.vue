@@ -41,7 +41,7 @@
 
     <a-drawer :open="drawerOpen" :title="editingId ? '编辑认证源' : '新建认证源'" width="640"
               @close="drawerOpen = false" :mask-closable="false">
-      <a-form layout="vertical">
+      <a-form layout="vertical" autocomplete="off">
         <a-divider orientation="left">接入（客户端凭据）</a-divider>
         <a-form-item label="认证源名称" required>
           <a-input v-model:value="form.name" placeholder="如「企业微信登录」「统一身份认证」" />
@@ -53,10 +53,10 @@
           <a-input v-model:value="form.issuerUrl" placeholder="https://idp.example.com/realms/main" />
         </a-form-item>
         <a-form-item label="Client ID">
-          <a-input v-model:value="form.clientId" placeholder="IdP 登记的客户端 ID" />
+          <a-input v-model:value="form.clientId" autocomplete="off" placeholder="IdP 登记的客户端 ID" />
         </a-form-item>
         <a-form-item label="Client Secret" extra="RSA 加密入库；编辑时留空 = 保持原值">
-          <a-input-password v-model:value="form.clientSecret" placeholder="IdP 登记的客户端密钥" />
+          <a-input-password v-model:value="form.clientSecret" autocomplete="new-password" placeholder="IdP 登记的客户端密钥" />
         </a-form-item>
         <a-form-item label="回调地址（Redirect URI）" extra="留空 = 按访问地址自动推导">
           <a-input v-model:value="form.redirectUri" placeholder="留空" />
