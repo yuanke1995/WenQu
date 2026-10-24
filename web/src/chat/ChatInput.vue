@@ -187,7 +187,8 @@ const showStop = computed(() => props.sending && !(props.steerable && props.canS
         </div>
         <div class="ci-right">
           <slot name="right" />
-          <button v-if="sending && canSend && steerable" class="ci-send" title="插话（Enter 同效）" @click="emit('send')">
+          <button v-if="sending && canSend && steerable" class="ci-send"
+                  title="插话（Enter 同效：先排到输入框上方 · Ctrl/⌘+Enter 立刻插进本轮）" @click="emit('send')">
             <arrow-up-outlined />
           </button>
           <button v-else-if="showStop" class="ci-send stop" :title="stopArmed ? '再按一次 Esc 停止生成' : '点击停止生成'" @click="emit('stop')">

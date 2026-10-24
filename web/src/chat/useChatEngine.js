@@ -1274,7 +1274,8 @@ const handleDeleteSession = async sid => {
 }
 // ==================== 发送与流式回答（SSE，事件处理与旧版口径一致） ====================
 // async：生成中按发送走插话分支，要等入队结果回来才知道该不该清输入框
-const send = async () => {
+// opts.steerNow=true：入队后马上走一遍「立即发送」（⌘/Ctrl+Enter 这一档）
+const send = async (opts = {}) => {
   const q = text.value.trim()
   const imgs = pendingImages.value.map(p => p.dataUrl)
   // 附件只带 fileId（内容已先上传落盘）；未传完的不带走，并明确拦下这次发送——
@@ -1297,10 +1298,12 @@ const send = async () => {
   if (!q && !imgs.length && !atts.length) return
   // 生成中再发一句 = 排进插话队列（输入框上方那排 chip），**不发请求**。
   // 主输入框不再因跑着而禁用：想改方向不该被迫先停止本轮。载荷与正常提问完全同权
-  // （图片/附件/技能/@/#/模型/思考/计划模式）。发给模型要等用户在 chip 上点「立即发送」。
+  // （图片/附件/技能/@/#/模型/思考/计划模式）。发给模型要等用户在 chip 上点「立即发送」，
+  // 或用 ⌘/Ctrl+Enter 这一档入队后立刻送。
   if (loading.value) {
-    if (!stageSteer({ text: q, images: imgs, atts, attsMeta, skills, mentions, historyRefs,
-                      deepThink: deepThinkOn.value, planMode: planModeOn.value })) return
+    const staged = stageSteer({ text: q, images: imgs, atts, attsMeta, skills, mentions, historyRefs,
+                      deepThink: deepThinkOn.value, planMode: planModeOn.value })
+    if (!staged) return
     // 计划模式跟着这条插话走（载荷里已带走），开关本身同样当场消费掉
     setPlanMode(false)
     text.value = ''
@@ -1310,6 +1313,9 @@ const send = async () => {
     pickedSkills.value = []
     pendingMentions.value = []
     pendingHistoryRefs.value = []
+    // 清完输入框再送：送不进（本轮已收尾/正等人裁决）时 sendSteer 要把这句放回输入框，
+    // 放回首尾留着刚打的下半句会把它拼成一句四不像
+    if (opts.steerNow) sendSteer(staged)
     return
   }
   // 无任何可用模型（会话/智能体/个人默认均未配置）时引导配置，不打无谓请求
@@ -3029,17 +3035,18 @@ function steerNeedsNextRound (s) {
 }
 
 /**
- * 生成中按发送：**只入队，不发请求**（等用户点那条上的「立即发送」）。
+ * 生成中按发送：**只入队，不发请求**（等用户点那条上的「立即发送」，或由 ⌘/Ctrl+Enter 入队后马上送）。
  * 载荷与正常提问完全同权（图片/附件/技能/@ 引用/# 历史引用/思考/计划模式）。
- * @returns true=已入队（调用方可清输入框）；false=没入成，**输入框必须原样保留**
+ * @returns 入队成功的那条（调用方要拿它马上走「立即发送」时就用它）；null=没入成，**输入框必须原样保留**
  */
 function stageSteer (payload) {
   const content = String(payload?.text || '').trim()
-  if (!content) return false
+  if (!content) return null
   const sid = currentSessionId.value
-  if (!sid || !chatStreams.has(sid)) return false
-  steerQueue.value = [...steerQueue.value, reactive({ ...payload, text: content, sending: false })]
-  return true
+  if (!sid || !chatStreams.has(sid)) return null
+  const item = reactive({ ...payload, text: content, sending: false })
+  steerQueue.value = [...steerQueue.value, item]
+  return item
 }
 
 /**

@@ -655,7 +655,8 @@
               </div>
             </div>
           </div>
-          <!-- 插话队列：生成中你在输入框里按发送，先落到这里排队，点「立即发送」才真发给模型。
+          <!-- 插话队列：生成中你在输入框里按发送，先落到这里排队，点「立即发送」才真发给模型；
+               按 ⌘/Ctrl+Enter 发出去的那句＝入队后自动替你点这一下。
           没点之前它是**纯本地的**——删掉/改掉/拖动排序都只是改数组，所以反悔是白拿的。
           拖动排序有意义：收尾结算按这个顺序依次发出，用户排的先后就是进模型的先后。
           刻意放在输入框正上方（而非气泡里）：它是"还没发出去的话"，离输入框最近才对。 -->
@@ -674,7 +675,8 @@
           <span v-else-if="it.sending" class="steer-state">发送中…</span>
           <span v-else-if="it.awaiting" class="steer-state">已送出，等这一轮听到</span>
           <template v-else>
-          <button class="steer-act primary" type="button" title="立刻发给模型（纯文字在下一次生成前生效）"
+          <button class="steer-act primary" type="button"
+          title="立刻发给模型（纯文字在下一次生成前生效 · ⌘/Ctrl+Enter 同效）"
           @click="sendSteer(it)">立即发送</button>
           <button class="steer-act" type="button" title="取回输入框改" @click="editSteer(it)"><edit-outlined /></button>
           <button class="steer-act" type="button" title="丢弃这条" @click="dropSteer(it)"><delete-outlined /></button>
@@ -1978,14 +1980,14 @@ const disarmEsc = () => {
 }
 const stopNow = () => { disarmEsc(); stop() }
 /** 主输入框占位文案：生成中不再禁用输入，所以文案要说清"这句是插话"，以及它**不会**随 Enter 直接
- *  进模型——Enter 只把它排到输入框上方那条队列，点队列里的「立即发送」才真送。
+ *  进模型——Enter 只把它排到输入框上方那条队列，点队列里的「立即发送」或按 ⌘/Ctrl+Enter 才真送。
  *  （早先"一步送达"那一版留下的文案没跟上后来加回的队列，这里按当前行为订正。）
  *  窄屏不写 Enter/Shift+Enter 提示（触屏没有这两个键） */
 const composerPlaceholder = computed(() => {
   if (loading.value) {
     return isNarrow.value
       ? '补一句方向（先排到上面，点「立即发送」才送出）'
-      : '补一句方向（Enter 先排到上面，点「立即发送」才送出）'
+      : '补一句方向（Enter 先排到上面 · ⌘/Ctrl+Enter 立刻插进本轮）'
   }
   if (goalArmed.value && !sessionGoal.value) return '写下目标，回车开始（助手会自己接着往下推进）'
   return isNarrow.value
@@ -2642,7 +2644,7 @@ const inlineSlash = () => {
   if (plan) { text.value = ''; runPlanCommand(plan[1] || ''); return true }
   return false
 }
-const sendNow = async () => {
+const sendNow = async (steerNow = false) => {
   if (inlineSlash()) { closeAllPanels(); return }
   if (goalModeOn.value && goalArmed.value && !sessionGoal.value && String(text.value || '').trim()) {
     goalArmed.value = false
@@ -2657,7 +2659,7 @@ const sendNow = async () => {
   }
   // 目标创建中：这一下是重复触发（连按 Enter / 发送键），不落到普通发送
   if (goalStarting.value) return
-  closeAddPanel(); send()
+  closeAddPanel(); send(steerNow ? { steerNow: true } : {})
 }
 
 // ==================== 插话队列的拖动排序 ====================
@@ -2810,6 +2812,13 @@ const onInputKeydown = e => {
   // 面板打开时由输入框接管导航：↑↓ 移动高亮、Enter 确认、Esc 关闭、「+」面板还能 Tab 切页签
   if (slashOpen.value || histOpen.value || addOpen.value) {
     if (onPanelNavKeydown(e)) return
+  }
+  // 生成中 ⌘/Ctrl+Enter = 这句排进队列后马上走「立即发送」，一步插进本轮；
+  // 单按 Enter 仍只排队——连打几句、发之前回改的路径还得留着。候选面板开着时先确认候选（上面已拦）。
+  if (loading.value && e.key === 'Enter' && !e.shiftKey && !e.altKey && (e.metaKey || e.ctrlKey)) {
+    e.preventDefault()
+    sendNow(true)
+    return
   }
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
