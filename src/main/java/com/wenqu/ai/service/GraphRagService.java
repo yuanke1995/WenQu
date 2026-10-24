@@ -74,13 +74,15 @@ public class GraphRagService {
     /** 回落抽取模型读库主的个人默认聊天模型（异步抽取线程没有请求身份，按库主 uid 显式查询） */
     private final UserMapper userMapper;
     private final ChatClient chatClient;
+    /** 检索扩展的权限判定（库级可见 + 文档级跟随库）：扩展块与主检索命中走同一套门，缺了就是越权入口 */
+    private final ResourceVisibilityService visibility;
 
     public GraphRagService(GraphEntityMapper entityMapper, GraphTripleMapper tripleMapper,
                            GraphExtractMapper extractMapper, KnowledgeMapper knowledgeMapper,
                            KnowledgeBaseMapper kbMapper, AiDocumentMapper docMapper,
                            ModelRegistryService modelRegistryService, ConfigService configService,
                            UserMapper userMapper,
-                           ChatClient chatClient) {
+                           ChatClient chatClient, ResourceVisibilityService visibility) {
         this.entityMapper = entityMapper;
         this.tripleMapper = tripleMapper;
         this.extractMapper = extractMapper;
@@ -91,6 +93,7 @@ public class GraphRagService {
         this.configService = configService;
         this.userMapper = userMapper;
         this.chatClient = chatClient;
+        this.visibility = visibility;
     }
 
     /** 实体/谓词长度上限（超长即弃——LLM 偶发输出整段话当实体，直接挡在入库前） */
@@ -754,8 +757,15 @@ public class GraphRagService {
         Set<String> scope = graphKbs.stream().map(KnowledgeBase::getId).collect(Collectors.toSet());
         if (kbIds != null && !kbIds.isEmpty()) {
             scope.retainAll(kbIds);
-            if (scope.isEmpty()) return hits;
         }
+        // 库级权限收口：graph_enabled 只说明「哪些库开了图谱」，不说明这一轮的用户看得见它们。
+        // 不与可见库求交的话，kbIds 为空（非围墙轮）时 scope 就是全平台开了图谱的库——别人的
+        // 私有库会经三元组扩进本轮上下文。判定与主检索同一来源（ResourceVisibilityService）；
+        // 查不了就放弃本轮扩展（fail-closed，宁少扩不越权），无请求身份的线程按匿名判定同口径。
+        Set<String> visibleKbIds = visibleKbIdsOf();
+        if (visibleKbIds == null) return hits;
+        scope.retainAll(visibleKbIds);
+        if (scope.isEmpty()) return hits;
         int expandTopK = Math.max(0, configService.getInt("graphrag.expandTopK", 5));
         if (expandTopK == 0) return hits;
 
@@ -800,12 +810,27 @@ public class GraphRagService {
                 .limit(expandTopK * 2L)
                 .toList();
         Map<String, HybridRetrievalService.Hit> added = new LinkedHashMap<>();
+        // 文档级权限与生效态先批量判（与主检索的晚绑定过滤同源同口径），再进并入循环——
+        // 扩展块最后进的是同一份上下文与引用面板，主检索那道「库可读 且 文档自身可读（未配置共享跟随库）」
+        // 这里一道都不能少；查询失败按空集 fail-closed，无权/弃用文档的块绝不因一次 DB 抖动混进来。
+        List<String> candidateChunkIds = picked.stream()
+                .map(GraphTriple::getChunkId)
+                .filter(id -> id != null && !existingKIds.contains(id))
+                .distinct()
+                .toList();
+        Map<String, Knowledge> chunkById = candidateChunkIds.isEmpty()
+                ? Map.of()
+                : knowledgeMapper.selectBatchIds(candidateChunkIds).stream()
+                        .collect(Collectors.toMap(Knowledge::getId, k -> k, (a, b) -> a));
+        Set<String> allowedDocIds = allowedDocIdsOf(chunkById.values());
         for (GraphTriple t : picked) {
             if (added.size() >= expandTopK) break;
             if (t.getChunkId() == null || existingKIds.contains(t.getChunkId()) || added.containsKey(t.getChunkId())) continue;
-            Knowledge chunk = knowledgeMapper.selectById(t.getChunkId());
+            Knowledge chunk = chunkById.get(t.getChunkId());
             if (chunk == null || (chunk.getStatus() != null && chunk.getStatus() == 1)) continue;
             if (t.getKbId() != null && !scope.contains(t.getKbId())) continue;
+            if (chunk.getDocId() != null && !String.valueOf(chunk.getDocId()).isBlank()
+                    && !allowedDocIds.contains(String.valueOf(chunk.getDocId()))) continue;
             double origin = Math.max(triggerEntityScore.getOrDefault(t.getSubjectId(), 0.0),
                     triggerEntityScore.getOrDefault(t.getObjectId(), 0.0));
             if (origin <= 0) continue;
@@ -826,6 +851,63 @@ public class GraphRagService {
         out.sort((a, b) -> Double.compare(b.score(), a.score()));
         log.debug("[GRAPH] 图扩展并入 {} 块（命中触发实体 {} 个）", added.size(), triggerEntityScore.size());
         return out;
+    }
+
+    /**
+     * 当前身份可见的知识库集合（判定与 {@code HybridRetrievalService#loadVisibleKbIds} 同一来源）。
+     *
+     * @return null = 判不了（查询失败）——调用方据此放弃本轮扩展；扩展是锦上添花，
+     *         判不了就一朵不锦，绝不拿「全当可见」赌
+     */
+    private Set<String> visibleKbIdsOf() {
+        try {
+            ResourceVisibilityService.Principal p = new ResourceVisibilityService.Principal(
+                    com.wenqu.ai.util.RequestUser.uid(), com.wenqu.ai.util.RequestUser.departmentId(),
+                    com.wenqu.ai.util.RequestUser.role());
+            Set<String> visible = new HashSet<>();
+            for (KnowledgeBase kb : kbMapper.selectList(null)) {
+                if (visibility.canRead(p, kb.getShareConfig(), kb.getCreatedBy(),
+                        ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
+                    visible.add(kb.getId());
+                }
+            }
+            return visible;
+        } catch (Exception e) {
+            log.error("[FAIL-LOUD] 图扩展查询可见知识库失败，本轮扩展放弃: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 扩展候选块涉及的文档里，本轮用户可见且生效中的 docId 集合。
+     * 生效判据与主检索 {@code loadNonRetrievableDocIds} 同口径（status=0 且未删——弃用 1/解析中 2/
+     * 解析失败 3 的块不复活）；可见判据与主检索晚绑定过滤同源（canReadDocFollowKb，未配置共享跟随库）。
+     * 手动知识块（docId 空）不在文档 ACL 管辖内，调用方按主检索同一口径直接放行。
+     */
+    private Set<String> allowedDocIdsOf(Collection<Knowledge> chunks) {
+        Set<String> docIds = chunks.stream()
+                .map(Knowledge::getDocId)
+                .filter(id -> id != null && !String.valueOf(id).isBlank())
+                .map(String::valueOf)
+                .collect(Collectors.toSet());
+        if (docIds.isEmpty()) return Set.of();
+        try {
+            ResourceVisibilityService.Principal p = new ResourceVisibilityService.Principal(
+                    com.wenqu.ai.util.RequestUser.uid(), com.wenqu.ai.util.RequestUser.departmentId(),
+                    com.wenqu.ai.util.RequestUser.role());
+            Set<String> allowed = new HashSet<>();
+            for (AiDocument d : docMapper.selectList(new LambdaQueryWrapper<AiDocument>()
+                    .in(AiDocument::getId, docIds))) {
+                if (d.getStatus() == null || d.getStatus() != 0) continue;
+                if (d.getDeleted() != null && d.getDeleted() != 0) continue;
+                if (!visibility.canReadDocFollowKb(p, d.getShareConfig(), d.getCreatedBy())) continue;
+                allowed.add(String.valueOf(d.getId()));
+            }
+            return allowed;
+        } catch (Exception e) {
+            log.error("[FAIL-LOUD] 图扩展文档权限判定失败，候选块全部放弃（fail-closed）: {}", e.getMessage());
+            return Set.of();
+        }
     }
 
     /** blank 判断小工具（避免为了两个方法引入 Commons Lang） */
