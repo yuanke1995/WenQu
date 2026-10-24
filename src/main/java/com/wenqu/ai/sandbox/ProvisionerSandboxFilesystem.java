@@ -69,7 +69,7 @@ public class ProvisionerSandboxFilesystem extends BaseSandboxFilesystem {
     private final ProvisionerSandboxBackend backend;
     private final String sandboxId;
     /** 会话日志存储：与沙箱容器生命周期无关，落宿主本地（见 {@link #sessionStorage}）。 */
-    private final io.agentscope.core.session.AtomicSessionStorage journalStorage;
+    private final LocalJournalStorage journalStorage;
 
     public ProvisionerSandboxFilesystem(ProvisionerSandboxBackend backend, String sandboxId) {
         this(backend, sandboxId, null);
@@ -85,7 +85,17 @@ public class ProvisionerSandboxFilesystem extends BaseSandboxFilesystem {
         // 必须有（框架强制非空），但不能落到沙箱或工作区里——那两处都会被容器回收。
         this.journalStorage = new LocalJournalStorage(journalRoot != null
                 ? journalRoot
-                : java.nio.file.Paths.get(System.getProperty("user.home"), ".wenqu", "agent-journal"));
+                : LocalJournalStorage.defaultRoot());
+    }
+
+    /**
+     * 这份文件系统用的会话日志存储（日志轮转与清理要走同一个 root）。
+     *
+     * <p>每次 {@code SandboxService#frameworkFilesystem} 都新建一份文件系统，因而也新建一份 storage 对象，
+     * 但它们都指向同一个物理 root——轮切换的是目录，不是某个实例里的状态。
+     */
+    public LocalJournalStorage journalStorage() {
+        return journalStorage;
     }
 
     @Override

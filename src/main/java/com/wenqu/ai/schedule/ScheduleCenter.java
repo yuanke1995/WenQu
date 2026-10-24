@@ -101,6 +101,8 @@ public class ScheduleCenter {
     private final com.wenqu.ai.service.NotificationService notificationService;
     /** 框架会话事件日志归档的超期清理（文件在归档目录，与产物/外溢原文同一口径） */
     private final com.wenqu.ai.agentx.SessionLogArchive sessionLogArchive;
+    /** 会话事件日志换代：搬走的旧代次落在 rotated/ 下，不清理就随轮转次数无限增长。 */
+    private final com.wenqu.ai.agentx.JournalRotation journalRotation;
     private final ScheduleRunLogMapper scheduleRunLogMapper;
 
     /** 仅负责计时（daemon，随 JVM 退出），任务体都在 ThreadPoolManager 里跑 */
@@ -125,6 +127,7 @@ public class ScheduleCenter {
                           com.wenqu.ai.service.ToolSpillService toolSpillService,
                           com.wenqu.ai.service.NotificationService notificationService,
                           com.wenqu.ai.agentx.SessionLogArchive sessionLogArchive,
+                          com.wenqu.ai.agentx.JournalRotation journalRotation,
                           ScheduleRunLogMapper scheduleRunLogMapper) {
         this.configService = configService;
         this.configSchemaService = configSchemaService;
@@ -144,6 +147,7 @@ public class ScheduleCenter {
         this.toolSpillService = toolSpillService;
         this.notificationService = notificationService;
         this.sessionLogArchive = sessionLogArchive;
+        this.journalRotation = journalRotation;
         this.scheduleRunLogMapper = scheduleRunLogMapper;
     }
 
@@ -228,8 +232,11 @@ public class ScheduleCenter {
                 });
 
         // 会话日志归档超期清理：归档是按会话摊在磁盘上的一份份 JSONL，不清理就随会话数无限增长。
-        //（间隔 chat.sessionLogArchive.cleanupIntervalMs，保留期 chat.sessionLogArchive.keepDays，≤0 = 不清理）
-        register("会话日志归档清理", "删除超过保留期的框架会话事件日志归档文件（保留期 chat.sessionLogArchive.keepDays，≤0 = 不清理）",
+        // 顺带扫日志换代搬走的旧代次（rotated/ 下），它随「会话数 × 换代次数」增长，比归档涨得更快。
+        //（间隔 chat.sessionLogArchive.cleanupIntervalMs，归档保留期 chat.sessionLogArchive.keepDays，
+        //  旧代次保留期 chat.agentscopeJournalRotateKeepDays，各自 ≤0 = 不清理）
+        register("会话日志归档清理", "删除超过保留期的框架会话事件日志归档文件与换代搬走的旧日志目录"
+                        + "（归档 chat.sessionLogArchive.keepDays、旧代次 chat.agentscopeJournalRotateKeepDays，≤0 = 不清理）",
                 "chat.sessionLogArchive.cleanupIntervalMs",
                 () -> configService.getInt("chat.sessionLogArchive.cleanupIntervalMs", 86_400_000),
                 () -> false,
@@ -239,6 +246,7 @@ public class ScheduleCenter {
                         log.info("[ARCHIVE] 超期归档已清理 {} 份（保留 {} 天）", cleaned,
                                 configService.getInt("chat.sessionLogArchive.keepDays", 90));
                     }
+                    journalRotation.cleanupRotated();
                 });
 
         // 定时执行智能体：扫描到期的用户任务并派发（间隔 scheduled.scanIntervalMs，默认 30s；≤0 暂停）。

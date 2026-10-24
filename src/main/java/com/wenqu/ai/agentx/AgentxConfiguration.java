@@ -41,11 +41,13 @@ public class AgentxConfiguration {
                                com.wenqu.ai.service.UsageLedgerService usageLedger,
                                com.wenqu.ai.service.GoalService goalService,
                                com.wenqu.ai.service.ChatRunBus chatRunBus,
-                               com.wenqu.ai.service.McpToolLabelService mcpToolLabelService) {
+                               com.wenqu.ai.service.McpToolLabelService mcpToolLabelService,
+                               JournalRotation journalRotation) {
         AgentscopeChatEngine engine = new AgentscopeChatEngine(modelRegistry, configService, properties, tools,
                 sessions, sessionService, attachments, userImages, keywordExtractor, artifactService,
                 sandboxService, consultService, citations, redisProperties, qaLog, toolRegistry, projectService,
                 skillRepository, orgService, usageLedger, goalService, chatRunBus, mcpToolLabelService,
+                journalRotation,
                 chatService::resolveTurnModel);
         factory.bindFramework(engine);
         // 目标模式跨轮续跑的发起口：控制流归框架，问渠只数轮数——续跑轮由引擎 submit + 跟随

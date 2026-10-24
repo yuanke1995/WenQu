@@ -33,12 +33,12 @@ import java.util.stream.Stream;
  * 换机器/重建容器就等于丢历史，而这份日志是唯一能回答「那一轮到底发生了什么」的东西——正文库里也有，
  * 工具入参、思考段、待办与裁决的时刻<b>只在日志里</b>。归档把它按会话摊成一份可搬运、可 grep 的 JSONL。
  *
- * <p><b>刻意不做</b>：
- * <ul>
- *   <li>不截断在线日志——框架的 journal SPI 没有截断入口（只有 {@code SessionMigration} 那套
- *       「导出→按 baseline 重建」的路子），要做就得连会话恢复语义一起改；</li>
- *   <li>不给界面下载入口——归档是运维件，路径与格式写进部署手册。</li>
- * </ul>
+ * <p><b>与日志换代的关系</b>：在线日志不做截断（commit 带父链与逐段校验，抽事件会让 {@code scan} 直接报
+ * {@code Broken committed prefix}），但会按事件数<b>换代</b>——见 {@link JournalRotation}。换代前必须先把
+ * 旧那一代按游标补送干净：导出游标存在旧目录里，目录一搬走就再也送不出去了，所以那一步在
+ * {@code JournalRotation#rotateIfNeeded} 里显式做。
+ *
+ * <p><b>刻意不做</b>：不给界面下载入口——归档是运维件，路径与格式写进部署手册。
  */
 @Component
 public class SessionLogArchive {
@@ -188,6 +188,12 @@ public class SessionLogArchive {
                         lastSeq = tailSeq(file);
                         primed = true;
                     }
+                    // 换代（日志轮转，见 {@link JournalRotation}）之后 seq 从 1 重头再来。不认这一颗，
+                    // 整条新代会被下面那道去重静默吞掉——归档从此只剩第一代的明细，不报错、不影响问答，
+                    // 只有事后翻归档排障的人才看得见，正是要防的那种坏法。
+                    // 框架的至少一次投递可能在游标没推进时重投 seq 1，代价是归档里多一行同样的
+                    // baseline，比漏掉一整代轻。
+                    if (event.seq() == 1L) lastSeq = 0L;
                     if (event.seq() <= lastSeq) return;
                     Files.createDirectories(file.getParent());
                     Files.writeString(file, line(event) + "\n", StandardCharsets.UTF_8,

@@ -354,6 +354,11 @@ public class ConfigService {
         d.put("chat.sessionLogArchive.dir", "");             // 留空=落在 {chat.agentscopeStateDir}/session-archive；多副本必须指共享卷
         d.put("chat.sessionLogArchive.keepDays", "90");      // 按归档文件最后写入时间判定；0=不清理
         d.put("chat.sessionLogArchive.cleanupIntervalMs", "86400000"); // 清理任务间隔，默认 1 天；≤0 暂停该任务
+        // 会话事件日志换代：框架每轮开始要把整条事件链从头读几遍，代价按事件数的平方算
+        // （本机实测 3.5k→1.1s、14k→4.7s、57k→49.3s，全花在模型出第一个字之前）。
+        // 阈值按「起轮税不超过约 1.5 秒」定，不是按轮数定；≤0 = 不换代（长会话必然越聊越慢）。
+        d.put("chat.agentscopeJournalRotateEvents", "12000");
+        d.put("chat.agentscopeJournalRotateKeepDays", "30");  // 搬走的旧代次留 30 天（归档 JSONL 才是长期件）；≤0 = 不清理
         // chat.agentscopeTurnTimeoutSeconds 已取消（2026-10）：框架对单把工具有自带 5 分钟硬超时，
         // 此前用该键覆盖成 SSE 超时，默认 0=沿用 SSE 超时——框架已有限制、参数只留个默认就用不上，
         // 现由 AgentscopeChatEngine.turnSeconds() 恒定取 chat.sseTimeoutMs，不再留配置口

@@ -29,11 +29,21 @@ import java.util.stream.Stream;
  * <p><b>原子性</b>：{@link #compareAndSet} 用「版本号校验 + 临时文件 + ATOMIC_MOVE」实现。
  * 单机单 JVM 下由文件锁保证；跨进程靠版本号比对（后写者若版本不匹配直接失败，不静默覆盖）。
  */
-final class LocalJournalStorage implements AtomicSessionStorage {
+public class LocalJournalStorage implements AtomicSessionStorage {
+
+    /**
+     * 会话事件日志的根目录——**只有这一处口径**。
+     *
+     * <p>轮转（{@code JournalRotation}）要在同一个根下搬目录，若两处各自算 root，
+     * 换一次布局就会出现「轮转搬走的不是问答正在写的那一份」——静默丢历史。
+     */
+    public static java.nio.file.Path defaultRoot() {
+        return java.nio.file.Paths.get(System.getProperty("user.home"), ".wenqu", "agent-journal");
+    }
 
     private final Path root;
 
-    LocalJournalStorage(Path root) {
+    public LocalJournalStorage(Path root) {
         this.root = Objects.requireNonNull(root, "root is required");
         try {
             Files.createDirectories(this.root);
@@ -127,6 +137,35 @@ final class LocalJournalStorage implements AtomicSessionStorage {
                     .toList();
         } catch (IOException e) {
             throw new UncheckedIOException("列会话日志失败：" + dir, e);
+        }
+    }
+
+    /** 一条会话日志目录在 root 下的物理位置（轮转搬走的就是它）。 */
+    public Path sessionDir(String storagePath) {
+        return resolve(storagePath);
+    }
+
+    /**
+     * 把一条会话当前的日志目录整体搬到旁边（日志轮转用），成功返回 true。
+     *
+     * <p><b>为什么是搬目录而不是截断链</b>：{@code JournalSessionLog} 的 commit 带父链与逐段 SHA-256，
+     * 删中间任何一颗都会让 {@code scan} 报 {@code Broken committed prefix}；框架给的有界入口只有
+     * {@code SessionMigration} 那套「导出 baseline → 换一份空日志」，而它要求目标日志为空——搬走正好造出空目标。
+     *
+     * <p><b>目标已存在不覆盖</b>：两条链撞在一起比「这一轮不轮转」坏得多，宁可不搬。
+     */
+    public boolean relocateSessionDir(String storagePath, String asidePath) {
+        Path from = resolve(storagePath);
+        Path to = resolve(asidePath);
+        if (!Files.isDirectory(from) || Files.exists(to)) {
+            return false;
+        }
+        try {
+            Files.createDirectories(to.getParent());
+            Files.move(from, to);
+            return true;
+        } catch (IOException e) {
+            throw new UncheckedIOException("搬开会话事件日志目录失败：" + from + " → " + to, e);
         }
     }
 

@@ -96,6 +96,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private final AppProperties properties;
     private final WenquAgentxTools tools;
     private final FrameworkSessions sessions;
+    /** 会话事件日志换代（起轮缝里做，见 {@link JournalRotation} 的成因账）。 */
+    private final JournalRotation journalRotation;
+    /**
+     * 框架侧 agentId——同时是会话事件日志物理路径的一段（{@code SessionKey#storagePath}）。
+     * 建实例与换代必须同一个值，写两处就会漂成「轮转搬走的不是问答正在写的那一份」。
+     */
+    static final String AGENT_ID = "wenqu";
     private final com.wenqu.ai.service.SessionService sessionService;
     /** 附件元信息落库的共用口径（与工作流路径同一个方法，见 metasJson 的类注释）。 */
     private final ChatAttachmentService attachments;
@@ -222,6 +229,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                                com.wenqu.ai.service.GoalService goalService,
                                com.wenqu.ai.service.ChatRunBus chatRunBus,
                                com.wenqu.ai.service.McpToolLabelService mcpToolLabelService,
+                               JournalRotation journalRotation,
                                java.util.function.Function<ChatCommand, com.wenqu.ai.service.ChatService.TurnModel> modelResolver) {
         this.modelRegistry = modelRegistry;
         this.projectService = projectService;
@@ -245,6 +253,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         this.usageLedger = usageLedger;
         this.goalService = goalService;
         this.chatRunBus = chatRunBus;
+        this.journalRotation = journalRotation;
         this.modelResolver = modelResolver;
     }
 
@@ -571,6 +580,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         }
         // run_code 的脚本通道按轮现装：工具面在 build 期固定，轮号/通道/台账必须是当轮的
         tools.ensureRunCodeTurn(slot, cmd);
+        // 起轮缝里先给这条会话的事件日志换一次代：框架每轮开始要把整条事件链从头读好几遍，
+        // 代价按事件数的平方算（实测 3.5k→1.1s、14k→4.7s、9.2 万→单是最贵的一趟 40.2s），
+        // 而本轮第一个这样的读就是下面的 reconcileStalledTurn（它读 SessionTurns.read）。
+        // 排在所有全量读之前，否则本轮照样白付一次旧账；上一轮留着没结算的卡或没撒手的租约时
+        // 框架自己会拒换代，那一轮就照旧不换，下一轮再试。
+        journalRotation.rotateIfNeeded(cmd.getUserId(), cmd.getSessionId(), AGENT_ID);
         // 上一轮只要以失败收场过，这条会话后续每一轮都不会被框架启动：开轮前先把它归档掉
         reconcileStalledTurn(session, cmd);
         // 工具步数预算按轮归零：实例是常驻的，不归零就是上一轮的步数吃掉这一轮的预算
@@ -3057,7 +3072,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         List<WenquAgentxTools.SubagentTarget> subagentTargets =
                 tools.consultSubagentTargets(cmd, policy, slot);
         HarnessAgent.Builder agentBuilder = HarnessAgent.builder()
-                .agentId("wenqu")
+                .agentId(AGENT_ID)
                 .name("wenqu")
                 .description("问渠·AgentScope 运行时")
                 // 角色提示词归智能体管（chat.systemPrompt 已退役）：见 rolePrompt 的分层说明。
