@@ -16,9 +16,17 @@
       <a-tab-pane key="roles">
         <template #tab><span class="pg-tab">角色<i v-if="loaded.roles" class="pg-badge">{{ roles.length }}</i></span></template>
       </a-tab-pane>
+      <!-- 并入本域的独立管理页：有哪些/叫什么/什么顺序全由菜单表数据驱动（renderAs=tab 且父为本页），
+           与「智能体工作台」同一套收编方式——管理员改名称、隐藏或收回角色授权，这里都跟着变 -->
+      <a-tab-pane v-for="t in extraTabs" :key="t.key">
+        <template #tab><span class="pg-tab">{{ t.name }}</span></template>
+      </a-tab-pane>
     </a-tabs>
 
-    <div class="app-page-body">
+    <!-- 并入的整页组件自带页头工具栏（计数 + 说明 + 主操作），形态与上面三张表不同，
+         故不套共用卡片，而是整块替掉内容区 -->
+    <component v-if="activeExtra" :is="TAB_COMPONENTS[activeExtra.key]" />
+    <div v-else class="app-page-body">
       <div class="app-card" style="padding:0;overflow:hidden">
         <!-- 工具栏：搜索 + 计数 + 新建 -->
         <div class="rb-toolbar">
@@ -354,7 +362,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch } from 'vue'
+import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { SearchOutlined, PlusOutlined, MessageOutlined, RobotOutlined, DatabaseOutlined, TeamOutlined,
@@ -364,14 +372,38 @@ import { listMenus, createMenu, updateMenu, deleteMenu,
          listApis, createApi, updateApi, deleteApi,
          listRoles, createRole, updateRole, deleteRole,
          getRolePermissions, saveRolePermissions } from '../api'
+import { ensureAuth } from '../utils/auth'
+import OidcProvidersPage from './OidcProvidersPage.vue'
 
 /* ==================== 页签：状态落 URL / 数据懒加载 / 各页签独立记忆筛选 ==================== */
 const route = useRoute()
 const router = useRouter()
-const TABS = ['menus', 'apis', 'roles']
+
+/** 本页固有的三个页签：它们就是「权限管理」本身，不作为菜单行存在 */
+const BASE_TABS = ['menus', 'apis', 'roles']
+/** tabKey → 组件。菜单表不知道组件的存在，这张表是数据与视图之间唯一的桥（同 AgentsHubPage） */
+const TAB_COMPONENTS = { oidc: OidcProvidersPage }
+/** 从 tab 菜单的 path（/permissions?tab=key）解析组件映射 key */
+const tabKeyOf = p => {
+  try { return new URLSearchParams(String(p || '').split('?')[1] || '').get('tab') } catch (e) { return null }
+}
+
+const extraTabs = ref([])
+const tabKeys = computed(() => BASE_TABS.concat(extraTabs.value.map(t => t.key)))
 const tab = computed({
-  get: () => (TABS.includes(route.query.tab) ? route.query.tab : 'menus'),
+  get: () => (tabKeys.value.includes(route.query.tab) ? route.query.tab : 'menus'),
   set: v => router.replace({ path: '/permissions', query: v === 'menus' ? {} : { tab: v } })
+})
+const activeExtra = computed(() => extraTabs.value.find(t => t.key === tab.value) || null)
+
+onMounted(async () => {
+  // AppLayout 挂载时已 ensureAuth，此处命中模块级缓存，不重复请求
+  const info = await ensureAuth()
+  const host = (info?.menus || []).find(m => m && m.path === '/permissions')
+  extraTabs.value = ((host && host.children) || [])
+    .filter(c => c && c.renderAs === 'tab')
+    .map(c => ({ id: c.id, key: tabKeyOf(c.path), name: c.name }))
+    .filter(t => t.key && TAB_COMPONENTS[t.key])  // 菜单表里有、代码里还没映射的 Tab 不渲染（升级半程态容错）
 })
 
 /** 每个页签各记自己的搜索/筛选（此前共用一个 keyword，切页签即被清空） */
@@ -879,12 +911,14 @@ const scheduleIdle = window.requestIdleCallback
   ? cb => window.requestIdleCallback(cb, { timeout: 2000 })
   : cb => setTimeout(cb, 300)
 
-// 页签即数据入口：URL 直达 ?tab=apis 时只拉接口；其余页签稍后空闲补拉
+// 页签即数据入口：URL 直达 ?tab=apis 时只拉接口；其余固有页签稍后空闲补拉
 // 接口页签额外预取菜单：表格「所属菜单」列需要菜单名
+// 并入的整页 Tab 不在这本懒加载账里——它自己挂载时拉清单，切走即销毁、再切回来重拉
 watch(tab, t => {
+  if (!LOADERS[t]) return
   ensureData(t)
   if (t === 'apis') ensureData('menus')
-  scheduleIdle(() => TABS.filter(x => x !== t).forEach(prefetch))
+  scheduleIdle(() => BASE_TABS.filter(x => x !== t).forEach(prefetch))
 }, { immediate: true })
 </script>
 
