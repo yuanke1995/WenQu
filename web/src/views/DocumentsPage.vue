@@ -14,6 +14,10 @@
         <!-- 标签筛选（本库内按文档标签过滤列表）：标签即智能体检索收窄与文档治理的同一套元数据 -->
         <a-select v-if="tagOptions.length" v-model:value="tagFilter" allow-clear :options="tagOptions"
                   placeholder="按标签筛选" style="width:150px" size="small" :dropdown-match-select-width="false" />
+        <!-- 回收站：软删文档可恢复/彻底删除；数量徽标提示有东西可清 -->
+        <button class="app-btn ghost" @click="openRecycle">
+          回收站<span v-if="recycleCount" class="recycle-badge">{{ recycleCount }}</span>
+        </button>
         <!-- 知识库配置直达：解析/检索参数与向量模型就地改，不用回知识库列表页。
              内置库对管理员开放（内容只读但配置可改，与后端内置库白名单同口径） -->
         <button v-if="canConfigKb" class="app-btn ghost" @click="openKbConfig">
@@ -189,7 +193,7 @@
                   </div>
                 </template>
               </a-popover>
-              <a-popconfirm v-if="canManageDoc(d)" title="确定删除该文档？知识库将同步移除" @confirm="del(d.id)">
+              <a-popconfirm v-if="canManageDoc(d)" title="删除后进入回收站，可恢复或彻底删除" @confirm="del(d.id)">
                 <button class="app-link-btn danger" :disabled="deletingId === d.id">删除</button>
               </a-popconfirm>
             </span>
@@ -198,6 +202,36 @@
         </a-spin>
       </div>
     </div>
+
+    <!-- 回收站：本库软删文档。恢复=原样回来（向量未动，检索即时可用）；彻底删除=物理清除不可恢复 -->
+    <a-modal v-model:open="recycleVisible" :title="`回收站 · ${currentKbName || '当前知识库'}`" :footer="null" :width="720">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+        <span style="font-size:12px;color:var(--app-text3)">共 {{ recycleRows.length }} 个已删除文档，内容保留中（向量/知识块/源文件不动，可随时恢复）</span>
+        <a-popconfirm v-if="recycleRows.length" title="彻底删除本库回收站全部文档？不可恢复" @confirm="doPurgeRecycle">
+          <button class="app-btn ghost sm" :disabled="recycleBusy" style="margin-left:auto">清空回收站</button>
+        </a-popconfirm>
+      </div>
+      <a-table :data-source="recycleRows" size="small" row-key="id" :loading="recycleLoading"
+               :pagination="recycleRows.length > 10 ? { pageSize: 10, size: 'small' } : false">
+        <a-table-column title="文件名" key="fileName" ellipsis>
+          <template #default="{ record }">{{ record.fileName }}</template>
+        </a-table-column>
+        <a-table-column title="大小" key="size" width="90">
+          <template #default="{ record }">{{ fmtSize(record.fileSize) }}</template>
+        </a-table-column>
+        <a-table-column title="删除时间" key="deletedAt" width="160">
+          <template #default="{ record }">{{ String(record.deletedAt || '').replace('T', ' ').slice(0, 19) || '—' }}</template>
+        </a-table-column>
+        <a-table-column title="操作" key="act" width="150">
+          <template #default="{ record }">
+            <button class="app-link-btn" :disabled="recycleBusy" @click="doRestore(record)">恢复</button>
+            <a-popconfirm title="彻底删除？向量/知识块/源文件物理清除，不可恢复" @confirm="doPurge(record)">
+              <button class="app-link-btn danger" :disabled="recycleBusy" style="margin-left:10px">彻底删除</button>
+            </a-popconfirm>
+          </template>
+        </a-table-column>
+      </a-table>
+    </a-modal>
 
     <!-- 知识块预览。勿加 destroy-on-close：关闭会销毁 Portal，重开时容器被重新追加到 body 末尾，
          而本页弹窗 z-index 同值（zIndexPopupBase），DOM 靠后者在上——会反把「编辑知识块」弹窗盖住。 -->
@@ -433,7 +467,8 @@ import { listDocuments, uploadDocumentsBatch, updateDocumentStatus, reparseDocum
          updateKnowledge, deleteKnowledge, listDocumentVersions, rollbackDocument,
          getRuntimeConfig, batchReparseDocuments, updateKnowledgeStatus, searchKnowledge,
          downloadDocumentSource, updateDocumentShare, listKnowledgeBases, moveDocToKb, importDocumentFromUrl, refreshConfigDocument,
-         getDocumentQueueStats, listAvailableModels, backfillDescriptions, setDocumentTags } from '../api'
+         getDocumentQueueStats, listAvailableModels, backfillDescriptions, setDocumentTags,
+         listRecycleDocuments, restoreDocument, purgeDocument, purgeRecycleBin } from '../api'
 import ShareScopeModal from './ShareScopeModal.vue'
 import KnowledgeBaseEditModal from '../components/KnowledgeBaseEditModal.vue'
 import KnowledgeGraphModal from '../components/KnowledgeGraphModal.vue'
@@ -595,8 +630,8 @@ const toggleSelect = (id, e) => {
   else if (at >= 0) selectedKeys.value.splice(at, 1)
 }
 
-onMounted(() => { fetchList(); fetchKbs(); loadUploadCfg(); ensureAuth().then(me => { myUid.value = me.user || '' }); window.addEventListener('paste', onPaste) })
-watch(currentKbId, () => { fetchList() })
+onMounted(() => { fetchList(); fetchKbs(); loadUploadCfg(); loadRecycle(); ensureAuth().then(me => { myUid.value = me.user || '' }); window.addEventListener('paste', onPaste) })
+watch(currentKbId, () => { fetchList(); loadRecycle() })
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
   window.removeEventListener('paste', onPaste)
@@ -910,6 +945,49 @@ async function saveTags (d) {
     if (r.success) { message.success('已更新标签'); d.tags = tagDraft.value.join(',') }
     else message.error(r.msg || '保存失败')
   } catch (e) { message.error(e.message || '保存失败') }
+}
+
+// ── 回收站：软删文档的恢复 / 彻底删除 / 清空 ──
+const recycleVisible = ref(false)
+const recycleRows = ref([])
+const recycleLoading = ref(false)
+const recycleBusy = ref(false)
+const recycleCount = computed(() => recycleRows.value.length)
+async function loadRecycle () {
+  recycleLoading.value = true
+  try {
+    const r = await listRecycleDocuments(currentKbId.value)
+    if (r.success) recycleRows.value = r.data || []
+  } catch (e) { /* 静默：徽标与列表保持现状 */ }
+  finally { recycleLoading.value = false }
+}
+function openRecycle () { recycleVisible.value = true; loadRecycle() }
+async function doRestore (record) {
+  recycleBusy.value = true
+  try {
+    const r = await restoreDocument(record.id)
+    if (r.success) { message.success(`「${record.fileName}」已恢复`); await loadRecycle(); fetchList() }
+    else message.error(r.msg || '恢复失败')
+  } catch (e) { message.error(e.message || '恢复失败') }
+  finally { recycleBusy.value = false }
+}
+async function doPurge (record) {
+  recycleBusy.value = true
+  try {
+    const r = await purgeDocument(record.id)
+    if (r.success) { message.success(`「${record.fileName}」已彻底删除`); await loadRecycle() }
+    else message.error(r.msg || '彻底删除失败')
+  } catch (e) { message.error(e.message || '彻底删除失败') }
+  finally { recycleBusy.value = false }
+}
+async function doPurgeRecycle () {
+  recycleBusy.value = true
+  try {
+    const r = await purgeRecycleBin(currentKbId.value)
+    if (r.success) { message.success(r.msg || '回收站已清空'); await loadRecycle() }
+    else message.error(r.msg || '清空失败')
+  } catch (e) { message.error(e.message || '清空失败') }
+  finally { recycleBusy.value = false }
 }
 function onRefreshToggle (d, val) { d.autoRefresh = val ? 1 : 0 }
 function onRefreshCronInput (d, v) { d.refreshCron = v }
@@ -1484,6 +1562,13 @@ const fmtTime = t => {
 /* 文档标签：贴在文件名后的小号 chip；标签多时行内收起（悬浮 title 仍全量可见） */
 .doc-tags { display: inline-flex; gap: 4px; flex-wrap: wrap; margin-left: 8px; max-width: 260px; overflow: hidden; max-height: 22px; }
 .doc-tag-chip { margin-inline-end: 0; font-size: 11px; line-height: 16px; padding: 0 6px; border-radius: 4px; }
+/* 回收站徽标：数量小圆点贴在按钮文字后 */
+.recycle-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 16px; height: 16px; padding: 0 4px; margin-left: 6px;
+  border-radius: 999px; background: var(--app-danger-weak); color: var(--app-danger);
+  font-size: 11px; line-height: 1;
+}
 .drag-mask {
   position: fixed; inset: 0; z-index: 1000;
   background: rgba(46,107,230,.08);

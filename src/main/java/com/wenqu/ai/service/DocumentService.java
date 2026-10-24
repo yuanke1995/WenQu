@@ -1427,9 +1427,94 @@ public class DocumentService {
     }
 
     /**
-     * 删除文档（向量/MySQL/图片分别清理）
+     * 删除文档：进入回收站（软删保留内容）。
+     * <p>与旧「硬删」的差异：只落 deleted=1 + deleted_at，并同步移除关键词索引（检索面即时消失）；
+     * 向量、知识块、源文件、图片、版本快照全部保留——恢复即原样回来（向量未动，检索即时可用）。
+     * 检索安全性靠既有双兜底：向量路命中级可见性过滤对已删行 fail-closed
+     * （{@code loadVisibleDocIdsOfHits} 的 selectBatchIds 取不到已删行），关键词路在软删时同步删索引。
+     * <p>解析中（status=2）的文档维持硬删：半成品没有可保留的价值，且硬删路径自带解析中断与产物清理。
      */
     public void delete(String docId) {
+        AiDocument doc = documentMapper.selectById(docId);
+        if (doc == null) throw new BizException("文档不存在");
+        if (doc.getStatus() != null && doc.getStatus() == 2) {
+            purge(docId);
+            return;
+        }
+        deletedFlags.put(docId, true);
+        try {
+            // 兜底中断（正常不该有：非解析中不持解析线程；重队列边界的竞态窗口仍可能残留）
+            Thread parseThread = parseThreads.get(docId);
+            if (parseThread != null && parseThread.isAlive()) {
+                parseThread.interrupt();
+                log.info("[{}] 删除时中断解析线程", docId);
+            }
+            keywordIndexService.deleteByDoc(docId); // best-effort：检索面即时消失
+            if (documentMapper.softDelete(docId) == 0) {
+                throw new BizException("文档不存在或已在回收站");
+            }
+            log.info("[AUDIT] 文档进入回收站 operator={} docId={} file={}", RequestUser.uid(), docId, doc.getFileName());
+        } finally {
+            deletedFlags.remove(docId);
+        }
+        documentMetaCache.invalidate(docId);
+    }
+
+    /**
+     * 回收站列表（kbId 空=全部；默认库语义与文档列表一致：并入 kb_id IS NULL 的历史行）。
+     * 只含本轮软删行（deleted_at 非空）——历史硬删行内容已销毁，不进回收站视图。
+     */
+    public List<AiDocument> recycleList(String kbId) {
+        List<AiDocument> all = documentMapper.selectRecycled();
+        if (kbId == null || kbId.isBlank()) return all;
+        boolean isDefault = kbId.equals(defaultKbIdOf());
+        return all.stream()
+                .filter(d -> kbId.equals(d.getKbId()) || (isDefault && d.getKbId() == null))
+                .toList();
+    }
+
+    /** 回收站取单条（供控制器做管理权校验：selectById 对已删行恒 null） */
+    public AiDocument getRecycled(String docId) {
+        return documentMapper.selectRecycledById(docId);
+    }
+
+    /**
+     * 从回收站恢复：校验所在库存活与同名冲突后出站；关键词索引灌回（仅生效文档，
+     * 与启停用恢复同口径），向量未动、检索即时可用。
+     */
+    public void restore(String docId) {
+        AiDocument doc = documentMapper.selectRecycledById(docId);
+        if (doc == null) throw new BizException("回收站中没有该文档（可能已被彻底删除）");
+        String effectiveKb = doc.getKbId() == null || doc.getKbId().isBlank() ? defaultKbIdOf() : doc.getKbId();
+        com.wenqu.ai.model.KnowledgeBase kb = effectiveKb == null ? null : kbMapper.selectById(effectiveKb);
+        if (kb == null || (kb.getDeleted() != null && kb.getDeleted() == 1)) {
+            throw new BizException("该文档所属知识库已删除，无法恢复；可先确认知识库，或直接彻底删除该文档");
+        }
+        if (documentMapper.countActiveSameName(effectiveKb, doc.getFileName()) > 0) {
+            throw new BizException("已存在同名生效文档（" + doc.getFileName() + "），无法恢复；请先处理同名文档");
+        }
+        if (documentMapper.restore(docId) == 0) {
+            throw new BizException("恢复失败：文档状态已变化，请刷新后重试");
+        }
+        if (doc.getStatus() != null && doc.getStatus() == 0) {
+            try {
+                List<Knowledge> blocks = knowledgeMapper.selectList(
+                        new LambdaQueryWrapper<Knowledge>().eq(Knowledge::getDocId, docId));
+                if (!blocks.isEmpty()) keywordIndexService.indexChunks(blocks);
+            } catch (Exception e) {
+                log.warn("[{}] 恢复后关键词索引灌回失败（可稍后 /reindex 修复）: {}", docId, e.getMessage());
+            }
+        }
+        documentMetaCache.invalidate(docId);
+        log.info("[AUDIT] 文档已从回收站恢复 operator={} docId={} file={}", RequestUser.uid(), docId, doc.getFileName());
+    }
+
+    /**
+     * 彻底删除（回收站「彻底删除」/ 清空回收站 / 解析中文档删除共用的物理清除路径）：
+     * 向量 → 附加索引 → GraphRAG → 知识块 → 关键词索引 → 版本快照 → 文档行（物理）→ 图片/源文件。
+     * 删除顺序保证失败可重试不产生不可追溯孤儿；解析中断逻辑保留（parsing 路入口）。
+     */
+    public void purge(String docId) {
         // 立即标记删除 + 中断解析线程（图片 join 等待立即响应，不再等阶段检查点）
         // 多实例语义：deletedFlags/parseThreads 为进程内存态——本实例解析的任务可立即中断；
         // 其他实例上运行的解析任务由 isDocAlive 的 DB 兜底感知（删除后 selectById 为 null），
@@ -1467,7 +1552,7 @@ public class DocumentService {
             log.warn("[{}] GraphRAG 清理失败（不影响删除）: {}", docId, e.getMessage());
         }
         knowledgeMapper.delete(new LambdaQueryWrapper<Knowledge>().eq(Knowledge::getDocId, docId));
-        documentMapper.deleteById(docId);
+        documentMapper.hardDelete(docId);
         keywordIndexService.deleteByDoc(docId); // 关键词索引同步（best-effort）
         // 清理版本快照
         try {
@@ -1480,6 +1565,7 @@ public class DocumentService {
         // 引用关系清理（纯派生数据，随文档删除）
         cleanupImages(docId);
         cleanupSourceFile(docId);
+        log.info("[AUDIT] 文档已彻底删除 operator={} docId={}", RequestUser.uid(), docId);
     }
 
     /**

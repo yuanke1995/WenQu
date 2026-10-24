@@ -237,7 +237,7 @@ public class DocumentController {
                 .body(new org.springframework.core.io.FileSystemResource(sf.path()));
     }
 
-    @Operation(summary = "删除文档", description = "删除指定文档（同时清理向量、知识块、图片、源文件）")
+    @Operation(summary = "删除文档", description = "进入回收站（软删保留内容，可恢复）；解析中的文档直接彻底删除。回收站见 GET /document/recycle")
     @DeleteMapping("/{id}")
     public ResultJson delete(
             @Parameter(description = "文档 ID") @PathVariable("id") String id,
@@ -245,7 +245,47 @@ public class DocumentController {
         requireDocManage(documentService.getDoc(id));
         documentService.delete(id);
         log.info("[AUDIT] 删除文档 operator={} docId={}", RequestUser.uid(), id);
-        return ResultJson.ok("删除成功");
+        return ResultJson.ok("已移入回收站");
+    }
+
+    @Operation(summary = "回收站列表", description = "软删文档（内容保留可恢复）；kbId 过滤时默认库并入 kb_id 为空的历史行，最近 500 条")
+    @GetMapping("/recycle")
+    public ResultJson recycle(@Parameter(description = "知识库 ID（空=全部）")
+                              @RequestParam(value = "kbId", required = false) String kbId) {
+        return ResultJson.ok(documentService.recycleList(kbId));
+    }
+
+    @Operation(summary = "从回收站恢复", description = "同名生效文档冲突或所属知识库已删除时拒绝；向量未动，恢复即检索可用")
+    @PostMapping("/{id}/restore")
+    public ResultJson restore(@Parameter(description = "文档 ID") @PathVariable("id") String id) {
+        requireDocManage(documentService.getRecycled(id));
+        documentService.restore(id);
+        return ResultJson.ok("已恢复");
+    }
+
+    @Operation(summary = "彻底删除", description = "物理清除向量/知识块/源文件/图片/版本快照，不可恢复（回收站行专用）")
+    @PostMapping("/{id}/purge")
+    public ResultJson purgeDoc(@Parameter(description = "文档 ID") @PathVariable("id") String id) {
+        requireDocManage(documentService.getRecycled(id));
+        documentService.purge(id);
+        return ResultJson.ok("已彻底删除");
+    }
+
+    @Operation(summary = "清空回收站", description = "逐条彻底删除该库回收站的文档；无管理权限的文档跳过并计数")
+    @PostMapping("/recycle/purge")
+    public ResultJson purgeRecycle(@Parameter(description = "知识库 ID") @RequestParam("kbId") String kbId) {
+        int ok = 0;
+        int skipped = 0;
+        for (com.wenqu.ai.model.AiDocument d : documentService.recycleList(kbId)) {
+            try {
+                requireDocManage(d);
+                documentService.purge(d.getId());
+                ok++;
+            } catch (Exception e) {
+                skipped++;
+            }
+        }
+        return ResultJson.ok("已彻底删除 " + ok + " 个" + (skipped > 0 ? "，跳过 " + skipped + " 个无权限文档" : ""));
     }
 
     @Operation(summary = "启停用文档", description = "设置文档状态：0=生效（参与检索），1=弃用（不参与检索）")
@@ -314,7 +354,7 @@ public class DocumentController {
         return ResultJson.ok("已更新标签");
     }
 
-    @Operation(summary = "批量删除文档", description = "批量删除多个文档")
+    @Operation(summary = "批量删除文档", description = "批量删除多个文档（进入回收站，可恢复）；解析中的文档直接彻底删除")
     @PostMapping("/batch/delete")
     public ResultJson batchDelete(
             @Parameter(description = "{\"ids\": [\"docId1\", \"docId2\"]}")

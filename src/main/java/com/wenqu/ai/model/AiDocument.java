@@ -65,6 +65,9 @@ public class AiDocument {
     @TableLogic
     private Integer deleted;
 
+    /** 进入回收站时刻（软删保留内容）；NULL=非回收站删除——历史硬删行不出现在回收站视图 */
+    private java.time.LocalDateTime deletedAt;
+
     /** 当前版本号（每次成功解析+1，用于版本管理） */
     private Integer version;
 

@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_document` (
     `last_refresh_at` DATETIME     DEFAULT NULL COMMENT '上次自动刷新时刻',
     `next_refresh_at` DATETIME     DEFAULT NULL COMMENT '下次自动刷新时刻（ScheduleCenter 扫描据此触发）',
     `deleted`      INT          DEFAULT 0 COMMENT '逻辑删除: 0=未删除, 1=已删除',
+    `deleted_at`   DATETIME     DEFAULT NULL COMMENT '进入回收站时刻（软删保留内容，可恢复/彻底删除）；NULL=非回收站删除',
     PRIMARY KEY (`id`),
     KEY `idx_status_deleted` (`status`, `deleted`),
     KEY `idx_file_status` (`file_name`, `status`),

@@ -1308,6 +1308,17 @@ export const runAnswerEval = caseCount =>
   request('/eval/answer/run', { method: 'POST', body: JSON.stringify({ caseCount }), timeout: 60000 })
 /** 答案级评测进度与最近报告（running=true 时按 progress 展示；report 含逐条得分与问题说明，history 为最近 10 期摘要） */
 export const answerEvalReport = () => request('/eval/answer/report')
+// ==================== 回收站（软删保留内容：恢复 / 彻底删除 / 清空） ====================
+/** 回收站列表（kbId 空=全部；默认库并入 kb_id 为空的历史行，最近 500 条） */
+export const listRecycleDocuments = kbId =>
+  request('/document/recycle' + (kbId ? `?kbId=${encodeURIComponent(kbId)}` : ''))
+/** 从回收站恢复（同名冲突/所属库已删除时后端拒绝） */
+export const restoreDocument = id => request(`/document/${encodeURIComponent(id)}/restore`, { method: 'POST' })
+/** 彻底删除（物理清除向量/块/源文件/图片/版本，不可恢复） */
+export const purgeDocument = id => request(`/document/${encodeURIComponent(id)}/purge`, { method: 'POST' })
+/** 清空回收站（按库；无管理权限的文档后端跳过并计数） */
+export const purgeRecycleBin = kbId =>
+  request(`/document/recycle/purge?kbId=${encodeURIComponent(kbId)}`, { method: 'POST', timeout: 120000 })
 
 /** 删除文档 */
 export const deleteDocument = id => request(`/document/${id}`, { method: 'DELETE' })
