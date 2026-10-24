@@ -377,10 +377,8 @@ const loadAgents = async () => {
     // 优先默认助手；未设默认时用列表第一个，保证下拉总有可选项
     const def = agentList.value.find(a => a.isDefault === 1 || a.isDefault === true) || agentList.value[0]
     defaultAgentId.value = def ? def.id : ''
-    // 当前会话尚未挑过作答智能体：落到默认智能体（P5 起没有「自动派遣」这一档）
-    if (!(currentSessionId.value in agentMap.value)) {
-      agentMap.value = { ...agentMap.value, [currentSessionId.value]: defaultAgentId.value || '' }
-    }
+    // 刻意不往 agentMap 给当前会话补默认值：那一格代表「用户在本会话显式挑过」，优先级高于 lastTurnAgent，
+    // 挂载时写种等于把「打开旧会话跟随上一位作答者」短路掉（没挑过也没上一问时 getter 自己回默认）
   } catch (e) { /* 接口不可用时静默：选择器回退为「默认（全局配置）」 */ }
 }
 const currentSessionId = ref(null)
