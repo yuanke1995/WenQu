@@ -1,9 +1,12 @@
 package com.wenqu.ai.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.dto.ResultJson;
 import com.wenqu.ai.mapper.KnowledgeMapper;
 import com.wenqu.ai.service.KeywordIndexService;
+import com.wenqu.ai.service.RoleService;
+import com.wenqu.ai.util.RequestUser;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
@@ -31,10 +34,17 @@ public class SearchIndexController {
 
     private final KeywordIndexService keywordIndexService;
     private final KnowledgeMapper knowledgeMapper;
+    private final RoleService roleService;
+
+    /** 重建/清空是全平台破坏性运维操作，状态含索引规模信息，整体收紧到管理员 */
+    private boolean admin() {
+        return roleService.isAdminCode(RequestUser.role());
+    }
 
     @Operation(summary = "引擎状态与索引统计（indexedCount 与 mysqlCount 对比可发现索引漂移）")
     @GetMapping("/stats")
     public ResultJson<Map<String, Object>> stats() {
+        if (!admin()) throw new BizException("仅管理员可查看关键词索引状态");
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("engine", keywordIndexService.engine());
         m.put("available", keywordIndexService.isAvailable());
@@ -54,6 +64,7 @@ public class SearchIndexController {
     @Operation(summary = "全量重建索引（切换引擎保存配置时已自动触发；漂移修复或手动重建用）")
     @PostMapping("/reindex")
     public ResultJson<String> reindex() {
+        if (!admin()) throw new BizException("仅管理员可重建关键词索引");
         if (!keywordIndexService.enabled()) {
             return ResultJson.error("关键词引擎未启用 Meilisearch（keyword.engine=mysql），无需重建");
         }
@@ -64,6 +75,7 @@ public class SearchIndexController {
     @Operation(summary = "清空索引全部文档")
     @DeleteMapping
     public ResultJson<String> clear() {
+        if (!admin()) throw new BizException("仅管理员可清空关键词索引");
         keywordIndexService.clearAll();
         return ResultJson.ok("索引已清空（下次解析/重解析会增量写回；也可执行 /reindex 全量重建）");
     }

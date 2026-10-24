@@ -151,6 +151,9 @@
               <!-- 源文件下载（个人文件区）：解析中的文档源文件可能正在读写，仅非解析中提供 -->
               <button v-if="d.status !== 2" class="app-link-btn" @click="dlSource(d)">下载</button>
               <button v-if="(d.status === 0 || d.status === 3) && canManageDoc(d)" class="app-link-btn" :disabled="reparsingId === d.id" @click="reparse(d.id)">重解析</button>
+              <a-tooltip v-if="d.status === 0 && canManageDoc(d)" title="对解析时未描述成功的图片后台补描述并回写知识块（重新向量化+索引同步）">
+                <button class="app-link-btn" :disabled="backfillingId === d.id" @click="backfillDesc(d.id)">补图描述</button>
+              </a-tooltip>
               <a-popover v-if="d.fileType === 'url' && canManageDoc(d)" title="自动刷新网页源" trigger="click" placement="leftTop">
                 <button class="app-link-btn" :class="{ active: d.autoRefresh === 1 }">自动刷新{{ d.autoRefresh === 1 ? '·开' : '' }}</button>
                 <template #content>
@@ -410,7 +413,7 @@ import { listDocuments, uploadDocumentsBatch, updateDocumentStatus, reparseDocum
          updateKnowledge, deleteKnowledge, listDocumentVersions, rollbackDocument,
          getRuntimeConfig, batchReparseDocuments, updateKnowledgeStatus, searchKnowledge,
          downloadDocumentSource, updateDocumentShare, listKnowledgeBases, moveDocToKb, importDocumentFromUrl, refreshConfigDocument,
-         getDocumentQueueStats, listAvailableModels } from '../api'
+         getDocumentQueueStats, listAvailableModels, backfillDescriptions } from '../api'
 import ShareScopeModal from './ShareScopeModal.vue'
 import KnowledgeBaseEditModal from '../components/KnowledgeBaseEditModal.vue'
 import KnowledgeGraphModal from '../components/KnowledgeGraphModal.vue'
@@ -448,6 +451,7 @@ const typeColor = t => {
   const map = {
     docx: { bg: 'var(--app-info-weak)', fg: 'var(--app-accent)' }, doc: { bg: 'var(--app-info-weak)', fg: 'var(--app-accent)' },
     pdf: { bg: 'var(--app-danger-weak)', fg: 'var(--app-danger-text)' }, xlsx: { bg: 'var(--app-ok-weak)', fg: 'var(--app-ok)' }, xls: { bg: 'var(--app-ok-weak)', fg: 'var(--app-ok)' },
+    ppt: { bg: 'var(--app-accent-weak)', fg: 'var(--app-accent)' }, pptx: { bg: 'var(--app-accent-weak)', fg: 'var(--app-accent)' },
     url: { bg: 'var(--app-accent-weak)', fg: 'var(--app-accent)' }
   }
   return map[(t || '').toLowerCase()] || { bg: 'var(--app-panel-2)', fg: 'var(--app-text2)' }
@@ -850,6 +854,17 @@ async function reparse (id) {
     else message.error(r.msg || '操作失败')
   } catch (e) { message.error(e.message || '操作失败') }
   finally { reparsingId.value = '' }
+}
+const backfillingId = ref('')
+/** 补齐图片描述：解析时视觉模型未描述成功的图片后台补描述并回写知识块（后端异步，本页状态由轮询自然刷新） */
+async function backfillDesc (id) {
+  backfillingId.value = id
+  try {
+    const r = await backfillDescriptions(id)
+    if (r.success) message.success(r.msg || '已提交图片描述补齐任务')
+    else message.error(r.msg || '操作失败')
+  } catch (e) { message.error(e.message || '操作失败') }
+  finally { backfillingId.value = '' }
 }
 function onRefreshToggle (d, val) { d.autoRefresh = val ? 1 : 0 }
 function onRefreshCronInput (d, v) { d.refreshCron = v }

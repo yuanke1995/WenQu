@@ -1282,6 +1282,23 @@ export const refreshConfigDocument = (id, autoRefresh, refreshCron) =>
  *  kbId 传当前库时只统计该库的任务（页头指标不串库），不传=全平台 */
 export const getDocumentQueueStats = (kbId) => request('/document/queue/stats' + (kbId ? `?kbId=${encodeURIComponent(kbId)}` : ''))
 
+// ==================== 检索索引运维（管理员：设置 · 定时任务 · 运行状态页签） ====================
+/** 关键词索引状态：indexedCount 与 mysqlCount 对比可发现索引漂移 */
+export const searchIndexStats = () => request('/search-index/stats')
+/** 关键词索引全量重建（后台执行，可通过 stats 观察 indexedCount 增长） */
+export const searchIndexReindex = () => request('/search-index/reindex', { method: 'POST', timeout: 120000 })
+/** 清空关键词索引全部文档（下次解析/重解析会增量写回） */
+export const searchIndexClear = () => request('/search-index', { method: 'DELETE' })
+/** 向量索引诊断：库门字段是否就绪 / 存量向量是否已带 ACL 标签（仅管理员） */
+export const vectorDiagnose = kbId =>
+  request(`/document/vector-diagnose?kbId=${encodeURIComponent(kbId)}`, { timeout: 120000 })
+/** 同模型重建库向量（DROP 索引后按当前绑定重新向量化写回，异步；存量向量补 ACL 标签 / 修复 schema 用） */
+export const rebuildKbVectors = kbId =>
+  request(`/document/rebuild-kb?kbId=${encodeURIComponent(kbId)}`, { method: 'POST' })
+/** 补齐文档图片描述：解析时未描述成功的图片后台补描述并回写知识块（重新向量化+索引同步） */
+export const backfillDescriptions = id =>
+  request(`/document/${encodeURIComponent(id)}/backfill-descriptions`, { method: 'POST', timeout: 120000 })
+
 /** 删除文档 */
 export const deleteDocument = id => request(`/document/${id}`, { method: 'DELETE' })
 

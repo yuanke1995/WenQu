@@ -525,6 +525,64 @@
                       </div>
                     </template>
                   </a-table>
+
+                  <!-- 检索索引运维：关键词索引漂移观察（已索引数 vs 库内块数）+ 向量索引库门诊断。
+                       三个动作接口均仅管理员；重建/清空为后台执行或下次解析增量写回，不阻塞本页 -->
+                  <div class="idx-ops">
+                    <div class="idx-ops-head">
+                      <span class="cfg-sub">检索索引</span>
+                      <a-tooltip title="刷新索引状态">
+                        <button class="app-icon-btn" aria-label="刷新检索索引状态" :disabled="idxLoading" @click="loadIndexOps">
+                          <reload-outlined />
+                        </button>
+                      </a-tooltip>
+                    </div>
+                    <div class="idx-ops-row">
+                      <span class="idx-ops-name">关键词索引</span>
+                      <span class="audit-chip" :class="idxStats.available ? 'pass' : 'fail'">
+                        {{ idxStats.engine || '—' }} · {{ idxStats.available ? '可用' : '不可用' }}
+                      </span>
+                      <span v-if="idxStats.indexedCount != null || idxStats.mysqlCount != null" class="key-dim">
+                        已索引 <b>{{ idxStats.indexedCount ?? '—' }}</b> / 库内块 <b>{{ idxStats.mysqlCount ?? '—' }}</b>
+                        <a-tooltip v-if="idxDrift" title="已索引数与库内块数不一致（写入为最终一致 + 写失败会累积），可执行全量重建对齐">
+                          <span class="sched-err">!</span>
+                        </a-tooltip>
+                      </span>
+                      <span v-if="(idxStats.writeFailCount || 0) > 0" class="audit-chip fail">写失败 {{ idxStats.writeFailCount }}</span>
+                      <span v-if="!idxStats.available && idxStats.unavailableReason" class="key-dim">（{{ idxStats.unavailableReason }}）</span>
+                      <span class="idx-ops-act">
+                        <button class="app-btn ghost sm" :disabled="idxBusy" @click="doIndexReindex">全量重建</button>
+                        <a-popconfirm title="清空后解析/重解析会增量写回，也可再点「全量重建」" @confirm="doIndexClear">
+                          <button class="app-btn ghost sm" :disabled="idxBusy">清空</button>
+                        </a-popconfirm>
+                      </span>
+                    </div>
+                    <div class="idx-ops-row">
+                      <span class="idx-ops-name">向量索引诊断</span>
+                      <a-select v-model:value="diagKbId" size="small" style="width: 220px" show-search
+                                option-filter-prop="label" :options="idxKbOptions" placeholder="选择知识库" />
+                      <button class="app-btn ghost sm" :disabled="!diagKbId || diagLoading" @click="doVectorDiagnose">诊断</button>
+                      <a-popconfirm v-if="diag && !diag.error && diag.kbGateUsable === false"
+                                    title="DROP 该库索引后按当前向量模型重新写回（异步，耗时取决于块数）？存量向量会补上 ACL 标签"
+                                    @confirm="doRebuildKb">
+                        <button class="app-btn ghost sm" :disabled="diagRebuilding">同模型重建库向量</button>
+                      </a-popconfirm>
+                    </div>
+                    <div v-if="diag" class="idx-ops-diag">
+                      <template v-if="diag.error">
+                        <span><span class="audit-chip fail">诊断失败</span> <span class="key-dim">{{ diag.error }}</span></span>
+                      </template>
+                      <template v-else>
+                        <span>
+                          <span class="audit-chip" :class="diag.schemaReady ? 'pass' : 'fail'">{{ diag.schemaReady ? '库门字段就绪' : '库门字段缺失' }}</span>
+                          <span class="key-dim" style="margin-left:8px">
+                            索引 <code>{{ diag.index }}</code> · 向量 {{ diag.indexedDocs < 0 ? '—' : diag.indexedDocs }} 条 · 抽样带 kbId 标签 {{ diag.docsWithKbIdSampled < 0 ? '—' : diag.docsWithKbIdSampled }} 条
+                          </span>
+                        </span>
+                        <span class="key-dim">{{ diag.hint }}</span>
+                      </template>
+                    </div>
+                  </div>
                 </div>
               </template>
 
@@ -675,7 +733,8 @@ import { getConfig, getConfigSchema, saveConfig, resetConfig,
          listApiKeys, createApiKey, setApiKeyDisabled, setApiKeyMcp, deleteApiKey, updateApiKey, updateApiKeyShare,
          getMcpAuditLogs, getMcpAuditSummary,
          getScheduleTasks, triggerScheduleTask, getScheduleRuns, clearScheduleRuns,
-         getToolInventory, listAvailableSkills } from '../api'
+         getToolInventory, listAvailableSkills, listKnowledgeBases,
+         searchIndexStats, searchIndexReindex, searchIndexClear, vectorDiagnose, rebuildKbVectors } from '../api'
 import ShareScopeModal from './ShareScopeModal.vue'
 import SchemaField from '../components/SchemaField.vue'
 import IntervalEditor from '../components/IntervalEditor.vue'
@@ -1532,7 +1591,10 @@ watch(activeFormPanel, () => { closedFolds.value = []; cfgKeyword.value = '' })
 // 但折叠标题的「影响哪个任务」依赖任务快照 ⇒ 进面板即拉一次
 watch(() => current.value, v => {
   if (v === 'maintenance' && !scheduleTasks.value.length) loadSchedule()
+  if (v === 'maintenance') { loadIndexOps(); ensureIdxKbOptions() }
 })
+// 运行状态页签是索引运维卡的唯一宿主：切进来时补拉一次（换库/重建后的最新状态）
+watch(maintTab, v => { if (v === 'status') { loadIndexOps(); ensureIdxKbOptions() } })
 
 /** 手动触发一次：异步执行，稍后自动刷一次状态与日志 */const doTrigger = async record => {
   try {
@@ -1548,6 +1610,75 @@ watch(() => current.value, v => {
       message.warning(r.data?.reason || r.msg || '触发被拒绝（上一轮可能还在执行）')
     }
   } catch (e) { message.error(e.message || '触发失败') }
+}
+
+// ── 检索索引运维（运行状态页签底部卡片）：关键词索引状态/重建/清空 + 向量索引库门诊断。
+//    接口均仅管理员：非管理员进入本页时请求会 403，状态留空显示为不可用即可，不弹错
+const idxStats = ref({})
+const idxLoading = ref(false)
+const idxBusy = ref(false)
+const diagKbId = ref('')
+const diag = ref(null)
+const diagLoading = ref(false)
+const diagRebuilding = ref(false)
+const idxKbOptions = ref([])
+
+const idxDrift = computed(() =>
+  !!idxStats.value.available
+  && idxStats.value.indexedCount != null && idxStats.value.mysqlCount != null
+  && idxStats.value.indexedCount !== idxStats.value.mysqlCount)
+
+const loadIndexOps = async () => {
+  idxLoading.value = true
+  try {
+    const r = await searchIndexStats()
+    idxStats.value = r.data || {}
+  } catch (e) { /* 非管理员/接口异常：保持现状，芯片已表达不可用 */ }
+  finally { idxLoading.value = false }
+}
+const ensureIdxKbOptions = async () => {
+  if (idxKbOptions.value.length) return
+  try {
+    const r = await listKnowledgeBases()
+    idxKbOptions.value = (r.data || []).map(k => ({ value: k.id, label: k.name }))
+  } catch (e) { /* 选择器留空 */ }
+}
+const doIndexReindex = async () => {
+  idxBusy.value = true
+  try {
+    const r = await searchIndexReindex()
+    message.success(r.data || '已提交全量重建')
+    setTimeout(loadIndexOps, 3000)
+  } catch (e) { message.error(e.message || '重建失败') }
+  finally { idxBusy.value = false }
+}
+const doIndexClear = async () => {
+  idxBusy.value = true
+  try {
+    const r = await searchIndexClear()
+    message.success(r.data || '索引已清空')
+    loadIndexOps()
+  } catch (e) { message.error(e.message || '清空失败') }
+  finally { idxBusy.value = false }
+}
+const doVectorDiagnose = async () => {
+  if (!diagKbId.value) return
+  diagLoading.value = true
+  diag.value = null
+  try {
+    const r = await vectorDiagnose(diagKbId.value)
+    diag.value = r.data || {}
+  } catch (e) { message.error(e.message || '诊断失败') }
+  finally { diagLoading.value = false }
+}
+const doRebuildKb = async () => {
+  if (!diagKbId.value) return
+  diagRebuilding.value = true
+  try {
+    const r = await rebuildKbVectors(diagKbId.value)
+    message.success(r.data || '已提交重建任务')
+  } catch (e) { message.error(e.message || '重建提交失败') }
+  finally { diagRebuilding.value = false }
 }
 
 const fmtInterval = ms => {
@@ -1756,4 +1887,16 @@ onMounted(() => { fetchAndFill(); loadToolInventory(); loadSkillOptions() })
 .sched-bad { color: var(--app-danger); }
 .audit-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
 .audit-pager { display: flex; align-items: center; gap: 12px; margin-top: 10px; justify-content: flex-end; }
+/* 检索索引运维（运行状态页签底部）：状态行内联排布，与上方任务表同一卡片面板 */
+.idx-ops { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--app-border); display: flex; flex-direction: column; gap: 8px; }
+.idx-ops-head { display: flex; align-items: center; gap: 8px; }
+.idx-ops-head .cfg-sub { margin: 0; }
+.idx-ops-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.idx-ops-name { font-weight: 600; font-size: 13px; color: var(--app-text); min-width: 90px; }
+.idx-ops-act { display: inline-flex; gap: 8px; margin-left: auto; }
+.idx-ops-diag {
+  display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--app-text2);
+  background: var(--app-panel-2); border: 1px solid var(--app-border); border-radius: 8px; padding: 8px 10px;
+}
+.idx-ops-diag code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
 </style>
