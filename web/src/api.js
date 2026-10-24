@@ -1301,6 +1301,8 @@ export const backfillDescriptions = id =>
 /** 设置文档标签（逗号分隔；空串=清空）。供智能体检索标签收窄（knowledgeTags）与文档筛选用 */
 export const setDocumentTags = (id, tags) =>
   request(`/document/${encodeURIComponent(id)}/tags?tags=${encodeURIComponent(tags)}`, { method: 'PUT' })
+/** 知识库健康度：按库聚合文档态分布/块规模/未向量化 + 全局索引漂移信号（仅管理员，只读） */
+export const documentHealth = () => request('/document/health', { timeout: 60000 })
 
 /** 删除文档 */
 export const deleteDocument = id => request(`/document/${id}`, { method: 'DELETE' })

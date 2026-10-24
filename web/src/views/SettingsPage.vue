@@ -583,6 +583,48 @@
                       </template>
                     </div>
                   </div>
+
+                  <!-- 知识库健康（§8）：文档态分布 / 块规模 / 未向量化 / 索引漂移。
+                       只读聚合不触发修复；漂移与未向量化给出「去哪修」的指引 -->
+                  <div class="idx-ops" style="margin-top:8px">
+                    <div class="idx-ops-head">
+                      <span class="cfg-sub">知识库健康</span>
+                      <a-tooltip title="刷新健康度">
+                        <button class="app-icon-btn" aria-label="刷新知识库健康度" :disabled="healthLoading" @click="loadHealth">
+                          <reload-outlined />
+                        </button>
+                      </a-tooltip>
+                    </div>
+                    <a-alert v-if="healthIndex.drift" type="warning" show-icon style="margin-bottom:6px"
+                             :message="`关键词索引漂移：索引 ${healthIndex.indexedCount ?? '—'} ≠ 库内有效块 ${healthIndex.mysqlCount ?? '—'}——可在上方「检索索引」执行全量重建对齐`" />
+                    <a-table :data-source="healthRows" size="small" row-key="kbId" :loading="healthLoading"
+                             :pagination="healthRows.length > 10 ? { pageSize: 10, size: 'small' } : false"
+                             :scroll="{ x: 720 }" :locale="{ emptyText: '暂无知识库数据' }">
+                      <a-table-column title="知识库" key="kbName" width="220">
+                        <template #default="{ record }">
+                          <span>{{ record.kbName }}</span>
+                          <a-tag v-if="record.builtin" color="gold" style="margin-left:6px">内置</a-tag>
+                        </template>
+                      </a-table-column>
+                      <a-table-column title="文档 生效/弃用/解析中/失败" key="docs" width="230">
+                        <template #default="{ record }">
+                          <span>{{ record.docActive }} / {{ record.docDeprecated }} / {{ record.docParsing }} /
+                            <span :class="{ 'sched-bad': record.docFailed > 0 }">{{ record.docFailed }}</span></span>
+                        </template>
+                      </a-table-column>
+                      <a-table-column title="知识块" key="chunks" width="100">
+                        <template #default="{ record }">{{ record.chunkTotal }}</template>
+                      </a-table-column>
+                      <a-table-column title="未向量化" key="nv" width="110">
+                        <template #default="{ record }">
+                          <span :class="{ 'sched-bad': record.chunkNoVector > 0 }">{{ record.chunkNoVector }}</span>
+                          <a-tooltip v-if="record.chunkNoVector > 0" title="重解析对应文档可补齐（向量模型换绑期间也会暂缺）">
+                            <span class="sched-err">!</span>
+                          </a-tooltip>
+                        </template>
+                      </a-table-column>
+                    </a-table>
+                  </div>
                 </div>
               </template>
 
@@ -734,7 +776,8 @@ import { getConfig, getConfigSchema, saveConfig, resetConfig,
          getMcpAuditLogs, getMcpAuditSummary,
          getScheduleTasks, triggerScheduleTask, getScheduleRuns, clearScheduleRuns,
          getToolInventory, listAvailableSkills, listKnowledgeBases,
-         searchIndexStats, searchIndexReindex, searchIndexClear, vectorDiagnose, rebuildKbVectors } from '../api'
+         searchIndexStats, searchIndexReindex, searchIndexClear, vectorDiagnose, rebuildKbVectors,
+         documentHealth } from '../api'
 import ShareScopeModal from './ShareScopeModal.vue'
 import SchemaField from '../components/SchemaField.vue'
 import IntervalEditor from '../components/IntervalEditor.vue'
@@ -1591,10 +1634,10 @@ watch(activeFormPanel, () => { closedFolds.value = []; cfgKeyword.value = '' })
 // 但折叠标题的「影响哪个任务」依赖任务快照 ⇒ 进面板即拉一次
 watch(() => current.value, v => {
   if (v === 'maintenance' && !scheduleTasks.value.length) loadSchedule()
-  if (v === 'maintenance') { loadIndexOps(); ensureIdxKbOptions() }
+  if (v === 'maintenance') { loadIndexOps(); loadHealth(); ensureIdxKbOptions() }
 })
 // 运行状态页签是索引运维卡的唯一宿主：切进来时补拉一次（换库/重建后的最新状态）
-watch(maintTab, v => { if (v === 'status') { loadIndexOps(); ensureIdxKbOptions() } })
+watch(maintTab, v => { if (v === 'status') { loadIndexOps(); loadHealth(); ensureIdxKbOptions() } })
 
 /** 手动触发一次：异步执行，稍后自动刷一次状态与日志 */const doTrigger = async record => {
   try {
@@ -1679,6 +1722,20 @@ const doRebuildKb = async () => {
     message.success(r.data || '已提交重建任务')
   } catch (e) { message.error(e.message || '重建提交失败') }
   finally { diagRebuilding.value = false }
+}
+
+// ── 知识库健康（§8）：按库聚合文档态/块规模/未向量化 + 索引漂移信号；非管理员静默留空
+const healthRows = ref([])
+const healthIndex = ref({})
+const healthLoading = ref(false)
+const loadHealth = async () => {
+  healthLoading.value = true
+  try {
+    const r = await documentHealth()
+    healthRows.value = r.data?.kbs || []
+    healthIndex.value = r.data?.index || {}
+  } catch (e) { /* 非管理员/接口异常：表格显示空态 */ }
+  finally { healthLoading.value = false }
 }
 
 const fmtInterval = ms => {

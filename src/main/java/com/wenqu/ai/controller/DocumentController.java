@@ -393,6 +393,14 @@ public class DocumentController {
         return ResultJson.ok(documentService.statsHitCounts());
     }
 
+    @Operation(summary = "知识库健康度", description = "按库聚合：文档态分布（生效/弃用/解析中/失败）、块规模与未向量化数，"
+            + "附全局关键词索引漂移信号（indexedCount vs 有效块数）。只读聚合，不触发对账/修复。仅管理员")
+    @GetMapping("/health")
+    public ResultJson health() {
+        if (!admin()) throw new BizException("仅管理员可查看知识库健康度");
+        return ResultJson.ok(documentService.healthReport());
+    }
+
     @Operation(summary = "向量索引诊断", description = "诊断某知识库向量索引：ACL 可过滤字段是否就绪、存量向量是否已带 ACL 标签"
             + "（两者含义不同——字段齐备≠标签已回填，FT.ALTER 只改 schema 不动历史 JSON）。仅管理员")
 @GetMapping("/vector-diagnose")

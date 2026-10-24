@@ -1921,6 +1921,91 @@ public class DocumentService {
     }
 
     /**
+     * 知识库健康度聚合（§8 面板数据源，只读）：按库汇总文档态分布、块规模与未向量化数，
+     * 附全局关键词索引漂移信号（索引数 vs 有效块数）。无库归属的脏数据文档以 kbId=null 行透出
+     * （面板标注，不做静默归并）；只做聚合查询，不触发任何对账/修复。
+     */
+    public Map<String, Object> healthReport() {
+        Map<String, Object> out = new LinkedHashMap<>();
+
+        // 文档态分布（kbId 可能为 null：历史空值/脏数据，原样透出）
+        record DocStat(long total, long active, long deprecated, long parsing, long failed) {}
+        Map<String, DocStat> byKb = new LinkedHashMap<>();
+        for (Map<String, Object> row : documentMapper.selectMaps(new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<AiDocument>()
+                .select("kb_id", "COUNT(*) AS total", "SUM(status=0) AS active", "SUM(status=1) AS deprecated",
+                        "SUM(status=2) AS parsing", "SUM(status=3) AS failed")
+                .eq("deleted", 0)
+                .groupBy("kb_id"))) {
+            String kbId = row.get("kb_id") == null ? "" : String.valueOf(row.get("kb_id"));
+            byKb.put(kbId, new DocStat(num(row, "total"), num(row, "active"), num(row, "deprecated"),
+                    num(row, "parsing"), num(row, "failed")));
+        }
+
+        // 块规模与未向量化：块表无 kb_id，按 doc_id 聚合后经文档归属折算到库
+        Map<String, String> docKb = new HashMap<>();
+        for (AiDocument d : documentMapper.selectList(new LambdaQueryWrapper<AiDocument>()
+                .select(AiDocument::getId, AiDocument::getKbId))) {
+            docKb.put(d.getId(), d.getKbId());
+        }
+        Map<String, long[]> chunkByKb = new LinkedHashMap<>();
+        for (Map<String, Object> row : knowledgeMapper.selectMaps(new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Knowledge>()
+                .select("doc_id", "COUNT(*) AS total", "SUM(vector_id IS NULL OR vector_id='') AS no_vector")
+                .eq("deleted", 0)
+                .groupBy("doc_id"))) {
+            String kbId = docKb.getOrDefault(String.valueOf(row.get("doc_id")), "");
+            long[] agg = chunkByKb.computeIfAbsent(kbId, k -> new long[2]);
+            agg[0] += num(row, "total");
+            agg[1] += num(row, "no_vector");
+        }
+
+        // 组装行（库名/内置标记补齐；孤儿库=有块无文档行的也透出）
+        java.util.Set<String> kbIds = new java.util.LinkedHashSet<>(byKb.keySet());
+        kbIds.addAll(chunkByKb.keySet());
+        Map<String, KnowledgeBase> kbMap = new HashMap<>();
+        for (KnowledgeBase kb : kbMapper.selectList(new LambdaQueryWrapper<>())) {
+            kbMap.put(kb.getId(), kb);
+        }
+        List<Map<String, Object>> kbs = new ArrayList<>();
+        for (String kbId : kbIds) {
+            KnowledgeBase kb = kbMap.get(kbId);
+            DocStat ds = byKb.getOrDefault(kbId, new DocStat(0, 0, 0, 0, 0));
+            long[] cs = chunkByKb.getOrDefault(kbId, new long[2]);
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("kbId", kbId);
+            r.put("kbName", kb == null ? "（未知库 " + kbId + "）" : kb.getName());
+            r.put("builtin", kb != null && Integer.valueOf(1).equals(kb.getBuiltin()));
+            r.put("docTotal", ds.total());
+            r.put("docActive", ds.active());
+            r.put("docDeprecated", ds.deprecated());
+            r.put("docParsing", ds.parsing());
+            r.put("docFailed", ds.failed());
+            r.put("chunkTotal", cs[0]);
+            r.put("chunkNoVector", cs[1]);
+            kbs.add(r);
+        }
+        kbs.sort((a, b) -> Long.compare((long) b.get("chunkTotal"), (long) a.get("chunkTotal")));
+        out.put("kbs", kbs);
+
+        // 全局关键词索引漂移信号（与 /search-index/stats 同口径；-1=拉取失败不判漂移）
+        long effective = knowledgeMapper.selectCount(new LambdaQueryWrapper<>());
+        long indexed = keywordIndexService.indexedCount();
+        Map<String, Object> index = new LinkedHashMap<>();
+        index.put("engine", keywordIndexService.engine());
+        index.put("available", keywordIndexService.isAvailable());
+        index.put("indexedCount", indexed);
+        index.put("mysqlCount", effective);
+        index.put("drift", indexed >= 0 && indexed != effective);
+        out.put("index", index);
+        return out;
+    }
+
+    /** selectMaps 数值取整（SUM/COUNT 在 MySQL 驱动下可能是 Long/BigDecimal/BigInteger） */
+    private long num(Map<String, Object> row, String key) {
+        Object v = row.get(key);
+        return v instanceof Number n ? n.longValue() : 0L;
+    }
+
+    /**
      * 文档命中次数统计：从问答日志 hit_doc_ids 聚合，返回 {docId: count}
      * hit_doc_ids 为逗号分隔串无法直接 GROUP BY，按近 90 天 + LIMIT 上限做有界扫描（避免全表拉取到内存）
      */
