@@ -662,11 +662,14 @@ public class DocumentService {
     /**
      * 按文档路由向量库：doc.kbId → 所属知识库绑定的向量模型（KbVectorStoreRegistry，每库独立索引）。
      * 文档行查不到（已删/迁移竞态）按默认库路由，保证向量有归属、后续删除清理不落空。
+     * 回收站行（软删）对标准查询不可见，purge 时必须回退回收站行取归属库——否则路由到默认库，
+     * 向量删除打在错误索引上，回收站「彻底删除」恒失败。
      */
     private VectorStore storeOf(String docId) {
         String kbId = null;
         if (docId != null && !docId.isBlank()) {
             AiDocument doc = documentMapper.selectById(docId);
+            if (doc == null) doc = documentMapper.selectRecycledById(docId);
             kbId = doc == null ? null : doc.getKbId();
         }
         return kbVectorStores.storeForKb(kbId);
