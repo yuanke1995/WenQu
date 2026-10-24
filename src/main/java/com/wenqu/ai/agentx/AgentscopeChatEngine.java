@@ -3617,7 +3617,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         if (recording.compactedThisTurn) {
             tokens.put("compacted", 1);
             // 摘要文本也要落库：分隔线上的「查看摘要」按会话读，不落就是压完刷新点进去报「还没有摘要」
-            persistCompactionSummary(cmd.getSessionId(), session);
+            persistCompactionSummary(cmd);
         }
         // 状态行既下发也落库：只随 done 发的话，刷新后「搜索 N 个关键词，参考 M 段资料」整块消失
         String lastRetrieved = retrievedJson(cmd, pool, recording);
@@ -3895,30 +3895,21 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
     /**
      * 把框架那份滚动摘要落进会话行（{@code c_ai_session.history_summary}）。
-     * <p>压缩交回 AgentScope 之后摘要只活在框架自己的会话状态里，问渠这两列再没人写——而分隔线上那条
-     * 「查看摘要」读的就是这两列，于是压完刷新点进去报「这个会话还没有生成过摘要」。
-     * <p>只认上下文头部那条摘要消息（框架压缩产物恒在首位，name={@code __compaction_summary__}）；
-     * 取不到就一行不写——宁可让面板报空，也不落一份来历不明的摘要。
+     * <p>压缩交回 AgentScope 之后摘要只活在框架的<b>会话状态</b>里：{@code CompactionMiddleware}
+     * 把它写进 {@code AgentState.contextMutable()} 首位，而框架原生日志没有这条消息
+     * （{@code transcript()} 只回放 user/assistant/tool 三类事件）。此前正是从 transcript 头一条找它，
+     * 判据永远不成立——分隔线照画、正文一行不落，点「查看摘要」就报「这个会话还没有生成过摘要」。
+     * <p>读不到就一行不写——宁可让面板报空，也不落一份来历不明的摘要。
      */
-    private void persistCompactionSummary(String sessionId, AgentSession session) {
-        try {
-            List<Msg> messages = session.transcript().messages();
-            if (messages.isEmpty()) return;
-            Msg head = messages.get(0);
-            if (head == null || !io.agentscope.harness.agent.memory.compaction.ConversationCompactor
-                    .SUMMARY_MSG_NAME.equals(head.getName())) return;
-            String summary = head.getTextContent();
-            if (summary == null || summary.isBlank()) return;
-            long covered = 0;
-            if (head.getMetadata() != null
-                    && head.getMetadata().get("context.covered_messages") instanceof List<?> ids) {
-                covered = ids.size();
-            }
-            sessionService.updateHistorySummary(sessionId, summary, covered);
-        } catch (Exception e) {
-            // 落不进会话不打断这一轮回答：分隔线照画，只是摘要面板这一次读不到全文
-            log.warn("[agentx] 压缩摘要落库失败 (session={}): {}", sessionId, e.toString());
+    private void persistCompactionSummary(ChatCommand cmd) {
+        FrameworkSessions.CompactionSummary live =
+                sessions.liveCompactionSummary(cmd.getUserId(), cmd.getSessionId());
+        if (live == null || live.text().isBlank()) {
+            log.warn("[FAIL-LOUD] 本轮压过上下文但摘要没落库（框架活状态里认不出摘要消息）: session={}",
+                    cmd.getSessionId());
+            return;
         }
+        sessionService.updateHistorySummary(cmd.getSessionId(), live.text(), live.coveredMessages());
     }
 
     /**

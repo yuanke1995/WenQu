@@ -3320,7 +3320,9 @@ const openCompactSummary = async () => {
   compactSummaryLoading.value = true
   try {
     const d = ((await sessionHistorySummaryApi(sid)) || {}).data || {}
-    if (!d.summary) { message.info('这个会话还没有生成过摘要'); return }
+    // 取不到不等于没压过：分隔线就在眼前，说「还没有生成过摘要」是跟用户看到的画面吵架。
+    // 摘要交回框架那阵子压的会话正文没落库，本进程又没这条会话的活实例时就是这一句
+    if (!d.summary) { message.info('这条会话的早期摘要暂时取不到'); return }
     snapshotSummary(d.summary, d.summaryTokens, d.keepTurns, 0)
     compactSummaryOpen.value = true
   } catch (e) {

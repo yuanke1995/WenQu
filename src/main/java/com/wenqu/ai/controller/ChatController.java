@@ -846,8 +846,21 @@ public class ChatController {
     @GetMapping("/session/{sessionId}/history-summary")
     public ResultJson historySummary(
             @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId) {
-        sessionService.assertOwned(sessionId, RequestUser.uid());
-        return ResultJson.ok(historyCompaction.currentSummary(sessionId));
+        String userId = RequestUser.uid();
+        sessionService.assertOwned(sessionId, userId);
+        Map<String, Object> current = historyCompaction.currentSummary(sessionId);
+        if (String.valueOf(current.get("summary")).isBlank()) {
+            // 存量自愈：摘要交回框架那阵子，轮内自动压缩只画了线、正文没落库（落库那一步读的是
+            // transcript()，而压缩产物只在框架会话状态里）。这些会话点「查看摘要」会一直报空——
+            // 本进程还持有它的活实例时，从框架状态里认出这份摘要就地补进会话行，补一次就永久有了。
+            com.wenqu.ai.agentx.FrameworkSessions.CompactionSummary live =
+                    frameworkSessions.liveCompactionSummary(userId, sessionId);
+            if (live != null && !live.text().isBlank()) {
+                sessionService.updateHistorySummary(sessionId, live.text(), live.coveredMessages());
+                return ResultJson.ok(historyCompaction.currentSummary(sessionId));
+            }
+        }
+        return ResultJson.ok(current);
     }
 
     @Operation(summary = "删除会话", description = "删除指定会话（MySQL 软删除 + Redis 清理；校验会话归属）")

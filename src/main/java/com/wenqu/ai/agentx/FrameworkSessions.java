@@ -1,6 +1,7 @@
 package com.wenqu.ai.agentx;
 
 import com.wenqu.ai.agent.chat.ChatCommand;
+import com.wenqu.ai.util.TokenCounter;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.message.Msg;
 import io.agentscope.core.session.SessionEvent;
@@ -690,7 +691,7 @@ public class FrameworkSessions {
      *         <ul>
      *           <li>{@code scheduled=true} = 没压成、排到了下一次提问前（无活实例 / 压缩失败回落）</li>
      *           <li>否则 {@code compressedTurns}（被覆盖的消息条数）、{@code freedTokens}（净腾出）、
-     *               {@code summary}（框架摘要全文）、{@code summaryTokens}（摘要自身 token）</li>
+     *               {@code summary}（摘要正文，不含框架那段给模型看的取数指引）、{@code summaryTokens}（摘要自身 token）</li>
      *         </ul>
      *         没得压（对话还短）返回 {@code compressedTurns=0}。
      */
@@ -745,18 +746,12 @@ public class FrameworkSessions {
                 s.contextMutable().addAll(finalCompacted);
             });
             // 摘要与覆盖消息数从摘要消息（name=__compaction_summary__，首位）提取
-            String summary = "";
-            int covered = 0;
-            int summaryTokens = 0;
-            if (!compacted.isEmpty()
-                    && ConversationCompactor.SUMMARY_MSG_NAME.equals(compacted.get(0).getName())) {
-                Msg sm = compacted.get(0);
-                String text = sm.getTextContent();
-                summary = text == null ? "" : text;
-                summaryTokens = TokenCounterUtil.calculateToken(List.of(sm));
-                Object cov = sm.getMetadata() == null ? null : sm.getMetadata().get("context.covered_messages");
-                if (cov instanceof List<?> l) covered = l.size();
-            }
+            CompactionSummary cs = summaryOf(compacted);
+            String summary = cs == null ? "" : cs.text();
+            int covered = cs == null ? 0 : cs.coveredMessages();
+            // 按问渠自己的计数器数这份正文：分隔线那条「摘要规模」两条路径（当场 /compact 与刷新后按会话读）
+            // 必须是同一个口径，用框架数整条消息的口径会比出另一个数
+            int summaryTokens = TokenCounter.estimate(summary);
             log.info("[agentx] 手动 /compact 就地压缩完成: session={} covered={} freedTokens={}",
                     sessionId, covered, Math.max(0, before - after));
             return java.util.Map.of(
@@ -777,6 +772,65 @@ public class FrameworkSessions {
     private static Map<String, Object> noneCompacted() {
         return java.util.Map.of("scheduled", false,
                 "compressedTurns", 0, "freedTokens", 0, "summary", "", "summaryTokens", 0);
+    }
+
+    /** 框架那份滚动摘要：给用户看的正文（已剥掉框架的提示词脚手架）+ 被它折进去的消息条数。 */
+    public record CompactionSummary(String text, int coveredMessages) {
+    }
+
+    /** 框架摘要消息正文里包住真摘要的那对标记。 */
+    private static final String SUMMARY_OPEN = "<summary>";
+    private static final String SUMMARY_CLOSE = "</summary>";
+
+    /**
+     * 从一份压缩产物里认出摘要消息——压缩器恒把摘要放在 {@code [summaryMsg + tail]} 的第 0 位。
+     * <p>摘要消息的正文外面还包着一段框架写给模型的取数指引（大意是「这段对话已被摘要，更早的原文
+     * 用 session_history(...) 去取，下面是一份精简摘要」），那是提示词不是内容，所以只取
+     * {@code <summary>} 里的那段；认不出标记就整条交回——框架改文案不该把摘要弄没。
+     *
+     * @return null=首位不是摘要消息（这条会话没压过 / 上下文头被别的路径改写了）
+     */
+    public static CompactionSummary summaryOf(List<Msg> messages) {
+        if (messages == null || messages.isEmpty()) return null;
+        Msg head = messages.get(0);
+        if (head == null || !ConversationCompactor.SUMMARY_MSG_NAME.equals(head.getName())) return null;
+        String raw = head.getTextContent();
+        if (raw == null || raw.isBlank()) return null;
+        int from = raw.indexOf(SUMMARY_OPEN);
+        int to = raw.lastIndexOf(SUMMARY_CLOSE);
+        String text = from >= 0 && to > from
+                ? raw.substring(from + SUMMARY_OPEN.length(), to).trim()
+                : raw.trim();
+        int covered = 0;
+        if (head.getMetadata() != null
+                && head.getMetadata().get("context.covered_messages") instanceof List<?> ids) {
+            covered = ids.size();
+        }
+        return new CompactionSummary(text, covered);
+    }
+
+    /**
+     * 这条会话<b>当前生效</b>的那份框架摘要：只读进程内活实例的框架状态，绝不新建实例。
+     * <p><b>为什么读状态而不是读会话日志</b>：压缩产物只被 {@code CompactionMiddleware} 写进
+     * {@code AgentState.contextMutable()} 首位，框架的原生日志里根本没有这条消息
+     * （{@code SessionViews.transcript()} 只回放 message/user、message/assistant、tool/result、
+     * turn/output 四类事件）。拿 transcript 找摘要，判据永远不成立。
+     *
+     * @return null=本进程没有这条会话的活实例，或它当前没有摘要
+     */
+    public CompactionSummary liveCompactionSummary(String userId, String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) return null;
+        String uid = (userId == null || userId.isBlank()) ? "guest" : userId;
+        Held h = held.get(uid + "|" + sessionId);
+        if (h == null || h.agent() == null) return null;
+        try {
+            RuntimeContext ctx = RuntimeContext.builder().userId(uid).sessionId(sessionId).build();
+            AgentState state = h.agent().getDelegate().getAgentState(ctx);
+            return state == null ? null : summaryOf(state.contextMutable());
+        } catch (Exception e) {
+            log.warn("[agentx] 框架活摘要读不出 (session={}): {}", sessionId, e.toString());
+            return null;
+        }
     }
 
     /** 登记一次强制压缩并丢掉常驻实例（下一轮会带新配置重建；会话状态在 stateStore 里，不丢历史）。 */
