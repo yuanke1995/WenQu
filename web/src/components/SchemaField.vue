@@ -77,15 +77,14 @@
 
     <template v-else-if="field.type === 'number'">
       <!-- ms 类字段（schema 标了 presets）：按「数值 + 单位」录入，落库仍是毫秒。
-           直接填 86400000 这类裸毫秒数没人读得懂，旁边挂换算提示也只是少算一次——
-           根治办法是让输入框本身就带单位，选「天」填 7 即 604800000 -->
+           直接填 86400000 这类裸毫秒数没人读得懂——根治办法是让输入框本身就带单位，
+           选「天」填 7 即 604800000。用户调的是「等多久」，换算出来的毫秒数不用回显给他 -->
       <template v-if="msUnits.length">
         <!-- flex 垂直居中：antd 的 input-number 与 select 各自 inline-block 按基线排，会差半个像素行 -->
         <span class="ms-row">
           <a-input-number v-model:value="msAmount" :min="msAmountMin" :max="msAmountMax"
                           :step="1" style="width: 96px" />
           <a-select v-model:value="msUnit" :options="msUnits" style="width: 84px; margin-left: 6px" />
-          <span v-if="msUnit !== 1 && value != null" class="num-hint">= {{ value }} ms</span>
         </span>
       </template>
       <a-input-number v-else v-model:value="value" :min="field.min" :max="field.max" :step="field.step"
@@ -257,12 +256,6 @@ const onSelectChange = v => emit('change', props.field, v)
 .ms-row {
   display: inline-flex;
   align-items: center;
-}
-.num-hint {
-  font-size: 12px;
-  color: var(--app-text3);
-  margin-left: 8px;
-  white-space: nowrap;
 }
 /* 多选标签：默认 antd 标签在长标签下会把选择框撑得很高，这里收一下字号与内边距 */
 .ms-tag {
