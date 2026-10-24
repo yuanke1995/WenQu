@@ -17,18 +17,18 @@
         <span class="head-tip" title="查看免责声明" @click="disclaimerVisible = true">AI 回答可能有误，重要信息请核实</span>
         <!-- 头部动作区：右对齐一组，图标按钮无框安静（此前每个按钮各自 margin-left:auto 散落标题栏中间，视觉突兀） -->
         <div class="head-actions">
-          <!-- 子智能体药丸：这一轮派出去几位、几位还在跑。它坐在标题栏而不是正文里，是因为
-               派遣一跑就是两三分钟，而正文在这期间一直在往下长——跟在正文里的东西要滚到
-               最新那一段才看得见，等它跑完才出现的东西等于没给。 -->
-          <SubagentPill :msg="processMsg" @focus="focusSpawn" />
+          <button class="app-icon-btn" title="在本会话中查找（Ctrl/⌘ + F）" @click="openSearch">
+            <search-outlined />
+          </button>
           <!-- 分享激活态：图标转琥珀，与侧栏会话行的分享标记同色（链接还开着不进弹窗也得有感知） -->
           <button class="app-icon-btn" :class="{ 'share-on': shareActive }" @click="openShare"
                   :title="shareActive ? '这段对话正在对外分享（只读链接生效中）' : '分享这段对话（只读链接）'">
             <share-alt-outlined />
           </button>
-          <button class="app-icon-btn" title="在本会话中查找（Ctrl/⌘ + F）" @click="openSearch">
-            <search-outlined />
-          </button>
+          <!-- 子智能体药丸：这一轮派出去几位、几位还在跑。它坐在标题栏而不是正文里，是因为
+               派遣一跑就是两三分钟，而正文在这期间一直在往下长——跟在正文里的东西要滚到
+               最新那一段才看得见，等它跑完才出现的东西等于没给。 -->
+          <SubagentPill :msg="processMsg" @focus="focusSpawn" />
           <button class="head-quiet-btn" @click="togglePanel">{{ panelOpen ? '隐藏状态' : '状态' }}</button>
           <button class="head-quiet-btn" title="看这个会话是怎么跑出来的：工具步与耗时、三张卡、产物、停止与失败"
                   @click="openEvents()">过程</button>
@@ -1130,7 +1130,7 @@
       <!-- 过程卡（常驻首位）：跑轮时实时滚动工具步，空闲时收成上一轮摘要。
            会话里还没有 AI 消息时整卡不渲染（新会话不占位）。其余三卡仍是「有数据才显示」。 -->
       <RightProcessCard :msg="processMsg" @open-events="openEvents()" />
-      <!-- 引用来源：右栏交互最重的一张卡（点片段定位正文 / hover 高亮角标 / 分组展开），过程卡之后的第一张。
+      <!-- 引用来源：右栏交互最重的一张卡（点片段看原文 / 角标号定位正文 / hover 高亮角标 / 分组展开），过程卡之后的第一张。
            原先排在末尾，等于把「核查答案」这个最高频动作排到最需要滚动才看得到的位置——
            正文里刚亮起的角标，用户得点开侧栏再往下翻。移动端 sheet 一直把它排第一，这里对齐。
            有引用才显示整卡（空则隐藏，不占版面，与产物卡同规则）。
@@ -1156,10 +1156,12 @@
               <div class="rp-group-body-in">
                 <div v-for="(s, si) in g.items" :key="si" class="rp-src rp-src-sub"
                      :class="{ hl: hoveredRef === s.ref }"
-                     title="点击查看原文；有对应角标的来源会在正文中定位"
-                     @click.stop="locateSource(s)"
+                     :title="s.origin === 'WEB' ? '点击查看来源摘要与原网页' : '点击查看原文'"
+                     @click.stop="openSource(s)"
                      @mouseenter="hoverSource(s)" @mouseleave="unhoverSource(s)">
-                  <span class="rp-src-ref">[{{ s.ref }}]</span>
+                  <!-- 角标号那枚单独是「在正文里定位」：整行已经拿去开原文了，跳转不能再占同一个点击区，
+                       而「[1]」这个号本身就是正文里那个上标，指着它跳最顺眼 -->
+                  <span class="rp-src-ref" title="在正文中定位这条引用" @click.stop="locateSource(s)">[{{ s.ref }}]</span>
                   <span v-if="s.origin === 'MENTION'" class="rp-src-mine" title="本轮你 @ 引用的资料">引用</span>
                   <span class="rp-src-name">{{ s.title ? '§ ' + s.title : '片段 ' + (si + 1) }}</span>
                   <span v-if="debugDisplayVisible && fmtSourceScore(s)" class="rp-src-score" :title="scoreTitle(s)">{{ fmtSourceScore(s) }}</span>
@@ -1918,7 +1920,9 @@ const unhoverSource = s => {
   if (hoveredRef.value === s.ref) hoveredRef.value = null
   setSupHighlight(s.ref, false)
 }
-// 右栏来源点击：正文有对应角标 → 滚动定位并闪烁提示；没有（片段未被回答引用）→ 打开原文弹窗
+// 行首角标号：正文有对应角标 → 滚动定位并闪烁；没有（片段未被回答引用）→ 退回打开原文弹窗。
+// 整行本身一律开原文弹窗——原先「有角标就只定位、不弹窗」，而正文里刚亮着的角标本来就在眼前，
+// 用户点这一行要的是「看这段的原文」，不是被弹回正文再看一遍（回答下方来源列表与移动端 sheet 也都是直接开）。
 const locateSource = s => {
   const idx = lastAi.value ? messages.value.indexOf(lastAi.value) : -1
   const el = idx >= 0 ? document.querySelector('.md[data-msg-index="' + idx + '"] .ref-sup[data-ref="' + s.ref + '"]') : null
@@ -4170,8 +4174,8 @@ onMounted(async () => {
 .share-intro { font-size: 13px; color: var(--app-text2); line-height: 1.8; margin: 0 0 10px; }
 /* 头部动作区：右对齐一组；分享/查找用全局 app-icon-btn（无框，悬停显 accent-weak 底色） */
 .head-actions { margin-left: auto; display: flex; align-items: center; gap: 2px; }
-/* 子智能体药丸与右边那组图标之间留一口气：它俩语义不同（状态 vs 动作），贴在一起读成一排按钮 */
-.head-actions .sap { margin-right: 6px; }
+/* 子智能体药丸与左边那组图标之间留一口气：它俩语义不同（状态 vs 动作），贴在一起读成一排按钮 */
+.head-actions .sap { margin-left: 6px; }
 .head-actions .app-icon-btn { font-size: 15px; }
 /* 分享激活态：琥珀（--app-warn）= 侧栏会话行分享标记同色。选择器比全局 .app-icon-btn:hover
    更高权，悬停时不褪回强调蓝——激活是状态、不该被 hover 盖掉（底色仍随 hover 变） */
@@ -4927,7 +4931,11 @@ onMounted(async () => {
 .rp-plan-badge.is-pending { color: var(--app-warn-text); font-weight: 500; }
 
 /* 引用相关度 + 角标联动（右栏 ↔ 正文） */
-.rp-src-ref { flex: none; font-size: 11px; color: var(--app-text3); }
+/* 行首角标号＝「在正文里定位」那颗按钮：加宽命中区但不占版面（负 margin 抵掉自身内缩），
+   悬停才变主色带下划线——平时它得跟正文角标一个长相，不能先抢了整行的视觉 */
+.rp-src-ref { flex: none; font-size: 11px; color: var(--app-text3); cursor: pointer;
+  padding: 2px 4px; margin: -2px -4px -2px 0; border-radius: 4px; }
+.rp-src-ref:hover { color: var(--app-accent); text-decoration: underline; background: var(--app-accent-weak); }
 .rp-src-mine {
   flex: none; font-size: 10px; line-height: 1.5; padding: 0 4px; border-radius: 4px;
   background: var(--app-warn-weak); color: var(--app-warn-text);
