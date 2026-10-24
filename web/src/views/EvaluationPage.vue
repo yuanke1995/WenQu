@@ -142,15 +142,79 @@
           </a-collapse>
         </div>
       </template>
+
+      <!-- 答案质量评测：检索之上的端到端维度。逐条用例检索 → 真实生成回答 → 评判模型打忠实度/相关性两维分。
+           每条两次真实模型调用（生成+评判）计费敏感：手动触发、单次上限 50 条、异步跑（3s 轮询进度） -->
+      <div class="app-card" style="margin-top:14px">
+        <div class="app-card-title">答案质量评测
+          <span class="card-sub">检索指标只看「找得到」，这里测「答得对不对」：逐条用例检索 → 真实生成回答 → 评判模型打分。每条用例 2 次模型调用（生成 + 评判），按用例数计费</span>
+        </div>
+        <div class="cfg-row">
+          <span class="cfg-label">用例数</span>
+          <a-input-number v-model:value="answerCaseCount" :min="1" :max="50" style="width:88px" />
+          <span class="cfg-sub">上限 50；生成/评判模型在 设置 · 定时任务 · 评估 里配置（生成模型留空复用评判模型）</span>
+          <button class="app-btn" style="margin-left:auto" :disabled="answerRunning || generating" @click="startAnswerEval">
+            {{ answerRunning ? `评测中 ${answerProgress.done}/${answerProgress.total}…` : '运行答案评测' }}
+          </button>
+        </div>
+        <a-progress v-if="answerRunning" :percent="answerProgress.total ? Math.round(answerProgress.done / answerProgress.total * 100) : 0"
+                    size="small" style="max-width:460px" />
+        <a-alert v-if="answerReport?.skippedReason" type="warning" show-icon style="margin-top:10px" :message="answerReport.skippedReason" />
+        <template v-if="answerReport && answerReport.skippedReason == null">
+          <div class="answer-scores">
+            <div class="score-box">
+              <div class="score-num" :class="scoreLevel(answerReport.avgFaithfulness)">{{ pctText(answerReport.avgFaithfulness) }}</div>
+              <div class="score-label">忠实度均分<span class="score-tip" title="回答的事实性陈述是否都有检索资料依据（编造=低分，如实说未覆盖不算）">?</span></div>
+            </div>
+            <div class="score-box">
+              <div class="score-num" :class="scoreLevel(answerReport.avgRelevance)">{{ pctText(answerReport.avgRelevance) }}</div>
+              <div class="score-label">相关性均分<span class="score-tip" title="回答是否切题回答了问题（答非所问/空泛回避=低分）">?</span></div>
+            </div>
+            <div class="score-box">
+              <div class="score-num dim">{{ answerReport.caseCount }}</div>
+              <div class="score-label">用例数 · {{ answerReport.runTime }}</div>
+            </div>
+          </div>
+          <a-table size="small" row-key="id" :data-source="answerReport.cases || []" :pagination="{ pageSize: 10, size: 'small' }"
+                   style="margin-top:10px" :expand-row-by-click="true">
+            <a-table-column title="问题" key="question" ellipsis>
+              <template #default="{ record }">{{ record.question }}</template>
+            </a-table-column>
+            <a-table-column title="忠实度" key="faithfulness" width="90">
+              <template #default="{ record }">
+                <span :class="scoreClass(record.faithfulness)">{{ pctText(record.faithfulness) }}</span>
+              </template>
+            </a-table-column>
+            <a-table-column title="相关性" key="relevance" width="90">
+              <template #default="{ record }">
+                <span :class="scoreClass(record.relevance)">{{ pctText(record.relevance) }}</span>
+              </template>
+            </a-table-column>
+            <a-table-column title="问题说明" key="issue" ellipsis>
+              <template #default="{ record }">{{ record.error || record.issue || '—' }}</template>
+            </a-table-column>
+            <template #expandedRowRender="{ record }">
+              <div class="answer-body">{{ record.answer || (record.error ? '（执行失败，未生成回答）' : '（无回答）') }}</div>
+            </template>
+          </a-table>
+        </template>
+        <div v-if="answerHistory.length" class="answer-history">
+          <span class="answer-history-label">历史评测</span>
+          <span v-for="(hh, hi) in answerHistory" :key="hi" class="answer-history-item"
+                :title="`${hh.answerModel} · ${hh.elapsedMs}ms`">
+            {{ hh.runTime }}：忠实 {{ pctText(hh.avgFaithfulness) }} / 相关 {{ pctText(hh.avgRelevance) }}（{{ hh.caseCount }} 条）
+          </span>
+        </div>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, h, onMounted } from 'vue'
+import { ref, computed, h, onMounted, onUnmounted } from 'vue'
 import { message, Modal, Tooltip } from 'ant-design-vue'
 import { ThunderboltOutlined, QuestionCircleOutlined, DownOutlined } from '@ant-design/icons-vue'
-import { evalGenerate, getEvalSet, runEvaluation, saveConfig, getConfig } from '../api'
+import { evalGenerate, getEvalSet, runEvaluation, saveConfig, getConfig, runAnswerEval, answerEvalReport } from '../api'
 
 // 指标列头：文字 + ? 图标（hover 看含义）
 const metricTitle = (text, tip) =>
@@ -336,7 +400,67 @@ const buildPayload = gs => ({
   }))
 })
 
-onMounted(() => { loadSet(); loadCur() })
+onMounted(() => { loadSet(); loadCur(); loadAnswerStatus() })
+onUnmounted(() => { if (answerTimer) { clearInterval(answerTimer); answerTimer = null } })
+
+// ── 答案质量评测：异步执行 + 3s 轮询进度；报告与历史由后端持久化（eval.lastAnswerReport / eval.answerHistory） ──
+const answerCaseCount = ref(10)
+const answerRunning = ref(false)
+const answerProgress = ref({ done: 0, total: 0 })
+const answerReport = ref(null)
+const answerHistory = ref([])
+let answerTimer = null
+
+const pctText = v => (v == null ? '—' : String(Math.round(v * 100)))
+const scoreLevel = v => (v == null ? '' : v >= 0.8 ? 'good' : v >= 0.6 ? 'mid' : 'bad')
+const scoreClass = v => (v == null ? 'score-miss' : scoreLevel(v))
+
+function scheduleAnswerPoll () {
+  if (answerTimer) return
+  answerTimer = setInterval(async () => {
+    try {
+      const r = await answerEvalReport()
+      if (!r.success) return
+      if (r.data?.progress) answerProgress.value = r.data.progress
+      answerRunning.value = !!r.data?.running
+      if (r.data?.report) answerReport.value = r.data.report
+      answerHistory.value = r.data?.history || []
+      if (!answerRunning.value && answerTimer) {
+        clearInterval(answerTimer); answerTimer = null
+        message.success(answerReport.value?.skippedReason ? '答案评测结束（有跳过项，见提示）' : '答案评测完成')
+      }
+    } catch (e) { /* 单次轮询失败下次再试 */ }
+  }, 3000)
+}
+
+async function loadAnswerStatus () {
+  try {
+    const r = await answerEvalReport()
+    if (r.success) {
+      answerRunning.value = !!r.data?.running
+      if (r.data?.progress) answerProgress.value = r.data.progress
+      if (r.data?.report) answerReport.value = r.data.report
+      answerHistory.value = r.data?.history || []
+      if (answerRunning.value) scheduleAnswerPoll()
+    }
+  } catch (e) { /* 后端未部署该接口时静默 */ }
+}
+
+async function startAnswerEval () {
+  if (!evalSet.value.cases?.length) {
+    message.warning('评估集为空，请先"重新生成评估集"')
+    return
+  }
+  try {
+    const r = await runAnswerEval(answerCaseCount.value)
+    if (r.success) {
+      message.success(`答案评测已启动（${answerCaseCount.value} 条，每条 2 次模型调用）`)
+      answerRunning.value = true
+      answerProgress.value = { done: 0, total: answerCaseCount.value }
+      scheduleAnswerPoll()
+    } else message.error(r.msg || '启动失败')
+  } catch (e) { message.error(e.message || '启动失败') }
+}
 async function loadSet() {
   try {
     const r = await getEvalSet()
@@ -463,4 +587,20 @@ const buildHealth = data => {
 .hit-good { color: var(--app-ok); }
 .hit-miss { color: var(--app-text2); }
 .hit-score { color: var(--app-text3); margin-left: 8px; }
+
+/* 答案质量评测：两维均分大数字 + 逐条明细 + 历史摘要 */
+.answer-scores { display: flex; gap: 32px; margin-top: 12px; }
+.score-box { text-align: center; }
+.score-num { font-size: 26px; font-weight: 600; line-height: 1.2; }
+.score-num.good { color: var(--app-ok); }
+.score-num.mid { color: var(--app-warn-text, #d48806); }
+.score-num.bad { color: var(--app-danger); }
+.score-num.dim { font-size: 20px; color: var(--app-text2); }
+.score-label { font-size: 12px; color: var(--app-text3); margin-top: 2px; }
+.score-tip { cursor: help; margin-left: 4px; color: var(--app-text3); }
+.score-miss { color: var(--app-text3); }
+.answer-body { font-size: 12px; line-height: 1.8; color: var(--app-text2); white-space: pre-wrap; word-break: break-word; max-height: 260px; overflow: auto; }
+.answer-history { margin-top: 12px; font-size: 11px; color: var(--app-text3); display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; }
+.answer-history-label { font-weight: 600; color: var(--app-text2); }
+.answer-history-item { white-space: nowrap; }
 </style>

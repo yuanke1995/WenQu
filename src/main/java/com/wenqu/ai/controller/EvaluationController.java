@@ -71,6 +71,22 @@ public class EvaluationController {
         return ResultJson.ok(evalService.runAutoCheck());
     }
 
+    @Operation(summary = "启动答案级评测（异步）", description = "每条用例：检索 → 生成回答（eval.answerModel，空=复用评判模型）→ 评判模型打忠实度/相关性两维分。"
+            + "每条真实调用两次模型，手动触发、单次上限 50 条；进度与结果经 GET /eval/answer/report 轮询")
+    @PostMapping("/answer/run")
+    public ResultJson startAnswerEval(@RequestBody(required = false) Map<String, Object> body) {
+        int caseCount = body == null || body.get("caseCount") == null ? 10 : Integer.parseInt(String.valueOf(body.get("caseCount")));
+        boolean started = evalService.startAnswerEval(caseCount);
+        if (!started) return ResultJson.error("已有答案评测在运行中，请等它跑完再启动");
+        return ResultJson.ok(Map.of("started", true));
+    }
+
+    @Operation(summary = "答案级评测进度与最近报告", description = "running=true 时按 progress.done/total 展示进度；report=最近一期完整报告（含逐条得分与问题说明），history=最近 10 期摘要")
+    @GetMapping("/answer/report")
+    public ResultJson answerEvalStatus() {
+        return ResultJson.ok(evalService.answerEvalStatus());
+    }
+
     /** 批量运行评估（多组参数对比） */
     @Operation(summary = "运行评估（参数组对比）")
     @PostMapping("/run")

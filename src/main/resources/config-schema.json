@@ -1607,6 +1607,21 @@
       "tier": 3
     },
     {
+      "backendKey": "eval.answerModel",
+      "panel": "maintenance",
+      "section": 1,
+      "group": "eval",
+      "key": "answerModel",
+      "path": "eval.answerModel",
+      "label": "答案评测生成模型",
+      "type": "model",
+      "tips": "evalAnswerModel",
+      "modelType": "chat",
+      "def": "",
+      "note": "答案级评测里生成回答用的模型，留空 = 复用评判模型。每条用例真实调用两次（生成 + 评判），手动触发、单次上限 50 条",
+      "tier": 3
+    },
+    {
       "backendKey": "eval.autoThresholdPct",
       "panel": "maintenance",
       "section": 1,

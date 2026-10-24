@@ -1303,6 +1303,11 @@ export const setDocumentTags = (id, tags) =>
   request(`/document/${encodeURIComponent(id)}/tags?tags=${encodeURIComponent(tags)}`, { method: 'PUT' })
 /** 知识库健康度：按库聚合文档态分布/块规模/未向量化 + 全局索引漂移信号（仅管理员，只读） */
 export const documentHealth = () => request('/document/health', { timeout: 60000 })
+/** 启动答案级评测（异步）：每条用例检索→生成回答→评判模型打忠实度/相关性；进度与结果用 answerEvalReport 轮询 */
+export const runAnswerEval = caseCount =>
+  request('/eval/answer/run', { method: 'POST', body: JSON.stringify({ caseCount }), timeout: 60000 })
+/** 答案级评测进度与最近报告（running=true 时按 progress 展示；report 含逐条得分与问题说明，history 为最近 10 期摘要） */
+export const answerEvalReport = () => request('/eval/answer/report')
 
 /** 删除文档 */
 export const deleteDocument = id => request(`/document/${id}`, { method: 'DELETE' })
