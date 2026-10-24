@@ -69,9 +69,17 @@ public class KnowledgeRetrievalTool {
      * 工具检索范围（与主链路同库界，2026-09-26 库隔离修复）：智能体绑定了知识库时，
      * searchKnowledge 不允许越过范围检索其他库——否则「仅挂刑法库」的智能体经工具仍能
      * 把其他库的块召回并注册进引用来源。kbIds 限定向量检索的库（null=不限，与主链路
-     * scopeKbIds 同语义）；docIds 对命中做后过滤（null=不限，空集合=范围内无文档，检索为空）。
+     * scopeKbIds 同语义）；docIds 对命中做后过滤（null=不限，空集合=范围内无文档，检索为空）；
+     * kbFilter 是 @ 知识库提及的收窄后过滤（null/空=不收窄）：命中块的所属库必须落在
+     * 用户本轮点名的库集合里——它只收窄、不放宽（向量路的 kbIds 原样保留智能体资料域，
+     * 域外被点名的库不会因提及而越界检索）。
      */
-    public record KbScope(java.util.Collection<String> kbIds, java.util.Set<String> docIds) {}
+    public record KbScope(java.util.Collection<String> kbIds, java.util.Set<String> docIds,
+                          java.util.Set<String> kbFilter) {
+        public KbScope(java.util.Collection<String> kbIds, java.util.Set<String> docIds) {
+            this(kbIds, docIds, null);
+        }
+    }
 
     /** toolContext 键：本轮检索范围（值为 {@link KbScope}，null=不限） */
     public static final String CTX_KB_SCOPE = "wenqu.knowledge.scope";
@@ -188,6 +196,17 @@ public class KnowledgeRetrievalTool {
                     .toList();
             log.info("[TOOL-DIAG] docId 后过滤：{} → {} 条（scope.docIds={}）", before, hits.size(),
                     scope.docIds());
+        }
+        // @ 知识库提及的收窄（两道闸的第二道）：关键词路本就不按库界走，只收窄向量路的 kbIds
+        // 会留一半口子——「以为只按这个库答，别的库的命中照样进来」。所属库不在点名集合里的
+        // 命中（含图扩展、手动块）一律剔除；kbId 解析不出的块宁可丢也不放（收窄语义下宁少不滥）。
+        if (scope != null && scope.kbFilter() != null && !scope.kbFilter().isEmpty()) {
+            int before = hits.size();
+            hits = hits.stream()
+                    .filter(h -> h.kbId() != null && scope.kbFilter().contains(h.kbId()))
+                    .toList();
+            log.info("[TOOL-DIAG] @kb 收窄后过滤：{} → {} 条（kbFilter={}）", before, hits.size(),
+                    scope.kbFilter());
         }
         // 补重排（强制窗口）：search() 只出融合分，本工具此前从未重排，相关分门发生在两个分值域上——
         // 与查询仅词面重叠的无关块（如"框架/使用"命中操作手册章节）融合分可达 0.6+，而真实重排分 ~0.000x，

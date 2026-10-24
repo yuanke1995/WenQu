@@ -345,7 +345,30 @@ public class WenquAgentxTools {
                                        ExecutionPolicy policy, TurnHooks hooks) {
         KnowledgeRetrievalTool.KbScope scope =
                 retrievalScope.resolve(agentOf(cmd), cmd.getUserId(), cmd.isGuestMode());
+        // @ 知识库提及的收窄（此前 mentions 里 kb 类型全仓无消费方，@ 了只留一行名字）：
+        // 向量路的 kbIds 只在「没有围墙域」时收成点名的库——围墙域原样保留，域外被点名的库
+        // 不因提及越界；kbFilter 恒等设置，命中块的所属库必须落在点名集合里（关键词路本就
+        // 不按库界走，不设这道后过滤会留一半口子，见 KnowledgeRetrievalTool 的同名过滤段）。
+        java.util.Set<String> mentionedKbIds = mentionedKbIdsOf(cmd);
+        if (!mentionedKbIds.isEmpty()) {
+            scope = new KnowledgeRetrievalTool.KbScope(
+                    scope.kbIds() == null ? mentionedKbIds : scope.kbIds(),
+                    scope.docIds(), mentionedKbIds);
+        }
         return new AgentxTurnSlot.Turn(hooks.turnId().get(), pool, channel, hooks, policy, scope);
+    }
+
+    /** 本轮 @ 提及里 kb 类型的 id 集合（保序去重；无提及返回空集）。 */
+    private static java.util.Set<String> mentionedKbIdsOf(ChatCommand cmd) {
+        List<com.wenqu.ai.dto.ChatRequest.Mention> ms = cmd.getMentions();
+        if (ms == null || ms.isEmpty()) return java.util.Set.of();
+        java.util.Set<String> out = new java.util.LinkedHashSet<>();
+        for (com.wenqu.ai.dto.ChatRequest.Mention m : ms) {
+            if (m != null && "kb".equals(m.getType()) && m.getId() != null && !m.getId().isBlank()) {
+                out.add(m.getId());
+            }
+        }
+        return out;
     }
 
     /**
@@ -514,6 +537,36 @@ public class WenquAgentxTools {
                 + "（agent_id 逐字取自清单里那一行，不要猜；可以派多次，每次一位；"
                 + "它会带着自己的知识库查一遍再把结论与资料交回）。"
                 + "通用问题（常识、写作、建议）不要派——没有对应的助手，直接自己答。";
+    }
+
+    /**
+     * @ 助手提及的强制咨询指令（用户在输入框点名「这一轮先问它」的那一位）。
+     * <p>只在模型真的派得动时才教：派遣被关（游客/分支/审批档/只读沙盒）或点名的那位不在
+     * 可派遣清单里时返回空串——不教一件做不到的事。委派的 agent_delegated 事件这里不发：
+     * 主路径上被点名的助手是「被咨询」不是「作答」，咨询真发生时 agent_consulted 照常下发
+     * （沿用既有口径）；引导是软约束，模型不派时用户看到的是它自己的回答，不会有假徽标。
+     */
+    public String agentMentionDirective(ChatCommand cmd, ExecutionPolicy policy) {
+        List<com.wenqu.ai.dto.ChatRequest.Mention> ms = cmd.getMentions();
+        if (ms == null || ms.isEmpty()) return "";
+        String id = null;
+        String name = null;
+        for (com.wenqu.ai.dto.ChatRequest.Mention m : ms) {
+            if (m != null && "agent".equals(m.getType()) && m.getId() != null && !m.getId().isBlank()) {
+                id = m.getId();
+                name = m.getName();
+                break;   // 多个取第一个，与轮级委派同一口径
+            }
+        }
+        if (id == null || !dispatchAllowed(cmd, policy)) return "";
+        final String mentionedId = id;
+        boolean listed = agentService.consultCandidates(cmd.getAgentId() == null ? "" : cmd.getAgentId())
+                .stream().anyMatch(a -> mentionedId.equals(a.getId()));
+        if (!listed) return "";
+        String shown = name == null || name.isBlank() ? id : name;
+        return "\n（用户点名要求本轮先咨询助手「" + shown + "」：请用 agent_spawn 把与本题相关、"
+                + "落在它职责内的问题交给它查（agent_id 逐字用「" + id + "」），"
+                + "拿到它的结论与资料后再综合作答；它答不了的部分你自己补。）";
     }
 
     /**

@@ -403,7 +403,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * <p>三段各自独立、任一为空就不追加段落；附件解析失败由 {@link ChatAttachmentService#prepare}
      * 自己兜成一段可读的错误说明（fail-loud 到用户可见文案，而不是静默丢）。
      */
-    private String userContentWithContext(ChatCommand cmd, io.agentscope.core.skill.SkillFilter skillFilter) {
+    private String userContentWithContext(ChatCommand cmd, io.agentscope.core.skill.SkillFilter skillFilter,
+                                          String agentConsultDirective) {
         StringBuilder sb = new StringBuilder();
         String q = cmd.getQuestion() == null ? "" : cmd.getQuestion();
         // 插话没赶上本轮、随收尾交回后作为新一轮补发的那一条：不带这句声明，模型看到的是孤零零一句
@@ -417,9 +418,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             String text = attachments.buildContextText(prepared);
             if (!text.isBlank()) sb.append('\n').append(text);
         }
-        // 2) @ 引用：kb=收窄检索范围（由检索侧按 mentions 生效，无需在这里重复正文）；
-        //    doc=该文档内容**直接带入上下文**，必须由这段送进去，否则 @ 了等于没 @；
-        //    agent=强制咨询，由工具侧处理，这里只说明本轮有一支会被咨询，避免模型自答。
+        // 2) @ 引用：kb=收窄本轮检索（检索侧按 mentions 生效，见 WenquAgentxTools.newTurn）；
+        //    doc=该文档内容**直接带入上下文**（docMentionText），否则 @ 了等于没 @；
+        //    agent=强制咨询（agentConsultDirective，模型可派遣时才教，派不动不给假指令）。
         if (cmd.getMentions() != null && !cmd.getMentions().isEmpty()) {
             sb.append("\n【本轮 @ 引用】\n");
             for (ChatRequest.Mention m : cmd.getMentions()) {
@@ -427,6 +428,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 sb.append("- ").append(m.getType()).append("：").append(m.getName()).append('\n');
             }
             sb.append(docMentionText(cmd.getMentions()));
+            sb.append(agentConsultDirective);
         }
         // 3) # 引用：把被引用的历史问答原文带过来，否则模型无从知道"这一句"在说什么
         if (cmd.getHistoryRefs() != null && !cmd.getHistoryRefs().isEmpty()) {
@@ -755,7 +757,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 送进模型的不只是问题原文：附件正文 / @ 引用 / # 历史引用都在这一段拼进去。
         // 此前这里直接送 cmd.getQuestion()，于是用户传的东西模型一概看不见（附件问题表现为
         // 它如实回答「没有看到您上传的文件」）——落库只保证人能回看到，不等于模型收到了。
-        String modelInput = userContentWithContext(cmd, binding.skillFilter()) + imgNote;
+        String modelInput = userContentWithContext(cmd, binding.skillFilter(),
+                tools.agentMentionDirective(cmd, policy)) + imgNote;
         // 模型能读图时，把原图作为 image_url 内容部件随本轮一起送进去。此前这里只有 submit(String)，
         // 图片在「问题正文」里没有任何落点——附件有 buildContextText 抽正文，图片没有等价的通道，
         // 于是发了图模型也一概看不见（它只会如实回答"没有看到图片"）。
@@ -860,7 +863,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             final boolean pendingChanged = mirror.takePendingChanged();
             final boolean taskChanged = mirror.takeTaskChanged();
             // 用量帧只在上下文真的添了行时才算：算它要先取 transcript，那是一次全量读
-            emitLiveUsage(session, cmd, pool, channel, historyBefore, usageStamp, mirror.takeMessageChanged());
+            emitLiveUsage(session, cmd, pool, channel, historyBefore, usageStamp, mirror.takeMessageChanged(),
+                    hooks.modelRef());
             announcedRefs = emitRetrieved(cmd, pool, channel, announcedRefs, recording);
             // 用户点了「继续对话」：这一轮就此收口——修改意见由前端作为一条用户消息开出完整新一轮
             // （与手写引擎同一契约）。框架那一跑是被 reject 唤醒的，它会自己往下重出一版计划，
@@ -1605,20 +1609,33 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     /**
-     * 用户在本轮显式选过的模型上下文窗口（token），落到 {@link OpenAIChatModel} 的
+     * 本轮用户显式选过的模型上下文窗口（token），落到 {@link OpenAIChatModel} 的
      * {@code contextWindowSize}。框架的压缩阈值与输入预算都由它推导：
      * <ul>
      *   <li>{@code CompactionMiddleware#onReasoning}：{@code window - reserved(20k)} 为动态压缩阈值</li>
      *   <li>{@code HarnessContextBuilder#inputLimit}：{@code window - output - safety} 为输入上限</li>
      * </ul>
-     * 未选 / 未登记（≤0）返回 0，调用方不设（模型按名查框架内置 {@code ModelContextWindows} 表）；
+     * 未选（≤0）返回 0，调用方不设（模型按名查框架内置 {@code ModelContextWindows} 表）；
      * 不能把 0 显式塞给模型——{@code OpenAIChatModel} 的 builder 只在 {@code >=0} 时用显式值，
      * 0 会被当成「窗口=0」喂给压缩逻辑（每轮都压）。用户选过的窗口优先于框架内置表：
      * 问渠登记的窗口是模型真实口径，框架表按前缀猜名、对中文大模型常缺条目。
+     * <p>越界值在服务端收敛到模型登记的 {@code [contextWindowMin, contextWindow]} 区间
+     * （前端面板只在区间内给档位，但前端校验不是边界）：超上限抬到上限——否则压缩阈值被抬到
+     * window−20k，基本不压缩直到上游 overflow；低于下限压到下限——否则每次模型调用都触发压缩。
+     * 模型未登记窗口（或引用解析不出登记行）时本轮选择整个忽略、返回 0：窗口档位只在
+     * 「模型登记了区间」时才有意义（与请求字段文档同一口径），宁回落框架内置表也不采信来路不明的值。
      */
-    private int modelContextWindow(ChatCommand cmd) {
+    private int modelContextWindow(ChatCommand cmd, String modelRef) {
         Integer requested = cmd.getRequestedContextWindow();
-        return requested == null || requested <= 0 ? 0 : requested;
+        if (requested == null || requested <= 0) return 0;
+        com.wenqu.ai.model.ModelInfo mi = modelRegistry.modelInfoOf(modelRef);
+        Integer max = mi == null ? null : mi.getContextWindow();
+        Integer min = mi == null ? null : mi.getContextWindowMin();
+        if (max == null || max <= 0) return 0;
+        // 只登记上限、没登记可选区间（min 空）：档位在界面上本就不出现，选择整个不生效，
+        // 按登记窗口（默认上限）走——不然 API 直调传 1 会把窗口钉在 1（每次调用都触发压缩）
+        if (min == null || min <= 0 || min > max) return max;
+        return Math.max(min, Math.min(requested, max));
     }
 
     /**
@@ -3157,7 +3174,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 .generateOptions(generateOptions(cmd, hooks.modelRef()))
                 .endpointPath(route.completionsPath() == null || route.completionsPath().isBlank()
                         ? "/v1/chat/completions" : route.completionsPath())
-                .contextWindowSize(modelContextWindow(cmd))
+                .contextWindowSize(modelContextWindow(cmd, hooks.modelRef()))
                 .build();
         io.agentscope.core.model.Model chatModel = new MeteredModel(baseModel, usageLedger,
                 com.wenqu.ai.util.UsageAttr.of(cmd.getUserId(), cmd.getSessionId(), null,
@@ -3557,7 +3574,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         com.wenqu.ai.agent.chat.TurnHandle handle =
                 com.wenqu.ai.agent.chat.TurnRegistry.handle(cmd.getSessionId());
         String framedTurnId = handle == null ? turnId : handle.turnId();
-        Map<String, Object> tokens = usageOf(session, historyBefore, pool, cmd);
+        Map<String, Object> tokens = usageOf(session, historyBefore, pool, cmd, modelRef);
         // 收尾这一发是终值（与 done 里的 tokens 同一份快照）；流式期间那几发见 emitLiveUsage，
         // 两拨都出自 usageOf，不做第二套估算
         // 整轮结束而思考段还开着（只思考没出正文、或被叫停）：照样补一条收尾帧，别让转圈永远挂着
@@ -3795,14 +3812,15 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 所以异常只告警不上抛。
      */
     private void emitLiveUsage(AgentSession session, ChatCommand cmd, WenquSourcePool pool,
-                               RunChannel channel, int historyBefore, long[] stamp, boolean transcriptChanged) {
+                               RunChannel channel, int historyBefore, long[] stamp, boolean transcriptChanged,
+                               String modelRef) {
         // 上下文没添新行就不必读全量日志去问「添了几条」：transcript() 走的是从 head 回走的整条 commit 链
         if (!transcriptChanged) return;
         int size = session.transcript().messages().size();
         if (size == stamp[0]) return;
         stamp[0] = size;
         try {
-            Map<String, Object> tokens = usageOf(session, historyBefore, pool, cmd);
+            Map<String, Object> tokens = usageOf(session, historyBefore, pool, cmd, modelRef);
             // 还没有任何一次模型回包带 usage：此刻报不出占用，等下一跳（空表发出去只会让前端清空预览）
             if (tokens.isEmpty()) return;
             channel.emit(RunEventType.USAGE, com.alibaba.fastjson2.JSON.toJSONString(tokens));
@@ -3822,7 +3840,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 算百分比。前端对缺字段是「不显示该行」，不填比填个假预算诚实。
      */
     private Map<String, Object> usageOf(AgentSession session, int historyBefore,
-                                        WenquSourcePool pool, ChatCommand cmd) {
+                                        WenquSourcePool pool, ChatCommand cmd, String modelRef) {
         List<Msg> messages = session.transcript().messages();
         int from = Math.min(Math.max(historyBefore, 0), messages.size());
         long prompt = 0;
@@ -3858,7 +3876,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         tokens.put("context", lastInput);
         tokens.put("outputIsReal", true);
         tokens.put("hits", pool.sources().size());
-        int window = modelContextWindow(cmd);
+        int window = modelContextWindow(cmd, modelRef);
         if (window > 0) {
             tokens.put("window", window);
             tokens.put("windowSource", "framework");
