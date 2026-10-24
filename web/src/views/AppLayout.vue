@@ -476,7 +476,7 @@ import { themeState, toggleTheme } from '../utils/theme'
 import { authUser, ensureAuth, isAdminSync, clearAuth } from '../utils/auth'
 import { chatDone, chatReady, defaultReady, embeddingReady, pendingCount, refreshSetupGuide, setupGuide,
          advPendingCount } from '../utils/setupGuide'
-import { sessionStore, loadSessions, loadTasks, loadSpaceMore, collapseSpace, reloadSpace, toggleArchived, visibleSessions, chatStreams, NO_SPACE_KEY, startSessionTabSync, stopSessionTabSync } from './store'
+import { sessionStore, loadSessions, loadTasks, loadSpaceMore, collapseSpace, reloadSpace, toggleArchived, visibleSessions, chatStreams, NO_SPACE_KEY, startSessionTabSync, stopSessionTabSync, resetSessionStore } from './store'
 import { isNarrow, mobileShell } from '../h5/mobile'
 import BrandMark from '../components/BrandMark.vue'
 import HelpFab from '../components/HelpFab.vue'
@@ -1364,10 +1364,12 @@ const menuTitle = m => {
 // 导航回来 TTL 对账（15s 内不重复请求；配置动作后的 force 对账在 Providers/Profile 页内做）
 watch(() => route.path, () => { refreshSetupGuide() })
 
-// 退出登录：令牌无状态，清本地令牌并回登录页
+// 退出登录：令牌无状态，清本地令牌并回登录页；模块级会话/工作区状态一并复位
+// （SPA 内换号不整页刷新，不复位会把本用户的侧栏数据带给下一个登录的人）
 const doLogout = async () => {
   try { await logoutApi() } catch (e) { /* 忽略：服务端不维护会话 */ }
   clearAuth()
+  resetSessionStore()
   message.success('已退出登录')
   router.replace('/login')
 }

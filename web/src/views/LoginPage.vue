@@ -28,8 +28,8 @@
           <h1 class="hero-poem">问渠那得清如许？<br />为有源头活水来。</h1>
           <p class="hero-cite">—— 朱熹《观书有感》</p>
           <ul class="hero-feats">
-            <li>知识库问答，答案自带出处、可溯源</li>
-            <li>多模型统一接入，一个会话里可把问题交给更合适的助手</li>
+            <li>知识库问答，句句有出处</li>
+            <li>多模型接入，交给更合适的助手</li>
             <li>技能与 MCP 工具，即连即用</li>
           </ul>
         </div>
@@ -100,6 +100,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { getFirstRun, loginApi, initializeAdmin, getOidcConfig, getOidcLoginUrl } from '../api'
 import { setToken } from '../utils/auth'
+import { resetSessionStore } from './store'
 import BrandMark from '../components/BrandMark.vue'
 import { themeState, toggleTheme } from '../utils/theme'
 import './app.css'
@@ -166,6 +167,9 @@ async function submit () {
     const token = r && r.data && r.data.token
     if (!token) { error.value = (r && r.msg) || '登录失败'; return }
     setToken(token)
+    // 换号登录（含已登录状态下直闯 /login 再登一次）必须先清掉上一个用户的模块级
+    // 会话/工作区缓存——SPA 内不整页刷新，缓存里 projectsLoaded 置位后侧栏甚至不再重拉
+    resetSessionStore()
     message.success(isInit.value ? '管理员已创建' : '登录成功')
     router.replace('/chat')
   } catch (e) {

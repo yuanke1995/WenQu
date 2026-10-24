@@ -14,6 +14,7 @@ import './views/app.css'
 import App from './App.vue'
 import router from './router'
 import { ensureAuth, isLoggedIn, clearAuth } from './utils/auth'
+import { resetSessionStore } from './views/store'
 import { initTheme } from './utils/theme'
 // 移动端地基（src/h5/）：装 visualViewport 监听（写 --kb / --app-vh 到 :root）。
 // 必须在此处（组件树之外）安装——它监听的是 window 事件，与任何组件无关，
@@ -102,6 +103,8 @@ window.addEventListener('unhandledrejection', e => {
 window.addEventListener('app:unauthorized', () => {
   message.error('登录状态已失效，请重新登录')
   clearAuth()
+  // 模块级会话/工作区缓存一并复位：401 后重新登录的可能不是同一个用户
+  resetSessionStore()
   if (router.currentRoute.value.path !== '/login') {
     // mount 前 router 可能未 ready，replace 会抛未处理 promise；吞掉（守卫会在导航时兜底）
     router.replace('/login').catch(() => {})

@@ -9,8 +9,9 @@
 //   store 负责「按工作区取数 + 重新摊平」，视图只决定怎么渲染。
 import { ref, reactive, shallowReactive } from 'vue'
 import { message } from 'ant-design-vue'
-import { listSessions, listProjects, listScheduledJobs, getNewSessionProject } from '../api'
+import { listSessions, listProjects, listScheduledJobs, getNewSessionProject, setNewSessionProject } from '../api'
 import { announce, onAnnounce } from '../utils/tabSync'
+import { getToken } from '../utils/auth'
 
 // 每个工作区首屏铺几条。4 条与基准稿（任务/工作区各 4 条后接「查看更多」）一致：
 // 再多一进来就是长列表，再少又看不出这个工作区最近在聊什么。
@@ -617,6 +618,13 @@ export function startSessionTabSync () {
     if (m.k === 'row') applyRemoteRow(m)
     else if (m.k === 'drop') applyRemoteDrop(m.ids)
     else if (m.k === 'spaces') queueResync({ withProjects: true })
+    else if (m.k === 'auth') {
+      // 别的页签换了登录身份：本页签复位后按新令牌重拉（令牌在 localStorage，全部页签共享，
+      // 下一笔请求已经是新身份了，界面却还挂着旧身份的列表）。无令牌（那边是登出）就不拉，
+      // 空列表挂着即可，下次导航由路由守卫带去登录页。
+      resetSessionStore({ broadcast: false })
+      if (getToken()) loadSessions()
+    }
     else queueResync({})    // 认不出的喊话一律按「列表大概变了」兜底，宁可多对齐一次
   })
   onTabVisible = () => {
@@ -630,6 +638,51 @@ export function stopSessionTabSync () {
   if (stopAnnounce) { stopAnnounce(); stopAnnounce = null }
   if (onTabVisible) { document.removeEventListener('visibilitychange', onTabVisible); onTabVisible = null }
   clearTimeout(resyncTimer)
+}
+
+// ==================== 登录身份变更复位 ====================
+// 会话/工作区状态是模块级单例，跨路由存活；而「换用户」在本应用里是 SPA 内跳转
+// （登出 router.replace('/login')、登录成功 router.replace('/chat')，都不整页刷新）——
+// 不复位的话，上一个用户的工作区列表（projectsLoaded 置位后甚至不再重拉）、会话行、
+// 定时任务与未消费的跨页信号会被原样带给下一个用户（表现为「工作区 (0)」或新用户的
+// 会话挂进上一个用户的工作区名下），在途的流式回答也会继续往新身份的界面上写。
+// 这里把所有带用户归属的状态清零，并抬 loadGen 作废在途取数（旧身份的响应不许落进新身份的列表）。
+// archivedOpen 只是界面偏好，不随身份走，保留。
+export function resetSessionStore ({ broadcast = true } = {}) {
+  loadGen++
+  for (const st of chatStreams.values()) {
+    try { st.abort?.abort() } catch (e) { /* 已中止 */ }
+  }
+  chatStreams.clear()
+  todosMap.value = {}
+  localRows.clear()
+  lastSyncAt = 0
+  projectsCache = []
+  projectsLoaded = false
+  resyncQueued = false
+  clearTimeout(resyncTimer)
+  Object.assign(sessionStore, {
+    list: [],
+    keyword: '',
+    spaces: [],
+    archived: [],
+    archivedLoaded: false,
+    archivedLoading: false,
+    tasks: [],
+    tasksLoaded: false,
+    tasksLoading: false,
+    total: 0,
+    hasMore: false,
+    // 跨页信号一并归零：旧身份残留的未消费信号（如「新建对话」）会在新身份进聊天页时被误消费
+    newChatTick: 0,
+    newChatSeen: 0,
+    autoPickTick: 0,
+    shareOpenTick: 0
+  })
+  setNewSessionProject('')
+  // 同浏览器的其它页签共享 localStorage 令牌：这边换了身份，它们那份模块级缓存同样作废。
+  // 广播给别的页签复位；接收方走 broadcast=false 复位，不再转发（防页签间乒乓）。
+  if (broadcast) announce({ k: 'auth' })
 }
 
 // ---------- 定时任务 ----------

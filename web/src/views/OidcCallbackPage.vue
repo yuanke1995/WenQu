@@ -37,6 +37,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { exchangeOidcCode } from '../api'
 import { setToken, ensureAuth } from '../utils/auth'
+import { resetSessionStore } from './store'
 import BrandMark from '../components/BrandMark.vue'
 import './app.css'
 
@@ -65,6 +66,8 @@ onMounted(async () => {
     setToken(payload.token)
     // 强制重拉身份（含菜单树）：上一次会话的缓存可能是别的账号
     await ensureAuth(true)
+    // 换号登录同理：模块级会话/工作区缓存按新身份复位，别把上一个用户的侧栏带进来
+    resetSessionStore()
     message.success('登录成功')
     const target = String(payload.redirectPath || '').trim()
     router.replace(target && target.startsWith('/') ? target : '/chat')

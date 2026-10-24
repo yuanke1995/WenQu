@@ -335,7 +335,7 @@ import { refreshSetupGuide } from '../utils/setupGuide'
 import { copyText } from '../utils/clipboard'
 import { parseMemoryDoc, serializeMemoryDoc, nextEntryId } from '../utils/memoryDoc'
 import { shareUrlOf } from './shareSession'
-import { markSessionShared } from './store'
+import { markSessionShared, resetSessionStore } from './store'
 import { changePasswordApi, getUserPreference, setUserPreference, updateMyProfile, uploadAvatarApi,
          listMySessionShares, stopShareBySession, purgeShareRecord, enableSessionShare,
          getMemoryOverview, getMemoryContent, saveMemoryMd, compactMemory, clearMyMemory,
@@ -428,6 +428,7 @@ const submitPwd = async () => {
     if (r && r.success) {
       message.success('密码已修改，请重新登录')
       clearAuth()
+      resetSessionStore()
       router.push('/login')
     } else {
       message.error((r && r.msg) || '修改失败')
