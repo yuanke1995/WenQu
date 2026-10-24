@@ -119,6 +119,7 @@ public class ChatRunRuntime {
         TurnHandle h = sessionId == null ? null : TurnRegistry.handle(sessionId);
         if (h == null || userId == null || !userId.equals(h.userId())) return false;
         h.stopped().set(true);
+        STOP_MARKS.put(sessionId, h.turnId());
         sessionEventService.append(sessionId, h.userId(), h.turnId(), "stop", "用户停止本轮");
         completeEmitter(h.emitter());
         // 不在这里给那一问打终止标记：本轮此刻还没真正退场（引擎线程要等下一个检查点才断），
@@ -266,6 +267,25 @@ public class ChatRunRuntime {
      */
     private static final java.util.concurrent.ConcurrentHashMap<String, String> BARE_ABORTS =
             new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * 被用户叫停的轮次登记（sessionId → turnId）：与 BARE_ABORTS 同一套桥接的另一条腿。
+     * <p>为什么需要它：「已停止本轮」的终止标注要由流水线线程走到头才打（早一步会抢在落库之前），
+     * 而框架引擎正常返回后分派段先摘把手，finally 里 {@code turnStopRequested} 已经查不到把手上的
+     * 停止标志——没有这一笔，「问出去立刻点停且引擎零产出」的轮在库里没有终止标注。摘除按
+     * (sessionId, turnId) 配对，旧轮残留的条目不会误标新轮。
+     */
+    private static final java.util.concurrent.ConcurrentHashMap<String, String> STOP_MARKS =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * 取走「这一轮被用户叫停」的登记（BARE_ABORTS 同款按 turnId 配对的摘除语义）。
+     *
+     * @return true=这轮确实被用户停过；调用方据此落「已停止本轮」的终止标注（是否真无产出由落库侧再判）
+     */
+    public boolean takeStopMark(String sessionId, String turnId) {
+        return turnId != null && turnId.equals(STOP_MARKS.remove(sessionId));
+    }
 
     /**
      * 运行中插话（steer）：用户在本轮还在跑时补一句方向性意见，交给<b>框架会话自己</b>送进正在跑的那一轮。
@@ -422,8 +442,11 @@ public class ChatRunRuntime {
     }
 
     private static void markSseDead(SseEmitter emitter) {
-        ACTIVE_SSE.computeIfAbsent(emitter,
-                k -> new java.util.concurrent.atomic.AtomicBoolean()).set(true);
+        // 只给还登记着的通道打标：条目已被完成回调移除的 emitter（终态之后迟到的一次发送失败）
+        // 不能再插回去——插回去就再没有回调会移除它，静态表从此慢性漏水。没登记 = 它的断开状态
+        // 已经没有读者（互斥拒绝那条短命通道同理，本来就没注册过生命周期回调）。
+        java.util.concurrent.atomic.AtomicBoolean flag = ACTIVE_SSE.get(emitter);
+        if (flag != null) flag.set(true);
     }
 
     /**

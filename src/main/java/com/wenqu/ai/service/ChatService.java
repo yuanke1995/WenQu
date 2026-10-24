@@ -538,7 +538,10 @@ public class ChatService {
                     // 两种终止要分开写：用户点停止 ≠ 没人看超时——后者不是用户做的事，文案不许怪他
                     if (runtime.takeBareAbort(sessionId, turnId)) {
                         sessionService.markTurnStopped(sessionId, "interrupted");
-                    } else if (runtime.turnStopRequested(sessionId)) {
+                    } else if (runtime.takeStopMark(sessionId, turnId)
+                            || runtime.turnStopRequested(sessionId)) {
+                        // stopMark 是用户点停的桥：分派段摘把手在先，turnStopRequested 只剩
+                        // 把手还挂着的路径（如收集型通道）走得到，两条并存时同一语义
                         sessionService.markTurnStopped(sessionId, "stopped");
                     }
                     runtime.endTurnMutex(sessionId);
