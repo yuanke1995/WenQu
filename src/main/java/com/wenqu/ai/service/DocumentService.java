@@ -914,17 +914,20 @@ public class DocumentService {
             try {
                 String fromRef = kbRefOf(fromKbId);
                 String toRef = kbRefOf(toKbId);
-                if (fromRef.equals(toRef)) return; // 同一向量空间，向量无需迁移
                 VectorStore from = kbVectorStores.storeForKb(fromKbId);
                 VectorStore to = kbVectorStores.storeForKb(toKbId);
                 List<Knowledge> rows = knowledgeMapper.selectList(new LambdaQueryWrapper<Knowledge>()
                         .eq(Knowledge::getDocId, docId));
                 List<String> vectorIds = rows.stream().map(Knowledge::getVectorId)
                         .filter(java.util.Objects::nonNull).filter(v -> !v.isBlank()).toList();
-                if (!vectorIds.isEmpty()) {
+                // 同 ref 不等于同索引：索引/键前缀按 kbId 隔离（每库独立 RediSearch 索引），
+                // 模型相同只是「无需重嵌入」——向量仍要从旧库索引搬运到新库索引，否则新库向量路
+                // 召回不到（同名 upsert 跨库导入、同模型库间移动文档都会踩中）。
+                boolean sameModel = fromRef.equals(toRef);
+                if (!vectorIds.isEmpty() && !sameModel) {
                     from.delete(vectorIds);
                 }
-                // QA/子块向量随迁：从旧库索引删除，新库从落库行恢复（不调 LLM）
+                // QA/子块向量随迁：从旧库索引删除，新库从落库行恢复（不调 LLM）；同 ref 分支也照搬（索引按库隔离）
                 try {
                     List<String> extras = new ArrayList<>(qaIndexService.vectorIdsByDoc(docId));
                     extras.addAll(childChunkService.vectorIdsByDoc(docId));
