@@ -3481,33 +3481,55 @@ const sandboxLoading = ref(false)
 const sandboxTaken = ref(new Set())
 /** 被收起的目录（默认全展开：这一栏答的是「刚才做的东西在哪」，收着等用户点等于把答案藏回去） */
 const sandboxClosed = ref(new Set())
+// 沙盒系工具名单：与后端 FrameworkToolLabels.FilesystemToolNames 同口径，另加 run_code（SANDBOX 族仅存的
+// 一把）与 deliver_artifact（把沙盒里做出来的文件存进会话）；ls 是退役老名，只为按裸名落库的老历史兜底。
+const SANDBOX_TOOL_NAMES = new Set(['execute', 'run_code', 'read_file', 'write_file', 'edit_file',
+                                    'grep_files', 'glob_files', 'list_files', 'ls', 'deliver_artifact'])
+/** 本会话是否真用过沙盒：沙盒目录要等模型第一次往里写东西才由 provisioner 建出来——没用过沙盒
+ *  工具的会话（新用户第一问最典型）连本人 workspace 根都还没有，这时去拉文件列表只会撞上
+ *  「沙盒可能部署在另一台机器上」的假故障（2026-10-24）。判据认「成功跑完的沙盒系工具调用」：
+ *  被拒/失败的调用没建出任何目录，不算——只认 done 顺带把「审批被拒却报目录故障」也挡掉。
+ *  会话目录里出现文件 ⟺ 本会话有过成功的沙盒系调用（附件、模板复制都落各自的目录，不进这里）。 */
+const sessionSandboxActive = computed(() => messages.value.some(m => m.role !== 'user'
+  && Array.isArray(m.toolCalls)
+  && m.toolCalls.some(t => t && t.status === 'done' && SANDBOX_TOOL_NAMES.has(t.name))))
 async function loadSandboxFiles() {
   const sid = currentSessionId.value
   sandboxTaken.value = new Set()
-  if (!sid) {
+  if (!sid || !sessionSandboxActive.value) {
     sandboxFiles.value = []
     sandboxTotal.value = 0
     sandboxErr.value = ''
+    sandboxLoading.value = false
     return
   }
   sandboxLoading.value = true
   sandboxErr.value = ''
   try {
     const r = await listSandboxFiles(sid)
+    // 迟到的结果不上屏：await 期间可能已切走会话、或判据翻假（切会话那一瞬 messages 还是
+    // 上一个会话的，历史落位才揭出本会话没用过沙盒）——上屏就会把误报/旧文件盖进当前视图
+    if (currentSessionId.value !== sid || !sessionSandboxActive.value) return
     sandboxFiles.value = (r && r.data && r.data.files) || []
     // 条数认服务端给的总数，不认到手这一截：一屏只回最新 300 个，只报到手数量会把「没列全」说成「就这些」
     sandboxTotal.value = Number(r?.data?.total) || sandboxFiles.value.length
   } catch (e) {
+    if (currentSessionId.value !== sid || !sessionSandboxActive.value) return
     // 失败必须说出来并给重试：静默成空列表，用户读到的是「我让它做的文件没了」
     sandboxFiles.value = []
     sandboxTotal.value = 0
     sandboxErr.value = e?.message || '沙盒目录读取失败'
   } finally {
-    sandboxLoading.value = false
+    // 只收拾自己这个会话的 loading：切换后新一次加载正在飞，别把它的小字提示掐了
+    if (currentSessionId.value === sid) sandboxLoading.value = false
   }
 }
 /** 一轮跑完就重列：交付物是那一轮做出来的，不重拉就要刷新页面才看得见 */
 watch(() => loading.value, (v, prev) => { if (prev && !v) loadSandboxFiles() })
+/** 判据翻转也要重拉：切会话那一瞬 messages 还是上一个会话的，判据可能是旧值（旧会话用过沙盒、
+ *  新会话没用过）；等新会话的历史落到位它才翻成真值/假值，这一拉补的就是那一刻——
+ *  没有它，从沙盒会话切进新会话会带着旧判据撞一次假故障，翻成假值后也没人把误报收走。 */
+watch(sessionSandboxActive, () => { loadSandboxFiles() })
 async function onSandboxDownload(f) {
   const sid = currentSessionId.value
   if (!sid) return

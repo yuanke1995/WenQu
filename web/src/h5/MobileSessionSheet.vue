@@ -127,7 +127,7 @@ import { installable, installEntryVisible, promptInstall } from './pwa'
 import BottomSheet from './BottomSheet.vue'
 import MoveToWorkspaceModal from '../components/MoveToWorkspaceModal.vue'
 import UserAvatar from '../components/UserAvatar.vue'
-import { sessionStore, loadSessions, loadSpaceMore, NO_SPACE_KEY } from '../views/store'
+import { sessionStore, loadSessions, loadSpaceMore, NO_SPACE_KEY, resetSessionStore } from '../views/store'
 import { pinSession, favoriteSession, renameSessionApi, logoutApi, deleteSessionApi, listProjects, moveSessionProject } from '../api'
 import { authUser, clearAuth } from '../utils/auth'
 import { themeState, toggleTheme } from '../utils/theme'
@@ -192,6 +192,7 @@ const doLogout = () => {
     onOk: async () => {
       try { await logoutApi() } catch (e) { /* 忽略：服务端不维护会话 */ }
       clearAuth()
+      resetSessionStore()
       message.success('已退出登录')
       router.replace('/login')
     }
