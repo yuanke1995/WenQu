@@ -57,7 +57,7 @@
           </div>
         </div>
 
-        <!-- 个人默认聊天模型（「保存」统一提交；「自动提炼记忆」开关已挪到「我的记忆」面板） -->
+        <!-- 个人默认聊天模型（选完即存，没有「保存」这一步；「自动提炼记忆」开关在「我的记忆」面板） -->
         <div v-else-if="current === 'chat'" class="app-card pf-card">
           <h2 class="app-card-title">{{ panelMeta.title }}</h2>
           <p class="pf-hint">{{ panelMeta.hint }}</p>
@@ -65,16 +65,14 @@
             <!-- 用组件声明的 v-model（而非 v-model:value——那是透传到根 a-select 的偶然生效路径） -->
             <ModelSelect v-model="pref[panelMeta.field]" type="chat"
                          :issue="current === 'chat' ? defaultModelIssue : ''"
-                         inherit-label="不设默认" :width="isNarrow ? '100%' : 360" :disabled="loading" />
+                         inherit-label="不设默认" :width="isNarrow ? '100%' : 360"
+                         :disabled="loading || prefSaving" @change="saveDefaultModel" />
+            <span v-if="prefSaving" class="pf-sub-hint pf-saving-tip">生效中…</span>
           </div>
           <p class="pf-sub-hint">{{ panelMeta.tail }}</p>
 
           <!-- 回答偏好（原「相关建议条数 / 空态示例问题 / 默认助手 / 停用的技能 / 工具执行上限」五项
                个人覆盖）已整体下线：连同它们在系统设置里的全局那一份一起删干净，不再有两处口径。 -->
-
-          <div class="pf-row" style="margin-top:14px">
-            <button class="app-btn" :disabled="saving" @click="save">保存</button>
-          </div>
         </div>
 
         <!-- 我的记忆（P5 收口）：框架负责写，这里负责让用户看得见、改得动、删得掉；
@@ -371,15 +369,15 @@ watch(current, () => nextTick(() => {
 const PANELS = {
   chat: {
     field: 'defaultModel', title: '默认模型',
-    hint: '智能体未指定、会话未手动选择时，用这个模型回答。',
+    hint: '会话未选定模型时，用这个模型回答；会话已选定模型时沿用会话的选择。选择后立即生效，没有单独的保存按钮。',
     tail: '清空（选「不设默认」）后，每次对话需手动选择模型。对话上传的图片能否被理解，取决于模型是否支持读图（不支持就换个能读图的模型重试）；入库文档的图片描述用知识库绑定的视觉模型。'
   }
 }
 const panelMeta = computed(() => PANELS[current.value] || PANELS.chat)
 
-// 个人默认（保存提交当前值；向量/重排/视觉无个人默认，归知识库绑定/检索设置/模型能力位）
+// 个人默认（选完即存，setUserPreference 为部分更新：缺省字段不动；向量/重排/视觉无个人默认，归知识库绑定/检索设置/模型能力位）
 const loading = ref(false)
-const saving = ref(false)
+const prefSaving = ref(false)
 const pref = ref({ defaultModel: '' })
 // 个人默认模型此刻能不能用（后端判：供应商被停用、模型被移出列表）。不参与保存，只驱动界面
 const defaultModelIssue = ref('')
@@ -399,17 +397,19 @@ const load = async () => {
   finally { loading.value = false }
 }
 
-const save = async () => {
-  saving.value = true
+const saveDefaultModel = async v => {
+  prefSaving.value = true
   try {
-    await setUserPreference(pref.value)
-    message.success('已保存')
-    await load()
-    refreshSetupGuide(true)  // 个人设置改了默认模型 → 引导 tag/卡片立即对账
+    await setUserPreference({ defaultModel: v || '' })
+    message.success(v ? '已设为默认模型' : '已清除默认模型')
   } catch (e) {
-    message.error(e.message || '保存失败')
-    await load() // 回落服务端状态，避免本地与服务端不一致
-  } finally { saving.value = false }
+    message.error(e.message || '设置失败')
+  } finally {
+    // 成败都回读服务端：成功要刷新「这个模型还能不能用」的判定，失败要把选择器退回真正生效的那一个
+    await load()
+    prefSaving.value = false
+    refreshSetupGuide(true)  // 个人默认模型变了 → 引导 tag/卡片立即对账
+  }
 }
 
 // ---- 账号安全：修改密码（成功后强制重新登录） ----
@@ -883,12 +883,14 @@ const purgeRecord = s => {
 
 // 面板切换时才拉列表：其余面板不碰这个接口（个人设置是常驻页，每次进都拉会白跑一次）
 // 记忆同理——自动提炼是在后台往库里加条目的，切回面板必须重拉，否则看到的是进页那一刻的旧快照
+// 「自动提炼记忆」开关也一起重拉：它过去只在进页时读过一次，值在别处变过（另一个页签、探针改完还原、
+// 请求超时但其实已落库）就永远显示旧值，看着像「它自己关了」
 watch(current, v => {
   if (v === 'shares') {
     focusSid.value = route.query.sid || ''
     loadShares()
   }
-  if (v === 'memory') loadMemory()
+  if (v === 'memory') { loadMemory(); load() }
 })
 
 onMounted(() => {
@@ -915,6 +917,8 @@ onMounted(() => {
 .pf-hint-top { margin-bottom: 18px; line-height: 1.65; }
 .pf-sub-hint { font-size: 11px; color: var(--app-text3); margin: 10px 0 0; }
 .pf-row { display: flex; align-items: center; gap: 10px; }
+/* 即时保存的进行中提示：选择器在 PUT 期间只是变灰，不写一句看不出「在等什么」 */
+.pf-saving-tip { margin: 0; white-space: nowrap; }
 /* 昵称输入框：PC 定宽 280（与保存按钮并排）；窄屏改全宽（见下方 768 块） */
 .pf-nick-input { width: 280px; }
 /* 表单最大宽度：PC 上限避免长行难读；窄屏取消（见下方 768 块） */
