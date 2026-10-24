@@ -168,7 +168,16 @@ const toolLabel = (n, label) => {
 const toolDesc = (n, hint) => (hint || TOOL_DESCS[n] || TOOL_DESCS[bareToolName(n)] || '')
 const toolCallsView = list => {
   if (!Array.isArray(list)) return []
-  const closed = list.filter(t => !(t.status === 'start' && list.some(x => x !== t && x.name === t.name && x.status !== 'start')))
+  // 去重要认「同名**且**同入参」那一对：档位闸重复记录的历史行就是同名同参两张。
+  // 只按名字去重会在并发派遣上出事——三位助手各一张 agent_spawn 卡同名不同参，
+  // 一位一收尾，另两张正在跑的卡就一起从正文里消失了（顶栏药丸跟着数成 1）。
+  const sameArgs = (a, b) => {
+    const x = a && a.args
+    const y = b && b.args
+    return !x || !y || String(x) === String(y)
+  }
+  const closed = list.filter(t => !(t.status === 'start'
+    && list.some(x => x !== t && x.name === t.name && x.status !== 'start' && sameArgs(t, x))))
   // 存量兼容：框架工具的档位闸曾经在引擎之外再记一张 start/done 卡，同一次调用在库里是两条——
   // 闸那条只有 name/args/status（没有 elapsedMs/result），引擎那条带耗时与输出。
   // 这里只合并「同名同入参、另一条确实带耗时，而本条既无耗时也无输出」的那一种，
@@ -298,6 +307,46 @@ const consultChatView = t => {
     timeout: status === 'timeout',
     error: s.error || ''
   }
+}
+/** 这把工具是不是「派一位助手出去」——顶栏药丸、卡片头与引擎挂锚点共用这一把判据 */
+const isDispatchTool = name => CONSULT_TOOL_NAMES.has(name)
+/** 派遣任务原文：跑完之后有 subChat.question，跑之前只有模型写进入参的那句 task */
+const dispatchTaskOf = t => {
+  const q = t?.subChat?.question
+  if (q) return String(q)
+  try { return String(JSON.parse(t?.args || 'null')?.task || '') } catch (e) { return '' }
+}
+/** 卡片上的定位锚：药丸点一行要滚到它。同一位助手不会在同一毫秒被派两次（台账按位去重） */
+const spawnAnchorOf = t => (Number(t?.startedAtMs) || 0) + '-' + (t?.name || '')
+/**
+ * 顶栏「子智能体」那一排：把这一条消息里的派遣卡摊成一支一行。
+ * 数据源就是工具卡自己那份（startedAtMs / elapsedMs / subChat 随后端同一帧来），不另起取数——
+ * 刷新与后台轮重连接的是同一个消息对象，药丸自然跟着有数，不需要第二条轮询。
+ * 两处刻意留的缺口（都宁可空着一行，不凑一个数出来）：
+ *  - liveStart 是**本地**收到 start 帧那一刻。服务端那把 startedAtMs 是服务端墙上时刻，拿它减本地
+ *    秒表会把两边的钟偏差算进用户眼里（同 turnElapsedMs 的起表口径）。刷新接上来的那一支没有这个
+ *    锚点 ⇒ 只报「在跑」不报秒数，跑完仍给服务端量出的那份耗时。
+ *  - live 走 subagent_step 转发，那份只活一次不落库 ⇒ 刷新后这一行空着，退回卡片上的「跑了 N 步」。
+ */
+const subagentRunsOf = m => {
+  if (!m || !Array.isArray(m.toolCalls)) return []
+  return toolCallsView(m.toolCalls).filter(t => isDispatchTool(t.name)).map(t => ({
+    t,
+    name: consultNameOf(t) || '另一位助手',
+    task: dispatchTaskOf(t),
+    running: t.status === 'start',
+    failed: t.status === 'error' || !!(t.subChat && t.subChat.status && t.subChat.status !== 'done'),
+    live: t.status === 'start' ? String(t._live || '') : '',
+    liveStart: Number(t._liveStart) || 0,
+    elapsedMs: Number((t.subChat && t.subChat.elapsedMs) || t.elapsedMs) || 0
+  }))
+}
+/** 分支里那一步的一行文案：工具名 + 关键参数，与主管线工具卡同一把尺（两处共用，别各写一遍） */
+const stepBriefOf = c => {
+  if (!c || !c.name) return ''
+  const brief = toolBrief(c)
+  const label = toolLabel(c.name, c.label)
+  return brief ? label + ' · ' + brief : label
 }
 // ==================== 时间线（正文与工具交错渲染） ====================
 // 正文与工具卡片按事件到达顺序交错渲染。timeline 是段数组：
@@ -839,6 +888,28 @@ const toggleToolCard = t => {
   t._open = t.subChat ? t._open === false : !t._open
 }
 /**
+ * 让一张工具卡在正文里真的看得见：本轮过程整条 → 所在簇 → 所在组条 → 卡片自己，四层依次摊开。
+ * 顶栏「子智能体」药丸点一行要走这一趟——派遣卡通常长在折叠着的「执行了 N 个操作」里面，
+ * 只点开卡片自己那一层等于点了没反应（PC 与移动壳共用这一个出口，两层判据分两处写必然漂移）。
+ */
+const openDispatchCard = (m, t) => {
+  if (!m || !t) return
+  const show = () => { if (!toolCardOpen(t)) toggleToolCard(t) }
+  if (!turnOpen(m)) m._turnOpen = true
+  for (const s of timelineView(m)) {
+    const segs = s.kind === 'cluster' ? (s.segs || []) : [s]
+    for (const g of segs) {
+      if (!g || g.kind !== 'group' || !Array.isArray(g.tools) || g.tools.indexOf(t) < 0) continue
+      if (s.kind === 'cluster' && !clusterOpen(m, s)) toggleCluster(m, s)
+      if (g.tools.length > 1 && g.tools[0]._groupOpen !== true) g.tools[0]._groupOpen = true
+      show()
+      return
+    }
+  }
+  // 时间线里没有它（正文重建失败退回兜底列表那条路）：只管把卡片本身点开
+  show()
+}
+/**
  * run_code 的扇出看板（P3b）：实时帧与终态清单同一个形状（后端 buildFanOut 一处组），
  * 所以这几条判据只写一遍，PC 与移动壳的模板都走它们。
  * 字段：total 已完成条数、inFlight 在途条数、items 清单、omitted 未列出数、
@@ -1339,6 +1410,7 @@ const goalEchoTipOf = (g, goalId) => {
 export {
   TOOL_LABELS, TOOL_DESCS, MCP_CLIENT_PREFIXES, bareToolName, toolLabel, toolDesc, toolCallsView, executedCount,
   toolDuration, toolRunning, consultChatView, consultNameOf, rememberAgents, hasTimelineBlocks, extendTimelineText, askUserView,
+  isDispatchTool, dispatchTaskOf, spawnAnchorOf, subagentRunsOf, stepBriefOf,
   extendTimelineProcess, procOpen, toggleProc, procSlice, pushTimelineTool, pushTimelineArtifact, pushTimelineSteer,
   pushTimelineThink, extendTimelineThink, thinkSlice, thinkGrowing, thinkSegOpen, toggleThinkSeg, ensureThinkSegment,
   restoreTimeline, SENTENCE_END_CHARS, endsSentence, timelineView, timelineRows, TOOL_BRIEF_KEYS, oneLine,
@@ -1348,7 +1420,7 @@ export {
   turnTop, turnBottom, turnToggleable,
   durZh,
   toolBrief, prettyIo, LIVE_TAIL_CHARS, liveOutput, groupRunning, groupHasError,
-  toolCardOpen, toggleToolCard,
+  toolCardOpen, toggleToolCard, openDispatchCard,
   fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget, fanRun, runBoardText,
   mergeDoneToolCalls, nowTick, ensureTick, holdTick, stopTick, toolSearchQueries,
   retrievalLineTitle,

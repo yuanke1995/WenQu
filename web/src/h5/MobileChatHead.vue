@@ -4,6 +4,8 @@
        顶栏已提供标题/搜索/新建，这里只保留 PC 版没有的三个动作 —— 会话内查找、
        分享、状态面板，且都用图标（PC 版的状态是文字按钮，窄屏放不下）。 -->
   <div class="m-chat-head">
+    <!-- 左位留给会话级实时状态（子智能体药丸）。没有内容时这块宽度为 0，那一行仍是右对齐的三个图标 -->
+    <div class="m-ch-left"><slot /></div>
     <button class="m-ch-btn" title="在本会话中查找" @click="$emit('search')">
       <search-outlined />
     </button>
@@ -36,6 +38,7 @@ defineEmits(['search', 'share', 'panel'])
   flex: none; height: 36px; padding: 0 8px;
   background: var(--app-panel); border-bottom: 1px solid var(--app-border);
 }
+.m-ch-left { margin-right: auto; display: flex; align-items: center; min-width: 0; }
 .m-ch-btn {
   width: 34px; height: 34px; border: none; background: transparent; cursor: pointer;
   color: var(--app-text3); font-size: 15px; border-radius: 8px;

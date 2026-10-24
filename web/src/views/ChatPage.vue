@@ -17,6 +17,10 @@
         <span class="head-tip" title="查看免责声明" @click="disclaimerVisible = true">AI 回答可能有误，重要信息请核实</span>
         <!-- 头部动作区：右对齐一组，图标按钮无框安静（此前每个按钮各自 margin-left:auto 散落标题栏中间，视觉突兀） -->
         <div class="head-actions">
+          <!-- 子智能体药丸：这一轮派出去几位、几位还在跑。它坐在标题栏而不是正文里，是因为
+               派遣一跑就是两三分钟，而正文在这期间一直在往下长——跟在正文里的东西要滚到
+               最新那一段才看得见，等它跑完才出现的东西等于没给。 -->
+          <SubagentPill :msg="processMsg" @focus="focusSpawn" />
           <!-- 分享激活态：图标转琥珀，与侧栏会话行的分享标记同色（链接还开着不进弹窗也得有感知） -->
           <button class="app-icon-btn" :class="{ 'share-on': shareActive }" @click="openShare"
                   :title="shareActive ? '这段对话正在对外分享（只读链接生效中）' : '分享这段对话（只读链接）'">
@@ -31,7 +35,9 @@
         </div>
       </div>
       <!-- 窄屏动作行：标题归顶栏，这里只放查找/分享/状态三个图标 -->
-      <MobileChatHead v-if="isNarrow" :share-active="shareActive" @search="openSearch" @share="openShare" @panel="togglePanel" />
+      <MobileChatHead v-if="isNarrow" :share-active="shareActive" @search="openSearch" @share="openShare" @panel="togglePanel">
+        <SubagentPill mobile :msg="processMsg" @focus="focusSpawn" />
+      </MobileChatHead>
 
       <!-- 执行过程（事件账本）：按轮列出这一会话跑过什么——工具步与耗时、审批/提问/计划三张卡、
            产物、子智能体编排、停止与失败。这份记录不参与智能体的回答，只服务事后回看与排障。
@@ -205,13 +211,17 @@
                       <span class="tl-caret" :class="{ open: seg.tools[0]._groupOpen }"><caret-right-outlined /></span>
                     </button>
                     <div v-if="seg.tools.length === 1 || seg.flat || seg.tools[0]._groupOpen" class="tl-group-body" :class="{ solo: seg.tools.length === 1 }">
-                      <div v-for="(t, ti) in seg.tools" :key="ti" class="tl-card" :class="{ run: t.status === 'start', err: t.status === 'error' }">
+                      <div v-for="(t, ti) in seg.tools" :key="ti" class="tl-card" :data-spawn="spawnAnchorOf(t)"
+                           :class="{ run: t.status === 'start', err: t.status === 'error' }">
                         <button class="tl-card-head" type="button" @click="toggleToolCard(t)">
                           <loading-outlined v-if="t.status === 'start'" spin class="tool-ic tool-ic-run" />
                           <check-outlined v-else-if="t.status === 'done'" class="tool-ic tool-ic-ok" />
                           <close-circle-outlined v-else class="tool-ic tool-ic-err" />
                           <span class="tool-name" :title="toolDesc(t.name, t.hint)">{{ toolLabel(t.name, t.label) }}</span>
                           <code v-if="toolBrief(t)" class="tl-brief">{{ toolBrief(t) }}</code>
+                          <!-- 派遣那一支跑到第几步了：子轮的过程帧原样转发过来（subagent_step），
+                               只活这一次、不落库，所以刷新后这一行是空的——卡片自己退回「跑了 N 步」 -->
+                          <span v-if="t._live && t.status === 'start'" class="tl-live" :title="t._live">{{ t._live }}</span>
                           <span v-if="t.attempts > 1" class="tool-dur">重试 {{ t.attempts - 1 }} 次</span>
                       <!-- 脚本扇出的规模（P3b）：不点开卡片也能看出"这一次跑了多少个子调用" -->
                       <span v-if="fanHasBoard(t.fanOut)" class="tool-dur">{{ fanHead(t) }}</span>
@@ -305,13 +315,15 @@
                   <span class="tl-caret" :class="{ open: m._fbOpen }"><caret-right-outlined /></span>
                 </button>
                 <div v-if="m._fbOpen" class="tl-group-body">
-                  <div v-for="(t, ti) in toolCallsView(m.toolCalls)" :key="ti" class="tl-card" :class="{ run: t.status === 'start', err: t.status === 'error' }">
+                  <div v-for="(t, ti) in toolCallsView(m.toolCalls)" :key="ti" class="tl-card" :data-spawn="spawnAnchorOf(t)"
+                       :class="{ run: t.status === 'start', err: t.status === 'error' }">
                     <button class="tl-card-head" type="button" @click="toggleToolCard(t)">
                       <loading-outlined v-if="t.status === 'start'" spin class="tool-ic tool-ic-run" />
                       <check-outlined v-else-if="t.status === 'done'" class="tool-ic tool-ic-ok" />
                       <close-circle-outlined v-else class="tool-ic tool-ic-err" />
                       <span class="tool-name" :title="toolDesc(t.name, t.hint)">{{ toolLabel(t.name, t.label) }}</span>
                       <code v-if="toolBrief(t)" class="tl-brief">{{ toolBrief(t) }}</code>
+                      <span v-if="t._live && t.status === 'start'" class="tl-live" :title="t._live">{{ t._live }}</span>
                       <span v-if="t.attempts > 1" class="tool-dur">重试 {{ t.attempts - 1 }} 次</span>
                       <!-- 脚本扇出的规模（P3b）：不点开卡片也能看出"这一次跑了多少个子调用" -->
                       <span v-if="fanHasBoard(t.fanOut)" class="tool-dur">{{ fanHead(t) }}</span>
@@ -1514,6 +1526,8 @@ import ToolSpillButton from '../components/ToolSpillButton.vue'
 import SessionEventsPanel from '../components/SessionEventsPanel.vue'
 // 右栏「过程」卡：跑轮时实时滚动工具步（数据就是引擎那份消息对象，不另取数）
 import RightProcessCard from '../components/RightProcessCard.vue'
+// 顶栏「子智能体」药丸：派遣在跑时给一个不随正文滚走的位置（PC 浮层 / 触屏底部 sheet 同一份组件）
+import SubagentPill from '../components/SubagentPill.vue'
 import SkillContentModal from '../components/SkillContentModal.vue'
 // 回答正文与它的浮层宿主：与两个分享页共用同一份实现（详见 src/chat/answerViewer.js 顶部说明）
 import AnswerBody from '../components/AnswerBody.vue'
@@ -1539,7 +1553,7 @@ import { toolLabel, toolDesc, toolCallsView, executedCount, toolRunning, hasTime
          fmtMsgTime, fmtSize, errorBrief, histItemTitle, histItemDigest, verLocal, canSwitchPrev, canSwitchNext, verLabel,
          pasteTitle, pasteSub, isPastedText,
          THINK_LEVEL_ON, levelLabel, stopTick, agentBadgeOf,
-         usageCtxTokens, usageTip, oneLine, toolCardOpen, toggleToolCard } from '../chat/projections'
+         usageCtxTokens, usageTip, oneLine, toolCardOpen, toggleToolCard, spawnAnchorOf, openDispatchCard } from '../chat/projections'
 
 const router = useRouter()
 const route = useRoute()
@@ -1763,6 +1777,17 @@ const processMsg = computed(() => {
   for (let i = list.length - 1; i >= 0; i--) if (list[i].role === 'ai') return list[i]
   return null
 })
+
+// 顶栏药丸点一行：把那张派遣卡摊开（本轮过程/所在簇/所在组条一起，判据在 openDispatchCard），
+// 再滚到它。锚点走卡片上的 data-spawn（服务端起表毫秒 + 工具名，同一位助手不会在同一毫秒被派两次）；
+// 没找到节点就只展开、不假装滚过去了。
+function focusSpawn ({ run, msg }) {
+  const t = run && run.t
+  if (!t) return
+  openDispatchCard(msg, t)
+  const el = box.value && box.value.querySelector('[data-spawn="' + spawnAnchorOf(t) + '"]')
+  if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+}
 
 
 
@@ -4145,6 +4170,8 @@ onMounted(async () => {
 .share-intro { font-size: 13px; color: var(--app-text2); line-height: 1.8; margin: 0 0 10px; }
 /* 头部动作区：右对齐一组；分享/查找用全局 app-icon-btn（无框，悬停显 accent-weak 底色） */
 .head-actions { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+/* 子智能体药丸与右边那组图标之间留一口气：它俩语义不同（状态 vs 动作），贴在一起读成一排按钮 */
+.head-actions .sap { margin-right: 6px; }
 .head-actions .app-icon-btn { font-size: 15px; }
 /* 分享激活态：琥珀（--app-warn）= 侧栏会话行分享标记同色。选择器比全局 .app-icon-btn:hover
    更高权，悬停时不褪回强调蓝——激活是状态、不该被 hover 盖掉（底色仍随 hover 变） */
@@ -4278,6 +4305,12 @@ onMounted(async () => {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .tl-card-body { padding: 0 10px 8px; max-width: 100%; }
+/* 派遣那一支正在跑的第几步：跟在助手名后面，弱一档的主色，不抢工具名。
+   卡片是 width:fit-content，这一行必须自己截断，否则一条长路径会把整张卡顶宽 */
+.tl-live {
+  flex: none; max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11px; color: var(--app-accent); opacity: .9;
+}
 .tl-io-label { font-size: 11px; color: var(--app-text3); margin: 6px 0 2px; }
 .tl-io {
   margin: 0; padding: 6px 8px; border-radius: 6px; background: var(--app-bg);

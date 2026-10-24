@@ -28,7 +28,7 @@ import { THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel, CTX_WINDOW_ST
          goalTerminalOf, goalBarVisibleOf, goalPhraseOf, goalStateLabelOf, goalStateClassOf,
          goalBlockReasonOf, goalBarTitleOf, goalBarMetaOf, goalRoundLineOf,
          goalCanPauseOf, goalCanResumeOf, goalCanEditOf,
-         rememberAgents } from './projections'
+         rememberAgents, isDispatchTool, consultNameOf, stepBriefOf } from './projections'
 
 export function useChatEngine (hooks = {}) {
   const route = useRoute()
@@ -2563,6 +2563,11 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
           // 重复的 start 会多出一颗转圈卡片，要等 done 才被终态盖掉——刷新那一刻最容易撞见
           if (msg.toolCalls.some(x => x.status === 'start' && x.name === t.name && (x.args || '') === (t.args || ''))) return
           const rec = { ...t }
+          // 派遣那一张另挂一个**本地**起表点，供顶栏那颗药丸跳秒：服务端随卡带的 startedAtMs 是
+          // 服务端墙上时刻，拿它减本地秒表会把两边的钟偏差算进用户眼里（同 turnElapsedMs 的取向）。
+          // 刷新接上来的那一支走的是快照那条路（applyTurnSnapshot 直接换掉整份 toolCalls），
+          // 拿不到这个锚点 ⇒ 药丸上那一行只写「在跑」不写秒数，跑完再给服务端量出的那份耗时。
+          if (isDispatchTool(t.name)) rec._liveStart = Date.now()
           msg.toolCalls.push(rec)
           pushTimelineTool(msg, rec)
           // 用时不在卡片上报，一轮只气泡顶部那一条说一个数
@@ -2573,7 +2578,11 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
           if (t.name === 'askUser' && msg.ask) retireAskCard(msg)
           if (t.name === 'run_code') msg.runBoard = null
           const list = msg.toolCalls
-          const last = [...list].reverse().find(x => x.name === t.name && x.status === 'start')
+          // 终态帧认领 start 卡要连同入参一起对：并发派遣时三位助手三张同名卡，只按名字认
+          // 会把甲那一份的耗时/入参/子对话盖到乙那张上（卡片换了主人、药丸跟着数错）。
+          // 后端有 toolCallId 那把尺，但它没往 SSE 帧里带；args 是这一帧自己带的那一份，够用。
+          const sameArgs = x => !x.args || !t.args || String(x.args) === String(t.args)
+          const last = [...list].reverse().find(x => x.name === t.name && x.status === 'start' && sameArgs(x))
           if (last) {
             last.status = t.status
             last.elapsedMs = t.elapsedMs || 0
@@ -2608,6 +2617,28 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         let out = (live.output || '') + o.delta
         if (out.length > MAX) { out = out.slice(out.length - MAX); live.outputTruncated = true }
         live.output = out
+      } catch (e) { /* 忽略 */ }
+    },
+    onSubagentStep: payload => {
+      // 分支那一支此刻跑到第几步（SubAgentBranchRuntime 把子轮的 tool_status 原样改名转发过来）：
+      // 帧形如 {i, agent, type, content}，content 还是子轮那张工具卡的原样载荷。
+      // i 在咨询这条通路上恒为 0（BranchRequest 那个 branchIndex 传的是 -1），所以归行只能认
+      // agent 那个名字——一位助手在同一轮里不会被派两次（台账按位去重，重试那一次前一张已收尾）。
+      // 刻意不落库：刷新后这一支退回卡片上的「跑了 N 步工具」，那一行宁可空着也不留一条假进度。
+      try {
+        const o = typeof payload === 'string' ? JSON.parse(payload) : payload
+        if (!o || o.type !== 'tool_status' || !o.agent) return
+        const c = typeof o.content === 'string' ? JSON.parse(o.content) : o.content
+        if (!c || !c.name || c.status !== 'start') return
+        const list = Array.isArray(msg.toolCalls) ? msg.toolCalls : []
+        let card = [...list].reverse().find(x => isDispatchTool(x.name) && x.status === 'start'
+          && consultNameOf(x) === o.agent)
+        // 名字查不到（助手清单那条旁路没落到）时，只有一支在跑才敢认领：两支并发认领错就是张冠李戴
+        if (!card) {
+          const running = list.filter(x => isDispatchTool(x.name) && x.status === 'start')
+          if (running.length === 1) card = running[0]
+        }
+        if (card) card._live = stepBriefOf(c)
       } catch (e) { /* 忽略 */ }
     },
     onRunCodeProgress: payload => {

@@ -124,13 +124,16 @@
                 <caret-right-outlined class="caret" :class="{ open: seg.tools[0]._groupOpen }" />
               </button>
               <div v-if="seg.tools.length === 1 || seg.flat || seg.tools[0]._groupOpen" class="tl-group-body">
-                <div v-for="(t, ti) in seg.tools" :key="ti" class="card tool-card" :class="{ run: t.status === 'start', err: t.status === 'error' }">
+                <div v-for="(t, ti) in seg.tools" :key="ti" class="card tool-card" :data-spawn="spawnAnchorOf(t)"
+                     :class="{ run: t.status === 'start', err: t.status === 'error' }">
                   <button class="card-head" type="button" @click.stop="toggleToolCard(t)">
                     <span v-if="t.status === 'start'" class="spinner"></span>
                     <check-outlined v-else-if="t.status === 'done'" class="ic-ok" />
                     <close-circle-outlined v-else class="ic-err" />
                     <span class="card-title">{{ toolLabel(t.name, t.label) }}</span>
                     <code v-if="toolBrief(t)" class="tool-brief">{{ toolBrief(t) }}</code>
+                    <!-- 派遣那一支跑到第几步：子轮过程帧原样转发（subagent_step），只活一次不落库 -->
+                    <span v-if="t._live && t.status === 'start'" class="tool-live" :title="t._live">{{ t._live }}</span>
                     <span v-if="t.attempts > 1" class="card-dim">重试 {{ t.attempts - 1 }} 次</span>
                     <span v-if="fanHasBoard(t.fanOut)" class="card-dim">{{ fanHead(t) }}</span>
                     <span v-if="fanRun(t)" class="fan-run">{{ fanRun(t) }}</span>
@@ -328,7 +331,7 @@ import { fmtTokens } from '../utils/token'
 import {
   hasTimelineBlocks, procOpen, toggleProc, procSlice,
   turnRows, turnOpen,
-  thinkSegOpen, toggleThinkSeg, thinkSlice, thinkGrowing, toolLabel, toolBrief,
+  thinkSegOpen, toggleThinkSeg, thinkSlice, thinkGrowing, toolLabel, toolBrief, spawnAnchorOf,
   clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterProcCount,
   prettyIo, liveOutput, toolRunning, groupRunning, groupHasError,
   fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget, fanRun, runBoardText,
@@ -517,6 +520,8 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
 .tl-group-body { display: flex; flex-direction: column; gap: 6px; padding: 0 0 2px; }
 .tool-card .card-head { padding: 8px 10px; }
 .tool-brief { font-family: "SF Mono", Menlo, monospace; font-size: 12px; color: var(--app-text3); background: transparent; overflow: hidden; text-overflow: ellipsis; max-width: 40%; white-space: nowrap; }
+/* 派遣那一支正在跑的第几步：卡头那行本来就会折行，这一条给它自己的主色 */
+.tool-live { font-size: 12px; color: var(--app-accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .io-label { font-size: 12px; color: var(--app-text3); margin: 8px 0 4px; }
 .io-pre { margin: 0; padding: 8px 10px; border-radius: 8px; background: var(--app-code-bg); font-family: "SF Mono", Menlo, monospace; font-size: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow: auto; }
 .io-pre.live { border-left: 2px solid var(--app-accent); }

@@ -170,6 +170,11 @@
         </span>
       </div>
 
+      <!-- 子智能体药丸（与 PC 标题栏那一颗同一份组件，触屏形态点开走底部 sheet）：
+           放在输入卡正上方而不是顶栏——顶栏那六个图标已经挤满，而这一条只在跑轮的那几分钟里出现，
+           是「此刻正在发生什么」，与目标条同一族（目标条也常驻在这儿）。 -->
+      <SubagentPill mobile :msg="panelAi" @focus="focusSpawn" />
+
       <!-- 目标条（常驻摘要条，与 PC 那一条同一套词汇与判据）：横跨多轮的目标不属于哪一颗气泡，
            所以常驻在输入卡正上方。一行说不完的（跑了几轮、卡在哪）压成第二行小字——
            触屏没有 hover，PC 收在悬浮里的东西在这儿必须落在地上。
@@ -460,7 +465,7 @@ import {
   BellOutlined, ExclamationCircleOutlined, FileTextOutlined, CopyOutlined, HistoryOutlined,
   CompressOutlined, EditOutlined, LoadingOutlined, AimOutlined
 } from '@ant-design/icons-vue'
-import { pasteTitle, pasteSub } from '../chat/projections'
+import { pasteTitle, pasteSub, spawnAnchorOf, openDispatchCard } from '../chat/projections'
 import { useChatEngine } from '../chat/useChatEngine'
 import { useChatSearch } from '../chat/useChatSearch'
 import { useNotifications } from '../chat/useNotifications'
@@ -472,6 +477,8 @@ import { preferMobileShell } from './mobile'
 import { startSessionTabSync, stopSessionTabSync } from '../views/store'
 import BottomSheet from './BottomSheet.vue'
 import MobileMsgRow from './MobileMsgRow.vue'
+// 顶栏/输入卡上方的「子智能体」药丸：与 PC 壳共用同一份组件（触屏形态点开走底部 sheet）
+import SubagentPill from '../components/SubagentPill.vue'
 import MobileSessionSheet from './MobileSessionSheet.vue'
 import MobileModelSheet from './MobileModelSheet.vue'
 import MobileAttachSheet from './MobileAttachSheet.vue'
@@ -492,6 +499,14 @@ const router = useRouter()
 const box = ref(null)
 const stickToBottom = ref(true)
 const AUTO_SCROLL_MARGIN = 80
+// 子智能体药丸点一行：滚到回答里那张派遣卡并把它摊开（判据与 PC 壳共用 openDispatchCard）
+function focusSpawn ({ run, msg }) {
+  const t = run && run.t
+  if (!t) return
+  openDispatchCard(msg, t)
+  const el = box.value && box.value.querySelector('[data-spawn="' + spawnAnchorOf(t) + '"]')
+  if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+}
 const onScroll = () => {
   const el = box.value
   if (!el) return

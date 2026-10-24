@@ -117,8 +117,9 @@ const CHAT_EVENT_CB = {
   image: 'onImage', warn: 'onWarn', artifact: 'onArtifact',
   tool_status: 'onToolStatus', tool_output: 'onToolOutput', process: 'onProcess',
   runcode_progress: 'onRunCodeProgress',
-  // subagent_step 登记在表里但不配回调：分支实时帧仍照发（账本逐帧排查用），而它原来写进的那份
-  // 「编排面板」数据源（msg.subagents）随派遣路由一起退场了——咨询过程现在由工具卡那份 subChat 呈现
+  // subagent_step：分支那一支正在跑的第几步。它原来写进的「编排面板」（msg.subagents）随派遣路由
+  // 一起退场了，现在这份实时帧只喂一个去处——顶栏那颗子智能体药丸与派遣卡上的一行文案
+  // （见 useChatEngine.onSubagentStep）；仍不落库，刷新后退回卡片上的「跑了 N 步工具」
   subagent_step: 'onSubagentStep',
   // agent_consulted 登记在表里但不配回调：派遣过程由那张工具卡呈现（框架驱使后是 agent_spawn），
   // 事件仍照发（账本逐帧排查用），留名只为不被判成「未识别事件」
