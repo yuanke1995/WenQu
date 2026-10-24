@@ -27,7 +27,7 @@
     <a-input v-else v-model:value="value" size="small" style="width: 120px" />
   </template>
 
-  <a-form-item v-else-if="visible">
+  <a-form-item v-else-if="visible" :data-fix="field.backendKey">
     <template #label>
       <a-tooltip v-if="tipText" :title="tipText" placement="top"
                  :overlay-inner-style="{ whiteSpace: 'pre-line' }">

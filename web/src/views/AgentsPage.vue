@@ -168,10 +168,12 @@
               <div v-else-if="runMode === 'sub'" class="ap-mode-extra">
                 <label class="ap-field-label">被委派时怎么做</label>
                 <a-select v-model:value="form.subagentMode" :options="branchModeOptions" allow-clear
-                          style="width:100%" placeholder="跟随系统默认" />
-                <div class="ap-hint">
+                          style="width:100%" :placeholder="branchModePlaceholder" />
+                <div v-if="agentDefaultsError" class="ap-pick-empty">
+                  系统默认值加载失败 —— <button type="button" class="app-btn ghost small" @click="loadAgentDefaults">重试</button>
+                </div>
+                <div v-else class="ap-hint">
                   交要点：只查资料、把要点交回来，快也省；全循环：像一次完整对话那样把事办完，能交付文件与产物，但更慢也更花费。
-                  <template v-if="branchModeDefaultLabel">当前平台默认「{{ branchModeDefaultLabel }}」。</template>
                   被委派的那一支不会向人提问，也不会建任务清单。
                 </div>
               </div>
@@ -285,11 +287,11 @@
                         <span v-if="capOverridden(c)" class="ap-cap-badge">已覆盖</span>
                       </div>
                       <div class="ap-cap-desc" :title="(c.detail || c.desc) + (globalText(c) ? '（全局' + globalText(c) + '）' : '')">
-                        {{ c.desc }}<span v-if="globalText(c)" class="ap-cap-global"> · 全局{{ globalText(c) }}</span>
+                        {{ c.desc }}
                       </div>
                     </div>
-                    <a-select :value="capState(c)" :options="c.kind === 'switch' ? SEG : SEG_MULTI" size="small"
-                              class="ap-cap-state" @change="v => setCapState(c, v)" />
+                    <a-select :value="capState(c)" :options="c.kind === 'switch' ? segOptions(c) : segMultiOptions(c)"
+                              size="small" class="ap-cap-state" @change="v => setCapState(c, v)" />
                   </div>
                   <!-- 「指定」的多选贴在自己那行下面；不要 pooled 到列表尾，否则看起来像挂在最后一行能力上 -->
                   <div v-if="needsPick(c)" class="ap-cap-pick">
@@ -323,25 +325,25 @@
                     <div class="ap-adv-field">
                       <label class="ap-field-label">权限档位</label>
                       <a-select v-model:value="form.permissionPreset" :options="presetOptions" allow-clear
-                                size="small" placeholder="跟随平台默认" style="width:100%" />
+                                size="small" :placeholder="presetPlaceholder" style="width:100%" />
                       <div v-if="presetError" class="ap-pick-empty">权限档位名册加载失败 —— <button type="button" class="app-btn ghost small" @click="loadPermissionPresets">重试</button></div>
                       <div v-else class="ap-hint">{{ presetHint() || '只读调研 / 常规 / 全自主；平台上限由管理员控制。' }}</div>
                     </div>
                     <div class="ap-adv-field">
                       <label class="ap-field-label">工具执行确认</label>
                       <a-select v-model:value="form.toolApprovalMode" :options="approvalOptions" size="small" style="width:100%" />
-                      <div class="ap-hint">跟随档位：只读调研→逐项确认，全自主→直接执行；也可单独覆盖。</div>
+                      <div class="ap-hint">「跟随档位」= 用上面那一档的建议值，也可单独覆盖。</div>
                     </div>
                     <div class="ap-adv-field">
                       <label class="ap-field-label">单轮工具步数</label>
                       <a-input-number v-model:value="form.maxToolSteps" :min="0" :max="50" :step="1" size="small"
-                                      style="width:100%" :placeholder="`全局 ${globalMaxToolSteps}`" />
-                      <div class="ap-hint">留空跟随全局（{{ globalMaxToolSteps }}）；0 = 不限制。</div>
+                                      style="width:100%" :placeholder="maxToolStepsPh" />
+                      <div class="ap-hint">留空即按全局当前值走；0 = 不限制。</div>
                     </div>
                     <div class="ap-adv-field">
                       <label class="ap-field-label">检索重排</label>
                       <a-select v-model:value="form.qpRerank" :options="rerankOptions" size="small" style="width:100%" />
-                      <div class="ap-hint">低延迟场景可关；阈值与权重归知识库。<template v-if="form.qpRerank === 'inherit' && rerankInheritHint">（{{ rerankInheritHint }}）</template></div>
+                      <div class="ap-hint">低延迟场景可关；阈值与权重归知识库。</div>
                     </div>
                     <div class="ap-adv-field ap-adv-full">
                       <label class="ap-field-label">工具黑名单</label>
@@ -363,6 +365,10 @@
                         </button>
                       </div>
                       <div v-else class="ap-hint">不选则沿用系统的多视角并行检索。</div>
+                    </div>
+                    <div v-if="agentDefaultsError" class="ap-pick-empty ap-adv-full">
+                      全局默认值加载失败 —— 上面的「跟随全局」没点名当前值 ——
+                      <button type="button" class="app-btn ghost small" @click="loadAgentDefaults">重试</button>
                     </div>
                   </div>
                 </div>
@@ -475,7 +481,7 @@
       <!-- 游客能力：模型归属发布者（只能选自己可用的），MCP 端点是分享的附加形态 -->
       <div class="pub-block">
         <div class="pub-block-h">游客能力</div>
-        <div class="pub-field">
+        <div class="pub-field" data-fix="pubModelRef">
           <span class="pub-label">对话模型</span>
           <ModelSelect v-model="pubModelRef" type="chat" width="100%" inherit-label="跟随发布者个人默认模型" @change="savePublish" />
         </div>
@@ -685,8 +691,9 @@ import {
   SettingOutlined, EditOutlined,
   CopyOutlined, ExportOutlined, LinkOutlined, ExclamationCircleOutlined
 } from '@ant-design/icons-vue'
-import { listAgents, createAgent, updateAgent, deleteAgent, batchDeleteAgents, setAgentDefault, listKnowledgeBases, getConfig,
-         listAvailableSkills, getMcpStatus, listSubAgents, getToolCatalog, getPermissionPresets, updateAgentShare, getKbParamDefaults,
+import { listAgents, createAgent, updateAgent, deleteAgent, batchDeleteAgents, setAgentDefault, listKnowledgeBases,
+         listAvailableSkills, getMcpStatus, listSubAgents, getToolCatalog, getPermissionPresets, updateAgentShare,
+         getAgentConfigDefaults,
          getAgentPublish, publishAgent, revokeAgentPublish, listWorkflows, createWorkflowFromAgent,
          listAgentVersions, rollbackAgent } from '../api'
 import ShareScopeModal from './ShareScopeModal.vue'
@@ -696,6 +703,7 @@ import AgentAvatar from '../components/AgentAvatar.vue'
 import SkillContentModal from '../components/SkillContentModal.vue'
 import { ensureAuth, isAdminSync } from '../utils/auth'
 import { loadModelIndex } from '../utils/modelRef'
+import { locateField } from '../utils/fieldLocate'
 
 // ==================== 能力定义 ====================
 // path：该能力在全局配置里的开关路径；gate：还受此总闸制约（关掉总闸时能力不生效）
@@ -728,21 +736,28 @@ const CAPS = [
     kind: 'switch', path: ['webSearch', 'enabled'], gate: ['tool', 'enabled'] }
 ]
 // 开关型三态：''=跟随全局 / '1'=开启 / '0'=关闭（对应后端 tool_* 的 1/0/null）
-const SEG = [
-  { label: '跟随全局', value: '' },
+// 多实例能力：跟随全局 / 指定（选「指定」才展开具体项多选）/ 不使用
+// 两者的「跟随全局」都点名全局当前是哪一侧：原来这句话只挂在描述末尾的灰字里，
+// 控件本身仍是「跟随全局」四个字——看默认值得把目光从选框挪开，且普通用户压根看不到那行灰字
+const globalSuffix = c => {
+  const t = globalText(c)
+  return t ? '（' + (t.startsWith('关闭') ? '关' : '开') + '）' : ''
+}
+const segOptions = c => [
+  { label: '跟随全局' + globalSuffix(c), value: '' },
   { label: '开启', value: '1' },
   { label: '关闭', value: '0' }
 ]
 // 有副作用工具（沙盒/MCP）执行审批：''=跟随权限档位的建议值（默认）；其余为显式覆盖
-const approvalOptions = [
-  { value: '', label: '跟随档位' },
+// 档位建议值是后端名册里的 approvalDefault（常规档不给建议值=直接执行），不在前端另写一份
+const approvalOptions = computed(() => [
+  { value: '', label: '跟随档位' + (approvalFollowLabel.value ? `（${approvalFollowLabel.value}）` : '') },
   { value: 'auto', label: '自动执行' },
   { value: 'ask', label: '执行前确认' },
   { value: 'off', label: '禁用' }
-]
-// 多实例能力：跟随全局 / 指定（选「指定」才展开具体项多选）/ 不使用
-const SEG_MULTI = [
-  { label: '跟随全局', value: 'inherit' },
+])
+const segMultiOptions = c => [
+  { label: '跟随全局' + globalSuffix(c), value: 'inherit' },
   { label: '指定', value: 'pick' },
   { label: '不使用', value: 'none' }
 ]
@@ -777,8 +792,11 @@ const saving = ref(false)
 const keyword = ref('')
 const agents = ref([])
 const kbOptions = ref([])
-// 全局配置快照（仅管理员可读；普通用户保持 null，能力行不显示「全局开/关」）
-const cfg = ref(null)
+// 全局默认值（/agent/config-defaults，登录用户都能读）：所有「跟随默认」的控件都要在触发器上
+// 点名它跟随的到底是什么值。以前这份数据从管理端的 /config 取，普通用户拿不到，界面就只剩
+// 「跟随系统默认」五个字——要么猜，要么显式覆盖一份（覆盖一旦写下就不再跟随管理员后续调整）
+const agentDefaults = ref(null)
+const agentDefaultsError = ref(false)
 // 管理员级身份：reload 里 ensureAuth 到位后刷新（localStorage 兜底仅在已拉取过时可靠）
 const isAdmin = ref(isAdminSync())
 
@@ -818,12 +836,17 @@ const loadToolCatalog = async () => {
 // 被上限禁掉的档位照样列出但置灰并给原因：「这一档管理员没开」与「平台没这档」对用户是两件事。
 const presetOptions = ref([])
 const presetError = ref(false)
+// 档位名册原样留着：下拉只吃 code/label，而「跟随档位」要点名这一档建议的审批值、
+// 「跟随平台默认」要点名平台默认是哪一档——那两列（approvalDefault / platformDefault）后端已下发，
+// 只是不进 options 对象，否则每个选项都带一份用不上的字段
+const presetRaw = ref([])
 const loadPermissionPresets = async () => {
   try {
     const r = await getPermissionPresets()
     const list = (r && r.success && Array.isArray(r.data)) ? r.data : null
     if (!list) { presetError.value = true; return }
     presetError.value = false
+    presetRaw.value = list
     presetOptions.value = list.map(p => ({
       value: p.code,
       label: p.label,
@@ -831,6 +854,34 @@ const loadPermissionPresets = async () => {
       title: p.available === false ? p.unavailableReason : p.summary
     }))
   } catch (e) { presetError.value = true }
+}
+/** 当前生效的档位（没选就是平台默认档）对应的名册条目 */
+const effectivePreset = computed(() => {
+  const code = form.value.permissionPreset || defaultPresetCode.value
+  return presetRaw.value.find(p => p.code === code) || null
+})
+/** 平台默认档（后端在名册里标出，含配置项写错时的回落，前端不再抄一份判定） */
+const defaultPresetCode = computed(() => presetRaw.value.find(p => p.platformDefault)?.code || '')
+const defaultPresetLabel = computed(() => presetRaw.value.find(p => p.platformDefault)?.label || '')
+/** 留空即跟随平台默认档：点名是哪一档，用户不用去猜管理员把默认调成了什么 */
+const presetPlaceholder = computed(() =>
+  '跟随平台默认' + (defaultPresetLabel.value ? `（${defaultPresetLabel.value}）` : ''))
+/** 审批三态的中文名（与 approvalOptions 同一份词表，档位建议值就是这个码） */
+const APPROVAL_LABELS = { auto: '自动执行', ask: '执行前确认', off: '禁用' }
+/** 「跟随档位」实际是什么：档位给了建议值就点名，常规档不给建议值=直接执行 */
+const approvalFollowLabel = computed(() => {
+  const p = effectivePreset.value
+  if (!p) return ''
+  return APPROVAL_LABELS[p.approvalDefault] || '自动执行'
+})
+/** 全局默认值（各「跟随默认」控件的点名来源） */
+const loadAgentDefaults = async () => {
+  try {
+    const r = await getAgentConfigDefaults()
+    if (!r || !r.success || !r.data) { agentDefaultsError.value = true; return }
+    agentDefaults.value = r.data
+    agentDefaultsError.value = false
+  } catch (e) { agentDefaultsError.value = true }
 }
 // 当前选中的档位说明（后端下发的那句 summary，不在前端另写一份）
 const presetHint = () => {
@@ -877,13 +928,15 @@ const branchModeOptions = [
   { value: 'full', label: '全循环（把事办完）' }
 ]
 const branchModeDefaultLabel = computed(() => {
-  // 配置快照只有管理员读得到（与「全局开/关」提示同一口径）：拿不到就说"跟随系统默认"，
-  // 不拿一个猜测值冒充当前默认——写死 digest 会在管理员已把默认改成全循环时谎报
+  // 值由后端按运行时口径解析（认不出按 digest 收口）后下发，前端不再自己判默认档
   const m = rawOf(['agent', 'subagentMode'])
   if (m === 'full') return '全循环'
   if (m === 'digest') return '检索要点'
   return ''
 })
+/** 留空即跟随平台默认档：把默认档直接写进触发器，用户不点开、不读灰字也知道会怎么走 */
+const branchModePlaceholder = computed(() =>
+  '跟随系统默认' + (branchModeDefaultLabel.value ? `（${branchModeDefaultLabel.value}）` : ''))
 /** M4：工作流列表与可绑定选项（只列已发布版本） */
 const workflowRows = ref([])
 const workflowOptions = ref([])
@@ -938,20 +991,17 @@ const blankForm = () => ({
   // M4：绑定的工作流 ID（空 = 不绑定，按模型/知识库/工具配置作答）
   workflowId: null
 })
-// 「系统设置 → 检索设置」的当前全局值（/kb/param-defaults，普通用户可读）：
-// 只用来展示「跟随全局」时重排开关处于什么状态，避免让用户去猜/翻设置页。
-const qpDefaults = ref(null)
-/** 重排三态：恒定短 label（控件宽度稳定）。全局当前状态走 rerankInheritHint 灰字 */
-const rerankOptions = [
-  { label: '跟随全局', value: 'inherit' },
+/** 全局重排开关当前状态（''=拿不到值） */
+const rerankInheritState = computed(() => {
+  const v = String(agentDefaults.value?.['rerank.enabled'] ?? '').trim()
+  return v === 'true' ? '开启' : (v === 'false' ? '关闭' : '')
+})
+/** 重排三态：「跟随全局」点名全局当前开关（读不到就只说跟随全局，不谎报某一侧） */
+const rerankOptions = computed(() => [
+  { label: '跟随全局' + (rerankInheritState.value ? `（${rerankInheritState.value}）` : ''), value: 'inherit' },
   { label: '开启', value: 'on' },
   { label: '关闭', value: 'off' }
-]
-/** 继承时的灰字提示：全局重排开关当前状态（读不到则不显示） */
-const rerankInheritHint = computed(() => {
-  const v = String(qpDefaults.value?.['rerank.enabled'] ?? '').trim()
-  return v === 'true' ? '全局当前：开启' : (v === 'false' ? '全局当前：关闭' : '')
-})
+])
 
 /**
  * queryParams(JSON 串) → 重排三态。阈值/权重等旧键即使残留在存量 JSON 里也不再读取
@@ -1242,6 +1292,23 @@ const iframeSnippet = computed(() => shareUrl.value
   ? `<iframe src="${shareUrl.value}?embed=1" style="width:${pubFrameW.value}px;height:${pubFrameH.value}px;border:1px solid #e5e6eb;border-radius:12px" title="${pubAgentName.value || 'AI 助手'}"></iframe>`
   : '')
 
+/**
+ * ?agentId=&pub=1 深链：模型供应商「查看引用」里那条「游客对话模型」，能改它的地方就是
+ * 这个公开发布弹窗（游客模型选择器在里面）。停在智能体列表上等于让人自己找那张卡再自己找入口。
+ */
+const applyPubDeepLink = () => {
+  const id = typeof route.query.agentId === 'string' ? route.query.agentId : ''
+  if (!id || !route.query.pub) return
+  router.replace({ path: route.path, query: { ...route.query, agentId: undefined, pub: undefined } })
+  const a = agents.value.find(x => x.id === id)
+  if (!a) {
+    message.warning('这位智能体不在你的列表里（可能已删除，或你没有管理权）')
+    return
+  }
+  openPublish(a)
+  locateField('pubModelRef')
+}
+
 async function openPublish (a) {
   pubAgentId.value = a.id
   pubAgentName.value = a.name || ''
@@ -1323,43 +1390,39 @@ async function copyText (text, tip) {
 /** 卡片上只标出「显式开启」的能力——跟随全局的不占位置 */
 const capsForcedOn = a => CAPS.filter(c => a[c.key] === 1).map(c => c.label)
 
-// ==================== 全局配置快照（用于显示每项的全局状态） ====================
+// ==================== 全局默认值（用于把每个「跟随默认」点名成具体值） ====================
 /**
- * 取全局配置项的 value。
- * 配置快照是「组 → 键」两层，且**组内键名是含点的扁平字符串**（`tool` 组里就是
- * `sandbox.enabled` / `runcode.enabled`），并不是嵌套对象——所以按
- * ['tool','sandbox','enabled'] 逐层下钻查不到。逐层走，某一层缺失时把
- * 「从该层起的剩余段」用 '.' 拼起来当扁平键直接取（消费掉整段）。
+ * 取某个全局键的当前值。
+ * 端点下发的是「配置键 → 值」的扁平表，所以路径按 '.' 拼接后直接取
+ * （['tool','enabled'] → `tool.enabled`）——与配置项在后端的键名逐字一致，不再有两套寻址形状。
  */
 const rawOf = path => {
-  if (!cfg.value || !Array.isArray(path) || !path.length) return undefined
-  let node = cfg.value
-  for (let i = 0; i < path.length; i++) {
-    if (node == null) return undefined
-    const direct = node[path[i]]
-    if (direct === undefined) {
-      const flat = node[path.slice(i).join('.')]
-      return flat === undefined ? undefined : flat?.value
-    }
-    node = direct
-  }
-  return node?.value
+  if (!agentDefaults.value || !Array.isArray(path) || !path.length) return undefined
+  const flat = agentDefaults.value[path.join('.')]
+  return flat === undefined ? undefined : String(flat)
 }
-const isOn = path => { const v = rawOf(path); return v === 'true' || v === true }
-/** 单轮工具步数上限的当前全局值（用于 placeholder 与描述，避免写死 15 与系统设置不一致） */
+const isOn = path => rawOf(path) === 'true'
+/**
+ * 单轮工具步数上限的当前全局值（'' = 没拿到）。
+ * 拿不到时不能回落到种子值 15——管理员把它调成 50 之后，placeholder 说「跟随全局（15）」
+ * 就是当着用户的面谎报，而这一格的表现是"步数到 15 就停"这种要回头查半天的坑。
+ */
 const globalMaxToolSteps = computed(() => {
   const v = rawOf(['agent', 'maxToolSteps'])
-  if (v === undefined || v === null || v === '') return 15
+  if (v === undefined || v === null || v === '') return ''
   const n = Number(v)
-  return Number.isFinite(n) ? n : 15
+  return Number.isFinite(n) ? n : ''
 })
+/** 步数选框的占位文案：拿得到值就点名，拿不到就只说跟随全局 */
+const maxToolStepsPh = computed(() =>
+  globalMaxToolSteps.value === '' ? '跟随全局' : `跟随全局（${globalMaxToolSteps.value}）`)
 /**
  * 能力行的「全局开/关」提示。
- * cfg 为空 = 拿不到全局快照（普通用户无权读 /config）→ 返回空串，模板据此不显示该提示；
+ * 拿不到默认值（端点失败）→ 返回空串，模板据此不显示该提示；
  * 之前无条件回落到 isOn()=false 会显示成「关闭」，与真实全局状态相反。
  */
 const globalText = c => {
-  if (!cfg.value) return ''
+  if (!agentDefaults.value) return ''
   if (c.gate && !isOn(c.gate)) return '关闭（工具总开关未开）'
   // 无独立全局开关的能力（技能 / MCP：内容归个人，只受工具总闸制约）
   if (!c.path) return '开启'
@@ -1417,12 +1480,12 @@ const summaryCapsList = computed(() => {
   return [goal, ...parts].join(' · ')
 })
 const presetLabelOf = () => {
-  if (!form.value.permissionPreset) return '平台默认档'
+  if (!form.value.permissionPreset) return defaultPresetLabel.value ? `平台默认档（${defaultPresetLabel.value}）` : '平台默认档'
   return presetOptions.value.find(x => x.value === form.value.permissionPreset)?.label || form.value.permissionPreset
 }
 const approvalLabelOf = () => {
   const v = form.value.toolApprovalMode || ''
-  return approvalOptions.find(x => x.value === v)?.label || '跟随档位'
+  return approvalOptions.value.find(x => x.value === v)?.label || '跟随档位'
 }
 const summaryExecution = computed(() => {
   if (runMode.value === 'workflow') return '由工作流接管'
@@ -1430,7 +1493,10 @@ const summaryExecution = computed(() => {
 })
 const summaryDelegation = computed(() => {
   if (runMode.value === 'workflow') return '由工作流接管'
-  if (runMode.value === 'sub') return `被委派：${BRANCH_MODE_LABELS[form.value.subagentMode] || '跟随默认'}`
+  if (runMode.value === 'sub') {
+    const own = BRANCH_MODE_LABELS[form.value.subagentMode]
+    return `被委派：${own || '跟随默认' + (branchModeDefaultLabel.value ? `（${branchModeDefaultLabel.value}）` : '')}`
+  }
   const n = (form.value.subAgentIds || []).length
   return n ? `${n} 个子智能体` : '未启用'
 })
@@ -1476,25 +1542,25 @@ const resetOverrides = () => {
 const reload = async () => {
   loading.value = true
   try {
-    // 身份先就位再决定要不要拉全局快照：/config 是**管理端点**，普通用户调用会 403
-    // （与本仓库既有约定一致：ChatPage / KnowledgeBasePage 同样只让管理员拉）
+    // 身份先就位：本页多处按管理员身份决定给不给入口（设为默认、删除内置等）
     const me = await ensureAuth()
     isAdmin.value = me.admin
-    // /kb/param-defaults 普通用户可读（检索参数占位符展示全局当前值用），可安全进 Promise.all
-    const [ar, dr, sr, mr, xr, pd, wr] = await Promise.all([
-      listAgents(), listKnowledgeBases(), listAvailableSkills().catch(() => null), getMcpStatus(), listSubAgents(), getKbParamDefaults(),
+    // 全局默认值走 /agent/config-defaults（登录用户可读），不再按身份分叉拉管理端的 /config
+    const [ar, dr, sr, mr, xr, wr] = await Promise.all([
+      listAgents(), listKnowledgeBases(), listAvailableSkills().catch(() => null), getMcpStatus(), listSubAgents(),
       // 工作流是个人资产端点（非管理端点），普通用户可安全并行拉取；失败只影响绑定下拉
       listWorkflows().catch(() => null),
       // 能力名册：结果自己写进 builtinOptions / toolCatalogError，失败不阻断本页其余加载
       loadToolCatalog(),
       // 权限档位名册：同上，失败写 presetError，界面上给重试入口
-      loadPermissionPresets()
+      loadPermissionPresets(),
+      // 全局默认值：同上，失败写 agentDefaultsError，界面上给重试入口
+      loadAgentDefaults()
     ])
     // /workflow/list 的 data 是分栏对象 { mine:[], shared:[] }（非数组），必须摊平再用，
     // 否则下面 .filter/.find 直接抛 "is not a function"（WorkflowPanel 同源数据按 mine/shared 解）
     const wd = (wr && wr.success && wr.data) || {}
     workflowRows.value = [...(wd.mine || []), ...(wd.shared || [])]
-    if (pd && pd.success && pd.data) qpDefaults.value = pd.data
     if (ar.success && ar.data) agents.value = ar.data
     // 批量勾选与现存列表对账：已被删掉的 id 从选中集合里清掉（避免批量操作撞「不存在」）
     const alive = new Set(agents.value.map(x => x.id))
@@ -1533,13 +1599,6 @@ const reload = async () => {
     workflowOptions.value = workflowRows.value
       .filter(w => w.status === 'published')
       .map(w => ({ value: w.id, label: (w.name || w.id) + (w.publishedVersion != null ? `（v${w.publishedVersion}）` : '') }))
-    // 全局能力总闸：仅管理员可读（普通用户拿不到时，能力行不显示「全局开/关」提示，而不是谎报关闭）
-    if (me.admin) {
-      try {
-        const cr = await getConfig()
-        if (cr && cr.success) cfg.value = cr.data
-      } catch (e) { /* 管理员也可能拉失败：保持不显示，页面其余部分照常可用 */ }
-    }
   } catch (e) { message.error(e.message || '加载失败') }
   finally { loading.value = false }
 }
@@ -1845,7 +1904,7 @@ const doSetDefault = async id => {
   } catch (e) { message.error(e.message || '操作失败') }
 }
 
-onMounted(reload)
+onMounted(async () => { await reload(); applyPubDeepLink() })
 onMounted(async () => { })
 </script>
 
@@ -2037,8 +2096,9 @@ onMounted(async () => { })
   font-size: 11.5px; color: var(--app-text3); line-height: 1.45; margin-top: 1px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.ap-cap-global { color: var(--app-text3); }
-.ap-cap-state { width: 92px; flex: none; }
+/* 130px：实测「跟随全局（开）」文本 91px + antd 给 selection-item 的 19.5px 右内边距
+   + 选框左内边距与描边 ≈ 124px，取 130 留缓冲。默认状态写在控件上，不只在旁边的灰字里 */
+.ap-cap-state { width: 130px; flex: none; }
 /* 「指定」模式展开的具体项多选：跟在自己那行能力下面，与上方图标块左对齐 */
 .ap-cap-pick { padding: 2px 0 10px 38px; }
 .ap-pick-empty { font-size: 11px; color: var(--app-text3); margin-top: 5px; }

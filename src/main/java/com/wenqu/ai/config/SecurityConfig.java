@@ -258,6 +258,9 @@ public class SecurityConfig implements WebMvcConfigurer {
                         // 权限档位名册（同上：配置智能体是普通用户也在做的事，档位选项与「管理员有没有放开
                         // 这一档」都由它下发；漏在这一表里的症状是普通用户打开配置页只看到「加载失败 + 重试」）
                         || path.equals("/api/ai/agent/permission-presets")
+                        // 「跟随默认」当前是什么值：与上面两份同属配置页的读侧元数据，
+                        // 漏放行的症状是普通用户界面上只剩「跟随系统默认」五个字、不知道默认是哪一档
+                        || path.equals("/api/ai/agent/config-defaults")
                         || path.matches("/api/ai/agent/[^/]+/versions")
                         || path.matches("/api/ai/agent/[^/]+/publish");
             case "POST":

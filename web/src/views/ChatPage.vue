@@ -1440,7 +1440,7 @@
       </div>
     </Teleport>
 
-    <!-- 上下文容量卡：悬浮输入框工具栏容量圆环弹出（用量/窗口 + 占用填充条 + 分类明细 + 缓存命中率）。
+    <!-- 上下文容量卡：悬浮输入框工具栏容量圆环弹出（用量/窗口 + 占用填充条 + 分类明细）。
          数据来自本轮落库的 tokens（刷新/切回会话仍在），窗口取用户所选档位或模型登记值 -->
     <Teleport to="body">
       <div v-if="ctxCapOpen" ref="ctxCapEl" class="ctxcap-float"
@@ -1470,9 +1470,6 @@
               <span class="ctxcap-row-val">{{ fmtWindow(r.tokens) }} · {{ ctxCapData.pctOf(r).toFixed(1) }}%</span>
             </div>
             <div v-if="!ctxCapData.rows.length" class="ctxcap-empty">本轮无分类明细</div>
-            <div v-if="ctxCapData.cacheRate != null" class="ctxcap-foot">
-              <span>缓存命中率</span><span class="ctxcap-row-val">{{ ctxCapData.cacheRate }}%</span>
-            </div>
           </template>
           <div v-else class="ctxcap-empty">该模型未登记上下文窗口，请在「模型供应商」里声明</div>
         </div>
@@ -4430,7 +4427,6 @@ onMounted(async () => {
 .ctxcap-row-label { color: var(--app-text2); }
 .ctxcap-row-val { margin-left: auto; color: var(--app-text3); }
 .ctxcap-empty { margin-top: 6px; font-size: 12px; color: var(--app-text3); }
-.ctxcap-foot { display: flex; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--app-border); font-size: 12px; color: var(--app-text2); }
 .ctxcap-tip { margin-top: 6px; font-size: 11px; color: var(--app-text3); line-height: 1.5; }
 
 /* 上下文容量圆环（输入框右下、模型选择器左侧）：与右栏模型行共用同一张容量卡，>80% 警告 / >95% 危险 */

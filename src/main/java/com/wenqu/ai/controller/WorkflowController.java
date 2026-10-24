@@ -41,6 +41,18 @@ public class WorkflowController {
         return ResultJson.ok(workflowService.listVisible());
     }
 
+    /**
+     * 节点表单「留空跟随全局」的当前全局值（登录用户可读）。
+     * <p>它与 {@code GET /{id}} 同形状（一段路径）：Spring 的图案比较器让字面量段优先于变量段，
+     * 所以这个请求不会被当成"查一个叫 config-defaults 的工作流"。
+     */
+    @Operation(summary = "工作流节点默认值", description = "LLM 节点温度兜底（chat.temperature）与检索节点低分门"
+            + "（retrieval.minContextScore）的当前全局值，供画布属性页把「留空跟随全局」点名成具体数")
+    @GetMapping("/config-defaults")
+    public ResultJson configDefaults() {
+        return ResultJson.ok(workflowService.configDefaults());
+    }
+
     @Operation(summary = "工作流详情", description = "含完整 DSL（画布加载即还原图形）；共享只读者也可加载（只读）。带 myPermission/mine")
     @GetMapping("/{id}")
     public ResultJson get(@PathVariable("id") String id) {

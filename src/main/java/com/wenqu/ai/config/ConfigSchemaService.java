@@ -213,6 +213,17 @@ public class ConfigSchemaService {
     }
 
     /**
+     * 字段所属设置面板 key（未登记返回 null）。
+     * <p>用途：模型引用扫描器报「系统配置里某槽位还在用这个供应商」时，光给一个 backendKey
+     * 等于把人丢进整页设置里自己找；带上面板 key 前端才能直接开到对应分组。
+     * 面板在设置页里的合并归组（RAG 三组进「检索设置」等）由前端决定，这里只给 schema 原始面板。
+     */
+    public String panelOf(String key) {
+        Field f = byKey.get(key);
+        return f == null ? null : f.panel();
+    }
+
+    /**
      * 表单 path → backendKey 归一：两者通常相同，但个别字段表单 path 带面板前缀而运行键不带
      * （如 {@code retrieval.rerank.enabled} → {@code rerank.enabled}）。
      * 个人设置页提交的是表单 path，个人值必须落成运行键（ConfigService.get / 检索覆盖用的键），

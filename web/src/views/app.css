@@ -260,6 +260,18 @@ input:focus-visible, textarea:focus-visible { outline: none; }
   color: inherit;
 }
 
+/* 深链定位闪烁：从别处（模型供应商的「查看引用」清单等）跳过来时，把要改的那一项亮一下。
+   只滚过去不亮，用户面对一整页同色表单仍然要自己找；见 utils/fieldLocate.js */
+.wq-flash { animation: wq-flash 1.5s ease-out; border-radius: 8px; }
+@keyframes wq-flash {
+  0%, 55% { background: var(--app-warn-weak); box-shadow: 0 0 0 3px var(--app-warn-border); }
+  100% { background: transparent; box-shadow: 0 0 0 3px transparent; }
+}
+/* 关掉动效时不退成"什么都不显示"：留一圈静态描边，到点由 JS 摘掉 */
+@media (prefers-reduced-motion: reduce) {
+  .wq-flash { animation: none; background: var(--app-warn-weak); box-shadow: 0 0 0 3px var(--app-warn-border); }
+}
+
 /* ==================== 全局窄屏兜底（二梯队页面的公共破版点） ==================== */
 @media (max-width: 768px) {
   /* 宽弹窗（图谱 860 / 各类表单 520+）收进视口，避免横向溢出 */

@@ -981,6 +981,19 @@ public class WorkflowService {
                 tokenSink, imageSink);
     }
 
+    /**
+     * 节点表单「留空跟随全局」背后的当前全局值（登录用户可读）。
+     * <p>不复用 {@code GET /config}：那是管理端点，普通用户 403，于是画布上只有「留空跟随全局」六个字、
+     * 不知道跟随的是多少——用户要么猜，要么随手填一个把它固化成节点覆盖。
+     * 只回这两个数值键（LLM 节点温度兜底、检索节点低分门），与 {@code WorkflowRunCtx} 实际取的是同一份。
+     */
+    public Map<String, Object> configDefaults() {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("chat.temperature", configService.get("chat.temperature"));
+        out.put("retrieval.minContextScore", configService.get("retrieval.minContextScore"));
+        return out;
+    }
+
     /** 图执行内核（同步/异步共用）：入参校验 → 模型预解析（fail-fast）→ 编译 → 执行 → 出参提取 → 收口 */
     /** 工作区归属校验：空 -> null（不挂工作区）；非空必须是本人的工作区（fail-loud）。 */
     private String resolveProjectId(String projectId) {

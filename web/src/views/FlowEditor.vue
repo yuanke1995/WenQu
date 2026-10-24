@@ -146,7 +146,8 @@
             <!-- llm -->
             <template v-else-if="selected.data.nodeType === 'llm'">
               <div class="wf-form-item"><label>模型</label>
-                <ModelSelect v-model="editConfig.modelRef" type="chat" width="100%" inherit-label="跟随个人默认模型" />
+                <ModelSelect v-model="editConfig.modelRef" type="chat" width="100%" inherit-label="跟随个人默认模型"
+                             inherit-resolve="personalDefault" />
               </div>
               <div class="wf-form-item"><label>Prompt（支持 <code v-pre>{{nodeId.key}}</code> 引用，可直接选）</label>
                 <a-textarea v-model:value="editConfig.prompt" :rows="7"
@@ -155,8 +156,9 @@
                           :options="refGroups" show-search option-filter-prop="label"
                           placeholder="+ 插入上游引用（选节点 · 输出键）" @change="v => insertRef('prompt', v, '\n')" />
               </div>
-              <div class="wf-form-item"><label>温度（留空跟随全局）</label>
-                <a-input-number v-model:value="editConfig.temperature" :min="0" :max="2" :step="0.1" style="width: 140px" />
+              <div class="wf-form-item"><label>温度</label>
+                <a-input-number v-model:value="editConfig.temperature" :min="0" :max="2" :step="0.1" style="width: 180px"
+                                :placeholder="temperaturePh" />
               </div>
               <div class="wf-form-item"><label>超时（秒，留空默认 600；到时按节点失败终止）</label>
                 <a-input-number v-model:value="editConfig.timeoutSeconds" :min="1" :max="3600" style="width: 140px" />
@@ -179,8 +181,9 @@
               <div class="wf-form-item"><label>topK（召回条数）</label>
                 <a-input-number v-model:value="editConfig.topK" :min="1" :max="20" style="width: 140px" />
               </div>
-              <div class="wf-form-item"><label>低分过滤 minScore（留空跟随全局检索设置；0=不过滤）</label>
-                <a-input-number v-model:value="editConfig.minScore" :min="0" :max="2" :step="0.05" style="width: 140px" />
+              <div class="wf-form-item"><label>低分过滤 minScore</label>
+                <a-input-number v-model:value="editConfig.minScore" :min="0" :max="2" :step="0.05" style="width: 180px"
+                                :placeholder="minScorePh" />
                 <div class="wf-hint">排序分（重排分，未启用重排时为融合分）低于它的块不进结果也不占 topK 名额。</div>
               </div>
               <div class="wf-hint"><code>text</code> 是可直接拼进 prompt 的拼接文本；<code>chunks</code> 保留结构（标题/路径/得分），<code>count</code> 是命中数。</div>
@@ -293,7 +296,8 @@
                           placeholder="+ 插入上游引用（选节点 · 输出键）" @change="v => insertRef('prompt', v, '\n')" />
               </div>
               <div class="wf-form-item"><label>模型（留空走发起人个人默认）</label>
-                <ModelSelect v-model="editConfig.modelRef" type="chat" width="100%" inherit-label="跟随个人默认模型" />
+                <ModelSelect v-model="editConfig.modelRef" type="chat" width="100%" inherit-label="跟随个人默认模型"
+                             inherit-resolve="personalDefault" />
               </div>
               <div class="wf-hint">复用该智能体完整问答管线（知识库范围/工具/技能原样生效），回答全文在 <code>answer</code>。</div>
             </template>
@@ -576,6 +580,7 @@ import {
   runWorkflowAsync, cancelWorkflowRun, subscribeWorkflowRun,
   listWorkflowRuns, getWorkflowRun, getWorkflowPendingApproval,
   listKnowledgeBases, listAvailableAgents, resolveWorkflowApproval, publishWorkflow,
+  getWorkflowConfigDefaults,
   listAvailableSkills, getMcpStatus,
   listCredentials, createCredential, updateCredential, deleteCredential,
   listProjects
@@ -1498,6 +1503,24 @@ async function loadKnowledgeBases() {
     kbOptions.value = ((r.data || [])).map(k => ({ value: k.id, label: k.name || k.id }))
   } catch (e) { /* 检索节点库列表拿不到就留空（不影响其他功能） */ }
 }
+
+// ==================== 「留空跟随全局」点名 ====================
+/** 节点没填时后端实际兜的数（/workflow/config-defaults，登录用户可读）；空=没拿到，只说跟随全局不编数 */
+const wfDefaults = ref({})
+loadWorkflowDefaults()
+async function loadWorkflowDefaults() {
+  try {
+    const r = await getWorkflowConfigDefaults()
+    if (r && r.success && r.data) wfDefaults.value = r.data
+  } catch (e) { /* 拿不到就退回不点名，画布其余功能照常 */ }
+}
+/** 拼成「跟随全局（0.3）」；拿不到值就只留前半句 */
+const withGlobal = (prefix, key, suffix) => {
+  const v = String(wfDefaults.value?.[key] ?? '').trim()
+  return v ? `${prefix}（${v}${suffix || ''}）` : prefix
+}
+const temperaturePh = computed(() => withGlobal('留空跟随全局', 'chat.temperature'))
+const minScorePh = computed(() => withGlobal('留空跟随全局', 'retrieval.minContextScore', '；0 = 不过滤'))
 
 loadAgents()
 async function loadAgents() {

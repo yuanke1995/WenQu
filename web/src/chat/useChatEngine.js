@@ -497,7 +497,7 @@ const liveTokensPreview = computed(() => {
 })
 // 容量圆环/明细卡数据源：流式估算优先（生成一开始就亮），无估算回落已完成轮的实测 tokens
 const ctxTokens = computed(() => liveTokensPreview.value || lastTokens.value)
-// ==================== 上下文容量面板（工具栏圆环悬浮：用量/窗口 + 分类占比 + 缓存命中） ====================
+// ==================== 上下文容量面板（工具栏圆环悬浮：用量/窗口 + 分类占比） ====================
 /** 分类展示名与配色（与后端 agentx FrameworkCtxParts 的键一一对应；占比条按此顺序堆叠）。
  *  按 AgentScope 的消息结构分类：MsgRole 只有 SYSTEM/USER/ASSISTANT/TOOL 四种，内容块再按类型细分。
  *  手写运行时（工作流旁路）仍按旧十类下发，本表只认框架那套键——两套分类不同时展示，
@@ -529,21 +529,12 @@ const ctxCapData = computed(() => {
     : []
   const sum = rows.reduce((a, r) => a + r.tokens, 0)
   const pct = window_ > 0 ? Math.min(100, Math.round(used / window_ * 1000) / 10) : 0
-  // 缓存命中：分子只认 cachedLast（末轮命中量，与上面的 used 同为「此刻上下文」口径）。
-  // 不能回落 cached（各轮命中之和，账单口径）：实测本轮压过上下文时末轮是真 0 命中，
-  // 而 0 在 || 眼里等于「没这个字段」，会拿 54.9 万的历史命中之和去除 3 万的当下上下文，
-  // 报出 1791% 这种数。
-  // 显示与否看 cached（本轮网关报没报过缓存命中 token）：不支持缓存的模型两个值都是 0，整行不出现；
-  // 支持缓存但末轮全丢就照实报 0%——那是「上下文被压过、前缀失效」的信号，不是缺数据。
-  const cachedLast = t && t.cachedLast != null ? Number(t.cachedLast) : null
   return {
     window: window_, used, pct, rows, sum,
     // 填充条宽=用量/窗口（不取整：窗口大用量小时 pct 取整会成 0 宽），填充内段宽按构成比分
     fillPct: window_ > 0 ? Math.min(100, used / window_ * 100) : 0,
     // 分类占比以分类之和为分母（后端按 context 校准后两者相等；无 parts 时退化为空列表）
-    pctOf: r => sum > 0 ? (r.tokens / sum * 100) : 0,
-    cacheRate: (cachedLast != null && used > 0 && Number(t.cached) > 0)
-      ? Math.round(cachedLast / used * 1000) / 10 : null
+    pctOf: r => sum > 0 ? (r.tokens / sum * 100) : 0
   }
 })
 // 工具栏容量圆环：r=7.5 周长固定，按 pct 撑 stroke-dasharray；告警档位与右栏占用条一致

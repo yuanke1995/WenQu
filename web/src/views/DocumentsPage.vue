@@ -440,7 +440,7 @@
     </a-modal>
 
     <!-- 知识库配置（与知识库列表页同一弹窗组件）：当前库的解析/检索参数就地改，保存后刷新库信息 -->
-    <KnowledgeBaseEditModal v-model:open="kbCfgVisible" :kb="currentKb" @saved="fetchKbs" />
+    <KnowledgeBaseEditModal v-model:open="kbCfgVisible" :kb="currentKb" :fix="kbCfgFix" @saved="fetchKbs" />
 
     <!-- 知识图谱（与知识库列表页同一弹窗组件）：库详情页的「图谱」入口 -->
     <KnowledgeGraphModal v-model:open="graphModal" :kb="currentKb" />
@@ -566,6 +566,24 @@ const currentKbName = computed(() => {
 // 当前库行对象来自 fetchKbs 的列表缓存（含 parseParams/queryParams），弹窗组件据此回填表单
 const kbCfgVisible = ref(false)
 const currentKb = computed(() => kbases.value.find(x => x.id === currentKbId.value) || null)
+// 深链定位键：模型供应商的「查看引用」点「去修改」时带 ?kbcfg=1&fix=<槽位>，
+// 要落进这个弹窗里的那一项，而不是把人丢在文档列表页自己找右上角按钮
+const kbCfgFix = ref('')
+watch(kbCfgVisible, open => { if (!open) kbCfgFix.value = '' })
+
+const applyKbCfgDeepLink = async () => {
+  if (route.query.kbcfg !== '1') return
+  kbCfgFix.value = typeof route.query.fix === 'string' ? route.query.fix : ''
+  // currentKb 要等 fetchKbs 回来；拿不到库行就开不出弹窗（组件按 kb 回填表单）
+  for (let i = 0; i < 30 && !currentKb.value; i++) await new Promise(r => setTimeout(r, 100))
+  if (!currentKb.value) {
+    message.warning('知识库信息没加载出来，请点右上角「知识库配置」重试')
+    return
+  }
+  kbCfgVisible.value = true
+  // 参数用完就摘掉：留着的话刷新一次再弹一次，用户会以为改动没存住
+  router.replace({ path: route.path, query: { ...route.query, kbcfg: undefined, fix: undefined } })
+}
 
 // ==================== 知识图谱（§5：与库列表页共用同一弹窗组件） ====================
 const graphModal = ref(false)
@@ -633,7 +651,7 @@ const toggleSelect = (id, e) => {
   else if (at >= 0) selectedKeys.value.splice(at, 1)
 }
 
-onMounted(() => { fetchList(); fetchKbs(); loadUploadCfg(); loadRecycle(); ensureAuth().then(me => { myUid.value = me.user || '' }); window.addEventListener('paste', onPaste) })
+onMounted(() => { fetchList(); fetchKbs(); loadUploadCfg(); loadRecycle(); ensureAuth().then(me => { myUid.value = me.user || '' }); window.addEventListener('paste', onPaste); applyKbCfgDeepLink() })
 watch(currentKbId, () => { fetchList(); loadRecycle() })
 onUnmounted(() => {
   if (pollTimer) clearInterval(pollTimer)
@@ -783,12 +801,17 @@ async function loadVisionModelNames () {
 /** 引用 → 展示名（清单里没有时退化为 ref 的模型 id 部分，与 ModelSelect 的兜底一致） */
 const visionRefName = r => visionModelNames.value[r] || (r.includes('/') ? r.slice(r.indexOf('/') + 1) : r)
 /**
- * 跟随知识库时实际生效的模型：两槽位同名（含 OCR 未单独指定=回落图片描述，与后端解析期同口径）
- * 只报一个名字；确实分开了才点名两条，免得用户以为只有一个模型。
+ * 跟随知识库时实际生效的两个槽位（desc=图片描述、ocr=扫描件 OCR；OCR 未单独指定=回落图片描述，
+ * 与后端解析期双槽位同口径）。
  */
-const kbInheritModels = computed(() => {
+const kbInheritSlots = computed(() => {
   const desc = currentKbVisionRef.value ? visionRefName(currentKbVisionRef.value) : ''
   const ocr = currentKbParseRefs.value.ocrRef ? visionRefName(currentKbParseRefs.value.ocrRef) : ''
+  return { desc, ocr }
+})
+/** 跟随态一行式文案：两槽位同名只报一个名字，确实分开了才点名两条，免得用户以为只有一个模型 */
+const kbInheritModels = computed(() => {
+  const { desc, ocr } = kbInheritSlots.value
   if (!ocr || ocr === desc) return desc
   return `图片描述 ${desc || '不处理'}、OCR ${ocr}`
 })
@@ -804,10 +827,21 @@ const visionInheritLabel = computed(() => {
   const models = kbInheritModels.value
   return models ? `跟随知识库配置（${models}）` : '不处理图片'
 })
-/** 展开后的单行提示：已配库一笔带过；未配库说明何时需要选模型 */
-const visionHint = computed(() => currentKbVisionRef.value
-  ? '通常无需修改；改选后本文档所有图片理解（插图描述、扫描页文字识别）都用该模型'
-  : '知识库暂未配置图片理解模型；如需让扫描件、图片内容可被检索，可在此指定模型')
+/**
+ * 展开后的提示行：跟随态点名两个槽位各用哪个模型（选框宽度不够会被省略号截断，这里是完整口径）；
+ * 覆盖态只说覆盖范围；未配库说明何时需要选模型。
+ */
+const visionHint = computed(() => {
+  const chosen = (uploadVisionRef.value || '').trim()
+  if (chosen && chosen !== currentKbVisionRef.value) return '本文档所有图片理解（插图描述、扫描页文字识别）都用该模型'
+  const { desc, ocr } = kbInheritSlots.value
+  if (!desc && !ocr) return '知识库暂未配置图片理解模型；如需让扫描件、图片内容可被检索，可在此指定模型'
+  let slots
+  if (!ocr || ocr === desc) slots = `插图描述与扫描页文字识别都用 ${desc}`
+  else if (!desc) slots = `扫描页文字识别用 ${ocr}，插图描述不处理`
+  else slots = `插图描述用 ${desc}、扫描页文字识别用 ${ocr}`
+  return `当前跟随知识库：${slots}。通常无需修改，改选则本文档两类图片理解都改用它`
+})
 const pendingFiles = ref([])
 /** 打开上传弹窗：视觉模型恢复折叠且不预选（提交非空才落文档级覆盖），摘要所需模型名懒加载 */
 function openUpload () {

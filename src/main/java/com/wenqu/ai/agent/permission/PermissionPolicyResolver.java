@@ -173,9 +173,12 @@ public class PermissionPolicyResolver {
      * 得到 {@code {}}），任何要出参的对象都得走 Map。
      * <p>被上限禁掉的档位<b>照样返回</b>并带 {@code available=false} 与原因：配置页上「这一档没开」
      * 与「平台没这档」对用户是两件事，藏掉前者会让人以为平台没这能力。
+     * <p>{@code platformDefault=true} 标出智能体未选档时实际生效的那一档（{@code agent.permissionPreset.default}
+     * 经回落解析后的结果，不是原始配置串）：配置页的「跟随平台默认」要点名它是什么档。
      */
     public List<Map<String, Object>> catalog() {
         PermissionPreset ceiling = platformCeiling();
+        PermissionPreset def = defaultPreset();
         List<Map<String, Object>> out = new ArrayList<>();
         for (PermissionPreset p : PermissionPreset.values()) {
             boolean available = p.rank() <= ceiling.rank();
@@ -188,6 +191,9 @@ public class PermissionPolicyResolver {
             m.put("approvalDefault", p.approvalDefault());
             m.put("approvalFollowsAgent", p.approvalDefault() == null);
             m.put("available", available);
+            // 平台默认档由本类判定（含配置项写错时的回落），前端据此把「跟随平台默认」点名成
+            // 「跟随平台默认（常规）」——它抄一份 agent.permissionPreset.default 的读法就会有两套回落口径
+            m.put("platformDefault", p == def);
             m.put("unavailableReason", available
                     ? null : "平台上限为「" + ceiling.label() + "」，本档不可选（需管理员放开）");
             out.add(m);

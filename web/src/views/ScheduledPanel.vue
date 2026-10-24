@@ -89,8 +89,9 @@
         <a-form-item label="时区">
           <a-select v-model:value="form.timezone" style="width:100%" :options="zoneOptions" />
         </a-form-item>
-        <a-form-item label="模型">
-          <ModelSelect v-model="form.modelRef" type="chat" width="100%" inherit-label="跟随个人默认模型" />
+        <a-form-item label="模型" data-fix="jobModelRef">
+          <ModelSelect v-model="form.modelRef" type="chat" width="100%" inherit-label="跟随个人默认模型"
+                       inherit-resolve="personalDefault" />
         </a-form-item>
         <a-form-item label="深度思考">
           <a-switch v-model:checked="form.deepThink" />
@@ -128,15 +129,17 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { PlusOutlined, PlayCircleOutlined, DeleteOutlined, HistoryOutlined } from '@ant-design/icons-vue'
 import ModelSelect from '../components/ModelSelect.vue'
+import { locateField } from '../utils/fieldLocate'
 import {
   listScheduledJobs, createScheduledJob, updateScheduledJob, deleteScheduledJob,
   toggleScheduledJob, runScheduledJob, listScheduledRuns, listAvailableAgents,
   batchDeleteScheduledJobs, batchToggleScheduledJobs
 } from '../api'
 
+const route = useRoute()
 const router = useRouter()
 
 const rows = ref([])
@@ -282,6 +285,23 @@ const openCreate = () => {
   loadAgents()
 }
 
+/**
+ * ?jobId= 深链：模型供应商的「查看引用」点「去修改」要直接开这条任务的编辑框——
+ * 钉住模型的槽位就在里面，停在列表上等于让人自己猜是哪一行。
+ */
+const applyJobDeepLink = async () => {
+  const id = typeof route.query.jobId === 'string' ? route.query.jobId : ''
+  if (!id) return
+  router.replace({ path: route.path, query: { ...route.query, jobId: undefined } })
+  const row = rows.value.find(x => x.id === id)
+  if (!row) {
+    message.warning('这条定时任务不在你的列表里（可能已删除，或不是你建的）')
+    return
+  }
+  openEdit(row)
+  locateField('jobModelRef')
+}
+
 const openEdit = row => {
   editing.value = row
   form.value = {
@@ -411,7 +431,7 @@ const humanNext = t => {
   return `${Math.floor(hour / 24)} 天后`
 }
 
-onMounted(load)
+onMounted(async () => { await load(); applyJobDeepLink() })
 </script>
 
 <style scoped>

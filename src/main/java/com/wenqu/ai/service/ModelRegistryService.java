@@ -180,6 +180,23 @@ public class ModelRegistryService {
 
     /** 本地变更后：重载缓存 + 广播其他实例（Redis 异常不影响保存结果） */
     private void changed() {
+        // 事务未提交就刷新/广播 = 把旧数据当新数据装进缓存：本实例订阅自己那条广播后另开连接重读，
+        // 读不到未提交的插入，快照被打回保存前的样子（实测 19:08 新登记的模型在界面上凭空消失，
+        // 直到下一次任意变更才回来）。事务里改挂到提交之后。
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                    new org.springframework.transaction.support.TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            reloadAndBroadcast();
+                        }
+                    });
+            return;
+        }
+        reloadAndBroadcast();
+    }
+
+    private void reloadAndBroadcast() {
         reload();
         try {
             redisTemplate.convertAndSend(PROVIDER_CHANNEL, "changed");
@@ -1026,8 +1043,8 @@ public class ModelRegistryService {
      * 遗留行只告警不阻挡——前者界面无处可改，后者的引用归各用户个人设置管理，挡在这里只会
      * 形成删不掉又说不清的僵局。
      * <p>
-     * 引用集合来自 {@link ModelReferenceScanner}（与额度不足时给用户看的「谁在用我」完全同一份
-     * 口径）——原先此处内联一份计数逻辑，导致出现「删时被拦、却找不到地方改」的矛盾。
+     * 引用集合来自 {@link ModelReferenceScanner}（与「额度不足」「停用后引导」给用户看的
+     * 「谁在用我」完全同一份口径）——原先此处内联一份计数逻辑，导致出现「删时被拦、却找不到地方改」的矛盾。
      */
     public void deleteProvider(String id, ModelReferenceScanner referenceScanner) {
         Provider p = providerMapper.selectById(id);
@@ -1045,7 +1062,8 @@ public class ModelRegistryService {
         }
         if (!labels.isEmpty()) {
             throw new IllegalArgumentException("供应商「" + p.getName() + "」仍被引用（" + String.join("、", labels)
-                    + "），请先在个人设置/知识库/系统设置改用其他模型");
+                    + "），请先在知识库/系统设置/个人设置/定时任务/工作流里改用其他模型"
+                    + "（点供应商卡片上的「查看引用」可逐处跳转）");
         }
         modelMapper.delete(new LambdaQueryWrapper<ModelInfo>().eq(ModelInfo::getProviderId, id));
         providerMapper.deleteById(id);

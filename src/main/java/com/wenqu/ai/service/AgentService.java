@@ -347,9 +347,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
                 .eq(Agent::getIsSubagent, 1)
                 .orderByDesc(Agent::getCreateTime));
         // 平台默认档：认不出的配置值按 digest 收口（默认档=引入本字段前的行为，写错了不该顺手放开全循环）
-        com.wenqu.ai.agent.subagent.BranchMode platformDefault =
-                com.wenqu.ai.agent.subagent.BranchMode.of(configService.get("agent.subagentMode"),
-                        com.wenqu.ai.agent.subagent.BranchMode.DIGEST);
+        com.wenqu.ai.agent.subagent.BranchMode platformDefault = platformBranchMode();
         for (Agent a : subs) {
             if (!readable(a)) continue;
             Map<String, Object> m = new LinkedHashMap<>();
@@ -363,6 +361,34 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
             m.put("subagentModeInherited", !own);
             out.add(m);
         }
+        return out;
+    }
+
+    /** 平台默认的子智能体执行档（认不出按 digest 收口，见 {@link #subAgents()} 注释） */
+    private com.wenqu.ai.agent.subagent.BranchMode platformBranchMode() {
+        return com.wenqu.ai.agent.subagent.BranchMode.of(configService.get("agent.subagentMode"),
+                com.wenqu.ai.agent.subagent.BranchMode.DIGEST);
+    }
+
+    /**
+     * 智能体配置页「跟随默认」背后的那份<b>当前生效默认值</b>（普通用户可读）。
+     * <p>为什么单开一个端点而不是复用 {@code GET /config}：那是管理端点（普通用户 403），而配置智能体
+     * 是普通用户也在做的事。界面写「跟随系统默认」却不说默认是什么，用户只剩两种坏选择——去猜，或者
+     * 干脆显式覆盖一份（覆盖一旦写下就不再跟随管理员后续的调整）。
+     * 与 {@code /kb/param-defaults} 同一条口径：只回库级/智能体级能覆盖的那几个键，
+     * 且都是枚举码、布尔与整数——不含任何网关地址与密钥。
+     * <p>值按<b>解析后</b>下发（{@code agent.subagentMode} 走 {@link #platformBranchMode()} 的回落），
+     * 前端拿到的就是运行时真正会用的那一档，不必再抄一份回落规则。
+     */
+    public Map<String, Object> configDefaults() {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("agent.subagentMode", platformBranchMode().code());
+        out.put("agent.maxToolSteps", configService.get("agent.maxToolSteps"));
+        out.put("tool.enabled", configService.get("tool.enabled"));
+        out.put("webSearch.enabled", configService.get("webSearch.enabled"));
+        // 重排开关归智能体覆盖（场景性），原先只挂在 /kb/param-defaults 上；这里补一份，
+        // 让配置页的默认值只有一个来源——两处读同一个键迟早漂移成两种说法
+        out.put("rerank.enabled", configService.get("rerank.enabled"));
         return out;
     }
 

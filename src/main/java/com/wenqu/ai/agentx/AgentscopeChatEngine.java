@@ -3850,7 +3850,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         long cached = 0;
         int lastInput = 0;
         long lastOutput = 0;
-        int lastCached = 0;
         boolean any = false;
         for (int i = from; i < messages.size(); i++) {
             io.agentscope.core.model.ChatUsage usage = messages.get(i).getUsage();
@@ -3862,9 +3861,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             // 最后一轮的 prompt≈本轮结束时的上下文占用（工具结果逐轮进上下文），与主链路口径同源
             lastInput = usage.getInputTokens();
             lastOutput = usage.getOutputTokens();
-            // 末轮命中量：容量面板的「缓存命中率」分母是「此刻上下文」（lastInput），
-            // 分子必须是同一时刻的命中量——用各轮命中之和（cached）配它会算出 >100% 的命中率
-            lastCached = usage.getCachedTokens();
         }
         if (!any) return new java.util.LinkedHashMap<>();
         Map<String, Object> tokens = new java.util.LinkedHashMap<>();
@@ -3874,7 +3870,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         tokens.put("finalOutput", lastOutput);
         tokens.put("total", prompt + output);
         tokens.put("cached", cached);
-        tokens.put("cachedLast", lastCached);
         tokens.put("context", lastInput);
         tokens.put("outputIsReal", true);
         tokens.put("hits", pool.sources().size());

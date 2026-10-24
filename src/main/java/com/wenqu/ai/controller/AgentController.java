@@ -105,6 +105,18 @@ public class AgentController {
     }
 
     /**
+     * 智能体配置页的「跟随默认」当前是什么值（登录用户可读）。
+     * <p>存在理由同 {@code /kb/param-defaults}：{@code GET /config} 是管理端点，普通用户 403，
+     * 于是他们看到的界面只有「跟随系统默认」五个字、不知道默认是什么，只能去猜或干脆显式覆盖一份。
+     */
+    @Operation(summary = "智能体默认值", description = "配置页各「跟随默认」项的当前生效值（子智能体执行档/"
+            + "单轮工具步数/工具总闸/联网搜索/重排开关），均为枚举码、布尔与整数，不含地址与密钥")
+    @GetMapping("/config-defaults")
+    public ResultJson configDefaults() {
+        return ResultJson.ok(agentService.configDefaults());
+    }
+
+    /**
      * 能力名册（智能体配置页用）：平台已声明工具的 family/name/中文名，登录用户可读。
      * <p>为什么挂在这里而不是管理员的 {@code /api/ai/tools}：配置智能体是普通用户也在做的事，
      * 而那份全景清单带全局开关键与 enabled 状态，按既定口径不开洞。这个位置落在

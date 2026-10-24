@@ -783,6 +783,12 @@ import SchemaField from '../components/SchemaField.vue'
 import IntervalEditor from '../components/IntervalEditor.vue'
 import TimeoutPreset from '../components/TimeoutPreset.vue'
 import { FIELDS, PANELS, TIPS, blocksOf, buildDefaultForm, readForm, writeForm, applyServerSchema } from '../configSchema'
+import { locateField } from '../utils/fieldLocate'
+import { useRoute, useRouter } from 'vue-router'
+
+// 深链用的当前路由（?panel= 决定开到哪一组，?fix= 决定亮哪一个字段）
+const route = useRoute()
+const router = useRouter()
 
 // 分组导航（沿用旧版锚点短名）
 const NAV_LABELS = {
@@ -833,6 +839,40 @@ const navPanels = computed(() => {
     && (!groupRag || !ragChildren.has(p.key)))
 })
 
+/**
+ * ?panel= 深链：别处（模型供应商的「查看引用」清单）要直接把设置页开到能改的那一组。
+ * 不做这件事的话，无论引用的是哪个槽位，落点恒是导航第一项，等于把人丢进一整页参数里自己找。
+ * schema 里被并页签的子面板（RAG 三组、联网搜索/技能）要先切到宿主面板再选中对应页签。
+ * 必须在字段定义到位后调用——navPanels 空表时任何面板都判不出可见。
+ */
+const PANEL_CHILD_TAB = {
+  context: 'retrieval', chunk: 'retrieval', vision: 'retrieval',
+  webSearch: 'tool', skills: 'tool'
+}
+const applyPanelDeepLink = raw => {
+  const key = typeof raw === 'string' ? raw : ''
+  if (!key) return
+  const host = PANEL_CHILD_TAB[key]
+  const panel = host || key
+  if (!navPanels.value.some(p => p.key === panel)) return
+  if (host === 'retrieval') ragTab.value = key
+  else if (host === 'tool') toolTab.value = key
+  current.value = panel
+}
+
+/**
+ * ?fix=<backendKey> 深链第二步：目标字段多半在收起的参数组里（收起时根本不在 DOM 里，
+ * 定位器再怎么等也等不到），先把装着它那一组展开，再交给统一的定位器滚过去＋亮一下。
+ */
+const applyFieldDeepLink = async () => {
+  const key = typeof route.query.fix === 'string' ? route.query.fix : ''
+  if (!key) return
+  const g = cfgGroupsAll.value.find(x => x.fields.some(f => f.backendKey === key))
+  if (g && closedFolds.value.includes(g.title)) toggleFold(g.title)
+  await locateField(key)
+  router.replace({ path: route.path, query: { ...route.query, fix: undefined } })
+}
+
 // 无「恢复本组默认」的分组（API Key 由数据库管理；调试组的落库键前缀是 chat，
 // 按 panel 名重置匹配不到键，且两个调试开关默认即关、重置价值低）
 const NO_RESET = ['maintenance', 'apiKey', 'debug']
@@ -860,6 +900,8 @@ const fetchAndFill = async () => {
     applyServerSchema(rs.data)
     form.value = buildDefaultForm()
     schemaLoaded.value = true
+    applyPanelDeepLink(route.query.panel)
+    applyFieldDeepLink()
     const r = await getConfig()
     if (r.success && r.data) {
       const d = r.data

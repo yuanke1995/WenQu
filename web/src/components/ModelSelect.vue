@@ -21,8 +21,8 @@
       <loading-outlined v-if="loading" spin class="ms-caret" />
       <down-outlined v-else-if="!compact" class="ms-caret" />
     </template>
-    <a-select-option v-if="inheritLabel && !pill" value="" :label="inheritLabel">
-      <span class="ms-inherit">{{ inheritLabel }}</span>
+    <a-select-option v-if="inheritLabel && !pill" value="" :label="inheritText">
+      <span class="ms-inherit">{{ inheritText }}</span>
     </a-select-option>
     <!-- 引用失配兜底：值不在当前列表（模型/供应商登记变化导致）时，antd 触发器会原样显示
          含供应商 UUID 的引用串；补一个隐藏选项让触发器只显示模型 id 部分。
@@ -74,7 +74,7 @@
 <script setup>
 import { ref, computed, onMounted, watch, nextTick } from 'vue'
 import { DownOutlined, LoadingOutlined } from '@ant-design/icons-vue'
-import { listAvailableModels } from '../api.js'
+import { listAvailableModels, getUserPreference } from '../api.js'
 import ProviderIcon from './ProviderIcon.vue'
 
 /**
@@ -91,6 +91,13 @@ const props = defineProps({
   type: { type: String, default: 'chat' },
   /** 「跟随全局」选项：label 用作未指定时触发器显示的文案（如当前生效模型名），下拉项固定显示「跟随全局」 */
   inheritLabel: { type: String, default: '' },
+  /**
+   * 空值（跟随）时后端实际用哪一个：'personalDefault' = 本人 /user/preference 的 defaultModel。
+   * 传了它，「跟随个人默认模型」就会被点名成「跟随个人默认模型（deepseek-chat）」——
+   * 不传点名的话，用户看着五个字「跟随个人默认」只能自己去翻个人设置，或者干脆显式选一个
+   * （显式选完就不再跟随个人默认了，这是会留下覆盖的）。
+   */
+  inheritResolve: { type: String, default: '' },
   /** 允许清空（清除后值为 ''，如视觉/向量/重排槽位可空） */
   allowClear: { type: Boolean, default: false },
   /** 胶囊形态：28px 高全圆角，弱化边框（对话工具栏） */
@@ -163,6 +170,40 @@ function onChange(v) {
   emit('change', v || '')
 }
 
+// ==================== 「跟随」点名 ====================
+// 个人默认模型（同页多个选择器共享一次请求）：known=false 表示还没取到或取失败——
+// 此时宁可只说「跟随个人默认模型」，也不猜一个名字上去（猜错的表现是用户以为换了就真换了）。
+// 带 TTL：个人设置页改完默认模型后，别处的「跟随…」不能一直挂着旧名字（与模型清单同一条口径）
+let prefCache = { ts: 0, known: false, ref: '' }
+const PREF_TTL = 10000
+const personalDefault = ref(prefCache)
+async function loadPersonalDefault(force = false) {
+  if (!force && prefCache.known && Date.now() - prefCache.ts < PREF_TTL) { personalDefault.value = prefCache; return }
+  try {
+    prefCache = { ts: Date.now(), known: true, ref: (await getUserPreference()).data?.defaultModel || '' }
+  } catch (e) {
+    // 取不到保持 known=false：文案退回不点名，且下次挂载还会再试（不缓存一次失败）
+    prefCache = { ts: 0, known: false, ref: '' }
+  }
+  personalDefault.value = prefCache
+}
+/** 引用 → 展示名（清单里查不到就取模型 id 那一段，与 orphan 兜底同一条口径） */
+function refDisplayName(r) {
+  for (const g of groups.value) {
+    const m = g.models.find(x => x.ref === r)
+    if (m) return m.displayName || r
+  }
+  return r.includes('/') ? r.slice(r.indexOf('/') + 1) : r
+}
+/** 继承项的完整文案：点名留空时实际生效的那个模型 */
+const inheritText = computed(() => {
+  const base = props.inheritLabel
+  if (!base || props.inheritResolve !== 'personalDefault') return base
+  const p = personalDefault.value
+  if (!p.known) return base
+  return `${base}（${p.ref ? refDisplayName(p.ref) : '未设置'}）`
+})
+
 /** 下拉行悬浮透传：value=模型引用、''=离开行；rowEl 为行根元素（同步捕获，供父层定位弹层）。
  *  未监听时是 no-op，不影响其它页面的既有用法 */
 function emitOptionHover(value, e) {
@@ -194,9 +235,11 @@ const issueTip = computed(() => props.issue
 /**
  * 占位文案同样要报失效：值留空（跟随个人默认）而那个默认已经不能用时，
  * 触发器显示的是占位串——它可能是含供应商 UUID 的原始引用，直接抛给用户看不懂。
+ * 没给显式 placeholder 时，留空态显示的是「跟随…」那句（带点名）而不是「选择模型」——
+ * 空在这里是合法选项，说「选择模型」等于把「留空=跟随」这件事藏掉了。
  */
 const displayPlaceholder = computed(() => {
-  const base = props.placeholder || '选择模型'
+  const base = props.placeholder || inheritText.value || '选择模型'
   if (!props.issue || (props.modelValue || '').trim()) return base
   const i = base.indexOf('/')
   return (i === -1 ? base : base.slice(i + 1)) + ' ' + props.issue
@@ -234,7 +277,10 @@ function blockedTip(ref) {
     + '若已充值，点该供应商的「测试连接」验证一下就会恢复可选。'
 }
 
-onMounted(() => load())
+onMounted(() => {
+  load()
+  if (props.inheritResolve) loadPersonalDefault()
+})
 
 // 同一实例被切到不同类型槽位时（如个人设置聊天↔视觉共用一个选择器）按缓存重过滤，
 // 否则新槽位展示的还是上一个类型的模型列表
@@ -242,7 +288,7 @@ watch(() => props.type, () => {
   if (cache.data.length) groups.value = filter(cache.data)
 })
 
-defineExpose({ refresh: () => load(true) })
+defineExpose({ refresh: () => { load(true); if (props.inheritResolve) loadPersonalDefault(true) } })
 
 // 幽灵胶囊下宽度随触发器文案收缩（近似 ZCode 的 w-fit）：渲染后用 Range 量真实 DOM 文本宽。
 // 不用 canvas 预估——触发器实际渲染字体（sans-serif 系）与 canvas 字体栈解析结果不一致，
@@ -266,7 +312,7 @@ async function measurePill() {
   // 无下限：宽度严格随文字伸缩（短名收窄、长名放宽），量宽来自渲染后 DOM，不需要防量窄余量
   pillWidth.value = Math.min(PILL_MAX, Math.ceil(w) + PILL_CHROME)
 }
-watch([() => props.modelValue, () => groups.value, () => props.inheritLabel,
+watch([() => props.modelValue, () => groups.value, inheritText,
        () => props.placeholder, () => props.pill, () => props.width], measurePill, { immediate: true })
 </script>
 

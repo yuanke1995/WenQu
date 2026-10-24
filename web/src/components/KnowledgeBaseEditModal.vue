@@ -41,7 +41,7 @@
       <!-- 向量模型：官方内置库也**可改**（管理员级）。原先随「名称/描述」一起置灰，而后端
            同一批字段里又放开了检索参数——于是引用清单里「去修改」指过来，看到的却是一个
            灰框：供应商额度耗尽时，管理员唯一能救内置库的动作就是换一个能用的向量模型。 -->
-      <a-form-item label="向量模型" required>
+      <a-form-item label="向量模型" required data-fix="embeddingRef">
         <ModelSelect v-model="form.embeddingRef" type="embedding"
                      :width="320" :admin-tip-visible="true" />
         <div class="kb-hint">必选：本库文档按此模型向量化与检索（不同模型的向量空间不兼容，无法跨模型混用）；换模型会自动按库重嵌入，期间该库检索降级关键词路。</div>
@@ -73,7 +73,7 @@
             <a-form-item label="向量阈值" :tooltip="tip('retrieval.vecThreshold')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
               <a-input-number v-model:value="form.q.vecThreshold" :min="0" :max="1" :step="0.05" style="width:100%" :placeholder="numPh('retrieval', 'vecThreshold')" />
             </a-form-item>
-            <a-form-item label="重排模型" :tooltip="tip('rerank.model')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
+            <a-form-item label="重排模型" data-fix="rerankModel" :tooltip="tip('rerank.model')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
               <ModelSelect v-model="form.q.rerankModel" type="rerank" width="100%" inherit-label="跟随默认" :placeholder="rerankPh" />
             </a-form-item>
           </div>
@@ -132,10 +132,10 @@
             <a-form-item label="OCR 渲染 DPI" :tooltip="tip('parse.ocrDpi')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
               <a-input-number v-model:value="form.p.ocrDpi" :min="72" :max="400" :step="8" style="width:100%" :placeholder="numPh('parse', 'ocrDpi')" />
             </a-form-item>
-            <a-form-item label="图片描述模型" :tooltip="tip('parse.visionRef')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
+            <a-form-item label="图片描述模型" data-fix="visionRef" :tooltip="tip('parse.visionRef')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
               <ModelSelect v-model="form.p.visionRef" type="vision,ocr" width="100%" inherit-label="不描述图片" />
             </a-form-item>
-            <a-form-item label="扫描件 OCR 模型" :tooltip="tip('parse.ocrRef')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
+            <a-form-item label="扫描件 OCR 模型" data-fix="ocrRef" :tooltip="tip('parse.ocrRef')" :label-col="{ span: 10 }" :wrapper-col="{ span: 13 }">
               <ModelSelect v-model="form.p.ocrRef" type="ocr" width="100%" inherit-label="跟随图片描述模型" />
             </a-form-item>
           </div>
@@ -160,7 +160,7 @@
           GraphRAG：开启后新解析的文档自动抽「实体-关系」三元组，检索时一跳图扩展（跨文档多跳问答）；已有文档点列表页「构建图谱」回溯。
         </div>
       </a-form-item>
-      <a-form-item v-if="!isBuiltin && form.graphEnabled" label="图谱抽取模型">
+      <a-form-item v-if="!isBuiltin && form.graphEnabled" label="图谱抽取模型" data-fix="graphModelRef">
         <ModelSelect v-model="form.graphModelRef" type="chat" width="320" inherit-label="跟随库主默认聊天模型" />
         <div class="kb-hint" style="margin-top:4px">
           本库抽三元组用的聊天模型（抽取消耗的 token 记在所选模型上）。
@@ -178,6 +178,11 @@ import { createKnowledgeBase, updateKnowledgeBase, getKbParamDefaults, getKbPara
 import ModelSelect from './ModelSelect.vue'
 import KbIcon from './KbIcon.vue'
 import { loadModelIndex, modelRefInfo } from '../utils/modelRef'
+import { locateField } from '../utils/fieldLocate'
+
+// 定位键 → 所属高级参数折叠组（'q'=检索参数，'p'=解析参数）；
+// 向量模型与图谱抽取模型在折叠区之外，不需要展开
+const FIX_FOLD = { rerankModel: 'q', visionRef: 'p', ocrRef: 'p' }
 
 // 图标可选集（emoji 口径与智能体一致）：''=默认库图标；其余 emoji 原样存库、原样渲染。
 // 「问渠品牌标」不进选择集——它是默认库专属（编辑默认库时锁定态单独展示，见 isDefaultKb）
@@ -198,7 +203,10 @@ const ICON_OPTIONS = [
 // kb 为 null = 新建模式（表单以当前全局值为模板预填）；传对象 = 编辑该库
 const props = defineProps({
   open: { type: Boolean, default: false },
-  kb: { type: Object, default: null }
+  kb: { type: Object, default: null },
+  /** 深链定位键（embeddingRef/rerankModel/visionRef/ocrRef/graphModelRef）：
+   *  模型供应商的「查看引用」点「去修改」时带进来，打开即展开对应分组并亮那一项 */
+  fix: { type: String, default: '' }
 })
 const emit = defineEmits(['update:open', 'saved'])
 
@@ -411,6 +419,10 @@ watch(() => props.open, open => {
   form.value = props.kb ? hydrateForm(props.kb) : blank()
   // 每次打开高级参数都收起（默认继承全局，不需要看）；官方内置库例外——它进来就是为了调检索参数
   advActive.value = isBuiltin.value ? ['q'] : []
+  // 深链带进来的定位键：先把那一组展开（收起状态下目标根本不在 DOM 里），再交给统一的定位器
+  const fold = FIX_FOLD[props.fix]
+  if (fold && !advActive.value.includes(fold)) advActive.value = [...advActive.value, fold]
+  if (props.fix) locateField(props.fix).catch(() => {})
   loadParamTips().catch(() => {})   // 问号文案加载失败不阻塞（只是少个问号）
   // 重排模型占位点名需要模型索引解析展示名（编辑模式此前不装；模块级 10s 缓存，新建模式重复调用无额外请求）
   loadModelIndex().then(i => { rerankIndex.value = i || {} }).catch(() => {})

@@ -629,6 +629,8 @@ export const batchToggleScheduledJobs = (ids, enabled) =>
 // ---------- 工作流（DSL 唯一真源；画布只是编辑器） ----------
 /** 列表：分栏返回 {mine:[我创建的], shared:[共享给我的]}；每条带 myPermission（MANAGE/READ）与 mine */
 export const listWorkflows = () => request('/workflow/list')
+/** 节点表单「留空跟随全局」的当前全局值：{chat.temperature, retrieval.minContextScore} */
+export const getWorkflowConfigDefaults = () => request('/workflow/config-defaults')
 export const getWorkflow = id => request(`/workflow/${id}`)
 export const createWorkflow = body => request('/workflow', { method: 'POST', body: JSON.stringify(body) })
 export const updateWorkflow = (id, body) => request(`/workflow/${id}`, { method: 'PUT', body: JSON.stringify(body) })
@@ -987,6 +989,10 @@ export const getToolCatalog = () => request('/agent/tool-catalog')
 /** 权限档位名册（登录用户可读）：配置页的档位选项、以及「管理员有没有放开这一档」从这里来，
  *  前端不抄第二份档位表（抄了就等于界面上能选一个后端不给的档位） */
 export const getPermissionPresets = () => request('/agent/permission-presets')
+/** 配置页「跟随默认」当前的默认值（登录用户可读）：{agent.subagentMode, agent.maxToolSteps,
+ *  tool.enabled, webSearch.enabled, rerank.enabled}。值由后端按运行时口径解析后下发，
+ *  前端不再判管理员身份去够 /config——那是普通用户 403 的根因（界面上只剩「跟随系统默认」五个字） */
+export const getAgentConfigDefaults = () => request('/agent/config-defaults')
 export const createAgent = body => request('/agent', { method: 'POST', body: JSON.stringify(body) })
 export const updateAgent = (id, body) => request(`/agent/${id}`, { method: 'PUT', body: JSON.stringify(body) })
 export const deleteAgent = id => request(`/agent/${id}`, { method: 'DELETE' })

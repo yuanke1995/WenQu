@@ -496,9 +496,11 @@ const tab = ref('files')
 /** 清空助手这件事不能只靠 hover 才显形的小叉：触屏没有 hover，就得有一个正常可点的「不设」项 */
 const AGENT_NONE = '__none__'
 const agentOptions = computed(() => [
-  { value: AGENT_NONE, label: '不设（跟随平台默认智能体）' },
+  { value: AGENT_NONE, label: '不设（跟随平台默认智能体' + (defaultAgentName.value ? `：${defaultAgentName.value}` : '') + '）' },
   ...agents.value.map(a => ({ value: a.id, label: a.name }))
 ])
+/** 平台默认智能体叫什么（清单里 isDefault 那一条）：不点名的话「跟随平台默认」等于让用户去猜 */
+const defaultAgentName = computed(() => (agents.value.find(a => a.isDefault === 1 || a.isDefault === true) || {}).name || '')
 const firstLoad = computed(() => loading.value && !loadedOnce.value)
 /** 没写过约定时直接给输入框：第一次进来最该做的事不该藏在「编辑」后面 */
 const instrEditing = computed(() => instrEdit.value || !saved.value.instructions)

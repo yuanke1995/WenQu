@@ -55,6 +55,12 @@
               </span>
               <button class="app-link-btn" @click="openRefs(p)">查看引用</button>
             </div>
+            <!-- 停用不等于「处理完了」：开关只让模型不再可选，钉着它的地方一处都没解开。
+                 弹窗关掉就再没有入口回到那份清单，所以这条提醒常驻在卡片上，直到引用改干净或重新启用 -->
+            <div v-if="!p.enabled && p.refCount" class="pv-refs-bar">
+              <span class="pv-refs-msg">停用后仍有 <b>{{ p.refCount }}</b> 处在用它的模型</span>
+              <button class="app-link-btn" @click="openRefs(p)">查看引用</button>
+            </div>
             <div class="pv-models">
               <a-tag v-for="t in typeChips(p)" :key="t.key" :color="t.color" class="pv-type-tag">
                 {{ t.label }} {{ t.count }}
@@ -420,28 +426,36 @@
       </template>
     </a-modal>
 
-    <!-- 被引用清单：额度不足时「该去改哪几处」的落地页。逐条给出引用类型、名称、后果与跳转，
-         逐处可改而不是只给一句「仍被引用」——否则用户只能全局搜模型名碰运气 -->
-    <a-modal v-model:open="showRefs" :title="`「${refsProvider?.name || ''}」的模型被用在哪里`"
-             :width="640" :footer="null" @cancelled="showRefs = false">
+    <!-- 被引用清单：三处共用同一个入口——额度不足、停用之后、删除被拒。
+         逐条给出引用类型、名称、后果与跳转，逐处可改而不是只给一句「仍被引用」；
+         否则用户只能全局搜模型名碰运气 -->
+    <a-modal v-model:open="showRefs" :title="refsTitle"
+             :width="660" :footer="null" @cancelled="showRefs = false">
       <a-spin :spinning="refsLoading">
         <template v-if="refsData">
-          <div class="pv-refs-head">
-            共 <b>{{ refsData.total || 0 }}</b> 处引用
-            <template v-if="refsData.total">
-              ，其中 <b>{{ refsData.editableCount || 0 }}</b> 处可在下列位置直接修改
+          <div v-if="refsData.error" class="pv-refs-error">{{ refsData.error }}</div>
+          <div v-else class="pv-refs-head">
+            <template v-if="refsOff">
+              开关只是让模型<b>不再可选</b>，不会把已经钉住它的地方解开——下面
+              <b>{{ refsData.total || 0 }}</b> 处还在用它，逐处换成别的模型才会真正恢复。
+            </template>
+            <template v-else>
+              共 <b>{{ refsData.total || 0 }}</b> 处引用
+              <template v-if="refsData.total">
+                ，其中 <b>{{ refsData.editableCount || 0 }}</b> 处可在下列位置直接修改
+              </template>
             </template>
           </div>
-          <div v-if="!refsData.items || !refsData.items.length" class="pv-refs-empty">
+          <div v-if="!refsData.error && (!refsData.items || !refsData.items.length)" class="pv-refs-empty">
             当前没有任何地方引用它的模型，可直接在这里处理。
           </div>
           <div v-else class="pv-refs-list">
-            <div v-for="(r, i) in refsData.items" :key="r.kind + '-' + (r.id || i)" class="pv-ref-item">
+            <div v-for="(r, i) in refsData.items" :key="r.kind + '-' + i" class="pv-ref-item">
               <div class="pv-ref-main">
                 <a-tag :color="refKindColor(r.kind)" class="pv-ref-kind">{{ r.label }}</a-tag>
-                <span class="pv-ref-name">{{ r.name }}</span>
+                <span class="pv-ref-name" :title="r.name">{{ r.name }}</span>
               </div>
-              <div class="pv-ref-hint">{{ r.hint }}</div>
+              <div class="pv-ref-hint" :title="r.hint">{{ r.hint }}</div>
               <a-button v-if="refJumpOf(r)" size="small" class="pv-ref-go" @click="jumpRef(r)">
                 去修改
               </a-button>
@@ -452,6 +466,14 @@
               </a-button>
               <span v-else class="pv-ref-note">{{ refNoteOf(r) }}</span>
             </div>
+          </div>
+          <!-- 反悔的出口：引用改不动、或只是想先让功能恢复，重新启用比逐处改快得多。
+               不给这一条，用户只能关掉弹窗回列表找那颗开关 -->
+          <div v-if="refsOff && !refsLoading" class="pv-refs-foot">
+            <button class="app-link-btn" :disabled="reEnabling" @click="reEnableFromRefs">
+              重新启用「{{ refsProvider?.name }}」
+            </button>
+            <span class="pv-refs-foot-hint">来不及逐处改，就先让它恢复可用。</span>
           </div>
         </template>
       </a-spin>
@@ -484,17 +506,35 @@ const saving = ref(false)
 const testing = ref(false)
 const testResult = ref(null)
 
-// ---- 被引用清单（额度不足时的处置入口）----
+// ---- 被引用清单（额度不足 / 停用之后 / 删除被拒 三处共用的处置入口）----
 const showRefs = ref(false)
 const refsLoading = ref(false)
 const refsProvider = ref(null)
 const refsData = ref(null)
+// 打开时它是不是已停用：决定这份清单讲「被用在哪里」还是「停用后还剩几处没解开」。
+// 每次拉清单都按当时的开关状态重算——弹窗里点「重新启用」后标题会翻回中性口径，
+// 因为那时「你刚停用了它」这个前提已经不成立，反悔出口也该跟着撤掉
+const refsOff = ref(false)
 
-/** 打开引用清单：实时查一次而非用列表里的缓存——引用关系随时会变（别人改了配置） */
-const openRefs = async (p) => {
+/**
+ * 清单里的引用处数；**拉失败时返回 null 而不是 0**。
+ * 把「没拉到」当成「没有引用」会让停用报出一句「没有地方在引用它的模型」，
+ * 而卡片上那条本该出现的提醒也会一起消失——失败被读成干净。
+ */
+const refTotalOf = d => (d && !d.error ? (d.total || 0) : null)
+
+const refsTitle = computed(() => {
+  const n = refsProvider.value?.name || ''
+  const total = refTotalOf(refsData.value)
+  return refsOff.value && total ? `「${n}」已停用 · 这 ${total} 处还在用它`
+    : `「${n}」的模型被用在哪里`
+})
+
+/** 拉一次实时清单（不用列表里的缓存：引用关系随时会变，别人也可能刚改了配置） */
+const loadRefs = async p => {
   refsProvider.value = p
+  refsOff.value = !p.enabled
   refsData.value = null
-  showRefs.value = true
   refsLoading.value = true
   try {
     const r = await listProviderReferences(p.id)
@@ -504,29 +544,58 @@ const openRefs = async (p) => {
   } finally {
     refsLoading.value = false
   }
+  return refsData.value
 }
 
-/** 引用类型的标签配色（按影响面分档：库=红，个人默认=橙，全平台=紫，其余=灰） */
+const openRefs = async p => {
+  showRefs.value = true
+  await loadRefs(p)
+}
+
+/** 引用类型的标签配色（按后果分档：直接失败=红，静默降质/个人范围=橙，全平台=紫，可忽略=灰） */
 const refKindColor = kind => ({
-  kbEmbedding: 'error', kbGraph: 'error',
-  userDefault: 'warning', userConfig: 'warning',
-  configSlot: 'purple', agentShare: 'default', session: 'default'
+  kbEmbedding: 'error', kbGraph: 'error', kbParseVision: 'error', kbParseOcr: 'error',
+  scheduledJob: 'error', workflow: 'error', agentShare: 'error',
+  kbRerank: 'warning', docVision: 'warning', userDefault: 'warning',
+  configSlot: 'purple', userConfig: 'default', session: 'default'
 }[kind] || 'default')
 
 /**
- * 逐条引用的跳转目标。**只给真能改的地点**：无管理入口的（历史会话覆盖）不给按钮，
- * 给了跳不过去比不给更让人困惑。
- * 注意：个人默认模型与个人设置那两条如果 uid 不是自己，是别人的配置，本界面改不了，
- * 因此只对「本人」给入口——供应商是本人登记的，但引用的可能是别人的个人设置。
+ * 知识库四类模型槽 → 配置弹窗里的定位键（与 KnowledgeBaseEditModal 上的 data-fix 同名）。
+ * 光跳到达标页不算送到：落点页要吃 ?kbcfg=1&fix=<槽位> 自己把弹窗开起来、把那一组展开、亮那一项。
+ */
+const KB_FIX = {
+  kbEmbedding: 'embeddingRef', kbGraph: 'graphModelRef', kbRerank: 'rerankModel',
+  kbParseVision: 'visionRef', kbParseOcr: 'ocrRef'
+}
+
+/**
+ * 逐条引用的跳转目标。**只给真能改的地点**：无管理入口的（历史会话覆盖、已下线入口的遗留行、
+ * 只能在重新上传时才清得掉的文档级覆盖）不给按钮，给了跳不过去比不给更让人困惑。
+ * 注意这里与后端 `editable` **不是同一个问题**：editable 问「这处算不算还没清干净」（决定删不删得掉），
+ * 这里问「能不能一键把人送到改的地方」。文档级覆盖就是两者不一致的那一类——算引用、但给不了按钮，
+ * 于是必须在 refNoteOf 里把唯一改法写清楚，不能只留一句「无管理入口」。
+ * 个人默认模型与历史个人配置那两类如果 uid 不是自己，是别人的配置，本界面改不了，故只对本人给入口。
  */
 const refJumpOf = r => {
-  const meUid = me.value
-  if (r.kind === 'kbEmbedding' || r.kind === 'kbGraph') {
-    return r.id ? { path: `/knowledge/${r.id}/docs` } : null
+  const fix = KB_FIX[r.kind]
+  if (fix) return r.id ? { path: `/knowledge/${r.id}/docs`, query: { kbcfg: '1', fix } } : null
+  // 系统配置槽位带的是它所属设置面板 key（后端 panelOf 解析），fix 用配置键本身：
+  // 开到对的那一组、展开装着它的那一节、再亮那一行
+  if (r.kind === 'configSlot') {
+    return r.id ? { path: '/settings', query: { panel: r.id, fix: r.name } } : null
   }
-  if (r.kind === 'configSlot') return { path: '/settings' }
-  if ((r.kind === 'userDefault' || r.kind === 'userConfig') && r.id && r.id === meUid) {
-    return { path: '/profile' }
+  if (r.kind === 'scheduledJob') {
+    return r.id ? { path: '/agents', query: { tab: 'scheduled', jobId: r.id } } : null
+  }
+  if (r.kind === 'workflow') {
+    return r.id ? { path: '/agents', query: { tab: 'workflow', wf: r.id, wfedit: '1' } } : null
+  }
+  if (r.kind === 'agentShare') {
+    return r.id ? { path: '/agents', query: { tab: 'agents', agentId: r.id, pub: '1' } } : null
+  }
+  if (r.kind === 'userDefault' && r.id && r.id === me.value) {
+    return { path: '/profile', query: { panel: 'chat' } }
   }
   return null
 }
@@ -538,17 +607,20 @@ const jumpRef = r => {
 }
 
 /**
- * 不可就地修改的引用，说清「为什么改不了、怎么办」——
- * 原来统一写「无管理入口」，等于把用户指到一扇没把手的门：既然点不动，得说明替代路径。
- * ⚠️ editable 判定在前端（refJumpOf），后端 ModelReferenceScanner 另有一套口径，
- * 两者必须对得上，否则会出现「按钮给得出去、跳过去却是灰框」。
+ * 不给跳转按钮的那几类，说清「为什么改不了、怎么办」——
+ * 统一写「无管理入口」等于把用户指到一扇没把手的门：既然点不动，得说明替代路径或能不能不管。
  */
 const refNoteOf = r => {
   if (r.kind === 'session') return '逐条进该会话切一次模型即可覆盖；点右侧按钮可一次清干净'
-  if (r.kind === 'userDefault' || r.kind === 'userConfig') {
-    return r.id && r.id !== me.value ? `属 ${r.name} 的个人设置，需其本人修改` : '无管理入口'
+  if (r.kind === 'userConfig') return '个人设置入口已下线，这一行是历史存量，不影响当前问答，可不管'
+  if (r.kind === 'userDefault') return `属 ${r.name} 的个人设置，需其本人修改`
+  if (r.kind === 'configSlot') return '该配置项在设置页里没有可改的入口'
+  // 文档级图片理解模型只在上传那一刻选过，之后界面上没有再改它的地方——
+  // 与其给一个打不开的按钮，不如把唯一能清掉它的动作说清楚
+  if (r.kind === 'docVision') {
+    return r.id ? '上传后没有单独改它的入口：重新上传同名文件、不选图片理解模型，覆盖即清掉回到跟随知识库'
+      : '以上未列全，逐库看文档的图片理解设置'
   }
-  if (r.kind === 'configSlot') return '请到系统设置对应项修改'
   return '无管理入口'
 }
 
@@ -562,14 +634,35 @@ const clearSessionModels = async () => {
   clearing.value = true
   try {
     const r = await clearProviderSessionModels(p.id)
-    const n = (r && r.data && r.data.cleared) || 0
-    message.success(n ? `已清除 ${n} 条会话的模型选择，它们回到跟随各自的默认模型` : '没有会话还在用这个供应商的模型')
+    const cleared = (r && r.data && r.data.cleared) || 0
+    message.success(cleared ? `已清除 ${cleared} 条会话的模型选择，它们回到跟随各自的默认模型` : '没有会话还在用这个供应商的模型')
     // 清完重查一次清单：那条「历史会话」应当消失。不重查用户读成「点了没生效」
-    await openRefs(p)
+    const d = await loadRefs(p)
+    const total = refTotalOf(d)
+    if (total !== null) p.refCount = total
   } catch (e) {
     message.error(`清除失败：${e?.message || '请稍后重试'}`)
   } finally {
     clearing.value = false
+  }
+}
+
+/** 弹窗里就地反悔：重新启用它，并刷新这份清单（会话那条应随启用一起消失） */
+const reEnabling = ref(false)
+const reEnableFromRefs = async () => {
+  const p = refsProvider.value
+  if (!p) return
+  reEnabling.value = true
+  try {
+    await setProviderEnabled(p.id, true)
+    p.enabled = true
+    p.refCount = 0
+    message.success('已重新启用，它的模型回到可选清单')
+    await loadRefs(p)
+  } catch (e) {
+    message.error(e.message || '启用失败')
+  } finally {
+    reEnabling.value = false
   }
 }
 
@@ -618,11 +711,29 @@ const doBatchEnabled = async on => {
     const r = await batchSetProvidersEnabled([...selected.value], on)
     reportBatch(r, on ? '启用' : '停用')
     await load()
+    if (!on) reportLeftoverRefs(r)
   } catch (e) {
     message.error((on ? '批量启用' : '批量停用') + '失败：' + (e.message || ''))
   } finally {
     batchBusy.value = false
   }
+}
+
+/**
+ * 批量停用后补一遍引用账：一次点掉十个供应商，最容易漏的就是「这几个还有人在用」。
+ * 不逐个弹清单（弹十次只会让人直接关掉页面），只汇总哪几个还剩几处——
+ * 每张卡片上已经有常驻的「查看引用」条，点进去逐处改。
+ */
+const reportLeftoverRefs = r => {
+  const done = new Set(((r && r.data && r.data.succeeded) || []))
+  const left = list.value.filter(p => done.has(p.id) && !p.enabled && p.refCount)
+  if (!left.length) return
+  Modal.warning({
+    title: `其中 ${left.length} 个停用后仍有地方在用它`,
+    content: left.map(p => `「${p.name}」还剩 ${p.refCount} 处`).join('；')
+      + '。对应卡片上已标出「查看引用」，点进去逐处换成别的模型才会真正恢复。',
+    okText: '知道了'
+  })
 }
 
 const doBatchDelete = () => {
@@ -820,10 +931,31 @@ const save = async () => {
   }
 }
 
+/**
+ * 启停开关。停用不是终点：开关只让模型「不再可选」，钉着它的地方一处都不会自己解开。
+ * 所以停用成功后立刻把还挂在上面的位置摊开（有引用就弹清单、没引用才报一句干净），
+ * 而不是等用户回到聊天页撞一句「所在的供应商已停用」。
+ */
 const onToggle = async (p, v) => {
   try {
     await setProviderEnabled(p.id, v)
     p.enabled = v
+    if (v) {
+      p.refCount = 0
+      message.success('已启用')
+      return
+    }
+    const d = await loadRefs(p)
+    const n = refTotalOf(d)
+    if (n === null) {
+      // 清单没拉到就不报「没有地方在用」：重拉一次列表，让卡片上的常驻提醒按服务端口径补回来
+      message.warning('已停用，但引用清单没拉到，稍后可在卡片上点「查看引用」重试')
+      await load()
+      return
+    }
+    p.refCount = n
+    if (n) showRefs.value = true
+    else message.success('已停用，没有地方在引用它的模型')
   } catch (e) {
     message.error(e.message || '操作失败')
   }
@@ -837,8 +969,14 @@ const onDelete = async p => {
     await load()
     refreshSetupGuide(true)  // 删掉模型后引导清单/tag 需要回升（对账）
   } catch (e) {
-    // 仍被引用时后端会给出具体引用位置
-    message.warning(e.message || '删除失败')
+    // 仍被引用时后端会列出引用类型。一次性 toast 读完就没了，等于把人挡在「删不掉、
+    // 又找不到地方改」；这里留住原因并直接给清单入口
+    Modal.confirm({
+      title: `删不掉：「${p.name}」仍被引用`,
+      content: e.message || '该供应商登记的模型还在被使用',
+      okText: '查看引用', cancelText: '知道了',
+      onOk: () => openRefs(p)
+    })
   }
 }
 
@@ -1469,6 +1607,20 @@ onMounted(async () => {
   flex: 1; min-width: 0; font-size: 12px; color: var(--app-danger-text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* 停用后仍有人在用的常驻提醒条：琥珀档（额度不足是「坏了」=红，这一条是「你停用完了但没改干净」） */
+.pv-refs-bar {
+  margin-top: 8px; padding: 7px 9px;
+  display: flex; align-items: center; gap: 8px;
+  border: 1px solid var(--app-warn-border); border-radius: 8px;
+  background: var(--app-warn-weak);
+}
+.pv-refs-msg {
+  flex: 1; min-width: 0; font-size: 12px; color: var(--app-warn-text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pv-refs-error {
+  padding: 14px 0; text-align: center; font-size: 13px; color: var(--app-danger-text);
+}
 .pv-refs-head { font-size: 13px; color: var(--app-text2, var(--app-text2)); margin-bottom: 10px; }
 .pv-refs-empty {
   padding: 18px 0; text-align: center; font-size: 13px;
@@ -1495,6 +1647,13 @@ onMounted(async () => {
 .pv-ref-note {
   grid-column: 2; grid-row: 1 / span 2; font-size: 11px; color: var(--app-text3, var(--app-text3));
 }
+/* 弹窗底部的反悔出口：与上面的清单分开，避免读成「这也是要改的一处」 */
+.pv-refs-foot {
+  margin-top: 12px; padding-top: 10px; display: flex; align-items: center; gap: 8px;
+  border-top: 1px solid var(--app-border, var(--app-border));
+}
+.pv-refs-foot button[disabled] { opacity: .55; cursor: not-allowed; }
+.pv-refs-foot-hint { font-size: 11px; color: var(--app-text3, var(--app-text3)); }
 .pv-icon-picker {
   display: flex; flex-wrap: wrap; gap: 4px;
   max-height: 132px; overflow-y: auto; padding: 2px;

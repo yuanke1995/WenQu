@@ -398,16 +398,20 @@ const load = async () => {
   }
 }
 
-/** 通知深链：route.query.wf/run 命中本地工作流时，打开运行历史并定位到指定 run */
+/**
+ * 通知深链：route.query.wf/run 命中本地工作流时，打开运行历史并定位到指定 run。
+ * 带 wfedit=1（模型供应商「查看引用」的「去修改」）则直接进画布编辑器——要换的模型在节点配置里，
+ * 停在列表上等于让人自己找那一行；没有管理权的人按列表里同样的口径进只读画布。
+ */
 const maybeDeepLink = () => {
   const wf = route.query.wf
   const run = route.query.run
   if (!wf) return
   const found = [...mine.value, ...shared.value].find(x => x.id === wf)
-  if (found) {
-    openHistory(found)
-    if (run) initialRunId.value = String(run)
-  }
+  if (!found) return
+  if (route.query.wfedit) { openEditor(found.id, !canManage(found)); return }
+  openHistory(found)
+  if (run) initialRunId.value = String(run)
 }
 
 const openEditor = (id, readonly = false) => { editingId.value = id; editorReadonly.value = readonly }
@@ -726,7 +730,7 @@ const fmtTime = t => (t ? String(t).replace('T', ' ').slice(0, 16) : '—')
 
 onMounted(load)
 // 通知深链：停留在工作流 Tab 时再次点击不同通知 → 重新定位 run
-watch(() => [route.query.wf, route.query.run], () => { if (mine.value.length || shared.value.length) maybeDeepLink() })
+watch(() => [route.query.wf, route.query.run, route.query.wfedit], () => { if (mine.value.length || shared.value.length) maybeDeepLink() })
 </script>
 
 <style scoped>

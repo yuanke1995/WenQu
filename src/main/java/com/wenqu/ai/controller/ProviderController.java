@@ -40,10 +40,18 @@ public class ProviderController {
     private final ModelQuotaService quotaService;
     private final com.wenqu.ai.service.SessionService sessionService;
 
-    @Operation(summary = "供应商列表", description = "按归属过滤：仅见自己登记的（数据按 userId 隔离）。apiKey 脱敏；每行带 ownerUid/manageable")
+    @Operation(summary = "供应商列表", description = "按归属过滤：仅见自己登记的（数据按 userId 隔离）。apiKey 脱敏；"
+            + "每行带 ownerUid/manageable。<b>已停用的行额外带 refCount</b>（仍有几处在用它的模型，含本人的会话级覆盖）"
+            + "——停用不是终点，卡片要能持续提醒还剩几处没改干净；启用中的行不扫，省掉每页五张表的全量查询")
     @GetMapping
     public ResultJson list() {
-        return ResultJson.ok(modelRegistryService.listProviders(RequestUser.uid(), RequestUser.role()));
+        String uid = RequestUser.uid();
+        List<Map<String, Object>> rows = modelRegistryService.listProviders(uid, RequestUser.role());
+        for (Map<String, Object> row : rows) {
+            boolean off = Boolean.FALSE.equals(row.get("enabled"));
+            row.put("refCount", off ? referenceScanner.countOf(String.valueOf(row.get("id")), uid) : 0);
+        }
+        return ResultJson.ok(rows);
     }
 
     @Operation(summary = "可用模型清单", description = "登录即可用（无需管理员）：按归属过滤后，enabled 供应商下 enabled 模型按供应商分组，预先拼好引用串 ref=providerId/modelId；type 过滤（chat/vision/embedding/rerank），期望 chat 时全模态 omni 一并入选（全模态本质是对话模型），不含 baseUrl/apiKey")
@@ -77,7 +85,9 @@ public class ProviderController {
                 intOrNull(body.get("sortOrder")), RequestUser.uid()), "已保存");
     }
 
-    @Operation(summary = "启用/停用供应商", description = "{\"enabled\":true|false}；停用后其模型不出现在可用清单。普通用户仅可操作自己登记的")
+    @Operation(summary = "启用/停用供应商", description = "{\"enabled\":true|false}；停用后其模型不出现在可用清单。"
+            + "普通用户仅可操作自己登记的。<b>停用不阻挡也不自动改引用</b>：前端停用成功后接着调 "
+            + "{id}/references，把仍在用它的地方逐处引导去改")
     @PutMapping("/{id}/enabled")
     public ResultJson setEnabled(
             @Parameter(description = "供应商ID") @PathVariable("id") String id,
@@ -98,9 +108,9 @@ public class ProviderController {
         return ResultJson.ok("已删除");
     }
 
-    @Operation(summary = "供应商被引用清单", description = "列出该供应商下模型当前被哪些位置引用（知识库向量/图谱模型、"
-            + "个人默认模型、个人设置、系统配置槽位、游客对话模型、本人的历史会话覆盖），每条带类型标签、可读名称与跳转 ID。"
-            + "用于额度不足/停用前定位「该去改哪几处」；与删除守门同一口径。返回 "
+    @Operation(summary = "供应商被引用清单", description = "列出该供应商下模型当前被哪些位置引用（知识库向量/图谱/重排/解析模型、"
+            + "文档图片理解模型、定时任务、工作流节点、个人默认模型、历史个人配置、系统配置槽位、游客对话模型、本人的历史会话覆盖），"
+            + "每条带类型标签、可读名称、后果与跳转参数。用于额度不足/停用/删除前定位「该去改哪几处」；三处同一口径。返回 "
             + "{total, editableCount, hasBlocking, sessionOverrideCount, byKind, items:[{kind,label,name,id,hint,editable}]}")
     @GetMapping("/{id}/references")
     public ResultJson references(
