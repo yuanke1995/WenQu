@@ -9,10 +9,12 @@ import io.agentscope.harness.agent.filesystem.model.FileUploadResponse;
 import io.agentscope.harness.agent.filesystem.model.GlobResult;
 import io.agentscope.harness.agent.filesystem.model.LsResult;
 import io.agentscope.harness.agent.filesystem.model.ReadResult;
+import io.agentscope.harness.agent.filesystem.model.WriteResult;
 import io.agentscope.harness.agent.filesystem.sandbox.BaseSandboxFilesystem;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -143,6 +145,38 @@ public class ProvisionerSandboxFilesystem extends BaseSandboxFilesystem {
         // infraError 表示「沙盒压根没通」而非命令跑失败：输出里那句「沙盒不可达」原样带回，
         // 让模型看见「连不上沙盒」而不是一句空的成功。
         return new ExecuteResponse(output, exitCode, r.truncated);
+    }
+
+    /**
+     * 写入文本文件——<b>create-or-overwrite</b>，覆盖框架 {@code BaseSandboxFilesystem#write} 的 create-only 语义。
+     *
+     * <p>框架那份先跑一条检查命令 {@code if [ -e 路径 ]; then echo EXISTS; exit 1; fi}，命中已存在文件就拒写。
+     * 两个后果（2026-10-23 真机逐环取证）：
+     * <ul>
+     *   <li>命令里的 {@code exit} 会退出 runtime 那个常驻 shell，于是这一条既拿不到退出码也拿不到
+     *       {@code EXISTS} 那行输出，要白等到 runtime 缺省 120 秒才回「没跑完」；</li>
+     *   <li>我们 {@link #execute} 把「没拿到码」记成 124（防假成功，那条是对的），框架因此走不到
+     *       「already exists，去 edit 或换个路径」这句可操作提示，回的是通用
+     *       {@code Failed to write file '<路径>'}。模型据此猜成「覆盖长文件有长度限制」，
+     *       改成拆片段写新文件再用脚本合并——于是一次交付在沙盒里留下 p1/p2/n1a/n1b/n2a/n2b 一堆
+     *       半成品，用户从「沙盒文件」面板挑中其中半份存成产物，预览和下载都是白页。</li>
+     * </ul>
+     *
+     * <p>这里去掉那条前置检查，直接走框架自己的第二步（{@link #uploadFiles}）：实测
+     * {@code /v1/file/upload} 0.1 秒返回、允许覆盖、父目录不存在时自动建，三项都够，不需要补检查或补
+     * {@code mkdir}。语义本身与 {@code ProvisionerSandboxBackend#write} 注释里早已定案的那份一致
+     * （deepagents 上游 issue #3731 同题，现行 write_file = 「不存在则创建，存在则整体替换」）——
+     * 只是那份校正落在了模型走不到的方法上。局部修改仍由工具描述引导走 {@code edit_file}。
+     */
+    @Override
+    public WriteResult write(RuntimeContext runtimeContext, String filePath, String content) {
+        List<FileUploadResponse> responses = uploadFiles(runtimeContext, List.of(Map.entry(
+                filePath, (content == null ? "" : content).getBytes(StandardCharsets.UTF_8))));
+        if (responses.isEmpty() || !responses.get(0).isSuccess()) {
+            String error = responses.isEmpty() ? "沙盒没有返回上传结果" : responses.get(0).error();
+            return WriteResult.fail("Failed to write file '" + filePath + "': " + error);
+        }
+        return WriteResult.ok(filePath);
     }
 
     /**

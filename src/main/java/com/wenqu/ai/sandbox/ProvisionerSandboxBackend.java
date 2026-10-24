@@ -641,12 +641,17 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
      * 把命令包成「先进入工作目录再执行」。
      * <p>用 {@code cd ... &&} 而不是 {@code ;}：进不去工作目录时应当**失败**，
      * 而不是继续在 {@code /home/gem} 执行然后把文件丢在没有挂载的地方。
-     * <p>用 {@code { ...; }} 包住原命令：原命令里的 {@code cd} 只影响它自己那次执行，
-     * 也不会把多行脚本的语义改掉。
+     * <p>用<b>子 shell</b> {@code ( ... )} 而不是花括号组包住原命令：runtime 那条 exec 跑在
+     * <b>常驻 shell</b> 里，命令自带的 {@code exit N}（模型写 {@code || exit 1} 很常见，框架
+     * {@code write_file} 的旧前置检查也用了它）会把那个 shell 一起退出——于是这一条既拿不到退出码
+     * 也拿不到任何输出，还要白等到 runtime 缺省的 120 秒才回「没跑完」（2026-10-23 直连 runtime
+     * A/B 实测：花括号包 90 秒无响应，子 shell 包 0 秒回 {@code exit=1 output='EXISTS'}）。
+     * 子 shell 只让 {@code exit} 结束这一次执行，退出码仍是整条命令的退出码。
+     * 顺带这才是原注释想要的语义：{@code cd} 与变量赋值出不了这一次执行。
      */
     private static String inWorkspace(String command) {
         if (command == null || command.isBlank()) return command;
-        return "cd " + WORKSPACE_ROOT + " && { " + command + "\n}";
+        return "cd " + WORKSPACE_ROOT + " && ( " + command + "\n)";
     }
 
     /**

@@ -28,6 +28,9 @@ import io.agentscope.core.session.SessionProjection;
 import io.agentscope.core.session.SessionRecovery;
 import io.agentscope.core.session.SessionTurns;
 import io.agentscope.core.state.AgentStateStore;
+import io.agentscope.core.tool.AgentTool;
+import io.agentscope.core.tool.ToolCallParam;
+import io.agentscope.core.tool.Toolkit;
 import io.agentscope.extensions.redis.state.RedisAgentStateStore;
 import io.agentscope.extensions.model.openai.OpenAIChatModel;
 import io.agentscope.harness.agent.HarnessAgent;
@@ -38,6 +41,7 @@ import org.springframework.boot.autoconfigure.data.redis.RedisProperties;
 import redis.clients.jedis.HostAndPort;
 import redis.clients.jedis.UnifiedJedis;
 import redis.clients.jedis.DefaultJedisClientConfig;
+import reactor.core.publisher.Mono;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -3238,7 +3242,88 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         for (WenquAgentxTools.SubagentTarget target : subagentTargets) {
             agentBuilder.subagentFactory(target.agentId(), target.description(), target.factory());
         }
-        return agentBuilder.build();
+        HarnessAgent agent = agentBuilder.build();
+        alignWriteFileDescription(agent);
+        return agent;
+    }
+
+    /**
+     * 把 {@code write_file} 的 schema 说明改成与问渠实际行为一致的那句。
+     *
+     * <p>框架 2.1.0-BETA1 的说明仍写着 "Write content to a <b>new</b> file"，而问渠侧早已把
+     * {@code write} 定为「无则新建、有则整体替换」（{@code ProvisionerSandboxFilesystem#write}，
+     * 手册 {@code 09-技能与沙盒} 同一口径）。说明与行为不一致不是显示问题：模型是照着说明行事的，
+     * "new file" 等于叫它换路径——真机那次它照做了，一份交付被拆成 {@code p1/p2/n1a/n1b/n2a/n2b}
+     * 六个片段留在沙盒里，用户从「沙盒文件」挑中半份存成产物，预览与下载都是白页。
+     *
+     * <p><b>只能在 build 之后改</b>：框架 {@code HarnessAgent:2530} 先 {@code this.toolkit.copy()}，
+     * 再往那个副本上注册文件工具（{@code :2895}）——build 前注册的同名工具会被这次注册盖掉
+     * （{@code ToolRegistry#registerTool} 是后写赢）。{@code getToolkit()} 返回的正是那个副本，
+     * 此处按同名重新注册即完成替换。
+     *
+     * <p>{@link DescriptionOverrideTool} 只改 {@code getDescription()}，名字、入参表、只读位、
+     * 执行本身全部转给框架原实现——控制流仍归框架，问渠不另造一把写文件的工具。
+     * 说明已是我们要的那句时直接跳过：本方法每轮都会走，不挡住就会一层层套娃。
+     */
+    private static void alignWriteFileDescription(HarnessAgent agent) {
+        Toolkit toolkit = agent.getToolkit();
+        if (toolkit == null) {
+            return;
+        }
+        AgentTool writeFile = toolkit.getTool(FrameworkToolLabels.FilesystemToolNames.WRITE_FILE);
+        if (writeFile == null || WRITE_FILE_DESCRIPTION.equals(writeFile.getDescription())) {
+            return;
+        }
+        toolkit.registerAgentTool(new DescriptionOverrideTool(writeFile, WRITE_FILE_DESCRIPTION));
+    }
+
+    /** {@code write_file} 该对模型说的那句（与问渠实现同真）。 */
+    private static final String WRITE_FILE_DESCRIPTION =
+            "Write content to a file, creating parent directories if needed. "
+                    + "If the file already exists its whole content is replaced - use edit_file to change part of it.";
+
+    /** 只替换工具说明、其余行为原样委托的包装（见 {@link #alignWriteFileDescription}）。 */
+    private record DescriptionOverrideTool(AgentTool delegate, String description) implements AgentTool {
+
+        @Override
+        public String getName() {
+            return delegate.getName();
+        }
+
+        @Override
+        public String getDescription() {
+            return description;
+        }
+
+        @Override
+        public Map<String, Object> getParameters() {
+            return delegate.getParameters();
+        }
+
+        @Override
+        public Boolean getStrict() {
+            return delegate.getStrict();
+        }
+
+        @Override
+        public Map<String, Object> getOutputSchema() {
+            return delegate.getOutputSchema();
+        }
+
+        @Override
+        public boolean isReadOnly() {
+            return delegate.isReadOnly();
+        }
+
+        @Override
+        public boolean isReturnDirect() {
+            return delegate.isReturnDirect();
+        }
+
+        @Override
+        public Mono<ToolResultBlock> callAsync(ToolCallParam param) {
+            return delegate.callAsync(param);
+        }
     }
 
     /**
