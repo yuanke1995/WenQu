@@ -1176,25 +1176,42 @@
       </div>
       <!-- 本会话沙盒目录：助手在沙盒里做出、却没交付成产物的文件（产物卡只管已交付的那一份）。
            有文件才显示整卡，与产物卡同一判据；读不到要报错带重试——静默成空列表会被读成「我让它做的文件没了」。
-           预览＝签名地址开新标签（与工作区文件栏同一条路、同一批类型判据，服务端只给点得开的条目配 viewUrl） -->
+           预览＝签名地址开新标签（与工作区文件栏同一条路、同一批类型判据，服务端只给点得开的条目配 viewUrl）。
+           接口给的是摊平的一维清单，这里按相对路径折回目录树：整条路径摊在一行时名字全被截断，
+           认不出哪份是成品；折成树之后行内只剩文件名，腾出的位置给大小。 -->
       <div v-if="sandboxFiles.length || sandboxErr || sandboxLoading" class="rp-card">
-        <div class="rp-label">沙盒文件 · {{ sandboxFiles.length }} 个</div>
+        <div class="rp-label">沙盒文件 · {{ sandboxCount }} 个{{ sandboxBytes ? ' · ' + sbSize(sandboxBytes) : '' }}</div>
         <div v-if="sandboxLoading" class="rp-sb-hint">正在读取沙盒目录…</div>
         <div v-else-if="sandboxErr" class="rp-sb-err">
           <span>{{ sandboxErr }}</span>
           <button type="button" class="rp-sb-retry" @click="loadSandboxFiles">重试</button>
         </div>
-        <div v-for="f in sandboxFiles" :key="f.path" class="rp-art">
-          <file-text-outlined class="rp-art-ic" />
-          <span class="rp-art-name" :title="f.path + '（' + sandboxSize(f.size) + '）'">{{ f.path }}</span>
-          <a v-if="f.viewUrl" class="rp-art-act" :href="resolveImg(f.viewUrl)" target="_blank" rel="noopener"
-             title="在新标签页打开"><eye-outlined /></a>
-          <button type="button" class="rp-art-act rp-sb-btn" :title="'下载 ' + f.name"
-                  @click="onSandboxDownload(f)"><download-outlined /></button>
-          <button v-if="!sandboxTaken.has(f.path)" type="button" class="rp-art-act rp-sb-btn"
-                  title="存为产物（进「我的产物」，可预览可下载）" @click="onSandboxTake(f)"><save-outlined /></button>
-          <span v-else class="rp-sb-taken" title="已存为产物"><check-outlined /></span>
-        </div>
+        <template v-for="row in sandboxRows" :key="row.key">
+          <button v-if="row.type === 'dir'" type="button" class="rp-sb-dir"
+                  @click="toggleSandboxDir(row.dir.path)"
+                  :title="(row.open ? '收起 ' : '展开 ') + row.dir.path + '/（' + row.dir.count + ' 个文件 · ' + fmtSize(row.dir.size) + '）'">
+            <span v-for="i in row.depth" :key="i" class="rp-sb-ind" />
+            <caret-right-outlined class="tl-caret" :class="{ open: row.open }" />
+            <folder-open-outlined v-if="row.open" class="rp-art-ic" />
+            <folder-outlined v-else class="rp-art-ic" />
+            <span class="rp-sb-name">{{ row.dir.name }}/</span>
+            <span class="rp-sb-meta">{{ row.dir.count }} 个 · {{ sbSize(row.dir.size) }}</span>
+          </button>
+          <div v-else class="rp-art">
+            <span v-for="i in row.depth" :key="i" class="rp-sb-ind" />
+            <span class="rp-art-name"
+                  :title="row.file.path + ' · ' + fmtSize(row.file.size) + ' · ' + fmtMsgTime(row.file.mtime)">{{ row.file.name }}</span>
+            <span class="rp-sb-meta">{{ sbSize(row.file.size) }}</span>
+            <a v-if="row.file.viewUrl" class="rp-art-act" :href="resolveImg(row.file.viewUrl)" target="_blank" rel="noopener"
+               title="在新标签页打开"><eye-outlined /></a>
+            <button type="button" class="rp-art-act rp-sb-btn" :title="'下载 ' + row.file.name"
+                    @click="onSandboxDownload(row.file)"><download-outlined /></button>
+            <button v-if="!sandboxTaken.has(row.file.path)" type="button" class="rp-art-act rp-sb-btn"
+                    title="存为产物（进「我的产物」，可预览可下载）" @click="onSandboxTake(row.file)"><save-outlined /></button>
+            <span v-else class="rp-sb-taken" title="已存为产物"><check-outlined /></span>
+          </div>
+        </template>
+        <div v-if="sandboxRest" class="rp-sb-hint">目录里另有 {{ sandboxRest }} 个文件没列出（这里只列最新 {{ sandboxFiles.length }} 个）</div>
       </div>
       <!-- 计划：本会话每轮出过的计划各列一条（继续对话后每次重做都算一份），点击定位到那一轮气泡。
            默认折叠沉底：它的条数随会话长度无上限增长，而动作只是「跳回历史某一轮」——低频导航不该占顶部固定槽位，
@@ -1461,7 +1478,7 @@ import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, Close
          CloseOutlined, DatabaseOutlined, SearchOutlined, UpOutlined, ShareAltOutlined,
          HistoryOutlined, SwapOutlined, InfoCircleOutlined,
          AppstoreOutlined, ClockCircleOutlined, BookOutlined,
-         OrderedListOutlined, LeftOutlined, FolderOpenOutlined,
+         OrderedListOutlined, LeftOutlined, FolderOpenOutlined, FolderOutlined,
          AimOutlined, EyeOutlined, SaveOutlined, ReloadOutlined } from '@ant-design/icons-vue'
 import { debugRetrieval, deleteMessageGroup, submitFeedback as apiSubmitFeedback,
          addEvalCase, getSessionShare, enableSessionShare, disableSessionShare,
@@ -3331,15 +3348,19 @@ const wsTitle = computed(() => {
 // 会话没挂工作区时那份文件躺在 sessions/{会话} 下看不见（真机 2026-10-23 21:04 那一轮做好的
 // 20.7 KB 看板页就是这么烂在盘上的）。读的是宿主目录，容器空闲回收后照样列得出来。
 const sandboxFiles = ref([])
+const sandboxTotal = ref(0)
 const sandboxErr = ref('')
 const sandboxLoading = ref(false)
 /** 本轮已取回成产物的路径：按钮点过一次就改口，不邀请重复点（重复点会落出一条同名重复产物） */
 const sandboxTaken = ref(new Set())
+/** 被收起的目录（默认全展开：这一栏答的是「刚才做的东西在哪」，收着等用户点等于把答案藏回去） */
+const sandboxClosed = ref(new Set())
 async function loadSandboxFiles() {
   const sid = currentSessionId.value
   sandboxTaken.value = new Set()
   if (!sid) {
     sandboxFiles.value = []
+    sandboxTotal.value = 0
     sandboxErr.value = ''
     return
   }
@@ -3348,9 +3369,12 @@ async function loadSandboxFiles() {
   try {
     const r = await listSandboxFiles(sid)
     sandboxFiles.value = (r && r.data && r.data.files) || []
+    // 条数认服务端给的总数，不认到手这一截：一屏只回最新 300 个，只报到手数量会把「没列全」说成「就这些」
+    sandboxTotal.value = Number(r?.data?.total) || sandboxFiles.value.length
   } catch (e) {
     // 失败必须说出来并给重试：静默成空列表，用户读到的是「我让它做的文件没了」
     sandboxFiles.value = []
+    sandboxTotal.value = 0
     sandboxErr.value = e?.message || '沙盒目录读取失败'
   } finally {
     sandboxLoading.value = false
@@ -3378,15 +3402,82 @@ async function onSandboxTake(f) {
     message.warning(`存为产物失败：${e?.message || '文件过大或该类型不支持作为产物'}`)
   }
 }
-/** 沙盒里的文件条目按名字认不出哪份是成品，所以整条相对路径都露出来（outputs/build/shot.html 一眼是中间件） */
-const sandboxSize = n => {
+const toggleSandboxDir = path => {
+  const next = new Set(sandboxClosed.value)
+  if (next.has(path)) next.delete(path)
+  else next.add(path)
+  sandboxClosed.value = next
+}
+/** 相对路径折回目录树；目录行的个数/体积是**整棵子树**的，所以一个上百文件的构建目录先看计数就知道值不值得点 */
+const sandboxTree = computed(() => {
+  const root = { name: '', path: '', dirs: new Map(), files: [], count: 0, size: 0, newest: 0 }
+  for (const f of sandboxFiles.value) {
+    const segs = String(f.path || '').split('/').filter(Boolean)
+    segs.pop()   // 末段是文件名，前面的才是目录
+    let node = root
+    let acc = ''
+    for (const seg of segs) {
+      acc = acc ? acc + '/' + seg : seg
+      let d = node.dirs.get(seg)
+      if (!d) {
+        d = { name: seg, path: acc, dirs: new Map(), files: [], count: 0, size: 0, newest: 0 }
+        node.dirs.set(seg, d)
+      }
+      node = d
+    }
+    node.files.push(f)
+  }
+  const roll = d => {
+    for (const f of d.files) {
+      d.count += 1
+      d.size += Number(f.size) || 0
+      d.newest = Math.max(d.newest, Number(f.mtime) || 0)
+    }
+    for (const sub of d.dirs.values()) {
+      roll(sub)
+      d.count += sub.count
+      d.size += sub.size
+      d.newest = Math.max(d.newest, sub.newest)
+    }
+    return d
+  }
+  return roll(root)
+})
+/** 树按收起状态摊平成可渲染的行；同层里目录与文件混排、谁最新谁在前（整栏的读法仍是「刚做出来的在最上面」） */
+const sandboxRows = computed(() => {
+  const out = []
+  const walk = (node, depth) => {
+    const kids = [
+      ...[...node.dirs.values()].map(d => ({ dir: true, node: d, newest: d.newest })),
+      ...node.files.map(f => ({ dir: false, node: f, newest: Number(f.mtime) || 0 })),
+    ].sort((a, b) => b.newest - a.newest)
+    for (const k of kids) {
+      if (!k.dir) {
+        out.push({ type: 'file', key: k.node.path, depth, file: k.node })
+        continue
+      }
+      const open = !sandboxClosed.value.has(k.node.path)
+      out.push({ type: 'dir', key: 'd:' + k.node.path, depth, dir: k.node, open })
+      if (open) walk(k.node, depth + 1)
+    }
+  }
+  walk(sandboxTree.value, 0)
+  return out
+})
+const sandboxCount = computed(() => sandboxTotal.value || sandboxFiles.value.length)
+const sandboxBytes = computed(() => sandboxTree.value.size)
+const sandboxRest = computed(() => Math.max(0, sandboxTotal.value - sandboxFiles.value.length))
+/** 这一栏只有 209px，体积文案要省着写：10 KB 以下留一位小数（1.4 KB 分得出大小），往上取整（146 KB 不需要那两位） */
+const sbSize = n => {
   const v = Number(n) || 0
   return v >= 1024 * 1024 ? (v / 1024 / 1024).toFixed(1) + ' MB'
-    : v >= 1024 ? Math.round(v / 1024) + ' KB' : v + ' B'
+    : v >= 10 * 1024 ? Math.round(v / 1024) + ' KB'
+    : v >= 1024 ? (v / 1024).toFixed(1) + ' KB' : v + ' B'
 }
 
 watch(currentSessionId, async sid => {
   sessionWorkspace.value = null
+  sandboxClosed.value = new Set()
   loadSandboxFiles()
   if (!sid) return
   try {
@@ -4731,6 +4822,15 @@ onMounted(async () => {
 .rp-sb-retry { background: none; border: 0; padding: 0; cursor: pointer; font-size: 11px; color: var(--app-accent); }
 .rp-sb-retry:hover { text-decoration: underline; }
 .rp-sb-taken { flex: none; font-size: 11px; color: var(--app-accent); }
+/* 目录行：整行是开合按钮（button 要自带重置，antd reset 不清底色边框）；计数与合计体积贴右 */
+.rp-sb-dir { display: flex; align-items: center; gap: 6px; width: 100%; padding: 4px 0;
+  background: none; border: 0; cursor: pointer; font: inherit; text-align: left; }
+.rp-sb-dir:hover .rp-sb-name { color: var(--app-accent); }
+.rp-sb-name { flex: 1; min-width: 0; font-size: 12px; color: var(--app-text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rp-sb-meta { flex: none; font-size: 10.5px; color: var(--app-text3); }
+/* 层级向导线：一层一格（12px），线画在这一格左缘＝上级那个箭头的列上。
+   上下各外扩 4px 盖住行内边距，逐行连成一条——只靠缩进时「深一段后突然浅一行」读不出归谁，线在就一眼看出。 */
+.rp-sb-ind { flex: none; width: 12px; align-self: stretch; margin: -4px -6px -4px 0; border-left: 1px solid var(--app-border); }
 
 /* 右栏计划卡：本会话出过的计划列表（问题为标签 + 状态角标；点击定位到那一轮并闪一下） */
 .rp-plan-row {
