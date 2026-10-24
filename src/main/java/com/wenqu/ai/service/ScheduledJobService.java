@@ -353,7 +353,9 @@ public class ScheduledJobService {
         ScheduledJob job = mustOwn(uid, jobId);
         assertProjectActive(job.getUid(), job.getProjectId());
         if (!dispatch(job, "manual")) {
-            throw new BizException("该任务正在执行中，请稍候再试");
+            // dispatch 拒还有两种原因：真在执行（id 仍在集合里）vs 队列满被丢弃（id 已回滚）——文案分开说
+            throw new BizException(runningJobs.contains(job.getId())
+                    ? "该任务正在执行中，请稍候再试" : "线程池繁忙，本轮未派发，请稍候再试");
         }
         return toDto(job);
     }
@@ -367,13 +369,22 @@ public class ScheduledJobService {
             }
             return false;
         }
-        ThreadPoolManager.execute(() -> {
+        // execute=false=任务被丢弃且 lambda 永不执行：不回滚 runningJobs 的话 id 永久泄漏，
+        // 该任务之后每轮都被判「上一轮仍在执行」直到重启，且丢弃不留任何执行记录
+        if (!ThreadPoolManager.execute(() -> {
             try {
                 execute(job, trigger);
             } finally {
                 runningJobs.remove(job.getId());
             }
-        });
+        })) {
+            runningJobs.remove(job.getId());
+            log.error("[SCHEDULED] 任务 {} 提交线程池被拒（队列满/池已关闭），本轮未派发", job.getName());
+            if ("scheduled".equals(trigger)) {
+                insertRun(job, trigger, "skipped", "线程池繁忙，本轮未派发（下个周期照常触发）", null, null);
+            }
+            return false;
+        }
         return true;
     }
 

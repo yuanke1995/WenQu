@@ -84,7 +84,7 @@
                       :value="''" @select="pickCron" />
           </div>
           <div class="sched-hint">5 段写法（分 时 日 月 周）：<code>0 9 * * 1-5</code> = 工作日 9 点；
-            <code>*/30 * * * *</code> = 每 30 分钟；<code>0 18 * * 5</code> = 每周五 18 点。保存后按左侧「下次」显示实际触发时间。</div>
+            <code>*/30 * * * *</code> = 每 30 分钟；<code>0 18 * * 5</code> = 每周五 18 点。新建默认的分钟是随机错峰的，不必凑整。保存后按左侧「下次」显示实际触发时间。</div>
         </a-form-item>
         <a-form-item label="时区">
           <a-select v-model:value="form.timezone" style="width:100%" :options="zoneOptions" />
@@ -218,8 +218,10 @@ const runs = ref([])
 const runsLoading = ref(false)
 const agentOptions = ref([])
 
+// 新建默认 cron 的分钟随机错峰：都写在整点会让到期任务挤在同一分钟，饱和期排队小时级
+const jitterMinute = () => Math.floor(Math.random() * 60)
 const blank = () => ({
-  name: '', agentId: '', prompt: '', cron: '0 9 * * 1-5',
+  name: '', agentId: '', prompt: '', cron: `${jitterMinute()} 9 * * 1-5`,
   timezone: 'Asia/Shanghai', modelRef: '', deepThink: false, enabled: true
 })
 const form = ref(blank())
