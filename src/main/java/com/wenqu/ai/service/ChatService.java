@@ -494,20 +494,41 @@ public class ChatService {
                 // 装载都是「这一轮」的外壳，两种引擎都要；被替换的只是外壳里面那段推理循环本身。
                 var dispatchChannel =
                         new com.wenqu.ai.engine.SseRunEventChannel(runtime, emitter, sessionId);
-                // 绑定了工作流的智能体<b>不进任何一条推理循环</b>：那条路由工作流 end 节点的出参当回答
-                // （ChatflowBridge 的口径是「整条不走常规检索/生成，人设/库界/工具都不参与」）。
-                // 分派原先只看「引擎选哪个」，于是切到框架引擎后这张图被整个跳过——用户配的是「图的答案」，
-                // 拿到的却是模型自己答的一句。这不是观测出来的差异，是 Phase 5 排工作流用例时读代码照出来的。
-                if (workflowBoundOf(cmd.getAgentId())) {
-                    runWorkflowBoundTurn(cmd, dispatchChannel);
-                } else {
-                    chatEngines.select(cmd).chat(cmd, dispatchChannel);
+                // 摘把手 + 收总线 run 是两种引擎共同的收尾（此前只在框架引擎分支做，工作流轮跑完后
+                // 把手挂在会话上——约 5 分钟后被看门狗补发一条假「回答超时已截断」、runStatus 长达
+                // 一个宽限期报「在跑」），现在两个分支各自跑完都收，异常路径的 catch 也收。
+                try {
+                    // 绑定了工作流的智能体<b>不进任何一条推理循环</b>：那条路由工作流 end 节点的出参当回答
+                    // （ChatflowBridge 的口径是「整条不走常规检索/生成，人设/库界/工具都不参与」）。
+                    // 分派原先只看「引擎选哪个」，于是切到框架引擎后这张图被整个跳过——用户配的是「图的答案」，
+                    // 拿到的却是模型自己答的一句。这不是观测出来的差异，是 Phase 5 排工作流用例时读代码照出来的。
+                    if (workflowBoundOf(cmd.getAgentId())) {
+                        runWorkflowBoundTurn(cmd, dispatchChannel);
+                    } else {
+                        chatEngines.select(cmd).chat(cmd, dispatchChannel);
+                    }
                     // 框架引擎同步跑完整轮：方法返回即本轮已终结（待办/计划批准期间引擎是在循环里
                     // 阻塞等待的，不会提前返回）。必须在这里摘轮次把手 + 收掉总线 run——总线 run 的
                     // turnAlive 判的是「TurnRegistry 里的把手是否还是本轮」，不摘就恒为真：会话被永久
                     // 当成「正在跑」，刷新/换设备接回来永远转圈，直到 300s 看门狗超时才收（实测踩过）。
                     TurnRegistry.removeHandle(sessionId);
                     chatRunBus.finish(sessionId);
+                } catch (Exception e) {
+                    // 引擎/桥自己会把可预期的失败收成 error+done 帧（failLoud / ChatflowBridge 三支），
+                    // 走到这里的是它们没接住的崩坏——不收口的话用户对着输入框干转到 300s 看门狗兜底，
+                    // 把手与总线 run 也悬到宽限 sweep 才清。补发与 failLoud 同形的 error+done，再统一收尾
+                    log.error("[FAIL-LOUD] 本轮问答引擎执行异常: session={} turn={}", sessionId, turnId, e);
+                    try {
+                        dispatchChannel.emit(com.wenqu.ai.engine.RunEventType.ERROR,
+                                "回答这一轮时服务内部出现异常，请重试；反复出现请换一个模型或新建会话");
+                        dispatchChannel.emit(com.wenqu.ai.engine.RunEventType.DONE,
+                                "{\"finalContent\":\"\",\"sources\":[],\"degradations\":[],\"engine\":\"agentscope\"}");
+                    } catch (Exception notifyFailed) {
+                        log.warn("[FAIL-LOUD] 异常收口帧没发出去（通道可能已被收）: session={}", sessionId);
+                    }
+                    TurnRegistry.removeHandle(sessionId);
+                    chatRunBus.finish(sessionId);
+                    runtime.completeEmitter(emitter);
                 }
                 } finally {
                     // 「这一问没有回答」的标记只能在本线程走到底时打——早一步判会抢在落库之前，

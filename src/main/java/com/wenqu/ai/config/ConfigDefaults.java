@@ -53,6 +53,10 @@ public final class ConfigDefaults {
 
     /** 单个技能全文读取字符上限（平台常量，不再作为设置项） */
     public static final int SKILL_MAX_FILE_CHARS = 20_000;
+    /** @ 文档提及正文注入的单份字符上限（粘贴型内容不放大，与技能正文同量级） */
+    public static final int MENTION_DOC_MAX_CHARS = 20_000;
+    /** @ 文档提及正文注入的总字符预算（一次 @ 十份文档不设总闸会把本轮输入顶爆） */
+    public static final int MENTION_DOC_TOTAL_MAX_CHARS = 30_000;
     /** mcp.server.timeoutMs：MCP Server 单次工具调用等待超时 */
     public static final int MCP_SERVER_TIMEOUT_MS = 180_000;
     /** artifact.retentionDays：产物保留天数（0=不清理） */

@@ -12,6 +12,8 @@ import com.wenqu.ai.engine.RunChannel;
 import com.wenqu.ai.engine.RunEvent;
 import com.wenqu.ai.engine.RunEventType;
 import com.wenqu.ai.model.Agent;
+import com.wenqu.ai.model.AiDocument;
+import com.wenqu.ai.model.Knowledge;
 import com.wenqu.ai.service.ChatAttachmentService;
 import com.wenqu.ai.service.ConfigService;
 import com.wenqu.ai.service.ModelRegistryService;
@@ -142,6 +144,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 框架调用一笔都没进 {@code c_ai_usage_log}；不补这一层，记忆与压缩的成本完全不可见。
      */
     private final com.wenqu.ai.service.UsageLedgerService usageLedger;
+    /**
+     * @ 文档提及的正文来源（文档表不存全文，解析产物就是知识块，按 chunkIndex 拼回）。
+     * 注入是「@ 了就必须真的给」，取不到要如实说明而不是让模型对着空话硬编（见 docMentionText）。
+     */
+    private final com.wenqu.ai.mapper.KnowledgeMapper knowledgeMapper;
+    /** @ 文档提及的生效态校验（解析中/失败/弃用的文档不给正文，只给一句如实的说明） */
+    private final com.wenqu.ai.mapper.AiDocumentMapper documentMapper;
 
     /**
      * 目标模式：状态机/续跑/收尾（问渠侧全部「目标」逻辑，见 GoalService 类注释）。
@@ -234,6 +243,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                                com.wenqu.ai.service.ChatRunBus chatRunBus,
                                com.wenqu.ai.service.McpToolLabelService mcpToolLabelService,
                                JournalRotation journalRotation,
+                               com.wenqu.ai.mapper.KnowledgeMapper knowledgeMapper,
+                               com.wenqu.ai.mapper.AiDocumentMapper documentMapper,
                                java.util.function.Function<ChatCommand, com.wenqu.ai.service.ChatService.TurnModel> modelResolver) {
         this.modelRegistry = modelRegistry;
         this.projectService = projectService;
@@ -258,6 +269,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         this.goalService = goalService;
         this.chatRunBus = chatRunBus;
         this.journalRotation = journalRotation;
+        this.knowledgeMapper = knowledgeMapper;
+        this.documentMapper = documentMapper;
         this.modelResolver = modelResolver;
     }
 
@@ -413,11 +426,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 if (m == null) continue;
                 sb.append("- ").append(m.getType()).append("：").append(m.getName()).append('\n');
             }
-            boolean hasDoc = cmd.getMentions().stream()
-                    .anyMatch(m -> m != null && "doc".equals(m.getType()));
-            if (hasDoc) {
-                sb.append("（doc 类型的内容已由系统直接前置到本轮上下文，请据此作答，勿声称没有看到）\n");
-            }
+            sb.append(docMentionText(cmd.getMentions()));
         }
         // 3) # 引用：把被引用的历史问答原文带过来，否则模型无从知道"这一句"在说什么
         if (cmd.getHistoryRefs() != null && !cmd.getHistoryRefs().isEmpty()) {
@@ -431,6 +440,74 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 4) 本轮指定技能：点名了就把正文送进去，否则「选了技能」这件事对模型完全不可见
         sb.append(pickedSkillsText(cmd, skillFilter));
         return sb.toString();
+    }
+
+    /**
+     * @ 文档提及的正文注入（逐份前置到本轮上下文）。
+     * <p>正文从知识块按 chunkIndex 顺序拼回：文档表不存全文，解析产物就是块。只注入「生效中」的
+     * 文档（status=0 且未删）——把解析中/失败/弃用文档的半成品或旧文喂给模型，比如实说
+     * 「这份取不到」更害人。单份与总量各设字符上限：一次 @ 十份文档不设总闸会把本轮输入顶爆，
+     * 先到先得，没赶上的如实说明（模型要转告用户，不许装作读过）。
+     * <p>可见性校验在控制器同步段已做；这里再查一次文档生效态，防的是「校验通过后到装配前
+     * 被弃用/删除」的竞态。此前这里的做法是只写一句「doc 内容已前置、勿声称没有看到」——而
+     * 全仓没有任何代码真的把正文取回来，模型被禁止说没看到，只能按文件名编造。
+     */
+    private String docMentionText(List<ChatRequest.Mention> mentions) {
+        boolean hasDoc = mentions.stream().anyMatch(m -> m != null && "doc".equals(m.getType()));
+        if (!hasDoc) return "";
+        StringBuilder sb = new StringBuilder();
+        int budget = com.wenqu.ai.config.ConfigDefaults.MENTION_DOC_TOTAL_MAX_CHARS;
+        for (ChatRequest.Mention m : mentions) {
+            if (m == null || !"doc".equals(m.getType())) continue;
+            String name = m.getName() == null || m.getName().isBlank() ? m.getId() : m.getName();
+            String body = docContentOf(m.getId());
+            sb.append("\n【@ 文档：").append(name).append("】\n");
+            if (body == null) {
+                sb.append("（这份文档当前没有可用正文：可能已删除、停用或尚未解析完成。")
+                        .append("请如实告知用户，不要凭文件名猜测内容）\n");
+                continue;
+            }
+            if (budget <= 0) {
+                sb.append("（本轮引用的文档较多，这份的正文因篇幅上限未注入。请如实告知用户该文档本轮未能读取）\n");
+                continue;
+            }
+            int cap = Math.min(com.wenqu.ai.config.ConfigDefaults.MENTION_DOC_MAX_CHARS, budget);
+            if (body.length() > cap) body = body.substring(0, cap) + "\n…（正文过长，已截断）";
+            budget -= body.length();
+            sb.append(body).append('\n');
+        }
+        sb.append("（以上 doc 引用的正文已由系统直接前置到本轮上下文，请据此作答，勿声称没有看到）\n");
+        return sb.toString();
+    }
+
+    /**
+     * 单份 @ 文档的正文（按块序拼回）；文档不在生效态或取不到时返回 null，由装配层如实说明。
+     * 块级只过滤停用块（status=1，与检索同一判据），文档删没删看文档行本身。
+     */
+    private String docContentOf(String docId) {
+        if (docId == null || docId.isBlank()) return null;
+        try {
+            AiDocument doc = documentMapper.selectById(docId);
+            if (doc == null || (doc.getDeleted() != null && doc.getDeleted() != 0)
+                    || doc.getStatus() == null || doc.getStatus() != 0) {
+                return null;
+            }
+            List<Knowledge> chunks = knowledgeMapper.selectList(
+                    new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<Knowledge>()
+                            .eq(Knowledge::getDocId, docId)
+                            .ne(Knowledge::getStatus, 1)
+                            .orderByAsc(Knowledge::getChunkIndex));
+            StringBuilder body = new StringBuilder();
+            for (Knowledge c : chunks) {
+                if (c.getContent() == null || c.getContent().isBlank()) continue;
+                if (body.length() > 0) body.append("\n\n");
+                body.append(c.getContent());
+            }
+            return body.length() == 0 ? null : body.toString();
+        } catch (Exception e) {
+            log.warn("[MENTION] @ 文档正文装配失败 docId={}: {}", docId, e.toString());
+            return null;
+        }
     }
 
     /**
@@ -655,6 +732,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         mentionsJson(cmd.getMentions()),
                         historyRefsJson(cmd.getHistoryRefs()),
                         null, turnId);
+        if (userMessageId != null && cmd.getEditVariantGroup() != null && !cmd.getEditVariantGroup().isBlank()) {
+            // 编辑重发：新用户消息挂上被替换旧分支的版本组键（与工作流路径同口径）。
+            // 被编辑的旧分支已在控制器同步段软删留档，不挂组键的话「‹ n/N ›」切换器出不来，
+            // 旧版本从此够不着——「编辑重发可反悔」就只剩一句空话
+            sessionService.setMessageVariant(userMessageId, cmd.getEditVariantGroup());
+        }
         Recording recording = new Recording(spills, hooks.consultLedger(), tools, hooks, displayNames,
                 cmd.getUserId());
         bindFrameworkToolGate(cmd, recording);
@@ -3523,6 +3606,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         String artifactList = com.alibaba.fastjson2.JSON.toJSONString(
                 artifactService.settleArtifacts(cmd.getSessionId()));
         String artifactsJson = "[]".equals(artifactList) ? null : artifactList;
+        // 重新生成的分支手术（与工作流路径 ChatflowBridge 同口径）：先软删被替换的旧回答并登记
+        // 版本组，新回答落库后挂同一组。单引擎化时这段没接回来——旧回答不软删，刷新后两条答案
+        // 并存且无 ‹ n/N › 可切。只在真要落库这一轮时做：等待/失败轮不落库，旧回答就不该被动。
+        String replaceGroup = null;
+        if (persist && cmd.getReplaceMessageId() != null && !cmd.getReplaceMessageId().isBlank()) {
+            replaceGroup = sessionService.beginAnswerReplace(cmd.getReplaceMessageId());
+        }
         String assistantMessageId = persist ? sessionService.appendMessage(cmd.getSessionId(), "assistant",
                 body, turnImages,
                 com.alibaba.fastjson2.JSON.toJSONString(pool.sources()), recording.thinkingText(),
@@ -3536,6 +3626,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 null, null,
                 planRecord == null ? null : com.alibaba.fastjson2.JSON.toJSONString(planRecord),
                 framedTurnId) : null;
+        if (replaceGroup != null && assistantMessageId != null) {
+            sessionService.setMessageVariant(assistantMessageId, replaceGroup);
+        }
         // 警示条也要活过刷新：它此前只随 warn 帧下发一次，用户当场看见「沙盒写入未执行」，
         // 刷新一次就等于没发生过——而这一轮确实被沙盒挡下过一次（与 degradations 那条同一个错法）
         sessionService.saveMessageWarn(assistantMessageId, channel.lastWarn());
