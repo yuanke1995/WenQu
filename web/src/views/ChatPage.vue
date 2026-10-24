@@ -2101,6 +2101,11 @@ const openMentionPanel = () => {
   mentionQuery.value = ''
   ensureRefCandidates()
 }
+/** 弹窗/下拉这类浮层挂在 body 上，不在面板子树里，按「外点」判据会把面板一起收掉：
+ *  从技能正文弹窗返回时「+」面板已经没了，得重新点「+」才能接着挑。浮层自己吃掉的那一下不算点了别处。 */
+const OVERLAY_ROOT_CLASSES = ['ant-modal-root', 'ant-dropdown']
+const hitsOverlay = path => path.some(n => n.classList
+    && OVERLAY_ROOT_CLASSES.some(c => n.classList.contains(c)))
 /** 点面板/输入区之外关闭（面板不遮断输入，所以用 document 级监听而不是遮罩层）；
  *  / 命令 / # 历史引用 / + 添加三个面板共用同一关闭监听（同一容器、同一交互约定） */
 const onDocClickForMention = e => {
@@ -2109,6 +2114,7 @@ const onDocClickForMention = e => {
   // 被点节点被拆下树（parent 链断在 .mention-item），closest 会判成面板外 → 切层的那一下
   // 自己就把面板关了。composedPath 在事件派发时已定，含换层前的旧祖先链，用它认面板。
   const path = typeof e.composedPath === 'function' ? e.composedPath() : []
+  if (hitsOverlay(path)) return
   // 卡片是 ChatInput 的 .ci-box（原先本页自己写 .input-box，抽出组件后跟着改）
   if (path.some(n => n && n.classList && (n.classList.contains('mention-panel') || n.classList.contains('ci-box')
       || n.classList.contains('msg-inline-edit')))) return
@@ -2725,6 +2731,9 @@ onUnmounted(() => document.removeEventListener('keydown', onSearchHotkey))
 const onDocEscKeydown = e => {
   if (e.key !== 'Escape' || e.isComposing || e.keyCode === 229) return
   if (!slashOpen.value && !histOpen.value && !addOpen.value) return
+  // 弹窗开着时 Esc 归弹窗自己（ant 收掉它）：这里再收一次会把背后的面板一起撤掉，
+  // 与点弹窗关闭叉号同一口径——回到页面应当还能接着逛面板
+  if (hitsOverlay(e.composedPath())) return
   const hit = n => n instanceof HTMLElement && (n.closest('.mention-panel') || n.closest('.ci-box'))
   if (e.composedPath().some(hit)) return
   e.preventDefault()
