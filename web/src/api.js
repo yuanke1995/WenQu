@@ -521,6 +521,8 @@ export const deleteProject = (id, deleteFiles = false) =>
   said(request(`/project/${id}${deleteFiles ? '?deleteFiles=true' : ''}`, { method: 'DELETE' }), { k: 'spaces' })
 // 工作区详情：名称 / 工作区约定（对该工作区所有会话生效）/ 默认助手
 export const getProject = id => request(`/project/${id}`)
+// 工作区轮次占用状态：共用目录的工作区当前有没有轮次在跑、是谁在跑（会话/定时任务/工作流子智能体）与跑了多久
+export const getProjectTurnGuard = id => request(`/project/${id}/turn-guard`)
 // 工作区下的工作流（本人）
 export const listProjectWorkflows = id => request(`/project/${id}/workflows`)
 /** 工作区运行记录（定时任务执行 + 工作流运行合流，按开始时刻倒序） */
@@ -991,6 +993,57 @@ export async function downloadSkillZip(name) {
   a.remove()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
+// ==================== 市场（技能市场 v1：上架 → 发现 → 一键安装；安装即复制，装完是自己的独立副本） ====================
+/** 市场列表：{type?, keyword?, tag?, mine?}——上架中的物品 + 我上架的（mine=true 只看自己的，含已下架） */
+export const listMarketItems = (params = {}) => {
+  const q = new URLSearchParams()
+  if (params.type) q.set('type', params.type)
+  if (params.keyword) q.set('keyword', params.keyword)
+  if (params.tag) q.set('tag', params.tag)
+  if (params.mine) q.set('mine', 'true')
+  const s = q.toString()
+  return request('/market/list' + (s ? '?' + s : ''))
+}
+/** 物品详情：元信息 + 详细介绍 + skillMd（SKILL.md 正文预览，装前可审阅） */
+export const getMarketItem = id => request(`/market/${encodeURIComponent(id || '')}`)
+/** 把「我的技能」上架：{name, summary?, description?, tags?, version?}；同一技能重复上架=更新同一条 */
+export const publishSkillToMarket = body =>
+  request('/market/publish', { method: 'POST', body: JSON.stringify(body) })
+/** 一键安装：把快照复制进自己的技能目录；{overwrite} 同名时覆盖重装（有更新/重装场景） */
+export const installMarketItem = (id, overwrite) =>
+  request(`/market/${encodeURIComponent(id)}/install`, {
+    method: 'POST', body: JSON.stringify({ overwrite: !!overwrite })
+  })
+/** 上架/下架我的物品 */
+export const setMarketItemStatus = (id, online) =>
+  request(`/market/${encodeURIComponent(id)}/status`, {
+    method: 'PUT', body: JSON.stringify({ online: !!online })
+  })
+/** 删除我的物品（连快照与安装记录；已装进别人目录的技能副本不受影响） */
+export const deleteMarketItem = id =>
+  request(`/market/${encodeURIComponent(id)}`, { method: 'DELETE' })
+/** 下载物品包 zip（装前留档/离线分发）：带登录令牌取 blob，避免 window.open 丢 Authorization */
+export async function downloadMarketItemZip (id, name) {
+  const bt = authToken()
+  const res = await fetch(BASE + '/market/' + encodeURIComponent(id || '') + '/download', {
+    headers: bt ? { Authorization: 'Bearer ' + bt } : {}
+  })
+  if (!res.ok) {
+    let msg = ''
+    try { const data = await res.json(); msg = data && data.msg } catch (e) { /* 非 JSON */ }
+    throw new Error(msg || ('下载失败(' + res.status + ')'))
+  }
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = (name || 'market-item') + '.zip'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
 export const listAgents = () => request('/agent/list')
 export const listSubAgents = () => request('/agent/sub')
 /** 能力名册（登录用户可读）：智能体配置页的「指定内置工具」可选项从这里来，

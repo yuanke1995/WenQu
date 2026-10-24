@@ -219,6 +219,18 @@ public class UserSkillStore {
         return readText(dir.resolve(SKILL_FILE), MAX_SKILL_BYTES);
     }
 
+    /** 技能 frontmatter 里的 version（没有则空串）——市场上架时登记版本号用。 */
+    public String versionOf(String uid, String key) {
+        Path dir = findDir(uid, key);
+        if (dir == null) return "";
+        try {
+            Doc doc = readDoc(dir.resolve(SKILL_FILE), "", false);
+            return doc.version() == null ? "" : doc.version().trim();
+        } catch (RuntimeException e) {
+            return "";
+        }
+    }
+
     /** 读技能目录下的任意文本文件（路径穿越/超限/二进制一律拒绝）。 */
     public String readFile(String uid, String key, String relativePath) {
         Path dir = findDir(uid, key);
@@ -328,10 +340,46 @@ public class UserSkillStore {
         if (file.getSize() > MAX_ZIP_BYTES) {
             throw new BizException("技能包过大（上限 " + (MAX_ZIP_BYTES / 1024 / 1024) + "MB）");
         }
+        try {
+            return installZipStream(uid, file.getInputStream(), nameOverride, overwrite, reserved);
+        } catch (IOException e) {
+            throw new BizException("读取上传文件失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 从本地 zip 文件安装（市场/站内分发用）：与上传 zip 同一条校验链（路径/体积/解压总量）。
+     * <p>文件来源是服务端管理的市场快照包，不是用户直传——但内容仍可能是别的用户上架的，
+     * 所以校验一条不少：市场安装的信任边界与匿名上传相同。
+     */
+    public InstalledSkill installZipFile(String uid, Path zip, String nameOverride,
+                                         boolean overwrite, Set<String> reserved) {
+        if (zip == null || !Files.isRegularFile(zip)) {
+            throw new BizException("物品包缺失，请联系作者重新上架");
+        }
+        long size;
+        try {
+            size = Files.size(zip);
+        } catch (IOException e) {
+            throw new BizException("物品包读取失败：" + e.getMessage());
+        }
+        if (size > MAX_ZIP_BYTES) {
+            throw new BizException("技能包过大（上限 " + (MAX_ZIP_BYTES / 1024 / 1024) + "MB）");
+        }
+        try (InputStream in = Files.newInputStream(zip)) {
+            return installZipStream(uid, in, nameOverride, overwrite, reserved);
+        } catch (IOException e) {
+            throw new BizException("物品包读取失败：" + e.getMessage());
+        }
+    }
+
+    /** zip 安装主体：解压到 .tmp → 定位 SKILL.md → 校验 → 整包落位（上传与市场安装共用）。 */
+    private InstalledSkill installZipStream(String uid, InputStream in, String nameOverride,
+                                            boolean overwrite, Set<String> reserved) {
         Path tmp = userDir(uid).resolve(TMP_DIR).resolve(UUID.randomUUID().toString());
         try {
             Files.createDirectories(tmp);
-            extractZip(file.getInputStream(), tmp);
+            extractZip(in, tmp);
             Path skillRoot = locateSkillRoot(tmp);
             Doc doc = readDoc(skillRoot.resolve(SKILL_FILE), "", true);
             if ((nameOverride == null || nameOverride.isBlank()) && (doc.name() == null || doc.name().isBlank())) {
@@ -348,8 +396,7 @@ public class UserSkillStore {
             }
             Path target = skillDir(uid, name);
             promote(skillRoot, target, overwrite);
-            log.info("[AUDIT] zip 安装技能 uid={} skill={} bytes={} overwrite={}",
-                    uid, name, file.getSize(), overwrite);
+            log.info("[AUDIT] zip 安装技能 uid={} skill={} overwrite={}", uid, name, overwrite);
             return find(uid, name);
         } catch (BizException e) {
             throw e;

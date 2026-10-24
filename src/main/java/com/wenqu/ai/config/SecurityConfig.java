@@ -142,6 +142,10 @@ public class SecurityConfig implements WebMvcConfigurer {
         // 内置技能只读，用户自装（user-data/skills-users/{uid}）可增删改，工作区那一路要求会话归属；
         // 所有写端点的归属判定在 SkillController 内做（匿名直接 401），这里只按端点放行。
         if (path.equals("/api/ai/skill") || path.startsWith("/api/ai/skill/")) return true;
+        // 市场（技能市场 v1，个人资产同口径）：浏览/上架/安装/管理。浏览对全员开放（上架中的物品），
+        // 上架/管理/安装的归属判定在 MarketService 内做（上架=本人安装的技能、管理=作者或管理员、
+        // 安装=落进本人技能目录且与上传 zip 同一条校验链），这里只按端点放行。
+        if (path.equals("/api/ai/market") || path.startsWith("/api/ai/market/")) return true;
         if (path.equals("/api/ai/mcp") || path.startsWith("/api/ai/mcp/")) return true;
         // 可用模型清单（聊天页模型选择器/个人设置数据源）：只读、不含 baseUrl/apiKey
         if ("GET".equals(method) && path.equals("/api/ai/provider/available")) return true;

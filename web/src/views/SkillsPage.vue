@@ -74,6 +74,7 @@
                 <button v-if="s.editable" class="app-link-btn" @click="openEdit(s)">编辑</button>
                 <button v-if="s.disableable" class="app-link-btn" @click="toggle(s)">{{ s.disabled ? '启用' : '停用' }}</button>
                 <button v-if="s.deletable" class="app-link-btn" @click="download(s)">下载</button>
+                <button v-if="s.editable" class="app-link-btn" @click="openPublish(s)">上架</button>
                 <a-popconfirm v-if="s.deletable" title="删除这个技能？" ok-text="删除" cancel-text="取消"
                               @confirm="remove(s)">
                   <button class="app-link-btn danger">删除</button>
@@ -236,6 +237,9 @@
       <a-spin v-if="fileLoading" style="display:block;margin:28px auto" />
       <pre v-else class="skill-view-raw">{{ fileView.content }}</pre>
     </a-modal>
+
+    <!-- 上架到市场（与市场页共用弹窗） -->
+    <MarketPublishModal v-model:open="publishOpen" :preset-name="publishName" />
   </div>
 </template>
 
@@ -250,9 +254,18 @@ import {
   installSkillZip, listSkills, setSkillDisabled, updateSkill
 } from '../api'
 import { renderMd } from '../utils/markdown'
+import MarketPublishModal from '../components/MarketPublishModal.vue'
 
 const SOURCE_LABEL = { user: '我的技能', builtin: '内置技能', workspace: '工作区技能' }
 const SOURCE_ORDER = ['user', 'builtin', 'workspace']
+
+// ---------------- 上架到市场 ----------------
+const publishOpen = ref(false)
+const publishName = ref('')
+const openPublish = s => {
+  publishName.value = s.name
+  publishOpen.value = true
+}
 
 const skills = ref([])
 const remote = ref({ enabled: false, hosts: [] })

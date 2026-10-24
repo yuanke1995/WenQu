@@ -1145,6 +1145,48 @@ CREATE TABLE IF NOT EXISTS `c_ai_session_event` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='会话事件账本（结构性事件，服务过程回放与审计；旁路写入，失败不影响问答）';
 
 -- ============================================
+-- 2026-10-24: 市场（v1 技能市场；底座按多物品类型设计，item_type 先只开放 skill）
+-- 安装即复制（fork）：装完就是用户自己的独立副本，与市场条目再无引用关系；
+-- 「有更新」只是提示（安装记录里的版本 ≠ 条目当前版本），升级 = 覆盖重装一份。
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS `c_ai_market_item` (
+    `id`            VARCHAR(50)  NOT NULL COMMENT '主键ID (UUID)',
+    `item_type`     VARCHAR(20)  NOT NULL DEFAULT 'skill' COMMENT '物品类型: skill（预留 agent/workflow/mcp）',
+    `item_key`      VARCHAR(64)  NOT NULL COMMENT '稳定标识（skill=技能名；同一作者同名物品重复上架=更新同一条）',
+    `name`          VARCHAR(128) NOT NULL COMMENT '展示名',
+    `summary`       VARCHAR(256) DEFAULT NULL COMMENT '一句话简介（列表卡片）',
+    `description`   MEDIUMTEXT   COMMENT '详细介绍（详情页，Markdown）',
+    `author_uid`    VARCHAR(64)  NOT NULL COMMENT '上架人（c_ai_user.uid；本人与管理员可管理）',
+    `tags`          VARCHAR(256) DEFAULT NULL COMMENT '标签（逗号分隔，供列表过滤）',
+    `version`       VARCHAR(32)  NOT NULL DEFAULT '1' COMMENT '版本号（纯展示；「有更新」不依赖它，见 content_hash）',
+    `content_hash`  CHAR(64)     DEFAULT NULL COMMENT '快照内容指纹（zip 的 SHA-256）：与安装记录比对出「有更新」——作者忘升版本号也能检出内容变化，反之只改卡片文案不误报',
+    `status`        VARCHAR(16)  NOT NULL DEFAULT 'online' COMMENT '状态: online=上架中 offline=已下架（下架后列表不可见、安装被拒，安装过的副本不受影响）',
+    `payload_path`  VARCHAR(512) NOT NULL COMMENT '物品包相对路径（user-data/market 下；skill=zip 包，复用技能安装校验链）',
+    `install_count` INT          NOT NULL DEFAULT 0 COMMENT '累计安装次数（覆盖重装也计入）',
+    `create_time`   DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time`   DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_type_key_author` (`item_type`, `item_key`, `author_uid`),
+    KEY `idx_type_status` (`item_type`, `status`),
+    KEY `idx_author` (`author_uid`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='市场物品登记表';
+
+CREATE TABLE IF NOT EXISTS `c_ai_market_install` (
+    `id`          VARCHAR(50) NOT NULL COMMENT '主键ID (UUID)',
+    `uid`         VARCHAR(64) NOT NULL COMMENT '安装人（c_ai_user.uid）',
+    `item_id`     VARCHAR(50) NOT NULL COMMENT '市场物品（c_ai_market_item.id）',
+    `item_type`   VARCHAR(20) NOT NULL DEFAULT 'skill' COMMENT '物品类型（冗余，便于按类型对账）',
+    `version`     VARCHAR(32) NOT NULL COMMENT '安装时的物品版本（展示用）',
+    `content_hash` CHAR(64)   DEFAULT NULL COMMENT '安装时的内容指纹（条目当前指纹 ≠ 此值即提示「有更新」）',
+    `create_time` DATETIME    DEFAULT CURRENT_TIMESTAMP COMMENT '首次安装时间',
+    `update_time` DATETIME    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '最近一次安装时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_uid_item` (`uid`, `item_id`),
+    KEY `idx_item` (`item_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='市场安装记录（「已安装/有更新」徽标依据；卸载技能不删记录）';
+
+-- ============================================
 -- 退役清理（全框架化 P3：技能与记忆改由文件系统 + 框架工具承载）
 -- 本文件由 spring.sql.init 在每次启动时逐条执行，故这四条 DROP 是幂等的：表不存在就是空操作。
 -- 为什么必须写在这里而不是「删掉建表语句就完事」：schema.sql 只管建表，存量库里已经存在的表

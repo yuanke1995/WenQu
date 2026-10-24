@@ -30,6 +30,8 @@ const routes = [
   // 智能体工作台不再要求管理员：MCP 外部工具是个人资产，所有人都要能进来管自己的；
   // 其中的「模型供应商 / 智能体」Tab 在页内按管理员身份显隐（见 AgentsHubPage）
   { path: '/agents', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/AgentsHubPage.vue')) }], meta: { title: '智能体' } },
+  // 市场：发现/安装同事上架的技能，或上架自己的（个人资产口径，所有登录用户；手机上走桌面引导卡）
+  { path: '/market', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/MarketplacePage.vue')) }], meta: { title: '市场' } },
   // 模型供应商并入智能体页 Tab（?tab=providers）；旧入口重定向
   { path: '/providers', redirect: { path: '/agents', query: { tab: 'providers' } } },
   { path: '/knowledge', component: page(() => import('./views/AppLayout.vue')), children: [
@@ -50,7 +52,8 @@ const routes = [
   { path: '/permissions', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/PermissionsPage.vue')) }], meta: { requiresAdmin: true, title: '权限管理' } },
   { path: '/dashboard', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/DashboardPage.vue')) }], meta: { requiresAdmin: true, title: '数据看板' } },
   { path: '/settings', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/SettingsPage.vue')) }], meta: { requiresAdmin: true, title: '系统设置' } },
-  { path: '/oidc-providers', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/OidcProvidersPage.vue')) }], meta: { requiresAdmin: true, title: '单点登录' } },
+  // 单点登录并入权限管理页 Tab（?tab=oidc）；旧入口重定向
+  { path: '/oidc-providers', redirect: { path: '/permissions', query: { tab: 'oidc' } } },
   { path: '/evaluation', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/EvaluationPage.vue')) }], meta: { requiresAdmin: true, title: '检索评估' } },
   // 兜底：未知路径（含历史遗留的旧链接）统一回到对话页
   { path: '/:pathMatch(.*)*', redirect: '/chat' }
