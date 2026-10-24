@@ -19,7 +19,7 @@
       </span>
       <div class="pj-tools">
         <a-popover v-model:open="settingsOpen" trigger="click" :placement="mobileShell ? 'bottom' : 'bottomRight'"
-                   :overlay-style="{ width: mobileShell ? 'min(340px, 92vw)' : '340px' }">
+                   :overlay-style="{ width: mobileShell ? 'min(360px, 92vw)' : '400px' }">
           <template #content>
             <div class="pj-set">
               <div class="pj-set-row">
@@ -29,7 +29,7 @@
               </div>
               <div class="pj-set-note">助手带的知识范围与工具会一起生效；只影响这个工作区里以后的新对话</div>
               <template v-if="!isImplicit">
-                <div class="pj-set-row pj-set-row-top">
+                <div class="pj-set-col">
                   <span class="pj-k">工作区资料</span>
                   <a-select class="pj-v" mode="multiple" :value="form.kbIds" :options="kbOptions"
                             placeholder="不绑定：检索沿用我的全部知识库" :max-tag-count="3" allow-clear
@@ -38,18 +38,18 @@
                 <div class="pj-set-note">绑定后，这个场子里的对话没点名别的库、助手也没绑库时，检索只搜这里选的库——进了场子就搜场子里的资料；@ 某个别的库仍可临时越出</div>
                 <div class="pj-set-row">
                   <span class="pj-k">共用目录</span>
-                  <a-switch :checked="form.sharedWorkdir === 1" :disabled="archiving" @change="saveShared" />
+                  <a-switch class="pj-sw" :checked="form.sharedWorkdir === 1" :disabled="archiving" @change="saveShared" />
                 </div>
                 <div class="pj-set-note">开启后本区所有对话共用一个工作目录：这里放的文件模型直接可读、跨对话互相可见；关闭则每条对话各自一份目录，互相看不见</div>
                 <div class="pj-set-row">
                   <span class="pj-k">记忆隔离</span>
-                  <a-switch :checked="form.memoryIsolated === 1" :disabled="archiving" @change="saveMemoryIsolated" />
+                  <a-switch class="pj-sw" :checked="form.memoryIsolated === 1" :disabled="archiving" @change="saveMemoryIsolated" />
                 </div>
                 <div class="pj-set-note">开启后这是个「干净房间」：对话不带入也不写入你的个人记忆（改设置后新开轮次生效），上下文全靠约定、资料域和目录里的文件；给敏感项目用</div>
                 <div class="pj-set-div"></div>
                 <div class="pj-set-row">
                   <span class="pj-k">复用</span>
-                  <button class="app-btn ghost" @click="openTpl">按这个场子的设置再建一个</button>
+                  <button class="app-btn ghost" @click="openTpl">复制</button>
                 </div>
                 <div class="pj-set-note">新工作区带上这里的约定、资料域与开关；对话、文件、事项不带过去</div>
               </template>
@@ -89,6 +89,13 @@
           <plus-outlined /> 新建对话
         </button>
       </div>
+    </div>
+
+    <!-- 轮次占用条：共用目录的工作区同一时刻只放一轮在跑；谁在跑、跑了多久摆在这里，别等发送被拒才知道 -->
+    <div v-if="turnGuard.busy" class="pj-busy" role="status">
+      <span class="pj-busy-dot" aria-hidden="true"></span>
+      <span class="pj-busy-text">{{ turnGuard.describe || '有任务' }}正在此工作区运行 · 已跑 {{ guardElapsedText }}</span>
+      <button v-if="turnGuard.sessionId" class="pj-link-btn" @click="openGuardSession">去看</button>
     </div>
 
     <div class="app-page-body">
@@ -141,30 +148,22 @@
             </div>
           </template>
           <a-tab-pane key="files">
-            <template #tab><span>文件 <span class="pj-count">{{ fileRows.length }}</span></span></template>
+            <template #tab><span>文件 <span class="pj-count">{{ fileCount }}</span></span></template>
 
-            <!-- 工具条：这一层在哪儿（面包屑）＋整个目录的合计＋三个写动作。
-                 标签页上的计数是本层条数，这里的合计说的是整个目录——删除弹窗要用后者 -->
+            <!-- 工具条：整棵树的合计＋三个写动作。层级由树本身表达，不再要面包屑；
+                 上传/新建默认落根目录，要放进某个文件夹就从它的 ⋯ 菜单点 -->
             <div class="pj-filebar">
-              <nav class="pj-crumb" aria-label="文件夹路径">
-                <button class="pj-crumb-item" :class="{ on: !dir }" type="button" @click="openDir('')">全部文件</button>
-                <template v-for="(seg, i) in crumbs" :key="i">
-                  <span class="pj-crumb-sep">›</span>
-                  <button class="pj-crumb-item" :class="{ on: i === crumbs.length - 1 }" type="button"
-                          @click="openDir(crumbAt(i))">{{ seg }}</button>
-                </template>
-              </nav>
               <span v-if="filesAll && !filesError" class="pj-hint pj-crumb-sum"
-                    :title="'整个工作区目录的合计'">{{ filesAll }}{{ filesCapped ? '+' : '' }} 个 · {{ fmtSize(bytesAll) }}</span>
+                    :title="'整个工作区目录的合计'">全部文件 {{ filesAll }}{{ filesCapped ? '+' : '' }} 个 · {{ fmtSize(bytesAll) }}</span>
               <div class="pj-filebar-act">
                 <a-checkbox v-model:checked="overwrite" class="pj-overwrite"
                             title="上传时同名文件直接换掉；不勾则报出那个名字，让你先改名或删掉">重名时覆盖</a-checkbox>
                 <button class="pj-act" type="button" :disabled="!!uploading || isArchived || !!filesError"
-                        :title="isArchived ? '工作区已归档，恢复后才能放文件' : ''" @click="pickFiles">
+                        :title="isArchived ? '工作区已归档，恢复后才能放文件' : ''" @click="pickFiles()">
                   <upload-outlined /> 上传
                 </button>
                 <button class="pj-act" type="button" :disabled="isArchived || !!filesError"
-                        :title="isArchived ? '工作区已归档，恢复后才能放文件' : ''" @click="openMkdir">
+                        :title="isArchived ? '工作区已归档，恢复后才能放文件' : ''" @click="openMkdir()">
                   <folder-add-outlined /> 新建文件夹
                 </button>
                 <button class="pj-act" type="button" :disabled="exporting || !filesAll" @click="doExportZip">
@@ -184,9 +183,9 @@
               <button v-if="form.sharedWorkdir !== 1 && !isArchived" class="pj-link-btn"
                       @click="saveShared(true)">打开共用目录</button>
             </div>
-            <!-- 截断：本层只列了最近这些，更早的要靠导出或新建文件夹把它们分开 -->
-            <div v-if="filesTruncated && !filesError" class="pj-hint pj-tabnote">
-              这一层只列了最近 {{ fileRows.length }} 项（共 {{ fileTotal }} 项），更早的可用打包导出整份查看
+            <!-- 截断：根目录条目太多只回了最近这些；子文件夹里超了的在树里各自说明 -->
+            <div v-if="rootLayer && rootLayer.truncated && !filesError" class="pj-hint pj-tabnote">
+              根目录只列了最近 {{ (rootLayer.entries || []).length }} 项（共 {{ fileTotal }} 项），更早的可用打包导出整份查看
             </div>
             <div v-if="artifactsError && !filesError" class="pj-hint pj-tabnote">
               {{ artifactsError }}，下面只列了工作目录里的文件（交付成产物的那些没并进来）
@@ -196,9 +195,9 @@
               {{ filesError }}
               <button class="pj-link-btn" @click="loadFiles">重试</button>
             </div>
-            <div v-else-if="!filteredFiles.length" class="pj-empty">
+            <div v-else-if="!fileViewRows.length" class="pj-empty">
               {{ kw ? '没有匹配的文件' : '还没有文件。可以直接把文件传进来，也可以让它在这个工作区里跑一段会写文件的命令。' }}
-              <button v-if="!kw && !isArchived" class="pj-link-btn" @click="pickFiles">上传文件</button>
+              <button v-if="!kw && !isArchived" class="pj-link-btn" @click="pickFiles()">上传文件</button>
               <button v-if="!kw && !isArchived" class="pj-link-btn" @click="goChat">去对话</button>
             </div>
             <template v-else>
@@ -211,53 +210,95 @@
                         @click="askDeletePaths(sel)">删除</button>
                 <button class="pj-link-btn" type="button" @click="sel = []">取消选择</button>
               </div>
-              <div class="pj-file-list" :class="{ 'pj-drop-on': dragOn }"
+              <div class="pj-file-list" :class="{ 'pj-drop-on': dropAt !== null }"
                    @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop">
-                <div v-for="f in filteredFiles" :key="f.key" class="pj-item"
-                     :class="{ 'pj-item-on': f.path && selSet.has(f.path) }" @click="onRowClick($event, f)">
-                  <!-- 勾选命中区是整个文字前的左侧。内层 checkbox 必须自己接住这一次点击：
-                       它带 @click.stop（防冒泡成整行跳转），只挂在外层 span 上时，
-                       点在那 16px 的框上会被 stop 掉、左侧反而白铺了（真机点验实测） -->
-                  <span v-if="f.path" class="pj-check-hit" @click="toggleSel(f)">
-                    <a-checkbox class="pj-check" :checked="selSet.has(f.path)" @click.stop="toggleSel(f)" />
-                  </span>
-                  <span v-else class="pj-check-hit pj-check-void" aria-hidden="true"></span>
-                  <span class="pj-item-title" :title="f.path || f.name">
-                    <folder-filled v-if="f.kind === 'dir'" class="pj-dir-ic" /><Hl :text="f.name" />
-                  </span>
-                  <span class="pj-badge-cell">
-                    <span v-if="f.artifact" class="pj-badge" title="已作为产物交付过（与这个文件是同一次产出的两份）">已交付</span>
-                  </span>
-                  <span class="pj-item-meta">{{ f.kind === 'dir' ? '文件夹' : fmtSize(f.size) }}</span>
-                  <span class="pj-item-meta">{{ fmtAgo(f.at) }}</span>
-                  <!-- 预览＝进预览台（与产物页、聊天区四个产物面同一待遇）：页面设计档给真实视口，读字档在应用里排版。
-                       落进工作目录的那一行用列表接口现签的地址；没落进来的那一行只有产物记录那份签名地址，
-                       判据共用 artifactView 那一份——同一份东西在这个页和聊天区给出不同的按钮集，用户只会当成随机行为。
-                       安全性靠服务端那份 CSP sandbox 头：这里的 HTML 是模型产出的，不带该头时这一跳等于
-                       让模型脚本跑在本域源上、能读登录令牌。Ctrl/中键点击照旧开成真标签页。 -->
-                  <a v-if="f.viewUrl || canPreview(f.artifact)" class="pj-act"
-                     :href="resolveImg(f.viewUrl || f.artifact.url)" target="_blank" rel="noopener"
-                     data-pv v-bind="pvAttrs(f)"
-                     title="预览（按住 Ctrl 或中键开成新标签页）">预览</a>
-                  <button v-if="f.kind === 'file'" class="pj-act" type="button" @click="download(f)">下载</button>
-                  <a v-else-if="f.artifact" :href="resolveImg(f.artifact.url)" :download="f.name" class="pj-act">下载</a>
-                  <!-- 行菜单：三个写动作收在 ⋯ 里，行宽才不会被按钮挤掉。
-                       注释必须待在 #overlay 外面——slot 里多出注释节点会让弹层渲染成空的 -->
-                  <a-dropdown v-if="f.path" :trigger="['click']" placement="bottomRight">
-                    <button class="pj-act pj-act-more" type="button" title="更多操作" @click.stop>
-                      <more-outlined />
+                <template v-for="r in fileViewRows" :key="r.key">
+                  <!-- 文件夹行：个数/体积是整棵子树的，先看计数就知道值不值得展开；拖文件到行上=传进这个文件夹 -->
+                  <div v-if="r.type === 'dir'" class="pj-item pj-item-dir"
+                       :class="{ 'pj-item-on': selSet.has(r.dir.path), 'pj-drop-dir': dropAt === r.dir.path }"
+                       @click="onRowClick($event, r.dir)" @dragover.stop.prevent="onRowDragOver(r.dir.path)">
+                    <span class="pj-check-hit" @click="toggleSel(r.dir)">
+                      <a-checkbox class="pj-check" :checked="selSet.has(r.dir.path)" @click.stop="toggleSel(r.dir)" />
+                    </span>
+                    <span class="pj-indent" :style="{ width: r.depth * 14 + 'px' }" aria-hidden="true"></span>
+                    <button class="pj-caret" type="button" :aria-expanded="r.open"
+                            :title="(r.open ? '收起 ' : '展开 ') + r.dir.path" @click.stop="toggleDir(r.dir.path)">
+                      <caret-right-outlined class="pj-caret-ic" :class="{ open: r.open }" />
                     </button>
-                    <template #overlay>
-                      <a-menu @click="info => rowAction(String(info && info.key), f)">
-                        <a-menu-item key="rename">重命名</a-menu-item>
-                        <a-menu-item key="move">移动到…</a-menu-item>
-                        <a-menu-item key="delete"><span class="pj-act-danger">删除</span></a-menu-item>
-                      </a-menu>
-                    </template>
-                  </a-dropdown>
-                </div>
+                    <span class="pj-item-title" :title="r.dir.path">
+                      <folder-filled class="pj-dir-ic" /><Hl :text="r.dir.name" />
+                    </span>
+                    <span class="pj-item-meta">{{ r.layer && !r.layer.error ? r.dir.count + ' 个' : '…' }}</span>
+                    <span class="pj-item-meta">{{ r.layer && !r.layer.error ? fmtSize(r.dir.size) : '' }}</span>
+                    <!-- 目录 ⋯：上传/新建可以指定落进这个文件夹，不用先传到根再挪进去。
+                         注释必须待在 #overlay 外面——slot 里多出注释节点会让弹层渲染成空的 -->
+                    <a-dropdown :trigger="['click']" placement="bottomRight">
+                      <button class="pj-act pj-act-more" type="button" title="更多操作" @click.stop>
+                        <more-outlined />
+                      </button>
+                      <template #overlay>
+                        <a-menu @click="info => rowAction(String(info && info.key), r.dir)">
+                          <a-menu-item key="upload-here">在这里上传</a-menu-item>
+                          <a-menu-item key="mkdir-here">新建子文件夹</a-menu-item>
+                          <a-menu-item key="rename">重命名</a-menu-item>
+                          <a-menu-item key="move">移动到…</a-menu-item>
+                          <a-menu-item key="delete"><span class="pj-act-danger">删除</span></a-menu-item>
+                        </a-menu>
+                      </template>
+                    </a-dropdown>
+                  </div>
+                  <!-- 层内提示（读不到/太大）：缩进对齐子内容，不冒充一行文件 -->
+                  <div v-else-if="r.type === 'note'" class="pj-subnote" :class="{ 'pj-suberr': r.error }"
+                       :style="{ marginLeft: 30 + r.depth * 14 + 'px' }">
+                    {{ r.text }}
+                    <button v-if="r.error" class="pj-link-btn" type="button" @click="retryDir(r.path)">重试</button>
+                  </div>
+                  <div v-else class="pj-item" :class="{ 'pj-item-on': r.file.path && selSet.has(r.file.path) }"
+                       @click="onRowClick($event, r.file)" @dragover.stop.prevent="onRowDragOver(parentOf(r.file.path))">
+                    <!-- 勾选命中区是整个文字前的左侧。内层 checkbox 必须自己接住这一次点击：
+                         它带 @click.stop（防冒泡成整行跳转），只挂在外层 span 上时，
+                         点在那 16px 的框上会被 stop 掉、左侧反而白铺了（真机点验实测） -->
+                    <span v-if="r.file.path" class="pj-check-hit" @click="toggleSel(r.file)">
+                      <a-checkbox class="pj-check" :checked="selSet.has(r.file.path)" @click.stop="toggleSel(r.file)" />
+                    </span>
+                    <span v-else class="pj-check-hit pj-check-void" aria-hidden="true"></span>
+                    <span class="pj-indent" :style="{ width: r.depth * 14 + 'px' }" aria-hidden="true"></span>
+                    <span class="pj-item-title" :title="r.file.path || r.file.name">
+                      <Hl :text="r.file.name" />
+                    </span>
+                    <span class="pj-badge-cell">
+                      <span v-if="r.file.artifact" class="pj-badge" title="已作为产物交付过（与这个文件是同一次产出的两份）">已交付</span>
+                    </span>
+                    <span class="pj-item-meta">{{ fmtSize(r.file.size) }}</span>
+                    <span class="pj-item-meta">{{ fmtAgo(r.file.at) }}</span>
+                    <!-- 预览＝进预览台（与产物页、聊天区四个产物面同一待遇）：页面设计档给真实视口，读字档在应用里排版。
+                         落进工作目录的那一行用列表接口现签的地址；没落进来的那一行只有产物记录那份签名地址，
+                         判据共用 artifactView 那一份——同一份东西在这个页和聊天区给出不同的按钮集，用户只会当成随机行为。
+                         安全性靠服务端那份 CSP sandbox 头：这里的 HTML 是模型产出的，不带该头时这一跳等于
+                         让模型脚本跑在本域源上、能读登录令牌。Ctrl/中键点击照旧开成真标签页。 -->
+                    <a v-if="r.file.viewUrl || canPreview(r.file.artifact)" class="pj-act"
+                       :href="resolveImg(r.file.viewUrl || r.file.artifact.url)" target="_blank" rel="noopener"
+                       data-pv v-bind="pvAttrs(r.file)"
+                       title="预览（按住 Ctrl 或中键开成新标签页）">预览</a>
+                    <button v-if="r.file.path" class="pj-act" type="button" @click="download(r.file)">下载</button>
+                    <a v-else-if="r.file.artifact" :href="resolveImg(r.file.artifact.url)" :download="r.file.name" class="pj-act">下载</a>
+                    <!-- 行菜单：写动作收在 ⋯ 里，行宽才不会被按钮挤掉 -->
+                    <a-dropdown v-if="r.file.path" :trigger="['click']" placement="bottomRight">
+                      <button class="pj-act pj-act-more" type="button" title="更多操作" @click.stop>
+                        <more-outlined />
+                      </button>
+                      <template #overlay>
+                        <a-menu @click="info => rowAction(String(info && info.key), r.file)">
+                          <a-menu-item key="rename">重命名</a-menu-item>
+                          <a-menu-item key="move">移动到…</a-menu-item>
+                          <a-menu-item key="delete"><span class="pj-act-danger">删除</span></a-menu-item>
+                        </a-menu>
+                      </template>
+                    </a-dropdown>
+                  </div>
+                </template>
               </div>
-              <div v-if="dragOn" class="pj-drop-tip" aria-hidden="true">松手就传进{{ dirLabel }}</div>
+              <div v-if="dropAt !== null" class="pj-drop-tip" aria-hidden="true">松手就传进{{ dropTipAt }}</div>
             </template>
           </a-tab-pane>
 
@@ -464,7 +505,7 @@
                         @confirm="doRemoveProject" />
 
     <!-- 三个写动作用的小弹窗：改名 / 新建文件夹 / 移动到…。都只改工作区目录，不碰归属 -->
-    <a-modal v-model:open="mkdirOpen" :title="'在' + dirLabel + '新建文件夹'" :confirm-loading="busy"
+    <a-modal v-model:open="mkdirOpen" :title="'在' + mkdirLabel + '新建文件夹'" :confirm-loading="busy"
              ok-text="创建" cancel-text="取消" :width="modalWidth" @ok="doMkdir">
       <a-input ref="mkdirInput" v-model:value="mkdirName" :maxlength="100" placeholder="文件夹名，例如 素材"
                @press-enter="doMkdir" />
@@ -475,7 +516,7 @@
              ok-text="保存" cancel-text="取消" :width="modalWidth" @ok="doRename">
       <a-input ref="renInput" v-model:value="renToName" :maxlength="100" placeholder="新名称"
                @press-enter="doRename" />
-      <div class="pj-mnote">还留在{{ dirLabel }}。</div>
+      <div class="pj-mnote">仍留在原来的文件夹里，只换名字。</div>
     </a-modal>
 
     <a-modal v-model:open="moveOpen" :title="moveCount > 1 ? '移动 ' + moveCount + ' 项到…' : '移动到…'"
@@ -491,7 +532,7 @@
     </a-modal>
 
     <!-- 以此工作区为模板再建一个：只带设置（约定/资料域/开关），不带历史 -->
-    <a-modal v-model:open="tplOpen" title="按这个场子的设置新建工作区" :confirm-loading="tplSaving"
+    <a-modal v-model:open="tplOpen" title="新建同款工作区" :confirm-loading="tplSaving"
              ok-text="创建" cancel-text="取消" :width="modalWidth" @ok="doCreateFromTpl">
       <a-input v-model:value="tplName" :maxlength="60" placeholder="新工作区名" @press-enter="doCreateFromTpl" />
       <div class="pj-mnote">会带上：约定、绑定的资料域、共用目录与记忆隔离开关。对话、文件、事项、运行记录不带过去。</div>
@@ -519,10 +560,10 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick, defineComponent, h } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
-import { PlusOutlined, CopyOutlined, UploadOutlined, FolderAddOutlined, FolderFilled, MoreOutlined } from '@ant-design/icons-vue'
+import { PlusOutlined, CopyOutlined, UploadOutlined, FolderAddOutlined, FolderFilled, MoreOutlined, CaretRightOutlined } from '@ant-design/icons-vue'
 import { getProject, updateProject, deleteProject, listArtifacts, listSessions, listAvailableAgents, listKnowledgeBases, listProjectFiles,
          downloadProjectFile, listScheduledJobs, createScheduledJob, runScheduledJob, listProjectWorkflows, runWorkflow,
-         setProjectStatus, setNewSessionProject, getProjectRuns,
+         setProjectStatus, setNewSessionProject, getProjectRuns, getProjectTurnGuard,
          exportProjectZip, uploadProjectFiles, createProjectDir, moveProjectEntry, projectBatch,
          listProjectTodos, createProjectTodo, updateProjectTodo, deleteProjectTodo,
          listInstructionHistory } from '../api'
@@ -571,15 +612,20 @@ const sessions = ref([])
 const sessionTotal = ref(0)
 const sessionError = ref('')
 const artifacts = ref([])
-const files = ref([])
 const filesError = ref('')
 /** 产物那份数据单独报错：文件列出来了但产物没并进来，看着就像「交付的东西凭空少了」 */
 const artifactsError = ref('')
-/** 本层条目数与是否截断（后端给的，别再把「只列最近 300 项」当成「就这些」） */
+/** 根层条目数与是否截断（后端给的，别再把「只列最近 300 项」当成「就这些」；子文件夹各自的截断随层存） */
 const fileTotal = ref(0)
 const filesTruncated = ref(false)
-/** 当前所在的文件夹（'' = 根）。列表接口给的是单层，所以位置由界面持有 */
-const dir = ref('')
+/** 树的各层清单：dirPath → { entries, total, truncated, error }。根那次调用带回全部文件夹清单，逐层并行取 */
+const layers = ref({})
+/** 收起的文件夹集合。默认全展开——工作区目录长不出几十层，摊开比一个个点开快 */
+const closedDirs = ref(new Set())
+/** 拖拽落点：null=没拖进列表，''=根目录，path=那个文件夹（行高亮跟落点走） */
+const dropAt = ref(null)
+/** 「在这里上传」的目标：工具条上传=根，文件夹 ⋯ 菜单上传=那个文件夹 */
+const uploadTarget = ref('')
 /** 整个目录的合计与文件夹清单、文件名集合（后端一次遍历给全，删除弹窗与产物去重都要用） */
 const filesAll = ref(0)
 const bytesAll = ref(0)
@@ -594,7 +640,6 @@ const busy = ref(false)
 const overwrite = ref(false)
 const uploading = ref('')
 const fileInput = ref(null)
-const dragOn = ref(false)
 const sel = ref([])
 const selSet = computed(() => new Set(sel.value))
 const mkdirOpen = ref(false)
@@ -668,51 +713,112 @@ const toMs = v => {
   return Number.isFinite(t) ? t : 0
 }
 
-/** 文件区 = 这一层的工作目录内容（文件夹在前）∪ 产物（只在根列）。
-    产物是从工作目录复制出去的同一份东西，不再各列一遍：与本层同名就挂「已交付」角标，
-    同名文件在别的文件夹里（names 里有）就整行不列——两处都出现等于把同一份东西摆两遍。 */
-const fileRows = computed(() => {
-  const rows = []
-  for (const f of files.value) {
-    rows.push({ key: 'f:' + f.path, kind: f.kind || 'file', name: f.name, path: f.path, size: f.size,
-                at: toMs(f.mtime), viewUrl: f.viewUrl || '', artifact: null })
-  }
-  const byName = new Map()
-  for (const r of rows) if (!byName.has(r.name)) byName.set(r.name, r)
-  if (!dir.value) {
-    const seen = new Set(namesAll.value)
-    for (const a of artifacts.value) {
-      const base = String(a.filename || '').split('/').pop()
-      const row = byName.get(base)
-      if (row) { row.artifact = a; continue }
-      if (seen.has(base)) continue
-      rows.push({ key: 'a:' + a.id, kind: 'artifact', name: base, path: '', size: a.size,
-                  at: toMs(a.createTime), viewUrl: '', artifact: a })
+/** 文件区 = 整棵目录树 ∪ 产物（只在根列）。后端一层一列：根那次带回全部文件夹清单（dirs），
+    逐层并行取完按路径折回树；产物是从工作目录复制出去的同一份东西，不再各列一遍——
+    与根层同名就挂「已交付」角标，同名文件在全目录任何位置出现过（names）就整行不列。 */
+const fileTree = computed(() => {
+  const root = { name: '', path: '', kind: 'dir', dirs: new Map(), files: [], count: 0, size: 0 }
+  for (const layer of Object.values(layers.value)) {
+    for (const f of (layer.entries || [])) {
+      if ((f.kind || 'file') !== 'file') continue
+      const segs = String(f.path || '').split('/').filter(Boolean)
+      segs.pop()   // 末段是文件名，前面的才是目录
+      let node = root
+      let acc = ''
+      for (const seg of segs) {
+        acc = acc ? acc + '/' + seg : seg
+        let d = node.dirs.get(seg)
+        if (!d) { d = { name: seg, path: acc, kind: 'dir', dirs: new Map(), files: [], count: 0, size: 0 }; node.dirs.set(seg, d) }
+        node = d
+      }
+      node.files.push({ name: f.name, path: f.path, size: f.size, at: toMs(f.mtime), viewUrl: f.viewUrl || '', artifact: null })
     }
   }
-  // 文件夹永远在前（同级之间按名字），文件与产物按修改时间倒序——与后端的排法一致，翻页才不会跳
-  return rows.sort((x, y) => {
-    const xd = x.kind === 'dir' ? 0 : 1
-    const yd = y.kind === 'dir' ? 0 : 1
-    if (xd !== yd) return xd - yd
-    return xd === 0 ? String(x.name).localeCompare(String(y.name)) : y.at - x.at
-  })
+  const byName = new Map()
+  for (const f of root.files) if (!byName.has(f.name)) byName.set(f.name, f)
+  const seen = new Set(namesAll.value)
+  for (const a of artifacts.value) {
+    const base = String(a.filename || '').split('/').pop()
+    const row = byName.get(base)
+    if (row) { row.artifact = a; continue }
+    if (seen.has(base)) continue
+    root.files.push({ name: base, path: '', size: a.size, at: toMs(a.createTime), viewUrl: '', artifact: a })
+  }
+  // 目录行上的个数/体积是整棵子树的：一个上百文件的构建目录先看计数就知道值不值得展开
+  const roll = d => {
+    for (const f of d.files) { d.count += 1; d.size += Number(f.size) || 0 }
+    for (const sub of d.dirs.values()) { roll(sub); d.count += sub.count; d.size += sub.size }
+    return d
+  }
+  return roll(root)
 })
-
-const crumbs = computed(() => (dir.value ? dir.value.split('/') : []))
-const crumbAt = i => crumbs.value.slice(0, i + 1).join('/')
-/** 「建在这里：素材」这类说明里的位置名——根目录要叫「根目录」，别显示成空串 */
-const dirLabel = computed(() => (dir.value ? '「' + dir.value + '」里' : '根目录'))
+const rootLayer = computed(() => layers.value[''] || null)
+const fileCount = computed(() => fileTree.value.count)
+/** 树按收起状态摊平成行：同层文件夹在前（名字序）、文件按修改时间倒序——沿用旧列表的读法。
+    forceOpen=无视收起状态全树摊平（搜索态用）：命中的文件可能正埋在收起的文件夹里 */
+const flattenTree = (forceOpen) => {
+  const out = []
+  const walk = (node, depth) => {
+    for (const d of [...node.dirs.values()].sort((a, b) => String(a.name).localeCompare(String(b.name)))) {
+      const open = forceOpen || !closedDirs.value.has(d.path)
+      const layer = layers.value[d.path] || null
+      out.push({ type: 'dir', key: 'd:' + d.path, depth, dir: d, open, layer })
+      if (!open) continue
+      if (layer && layer.error) {
+        out.push({ type: 'note', key: 'n:' + d.path, depth: depth + 1, path: d.path, error: true,
+                   text: '这个文件夹读不到：' + layer.error })
+      } else if (layer && layer.truncated) {
+        out.push({ type: 'note', key: 'n:' + d.path, depth: depth + 1, path: d.path, error: false,
+                   text: '文件夹太大，只列了最近 ' + (layer.entries || []).length + ' 项（共 ' + layer.total + ' 项），更早的用「打包导出」看整份' })
+      }
+      walk(d, depth + 1)
+    }
+    for (const f of [...node.files].sort((a, b) => b.at - a.at))
+      out.push({ type: 'file', key: f.path ? 'f:' + f.path : 'a:' + (f.artifact && f.artifact.id), depth, file: f })
+  }
+  walk(fileTree.value, 0)
+  return out
+}
+const treeRows = computed(() => flattenTree(false))
+/** 搜索态：强制全树摊平；文件按名字/路径命中，文件夹自己命中或底下有命中的都保留（保留层级，命中文件不会悬空） */
+const searchRows = computed(() => {
+  const q = kw.value.trim().toLowerCase()
+  if (!q) return treeRows.value
+  const m = t => String(t || '').toLowerCase().includes(q)
+  const mark = node => {
+    let any = m(node.name)
+    for (const sub of node.dirs.values()) if (mark(sub)) any = true
+    for (const f of node.files) if (m(f.name) || m(f.path)) any = true
+    node.hit = any
+    return any
+  }
+  mark(fileTree.value)
+  return flattenTree(true).filter(r => r.type === 'file'
+    ? m(r.file.name) || m(r.file.path)
+    : r.type === 'dir' && r.dir.hit)
+})
+const fileViewRows = searchRows
+/** 新建文件夹的落点（'' = 根，目录 ⋯ 菜单=那个文件夹）；说明里的位置名——根目录要叫「根目录」 */
+const mkdirTarget = ref('')
+const mkdirLabel = computed(() => (mkdirTarget.value ? '「' + mkdirTarget.value + '」里' : '根目录'))
 const parentOf = path => (path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '')
 const nameOf = path => String(path).split('/').pop()
 const modalWidth = computed(() => (mobileShell ? '92vw' : 420))
 const renFromName = computed(() => (renTarget.value ? nameOf(renTarget.value.path) : ''))
 const moveCount = computed(() => movePaths.value.length)
-/** 「移动到…」的候选：根目录＋整个目录里的文件夹（后端给的清单，不靠本层看得见的几个猜） */
-const dirChoices = computed(() => [
-  { value: '', label: '根目录' },
-  ...dirsAll.value.filter(d => d !== dir.value).map(d => ({ value: d, label: d }))
-])
+/** 「移动到…」的候选：根目录＋整个目录里的文件夹；要移的那个文件夹自己和它的子孙不能当目的地 */
+const dirChoices = computed(() => {
+  const moving = new Set()
+  for (const p of movePaths.value) {
+    if (!dirsAll.value.includes(p)) continue
+    moving.add(p)
+    for (const d of dirsAll.value) if (d.startsWith(p + '/')) moving.add(d)
+  }
+  return [{ value: '', label: '根目录' },
+    ...dirsAll.value.filter(d => !moving.has(d)).map(d => ({ value: d, label: d }))]
+})
+/** 拖拽提示里的落点名——根目录要叫「根目录」，别显示成空串 */
+const dropTipAt = computed(() => (dropAt.value ? '「' + dropAt.value + '」里' : '根目录'))
 
 /** 工作区内搜索：五类都过滤（此前漏了定时任务与工作流，搜任务名一片空白） */
 const hit = (...texts) => {
@@ -720,7 +826,6 @@ const hit = (...texts) => {
   if (!q) return true
   return texts.some(t => String(t || '').toLowerCase().includes(q))
 }
-const filteredFiles = computed(() => fileRows.value.filter(f => hit(f.name, f.path)))
 const filteredSessions = computed(() => sessions.value.filter(s => hit(s.title || '新对话', s.lastMessage)))
 const filteredJobs = computed(() => jobs.value.filter(j => hit(j.name, j.prompt)))
 const filteredWorkflows = computed(() => workflows.value.filter(w => hit(w.name)))
@@ -785,7 +890,7 @@ const hintChips = computed(() => {
     否则停在「文件」搜会话名会看到「没有匹配的文件」——用户读成搜不到，不会想到换栏 */
 const TAB_LABEL = { files: '文件', sessions: '会话', auto: '自动化', activity: '动态', todos: '事项' }
 const tabHits = computed(() => ({
-  files: filteredFiles.value.length,
+  files: searchRows.value.length,
   sessions: filteredSessions.value.length,
   auto: filteredJobs.value.length + filteredWorkflows.value.length,
   activity: filteredActivity.value.length,
@@ -958,7 +1063,7 @@ const doCreateFromTpl = async () => {
     const r = await createProject(n, id.value)
     tplOpen.value = false
     settingsOpen.value = false
-    message.success('已按这个场子的设置创建')
+    message.success('已创建同款工作区')
     const created = (r && r.data && r.data.id) || ''
     if (created) router.push('/project/' + created)
   } catch (e) {
@@ -1014,7 +1119,7 @@ const toggleArchive = async () => {
 
 const download = async f => {
   try {
-    await downloadProjectFile(id.value, f.path, f.name, dir.value)
+    await downloadProjectFile(id.value, f.path, f.name, '')
   } catch (e) {
     message.error('下载失败：' + (e.message || '请重试'))
   }
@@ -1043,16 +1148,28 @@ const toggleSel = f => {
   if (i >= 0) sel.value.splice(i, 1)
   else sel.value.push(f.path)
 }
-/** 有勾选时点整行＝加入/移出勾选（Gmail 式），没勾选时点文件夹行＝进那个文件夹。
+/** 有勾选时点整行＝加入/移出勾选（Gmail 式），没勾选时点文件夹行＝展开/收起它。
     判据用 closest()：a-checkbox 的 @click.stop 只盖得住内层 16px，外层 label 不转发点击 */
 const onRowClick = (e, f) => {
-  if (e.target.closest('.pj-check-hit, .pj-act, .pj-act-more, a')) return
+  if (e.target.closest('.pj-check-hit, .pj-act, .pj-act-more, a, .pj-caret')) return
   if (sel.value.length) { toggleSel(f); return }
-  if (f.kind === 'dir') openDir(f.path)
+  if (f.kind === 'dir') toggleDir(f.path)
+}
+
+/** 展开/收起一个文件夹；收起后再展开时若这层数据还没取过（超出预取上限的）就地补取 */
+const toggleDir = async path => {
+  const next = new Set(closedDirs.value)
+  const closing = !next.has(path)
+  if (closing) next.add(path)
+  else next.delete(path)
+  closedDirs.value = next
+  if (!closing && !layers.value[path]) await retryDir(path)
 }
 
 // a-menu 的 click 载荷是对象（key/keyPath/item/domEvent），不是裸 key：直接当 key 用会得到 "[object Object]"，三个动作静默失效
 const rowAction = (key, f) => {
+  if (key === 'upload-here') { openPicker(f.path); return }
+  if (key === 'mkdir-here') { openMkdir(f.path); return }
   if (key === 'rename') openRename(f)
   else if (key === 'move') openMove([f.path])
   else if (key === 'delete') askDeletePaths([f.path])
@@ -1075,37 +1192,46 @@ const writeRun = async fn => {
 }
 
 // ---------- 上传 ----------
-const pickFiles = () => fileInput.value && fileInput.value.click()
+/** 打开系统文件选择器。target=落进哪个文件夹（''=根）——工具条走根，目录 ⋯ 菜单带路径来 */
+const openPicker = (target = '') => {
+  uploadTarget.value = target
+  fileInput.value && fileInput.value.click()
+}
+const pickFiles = () => openPicker('')
 /** 选中同一个文件第二次也要触发 change：input 自己不会因为值相同再报，得由我们清一次 */
 const onInputClick = () => { fileInput.value && (fileInput.value.value = '') }
 const onPickFiles = e => uploadFiles(Array.from(e.target.files || []))
+/** 拖拽落点跟着悬停位置走：null=不在列表上、''=空白处（根目录）、path=某个文件夹行（文件行上=它的父文件夹） */
 const onDragOver = e => {
   if (isArchived.value || !e.dataTransfer) return
   e.preventDefault()
-  dragOn.value = true
+  dropAt.value = ''
 }
-const onDragLeave = () => { dragOn.value = false }
+const onRowDragOver = path => { dropAt.value = path }
+const onDragLeave = () => { dropAt.value = null }
 const onDrop = e => {
-  dragOn.value = false
-  if (isArchived.value) return
+  const at = dropAt.value
+  dropAt.value = null
+  if (isArchived.value || at === null) return
   e.preventDefault()
-  uploadFiles(Array.from((e.dataTransfer && e.dataTransfer.files) || []))
+  uploadFiles(Array.from((e.dataTransfer && e.dataTransfer.files) || []), at)
 }
 /** 一份一个请求：服务端同名就整单报错，打包发会变成「五个里第三个坏了，那前两个到底进没进」。
-    逐份发就看得见卡在哪一份，坏的也不会假装成功 */
-const uploadFiles = async list => {
+    逐份发就看得见卡在哪一份，坏的也不会假装成功。at 覆盖落点（拖拽进来），缺省用选择器记下的目标 */
+const uploadFiles = async (list, at) => {
+  const target = at !== undefined ? at : uploadTarget.value
   const picked = list.filter(Boolean)
   if (!picked.length) return
   if (isArchived.value) { message.warning('工作区已归档，恢复后才能放文件'); return }
   busy.value = true
-  dragOn.value = false
+  dropAt.value = null
   let ok = 0
   const bad = []
   for (let i = 0; i < picked.length; i++) {
     const f = picked[i]
     uploading.value = `上传中 ${i + 1}/${picked.length}：${f.name}`
     try {
-      await uploadProjectFiles(id.value, dir.value, [f], overwrite.value)
+      await uploadProjectFiles(id.value, target, [f], overwrite.value)
       ok++
     } catch (e) {
       bad.push(`${f.name}（${e.message || '失败'}）`)
@@ -1113,6 +1239,7 @@ const uploadFiles = async list => {
   }
   uploading.value = ''
   busy.value = false
+  uploadTarget.value = ''
   if (fileInput.value) fileInput.value.value = ''
   await loadFiles()
   if (!bad.length) message.success(ok > 1 ? `已上传 ${ok} 个文件` : '已上传')
@@ -1121,7 +1248,8 @@ const uploadFiles = async list => {
 }
 
 // ---------- 新建文件夹 ----------
-const openMkdir = () => {
+const openMkdir = (target = '') => {
+  mkdirTarget.value = target
   mkdirName.value = ''
   mkdirOpen.value = true
   nextTick(() => mkdirInput.value && mkdirInput.value.focus())
@@ -1129,7 +1257,8 @@ const openMkdir = () => {
 const doMkdir = async () => {
   const n = mkdirName.value.trim()
   if (!n) { message.warning('给文件夹起个名字'); return }
-  if (await writeRun(() => createProjectDir(id.value, dir.value ? dir.value + '/' + n : n))) {
+  const at = mkdirTarget.value
+  if (await writeRun(() => createProjectDir(id.value, at ? at + '/' + n : n))) {
     mkdirOpen.value = false
     message.success('已新建文件夹')
   }
@@ -1175,7 +1304,7 @@ const doMove = async () => {
 const askDeletePaths = paths => {
   if (!paths.length) return
   const one = paths.length === 1 ? paths[0] : ''
-  const isDir = !!one && fileRows.value.some(r => r.kind === 'dir' && r.path === one)
+  const isDir = !!one && dirsAll.value.includes(one)
   const title = paths.length === 1
     ? `删除「${nameOf(one)}」？`
     : `删除选中的 ${paths.length} 项？`
@@ -1289,14 +1418,18 @@ const onAppVisible = () => {
   if (document.visibilityState === 'visible' && Date.now() - filesLoadedAt > FILES_RESIGN_AFTER) loadFiles()
 }
 
-/** 文件栏是两份数据的合并视图（工作目录这一层 + 产物），一起取才不会一半新一半旧。
-    宿主目录读不到（如沙盒在远端）时如实提示，不伪装成空列表；取失败时全区数字也一起清掉——
-    留着上一次的「共 12 个」配一条读不到的列表，比报错更骗人 */
+/** 文件栏是整棵树 + 产物的合并视图，一起取才不会一半新一半旧。
+    根那次调用带回全部文件夹清单（dirs）与全区合计，各子文件夹并行补齐；单层失败只在该层标错，
+    不拖垮整棵树。宿主目录读不到（如沙盒在远端）时如实提示，不伪装成空列表；根层失败时全区数字
+    一起清掉——留着上一次的「共 12 个」配一条读不到的列表，比报错更骗人 */
+const FILES_LAZY_AHEAD = 40   // 一口气预取的文件夹数上限；更多的等展开时再取，别一进页就打几十个请求
+let filesSeq = 0
 const loadFiles = async () => {
-  const at = dir.value
+  const seq = ++filesSeq
   try {
-    const d = ((await listProjectFiles(id.value, at)) || {}).data || {}
-    files.value = d.entries || []
+    const d = ((await listProjectFiles(id.value, '')) || {}).data || {}
+    if (seq !== filesSeq) return
+    layers.value = { '': { entries: d.entries || [], total: d.total || 0, truncated: !!d.truncated, error: '' } }
     fileTotal.value = d.total || 0
     filesTruncated.value = !!d.truncated
     filesAll.value = d.files || 0
@@ -1307,8 +1440,20 @@ const loadFiles = async () => {
     agentShared.value = d.agentShared !== false
     filesError.value = ''
     filesLoadedAt = Date.now()
+    sel.value = []
+    await Promise.all(dirsAll.value.slice(0, FILES_LAZY_AHEAD).map(async path => {
+      try {
+        const s = ((await listProjectFiles(id.value, path)) || {}).data || {}
+        if (seq !== filesSeq) return
+        layers.value = { ...layers.value, [path]: { entries: s.entries || [], total: s.total || 0, truncated: !!s.truncated, error: '' } }
+      } catch (e2) {
+        if (seq !== filesSeq) return
+        layers.value = { ...layers.value, [path]: { entries: [], total: 0, truncated: false, error: e2.message || '读取失败' } }
+      }
+    }))
   } catch (e) {
-    files.value = []
+    if (seq !== filesSeq) return
+    layers.value = {}
     fileTotal.value = 0
     filesTruncated.value = false
     filesAll.value = 0
@@ -1316,10 +1461,10 @@ const loadFiles = async () => {
     filesCapped.value = false
     dirsAll.value = []
     namesAll.value = []
+    sel.value = []
     filesError.value = e.message || '工作区目录暂时读不到'
   }
-  if (at !== dir.value) return loadFiles()   // 取的过程中用户已经切走了：按新的那一层重取
-  sel.value = []
+  if (seq !== filesSeq) return
   try {
     artifacts.value = ((await listArtifacts(undefined, id.value)) || {}).data || []
     artifactsError.value = ''
@@ -1329,12 +1474,14 @@ const loadFiles = async () => {
   }
 }
 
-/** 进某个文件夹：先把这一层的读态清干净，别让上一个文件夹的行在新位置闪一下 */
-const openDir = next => {
-  if (next === dir.value) return
-  dir.value = next
-  dragOn.value = false
-  loadFiles()
+/** 单层补取：展开一个还没取过数据的文件夹（超出预取上限的）或该层读失败后重试 */
+const retryDir = async path => {
+  try {
+    const s = ((await listProjectFiles(id.value, path)) || {}).data || {}
+    layers.value = { ...layers.value, [path]: { entries: s.entries || [], total: s.total || 0, truncated: !!s.truncated, error: '' } }
+  } catch (e) {
+    layers.value = { ...layers.value, [path]: { entries: [], total: 0, truncated: false, error: e.message || '读取失败' } }
+  }
 }
 
 const reloadTab = () => {
@@ -1436,7 +1583,7 @@ const load = async () => {
     // 落点只在首次决定：有动静先看动态（这个场子最近发生过什么）；空工作区则给「新建对话」的会话空态，
     // 有文件没动静（刚传完材料还没聊）给文件栏
     const want = activityRows.value.length ? 'activity'
-      : (fileRows.value.length ? 'files' : 'sessions')
+      : (fileCount.value ? 'files' : 'sessions')
     if (!loadedOnce.value && want !== tab.value) {
       skipTabWatch = true
       tab.value = want
@@ -1451,6 +1598,27 @@ const load = async () => {
 
 /** 弹层里点删除：先收掉弹层，别让二选一弹窗压在还开着的弹层上 */
 const removeProject = () => { settingsOpen.value = false; delOpen.value = true }
+
+// ---- 轮次占用条（租约感知）：共用目录的工作区正在跑谁，进来一眼看到，别等发送被拒才知道 ----
+const turnGuard = ref({ busy: false })
+let guardTimer = null
+const guardElapsedText = computed(() => {
+  const ms = turnGuard.value.elapsedMs || 0
+  if (ms < 60000) return '不足 1 分钟'
+  const min = Math.floor(ms / 60000)
+  if (min < 60) return min + ' 分钟'
+  return Math.floor(min / 60) + ' 小时 ' + (min % 60) + ' 分钟'
+})
+const loadTurnGuard = async () => {
+  try {
+    const r = await getProjectTurnGuard(id.value)
+    turnGuard.value = (r && r.data) || { busy: false }
+  } catch (e) { /* 查询失败静默：占用条是提示不是阻断，失败就当下一次轮询再说 */ }
+}
+const openGuardSession = () => {
+  if (turnGuard.value.sessionId) router.push({ path: '/chat', query: { sid: turnGuard.value.sessionId } })
+}
+
 /** 删除二选一：withFiles=false 保留工作目录（默认）；true 连文件一起删（后端先删文件、失败即整单失败） */
 const doRemoveProject = async withFiles => {
   deleting.value = true
@@ -1469,6 +1637,9 @@ const doRemoveProject = async withFiles => {
 onMounted(async () => {
   document.addEventListener('visibilitychange', onAppVisible)
   load()
+  // 占用条 10s 轮询：工作区页是旁观位，不必秒级实时；挂到页面生命周期上，离开即停
+  loadTurnGuard()
+  guardTimer = setInterval(loadTurnGuard, 10000)
   try {
     const r = await listAvailableAgents()
     agents.value = (r && r.data) || []
@@ -1481,7 +1652,10 @@ onMounted(async () => {
   } catch (e) { kbList.value = [] }
   finally { kbLoading.value = false }
 })
-onUnmounted(() => document.removeEventListener('visibilitychange', onAppVisible))
+onUnmounted(() => {
+  document.removeEventListener('visibilitychange', onAppVisible)
+  if (guardTimer) { clearInterval(guardTimer); guardTimer = null }
+})
 
 /**
  * 换工作区：路由复用同一个组件实例，onMounted 不会再跑，所以这里自己结算。
@@ -1498,11 +1672,14 @@ watch(id, () => {
   sessionError.value = ''
   artifacts.value = []
   artifactsError.value = ''
-  files.value = []
+  layers.value = {}
   filesError.value = ''
-  // 目录位置与勾选是上一个工作区的状态：不一起清，第二个工作区会开在对方那个文件夹名下
-  dir.value = ''
+  // 树的收起状态与各落点是上一个工作区的：不一起清，第二个工作区会把别人的文件夹收着、传进别人的路径
+  closedDirs.value = new Set()
   sel.value = []
+  dropAt.value = null
+  uploadTarget.value = ''
+  mkdirTarget.value = ''
   dirsAll.value = []
   namesAll.value = []
   agentShared.value = true
@@ -1510,7 +1687,7 @@ watch(id, () => {
   bytesAll.value = 0
   filesCapped.value = false
   fileTotal.value = 0
-  dragOn.value = false
+  filesTruncated.value = false
   mkdirOpen.value = false
   renOpen.value = false
   moveOpen.value = false
@@ -1529,6 +1706,9 @@ watch(id, () => {
   settingsOpen.value = false
   nameEditing.value = false
   jobFormOpen.value = false
+  // 占用条跟着换工作区：先清旧值再立刻查一次（不等下一个 10s 拍）
+  turnGuard.value = { busy: false }
+  loadTurnGuard()
   load()
 })
 </script>
@@ -1537,6 +1717,18 @@ watch(id, () => {
 /* ---- 页头：名字就地改 + 归档态 + 设置弹层入口 + 唯一的主行动 ---- */
 .pj-tools { margin-left: auto; display: flex; align-items: center; gap: var(--app-sp-2); flex: none; }
 .pj-title { display: flex; align-items: center; gap: var(--app-sp-2); }
+
+/* ---- 轮次占用条：弱提示不抢戏（琥珀细条），只是让人在动手前知道场子里有人 ---- */
+.pj-busy {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 10px; padding: 6px 12px;
+  border: 1px solid var(--app-warn-text); border-radius: 8px;
+  background: var(--app-warn-weak); color: var(--app-warn-text);
+  font-size: var(--app-fs-sm);
+}
+.pj-busy-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--app-warn-text); flex: none; animation: pj-busy-pulse 1.6s ease-in-out infinite; }
+@keyframes pj-busy-pulse { 0%, 100% { opacity: .4; } 50% { opacity: 1; } }
+.pj-busy-text { flex: 1; min-width: 0; }
 .pj-pen {
   border: 0; background: transparent; cursor: pointer; padding: 1px 5px; border-radius: var(--app-radius-sm);
   color: var(--app-label-tertiary); font-size: var(--app-fs-sm); font-family: inherit;
@@ -1560,7 +1752,10 @@ watch(id, () => {
 /* ---- 设置弹层：teleport 到 body，靠元素自身的 data-v 命中 ---- */
 .pj-set { display: flex; flex-direction: column; gap: var(--app-sp-2); }
 .pj-set-row { display: grid; grid-template-columns: 62px 1fr; align-items: center; gap: var(--app-sp-2); }
-.pj-set-row .app-btn { justify-self: start; }   /* 弹层只有 340px：按钮拉满会看着像两块板 */
+.pj-set-row .app-btn { justify-self: start; }   /* 按钮拉满会看着像两块板 */
+.pj-set-row .pj-sw { justify-self: end; }       /* 开关贴右（设置面板惯例）；网格里不加这条会被拉伸成整条胶囊 */
+/* 宽控件行（多选资料域/复用按钮）：标签独占一行、控件通栏，不挤在 62px 标签列旁 */
+.pj-set-col { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 .pj-k { font-size: var(--app-fs-sm); color: var(--app-label-secondary); }
 .pj-v { width: 100%; }
 .pj-set-note { font-size: var(--app-fs-xs); line-height: 1.6; color: var(--app-label-tertiary); }
@@ -1733,19 +1928,24 @@ watch(id, () => {
   border-radius: var(--app-radius-sm); background: var(--app-accent-weak); color: var(--app-accent);
 }
 
-/* ---- 文件栏：面包屑 + 全区合计 + 写动作 ---- */
+/* ---- 文件栏：全区合计 + 写动作（层级由树本身表达） ---- */
 .pj-filebar { display: flex; align-items: center; gap: var(--app-sp-2); margin-bottom: var(--app-sp-2); }
-.pj-crumb { display: flex; align-items: center; gap: 2px; min-width: 0; flex-wrap: wrap; }
-.pj-crumb-item {
-  border: 0; background: transparent; cursor: pointer; font: inherit; font-size: var(--app-fs-sm);
-  color: var(--app-accent); padding: 1px 5px; border-radius: var(--app-radius-sm);
-  max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.pj-crumb-item:hover { background: var(--app-accent-weak); }
-.pj-crumb-item.on { color: var(--app-label-primary); cursor: default; }
-.pj-crumb-item.on:hover { background: transparent; }
-.pj-crumb-sep { font-size: var(--app-fs-sm); color: var(--app-label-tertiary); }
 .pj-crumb-sum { flex: none; }
+/* 树：缩进用固定宽 span（不嵌套 ul，行高与旧列表一致）；展开钮独立命中区，别跟整行点击打架 */
+.pj-indent { flex: none; height: 1px; }
+.pj-caret {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 22px; border: 0; background: transparent; padding: 0;
+  cursor: pointer; color: var(--app-label-tertiary);
+}
+.pj-caret:hover { color: var(--app-label-primary); }
+.pj-caret-ic { font-size: 11px; transition: transform .15s; }
+.pj-caret-ic.open { transform: rotate(90deg); }
+/* 拖到某个文件夹行上：那行亮成落点 */
+.pj-item.pj-drop-dir { background: var(--app-accent-weak); outline: 1px dashed var(--app-accent-border); outline-offset: -1px; }
+/* 层内提示（读不到/太大）：缩进对齐子内容，不冒充一行文件 */
+.pj-subnote { font-size: var(--app-fs-xs); color: var(--app-label-tertiary); padding: 3px 0; }
+.pj-subnote.pj-suberr { color: var(--app-danger-text); }
 .pj-filebar-act { margin-left: auto; display: flex; align-items: center; gap: var(--app-sp-2); flex: none; }
 .pj-filebar-act .pj-act { padding: 4px 6px; }
 .pj-overwrite { font-size: var(--app-fs-sm); color: var(--app-label-secondary); }
