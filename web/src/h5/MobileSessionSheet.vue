@@ -58,21 +58,32 @@
 
     <!-- 壳外入口（对称 PC 侧栏 foot）：手机上聊天以外的页面只从这里进。
          不塞进顶栏：个人设置/帮助/主题/退出全是低频动作，挤在顶栏只会稀释「新建/查找」的位置；
-         通知是高频动作，单列在顶栏铃铛（带未读角标）。 -->
+         通知是高频动作，单列在顶栏铃铛（带未读角标）。
+         默认收成一行账户条（点它才展开）：这一排是 4 行 44px 按钮，sticky 贴底要常驻约 220px
+         ——手机上等于三条半会话，而会话才是这张 sheet 的主内容。收成一条只剩约 74px，
+         列表拿回那两条半。收起/展开的选择记在本地（与 PC 侧栏的工作区折叠同一套做法）。 -->
     <div v-if="!menuFor" class="ss-foot">
-      <button class="ss-foot-btn" type="button" @click="$emit('profile')"><user-outlined />个人设置</button>
-      <button class="ss-foot-btn" type="button" @click="$emit('help')"><question-circle-outlined />帮助中心</button>
-      <button class="ss-foot-btn" type="button" @click="$emit('artifacts')"><file-text-outlined />我的产物</button>
-      <button class="ss-foot-btn" type="button" @click="$emit('knowledge')"><database-outlined />知识库</button>
-      <button class="ss-foot-btn" type="button" @click="onToggleTheme">
-        <bulb-outlined />{{ themeState === 'dark' ? '切换亮色主题' : '切换暗色主题' }}
+      <button class="ss-foot-head" type="button" :aria-expanded="String(footOpen)" aria-controls="ss-foot-grid"
+              :title="footOpen ? '收起这些入口' : '展开这些入口'" @click="toggleFoot">
+        <UserAvatar class="ss-foot-avatar" :avatar="userAvatar" :name="userName" :size="26" />
+        <span class="ss-foot-name">{{ userName || '未登录' }}</span>
+        <right-outlined class="ss-foot-caret" :class="{ open: footOpen }" />
       </button>
-      <button class="ss-foot-btn danger" type="button" @click="doLogout"><logout-outlined />退出登录</button>
-      <!-- 安装到桌面（PWA）：Android 走 beforeinstallprompt，iOS 走图文指引（见 h5/pwa.js）；
-           应用内浏览器（微信等）与已安装时不显示 -->
-      <button v-if="installVisible" class="ss-foot-btn install" type="button" @click="onInstall">
-        <mobile-outlined />安装到桌面
-      </button>
+      <div v-show="footOpen" id="ss-foot-grid" class="ss-foot-grid">
+        <button class="ss-foot-btn" type="button" @click="$emit('profile')"><user-outlined />个人设置</button>
+        <button class="ss-foot-btn" type="button" @click="$emit('help')"><question-circle-outlined />帮助中心</button>
+        <button class="ss-foot-btn" type="button" @click="$emit('artifacts')"><file-text-outlined />我的产物</button>
+        <button class="ss-foot-btn" type="button" @click="$emit('knowledge')"><database-outlined />知识库</button>
+        <button class="ss-foot-btn" type="button" @click="onToggleTheme">
+          <bulb-outlined />{{ themeState === 'dark' ? '切换亮色主题' : '切换暗色主题' }}
+        </button>
+        <button class="ss-foot-btn danger" type="button" @click="doLogout"><logout-outlined />退出登录</button>
+        <!-- 安装到桌面（PWA）：Android 走 beforeinstallprompt，iOS 走图文指引（见 h5/pwa.js）；
+             应用内浏览器（微信等）与已安装时不显示 -->
+        <button v-if="installVisible" class="ss-foot-btn install" type="button" @click="onInstall">
+          <mobile-outlined />安装到桌面
+        </button>
+      </div>
     </div>
 
     <!-- 行操作（底部二级 sheet 太重，这里用行内操作条） -->
@@ -115,9 +126,10 @@ import { SearchOutlined, PlusOutlined, MoreOutlined, PushpinOutlined, StarOutlin
 import { installable, installEntryVisible, promptInstall } from './pwa'
 import BottomSheet from './BottomSheet.vue'
 import MoveToWorkspaceModal from '../components/MoveToWorkspaceModal.vue'
+import UserAvatar from '../components/UserAvatar.vue'
 import { sessionStore, loadSessions, loadSpaceMore, NO_SPACE_KEY } from '../views/store'
 import { pinSession, favoriteSession, renameSessionApi, logoutApi, deleteSessionApi, listProjects, moveSessionProject } from '../api'
-import { clearAuth } from '../utils/auth'
+import { authUser, clearAuth } from '../utils/auth'
 import { themeState, toggleTheme } from '../utils/theme'
 import { exportSessionMarkdown } from '../views/exportMd'
 
@@ -136,6 +148,19 @@ const emit = defineEmits(['close', 'select', 'new-chat', 'changed', 'profile', '
 // 主题与退出是本 sheet 自持的动作（与会话行操作同一层级）
 const router = useRouter()
 const onToggleTheme = () => toggleTheme()
+
+// 这排入口的收起态：默认收起（键不存在即收起），展开与否记本地——sticky 贴底的一整排
+// 按钮会常驻占掉约 220px 的列表高度，收成一行账户条（约 74px）才把位置还给会话。
+const FOOT_KEY = 'app_h5_foot_open'
+const footOpen = ref(localStorage.getItem(FOOT_KEY) === '1')
+const toggleFoot = () => {
+  footOpen.value = !footOpen.value
+  try { localStorage.setItem(FOOT_KEY, footOpen.value ? '1' : '0') } catch (e) { /* 忽略：隐私模式下写不进，本次会话内仍然可用 */ }
+}
+// 账户条的头像与昵称：读 auth.js 的响应式镜像（与 PC 侧栏 foot 同源，改完昵称立刻跟着变）。
+// 做空安全：身份未就绪时 authUser 为 null
+const userName = computed(() => { const i = authUser.value; return (i && (i.username || i.user)) || '' })
+const userAvatar = computed(() => (authUser.value && authUser.value.avatar) || '')
 
 // 安装到桌面：能弹浏览器安装提示就弹；iOS 没有该能力，给「分享 → 添加到主屏幕」图文步骤
 // （computed 而非一次性求值：beforeinstallprompt 在挂载后到达时入口要能自己出现）
@@ -346,12 +371,25 @@ const doDelete = () => {
 .ss-empty { padding: 24px 0; text-align: center; color: var(--app-text3); font-size: 13px; }
 .ss-more-load { min-height: 40px; border: none; background: transparent; color: var(--app-accent); font-size: 13px; touch-action: manipulation; }
 
-/* 壳外入口：sticky 贴底——会话列表很长时也不必滚到底才能退出登录（PC 侧栏 foot 同理） */
+/* 壳外入口：sticky 贴底——会话列表很长时也不必滚到底才能展开这排入口（PC 侧栏 foot 同理）。
+   默认只露下面那一行账户条，整排按钮由它展开。 */
 .ss-foot {
   position: sticky; bottom: 0; margin-top: 12px; padding-top: 10px;
   background: var(--app-panel); border-top: 1px solid var(--app-border);
-  display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
 }
+/* 账户条：收起态下它是这排入口的唯一出口，热区给满整行（44px） */
+.ss-foot-head {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  min-height: 44px; margin-bottom: 8px; padding: 0 4px;
+  border: none; border-radius: 10px; background: transparent;
+  color: var(--app-text2); font-size: 13px; text-align: left; touch-action: manipulation;
+}
+.ss-foot-head:active { background: var(--app-accent-weak); color: var(--app-accent); }
+.ss-foot-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 箭头口径与 PC 侧栏的分组折叠一致：折起 = >，展开 = 转 90° 向下 */
+.ss-foot-caret { margin-left: auto; flex: none; font-size: 11px; color: var(--app-text3); transition: transform .15s; }
+.ss-foot-caret.open { transform: rotate(90deg); }
+.ss-foot-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .ss-foot-btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 6px;
   min-height: 44px; border: 1px solid var(--app-border); border-radius: 10px;
