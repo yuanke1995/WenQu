@@ -151,51 +151,25 @@
             </span>
             <span class="col-time">{{ fmtTime(d.createTime) }}</span>
             <span class="col-act">
+              <!-- 行内只留「看内容 / 拿文件 / 换状态」三个高频动作，其余全收进 ⋯。
+                   十个链接按钮排一排会把列宽撑到卡片 overflow 之外，右侧按钮直接看不见。 -->
               <template v-if="d.status === 0">
                 <button class="app-link-btn" @click="openKb(d)">知识块</button>
-                <button class="app-link-btn" @click="openVersions(d)">版本</button>
                 <button v-if="canManageDoc(d)" class="app-link-btn" @click="toggleStatus(d, 1)">弃用</button>
               </template>
               <button v-else-if="d.status === 1 && canManageDoc(d)" class="app-link-btn" @click="toggleStatus(d, 0)">启用</button>
-              <button v-if="d.status !== 2 && canManageDoc(d)" class="app-link-btn" @click="openShare(d)">共享</button>
               <!-- 源文件下载（个人文件区）：解析中的文档源文件可能正在读写，仅非解析中提供 -->
               <button v-if="d.status !== 2" class="app-link-btn" @click="dlSource(d)">下载</button>
-              <button v-if="(d.status === 0 || d.status === 3) && canManageDoc(d)" class="app-link-btn" :disabled="reparsingId === d.id" @click="reparse(d.id)">重解析</button>
-              <a-tooltip v-if="d.status === 0 && canManageDoc(d)" title="对解析时未描述成功的图片后台补描述并回写知识块（重新向量化+索引同步）">
-                <button class="app-link-btn" :disabled="backfillingId === d.id" @click="backfillDesc(d.id)">补图描述</button>
-              </a-tooltip>
-              <!-- 标签编辑：即改即存（late-binding，检索侧直接生效，无需重建索引） -->
-              <a-popover v-if="canManageDoc(d)" trigger="click" placement="leftTop" @open-change="v => openTagEdit(d, v)">
-                <button class="app-link-btn">标签{{ docTags(d).length ? '·' + docTags(d).length : '' }}</button>
-                <template #content>
-                  <div style="width:280px" @click.stop>
-                    <a-select v-model:value="tagDraft" mode="tags" style="width:100%" :token-separators="[',', '，']"
-                              placeholder="输入后回车添加标签" />
-                    <div style="font-size:12px;color:var(--app-text3);margin-top:6px">
-                      供智能体「检索标签收窄」与列表筛选；检索侧即时生效，无需重建索引
-                    </div>
-                    <button class="app-btn primary sm" style="margin-top:8px" @click="saveTags(d)">保存</button>
-                  </div>
+              <a-dropdown v-if="rowMenu(d).length" :trigger="['click']" placement="bottomRight">
+                <button class="app-icon-btn row-more" type="button" title="更多操作"><more-outlined /></button>
+                <template #overlay>
+                  <a-menu @click="info => onRowMenu(d, String(info && info.key))">
+                    <a-menu-item v-for="m in rowMenu(d)" :key="m.key" :disabled="m.disabled">
+                      <span :class="{ 'row-danger': m.danger }" :title="m.tip">{{ m.label }}</span>
+                    </a-menu-item>
+                  </a-menu>
                 </template>
-              </a-popover>
-              <a-popover v-if="d.fileType === 'url' && canManageDoc(d)" title="自动刷新网页源" trigger="click" placement="leftTop">
-                <button class="app-link-btn" :class="{ active: d.autoRefresh === 1 }">自动刷新{{ d.autoRefresh === 1 ? '·开' : '' }}</button>
-                <template #content>
-                  <div style="width:264px">
-                    <a-switch :checked="d.autoRefresh === 1" @change="v => onRefreshToggle(d, v)" />
-                    <span style="margin-left:8px">开启后按周期重新抓网重建</span>
-                    <div v-if="d.autoRefresh === 1" style="margin-top:10px">
-                      <div style="font-size:12px;color:#888">刷新周期 (cron 5段: 分 时 日 月 周)</div>
-                      <a-input :value="d.refreshCron || ''" size="small" placeholder="0 3 * * *" style="margin-top:4px" @change="e => onRefreshCronInput(d, e.target.value)" />
-                      <div style="font-size:12px;color:#888;margin-top:4px">下次刷新: {{ d.nextRefreshAt || '—' }}</div>
-                      <button class="app-btn primary sm" style="margin-top:8px" @click="saveRefresh(d)">保存</button>
-                    </div>
-                  </div>
-                </template>
-              </a-popover>
-              <a-popconfirm v-if="canManageDoc(d)" title="删除后进入回收站，可恢复或彻底删除" @confirm="del(d.id)">
-                <button class="app-link-btn danger" :disabled="deletingId === d.id">删除</button>
-              </a-popconfirm>
+              </a-dropdown>
             </span>
           </div>
           <a-empty v-if="!loading && !list.length" :description="`暂无文档，点击右上角上传 ${uploadCfg.allowedExts.join(' / ')} 或导入网页`" style="padding:40px 0" />
@@ -204,32 +178,41 @@
     </div>
 
     <!-- 回收站：本库软删文档。恢复=原样回来（向量未动，检索即时可用）；彻底删除=物理清除不可恢复 -->
-    <a-modal v-model:open="recycleVisible" :title="`回收站 · ${currentKbName || '当前知识库'}`" :footer="null" :width="720">
+    <a-modal v-model:open="recycleVisible" :title="`回收站 · ${currentKbName || '当前知识库'}`" :footer="null" :width="900">
       <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
         <span style="font-size:12px;color:var(--app-text3)">共 {{ recycleRows.length }} 个已删除文档，内容保留中（向量/知识块/源文件不动，可随时恢复）</span>
         <a-popconfirm v-if="recycleRows.length" title="彻底删除本库回收站全部文档？不可恢复" @confirm="doPurgeRecycle">
           <button class="app-btn ghost sm" :disabled="recycleBusy" style="margin-left:auto">清空回收站</button>
         </a-popconfirm>
       </div>
-      <a-table :data-source="recycleRows" size="small" row-key="id" :loading="recycleLoading"
+      <!-- 批量操作栏：勾选后才出现，与文档列表同款（清空=整库，批量=选中项） -->
+      <div v-if="recycleSelected.length" class="batch-bar">
+        <span>已选 {{ recycleSelected.length }} 项：</span>
+        <button class="app-btn ghost" :disabled="recycleBusy" @click="doBatchRestore">批量恢复</button>
+        <a-popconfirm title="彻底删除选中文档？向量/知识块/源文件物理清除，不可恢复" @confirm="doBatchPurge">
+          <button class="app-btn danger" :disabled="recycleBusy">批量彻底删除</button>
+        </a-popconfirm>
+        <button class="app-link-btn" @click="recycleSelected = []">取消选择</button>
+      </div>
+      <!-- 列宽走 :columns 声明：a-table-column 上的 width 不进 colgroup（实测四列等分、文件名折三行） -->
+      <a-table :data-source="recycleRows" :columns="recycleCols" size="small" row-key="id"
+               :loading="recycleLoading" table-layout="fixed"
+               :row-selection="{ selectedRowKeys: recycleSelected, onChange: keys => recycleSelected = keys, columnWidth: 44 }"
                :pagination="recycleRows.length > 10 ? { pageSize: 10, size: 'small' } : false">
-        <a-table-column title="文件名" key="fileName" ellipsis>
-          <template #default="{ record }">{{ record.fileName }}</template>
-        </a-table-column>
-        <a-table-column title="大小" key="size" width="90">
-          <template #default="{ record }">{{ fmtSize(record.fileSize) }}</template>
-        </a-table-column>
-        <a-table-column title="删除时间" key="deletedAt" width="160">
-          <template #default="{ record }">{{ String(record.deletedAt || '').replace('T', ' ').slice(0, 19) || '—' }}</template>
-        </a-table-column>
-        <a-table-column title="操作" key="act" width="150">
-          <template #default="{ record }">
-            <button class="app-link-btn" :disabled="recycleBusy" @click="doRestore(record)">恢复</button>
-            <a-popconfirm title="彻底删除？向量/知识块/源文件物理清除，不可恢复" @confirm="doPurge(record)">
-              <button class="app-link-btn danger" :disabled="recycleBusy" style="margin-left:10px">彻底删除</button>
-            </a-popconfirm>
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'size'"><span class="rc-nowrap">{{ fmtSize(record.fileSize) }}</span></template>
+          <template v-else-if="column.key === 'deletedAt'">
+            <span class="rc-nowrap">{{ String(record.deletedAt || '').replace('T', ' ').slice(0, 19) || '—' }}</span>
           </template>
-        </a-table-column>
+          <template v-else-if="column.key === 'act'">
+            <span class="rc-nowrap">
+              <button class="app-link-btn" :disabled="recycleBusy" @click="doRestore(record)">恢复</button>
+              <a-popconfirm title="彻底删除？向量/知识块/源文件物理清除，不可恢复" @confirm="doPurge(record)">
+                <button class="app-link-btn danger" :disabled="recycleBusy" style="margin-left:10px">彻底删除</button>
+              </a-popconfirm>
+            </span>
+          </template>
+        </template>
       </a-table>
     </a-modal>
 
@@ -436,6 +419,26 @@
                      :share-config="shareTarget.shareConfig" :save-fn="saveShareFn"
                      :tip="SCOPE_TIP" @saved="fetchList" />
 
+    <!-- 文档标签：从行内 ⋯ 打开（即改即存，检索侧直接生效，无需重建索引） -->
+    <a-modal v-model:open="tagVisible" :title="'文档标签 · ' + tagDocName" :width="480" ok-text="保存" @ok="saveTags">
+      <a-select v-model:value="tagDraft" mode="tags" style="width:100%" :token-separators="[',', '，']"
+                placeholder="输入后回车添加标签" />
+      <div class="modal-note">供智能体「检索标签收窄」与列表筛选；检索侧即时生效，无需重建索引</div>
+    </a-modal>
+
+    <!-- 网页源自动刷新：草稿式编辑，点取消不会把行数据改脏 -->
+    <a-modal v-model:open="refreshVisible" :title="'自动刷新网页源 · ' + refreshDocName" :width="480" ok-text="保存" @ok="saveRefresh">
+      <div class="rf-row">
+        <a-switch v-model:checked="refreshDraft.enabled" />
+        <span>开启后按周期重新抓网重建</span>
+      </div>
+      <template v-if="refreshDraft.enabled">
+        <div class="modal-note">刷新周期（cron 5 段：分 时 日 月 周）</div>
+        <a-input v-model:value="refreshDraft.cron" placeholder="0 3 * * *" />
+        <div class="modal-note">下次刷新：{{ refreshDraft.nextAt || '—' }}</div>
+      </template>
+    </a-modal>
+
     <!-- 知识库配置（与知识库列表页同一弹窗组件）：当前库的解析/检索参数就地改，保存后刷新库信息 -->
     <KnowledgeBaseEditModal v-model:open="kbCfgVisible" :kb="currentKb" @saved="fetchKbs" />
 
@@ -460,7 +463,7 @@
 import { ref, computed, onMounted, onUnmounted, nextTick, watch, h } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { UploadOutlined, SearchOutlined, DownOutlined, LinkOutlined, SettingOutlined,
-         InboxOutlined, FileOutlined, CloseOutlined, ApartmentOutlined } from '@ant-design/icons-vue'
+         InboxOutlined, FileOutlined, CloseOutlined, ApartmentOutlined, MoreOutlined } from '@ant-design/icons-vue'
 import { useRoute, useRouter } from 'vue-router'
 import { listDocuments, uploadDocumentsBatch, updateDocumentStatus, reparseDocument, deleteDocument,
          batchDeleteDocuments, batchUpdateDocumentStatus, getDocumentStats, listKnowledgeByDoc, getKnowledgeDetail,
@@ -468,7 +471,8 @@ import { listDocuments, uploadDocumentsBatch, updateDocumentStatus, reparseDocum
          getRuntimeConfig, batchReparseDocuments, updateKnowledgeStatus, searchKnowledge,
          downloadDocumentSource, updateDocumentShare, listKnowledgeBases, moveDocToKb, importDocumentFromUrl, refreshConfigDocument,
          getDocumentQueueStats, listAvailableModels, backfillDescriptions, setDocumentTags,
-         listRecycleDocuments, restoreDocument, purgeDocument, purgeRecycleBin } from '../api'
+         listRecycleDocuments, restoreDocument, purgeDocument, purgeRecycleBin,
+         batchRestoreRecycled, batchPurgeRecycled } from '../api'
 import ShareScopeModal from './ShareScopeModal.vue'
 import KnowledgeBaseEditModal from '../components/KnowledgeBaseEditModal.vue'
 import KnowledgeGraphModal from '../components/KnowledgeGraphModal.vue'
@@ -578,7 +582,6 @@ const currentDoc = ref(null)   // 当前打开抽屉（知识块/版本）的文
 const loading = ref(false)
 const uploading = ref(false)
 const uploadPercent = ref(0)
-const deletingId = ref('')
 const reparsingId = ref('')
 const dragDepth = ref(0)
 const selectedKeys = ref([])
@@ -755,12 +758,17 @@ const uploadDesc = ref('')
 const uploadVisionRef = ref('')
 /** 选择器是否展开（高级项默认收起，主流程只剩"拖文件 → 开始上传"） */
 const visionEditing = ref(false)
-/** 当前库 parse_params.visionRef（库级图片描述模型；parseParams 为 JSON 字符串，未配/解析失败返回 ''） */
-const currentKbVisionRef = computed(() => {
+/** 当前库 parse_params 的双槽位引用（visionRef=图片描述模型、ocrRef=扫描件 OCR 模型；
+ *  parseParams 为 JSON 字符串，未配/解析失败返回空） */
+const currentKbParseRefs = computed(() => {
   const kb = currentKb.value
-  if (!kb || !kb.parseParams) return ''
-  try { return JSON.parse(kb.parseParams).visionRef || '' } catch { return '' }
+  if (!kb || !kb.parseParams) return { visionRef: '', ocrRef: '' }
+  try {
+    const p = JSON.parse(kb.parseParams) || {}
+    return { visionRef: p.visionRef || '', ocrRef: p.ocrRef || '' }
+  } catch { return { visionRef: '', ocrRef: '' } }
 })
+const currentKbVisionRef = computed(() => currentKbParseRefs.value.visionRef)
 /** 可用模型 ref → displayName（摘要文案解析用；打开弹窗时懒加载，拉不到只影响展示不影响上传） */
 const visionModelNames = ref({})
 async function loadVisionModelNames () {
@@ -774,17 +782,28 @@ async function loadVisionModelNames () {
 }
 /** 引用 → 展示名（清单里没有时退化为 ref 的模型 id 部分，与 ModelSelect 的兜底一致） */
 const visionRefName = r => visionModelNames.value[r] || (r.includes('/') ? r.slice(r.indexOf('/') + 1) : r)
+/**
+ * 跟随知识库时实际生效的模型：两槽位同名（含 OCR 未单独指定=回落图片描述，与后端解析期同口径）
+ * 只报一个名字；确实分开了才点名两条，免得用户以为只有一个模型。
+ */
+const kbInheritModels = computed(() => {
+  const desc = currentKbVisionRef.value ? visionRefName(currentKbVisionRef.value) : ''
+  const ocr = currentKbParseRefs.value.ocrRef ? visionRefName(currentKbParseRefs.value.ocrRef) : ''
+  if (!ocr || ocr === desc) return desc
+  return `图片描述 ${desc || '不处理'}、OCR ${ocr}`
+})
 /** 折叠摘要：本文档覆盖 > 跟随库（带模型名）> 未配置 */
 const visionSummary = computed(() => {
   const chosen = (uploadVisionRef.value || '').trim()
   if (chosen && chosen !== currentKbVisionRef.value) return '本文档指定：' + visionRefName(chosen)
-  const kbRef = currentKbVisionRef.value
-  if (!kbRef) return '未配置'
-  const name = visionModelNames.value[kbRef]
-  return '跟随知识库配置' + (name ? `（${name}）` : '')
+  const models = kbInheritModels.value
+  return models ? `跟随知识库配置（${models}）` : '未配置'
 })
-/** 空值选项文案：库已配=跟随；未配=不处理图片（与后端「空=跳过图片描述」语义一致） */
-const visionInheritLabel = computed(() => currentKbVisionRef.value ? '跟随知识库配置' : '不处理图片')
+/** 空值选项文案：库已配=跟随并点名模型；未配=不处理图片（与后端「空=跳过图片描述」语义一致） */
+const visionInheritLabel = computed(() => {
+  const models = kbInheritModels.value
+  return models ? `跟随知识库配置（${models}）` : '不处理图片'
+})
 /** 展开后的单行提示：已配库一笔带过；未配库说明何时需要选模型 */
 const visionHint = computed(() => currentKbVisionRef.value
   ? '通常无需修改；改选后本文档所有图片理解（插图描述、扫描页文字识别）都用该模型'
@@ -933,16 +952,21 @@ const tagOptions = computed(() => {
 const shownList = computed(() =>
   tagFilter.value ? list.value.filter(d => docTags(d).includes(tagFilter.value)) : list.value)
 const tagDraft = ref([])
-const tagEditId = ref('')
-function openTagEdit (d, open) {
-  if (open) { tagEditId.value = d.id; tagDraft.value = docTags(d) }
-  else if (tagEditId.value === d.id) tagEditId.value = ''
+const tagVisible = ref(false)
+const tagDoc = ref(null)
+const tagDocName = computed(() => tagDoc.value?.fileName || '')
+function openTagEdit (d) {
+  tagDoc.value = d
+  tagDraft.value = docTags(d)
+  tagVisible.value = true
 }
 /** 保存标签：成功后就地回写行数据（免整表重拉；标签筛选选项随之自动更新） */
-async function saveTags (d) {
+async function saveTags () {
+  const d = tagDoc.value
+  if (!d) return
   try {
     const r = await setDocumentTags(d.id, tagDraft.value.join(','))
-    if (r.success) { message.success('已更新标签'); d.tags = tagDraft.value.join(',') }
+    if (r.success) { message.success('已更新标签'); d.tags = tagDraft.value.join(','); tagVisible.value = false }
     else message.error(r.msg || '保存失败')
   } catch (e) { message.error(e.message || '保存失败') }
 }
@@ -952,12 +976,21 @@ const recycleVisible = ref(false)
 const recycleRows = ref([])
 const recycleLoading = ref(false)
 const recycleBusy = ref(false)
+const recycleSelected = ref([])
+// 文件名不设宽=吃掉剩余宽度并省略号收尾；其余三列定宽，勾选列 44px（见 row-selection.columnWidth）
+// fileName 必须有 dataIndex：#bodyCell 没有对应分支时按它回退渲染（只有 key 会得到空单元格）
+const recycleCols = [
+  { title: '文件名', dataIndex: 'fileName', key: 'fileName', ellipsis: true },
+  { title: '大小', dataIndex: 'fileSize', key: 'size', width: 96 },
+  { title: '删除时间', dataIndex: 'deletedAt', key: 'deletedAt', width: 140 },
+  { title: '操作', key: 'act', width: 132 }
+]
 const recycleCount = computed(() => recycleRows.value.length)
 async function loadRecycle () {
   recycleLoading.value = true
   try {
     const r = await listRecycleDocuments(currentKbId.value)
-    if (r.success) recycleRows.value = r.data || []
+    if (r.success) { recycleRows.value = r.data || []; recycleSelected.value = [] }
   } catch (e) { /* 静默：徽标与列表保持现状 */ }
   finally { recycleLoading.value = false }
 }
@@ -989,26 +1022,104 @@ async function doPurgeRecycle () {
   } catch (e) { message.error(e.message || '清空失败') }
   finally { recycleBusy.value = false }
 }
-function onRefreshToggle (d, val) { d.autoRefresh = val ? 1 : 0 }
-function onRefreshCronInput (d, v) { d.refreshCron = v }
-async function saveRefresh (d) {
-  if (d.autoRefresh === 1 && (!d.refreshCron || !d.refreshCron.trim())) {
-    message.warning('开启自动刷新需填写 cron（5段，如 0 3 * * *）'); return
+/** 后端逐项回报 {id,success,msg}：部分失败要报出来，否则用户以为选中项全做完了 */
+function reportRecycleBatch (r, ids, verb) {
+  const failed = (r.data || []).filter(x => !x.success)
+  if (!failed.length) message.success(`已${verb} ${ids.length} 个文档`)
+  else message.warning(`已${verb} ${ids.length - failed.length} 个，${failed.length} 个失败：${failed[0].msg || ''}`)
+}
+async function doBatchRestore () {
+  const ids = [...recycleSelected.value]
+  if (!ids.length) return
+  recycleSelected.value = []
+  recycleBusy.value = true
+  try {
+    const r = await batchRestoreRecycled(ids)
+    if (r.success) { reportRecycleBatch(r, ids, '恢复'); await loadRecycle(); fetchList() }
+    else message.error(r.msg || '批量恢复失败')
+  } catch (e) { message.error(e.message || '批量恢复失败') }
+  finally { recycleBusy.value = false }
+}
+async function doBatchPurge () {
+  const ids = [...recycleSelected.value]
+  if (!ids.length) return
+  recycleSelected.value = []
+  recycleBusy.value = true
+  try {
+    const r = await batchPurgeRecycled(ids)
+    if (r.success) { reportRecycleBatch(r, ids, '彻底删除'); await loadRecycle() }
+    else message.error(r.msg || '批量彻底删除失败')
+  } catch (e) { message.error(e.message || '批量彻底删除失败') }
+  finally { recycleBusy.value = false }
+}
+// ── 网页源自动刷新（行内 ⋯ 打开的弹窗）：草稿式编辑，点取消不会把行数据改脏 ──
+const refreshVisible = ref(false)
+const refreshDoc = ref(null)
+const refreshDraft = ref({ enabled: false, cron: '', nextAt: '' })
+const refreshDocName = computed(() => refreshDoc.value?.fileName || '')
+function openRefreshEdit (d) {
+  refreshDoc.value = d
+  refreshDraft.value = { enabled: d.autoRefresh === 1, cron: d.refreshCron || '', nextAt: d.nextRefreshAt || '' }
+  refreshVisible.value = true
+}
+async function saveRefresh () {
+  const d = refreshDoc.value
+  if (!d) return
+  const draft = refreshDraft.value
+  if (draft.enabled && !String(draft.cron || '').trim()) {
+    message.warning('开启自动刷新需填写 cron（5 段，如 0 3 * * *）'); return
   }
   try {
-    const r = await refreshConfigDocument(d.id, d.autoRefresh, d.autoRefresh === 1 ? d.refreshCron.trim() : '')
-    if (r.success) { message.success('已更新自动刷新配置'); fetchList() }
+    const r = await refreshConfigDocument(d.id, draft.enabled ? 1 : 0, draft.enabled ? String(draft.cron).trim() : '')
+    if (r.success) { message.success('已更新自动刷新配置'); refreshVisible.value = false; fetchList() }
     else message.error(r.msg || '操作失败')
   } catch (e) { message.error(e.message || '操作失败') }
 }
 async function del (id) {
-  deletingId.value = id
   try {
     const r = await deleteDocument(id)
     if (r.success) { message.success('删除成功'); fetchList() }
     else message.error(r.msg || '删除失败')
   } catch (e) { message.error(e.message || '删除失败') }
-  finally { deletingId.value = '' }
+}
+
+// ==================== 行内 ⋯ 菜单 ====================
+/**
+ * 收进 ⋯ 的低频/写动作。判据与行内三个按钮互斥：行内留「看内容 / 拿文件 / 换状态」，
+ * 其余全在这里——十个链接排一排会撑破操作列宽，右侧按钮直接被卡片裁掉看不见。
+ */
+function rowMenu (d) {
+  if (!canManageDoc(d)) return []
+  const items = []
+  if (d.status === 0) items.push({ key: 'versions', label: '版本历史' })
+  if (d.status !== 2) items.push({ key: 'share', label: '共享范围' })
+  if (d.status === 0 || d.status === 3) {
+    items.push({ key: 'reparse', label: '重新解析', disabled: reparsingId.value === d.id,
+                 tip: '复用源文件重新解析+向量化，适用于文档内容更新后重新入库' })
+  }
+  if (d.status === 0) {
+    items.push({ key: 'backfill', label: '补图片描述', disabled: backfillingId.value === d.id,
+                 tip: '对解析时未描述成功的图片后台补描述并回写知识块（重新向量化+索引同步）' })
+  }
+  const n = docTags(d).length
+  items.push({ key: 'tags', label: n ? `标签（${n}）` : '标签' })
+  if (d.fileType === 'url') items.push({ key: 'refresh', label: d.autoRefresh === 1 ? '自动刷新（开）' : '自动刷新' })
+  items.push({ key: 'delete', label: '删除', danger: true, tip: '删除后进入回收站，可恢复或彻底删除' })
+  return items
+}
+function onRowMenu (d, key) {
+  if (key === 'versions') openVersions(d)
+  else if (key === 'share') openShare(d)
+  else if (key === 'reparse') reparse(d.id)
+  else if (key === 'backfill') backfillDesc(d.id)
+  else if (key === 'tags') openTagEdit(d)
+  else if (key === 'refresh') openRefreshEdit(d)
+  else if (key === 'delete') {
+    Modal.confirm({
+      title: `删除「${d.fileName}」？`, content: '删除后进入回收站，可恢复或彻底删除',
+      okText: '删除', okType: 'danger', cancelText: '取消', onOk: () => del(d.id)
+    })
+  }
 }
 function showFailReason (record) {
   Modal.info({ title: `解析失败 - ${record.fileName}`, content: record.failReason || '未知原因，可点击"重解析"重试' })
@@ -1553,7 +1664,13 @@ const fmtTime = t => {
 .col-size { width: 72px; flex: none; text-align: right; }
 .col-status { width: 130px; flex: none; }
 .col-time { width: 130px; flex: none; }
-.col-act { width: 250px; flex: none; text-align: right; white-space: nowrap; }
+/* 操作列：行内只有「知识块 / 下载 / 弃用·启用」三个链接 + 一个 ⋯，约 165px（旧值 250 是给十个按钮留的） */
+.col-act { width: 168px; flex: none; text-align: right; white-space: nowrap; }
+.row-more { vertical-align: middle; }
+.row-danger { color: var(--app-danger); }
+/* 弹窗内的说明行（标签、自动刷新共用） */
+.modal-note { margin: 10px 0 6px; font-size: 12px; color: var(--app-text3); }
+.rf-row { display: flex; align-items: center; gap: 10px; }
 .parse-desc { font-size: 11px; color: var(--app-text3); display: inline-block; max-width: 150px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* 解析队列指示：队列非空时常驻页头，点工具栏按钮/刷新不会丢 */
 .queue-chip { flex: none; cursor: default; }
@@ -1569,6 +1686,8 @@ const fmtTime = t => {
   border-radius: 999px; background: var(--app-danger-weak); color: var(--app-danger);
   font-size: 11px; line-height: 1;
 }
+/* 回收站表格单元格：定宽列里的「692.0 KB」「恢复/彻底删除」被挤成两行会撑高整行 */
+.rc-nowrap { white-space: nowrap; }
 .drag-mask {
   position: fixed; inset: 0; z-index: 1000;
   background: rgba(46,107,230,.08);
@@ -1669,7 +1788,6 @@ const fmtTime = t => {
    低优列按屏宽逐级隐藏，保住「文件名 + 状态 + 操作」这条主线；隐藏比挤压可读。 */
 @media (max-width: 900px) {
   .col-kb, .col-time { display: none; }
-  .col-act { width: 210px; }
 }
 @media (max-width: 640px) {
   .col-num, .col-size, .col-status { display: none; }

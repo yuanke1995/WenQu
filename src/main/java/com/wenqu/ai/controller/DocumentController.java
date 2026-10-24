@@ -65,6 +65,16 @@ public class DocumentController {
     }
 
     /**
+     * 回收站行的管理权校验。回收站行对 {@code selectById} 恒为 null，只能走 getRecycled；
+     * 取不到时给出专属原因——批量接口逐项回报失败原因，说成「文档不存在」会被读成权限问题。
+     */
+    private void requireRecycledManage(String id) {
+        com.wenqu.ai.model.AiDocument doc = documentService.getRecycled(id);
+        if (doc == null) throw new BizException("回收站中没有该文档（可能已被彻底删除）");
+        requireDocManage(doc);
+    }
+
+    /**
      * 文档可读：所属库可见（个人默认库=归属人私有），且文档显式配置了共享时按配置判
      * （未配置=跟随库——谁建归谁语义下，文档分享是显式例外）。不可见按不存在处理，不泄露存在性。
      */
@@ -258,7 +268,7 @@ public class DocumentController {
     @Operation(summary = "从回收站恢复", description = "同名生效文档冲突或所属知识库已删除时拒绝；向量未动，恢复即检索可用")
     @PostMapping("/{id}/restore")
     public ResultJson restore(@Parameter(description = "文档 ID") @PathVariable("id") String id) {
-        requireDocManage(documentService.getRecycled(id));
+        requireRecycledManage(id);
         documentService.restore(id);
         return ResultJson.ok("已恢复");
     }
@@ -266,7 +276,7 @@ public class DocumentController {
     @Operation(summary = "彻底删除", description = "物理清除向量/知识块/源文件/图片/版本快照，不可恢复（回收站行专用）")
     @PostMapping("/{id}/purge")
     public ResultJson purgeDoc(@Parameter(description = "文档 ID") @PathVariable("id") String id) {
-        requireDocManage(documentService.getRecycled(id));
+        requireRecycledManage(id);
         documentService.purge(id);
         return ResultJson.ok("已彻底删除");
     }
@@ -286,6 +296,59 @@ public class DocumentController {
             }
         }
         return ResultJson.ok("已彻底删除 " + ok + " 个" + (skipped > 0 ? "，跳过 " + skipped + " 个无权限文档" : ""));
+    }
+
+    @Operation(summary = "批量恢复", description = "从回收站批量恢复（{ids:[...]}）；逐个校验管理权与同名/所属库冲突，失败项跳过并回传原因")
+    @PostMapping("/recycle/batch/restore")
+    public ResultJson batchRestore(@Parameter(description = "{\"ids\": [\"docId1\", \"docId2\"]}")
+                                   @RequestBody Map<String, List<String>> body) {
+        List<Map<String, Object>> results = new ArrayList<>();
+        long ok = 0;
+        for (String id : body.getOrDefault("ids", List.of())) {
+            Map<String, Object> item = recycleBatchItem(id, () -> {
+                requireRecycledManage(id);
+                documentService.restore(id);
+            });
+            if (Boolean.TRUE.equals(item.get("success"))) ok++;
+            results.add(item);
+        }
+        log.info("[AUDIT] 回收站批量恢复 operator={} total={} ok={}", RequestUser.uid(), results.size(), ok);
+        return ResultJson.ok(results, recycleBatchMsg("恢复", results.size(), ok));
+    }
+
+    @Operation(summary = "批量彻底删除", description = "批量物理清除回收站文档（{ids:[...]}）；仅接受回收站行，生效文档不会被本接口删除")
+    @PostMapping("/recycle/batch/purge")
+    public ResultJson batchPurge(@Parameter(description = "{\"ids\": [\"docId1\", \"docId2\"]}")
+                                 @RequestBody Map<String, List<String>> body) {
+        List<Map<String, Object>> results = new ArrayList<>();
+        long ok = 0;
+        for (String id : body.getOrDefault("ids", List.of())) {
+            Map<String, Object> item = recycleBatchItem(id, () -> {
+                requireRecycledManage(id);
+                documentService.purge(id);
+            });
+            if (Boolean.TRUE.equals(item.get("success"))) ok++;
+            results.add(item);
+        }
+        log.info("[AUDIT] 回收站批量彻底删除 operator={} total={} ok={}", RequestUser.uid(), results.size(), ok);
+        return ResultJson.ok(results, recycleBatchMsg("彻底删除", results.size(), ok));
+    }
+
+    private Map<String, Object> recycleBatchItem(String id, Runnable action) {
+        Map<String, Object> item = new LinkedHashMap<>();
+        item.put("id", id);
+        try {
+            action.run();
+            item.put("success", true);
+        } catch (Exception e) {
+            item.put("success", false);
+            item.put("msg", e.getMessage());
+        }
+        return item;
+    }
+
+    private String recycleBatchMsg(String verb, int total, long ok) {
+        return "已" + verb + " " + ok + "/" + total + " 个" + (ok < total ? "，失败项见明细" : "");
     }
 
     @Operation(summary = "启停用文档", description = "设置文档状态：0=生效（参与检索），1=弃用（不参与检索）")
