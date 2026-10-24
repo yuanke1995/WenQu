@@ -524,6 +524,14 @@ export const listProjectWorkflows = id => request(`/project/${id}/workflows`)
 /** 工作区运行记录（定时任务执行 + 工作流运行合流，按开始时刻倒序） */
 export const getProjectRuns = (id, limit) =>
   request(`/project/${id}/runs${limit ? '?limit=' + limit : ''}`)
+// 工作区事项（要做的事：记下 → 去做 → 勾掉；「去聊」在前端拼 ask 参数带回输入框）
+export const listProjectTodos = id => request(`/project/${id}/todos`)
+export const createProjectTodo = (id, title) =>
+  request(`/project/${id}/todos`, { method: 'POST', body: JSON.stringify({ title }) })
+export const updateProjectTodo = (id, todoId, body) =>
+  request(`/project/${id}/todos/${encodeURIComponent(todoId)}`, { method: 'PUT', body: JSON.stringify(body) })
+export const deleteProjectTodo = (id, todoId) =>
+  request(`/project/${id}/todos/${encodeURIComponent(todoId)}`, { method: 'DELETE' })
 // 归档 / 恢复工作区（不动会话与产物，implicit 兜底容器不可归档）
 export const setProjectStatus = (id, status) =>
   said(request(`/project/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) }), { k: 'spaces' })

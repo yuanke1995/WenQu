@@ -4,6 +4,7 @@ import com.wenqu.ai.dto.ResultJson;
 import com.wenqu.ai.model.Project;
 import com.wenqu.ai.service.ProjectFileService;
 import com.wenqu.ai.service.ProjectService;
+import com.wenqu.ai.service.ProjectTodoService;
 import com.wenqu.ai.service.ScheduledJobService;
 import com.wenqu.ai.service.WorkflowService;
 import com.wenqu.ai.util.RequestUser;
@@ -49,6 +50,7 @@ public class ProjectController {
     private final ProjectFileService projectFileService;
     private final WorkflowService workflowService;
     private final ScheduledJobService scheduledJobService;
+    private final ProjectTodoService projectTodoService;
 
     @Operation(summary = "我的工作区列表",
             description = "implicit 兜底容器在前（每人一个、后台懒创建），其余按创建时间倒序。"
@@ -369,6 +371,56 @@ public class ProjectController {
     }
 
     public record CreateReq(String name) {
+    }
+
+    // ==================== 工作区事项（这个场子要做的事：记下 → 去做 → 勾掉） ====================
+
+    @Operation(summary = "工作区事项清单",
+            description = "未完成在前（新添的在上），已完成按完成时刻倒序收尾。归属校验同其他工作区端点")
+    @GetMapping("/{id}/todos")
+    public ResultJson todos(@PathVariable("id") String id) {
+        try {
+            return ResultJson.ok(projectTodoService.list(RequestUser.uid(), id));
+        } catch (IllegalArgumentException e) {
+            return ResultJson.error(400, e.getMessage());
+        }
+    }
+
+    @Operation(summary = "新增事项", description = "body: {title}（一句话，≤200 字）")
+    @PostMapping("/{id}/todos")
+    public ResultJson createTodo(@PathVariable("id") String id, @RequestBody TodoReq req) {
+        try {
+            return ResultJson.ok(projectTodoService.create(RequestUser.uid(), id, req == null ? null : req.title()),
+                    "已记下");
+        } catch (IllegalArgumentException e) {
+            return ResultJson.error(400, e.getMessage());
+        }
+    }
+
+    @Operation(summary = "更新事项", description = "body: {title?, done?}（传才改）。done=true 勾完成并记时刻，false 取消完成")
+    @PutMapping("/{id}/todos/{todoId}")
+    public ResultJson updateTodo(@PathVariable("id") String id, @PathVariable("todoId") String todoId,
+                                 @RequestBody TodoReq req) {
+        try {
+            return ResultJson.ok(projectTodoService.update(RequestUser.uid(), id, todoId,
+                    req == null ? null : req.title(), req == null ? null : req.done()));
+        } catch (IllegalArgumentException e) {
+            return ResultJson.error(400, e.getMessage());
+        }
+    }
+
+    @Operation(summary = "删除事项", description = "逻辑删除；已完成与未完成都可删")
+    @DeleteMapping("/{id}/todos/{todoId}")
+    public ResultJson deleteTodo(@PathVariable("id") String id, @PathVariable("todoId") String todoId) {
+        try {
+            projectTodoService.delete(RequestUser.uid(), id, todoId);
+            return ResultJson.ok(null, "已删除");
+        } catch (IllegalArgumentException e) {
+            return ResultJson.error(400, e.getMessage());
+        }
+    }
+
+    public record TodoReq(String title, Boolean done) {
     }
 
     /**

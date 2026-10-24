@@ -344,11 +344,16 @@
             {{ runsError }}
             <button class="pj-link-btn" @click="loadRuns">重试</button>
           </div>
-          <div v-else-if="!filteredActivity.length" class="pj-empty">
+          <!-- 进入即推进：还没做完的事摆在时间线上面，不该翻到事项栏才知道欠着活 -->
+          <div v-if="openTodoCount" class="pj-todo-strip">
+            <span>这个场子还有 <b>{{ openTodoCount }}</b> 件事没做完</span>
+            <button class="pj-link-btn" @click="tab = 'todos'">去事项栏</button>
+          </div>
+          <div v-else-if="!runsError && !filteredActivity.length" class="pj-empty">
             {{ kw ? '没有匹配的记录' : '这个工作区还没有动静。对话、交付的产物、任务与工作流的运行都会落在这里。' }}
             <button v-if="!kw && !isArchived" class="pj-link-btn" @click="goChat">新建一条对话</button>
           </div>
-          <div v-else class="pj-file-list">
+          <div v-else-if="filteredActivity.length" class="pj-file-list">
             <template v-for="x in filteredActivity" :key="x.key">
               <!-- 会话：点开进对话；最后一句作摘要行——标题只说「这条叫什么」，摘要才说「聊到了哪」 -->
               <a v-if="x.k === 'session'" class="pj-item" :href="'/chat?sid=' + x.id"
@@ -385,6 +390,48 @@
               </div>
             </template>
           </div>
+        </a-tab-pane>
+
+        <a-tab-pane key="todos">
+          <template #tab><span>事项 <span class="pj-count">{{ openTodoCount }}</span></span></template>
+          <!-- 计数是「还没做完的」：清单的意义在于欠着几件，不是一共记过几件 -->
+          <div class="pj-todo-add">
+            <a-input v-model:value="todoDraft" :maxlength="200" :disabled="isArchived"
+                     placeholder="记一件要做的事，回车添加（例如：把周报模板按新表头改一版）"
+                     @press-enter="addTodo" />
+            <button class="app-btn" :disabled="isArchived || todoSaving || !todoDraft.trim()"
+                    @click="addTodo">{{ todoSaving ? '添加中…' : '添加' }}</button>
+          </div>
+          <div v-if="todosError" class="pj-empty pj-err">
+            {{ todosError }}
+            <button class="pj-link-btn" @click="loadTodos">重试</button>
+          </div>
+          <div v-else-if="!filteredTodos.length" class="pj-empty">
+            {{ kw ? '没有匹配的事项' : '还没有事项。想到要做的事就记在这里；点「去聊」带着它开一条对话，做完勾掉。' }}
+          </div>
+          <template v-else>
+            <div v-if="openTodos.length" class="pj-file-list">
+              <div v-for="t in openTodos" :key="t.id" class="pj-item">
+                <a-checkbox :checked="false" @change="toggleTodo(t, true)" />
+                <span class="pj-item-title"><Hl :text="t.title" /></span>
+                <button class="pj-act" :disabled="isArchived"
+                        :title="isArchived ? '工作区已归档，恢复后才能新建对话' : ''"
+                        @click="goTodoChat(t)">去聊</button>
+                <button class="pj-act pj-act-danger" @click="removeTodo(t)">删除</button>
+              </div>
+            </div>
+            <template v-if="doneTodos.length">
+              <div class="pj-todo-done-label">已完成 · {{ doneTodos.length }}</div>
+              <div class="pj-file-list">
+                <div v-for="t in doneTodos" :key="t.id" class="pj-item">
+                  <a-checkbox :checked="true" @change="toggleTodo(t, false)" />
+                  <span class="pj-item-title pj-todo-strike"><Hl :text="t.title" /></span>
+                  <span class="pj-item-meta">{{ fmtAgo(toMs(t.doneTime)) }}完成</span>
+                  <button class="pj-act pj-act-danger" @click="removeTodo(t)">删除</button>
+                </div>
+              </div>
+            </template>
+          </template>
         </a-tab-pane>
       </a-tabs>
       </template>
@@ -436,7 +483,8 @@ import { PlusOutlined, CopyOutlined, UploadOutlined, FolderAddOutlined, FolderFi
 import { getProject, updateProject, deleteProject, listArtifacts, listSessions, listAvailableAgents, listKnowledgeBases, listProjectFiles,
          downloadProjectFile, listScheduledJobs, createScheduledJob, runScheduledJob, listProjectWorkflows, runWorkflow,
          setProjectStatus, setNewSessionProject, getProjectRuns,
-         exportProjectZip, uploadProjectFiles, createProjectDir, moveProjectEntry, projectBatch } from '../api'
+         exportProjectZip, uploadProjectFiles, createProjectDir, moveProjectEntry, projectBatch,
+         listProjectTodos, createProjectTodo, updateProjectTodo, deleteProjectTodo } from '../api'
 import DeleteProjectModal from '../components/DeleteProjectModal.vue'
 import { sessionStore, rememberSession } from './store'
 // 产物地址要过 resolveImg：后端给的是 /ai/artifacts/**，开发态不经媒体前缀会落到 SPA 回退，下载到的是 index.html
@@ -524,6 +572,11 @@ const workflows = ref([])
 const autoError = ref('')
 const runs = ref([])
 const runsError = ref('')
+// ---------- 事项（这个场子要做的事） ----------
+const todos = ref([])
+const todosError = ref('')
+const todoDraft = ref('')
+const todoSaving = ref(false)
 const jobFormOpen = ref(false)
 const jobSaving = ref(false)
 const jobForm = ref({ name: '', prompt: '', cron: '0 9 * * 1' })
@@ -649,15 +702,21 @@ const activityRows = computed(() => {
 })
 const filteredActivity = computed(() =>
   activityRows.value.filter(x => hit(x.title, x.preview, x.run && x.run.error)))
+// ---------- 事项：未完成在前、完成收尾（后端同序）；计数只认「还没做完的」 ----------
+const openTodos = computed(() => todos.value.filter(t => t.status !== 'done'))
+const doneTodos = computed(() => todos.value.filter(t => t.status === 'done'))
+const openTodoCount = computed(() => openTodos.value.length)
+const filteredTodos = computed(() => todos.value.filter(t => hit(t.title)))
 
 /** 搜索跨四个栏过滤，但一次只显示一个栏：命中在别的栏时必须说出来并可一键跳过去，
     否则停在「文件」搜会话名会看到「没有匹配的文件」——用户读成搜不到，不会想到换栏 */
-const TAB_LABEL = { files: '文件', sessions: '会话', auto: '自动化', activity: '动态' }
+const TAB_LABEL = { files: '文件', sessions: '会话', auto: '自动化', activity: '动态', todos: '事项' }
 const tabHits = computed(() => ({
   files: filteredFiles.value.length,
   sessions: filteredSessions.value.length,
   auto: filteredJobs.value.length + filteredWorkflows.value.length,
-  activity: filteredActivity.value.length
+  activity: filteredActivity.value.length,
+  todos: filteredTodos.value.length
 }))
 const currentHits = computed(() => tabHits.value[tab.value])
 /** 只在真的搜了东西时才提「别处命中」——空关键词下每条记录都算命中，跳转条会常驻不放 */
@@ -1156,8 +1215,59 @@ const reloadTab = () => {
   if (tab.value === 'files') return loadFiles()
   if (tab.value === 'sessions') return loadSessions()
   if (tab.value === 'auto') return loadAuto()
+  if (tab.value === 'todos') return loadTodos()
   // 动态：会话与运行两份都重取（产物随文件栏已在取数路径里）
   return Promise.all([loadRuns(), loadSessions()])
+}
+
+// ==================== 事项（记下 → 去做 → 勾掉） ====================
+const loadTodos = async () => {
+  try {
+    todos.value = ((await listProjectTodos(id.value)) || {}).data || []
+    todosError.value = ''
+  } catch (e) {
+    todos.value = []
+    todosError.value = e.message || '事项清单加载失败'
+  }
+}
+const addTodo = async () => {
+  const t = todoDraft.value.trim()
+  if (!t || todoSaving.value) return
+  todoSaving.value = true
+  try {
+    await createProjectTodo(id.value, t)
+    todoDraft.value = ''
+    await loadTodos()
+  } catch (e) {
+    message.error(e.message || '添加失败，请重试')
+  } finally {
+    todoSaving.value = false
+  }
+}
+/** 勾/取消完成。失败把服务端真值拉回来——勾没勾上不能靠本地猜 */
+const toggleTodo = async (t, done) => {
+  try {
+    await updateProjectTodo(id.value, t.id, { done })
+    await loadTodos()
+  } catch (e) {
+    message.error(e.message || '操作失败，请重试')
+    await loadTodos()
+  }
+}
+const removeTodo = async t => {
+  try {
+    await deleteProjectTodo(id.value, t.id)
+    await loadTodos()
+  } catch (e) {
+    message.error(e.message || '删除失败，请重试')
+  }
+}
+/** 把事项带去对话：落点写进本工作区 → 新建信号 → ask 预填输入框。
+    不自动发——事项措辞是给清单看的一句话，发给模型前该让用户过目改写 */
+const goTodoChat = t => {
+  setNewSessionProject(id.value)
+  sessionStore.newChatTick++
+  router.push({ path: '/chat', query: { ask: t.title } })
 }
 
 /** 切栏就重拉这一栏：定时任务在后台跑完、在别处新建的对话，回到这一屏就该看见 */
@@ -1194,7 +1304,7 @@ const load = async () => {
     }
     if (!keepDraft) instrEdit.value = false
     instrFull.value = false
-    await Promise.all([loadSessions(), loadFiles(), loadAuto(), loadRuns()])
+    await Promise.all([loadSessions(), loadFiles(), loadAuto(), loadRuns(), loadTodos()])
     // 落点只在首次决定：有动静先看动态（这个场子最近发生过什么）；空工作区则给「新建对话」的会话空态，
     // 有文件没动静（刚传完材料还没聊）给文件栏
     const want = activityRows.value.length ? 'activity'
@@ -1281,6 +1391,9 @@ watch(id, () => {
   autoError.value = ''
   runs.value = []
   runsError.value = ''
+  todos.value = []
+  todosError.value = ''
+  todoDraft.value = ''
   instrEdit.value = false
   instrFull.value = false
   settingsOpen.value = false
@@ -1371,6 +1484,21 @@ watch(id, () => {
 }
 
 .pj-cron-input { max-width: 260px; }
+
+/* ---- 事项栏：添加行 / 已完成分组 / 动态栏顶部的未完成提示条 ---- */
+.pj-todo-add { display: flex; gap: var(--app-sp-2); margin-bottom: var(--app-sp-3); }
+.pj-todo-add > :first-child { flex: 1; min-width: 0; }
+.pj-todo-done-label {
+  font-size: var(--app-fs-sm); color: var(--app-label-tertiary);
+  margin: var(--app-sp-4) 0 var(--app-sp-1);
+}
+.pj-todo-strike { text-decoration: line-through; color: var(--app-label-tertiary); }
+.pj-todo-strip {
+  display: flex; align-items: center; gap: var(--app-sp-2); margin-bottom: var(--app-sp-2);
+  padding: 6px var(--app-sp-2); border-radius: var(--app-radius-sm);
+  background: var(--app-warn-weak); font-size: var(--app-fs-sm); color: var(--app-warn-text);
+}
+.pj-todo-strip b { font-weight: 600; }
 
 /* ---- 内容区 ---- */
 /* 运行记录行：来源徽章 + 状态徽章（成功/失败/进行中/待审核各一色，均为弱底不抢标题） */

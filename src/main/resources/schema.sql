@@ -682,6 +682,28 @@ CREATE TABLE IF NOT EXISTS `c_ai_project` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工作区容器（把工作目录/会话/产物收在一个可持续的根下）';
 
 -- ============================================
+-- 2026-10-24: 工作区事项（这个场子要做的事）
+-- 工作区从「归档柜」走向「推进器」的第一块载体：事项手填、做完勾掉，
+-- 「去聊」把事项带回输入框（预填不自动发，措辞让用户过目）。
+-- 刻意不做派发到定时任务/工作流的机器可读结构（deadline/依赖/负责人）：
+-- 单人工作区的「要做的事」是清单不是项目管理，先让「记下→去做→勾掉」闭环跑起来。
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS `c_ai_project_todo` (
+    `id`          VARCHAR(50)  NOT NULL COMMENT '主键ID (UUID)',
+    `uid`         VARCHAR(64)  NOT NULL COMMENT '归属用户（c_ai_user.uid；与工作区同口径，双保险）',
+    `project_id`  VARCHAR(64)  NOT NULL COMMENT '所属工作区（c_ai_project.id）。删工作区时随归属一起清理',
+    `title`       VARCHAR(200) NOT NULL COMMENT '事项内容（一句话）',
+    `status`      VARCHAR(16)  NOT NULL DEFAULT 'open' COMMENT 'open=待办 done=已完成（done_time 记完成时刻）',
+    `done_time`   DATETIME     DEFAULT NULL COMMENT '完成时刻（null=未完成）',
+    `deleted`     INT          NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0=正常 1=已删除',
+    `create_time` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_project_status` (`project_id`, `deleted`, `status`, `create_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工作区事项（要做的事；「记下→去做→勾掉」的最短闭环）';
+
+-- ============================================
 -- 2026-09-26: 定时执行智能体（用户自建的计划任务）
 -- 每轮到点后按「智能体 + 提示词」跑一次完整问答，结果落进该任务的**专属会话**
 -- （一个任务一个会话，历史执行追加在里面，不刷屏会话列表；与平台版"每轮新建会话"不同，

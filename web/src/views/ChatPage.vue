@@ -4132,6 +4132,15 @@ onMounted(async () => {
   document.addEventListener('pointerdown', onDocPointerDown)
   refreshSetupGuide()  // 欢迎区引导卡状态（TTL 去重：AppLayout 挂载时已 force 过，通常直接复用）
   await ready()
+  // 「带着一句要问的话来」：工作区事项的「去聊」带 ask 进来，落进输入框等用户确认发送。
+  // 不自动发——事项措辞是给清单看的一句话，发给模型前该让用户过目改写。消费后摘掉参数，
+  // 刷新不再重复预填。只填空输入框：万一路径上有别的东西已经写了字，不覆盖
+  const askPrefill = String(route.query.ask || '')
+  if (askPrefill && !String(text.value || '').trim()) {
+    text.value = askPrefill
+    focusInput()
+    router.replace({ path: '/chat', query: { ...route.query, ask: undefined } }).catch(() => {})
+  }
   // ready 后会话已加载、消息区进入稳态布局，此时测出的滚动条槽宽才准
   nextTick(syncScrollbarGutter)
 })
