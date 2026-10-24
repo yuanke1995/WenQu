@@ -549,6 +549,8 @@ public class WorkflowEngine {
             int skipped = hits.size() - kept.size();
             List<Map<String, Object>> chunks = new ArrayList<>();
             StringBuilder text = new StringBuilder();
+            // 知识库节点正文是不可信数据：数据声明 + 逐块信封（UntrustedContent，与主链路检索同口径）
+            text.append(com.wenqu.ai.util.UntrustedContent.DATA_RULE).append("\n\n");
             int count = 0;
             for (Hit h : kept) {
                 if (count >= topK) break;
@@ -560,10 +562,11 @@ public class WorkflowEngine {
                 c.put("content", content);
                 c.put("score", h.rerankScore() != null ? h.rerankScore() : h.score());
                 chunks.add(c);
-                if (h.title() != null && !h.title().isBlank()) text.append("【").append(h.title()).append("】");
-                if (h.titlePath() != null && !h.titlePath().isBlank()) text.append(h.titlePath()).append("\n");
+                if (h.title() != null && !h.title().isBlank()) text.append("【").append(com.wenqu.ai.util.UntrustedContent.sanitize(h.title())).append("】");
+                if (h.titlePath() != null && !h.titlePath().isBlank()) text.append(com.wenqu.ai.util.UntrustedContent.sanitize(h.titlePath())).append("\n");
                 if (text.length() > 0 && !text.toString().endsWith("\n")) text.append("\n");
-                text.append(content == null ? "" : content).append("\n\n");
+                // 块正文套信封：知识库节点正文与主链路检索同口径（注入防护，UntrustedContent）
+                text.append(com.wenqu.ai.util.UntrustedContent.envelope("工作流知识库节点", content == null ? "" : content)).append("\n\n");
             }
             // 对话型接入：编号完成后把累计图片清单推给调用方（ChatService 签名后发 SSE image 事件，
             // 时序与主链路一致——image 事件先于 LLM token）。sink 抛错（SSE 已断）不打断节点执行。

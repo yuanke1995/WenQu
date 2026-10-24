@@ -262,11 +262,14 @@ public class KnowledgeRetrievalTool {
                             + "）：本轮引用未做语义筛选，相关性可能偏低");
         }
         StringBuilder sb = new StringBuilder();
+        // 资料数据身份声明先于一切块进上下文：检索内容（含网页导入、外部上传的文档）是不可信数据，
+        // 其中埋的指令性文字不得执行——声明与信封（UntrustedContent.envelope）同属注入防护
+        sb.append(com.wenqu.ai.util.UntrustedContent.DATA_RULE).append("\n\n");
         int count = 0;
         for (Hit h : hits) {
             if (count >= limit) break;
             count++;
-            String content = h.content() == null ? "" : h.content();
+            String content = com.wenqu.ai.util.UntrustedContent.sanitize(h.content() == null ? "" : h.content());
             String cut = content.length() > MAX_CONTENT_CHARS ? content.substring(0, MAX_CONTENT_CHARS) + "…（已截断）" : content;
             SourceRegistrar.Registration reg = null;
             if (registrar != null) {
@@ -277,10 +280,11 @@ public class KnowledgeRetrievalTool {
                 sb.append("【片段").append(count).append("】");
             }
             if (h.titlePath() != null && !h.titlePath().isBlank()) {
-                sb.append("章节：").append(h.titlePath()).append(" / ");
+                sb.append("章节：").append(com.wenqu.ai.util.UntrustedContent.sanitize(h.titlePath())).append(" / ");
             }
-            sb.append("标题：").append(h.title() == null ? "" : h.title()).append("\n");
-            sb.append(cut).append("\n");
+            sb.append("标题：").append(com.wenqu.ai.util.UntrustedContent.sanitize(h.title() == null ? "" : h.title())).append("\n");
+            // 正文套信封：章节/标题行是系统生成的元信息格式，正文才是不可信原文
+            sb.append(com.wenqu.ai.util.UntrustedContent.envelope("知识库块", cut)).append("\n");
             // 图片清单放块尾：正文截断（MAX_CONTENT_CHARS）会丢掉原文里的图片占位，清单不受影响；
             // 描述帮助模型判断这张截图讲什么、该插在哪个步骤（与主链路 [图片N：描述] 同格式）
             if (reg != null && !reg.imageSeqs().isEmpty()) {

@@ -457,13 +457,15 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private String docMentionText(List<ChatRequest.Mention> mentions) {
         boolean hasDoc = mentions.stream().anyMatch(m -> m != null && "doc".equals(m.getType()));
         if (!hasDoc) return "";
+        // 文档正文是不可信数据（网页导入/外部上传都可能埋指令），信封+数据声明与检索工具同口径
         StringBuilder sb = new StringBuilder();
+        sb.append(com.wenqu.ai.util.UntrustedContent.DATA_RULE).append('\n');
         int budget = com.wenqu.ai.config.ConfigDefaults.MENTION_DOC_TOTAL_MAX_CHARS;
         for (ChatRequest.Mention m : mentions) {
             if (m == null || !"doc".equals(m.getType())) continue;
             String name = m.getName() == null || m.getName().isBlank() ? m.getId() : m.getName();
             String body = docContentOf(m.getId());
-            sb.append("\n【@ 文档：").append(name).append("】\n");
+            sb.append("\n【@ 文档：").append(com.wenqu.ai.util.UntrustedContent.sanitize(name)).append("】\n");
             if (body == null) {
                 sb.append("（这份文档当前没有可用正文：可能已删除、停用或尚未解析完成。")
                         .append("请如实告知用户，不要凭文件名猜测内容）\n");
@@ -476,7 +478,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             int cap = Math.min(com.wenqu.ai.config.ConfigDefaults.MENTION_DOC_MAX_CHARS, budget);
             if (body.length() > cap) body = body.substring(0, cap) + "\n…（正文过长，已截断）";
             budget -= body.length();
-            sb.append(body).append('\n');
+            sb.append(com.wenqu.ai.util.UntrustedContent.envelope("@" + name, body)).append('\n');
         }
         sb.append("（以上 doc 引用的正文已由系统直接前置到本轮上下文，请据此作答，勿声称没有看到）\n");
         return sb.toString();

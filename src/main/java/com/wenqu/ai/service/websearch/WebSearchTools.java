@@ -187,6 +187,8 @@ public class WebSearchTools {
 
         int snippetChars = configService.getInt("webSearch.snippetChars", DEFAULT_SNIPPET_CHARS);
         StringBuilder sb = new StringBuilder();
+        // 联网摘要与知识库正文同为不可信数据：信封+数据声明与检索工具同口径（防网页内容埋指令）
+        sb.append(com.wenqu.ai.util.UntrustedContent.DATA_RULE).append("\n\n");
         int seq = 0;
         for (WebSearchResult r : kept) {
             seq++;
@@ -195,16 +197,17 @@ public class WebSearchTools {
             } else {
                 sb.append("【片段").append(seq).append("】");
             }
-            sb.append("标题：").append(r.title()).append("\n");
+            sb.append("标题：").append(com.wenqu.ai.util.UntrustedContent.sanitize(r.title() == null ? "" : r.title())).append("\n");
             if (r.siteName() != null && !r.siteName().isBlank()) {
-                sb.append("站点：").append(r.siteName()).append("\n");
+                sb.append("站点：").append(com.wenqu.ai.util.UntrustedContent.sanitize(r.siteName())).append("\n");
             }
             if (r.publishedAt() != null && !r.publishedAt().isBlank()) {
-                sb.append("发布：").append(r.publishedAt()).append("\n");
+                sb.append("发布：").append(com.wenqu.ai.util.UntrustedContent.sanitize(r.publishedAt())).append("\n");
             }
-            String snippet = r.snippet();
+            String snippet = com.wenqu.ai.util.UntrustedContent.sanitize(r.snippet() == null ? "" : r.snippet());
             if (snippet.length() > snippetChars) snippet = snippet.substring(0, snippetChars) + "…（已截断）";
-            sb.append("摘要：").append(snippet).append("\n");
+            // 摘要套信封（source=链接）：网页内容是注入防护里最不可信的一档
+            sb.append("摘要：\n").append(com.wenqu.ai.util.UntrustedContent.envelope(r.url(), snippet)).append("\n");
             sb.append("链接：").append(r.url()).append("\n\n");
         }
         if (filtered > 0) {
