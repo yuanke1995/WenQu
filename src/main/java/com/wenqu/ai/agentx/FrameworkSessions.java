@@ -203,9 +203,29 @@ public class FrameworkSessions {
      *                   技能白名单（{@code .skillFilter}）全在 build 期固化，实例复用时不会重算。
      *                   传空串表示「本轮没有智能体绑定」（默认助手），与真正绑定了智能体的实例区分开。
      */
+    /**
+     * open 的按会话分片串行锁（固定 64 片）：open 本体是 check-then-act（held.get → 建实例 → held.put），
+     * 用户问答轮有轮级互斥挡着，但<b>目标续跑、接回待办、答完补跟随</b>三条旁路不经过它——
+     * 两路同时 open 同一个 (uid, sessionId) 会各建一个 HarnessAgent 且都 session.start()，
+     * 后写者覆盖 held，前一个泄漏且握着会话写租约（后续轮撞 "Session already has an active writer"）。
+     * 冷启动建实例可达数十秒，同一会话的并发 open 本就该串行等；不同会话落在不同分片，互不牵连。
+     * 用固定分片而不按 key 建锁对象，免掉锁表清理与「取引用-移除-再取」的竞争移除麻烦。
+     */
+    private static final Object[] OPEN_LOCKS = new Object[64];
+    static {
+        for (int i = 0; i < OPEN_LOCKS.length; i++) OPEN_LOCKS[i] = new Object();
+    }
+
     public AgentSession open(ChatCommand cmd, String modelRef, String bindingKey,
                              Function<RuntimeContext, HarnessAgent> agentFactory) {
         String key = key(cmd);
+        synchronized (OPEN_LOCKS[Math.floorMod(key.hashCode(), OPEN_LOCKS.length)]) {
+            return openLocked(cmd, modelRef, bindingKey, agentFactory, key);
+        }
+    }
+
+    private AgentSession openLocked(ChatCommand cmd, String modelRef, String bindingKey,
+                                    Function<RuntimeContext, HarnessAgent> agentFactory, String key) {
         String wantBinding = bindingKey == null ? "" : bindingKey;
         Held current = held.get(key);
         // /compact 强制压缩那一实例的 triggerMessages(1) 只应作用一轮：下次开轮丢掉它、用默认配置重建。

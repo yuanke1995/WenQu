@@ -816,17 +816,27 @@ public class ChatController {
         // 摘要调用按 chat 桶限频，防连点刷额度（框架那一路也要过这道，不然连点能一直重建实例）
         rateLimitService.checkRateLimit("chat", RequestUser.ANONYMOUS.equals(userId)
                 ? "ip:" + clientIp(httpRequest) : "user:" + userId);
-        // 单一引擎：会话上下文恒由 AgentScope 框架持有。框架不产问渠旧版那份摘要、也不接受
-        // instruction/model 参数，压缩语义只有框架这一份。
-        Map<String, Object> r = frameworkSessions.compactNow(userId, sessionId);
-        boolean scheduled = Boolean.TRUE.equals(r.get("scheduled"));
-        // 摘要落进会话行：框架只把压缩产物写在自己的会话状态里，而分隔线上「查看摘要」读的是
-        // c_ai_session 那两列——不落库就是当场看得见、刷新再点进去报「这个会话还没有生成过摘要」
-        if (r.get("summary") instanceof String summary && !summary.isBlank()) {
-            sessionService.updateHistorySummary(sessionId, summary,
-                    r.get("compressedTurns") instanceof Number n ? n.longValue() : 0L);
+        // 会话轮级互斥：压缩与问答同一把锁。就地压缩是「读状态快照 → 压缩 → clear+addAll 写回」，
+        // 快照过期不提交的守卫只有框架自动压缩有，手动这条路径没有——读与写之间若有一轮在跑
+        //（插话、工具结果、半截正文正往上下文里追加），那些消息会被旧快照覆盖掉。抢不到如实说，不排队。
+        if (!runtime.tryBeginTurn(sessionId)) {
+            throw new BizException("这个会话上一轮还在回答中，等回答结束或先停止本轮，再压缩上下文");
         }
-        return ResultJson.ok(r, scheduled ? "已排到下一次提问前压缩" : "压缩完成");
+        try {
+            // 单一引擎：会话上下文恒由 AgentScope 框架持有。框架不产问渠旧版那份摘要、也不接受
+            // instruction/model 参数，压缩语义只有框架这一份。
+            Map<String, Object> r = frameworkSessions.compactNow(userId, sessionId);
+            boolean scheduled = Boolean.TRUE.equals(r.get("scheduled"));
+            // 摘要落进会话行：框架只把压缩产物写在自己的会话状态里，而分隔线上「查看摘要」读的是
+            // c_ai_session 那两列——不落库就是当场看得见、刷新再点进去报「这个会话还没有生成过摘要」
+            if (r.get("summary") instanceof String summary && !summary.isBlank()) {
+                sessionService.updateHistorySummary(sessionId, summary,
+                        r.get("compressedTurns") instanceof Number n ? n.longValue() : 0L);
+            }
+            return ResultJson.ok(r, scheduled ? "已排到下一次提问前压缩" : "压缩完成");
+        } finally {
+            runtime.endTurnMutex(sessionId);
+        }
     }
 
     @Operation(summary = "当前早期对话摘要", description = "读会话现在这份滚动历史摘要（对话流里「已压缩上下文」分隔线点开的内容）："
