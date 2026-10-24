@@ -13,7 +13,7 @@ import { sendQuestion, resumeChat, getChatRun, newSession, getHistory, deleteSes
          listKnowledgeBases, listDocuments, uploadChatAttachment, getSessionTodosApi,
          startGoalApi, goalActionApi, getPendingGoalApi, getSessionGoalApi, getGoalEventsApi,
          refreshArtifactSigns as refreshArtifactSignsApi } from '../api'
-import { sessionStore, loadSessions, chatStreams, todosMap, markSessionActive } from '../views/store'
+import { sessionStore, loadSessions, chatStreams, todosMap, markSessionActive, touchSessionRow } from '../views/store'
 import { markLive, splitAtts } from './attachments'
 // 取材判定层：图片压缩参数、附件白名单与各项限额都在这里（分享页共用同一份，见 ./intake.js）
 import { MAX_IMAGES, MAX_FILES, classifyIntake, rejectText, REJECT, compressImage, pasteFilesOf,
@@ -2781,6 +2781,10 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       // 收尾同样走 liveScroll：跟随中的会话落到最新，用户已上翻看历史的会话原地不动——
       // 答案写完不该把读者的位置抢走
       liveScroll()
+      // 侧栏归位：服务端每轮都把会话的 update_time 推到当下，列表又按它倒序，本地这一行要跟着回段首。
+      // 只定点改这一行、不整表重拉（重拉会抬代次丢掉在路上的「查看更多」、把铺开的行折回首屏、整栏还闪
+      // 一次转圈，见 store 跨页签那段的三条）；首条消息除外——它刚从「隐藏的空会话」变成有消息的行。
+      touchSessionRow(sid)
       if (isFirstMessage) loadSessions()
       // 重新生成：把刚完成的这一版追加进版本序列并切到它（气泡底部出现 ‹ n/N › 切换器）。
       // 自动重试（prev 非空）不追加：那是同一版本的重试，不是新版本——否则失败重试一次就多出一版

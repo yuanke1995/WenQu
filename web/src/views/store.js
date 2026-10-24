@@ -725,6 +725,28 @@ export function markSessionActive (sid, question) {
 }
 
 /**
+ * 一整轮答完，把这一行按新的更新时间归位（不整表重拉）。
+ * <p>服务端每轮都会把会话的 update_time 推到当下，列表又正是按它倒序——本地不跟着重排，
+ * 老会话再问一次就停在原位，要等下一次整表刷新才跳顶；而别的页签改一下(updateTime)是会重排的
+ * （applyRemoteRow），同两路口径打架。
+ * <p>只动已加载出来的行：没加载到的行侧栏本来就看不见，整表刷新时自然由服务端排序放到位。
+ * 搜索态不动：那一栏的关键字命中顺序由服务端给定，本地猜不出该插在哪。
+ */
+export function touchSessionRow (sid) {
+  if (!sid || sessionStore.keyword) return
+  const hit = locateRow(sid)
+  if (!hit) return
+  const now = new Date().toISOString()
+  hit.space.items[hit.idx].updateTime = now
+  const snap = hit.space.firstItems.find(s => s.id === sid)
+  if (snap) snap.updateTime = now
+  hit.space.items.sort(rowOrder)
+  hit.space.firstItems.sort(rowOrder)
+  rebuildFlat()
+  announce({ k: 'row', sid, updateTime: now })
+}
+
+/**
  * 把一个「列表里还没加载、但用户明确要打开」的会话（典型：工作区页里点进第 5 条以后的会话）
  * 先塞进它所属工作区的已加载行里。
  *
