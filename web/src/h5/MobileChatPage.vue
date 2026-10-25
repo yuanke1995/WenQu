@@ -204,6 +204,33 @@
         <div v-else-if="goalBarMeta" class="m-gb-meta">{{ goalBarMeta }}</div>
       </div>
 
+      <!-- 任务清单：本会话最近一次 writeTodo 的整表快照，坐在输入卡正上方，与 PC 同一列同一顺序
+           （先看还差几步，再看整件事推到哪；插话队列仍排在它下面——那是「还没发出去的话」，离输入框最近）。
+           默认收成一行计数：触屏没有 hover，PC 藏进悬浮的东西在这儿必须落在地上，
+           而清单摊开常有十行，会常驻吃掉输入区上方那一屏。显隐与计数判据吃引擎那一份。 -->
+      <div v-if="todoBarVisible" class="m-todo" :class="{ open: todoOpen }">
+        <button class="mt-head" type="button" @click="todoOpen = !todoOpen"
+                :title="todoOpen ? '收起任务清单' : '展开任务清单'">
+          <ordered-list-outlined class="mt-ico" />
+          <span class="mt-label">任务清单</span>
+          <span class="mt-count">{{ todoSummary }}</span>
+          <caret-right-outlined class="mt-caret" :class="{ open: todoOpen }" />
+        </button>
+        <div v-show="todoOpen" class="mt-list">
+          <div v-for="(t, ti) in sessionTodos.items" :key="ti" class="mt-item" :class="t.status">
+            <!-- 进行中且本轮还在跑：框里换成转圈 + 整行底色 + 「执行中」文字（与 PC 同一套判据）。
+                 转圈仍要坐在这个框里：这一列其余行都是方框，裸图标会在框的位置留一个洞。
+                 本轮已停时不给转圈——清单是快照，停掉的那一项再转下去就是撒谎。 -->
+            <span class="mt-box" :class="{ run: t.status === 'doing' && loading }">
+              <loading-outlined v-if="t.status === 'doing' && loading" spin />
+              <template v-else>{{ t.status === 'done' ? '✓' : '' }}</template>
+            </span>
+            <span class="mt-txt">{{ t.content }}</span>
+            <span v-if="t.status === 'doing' && loading" class="mt-run-tag">执行中</span>
+          </div>
+        </div>
+      </div>
+
       <!-- 插话队列：跑着的这一轮里发出去的话先落在这里排队，<b>没点「立即发送」就是还没发出去</b>。
            吃的是引擎那份 steerQueue（与 PC 同一状态、同一组动作），条目里的状态文字也同词。
            刻意不搬 PC 的拖动排序：触屏没有可靠的 HTML5 拖拽，而顺序只影响收尾结算的发出次序，
@@ -491,7 +518,8 @@ import {
   PlayCircleOutlined,
   ThunderboltOutlined, PlusCircleOutlined, CloseOutlined, GlobalOutlined, SearchOutlined, UpOutlined, DownOutlined,
   BellOutlined, ExclamationCircleOutlined, FileTextOutlined, CopyOutlined, HistoryOutlined,
-  CompressOutlined, EditOutlined, DeleteOutlined, LoadingOutlined, AimOutlined
+  CompressOutlined, EditOutlined, DeleteOutlined, LoadingOutlined, AimOutlined,
+  OrderedListOutlined, CaretRightOutlined
 } from '@ant-design/icons-vue'
 import { pasteTitle, pasteSub, spawnAnchorOf, openDispatchCard } from '../chat/projections'
 import { useChatEngine } from '../chat/useChatEngine'
@@ -566,6 +594,8 @@ const refOpen = ref(false)
 const notifOpen = ref(false)
 const roundOpen = ref(false)
 const roundIdx = ref(-1)
+// 任务清单默认收起成一计数行：长任务的清单常有十行，摊开会常驻占掉输入区上方那一屏
+const todoOpen = ref(false)
 const closeSheets = () => {
   sessionsOpen.value = false; modelOpen.value = false; attachOpen.value = false
   refOpen.value = false; notifOpen.value = false; roundOpen.value = false
@@ -627,6 +657,9 @@ const {
   goalCanPause, goalCanResume, goalCanEdit, runGoalAction,
   goalEditing, goalEdit, goalEditBusy, goalEditSaveable,
   startGoalInlineEdit, saveGoalEdit,
+  // 任务清单：快照与「何时露/怎么计数」全吃引擎那一份，本页只留折叠开关。
+  // 此前移动壳对 sessionTodos 零命中——数据两端都挂，渲染处只有 PC 一份
+  sessionTodos, todoSummary, todoBarVisible,
   // 手动压缩上下文（入口在「模型与思考」sheet；分隔线与摘要 sheet 在本页。
   // 「压缩中」态由 compacting 一并表达；流尾那行进度只认手动那一路 manualCompacting）
   compacting, manualCompacting, compactNotice, compactContext, compactDividerAt, liveCompactAt,
@@ -1272,6 +1305,46 @@ onUnmounted(() => {
 .m-gb-btn:disabled { opacity: .4; }
 .m-gb-meta { font-size: 11.5px; line-height: 16px; color: var(--app-text3); font-variant-numeric: tabular-nums; padding-left: 2px; }
 .m-gb-error { font-size: 11.5px; line-height: 16px; color: var(--app-danger); padding-left: 2px; word-break: break-word; }
+
+/* 任务清单（输入卡正上方）：快照与判据都吃引擎那一份，这里只管触屏版式。
+   刻意不搬 PC 那对「条目负 margin 外扩＋列表内缩 6px」的写法——滚动容器会把外扩裁掉
+   （高亮带被切成直角），而触屏本来没有 hover 需要加宽命中区。
+   展开区封顶约四行、超出在卡内滚：十项清单就是十行长句，不设帽会把输入区顶出屏幕。 */
+.m-todo {
+  border: 1px solid var(--app-border); border-radius: 12px; background: var(--app-panel);
+  padding: 0 6px; margin-bottom: 8px;
+}
+.mt-head {
+  display: flex; align-items: center; gap: 8px; width: 100%; min-height: 44px;
+  padding: 0 4px; background: none; border: none; text-align: left; touch-action: manipulation;
+}
+.m-todo.open .mt-head { border-bottom: 1px solid var(--app-border); }
+.mt-ico { flex: none; font-size: 14px; color: var(--app-text3); }
+.mt-label { flex: none; font-size: 13px; font-weight: 600; color: var(--app-text); }
+.mt-count {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 12px; font-variant-numeric: tabular-nums; color: var(--app-text3);
+}
+.mt-caret { flex: none; font-size: 11px; color: var(--app-text3); transition: transform .18s; }
+.mt-caret.open { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .mt-caret { transition: none; } }
+.mt-list { max-height: 172px; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 4px 4px 8px; }
+.mt-item {
+  display: flex; align-items: flex-start; gap: 6px; font-size: 12.5px; line-height: 1.5;
+  padding: 5px 6px; border-radius: 7px;
+}
+.mt-item.doing { background: var(--app-accent-weak); }
+.mt-box {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px; margin-top: 2px; border: 1px solid var(--app-border);
+  border-radius: 4px; font-size: 10px; line-height: 1; color: var(--app-panel);
+}
+.mt-box.run { border-color: var(--app-accent); color: var(--app-accent); font-size: 11px; }
+.mt-item.done .mt-box { background: var(--app-ok); border-color: var(--app-ok); }
+.mt-item.done .mt-txt { color: var(--app-text3); text-decoration: line-through; }
+.mt-item.doing .mt-txt { color: var(--app-accent); font-weight: 500; }
+.mt-txt { min-width: 0; word-break: break-word; }
+.mt-run-tag { flex: none; margin-left: 2px; font-size: 11px; line-height: 18px; color: var(--app-accent); }
 
 /* 插话队列（移动端形态）：虚线边＝「这句还没发出去」，点了之后转实线并换成状态文字。
    动作钮按 44px 热区口径（与 PC 窄屏那颗发送键同一标准，仓库里 share/mshell 都按 44 断言）。 */

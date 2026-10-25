@@ -886,6 +886,59 @@ const sessionTodos = computed(() => todosMap.value[currentSessionId.value] || nu
 function setTodos (sid, doc) { todosMap.value = { ...todosMap.value, [sid]: doc } }
 
 /**
+ * 清单计数行：只报非零的几档（「3 已完成 · 1 进行中 · 5 待处理」）。
+ * 不报「x/y」那种分数：它看不出进行中那一项是谁，而长任务里用户问的正是「现在卡在哪」。
+ */
+const todoSummary = computed(() => {
+  const items = (sessionTodos.value && sessionTodos.value.items) || []
+  const n = s => items.filter(i => i.status === s).length
+  const done = n('done')
+  const doing = n('doing')
+  const parts = []
+  if (done) parts.push(`${done} 已完成`)
+  if (doing) parts.push(`${doing} 进行中`)
+  if (items.length - done - doing > 0) parts.push(`${items.length - done - doing} 待处理`)
+  return parts.length ? parts.join(' · ') : `${items.length} 项`
+})
+
+/** 清单是否全部收口：全 done 之后它就从「还剩几步」变成「这一轮做成了什么」，
+ *  不再是进行中的进度板，去留按「还看不看得到最后一轮」来定（见 todoBarVisible）。 */
+const todoAllDone = computed(() => {
+  const items = (sessionTodos.value && sessionTodos.value.items) || []
+  return items.length > 0 && items.every(i => i.status === 'done')
+})
+
+/**
+ * 任务清单何时露：
+ *  - 未完成：照常跨轮保留（目标模式/长任务靠它接着推，新一轮不自动清）；
+ *  - 全 done：留在它自己那一轮里给人看最后一眼，**下一次用户发话（新一轮开始）收场**。
+ * 判据是「清单所属轮之后是否已出现用户消息」：轮身份用清单的 turnId 去消息流里认——
+ * 实时 done/接流快照与历史回放都会给用户行和回答行盖上同一个 turnId（与落库同源）。
+ * 认不出来（存量清单没 turnId、或那一轮的消息已被过滤）按「还没开始新一轮」处理：
+ * 宁可多留一条，也不能把正在推进的清单藏掉。
+ * <p>**这条与上面两个派生态过去长在 PC 壳里**（2026-10-25 下沉），于是移动壳拿不到、清单在手机上
+ * 整条不可见；现在两端同吃这一份，页面只留折叠态这种纯 UI 开关。
+ */
+const todoBarVisible = computed(() => {
+  const doc = sessionTodos.value
+  const items = (doc && doc.items) || []
+  if (!items.length) return false
+  if (!todoAllDone.value) return true
+  const tid = doc.turnId
+  if (!tid) return true
+  const list = messages.value
+  let idx = -1
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i] && list[i].turnId === tid) { idx = i; break }
+  }
+  if (idx < 0) return true
+  for (let i = idx + 1; i < list.length; i++) {
+    if (list[i] && list[i].role === 'user') return false
+  }
+  return true
+})
+
+/**
  * 各会话当前目标（目标模式）：sid → 目标视图模型。
  * 实时由 SSE 的 goal_state 帧写入（阶段迁移/轮次推进/停因的唯一帧），
  * 切会话/刷新按需回捞（后端读 DB 不读框架：重启/换副本后面板照常长出来）。
@@ -3491,6 +3544,8 @@ if (typeof window !== 'undefined') {
     lastAi, lastSources, groupedSources, lastTokens, liveTokensPreview, ctxTokens,
     ctxCapData, ctxRingDash, ctxRingLevel, panelAi, sessionArtifacts,
     sessionTokens, sessionRetrieval, sessionTodos,
+    // 任务清单的派生态只在这一处算（PC 与移动壳同吃这一份，页面只留折叠开关）
+    todoSummary, todoAllDone, todoBarVisible,
     // 图片与附件
     pendingImages, removePendingImage, MAX_FILES, pendingFiles, hasUploadingFile,
     addFiles, removePendingFile, attachUploaded, attachImage,
