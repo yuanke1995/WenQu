@@ -96,7 +96,7 @@ import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import {
   CheckCircleFilled, CloseCircleFilled, ExclamationCircleFilled, BellOutlined,
-  DownOutlined, SettingOutlined, DeleteOutlined
+  DownOutlined, SettingOutlined, DeleteOutlined, TrophyFilled, FlagFilled
 } from '@ant-design/icons-vue'
 import {
   notificationList, notificationCounts, notificationMarkRead, notificationMarkAllRead,
@@ -119,6 +119,12 @@ const TYPES = [
   { type: 'eval.decline', label: '检索评估下滑', icon: ExclamationCircleFilled, tone: 'warn' },
   { type: 'tool.approval', label: '工具审批待决', icon: ExclamationCircleFilled, tone: 'warn' },
   { type: 'tool.ask', label: '智能体提问待答', icon: ExclamationCircleFilled, tone: 'warn' },
+  { type: 'plan.approval', label: '执行计划待确认', icon: ExclamationCircleFilled, tone: 'warn' },
+  // 问答运行时这三类是「离开工位后还要不要回来」的判断依据，标签与通知标题同一批词
+  { type: 'chat.turn.done', label: '一轮跑完', icon: CheckCircleFilled, tone: 'ok' },
+  { type: 'chat.turn.failed', label: '一轮没跑成', icon: CloseCircleFilled, tone: 'err' },
+  { type: 'goal.achieved', label: '目标达成', icon: TrophyFilled, tone: 'ok' },
+  { type: 'goal.failed', label: '目标停住', icon: FlagFilled, tone: 'warn' },
   // 额度不足是「该充值了」而非系统故障：警告色（红叉会让人以为是 bug）
   { type: 'model.quota', label: '模型额度不足', icon: ExclamationCircleFilled, tone: 'warn' }
 ]

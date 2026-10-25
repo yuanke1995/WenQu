@@ -4,10 +4,12 @@
 // 两端只差呈现与「点开通知后跳哪」——故这里只给数据与读状态，**不含任何 router 语义**
 //（审批/会话/知识库的深链落点各端自持：PC 跳 /chat，移动壳跳 /m/chat）。
 // 后端触发面：解析终态、工作流失败/超时/挂起待审核、网页源刷新失败、定时任务终态、
-// 检索评估下滑预警、工具审批待决；接收人=资源归属人（平台预警=管理员）。
+// 检索评估下滑预警、模型额度不足，以及问答运行时的三类：**一轮收口**（跑完/没跑成/提前停了）、
+// **人在回路待决**（提问卡、工具审批卡、计划确认卡）、**目标终态**（达成/停住）。
+// 接收人=资源归属人（问答与目标取会话行上的归属人；平台预警=管理员）。
 import { onMounted, onUnmounted, ref } from 'vue'
 import { message } from 'ant-design-vue'
-import { BellOutlined, CheckCircleFilled, CloseCircleFilled, ExclamationCircleFilled } from '@ant-design/icons-vue'
+import { BellOutlined, CheckCircleFilled, CloseCircleFilled, ExclamationCircleFilled, TrophyFilled, FlagFilled } from '@ant-design/icons-vue'
 import { notificationList, notificationUnreadCount, notificationMarkRead, notificationMarkAllRead } from '../api'
 
 /** 类型 → 图标/语义色：成功绿、失败红、等待/超时黄 */
@@ -24,6 +26,12 @@ export const NOTIF_ICONS = {
   'eval.decline': ExclamationCircleFilled,
   'tool.approval': ExclamationCircleFilled,
   'tool.ask': ExclamationCircleFilled,
+  'plan.approval': ExclamationCircleFilled,
+  'chat.turn.done': CheckCircleFilled,
+  'chat.turn.failed': CloseCircleFilled,
+  // 目标是跨轮的一件事，图标要与「一轮跑完」分得开：奖杯=达成了，旗子=它自己停下了
+  'goal.achieved': TrophyFilled,
+  'goal.failed': FlagFilled,
   // 额度不足是「需要人处理」而非「系统故障」：用警告色而非错误色——
   // 红叉会让人以为是 bug，实际是账户该充值了
   'model.quota': ExclamationCircleFilled
@@ -41,6 +49,12 @@ const NOTIF_TONES = {
   'eval.decline': 'warn',
   'tool.approval': 'warn',
   'tool.ask': 'warn',
+  'plan.approval': 'warn',
+  'chat.turn.done': 'ok',
+  'chat.turn.failed': 'err',
+  'goal.achieved': 'ok',
+  // 目标停住是「等人补东西或决定继不继续」，不是系统坏了：与审批、提问同一档
+  'goal.failed': 'warn',
   'model.quota': 'warn'
 }
 export const notifIcon = t => NOTIF_ICONS[t] || BellOutlined

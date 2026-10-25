@@ -653,6 +653,8 @@ public class ConfigService {
         d.put("workflow.approvalReapIntervalMs", "60000"); // 审批超时回收间隔（ms，默认 60s；≤0 暂停，暂停后挂起 run 不落终态）
         d.put("config.reloadIntervalMs", "300000");        // 多副本配置同步的周期兜底刷新间隔（ms，默认 5min；≤0 暂停）
         d.put("notification.retentionDays", "30");          // 站内通知保留天数（超期由「站内通知清理」任务物理删除，不区分已读未读）
+        d.put("notification.turnEnabled", "true");           // 问答轮次与目标的站内通知总闸（平台级）：个人想收哪几类走个人静音偏好
+        d.put("notification.turnMinSeconds", "60");          // 一轮机器耗时达到此秒数才报「跑完了」：短轮答案当场就到屏幕，多报一条是噪音
         d.put("notification.cleanupIntervalMs", "86400000"); // 站内通知清理间隔（ms，默认每日；≤0 暂停）
         d.put("notification.dedupWindow", "1440");          // 同类通知合并窗口(分钟)：同目标重复发生的同类通知合并为一条，0=关闭合并
         d.put("workflow.maxConcurrentRuns", "4");          // 第 2 期：异步运行并发上限（派发池 core=max；改后需重启生效）

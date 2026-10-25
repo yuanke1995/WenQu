@@ -10,7 +10,8 @@ import java.time.LocalDateTime;
 /**
  * 站内通知（一行 = 给某用户的一条通知）。
  * <p>
- * 产生方是各异步链路的终态收口处（解析队列 / 工作流收口 / 网页源刷新），
+ * 产生方是各异步链路的终态收口处（解析队列 / 工作流收口 / 网页源刷新 / 定时任务 / 对话轮与目标收口
+ * / 人在回路待决），
  * 消费方是前端铃铛（轮询未读数 + 拉列表）。通知是主链路的旁路：落库失败只告警，
  * 绝不影响解析/运行本身的收口（见 {@code NotificationService.create} 的边界说明）。
  *
@@ -83,6 +84,8 @@ public class Notification {
     public static final String TYPE_TOOL_APPROVAL = "tool.approval";
     /** 智能体提问待决（askUser 结构化提问卡挂起等用户作答，超时/忽略都不替用户选） */
     public static final String TYPE_TOOL_ASK = "tool.ask";
+    /** 执行计划待确认（计划卡挂起等用户拍板；确认或继续对话都算答复） */
+    public static final String TYPE_PLAN_APPROVAL = "plan.approval";
     /** 知识库批量解析失败告警（同库短窗内多个文档终态失败，收件人为库归属人） */
     public static final String TYPE_PARSE_BATCH_FAILED = "parse.batch.failed";
     /**
@@ -91,4 +94,19 @@ public class Notification {
      * 正文带引用清单（哪些知识库/哪些人的默认模型在用它），refType=provider 可跳转模型供应商页。
      */
     public static final String TYPE_MODEL_QUOTA = "model.quota";
+    /**
+     * 一轮对话跑完了（只给「跑得够久、人多半已经离开屏幕」的那类轮，见
+     * {@code notification.turnMinSeconds}）。短轮不发：答案当场就到了，再钉一条通知是刷屏。
+     */
+    public static final String TYPE_CHAT_TURN_DONE = "chat.turn.done";
+    /**
+     * 一轮对话没跑成（上游额度/网关异常、整轮时间上限、推理步数用满）。
+     * 与 {@link #TYPE_CHAT_TURN_DONE} 不同档：<b>不受时长阈值约束</b>——失败了就该让人知道，
+     * 哪怕只跑了三秒。
+     */
+    public static final String TYPE_CHAT_TURN_FAILED = "chat.turn.failed";
+    /** 一个横跨多轮的目标达成了（此时不再逐轮发 {@link #TYPE_CHAT_TURN_DONE}，见 TurnNotifyService） */
+    public static final String TYPE_GOAL_ACHIEVED = "goal.achieved";
+    /** 一个目标停住了（预算耗尽、连续失败、受阻）——与「达成」分两类：一个是好消息，一个要人处理 */
+    public static final String TYPE_GOAL_FAILED = "goal.failed";
 }

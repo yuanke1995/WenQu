@@ -163,6 +163,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      */
     private final com.wenqu.ai.service.GoalService goalService;
 
+    /**
+     * 轮次与目标的站内通知产生方（「跑完了 / 没跑成 / 在等人拍板」）。
+     * <p>它是旁路：内部全捕获，写不进去不影响这一轮收口。归属在这里必须靠会话行，
+     * 不能拿 {@code cmd.getUserId()}——续跑重建命令时那一位可能是字面量 {@code guest}。
+     */
+    private final com.wenqu.ai.service.TurnNotifyService turnNotify;
+
     /** 运行总线：后台续跑轮要登记上去，前端才能按 goal_turn 帧自动接流 */
     private final com.wenqu.ai.service.ChatRunBus chatRunBus;
 
@@ -246,6 +253,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                                com.wenqu.ai.service.OrgService orgService,
                                com.wenqu.ai.service.UsageLedgerService usageLedger,
                                com.wenqu.ai.service.GoalService goalService,
+                               com.wenqu.ai.service.TurnNotifyService turnNotify,
                                com.wenqu.ai.service.ChatRunBus chatRunBus,
                                com.wenqu.ai.service.McpToolLabelService mcpToolLabelService,
                                JournalRotation journalRotation,
@@ -274,6 +282,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         this.orgService = orgService;
         this.usageLedger = usageLedger;
         this.goalService = goalService;
+        this.turnNotify = turnNotify;
         this.chatRunBus = chatRunBus;
         this.journalRotation = journalRotation;
         this.knowledgeMapper = knowledgeMapper;
@@ -1040,6 +1049,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 「答好了」的样子把上一轮的正文存进历史——真机 2026-10-15 20:00:49 那轮 401，库里多出一条
         // 597 字助手行、model 记的正是失败那个模型，界面上只收到一个正常 done，失败一个字没提。
         String failure = runFailure(session, current);
+        // 界面那一句人话（emitRunFailure 生成的），通知要抄它而不是抄上游原始串：
+        // 原始串形如「HTTP transport error during streaming: HTTP request failed with status 403…」，
+        // 是英文、带响应体碎片，用户在铃铛里读不出「该充值还是该换模型」
+        String spokenFailure = null;
         if (answer.isBlank() && failure == null) answer = stripFallbackBody(recording, lastAssistantText(session));
         // 框架那一跑本身失败（上游 402 额度、网关异常、运行被拒……）必须说出来的那一件事：双跑实测——
         // 同一问题手写引擎发 error 帧，框架只发了一条「done + 空正文」，用户看到的是「它答了个空」，
@@ -1053,7 +1066,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             log.warn("[FAIL-LOUD] 本轮 submit 始终未被框架启动: session={} turn={} 空等 {}ms",
                     cmd.getSessionId(), turnId, System.currentTimeMillis() - startedAt);
         } else if (!stopped && failure != null && answer.isBlank()) {
-            emitRunFailure(pool, channel, failure);
+            spokenFailure = emitRunFailure(pool, channel, failure);
         }
         // 框架撞步数上限时补的那条收尾正文要接回来：它走 SUMMARY 用途，被 translate() 那道
         // 「只透传 REASONING」的闸挡在流外（那道闸是为压缩摘要与记忆提炼加的，那两样确实不该进聊天流）。
@@ -1111,6 +1124,17 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 userMessageId, stopped,
                 timedOut, awaiting, machineMs, humanWaitMs, wallMs,
                 session, historyBefore, turnId, planRecord);
+        // 站内通知（旁路：内部全捕获，写不进去只记 WARN，绝不影响这一轮收口）。这件事此前只有
+        // 屏幕前的人看得见——长轮跑完时人多半已经切走或锁屏，铃铛一声不响等于「跑完没人知道」。
+        // 「提前停了」与「没跑成」分两句说：已经写出一半正文的那一轮，用户真读到了东西，
+        // 把它报成「没跑成」等于说那段话不存在。
+        String earlyExit = spokenFailure != null ? spokenFailure : failure;
+        if (earlyExit == null && neverLaunched) earlyExit = "这一轮模型没有被调用，请重试或新建一条会话再问";
+        if (earlyExit == null && timedOut) earlyExit = "撞到整轮时间上限，活没干完就停了";
+        if (earlyExit == null && cutByMaxIters) earlyExit = "推理步数已用满，活没干完就停了";
+        turnNotify.onTurnSettled(cmd, turnId, machineMs, recording.toolCallList().size(),
+                stopped, awaiting, earlyExit, !answer.isBlank(),
+                turnId != null && turnId.startsWith(com.wenqu.ai.service.GoalService.GOAL_TURN_ID_PREFIX));
     }
 
     /**
@@ -1133,8 +1157,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 把框架留下的失败痕迹说成用户能行动的一句话。判据与文案都取手写引擎那一组
      * （{@code ChatService} 的 stream-error 分支：额度／限流／连不上／其它）——同一件 402 在两条
      * 运行时里必须长成同一句话，否则灰度一切换，用户看到的指引就换了。
+     *
+     * @return 那句给用户看的话（站内通知复用它，不再抄上游原始串）
      */
-    private void emitRunFailure(WenquSourcePool pool, RunChannel channel, String raw) {
+    private String emitRunFailure(WenquSourcePool pool, RunChannel channel, String raw) {
         boolean quota = com.wenqu.ai.service.ModelQuotaGuard.isQuotaText(raw);
         boolean limited = !quota && com.wenqu.ai.service.ModelQuotaGuard.isRateLimitedText(raw);
         boolean unreachable = !quota && !limited
@@ -1146,6 +1172,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         pool.registrar().degrade(quota ? "modelQuotaExhausted" : "streamError", "模型输出中断：" + msg);
         channel.emit(RunEventType.ERROR, msg);
         log.info("[agentx] 本轮失败收束: {} 原文={}", msg, raw.length() > 200 ? raw.substring(0, 200) : raw);
+        return msg;
     }
 
     /**
@@ -1484,7 +1511,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private void continueGoalTurn(com.wenqu.ai.model.Goal goal, String input, int n, int attempt) {
         String sessionId = goal.getSessionId();
         String uid = goal.getUserId();
-        String turnId = "goal:" + goal.getId() + ":" + n;
+        String turnId = com.wenqu.ai.service.GoalService.GOAL_TURN_ID_PREFIX + goal.getId() + ":" + n;
         // 提交前复查：从「上一次收尾决定起下一轮」到这一行之间，用户可能刚停止/删除/改了目标。
         // 不复查就会把一轮已经没人要的续跑放出去（界面上表现为「删了目标它还在跑」）。
         if (!goalService.runnable(goal)) {
@@ -1514,7 +1541,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             return;
         }
         try {
-            AgentSession.Task task = f.session().submit("goal:" + goal.getId() + ":" + n, input);
+            AgentSession.Task task = f.session().submit(
+                    com.wenqu.ai.service.GoalService.GOAL_TURN_ID_PREFIX + goal.getId() + ":" + n, input);
             backgroundGoalTurns.add(sessionId + "|" + turnId);
             // 先登记总线再发帧：goal_turn 到浏览器时，它探测 /chat/run 必须已经探得到这一轮
             java.util.concurrent.atomic.AtomicBoolean alive = openGoalTurnRun(f, sessionId, uid, turnId);
@@ -1698,6 +1726,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         channel.emit(RunEventType.DONE,
                 "{\"finalContent\":\"\",\"sources\":[],\"degradations\":[],\"engine\":\"agentscope\"}");
         channel.complete();
+        // 开局就判不了也是「没跑成」：这一支不经过 finish（那一串收口变量压根没建起来），
+        // 不补这一句，模型都解析不出来的轮次是通知面上唯一的空白——而它恰恰是最该喊人的那种
+        turnNotify.onTurnSettled(cmd, null, 0L, 0, false, false, message, false, false);
     }
 
     /**
@@ -2978,6 +3009,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 落同一张 c_ai_tool_approval（tool_name=planApproval）：不落的话刷新后这张卡取不回来
                 sessions.recordPending(cmd, sessionKey, turnId, entry.getKey(), "planApproval",
                         com.alibaba.fastjson2.JSON.toJSONString(Map.of("plan", planText)));
+                // 计划卡等人拍板是有时限的：不确认这一轮会超时并停止。屏幕外的人看不见那张卡，
+                // 只能靠这一句把人叫回来
+                turnNotify.onPlanPending(cmd, entry.getKey());
                 continue;
             }
             if (!"confirmation".equals(kind)) {
@@ -2986,6 +3020,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 channel.emit(RunEventType.ASK_USER, askPayload);
                 // 载荷与手写侧 askArgsJson 同形（都按 {"questions":[…]} 解析），恢复端点可直接复用
                 sessions.recordPending(cmd, sessionKey, turnId, entry.getKey(), "askUser", askPayload);
+                // 通知正文带<b>第一题的题面</b>：手机上「智能体在等你回答」不说明在等什么，
+                // 人得先点进来才知道——把那句问题直接抄进通知，看一眼就能决定要不要回来
+                turnNotify.onAskPending(cmd, entry.getKey(), firstAskText(toolInputOf(call)));
                 continue;
             }
             // 审批卡：展示名与工具卡同源（注册中心 → 框架工具表），不再把裸工具名当 label 下发。
@@ -3004,6 +3041,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             channel.emit(RunEventType.APPROVAL_REQUIRED,
                     com.alibaba.fastjson2.JSON.toJSONString(approvalCard));
             sessions.recordPending(cmd, sessionKey, turnId, entry.getKey(), tool, args);
+            // 审批卡同样等人：正文带展示名（与那张卡同源的一个词）。名字没收过就只报会话，
+            // 绝不拿裸工具名冒充展示名
+            turnNotify.onApprovalPending(cmd, entry.getKey(), str(approvalCard.get("label")));
         }
     }
 
@@ -4098,6 +4138,23 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 而真正决定这张卡什么时候作废的是后端那个循环。两处不同源的表现是「界面还在数 8 分钟、
      * 后端两分钟就把这一轮收了」——用户对着一个已经作废的输入框作答，提交后只得到一句失败提示。
      */
+    /**
+     * 提问卡<b>第一题的题面</b>（站内通知正文用）。
+     * <p>形状与 {@link #askCard} 认的那一份同源：一卡多问取 {@code questions[0].question}，单题取
+     * {@code question}，两者都不是（模型直接给了一段文本）就把那段当题面。取不到就交回空串——
+     * 通知少一句正文，比拼出一句错话好。
+     */
+    static String firstAskText(Object input) {
+        if (!(input instanceof Map<?, ?> in)) return input == null ? "" : String.valueOf(input).strip();
+        Object qs = in.get("questions");
+        if (qs instanceof List<?> list && !list.isEmpty()) {
+            Object first = list.get(0);
+            if (first instanceof Map<?, ?> q) return str(q.get("question"));
+            return String.valueOf(first).strip();
+        }
+        return str(in.get("question"));
+    }
+
     private String askCard(String askId, Object input, String toolName) {
         Object questions;
         if (input instanceof Map<?, ?> in) {

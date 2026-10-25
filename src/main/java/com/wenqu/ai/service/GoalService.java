@@ -89,6 +89,14 @@ public class GoalService {
             WAITING_APPROVAL, WAITING_EVENT);
     private static final Set<String> TERMINAL = Set.of(ACHIEVED, FAILED, CANCELLED);
 
+    /**
+     * 目标轮的轮 id 前缀（跨轮续跑的幂等键 {@code goal:{goalId}:{n}}）。
+     * <p>站内通知按它认「这一轮属不属于某个目标」：目标轮不逐轮报「跑完了」，只由目标自己说话一次，
+     * 否则一个长目标会把铃铛变成进度条。续跑发起口（框架引擎）与本类的跨轮入口都拼这一个前缀，
+     * 不许各写一份字面量。
+     */
+    public static final String GOAL_TURN_ID_PREFIX = "goal:";
+
     /** 目标原文产品上限（与 c_ai_goal.objective 列宽对齐，不是运营旋钮）。 */
     public static final int MAX_OBJECTIVE_CHARS = 4000;
 
@@ -110,6 +118,8 @@ public class GoalService {
     private final GoalSettings settings;
     private final GoalVerifier verifier;
     private final GoalPromptBuilder promptBuilder;
+    /** 目标进终态时喊人回来（旁路：写不进通知不影响目标本身）。跨轮不逐轮报，只在这一处说话 */
+    private final TurnNotifyService turnNotify;
 
     /** 续跑驱动（引擎实现，构造期后绑）：控制流归调度器，这里只把一轮交给引擎。 */
     private volatile GoalTurnDriver turnDriver;
@@ -123,7 +133,7 @@ public class GoalService {
                        com.wenqu.ai.agentx.FrameworkSessions sessions,
                        SessionService sessionService, ArtifactService artifactService,
                        GoalSettings settings, GoalVerifier verifier,
-                       GoalPromptBuilder promptBuilder) {
+                       GoalPromptBuilder promptBuilder, TurnNotifyService turnNotify) {
         this.goalMapper = goalMapper;
         this.roundMapper = roundMapper;
         this.evidenceMapper = evidenceMapper;
@@ -135,6 +145,7 @@ public class GoalService {
         this.settings = settings;
         this.verifier = verifier;
         this.promptBuilder = promptBuilder;
+        this.turnNotify = turnNotify;
     }
 
     /** 续跑驱动（引擎侧实现）。由装配处显式绑定——引擎是那里 new 的，不归 Spring 管。 */
@@ -533,7 +544,7 @@ public class GoalService {
         String input = completionCheck
                 ? promptBuilder.completionCheckPrompt(goal, c, n, max)
                 : promptBuilder.roundPrompt(goal, c, n, max, budgetNote(goal), recovery);
-        String turnId = "goal:" + goal.getId() + ":" + n;
+        String turnId = GOAL_TURN_ID_PREFIX + goal.getId() + ":" + n;
         LocalDateTime now = LocalDateTime.now();
 
         GoalRound round = new GoalRound();
@@ -1346,6 +1357,9 @@ public class GoalService {
         releaseLease(goal);
         appendOutcome(goal, outcome);
         emitState(goal, channel);
+        // 一个能跑到达成的目标通常已经跑了好几轮、几十分钟——人早不在屏幕前了。
+        // 目标轮的「跑完了」由这里统一说话（见 TurnNotifyService 里那条 goal: 前缀判据）
+        turnNotify.onGoalTerminal(goal, true, null);
         log.info("[GOAL] 目标完成: goal={} 共 {} 轮", goal.getId(), nz(goal.getTurnCounter()));
     }
 
@@ -1366,6 +1380,8 @@ public class GoalService {
         releaseLease(goal);
         appendOutcome(goal, outcome);
         emitState(goal, channel);
+        // 受阻是要人补东西的：助手自己往下走不动了，等人回来给一句才能继续
+        turnNotify.onGoalTerminal(goal, false, reason);
         log.info("[GOAL] 助手报告受阻，目标暂停: goal={} 原因={}", goal.getId(), reason);
     }
 
@@ -1382,6 +1398,9 @@ public class GoalService {
         releaseLease(goal);
         appendOutcome(goal, outcome);
         emitState(goal, channel);
+        // 通知说人话：那两句 detail 里的 goal_submit、remaining 缺口是框架词汇，用户看得懂的是
+        // 「连着几轮没往前走」和「它自己也不确定做完了没」
+        turnNotify.onGoalTerminal(goal, false, "连着几轮没有新的进展");
         log.info("[GOAL] 连续无进展，目标暂停: goal={} 轮次={}", goal.getId(), nz(goal.getNoProgressRounds()));
     }
 
@@ -1398,6 +1417,7 @@ public class GoalService {
         releaseLease(goal);
         appendOutcome(goal, outcome);
         emitState(goal, channel);
+        turnNotify.onGoalTerminal(goal, false, "助手反复检查也没确认这件事做完了");
         log.info("[GOAL] 完成检查连续无结果，目标暂停: goal={} 检查次数={}",
                 goal.getId(), c.getCompletionCheckCount());
     }
@@ -1417,6 +1437,8 @@ public class GoalService {
         releaseLease(goal);
         appendOutcome(goal, outcome);
         emitState(goal, channel);
+        // detail 已经是给人看的那句（「轮次预算已用完（N 轮）」这种），reason 是内部档位词，别抄进通知
+        turnNotify.onGoalTerminal(goal, false, detail);
         log.info("[GOAL] 目标终止: goal={} status={} reason={}", goal.getId(), status, reason);
     }
 

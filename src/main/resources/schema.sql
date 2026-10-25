@@ -1090,7 +1090,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_schedule_run` (
 CREATE TABLE IF NOT EXISTS `c_ai_notification` (
     `id`          VARCHAR(50)   NOT NULL COMMENT '通知ID（UUID）',
     `uid`         VARCHAR(64)   NOT NULL COMMENT '接收人（uid；每人只看自己的通知）',
-    `type`        VARCHAR(32)   NOT NULL COMMENT '类型: parse.done=解析完成 parse.failed=解析失败 parse.batch.failed=知识库批量解析失败 workflow.failed=运行失败 workflow.timeout=运行超时 workflow.approval=待人工审核 web.refresh.failed=网页源刷新失败 schedule.done=定时任务完成 schedule.failed=定时任务失败 eval.decline=检索评估下滑预警 tool.approval=工具审批待决 tool.ask=智能体提问待答 model.quota=模型供应商额度不足',
+    `type`        VARCHAR(32)   NOT NULL COMMENT '类型: parse.done=解析完成 parse.failed=解析失败 parse.batch.failed=知识库批量解析失败 workflow.failed=运行失败 workflow.timeout=运行超时 workflow.approval=待人工审核 web.refresh.failed=网页源刷新失败 schedule.done=定时任务完成 schedule.failed=定时任务失败 eval.decline=检索评估下滑预警 tool.approval=工具审批待决 tool.ask=智能体提问待答 plan.approval=执行计划待确认 chat.turn.done=一轮对话跑完 chat.turn.failed=一轮对话没跑成或提前停了 goal.achieved=目标达成 goal.failed=目标停住(预算耗尽/连续无进展/受阻) model.quota=模型供应商额度不足',
     `title`       VARCHAR(200)  NOT NULL COMMENT '一句话标题（列表主文本）',
     `content`     VARCHAR(1000) DEFAULT NULL COMMENT '详情（块数/失败原因等，落库前截断）',
     `ref_type`    VARCHAR(16)   DEFAULT NULL COMMENT '跳转目标类型: kb=知识库文档 workflow=工作流 session=会话（/chat?sid=） provider=模型供应商（/providers）',

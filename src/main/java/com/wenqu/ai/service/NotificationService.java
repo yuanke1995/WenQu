@@ -21,8 +21,9 @@ import java.util.stream.Collectors;
 /**
  * 站内通知服务：异步事件终态的用户可感知面。
  * <p>
- * - 产生：各异步链路的终态收口处调用 {@link #create}（解析队列 / 工作流收口 / 网页源刷新）；
- *   接收人一律取自数据本身（文档 createdBy、run triggeredBy），与请求上下文无关——
+ * - 产生：各异步链路的终态收口处调用 {@link #create}（解析队列 / 工作流收口 / 网页源刷新 /
+ *   定时任务 / 对话轮与目标收口 / 人在回路待决）；
+ *   接收人一律取自数据本身（文档 createdBy、run triggeredBy、会话行的 userId），与请求上下文无关——
  *   触发点都在后台线程（ThreadLocal 无登录态），不能读 {@code RequestUser}；
  * - 消费：铃铛接口（列表 / 未读数 / 已读），只按接收人 uid 过滤，别人不可见也不可标；
  * - 清理：{@link #cleanupExpired} 由 ScheduleCenter 按保留期物理删除（通知的生命周期与
