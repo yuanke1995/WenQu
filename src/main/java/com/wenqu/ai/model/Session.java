@@ -62,6 +62,15 @@ public class Session {
      */
     private String model;
 
+    /**
+     * 会话当前生效的上下文窗口档（token）。与 {@link #model} 同一套归属口径：只有用户在这条会话里
+     * 显式改过档位时才有值，NULL=从没选过（按模型登记上限走，登记值改了自动跟）。
+     * <p>为什么必须是会话状态而不是每轮随请求上报：这一份要烤进框架的常驻实例（压缩阈值与输入上限
+     * 都由它推导），而档位选择历来只存在浏览器 localStorage 里——换台机器就是「没选过」，同一个会话
+     * 在两台机器之间来回就把窗口来回盖，每轮都在重建实例（模型覆盖那条链上已经踩过，故模型改由本列权威）。
+     */
+    private Integer contextWindow;
+
     /** 滚动历史摘要（上下文压缩：更早轮次压缩后的摘要，注入 prompt 的「早期对话摘要」段；NULL=未压缩过） */
     private String historySummary;
 

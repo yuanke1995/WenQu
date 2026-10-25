@@ -362,9 +362,10 @@ public class ConfigService {
         // chat.agentscopeTurnTimeoutSeconds 已取消（2026-10）：框架对单把工具有自带 5 分钟硬超时，
         // 此前用该键覆盖成 SSE 超时，默认 0=沿用 SSE 超时——框架已有限制、参数只留个默认就用不上，
         // 现由 AgentscopeChatEngine.turnSeconds() 恒定取 chat.sseTimeoutMs，不再留配置口
-        // chat.agentscopeCompactTriggerMessages 已取消（2026-10）：框架默认（动态 token 阈值或
-        // 50 条消息触发、逐字留最近 20 条）本身就是会跑的滚动压缩，默认态与框架默认逐字相同，
-        // 现 compactionConfig() 只保留手动 /compact 的强制压缩路径
+        // chat.agentscopeCompactTriggerMessages 已取消（2026-10）：当时框架默认（动态 token 阈值或
+        // 50 条消息触发）本身就是会跑的滚动压缩，默认态与框架默认逐字相同，属留个用不上的改口。
+        // 2026-10-25 按条数触发那道线已在 compactionConfig() 里显式关掉（只按窗口推的 token 线触发），
+        // 这一格仍不留配置口：要恢复按条数触发是改代码，不是改设置
         // 工具大输出留存固定开启（不再留开关）；下面两条只治理磁盘占用。
         d.put("tool.spillMaxMbPerUser", "200");             // 每人留存原文的磁盘配额(MB)，0=不限量；超出按落盘时间淘汰最旧几份
         // 留存的两条治理参数都要进 defaults()：snapshot() 只回显这里登记过的键，

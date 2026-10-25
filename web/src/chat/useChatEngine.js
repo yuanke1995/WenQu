@@ -9,7 +9,7 @@ import { isAdminSync } from '../utils/auth'
 import { message } from 'ant-design-vue'
 import { sendQuestion, resumeChat, getChatRun, newSession, getHistory, deleteSessionApi, switchMessageVariant, compactSessionApi, sessionHistorySummaryApi, getConfig, getRuntimeConfig, listAvailableAgents, listConsultableAgents,
          listAvailableSkills, getUserPreference, approveToolCall, answerAgentAsk, ignoreAgentAsk, stopChatTurn, steerChatTurn,
-         listPendingAsks, listPendingApprovals, resolvePlanApproval, supersedePlanApproval, listPendingPlans, updateSessionModelApi, getSessionModelApi,
+         listPendingAsks, listPendingApprovals, resolvePlanApproval, supersedePlanApproval, listPendingPlans, updateSessionModelApi, updateSessionWindowApi, getSessionModelApi,
          listKnowledgeBases, listDocuments, uploadChatAttachment, getSessionTodosApi,
          startGoalApi, goalActionApi, getPendingGoalApi, getSessionGoalApi, getGoalEventsApi,
          refreshArtifactSigns as refreshArtifactSignsApi } from '../api'
@@ -165,7 +165,8 @@ const ctxWindowOptionsOf = ref => {
     .filter(o => !seen.has(o.label) && seen.add(o.label))
   return [{ value: range.min, label: minLabel }, ...mids, { value: range.max, label: maxLabel }]
 }
-/** 按模型记忆的窗口档位选择（与思考强度同一套 per-model localStorage 记忆风格；未记忆=上限） */
+/** 按模型记忆的窗口档位（只在「还没有会话 ID」时当种子用——首问要带着它落进会话行）。
+ *  会话一旦存在，档位的权威就不在这里：见 sessionCtxMap。 */
 const ctxWindowMap = ref((() => {
   try {
     const raw = localStorage.getItem('ai_ctx_window')
@@ -173,24 +174,43 @@ const ctxWindowMap = ref((() => {
     return (parsed && typeof parsed === 'object') ? parsed : {}
   } catch (e) { return {} }
 })())
-/** 某模型当前生效窗口：记忆值落在区间内用记忆值，否则默认给最大 */
+/** 会话ID → 会话行上钉住的窗口档（token；无键/null=这个会话没选过，按模型登记上限走）。
+ *  这一档决定框架什么时候折上下文，且烤在常驻实例里（改档位下一轮重建实例），所以必须服务端权威：
+ *  只存本台机器的话，换台机器就是「没选过」，同一个会话在两端之间来回就把窗口来回盖。 */
+const sessionCtxMap = ref({})
+/** 某模型当前生效窗口：会话钉过用会话那份，其次本台机器的记忆（仅首问前），都没有=登记上限 */
 const effectiveCtxWindowOf = ref => {
   const range = ctxRangeOf(ref)
   if (!range) return null
-  const v = ctxWindowMap.value[ref]
-  return (v >= range.min && v <= range.max) ? v : range.max
+  const sid = currentSessionId.value
+  // 有键就认服务端那份（键在而值为 null = 后端说这个会话没钉过，显示上限）；
+  // 还没有键只有一种情况：这一条会话刚由首问建出来、列表还没回填，此时本地记忆就是刚发出去的那一档
+  const pinned = sid && sid in sessionCtxMap.value
+    ? sessionCtxMap.value[sid]
+    : ctxWindowMap.value[ref]
+  return (pinned >= range.min && pinned <= range.max) ? pinned : range.max
 }
-/** 面板点选窗口档位：写按模型 localStorage 记忆，下一轮发送立即生效 */
+/** 面板点选窗口档位：有会话就即时 PUT 到会话行（下一轮起生效并重建实例），首问前只记本地等随载荷落库 */
 const setCtxWindow = (v, modelRef) => {
   const target = modelRef || effectiveModel.value
-  if (loading.value || !ctxRangeOf(target)) return
+  const sid = currentSessionId.value
+  if (!ctxRangeOf(target)) return
+  if (sid) {
+    // 切换即时落库；失败必须提醒——静默吞掉的话界面显示已改、下一轮仍按旧档压缩
+    sessionCtxMap.value = { ...sessionCtxMap.value, [sid]: v }
+    updateSessionWindowApi(sid, v)
+      .catch(e => message.error(`窗口档位保存失败：${e?.message || '请稍后重试'}`))
+    return
+  }
   ctxWindowMap.value = { ...ctxWindowMap.value, [target]: v }
   try {
     localStorage.setItem('ai_ctx_window', JSON.stringify(ctxWindowMap.value))
   } catch (e) { /* 存储不可用忽略 */ }
 }
-/** 本轮下发后端的窗口档位（token）：可调模型始终显式下发（含默认上限）；不可调/未登记=null，后端走原逻辑 */
+/** 本轮下发后端的窗口档位：只在还没有会话 ID 时带（那时 PUT 无处可落，后端补建会话后据此落库）。
+ *  会话已存在就不带——和模型同一口径：把本台机器的选择盖到服务端权威值上，两端会来回互相覆盖。 */
 const contextWindowParam = computed(() => {
+  if (currentSessionId.value) return null
   const range = ctxRangeOf(effectiveModel.value)
   return range ? effectiveCtxWindowOf(effectiveModel.value) : null
 })
@@ -418,14 +438,19 @@ const currentOverrideModel = computed({
 const seedSessionModels = () => {
   const patch = {}
   const issues = {}
+  const wins = {}
   for (const s of sessionStore.list) {
     if (!s || !s.id) continue
     if (!(s.id in modelMap.value)) patch[s.id] = s.model || ''
     // 可用性每次重算：它随管理员停启用供应商/模型而变，不像选择那样归本地
     issues[s.id] = s.modelIssue || ''
+    // 窗口档每次重算：会话换过模型后，上一台模型留下的档对新模型可能根本不成立，
+    // 界面要显示这一条会话真正在用的那一个数，不是本台机器缓存里的习惯
+    wins[s.id] = s.contextWindow == null ? null : Number(s.contextWindow)
   }
   if (Object.keys(patch).length) modelMap.value = { ...modelMap.value, ...patch }
   modelIssueMap.value = { ...modelIssueMap.value, ...issues }
+  sessionCtxMap.value = { ...sessionCtxMap.value, ...wins }
 }
 // 监听列表本身，而不是在挂载流程里调一次：会话列表由侧栏（AppLayout）与聊天页各自触发加载，
 // 并发时 loadSessions 的加载代次守卫会丢弃较早的一次（列表还没写入），挂载时点读到的可能是空列表。
@@ -1023,6 +1048,8 @@ const switchSession = async sid => {
       // 迟到的响应不覆盖界面上已改的选择（用户在这期间又切了模型）
       if (r && r.success && !(sid in modelMap.value)) {
         modelMap.value = { ...modelMap.value, [sid]: r.data?.model || '' }
+        sessionCtxMap.value = { ...sessionCtxMap.value,
+          [sid]: r.data?.contextWindow == null ? null : Number(r.data.contextWindow) }
       }
     }).catch(() => {})
   }
@@ -3441,7 +3468,7 @@ if (typeof window !== 'undefined') {
     thinkCapsOf, reasoningLevelsOf, deepThinkMap, deepOnOf, deepThinkOn, levelOptionsOf, currentLevelOf,
     levelMap, setThinkLevel, currentThinkLevel, reasoningLevelParam,
     // 上下文窗口档位（发送载荷 + 思考面板消费）
-    ctxRangeOf, ctxWindowOptionsOf, ctxWindowMap, effectiveCtxWindowOf, setCtxWindow, contextWindowParam,
+    ctxRangeOf, ctxWindowOptionsOf, effectiveCtxWindowOf, setCtxWindow, contextWindowParam,
     // 技能
     skillList, pickedSkills, loadSkills, toggleSkill, skillAvaStyle, skillDoc,
     // 智能体

@@ -458,7 +458,14 @@ export const renameSessionApi = (sid, title) =>
 export const updateSessionModelApi = (sid, model) =>
   request(`/session/${sid}/model`, { method: 'PUT', body: JSON.stringify({ model }) })
 
-/** 读取会话已存的模型覆盖（切到列表未加载的会话时按需恢复选择器） */
+/**
+ * 会话级上下文窗口档（聊天页改档位即存）。与模型共用一个端点但各键独立：
+ * 这份载荷里没有 model，所以不会把会话上钉着的模型清掉。传 0/null = 清除档位回到模型登记上限。
+ */
+export const updateSessionWindowApi = (sid, contextWindow) =>
+  request(`/session/${sid}/model`, { method: 'PUT', body: JSON.stringify({ contextWindow }) })
+
+/** 读取会话已存的模型覆盖与窗口档（切到列表未加载的会话时按需恢复选择器） */
 export const getSessionModelApi = sid => request(`/session/${sid}/model`)
 /** 当前会话所属工作区摘要（聊天页头部标识）：无工作区/非本人会话返回 data=null */
 export const getSessionWorkspace = sid => request(`/session/${sid}/workspace`)

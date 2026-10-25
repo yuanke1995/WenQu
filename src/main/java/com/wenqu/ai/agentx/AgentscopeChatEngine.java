@@ -655,7 +655,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         slot.begin(tools.newTurn(cmd, pool, channel, policy, hooks));
         // 本轮智能体绑定一次解析：实例重建判据、人设、技能白名单三处共用同一份（避免一轮读三遍库，
         // 也避免「判据说没换、人设却按另一份装配」这种自相矛盾）
-        AgentBinding binding = bindingOf(cmd, policy);
+        AgentBinding binding = bindingOf(cmd, policy, ref);
         // 实例键用完整引用而不是裸模型名：同一个模型名可以挂在好几个供应商下（各自的 baseUrl 与 Key 不同），
         // 只按裸名判「模型没换」就不重建实例，于是换了供应商仍拿旧网关旧 Key 跑，且日志上一切正常
         AgentSession session;
@@ -785,7 +785,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         sessions.claimFollower(sessionKey);
         try {
             followTurn(session, cmd, channel, pool, route, hooks, turnId, historyBefore, startCursor,
-                    userMessageId, current, recording, System.currentTimeMillis());
+                    userMessageId, current, recording, System.currentTimeMillis(), binding.contextWindow());
         } finally {
             sessions.releaseFollower(sessionKey);
             // 收口后清掉本轮落点：之后再有工具调用会明确失败，而不是回落到这一轮的池子里
@@ -806,7 +806,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                             ModelRegistryService.ModelRoute route, WenquAgentxTools.TurnHooks hooks,
                             String turnId, int historyBefore, long startCursor, String userMessageId,
                             AgentSession.Task current,
-                            Recording recording, long startedAt) {
+                            Recording recording, long startedAt, int contextWindow) {
         long machineBudgetMs = turnSeconds() * 1000L;
         // 接流快照改由本轮自己供：外壳开轮时只有「还没出字」那份空快照，而正文/工具卡/时间线
         // 只活在这里的 Recording 与引用池里。不回填的表现为——生成中刷新，气泡接回来是一片空白。
@@ -858,7 +858,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             final boolean taskChanged = mirror.takeTaskChanged();
             // 用量帧只在上下文真的添了行时才算：算它要先取 transcript，那是一次全量读
             emitLiveUsage(session, cmd, pool, channel, historyBefore, usageStamp, mirror.takeMessageChanged(),
-                    hooks.modelRef());
+                    contextWindow);
             announcedRefs = emitRetrieved(cmd, pool, channel, announcedRefs, recording);
             // 用户点了「继续对话」：这一轮就此收口——修改意见由前端作为一条用户消息开出完整新一轮
             // （与手写引擎同一契约）。框架那一跑是被 reject 唤醒的，它会自己往下重出一版计划，
@@ -1105,7 +1105,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 收尾标记（【目标完成】/【目标受阻】…）是平台控制信号，落库与下发的正文里不出现：
         // 摘在 onTurnEnd 之后、finish 之前，用户读到的最后一条就是干净的交付说明。
         answer = com.wenqu.ai.service.GoalService.stripMarkers(answer);
-        finish(cmd, channel, pool, route, hooks.modelRef(), answer, recording, userMessageId, stopped,
+        finish(cmd, channel, pool, route, hooks.modelRef(), contextWindow, answer, recording,
+                userMessageId, stopped,
                 timedOut, awaiting, machineMs, humanWaitMs, wallMs,
                 session, historyBefore, turnId, planRecord);
     }
@@ -1269,7 +1270,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                              ModelRegistryService.ModelRoute route, WenquAgentxTools.TurnHooks hooks,
                              ExecutionPolicy policy,
                              AgentSession session, int historyBefore, long startCursor,
-                             Recording recording) {
+                             Recording recording, int contextWindow) {
     }
 
     /**
@@ -1310,7 +1311,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 new java.util.concurrent.ConcurrentLinkedQueue<>();
         WenquAgentxTools.TurnHooks hooks = tools.newHooks(cmd, ref, () -> turnId, spills,
                 consultService.newLedger());
-        AgentBinding binding = bindingOf(cmd, policy);
+        AgentBinding binding = bindingOf(cmd, policy, ref);
         AgentxTurnSlot slot = sessions.turnSlot(cmd);
         AgentSession session;
         try {
@@ -1343,7 +1344,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 cmd.getUserId());
         bindFrameworkToolGate(cmd, recording);
         return new Following(cmd, channel, pool, route, hooks, policy, session,
-                session.transcript().messages().size(), session.log().head().seq(), recording);
+                session.transcript().messages().size(), session.log().head().seq(), recording,
+                binding.contextWindow());
     }
 
 /**
@@ -1420,7 +1422,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 那一轮的账本归属就全挂错了
                 followTurn(f.session(), f.cmd(), f.channel(), f.pool(), f.route(), f.hooks(),
                         turnId, f.historyBefore(), f.startCursor(), null, current,
-                        f.recording(), System.currentTimeMillis());
+                        f.recording(), System.currentTimeMillis(), f.contextWindow());
                 log.info("[agentx] 续跑已收尾 session={}", f.cmd().getSessionId());
             } catch (Exception e) {
                 log.warn("[agentx] 续跑中断 session={}: {}", f.cmd().getSessionId(), e.toString());
@@ -1603,32 +1605,41 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     /**
-     * 本轮用户显式选过的模型上下文窗口（token），落到 {@link OpenAIChatModel} 的
+     * 本轮生效的模型上下文窗口（token），落到 {@link OpenAIChatModel} 的
      * {@code contextWindowSize}。框架的压缩阈值与输入预算都由它推导：
      * <ul>
      *   <li>{@code CompactionMiddleware#onReasoning}：{@code window - reserved(20k)} 为动态压缩阈值</li>
-     *   <li>{@code HarnessContextBuilder#inputLimit}：{@code window - output - safety} 为输入上限</li>
+     *   <li>{@code HarnessContextBuilder#inputLimit}：{@code window - output - safety} 为输入上限，
+     *       再减去「系统提示词＋运行时投影＋工具声明」才是<b>对话</b>那一份的压缩阈值</li>
      * </ul>
-     * 未选（≤0）返回 0，调用方不设（模型按名查框架内置 {@code ModelContextWindows} 表）；
-     * 不能把 0 显式塞给模型——{@code OpenAIChatModel} 的 builder 只在 {@code >=0} 时用显式值，
-     * 0 会被当成「窗口=0」喂给压缩逻辑（每轮都压）。用户选过的窗口优先于框架内置表：
-     * 问渠登记的窗口是模型真实口径，框架表按前缀猜名、对中文大模型常缺条目。
+     * 问渠登记的窗口优先于框架内置表：登记值是模型真实口径，框架 {@code ModelContextWindows} 按前缀
+     * 猜名、对中文大模型常缺条目（{@code deepseek-v4.1-flash} 在框架的 OPENAI 表里就查不到）。
+     * <p><b>返回 0 只有一种情况</b>：模型没登记窗口（或引用解析不出登记行）。这时调用方必须
+     * <b>整个不调</b> {@code contextWindowSize}——该 setter 的判据是 {@code >= 0 即用显式值}，
+     * 把 0 塞进去等于向框架声明「窗口=0」，框架随即改用 64000 的兜底输入上限。真机 2026-10-25：
+     * 一台 1M 窗口的模型因此被压成「对话约 44K 就折一次上下文」，24 小时内自动压缩 7 次，
+     * 而界面上的容量条一直显示 2.8%。
+     * <p>取值链：<b>本轮请求显式带的档 ＞ 会话钉住的档 ＞ 模型登记上限</b>。会话那一层是给续跑轮用的：
+     * 目标续跑、后台轮、断线重连重建的 {@link ChatCommand} 不带请求档，只认请求时这些轮会退回登记上限，
+     * 用户手动降过的档就在中途悄悄变回去——窗口变了，压缩阈值跟着变，而界面上看不出来。
      * <p>越界值在服务端收敛到模型登记的 {@code [contextWindowMin, contextWindow]} 区间
      * （前端面板只在区间内给档位，但前端校验不是边界）：超上限抬到上限——否则压缩阈值被抬到
      * window−20k，基本不压缩直到上游 overflow；低于下限压到下限——否则每次模型调用都触发压缩。
-     * 模型未登记窗口（或引用解析不出登记行）时本轮选择整个忽略、返回 0：窗口档位只在
-     * 「模型登记了区间」时才有意义（与请求字段文档同一口径），宁回落框架内置表也不采信来路不明的值。
+     * 只登记上限、没登记可选区间（min 空）时档位选择整个不生效，按登记上限走。
      */
     private int modelContextWindow(ChatCommand cmd, String modelRef) {
-        Integer requested = cmd.getRequestedContextWindow();
-        if (requested == null || requested <= 0) return 0;
         com.wenqu.ai.model.ModelInfo mi = modelRegistry.modelInfoOf(modelRef);
         Integer max = mi == null ? null : mi.getContextWindow();
-        Integer min = mi == null ? null : mi.getContextWindowMin();
         if (max == null || max <= 0) return 0;
-        // 只登记上限、没登记可选区间（min 空）：档位在界面上本就不出现，选择整个不生效，
-        // 按登记窗口（默认上限）走——不然 API 直调传 1 会把窗口钉在 1（每次调用都触发压缩）
-        if (min == null || min <= 0 || min > max) return max;
+        Integer min = mi.getContextWindowMin();
+        boolean adjustable = min != null && min > 0 && min <= max;
+        Integer requested = cmd.getRequestedContextWindow();
+        if (requested == null || requested <= 0) {
+            // 会话钉住的那一档只在这台模型本来就有可调区间时才算数：没有区间就谈不上「用户选过」，
+            // 采信历史值等于把窗口永久钉在一个没人选过的数上
+            requested = adjustable ? sessionService.contextWindowOf(cmd.getSessionId()) : null;
+        }
+        if (requested == null || requested <= 0 || !adjustable) return max;
         return Math.max(min, Math.min(requested, max));
     }
 
@@ -2409,10 +2420,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      *
      * @param key 智能体 id + 配置更新时间：换人、改配置都会让它变
      */
-    private record AgentBinding(Agent row, String key, io.agentscope.core.skill.SkillFilter skillFilter) {
+    private record AgentBinding(Agent row, String key, io.agentscope.core.skill.SkillFilter skillFilter,
+                                int contextWindow) {
     }
 
-    private AgentBinding bindingOf(ChatCommand cmd, ExecutionPolicy policy) {
+    private AgentBinding bindingOf(ChatCommand cmd, ExecutionPolicy policy, String modelRef) {
         Agent row = null;
         try {
             row = tools.agentOf(cmd);
@@ -2434,10 +2446,14 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 个人「自动提炼记忆」开关也是 build 期装配（memoryConfig 还是 disableMemoryHooks）：不并进
         // 指纹的话，关掉后要等下一次重建才停，与个人设置里「关掉后下一轮起才停」的说法不符。
         key = key + "|mem=" + orgService.memoryFlushEnabled(cmd.getUserId());
-        // 注意：思考开关/上下文窗口档也烤在实例里，但续跑入口（openForContinuation）重建的
-        // ChatCommand 不带这两个值，若把它们并进 key，续跑会按默认档重建、丢掉用户原来的选择。
-        // 因此这里只并入可复原的档位；思考/窗口档的变更留给后续「按调用传 GenerateOptions」那一刀。
-        return new AgentBinding(row, key, skillFilterOf(row));
+        // 上下文窗口档并进指纹：它决定框架的压缩阈值与输入上限，烤死在实例里，不重建就等于改档位没改。
+        // 之所以敢并：这一档现在归会话行权威（见 modelContextWindow），续跑轮重建的 ChatCommand 虽然
+        // 不带请求档，也会从会话行读到同一份，不会像早先那样「续跑按默认档重建、丢掉用户的选择」。
+        int contextWindow = modelContextWindow(cmd, modelRef);
+        key = key + "|ctx=" + contextWindow;
+        // 思考开关仍留在指纹外：它同样烤在实例里，但续跑轮的 ChatCommand 复原不了它，并进来会让
+        // 续跑按默认档重建。那一档的变更仍欠「按调用传 GenerateOptions」那一刀。
+        return new AgentBinding(row, key, skillFilterOf(row), contextWindow);
     }
 
     /**
@@ -3111,8 +3127,15 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     /**
-     * 压缩配置。框架默认（不配＝动态 token 阈值或 50 条消息触发、逐字留最近 20 条、prune 开）
-     * 本身就是一条会跑的滚动压缩，问渠不再另算一份摘要——两边各算就是两份「已压缩上下文」互相冒充。
+     * 压缩配置。问渠只把「按消息条数触发」这一道关掉（{@code triggerMessages(0)}），其余走框架默认
+     * （动态 token 阈值、逐字留最近 20 条、prune 开）——框架那条本身就是一条会跑的滚动压缩，
+     * 问渠不再另算一份摘要，两边各算就是两份「已压缩上下文」互相冒充。
+     * <p><b>为什么取消条数那道线</b>：它数的是整条会话累计的对话消息（一次工具调用＝ASSISTANT 调用
+     * ＋TOOL 结果两条），25 次工具调用就撞满 50 条——而它和「窗口还剩多少」没有关系。窗口那道线
+     * 算出来是 95.6 万 token（1M 档），条数那道线总是先把它抢掉，结果是长会话被反复折成摘要、
+     * 而容量条上明明还空着。折完尾部只留 ≤8K token，条数又从个位数重新数起，等于越干越勤。
+     * 真把上游窗口顶爆了有兜底：{@code CompactionMiddleware#overflowRecovery} 认 provider 的
+     * context-overflow 错，当场强制折一次并重试同一轮，所以取消条数那道线不会变成「直接报错」。
      * <p>手动 {@code /compact} 在这一路会话上留过请求时，本次建实例强制「有一条就先压」，
      * 让那次点击真的在下一次提问前把旧对话折进去（框架没有「就地压一次」的入口，压缩长在推理循环前）。
      * <p>此前框架默认阈值另有可配项（chat.agentscopeCompactTriggerMessages，0＝框架默认），默认态
@@ -3131,7 +3154,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 com.wenqu.ai.util.UsageAttr.of(cmd.getUserId(), cmd.getSessionId(), null, "compress"),
                 modelRef);
         io.agentscope.harness.agent.memory.compaction.CompactionConfig.Builder b =
-                io.agentscope.harness.agent.memory.compaction.CompactionConfig.builder().model(compressModel);
+                io.agentscope.harness.agent.memory.compaction.CompactionConfig.builder()
+                        .model(compressModel)
+                        // 0=不按条数触发（框架判据是 triggerMessages > 0 才比条数），只留窗口那道线
+                        .triggerMessages(0);
         // 只关 MemoryConfig 的 per-call flush 会漏掉压缩前这一次；游客/子轮本就不写记忆，一并关。
         if (cmd.isGuestMode() || cmd.branchTurn() || !memoryOn(cmd)) {
             b.flushBeforeCompact(false);
@@ -3192,7 +3218,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         toolGate.denyMemoryWrites(cmd.branchTurn());
         // 主模型只建一次：主对话、记忆提炼、上下文压缩各包一层 MeteredModel（按 kind 分开记账），
         // 底层仍是同一个 OpenAIChatModel。包装器只旁路 usage，不改变请求参数与上下文窗口。
-        io.agentscope.core.model.Model baseModel = OpenAIChatModel.builder()
+        OpenAIChatModel.Builder modelBuilder = OpenAIChatModel.builder()
                 .baseUrl(route.baseUrl())
                 .apiKey(route.apiKey())
                 .modelName(route.modelId())
@@ -3208,9 +3234,15 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         .build())
                 .generateOptions(generateOptions(cmd, hooks.modelRef()))
                 .endpointPath(route.completionsPath() == null || route.completionsPath().isBlank()
-                        ? "/v1/chat/completions" : route.completionsPath())
-                .contextWindowSize(modelContextWindow(cmd, hooks.modelRef()))
-                .build();
+                        ? "/v1/chat/completions" : route.completionsPath());
+        // 窗口拿得到登记值才交给模型：没拿到时一次都不调，让框架按模型名查它自己的内置表。
+        // 显式传 0 会被框架当成「这条模型的窗口是 0」，输入上限直接掉到 64000 兜底值——
+        // 压缩阈值随之变成 64000 减去固定开销（系统提示词＋投影＋工具声明），实测约 44K 就折一次。
+        // 值取 binding 里那一份：它同时是实例复用指纹的一部分，两处共用一个数才不会出现
+        // 「指纹判成没变、实例里的窗口却是另一个」这种自相矛盾。
+        int contextWindow = binding.contextWindow();
+        if (contextWindow > 0) modelBuilder.contextWindowSize(contextWindow);
+        io.agentscope.core.model.Model baseModel = modelBuilder.build();
         io.agentscope.core.model.Model chatModel = new MeteredModel(baseModel, usageLedger,
                 com.wenqu.ai.util.UsageAttr.of(cmd.getUserId(), cmd.getSessionId(), null,
                         cmd.branchTurn() ? "subagent" : "chat"), hooks.modelRef());
@@ -3267,7 +3299,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 或者把 doing 写进 todo_write 被框架判非法。storage 用框架的、tool 面用问渠的，
                 // 是这里刻意的分工——框架 AgentState 才是清单的权威真源（见 TodoBridge）。
                 // 真要换成框架工具面，得连护栏、中文名、前端契约一起换，不能只开这个开关。
-                // 上下文压缩：框架默认就开着（动态 token 阈值或 50 条消息触发、逐字保留最近 20 条）。
+                // 上下文压缩：只按「窗口推导出来的那道 token 线」触发（按条数触发那道已在
+                // compactionConfig 里关掉，逐字保留最近 20 条仍走框架默认）。
                 // 用户选的窗口已落到 model.contextWindowSize（见 .model(...) 段），压缩阈值由它推导，
                 // 这里不再单独传 maxContextTokens（那是 WorkspaceContextMiddleware 的注入预算，非压缩阈值）。
                 // 压缩摘要用独立的 MeteredModel（kind=compress），成本才进得了台账。
@@ -3534,7 +3567,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * @param wallMs      整轮墙钟（开轮那一刻到收尾），只用来反推本轮真实开始时刻与写日志
      */
     private void finish(ChatCommand cmd, RunChannel channel, WenquSourcePool pool,
-                        ModelRegistryService.ModelRoute route, String modelRef, String answer, Recording recording,
+                        ModelRegistryService.ModelRoute route, String modelRef, int contextWindow, String answer,
+                        Recording recording,
                         String userMessageId, boolean stopped, boolean timedOut, boolean awaiting,
                         long elapsedMs, long humanWaitMs, long wallMs,
                         AgentSession session, int historyBefore, String turnId,
@@ -3612,7 +3646,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         com.wenqu.ai.agent.chat.TurnHandle handle =
                 com.wenqu.ai.agent.chat.TurnRegistry.handle(cmd.getSessionId());
         String framedTurnId = handle == null ? turnId : handle.turnId();
-        Map<String, Object> tokens = usageOf(session, historyBefore, pool, cmd, modelRef);
+        Map<String, Object> tokens = usageOf(session, historyBefore, pool, cmd, contextWindow);
         // 收尾这一发是终值（与 done 里的 tokens 同一份快照）；流式期间那几发见 emitLiveUsage，
         // 两拨都出自 usageOf，不做第二套估算
         // 整轮结束而思考段还开着（只思考没出正文、或被叫停）：照样补一条收尾帧，别让转圈永远挂着
@@ -3856,14 +3890,14 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      */
     private void emitLiveUsage(AgentSession session, ChatCommand cmd, WenquSourcePool pool,
                                RunChannel channel, int historyBefore, long[] stamp, boolean transcriptChanged,
-                               String modelRef) {
+                               int contextWindow) {
         // 上下文没添新行就不必读全量日志去问「添了几条」：transcript() 走的是从 head 回走的整条 commit 链
         if (!transcriptChanged) return;
         int size = session.transcript().messages().size();
         if (size == stamp[0]) return;
         stamp[0] = size;
         try {
-            Map<String, Object> tokens = usageOf(session, historyBefore, pool, cmd, modelRef);
+            Map<String, Object> tokens = usageOf(session, historyBefore, pool, cmd, contextWindow);
             // 还没有任何一次模型回包带 usage：此刻报不出占用，等下一跳（空表发出去只会让前端清空预览）
             if (tokens.isEmpty()) return;
             channel.emit(RunEventType.USAGE, com.alibaba.fastjson2.JSON.toJSONString(tokens));
@@ -3883,7 +3917,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 算百分比。前端对缺字段是「不显示该行」，不填比填个假预算诚实。
      */
     private Map<String, Object> usageOf(AgentSession session, int historyBefore,
-                                        WenquSourcePool pool, ChatCommand cmd, String modelRef) {
+                                        WenquSourcePool pool, ChatCommand cmd, int contextWindow) {
         List<Msg> messages = session.transcript().messages();
         int from = Math.min(Math.max(historyBefore, 0), messages.size());
         long prompt = 0;
@@ -3914,9 +3948,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         tokens.put("context", lastInput);
         tokens.put("outputIsReal", true);
         tokens.put("hits", pool.sources().size());
-        int window = modelContextWindow(cmd, modelRef);
-        if (window > 0) {
-            tokens.put("window", window);
+        // 窗口取实例真正烤进去的那一份（与压缩阈值同源）：报别的数，容量条的百分比就和
+        // 「什么时候会折上下文」各说各话
+        if (contextWindow > 0) {
+            tokens.put("window", contextWindow);
             tokens.put("windowSource", "framework");
         }
         // 分类用量：按框架消息结构切分，并按本轮真实 prompt（最终轮输入）校准。

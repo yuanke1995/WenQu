@@ -637,6 +637,9 @@ public class SessionService {
             info.setAgentName(s.getAgentName() == null ? "" : s.getAgentName());
         }
         info.setProjectId(s.getProjectId());
+        // 窗口档原样带出（null=这个会话没选过，前端按模型登记上限显示）：这一份是问答侧真正烤进
+        // 实例的那一个值，界面不回显它就会出现「选择器显示上限、实际按另一档在压上下文」
+        info.setContextWindow(s.getContextWindow());
         info.setModel(s.getModel() == null ? "" : s.getModel());
         // 这一列存的是某次点选留下的引用，而它随时可能变成不能用（供应商停用、模型被移除）：
         // 判不出来就只能等回答时撞上游报错，用户读到的是「网关坏了」而不是「你选的这个模型没了」。
@@ -1499,6 +1502,37 @@ public class SessionService {
         sessionMapper.update(null, new LambdaUpdateWrapper<Session>()
                 .eq(Session::getId, sessionId)
                 .set(Session::getModel, m.isEmpty() ? null : m));
+    }
+
+    /**
+     * 会话级上下文窗口档（聊天页改档位即存，刷新/换端/续跑后仍是这一份）。
+     * <p>只在用户显式选过时写值；传 null 或 ≤0 = 清除选择，回到「按模型登记上限走」。
+     * 值域不在这里校验：档位是否越界由问答侧按模型登记的 {@code [contextWindowMin, contextWindow]}
+     * 收敛（见 {@code AgentscopeChatEngine#modelContextWindow}），登记值后来改了也能自动跟着收敛，
+     * 不必在本列上再存一份边界。
+     */
+    public void updateContextWindow(String userId, String sessionId, Integer contextWindow) {
+        assertOwned(sessionId, userId);
+        // 清除要显式 SET null：updateById 默认忽略 null 字段（置空清不掉）
+        sessionMapper.update(null, new LambdaUpdateWrapper<Session>()
+                .eq(Session::getId, sessionId)
+                .set(Session::getContextWindow,
+                        contextWindow == null || contextWindow <= 0 ? null : contextWindow));
+    }
+
+    /** 读取会话已存的窗口档（没选过/会话不存在/查询失败返回 null——调用方按「未选」处理）。 */
+    public Integer contextWindowOf(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) return null;
+        try {
+            Session s = sessionMapper.selectOne(new LambdaQueryWrapper<Session>()
+                    .eq(Session::getId, sessionId)
+                    .select(Session::getContextWindow));
+            Integer v = s == null ? null : s.getContextWindow();
+            return v == null || v <= 0 ? null : v;
+        } catch (Exception e) {
+            log.warn("读取会话窗口档失败 (session={}): {}", sessionId, e.getMessage());
+            return null;
+        }
     }
 
     /** 本人会话里仍钉着该供应商的模型覆盖条数（供应商管理界面「谁还在用」的那一项） */

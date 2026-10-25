@@ -183,6 +183,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_session` (
     `agent_id`      VARCHAR(50)  DEFAULT NULL COMMENT '最近一次作答的智能体（P5：不再是会话锁定值，每轮按请求重新解析；供分享页按智能体列会话与访客会话回收使用）',
     `agent_name`    VARCHAR(100) DEFAULT NULL COMMENT '绑定时的智能体名称快照（智能体改名/删除后会话仍可展示原名称）',
     `model`         VARCHAR(190) DEFAULT NULL COMMENT '会话级模型覆盖（聊天页手动切换模型时写入，引用或遗留名；NULL=跟随个人默认）',
+    `context_window` INT          DEFAULT NULL COMMENT '会话级上下文窗口档（token，聊天页手动改档位时写入；NULL=没选过，按模型登记上限走）。框架的压缩阈值与输入上限都由它推导，故改动会在下一轮重建常驻实例',
     `history_summary`   MEDIUMTEXT DEFAULT NULL COMMENT '滚动历史摘要（上下文压缩：更早轮次压缩后的摘要，注入 prompt 的「早期对话摘要」段；NULL=未压缩过）',
     `summary_until_seq` BIGINT     DEFAULT 0 COMMENT '摘要已覆盖的消息条数（压缩由 AgentScope 框架执行，问渠只在压缩完成后把摘要与这一计数落一份，供「已压缩上下文」那条线的「查看摘要」读；0=本会话从没压过）',
     `todos`        TEXT         DEFAULT NULL COMMENT '会话当前任务清单 (JSON: {turnId,items:[{content,status}],updatedAt})；整表覆盖，只留最新一份——清单是"现在还剩几步"的状态，不是历史；历史写入由 c_ai_session_event 留痕；NULL=本会话没有清单',

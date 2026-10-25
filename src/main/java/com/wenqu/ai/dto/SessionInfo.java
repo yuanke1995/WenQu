@@ -37,6 +37,9 @@ public class SessionInfo {
     private String projectId;
 
     private String model;
+    @Schema(description = "会话级上下文窗口档（token，聊天页改过档位才有值；null=没选过，按模型登记上限走）。"
+            + "框架的压缩阈值与输入上限都由它推导，前端据此恢复该会话的档位，不按本台机器的缓存猜")
+    private Integer contextWindow;
     @Schema(description = "上面这个模型已经不能用了的原因（一句话文案；能用或未设置时为空）。"
             + "界面据此把选择器标成失效态，而不是等回答时撞上上游报错")
     private String modelIssue;
