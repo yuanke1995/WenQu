@@ -20,6 +20,17 @@ public class GoalSettings {
     /** 轮次预算默认值（设置页可改）。 */
     public static final int DEFAULT_MAX_ROUNDS = 40;
 
+    /**
+     * 四项硬预算共用的「不限制」哨兵（设置页填 0 得到它）。
+     * <p>为什么不是 0：目标行的 {@code budget_*} 列用 0 表达「0=用配置默认」（见 schema.sql），
+     * 拿 0 当不限制会让「没配」和「配了不限制」两支并成一支。出参要过一道
+     * {@code GoalService#budgetView} 把它翻回 0，否则界面会印出 2147483647。
+     */
+    public static final int UNLIMITED = Integer.MAX_VALUE;
+
+    /** 毫秒与 token 两项的不限制哨兵（列是 BIGINT）。 */
+    public static final long UNLIMITED_LONG = Long.MAX_VALUE;
+
     private final ConfigService config;
 
     public GoalSettings(ConfigService config) {
@@ -28,8 +39,10 @@ public class GoalSettings {
 
     // ==================== 推进与轮次 ====================
 
+    /** 轮次预算：0=不限制。 */
     public int maxRounds() {
-        return clamp(config.getInt("chat.goal.maxRounds", DEFAULT_MAX_ROUNDS), 1, 500);
+        int v = config.getInt("chat.goal.maxRounds", DEFAULT_MAX_ROUNDS);
+        return v <= 0 ? UNLIMITED : Math.min(v, 5000);
     }
 
     /** 一轮收尾到下一轮开跑之间的间隔（毫秒）。 */
@@ -60,16 +73,25 @@ public class GoalSettings {
 
     // ==================== 预算与恢复 ====================
 
-    public int maxTokens() {
-        return clamp(config.getInt("chat.goal.maxTokens", 2_000_000), 1_000, 100_000_000);
+    /**
+     * Token 预算：0=不限制。返回 long 而不是 int——列是 BIGINT，用 int 哨兵存进去会变成
+     * 2147483647，出参那道「哨兵翻回 0」认的是 Long.MAX_VALUE，翻不动就印给界面一个天文数字。
+     */
+    public long maxTokens() {
+        long v = config.getLong("chat.goal.maxTokens", 2_000_000L);
+        return v <= 0 ? UNLIMITED_LONG : Math.min(v, 100_000_000L);
     }
 
+    /** 机器耗时预算（毫秒）：0=不限制。 */
     public long maxMs() {
-        return clamp(config.getLong("chat.goal.maxMs", 7_200_000L), 1_000L, 86_400_000L);
+        long v = config.getLong("chat.goal.maxMs", 7_200_000L);
+        return v <= 0 ? UNLIMITED_LONG : Math.min(v, 604_800_000L);
     }
 
+    /** 工具调用预算：0=不限制。 */
     public int maxToolCalls() {
-        return clamp(config.getInt("chat.goal.maxToolCalls", 400), 1, 100_000);
+        int v = config.getInt("chat.goal.maxToolCalls", 400);
+        return v <= 0 ? UNLIMITED : Math.min(v, 1_000_000);
     }
 
     public int maxRetries() {

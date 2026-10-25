@@ -31,7 +31,7 @@ public class StepBudgetGuard implements ToolGuard {
                     max, inv.toolName(), turn.sessionId());
             return new Denial("{\"error\":\"已达到本轮工具调用步数上限(" + max + ")，不再执行工具调用。"
                     + "请基于已有信息直接给出最终回答。\"}",
-                    "已达单轮工具调用步数上限(" + max + ")");
+                    "已达单轮工具调用步数上限(" + max + ")，发一句「继续」可以接着做");
         }
         turn.takeStep();
         return null;

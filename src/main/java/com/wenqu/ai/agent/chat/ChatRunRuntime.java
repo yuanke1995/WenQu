@@ -181,10 +181,20 @@ public class ChatRunRuntime {
         return scheduleKeepalive(emitter, "整轮");
     }
 
-    /** 整轮机器耗时预算（chat.sseTimeoutMs，默认 5 分钟） */
+    /**
+     * 整轮机器耗时预算（chat.sseTimeoutMs，默认 5 分钟）。
+     * <p>0 = <b>不限制</b>：看门狗不再截断这一轮。缺行与脏值仍回默认 5 分钟，不能和「显式 0」并成
+     * 一支——{@code getLong} 对两者都给 0，所以这里读原始串自己判。
+     */
     public long turnMachineBudgetMs() {
-        long t = configService.getLong("chat.sseTimeoutMs");
-        return t > 0 ? t : 300000L;
+        String raw = configService.get("chat.sseTimeoutMs");
+        if (raw == null || raw.isBlank()) return 300_000L;
+        try {
+            long t = Long.parseLong(raw.trim());
+            return t > 0 ? t : Long.MAX_VALUE;
+        } catch (NumberFormatException e) {
+            return 300_000L;
+        }
     }
 
     /**

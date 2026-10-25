@@ -95,6 +95,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     /** 本轮提交离队的宽限：投递循环 100ms 一跳，超过这一段还没启动就是被闸门锁住了。 */
     private static final long LAUNCH_GRACE_MS = 30_000L;
 
+    /** 整轮不截断（{@code chat.sseTimeoutMs}=0）时，单把工具仍保留的超时（秒）。 */
+    private static final int UNLIMITED_TOOL_SECONDS = 7200;
+
     private final ModelRegistryService modelRegistry;
     /** 工作区约定：注入 system prompt 的工作背景段（无工作区/无约定时为空） */
     private final com.wenqu.ai.service.ProjectService projectService;
@@ -1072,8 +1075,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             }
         }
         if (cutByMaxIters) {
-            channel.emit(RunEventType.WARN, "这一轮的推理步数已用满（上限 "
-                    + configService.getInt("chat.agentscopeMaxIters", 12)
+            channel.emit(RunEventType.WARN, "这一轮的推理步数已用满（上限 " + maxItersForTurn()
                     + " 步），活没干完就停了。发一句「继续」可以接着做");
         }
         // 卡片还开着、且没有被判超时：这一轮只是暂时没人跟——用户答了会有新的跟随者把它跑完并落库。
@@ -1649,12 +1651,26 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 不重试），不显式覆盖就会多一道没人知道的天花板——咨询子轮、沙盒长命令都会撞上去
      * （实测：咨询跑满 5 分钟被判工具失败，父轮只收到一句 Tool execution timeout）。
      * 工具超时跟着整轮超时走：SSE 调大时长工具不会被框架固定的 5 分钟砍掉。
+     * <p>{@code chat.sseTimeoutMs} 填 0 说的是「整轮不截断」，<b>不是</b>「单条命令可以挂死」：那一档
+     * 仍要一个有限值，否则 {@code max(30, 0/1000)} 会把每把工具压到 30 秒，放开限制反而变成最严的天花板。
      * <p>此前这里是可配项（chat.agentscopeTurnTimeoutSeconds，0=沿用 SSE 超时），默认态两者同值，
      * 属「框架已有限制、参数只留个默认就用不上的改口」，已取消——需要单独给框架引擎配墙钟的
      * 场景不存在：整轮超时本来就是唯一该有的天花板。
      */
     private int turnSeconds() {
-        return Math.max(30, configService.getInt("chat.sseTimeoutMs", 300000) / 1000);
+        int ms = configService.getInt("chat.sseTimeoutMs", 300000);
+        return ms <= 0 ? UNLIMITED_TOOL_SECONDS : Math.max(30, ms / 1000);
+    }
+
+    /**
+     * 框架的推理轮数上限（一次模型调用＋其工具派发为一轮）。
+     * <p>0=不限制只能以大数表达：框架的 {@code ReactConfig} 构造器对 {@code maxIters<=0} 直接抛
+     * {@code IllegalArgumentException}。取 {@code Integer.MAX_VALUE} 安全——框架侧只做
+     * {@code iter >= maxIters} 比较与拼日志，不参与加减。
+     */
+    private int maxItersForTurn() {
+        int v = configService.getInt("chat.agentscopeMaxIters", 12);
+        return v <= 0 ? Integer.MAX_VALUE : v;
     }
 
     /**
@@ -3280,7 +3296,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 .toolExecutionConfig(io.agentscope.core.model.ExecutionConfig.builder()
                         .timeout(java.time.Duration.ofSeconds(turnSeconds()))
                         .build())
-                .maxIters(configService.getInt("chat.agentscopeMaxIters", 12))
+                .maxIters(maxItersForTurn())
                 // 计划模式工具面常驻开启：是否进入只由用户显式开计划开关（sessions.setPlanMode）或
                 // 模型自己在推理中调用 plan_enter 决定。问渠不再做「按消息意图预判」——PlanModeService
                 // 与 chat.planAutoIntent 已删除，计划怎么执行全交框架的 plan_enter/write/exit + 只读拦截。

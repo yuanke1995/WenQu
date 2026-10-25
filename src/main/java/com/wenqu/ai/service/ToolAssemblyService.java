@@ -38,16 +38,17 @@ public class ToolAssemblyService {
      * 就是并列的第二套运行时各数各的预算——框架侧漏接时表现为「同样的问题一边被截在一半」，
      * 而不是任何一条错误。
      * <p>分支逐层减半，且下限 3 防的是基础值很小或层数很深时 {@code >>} 直接算出 0——而 0 在本平台
-     * 语义是<b>不限制</b>，递减递减出不限制是最坏的结果。基础值为 0（智能体显式「不限制」）时分支不跟随：
-     * 那只有人工盯着的会话里才安全，分支按全局档减半处理，宁可少跑也不放飞。
+     * 语义是<b>不限制</b>，递减递减出不限制是最坏的结果。智能体单独填 0（显式「不限制」）时分支不跟随：
+     * 那只有人工盯着的会话里才安全，分支退回全局档减半，宁可少跑也不放飞。
+     * <p>但全局本身也是 0 时没有「全局档」可退——那 0 是平台口径的不限制，必须原样传给分支。
      */
     public int maxToolSteps(Agent agent, int depth) {
         Integer v = agent == null ? null : agent.getMaxToolSteps();
         int global = configService.getInt("agent.maxToolSteps", 15);
-        boolean unlimited = v != null && v == 0;
         int base = (v == null || v < 0) ? global : v;
         if (depth <= 0) return Math.max(0, base);
-        if (unlimited) base = Math.max(1, global);
+        if (v != null && v == 0 && global > 0) base = global;
+        if (base <= 0) return 0;
         return Math.max(3, base >> depth);
     }
 

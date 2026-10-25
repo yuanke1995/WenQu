@@ -126,7 +126,8 @@ public final class AgentxStepBudget implements MiddlewareBase {
             taken++;
         }
         if (!denied.isEmpty()) {
-            onDeny.accept("engine.stepBudget", "本轮工具调用已达上限（" + limit + " 步），后续工具未执行");
+            onDeny.accept("engine.stepBudget", "本轮工具调用已达上限（" + limit + " 步），后续工具未执行；"
+                    + "发一句「继续」可以接着做");
         }
         return new Allocation(allowed, denied);
     }

@@ -184,7 +184,7 @@ public class GoalService {
             goal.setNoProgressRounds(0);
             goal.setRecoveryCount(0);
             goal.setBudgetRounds(settings.maxRounds());
-            goal.setBudgetTokens((long) settings.maxTokens());
+            goal.setBudgetTokens(settings.maxTokens());
             goal.setBudgetMs(settings.maxMs());
             goal.setBudgetToolCalls(settings.maxToolCalls());
             goal.setRowVersion(0L);
@@ -1215,15 +1215,29 @@ public class GoalService {
         int tools = (int) nz(goal.getUsedToolCalls());
         int rounds = ni(goal.getTurnCounter());
         b.put("tokens", tokens);
-        b.put("maxTokens", budgetTokens(goal));
+        b.put("maxTokens", shown(budgetTokens(goal)));
         b.put("ms", ms);
-        b.put("maxMs", budgetMs(goal));
+        b.put("maxMs", shown(budgetMs(goal)));
         b.put("toolCalls", tools);
-        b.put("maxToolCalls", budgetToolCalls(goal));
+        b.put("maxToolCalls", shown(budgetToolCalls(goal)));
         b.put("rounds", rounds);
-        b.put("maxRounds", budgetRounds(goal));
+        b.put("maxRounds", shown(budgetRounds(goal)));
         b.put("percent", budgetRatio(goal));
         return b;
+    }
+
+    /**
+     * 不限制的哨兵在出参里说回 0：目标行的 {@code budget_*} 列用 0 表达「用配置默认」，
+     * 界面那侧 0 读作「这一项没有预算」（GoalCard 据此换一种说法，四项全 0 才整行不画）。
+     * 不翻的话界面上是一行「预算：3/2147483647 轮」。
+     */
+    private static int shown(int budget) {
+        return budget >= GoalSettings.UNLIMITED ? 0 : budget;
+    }
+
+    /** {@link #shown(int)} 的 BIGINT 版（token 与毫秒两项）。 */
+    private static long shown(long budget) {
+        return budget >= GoalSettings.UNLIMITED_LONG ? 0L : budget;
     }
 
     private Map<String, Object> outcomeOf(Goal goal) {

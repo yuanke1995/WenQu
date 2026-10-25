@@ -336,7 +336,7 @@
                     </div>
                     <div class="ap-adv-field">
                       <label class="ap-field-label">单轮工具步数</label>
-                      <a-input-number v-model:value="form.maxToolSteps" :min="0" :max="50" :step="1" size="small"
+                      <a-input-number v-model:value="form.maxToolSteps" :min="0" :max="1000" :step="1" size="small"
                                       style="width:100%" :placeholder="maxToolStepsPh" />
                       <div class="ap-hint">留空即按全局当前值走；0 = 不限制。</div>
                     </div>
