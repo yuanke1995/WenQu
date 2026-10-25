@@ -845,21 +845,30 @@ public class ChatController {
     }
 
     @Operation(summary = "手动压缩会话上下文",
-            description = "把较早的对话压缩成摘要（前端 /compact 斜杠命令），为后续提问腾出上下文空间。"
+            description = "把较早的对话压缩成摘要（前端 /compact 斜杠命令、摘要弹窗的「带要求重新压缩」），为后续提问腾出上下文空间。"
                     + "压缩由 AgentScope 框架的 ConversationCompactor 执行：进程内持有该会话的活实例时<b>当场压并写回</b>，"
                     + "返回 {engine:\"agentscope\", scheduled:false, compressedTurns, freedTokens, summary, summaryTokens}；"
                     + "无活实例（进程重启后 / 本进程没答过）时回落为登记一次强制压缩，"
-                    + "返回 {engine:\"agentscope\", scheduled:true}，下一次提问开跑前生效")
+                    + "返回 {engine:\"agentscope\", scheduled:true}，下一次提问开跑前生效。"
+                    + "可选入参 {instruction:\"…\"}＝这一次摘要的附加要求（最长 200 字），"
+                    + "并进框架的摘要提示词，只作用这一次压缩、不残留到之后的轮次")
     @ApiResponse(responseCode = "200", description = "压缩结果统计（含摘要全文，供前端展示）")
     @PostMapping("/session/{sessionId}/compact")
     public ResultJson compactSession(
             @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId,
+            @Parameter(description = "可选 {instruction:这一次摘要的附加要求}")
+            @RequestBody(required = false) Map<String, String> body,
             HttpServletRequest httpRequest) {
         String userId = RequestUser.uid();
         sessionService.assertOwned(sessionId, userId);
         // 摘要调用按 chat 桶限频，防连点刷额度（框架那一路也要过这道，不然连点能一直重建实例）
         rateLimitService.checkRateLimit("chat", RequestUser.ANONYMOUS.equals(userId)
                 ? "ip:" + clientIp(httpRequest) : "user:" + userId);
+        // 这一次摘要的附加要求（摘要弹窗「带要求重新压缩」填的那句）：并进框架的摘要提示词。
+        // 上限与输入框那道 maxlength 一致，超了如实报错，不静默截断半句要求
+        String instruction = body == null || body.get("instruction") == null
+                ? "" : body.get("instruction").trim();
+        if (instruction.length() > 200) throw new BizException("摘要要求最长 200 字");
         // 会话轮级互斥：压缩与问答同一把锁。就地压缩是「读状态快照 → 压缩 → clear+addAll 写回」，
         // 快照过期不提交的守卫只有框架自动压缩有，手动这条路径没有——读与写之间若有一轮在跑
         //（插话、工具结果、半截正文正往上下文里追加），那些消息会被旧快照覆盖掉。抢不到如实说，不排队。
@@ -867,9 +876,8 @@ public class ChatController {
             throw new BizException("这个会话上一轮还在回答中，等回答结束或先停止本轮，再压缩上下文");
         }
         try {
-            // 单一引擎：会话上下文恒由 AgentScope 框架持有。框架不产问渠旧版那份摘要、也不接受
-            // instruction/model 参数，压缩语义只有框架这一份。
-            Map<String, Object> r = frameworkSessions.compactNow(userId, sessionId);
+            // 单一引擎：会话上下文恒由 AgentScope 框架持有，压缩语义只有框架这一份（摘要提示词也是）。
+            Map<String, Object> r = frameworkSessions.compactNow(userId, sessionId, instruction);
             boolean scheduled = Boolean.TRUE.equals(r.get("scheduled"));
             // 摘要落进会话行：框架只把压缩产物写在自己的会话状态里，而分隔线上「查看摘要」读的是
             // c_ai_session 那两列——不落库就是当场看得见、刷新再点进去报「这个会话还没有生成过摘要」

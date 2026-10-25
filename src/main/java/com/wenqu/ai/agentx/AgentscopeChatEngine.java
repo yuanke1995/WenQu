@@ -3179,12 +3179,17 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             b.flushBeforeCompact(false);
         }
         String key = sessions.key(cmd);
-        if (!sessions.takeCompactRequest(key)) {
+        String forcedInstruction = sessions.takeCompactRequest(key);
+        if (forcedInstruction == null) {
             return b.build();
         }
         // 强制压缩只应作用「下一次提问」那一个实例：实例按会话常驻，triggerMessages(1) 若不复位会被
         // 这一条会话的后续每一轮继承（每轮都压）。这里标「下次开轮重建」，让下一轮回到默认压缩配置。
+        // 摘要要求走同一道生命周期：它烤进这一个实例的提示词，实例一换就回默认，不会串到之后的轮次。
         sessions.markRebuildAfterCompact(key);
+        if (!forcedInstruction.isBlank()) {
+            b.summaryPrompt(FrameworkSessions.summaryPromptWith(forcedInstruction));
+        }
         return b.triggerMessages(1).build();
     }
 

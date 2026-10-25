@@ -668,8 +668,10 @@ public class FrameworkSessions {
      * <p>为什么是「下一次」而不是「当场」：框架的压缩长在推理循环里（{@code CompactionMiddleware} 在
      * 每次模型调用前判阈值），它没有「把已有会话就地压一次」的入口。而 /compact 要的结果就是
      * 「下一次提问别再背着那些旧对话」——在下一次提问开跑之前压，效果与用户要的是同一件事。
+     * <p>值=用户给这一次压缩的摘要要求（空串＝没提要求）：随强制压缩一起进那一个实例的摘要提示词，
+     * 取走即清，不会串到之后的轮次（{@link #markRebuildAfterCompact} 保证强制配置只作用一次）。
      */
-    private final java.util.Set<String> compactRequests = ConcurrentHashMap.newKeySet();
+    private final java.util.Map<String, String> compactRequests = new ConcurrentHashMap<>();
 
     /**
      * 手动 /compact 在框架引擎下的<b>就地压缩</b>（全框架化 P4）。
@@ -694,13 +696,16 @@ public class FrameworkSessions {
      *               {@code summary}（摘要正文，不含框架那段给模型看的取数指引）、{@code summaryTokens}（摘要自身 token）</li>
      *         </ul>
      *         没得压（对话还短）返回 {@code compressedTurns=0}。
+     * @param instruction 这一次摘要的附加要求（可空）：非空时并进框架的摘要提示词；
+     *                    走回落那一路时随强制压缩一起留下一次提问生效
      */
-    public Map<String, Object> compactNow(String userId, String sessionId) {
+    public Map<String, Object> compactNow(String userId, String sessionId, String instruction) {
         String key = (userId == null || userId.isBlank() ? "guest" : userId) + "|" + sessionId;
+        String req = instruction == null ? "" : instruction.trim();
         Held h = held.get(key);
         if (h == null) {
             // 无活实例：回落「排到下一次建实例时压」（那一路会带上 triggerMessages(1) 强制压缩）
-            requestCompact(userId, sessionId);
+            requestCompact(userId, sessionId, req);
             return java.util.Map.of("scheduled", true, "compressedTurns", 0);
         }
         HarnessAgent agent = h.agent();
@@ -711,7 +716,7 @@ public class FrameworkSessions {
         try {
             AgentState state = agent.getDelegate().getAgentState(ctx);
             if (state == null) {
-                requestCompact(userId, sessionId);
+                requestCompact(userId, sessionId, req);
                 return java.util.Map.of("scheduled", true, "compressedTurns", 0);
             }
             // 上下文里可能混有 SYSTEM / 合成消息：压缩器只吃对话消息（与 CompactionMiddleware 的
@@ -729,7 +734,9 @@ public class FrameworkSessions {
             WorkspaceManager ws = agent.getWorkspaceManager();
             MemoryFlushManager fm = new MemoryFlushManager(ws, agent.getModel());
             ConversationCompactor compactor = new ConversationCompactor(agent.getModel(), fm);
-            CompactionConfig forceConfig = CompactionConfig.builder().triggerMessages(1).build();
+            CompactionConfig.Builder force = CompactionConfig.builder().triggerMessages(1);
+            if (!req.isEmpty()) force.summaryPrompt(summaryPromptWith(req));
+            CompactionConfig forceConfig = force.build();
             Optional<List<Msg>> opt = compactor
                     .compactIfNeeded(ctx, conversation, forceConfig, agent.getName(), sessionId)
                     .block(Duration.ofSeconds(120));
@@ -763,9 +770,34 @@ public class FrameworkSessions {
         } catch (Exception e) {
             log.warn("[agentx] 手动 /compact 就地压缩失败，回落排到下一次: session={}, {}",
                     sessionId, e.toString());
-            requestCompact(userId, sessionId);
+            requestCompact(userId, sessionId, req);
             return java.util.Map.of("scheduled", true, "compressedTurns", 0);
         }
+    }
+
+    /** 框架摘要提示词里那句占位符——压缩时由 {@code ConversationCompactor} 换成对话原文。 */
+    private static final String SUMMARY_MESSAGES_SLOT = "{messages}";
+
+    /**
+     * 把用户给这一次压缩的要求并进框架的摘要提示词。
+     * <p>不另写一份提示词：框架那份（SESSION INTENT / SUMMARY / ARTIFACTS / NEXT STEPS）就是摘要的
+     * 结构，这里只在 {@code {messages}} 前插一段要求，让模型带着它读那段对话。占位符必须原样留着，
+     * 否则框架替换不到对话、摘要会空转，所以认不出占位符时如实告警并交回框架原文——
+     * 宁可少一条要求，也不能把压缩弄坏。
+     */
+    public static String summaryPromptWith(String instruction) {
+        String base = CompactionConfig.DEFAULT_SUMMARY_PROMPT;
+        String req = instruction == null ? "" : instruction.trim();
+        if (req.isEmpty()) return base;
+        if (!base.contains(SUMMARY_MESSAGES_SLOT)) {
+            log.warn("[agentx] 框架摘要提示词里没有 {} 占位符，本次摘要要求无法带入（框架改过模板？）",
+                    SUMMARY_MESSAGES_SLOT);
+            return base;
+        }
+        return base.replace(SUMMARY_MESSAGES_SLOT, "<user_requirements>\n"
+                + "The user asked for these specific requirements for this extraction. "
+                + "Weight what you keep accordingly; keep the output structure above unchanged.\n\n"
+                + req + "\n</user_requirements>\n\n" + SUMMARY_MESSAGES_SLOT);
     }
 
     /** 「没得压」的统一返回（对话还短 / 压不动）：字段与压缩成功时同形，前端按同一套键渲染。 */
@@ -834,9 +866,9 @@ public class FrameworkSessions {
     }
 
     /** 登记一次强制压缩并丢掉常驻实例（下一轮会带新配置重建；会话状态在 stateStore 里，不丢历史）。 */
-    public void requestCompact(String userId, String sessionId) {
+    public void requestCompact(String userId, String sessionId, String instruction) {
         String key = (userId == null || userId.isBlank() ? "guest" : userId) + "|" + sessionId;
-        compactRequests.add(key);
+        compactRequests.put(key, instruction == null ? "" : instruction.trim());
         Held h = held.remove(key);
         if (h != null) {
             order.remove(key);
@@ -846,9 +878,13 @@ public class FrameworkSessions {
         turnSlots.remove(key);
     }
 
-    /** 取走并清掉这次强制压缩（一次请求只对应一次生效）。 */
-    public boolean takeCompactRequest(String sessionKey) {
-        return sessionKey != null && compactRequests.remove(sessionKey);
+    /**
+     * 取走并清掉这次强制压缩（一次请求只对应一次生效）。
+     *
+     * @return 用户给这一次压缩的摘要要求（空串＝没提）；null=没有待生效的强制压缩
+     */
+    public String takeCompactRequest(String sessionKey) {
+        return sessionKey == null ? null : compactRequests.remove(sessionKey);
     }
 
     /**
