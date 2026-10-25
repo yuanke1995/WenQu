@@ -530,6 +530,7 @@ import { submitFeedback as apiSubmitFeedback, getKnowledgeDetail } from '../api'
 import { renderMd, prepKnowledgeContent, enhanceDiagrams } from '../utils/markdown'
 import { fmtTokens } from '../utils/token'
 import { preferMobileShell } from './mobile'
+import { addSheet, removeSheet } from './sheetStack'
 import { startSessionTabSync, stopSessionTabSync } from '../views/store'
 import BottomSheet from './BottomSheet.vue'
 import MobileMsgRow from './MobileMsgRow.vue'
@@ -986,6 +987,21 @@ watch(messages, () => {
   if (edit.idx == null) return
   if ((messages.value[edit.idx] || {}).messageId !== edit.mid) closeEdit()
 })
+
+// ==================== 两个全屏覆盖层接进 sheet 栈 ====================
+// 图片查看与全屏编辑不是 BottomSheet（整屏、无抓手，形状不同），但同样得吃系统返回键，
+// 所以按同一套 API 各登记一层。baseZ 与它们各自的 CSS 对齐（1300 / 1250），
+// 保证「后开的在上面」与「后开的先关」是同一个顺序——事件 sheet 里点图就是这种叠法。
+let lbToken = 0
+watch(() => preview.list.length, n => {
+  if (n && !lbToken) lbToken = addSheet(closePreview, 1300)
+  else if (!n && lbToken) { removeSheet(lbToken); lbToken = 0 }
+})
+let editToken = 0
+watch(() => edit.open, v => {
+  if (v && !editToken) editToken = addSheet(closeEdit, 1250)
+  else if (!v && editToken) { removeSheet(editToken); editToken = 0 }
+})
 const confirmEdit = () => {
   const mi = edit.idx
   const old = mi != null ? messages.value[mi] : null
@@ -1039,6 +1055,9 @@ onMounted(async () => {
 onUnmounted(() => {
   window.removeEventListener('resize', onViewportChange)
   stopSessionTabSync()
+  // 全屏层随页面走：栈里不能留死条目，否则下一次返回会去关一个已经不存在的界面
+  if (lbToken) { removeSheet(lbToken); lbToken = 0 }
+  if (editToken) { removeSheet(editToken); editToken = 0 }
 })
 </script>
 

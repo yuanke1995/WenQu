@@ -2,7 +2,7 @@
   <!-- 通用底部 sheet（移动壳的地基交互件）：遮罩点击关闭、圆角在上、底部让开 Home Indicator。
        键盘弹起时 --kb 收缩 sheet 的可用高度（输入类 sheet 的输入框不会被键盘盖住）。 -->
   <Teleport to="body">
-    <div v-if="open" class="bs-mask" @click.self="$emit('close')">
+    <div v-if="open" class="bs-mask" :style="maskStyle" @click.self="close">
       <section class="bs-sheet" :style="{ maxHeight }" role="dialog" :aria-label="title">
         <div class="bs-grab" aria-hidden="true"></div>
         <header class="bs-head">
@@ -10,7 +10,7 @@
             <div class="bs-title">{{ title }}</div>
             <div v-if="subtitle" class="bs-sub">{{ subtitle }}</div>
           </div>
-          <button class="bs-close" type="button" title="关闭" @click="$emit('close')">×</button>
+          <button class="bs-close" type="button" title="关闭" @click="close">×</button>
         </header>
         <div class="bs-body"><slot /></div>
       </section>
@@ -19,14 +19,33 @@
 </template>
 
 <script setup>
-defineProps({
+import { computed, onUnmounted, ref, watch } from 'vue'
+import { addSheet, removeSheet, sheetZ } from './sheetStack'
+
+const props = defineProps({
   open: { type: Boolean, default: false },
   title: { type: String, default: '' },
   subtitle: { type: String, default: '' },
   /** 面板最大高度：默认 76dvh（留出顶栏与会话上下文） */
-  maxHeight: { type: String, default: '76dvh' }
+  maxHeight: { type: String, default: '76dvh' },
+  /** 这层界面的 z-index 基线：栈里每深一层再加 10 */
+  baseZ: { type: Number, default: 1100 }
 })
-defineEmits(['close'])
+const emit = defineEmits(['close'])
+const close = () => emit('close')
+
+// 登记/摘掉只看 open 这一个事实：返回键（由 sheetStack 关栈顶）、×、遮罩、页面自己置
+// open=false 四条路都收敛到「open 翻假」，所以栈不需要知道是谁关的。
+const token = ref(0)
+watch(() => props.open, v => {
+  if (v && !token.value) token.value = addSheet(close, props.baseZ)
+  else if (!v && token.value) { removeSheet(token.value); token.value = 0 }
+}, { immediate: true })
+// sheet 常因为一次跳转就整块卸载（点通知 → router.push）：卸载也要摘栈，
+// 否则哨兵留在 history 里，下一次返回会去关一个已经不存在的界面
+onUnmounted(() => { if (token.value) { removeSheet(token.value); token.value = 0 } })
+
+const maskStyle = computed(() => ({ zIndex: token.value ? sheetZ(token.value, props.baseZ) : props.baseZ }))
 </script>
 
 <style scoped>
