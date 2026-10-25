@@ -67,6 +67,27 @@ public class WorkflowController {
         return ResultJson.ok(Map.of("id", row.getId(), "name", row.getName()));
     }
 
+    @Operation(summary = "导出工作流", description = "{name, description, dsl}——备份 / 跨环境迁移 / 市场上架共用一份格式；需管理权")
+    @GetMapping("/{id}/export")
+    public ResultJson export(@PathVariable("id") String id) {
+        Workflow row = workflowService.requireManage(id);
+        return ResultJson.ok(Map.of(
+                "name", row.getName(),
+                "description", row.getDescription() == null ? "" : row.getDescription(),
+                "dsl", row.getDsl() == null ? "" : row.getDsl()));
+    }
+
+    @Operation(summary = "导入工作流", description = "body: {name?, description?, dsl}（与导出同格式，可来自导出文件或手写 DSL）；"
+            + "创建为自己的草稿，名称留空时取「导入的工作流」")
+    @PostMapping("/import")
+    public ResultJson importDsl(@RequestBody Map<String, Object> body) {
+        String dsl = str(body, "dsl");
+        String name = str(body, "name");
+        if (name == null || name.isBlank()) name = "导入的工作流";
+        Workflow row = workflowService.create(name, str(body, "description"), dsl);
+        return ResultJson.ok(Map.of("id", row.getId(), "name", row.getName()), "已导入");
+    }
+
     @Operation(summary = "更新工作流", description = "body: {name?, description?, dsl?}；只传要改的字段，dsl 变更会重新校验")
     @PutMapping("/{id}")
     public ResultJson update(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {

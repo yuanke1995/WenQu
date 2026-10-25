@@ -21,6 +21,12 @@ import java.time.LocalDateTime;
 public class MarketItem {
 
     public static final String TYPE_SKILL = "skill";
+    /** 应用模板 = 一份智能体配置快照（+ 可选绑定工作流 DSL），安装 = fork 成自己的智能体 */
+    public static final String TYPE_AGENT = "agent";
+    /** 工作流：payload = {name, description, dsl}，安装 = 创建为自己的草稿 */
+    public static final String TYPE_WORKFLOW = "workflow";
+    /** 官方条目作者（内置模板种入市场用）：显示名固定「平台官方」，不可被用户删除 */
+    public static final String AUTHOR_SYSTEM = "system";
     public static final String STATUS_ONLINE = "online";
     public static final String STATUS_OFFLINE = "offline";
 

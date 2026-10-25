@@ -69,33 +69,39 @@ public class MarketController {
         return ResultJson.ok(market.detail(uid(), id));
     }
 
-    @Operation(summary = "下载物品包", description = "快照 zip（装前留档/离线分发）；可见即可下")
+    @Operation(summary = "下载物品包", description = "快照包（skill=zip、agent/workflow=JSON；装前留档/离线分发）；可见即可下")
     @GetMapping("/{id}/download")
     public void download(@PathVariable("id") String id, HttpServletResponse response) throws IOException {
-        String name = market.requireItem(id).getName();
-        Path zip = market.payloadZip(uid(), id);
-        String filename = URLEncoder.encode(name + ".zip", StandardCharsets.UTF_8).replace("+", "%20");
-        response.setContentType("application/zip");
+        com.wenqu.ai.model.MarketItem row = market.requireItem(id);
+        boolean isSkill = com.wenqu.ai.model.MarketItem.TYPE_SKILL.equals(row.getItemType());
+        Path file = market.payloadZip(uid(), id);
+        String filename = URLEncoder.encode(row.getName() + (isSkill ? ".zip" : ".json"),
+                StandardCharsets.UTF_8).replace("+", "%20");
+        response.setContentType(isSkill ? "application/zip" : "application/json");
         response.setHeader("Content-Disposition", "attachment; filename*=UTF-8''" + filename);
-        try (var in = java.nio.file.Files.newInputStream(zip)) {
+        try (var in = java.nio.file.Files.newInputStream(file)) {
             in.transferTo(response.getOutputStream());
         }
     }
 
     // ==================== 写 ====================
 
-    @Operation(summary = "上架我的技能",
-            description = "body: {name, summary?, description?, tags?, version?}；name=技能管理里「我的技能」之一。"
-                    + "同一技能重复上架=更新同一条（快照覆盖）；「有更新」按快照内容指纹判定，与版本号无关")
+    @Operation(summary = "上架",
+            description = "body: {type: skill|agent|workflow, ref, summary?, description?, tags?, version?}——"
+                    + "ref：skill=技能名（仅「我的技能」）、agent=智能体 id（须本人可管理）、workflow=工作流 id（须本人可管理）。"
+                    + "同一物品重复上架=更新同一条（快照覆盖）；「有更新」按内容指纹判定，与版本号无关")
     @PostMapping("/publish")
     public ResultJson publish(@RequestBody Map<String, Object> body) {
         Map<String, Object> item = market.publish(uid(),
-                text(body.get("name")), text(body.get("summary")), text(body.get("description")),
+                text(body.get("type")), text(body.get("ref")),
+                text(body.get("summary")), text(body.get("description")),
                 text(body.get("tags")), text(body.get("version")));
         return ResultJson.ok(item, "已上架");
     }
 
-    @Operation(summary = "一键安装", description = "body: {overwrite?}；把快照复制进自己的技能目录（与上传 zip 同一条校验链）")
+    @Operation(summary = "一键安装",
+            description = "body: {overwrite?}。skill=复制进本人技能目录（同名时按 overwrite 整包替换）；"
+                    + "agent/workflow=每次安装都新建一份副本（fork），引用按安装人权限裁剪，warnings 逐项说明")
     @PostMapping("/{id}/install")
     public ResultJson install(@PathVariable("id") String id,
                               @RequestBody(required = false) Map<String, Object> body) {

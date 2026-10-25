@@ -886,6 +886,14 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         return o.toJSONString(JSONWriter.Feature.WriteMapNullValue);
     }
 
+    /**
+     * 配置快照 JSON（{@link #VERSION_FIELDS} 白名单）——市场上架「应用模板」用，
+     * 与版本回滚同源同口径：模板装到谁名下，就等价于把作者当前的这份配置存成新智能体。
+     */
+    public String configJson(Agent a) {
+        return snapshotJson(a);
+    }
+
     /** 智能体行 → 快照对象（与 snapshotJson 同源，供列表比对当前态） */
     private Map<String, Object> configOf(Agent a) {
         return parseConfig(snapshotJson(a));

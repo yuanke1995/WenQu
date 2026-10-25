@@ -647,6 +647,11 @@ export const getWorkflow = id => request(`/workflow/${id}`)
 export const createWorkflow = body => request('/workflow', { method: 'POST', body: JSON.stringify(body) })
 export const updateWorkflow = (id, body) => request(`/workflow/${id}`, { method: 'PUT', body: JSON.stringify(body) })
 export const deleteWorkflow = id => request(`/workflow/${id}`, { method: 'DELETE' })
+/** 导出工作流：{name, description, dsl}——备份 / 跨环境迁移 / 市场上架共用一份格式 */
+export const exportWorkflow = id => request(`/workflow/${encodeURIComponent(id)}/export`)
+/** 导入工作流：{name?, description?, dsl}（与导出同格式，可来自导出文件或手写 DSL）；创建为自己的草稿 */
+export const importWorkflow = body =>
+  request('/workflow/import', { method: 'POST', body: JSON.stringify(body) })
 /** 校验 + 编译 dry-run：返回 {errors:[], compiled, compileError?, nodeCount, edgeCount} */
 export const validateWorkflowDsl = dsl => request('/workflow/validate', { method: 'POST', body: JSON.stringify({ dsl }) })
 /** 同步调试运行（LLM/检索耗时可达分钟级，放宽超时）；失败不抛——返回 status=failed 的 run */
@@ -993,8 +998,8 @@ export async function downloadSkillZip(name) {
   a.remove()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
-// ==================== 市场（技能市场 v1：上架 → 发现 → 一键安装；安装即复制，装完是自己的独立副本） ====================
-/** 市场列表：{type?, keyword?, tag?, mine?}——上架中的物品 + 我上架的（mine=true 只看自己的，含已下架） */
+// ==================== 市场（技能 / 应用模板 / 工作流：上架 → 发现 → 一键安装；安装即复制） ====================
+/** 市场列表：{type?: skill|agent|workflow, keyword?, tag?, mine?}——上架中的物品 + 我上架的（mine=true 含已下架） */
 export const listMarketItems = (params = {}) => {
   const q = new URLSearchParams()
   if (params.type) q.set('type', params.type)
@@ -1004,12 +1009,19 @@ export const listMarketItems = (params = {}) => {
   const s = q.toString()
   return request('/market/list' + (s ? '?' + s : ''))
 }
-/** 物品详情：元信息 + 详细介绍 + skillMd（SKILL.md 正文预览，装前可审阅） */
+/** 物品详情：元信息 + 详细介绍 + skillMd（技能）或 configJson（应用模板/工作流的载荷预览） */
 export const getMarketItem = id => request(`/market/${encodeURIComponent(id || '')}`)
-/** 把「我的技能」上架：{name, summary?, description?, tags?, version?}；同一技能重复上架=更新同一条 */
-export const publishSkillToMarket = body =>
+/**
+ * 上架：{type: skill|agent|workflow, ref, summary?, description?, tags?, version?}
+ * ref——skill=技能名（仅「我的技能」）、agent=智能体 id、workflow=工作流 id（后两者须本人可管理）。
+ * 同一物品重复上架=更新同一条（快照覆盖）
+ */
+export const publishMarketItem = body =>
   request('/market/publish', { method: 'POST', body: JSON.stringify(body) })
-/** 一键安装：把快照复制进自己的技能目录；{overwrite} 同名时覆盖重装（有更新/重装场景） */
+/**
+ * 一键安装（安装即复制）：skill=复制进技能目录（{overwrite} 同名整包替换）；
+ * agent/workflow=每次安装新建一份副本，返回 warnings 逐项说明被裁剪的引用
+ */
 export const installMarketItem = (id, overwrite) =>
   request(`/market/${encodeURIComponent(id)}/install`, {
     method: 'POST', body: JSON.stringify({ overwrite: !!overwrite })
@@ -1019,11 +1031,11 @@ export const setMarketItemStatus = (id, online) =>
   request(`/market/${encodeURIComponent(id)}/status`, {
     method: 'PUT', body: JSON.stringify({ online: !!online })
   })
-/** 删除我的物品（连快照与安装记录；已装进别人目录的技能副本不受影响） */
+/** 删除我的物品（连快照与安装记录；已装进别人目录的副本不受影响） */
 export const deleteMarketItem = id =>
   request(`/market/${encodeURIComponent(id)}`, { method: 'DELETE' })
-/** 下载物品包 zip（装前留档/离线分发）：带登录令牌取 blob，避免 window.open 丢 Authorization */
-export async function downloadMarketItemZip (id, name) {
+/** 下载物品包（skill=zip、agent/workflow=JSON；装前留档/离线分发）：带登录令牌取 blob，避免 window.open 丢 Authorization */
+export async function downloadMarketItem (id, name, type) {
   const bt = authToken()
   const res = await fetch(BASE + '/market/' + encodeURIComponent(id || '') + '/download', {
     headers: bt ? { Authorization: 'Bearer ' + bt } : {}
@@ -1037,7 +1049,7 @@ export async function downloadMarketItemZip (id, name) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = (name || 'market-item') + '.zip'
+  a.download = (name || 'market-item') + (type === 'skill' ? '.zip' : '.json')
   document.body.appendChild(a)
   a.click()
   a.remove()

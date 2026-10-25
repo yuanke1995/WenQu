@@ -276,6 +276,16 @@ public class WorkflowService {
         return requireManage(id);
     }
 
+    /** 归属本人可管的工作流（不存在 / 无管理权返回 null）——市场上架附带绑定工作流用，不 fail-loud */
+    public Workflow getOwnOrNull(String id) {
+        if (id == null || id.isBlank()) return null;
+        try {
+            return requireManage(id);
+        } catch (BizException e) {
+            return null;
+        }
+    }
+
     /** 新建：名称必填、DSL 必须通过结构校验（不接受存进去的坏图） */
     public Workflow create(String name, String description, String dslText) {
         return create(name, description, dslText, null);

@@ -1,14 +1,23 @@
 package com.wenqu.ai.service;
 
+import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.JSONObject;
+import com.alibaba.fastjson2.JSONWriter;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
 import com.wenqu.ai.common.BizException;
+import com.wenqu.ai.mapper.KnowledgeBaseMapper;
 import com.wenqu.ai.mapper.MarketInstallMapper;
 import com.wenqu.ai.mapper.MarketItemMapper;
+import com.wenqu.ai.mapper.UserMapper;
+import com.wenqu.ai.mapper.UserMcpMapper;
+import com.wenqu.ai.model.Agent;
+import com.wenqu.ai.model.KnowledgeBase;
 import com.wenqu.ai.model.MarketInstall;
 import com.wenqu.ai.model.MarketItem;
 import com.wenqu.ai.model.User;
-import com.wenqu.ai.mapper.UserMapper;
+import com.wenqu.ai.model.UserMcp;
+import com.wenqu.ai.model.Workflow;
 import com.wenqu.ai.skill.UserSkillStore;
 import com.wenqu.ai.skill.WenquSkillRepository;
 import com.wenqu.ai.util.RequestUser;
@@ -23,10 +32,13 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -34,21 +46,25 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 /**
- * 市场（v1 技能市场）：上架 → 发现 → 一键安装。
+ * 市场：上架 → 发现 → 一键安装。物品类型（{@code item_type}）：
+ * <ul>
+ *   <li><b>skill</b> 技能：payload = zip 快照，安装 = 复制进本人技能目录（与上传 zip 同校验链）；</li>
+ *   <li><b>agent</b> 应用模板：payload = {agent 配置快照, 可选绑定工作流 DSL}，安装 = <b>fork</b>
+ *       成安装人自己的智能体（引用按安装人权限裁剪并逐项告警）；</li>
+ *   <li><b>workflow</b> 工作流：payload = {name, description, dsl}，安装 = 创建为自己的草稿；</li>
+ *   <li>官方条目（{@code author_uid=system}，内置模板启动期种入）：显示「平台官方」，不可删只可下架。</li>
+ * </ul>
  *
  * <h3>核心语义：安装即复制（fork）</h3>
- * 物品包是上架那一刻的<b>快照</b>（zip 落 {@code user-data/market/skill/{id}.zip}），
- * 安装把快照完整复制进用户自己的技能目录，装完与市场条目再无引用关系——
+ * 物品包是上架那一刻的<b>快照</b>（skill=zip、agent/workflow=JSON，落 {@code user-data/market/{type}/{id}}），
+ * 安装把快照完整复制进用户自己的资产，装完与市场条目再无引用关系——
  * 与全平台「业务资产归使用者」的所有权约定一致。因此：
  * <ul>
  *   <li>没有订阅/运行时依赖：作者改版、下架、删除都不影响已装副本；</li>
- *   <li>「有更新」由<b>内容指纹</b>（快照 zip 的 SHA-256）驱动，不依赖版本号——
+ *   <li>「有更新」由<b>内容指纹</b>（快照文件的 SHA-256）驱动，不依赖版本号——
  *       作者忘升版本号也能检出内容变化，反之只改市场卡片文案（简介/标签）不会误报；</li>
  *   <li>上架校验链与匿名上传完全相同（市场快照内容来自其他用户，信任边界不放宽）。</li>
  * </ul>
- *
- * <h3>类型扩展位</h3> {@code item_type} 现只开放 skill；agent / workflow / mcp
- * 接入时按类型换「打包 + 落地」两条路径即可，登记表与安装记录表不动。
  *
  * @author yuanke
  */
@@ -61,6 +77,7 @@ public class MarketService {
     private static final int MAX_VERSION = 32;
     private static final int MAX_LIST = 200;
     private static final int MAX_SKILL_MD_BYTES = 512 * 1024;
+    private static final int MAX_PAYLOAD_JSON_BYTES = 512 * 1024;
 
     private final MarketItemMapper itemMapper;
     private final MarketInstallMapper installMapper;
@@ -68,6 +85,11 @@ public class MarketService {
     private final WenquSkillRepository skillRepository;
     private final UserMapper userMapper;
     private final RoleService roleService;
+    private final AgentService agentService;
+    private final WorkflowService workflowService;
+    private final KnowledgeBaseMapper kbMapper;
+    private final UserMcpMapper userMcpMapper;
+    private final ResourceVisibilityService visibility;
 
     /** 物品包根目录（与 user-data 同域，可配）。 */
     private final Path payloadRoot;
@@ -76,7 +98,10 @@ public class MarketService {
             @Value("${wenqu.market.payload-dir:user-data/market}") String payloadDir,
             MarketItemMapper itemMapper, MarketInstallMapper installMapper,
             UserSkillStore skillStore, WenquSkillRepository skillRepository,
-            UserMapper userMapper, RoleService roleService) {
+            UserMapper userMapper, RoleService roleService,
+            AgentService agentService, WorkflowService workflowService,
+            KnowledgeBaseMapper kbMapper, UserMcpMapper userMcpMapper,
+            ResourceVisibilityService visibility) {
         this.payloadRoot = Paths.get(payloadDir == null || payloadDir.isBlank()
                 ? "user-data/market" : payloadDir).toAbsolutePath().normalize();
         this.itemMapper = itemMapper;
@@ -85,6 +110,11 @@ public class MarketService {
         this.skillRepository = skillRepository;
         this.userMapper = userMapper;
         this.roleService = roleService;
+        this.agentService = agentService;
+        this.workflowService = workflowService;
+        this.kbMapper = kbMapper;
+        this.userMcpMapper = userMcpMapper;
+        this.visibility = visibility;
     }
 
     // ==================== 读：列表 / 详情 ====================
@@ -134,44 +164,83 @@ public class MarketService {
         return w;
     }
 
-    /** 详情：元信息 + 详细介绍 + SKILL.md 正文预览（装前可审阅）。 */
+    /** 详情：元信息 + 详细介绍 + 内容预览（skill=SKILL.md 原文；agent/workflow=载荷 JSON，装前可审阅）。 */
     public Map<String, Object> detail(String uid, String id) {
         MarketItem item = requireVisible(uid, id);
         Map<String, Object> m = view(item, installsOf(uid, Set.of(id)).get(id), Map.of(), uid);
         m.put("description", item.getDescription());
-        m.put("skillMd", readSkillMdFromPayload(item));
+        if (MarketItem.TYPE_SKILL.equals(item.getItemType())) {
+            m.put("skillMd", readSkillMdFromPayload(item));
+        } else {
+            m.put("configJson", prettyPayload(item));
+        }
         return m;
     }
 
     // ==================== 上架 ====================
 
     /**
-     * 把<b>自己安装的技能</b>上架：打 zip 快照落市场目录 + 登记/更新条目。
-     * <p>同一作者同名技能重复上架 = 更新同一条（快照覆盖、版本刷新、重新上架）。
+     * 上架（三类型）：skill=自己安装的技能（ref=技能名）；agent=自己可管理的智能体（ref=agentId）；
+     * workflow=自己可管理的工作流（ref=workflowId）。
+     * <p>同一作者同 item_type + item_key 重复上架 = 更新同一条（快照覆盖、重新上架）。
      */
-    public Map<String, Object> publish(String uid, String skillName, String summary,
-                                       String description, String tags, String version) {
-        UserSkillStore.InstalledSkill meta = skillStore.find(uid, skillName);
-        if (meta == null) {
-            throw new BizException("技能不存在，或不是你安装的技能：" + skillName
-                    + "（内置技能随版本分发人人都有，无需上架；工作区技能请在对话里另存后再上架）");
+    public Map<String, Object> publish(String uid, String type, String ref,
+                                       String summary, String description, String tags, String version) {
+        String t = normalizeType(type);
+        String itemKey;
+        String name;
+        String defaultSummary;
+        byte[] payload;
+        String payloadExt;
+        switch (t) {
+            case MarketItem.TYPE_SKILL -> {
+                UserSkillStore.InstalledSkill meta = skillStore.find(uid, ref);
+                if (meta == null) {
+                    throw new BizException("技能不存在，或不是你安装的技能：" + ref
+                            + "（内置技能随版本分发人人都有，无需上架；工作区技能请在对话里另存后再上架）");
+                }
+                itemKey = meta.name();
+                name = clean(meta.name(), MAX_NAME, "展示名");
+                defaultSummary = meta.description();
+                payloadExt = ".zip";
+                payload = skillZipBytes(uid, meta.name());
+            }
+            case MarketItem.TYPE_AGENT -> {
+                Agent a = agentService.get(ref);
+                if (a == null) throw new BizException(404, "智能体不存在或对当前用户不可见");
+                if (!agentService.manageable(a)) throw new BizException("只能上架自己可管理的智能体");
+                itemKey = a.getName();
+                name = clean(a.getName(), MAX_NAME, "展示名");
+                defaultSummary = a.getDescription();
+                payloadExt = ".json";
+                payload = agentPayloadJson(uid, a).getBytes(StandardCharsets.UTF_8);
+            }
+            case MarketItem.TYPE_WORKFLOW -> {
+                Workflow wf = workflowService.requireManage(ref);
+                itemKey = wf.getName();
+                name = clean(wf.getName(), MAX_NAME, "展示名");
+                defaultSummary = wf.getDescription();
+                payloadExt = ".json";
+                payload = workflowPayloadJson(wf.getName(), wf.getDescription(), wf.getDsl())
+                        .getBytes(StandardCharsets.UTF_8);
+            }
+            default -> throw new BizException("暂不支持该物品类型：" + type);
         }
-        String name = clean(meta.name(), MAX_NAME, "展示名");
         String finalSummary = clean(summary == null || summary.isBlank()
-                ? meta.description() : summary.trim(), MAX_SUMMARY, "简介");
-        String finalVersion = resolveVersion(uid, meta.name(), version);
+                ? defaultSummary : summary.trim(), MAX_SUMMARY, "简介");
+        String finalVersion = resolveVersion(uid, t, ref, version);
         String finalTags = normalizeTags(tags);
 
         MarketItem item = itemMapper.selectOne(new QueryWrapper<MarketItem>()
-                .eq("item_type", MarketItem.TYPE_SKILL)
-                .eq("item_key", meta.name())
+                .eq("item_type", t)
+                .eq("item_key", itemKey)
                 .eq("author_uid", uid));
         boolean update = item != null;
         if (item == null) item = new MarketItem();
         if (!update) {
             item.setId(UUID.randomUUID().toString().replace("-", ""));
-            item.setItemType(MarketItem.TYPE_SKILL);
-            item.setItemKey(meta.name());
+            item.setItemType(t);
+            item.setItemKey(itemKey);
             item.setAuthorUid(uid);
             item.setInstallCount(0);
         }
@@ -182,50 +251,152 @@ public class MarketService {
         item.setVersion(finalVersion);
         item.setStatus(MarketItem.STATUS_ONLINE);
         // 快照先落位再写库：库里路径永远指向存在的文件；写库失败留下的孤儿文件会被下次同 id 上架覆盖
-        String rel = "skill/" + item.getId() + ".zip";
-        writePayload(uid, meta.name(), rel);
+        String rel = t + "/" + item.getId() + payloadExt;
+        writePayloadBytes(payload, rel);
         item.setPayloadPath(rel);
         // 内容指纹：徽标只认内容变化，不认版本号（版本号纯展示）。
-        // writeZip 对同一份技能是字节确定的（文件按名排序、条目时间取 mtime），内容没变指纹就不变
-        item.setContentHash(sha256Of(payloadRoot.resolve(rel)));
+        // 技能 zip 对同一份技能字节确定（文件按名排序、条目时间取 mtime），内容没变指纹就不变
+        item.setContentHash(sha256Of(payload));
         if (update) {
             itemMapper.updateById(item);
         } else {
             itemMapper.insert(item);
         }
-        log.info("[AUDIT] 市场上架 uid={} item={} skill={} version={} update={}",
-                uid, item.getId(), meta.name(), finalVersion, update);
+        log.info("[AUDIT] 市场上架 uid={} item={} type={} key={} version={} update={}",
+                uid, item.getId(), t, itemKey, finalVersion, update);
         return view(item, null, Map.of(), uid);
     }
 
     // ==================== 安装 ====================
 
     /**
-     * 一键安装：市场快照 zip → 用户技能目录（走与上传 zip 完全相同的校验链），
-     * 成功后落安装记录并计数。同名冲突由调用方决定是否覆盖重装。
+     * 一键安装（安装即复制）：
+     * <ul>
+     *   <li>skill：快照 zip → 本人技能目录（与上传 zip 同校验链），同名时按 overwrite 决定是否整包替换；</li>
+     *   <li>agent / workflow：<b>每次安装都是新建一份</b>（fork），无同名冲突概念，overwrite 不参与；
+     *       智能体模板里的引用（知识库 / MCP / 技能 / 绑定工作流）按安装人权限裁剪，逐项告警放进 warnings。</li>
+     * </ul>
      */
     public Map<String, Object> install(String uid, String id, boolean overwrite) {
         MarketItem item = requireVisible(uid, id);
-        Path zip = payloadOf(item);
-        UserSkillStore.InstalledSkill skill = skillStore.installZipFile(uid, zip,
-                null, overwrite, new LinkedHashSet<>(skillRepository.builtinNames()));
-        // 装完才记版本：安装失败不留「装过」痕迹，徽标不会谎报
+        List<String> warnings = new ArrayList<>();
+        Map<String, Object> m;
+        switch (Objects.requireNonNullElse(item.getItemType(), MarketItem.TYPE_SKILL)) {
+            case MarketItem.TYPE_SKILL -> {
+                Path zip = payloadOf(item);
+                UserSkillStore.InstalledSkill skill = skillStore.installZipFile(uid, zip,
+                        null, overwrite, new LinkedHashSet<>(skillRepository.builtinNames()));
+                m = finishInstall(uid, item);
+                m.put("skillName", skill.name());
+            }
+            case MarketItem.TYPE_WORKFLOW -> {
+                JSONObject payload = payloadJson(item);
+                Workflow wf = workflowService.create(
+                        str(payload, "name"), str(payload, "description"), str(payload, "dsl"));
+                m = finishInstall(uid, item);
+                m.put("workflowId", wf.getId());
+                m.put("workflowName", wf.getName());
+            }
+            case MarketItem.TYPE_AGENT -> {
+                JSONObject payload = payloadJson(item);
+                Agent created = forkAgent(uid, payload, warnings);
+                m = finishInstall(uid, item);
+                m.put("agentId", created.getId());
+                m.put("agentName", created.getName());
+            }
+            default -> throw new BizException("暂不支持该物品类型：" + item.getItemType());
+        }
+        m.put("warnings", warnings);
+        return m;
+    }
+
+    /** 安装收尾：落安装记录（记当前指纹）+ 计数 + 视图；失败路径不会走到这里（不留「装过」痕迹）。 */
+    private Map<String, Object> finishInstall(String uid, MarketItem item) {
         installMapper.delete(new QueryWrapper<MarketInstall>()
-                .eq("uid", uid).eq("item_id", id));
+                .eq("uid", uid).eq("item_id", item.getId()));
         MarketInstall rec = new MarketInstall();
         rec.setUid(uid);
-        rec.setItemId(id);
+        rec.setItemId(item.getId());
         rec.setItemType(item.getItemType());
         rec.setVersion(item.getVersion());
         rec.setContentHash(item.getContentHash());
         installMapper.insert(rec);
         itemMapper.update(null, new UpdateWrapper<MarketItem>()
-                .eq("id", id).setSql("install_count = install_count + 1"));
-        log.info("[AUDIT] 市场安装 uid={} item={} skill={} version={} overwrite={}",
-                uid, id, skill.name(), item.getVersion(), overwrite);
-        Map<String, Object> m = view(item, rec, Map.of(), uid);
-        m.put("skillName", skill.name());
-        return m;
+                .eq("id", item.getId()).setSql("install_count = install_count + 1"));
+        log.info("[AUDIT] 市场安装 uid={} item={} type={} key={} version={}",
+                uid, item.getId(), item.getItemType(), item.getItemKey(), item.getVersion());
+        return view(item, rec, Map.of(), uid);
+    }
+
+    /**
+     * 应用模板 → 安装人自己的新智能体：引用按安装人权限裁剪、逐项写进 warnings——
+     * 装完的东西必须「在这台机器上真的能跑」，而不是带着一串断链引用静默降级。
+     */
+    private Agent forkAgent(String uid, JSONObject payload, List<String> warnings) {
+        JSONObject cfg = payload.getJSONObject("agent");
+        if (cfg == null || cfg.isEmpty()) throw new BizException("物品包损坏（缺少智能体配置），请联系作者重新上架");
+        // 知识库：装的人可读才保留；全数不可见时清空（=回落默认知识库，见 c_ai_agent.knowledge_base_ids 语义）
+        String kbIds = str(cfg, "knowledgeBaseIds");
+        if (kbIds != null && !kbIds.isBlank()) {
+            List<String> keep = new ArrayList<>();
+            List<String> dropped = new ArrayList<>();
+            ResourceVisibilityService.Principal p = principalOf(uid);
+            for (String kbId : splitCsv(kbIds)) {
+                KnowledgeBase kb = kbMapper.selectById(kbId);
+                if (kb != null && visibility.canRead(p, kb.getShareConfig(), kb.getCreatedBy(),
+                        ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
+                    keep.add(kbId);
+                } else {
+                    dropped.add(kb != null ? kb.getName() : kbId);
+                }
+            }
+            if (!dropped.isEmpty()) {
+                warnings.add("知识库未保留（无权限或已删除）：" + String.join("、", dropped)
+                        + (keep.isEmpty() ? "；检索范围已回落默认知识库" : ""));
+            }
+            cfg.put("knowledgeBaseIds", keep.isEmpty() ? null : String.join(",", keep));
+        }
+        // MCP：装的人登记过同名 Server 才保留（MCP 配置按用户隔离，引用断链不如明确剔除）
+        String mcps = str(cfg, "mcps");
+        if (mcps != null && !mcps.isBlank()) {
+            Set<String> mine = userMcpMapper.selectList(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<UserMcp>()
+                            .eq(UserMcp::getUid, uid))
+                    .stream().map(UserMcp::getName).collect(Collectors.toSet());
+            List<String> keep = new ArrayList<>();
+            List<String> dropped = new ArrayList<>();
+            for (String n : splitCsv(mcps)) {
+                if (mine.contains(n)) keep.add(n);
+                else dropped.add(n);
+            }
+            if (!dropped.isEmpty()) {
+                warnings.add("MCP 未保留（你未登记同名 Server）：" + String.join("、", dropped));
+            }
+            cfg.put("mcps", keep.isEmpty() ? "" : String.join(",", keep));
+        }
+        // 技能：引用保留但缺装的提示（技能的获得渠道就是技能市场，装上即生效）
+        String skills = str(cfg, "skills");
+        if (skills != null && !skills.isBlank()) {
+            Set<String> mine = new LinkedHashSet<>(skillRepository.builtinNames());
+            for (UserSkillStore.InstalledSkill s : skillStore.list(uid)) mine.add(s.name());
+            List<String> missing = splitCsv(skills).stream()
+                    .filter(n -> !mine.contains(n)).collect(Collectors.toList());
+            if (!missing.isEmpty()) {
+                warnings.add("技能未安装（装上后引用即生效，可在技能市场找找）：" + String.join("、", missing));
+            }
+        }
+        // 绑定工作流：模板附带 DSL 时 fork 一份新的再重链。副本建完立即<b>发布</b>——
+        // 能绑到模板作者智能体上的工作流必然是已发布态（草稿绑不上），副本保持同态，
+        // 否则 AgentService.create 的绑定校验会当场拒绝这次安装
+        JSONObject wfPayload = payload.getJSONObject("workflow");
+        if (wfPayload != null && str(wfPayload, "dsl") != null && !str(wfPayload, "dsl").isBlank()) {
+            Workflow wf = workflowService.create(str(wfPayload, "name"),
+                    str(wfPayload, "description"), str(wfPayload, "dsl"));
+            workflowService.publish(wf.getId(), "市场模板安装");
+            cfg.put("workflowId", wf.getId());
+        }
+        // 快照键与 AgentService.create(toEntity) 的 body 口径一致；权限档位原样保留——
+        // 超出平台上限时运行时钳制（与作者本人跑起来的行为一致，见 PermissionPolicyResolver）
+        return agentService.create(cfg);
     }
 
     // ==================== 管理：状态 / 删除 ====================
@@ -242,6 +413,9 @@ public class MarketService {
     /** 上架人/管理员：删除条目（连快照与安装记录；已装进别人目录的技能副本动不了，也不该动）。 */
     public void delete(String uid, String id) {
         MarketItem item = requireManageable(uid, id);
+        if (MarketItem.AUTHOR_SYSTEM.equals(item.getAuthorUid())) {
+            throw new BizException("官方条目不可删除；不需要时请下架（下架后不再展示，历史安装不受影响）");
+        }
         itemMapper.deleteById(id);
         installMapper.delete(new QueryWrapper<MarketInstall>().eq("item_id", id));
         try {
@@ -299,16 +473,84 @@ public class MarketService {
         return zip;
     }
 
-    private void writePayload(String uid, String skillName, String rel) {
+    private void writePayloadBytes(byte[] bytes, String rel) {
         Path target = payloadRoot.resolve(rel).normalize();
         if (!target.startsWith(payloadRoot)) throw new BizException("物品包路径不合法");
         try {
             Files.createDirectories(target.getParent());
-            try (var out = Files.newOutputStream(target)) {
-                skillStore.writeZip(uid, skillName, out);
-            }
+            Files.write(target, bytes);
         } catch (IOException e) {
             throw new BizException("物品包写入失败：" + e.getMessage());
+        }
+    }
+
+    /** 技能 → zip 字节（与技能页下载同一打包口径）。 */
+    private byte[] skillZipBytes(String uid, String skillName) {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        try {
+            skillStore.writeZip(uid, skillName, out);
+        } catch (IOException e) {
+            throw new BizException("技能打包失败：" + e.getMessage());
+        }
+        return out.toByteArray();
+    }
+
+    /** 智能体 → 应用模板载荷：配置快照（VERSION_FIELDS 白名单，剔除 fork 后必断链的引用）+ 可选绑定工作流 DSL。 */
+    private String agentPayloadJson(String uid, Agent a) {
+        JSONObject cfg = JSON.parseObject(agentService.configJson(a));
+        // subAgentIds 引用别的智能体 id，装到谁名下都必断链——模板里带上只会制造幽灵引用
+        cfg.remove("subAgentIds");
+        // workflowId 不进快照：安装时按附带 DSL 重链新副本
+        cfg.remove("workflowId");
+        JSONObject wfPayload = null;
+        Workflow wf = workflowService.getOwnOrNull(a.getWorkflowId());
+        if (wf != null) {
+            wfPayload = new JSONObject();
+            wfPayload.put("name", wf.getName());
+            wfPayload.put("description", wf.getDescription() == null ? "" : wf.getDescription());
+            wfPayload.put("dsl", wf.getDsl() == null ? "" : wf.getDsl());
+        }
+        JSONObject payload = new JSONObject();
+        payload.put("agent", cfg);
+        payload.put("workflow", wfPayload);
+        return payload.toJSONString(JSONWriter.Feature.WriteMapNullValue);
+    }
+
+    /** 工作流 → 载荷 JSON（与 /workflow/{id}/export 同一份格式）。 */
+    private String workflowPayloadJson(String name, String description, String dsl) {
+        JSONObject payload = new JSONObject();
+        payload.put("name", name);
+        payload.put("description", description == null ? "" : description);
+        payload.put("dsl", dsl == null ? "" : dsl);
+        return payload.toJSONString();
+    }
+
+    /** 读 JSON 载荷（agent/workflow）：文件缺失/超限/坏 JSON 都按「物品包损坏」fail-loud。 */
+    private JSONObject payloadJson(MarketItem item) {
+        Path file = payloadOf(item);
+        try {
+            long size = Files.size(file);
+            if (size > MAX_PAYLOAD_JSON_BYTES) throw new BizException("物品包过大（上限 512KB）");
+            JSONObject o = JSON.parseObject(Files.readString(file, StandardCharsets.UTF_8));
+            if (o == null) throw new BizException("物品包内容为空");
+            return o;
+        } catch (BizException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new BizException("物品包损坏，请联系作者重新上架");
+        }
+    }
+
+    /** 详情页的载荷预览（pretty JSON，超限截断）。 */
+    private String prettyPayload(MarketItem item) {
+        try {
+            String raw = Files.readString(payloadOf(item), StandardCharsets.UTF_8);
+            if (raw.getBytes(StandardCharsets.UTF_8).length > MAX_PAYLOAD_JSON_BYTES) {
+                return raw.substring(0, MAX_PAYLOAD_JSON_BYTES / 2) + "\n…（内容过长已截断）";
+            }
+            return JSON.toJSONString(JSON.parseObject(raw), JSONWriter.Feature.PrettyFormat);
+        } catch (Exception e) {
+            return "（载荷读取失败：" + e.getMessage() + "）";
         }
     }
 
@@ -342,15 +584,95 @@ public class MarketService {
         }
     }
 
-    /** 版本号：显式填的 > SKILL.md frontmatter 里的 > "1"。 */
-    private String resolveVersion(String uid, String skillName, String override) {
+    /** 物品类型归一：空/未知按 skill 兜底（v1 只有技能时的旧调用不带 type）。 */
+    private static String normalizeType(String raw) {
+        String t = raw == null ? "" : raw.trim().toLowerCase(Locale.ROOT);
+        return switch (t) {
+            case "", MarketItem.TYPE_SKILL -> MarketItem.TYPE_SKILL;
+            case MarketItem.TYPE_AGENT -> MarketItem.TYPE_AGENT;
+            case MarketItem.TYPE_WORKFLOW -> MarketItem.TYPE_WORKFLOW;
+            default -> throw new BizException("暂不支持该物品类型：" + raw + "（可选 skill / agent / workflow）");
+        };
+    }
+
+    /** 版本号：显式填的 > 技能 SKILL.md frontmatter 里的 > "1"（agent/workflow 无 frontmatter 可回落）。 */
+    private String resolveVersion(String uid, String type, String ref, String override) {
         String v = override == null ? "" : override.trim();
-        if (v.isEmpty()) v = skillStore.versionOf(uid, skillName);
+        if (v.isEmpty() && MarketItem.TYPE_SKILL.equals(type)) v = skillStore.versionOf(uid, ref);
         if (v.isEmpty()) v = "1";
         if (v.length() > MAX_VERSION) {
             throw new BizException("版本号过长（最多 " + MAX_VERSION + " 字符）");
         }
         return v;
+    }
+
+    /** csv 拆分（空白容忍，保序去空）。 */
+    private static List<String> splitCsv(String raw) {
+        if (raw == null || raw.isBlank()) return List.of();
+        List<String> out = new ArrayList<>();
+        for (String part : raw.split("[,，\\s]+")) {
+            String v = part.trim();
+            if (!v.isEmpty()) out.add(v);
+        }
+        return out;
+    }
+
+    private static String str(JSONObject o, String key) {
+        if (o == null) return null;
+        Object v = o.get(key);
+        return v == null ? null : String.valueOf(v);
+    }
+
+    /** 安装人的身份三元组（KB 可读性判定用）。 */
+    private ResourceVisibilityService.Principal principalOf(String uid) {
+        User u = userMapper.selectById(uid);
+        return new ResourceVisibilityService.Principal(uid,
+                u == null ? null : u.getDepartmentId(),
+                u == null ? "user" : u.getRole());
+    }
+
+    /**
+     * 官方工作流模板种入市场（启动期幂等）：不存在则建（默认上架中），已存在则在 DSL 变化时刷新内容
+     * 与指纹——状态（含管理员下架过的）与安装计数不动。
+     */
+    public void seedOfficialWorkflow(String key, String name, String description, String dsl) {
+        MarketItem item = itemMapper.selectOne(new QueryWrapper<MarketItem>()
+                .eq("item_type", MarketItem.TYPE_WORKFLOW)
+                .eq("item_key", key)
+                .eq("author_uid", MarketItem.AUTHOR_SYSTEM));
+        String payload = workflowPayloadJson(name, description, dsl);
+        byte[] bytes = payload.getBytes(StandardCharsets.UTF_8);
+        String hash = sha256Of(bytes);
+        if (item == null) {
+            item = new MarketItem();
+            item.setId(UUID.randomUUID().toString().replace("-", ""));
+            item.setItemType(MarketItem.TYPE_WORKFLOW);
+            item.setItemKey(key);
+            item.setAuthorUid(MarketItem.AUTHOR_SYSTEM);
+            item.setInstallCount(0);
+            item.setName(name);
+            item.setSummary(clean(description, MAX_SUMMARY, "简介"));
+            item.setDescription(description);
+            item.setTags("");
+            item.setVersion("1");
+            item.setStatus(MarketItem.STATUS_ONLINE);
+            item.setPayloadPath(MarketItem.TYPE_WORKFLOW + "/" + item.getId() + ".json");
+            writePayloadBytes(bytes, item.getPayloadPath());
+            item.setContentHash(hash);
+            itemMapper.insert(item);
+            log.info("[MARKET] 官方模板已种入市场：{}", name);
+            return;
+        }
+        // 已存在：DSL 没变就不动库（避免 updateTime 跳动改列表排序）；文件始终重写一份（容错孤儿删除）
+        writePayloadBytes(bytes, item.getPayloadPath());
+        if (!Objects.equals(normalizeHash(item.getContentHash()), hash)) {
+            item.setName(name);
+            item.setSummary(clean(description, MAX_SUMMARY, "简介"));
+            item.setDescription(description);
+            item.setContentHash(hash);
+            itemMapper.updateById(item);
+            log.info("[MARKET] 官方模板内容已刷新：{}", name);
+        }
     }
 
     /** 标签：逗号/顿号/空白分隔 → 去重、单个 ≤32 字、总量 ≤256 字（列宽）。 */
@@ -388,7 +710,13 @@ public class MarketService {
     private Map<String, String> authorNames(Set<String> uids) {
         if (uids.isEmpty()) return Map.of();
         Map<String, String> out = new LinkedHashMap<>();
-        for (User u : userMapper.selectBatchIds(uids)) {
+        // 官方条目作者不在用户表，显示名固定「平台官方」（不回退裸 uid）
+        if (uids.contains(MarketItem.AUTHOR_SYSTEM)) out.put(MarketItem.AUTHOR_SYSTEM, "平台官方");
+        // selectBatchIds 对空集合会生成 IN () 直接 SQL 语法错——整页都是官方条目时就会踩到
+        Set<String> real = uids.stream()
+                .filter(id -> !MarketItem.AUTHOR_SYSTEM.equals(id)).collect(Collectors.toSet());
+        if (real.isEmpty()) return out;
+        for (User u : userMapper.selectBatchIds(real)) {
             out.put(u.getUid(), u.getUsername() == null || u.getUsername().isBlank()
                     ? u.getUid() : u.getUsername());
         }
@@ -435,15 +763,10 @@ public class MarketService {
     }
 
     /** 文件 SHA-256（hex）。失败抛业务异常——指纹缺失会让徽标退回版本比对，宁可上架失败也不静默降级。 */
-    private static String sha256Of(Path file) {
+    private static String sha256Of(byte[] bytes) {
         try {
-            java.security.MessageDigest md = java.security.MessageDigest.getInstance("SHA-256");
-            try (InputStream in = Files.newInputStream(file)) {
-                byte[] buf = new byte[8192];
-                int n;
-                while ((n = in.read(buf)) >= 0) md.update(buf, 0, n);
-            }
-            return java.util.HexFormat.of().formatHex(md.digest());
+            return java.util.HexFormat.of()
+                    .formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(bytes));
         } catch (Exception e) {
             throw new BizException("计算物品指纹失败：" + e.getMessage());
         }
