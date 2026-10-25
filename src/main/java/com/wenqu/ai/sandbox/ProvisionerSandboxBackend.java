@@ -98,6 +98,12 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
     private final boolean unrestrictedWrites;
     private final int commandTimeoutSeconds;
     private final int maxOutputBytes;
+    /**
+     * 这一条 backend 跑出去的命令留下的进程该记在谁头上（见 {@link #procTagFor}）。
+     * <p>null = 不起标记：工作流代码节点、定时任务那一路没有会话上下文，它们漏下的进程
+     * 不进对话页那张「后台进程」卡（它们的账在运行历史里）。
+     */
+    private final String procTag;
 
     // 测试覆盖：绕过 provider / 远程 client 构造（对应参考单测的 monkeypatch _get_client / _provider）。
     SandboxConnection overrideConnection;
@@ -126,6 +132,18 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
             boolean createIfMissing,
             boolean inheritEnv,
             boolean unrestrictedWrites) {
+        this(provider, threadId, uid, workdirPath, createIfMissing, inheritEnv, unrestrictedWrites, null);
+    }
+
+    public ProvisionerSandboxBackend(
+            ProvisionerSandboxProvider provider,
+            String threadId,
+            String uid,
+            String workdirPath,
+            boolean createIfMissing,
+            boolean inheritEnv,
+            boolean unrestrictedWrites,
+            String procTag) {
         this.provider = provider;
         this.unrestrictedWrites = unrestrictedWrites;
         this.threadId = threadId == null ? "" : threadId.strip();
@@ -142,6 +160,7 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
         this.userDataRoot = provider.virtualPathPrefix();
         this.commandTimeoutSeconds = provider.commandTimeoutSeconds();
         this.maxOutputBytes = provider.maxOutputBytes();
+        this.procTag = procTag;
     }
 
     // ==================== 路径 / 权限纯逻辑 ====================
@@ -638,7 +657,46 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
 
 
     /**
-     * 把命令包成「先进入工作目录再执行」。
+     * 进程归属标记的环境变量名。子进程<b>继承</b>它（exec 出去、fork 出来的都带着），
+     * 所以扫一遍 {@code /proc} 下各进程的 {@code environ} 就能把「哪条命令漏下的进程」还原出来——
+     * 不需要在 Java 侧维护一份会和容器 reality 漂移的台账。
+     * <p>真机 2026-10-25 在探针沙盒里验过：{@code ( export WQ_PROC_TAG=x; python3 -m http.server )}
+     * 超时退出后，那条 http.server 仍带标记、可被 {@code /proc} 扫到并按标记杀掉。
+     */
+    public static final String PROC_TAG_VAR = "WQ_PROC_TAG";
+
+    /** 标记形状：{@code wq1.<会话 id>.<8 位随机>}。会话 id 只留 shell 安全字符，随机位让同一会话两轮可分。 */
+    private static final java.util.regex.Pattern PROC_TAG_PATTERN =
+            java.util.regex.Pattern.compile("^wq1\\.([A-Za-z0-9_-]{1,64})\\.([a-f0-9]{8})$");
+
+    /**
+     * 给一条会话上下文里的 backend 生成进程归属标记。
+     *
+     * @return null=没有会话上下文（匿名/空 id），这一路起的进程不进「后台进程」清单
+     */
+    public static String procTagFor(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) return null;
+        String sid = sessionId.strip().replaceAll("[^A-Za-z0-9_-]", "");
+        if (sid.length() > 64) sid = sid.substring(0, 64);
+        if (sid.isEmpty()) return null;
+        String nonce = UUID.randomUUID().toString().replace("-", "").substring(0, 8);
+        return "wq1." + sid + "." + nonce;
+    }
+
+    /** 标记里编的会话 id；形状不对返回 null（别人手工塞的标记不当会话用）。 */
+    public static String sessionOfProcTag(String tag) {
+        if (tag == null) return null;
+        java.util.regex.Matcher m = PROC_TAG_PATTERN.matcher(tag);
+        return m.matches() ? m.group(1) : null;
+    }
+
+    /** 本 backend 的标记（null=不打标记）。 */
+    public String procTag() {
+        return procTag;
+    }
+
+    /**
+     * 把命令包成「先进入工作目录再执行」，并打上进程归属标记。
      * <p>用 {@code cd ... &&} 而不是 {@code ;}：进不去工作目录时应当**失败**，
      * 而不是继续在 {@code /home/gem} 执行然后把文件丢在没有挂载的地方。
      * <p>用<b>子 shell</b> {@code ( ... )} 而不是花括号组包住原命令：runtime 那条 exec 跑在
@@ -648,10 +706,14 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
      * A/B 实测：花括号包 90 秒无响应，子 shell 包 0 秒回 {@code exit=1 output='EXISTS'}）。
      * 子 shell 只让 {@code exit} 结束这一次执行，退出码仍是整条命令的退出码。
      * 顺带这才是原注释想要的语义：{@code cd} 与变量赋值出不了这一次执行。
+     * <p>标记同样写在子 shell <b>里面</b>（{@code export} 而不是 {@code VAR=x ( ... )}）：
+     * 前者出不了子 shell、不会污染常驻 shell 后续命令；后者 bash 直接报
+     * {@code syntax error near unexpected token '('}（2026-10-25 真机实测，赋值前缀只允许配简单命令）。
      */
-    private static String inWorkspace(String command) {
+    private static String inWorkspace(String command, String tag) {
         if (command == null || command.isBlank()) return command;
-        return "cd " + WORKSPACE_ROOT + " && ( " + command + "\n)";
+        String head = tag == null ? "" : "export " + PROC_TAG_VAR + "=" + tag + "\n";
+        return "cd " + WORKSPACE_ROOT + " && ( " + head + command + "\n)";
     }
 
     /**
@@ -676,10 +738,32 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
     }
 
     public ExecuteResponse execute(String command, Integer timeout) {
+        ExecuteResponse r = execute(command, timeout, procTag);
+        // 到点没跑完是「进程漏在容器里」最常见的一条来路：runtime 只是不再等，命令还活着、端口还占着。
+        // 只在这种情形补一次扫描（正常跑完的命令不付这个钱），把「还在跑的是什么」如实告诉模型——
+        // 它自己看不见，不知道就会拿同一条命令重跑，然后撞上 address already in use 再来一轮。
+        if (r.exitCode() == null && !r.infraError() && procTag != null) {
+            String note = survivorNote();
+            if (note != null) {
+                return new ExecuteResponse(r.output() + "\n" + note, null, r.truncated());
+            }
+        }
+        return r;
+    }
+
+    /**
+     * 平台自己的维护命令（扫进程表、按标记杀进程）：<b>不打归属标记</b>。
+     * <p>打了会自我污染——扫描进程出现在它自己要返回的那份清单里，「后台进程」卡于是永远关不掉。
+     */
+    public ExecuteResponse executeUntracked(String command, Integer timeout) {
+        return execute(command, timeout, null);
+    }
+
+    private ExecuteResponse execute(String command, Integer timeout, String tag) {
         try {
             SandboxRuntimeClient client = getClient();
             Duration t = timeout == null ? null : Duration.ofSeconds(timeout);
-            SandboxRuntimeClient.SandboxExecResult result = client.execCommand(inWorkspace(command), t, false);
+            SandboxRuntimeClient.SandboxExecResult result = client.execCommand(inWorkspace(command, tag), t, false);
             if (result.notCompleted()) {
                 // runtime 到点说的是「这一趟没等到结果」：命令仍在容器里活着（实测——被 no_change
                 // 闸放弃的那条，130 秒的 touch 照样落盘），只是它不再等了。所以这句话必须同时
@@ -738,6 +822,154 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
                 + "命令可能仍在容器里跑，先查它已经落盘的产物，别急着重跑整条。";
     }
 
+    // ==================== 沙盒内的后台进程（「后台进程」卡的取数口） ====================
+
+    /**
+     * 扫容器里<b>带着本平台标记</b>的存活进程。
+     *
+     * <p><b>为什么扫 {@code /proc} 而不在 Java 侧记一本台账</b>：进程的真实状态只有容器自己知道。
+     * 记一份「我起过什么」的表，就要面对「表说在跑、其实早退了」和反过来的两种漂移（还要处理重启、
+     * 多副本、空闲回收后表还留着）；而子进程<b>天然继承</b>环境变量这一条 POSIX 语义，
+     * 让标记本身就长在进程上，扫一次就是实况。真机 2026-10-25 验过三层：
+     * 超时残留的进程带得上标记、孙进程也带（{@code bash -c 'sleep & sleep'} 三个 pid 全命中）、按标记杀之后端口释放。
+     *
+     * <p>输出形状（每行一条，解析在 {@code SandboxProcService}）：
+     * <ul>
+     *   <li>{@code WQPROC|pid|ppid|已跑秒|标记|命令行}</li>
+     *   <li>{@code WQPORT|pid|端口}（{@code ss} 只给得到自己那批，够用）</li>
+     * </ul>
+     */
+    private static final String PROC_SCAN = """
+            __ps=$(ps -eo pid=,ppid=,etimes= 2>/dev/null)
+            for d in /proc/[0-9]*; do
+              [ -r "$d/environ" ] || continue
+              __t=$(tr '\\0' '\\n' < "$d/environ" 2>/dev/null | sed -n 's/^WQ_PROC_TAG=//p' | head -1)
+              [ -n "$__t" ] || continue
+              __p=${d#/proc/}
+              __row=$(echo "$__ps" | awk -v p="$__p" '$1==p{print $2" "$3}')
+              __pp=${__row%% *}
+              __et=${__row##* }
+              __cmd=$(tr '\\0' ' ' < "$d/cmdline" 2>/dev/null | head -c 240 | tr '|' '/')
+              echo "WQPROC|${__p}|${__pp}|${__et}|${__t}|${__cmd}"
+            done
+            ss -ltnp 2>/dev/null | awk 'NR>1 && match($0,/pid=[0-9]+/){p=substr($0,RSTART+4,RLENGTH-4);n=split($4,a,":");print "WQPORT|"p"|"a[n]}'
+            echo WQSCAN_DONE""";
+
+    /**
+     * 按标记杀整棵进程树：先 TERM 给它一次清理的机会，一秒后对幸存的补 KILL，再等一秒结算。
+     * <p>结算<b>必须等一拍</b>且要认僵尸态：{@code kill -KILL} 之后 {@code /proc/<pid>} 还会短暂存在
+     * （等父进程回收），当场查会把「已经杀掉」如实报成「幸存」——2026-10-25 探针沙盒实测四个 pid
+     * 全在 {@code remaining} 里，而再扫一次它们确实没了。僵尸态（{@code Z}）进程已经死了、只剩一条
+     * 待回收的记录，同样不算幸存。
+     * <p>标记已经过 {@link #PROC_TAG_PATTERN} 校验（只含 {@code [A-Za-z0-9_.-]}），
+     * 拼进单引号里不构成注入面；这道校验是<b>必须</b>的，标记来自前端请求。
+     */
+    private static String procKillScript(String tag) {
+        return """
+                __pids=""
+                for d in /proc/[0-9]*; do
+                  [ -r "$d/environ" ] || continue
+                  if tr '\\0' '\\n' < "$d/environ" 2>/dev/null | grep -qxF 'WQ_PROC_TAG=%1$s'; then
+                    __pids="$__pids ${d#/proc/}"
+                  fi
+                done
+                [ -n "$__pids" ] && kill -TERM $__pids 2>/dev/null
+                sleep 1
+                __left=""
+                for p in $__pids; do [ -d "/proc/$p" ] && __left="$__left $p"; done
+                [ -n "$__left" ] && kill -KILL $__left 2>/dev/null
+                sleep 1
+                __still=""
+                for p in $__pids; do
+                  __st=$(ps -o stat= -p "$p" 2>/dev/null | tr -d ' ')
+                  case "$__st" in ''|Z*) ;; *) __still="$__still $p" ;; esac
+                done
+                echo "WQKILLED|%2$s|%3$s"
+                """.formatted(tag, "${__pids## }", "${__still## }");
+    }
+
+    /**
+     * 扫一遍带标记的存活进程。
+     *
+     * @return 行列表（含 {@code WQPROC|} 与 {@code WQPORT|} 两类）；<b>null=没扫成</b>（沙盒不可达、
+     *         命令没跑完）——调用方必须按「读不到」如实报，不许当成「容器里没有后台进程」
+     */
+    public List<String> scanProcs() {
+        ExecuteResponse r = executeUntracked(PROC_SCAN, 25);
+        if (r.infraError() || r.exitCode() == null || r.exitCode() != 0 || r.output() == null) {
+            return null;
+        }
+        String out = r.output();
+        if (!out.contains("WQSCAN_DONE")) {
+            return null;   // 输出被截断或掺了别的东西：宁可报读不到，不给一份缺行的清单
+        }
+        List<String> lines = new ArrayList<>();
+        for (String line : out.split("\n")) {
+            String s = line.strip();
+            if (s.startsWith("WQPROC|") || s.startsWith("WQPORT|")) lines.add(s);
+        }
+        return lines;
+    }
+
+    /**
+     * 按标记杀掉一棵进程树。
+     *
+     * @return {@code [已杀掉的 pid 数, 仍幸存的 pid 串]}；null=标记形状不合法或这条通道没做成
+     *         （<b>没做成不等于杀干净了</b>，调用方要如实报「停止命令没发出去」）
+     */
+    public int[] killByProcTag(String tag) {
+        if (sessionOfProcTag(tag) == null) return null;
+        ExecuteResponse r = executeUntracked(procKillScript(tag), 40);
+        if (r.output() == null) return null;
+        String targets = null;
+        String still = null;
+        for (String line : r.output().split("\n")) {
+            String s = line.strip();
+            if (s.startsWith("WQKILLED|")) {
+                String[] parts = s.split("\\|", -1);
+                targets = parts.length > 1 ? parts[1].strip() : "";
+                still = parts.length > 2 ? parts[2].strip() : "";
+            }
+        }
+        if (targets == null) return null;   // 脚本没跑到结算那一行：读不到，不猜
+        Set<String> alive = new java.util.HashSet<>();
+        for (String p : still.split(" ")) {
+            if (!p.isBlank()) alive.add(p.strip());
+        }
+        int killed = 0;
+        for (String p : targets.split(" ")) {
+            if (!p.isBlank() && !alive.contains(p.strip())) killed++;
+        }
+        return new int[]{killed, alive.size()};
+    }
+
+    /**
+     * 命令超时后补一句实话：这一条在容器里留下了什么还活着。
+     *
+     * @return null=没扫到 / 扫不到（不硬编一句「有进程」，读不到就照原样回）
+     */
+    private String survivorNote() {
+        List<String> lines = scanProcs();
+        if (lines == null) return null;
+        List<String> mine = new ArrayList<>();
+        for (String line : lines) {
+            if (!line.startsWith("WQPROC|")) continue;
+            String[] parts = line.split("\\|", 6);
+            if (parts.length < 6 || !procTag.equals(parts[4])) continue;
+            mine.add("pid=" + parts[1] + " " + parts[5]);
+        }
+        if (mine.isEmpty()) return null;
+        StringBuilder sb = new StringBuilder("【这条命令留下的进程还在容器里跑，没被杀】共 ")
+                .append(mine.size()).append(" 个：\n");
+        for (int i = 0; i < Math.min(5, mine.size()); i++) {
+            sb.append("  ").append(mine.get(i)).append('\n');
+        }
+        if (mine.size() > 5) sb.append("  …其余 ").append(mine.size() - 5).append(" 个略\n");
+        sb.append("端口/文件锁仍被它占着，原样重跑会撞「address already in use」或互相覆盖。")
+                .append("要继续调试：先杀掉它（用户可在对话右侧「后台进程」里停，你也可以让它换个端口重起）。");
+        return sb.toString();
+    }
+
     // ==================== 流式执行（实时输出） ====================
 
     /** 输出增量采样间隔（ms）：粒度权衡——太小打爆 HTTP，太大滚动不"实时"。 */
@@ -780,7 +1012,10 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
             // 挂到宿主的工作区目录（见 WORKSPACE_ROOT 注释）。写在脚本里而不是拼命令行，是为了
             // 保住 heredoc/多行/引号的原样语义（拼 shell 包装串会破坏 heredoc 终止符）。
             SandboxRuntimeClient.SandboxWriteResult wrote = client.writeFile(cmdPath,
-                    "cd " + WORKSPACE_ROOT + " || exit 1\n" + command);
+                    "cd " + WORKSPACE_ROOT + " || exit 1\n"
+                            // 与同步 execute 同一套归属标记：脚本里 export，它起走的一切后代都带着
+                            + (procTag == null ? "" : "export " + PROC_TAG_VAR + "=" + procTag + "\n")
+                            + command);
             if (!wrote.success()) {
                 return new ExecuteResponse("Error: 沙盒命令脚本落盘失败: "
                         + (wrote.message() == null ? "unknown error" : wrote.message()), 1, false, true);

@@ -9,6 +9,7 @@ import com.wenqu.ai.sandbox.ProvisionerSandboxFilesystem;
 import com.wenqu.ai.sandbox.ProvisionerSandboxProvider;
 import com.wenqu.ai.sandbox.ProvisionerSandbox;
 import com.wenqu.ai.sandbox.ProvisionerSandboxState;
+import com.wenqu.ai.sandbox.SandboxConnection;
 import io.agentscope.harness.agent.filesystem.AbstractFilesystem;
 import io.agentscope.harness.agent.filesystem.RoutedSandboxFilesystem;
 import io.agentscope.harness.agent.filesystem.local.LocalFilesystem;
@@ -17,6 +18,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * 沙盒生命周期与 backend 装配（本工程特有的那一层薄壳）。
@@ -135,7 +138,7 @@ public class SandboxService {
         }
         SandboxScope scope = scopeOf(sessionId);
         return new ProvisionerSandboxBackend(provider, scope.scopeId(), uid, scope.workdirPath(),
-                true, true, unrestrictedWrites);
+                true, true, unrestrictedWrites, ProvisionerSandboxBackend.procTagFor(sessionId));
     }
 
     /**
@@ -159,7 +162,7 @@ public class SandboxService {
             SandboxScope scope = scopeOf(sessionId);
             ProvisionerSandboxBackend backend = new ProvisionerSandboxBackend(
                     provider, scope.scopeId(), uid, scope.workdirPath(),
-                    true, true, unrestrictedWrites);
+                    true, true, unrestrictedWrites, ProvisionerSandboxBackend.procTagFor(sessionId));
             String sandboxId = ProvisionerSandboxProvider.sandboxIdForThread(scope.scopeId(), uid);
             ProvisionerSandboxFilesystem sandboxFs = new ProvisionerSandboxFilesystem(backend, sandboxId);
             return memoryRouted(sandboxFs, uid);
@@ -249,7 +252,7 @@ public class SandboxService {
             SandboxScope scope = scopeOf(sessionId);
             ProvisionerSandboxBackend backend = new ProvisionerSandboxBackend(
                     provider, scope.scopeId(), uid, scope.workdirPath(),
-                    true, true, unrestrictedWrites);
+                    true, true, unrestrictedWrites, ProvisionerSandboxBackend.procTagFor(sessionId));
             ProvisionerSandboxState state = new ProvisionerSandboxState();
             state.setThreadId(scope.scopeId());
             state.setUid(uid);
@@ -292,6 +295,8 @@ public class SandboxService {
     /**
      * 取「不创建」的沙盒 backend：供浏览端点使用。沙盒未运行时首次连接即抛
      * RuntimeException（sandbox is unavailable）——调用方自行转成可读状态，不产生容器。
+     * <p>刻意<b>不带进程归属标记</b>：这条口子只读不跑用户的命令，「后台进程」那一路走的也是
+     * {@code executeUntracked}（扫描进程自己出现在扫描结果里，那张卡就永远关不掉）。
      */
     public ProvisionerSandboxBackend backendIfPresent(String sessionId, String uid) {
         if (sessionId == null || sessionId.isBlank()) {
@@ -302,6 +307,24 @@ public class SandboxService {
         }
         SandboxScope scope = scopeOf(sessionId);
         return new ProvisionerSandboxBackend(provider, scope.scopeId(), uid, scope.workdirPath(), false, true);
+    }
+
+    /**
+     * 本进程里该用户<b>还活着</b>的沙盒 backend（不创建、不探 provisioner，只读连接缓存）。
+     *
+     * <p>给「侧栏后台进程标记」这类要廉价轮询的批量取数用：没有活容器时返回空表，一个请求都不发。
+     * 每个 backend 的工作目录按<b>缓存里那份连接</b>回填——作用域一旦定了工作区，工作目录就是它的一部分，
+     * 传错会让 provider 认成「同一个作用域两个身份」直接抛错。
+     *
+     * <p><b>边界</b>：连接缓存在进程内 ⇒ 多副本部署下只看得到本副本建过/发现过的容器。
+     */
+    public List<ProvisionerSandboxBackend> liveBackends(String uid) {
+        List<ProvisionerSandboxBackend> out = new ArrayList<>();
+        for (SandboxConnection conn : provider.liveConnections(uid)) {
+            out.add(new ProvisionerSandboxBackend(provider, conn.getThreadId(), uid,
+                    conn.getWorkdirPath(), false, true));
+        }
+        return out;
     }
 
     /** 沙盒内用户数据虚拟根（可读写区，浏览面板的默认起点；默认 /home/gem/user-data）。 */

@@ -5,6 +5,8 @@ import com.alibaba.fastjson2.JSONObject;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.locks.ReentrantLock;
@@ -265,6 +267,34 @@ public class ProvisionerSandboxProvider {
             return true;
         }
         return false;
+    }
+
+    /**
+     * 本进程连接缓存里<b>这个用户</b>还活着的沙盒作用域，按最近使用倒序。
+     *
+     * <p>只读缓存、<b>一次网络都不发</b>：给「侧栏后台进程标记」这种要每隔几十秒问一遍的批量取数用，
+     * 没有活容器时这里就是空的，轮询因此是免费的。
+     *
+     * <p><b>边界</b>：缓存是进程内的 ⇒ 多副本部署下只看得到<b>本副本</b>建过或发现过的容器。
+     * 别的副本起的沙盒不在这里（要跨副本就得让 provisioner 出一份全局清单，那又是另一本会和现实漂移的账）。
+     */
+    public List<SandboxConnection> liveConnections(String uid) {
+        if (uid == null || uid.isBlank()) {
+            return new ArrayList<>();
+        }
+        String prefix = uid + "::";
+        List<SandboxConnection> out = new ArrayList<>();
+        for (Map.Entry<String, SandboxConnection> entry : connections.entrySet()) {
+            if (entry.getKey().startsWith(prefix)) {
+                out.add(entry.getValue());
+            }
+        }
+        out.sort(java.util.Comparator.comparingDouble(
+                (SandboxConnection c) -> {
+                    Double touched = lastTouchAt.get(c.getCacheKey());
+                    return touched == null ? 0d : touched;
+                }).reversed());
+        return out;
     }
 
     public SandboxConnection get(

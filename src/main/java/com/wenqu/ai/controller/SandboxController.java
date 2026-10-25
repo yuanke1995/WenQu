@@ -6,6 +6,7 @@ import com.wenqu.ai.sandbox.SandboxFsBackend;
 import com.wenqu.ai.service.ArtifactService;
 import com.wenqu.ai.service.ConfigService;
 import com.wenqu.ai.service.ProjectFileService;
+import com.wenqu.ai.service.SandboxProcService;
 import com.wenqu.ai.service.SandboxService;
 import com.wenqu.ai.service.SessionService;
 import com.wenqu.ai.util.RequestUser;
@@ -67,6 +68,7 @@ public class SandboxController {
     private static final int MAX_CODE_CHARS = 100_000;
 
     private final SandboxService sandboxService;
+    private final SandboxProcService sandboxProcService;
     private final ConfigService configService;
     private final ProjectFileService projectFileService;
     private final ArtifactService artifactService;
@@ -322,6 +324,74 @@ public class SandboxController {
             // 沙盒不可达/拉起失败：如实回显根因消息，前端显示在输出框里（不吞错、不假装成功）
             log.warn("[SANDBOX] 运行失败 (session={}, lang={}): {}", sessionId, language, e.getMessage());
             return ResultJson.error("沙盒运行失败：" + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+        }
+    }
+
+    /**
+     * 本会话沙盒里<b>还在跑的后台进程</b>（模型起的 dev server 这类不会自己退的东西）。
+     * <p>读的是容器实况（扫 {@code /proc}），本侧不落台账：所以后端重启、换副本都不影响这张清单，
+     * 而「沙盒没在跑」与「读不到进程表」是两种回法——后者报错，不退成空清单，
+     * 否则一个正占着端口的服务会被读成「没有进程」。
+     */
+    @Operation(summary = "沙盒后台进程清单", description = "列本会话沙盒里带归属标记、此刻仍在跑的进程树"
+            + "（命令行/起了多久/占用的端口/是谁起的）；只探测不创建容器")
+    @GetMapping("/procs")
+    public ResultJson procs(@RequestParam("sessionId") String sessionId) {
+        if (!enabled()) {
+            return ResultJson.error("沙盒未开启");
+        }
+        String uid = RequestUser.uid();
+        sessionService.assertOwned(sessionId, uid);
+        try {
+            return ResultJson.ok(sandboxProcService.list(sessionId, uid));
+        } catch (IllegalStateException e) {
+            return ResultJson.error(503, e.getMessage());
+        }
+    }
+
+    /**
+     * 侧栏标记用的<b>批量</b>后台进程实况：一次扫过本进程里该用户所有还活着的沙盒，
+     * 返回 {@code {sessions:{会话id:进程树数}, partial}}。
+     * <p>与会话级那份的区别只在取数范围：这里读的是进程内连接缓存（没有活容器就一个请求都不发，
+     * 所以侧栏可以放心每几十秒问一次），而会话级那份每次都实打实探一次容器。
+     * 代价是它只看得到<b>本副本</b>建过的容器，多副本部署下别的副本起的沙盒不在这份清单里。
+     */
+    @Operation(summary = "各会话沙盒后台进程数", description = "批量扫过当前用户所有活着的沙盒，"
+            + "按进程归属会话汇总进程树数（供侧栏会话行标记用）；partial=true 表示本轮没扫全，结果只多不少")
+    @GetMapping("/procs/live")
+    public ResultJson liveProcs() {
+        if (!enabled()) {
+            return ResultJson.error("沙盒未开启");
+        }
+        return ResultJson.ok(sandboxProcService.liveBySession(RequestUser.uid()));
+    }
+
+    /**
+     * 停掉一棵沙盒进程树。
+     * <p>越权判定在 {@code SandboxProcService.kill} 里按<b>标记中编的会话</b>再过一道：
+     * 同工作区共享同一个容器，光验「这个会话是你的」只证明了容器能碰，没证明进程是谁起的。
+     */
+    @Operation(summary = "停止沙盒后台进程", description = "按进程标识停掉那棵树（先 TERM、一秒后对幸存补 KILL），"
+            + "端口随之释放。仅当该进程归属的会话是你自己的才停得动")
+    @PostMapping("/procs/kill")
+    public ResultJson killProc(@RequestBody Map<String, Object> body) {
+        if (!enabled()) {
+            return ResultJson.error("沙盒未开启");
+        }
+        String sessionId = str(body, "sessionId");
+        String tag = str(body, "tag");
+        String uid = RequestUser.uid();
+        if (sessionId.isBlank() || tag.isBlank()) {
+            return ResultJson.error("缺少会话或进程标识");
+        }
+        try {
+            return ResultJson.ok(sandboxProcService.kill(sessionId, uid, tag));
+        } catch (IllegalArgumentException e) {
+            return ResultJson.error(400, e.getMessage());
+        } catch (IllegalStateException e) {
+            return ResultJson.error(503, e.getMessage());
+        } catch (com.wenqu.ai.common.BizException e) {
+            throw e;
         }
     }
 
