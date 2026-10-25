@@ -19,21 +19,30 @@ import java.util.Map;
  * @param sources       子轮引用来源：ref / knowledgeId / docId / title / snippet / images（原始 URL，已剥签名）/ score
  * @param images        子轮图片编号表（下标 0 = {@code [图片1]}，原始 URL）
  * @param toolSteps     子轮实际执行的工具步数（编排视图用它说明"这一支真跑了活"）
+ * @param steps         逐步执行记录（干活视角）：{n=工具名, l=中文名, ms=单步耗时, d=被挡下, s=start|done|error}，
+ *                      上限 {@link #MAX_STEPS} 步；超出的尾部丢弃（计数 toolSteps 仍如实）
  * @param artifactFiles 子轮交付的产物文件名（已收养进父会话，此处只作展示）
+ * @param artifacts     产物明细（干活视角）：{f=文件名, u=url, s=大小, e=类型}，与 artifactFiles 同源更全
  * @param elapsedMs     本支耗时
  * @param error         失败/超时文案（可为 null）
  * @author yuanke
  */
 public record BranchReport(String status, String answer, List<Map<String, Object>> sources, List<String> images,
-                           int toolSteps, List<String> artifactFiles, long elapsedMs, String error) {
+                           int toolSteps, List<Map<String, Object>> steps, List<String> artifactFiles,
+                           List<Map<String, Object>> artifacts, long elapsedMs, String error) {
 
     public static final String DONE = "done";
     public static final String FAILED = "failed";
     public static final String TIMEOUT = "timeout";
 
-    /** 组装一份失败回报（超时/异常两条路径共用，保证失败分支也有名字与耗时） */
-    public static BranchReport failed(String status, String error, long elapsedMs) {
-        return new BranchReport(status, "", List.of(), List.of(), 0, List.of(), elapsedMs, error);
+    /** 逐步记录的条数上限：干活视角要的是"干了什么"，不是流水账全文 */
+    public static final int MAX_STEPS = 20;
+
+    /** 组装一份失败回报（超时/异常两条路径共用，保证失败分支也有名字与耗时；已跑到的步骤如实带上——
+     *  「跑到第几步断的」正是失败排查要看的） */
+    public static BranchReport failed(String status, String error, long elapsedMs, List<Map<String, Object>> steps) {
+        return new BranchReport(status, "", List.of(), List.of(), 0,
+                steps == null ? List.of() : List.copyOf(steps), List.of(), List.of(), elapsedMs, error);
     }
 
     /** 这一支有没有可用作答的回报 */
@@ -55,5 +64,13 @@ public record BranchReport(String status, String answer, List<Map<String, Object
 
     public List<String> artifactFilesOrEmpty() {
         return artifactFiles == null ? List.of() : artifactFiles;
+    }
+
+    public List<Map<String, Object>> stepsOrEmpty() {
+        return steps == null ? List.of() : steps;
+    }
+
+    public List<Map<String, Object>> artifactsOrEmpty() {
+        return artifacts == null ? List.of() : artifacts;
     }
 }

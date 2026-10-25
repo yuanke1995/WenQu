@@ -67,10 +67,16 @@ public class SubAgentBranchRuntime {
             long start = System.currentTimeMillis();
             String childSession = null;
             CollectingSseEmitter sink = new CollectingSseEmitter();
+            // 干活视角的逐步记录：转发帧里每张终态工具卡顺手留一份摘要（名字/中文名/单步耗时/成败），
+            // 随 BranchReport 进 subChat 落库——刷新后卡片上那条「执行过程」时间线的真身就是它。
+            // 直播那份靠同一条转发流（subagent_step），两处同源，天然同构。
+            List<Map<String, Object>> workSteps = java.util.Collections.synchronizedList(new ArrayList<>());
+            java.util.Set<String> seenStepKeys = java.util.Collections.synchronizedSet(new java.util.HashSet<>());
             // 分支的实时过程（P3a 刀2）：那一支在父轮卡片上原本只有「跑了 N 步工具」这个事后计数，
             // 一支跑两三分钟时用户对着一个静止的数字等。这里把它自己那几路过程事件原样转给父轮通道，
             // 事件名换成 subagent_step、带上分支序号，前端归到对应那一行下面（不重组协议、不改内容）。
-            // 只转不发完就没了：这份实时步骤不落库，刷新后看到的仍是步数与回报全文。
+            // 只转不发完就没了：这份实时步骤不落库，刷新后看到的仍是步数与回报全文
+            // （终态步骤清单 2026-10-25 起随 subChat.steps 落库，见上）。
             final int branchIndex = Math.max(0, req.branchIndex());
             final boolean[] first = {false};
             sink.forwardProcess((type, content) -> {
@@ -85,6 +91,31 @@ public class SubAgentBranchRuntime {
                     first[0] = true;
                     log.info("[SUBAGENT] 分支实时过程首帧：branch={} type={} 父轮接收={} session={}",
                             branchIndex, type, sent, parentSessionId);
+                }
+                // 干活视角采步：只认终态帧（start 那张卡在前端直播里自己会转圈）；
+                // toolCard 载荷不带 denied，被挡下的区分靠 done 载荷那一步的对齐（见下）。
+                // 同一次调用的帧可能经两条路各到一遍（SSE 直发 + 总线扇出，真机实测成对出现）——
+                // 按 name+startedAtMs 去重，同一把工具只进时间线一次
+                if ("tool_status".equals(type) && workSteps.size() < BranchReport.MAX_STEPS) {
+                    try {
+                        com.alibaba.fastjson2.JSONObject tc =
+                                com.alibaba.fastjson2.JSON.parseObject(String.valueOf(content == null ? "" : content));
+                        String st = tc == null ? null : tc.getString("status");
+                        if (tc != null && tc.getString("name") != null && ("done".equals(st) || "error".equals(st))) {
+                            String stepKey = tc.getString("name") + "#" + tc.getLongValue("startedAtMs");
+                            if (seenStepKeys.add(stepKey)) {
+                                Map<String, Object> one = new LinkedHashMap<>();
+                                one.put("n", tc.getString("name"));
+                                if (tc.getString("label") != null) one.put("l", tc.getString("label"));
+                                long ms = tc.getLongValue("elapsedMs");
+                                if (ms > 0) one.put("ms", ms);
+                                one.put("s", "error".equals(st) ? "error" : "done");
+                                workSteps.add(one);
+                            }
+                        }
+                    } catch (Exception ignore) {
+                        // 采不上一步不影响正路：时间线少一行比分支报失败强
+                    }
                 }
             });
             try {
@@ -109,16 +140,16 @@ public class SubAgentBranchRuntime {
                     // 并发几轮之后问答池就被没人等的分支填满。
                     runtime.stopTurn(childSession, req.userId());
                     return BranchReport.failed(BranchReport.TIMEOUT,
-                            "分支超时（" + req.timeoutMs() / 1000 + " 秒）", System.currentTimeMillis() - start);
+                            "分支超时（" + req.timeoutMs() / 1000 + " 秒）", System.currentTimeMillis() - start, workSteps);
                 }
                 if (sink.lastError() != null && !sink.lastError().isBlank()) {
                     return BranchReport.failed(BranchReport.FAILED, sink.lastError(),
-                            System.currentTimeMillis() - start);
+                            System.currentTimeMillis() - start, workSteps);
                 }
                 String answer = sink.answer() == null ? "" : sink.answer().strip();
                 if (answer.isBlank()) {
                     return BranchReport.failed(BranchReport.FAILED, "子智能体未产生回答",
-                            System.currentTimeMillis() - start);
+                            System.currentTimeMillis() - start, workSteps);
                 }
                 // 子轮的引用/图片表是父轮续编编号的依据（done 载荷里那份是<b>已签名</b>的展示副本，
                 // 存进回报前先把签名参数剥掉，回到与主链路一致的原始 URL）
@@ -152,6 +183,7 @@ public class SubAgentBranchRuntime {
                                 com.alibaba.fastjson2.JSONObject o = tc.getJSONObject(i);
                                 if (o != null && !o.getBooleanValue("denied")) steps++;
                             }
+                            alignDeniedFlags(tc, workSteps);
                         }
                     }
                 } catch (Exception e) {
@@ -159,10 +191,25 @@ public class SubAgentBranchRuntime {
                 }
                 // 产物收养：子轮交付的东西归到父会话，用户在父轮里就点得到（跑完即删的临时会话留不住它）
                 List<String> artifactFiles = new ArrayList<>();
+                // 干活视角的产物明细：url/大小/类型随卡落库，卡上的 chips 才点得开；
+                // url 剥掉签名参数再存——落库的必须是稳定地址，带时效签名过期就是死链（与 images 同一口径）
+                List<Map<String, Object>> artifactDetail = new ArrayList<>();
                 try {
                     for (Map<String, Object> a : artifactService.adoptFromSession(childSession, parentSessionId)) {
                         Object f = a.get("filename");
                         if (f != null) artifactFiles.add(String.valueOf(f));
+                        Map<String, Object> d = new LinkedHashMap<>();
+                        d.put("f", String.valueOf(f));
+                        Object u = a.get("url");
+                        if (u != null) {
+                            String us = String.valueOf(u);
+                            int q = us.indexOf('?');
+                            d.put("u", q > 0 ? us.substring(0, q) : us);
+                        }
+                        if (a.get("size") instanceof Number n) d.put("s", n.longValue());
+                        Object ex = a.get("ext");
+                        if (ex != null && !String.valueOf(ex).isBlank()) d.put("e", String.valueOf(ex));
+                        artifactDetail.add(d);
                     }
                 } catch (Exception e) {
                     log.warn("[SUBAGENT] 分支产物收养失败（回答仍有效，产物留在子会话）: {}", e.getMessage());
@@ -171,12 +218,13 @@ public class SubAgentBranchRuntime {
                 log.info("[SUBAGENT] 全循环分支完成 {}：正文 {}字 引用 {} 条 工具步 {} 产物 {} 个 耗时 {}ms",
                         req.describe(), answer.length(), childSources.size(), steps, artifactFiles.size(), ms);
                 return new BranchReport(BranchReport.DONE, answer, List.copyOf(childSources),
-                        List.copyOf(childImages), steps, List.copyOf(artifactFiles), ms, null);
+                        List.copyOf(childImages), steps, List.copyOf(workSteps),
+                        List.copyOf(artifactFiles), List.copyOf(artifactDetail), ms, null);
             } catch (Exception e) {
                 Throwable cause = e.getCause() != null ? e.getCause() : e;
                 log.warn("[SUBAGENT] 全循环分支异常（按失败降级，不影响主链路）{}: {}",
                         req.describe(), cause.toString());
-                return BranchReport.failed(BranchReport.FAILED, cause.toString(), System.currentTimeMillis() - start);
+                return BranchReport.failed(BranchReport.FAILED, cause.toString(), System.currentTimeMillis() - start, workSteps);
             } finally {
                 // 收集型通道不触发 onCompletion，登记必须主动清（否则整轮台账与断开表挂着引用）
                 ChatRunRuntime.forgetSseChannel(sink);
@@ -201,6 +249,38 @@ public class SubAgentBranchRuntime {
             out.add(q > 0 ? u.substring(0, q) : u);
         }
         return List.copyOf(out);
+    }
+
+    /**
+     * 用子轮 done 载荷的 toolCalls（name + denied）对齐逐步记录：转发帧里的工具卡不带 denied，
+     * 「被挡下」与「跑出错」在时间线上是两种话术；顺手补上转发漏采的步（排尾部，无耗时）。
+     */
+    private static void alignDeniedFlags(com.alibaba.fastjson2.JSONArray toolCalls,
+                                         List<Map<String, Object>> workSteps) {
+        if (toolCalls == null || toolCalls.isEmpty()) return;
+        synchronized (workSteps) {
+            for (int i = 0; i < toolCalls.size(); i++) {
+                com.alibaba.fastjson2.JSONObject o = toolCalls.getJSONObject(i);
+                if (o == null || o.getString("name") == null) continue;
+                String name = o.getString("name");
+                boolean denied = o.getBooleanValue("denied");
+                boolean matched = false;
+                for (Map<String, Object> s : workSteps) {
+                    if (name.equals(s.get("n")) && !s.containsKey("d")) {
+                        if (denied) s.put("d", true);
+                        matched = true;
+                        break;
+                    }
+                }
+                if (!matched && !denied && workSteps.size() < BranchReport.MAX_STEPS) {
+                    // 转发漏采的兜底：没有耗时与中文名，但比时间线上凭空少一步强
+                    Map<String, Object> one = new LinkedHashMap<>();
+                    one.put("n", name);
+                    one.put("s", "done");
+                    workSteps.add(one);
+                }
+            }
+        }
     }
 }
 

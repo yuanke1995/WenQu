@@ -200,45 +200,55 @@ public class ChatController {
             }
         }
 
-        // 模型引用归属校验：普通用户只能用自己可用的供应商（平台级 + 自己登记的个人级）。
-        // 放在发起问答之前 fail-loud——否则引用他人个人级供应商时会拿对方的 Key 跑通，事后无从发现。
-        modelRegistryService.assertUsable(request.getModel(), userId, RequestUser.role());
-
-        // 会话级模型覆盖落库（聊天页手动切换即存，刷新/换端后选择不丢）：只有请求显式携带才写——
-        // 清除选择（跟随个人默认）由 PUT /session/{id}/model 在切换时处理；游客/定时任务/工作流等
-        // 旁路调用不经过这里，不会把各自的配置模型误存成会话覆盖。引用须可解析：存进会话的值若失效，
-        // 后续每轮都会在回答期报错（与上面 PUT 端点同口径）
-        if (request.getModel() != null && !request.getModel().isBlank()) {
-            String modelRef = request.getModel().trim();
-            // 已停用的引用不再写进会话、也不再发给上游：界面（选择器）只列可用项，走到这里的只有
-            // 停留在旧选择上的页签与重发。让它落库就是「A 端切成 X、B 端一句重发又盖回停用模型」
-            String issue = modelRegistryService.issueMessage(modelRef, userId, RequestUser.role());
-            if (!issue.isEmpty()) {
-                throw new BizException("模型" + issue + "，请重新选择");
-            }
-            // 重新生成/自动重试带的还是这一轮原来那个模型，它不是「用户改了一次选择」：
-            // 写下去就是把一次失败的重发当成一次选择变更，覆盖掉别的端刚选的那一份
-            if (!request.isRegenerate()) {
-                sessionService.updateModel(userId, sessionId, modelRef);
-            }
-        }
-
-        // @ 引用校验（同样必须在发起问答前 fail-loud）：类型合法 + 资源存在 + 在当前用户共享范围内。
-        // 放在这里而不是流水线内：流水线是异步线程，异常只能变成 SSE error，用户拿不到明确的 400 语义
-        List<ChatRequest.Mention> mentions = validateMentions(request.getMentions(), httpRequest);
-
-        // # 历史引用校验（同上，同步段 fail-loud）：messageId 必须属于当前会话，内容由服务端查库回填
-        List<ChatRequest.HistoryRef> historyRefs = validateHistoryRefs(sessionId, request.getHistoryRefs());
-
-        // 编辑重发（消息分支）：被编辑的用户消息在此校验并完成分支手术（旧分支软删留档+快照，同步段 fail-loud，
-        // 异常以明确的 4xx 语义返回而不是流中报错）；返回的组键贯穿本轮，新用户消息落库后挂同一组
+        // 同步段这几道校验都是「一句话还没发出去就被挡下」，抛 400。以前挡下就什么都不留：
+        // 用户那句提问是当场打出去的，刷一下页面连问带错一起消失，读到的就成了「软件吞了我一句话」。
+        // 400 的语义照旧（前端 toast 与错误卡都认它），只在抛之前补一笔留痕。
+        final List<ChatRequest.Mention> mentions;
+        final List<ChatRequest.HistoryRef> historyRefs;
         String editVariantGroup = null;
-        if (request.getEditMessageId() != null && !request.getEditMessageId().isBlank()) {
-            String editId = request.getEditMessageId().trim();
-            if (!editId.matches("[0-9a-fA-F]{32}")) {
-                throw new BizException("被编辑消息标识无效");
+        try {
+            // 模型引用归属校验：普通用户只能用自己可用的供应商（平台级 + 自己登记的个人级）。
+            // 放在发起问答之前 fail-loud——否则引用他人个人级供应商时会拿对方的 Key 跑通，事后无从发现。
+            modelRegistryService.assertUsable(request.getModel(), userId, RequestUser.role());
+
+            // 会话级模型覆盖落库（聊天页手动切换即存，刷新/换端后选择不丢）：只有请求显式携带才写——
+            // 清除选择（跟随个人默认）由 PUT /session/{id}/model 在切换时处理；游客/定时任务/工作流等
+            // 旁路调用不经过这里，不会把各自的配置模型误存成会话覆盖。引用须可解析：存进会话的值若失效，
+            // 后续每轮都会在回答期报错（与上面 PUT 端点同口径）
+            if (request.getModel() != null && !request.getModel().isBlank()) {
+                String modelRef = request.getModel().trim();
+                // 已停用的引用不再写进会话、也不再发给上游：界面（选择器）只列可用项，走到这里的只有
+                // 停留在旧选择上的页签与重发。让它落库就是「A 端切成 X、B 端一句重发又盖回停用模型」
+                String issue = modelRegistryService.issueMessage(modelRef, userId, RequestUser.role());
+                if (!issue.isEmpty()) {
+                    throw new BizException("模型" + issue + "，请重新选择");
+                }
+                // 重新生成/自动重试带的还是这一轮原来那个模型，它不是「用户改了一次选择」：
+                // 写下去就是把一次失败的重发当成一次选择变更，覆盖掉别的端刚选的那一份
+                if (!request.isRegenerate()) {
+                    sessionService.updateModel(userId, sessionId, modelRef);
+                }
             }
-            editVariantGroup = sessionService.prepareEditBranch(sessionId, editId);
+
+            // @ 引用校验（同样必须在发起问答前 fail-loud）：类型合法 + 资源存在 + 在当前用户共享范围内。
+            // 放在这里而不是流水线内：流水线是异步线程，异常只能变成 SSE error，用户拿不到明确的 400 语义
+            mentions = validateMentions(request.getMentions(), httpRequest);
+
+            // # 历史引用校验（同上，同步段 fail-loud）：messageId 必须属于当前会话，内容由服务端查库回填
+            historyRefs = validateHistoryRefs(sessionId, request.getHistoryRefs());
+
+            // 编辑重发（消息分支）：被编辑的用户消息在此校验并完成分支手术（旧分支软删留档+快照，同步段 fail-loud，
+            // 异常以明确的 4xx 语义返回而不是流中报错）；返回的组键贯穿本轮，新用户消息落库后挂同一组
+            if (request.getEditMessageId() != null && !request.getEditMessageId().isBlank()) {
+                String editId = request.getEditMessageId().trim();
+                if (!editId.matches("[0-9a-fA-F]{32}")) {
+                    throw new BizException("被编辑消息标识无效");
+                }
+                editVariantGroup = sessionService.prepareEditBranch(sessionId, editId);
+            }
+        } catch (BizException e) {
+            chatService.recordRejectedQuestion(sessionId, userId, request, e.getMessage());
+            throw e;
         }
 
         // 不设容器级 SSE 超时：那是一条从请求开始一路走到头的墙钟，且 async 启动后不可续期——

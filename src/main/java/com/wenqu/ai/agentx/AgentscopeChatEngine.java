@@ -615,17 +615,17 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         if (turn.unusableMessage() != null) {
             // 已停用的模型不发给上游：上游只会回一句 401/404，用户读到的是「网关坏了」，
             // 而不是「你选的这个模型已经不能用了，去这儿改」
-            failLoud(channel, turn.unusableMessage());
+            failLoud(cmd, channel, turn.unusableMessage());
             return;
         }
         String ref = turn.ref();
         if (ref == null || ref.isBlank()) {
-            failLoud(channel, "未指定模型：请在对话右上角选择模型，或在个人设置中配置默认模型");
+            failLoud(cmd, channel, "未指定模型：请在对话右上角选择模型，或在个人设置中配置默认模型");
             return;
         }
         ModelRegistryService.ModelRoute route = modelRegistry.chatRoute(ref);
         if (route == null) {
-            failLoud(channel, "模型「" + ref + "」未登记或已不可用：请在「智能体 → 模型供应商」里确认该供应商与模型");
+            failLoud(cmd, channel, "模型「" + ref + "」未登记或已不可用：请在「智能体 → 模型供应商」里确认该供应商与模型");
             return;
         }
         ExecutionPolicy policy = tools.policyFor(cmd,
@@ -733,19 +733,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 问题先落库：这一轮哪怕中途停掉或出错，界面上也不该出现「问出去了却什么都没有」的空档
         // （与手写运行时的即时落库同一条口径）。附件/@/#历史引用随用户消息一并持久化，刷新后回显不丢。
         String userMessageId = cmd.isRegenerate() || cmd.isFromSteer() ? null
-                : sessionService.appendMessage(cmd.getSessionId(), "user", cmd.getQuestion(),
-                        userImgUrls.isEmpty() ? null : userImgUrls, null, null, null, null, null,
-                        attachments.metasJson(cmd.getAttachments(), cmd.uploadOwnerUid()),
-                        null, null, null, null, null, null, null,
-                        mentionsJson(cmd.getMentions()),
-                        historyRefsJson(cmd.getHistoryRefs()),
-                        null, turnId);
-        if (userMessageId != null && cmd.getEditVariantGroup() != null && !cmd.getEditVariantGroup().isBlank()) {
-            // 编辑重发：新用户消息挂上被替换旧分支的版本组键（与工作流路径同口径）。
-            // 被编辑的旧分支已在控制器同步段软删留档，不挂组键的话「‹ n/N ›」切换器出不来，
-            // 旧版本从此够不着——「编辑重发可反悔」就只剩一句空话
-            sessionService.setMessageVariant(userMessageId, cmd.getEditVariantGroup());
-        }
+                : appendQuestion(cmd, turnId, userImgUrls);
         Recording recording = new Recording(spills, hooks.consultLedger(), tools, hooks, displayNames,
                 cmd.getUserId());
         bindFrameworkToolGate(cmd, recording);
@@ -1674,12 +1662,51 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     /**
      * 开局就判不了的收场：error 说清原因，再补一条最小 done——SSE 读循环「流关闭却没有 done」
      * 会把它误报成「连接被提前关闭」，用户看到的就是莫名其妙的中断错。
+     * <p>先把那一问落库再收口：这三支柱都排在正常轮次的提问落库之前，不补这一句，用户刷新一次
+     * 读到的就是「我刚才问的话呢」——问没留下、答没有、当场看见的错误卡也随流走了。
      */
-    private void failLoud(RunChannel channel, String message) {
+    private void failLoud(ChatCommand cmd, RunChannel channel, String message) {
+        appendQuestionOnFailure(cmd);
         channel.emit(RunEventType.ERROR, message);
         channel.emit(RunEventType.DONE,
                 "{\"finalContent\":\"\",\"sources\":[],\"degradations\":[],\"engine\":\"agentscope\"}");
         channel.complete();
+    }
+
+    /**
+     * 提问行的一次落库——正常轮与失败轮共用，这一行的形状只在这里定义一遍。
+     * <p>编辑重发要挂上被替换旧分支的版本组键（与工作流路径同口径）：被编辑的旧分支已在控制器
+     * 同步段软删留档，不挂组键的话「‹ n/N ›」切换器出不来，旧版本从此够不着——「编辑重发可反悔」就只剩一句空话
+     */
+    private String appendQuestion(ChatCommand cmd, String turnId, List<String> userImgUrls) {
+        String messageId = sessionService.appendMessage(cmd.getSessionId(), "user", cmd.getQuestion(),
+                userImgUrls == null || userImgUrls.isEmpty() ? null : userImgUrls,
+                null, null, null, null, null,
+                attachments.metasJson(cmd.getAttachments(), cmd.uploadOwnerUid()),
+                null, null, null, null, null, null, null,
+                mentionsJson(cmd.getMentions()),
+                historyRefsJson(cmd.getHistoryRefs()),
+                null, turnId);
+        if (messageId != null && cmd.getEditVariantGroup() != null && !cmd.getEditVariantGroup().isBlank()) {
+            sessionService.setMessageVariant(messageId, cmd.getEditVariantGroup());
+        }
+        return messageId;
+    }
+
+    /**
+     * 失败轮的那一问。图片走 {@code processDisplay}（只落盘回显）：本轮压根没进模型，
+     * 谈不上「这个模型读不读得懂图」，但用户贴的图该跟着他的问题一起留在对话里。
+     */
+    private void appendQuestionOnFailure(ChatCommand cmd) {
+        if (cmd.isRegenerate() || cmd.isFromSteer()) return;   // 提问在上一句请求里已经落过
+        if (cmd.getQuestion() == null || cmd.getQuestion().isBlank()) return;
+        try {
+            appendQuestion(cmd, turnIdOf(cmd), userImages.processDisplay(cmd.getUserImages()).stream()
+                    .map(com.wenqu.ai.service.UserImageService.UserImage::url).toList());
+        } catch (Exception e) {
+            // 问没留住不碍「这一轮失败」这件事本身：帧照发、日志照记，只是刷新后读不回这一句
+            log.warn("[FAIL-LOUD] 失败轮的提问落库失败: session={} {}", cmd.getSessionId(), e.getMessage());
+        }
     }
 
     /**
@@ -3660,6 +3687,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 警示条也要活过刷新：它此前只随 warn 帧下发一次，用户当场看见「沙盒写入未执行」，
         // 刷新一次就等于没发生过——而这一轮确实被沙盒挡下过一次（与 degradations 那条同一个错法）
         sessionService.saveMessageWarn(assistantMessageId, channel.lastWarn());
+        // 降级条与警示条同一个错法：只随 done 帧下发一次，刷新后「本轮没咨询成其他助手」「模型换过路」
+        // 整块消失。手写引擎时代有四处补写（正常轮/半程轮/closeout），P6 退役自研那两刀把调用点删净了
+        // 却没在这里接回来——于是全仓只剩工作流轮那一条（ChatflowBridge），普通对话轮的降级条
+        // 一直是当场看得见、回头读不到。列在这里已定型：引用自检那道防线跑在落库之前。
+        sessionService.persistDegradations(assistantMessageId, pool.degradations());
         // 问答台账：与手写侧 doOnComplete 同一处时机（半程轮不落台账，那是中断轮的收尾语义）。
         // 不接的表现为看板与「未命中问题」列表只统计到切换前那部分流量——分派切了运行时，
         // 运营侧的数却悄悄少了一半，而且没有任何一处会报错。

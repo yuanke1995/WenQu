@@ -1,6 +1,8 @@
 package com.wenqu.ai.model;
 
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
@@ -32,7 +34,13 @@ public class AgentShare {
     /** 分享令牌（URL 路径段） */
     private String token;
 
-    /** 游客对话模型引用（providerId/modelId；空=回退创建者个人默认模型） */
+    /**
+     * 游客对话模型引用（providerId/modelId；空=回退创建者个人默认模型）。
+     * <p>{@code updateStrategy=ALWAYS}：切回「跟随发布者个人默认模型」是把这一列清空，
+     * 而 updateById 默认忽略 null 字段——不加它，弹窗里选「跟随」会保存成功、界面也显示成「跟随」，
+     * 库里却仍留着上一个模型，重开弹窗它就又回来了，游客也照旧用被换掉的那个模型作答。
+     */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String modelRef;
 
     /** 启用: 1=可访问, 0=暂停（保留 token） */
