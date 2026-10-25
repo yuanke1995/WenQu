@@ -9,61 +9,68 @@
 问渠是一款以智能体为核心的 AI 工作台，基于 Spring AI 构建，支持私有化部署。它将大模型、知识库与工具统一组织与编排，覆盖「智能对话 → 知识检索 → 工具执行 → 产物交付 → 对外能力开放」的完整链路，适用于知识管理、内部智能问答、智能体应用搭建与 AI 能力开放等场景。
 
 - **智能体优先**：以智能体（人设 / 知识范围 / 工具集）为核心组织能力，支持智能体按需委派与可视化工作流
+- **长任务可控**：计划模式先出执行计划再动手，目标模式自动续跑并以证据核验完成度，人在回路卡片覆盖提问、审批与裁决
 - **答案可溯源**：混合检索 + 引用溯源 + 位置级文档原图展示，每个结论都能回到源头
 - **开放互联**：MCP 双向（接入外部 Server / 对外发布为 MCP Server）、API Key 开放接口、游客分享页
 - **生产就绪**：RBAC、OIDC 单点登录、密钥加密存储、接口限流、操作审计、多副本水平扩展
 
 ### 核心能力一览
 
-| 能力域 | 亮点 |
+| 能力域 | 说明 |
 |--------|------|
-| 智能对话 | SSE 流式回答、句末 `[N]` 引用溯源、深度思考（思考强度五档）、上下文容量面板（分类计量）、过程独白与消息时间线、图片理解、@ 文档引用、回答末尾下一步建议、计划模式（执行计划卡：确认/继续对话/取消） |
-| 知识库（RAG） | Word/PDF/Excel/TXT/Markdown/网页解析（扫描件 OCR）、混合检索 + GraphRAG 图谱扩展、父子分块与问答对增强、网页定时刷新 |
-| 智能体 | 人设/知识/工具可配、会话级绑定、按需委派（agent-as-tool，跨主题问题派给对口助手各带知识库查证）、@ 强制咨询、定时执行 |
-| 工具与沙盒 | 内置工具 + 联网搜索（Tavily/博查/SearXNG）+ 技能包（Skills）+ MCP 工具；Docker 沙盒隔离执行 shell/文件读写（输出实时流式回传）；有副作用工具支持执行前人工确认 |
-| 可视化工作流 | DSL 唯一真源 + StateGraph 执行引擎、11 类节点、画布编辑器与节点级 trace 回放、版本发布/回滚、API 触发、cron 定时触发、智能体 chatflow 绑定 |
-| MCP 双向 | 接入任意外部 MCP Server；智能体一键发布为 MCP 端点（Claude/Cursor 直连）；平台级 MCP 入口 |
-| 安全管控 | RBAC 菜单/端点两级管控、OIDC 单点登录、API Key（仅存哈希）、接口限流、操作审计 |
-| 运营闭环 | 个人使用统计（Token 热力图/趋势/模型用量）、问答日志、赞/踩反馈回流、数据看板（知识缺口一键补块）、检索量化评估（recall@k / MRR）、检索链路分步调试 |
-| 长期记忆 | 问答后异步提炼用户画像、跨会话注入；个人设置与系统设置各有一道开关（只关提炼，不关提起） |
+| 智能对话 | SSE 流式回答、随时停止与断线重连接流、运行中插话、句末 `[N]` 引用溯源、深度思考（思考强度五档）、上下文容量分类计量与手动/自动压缩、过程独白与消息时间线、图片与文件多模态输入、`@` 引用资料与 `#` 历史引用、回答末尾下一步建议 |
+| 长任务执行 | 计划模式（执行计划卡：确认 / 继续对话 / 取消）、目标模式（自动续跑，助手提交证据、平台逐条核验后判定完成）、四项硬预算与软阈值收敛、任务清单进度、工具执行确认与智能体提问卡（人在回路） |
+| 知识库（RAG） | docx / pdf / xlsx / ppt / pptx / txt / md / csv 解析与网页导入（扫描件 OCR）、混合检索（向量 + 中文分词词面）+ GraphRAG 图谱扩展、父子分块与问答对增强、网页定时刷新、文档版本与回收站、知识块预览与单块编辑 |
+| 智能体 | 人设 / 知识范围 / 能力开关可配、会话级不锁定、按需委派（跨主题问题派给职责对口助手）、子智能体两种执行形态、配置历史版本回滚、公开发布与 MCP 端点、定时执行 |
+| 工作区 | 一个工作目录 + 一份约定 + 一位默认助手；文件管理（上传 / 新建文件夹 / 重命名 / 移动 / 删除 / 打包导出 / 整屏预览）、会话与自动化归集、动态时间线、事项清单、资料域绑定、共用目录与记忆隔离 |
+| 工具与沙盒 | 内置工具 + 联网搜索（Tavily / 博查 / SearXNG）+ 技能包 + MCP 工具；Docker 沙盒隔离执行命令与读写文件（输出实时回传）、后台进程查看与停止、脚本批量执行；产物与沙盒文件整屏预览台 |
+| 可视化工作流 | DSL 唯一真源 + StateGraph 执行引擎、13 类节点（含技能节点与 MCP 工具节点）、画布编辑器与节点级 trace 回放、版本发布 / 回滚、API 触发、cron 定时触发、终态回调、运行实时流 |
+| 技能与市场 | 技能三层来源（内置 / 我的 / 工作区）、zip 与 URL 安装、平台与个人两级停用；团队内市场分发技能、应用模板与工作流，安装即复制并提示「有更新」 |
+| MCP 双向 | 接入任意外部 MCP Server（请求头凭据加密、JSON 粘贴导入、工具逐条命名）；智能体发布为 MCP 端点，平台级 MCP 入口对外提供四项工具；入站与出站调用统一审计 |
+| 安全管控 | RBAC 菜单与接口两级管控、多认证源 OIDC 单点登录、部门与共享范围、API Key（仅存哈希）、接口限流、操作审计、数据按归属隔离 |
+| 运营闭环 | 个人使用统计（Token 热力图 / 趋势 / 模型用量 / 用途分项 / 累计费用）、数据看板（无命中率、热门与无命中问题、差评回流、知识缺口补块、执行 Trace、采样池、费用）、检索量化评估（recall@k / MRR / 忠实度与相关性评分）、检索链路分步调试 |
+| 通知与可感知 | 站内通知中心覆盖解析、工作流、网页源刷新、定时任务、审批等待、模型额度等异步事件，未读计数、按类型静音、铃铛与列表双入口 |
+| 长期记忆 | 问答后异步提炼用户画像与事实、跨会话注入、按工作区隔离；个人设置提供记忆查看、编辑与清空，平台另有总闸 |
+| 终端形态 | 电脑端工作台与移动端原生壳（触屏窄屏自动切换），人在回路卡片、状态与来源、导出与分享在两端口径一致 |
 
 ## 系统架构
 
 ```
-浏览器（Vue 3 单页应用）
+浏览器（Vue 3 单页应用 · 电脑端工作台 / 移动端原生壳）
   │  REST + SSE · /api/ai/*
   ▼
 问渠服务端（Java 17 · Spring Boot 3.5 · Spring AI）
   ├─ 问答管线：混合检索 → 重排 → 上下文组装 → 流式生成
-  ├─ 智能体编排：按需委派（agent-as-tool，跨主题咨询对口助手）
+  ├─ 智能体编排：按需委派、计划模式、目标模式（证据核验 + 预算闸）、人在回路审批
   ├─ 工作流引擎：DSL → StateGraph 翻译执行 + 节点级 trace
-  ├─ 沙盒调度 · 定时调度 · 配置中心 · RBAC · OIDC · 限流 · 审计
+  ├─ 沙盒调度 · 目标调度 · 定时调度 · 站内通知 · 市场分发 · 配置中心 · RBAC · OIDC · 限流 · 审计
   │
-  ├─ MySQL …… 业务数据（50+ 张 c_ai_* 表，启动自动建表）
-  ├─ Redis Stack ………… 向量索引 / 配置变更广播（pub/sub）/ 分布式锁与限频
+  ├─ MySQL …… 业务数据（57 张 c_ai_* 表，启动自动建表）
+  ├─ Redis Stack ………… 向量索引 / 框架会话状态 / 配置变更广播（pub/sub）/ 分布式锁与限频
   ├─ Meilisearch ……… 关键词引擎（可选，默认 MySQL LIKE，零依赖）
   ├─ Docker 沙盒 ……… provisioner + 隔离容器执行环境
   └─ 模型网关 …………… OpenAI 兼容供应商自登记（DeepSeek / GLM / Qwen / Kimi / …）
 
-对外开放：/s/{token} 游客分享 · /ai/mcp/{token} MCP 端点 · /ai/mcp 平台入口 · 工作流 API
+对外开放：/s/{token} 游客分享 · /shared/{token} 对话只读分享 · /ai/mcp/{token} MCP 端点
+          /ai/mcp 平台入口 · 工作流开放接口 · 问答开放接口
 ```
 
 ### 技术栈
 
 | 模块 | 技术 |
 |------|------|
-| 后端 | Java 17 + Spring Boot 3.5.15 + Spring AI 1.1.8（`spring-ai-bom` 统一版本） |
+| 后端 | Java 17 + Spring Boot 3.5.15 + Spring AI 1.1.8（`spring-ai-bom` 统一版本）+ MCP Java SDK 0.18.3 |
 | ORM | MyBatis-Plus 3.5.12（逻辑删除 `deleted`，驼峰映射） |
-| 数据库 | MySQL 8 等 MySQL 协议兼容库（驱动即 MySQL Connector/J，无任何数据库专有逻辑；内置 compose 提供 MySQL，生产环境亦可指向外部 MySQL；库名 `wenqu_ai` 经 `DB_NAME` 调整）；50+ 张 `c_ai_*` 表由启动自动建立 |
-| 向量库 | Redis Stack（RediSearch 向量索引，Jedis 客户端，每个知识库独立索引；连接地址经 `REDIS_HOST`/`REDIS_PORT` 注入，默认 `127.0.0.1:6379`） |
-| LLM | 聊天/视觉/向量/重排/OCR/图谱抽取模型均可跨厂商热切换（DeepSeek / 智谱 GLM / 阿里百炼 Qwen / Kimi / 豆包 / 腾讯混元 / 百度千帆 / MiniMax / SiliconFlow / Ollama 等 OpenAI 兼容网关预设，模型经「供应商表 + 引用」登记绑定，**无全局兜底**——聊天模型缺失/引用无效会 fail-loud 引导选择） |
-| 智能体 / 问答引擎 | **AgentScope 2.1.0-BETA1**（`io.agentscope:agentscope-harness` 的 `HarnessAgent`：推理循环、工具派发、会话状态、上下文压缩、权限、子智能体、HITL、Plan Mode 全部由框架原生接管，单一引擎恒走框架）。问渠领域工具/语义经适配层（Spring AI ToolCallback → AgentScope 一等工具）注入 |
-| 工作流引擎 | **Spring AI Alibaba Agent Framework 1.1.2.3** 的 graph 模块（`com.alibaba.cloud.ai.graph.StateGraph`）：DSL → StateGraph 的唯一翻译层（`WorkflowEngine`），负责节点装配、条件边、checkpoint、HITL 续跑、loop 回边闸。执行框架与智能体问答引擎（AgentScope）互相独立；子智能体节点运行时复用同一问答管线 |
-| 沙盒 | 独立 provisioner 服务（Python 3.13 + FastAPI + Docker SDK，容器化部署）+ 全功能沙盒镜像（all-in-one-sandbox）；模型经 Function Calling 在隔离容器内执行 shell、读写文件 |
-| 文档解析 | Apache POI 5.2.3（docx/xlsx）+ PDFBox 3.0.2（含扫描件 OCR 降级）+ 原生流（txt/md/csv）+ jieba-analysis 1.0.2（中文分词） |
-| 序列化 / 文档 | fastjson2 2.0.31；springdoc-openapi 2.8.8（Swagger UI，生产默认关） |
-| 安全 | RSA 加密落库模型 API Key（`ConfigCryptoService`）+ SHA-256 哈希签发对外 API Key + 图片 HMAC 签名 URL + PBKDF2 密码哈希 + JWT 登录令牌 + OIDC 单点登录 |
-| 前端 | Vue ^3.4 + Vite ^5 + Ant Design Vue ^4.2 + markdown-it/DOMPurify/highlight.js + @vue-flow/core 1.48.2（工作流画布，锁版本）（`.nvmrc` 固定 Node **22** LTS，依赖链要求 ≥22.12 或 20.19+） |
+| 数据库 | MySQL 8 等 MySQL 协议兼容库（驱动即 MySQL Connector/J，无任何数据库专有逻辑；内置 compose 提供 MySQL，生产环境亦可指向外部 MySQL；库名 `wenqu_ai` 经 `DB_NAME` 调整）；57 张 `c_ai_*` 表由启动自动建立 |
+| 向量库 | Redis Stack（RediSearch 向量索引，Jedis 7.4.1 客户端，每个知识库独立索引；连接地址经 `REDIS_HOST`/`REDIS_PORT` 注入，默认 `127.0.0.1:6379`） |
+| LLM | 聊天 / 视觉 / 向量 / 重排 / OCR / 语音 / 全模态 / 其他八类模型可跨厂商热切换（DeepSeek / 智谱 GLM / 阿里百炼 Qwen / Kimi / 豆包 / 腾讯混元 / 百度千帆 / MiniMax / SiliconFlow / Ollama 等 OpenAI 兼容网关预设，模型经「供应商表 + 引用」登记绑定，**无全局兜底**——聊天模型缺失或引用无效会 fail-loud 引导选择；全模态模型按对话模型同等可用） |
+| 智能体 / 问答引擎 | **AgentScope 2.1.0-BETA1**（`io.agentscope:agentscope-harness` 的 `HarnessAgent` 与常驻 `AgentSession`：推理循环、工具派发、会话状态、上下文压缩、权限档位、子智能体、人在回路、计划模式、断线续跑全部由框架原生接管，单一引擎恒走框架）。问渠领域工具与语义经适配层（Spring AI ToolCallback → AgentScope 一等工具）注入；会话状态存 Redis，过程事件写宿主事件日志并按代次轮换 |
+| 工作流引擎 | **Spring AI Alibaba Agent Framework 1.1.2.3** 的 graph 模块（`com.alibaba.cloud.ai.graph.StateGraph`）：DSL → StateGraph 的唯一翻译层（`WorkflowEngine`），负责节点装配、条件边、checkpoint、人在回路续跑、loop 回边闸。执行框架与智能体问答引擎（AgentScope）互相独立；子智能体节点运行时复用同一问答管线 |
+| 沙盒 | 独立 provisioner 服务（Python + FastAPI + Docker SDK，容器化部署）+ 全功能沙盒镜像（all-in-one-sandbox）；模型经 Function Calling 在隔离容器内执行命令、读写文件，命令输出实时回传 |
+| 文档解析 | Apache POI 5.5.1（docx / xlsx / ppt / pptx，含旧版 OLE2 容器）+ PDFBox 3.0.2（含扫描件 OCR 降级）+ jsoup 1.15.4（网页正文提取）+ 原生流（txt/md/csv）+ jieba-analysis 1.0.2（中文分词） |
+| 计量 / 序列化 / 文档 | jtokkit 1.1.0（cl100k BPE token 计数）；fastjson2 2.0.31；springdoc-openapi 2.8.8（Swagger UI，生产默认关） |
+| 安全 | RSA 加密落库模型 API Key 与 MCP 请求头（`ConfigCryptoService`）+ SHA-256 哈希签发对外 API Key + 图片与工作区文件 HMAC 签名 URL + PBKDF2 密码哈希 + JWT 登录令牌 + OIDC 单点登录 |
+| 前端 | Vue ^3.4 + Vite ^5 + Ant Design Vue ^4.2 + markdown-it ^15 / DOMPurify ^3.4 / highlight.js ^11 + echarts 6.1 + mermaid ^11.17 + @vue-flow/core 1.48.2（工作流画布，锁版本）；视图全部懒加载按页分包（`.nvmrc` 固定 Node **22** LTS，依赖链要求 ≥22.12 或 20.19+） |
 
 ## 快速开始
 
@@ -90,7 +97,7 @@ docker run -d --name redis-stack -p 6379:6379 redis/redis-stack-server:latest
 mysql -h<db-host> -P<db-port> -uroot -p wenqu_ai < src/main/resources/schema.sql
 ```
 
-**模型供应商**（聊天/视觉/向量/重排等模型，含图片描述与扫描 PDF OCR）：不需要任何本地部署——在「智能体工作台 → 模型供应商」登记 OpenAI 兼容网关（网关地址 / API Key / 补全与向量路径），按类型登记模型后**按归属绑定**：聊天模型在对话页（会话级切换）与「个人设置」（个人默认）选择；知识库编辑里绑定向量（必选）/ 重排 / 视觉 / OCR / 图谱抽取模型；平台默认重排模型在系统设置登记（API Key RSA 加密入库）。若本机装了 Ollama，也可按「本地网关」供应商登记使用，但非必需。
+**模型供应商**（聊天 / 视觉 / 向量 / 重排 / OCR / 语音 / 全模态 / 其他八类模型，含图片描述、扫描件 OCR 与图谱抽取）：不需要任何本地部署——在「智能体 → 模型供应商」登记 OpenAI 兼容网关（网关地址 / API Key / 补全与向量路径），按类型登记模型（对话类需声明上下文窗口与最大输出，可登记「最小~最大」区间；可登记输入/输出单价用于费用统计）后**按归属绑定**：聊天模型在对话页（会话级切换）与「个人设置 → 默认模型」选择；知识库编辑里绑定向量（必选）/ 重排 / 视觉 / OCR / 图谱抽取模型；平台默认重排模型与评估评判模型在系统设置登记（API Key RSA 加密入库）。个人供应商只有登记人自己可见可用。若本机装了 Ollama，也可按「本地网关」供应商登记使用，但非必需。
 
 **沙盒 provisioner**（可选，隔离执行环境）：
 
@@ -124,8 +131,11 @@ export AI_IMAGES_DIR=./data               # 数据落盘目录（跨平台兜底
 export AI_JWT_SECRET=xxx                  # 登录令牌签名密钥（≥32 位随机串；留空则每次启动随机生成，重启后已发令牌失效；多副本必须一致）
 
 # ===== 仅 env/yml（不进设置页）=====
-export AI_MEILI_KEY=xxx                   # Meilisearch master key（compose 部署必填：meilisearch 容器以它初始化；app 侧同值可在设置页「检索设置 → 服务连接」配）
+export AI_AGENTSCOPE_STATE_DIR=./user-data/agentscope   # 框架工作区（个人记忆 MEMORY.md 与日账、plans、会话事件日志归档）；容器部署需指向挂载卷，多副本需共享
+export WENQU_SKILLS_USERS_DIR=./user-data/skills-users  # 用户自装技能的宿主目录
+export AI_MEILI_KEY=xxx                   # Meilisearch master key（compose 部署必填：meilisearch 容器以它初始化；app 侧同值可在设置页「检索设置 → 关键词引擎」配）
 export AI_MEILI_INDEX=wenqu-chunks        # 关键词索引名（只从 env/yml 读，永不入库）
+export LOG_DIR=./data/logs                # 应用日志目录（容器部署需指向挂载卷内，否则容器重建后丢失）
 export LOG_LEVEL_APP=info                 # 应用日志级别
 export LOG_LEVEL_SPRING_AI=info           # Spring AI 日志级别
 export MYBATIS_LOG_IMPL=org.apache.ibatis.logging.slf4j.Slf4jImpl
@@ -134,7 +144,7 @@ export ACTUATOR_HEALTH_DETAILS=never      # /actuator/health 详情级别
 # ===== 沙盒 / OCR 等部署连接（不进设置页）=====
 export SANDBOX_PROVISIONER_URL=http://127.0.0.1:8002
 export SANDBOX_PROVISIONER_TOKEN=          # 与 provisioner 侧一致，≥32 字符
-export SANDBOX_CALLBACK_BASE_URL=http://host.docker.internal:8090/ai
+export SANDBOX_CALLBACK_BASE_URL=http://host.docker.internal:8090/ai   # 沙盒脚本回程调用本服务的地址，须容器侧可达
 export SANDBOX_VIRTUAL_PATH_PREFIX=/home/gem/user-data
 export OCR_PP_STRUCTURE_URI=               # PP-StructureV3 服务地址；空=不用
 export OCR_MINERU_URI=                     # MinerU 服务地址；空=不用
@@ -143,7 +153,7 @@ export OCR_TIMEOUT_MS=600000
 export SPRINGDOC_ENABLED=false            # Swagger/OpenAPI 开关（默认关，接口契约不外泄；本地调试可置 true）
 ```
 
-> **行为参数与模型配置不走环境变量**：检索/重排/解析/限流/上下文/沙盒/记忆/定时任务/联网搜索等 170+ 行为参数统一在**系统设置页**维护（`config-schema.json` → `c_ai_config`，保存即生效）；聊天/视觉/向量等模型走**模型供应商**登记 + 引用绑定（API Key RSA 加密入库，**无全局兜底**——聊天模型缺失/引用无效会 fail-loud 引导选择）。`application.yml` 不存任何模型网关/密钥。
+> **行为参数与模型配置不走环境变量**：检索 / 重排 / 解析 / 上下文 / 工具 / 联网搜索 / 目标模式 / 沙盒 / 记忆 / 定时任务 / 限流等 **179 项**行为参数统一在**系统设置页**维护（`config-schema.json` → `c_ai_config`，保存即生效）；聊天 / 视觉 / 向量 / 重排 / OCR 等模型走**模型供应商**登记 + 引用绑定（API Key RSA 加密入库，**无全局兜底**——聊天模型缺失或引用无效会 fail-loud 引导选择）。`application.yml` 不存任何模型网关与密钥。
 
 **本地开发**：无需 export。密钥、数据目录等环境相关值放在工作区根 `config/application-local.yml`（Spring Boot 外部配置目录，已被 .gitignore 忽略，**不打进构建产物**——密钥不会随 jar 分发），再以 `local` profile 启动（application.yml 已默认激活 local）：
 - IDEA：Run Configuration → Active profiles 填 `local`
@@ -190,11 +200,12 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 
 ### 5. 五分钟上手
 
-1. 访问 `http://localhost:5800/chat`，按引导创建管理员账号（接入 OIDC 后可单点登录）
-2. 在「智能体工作台 → 模型供应商」登记模型网关并登记模型，再到「个人设置」绑定个人默认聊天模型（对话页可随时切换）
-3. 在「知识库」新建库 → 上传文档（或粘贴网页 URL）→ 等待解析完成
+1. 访问 `http://localhost:5800/chat`，按引导创建管理员账号；接入 OIDC 后可单点登录
+2. 在「智能体 → 模型供应商」登记模型网关与模型，再到「个人设置 → 默认模型」绑定个人默认聊天模型（对话页可随时切换）
+3. 在「知识库」新建库（绑定向量模型）→ 上传文档（或粘贴网页 URL）→ 等待解析完成
 4. 回到「对话」提问：句末 `[N]` 角标点开即见来源全文与原文图片
-5. 在「智能体」开启工具/沙盒，让智能体执行命令、交付文件产物（`/artifacts` 查看下载）
+5. 在「智能体 → 技能 / MCP 外部工具」装配能力，或在系统设置开启沙盒后让助手执行命令、交付产物（`/artifacts` 查看下载）
+6. 需要把一件事的对话、文件与产物放在一起时，在侧栏新建**工作区**；需要长任务自动推进时用 `/目标`，需要先确认方案时用 `/plan`
 
 ## 功能详解
 
