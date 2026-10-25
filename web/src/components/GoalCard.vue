@@ -74,10 +74,15 @@ const phaseLine = computed(() => {
 
 const budgetLine = computed(() => {
   const b = props.card.budget
-  if (!b || !b.maxRounds) return ''
+  if (!b) return ''
   if (props.card.status === 'ACHIEVED') return `共 ${b.rounds} 轮完成`
+  // 后端把「这一项不限制」出成 0；四项全 0 时这行没有可说的，只有一项 0 仍要报已用几轮，
+  // 否则整行消失等于把进度也一起藏了
+  if (!b.maxRounds && !b.maxToolCalls && !b.maxTokens && !b.maxMs) return ''
   const pct = Math.round((Number(b.percent) || 0) * 100)
-  return `预算：${b.rounds}/${b.maxRounds} 轮 · ${pct}%`
+  return b.maxRounds
+    ? `预算：${b.rounds}/${b.maxRounds} 轮 · ${pct}%`
+    : `已跑 ${b.rounds} 轮 · 预算占 ${pct}%`
 })
 
 const outcomeLine = computed(() => goalOutcomeLineOf(props.card))
