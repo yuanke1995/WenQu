@@ -620,6 +620,9 @@ public class ConfigService {
         // 工作区页往目录里上传文件的单文件上限（MB）。服务端代码再钳到 256：
         // spring 的 multipart 上限是 256MB，写更大只会让请求在容器那一层变成一句没有原因的失败。
         d.put("sandbox.projectUploadMaxMb", "100");
+        // 只进过 config-schema、没进 defaults，库里便一直没有这一行：设置页永远回显默认值，
+        // 改了实际生效却看着像没生效。与 schema 的 def、JvmProjectTurnGuard.DEFAULT_LEASE_TTL_MS 三处同值
+        d.put("project.turnGuard.leaseTtlMs", "7200000");
         d.put("tool.sandbox.enabled", "false");                   // 沙盒 API / 工作流节点开关（不是聊天里的文件/命令工具）
         // ---------- 权限档位（P2：沙盒执行档 × 工具执行确认，捆成具名预设）----------
         // 档位取值见 PermissionPreset：research=只读调研 standard=常规 autonomous=全自主。
