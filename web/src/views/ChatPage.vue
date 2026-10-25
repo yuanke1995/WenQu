@@ -192,8 +192,9 @@
                   <AnswerBody v-if="seg.kind === 'text'" class="tl-text" :content="m.content.slice(seg.from, seg.to)"
                               :images="m.images" :sources="m.sources" :msg-index="i"
                               runnable :session-id="currentSessionId" :streaming="m.loading" />
-                  <!-- 思考段：这一轮模型在想什么，就地一行。只有正在长的那一段自动展开，其余折叠 -->
-                  <div v-else-if="seg.kind === 'think'" class="tl-think-block">
+                  <!-- 思考段：这一轮模型在想什么，就地一行。只有正在长的那一段自动展开，其余折叠。
+                       它同样会被上面的过程簇收进去（跑着的时候簇里只露当前那一步，见 projections 的 timelineRows） -->
+                  <div v-else-if="seg.kind === 'think'" class="tl-think-block" :class="{ inCluster: seg.inCluster }">
                     <button class="tl-think-head" type="button" @click="toggleThinkSeg(m, seg)">
                       <span class="tl-think-title" :class="{ running: thinkGrowing(m, seg) }">深度思考</span>
                       <caret-right-outlined class="tl-caret" :class="{ open: thinkSegOpen(m, seg) }" />
@@ -202,8 +203,8 @@
                       <AnswerBody :content="thinkSlice(m, seg)" :streaming="thinkGrowing(m, seg)" />
                     </div>
                   </div>
-                  <!-- 过程簇头：连续的「独白+工具」收成一行。展开后其内各段由摊平那一步接着渲染，
-                       内部结构与展开前完全一致（时序零损失）；纯独白簇（无工具）退化为「N 段说明」 -->
+                  <!-- 过程簇头：连续的「思考+独白+工具」收成一行。展开后其内各段由摊平那一步接着渲染，
+                       内部结构与聚簇前完全一致（时序零损失）；纯说明簇（一个工具都没跑）退化为「N 段说明」 -->
                   <div v-else-if="seg.kind === 'cluster'" class="tl-cluster" :class="{ open: clusterOpen(m, seg) }">
                     <button class="tl-cluster-bar" type="button" @click="toggleCluster(m, seg)">
                       <loading-outlined v-if="clusterRunning(seg)" spin class="tool-ic tool-ic-run" />
@@ -4402,7 +4403,7 @@ onMounted(async () => {
 .tl-cluster-bar:hover { border-color: var(--app-accent); color: var(--app-text); }
 .tl-cluster-bar span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* 簇内段左缩进一格：展开后能看出「这些行同属上面那个簇」，层级关系一眼可辨 */
-.tl-process-block.inCluster, .tl-group.inCluster { margin-left: 12px; }
+.tl-process-block.inCluster, .tl-think-block.inCluster, .tl-group.inCluster { margin-left: 12px; }
 .tl-group { margin: 3px 0; }
 .tl-group-bar {
   display: inline-flex; align-items: center; gap: 6px; width: fit-content; max-width: 100%;

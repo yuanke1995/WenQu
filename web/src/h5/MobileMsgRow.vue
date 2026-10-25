@@ -85,8 +85,9 @@
                         :images="m.images" :sources="m.sources" :msg-index="index"
                         runnable :session-id="sessionId" :streaming="m.loading"
                         :viewer="false" @citation="onBodyCitation" @preview="onBodyPreview" />
-            <!-- 思考段：这一轮在想什么就长在哪一行，只有正在长的那一段自动展开 -->
-            <div v-else-if="seg.kind === 'think'" class="card think-card">
+            <!-- 思考段：这一轮在想什么就长在哪一行，只有正在长的那一段自动展开。
+                 它同样会被过程簇收进去（跑着的时候簇里只露当前那一步，与 PC 同一份判据） -->
+            <div v-else-if="seg.kind === 'think'" class="card think-card" :class="{ inCluster: seg.inCluster }">
               <button class="card-head" type="button" @click.stop="toggleThinkSeg(m, seg)">
                 <span class="card-title">深度思考</span>
                 <span v-if="thinkGrowing(m, seg)" class="spinner" aria-label="进行中"></span>
@@ -97,6 +98,7 @@
                             :streaming="thinkGrowing(m, seg)" />
               </div>
             </div>
+            <!-- 过程簇头：连续的「思考+独白+工具」收成一行（与 PC 同判据、同文案） -->
             <div v-else-if="seg.kind === 'cluster'" class="card proc-cluster" :class="{ open: clusterOpen(m, seg) }">
               <button class="card-head" type="button" @click.stop="toggleCluster(m, seg)">
                 <span v-if="clusterRunning(seg)" class="spinner"></span>
@@ -523,7 +525,7 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
    展开后其内各段由摊平那一步接着渲染，这里只给簇内段左缩进一格做出层级。 */
 .proc-cluster { background: var(--app-panel); }
 .tl-group { display: flex; flex-direction: column; gap: 6px; }
-.proc-card.inCluster, .tl-group.inCluster { margin-left: 12px; }
+.proc-card.inCluster, .think-card.inCluster, .tl-group.inCluster { margin-left: 12px; }
 .tl-group-body { display: flex; flex-direction: column; gap: 6px; padding: 0 0 2px; }
 .tool-card .card-head { padding: 8px 10px; }
 .tool-brief { font-family: "SF Mono", Menlo, monospace; font-size: 12px; color: var(--app-text3); background: transparent; overflow: hidden; text-overflow: ellipsis; max-width: 40%; white-space: nowrap; }

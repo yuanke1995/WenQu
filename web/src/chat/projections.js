@@ -475,12 +475,16 @@ const ensureThinkSegment = m => {
   return m
 }
 
-// ==================== 过程簇（连续过程/工具的二次折叠） ====================
-/* 为什么需要这一层：模型一轮里常是「独白→工具→独白→工具」交替，而 timelineView 遇 process 段
- * 就flushGroup（独白天然切断工具分组，时序要如实保留），于是一轮过程被切成 2N 个折叠头
- * （实测「如何设计一个表单」这条回答出了 6 行：执行过程/2 个操作/执行过程/3 个操作/…）。
- * 这里在视图层补一道**后置聚簇**：把 out 里连续的 process/group 段包成 cluster，簇内原序完整保留，
- * 展开态与聚簇前逐段渲染完全一致（时序零损失），折叠态由 2N 行收敛为 1 行。
+// ==================== 过程簇（连续思考/过程/工具的二次折叠） ====================
+/* 为什么需要这一层：模型一轮里常是「思考→工具→思考→工具」交替，而 timelineView 遇 think/process 段
+ * 就 flushGroup（它们天然切断工具分组，时序要如实保留），于是一轮过程被切成 3N 个折叠头
+ * （真机「用Java做一个打卡签到的H5」那条：深度思考/执行了4个操作/深度思考/执行了3个操作… 一路排到
+ * 屏幕外，实测三十多行）。这里在视图层补一道**后置聚簇**：把 out 里连续的 think/process/group 段
+ * 包成 cluster，簇内原序完整保留，展开态与聚簇前逐段渲染完全一致（时序零损失），折叠态收敛为 1 行。
+ *
+ * 思考段为什么也要进游程（它原来会断簇）：它和 process 一样是「执行细节」，不是正文。
+ * 让它断簇等于每一轮思考都新开一行标题，用户要的「及时合并」恰恰合并不到它身上——
+ * 收场后 TurnBar 把整块过程藏起来，才让人产生「输出完才合并」的错觉。
  *
  * 判定边界（两条都不能越）：
  *   ① 只在「游程内不含任何 text 段」时成立——即这一段过程与正文无交错、纯属执行细节；
@@ -490,6 +494,7 @@ const ensureThinkSegment = m => {
  * 簇键用序号 c{N}（N = res.length）。序号稳定性论证：时间线只追加不重排，text 段到来时
  * 已 flush 的簇其 res 下标不会变动，新簇一律追加在尾部，故历史键不会错位到别的簇上。
  * （对比用 from 做键不成立：工具段与独白段的下标来自两套独立空间。）*/
+const CLUSTER_RUN = { think: 1, process: 1, group: 1 }
 const clusterize = out => {
   const res = []
   let run = []
@@ -500,7 +505,7 @@ const clusterize = out => {
     run = []
   }
   for (const seg of out) {
-    if (seg && (seg.kind === 'process' || seg.kind === 'group')) { run.push(seg); continue }
+    if (seg && CLUSTER_RUN[seg.kind]) { run.push(seg); continue }
     flush()
     res.push(seg)
   }
@@ -522,6 +527,13 @@ const clusterOpen = (m, cl) => {
   if (marked === false) return false
   return !!(m && m.loading && cl.grow)
 }
+/** 这一簇是「自动开着」还是「用户点开」的：自动开着＝正在跑的这一簇、用户没碰过它。
+ *  只有这一种情况下展开只给当前这一步（见 timelineRows）——跑着的时候簇会长到几十段，
+ *  全展开就又退回聚簇前的那一排标题行，簇头等于白加。用户主动点开则照旧给全量。 */
+const clusterAutoOpen = (m, cl) => {
+  const marked = m && m._clOpen ? m._clOpen[cl.key] : undefined
+  return marked === undefined && !!(m && m.loading && cl.grow)
+}
 const toggleCluster = (m, cl) => {
   if (!m) return
   if (!m._clOpen) m._clOpen = {}
@@ -536,22 +548,27 @@ const clusterTools = cl => {
 }
 const clusterRunning = cl => clusterTools(cl).some(t => t.status === 'start')
 const clusterHasError = cl => clusterTools(cl).some(t => t.status === 'error')
-/** 簇内独白段数：只在簇里一个工具都没有时外露（那时它是唯一可报的信息量） */
-const clusterProcCount = cl => (cl?.segs || []).filter(s => s && s.kind === 'process').length
+/** 簇内「说了几段」的计数：过程独白与思考段同属一类（一个工具都没跑时它是簇头唯一的信息量，
+ *  只数独白会让纯思考簇报成「0 段说明」）。 */
+const clusterProcCount = cl => (cl?.segs || []).filter(s => s && (s.kind === 'process' || s.kind === 'think')).length
 
 /** 渲染行= timelineView 的扁平化：簇头一行，簇展开时紧跟其内各段（标记 inCluster）。
  *  用「摊平 + 原分支复用」而不是在模板里嵌套 v-for，是为了不复制一份工具组/独白渲染代码——
  *  两份模板必然漂移（PC 与 H5 已经各有第三份了）。折叠即不产出内段，无需 v-show 维持其状态。
  *  flat：簇内只有一个工具组时，组条与簇头数的是同一批操作（真机「SpringAi框架怎么用」这条
  *  两行都报 7 个操作，点一层还有一层）——那一层组条不再出，卡片直接摊在簇头下。
- *  两个以上组才留各自组条：那时它数的是不同的子集，是有信息量的下一层。 */
+ *  两个以上组才留各自组条：那时它数的是不同的子集，是有信息量的下一层。
+ *  自动开着的那一簇只摊末尾两段＝「这一段思考 + 它之后正在跑的那一组操作」＝当前这一步：
+ *  思考一到就排最后（它后面还没有别的段），工具跑起来后末尾两段正好是那一次思考与它的组。
+ *  已经收场的步骤收进簇头，簇头上那个一直在涨的操作数就是它们的合计。 */
 const timelineRows = m => {
   const out = []
   for (const s of timelineView(m)) {
     out.push(s)
     if (s.kind === 'cluster' && clusterOpen(m, s)) {
-      const groups = (s.segs || []).filter(x => x && x.kind === 'group')
-      for (const inner of s.segs) {
+      const segs = s.segs || []
+      const groups = segs.filter(x => x && x.kind === 'group')
+      for (const inner of (clusterAutoOpen(m, s) ? segs.slice(Math.max(0, segs.length - 2)) : segs)) {
         out.push({ ...inner, inCluster: true, flat: groups.length === 1 && inner.kind === 'group' })
       }
     }
