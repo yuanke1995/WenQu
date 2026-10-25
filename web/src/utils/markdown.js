@@ -923,6 +923,10 @@ const runInSandbox = async (box, sessionId) => {
       + (d.truncated ? ' · 输出过长已截断' : '')
     head.className = 'md-run-head ' + (exit === 0 ? 'ok' : 'err')
     out.textContent = d.output || '(无输出)'
+    // 这段代码可能在沙盒里留下不会自己退的进程（跑个 server 试效果就是这种）。发一声，
+    // 让对话页把「后台进程」卡揭出来：那张卡默认按「本会话有过沙盒工具调用」判存在，
+    // 而只点过这个运行按钮的会话没有工具调用——不揭它就看不见、也停不掉自己起的进程。
+    window.dispatchEvent(new CustomEvent('app:sandbox-ran'))
   } catch (e) {
     head.textContent = '运行失败'
     head.className = 'md-run-head err'

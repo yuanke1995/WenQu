@@ -9,7 +9,7 @@
 //   store 负责「按工作区取数 + 重新摊平」，视图只决定怎么渲染。
 import { ref, reactive, shallowReactive } from 'vue'
 import { message } from 'ant-design-vue'
-import { listSessions, listProjects, listScheduledJobs, getNewSessionProject, setNewSessionProject } from '../api'
+import { listSessions, listProjects, listScheduledJobs, getNewSessionProject, setNewSessionProject, listLiveSandboxProcs } from '../api'
 import { announce, onAnnounce } from '../utils/tabSync'
 import { getToken } from '../utils/auth'
 
@@ -80,6 +80,53 @@ export const sessionStore = reactive({
 // （发送按钮停在红色停止态）。shallowReactive 下 get 返回原对象，身份比较成立；msg 自身
 // 已是 reactive(fresh)，模板响应性不受影响。
 export const chatStreams = shallowReactive(new Map())
+
+// ==================== 沙盒后台进程标记（模块级单例，跨路由存活） ====================
+// sid → 这条会话的沙盒里还在跑的进程树数。模型「起个服务自己看效果」留下的是不会自己退的进程，
+// 端口一直占着，而此前唯一的线索是那条会话的标题——不进那条对话就永远不知道它还背着东西。
+// 视觉直接复用会话行的「生成中」呼吸（同一套语言，不另开第二套），区别写在 hover 提示里。
+export const procSessions = shallowReactive(new Map())
+
+const PROC_POLL_MS = 60000
+let procTimer = null
+let procInFlight = false
+
+/** 扫一遍所有活着的沙盒，把「谁还背着进程」刷进 procSessions。
+ *  后端没有活容器时一次网络都不发，所以这条可以按分钟级放心轮询。 */
+export async function refreshProcBadges() {
+  if (procInFlight) return
+  procInFlight = true
+  try {
+    const r = await listLiveSandboxProcs()
+    const sessions = (r && r.data && r.data.sessions) || {}
+    if (r && r.data && r.data.partial) {
+      // 这轮没扫全：只写查到的。据此摘掉别的标记 = 把一个可能正占着端口的服务读成「已经没了」
+      for (const [sid, n] of Object.entries(sessions)) procSessions.set(sid, n)
+    } else {
+      for (const sid of [...procSessions.keys()]) if (!(sid in sessions)) procSessions.delete(sid)
+      for (const [sid, n] of Object.entries(sessions)) procSessions.set(sid, n)
+    }
+  } catch (e) {
+    // 拉不到就留着上一次的结果：这条是软提示，进对话后右栏那张「后台进程」卡才是权威；
+    // 每 60 秒为它弹一次红字只会变成噪音（沙盒没开启时这条口本来就是关的）
+  } finally {
+    procInFlight = false
+  }
+}
+
+const onProcVisibility = () => { if (!document.hidden) refreshProcBadges() }
+
+export function startProcBadgePoll() {
+  if (procTimer) return
+  procTimer = setInterval(() => { if (!document.hidden) refreshProcBadges() }, PROC_POLL_MS)
+  document.addEventListener('visibilitychange', onProcVisibility)
+  refreshProcBadges()
+}
+
+export function stopProcBadgePoll() {
+  if (procTimer) { clearInterval(procTimer); procTimer = null }
+  document.removeEventListener('visibilitychange', onProcVisibility)
+}
 
 // ==================== 任务清单快照（模块级单例，跨路由存活） ====================
 // sid → { turnId, items:[{content,status}], updatedAt }：writeTodo 每次整表覆盖，后端只存最新一份。

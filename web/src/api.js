@@ -392,13 +392,12 @@ export const newSession = () => {
 export const getHistory = (sid, opts) => request(`/session/${sid}`, opts)
 
 /**
- * 手动压缩会话上下文（/compact）：早期对话并入摘要，为后续提问腾出上下文空间。
- * instruction 为附加要求（可空）；model 传会话当前选择的模型引用（空=后端按个人默认解析）。
- * 长会话后端分批多次调用模型（每批最多 60s，最多 8 批），故超时给到 300s——
- * 默认 30s 会把正常等待误判成超时。超时后已压好的批次已落库，可再次执行接着压。
+ * 手动压缩会话上下文（/compact、摘要弹窗的「带要求重新压缩」）：早期对话并入摘要，为后续提问腾出空间。
+ * instruction 为这一次摘要的附加要求（可空）：后端把它并进框架的摘要提示词，只作用这一次压缩、不留到之后的轮。
+ * 后端就地压缩最长等 120s，故超时给到 300s——默认 30s 会把正常等待误判成超时。
  */
-export const compactSessionApi = (sid, { instruction = '', model = '' } = {}) =>
-  request(`/session/${sid}/compact`, { method: 'POST', body: JSON.stringify({ instruction, model }), timeout: 300000 })
+export const compactSessionApi = (sid, instruction = '') =>
+  request(`/session/${sid}/compact`, { method: 'POST', body: JSON.stringify({ instruction }), timeout: 300000 })
 
 /** 会话当前那份滚动摘要（对话流「已压缩上下文」分隔线点开）：{summary, summaryTokens, untilSeq, keepTurns}。
  *  会话只有一份摘要、每次压缩往后滚，所以从哪条分隔线点进来看到的都是生效中的这一版 */
@@ -1713,6 +1712,19 @@ export const sandboxFileToArtifact = (sessionId, path, description) =>
     method: 'POST',
     body: JSON.stringify({ sessionId, path, description: description || '' })
   })
+/** 本会话沙盒里**还在跑**的后台进程（模型起的 dev server 这类不会自己退的）。
+ *  读的是容器实况（扫带归属标记的进程），服务端不留台账：后端重启、换副本都照样取得到，
+ *  沙盒被空闲回收后清单自然清空。返回 {available, procs:[{tag,command,elapsedSec,ports,own,killable}]} */
+export const listSandboxProcs = sessionId =>
+  request(`/sandbox/procs?sessionId=${encodeURIComponent(sessionId)}`)
+/** 侧栏标记用的批量实况：一次扫过本进程里该用户所有还活着的沙盒，
+ *  返回 {sessions:{会话id:进程树数}, partial}。没有活容器时后端一次网络都不发，可以放心轮询；
+ *  partial=true 表示这轮没扫全，这份结果只多不少（列出来的都是真的，没列出的只是没查到） */
+export const listLiveSandboxProcs = () => request('/sandbox/procs/live')
+/** 停掉一棵进程树（先 TERM、一秒后对幸存的补 KILL）：返回 {killed, remaining}，
+ *  remaining>0 = 有进程停不下来，要如实报出来，不能当成已经关掉 */
+export const killSandboxProc = (sessionId, tag) =>
+  request('/sandbox/procs/kill', { method: 'POST', body: JSON.stringify({ sessionId, tag }) })
 /** 下载沙盒文件：与工作区那份同一条路——必须走 fetch 带 Authorization（后端认 JWT，不认 cookie） */
 export const downloadSandboxFile = async (sessionId, path, filename) => {
   const q = `sessionId=${encodeURIComponent(sessionId)}&path=${encodeURIComponent(path)}`

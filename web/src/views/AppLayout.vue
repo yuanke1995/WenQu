@@ -181,8 +181,8 @@
         <!-- 折叠成 56px 图标条：分区标题没有横向空间，只保留会话圆点（切换入口不能丢） -->
         <template v-if="collapsed">
           <div v-for="s in sessionStore.list" :key="s.id" class="sess-item"
-               :class="{ active: isActive('/chat') && route.query.sid === s.id, running: chatStreams.has(s.id) }"
-               :title="s.title || '新对话'" @click="openSession(s.id)">
+               :class="{ active: isActive('/chat') && route.query.sid === s.id, running: sessBusy(s) }"
+               :title="sessTooltip(s)" @click="openSession(s.id)">
             <span class="sess-dot"></span>
           </div>
           <div v-if="!sessionStore.list.length" class="side-empty">暂无会话</div>
@@ -270,7 +270,7 @@
                   </div>
                   <div v-for="s in row.items" :key="s.id"
                        class="sess-item"
-                       :class="{ active: !batchMode && isActive('/chat') && route.query.sid === s.id, picked: batchMode && batchSel.has(s.id), running: chatStreams.has(s.id) }"
+                       :class="{ active: !batchMode && isActive('/chat') && route.query.sid === s.id, picked: batchMode && batchSel.has(s.id), running: sessBusy(s) }"
                        :style="{ '--sess-i': sessRowOrdinal.get(s.id) ?? 0 }"
                        :title="sessTooltip(s)"
                        @click="batchMode ? toggleBatchSel(s.id) : openSession(s.id)">
@@ -476,7 +476,7 @@ import { themeState, toggleTheme } from '../utils/theme'
 import { authUser, ensureAuth, isAdminSync, clearAuth } from '../utils/auth'
 import { chatDone, chatReady, defaultReady, embeddingReady, pendingCount, refreshSetupGuide, setupGuide,
          advPendingCount } from '../utils/setupGuide'
-import { sessionStore, loadSessions, loadTasks, loadSpaceMore, collapseSpace, reloadSpace, toggleArchived, visibleSessions, chatStreams, NO_SPACE_KEY, startSessionTabSync, stopSessionTabSync, resetSessionStore } from './store'
+import { sessionStore, loadSessions, loadTasks, loadSpaceMore, collapseSpace, reloadSpace, toggleArchived, visibleSessions, chatStreams, procSessions, startProcBadgePoll, stopProcBadgePoll, NO_SPACE_KEY, startSessionTabSync, stopSessionTabSync, resetSessionStore } from './store'
 import { isNarrow, mobileShell } from '../h5/mobile'
 import BrandMark from '../components/BrandMark.vue'
 import HelpFab from '../components/HelpFab.vue'
@@ -963,8 +963,17 @@ const jobsBySession = computed(() => {
 const jobsOfSession = sid => jobsBySession.value[sid] || []
 const jobsTip = sid => jobsOfSession(sid).map(j => `${j.name}（${j.cron}）`).join('\n')
 
+/** 这一行要不要「亮着」：本机还在生成回答，或它的沙盒里还背着没停的进程。
+ *  两种状态共用同一套呼吸视觉（不为后台进程另开第二套），靠悬停提示分辨是哪一种。 */
+const sessBusy = s => chatStreams.has(s.id) || procSessions.has(s.id)
+
 /** 会话行悬停提示：标题太长被截断时补全文（所属工作区已由分组头表达，不再重复） */
-const sessTooltip = s => s.title || '新对话'
+const sessTooltip = s => {
+  const base = s.title || '新对话'
+  const n = procSessions.get(s.id)
+  if (!n) return base
+  return `${base}\n沙盒里有 ${n} 个后台进程还在跑（进这段对话，在右栏「后台进程」里停）`
+}
 const isActive = p => route.path === p
 // 窄屏抽屉开合。不落 localStorage：抽屉是「当前这一秒的临时状态」，
 // 刷新后默认关着才是符合预期的（记住它会让下次进来莫名其妙开着一个遮罩）
@@ -1260,6 +1269,7 @@ const clearSearch = () => {
 onUnmounted(() => {
   clearTimeout(searchTimer)
   stopSessionTabSync()
+  stopProcBadgePoll()
 })
 
 const delSession = async sid => {
@@ -1411,6 +1421,7 @@ onMounted(async () => {
   navMenus.value = sidebarMenusOf(info && info.menus)
   loadSessions()
   loadTasks(true)  // 「任务」分区 + 会话行时钟标记（与工作区取数并行，不互相阻塞）
+  startProcBadgePoll()  // 会话行的「还背着沙盒进程」标记：60s 一轮，没有活容器时后端一次网络都不发
   refreshSetupGuide(true)  // 登录即可见的配置引导首拉（此时菜单树已就绪，tag/入口立即可判）
   // 通知未读轮询与 focus/visibility 刷新由 useNotifications 自持（首拉 + 30s 定时 + 卸载清理）
 })
@@ -1749,7 +1760,9 @@ watch(() => route.fullPath, () => {
 /* 折叠成图标条：圆点居中，行不再左缩进 */
 .side.collapsed .sess-item { padding: 6px 0; justify-content: center; }
 
-/* 本机还在生成的会话（chatStreams 持有它的流）：标题在主色与次文本之间呼吸。
+/* 这一行「亮着」的两种来路（见 sessBusy）：本机还在生成回答（chatStreams 持有它的流），
+   或它的沙盒里还背着没停的后台进程（procSessions）。两者共用同一套呼吸，不再为后者另画一套：
+   它要传达的是同一件事——「这条会话还没完事」。是哪种由悬停提示说清。
    不用转圈图标：行右端是 hover 操作位、行首已排着置顶/分享标记，再插一个会打架；
    也不用 background-clip 流光：那会让 text-overflow 的省略号一起透明，长标题看不出被截断。
    只改 color，省略号与收藏星标跟着一起呼吸，深浅主题同源。
