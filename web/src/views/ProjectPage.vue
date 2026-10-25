@@ -212,6 +212,17 @@
               </div>
               <div class="pj-file-list" :class="{ 'pj-drop-on': dropAt !== null }"
                    @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop">
+                <!-- 表头：每格复用行内同名 class（宽度/对齐由它们定义），所以天然与列对齐；
+                     改行内列宽只改那些 class 一处，表头跟着走 -->
+                <div class="pj-thead">
+                  <span class="pj-check-hit pj-check-void" aria-hidden="true"></span>
+                  <span class="pj-indent" style="width: 0" aria-hidden="true"></span>
+                  <span class="pj-item-title">名称</span>
+                  <span class="pj-badge-cell">状态</span>
+                  <span class="pj-item-meta pj-size">大小</span>
+                  <span class="pj-item-meta pj-time">时间</span>
+                  <span class="pj-acts">操作</span>
+                </div>
                 <template v-for="r in fileViewRows" :key="r.key">
                   <!-- 文件夹行：个数/体积是整棵子树的，先看计数就知道值不值得展开；拖文件到行上=传进这个文件夹 -->
                   <div v-if="r.type === 'dir'" class="pj-item pj-item-dir"
@@ -228,24 +239,30 @@
                     <span class="pj-item-title" :title="r.dir.path">
                       <folder-filled class="pj-dir-ic" /><Hl :text="r.dir.name" />
                     </span>
-                    <span class="pj-item-meta">{{ r.layer && !r.layer.error ? r.dir.count + ' 个' : '…' }}</span>
-                    <span class="pj-item-meta">{{ r.layer && !r.layer.error ? fmtSize(r.dir.size) : '' }}</span>
-                    <!-- 目录 ⋯：上传/新建可以指定落进这个文件夹，不用先传到根再挪进去。
-                         注释必须待在 #overlay 外面——slot 里多出注释节点会让弹层渲染成空的 -->
-                    <a-dropdown :trigger="['click']" placement="bottomRight">
-                      <button class="pj-act pj-act-more" type="button" title="更多操作" @click.stop>
-                        <more-outlined />
-                      </button>
-                      <template #overlay>
-                        <a-menu @click="info => rowAction(String(info && info.key), r.dir)">
-                          <a-menu-item key="upload-here">在这里上传</a-menu-item>
-                          <a-menu-item key="mkdir-here">新建子文件夹</a-menu-item>
-                          <a-menu-item key="rename">重命名</a-menu-item>
-                          <a-menu-item key="move">移动到…</a-menu-item>
-                          <a-menu-item key="delete"><span class="pj-act-danger">删除</span></a-menu-item>
-                        </a-menu>
-                      </template>
-                    </a-dropdown>
+                    <span class="pj-dir-n">{{ r.layer && !r.layer.error ? r.dir.count + ' 个' : '…' }}</span>
+                    <!-- 目录没有交付状态，也没有可靠的修改时刻（个数与体积都是整棵子树的合计）：
+                         两格留空占位，不然「大小」会跑到表头「时间」底下去 -->
+                    <span class="pj-badge-cell"></span>
+                    <span class="pj-item-meta pj-size">{{ r.layer && !r.layer.error ? fmtSize(r.dir.size) : '' }}</span>
+                    <span class="pj-item-meta pj-time"></span>
+                    <span class="pj-acts">
+                      <!-- 目录 ⋯：上传/新建可以指定落进这个文件夹，不用先传到根再挪进去。
+                           注释必须待在 #overlay 外面——slot 里多出注释节点会让弹层渲染成空的 -->
+                      <a-dropdown :trigger="['click']" placement="bottomRight">
+                        <button class="pj-act pj-act-more" type="button" title="更多操作" @click.stop>
+                          <more-outlined />
+                        </button>
+                        <template #overlay>
+                          <a-menu @click="info => rowAction(String(info && info.key), r.dir)">
+                            <a-menu-item key="upload-here">在这里上传</a-menu-item>
+                            <a-menu-item key="mkdir-here">新建子文件夹</a-menu-item>
+                            <a-menu-item key="rename">重命名</a-menu-item>
+                            <a-menu-item key="move">移动到…</a-menu-item>
+                            <a-menu-item key="delete"><span class="pj-act-danger">删除</span></a-menu-item>
+                          </a-menu>
+                        </template>
+                      </a-dropdown>
+                    </span>
                   </div>
                   <!-- 层内提示（读不到/太大）：缩进对齐子内容，不冒充一行文件 -->
                   <div v-else-if="r.type === 'note'" class="pj-subnote" :class="{ 'pj-suberr': r.error }"
@@ -269,32 +286,34 @@
                     <span class="pj-badge-cell">
                       <span v-if="r.file.artifact" class="pj-badge" title="已作为产物交付过（与这个文件是同一次产出的两份）">已交付</span>
                     </span>
-                    <span class="pj-item-meta">{{ fmtSize(r.file.size) }}</span>
-                    <span class="pj-item-meta">{{ fmtAgo(r.file.at) }}</span>
-                    <!-- 预览＝进预览台（与产物页、聊天区四个产物面同一待遇）：页面设计档给真实视口，读字档在应用里排版。
-                         落进工作目录的那一行用列表接口现签的地址；没落进来的那一行只有产物记录那份签名地址，
-                         判据共用 artifactView 那一份——同一份东西在这个页和聊天区给出不同的按钮集，用户只会当成随机行为。
-                         安全性靠服务端那份 CSP sandbox 头：这里的 HTML 是模型产出的，不带该头时这一跳等于
-                         让模型脚本跑在本域源上、能读登录令牌。Ctrl/中键点击照旧开成真标签页。 -->
-                    <a v-if="r.file.viewUrl || canPreview(r.file.artifact)" class="pj-act"
-                       :href="resolveImg(r.file.viewUrl || r.file.artifact.url)" target="_blank" rel="noopener"
-                       data-pv v-bind="pvAttrs(r.file)"
-                       title="预览（按住 Ctrl 或中键开成新标签页）">预览</a>
-                    <button v-if="r.file.path" class="pj-act" type="button" @click="download(r.file)">下载</button>
-                    <a v-else-if="r.file.artifact" :href="resolveImg(r.file.artifact.url)" :download="r.file.name" class="pj-act">下载</a>
-                    <!-- 行菜单：写动作收在 ⋯ 里，行宽才不会被按钮挤掉 -->
-                    <a-dropdown v-if="r.file.path" :trigger="['click']" placement="bottomRight">
-                      <button class="pj-act pj-act-more" type="button" title="更多操作" @click.stop>
-                        <more-outlined />
-                      </button>
-                      <template #overlay>
-                        <a-menu @click="info => rowAction(String(info && info.key), r.file)">
-                          <a-menu-item key="rename">重命名</a-menu-item>
-                          <a-menu-item key="move">移动到…</a-menu-item>
-                          <a-menu-item key="delete"><span class="pj-act-danger">删除</span></a-menu-item>
-                        </a-menu>
-                      </template>
-                    </a-dropdown>
+                    <span class="pj-item-meta pj-size">{{ fmtSize(r.file.size) }}</span>
+                    <span class="pj-item-meta pj-time">{{ fmtAgo(r.file.at) }}</span>
+                    <span class="pj-acts">
+                      <!-- 预览＝进预览台（与产物页、聊天区四个产物面同一待遇）：页面设计档给真实视口，读字档在应用里排版。
+                           落进工作目录的那一行用列表接口现签的地址；没落进来的那一行只有产物记录那份签名地址，
+                           判据共用 artifactView 那一份——同一份东西在这个页和聊天区给出不同的按钮集，用户只会当成随机行为。
+                           安全性靠服务端那份 CSP sandbox 头：这里的 HTML 是模型产出的，不带该头时这一跳等于
+                           让模型脚本跑在本域源上、能读登录令牌。Ctrl/中键点击照旧开成真标签页。 -->
+                      <a v-if="r.file.viewUrl || canPreview(r.file.artifact)" class="pj-act"
+                         :href="resolveImg(r.file.viewUrl || r.file.artifact.url)" target="_blank" rel="noopener"
+                         data-pv v-bind="pvAttrs(r.file)"
+                         title="预览（按住 Ctrl 或中键开成新标签页）">预览</a>
+                      <button v-if="r.file.path" class="pj-act" type="button" @click="download(r.file)">下载</button>
+                      <a v-else-if="r.file.artifact" :href="resolveImg(r.file.artifact.url)" :download="r.file.name" class="pj-act">下载</a>
+                      <!-- 行菜单：写动作收在 ⋯ 里，行宽才不会被按钮挤掉 -->
+                      <a-dropdown v-if="r.file.path" :trigger="['click']" placement="bottomRight">
+                        <button class="pj-act pj-act-more" type="button" title="更多操作" @click.stop>
+                          <more-outlined />
+                        </button>
+                        <template #overlay>
+                          <a-menu @click="info => rowAction(String(info && info.key), r.file)">
+                            <a-menu-item key="rename">重命名</a-menu-item>
+                            <a-menu-item key="move">移动到…</a-menu-item>
+                            <a-menu-item key="delete"><span class="pj-act-danger">删除</span></a-menu-item>
+                          </a-menu>
+                        </template>
+                      </a-dropdown>
+                    </span>
                   </div>
                 </template>
               </div>
@@ -1883,6 +1902,25 @@ watch(id, () => {
 }
 .pj-file-list { border-top: 1px solid var(--app-border-l1); }
 .pj-file-list .pj-item:last-child { border-bottom: none; }
+/* 表头：内边距/负外边距与 .pj-item 同一套，格宽直接复用行内那几个 class——
+   列宽以后只改行内定义，表头跟着走，不留第二份要对账的定宽 */
+.pj-thead {
+  display: flex; align-items: center; gap: var(--app-sp-2);
+  padding: 3px var(--app-sp-1); margin: 0 calc(-1 * var(--app-sp-1));
+  border-bottom: 1px solid var(--app-border-l1);
+  font-size: var(--app-fs-sm); color: var(--app-label-tertiary);
+}
+.pj-thead .pj-check-hit { min-height: 0; }
+/* 三列定宽：动作组以前按内容长短排，「预览+下载+⋯」比只有「下载」宽 70px，
+   同一屏里「大小 / 时间」会随行的按钮数左右漂——表头一加上来就会指着错位的列。
+   定宽按最坏取值留：时间超过 7 天要退化成「2026-09-15 14:32」整串 */
+.pj-size { width: 104px; }
+.pj-time { width: 104px; }
+.pj-acts {
+  flex: none; width: 104px; display: flex; align-items: center; justify-content: flex-end; gap: var(--app-sp-2);
+}
+/* 文件夹的合计个数：单独一格贴右，不塞进名称格——名称格要省略号，塞进去就会被一起截掉 */
+.pj-dir-n { flex: none; font-size: var(--app-fs-sm); color: var(--app-label-tertiary); }
 .pj-item:hover { background: var(--app-interactive-hover); }
 .pj-item-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 双行标题：标题行 + 「最后一句」摘要行（会话栏与动态栏的会话行）。
@@ -1997,6 +2035,9 @@ watch(id, () => {
   .pj-item-title { flex: 1 1 100%; order: -1; }
   .pj-item-meta { min-width: 0; }
   .pj-badge-cell { width: auto; margin-left: auto; }
+  .pj-size, .pj-time { width: auto; }
+  .pj-acts { width: auto; }
+  .pj-thead { display: none; }   /* 行折成竖排后没有列可对，表头只会指错位置 */
   .pj-act { padding: 6px 4px; }   /* 触摸热区：行内小按钮加到可点尺寸 */
   /* 表单类控件收回全宽（cron 与就地改名的输入框原本都是定宽横排） */
   .pj-cron-input { max-width: none; width: 100%; }
