@@ -480,7 +480,8 @@ const ensureThinkSegment = m => {
  * 就 flushGroup（它们天然切断工具分组，时序要如实保留），于是一轮过程被切成 3N 个折叠头
  * （真机「用Java做一个打卡签到的H5」那条：深度思考/执行了4个操作/深度思考/执行了3个操作… 一路排到
  * 屏幕外，实测三十多行）。这里在视图层补一道**后置聚簇**：把 out 里连续的 think/process/group 段
- * 包成 cluster，簇内原序完整保留，展开态与聚簇前逐段渲染完全一致（时序零损失），折叠态收敛为 1 行。
+ * 包成 cluster，折叠态收敛为 1 行；展开态由 clusterSteps 再摊一次——工具一行一步、思考并到步的
+ * 行尾，段与段的先后次序不变（时序仍零损失），但不再是一段过程一行标题。
  *
  * 思考段为什么也要进游程（它原来会断簇）：它和 process 一样是「执行细节」，不是正文。
  * 让它断簇等于每一轮思考都新开一行标题，用户要的「及时合并」恰恰合并不到它身上——
@@ -552,25 +553,65 @@ const clusterHasError = cl => clusterTools(cl).some(t => t.status === 'error')
  *  只数独白会让纯思考簇报成「0 段说明」）。 */
 const clusterProcCount = cl => (cl?.segs || []).filter(s => s && (s.kind === 'process' || s.kind === 'think')).length
 
-/** 渲染行= timelineView 的扁平化：簇头一行，簇展开时紧跟其内各段（标记 inCluster）。
+/** 展开态的簇摊平成「一行一步」：思考段与过程独白段不再各占一行标题，挂到它之后第一个工具组那一行的
+ *  行尾（那里本来就是「想了这些才动手」的那个位置，一行一标题把展开态的高度吃掉一半）。
+ *  多工具组仍出它自己的组条（并行批次折叠着只占一行，是省高度的），此时那一项挂在组条上而不是首张卡上——
+ *  挂错地方的后果是真机量出来的：批次一折叠，挂在首卡行尾的思考就跟着看不见了。
+ *  末尾挂不出去的段（正在想、还没调工具）自成一节：它正是「当前这一步」，不能因为还没有工具就看不见。
+ *  idxFrom＝这一节首张卡在本簇里的序号，自动态与点开态、收起再展开都数得连贯。 */
+const clusterSteps = cl => {
+  const rows = []
+  let notes = []
+  let n = 0
+  const push = group => { rows.push({ ...group, notes, idxFrom: n }); notes = []; n += (group.tools || []).length }
+  for (const s of cl?.segs || []) {
+    if (!s) continue
+    if (s.kind === 'think' || s.kind === 'process') { notes.push(s); continue }
+    if (s.kind === 'group') push(s)
+  }
+  if (notes.length) rows.push({ kind: 'notes', notes, idxFrom: n })
+  return rows
+}
+
+/** 这一组要不要出自己的组条（＝它是并行批次且不是簇内唯一的一组）。
+ *  组条在不在，决定行尾那一项挂在组条上还是挂在首张卡上——判据只写这一处，两端模板共用。 */
+const groupHasBar = seg => (seg?.tools || []).length > 1 && !seg?.flat
+
+/** 行尾那一项（思考/独白）的四个口径统一出口：模板两端各写一遍 kind 判断必然漂移。
+ *  标签带字数——原来那一行标题什么量级都没说，展开前猜不出这一点值不值得点。 */
+const noteText = (m, n) => (n.kind === 'think' ? thinkSlice(m, n) : procSlice(m, n))
+const noteTag = (m, n) => (n.kind === 'think' ? '深度思考 ' : '过程说明 ') + noteText(m, n).length + ' 字'
+const noteOpen = (m, n) => (n.kind === 'think' ? thinkSegOpen(m, n) : procOpen(m, n))
+/** 正在长的那一段：思考有专门的判据，独白的判据就是「流式期它还自动开着」（procOpen 同一把尺） */
+const noteGrowing = (m, n) => (n.kind === 'think' ? thinkGrowing(m, n) : !!(m && m.loading && procOpen(m, n)))
+const toggleNote = (m, n) => (n.kind === 'think' ? toggleThinkSeg(m, n) : toggleProc(m, n))
+
+/** 渲染行＝timelineView 的扁平化：簇头一行，簇展开时紧跟其内各段（标记 inCluster）。
  *  用「摊平 + 原分支复用」而不是在模板里嵌套 v-for，是为了不复制一份工具组/独白渲染代码——
  *  两份模板必然漂移（PC 与 H5 已经各有第三份了）。折叠即不产出内段，无需 v-show 维持其状态。
  *  flat：簇内只有一个工具组时，组条与簇头数的是同一批操作（真机「SpringAi框架怎么用」这条
  *  两行都报 7 个操作，点一层还有一层）——那一层组条不再出，卡片直接摊在簇头下。
  *  两个以上组才留各自组条：那时它数的是不同的子集，是有信息量的下一层。
- *  自动开着的那一簇只摊末尾两段＝「这一段思考 + 它之后正在跑的那一组操作」＝当前这一步：
- *  思考一到就排最后（它后面还没有别的段），工具跑起来后末尾两段正好是那一次思考与它的组。
+ *  自动开着的那一簇只摊末一节＝当前这一步（它自己的思考挂在它行尾，不再另占一行）：
  *  已经收场的步骤收进簇头，簇头上那个一直在涨的操作数就是它们的合计。 */
+/** 自动开着时该露哪几行＝「当前这一步」：末节通常就是正在跑的那一组操作；
+ *  但模型想下一段的时候工具组已经收场、思考还没换来新的一步，末节会是一条只有思考的行——
+ *  只给它的话，刚跑完那一步会当场从视野里消失（跑着的界面来回跳）。所以这一种连上一步一起露。 */
+const currentStepRows = rows => {
+  const last = rows[rows.length - 1]
+  if (!last) return rows
+  return last.kind === 'notes' ? rows.slice(-2) : rows.slice(-1)
+}
+
 const timelineRows = m => {
   const out = []
   for (const s of timelineView(m)) {
     out.push(s)
     if (s.kind === 'cluster' && clusterOpen(m, s)) {
-      const segs = s.segs || []
-      const groups = segs.filter(x => x && x.kind === 'group')
-      for (const inner of (clusterAutoOpen(m, s) ? segs.slice(Math.max(0, segs.length - 2)) : segs)) {
-        out.push({ ...inner, inCluster: true, flat: groups.length === 1 && inner.kind === 'group' })
-      }
+      const rows = clusterSteps(s)
+      const groups = rows.filter(r => r.kind === 'group')
+      const keep = clusterAutoOpen(m, s) ? currentStepRows(rows) : rows
+      for (const r of keep) out.push({ ...r, inCluster: true, flat: groups.length === 1 })
     }
   }
   return out
@@ -1446,6 +1487,7 @@ export {
   pushTimelineThink, extendTimelineThink, thinkSlice, thinkGrowing, thinkSegOpen, toggleThinkSeg, ensureThinkSegment,
   restoreTimeline, SENTENCE_END_CHARS, endsSentence, timelineView, timelineRows, TOOL_BRIEF_KEYS, oneLine,
   clusterize, clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterProcCount,
+  clusterSteps, groupHasBar, noteText, noteTag, noteOpen, noteGrowing, toggleNote,
   turnRows, turnOpen, toggleTurn, turnShow, turnWarn, turnExpandable, turnHead, turnTitle, turnElapsedMs, turnWaitMs,
   resumedStartAt, earlierStart, settledTurnMs,
   turnTop, turnBottom, turnToggleable,

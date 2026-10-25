@@ -59,9 +59,9 @@
                派遣一跑就是两三分钟，而正文在这期间一直在往下长——跟在正文里的东西要滚到
                最新那一段才看得见，等它跑完才出现的东西等于没给。 -->
           <SubagentPill :msg="processMsg" @focus="focusSpawn" />
-          <button class="head-quiet-btn" @click="togglePanel">{{ panelOpen ? '隐藏状态' : '状态' }}</button>
           <button class="head-quiet-btn" title="看这个会话是怎么跑出来的：工具步与耗时、三张卡、产物、停止与失败"
                   @click="openEvents()">过程</button>
+          <button class="head-quiet-btn" @click="togglePanel">{{ panelOpen ? '隐藏状态' : '状态' }}</button>
         </div>
       </div>
       <!-- 窄屏动作行：标题归顶栏，这里只放查找/分享/状态三个图标 -->
@@ -192,9 +192,9 @@
                   <AnswerBody v-if="seg.kind === 'text'" class="tl-text" :content="m.content.slice(seg.from, seg.to)"
                               :images="m.images" :sources="m.sources" :msg-index="i"
                               runnable :session-id="currentSessionId" :streaming="m.loading" />
-                  <!-- 思考段：这一轮模型在想什么，就地一行。只有正在长的那一段自动展开，其余折叠。
-                       它同样会被上面的过程簇收进去（跑着的时候簇里只露当前那一步，见 projections 的 timelineRows） -->
-                  <div v-else-if="seg.kind === 'think'" class="tl-think-block" :class="{ inCluster: seg.inCluster }">
+                  <!-- 思考段（簇外）：这一轮模型在想什么，就地一行。只有正在长的那一段自动展开，其余折叠。
+                       被过程簇收进去的那些不走这一支——它们并成下一张工具卡行尾的一项（见 projections 的 clusterSteps） -->
+                  <div v-else-if="seg.kind === 'think'" class="tl-think-block">
                     <button class="tl-think-head" type="button" @click="toggleThinkSeg(m, seg)">
                       <span class="tl-think-title" :class="{ running: thinkGrowing(m, seg) }">深度思考</span>
                       <caret-right-outlined class="tl-caret" :class="{ open: thinkSegOpen(m, seg) }" />
@@ -203,8 +203,8 @@
                       <AnswerBody :content="thinkSlice(m, seg)" :streaming="thinkGrowing(m, seg)" />
                     </div>
                   </div>
-                  <!-- 过程簇头：连续的「思考+独白+工具」收成一行。展开后其内各段由摊平那一步接着渲染，
-                       内部结构与聚簇前完全一致（时序零损失）；纯说明簇（一个工具都没跑）退化为「N 段说明」 -->
+                  <!-- 过程簇头：连续的「思考+独白+工具」收成一行。展开后是一行一步的清单，
+                       思考与独白挂在它们所属那一步的行尾；纯说明簇（一个工具都没跑）退化为「N 段说明」 -->
                   <div v-else-if="seg.kind === 'cluster'" class="tl-cluster" :class="{ open: clusterOpen(m, seg) }">
                     <button class="tl-cluster-bar" type="button" @click="toggleCluster(m, seg)">
                       <loading-outlined v-if="clusterRunning(seg)" spin class="tool-ic tool-ic-run" />
@@ -216,11 +216,11 @@
                       <span class="tl-caret" :class="{ open: clusterOpen(m, seg) }"><caret-right-outlined /></span>
                     </button>
                   </div>
-                  <!-- 过程独白段：区间指向 m.processText（与正文分流），标题行常驻、内容可折叠。
-                       在簇内改称「过程说明」——父子同名会读成套娃（簇头「已执行 N 个操作」/「执行过程」） -->
-                  <div v-else-if="seg.kind === 'process'" class="tl-process-block" :class="{ inCluster: seg.inCluster }">
+                  <!-- 过程独白段（簇外）：区间指向 m.processText（与正文分流），标题行常驻、内容可折叠。
+                       被簇收进去的那些不走这一支，并成所属那一步行尾的「过程说明 N 字」 -->
+                  <div v-else-if="seg.kind === 'process'" class="tl-process-block">
                     <button class="tl-process-head" type="button" @click="toggleProc(m, seg)">
-                      <span class="tl-process-title">{{ seg.inCluster ? '过程说明' : '执行过程' }}</span>
+                      <span class="tl-process-title">执行过程</span>
                       <span class="tl-caret" :class="{ open: procOpen(m, seg) }"><caret-right-outlined /></span>
                     </button>
                     <div v-show="procOpen(m, seg)" class="tl-process">{{ procSlice(m, seg) }}</div>
@@ -232,19 +232,35 @@
                     <span class="tl-steer-txt">{{ seg.text }}</span>
                   </div>
                   <!-- 产物段不再就地渲染：产物统一沉底（时间线数据仍保留 artifact 段以备后续） -->
+                  <div v-else-if="seg.kind === 'notes'" class="tl-group inCluster">
+                    <div class="tl-group-body">
+                      <div v-for="(nt, ni) in seg.notes" :key="ni" class="tl-note-item">
+                        <button class="tl-note-head" type="button" @click="toggleNote(m, nt)">
+                          <span class="tl-idx"></span>
+                          <NoteTag :m="m" :note="nt" />
+                          <span class="tl-caret" :class="{ open: noteOpen(m, nt) }"><caret-right-outlined /></span>
+                        </button>
+                        <NoteBody :m="m" :note="nt" />
+                      </div>
+                    </div>
+                  </div>
                   <div v-else class="tl-group" :class="{ inCluster: seg.inCluster, flat: seg.flat }">
-                    <button v-if="seg.tools.length > 1 && !seg.flat" class="tl-group-bar" type="button" @click="seg.tools[0]._groupOpen = !seg.tools[0]._groupOpen">
+                    <button v-if="groupHasBar(seg)" class="tl-group-bar" type="button" @click="seg.tools[0]._groupOpen = !seg.tools[0]._groupOpen">
                       <loading-outlined v-if="groupRunning(seg)" spin class="tool-ic tool-ic-run" />
                       <close-circle-outlined v-else-if="groupHasError(seg)" class="tool-ic tool-ic-err" />
                       <check-outlined v-else class="tool-ic tool-ic-ok" />
                       <span>执行了 {{ executedCount(seg.tools) }} 个操作</span>
                       <span v-if="runBoardText(m)" class="run-board">{{ runBoardText(m) }}</span>
+                      <NoteTag v-for="(nt, ni) in seg.notes" :key="ni" :m="m" :note="nt" />
                       <span class="tl-caret" :class="{ open: seg.tools[0]._groupOpen }"><caret-right-outlined /></span>
                     </button>
+                    <!-- 有组条时全文挂在组条下面（批次折叠着也点得开）；没有组条时挂在它所属那张卡下面 -->
+                    <NoteBody v-if="groupHasBar(seg)" v-for="(nt, ni) in seg.notes" :key="'note' + ni" :m="m" :note="nt" />
                     <div v-if="seg.tools.length === 1 || seg.flat || seg.tools[0]._groupOpen" class="tl-group-body" :class="{ solo: seg.tools.length === 1 }">
                       <div v-for="(t, ti) in seg.tools" :key="ti" class="tl-card" :data-spawn="spawnAnchorOf(t)"
                            :class="{ run: t.status === 'start', err: t.status === 'error' }">
                         <button class="tl-card-head" type="button" @click="toggleToolCard(t)">
+                          <span v-if="seg.inCluster" class="tl-idx">{{ seg.idxFrom + ti + 1 }}</span>
                           <loading-outlined v-if="t.status === 'start'" spin class="tool-ic tool-ic-run" />
                           <check-outlined v-else-if="t.status === 'done'" class="tool-ic tool-ic-ok" />
                           <close-circle-outlined v-else class="tool-ic tool-ic-err" />
@@ -258,8 +274,12 @@
                       <span v-if="fanHasBoard(t.fanOut)" class="tool-dur">{{ fanHead(t) }}</span>
                       <span v-if="fanRun(t)" class="fan-run">{{ fanRun(t) }}</span>
                           <span v-if="t.status === 'error'" class="tool-fail">失败</span>
-                          <span class="tl-caret" :class="{ open: toolCardOpen(t) }"><caret-right-outlined /></span>
+                          <!-- 这一轮的思考/独白并到步的行尾（原来各占一行标题，展开态一半高度是它买单的）：
+                               它本来就长在「想了这些才动手」的那个位置，字数在展开前就说清这一点值不值得点 -->
+                          <NoteTag v-if="ti === 0 && !groupHasBar(seg)" v-for="(nt, ni) in seg.notes" :key="ni" :m="m" :note="nt" />
+                          <span class="tl-caret tl-caret-btn" :class="{ open: toolCardOpen(t) }"><caret-right-outlined /></span>
                         </button>
+                        <NoteBody v-if="!groupHasBar(seg)" v-for="(nt, ni) in seg.notes" :key="'note' + ni" :m="m" :note="nt" />
                         <!-- askUser 问答记录：可折叠（默认展开），刷新/历史恢复同构 -->
                         <AskRecordCard v-if="t.name === 'askUser' && t.status !== 'start'" :t="t" />
                         <!-- 咨询另一位助手：这一问一答就地成卡（那份 subChat 随后端工具卡一起落库，
@@ -888,7 +908,7 @@
         </div>
         <div v-if="!slashFiltered.length" class="mention-empty">没有匹配的命令</div>
         </div>
-        <div class="mention-foot">↑↓ 选择 · Enter 确认 · Esc 关闭　|　命令可附要求（如 /compact 保留结论）</div>
+        <div class="mention-foot">↑↓ 选择 · Enter 确认 · Esc 关闭　|　计划、目标可跟一句任务</div>
         </div>
         <!-- # 历史引用面板（敲 # 唤起）：勾选本会话历史问答，随本轮请求前置给模型 -->
         <div v-if="histOpen" class="mention-panel">
@@ -1267,6 +1287,46 @@
         </template>
         <div v-if="sandboxRest" class="rp-sb-hint">目录里另有 {{ sandboxRest }} 个文件没列出（这里只列最新 {{ sandboxFiles.length }} 个）</div>
       </div>
+      <!-- 沙盒后台进程：让它「把写好的前后端跑起来自己看效果」时，起的是 npm run dev 这类<b>不会自己退</b>
+           的进程；而沙盒那条执行到点只是「不再等它」，进程照旧活着、端口照旧占着，界面上却什么都看不见。
+           这里给一个看得见、能一键停掉的地方。清单读的是容器实况（带归属标记的进程），不是服务端台账：
+           后端重启、换副本都照得到；沙盒被空闲回收（默认 60 分钟）后整张清单自然清空。
+           挂了共享目录的工作区里多个会话共用一个容器，所以同工作区别的会话起走的进程也会出现在这里，
+           标一句「别的会话起的」——端口是被同一个容器占的，看不见就停不掉。 -->
+      <div v-if="procCardVisible" class="rp-card">
+        <div class="rp-label rp-proc-head"
+             title="助手在沙盒里起的、不会自己退的进程（比如为了自己看效果起的服务）。到点没跑完只是不再等它，进程照旧活着。">
+          <span>后台进程<span class="rp-proc-n">{{ procs.length }}</span><span class="rp-proc-unit">个在跑</span></span>
+          <button type="button" class="rp-sb-retry" :disabled="procLoading"
+                  title="重新扫一遍沙盒里的进程" @click="loadSandboxProcs">刷新</button>
+        </div>
+        <div v-if="procErr" class="rp-sb-err">
+          <span>{{ procErr }}</span>
+          <button type="button" class="rp-sb-retry" @click="loadSandboxProcs">重试</button>
+        </div>
+        <div v-for="(p, i) in procs" :key="p.tag" class="rp-proc"
+             :class="{ 'is-killing': killingTag === p.tag }" :style="{ '--proc-i': i }">
+          <!-- 命令行独占一行：它和「跑了多久/端口」挤同一行时，右栏一窄就被 flex 压成零宽，
+               于是这张卡最该认得出的东西（这是哪个服务）整个消失（真机 2026-10-25 用户截图复现） -->
+          <div class="rp-proc-cmd">
+            <span class="rp-proc-dot" aria-hidden="true" />
+            <span class="rp-proc-cmd-t" :title="p.command">{{ p.command }}</span>
+          </div>
+          <div class="rp-proc-foot">
+            <span class="rp-proc-meta">
+              <span>跑了 {{ procAge(p) }}</span>
+              <span v-if="p.ports && p.ports.length" title="沙盒内部的端口，外部浏览器打不开；这里只说明它占着哪个">
+                · 占着端口 {{ p.ports.join(' / ') }}</span>
+              <span v-if="p.roots > 1"> · {{ p.roots }} 棵进程树</span>
+              <span v-if="!p.own"> · 同沙盒别的会话起的</span>
+            </span>
+            <button v-if="p.killable" type="button" class="rp-proc-kill" :disabled="killingTag === p.tag"
+                    :title="'停掉它，连同它起走的全部子进程（' + p.pids.length + ' 个）'"
+                    @click="killProc(p)">{{ killingTag === p.tag ? '停止中…' : '停止' }}</button>
+            <span v-else class="rp-proc-unknown" title="认不出这是哪次会话起的，停不了">来源不明</span>
+          </div>
+        </div>
+      </div>
       <!-- 计划：本会话每轮出过的计划各列一条（继续对话后每次重做都算一份），点击定位到那一轮气泡。
            默认折叠沉底：它的条数随会话长度无上限增长，而动作只是「跳回历史某一轮」——低频导航不该占顶部固定槽位，
            更不该把上面几张交互卡挤出首屏。有待确认的计划时自动展开，避免「计划要批」这件事被藏住。 -->
@@ -1400,8 +1460,7 @@
           </button>
         </div>
       </div>
-      <!-- 附加要求随摘要提示词下发给模型（后端 compact 的 instruction 参数）：这次要保留什么、忽略什么。
-           此前只有 /compact 空格加要求这一条没人知道的路径能用 -->
+      <!-- 这一次摘要要保留什么、忽略什么：交给后端并进框架的摘要提示词，只作用这一次压缩，不留到之后的轮 -->
       <div v-if="csumInstrOpen" class="csum-instr">
         <input v-model="csumInstr" class="csum-instr-input" maxlength="200"
                placeholder="这次摘要要保留什么、忽略什么" @keyup.enter="applyRecompact" />
@@ -1508,6 +1567,18 @@
               <span class="ctxcap-row-val">{{ fmtWindow(r.tokens) }} · {{ ctxCapData.pctOf(r).toFixed(1) }}%</span>
             </div>
             <div v-if="!ctxCapData.rows.length" class="ctxcap-empty">本轮无分类明细</div>
+            <!-- 手动压缩上下文的常驻入口（此前只有 /compact 一条键盘路径）：压完本卡数字不动，
+                 腾出的量在 toast 里报，占用率要到下一轮落库才反映在这里 -->
+            <div class="ctxcap-foot">
+              <button class="app-btn ghost ctxcap-compact" type="button"
+                      :disabled="compacting || loading"
+                      :title="compacting || loading ? '' : '把较早的对话并入摘要，为后续提问腾出空间；完整记录仍可回看'"
+                      @click="compactContext()">
+                <compress-outlined />
+                <span>{{ compacting ? '压缩中…' : '压缩上下文' }}</span>
+              </button>
+              <div v-if="loading && !compacting" class="ctxcap-tip">正在生成回答，等本轮结束后再压缩</div>
+            </div>
           </template>
           <div v-else class="ctxcap-empty">该模型未登记上下文窗口，请在「模型供应商」里声明</div>
         </div>
@@ -1534,10 +1605,11 @@ import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, Close
 import { debugRetrieval, deleteMessageGroup, submitFeedback as apiSubmitFeedback,
          addEvalCase, getSessionShare, enableSessionShare, disableSessionShare,
          getSessionWorkspace, listSandboxFiles, downloadSandboxFile, sandboxFileToArtifact,
+         listSandboxProcs, killSandboxProc,
          listSessions, setNewSessionProject } from '../api'
 import { renderMd, resolveImg, onImgError } from '../utils/markdown'
 import { canPreview, artifactExt } from '../utils/artifactView'
-import { loadSessions, sessionStore } from './store'
+import { loadSessions, sessionStore, refreshProcBadges } from './store'
 import { exportAnswerMd, exportSessionMarkdown } from './exportMd'
 import { fmtTokens } from '../utils/token'
 import { chatDone, refreshSetupGuide, setupGuide } from '../utils/setupGuide'
@@ -1559,6 +1631,8 @@ import SourceList from '../chat/SourceList.vue'
 // 窄屏专属 UI 组件（PC 态不渲染，详见 src/h5/README.md）
 import MobileChatHead from '../h5/MobileChatHead.vue'
 import AskRecordCard from '../components/AskRecordCard.vue'
+import NoteTag from '../components/NoteTag.vue'
+import NoteBody from '../components/NoteBody.vue'
 import TurnBar from '../components/TurnBar.vue'
 import SubAgentChatCard from '../components/SubAgentChatCard.vue'
 import MsgDivider from '../components/MsgDivider.vue'
@@ -1587,6 +1661,7 @@ import { toolLabel, toolDesc, toolCallsView, executedCount, toolRunning, hasTime
          turnRows, turnOpen,
          toolBrief, prettyIo, liveOutput, groupRunning,
          clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterProcCount,
+         groupHasBar, noteOpen, toggleNote,
          groupHasError, toolSearchQueries, retrievalLineTitle,
          fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget, fanRun, runBoardText,
          fmtWindow, externalOrigin, sourceName, fmtSourceScore, scoreTitle,
@@ -2277,8 +2352,8 @@ const syncPanelQuery = () => {
     return
   }
   const q = text.value.slice(panelTriggerPos + 1, caret)
-  // 空白 = 这个"词"已经结束，收起面板；例外是 / 命令的带参写法（/compact 保留结论）——
-  // 别名打完整后敲的空格是在给命令传要求，此时收起面板就等于把参数那半句丢掉
+  // 空白 = 这个"词"已经结束，收起面板；例外是带参命令的写法（/计划 一句任务）——
+  // 别名打完整后敲的空格是在给命令传任务，此时收起面板就等于把参数那半句丢掉
   if (/\s/.test(q) && !(slashOpen.value && slashArgPending(q))) { closeAllPanels(); return }
   if (slashOpen.value) slashQuery.value = q
   else if (histOpen.value) histQuery.value = q
@@ -2292,20 +2367,21 @@ const slashOpen = ref(false)
 const slashQuery = ref('')
 const slashHi = ref(0)
 // 命令一律是会话级动作，选中即执行、不往正文插任何东西
-// cmd=英文别名（打 /compact 直接命中，与主流 CLI 同一习惯），带别名的命令可跟参数：「别名 + 空格 + 要求」
+// cmd=英文别名（打 /compact 直接命中，与主流 CLI 同一习惯），args=这行认「别名 + 空格 + 一句任务」
 // 目标是工具条那颗胶囊的键盘入口，计划则以此命令为桌面唯一入口（工具条上不留胶囊，开启态只由正文里那颗 chip 说话）。
 // noGate=不碰正在跑的这一轮（翻模式、只开弹窗），生成中也照样能用；
 // 计划模式的行名按当前状态现写，用户看名字就知道这一下是开还是关
 // 目标那条与 /goal 命令共用 goalEntryVisible：智能体关着目标模式、或这条会话已有目标时，命令也不出现
+// 压缩上下文不带参数：要指定摘要要求，走摘要弹窗那行「带要求重新压缩」
 const slashCommands = computed(() => [
   { key: 'act-compact', cmd: 'compact', icon: CompressOutlined, name: '压缩上下文',
-    desc: '早期对话压缩为摘要，腾出上下文空间（可附要求）',
-    run: args => compactContext(args) },
-  { key: 'act-plan', cmd: 'plan', aliases: ['计划'], icon: OrderedListOutlined, noGate: true,
+    desc: '早期对话压缩为摘要，腾出上下文空间',
+    run: () => compactContext() },
+  { key: 'act-plan', cmd: 'plan', aliases: ['计划'], icon: OrderedListOutlined, noGate: true, args: true,
     name: planModeOn.value ? '关闭计划' : '计划',
     desc: '这一轮先产出执行计划；可跟任务（/计划 任务），直接生成计划',
     run: args => runPlanCommand(args) },
-  ...(goalEntryVisible.value ? [{ key: 'act-goal', cmd: 'goal', aliases: ['目标'], icon: AimOutlined, noGate: true,
+  ...(goalEntryVisible.value ? [{ key: 'act-goal', cmd: 'goal', aliases: ['目标'], icon: AimOutlined, noGate: true, args: true,
     name: '目标', desc: '进入目标模式（再发一条即开始）；也可直接跟目标原文',
     run: args => {
       const task = String(args || '').trim()
@@ -2334,10 +2410,10 @@ const closeSlashPanel = () => closeAllPanels()
 const slashQueryNorm = computed(() => slashQuery.value.trim())
 /** 一条命令可用的触发词：英文别名（/plan、/goal）与中文别名（/计划、/目标）共用同一行 */
 const slashAliasesOf = c => [c.cmd, ...(c.aliases || [])].filter(Boolean).map(a => String(a).toLowerCase())
-/** / 命令的带参判定（/compact 保留结论）：别名打完整后再出现的空白，是在给命令传要求，不是在结束筛选 */
+/** / 命令的带参判定（/计划 一句任务）：别名打完整后再出现的空白，是在给命令传任务，不是在结束筛选 */
 const slashArgPending = q => {
   const s = String(q || '').trimStart().toLowerCase()
-  return slashCommands.value.some(c => slashAliasesOf(c).some(a => s.startsWith(a + ' ')))
+  return slashCommands.value.some(c => c.args && slashAliasesOf(c).some(a => s.startsWith(a + ' ')))
 }
 /** 命令参数：筛选词里「别名 + 空格」之后的部分（原文切片，保留用户输入的大小写与用词） */
 const slashArgsOf = c => {
@@ -2372,7 +2448,7 @@ const runSlashCommand = c => {
   // 参数先取：下面 stripTriggerToken/closeAllPanels 会把触发片段与筛选词清掉，取晚了就只能拿到空串
   const args = slashArgsOf(c)
   // 命令不往正文插任何东西，触发片段必须摘掉，否则留下 "/新建会话" 残渣
-  // （带参的命令同理："/compact 保留结论"整段都要摘走，参数已在上方取到）
+  // （带参的命令同理："/计划 一句任务"整段都要摘走，参数已在上方取到）
   stripTriggerToken()
   closeAllPanels()
   c.run?.(args)
@@ -2509,7 +2585,7 @@ const addFootHint = computed(() => {
     return nav + `　|　引用只对${scope}生效：知识库 = 检索只在这些库里找；文档 = 内容直接带入上下文；智能体 = 强制咨询它（它带自己的知识库查一遍，回答仍由当前助手汇总）`
   }
   if (t === 'hist') return nav + `　|　勾选的历史问答作为${scope}上下文带给模型（最多 10 条）`
-  return nav + '　|　命令立即执行，可附要求（如 /compact 保留结论）'
+  return nav + '　|　命令立即执行，计划、目标可跟一句任务'
 })
 const addSkillList = computed(() => {
   const s = mentionQuery.value.trim().toLowerCase()
@@ -3532,12 +3608,108 @@ async function loadSandboxFiles() {
     if (currentSessionId.value === sid) sandboxLoading.value = false
   }
 }
-/** 一轮跑完就重列：交付物是那一轮做出来的，不重拉就要刷新页面才看得见 */
-watch(() => loading.value, (v, prev) => { if (prev && !v) loadSandboxFiles() })
+/** 一轮跑完就重列：交付物是那一轮做出来的，不重拉就要刷新页面才看得见。
+ *  后台进程同一拍重扫——「起个服务自己看效果」恰恰发生在这一轮里，收尾时它多半还活着。
+ *  侧栏那一排的标记也在这同一拍跟新：本轮漏下的进程，收完尾就该在列表里亮起来。 */
+watch(() => loading.value, (v, prev) => { if (prev && !v) { loadSandboxFiles(); loadSandboxProcs(); refreshProcBadges() } })
 /** 判据翻转也要重拉：切会话那一瞬 messages 还是上一个会话的，判据可能是旧值（旧会话用过沙盒、
  *  新会话没用过）；等新会话的历史落到位它才翻成真值/假值，这一拉补的就是那一刻——
  *  没有它，从沙盒会话切进新会话会带着旧判据撞一次假故障，翻成假值后也没人把误报收走。 */
-watch(sessionSandboxActive, () => { loadSandboxFiles() })
+watch(sessionSandboxActive, () => { loadSandboxFiles(); loadSandboxProcs() })
+// ==================== 沙盒后台进程（模型起的 dev server 这类不会自己退的东西） ====================
+const procs = ref([])
+const procErr = ref('')
+const procLoading = ref(false)
+/** 本会话点过回答里的「在沙盒中运行」：那条路没有工具调用记录，光靠 sessionSandboxActive 判不出用过沙盒 */
+const sandboxRanOnce = ref(false)
+/** 要不要扫：本会话用过沙盒（或点过回答里的「在沙盒中运行」）。没用过就没得扫，白打一次容器。
+ *  这条与「卡要不要露脸」必须分开——判据里若掺进 procs 是否为空，空清单会让这里短路，
+ *  于是下一次扫永远发不出去，起了真进程也再也不会显示。 */
+const procScanActive = computed(() => sessionSandboxActive.value || sandboxRanOnce.value)
+/** 卡只在<b>扫到了东西</b>或<b>扫失败</b>时露脸：一条都没扫到就整张不显示。
+ *  常驻一句「后台进程 · 没有」等于把「我查过了，没事」当成用户要看的东西，
+ *  而用过沙盒的会话里这才是绝大多数情况。读不到 ≠ 没有，所以那种情形照显示，且给重试。 */
+const procCardVisible = computed(() => procScanActive.value && (procs.value.length > 0 || !!procErr.value))
+/** 正在停的那一棵：只让这一行的按钮变灰变字，别把整张卡按成 loading（用户还在看其余几行） */
+const killingTag = ref('')
+async function loadSandboxProcs() {
+  const sid = currentSessionId.value
+  if (!sid || !procScanActive.value) {
+    procs.value = []
+    procErr.value = ''
+    procLoading.value = false
+    return
+  }
+  procLoading.value = true
+  procErr.value = ''
+  try {
+    const r = await listSandboxProcs(sid)
+    if (currentSessionId.value !== sid || !procScanActive.value) return
+    procs.value = (r && r.data && r.data.procs) || []
+  } catch (e) {
+    if (currentSessionId.value !== sid || !procScanActive.value) return
+    // 「读不到进程表」和「没有后台进程」是两件事，静默成空列表会把一个正占着端口的服务读成不存在
+    procs.value = []
+    procErr.value = e?.message || '读不到沙盒里的进程'
+  } finally {
+    if (currentSessionId.value === sid) {
+      procLoading.value = false
+      ensureProcTimer()   // 有在跑的就挂秒针，全停完了就把定时器摘掉
+    }
+  }
+}
+/** 回答里点了「在沙盒中运行」：揭出这张卡并立刻扫一次（那条路没有工具调用记录，判据翻不真） */
+const onSandboxRan = () => { sandboxRanOnce.value = true; loadSandboxProcs() }
+onMounted(() => window.addEventListener('app:sandbox-ran', onSandboxRan))
+onUnmounted(() => window.removeEventListener('app:sandbox-ran', onSandboxRan))
+/** 跑了多久：这一栏答的是「忘了关的那个跑了多久」，分钟以上就不必再报秒。
+ *  走的是本地秒针（按 startedAt 现算），不是每次重扫——不然数字停在「17 秒」看着像整张卡死了。 */
+function procAge(p) {
+  const s = p.startedAt ? Math.max(0, Math.floor((nowTick.value - p.startedAt) / 1000)) : (Number(p.elapsedSec) || 0)
+  if (s < 60) return `${s} 秒`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m} 分钟`
+  const h = Math.floor(m / 60)
+  return `${h} 小时 ${m % 60} 分`
+}
+/** 秒针（1s）与实况重扫（30s）共用一个定时器：只在卡上有进程时挂着，空卡不白打沙盒 */
+let procTimer = null
+const nowTick = ref(Date.now())
+function ensureProcTimer() {
+  const need = procs.value.length > 0
+  if (!need && procTimer) { clearInterval(procTimer); procTimer = null; return }
+  if (need && !procTimer) {
+    let n = 0
+    procTimer = setInterval(() => {
+      nowTick.value = Date.now()
+      // 定时重扫：进程在别处被杀掉、或自己退出了，这一行要自己消失，而不是挂着个「在跑」骗人
+      if (++n % 30 === 0 && !killingTag.value && !procLoading.value) loadSandboxProcs()
+    }, 1000)
+  }
+}
+onUnmounted(() => { if (procTimer) { clearInterval(procTimer); procTimer = null } })
+async function killProc(p) {
+  const sid = currentSessionId.value
+  if (!sid || killingTag.value) return
+  killingTag.value = p.tag
+  try {
+    const r = await killSandboxProc(sid, p.tag)
+    const killed = Number(r?.data?.killed) || 0
+    const remaining = Number(r?.data?.remaining) || 0
+    // 三种结果分开说：停掉了几个 / 有停不下来的 / 它本来就自己退了——最后那种不能报「已停止」，
+    // 用户会以为是自己这一刀救回来的
+    if (remaining > 0) message.error(`有 ${remaining} 个进程停不下来（可能卡在不可中断的读写上），可再刷新确认`)
+    else if (killed > 0) message.success(`已停掉 ${killed} 个进程，占用的端口随之释放`)
+    else message.info('这个进程已经自己退出了')
+  } catch (e) {
+    message.error(e?.message || '停止失败')
+  } finally {
+    killingTag.value = ''
+    await loadSandboxProcs()
+    // 停完顺手喊侧栏重扫：那一行的「还背着进程」不该再等下一轮轮询才灭
+    refreshProcBadges()
+  }
+}
 async function onSandboxDownload(f) {
   const sid = currentSessionId.value
   if (!sid) return
@@ -3634,7 +3806,9 @@ const sbSize = n => {
 watch(currentSessionId, async sid => {
   sessionWorkspace.value = null
   sandboxClosed.value = new Set()
+  sandboxRanOnce.value = false   // 「点过运行按钮」是这一会话的事，切走就作废
   loadSandboxFiles()
+  loadSandboxProcs()
   if (!sid) return
   try {
     const r = await getSessionWorkspace(sid)
@@ -4402,8 +4576,21 @@ onMounted(async () => {
 }
 .tl-cluster-bar:hover { border-color: var(--app-accent); color: var(--app-text); }
 .tl-cluster-bar span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* 簇内段左缩进一格：展开后能看出「这些行同属上面那个簇」，层级关系一眼可辨 */
-.tl-process-block.inCluster, .tl-think-block.inCluster, .tl-group.inCluster { margin-left: 12px; }
+/* 簇内＝一行一步的紧凑清单：卡片去描边去卡底、行首补序号、整簇共一条左轨。
+   簇外的工具组仍是原来的描边卡——那是一步插在正文之间，不是一串清单，收掉描边反而读不出边界。 */
+.tl-group.inCluster { margin: 0 0 0 12px; }
+.tl-group.inCluster .tl-group-body { margin: 0; padding-left: 10px; border-left: 2px solid var(--app-border); }
+.tl-group.inCluster .tl-card { border: 0; background: none; border-radius: 5px; width: 100%; }
+.tl-group.inCluster .tl-card-head { padding: 3px 6px; }
+.tl-group.inCluster .tl-card-head:hover { background: var(--app-panel-2); color: var(--app-text); }
+.tl-group.inCluster .tl-caret-btn { margin-left: auto; }
+/* 行首序号：与簇头那个「已执行 N 个操作」同一把尺，一眼数得出跑到第几步、也认得出被跳过的步号 */
+.tl-idx { flex: none; width: 18px; font-size: 10.5px; color: var(--app-text3);
+  font-variant-numeric: tabular-nums; text-align: right; }
+/* 簇尾挂不出去的那一段（正在想、还没调工具）自成一节：行壳与工具卡同款，只是没有工具名 */
+.tl-note-head { display: flex; align-items: center; gap: 6px; width: 100%; padding: 3px 6px; margin: 0;
+  border: 0; background: none; border-radius: 5px; font-size: 12px; color: var(--app-text2); cursor: pointer; }
+.tl-note-head:hover { background: var(--app-panel-2); }
 .tl-group { margin: 3px 0; }
 .tl-group-bar {
   display: inline-flex; align-items: center; gap: 6px; width: fit-content; max-width: 100%;
@@ -4412,6 +4599,9 @@ onMounted(async () => {
   cursor: pointer; user-select: none;
 }
 .tl-group-bar:hover { border-color: var(--app-accent); color: var(--app-text); }
+/* 簇内的并行批次条：与它下面那些行同一种壳（带描边会在清单里戳出一颗药丸） */
+.tl-group.inCluster .tl-group-bar { border: 0; background: none; padding: 3px 6px; margin: 0 -6px; border-radius: 5px; }
+.tl-group.inCluster .tl-group-bar:hover { border-color: transparent; background: var(--app-panel-2); }
 /* 折叠三角唯一样式（CaretRightOutlined）：10px 灰、行尾、展开旋转 90°（▶→▼）；
  * 深度思考头/执行过程/工具组条/工具卡片/检索行/子智能体头/引用来源组共用，不再各写一套 */
 .tl-caret { flex: none; font-size: 10px; color: var(--app-text3); transition: transform .15s; line-height: 1; }
@@ -4542,6 +4732,9 @@ onMounted(async () => {
 .ctxcap-row-val { margin-left: auto; color: var(--app-text3); }
 .ctxcap-empty { margin-top: 6px; font-size: 12px; color: var(--app-text3); }
 .ctxcap-tip { margin-top: 6px; font-size: 11px; color: var(--app-text3); line-height: 1.5; }
+/* 卡底操作区：与上面的分类明细隔一条线，按钮铺满卡宽（268px 里摆一个小按钮不居中会像漏了一半） */
+.ctxcap-foot { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--app-border); }
+.ctxcap-compact { width: 100%; justify-content: center; }
 
 /* 上下文容量圆环（输入框右下、模型选择器左侧）：与右栏模型行共用同一张容量卡，>80% 警告 / >95% 危险 */
 .ctx-ring { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; margin-right: 4px; border-radius: 50%; cursor: default; transition: background .15s; }
@@ -5021,6 +5214,36 @@ onMounted(async () => {
 .rp-sb-retry { background: none; border: 0; padding: 0; cursor: pointer; font-size: 11px; color: var(--app-accent); }
 .rp-sb-retry:hover { text-decoration: underline; }
 .rp-sb-taken { flex: none; font-size: 11px; color: var(--app-accent); }
+/* 后台进程卡：标题行右侧挂「刷新」（与左对齐的标题分两头，才不显得那一排是两条标题） */
+.rp-proc-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+/* 条数用主色徽标：这张卡只在真扫到东西（或扫失败）时才露脸，见 procCardVisible */
+.rp-proc-n { display: inline-block; min-width: 16px; margin-left: 5px; padding: 0 5px; border-radius: 8px;
+  text-align: center; background: var(--app-accent-weak); color: var(--app-accent); font-variant-numeric: tabular-nums; }
+/* 徽标后面那个单位词：只留数字会读成「后台进程 2」这么个名字 */
+.rp-proc-unit { margin-left: 5px; color: var(--app-text3); font-weight: 400; }
+.rp-proc { padding: 6px 0; border-top: 1px solid var(--app-border); }
+.rp-proc.is-killing { opacity: .55; }
+/* 第一行只有命令行（它必须独占一行：与次要信息同行时，右栏一窄就被压成零宽，最该认得出的东西消失） */
+.rp-proc-cmd { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.rp-proc-cmd-t { flex: 1; min-width: 0; font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11px; color: var(--app-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 在跑的状态点：多行按整序错相呼吸，不许整列同步（与侧栏「生成中」同一口径） */
+.rp-proc-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--app-accent);
+  animation: proc-pulse 1.8s ease-in-out infinite; animation-delay: calc(var(--proc-i, 0) * -0.43s); }
+@keyframes proc-pulse { 0%, 100% { opacity: .3 } 50% { opacity: 1 } }
+.rp-proc.is-killing .rp-proc-dot { animation: none; background: var(--app-text3); }
+/* 第二行：信息贴左（等宽数字，走秒时不抖行）、动作贴右 */
+.rp-proc-foot { display: flex; align-items: center; gap: 8px; margin-top: 3px; }
+/* 次要信息可换行：窄栏里 nowrap + 省略号会把「占着端口 8097」整段吃掉，
+   而那正是用户判断「这是不是我要关的那个服务」的第二条线索 */
+.rp-proc-meta { flex: 1; min-width: 0; font-size: 11px; color: var(--app-text3); line-height: 16px;
+  font-variant-numeric: tabular-nums; }
+.rp-proc-kill { flex: none; background: none; border: 1px solid var(--app-border); border-radius: 4px;
+  padding: 1px 9px; font-size: 11px; color: var(--app-text2); cursor: pointer; line-height: 18px; }
+.rp-proc-kill:hover:not(:disabled) { color: var(--app-warn-text); border-color: var(--app-warn-text); }
+.rp-proc-kill:disabled { opacity: .7; cursor: default; }
+.rp-proc-unknown { flex: none; font-size: 11px; color: var(--app-text3); }
+@media (prefers-reduced-motion: reduce) { .rp-proc-dot { animation: none; } }
 /* 目录行：整行是开合按钮（button 要自带重置，antd reset 不清底色边框）；计数与合计体积贴右 */
 .rp-sb-dir { display: flex; align-items: center; gap: 6px; width: 100%; padding: 4px 0;
   background: none; border: 0; cursor: pointer; font: inherit; text-align: left; }

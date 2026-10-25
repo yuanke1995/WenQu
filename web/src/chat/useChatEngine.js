@@ -3303,7 +3303,7 @@ const compactNotice = ref(null)
 
 /**
  * 手动压缩当前会话上下文：早期对话并入摘要，完整记录仍留在会话里可回看。
- * @param instruction 附加要求（可空，如「保留结论与数字、忽略寒暄」），随摘要提示词下发给模型
+ * @param instruction 这一次摘要的附加要求（可空，如「保留结论与数字、忽略寒暄」），后端并进摘要提示词
  * @returns 后端统计（compressedTurns/summary 等）；无会话/正在回答/失败返回 null（原因已就地提示）
  */
 const compactContext = async (instruction = '') => {
@@ -3312,16 +3312,16 @@ const compactContext = async (instruction = '') => {
   // 正在回答时不允许压缩：本轮正在读/写同一份摘要，交叉会互相覆盖
   if (loading.value) { message.warning('正在生成回答，等本轮结束后再压缩'); return null }
   if (compacting.value) return null
+  const req = String(instruction || '').trim()
   manualCompacting.value = true
   // 进行中不给常驻 toast：流尾那条「正在压缩上下文」分隔线就是进度（压完原地换成结果那条）
   try {
-    // 不随请求带 model：压缩就该用这条会话本身在用的那个模型（后端按会话存的覆盖→个人默认解析）。
-    // 拿页签内存里的旧选择去压，会把历史折进「另一个模型的口吻」里，而用户没做过那次选择
-    const r = await compactSessionApi(sid, { instruction })
+    const r = await compactSessionApi(sid, req)
     const d = (r && r.data) || {}
     // 无活实例/压缩失败回落：框架在提问前自己整理上下文，这里如实说排到了下一次提问前
+    // （那句要求跟着排进去，不是丢了——所以说了要求才算收下，输入行可以收）
     if (d.scheduled) {
-      message.info('已安排下一次提问前折一次早期对话')
+      message.info(req ? '这条要求已记下，下一次提问前折一次早期对话' : '已安排下一次提问前折一次早期对话')
       return d
     }
     // 两种情形都算「没得压」：对话本来就短，或早期对话上次已经压过了（最近 2 次问答不会被压掉）
@@ -3383,10 +3383,16 @@ const openCompactSummary = async () => {
   }
 }
 
-/** 带着要求再压一次（摘要面板里的入口）：成功后面板刷成新摘要；没得压/失败的原因引擎已就地提示 */
+/**
+ * 带着要求再压一次（摘要弹窗里的入口）：压成就把面板刷成新摘要；
+ * 排到下一次提问前那句要求也已收下，同样算成功（面板没有新摘要可刷，原因引擎已就地提示）。
+ * 真没压成（没得压/失败）返回 false，让弹窗里那行输入留着好改一句再试。
+ */
 const recompactWith = async (instruction) => {
   const d = await compactContext(instruction)
-  if (!d || !d.compressedTurns) return false
+  if (!d) return false
+  if (d.scheduled) return true
+  if (!d.compressedTurns) return false
   snapshotSummary(d.summary, d.summaryTokens, d.keepTurns, d.freedTokens)
   return true
 }

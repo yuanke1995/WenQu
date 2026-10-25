@@ -85,9 +85,9 @@
                         :images="m.images" :sources="m.sources" :msg-index="index"
                         runnable :session-id="sessionId" :streaming="m.loading"
                         :viewer="false" @citation="onBodyCitation" @preview="onBodyPreview" />
-            <!-- 思考段：这一轮在想什么就长在哪一行，只有正在长的那一段自动展开。
-                 它同样会被过程簇收进去（跑着的时候簇里只露当前那一步，与 PC 同一份判据） -->
-            <div v-else-if="seg.kind === 'think'" class="card think-card" :class="{ inCluster: seg.inCluster }">
+            <!-- 思考段（簇外）：这一轮在想什么就长在哪一行，只有正在长的那一段自动展开。
+                 被过程簇收进去的那些不走这一支——并成下一张工具卡行尾的一项（与 PC 同一份 clusterSteps） -->
+            <div v-else-if="seg.kind === 'think'" class="card think-card">
               <button class="card-head" type="button" @click.stop="toggleThinkSeg(m, seg)">
                 <span class="card-title">深度思考</span>
                 <span v-if="thinkGrowing(m, seg)" class="spinner" aria-label="进行中"></span>
@@ -98,7 +98,8 @@
                             :streaming="thinkGrowing(m, seg)" />
               </div>
             </div>
-            <!-- 过程簇头：连续的「思考+独白+工具」收成一行（与 PC 同判据、同文案） -->
+            <!-- 过程簇头：连续的「思考+独白+工具」收成一行（与 PC 同判据、同文案）。
+                 展开后是一行一步的清单，思考与独白挂在它们所属那一步的行尾 -->
             <div v-else-if="seg.kind === 'cluster'" class="card proc-cluster" :class="{ open: clusterOpen(m, seg) }">
               <button class="card-head" type="button" @click.stop="toggleCluster(m, seg)">
                 <span v-if="clusterRunning(seg)" class="spinner"></span>
@@ -110,9 +111,10 @@
                 <caret-right-outlined class="caret" :class="{ open: clusterOpen(m, seg) }" />
               </button>
             </div>
-            <div v-else-if="seg.kind === 'process'" class="card proc-card" :class="{ inCluster: seg.inCluster }">
+            <!-- 过程独白段（簇外）：标题行常驻、内容可折叠。被簇收进去的并成所属那一步行尾的「过程说明 N 字」 -->
+            <div v-else-if="seg.kind === 'process'" class="card proc-card">
               <button class="card-head" type="button" @click.stop="toggleProc(m, seg)">
-                <span class="card-title">{{ seg.inCluster ? '过程说明' : '执行过程' }}</span>
+                <span class="card-title">执行过程</span>
                 <caret-right-outlined class="caret" :class="{ open: procOpen(m, seg) }" />
               </button>
               <div v-show="procOpen(m, seg)" class="card-body proc-body">{{ procSlice(m, seg) }}</div>
@@ -121,19 +123,37 @@
             <div v-else-if="seg.kind === 'steer'" class="tl-steer">
               <span class="tl-steer-txt">{{ seg.text }}</span>
             </div>
+            <!-- 簇尾挂不出去的那一段（正在想、还没调工具）：自成一节，它正是「当前这一步」 -->
+            <div v-else-if="seg.kind === 'notes'" class="tl-group inCluster">
+              <div class="tl-group-body">
+                <div v-for="(nt, ni) in seg.notes" :key="ni" class="note-item">
+                  <button class="note-head" type="button" @click.stop="toggleNote(m, nt)">
+                    <span class="tl-idx"></span>
+                    <NoteTag :m="m" :note="nt" />
+                    <caret-right-outlined class="caret" :class="{ open: noteOpen(m, nt) }" />
+                  </button>
+                  <NoteBody :m="m" :note="nt" :viewer="false" @citation="onBodyCitation" @preview="onBodyPreview" />
+                </div>
+              </div>
+            </div>
             <div v-else-if="seg.kind === 'group'" class="tl-group" :class="{ inCluster: seg.inCluster, flat: seg.flat }">
-              <button v-if="seg.tools.length > 1 && !seg.flat" class="card-head" type="button" @click.stop="seg.tools[0]._groupOpen = !seg.tools[0]._groupOpen">
+              <button v-if="groupHasBar(seg)" class="card-head" type="button" @click.stop="seg.tools[0]._groupOpen = !seg.tools[0]._groupOpen">
                 <span v-if="groupRunning(seg)" class="spinner"></span>
                 <check-outlined v-else-if="!groupHasError(seg)" class="ic-ok" />
                 <close-circle-outlined v-else class="ic-err" />
                 <span class="card-title">执行了 {{ executedCount(seg.tools) }} 个操作</span>
                 <span v-if="runBoardText(m)" class="run-board">{{ runBoardText(m) }}</span>
+                <NoteTag v-for="(nt, ni) in seg.notes" :key="ni" :m="m" :note="nt" />
                 <caret-right-outlined class="caret" :class="{ open: seg.tools[0]._groupOpen }" />
               </button>
+              <!-- 有组条时全文挂在组条下面（批次折叠着也点得开）；没有组条时挂在它所属那张卡下面 -->
+              <NoteBody v-if="groupHasBar(seg)" v-for="(nt, ni) in seg.notes" :key="'note' + ni"
+                        :m="m" :note="nt" :viewer="false" @citation="onBodyCitation" @preview="onBodyPreview" />
               <div v-if="seg.tools.length === 1 || seg.flat || seg.tools[0]._groupOpen" class="tl-group-body">
                 <div v-for="(t, ti) in seg.tools" :key="ti" class="card tool-card" :data-spawn="spawnAnchorOf(t)"
                      :class="{ run: t.status === 'start', err: t.status === 'error' }">
                   <button class="card-head" type="button" @click.stop="toggleToolCard(t)">
+                    <span v-if="seg.inCluster" class="tl-idx">{{ seg.idxFrom + ti + 1 }}</span>
                     <span v-if="t.status === 'start'" class="spinner"></span>
                     <check-outlined v-else-if="t.status === 'done'" class="ic-ok" />
                     <close-circle-outlined v-else class="ic-err" />
@@ -144,8 +164,12 @@
                     <span v-if="t.attempts > 1" class="card-dim">重试 {{ t.attempts - 1 }} 次</span>
                     <span v-if="fanHasBoard(t.fanOut)" class="card-dim">{{ fanHead(t) }}</span>
                     <span v-if="fanRun(t)" class="fan-run">{{ fanRun(t) }}</span>
+                    <!-- 这一轮的思考/独白并到步的行尾（与 PC 同形）：字数在展开前就说清这一点值不值得点 -->
+                    <NoteTag v-if="ti === 0 && !groupHasBar(seg)" v-for="(nt, ni) in seg.notes" :key="ni" :m="m" :note="nt" />
                     <caret-right-outlined class="caret" :class="{ open: toolCardOpen(t) }" />
                   </button>
+                  <NoteBody v-if="!groupHasBar(seg)" v-for="(nt, ni) in seg.notes" :key="'note' + ni"
+                            :m="m" :note="nt" :viewer="false" @citation="onBodyCitation" @preview="onBodyPreview" />
                   <!-- askUser 问答记录：可折叠（默认展开），与 PC 同构 -->
                   <AskRecordCard v-if="t.name === 'askUser' && t.status !== 'start'" :t="t" />
                   <SubAgentChatCard v-if="(t.subChat || (t._steps && t._steps.length)) && toolCardOpen(t)" :t="t" :sources="m.sources"
@@ -340,6 +364,7 @@ import {
   turnRows, turnOpen,
   thinkSegOpen, toggleThinkSeg, thinkSlice, thinkGrowing, toolLabel, toolBrief, spawnAnchorOf,
   clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterProcCount,
+  groupHasBar, noteOpen, toggleNote,
   prettyIo, liveOutput, toolRunning, groupRunning, groupHasError,
   fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget, fanRun, runBoardText,
   toolCallsView, executedCount, toolSearchQueries, retrievalLineTitle,
@@ -348,6 +373,8 @@ import {
   toolCardOpen, toggleToolCard
 } from '../chat/projections'
 import AskRecordCard from '../components/AskRecordCard.vue'
+import NoteTag from '../components/NoteTag.vue'
+import NoteBody from '../components/NoteBody.vue'
 import PlanCard from '../components/PlanCard.vue'
 import TurnBar from '../components/TurnBar.vue'
 import SubAgentChatCard from '../components/SubAgentChatCard.vue'
@@ -522,11 +549,28 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
 .ic-err { color: var(--app-danger); }
 .ic-accent { color: var(--app-accent); }
 /* 过程簇：连续的「独白+工具」收成一张卡（PC 端同构，见 ChatPage.vue .tl-cluster）。
-   展开后其内各段由摊平那一步接着渲染，这里只给簇内段左缩进一格做出层级。 */
+   展开后是一行一步的清单：去描边去卡底、行首补序号、整簇共一条左轨；
+   触屏行高仍守 .card-head 的 40px，只撤掉每张卡自己的壳。 */
 .proc-cluster { background: var(--app-panel); }
 .tl-group { display: flex; flex-direction: column; gap: 6px; }
-.proc-card.inCluster, .think-card.inCluster, .tl-group.inCluster { margin-left: 12px; }
+.tl-group.inCluster { margin-left: 12px; }
+.tl-group.inCluster .tl-group-body { gap: 0; padding: 0 0 0 8px; border-left: 2px solid var(--app-border); }
+.tl-group.inCluster .tool-card { border: 0; background: transparent; border-radius: 8px; }
+.tl-group.inCluster .tool-card .card-head { padding: 6px 8px; }
+.tl-group.inCluster .tool-card:active { background: var(--app-panel-2); }
+.tl-group.inCluster .card-body { padding: 0 8px 8px; }
 .tl-group-body { display: flex; flex-direction: column; gap: 6px; padding: 0 0 2px; }
+/* 行首序号：与簇头那个「已执行 N 个操作」同一把尺 */
+.tl-idx { flex: none; width: 18px; font-size: 11px; color: var(--app-text3);
+  font-variant-numeric: tabular-nums; text-align: right; }
+/* 行尾那一项与它的全文由共用组件带着（NoteTag / NoteBody），这里只把触屏那一档尺寸递过去 */
+.bubble { --note-tag-fs: 12px; --note-body-fs: 14px; --note-body-ml: 34px; }
+/* 簇尾那一段（还没调工具）自成一节：行壳与工具卡同款，只是没有工具名 */
+.note-head {
+  width: 100%; display: flex; align-items: center; gap: 6px; padding: 6px 8px; border: none;
+  background: transparent; cursor: pointer; text-align: left; color: var(--app-text2);
+  font-size: 13px; min-height: 40px; touch-action: manipulation;
+}
 .tool-card .card-head { padding: 8px 10px; }
 .tool-brief { font-family: "SF Mono", Menlo, monospace; font-size: 12px; color: var(--app-text3); background: transparent; overflow: hidden; text-overflow: ellipsis; max-width: 40%; white-space: nowrap; }
 /* 派遣那一支正在跑的第几步：卡头那行本来就会折行，这一条给它自己的主色 */
