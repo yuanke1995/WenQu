@@ -160,6 +160,16 @@ public class Message {
      */
     private String endReason;
 
+    /**
+     * 本轮失败原因（发给用户的那一句 error 帧原文）：模型不可用、额度不足、并发被拒、引擎异常兜底……
+     * <p>挂在<b>本轮最后一行</b>上：跑出了半截回答就挂在回答上（与实时那颗错误卡同位），
+     * 什么都没产出就挂在那一问上（与 {@link #endReason} 同位——「这一问没答上来」本就是那一问的事实）。
+     * <p>为什么必须落库：这一句此前只随流下发一次，用户当场看见「这个模型已经不能用了」，
+     * 刷新一次就等于没发生过，读到的是一轮凭空断掉的对话。
+     * <p>NULL＝本轮没失败。
+     */
+    private String failMsg;
+
     private LocalDateTime createTime;
 
     @TableLogic

@@ -39,9 +39,18 @@ public interface MessageMapper extends BaseMapper<Message> {
             "AND deleted = 0 AND sequence > #{seq}")
     int countAssistantAfter(@Param("sessionId") String sessionId, @Param("seq") int seq);
 
+    /** 本轮最后一行（一问一答共用同一个 turn_id，取序号最大的那条）：失败原因该挂的那一行 */
+    @Select("SELECT * FROM c_ai_message WHERE session_id = #{sessionId} AND turn_id = #{turnId} AND deleted = 0 " +
+            "ORDER BY sequence DESC LIMIT 1")
+    Message selectLastOfTurn(@Param("sessionId") String sessionId, @Param("turnId") String turnId);
+
     /** 给某一问写终止原因（stopped=用户叫停且本轮无回答） */
     @Update("UPDATE c_ai_message SET end_reason = #{reason} WHERE id = #{id}")
     int updateEndReason(@Param("id") String id, @Param("reason") String reason);
+
+    /** 写本轮失败原因（挂在回答上，零产出轮挂在那一问上） */
+    @Update("UPDATE c_ai_message SET fail_msg = #{msg} WHERE id = #{id}")
+    int updateFailMsg(@Param("id") String id, @Param("msg") String msg);
 
     /** 恢复单条软删除消息（撤销删除用） */
     @Update("UPDATE c_ai_message SET deleted = 0 WHERE id = #{id}")

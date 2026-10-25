@@ -1704,6 +1704,35 @@ public class SessionService {
         }
     }
 
+    /** 失败原因落库的原文上限：这一句是给用户看的，不是异常栈（工作流那条会带 run.error 全文） */
+    private static final int FAIL_MSG_MAX = 2000;
+
+    /**
+     * 本轮失败原因补写：挂在<b>本轮最后一行</b>上——跑出了半截回答就挂回答，什么都没产出就挂在那一问上。
+     * <p>补的是「只随流下发一次」那半只钥匙：error 帧当场看得见，刷新一次连「这一轮断过」这件事
+     * 都读不出来，用户面对的是一轮凭空消失的回答（与 {@code warn_msg}、{@code degradations} 同一个错法）。
+     * <p>时机由调用方保证：必须在收尾时调，那时本轮的 assistant 行该落的已经落了——早一步判会把
+     * 失败挂到提问上，界面上就成了「错误卡在问下面、半截回答在它上面」的错位。
+     * <p>写不进去只影响「刷新后还能不能看到这轮为什么失败」，不阻断问答收尾，留痕即可。
+     */
+    public void saveTurnFailure(String sessionId, String turnId, String message) {
+        if (sessionId == null || sessionId.isBlank() || message == null || message.isBlank()) return;
+        String text = message.length() > FAIL_MSG_MAX ? message.substring(0, FAIL_MSG_MAX) + "…" : message;
+        try {
+            Message row = turnId == null || turnId.isBlank()
+                    ? null : messageMapper.selectLastOfTurn(sessionId, turnId);
+            // 本轮一行都没有（提问在更早的提交里没落库）：退回最后一问，别把失败原因丢掉
+            if (row == null) row = messageMapper.selectLastUserMessage(sessionId);
+            if (row == null) {
+                log.warn("[FAIL] 本轮没有可挂失败原因的消息行: session={} turn={}", sessionId, turnId);
+                return;
+            }
+            messageMapper.updateFailMsg(row.getId(), text);
+        } catch (Exception e) {
+            log.warn("[FAIL] 失败原因落库失败 (session={} turn={}): {}", sessionId, turnId, e.getMessage());
+        }
+    }
+
     /**
      * 把一条刚落库的用户提问标记为「目标指令回声」（值＝目标 id）。
      * <p>与 {@code saveMessageWarn} 同一个形状：先按常规写口把正文落进去，再补这一列，
@@ -2003,6 +2032,10 @@ public class SessionService {
         // 本轮终止原因（记在用户提问上）：前端据此在问题下方显示「本轮已停止 · 未产生回答」
         if (m.getEndReason() != null && !m.getEndReason().isBlank()) {
             map.put("endReason", m.getEndReason());
+        }
+        // 本轮失败原因（挂在回答上，零产出轮挂在那一问上）：前端据此重建错误卡，刷新后仍看得见为什么断
+        if (m.getFailMsg() != null && !m.getFailMsg().isBlank()) {
+            map.put("failMsg", m.getFailMsg());
         }
         // 智能体归属（随消息落库的当轮快照）：历史回显「这条是谁答的」；无值表示本轮未使用智能体
         if (m.getAgentId() != null && !m.getAgentId().isBlank()) {

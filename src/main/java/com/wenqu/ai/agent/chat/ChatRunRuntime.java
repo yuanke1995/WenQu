@@ -288,6 +288,25 @@ public class ChatRunRuntime {
     }
 
     /**
+     * 本轮发给用户的那一句失败原因（emitter → 归属与原文），随收尾落到消息行。
+     * <p>为什么按通道记而不是按会话：并发拒绝那一句是在<b>另一轮</b>还挂着的时候发的，按会话记会把
+     * 拒绝算到正在跑的那一轮头上。通道才是「这一轮」的身份。
+     * <p>为什么不在发送当场落库：那时本轮的 assistant 行还没落，失败只能挂到提问上，界面上就成了
+     * 错误卡在问下面、半截回答在它上面——实时那颗卡是跟在回答后面的，两端必须同形。
+     */
+    private record TurnError(String sessionId, String turnId, String text) {
+    }
+
+    private static final java.util.concurrent.ConcurrentHashMap<SseEmitter, TurnError> TURN_ERRORS =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** 这一轮自己的把手：并发拒绝时该会话挂着的是<b>别人</b>那一轮的，按通道比对才认得出 */
+    private static TurnHandle ownHandle(SseEmitter emitter, String sessionId) {
+        TurnHandle h = sessionId == null ? null : TurnRegistry.handle(sessionId);
+        return h == null || h.emitter() == emitter ? h : null;
+    }
+
+    /**
      * 运行中插话（steer）：用户在本轮还在跑时补一句方向性意见，交给<b>框架会话自己</b>送进正在跑的那一轮。
      * <p><b>为什么必须走框架</b>：插话的送达点在框架自己的推理循环里——它每次调模型前把待送达的插话写进
      * 会话上下文（{@code ReActAgent#reasoning} → {@code SessionExecution#beforeStep}），并且
@@ -403,13 +422,30 @@ public class ChatRunRuntime {
      * 失败只记日志不抛错（fail-loud），调用方在关键发送点按返回值短路后续 LLM/检索开销。
      */
     public boolean sendSseEvent(SseEmitter emitter, String type, String content, String sessionId) {
+        return sendSseEvent(emitter, type, content, sessionId, null, null);
+    }
+
+    /**
+     * SSE 发送（带<b>显式</b>轮次身份）。
+     * <p>后两个参数只在「这一轮还没登记把手」的收束句上需要：并发拒绝、工作区占用、流水线繁忙都发生在
+     * {@code TurnRegistry.registerHandle} 之前，其中并发那一句会话上挂着的还是<b>另一轮</b>的把手——
+     * 照把手记账会把拒绝塞进正在跑的那一轮的过程里，不记就成了按谁都查不到的孤儿行（两个读口都按
+     * user_id 过滤）。两头都不对，所以由调用方把这一轮的身份递过来。传 null 即按把手归属（正常轮次）。
+     */
+    public boolean sendSseEvent(SseEmitter emitter, String type, String content, String sessionId,
+                                String ledgerUserId, String ledgerTurnId) {
         // 账本按「事件是否发生」记，不按「是否送达」记：断线转后台续跑的那一轮，恰恰是最需要事后回放的
         // 过程（卡片、编排、裁决都在那一刻之后产生，而通道已经没了）。只收结构性事件
         // （{@link #LEDGER_SSE_TYPES}）——token/thinking/plan_delta 这类增量与心跳没有超出消息表的信息量。
+        TurnHandle handle = ownHandle(emitter, sessionId);
+        String turnId = ledgerTurnId != null ? ledgerTurnId : handle == null ? null : handle.turnId();
         if (LEDGER_SSE_TYPES.contains(type)) {
-            TurnHandle handle = sessionId == null ? null : TurnRegistry.handle(sessionId);
-            sessionEventService.append(sessionId, handle == null ? null : handle.userId(),
-                    handle == null ? null : handle.turnId(), type, content);
+            sessionEventService.append(sessionId,
+                    ledgerUserId != null ? ledgerUserId : handle == null ? null : handle.userId(),
+                    turnId, type, content);
+        }
+        if ("error".equals(type) && content != null && !content.isBlank()) {
+            TURN_ERRORS.put(emitter, new TurnError(sessionId, turnId, content));
         }
         // 运行总线接管（本轮已登记且未终结）：事件按「这一轮」扇给此刻挂着的所有通道，没人看也照发。
         // 返回 true 的含义是「本轮还活着，别把没人看当成客户端断开」——各发送点那条
@@ -458,11 +494,24 @@ public class ChatRunRuntime {
     }
 
     public void completeEmitter(SseEmitter emitter) {
+        persistTurnError(emitter);
         try {
             emitter.complete();
         } catch (Exception e) {
             // 忽略
         }
+    }
+
+    /**
+     * 本轮那句失败原因落到消息行上（没发过 error 帧就是正常轮，取不到即返回）。
+     * <p>挂在收尾这一刻而不是发送那一刻：那时本轮的 assistant 行该落的已经落了，失败才挂得对地方——
+     * 有半截回答就挂在回答上（与实时那颗错误卡同位），什么都没产出才挂在那一问上。
+     * <p>取走即清，所以这里和 {@code chat()} 的 finally 两处都调不会写两遍；谁先到算谁。
+     */
+    public void persistTurnError(SseEmitter emitter) {
+        TurnError err = emitter == null ? null : TURN_ERRORS.remove(emitter);
+        if (err == null || err.sessionId() == null) return;
+        sessionService.saveTurnFailure(err.sessionId(), err.turnId(), err.text());
     }
 
     /**

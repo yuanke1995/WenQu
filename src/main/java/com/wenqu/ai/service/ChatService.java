@@ -120,6 +120,8 @@ public class ChatService {
     private final ConfigService configService;
     /** 附件元信息落库的共用口径（工作流路径用；与框架引擎同一个方法，见 metasJson 的类注释） */
     private final ChatAttachmentService chatAttachments;
+    /** 被挡下的那一问也要带回图片，故与引擎一样持有图片落盘口（字段名不叫 userImages：本类里那是提问入参的惯用局部名） */
+    private final UserImageService userImageService;
     /** 知识库精确检索工具（Function Calling；由 tool.* 配置开关控制，默认开启） */
     private final KnowledgeRetrievalTool knowledgeRetrievalTool;
     /** MCP 客户端服务（外部 MCP server 工具接入；按用户隔离连接池，各人连各人的服务） */
@@ -248,17 +250,13 @@ public class ChatService {
         // 撞上一个已经不能用的模型时它负责决定「清掉会话选择并说明」还是「不发起、告诉用户去哪儿改」。
         final TurnModel turnModel = resolveTurnModel(cmd);
         if (turnModel.unusableMessage() != null) {
-            log.warn("[FAIL-LOUD] 本轮模型已不可用: session={} {}", sessionId, turnModel.unusableMessage());
-            runtime.sendSseEvent(emitter, "error", turnModel.unusableMessage(), sessionId);
-            runtime.completeEmitter(emitter);
+            rejectTurn(emitter, cmd, sessionId, userId, turnId, turnModel.unusableMessage());
             return;
         }
         final String resolvedModel = turnModel.ref();
         if (resolvedModel.isBlank()) {
-            log.warn("[FAIL-LOUD] 未配置任何模型（会话覆盖/个人默认均未指定）: session={}", sessionId);
-            runtime.sendSseEvent(emitter, "error",
-                    "未指定模型：请在对话右上角选择模型，或在个人设置中配置默认模型", sessionId);
-            runtime.completeEmitter(emitter);
+            rejectTurn(emitter, cmd, sessionId, userId, turnId,
+                    "未指定模型：请在对话右上角选择模型，或在个人设置中配置默认模型");
             return;
         }
         // 本轮全部降级/兜底事件（fail-loud：随 done 下发，前端渲染警示条；code 去重，同类只报一次）。
@@ -363,6 +361,7 @@ public class ChatService {
     public ChatService(SessionService sessionService,
                       ConfigService configService,
                       ChatAttachmentService chatAttachments,
+                      UserImageService userImageService,
                       KnowledgeRetrievalTool knowledgeRetrievalTool,
                       BuiltinTools builtinTools,
                       AgentService agentService,
@@ -380,6 +379,7 @@ public class ChatService {
         this.sessionService = sessionService;
         this.configService = configService;
         this.chatAttachments = chatAttachments;
+        this.userImageService = userImageService;
         this.knowledgeRetrievalTool = knowledgeRetrievalTool;
         this.builtinTools = builtinTools;
         this.agentService = agentService;
@@ -417,9 +417,8 @@ public class ChatService {
         // 相互覆盖（后轮覆盖前轮，先完成者注销掉后轮的推送）、首问智能体绑定竞态。断线后台续跑
         // 与 askUser 等待期同样占坑——等待作答时再发新消息正是要挡的交错。限频/归属校验已在上游。
         if (!runtime.tryBeginTurn(sessionId)) {
-            log.warn("[FAIL-LOUD] 同会话并发问答被拒: session={}", sessionId);
-            runtime.sendSseEvent(emitter, "error", "该会话上一轮还在回答中，请等回答结束或先停止本轮，再发送新消息", sessionId);
-            runtime.completeEmitter(emitter);
+            rejectTurn(emitter, cmd, sessionId, userId, null,
+                    "该会话上一轮还在回答中，请等回答结束或先停止本轮，再发送新消息");
             return;
         }
         // 本轮身份在这一刻起可用（早于工作区取锁与流状态构造）：账本的每条事件都挂得到同一个 turnId
@@ -445,10 +444,9 @@ public class ChatService {
                 TurnLease holder = projectTurnGuard.current(projectId);
                 String who = holder == null ? "另一个任务" : holder.describe();
                 log.warn("[FAIL-LOUD] 同工作区并发轮次被拒: project={} session={} 占用者={}", projectId, sessionId, who);
-                runtime.sendSseEvent(emitter, "error",
-                        "这个工作区里" + who + "正在跑，等它结束或先停掉它再发送", sessionId);
                 runtime.endTurnMutex(sessionId);
-                runtime.completeEmitter(emitter);
+                rejectTurn(emitter, cmd, sessionId, userId, turnId,
+                        "这个工作区里" + who + "正在跑，等它结束或先停掉它再发送");
                 return;
             }
         }
@@ -547,6 +545,9 @@ public class ChatService {
                     runtime.completeEmitter(emitter);
                 }
                 } finally {
+                    // 本轮那句失败原因落到消息行（正常轮取不到即返回）。发帧时的 completeEmitter 通常
+                    // 已经落过，这一句只兜「通道没走到收尾就散了」那几条路——取走即清，两处都调不会写两遍
+                    runtime.persistTurnError(emitter);
                     // 「这一问没有回答」的标记只能在本线程走到底时打——早一步判会抢在落库之前，
                     // 晚一步这里已经出不来了。断线宽限到点的中止也在这一并判：那条路径由总线线程
                     // 摘掉把手，只看 runtime.turnStopRequested 会漏打标记，用户下次进来读到的会是
@@ -578,9 +579,80 @@ public class ChatService {
             // L7 fail-loud：繁忙拒绝时告知当前队列长度（用户可感知拥堵程度）
             int queued = pipelineExecutor == null ? 0 : pipelineExecutor.getQueue().size();
             log.warn("[FAIL-LOUD] 问答流水线繁忙，拒绝请求（排队 {}）: session={}", queued, sessionId);
-            runtime.sendSseEvent(emitter, "error", "系统繁忙（当前排队 " + queued + " 个请求），请稍后重试", sessionId);
-            runtime.completeEmitter(emitter);
+            rejectTurn(emitter, cmd, sessionId, userId, turnId,
+                    "系统繁忙（当前排队 " + queued + " 个请求），请稍后重试");
         }
+    }
+
+
+    /**
+     * 这一轮<b>不发起</b>就收束：模型不可用、未指定模型、同会话/同工作区并发被拒、流水线繁忙——
+     * 都是「一个字还没送出去就被挡下」。三件事必须一起做，少一件界面上就缺一块：
+     * <ol><li><b>提问先落库</b>：不落的后果是刷新一次连「我问过什么」都读不出来，侧栏只剩标题，
+     * 用户读到的是「软件吞了我一句话」；</li>
+     * <li>error 帧带<b>显式</b>轮次身份记账本：这几句都发在把手登记之外（并发那一条会话上挂的还是
+     * <b>另一轮</b>的把手），照把手记账会把拒绝塞进正在跑的那一轮的过程里，不记就成了谁都查不到的孤儿行；</li>
+     * <li>收尾把那句原因落到消息行上（{@code completeEmitter} 顺带做），刷新后错误卡还在。</li></ol>
+     *
+     * @param turnId 本轮身份；并发被拒那一条此刻还没生成，传 null 就地补一颗
+     */
+    private void rejectTurn(SseEmitter emitter, ChatCommand cmd, String sessionId, String userId,
+                            String turnId, String message) {
+        final String tid = turnId == null || turnId.isBlank()
+                ? java.util.UUID.randomUUID().toString().replace("-", "") : turnId;
+        appendRejectedQuestion(cmd, sessionId, tid);
+        log.warn("[FAIL-LOUD] 本轮不发起: session={} turn={} {}", sessionId, tid, message);
+        runtime.sendSseEvent(emitter, "error", message, sessionId, userId, tid);
+        runtime.completeEmitter(emitter);
+    }
+
+    /**
+     * 被挡下那一问的落库：与引擎/工作流那两处同一个形状（附件、@ 引用、# 历史引用、图片都带上）。
+     * <p>图片走 {@code processDisplay}：本轮压根没跑起来，谈不上「模型能不能读图」，落盘回显就够了。
+     */
+    private void appendRejectedQuestion(ChatCommand cmd, String sessionId, String turnId) {
+        // 重新生成/插话的提问在上一句请求里已经落过，再写一条就是同一问问两遍
+        if (cmd.isRegenerate() || cmd.isFromSteer()) return;
+        if (cmd.getQuestion() == null || cmd.getQuestion().isBlank()) return;
+        try {
+            List<String> urls = userImageService.processDisplay(cmd.getUserImages()).stream()
+                    .map(UserImageService.UserImage::url).toList();
+            List<ChatRequest.HistoryRef> historyRefs = cmd.getHistoryRefs();
+            sessionService.appendMessage(sessionId, "user", cmd.getQuestion(),
+                    urls.isEmpty() ? null : urls, null, null, null, null, null,
+                    chatAttachments.metasJson(cmd.getAttachments(), cmd.uploadOwnerUid()),
+                    null, null, null, null, null, null, null,
+                    cmd.getMentions() == null || cmd.getMentions().isEmpty()
+                            ? null : com.alibaba.fastjson2.JSON.toJSONString(cmd.getMentions()),
+                    historyRefs == null || historyRefs.isEmpty()
+                            ? null : com.alibaba.fastjson2.JSON.toJSONString(historyRefs),
+                    null, turnId);
+        } catch (Exception e) {
+            // 问没留住不碍「这一轮被挡下」这件事本身：帧照发、日志照记，只是刷新后读不回这一句
+            log.warn("[FAIL-LOUD] 被挡下的提问落库失败: session={} {}", sessionId, e.getMessage());
+        }
+    }
+
+
+    /**
+     * 同步预检（HTTP 400）就把这一问挡下时的留痕：400 照旧由调用方抛，但那一问要留在对话里并带上原因。
+     * <p>与 {@code rejectTurn} 同一条口径，区别只是这条路没有 SSE 通道可发帧——前端拿 400 的 msg
+     * 当场就弹得出错误卡，缺的是「刷一下页面还在」。不补这一笔，用户读到的就是「软件吞了我一句话」。
+     * <p>请求体在这里按同一形状拼一份最小命令对象：预检排在命令装配之前，不为一条留痕去挪校验顺序。
+     */
+    public void recordRejectedQuestion(String sessionId, String userId, ChatRequest request, String message) {
+        final String tid = java.util.UUID.randomUUID().toString().replace("-", "");
+        appendRejectedQuestion(ChatCommand.builder()
+                .sessionId(sessionId).userId(userId)
+                .question(request.getQuestion())
+                .userImages(request.getImages())
+                .attachments(request.getAttachments())
+                .mentions(request.getMentions())
+                .historyRefs(request.getHistoryRefs())
+                .regenerate(request.isRegenerate())
+                .build(), sessionId, tid);
+        sessionEventService.append(sessionId, userId, tid, "error", message);
+        sessionService.saveTurnFailure(sessionId, tid, message);
     }
 
 
@@ -760,7 +832,11 @@ public class ChatService {
                             + "，这一轮没有作答。请在下方重新选一个模型。");
         }
         var pin = sessionService.sessionPinOf(cmd.getSessionId());
-        if (!pin.model().isEmpty()) {
+        // 访客不认「会话钉选」：访客会话那一列是每轮 recordTurnModel 顺手写进去的机器副作用，访客从头到尾
+        // 没做过任何模型决定。认了它，发布者把对话模型切回「跟随发布者个人默认模型」之后，老访客会话会一直
+        // 钉在被换掉的那个模型上——而这一档要跟随的偏偏是发布者的默认，不是「这个访客第一次用了谁」。
+        // （顺带：下面那行清钉选的 updateModel 按发布者 uid 校验归属，访客会话不属他 ⇒ 钉住的模型一失效就 403）
+        if (!cmd.isGuestMode() && !pin.model().isEmpty()) {
             var u = probe.apply(pin.model());
             if (u.usable()) return new TurnModel(pin.model(), null, null);
             sessionService.updateModel(uid, cmd.getSessionId(), "");

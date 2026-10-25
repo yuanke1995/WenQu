@@ -262,9 +262,10 @@
                         <!-- askUser 问答记录：可折叠（默认展开），刷新/历史恢复同构 -->
                         <AskRecordCard v-if="t.name === 'askUser' && t.status !== 'start'" :t="t" />
                         <!-- 咨询另一位助手：这一问一答就地成卡（那份 subChat 随后端工具卡一起落库，
-                             所以刷新/换设备与实时同构）；老消息没这份就不渲染，退回上面的普通工具卡 -->
-                        <SubAgentChatCard v-if="t.subChat && toolCardOpen(t)" :t="t"
-                                          :agent="agentBadgeOf(agentList, t.subChat.agentId, t.subChat.agentName)"
+                             所以刷新/换设备与实时同构）；老消息没这份就不渲染，退回上面的普通工具卡。
+                             直播期（subChat 未到、_steps 已有）挂执行中形态：卡内时间线逐步追加 -->
+                        <SubAgentChatCard v-if="(t.subChat || (t._steps && t._steps.length)) && toolCardOpen(t)" :t="t"
+                                          :agent="t.subChat ? agentBadgeOf(agentList, t.subChat.agentId, t.subChat.agentName) : null"
                                           :sources="m.sources" />
                         <div v-if="t._open" class="tl-card-body">
                       <!-- 脚本扇出清单（P3b 过程下钻）：一次运行内部调了什么、各多久、有没有被挡下。
@@ -317,8 +318,9 @@
                           :streaming="m.loading && !m.failed" />
           </template>
           <template #body-after="{ m, i }">
-              <!-- 错误卡（独立于正文）：回答中断时保留已流出内容，这里给分类文案 + 重试 + 异常详情折叠 -->
-              <div v-if="m.errorCard" class="msg-error-card" :class="{ net: m.errorCard.kind === 'interrupted' }">
+              <!-- 错误卡（独立于正文）：回答中断时保留已流出内容，这里给分类文案 + 重试 + 异常详情折叠。
+                   只管回答那一行：什么都没产出的轮次错误挂在提问上，见下面 #actions-after 那一条 -->
+              <div v-if="m.errorCard && m.role === 'ai'" class="msg-error-card" :class="{ net: m.errorCard.kind === 'interrupted' }">
                 <div class="mec-head"><close-circle-outlined class="mec-ic" /> {{ errorBrief(m.errorCard.message, m.errorCard.kind) }}</div>
                 <div v-if="m.errorCard.kind === 'interrupted'" class="mec-net-tip">
                   已生成的部分已保存。重新生成会重跑本轮并重新计费；若你刚切后台回来，这通常是系统挂起了连接。
@@ -363,8 +365,8 @@
                     </button>
                     <!-- askUser 问答记录：可折叠（默认展开），刷新/历史恢复同构 -->
                     <AskRecordCard v-if="t.name === 'askUser' && t.status !== 'start'" :t="t" />
-                    <SubAgentChatCard v-if="t.subChat && toolCardOpen(t)" :t="t"
-                                      :agent="agentBadgeOf(agentList, t.subChat.agentId, t.subChat.agentName)"
+                    <SubAgentChatCard v-if="(t.subChat || (t._steps && t._steps.length)) && toolCardOpen(t)" :t="t"
+                                      :agent="t.subChat ? agentBadgeOf(agentList, t.subChat.agentId, t.subChat.agentName) : null"
                                       :sources="m.sources" />
                     <div v-if="t._open" class="tl-card-body">
                       <!-- 脚本扇出清单（P3b 过程下钻）：一次运行内部调了什么、各多久、有没有被挡下。
@@ -506,6 +508,11 @@
             <div v-if="m.role === 'user' && m.endReason === 'interrupted'" class="msg-stopped"
                  title="你离开后超过设定时间没人观看，这一轮被自动中断了，没有产出回答">
               <exclamation-circle-outlined /> 本轮已中断 · 未产生回答
+            </div>
+            <!-- 这一轮被挡下或跑挂了、且什么都没产出：原因挂在「这一问」上（库里带回的那一句，
+                 与实时那颗错误卡同一个 errorBrief 口径）。不另摆重新生成按钮——重发入口本就在这一问上 -->
+            <div v-if="m.role === 'user' && m.errorCard" class="msg-fail" :title="m.errorCard.message">
+              <close-circle-outlined /> {{ errorBrief(m.errorCard.message, m.errorCard.kind) }}
             </div>
             <!-- 目标指令回声只撤这一行的动作键：那句「把这件事做到什么算完」是一条指令，
                  不是一等回答的提问，复制/编辑重发对它没有意义（与公开分享页同一口径）。
@@ -4588,6 +4595,13 @@ onMounted(async () => {
 .msg-stopped {
   display: flex; align-items: center; gap: 4px; justify-content: flex-end;
   margin-top: 2px; font-size: 11px; color: var(--app-text3); user-select: none;
+}
+/* 这一问失败了（被挡下或跑挂、且什么都没产出）：占与「本轮已停止」同一行位，
+   但那是平静的事实、这是要人看见的红色；文案可能很长，截一行，全文在悬停说明里 */
+.msg-fail {
+  display: flex; align-items: center; gap: 4px; justify-content: flex-end;
+  margin-top: 2px; font-size: 11px; color: var(--app-danger-text); user-select: none;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .msg-edit-row {
   position: absolute; top: calc(100% + 2px); left: 0; right: 0; height: 24px; z-index: 1;

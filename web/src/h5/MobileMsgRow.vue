@@ -50,6 +50,11 @@
         <div v-if="m.endReason === 'interrupted'" class="u-stopped">
           <exclamation-circle-outlined /> 本轮已中断 · 未产生回答
         </div>
+        <!-- 这一轮被挡下或跑挂了、且什么都没产出：原因挂在「这一问」上（与 PC 端同一份库里的同一句），
+             重发入口本就在下面的动作行里，不另摆一颗按钮 -->
+        <div v-if="m.errorCard" class="u-stopped u-fail" :title="m.errorCard.message">
+          <close-circle-outlined /> {{ errorBrief(m.errorCard.message, m.errorCard.kind) }}
+        </div>
         <div v-if="showActions" class="u-actions">
           <template v-if="showUserActs">
             <div v-if="m.variantCount > 1" class="ver-switch">
@@ -141,7 +146,7 @@
                   </button>
                   <!-- askUser 问答记录：可折叠（默认展开），与 PC 同构 -->
                   <AskRecordCard v-if="t.name === 'askUser' && t.status !== 'start'" :t="t" />
-                  <SubAgentChatCard v-if="t.subChat && toolCardOpen(t)" :t="t" :sources="m.sources"
+                  <SubAgentChatCard v-if="(t.subChat || (t._steps && t._steps.length)) && toolCardOpen(t)" :t="t" :sources="m.sources"
                                     :viewer="false" @citation="onBodyCitation" @preview="onBodyPreview" />
                   <div v-show="t._open" class="card-body">
                     <!-- 脚本扇出清单（P3b 过程下钻）：子调用不各占一张顶层卡片，结构收在这里 -->
@@ -457,6 +462,8 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
   display: flex; align-items: center; gap: 4px; justify-content: flex-end;
   margin-top: 2px; font-size: 11px; color: var(--app-text3); user-select: none;
 }
+/* 失败那一行占同一位置，但要人看见：红色 + 最多两行（触屏比 PC 窄，一句指引常常放不下） */
+.u-fail { color: var(--app-danger-text); text-align: right; }
 .ai-actions { justify-content: flex-start; }
 .act-btn {
   width: 34px; height: 34px; border: none; background: transparent; border-radius: 8px;

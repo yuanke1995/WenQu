@@ -1084,6 +1084,9 @@ const switchSession = async sid => {
             historyRefs: Array.isArray(m.historyRefs) ? m.historyRefs : [],
             // 本轮终止原因（叫停且该轮没产出回答时记在用户提问上）：刷新后据此在问题下补一行说明
             endReason: m.endReason || '',
+            // 本轮失败原因（挂在回答上，什么都没产出时挂在那一问上）：这一句此前只随 error 帧下发一次，
+            // 刷一下页面连「这一轮断过」都读不出来，用户面对的是一轮凭空消失的回答
+            failMsg: typeof m.failMsg === 'string' ? m.failMsg : '',
             // 目标指令回声（记在用户提问上）：气泡挂 /goal 命令标注、不挂普通消息动作
             goalCommand: typeof m.goalCommand === 'string' ? m.goalCommand : '',
             thinking: m.thinking || '',
@@ -1110,6 +1113,9 @@ const switchSession = async sid => {
             timeline: []
           }
           if (Array.isArray(m.timeline)) msg.timeline = restoreTimeline(msg, m.timeline)
+          // 失败轮的错误卡按库里那句重建：实时那颗长在同一行上（有回答挂回答、零产出挂那一问），
+          // kind 留空——它是服务端说的那句业务错误，不是本地这条流断掉（interrupted 那套文案不适用）
+          if (msg.failMsg) msg.errorCard = { message: msg.failMsg, kind: '', at: msg.time || 0 }
           // 存量消息没落思考分段（改动前只存一整块全文）：补一段在头部，别让它从界面上消失
           ensureThinkSegment(msg)
           return msg
@@ -2619,12 +2625,15 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       // 帧形如 {i, agent, type, content}，content 还是子轮那张工具卡的原样载荷。
       // i 在咨询这条通路上恒为 0（BranchRequest 那个 branchIndex 传的是 -1），所以归行只能认
       // agent 那个名字——一位助手在同一轮里不会被派两次（台账按位去重，重试那一次前一张已收尾）。
-      // 刻意不落库：刷新后这一支退回卡片上的「跑了 N 步工具」，那一行宁可空着也不留一条假进度。
+      // start 帧 → 卡头那行「当前步骤」（_live，仍不落库）；终态帧 → 追加进卡上的迷你时间线
+      // （_steps，也只活这一次）——跑完后 subChat.steps（后端同源落库）接管，刷新不丢。
       try {
         const o = typeof payload === 'string' ? JSON.parse(payload) : payload
         if (!o || o.type !== 'tool_status' || !o.agent) return
         const c = typeof o.content === 'string' ? JSON.parse(o.content) : o.content
-        if (!c || !c.name || c.status !== 'start') return
+        if (!c || !c.name) return
+        const terminal = c.status === 'done' || c.status === 'error'
+        if (c.status !== 'start' && !terminal) return
         const list = Array.isArray(msg.toolCalls) ? msg.toolCalls : []
         let card = [...list].reverse().find(x => isDispatchTool(x.name) && x.status === 'start'
           && consultNameOf(x) === o.agent)
@@ -2633,7 +2642,22 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
           const running = list.filter(x => isDispatchTool(x.name) && x.status === 'start')
           if (running.length === 1) card = running[0]
         }
-        if (card) card._live = stepBriefOf(c)
+        if (!card) return
+        if (c.status === 'start') {
+          card._live = stepBriefOf(c)
+          return
+        }
+        card._steps = Array.isArray(card._steps) ? card._steps : []
+        card._steps.push({
+          name: String(c.name || ''),
+          label: String(c.label || ''),
+          ms: Number(c.elapsedMs) || 0,
+          denied: false,
+          st: c.status === 'error' ? 'error' : 'done'
+        })
+        // 与后端 subChat.steps 同一把尺：时间线只留最近 20 步，更早的看步数就够了
+        if (card._steps.length > 20) card._steps.splice(0, card._steps.length - 20)
+        if (card._live) card._live = ''
       } catch (e) { /* 忽略 */ }
     },
     onRunCodeProgress: payload => {

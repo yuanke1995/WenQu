@@ -300,9 +300,23 @@ const consultChatView = t => {
     question: s.question || '',
     answer: s.answer || '',
     steps: Number(s.toolSteps) || 0,
+    // 干活视角的执行时间线（落库那份）：{n=工具名, l=中文名, ms=单步耗时, d=被挡下, s=done|error}
+    stepList: (Array.isArray(s.steps) ? s.steps : []).map(x => (x && typeof x === 'object') ? {
+      name: String(x.n || ''),
+      label: String(x.l || ''),
+      ms: Number(x.ms) || 0,
+      denied: !!x.d,
+      st: x.s === 'error' ? 'error' : 'done'
+    } : null).filter(Boolean),
     dur: toolDuration(Number(s.elapsedMs) || 0),
     sources: (Array.isArray(s.sources) ? s.sources : []).filter(x => x && x.ref),
-    artifacts: (Array.isArray(s.artifacts) ? s.artifacts : []).filter(Boolean),
+    // 产物：新格式 {f,u,s,e} 对象（可点），旧格式纯文件名字符串（只展示）——双兼容
+    artifacts: (Array.isArray(s.artifacts) ? s.artifacts : []).map(a => {
+      if (a && typeof a === 'object') {
+        return { name: String(a.f || ''), url: a.u ? String(a.u) : '', size: Number(a.s) || 0, ext: String(a.e || '') }
+      }
+      return a ? { name: String(a), url: '', size: 0, ext: '' } : null
+    }).filter(Boolean),
     failed: status !== 'done',
     timeout: status === 'timeout',
     error: s.error || ''
