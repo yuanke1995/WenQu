@@ -204,6 +204,28 @@
         <div v-else-if="goalBarMeta" class="m-gb-meta">{{ goalBarMeta }}</div>
       </div>
 
+      <!-- 插话队列：跑着的这一轮里发出去的话先落在这里排队，<b>没点「立即发送」就是还没发出去</b>。
+           吃的是引擎那份 steerQueue（与 PC 同一状态、同一组动作），条目里的状态文字也同词。
+           刻意不搬 PC 的拖动排序：触屏没有可靠的 HTML5 拖拽，而顺序只影响收尾结算的发出次序，
+           入队序已经是对的，做不出「排得更快」就别加一颗拖不动的把手。
+           版式是文字一行、动作一行：360px 屏上把三颗 44px 热区挤到文字同一侧会吞掉整句话。 -->
+      <div v-if="steerQueue.length" class="m-steer">
+        <div v-for="(it, qi) in steerQueue" :key="qi" class="ms-item"
+             :class="{ sending: it.sending, deferred: it.deferred, awaiting: it.awaiting }">
+          <div class="ms-txt">{{ it.text }}</div>
+          <div class="ms-foot">
+            <span v-if="it.deferred" class="ms-state">本轮结束后自动发出</span>
+            <span v-else-if="it.sending" class="ms-state">发送中…</span>
+            <span v-else-if="it.awaiting" class="ms-state">已送出，等这一轮听到</span>
+            <template v-else>
+              <button class="ms-act ghost" type="button" title="丢弃这条" @click="dropSteer(it)"><delete-outlined /></button>
+              <button class="ms-act" type="button" title="取回输入框改" @click="editSteer(it)"><edit-outlined /></button>
+              <button class="ms-go" type="button" @click="sendSteer(it)">立即发送</button>
+            </template>
+          </div>
+        </div>
+      </div>
+
       <!-- 智能体提问面板（一卡多问）：当前会话有挂起提问时整块替换输入卡。
            触屏直接点选；逐题翻页、底部一次提交；答复后面板撤下、输入卡回归，问答记录留在气泡原位 -->
       <div v-if="pendingAsk" class="m-input-card m-askp">
@@ -310,7 +332,13 @@
             <plus-circle-outlined />
           </button>
           <span class="m-tools-sp" />
-          <button v-if="loading" class="m-send stop" type="button" title="停止生成" @click="stop()">
+          <!-- 生成中且框里有字 → 这一点是「插话」（引擎只把它排进队列，不发请求）；没字才是停止本轮。
+               与 PC 那颗键同一条判据（ChatInput 的 showStop）：想改方向不该被迫先停止这一轮。 -->
+          <button v-if="loading && canSend" class="m-send" type="button"
+                  title="插话：先排到上方队列，点那条上的「立即发送」才送进这一轮" @click="send()">
+            <arrow-up-outlined />
+          </button>
+          <button v-else-if="loading" class="m-send stop" type="button" title="停止生成" @click="stop()">
             <pause-circle-outlined />
           </button>
           <button v-else class="m-send" type="button" title="发送" :disabled="!canSend" @click="send()">
@@ -463,7 +491,7 @@ import {
   PlayCircleOutlined,
   ThunderboltOutlined, PlusCircleOutlined, CloseOutlined, GlobalOutlined, SearchOutlined, UpOutlined, DownOutlined,
   BellOutlined, ExclamationCircleOutlined, FileTextOutlined, CopyOutlined, HistoryOutlined,
-  CompressOutlined, EditOutlined, LoadingOutlined, AimOutlined
+  CompressOutlined, EditOutlined, DeleteOutlined, LoadingOutlined, AimOutlined
 } from '@ant-design/icons-vue'
 import { pasteTitle, pasteSub, spawnAnchorOf, openDispatchCard } from '../chat/projections'
 import { useChatEngine } from '../chat/useChatEngine'
@@ -575,6 +603,9 @@ provide('wqChat', engine)
 const {
   text, canSend, send, stop, streamAnswer, messages, loading, currentSessionId, currentSessionTitle,
   panelAi,
+  // 运行中插话：引擎的 send 在 loading 时本来就只入队、不发请求（PC 靠 ⌘/Ctrl+Enter 一步送），
+  // 触屏没有修饰键可组合，所以「立即送」落在队列条目上那颗主按钮——不引入长按之类的隐藏手势
+  steerQueue, sendSteer, editSteer, dropSteer,
   deepThinkOn, effectiveModelLabel, debugDisplayVisible, regenerate, switchBranch, variantSwitching,
   resolveApproval, askSubmitAll, createNewSession, pendingImages, pendingFiles, pickedSkills, pendingMentions,
   // 提问卡选择状态口径与 PC 同一份（单选/多选同一形状），面板只读不自己数
@@ -605,6 +636,11 @@ const {
 
 // 空态引导用：本轮 @ 引用的资料名（欢迎副标题会说明「只在这些资料里找答案」）
 const mentionNames = computed(() => pendingMentions.value.map(m => m.name || m.id))
+
+// 插话入队时引擎会把正文清掉，而 textarea 高度只在 @input 那一路重算（程序改值不触发 input 事件）。
+// 不补这一下，输入卡会顶着一大块空白继续占位——屏幕上看着像输入框坏了。
+// 必须排在引擎解构之后：text 是那里的 const，提前引用会撞暂时性死区、整个 setup 直接抛错。
+watch(text, () => nextTick(autosize))
 
 // ==================== 目标模式（移动壳） ====================
 // 一句话创建：输入框有正文就直接建目标并开跑（PC 是按钮/命令取正文，同一条口径）。
@@ -1236,6 +1272,33 @@ onUnmounted(() => {
 .m-gb-btn:disabled { opacity: .4; }
 .m-gb-meta { font-size: 11.5px; line-height: 16px; color: var(--app-text3); font-variant-numeric: tabular-nums; padding-left: 2px; }
 .m-gb-error { font-size: 11.5px; line-height: 16px; color: var(--app-danger); padding-left: 2px; word-break: break-word; }
+
+/* 插话队列（移动端形态）：虚线边＝「这句还没发出去」，点了之后转实线并换成状态文字。
+   动作钮按 44px 热区口径（与 PC 窄屏那颗发送键同一标准，仓库里 share/mshell 都按 44 断言）。 */
+.m-steer { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.ms-item {
+  border: 1px dashed var(--app-border-strong); border-radius: 12px;
+  background: var(--app-panel); padding: 6px 6px 6px 10px;
+}
+.ms-item.sending, .ms-item.deferred, .ms-item.awaiting { border-style: solid; }
+.ms-txt {
+  font-size: 13px; line-height: 1.45; color: var(--app-text); word-break: break-word;
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
+}
+.ms-foot { display: flex; align-items: center; justify-content: flex-end; gap: 4px; margin-top: 4px; }
+.ms-state { flex: 1; min-width: 0; font-size: 11.5px; line-height: 16px; color: var(--app-text3); text-align: right; }
+.ms-go {
+  flex: none; min-height: 44px; padding: 0 14px; border: none; border-radius: 10px;
+  background: var(--app-accent); color: #fff; font-size: 13px; touch-action: manipulation;
+}
+.ms-go:active { background: var(--app-accent-hover); }
+.ms-act {
+  flex: none; width: 44px; height: 44px; border: none; border-radius: 10px;
+  background: var(--app-panel-2); color: var(--app-text2); font-size: 15px;
+  display: inline-flex; align-items: center; justify-content: center; touch-action: manipulation;
+}
+.ms-act.ghost { background: transparent; color: var(--app-text3); }
+.ms-act:active { background: var(--app-accent-weak); color: var(--app-accent); }
 
 /* 目标改订 sheet（PC 在条子里就地长开，移动壳开底部 sheet）：只有一个目标原文输入框——
    没有验收标准要维护，也没有「另起一条」这条岔路 */
