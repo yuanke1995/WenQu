@@ -77,6 +77,47 @@
         </div>
       </template>
 
+      <!-- ---- 沙盒文件：模型写进沙盒、却没交付成产物的文件 ----
+           露脸判据与 PC 右栏那张卡同一条：有文件 / 读失败 / 正在读。读不到必须说出来并给重试——
+           静默成空列表会被读成「我让它做的文件没了」。折树也吃引擎那一份：接口给的是摊平的一维
+           清单，整条路径摊在一行时名字全被截断，认不出哪份是成品。 -->
+      <template v-if="sandboxFiles.length || sandboxErr || sandboxLoading">
+        <div class="rs-section">沙盒文件<span v-if="sandboxCount" class="rs-n">{{ sandboxCount }} 个{{ sandboxBytes ? ' · ' + sbSize(sandboxBytes) : '' }}</span></div>
+        <div v-if="sandboxLoading" class="rs-empty">正在读取沙盒目录…</div>
+        <div v-else-if="sandboxErr" class="rs-sb-err">
+          <span>{{ sandboxErr }}</span>
+          <button type="button" class="rs-sb-retry" @click="loadSandboxFiles">重试</button>
+        </div>
+        <template v-for="row in sandboxRows" :key="row.key">
+          <button v-if="row.type === 'dir'" type="button" class="rs-sb-dir"
+                  @click="toggleSandboxDir(row.dir.path)"
+                  :title="(row.open ? '收起 ' : '展开 ') + row.dir.path + '/（' + row.dir.count + ' 个文件）'">
+            <span v-for="i in row.depth" :key="i" class="rs-sb-ind" />
+            <caret-right-outlined class="rs-caret" :class="{ open: row.open }" />
+            <folder-open-outlined v-if="row.open" class="rs-ic" />
+            <folder-outlined v-else class="rs-ic" />
+            <span class="rs-sb-name">{{ row.dir.name }}/</span>
+            <span class="rs-n">{{ row.dir.count }} 个 · {{ sbSize(row.dir.size) }}</span>
+          </button>
+          <div v-else class="rs-art rs-sb-file">
+            <span v-for="i in row.depth" :key="i" class="rs-sb-ind" />
+            <span class="rs-art-name" :title="row.file.path">{{ row.file.name }}</span>
+            <span class="rs-n rs-sb-size">{{ sbSize(row.file.size) }}</span>
+            <span class="rs-art-acts">
+              <a v-if="row.file.viewUrl" class="rs-art-act" :href="resolveImg(row.file.viewUrl)"
+                 target="_blank" rel="noopener" title="在新标签页打开"><eye-outlined /></a>
+              <button type="button" class="rs-art-act" :title="'下载 ' + row.file.name"
+                      @click="sandboxDownload(row.file)"><download-outlined /></button>
+              <button v-if="!sandboxTaken.has(row.file.path)" type="button" class="rs-art-act"
+                      title="存为产物（进「我的产物」，可预览可下载）"
+                      @click="sandboxTake(row.file)"><save-outlined /></button>
+              <check-outlined v-else class="rs-art-act rs-sb-taken" title="已存为产物" />
+            </span>
+          </div>
+        </template>
+        <div v-if="sandboxRest" class="rs-act-tip">目录里另有 {{ sandboxRest }} 个文件没列出（这里只列最新 {{ sandboxFiles.length }} 个）</div>
+      </template>
+
       <!-- ---- 目标（与 PC 摘要条同一份 sessionGoal，同一个 GoalCard 组件；PC 右栏不单列目标卡） ----
            卡片只读：状态、轮次、目标原文与卡住的原因。暂停/继续/改原文/删除都只在输入框上方
            那条摘要条上（一个动作只留一个入口），这里不再摆验收/收尾/另起目标那一套。 -->
@@ -132,7 +173,7 @@
 
 <script setup>
 import { computed, inject, reactive, ref, watch } from 'vue'
-import { CaretRightOutlined, FileTextOutlined, DownloadOutlined, ShareAltOutlined, FileMarkdownOutlined, CopyOutlined, SwapOutlined, StopOutlined, EyeOutlined } from '@ant-design/icons-vue'
+import { CaretRightOutlined, FileTextOutlined, DownloadOutlined, ShareAltOutlined, FileMarkdownOutlined, CopyOutlined, SwapOutlined, StopOutlined, EyeOutlined, FolderOutlined, FolderOpenOutlined, SaveOutlined, CheckOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
 import BottomSheet from './BottomSheet.vue'
 import GoalCard from '../components/GoalCard.vue'
@@ -145,7 +186,7 @@ import { buildSessionMd, saveMd } from '../views/exportMd'
 import { copyText } from '../utils/clipboard'
 import { useSessionShare } from '../views/shareSession'
 
-defineProps({ open: { type: Boolean, default: false } })
+const props = defineProps({ open: { type: Boolean, default: false } })
 defineEmits(['close', 'source'])
 
 const engine = inject('wqChat')
@@ -153,7 +194,12 @@ const engine = inject('wqChat')
 // 轮次与「为什么停在这儿」都由它按 projections 那一份算，本 sheet 只负责把卡片摆上去。
 const { groupedSources, lastTokens, lastSources, sessionTokens, sessionRetrieval, sessionArtifacts,
   currentSessionId, currentSessionTitle, messages, ctxTokens, modelIndex, effectiveModel,
-  sessionGoal } = engine
+  sessionGoal,
+  // 沙盒目录：取数、判据、折树、下载与存为产物全吃引擎那一份（与 PC 右栏那张卡同源，
+  // 2026-10-25 从 PC 壳下沉），本 sheet 只负责把它摆成触屏形状
+  sandboxFiles, sandboxRows, sandboxCount, sandboxBytes, sandboxRest,
+  sandboxErr, sandboxLoading, sandboxTaken,
+  loadSandboxFiles, toggleSandboxDir, sandboxDownload, sandboxTake, sbSize } = engine
 
 // 容量构成：与 PC 的 ctxCapData 同一算法（窗口取本轮 tokens.window，回落模型登记窗口；
 // 用量取 prompt，无则 context；分类占窗口比例撑填充段）。分类表是 PC 视图层的同款副本——
@@ -250,6 +296,11 @@ const copyBuilt = () => copyText(built.value?.md, '全文已复制，可粘贴�
 
 // 换会话：清掉上一个会话的导出结果与分享面板，否则"保存文件"会落出别人的会话
 watch(currentSessionId, () => { built.value = null; shareOpen.value = false; resetShare() })
+
+// 每次打开这张 sheet 都重扫一次沙盒目录：sheet 关着的时候引擎只在「一轮收尾 / 切会话」那两拍拉，
+// 而用户点开「沙盒文件」恰恰是要看最新做出来的东西。常驻的 PC 右栏没有这个问题（它一直在屏上，
+// 收尾那一拍已经拉过）。
+watch(() => props.open, v => { if (v) loadSandboxFiles() })
 </script>
 
 <style scoped>
@@ -303,4 +354,30 @@ watch(currentSessionId, () => { built.value = null; shareOpen.value = false; res
   width: 100%; box-sizing: border-box; border: 1px solid var(--app-border); border-radius: 10px;
   background: var(--app-panel-2); color: var(--app-text2); font-size: 13px; padding: 10px 12px; outline: none;
 }
+/* 沙盒文件段：目录行与文件行都按 44px 热区口径；缩进一格 12px，触屏没有 hover 所以
+   目录行直接把「几个文件 · 多大」印在行尾，不藏进悬浮提示 */
+.rs-sb-dir {
+  display: flex; align-items: center; gap: 6px; width: 100%; min-height: 44px;
+  margin-bottom: 4px; padding: 0 10px; box-sizing: border-box;
+  border: none; border-radius: 10px; background: var(--app-panel-2);
+  color: var(--app-text); font-size: 13px; text-align: left; touch-action: manipulation;
+}
+.rs-sb-dir:active { background: var(--app-accent-weak); }
+.rs-sb-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rs-sb-ind { flex: none; width: 12px; }
+.rs-sb-file { align-items: center; }
+.rs-sb-size { flex: none; }
+.rs-sb-taken { color: var(--app-ok); }
+.rs-sb-err {
+  display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--app-danger);
+  padding: 8px 10px; border: 1px solid var(--app-danger-border); border-radius: 10px;
+  background: var(--app-danger-weak); margin-bottom: 6px;
+}
+.rs-sb-err span { flex: 1; min-width: 0; word-break: break-word; }
+.rs-sb-retry {
+  flex: none; min-height: 36px; padding: 0 12px; border: 1px solid var(--app-border);
+  border-radius: 9px; background: var(--app-panel); color: var(--app-text2);
+  font-size: 13px; touch-action: manipulation;
+}
+.rs-sb-retry:active { background: var(--app-accent-weak); color: var(--app-accent); }
 </style>

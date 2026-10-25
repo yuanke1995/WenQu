@@ -1279,9 +1279,9 @@
             <a v-if="row.file.viewUrl" class="rp-art-act" :href="resolveImg(row.file.viewUrl)" target="_blank" rel="noopener"
                title="在新标签页打开"><eye-outlined /></a>
             <button type="button" class="rp-art-act rp-sb-btn" :title="'下载 ' + row.file.name"
-                    @click="onSandboxDownload(row.file)"><download-outlined /></button>
+                    @click="sandboxDownload(row.file)"><download-outlined /></button>
             <button v-if="!sandboxTaken.has(row.file.path)" type="button" class="rp-art-act rp-sb-btn"
-                    title="存为产物（进「我的产物」，可预览可下载）" @click="onSandboxTake(row.file)"><save-outlined /></button>
+                    title="存为产物（进「我的产物」，可预览可下载）" @click="sandboxTake(row.file)"><save-outlined /></button>
             <span v-else class="rp-sb-taken" title="已存为产物"><check-outlined /></span>
           </div>
         </template>
@@ -1604,7 +1604,7 @@ import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, Close
          AimOutlined, EyeOutlined, SaveOutlined, ReloadOutlined } from '@ant-design/icons-vue'
 import { debugRetrieval, deleteMessageGroup, submitFeedback as apiSubmitFeedback,
          addEvalCase, getSessionShare, enableSessionShare, disableSessionShare,
-         getSessionWorkspace, listSandboxFiles, downloadSandboxFile, sandboxFileToArtifact,
+         getSessionWorkspace,
          listSandboxProcs, killSandboxProc,
          listSessions, setNewSessionProject } from '../api'
 import { renderMd, resolveImg, onImgError } from '../utils/markdown'
@@ -3422,6 +3422,10 @@ const {
   ctxRingLevel, panelAi, sessionArtifacts, sessionTodos,
   // 清单的计数与显隐判据吃引擎那一份（此前长在本页，于是移动壳拿不到、清单在手机上整条不可见）
   todoSummary, todoBarVisible,
+  // 沙盒目录同样整族吃引擎：取数、判据、折树、下载与存为产物（2026-10-25 下沉，与任务清单同一刀）
+  sandboxFiles, sandboxRows, sandboxCount, sandboxBytes, sandboxRest,
+  sandboxErr, sandboxLoading, sandboxTaken, sessionSandboxActive,
+  loadSandboxFiles, toggleSandboxDir, sandboxDownload, sandboxTake, sbSize,
   // 图片与附件（chip 的删除走编辑区 → onKeys 剪枝，不再需要按下标移除）
   pendingImages, MAX_FILES, pendingFiles, hasUploadingFile, addFiles,
   takePastedFiles, takePastedText, attachUploaded, attachImage,
@@ -3556,68 +3560,9 @@ const newChatInWs = () => {
   router.push('/chat')
 }
 // ==================== 本会话沙盒目录 ====================
-// 模型写进沙盒、却没交付成产物的文件，此前在应用里没有任何出口：工作区文件栏只读 projects/{工作区}，
-// 会话没挂工作区时那份文件躺在 sessions/{会话} 下看不见（真机 2026-10-23 21:04 那一轮做好的
-// 20.7 KB 看板页就是这么烂在盘上的）。读的是宿主目录，容器空闲回收后照样列得出来。
-const sandboxFiles = ref([])
-const sandboxTotal = ref(0)
-const sandboxErr = ref('')
-const sandboxLoading = ref(false)
-/** 本轮已取回成产物的路径：按钮点过一次就改口，不邀请重复点（重复点会落出一条同名重复产物） */
-const sandboxTaken = ref(new Set())
-/** 被收起的目录（默认全展开：这一栏答的是「刚才做的东西在哪」，收着等用户点等于把答案藏回去） */
-const sandboxClosed = ref(new Set())
-// 沙盒系工具名单：与后端 FrameworkToolLabels.FilesystemToolNames 同口径，另加 run_code（SANDBOX 族仅存的
-// 一把）与 deliver_artifact（把沙盒里做出来的文件存进会话）；ls 是退役老名，只为按裸名落库的老历史兜底。
-const SANDBOX_TOOL_NAMES = new Set(['execute', 'run_code', 'read_file', 'write_file', 'edit_file',
-                                    'grep_files', 'glob_files', 'list_files', 'ls', 'deliver_artifact'])
-/** 本会话是否真用过沙盒：沙盒目录要等模型第一次往里写东西才由 provisioner 建出来——没用过沙盒
- *  工具的会话（新用户第一问最典型）连本人 workspace 根都还没有，这时去拉文件列表只会撞上
- *  「沙盒可能部署在另一台机器上」的假故障（2026-10-24）。判据认「成功跑完的沙盒系工具调用」：
- *  被拒/失败的调用没建出任何目录，不算——只认 done 顺带把「审批被拒却报目录故障」也挡掉。
- *  会话目录里出现文件 ⟺ 本会话有过成功的沙盒系调用（附件、模板复制都落各自的目录，不进这里）。 */
-const sessionSandboxActive = computed(() => messages.value.some(m => m.role !== 'user'
-  && Array.isArray(m.toolCalls)
-  && m.toolCalls.some(t => t && t.status === 'done' && SANDBOX_TOOL_NAMES.has(t.name))))
-async function loadSandboxFiles() {
-  const sid = currentSessionId.value
-  sandboxTaken.value = new Set()
-  if (!sid || !sessionSandboxActive.value) {
-    sandboxFiles.value = []
-    sandboxTotal.value = 0
-    sandboxErr.value = ''
-    sandboxLoading.value = false
-    return
-  }
-  sandboxLoading.value = true
-  sandboxErr.value = ''
-  try {
-    const r = await listSandboxFiles(sid)
-    // 迟到的结果不上屏：await 期间可能已切走会话、或判据翻假（切会话那一瞬 messages 还是
-    // 上一个会话的，历史落位才揭出本会话没用过沙盒）——上屏就会把误报/旧文件盖进当前视图
-    if (currentSessionId.value !== sid || !sessionSandboxActive.value) return
-    sandboxFiles.value = (r && r.data && r.data.files) || []
-    // 条数认服务端给的总数，不认到手这一截：一屏只回最新 300 个，只报到手数量会把「没列全」说成「就这些」
-    sandboxTotal.value = Number(r?.data?.total) || sandboxFiles.value.length
-  } catch (e) {
-    if (currentSessionId.value !== sid || !sessionSandboxActive.value) return
-    // 失败必须说出来并给重试：静默成空列表，用户读到的是「我让它做的文件没了」
-    sandboxFiles.value = []
-    sandboxTotal.value = 0
-    sandboxErr.value = e?.message || '沙盒目录读取失败'
-  } finally {
-    // 只收拾自己这个会话的 loading：切换后新一次加载正在飞，别把它的小字提示掐了
-    if (currentSessionId.value === sid) sandboxLoading.value = false
-  }
-}
-/** 一轮跑完就重列：交付物是那一轮做出来的，不重拉就要刷新页面才看得见。
- *  后台进程同一拍重扫——「起个服务自己看效果」恰恰发生在这一轮里，收尾时它多半还活着。
- *  侧栏那一排的标记也在这同一拍跟新：本轮漏下的进程，收完尾就该在列表里亮起来。 */
-watch(() => loading.value, (v, prev) => { if (prev && !v) { loadSandboxFiles(); loadSandboxProcs(); refreshProcBadges() } })
-/** 判据翻转也要重拉：切会话那一瞬 messages 还是上一个会话的，判据可能是旧值（旧会话用过沙盒、
- *  新会话没用过）；等新会话的历史落到位它才翻成真值/假值，这一拉补的就是那一刻——
- *  没有它，从沙盒会话切进新会话会带着旧判据撞一次假故障，翻成假值后也没人把误报收走。 */
-watch(sessionSandboxActive, () => { loadSandboxFiles(); loadSandboxProcs() })
+// 取数、判据（sessionSandboxActive）、折树与三个重拉时机已全部下沉到 chat/useChatEngine.js
+// （2026-10-25 与任务清单同一刀）：过去整块长在本页，移动壳拿不到，于是「助手在沙盒里做了文件」
+// 这件事在手机上完全不可见。本页只留右栏那张卡的摆法，以及后台进程那一族（下一刀待下沉）。
 // ==================== 沙盒后台进程（模型起的 dev server 这类不会自己退的东西） ====================
 const procs = ref([])
 const procErr = ref('')
@@ -3660,6 +3605,13 @@ async function loadSandboxProcs() {
     }
   }
 }
+/** 一轮跑完就重扫后台进程：占端口的服务恰恰是在这一轮里起的，收尾时它多半还活着；
+ *  侧栏那一排的标记也在这同一拍跟新——本轮漏下的进程，收完尾就该在列表里亮起来。
+ *  沙盒文件清单的重拉已跟着引擎走，这里不再各拉一次（否则每次收尾都要打两遍目录接口）。 */
+watch(() => loading.value, (v, prev) => { if (prev && !v) { loadSandboxProcs(); refreshProcBadges() } })
+/** 判据翻转也要重扫：切会话那一瞬 messages 还是上一个会话的，判据可能是旧值
+ *  （旧会话用过沙盒、新会话没用过），等新会话的历史落到位它才翻成真值/假值。 */
+watch(sessionSandboxActive, () => { loadSandboxProcs() })
 /** 回答里点了「在沙盒中运行」：揭出这张卡并立刻扫一次（那条路没有工具调用记录，判据翻不真） */
 const onSandboxRan = () => { sandboxRanOnce.value = true; loadSandboxProcs() }
 onMounted(() => window.addEventListener('app:sandbox-ran', onSandboxRan))
@@ -3712,105 +3664,15 @@ async function killProc(p) {
     refreshProcBadges()
   }
 }
-async function onSandboxDownload(f) {
-  const sid = currentSessionId.value
-  if (!sid) return
-  try {
-    await downloadSandboxFile(sid, f.path, f.name)
-  } catch (e) {
-    message.warning(`下载失败：${e?.message || '沙盒目录读不到这个文件'}`)
-  }
-}
-async function onSandboxTake(f) {
-  const sid = currentSessionId.value
-  if (!sid) return
-  try {
-    await sandboxFileToArtifact(sid, f.path)
-    sandboxTaken.value = new Set([...sandboxTaken.value, f.path])
-    message.success('已存为产物，可在「我的产物」里查看')
-  } catch (e) {
-    message.warning(`存为产物失败：${e?.message || '文件过大或该类型不支持作为产物'}`)
-  }
-}
-const toggleSandboxDir = path => {
-  const next = new Set(sandboxClosed.value)
-  if (next.has(path)) next.delete(path)
-  else next.add(path)
-  sandboxClosed.value = next
-}
-/** 相对路径折回目录树；目录行的个数/体积是**整棵子树**的，所以一个上百文件的构建目录先看计数就知道值不值得点 */
-const sandboxTree = computed(() => {
-  const root = { name: '', path: '', dirs: new Map(), files: [], count: 0, size: 0, newest: 0 }
-  for (const f of sandboxFiles.value) {
-    const segs = String(f.path || '').split('/').filter(Boolean)
-    segs.pop()   // 末段是文件名，前面的才是目录
-    let node = root
-    let acc = ''
-    for (const seg of segs) {
-      acc = acc ? acc + '/' + seg : seg
-      let d = node.dirs.get(seg)
-      if (!d) {
-        d = { name: seg, path: acc, dirs: new Map(), files: [], count: 0, size: 0, newest: 0 }
-        node.dirs.set(seg, d)
-      }
-      node = d
-    }
-    node.files.push(f)
-  }
-  const roll = d => {
-    for (const f of d.files) {
-      d.count += 1
-      d.size += Number(f.size) || 0
-      d.newest = Math.max(d.newest, Number(f.mtime) || 0)
-    }
-    for (const sub of d.dirs.values()) {
-      roll(sub)
-      d.count += sub.count
-      d.size += sub.size
-      d.newest = Math.max(d.newest, sub.newest)
-    }
-    return d
-  }
-  return roll(root)
-})
-/** 树按收起状态摊平成可渲染的行；同层里目录与文件混排、谁最新谁在前（整栏的读法仍是「刚做出来的在最上面」） */
-const sandboxRows = computed(() => {
-  const out = []
-  const walk = (node, depth) => {
-    const kids = [
-      ...[...node.dirs.values()].map(d => ({ dir: true, node: d, newest: d.newest })),
-      ...node.files.map(f => ({ dir: false, node: f, newest: Number(f.mtime) || 0 })),
-    ].sort((a, b) => b.newest - a.newest)
-    for (const k of kids) {
-      if (!k.dir) {
-        out.push({ type: 'file', key: k.node.path, depth, file: k.node })
-        continue
-      }
-      const open = !sandboxClosed.value.has(k.node.path)
-      out.push({ type: 'dir', key: 'd:' + k.node.path, depth, dir: k.node, open })
-      if (open) walk(k.node, depth + 1)
-    }
-  }
-  walk(sandboxTree.value, 0)
-  return out
-})
-const sandboxCount = computed(() => sandboxTotal.value || sandboxFiles.value.length)
-const sandboxBytes = computed(() => sandboxTree.value.size)
-const sandboxRest = computed(() => Math.max(0, sandboxTotal.value - sandboxFiles.value.length))
-/** 这一栏只有 209px，体积文案要省着写：10 KB 以下留一位小数（1.4 KB 分得出大小），往上取整（146 KB 不需要那两位） */
-const sbSize = n => {
-  const v = Number(n) || 0
-  return v >= 1024 * 1024 ? (v / 1024 / 1024).toFixed(1) + ' MB'
-    : v >= 10 * 1024 ? Math.round(v / 1024) + ' KB'
-    : v >= 1024 ? (v / 1024).toFixed(1) + ' KB' : v + ' B'
-}
+// 沙盒文件的下载与存为产物也住在引擎里（sandboxDownload / sandboxTake）：两端那张卡/那一段
+// 要的是同一个动作、同一句失败话术，页面不再各包一层。
+// 折树（sandboxTree / sandboxRows）、计数与体积文案（sandboxCount / sandboxBytes / sandboxRest / sbSize）
+// 全在引擎那一份里：PC 这张卡与移动壳「状态与来源」里那段读的是同一批值。
 
 watch(currentSessionId, async sid => {
   sessionWorkspace.value = null
-  sandboxClosed.value = new Set()
   sandboxRanOnce.value = false   // 「点过运行按钮」是这一会话的事，切走就作废
-  loadSandboxFiles()
-  loadSandboxProcs()
+  loadSandboxProcs()             // 沙盒文件清单与展开态已由引擎的 watch 负责，这里只扫进程
   if (!sid) return
   try {
     const r = await getSessionWorkspace(sid)
