@@ -2,18 +2,18 @@
   <!-- 窄屏顶栏：菜单入口 / 会话标题 / 搜索 / 新建 / 帮助（H5 外壳下再补一个通知）。
        刻意不放主题切换、退出——窄屏放不下一排图标，这两项菜单底部 .side-foot / sheet foot 已全都有。 -->
   <header class="m-topbar">
-    <button class="m-tb-btn" title="菜单与会话" @click="$emit('toggle-side')">
+    <button class="m-tb-btn" title="菜单与会话" aria-label="菜单与会话" @click="$emit('toggle-side')">
       <menu-outlined />
     </button>
     <div class="m-tb-title" :title="title">{{ title }}</div>
-    <button class="m-tb-btn" title="搜索会话" @click="$emit('search')">
+    <button class="m-tb-btn" title="搜索会话" aria-label="搜索会话" @click="$emit('search')">
       <search-outlined />
     </button>
-    <button class="m-tb-btn" title="新建对话" @click="$emit('new-chat')">
+    <button class="m-tb-btn" title="新建对话" aria-label="新建对话" @click="$emit('new-chat')">
       <plus-outlined />
     </button>
     <!-- 帮助入口：窄屏下 HelpFab（fixed 右下角）会压住对话页输入框，改为顶栏入口 -->
-    <button class="m-tb-btn" title="帮助中心" @click="openHelp">
+    <button class="m-tb-btn" title="帮助中心" aria-label="帮助中心" @click="openHelp">
       <question-circle-outlined />
     </button>
     <!-- 通知（仅 H5 外壳）：触屏下侧栏整体退场，铃铛不能只留在侧栏 foot——

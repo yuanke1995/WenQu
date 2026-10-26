@@ -12,7 +12,7 @@
             <div class="bs-title">{{ title }}</div>
             <div v-if="subtitle" class="bs-sub">{{ subtitle }}</div>
           </div>
-          <button class="bs-close" type="button" title="关闭" @click="close">×</button>
+          <button class="bs-close" type="button" title="关闭" aria-label="关闭" @click="close">×</button>
         </header>
         <div class="bs-body"><slot /></div>
       </section>

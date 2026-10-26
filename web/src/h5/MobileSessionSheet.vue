@@ -36,7 +36,7 @@
           <span v-if="!space.error" class="ss-space-n">{{ space.count }}</span>
           <!-- 真实工作区（有 id）整头可点，进工作区页：约定/文件/会话/运行都在那里。
                「会话」栏（implicit + 没挂工作区）没有工作区可进，保持纯标签 -->
-          <button v-if="space.id" class="ss-space-go" type="button" title="进入工作区"
+          <button v-if="space.id" class="ss-space-go" type="button" title="进入工作区" aria-label="进入工作区"
                   @click.stop="openSpace(space.id)"><right-outlined /></button>
         </div>
         <div v-for="s in space.items" :key="s.id" class="ss-row" :class="{ cur: s.id === currentId }">
@@ -47,7 +47,7 @@
               {{ sessTimeText(s) }}<template v-if="s.messageCount"> · {{ s.messageCount }} 条</template>
             </span>
           </button>
-          <button class="ss-more" type="button" title="会话操作" @click.stop="openMenu(s)"><more-outlined /></button>
+          <button class="ss-more" type="button" title="会话操作" aria-label="会话操作" @click.stop="openMenu(s)"><more-outlined /></button>
         </div>
         <!-- 单个分组取数失败：说清楚是「这一栏没取回来」并给重试，别的分组照常列。
              不画成「暂无会话」——那是空态，会把失败说成没有（与 PC 侧栏同一条判据） -->

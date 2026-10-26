@@ -5,7 +5,7 @@
        发送靠按钮（移动键盘的回车是换行）、停止直点（无桌面 ESC 两段式）。 -->
   <div class="m-chat">
     <header class="m-bar">
-      <button class="m-bar-btn" type="button" title="会话列表" @click="sessionsOpen = true">
+      <button class="m-bar-btn" type="button" title="会话列表" aria-label="会话列表" @click="sessionsOpen = true">
         <menu-outlined />
         <span v-if="loading" class="m-bar-dot" />
       </button>
@@ -13,20 +13,20 @@
         <span class="m-bar-t">{{ currentSessionTitle }}</span>
         <caret-down-outlined class="m-bar-caret" />
       </button>
-      <button class="m-bar-btn" type="button" title="在本会话中查找" @click="openSearch">
+      <button class="m-bar-btn" type="button" title="在本会话中查找" aria-label="在本会话中查找" @click="openSearch">
         <search-outlined />
       </button>
       <!-- 过程回放：PC 的头部「过程」按钮在移动壳的同位入口。账本只服务事后回看，
            放顶栏而不是收进会话 sheet——「这一轮为什么这么答」是排障动作，不该多跳两层 -->
-      <button class="m-bar-btn" type="button" title="看这个会话是怎么跑出来的" @click="openEvents()">
+      <button class="m-bar-btn" type="button" title="看这个会话是怎么跑出来的" aria-label="看这个会话是怎么跑出来的" @click="openEvents()">
         <history-outlined />
       </button>
-      <button class="m-bar-btn" type="button" title="新建对话" @click="createNewSession()">
+      <button class="m-bar-btn" type="button" title="新建对话" aria-label="新建对话" @click="createNewSession()">
         <plus-outlined />
       </button>
       <!-- 通知：手机上「平台有新事」的唯一入口（PC 是侧栏 foot 的铃铛 popover）。
            取数实例由本页 provide，角标与 sheet 列表共用同一份未读数 -->
-      <button class="m-bar-btn" type="button" title="通知" @click="notifOpen = true">
+      <button class="m-bar-btn" type="button" title="通知" aria-label="通知" @click="notifOpen = true">
         <bell-outlined />
         <span v-if="notifUnread > 0" class="m-bar-badge">{{ notifUnread > 99 ? '99+' : notifUnread }}</span>
       </button>
@@ -46,9 +46,9 @@
       <span class="mf-count">
         {{ searchQuery.trim() ? (matchedIdxs.length ? searchPosShown + ' / ' + matchedIdxs.length : '无匹配') : '' }}
       </span>
-      <button class="mf-btn" type="button" title="上一个匹配" :disabled="!matchedIdxs.length" @click="gotoMatch(-1)"><up-outlined /></button>
-      <button class="mf-btn" type="button" title="下一个匹配" :disabled="!matchedIdxs.length" @click="gotoMatch(1)"><down-outlined /></button>
-      <button class="mf-btn" type="button" title="关闭查找" @click="closeSearch"><close-outlined /></button>
+      <button class="mf-btn" type="button" title="上一个匹配" aria-label="上一个匹配" :disabled="!matchedIdxs.length" @click="gotoMatch(-1)"><up-outlined /></button>
+      <button class="mf-btn" type="button" title="下一个匹配" aria-label="下一个匹配" :disabled="!matchedIdxs.length" @click="gotoMatch(1)"><down-outlined /></button>
+      <button class="mf-btn" type="button" title="关闭查找" aria-label="关闭查找" @click="closeSearch"><close-outlined /></button>
     </div>
 
     <!-- 工具审批恢复横幅：点开 tool.approval 通知直达会话时，按 approvalId 重建审批卡
@@ -128,7 +128,7 @@
       </template>
     </main>
 
-    <button v-if="!stickToBottom && messages.length" class="m-jump" type="button" title="回到最新" @click="scrollForce()">
+    <button v-if="!stickToBottom && messages.length" class="m-jump" type="button" title="回到最新" aria-label="回到最新" @click="scrollForce()">
       <arrow-down-outlined />
     </button>
 
@@ -203,15 +203,15 @@
           <span class="m-gb-objective">{{ sessionGoal.objective }}</span>
           <span class="m-gb-acts">
             <button v-if="goalCanPause" type="button" class="m-gb-btn" :disabled="sessionGoal.busy"
-                    title="停止目标（可以再继续）" @click="runGoalAction('pause')"><pause-circle-outlined /></button>
+                    title="停止目标（可以再继续）" aria-label="停止目标（可以再继续）" @click="runGoalAction('pause')"><pause-circle-outlined /></button>
             <button v-else-if="goalCanResume" type="button" class="m-gb-btn" :disabled="sessionGoal.busy"
-                    title="继续目标" @click="runGoalAction('resume')"><play-circle-outlined /></button>
+                    title="继续目标" aria-label="继续目标" @click="runGoalAction('resume')"><play-circle-outlined /></button>
             <button v-if="goalCanEdit" type="button" class="m-gb-btn"
-                    title="编辑目标" @click="startGoalInlineEdit">
+                    title="编辑目标" aria-label="编辑目标" @click="startGoalInlineEdit">
               <edit-outlined />
             </button>
             <button type="button" class="m-gb-btn" :disabled="sessionGoal.busy"
-                    title="删除目标" @click="runGoalAction('clear')"><close-outlined /></button>
+                    title="删除目标" aria-label="删除目标" @click="runGoalAction('clear')"><close-outlined /></button>
           </span>
         </div>
         <div v-if="goalBarError" class="m-gb-error" role="alert">{{ goalBarError }}</div>
@@ -259,8 +259,8 @@
             <span v-else-if="it.sending" class="ms-state">发送中…</span>
             <span v-else-if="it.awaiting" class="ms-state">已送出，等这一轮听到</span>
             <template v-else>
-              <button class="ms-act ghost" type="button" title="丢弃这条" @click="dropSteer(it)"><delete-outlined /></button>
-              <button class="ms-act" type="button" title="取回输入框改" @click="editSteer(it)"><edit-outlined /></button>
+              <button class="ms-act ghost" type="button" title="丢弃这条" aria-label="丢弃这条" @click="dropSteer(it)"><delete-outlined /></button>
+              <button class="ms-act" type="button" title="取回输入框改" aria-label="取回输入框改" @click="editSteer(it)"><edit-outlined /></button>
               <button class="ms-go" type="button" @click="sendSteer(it)">立即发送</button>
             </template>
           </div>
@@ -369,20 +369,20 @@
           <!-- 工具条只留这两颗：模型名要占位，「+」是唯一的收口入口。计划/目标两颗药丸原先把这一排
                撑到 360px 固定宽（药丸缩不动，见 .m-tool 的 min-width），360px 屏上送出键直接画到卡外，
                现在收进「+」的「本轮模式」区，开启态改由输入框上方那颗 chip 说话。 -->
-          <button class="m-tool" type="button" title="添加：模式 / 技能 / 引用 / 历史 / 附件" @click="attachOpen = true">
+          <button class="m-tool" type="button" title="添加：模式 / 技能 / 引用 / 历史 / 附件" aria-label="添加：模式 / 技能 / 引用 / 历史 / 附件" @click="attachOpen = true">
             <plus-circle-outlined />
           </button>
           <span class="m-tools-sp" />
           <!-- 生成中且框里有字 → 这一点是「插话」（引擎只把它排进队列，不发请求）；没字才是停止本轮。
                与 PC 那颗键同一条判据（ChatInput 的 showStop）：想改方向不该被迫先停止这一轮。 -->
           <button v-if="loading && canSend" class="m-send" type="button"
-                  title="插话：先排到上方队列，点那条上的「立即发送」才送进这一轮" @click="send()">
+                  title="插话：先排到上方队列，点那条上的「立即发送」才送进这一轮" aria-label="插话：先排到上方队列，点那条上的「立即发送」才送进这一轮" @click="send()">
             <arrow-up-outlined />
           </button>
-          <button v-else-if="loading" class="m-send stop" type="button" title="停止生成" @click="stop()">
+          <button v-else-if="loading" class="m-send stop" type="button" title="停止生成" aria-label="停止生成" @click="stop()">
             <pause-circle-outlined />
           </button>
-          <button v-else class="m-send" type="button" title="发送" :disabled="!canSend" @click="send()">
+          <button v-else class="m-send" type="button" title="发送" aria-label="发送" :disabled="!canSend" @click="send()">
             <arrow-up-outlined />
           </button>
         </div>
@@ -445,7 +445,7 @@
     <Teleport to="body">
       <div v-if="edit.open" class="m-edit">
         <header class="m-edit-bar">
-          <button class="m-bar-btn" type="button" title="取消" @click="closeEdit"><close-outlined /></button>
+          <button class="m-bar-btn" type="button" title="取消" aria-label="取消" @click="closeEdit"><close-outlined /></button>
           <div class="m-edit-title">编辑后从这一轮重新生成</div>
           <button class="m-edit-ok" type="button" :disabled="!edit.text.trim()" @click="confirmEdit">重新生成</button>
         </header>

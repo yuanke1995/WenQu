@@ -130,11 +130,11 @@
             <span class="rs-n rs-sb-size">{{ sbSize(row.file.size) }}</span>
             <span class="rs-art-acts">
               <a v-if="row.file.viewUrl" class="rs-art-act" :href="resolveImg(row.file.viewUrl)"
-                 target="_blank" rel="noopener" title="在新标签页打开"><eye-outlined /></a>
+                 target="_blank" rel="noopener" title="在新标签页打开" aria-label="在新标签页打开"><eye-outlined /></a>
               <button type="button" class="rs-art-act" :title="'下载 ' + row.file.name"
                       @click="sandboxDownload(row.file)"><download-outlined /></button>
               <button v-if="!sandboxTaken.has(row.file.path)" type="button" class="rs-art-act"
-                      title="存为产物（进「我的产物」，可预览可下载）"
+                      title="存为产物（进「我的产物」，可预览可下载）" aria-label="存为产物（进「我的产物」，可预览可下载）"
                       @click="sandboxTake(row.file)"><save-outlined /></button>
               <check-outlined v-else class="rs-art-act rs-sb-taken" title="已存为产物" />
             </span>

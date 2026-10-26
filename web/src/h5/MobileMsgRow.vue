@@ -65,8 +65,8 @@
               <span class="ver-idx">{{ m.variantIndex || 1 }}/{{ m.variantCount }}</span>
               <button class="ver-btn" :disabled="(m.variantIndex || 1) >= m.variantCount || variantSwitching" @click.stop="$emit('switch-version', index, 1)">›</button>
             </div>
-            <button class="act-btn" title="复制问题" @click.stop="$emit('copy-user', m)"><copy-outlined /></button>
-            <button class="act-btn" title="编辑此问题，从这一轮重新生成" @click.stop="$emit('edit', index)"><edit-outlined /></button>
+            <button class="act-btn" title="复制问题" aria-label="复制问题" @click.stop="$emit('copy-user', m)"><copy-outlined /></button>
+            <button class="act-btn" title="编辑此问题，从这一轮重新生成" aria-label="编辑此问题，从这一轮重新生成" @click.stop="$emit('edit', index)"><edit-outlined /></button>
           </template>
           <span v-if="m.time" class="act-time">{{ fmtMsgTime(m.time) }}</span>
         </div>
@@ -334,13 +334,13 @@
             <button class="ver-btn" :disabled="!canSwitchNext(m)" @click.stop="$emit('switch-version', index, 1)">›</button>
           </div>
           <template v-if="m.messageId">
-            <button class="act-btn" title="复制" @click.stop="$emit('copy', m)"><copy-outlined /></button>
-            <button class="act-btn" :class="{ on: m.fb === 1 }" :disabled="m.fb != null" title="有帮助" @click.stop="$emit('feedback', m, 1)"><like-outlined /></button>
-            <button class="act-btn" :class="{ on: m.fb === 0 }" :disabled="m.fb != null" title="没帮助" @click.stop="$emit('feedback', m, 0)"><dislike-outlined /></button>
-            <button class="act-btn" :disabled="loading" title="重新生成" @click.stop="$emit('retry', index)"><reload-outlined /></button>
+            <button class="act-btn" title="复制" aria-label="复制" @click.stop="$emit('copy', m)"><copy-outlined /></button>
+            <button class="act-btn" :class="{ on: m.fb === 1 }" :disabled="m.fb != null" title="有帮助" aria-label="有帮助" @click.stop="$emit('feedback', m, 1)"><like-outlined /></button>
+            <button class="act-btn" :class="{ on: m.fb === 0 }" :disabled="m.fb != null" title="没帮助" aria-label="没帮助" @click.stop="$emit('feedback', m, 0)"><dislike-outlined /></button>
+            <button class="act-btn" :disabled="loading" title="重新生成" aria-label="重新生成" @click.stop="$emit('retry', index)"><reload-outlined /></button>
             <!-- 单轮操作（PC 是 a-dropdown）：导出这轮 / 加入评测集 / 检索调试 / 删除本轮。
                  触屏没有 hover 菜单，收进底部 sheet（MobileRoundSheet） -->
-            <button class="act-btn" title="更多操作" @click.stop="$emit('more', index)"><more-outlined /></button>
+            <button class="act-btn" title="更多操作" aria-label="更多操作" @click.stop="$emit('more', index)"><more-outlined /></button>
           </template>
           <span v-if="usageCtxTokens(m.tokens)" class="act-time">上下文{{ m.tokens.outputIsReal ? ' ' : ' ≈' }}{{ fmtTokens(usageCtxTokens(m.tokens)) }} tokens</span>
           <span v-if="m.time" class="act-time">{{ fmtMsgTime(m.time) }}</span>

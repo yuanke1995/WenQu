@@ -6,7 +6,7 @@
   <div class="m-chat-head">
     <!-- 左位留给会话级实时状态（子智能体药丸）。没有内容时这块宽度为 0，那一行仍是右对齐的三个图标 -->
     <div class="m-ch-left"><slot /></div>
-    <button class="m-ch-btn" title="在本会话中查找" @click="$emit('search')">
+    <button class="m-ch-btn" title="在本会话中查找" aria-label="在本会话中查找" @click="$emit('search')">
       <search-outlined />
     </button>
     <button class="m-ch-btn" :class="{ 'share-on': shareActive }" @click="$emit('share')"
@@ -14,7 +14,7 @@
       <share-alt-outlined />
     </button>
     <!-- 状态面板：窄屏是覆盖式 sheet，点开即用；文案用图标，语义靠 title 提示 -->
-    <button class="m-ch-btn" title="运行状态与引用来源" @click="$emit('panel')">
+    <button class="m-ch-btn" title="运行状态与引用来源" aria-label="运行状态与引用来源" @click="$emit('panel')">
       <info-circle-outlined />
     </button>
   </div>
