@@ -411,26 +411,24 @@ CREATE TABLE IF NOT EXISTS `c_ai_user` (
     `uid`          VARCHAR(64)  NOT NULL COMMENT '用户标识（登录账号，与鉴权一致）',
     `username`     VARCHAR(100) DEFAULT NULL COMMENT '显示名称',
     `department_id` VARCHAR(50) DEFAULT NULL COMMENT '所属部门ID（外键 c_ai_department.id，可空=未分配）',
-    `role`         VARCHAR(20)  NOT NULL DEFAULT 'user' COMMENT '角色: superadmin | admin | user',
     `status`       INT          DEFAULT 1 COMMENT '状态: 1=启用, 0=禁用',
     `password_hash` VARCHAR(255) DEFAULT NULL COMMENT '密码哈希（PBKDF2；空=未设置，不能本地登录）',
     `login_fail_count` INT      DEFAULT 0 COMMENT '连续登录失败次数',
     `locked_until` DATETIME     DEFAULT NULL COMMENT '锁定至（失败过多时；空=未锁定）',
-    `last_login_time` DATETIME  DEFAULT NULL COMMENT '最近一次登录成功时间（本地登录与 OIDC 回调均记；空=从未登录）',
+    `last_login_time` DATETIME  DEFAULT NULL COMMENT '最近一次登录成功时间（本地登录与 SSO 回调均记；空=从未登录）',
     `default_model` VARCHAR(255) DEFAULT NULL COMMENT '个人默认聊天模型（引用 providerId/modelId；空=不设默认，对话时手动选择）',
     `memory_enabled` INT DEFAULT 1 COMMENT '用户级长期记忆自动提炼开关（个人设置可改）: 1=开, 0=关；历史行加列时按默认 1（保持原行为）',
+    -- role / oidc_sub / oidc_provider 三列已随统一身份模型退役（2026-10-26）：
+    -- 角色 → c_ai_user_role（多角色），外部身份 → c_ai_user_identity（多认证源绑定）；
+    -- 存量库由 DropLegacyColumnsRunner 迁移完成后删除，新库不再建。
     -- default_rerank_model 已随「重排归知识库检索设置」退役（存量库该列无害保留）
     -- default_vision_model 已随「聊天图片理解只看模型能力位」下线（存量库该列无害保留）
-    `oidc_sub`     VARCHAR(255) DEFAULT NULL COMMENT 'OIDC 身份标识（IdP 的 sub；空=未绑定单点登录）',
-    `oidc_provider` VARCHAR(50) DEFAULT NULL COMMENT 'OIDC 认证源（c_ai_oidc_provider.id）。与 oidc_sub 组成复合唯一：一个 sub 在同一认证源下只能绑一个账号，防冒用；两个不同 IdP 签发相同 sub 不再冲突（空=未绑定）',
     `menu_pref`    TEXT        DEFAULT NULL COMMENT '个人侧栏偏好 JSON：{"order":[menuId...],"hidden":[menuId...]}。仅重排/隐藏「本人有权看到」的菜单，不越权；空=未自定义（走菜单表默认顺序与显隐）',
     `avatar`       VARCHAR(512) DEFAULT NULL COMMENT '用户头像：空=昵称首字；emoji=表情头像；以 / 开头=上传图片 URL（/ai/images/avatar/...）',
     `create_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`uid`),
     UNIQUE KEY `uk_username` (`username`),
-    -- MySQL 唯一索引允许多行 NULL ⇒ 未绑定 OIDC 的本地账号不受影响
-    UNIQUE KEY `uk_oidc_provider_sub` (`oidc_provider`, `oidc_sub`),
     KEY `idx_department` (`department_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 用户表（画像/归属 + 本地登录凭据）';
 

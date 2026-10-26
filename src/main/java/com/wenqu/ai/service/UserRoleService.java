@@ -198,21 +198,9 @@ public class UserRoleService {
     public boolean isLastAdminAccount() {
         List<String> adminCodes = roleService.adminCodes();
         if (adminCodes.isEmpty()) return false;
-        Long modern = mapper.selectCount(new LambdaQueryWrapper<UserRole>()
+        Long n = mapper.selectCount(new LambdaQueryWrapper<UserRole>()
                 .in(UserRole::getRoleCode, adminCodes));
-        long total = modern == null ? 0 : modern;
-        if (total > 1) return false;
-        // 兜底：迁移未跑/失败的存量库——旧单角色列是管理员级、且在新表无任何角色行的账号也计入，
-        // 避免把唯一管理员当成可删（迁移完成后该查询恒 0，不构成热路径负担）
-        try {
-            Long legacy = userMapper.selectCount(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<com.wenqu.ai.model.User>()
-                    .in(com.wenqu.ai.model.User::getRole, adminCodes)
-                    .notExists("SELECT 1 FROM c_ai_user_role ur WHERE ur.uid = c_ai_user.uid"));
-            total += legacy == null ? 0 : legacy;
-        } catch (Exception ignored) {
-            // 旧列可能已随迁移批次删除：忽略，以新表口径为准
-        }
-        return total <= 1;
+        return n != null && n <= 1;
     }
 
     /** 某用户角色变更后失效缓存 */

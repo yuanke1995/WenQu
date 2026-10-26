@@ -28,8 +28,7 @@ public class User {
     /** 所属部门ID（c_ai_department.id，可空=未分配） */
     private String departmentId;
 
-    /** 角色: superadmin | admin | user */
-    private String role;
+    // 单角色列已退役 → c_ai_user_role（多角色，granted_by 区分 manual/idp；判定见 UserRoleService）
 
     /** 状态: 1=启用, 0=禁用 */
     private Integer status;
@@ -56,14 +55,8 @@ public class User {
 
     // 个人默认重排模型已退役（重排归知识库检索设置；存量库该列无害保留）
     // 个人默认视觉模型已下线（聊天图片理解只看模型能力位，见 ChatService；存量库该列无害保留）
-
-    /** OIDC 身份标识（IdP 的 sub，与 oidcProvider 组成复合唯一）：空=未绑定单点登录。
-     *  <p>蓝本用「占位用户 oidc:{sub}:{userId}」记录绑定，其注释自述原因是"在不修改表结构的前提下"
-     *  保存绑定关系；本工程有 SchemaMigrator 自动加列，故直接用列承载，不再制造假用户行。</p> */
-    private String oidcSub;
-
-    /** OIDC 认证源（c_ai_oidc_provider.id）：空=未绑定。与 oidcSub 组成复合唯一——一个 sub 在同一认证源下只能绑一个账号，两个不同 IdP 签发相同 sub 不再冲突 */
-    private String oidcProvider;
+    // role / oidcSub / oidcProvider 已随统一身份模型退役（2026-10-26）：
+    // 角色 → UserRole（c_ai_user_role 多角色），外部身份 → UserIdentity（c_ai_user_identity 多认证源绑定）
 
     /** 用户头像：空=昵称首字；emoji 字符=表情头像；以 / 开头=上传图片 URL（/ai/images/avatar/...）。
      *  清空（回落昵称首字）需将列置 null，故更新走 LambdaUpdateWrapper 字符串 set，绕过 MP 默认 NOT_NULL 跳过 null 的策略 */
