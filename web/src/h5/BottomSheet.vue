@@ -147,6 +147,9 @@ const maskStyle = computed(() => ({
   -webkit-overflow-scrolling: touch;
   padding: 10px 12px 16px;
 }
+/* 平板横屏（iPad 1024 宽也走移动壳）下，sheet 里一行 1000px 宽的正文与表单同样读不动：
+   内容列封顶。手机取满宽，这条对 ≤720px 零影响。 */
+.bs-body > * { max-width: min(100%, 720px); margin-inline: auto; }
 /* 把手区（抓手条 + 标题行）：明确的可拖区，不让浏览器把这里的竖向移动抢去当滚动或下拉刷新。
    body 不设 touch-action，内容照常滚。 */
 .bs-grab, .bs-head { touch-action: none; }

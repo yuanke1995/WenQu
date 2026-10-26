@@ -1087,7 +1087,11 @@ onUnmounted(() => {
   display: flex; flex-direction: column;
   background: var(--app-bg); color: var(--app-text);
   overflow: hidden;
+  /* 正文列宽上限：平板横屏（iPad 1024×768 也是触屏且宽 ≤1024，落进移动壳）不封顶就会把
+     一行正文拉到 1000px 宽，眼睛回不了行。手机取 100% —— 这条对 ≤720px 的屏零影响。 */
+  --m-col: min(100%, 720px);
 }
+.m-list > *, .m-composer > *, .m-find, .m-rec { width: var(--m-col); margin-inline: auto }
 
 /* ---- 顶栏（安全区让开刘海）---- */
 .m-bar {
@@ -1229,8 +1233,7 @@ onUnmounted(() => {
 }
 
 /* ---- 输入区 ---- */
-.m-composer {
-  /* 键盘弹起（--kb>0）时容器已按视觉视口收缩，安全区不再叠加——max() 让两者互斥 */
+.m-composer {  /* 键盘弹起（--kb>0）时容器已按视觉视口收缩，安全区不再叠加——max() 让两者互斥 */
   flex: none; padding: 6px 10px calc(8px + max(0px, var(--sab, 0px) - var(--kb, 0px)));
   background: var(--app-panel); border-top: 1px solid var(--app-border);
 }
