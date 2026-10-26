@@ -32,6 +32,9 @@
       </button>
     </header>
 
+    <!-- 连通性：本机断网与服务器不通分开说一行（/m/chat 不经工作台外壳，这里自己挂一份） -->
+    <NetBanner />
+
     <!-- 会话内查找：移动壳没有 Ctrl+F，入口在顶栏。行作为 flex:none 插在消息流之上——
          不用 fixed 是刻意的：keyboard.js 已把容器高写成 --app-vh（已扣软键盘），
          键盘弹起时容器自然收缩，查找条不会被盖住也不会悬浮错位。 -->
@@ -68,9 +71,20 @@
          会话加载时由引擎按待答记录重建底部答题面板；答复后问答记录以工具卡形态留在气泡里。 -->
 
     <main ref="box" class="m-list" @scroll.passive="onScroll">
+      <!-- 历史没取回来：这是一次失败，不是「这个会话还没有消息」。以前这里只有一颗顶栏小圆点
+           闪一下就没了，界面接着把欢迎页画给用户看——用户以为会话被清空了，实际是请求挂了。
+           错误卡占住空态的位置，给出原因和重试出口。 -->
+      <div v-if="historyError" class="m-herr" role="alert">
+        <exclamation-circle-outlined class="mhe-ic" />
+        <div class="mhe-t">这个会话的历史没有加载出来</div>
+        <div class="mhe-s">{{ historyError }}</div>
+        <button class="mhe-btn" type="button" @click="retryHistory">重试</button>
+      </div>
+
       <!-- 空态：品牌 + 欢迎语。门控与 PC 欢迎区同一条：聊天/默认模型未就绪时换成配置引导
-           （没有可用模型时任何提问都只会弹拦截 toast）；loaded=false（首次对账未成功）维持现状，不闪假引导 -->
-      <div v-if="!messages.length" class="m-welcome">
+           （没有可用模型时任何提问都只会弹拦截 toast）；loaded=false（首次对账未成功）维持现状，不闪假引导
+           —— 且必须排掉 historyError：那是「没取回来」，不是「没有」 -->
+      <div v-if="!messages.length && !historyError" class="m-welcome">
         <BrandMark class="m-brand" />
         <template v-if="setupGuide.loaded && !chatDone">
           <div class="m-welcome-title">欢迎使用问渠</div>
@@ -545,6 +559,7 @@ import MobileRoundSheet from './MobileRoundSheet.vue'
 import MobileEventsSheet from './MobileEventsSheet.vue'
 import SkillContentModal from '../components/SkillContentModal.vue'
 import BrandMark from '../components/BrandMark.vue'
+import NetBanner from '../components/NetBanner.vue'
 import SetupGuide from '../components/SetupGuide.vue'
 import WelcomeCopy from '../components/WelcomeCopy.vue'
 import MsgDivider from '../components/MsgDivider.vue'
@@ -661,6 +676,8 @@ const {
   // 任务清单：快照与「何时露/怎么计数」全吃引擎那一份，本页只留折叠开关。
   // 此前移动壳对 sessionTodos 零命中——数据两端都挂，渲染处只有 PC 一份
   sessionTodos, todoSummary, todoBarVisible,
+  // 这一会话的历史有没有取回来（与「取回来了、就是空的」是两条判据，见引擎 historyError 注释）
+  historyError, retryHistory,
   // 手动压缩上下文（入口在「模型与思考」sheet；分隔线与摘要 sheet 在本页。
   // 「压缩中」态由 compacting 一并表达；流尾那行进度只认手动那一路 manualCompacting）
   compacting, manualCompacting, compactNotice, compactContext, compactDividerAt, liveCompactAt,
@@ -1153,6 +1170,22 @@ onUnmounted(() => {
   padding: 12px 12px 8px;
 }
 .m-welcome { display: flex; flex-direction: column; align-items: center; padding: 20px 0 8px; }
+/* 历史取数失败卡：整卡中性（坏的是这一次请求，不是这条会话），只有图标用危险色。
+   重试按 44px 热区口径——它是这块屏幕上唯一该被点中的东西。 */
+.m-herr {
+  display: flex; flex-direction: column; align-items: center; gap: 6px;
+  margin: 20px auto 8px; padding: 18px 16px 20px;
+  background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 12px;
+  text-align: center;
+}
+.mhe-ic { font-size: 22px; color: var(--app-danger); }
+.mhe-t { font-size: 15px; font-weight: 600; color: var(--app-text); }
+.mhe-s { font-size: 12px; color: var(--app-text3); line-height: 1.6; word-break: break-word; }
+.mhe-btn {
+  width: 100%; margin-top: 10px; min-height: 44px; border: none; border-radius: 12px;
+  background: var(--app-accent); color: #fff; font-size: 15px; touch-action: manipulation;
+}
+.mhe-btn:active { opacity: .82; }
 /* 示例卡组件自带 12px 横向内边距（PC 窄屏布局用语）；在列表已加内边距时取消，避免双层缩进 */
 .m-brand { font-size: 40px; }
 .m-welcome-title { margin-top: 12px; font-size: 19px; font-weight: 600; }

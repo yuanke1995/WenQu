@@ -6,6 +6,7 @@
  * - 环境配置：VITE_API_BASE 接口前缀
  */
 import { announce } from './utils/tabSync'
+import { clearUnreachable, ensureNetworkWatch, markRequestOutcome } from './utils/netState'
 
 const BASE = import.meta.env.VITE_API_BASE || '/proxy/api/ai'
 
@@ -26,8 +27,16 @@ const authHeaders = extra => {
  * silentForbidden: 403 时不派发全局 app:forbidden（归属类拒绝由调用方静默处理的场景）
  */
 async function request(path, { method = 'GET', body, timeout = 30000, silentForbidden = false } = {}) {
+  ensureNetworkWatch()
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeout)
+  let gotResponse = false
+  // 抛错前一律先把「连不上服务器」这条判据退回：它的成立只能来自「fetch 没拿到任何响应」
+  // 这一个事实（见 catch 末尾）。业务失败、超时、5xx 都谈不上这句话，挂着它横幅就下不来。
+  const bail = (message, err) => {
+    clearUnreachable()
+    throw err || new Error(message)
+  }
   try {
     const res = await fetch(BASE + path, {
       method,
@@ -35,6 +44,9 @@ async function request(path, { method = 'GET', body, timeout = 30000, silentForb
       body,
       signal: controller.signal
     })
+    // 拿到了 HTTP 响应 = 这台服务器活着，哪怕状态码是 5xx：连通性判据到此翻回「通」
+    gotResponse = true
+    markRequestOutcome(true)
     let data = null
     try { data = await res.json() } catch (e) { /* 非 JSON 响应 */ }
     if (!res.ok) {
@@ -42,13 +54,26 @@ async function request(path, { method = 'GET', body, timeout = 30000, silentForb
       if (res.status === 403 && !silentForbidden) window.dispatchEvent(new CustomEvent('app:forbidden', { detail: data?.msg }))
       const err = new Error(data?.msg || `请求失败(${res.status})`)
       err.status = res.status
-      throw err
+      bail(null, err)
     }
-    if (data && data.success === false) throw new Error(data.msg || '请求失败')
+    if (data && data.success === false) bail(data.msg || '请求失败')
     return data
   } catch (e) {
-    if (e.name === 'AbortError') throw new Error('请求超时，请稍后重试')
-    throw e
+    if (e.name === 'AbortError') {
+      // 超时是我们自己掐的连接，不能当成「连不上服务器」的证据——那一档要说的是「慢」，
+      // 各条错误卡自己会讲，横幅不该跟着一起喊不通
+      bail('请求超时，请稍后重试')
+    }
+    // fetch 在任何响应到达之前抛错（断网、DNS 挂了、服务没起）才是「不通」这条判据的唯一来源
+    if (gotResponse) bail(null, e)
+    markRequestOutcome(false)
+    // 原始的 "Failed to fetch" 不该出现在界面上：它既不说清后果也不说该做什么，而这一路的调用方
+    // 都是直接把 e.message 摊给用户看的（会话列表、会话历史、错误卡）。
+    // 换成一句读得懂的中文，原文挂在 cause 上留给排障。
+    const friendly = new Error('网络请求没有成功，请检查网络后重试')
+    friendly.cause = e
+    friendly.netClass = true
+    throw friendly
   } finally {
     clearTimeout(timer)
   }

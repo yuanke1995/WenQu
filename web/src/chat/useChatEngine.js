@@ -411,6 +411,12 @@ watch(currentSessionId, () => { loadSkills() })
 // 同一会话内仍互斥（输入/重新生成/停止都作用于当前会话），守卫写法不用动。
 const loading = computed(() => chatStreams.has(currentSessionId.value))
 const messages = ref([])
+/**
+ * 当前会话的历史**没取回来**的原因（空串=取到了，不论有没有内容）。
+ * <p>必须有这一格：过去拉取失败只把 messages 清空，于是「断网/500/超时」和「这个会话是空的」
+ * 在界面上长成同一张欢迎页——那是把失败伪装成空态。两端各自按它决定露错误卡还是露空态。
+ */
+const historyError = ref('')
 const currentSessionTitle = computed(() => {
   const s = sessionStore.list.find(x => x.id === currentSessionId.value)
   return s?.title || '新对话'
@@ -1127,6 +1133,7 @@ const switchSession = async sid => {
   router.replace({ path: hooks.chatPath, query: { ...route.query, sid } }).catch(() => {})
   // 同一会话已在加载：复用它的结果，别再发一次请求、也别让两份快照互相覆盖
   if (historyLoads.has(sid)) return historyLoads.get(sid)
+  historyError.value = ''
   const task = (async () => {
   try {
     // 403（会话归属拒绝）由本函数静默回退处理，不触发全局提示
@@ -1222,6 +1229,8 @@ const switchSession = async sid => {
       messages.value = steered.size
         ? list.filter(m => !(m.role === 'user' && m.messageId && steered.has(m.messageId)))
         : list
+      // 取到了就清掉失败标记——哪怕这一会话真的空着，那也是「查过确实没有」，不是失败
+      historyError.value = ''
       // 产物换发新鲜签名（fire-and-forget）：历史接口给的 URL 签好就不变，1 小时后过期即 401。
       // 进会话/切会话都换一次，避免"打开页面久了产物点不动"
       refreshArtifactSigns()
@@ -1241,9 +1250,18 @@ const switchSession = async sid => {
       hooks.scrollForce?.()
     } else if (currentSessionId.value === sid) {
       messages.value = []
+      // 接口回成功但结构不对（r.success=false 且不是 403/404）：这也是「没拿到」，不许当成「没有」
+      historyError.value = r?.msg || '这个会话的历史没取回来'
     }
   } catch (e) {
     if (currentSessionId.value === sid) messages.value = []
+    // 「拉取失败」与「这个会话确实是空的」必须是两个判据：过去这里只把 messages 清空，
+    // 于是断网/500/超时的下场和空会话一模一样——界面摊开一张欢迎页，用户读到的是
+    // 「我聊过的东西没了」。（同一条口径见通知中心那次：空态不许掩盖失败。）
+    // 403/404 不算失败：那是「这条会话不归你/已删除」，走下面那条静默回退。
+    if (currentSessionId.value === sid && e?.status !== 403 && e?.status !== 404) {
+      historyError.value = e?.message || '历史加载失败，请重试'
+    }
     // 非本人/已删除的会话（403/404）：静默清掉地址栏 sid，回退到自己的最近会话或新建
     // （autoPick 与首屏落地同一逻辑）；先刷新列表，避免用陈旧列表再选中已失效会话
     if (!sessionRecovering && (e?.status === 403 || e?.status === 404)
@@ -1269,6 +1287,17 @@ const switchSession = async sid => {
   return task
 }
 
+/**
+ * 重试取当前会话的历史（两端错误卡上那颗钮用）。
+ * 直接走 switchSession：同 sid 有在途加载时它会复用结果，不会并发发两份。
+ */
+const retryHistory = async () => {
+  const sid = currentSessionId.value
+  if (!sid) return
+  historyError.value = ''
+  await switchSession(sid)
+}
+
 const creatingSession = ref(false)
 /**
  * 新建会话。presetAgentId：由「切换智能体」触发时带上目标智能体，落为新会话的待选值
@@ -1287,7 +1316,9 @@ const createNewSession = async presetAgentId => {
       agentMap.value = { ...agentMap.value, [emptySid]: presetAgentId || '' }
     }
     if (currentSessionId.value !== emptySid) await switchSession(emptySid)
-    else messages.value = []
+    // 这一句把视图判成「就是空的」（列表里 messageCount=0），所以失败标记要一起清：
+    // 留着它，界面上会在一条新会话上方画一张「历史没取回来」的错误卡
+    else { messages.value = []; historyError.value = '' }
     router.replace({ path: hooks.chatPath, query: { sid: emptySid } })
     hooks.focusInput?.()
     return
@@ -1302,6 +1333,7 @@ const createNewSession = async presetAgentId => {
         agentMap.value = { ...agentMap.value, [sid]: presetAgentId || '' }
       }
       messages.value = []
+      historyError.value = ''
       router.replace({ path: hooks.chatPath, query: { sid: r.data.sessionId } })
       await loadSessions()
       hooks.focusInput?.()
@@ -1343,7 +1375,7 @@ const handleDeleteSession = async sid => {
     if (sid === currentSessionId.value) {
       const remaining = sessionStore.list.filter(s => s.id !== sid && (s.messageCount ?? 0) > 0)
       if (remaining.length > 0) await switchSession(remaining[0].id)
-      else { settleSteerOnLeave(); messages.value = []; currentSessionId.value = null; router.replace(hooks.chatPath) }
+      else { settleSteerOnLeave(); messages.value = []; historyError.value = ''; currentSessionId.value = null; router.replace(hooks.chatPath) }
     }
     await loadSessions()
   } catch (e) { message.error(e.message || '删除失败') }
@@ -3705,6 +3737,8 @@ watch(sessionSandboxActive, () => { loadSandboxFiles() })
     sessionTokens, sessionRetrieval, sessionTodos,
     // 任务清单的派生态只在这一处算（PC 与移动壳同吃这一份，页面只留折叠开关）
     todoSummary, todoAllDone, todoBarVisible,
+    // 「这一会话的历史没取回来」与「取回来了、就是空的」是两个事实，分开暴露（见 historyError 注释）
+    historyError, retryHistory,
     // 沙盒目录：取数、判据与折树一份两用（PC 右栏那张卡与移动壳「状态与来源」里那段同吃）
     sandboxFiles, sandboxRows, sandboxCount, sandboxBytes, sandboxRest,
     sandboxErr, sandboxLoading, sandboxTaken, sessionSandboxActive,

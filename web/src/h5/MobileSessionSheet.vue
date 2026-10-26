@@ -32,7 +32,8 @@
         <div class="ss-space">
           <folder-outlined class="ss-space-ic" />
           <span class="ss-space-name">{{ space.name }}</span>
-          <span class="ss-space-n">{{ space.count }}</span>
+          <!-- 取数失败时不报条数：那个 0 是「没取回来」的副产品，摆在栏头读起来就是「这个工作区没有会话」 -->
+          <span v-if="!space.error" class="ss-space-n">{{ space.count }}</span>
           <!-- 真实工作区（有 id）整头可点，进工作区页：约定/文件/会话/运行都在那里。
                「会话」栏（implicit + 没挂工作区）没有工作区可进，保持纯标签 -->
           <button v-if="space.id" class="ss-space-go" type="button" title="进入工作区"
@@ -48,7 +49,16 @@
           </button>
           <button class="ss-more" type="button" title="会话操作" @click.stop="openMenu(s)"><more-outlined /></button>
         </div>
-        <div v-if="!space.items.length" class="ss-space-empty">{{ kw ? '没有匹配的会话' : '暂无会话' }}</div>
+        <!-- 单个分组取数失败：说清楚是「这一栏没取回来」并给重试，别的分组照常列。
+             不画成「暂无会话」——那是空态，会把失败说成没有（与 PC 侧栏同一条判据） -->
+        <div v-if="space.error" class="ss-space-err">
+          <span class="sse-t">这一栏的会话没加载出来</span>
+          <span class="sse-r">{{ space.error }}</span>
+          <button class="sse-btn" type="button" :disabled="space.loading" @click="reloadSpace(space)">
+            {{ space.loading ? '加载中…' : '重试' }}
+          </button>
+        </div>
+        <div v-else-if="!space.items.length" class="ss-space-empty">{{ kw ? '没有匹配的会话' : '暂无会话' }}</div>
         <button v-if="space.hasMore" class="ss-more-load" type="button" :disabled="space.loadingMore"
                 @click="loadSpaceMore(space)">
           {{ space.loadingMore ? '加载中…' : `查看更多 (${space.count - space.items.length})` }}
@@ -127,7 +137,7 @@ import { installable, installEntryVisible, promptInstall } from './pwa'
 import BottomSheet from './BottomSheet.vue'
 import MoveToWorkspaceModal from '../components/MoveToWorkspaceModal.vue'
 import UserAvatar from '../components/UserAvatar.vue'
-import { sessionStore, loadSessions, loadSpaceMore, NO_SPACE_KEY, resetSessionStore } from '../views/store'
+import { sessionStore, loadSessions, loadSpaceMore, reloadSpace, NO_SPACE_KEY, resetSessionStore } from '../views/store'
 import { pinSession, favoriteSession, renameSessionApi, logoutApi, deleteSessionApi, listProjects, moveSessionProject } from '../api'
 import { authUser, clearAuth } from '../utils/auth'
 import { themeState, toggleTheme } from '../utils/theme'
@@ -280,7 +290,10 @@ const sessTimeText = s => relText(sessTime(s.updateTime))
 const total = computed(() => sessionStore.total || sessionStore.list.length)
 // 移动端不展示空的「会话」栏段：PC 侧栏要用它占住「会话 (0)」的位置，
 // 手机上的空分组只会把真正的工作区往下推。
-const spaces = computed(() => sessionStore.spaces.filter(s => s.key !== NO_SPACE_KEY || s.count > 0))
+// 但取数失败的分组必须留着（count=0 是「没取回来」的副产品，不是「这里真的没有会话」）——
+// 否则这一栏整块消失，用户看到的就是一份看起来完整的列表。
+const spaces = computed(() =>
+  sessionStore.spaces.filter(s => s.error || s.key !== NO_SPACE_KEY || s.count > 0))
 
 const menuFor = ref(null)
 const renaming = ref(false)
@@ -350,8 +363,11 @@ const doDelete = () => {
   font-size: 13px; color: var(--app-text2);
 }
 .ss-space-ic { font-size: 13px; color: var(--app-text3); flex: none; }
-.ss-space-name { font-weight: 500; color: var(--app-text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ss-space-n { margin-left: auto; font-size: 12px; color: var(--app-text3); }
+/* 名字占满剩余宽度，把「计数 + 进工作区」推到右边。
+   不用 .ss-space-n{margin-left:auto} 那套：取数失败时计数整颗不渲染（那个 0 会读成「这里没有会话」），
+   靠它撑右的话箭头就会跟着贴到名字后面，版式一坏一好取决于有没有报错 */
+.ss-space-name { flex: 1; font-weight: 500; color: var(--app-text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ss-space-n { font-size: 12px; color: var(--app-text3); }
 /* 进工作区：计数右侧的箭头钮。常显（不像 ⋯ 那样平时隐身）——分组头是这棵树里
    唯一的「往下走一层」入口，藏起来等于没有 */
 .ss-space-go {
@@ -362,6 +378,21 @@ const doDelete = () => {
 }
 .ss-space-go:active { color: var(--app-accent); background: var(--app-accent-weak); }
 .ss-space-empty { padding: 4px 2px 6px 22px; font-size: 12px; color: var(--app-text3); }
+/* 分组取数失败：一行原因 + 一颗重试钮（钮按 44px 热区口径，与 sheet 里其它动作同标准） */
+.ss-space-err {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 2px 4px 22px;
+  border-top: 1px dashed var(--app-border); border-bottom: 1px dashed var(--app-border);
+}
+.sse-t { flex: none; font-size: 12px; color: var(--app-danger); }
+.sse-r { flex: 1; min-width: 0; font-size: 12px; color: var(--app-text3); line-height: 1.5; word-break: break-word; }
+.sse-btn {
+  flex: none; min-height: 44px; padding: 0 14px;
+  border: 1px solid var(--app-border); border-radius: 9px;
+  background: var(--app-panel); color: var(--app-text2); font-size: 13px; touch-action: manipulation;
+}
+.sse-btn:disabled { opacity: .55; }
+.sse-btn:active { background: var(--app-accent-weak); color: var(--app-accent); }
 .ss-row { display: flex; align-items: stretch; gap: 2px; border-radius: 10px; padding-left: 10px; }
 .ss-row.cur { background: var(--app-accent-weak); }
 .ss-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; align-items: flex-start; padding: 10px; border: none; background: transparent; text-align: left; touch-action: manipulation; }

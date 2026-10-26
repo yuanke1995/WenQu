@@ -117,7 +117,18 @@
            按待答记录重建底部答题面板（hydratePendingAsk），与实时卡同一处、同一套交互。 -->
 
       <div class="messages" ref="box" @scroll="onMessagesScroll">
-        <div v-if="messages.length === 0" class="welcome">
+        <!-- 历史没取回来：这是一次失败，不是「这个会话还没有消息」。画成欢迎页会让人以为
+             会话被清空了，实际是请求挂了——错误卡占住空态位置，给出原因和重试出口（与移动壳同一判据） -->
+        <div v-if="historyError" class="hist-err" role="alert">
+          <exclamation-circle-outlined class="he-ic" />
+          <div class="he-body">
+            <div class="he-t">这个会话的历史没有加载出来</div>
+            <div class="he-s">{{ historyError }}</div>
+          </div>
+          <button class="app-btn small" type="button" @click="retryHistory">重试</button>
+        </div>
+
+        <div v-if="messages.length === 0 && !historyError" class="welcome">
           <BrandMark :size="44" class="welcome-mark" />
           <!-- 引导卡：聊天模型/默认模型未就绪时显示（loaded 门控——首次对账未成功前维持现状，
                宁可晚一拍引导，不给已配好的存量用户闪一帧假引导）。没有可用模型时任何提问都只会弹拦截 toast -->
@@ -3422,6 +3433,8 @@ const {
   ctxRingLevel, panelAi, sessionArtifacts, sessionTodos,
   // 清单的计数与显隐判据吃引擎那一份（此前长在本页，于是移动壳拿不到、清单在手机上整条不可见）
   todoSummary, todoBarVisible,
+  // 这一会话的历史有没有取回来（与「取回来了、就是空的」是两条判据，见引擎 historyError 注释）
+  historyError, retryHistory,
   // 沙盒目录同样整族吃引擎：取数、判据、折树、下载与存为产物（2026-10-25 下沉，与任务清单同一刀）
   sandboxFiles, sandboxRows, sandboxCount, sandboxBytes, sandboxRest,
   sandboxErr, sandboxLoading, sandboxTaken, sessionSandboxActive,
@@ -4309,6 +4322,16 @@ onMounted(async () => {
 
 .messages { flex: 1; overflow-y: auto; padding: 20px 32px 8px; scrollbar-gutter: stable; }
 .welcome { text-align: center; padding: 72px 20px 40px; }
+/* 历史取数失败卡：中性面板 + 只有图标用危险色（坏的是这一次请求，不是这条会话） */
+.hist-err {
+  display: flex; align-items: center; gap: 10px;
+  max-width: 560px; margin: 16px auto 4px; padding: 12px 14px;
+  background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 10px;
+}
+.he-ic { font-size: 18px; color: var(--app-danger); flex: none; }
+.he-body { flex: 1; min-width: 0; }
+.he-t { font-size: 13px; font-weight: 600; color: var(--app-text); }
+.he-s { font-size: 12px; color: var(--app-text3); margin-top: 2px; word-break: break-word; }
 /* 品牌标 = BrandMark 组件（自带圆角与品牌渐变），留出与标题的间距 */
 .welcome-mark { display: block; margin: 0 auto; }
 .welcome h2 { margin: 14px 0 6px; font-size: 16px; font-weight: 500; }

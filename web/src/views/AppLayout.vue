@@ -428,6 +428,9 @@
       <MobileTopBar v-if="isNarrow || mobileShell" :notif="mobileShell" :unread="unreadCount"
                     @toggle-side="onMenuEntry" @search="openSideSearch" @new-chat="newChat"
                     @notif="notifSheetOpen = true" />
+      <!-- 连通性：本机断网与服务器不通分开说一行。放在内容区之上而不是各处 toast——
+           「现在问不了」是持续状态，闪一条就没了会让人反复试 -->
+      <NetBanner />
       <div class="main-body">
         <DesktopOnlyGuard v-if="isNarrow || mobileShell" :path="route.path">
           <router-view />
@@ -481,6 +484,7 @@ import { isNarrow, mobileShell } from '../h5/mobile'
 import BrandMark from '../components/BrandMark.vue'
 import HelpFab from '../components/HelpFab.vue'
 import MobileTopBar from '../h5/MobileTopBar.vue'
+import NetBanner from '../components/NetBanner.vue'
 import MobileSessionSheet from '../h5/MobileSessionSheet.vue'
 import MobileNotifSheet from '../h5/MobileNotifSheet.vue'
 import DesktopOnlyGuard from '../h5/DesktopOnlyGuard.vue'
