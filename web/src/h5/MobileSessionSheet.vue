@@ -108,7 +108,7 @@
         <button class="ss-menu-btn danger" type="button" @click="doDelete"><delete-outlined />删除</button>
       </div>
       <div v-if="renaming" class="ss-rename">
-        <input v-model="renameText" class="ss-rename-input" type="text" placeholder="会话名称" @keydown.enter="confirmRename" />
+        <input v-model="renameText" class="ss-rename-input" type="text" placeholder="会话名称" enterkeyhint="done" @keydown.enter="confirmRename" />
         <button class="ss-menu-btn" type="button" @click="confirmRename">保存</button>
         <button class="ss-menu-btn" type="button" @click="renaming = false">取消</button>
       </div>

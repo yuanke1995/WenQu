@@ -61,7 +61,7 @@
           <button class="as-subtab" :class="{ on: mentionTab === 'doc' }" type="button" @click="switchMentionTab('doc')">文档</button>
           <button class="as-subtab" :class="{ on: mentionTab === 'agent' }" type="button" @click="switchMentionTab('agent')">智能体</button>
         </div>
-        <input v-model="mentionQuery" class="as-filter" type="search" placeholder="筛选…" />
+        <input v-model="mentionQuery" class="as-filter" type="search" placeholder="筛选…" enterkeyhint="search" />
         <div v-if="mentionLoading" class="as-empty">加载中…</div>
         <template v-else>
           <button v-for="k in (mentionTab === 'kb' ? mentionKbFiltered : [])" :key="'kb' + k.id" class="as-row" :class="{ on: isMentioned('kb', k.id) }"
@@ -90,7 +90,7 @@
       <!-- ==================== 历史(#) ==================== -->
       <template v-else-if="tab === 'hist'">
         <div class="as-hint">勾选本会话中的历史问答，把它们作为本轮回答的上下文（最多 10 条）</div>
-        <input v-model="histQuery" class="as-filter" type="search" placeholder="筛选…" />
+        <input v-model="histQuery" class="as-filter" type="search" placeholder="筛选…" enterkeyhint="search" />
         <button v-for="hm in histCandidates" :key="hm.messageId" class="as-row" :class="{ on: isHistPicked(hm.messageId) }"
                 type="button" @click="toggleHistoryRef(hm)">
           <span class="as-role">{{ hm.role === 'user' ? '问' : '答' }}</span>

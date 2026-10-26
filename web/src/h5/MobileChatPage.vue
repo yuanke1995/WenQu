@@ -296,7 +296,7 @@
           <div class="m-askp-opt m-askp-custom" :class="{ sel: askCustomPicked(pendingAsk.ask, mAskPage) }">
             <span v-if="mCurAsk.multi" class="m-askp-tick" :class="{ on: askCustomPicked(pendingAsk.ask, mAskPage) }"></span>
             <span class="m-askp-no">{{ mCurAsk.options.length + 1 }}.</span>
-            <input v-model="pendingAsk.ask.customs[mAskPage]" class="m-askp-input" :maxlength="2000"
+            <input v-model="pendingAsk.ask.customs[mAskPage]" class="m-askp-input" :maxlength="2000" enterkeyhint="done"
                    :disabled="pendingAsk.ask.busy || pendingAsk.ask.answered || mAskExpired"
                    placeholder="输入你的回答…" @blur="commitCustomM(mAskPage, false)"
                    @keydown.enter.prevent="commitCustomM(mAskPage, true)" />
@@ -481,7 +481,7 @@
         </button>
       </div>
       <div v-if="csumInstrOpen" class="m-csum-instr">
-        <input v-model="csumInstr" class="m-csum-instr-input" maxlength="200"
+        <input v-model="csumInstr" class="m-csum-instr-input" maxlength="200" enterkeyhint="done"
                placeholder="这次摘要要保留什么、忽略什么" @keyup.enter="applyRecompact" />
         <button class="app-btn small" type="button" :disabled="compacting" @click="applyRecompact">
           {{ compacting ? '压缩中…' : '重新压缩' }}
