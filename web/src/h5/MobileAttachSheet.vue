@@ -279,4 +279,21 @@ const onImg = e => {
 .as-img .as-del { position: absolute; top: -8px; right: -8px; background: var(--app-panel); border-radius: 50%; width: 24px; height: 24px; font-size: 14px; box-shadow: var(--app-shadow-sm); }
 .as-foot { position: sticky; bottom: 0; padding: 8px 0 0; background: var(--app-panel); }
 .as-done { width: 100%; min-height: 44px; border: none; border-radius: 12px; background: var(--app-accent); color: #fff; font-size: 15px; touch-action: manipulation; }
+/* 触屏热区：视觉尺寸都不动。
+   - 子页签 .as-subtab 成排（flex:1 已占满宽）→ 只补命中高度；
+   - 行尾的删除钮 .as-del 只向右补，向左让出 4px，否则会盖住同一行左侧那条技能的点开入口；
+   - 图片缩略图角上那颗 .as-img .as-del 四周都是留白，双向补到 44。 */
+.as-subtab, .as-del, .as-img .as-del { position: relative; }
+.as-subtab::after {
+  content: ''; position: absolute; top: 50%; left: 0; right: 0;
+  height: 44px; transform: translateY(-50%);
+}
+.as-del::after {
+  content: ''; position: absolute; top: 50%; right: -8px; transform: translateY(-50%);
+  width: 44px; height: 44px;
+}
+.as-img .as-del::after {
+  content: ''; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: 44px; height: 44px;
+}
 </style>

@@ -48,4 +48,10 @@ defineEmits(['search', 'share', 'panel'])
 .m-ch-btn:active { color: var(--app-accent); background: var(--app-accent-weak); }
 /* 分享激活态：琥珀（--app-warn）= 侧栏会话行分享标记同色；按下也不闪回强调蓝（激活是状态非手势） */
 .m-ch-btn.share-on, .m-ch-btn.share-on:active { color: var(--app-warn); }
+/* 触屏热区：头部这几颗 34px 的钮成排，只补命中高度、横向不扩（对扩会互相挡点击） */
+.m-ch-btn { position: relative; }
+.m-ch-btn::after {
+  content: ''; position: absolute; top: 50%; left: 0; right: 0;
+  height: 44px; transform: translateY(-50%);
+}
 </style>

@@ -242,4 +242,11 @@ const doCompact = async () => {
 .ms-group .ms-quota-flag { margin-left: 6px; }
 .ms-row .ms-quota-flag { margin-left: auto; }
 .ms-row .ms-check + .ms-quota-flag, .ms-row .ms-quota-flag + .ms-check { margin-left: 6px; }
+/* 触屏热区：模型/思考那排 chip 视觉仍是 36px，只补命中高度到 44（横向不扩——它们 gap 8 紧挨着，
+   对扩会互相挡点击）。开关 .ms-switch 本来就是 44×26，宽度已达标，不动。 */
+.ms-chip { position: relative; }
+.ms-chip::after {
+  content: ''; position: absolute; top: 50%; left: 0; right: 0;
+  height: 44px; transform: translateY(-50%);
+}
 </style>

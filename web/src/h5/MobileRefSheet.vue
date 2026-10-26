@@ -422,6 +422,12 @@ watch(() => props.open, v => { if (v) loadSandboxFiles() })
   font-size: 13px; touch-action: manipulation;
 }
 .rs-sb-retry:active { background: var(--app-accent-weak); color: var(--app-accent); }
+/* 触屏热区：重试那颗 36px，左边是错误文案（不可点）→ 只补命中高度，横向不扩免得文案与钮抢手 */
+.rs-sb-retry { position: relative; }
+.rs-sb-retry::after {
+  content: ''; position: absolute; top: 50%; left: 0; right: 0;
+  height: 44px; transform: translateY(-50%);
+}
 /* 本轮过程总览：只读行（不点），行高 34 已够读；在跑的那一行给强调色，一眼看到卡在哪一步 */
 .rs-phase { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--app-accent); padding: 2px 2px 8px; }
 .rs-phase-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--app-accent); animation: rs-blink 1.2s ease-in-out infinite; }

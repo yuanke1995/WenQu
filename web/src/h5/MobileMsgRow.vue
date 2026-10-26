@@ -647,6 +647,13 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
 
 .ver-switch { display: inline-flex; align-items: center; border: 1px solid var(--app-border); border-radius: 8px; overflow: hidden; margin-right: 4px; }
 .ver-btn { width: 34px; height: 34px; border: none; background: var(--app-panel); color: var(--app-text2); font-size: 16px; touch-action: manipulation; }
+/* 触屏热区：操作行、版本切换 ‹ ›、推荐标签都是**密集成排**的钮，只补高度不补宽度——
+   横向对扩会让后渲染的那颗盖住前一颗的外侧半区，点上去没反应。视觉尺寸一律不动。 */
+.act-btn, .ver-btn, .related-tag { position: relative; }
+.act-btn::after, .ver-btn::after, .related-tag::after {
+  content: ''; position: absolute; top: 50%; left: 0; right: 0;
+  height: 44px; transform: translateY(-50%);
+}
 .ver-btn:disabled { opacity: .35; }
 .ver-idx { font-size: 12px; color: var(--app-text3); padding: 0 4px; }
 </style>

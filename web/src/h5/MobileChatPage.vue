@@ -1482,4 +1482,30 @@ onUnmounted(() => {
 }
 .m-fb-ok { width: 100%; margin-top: 10px; min-height: 44px; border: none; border-radius: 12px; background: var(--app-accent); color: #fff; font-size: 15px; touch-action: manipulation; }
 .m-fb-ok:disabled { background: var(--app-accent-disabled); }
+
+/* ==================== 触屏热区补齐 ====================
+   这些控件此前 24–42px，手指点不准；但**视觉尺寸一律不动**——把框改大会把同一排挤爆
+   （工具条那一排曾因 .m-tool 缺 min-width:0 把发送键画到卡外过）。所以只加一层透明伪元素
+   把命中区补到 44：手指打的是这块透明区域，看起来还是原来那颗小钮。
+   两档分开，不能一刀切：
+   - 孤立或左右留白的钮 → 双向补（发送、图片查看关闭、回到底部）；
+   - 密集成排的钮（顶栏六颗、目标条四颗、提问卡翻页 ‹ ›、查找条上下颗）→ **只补高度**。
+     横向对扩会互相挡点击：后渲染的那颗的透明区会盖住前一颗的外侧半区，点上去没反应。
+   chip 的 × 单独处理：向右扩，向左只让出 8px，否则会盖住同一颗 chip 上的图片预览入口。
+   真机判据用 elementFromPoint 逐颗量——getBoundingClientRect 是布局盒，量不出命中区。 */
+.m-bar-btn, .m-bar-title, .mf-btn, .m-chip-del, .m-tool, .m-send, .m-gb-btn,
+.m-askp-page-btn, .m-lb-close, .m-rec-btn, .m-jump { position: relative; }
+.m-bar-btn::after, .m-bar-title::after, .mf-btn::after, .m-tool::after,
+.m-gb-btn::after, .m-askp-page-btn::after, .m-rec-btn::after {
+  content: ''; position: absolute; top: 50%; left: 0; right: 0;
+  height: 44px; transform: translateY(-50%);
+}
+.m-send::after, .m-lb-close::after, .m-jump::after {
+  content: ''; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: 44px; height: 44px;
+}
+.m-chip-del::after {
+  content: ''; position: absolute; top: 50%; right: -6px; transform: translateY(-50%);
+  width: 40px; height: 44px;
+}
 </style>

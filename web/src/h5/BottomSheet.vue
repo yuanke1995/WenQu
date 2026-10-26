@@ -87,6 +87,13 @@ const maskStyle = computed(() => ({ zIndex: token.value ? sheetZ(token.value, pr
   touch-action: manipulation;
 }
 .bs-close:active { background: var(--app-accent-weak); color: var(--app-accent); }
+/* 触屏热区：这颗 × 视觉仍是 34px（改大会把标题挤没），用透明伪元素把命中区补到 44×44——
+   它左边是标题文本、不可点，所以双向扩不会挡到别的东西。 */
+.bs-close { position: relative; }
+.bs-close::after {
+  content: ''; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: 44px; height: 44px;
+}
 .bs-body {
   flex: 1; min-height: 0; overflow-y: auto;
   -webkit-overflow-scrolling: touch;

@@ -90,4 +90,11 @@ const openNotif = n => {
 }
 .nt-time { font-size: 11px; color: var(--app-text3); }
 .nt-tip { font-size: 12px; line-height: 1.6; color: var(--app-text3); padding: 10px 2px 0; }
+/* 触屏热区：顶部「全部已读 / 刷新」两颗成排，只补命中高度（横向对扩会互相挡点击）。
+   通知行 .nt-item 本身整行可点、已有 11px 上下内边距，不再补。 */
+.nt-act { position: relative; }
+.nt-act::after {
+  content: ''; position: absolute; top: 50%; left: 0; right: 0;
+  height: 44px; transform: translateY(-50%);
+}
 </style>
