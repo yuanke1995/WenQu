@@ -1452,7 +1452,7 @@ watch(() => route.fullPath, () => {
      200px 下名字会被挤成省略号、查看更多也要换行。 */
   width: 232px; flex: none; display: flex; flex-direction: column;
   background: var(--app-panel); border-right: 1px solid var(--app-border);
-  padding: 10px 8px; transition: width .18s ease; overflow: hidden;
+  padding: 10px 8px 0; transition: width .18s ease; overflow: hidden;
 }
 .side.collapsed { width: 56px; }
 .side-logo { position: relative; display: flex; align-items: center; gap: 8px; padding: 2px 6px 12px; }
@@ -1463,7 +1463,7 @@ watch(() => route.fullPath, () => {
 .side.collapsed .nav-item { justify-content: center; padding-left: 0; padding-right: 0; }
 /* 折叠态：底部改为竖排（头像=个人设置入口 + 主题 + 退出），沿侧边栏中轴对齐——
    横排 3 个 26px 图标在 ~56px 图标条里放不下，此前直接溢出 */
-.side.collapsed .side-foot { flex-direction: column; gap: 6px; padding: 8px 0 6px; }
+.side.collapsed .side-foot { flex-direction: column; gap: 6px; padding: 8px 0; }
 .side.collapsed .side-foot .app-icon-btn { margin-left: 0 !important; }
 /* 品牌标用 BrandMark 组件（SVG 自带圆角与品牌渐变，明暗主题通用）；此处只留占位规则 */
 .logo-name { font-weight: 500; font-size: 13px; white-space: nowrap; }
@@ -1855,8 +1855,10 @@ watch(() => route.fullPath, () => {
 .side-more-btn:disabled { color: var(--app-text3); opacity: .6; cursor: default; background: none; }
 .side-more-btn.muted { color: var(--app-text3); }
 
+/* 这一排到侧栏底边的距离由 .side-foot 自己的上下 padding 决定（.side 的 padding-bottom 已让给它）：
+   否则「分隔线→内容」6px 与「内容→窗口底边」12px 不等，整排看着贴在线上、下面空一大块 */
 .side-foot {
-  display: flex; align-items: center; gap: 4px; padding: 6px 6px 2px;
+  display: flex; align-items: center; gap: 4px; padding: 8px 6px;
   border-top: 1px solid var(--app-border);
 }
 /* 头像+昵称 = 个人设置入口（点击进 /profile），占满剩余宽度把右侧两个图标推到行尾 */
