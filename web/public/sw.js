@@ -54,3 +54,57 @@ self.addEventListener('fetch', e => {
     }
   })())
 })
+
+// ==================== Web Push（系统级通知） ====================
+// 载荷由后端 WebPushNotifier 拼（字段含义见那里的 payload()），到这里只负责两件事：
+// 弹出来、点进去。内容刻意<b>不</b>落任何本地存储——通知正文只在通知里活着，
+// 点完就没了，不给这台设备留一份可翻的对话副本。
+const ICON = '/icons/icon-192.svg'
+
+async function say (msg) {
+  const list = await clients.matchAll({ type: 'window', includeUncontrolled: true })
+  for (const c of list) { try { c.postMessage(msg) } catch (e) { /* 那个窗口正在卸载，忽略 */ } }
+  return list
+}
+
+self.addEventListener('push', e => {
+  let d = {}
+  try {
+    d = e.data ? e.data.json() : {}
+  } catch (err) {
+    // 载荷不是 JSON（多半是被人拿测试脚本直发）：退化成一句可读的，不因此丢掉整条通知
+    d = { title: '问渠', body: (e.data && e.data.text) ? String(e.data.text()).slice(0, 200) : '' }
+  }
+  const opts = {
+    body: d.body || '',
+    // tag 相同的新通知会<b>替换</b>旧的（而不是叠一条）：后端把通知 id 当 tag 用，
+    // 同一条站内通知重复推不会攒成一堆
+    icon: ICON,
+    badge: ICON,
+    data: { url: d.url || '/chat' },
+    tag: d.tag || undefined
+  }
+  if (!('Notification' in self)) return
+  e.waitUntil((async () => {
+    await self.registration.showNotification(d.title || '问渠', opts)
+    // 顺手喊已打开的页面：未读数立刻跟上，不用等下一次 30s 轮询
+    await say({ k: 'wq-push', what: 'notify' })
+  })())
+})
+
+self.addEventListener('notificationclick', e => {
+  e.notification.close()
+  const url = (e.notification.data && e.notification.data.url) || '/chat'
+  e.waitUntil((async () => {
+    // 已有页面就复用：让页面自己用路由跳过去（跳转规则、审批深链的参数口径都在前端一份，
+    // SW 里不复制第二套）。一个页面都没有才开新窗口。
+    const list = await say({ k: 'wq-push', what: 'click', url })
+    for (const c of list) { if ('focus' in c) return c.focus() }
+    if (clients.openWindow) return clients.openWindow(url)
+  })())
+})
+
+// 订阅在浏览器侧失效（推送服务换地址、清过站点数据）：SW 没有登录令牌，重订阅只能喊页面做
+self.addEventListener('pushsubscriptionchange', e => {
+  e.waitUntil(say({ k: 'wq-push', what: 'resubscribe' }))
+})

@@ -59,6 +59,7 @@ PC 壳传与原实现逐字等价的回调；移动壳传自己的滚动与 `/m/
 | 新问题置顶 | 尾随留白（桌面语义） | 用户消息出现即送上容器顶（不加留白，见下） |
 | 会话内查找 | Ctrl/⌘+F 热键 | 顶栏按钮 → 消息流上方查找条 |
 | 站内通知 | 侧栏 foot 铃铛 popover（未读 Badge，30s 轮询） | 顶栏铃铛 → 通知 sheet（角标与列表同源，同一份 useNotifications.js） |
+| 系统级推送（Web Push） | 个人设置 → 通知与推送：允许通知 / 发一条测试 / 取消这台设备 | 同一屏（/profile 在移动壳可达），**没有第二套 UI**；订阅按设备各点一次 |
 | 长轮收口通知 | 后端 `TurnNotifyService` 一份产生方，两端同一条通知 | 同左——手机上「人离开屏幕、这一轮还在跑」才是这条通知的主场景，铃铛是它唯一的入口 |
 | 个人设置 / 帮助 / 主题 / 退出 | 侧栏 foot | 会话 sheet 底部（壳外入口；默认收成一行账户条、点开才展开整排——整排 sticky 贴底会常驻约三条半会话的高度。通知不在其中，铃铛是高频动作单列顶栏） |
 | 工具审批恢复 | 消息区顶部横幅（`?approval=` 深链重建） | 消息区顶部横幅（同一份 useApprovalRecovery.js） |
@@ -110,6 +111,31 @@ PC 壳传与原实现逐字等价的回调；移动壳传自己的滚动与 `/m/
 新增取数路径（SSE、XHR 上传、裸 fetch 下载）不接这三个口子就**不参与判据**——它们失败时该由各自的
 错误卡说话，不该把「连不上服务器」钉在横幅上。原始 `Failed to fetch` 在 `request` 里就换成中文句子
 （调用方全是直接摊 `e.message`），原文留在 `err.cause`。
+
+## 系统级推送（Web Push）：入口只有一处，判定也不许含糊
+
+产生方与静音清单都在 `NotificationService`（见上面那一节），推送只是它落库后的一个旁路消费者：
+`WebPushNotifier.push` 挂在**插入成功之后**——去重合并（hit_count+1）那一路不推，
+同一件事反复弹系统横幅比不弹更糟。VAPID 密钥对走 env（`ai-app.webpush.*`，与 `AI_JWT_SECRET` 同类），
+**不进设置页也不进 DB**；`webpush.enabled` / `webpush.ttlSeconds` 才是 DB 配置。
+
+浏览器侧三条硬限制由 `utils/webpush.js` 逐条判、逐条说（`pushCapability()` 回 reason 代码，
+文案在 ProfilePage 映射成「下一步该点什么」）：
+
+- **安全上下文**：`http://IP` 上 `navigator.serviceWorker` 干脆不存在（真机实测线上
+  `isSecureContext=false / hasSW=false`），所以这一栏在 http 直连 IP 的部署上只会显示
+  「当前地址不是安全连接」，不会假装能开；
+- **iOS/iPadOS**：Safari 标签页不支持推送，必须「添加到桌面」后从图标打开（`isIos() && !isStandalone()`）；
+- **授权是按设备 + 按站点**的：所以入口放在「个人设置」而不是全局横幅，且列表只报「已订阅 N 台」——
+  服务端无从知道哪一行是「你现在这台」，前端本机才有这个事实（`pushManager.getSubscription()`）。
+
+订阅列表接口**不回 endpoint**：那串地址本身就是能往这台设备发消息的凭证；退订因此按本机自己持有的
+endpoint 删（`unsubscribe(uid, endpoint)`），而不是按行 id。
+
+SW 那三个监听（`push` / `notificationclick` / `pushsubscriptionchange`）在 `public/sw.js` 里，
+载荷字段与后端 `WebPushNotifier.payload()` 一一对应；点击落点 `url` **由后端算**——
+点通知时可能一个页面都没开，SW 没有前端路由可用（映射与前端两处 `openNotif` 同一套语义）。
+通知正文不落任何本地存储：弹完即弃，不给设备留一份可翻的对话副本。
 
 ## 系统返回键与 sheet 栈（`sheetStack.js`）
 

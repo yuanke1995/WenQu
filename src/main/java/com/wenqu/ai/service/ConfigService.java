@@ -660,6 +660,8 @@ public class ConfigService {
         d.put("notification.turnMinSeconds", "60");          // 一轮机器耗时达到此秒数才报「跑完了」：短轮答案当场就到屏幕，多报一条是噪音
         d.put("notification.cleanupIntervalMs", "86400000"); // 站内通知清理间隔（ms，默认每日；≤0 暂停）
         d.put("notification.dedupWindow", "1440");          // 同类通知合并窗口(分钟)：同目标重复发生的同类通知合并为一条，0=关闭合并
+        d.put("webpush.enabled", "false");                  // Web Push 总闸：站内通知同时推到浏览器系统级通知（还需 env 里有 VAPID 密钥对，缺钥时这条开了也不动）
+        d.put("webpush.ttlSeconds", "86400");             // 推送载荷在推送服务上能等多久（秒，默认 1 天）：过期就不弹——「这一轮跑完了」不该三天后才跳出来
         d.put("workflow.maxConcurrentRuns", "4");          // 第 2 期：异步运行并发上限（派发池 core=max；改后需重启生效）
         d.put("workflow.runQueueCapacity", String.valueOf(ConfigDefaults.WORKFLOW_RUN_QUEUE_CAPACITY));          // 第 2 期：异步运行排队容量（队列满即拒绝，fail-loud 不无限堆积；改后需重启生效）
         d.put("trace.samplingIntervalMs", "86400000");     // P1：Trace 线上采样间隔（ms，默认每日；≤0 暂停）

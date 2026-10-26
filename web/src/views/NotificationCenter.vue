@@ -20,27 +20,11 @@
             </a-menu>
           </template>
         </a-dropdown>
-        <button class="app-btn ghost small" @click="prefOpen = !prefOpen">
-          <setting-outlined /> 通知偏好
+        <!-- 收哪些类、用什么方式收到，统一在「个人设置 → 通知与推送」一处管
+             （勾选类偏好不留两个入口，两边各存一份开关必然漂） -->
+        <button class="app-btn ghost small" @click="router.push('/profile?panel=notify')">
+          <setting-outlined /> 通知与推送设置
         </button>
-      </div>
-    </div>
-
-    <!-- 类型偏好（静音）：点开按钮即完整展开（不做二次折叠），按 TYPES 逐类列出（数量随类型表自动增长，不写死数字） -->
-    <div v-if="prefOpen" class="nc-pref">
-      <div class="nc-pref-head">通知类型偏好（关闭后不再接收该类通知）</div>
-      <div class="nc-pref-body">
-        <div class="nc-pref-grid">
-          <label v-for="t in TYPES" :key="t.type" class="nc-pref-item">
-            <a-switch :checked="!muted(t.type)" size="small" @change="v => toggleMute(t.type, v)" />
-            <component :is="t.icon" class="nc-pref-ic" :class="t.tone" />
-            <span>{{ t.label }}</span>
-          </label>
-        </div>
-        <div class="nc-pref-foot">
-          <span class="nc-meta">保存即生效；恢复某类需重新开启。静音仅影响本人，不产生通知。</span>
-          <button class="app-btn small" :disabled="savingPref" @click="savePrefs">保存偏好</button>
-        </div>
       </div>
     </div>
 
@@ -94,40 +78,18 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
-import {
-  CheckCircleFilled, CloseCircleFilled, ExclamationCircleFilled, BellOutlined,
-  DownOutlined, SettingOutlined, DeleteOutlined, TrophyFilled, FlagFilled
-} from '@ant-design/icons-vue'
+import { BellOutlined, DownOutlined, SettingOutlined, DeleteOutlined } from '@ant-design/icons-vue'
 import {
   notificationList, notificationCounts, notificationMarkRead, notificationMarkAllRead,
-  notificationDelete, notificationClear, notificationPreferences, notificationSavePreferences
+  notificationDelete, notificationClear
 } from '../api'
+import { NOTIF_TYPES } from '../chat/useNotifications'
 
 const router = useRouter()
 
-// 类型元数据：标签 + 图标 + 语义色（成功绿/失败红/等待黄）
-const TYPES = [
-  { type: 'parse.done', label: '解析完成', icon: CheckCircleFilled, tone: 'ok' },
-  { type: 'parse.failed', label: '解析失败', icon: CloseCircleFilled, tone: 'err' },
-  { type: 'parse.batch.failed', label: '批量解析失败', icon: CloseCircleFilled, tone: 'err' },
-  { type: 'workflow.failed', label: '工作流失败', icon: CloseCircleFilled, tone: 'err' },
-  { type: 'workflow.timeout', label: '工作流超时', icon: ExclamationCircleFilled, tone: 'warn' },
-  { type: 'workflow.approval', label: '工作流待审核', icon: ExclamationCircleFilled, tone: 'warn' },
-  { type: 'web.refresh.failed', label: '网页源刷新失败', icon: CloseCircleFilled, tone: 'err' },
-  { type: 'schedule.done', label: '定时任务完成', icon: CheckCircleFilled, tone: 'ok' },
-  { type: 'schedule.failed', label: '定时任务失败', icon: CloseCircleFilled, tone: 'err' },
-  { type: 'eval.decline', label: '检索评估下滑', icon: ExclamationCircleFilled, tone: 'warn' },
-  { type: 'tool.approval', label: '工具审批待决', icon: ExclamationCircleFilled, tone: 'warn' },
-  { type: 'tool.ask', label: '智能体提问待答', icon: ExclamationCircleFilled, tone: 'warn' },
-  { type: 'plan.approval', label: '执行计划待确认', icon: ExclamationCircleFilled, tone: 'warn' },
-  // 问答运行时这三类是「离开工位后还要不要回来」的判断依据，标签与通知标题同一批词
-  { type: 'chat.turn.done', label: '一轮跑完', icon: CheckCircleFilled, tone: 'ok' },
-  { type: 'chat.turn.failed', label: '一轮没跑成', icon: CloseCircleFilled, tone: 'err' },
-  { type: 'goal.achieved', label: '目标达成', icon: TrophyFilled, tone: 'ok' },
-  { type: 'goal.failed', label: '目标停住', icon: FlagFilled, tone: 'warn' },
-  // 额度不足是「该充值了」而非系统故障：警告色（红叉会让人以为是 bug）
-  { type: 'model.quota', label: '模型额度不足', icon: ExclamationCircleFilled, tone: 'warn' }
-]
+// 类型元数据（标签/图标/语义色）在 chat/useNotifications 一份：
+// 铃铛列表、这里的筛选、个人设置里「收哪些类」三处必须同一批词，不各抄一份
+const TYPES = NOTIF_TYPES
 const META = Object.fromEntries(TYPES.map(t => [t.type, t]))
 const iconOf = t => (META[t]?.icon) || BellOutlined
 const toneOf = t => (META[t]?.tone) || ''
@@ -260,27 +222,7 @@ const fmt = v => {
   return `${d.getMonth() + 1}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
-// 类型偏好（静音）：点按钮即整块展开，不做二次折叠
-const prefOpen = ref(false)
-const mutedTypes = ref([])
-const savingPref = ref(false)
-const muted = t => mutedTypes.value.includes(t)
-const toggleMute = (t, on) => {
-  mutedTypes.value = on ? mutedTypes.value.filter(x => x !== t) : [...new Set([...mutedTypes.value, t])]
-}
-const loadPrefs = async () => {
-  try { const r = await notificationPreferences(); mutedTypes.value = (r?.data?.mutedTypes) || [] } catch (e) { /* 静默 */ }
-}
-const savePrefs = async () => {
-  savingPref.value = true
-  try {
-    await notificationSavePreferences(mutedTypes.value)
-    message.success('通知偏好已保存')
-  } catch (e) { message.error('保存失败：' + (e.message || '')) }
-  finally { savingPref.value = false }
-}
-
-onMounted(() => { load(); refreshCounts(); loadPrefs() })
+onMounted(() => { load(); refreshCounts() })
 </script>
 
 <style scoped>
@@ -288,16 +230,6 @@ onMounted(() => { load(); refreshCounts(); loadPrefs() })
 .nc-select { width: 160px; }
 .nc-danger { color: var(--app-danger); }
 .nc-danger:hover:not(:disabled) { background: var(--app-danger-weak); }
-.nc-pref { margin: 0 0 12px; background: var(--app-panel); border: 1px solid var(--app-border); border-radius: var(--app-radius); }
-.nc-pref-head { padding: 10px 14px; font-size: 13px; font-weight: 600; color: var(--app-text); border-bottom: 1px solid var(--app-border); }
-.nc-pref-body { padding: 14px; }
-.nc-pref-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px 16px; }
-.nc-pref-item { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--app-text); }
-.nc-pref-ic { font-size: 15px; flex: none; }
-.nc-pref-ic.ok { color: var(--app-ok); }
-.nc-pref-ic.err { color: var(--app-danger); }
-.nc-pref-ic.warn { color: var(--app-warn); }
-.nc-pref-foot { display: flex; align-items: center; gap: 12px; margin-top: 14px; }
 .nc-meta { font-size: 12px; color: var(--app-text3); margin-right: auto; }
 .nc-batch { display: flex; align-items: center; gap: 10px; padding: 8px 12px; margin: 0 0 10px; background: var(--app-accent-weak); border: 1px solid var(--app-accent-border); border-radius: 8px; font-size: 12px; color: var(--app-accent); }
 .nc-batch-count { font-weight: 600; }

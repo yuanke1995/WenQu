@@ -26,6 +26,9 @@ public class AppProperties {
 
     private Auth auth = new Auth();
 
+    /** Web Push（浏览器系统级推送）的 VAPID 密钥，只从 env/yml 读（见 application.yml 的 ai-app.webpush） */
+    private Webpush webpush = new Webpush();
+
     /** 主回答 System Prompt 角色段（DB 可编辑覆盖，保存即生效；此处为兜底默认值） */
     private String systemPrompt = "你是\"问渠\"（WenQu），智能体工作台的 AI 助手。"
             + "你可以依据检索到的知识库资料回答问题，也能直接处理日常问答与创作；"
@@ -188,5 +191,23 @@ public class AppProperties {
         private int lockMinutes = 15;
         /** 初始化管理员时要求的最小密码长度 */
         private int minPasswordLength = 6;
+    }
+
+    /**
+     * Web Push（浏览器系统级推送）的 VAPID 身份。
+     *
+     * <p>密钥对是<b>部署级</b>秘密：与 {@code AI_JWT_SECRET} 同类，只从 env/yml 读，
+     * 不进设置页也不进 {@code c_ai_config}——私钥若能经 UI 读写，就等于能被任何登录用户读走。
+     * 多副本必须配同一对（订阅时浏览器存的是<b>公钥</b>，发送时必须用配对的私钥签名，
+     * 不一致会让推送服务回 401，表现为「订阅成功但推不到」）。
+     */
+    @Data
+    public static class Webpush {
+        /** VAPID 公钥（X509/DER 的 base64url，env AI_VAPID_PUBLIC_KEY）。空＝功能不可用 */
+        private String publicKey = "";
+        /** VAPID 私钥（PKCS8 的 base64url，env AI_VAPID_PRIVATE_KEY）。空＝功能不可用 */
+        private String privateKey = "";
+        /** VAPID subject（推送服务要求的联系标识，须 mailto: 或 https: 开头） */
+        private String subject = "mailto:admin@wenqu.local";
     }
 }

@@ -164,6 +164,15 @@ ai-app:
   # 上下文填充配额（窗口/最大输出按模型声明；安全系数固定 0.7）
   context:
     max-context-hits: 8
+  # Web Push（浏览器系统级推送）：VAPID 密钥对是**部署级密钥**，与 AI_JWT_SECRET 同类——
+  # 只从 env/yml 读，不进设置页也不进 c_ai_config（私钥一旦能在 UI 上改，就等于能被读出来存出去）。
+  # 生成一对：POST /ai/api/ai/webpush/keys（仅管理员，只回显不落库），把两串贴进 .env 后重启。
+  # 留空＝功能不可用；开关（ai-app.webpush 之外的 webpush.enabled 走 DB 配置）打开但密钥缺失时启动会告警。
+  webpush:
+    public-key: ${AI_VAPID_PUBLIC_KEY:}
+    private-key: ${AI_VAPID_PRIVATE_KEY:}
+    # VAPID subject：推送服务要求的联系标识，mailto: 或 https: 开头（只用于鉴权声明，不外发请求）
+    subject: ${AI_VAPID_SUBJECT:mailto:admin@wenqu.local}
   # 本地登录鉴权（JWT + PBKDF2，纯 JDK 实现）——唯一认证体系：
   # 管理员由登录角色（admin/superadmin）判定；API Key 仅开放问答链路端点。
   auth:

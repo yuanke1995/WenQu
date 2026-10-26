@@ -1795,6 +1795,15 @@ export const notificationMarkAllRead = () => request('/notification/read-all', {
 export const notificationDelete = ids => request('/notification/delete', { method: 'POST', body: JSON.stringify({ ids }) })
 export const notificationClear = scope => request('/notification/clear', { method: 'POST', body: JSON.stringify({ scope }) })
 export const notificationPreferences = () => request('/notification/preferences')
+
+// ==================== Web Push（浏览器系统级推送） ====================
+// 订阅三元组（endpoint/p256dh/auth）由浏览器 PushManager 给，平台只是保管者；一台浏览器一行。
+// 列表与退订都按「本人名下」判，跨人拿 id 也删不掉别人的。
+export const webpushConfig = () => request('/webpush/config')
+export const webpushSubscribe = sub => request('/webpush/subscribe', { method: 'POST', body: JSON.stringify(sub) })
+export const webpushUnsubscribe = id => request('/webpush/unsubscribe', { method: 'POST', body: JSON.stringify({ id }) })
+export const webpushTest = () => request('/webpush/test', { method: 'POST', timeout: 20000 })
+export const webpushGenKeys = () => request('/webpush/keys', { method: 'POST' })
 export const notificationSavePreferences = mutedTypes => request('/notification/preferences', { method: 'PUT', body: JSON.stringify({ mutedTypes }) })
 // 工具审批恢复：按 approvalId 取本人审批记录（tool.approval 通知点击后重建审批卡）
 // （此前误写 /chat/tool-approval/，后端实际映射 /api/ai/tool-approval/{id}，恢复查询一直 404）

@@ -24,6 +24,7 @@ import { installKeyboardInset } from './h5/keyboard'
 import { registerPwa } from './h5/pwa'
 // 产物/工作区文件的预览台：本行只为装它那两个 document 级委托（预览入口 + 正文复制按钮）
 import './utils/previewStage'
+import { watchPushMessages } from './utils/webpush'
 
 // ==================== Edge「窗口无法最小化」兼容修复 ====================
 // 现象：Edge 中当「本页是激活标签」时最小化浏览器窗口，窗口缩下去后立即自动弹回；
@@ -116,6 +117,28 @@ window.addEventListener('app:unauthorized', () => {
 window.addEventListener('app:forbidden', e => {
   message.error(e?.detail || '无管理员权限，请先完成管理员验证')
 })
+
+// ==================== Web Push：Service Worker 发来的消息 ====================
+// 三条消息各有去处，共同点是「页面里那套判断不重写第二遍」：
+//   click       → 用路由跳到通知的目标（审批深链的参数口径在前端一份，SW 不复制）
+//   notify      → 转发成 app:push，让已挂载的铃铛实例立刻刷未读（否则要等下一次 30s 轮询）
+//   resubscribe → 订阅在浏览器侧失效了，静默重订一次并再报给铃铛
+if ('serviceWorker' in navigator) {
+  watchPushMessages(async d => {
+    if (d.what === 'click' && d.url) {
+      const dest = typeof d.url === 'string' ? d.url : '/chat'
+      router.push(dest).catch(() => { window.location.href = dest })
+      return
+    }
+    if (d.what === 'resubscribe') {
+      try {
+        const { enablePush } = await import('./utils/webpush')
+        await enablePush()
+      } catch (e) { /* 没人开着页面时才走到这里；订不上就等用户下次进设置页手动开 */ }
+    }
+    window.dispatchEvent(new CustomEvent('app:push', { detail: d }))
+  })
+}
 
 // 首屏先确认身份/角色再挂载（避免 App 渲染后才异步拉取导致的"角色已就绪但视图未刷新"时序问题）。
 // 已登录才拉取；未登录直接进登录页，避免无谓的 401 噪音。

@@ -75,6 +75,51 @@
                个人覆盖）已整体下线：连同它们在系统设置里的全局那一份一起删干净，不再有两处口径。 -->
         </div>
 
+        <!-- 通知与推送：一件事的两半放同一屏——「收哪些类」与「要不要跳出浏览器成为系统级通知」。
+             「收哪些类」过去长在通知中心里（点开一块开关），这次整块搬过来，通知中心只留跳转入口：
+             同一批勾选状态不许在两个页面各存一份，两边各写各的迟早对不上。 -->
+        <div v-else-if="current === 'notify'" class="app-card pf-card">
+          <h2 class="app-card-title">通知与推送</h2>
+          <p class="pf-hint">这里管两件事：哪些事值得通知你，以及通知要不要跳出浏览器、成为手机或系统上的那条横幅。</p>
+
+          <div class="pf-field">
+            <div class="pf-field-head">
+              <span class="pf-label">这台设备的系统级通知</span>
+              <span class="pf-sub-hint">{{ pushStateHint }}</span>
+            </div>
+            <div class="pf-row">
+              <button v-if="!pushSubscribedHere" class="app-btn small" type="button"
+                      :disabled="!pushCanEnable || pushBusy" @click="onEnablePush">允许通知</button>
+              <template v-else>
+                <button class="app-btn small" type="button" :disabled="pushBusy" @click="onTestPush">发一条测试</button>
+                <button class="app-btn ghost small" type="button" :disabled="pushBusy" @click="onDisablePush">取消这台设备</button>
+              </template>
+            </div>
+            <p class="pf-sub-hint">{{ pushWhy }}</p>
+            <p v-if="pushDeviceCount" class="pf-sub-hint">
+              已订阅 {{ pushDeviceCount }} 台设备{{ pushLastSeen ? `（最近一次 ${pushLastSeen}）` : '' }}
+            </p>
+          </div>
+
+          <div class="pf-field">
+            <div class="pf-field-head">
+              <span class="pf-label">收哪些类</span>
+              <span class="pf-sub-hint">关掉即不再接收该类通知（只影响你本人，平台照常生成）</span>
+            </div>
+            <div class="np-grid">
+              <label v-for="t in NOTIF_TYPES" :key="t.type" class="np-item">
+                <a-switch :checked="!muted(t.type)" size="small" @change="v => toggleMute(t.type, v)" />
+                <component :is="t.icon" class="np-ic" :class="t.tone" />
+                <span>{{ t.label }}</span>
+              </label>
+            </div>
+            <div class="np-foot">
+              <span class="pf-sub-hint">改完点「保存」才生效。系统级推送同样尊重这份清单——被关掉的类不会弹横幅。</span>
+              <button class="app-btn small" type="button" :disabled="muteSaving" @click="saveMutes">保存</button>
+            </div>
+          </div>
+        </div>
+
         <!-- 我的记忆（P5 收口）：框架负责写，这里负责让用户看得见、改得动、删得掉；
              「自动提炼记忆」生成闸也从聊天面板挪到了这里——开关与沉淀内容同面板，边看边管。
              阅读与编辑都按「分类 → 条目」结构化呈现（parse/serialize 见 utils/memoryDoc.js），
@@ -336,13 +381,20 @@ import { copyText } from '../utils/clipboard'
 import { parseMemoryDoc, serializeMemoryDoc, nextEntryId } from '../utils/memoryDoc'
 import { shareUrlOf } from './shareSession'
 import { markSessionShared, resetSessionStore } from './store'
+import { NOTIF_TYPES } from '../chat/useNotifications'
 import { changePasswordApi, getUserPreference, setUserPreference, updateMyProfile, uploadAvatarApi,
+         notificationPreferences, notificationSavePreferences,
          listMySessionShares, stopShareBySession, purgeShareRecord, enableSessionShare,
          getMemoryOverview, getMemoryContent, saveMemoryMd, compactMemory, clearMyMemory,
          deleteMemoryDaily } from '../api'
 import ModelSelect from '../components/ModelSelect.vue'
 import UserAvatar from '../components/UserAvatar.vue'
 import { isNarrow } from '../h5/mobile'
+// Web Push 的浏览器侧（能力判定 / 订阅 / 测试）：这一屏是它唯一的入口，判定与文案都从这里出
+import {
+  pushCapability, refreshPushState, enablePush, disablePush, testPush,
+  pushPlatform, pushSubscribedHere, pushBusy
+} from '../utils/webpush'
 
 const router = useRouter()
 const route = useRoute()
@@ -350,6 +402,7 @@ const route = useRoute()
 const navs = [
   { key: 'profile', label: '个人资料' },
   { key: 'chat', label: '默认模型' },
+  { key: 'notify', label: '通知与推送' },
   { key: 'memory', label: '我的记忆' },
   { key: 'shares', label: '分享管理' },
   { key: 'security', label: '账号安全' }
@@ -381,6 +434,90 @@ const prefSaving = ref(false)
 const pref = ref({ defaultModel: '' })
 // 个人默认模型此刻能不能用（后端判：供应商被停用、模型被移出列表）。不参与保存，只驱动界面
 const defaultModelIssue = ref('')
+
+// ==================== 通知与推送（系统级推送 + 收哪些类） ====================
+// 判定与文案的分工：utils/webpush.js 只回 reason 代码，这里负责把每条 reason 翻成
+// 「用户下一步该点什么」——四条失败路径的动作完全不同（找管理员 / 换 https 地址 /
+// 装到主屏幕 / 去浏览器站点设置改回允许），混成一句「不支持推送」就是把人往错方向支使。
+const REASON_HINT = {
+  loading: '正在确认这台设备能不能收…',
+  unsupported: '这个浏览器不支持',
+  insecure: '当前地址不是安全连接',
+  'needs-install': '需先装到主屏幕',
+  'not-configured': '平台未配置密钥',
+  disabled: '平台总闸未开',
+  denied: '浏览器已拒绝本站通知',
+  ok: '可以开启'
+}
+const REASON_WHY = {
+  loading: '',
+  unsupported: '换较新的浏览器（Chrome / Edge / Safari 16.4 以上）再试；无痕/隐私窗口里也开不了。',
+  insecure: '浏览器只允许 https 地址或本机地址订阅推送。现在如果是 http 直连 IP，请改用 https 地址访问本站再回来。',
+  'needs-install': 'iPhone / iPad 上 Safari 标签页不支持推送：请先在会话面板底部点「安装到桌面」，再从桌面图标打开本站，然后回到这里开启。',
+  'not-configured': '需要管理员先生成一对 VAPID 密钥、配进服务器环境变量（AI_VAPID_PUBLIC_KEY / AI_VAPID_PRIVATE_KEY）并重启。多副本必须同一对。',
+  disabled: '需要管理员在「系统设置 → 定时任务 → 站内通知」里打开「推送到浏览器（Web Push）」。',
+  denied: '浏览器记住了「不允许」。点地址栏左侧的站点信息图标 → 网站设置 → 通知 → 改成「允许」，再回来点一次。',
+  ok: '点「允许通知」后浏览器会弹一次授权框；这台设备之后就能在后台或锁屏时收到通知。手机端要收到，还需要浏览器在后台活着（装到桌面更稳）。'
+}
+const pushReason = ref('loading')
+const pushCanEnable = ref(false)
+const pushDeviceCount = computed(() => ((pushPlatform.value && pushPlatform.value.devices) || []).length)
+const pushStateHint = computed(() => {
+  if (pushSubscribedHere.value) return '这台设备已开启'
+  return REASON_HINT[pushReason.value] || ''
+})
+const pushWhy = computed(() => {
+  if (pushSubscribedHere.value) {
+    return '已订阅。换浏览器或换设备需要在那台上各点一次——浏览器的授权是按设备、按站点记的，平台不能替你点。'
+  }
+  if (pushReason.value === 'ok') return REASON_WHY.ok
+  return REASON_WHY[pushReason.value] || ''
+})
+const refreshCap = async () => {
+  const c = await pushCapability()
+  pushReason.value = c.reason
+  pushCanEnable.value = !!c.ok
+}
+const onEnablePush = async () => {
+  const r = await enablePush()
+  if (r.ok) message.success('这台设备已开启系统级通知')
+  else if (r.reason === 'failed') message.error('订阅失败：' + (r.error || '浏览器拒绝了这次订阅'))
+  else { message.warning(REASON_HINT[r.reason] || '现在还不能开启'); await refreshCap() }
+}
+const onDisablePush = async () => {
+  const r = await disablePush()
+  if (r.ok) message.success('已取消这台设备的系统级通知（其它设备不受影响）')
+  else message.error('取消失败：' + (r.error || '未知错误'))
+  await refreshCap()
+}
+const onTestPush = async () => {
+  const r = await testPush()
+  if (!r.ok) { message.error(r.error || '测试推送失败'); return }
+  const sent = (r.results || []).filter(x => x.result === 'sent').length
+  if (sent) message.success(`已发出 ${sent} 条，去通知中心/系统通知栏看`)
+  else if (!(r.results || []).length) message.warning('没有已订阅的设备：先点「允许通知」')
+  else message.error('推送服务没接受（多半是密钥不配对或推送服务打不通），详情看服务端日志')
+}
+
+// 收哪些类（个人静音清单）：从通知中心整块搬来，那边只留跳转入口
+const mutedTypes = ref([])
+const muteSaving = ref(false)
+const muted = t => mutedTypes.value.includes(t)
+const toggleMute = (t, on) => {
+  mutedTypes.value = on ? mutedTypes.value.filter(x => x !== t) : [...new Set([...mutedTypes.value, t])]
+}
+const loadMutes = async () => {
+  try { const r = await notificationPreferences(); mutedTypes.value = (r && r.data && r.data.mutedTypes) || [] }
+  catch (e) { message.error('通知偏好读取失败：' + (e.message || '请重试')) }
+}
+const saveMutes = async () => {
+  muteSaving.value = true
+  try {
+    await notificationSavePreferences(mutedTypes.value)
+    message.success('已保存')
+  } catch (e) { message.error('保存失败：' + (e.message || '')) }
+  finally { muteSaving.value = false }
+}
 
 const load = async () => {
   loading.value = true
@@ -900,10 +1037,26 @@ onMounted(() => {
   // 深链直达（?panel=xxx）时 watch 不会触发，首拉在这里补齐
   if (current.value === 'shares') loadShares()
   if (current.value === 'memory') loadMemory()
+  // 通知这一屏的两个数据源都静默拉：静音清单是本页主内容（失败要报），
+  // 推送能力只是环境判定（拿不到就当「还不确定」，不打扰）
+  loadMutes()
+  refreshPushState().then(refreshCap).catch(() => {})
 })
+// 从别处回到这一屏（切 Tab、通知中心点「通知与推送设置」跳来）重新判一次能力：
+// 用户可能刚在浏览器站点设置里把通知改回允许，不重判就会一直显示旧结论
+watch(current, v => { if (v === 'notify') refreshPushState().then(refreshCap).catch(() => {}) })
 </script>
 
 <style scoped>
+/* 收哪些类：开关 + 图标 + 标签成行，窄屏自动换列（与通知中心原来那块同形，搬过来不改观感） */
+.np-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px 16px; }
+.np-item { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--app-text); }
+.np-ic { font-size: 15px; flex: none; }
+.np-ic.ok { color: var(--app-ok); }
+.np-ic.err { color: var(--app-danger); }
+.np-ic.warn { color: var(--app-warn); }
+.np-foot { display: flex; align-items: center; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
+
 .pf-body { flex: 1; min-height: 0; display: flex; }
 .pf-nav {
   width: 150px; flex: none; border-right: 1px solid var(--app-border); background: var(--app-panel);

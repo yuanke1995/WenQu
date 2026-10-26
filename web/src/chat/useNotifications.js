@@ -60,6 +60,37 @@ const NOTIF_TONES = {
 export const notifIcon = t => NOTIF_ICONS[t] || BellOutlined
 export const notifClass = t => NOTIF_TONES[t] || ''
 
+/**
+ * 类型 → 中文标签。三处共用同一批词（铃铛/通知 sheet 的列表行、通知中心的筛选下拉、
+ * 个人设置里「收哪些类」那一屏），顺序就是用户读通知时的自然分组顺序。
+ * 新增通知类型时必须同时补这里——不补的话界面上会露出裸类型常量（如 chat.turn.done）。
+ */
+export const NOTIF_LABELS = {
+  'parse.done': '解析完成',
+  'parse.failed': '解析失败',
+  'parse.batch.failed': '批量解析失败',
+  'workflow.failed': '工作流失败',
+  'workflow.timeout': '工作流超时',
+  'workflow.approval': '工作流待审核',
+  'web.refresh.failed': '网页源刷新失败',
+  'schedule.done': '定时任务完成',
+  'schedule.failed': '定时任务失败',
+  'eval.decline': '检索评估下滑',
+  'tool.approval': '工具审批待决',
+  'tool.ask': '智能体提问待答',
+  'plan.approval': '执行计划待确认',
+  'chat.turn.done': '一轮跑完',
+  'chat.turn.failed': '一轮没跑成',
+  'goal.achieved': '目标达成',
+  'goal.failed': '目标停住',
+  'model.quota': '模型额度不足'
+}
+export const notifLabel = t => NOTIF_LABELS[t] || t
+
+/** 全部通知类型（标签 + 图标 + 语义色），由上面三张表派生——不再在页面里各抄一份 */
+export const NOTIF_TYPES = Object.keys(NOTIF_LABELS)
+  .map(t => ({ type: t, label: NOTIF_LABELS[t], icon: notifIcon(t), tone: notifClass(t) }))
+
 // 时间字段稳健解析（ISO/数组/对象三种形态后端都可能给，与会话时间的解析同口径）
 const parseTime = v => {
   if (!v) return null
@@ -127,16 +158,21 @@ export function useNotifications ({ limit = 50, pollMs = 30000 } = {}) {
 
   // 切回页面/窗口聚焦立即刷新未读数（登录态失效由全局拦截器接管，这里只静默刷新）
   const onVisible = () => { if (document.visibilityState === 'visible') refreshUnread() }
+  // 系统级通知刚弹出来时由 main.js 转成这条事件（否则未读角标要等下一次轮询才跟上，
+  // 而「通知都弹了角标还是 0」是最容易被当成 bug 报回来的那种不一致）
+  const onAppPush = () => refreshUnread()
   onMounted(() => {
     refreshUnread()
     timer = setInterval(refreshUnread, pollMs)
     window.addEventListener('focus', refreshUnread)
     document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('app:push', onAppPush)
   })
   onUnmounted(() => {
     clearInterval(timer)
     window.removeEventListener('focus', refreshUnread)
     document.removeEventListener('visibilitychange', onVisible)
+    window.removeEventListener('app:push', onAppPush)
   })
 
   return { items, loading, unreadCount, refreshUnread, loadList, markRead, markAllRead }

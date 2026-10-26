@@ -158,6 +158,16 @@
             <artifactId>jsoup</artifactId>
             <version>1.15.4</version>
         </dependency>
+        <!-- Web Push（RFC 8291 消息加密 + RFC 8006 VAPID）：站内通知推到浏览器系统级通知。
+             选它而不是 nl.martijndwars:web-push 的理由是依赖面：后者要拖 async-http-client /
+             httpasyncclient / jose4j / bouncycastle / jcommander 五件，而这一件只用 JDK 密码学
+             与 java.net.http，唯一编译期依赖 kotlin-stdlib 已在 classpath 上（Spring AI 带进来的），
+             等于零新增传递依赖。 -->
+        <dependency>
+            <groupId>com.interaso</groupId>
+            <artifactId>webpush</artifactId>
+            <version>1.2.0</version>
+        </dependency>
         <!-- SpringDoc OpenAPI (Swagger UI)，Boot 3.5 对应 2.8.x -->
         <dependency>
             <groupId>org.springdoc</groupId>

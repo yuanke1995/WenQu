@@ -1327,3 +1327,23 @@ DELETE FROM `c_ai_user_config` WHERE `config_key` IN (
     -- 技能停用只剩平台一层：成员那份个人清单不再被 WenquSkillRepository 合并
     'skill.disabled'
 );
+
+-- ============================================
+-- 2026-10-26: Web Push 订阅（站内通知推到浏览器系统级通知）
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS `c_ai_webpush_subscription` (
+    `id`            BIGINT        NOT NULL AUTO_INCREMENT COMMENT '主键ID',
+    `uid`           VARCHAR(64)   NOT NULL COMMENT '归属用户（登录用户 uid；一条通知只推给本人订阅的设备）',
+    `endpoint_hash` CHAR(32)      NOT NULL COMMENT 'endpoint 的 MD5：推送服务给的地址可达数百字符，唯一键建在这上面（同一地址重复订阅＝刷新这一行）',
+    `endpoint`      VARCHAR(1000) NOT NULL COMMENT '推送服务给的回调地址（载荷 POST 给它才算投递）',
+    `p256dh`        VARCHAR(200)  NOT NULL COMMENT '浏览器订阅的 ECDH 公钥（base64url，载荷加密用；公钥换了必须重新订阅）',
+    `auth_secret`   VARCHAR(200)  NOT NULL COMMENT '浏览器订阅的鉴权秘密（base64url，HKDF 派生用；列名避开 auth 这个潜在保留字）',
+    `user_agent`    VARCHAR(200)  DEFAULT NULL COMMENT '订阅时的 UA：只用来在个人设置里认「这是哪台设备」，不参与任何判定',
+    `fail_count`    INT           NOT NULL DEFAULT 0 COMMENT '连续发送失败次数（推送服务回 4xx/5xx 累加，达阈值自动摘掉；成功即归零）',
+    `create_time`   DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '首次订阅时刻',
+    `update_time`   DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '最近一次订阅或发送成功时刻',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_wp_endpoint_hash` (`endpoint_hash`),
+    KEY `idx_wp_uid` (`uid`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Web Push 订阅（一台浏览器一行；VAPID 密钥对在 env，见 application.yml 的 ai-app.webpush）';
