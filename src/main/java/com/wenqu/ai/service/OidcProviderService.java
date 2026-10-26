@@ -2,9 +2,7 @@ package com.wenqu.ai.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenqu.ai.mapper.OidcProviderMapper;
-import com.wenqu.ai.mapper.UserMapper;
 import com.wenqu.ai.model.OidcProvider;
-import com.wenqu.ai.model.User;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -29,14 +27,14 @@ public class OidcProviderService {
     private final OidcProviderMapper mapper;
     private final ConfigCryptoService crypto;
     private final RoleService roleService;
-    private final UserMapper userMapper;
+    private final IdentityService identityService;
 
     public OidcProviderService(OidcProviderMapper mapper, ConfigCryptoService crypto,
-                              RoleService roleService, UserMapper userMapper) {
+                              RoleService roleService, IdentityService identityService) {
         this.mapper = mapper;
         this.crypto = crypto;
         this.roleService = roleService;
-        this.userMapper = userMapper;
+        this.identityService = identityService;
     }
 
     /** 全部认证源（排序后），client_secret 掩码脱敏；供管理页 */
@@ -154,8 +152,8 @@ public class OidcProviderService {
      */
     public void delete(String id) {
         OidcProvider p = require(id);
-        long bound = userMapper.selectCount(new LambdaQueryWrapper<User>()
-                .eq(User::getOidcProvider, id).isNotNull(User::getOidcSub));
+        // 绑定计数走统一身份表 c_ai_user_identity（迁移后旧列不再维护）
+        long bound = identityService.boundCount(id);
         if (bound > 0) {
             throw new IllegalArgumentException("认证源「" + p.getName() + "」仍绑定 " + bound
                     + " 个账号，请先在「成员管理」解绑后再删除");

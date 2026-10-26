@@ -90,6 +90,7 @@ public class MarketService {
     private final KnowledgeBaseMapper kbMapper;
     private final UserMcpMapper userMcpMapper;
     private final ResourceVisibilityService visibility;
+    private final UserRoleService userRoleService;
 
     /** 物品包根目录（与 user-data 同域，可配）。 */
     private final Path payloadRoot;
@@ -101,7 +102,7 @@ public class MarketService {
             UserMapper userMapper, RoleService roleService,
             AgentService agentService, WorkflowService workflowService,
             KnowledgeBaseMapper kbMapper, UserMcpMapper userMcpMapper,
-            ResourceVisibilityService visibility) {
+            ResourceVisibilityService visibility, UserRoleService userRoleService) {
         this.payloadRoot = Paths.get(payloadDir == null || payloadDir.isBlank()
                 ? "user-data/market" : payloadDir).toAbsolutePath().normalize();
         this.itemMapper = itemMapper;
@@ -115,6 +116,7 @@ public class MarketService {
         this.kbMapper = kbMapper;
         this.userMcpMapper = userMcpMapper;
         this.visibility = visibility;
+        this.userRoleService = userRoleService;
     }
 
     // ==================== 读：列表 / 详情 ====================
@@ -460,8 +462,7 @@ public class MarketService {
     }
 
     private boolean isAdmin() {
-        String role = RequestUser.role();
-        return role != null && roleService.isAdminCode(role);
+        return roleService.isAdminAny(RequestUser.roles());
     }
 
     private Path payloadOf(MarketItem item) {
@@ -623,12 +624,12 @@ public class MarketService {
         return v == null ? null : String.valueOf(v);
     }
 
-    /** 安装人的身份三元组（KB 可读性判定用）。 */
+    /** 安装人的身份三元组（KB 可读性判定用；角色取主角色——管理员优先，判定口径一致）。 */
     private ResourceVisibilityService.Principal principalOf(String uid) {
         User u = userMapper.selectById(uid);
         return new ResourceVisibilityService.Principal(uid,
                 u == null ? null : u.getDepartmentId(),
-                u == null ? "user" : u.getRole());
+                u == null ? "user" : userRoleService.primaryRole(uid));
     }
 
     /**

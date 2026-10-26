@@ -237,7 +237,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
     public boolean manageable(Agent a) {
         if (a == null) return false;
         if (Integer.valueOf(1).equals(a.getIsBuiltin())) {
-            return roleService.isAdminCode(RequestUser.role());
+            return roleService.isAdminAny(RequestUser.roles());
         }
         return resourceVisibilityService.canManage(principal(), a.getShareConfig(), a.getCreatedBy(), ResourceKind.AGENT);
     }

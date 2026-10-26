@@ -14,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -31,6 +32,8 @@ public class AuthService {
     private final UserMapper userMapper;
     private final AppProperties properties;
     private final RoleService roleService;
+    private final UserRoleService userRoleService;
+    private final IdentityService identityService;
 
     /** 运行时解析后的签名密钥（未配置时开发期随机生成） */
     private volatile String resolvedSecret;
@@ -86,7 +89,6 @@ public class AuthService {
             user = new User();
             user.setUid(u);
             user.setUsername(name);
-            user.setRole("superadmin");
             user.setStatus(1);
             user.setPasswordHash(AuthCrypto.hashPassword(password));
             user.setLoginFailCount(0);
@@ -94,13 +96,14 @@ public class AuthService {
         } else {
             // 存量用户（可能由成员管理建过、无密码）→ 升级为超管并设密码
             user.setUsername(name);
-            user.setRole("superadmin");
             user.setStatus(1);
             user.setPasswordHash(AuthCrypto.hashPassword(password));
             user.setLoginFailCount(0);
             user.setLockedUntil(null);
             userMapper.updateById(user);
         }
+        // 超管走多角色表（c_ai_user_role），不再写 c_ai_user.role 旧列
+        userRoleService.grant(u, "superadmin", "manual");
         log.info("[AUDIT] 初始化管理员 uid={} username={}", u, name);
         return login(u, password);
     }
@@ -133,11 +136,11 @@ public class AuthService {
         user.setLastLoginTime(LocalDateTime.now());
         userMapper.updateById(user);
         String token = AuthCrypto.issueToken(secret(), issuer(), audience(),
-                user.getUid(), user.getRole(), ttlSeconds());
+                user.getUid(), userRoleService.primaryRole(user.getUid()), ttlSeconds());
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("token", token);
         out.put("user", userInfo(user));
-        log.info("[AUDIT] 登录成功 uid={} role={}", user.getUid(), user.getRole());
+        log.info("[AUDIT] 登录成功 uid={} roles={}", user.getUid(), userRoleService.rolesOf(user.getUid()));
         return out;
     }
 
@@ -167,17 +170,21 @@ public class AuthService {
         log.info("[AUDIT] 重置密码 uid={}", uid);
     }
 
-    /** 用户公开信息（不含敏感字段；admin 按管理员级角色判定，含自定义 admin_flag=1） */
+    /** 用户公开信息（不含敏感字段）：多角色并集判定管理员；外部身份绑定取自统一身份表 */
     public Map<String, Object> userInfo(User u) {
         Map<String, Object> m = new LinkedHashMap<>();
+        List<String> roles = userRoleService.rolesOf(u.getUid());
         m.put("uid", u.getUid());
         m.put("username", u.getUsername());
-        m.put("role", u.getRole() == null ? "user" : u.getRole());
+        m.put("role", userRoleService.primaryRole(u.getUid()));
+        m.put("roles", roles);
         m.put("departmentId", u.getDepartmentId());
-        m.put("admin", roleService.isAdminCode(u.getRole()));
-        // OIDC 绑定（成员管理展示用）：认证源 id 与 sub；未绑定则均为 null
-        m.put("oidcProvider", u.getOidcProvider());
-        m.put("oidcSub", u.getOidcSub());
+        m.put("admin", roleService.isAdminAny(roles));
+        // 外部身份绑定（成员管理展示用）：首个绑定的认证源 id 与外部标识；未绑定则均为 null
+        com.wenqu.ai.model.UserIdentity ident = identityService.listOf(u.getUid())
+                .stream().findFirst().orElse(null);
+        m.put("oidcProvider", ident == null ? null : ident.getProviderId());
+        m.put("oidcSub", ident == null ? null : ident.getExternalId());
         return m;
     }
 
@@ -196,7 +203,7 @@ public class AuthService {
         return AuthCrypto.hashPassword(rawPassword);
     }
 
-    /** 当前身份（供 /auth/me）：返回 uid/username/role/departmentId 与是否管理员 */
+    /** 当前身份（供 /auth/me）：返回 uid/username/roles/departmentId 与是否管理员 */
     public Map<String, Object> currentUser(String uid, boolean adminFromGuard) {
         User u = (uid == null || uid.isBlank()) ? null : userMapper.selectById(uid);
         Map<String, Object> m = new LinkedHashMap<>();
@@ -205,10 +212,11 @@ public class AuthService {
             m.put("uid", u.getUid());
             m.put("username", u.getUsername());
             m.put("avatar", u.getAvatar());
-            m.put("role", u.getRole() == null ? "user" : u.getRole());
+            m.put("role", userRoleService.primaryRole(u.getUid()));
+            m.put("roles", userRoleService.rolesOf(u.getUid()));
             m.put("departmentId", u.getDepartmentId());
         }
-        m.put("admin", adminFromGuard || (u != null && roleService.isAdminCode(u.getRole())));
+        m.put("admin", adminFromGuard || (u != null && userRoleService.isAdmin(u.getUid())));
         return m;
     }
 

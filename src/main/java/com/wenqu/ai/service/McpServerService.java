@@ -121,6 +121,7 @@ public class McpServerService {
     private final ResourceVisibilityService visibility;
     private final McpCallLogMapper mcpCallLogMapper;
     private final MessageMapper messageMapper;
+    private final UserRoleService userRoleService;
 
     public McpServerService(AgentShareService agentShareService, SessionService sessionService,
                             ChatService chatService, RateLimitService rateLimitService,
@@ -129,7 +130,7 @@ public class McpServerService {
                             KnowledgeRetrievalTool knowledgeRetrievalTool,
                             KnowledgeBaseService knowledgeBaseService, AgentService agentService,
                             ResourceVisibilityService visibility, McpCallLogMapper mcpCallLogMapper,
-                            MessageMapper messageMapper) {
+                            MessageMapper messageMapper, UserRoleService userRoleService) {
         this.agentShareService = agentShareService;
         this.sessionService = sessionService;
         this.chatService = chatService;
@@ -144,6 +145,7 @@ public class McpServerService {
         this.visibility = visibility;
         this.mcpCallLogMapper = mcpCallLogMapper;
         this.messageMapper = messageMapper;
+        this.userRoleService = userRoleService;
     }
 
     /** MCP 端点总开关（mcp.server.enabled，默认关：不主动对外暴露能力） */
@@ -431,7 +433,7 @@ public class McpServerService {
         String modelRef = guest.share().getModelRef() == null ? "" : guest.share().getModelRef();
         // 发布后模型可能被停用/删除：每次调用都复核（fail-loud，而不是拿到空模型静默报错）
         if (!modelRef.isBlank()) {
-            modelRegistryService.assertUsable(modelRef, owner.getUid(), owner.getRole());
+            modelRegistryService.assertUsable(modelRef, owner.getUid(), userRoleService.primaryRole(owner.getUid()));
         }
         return new Resolved(guest.share(), guest.agent(), owner, modelRef);
     }
@@ -699,7 +701,7 @@ public class McpServerService {
         }
         User u = userMapper.selectById(key.getCreatedBy());
         if (u == null) return toolError("Key 所属用户不存在");
-        RequestUser.set(u.getUid(), u.getDepartmentId(), u.getRole());
+        RequestUser.set(u.getUid(), u.getDepartmentId(), userRoleService.rolesOf(u.getUid()));
         try {
             return body.get();
         } finally {

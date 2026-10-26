@@ -98,6 +98,7 @@ public class RetrievalEvaluationService {
     private final ChatClient chatClient;
     /** 站内通知：自动体检下滑预警（eval.decline）广播给管理员级账号。旁路语义 */
     private final NotificationService notificationService;
+    private final UserRoleService userRoleService;
 
     /** 评估执行线程池（daemon；每组参数一个任务，线程局部 override 不污染主线程） */
     private final ExecutorService evalPool = Executors.newFixedThreadPool(4, r -> {
@@ -111,7 +112,8 @@ public class RetrievalEvaluationService {
                                       MessageMapper messageMapper, KnowledgeMapper knowledgeMapper,
                                       AiDocumentMapper documentMapper, UserMapper userMapper,
                                       AppProperties properties, ChatClient chatClient,
-                                      NotificationService notificationService) {
+                                      NotificationService notificationService,
+                                      UserRoleService userRoleService) {
         this.retrievalService = retrievalService;
         this.configService = configService;
         this.keywordExtractor = keywordExtractor;
@@ -123,6 +125,7 @@ public class RetrievalEvaluationService {
         this.properties = properties;
         this.chatClient = chatClient;
         this.notificationService = notificationService;
+        this.userRoleService = userRoleService;
     }
 
     @jakarta.annotation.PreDestroy
@@ -326,7 +329,7 @@ public class RetrievalEvaluationService {
         } else {
             User u = userMapper.selectById(evalUid);
             evalDept = u == null ? null : u.getDepartmentId();
-            evalRole = (u == null || u.getRole() == null || u.getRole().isBlank()) ? "user" : u.getRole();
+            evalRole = u == null ? "user" : userRoleService.primaryRole(evalUid);
         }
         List<Integer> ks = kList == null || kList.isEmpty() ? List.of(5, 10, 20) : kList.stream().distinct().sorted().toList();
         List<EvalParams> gs = groups == null || groups.isEmpty()
@@ -793,7 +796,7 @@ public class RetrievalEvaluationService {
         final String uid = RequestUser.uid();
         final User u = com.wenqu.ai.util.RequestUser.ANONYMOUS.equals(uid) ? null : userMapper.selectById(uid);
         final String dept = u == null ? null : u.getDepartmentId();
-        final String role = (u == null || u.getRole() == null || u.getRole().isBlank()) ? "user" : u.getRole();
+        final String role = u == null ? "user" : userRoleService.primaryRole(uid);
         AnswerRun run = new AnswerRun(cases.size());
         answerRun.set(run);
         evalPool.submit(() -> {

@@ -185,6 +185,7 @@ public class ChatService {
      * 个性化能力，经 {@link #runWorkflowBoundTurn} 处理，不属于被框架替代的手写推理循环。
      */
     private final com.wenqu.ai.engine.ChatEngineFactory chatEngines;
+    private final UserRoleService userRoleService;
 
 
 
@@ -375,7 +376,8 @@ public class ChatService {
                       ChatRunBus chatRunBus,
                       ChatRunRuntime runtime,
                       com.wenqu.ai.agent.chatflow.ChatflowBridge chatflow,
-                      com.wenqu.ai.engine.ChatEngineFactory chatEngines) {
+                      com.wenqu.ai.engine.ChatEngineFactory chatEngines,
+                      UserRoleService userRoleService) {
         this.sessionService = sessionService;
         this.configService = configService;
         this.chatAttachments = chatAttachments;
@@ -394,6 +396,7 @@ public class ChatService {
         this.runtime = runtime;
         this.chatflow = chatflow;
         this.chatEngines = chatEngines;
+        this.userRoleService = userRoleService;
 
     }
 
@@ -816,7 +819,8 @@ public class ChatService {
         // 模型、匿名兼容池的会话没有 uid，按他们的身份判必然判成「不属于你」，于是把好用的模型判死
         boolean judgeOwnership = !cmd.isGuestMode() && uid != null && !uid.isBlank()
                 && !com.wenqu.ai.util.RequestUser.ANONYMOUS.equals(uid);
-        String role = prefUser != null ? prefUser.getRole() : com.wenqu.ai.util.RequestUser.role();
+        String role = prefUser != null ? userRoleService.primaryRole(prefUser.getUid())
+                : com.wenqu.ai.util.RequestUser.role();
         java.util.function.Function<String, com.wenqu.ai.service.ModelRegistryService.Usability> probe =
                 ref -> modelRegistryService.referenceUsability(ref, uid, role, judgeOwnership);
         java.util.function.Function<String, String> why =
@@ -887,7 +891,7 @@ public class ChatService {
         try {
             com.wenqu.ai.model.User u = userMapper.selectById(userId);
             if (u == null) return false;
-            com.wenqu.ai.util.RequestUser.set(u.getUid(), u.getDepartmentId(), u.getRole());
+            com.wenqu.ai.util.RequestUser.set(u.getUid(), u.getDepartmentId(), userRoleService.rolesOf(u.getUid()));
             return true;
         } catch (Exception e) {
             // 装载失败按匿名继续（不打断问答），但必须留痕：否则又变成"共享资料检索不到"且无迹可查

@@ -74,7 +74,7 @@ public class KnowledgeBaseController {
         // 故对管理员级单独放行；
         // 能改哪些字段由服务层白名单兜住（KnowledgeBaseService.update），内容/删除仍不可动。
         if (kb.getBuiltin() != null && kb.getBuiltin() == 1) {
-            if (!roleService.isAdminCode(com.wenqu.ai.util.RequestUser.role())) {
+            if (!roleService.isAdminAny(com.wenqu.ai.util.RequestUser.roles())) {
                 throw new BizException("官方内置知识库仅管理员可维护检索/解析设置与向量模型（文档内容随版本自动同步）");
             }
             return;
@@ -162,7 +162,7 @@ public class KnowledgeBaseController {
         // 官方内置库（问渠使用手册）：知识库管理页仅管理员可见——它是系统资源而非用户资产，
         // 普通用户在这里看到只会误以为可翻可改。消费入口不受影响：帮助中心（/manual 独立只读端点）
         // 与对话检索链路（read_scope=global）仍全员可读。
-        if (!roleService.isAdminCode(RequestUser.role())) {
+        if (!roleService.isAdminAny(RequestUser.roles())) {
             all = all.stream().filter(m -> !Integer.valueOf(1).equals(m.get("builtin"))).toList();
         }
         return ResultJson.ok(all);
@@ -175,7 +175,7 @@ public class KnowledgeBaseController {
         if (kb == null) return ResultJson.error("知识库不存在");
         // 官方内置库：详情与列表同口径仅管理员（不可见按不存在处理，不泄露存在性）
         if (kb.getBuiltin() != null && kb.getBuiltin() == 1
-                && !roleService.isAdminCode(RequestUser.role())) {
+                && !roleService.isAdminAny(RequestUser.roles())) {
             return ResultJson.error("知识库不存在");
         }
         if (!visibility.canRead(principal(), kb.getShareConfig(), kb.getCreatedBy(),

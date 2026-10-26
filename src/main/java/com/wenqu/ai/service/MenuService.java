@@ -42,6 +42,7 @@ public class MenuService {
     private final MenuApiMapper menuApiMapper;
     private final RoleService roleService;
     private final UserMapper userMapper;
+    private final UserRoleService userRoleService;
 
     /** 偏好 JSON 解析专用：字段名固定、类型固定，不受全局 ObjectMapper 配置影响 */
     private static final ObjectMapper PREF_MAPPER = new ObjectMapper();
@@ -49,15 +50,16 @@ public class MenuService {
     // ==================== 下发（/auth/me 热路径） ====================
 
     /**
-     * 当前角色可见的菜单树（仅 visible=1），按 sortOrder 升序；节点含 children。
+     * 当前角色集可见的菜单树（仅 visible=1），按 sortOrder 升序；节点含 children。
      * 输出为 LinkedHashMap 列表（Jackson 直接序列化）。
+     * <p>多角色口径：任一角色为管理员级 → 全部可见；否则各角色授权菜单取<b>并集</b>。
      */
-    public List<Map<String, Object>> visibleMenusFor(String role) {
-        return visibleMenusFor(role, null);
+    public List<Map<String, Object>> visibleMenusFor(java.util.Collection<String> roles) {
+        return visibleMenusFor(roles, null);
     }
 
     /**
-     * 个人偏好版：{@code prefJson} 为空/解析失败时行为与 {@link #visibleMenusFor(String)} 一致。
+     * 个人偏好版：{@code prefJson} 为空/解析失败时行为与 {@link #visibleMenusFor(Collection)} 一致。
      * <p>
      * <b>越权防护（关键）</b>：偏好只在「RBAC 授权结果」之后生效 —— 先按角色算出可见集合，
      * 再在集合内按个人 order 重排、剔除 hidden。偏好里出现未授权菜单的 id 一律忽略，
@@ -66,7 +68,7 @@ public class MenuService {
      * <b>容错</b>：偏好脏数据（JSON 坏、id 已删除、角色变更后授权收回）一律静默忽略：
      * order 里失效的 id 跳过、剩余按菜单表原序补后，绝不丢菜单或清空侧栏。
      */
-    public List<Map<String, Object>> visibleMenusFor(String role, String prefJson) {
+    public List<Map<String, Object>> visibleMenusFor(java.util.Collection<String> roles, String prefJson) {
         List<Menu> all = menuMapper.selectList(new LambdaQueryWrapper<Menu>()
                 .eq(Menu::getVisible, 1)
                 .orderByAsc(Menu::getSortOrder)
@@ -74,10 +76,14 @@ public class MenuService {
         if (all.isEmpty()) return List.of();
 
         Set<String> allowed;
-        if (roleService.isAdminCode(role)) {
+        if (roleService.isAdminAny(roles)) {
             allowed = null; // 管理员级：全部可见
         } else {
-            allowed = new HashSet<>(roleService.menuIdsOf(role));
+            // 多角色并集：任一角色授权的菜单都可见
+            allowed = new HashSet<>();
+            for (String role : UserRoleService.distinct(roles)) {
+                allowed.addAll(roleService.menuIdsOf(role));
+            }
             if (allowed.isEmpty()) return List.of();
         }
 
@@ -182,16 +188,16 @@ public class MenuService {
     }
 
     /**
-     * 供 /auth/me 用的便捷入口：按当前用户（uid + role）下发菜单，自动叠加其个人偏好。
-     * 偏好列不存在/为空/坏JSON 时静默退化为菜单表默认。
+     * 供 /auth/me 用的便捷入口：按当前用户（uid）下发菜单（角色集从多角色表解析，并集口径），
+     * 自动叠加其个人偏好。偏好列不存在/为空/坏JSON 时静默退化为菜单表默认。
      */
-    public List<Map<String, Object>> menusForUser(String uid, String role) {
+    public List<Map<String, Object>> menusForUser(String uid) {
         String pref = null;
         if (uid != null && !uid.isBlank()) {
             User u = userMapper.selectById(uid);
             pref = u == null ? null : u.getMenuPref();
         }
-        return visibleMenusFor(role, pref);
+        return visibleMenusFor(userRoleService.rolesOf(uid), pref);
     }
 
     /**
@@ -208,9 +214,9 @@ public class MenuService {
      * 只会让「智能体」带着 6 个 Tab 子节点进响应（实测普通用户响应里就有）。直接复用
      * visibleMenusFor 的节点会把子树一起带出去，故逐字段重建。
      */
-    public List<Map<String, Object>> adjustableSidebarMenus(String role) {
+    public List<Map<String, Object>> adjustableSidebarMenus(String uid) {
         List<Map<String, Object>> out = new ArrayList<>();
-        for (Map<String, Object> m : visibleMenusFor(role, null)) {
+        for (Map<String, Object> m : visibleMenusFor(userRoleService.rolesOf(uid), null)) {
             String ra = m.get("renderAs") == null ? "sidebar" : String.valueOf(m.get("renderAs"));
             if (!"sidebar".equals(ra) && !"group".equals(ra)) continue;
             Map<String, Object> flat = new LinkedHashMap<>();
@@ -243,8 +249,8 @@ public class MenuService {
             log.info("[AUDIT] 用户 {} 恢复默认侧栏布局", uid);
             return;
         }
-        // 白名单：当前角色可见的菜单 id（RBAC 结果，管理员级 = 全部 visible）
-        Set<String> visible = visibleMenuIdsOf(u.getRole());
+        // 白名单：当前角色集可见的菜单 id（RBAC 并集结果，管理员级 = 全部 visible）
+        Set<String> visible = visibleMenuIdsOf(userRoleService.rolesOf(uid));
         MenuPref pref = new MenuPref();
         pref.order = sanitize(order, visible);
         pref.hidden = sanitize(hidden, visible);
@@ -270,14 +276,18 @@ public class MenuService {
         }
     }
 
-    /** 当前角色可见的菜单 id 集合（visible=1 ∩ 角色授权；管理员级 = 全部 visible） */
-    public Set<String> visibleMenuIdsOf(String role) {
+    /** 当前角色集可见的菜单 id 集合（visible=1 ∩ 各角色授权并集；管理员级 = 全部 visible） */
+    public Set<String> visibleMenuIdsOf(java.util.Collection<String> roles) {
         List<Menu> all = menuMapper.selectList(new LambdaQueryWrapper<Menu>()
                 .eq(Menu::getVisible, 1).select(Menu::getId));
         Set<String> ids = new LinkedHashSet<>();
         for (Menu m : all) ids.add(m.getId());
-        if (roleService.isAdminCode(role)) return ids;
-        ids.retainAll(new HashSet<>(roleService.menuIdsOf(role)));
+        if (roleService.isAdminAny(roles)) return ids;
+        Set<String> granted = new HashSet<>();
+        for (String role : UserRoleService.distinct(roles)) {
+            granted.addAll(roleService.menuIdsOf(role));
+        }
+        ids.retainAll(granted);
         return ids;
     }
 

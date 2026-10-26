@@ -1347,3 +1347,99 @@ CREATE TABLE IF NOT EXISTS `c_ai_webpush_subscription` (
     UNIQUE KEY `uk_wp_endpoint_hash` (`endpoint_hash`),
     KEY `idx_wp_uid` (`uid`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Web Push 订阅（一台浏览器一行；VAPID 密钥对在 env，见 application.yml 的 ai-app.webpush）';
+
+-- ============================================
+-- 2026-10：统一身份认证源（OIDC/SAML/LDAP/SCIM）
+-- 取代 c_ai_oidc_provider 专用表：用 type 区分协议，协议参数统一收纳进 config JSON
+-- （敏感字段整块 RSA 加密，沿用 ConfigCryptoService 口径）。
+-- 存量 c_ai_oidc_provider 由 IdentityMigrationRunner 一次性迁入本表（type=oidc），无兼容双写。
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS `c_ai_identity_provider` (
+    `id`                VARCHAR(50)  NOT NULL COMMENT '主键 (UUID)',
+    `tenant_id`         VARCHAR(50)  DEFAULT NULL COMMENT '租户ID（Phase4 启用，当前 NULL）',
+    `type`              VARCHAR(20)  NOT NULL COMMENT 'oidc | saml | ldap | scim',
+    `name`              VARCHAR(100) NOT NULL COMMENT '认证源名称（登录按钮/同步源名）',
+    `enabled`           INT          DEFAULT 1 COMMENT '启用: 1=启用 0=停用',
+    `config`            TEXT         NOT NULL COMMENT '协议参数 JSON（按 type 不同；敏感字段整块 RSA 加密，RSA: 前缀）',
+    `default_role`      VARCHAR(20)  DEFAULT 'user' COMMENT '自动建档默认角色（须是 c_ai_role.code 已启用值）',
+    `default_department` VARCHAR(50) DEFAULT NULL COMMENT '自动建档默认部门（c_ai_department.id）',
+    `auto_create_user`  INT          DEFAULT 1 COMMENT '首次登录自动建号（关闭则须管理员预先建好并绑定）',
+    `sort_order`        INT          DEFAULT 0 COMMENT '排序（小在前，决定登录页按钮顺序）',
+    `create_time`       DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time`       DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_tenant` (`tenant_id`),
+    KEY `idx_type` (`type`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='统一身份认证源（OIDC/SAML/LDAP/SCIM）';
+
+-- 用户-外部身份关联：取代 c_ai_user.oidc_sub / oidc_provider 两列（统一身份抽象）
+CREATE TABLE IF NOT EXISTS `c_ai_user_identity` (
+    `id`             VARCHAR(50)  NOT NULL COMMENT '主键 (UUID)',
+    `tenant_id`      VARCHAR(50)  DEFAULT NULL COMMENT '租户ID（Phase4 启用，当前 NULL）',
+    `uid`            VARCHAR(64)  NOT NULL COMMENT '本地账号 (c_ai_user.uid)',
+    `provider_id`    VARCHAR(50)  NOT NULL COMMENT 'c_ai_identity_provider.id',
+    `external_id`    VARCHAR(255) NOT NULL COMMENT 'IdP 侧唯一标识（OIDC sub / SAML NameID / SCIM id / LDAP dn 摘要）',
+    `external_attrs` TEXT         DEFAULT NULL COMMENT '最近同步的映射属性快照 JSON',
+    `last_synced`    DATETIME     DEFAULT NULL COMMENT '最近一次同步时间',
+    `create_time`    DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time`    DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_ident` (`provider_id`, `external_id`),
+    KEY `idx_uid` (`uid`),
+    KEY `idx_tenant` (`tenant_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户-外部身份关联（取代 c_ai_user.oidc_sub/oidc_provider）';
+
+-- 用户-角色多对多：取代 c_ai_user.role 单值列
+CREATE TABLE IF NOT EXISTS `c_ai_user_role` (
+    `uid`         VARCHAR(64) NOT NULL COMMENT 'c_ai_user.uid',
+    `role_code`   VARCHAR(20) NOT NULL COMMENT 'c_ai_role.code',
+    `granted_by`  VARCHAR(20) DEFAULT 'manual' COMMENT '授权来源: idp | manual',
+    `create_time` DATETIME    DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`uid`, `role_code`),
+    KEY `idx_role` (`role_code`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户-角色多对多（取代 c_ai_user.role 单值）';
+
+-- 组→角色/部门 自动映射（治理核心，优先级裁决）
+CREATE TABLE IF NOT EXISTS `c_ai_group_role_mapping` (
+    `id`             VARCHAR(50) NOT NULL COMMENT '主键 (UUID)',
+    `tenant_id`      VARCHAR(50) DEFAULT NULL COMMENT '租户ID（Phase4 启用，当前 NULL）',
+    `provider_id`    VARCHAR(50) NOT NULL COMMENT 'c_ai_identity_provider.id',
+    `external_group` VARCHAR(255) NOT NULL COMMENT 'IdP 侧组名/组标识',
+    `role_code`      VARCHAR(20) DEFAULT NULL COMMENT '映射到的角色（c_ai_role.code）',
+    `department_id`  VARCHAR(50) DEFAULT NULL COMMENT '映射到的部门（c_ai_department.id）',
+    `priority`       INT         DEFAULT 0 COMMENT '多组命中裁决用，大优先',
+    `create_time`    DATETIME    DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_grp` (`provider_id`, `external_group`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='组→角色/部门 自动映射';
+
+-- 身份同步作业日志（SCIM/LDAP/销户回收可追溯）
+CREATE TABLE IF NOT EXISTS `c_ai_sync_job_log` (
+    `id`             VARCHAR(50)  NOT NULL COMMENT '主键 (UUID)',
+    `tenant_id`      VARCHAR(50)  DEFAULT NULL COMMENT '租户ID（Phase4 启用，当前 NULL）',
+    `source_type`    VARCHAR(20)  NOT NULL COMMENT 'scim | ldap | saml | oidc',
+    `source_id`      VARCHAR(50)  DEFAULT NULL COMMENT '对应 c_ai_identity_provider.id',
+    `users_created`  INT          DEFAULT 0 COMMENT '本次新建账号数',
+    `users_updated`  INT          DEFAULT 0 COMMENT '本次更新账号数',
+    `users_disabled` INT          DEFAULT 0 COMMENT '本次禁用账号数',
+    `status`         VARCHAR(20)  DEFAULT 'success' COMMENT 'success | partial | failed',
+    `detail`         TEXT         DEFAULT NULL COMMENT '摘要/错误信息',
+    `create_time`    DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_source` (`source_type`, `source_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='身份同步作业日志（SCIM/LDAP/销户回收）';
+
+-- 组成员关系事实源：SCIM Groups 推送 / LDAP 目录同步共用的「用户属于哪个 IdP 组」。
+-- 与 c_ai_group_role_mapping（组→角色规则）分离：成员是 IdP 侧事实，规则是本地治理配置。
+CREATE TABLE IF NOT EXISTS `c_ai_group_member` (
+    `id`             VARCHAR(50)  NOT NULL COMMENT '主键 (UUID)',
+    `tenant_id`      VARCHAR(50)  DEFAULT NULL COMMENT '租户ID（Phase4 启用，当前 NULL）',
+    `provider_id`    VARCHAR(50)  NOT NULL COMMENT 'c_ai_identity_provider.id',
+    `external_group` VARCHAR(255) NOT NULL COMMENT 'IdP 侧组名/组标识（同 c_ai_group_role_mapping.external_group）',
+    `uid`            VARCHAR(64)  NOT NULL COMMENT '本地账号 (c_ai_user.uid)',
+    `create_time`    DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '入组时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_grp_member` (`provider_id`, `external_group`, `uid`),
+    KEY `idx_member_uid` (`uid`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='组⇄用户成员关系（SCIM/LDAP 同步）';

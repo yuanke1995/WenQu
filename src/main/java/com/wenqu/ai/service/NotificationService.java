@@ -47,6 +47,8 @@ public class NotificationService {
     private final RoleService roleService;
     /** 用户表（createForAdmins 解析管理员级账号清单） */
     private final com.wenqu.ai.mapper.UserMapper userMapper;
+    /** 多角色表服务（createForAdmins 按角色圈定收件人） */
+    private final UserRoleService userRoleService;
     /** Web Push：一条<b>新</b>通知落库后推给本人已订阅的设备（旁路，失败只记日志） */
     private final WebPushNotifier webPush;
 
@@ -205,8 +207,12 @@ public class NotificationService {
         try {
             List<String> codes = roleService.adminCodes();
             if (codes.isEmpty()) return;
+            // 收件人按多角色表圈定（c_ai_user_role；任一管理员级角色即收件人）
+            List<String> adminUids = userRoleService.uidsWithAnyRole(codes);
+            if (adminUids.isEmpty()) return;
             List<com.wenqu.ai.model.User> admins = userMapper.selectList(
-                    new LambdaQueryWrapper<com.wenqu.ai.model.User>().in(com.wenqu.ai.model.User::getRole, codes));
+                    new LambdaQueryWrapper<com.wenqu.ai.model.User>()
+                            .in(com.wenqu.ai.model.User::getUid, adminUids));
             for (com.wenqu.ai.model.User u : admins) {
                 if (u.getStatus() == null || u.getStatus() == 1) {
                     create(u.getUid(), type, title, content, refType, refId);

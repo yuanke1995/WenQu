@@ -1,11 +1,21 @@
 package com.wenqu.ai.util;
 
+import java.util.List;
+
 /**
  * 当前请求用户透传（ThreadLocal）。
  * <p>
  * 由 {@code UserContextInterceptor} 在请求入口解析登录令牌（{@code Authorization: Bearer <JWT>}）后装载
- * （含部门/角色）；未登录一律为 {@link #ANONYMOUS}。业务层（创建资源写 created_by、检索层按可见范围过滤）
+ * （含部门/角色集）；未登录一律为 {@link #ANONYMOUS}。业务层（创建资源写 created_by、检索层按可见范围过滤）
  * 直接读取，无需层层透传参数。参照工作区既有 {@code SubAgentOrchestrator.CTX} 的 ThreadLocal 模式。
+ * <p>
+ * <b>多角色口径</b>（RBAC 并集判定）：
+ * <ul>
+ *   <li>{@link #roles()}：全部角色——鉴权判定一律用它（任一角色为管理员级即管理员；
+ *       接口/菜单授权各角色取并集）；</li>
+ *   <li>{@link #role()}：主角色（首个管理员级角色，否则首个）——仅供展示、日志与
+ *       「角色标签」类读端点使用，<b>不</b>作为鉴权依据。</li>
+ * </ul>
  *
  * @author yuanke
  */
@@ -18,17 +28,28 @@ public final class RequestUser {
 
     private final String uid;
     private final String departmentId;
-    /** 角色：superadmin | admin | user（未建档按 user） */
+    /** 全部角色（管理员级在前；空按 ["user"]） */
+    private final List<String> roles;
+    /** 主角色（首个管理员级，否则首个；展示/日志用，不作鉴权依据） */
     private final String role;
 
-    private RequestUser(String uid, String departmentId, String role) {
+    private RequestUser(String uid, String departmentId, List<String> roles) {
         this.uid = uid;
         this.departmentId = departmentId;
-        this.role = (role == null || role.isBlank()) ? "user" : role;
+        List<String> rs = com.wenqu.ai.service.UserRoleService.distinct(roles);
+        if (rs.isEmpty()) rs = List.of("user");
+        this.roles = rs;
+        this.role = rs.get(0);
     }
 
+    /** 多角色装载（推荐入口：UserContextInterceptor / 流水线身份装载用） */
+    public static void set(String uid, String departmentId, List<String> roles) {
+        CURRENT.set(new RequestUser(uid, departmentId, roles));
+    }
+
+    /** 单角色装载（兼容入口：等价于单元素角色集；快照恢复也走这里） */
     public static void set(String uid, String departmentId, String role) {
-        CURRENT.set(new RequestUser(uid, departmentId, role));
+        CURRENT.set(new RequestUser(uid, departmentId, role == null ? List.of() : List.of(role)));
     }
 
     public static void clear() {
@@ -46,14 +67,21 @@ public final class RequestUser {
         return u == null ? null : u.departmentId;
     }
 
-    /** 当前用户角色；无上下文按普通用户 */
+    /** 当前用户全部角色（鉴权判定口径：并集）；无上下文按 ["user"] */
+    public static List<String> roles() {
+        RequestUser u = CURRENT.get();
+        return u == null ? List.of("user") : u.roles;
+    }
+
+    /** 当前用户主角色（首个管理员级，否则首个）；仅供展示/日志，不作鉴权依据 */
     public static String role() {
         RequestUser u = CURRENT.get();
         return u == null ? "user" : u.role;
     }
 
+    /** 当前用户是否持有 superadmin（多角色口径：任一角色为 superadmin） */
     public static boolean superadmin() {
-        return "superadmin".equals(role());
+        return roles().contains("superadmin");
     }
 
     /**
@@ -67,21 +95,21 @@ public final class RequestUser {
      * 同一坑已踩多次（{@code SubAgentOrchestrator} 分支检索也为此打了局部补丁），故在此提供
      * 通用快照/恢复，由调用点在<b>线程切换之前</b>捕获、切换之后恢复。
      */
-    public record Snapshot(String uid, String departmentId, String role) {
+    public record Snapshot(String uid, String departmentId, String role, List<String> roles) {
     }
 
     /** 捕获当前身份快照（应在提交异步任务<b>之前</b>调用，此时身份还可见） */
     public static Snapshot snapshot() {
         RequestUser u = CURRENT.get();
-        return u == null ? new Snapshot(ANONYMOUS, null, "user")
-                : new Snapshot(u.uid, u.departmentId, u.role);
+        return u == null ? new Snapshot(ANONYMOUS, null, "user", List.of("user"))
+                : new Snapshot(u.uid, u.departmentId, u.role, u.roles);
     }
 
     /** 在<b>新线程里</b>恢复身份；返回的 AutoCloseable 用于 finally 复原，避免污染线程池里后续复用该线程的任务 */
     public static AutoCloseable restore(Snapshot s) {
         if (s == null) return () -> { };
         RequestUser prev = CURRENT.get();
-        CURRENT.set(new RequestUser(s.uid(), s.departmentId(), s.role()));
+        CURRENT.set(new RequestUser(s.uid(), s.departmentId(), s.roles()));
         return () -> {
             if (prev == null) CURRENT.remove();
             else CURRENT.set(prev);

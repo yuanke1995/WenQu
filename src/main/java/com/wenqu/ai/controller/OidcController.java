@@ -29,6 +29,7 @@ import java.util.Map;
 public class OidcController {
 
     private final OidcService oidcService;
+    private final com.wenqu.ai.service.SsoLoginCodeService loginCodeService;
 
     @Operation(summary = "OIDC 可用认证源清单", description = "回 {providers:[{id,name}…]}：仅 enabled 且配置完整的认证源；清单为空时前端不显示单点登录入口")
     @GetMapping("/config")
@@ -67,9 +68,9 @@ public class OidcController {
         return ResponseEntity.status(HttpStatus.FOUND).location(URI.create(target)).build();
     }
 
-    @Operation(summary = "用一次性 code 兑换登录结果", description = "{\"code\":\"...\"}；返回 {token, user, redirectPath}，code 一次性且 60 秒过期")
+    @Operation(summary = "用一次性 code 兑换登录结果", description = "{\"code\":\"...\"}；返回 {token, user, redirectPath}，code 一次性且 60 秒过期。OIDC 与 SAML 共用（SSO 登录结果兑换，与协议无关）")
     @PostMapping("/exchange-code")
     public ResultJson exchangeCode(@RequestBody Map<String, String> body) {
-        return ResultJson.ok(oidcService.exchangeCode(body.get("code")), "登录成功");
+        return ResultJson.ok(loginCodeService.exchange(body.get("code")), "登录成功");
     }
 }

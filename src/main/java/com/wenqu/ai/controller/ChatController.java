@@ -124,7 +124,7 @@ public class ChatController {
     @GetMapping("/auth/me")
     public ResultJson authMe(HttpServletRequest httpRequest) {
         Map<String, Object> me = authService.currentUser(RequestUser.uid(), adminGuard.isAdmin(httpRequest));
-        me.put("menus", menuService.menusForUser(RequestUser.uid(), RequestUser.role()));
+        me.put("menus", menuService.menusForUser(RequestUser.uid()));
         return ResultJson.ok(me);
     }
 

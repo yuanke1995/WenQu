@@ -175,7 +175,7 @@ public class KnowledgeBaseService {
         //    而提示却说「仅 1 处可在下列位置直接修改」，指了个改不了的地方。
         boolean builtin = kb.getBuiltin() != null && kb.getBuiltin() == 1;
         if (builtin) {
-            if (!roleService.isAdminCode(com.wenqu.ai.util.RequestUser.role())) {
+            if (!roleService.isAdminAny(com.wenqu.ai.util.RequestUser.roles())) {
                 throw new com.wenqu.ai.common.BizException("官方内置知识库「" + kb.getName()
                         + "」仅管理员可维护检索/解析设置与向量模型（内容随版本自动同步）");
             }

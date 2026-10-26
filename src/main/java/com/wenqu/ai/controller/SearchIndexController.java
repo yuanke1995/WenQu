@@ -38,7 +38,7 @@ public class SearchIndexController {
 
     /** 重建/清空是全平台破坏性运维操作，状态含索引规模信息，整体收紧到管理员 */
     private boolean admin() {
-        return roleService.isAdminCode(RequestUser.role());
+        return roleService.isAdminAny(RequestUser.roles());
     }
 
     @Operation(summary = "引擎状态与索引统计（indexedCount 与 mysqlCount 对比可发现索引漂移）")

@@ -63,6 +63,7 @@ public class ShareController {
     private final AgentShareService agentShareService;
     private final SessionService sessionService;
     private final ChatService chatService;
+    private final com.wenqu.ai.service.UserRoleService userRoleService;
 
     /**
      * 轮次控制与存活（P6 刀 2）。免登录分享页也要能问「这一轮还在跑吗」、能接回正在跑的流、
@@ -233,7 +234,7 @@ public class ShareController {
         String modelRef = ctx.share().getModelRef() == null ? "" : ctx.share().getModelRef();
         // 发布者模型可用性复核（发布后供应商可能被停用/删除；fail-loud 而不是拿不到模型静默报错）
         if (!modelRef.isBlank()) {
-            modelRegistryService.assertUsable(modelRef, owner.getUid(), owner.getRole());
+            modelRegistryService.assertUsable(modelRef, owner.getUid(), userRoleService.primaryRole(owner.getUid()));
         }
 
         String message = body.getMessage();

@@ -18,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.AntPathMatcher;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -57,6 +58,7 @@ public class RoleService {
     private final MenuMapper menuMapper;
     private final ApiEndpointMapper apiEndpointMapper;
     private final UserMapper userMapper;
+    private final com.wenqu.ai.mapper.UserRoleMapper userRoleMapper;
 
     private final AntPathMatcher pathMatcher = new AntPathMatcher();
 
@@ -120,6 +122,27 @@ public class RoleService {
         Role r = roles().get(role);
         return r != null && r.getAdminFlag() != null && r.getAdminFlag() == 1
                 && (r.getStatus() == null || r.getStatus() == 1);
+    }
+
+    /** 角色集合中任一为管理员级（多角色并集判定：并集放大权限） */
+    public boolean isAdminAny(Collection<String> roles) {
+        if (roles == null || roles.isEmpty()) return false;
+        for (String r : roles) {
+            if (isAdminCode(r)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * 角色集合的接口级鉴权（多角色并集）：任一角色绑定该接口（method + path）即放行。
+     * 全部角色均未命中 → false（fail-closed）。
+     */
+    public boolean canAccessAny(Collection<String> roles, String method, String path) {
+        if (roles == null || roles.isEmpty()) return false;
+        for (String r : roles) {
+            if (canAccess(r, method, path)) return true;
+        }
+        return false;
     }
 
     /** 角色是否存在且启用（OrgService 用户建档校验用；内置角色恒存在——种子兜底） */
@@ -288,7 +311,9 @@ public class RoleService {
         Role r = roleMapper.selectById(code);
         if (r == null) throw new BizException("角色不存在");
         if (r.getBuiltin() != null && r.getBuiltin() == 1) throw new BizException("内置角色不可删除");
-        Long used = userMapper.selectCount(new LambdaQueryWrapper<User>().eq(User::getRole, code));
+        // 占用计数走 c_ai_user_role（多角色模型）；直接依赖 Mapper 而非 UserRoleService，避免服务环依赖
+        Long used = userRoleMapper.selectCount(
+                new LambdaQueryWrapper<com.wenqu.ai.model.UserRole>().eq(com.wenqu.ai.model.UserRole::getRoleCode, code));
         if (used != null && used > 0) {
             throw new BizException("仍有 " + used + " 名用户使用该角色，请先调整其角色");
         }

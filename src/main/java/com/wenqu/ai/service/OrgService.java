@@ -18,6 +18,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -41,6 +42,9 @@ public class OrgService {
     private final AuthService authService;
     private final ModelRegistryService modelRegistryService;
     private final RoleService roleService;
+    private final UserRoleService userRoleService;
+    private final IdentityService identityService;
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
     private final AppProperties properties;
     /** 账号删除时一并清理个人记忆文件（MEMORY.md + 日账）；不清理会在磁盘上留下无主数据。 */
     private final com.wenqu.ai.memory.MemoryService memoryService;
@@ -108,7 +112,32 @@ public class OrgService {
                 new LambdaQueryWrapper<User>().orderByAsc(User::getUsername));
     }
 
-    /** 新建用户（必须设置初始密码，否则无法登录；角色须为角色表中启用的角色） */
+    /**
+     * 用户列表（含多角色）：User 全字段 + {@code roles}（角色集，多角色数据源）+
+     * {@code role}（主角色，管理员优先——前端单角色展示的兼容口径）。
+     */
+    public List<java.util.Map<String, Object>> listUsersWithRoles() {
+        List<java.util.Map<String, Object>> out = new java.util.ArrayList<>();
+        for (User u : listUsers()) {
+            java.util.Map<String, Object> m = new java.util.LinkedHashMap<>(
+                    objectMapper.convertValue(u, java.util.Map.class));
+            List<String> roles = userRoleService.rolesOf(u.getUid());
+            m.put("roles", roles);
+            m.put("role", roles.isEmpty() ? "user" : roles.get(0));
+            // 身份来源（统一身份表）：成员管理「单点登录」列与解绑判定的数据源
+            // （旧 oidc_sub/oidc_provider 两列不再写入，批次 2 起新绑定只落这里）
+            List<java.util.Map<String, Object>> ids = new java.util.ArrayList<>();
+            for (var i : identityService.listOf(u.getUid())) {
+                ids.add(java.util.Map.of("providerId", (Object) i.getProviderId(),
+                        "externalId", (Object) i.getExternalId()));
+            }
+            m.put("identities", ids);
+            out.add(m);
+        }
+        return out;
+    }
+
+    /** 新建用户（必须设置初始密码，否则无法登录；角色须为角色表中启用的角色；落多角色表） */
     public User createUser(String uid, String username, String departmentId, String role, String password) {
         String u = normalizeUid(uid);
         if (userMapper.selectById(u) != null) throw new BizException("该登录账号已存在");
@@ -120,41 +149,60 @@ public class OrgService {
         user.setUid(u);
         user.setUsername(name);
         user.setDepartmentId(trimOrNull(departmentId));
-        user.setRole(r);
         user.setStatus(1);
         user.setPasswordHash(authService.hashNewPassword(password));
         user.setLoginFailCount(0);
         userMapper.insert(user);
-        log.info("[AUDIT] 新建用户 uid={} role={} dept={}", u, r, user.getDepartmentId());
+        userRoleService.grant(u, r, "manual");
+        log.info("[AUDIT] 新建用户 uid={} roles=[{}] dept={}", u, r, user.getDepartmentId());
         return user;
     }
 
-    public void updateUser(String uid, String username, String departmentId, String role, Integer status) {
+    /**
+     * 编辑用户（批次 5 多角色化）：{@code roles} 为角色集（manual 全量替换，idp 行不动）；
+     * 旧调用传单 {@code role} 时按单元素集合处理（兼容存量调用方，语义不变）。
+     */
+    public void updateUser(String uid, String username, String departmentId, List<String> roles, Integer status) {
         User user = userMapper.selectById(uid);
         if (user == null) throw new BizException("用户不存在");
-        String r = normalizeRole(role);
+        List<String> normalized = new ArrayList<>();
+        if (roles != null) {
+            for (String code : roles) {
+                if (code == null || code.isBlank()) continue;
+                String c = code.trim().toLowerCase();
+                if (!roleService.existsActive(c)) {
+                    throw new BizException("角色「" + c + "」不存在或已停用，请在权限管理中创建或改用其它角色");
+                }
+                if (!normalized.contains(c)) normalized.add(c);
+            }
+        }
         ensureDeptExists(departmentId);
         if (status != null && status != 0 && status != 1) throw new BizException("非法状态");
-        // 最后一名管理员级账号不可降级为普通角色，避免把自己锁死（RBAC 化：superadmin 或 admin_flag=1）
-        if (roleService.isAdminCode(user.getRole()) && !roleService.isAdminCode(r) && isLastAdminAccount()) {
+        // 最后一名管理员级账号不可降级为普通角色，避免把自己锁死（多角色口径：任一角色为管理员级）
+        boolean targetAdmin = normalized.stream().anyMatch(roleService::isAdminCode);
+        if (userRoleService.isAdmin(uid) && !targetAdmin && isLastAdminAccount()) {
             throw new BizException("至少保留一名管理员级账号，无法降级最后一名");
         }
         String name = trimOrNull(username);
         if (name != null) ensureUsernameUnique(name, uid);
         user.setUsername(name);
         user.setDepartmentId(trimOrNull(departmentId));
-        user.setRole(r);
         if (status != null) user.setStatus(status);
         userMapper.updateById(user);
+        // 角色全量替换写多角色表（granted_by='manual' 行；idp 行不动——IdP 权威）
+        userRoleService.setManualRoles(uid, normalized);
     }
 
     public void deleteUser(String uid) {
         User user = userMapper.selectById(uid);
         if (user == null) throw new BizException("用户不存在");
-        if (roleService.isAdminCode(user.getRole()) && isLastAdminAccount()) {
+        if (userRoleService.isAdmin(uid) && isLastAdminAccount()) {
             throw new BizException("至少保留一名管理员级账号，无法删除最后一名");
         }
         userMapper.deleteById(uid);
+        // 级联清理角色/外部身份绑定（多角色与统一身份模型的归属行，不清理会在重建同名 uid 时继承旧授权）
+        userRoleService.removeAll(uid);
+        identityService.unbindAll(uid);
         // 记忆是用户资产，删人不能只删库行：MEMORY.md 与日账都在 user-data/agentscope/{uid} 下。
         // 清理失败只告警（账号已经删了），但必须显形——静默留下无主记忆会让下一个同名 uid 继承旧数据。
         try {
@@ -166,15 +214,15 @@ public class OrgService {
         log.info("[AUDIT] 删除用户 uid={}", uid);
     }
 
-    /** 解绑 OIDC 单点登录：清掉 oidc_sub / oidc_provider（复合唯一约束允许重复绑定）。解绑后须重新走对应 IdP 登录才能再次绑定 */
+    /**
+     * 解绑单点登录：清除该账号在统一身份表（{@code c_ai_user_identity}）中的全部外部身份绑定。
+     * 解绑后须重新走对应 IdP 登录才能再次绑定。
+     */
     public void unbindOidc(String uid) {
         User user = userMapper.selectById(uid);
         if (user == null) throw new BizException("用户不存在");
-        userMapper.update(null, new LambdaUpdateWrapper<User>()
-                .eq(User::getUid, uid)
-                .set(User::getOidcSub, null)
-                .set(User::getOidcProvider, null));
-        log.info("[AUDIT] 解绑 OIDC uid={}", uid);
+        identityService.unbindAll(uid);
+        log.info("[AUDIT] 解绑单点登录 uid={}", uid);
     }
 
     // ==================== 个人偏好（个人设置） ====================
@@ -209,7 +257,7 @@ public class OrgService {
     public void setPreference(String uid, String chatRef, Boolean memoryEnabled) {
         User u = userMapper.selectById(uid);
         if (u == null) throw new BizException("用户不存在");
-        String role = u.getRole();
+        String role = userRoleService.primaryRole(uid);
         if (chatRef != null) {
             String v = chatRef.trim();
             validateDefaultModel(v, ModelRegistryService.TYPE_CHAT, "聊天", uid, role);
@@ -408,12 +456,9 @@ public class OrgService {
         if (departmentMapper.selectById(d) == null) throw new BizException("指定部门不存在");
     }
 
-    /** 是否仅剩这一名管理员级账号（role 为 superadmin/admin 或自定义 admin_flag=1 的用户数 ≤1） */
+    /** 是否仅剩这一名管理员级账号（多角色口径：持有任一管理员级角色的用户数 ≤1） */
     private boolean isLastAdminAccount() {
-        List<String> adminCodes = roleService.adminCodes();
-        if (adminCodes.isEmpty()) return false;
-        Long c = userMapper.selectCount(new LambdaQueryWrapper<User>().in(User::getRole, adminCodes));
-        return c != null && c <= 1;
+        return userRoleService.isLastAdminAccount();
     }
 
     private static String trimOrNull(String s) {

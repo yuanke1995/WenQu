@@ -100,7 +100,7 @@ public class MenuController {
         MenuService.MenuPref p = menuService.parsePref(prefJson);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("customized", p != null);
-        out.put("menus", menuService.adjustableSidebarMenus(RequestUser.role()));
+        out.put("menus", menuService.adjustableSidebarMenus(RequestUser.uid()));
         out.put("order", p == null ? List.of() : p.order);
         out.put("hidden", p == null ? List.of() : p.hidden);
         return ResultJson.ok(out);

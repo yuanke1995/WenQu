@@ -28,6 +28,6 @@ public class AdminGuard {
     /** 是否为管理员级请求（判定不抛异常、不落日志噪音，纯布尔） */
     public boolean isAdmin(HttpServletRequest request) {
         if (request == null) return false;
-        return roleService.isAdminCode(RequestUser.role());
+        return roleService.isAdminAny(RequestUser.roles());
     }
 }

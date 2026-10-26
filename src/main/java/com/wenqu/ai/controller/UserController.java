@@ -10,6 +10,7 @@ import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -32,10 +33,10 @@ public class UserController {
     /** 框架会话表：个人偏好里「只能在 build 期定」的那一项（自动提炼记忆）改完要让常驻实例作废。 */
     private final com.wenqu.ai.agentx.FrameworkSessions frameworkSessions;
 
-    @Operation(summary = "用户列表", description = "返回全部用户（按昵称升序）")
+    @Operation(summary = "用户列表", description = "返回全部用户（按昵称升序）：User 全字段 + roles（角色集）+ role（主角色）")
     @GetMapping("/list")
     public ResultJson list() {
-        return ResultJson.ok(orgService.listUsers());
+        return ResultJson.ok(orgService.listUsersWithRoles());
     }
 
     @Operation(summary = "新建用户", description = "{\"uid\":\"alice\",\"username\":\"Alice\",\"password\":\"必填\",\"departmentId\":\"可选\",\"role\":\"user|admin|superadmin\"}")
@@ -53,7 +54,7 @@ public class UserController {
             @Parameter(description = "登录账号（uid）") @PathVariable("uid") String uid,
             @RequestBody Map<String, Object> body) {
         // 自助改密：非管理员级角色只允许改自己的（uid 来自路径，但必须与登录态一致，防止代改）
-        if (!roleService.isAdminCode(com.wenqu.ai.util.RequestUser.role())
+        if (!roleService.isAdminAny(com.wenqu.ai.util.RequestUser.roles())
                 && !com.wenqu.ai.util.RequestUser.uid().equals(uid)) {
             return ResultJson.error(403, "仅可修改自己的密码");
         }
@@ -61,13 +62,21 @@ public class UserController {
         return ResultJson.ok("密码已重置");
     }
 
-    @Operation(summary = "修改用户", description = "{\"username\": \"\", \"departmentId\": \"\", \"role\": \"\", \"status\": 1|0}")
+    @Operation(summary = "修改用户", description = "{\"username\":\"\",\"departmentId\":\"\",\"roles\":[\"user\",\"admin\"],\"status\":1|0}；roles 为角色集（manual 全量替换），兼容旧的单 role 字段")
     @PutMapping("/{uid}")
     public ResultJson update(
             @Parameter(description = "登录账号（uid）") @PathVariable("uid") String uid,
             @RequestBody Map<String, Object> body) {
         Integer status = body.get("status") == null ? null : Integer.parseInt(String.valueOf(body.get("status")));
-        orgService.updateUser(uid, str(body.get("username")), str(body.get("departmentId")), str(body.get("role")), status);
+        List<String> roles;
+        Object rolesRaw = body.get("roles");
+        if (rolesRaw instanceof List<?> l) {
+            roles = l.stream().map(String::valueOf).toList();
+        } else {
+            String single = str(body.get("role"));
+            roles = single == null ? null : List.of(single);
+        }
+        orgService.updateUser(uid, str(body.get("username")), str(body.get("departmentId")), roles, status);
         return ResultJson.ok("已保存");
     }
 

@@ -41,6 +41,15 @@ public class SecurityConfig implements WebMvcConfigurer {
     /** 请求属性名：本次请求通过 API Key 认证（权限固定为问答链路，不参与管理员判定） */
     public static final String ATTR_API_KEY_ID = "ai.apiKeyId";
 
+    /**
+     * SCIM 2.0 入站路径（机器凭据，RFC 7644）：整条拦截链豁免——凭据是认证源专属 Bearer
+     * （非用户 JWT、非 API Key），鉴权在 {@code ScimService.authenticate} 逐入口强校验，
+     * 认不出即 401。挂 /api/ai/scim/** 刻意避开 /api/ai/auth/ 前缀（P7 后 auth 只做精确枚举）。
+     */
+    private static boolean isScimEndpoint(String path) {
+        return path != null && path.startsWith("/api/ai/scim/");
+    }
+
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
         // 身份先行：解析登录令牌 → RequestUser（ThreadLocal）；AccessControlInterceptor 后续据「是否已登录」与角色判定
@@ -130,8 +139,12 @@ public class SecurityConfig implements WebMvcConfigurer {
                 && (path.equals("/api/ai/chat/session") || path.startsWith("/api/ai/chat/session/"))) return true;
         if ("POST".equals(method) && path.equals("/api/ai/feedback")) return true;
         if (path.equals("/api/ai/auth/me")) return true;
-        // 登录相关端点不要求管理员（登录门禁另判：见 isAuthBootstrapEndpoint）
-        if (isAuthEndpoint(path)) return true;
+        // 登录鉴权相关端点不要求管理员（登录门禁另判：见 isAuthBootstrapEndpoint）。
+        // P7 收窄（2026-10-26）：原来是 isAuthEndpoint 前缀一把放行——/api/ai/auth/** 下任何
+        // 新端点都自动对全体登录用户免 RBAC，属于「看着像同一段就被漏掉自动放行」的形状
+        // （与本文件 isKbOrDocEndpoint 注释里的历史教训同型）。改精确枚举：
+        // 登录前可达的端点逐条列在 isAuthBootstrapEndpoint（含 /auth/me）。
+        if (isAuthBootstrapEndpoint(method, path)) return true;
         if ("GET".equals(method) && path.equals("/api/ai/config/public")) return true;
         // 对话页智能体下拉：只读精简列表（不含提示词/知识库范围等管理配置），问答用户可用；
         // 管理端 /api/ai/agent/list 等仍走管理员判定。
@@ -320,8 +333,10 @@ public class SecurityConfig implements WebMvcConfigurer {
     }
 
     /**
-     * 登录引导端点：未登录也必须可访问，否则无法登录（否则死锁）。
+     * 登录引导端点：未登录也必须可访问，否则无法登录（否则死锁）。<b>精确枚举，不做前缀放行</b>。
      * 其余端点在校验完平台信任 token 后，若开启 require-login 则要求携带有效登录令牌。
+     * <p>注意：{@code isAuthEndpoint}（API Key 一律不得访问 auth 前缀）保留前缀匹配——那是
+     * fail-closed 方向的拒绝，与这里的放行清单无关。</p>
      */
     private static boolean isAuthBootstrapEndpoint(String method, String path) {
         if (path == null) return false;
@@ -335,6 +350,11 @@ public class SecurityConfig implements WebMvcConfigurer {
                 || path.equals("/api/ai/auth/oidc/exchange-code")) {
             return true;
         }
+        // SAML 单点登录（Phase 1 批次 3）：登录页取清单 + 发起登录都在无令牌阶段；
+        // 兑换复用上面的 /oidc/exchange-code（SSO 一次性 code 与协议无关）。
+        // ACS（/login/saml2/sso/{id}）与 metadata（/saml2/**）不在 /api/** 下，由 SAML 过滤链处理。
+        if ("GET".equals(method) && path.equals("/api/ai/auth/saml/config")) return true;
+        if ("GET".equals(method) && path.matches("/api/ai/auth/saml/login/[^/]+")) return true;
         if ("GET".equals(method) && path.equals("/api/ai/auth/first-run")) return true;
         return "POST".equals(method) && (path.equals("/api/ai/auth/login")
                 || path.equals("/api/ai/auth/initialize")
@@ -350,6 +370,8 @@ public class SecurityConfig implements WebMvcConfigurer {
         public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
             String method = request.getMethod();
             String path = request.getRequestURI().substring(request.getContextPath().length());
+            // 0. SCIM 机器凭据通道：不走 API Key/登录态/RBAC 任何一层，鉴权在 ScimController 入口强校验
+            if (isScimEndpoint(path)) return true;
             // 1. API Key 认证（对外开放问答能力的入口）：带对 X-Api-Key 且命中问答白名单 → 放行。
             //    未带 / 校验失败的 Key 不在此处拦截，继续走登录门禁与管理员判定。
             String plainKey = request.getHeader("X-Api-Key");
@@ -376,10 +398,10 @@ public class SecurityConfig implements WebMvcConfigurer {
             //       未绑定一律 403——权限在权限管理页「角色 → 接口权限」里显式授予。
             //    OPTIONS 预检放行（浏览器 CORS 预检不携带语义，交给 CORS 配置处理）。
             if (!isPublicUserEndpoint(method, path)) {
-                String role = com.wenqu.ai.util.RequestUser.role();
+                var roles = com.wenqu.ai.util.RequestUser.roles();
                 boolean pass = "OPTIONS".equals(method)
-                        || roleService.isAdminCode(role)
-                        || roleService.canAccess(role, method, path);
+                        || roleService.isAdminAny(roles)
+                        || roleService.canAccessAny(roles, method, path);
                 if (!pass) {
                     response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                     response.setContentType("application/json;charset=UTF-8");

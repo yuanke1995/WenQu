@@ -42,16 +42,26 @@ public class UserContextInterceptor implements HandlerInterceptor {
 
     private final UserMapper userMapper;
     private final AuthService authService;
+    private final com.wenqu.ai.service.UserRoleService userRoleService;
     private final ObjectMapper objectMapper;
 
-    public UserContextInterceptor(UserMapper userMapper, AuthService authService, ObjectMapper objectMapper) {
+    public UserContextInterceptor(UserMapper userMapper, AuthService authService,
+                                  com.wenqu.ai.service.UserRoleService userRoleService, ObjectMapper objectMapper) {
         this.userMapper = userMapper;
         this.authService = authService;
+        this.userRoleService = userRoleService;
         this.objectMapper = objectMapper;
     }
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
+        // SCIM 2.0 入站（机器凭据）：Authorization 是认证源专属 Bearer 而非用户 JWT，
+        // 这里不做解析/不设登录态，整条链对它豁免——鉴权由 ScimService.authenticate 强校验
+        String scimPath = request.getRequestURI().substring(request.getContextPath().length());
+        if (scimPath.startsWith("/api/ai/scim/")) {
+            RequestUser.set(RequestUser.ANONYMOUS, null, "user");
+            return true;
+        }
         String token = bearerToken(request);
         if (token != null) {
             String uid = authService.uidFromToken(token);
@@ -61,7 +71,8 @@ public class UserContextInterceptor implements HandlerInterceptor {
                 return reject(response, "账号不存在或已被禁用");
             }
             request.setAttribute(ATTR_AUTHENTICATED, Boolean.TRUE);
-            RequestUser.set(u.getUid(), u.getDepartmentId(), u.getRole());
+            // 多角色装载（并集判定口径）：鉴权一律用 roles()，role() 仅展示
+            RequestUser.set(u.getUid(), u.getDepartmentId(), userRoleService.rolesOf(u.getUid()));
             return true;
         }
         // 无令牌：匿名。不再回落到客户端自报的 X-User-Id——那等价于把身份（含管理员角色）

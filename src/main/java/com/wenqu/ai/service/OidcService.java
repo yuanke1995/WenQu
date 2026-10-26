@@ -52,15 +52,13 @@ public class OidcService {
 
     private final OidcProviderService providerService;
     private final UserMapper userMapper;
-    private final DepartmentMapper departmentMapper;
-    private final OrgService orgService;
     private final AuthService authService;
-    private final RoleService roleService;
+    private final UserRoleService userRoleService;
+    private final SsoLoginCodeService loginCodeService;
+    private final ExternalUserService externalUserService;
 
     /** 授权 state 有效期（IdP 侧完成认证的耗时上限） */
     private static final long STATE_TTL_MS = 5 * 60 * 1000L;
-    /** 一次性登录 code 有效期（浏览器跳回前端后立即兑换，无需长） */
-    private static final long LOGIN_CODE_TTL_MS = 60 * 1000L;
     /** 元数据缓存时长：缓存键含配置值，所以改配置立即失效；此 TTL 只兜「远端端点变更」 */
     private static final long METADATA_TTL_MS = 10 * 60 * 1000L;
 
@@ -86,8 +84,6 @@ public class OidcService {
 
     /** state → 授权上下文（一次性，消费即删）；state 携带 providerId 以路由回调 */
     private final Map<String, StateEntry> states = new ConcurrentHashMap<>();
-    /** 一次性登录 code → 登录响应（一次性，消费即删） */
-    private final Map<String, CodeEntry> codes = new ConcurrentHashMap<>();
 
     /** 元数据缓存（按 providerId）：键含配置值，改配置即失效 */
     private final Map<String, MetadataCache> metadataCache = new ConcurrentHashMap<>();
@@ -190,184 +186,26 @@ public class OidcService {
         payload.put("user", authService.userInfo(user));
         payload.put("redirectPath", se.redirectPath());
 
-        String oneTime = newToken();
-        codes.put(oneTime, new CodeEntry(payload, System.currentTimeMillis() + LOGIN_CODE_TTL_MS));
-        sweep();
-        log.info("[AUDIT] OIDC 登录成功 provider={} uid={} sub={} role={}", providerId, user.getUid(), ex.sub(), user.getRole());
+        String oneTime = loginCodeService.issue(payload);
+        log.info("[AUDIT] OIDC 登录成功 provider={} uid={} sub={} roles={}",
+                providerId, user.getUid(), ex.sub(), userRoleService.rolesOf(user.getUid()));
         return frontBase(p) + FRONTEND_CALLBACK_PATH + "?code=" + enc(oneTime);
-    }
-
-    /** 用一次性 code 兑换登录结果（兑换即失效，避免令牌留在浏览器历史/日志里） */
-    public Map<String, Object> exchangeCode(String code) {
-        CodeEntry ce = blank(code) ? null : codes.remove(code);
-        if (ce == null || ce.expiresAt() < System.currentTimeMillis()) {
-            throw new BizException("登录 code 无效或已过期，请重新登录");
-        }
-        return ce.payload;
     }
 
     // ==================== 账号解析 ====================
 
     /**
-     * 把 OIDC 身份落到本地账号：
-     * <ol>
-     *   <li>已绑定（providerId + sub 命中）→ 直接登录；</li>
-     *   <li>{@code useRawUsername} 且 IdP 用户名对应的账号存在且**未被其他 sub 绑定** → 绑定后登录
-     *       （绑定冲突一律拒绝，不覆盖，防冒用）；</li>
-     *   <li>否则按 {@code autoCreateUser} 自动建档，或拒绝并提示联系管理员。</li>
-     * </ol>
+     * 把 OIDC 身份落到本地账号：三段式（已绑定 → 绑定既有账号 → 自动建档），
+     * 语义统一在 {@link ExternalUserService}（OIDC/SAML 共用）。
      */
     private User resolveUser(OidcProvider p, Extracted ex) {
-        User bound = findByOidcSub(p.getId(), ex.sub());
-        if (bound != null) return assertUsable(bound);
-
-        if (p.getUseRawUsername() != null && p.getUseRawUsername() == 1 && !blank(ex.username())) {
-            String uid = rawUid(ex.username());
-            if (uid != null) {
-                User exist = userMapper.selectById(uid);
-                if (exist != null) {
-                    if (blank(exist.getOidcSub())) {
-                        exist.setOidcSub(ex.sub());
-                        exist.setOidcProvider(p.getId());
-                        userMapper.updateById(exist);
-                        log.info("[AUDIT] OIDC 身份绑定到既有账号 uid={} provider={} sub={}", uid, p.getId(), ex.sub());
-                        return assertUsable(exist);
-                    }
-                    throw new BizException("账号 " + uid + " 已绑定其他 OIDC 身份，请联系管理员处理绑定冲突");
-                }
-            }
-        }
-
-        if (p.getAutoCreateUser() == null || p.getAutoCreateUser() != 1) {
-            throw new BizException("用户未注册，请联系管理员开通账号");
-        }
-        return createUser(p, ex);
-    }
-
-    private User createUser(OidcProvider p, Extracted ex) {
-        String base = (p.getUseRawUsername() != null && p.getUseRawUsername() == 1) ? rawUid(ex.username()) : null;
-        String uid = ensureUniqueUid(base == null ? sanitizeUid(ex.sub()) : base, ex.sub());
-        String username = ensureUniqueUsername(blank(ex.name()) ? ex.username() : ex.name(), ex.sub());
-        String role = normalizeRole(p.getDefaultRole());
-        String deptId = resolveDepartmentId(p, ex);
-
-        User u = new User();
-        u.setUid(uid);
-        u.setUsername(username);
-        u.setRole(role);
-        u.setDepartmentId(deptId);
-        u.setStatus(1);
-        u.setLoginFailCount(0);
-        u.setOidcSub(ex.sub());
-        u.setOidcProvider(p.getId());
-        // 刻意不设密码：OIDC 账号不能走本地密码登录；同时不干扰「首次运行初始化管理员」的判定
-        // （needsInitialize() 数的是"已设置密码的用户"，给随机密码会让初始化流程消失）。
-        try {
-            userMapper.insert(u);
-        } catch (org.springframework.dao.DuplicateKeyException e) {
-            User raced = findByOidcSub(p.getId(), ex.sub());
-            if (raced != null) return assertUsable(raced);
-            throw new BizException("创建 OIDC 账号失败（登录账号或昵称冲突），请重试或联系管理员");
-        }
-        log.info("[AUDIT] OIDC 自动建档 provider={} uid={} username={} role={} dept={}", p.getId(), uid, username, role, deptId);
-        return u;
-    }
-
-    private User findByOidcSub(String providerId, String sub) {
-        return userMapper.selectOne(new LambdaQueryWrapper<User>()
-                .eq(User::getOidcSub, sub).eq(User::getOidcProvider, providerId).last("LIMIT 1"));
-    }
-
-    private User assertUsable(User u) {
-        if (u.getStatus() != null && u.getStatus() == 0) throw new BizException("账号已被禁用，请联系管理员");
-        return u;
-    }
-
-    /** IdP 用户名 → 账号标识；不合法（超长/含非法字符）时返回 null 由调用方回退到 sub 派生 */
-    private String rawUid(String username) {
-        String u = username == null ? "" : username.trim();
-        if (u.isEmpty() || u.length() > UID_MAX || !UID_PATTERN.matcher(u).matches()) {
-            if (!u.isEmpty()) log.warn("[OIDC] IdP 用户名 {} 不能作为账号标识（含非法字符或过长），改用 sub 派生", u);
-            return null;
-        }
-        return u;
-    }
-
-    /** sub → 合法账号标识（`oidc_` 前缀 + 非法字符替换，超长截断） */
-    private String sanitizeUid(String sub) {
-        String s = sub.replaceAll("[^A-Za-z0-9_@.\\-]", "_");
-        String uid = "oidc_" + s;
-        return uid.length() > UID_MAX ? uid.substring(0, UID_MAX) : uid;
-    }
-
-    private String ensureUniqueUid(String base, String sub) {
-        if (userMapper.selectById(base) == null) return base;
-        String suffix = "_" + shortHash(sub);
-        String candidate = base;
-        if (base.length() + suffix.length() > UID_MAX) candidate = base.substring(0, UID_MAX - suffix.length());
-        candidate = candidate + suffix;
-        if (userMapper.selectById(candidate) == null) return candidate;
-        for (int i = 2; i < 100; i++) {
-            String c = candidate + "_" + i;
-            if (userMapper.selectById(c) == null) return c;
-        }
-        throw new BizException("无法生成可用账号标识，请联系管理员");
-    }
-
-    /** 用户名（显示名）唯一：直接用 → 加 sub 短哈希 → 加序号（与蓝本同序） */
-    private String ensureUniqueUsername(String preferred, String sub) {
-        String base = preferred == null ? "" : preferred.trim();
-        if (base.isEmpty()) base = "oidc_" + shortHash(sub);
-        if (base.length() > USERNAME_MAX) base = base.substring(0, USERNAME_MAX);
-        if (usernameFree(base)) return base;
-        String suffix = "-" + shortHash(sub);
-        String candidate = base.length() + suffix.length() > USERNAME_MAX
-                ? base.substring(0, USERNAME_MAX - suffix.length()) + suffix : base + suffix;
-        if (usernameFree(candidate)) return candidate;
-        for (int i = 2; i < 100; i++) {
-            String c = candidate + "-" + i;
-            if (c.length() <= USERNAME_MAX && usernameFree(c)) return c;
-        }
-        throw new BizException("无法生成可用昵称，请联系管理员");
-    }
-
-    private boolean usernameFree(String username) {
-        return userMapper.selectCount(new LambdaQueryWrapper<User>().eq(User::getUsername, username)) == 0;
-    }
-
-    /** 默认角色必须是权限管理中「已启用」的角色：否则会建出登录得进、但处处 403 的账号，比直接报错难查得多 */
-    private String normalizeRole(String role) {
-        String r = (role == null || role.isBlank()) ? "user" : role.trim().toLowerCase();
-        if (!roleService.existsActive(r)) {
-            throw new BizException("OIDC 默认角色「" + r + "」不存在或已停用，请在权限管理中创建或改用其它角色");
-        }
-        return r;
-    }
-
-    /**
-     * 部门归属：优先用 IdP 给的部门名（需开启「从 IdP 同步部门」），否则用配置的默认部门；
-     * 部门不存在则按名称创建（与蓝本同语义：按名称匹配，不维护层级）。
-     */
-    private String resolveDepartmentId(OidcProvider p, Extracted ex) {
-        String name = (p.getFetchDepartmentInfo() != null && p.getFetchDepartmentInfo() == 1)
-                ? trimToNull(ex.departmentName()) : null;
-        if (name == null) name = trimToNull(p.getDefaultDepartment());
-        if (name == null) return null;
-        if (name.length() > DEPT_NAME_MAX) name = name.substring(0, DEPT_NAME_MAX);
-
-        Department exist = departmentMapper.selectOne(new LambdaQueryWrapper<Department>()
-                .eq(Department::getName, name).last("LIMIT 1"));
-        if (exist != null) return exist.getId();
-        try {
-            return orgService.createDepartment(name, name + "部门", null).getId();
-        } catch (BizException e) {
-            // 并发创建或同名部门已存在（含软删）：退回按名称再查一次，仍无则不带部门（登录不受影响）
-            Department again = departmentMapper.selectOne(new LambdaQueryWrapper<Department>()
-                    .eq(Department::getName, name).last("LIMIT 1"));
-            if (again != null) return again.getId();
-            log.warn("[OIDC] 部门「{}」创建失败，本次不带部门：{}", name, e.getMessage());
-            return null;
-        }
+        return externalUserService.resolveUser("OIDC", "oidc", p.getId(),
+                new ExternalUserService.ExternalProfile(ex.sub(), ex.username(), ex.name(), ex.departmentName()),
+                new ExternalUserService.ProvisionSpec(
+                        p.getUseRawUsername() != null && p.getUseRawUsername() == 1,
+                        p.getAutoCreateUser() != null && p.getAutoCreateUser() == 1,
+                        p.getFetchDepartmentInfo() != null && p.getFetchDepartmentInfo() == 1,
+                        p.getDefaultRole(), p.getDefaultDepartment()));
     }
 
     // ==================== 用户信息映射 ====================
@@ -539,7 +377,7 @@ public class OidcService {
 
     private String issue(User u) {
         return AuthCrypto.issueToken(authService.secret(), authService.issuer(), authService.audience(),
-                u.getUid(), u.getRole(), authService.ttlSeconds());
+                u.getUid(), userRoleService.primaryRole(u.getUid()), authService.ttlSeconds());
     }
 
     private String newToken() {
@@ -551,7 +389,6 @@ public class OidcService {
     private void sweep() {
         long now = System.currentTimeMillis();
         states.entrySet().removeIf(e -> e.getValue().expiresAt() < now);
-        codes.entrySet().removeIf(e -> e.getValue().expiresAt() < now);
     }
 
     private static String text(JsonNode node, String field) {
@@ -612,9 +449,7 @@ public class OidcService {
     private record StateEntry(String providerId, String redirectPath, long expiresAt) {
     }
 
-    /** 一次性登录结果 */
-    private record CodeEntry(Map<String, Object> payload, long expiresAt) {
-    }
+    /** 一次性登录结果存储已抽到 {@link SsoLoginCodeService}（SAML 共用） */
 
     /** 元数据缓存（按 providerId） */
     private record MetadataCache(Metadata metadata, String key, long at, String error) {

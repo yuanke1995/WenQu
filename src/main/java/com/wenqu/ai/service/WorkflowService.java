@@ -121,6 +121,7 @@ public class WorkflowService {
     private final ProjectService projectService;
     private final WorkflowRunStreamService stream;
     private final NotificationService notificationService;
+    private final UserRoleService userRoleService;
 
     /**
      * 异步运行派发池（第 2 期：run 异步化 + 排队可见）：core=max=workflow.maxConcurrentRuns，
@@ -140,13 +141,13 @@ public class WorkflowService {
             return new Principal(RequestUser.uid(), RequestUser.departmentId(), RequestUser.role());
         }
 
-        public static Principal ofUser(String uid, UserMapper userMapper) {
+        public static Principal ofUser(String uid, UserMapper userMapper, UserRoleService userRoleService) {
             String dept = null, role = "user";
             if (uid != null && !uid.isBlank()) {
                 User u = userMapper.selectById(uid);
                 if (u != null) {
                     dept = u.getDepartmentId();
-                    role = u.getRole() == null || u.getRole().isBlank() ? "user" : u.getRole();
+                    role = userRoleService.primaryRole(uid);
                 }
             }
             return new Principal(uid, dept, role);
@@ -750,7 +751,7 @@ public class WorkflowService {
             if (key == null || key.getCreatedBy() == null) {
                 throw new BizException(403, "API Key 无效（未绑定归属用户）");
             }
-            return Principal.ofUser(key.getCreatedBy(), userMapper);
+            return Principal.ofUser(key.getCreatedBy(), userMapper, userRoleService);
         }
         return Principal.current();
     }
@@ -1682,7 +1683,7 @@ public class WorkflowService {
             log.warn("[WORKFLOW] 定时触发跳过：{}（{}）{}", row.getName(), row.getId(), e.getMessage());
             return null;
         }
-        Principal p = Principal.ofUser(row.getUid(), userMapper);
+        Principal p = Principal.ofUser(row.getUid(), userMapper, userRoleService);
         return execute(row, row.getPublishedDsl(), "schedule", row.getUid(), null, row.getPublishedVersion(),
                 "published", Map.of(), null, null, p);
     }

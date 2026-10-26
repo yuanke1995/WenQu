@@ -47,7 +47,7 @@ public class DocumentController {
     // ==================== 资源级权限（自建自管，数据按 userId 隔离，无角色直通） ====================
 
     private boolean admin() {
-        return roleService.isAdminCode(RequestUser.role());
+        return roleService.isAdminAny(RequestUser.roles());
     }
 
     private com.wenqu.ai.service.ResourceVisibilityService.Principal principal() {
