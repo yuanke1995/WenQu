@@ -51,6 +51,18 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-actuator</artifactId>
         </dependency>
+        <!-- SAML 2.0 服务端（企业级身份治理）：仅启用 SAML2 Login 过滤链（/saml2/**、/login/saml2/**），
+             其余路径由 SamlSecurityConfig 的兜底链全放行——应用鉴权仍是拦截器 + JWT 自有体系，
+             Spring Security 在这里只承担 SAML 协议（AuthnRequest 生成 / Response 验签，OpenSAML 5），
+             不接管鉴权语义。版本由 Boot 父 POM（spring-security-bom）管理。 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-saml2-service-provider</artifactId>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-redis</artifactId>
@@ -213,6 +225,23 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
+
+    <!-- OpenSAML 不发布到 Maven Central（4.x/5.x 均只在 Shibboleth 官方仓库），
+         Spring Security SAML2 服务端（spring-security-saml2-service-provider）依赖它做协议处理。
+         官方文档要求：https://docs.spring.io/spring-security/reference/servlet/saml2/index.html -->
+    <repositories>
+        <repository>
+            <id>shibboleth-releases</id>
+            <name>Shibboleth Releases (OpenSAML)</name>
+            <url>https://build.shibboleth.net/maven/releases/</url>
+            <releases>
+                <enabled>true</enabled>
+            </releases>
+            <snapshots>
+                <enabled>false</enabled>
+            </snapshots>
+        </repository>
+    </repositories>
 
     <!-- Spring AI BOM 统一管理各模块版本（1.1 GA 起无需 milestone 仓库，Maven Central 即可） -->
     <dependencyManagement>
