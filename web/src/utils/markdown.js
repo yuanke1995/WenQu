@@ -454,6 +454,10 @@ const renderMdInner = (t, images = [], runnable = RUNNABLE_DEFAULT, preview = PR
     wrap.appendChild(real)
     img.replaceWith(wrap)
   })
+  // 历史里的图片一律延迟加载：一条 22 轮的会话有 13 张图文交错的配图，打开时全量拉是 5.3 MB
+  // （真机 2026-10-26 实测），手机上这正是最贵的那一笔。视口内的浏览器本来就会立刻取，
+  // 视口外的等滚到跟前——滚动位置由 Chrome 的 scroll anchoring 兜住，不会跳。
+  box.querySelectorAll('img').forEach(img => { img.loading = 'lazy'; img.decoding = 'async' })
   // 引用角标：[N] → sup（TreeWalker 跳过 pre/code/a，防误伤代码块/链接内的 [1]）
   // literal 模式整段跳过：提问里的 [1] 是用户打的字，不是引用角标
   const walker = literal ? null : document.createTreeWalker(box, NodeFilter.SHOW_TEXT)

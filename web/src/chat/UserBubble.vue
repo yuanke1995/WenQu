@@ -34,7 +34,10 @@ function preview (i) {
 <template>
   <div v-if="(images && images.length) || (attachments && attachments.length)" class="ub-media">
     <div v-if="images && images.length" class="msg-imgs">
+      <!-- loading=lazy：缩略图是定尺 88×88（不会因延迟加载撑开布局），一屏几十张上传图时
+           只取滚到跟前的那几张，其余交给浏览器按需拉 -->
       <img v-for="(u, ui) in images" :key="ui" :src="resolveImg(u)" class="msg-img"
+           loading="lazy" decoding="async"
            :alt="'上传图片' + (ui + 1)" @click="preview(ui)" @error="onImgError" />
     </div>
     <div v-if="attachments && attachments.length" class="msg-files">

@@ -19,7 +19,10 @@
         <div class="ububble">
           <div v-if="m.content" class="u-text">{{ m.content }}</div>
           <div v-if="m.images && m.images.length" class="u-imgs">
-            <img v-for="(u, ii) in m.images" :key="ii" :src="resolveImg(u)" alt="图片" @click.stop="$emit('preview', m.images.map(resolveImg), ii)">
+            <!-- 定尺缩略图（.u-imgs img 88×88）+ 延迟加载：手机上翻开一条长会话，
+                 不该一上来就把几十张上传图全拉下来 -->
+            <img v-for="(u, ii) in m.images" :key="ii" :src="resolveImg(u)" alt="图片"
+                 loading="lazy" decoding="async" @click.stop="$emit('preview', m.images.map(resolveImg), ii)">
           </div>
           <div v-if="m.attachments && m.attachments.length" class="chips">
             <template v-for="(a, ai) in m.attachments" :key="ai">
