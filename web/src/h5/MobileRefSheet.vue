@@ -3,6 +3,31 @@
        PC 的右栏在移动端收纳到这里的底部 sheet；内容都来自引擎派生数据，不另算口径。 -->
   <BottomSheet :open="open" title="状态与来源" max-height="78dvh" @close="$emit('close')">
     <div class="rs">
+      <!-- ---- 本轮过程总览 ----
+           气泡里逐步的工具卡一直都在（MobileMsgRow 的过程簇），这一张补的是另一个视角：
+           不用上下滚就能看完「总共走了哪几步、哪一步慢、现在卡在做什么」。展示口径整份复用
+           projections（toolCallsView 并重复卡、toolLabel 中文名、toolDuration 耗时、executedCount
+           只数真执行过的）——与 PC 右栏那张卡同一把尺，两处不许各写一套。
+           「查看完整过程」不在这儿放：顶栏那颗时钟图标就是它的入口，一个动作只留一个入口。 -->
+      <template v-if="procSteps.length">
+        <div class="rs-section">本轮过程<span class="rs-n">{{ executedCount(procSteps) }} 步{{ procRunning ? ' · 跑轮中' : '' }}</span></div>
+        <div v-if="procRunning" class="rs-phase"><i class="rs-phase-dot" />{{ procPhase }}</div>
+        <div v-for="(t, ti) in procSteps" :key="ti" class="rs-proc"
+             :class="{ run: t.status === 'start' && !t.denied, err: t.status === 'error', off: t.denied }">
+          <span class="rs-proc-ic">
+            <loading-outlined v-if="t.status === 'start' && !t.denied" spin />
+            <check-outlined v-else-if="t.status === 'done'" />
+            <close-circle-outlined v-else-if="t.status === 'error'" />
+            <pause-outlined v-else />
+          </span>
+          <span class="rs-proc-name" :title="toolDesc(t.name, t.hint)">{{ toolLabel(t.name, t.label) }}</span>
+          <!-- 被挡下的不报耗时：那一步根本没执行，给个数字等于说它跑过了 -->
+          <span v-if="t.denied" class="rs-proc-dur off">被挡下</span>
+          <span v-else-if="t.status === 'start'" class="rs-proc-dur run">进行中</span>
+          <span v-else-if="t.elapsedMs != null" class="rs-proc-dur">{{ toolDuration(Number(t.elapsedMs) || 0) }}</span>
+        </div>
+      </template>
+
       <!-- ---- 引用来源 ---- -->
       <div class="rs-section">引用来源<span v-if="sources.length" class="rs-n">{{ sources.length }} 段</span></div>
       <div v-if="!groups.length" class="rs-empty">本轮还没有引用来源</div>
@@ -173,12 +198,13 @@
 
 <script setup>
 import { computed, inject, reactive, ref, watch } from 'vue'
-import { CaretRightOutlined, FileTextOutlined, DownloadOutlined, ShareAltOutlined, FileMarkdownOutlined, CopyOutlined, SwapOutlined, StopOutlined, EyeOutlined, FolderOutlined, FolderOpenOutlined, SaveOutlined, CheckOutlined } from '@ant-design/icons-vue'
+import { CaretRightOutlined, FileTextOutlined, DownloadOutlined, ShareAltOutlined, FileMarkdownOutlined, CopyOutlined, SwapOutlined, StopOutlined, EyeOutlined, FolderOutlined, FolderOpenOutlined, SaveOutlined, CheckOutlined, LoadingOutlined, CloseCircleOutlined, PauseOutlined } from '@ant-design/icons-vue'
 import { message } from 'ant-design-vue'
 import BottomSheet from './BottomSheet.vue'
 import GoalCard from '../components/GoalCard.vue'
 import { fmtTokens } from '../utils/token'
-import { fmtSourceScore, fmtWindow, usageCtxTokens } from '../chat/projections'
+import { fmtSourceScore, fmtWindow, usageCtxTokens,
+         toolLabel, toolDesc, toolCallsView, executedCount, toolDuration } from '../chat/projections'
 // 产物地址必须过 resolveImg：后端给的是 /ai/artifacts/**，不经媒体前缀在开发态会落到 SPA 回退（下载到 index.html）
 import { resolveImg } from '../utils/markdown'
 import { canPreview, artifactExt } from '../utils/artifactView'
@@ -199,7 +225,9 @@ const { groupedSources, lastTokens, lastSources, sessionTokens, sessionRetrieval
   // 2026-10-25 从 PC 壳下沉），本 sheet 只负责把它摆成触屏形状
   sandboxFiles, sandboxRows, sandboxCount, sandboxBytes, sandboxRest,
   sandboxErr, sandboxLoading, sandboxTaken,
-  loadSandboxFiles, toggleSandboxDir, sandboxDownload, sandboxTake, sbSize } = engine
+  loadSandboxFiles, toggleSandboxDir, sandboxDownload, sandboxTake, sbSize,
+  // 本轮过程总览的数据源：与 PC 右栏那张卡同一个对象（跑轮时它就是正在流的那条，结束后是上一轮）
+  panelAi } = engine
 
 // 容量构成：与 PC 的 ctxCapData 同一算法（窗口取本轮 tokens.window，回落模型登记窗口；
 // 用量取 prompt，无则 context；分类占窗口比例撑填充段）。分类表是 PC 视图层的同款副本——
@@ -245,6 +273,20 @@ const tokens = computed(() => lastTokens.value)
 // 上下文占用（给足原值，不缩成 k）：与下面容量条同一个分子
 const usageCtx = computed(() => usageCtxTokens(tokens.value) || '—')
 const artifacts = computed(() => sessionArtifacts.value)
+
+// ==================== 本轮过程总览 ====================
+// 判据与 PC 右栏那张卡（RightProcessCard）逐条对齐：并重复卡走 toolCallsView、步数只数真执行
+// 过的走 executedCount；「在跑的那一步」要显式给状态词，因为 start 帧带的是 elapsedMs=0，
+// 按耗时先判会给它报「0ms」，而并发派遣一屏三个 0ms 读起来像三步都跑完了。
+const procSteps = computed(() => toolCallsView(panelAi.value && panelAi.value.toolCalls))
+const procRunning = computed(() => !!panelAi.value && panelAi.value.loading === true)
+const procPhase = computed(() => {
+  const m = panelAi.value
+  if (!m) return ''
+  if (procSteps.value.some(t => t.status === 'start' && !t.denied)) return '执行工具中'
+  if (m.thinkLoading || (m.thinking && !m.content)) return '正在思考'
+  return '正在输出'
+})
 const scoreOf = s => (s.rerankScore != null || s.score != null) ? fmtSourceScore(s) : ''
 
 // ==================== 这段对话：分享只读链接 ====================
@@ -380,4 +422,20 @@ watch(() => props.open, v => { if (v) loadSandboxFiles() })
   font-size: 13px; touch-action: manipulation;
 }
 .rs-sb-retry:active { background: var(--app-accent-weak); color: var(--app-accent); }
+/* 本轮过程总览：只读行（不点），行高 34 已够读；在跑的那一行给强调色，一眼看到卡在哪一步 */
+.rs-phase { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--app-accent); padding: 2px 2px 8px; }
+.rs-phase-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--app-accent); animation: rs-blink 1.2s ease-in-out infinite; }
+@keyframes rs-blink { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .rs-phase-dot { animation: none; } }
+.rs-proc { display: flex; align-items: center; gap: 8px; min-height: 34px; font-size: 13px; padding: 0 2px; border-bottom: 1px dashed var(--app-border); }
+.rs-proc-ic { flex: none; width: 14px; text-align: center; font-size: 12px; color: var(--app-text3); }
+.rs-proc.run .rs-proc-ic { color: var(--app-accent); }
+.rs-proc.err .rs-proc-ic { color: var(--app-danger); }
+.rs-proc-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--app-text2); }
+.rs-proc.run .rs-proc-name { color: var(--app-text); }
+.rs-proc.err .rs-proc-name { color: var(--app-danger); }
+.rs-proc.off .rs-proc-name { color: var(--app-text3); }
+.rs-proc-dur { flex: none; font-size: 11.5px; color: var(--app-text3); font-variant-numeric: tabular-nums; }
+.rs-proc-dur.run { color: var(--app-accent); }
+.rs-proc-dur.off { color: var(--app-text3); }
 </style>
