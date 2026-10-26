@@ -1,5 +1,6 @@
 package com.wenqu.ai.startup;
 
+import com.wenqu.ai.service.OidcProviderService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
@@ -12,13 +13,13 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * OIDC 旧配置（{@code c_ai_config} 的 {@code oidc.*} 键）→ 旧认证源表 default 行的存量迁移
+ * OIDC 旧配置（{@code c_ai_config} 的 {@code oidc.*} 键）→ 统一认证源表 default 行的存量迁移
  * （幂等，可重复执行）：
  * <p>
- * 2026-10-26 收缩：只保留「组装 default 行」——{@code c_ai_user.oidc_sub/oidc_provider} 两列与
- * 唯一索引已随统一身份模型退役（{@link DropLegacyColumnsRunner} 负责删除），回填绑定与换索引
- * 两段随之移除；default 行组装出的旧表行由 {@link IdentityMigrationRunner}（@Order(2)）桥接进
- * 统一身份表。旧 {@code oidc.*} 行<b>原样保留、不删</b>——代码回滚后老实现直接可读，回滚零成本。
+ * 2026-10-26（任务 #8）：直接落 {@code c_ai_identity_provider}(type='oidc') default 行
+ * （旧表 c_ai_oidc_provider 已退役）；统一表已有 OIDC 行则跳过（多行存量由
+ * {@link IdentityMigrationRunner} 按行幂等桥接）。旧 {@code oidc.*} 行<b>原样保留、不删</b>——
+ * 代码回滚后老实现直接可读，回滚零成本。
  *
  * @author yuanke
  */
@@ -28,9 +29,11 @@ import java.util.Map;
 public class OidcMigrationRunner implements ApplicationRunner {
 
     private final JdbcTemplate jdbcTemplate;
+    private final OidcProviderService providerService;
 
-    public OidcMigrationRunner(JdbcTemplate jdbcTemplate) {
+    public OidcMigrationRunner(JdbcTemplate jdbcTemplate, OidcProviderService providerService) {
         this.jdbcTemplate = jdbcTemplate;
+        this.providerService = providerService;
     }
 
     @Override
@@ -43,13 +46,14 @@ public class OidcMigrationRunner implements ApplicationRunner {
     }
 
     void migrate() {
-        if (!tableExists("c_ai_oidc_provider")) {
-            log.warn("[OidcMigration] 前置表不存在（SchemaMigrator 可能未执行），跳过迁移");
+        if (!tableExists("c_ai_identity_provider")) {
+            log.warn("[OidcMigration] 统一认证源表不存在（SchemaMigrator 可能未执行），跳过迁移");
             return;
         }
-        long providerCount = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM c_ai_oidc_provider", Long.class);
-        if (providerCount > 0) {
-            log.info("[OidcMigration] c_ai_oidc_provider 已存在数据，跳过 default 行组装");
+        long oidcRows = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM c_ai_identity_provider WHERE type = 'oidc'", Long.class);
+        if (oidcRows > 0) {
+            log.info("[OidcMigration] 统一表已有 OIDC 认证源，跳过 default 行组装");
             return;
         }
         Map<String, String> cfg = loadOidcConfig();
@@ -81,31 +85,28 @@ public class OidcMigrationRunner implements ApplicationRunner {
         String name = blankToNull(cfg.get("oidc.providerName"));
         name = name == null ? "默认认证源" : name;
         int enabled = "true".equalsIgnoreCase(cfg.getOrDefault("oidc.enabled", "false")) ? 1 : 0;
-        String sql = "INSERT INTO c_ai_oidc_provider (id, name, enabled, issuer_url, client_id, client_secret, "
-                + "redirect_uri, frontend_base_url, authorization_endpoint, token_endpoint, userinfo_endpoint, "
-                + "scopes, force_prompt_login, username_claim, name_claim, use_raw_username, auto_create_user, "
-                + "default_role, default_department, fetch_department_info, department_claim, sort_order) VALUES ("
-                + "'default', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)";
-        jdbcTemplate.update(sql,
-                name, enabled,
-                toNull(cfg.get("oidc.issuerUrl")),
-                toNull(cfg.get("oidc.clientId")),
-                toNull(cfg.get("oidc.clientSecret")),
-                toNull(cfg.get("oidc.redirectUri")),
-                toNull(cfg.get("oidc.frontendBaseUrl")),
-                toNull(cfg.get("oidc.authorizationEndpoint")),
-                toNull(cfg.get("oidc.tokenEndpoint")),
-                toNull(cfg.get("oidc.userinfoEndpoint")),
-                toNull(cfg.get("oidc.scopes")),
-                bool(cfg.get("oidc.forcePromptLogin")),
-                toNull(cfg.get("oidc.usernameClaim")),
-                toNull(cfg.get("oidc.nameClaim")),
-                bool(cfg.get("oidc.useRawUsername")),
-                bool(cfg.get("oidc.autoCreateUser")),
-                toNull(cfg.get("oidc.defaultRole")),
-                toNull(cfg.get("oidc.defaultDepartment")),
-                bool(cfg.get("oidc.fetchDepartmentInfo")),
-                toNull(cfg.get("oidc.departmentClaim")));
+        // 组装成视图直接落统一表（旧表已退役）；client_secret 已是 RSA 密文原样搬
+        com.wenqu.ai.model.OidcProvider src = new com.wenqu.ai.model.OidcProvider();
+        src.setEnabled(enabled);
+        src.setIssuerUrl(toNull(cfg.get("oidc.issuerUrl")));
+        src.setClientId(toNull(cfg.get("oidc.clientId")));
+        src.setClientSecret(toNull(cfg.get("oidc.clientSecret")));
+        src.setRedirectUri(toNull(cfg.get("oidc.redirectUri")));
+        src.setFrontendBaseUrl(toNull(cfg.get("oidc.frontendBaseUrl")));
+        src.setAuthorizationEndpoint(toNull(cfg.get("oidc.authorizationEndpoint")));
+        src.setTokenEndpoint(toNull(cfg.get("oidc.tokenEndpoint")));
+        src.setUserinfoEndpoint(toNull(cfg.get("oidc.userinfoEndpoint")));
+        src.setScopes(toNull(cfg.get("oidc.scopes")));
+        src.setForcePromptLogin(bool(cfg.get("oidc.forcePromptLogin")));
+        src.setUsernameClaim(toNull(cfg.get("oidc.usernameClaim")));
+        src.setNameClaim(toNull(cfg.get("oidc.nameClaim")));
+        src.setUseRawUsername(bool(cfg.get("oidc.useRawUsername")));
+        src.setAutoCreateUser(bool(cfg.get("oidc.autoCreateUser")));
+        src.setDefaultRole(toNull(cfg.get("oidc.defaultRole")));
+        src.setDefaultDepartment(toNull(cfg.get("oidc.defaultDepartment")));
+        src.setFetchDepartmentInfo(bool(cfg.get("oidc.fetchDepartmentInfo")));
+        src.setDepartmentClaim(toNull(cfg.get("oidc.departmentClaim")));
+        providerService.createFromMigration("default", name, src);
         log.info("[OidcMigration] 已组装默认认证源 id=default name={} enabled={}", name, enabled);
     }
 

@@ -433,39 +433,11 @@ CREATE TABLE IF NOT EXISTS `c_ai_user` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 用户表（画像/归属 + 本地登录凭据）';
 
 -- ============================================
--- 2026-10：OIDC 多认证源（多 IdP）
--- 把原先 c_ai_config 里 20 个扁平 oidc.* 键搬成「每行一个认证源」的表，
--- 照搬模型供应商 c_ai_provider 的形状（逐行 RSA 加密 client_secret + 掩码脱敏 + 管理页 CRUD）。
--- 存量库由 OidcMigrationRunner 自动组装 default 行；新库直接建表。
+-- 2026-10：OIDC 多认证源（多 IdP）——旧表 c_ai_oidc_provider 已随统一身份模型退役（2026-10-26）：
+-- 认证源统一登记在 c_ai_identity_provider(type='oidc')，协议参数收纳进 config JSON。
+-- 存量库由 IdentityMigrationRunner 桥接、DropLegacyColumnsRunner 删表；oidc.* 旧配置键
+-- 仍由 OidcMigrationRunner 直接组装成统一表 default 行。
 -- ============================================
-
-CREATE TABLE IF NOT EXISTS `c_ai_oidc_provider` (
-    `id`                    VARCHAR(50)  NOT NULL COMMENT '主键ID (UUID)',
-    `name`                  VARCHAR(100) NOT NULL COMMENT '认证源名称（登录按钮文案，如「企业微信登录」）',
-    `enabled`               INT          DEFAULT 1 COMMENT '启用: 1=启用 0=停用（停用后登录页不显示该入口）',
-    `issuer_url`            VARCHAR(512) DEFAULT NULL COMMENT 'IdP issuer（discovery 源：/.well-known/openid-configuration）',
-    `client_id`             VARCHAR(255) DEFAULT NULL COMMENT '客户端 ID',
-    `client_secret`         TEXT         DEFAULT NULL COMMENT '客户端密钥（RSA 加密存储，RSA: 前缀）',
-    `redirect_uri`          VARCHAR(512) DEFAULT NULL COMMENT '回调地址（空=按访问来源推导 /api/ai/auth/oidc/callback）',
-    `frontend_base_url`     VARCHAR(512) DEFAULT NULL COMMENT '登录后前端跳转基地址（空=同源相对路径）',
-    `authorization_endpoint` VARCHAR(512) DEFAULT NULL COMMENT '授权端点（空=discovery）',
-    `token_endpoint`        VARCHAR(512) DEFAULT NULL COMMENT '令牌端点（空=discovery）',
-    `userinfo_endpoint`     VARCHAR(512) DEFAULT NULL COMMENT '用户信息端点（空=discovery）',
-    `scopes`                VARCHAR(255) DEFAULT 'openid profile email' COMMENT '请求 scope（空格分隔）',
-    `force_prompt_login`    INT          DEFAULT 0 COMMENT '授权请求带 prompt=login（强制重新认证）',
-    `username_claim`        VARCHAR(100) DEFAULT 'preferred_username' COMMENT '用户名字段',
-    `name_claim`            VARCHAR(100) DEFAULT 'name' COMMENT '显示名字段',
-    `use_raw_username`      INT          DEFAULT 0 COMMENT '用 IdP 用户名当账号标识（便于与本地账号对齐）',
-    `auto_create_user`      INT          DEFAULT 1 COMMENT '首次登录自动建号（关闭则须管理员预先建好并绑定）',
-    `default_role`          VARCHAR(64)  DEFAULT 'user' COMMENT '自动建档默认角色（须是权限管理中已启用的角色）',
-    `default_department`    VARCHAR(50)  DEFAULT NULL COMMENT '自动建档默认部门（不存在则按名称创建）',
-    `fetch_department_info` INT          DEFAULT 0 COMMENT '从 userinfo 同步部门',
-    `department_claim`      VARCHAR(100) DEFAULT 'department' COMMENT '部门映射字段',
-    `sort_order`            INT          DEFAULT 0 COMMENT '排序（小在前，决定登录页按钮顺序）',
-    `create_time`           DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    `update_time`           DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-    PRIMARY KEY (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='OIDC 认证源表（多 IdP）';
 
 -- ============================================
 -- 2026-09-25: 模型供应商管理（多供应商 + 模型库分类型）

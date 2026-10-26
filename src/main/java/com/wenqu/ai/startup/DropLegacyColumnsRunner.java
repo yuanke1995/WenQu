@@ -81,6 +81,15 @@ public class DropLegacyColumnsRunner implements ApplicationRunner {
                 }
             }
         }
+        // OIDC 旧认证源表退役（任务 #8）：数据已由 IdentityMigrationRunner 桥接进统一表
+        if (tableExists("c_ai_oidc_provider")) {
+            try {
+                jdbcTemplate.execute("DROP TABLE IF EXISTS c_ai_oidc_provider");
+                log.info("[DropLegacy] 已删除退役表 c_ai_oidc_provider（OIDC 认证源统一存 c_ai_identity_provider）");
+            } catch (Exception e) {
+                log.warn("[DropLegacy] 删除 c_ai_oidc_provider 失败：{}", e.getMessage());
+            }
+        }
     }
 
     private boolean tableExists(String table) {

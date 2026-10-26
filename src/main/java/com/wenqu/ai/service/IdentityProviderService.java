@@ -98,7 +98,7 @@ public class IdentityProviderService {
     public IdentityProvider create(String type, String name, Integer enabled, String defaultRole,
                                    String defaultDepartment, Integer autoCreateUser, Integer sortOrder,
                                    Map<String, Object> config) {
-        if (!Set.of("saml", "scim", "ldap").contains(type)) {
+        if (!Set.of("oidc", "saml", "scim", "ldap").contains(type)) {
             throw new BizException("不支持的认证源类型: " + type);
         }
         IdentityProvider p = new IdentityProvider();

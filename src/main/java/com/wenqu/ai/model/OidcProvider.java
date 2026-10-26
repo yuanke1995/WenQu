@@ -1,26 +1,20 @@
 package com.wenqu.ai.model;
 
-import com.baomidou.mybatisplus.annotation.IdType;
-import com.baomidou.mybatisplus.annotation.TableId;
-import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
 
-import java.time.LocalDateTime;
-
 /**
- * OIDC 认证源表（多 IdP）：把原先 c_ai_config 里 20 个扁平 oidc.* 键搬成「每行一个认证源」。
- * <p>
- * 形状照搬 {@link Provider}（模型供应商）：client_secret 以 RSA 密文存储（复用 {@code ConfigCryptoService}），
- * 列表回显只脱敏后 4 位，管理端点走管理员判定。一个 IdP = 一行；登录页按 sort_order 顺序渲染入口按钮。
+ * OIDC 认证源配置视图：<b>不再映射独立表</b>——数据统一存 {@code c_ai_identity_provider}
+ * （type='oidc'），协议参数收纳进 {@code config} JSON（键名与本类字段一致，clientSecret 为
+ * RSA 密文），name/enabled/defaultRole/defaultDepartment/autoCreateUser/sortOrder 用统一表列。
+ * {@code OidcProviderService} 负责行 ↔ 视图互转；存量库由 {@code IdentityMigrationRunner}
+ * 从旧表 c_ai_oidc_provider（已退役）桥接而来，键名与本类对齐。
  *
  * @author yuanke
  */
 @Data
-@TableName("c_ai_oidc_provider")
 public class OidcProvider {
 
-    /** 主键ID (UUID) */
-    @TableId(type = IdType.INPUT)
+    /** 主键ID (UUID；= c_ai_identity_provider.id) */
     private String id;
 
     /** 认证源名称（登录按钮文案） */
@@ -85,10 +79,4 @@ public class OidcProvider {
 
     /** 排序（小在前） */
     private Integer sortOrder;
-
-    /** 创建时间 */
-    private LocalDateTime createTime;
-
-    /** 更新时间 */
-    private LocalDateTime updateTime;
 }

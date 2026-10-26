@@ -66,13 +66,12 @@ public class IdentityMigrationRunner implements ApplicationRunner {
         seedUserRoles();
     }
 
-    /** c_ai_oidc_provider → c_ai_identity_provider（仅当新表为空时；幂等） */
+    /** c_ai_oidc_provider → c_ai_identity_provider（按行幂等：同 id 已存在则跳过——
+     *  OidcMigrationRunner 可能已从 oidc.* 键组装了 default 行，不能因此挡掉其余行） */
     private void seedIdentityProviders() {
         try {
-            Long idpCount = jdbcTemplate.queryForObject(
-                    "SELECT COUNT(*) FROM c_ai_identity_provider", Long.class);
-            if (idpCount != null && idpCount > 0) {
-                log.info("[IdentityMigration] c_ai_identity_provider 已存在数据，跳过认证源桥接");
+            if (!tableExists("c_ai_oidc_provider")) {
+                log.info("[IdentityMigration] 旧认证源表已退役删除，跳过认证源桥接");
                 return;
             }
             List<Map<String, Object>> rows = jdbcTemplate.queryForList("SELECT * FROM c_ai_oidc_provider");
@@ -82,6 +81,10 @@ public class IdentityMigrationRunner implements ApplicationRunner {
             }
             int n = 0;
             for (Map<String, Object> r : rows) {
+                String id = str(r, "id");
+                Long dup = jdbcTemplate.queryForObject(
+                        "SELECT COUNT(*) FROM c_ai_identity_provider WHERE id = ?", Long.class, id);
+                if (dup != null && dup > 0) continue;
                 Map<String, Object> cfg = new HashMap<>();
                 cfg.put("issuerUrl", str(r, "issuer_url"));
                 cfg.put("clientId", str(r, "client_id"));
