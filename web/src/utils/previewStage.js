@@ -67,7 +67,8 @@ const closePreview = () => {
  * 让缩放后的 iframe 恰好铺满舞台——页面自己滚，这里不再套第二条滚动条。
  */
 const applyStage = () => {
-  if (!layer) return
+  // canvas/frame 只在 page、pdf 档建：图片与读字档没有舞台，尺寸算无可算
+  if (!layer || !layer.canvas) return
   const { body, canvas, frame, tier, zoom } = layer
   const bw = body.clientWidth
   const bh = body.clientHeight
@@ -85,7 +86,7 @@ const markCanvasFramed = () => {
   if (!layer) return
   const framed = layer.tier !== '自适应'
   layer.body.classList.toggle('ps-framed', framed)
-  layer.canvas.classList.toggle('ps-canvas-framed', framed)
+  layer.canvas?.classList.toggle('ps-canvas-framed', framed)
 }
 
 // ==================== 三种读法（md / text / table） ====================
