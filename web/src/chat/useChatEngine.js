@@ -3,7 +3,7 @@
 // 发送与 SSE 流式回答、审批、重新生成与分支切换。与视图的接缝全部收在 hooks 里
 // （滚动、收面板、聚焦），PC 端由 ChatPage 按原行为传参；移动壳可传自己的落点
 // （如 '/m/chat'）与滚动实现复用同一套引擎。纯函数/常量见 ./projections.js。
-import { ref, reactive, computed, watch, onUnmounted } from 'vue'
+import { ref, reactive, computed, watch, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { isAdminSync } from '../utils/auth'
 import { message } from 'ant-design-vue'
@@ -12,9 +12,10 @@ import { sendQuestion, resumeChat, getChatRun, newSession, getHistory, deleteSes
          listPendingAsks, listPendingApprovals, resolvePlanApproval, supersedePlanApproval, listPendingPlans, updateSessionModelApi, updateSessionWindowApi, getSessionModelApi,
          listKnowledgeBases, listDocuments, uploadChatAttachment, getSessionTodosApi,
          listSandboxFiles, downloadSandboxFile, sandboxFileToArtifact,
+         listSandboxProcs, killSandboxProc,
          startGoalApi, goalActionApi, getPendingGoalApi, getSessionGoalApi, getGoalEventsApi,
          refreshArtifactSigns as refreshArtifactSignsApi } from '../api'
-import { sessionStore, loadSessions, chatStreams, todosMap, markSessionActive, touchSessionRow } from '../views/store'
+import { sessionStore, loadSessions, chatStreams, todosMap, markSessionActive, touchSessionRow, refreshProcBadges } from '../views/store'
 import { markLive, splitAtts } from './attachments'
 // 取材判定层：图片压缩参数、附件白名单与各项限额都在这里（分享页共用同一份，见 ./intake.js）
 import { MAX_IMAGES, MAX_FILES, classifyIntake, rejectText, REJECT, compressImage, pasteFilesOf,
@@ -3697,6 +3698,112 @@ watch(currentSessionId, () => { sandboxClosed.value = new Set(); loadSandboxFile
 watch(() => loading.value, (v, prev) => { if (prev && !v) loadSandboxFiles() })
 watch(sessionSandboxActive, () => { loadSandboxFiles() })
 
+// ==================== 沙盒后台进程（两端同吃这一份） ====================
+// 助手「把写好的前后端跑起来自己看效果」时起的是 npm run dev 这类**不会自己退**的进程；
+// 沙盒那条执行到点只是「不再等它」，进程照旧活着、端口照旧占着，界面上却什么都看不见。
+// 读的是容器实况（带归属标记的进程），不是服务端台账：后端重启、换副本都照得到；
+// 沙盒被空闲回收（默认 60 分钟）后整张清单自然清空。
+// 2026-10-26 从 ChatPage 下沉：这一族长在 PC 页里时，手机上「有个服务正占着端口」完全不可见。
+const procs = ref([])
+const procErr = ref('')
+const procLoading = ref(false)
+/** 本会话点过回答里的「在沙盒中运行」：那条路没有工具调用记录，光靠 sessionSandboxActive 判不出用过沙盒 */
+const sandboxRanOnce = ref(false)
+/** 要不要扫：本会话用过沙盒（或点过回答里的「在沙盒中运行」）。没用过就没得扫，白打一次容器。
+ *  这条与「卡要不要露脸」必须分开——判据里若掺进 procs 是否为空，空清单会让这里短路，
+ *  于是下一次扫永远发不出去，起了真进程也再也不会显示。 */
+const procScanActive = computed(() => sessionSandboxActive.value || sandboxRanOnce.value)
+/** 卡只在<b>扫到了东西</b>或<b>扫失败</b>时露脸：一条都没扫到就整张不显示。
+ *  常驻一句「后台进程 · 没有」等于把「我查过了，没事」当成用户要看的东西，
+ *  而用过沙盒的会话里这才是绝大多数情况。读不到 ≠ 没有，所以那种情形照显示，且给重试。 */
+const procCardVisible = computed(() => procScanActive.value && (procs.value.length > 0 || !!procErr.value))
+/** 正在停的那一棵：只让这一行的按钮变灰变字，别把整张卡按成 loading（用户还在看其余几行） */
+const killingTag = ref('')
+/** 秒针（1s）：「跑了多久」按 startedAt 现算，不是每次重扫——不然数字停在「17 秒」看着像整张卡死了 */
+const nowTick = ref(Date.now())
+async function loadSandboxProcs () {
+  const sid = currentSessionId.value
+  if (!sid || !procScanActive.value) {
+    procs.value = []
+    procErr.value = ''
+    procLoading.value = false
+    return
+  }
+  procLoading.value = true
+  procErr.value = ''
+  try {
+    const r = await listSandboxProcs(sid)
+    if (currentSessionId.value !== sid || !procScanActive.value) return
+    procs.value = (r && r.data && r.data.procs) || []
+  } catch (e) {
+    if (currentSessionId.value !== sid || !procScanActive.value) return
+    // 「读不到进程表」和「没有后台进程」是两件事，静默成空列表会把一个正占着端口的服务读成不存在
+    procs.value = []
+    procErr.value = e?.message || '读不到沙盒里的进程'
+  } finally {
+    if (currentSessionId.value === sid) {
+      procLoading.value = false
+      ensureProcTimer()   // 有在跑的就挂秒针，全停完了就把定时器摘掉
+    }
+  }
+}
+/** 跑了多久：这一栏答的是「忘了关的那个跑了多久」，分钟以上就不必再报秒 */
+function procAge (p) {
+  const s = p.startedAt ? Math.max(0, Math.floor((nowTick.value - p.startedAt) / 1000)) : (Number(p.elapsedSec) || 0)
+  if (s < 60) return `${s} 秒`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m} 分钟`
+  const h = Math.floor(m / 60)
+  return `${h} 小时 ${m % 60} 分`
+}
+/** 秒针（1s）与实况重扫（30s）共用一个定时器：只在卡上有进程时挂着，空卡不白打沙盒 */
+let procTimer = null
+function ensureProcTimer () {
+  const need = procs.value.length > 0
+  if (!need && procTimer) { clearInterval(procTimer); procTimer = null; return }
+  if (need && !procTimer) {
+    let n = 0
+    procTimer = setInterval(() => {
+      nowTick.value = Date.now()
+      // 定时重扫：进程在别处被杀掉、或自己退出了，这一行要自己消失，而不是挂着个「在跑」骗人
+      if (++n % 30 === 0 && !killingTag.value && !procLoading.value) loadSandboxProcs()
+    }, 1000)
+  }
+}
+async function killProc (p) {
+  const sid = currentSessionId.value
+  if (!sid || killingTag.value) return
+  killingTag.value = p.tag
+  try {
+    const r = await killSandboxProc(sid, p.tag)
+    const killed = Number(r?.data?.killed) || 0
+    const remaining = Number(r?.data?.remaining) || 0
+    // 三种结果分开说：停掉了几个 / 有停不下来的 / 它本来就自己退了——最后那种不能报「已停止」，
+    // 用户会以为是自己这一刀救回来的
+    if (remaining > 0) message.error(`有 ${remaining} 个进程停不下来（可能卡在不可中断的读写上），可再刷新确认`)
+    else if (killed > 0) message.success(`已停掉 ${killed} 个进程，占用的端口随之释放`)
+    else message.info('这个进程已经自己退出了')
+  } catch (e) {
+    message.error(e?.message || '停止失败')
+  } finally {
+    killingTag.value = ''
+    await loadSandboxProcs()
+    // 停完顺手喊侧栏重扫：那一行的「还背着进程」不该再等下一轮轮询才灭
+    refreshProcBadges()
+  }
+}
+// 重扫时机与沙盒文件同一批：一轮跑完（占端口的服务恰恰是在这一轮里起的）、判据翻转、切会话。
+// 「点过运行按钮」是这一会话的事，切走就作废。
+watch(() => loading.value, (v, prev) => { if (prev && !v) { loadSandboxProcs(); refreshProcBadges() } })
+watch(sessionSandboxActive, () => { loadSandboxProcs() })
+watch(currentSessionId, () => { sandboxRanOnce.value = false; loadSandboxProcs() })
+const onSandboxRan = () => { sandboxRanOnce.value = true; loadSandboxProcs() }
+onMounted(() => window.addEventListener('app:sandbox-ran', onSandboxRan))
+onUnmounted(() => {
+  window.removeEventListener('app:sandbox-ran', onSandboxRan)
+  if (procTimer) { clearInterval(procTimer); procTimer = null }
+})
+
   return {
     // 输入与发送
     text, canSend, send, stop, steerQueue, sendSteer, editSteer, dropSteer, moveSteer,
@@ -3743,6 +3850,9 @@ watch(sessionSandboxActive, () => { loadSandboxFiles() })
     sandboxFiles, sandboxRows, sandboxCount, sandboxBytes, sandboxRest,
     sandboxErr, sandboxLoading, sandboxTaken, sessionSandboxActive,
     loadSandboxFiles, toggleSandboxDir, sandboxDownload, sandboxTake, sbSize,
+    // 沙盒后台进程：同一族两端口径（露脸判据、秒针、三种停止结果）只算一份
+    procs, procErr, procLoading, procCardVisible, procScanActive, killingTag,
+    loadSandboxProcs, procAge, killProc,
     // 图片与附件
     pendingImages, removePendingImage, MAX_FILES, pendingFiles, hasUploadingFile,
     addFiles, removePendingFile, attachUploaded, attachImage,

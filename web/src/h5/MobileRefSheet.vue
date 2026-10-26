@@ -143,6 +143,40 @@
         <div v-if="sandboxRest" class="rs-act-tip">目录里另有 {{ sandboxRest }} 个文件没列出（这里只列最新 {{ sandboxFiles.length }} 个）</div>
       </template>
 
+      <!-- ---- 沙盒后台进程：助手起的、不会自己退的服务（npm run dev 这类） ----
+           露脸判据与 PC 右栏那张卡同一条（引擎的 procCardVisible）：一条都没扫到就整段不显示，
+           「读不到」才显示并给重试。秒针、跑了多久、停掉几种结果全在引擎那一份里。
+           PC 上那些靠 hover 才说得清的（端口是沙盒内部的、来源不明为什么停不了）在触屏上没有第二次
+           机会，所以把话直接写进行内。
+           类名走 rs-bg* 一段：rs-proc* 已被上面「本轮过程」那些步 row 占着，同名会让两套样式互相打脏
+           （真机 2026-10-26 撞过一次：进程行数比实况多 1，多的那条就是工具步 row）。 -->
+      <template v-if="procCardVisible">
+        <div class="rs-section">后台进程<span class="rs-n rs-bg-n">{{ procs.length }} 个在跑</span></div>
+        <div v-if="procErr" class="rs-sb-err">
+          <span>{{ procErr }}</span>
+          <button type="button" class="rs-sb-retry" @click="loadSandboxProcs">重试</button>
+        </div>
+        <div v-for="(p, i) in procs" :key="p.tag" class="rs-bg"
+             :class="{ 'is-killing': killingTag === p.tag }" :style="{ '--proc-i': i }">
+          <div class="rs-bg-cmd">
+            <span class="rs-bg-dot" aria-hidden="true" />
+            <span class="rs-bg-cmd-t">{{ p.command }}</span>
+          </div>
+          <div class="rs-bg-foot">
+            <span class="rs-bg-meta">
+              <span>跑了 {{ procAge(p) }}</span>
+              <span v-if="p.ports && p.ports.length"> · 占着端口 {{ p.ports.join(' / ') }}（沙盒内部）</span>
+              <span v-if="p.roots > 1"> · {{ p.roots }} 棵进程树</span>
+              <span v-if="!p.own"> · 同沙盒别的会话起的</span>
+            </span>
+            <button v-if="p.killable" type="button" class="rs-bg-kill" :disabled="killingTag === p.tag"
+                    @click="killProc(p)">{{ killingTag === p.tag ? '停止中…' : '停止它' }}</button>
+            <span v-else class="rs-bg-unknown">认不出来源，停不了</span>
+          </div>
+        </div>
+        <div class="rs-act-tip">停掉它会连同它起走的全部子进程一起结束，占用的端口随之释放</div>
+      </template>
+
       <!-- ---- 目标（与 PC 摘要条同一份 sessionGoal，同一个 GoalCard 组件；PC 右栏不单列目标卡） ----
            卡片只读：状态、轮次、目标原文与卡住的原因。暂停/继续/改原文/删除都只在输入框上方
            那条摘要条上（一个动作只留一个入口），这里不再摆验收/收尾/另起目标那一套。 -->
@@ -226,6 +260,8 @@ const { groupedSources, lastTokens, lastSources, sessionTokens, sessionRetrieval
   sandboxFiles, sandboxRows, sandboxCount, sandboxBytes, sandboxRest,
   sandboxErr, sandboxLoading, sandboxTaken,
   loadSandboxFiles, toggleSandboxDir, sandboxDownload, sandboxTake, sbSize,
+  // 后台进程同样整族吃引擎（2026-10-26 从 PC 壳下沉）：露脸判据、秒针、停止的三种结果只算一份
+  procs, procErr, procCardVisible, killingTag, loadSandboxProcs, procAge, killProc,
   // 本轮过程总览的数据源：与 PC 右栏那张卡同一个对象（跑轮时它就是正在流的那条，结束后是上一轮）
   panelAi } = engine
 
@@ -341,8 +377,8 @@ watch(currentSessionId, () => { built.value = null; shareOpen.value = false; res
 
 // 每次打开这张 sheet 都重扫一次沙盒目录：sheet 关着的时候引擎只在「一轮收尾 / 切会话」那两拍拉，
 // 而用户点开「沙盒文件」恰恰是要看最新做出来的东西。常驻的 PC 右栏没有这个问题（它一直在屏上，
-// 收尾那一拍已经拉过）。
-watch(() => props.open, v => { if (v) loadSandboxFiles() })
+// 收尾那一拍已经拉过）。后台进程同理——起了个服务、又自己退了的，重扫才知道。
+watch(() => props.open, v => { if (v) { loadSandboxFiles(); loadSandboxProcs() } })
 </script>
 
 <style scoped>
@@ -428,6 +464,30 @@ watch(() => props.open, v => { if (v) loadSandboxFiles() })
   content: ''; position: absolute; top: 50%; left: 0; right: 0;
   height: 44px; transform: translateY(-50%);
 }
+/* ---- 后台进程：命令行独占一行（触屏没有 title 可看，它是这行里唯一认得出「哪个服务」的东西），
+   次要信息与「停止它」同一行；多行按整序错相呼吸，不许整列同步（与 PC 那张卡同一口径）。
+   前缀 rs-bg*：rs-proc* 是上面「本轮过程」步 row 的类名，两套样式不能共用一个选择器 ---- */
+.rs-bg { padding: 8px 0; border-top: 1px solid var(--app-border); }
+.rs-bg.is-killing { opacity: .55; }
+.rs-bg-n { margin-left: 2px; }
+.rs-bg-cmd { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.rs-bg-cmd-t { flex: 1; min-width: 0; font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px; color: var(--app-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rs-bg-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--app-accent);
+  animation: rs-bg-pulse 1.8s ease-in-out infinite; animation-delay: calc(var(--proc-i, 0) * -0.43s); }
+@keyframes rs-bg-pulse { 0%, 100% { opacity: .3 } 50% { opacity: 1 } }
+.rs-bg.is-killing .rs-bg-dot { animation: none; background: var(--app-text3); }
+.rs-bg-foot { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
+.rs-bg-meta { flex: 1; min-width: 0; font-size: 12px; color: var(--app-text3); line-height: 1.5;
+  font-variant-numeric: tabular-nums; }
+.rs-bg-kill {
+  flex: none; min-height: 44px; padding: 0 14px; border: 1px solid var(--app-border); border-radius: 10px;
+  background: var(--app-panel); color: var(--app-text2); font-size: 14px; touch-action: manipulation;
+}
+.rs-bg-kill:active { color: var(--app-warn-text); border-color: var(--app-warn-text); }
+.rs-bg-kill:disabled { opacity: .6; }
+.rs-bg-unknown { flex: none; font-size: 12px; color: var(--app-text3); }
+@media (prefers-reduced-motion: reduce) { .rs-bg-dot { animation: none; } }
 /* 本轮过程总览：只读行（不点），行高 34 已够读；在跑的那一行给强调色，一眼看到卡在哪一步 */
 .rs-phase { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--app-accent); padding: 2px 2px 8px; }
 .rs-phase-dot { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--app-accent); animation: rs-blink 1.2s ease-in-out infinite; }
