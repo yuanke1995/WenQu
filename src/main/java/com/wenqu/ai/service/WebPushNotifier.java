@@ -10,6 +10,8 @@ import com.wenqu.ai.mapper.WebPushSubscriptionMapper;
 import com.wenqu.ai.model.WebPushSubscription;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
 import java.net.URLEncoder;
@@ -89,6 +91,25 @@ public class WebPushNotifier {
     @PreDestroy
     public void shutdown() {
         executor.shutdownNow();
+    }
+
+    /**
+     * 启动自检：总闸开着但 env 里没有可用密钥＝管理员按了一半开关。
+     *
+     * <p>为什么值得单独喊一句：这一格错法在界面上<b>是</b>说得清的（设置页会显示「平台未配置密钥」），
+     * 但管理员多半从系统设置页进去、看到开关是开的就以为在跑——服务端日志里留一行 WARN，
+     * 比让人从「为什么没人收到推送」倒推快得多。口径同 {@code ConfigService#auditDefaultOnSwitches}：
+     * 只告警，不替管理员关开关（关等于把「他刚做的动作」抹掉）。
+     */
+    @EventListener
+    public void auditOnStartup(ApplicationReadyEvent event) {
+        if (enabled() && keys() == null) {
+            log.warn("[PUSH] webpush.enabled 已打开，但 env 里没有可用的 VAPID 密钥对（AI_VAPID_PUBLIC_KEY / "
+                    + "AI_VAPID_PRIVATE_KEY）——系统级推送实际不会发出。生成一对：POST /ai/api/ai/webpush/keys"
+                    + "（仅管理员，只回显不落库），贴进 .env 后重启。");
+        } else if (enabled()) {
+            log.info("[PUSH] Web Push 已启用（订阅数按用户各自计，TTL={}s）", ttlSeconds());
+        }
     }
 
     // ==================== 配置面 ====================
