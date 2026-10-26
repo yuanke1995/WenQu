@@ -1655,6 +1655,29 @@ export const changePasswordApi = (oldPassword, newPassword) =>
 export const resetUserPassword = (uid, password) =>
   request(`/user/${encodeURIComponent(uid)}/password`, { method: 'PUT', body: JSON.stringify({ password }) })
 
+// ---- 统一认证源（SAML/SCIM/LDAP）与身份同步（管理员）----
+export const listIdentityProviders = () => request('/identity/providers')
+export const createIdentityProvider = payload =>
+  request('/identity/providers', { method: 'POST', body: JSON.stringify(payload) })
+export const updateIdentityProvider = (id, payload) =>
+  request(`/identity/providers/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(payload) })
+export const deleteIdentityProvider = id =>
+  request(`/identity/providers/${encodeURIComponent(id)}`, { method: 'DELETE' })
+export const testIdentityProvider = id =>
+  request(`/identity/providers/${encodeURIComponent(id)}/test`, { method: 'POST' })
+export const listGroupMappings = providerId =>
+  request(`/identity/mappings?providerId=${encodeURIComponent(providerId)}`)
+export const createGroupMapping = payload =>
+  request('/identity/mappings', { method: 'POST', body: JSON.stringify(payload) })
+export const updateGroupMapping = (id, payload) =>
+  request(`/identity/mappings/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(payload) })
+export const deleteGroupMapping = id =>
+  request(`/identity/mappings/${encodeURIComponent(id)}`, { method: 'DELETE' })
+export const triggerIdentitySync = providerId =>
+  request(`/identity/sync/${encodeURIComponent(providerId)}`, { method: 'POST' })
+export const listSyncLogs = (providerId, limit = 20) =>
+  request(`/identity/sync/logs?providerId=${encodeURIComponent(providerId)}&limit=${limit}`)
+
 // ---- 模型供应商（供应商管理页 + 各处模型选择器） ----
 export const listProviders = () => request('/provider')
 export const createProvider = body => request('/provider', { method: 'POST', body: JSON.stringify(body) })

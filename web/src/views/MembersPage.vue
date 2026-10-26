@@ -52,17 +52,22 @@
                 <span v-else class="mem-none">未分配</span>
               </template>
             </a-table-column>
-            <a-table-column title="角色" key="role" width="120">
+            <a-table-column title="角色" key="roles" width="170">
               <template #default="{ record }">
-                <span class="role-pill" :class="'r-' + (record.role || 'user')">{{ roleLabel(record.role) }}</span>
+                <span class="mem-roles">
+                  <span v-for="rc in (record.roles && record.roles.length ? record.roles : ['user'])"
+                        :key="rc" class="role-pill" :class="'r-' + rc">{{ roleLabel(rc) }}</span>
+                </span>
               </template>
             </a-table-column>
-            <a-table-column title="单点登录" key="oidc" width="200">
+            <a-table-column title="单点登录" key="identities" width="200">
               <template #default="{ record }">
-                <span v-if="record.oidcProvider && record.oidcSub" class="mem-oidc">
-                  <span class="mem-oidc-name">{{ providerName(record.oidcProvider) }}</span>
-                  <code class="mem-oidc-sub" :title="record.oidcSub">{{ record.oidcSub }}</code>
-                </span>
+                <template v-if="record.identities && record.identities.length">
+                  <span v-for="(it, i) in record.identities" :key="i" class="mem-oidc">
+                    <span class="mem-oidc-name">{{ providerName(it.providerId) }}</span>
+                    <code class="mem-oidc-sub" :title="it.externalId">{{ it.externalId }}</code>
+                  </span>
+                </template>
                 <span v-else class="mem-none">本地账号</span>
               </template>
             </a-table-column>
@@ -82,7 +87,7 @@
                 <span class="mem-inline">
                   <button class="app-link-btn" @click="openUserEdit(record)">编辑</button>
                   <button class="app-link-btn" @click="openResetPwd(record)">重置密码</button>
-                  <a-popconfirm v-if="record.oidcProvider && record.oidcSub"
+                  <a-popconfirm v-if="record.identities && record.identities.length"
                                 title="解绑后该用户须重新走对应 IdP 登录才能再次绑定" ok-text="解绑" cancel-text="取消"
                                 @confirm="unbind(record.uid)">
                     <button class="app-link-btn danger">解绑</button>
@@ -168,7 +173,8 @@
                     :not-found-content="'暂无部门，可切换到「部门」页先新建'" />
         </a-form-item>
         <a-form-item label="角色">
-          <a-select v-model:value="userForm.role" :options="roleOptions" style="width:100%" />
+          <a-select v-model:value="userForm.roles" :options="roleOptions" mode="multiple" style="width:100%"
+                    placeholder="至少选一个角色" />
           <div class="form-tip">{{ roleTip }}</div>
         </a-form-item>
         <a-form-item v-if="userForm.isEdit" label="状态">
@@ -222,7 +228,7 @@ import { message } from 'ant-design-vue'
 import { SearchOutlined, PlusOutlined, ApartmentOutlined } from '@ant-design/icons-vue'
 import { listUsers, createUser, updateUser, deleteUser, resetUserPassword,
          listDepartments, createDepartment, updateDepartment, deleteDepartment,
-         listRoleOptions, listOidcProviders, unbindOidc } from '../api'
+         listRoleOptions, listOidcProviders, listIdentityProviders, unbindOidc } from '../api'
 import UserAvatar from '../components/UserAvatar.vue'
 
 /* ==================== 页签：状态落 URL / 数据懒加载 / 各页签独立记忆筛选 ==================== */
@@ -271,7 +277,7 @@ const filteredUsers = computed(() => {
   const r = filters.users.role
   return users.value.filter(u => {
     if (d !== undefined && (u.departmentId || '') !== d) return false
-    if (r !== undefined && (u.role || 'user') !== r) return false
+    if (r !== undefined && !((u.roles && u.roles.length ? u.roles : ['user']).includes(r))) return false
     if (k && !(u.username || '').toLowerCase().includes(k) && !(u.uid || '').toLowerCase().includes(k)) return false
     return true
   })
@@ -312,10 +318,12 @@ const fullTime = s => (s ? String(s).replace('T', ' ') : '')
 const deptOptions = computed(() => departments.value.map(d => ({ label: d.name, value: d.id })))
 const roleOptions = computed(() => roles.value.map(r => ({ label: r.name, value: r.code })))
 const roleTip = computed(() => {
-  const r = roles.value.find(x => x.code === userForm.value.role)
-  if (!r) return ''
-  if (r.adminFlag === 1) return '管理员级角色：可访问全部管理功能。'
-  return r.builtin === 1 ? '普通角色：问答与个人资源，可按权限管理中的绑定开放更多功能。' : '自定义角色：按「权限管理 → 角色权限」的绑定开放菜单与接口。'
+  const picked = userForm.value.roles || []
+  if (!picked.length) return '至少保留一个角色，否则按「成员」权限判定。'
+  if (picked.some(c => (roles.value.find(x => x.code === c) || {}).adminFlag === 1)) {
+    return '已包含管理员级角色：该用户可访问全部管理功能（并集放大权限）。'
+  }
+  return '手动角色与 IdP 组映射角色并存（并集判定）；组映射授予的角色在成员管理中不可改。'
 })
 
 /* ==================== 加载（按页签懒加载 + 保存后按需重拉） ==================== */
@@ -334,8 +342,13 @@ async function loadRoles () {
   roles.value = (r && r.data) || []
 }
 async function loadProviders () {
-  const r = await listOidcProviders()
-  providers.value = (r && r.data) || []
+  // 合并两个来源：OIDC 旧表（迁移期）+ 统一认证源表（SAML/SCIM/LDAP）——
+  // 「单点登录」列的 providerId 两边都可能出现
+  const [oidc, unified] = await Promise.all([listOidcProviders(), listIdentityProviders()])
+  providers.value = [
+    ...((oidc && oidc.data) || []),
+    ...(((unified && unified.data) || []).map(p => ({ id: p.id, name: p.name })))
+  ]
 }
 const LOADERS = { users: loadUsers, departments: loadDepartments, roles: loadRoles, providers: loadProviders }
 
@@ -369,7 +382,7 @@ const userModal = ref(false)
 const userForm = ref(blankUser())
 const uidError = ref('')
 const pwdError = ref('')
-function blankUser () { return { isEdit: false, uid: '', username: '', password: '', confirm: '', departmentId: undefined, role: 'user', status: 1 } }
+function blankUser () { return { isEdit: false, uid: '', username: '', password: '', confirm: '', departmentId: undefined, roles: ['user'], status: 1 } }
 function openUserCreate () { userForm.value = blankUser(); uidError.value = ''; userModal.value = true }
 function openUserEdit (r) {
   userForm.value = {
@@ -377,7 +390,7 @@ function openUserEdit (r) {
     uid: r.uid,
     username: r.username || '',
     departmentId: r.departmentId || undefined,
-    role: r.role || 'user',
+    roles: (r.roles && r.roles.length ? r.roles : ['user']).slice(),
     status: r.status === 0 ? 0 : 1
   }
   uidError.value = ''
@@ -396,7 +409,7 @@ async function saveUser () {
   }
   saving.value = true
   try {
-    const base = { username: f.username, departmentId: f.departmentId || '', role: f.role }
+    const base = { username: f.username, departmentId: f.departmentId || '', roles: (f.roles && f.roles.length ? f.roles : ['user']) }
     const r = f.isEdit
       ? await updateUser(f.uid, { ...base, status: f.status })
       : await createUser({ ...base, uid: String(f.uid).trim(), password: f.password })

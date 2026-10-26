@@ -82,6 +82,10 @@ public class RbacSeedRunner implements ApplicationRunner {
     private static final String[] OIDC_TAB_MENU =
             {"menu-oidc-providers", "单点登录", "/permissions?tab=oidc", "10", "menu-permissions"};
 
+    /** 批次 5（2026-10-26）：SAML/SCIM/LDAP 统一认证源与组映射、目录同步，挂权限管理下的独立页签 */
+    private static final String[] IDENTITY_TAB_MENU =
+            {"menu-identity-providers", "认证源", "/permissions?tab=identity", "15", "menu-permissions"};
+
     /**
      * 内置 Tab 菜单（renderAs=tab）：id / 名称 / path / 排序 / 父菜单。
      * <p>
@@ -107,7 +111,8 @@ public class RbacSeedRunner implements ApplicationRunner {
             new String[]{"menu-agents-tab-mcp", "MCP 外部工具", "/agents?tab=mcp", "40", "menu-agents"},
             new String[]{"menu-agents-tab-workflow", "工作流", "/agents?tab=workflow", "50", "menu-agents"},
             new String[]{"menu-agents-tab-scheduled", "定时任务", "/agents?tab=scheduled", "60", "menu-agents"},
-            OIDC_TAB_MENU
+            OIDC_TAB_MENU,
+            IDENTITY_TAB_MENU
     );
 
     /** 并入宿主页 Tab 前「单点登录」占侧栏入口时的旧路径：存量库就地改写的判据，见 {@link #migrateOidcIntoPermissionsTab()} */
