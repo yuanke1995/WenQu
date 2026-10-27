@@ -67,10 +67,12 @@ body.ps-lock { overflow: hidden; }
 .ps-canvas.ps-canvas-framed { box-shadow: 0 2px 14px rgba(0, 0, 0, .12); }
 .ps-frame { display: block; border: none; background: #fff; transform-origin: 0 0; }
 
-.ps-img-wrap { min-height: 100%; display: flex; align-items: center; justify-content: center; cursor: zoom-in; }
-.ps-img { max-width: 100%; max-height: 88vh; height: auto; display: block; }
+.ps-img-wrap { min-height: 100%; display: flex; cursor: zoom-in; }
+/* 居中靠图片自己的 margin:auto，不用 align/justify-center：1:1 档图比舞台大时，
+   justify-content 会把溢出那半截推到滚动区外面（滚不回去）；自动边距放不下时自己归零，居中和可滚不打架。 */
+.ps-img { margin: auto; max-width: 100%; max-height: 88vh; height: auto; display: block; }
 /* 实际大小：设计稿要看字号与锯齿，适合屏幕那档看不出像素级问题 */
-.ps-img-wrap.ps-img-actual { display: block; cursor: zoom-out; }
+.ps-img-wrap.ps-img-actual { cursor: zoom-out; }
 .ps-img-wrap.ps-img-actual .ps-img { max-width: none; max-height: none; }
 
 /* 读字档：正文宽度收在可读区间，不铺满 4K 屏 */
