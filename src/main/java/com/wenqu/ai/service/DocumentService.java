@@ -76,6 +76,9 @@ import java.time.LocalDateTime;
 @Service
 @RequiredArgsConstructor
 public class DocumentService {
+    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    private final AuditService audit;
+
 
     private final AiDocumentMapper documentMapper;
     private final KnowledgeMapper knowledgeMapper;
@@ -1459,7 +1462,7 @@ public class DocumentService {
             if (documentMapper.softDelete(docId) == 0) {
                 throw new BizException("文档不存在或已在回收站");
             }
-            log.info("[AUDIT] 文档进入回收站 operator={} docId={} file={}", RequestUser.uid(), docId, doc.getFileName());
+            audit.record("[AUDIT] 文档进入回收站 operator={} docId={} file={}", RequestUser.uid(), docId, doc.getFileName());
         } finally {
             deletedFlags.remove(docId);
         }
@@ -1512,7 +1515,7 @@ public class DocumentService {
             }
         }
         documentMetaCache.invalidate(docId);
-        log.info("[AUDIT] 文档已从回收站恢复 operator={} docId={} file={}", RequestUser.uid(), docId, doc.getFileName());
+        audit.record("[AUDIT] 文档已从回收站恢复 operator={} docId={} file={}", RequestUser.uid(), docId, doc.getFileName());
     }
 
     /**
@@ -1571,7 +1574,7 @@ public class DocumentService {
         // 引用关系清理（纯派生数据，随文档删除）
         cleanupImages(docId);
         cleanupSourceFile(docId);
-        log.info("[AUDIT] 文档已彻底删除 operator={} docId={}", RequestUser.uid(), docId);
+        audit.record("[AUDIT] 文档已彻底删除 operator={} docId={}", RequestUser.uid(), docId);
     }
 
     /**
@@ -1658,7 +1661,7 @@ public class DocumentService {
                 .eq(AiDocument::getId, docId)
                 .set(AiDocument::getShareConfig, normalized));
         documentMetaCache.invalidate(docId);
-        log.info("[AUDIT] 设置文档共享范围 operator={} docId={} scope={}", operator, docId,
+        audit.record("[AUDIT] 设置文档共享范围 operator={} docId={} scope={}", operator, docId,
                 normalized == null ? "global" : "custom");
     }
 

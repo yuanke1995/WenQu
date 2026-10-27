@@ -81,6 +81,7 @@ public class ScheduleCenter {
 
     private final List<PeriodicTask> tasks = new ArrayList<>();
     private final ConfigService configService;
+    private final com.wenqu.ai.service.AuditService auditService;
     private final ConfigSchemaService configSchemaService;
     private final KeywordIndexService keywordIndexService;
     private final UserImageService userImageService;
@@ -113,6 +114,7 @@ public class ScheduleCenter {
     });
 
     public ScheduleCenter(ConfigService configService, ConfigSchemaService configSchemaService,
+                          com.wenqu.ai.service.AuditService auditService,
                           KeywordIndexService keywordIndexService,
                           UserImageService userImageService, RetrievalEvaluationService evalService,
                           SessionService sessionService, ArtifactService artifactService,
@@ -149,6 +151,7 @@ public class ScheduleCenter {
         this.sessionLogArchive = sessionLogArchive;
         this.journalRotation = journalRotation;
         this.scheduleRunLogMapper = scheduleRunLogMapper;
+        this.auditService = auditService;
     }
 
     @EventListener(ApplicationReadyEvent.class)
@@ -190,6 +193,15 @@ public class ScheduleCenter {
 
         // 检索质量自动体检：按线上参数跑评估集并与上期对比（间隔 eval.autoIntervalMs，默认每日；≤0 停用）。
         // 评估集为空自动跳过并记录（生成评估集后无需重启即生效）；下滑结论落在 eval.lastReport 供看板红绿灯
+        // 审计事件留存清理：与过期会话同一周期跑（cleanup.sessionCleanupIntervalMs），保留期
+        // cleanup.auditRetentionDays（默认 365 天，0=永久）。合规要的是「留够」而不是「永不清」，
+        // 天数由管理员设、清理动作固定跑——不跑就等于审计表无限长，最后没人敢查。
+        register("审计事件留存清理", "删除超过保留期的统一审计事件（保留期 cleanup.auditRetentionDays，0 = 永久保留）",
+                "cleanup.sessionCleanupIntervalMs",
+                () -> configService.getInt("cleanup.sessionCleanupIntervalMs", 86_400_000),
+                () -> false,
+                () -> auditService.purgeExpired());
+
         register("检索评估自动体检", "按线上参数跑检索评估集并与上期对比，结论落 eval.lastReport 供看板红绿灯（评估集为空自动跳过）",
                 "eval.autoIntervalMs",
                 () -> configService.getInt("eval.autoIntervalMs", 86_400_000),

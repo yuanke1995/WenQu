@@ -36,6 +36,9 @@ import java.util.Set;
 @Service
 @RequiredArgsConstructor
 public class MenuService {
+    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    private final AuditService audit;
+
 
     private final MenuMapper menuMapper;
     private final RoleMenuMapper roleMenuMapper;
@@ -246,7 +249,7 @@ public class MenuService {
         if (reset) {
             // 置 null 恢复默认：MP 默认 NOT_NULL 策略会跳过 null 字段，须用 UpdateWrapper 显式 set
             userMapper.update(null, set.set(User::getMenuPref, null));
-            log.info("[AUDIT] 用户 {} 恢复默认侧栏布局", uid);
+            audit.record("[AUDIT] 用户 {} 恢复默认侧栏布局", uid);
             return;
         }
         // 白名单：当前角色集可见的菜单 id（RBAC 并集结果，管理员级 = 全部 visible）
@@ -260,7 +263,7 @@ public class MenuService {
             return;
         }
         userMapper.update(null, set.set(User::getMenuPref, writeJson(pref)));
-        log.info("[AUDIT] 用户 {} 保存侧栏布局：重排 {} 项，隐藏 {} 项", uid, pref.order.size(), pref.hidden.size());
+        audit.record("[AUDIT] 用户 {} 保存侧栏布局：重排 {} 项，隐藏 {} 项", uid, pref.order.size(), pref.hidden.size());
     }
 
     private static List<String> sanitize(List<String> ids, Set<String> visible) {
@@ -357,7 +360,7 @@ public class MenuService {
         m.setVisible(visible == null || visible == 1 ? 1 : 0);
         m.setBuiltin(0);
         menuMapper.insert(m);
-        log.info("[AUDIT] 新建菜单 id={} name={} path={} renderAs={}", m.getId(), n, m.getPath(), ra);
+        audit.record("[AUDIT] 新建菜单 id={} name={} path={} renderAs={}", m.getId(), n, m.getPath(), ra);
         return m;
     }
 
@@ -383,7 +386,7 @@ public class MenuService {
         if (renderAs != null) m.setRenderAs(normalizeRenderAs(renderAs));
         validateRenderState(m);
         menuMapper.updateById(m);
-        log.info("[AUDIT] 编辑菜单 id={} name={} renderAs={}", id, m.getName(), m.getRenderAs());
+        audit.record("[AUDIT] 编辑菜单 id={} name={} renderAs={}", id, m.getName(), m.getRenderAs());
     }
 
     /**
@@ -429,7 +432,7 @@ public class MenuService {
         menuMapper.deleteById(id);
         roleMenuMapper.unbindByMenu(id);
         menuApiMapper.unbindByMenu(id);
-        log.info("[AUDIT] 删除菜单 id={} name={}", id, m.getName());
+        audit.record("[AUDIT] 删除菜单 id={} name={}", id, m.getName());
     }
 
     // ==================== 校验工具 ====================

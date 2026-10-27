@@ -1,6 +1,7 @@
 package com.wenqu.ai.controller;
 
 import com.wenqu.ai.common.BizException;
+import com.wenqu.ai.service.AuditService;
 import com.wenqu.ai.dto.ResultJson;
 import com.wenqu.ai.service.ConfigService;
 import com.wenqu.ai.service.DocumentService;
@@ -34,6 +35,9 @@ import java.util.Map;
 @RequiredArgsConstructor
 @Tag(name = "文档管理", description = "文档上传/解析、列表、启停用、重解析、批量操作、命中统计")
 public class DocumentController {
+    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    private final AuditService audit;
+
 
     private final DocumentService documentService;
     private final ConfigService configService;
@@ -140,7 +144,7 @@ public class DocumentController {
         }
         requireKbManage(kbId);   // 往哪个库传，就要对这个库有管理权
         var doc = documentService.upload(file, description, kbId, visionRef);
-        log.info("[AUDIT] 上传文档 operator={} docId={} file={} size={}", RequestUser.uid(),
+        audit.record("[AUDIT] 上传文档 operator={} docId={} file={} size={}", RequestUser.uid(),
                 doc.getId(), file.getOriginalFilename(), file.getSize());
         return ResultJson.ok(doc, "已提交解析");
     }
@@ -160,7 +164,7 @@ public class DocumentController {
         }
         requireKbManage(kbId);
         var doc = documentService.importFromUrl(url, description, kbId);
-        log.info("[AUDIT] 网页导入 operator={} docId={} url={}", RequestUser.uid(), doc.getId(), url);
+        audit.record("[AUDIT] 网页导入 operator={} docId={} url={}", RequestUser.uid(), doc.getId(), url);
         return ResultJson.ok(doc, "已提交解析");
     }
 
@@ -193,7 +197,7 @@ public class DocumentController {
             }
             results.add(item);
         }
-        log.info("[AUDIT] 批量上传 operator={} count={}", RequestUser.uid(), files.length);
+        audit.record("[AUDIT] 批量上传 operator={} count={}", RequestUser.uid(), files.length);
         return ResultJson.ok(results);
     }
 
@@ -265,7 +269,7 @@ public class DocumentController {
             HttpServletRequest httpRequest) {
         requireDocManage(documentService.getDoc(id));
         documentService.delete(id);
-        log.info("[AUDIT] 删除文档 operator={} docId={}", RequestUser.uid(), id);
+        audit.record("[AUDIT] 删除文档 operator={} docId={}", RequestUser.uid(), id);
         return ResultJson.ok("已移入回收站");
     }
 
@@ -330,7 +334,7 @@ public class DocumentController {
             if (Boolean.TRUE.equals(item.get("success"))) ok++;
             results.add(item);
         }
-        log.info("[AUDIT] 回收站批量恢复 operator={} total={} ok={}", RequestUser.uid(), results.size(), ok);
+        audit.record("[AUDIT] 回收站批量恢复 operator={} total={} ok={}", RequestUser.uid(), results.size(), ok);
         return ResultJson.ok(results, recycleBatchMsg("恢复", results.size(), ok));
     }
 
@@ -348,7 +352,7 @@ public class DocumentController {
             if (Boolean.TRUE.equals(item.get("success"))) ok++;
             results.add(item);
         }
-        log.info("[AUDIT] 回收站批量彻底删除 operator={} total={} ok={}", RequestUser.uid(), results.size(), ok);
+        audit.record("[AUDIT] 回收站批量彻底删除 operator={} total={} ok={}", RequestUser.uid(), results.size(), ok);
         return ResultJson.ok(results, recycleBatchMsg("彻底删除", results.size(), ok));
     }
 
@@ -450,11 +454,11 @@ public class DocumentController {
                     com.wenqu.ai.service.ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
                 allowed.add(docId);
             } else {
-                log.warn("[AUDIT] 批量删除跳过无权限文档 operator={} docId={}", RequestUser.uid(), docId);
+                audit.warn("[AUDIT] 批量删除跳过无权限文档 operator={} docId={}", RequestUser.uid(), docId);
             }
         }
         documentService.batchDelete(allowed);
-        log.info("[AUDIT] 批量删除文档 operator={} count={} ids={}", RequestUser.uid(), allowed.size(), allowed);
+        audit.record("[AUDIT] 批量删除文档 operator={} count={} ids={}", RequestUser.uid(), allowed.size(), allowed);
         return ResultJson.ok("删除成功（" + allowed.size() + "/" + ids.size() + "，无权限的已跳过）");
     }
 
@@ -481,7 +485,7 @@ public class DocumentController {
             results.add(item);
         }
         long ok = results.stream().filter(r -> Boolean.TRUE.equals(r.get("success"))).count();
-        log.info("[AUDIT] 批量重解析 operator={} total={} ok={}", RequestUser.uid(), ids.size(), ok);
+        audit.record("[AUDIT] 批量重解析 operator={} total={} ok={}", RequestUser.uid(), ids.size(), ok);
         return ResultJson.ok(results, "已提交 " + ok + "/" + ids.size() + " 个重解析");
     }
 
@@ -564,7 +568,7 @@ public ResultJson rebuildKb(
         if (version == null) throw new BizException("缺少 version 参数");
         requireDocManage(documentService.getDoc(id));
         documentService.rollback(id, version);
-        log.info("[AUDIT] 回滚文档版本 operator={} docId={} version={}", RequestUser.uid(), id, version);
+        audit.record("[AUDIT] 回滚文档版本 operator={} docId={} version={}", RequestUser.uid(), id, version);
         return ResultJson.ok("回滚成功");
     }
 

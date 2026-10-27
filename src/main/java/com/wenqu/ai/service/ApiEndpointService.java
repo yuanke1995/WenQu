@@ -35,6 +35,9 @@ import java.util.Set;
 @Service
 @RequiredArgsConstructor
 public class ApiEndpointService {
+    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    private final AuditService audit;
+
 
     private static final Set<String> METHODS = Set.of("GET", "POST", "PUT", "DELETE", "PATCH", "ALL");
 
@@ -84,7 +87,7 @@ public class ApiEndpointService {
         apiEndpointMapper.insert(api);
         bindMenus(api.getId(), menuIds);
         roleService.invalidateApiPatterns();
-        log.info("[AUDIT] 手工登记接口 id={} {} {} menus={}", api.getId(), m, p, menuIds == null ? 0 : menuIds.size());
+        audit.record("[AUDIT] 手工登记接口 id={} {} {} menus={}", api.getId(), m, p, menuIds == null ? 0 : menuIds.size());
         return api;
     }
 
@@ -114,7 +117,7 @@ public class ApiEndpointService {
             bindMenus(id, menuIds);
         }
         roleService.invalidateApiPatterns();
-        log.info("[AUDIT] 编辑接口 id={} {} {}", id, api.getMethod(), api.getPath());
+        audit.record("[AUDIT] 编辑接口 id={} {} {}", id, api.getMethod(), api.getPath());
     }
 
     /**
@@ -129,7 +132,7 @@ public class ApiEndpointService {
         roleApiMapper.unbindByApi(id);
         menuApiMapper.unbindByApi(id);
         roleService.invalidateApiPatterns();
-        log.info("[AUDIT] 删除接口 id={} {} {}", id, api.getMethod(), api.getPath());
+        audit.record("[AUDIT] 删除接口 id={} {} {}", id, api.getMethod(), api.getPath());
     }
 
     /** 绑定菜单归属（校验菜单存在；忽略空项与重复项） */

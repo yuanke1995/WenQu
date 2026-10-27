@@ -28,6 +28,9 @@ import java.util.List;
 @Service
 @RequiredArgsConstructor
 public class AgentShareService {
+    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    private final AuditService audit;
+
 
     private final AgentShareMapper shareMapper;
     private final AgentService agentService;
@@ -104,7 +107,7 @@ public class AgentShareService {
         } else {
             shareMapper.updateById(share);
         }
-        log.info("[AUDIT] 智能体分享发布 operator={} agent={} enabled={} mcp={} 游客发图={} 游客附件={} token={}***",
+        audit.record("[AUDIT] 智能体分享发布 operator={} agent={} enabled={} mcp={} 游客发图={} 游客附件={} token={}***",
                 uid, agentId, spec.enabled(), spec.mcpEnabled(), spec.guestImages(), spec.guestFiles(),
                 share.getToken().substring(0, 6));
         return share;

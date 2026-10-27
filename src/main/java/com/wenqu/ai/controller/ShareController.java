@@ -1,6 +1,7 @@
 package com.wenqu.ai.controller;
 
 import com.wenqu.ai.agent.chat.ChatCommand;
+import com.wenqu.ai.service.AuditService;
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.dto.ChatRequest;
 import com.wenqu.ai.dto.ResultJson;
@@ -59,6 +60,9 @@ import java.util.Map;
 @RequiredArgsConstructor
 @Tag(name = "智能体公开分享", description = "游客免登录与指定智能体对话（/s/{token}）")
 public class ShareController {
+    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    private final AuditService audit;
+
 
     private final AgentShareService agentShareService;
     private final SessionService sessionService;
@@ -149,7 +153,7 @@ public class ShareController {
         // 中文文件名必须按 RFC 5987 编码，否则部分浏览器/客户端落盘乱码
         String encoded = java.net.URLEncoder.encode(artifact.filename(), java.nio.charset.StandardCharsets.UTF_8)
                 .replace("+", "%20");
-        log.info("[AUDIT] 分享产物下载 token={} file={} seq={}", token, artifact.filename(), seq);
+        audit.record("[AUDIT] 分享产物下载 token={} file={} seq={}", token, artifact.filename(), seq);
         return org.springframework.http.ResponseEntity.ok()
                 .header(org.springframework.http.HttpHeaders.CONTENT_DISPOSITION,
                         "attachment; filename=\"" + encoded + "\"; filename*=UTF-8''" + encoded)
@@ -212,7 +216,7 @@ public class ShareController {
         var ctx = agentShareService.resolveGuest(token);
         int deleted = sessionService.deleteSessionsOfVisitor(
                 AgentShareService.visitorUid(visitorId), ctx.agent().getId());
-        log.info("[AUDIT] 游客清除会话 ip={} agent={} 会话数={}",
+        audit.record("[AUDIT] 游客清除会话 ip={} agent={} 会话数={}",
                 clientIp(httpRequest), ctx.agent().getId(), deleted);
         return ResultJson.ok(Map.of("deleted", deleted));
     }
@@ -285,7 +289,7 @@ public class ShareController {
                 .regenerate(body.isRegenerate()).replaceMessageId(replaceMessageId)
                 .build(), emitter);
         agentShareService.incrementVisit(ctx.share().getId());
-        log.info("[AUDIT] 游客对话 ip={} agent={} session={} 图片={} 附件={} 重新生成={}",
+        audit.record("[AUDIT] 游客对话 ip={} agent={} session={} 图片={} 附件={} 重新生成={}",
                 clientIp(httpRequest), ctx.agent().getId(), sessionId,
                 images.size(), attachments.size(), body.isRegenerate());
         return emitter;
@@ -322,7 +326,7 @@ public class ShareController {
         }
         String visitorUid = AgentShareService.visitorUid(visitorId);
         var saved = chatUploadService.save(file, visitorUid);
-        log.info("[AUDIT] 游客上传附件 ip={} agent={} file={} size={}",
+        audit.record("[AUDIT] 游客上传附件 ip={} agent={} file={} size={}",
                 clientIp(httpRequest), ctx.agent().getId(), saved.name(), saved.size());
         return ResultJson.ok(saved, "上传完成");
     }
@@ -354,7 +358,7 @@ public class ShareController {
         sessionService.assertOwned(msg.getSessionId(), visitorUid);
         int rating = parseRating(body.get("rating"));
         qaLogService.feedback(messageId, rating, str(body, "feedbackText"));
-        log.info("[AUDIT] 游客反馈 ip={} session={} message={} rating={}",
+        audit.record("[AUDIT] 游客反馈 ip={} session={} message={} rating={}",
                 clientIp(httpRequest), msg.getSessionId(), messageId, rating);
         return ResultJson.ok("感谢反馈");
     }
@@ -537,7 +541,7 @@ public class ShareController {
         String visitorUid = AgentShareService.visitorUid(visitorId);
         sessionService.assertOwned(sessionId.trim(), visitorUid);
         boolean stopped = runtime.stopTurn(sessionId.trim(), ctx.owner().getUid());
-        log.info("[AUDIT] 游客停止本轮 ip={} agent={} session={} stopped={}",
+        audit.record("[AUDIT] 游客停止本轮 ip={} agent={} session={} stopped={}",
                 clientIp(httpRequest), ctx.agent().getId(), sessionId, stopped);
         return ResultJson.ok(stopped ? "已停止本轮" : "这一会话没有在跑的回答（可能刚结束）");
     }

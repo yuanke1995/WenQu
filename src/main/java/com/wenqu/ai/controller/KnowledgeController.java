@@ -1,6 +1,7 @@
 package com.wenqu.ai.controller;
 
 import com.wenqu.ai.common.BizException;
+import com.wenqu.ai.service.AuditService;
 import com.wenqu.ai.dto.ResultJson;
 import com.wenqu.ai.mapper.AiDocumentMapper;
 import com.wenqu.ai.mapper.KnowledgeMapper;
@@ -42,6 +43,9 @@ import java.util.Map;
 @RequiredArgsConstructor
 @Tag(name = "知识库", description = "无命中问题查询、知识块预览、跨文档搜索、手动创建知识块")
 public class KnowledgeController {
+    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    private final AuditService audit;
+
 
     private final KnowledgeMapper knowledgeMapper;
     private final AiDocumentMapper documentMapper;
@@ -156,7 +160,7 @@ public class KnowledgeController {
         } catch (Exception e) {
             log.warn("[FAIL-LOUD] 知识块 {} 状态切换索引同步失败: {}", id, e.getMessage());
         }
-        log.info("[AUDIT] 知识块{} operator={} id={} title={}", status == 1 ? "停用" : "启用",
+        audit.record("[AUDIT] 知识块{} operator={} id={} title={}", status == 1 ? "停用" : "启用",
                 RequestUser.uid(), id, k.getTitle());
         return ResultJson.ok("操作成功");
     }

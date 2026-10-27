@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.openai.OpenAiChatModel;
@@ -53,6 +54,10 @@ public class DynamicOpenAiChatModel implements ChatModel {
     private final UsageLedgerService usageLedger;
     /** 额度状态登记（识别在 ModelQuotaGuard，本类只负责在路由出口触发登记与恢复） */
     private final ModelQuotaService quotaService;
+    /** 平台侧配额闸（Phase 2）：与框架出口 {@code MeteredModel} 共用一份判据 */
+    private final UsageQuotaService usageQuota;
+    /** 内容安全出口闸（Phase 3 · P12）：与框架出口 {@code MeteredModel} 共用一份规则表与判据 */
+    private final com.wenqu.ai.service.contentsafety.ContentSafetyService contentSafety;
     /** 容器存在则复用（与自动配置构建的 ChatModel 行为一致），缺失时用 builder 内部默认值 */
     private final RetryTemplate retryTemplate;
     private final ObservationRegistry observationRegistry;
@@ -63,18 +68,26 @@ public class DynamicOpenAiChatModel implements ChatModel {
     public DynamicOpenAiChatModel(ModelRegistryService registry, Environment environment,
                                   UsageLedgerService usageLedger,
                                   ModelQuotaService quotaService,
+                                  UsageQuotaService usageQuota,
+                                  com.wenqu.ai.service.contentsafety.ContentSafetyService contentSafety,
                                   ObjectProvider<RetryTemplate> retryTemplate,
                                   ObjectProvider<ObservationRegistry> observationRegistry) {
         this.registry = registry;
         this.environment = environment;
         this.usageLedger = usageLedger;
         this.quotaService = quotaService;
+        this.usageQuota = usageQuota;
+        this.contentSafety = contentSafety;
         this.retryTemplate = retryTemplate.getIfAvailable();
         this.observationRegistry = observationRegistry.getIfAvailable();
     }
 
     @Override
     public ChatResponse call(Prompt prompt) {
+        // 配额闸在计费请求发起前判（Phase 2）：辅助用途与不在受限清单里的用途由服务内部放行
+        UsageAttr.Attr selfAttr = UsageAttr.current();
+        usageQuota.assertWithinBudget(selfAttr == null ? null : selfAttr.uid(),
+                selfAttr == null ? null : selfAttr.kind());
         ModelRegistryService.ModelRoute route = requireRoute(prompt);
         String modelRef = modelOf(prompt);
         ChatResponse resp;
@@ -93,7 +106,53 @@ public class DynamicOpenAiChatModel implements ChatModel {
         } catch (Exception e) {
             log.warn("[UsageLedger] 非流式用量记账异常（不影响本次调用）: {}", e.getMessage());
         }
-        return resp;
+        // 出口闸（Phase 3 · P12）：非流式没有「已经下发收不回」的问题，整段一次判完即可
+        return guardText(resp, selfAttr);
+    }
+
+    /**
+     * 非流式输出的内容安全处置：命中 block 规则时把正文换成「命中点之前的安全部分 ＋ 截断标注」。
+     * <p>与框架出口（{@code MeteredModel}）共用 {@link com.wenqu.ai.service.contentsafety.ContentSafetyService}
+     * 一份规则表与判据，两处形态一致——工作流节点、图片描述这类走 Spring AI 的调用不至于成为漏网的一侧。
+     */
+    private ChatResponse guardText(ChatResponse resp, UsageAttr.Attr attr) {
+        if (resp == null || resp.getResult() == null || resp.getResult().getOutput() == null) return resp;
+        String text = resp.getResult().getOutput().getText();
+        if (text == null || text.isEmpty()) return resp;
+        com.wenqu.ai.service.contentsafety.ContentSafetyService.OutputGate gate =
+                contentSafety.outputGate(attr == null ? null : attr.uid(),
+                        attr == null ? null : attr.sessionId(), attr == null ? null : attr.kind());
+        if (gate.isPassive()) return resp;
+        String head = gate.transform("text", text);
+        String safe = (head == null ? "" : head) + gate.drain("text");
+        if (safe.equals(text)) return resp;
+        return replaceText(resp, safe);
+    }
+
+    /** 换掉一块响应的正文（其余元数据、工具调用、usage 原样留着，记账与收尾判据不受影响） */
+    private static ChatResponse replaceText(ChatResponse resp, String text) {
+        org.springframework.ai.chat.messages.AssistantMessage out = resp.getResult().getOutput();
+        return new ChatResponse(java.util.List.of(new Generation(
+                org.springframework.ai.chat.messages.AssistantMessage.builder()
+                        .content(text)
+                        .properties(out.getMetadata() == null ? Map.of() : out.getMetadata())
+                        .toolCalls(out.getToolCalls())
+                        .build())),
+                resp.getMetadata());
+    }
+
+    /** 流式增量过闸：被压住的尾巴随流末尾补一块出去 */
+    private static ChatResponse gateChunk(
+            com.wenqu.ai.service.contentsafety.ContentSafetyService.OutputGate gate, ChatResponse r) {
+        if (gate.isPassive() || r == null || r.getResult() == null || r.getResult().getOutput() == null) {
+            return r;
+        }
+        String text = r.getResult().getOutput().getText();
+        if (text == null || text.isEmpty()) return r;
+        String kept = gate.transform("text", text);
+        if (kept == null) kept = "";
+        if (kept.equals(text)) return r;
+        return replaceText(r, kept);
     }
 
     /**
@@ -109,15 +168,32 @@ public class DynamicOpenAiChatModel implements ChatModel {
         Prompt rewritten = rewriteModel(prompt, route);
         OpenAiChatModel delegate = current(route);
         return Flux.defer(() -> {
+            // 配额闸按订阅判：工具循环里每一轮都是一次真实计费请求，触顶后最多再花当前这一轮
+            UsageAttr.Attr preAttr = UsageAttr.current();
+            usageQuota.assertWithinBudget(preAttr == null ? null : preAttr.uid(),
+                    preAttr == null ? null : preAttr.kind());
             // 每订阅一个累加器：多次订阅互不串账
             UsageAccumulator acc = new UsageAccumulator();
             UsageAttr.Attr[] holder = new UsageAttr.Attr[1];
+            // 出口闸（Phase 3 · P12）：订阅时起，一次订阅＝一次模型调用＝一本独立的判定状态
+            com.wenqu.ai.service.contentsafety.ContentSafetyService.OutputGate gate =
+                    contentSafety.outputGate(preAttr == null ? null : preAttr.uid(),
+                            preAttr == null ? null : preAttr.sessionId(),
+                            preAttr == null ? null : preAttr.kind());
             // 是否已收到过输出块：只有完整走完才谈得上"调用成功、可清除额度标记"，
             // 中途报错/被取消都不算（网关可能已扣费但本轮没成，不能据此认为额度恢复）
             boolean[] gotOutput = new boolean[1];
             // 已收到的输出文本（取消时的中断估算用）
             StringBuilder received = new StringBuilder();
             return delegate.stream(rewritten)
+                    .map(r -> gateChunk(gate, r))
+                    .concatWith(Flux.defer(() -> {
+                        // 闸里压着的尾巴（为了接住「违规词正好被切在两块之间」而留的）在流末尾补一块出去
+                        String tail = gate.drain("text");
+                        return tail == null || tail.isEmpty() ? Flux.<ChatResponse>empty()
+                                : Flux.just(new ChatResponse(java.util.List.of(
+                                new Generation(new org.springframework.ai.chat.messages.AssistantMessage(tail)))));
+                    }))
                     .doOnEach(signal -> {
                         // 归属只能从上 ContextView 取（ThreadLocal 在 netty 线程不可见）
                         if (holder[0] == null) holder[0] = UsageAttr.resolve(signal.getContextView());

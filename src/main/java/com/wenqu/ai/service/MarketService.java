@@ -71,6 +71,9 @@ import java.util.zip.ZipInputStream;
 @Slf4j
 @Service
 public class MarketService {
+    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    private final AuditService audit;
+
 
     private static final int MAX_SUMMARY = 256;
     private static final int MAX_NAME = 128;
@@ -102,7 +105,9 @@ public class MarketService {
             UserMapper userMapper, RoleService roleService,
             AgentService agentService, WorkflowService workflowService,
             KnowledgeBaseMapper kbMapper, UserMcpMapper userMcpMapper,
-            ResourceVisibilityService visibility, UserRoleService userRoleService) {
+            ResourceVisibilityService visibility, UserRoleService userRoleService,
+            AuditService audit) {
+        this.audit = audit;
         this.payloadRoot = Paths.get(payloadDir == null || payloadDir.isBlank()
                 ? "user-data/market" : payloadDir).toAbsolutePath().normalize();
         this.itemMapper = itemMapper;
@@ -276,7 +281,7 @@ public class MarketService {
         } else {
             itemMapper.insert(item);
         }
-        log.info("[AUDIT] 市场上架 uid={} item={} type={} key={} version={} update={}",
+        audit.record("[AUDIT] 市场上架 uid={} item={} type={} key={} version={} update={}",
                 uid, item.getId(), t, itemKey, finalVersion, update);
         return view(item, null, Map.of(), uid);
     }
@@ -337,7 +342,7 @@ public class MarketService {
         installMapper.insert(rec);
         itemMapper.update(null, new UpdateWrapper<MarketItem>()
                 .eq("id", item.getId()).setSql("install_count = install_count + 1"));
-        log.info("[AUDIT] 市场安装 uid={} item={} type={} key={} version={}",
+        audit.record("[AUDIT] 市场安装 uid={} item={} type={} key={} version={}",
                 uid, item.getId(), item.getItemType(), item.getItemKey(), item.getVersion());
         return view(item, rec, Map.of(), uid);
     }
@@ -420,7 +425,7 @@ public class MarketService {
         MarketItem item = requireManageable(uid, id);
         itemMapper.update(null, new UpdateWrapper<MarketItem>()
                 .eq("id", id).set("status", online ? MarketItem.STATUS_ONLINE : MarketItem.STATUS_OFFLINE));
-        log.info("[AUDIT] 市场{} uid={} item={}", online ? "上架" : "下架", uid, id);
+        audit.record("[AUDIT] 市场{} uid={} item={}", online ? "上架" : "下架", uid, id);
         return view(itemMapper.selectById(id), null, Map.of(), uid);
     }
 
@@ -437,7 +442,7 @@ public class MarketService {
         } catch (IOException e) {
             log.warn("[MARKET] 快照删除失败 item={}: {}", id, e.toString());
         }
-        log.info("[AUDIT] 市场删除 uid={} item={}", uid, id);
+        audit.record("[AUDIT] 市场删除 uid={} item={}", uid, id);
     }
 
     /** 下载快照包（装前留档/离线分发）：可见即可下（市场物品本身是公开内容）。 */

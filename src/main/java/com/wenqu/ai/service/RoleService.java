@@ -45,6 +45,9 @@ import java.util.regex.Pattern;
 @Service
 @RequiredArgsConstructor
 public class RoleService {
+    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    private final AuditService audit;
+
 
     /** 角色编码规则：小写字母开头，允许小写字母/数字/下划线/连字符，≤20 字符（对齐 c_ai_user.role VARCHAR(20)） */
     private static final Pattern CODE_PATTERN = Pattern.compile("[a-z][a-z0-9_-]{0,19}");
@@ -275,7 +278,7 @@ public class RoleService {
         r.setStatus(1);
         roleMapper.insert(r);
         invalidateCaches();
-        log.info("[AUDIT] 新建角色 code={} name={} admin={}", c, n, r.getAdminFlag());
+        audit.record("[AUDIT] 新建角色 code={} name={} admin={}", c, n, r.getAdminFlag());
         return r;
     }
 
@@ -302,7 +305,7 @@ public class RoleService {
         }
         roleMapper.updateById(r);
         invalidateCaches();
-        log.info("[AUDIT] 编辑角色 code={} name={} admin={} status={}", code, r.getName(), r.getAdminFlag(), r.getStatus());
+        audit.record("[AUDIT] 编辑角色 code={} name={} admin={} status={}", code, r.getName(), r.getAdminFlag(), r.getStatus());
     }
 
     /** 删除角色：内置不可删；仍有用户挂靠不可删；级联清绑定 */
@@ -321,7 +324,7 @@ public class RoleService {
         roleMenuMapper.unbindAllOfRole(code);
         roleApiMapper.unbindAllOfRole(code);
         invalidateCaches();
-        log.info("[AUDIT] 删除角色 code={} name={}", code, r.getName());
+        audit.record("[AUDIT] 删除角色 code={} name={}", code, r.getName());
     }
 
     // ==================== 菜单 / 接口绑定 ====================
@@ -348,7 +351,7 @@ public class RoleService {
             }
         }
         invalidateCaches();
-        log.info("[AUDIT] 保存角色权限绑定 code={} menus={} apis={}", code,
+        audit.record("[AUDIT] 保存角色权限绑定 code={} menus={} apis={}", code,
                 menuIds == null ? 0 : menuIds.size(), apiIds == null ? 0 : apiIds.size());
     }
 

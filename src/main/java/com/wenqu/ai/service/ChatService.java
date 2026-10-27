@@ -186,6 +186,8 @@ public class ChatService {
      */
     private final com.wenqu.ai.engine.ChatEngineFactory chatEngines;
     private final UserRoleService userRoleService;
+    /** 内容安全输入闸（Phase 3 · P12）：命中即不发起本轮，与模型出口的出口闸共用一份判据 */
+    private final com.wenqu.ai.service.contentsafety.ContentSafetyService contentSafety;
 
 
 
@@ -377,6 +379,7 @@ public class ChatService {
                       ChatRunRuntime runtime,
                       com.wenqu.ai.agent.chatflow.ChatflowBridge chatflow,
                       com.wenqu.ai.engine.ChatEngineFactory chatEngines,
+                      com.wenqu.ai.service.contentsafety.ContentSafetyService contentSafety,
                       UserRoleService userRoleService) {
         this.sessionService = sessionService;
         this.configService = configService;
@@ -396,8 +399,8 @@ public class ChatService {
         this.runtime = runtime;
         this.chatflow = chatflow;
         this.chatEngines = chatEngines;
+        this.contentSafety = contentSafety;
         this.userRoleService = userRoleService;
-
     }
 
     /**
@@ -415,6 +418,15 @@ public class ChatService {
         final String agentId = cmd.getAgentId();
         final String userId = cmd.getUserId();
         final boolean guestMode = cmd.isGuestMode();
+
+        // 内容安全输入闸（Phase 3 · P12）：命中 block 规则就不发起这一轮——一次模型调用都不花，
+        // 用户当场看到「哪条规则拦的」。判据只有一处实现（ContentSafetyService），出口闸在模型出口
+        // （MeteredModel / DynamicOpenAiChatModel），两道闸同一份规则表，与 Phase 2 配额闸同一形态。
+        String refused = contentSafety.checkInput(userId, sessionId, cmd.getQuestion());
+        if (refused != null) {
+            rejectTurn(emitter, cmd, sessionId, userId, null, refused);
+            return;
+        }
 
         // 会话轮级互斥：同一会话同时只允许一轮在跑。并发两问会历史交错、ArtifactService EMITTERS
         // 相互覆盖（后轮覆盖前轮，先完成者注销掉后轮的推送）、首问智能体绑定竞态。断线后台续跑

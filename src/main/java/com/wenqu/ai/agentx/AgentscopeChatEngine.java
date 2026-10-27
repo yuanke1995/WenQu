@@ -149,6 +149,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 框架调用一笔都没进 {@code c_ai_usage_log}；不补这一层，记忆与压缩的成本完全不可见。
      */
     private final com.wenqu.ai.service.UsageLedgerService usageLedger;
+    /** 配额闸（Phase 2）：框架模型出口前判一次，与 Spring AI 那一路共用同一个服务与同一份判据 */
+    private final com.wenqu.ai.service.UsageQuotaService quotaService;
+    /** 内容安全出口闸（Phase 3 · P12）：同样挂在模型出口，与 Spring AI 那一路共用一份判据 */
+    private final com.wenqu.ai.service.contentsafety.ContentSafetyService contentSafety;
     /**
      * @ 文档提及的正文来源（文档表不存全文，解析产物就是知识块，按 chunkIndex 拼回）。
      * 注入是「@ 了就必须真的给」，取不到要如实说明而不是让模型对着空话硬编（见 docMentionText）。
@@ -252,6 +256,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                                com.wenqu.ai.skill.WenquSkillRepository skillRepository,
                                com.wenqu.ai.service.OrgService orgService,
                                com.wenqu.ai.service.UsageLedgerService usageLedger,
+                               com.wenqu.ai.service.UsageQuotaService quotaService,
+                               com.wenqu.ai.service.contentsafety.ContentSafetyService contentSafety,
                                com.wenqu.ai.service.GoalService goalService,
                                com.wenqu.ai.service.TurnNotifyService turnNotify,
                                com.wenqu.ai.service.ChatRunBus chatRunBus,
@@ -281,6 +287,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         this.skillRepository = skillRepository;
         this.orgService = orgService;
         this.usageLedger = usageLedger;
+        this.quotaService = quotaService;
+        this.contentSafety = contentSafety;
         this.goalService = goalService;
         this.turnNotify = turnNotify;
         this.chatRunBus = chatRunBus;
@@ -3157,7 +3165,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      */
     private io.agentscope.harness.agent.memory.MemoryConfig memoryConfig(
             ChatCommand cmd, io.agentscope.core.model.Model baseModel, String modelRef) {
-        io.agentscope.core.model.Model memoryModel = new MeteredModel(baseModel, usageLedger,
+        io.agentscope.core.model.Model memoryModel = new MeteredModel(baseModel, usageLedger, quotaService, contentSafety,
                 com.wenqu.ai.util.UsageAttr.of(cmd.getUserId(), cmd.getSessionId(), null, "memory"), modelRef);
         int maxMdTokens = Math.max(500, configService.getInt("memory.maxMdTokens",
                 com.wenqu.ai.config.ConfigDefaults.MEMORY_MAX_MD_TOKENS));
@@ -3206,7 +3214,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      */
     private io.agentscope.harness.agent.memory.compaction.CompactionConfig compactionConfig(
             ChatCommand cmd, io.agentscope.core.model.Model baseModel, String modelRef) {
-        io.agentscope.core.model.Model compressModel = new MeteredModel(baseModel, usageLedger,
+        io.agentscope.core.model.Model compressModel = new MeteredModel(baseModel, usageLedger, quotaService, contentSafety,
                 com.wenqu.ai.util.UsageAttr.of(cmd.getUserId(), cmd.getSessionId(), null, "compress"),
                 modelRef);
         io.agentscope.harness.agent.memory.compaction.CompactionConfig.Builder b =
@@ -3304,7 +3312,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         int contextWindow = binding.contextWindow();
         if (contextWindow > 0) modelBuilder.contextWindowSize(contextWindow);
         io.agentscope.core.model.Model baseModel = modelBuilder.build();
-        io.agentscope.core.model.Model chatModel = new MeteredModel(baseModel, usageLedger,
+        io.agentscope.core.model.Model chatModel = new MeteredModel(baseModel, usageLedger, quotaService, contentSafety,
                 com.wenqu.ai.util.UsageAttr.of(cmd.getUserId(), cmd.getSessionId(), null,
                         cmd.branchTurn() ? "subagent" : "chat"), hooks.modelRef());
         // 可派遣的助手（派遣由框架的 agent_spawn 驱使）：这一份列表同时决定两件事——

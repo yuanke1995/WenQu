@@ -49,6 +49,9 @@ import java.util.zip.ZipOutputStream;
 @Service
 @RequiredArgsConstructor
 public class KbTransferService {
+    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    private final AuditService audit;
+
 
     private static final String MANIFEST = "manifest.json";
     private static final String FILES_DIR = "files/";
@@ -127,7 +130,7 @@ public class KbTransferService {
         } catch (IOException e) {
             throw new BizException("导出打包失败：" + e.getMessage());
         }
-        log.info("[AUDIT] 知识库导出 operator={} kbId={} docs={} skippedFiles={}",
+        audit.record("[AUDIT] 知识库导出 operator={} kbId={} docs={} skippedFiles={}",
                 com.wenqu.ai.util.RequestUser.uid(), kbId, exported, skippedFiles);
         return "已导出 " + exported + " 个文档" + (skippedFiles > 0 ? "（" + skippedFiles + " 个源文件缺失未打包）" : "");
     }
@@ -204,7 +207,7 @@ public class KbTransferService {
             }
             results.add(item);
         }
-        log.info("[AUDIT] 知识库导入 operator={} kbId={} ok={} failed={}",
+        audit.record("[AUDIT] 知识库导入 operator={} kbId={} ok={} failed={}",
                 com.wenqu.ai.util.RequestUser.uid(), kbId, ok, failed);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("total", docs.size());

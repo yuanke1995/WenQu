@@ -74,9 +74,15 @@ public class RbacSeedRunner implements ApplicationRunner {
             new String[]{"menu-settings", "系统设置", "SettingOutlined", "/settings", "80", "1"}
     );
 
-    /** 批次 5（2026-10-26）：SAML/SCIM/LDAP 统一认证源与组映射、目录同步，挂权限管理下的独立页签 */
+    /** 挂「权限管理」下的页签：认证源（批次 5）、审计事件（Phase 3 P11）、内容安全（Phase 3 P12）。 */
     private static final String[] IDENTITY_TAB_MENU =
             {"menu-identity-providers", "认证源", "/permissions?tab=identity", "15", "menu-permissions"};
+
+    private static final String[] AUDIT_TAB_MENU =
+            {"menu-audit-events", "审计事件", "/permissions?tab=audit", "70", "menu-permissions"};
+
+    private static final String[] CONTENT_SAFETY_TAB_MENU =
+            {"menu-content-safety", "内容安全", "/permissions?tab=content", "80", "menu-permissions"};
 
     /**
      * 内置 Tab 菜单（renderAs=tab）：id / 名称 / path / 排序 / 父菜单。
@@ -103,7 +109,9 @@ public class RbacSeedRunner implements ApplicationRunner {
             new String[]{"menu-agents-tab-mcp", "MCP 外部工具", "/agents?tab=mcp", "40", "menu-agents"},
             new String[]{"menu-agents-tab-workflow", "工作流", "/agents?tab=workflow", "50", "menu-agents"},
             new String[]{"menu-agents-tab-scheduled", "定时任务", "/agents?tab=scheduled", "60", "menu-agents"},
-            IDENTITY_TAB_MENU
+            IDENTITY_TAB_MENU,
+            AUDIT_TAB_MENU,
+            CONTENT_SAFETY_TAB_MENU
     );
 
     /**
