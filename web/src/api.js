@@ -1650,6 +1650,8 @@ export const setOidcProviderEnabled = (id, enabled) =>
   request(`/oidc/${encodeURIComponent(id)}/enabled`, { method: 'PUT', body: JSON.stringify({ enabled }) })
 export const unbindOidc = uid =>
   request(`/user/${encodeURIComponent(uid)}/oidc-binding`, { method: 'DELETE' })
+export const unbindIdentity = (uid, providerId) =>
+  request(`/user/${encodeURIComponent(uid)}/identity-binding/${encodeURIComponent(providerId)}`, { method: 'DELETE' })
 export const changePasswordApi = (oldPassword, newPassword) =>
   request('/auth/password', { method: 'POST', body: JSON.stringify({ oldPassword, newPassword }) })
 export const resetUserPassword = (uid, password) =>

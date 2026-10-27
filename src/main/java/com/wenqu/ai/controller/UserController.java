@@ -87,11 +87,19 @@ public class UserController {
         return ResultJson.ok("已删除");
     }
 
-    @Operation(summary = "解绑 OIDC 单点登录", description = "清除该账号的 oidc_sub / oidc_provider 绑定；解绑后须重新走对应 IdP 登录才能再次绑定。仅管理员可操作他人")
+    @Operation(summary = "解绑 OIDC 单点登录", description = "清除该账号在统一身份表的全部外部身份绑定；解绑后须重新走对应 IdP 登录才能再次绑定。仅管理员可操作他人")
     @DeleteMapping("/{uid}/oidc-binding")
     public ResultJson unbindOidc(@Parameter(description = "登录账号（uid）") @PathVariable("uid") String uid) {
         orgService.unbindOidc(uid);
         return ResultJson.ok("已解绑单点登录");
+    }
+
+    @Operation(summary = "逐源解绑身份", description = "只清除该账号在指定认证源下的外部身份绑定，其他认证源不动；解绑后须重新走对应认证源登录才能再次绑定。仅管理员可操作他人")
+    @DeleteMapping("/{uid}/identity-binding/{providerId}")
+    public ResultJson unbindIdentity(@Parameter(description = "登录账号（uid）") @PathVariable("uid") String uid,
+                                     @Parameter(description = "认证源 id") @PathVariable("providerId") String providerId) {
+        orgService.unbindIdentity(uid, providerId);
+        return ResultJson.ok("已解绑");
     }
 
     @Operation(summary = "个人偏好读取", description = "本人个人设置：defaultModel（个人默认聊天模型引用，空=跟随系统全局）+ models（可用聊天模型清单，选择器数据源）")

@@ -60,12 +60,17 @@
                 </span>
               </template>
             </a-table-column>
-            <a-table-column title="单点登录" key="identities" width="200">
+            <a-table-column title="单点登录" key="identities" width="240">
               <template #default="{ record }">
                 <template v-if="record.identities && record.identities.length">
                   <span v-for="(it, i) in record.identities" :key="i" class="mem-oidc">
                     <span class="mem-oidc-name">{{ providerName(it.providerId) }}</span>
                     <code class="mem-oidc-sub" :title="it.externalId">{{ it.externalId }}</code>
+                    <a-popconfirm :title="`解绑「${providerName(it.providerId)}」后该用户须重新走对应认证源登录才能再次绑定`"
+                                  ok-text="解绑" cancel-text="取消"
+                                  @confirm="unbind(record.uid, it.providerId)">
+                      <button class="app-link-btn danger mem-oidc-x" :aria-label="`解绑 ${providerName(it.providerId)}`">×</button>
+                    </a-popconfirm>
                   </span>
                 </template>
                 <span v-else class="mem-none">本地账号</span>
@@ -87,11 +92,6 @@
                 <span class="mem-inline">
                   <button class="app-link-btn" @click="openUserEdit(record)">编辑</button>
                   <button class="app-link-btn" @click="openResetPwd(record)">重置密码</button>
-                  <a-popconfirm v-if="record.identities && record.identities.length"
-                                title="解绑后该用户须重新走对应 IdP 登录才能再次绑定" ok-text="解绑" cancel-text="取消"
-                                @confirm="unbind(record.uid)">
-                    <button class="app-link-btn danger">解绑</button>
-                  </a-popconfirm>
                   <a-popconfirm title="删除后该用户将失去部门与角色归属（不影响其历史会话）" ok-text="删除" cancel-text="取消" @confirm="delUser(record.uid)">
                     <button class="app-link-btn danger">删除</button>
                   </a-popconfirm>
@@ -228,7 +228,7 @@ import { message } from 'ant-design-vue'
 import { SearchOutlined, PlusOutlined, ApartmentOutlined } from '@ant-design/icons-vue'
 import { listUsers, createUser, updateUser, deleteUser, resetUserPassword,
          listDepartments, createDepartment, updateDepartment, deleteDepartment,
-         listRoleOptions, listOidcProviders, listIdentityProviders, unbindOidc } from '../api'
+         listRoleOptions, listOidcProviders, listIdentityProviders, unbindIdentity } from '../api'
 import UserAvatar from '../components/UserAvatar.vue'
 
 /* ==================== 页签：状态落 URL / 数据懒加载 / 各页签独立记忆筛选 ==================== */
@@ -425,11 +425,11 @@ async function delUser (uid) {
     else message.error(r.msg || '删除失败')
   } catch (e) { message.error(e.message || '删除失败') }
 }
-/** 解绑单点登录：清除该账号的 oidc_sub / oidc_provider 绑定 */
-async function unbind (uid) {
+/** 逐源解绑身份：只清除该账号在指定认证源的绑定，其他认证源不动 */
+async function unbind (uid, providerId) {
   try {
-    const r = await unbindOidc(uid)
-    if (r.success) { message.success('已解绑单点登录'); await loadData(['users'], { force: true }) }
+    const r = await unbindIdentity(uid, providerId)
+    if (r.success) { message.success('已解绑'); await loadData(['users'], { force: true }) }
     else message.error(r.msg || '解绑失败')
   } catch (e) { message.error(e.message || '解绑失败') }
 }
@@ -527,9 +527,10 @@ async function delDept (id) {
 .mem-uid { font-size: 11px; color: var(--app-text3); }
 .mem-dept { color: var(--app-text2); }
 .mem-desc { color: var(--app-text2); }
-.mem-oidc { display: inline-flex; flex-direction: column; gap: 2px; min-width: 0; }
+.mem-oidc { display: inline-flex; align-items: center; gap: 4px; min-width: 0; margin: 2px 8px 2px 0; }
 .mem-oidc-name { color: var(--app-text); font-size: 12px; }
 .mem-oidc-sub { font-size: 11px; color: var(--app-text3); max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mem-oidc-x { flex: none; font-size: 13px; line-height: 1; padding: 1px 4px; }
 .mem-login-time { color: var(--app-text2); font-size: 12px; white-space: nowrap; }
 .mem-none { color: var(--app-text3); }
 .mem-inline { display: inline-flex; align-items: center; gap: 8px; }

@@ -222,7 +222,19 @@ public class OrgService {
         User user = userMapper.selectById(uid);
         if (user == null) throw new BizException("用户不存在");
         identityService.unbindAll(uid);
-        log.info("[AUDIT] 解绑单点登录 uid={}", uid);
+        log.info("[AUDIT] 解绑单点登录（全部源） uid={}", uid);
+    }
+
+    /**
+     * 逐源解绑：只清除该账号在指定认证源下的外部身份绑定，其他认证源绑定不动。
+     * 解绑后须重新走对应认证源登录才能再次绑定。
+     */
+    public void unbindIdentity(String uid, String providerId) {
+        User user = userMapper.selectById(uid);
+        if (user == null) throw new BizException("用户不存在");
+        if (identityService.findOf(uid, providerId) == null) throw new BizException("该账号在此认证源下没有绑定");
+        identityService.unbind(uid, providerId);
+        log.info("[AUDIT] 逐源解绑身份 uid={} provider={}", uid, providerId);
     }
 
     // ==================== 个人偏好（个人设置） ====================

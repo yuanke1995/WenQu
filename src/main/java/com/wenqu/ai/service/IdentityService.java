@@ -89,6 +89,14 @@ public class IdentityService {
         mapper.delete(new LambdaQueryWrapper<UserIdentity>().eq(UserIdentity::getUid, uid));
     }
 
+    /** 解绑某账号在某认证源的绑定（逐源解绑）；绑定不存在按幂等处理 */
+    public void unbind(String uid, String providerId) {
+        if (uid == null || uid.isBlank() || providerId == null || providerId.isBlank()) return;
+        mapper.delete(new LambdaQueryWrapper<UserIdentity>()
+                .eq(UserIdentity::getUid, uid)
+                .eq(UserIdentity::getProviderId, providerId));
+    }
+
     /** 更新身份绑定行的属性快照/同步时间（SCIM 属性快照用） */
     public void updateAttrs(UserIdentity identity) {
         if (identity == null || identity.getId() == null) return;
