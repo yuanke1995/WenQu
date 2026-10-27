@@ -35,6 +35,9 @@
           <span>{{ field.label }}</span>
           <a-tag v-if="field.debug" color="warning" size="small" style="margin-left:4px">调试</a-tag>
           <a-tag v-if="field.personal" color="blue" size="small" style="margin-left:4px">个人可覆盖</a-tag>
+          <a-tooltip v-if="srcTag" :title="srcTag.tip">
+            <a-tag :color="srcTag.color" size="small" style="margin-left:4px">{{ srcTag.text }}</a-tag>
+          </a-tooltip>
           <question-circle-outlined class="tip-icon" />
         </span>
       </a-tooltip>
@@ -42,6 +45,9 @@
         <span>{{ field.label }}</span>
         <a-tag v-if="field.debug" color="warning" size="small" style="margin-left:4px">调试</a-tag>
         <a-tag v-if="field.personal" color="blue" size="small" style="margin-left:4px">个人可覆盖</a-tag>
+        <a-tooltip v-if="srcTag" :title="srcTag.tip">
+          <a-tag :color="srcTag.color" size="small" style="margin-left:4px">{{ srcTag.text }}</a-tag>
+        </a-tooltip>
       </span>
     </template>
 
@@ -137,7 +143,10 @@ const props = defineProps({
    *  （平台的停用名单＝工具全景，智能体的名单＝名册），字段定义里写死一处会锁死另一处 */
   options: { type: Array, default: () => [] },
   /** 裸控件模式：不套 a-form-item（见模板顶部注释）。标签与说明由使用方负责 */
-  bare: { type: Boolean, default: false }
+  bare: { type: Boolean, default: false },
+  /** 这项此刻由哪一层说话（后端 snapshot 的 source/invalid，见 ConfigService#resolve）。
+      只在「不是平台设置」或「库里那行不合字段定义」时出现，正常情况不打扰 */
+  source: { type: Object, default: null }
 })
 const emit = defineEmits(['change'])
 
@@ -152,6 +161,30 @@ const write = (o, p, v) => {
 const value = computed({
   get: () => read(props.form, props.field.path),
   set: v => write(props.form, props.field.path, v)
+})
+
+// 「谁在说话」徽标：平台设置（库里那行）是常态，不打扰；
+// 只有生效值不是来自平台设置、或库里那行根本不合字段定义时才说一句——
+// 那正是「界面写着 A、实际跑的是 B」唯一的界面线索
+const srcTag = computed(() => {
+  const s = props.source
+  if (!s) return null
+  if (s.invalid) {
+    return { text: '值不合定义', color: 'error', tip: '库里这行的值不符合字段定义：' + s.invalid + '。生效的就是这个越界值，与界面写的可能不一样 — 重新保存一次即可修正。' }
+  }
+  if (s.source === 'CODE_DEFAULT') {
+    return { text: '出厂默认', color: 'warning', tip: '配置表里没有这一行，此刻生效的是代码默认值；在这里改一次就会写入配置表。' }
+  }
+  if (s.source === 'UNREGISTERED') {
+    return { text: '无处取值', color: 'error', tip: '字段定义、默认值清单与配置表三处都没有这一项，读到的是空值 — 这条配置实际不生效。' }
+  }
+  if (s.source === 'USER_OVERRIDE') {
+    return { text: '个人覆盖', color: 'blue', tip: '这一项正被成员的个人设置覆盖，全局值对他不生效。' }
+  }
+  if (s.source === 'EVAL_OVERRIDE') {
+    return { text: '评估覆盖', color: 'purple', tip: '检索评估的参数对比正在临时改写这一项，跑完即清。' }
+  }
+  return null
 })
 
 // ==================== 多选名单（逗号串） ====================

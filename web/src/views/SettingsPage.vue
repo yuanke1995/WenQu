@@ -93,7 +93,8 @@
                       <!-- 常规字段（SchemaField 全量复用：类型控件/条件显隐/参数说明）。
                            MCP 的管理界面已迁到「智能体」页的个人 Tab；技能停用清单随本页「技能」页签一起渲染 -->
                       <template v-else-if="blk.type === 'field'">
-                        <SchemaField :field="blk.field" :form="form" :tips="TIPS" :options="fieldOptions(blk.field)">
+                        <SchemaField :field="blk.field" :form="form" :tips="TIPS" :options="fieldOptions(blk.field)"
+                                     :source="sources[blk.field.backendKey]">
                           <template v-if="probeKey(blk.field)" #extra>
                             <button class="app-btn ghost small probe-btn" :disabled="probeStates[probeKey(blk.field)].loading" @click="doProbe(probeKey(blk.field))">
                               {{ probeStates[probeKey(blk.field)].loading ? '测试中…' : '测试连接' }}
@@ -891,6 +892,9 @@ const schemaLoaded = ref(false)
 // keyword 预置空对象是给下方的探测结果清理 watch 兜底（避免加载期取属性报错）
 const form = ref({ keyword: {} })
 
+/** 每项此刻由哪一层说话（后端 snapshot 带回来的 source/invalid）：只在异常时出徽标 */
+const sources = ref({})
+
 const fetchAndFill = async () => {
   loading.value = true
   try {
@@ -905,8 +909,13 @@ const fetchAndFill = async () => {
     const r = await getConfig()
     if (r.success && r.data) {
       const d = r.data
+      const src = {}
       for (const f of FIELDS) {
-        const raw = d[f.group]?.[f.submitKey || f.key]?.value
+        const cell = d[f.group]?.[f.submitKey || f.key]
+        const raw = cell?.value
+        if (cell && (cell.source || cell.invalid)) {
+          src[f.backendKey] = { source: cell.source, invalid: cell.invalid || null }
+        }
         let v
         // 多选名单（如平台停用工具名单）先判：库里是逗号串、表单里恒为数组，空值也不能例外。
         // 落到下面那条 def 分支会填进空串——控件虽然还能渲染（SchemaField.rawMulti 会兜），
@@ -921,6 +930,7 @@ const fetchAndFill = async () => {
         if (f.factor) v = Math.round(Number(v) / f.factor)
         writeForm(form.value, f.path, v)
       }
+      sources.value = src
       initialPayload.value = buildPayload()
     }
   } catch (e) { message.error(e.message || '加载配置失败') }

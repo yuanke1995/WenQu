@@ -99,7 +99,102 @@ public class ConfigService {
         migratePlainSecrets();
         startRedisConfigSync();
         auditDefaultOnSwitches();
+        auditConfigDrift();
         log.info("模型配置加载完成，共 {} 项", cache.size());
+    }
+
+    /**
+     * 启动对账（Phase 3b · P10）：一个键同时活在<b>三处清单</b>里——字段定义
+     * （{@code config-schema.json}）、代码默认值（{@link #defaults()}）、库里的行。
+     * 任一处错位都不报错，只会以「开关关不掉」「改了没生效」「回显永远默认」的面目出现，
+     * 所以启动时一次点名，而不是等排查时去猜。
+     * <p>三条判据：
+     * <ol>
+     *   <li><b>定义里有、defaults 里没有</b>：保存能落库，但 {@code snapshot()} 遍历 defaults 取不到值
+     *       ⇒ 界面永远显示出厂默认，脏检测也比不出改动（历史上 {@code chat.sessionLogArchive.*} 四项就是这么「打开后关不掉」）；</li>
+     *   <li><b>defaults 里有、库里没有行</b>：{@link #ensureDefaults()} 本该补齐，缺了通常是被
+     *       {@code schema.sql} 那份退役键清理名单误杀（{@code skill.remoteAllowedHosts} 曾每次重启清空管理员白名单）；</li>
+     *   <li><b>库里那行的值不合定义</b>：只能来自直接改库或历史迁移——保存路径上的校验与读侧诊断共用同一个
+     *       {@code ConfigSchemaService.validate}，这里把它对存量行的结论摊出来，不留「界面写着 5、实际生效 99999」。</li>
+     * </ol>
+     * 只告警不自动改：自动补/自动改会把「有人动过库」这个事实洗成「系统本来就是这样」。
+     */
+    private void auditConfigDrift() {
+        try {
+            Map<String, Object> r = driftReport();
+            @SuppressWarnings("unchecked")
+            List<String> onlyDefined = (List<String>) r.get("definedNotInDefaults");
+            @SuppressWarnings("unchecked")
+            List<String> noRow = (List<String>) r.get("defaultsWithoutRow");
+            @SuppressWarnings("unchecked")
+            List<String> badRows = (List<String>) r.get("invalidStoredValues");
+            if (onlyDefined.isEmpty() && noRow.isEmpty() && badRows.isEmpty()) {
+                log.info("[Config][对账] 字段定义、默认值清单与库里三处一致（活跃键 {} 个）", r.get("liveKeys"));
+                return;
+            }
+            log.warn("[Config][对账] 配置三处清单有错位（定义有而默认无 {} 个 / 默认有而库里无行 {} 个 / 存量值不合定义 {} 个）"
+                            + "；前者会让界面回显永远默认，中者通常是被退役键清理名单误杀，后者的生效值与界面写的不一样。"
+                            + " 明细 definedOnly={} noRow={} badRows={}（全量见 GET /api/ai/config/trace）",
+                    onlyDefined.size(), noRow.size(), badRows.size(),
+                    head(onlyDefined), head(noRow), head(badRows));
+        } catch (Exception e) {
+            log.warn("[Config][对账] 配置三处清单对账失败（不影响启动）: {}", e.toString());
+        }
+    }
+
+    /**
+     * 三处清单的对账结果（启动日志与 {@code GET /api/ai/config/trace} 共用同一份判据）。
+     * <p>明细给全量而不截断：截断的清单正好是「查不到自己那一行」的那种难受。
+     */
+    public Map<String, Object> driftReport() {
+        Map<String, String> seeds = defaults();
+        List<String> onlyDefined = new ArrayList<>();
+        for (String key : schema.fieldKeys()) {
+            // personalOnly（模型引用这类个人层键）刻意不进 defaults：没有全局槽位语义，不算错位
+            if (!seeds.containsKey(key) && !schema.isPersonalOnly(key)) onlyDefined.add(key);
+        }
+        List<String> noRow = new ArrayList<>();
+        for (String key : seeds.keySet()) {
+            // personalOnly 键刻意不灌库（库里那行会变成「管理员的私有资产被全平台引用」的死配置，
+            // 见 ensureDefaults 的同款跳过），没有行是设计而不是错位
+            if (schema.isPersonalOnly(key)) continue;
+            if (!cache.containsKey(key)) noRow.add(key);
+        }
+        List<String> badRows = new ArrayList<>();
+        for (Map.Entry<String, String> e : cache.entrySet()) {
+            // 退役键与刻意不进设置页的内部键都不判：前者改它也不生效，后者没有字段定义，
+            // validate 一律回「未知配置项」——那是误报，会把真错位淹掉
+            if (!seeds.containsKey(e.getKey()) || !schema.isEditable(e.getKey())) continue;
+            String v = e.getValue();
+            if (v == null || v.isBlank()) continue;
+            String bad = schema.validate(e.getKey(), isSensitiveKey(e.getKey()) ? crypto.decrypt(v) : v);
+            if (bad != null) badRows.add(bad);
+        }
+        java.util.Collections.sort(onlyDefined);
+        java.util.Collections.sort(noRow);
+        java.util.Collections.sort(badRows);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("liveKeys", seeds.size());
+        out.put("definedNotInDefaults", onlyDefined);
+        out.put("defaultsWithoutRow", noRow);
+        out.put("invalidStoredValues", badRows);
+        return out;
+    }
+
+    /** 一个层的用户可读说法（诊断界面与日志共用，别在两端各写一遍措辞） */    public static String layerText(Layer layer) {
+        return switch (layer) {
+            case EVAL_OVERRIDE -> "本轮评估覆盖（临时，跑完即清）";
+            case USER_OVERRIDE -> "成员个人覆盖";
+            case PERSONAL_ONLY_UNSET -> "个人专属项，本人未设置（无全局层）";
+            case PLATFORM_DB -> "平台设置（库里那行）";
+            case CODE_DEFAULT -> "出厂默认（库里没有这一行）";
+            case UNREGISTERED -> "三处都没登记（读到空）";
+        };
+    }
+
+    /** 明细只点前 12 个：日志是给人看的，全量在 trace 端点上查得到 */
+    private static List<String> head(List<String> in) {
+        return in.size() <= 12 ? in : in.subList(0, 12);
     }
 
     /**
@@ -131,7 +226,7 @@ public class ConfigService {
     }
 
     /**
-     * 存量明文密钥迁移：敏感项（*.apiKey / *.clientSecret）非 RSA: 前缀的值加密回写 DB 与缓存。
+     * 存量明文密钥迁移：敏感项（*.apiKey / *.clientSecret）无 JWE: 前缀的值加密回写 DB 与缓存。
      * 读取兼容明文（get 透明解密对无前缀值原样返回），迁移只为尽快消除库中明文；
      * 多实例部署由 Redis 广播 reload 触发各自迁移，幂等。
      */
@@ -266,7 +361,7 @@ public class ConfigService {
                 if (cnt == null || cnt == 0) {
                     Config c = new Config();
                     c.setConfigKey(e.getKey());
-                    // 敏感项默认值灌入即加密（RSA: 前缀密文）
+                    // 敏感项默认值灌入即加密（JWE: 前缀密文）
                     c.setConfigValue(isSensitiveKey(e.getKey()) ? crypto.encrypt(e.getValue()) : e.getValue());
                     c.setRemark(schema.helpOrDefault(e.getKey(), "只读配置"));
                     configMapper.insert(c);
@@ -510,6 +605,7 @@ public class ConfigService {
         d.put("cleanup.sessionCleanupIntervalMs", "86400000"); // 会话清理间隔(ms)
         d.put("cleanup.sessionRetentionDays", "30");           // 会话保留天数
         d.put("cleanup.sessionEventRetentionDays", "30");      // 会话事件账本保留天数（≤0=不清理；与上一条同一清理周期）
+        d.put("cleanup.auditRetentionDays", "365");            // 审计事件保留天数（≤0=永久保留；合规留存的默认档）
         d.put("cleanup.visitorIdleDays", String.valueOf(ConfigDefaults.VISITOR_SESSION_IDLE_DAYS)); // 访客会话闲置回收天数
         d.put("artifact.retentionDays", String.valueOf(ConfigDefaults.ARTIFACT_RETENTION_DAYS));                 // 产物保留天数（0=不清理）
         d.put("artifact.cleanupIntervalMs", "86400000");       // 产物超期清理间隔(ms，≤0=暂停)
@@ -549,6 +645,20 @@ public class ConfigService {
         d.put("parse.ocrMineruBackend", env("OCR_MINERU_BACKEND", "pipeline")); // pipeline=CPU 稳 / hybrid-auto-engine=本地 VLM 高精度
         d.put("parse.ocrTimeoutMs", env("OCR_TIMEOUT_MS", String.valueOf(ConfigDefaults.PARSE_OCR_TIMEOUT_MS))); // 版面引擎单次调用超时(ms)
         d.put("ratelimit.windowSeconds", "60");
+        // 内容安全网关（Phase 3 · P12）：两道闸共用一份规则表（c_ai_content_rule），这里只放闸门参数
+        d.put("contentSafety.enabled", "true");
+        d.put("contentSafety.provider", "local");
+        d.put("contentSafety.baseUrl", "");
+        d.put("contentSafety.apiKey", "");
+        d.put("contentSafety.timeoutMs", "3000");
+        d.put("contentSafety.remoteOnInput", "true");
+        d.put("contentSafety.remoteOnOutput", "false");
+        d.put("contentSafety.remoteCheckChars", "400");
+        d.put("contentSafety.outputHoldChars", "24");
+        d.put("contentSafety.scanThinking", "true");
+        d.put("contentSafety.maxScanChars", "20000");
+        d.put("contentSafety.inputRefusal", "");
+        d.put("contentSafety.outputSuffix", "");
         d.put("cache.docMetaTtlSeconds", "600");
         // 问渠工具总开关（只管理问渠注册的工具；AgentScope 原生文件/命令/记忆/技能由权限档位与各自配置控制）
         d.put("tool.enabled", "true");
@@ -796,6 +906,11 @@ public class ConfigService {
         return key != null && defaults().containsKey(key);
     }
 
+    /** 这一层是否真有库里的行（{@code false}＝此刻生效的是代码默认值，设置页改它等于新增一行） */
+    public boolean hasStoredRow(String key) {
+        return key != null && cache.containsKey(key);
+    }
+
     /**
      * 个人专属键（schema personalOnly：模型引用类，无全局槽位语义）。
      * 供删除供应商守门等场景区分「可见可改的活跃槽位」与「个人层键」——后者的引用去留
@@ -846,23 +961,91 @@ public class ConfigService {
 
     /**
      * 读取配置（显式覆盖 → 个人覆盖 → 缓存 → 默认值）。
-     * 敏感项 RSA 密文在此透明解密（见 {@link #isSensitiveKey}）：缓存/DB 存密文，消费方拿明文（无前缀的历史明文原样返回，兼容存量）。
+     * 敏感项 JWE 密文在此透明解密（见 {@link #isSensitiveKey}）：缓存/DB 存密文，消费方拿明文（无前缀的历史明文原样返回，兼容存量）。
      * <p>
      * <b>个人专属键（schema personalOnly）没有全局层</b>：值引用的是某个用户登记的私有资产
      * （模型），残留的全局行一旦被无个人覆盖的线程读到，就是"管理员的模型被全平台使用"——
      * 这里是隔离的最后一道闸：未装载个人覆盖（或未设置）时一律返回空，各消费方按自身口径降级/回落。
+     * <p>
+     * 本方法刻意<b>不</b>自己走一遍优先级：链在 {@link #resolveChain} 里只有一份，
+     * {@link #resolve} 与设置页的「谁在说话」都从它取，避免「读的是 A 口径、诊断报的是 B 口径」。
      */
     public String get(String key) {
+        return resolveChain(key, null);
+    }
+
+    /** 一个键此刻由哪一层说话（Phase 3b · P10：分层可追溯） */
+    public enum Layer {
+        /** 评估/参数对比用的线程内临时覆盖（最高，跑完即清） */
+        EVAL_OVERRIDE,
+        /** 成员个人覆盖（schema 标 personal 的键，问答线程装载） */
+        USER_OVERRIDE,
+        /** 个人专属键（personalOnly）且本人未设置：没有全局层，一律空 */
+        PERSONAL_ONLY_UNSET,
+        /** 平台配置行（{@code c_ai_config}）——设置页保存的就是这一层 */
+        PLATFORM_DB,
+        /** 代码默认值（{@link #defaults()}，由 yml/env/AppProperties 派生）：库里没有这一行 */
+        CODE_DEFAULT,
+        /** 三处都没登记，读到空串 */
+        UNREGISTERED
+    }
+
+    /**
+     * 一个键的解析结果：值、哪一层在说话、以及声明口径（类型/出厂默认/这行值合不合定义）。
+     *
+     * @param invalid 库里/覆盖层里那行的值不符合字段定义时给原因（null=正常）。保存时走的是同一个
+     *                {@code ConfigSchemaService.validate}，所以「界面写着 5 而实际生效 99999」这种
+     *                只能来自直接改库或历史迁移的值，在这里当场摊出来而不是静默生效
+     */
+    public record Resolution(String key, String value, Layer layer, String type,
+                             String seed, String invalid) {
+    }
+
+    /**
+     * 解析一个键并说清是谁在说话（诊断入口，见 {@code GET /api/ai/config/trace}）。
+     * <p>热路径别用这个：它每条键都要查 schema 与 validate；读值请走 {@link #get}。
+     */
+    public Resolution resolve(String key) {
+        Layer[] box = new Layer[1];
+        String value = resolveChain(key, box);
+        com.wenqu.ai.config.ConfigSchemaService.Field f = schema.field(key);
+        String type = f == null ? "" : (f.type() == null ? "" : f.type());
+        String seed = defaults().get(key);
+        // 只对「这一层的原始那行」判合法性：覆盖层是代码/评估给的临时值，判它没意义。
+        // 且只判字段定义里登记过的键——defaults 里刻意不进设置页的内部键（chat.resumeEnabled、
+        // sandbox.* 等）没有定义，validate 会一律回「未知配置项」，那是误报不是错位。
+        String stored = box[0] == Layer.PLATFORM_DB && schema.isEditable(key) ? cache.get(key) : null;
+        String invalid = stored == null || stored.isBlank() ? null : schema.validate(key, stored);
+        return new Resolution(key, value, box[0] == null ? Layer.UNREGISTERED : box[0],
+                type, seed == null ? "" : seed, invalid);
+    }
+
+    /** 优先级链的唯一实现；{@code out} 非空时顺带把命中的那一层写回去（读值路径传 null，零额外分配） */
+    private String resolveChain(String key, Layer[] out) {
         Map<String, String> ov = OVERRIDE.get();
-        if (ov != null && ov.containsKey(key)) return ov.get(key);
+        if (ov != null && ov.containsKey(key)) {
+            if (out != null) out[0] = Layer.EVAL_OVERRIDE;
+            return ov.get(key);
+        }
         Map<String, String> pv = USER_OVERRIDE.get();
         if (pv != null) {
             String u = pv.get(key);
-            if (u != null && !u.isBlank()) return u;
+            if (u != null && !u.isBlank()) {
+                if (out != null) out[0] = Layer.USER_OVERRIDE;
+                return u;
+            }
         }
-        if (schema.isPersonalOnly(key)) return "";
+        if (schema.isPersonalOnly(key)) {
+            if (out != null) out[0] = Layer.PERSONAL_ONLY_UNSET;
+            return "";
+        }
         String v = cache.get(key);
-        if (v == null) v = defaults().getOrDefault(key, "");
+        if (v != null) {
+            if (out != null) out[0] = Layer.PLATFORM_DB;
+        } else {
+            v = defaults().getOrDefault(key, "");
+            if (out != null) out[0] = v.isEmpty() ? Layer.UNREGISTERED : Layer.CODE_DEFAULT;
+        }
         return isSensitiveKey(key) ? crypto.decrypt(v) : v;
     }
 
@@ -1205,14 +1388,21 @@ public class ConfigService {
             for (Map.Entry<String, String> d : defs.entrySet()) {
                 if (!d.getKey().startsWith(g + ".")) continue;
                 String shortKey = d.getKey().substring(g.length() + 1);
-                String value = get(d.getKey());
+                Resolution r = resolve(d.getKey());
+                String value = r.value();
                 if (isSensitiveKey(d.getKey()) && value.length() > 4) {
                     value = "****" + value.substring(value.length() - 4);
                 }
-                items.put(shortKey, Map.of(
-                        "value", value,
-                        "editable", schema.isEditable(d.getKey()),
-                        "tier", schema.tier(d.getKey())));
+                // 用 LinkedHashMap 而不是 Map.of：invalid 正常时就是 null，Map.of 塞 null 值会当场 NPE
+                Map<String, Object> one = new LinkedHashMap<>();
+                one.put("value", value);
+                one.put("editable", schema.isEditable(d.getKey()));
+                one.put("tier", schema.tier(d.getKey()));
+                // 分层可追溯（P10）：设置页据此标出「这项此刻由谁决定」——库里没行的出厂默认，
+                // 正是「schema 有、defaults 无」那类静默错位唯一的界面线索
+                one.put("source", r.layer().name());
+                one.put("invalid", r.invalid());
+                items.put(shortKey, one);
             }
             result.put(g, items);
         }

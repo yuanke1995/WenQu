@@ -35,6 +35,8 @@ public class ConfigController {
     private final KeywordIndexService keywordIndexService;
     private final ConnectivityProbeService connectivityProbeService;
     private final com.wenqu.ai.config.ConfigSchemaService configSchemaService;
+    private final com.wenqu.ai.config.AdminGuard adminGuard;
+    private final com.wenqu.ai.service.UserConfigService userConfigService;
 
     @Operation(summary = "获取全量配置", description = "获取所有模型配置项（分组展示 + editable 标记；apiKey 脱敏显示）")
     @GetMapping
@@ -50,6 +52,67 @@ public class ConfigController {
     @GetMapping("/schema")
     public ResultJson schema() {
         return ResultJson.ok(configSchemaService.describe());
+    }
+
+    /**
+     * 配置来源追踪（Phase 3b · P10）。
+     * <p>要解决的问题：一个键同时活在字段定义、代码默认值与库里的行三处，错位时<b>什么都不报错</b>——
+     * 界面写着出厂默认而实际生效另一个数、开关打开后关不掉、保存生效但重启清零。
+     * 这里把「此刻是哪一层在说话」摊成一次可查的接口，并在启动日志里同步点名三处清单的差集。
+     */
+    @Operation(summary = "配置来源追踪（管理）",
+            description = "不带 keys：回三处清单的对账结果（定义有而默认无 / 默认有而库里无行 / 存量值不合字段定义）。"
+                    + "带 keys（逗号分隔）：逐键给出生效值、哪一层在说话、出厂默认、库里是否有行、这行值合不合定义，"
+                    + "传 uid 时另给该成员的个人覆盖值。敏感项只回掩码。")
+    @GetMapping("/trace")
+    public ResultJson<Map<String, Object>> trace(
+            @Parameter(description = "逗号分隔的配置键；留空=只回对账汇总")
+            @RequestParam(value = "keys", required = false) String keys,
+            @Parameter(description = "查这位成员的个人覆盖（可选）")
+            @RequestParam(value = "uid", required = false) String uid,
+            jakarta.servlet.http.HttpServletRequest request) {
+        if (!adminGuard.isAdmin(request)) return ResultJson.error("配置来源追踪仅管理员可查看");
+        Map<String, Object> out = new LinkedHashMap<>(configService.driftReport());
+        List<Map<String, Object>> items = new ArrayList<>();
+        for (String key : splitKeys(keys)) {
+            ConfigService.Resolution r = configService.resolve(key);
+            Map<String, Object> one = new LinkedHashMap<>();
+            one.put("key", key);
+            one.put("value", mask(key, r.value()));
+            one.put("layer", r.layer().name());
+            one.put("layerText", ConfigService.layerText(r.layer()));
+            one.put("type", r.type());
+            one.put("seed", mask(key, r.seed()));
+            one.put("hasRow", configService.hasStoredRow(key));
+            one.put("defined", configSchemaService.isEditable(key));
+            one.put("invalid", r.invalid());
+            if (uid != null && !uid.isBlank()) {
+                one.put("userOverride", mask(key, userConfigService.personalValue(uid, key)));
+            }
+            items.add(one);
+        }
+        out.put("items", items);
+        return ResultJson.ok(out);
+    }
+
+    /** 逗号/空白分隔的键清单（去重去空，保持输入顺序） */
+    private static List<String> splitKeys(String keys) {
+        if (keys == null || keys.isBlank()) return List.of();
+        List<String> out = new ArrayList<>();
+        for (String k : keys.split("[,，\\s]+")) {
+            String v = k.trim();
+            if (!v.isEmpty() && !out.contains(v)) out.add(v);
+        }
+        return out;
+    }
+
+    /** 敏感项只回掩码：诊断接口不该变成读密钥的第二条路 */
+    private static String mask(String key, String value) {
+        if (value == null) return "";
+        boolean sensitive = key.endsWith(".apiKey") || key.endsWith(".clientSecret")
+                || key.endsWith(".token") || key.endsWith("Password");
+        if (!sensitive) return value;
+        return value.length() <= 4 ? "" : "****" + value.substring(value.length() - 4);
     }
 
     /**

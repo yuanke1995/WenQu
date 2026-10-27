@@ -158,6 +158,16 @@ public class ConfigSchemaService {
         return byKey.containsKey(key);
     }
 
+    /** 字段定义本体（类型/范围/枚举）；未登记返回 null。诊断与读侧越界判定共用同一份定义 */
+    public Field field(String key) {
+        return key == null ? null : byKey.get(key);
+    }
+
+    /** 字段定义里登记的全部 backendKey（启动对账用：与 defaults() 做差集） */
+    public java.util.Set<String> fieldKeys() {
+        return java.util.Set.copyOf(byKey.keySet());
+    }
+
     /**
      * 「默认开」的开关键清单（type=switch 且 def=true）。
      * <p>用途只有一个：启动自检。这类键若既没有配置行、也没在 {@code ConfigService.defaults()} 登记默认值，
