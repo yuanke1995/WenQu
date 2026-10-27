@@ -142,15 +142,6 @@ public final class AuthCrypto {
         return claims;
     }
 
-    /** 随机密钥（32 字节 hex，64 字符）；开发期未配置 jwt-secret 时自动生成 */
-    public static String randomSecret() {
-        byte[] b = new byte[32];
-        RANDOM.nextBytes(b);
-        StringBuilder sb = new StringBuilder(64);
-        for (byte x : b) sb.append(String.format("%02x", x));
-        return sb.toString();
-    }
-
     private static byte[] hmac(String secret, String input) {
         try {
             Mac mac = Mac.getInstance(HMAC_ALGO);

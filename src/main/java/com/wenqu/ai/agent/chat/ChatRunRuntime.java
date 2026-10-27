@@ -57,6 +57,13 @@ public class ChatRunRuntime {
         this.sessionService = sessionService;
     }
 
+    /** 别的副本转过来的叫停要在本副本（宿主）落地：动作与本地停止同一条路径，不另写一份 */
+    @jakarta.annotation.PostConstruct
+    void bindRemoteCommands() {
+        chatRunBus.registerCommandHandler("stop", (session, payload) ->
+                stopTurn(session, payload.getString("userId")));
+    }
+
     // ==================== 给 chat() 入口用的四个闸口 ====================
 
     /**
@@ -117,7 +124,16 @@ public class ChatRunRuntime {
      */
     public boolean stopTurn(String sessionId, String userId) {
         TurnHandle h = sessionId == null ? null : TurnRegistry.handle(sessionId);
-        if (h == null || userId == null || !userId.equals(h.userId())) return false;
+        if (h == null) {
+            // 本副本没有这一轮的把手：轮可能跑在别的副本上，转给宿主执行（归属仍按发起者的 uid 判）
+            Map<String, String> remote = chatRunBus.remoteRunInfo(sessionId);
+            if (remote != null && userId != null && userId.equals(remote.get("userId"))) {
+                log.info("[SSE] 停止请求转给宿主副本: session={} host={}", sessionId, remote.get("replica"));
+                return chatRunBus.forwardStop(sessionId, userId);
+            }
+            return false;
+        }
+        if (userId == null || !userId.equals(h.userId())) return false;
         h.stopped().set(true);
         STOP_MARKS.put(sessionId, h.turnId());
         sessionEventService.append(sessionId, h.userId(), h.turnId(), "stop", "用户停止本轮");
@@ -544,6 +560,19 @@ public class ChatRunRuntime {
      */
     public Map<String, Object> runStatus(String sessionId, String userId) {
         ChatRunBus.Run run = chatRunBus.running(sessionId);
+        if (run == null) {
+            // 本副本没登记，问注册表：轮在别的副本上跑也是「在跑」，否则换副本刷新就查无此轮
+            Map<String, String> remote = chatRunBus.remoteRunInfo(sessionId);
+            boolean remoteMine = remote != null && userId != null && userId.equals(remote.get("userId"));
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("running", remoteMine);
+            if (remoteMine) {
+                out.put("turnId", remote.get("turnId"));
+                out.put("beganAt", Long.parseLong(remote.getOrDefault("began", "0")));
+                out.put("host", remote.get("replica"));
+            }
+            return out;
+        }
         boolean mine = run != null && userId != null && userId.equals(run.userId());
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("running", mine);
@@ -564,7 +593,25 @@ public class ChatRunRuntime {
      */
     public void resumeTurn(String sessionId, String userId, SseEmitter emitter) {
         ChatRunBus.Run run = chatRunBus.running(sessionId);
-        if (run == null || userId == null || !userId.equals(run.userId())) {
+        if (run == null) {
+            // 轮跑在别的副本上：向宿主要一份权威快照，再把这条通道代管起来（此后同一条帧从 Redis 转发过来）
+            emitter.onCompletion(() -> chatRunBus.dropRemote(emitter, sessionId));
+            emitter.onTimeout(() -> chatRunBus.dropRemote(emitter, sessionId));
+            emitter.onError(t -> chatRunBus.dropRemote(emitter, sessionId));
+            Map<String, Object> remoteSnapshot = chatRunBus.attachRemote(sessionId, userId, emitter);
+            if (remoteSnapshot == null) {
+                sendFrame(emitter, "snapshot", JSON.toJSONString(Map.of("running", false)), sessionId);
+                completeEmitter(emitter);
+                return;
+            }
+            if (!sendFrame(emitter, "snapshot", JSON.toJSONString(remoteSnapshot), sessionId,
+                    remoteSnapshot.get("seq"))) {
+                chatRunBus.dropRemote(emitter, sessionId);
+                completeEmitter(emitter);
+            }
+            return;
+        }
+        if (userId == null || !userId.equals(run.userId())) {
             sendFrame(emitter, "snapshot", JSON.toJSONString(Map.of("running", false)), sessionId);
             completeEmitter(emitter);
             return;

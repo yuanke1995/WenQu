@@ -176,7 +176,7 @@ ai-app:
   # 本地登录鉴权（JWT + PBKDF2，纯 JDK 实现）——唯一认证体系：
   # 管理员由登录角色（admin/superadmin）判定；API Key 仅开放问答链路端点。
   auth:
-    # 令牌签名密钥：留空则开发期自动生成随机值（重启后原令牌失效）；生产务必配置 ≥32 位随机串
+    # 令牌签名密钥：多副本必须一致。留空时按下面 secrets 段的规则取用（文件 → 开发期临时 → 生产启动失败）
     jwt-secret: ${AI_JWT_SECRET:}
     # 令牌有效期（小时，默认 7 天）
     token-ttl-hours: ${AI_TOKEN_TTL_HOURS:168}
@@ -186,6 +186,14 @@ ai-app:
     max-login-failures: ${AI_MAX_LOGIN_FAILURES:5}
     lock-minutes: ${AI_LOCK_MINUTES:15}
     min-password-length: ${AI_MIN_PASSWORD_LENGTH:6}
+  # 部署级密钥（登录令牌签名密钥 + 配置加密 RSA 密钥环）的取用方式，只从 env/yml 读，不进设置页也不进 c_ai_config。
+  # 密钥目录 = AI_SECRETS_DIR，默认落盘数据目录下的 secret/；多副本必须挂同一个目录（K8s Secret、docker --secret、NFS 卷皆可）。
+  # 目录里放版本化 PEM 私钥：rsa/v3.key（文件名里的数字＝版本，即 JWE header 的 kid；最大的那把用于新写入）。
+  # 轮换：放一把 rsa/v4.key 再重启，启动时 SecretRotationRunner 把存量密文重封到新 kid，之后旧文件可撤。
+  # 生成一把（OpenSSL 3 的 PKCS#8 与 PKCS#1 都认，读取走 BouncyCastle PEMParser）：
+  #   openssl genrsa 2048 | openssl pkcs8 -topk8 -nocrypt > data/secret/rsa/v4.key
+  secrets:
+    dir: ${AI_SECRETS_DIR:}
 
 logging:
   level:

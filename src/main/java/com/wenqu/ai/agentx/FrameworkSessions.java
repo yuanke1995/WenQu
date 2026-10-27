@@ -117,13 +117,29 @@ public class FrameworkSessions {
      */
     private final com.wenqu.ai.service.SandboxService sandboxService;
 
+    /** 跨副本协调（Phase 0 · P2）：实例租约、跟随位互斥、人在回路答复转投 */
+    private final AgentxCluster cluster;
+
     public FrameworkSessions(
             com.wenqu.ai.agent.hitl.HitlDecisionService hitl,
             com.wenqu.ai.service.SandboxService sandboxService,
-            SessionLogArchive archive) {
+            SessionLogArchive archive,
+            AgentxCluster cluster) {
         this.hitl = hitl;
         this.sandboxService = sandboxService;
         this.archive = archive;
+        this.cluster = cluster;
+    }
+
+    /** 持有者侧执行方：答复在别的副本点下来时，由<b>持有实例的这个进程</b>照本地路径跑一遍 */
+    @jakarta.annotation.PostConstruct
+    void bindClusterAnswers() {
+        cluster.bindAnswer("approval", req -> respondLocal(req.getString("requestId"),
+                Boolean.TRUE.equals(req.getBoolean("approved")), req.getString("reason")));
+        cluster.bindAnswer("ask", req -> respondAskLocal(req.getString("requestId"), req.getString("answer")));
+        cluster.bindAnswer("plan", req -> respondPlanLocal(req.getString("requestId"),
+                Boolean.TRUE.equals(req.getBoolean("approved")), req.getString("reason"),
+                req.getString("outcome")));
     }
 
     /** 会话事件日志的归档出口（框架 SessionExportSink，开关关闭时不挂） */
@@ -299,6 +315,7 @@ public class FrameworkSessions {
         AgentSession session = agent.session(ctx);
         session.start();
         held.put(key, new Held(agent, session, modelRef, wantBinding));
+        cluster.claimHeld(key);   // 实例归本副本：别的副本据此把人在回路的答复转投过来，而不是本地重建第二个
         touch(key);
         evictOverflow();
         return session;
@@ -434,6 +451,23 @@ public class FrameworkSessions {
     }
 
     /**
+     * 这张待办属于哪条会话：本进程的登记表是快路径，查不到就问 {@code c_ai_tool_approval}——
+     * 它是待办归属的真相源，所以<b>不另在 Redis 记一份</b>（两份归属迟早漂移，一份不会）。
+     * 答复打到没有跑过这一轮的副本上，也能靠这里找回会话。
+     */
+    private String ownerOf(String requestId) {
+        if (requestId == null) return null;
+        String local = pendingOwner.get(requestId);
+        if (local != null) return local;
+        var row = hitl.findApproval(requestId);
+        if (row == null || row.getSessionId() == null) return null;
+        String uid = (row.getUserId() == null || row.getUserId().isBlank()) ? "guest" : row.getUserId();
+        String sessionKey = uid + "|" + row.getSessionId();
+        pendingOwner.put(requestId, sessionKey);
+        return sessionKey;
+    }
+
+    /**
      * 这条会话当前挂着的工具声明（{@code tools} 字段的 schema），供容量面板估算「工具声明」一段。
      * <p>取值走常驻实例的 toolkit —— 与真正发出去的那份请求同一份，不是重算一遍：
      * 工具挂载是建实例时定死的（{@code open} 只在新建或换模型时调 factory），所以读实例
@@ -458,7 +492,11 @@ public class FrameworkSessions {
      * 那会各落一条助手消息）。
      */
     public boolean reserveFollower(String sessionKey) {
-        return sessionKey != null && followers.putIfAbsent(sessionKey, Boolean.TRUE) == null;
+        if (sessionKey == null) return false;
+        if (followers.putIfAbsent(sessionKey, Boolean.TRUE) != null) return false;   // 本副本已有人在跟
+        if (cluster.acquireFollow(sessionKey)) return true;
+        followers.remove(sessionKey);   // 别的副本占着这个位置，让位并撤销本地那格
+        return false;
     }
 
     /**
@@ -466,16 +504,21 @@ public class FrameworkSessions {
      * 不能因为上一轮的续跑还没让位就不跟。
      */
     public void claimFollower(String sessionKey) {
-        if (sessionKey != null) followers.put(sessionKey, Boolean.TRUE);
+        if (sessionKey == null) return;
+        followers.put(sessionKey, Boolean.TRUE);
+        cluster.claimFollow(sessionKey);   // 新一轮的提问者权威：跨副本也照样占住
     }
 
     /** 跟随循环退出（正常收尾、超时、叫停都算）：让位，之后再有答复就补起一个新的。 */
     public void releaseFollower(String sessionKey) {
-        if (sessionKey != null) followers.remove(sessionKey);
+        if (sessionKey == null) return;
+        followers.remove(sessionKey);
+        cluster.releaseFollow(sessionKey);
     }
 
     public boolean hasFollower(String sessionKey) {
-        return sessionKey != null && followers.containsKey(sessionKey);
+        // 「答完有没有人接着把这一轮跑完并落库」必须跨副本答：跟随循环在别的副本上也在读同一条会话
+        return sessionKey != null && (followers.containsKey(sessionKey) || cluster.followHeld(sessionKey));
     }
 
     /**
@@ -493,23 +536,47 @@ public class FrameworkSessions {
     }
 
     /**
-     * 答复一张确认卡。
+     * 答复一张确认卡：本副本持有实例就本地执行，别的副本持有就转投过去。
      *
      * @return false = 这个审批号不属于框架引擎的任何会话（交回人在回路的旧通道处理）
      */
-    public AgentSession.Task respond(String approvalId, boolean approved, String reason) {
+    public boolean respond(String approvalId, boolean approved, String reason) {
+        if (routeAnswerElsewhere(approvalId, "approval", approved, reason, null, null)) return true;
+        return respondLocal(approvalId, approved, reason);
+    }
+
+    /**
+     * 实例在别的副本上：把这次裁决转投给持有者执行。
+     * <p>不在本地重建实例是刻意的——同一条会话两个进程各持一份框架实例会撞会话写租约
+     * （"Session already has an active writer"），而且两边都会各落一条助手消息。
+     * 只有<b>确实没人持有</b>时才走下面的接续重建路径（与进程重启后接回同一套）。
+     */
+    private boolean routeAnswerElsewhere(String requestId, String kind, boolean approved,
+                                         String reason, String answer, String outcome) {
+        String sessionKey = ownerOf(requestId);
+        if (sessionKey == null || held.containsKey(sessionKey)) return false;
+        if (!cluster.heldElsewhere(sessionKey)) return false;
+        boolean ok = cluster.forwardAnswer(sessionKey, kind, requestId, approved, reason, answer, outcome);
+        if (ok) {
+            pendingOwner.remove(requestId);
+            log.info("[agentx] 答复已转投持有副本: kind={} id={} host={}", kind, requestId, cluster.heldBy(sessionKey));
+        }
+        return ok;
+    }
+
+    private boolean respondLocal(String approvalId, boolean approved, String reason) {
         String sessionKey = pendingOwner.remove(approvalId);
         Held h = sessionKey == null ? null : held.get(sessionKey);
-        if (h == null) return resume(approvalId, "approval", approved, reason, null);
+        if (h == null) return resume(approvalId, "approval", approved, reason, null) != null;
         // 框架自己找回待办所属的原任务与工具调用并安排接续执行，这里不拼工具 ID、也不再调 resume
         AgentSession.Task resumed = h.session().respond(approvalId,
                 approved ? io.agentscope.harness.agent.session.SessionAnswer.approve()
                         : io.agentscope.harness.agent.session.SessionAnswer.reject(reason));
         hitl.resolveFrameworkPending(approvalId, approved ? "APPROVED" : "REJECTED", null, reason);
         log.info("[agentx] 待办已答复 requestId={} approved={} → 接续任务={}",
-                approvalId, approved, resumed.commandId());
+                approvalId, approved, resumed == null ? "无" : resumed.commandId());
         ensureFollowing(approvalId);
-        return resumed;
+        return resumed != null;
     }
 
     /**
@@ -517,16 +584,21 @@ public class FrameworkSessions {
      *
      * @return false = 该 askId 不属于框架会话（交回人在回路的旧通道）
      */
-    public AgentSession.Task respondAsk(String askId, String answerText) {
+    public boolean respondAsk(String askId, String answerText) {
+        if (routeAnswerElsewhere(askId, "ask", true, null, answerText, null)) return true;
+        return respondAskLocal(askId, answerText);
+    }
+
+    private boolean respondAskLocal(String askId, String answerText) {
         String sessionKey = pendingOwner.remove(askId);
         Held h = sessionKey == null ? null : held.get(sessionKey);
-        if (h == null) return resume(askId, "ask", true, null, answerText);
+        if (h == null) return resume(askId, "ask", true, null, answerText) != null;
         AgentSession.Task resumed = h.session().respond(askId,
                 io.agentscope.harness.agent.session.SessionAnswer.text(answerText));
         hitl.resolveFrameworkPending(askId, "ANSWERED", null, answerText);
         log.info("[agentx] 提问已答复 askId={} → 接续任务={}", askId, resumed.commandId());
         ensureFollowing(askId);
-        return resumed;
+        return true;
     }
 
     /**
@@ -545,13 +617,21 @@ public class FrameworkSessions {
      * @param outcome 界面终态：approve / revise（退回重出）/ supersede（继续对话、本版作废）/ reject（取消本轮）
      */
     public boolean respondPlanApproval(String planApprovalId, boolean approved, String reason, String outcome) {
-        String sessionKey = pendingOwner.remove(planApprovalId);
+        if (routeAnswerElsewhere(planApprovalId, "plan", approved, reason, null, outcome)) return true;
+        return respondPlanLocal(planApprovalId, approved, reason, outcome);
+    }
+
+    private boolean respondPlanLocal(String planApprovalId, boolean approved, String reason, String outcome) {
+        String sessionKey = ownerOf(planApprovalId);
+        pendingOwner.remove(planApprovalId);
         Held live = sessionKey == null ? null : held.get(sessionKey);
         String why = reason == null || reason.isBlank() ? "用户未批准这版计划" : reason;
         if (live == null) {
-            // 重启后接回：续跑起来才算裁决送达；界面终态按接回后的归属键留下
-            if (resume(planApprovalId, "plan", approved, why, null) == null) return false;
-            planOutcomes.put(pendingOwner.getOrDefault(planApprovalId, ""), outcome == null ? "reject" : outcome);
+            // 重启后接回：续跑起来才算裁决送达；界面终态按这条会话的归属键留下
+            // （原写法在 remove 之后再回查 pendingOwner，取到的永远是空串——终态存进空键，
+            //  引擎按会话键取不到，卡片就在「已拒绝」之后仍挂着「等待中」）
+            if (sessionKey == null || resume(planApprovalId, "plan", approved, why, null) == null) return false;
+            planOutcomes.put(sessionKey, outcome == null ? "reject" : outcome);
             return true;
         }
         Held h = live;
@@ -582,7 +662,10 @@ public class FrameworkSessions {
      * 框架待办的唤醒句柄在 {@code AgentSession} 上，所以存活判据是这里而不是旧通道的内存表。
      */
     public boolean isLive(String requestId) {
-        return requestId != null && pendingOwner.containsKey(requestId) && held.containsKey(pendingOwner.get(requestId));
+        String sessionKey = ownerOf(requestId);
+        if (sessionKey == null) return false;
+        // 「答了有没有人接着跑」要跨副本答：实例在别的副本上也一样能唤醒这张卡
+        return held.containsKey(sessionKey) || cluster.heldBy(sessionKey) != null;
     }
 
     /**
@@ -872,6 +955,7 @@ public class FrameworkSessions {
         Held h = held.remove(key);
         if (h != null) {
             order.remove(key);
+            cluster.releaseHeld(key);
             closeQuietly(key, h);
         }
         // 实例与槽位一起丢：下一轮会按新配置重建，槽位由 turnSlot(cmd) 现建
@@ -938,6 +1022,7 @@ public class FrameworkSessions {
         for (String key : new java.util.ArrayList<>(held.keySet())) {
             if (!key.startsWith(prefix)) continue;
             Held h = held.remove(key);
+            cluster.releaseHeld(key);
             order.remove(key);
             stepBudgets.remove(key);
             frameworkToolGates.remove(key);
@@ -1041,7 +1126,10 @@ public class FrameworkSessions {
         while (order.size() > MAX_HELD) {
             String oldest = order.pollFirst();
             Held h = oldest == null ? null : held.remove(oldest);
-            if (h != null) closeQuietly(oldest, h);
+            if (h != null) {
+                cluster.releaseHeld(oldest);
+                closeQuietly(oldest, h);
+            }
         }
         // 槽位不跟着实例立刻删：工具闭包捕获的是它，删了之后这条会话下一轮会拿到一个新槽位，
         // 已建好的工具却还指着旧的那个（又变回「工具写上一轮」）。只在高水位时清理<b>没有实例、

@@ -63,6 +63,37 @@
             <groupId>org.springframework.security</groupId>
             <artifactId>spring-security-saml2-service-provider</artifactId>
         </dependency>
+        <!-- 敏感数据信封加密（Phase 0 密钥集中与轮换）：JWE = RSA-OAEP-256 包裹 AES-GCM 数据密钥，
+             header 里带 kid（密钥版本）⇒ 轮换与「双密钥过渡期」是 JOSE 标准语义，不再自己定密文格式。
+             顺带补上原分块 RSA 没有的东西：GCM 认证标签（完整性）。版本由 Boot 父 POM 管理。 -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-oauth2-jose</artifactId>
+        </dependency>
+        <!-- 密钥文件读取：PEMParser 认 PKCS#1 / PKCS#8 v1 / OpenSSL 3 的 v2（JCA 的 PKCS8EncodedKeySpec
+             对 openssl genpkey 的产物直接报 algid parse error）。随 OpenSAML 一起已在包里，此处显式声明
+             为直接使用，避免哪天 SAML 依赖变动把密钥读取带走。 -->
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcpkix-jdk18on</artifactId>
+            <version>1.72</version>
+        </dependency>
+        <!-- 限流降级用的令牌桶原语（Phase 0 P8：Redis 不可用时 fail-closed）：Bandwidth/GCRA 与
+             LocalBucket 交给 Bucket4j，只引无依赖的 core；跨副本主路径仍走 Redis 原子计数。
+             刻意不用 bucket4j-redis：它按 jedis 4.4.6 / lettuce 6.1.8 编译，本包是 jedis 7.4.1，
+             代理层会撞 NoSuchMethodError。 -->
+        <dependency>
+            <groupId>com.bucket4j</groupId>
+            <artifactId>bucket4j-core</artifactId>
+            <version>8.10.1</version>
+        </dependency>
+        <!-- 降级令牌桶的身份缓存：Bucket4j 本身不管「按身份建桶」，用 Guava Cache 的过期策略兜住
+             无上限的身份基数（传递依赖里已有 31.1-jre，这里显式声明为直接使用并钉住同一版本）。 -->
+        <dependency>
+            <groupId>com.google.guava</groupId>
+            <artifactId>guava</artifactId>
+            <version>31.1-jre</version>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-redis</artifactId>

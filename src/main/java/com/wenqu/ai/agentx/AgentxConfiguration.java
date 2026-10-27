@@ -40,6 +40,8 @@ public class AgentxConfiguration {
                                com.wenqu.ai.skill.WenquSkillRepository skillRepository,
                                com.wenqu.ai.service.OrgService orgService,
                                com.wenqu.ai.service.UsageLedgerService usageLedger,
+                               com.wenqu.ai.service.UsageQuotaService quotaService,
+                               com.wenqu.ai.service.contentsafety.ContentSafetyService contentSafety,
                                com.wenqu.ai.service.GoalService goalService,
                                com.wenqu.ai.service.TurnNotifyService turnNotify,
                                com.wenqu.ai.service.ChatRunBus chatRunBus,
@@ -50,7 +52,8 @@ public class AgentxConfiguration {
         AgentscopeChatEngine engine = new AgentscopeChatEngine(modelRegistry, configService, properties, tools,
                 sessions, sessionService, attachments, userImages, keywordExtractor, artifactService,
                 sandboxService, consultService, citations, redisProperties, qaLog, toolRegistry, projectService,
-                projectFileService, skillRepository, orgService, usageLedger, goalService, turnNotify,
+                projectFileService, skillRepository, orgService, usageLedger, quotaService, contentSafety,
+                goalService, turnNotify,
                 chatRunBus, mcpToolLabelService,
                 journalRotation, knowledgeMapper, documentMapper,
                 chatService::resolveTurnModel);

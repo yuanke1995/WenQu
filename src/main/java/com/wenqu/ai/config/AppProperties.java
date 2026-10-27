@@ -26,6 +26,9 @@ public class AppProperties {
 
     private Auth auth = new Auth();
 
+    /** 部署级密钥（登录令牌签名密钥、配置加密 RSA 密钥环）的取用方式，见 DeploymentSecrets */
+    private Secrets secrets = new Secrets();
+
     /** Web Push（浏览器系统级推送）的 VAPID 密钥，只从 env/yml 读（见 application.yml 的 ai-app.webpush） */
     private Webpush webpush = new Webpush();
 
@@ -172,7 +175,7 @@ public class AppProperties {
     /** 本地登录鉴权（JWT + PBKDF2，纯 JDK 实现，不引入第三方依赖） */
     @Data
     public static class Auth {
-        /** JWT 签名密钥（env AI_JWT_SECRET）。留空则开发期自动生成随机值并告警（重启后原令牌失效） */
+        /** JWT 签名密钥（env AI_JWT_SECRET）。留空时按 ai-app.secrets 的规则取用：密钥目录文件 → 开发期临时随机 → 生产直接启动失败 */
         private String jwtSecret = "";
         /** 令牌有效期（小时，默认 7 天） */
         private int tokenTtlHours = 168;
@@ -191,6 +194,19 @@ public class AppProperties {
         private int lockMinutes = 15;
         /** 初始化管理员时要求的最小密码长度 */
         private int minPasswordLength = 6;
+    }
+
+    /**
+     * 部署级密钥的取用方式。密钥一律不进设置页、不进 {@code c_ai_config}——
+     * 能经 UI 读写就等于能被任何登录用户读走。
+     */
+    @Data
+    public static class Secrets {
+        /**
+         * 密钥目录（env AI_SECRETS_DIR）：{@code rsa/vN.key} 放版本化 PEM 私钥。
+         * 默认落盘数据目录下的 secret/；多副本必须挂同一个目录。
+         */
+        private String dir = "";
     }
 
     /**

@@ -17,6 +17,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BiConsumer;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
@@ -71,6 +72,8 @@ public class ChatRunBus {
             List.of("plan", "todo", "retrieved", "usage", "warn", "goal_state", "compact_state");
 
     private final ConfigService configService;
+    /** 跨副本层（Phase 0 · P1）：注册表、事件帧广播、远端观众与快照请求 */
+    private final RunBusCluster cluster;
 
     /** 一条在跑的轮：订阅者 + 事件序号 + 宽限状态 */
     public static final class Run {
@@ -164,6 +167,9 @@ public class ChatRunBus {
             return t;
         });
         sweeper.scheduleWithFixedDelay(this::tick, SWEEP_MS, SWEEP_MS, TimeUnit.MILLISECONDS);
+        // 宿主侧能力挂给跨副本层：远端观众要快照、别的副本要叫停，都得由本副本（这一轮的主人）来答
+        cluster.bind(this::snapshotForRemote, this::onRemoteCommand,
+                (session, left) -> reportViewers(session));
     }
 
     @PreDestroy
@@ -203,6 +209,8 @@ public class ChatRunBus {
             channels.put(emitter, run);
             run.subs.add(new Sub(emitter, 0));
         }
+        cluster.registerRun(sessionId, turnId, userId);
+        cluster.reportViewerCount(sessionId, run.subs.size());
         log.debug("[RUN] 总线登记本轮: session={} turn={} grace={}ms", sessionId, turnId, graceMs());
     }
 
@@ -303,6 +311,13 @@ public class ChatRunBus {
         }
     }
 
+    /** 本地扇出之后：这一轮若有别的副本上的观众，同一条帧原样广播出去（序号沿用本副本宿主的） */
+    private void broadcastRemote(Run run, long seq, String frame) {
+        if (cluster.shouldBroadcast(run.sessionId)) {
+            cluster.publishFrame(run.sessionId, seq, frame);
+        }
+    }
+
     private boolean fan(Run run, long seq, String frame, String type) {
         for (Sub sub : run.subs) {
             if (sub.fromSeq >= seq) continue;   // 快照已覆盖到它
@@ -319,6 +334,7 @@ public class ChatRunBus {
                 log.debug("[RUN] 通道推送失败已摘除: session={} type={} {}", run.sessionId, type, e.getMessage());
             }
         }
+        broadcastRemote(run, seq, frame);
         return !run.closed;
     }
 
@@ -338,6 +354,7 @@ public class ChatRunBus {
                 run.bareSince = 0;   // 有观众了，宽限重新计时
             }
         }
+        reportViewers(run.sessionId);
         log.info("[RUN] 观众接流: session={} turn={} 现有观众={}", run.sessionId, run.turnId, run.subs.size());
         return snapshot;
     }
@@ -355,6 +372,7 @@ public class ChatRunBus {
         }
         snap.putIfAbsent("running", !run.closed);
         snap.put("turnId", run.turnId);
+        snap.put("uid", run.userId);
         snap.put("seq", run.seq);
         snap.put("beganAt", run.beganAt);
         Map<String, String> events = new LinkedHashMap<>();
@@ -383,7 +401,10 @@ public class ChatRunBus {
     }
 
     private void removeSub(Run run, Sub sub) {
-        if (run.subs.remove(sub) && run.subs.isEmpty()) {
+        if (run.subs.remove(sub)) {
+            reportViewers(run.sessionId);
+        }
+        if (run.subs.isEmpty() && !run.closed) {
             synchronized (run) {
                 if (run.subs.isEmpty() && run.bareSince == 0) run.bareSince = System.currentTimeMillis();
             }
@@ -403,6 +424,9 @@ public class ChatRunBus {
         }
         runs.remove(run.sessionId, run);
         channels.values().removeIf(r -> r == run);
+        // 别的副本上可能也挂着这一轮的观众：先通知他们收尾，再摘注册表（顺序反了他们就等 TTL 才发现）
+        cluster.publishClosed(run.sessionId, run.seq);
+        cluster.unregisterRun(run.sessionId);
         // 每个观众的连接都要关掉：本轮结束而通道留着不 complete，那个异步请求会一直挂着
         // （emitter 不带容器超时，接流方自己也只会转圈到空闲看门狗超时）
         for (Sub sub : run.subs) {
@@ -434,7 +458,10 @@ public class ChatRunBus {
                     close(run);
                     continue;
                 }
-                if (run.subs.isEmpty()) {
+                cluster.hostPulse(run.sessionId, run.subs.size());
+                cluster.refreshRun(run.sessionId, run.seq);
+                // 「没人看」必须连同别的副本上的观众一起判，否则 A 副本一刷新就会把 B 副本正在看的轮掐掉
+                if (run.subs.isEmpty() && cluster.remoteViewerCount(run.sessionId) == 0) {
                     if (run.bareSince == 0) run.bareSince = now;
                     if (grace >= 0 && now - run.bareSince >= grace) {
                         boolean aborted = false;
@@ -466,9 +493,93 @@ public class ChatRunBus {
                     }
                 }
             }
+            // 本副本不主持、却在替别的副本服务观众的那些会话：续存在性 + 心跳，否则它们的通道会静默失联
+            for (String session : cluster.sessionsWithRemoteSubs()) {
+                if (running(session) != null) continue;
+                cluster.reportViewerCount(session, cluster.remoteSubCountHere(session));
+                cluster.keepaliveRemote(session);
+            }
         } catch (Exception e) {
             log.warn("[RUN] 总线巡检异常（不中断）: {}", e.getMessage());
         }
+    }
+
+    /** 本副本此刻的观众总数（本地通道 + 本副本代管的远端通道）写进跨副本存在性表 */
+    private void reportViewers(String sessionId) {
+        Run run = runs.get(sessionId);
+        int local = run == null ? 0 : run.subs.size();
+        cluster.reportViewerCount(sessionId, local + cluster.remoteSubCountHere(sessionId));
+    }
+
+    // ==================== 跨副本（Phase 0 · P1）====================
+
+    /** 只取快照不登记观众：供别的副本上的接流方使用（它们要的是「此刻为止看得见的东西」） */
+    private Map<String, Object> snapshotForRemote(String sessionId) {
+        Run run = running(sessionId);
+        if (run == null) return null;
+        synchronized (run) {
+            return safeSnapshot(run);
+        }
+    }
+
+    /** 别的副本转过来的指令：交回给登记过该动作的执行方（叫停/中止都在轮次控制侧） */
+    private void onRemoteCommand(String op, com.alibaba.fastjson2.JSONObject payload) {
+        BiConsumer<String, com.alibaba.fastjson2.JSONObject> handler = commandHandlers.get(op);
+        if (handler == null) {
+            log.warn("[RUN] 收到没人认领的跨副本指令: op={} {}", op, payload);
+            return;
+        }
+        handler.accept(payload.getString("session"), payload);
+    }
+
+    private final Map<String, BiConsumer<String, com.alibaba.fastjson2.JSONObject>> commandHandlers = new ConcurrentHashMap<>();
+
+    /** 注册一个跨副本指令的处理方（同 op 覆盖）；由轮次控制在装配时调用 */
+    public void registerCommandHandler(String op, BiConsumer<String, com.alibaba.fastjson2.JSONObject> handler) {
+        commandHandlers.put(op, handler);
+    }
+
+    /** 本副本没有这一轮、但别的副本有：向宿主要快照并把这条通道代管起来 */
+    public Map<String, Object> attachRemote(String sessionId, String userId, SseEmitter emitter) {
+        if (!enabled() || sessionId == null) return null;
+        if (!cluster.hostedElsewhere(sessionId)) return null;
+        Map<String, String> host = cluster.lookupRun(sessionId);
+        Map<String, Object> snapshot = cluster.requestSnapshot(sessionId);
+        if (snapshot == null || !Boolean.TRUE.equals(snapshot.get("running"))) return null;
+        if (userId == null || !userId.equals(String.valueOf(snapshot.get("uid")))) {
+            // 快照里没有归属就不代管：宁可接不上，也不能让任何人接走别人的流
+            log.warn("[RUN] 远端快照缺归属信息，拒绝代管: session={}", sessionId);
+            return null;
+        }
+        long fromSeq = snapshot.get("seq") instanceof Number n ? n.longValue() : 0L;
+        cluster.addRemoteViewer(sessionId, emitter, userId, fromSeq);
+        log.info("[RUN] 观众接流（跨副本）: session={} host={} 本副本代管观众={}",
+                sessionId, host == null ? "?" : host.get("replica"), cluster.remoteSubCountHere(sessionId));
+        return snapshot;
+    }
+
+    /** 通道走完：本地订阅与本副本代管的远端订阅都要摘 */
+    public void dropRemote(SseEmitter emitter, String sessionId) {
+        if (emitter == null) return;
+        if (sessionId != null) {
+            cluster.removeRemoteSub(sessionId, emitter);
+        }
+    }
+
+    /** 跨副本探测：本副本没有这一轮时，问注册表 */
+    public Map<String, String> remoteRunInfo(String sessionId) {
+        return cluster.hostedElsewhere(sessionId) ? cluster.lookupRun(sessionId) : null;
+    }
+
+    /** 把叫停转给宿主副本执行 */
+    public boolean forwardStop(String sessionId, String userId) {
+        return cluster.forwardCommand(sessionId, "stop",
+                Map.of("session", sessionId, "userId", userId == null ? "" : userId));
+    }
+
+    /** 宿主副本 id（前端提示「这一轮在别的节点上」用） */
+    public String replicaId() {
+        return cluster.replicaId();
     }
 
     /**

@@ -36,7 +36,7 @@ public class UserMcp {
     private String type;
 
     /**
-     * 自定义请求头（JSON 对象，整块 RSA 加密存储，{@code RSA:} 前缀）。
+     * 自定义请求头（JSON 对象，整块 JWE 信封加密存储，{@code JWE:} 前缀）。
      * <p>实体层只存密文：加解密只在 service 层进出边界发生，接口回显只给键名。
      */
     private String headers;
