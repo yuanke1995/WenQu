@@ -228,7 +228,7 @@ import { message } from 'ant-design-vue'
 import { SearchOutlined, PlusOutlined, ApartmentOutlined } from '@ant-design/icons-vue'
 import { listUsers, createUser, updateUser, deleteUser, resetUserPassword,
          listDepartments, createDepartment, updateDepartment, deleteDepartment,
-         listRoleOptions, listOidcProviders, listIdentityProviders, unbindIdentity } from '../api'
+         listRoleOptions, listIdentityProviders, unbindIdentity } from '../api'
 import UserAvatar from '../components/UserAvatar.vue'
 
 /* ==================== 页签：状态落 URL / 数据懒加载 / 各页签独立记忆筛选 ==================== */
@@ -342,13 +342,9 @@ async function loadRoles () {
   roles.value = (r && r.data) || []
 }
 async function loadProviders () {
-  // 合并两个来源：OIDC 旧表（迁移期）+ 统一认证源表（SAML/SCIM/LDAP）——
-  // 「单点登录」列的 providerId 两边都可能出现
-  const [oidc, unified] = await Promise.all([listOidcProviders(), listIdentityProviders()])
-  providers.value = [
-    ...((oidc && oidc.data) || []),
-    ...(((unified && unified.data) || []).map(p => ({ id: p.id, name: p.name })))
-  ]
+  // 统一认证源表（OIDC/SAML/SCIM/LDAP 四类同一份数据）——「单点登录」列的 providerId 都在这里
+  const r = await listIdentityProviders()
+  providers.value = ((r && r.data) || []).map(p => ({ id: p.id, name: p.name }))
 }
 const LOADERS = { users: loadUsers, departments: loadDepartments, roles: loadRoles, providers: loadProviders }
 

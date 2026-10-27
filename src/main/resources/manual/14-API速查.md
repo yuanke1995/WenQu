@@ -78,8 +78,7 @@
 | 端点 | 说明 |
 |------|------|
 | `GET /api/ai/auth/first-run`、`POST /auth/initialize`、`/auth/login`、`/auth/logout`、`/auth/password` | 首启判定、创建管理员、登录登出、改密 |
-| `GET /api/ai/oidc/list`、`POST /oidc`、`PUT /oidc/{id}`、`/{id}/enabled`、`DELETE /oidc/{id}`、`DELETE /user/{uid}/oidc-binding`；`GET /auth/oidc/config`、`/login-url`、`/callback`、`POST /auth/oidc/exchange-code` | OIDC 认证源管理（多 IdP）与授权码流程四端点 |
-| `GET /api/ai/auth/saml/config`、`GET /auth/saml/login/{id}` | SAML：已启用认证源公开清单、发起登录（302 跳 IdP）；断言消费走 Spring Security `/saml2/**` |
+| `GET /api/ai/auth/oidc/config`、`/login-url`、`/callback`、`POST /auth/oidc/exchange-code`；`GET /api/ai/auth/saml/config`、`GET /auth/saml/login/{id}` | 单点登录流程端点：OIDC 授权码四端点 + SAML 公开清单与发起登录（断言消费走 Spring Security `/saml2/**`）。认证源的管理走 `/api/ai/identity/**`（见下） |
 | `GET /api/ai/identity/providers`、`POST /providers`、`PUT /providers/{id}`、`DELETE /providers/{id}`、`POST /providers/{id}/test`；`GET+POST /identity/mappings`、`PUT /mappings/{id}`、`DELETE /mappings/{id}`；`POST /identity/sync/{id}`、`GET /identity/sync/logs` | 统一认证源（OIDC / SAML / SCIM / LDAP）CRUD 与 LDAP 连接测试、组映射规则 CRUD、手动触发目录同步与同步日志 |
 | `/api/ai/scim/v2/ServiceProviderConfig`、`/Schemas`、`/ResourceTypes`、`/Users`、`/Groups` | SCIM 2.0 入站（RFC 7644）：发现端点与用户 / 组资源，供 Entra / Okta 推送。**凭据为认证源配置的独立 Bearer**（非登录令牌），响应为 SCIM JSON，状态码按协议（201/200/204/400/404/409） |
 | `GET /api/ai/user/list`、`/preference`、`/settings`；`POST /user`；`PUT /user/{uid}`、`/{uid}/password`、`/preference`、`/profile`、`/settings`；`DELETE /user/{uid}`、`/{uid}/oidc-binding` | 成员管理与个人偏好（默认模型、记忆开关） |

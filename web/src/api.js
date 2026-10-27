@@ -1638,18 +1638,6 @@ export const getOidcLoginUrl = (providerId, redirectPath) =>
 export const exchangeOidcCode = code =>
   request('/auth/oidc/exchange-code', { method: 'POST', body: JSON.stringify({ code }) })
 
-// ---- 单点登录认证源管理（多 IdP，管理员）----
-export const listOidcProviders = () => request('/oidc/list')
-export const createOidcProvider = payload =>
-  request('/oidc', { method: 'POST', body: JSON.stringify(payload) })
-export const updateOidcProvider = (id, payload) =>
-  request(`/oidc/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(payload) })
-export const deleteOidcProvider = id =>
-  request(`/oidc/${encodeURIComponent(id)}`, { method: 'DELETE' })
-export const setOidcProviderEnabled = (id, enabled) =>
-  request(`/oidc/${encodeURIComponent(id)}/enabled`, { method: 'PUT', body: JSON.stringify({ enabled }) })
-export const unbindOidc = uid =>
-  request(`/user/${encodeURIComponent(uid)}/oidc-binding`, { method: 'DELETE' })
 export const unbindIdentity = (uid, providerId) =>
   request(`/user/${encodeURIComponent(uid)}/identity-binding/${encodeURIComponent(providerId)}`, { method: 'DELETE' })
 export const changePasswordApi = (oldPassword, newPassword) =>

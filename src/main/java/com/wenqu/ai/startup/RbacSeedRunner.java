@@ -1,6 +1,5 @@
 package com.wenqu.ai.startup;
 
-import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.wenqu.ai.mapper.MenuApiMapper;
 import com.wenqu.ai.mapper.MenuMapper;
 import com.wenqu.ai.mapper.RoleMapper;
@@ -75,13 +74,6 @@ public class RbacSeedRunner implements ApplicationRunner {
             new String[]{"menu-settings", "系统设置", "SettingOutlined", "/settings", "80", "1"}
     );
 
-    /**
-     * 「单点登录」并入「权限管理」后的 Tab 菜单定义（同 {@link #BUILTIN_TAB_MENUS} 的字段序）。
-     * 单独命名是因为存量库那条就地改写也要读它——旧行该改成什么，只有这一份权威值。
-     */
-    private static final String[] OIDC_TAB_MENU =
-            {"menu-oidc-providers", "单点登录", "/permissions?tab=oidc", "10", "menu-permissions"};
-
     /** 批次 5（2026-10-26）：SAML/SCIM/LDAP 统一认证源与组映射、目录同步，挂权限管理下的独立页签 */
     private static final String[] IDENTITY_TAB_MENU =
             {"menu-identity-providers", "认证源", "/permissions?tab=identity", "15", "menu-permissions"};
@@ -96,11 +88,11 @@ public class RbacSeedRunner implements ApplicationRunner {
      * <p>path 存完整跳转 {@code /agents?tab=key} —— 与 sidebar 型「path=点击后去哪」语义完全一致；
      * 宿主页从 path 的 query 解析 tabKey 映射组件。URL 与既有链接（/agents?tab=skills）零变化。
      * icon 留空（Tab 条本就是纯文字）。
-     * <p>2026-10-24 起这张表也是「一个独立管理页并入他页 Tab」的落点：单点登录原本是侧栏
-     * 独立入口，现挂到权限管理名下。并入后它仍是独立菜单行，故接口归属（{@code c_ai_menu_api}）
+     * <p>2026-10-24 起这张表也是「一个独立管理页并入他页 Tab」的落点：独立页收编为宿主页的
+     * 页内 Tab。并入后它仍是独立菜单行，故接口归属（{@code c_ai_menu_api}）
      * 与角色授权粒度不变——只是渲染位置从侧栏换成了页签。
      * <p><b>「可单独授权」管的是宿主页里这个页签出不出现，不管进不进得了宿主页</b>：路由守卫按
-     * {@code menuHasPath} 精确匹配菜单 path 与路由 path，而 tab 型存的是 {@code /permissions?tab=oidc}
+     * {@code menuHasPath} 精确匹配菜单 path 与路由 path，而 tab 型存的是 {@code /permissions?tab=identity}
      * 带查询串的那一份，对不上 {@code /permissions}。故只勾 Tab 不勾宿主菜单的角色仍会被挡在门外——
      * 并入一个页面就意味着接受该页面的准入条件。
      */
@@ -111,18 +103,18 @@ public class RbacSeedRunner implements ApplicationRunner {
             new String[]{"menu-agents-tab-mcp", "MCP 外部工具", "/agents?tab=mcp", "40", "menu-agents"},
             new String[]{"menu-agents-tab-workflow", "工作流", "/agents?tab=workflow", "50", "menu-agents"},
             new String[]{"menu-agents-tab-scheduled", "定时任务", "/agents?tab=scheduled", "60", "menu-agents"},
-            OIDC_TAB_MENU,
             IDENTITY_TAB_MENU
     );
 
-    /** 并入宿主页 Tab 前「单点登录」占侧栏入口时的旧路径：存量库就地改写的判据，见 {@link #migrateOidcIntoPermissionsTab()} */
-    private static final String LEGACY_OIDC_MENU_PATH = "/oidc-providers";
-
     /**
-     * 已退役的内置菜单：入口已迁移（帮助中心 → 前端右下角全局悬浮按钮，见 HelpFab.vue），
-     * 种子清单剔除后存量库需按 id 连行清理（菜单 + 角色绑定），否则老库侧边栏仍会显示。
+     * 已退役的内置菜单：入口已迁移或被统一入口取代，种子清单剔除后存量库需按 id 连行清理
+     * （菜单 + 角色绑定 + 接口归属），否则老库仍会显示。
+     * <p>
+     * {@code menu-help}：帮助中心 → 前端右下角全局悬浮按钮（HelpFab.vue）。
+     * {@code menu-oidc-providers}：OIDC 专属管理页（「单点登录」Tab）→ 2026-10-27 由
+     * 「认证源」统一页签取代（OIDC/SAML/SCIM/LDAP 四类一起管，同一份数据），不做兼容。
      */
-    private static final List<String> RETIRED_MENUS = List.of("menu-help");
+    private static final List<String> RETIRED_MENUS = List.of("menu-help", "menu-oidc-providers");
 
     /** user 角色默认可见的内置菜单 id（个人资产类与问答类一致，默认对所有人开放） */
     private static final List<String> USER_MENUS =
@@ -219,7 +211,6 @@ public class RbacSeedRunner implements ApplicationRunner {
             seeded = true;
             log.info("[RbacSeed] 已补齐 {} 个内置 Tab 菜单", tabAdded);
         }
-        if (migrateOidcIntoPermissionsTab()) seeded = true;
         // user 角色基础菜单：按项补齐（此前是「全空才灌」，见方法注释）。
         // 已绑定的项不重复写，故对管理员的既有绑定零影响。
         Set<String> userMenuIds = new HashSet<>(roleMenuMapper.menuIdsOfRole("user"));
@@ -230,30 +221,6 @@ public class RbacSeedRunner implements ApplicationRunner {
             log.info("[RbacSeed] 已为 user 角色补绑基础菜单 {}", userMenuAdded);
         }
         if (seeded) roleService.invalidateCaches();
-    }
-
-    /**
-     * 存量库就地改写：「单点登录」从侧栏独立入口并入「权限管理」页内 Tab（2026-10-24）。
-     * <p>
-     * 上面的补齐只按 id 插缺失行、存在即不动，所以老库那一行仍是 {@code sidebar + /oidc-providers}：
-     * 侧栏会继续顶着这个入口，而宿主页读不到它（Tab 清单取的是 {@code renderAs=tab} 的子节点）。
-     * 判据用旧 path——只有没迁过的行才带它，故重复启动幂等；已按新形状存在的行（全新库走上面的
-     * Tab 补齐插出来的）不会被碰到。
-     * <p>名称与可见性保留（那是管理员在「权限管理 → 编辑菜单」里的调整），只改「它活在哪」；
-     * icon 清空，Tab 条本就是纯文字。角色绑定与接口归属按 id 挂着，一行没动，故授权粒度不变。
-     */
-    private boolean migrateOidcIntoPermissionsTab() {
-        Menu row = menuMapper.selectById(OIDC_TAB_MENU[0]);
-        if (row == null || !LEGACY_OIDC_MENU_PATH.equals(row.getPath())) return false;
-        menuMapper.update(null, new LambdaUpdateWrapper<Menu>()
-                .eq(Menu::getId, OIDC_TAB_MENU[0])
-                .set(Menu::getPath, OIDC_TAB_MENU[2])
-                .set(Menu::getParentId, OIDC_TAB_MENU[4])
-                .set(Menu::getRenderAs, "tab")
-                .set(Menu::getSortOrder, Integer.valueOf(OIDC_TAB_MENU[3]))
-                .set(Menu::getIcon, null));
-        log.info("[RbacSeed] 「单点登录」已并入「权限管理」页内 Tab，侧栏旧入口退场");
-        return true;
     }
 
     private void insertRole(String code, String name, String desc, int adminFlag) {

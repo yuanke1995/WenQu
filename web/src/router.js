@@ -52,8 +52,8 @@ const routes = [
   { path: '/permissions', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/PermissionsPage.vue')) }], meta: { requiresAdmin: true, title: '权限管理' } },
   { path: '/dashboard', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/DashboardPage.vue')) }], meta: { requiresAdmin: true, title: '数据看板' } },
   { path: '/settings', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/SettingsPage.vue')) }], meta: { requiresAdmin: true, title: '系统设置' } },
-  // 单点登录并入权限管理页 Tab（?tab=oidc）；旧入口重定向
-  { path: '/oidc-providers', redirect: { path: '/permissions', query: { tab: 'oidc' } } },
+  // OIDC 旧管理页（/oidc-providers）已由「认证源」统一页签取代并退役，旧链接回权限管理
+  { path: '/oidc-providers', redirect: { path: '/permissions' } },
   { path: '/evaluation', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/EvaluationPage.vue')) }], meta: { requiresAdmin: true, title: '检索评估' } },
   // 兜底：未知路径（含历史遗留的旧链接）统一回到对话页
   { path: '/:pathMatch(.*)*', redirect: '/chat' }
