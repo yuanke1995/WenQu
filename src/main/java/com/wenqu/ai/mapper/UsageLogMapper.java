@@ -60,12 +60,35 @@ public interface UsageLogMapper extends BaseMapper<UsageLog> {
      * uid=null 跨全部用户（管理侧），since=null 全量（个人费用卡全时段口径）。
      */
     @Select("<script>SELECT DATE_FORMAT(create_time, '%Y-%m-%d') AS d, uid AS uid, model AS model, "
+            + "tenant_id AS tenant, "
             + "SUM(prompt_tokens) AS p, SUM(completion_tokens) AS c, SUM(total_tokens) AS t "
             + "FROM c_ai_usage_log "
             + "<where>"
             + "<if test='uid != null'>uid = #{uid}</if>"
             + "<if test='since != null'>AND create_time &gt;= #{since}</if>"
             + "</where> "
-            + "GROUP BY d, uid, model ORDER BY d</script>")
+            + "GROUP BY d, uid, model, tenant ORDER BY d</script>")
     List<Map<String, Object>> statCostDetail(@Param("uid") String uid, @Param("since") LocalDateTime since);
+
+    /**
+     * 配额用量的<b>对账口径</b>（按模型聚合输入/输出，费用在 Java 侧按现行单价现算）：
+     * 周期计数器走 Redis 图快，但 Redis 会被清、会换实例，账必须能从台账重算出来——
+     * 重算不出来的配额等于「谁也不知道现在到底用了多少」。
+     *
+     * @param uid    成员档：非空按单人
+     * @param deptId 部门档：非空按该部门全体成员（join c_ai_user.department_id）
+     * @param kinds  受限用途清单（空=全部）；kind 为空的存量行按 chat 归，与费用报表同一口径
+     */
+    @Select("<script>SELECT u.model AS model, SUM(u.prompt_tokens) AS p, SUM(u.completion_tokens) AS c "
+            + "FROM c_ai_usage_log u "
+            + "<if test='deptId != null'>JOIN c_ai_user m ON m.uid = u.uid AND m.department_id = #{deptId} </if>"
+            + "WHERE u.create_time &gt;= #{since} "
+            + "<if test='uid != null'>AND u.uid = #{uid}</if> "
+            + "<if test='kinds != null and kinds.size() > 0'>AND COALESCE(NULLIF(u.kind, ''), 'chat') "
+            + "IN <foreach item='k' collection='kinds' open='(' separator=',' close=')'>#{k}</foreach></if> "
+            + "GROUP BY u.model</script>")
+    List<Map<String, Object>> sumForQuota(@Param("uid") String uid,
+                                          @Param("deptId") String deptId,
+                                          @Param("since") LocalDateTime since,
+                                          @Param("kinds") List<String> kinds);
 }

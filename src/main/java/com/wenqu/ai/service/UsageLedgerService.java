@@ -89,6 +89,10 @@ public class UsageLedgerService {
             }
         }
         UsageLog row = new UsageLog();
+        // 租户归属在记账线程就地定（未绑定按默认租户）：见 UsageLog#tenantId 的注释
+        String tenant = com.wenqu.ai.util.TenantContext.current();
+        row.setTenantId(tenant == null || tenant.isBlank()
+                ? com.wenqu.ai.util.TenantContext.DEFAULT_TENANT : tenant);
         row.setUid(uid == null || uid.isBlank() || "anonymous".equals(uid) ? null : uid);
         row.setSessionId(attr == null ? null : attr.sessionId());
         row.setMessageId(attr == null ? null : attr.messageId());

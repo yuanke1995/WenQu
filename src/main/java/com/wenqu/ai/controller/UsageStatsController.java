@@ -4,6 +4,8 @@ import com.wenqu.ai.config.AdminGuard;
 import com.wenqu.ai.dto.ResultJson;
 import com.wenqu.ai.service.UsageStatsService;
 import com.wenqu.ai.util.RequestUser;
+import java.util.List;
+import java.util.Map;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -31,6 +33,7 @@ public class UsageStatsController {
 
     private final UsageStatsService usageStatsService;
     private final AdminGuard adminGuard;
+    private final com.wenqu.ai.service.UsageQuotaService usageQuota;
 
     @Operation(summary = "个人用量统计",
             description = "cards=全时段统计卡（累计/峰值 Token、最长聊天时长、当前/最长连续天数、费用）；"
@@ -46,6 +49,16 @@ public class UsageStatsController {
             return ResultJson.ok(UsageStatsService.empty());
         }
         return ResultJson.ok(usageStatsService.usage(uid, range));
+    }
+
+    @Operation(summary = "我此刻受哪些配额管着",
+            description = "返回约束到本人的规则（平台/本部门/本人三档）与各档本周期已用量。"
+                    + "问答被配额拦下时给出的那句提示，与这里读的是同一份数——两处数字不一致会让人怀疑闸门在说谎。")
+    @GetMapping("/stats/quota")
+    public ResultJson<List<Map<String, Object>>> myQuota() {
+        String uid = RequestUser.uid();
+        if (RequestUser.ANONYMOUS.equals(uid)) return ResultJson.ok(List.of());
+        return ResultJson.ok(usageQuota.mine(uid));
     }
 
     @Operation(summary = "费用报表（管理）",

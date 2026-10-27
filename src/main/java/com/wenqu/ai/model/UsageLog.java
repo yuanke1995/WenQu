@@ -28,6 +28,13 @@ public class UsageLog {
 
     /** 归属用户 uid（NULL=无用户上下文的系统调用） */
     private String uid;
+    /**
+     * 归属租户（Phase 4）。显式落值而不是靠拦截器补：记账常发生在未绑定租户的线程上
+     * （定时任务、工作流后台跑），那些行若留 NULL 就在本租户的用量与配额聚合里<b>凭空不存在</b>——
+     * 花掉的钱看不见，配额闸也拦不住。
+     */
+    private String tenantId;
+
 
     /** 触发该次调用的会话 id（可空） */
     private String sessionId;

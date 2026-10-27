@@ -62,6 +62,8 @@ public class UsageStatsService {
     private final UsageLogMapper usageLogMapper;
     private final ModelInfoMapper modelInfoMapper;
     private final UserMapper userMapper;
+    private final com.wenqu.ai.mapper.DepartmentMapper departmentMapper;
+    private final com.wenqu.ai.mapper.TenantMapper tenantMapper;
 
     /** 空结果（未登录匿名身份无可归属的个人用量，不展示匿名兼容池数据） */
     public static Map<String, Object> empty() {
@@ -255,27 +257,63 @@ public class UsageStatsService {
     }
 
     /**
-     * 管理侧费用报表（§13）：全员台账 × 模型登记单价，按用户 / 按模型两个维度聚合。
+     * 管理侧费用报表（§13）：全员台账 × 模型登记单价，按用户 / 按模型 / 按部门 / 按租户四个维度聚合。
      * 单价未配置的模型照常出现在维度里但费用记 null（token 数照实），费用合计只含有价部分——
      * 未计价 token 总量单列，避免「总费用」被误读成全部消耗的真实成本。
+     * <p>
+     * <b>superadmin 走平台视图</b>：这份报表要回答的是「每个租户这个周期烧了多少钱」，
+     * 按本租户过滤后「按租户」那一栏永远只剩自己一行，结算无从下手。租户管理员仍是本租户口径，
+     * 输出里的 {@code crossTenant} 就是给前端的判据——false 时不画租户栏，免得摆一张单行表让人以为还有别人。
      *
      * @param range 时间范围（天）：7 或 30，其他值归一为 30
      */
     public Map<String, Object> adminCost(int range) {
         int r = range == 7 ? 7 : 30;
+        if (com.wenqu.ai.util.RequestUser.superadmin()) {
+            return com.wenqu.ai.util.TenantContext.asPlatform(() -> costReport(r, true));
+        }
+        return costReport(r, false);
+    }
+
+    private Map<String, Object> costReport(int r, boolean crossTenant) {
         LocalDate today = LocalDate.now();
         List<ModelInfo> modelRows = modelRows();
         Map<String, BigDecimal[]> prices = priceMap(modelRows);
         Set<String> registered = registeredRefs(modelRows);
         List<Map<String, Object>> rows = usageLogMapper.statCostDetail(null, today.minusDays(r - 1L).atStartOfDay());
 
+        // 用户名回填（看板展示 uid 没有人味；量级=成员数，一次全量可接受）；顺带取成员所属部门做部门归因
+        Map<String, String> names = new HashMap<>();
+        Map<String, String> deptOf = new HashMap<>();
+        try {
+            for (User u : userMapper.selectList(null)) {
+                names.put(u.getUid(), u.getUsername());
+                if (u.getDepartmentId() != null && !u.getDepartmentId().isBlank()) {
+                    deptOf.put(u.getUid(), u.getDepartmentId());
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[Cost] 用户名回填失败，按 uid 展示: {}", e.getMessage());
+        }
+        Map<String, String> deptNames = new HashMap<>();
+        try {
+            for (com.wenqu.ai.model.Department d : departmentMapper.selectList(null)) {
+                deptNames.put(d.getId(), d.getName());
+            }
+        } catch (Exception e) {
+            log.warn("[Cost] 部门名读取失败，部门归因按 id 展示: {}", e.getMessage());
+        }
         double total = 0;
         long unpricedTokens = 0;
-        // uid -> {tokens, cost}；model -> {tokens, cost, priced}
+        // uid -> {tokens, cost}；model -> {tokens, cost, priced}；dept -> {tokens, cost}（""＝无部门/匿名）
         Map<String, long[]> userTok = new LinkedHashMap<>();
+        Map<String, long[]> deptTok = new LinkedHashMap<>();
+        Map<String, double[]> deptCost = new HashMap<>();
         Map<String, double[]> userCost = new HashMap<>();
         Map<String, long[]> modelTok = new LinkedHashMap<>();
         Map<String, double[]> modelCost = new HashMap<>();
+        Map<String, long[]> tenantTok = new LinkedHashMap<>();
+        Map<String, double[]> tenantCost = new HashMap<>();
         Map<String, Long> unpricedByRef = new LinkedHashMap<>();   // 未计价的完整引用 -> tokens
         for (Map<String, Object> row : rows) {
             String model = row.get("model") == null ? UNKNOWN_LABEL : String.valueOf(row.get("model"));
@@ -293,9 +331,21 @@ public class UsageStatsService {
             userTok.computeIfAbsent(uid, k -> new long[2])[0] += p;
             userTok.get(uid)[1] += c;
             if (cost != null) userCost.merge(uid, new double[]{cost}, (a, b) -> new double[]{a[0] + b[0]});
+            String deptId = uid == null || uid.isBlank() ? "" : deptOf.getOrDefault(uid, "");
+            long[] dt = deptTok.computeIfAbsent(deptId, k -> new long[2]);
+            dt[0] += p;
+            dt[1] += c;
+            if (cost != null) deptCost.merge(deptId, new double[]{cost}, (a, b) -> new double[]{a[0] + b[0]});
             modelTok.computeIfAbsent(model, k -> new long[2])[0] += p;
             modelTok.get(model)[1] += c;
             if (cost != null) modelCost.merge(model, new double[]{cost}, (a, b) -> new double[]{a[0] + b[0]});
+            // 租户归因取台账行自己的 tenant_id，不绕成员：系统侧调用（uid 为空）也有归属租户
+            String tenantId = row.get("tenant") == null || String.valueOf(row.get("tenant")).isBlank()
+                    ? com.wenqu.ai.util.TenantContext.DEFAULT_TENANT : String.valueOf(row.get("tenant"));
+            long[] tt = tenantTok.computeIfAbsent(tenantId, k -> new long[2]);
+            tt[0] += p;
+            tt[1] += c;
+            if (cost != null) tenantCost.merge(tenantId, new double[]{cost}, (a, b) -> new double[]{a[0] + b[0]});
         }
 
         // 未计价清单按展示名合并：同一个模型名曾散在几百个已删供应商下（压测遗留），逐个列等于没信息量；
@@ -326,13 +376,6 @@ public class UsageStatsService {
                 })
                 .toList();
 
-        // 用户名回填（看板展示 uid 没有人味；量级=成员数，一次全量可接受）
-        Map<String, String> names = new HashMap<>();
-        try {
-            for (User u : userMapper.selectList(null)) names.put(u.getUid(), u.getUsername());
-        } catch (Exception e) {
-            log.warn("[Cost] 用户名回填失败，按 uid 展示: {}", e.getMessage());
-        }
         List<Map<String, Object>> byUser = userTok.entrySet().stream()
                 .map(e -> {
                     Map<String, Object> m = new LinkedHashMap<String, Object>();
@@ -372,7 +415,65 @@ public class UsageStatsService {
                                 ((Number) m.get("tokens")).longValue()).reversed()))
                 .toList();
 
+        List<Map<String, Object>> byDept = deptTok.entrySet().stream()
+                .map(e -> {
+                    Map<String, Object> m = new LinkedHashMap<String, Object>();
+                    double[] cost = deptCost.get(e.getKey());
+                    m.put("departmentId", e.getKey());
+                    m.put("name", e.getKey().isBlank() ? "未归部门（含匿名与系统调用）"
+                            : deptNames.getOrDefault(e.getKey(), e.getKey() + "（部门已删）"));
+                    m.put("promptTokens", e.getValue()[0]);
+                    m.put("completionTokens", e.getValue()[1]);
+                    m.put("tokens", e.getValue()[0] + e.getValue()[1]);
+                    m.put("cost", cost == null ? null : round2(cost[0]));
+                    return m;
+                })
+                .sorted(Comparator.comparingDouble((Map<String, Object> m) ->
+                        m.get("cost") == null ? -1 : ((Number) m.get("cost")).doubleValue()).reversed()
+                        .thenComparing(Comparator.comparingLong((Map<String, Object> m) ->
+                                ((Number) m.get("tokens")).longValue()).reversed()))
+                .toList();
+
+        // 按租户结算（Phase 4）：只有平台视图摊开的是多租户台账时才有意义，成员数取实时归属名单
+        Map<String, Long> tenantMembers = new HashMap<>();
+        Map<String, String> tenantNames = new HashMap<>();
+        if (crossTenant) {
+            try {
+                for (Map<String, Object> mc : tenantMapper.memberCounts()) {
+                    tenantMembers.put(String.valueOf(mc.get("tenantId")), num(mc.get("members")));
+                }
+                for (com.wenqu.ai.model.Tenant t : tenantMapper.selectList(null)) {
+                    tenantNames.put(t.getId(), t.getName());
+                }
+            } catch (Exception e) {
+                log.warn("[Cost] 租户名单读取失败，按租户结算退化为按标识展示: {}", e.getMessage());
+            }
+        }
+        List<Map<String, Object>> byTenant = crossTenant
+                ? tenantTok.entrySet().stream()
+                .map(e -> {
+                    Map<String, Object> m = new LinkedHashMap<String, Object>();
+                    double[] cost2 = tenantCost.get(e.getKey());
+                    m.put("tenantId", e.getKey());
+                    m.put("name", tenantNames.getOrDefault(e.getKey(), e.getKey()));
+                    m.put("members", tenantMembers.getOrDefault(e.getKey(), 0L));
+                    m.put("promptTokens", e.getValue()[0]);
+                    m.put("completionTokens", e.getValue()[1]);
+                    m.put("tokens", e.getValue()[0] + e.getValue()[1]);
+                    m.put("cost", cost2 == null ? null : round2(cost2[0]));
+                    return m;
+                })
+                .sorted(Comparator.comparingDouble((Map<String, Object> m) ->
+                        m.get("cost") == null ? -1 : ((Number) m.get("cost")).doubleValue()).reversed()
+                        .thenComparing(Comparator.comparingLong((Map<String, Object> m) ->
+                                ((Number) m.get("tokens")).longValue()).reversed()))
+                .toList()
+                : List.of();
+
         Map<String, Object> out = new LinkedHashMap<>();
+        out.put("byDepartment", byDept);
+        out.put("byTenant", byTenant);
+        out.put("crossTenant", crossTenant);
         out.put("range", r);
         out.put("total", round2(total));
         out.put("unpricedTokens", unpricedTokens);

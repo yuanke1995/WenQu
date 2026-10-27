@@ -32,7 +32,7 @@ public class Provider {
     /** 网关地址（OpenAI 兼容） */
     private String baseUrl;
 
-    /** API Key（RSA 密文，RSA: 前缀） */
+    /** API Key（JWE 密文，JWE: 前缀） */
     private String apiKey;
 
     /** 聊天补全路径（空=默认 /v1/chat/completions） */

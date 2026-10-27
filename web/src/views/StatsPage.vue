@@ -21,6 +21,29 @@
         </div>
       </div>
 
+      <!-- 配额进度：管理员给本人/本部门/本租户设的上限，与问答被拦时那句提示同源 -->
+      <div v-if="quotaRows.length" class="app-card">
+        <div class="app-card-title">
+          我的配额
+          <span class="card-sub">按周期现算；到额后新问答会被拦下，历史压缩这类辅助调用不拦</span>
+        </div>
+        <div v-for="q in quotaRows" :key="q.scope + q.period" class="quota-row">
+          <span class="quota-scope">{{ q.scopeName }}</span>
+          <span class="quota-period">{{ q.period === 'day' ? '今日' : '本月' }}</span>
+          <span class="quota-used">{{ fmtTokens(q.usedTokens) }} token<template v-if="q.costLimit != null"> · {{ fmtCost(q.usedCost) }}</template></span>
+          <span class="quota-limit">
+            上限
+            <template v-if="Number(q.tokenLimit) > 0">{{ fmtTokens(q.tokenLimit) }} token</template>
+            <template v-if="Number(q.tokenLimit) > 0 && q.costLimit != null"> · </template>
+            <template v-if="q.costLimit != null">{{ fmtCost(q.costLimit) }}</template>
+          </span>
+          <a-tag v-if="quotaBreached(q)" :color="Number(q.enforce) === 1 ? 'red' : 'orange'">
+            {{ Number(q.enforce) === 1 ? '已到额，问答被拦下' : '已到额（管理员设为只告警）' }}
+          </a-tag>
+          <a-tag v-else-if="quotaNearLimit(q)" color="gold">接近上限</a-tag>
+        </div>
+      </div>
+
       <!-- ==================== Token 活动（近一年热力图） ==================== -->
       <div class="app-card heat-card">
         <div class="app-card-title">
@@ -131,7 +154,7 @@ import * as echarts from 'echarts/core'
 import { LineChart, PieChart } from 'echarts/charts'
 import { TooltipComponent, GridComponent, TitleComponent } from 'echarts/components'
 import { CanvasRenderer } from 'echarts/renderers'
-import { getUsageStats } from '../api'
+import { getUsageStats, getMyQuota } from '../api'
 import { themeState } from '../utils/theme'
 
 echarts.use([LineChart, PieChart, TooltipComponent, GridComponent, TitleComponent, CanvasRenderer])
@@ -156,6 +179,21 @@ const pctKind = tokens => {
 const hasUnrecorded = computed(() => modelRows.value.some(m => m.model === '未记录'))
 // 有任一模型配置了价格才在列表里显示「未计价」标注——全员都没配价时整列都是噪声
 const hasAnyPrice = computed(() => modelRows.value.some(m => m.cost != null))
+const quotaRows = ref([])
+const loadQuota = async () => {
+  try {
+    const r = await getMyQuota()
+    if (r.success) quotaRows.value = r.data || []
+  } catch (e) { /* 配额是附加信息，取不到不打扰用户（个人统计仍完整） */ }
+}
+const quotaBreached = q => (Number(q.tokenLimit) > 0 && Number(q.usedTokens) >= Number(q.tokenLimit))
+  || (q.costLimit != null && Number(q.costLimit) > 0 && Number(q.usedCost) >= Number(q.costLimit))
+const quotaNearLimit = q => {
+  const tp = Number(q.tokenLimit) > 0 ? Number(q.usedTokens) / Number(q.tokenLimit) : 0
+  const cp = q.costLimit != null && Number(q.costLimit) > 0 ? Number(q.usedCost) / Number(q.costLimit) : 0
+  return Math.max(tp, cp) >= 0.8
+}
+
 // 未计价模型的 token 总量（费用数字不含它）
 const unpricedTokens = computed(() => Number(cards.value.unpricedTokens) || 0)
 
@@ -466,6 +504,7 @@ watch(themeState, () => { renderCharts() })
 let ro = null
 onMounted(() => {
   load()
+  loadQuota()
   window.addEventListener('resize', onResize)
   if (typeof ResizeObserver !== 'undefined') {
     ro = new ResizeObserver(() => onResize())
@@ -618,4 +657,12 @@ onBeforeUnmount(() => {
 .kind-bar { flex: 1; min-width: 0; height: 5px; border-radius: 3px; background: var(--app-accent-weak); overflow: hidden; }
 .kind-bar i { display: block; height: 100%; background: var(--app-accent); border-radius: 3px; }
 .kind-pct { font-size: 13px; color: var(--app-text2); font-variant-numeric: tabular-nums; width: 44px; text-align: right; }
+
+/* 我的配额：一行一档，标签靠左、数字靠右，触顶用 tag 说明后果 */
+.quota-row { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 6px 0; border-top: 1px solid var(--app-border, rgba(0,0,0,.06)); }
+.quota-row:first-of-type { border-top: none; }
+.quota-scope { font-weight: 600; }
+.quota-period { color: var(--app-text-muted, #888); font-size: 12px; }
+.quota-used { font-variant-numeric: tabular-nums; }
+.quota-limit { color: var(--app-text-muted, #888); font-size: 12px; font-variant-numeric: tabular-nums; margin-left: auto; }
 </style>
