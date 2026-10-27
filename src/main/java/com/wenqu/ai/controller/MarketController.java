@@ -48,7 +48,8 @@ public class MarketController {
 
     @Operation(summary = "市场列表",
             description = "上架中的物品 + 我上架的（含已下架）；每条带 installed/hasUpdate/mine 徽标。"
-                    + "counts 给两个页签打标，与列表同筛选条件、不受分页影响")
+                    + "counts 给页签打标：byType 按技能/应用模板/工作流各一份、mine 跨类型，"
+                    + "与列表同关键词标签条件、不受分页影响")
     @GetMapping("/list")
     public ResultJson list(@RequestParam(value = "type", required = false) String type,
                            @RequestParam(value = "keyword", required = false) String keyword,
@@ -56,11 +57,8 @@ public class MarketController {
                            @Parameter(description = "true=只看我上架的（管理视图）")
                            @RequestParam(value = "mine", required = false, defaultValue = "false") boolean mine) {
         String uid = uid();
-        Map<String, Object> counts = Map.of(
-                "all", market.count(uid, type, keyword, tag, false),
-                "mine", market.count(uid, type, keyword, tag, true));
         List<Map<String, Object>> items = market.list(uid, type, keyword, tag, mine);
-        return ResultJson.ok(Map.of("items", items, "counts", counts));
+        return ResultJson.ok(Map.of("items", items, "counts", market.counts(uid, keyword, tag)));
     }
 
     @Operation(summary = "物品详情", description = "元信息 + 详细介绍 + SKILL.md 正文预览（装前可审阅模型将读到的原文）")

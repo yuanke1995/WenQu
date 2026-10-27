@@ -20,11 +20,11 @@
     </div>
 
     <!-- 页签形态对齐成员/权限管理页：a-tabs 只当导航条，内容在下方按 tab 渲染。
-         前三个页签按物品类型过滤（counts.all = 当前类型的上架数），「我的上架」跨类型；
+         前三个页签按物品类型过滤（各读 counts.byType[类型]，切页签时角标不变），「我的上架」读跨类型的 counts.mine；
          页签状态落 URL(?tab=mine)，刷新/回退/分享可还原 -->
     <a-tabs v-model:active-key="tab" class="mk-tabs">
       <a-tab-pane v-for="t in TYPE_TABS" :key="t.key">
-        <template #tab><span class="mk-tab">{{ t.label }}<i v-if="counts" class="mk-badge">{{ counts.all }}</i></span></template>
+        <template #tab><span class="mk-tab">{{ t.label }}<i v-if="counts" class="mk-badge">{{ counts.byType[t.key] }}</i></span></template>
       </a-tab-pane>
       <a-tab-pane key="mine">
         <template #tab><span class="mk-tab">我的上架<i v-if="counts" class="mk-badge">{{ counts.mine }}</i></span></template>
@@ -179,7 +179,7 @@ const router = useRouter()
 const items = ref([])
 const loading = ref(false)
 const keyword = ref('')
-/** 页签条数（后端按当前筛选条件算：类型页签 all=该类型上架数、mine=我的上架数），首次加载前为 null 不占位 */
+/** 页签条数（后端 counts：byType 逐类型 + 跨类型 mine，均按当前关键词/标签算），首次加载前为 null 不占位 */
 const counts = ref(null)
 const installing = ref({})
 const publishOpen = ref(false)

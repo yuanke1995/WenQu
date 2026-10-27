@@ -141,10 +141,22 @@ public class MarketService {
     }
 
     /**
-     * 页签计数：与列表走同一条筛选链（类型/关键词/标签），mineOnly 决定数「全部」还是「我的上架」。
-     * 不套列表的条数上限，因此列表被截断时计数仍是全量。
+     * 页签计数：三个类型页签各数自己那一类，「我的上架」跨类型。
+     * 计数不能跟着当前页签的类型过滤，否则切页签时三个角标会全变成同一类物品的数量。
+     * 与列表共用关键词/标签条件；不套列表的条数上限，因此列表被截断时计数仍是全量。
      */
-    public long count(String uid, String type, String keyword, String tag, boolean mineOnly) {
+    public Map<String, Object> counts(String uid, String keyword, String tag) {
+        Map<String, Long> byType = new LinkedHashMap<>();
+        for (String type : List.of(MarketItem.TYPE_SKILL, MarketItem.TYPE_AGENT, MarketItem.TYPE_WORKFLOW)) {
+            byType.put(type, count(uid, type, keyword, tag, false));
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("byType", byType);
+        out.put("mine", count(uid, null, keyword, tag, true));
+        return out;
+    }
+
+    private long count(String uid, String type, String keyword, String tag, boolean mineOnly) {
         return itemMapper.selectCount(listWrapper(uid, type, keyword, tag, mineOnly));
     }
 
