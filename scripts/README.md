@@ -6,6 +6,7 @@
 
 | 目录 | 内容 | 运行方式 |
 |---|---|---|
+| `dr/` | 备份与按租户恢复（Phase 4 刀三） | `python3 scripts/dr/tenant-dr.py backup --tenant acme --out /backup/wenqu` |
 | `redis/` | Redis / Meilisearch 侧的一次性迁移 | `bash scripts/redis/xxx.sh` |
 | `services/` | 独立运行的服务 / 测试进程（MCP 测试服务） | `python3 scripts/services/xxx.py` |
 | `codegen/` | Node 代码生成 / 一致性校验 | `node scripts/codegen/xxx.js` |

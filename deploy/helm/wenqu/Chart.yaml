@@ -1,0 +1,13 @@
+apiVersion: v2
+name: wenqu
+description: 问渠 WenQu AI 平台（Spring Boot 后端 + Vue 前端静态资源同域由后端提供）
+type: application
+# version = chart 自身版本；appVersion = 被部署的应用版本（镜像 tag 默认取它）
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - ai
+  - agent
+  - rag
+maintainers:
+  - name: yuki

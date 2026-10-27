@@ -1,0 +1,82 @@
+{{- if .Values.ingress.enabled }}
+{{- $root := . -}}
+{{- $fullName := include "wenqu.fullname" . -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $fullName | quote }}
+  labels:
+    {{- include "wenqu.labels" . | nindent 4 }}
+  annotations:
+    # SSE 长连接：ingress-nginx 默认读超时 60s，问答流超过就被掐断，症状是「答到一半没了」
+    nginx.ingress.kubernetes.io/proxy-read-timeout: {{ .Values.ingress.proxyReadTimeout | quote }}
+    nginx.ingress.kubernetes.io/proxy-send-timeout: {{ .Values.ingress.proxySendTimeout | quote }}
+    nginx.ingress.kubernetes.io/proxy-body-size: {{ .Values.ingress.proxyBodySize | quote }}
+    # 流式响应不能被缓冲：默认开启的 proxy-buffering 会把 SSE 攒成整块再吐，界面看起来就是「卡住后整段出」
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    {{- with .Values.ingress.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className | quote }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      secretName: {{ .Values.ingress.tls.secretName | quote }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ $fullName | quote }}
+                port:
+                  name: http
+{{- if .Values.canary.enabled }}
+---
+# 灰度入口：ingress-nginx 的 canary 注解把同一 host 的一部分流量指到 canary Service。
+# 只放向后兼容的变更（两版共用同一套库与盘），带不兼容 schema 变更请停机升级。
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: "{{ $fullName }}-canary"
+  labels:
+    {{- include "wenqu.labels" $root | nindent 4 }}
+    app.wenqu/track: "canary"
+  annotations:
+    nginx.ingress.kubernetes.io/canary: "true"
+    {{- if .Values.canary.header.enabled }}
+    # 命中该请求头的一定进灰度版：比权重好验证（内部先跑一遍再放权重）
+    nginx.ingress.kubernetes.io/canary-by-header: {{ .Values.canary.header.name | quote }}
+    nginx.ingress.kubernetes.io/canary-by-header-value: {{ .Values.canary.header.value | quote }}
+    {{- else }}
+    nginx.ingress.kubernetes.io/canary-weight: {{ .Values.canary.weight | quote }}
+    {{- end }}
+    nginx.ingress.kubernetes.io/proxy-read-timeout: {{ .Values.ingress.proxyReadTimeout | quote }}
+    nginx.ingress.kubernetes.io/proxy-send-timeout: {{ .Values.ingress.proxySendTimeout | quote }}
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+spec:
+  ingressClassName: {{ .Values.ingress.className | quote }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      secretName: {{ .Values.ingress.tls.secretName | quote }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: "{{ $fullName }}-canary"
+                port:
+                  name: http
+{{- end }}
+{{- end }}

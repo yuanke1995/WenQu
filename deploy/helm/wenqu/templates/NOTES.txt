@@ -1,0 +1,33 @@
+问渠 WenQu 已发布：{{ .Release.Name }}（命名空间 {{ .Release.Namespace }}）
+
+访问地址：{{ if .Values.ingress.enabled }}http{{ if .Values.ingress.tls.enabled }}s{{ end }}://{{ .Values.ingress.host }}{{ else }}集群内 http://{{ include "wenqu.fullname" . }}（本次未开 Ingress）{{ end }}
+后端接口前缀固定 /ai（context-path），前端与后端同源，无需单独部署 web。
+
+副本：稳定版 {{ .Values.replicaCount }}
+{{- if .Values.canary.enabled }}
+灰度版 {{ .Values.canary.replicaCount }} 份，镜像 {{ .Values.image.repository }}:{{ .Values.canary.imageTag }}，
+{{- if .Values.canary.header.enabled }}
+分流方式：请求头 {{ .Values.canary.header.name }}: {{ .Values.canary.header.value }} 命中即进灰度版（内部先验证）
+{{- else }}
+分流方式：按权重 {{ .Values.canary.weight }}%
+{{- end }}
+  推进灰度：helm upgrade {{ .Release.Name }} deploy/helm/wenqu --reuse-values \
+              --set canary.enabled=true --set canary.imageTag=<新tag> --set canary.weight=25
+  全量切换：把新 tag 写成稳定版（--set image.tag=<新tag>）并把 canary.enabled 置 false
+  回滚：    --set canary.enabled=false（灰度期）或 helm rollback {{ .Release.Name }} <上一版本>
+  灰度期两版共用同一套库与盘：只放向后兼容的变更；不兼容的 schema 变更请停机升级。
+{{- end }}
+
+升级前请记得备份：python3 scripts/dr/tenant-dr.py backup --all --out /backup/wenqu
+（按租户恢复：python3 scripts/dr/tenant-dr.py backup --tenant <id> --out ... ；restore --from ... --into-db ...）
+
+健康检查：{{ .Values.contextPath }}/actuator/health
+{{- if not .Values.persistence.data.enabled }}
+
+注意：持久化被关闭了 —— 产物、上传、个人记忆与用户自装技能都写在容器可写层，
+一次重新部署就会全部丢失。这不是「测试环境的省事选项」，是一个会吃掉客户数据的默认值。
+{{- end }}
+{{- if and (gt (int .Values.replicaCount) 1) (ne .Values.persistence.data.accessMode "ReadWriteMany") }}
+
+注意：多副本但数据卷不是 ReadWriteMany —— 模板已拒绝渲染，请改存储或把副本降到 1。
+{{- end }}

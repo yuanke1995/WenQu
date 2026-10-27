@@ -1,0 +1,143 @@
+{{- include "wenqu.validateTopology" . -}}
+{{- $root := . -}}
+{{- $slots := list (dict "suffix" "" "track" "stable" "replicas" (int .Values.replicaCount) "image" (include "wenqu.image" .)) -}}
+{{- if .Values.canary.enabled -}}
+{{- if not .Values.canary.imageTag -}}
+{{- fail "canary.enabled=true 必须同时给 canary.imageTag（灰度要部署的镜像版本），否则灰度版与稳定版是同一个镜像——白跑一趟" -}}
+{{- end -}}
+{{- $slots = append $slots (dict "suffix" "-canary" "track" "canary" "replicas" (int .Values.canary.replicaCount) "image" (printf "%s:%s" .Values.image.repository .Values.canary.imageTag)) -}}
+{{- end -}}
+{{- range $slot := $slots }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: "{{ include "wenqu.fullname" $root }}{{ $slot.suffix }}"
+  labels:
+    {{- include "wenqu.labels" $root | nindent 4 }}
+    app.wenqu/track: {{ $slot.track | quote }}
+spec:
+  replicas: {{ $slot.replicas }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      # 问答是长连接：先起新的再停旧的，否则升级瞬间在跑的那一轮会被断（maxUnavailable=0 是这条的理由）
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      {{- include "wenqu.selectorLabels" $root | nindent 6 }}
+      app.wenqu/track: {{ $slot.track | quote }}
+  template:
+    metadata:
+      labels:
+        {{- include "wenqu.selectorLabels" $root | nindent 8 }}
+        app.wenqu/track: {{ $slot.track | quote }}
+        {{- with $root.Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") $root | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") $root | sha256sum }}
+        {{- with $root.Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with $root.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "wenqu.serviceAccountName" $root }}
+      {{- with $root.Values.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: app
+          image: {{ $slot.image | quote }}
+          imagePullPolicy: {{ $root.Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ $root.Values.containerPort }}
+          envFrom:
+            - configMapRef:
+                name: "{{ include "wenqu.fullname" $root }}-env"
+            {{- if $root.Values.existingConfigMap }}
+            - configMapRef:
+                name: {{ $root.Values.existingConfigMap | quote }}
+            {{- end }}
+          env:
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "wenqu.secretName" $root }}
+                  key: {{ $root.Values.secrets.keys.dbPassword | quote }}
+            - name: AI_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "wenqu.secretName" $root }}
+                  key: {{ $root.Values.secrets.keys.jwtSecret | quote }}
+          {{- with $root.Values.securityContext }}
+          securityContext:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          startupProbe:
+            httpGet:
+              path: "{{ $root.Values.contextPath }}/actuator/health"
+              port: http
+            failureThreshold: {{ $root.Values.probes.startup.failureThreshold }}
+            periodSeconds: {{ $root.Values.probes.startup.periodSeconds }}
+          livenessProbe:
+            httpGet:
+              path: "{{ $root.Values.contextPath }}/actuator/health"
+              port: http
+            periodSeconds: {{ $root.Values.probes.liveness.periodSeconds }}
+            failureThreshold: {{ $root.Values.probes.liveness.failureThreshold }}
+          readinessProbe:
+            httpGet:
+              # 健康端点会把依赖（DB/Redis）算进状态：依赖抖动时转红＝不接新流量，
+              # 正在流的 SSE 不受影响（就绪探针只影响 Service 端点摘除）
+              path: "{{ $root.Values.contextPath }}/actuator/health"
+              port: http
+            periodSeconds: {{ $root.Values.probes.readiness.periodSeconds }}
+            failureThreshold: {{ $root.Values.probes.readiness.failureThreshold }}
+          resources:
+            {{- toYaml $root.Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: {{ $root.Values.persistence.data.mountPath | quote }}
+            - name: user-data
+              mountPath: {{ $root.Values.persistence.userData.mountPath | quote }}
+      volumes:
+        - name: data
+          {{- if $root.Values.persistence.data.enabled }}
+          persistentVolumeClaim:
+            claimName: "{{ include "wenqu.fullname" $root }}-data"
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        - name: user-data
+          {{- if $root.Values.persistence.userData.enabled }}
+          persistentVolumeClaim:
+            claimName: "{{ include "wenqu.fullname" $root }}-user-data"
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+      {{- with $root.Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $root.Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $root.Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $root.Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- end }}

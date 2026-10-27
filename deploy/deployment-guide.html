@@ -184,7 +184,8 @@ vim .env                   # 填好三行：DB_PASSWORD / AI_JWT_SECRET / AI_MEI
   <div class="note"><b>说明</b>
     <ul class="plain" style="margin:6px 0 0">
       <li><code>DB_PASSWORD</code>：数据库 root 密码，自定强密码即可（备份 mysqldump 也用它）。</li>
-      <li><code>AI_JWT_SECRET</code>：登录令牌签名密钥（≥32 位）。写死勿改——改动后全员需重新登录。</li>
+      <li><code>AI_JWT_SECRET</code>：登录令牌签名密钥（≥32 位）。必填，多副本同一个值；写死勿改——改动后全员需重新登录。</li>
+      <li><code>AI_SECRETS_DIR</code>：密钥目录（默认 <code>{AI_IMAGES_DIR}/secret</code>），放版本化 PEM 私钥 <code>rsa/vN.key</code>。多副本必须挂同一目录；轮换＝生成一把更高版本号的私钥放进去再重启，存量密文在启动时自动重封。</li>
       <li><code>AI_MEILI_KEY</code>：Meilisearch 容器初始化必填（≥16 字节）；应用默认关键词引擎是 MySQL LIKE，切到 meilisearch 时才实际使用。</li>
     </ul>
   </div>
@@ -376,7 +377,7 @@ docker compose exec -T app tar xzf - -C /app/data &lt; ~/backup-appdata-2026-10-
   <table>
     <tr><th>变量</th><th>必填</th><th>说明</th></tr>
     <tr><td><code>DB_PASSWORD</code></td><td>是</td><td>MySQL root 密码（应用与备份共用）</td></tr>
-    <tr><td><code>AI_JWT_SECRET</code></td><td>是（推荐）</td><td>登录令牌签名密钥 ≥32 位；不填则每次重启全员重新登录；多副本必须一致</td></tr>
+    <tr><td><code>AI_JWT_SECRET</code></td><td>是</td><td>登录令牌签名密钥 ≥32 位，多副本必须一致；缺失时容器启动即失败（不再退回随机密钥，随机密钥会让多副本各签各验）</td></tr>
     <tr><td><code>AI_MEILI_KEY</code></td><td>是</td><td>Meilisearch master key ≥16 字节；容器初始化用</td></tr>
     <tr><td><code>TZ</code></td><td>否</td><td>容器时区，默认 <code>Asia/Shanghai</code>（定时任务按它求值）</td></tr>
     <tr><td><code>APP_PUBLISH</code></td><td>否</td><td>后端宿主映射，默认 <code>127.0.0.1:8090</code>；走 Nginx 时勿改</td></tr>

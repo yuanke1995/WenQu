@@ -128,7 +128,8 @@ export REDIS_DB=0
 export AI_IMAGES_DIR=./data               # 数据落盘目录（跨平台兜底；生产容器内为 /app/data）
 
 # ===== 安全 =====
-export AI_JWT_SECRET=xxx                  # 登录令牌签名密钥（≥32 位随机串；留空则每次启动随机生成，重启后已发令牌失效；多副本必须一致）
+export AI_JWT_SECRET=xxx                  # 登录令牌签名密钥（≥32 位随机串；多副本必须一致，非 local profile 缺失即启动失败）
+export AI_SECRETS_DIR=./data/secret       # 密钥目录（默认 {AI_IMAGES_DIR}/secret），放版本化 PEM 私钥 rsa/vN.key
 
 # ===== 仅 env/yml（不进设置页）=====
 export AI_AGENTSCOPE_STATE_DIR=./user-data/agentscope   # 框架工作区（个人记忆 MEMORY.md 与日账、plans、会话事件日志归档）；容器部署需指向挂载卷，多副本需共享
@@ -348,7 +349,7 @@ docker compose up -d          # 自包含：redis-stack + meilisearch + 内置 M
 5. **总并发核算**：解析并发为「副本数 × `parse.concurrency`」，embedding 与视觉模型调用是共享瓶颈
 6. **向量模型换绑为全实例串行**：Redis 分布式锁互斥，锁持有期间向量检索自动降级关键词路；任务每批续期锁，实例崩溃后锁 TTL 自愈
 7. **启动对账/巡检开关需收敛为单点**：多副本上线前把 `keyword.reconcileOnStartup` 置 false（启动对账收敛为单点）
-8. **RSA 密钥文件必须共享**：默认在 `{AI_IMAGES_DIR}/secret/config-rsa.key`，可用 `AI_CONFIG_RSA_KEY` 覆盖路径——否则 A 实例加密的 key 在 B 实例无法解密
+8. **密钥目录必须共享**：默认 `{AI_IMAGES_DIR}/secret`（`AI_SECRETS_DIR` 覆盖），敏感数据用其中 `rsa/vN.key` 的 PEM 私钥做 JWE 信封加密（密钥版本记在密文里）——各副本挂同一目录，否则 A 实例加密的 key 在 B 实例解不开；轮换＝放一把更高版本的 PEM 再重启，存量由启动流程重封，无需停机
 9. **会话状态与事件日志**：框架会话状态在 Redis；会话事件日志与代次轮换写在宿主 `~/.wenqu/agent-journal`，事件账本内容按会话导出为 JSONL 归档（`chat.sessionLogArchive.*`），归档目录须指向共享卷
 10. **目标模式与定时任务**：目标推进由 `GoalScheduler` 按租约抢占执行（DB 条件更新保证唯一执行权），定时任务调度中心先推进 `next_run_at` 再执行，多副本无需额外中间件
 
@@ -499,7 +500,7 @@ ai-app:
     dir: ${AI_IMAGES_DIR:./data}           # 数据根目录（源文件 / 图片 / 产物 / 密钥都在此）
     auth-enabled: ${AI_IMAGES_AUTH_ENABLED:true}
   auth:
-    jwt-secret: ${AI_JWT_SECRET:}          # 留空自动生成（重启后令牌失效）；多副本必须一致
+    jwt-secret: ${AI_JWT_SECRET:}          # 多副本必须一致；非 local profile 缺失即启动失败
     token-ttl-hours: 168
     require-login: ${AI_AUTH_REQUIRE_LOGIN:true}
     max-login-failures: 5                  # 连续失败次数
@@ -639,7 +640,7 @@ WenQu/                               # 工作区根（git 仓库名 WenQu；本�
 │   ├── schema.sql                   # 建表脚本（启动自动执行，幂等可重复运行）
 │   ├── manual/*.md                  # 《问渠使用手册》16 篇（随包分发，同步后成为官方内置知识库）
 │   └── skills/*/SKILL.md            # 内置技能
-├── data/                            # 运行时生成：files/{docId}/ 源文件 + images/ + artifacts/{uid}/{yyyyMM}/ + secret/config-rsa.key
+├── data/                            # 运行时生成：files/{docId}/ 源文件 + images/ + artifacts/{uid}/{yyyyMM}/ + secret/rsa/vN.key
 ├── user-data/                       # agentscope（框架状态、个人记忆、plans、session-archive）· 沙盒持久卷 shared/{uid}/workspace/sessions/{会话id}
 │   └── skills-users/                # 用户自装技能（{uid}/技能名/SKILL.md，宿主、跨会话）
 ├── deploy/

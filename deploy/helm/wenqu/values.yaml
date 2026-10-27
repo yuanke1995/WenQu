@@ -1,0 +1,171 @@
+# 问渠 WenQu · Helm values
+# 只列需要决策的项；注释里写清「改它会怎样」，因为多数坑都是默认值在特定规模下才暴露。
+
+replicaCount: 1
+
+image:
+  repository: wenqu/app
+  tag: ""            # 留空取 Chart.yaml 的 appVersion
+  pullPolicy: IfNotPresent
+  # 镜像里已含前端构建产物（Dockerfile 里 vite build 后拷进后端静态资源目录），不需要单独的 web 部署
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# 额外环境变量从已有 ConfigMap 带出（密钥轮换、临时开关等不想改 chart 的场合）；留空＝不引用
+existingConfigMap: ""
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podAnnotations: {}
+podLabels: {}
+podSecurityContext:
+  runAsNonRoot: false   # 镜像以 root 跑（沙盒回调与卷权限按此设定）；要收紧就配套改镜像
+securityContext: {}
+  # capabilities:
+  #   drop: ["ALL"]
+
+# 服务端口固定 8090（server.port）；context-path 固定 /ai —— 探针路径带前缀，别改成根路径
+containerPort: 8090
+contextPath: /ai
+
+probes:
+  startup:
+    # 首启动要跑 schema 演进、种子补齐与框架实例预热，慢机器上 60s 内起不来是常态
+    failureThreshold: 60
+    periodSeconds: 5
+  liveness:
+    periodSeconds: 20
+    failureThreshold: 5
+  readiness:
+    periodSeconds: 10
+    failureThreshold: 3
+
+resources:
+  # 堆大小与 JAVA_OPTS 里的 -Xmx 必须一起改：容器内存 < Xmx + 堆外（Metaspace/线程栈/Netty）会被 OOMKill
+  requests:
+    cpu: "500m"
+    memory: 1Gi
+  limits:
+    cpu: "4"
+    memory: 8Gi
+
+# JAVA_OPTS 是这台机器上唯一决定堆的地方；defaultBoundedElasticSize 给阻塞型工具线程（人在回路等待、
+# 沙盒、MCP）留余量，默认 10×CPU 在几十路并发时会把工具调用排成长队
+javaOpts: "-Xms512m -Xmx6g -Dreactor.schedulers.defaultBoundedElasticSize=128"
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+  # 问答是长连接 SSE：CPU 打满之前往往先撞连接数上限。有自定义指标就把 behaviour 换成基于该指标扩缩
+  behavior: {}
+
+# ---------------------------------------------------------------- 应用配置
+# 必填两项没有默认值：缺失时后端启动即失败（不是悄悄用随机密钥上线——多副本下那等于登录随机 401）
+config:
+  springProfilesActive: prod
+  timezone: Asia/Shanghai        # 智能体/工作流定时任务按此时区求值，不设默认 UTC 与北京时间差 8 小时
+  dbHost: mysql                  # 用下方 builtinMysql=false 时改成外部库地址
+  dbPort: "3306"
+  dbName: wenqu_ai
+  dbUsername: root
+  dbPoolMax: "40"                # 与 MySQL max_connections 同向调整：副本数 × 池上限 不能超过后者
+  redisPoolMax: "64"
+  redisHost: redis-stack
+  redisPort: "6379"
+  logLevelApp: info
+  # 关键词检索：mysql=LIKE 零依赖；meilisearch=外部索引（需同时给 meiliBaseUrl/meiliKey）
+  keywordEngine: mysql
+  meiliBaseUrl: ""
+  meiliKey: ""
+  meiliIndex: wenqu-chunks
+  # 沙盒与外部 OCR：没有就留空，功能自动降级（沙盒工具报「未配置」而不是静默不可用）
+  sandboxProvisionerUrl: ""
+  sandboxProvisionerToken: ""
+  sandboxCallbackBaseUrl: ""     # 沙盒容器回调本应用的地址（通常是集群内 Service 的可达地址）
+  sandboxVirtualPathPrefix: /home/gem/user-data
+  ocrPpStructureUri: ""
+  ocrMinerUUri: ""
+  ocrMinerUBackend: pipeline
+  ocrTimeoutMs: "600000"
+  imagesAuthEnabled: "true"
+
+secrets:
+  # 生产建议二选一：create=false + existingSecret 指向外部管理的 Secret（SealedSecret/ESO/Vault Agent）
+  create: true
+  existingSecret: ""
+  keys:
+    dbPassword: DB_PASSWORD
+    jwtSecret: AI_JWT_SECRET
+  values:
+    dbPassword: ""               # 明文写在这里只适合本地试装；生产用 existingSecret 或 --set-string
+    jwtSecret: ""
+
+# ---------------------------------------------------------------- 持久化
+# 两处盘：/app/data（产物、上传、日志、框架记忆 state）与 /app/user-data（用户自装技能）
+# 多副本必须 ReadWriteMany（NFS/CephFS/EFS…）：各副本各拿一块 RWO 卷会让「已装技能/已交付产物」
+# 只在某一个副本上看得见——症状是同一份文件时而能打开时而 404，比直接起不来更难查。
+# replicaCount>1 且 accessMode 不是 ReadWriteMany 时模板会直接渲染失败（把问题挡在 apply 之前）。
+persistence:
+  data:
+    enabled: true
+    size: 20Gi
+    accessMode: ReadWriteMany
+    storageClass: ""
+    mountPath: /app/data
+  userData:
+    enabled: true
+    size: 2Gi
+    accessMode: ReadWriteMany
+    storageClass: ""
+    mountPath: /app/user-data
+  # 框架会话状态与运行总线走 Redis（见 Phase 0），不落这两块盘；盘只放文件
+
+# 内置依赖：企业环境一般用外部 MySQL/Redis，这里默认关
+builtinMysql:
+  enabled: false
+builtinRedis:
+  enabled: false
+
+ingress:
+  enabled: true
+  className: nginx
+  host: wenqu.example.com
+  annotations: {}
+  tls:
+    enabled: false
+    secretName: ""
+  # SSE 长连接：nginx-ingress 的读超时默认 60s，问答流超过就会被掐（表现为「答到一半断了」）
+  proxyReadTimeout: "3600"
+  proxySendTimeout: "3600"
+  proxyBodySize: 100m
+
+# ---------------------------------------------------------------- 灰度发布
+# 做法：稳定版与灰度版两个 Deployment + 两条 Service，Ingress 按权重或按头分流。
+# 灰度版与稳定版**共用同一套数据库与盘**，所以只放「向后兼容」的变更：
+# 带不兼容 schema 变更的版本要先按 §备份与恢复 做全量备份，再走停机升级，不要灰度。
+canary:
+  enabled: false
+  imageTag: ""                   # 必填（灰度要部署的镜像 tag）
+  replicaCount: 1
+  # 权重按「请求数」分流；SSE 长连接按请求数分不等于按时长分，灰度期请同时盯 SSE 中断率
+  weight: 10
+  # 给内部验证用的确定性分流：命中该请求头的一定进灰度版（比权重好验证）
+  header:
+    enabled: false
+    name: x-wenqu-canary
+    value: "1"
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1

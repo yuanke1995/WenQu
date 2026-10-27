@@ -1,0 +1,24 @@
+{{- $root := . -}}
+{{- $slots := list (dict "suffix" "" "track" "stable") -}}
+{{- if .Values.canary.enabled -}}
+{{- $slots = append $slots (dict "suffix" "-canary" "track" "canary") -}}
+{{- end -}}
+{{- range $slot := $slots }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: "{{ include "wenqu.fullname" $root }}{{ $slot.suffix }}"
+  labels:
+    {{- include "wenqu.labels" $root | nindent 4 }}
+    app.wenqu/track: {{ $slot.track | quote }}
+spec:
+  type: ClusterIP
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+  selector:
+    {{- include "wenqu.selectorLabels" $root | nindent 4 }}
+    app.wenqu/track: {{ $slot.track | quote }}
+{{- end }}
