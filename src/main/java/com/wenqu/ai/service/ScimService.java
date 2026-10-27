@@ -225,6 +225,15 @@ public class ScimService {
                 applyActive(p, u, v, "PATCH");
                 touched = true;
             } else if (isReplace && (path == null || path.equalsIgnoreCase("displayName")) && value != null) {
+                // value 两种形态：直接文本 = displayName；对象 = {"active":x,"displayName":y}——
+                // Entra 停用账号发的就是无 path 的对象形态，漏了会静默 no-op 还返回 200（2026-10-27 实机验证发现）
+                if (value.isObject() && value.has("active")) {
+                    Boolean v = boolOf(value.get("active"));
+                    if (v != null) {
+                        applyActive(p, u, v, "PATCH");
+                        touched = true;
+                    }
+                }
                 String d = value.isTextual() ? value.asText() : text(value, "displayName");
                 if (d != null && !d.isBlank()) {
                     u.setUsername(d);

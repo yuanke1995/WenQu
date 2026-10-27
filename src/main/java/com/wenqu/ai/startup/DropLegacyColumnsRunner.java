@@ -52,13 +52,17 @@ public class DropLegacyColumnsRunner implements ApplicationRunner {
             return;
         }
         Long userRows = count("c_ai_user");
-        // 数据安全守卫：迁移 Runner 失败不阻塞启动，若它失败了（新表空而用户表有行）就删列 = 丢存量授权。
-        // 故删 role 列要求 c_ai_user_role 非空（或根本没有用户），删 oidc 列要求 c_ai_user_identity 非空；
-        // 不满足则保留列，下轮启动 IdentityMigrationRunner 重试后自然满足。
-        boolean rolesReady = count("c_ai_user_role") > 0 || userRows == 0;
-        boolean identityReady = count("c_ai_user_identity") > 0 || userRows == 0;
+        // 数据安全守卫：迁移 Runner 失败不阻塞启动，若它失败了（旧列数据没搬走）就删列 = 丢存量授权。
+        // 判据不看新表「是否非空」，而看「旧列上待迁移的行是否都已搬走」——零 OIDC 绑定的库
+        // user_identity 恒为 0，按非空判会永远不收敛（2026-10-27 实机验证发现）。
+        // role 列 NOT NULL：桥接成功后 c_ai_user_role 行数 ≥ 用户行数；
+        // 绑定桥接成功后 c_ai_user_identity 行数 ≥ 旧列非空绑定行数。
+        boolean rolesReady = !columnExists("c_ai_user", "role") || userRows == 0
+                || count("c_ai_user_role") >= userRows;
+        boolean identityReady = !columnExists("c_ai_user", "oidc_sub")
+                || count("c_ai_user_identity") >= countLegacyBindings();
         if (!rolesReady || !identityReady) {
-            log.warn("[DropLegacy] 桥接迁移尚未完成（user_role/identity 表为空而用户表有行），保留旧列下轮重试");
+            log.warn("[DropLegacy] 桥接迁移尚未完成（旧列仍有未迁移的授权/绑定行），保留旧列下轮重试");
             return;
         }
         for (String idx : LEGACY_INDEXES) {
@@ -108,6 +112,20 @@ public class DropLegacyColumnsRunner implements ApplicationRunner {
             return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM " + table, Long.class);
         } catch (Exception e) {
             return 0L;
+        }
+    }
+
+    /**
+     * 旧列上尚未桥接的外部绑定行数（oidc_sub/oidc_provider 任一非空）。
+     * 调用方已确认 oidc_sub 列存在；查询异常按「未完成」处理（返回极大值守住不删）。
+     */
+    private long countLegacyBindings() {
+        try {
+            return jdbcTemplate.queryForObject(
+                    "SELECT COUNT(*) FROM c_ai_user WHERE oidc_sub IS NOT NULL OR oidc_provider IS NOT NULL",
+                    Long.class);
+        } catch (Exception e) {
+            return Long.MAX_VALUE;
         }
     }
 
