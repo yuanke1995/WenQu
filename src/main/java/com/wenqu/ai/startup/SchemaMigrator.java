@@ -109,8 +109,84 @@ public class SchemaMigrator implements ApplicationRunner {
                 }
             }
         }
-        log.info("[SchemaMigrator] schema 演进检查完成：{} 张表，补列 {} 个，补索引 {} 个{}",
-                tables.size(), addedCols, addedIdx, autoIndex ? "" : "（索引自动补齐已关闭）");
+        int tenantFixed = normalizeTenantColumns();
+        int scopeRenamed = migrateQuotaScope();
+        log.info("[SchemaMigrator] schema 演进检查完成：{} 张表，补列 {} 个，补索引 {} 个{}{}{}",
+                tables.size(), addedCols, addedIdx,
+                autoIndex ? "" : "（索引自动补齐已关闭）",
+                tenantFixed > 0 ? "，租户列归一 " + tenantFixed + " 张表" : "",
+                scopeRenamed > 0 ? "，配额作用域改名 " + scopeRenamed + " 条" : "");
+    }
+
+    /**
+     * 租户列归一（Phase 4 刀二）：把所有 {@code tenant_id} 统一成 {@code VARCHAR(32) NOT NULL DEFAULT 'default'}，
+     * 并把历史 NULL 行回填成默认租户。
+     *
+     * <p><b>为什么这是本类「只补不改」边界唯一的例外</b>：Phase 1/P3 那批表留的是可空占位列
+     * （注释写着「Phase4 启用，当前 NULL」）。租户行级过滤一上线，读侧谓词就是 {@code tenant_id = 'default'}，
+     * 而 SQL 里 {@code NULL = 'default'} 不为真 —— 那些行会<b>在界面上集体消失</b>。真机实测到两处：
+     * 审计页 27 条变 0 条、内容安全规则读成空集＝<b>闸门静默失效</b>。这里改的不是类型，是「数据看不看得见」。
+     *
+     * <p>顺序是先回填再改列：MySQL 严格模式下带着 NULL 去 {@code MODIFY ... NOT NULL} 会直接报错。
+     * 表名取自 information_schema（不是外部输入），拼接安全。大表上这条 ALTER 会重建表——
+     * 生产首次升级请在窗口期执行（手册「多租户」里已写明）。
+     *
+     * @return 实际改写定义的表数（0＝都已归一，正常静默）
+     */
+    private int normalizeTenantColumns() {
+        int fixed = 0;
+        try {
+            List<Map<String, Object>> cols = jdbcTemplate.queryForList(
+                    "select TABLE_NAME as t, IS_NULLABLE as n, COLUMN_DEFAULT as d, CHARACTER_MAXIMUM_LENGTH as len "
+                            + "from information_schema.COLUMNS "
+                            + "where TABLE_SCHEMA = DATABASE() and COLUMN_NAME = 'tenant_id'");
+            for (Map<String, Object> c : cols) {
+                // 平台全局表（租户注册表、开通申请等）不归一：它们本来就不参与行级过滤，
+                // 把列改成 NOT NULL DEFAULT 'default' 等于给「没有归属」这件事编一个假值
+                if (com.wenqu.ai.config.WenquTenantLineHandler.isGlobalTable(String.valueOf(c.get("t")))) continue;
+                String table = String.valueOf(c.get("t"));
+                try {
+                    Integer nulls = jdbcTemplate.queryForObject(
+                            "select count(*) from `" + table + "` where `tenant_id` is null", Integer.class);
+                    if (nulls != null && nulls > 0) {
+                        jdbcTemplate.update("update `" + table + "` set `tenant_id` = 'default' where `tenant_id` is null");
+                        log.info("[SchemaMigrator] 租户回填：{}.tenant_id 的 {} 行 NULL 归入默认租户", table, nulls);
+                    }
+                    boolean nullable = !"NO".equalsIgnoreCase(String.valueOf(c.get("n")));
+                    Object def = c.get("d");
+                    boolean wrongDefault = def == null || !"default".equals(String.valueOf(def));
+                    boolean wrongWidth = !"32".equals(String.valueOf(c.get("len")));
+                    if (nullable || wrongDefault || wrongWidth) {
+                        jdbcTemplate.update("alter table `" + table + "` modify column `tenant_id` "
+                                + "VARCHAR(32) NOT NULL DEFAULT 'default' "
+                                + "COMMENT '租户ID（Phase 4 多租户：本行归属的租户）'");
+                        fixed++;
+                    }
+                } catch (Exception ex) {
+                    log.warn("[SchemaMigrator] 表 {} 的租户列归一失败（该表的行可能对部分成员不可见，需手工处理）: {}",
+                            table, ex.getMessage());
+                }
+            }
+        } catch (Exception ex) {
+            log.warn("[SchemaMigrator] 查询租户列清单失败（跳过归一）: {}", ex.getMessage());
+        }
+        return fixed;
+    }
+
+    /**
+     * 配额作用域 {@code platform} → {@code tenant}（Phase 4 刀二）。
+     * <p>配额行本身按租户归属，"全平台"这个说法在多租户下是错的——一条规则管不到别的租户。
+     * 值改了就要连带存量行一起改，否则老行读成未知作用域、{@code matchesScope} 一律不匹配，
+     * 表现为「设过预算的人突然不限额了」这种最坏的静默失效。
+     */
+    private int migrateQuotaScope() {
+        try {
+            return jdbcTemplate.update("update c_ai_quota set scope = 'tenant' where scope = 'platform'");
+        } catch (Exception ex) {
+            log.warn("[SchemaMigrator] 配额作用域改名失败（platform 档将不再匹配任何调用，请手工处理）: {}",
+                    ex.getMessage());
+            return 0;
+        }
     }
 
     /** 查表现有列；表不存在返回 null */

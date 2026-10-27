@@ -165,7 +165,8 @@ public class ChatUploadService {
         return removed;
     }
 
-    private Path dirOf(String uid) {
+    /** 该成员的聊天附件目录（DR 清单按租户枚举时用，见 TenantDiskInventory） */
+    public Path dirOf(String uid) {
         return Paths.get(properties.getImages().getDir(), SUB_DIR, hashUid(uid));
     }
 

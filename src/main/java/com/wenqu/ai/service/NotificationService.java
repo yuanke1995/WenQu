@@ -214,12 +214,37 @@ public class NotificationService {
                     new LambdaQueryWrapper<com.wenqu.ai.model.User>()
                             .in(com.wenqu.ai.model.User::getUid, adminUids));
             for (com.wenqu.ai.model.User u : admins) {
-                if (u.getStatus() == null || u.getStatus() == 1) {
-                    create(u.getUid(), type, title, content, refType, refId);
-                }
+                if (u.getStatus() == null || u.getStatus() != 1) continue;
+                // 收件人限定在本租户（Phase 4）：A 家的配额触顶不该去敲 B 家管理员的铃铛。
+                // 未绑定线程（系统任务）保持原语义——它本来就在跨租户做事，此时过滤会把所有通知都吞掉
+                String bound = com.wenqu.ai.util.TenantContext.current();
+                if (bound != null && !bound.equals(u.getTenantId() == null || u.getTenantId().isBlank()
+                        ? com.wenqu.ai.util.TenantContext.DEFAULT_TENANT : u.getTenantId())) continue;
+                create(u.getUid(), type, title, content, refType, refId);
             }
         } catch (Exception e) {
             log.warn("[NOTIFY] 管理员通知组装失败（不影响主链路）type={} title={} err={}", type, title, e.getMessage());
+        }
+    }
+
+    /**
+     * 只发给平台级（superadmin）：这件事的责任面是「平台运营方」，不是各租户自己的管理员。
+     * <p>典型是租户开通申请的批准提醒——租户管理员既看不到也不该批，发给他们只是噪音。
+     */
+    public void createForSuperadmins(String type, String title, String content, String refType, String refId) {
+        try {
+            List<String> uids = userRoleService.uidsWithAnyRole(List.of("superadmin"));
+            if (uids.isEmpty()) {
+                log.warn("[NOTIFY] 没有任何平台级账号，这类事件无人可处理 type={} title={}", type, title);
+                return;
+            }
+            for (com.wenqu.ai.model.User u : userMapper.selectList(new LambdaQueryWrapper<com.wenqu.ai.model.User>()
+                    .in(com.wenqu.ai.model.User::getUid, uids))) {
+                if (u.getStatus() == null || u.getStatus() != 1) continue;
+                create(u.getUid(), type, title, content, refType, refId);
+            }
+        } catch (Exception e) {
+            log.warn("[NOTIFY] 平台级通知组装失败（不影响主链路）type={} title={} err={}", type, title, e.getMessage());
         }
     }
 

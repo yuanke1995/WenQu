@@ -52,6 +52,9 @@ import java.util.UUID;
 @Service
 @RequiredArgsConstructor
 public class ScimService {
+    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    private final AuditService audit;
+
 
     private final IdentityProviderMapper providerMapper;
     private final ConfigCryptoService crypto;
@@ -104,7 +107,7 @@ public class ScimService {
     public JsonNode config(IdentityProvider p) {
         String raw = p.getConfig();
         if (raw == null || raw.isBlank()) return null;
-        if (raw.startsWith("RSA:")) raw = crypto.decrypt(raw);
+        raw = crypto.decrypt(raw);
         try {
             return json.readTree(raw);
         } catch (Exception e) {
@@ -185,7 +188,7 @@ public class ScimService {
             }
         }
         syncLog(p, 1, 0, active ? 0 : 1, "createUser " + userName + (active ? "" : " (inactive)"));
-        log.info("[AUDIT] SCIM 建号 provider={} uid={} externalId={} active={}", p.getId(), uid, externalId, active);
+        audit.record("[AUDIT] SCIM 建号 provider={} uid={} externalId={} active={}", p.getId(), uid, externalId, active);
         return u;
     }
 
@@ -253,7 +256,7 @@ public class ScimService {
         User u = requireUser(uid);
         applyActive(p, u, false, "DELETE");
         syncLog(p, 0, 0, 1, "deleteUser(disable) " + uid);
-        log.info("[AUDIT] SCIM 销户（disable 可恢复）provider={} uid={}", p.getId(), uid);
+        audit.record("[AUDIT] SCIM 销户（disable 可恢复）provider={} uid={}", p.getId(), uid);
     }
 
     private void applyActive(IdentityProvider p, User u, boolean active, String via) {
@@ -266,7 +269,7 @@ public class ScimService {
             u.setStatus(1);
         }
         userMapper.updateById(u);
-        log.info("[AUDIT] SCIM 账号{} provider={} uid={} via={}", active ? "启用" : "禁用", p.getId(), u.getUid(), via);
+        audit.record("[AUDIT] SCIM 账号{} provider={} uid={} via={}", active ? "启用" : "禁用", p.getId(), u.getUid(), via);
     }
 
     /** SCIM filter（仅支持 userName eq "x" / externalId eq "x" —— Entra/Okta 主用形态） */
@@ -428,7 +431,7 @@ public class ScimService {
         }
         mappingMapper.deleteById(g.getId());
         syncLog(p, 0, 0, 0, "deleteGroup " + groupId);
-        log.info("[AUDIT] SCIM 删组 provider={} group={}", p.getId(), groupId);
+        audit.record("[AUDIT] SCIM 删组 provider={} group={}", p.getId(), groupId);
     }
 
     private List<String> membersOf(JsonNode body) {
@@ -512,7 +515,7 @@ public class ScimService {
         g.setProviderId(p.getId());
         g.setExternalGroup(displayName);
         mappingMapper.insert(g);
-        log.info("[AUDIT] SCIM 组登记（映射规则待配置）provider={} group={}", p.getId(), displayName);
+        audit.record("[AUDIT] SCIM 组登记（映射规则待配置）provider={} group={}", p.getId(), displayName);
         return g;
     }
 

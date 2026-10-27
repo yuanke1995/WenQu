@@ -6,7 +6,7 @@ import { ref } from 'vue'
 import { getAuthMe } from '../api'
 
 const TOKEN_KEY = 'ai_token'
-let cached = null // { user, username, role, admin, menus } | null（会话内缓存，失效后由 ensureAuth 重拉）
+let cached = null // { user, username, role, admin, superadmin, menus } | null（会话内缓存，失效后由 ensureAuth 重拉）
 // 响应式镜像（ensureAuth 每次刷新都会同步）：供需要「昵称改完侧栏立刻变」的组件读
 export const authUser = ref(null)
 
@@ -30,6 +30,9 @@ export const isAdminSync = () => {
   if (cached) return cached.admin
   try { return localStorage.getItem('ai_role') === 'admin' } catch (e) { return false }
 }
+
+/** 是否平台级（superadmin）：跨租户动作的入口判据（批准开通申请、跨租户审阅审计） */
+export const isSuperadminSync = () => Boolean(cached && cached.superadmin)
 
 /** 当前用户可见菜单（会话内缓存；未拉取身份前为 null） */
 export const menusSync = () => (cached ? cached.menus : null)
@@ -55,11 +58,12 @@ export async function ensureAuth (force = false) {
       avatar: info.avatar || '',
       role: info.role || 'user',
       admin: Boolean(info.admin),
+      superadmin: Boolean(info.superadmin),
       menus: Array.isArray(info.menus) ? info.menus : []
     }
     try { localStorage.setItem('ai_role', cached.admin ? 'admin' : 'user') } catch (e) { /* ignore */ }
   } catch (e) {
-    cached = { user: 'anonymous', username: '', role: 'user', admin: false, menus: [] }
+    cached = { user: 'anonymous', username: '', role: 'user', admin: false, superadmin: false, menus: [] }
   }
   authUser.value = cached
   return cached

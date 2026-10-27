@@ -410,7 +410,8 @@ public class ToolSpillService {
         }
     }
 
-    private Path dirOf(String uid) {
+    /** 该成员的工具外溢原文目录（DR 清单按租户枚举时用，见 TenantDiskInventory） */
+    public Path dirOf(String uid) {
         return Paths.get(properties.getImages().getDir(), SUB_DIR, hashUid(uid));
     }
 

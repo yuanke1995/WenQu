@@ -243,7 +243,13 @@ public class ScimController {
             return error(e);
         }
         try {
-            Map<String, Object> body = h.apply(p);
+            // 整条拦截链对本路径豁免 ⇒ 线程上没有租户绑定，而「未绑定」在租户拦截器里等于「不过滤」：
+            // GET/PUT/PATCH/DELETE /Users/{id} 会按 uid 直接命中别家租户的成员。认证源自己归属哪个租户，
+            // 这一段就跑在哪个租户里（as() 跑完恢复原值，池化线程上不留残留）。
+            Map<String, Object> body = com.wenqu.ai.util.TenantContext.as(
+                    p.getTenantId() == null || p.getTenantId().isBlank()
+                            ? com.wenqu.ai.util.TenantContext.DEFAULT_TENANT : p.getTenantId(),
+                    () -> h.apply(p));
             return body == null
                     ? ResponseEntity.status(HttpStatus.NO_CONTENT).build()
                     : ResponseEntity.status(success).body(body);

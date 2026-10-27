@@ -70,6 +70,12 @@ public class ChatController {
     private final com.wenqu.ai.mapper.MessageMapper messageMapper;
     private final ConfigService configService;
     private final RateLimitService rateLimitService;
+    /** 配额预检（Phase 2）：到额就在入口拒，不给用户一条「转了半天才报错」的流 */
+    private final com.wenqu.ai.service.UsageQuotaService usageQuota;
+    /** 内容安全输入闸（Phase 3 · P12）：插话也是一句用户打进来的话，走同一道闸 */
+    private final com.wenqu.ai.service.contentsafety.ContentSafetyService contentSafety;
+    /** 租户（Phase 4 · P9）：只用于在 /auth/me 里说一句「现在看的是哪个租户的数据」 */
+    private final com.wenqu.ai.service.TenantService tenantService;
     private final QaLogService qaLogService;
     private final AdminGuard adminGuard;
     /** 工具大输出外溢原文（卡片「查看完整输出」按需读回，仅归属人可读） */
@@ -125,6 +131,15 @@ public class ChatController {
     public ResultJson authMe(HttpServletRequest httpRequest) {
         Map<String, Object> me = authService.currentUser(RequestUser.uid(), adminGuard.isAdmin(httpRequest));
         me.put("menus", menuService.menusForUser(RequestUser.uid()));
+        // 租户（Phase 4）：随身份一起给，界面据此说一句「现在看的是哪个租户的数据」。
+        // 刻意不另开 /tenant/mine 端点——那会多一处要给所有角色授权的面，而它说的还是同一件事
+        String tenant = com.wenqu.ai.util.TenantContext.current();
+        if (tenant == null || tenant.isBlank()) tenant = com.wenqu.ai.util.TenantContext.DEFAULT_TENANT;
+        me.put("tenant", tenant);
+        me.put("tenantName", tenantService.nameOf(tenant));
+        // 平台级与否随身份一起下发：界面上「批准开通申请」这类入口要按它决定出不出现，
+        // 让人点了才知道没权限是最差的一种提示
+        me.put("superadmin", com.wenqu.ai.util.RequestUser.superadmin());
         return ResultJson.ok(me);
     }
 
@@ -138,6 +153,9 @@ public class ChatController {
         // 按用户限频（anonymous 落到 IP 维度，避免匿名共享池互相挤兑）
         rateLimitService.checkRateLimit("chat", RequestUser.ANONYMOUS.equals(userId)
                 ? "ip:" + clientIp(httpRequest) : "user:" + userId);
+        // 配额闸在入口先判一次：模型出口那道闸是硬保证，这一道是为了让用户当场看到「哪条规则、用了多少、何时恢复」
+        // 而不是看一条转了很久才失败的流（真正的强制仍在出口，两处共用 UsageQuotaService 一份判据）
+        usageQuota.assertWithinBudget(RequestUser.ANONYMOUS.equals(userId) ? null : userId, "chat");
 
         String question = request.getQuestion().trim();
 
@@ -406,6 +424,9 @@ public class ChatController {
         if (sessionId == null || sessionId.isBlank() || text == null || text.isBlank()) {
             return ResultJson.error("缺少会话 ID 或插话内容");
         }
+        // 插话同样过输入闸（Phase 3 · P12）：它是用户当场打的一句话，与发问同一身份，不该成为闸外的旁路
+        String refused = contentSafety.checkInput(com.wenqu.ai.util.RequestUser.uid(), sessionId, text);
+        if (refused != null) return ResultJson.error(refused);
         String messageId = runtime.steerTurn(sessionId.trim(), com.wenqu.ai.util.RequestUser.uid(), text);
         return ResultJson.ok(java.util.Map.of("accepted", messageId != null,
                 "messageId", messageId == null ? "" : messageId));
@@ -450,7 +471,7 @@ public class ChatController {
         // 框架引擎的待办先走它自己：AgentSession.respond 会找回待办所属的原任务与工具调用并安排
         // 接续执行；不在这套会话里才交回人在回路的旧通道（两条通道不双写同一个审批号）
         boolean ok = frameworkSessions.respond(approvalId, approved,
-                approved ? null : String.valueOf(body.get("reason"))) != null
+                approved ? null : String.valueOf(body.get("reason")))
                 || hitl.resolveApproval(approvalId, approved, com.wenqu.ai.util.RequestUser.uid());
         if (!ok) return ResultJson.error("审批请求不存在或已失效（可能已超时）");
         return ResultJson.ok(approved ? "已批准" : "已拒绝");
@@ -506,7 +527,7 @@ public class ChatController {
         // 框架引擎的提问卡走框架待办（挂起→答复→由框架接续原任务），不属于它才回落旧通道；
         // 忽略＝把「用户没答」原样送回模型，绝不替用户编一个答案
         if (!ignore) {
-            if (frameworkSessions.respondAsk(askId, frameworkAskText(answers)) != null) {
+            if (frameworkSessions.respondAsk(askId, frameworkAskText(answers))) {
                 return ResultJson.ok("已提交");
             }
         }

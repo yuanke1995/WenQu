@@ -204,6 +204,9 @@ public class SecurityConfig implements WebMvcConfigurer {
         if (path.startsWith("/api/ai/knowledge/") && !path.equals("/api/ai/knowledge/unmatched")) return true;
         // 智能体公开分享（游客通道）：免登录，token 即凭据（/s/{token} 的后端 API）
         if (isShareGuestEndpoint(path)) return true;
+        // 租户开通申请：免登录的公开写入端点（精确路径 + 仅 POST，不给前缀），
+        // 与上面游客分享同一形态——没有登录态也就没有角色，RBAC 这一层必须显式放过它
+        if (isTenantApplyEndpoint(method, path)) return true;
         // 帮助中心（官方内置手册，只读）：数据源为全员只读的内置库，且 ManualController 只暴露手册篇目，
         // 登录即可读——入口是前端右下角全局悬浮按钮，所有角色都要能用
         if ("GET".equals(method) && (path.equals("/api/ai/manual/documents")
@@ -298,6 +301,15 @@ public class SecurityConfig implements WebMvcConfigurer {
      * 安全面收窄在 {@code ShareController} 与 ChatService 游客模式内做：
      * token 校验 + IP 限流 + 工具白名单收窄（沙盒/产物/MCP/技能不暴露）。
      */
+    /**
+     * 租户开通申请（Phase 4 刀三）：免登录的唯一<b>写入</b>端点，只此一条路径，不给前缀。
+     * <p>它免的是登录门禁，不是所有约束：控制器里不读任何用户态数据、按 IP 限流、
+     * 字段全量校验，且提交后只是待审记录——真正的开通动作在平台级管理员手里。
+     */
+    private static boolean isTenantApplyEndpoint(String method, String path) {
+        return "POST".equalsIgnoreCase(method) && "/api/ai/tenant/apply".equals(path);
+    }
+
     private static boolean isShareGuestEndpoint(String path) {
         return path != null && path.startsWith("/api/ai/share/");
     }
@@ -381,10 +393,12 @@ public class SecurityConfig implements WebMvcConfigurer {
                 apiKeyService.touchLastUsed(rec.getId());
                 return true;
             }
-            // 2. 登录门禁：require-login=true 时，除登录引导端点、游客分享端点与沙盒脚本回调外必须持有效登录令牌
+            // 2. 登录门禁：require-login=true 时，除登录引导端点、游客分享端点、租户开通申请与沙盒脚本回调外
+            //    必须持有效登录令牌
             boolean authenticated = Boolean.TRUE.equals(request.getAttribute(UserContextInterceptor.ATTR_AUTHENTICATED));
             if (properties.getAuth().isRequireLogin() && !authenticated
                     && !isAuthBootstrapEndpoint(method, path) && !isShareGuestEndpoint(path)
+                    && !isTenantApplyEndpoint(method, path)
                     && !isSandboxCallbackEndpoint(method, path)) {
                 response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
                 response.setContentType("application/json;charset=UTF-8");

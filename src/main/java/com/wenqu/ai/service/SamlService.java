@@ -45,7 +45,7 @@ import java.util.Map;
  *       SAML 属性名映射（缺省 uid/displayName/department）；</li>
  *   <li>{@code useRawUsername}/{@code fetchDepartmentInfo}：布尔，语义同 OIDC。</li>
  * </ul>
- * config 整块可 RSA 加密（"RSA: " 前缀，含 IdP 证书与 SP 私钥时建议开启）。
+ * config 整块 JWE 信封加密（JWE: 前缀，含 IdP 证书与 SP 私钥时同样是密文）。
  *
  * @author yuanke
  */
@@ -53,6 +53,9 @@ import java.util.Map;
 @Service
 @RequiredArgsConstructor
 public class SamlService {
+    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    private final AuditService audit;
+
 
     private final IdentityProviderMapper mapper;
     private final ConfigCryptoService crypto;
@@ -158,7 +161,7 @@ public class SamlService {
             payload.put("redirectPath", redirectPath == null || redirectPath.isBlank() ? "/" : redirectPath);
 
             String oneTime = loginCodeService.issue(payload);
-            log.info("[AUDIT] SAML 登录成功 provider={} uid={} nameId={} roles={}",
+            audit.record("[AUDIT] SAML 登录成功 provider={} uid={} nameId={} roles={}",
                     p.getId(), user.getUid(), nameId, userRoleService.rolesOf(user.getUid()));
             return frontBaseUrl(p) + FRONTEND_CALLBACK_PATH + "?code=" + urlEnc(oneTime);
         } catch (BizException e) {
@@ -180,7 +183,7 @@ public class SamlService {
     public JsonNode config(IdentityProvider p) {
         String raw = p.getConfig();
         if (raw == null || raw.isBlank()) return null;
-        if (raw.startsWith("RSA:")) raw = crypto.decrypt(raw);
+        raw = crypto.decrypt(raw);
         try {
             return json.readTree(raw);
         } catch (Exception e) {

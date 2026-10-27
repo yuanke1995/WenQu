@@ -11,16 +11,23 @@
 
     <div class="app-page-body">
       <a-spin :spinning="loading">
-        <a-table v-if="list.length" :data-source="list" row-key="id" :pagination="false" size="middle">
+        <a-table v-if="list.length" :data-source="list" :columns="cols" row-key="id" :pagination="false"
+                 size="middle" table-layout="fixed">
           <template #bodyCell="{ column, record }">
             <template v-if="column.key === 'type'">
               <a-tag :color="typeColor(record.type)">{{ typeLabel(record.type) }}</a-tag>
+            </template>
+            <template v-else-if="column.key === 'defaultRole'">
+              {{ record.defaultRole || '—' }}
             </template>
             <template v-else-if="column.key === 'enabled'">
               <a-switch :checked="record.enabled === 1" size="small" @change="v => onToggle(record, v)" />
             </template>
             <template v-else-if="column.key === 'boundUsers'">
               <span>{{ record.boundUsers }} 个账号</span>
+            </template>
+            <template v-else-if="column.key === 'tenant'">
+              <span class="idp-tenant">{{ record.tenantName || record.tenantId }}</span>
             </template>
             <template v-else-if="column.key === 'action'">
               <a-space>
@@ -52,6 +59,10 @@
         </a-form-item>
         <a-form-item label="启用">
           <a-switch v-model:checked="form.enabled" />
+        </a-form-item>
+        <a-form-item v-if="multiTenant" label="所属租户"
+                     extra="登录与同步建出来的成员都归这个租户；只有平台级管理员能把它开到别的租户">
+          <a-select v-model:value="form.tenantId" :options="tenantOptions" style="width:220px" />
         </a-form-item>
 
         <!-- SAML -->
@@ -217,11 +228,12 @@ import {
   listGroupMappings, createGroupMapping, updateGroupMapping, deleteGroupMapping,
   triggerIdentitySync, listSyncLogs
 } from '../api'
-import { listRoleOptions, listDepartments } from '../api'
+import { listRoleOptions, listDepartments, listTenants } from '../api'
 
 const list = ref([])
 const roles = ref([])
 const departments = ref([])
+const tenants = ref([])
 const loading = ref(false)
 const saving = ref(false)
 const drawerOpen = ref(false)
@@ -241,13 +253,31 @@ const roleOptions = computed(() => roles.value.map(r => ({ label: r.name, value:
 const deptOptions = computed(() => departments.value.map(d => ({ label: d.name, value: d.id })))
 const deptName = id => (departments.value.find(d => d.id === id) || {}).name || '—'
 
+// 只有一个租户时「租户」这一维没有信息量，列与表单项都不出现（与成员管理页同一判据）
+const multiTenant = computed(() => tenants.value.length > 1)
+const tenantOptions = computed(() => tenants.value
+        .map(t => ({ label: t.name || t.id, value: t.id })))
+const cols = computed(() => {
+  const c = [
+    { title: '类型', key: 'type', dataIndex: 'type', width: 108 },
+    { title: '名称', key: 'name', dataIndex: 'name' },
+    { title: '启用', key: 'enabled', dataIndex: 'enabled', width: 68 },
+    { title: '默认角色', key: 'defaultRole', dataIndex: 'defaultRole', width: 96 },
+    { title: '绑定账号', key: 'boundUsers', dataIndex: 'boundUsers', width: 92 },
+    { title: '操作', key: 'action', width: 232 }
+  ]
+  if (multiTenant.value) c.splice(5, 0, { title: '租户', key: 'tenant', dataIndex: 'tenantName', width: 120 })
+  return c
+})
+
 async function load () {
   loading.value = true
   try {
-    const [r, rr, rd] = await Promise.all([listIdentityProviders(), listRoleOptions(), listDepartments()])
+    const [r, rr, rd, rt] = await Promise.all([listIdentityProviders(), listRoleOptions(), listDepartments(), listTenants()])
     list.value = (r && r.data) || []
     roles.value = (rr && rr.data) || []
     departments.value = (rd && rd.data) || []
+    tenants.value = (rt && rt.success && rt.data) || []
   } catch (e) {
     message.error(e.message || '加载失败')
   } finally {
@@ -257,12 +287,12 @@ async function load () {
 onMounted(load)
 
 function blank () {
-  return { type: 'ldap', name: '', enabled: 1, defaultRole: 'user', autoCreateUser: 1, sortOrder: 0, config: {} }
+  return { type: 'ldap', name: '', enabled: 1, defaultRole: 'user', autoCreateUser: 1, sortOrder: 0, tenantId: undefined, config: {} }
 }
 function openCreate () {
   const b = blank()
   editingId.value = ''
-  form.value = { type: b.type, name: b.name, enabled: !!b.enabled, defaultRole: b.defaultRole, autoCreateUser: !!b.autoCreateUser, sortOrder: b.sortOrder }
+  form.value = { type: b.type, name: b.name, enabled: !!b.enabled, defaultRole: b.defaultRole, autoCreateUser: !!b.autoCreateUser, sortOrder: b.sortOrder, tenantId: undefined }
   cfg.value = {}
   drawerOpen.value = true
 }
@@ -270,7 +300,8 @@ function openEdit (p) {
   editingId.value = p.id
   form.value = {
     type: p.type, name: p.name, enabled: p.enabled === 1,
-    defaultRole: p.defaultRole || '', autoCreateUser: p.autoCreateUser === 1, sortOrder: p.sortOrder || 0
+    defaultRole: p.defaultRole || '', autoCreateUser: p.autoCreateUser === 1, sortOrder: p.sortOrder || 0,
+    tenantId: p.tenantId
   }
   cfg.value = { ...(p.config || {}) }
   drawerOpen.value = true
@@ -289,7 +320,7 @@ function payload () {
   return {
     name: f.name, enabled: f.enabled ? 1 : 0,
     defaultRole: f.defaultRole || '', autoCreateUser: f.autoCreateUser ? 1 : 0,
-    sortOrder: f.sortOrder, type: f.type, config
+    sortOrder: f.sortOrder, type: f.type, tenantId: f.tenantId || '', config
   }
 }
 
@@ -419,6 +450,7 @@ async function openLogs (p) {
 .mono { font-family: var(--app-mono, monospace); font-size: 12px; }
 .form-tip { font-size: 12px; color: var(--app-text-3, #888); line-height: 1.6; }
 .mem-none { color: var(--app-text-3, #aaa); font-size: 12px; }
+.idp-tenant { color: var(--app-text-2, #666); font-size: 12px; }
 .log-line { display: flex; gap: 12px; align-items: baseline; }
 .log-stat { color: var(--app-text-3, #888); font-size: 12px; }
 code { padding: 1px 6px; border-radius: 4px; background: var(--app-bg-2, #f5f5f5); font-size: 12px; }

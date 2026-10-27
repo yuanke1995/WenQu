@@ -1,6 +1,7 @@
 package com.wenqu.ai.skill;
 
 import com.wenqu.ai.common.BizException;
+import com.wenqu.ai.service.AuditService;
 import com.wenqu.ai.sandbox.SandboxPaths;
 import com.wenqu.ai.service.ConfigService;
 import com.wenqu.ai.util.SsrfGuard;
@@ -81,6 +82,9 @@ import java.util.zip.ZipOutputStream;
  */
 @Service
 public class UserSkillStore {
+    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    private final AuditService audit;
+
 
     private static final Logger log = LoggerFactory.getLogger(UserSkillStore.class);
 
@@ -120,10 +124,12 @@ public class UserSkillStore {
 
     public UserSkillStore(
             @Value("${wenqu.skills.users-dir:user-data/skills-users}") String usersDir,
-            ConfigService configService) {
+            ConfigService configService,
+            com.wenqu.ai.service.AuditService audit) {
         this.root = Paths.get(usersDir == null || usersDir.isBlank() ? "user-data/skills-users" : usersDir)
                 .toAbsolutePath().normalize();
         this.configService = configService;
+        this.audit = audit;
     }
 
     /** 用户技能根（测试/装配用）。 */
@@ -267,7 +273,7 @@ public class UserSkillStore {
         ensureNotReserved(n, reserved);
         Doc doc = parseContent(content, n, description);
         writeSkill(uid, n, doc, overwrite);
-        log.info("[AUDIT] 新建技能 uid={} skill={} overwrite={}", uid, n, overwrite);
+        audit.record("[AUDIT] 新建技能 uid={} skill={} overwrite={}", uid, n, overwrite);
         return find(uid, n);
     }
 
@@ -285,7 +291,7 @@ public class UserSkillStore {
         } catch (IOException e) {
             throw new BizException("写入技能失败: " + e.getMessage());
         }
-        log.info("[AUDIT] 编辑技能 uid={} skill={}", uid, dirName);
+        audit.record("[AUDIT] 编辑技能 uid={} skill={}", uid, dirName);
         return find(uid, dirName);
     }
 
@@ -317,7 +323,7 @@ public class UserSkillStore {
         } catch (RuntimeException e) {
             log.warn("[SKILL] 清理个人停用记录失败 uid={} skill={}: {}", uid, dirName, e.toString());
         }
-        log.info("[AUDIT] 删除技能 uid={} skill={}", uid, dirName);
+        audit.record("[AUDIT] 删除技能 uid={} skill={}", uid, dirName);
     }
 
     // ==================== 安装：zip ====================
@@ -396,7 +402,7 @@ public class UserSkillStore {
             }
             Path target = skillDir(uid, name);
             promote(skillRoot, target, overwrite);
-            log.info("[AUDIT] zip 安装技能 uid={} skill={} overwrite={}", uid, name, overwrite);
+            audit.record("[AUDIT] zip 安装技能 uid={} skill={} overwrite={}", uid, name, overwrite);
             return find(uid, name);
         } catch (BizException e) {
             throw e;
@@ -446,7 +452,7 @@ public class UserSkillStore {
             throw new BizException("技能描述过长（最多 " + MAX_DESCRIPTION + " 字）");
         }
         writeSkill(uid, name, doc, overwrite);
-        log.info("[AUDIT] URL 安装技能 uid={} skill={} url={}", uid, name, uri);
+        audit.record("[AUDIT] URL 安装技能 uid={} skill={} url={}", uid, name, uri);
         return find(uid, name);
     }
 
@@ -463,7 +469,7 @@ public class UserSkillStore {
             names.remove(n);
         }
         writeDisabled(uid, names);
-        log.info("[AUDIT] {}技能 uid={} skill={}", disabled ? "停用" : "启用", uid, n);
+        audit.record("[AUDIT] {}技能 uid={} skill={}", disabled ? "停用" : "启用", uid, n);
     }
 
     /** 个人停用清单（读不到按空处理）。 */

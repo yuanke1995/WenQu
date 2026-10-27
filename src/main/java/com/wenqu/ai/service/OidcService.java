@@ -49,6 +49,9 @@ import java.util.regex.Pattern;
 @Service
 @RequiredArgsConstructor
 public class OidcService {
+    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    private final AuditService audit;
+
 
     private final OidcProviderService providerService;
     private final UserMapper userMapper;
@@ -187,7 +190,7 @@ public class OidcService {
         payload.put("redirectPath", se.redirectPath());
 
         String oneTime = loginCodeService.issue(payload);
-        log.info("[AUDIT] OIDC 登录成功 provider={} uid={} sub={} roles={}",
+        audit.record("[AUDIT] OIDC 登录成功 provider={} uid={} sub={} roles={}",
                 providerId, user.getUid(), ex.sub(), userRoleService.rolesOf(user.getUid()));
         return frontBase(p) + FRONTEND_CALLBACK_PATH + "?code=" + enc(oneTime);
     }

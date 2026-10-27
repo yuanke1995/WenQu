@@ -1,6 +1,7 @@
 package com.wenqu.ai.memory;
 
 import com.wenqu.ai.agentx.FrameworkSessions;
+import com.wenqu.ai.service.AuditService;
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.service.ConfigService;
@@ -40,6 +41,9 @@ import java.util.stream.Stream;
 @Service
 @RequiredArgsConstructor
 public class MemoryService {
+    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    private final AuditService audit;
+
 
     private final ConfigService configService;
     private final FrameworkSessions sessions;
@@ -98,7 +102,7 @@ public class MemoryService {
         }
         writeAtomic(root.resolve(MemoryPaths.MEMORY_MD), text);
         markStale(u);
-        log.info("[AUDIT] 用户编辑长期记忆 uid={} chars={}", u, text.length());
+        audit.record("[AUDIT] 用户编辑长期记忆 uid={} chars={}", u, text.length());
         return overview(u);
     }
 
@@ -121,7 +125,7 @@ public class MemoryService {
             throw new BizException(500, "清空记忆失败");
         }
         markStale(u);
-        log.info("[AUDIT] 用户清空长期记忆 uid={}", u);
+        audit.record("[AUDIT] 用户清空长期记忆 uid={}", u);
         return overview(u);
     }
 
@@ -141,7 +145,7 @@ public class MemoryService {
             throw new BizException(500, "删除日账失败");
         }
         markStale(u);
-        log.info("[AUDIT] 用户删除长期记忆日账 uid={} date={}", u, day);
+        audit.record("[AUDIT] 用户删除长期记忆日账 uid={} date={}", u, day);
         return overview(u);
     }
 
@@ -155,7 +159,7 @@ public class MemoryService {
         if (!trimmed.equals(text)) {
             writeAtomic(file, trimmed);
             markStale(u);
-            log.info("[AUDIT] 用户按上限裁剪长期记忆 uid={} chars={} -> {}",
+            audit.record("[AUDIT] 用户按上限裁剪长期记忆 uid={} chars={} -> {}",
                     u, text.length(), trimmed.length());
         }
         return overview(u);

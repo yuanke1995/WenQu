@@ -208,6 +208,17 @@
               （{{ cost.unregisteredCount }} 个引用），不计入费用，也无法通过登记单价挽回。
             </div>
           </div>
+          <!-- 只在真摊开多家时出现：单租户部署里这张表永远只有一行，等于把「本租户」再说一遍 -->
+          <div v-if="cost.crossTenant && (cost.byTenant || []).length > 1" class="app-card">
+            <div class="app-card-title">按租户结算<span class="card-sub">跨租户台账汇总；每个租户一行，费用按现行单价现算</span></div>
+            <a-table :data-source="cost.byTenant || []" :columns="costTenantCols" size="small"
+                     row-key="tenantId" :loading="costLoading" :pagination="costPager"
+                     :locale="{ emptyText: '该时间范围内没有用量' }">
+              <template #bodyCell="{ column, record }">
+                <template v-if="column.key === 'cost'">{{ record.cost != null ? fmtCost(record.cost) : '未计价' }}</template>
+              </template>
+            </a-table>
+          </div>
           <div class="two-col">
             <div class="app-card">
               <div class="app-card-title">按用户<span class="card-sub">台账输入/输出 tokens × 模型单价</span></div>
@@ -228,8 +239,91 @@
               </a-table>
             </div>
           </div>
+          <div class="app-card">
+            <div class="app-card-title">按部门<span class="card-sub">成员归属部门汇总；未归部门（含匿名与系统调用）单列一条</span></div>
+            <a-table :data-source="cost.byDepartment || []" :columns="costDeptCols" size="small"
+                     :row-key="r => r.departmentId || 'none'" :loading="costLoading" :pagination="costPager"
+                     :locale="{ emptyText: '该时间范围内没有用量' }">
+              <template #bodyCell="{ column, record }">
+                <template v-if="column.key === 'cost'">{{ record.cost != null ? fmtCost(record.cost) : '未计价' }}</template>
+              </template>
+            </a-table>
+          </div>
+          <div class="app-card">
+            <div class="app-card-title">
+              配额与预算
+              <span class="card-sub">上限管「谁最多能花多少」；用量按台账现算，与上面三张表同源</span>
+              <button class="app-link-btn" style="margin-left:auto" @click="openQuota()">新建配额</button>
+            </div>
+            <a-table :data-source="quotas" :columns="quotaCols" size="small" row-key="id"
+                     :loading="quotaLoading" :pagination="false"
+                     :locale="{ emptyText: '还没设任何上限——当前不限额' }">
+              <template #bodyCell="{ column, record }">
+                <template v-if="column.key === 'tokenLimit'">
+                  {{ Number(record.tokenLimit) > 0 ? fmtTokensCompact(record.tokenLimit) : '—' }}
+                </template>
+                <template v-else-if="column.key === 'costLimit'">
+                  {{ record.costLimit != null ? fmtCost(record.costLimit) : '—' }}
+                </template>
+                <template v-else-if="column.key === 'used'">
+                  <div>{{ fmtTokensCompact(record.usedTokens) }}<template v-if="record.costLimit != null"> · {{ fmtCost(record.usedCost) }}</template></div>
+                  <div class="metric-sub">
+                    {{ record.tokenPercent != null ? record.tokenPercent + '%' : '' }}<template v-if="record.tokenPercent != null && record.costPercent != null"> / </template>{{ record.costPercent != null ? record.costPercent + '%' : '' }}
+                  </div>
+                </template>
+                <template v-else-if="column.key === 'state'">
+                  <a-tag v-if="record.breach" :color="Number(record.enforce) === 1 ? 'red' : 'orange'">
+                    {{ record.breach === 'token' ? 'token 到顶' : '费用到顶' }}·{{ Number(record.enforce) === 1 ? '已拦下' : '只告警' }}
+                  </a-tag>
+                  <a-tag v-else-if="Number(record.tokenPercent || 0) >= 80 || Number(record.costPercent || 0) >= 80" color="gold">接近上限</a-tag>
+                  <span v-else class="metric-sub">正常</span>
+                </template>
+                <template v-else-if="column.key === 'op'">
+                  <button class="app-link-btn" @click="openQuota(record)">编辑</button>
+                  <button class="app-link-btn" style="margin-left:8px" @click="removeQuota(record)">删除</button>
+                </template>
+              </template>
+            </a-table>
+            <div class="metric-sub" style="padding-top:6px">
+              到顶后拦的是用户主动发起的调用（对话 / 子智能体 / 工作流）；历史压缩、记忆提炼这类辅助调用不拦——
+              掐断它们只会让上下文撑爆、这一轮反而更贵。
+            </div>
+          </div>
         </a-tab-pane>
       </a-tabs>
+
+      <a-modal v-model:open="quotaModal" :title="quotaForm.id ? '编辑配额' : '新建配额'" @ok="submitQuota">
+        <a-form layout="vertical">
+          <a-form-item label="作用域">
+            <a-segmented v-model:value="quotaForm.scope" :options="quotaScopeOptions" @change="onQuotaScopeChange" />
+          </a-form-item>
+          <a-form-item v-if="quotaForm.scope === 'department'" label="部门">
+            <a-select v-model:value="quotaForm.scopeId" :options="deptOptions" placeholder="选部门" style="width:100%" />
+          </a-form-item>
+          <a-form-item v-if="quotaForm.scope === 'user'" label="成员">
+            <a-select v-model:value="quotaForm.scopeId" :options="memberOptions" placeholder="选成员" style="width:100%"
+                      show-search option-filter-prop="label" />
+          </a-form-item>
+          <a-form-item label="周期">
+            <a-segmented v-model:value="quotaForm.period" :options="[{ value: 'day', label: '按日' }, { value: 'month', label: '按月' }]" />
+          </a-form-item>
+          <a-form-item label="token 上限（0＝不按 token 限）">
+            <a-input-number v-model:value="quotaForm.tokenLimit" :min="0" :step="100000" style="width:100%"
+                            :formatter="v => (v || 0).toLocaleString('zh-CN')" :parser="v => v.replace(/[^0-9]/g, '')" />
+          </a-form-item>
+          <a-form-item label="费用上限（元，留空＝不按金额限）">
+            <a-input-number v-model:value="quotaForm.costLimit" :min="0" :step="1" style="width:100%" />
+            <div class="metric-sub">金额只累计已登记单价的模型；未配单价的模型不进金额口径（token 口径照算）。</div>
+          </a-form-item>
+          <a-form-item label="到额处理">
+            <a-switch v-model:checked="quotaForm.enforce" checked-children="熔断" un-checked-children="只告警" />
+            <span class="metric-sub" style="margin-left:8px">新策略建议先「只告警」跑一个周期，确认拦得对再熔断。</span>
+          </a-form-item>
+          <a-form-item label="备注（为什么设这条）">
+            <a-input v-model:value="quotaForm.remark" :maxlength="200" placeholder="如：外部合作账号只给 200 万/月" />
+          </a-form-item>
+        </a-form>
+      </a-modal>
 
       <!-- Trace 详情抽屉 -->
       <a-drawer v-model:open="detailDrawer" :title="detailTitle" width="560" destroy-on-close>
@@ -325,7 +419,7 @@ import { message } from 'ant-design-vue'
 import {
   getAnalytics, getUnmatchedQuestions, createKnowledge, getBadCases, addEvalCase, getEvalLastReport, runEvalAutoCheck,
   listTraces, getChatTrace, getWorkflowTrace, listTracePool, labelTraceSample, dismissTraceSample, runTraceSampling, getTraceStats,
-  getUsageCost
+  getUsageCost, listQuotas, saveQuota, deleteQuota, listDepartments, listUsers
 } from '../api'
 
 const tab = ref('overview')
@@ -655,10 +749,78 @@ const reloadAll = async () => {
   finally { analyticsLoading.value = false }
 }
 
-// ==================== 费用（§13）：台账×模型单价，按用户/按模型 ====================
+// ==================== 费用（§13）：台账×模型单价，按用户/按模型/按部门/按租户 ====================
 const costRange = ref(30)
 const costLoading = ref(false)
 const cost = ref({})
+const quotas = ref([])
+const quotaLoading = ref(false)
+const quotaModal = ref(false)
+const quotaForm = ref({ id: null, scope: 'user', scopeId: undefined, period: 'month',
+  tokenLimit: 0, costLimit: null, enforce: true, remark: '' })
+const quotaScopeOptions = [{ value: 'tenant', label: '本租户' }, { value: 'department', label: '按部门' }, { value: 'user', label: '按成员' }]
+const deptOptions = ref([])
+const memberOptions = ref([])
+const quotaCols = [
+  { title: '作用域', dataIndex: 'scope', key: 'scope', width: 92, customRender: ({ text }) => ({ tenant: '本租户', department: '部门', user: '成员' }[text] || text) },
+  { title: '对象', dataIndex: 'scopeName', key: 'scopeName', ellipsis: true },
+  { title: '周期', dataIndex: 'period', key: 'period', width: 68, customRender: ({ text }) => (text === 'day' ? '按日' : '按月') },
+  { title: 'token 上限', key: 'tokenLimit', width: 108, align: 'right' },
+  { title: '费用上限', key: 'costLimit', width: 108, align: 'right' },
+  { title: '已用 / 进度', key: 'used', width: 150 },
+  { title: '状态', key: 'state', width: 132 },
+  { title: '操作', key: 'op', width: 110 }
+]
+const loadQuotas = async () => {
+  quotaLoading.value = true
+  try {
+    const r = await listQuotas()
+    if (r.success) quotas.value = r.data || []
+    else message.error(r.msg || '配额清单加载失败')
+  } catch (e) { message.error(e.message || '配额清单加载失败') } finally { quotaLoading.value = false }
+}
+const openQuota = async record => {
+  quotaForm.value = record ? {
+    id: record.id, scope: record.scope, scopeId: record.scopeId || undefined, period: record.period,
+    tokenLimit: Number(record.tokenLimit || 0), costLimit: record.costLimit == null ? null : Number(record.costLimit),
+    enforce: Number(record.enforce) !== 0, remark: record.remark || ''
+  } : { id: null, scope: 'user', scopeId: undefined, period: 'month', tokenLimit: 0, costLimit: null, enforce: true, remark: '' }
+  if (!deptOptions.value.length || !memberOptions.value.length) {
+    try {
+      const [d, m] = await Promise.all([listDepartments(), listUsers()])
+      if (d.success) deptOptions.value = (d.data || []).map(x => ({ value: x.id, label: x.name }))
+      if (m.success) memberOptions.value = (m.data || []).map(x => ({ value: x.uid, label: (x.username || x.uid) + '（' + x.uid + '）' }))
+    } catch (e) { message.error('部门或成员名单加载失败：' + e.message) }
+  }
+  quotaModal.value = true
+}
+const onQuotaScopeChange = () => { quotaForm.value.scopeId = undefined }
+const submitQuota = async () => {
+  const f = quotaForm.value
+  if (f.scope !== 'tenant' && !f.scopeId) { message.warning('要先选部门或成员'); return }
+  if (!(Number(f.tokenLimit) > 0) && !(f.costLimit != null && Number(f.costLimit) > 0)) {
+    message.warning('至少填一个上限，否则这条规则不限任何东西'); return
+  }
+  try {
+    const r = await saveQuota({ id: f.id, scope: f.scope, scopeId: f.scopeId, period: f.period,
+      tokenLimit: Number(f.tokenLimit || 0), costLimit: f.costLimit == null || f.costLimit === '' ? null : Number(f.costLimit),
+      enforce: f.enforce ? 1 : 0, remark: f.remark })
+    if (!r.success) { message.error(r.msg || '保存失败'); return }
+    message.success('已保存')
+    quotaModal.value = false
+    loadQuotas()
+  } catch (e) { message.error(e.message || '保存失败') }
+}
+const removeQuota = async record => {
+  const label = (record.scopeName || record.scope) + ' · ' + (record.period === 'day' ? '按日' : '按月')
+  if (!window.confirm('删除这条配额「' + label + '」？删除即解除该档约束。')) return
+  try {
+    const r = await deleteQuota(record.id)
+    if (!r.success) { message.error(r.msg || '删除失败'); return }
+    message.success('已删除')
+    loadQuotas()
+  } catch (e) { message.error(e.message || '删除失败') }
+}
 /** 未计价清单默认只展开前 8 类（按 token 降序）——曾经这里是几百个原始 providerId/模型名标签 */
 const UNPRICED_SHOWN = 8
 const unpricedAll = ref(false)
@@ -677,6 +839,20 @@ const loadCost = async () => {
 }
 const costUserCols = [
   { title: '用户', dataIndex: 'name', key: 'name' },
+  { title: '输入 tok', dataIndex: 'promptTokens', key: 'promptTokens', width: 96, align: 'right', customRender: ({ text }) => fmtTokensCompact(text) },
+  { title: '输出 tok', dataIndex: 'completionTokens', key: 'completionTokens', width: 96, align: 'right', customRender: ({ text }) => fmtTokensCompact(text) },
+  { title: '费用', key: 'cost', width: 110, align: 'right' }
+]
+const costDeptCols = [
+  { title: '部门', dataIndex: 'name', key: 'name' },
+  { title: '输入 tok', dataIndex: 'promptTokens', key: 'promptTokens', width: 96, align: 'right', customRender: ({ text }) => fmtTokensCompact(text) },
+  { title: '输出 tok', dataIndex: 'completionTokens', key: 'completionTokens', width: 96, align: 'right', customRender: ({ text }) => fmtTokensCompact(text) },
+  { title: '费用', key: 'cost', width: 110, align: 'right' }
+]
+const costTenantCols = [
+  { title: '租户', dataIndex: 'name', key: 'name' },
+  { title: '标识', dataIndex: 'tenantId', key: 'tenantId', width: 110 },
+  { title: '成员', dataIndex: 'members', key: 'members', width: 72, align: 'right' },
   { title: '输入 tok', dataIndex: 'promptTokens', key: 'promptTokens', width: 96, align: 'right', customRender: ({ text }) => fmtTokensCompact(text) },
   { title: '输出 tok', dataIndex: 'completionTokens', key: 'completionTokens', width: 96, align: 'right', customRender: ({ text }) => fmtTokensCompact(text) },
   { title: '费用', key: 'cost', width: 110, align: 'right' }
@@ -712,6 +888,7 @@ onMounted(() => {
   loadPool()
   loadTraces()
   loadCost()
+  loadQuotas()
 })
 </script>
 

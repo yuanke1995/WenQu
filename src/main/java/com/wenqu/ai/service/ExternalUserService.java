@@ -32,7 +32,11 @@ import java.util.regex.Pattern;
 @Service
 @RequiredArgsConstructor
 public class ExternalUserService {
+    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    private final AuditService audit;
 
+
+    private final com.wenqu.ai.mapper.IdentityProviderMapper providerMapper;
     private final UserMapper userMapper;
     private final DepartmentMapper departmentMapper;
     private final OrgService orgService;
@@ -63,6 +67,11 @@ public class ExternalUserService {
      */
     public User resolveUser(String protocol, String uidPrefix, String providerId,
                             ExternalProfile profile, ProvisionSpec spec) {
+        return inProviderTenant(providerId, () -> resolveUserScoped(protocol, uidPrefix, providerId, profile, spec));
+    }
+
+    private User resolveUserScoped(String protocol, String uidPrefix, String providerId,
+                                   ExternalProfile profile, ProvisionSpec spec) {
         User bound = findByExternal(providerId, profile.externalId());
         if (bound != null) return assertUsable(bound);
 
@@ -77,7 +86,7 @@ public class ExternalUserService {
                         throw new BizException("该 " + protocol + " 身份已绑定其他账号，请联系管理员处理绑定冲突");
                     }
                     identityService.bind(uid, providerId, profile.externalId());
-                    log.info("[AUDIT] {} 身份绑定到既有账号 uid={} provider={} external={}",
+                    audit.record("[AUDIT] {} 身份绑定到既有账号 uid={} provider={} external={}",
                             protocol, uid, providerId, profile.externalId());
                     return assertUsable(exist);
                 }
@@ -118,7 +127,7 @@ public class ExternalUserService {
         // 外部身份与默认角色落统一身份/多角色表（不写 c_ai_user 的 oidc_sub/oidc_provider/role 旧列）
         identityService.bind(uid, providerId, profile.externalId());
         userRoleService.grant(uid, role, "idp");
-        log.info("[AUDIT] {} 自动建档 provider={} uid={} username={} role={} dept={}",
+        audit.record("[AUDIT] {} 自动建档 provider={} uid={} username={} role={} dept={}",
                 protocol, providerId, uid, username, role, deptId);
         return u;
     }
@@ -151,17 +160,64 @@ public class ExternalUserService {
         return uid.length() > UID_MAX ? uid.substring(0, UID_MAX) : uid;
     }
 
-    /** 账号标识唯一化（冲突时追加短哈希/序号）；SCIM 建号等外部场景复用 */
+    /**
+     * 把外部落位逻辑跑在<b>认证源自己的租户</b>里（Phase 4 多租户）。
+     * <p>登录/同步线程上还没有已登录身份 ⇒ 线程没绑租户，而「未绑定」在租户拦截器里等于「不过滤」。
+     * 那时按外部用户名去认领既有账号，会跨租户捞到别家的同名账号直接放行；建出来的新档也会落进
+     * 默认租户——认证源明明属于 acme，人却成了 default 的成员。这两个都不是「少一条数据」级别的错，
+     * 所以判据放在唯一入口上，而不是散在各协议里。
+     * <p>认证源行自身的 {@code tenant_id} 用平台视图读（当前线程可能正绑着别的租户）。
+     * 取不到租户（老库里 providerId 已不存在）时按原样跑，行为与本次改造前一致。
+     */
+    public <T> T inProviderTenant(String providerId, java.util.function.Supplier<T> body) {
+        String tenant = providerTenant(providerId);
+        return tenant == null ? body.get() : com.wenqu.ai.util.TenantContext.as(tenant, body);
+    }
+
+    /** {@link #inProviderTenant} 的无返回值版（同步作业只写不读） */
+    public void inProviderTenant(String providerId, Runnable body) {
+        inProviderTenant(providerId, () -> {
+            body.run();
+            return null;
+        });
+    }
+
+    private String providerTenant(String providerId) {
+        if (providerId == null || providerId.isBlank()) return null;
+        try {
+            com.wenqu.ai.model.IdentityProvider p = com.wenqu.ai.util.TenantContext
+                    .asPlatform(() -> providerMapper.selectById(providerId));
+            return p == null ? null : p.getTenantId();
+        } catch (Exception e) {
+            log.warn("[SSO] 认证源租户归属读取失败 provider={}（按未绑定继续，建出的账号会落默认租户）: {}",
+                    providerId, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 账号标识是否已被占用——<b>平台级</b>判据，理由见 {@link #ensureUniqueUid}。
+     */
+    private boolean uidTaken(String uid) {
+        return com.wenqu.ai.util.TenantContext.asPlatform(() -> userMapper.selectById(uid)) != null;
+    }
+
+    /**
+     * 账号标识唯一化（冲突时追加短哈希/序号）；SCIM 建号等外部场景复用。
+     * <p>查重跨全平台而不是只查本租户：uid 是全平台一个命名空间（磁盘上的记忆目录 {@code agentscope/{uid}}、
+     * 沙盒工作区 {@code shared/{uid}/workspace} 与令牌里的身份都只带 uid），两个租户各起一个同名账号
+     * 会互相踩对方的文件。本租户过滤下查出「没占用」、插入时撞主键，只会把一条清楚的报错换成一次 500。
+     */
     public String ensureUniqueUid(String base, String seed) {
-        if (userMapper.selectById(base) == null) return base;
+        if (!uidTaken(base)) return base;
         String suffix = "_" + shortHash(seed);
         String candidate = base;
         if (base.length() + suffix.length() > UID_MAX) candidate = base.substring(0, UID_MAX - suffix.length());
         candidate = candidate + suffix;
-        if (userMapper.selectById(candidate) == null) return candidate;
+        if (!uidTaken(candidate)) return candidate;
         for (int i = 2; i < 100; i++) {
             String c = candidate + "_" + i;
-            if (userMapper.selectById(c) == null) return c;
+            if (!uidTaken(c)) return c;
         }
         throw new BizException("无法生成可用账号标识，请联系管理员");
     }

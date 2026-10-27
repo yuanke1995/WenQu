@@ -53,23 +53,26 @@ public class IdentityAdminController {
         return ResultJson.ok(providerService.list());
     }
 
-    @Operation(summary = "新建认证源", description = "type=saml|scim|ldap；config 敏感字段整块 RSA 加密入库")
+    @Operation(summary = "新建认证源", description = "type=saml|scim|ldap；config 敏感字段整块 RSA 加密入库；"
+            + "tenantId 留空＝归当前管理员的租户，归到别的租户仅平台级管理员可执行")
     @PostMapping("/providers")
     public ResultJson create(@RequestBody Map<String, Object> body) {
         return ResultJson.ok(providerService.toView(providerService.create(
                 str(body.get("type")), str(body.get("name")),
                 intOrNull(body.get("enabled")), str(body.get("defaultRole")),
                 str(body.get("defaultDepartment")), intOrNull(body.get("autoCreateUser")),
-                intOrNull(body.get("sortOrder")), mapOf(body.get("config")))), "已创建");
+                intOrNull(body.get("sortOrder")), mapOf(body.get("config")),
+                str(body.get("tenantId")))), "已创建");
     }
 
-    @Operation(summary = "编辑认证源", description = "config 中敏感字段为 \"******\" 时保留原值不覆盖")
+    @Operation(summary = "编辑认证源", description = "config 中敏感字段为 \"******\" 时保留原值不覆盖；tenantId 留空＝归属不动")
     @PutMapping("/providers/{id}")
     public ResultJson update(@PathVariable String id, @RequestBody Map<String, Object> body) {
         return ResultJson.ok(providerService.toView(providerService.update(
                 id, str(body.get("name")), intOrNull(body.get("enabled")), str(body.get("defaultRole")),
                 str(body.get("defaultDepartment")), intOrNull(body.get("autoCreateUser")),
-                intOrNull(body.get("sortOrder")), mapOf(body.get("config")))), "已保存");
+                intOrNull(body.get("sortOrder")), mapOf(body.get("config")),
+                str(body.get("tenantId")))), "已保存");
     }
 
     @Operation(summary = "删除认证源", description = "仍有用户绑定即拒")
@@ -82,7 +85,7 @@ public class IdentityAdminController {
     @Operation(summary = "测试 LDAP 连接", description = "bind + baseDn 可搜索即通过；仅 ldap 类型")
     @PostMapping("/providers/{id}/test")
     public ResultJson test(@PathVariable String id) {
-        IdentityProvider p = providerService.getById(id);
+        IdentityProvider p = providerService.getByIdForAdmin(id);
         if (p == null) throw new BizException("认证源不存在");
         if (!"ldap".equals(p.getType())) throw new BizException("连接测试当前仅支持 LDAP 认证源");
         try {
@@ -127,7 +130,7 @@ public class IdentityAdminController {
     @Operation(summary = "立即同步（LDAP）", description = "diff：远端建号/恢复/离员禁用 + 组映射裁决；返回本轮日志")
     @PostMapping("/sync/{providerId}")
     public ResultJson syncNow(@PathVariable String providerId) {
-        IdentityProvider p = providerService.getById(providerId);
+        IdentityProvider p = providerService.getByIdForAdmin(providerId);
         if (p == null) throw new BizException("认证源不存在");
         if (!"ldap".equals(p.getType())) throw new BizException("手动同步当前仅支持 LDAP 认证源（SCIM 由 IdP 推送）");
         SyncJobLog l = directorySyncService.syncNow(p);
@@ -138,10 +141,15 @@ public class IdentityAdminController {
     @GetMapping("/sync/logs")
     public ResultJson syncLogs(@RequestParam("providerId") String providerId,
                                @RequestParam(value = "limit", defaultValue = "20") int limit) {
-        List<SyncJobLog> logs = syncLogMapper.selectList(new LambdaQueryWrapper<SyncJobLog>()
-                .eq(SyncJobLog::getSourceId, providerId)
-                .orderByDesc(SyncJobLog::getCreateTime)
-                .last("LIMIT " + Math.min(Math.max(limit, 1), 100)));
+        // 日志按 provider 归属：管理员此刻可能绑着自己的租户，看别家认证源的日志要切到它自己的租户里取
+        IdentityProvider p = providerService.getByIdForAdmin(providerId);
+        String tenant = p == null || p.getTenantId() == null || p.getTenantId().isBlank()
+                ? com.wenqu.ai.util.TenantContext.DEFAULT_TENANT : p.getTenantId();
+        List<SyncJobLog> logs = com.wenqu.ai.util.TenantContext.as(tenant, () ->
+                syncLogMapper.selectList(new LambdaQueryWrapper<SyncJobLog>()
+                        .eq(SyncJobLog::getSourceId, providerId)
+                        .orderByDesc(SyncJobLog::getCreateTime)
+                        .last("LIMIT " + Math.min(Math.max(limit, 1), 100))));
         return ResultJson.ok(logs);
     }
 

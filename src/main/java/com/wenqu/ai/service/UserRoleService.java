@@ -40,6 +40,9 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 @RequiredArgsConstructor
 public class UserRoleService {
+    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    private final AuditService audit;
+
 
     private final UserRoleMapper mapper;
     private final RoleService roleService;
@@ -135,7 +138,7 @@ public class UserRoleService {
             }
         }
         invalidate(uid);
-        log.info("[AUDIT] 设置用户角色 uid={} roles={}", uid, normalized);
+        audit.record("[AUDIT] 设置用户角色 uid={} roles={}", uid, normalized);
     }
 
     /** 授予单角色（服务内部建档用：OIDC 默认角色/初始化超管；granted_by 可传 manual 或 idp） */

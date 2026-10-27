@@ -12,6 +12,7 @@
 -- 一个知识库 = 一套检索作用域（含自己的检索参数）；文档归属某个库，智能体关联若干库。
 CREATE TABLE IF NOT EXISTS `c_ai_knowledge_base` (
     -- 主键列为 kb_id：c_ai_document.kb_id 的外键指向它
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `kb_id`        VARCHAR(50)  NOT NULL COMMENT '知识库ID（c_ai_document.kb_id 的外键）',
     `name`         VARCHAR(200) NOT NULL COMMENT '知识库名称',
     `description`  VARCHAR(500) DEFAULT NULL COMMENT '描述',
@@ -34,6 +35,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_knowledge_base` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识库表（文档容器，检索按库隔离，检索参数随库）';
 
 CREATE TABLE IF NOT EXISTS `c_ai_document` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`           VARCHAR(50)  NOT NULL COMMENT '主键ID',
     `file_name`    VARCHAR(200) DEFAULT NULL COMMENT '文件名',
     `file_type`    VARCHAR(20)  DEFAULT NULL COMMENT '文件类型: docx/pdf/xlsx/url(url=网页导入,源文件为HTML快照)',
@@ -67,6 +69,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_document` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI文档表';
 
 CREATE TABLE IF NOT EXISTS `c_ai_parse_task` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`            VARCHAR(50)  NOT NULL COMMENT '主键ID',
     `doc_id`        VARCHAR(50)  NOT NULL COMMENT '所属文档ID（与 c_ai_document.id 对应）',
     `kb_id`         VARCHAR(50)  DEFAULT NULL COMMENT '所属知识库ID',
@@ -88,6 +91,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_parse_task` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文档解析持久化任务队列（上传只登记，解析由扫描器抢占执行，队列满不丢任务）';
 
 CREATE TABLE IF NOT EXISTS `c_ai_knowledge` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`           VARCHAR(50)  NOT NULL COMMENT '主键ID',
     `doc_id`       VARCHAR(50)  DEFAULT NULL COMMENT '所属文档ID',
     `title`        VARCHAR(200) DEFAULT NULL COMMENT '片段标题',
@@ -106,6 +110,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_knowledge` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI知识片段表';
 
 CREATE TABLE IF NOT EXISTS `c_ai_knowledge_qa` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`            VARCHAR(50)  NOT NULL COMMENT '主键ID（同时作为问答对向量的 vector id）',
     `doc_id`        VARCHAR(50)  DEFAULT NULL COMMENT '所属文档ID',
     `knowledge_id`  VARCHAR(50)  NOT NULL COMMENT '来源知识块ID（问答对命中后取回该块正文）',
@@ -118,6 +123,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_knowledge_qa` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识块问答对索引表（QA增强检索：按问法向量化，命中后返回来源块）';
 
 CREATE TABLE IF NOT EXISTS `c_ai_knowledge_child` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`            VARCHAR(50)  NOT NULL COMMENT '主键ID（同时作为子块向量的 vector id）',
     `doc_id`        VARCHAR(50)  DEFAULT NULL COMMENT '所属文档ID',
     `knowledge_id`  VARCHAR(50)  NOT NULL COMMENT '父块ID（命中子块后取回父块完整正文进上下文）',
@@ -130,6 +136,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_knowledge_child` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='子块索引表（父子分块：小块向量化检索，命中后返回父块完整正文）';
 
 CREATE TABLE IF NOT EXISTS `c_ai_agent_share` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`          VARCHAR(50)  NOT NULL COMMENT '主键ID',
     `agent_id`    VARCHAR(50)  NOT NULL COMMENT '被分享的智能体ID',
     `token`       VARCHAR(64)  NOT NULL COMMENT '分享令牌（/s/{token} 免登录访问；唯一）',
@@ -156,6 +163,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_agent_share` (
 -- ============================================
 
 CREATE TABLE IF NOT EXISTS `c_ai_user_config` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`           BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键ID',
     `uid`          VARCHAR(64)  NOT NULL COMMENT '归属用户（c_ai_user.uid）',
     `config_key`   VARCHAR(128) NOT NULL COMMENT '配置键（config-schema.json 的 backendKey，须标记 personal）',
@@ -174,6 +182,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_user_config` (
 -- ============================================
 
 CREATE TABLE IF NOT EXISTS `c_ai_session` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`            VARCHAR(50)  NOT NULL COMMENT '主键ID (UUID无横线)',
     `user_id`       VARCHAR(64)  NOT NULL DEFAULT 'anonymous' COMMENT '归属用户（登录用户 uid；anonymous=历史兼容池全局可见）',
     `title`         VARCHAR(200) DEFAULT NULL COMMENT '会话标题 (取自首条用户问题)',
@@ -199,6 +208,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_session` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI会话表';
 
 CREATE TABLE IF NOT EXISTS `c_ai_message` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`          VARCHAR(50)  NOT NULL COMMENT '主键ID (UUID无横线)',
     `session_id`  VARCHAR(50)  NOT NULL COMMENT '所属会话ID',
     `role`        VARCHAR(20)  NOT NULL COMMENT '角色: user / assistant',
@@ -242,6 +252,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_message` (
 -- ============================================
 
 CREATE TABLE IF NOT EXISTS `c_ai_qa_log` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`              VARCHAR(50)  NOT NULL COMMENT '主键ID',
     `session_id`      VARCHAR(50)  DEFAULT NULL COMMENT '会话ID',
     `question`        TEXT         COMMENT '用户问题',
@@ -259,6 +270,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_qa_log` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI问答日志表';
 
 CREATE TABLE IF NOT EXISTS `c_ai_qa_feedback` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`             VARCHAR(50)  NOT NULL COMMENT '主键ID',
     `message_id`     VARCHAR(50)  NOT NULL COMMENT '关联消息ID',
     `rating`         INT          DEFAULT 0 COMMENT '1=有帮助 0=没帮助',
@@ -291,6 +303,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_config` (
 -- ============================================
 
 CREATE TABLE IF NOT EXISTS `c_ai_document_version` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`            VARCHAR(50)  NOT NULL COMMENT '主键ID',
     `doc_id`        VARCHAR(50)  NOT NULL COMMENT '文档ID',
     `version`       INT          DEFAULT 0 COMMENT '版本号',
@@ -309,6 +322,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_document_version` (
 -- key_hash 建唯一索引：鉴权热路径按哈希等值查询，且防重复签发同一 Key
 -- ============================================
 CREATE TABLE IF NOT EXISTS `c_ai_api_key` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`           VARCHAR(50)  NOT NULL COMMENT '主键ID',
     `name`         VARCHAR(200) DEFAULT NULL COMMENT '用途名称（如"报表系统集成"）',
     `key_hash`     VARCHAR(64)  NOT NULL COMMENT 'Key 的 SHA-256 哈希（十六进制小写）',
@@ -332,6 +346,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_api_key` (
 -- 选中后该轮问答按智能体覆盖全局配置（未填维度继承全局）。工具开关三态：1=开 0=关 NULL=继承。
 -- ============================================
 CREATE TABLE IF NOT EXISTS `c_ai_agent` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`              VARCHAR(50)  NOT NULL COMMENT '主键ID',
     `name`            VARCHAR(200) NOT NULL COMMENT '智能体名称',
     `icon`            VARCHAR(32)  DEFAULT NULL COMMENT '图标: wenqu=问渠品牌标 / emoji 字符; NULL=默认展示（内置「问渠」默认用问渠品牌标，其余用机器人图标）',
@@ -376,6 +391,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_agent` (
 -- 最新版本恒等于当前配置；保留份数 agent.versionKeep（默认 20），超出按版本号最小先删。
 -- ============================================
 CREATE TABLE IF NOT EXISTS `c_ai_agent_version` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`          VARCHAR(50)  NOT NULL COMMENT '版本记录ID（UUID）',
     `agent_id`    VARCHAR(50)  NOT NULL COMMENT '智能体ID',
     `version`     INT          NOT NULL COMMENT '版本号（同一智能体内递增，从 1 起）',
@@ -395,6 +411,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_agent_version` (
 -- ============================================
 
 CREATE TABLE IF NOT EXISTS `c_ai_department` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`           VARCHAR(50)  NOT NULL COMMENT '主键ID (UUID无横线)',
     `parent_id`    VARCHAR(50)  DEFAULT NULL COMMENT '父部门ID（c_ai_department.id，空=根节点；2026-09-26 升级树形）',
     `name`         VARCHAR(100) NOT NULL COMMENT '部门名称',
@@ -408,6 +425,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_department` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 部门表（树形：parent_id 空为根）';
 
 CREATE TABLE IF NOT EXISTS `c_ai_user` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `uid`          VARCHAR(64)  NOT NULL COMMENT '用户标识（登录账号，与鉴权一致）',
     `username`     VARCHAR(100) DEFAULT NULL COMMENT '显示名称',
     `department_id` VARCHAR(50) DEFAULT NULL COMMENT '所属部门ID（外键 c_ai_department.id，可空=未分配）',
@@ -451,7 +469,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_provider` (
     `name`             VARCHAR(100) NOT NULL COMMENT '供应商显示名（如 DeepSeek / 智谱GLM）',
     `icon`             VARCHAR(255) DEFAULT NULL COMMENT '图标：内置图标key（deepseek/zhipu/...）或 http(s) 图片URL（空=前端字母头像）',
     `base_url`         VARCHAR(512) NOT NULL COMMENT '网关地址（OpenAI 兼容）',
-    `api_key`          TEXT         DEFAULT NULL COMMENT 'API Key（RSA 加密存储，RSA: 前缀）',
+    `api_key`          TEXT         DEFAULT NULL COMMENT 'API Key（JWE 信封加密存储，JWE: 前缀，header 带密钥版本 kid）',
     `completions_path` VARCHAR(255) DEFAULT NULL COMMENT '聊天补全路径（空=默认 /v1/chat/completions）',
     `embeddings_path`  VARCHAR(255) DEFAULT NULL COMMENT '向量路径（空=默认 /v1/embeddings）',
     `api_type`         VARCHAR(32)  DEFAULT 'openai' COMMENT '协议类型（预留: openai=OpenAI 兼容）',
@@ -505,12 +523,13 @@ CREATE TABLE IF NOT EXISTS `c_ai_model` (
 -- ============================================
 
 CREATE TABLE IF NOT EXISTS `c_ai_user_mcp` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`          VARCHAR(50)  NOT NULL COMMENT '主键ID (UUID)',
     `uid`         VARCHAR(64)  NOT NULL COMMENT '归属用户（c_ai_user.uid）',
     `name`        VARCHAR(60)  NOT NULL COMMENT '服务显示名（个人维度唯一；同时作为工具名前缀防冲突）',
     `url`         VARCHAR(512) NOT NULL COMMENT '服务地址（可含路径；streamable 默认端点 /mcp、sse 默认 /sse）',
     `type`        VARCHAR(16)  DEFAULT 'streamable' COMMENT '传输类型: streamable | sse',
-    `headers`     TEXT         COMMENT '自定义请求头（JSON 对象，整块 RSA 加密存储；RSA: 前缀）',
+    `headers`     TEXT         COMMENT '自定义请求头（JSON 对象，整块 JWE 信封加密存储；JWE: 前缀）',
     `enabled`     INT          DEFAULT 1 COMMENT '启用: 1=启用 0=停用（停用后不建立连接、不暴露其工具）',
     `tool_labels` TEXT COMMENT '工具中文名（JSON）：{items:{裸工具名:中文名}}。用户在 MCP 页逐条手工起名，没起名的展示原名',
     `create_time` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -597,6 +616,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_menu_api` (
 -- ============================================
 
 CREATE TABLE IF NOT EXISTS `c_ai_artifact` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`          VARCHAR(50)  NOT NULL COMMENT '主键ID (UUID)',
     `uid`         VARCHAR(64)  NOT NULL COMMENT '归属用户（c_ai_user.uid）',
     `session_id`  VARCHAR(64)  DEFAULT NULL COMMENT '产生该产物的会话（可空：会话清理后成果仍归人）',
@@ -633,6 +653,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_artifact` (
 -- ============================================
 
 CREATE TABLE IF NOT EXISTS `c_ai_project` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`               VARCHAR(64)  NOT NULL COMMENT '主键ID (UUID)',
     `uid`              VARCHAR(64)  NOT NULL COMMENT '归属用户（c_ai_user.uid；单用户容器，不做共享）',
     `name`             VARCHAR(255) DEFAULT NULL COMMENT '工作区名；implicit 容器可为空（不给它起名，界面只体现为侧栏「会话」栏）',
@@ -663,6 +684,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_project` (
 -- ============================================
 
 CREATE TABLE IF NOT EXISTS `c_ai_project_todo` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`          VARCHAR(50)  NOT NULL COMMENT '主键ID (UUID)',
     `uid`         VARCHAR(64)  NOT NULL COMMENT '归属用户（c_ai_user.uid；与工作区同口径，双保险）',
     `project_id`  VARCHAR(64)  NOT NULL COMMENT '所属工作区（c_ai_project.id）。删工作区时随归属一起清理',
@@ -685,6 +707,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_project_todo` (
 -- ============================================
 
 CREATE TABLE IF NOT EXISTS `c_ai_project_note_log` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`          VARCHAR(50)  NOT NULL COMMENT '主键ID (UUID)',
     `project_id`  VARCHAR(64)  NOT NULL COMMENT '所属工作区（c_ai_project.id）',
     `content`     TEXT         DEFAULT NULL COMMENT '被替换掉的那一版约定全文（NULL=当时约定为空，即本次是首次写入）',
@@ -703,6 +726,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_project_note_log` (
 -- ============================================
 
 CREATE TABLE IF NOT EXISTS `c_ai_scheduled_job` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`           VARCHAR(50)   NOT NULL COMMENT '主键ID (UUID)',
     `uid`          VARCHAR(64)   NOT NULL COMMENT '归属用户（c_ai_user.uid）',
     `name`         VARCHAR(100)  NOT NULL COMMENT '任务名（同时作为结果会话标题）',
@@ -727,6 +751,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_scheduled_job` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='定时执行智能体任务表';
 
 CREATE TABLE IF NOT EXISTS `c_ai_scheduled_run` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`           VARCHAR(50)   NOT NULL COMMENT '主键ID (UUID)',
     `job_id`       VARCHAR(50)   NOT NULL COMMENT '任务ID（c_ai_scheduled_job.id）',
     `uid`          VARCHAR(64)   NOT NULL COMMENT '归属用户',
@@ -744,6 +769,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_scheduled_run` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='定时任务执行记录（每轮一行；回答正文在结果会话里）';
 
 CREATE TABLE IF NOT EXISTS `c_ai_tool_approval` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`           VARCHAR(50)   NOT NULL COMMENT '审批请求ID（UUID，与 SSE approval_required 事件一致）',
     `session_id`   VARCHAR(50)   DEFAULT NULL COMMENT '归属会话',
     `user_id`      VARCHAR(64)   DEFAULT NULL COMMENT '发起问答的用户（仅本人可裁决）',
@@ -767,6 +793,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_tool_approval` (
 -- 完成不再由回答最后一行直接决定：marker 只生成「完成申请」，证据核验通过才落 ACHIEVED。
 -- ============================================
 CREATE TABLE IF NOT EXISTS `c_ai_goal` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`                VARCHAR(64)  NOT NULL COMMENT '目标ID（UUID，续跑幂等键 goal:{id}:{n} 用它，永不复用）',
     `session_id`        VARCHAR(50)  NOT NULL COMMENT '归属会话',
     `user_id`           VARCHAR(64)  DEFAULT NULL COMMENT '发起用户（仅本人可操作）',
@@ -829,6 +856,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_goal` (
 -- 「这一轮到底跑没跑、跑到了哪」，不能只看 goal 的 turn_counter。
 -- ============================================
 CREATE TABLE IF NOT EXISTS `c_ai_goal_round` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`              BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
     `goal_id`         VARCHAR(64)  NOT NULL COMMENT '归属目标',
     `n`               INT          NOT NULL COMMENT '第几轮（从 1 起，幂等键 goal:{id}:{n} 的 n）',
@@ -857,6 +885,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_goal_round` (
 -- 模型只能「申请完成」，证据落在这里，Verifier 逐条核验后才允许 COMPLETED。
 -- ============================================
 CREATE TABLE IF NOT EXISTS `c_ai_goal_evidence` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`         BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键',
     `goal_id`    VARCHAR(64)  NOT NULL COMMENT '归属目标',
     `round_n`    INT          NOT NULL DEFAULT 0 COMMENT '产生/引用该证据的轮次',
@@ -871,6 +900,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_goal_evidence` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='目标证据：Verifier 依据环境事实核验完成申请';
 
 CREATE TABLE IF NOT EXISTS `c_ai_mcp_call_log` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`             VARCHAR(50)  NOT NULL COMMENT '调用记录ID（UUID）',
     `channel`        VARCHAR(16)  NOT NULL COMMENT '渠道: agent=智能体端点/ai/mcp/{token}，platform=平台级/ai/mcp，outbound=平台调用用户接入的外部工具',
     `tool_name`      VARCHAR(128) DEFAULT NULL COMMENT '被调用的工具名（ask-{slug} / wenqu_*）',
@@ -891,6 +921,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_mcp_call_log` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='MCP 调用审计日志（入站：外部客户端调 wenqu 端点；出站：模型调用户接入的外部 MCP 工具）';
 
 CREATE TABLE IF NOT EXISTS `c_ai_workflow` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`           VARCHAR(50)   NOT NULL COMMENT '工作流ID（UUID）',
     `uid`          VARCHAR(64)   NOT NULL COMMENT '创建者 uid',
     `name`         VARCHAR(100)  NOT NULL COMMENT '工作流名称',
@@ -917,6 +948,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_workflow` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工作流定义（DSL 是唯一真源，画布只是编辑器）';
 
 CREATE TABLE IF NOT EXISTS `c_ai_workflow_run` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`           VARCHAR(50)   NOT NULL COMMENT '运行ID（UUID）',
     `workflow_id`  VARCHAR(50)   NOT NULL COMMENT '工作流ID',
     `dsl_snapshot` MEDIUMTEXT    NOT NULL COMMENT '本次运行锁定的 DSL 快照（执行不可变，改画布不影响历史回放）',
@@ -941,6 +973,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_workflow_run` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工作流运行记录（每次运行锁 DSL 快照；trace 为运营闭环打地基）';
 
 CREATE TABLE IF NOT EXISTS `c_ai_workflow_version` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`           VARCHAR(50)   NOT NULL COMMENT '版本记录ID（UUID）',
     `workflow_id`  VARCHAR(50)   NOT NULL COMMENT '工作流ID',
     `version`      INT           NOT NULL COMMENT '版本号（同一工作流内递增，从 1 起）',
@@ -954,6 +987,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_workflow_version` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工作流发布版本（M4：发布即落一版，回滚=以历史版本 DSL 再发一版）';
 
 CREATE TABLE IF NOT EXISTS `c_ai_credential` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`          VARCHAR(50)   NOT NULL COMMENT '凭据ID（UUID）',
     `uid`         VARCHAR(64)   NOT NULL COMMENT '归属人 uid（个人资产，不共享）',
     `name`        VARCHAR(64)   NOT NULL COMMENT '凭据名称（工作流里以 {{credential:名称}} 引用；同一用户内唯一）',
@@ -966,6 +1000,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_credential` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工作流凭据（http 节点引用；个人资产，值加密落库、出参脱敏）';
 
 CREATE TABLE IF NOT EXISTS `c_ai_trace_sample` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`           VARCHAR(50)  NOT NULL COMMENT '采样ID',
     `qa_log_id`    VARCHAR(50)  NOT NULL COMMENT '问答日志ID（唯一：一条日志只进一次池）',
     `message_id`   VARCHAR(50)  DEFAULT NULL COMMENT '回答消息ID（标注时还原全过程）',
@@ -985,6 +1020,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_trace_sample` (
 -- ============================================
 
 CREATE TABLE IF NOT EXISTS `c_ai_graph_entity` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`            VARCHAR(50)  NOT NULL COMMENT '实体ID',
     `kb_id`         VARCHAR(50)  NOT NULL COMMENT '知识库ID（图按库隔离）',
     `name`          VARCHAR(128) NOT NULL COMMENT '实体显示名（首次见到的写法）',
@@ -998,6 +1034,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_graph_entity` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='GraphRAG 实体表';
 
 CREATE TABLE IF NOT EXISTS `c_ai_graph_triple` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`          VARCHAR(50)  NOT NULL COMMENT '三元组ID',
     `kb_id`       VARCHAR(50)  NOT NULL COMMENT '知识库ID',
     `subject_id`  VARCHAR(50)  NOT NULL COMMENT '主体实体ID（c_ai_graph_entity.id）',
@@ -1015,6 +1052,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_graph_triple` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='GraphRAG 三元组表（LLM 从知识块抽取，仅原文陈述）';
 
 CREATE TABLE IF NOT EXISTS `c_ai_graph_extract` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`           VARCHAR(50)  NOT NULL COMMENT '抽取记录ID',
     `doc_id`       VARCHAR(50)  NOT NULL COMMENT '文档ID',
     `chunk_id`     VARCHAR(50)  NOT NULL COMMENT '知识块ID',
@@ -1028,6 +1066,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_graph_extract` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='GraphRAG 抽取记录（哈希增量与失败率的账本）';
 
 CREATE TABLE IF NOT EXISTS `c_ai_session_share` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`            VARCHAR(50)  NOT NULL COMMENT '分享ID（UUID）',
     `session_id`    VARCHAR(50)  NOT NULL COMMENT '被分享的会话ID',
     `token`         VARCHAR(64)  NOT NULL COMMENT '公开访问令牌（链接即凭据，重新开启会换新 token 使旧链接失效）',
@@ -1044,6 +1083,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_session_share` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='会话只读分享（链接持有者可看对话，不含工具过程与知识块全文）';
 
 CREATE TABLE IF NOT EXISTS `c_ai_schedule_run` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`           VARCHAR(50)   NOT NULL COMMENT '执行记录ID（UUID）',
     `task_name`    VARCHAR(64)   NOT NULL COMMENT '任务名（ScheduleCenter 注册名，中文）',
     `trigger_type` VARCHAR(16)   NOT NULL DEFAULT 'auto' COMMENT '触发方式: startup=启动首轮 auto=周期触发 manual=手动触发',
@@ -1058,6 +1098,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_schedule_run` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='定时任务执行日志（只记有信息量的执行：失败/手动/有产出；高频任务空跑不记；按保留期定期清理）';
 
 CREATE TABLE IF NOT EXISTS `c_ai_notification` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`          VARCHAR(50)   NOT NULL COMMENT '通知ID（UUID）',
     `uid`         VARCHAR(64)   NOT NULL COMMENT '接收人（uid；每人只看自己的通知）',
     `type`        VARCHAR(32)   NOT NULL COMMENT '类型: parse.done=解析完成 parse.failed=解析失败 parse.batch.failed=知识库批量解析失败 workflow.failed=运行失败 workflow.timeout=运行超时 workflow.approval=待人工审核 web.refresh.failed=网页源刷新失败 schedule.done=定时任务完成 schedule.failed=定时任务失败 eval.decline=检索评估下滑预警 tool.approval=工具审批待决 tool.ask=智能体提问待答 plan.approval=执行计划待确认 chat.turn.done=一轮对话跑完 chat.turn.failed=一轮对话没跑成或提前停了 goal.achieved=目标达成 goal.failed=目标停住(预算耗尽/连续无进展/受阻) model.quota=模型供应商额度不足',
@@ -1078,6 +1119,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_notification` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='站内通知（解析/工作流/网页源刷新等异步事件的用户可感知面；由 ScheduleCenter 按保留期定期清理）';
 
 CREATE TABLE IF NOT EXISTS `c_ai_usage_log` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`                VARCHAR(50)  NOT NULL COMMENT '流水ID（UUID）',
     `uid`               VARCHAR(64)  DEFAULT NULL COMMENT '归属用户（NULL=无用户上下文的系统调用：索引/评测/探测等）',
     `session_id`        VARCHAR(64)  DEFAULT NULL COMMENT '触发该次调用的会话（可空）',
@@ -1104,6 +1146,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_usage_log` (
 -- ============================================
 
 CREATE TABLE IF NOT EXISTS `c_ai_session_event` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`         BIGINT       NOT NULL AUTO_INCREMENT COMMENT '主键ID（自增即全局写入顺序，回放按它排序）',
     `session_id` VARCHAR(50)  NOT NULL COMMENT '归属会话',
     `user_id`    VARCHAR(64)  DEFAULT NULL COMMENT '发起本轮的用户（数据按人隔离，仅本人可见）',
@@ -1303,6 +1346,7 @@ DELETE FROM `c_ai_user_config` WHERE `config_key` IN (
 -- ============================================
 
 CREATE TABLE IF NOT EXISTS `c_ai_webpush_subscription` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`            BIGINT        NOT NULL AUTO_INCREMENT COMMENT '主键ID',
     `uid`           VARCHAR(64)   NOT NULL COMMENT '归属用户（登录用户 uid；一条通知只推给本人订阅的设备）',
     `endpoint_hash` CHAR(32)      NOT NULL COMMENT 'endpoint 的 MD5：推送服务给的地址可达数百字符，唯一键建在这上面（同一地址重复订阅＝刷新这一行）',
@@ -1327,11 +1371,11 @@ CREATE TABLE IF NOT EXISTS `c_ai_webpush_subscription` (
 
 CREATE TABLE IF NOT EXISTS `c_ai_identity_provider` (
     `id`                VARCHAR(50)  NOT NULL COMMENT '主键 (UUID)',
-    `tenant_id`         VARCHAR(50)  DEFAULT NULL COMMENT '租户ID（Phase4 启用，当前 NULL）',
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `type`              VARCHAR(20)  NOT NULL COMMENT 'oidc | saml | ldap | scim',
     `name`              VARCHAR(100) NOT NULL COMMENT '认证源名称（登录按钮/同步源名）',
     `enabled`           INT          DEFAULT 1 COMMENT '启用: 1=启用 0=停用',
-    `config`            TEXT         NOT NULL COMMENT '协议参数 JSON（按 type 不同；敏感字段整块 RSA 加密，RSA: 前缀）',
+    `config`            TEXT         NOT NULL COMMENT '协议参数 JSON（按 type 不同；整块 JWE 信封加密存储，JWE: 前缀）',
     `default_role`      VARCHAR(20)  DEFAULT 'user' COMMENT '自动建档默认角色（须是 c_ai_role.code 已启用值）',
     `default_department` VARCHAR(50) DEFAULT NULL COMMENT '自动建档默认部门（c_ai_department.id）',
     `auto_create_user`  INT          DEFAULT 1 COMMENT '首次登录自动建号（关闭则须管理员预先建好并绑定）',
@@ -1346,7 +1390,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_identity_provider` (
 -- 用户-外部身份关联：取代 c_ai_user.oidc_sub / oidc_provider 两列（统一身份抽象）
 CREATE TABLE IF NOT EXISTS `c_ai_user_identity` (
     `id`             VARCHAR(50)  NOT NULL COMMENT '主键 (UUID)',
-    `tenant_id`      VARCHAR(50)  DEFAULT NULL COMMENT '租户ID（Phase4 启用，当前 NULL）',
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `uid`            VARCHAR(64)  NOT NULL COMMENT '本地账号 (c_ai_user.uid)',
     `provider_id`    VARCHAR(50)  NOT NULL COMMENT 'c_ai_identity_provider.id',
     `external_id`    VARCHAR(255) NOT NULL COMMENT 'IdP 侧唯一标识（OIDC sub / SAML NameID / SCIM id / LDAP dn 摘要）',
@@ -1362,6 +1406,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_user_identity` (
 
 -- 用户-角色多对多：取代 c_ai_user.role 单值列
 CREATE TABLE IF NOT EXISTS `c_ai_user_role` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `uid`         VARCHAR(64) NOT NULL COMMENT 'c_ai_user.uid',
     `role_code`   VARCHAR(20) NOT NULL COMMENT 'c_ai_role.code',
     `granted_by`  VARCHAR(20) DEFAULT 'manual' COMMENT '授权来源: idp | manual',
@@ -1373,7 +1418,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_user_role` (
 -- 组→角色/部门 自动映射（治理核心，优先级裁决）
 CREATE TABLE IF NOT EXISTS `c_ai_group_role_mapping` (
     `id`             VARCHAR(50) NOT NULL COMMENT '主键 (UUID)',
-    `tenant_id`      VARCHAR(50) DEFAULT NULL COMMENT '租户ID（Phase4 启用，当前 NULL）',
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `provider_id`    VARCHAR(50) NOT NULL COMMENT 'c_ai_identity_provider.id',
     `external_group` VARCHAR(255) NOT NULL COMMENT 'IdP 侧组名/组标识',
     `role_code`      VARCHAR(20) DEFAULT NULL COMMENT '映射到的角色（c_ai_role.code）',
@@ -1387,7 +1432,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_group_role_mapping` (
 -- 身份同步作业日志（SCIM/LDAP/销户回收可追溯）
 CREATE TABLE IF NOT EXISTS `c_ai_sync_job_log` (
     `id`             VARCHAR(50)  NOT NULL COMMENT '主键 (UUID)',
-    `tenant_id`      VARCHAR(50)  DEFAULT NULL COMMENT '租户ID（Phase4 启用，当前 NULL）',
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `source_type`    VARCHAR(20)  NOT NULL COMMENT 'scim | ldap | saml | oidc',
     `source_id`      VARCHAR(50)  DEFAULT NULL COMMENT '对应 c_ai_identity_provider.id',
     `users_created`  INT          DEFAULT 0 COMMENT '本次新建账号数',
@@ -1404,7 +1449,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_sync_job_log` (
 -- 与 c_ai_group_role_mapping（组→角色规则）分离：成员是 IdP 侧事实，规则是本地治理配置。
 CREATE TABLE IF NOT EXISTS `c_ai_group_member` (
     `id`             VARCHAR(50)  NOT NULL COMMENT '主键 (UUID)',
-    `tenant_id`      VARCHAR(50)  DEFAULT NULL COMMENT '租户ID（Phase4 启用，当前 NULL）',
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `provider_id`    VARCHAR(50)  NOT NULL COMMENT 'c_ai_identity_provider.id',
     `external_group` VARCHAR(255) NOT NULL COMMENT 'IdP 侧组名/组标识（同 c_ai_group_role_mapping.external_group）',
     `uid`            VARCHAR(64)  NOT NULL COMMENT '本地账号 (c_ai_user.uid)',
@@ -1413,3 +1458,117 @@ CREATE TABLE IF NOT EXISTS `c_ai_group_member` (
     UNIQUE KEY `uk_grp_member` (`provider_id`, `external_group`, `uid`),
     KEY `idx_member_uid` (`uid`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='组⇄用户成员关系（SCIM/LDAP 同步）';
+
+-- ============================================
+-- Phase 2 计量计费与配额（2026-10-27）
+-- 用量账目本身仍以 c_ai_usage_log 为唯一事实源（单价按模型登记、随改随算，不落快照），
+-- 这里只存「上限」：谁（平台/部门/成员）、按什么周期（日/月）、限多少（token 与金额）、限不限辅助调用。
+-- ============================================
+CREATE TABLE IF NOT EXISTS `c_ai_quota` (
+    `id`           VARCHAR(50)   NOT NULL COMMENT '主键 (UUID)',
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
+    `scope`        VARCHAR(16)   NOT NULL COMMENT '作用域: tenant=本租户全体 department=某部门 user=某成员（行按租户归属，跨租户请逐租户设）',
+    `scope_id`     VARCHAR(64)   DEFAULT NULL COMMENT 'tenant 留空；department=c_ai_department.id；user=c_ai_user.uid',
+    `period`       VARCHAR(8)    NOT NULL DEFAULT 'month' COMMENT '周期: day=自然日 month=自然月（到点自动归零，按账期重算）',
+    `token_limit`  BIGINT        NOT NULL DEFAULT 0 COMMENT '周期 token 上限（0=不按 token 限）',
+    `cost_limit`   DECIMAL(12,2) DEFAULT NULL COMMENT '周期费用上限（元；NULL=不按金额限。未配单价的模型不计入金额）',
+    `kinds`        VARCHAR(255)  DEFAULT NULL COMMENT '受限用途（逗号分隔 kind；空=只限用户主动发起的对话/子智能体/工作流/目标轮，辅助调用不拦）',
+    `enforce`      INT           DEFAULT 1 COMMENT '1=到额即熔断该用途的后续调用；0=只告警不拦（新策略先观察再收紧）',
+    `remark`       VARCHAR(200)  DEFAULT NULL COMMENT '备注（为什么给这个人/部门设这个数，审计要看得到）',
+    `create_time`  DATETIME      DEFAULT CURRENT_TIMESTAMP,
+    `update_time`  DATETIME      DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_quota_scope` (`scope`, `scope_id`, `period`),
+    KEY `idx_quota_scope_id` (`scope_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='推理配额与预算上限（平台/部门/成员三档，日/月两周期）';
+
+-- ============================================
+-- Phase 3 统一审计事件总线（2026-10-27，plan §4.3 P11）
+-- 原先 84 处 [AUDIT] 只落日志文件：查一次「谁删了这份文档」要登机器 grep，
+-- 留存随日志轮转丢失，也没法按人/按动作/按时间出合规清单。这里把同一批事件结构化入库。
+-- prev_hash/row_hash 是一条 SHA-256 哈希链：改一行或删一行都会让后续链验不过（导出接口带校验）。
+-- ============================================
+CREATE TABLE IF NOT EXISTS `c_ai_audit_event` (
+    `id`           BIGINT       NOT NULL AUTO_INCREMENT COMMENT '自增序号（哈希链按此顺序）',
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
+    `ts`           DATETIME(3)  NOT NULL COMMENT '事件时刻（毫秒）',
+    `level`        VARCHAR(8)   NOT NULL DEFAULT 'info' COMMENT 'info=常规治理动作 warn=需人工看一眼（如无权限跳过）',
+    `action`       VARCHAR(64)  NOT NULL COMMENT '动作名（中文，与日志里 [AUDIT] 后那段同源）',
+    `actor_uid`    VARCHAR(64)  DEFAULT NULL COMMENT '操作人 uid（NULL=系统/无请求上下文）',
+    `actor_ip`     VARCHAR(64)  DEFAULT NULL COMMENT '来源 IP（登录/分享侧审计要按 IP 追）',
+    `target_type`  VARCHAR(32)  DEFAULT NULL COMMENT '对象类型（doc/kb/agent/user/role/menu/config…）',
+    `target_id`    VARCHAR(190) DEFAULT NULL COMMENT '对象标识（文档 ID、uid、模型引用…）',
+    `session_id`  VARCHAR(64)   DEFAULT NULL COMMENT '关联会话（问答/游客类事件才有）',
+    `detail`       TEXT         DEFAULT NULL COMMENT '其余键值（JSON，按插入序）',
+    `replica`      VARCHAR(64)  DEFAULT NULL COMMENT '产生该事件的副本标识（多副本排障）',
+    `seq`          BIGINT       DEFAULT NULL COMMENT '本副本内单调序号：哈希链按 (replica, seq) 排序，不依赖自增 id（多副本并发插入会交错）',
+    `prev_hash`    CHAR(64)     DEFAULT NULL COMMENT '同副本上一条的 row_hash（链头为 GENESIS）',
+    `row_hash`     CHAR(64)     DEFAULT NULL COMMENT '本行规范化字段的 SHA-256',
+    `create_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '入库时刻（与 ts 可差一个批量窗口）',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_ae_replica_seq` (`replica`, `seq`),
+    KEY `idx_ae_ts` (`ts`),
+    KEY `idx_ae_actor` (`actor_uid`, `ts`),
+    KEY `idx_ae_action` (`action`, `ts`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='统一审计事件（结构化 + 哈希链可验证 + 按留存期清理）';
+
+-- ============================================
+-- Phase 3 内容安全网关（2026-10-27，plan §4.3 P12）
+-- 拦截词表属于部署方的合规判断，一律以数据存在这张表里由管理员维护，代码里不写死任何一条规则。
+-- 两道闸共用这一份表：输入闸在问答入口（命中即不发起本轮），出口闸在两处模型出口（命中即当场截断）。
+-- ============================================
+CREATE TABLE IF NOT EXISTS `c_ai_content_rule` (
+    `id`             VARCHAR(50)  NOT NULL COMMENT '主键 (UUID)',
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
+    `name`           VARCHAR(100) NOT NULL COMMENT '规则名（审计与拦截文案都点名它，要能读懂）',
+    `category`       VARCHAR(50)  DEFAULT NULL COMMENT '类目（同类规则归组，便于统计，不参与判定）',
+    `stage`          VARCHAR(8)   NOT NULL DEFAULT 'both' COMMENT '作用侧: input=只判提问 output=只判回答 both=两侧都判',
+    `match_type`     VARCHAR(8)   NOT NULL DEFAULT 'keyword' COMMENT '匹配方式: keyword=字面包含 regex=正则',
+    `pattern`        VARCHAR(1000) NOT NULL COMMENT '关键词（逗号或换行分隔多条）或正则表达式',
+    `action`         VARCHAR(8)   NOT NULL DEFAULT 'block' COMMENT '命中动作: block=拦下（提问被拒/回答截断） warn=放行只记审计',
+    `case_sensitive` INT          DEFAULT 0 COMMENT '1=区分大小写（只对拉丁字母有意义）',
+    `enabled`        INT          DEFAULT 1 COMMENT '1=生效',
+    `priority`       INT          DEFAULT 100 COMMENT '升序判定，先命中的那条说话（更具体的排前面）',
+    `note`           VARCHAR(300) DEFAULT NULL COMMENT '依据：为什么定这条规则（合规检查要看得到出处）',
+    `create_time`    DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    `update_time`    DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_cr_stage` (`enabled`, `stage`, `priority`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='内容安全规则（输入闸与出口闸共用一份表）';
+
+-- ============================================
+-- Phase 4 多租户隔离（2026-10-27，plan §4.5 P9）
+-- 租户是行级归属：全表 tenant_id（NOT NULL DEFAULT 'default'）由 MyBatis-Plus 的
+-- TenantLineInnerInterceptor 在 SQL 上强制，存量库由 SchemaMigrator 自动补列并按默认租户回填。
+-- 单租户部署不需要任何开关——平台自己就是一个租户（default），行为与加列前完全一致。
+-- ============================================
+CREATE TABLE IF NOT EXISTS `c_ai_tenant` (
+    `id`           VARCHAR(32)  NOT NULL COMMENT '租户标识（行内 tenant_id 的取值；default=单租户部署的那个租户）',
+    `name`         VARCHAR(100) NOT NULL COMMENT '租户显示名',
+    `status`       INT          NOT NULL DEFAULT 1 COMMENT '1=启用 0=停用（停用后该租户成员无法登录）',
+    `contact`      VARCHAR(100) DEFAULT NULL COMMENT '联系人/对接人',
+    `note`         VARCHAR(300) DEFAULT NULL COMMENT '备注：这个租户是谁、怎么开通的',
+    `create_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    `update_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='租户注册表（行级隔离的归属清单）';
+
+-- 租户开通申请（Phase 4 刀三 · 自助开通）：申请发生在还没有租户的时候，
+-- 所以这张表没有 tenant_id（它在 WenquTenantLineHandler 的平台全局表清单里点名豁免）
+CREATE TABLE IF NOT EXISTS `c_ai_tenant_request` (
+    `id`            VARCHAR(50)  NOT NULL COMMENT '主键ID',
+    `org_name`      VARCHAR(80)  NOT NULL COMMENT '机构名称（批准后即租户显示名）',
+    `desired_id`    VARCHAR(32)  DEFAULT NULL COMMENT '期望的租户标识；NULL=由批准人定',
+    `contact_name`  VARCHAR(60)  DEFAULT NULL COMMENT '联系人',
+    `contact_email` VARCHAR(160) NOT NULL COMMENT '联系邮箱（校验格式；唯一性只用于拦重复提交）',
+    `purpose`       VARCHAR(500) NOT NULL COMMENT '用途说明：审批要看这条',
+    `status`        VARCHAR(20)  NOT NULL DEFAULT 'pending' COMMENT 'pending=待审 approved=已开通 rejected=已驳回',
+    `opened_tenant` VARCHAR(32)  DEFAULT NULL COMMENT '批准后开出的租户标识（审批结果，不是行归属）',
+    `admin_uid`     VARCHAR(64)  DEFAULT NULL COMMENT '批准时建出的首位管理员账号（口令不落库）',
+    `reviewer`      VARCHAR(64)  DEFAULT NULL COMMENT '审批人',
+    `review_note`   VARCHAR(500) DEFAULT NULL COMMENT '驳回/批准说明',
+    `create_time`   DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    `update_time`   DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_tenant_request_status` (`status`, `create_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='租户开通申请（提交自助、开通人工批准）';

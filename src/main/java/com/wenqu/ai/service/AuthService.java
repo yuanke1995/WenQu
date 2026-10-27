@@ -28,29 +28,27 @@ import java.util.Map;
 @Service
 @RequiredArgsConstructor
 public class AuthService {
+    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    private final AuditService audit;
+
 
     private final UserMapper userMapper;
     private final AppProperties properties;
     private final RoleService roleService;
     private final UserRoleService userRoleService;
     private final IdentityService identityService;
+    private final DeploymentSecrets secrets;
 
-    /** 运行时解析后的签名密钥（未配置时开发期随机生成） */
+    /** 运行时解析后的签名密钥（取用规则与多副本一致性由 DeploymentSecrets 兜住） */
     private volatile String resolvedSecret;
 
     @PostConstruct
     void init() {
-        AppProperties.Auth a = properties.getAuth();
-        String s = a.getJwtSecret();
-        if (s == null || s.isBlank()) {
-            resolvedSecret = AuthCrypto.randomSecret();
-            log.warn("[AUTH] 未配置 AI_JWT_SECRET，已生成临时随机密钥；服务重启后所有登录令牌将失效。生产环境请配置 ≥32 位随机串。");
-        } else {
-            if (s.length() < 32) {
-                log.warn("[AUTH] AI_JWT_SECRET 长度仅 {} 位，建议使用 ≥32 位随机密钥", s.length());
-            }
-            resolvedSecret = s;
+        String s = secrets.jwtSecret();
+        if (s.length() < 32) {
+            log.warn("[AUTH] 登录令牌密钥长度仅 {} 位，建议使用 ≥32 位随机密钥", s.length());
         }
+        resolvedSecret = s;
     }
 
     public String secret() { return resolvedSecret; }
@@ -104,7 +102,7 @@ public class AuthService {
         }
         // 超管走多角色表（c_ai_user_role），不再写 c_ai_user.role 旧列
         userRoleService.grant(u, "superadmin", "manual");
-        log.info("[AUDIT] 初始化管理员 uid={} username={}", u, name);
+        audit.record("[AUDIT] 初始化管理员 uid={} username={}", u, name);
         return login(u, password);
     }
 
@@ -140,7 +138,7 @@ public class AuthService {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("token", token);
         out.put("user", userInfo(user));
-        log.info("[AUDIT] 登录成功 uid={} roles={}", user.getUid(), userRoleService.rolesOf(user.getUid()));
+        audit.record("[AUDIT] 登录成功 uid={} roles={}", user.getUid(), userRoleService.rolesOf(user.getUid()));
         return out;
     }
 
@@ -155,7 +153,7 @@ public class AuthService {
         checkPassword(newPassword);
         user.setPasswordHash(AuthCrypto.hashPassword(newPassword));
         userMapper.updateById(user);
-        log.info("[AUDIT] 修改密码 uid={}", uid);
+        audit.record("[AUDIT] 修改密码 uid={}", uid);
     }
 
     /** 管理员重置他人密码（同时清除锁定） */
@@ -167,7 +165,7 @@ public class AuthService {
         user.setLoginFailCount(0);
         user.setLockedUntil(null);
         userMapper.updateById(user);
-        log.info("[AUDIT] 重置密码 uid={}", uid);
+        audit.record("[AUDIT] 重置密码 uid={}", uid);
     }
 
     /** 用户公开信息（不含敏感字段）：多角色并集判定管理员；外部身份绑定取自统一身份表 */

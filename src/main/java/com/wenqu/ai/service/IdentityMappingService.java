@@ -35,16 +35,27 @@ public class IdentityMappingService {
     private final GroupMemberMapper groupMemberMapper;
     private final UserRoleService userRoleService;
     private final RoleService roleService;
+    private final ExternalUserService externalUserService;
 
     // ==================== 规则管理 ====================
+    // 四条管理入口一律跑在「该认证源的租户」里（Phase 4）：平台级管理员替别家租户配规则时，
+    // 若按管理员本人的租户落行或取数，规则会存进他自己的租户而本租户的同步永远读不到它——
+    // 界面上「已保存」、裁决照旧不生效，正是要防的静默失配。判据与 ExternalUserService.inProviderTenant 同源。
 
     public List<GroupRoleMapping> listByProvider(String providerId) {
-        return mapper.selectList(new LambdaQueryWrapper<GroupRoleMapping>()
-                .eq(GroupRoleMapping::getProviderId, providerId)
-                .orderByAsc(GroupRoleMapping::getExternalGroup));
+        return externalUserService.inProviderTenant(providerId, () -> mapper.selectList(
+                new LambdaQueryWrapper<GroupRoleMapping>()
+                        .eq(GroupRoleMapping::getProviderId, providerId)
+                        .orderByAsc(GroupRoleMapping::getExternalGroup)));
     }
 
     public GroupRoleMapping create(String providerId, String externalGroup, String roleCode, String departmentId, Integer priority) {
+        return externalUserService.inProviderTenant(providerId,
+                () -> createScoped(providerId, externalGroup, roleCode, departmentId, priority));
+    }
+
+    private GroupRoleMapping createScoped(String providerId, String externalGroup, String roleCode,
+                                          String departmentId, Integer priority) {
         if (externalGroup == null || externalGroup.isBlank()) throw new BizException("组名不能为空");
         GroupRoleMapping exist = findOf(providerId, externalGroup.trim());
         if (exist != null) throw new BizException("该认证源下已存在组「" + externalGroup + "」的映射规则");
@@ -60,6 +71,11 @@ public class IdentityMappingService {
     }
 
     public GroupRoleMapping update(String id, String roleCode, String departmentId, Integer priority) {
+        return externalUserService.inProviderTenant(providerOf(id),
+                () -> updateScoped(id, roleCode, departmentId, priority));
+    }
+
+    private GroupRoleMapping updateScoped(String id, String roleCode, String departmentId, Integer priority) {
         GroupRoleMapping g = require(id);
         g.setRoleCode(normalizeRoleCode(roleCode));
         g.setDepartmentId(trimToNull(departmentId));
@@ -70,6 +86,10 @@ public class IdentityMappingService {
 
     /** 删规则：顺带回收按该规则拿到角色的用户的 idp 行（裁决事实变化） */
     public void delete(String id) {
+        externalUserService.inProviderTenant(providerOf(id), () -> deleteScoped(id));
+    }
+
+    private void deleteScoped(String id) {
         GroupRoleMapping g = require(id);
         mapper.deleteById(id);
         if (g.getRoleCode() != null && !g.getRoleCode().isBlank()) {
@@ -84,6 +104,13 @@ public class IdentityMappingService {
         return mapper.selectOne(new LambdaQueryWrapper<GroupRoleMapping>()
                 .eq(GroupRoleMapping::getProviderId, providerId)
                 .eq(GroupRoleMapping::getExternalGroup, externalGroup).last("LIMIT 1"));
+    }
+
+    /** 规则属于哪个认证源（平台视图读：管理员此刻可能绑着别的租户，而这条语句只是要拿到 provider_id） */
+    private String providerOf(String id) {
+        GroupRoleMapping g = com.wenqu.ai.util.TenantContext.asPlatform(() -> mapper.selectById(id));
+        if (g == null) throw new BizException("映射规则不存在");
+        return g.getProviderId();
     }
 
     private GroupRoleMapping require(String id) {

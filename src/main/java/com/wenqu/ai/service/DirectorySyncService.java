@@ -45,6 +45,9 @@ import java.util.UUID;
 @Service
 @RequiredArgsConstructor
 public class DirectorySyncService {
+    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    private final AuditService audit;
+
 
     private final IdentityProviderMapper providerMapper;
     private final LdapDirectoryService ldap;
@@ -96,6 +99,11 @@ public class DirectorySyncService {
     // ==================== diff 同步 ====================
 
     private SyncJobLog syncProvider(IdentityProvider p) {
+        // 同步建出来的成员必须落在认证源自己的租户里，判据与理由见 ExternalUserService.inProviderTenant
+        return externalUserService.inProviderTenant(p.getId(), () -> syncProviderScoped(p));
+    }
+
+    private SyncJobLog syncProviderScoped(IdentityProvider p) {
         int created = 0, updated = 0, disabled = 0;
         List<String> errors = new ArrayList<>();
         List<LdapDirectoryService.LdapUser> remote;
@@ -145,7 +153,7 @@ public class DirectorySyncService {
             u.setStatus(0);
             userMapper.updateById(u);
             disabled++;
-            log.info("[AUDIT] LDAP 离员禁用 provider={} uid={}", p.getId(), u.getUid());
+            audit.record("[AUDIT] LDAP 离员禁用 provider={} uid={}", p.getId(), u.getUid());
         }
 
         String status = errors.isEmpty() ? "success" : (created + updated + disabled > 0 ? "partial" : "failed");
@@ -220,7 +228,7 @@ public class DirectorySyncService {
                 log.warn("[LDAP] 默认角色授予失败 uid={} role={}: {}", uid, defaultRole, e.getMessage());
             }
         }
-        log.info("[AUDIT] LDAP 自动建档 provider={} uid={} dn={}", p.getId(), uid, lu.externalId());
+        audit.record("[AUDIT] LDAP 自动建档 provider={} uid={} dn={}", p.getId(), uid, lu.externalId());
         return u;
     }
 
@@ -255,7 +263,7 @@ public class DirectorySyncService {
         } catch (Exception e) {
             log.warn("[LDAP] 同步日志写入失败 provider={}: {}", p.getId(), e.getMessage());
         }
-        log.info("[AUDIT] LDAP 同步完成 provider={} status={} created={} updated={} disabled={}",
+        audit.record("[AUDIT] LDAP 同步完成 provider={} status={} created={} updated={} disabled={}",
                 p.getId(), status, created, updated, disabled);
         return l;
     }

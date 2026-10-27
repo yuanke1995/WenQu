@@ -707,6 +707,11 @@ public class ArtifactService {
         return Paths.get(properties.getImages().getDir()).toAbsolutePath().normalize();
     }
 
+    /** 该成员的产物分片根（{@code {images.dir}/artifacts/{uid}}）——DR 清单按租户枚举时用 */
+    public Path userArtifactDir(String uid) {
+        return baseDir().resolve("artifacts").resolve(com.wenqu.ai.sandbox.SandboxPaths.uidDirname(uid));
+    }
+
     private static String extOf(String name) {
         int dot = name.lastIndexOf('.');
         return dot > 0 ? name.substring(dot + 1).toLowerCase() : "";

@@ -29,7 +29,7 @@ public class OidcProvider {
     /** 客户端 ID */
     private String clientId;
 
-    /** 客户端密钥（RSA 密文，RSA: 前缀） */
+    /** 客户端密钥（JWE 密文，JWE: 前缀） */
     private String clientSecret;
 
     /** 回调地址（空=按访问来源推导） */

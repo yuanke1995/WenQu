@@ -9,9 +9,9 @@ import java.time.LocalDateTime;
 
 /**
  * 统一身份认证源（OIDC/SAML/LDAP/SCIM）：一行一个认证源，协议参数集中在
- * {@code config} JSON 列（按 {@code type} 不同结构不同；敏感字段整块 RSA 加密，"RSA: " 前缀，
- * 经 {@code ConfigCryptoService.decrypt} 解出）。OIDC 存量配置仍在旧表 {@code c_ai_oidc_provider}
- * （迁移期并存，退役见任务 #7），本表是批次 1 起新认证源的唯一登记处。
+ * {@code config} JSON 列（按 {@code type} 不同结构不同；整块 JWE 信封加密，{@code JWE:} 前缀，
+ * 经 {@code ConfigCryptoService.decrypt} 解出）。四类认证源都登记在本表，
+ * OIDC 的运行时配置由 {@code OidcProviderService} 按 {@code type='oidc'} 读写这里。
  *
  * @author yuanke
  */

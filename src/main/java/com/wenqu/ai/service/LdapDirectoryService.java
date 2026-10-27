@@ -25,7 +25,7 @@ import java.util.Map;
  * <p>
  * config JSON 字段：
  * <pre>{ "url": "ldap://ad.corp.com:389", "baseDn": "DC=corp,DC=com",
- *        "bindDn": "CN=svc-wenqu,DC=corp,DC=com", "bindPassword": "..."（RSA: 加密）,
+ *        "bindDn": "CN=svc-wenqu,DC=corp,DC=com", "bindPassword": "..."（密文）,
  *        "userFilter": "(objectClass=user)", "uidAttr": "sAMAccountName",
  *        "nameAttr": "displayName", "memberOfAttr": "memberOf",      ← AD 形态（用户侧组属性）
  *        "groupBaseDn": "OU=Groups,...", "groupFilter": "(objectClass=group)",
@@ -131,7 +131,7 @@ public class LdapDirectoryService {
     public LdapConfig config(IdentityProvider p) {
         String raw = p.getConfig();
         if (raw == null || raw.isBlank()) throw new IllegalArgumentException("LDAP 认证源未配置");
-        if (raw.startsWith("RSA:")) raw = crypto.decrypt(raw);
+        raw = crypto.decrypt(raw);
         try {
             JsonNode n = new com.fasterxml.jackson.databind.ObjectMapper().readTree(raw);
             String url = text(n, "url");

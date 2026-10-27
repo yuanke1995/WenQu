@@ -33,6 +33,9 @@ import java.util.UUID;
 @Service
 @RequiredArgsConstructor
 public class OrgService {
+    /** 统一审计事件（Phase 3）：同一份格式串派生日志与结构化事件，不再两处抄 */
+    private final AuditService audit;
+
 
     private static final String UID_PATTERN = "[A-Za-z0-9_@.\\-]+";
     private static final int NAME_MAX = 100;
@@ -54,6 +57,33 @@ public class OrgService {
 
     // ==================== 部门 ====================
 
+    /**
+     * 成员管理类写操作在 superadmin 下走平台视图（Phase 4 多租户）。
+     * <p>两个原因，第二个更要命：
+     * <ol>
+     *   <li>成员名单对 superadmin 是跨租户摊开的，写侧仍按本租户过滤就会出现「看得见、点保存说用户不存在」；</li>
+     *   <li>{@code updateById} 会被拼上 {@code WHERE uid = ? AND tenant_id = ?}，匹配 0 行时<b>一声不响</b>——
+     *       界面提示「已保存」而什么都没改，正是本仓最忌讳的静默失效。</li>
+     * </ol>
+     * 租户管理员（role=admin，非 superadmin）不在放开范围内：他只管本租户的成员。
+     * 本人自助类操作（改自己的昵称/头像/偏好）不走这里——那些线程上绑的就是他自己的租户。
+     */
+    private <T> T asPlatformIfSuper(java.util.function.Supplier<T> body) {
+        return com.wenqu.ai.util.RequestUser.superadmin()
+                ? com.wenqu.ai.util.TenantContext.asPlatform(body) : body.get();
+    }
+
+    private void asPlatformIfSuperVoid(Runnable body) {
+        if (!com.wenqu.ai.util.RequestUser.superadmin()) {
+            body.run();
+            return;
+        }
+        com.wenqu.ai.util.TenantContext.asPlatform(() -> {
+            body.run();
+            return null;
+        });
+    }
+
     public List<Department> listDepartments() {
         return departmentMapper.selectList(
                 new LambdaQueryWrapper<Department>().orderByAsc(Department::getName));
@@ -68,7 +98,7 @@ public class OrgService {
         d.setName(n);
         d.setDescription(trimOrNull(description));
         departmentMapper.insert(d);
-        log.info("[AUDIT] 新建部门 id={} name={} parent={}", d.getId(), n, d.getParentId());
+        audit.record("[AUDIT] 新建部门 id={} name={} parent={}", d.getId(), n, d.getParentId());
         return d;
     }
 
@@ -82,7 +112,7 @@ public class OrgService {
         d.setName(n);
         d.setDescription(trimOrNull(description));
         departmentMapper.updateById(d);
-        log.info("[AUDIT] 编辑部门 id={} name={} parent={}", id, n, d.getParentId());
+        audit.record("[AUDIT] 编辑部门 id={} name={} parent={}", id, n, d.getParentId());
     }
 
     /**
@@ -102,7 +132,7 @@ public class OrgService {
             throw new BizException("该部门下仍有 " + children + " 个子部门，请先删除或移出子部门");
         }
         departmentMapper.hardDeleteById(id);
-        log.info("[AUDIT] 删除部门 id={} name={}", id, d.getName());
+        audit.record("[AUDIT] 删除部门 id={} name={}", id, d.getName());
     }
 
     // ==================== 用户 ====================
@@ -117,6 +147,16 @@ public class OrgService {
      * {@code role}（主角色，管理员优先——前端单角色展示的兼容口径）。
      */
     public List<java.util.Map<String, Object>> listUsersWithRoles() {
+        // 平台级（superadmin）看得到全部租户的成员：把成员挪进别的租户之后，
+        // 若名单也按本租户过滤，就再也没有入口把他改回来——管理动作不能留这种死路。
+        // 只放开这份名单，其它数据列表仍按本人租户过滤（跨租户读别人的知识库/会话不是管理成员所需）。
+        if (com.wenqu.ai.util.RequestUser.superadmin()) {
+            return com.wenqu.ai.util.TenantContext.asPlatform(this::listUsersWithRolesScoped);
+        }
+        return listUsersWithRolesScoped();
+    }
+
+    private List<java.util.Map<String, Object>> listUsersWithRolesScoped() {
         List<java.util.Map<String, Object>> out = new java.util.ArrayList<>();
         for (User u : listUsers()) {
             java.util.Map<String, Object> m = new java.util.LinkedHashMap<>(
@@ -139,8 +179,17 @@ public class OrgService {
 
     /** 新建用户（必须设置初始密码，否则无法登录；角色须为角色表中启用的角色；落多角色表） */
     public User createUser(String uid, String username, String departmentId, String role, String password) {
+        // 成员管理是平台动作（Phase 4）：判据与理由见 asPlatformIfSuper 的注释
+        return asPlatformIfSuper(() -> createUserScoped(uid, username, departmentId, role, password));
+    }
+
+    private User createUserScoped(String uid, String username, String departmentId, String role, String password) {
         String u = normalizeUid(uid);
-        if (userMapper.selectById(u) != null) throw new BizException("该登录账号已存在");
+        // 账号标识是平台级命名空间（判据与后果见 ExternalUserService.ensureUniqueUid 的注释）：
+        // 只查本租户会「查无此人」然后撞主键，把一句清楚的提示变成一次 500。
+        if (com.wenqu.ai.util.TenantContext.asPlatform(() -> userMapper.selectById(u)) != null) {
+            throw new BizException("该登录账号在本平台内已被占用（账号标识跨租户唯一，请换一个）");
+        }
         String name = trimOrNull(username);
         if (name != null) ensureUsernameUnique(name, null);
         String r = normalizeRole(role);
@@ -154,7 +203,7 @@ public class OrgService {
         user.setLoginFailCount(0);
         userMapper.insert(user);
         userRoleService.grant(u, r, "manual");
-        log.info("[AUDIT] 新建用户 uid={} roles=[{}] dept={}", u, r, user.getDepartmentId());
+        audit.record("[AUDIT] 新建用户 uid={} roles=[{}] dept={}", u, r, user.getDepartmentId());
         return user;
     }
 
@@ -163,6 +212,11 @@ public class OrgService {
      * 旧调用传单 {@code role} 时按单元素集合处理（兼容存量调用方，语义不变）。
      */
     public void updateUser(String uid, String username, String departmentId, List<String> roles, Integer status) {
+        // 成员管理是平台动作（Phase 4）：判据与理由见 asPlatformIfSuper 的注释
+        asPlatformIfSuperVoid(() -> updateUserScoped(uid, username, departmentId, roles, status));
+    }
+
+    private void updateUserScoped(String uid, String username, String departmentId, List<String> roles, Integer status) {
         User user = userMapper.selectById(uid);
         if (user == null) throw new BizException("用户不存在");
         List<String> normalized = new ArrayList<>();
@@ -189,17 +243,25 @@ public class OrgService {
         user.setDepartmentId(trimOrNull(departmentId));
         if (status != null) user.setStatus(status);
         userMapper.updateById(user);
+        // 档案整行被请求侧缓存 60s：改完不逐出，禁用/改角色/改部门要多等一分钟才对新的请求生效
+        com.wenqu.ai.config.UserContextInterceptor.evict(uid);
         // 角色全量替换写多角色表（granted_by='manual' 行；idp 行不动——IdP 权威）
         userRoleService.setManualRoles(uid, normalized);
     }
 
     public void deleteUser(String uid) {
+        // 成员管理是平台动作（Phase 4）：判据与理由见 asPlatformIfSuper 的注释
+        asPlatformIfSuperVoid(() -> deleteUserScoped(uid));
+    }
+
+    private void deleteUserScoped(String uid) {
         User user = userMapper.selectById(uid);
         if (user == null) throw new BizException("用户不存在");
         if (userRoleService.isAdmin(uid) && isLastAdminAccount()) {
             throw new BizException("至少保留一名管理员级账号，无法删除最后一名");
         }
         userMapper.deleteById(uid);
+        com.wenqu.ai.config.UserContextInterceptor.evict(uid);
         // 级联清理角色/外部身份绑定（多角色与统一身份模型的归属行，不清理会在重建同名 uid 时继承旧授权）
         userRoleService.removeAll(uid);
         identityService.unbindAll(uid);
@@ -211,7 +273,7 @@ public class OrgService {
             log.error("[MEMORY] 删除用户后清理记忆失败 uid={}（请手工删除 user-data/agentscope/{}）: {}",
                     uid, uid, e.getMessage());
         }
-        log.info("[AUDIT] 删除用户 uid={}", uid);
+        audit.record("[AUDIT] 删除用户 uid={}", uid);
     }
 
     /**
@@ -219,10 +281,15 @@ public class OrgService {
      * 解绑后须重新走对应 IdP 登录才能再次绑定。
      */
     public void unbindOidc(String uid) {
+        // 成员管理是平台动作（Phase 4）：判据与理由见 asPlatformIfSuper 的注释
+        asPlatformIfSuperVoid(() -> unbindOidcScoped(uid));
+    }
+
+    private void unbindOidcScoped(String uid) {
         User user = userMapper.selectById(uid);
         if (user == null) throw new BizException("用户不存在");
         identityService.unbindAll(uid);
-        log.info("[AUDIT] 解绑单点登录（全部源） uid={}", uid);
+        audit.record("[AUDIT] 解绑单点登录（全部源） uid={}", uid);
     }
 
     /**
@@ -230,11 +297,16 @@ public class OrgService {
      * 解绑后须重新走对应认证源登录才能再次绑定。
      */
     public void unbindIdentity(String uid, String providerId) {
+        // 成员管理是平台动作（Phase 4）：判据与理由见 asPlatformIfSuper 的注释
+        asPlatformIfSuperVoid(() -> unbindIdentityScoped(uid, providerId));
+    }
+
+    private void unbindIdentityScoped(String uid, String providerId) {
         User user = userMapper.selectById(uid);
         if (user == null) throw new BizException("用户不存在");
         if (identityService.findOf(uid, providerId) == null) throw new BizException("该账号在此认证源下没有绑定");
         identityService.unbind(uid, providerId);
-        log.info("[AUDIT] 逐源解绑身份 uid={} provider={}", uid, providerId);
+        audit.record("[AUDIT] 逐源解绑身份 uid={} provider={}", uid, providerId);
     }
 
     // ==================== 个人偏好（个人设置） ====================
@@ -279,7 +351,7 @@ public class OrgService {
             u.setMemoryEnabled(Boolean.TRUE.equals(memoryEnabled) ? 1 : 0);
         }
         userMapper.updateById(u);
-        log.info("[AUDIT] 个人偏好已更新 uid={} chat={} memoryEnabled={}", uid,
+        audit.record("[AUDIT] 个人偏好已更新 uid={} chat={} memoryEnabled={}", uid,
                 chatRef == null ? "(未改)" : chatRef.isBlank() ? "(清空)" : chatRef,
                 memoryEnabled == null ? "(未改)" : memoryEnabled);
     }
@@ -306,7 +378,7 @@ public class OrgService {
             ensureUsernameUnique(name, uid);
             userMapper.update(null, new LambdaUpdateWrapper<User>()
                     .eq(User::getUid, uid).set(User::getUsername, name));
-            log.info("[AUDIT] 用户修改昵称 uid={} username={}", uid, name);
+            audit.record("[AUDIT] 用户修改昵称 uid={} username={}", uid, name);
         }
         if (avatar != null) {
             setAvatar(uid, avatar);
@@ -331,7 +403,7 @@ public class OrgService {
         // 而 LambdaUpdateWrapper.set(SFunction,..) 会按 NOT_NULL 策略跳过 null 导致清空失效
         userMapper.update(null, new UpdateWrapper<User>()
                 .eq("uid", uid).set("avatar", (Object) next));
-        log.info("[AUDIT] 用户头像已更新 uid={} avatar={}", uid, next == null ? "(清空)" : next);
+        audit.record("[AUDIT] 用户头像已更新 uid={} avatar={}", uid, next == null ? "(清空)" : next);
         return next;
     }
 

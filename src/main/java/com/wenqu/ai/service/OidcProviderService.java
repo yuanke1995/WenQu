@@ -189,7 +189,7 @@ public class OidcProviderService {
     /** config JSON 解析（兼容整块 RSA 加密与明文两种形态；坏配置返回 null） */
     private JsonNode parseConfig(String raw) {
         if (raw == null || raw.isBlank()) return null;
-        if (raw.startsWith("RSA:")) raw = crypto.decrypt(raw);
+        raw = crypto.decrypt(raw);
         try {
             return json.readTree(raw);
         } catch (Exception e) {

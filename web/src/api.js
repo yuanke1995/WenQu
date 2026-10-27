@@ -1517,6 +1517,55 @@ export const getUsageStats = range => request(`/stats/usage?range=${range === 7 
 // 费用报表（管理）：全员台账×模型单价，按用户/按模型两维度；range=7|30
 export const getUsageCost = range => request(`/stats/cost?range=${range === 7 ? 7 : 30}`)
 
+/** 我的配额（成员可见）：约束到本人的平台档/部门档/本人档与本周期已用量 */
+export const getMyQuota = () => request('/stats/quota')
+/** 配额清单（管理）：每条规则连同此刻按台账现算的用量与进度 */
+export const listQuotas = () => request('/quota')
+export const saveQuota = body => request('/quota', { method: 'POST', body: JSON.stringify(body) })
+export const deleteQuota = id => request(`/quota/${id}`, { method: 'DELETE' })
+
+/**
+ * 内容安全（Phase 3 · P12）：规则清单 / 闸门状态 / 试跑。
+ * <p>闸门参数（总开关、外部服务、文案）不在这儿，那些走设置页的通用 /config 读写。
+ */
+export const listContentRules = () => request('/content-safety')
+export const contentSafetyStatus = () => request('/content-safety/status')
+export const saveContentRule = body => request('/content-safety', { method: 'POST', body: JSON.stringify(body) })
+export const deleteContentRule = id => request(`/content-safety/${id}`, { method: 'DELETE' })
+export const dryRunContentRule = (text, stage) =>
+  request('/content-safety/dry-run', { method: 'POST', body: JSON.stringify({ text, stage }) })
+
+/** 租户（Phase 4 多租户）：清单/开通/启停/成员归属变更 */
+export const listTenants = () => request('/tenant')
+export const createTenant = body => request('/tenant', { method: 'POST', body: JSON.stringify(body) })
+export const setTenantStatus = (id, enabled) =>
+  request(`/tenant/${encodeURIComponent(id)}/status`, { method: 'POST', body: JSON.stringify({ enabled }) })
+export const applyTenant = body => request('/tenant/apply', { method: 'POST', body: JSON.stringify(body) })
+export const listTenantRequests = status =>
+  request('/tenant/requests' + (status ? '?status=' + encodeURIComponent(status) : ''))
+export const approveTenantRequest = (id, tenantId) =>
+  request(`/tenant/requests/${encodeURIComponent(id)}/approve`, { method: 'POST', body: JSON.stringify({ tenantId: tenantId || '' }) })
+export const rejectTenantRequest = (id, note) =>
+  request(`/tenant/requests/${encodeURIComponent(id)}/reject`, { method: 'POST', body: JSON.stringify({ note: note || '' }) })
+export const moveMemberTenant = (uid, tenantId) =>
+  request('/tenant/member', { method: 'POST', body: JSON.stringify({ uid, tenantId }) })
+
+/** 审计事件：查询 / 合规导出地址 / 哈希链校验 */
+export const listAuditEvents = params => request('/audit?' + params)
+export const verifyAuditChain = maxRows => request('/audit/verify' + (maxRows ? `?maxRows=${maxRows}` : ''))
+/** 合规导出：带令牌取 CSV 并触发下载（与项目导出同一套 fetch + blob 写法） */
+export const exportAuditCsv = async params => {
+  const res = await fetch(`${BASE}/audit/export?${params}`, { headers: authHeaders() })
+  if (!res.ok) throw new Error(`导出失败（${res.status}）`)
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `wenqu-audit-${new Date().toISOString().slice(0, 10)}.csv`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 /** 追加单条评估 case（差评回流：问题 → 引用过的知识块） */
 export const addEvalCase = (question, knowledgeIds) =>
   request('/eval/case', { method: 'POST', body: JSON.stringify({ question, knowledgeIds }) })

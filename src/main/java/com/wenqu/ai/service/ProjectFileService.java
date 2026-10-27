@@ -964,8 +964,8 @@ public class ProjectFileService {
         return base;
     }
 
-    /** 本人 workspace 根（工作区目录与会话沙盒目录共同的上级，越界校验以它为基准） */
-    private Path workspaceRootOf(String uid) {
+    /** 本人 workspace 根（工作区目录与会话沙盒目录共同的上级，越界校验以它为基准）；DR 清单枚举时用 */
+    public Path workspaceRootOf(String uid) {
         String root = configService.get("sandbox.userDataHostDir");
         if (root == null || root.isBlank()) {
             root = System.getProperty("user.dir") + "/user-data";

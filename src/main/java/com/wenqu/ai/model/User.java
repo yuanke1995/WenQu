@@ -28,12 +28,24 @@ public class User {
     /** 所属部门ID（c_ai_department.id，可空=未分配） */
     private String departmentId;
 
+    /**
+     * 所属租户（Phase 4 多租户；空按 {@code default} 处理——存量行加列时由数据库默认值回填）。
+     * <p>它决定这个账号登录后能看到哪些行：请求线程装载身份时绑定，
+     * 谓词由 {@code WenquTenantLineHandler} 拼在 SQL 上，业务代码不各自判。
+     */
+    private String tenantId;
+
     // 单角色列已退役 → c_ai_user_role（多角色，granted_by 区分 manual/idp；判定见 UserRoleService）
 
     /** 状态: 1=启用, 0=禁用 */
     private Integer status;
 
-    /** 密码哈希（PBKDF2；空=未设置，不能本地登录） */
+    /**
+     * 密码哈希（PBKDF2；空=未设置，不能本地登录）。
+     * <p>不参与 JSON 序列化：{@code POST /api/ai/user} 这类直接回实体的管理端点会把整串
+     * {@code pbkdf2$迭代数$盐$摘要} 发给调用方——哈希不是明文，但把它交出去等于给离线爆破递一份现成的靶子。
+     */
+    @com.fasterxml.jackson.annotation.JsonIgnore
     private String passwordHash;
 
     /** 连续登录失败次数 */
