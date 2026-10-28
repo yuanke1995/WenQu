@@ -156,7 +156,7 @@ public class SamlService {
             Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("token", AuthCrypto.issueToken(authService.secret(), authService.issuer(),
                     authService.audience(), user.getUid(), userRoleService.primaryRole(user.getUid()),
-                    authService.ttlSeconds()));
+                    authService.ttlSeconds(), authService.tokenEpoch(user)));
             payload.put("user", authService.userInfo(user));
             payload.put("redirectPath", redirectPath == null || redirectPath.isBlank() ? "/" : redirectPath);
 

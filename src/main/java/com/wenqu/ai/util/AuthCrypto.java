@@ -89,9 +89,14 @@ public final class AuthCrypto {
 
     // ==================== 令牌（JWT HS256） ====================
 
-    /** 签发访问令牌（有效期 ttlSeconds） */
+    /**
+     * 签发访问令牌（有效期 ttlSeconds；epoch=签发时的会话代数，写进 ep 声明）。
+     * <p>会话治理判据在 {@code UserContextInterceptor}：令牌 ep 与用户当前代数不符即失效——
+     * 改密 / 强制下线把代数 +1，此人所有已签发令牌（含其他设备）当场作废。
+     * 存量令牌没有 ep 声明，按代数 0 兼容：升级不踢人，安全动作才踢。
+     */
     public static String issueToken(String secret, String issuer, String audience,
-                                    String uid, String role, long ttlSeconds) {
+                                    String uid, String role, long ttlSeconds, long epoch) {
         long now = System.currentTimeMillis() / 1000L;
         Map<String, Object> header = new LinkedHashMap<>();
         header.put("alg", "HS256");
@@ -101,6 +106,7 @@ public final class AuthCrypto {
         payload.put("role", role);
         payload.put("iss", issuer);
         payload.put("aud", audience);
+        payload.put("ep", epoch);
         payload.put("iat", now);
         payload.put("exp", now + ttlSeconds);
         String signingInput = b64(json(header)) + "." + b64(json(payload));

@@ -433,6 +433,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_user` (
     `password_hash` VARCHAR(255) DEFAULT NULL COMMENT '密码哈希（PBKDF2；空=未设置，不能本地登录）',
     `login_fail_count` INT      DEFAULT 0 COMMENT '连续登录失败次数',
     `locked_until` DATETIME     DEFAULT NULL COMMENT '锁定至（失败过多时；空=未锁定）',
+    `token_epoch`  BIGINT       DEFAULT 0 COMMENT '会话代数（会话治理）：改密/管理员强制下线时 +1，已签发令牌的 ep 声明与代数不符即全端失效；存量令牌无 ep 声明按代数 0 兼容',
     `last_login_time` DATETIME  DEFAULT NULL COMMENT '最近一次登录成功时间（本地登录与 SSO 回调均记；空=从未登录）',
     `default_model` VARCHAR(255) DEFAULT NULL COMMENT '个人默认聊天模型（引用 providerId/modelId；空=不设默认，对话时手动选择）',
     `memory_enabled` INT DEFAULT 1 COMMENT '用户级长期记忆自动提炼开关（个人设置可改）: 1=开, 0=关；历史行加列时按默认 1（保持原行为）',
@@ -1117,6 +1118,20 @@ CREATE TABLE IF NOT EXISTS `c_ai_notification` (
     KEY `idx_nt_uid_unread` (`uid`, `read_flag`),
     KEY `idx_nt_uid_dedup` (`uid`, `dedup_key`, `read_flag`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='站内通知（解析/工作流/网页源刷新等异步事件的用户可感知面；由 ScheduleCenter 按保留期定期清理）';
+
+CREATE TABLE IF NOT EXISTS `c_ai_announcement` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
+    `id`            VARCHAR(50)   NOT NULL COMMENT '公告ID（UUID）',
+    `title`         VARCHAR(200)  NOT NULL COMMENT '标题（横幅主文本）',
+    `content`       VARCHAR(2000) DEFAULT NULL COMMENT '正文（点开看详情；停机窗口/升级内容/影响范围）',
+    `level`         VARCHAR(10)   NOT NULL DEFAULT 'info' COMMENT '级别: info=通知 warn=警示 danger=紧急（横幅按级别配色，danger 常驻不可关）',
+    `enabled`       INT           NOT NULL DEFAULT 1 COMMENT '1=发布中 0=下线（下线保留行，历史可查，不真删）',
+    `created_by`    VARCHAR(64)   DEFAULT NULL COMMENT '发布人 uid',
+    `create_time`   DATETIME      DEFAULT CURRENT_TIMESTAMP COMMENT '发布时间',
+    `update_time`   DATETIME      DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    KEY `idx_ann_tenant_enabled` (`tenant_id`, `enabled`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='平台公告（治理沟通：停机窗口/升级/新功能通知，按租户发布，登录后横幅常显）';
 
 CREATE TABLE IF NOT EXISTS `c_ai_usage_log` (
     `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',

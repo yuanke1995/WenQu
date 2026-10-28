@@ -11,6 +11,8 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
+import java.util.Map;
+
 /**
  * 请求入口解析当前用户身份并装载到 {@link RequestUser}（ThreadLocal）。
  * <p>
@@ -65,11 +67,21 @@ public class UserContextInterceptor implements HandlerInterceptor {
         }
         String token = bearerToken(request);
         if (token != null) {
-            String uid = authService.uidFromToken(token);
-            if (uid == null) return reject(response, "登录状态已失效，请重新登录");
+            Map<String, Object> claims = authService.claimsFromToken(token);
+            if (claims == null) return reject(response, "登录状态已失效，请重新登录");
+            String uid = String.valueOf(claims.get("sub"));
+            if (uid == null || uid.isBlank() || "null".equals(uid)) return reject(response, "登录状态已失效，请重新登录");
             User u = safeLoad(uid);
             if (u == null || (u.getStatus() != null && u.getStatus() == 0)) {
                 return reject(response, "账号不存在或已被禁用");
+            }
+            // 会话治理：令牌 ep 与用户当前会话代数不符即失效——改密/管理员强制下线后，旧令牌（含其他
+            // 设备与被盗会话）当场作废。存量令牌没有 ep 声明按代数 0 兼容：升级不踢人，安全动作才踢。
+            long want = u.getTokenEpoch() == null ? 0L : u.getTokenEpoch();
+            Object ep = claims.get("ep");
+            long got = ep instanceof Number n ? n.longValue() : 0L;
+            if (got != want) {
+                return reject(response, "登录状态已失效（账号安全状态已变更或被强制下线），请重新登录");
             }
             request.setAttribute(ATTR_AUTHENTICATED, Boolean.TRUE);
             // 多角色装载（并集判定口径）：鉴权一律用 roles()，role() 仅展示

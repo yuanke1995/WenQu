@@ -54,6 +54,8 @@ const routes = [
   // 租户与开通（Phase 4 · P9）：租户清单/启停/直开 + 自助开通申请的批准与驳回；
   // 平台级动作（启停/直开/审批/落点清单）页内按 superadmin 显隐，服务端同判据兜底
   { path: '/tenants', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/TenantsPage.vue')) }], meta: { requiresAdmin: true, title: '租户与开通' } },
+  // 安全与运维（管理员面）：系统巡检（运行状态体检）/ 会话治理（强制下线）/ 平台公告（停机/升级通知）
+  { path: '/security', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/SecurityOpsPage.vue')) }], meta: { requiresAdmin: true, title: '安全与运维' } },
   { path: '/permissions', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/PermissionsPage.vue')) }], meta: { requiresAdmin: true, title: '权限管理' } },
   { path: '/dashboard', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/DashboardPage.vue')) }], meta: { requiresAdmin: true, title: '数据看板' } },
   { path: '/settings', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/SettingsPage.vue')) }], meta: { requiresAdmin: true, title: '系统设置' } },

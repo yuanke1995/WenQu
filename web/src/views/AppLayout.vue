@@ -431,6 +431,8 @@
       <!-- 连通性：本机断网与服务器不通分开说一行。放在内容区之上而不是各处 toast——
            「现在问不了」是持续状态，闪一条就没了会让人反复试 -->
       <NetBanner />
+      <!-- 平台公告横幅（按租户发布，danger 级别常驻不可关）：与断网横幅同一层级——「平台要停机」是持续状态 -->
+      <AnnouncementsBar />
       <div class="main-body">
         <DesktopOnlyGuard v-if="isNarrow || mobileShell" :path="route.path">
           <router-view />
@@ -469,7 +471,7 @@ import { PlusOutlined, MessageOutlined, RobotOutlined, FolderOutlined, BarChartO
          CheckOutlined, CheckSquareOutlined, QuestionCircleOutlined, PieChartOutlined, ShareAltOutlined,
          RightOutlined, DownOutlined, BellOutlined, UnorderedListOutlined,
          ClockCircleOutlined, FolderOpenOutlined, InboxOutlined, ReloadOutlined,
-         ArrowsAltOutlined, ShrinkOutlined } from '@ant-design/icons-vue'
+         ArrowsAltOutlined, ShrinkOutlined, SafetyCertificateOutlined, ApartmentOutlined } from '@ant-design/icons-vue'
 import { deleteSessionApi, logoutApi, renameSessionApi, pinSession, favoriteSession, batchDeleteSessionsApi,
          getMyMenuLayout, saveMyMenuLayout, setNewSessionProject,
          updateProject, deleteProject, createProject, setProjectStatus,
@@ -485,6 +487,7 @@ import BrandMark from '../components/BrandMark.vue'
 import HelpFab from '../components/HelpFab.vue'
 import MobileTopBar from '../h5/MobileTopBar.vue'
 import NetBanner from '../components/NetBanner.vue'
+import AnnouncementsBar from '../components/AnnouncementsBar.vue'
 import MobileSessionSheet from '../h5/MobileSessionSheet.vue'
 import MobileNotifSheet from '../h5/MobileNotifSheet.vue'
 import DesktopOnlyGuard from '../h5/DesktopOnlyGuard.vue'
@@ -515,7 +518,7 @@ const ICONS = {
   MessageOutlined, RobotOutlined, DatabaseOutlined, TeamOutlined, BarChartOutlined,
   ExperimentOutlined, SafetyOutlined, SettingOutlined, AppstoreOutlined, PlusOutlined,
   FolderOutlined, UserOutlined, FileOutlined, FileTextOutlined, QuestionCircleOutlined,
-  PieChartOutlined
+  PieChartOutlined, SafetyCertificateOutlined, ApartmentOutlined
 }
 const iconOf = name => ICONS[name] || FileOutlined
 // ensureAuth 填充的是模块级缓存（非响应式），故挂载后显式赋值

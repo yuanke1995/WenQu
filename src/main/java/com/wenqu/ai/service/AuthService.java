@@ -3,6 +3,7 @@ package com.wenqu.ai.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.config.AppProperties;
+import com.wenqu.ai.config.UserContextInterceptor;
 import com.wenqu.ai.mapper.UserMapper;
 import com.wenqu.ai.model.User;
 import com.wenqu.ai.util.AuthCrypto;
@@ -67,6 +68,16 @@ public class AuthService {
         if (claims == null) return null;
         String sub = String.valueOf(claims.get("sub"));
         return sub.isBlank() ? null : sub;
+    }
+
+    /** 解析令牌全量载荷（校验同上），无效返回 null；会话治理的 ep 代数判据在拦截器里比对 */
+    public Map<String, Object> claimsFromToken(String token) {
+        return AuthCrypto.parseToken(resolvedSecret, issuer(), audience(), token);
+    }
+
+    /** 该用户当前的会话代数（签发令牌时写进 ep；null 视为 0，与存量行兼容） */
+    public long tokenEpoch(User user) {
+        return user == null || user.getTokenEpoch() == null ? 0L : user.getTokenEpoch();
     }
 
     /** 是否「首次运行」：库中尚无任何已设置密码的用户（仅此时允许初始化管理员） */
@@ -139,7 +150,7 @@ public class AuthService {
         user.setLastLoginTime(LocalDateTime.now());
         userMapper.updateById(user);
         String token = AuthCrypto.issueToken(secret(), issuer(), audience(),
-                user.getUid(), userRoleService.primaryRole(user.getUid()), ttlSeconds());
+                user.getUid(), userRoleService.primaryRole(user.getUid()), ttlSeconds(), tokenEpoch(user));
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("token", token);
         out.put("user", userInfo(user));
@@ -157,8 +168,11 @@ public class AuthService {
         }
         checkPassword(newPassword);
         user.setPasswordHash(AuthCrypto.hashPassword(newPassword));
+        // 会话治理：改密即全端下线——代数 +1 后，此人所有已签发令牌（含其他设备/被盗的会话）当场失效
+        user.setTokenEpoch(tokenEpoch(user) + 1);
         userMapper.updateById(user);
-        audit.record("[AUDIT] 修改密码 uid={}", uid);
+        UserContextInterceptor.evict(uid);
+        audit.record("[AUDIT] 修改密码 uid={}（会话代数升至 {}，全端已下线）", uid, user.getTokenEpoch());
     }
 
     /** 管理员重置他人密码（同时清除锁定） */
@@ -173,8 +187,28 @@ public class AuthService {
             user.setPasswordHash(AuthCrypto.hashPassword(newPassword));
             user.setLoginFailCount(0);
             user.setLockedUntil(null);
+            // 会话治理：重置密码即解锁 + 全端下线（离职/被盗场景的兜底动作，新口令只发到该发的人手里）
+            user.setTokenEpoch(tokenEpoch(user) + 1);
             userMapper.updateById(user);
-            audit.record("[AUDIT] 重置密码 uid={}", uid);
+            UserContextInterceptor.evict(uid);
+            audit.record("[AUDIT] 重置密码 uid={}（会话代数升至 {}，全端已下线）", uid, user.getTokenEpoch());
+        });
+    }
+
+    /**
+     * 管理员强制下线：会话代数 +1，该账号已签发的全部令牌（所有设备）当场失效。
+     * 账号疑似被盗、离职即踢、或「他改完密码怎么还在登录态」的答案都在这一处。
+     * 与改密/重置共用同一代数机制——踢人只有一种判据，就不会有漏网的那种。
+     */
+    public void forceLogout(String uid) {
+        required(uid, "登录账号");
+        com.wenqu.ai.util.TenantContext.asPlatformIfSuper(() -> {
+            User user = userMapper.selectById(uid);
+            if (user == null) throw new BizException("用户不存在");
+            user.setTokenEpoch(tokenEpoch(user) + 1);
+            userMapper.updateById(user);
+            UserContextInterceptor.evict(uid);
+            audit.record("[AUDIT] 强制下线 uid={}（会话代数升至 {}）", uid, user.getTokenEpoch());
         });
     }
 

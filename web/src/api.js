@@ -1553,6 +1553,25 @@ export const moveMemberTenant = (uid, tenantId) =>
 export const getTenantInventory = id =>
   request(`/tenant/${encodeURIComponent(id)}/inventory`)
 
+// ==================== 运维保障：系统巡检 / 会话治理 / 平台公告 ====================
+/** 立即巡检：MySQL/Redis/关键词引擎/磁盘/审计链/供应商/登录安全态势，overall 取最差项 */
+export const runOpsCheckup = () => request('/ops/checkup', { method: 'POST' })
+/** 最近一次巡检报告（进程内缓存，后端重启后为空） */
+export const getLastOpsCheckup = () => request('/ops/checkup/last')
+/** 强制下线：该账号已签发的全部令牌（所有设备）当场失效 */
+export const forceLogoutUser = uid =>
+  request(`/ops/user/${encodeURIComponent(uid)}/force-logout`, { method: 'POST' })
+/** 公告管理清单（含下线的，历史可查） */
+export const listAnnouncements = () => request('/ops/announcement')
+/** 发布/更新公告 {id?, title, content, level, enabled, tenantId?} */
+export const saveAnnouncement = body =>
+  request('/ops/announcement', { method: 'POST', body: JSON.stringify(body) })
+/** 下线公告（保留行，可恢复） */
+export const deleteAnnouncement = id =>
+  request(`/ops/announcement/${encodeURIComponent(id)}`, { method: 'DELETE' })
+/** 当前生效公告（登录后横幅数据源，所有登录用户） */
+export const getActiveAnnouncements = () => request('/ops/announcement/active')
+
 /** 审计事件：查询 / 合规导出地址 / 哈希链校验 */
 export const listAuditEvents = params => request('/audit?' + params)
 export const verifyAuditChain = maxRows => request('/audit/verify' + (maxRows ? `?maxRows=${maxRows}` : ''))
