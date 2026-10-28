@@ -51,6 +51,9 @@ const routes = [
   // 帮助中心：官方内置手册（问渠使用手册）只读视图，所有登录用户可见
   { path: '/help', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/HelpPage.vue')) }], meta: { title: '帮助中心' } },
   { path: '/members', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/MembersPage.vue')) }], meta: { requiresAdmin: true, title: '成员管理' } },
+  // 租户与开通（Phase 4 · P9）：租户清单/启停/直开 + 自助开通申请的批准与驳回；
+  // 平台级动作（启停/直开/审批/落点清单）页内按 superadmin 显隐，服务端同判据兜底
+  { path: '/tenants', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/TenantsPage.vue')) }], meta: { requiresAdmin: true, title: '租户与开通' } },
   { path: '/permissions', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/PermissionsPage.vue')) }], meta: { requiresAdmin: true, title: '权限管理' } },
   { path: '/dashboard', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/DashboardPage.vue')) }], meta: { requiresAdmin: true, title: '数据看板' } },
   { path: '/settings', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/SettingsPage.vue')) }], meta: { requiresAdmin: true, title: '系统设置' } },

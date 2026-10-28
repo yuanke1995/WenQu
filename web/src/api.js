@@ -1549,6 +1549,9 @@ export const rejectTenantRequest = (id, note) =>
   request(`/tenant/requests/${encodeURIComponent(id)}/reject`, { method: 'POST', body: JSON.stringify({ note: note || '' }) })
 export const moveMemberTenant = (uid, tenantId) =>
   request('/tenant/member', { method: 'POST', body: JSON.stringify({ uid, tenantId }) })
+/** 租户落点清单（备份与恢复用）：库表行数 / 磁盘目录 / Redis 键形态，仅平台级可看 */
+export const getTenantInventory = id =>
+  request(`/tenant/${encodeURIComponent(id)}/inventory`)
 
 /** 审计事件：查询 / 合规导出地址 / 哈希链校验 */
 export const listAuditEvents = params => request('/audit?' + params)
