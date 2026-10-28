@@ -28,15 +28,15 @@
     <component v-if="activeExtra" :is="TAB_COMPONENTS[activeExtra.key]" />
     <div v-else class="app-page-body">
       <div class="app-card" style="padding:0;overflow:hidden">
-        <!-- 工具栏：搜索 + 计数 + 新建 -->
-        <div class="rb-toolbar">
+        <!-- 工具栏：搜索 + 计数 + 新建（app-list-bar 全局类，卡片内嵌 in-card 变体） -->
+        <div class="app-list-bar in-card">
           <a-input v-model:value="keyword" allow-clear size="small" class="rb-search"
                    :placeholder="tab === 'apis' ? '搜索路径 / 名称' : tab === 'menus' ? '搜索菜单名称 / 路径' : '搜索角色编码 / 名称'">
             <template #prefix><search-outlined class="rb-search-ic" /></template>
           </a-input>
           <a-select v-if="tab === 'apis'" v-model:value="moduleFilter" allow-clear size="small" class="rb-filter"
                     placeholder="全部模块" :options="moduleFilterOptions" />
-          <span class="rb-count">{{ countText }}</span>
+          <span class="app-list-count">{{ countText }}</span>
           <button v-if="tab === 'menus'" class="app-btn rb-new" @click="openMenuCreate"><plus-outlined /> 新建菜单</button>
           <button v-else-if="tab === 'apis'" class="app-btn rb-new" @click="openApiCreate"><plus-outlined /> 登记接口</button>
           <button v-else class="app-btn rb-new" @click="openRoleCreate"><plus-outlined /> 新建角色</button>
@@ -978,11 +978,9 @@ watch(tab, t => {
 }
 .pg-tabs :deep(.ant-tabs-tab-active) .pg-badge { background: var(--app-accent); color: #fff; }
 
-.rb-toolbar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--app-border); }
 .rb-search { width: 240px; }
 .rb-search-ic { color: var(--app-text3); }
 .rb-filter { width: 140px; flex: none; }
-.rb-count { font-size: 12px; color: var(--app-text3); }
 .rb-new { margin-left: auto; }
 .rb-inline { display: inline-flex; align-items: center; gap: 8px; }
 .rb-menu { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }

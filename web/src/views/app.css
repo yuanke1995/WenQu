@@ -247,6 +247,21 @@ input:focus-visible, textarea:focus-visible { outline: none; }
 .app-btn.danger { background: transparent; color: var(--app-danger); border: 1px solid #eecdc2; }
 .app-btn.danger:hover { background: #fbecea; }
 
+/* ==================== 列表页公共件（工具栏/计数/页脚/横幅） ====================
+ * 收编自「权限管理」各页签的 scoped 复制样式（rb-/al-/cs- 三套同款）。
+ * 规格见 .workbuddy/list-style-guide.html：控件一律 antd size="small"（高 24px），
+ * 搜索框 240px 带前缀图标，计数 12px 弱文本，页脚只放口径说明不放计数。 */
+.app-list-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); padding-bottom: 10px; }
+/* 卡片内嵌变体：跟 rb-toolbar 同款（自带底部分割线、更紧的内边距） */
+.app-list-bar.in-card { padding: 10px 14px; border-bottom: 1px solid var(--app-border); }
+.app-list-spacer { flex: 1 1 auto; }
+.app-list-count { font-size: var(--app-fs-sm); color: var(--app-text3); white-space: nowrap; }
+.app-list-foot { flex: none; padding-top: var(--sp-2); color: var(--app-text3); font-size: var(--app-fs-sm); }
+/* 状态横幅两型：中性（border 卡）与告警（warn 弱底）；.row 给横排内容的（状态条一排小字） */
+.app-note { border: 1px solid var(--app-border); border-radius: var(--app-radius-sm); padding: 8px 10px; margin-bottom: 10px; font-size: var(--app-fs-md); }
+.app-note.row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+.app-note.warn { border-color: var(--app-warn-border); background: var(--app-warn-weak); font-size: var(--app-fs-sm); color: var(--app-warn-text); }
+
 /* 会话内查找命中高亮（CSS Custom Highlight API）：不在 DOM 里插节点——
    回答正文是 v-html 渲染的，插 <mark> 会与重渲染/渲染缓存互相打架。
    浏览器不支持该 API 时聊天页降级为"只定位不标黄"。 */
