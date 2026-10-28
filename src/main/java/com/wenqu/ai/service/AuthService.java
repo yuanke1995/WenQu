@@ -38,6 +38,8 @@ public class AuthService {
     private final UserRoleService userRoleService;
     private final IdentityService identityService;
     private final DeploymentSecrets secrets;
+    /** 租户启停判据（停用租户挡登录的那条承诺落在这里与 {@link ExternalUserService#assertUsable}） */
+    private final TenantService tenantService;
 
     /** 运行时解析后的签名密钥（取用规则与多副本一致性由 DeploymentSecrets 兜住） */
     private volatile String resolvedSecret;
@@ -125,6 +127,9 @@ public class AuthService {
             registerFailure(user);
             throw new BizException("账号或密码不正确");
         }
+        // 所属租户被平台停用 → 拒（判据与 SSO/SCIM/目录同步共用 TenantService.isActive，见手册「停用只挡登录」）。
+        // 放在口令校验<b>之后</b>：口令不对的人只该听到「账号或密码不正确」，不该被告知「这家租户还在平台上」。
+        tenantService.requireActive(user.getTenantId());
         boolean lockDirty = (user.getLoginFailCount() != null && user.getLoginFailCount() > 0) || user.getLockedUntil() != null;
         if (lockDirty) {
             user.setLoginFailCount(0);
@@ -158,14 +163,19 @@ public class AuthService {
 
     /** 管理员重置他人密码（同时清除锁定） */
     public void resetPassword(String uid, String newPassword) {
-        User user = userMapper.selectById(uid);
-        if (user == null) throw new BizException("用户不存在");
         checkPassword(newPassword);
-        user.setPasswordHash(AuthCrypto.hashPassword(newPassword));
-        user.setLoginFailCount(0);
-        user.setLockedUntil(null);
-        userMapper.updateById(user);
-        audit.record("[AUDIT] 重置密码 uid={}", uid);
+        // 与新建/编辑成员同一条平台视图判据（理由见 OrgService.asPlatformIfSuper 的注释）：
+        // 名单对 superadmin 是跨租户摊开的，这里不切视图就会出现「列表里看得见这个人、点重置报用户不存在」，
+        // 而批准开通时发出的那次性口令一旦丢失，平台侧就再没有恢复入口。
+        com.wenqu.ai.util.TenantContext.asPlatformIfSuper(() -> {
+            User user = userMapper.selectById(uid);
+            if (user == null) throw new BizException("用户不存在");
+            user.setPasswordHash(AuthCrypto.hashPassword(newPassword));
+            user.setLoginFailCount(0);
+            user.setLockedUntil(null);
+            userMapper.updateById(user);
+            audit.record("[AUDIT] 重置密码 uid={}", uid);
+        });
     }
 
     /** 用户公开信息（不含敏感字段）：多角色并集判定管理员；外部身份绑定取自统一身份表 */

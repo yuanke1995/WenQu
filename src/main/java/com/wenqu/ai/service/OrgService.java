@@ -69,19 +69,11 @@ public class OrgService {
      * 本人自助类操作（改自己的昵称/头像/偏好）不走这里——那些线程上绑的就是他自己的租户。
      */
     private <T> T asPlatformIfSuper(java.util.function.Supplier<T> body) {
-        return com.wenqu.ai.util.RequestUser.superadmin()
-                ? com.wenqu.ai.util.TenantContext.asPlatform(body) : body.get();
+        return com.wenqu.ai.util.TenantContext.asPlatformIfSuper(body);
     }
 
     private void asPlatformIfSuperVoid(Runnable body) {
-        if (!com.wenqu.ai.util.RequestUser.superadmin()) {
-            body.run();
-            return;
-        }
-        com.wenqu.ai.util.TenantContext.asPlatform(() -> {
-            body.run();
-            return null;
-        });
+        com.wenqu.ai.util.TenantContext.asPlatformIfSuper(body);
     }
 
     public List<Department> listDepartments() {

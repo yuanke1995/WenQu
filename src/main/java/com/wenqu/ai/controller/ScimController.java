@@ -44,6 +44,8 @@ import java.util.Map;
 public class ScimController {
 
     private final ScimService scimService;
+    /** 租户启停判据：认证源所属租户被停用 ⇒ 整条 SCIM 通道 403（见 {@code handleStatus}） */
+    private final com.wenqu.ai.service.TenantService tenantService;
 
     // ==================== 发现端点 ====================
 
@@ -243,6 +245,10 @@ public class ScimController {
             return error(e);
         }
         try {
+            // 认证源所属租户被平台停用 → 整条 SCIM 通道停摆。判据与密码登录、SSO 认领、目录同步
+            // 共用 TenantService.isActive：三家协议各写一遍必然漏一家，漏的那家等于「客户已经停了，
+            // IdP 还在替它建号改号」。这里不查租户表就返回，SCIM 侧按 RFC 7644 出 403 错误体。
+            tenantService.requireActive(p.getTenantId());
             // 整条拦截链对本路径豁免 ⇒ 线程上没有租户绑定，而「未绑定」在租户拦截器里等于「不过滤」：
             // GET/PUT/PATCH/DELETE /Users/{id} 会按 uid 直接命中别家租户的成员。认证源自己归属哪个租户，
             // 这一段就跑在哪个租户里（as() 跑完恢复原值，池化线程上不留残留）。
@@ -255,6 +261,9 @@ public class ScimController {
                     : ResponseEntity.status(success).body(body);
         } catch (ScimService.ScimException e) {
             return error(e);
+        } catch (com.wenqu.ai.common.BizException e) {
+            // 业务拒绝（如所属租户被停用）按 SCIM 口径出 403，别裹成 500 让 IdP 以为我们坏了
+            return error(new ScimService.ScimException(403, e.getMessage()));
         } catch (Exception e) {
             log.error("[SCIM] 处理异常 provider={}", p.getId(), e);
             return error(new ScimService.ScimException(500, "SCIM 处理异常: " + e.getMessage()));

@@ -138,8 +138,42 @@ public class TenantService {
         if (t == null) throw new BizException("租户不存在：" + id);
         t.setStatus(enabled ? 1 : 0);
         tenantMapper.updateById(t);
+        statusCache.remove(id);   // 本平台刚按下的那一下要立刻生效；别的副本最迟一分钟后跟上
         audit.record("[AUDIT] 租户启停 租户={} 状态={}", id, enabled ? "启用" : "停用");
     }
+
+    /**
+     * 这个租户当前是否可用（1=启用；行不存在按不可用处理——归属指向一个查无此家的租户，
+     * 不能算「可以进来」）。默认租户恒可用：它不能停用，也就不必为每次登录多查一行。
+     * <p>「停用只挡该租户成员登录」是手册与接口描述写下的承诺，承诺要有<b>一个</b>落点：
+     * 散到密码登录、SSO 认领、SCIM 推送、目录同步四处各写一遍，漏一处就等于那条路照常进人。
+     * <p>读的是 60 秒缓存（与成员归属同一档）：登录是每个成员每次都问，启停是极低频动作；
+     * 代价写明白——在别的管理员副本上刚改的启停，最迟 60 秒后才在这里咬住。
+     */
+    public boolean isActive(String tenantId) {
+        String t = tenantId == null || tenantId.isBlank() ? TenantContext.DEFAULT_TENANT : tenantId.trim();
+        if (TenantContext.DEFAULT_TENANT.equals(t)) return true;
+        CachedStatus hit = statusCache.get(t);
+        long now = System.currentTimeMillis();
+        if (hit != null && hit.expireAt() > now) return hit.active();
+        Tenant row = tenantMapper.selectById(t);
+        boolean active = row != null && row.getStatus() != null && row.getStatus() == 1;
+        statusCache.put(t, new CachedStatus(active, now + CACHE_TTL_MS));
+        return active;
+    }
+
+    /** {@link #isActive} 的守门版：文案要点名是租户被平台停用，别让人以为是自己密码敲错 */
+    public void requireActive(String tenantId) {
+        String t = tenantId == null || tenantId.isBlank() ? TenantContext.DEFAULT_TENANT : tenantId.trim();
+        if (!isActive(t)) {
+            throw new BizException("该租户（" + t + "）已被平台停用，成员暂时无法登录，请联系平台管理员");
+        }
+    }
+
+    private record CachedStatus(boolean active, long expireAt) {
+    }
+
+    private final Map<String, CachedStatus> statusCache = new ConcurrentHashMap<>();
 
     /**
      * 归一并校验要写进 {@code tenant_id} 的归属（成员、认证源等资源类行共用这一条判据）。

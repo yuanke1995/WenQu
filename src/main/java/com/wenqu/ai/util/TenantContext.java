@@ -136,4 +136,28 @@ public final class TenantContext {
             bind(prevTenant);
         }
     }
+
+    /**
+     * 管理员写路径的统一落点：调用者是平台级（superadmin）才切平台视图，否则原样跑。
+     * <p>为什么需要它：成员名单/资源清单对 superadmin 是<b>跨租户摊开</b>的，写侧若仍按本租户过滤，
+     * 症状是「看得见、一保存就说用户不存在」；更坏的一种是 {@code updateById} 被拼上
+     * {@code AND tenant_id = ?} 后匹配 0 行而<b>一声不响</b>——界面报「已保存」而什么都没改。
+     * <p>租户管理员（role=admin，非 superadmin）不在放开范围内：他只管本租户的行。
+     * 判据只写在这一处；散到各服务各写一遍，漏一处就留一个静默失效的口子。
+     */
+    public static <T> T asPlatformIfSuper(Supplier<T> body) {
+        return com.wenqu.ai.util.RequestUser.superadmin() ? asPlatform(body) : body.get();
+    }
+
+    /** {@link #asPlatformIfSuper(Supplier)} 的无返回值版 */
+    public static void asPlatformIfSuper(Runnable body) {
+        if (!com.wenqu.ai.util.RequestUser.superadmin()) {
+            body.run();
+            return;
+        }
+        asPlatform(() -> {
+            body.run();
+            return null;
+        });
+    }
 }

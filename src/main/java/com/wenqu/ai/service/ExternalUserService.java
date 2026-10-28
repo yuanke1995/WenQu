@@ -43,6 +43,8 @@ public class ExternalUserService {
     private final RoleService roleService;
     private final IdentityService identityService;
     private final UserRoleService userRoleService;
+    /** 租户启停判据（停用租户的外部通道在这里停摆，见 {@link #inProviderTenant} 与 {@link #assertUsable}） */
+    private final TenantService tenantService;
 
     /** 账号标识字符集（与 OrgService 的 uid 校验一致：带冒号的外部标识不能直接当 uid） */
     private static final Pattern UID_PATTERN = Pattern.compile("[A-Za-z0-9_@.\\-]+");
@@ -137,9 +139,10 @@ public class ExternalUserService {
         return uid == null ? null : userMapper.selectById(uid);
     }
 
-    /** 账号可用性守门：禁用即拒 */
+    /** 账号可用性守门：禁用即拒；所属租户被平台停用同样拒（判据见 {@link TenantService#isActive}） */
     public User assertUsable(User u) {
         if (u.getStatus() != null && u.getStatus() == 0) throw new BizException("账号已被禁用，请联系管理员");
+        tenantService.requireActive(u.getTenantId());
         return u;
     }
 
@@ -171,6 +174,9 @@ public class ExternalUserService {
      */
     public <T> T inProviderTenant(String providerId, java.util.function.Supplier<T> body) {
         String tenant = providerTenant(providerId);
+        // 认证源所属租户被平台停用 → 这条外部通道整体停摆（SSO 认领、SCIM 推送、目录同步三路共用这一句）。
+        // 判据放在唯一入口处：三家协议各自写一遍，漏一家就等于「这家客户已经被停了，IdP 还在替它建号」。
+        if (tenant != null) tenantService.requireActive(tenant);
         return tenant == null ? body.get() : com.wenqu.ai.util.TenantContext.as(tenant, body);
     }
 
