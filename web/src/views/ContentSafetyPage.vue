@@ -264,7 +264,9 @@ const patternHint = computed(() => form.value.matchType === 'regex'
 </template>
 
 <style scoped>
-.cs-wrap { padding: 4px 0 0; }
+/* 与「审计事件」同一挂载点：根容器是 .app-page 的直系子元素，不当滚动容器就会被裁掉。
+   内边距同 .app-page-body，与菜单/接口/角色三个页签对齐。 */
+.cs-wrap { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 20px; }
 .cs-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-bottom: 10px; }
 .cs-search { width: 260px; }
 .cs-ic { color: var(--app-text-muted, #999); }

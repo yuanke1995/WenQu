@@ -130,7 +130,10 @@ onMounted(load)
 </template>
 
 <style scoped>
-.al-wrap { padding: 4px 0 0; }
+/* 本页挂在「权限管理」的页签里，根容器是 .app-page（flex 列、自身不裁不滚）的直系子元素：
+   不给它 flex:1 + overflow 就没有滚动容器，50 行表格按内容高撑出去，视口外的行再也滚不到。
+   内边距同 .app-page-body，与菜单/接口/角色三个页签对齐。 */
+.al-wrap { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 20px; }
 .al-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-bottom: 10px; }
 .al-spacer { flex: 1 1 auto; }
 .al-meta { color: var(--app-text-muted, #888); font-size: 12px; }
