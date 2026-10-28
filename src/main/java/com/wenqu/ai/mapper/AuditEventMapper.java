@@ -17,9 +17,9 @@ public interface AuditEventMapper extends BaseMapper<AuditEvent> {
     @Select("select coalesce(max(seq), 0) from c_ai_audit_event where replica = #{replica}")
     long maxSeqOfReplica(@Param("replica") String replica);
 
-    /** 按副本+序号区间取链（校验用，必须按 seq 升序且不能跳号） */
+    /** 按副本+序号区间取链（校验用，必须按 seq 升序且不能跳号；链跨租户，取数走平台视图，含 tenant_id 只为报断点位置） */
     @Select("select id, ts, level, action, actor_uid, actor_ip, target_type, target_id, session_id, "
-            + "detail, replica, seq, prev_hash, row_hash from c_ai_audit_event "
+            + "detail, replica, seq, prev_hash, row_hash, tenant_id from c_ai_audit_event "
             + "where replica = #{replica} and seq > #{afterSeq} order by seq asc limit #{limit}")
     List<AuditEvent> chainAfter(@Param("replica") String replica, @Param("afterSeq") long afterSeq,
                                 @Param("limit") int limit);

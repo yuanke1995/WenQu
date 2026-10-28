@@ -452,10 +452,18 @@ public class AuditService {
     /**
      * 链校验：逐副本按 seq 走一遍，报告断点（缺号 / 哈希不符 / prev 不接）。
      * <p>留存清理会合法地删掉最老的一批，所以链头允许从任意 seq 起——这里只判「中间有没有洞或被改」。
+     * <p><b>必须走平台视图读</b>：链是「副本」级的，同一根链上混着各租户的行（写侧按业务线程落
+     * {@code tenant_id}），而 {@code chainAfter} 经 MyBatis 会被租户拦截器拼上租户条件——用请求线程
+     * 的租户视图读，别家租户的那几行就「不存在」，于是每跨一次租户报一对「序号断裂 + 链头不接」。
+     * 本机实测 38 条断点全是这么来的假信号（那些行都在，只是不属于 default）。
      * <p>哈希比对容忍 1~2 毫秒的时间戳表示差（见 {@link #hashMatchesStored}）：写侧截断、库里四舍五入，
      * 这条差在修复之前的存量行上必然存在，把它当成「内容被改写」会让合规出口永远是一片红。
      */
     public List<Map<String, Object>> verify(int maxRowsPerReplica) {
+        return com.wenqu.ai.util.TenantContext.asPlatform(() -> verifyChain(maxRowsPerReplica));
+    }
+
+    private List<Map<String, Object>> verifyChain(int maxRowsPerReplica) {
         List<Map<String, Object>> problems = new ArrayList<>();
         List<String> replicas;
         try {
@@ -474,15 +482,18 @@ public class AuditService {
                 if (rows.isEmpty()) break;
                 for (AuditEvent row : rows) {
                     scanned++;
+                    String tenant = row.getTenantId() == null ? "" : row.getTenantId();
                     if (prev != null && row.getSeq() != after + 1) {
                         problems.add(Map.of("replica", replica, "problem", "序号断裂",
-                                "seq", row.getSeq(), "expected", after + 1));
+                                "seq", row.getSeq(), "expected", after + 1, "tenant", tenant));
                     }
                     if (prev != null && !prev.equals(row.getPrevHash())) {
-                        problems.add(Map.of("replica", replica, "problem", "链头不接", "seq", row.getSeq()));
+                        problems.add(Map.of("replica", replica, "problem", "链头不接",
+                                "seq", row.getSeq(), "tenant", tenant));
                     }
                     if (!hashMatchesStored(row)) {
-                        problems.add(Map.of("replica", replica, "problem", "内容被改写（哈希不符）", "seq", row.getSeq()));
+                        problems.add(Map.of("replica", replica, "problem", "内容被改写（哈希不符）",
+                                "seq", row.getSeq(), "tenant", tenant));
                     }
                     prev = row.getRowHash();
                     after = row.getSeq();

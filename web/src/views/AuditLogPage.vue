@@ -102,7 +102,7 @@ onMounted(load)
       <template v-else>
         发现 {{ chain.problems.length }} 处断点（前 5 处）：
         <div v-for="(p, i) in chain.problems.slice(0, 5)" :key="i" class="al-problem">
-          副本 {{ p.replica }} · seq {{ p.seq }} · {{ p.problem }}
+          副本 {{ p.replica }} · seq {{ p.seq }}<template v-if="p.tenant"> · {{ p.tenant }}</template> · {{ p.problem }}
         </div>
       </template>
       <span v-if="Number(chain.droppedSinceStart) > 0" class="al-drop">
