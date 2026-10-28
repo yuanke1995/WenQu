@@ -198,7 +198,7 @@
       <a-table :data-source="recycleRows" :columns="recycleCols" size="small" row-key="id"
                :loading="recycleLoading" table-layout="fixed"
                :row-selection="{ selectedRowKeys: recycleSelected, onChange: keys => recycleSelected = keys, columnWidth: 44 }"
-               :pagination="recycleRows.length > 10 ? { pageSize: 10, size: 'small' } : false">
+               :pagination="{ pageSize: 20, size: 'small', hideOnSinglePage: true, showTotal: t => `共 ${t} 条` }">
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'size'"><span class="rc-nowrap">{{ fmtSize(record.fileSize) }}</span></template>
           <template v-else-if="column.key === 'deletedAt'">
@@ -259,7 +259,8 @@
         </div>
         <!-- 表体内部滚动（表头固定）：一页 20 条在矮屏会超出屏幕，高度随视口自适应。
              点行内联展开完整内容（对齐片段卡片：内容直读，不再叠二级弹窗） -->
-        <a-table :key="kbDocId" :data-source="kbFilteredList" size="small" row-key="id" :pagination="{ pageSize: 20 }"
+        <a-table :key="kbDocId" :data-source="kbFilteredList" size="small" row-key="id"
+                 :pagination="{ pageSize: 20, size: 'small', hideOnSinglePage: true, showTotal: t => `共 ${t} 条` }"
                  :scroll="{ y: kbScrollY }"
                  :locale="{ emptyText: kbEmptyText }"
                  :expand-row-by-click="true"
@@ -371,7 +372,7 @@
         <a-input-search v-model:value="gSearchKw" placeholder="输入关键词，跨全部文档搜索知识块（含已停用）" enter-button="搜索" :loading="gSearchLoading" @search="doGlobalSearch" />
       </div>
       <a-table :data-source="gResults" size="small" row-key="id"
-               :pagination="gResults.length > 20 ? { pageSize: 20 } : false"
+               :pagination="{ pageSize: 10, size: 'small', hideOnSinglePage: true, showTotal: t => `共 ${t} 条` }"
                :locale="{ emptyText: '输入关键词后搜索' }"
                :custom-row="r => ({ onClick: () => openKbDetail(r) })" style="cursor:pointer">
         <a-table-column title="文档" dataIndex="docName" key="docName" width="160" ellipsis />

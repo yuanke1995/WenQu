@@ -599,7 +599,7 @@
                     <a-alert v-if="healthIndex.drift" type="warning" show-icon style="margin-bottom:6px"
                              :message="`关键词索引漂移：索引 ${healthIndex.indexedCount ?? '—'} ≠ 库内有效块 ${healthIndex.mysqlCount ?? '—'}——可在上方「检索索引」执行全量重建对齐`" />
                     <a-table :data-source="healthRows" size="small" row-key="kbId" :loading="healthLoading"
-                             :pagination="healthRows.length > 10 ? { pageSize: 10, size: 'small' } : false"
+                             :pagination="{ pageSize: 10, size: 'small', hideOnSinglePage: true, showTotal: t => `共 ${t} 条` }"
                              :scroll="{ x: 720 }" :locale="{ emptyText: '暂无知识库数据' }">
                       <a-table-column title="知识库" key="kbName" width="220">
                         <template #default="{ record }">

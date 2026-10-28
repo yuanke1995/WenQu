@@ -62,7 +62,7 @@
               <button class="app-btn ghost" style="margin-left:auto" @click="loadBadCases">刷新</button>
             </div>
             <a-table :data-source="badCases" :columns="badCols" size="small" row-key="messageId" :loading="badLoading"
-                     :pagination="badCases.length > 10 ? { pageSize: 10 } : false"
+                     :pagination="{ pageSize: 10, size: 'small', hideOnSinglePage: true, showTotal: t => `共 ${t} 条` }"
                      :locale="{ emptyText: '暂无差评样本' }">
               <template #bodyCell="{ column, record }">
                 <template v-if="column.key === 'action'">
@@ -81,7 +81,7 @@
               <button class="app-btn ghost" style="margin-left:auto" @click="loadUnmatched">刷新</button>
             </div>
             <a-table :data-source="unmatchedList" :columns="unmatchedCols" size="small"
-                     row-key="question" :pagination="{ pageSize: 10 }" :loading="unmatchedLoading"
+                     row-key="question" :pagination="{ pageSize: 10, size: 'small', hideOnSinglePage: true, showTotal: t => `共 ${t} 条` }" :loading="unmatchedLoading"
                      :locale="{ emptyText: '暂无数据' }">
               <template #bodyCell="{ column, record }">
                 <template v-if="column.key === 'action'">
@@ -484,7 +484,8 @@ const traceCols = computed(() => traceKind.value === 'workflow' ? [
 ])
 
 const tracePagination = computed(() => ({
-  current: tracePage.value, total: traceTotal.value, pageSize: TRACE_SIZE, showSizeChanger: false
+  current: tracePage.value, total: traceTotal.value, pageSize: TRACE_SIZE,
+  size: 'small', showSizeChanger: false, showTotal: t => `共 ${t} 条`
 }))
 
 const loadTraces = async (p) => {
@@ -852,7 +853,7 @@ const unpricedAll = ref(false)
 const unpricedList = computed(() => cost.value.unpricedModels || [])
 const shownUnpriced = computed(() =>
   unpricedAll.value ? unpricedList.value : unpricedList.value.slice(0, UNPRICED_SHOWN))
-const costPager = { pageSize: 10, showSizeChanger: false, hideOnSinglePage: true }
+const costPager = { pageSize: 10, size: 'small', showSizeChanger: false, hideOnSinglePage: true, showTotal: t => `共 ${t} 条` }
 const loadCost = async () => {
   costLoading.value = true
   try {

@@ -175,7 +175,8 @@
               <div class="score-label">用例数 · {{ answerReport.runTime }}</div>
             </div>
           </div>
-          <a-table size="small" row-key="id" :data-source="answerReport.cases || []" :pagination="{ pageSize: 10, size: 'small' }"
+          <a-table size="small" row-key="id" :data-source="answerReport.cases || []"
+                   :pagination="{ pageSize: 10, size: 'small', hideOnSinglePage: true, showTotal: t => `共 ${t} 条` }"
                    style="margin-top:10px" :expand-row-by-click="true">
             <a-table-column title="问题" key="question" ellipsis>
               <template #default="{ record }">{{ record.question }}</template>

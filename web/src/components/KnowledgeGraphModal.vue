@@ -134,7 +134,8 @@ const tripleCols = [
   { title: '来源文档', dataIndex: 'doc', key: 'doc', width: 180, ellipsis: true }
 ]
 const triplePagination = computed(() => ({
-  current: triplePage.value, total: tripleTotal.value, pageSize: 20, showSizeChanger: false
+  current: triplePage.value, total: tripleTotal.value, pageSize: 20,
+  size: 'small', showSizeChanger: false, showTotal: t => `共 ${t} 条`
 }))
 
 const kbId = () => props.kb?.id
