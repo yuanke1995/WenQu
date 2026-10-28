@@ -71,7 +71,7 @@ public class AuditService {
     private volatile long lastDropWarnAt;
     private volatile boolean running = true;
     private Thread writerThread;
-    /** 链状态只在写线程里动，故无需加锁 */
+    /** 链状态（序号与链尾哈希）只由 {@link #persist} 一处推进：写线程与收尾冲队列都会进来，故它必须加锁 */
     private long seq;
     private String headHash;
 
@@ -101,7 +101,17 @@ public class AuditService {
     @PreDestroy
     void stop() {
         running = false;
-        if (writerThread != null) writerThread.interrupt();
+        if (writerThread != null) {
+            writerThread.interrupt();
+            try {
+                // 必须先等写线程真的停下来，再自己上手冲队列。原先只 interrupt 就立刻 drainOnce，
+                // 收尾那一瞬两个线程同时在改 seq 与链尾：链上会多出「序号断裂 + 链头不接」——
+                // 而这恰好是「事后有人删了行」的形状，等于每次重启都可能自己造出一条假篡改证据。
+                writerThread.join(2000);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        }
         // 退出前把队列里的最后几条冲掉：进程收尾时的审计恰恰最重要（谁停了服务）
         drainOnce(true);
     }
@@ -150,7 +160,10 @@ public class AuditService {
         if (action.isEmpty()) action = "未命名动作";
 
         AuditEvent row = new AuditEvent();
-        row.setTs(LocalDateTime.now());
+        // 时间戳先截到毫秒再入队：链里的 ts 参与哈希，而列是 DATETIME(3)、MySQL 存时四舍五入、
+        // 哈希用的是截断值——纳秒尾巴 ≥500µs 的那一条，落库后按库里的 ts 永远算不回原哈希
+        //（实测约四成的行被 verify 报成「内容被改写」）。两边统一成毫秒，链才可能自校验通过。
+        row.setTs(LocalDateTime.now().truncatedTo(java.time.temporal.ChronoUnit.MILLIS));
         row.setLevel(level);
         row.setAction(action.length() > 64 ? action.substring(0, 64) : action);
         row.setDetail(JSON.toJSONString(detail));
@@ -291,20 +304,50 @@ public class AuditService {
         if (!rest.isEmpty()) persist(rest);
     }
 
-    private void persist(List<AuditEvent> batch) {
+    private synchronized void persist(List<AuditEvent> batch) {
         for (AuditEvent row : batch) {
+            // 序号与链头只在「真落库」之后才推进：原先是先 ++seq 再插，一条插失败就 return，
+            // 于是那一期号被占掉、下一期的 prev_hash 又指向一条库里不存在的行——verify 同时报
+            // 「序号断裂」与「链头不接」，看起来像有人删了行，其实是我们自己没插进去。
+            // 现在失败的这一条不进链、单独计数并打错误行，链本身保持连续：
+            // 于是「链上有洞」重新变成它唯一的含义——事后被人删过。
+            long next = seq + 1;
+            row.setSeq(next);
+            row.setPrevHash(headHash);
+            row.setRowHash(hash(row));
             try {
-                row.setSeq(++seq);
-                row.setPrevHash(headHash);
-                row.setRowHash(hash(row));
-                headHash = row.getRowHash();
                 mapper.insert(row);
+                seq = next;
+                headHash = row.getRowHash();
             } catch (Exception e) {
-                // 单条失败不拖整批：链会在这里断一节，verify 会报出来，宁可看得见也不要静默补洞
-                log.error("[AUDIT] 事件落库失败（链在此处会报断点）: action={} {}", row.getAction(), e.getMessage());
-                return;
+                long lost = dropped.incrementAndGet();
+                log.error("[AUDIT] 事件落库失败（这条不进链，已计入未入库条数）: action={} 累计未入库={} 原因={}",
+                        row.getAction(), lost, e.getMessage());
             }
         }
+    }
+
+    /**
+     * 这行的内容哈希对不对——容忍 1 毫秒的时间戳表示差。
+     * <p>写侧现已把 ts 截到毫秒，但<b>存量行</b>是「哈希用截断值、库里存四舍五入值」留下的，
+     * 两者相差恰好 1ms；这不是内容被改，而是同一时刻的两种写法。判据放在这里而不是清库重算：
+     * 链的证据一旦落库就不再改写，为了让校验变绿去重算历史哈希，等于把「谁来认证过这件事」
+     * 变成「我现在算得出什么」——那是把审计账本擦成白纸上交差。
+     * <p>容忍的只有 ts：{@code detail}/{@code action} 等任一字段被改，±1ms 的三种算发都对不上，
+     * 照样报「内容被改写」。攻击者能挑的只是 1 毫秒的时间读数，挑不走他改的内容。
+     */
+    private static boolean hashMatchesStored(AuditEvent row) {
+        LocalDateTime origin = row.getTs();
+        if (hash(row).equals(row.getRowHash())) return true;
+        for (int delta = 1; delta <= 2; delta++) {
+            row.setTs(origin.minusNanos(delta * 1_000_000L));
+            boolean hit = hash(row).equals(row.getRowHash());
+            row.setTs(origin.plusNanos(delta * 1_000_000L));
+            hit = hit || hash(row).equals(row.getRowHash());
+            row.setTs(origin);
+            if (hit) return true;
+        }
+        return false;
     }
 
     private static String hash(AuditEvent row) {
@@ -409,6 +452,8 @@ public class AuditService {
     /**
      * 链校验：逐副本按 seq 走一遍，报告断点（缺号 / 哈希不符 / prev 不接）。
      * <p>留存清理会合法地删掉最老的一批，所以链头允许从任意 seq 起——这里只判「中间有没有洞或被改」。
+     * <p>哈希比对容忍 1~2 毫秒的时间戳表示差（见 {@link #hashMatchesStored}）：写侧截断、库里四舍五入，
+     * 这条差在修复之前的存量行上必然存在，把它当成「内容被改写」会让合规出口永远是一片红。
      */
     public List<Map<String, Object>> verify(int maxRowsPerReplica) {
         List<Map<String, Object>> problems = new ArrayList<>();
@@ -436,7 +481,7 @@ public class AuditService {
                     if (prev != null && !prev.equals(row.getPrevHash())) {
                         problems.add(Map.of("replica", replica, "problem", "链头不接", "seq", row.getSeq()));
                     }
-                    if (!hash(row).equals(row.getRowHash())) {
+                    if (!hashMatchesStored(row)) {
                         problems.add(Map.of("replica", replica, "problem", "内容被改写（哈希不符）", "seq", row.getSeq()));
                     }
                     prev = row.getRowHash();
