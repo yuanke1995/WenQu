@@ -342,7 +342,11 @@ def cmd_restore(db, args):
         die("--skip-db 与 --skip-files 不能同时给，那样等于什么都不做")
 
     print("恢复租户 %s ← %s" % (tenant, args.from_dir))
-    if fresh:
+    if args.skip_db:
+        # --skip-db 原先只管「不灌行」，建库与装结构那两步照跑——结果是把上一步刚灌好的表
+        # 连同数据一起抹平（实测：verify 当场报 37 张表全 0）。只解文件时什么都不该动库。
+        print("  --skip-db：不动数据库（不建库、不装结构、不灌行），只处理盘上目录")
+    elif fresh:
         print("目标库 %s 与来源库不同：按新库建库并先装 schema.sql" % into)
         if not args.yes:
             die("要往一个新库里灌数据，加 --yes 确认（避免误写回原库）")
@@ -358,7 +362,7 @@ def cmd_restore(db, args):
             db.run_script(schema, into)
     else:
         print("目标就是来源库 %s：恢复会把该租户的行插回原表（同 id 冲突会报错，不会静默覆盖）" % into)
-        if not args.skip_db and not args.yes:
+        if not args.yes:
             die("往来源库里恢复是破坏性动作，加 --yes 确认（只解文件用 --skip-db，不需要它）")
 
     if not args.skip_db:
