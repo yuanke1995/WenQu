@@ -51,7 +51,6 @@
                   <component :is="iconOf(record.icon)" class="rb-menu-ic" />
                   <span class="rb-name">{{ record.name }}</span>
                   <span v-if="record.builtin === 1" class="app-pill builtin">内置</span>
-                  <span v-if="record.visible === 0" class="app-pill warn">隐藏</span>
                   <!-- 渲染位置：sidebar 是默认态不加噪，其余三类必须可见——
                        尤其 tab 型不出现在侧栏，权限页里不标出来就成了「看不见的菜单」 -->
                   <span v-if="(record.renderAs || 'sidebar') === 'tab'" class="app-pill rb-ra">Tab</span>
@@ -77,6 +76,15 @@
             </a-table-column>
             <a-table-column title="排序" key="sort" width="80">
               <template #default="{ record }"><span class="rb-none">{{ record.sortOrder ?? 0 }}</span></template>
+            </a-table-column>
+            <a-table-column title="可见" key="visible" width="80">
+              <template #default="{ record }">
+                <!-- 显示/隐藏是这一个菜单自己的开关，不该藏在编辑弹窗里：
+                     隐藏某项是日常动作（临时收口、给新页签让路），点开弹窗只为改这一格太重 -->
+                <a-switch size="small" :checked="record.visible !== 0"
+                          :loading="visibleSaving === record.id"
+                          @change="v => toggleMenuVisible(record, v)" />
+              </template>
             </a-table-column>
             <a-table-column title="操作" key="action" width="130">
               <template #default="{ record }">
@@ -244,9 +252,6 @@
           <a-input-number v-model:value="menuForm.sort" :min="0" :max="9999" style="width:100%" />
           <div class="form-tip">数字小的排前面。</div>
         </a-form-item>
-        <a-form-item label="可见">
-          <a-switch v-model:checked="menuVisible" checked-children="显示" un-checked-children="隐藏" />
-        </a-form-item>
       </a-form>
     </a-modal>
 
@@ -364,7 +369,7 @@
 <script setup>
 import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { message } from 'ant-design-vue'
+import { message, Modal } from 'ant-design-vue'
 import { SearchOutlined, PlusOutlined, MessageOutlined, RobotOutlined, DatabaseOutlined, TeamOutlined,
          BarChartOutlined, ExperimentOutlined, SafetyOutlined, SettingOutlined, AppstoreOutlined,
          FolderOutlined, UserOutlined, FileOutlined, FileTextOutlined } from '@ant-design/icons-vue'
@@ -489,12 +494,10 @@ const countText = computed(() =>
 
 const menuModal = ref(false)
 const menuForm = ref(blankMenu())
-const menuVisible = ref(true)
 function blankMenu () { return { id: '', parentId: undefined, name: '', icon: undefined, path: '', sort: 0, renderAs: 'sidebar' } }
-function openMenuCreate () { menuForm.value = blankMenu(); menuVisible.value = true; menuModal.value = true }
+function openMenuCreate () { menuForm.value = blankMenu(); menuModal.value = true }
 function openMenuEdit (r) {
   menuForm.value = { id: r.id, parentId: r.parentId || undefined, name: r.name || '', icon: r.icon || undefined, path: r.path || '', sort: r.sortOrder ?? 0, renderAs: r.renderAs || 'sidebar' }
-  menuVisible.value = r.visible !== 0
   menuModal.value = true
 }
 /** 父菜单候选：排除自身及其后代（防环） */
@@ -511,12 +514,49 @@ async function saveMenu () {
   if (!String(f.name || '').trim()) { message.warning('请填写菜单名称'); return }
   saving.value = true
   try {
-    const body = { parentId: f.parentId || '', name: f.name, icon: f.icon || '', path: f.path || '', sortOrder: f.sort, visible: menuVisible.value ? 1 : 0, renderAs: f.renderAs || 'sidebar' }
+    const body = { parentId: f.parentId || '', name: f.name, icon: f.icon || '', path: f.path || '', sortOrder: f.sort, renderAs: f.renderAs || 'sidebar' }
     const r = f.id ? await updateMenu(f.id, body) : await createMenu(body)
     if (r.success) { message.success('已保存'); menuModal.value = false; await refresh('menus') }
     else message.error(r.msg || '保存失败')
   } catch (e) { message.error(e.message || '保存失败') }
   finally { saving.value = false }
+}
+/** 行内「可见」开关：PUT 只带 visible 一个字段（后端按字段增量更新），新建菜单默认显示 */
+const visibleSaving = ref('')
+async function toggleMenuVisible (record, on) {
+  // 子级按 parentId 现查，不用 record.children：搜索态下那是剪过枝的子集，会漏报
+  const kids = menus.value.filter(m => m.parentId === record.id && m.visible !== 0)
+  if (!on && kids.length) {
+    // 隐藏父级不是「整枝收起来」：服务端把可见子级上提为顶级，Tab 型子级则因失去宿主而全部失效——
+    // 两种结果都反直觉，点下去之前必须点名
+    const tabKids = kids.filter(c => (c.renderAs || 'sidebar') === 'tab')
+    const rest = kids.filter(c => (c.renderAs || 'sidebar') !== 'tab')
+    const lines = []
+    if (tabKids.length) lines.push(`${tabKids.map(c => c.name).join('、')}（${tabKids.length} 个页内 Tab）会失去宿主，打开该页面将没有可用页签`)
+    if (rest.length) lines.push(`${rest.map(c => c.name).join('、')} 会升到侧栏顶级继续显示`)
+    Modal.confirm({
+      title: `隐藏「${record.name}」？`,
+      content: lines.join('；') + '。',
+      okText: '隐藏',
+      cancelText: '取消',
+      onOk: () => applyMenuVisible(record, false)
+    })
+    return
+  }
+  await applyMenuVisible(record, on)
+}
+async function applyMenuVisible (record, on) {
+  visibleSaving.value = record.id
+  try {
+    const r = await updateMenu(record.id, { visible: on ? 1 : 0 })
+    if (!r.success) { message.error(r.msg || '操作失败'); await refresh('menus'); return }
+    // 表格行是 menuTree 计算出的拷贝，改它不会重渲染：写回 menus 源数组，由 computed 组出新树
+    const src = menus.value.find(m => m.id === record.id)
+    if (src) src.visible = on ? 1 : 0
+  } catch (e) {
+    message.error(e.message || '操作失败')
+    await refresh('menus')
+  } finally { visibleSaving.value = '' }
 }
 async function delMenu (id) {
   try {
