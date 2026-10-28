@@ -38,6 +38,7 @@ desc_of() {
     codegen/gen_config_schema.js)            echo "配置字段 ↔ defaults 一致性校验" ;;
     loadtest/mock-gateway.mjs)               echo "压测 mock 网关(:9101)" ;;
     loadtest/loadtest.mjs)                   echo "100 路并发压测" ;;
+    mac/check-enterprise.py)                  echo "企业级基底自检：审计链/停用租户/跨租户重置密码（--fixtures 建临时数据并自清）" ;;
     mac/dev-stack.sh)                        echo "本机开发栈统一启停(mysql/redis/meili/searxng/sandbox)" ;;
     mac/start-backend.sh)                    echo "启动后端 jar" ;;
     win/start-backend.bat)                   echo "启动后端 jar (Windows)" ;;
