@@ -28,9 +28,11 @@
                     placeholder="全部部门" :options="deptFilterOptions" />
           <a-select v-if="tab === 'users'" v-model:value="roleFilter" allow-clear size="small" class="mem-filter"
                     placeholder="全部角色" :options="roleFilterOptions" />
-          <button v-if="tab === 'users'" class="app-btn mem-new" @click="openUserCreate"><plus-outlined /> 新建用户</button>
-          <button v-if="tab === 'users'" class="app-btn ghost mem-new" @click="openTenantAdmin">租户管理<i v-if="multiTenant" class="mem-tenant-n">{{ tenants.length }}</i></button>
-          <button v-else class="app-btn mem-new" @click="openDeptCreate"><plus-outlined /> 新建部门</button>
+          <div class="mem-actions">
+            <button v-if="tab === 'users'" class="app-btn mem-new" @click="openUserCreate"><plus-outlined /> 新建用户</button>
+            <button v-if="tab === 'users'" class="app-btn ghost mem-new" @click="openTenantAdmin">租户管理<i v-if="multiTenant" class="mem-tenant-n">{{ tenants.length }}</i></button>
+            <button v-else class="app-btn mem-new" @click="openDeptCreate"><plus-outlined /> 新建部门</button>
+          </div>
         </div>
 
         <a-spin :spinning="loading">
@@ -744,7 +746,11 @@ async function delDept (id) {
 .mem-filter { width: 130px; flex: none; }
 .mem-filter .ant-select-selector { font-size: 12px; }
 .mem-count { font-size: 12px; color: var(--app-text3); }
-.mem-new { margin-left: auto; }
+/* 操作区整体右对齐成组：只让容器吃 margin-left:auto，按钮之间用固定 gap。
+   原先 margin-left:auto 直接挂在每个 .mem-new 上，flex 会把空白平分到多个 auto 间距，
+   导致「新建用户」「租户管理」之间被撑出一大段空隙。 */
+.mem-actions { margin-left: auto; display: inline-flex; align-items: center; gap: 10px; flex: none; }
+.mem-new { flex: none; }
 
 .mem-user { display: inline-flex; align-items: center; gap: 9px; min-width: 0; }
 .mem-avatar {
