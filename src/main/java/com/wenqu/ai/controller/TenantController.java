@@ -45,11 +45,17 @@ public class TenantController {
     private final AdminGuard adminGuard;
 
     @Operation(summary = "租户清单（管理）",
-            description = "每个租户的名称、启停状态与成员数（成员数跨租户统计，是平台视角）")
+            description = "每个租户的名称、启停状态与成员数（成员数跨租户统计，是平台视角）。"
+                    + "平台级管理员看全量；租户级管理员只看自家一行——别家客户的存在与名字不外泄")
     @GetMapping
     public ResultJson<List<Map<String, Object>>> list(HttpServletRequest request) {
         if (!adminGuard.isAdmin(request)) return ResultJson.error("租户管理仅管理员可查看");
-        return ResultJson.ok(tenantService.listWithCounts());
+        List<Map<String, Object>> rows = tenantService.listWithCounts();
+        if (!com.wenqu.ai.util.RequestUser.superadmin()) {
+            String mine = com.wenqu.ai.util.TenantContext.current();
+            rows = rows.stream().filter(t -> mine != null && mine.equals(String.valueOf(t.get("id")))).toList();
+        }
+        return ResultJson.ok(rows);
     }
 
     @Operation(summary = "开通租户",
@@ -58,7 +64,7 @@ public class TenantController {
     @PostMapping
     public ResultJson<Map<String, Object>> create(@RequestBody Map<String, String> body,
                                                   HttpServletRequest request) {
-        if (!adminGuard.isAdmin(request)) return ResultJson.error("租户管理仅管理员可操作");
+        requirePlatform(request);
         var t = tenantService.create(body == null ? null : body.get("id"),
                 body == null ? null : body.get("name"),
                 body == null ? null : body.get("contact"),
@@ -73,7 +79,7 @@ public class TenantController {
     @PostMapping("/{id}/status")
     public ResultJson status(@PathVariable("id") String id, @RequestBody Map<String, Object> body,
                              HttpServletRequest request) {
-        if (!adminGuard.isAdmin(request)) return ResultJson.error("租户管理仅管理员可操作");
+        requirePlatform(request);
         Object enabled = body == null ? null : body.get("enabled");
         tenantService.setStatus(id, enabled == null || Boolean.parseBoolean(String.valueOf(enabled)));
         return ResultJson.ok("已更新");
@@ -84,7 +90,7 @@ public class TenantController {
                     + "他已产出的会话、知识库、工作流留在原租户（要合并资源走显式的资源转移，不藏在改归属里）")
     @PostMapping("/member")
     public ResultJson moveMember(@RequestBody Map<String, String> body, HttpServletRequest request) {
-        if (!adminGuard.isAdmin(request)) return ResultJson.error("租户管理仅管理员可操作");
+        requirePlatform(request);
         tenantService.moveMember(body == null ? null : body.get("uid"),
                 body == null ? null : body.get("tenantId"));
         return ResultJson.ok("已变更归属");
@@ -143,6 +149,18 @@ public class TenantController {
         if (!adminGuard.isAdmin(request)) throw new com.wenqu.ai.common.BizException("开通申请仅管理员可处理");
         if (!com.wenqu.ai.util.RequestUser.superadmin()) {
             throw new com.wenqu.ai.common.BizException("批准租户开通申请仅平台级管理员可执行");
+        }
+    }
+
+    /**
+     * 平台级租户动作（直开/启停/划人）的判据：只挡 isAdmin 等于把别家客户交给别家管理员摆布——
+     * 实测租户甲管理员能停掉租户乙、能把租户乙的成员划归自己（2026-10-28 本地真机复现），
+     * 故与「批准开通申请」同款判据：必须是平台级管理员。
+     */
+    private void requirePlatform(HttpServletRequest request) {
+        if (!adminGuard.isAdmin(request)) throw new com.wenqu.ai.common.BizException("租户管理仅管理员可操作");
+        if (!com.wenqu.ai.util.RequestUser.superadmin()) {
+            throw new com.wenqu.ai.common.BizException("该动作是平台级租户管理，仅平台级管理员可执行");
         }
     }
 
