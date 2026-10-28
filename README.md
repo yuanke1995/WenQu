@@ -545,7 +545,7 @@ spring:
 
 | 前缀 | 主要键（默认值） | 生效方式 |
 |------|------------------|----------|
-| `chat.*` | `citationCheckEnabled`(true)、`sseTimeoutMs`(300000)、`approvalTimeoutMs`(120000)、`askTimeoutMs`(600000)、`planTimeoutMs`(600000)、`maxImagesPerMessage`(9)、`maxImageMb`(10)、`uploadRetentionHours`(24)、`uploadCleanupIntervalMs`(1h)、`retrievalDebugEnabled`(true) | 聊天模型走「会话选择 > 个人默认」；行为项保存即生效。「超时与等待」提供**耐心档位**（标准 / 长任务 / 无人值守）一次写齐四个超时，也可逐项微调；回答温度、断线重连、流水线线程数为内部键 |
+| `chat.*` | `citationCheckEnabled`(true)、`sseTimeoutMs`(300000)、`approvalTimeoutMs`(120000)、`askTimeoutMs`(600000)、`planTimeoutMs`(600000)、`modelStallTimeoutMs`(60000)、`maxImagesPerMessage`(9)、`maxImageMb`(10)、`uploadRetentionHours`(24)、`uploadCleanupIntervalMs`(1h)、`retrievalDebugEnabled`(true) | 聊天模型走「会话选择 > 个人默认」；行为项保存即生效。「超时与等待」提供**耐心档位**（标准 / 长任务 / 无人值守）一次写齐四个超时，也可逐项微调；`modelStallTimeoutMs` 管的是一次模型调用**停住不动**多久判这条流已断（还在出字就不算，长回答不受约束），故不随档位调整；回答温度、断线重连、流水线线程数为内部键 |
 | `memory.*` | `enabled`(true)、`flushThrottleMinutes`(10，0=每轮)、`maxMdTokens`(3000) | 长期记忆平台总闸与预算；合并时给模型的目标预算按上限的 2/3 推导，写入落盘再按上限强制裁剪；日账保留期沿用框架默认 90 天 |
 | `retrieval.*` | `vectorWeight`(0.6)、`keywordWeight`(0.4)、`vectorTopK`(15)、`vecThreshold`(0.3)、`keywordLimit`(20)、`minContextScore`(0.6 重排门)、`minFusionScore`(0.5 融合门)、`aclTopKSupplant`(true) | 保存即生效；同一组参数也可在知识库编辑里逐库稀疏覆盖 |
 | `rerank.*` | `enabled`(true)、`platformRef`（平台默认重排模型，空=不重排）、`minHits`(6 少于几条不重排)、`maxHits`(15 重排窗口)、`model`（个人专属重排模型） | 取值顺序：知识库检索设置 > 平台默认 > 内部回落；未绑模型或服务不可用时按融合分排序并提示，不阻塞问答 |

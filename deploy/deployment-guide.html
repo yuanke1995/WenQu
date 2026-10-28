@@ -118,6 +118,7 @@ Nginx（宿主安装）
     <tr><td>boundedElastic（工具执行）</td><td>128</td><td>askUser 等待 / 审批 / 沙盒等阻塞工具占用此池，每线程 ≈1MB 栈</td></tr>
     <tr><td>整轮机器耗时预算 <code>chat.sseTimeoutMs</code></td><td>300000（设置页可调）</td><td>人工等待（askUser/审批）不计入；心跳 15s 保活，nginx 需 buffering off + 超时 ≥ 预算</td></tr>
     <tr><td>askUser 等待窗口 <code>chat.askTimeoutMs</code></td><td>600000（设置页可调）</td><td>提问卡跨页面可恢复；超时不代答</td></tr>
+    <tr><td>单次模型调用静默上限 <code>chat.modelStallTimeoutMs</code></td><td>60000（设置页可调）</td><td>管「这条流停住不动」，不管「跑得久」：还在出字就不算超时。死流判死后按可重试错误自动再发一次（主链 3 次、记忆/压缩 2 次）；0 = 回落到框架默认 5 分钟</td></tr>
     <tr><td>同会话并发</td><td>互斥</td><td>同一会话同时只跑一轮，第二问明确提示「上一轮还在回答中」</td></tr>
     <tr><td>多副本扩展</td><td>暂不支持</td><td>审批/提问/产物推送为进程内存态，多副本需先做粘性路由与跨副本回调</td></tr>
   </table>

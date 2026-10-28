@@ -98,6 +98,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     /** 整轮不截断（{@code chat.sseTimeoutMs}=0）时，单把工具仍保留的超时（秒）。 */
     private static final int UNLIMITED_TOOL_SECONDS = 7200;
 
+    /** 单次模型调用的静默上限默认值（毫秒），见 {@link #modelExecutionConfig}。 */
+    private static final int MODEL_STALL_TIMEOUT_MS_DEFAULT = 60_000;
+    /** 主链一次调用的尝试次数（含首次）：与框架 MODEL_DEFAULTS 同数，只是把静默上限收下来。 */
+    private static final int MODEL_MAX_ATTEMPTS = 3;
+    /** 辅助调用（记忆提炼／上下文压缩）的尝试次数：慢一次没人等，不值得再烧一整段静默。 */
+    private static final int AUX_MODEL_MAX_ATTEMPTS = 2;
+
     private final ModelRegistryService modelRegistry;
     /** 工作区约定：注入 system prompt 的工作背景段（无工作区/无约定时为空） */
     private final com.wenqu.ai.service.ProjectService projectService;
@@ -1010,6 +1017,21 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         boolean superseded = "supersede".equals(planOutcome);
         if (superseded) channel.emit(RunEventType.PLAN_SUPERSEDED, "{}");
         else if ("reject".equals(planOutcome)) channel.emit(RunEventType.PLAN_CANCELLED, "{}");
+        // 整轮机器预算用尽而循环是自己退的：屏幕上这一轮已经收尾，框架那一跑却还活着——不叫停，
+        // 下一步与下一段钱就记在没有人跟的那一跑上（线上 57 分钟那一账的第 4 条机制：整轮那道闸
+        // 打不断在途调用，turn 1/3/4 全部越闸）。中断是协作式的：在途那一步跑完，之后不再起新的
+        // 模型调用；已经流出半截的正文照旧走下面的收尾落库，不丢。
+        // 判据用同一个 machineMs——与上面 while 的退出条件一字不差，否则「退出了」与「预算用尽」
+        // 会对不上，把正常答完的那一轮也报成超时。
+        boolean ranOutBudget = false;
+        if (!stopped && !neverLaunched && !superseded
+                && machineMs(startedAt, humanWaitMs, waitingOnHuman, waitBeganAt) >= machineBudgetMs) {
+            session.interrupt();
+            ranOutBudget = true;
+            channel.emit(RunEventType.WARN, "已到整轮时间上限，后面的步骤没有执行。发一句「继续」可以接着做");
+            log.warn("[FAIL-LOUD] 整轮机器预算用尽，已叫停框架那一跑: session={} turn={} 预算={}ms",
+                    cmd.getSessionId(), turnId, machineBudgetMs);
+        }
         // 裁决过的计划卡随助手消息落 plan 列（字段与手写侧 planSnapshot 同名：plan/status/versions/auto）。
         // 不落的表现：刷新后只剩「还在等确认」的那一张（它由待办恢复端点重建），已批过的每张计划都消失，
         // 用户回头看不出这一轮是按哪一版计划跑的。
@@ -1073,7 +1095,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                     "框架引擎本轮没有开始执行（模型未被调用），请重试；反复出现请新建一条会话");
             log.warn("[FAIL-LOUD] 本轮 submit 始终未被框架启动: session={} turn={} 空等 {}ms",
                     cmd.getSessionId(), turnId, System.currentTimeMillis() - startedAt);
-        } else if (!stopped && failure != null && answer.isBlank()) {
+        } else if (!stopped && failure != null) {
+            // 不看正文空不空：跑出过半截正文的那一跑同样是被 402／网关异常打死的。原先只在
+            // answer 空时才出声，症状是「气泡照报已完成、正文停在半句」，而错误卡与「这一轮中断」
+            // 那句状态全都没长出来——用户得自己发现它没说完。
+            // 叫停那一支不套用：那是用户自己按的，再说一句「AI 回复失败」就是把他的动作报成故障。
             spokenFailure = emitRunFailure(pool, channel, failure);
         }
         // 框架撞步数上限时补的那条收尾正文要接回来：它走 SUMMARY 用途，被 translate() 那道
@@ -1136,9 +1162,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 屏幕前的人看得见——长轮跑完时人多半已经切走或锁屏，铃铛一声不响等于「跑完没人知道」。
         // 「提前停了」与「没跑成」分两句说：已经写出一半正文的那一轮，用户真读到了东西，
         // 把它报成「没跑成」等于说那段话不存在。
-        String earlyExit = spokenFailure != null ? spokenFailure : failure;
+        // 铃铛只说人话：spokenFailure 就是 emitRunFailure 生成的那一句。原先这里在它为空时退回
+        // `failure`——那是上游原始串（「HTTP transport error during streaming: HTTP request failed
+        // with status 403…」，英文、带响应体碎片），用户在铃铛里读不出「该充值还是该换模型」，
+        // 而用户自己叫停的那一轮也会被报成故障。原始串留给日志，不进通知。
+        String earlyExit = spokenFailure;
         if (earlyExit == null && neverLaunched) earlyExit = "这一轮模型没有被调用，请重试或新建一条会话再问";
-        if (earlyExit == null && timedOut) earlyExit = "撞到整轮时间上限，活没干完就停了";
+        if (earlyExit == null && (timedOut || ranOutBudget)) earlyExit = "撞到整轮时间上限，活没干完就停了";
         if (earlyExit == null && cutByMaxIters) earlyExit = "推理步数已用满，活没干完就停了";
         turnNotify.onTurnSettled(cmd, turnId, machineMs, recording.toolCallList().size(),
                 stopped, awaiting, earlyExit, !answer.isBlank(),
@@ -2069,9 +2099,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         private final Set<String> appliedSteers = java.util.concurrent.ConcurrentHashMap.newKeySet();
         /**
          * 这一跑是否已经真的结束（看到过 {@code run/end}）。
-         * <p>插话对账要用它：跟随循环撞到墙钟上限退出时，框架那一跑<b>还在后台继续</b>，那条插话会在
-         * 下一次调模型前被正常应用。那时候交回前端等于把同一句话发两遍——所以只认「已经收尾、
-         * 且没应用成」的那几条。
+         * <p>插话对账要用它。撞到整轮机器预算的那一支现在会当场叫停那一跑（见 followTurn 的
+         * {@code ranOutBudget}），所以框架会写下终态的 {@code run/end}——那句「模型还没收到这句话」
+         * 从此可以如实报出来；没等到 {@code run/end} 就说明那一跑还活着，插话会在下一次调模型前
+         * 正常应用，这时候交回前端等于把同一句话发两遍。
          */
         private volatile boolean runEnded;
 
@@ -3118,7 +3149,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      */
     private io.agentscope.core.model.GenerateOptions generateOptions(ChatCommand cmd, String ref) {
         io.agentscope.core.model.GenerateOptions.Builder b =
-                io.agentscope.core.model.GenerateOptions.builder();
+                io.agentscope.core.model.GenerateOptions.builder()
+                        .executionConfig(modelExecutionConfig(MODEL_MAX_ATTEMPTS));
         String thinkLevel = cmd.getReasoningLevel() != null ? cmd.getReasoningLevel()
                 : modelRegistry.defaultReasoningLevelOf(ref);
         boolean thinkingOn = cmd.isDeepThink()
@@ -3148,6 +3180,60 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     /**
+     * 辅助调用（框架的记忆提炼与上下文压缩）那一份请求参数：<b>把思考关掉</b>，其余照最小集。
+     * <p>为什么要单独一份：这两类调用由框架直接拿建实例时那份模型去发（调用点传的是
+     * {@code options=null}，只吃模型实例的 configuredOptions），所以「用户这一轮开了深度思考」会
+     * 一并带进摘要与记忆里。实测代价是 2026-10-22 那一轮压缩前的 24.7 秒静默——两次 SUMMARY
+     * 调用共 4,811 输出 token，其中 2,705 是 reasoning，折完就扔。摘要要的是把话压短，不是想清楚。
+     * <p>{@code reasoningOffBody} 只在模型登记为「可开关思考」时给关闭方言；<b>恒思考那一族
+     * （R1／deepseek-flash 等）压根没有关的开关</b>，返回空 Map 时这里就只发最小集（不猜方言字段，
+     * 发了会被网关 400 拒掉，真机为 GLM 那条踩过并写进方法注释）。这一族确实省不掉，至少不再
+     * 把主链的「思考强度档位」也叠上去。
+     * <p>温度沿用设置页那一个值：这两类调用本来就跟着问答走，不为它们另开一档。
+     */
+    private io.agentscope.core.model.GenerateOptions auxGenerateOptions(ChatCommand cmd, String ref) {
+        io.agentscope.core.model.GenerateOptions.Builder b =
+                io.agentscope.core.model.GenerateOptions.builder()
+                        .temperature(configService.getDouble("chat.temperature"))
+                        // 辅助调用少一次重试就少挂一整段静默：主链撞 429 值得等，摘要晚一帧没人等
+                        .executionConfig(modelExecutionConfig(AUX_MODEL_MAX_ATTEMPTS));
+        int offApplied = 0;
+        for (Map.Entry<String, Object> e : modelRegistry.reasoningOffBody(ref).entrySet()) {
+            b.additionalBodyParam(e.getKey(), e.getValue());
+            offApplied++;
+        }
+        if (offApplied == 0 && ModelRegistryService.THINK_ALWAYS.equals(modelRegistry.referenceThinking(ref))) {
+            // 关不掉且这一族恒思考：说清楚它在，别让它冒充「已经省下了」
+            log.info("[agentx] 模型 {} 恒思考、无关闭方言，辅助调用（记忆/压缩）仍会带 reasoning", ref);
+        }
+        return b.build();
+    }
+
+    /**
+     * 单次模型调用的超时与重试（框架原生口子 {@code GenerateOptions.executionConfig}）。
+     * <p><b>这条闸管的是「静默」不是「总时长」</b>：框架把它挂在响应流的 {@code timeout()} 上
+     * （{@code ModelUtils.applyTimeoutAndRetry}），逐块复位——上游还在吐字就不算超时，停住不动才算。
+     * <p>为什么要显式设：框架默认 {@code MODEL_DEFAULTS} 的静默上限是 5 分钟，而本机事件日志里
+     * 26,850 个真实块间隔的最大值是 <b>0.891 秒</b>（p99=90ms，没有一段超过 30 秒）——5 分钟那道
+     * 默认线保护不了任何人，只会把「这条流已经死了」拖成用户屏幕上五分钟的空转，再乘上重试次数。
+     * <p>{@code mergeConfigs(这份, MODEL_DEFAULTS)} 只覆盖我点名的三项，退避曲线与重试判据仍取框架
+     * 那份（{@code RETRYABLE_ERRORS}：429/5xx/超时/IO 才重试，400/401 直接失败——把 401 重试三遍
+     * 只是让额度不足晚三分钟才说出口）。重试还有一条框架自带的保护：已经流出过可见内容就不重试，
+     * 免得同一句话在气泡里印两遍。
+     */
+    private io.agentscope.core.model.ExecutionConfig modelExecutionConfig(int maxAttempts) {
+        io.agentscope.core.model.ExecutionConfig.Builder b =
+                io.agentscope.core.model.ExecutionConfig.builder()
+                        .maxAttempts(maxAttempts)
+                        .retryOn(io.agentscope.core.model.ExecutionConfig.RETRYABLE_ERRORS);
+        int stallMs = configService.getInt("chat.modelStallTimeoutMs", MODEL_STALL_TIMEOUT_MS_DEFAULT);
+        if (stallMs > 0) b.timeout(java.time.Duration.ofMillis(stallMs));
+        // 0=不限制：这一项留给框架 MODEL_DEFAULTS 那 5 分钟，主链完全不设静默闸的场景是「上游就是慢」
+        return io.agentscope.core.model.ExecutionConfig.mergeConfigs(
+                b.build(), io.agentscope.core.model.ExecutionConfig.MODEL_DEFAULTS);
+    }
+
+    /**
      * 记忆提炼配置：只在平台总闸与个人开关都开着时装配（见 {@code buildAgent} 的记忆闸）。
      * 任一关掉时走框架 {@code disableMemoryHooks()}：flush 与后台维护都不注册，模型侧也不会
      * 再收到「问答后自动提炼」的引导——只把 {@code FlushTrigger} 改成 never 会留下这句假承诺，
@@ -3158,14 +3244,16 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 都多一次主模型提炼调用；② prompt 追加问渠规则（中文、只记持久事实、不记密钥/探针）；
      * ③ 记忆模型包 MeteredModel（kind=memory），成本进台账。{@code MEMORY.md} 的硬上限
      * 不在这里——它落在写入文件系统那一层（{@code MemoryCappedFilesystem}）。
+     * <p>进来的模型是 {@code auxModel}（关思考那一份，见 {@link #auxGenerateOptions}）：提炼一段
+     * 记忆要的是把话记下来，不需要它先推理两千 token。
      *
      * <p>容量只有一个旋钮 {@code memory.maxMdTokens}：consolidation 的提示词目标按它的 2/3
      * 推导（默认 3000 → 2000），不再单列「目标上限」——两个数要人肉保证大小关系，配反了
      * 每次合并都会被裁。日账保留期同理沿用框架默认 90 天，不单独配置。
      */
     private io.agentscope.harness.agent.memory.MemoryConfig memoryConfig(
-            ChatCommand cmd, io.agentscope.core.model.Model baseModel, String modelRef) {
-        io.agentscope.core.model.Model memoryModel = new MeteredModel(baseModel, usageLedger, quotaService, contentSafety,
+            ChatCommand cmd, io.agentscope.core.model.Model auxModel, String modelRef) {
+        io.agentscope.core.model.Model memoryModel = new MeteredModel(auxModel, usageLedger, quotaService, contentSafety,
                 com.wenqu.ai.util.UsageAttr.of(cmd.getUserId(), cmd.getSessionId(), null, "memory"), modelRef);
         int maxMdTokens = Math.max(500, configService.getInt("memory.maxMdTokens",
                 com.wenqu.ai.config.ConfigDefaults.MEMORY_MAX_MD_TOKENS));
@@ -3210,11 +3298,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * paths still run their own flush when they fire."*）。压缩前的 flush 不走 MemoryConfig，
      * 只能在这里关；溢出兜底在 CompactionMiddleware 内复制同一开关，因此一并生效。
      * <p>摘要模型包 MeteredModel（kind=compress）：压缩平时不常跑，但一跑就是一次不小的输入，
-     * 不记账就永远不知道它花在哪。
+     * 不记账就永远不知道它花在哪。进来的模型是 {@code auxModel}（关思考那一份，见
+     * {@link #auxGenerateOptions}）——那 24.7 秒里有 2,705 个 reasoning token 是折完就扔的。
      */
     private io.agentscope.harness.agent.memory.compaction.CompactionConfig compactionConfig(
-            ChatCommand cmd, io.agentscope.core.model.Model baseModel, String modelRef) {
-        io.agentscope.core.model.Model compressModel = new MeteredModel(baseModel, usageLedger, quotaService, contentSafety,
+            ChatCommand cmd, io.agentscope.core.model.Model auxModel, String modelRef) {
+        io.agentscope.core.model.Model compressModel = new MeteredModel(auxModel, usageLedger, quotaService, contentSafety,
                 com.wenqu.ai.util.UsageAttr.of(cmd.getUserId(), cmd.getSessionId(), null, "compress"),
                 modelRef);
         io.agentscope.harness.agent.memory.compaction.CompactionConfig.Builder b =
@@ -3285,25 +3374,32 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 子轮只读记忆：框架四把记忆工具打包注册，没有「只摘写」的开关；
         // 这里在执行前拒 memory_save，保留注入与 memory_search/get（只读也读得到）。
         toolGate.denyMemoryWrites(cmd.branchTurn());
-        // 主模型只建一次：主对话、记忆提炼、上下文压缩各包一层 MeteredModel（按 kind 分开记账），
-        // 底层仍是同一个 OpenAIChatModel。包装器只旁路 usage，不改变请求参数与上下文窗口。
+        // 模型实例建两份，共用同一条 HTTP 通道（一个连接池）：
+        //  · 主链那份带用户这一轮的思考档与温度；
+        //  · 辅助那份只服务框架的记忆提炼与上下文压缩——它们要的是「把话折短」，不是「想清楚」，
+        //    跟着主链开思考就是拿最贵的token去写一段算完即扔的推理（实测一次压缩 4,811 输出
+        //    token 里 2,705 是 reasoning，24.7 秒静默全花在这上面）。两条请求参数不同，只能是两个实例；
+        //    transport 提出来复用，否则多建一个 OkHttp 客户端＝多一份连接池。
+        // 两处的用量各按 kind 分开记账（chat/subagent/memory/compress），窗口都照抄登记值。
+        io.agentscope.core.model.transport.OkHttpTransport modelTransport =
+                io.agentscope.core.model.transport.OkHttpTransport.builder()
+                        .config(io.agentscope.core.model.transport.HttpTransportConfig.builder()
+                                // 连接超时从框架默认的 30 秒收到 8 秒：真机 2026-10-23 22:24 那一轮，第一次模型调用
+                                // 挂满 33.7 秒以「SSE/NDJSON stream failed: java.io.IOException: Operation timed out」收场，
+                                // 框架随即重试且第二次 5.8 秒就出了字——那 30 秒是一条已经死掉的连接在慢慢超时。
+                                .connectTimeout(java.time.Duration.ofSeconds(8))
+                                .build())
+                        .build();
+        String completionsPath = route.completionsPath() == null || route.completionsPath().isBlank()
+                ? "/v1/chat/completions" : route.completionsPath();
         OpenAIChatModel.Builder modelBuilder = OpenAIChatModel.builder()
                 .baseUrl(route.baseUrl())
                 .apiKey(route.apiKey())
                 .modelName(route.modelId())
                 .stream(true)
-                // 连接超时从框架默认的 30 秒收到 8 秒：真机 2026-10-23 22:24 那一轮，第一次模型调用
-                // 挂满 33.7 秒以「SSE/NDJSON stream failed: java.io.IOException: Operation timed out」收场，
-                // 框架随即重试且第二次 5.8 秒就出了字——那 30 秒是一条已经死掉的连接在慢慢超时。
-                // 只收连接这一档：读超时/流空闲仍是 5 分钟，长思考与长流式不该被掐。
-                .httpTransport(io.agentscope.core.model.transport.OkHttpTransport.builder()
-                        .config(io.agentscope.core.model.transport.HttpTransportConfig.builder()
-                                .connectTimeout(java.time.Duration.ofSeconds(8))
-                                .build())
-                        .build())
+                .httpTransport(modelTransport)
                 .generateOptions(generateOptions(cmd, hooks.modelRef()))
-                .endpointPath(route.completionsPath() == null || route.completionsPath().isBlank()
-                        ? "/v1/chat/completions" : route.completionsPath());
+                .endpointPath(completionsPath);
         // 窗口拿得到登记值才交给模型：没拿到时一次都不调，让框架按模型名查它自己的内置表。
         // 显式传 0 会被框架当成「这条模型的窗口是 0」，输入上限直接掉到 64000 兜底值——
         // 压缩阈值随之变成 64000 减去固定开销（系统提示词＋投影＋工具声明），实测约 44K 就折一次。
@@ -3312,6 +3408,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         int contextWindow = binding.contextWindow();
         if (contextWindow > 0) modelBuilder.contextWindowSize(contextWindow);
         io.agentscope.core.model.Model baseModel = modelBuilder.build();
+        // 辅助调用那一份：同一个 builder 换参数再 build（build() 只读字段、不复用实例），
+        // 因此两条路径共用 transport 与窗口，只有请求参数不同。
+        io.agentscope.core.model.Model auxModel = modelBuilder
+                .generateOptions(auxGenerateOptions(cmd, hooks.modelRef()))
+                .build();
         io.agentscope.core.model.Model chatModel = new MeteredModel(baseModel, usageLedger, quotaService, contentSafety,
                 com.wenqu.ai.util.UsageAttr.of(cmd.getUserId(), cmd.getSessionId(), null,
                         cmd.branchTurn() ? "subagent" : "chat"), hooks.modelRef());
@@ -3373,7 +3474,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 用户选的窗口已落到 model.contextWindowSize（见 .model(...) 段），压缩阈值由它推导，
                 // 这里不再单独传 maxContextTokens（那是 WorkspaceContextMiddleware 的注入预算，非压缩阈值）。
                 // 压缩摘要用独立的 MeteredModel（kind=compress），成本才进得了台账。
-                .compaction(compactionConfig(cmd, baseModel, hooks.modelRef()))
+                .compaction(compactionConfig(cmd, auxModel, hooks.modelRef()))
                 .workspace(stateDir)
                 // 会话状态恒存 Redis：本地文件方案已退役（容器重建即丢，会让多轮对话退化成每轮独立问答）。
                 // Redis 连不上时应用起不来——宁可启动失败，也不要带着「每轮失忆」对外服务。
@@ -3476,7 +3577,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         } else if (cmd.branchTurn() || !memoryOn(cmd)) {
             agentBuilder.disableMemoryHooks();
         } else {
-            agentBuilder.memory(memoryConfig(cmd, baseModel, hooks.modelRef()));
+            agentBuilder.memory(memoryConfig(cmd, auxModel, hooks.modelRef()));
         }
         io.agentscope.harness.agent.DistributedStore distributedStore = distributedStore();
         if (distributedStore != null) {
@@ -3870,8 +3971,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 本轮送进过框架会话、但<b>没被写进上下文</b>的插话（要交回前端补发的那几条）。
      * <p>按把手取：收据与落库的那条用户消息同行，都在本轮的把手上；把手已经换成别的轮（新轮已经开始、
      * 或已经被摘掉）时一条都不报——把上一轮的插话挂到这一轮的 done 上，前端会把它再发一遍。
-     * <p>只在「这一跑真的结束了」之后认账（{@code run/end}）：墙钟到点退出的那一支里框架那一跑还在
-     * 后台继续，插话照样会在它下一次调模型前被应用——在这里交回前端等于让用户同一句话讲两遍。
+     * <p>只在「这一跑真的结束了」之后认账（{@code run/end}）：那一跑还活着时，插话会在它下一次
+     * 调模型前被应用——在这里交回前端等于让用户同一句话讲两遍。撞整轮机器预算退出的那一支现在
+     * 当场就把它叫停了（见 {@code ranOutBudget}），所以那种收尾也拿得到 {@code run/end}。
      */
     /** 按框架收据找回那句插话（用户原话＋它落库的消息 ID）。收据号本轮唯一，配不上就是本轮没这句话。 */
     private static com.wenqu.ai.agent.chat.TurnHandle.SteerAck steerAckOf(String sessionId, String receiptId) {
