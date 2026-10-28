@@ -392,9 +392,15 @@ public class UsageQuotaService {
         List<Map<String, Object>> out = new ArrayList<>();
         for (Quota q : quotaMapper.selectList(new LambdaQueryWrapper<Quota>()
                 .orderByAsc(Quota::getScope).orderByAsc(Quota::getPeriod))) {
-            UsageAgg agg = usage(q);
+            // 用量聚合按「行归属租户」显式绑定后再算：平台视图（superadmin 跨租户看清单）里
+            // 行级拦截器不再注入租户谓词，不绑的话租户档行会把全平台台账加总成它的用量——
+            // 数字当场说谎。普通视图里 as(本租户) 与线程现值同值，行为零变化。
+            String rowTenant = q.getTenantId() == null || q.getTenantId().isBlank()
+                    ? com.wenqu.ai.util.TenantContext.DEFAULT_TENANT : q.getTenantId();
+            UsageAgg agg = com.wenqu.ai.util.TenantContext.as(rowTenant, () -> usage(q));
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", q.getId());
+            m.put("tenantId", q.getTenantId());
             m.put("scope", q.getScope());
             m.put("scopeId", q.getScopeId());
             m.put("scopeName", scopeDisplayName(q));
@@ -461,7 +467,7 @@ public class UsageQuotaService {
 
     /** 新建或覆盖（同作用域同周期唯一，撞了就改那一条） */
     public Quota save(String id, String scope, String scopeId, String period, Long tokenLimit,
-                      BigDecimal costLimit, String kinds, Integer enforce, String remark) {
+                      BigDecimal costLimit, String kinds, Integer enforce, String remark, String tenantId) {
         if (!Set.of("tenant", "department", "user").contains(scope)) {
             throw new BizException("配额作用域只能是平台/部门/成员");
         }
@@ -490,6 +496,16 @@ public class UsageQuotaService {
         q.setEnforce(enforce == null ? 1 : enforce);
         q.setRemark(remark);
         if (fresh) {
+            // 平台级管理员可指定归属租户（跨租户设限，如按合同给某客户封顶）：显式带 tenant_id 列，
+            // 行级拦截器见列即让行（WenquTenantLineHandler#ignoreInsert）。平台视图里拦截器不补默认值，
+            // 不落这一笔新行会静默掉进 default，所以没指定时兜当前租户（再兜 DEFAULT）。
+            // 只 superadmin 生效；普通路径维持拦截器按线程补。编辑路径不碰归属——
+            // 改归属是数据迁移，不是改一条规则的限额。
+            if (com.wenqu.ai.util.RequestUser.superadmin()) {
+                String own = tenantId != null && !tenantId.isBlank() ? tenantId.trim()
+                        : com.wenqu.ai.util.TenantContext.current();
+                q.setTenantId(own == null || own.isBlank() ? com.wenqu.ai.util.TenantContext.DEFAULT_TENANT : own);
+            }
             quotaMapper.insert(q);
             audit.record("[AUDIT] 新建配额 scope={} scopeId={} period={} token={} cost={} enforce={}",
                     scope, scopeId, period, q.getTokenLimit(), costLimit, q.getEnforce());

@@ -48,7 +48,9 @@ public class QuotaController {
     @GetMapping
     public ResultJson<List<Map<String, Object>>> list(HttpServletRequest request) {
         if (!adminGuard.isAdmin(request)) return ResultJson.error("配额管理仅管理员可查看");
-        return ResultJson.ok(quotaService.listWithUsage());
+        // 平台级管理员跨租户看全量（行里带 tenantId 供前端分组），租户管理员仍只看本租户；
+        // 聚合侧由 listWithUsage 按行归属租户显式绑定，平台视图不会把别家台账加总进来
+        return ResultJson.ok(com.wenqu.ai.util.TenantContext.asPlatformIfSuper(quotaService::listWithUsage));
     }
 
     @Operation(summary = "新建或修改配额",
@@ -65,9 +67,11 @@ public class QuotaController {
         BigDecimal costLimit = body.get("costLimit") == null || String.valueOf(body.get("costLimit")).isBlank()
                 ? null : new BigDecimal(String.valueOf(body.get("costLimit")));
         Integer enforce = body.get("enforce") == null ? 1 : ((Number) body.get("enforce")).intValue();
-        var saved = quotaService.save(str(body.get("id")), str(body.get("scope")), str(body.get("scopeId")),
-                str(body.get("period")), tokenLimit, costLimit, str(body.get("kinds")), enforce,
-                str(body.get("remark")));
+        // tenantId 只有平台级管理员能指定（给某个客户按合同封顶）；普通路径忽略之，归属由行级拦截器补
+        var saved = com.wenqu.ai.util.TenantContext.asPlatformIfSuper(() ->
+                quotaService.save(str(body.get("id")), str(body.get("scope")), str(body.get("scopeId")),
+                        str(body.get("period")), tokenLimit, costLimit, str(body.get("kinds")), enforce,
+                        str(body.get("remark")), str(body.get("tenantId"))));
         Map<String, Object> out = new java.util.LinkedHashMap<>();
         out.put("id", saved.getId());
         return ResultJson.ok(out, "已保存");
@@ -77,7 +81,8 @@ public class QuotaController {
     @DeleteMapping("/{id}")
     public ResultJson delete(@PathVariable("id") String id, HttpServletRequest request) {
         if (!adminGuard.isAdmin(request)) return ResultJson.error("配额管理仅管理员可删除");
-        quotaService.delete(id);
+        // 平台视图放开 selectById 的租户过滤：superadmin 删别家租户的规则不至于「规则不存在」
+        com.wenqu.ai.util.TenantContext.asPlatformIfSuper(() -> quotaService.delete(id));
         return ResultJson.ok("已删除");
     }
 

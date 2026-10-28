@@ -294,6 +294,11 @@
 
       <a-modal v-model:open="quotaModal" :title="quotaForm.id ? '编辑配额' : '新建配额'" @ok="submitQuota">
         <a-form layout="vertical">
+          <a-form-item v-if="superadmin" label="归属租户"
+                       extra="平台级管理员可给任一租户设限（如按合同封顶）；租户管理员固定为本租户">
+            <a-select v-model:value="quotaForm.tenantId" :options="tenantOptions" style="width:100%"
+                      :disabled="!!quotaForm.id" />
+          </a-form-item>
           <a-form-item label="作用域">
             <a-segmented v-model:value="quotaForm.scope" :options="quotaScopeOptions" @change="onQuotaScopeChange" />
           </a-form-item>
@@ -419,8 +424,9 @@ import { message } from 'ant-design-vue'
 import {
   getAnalytics, getUnmatchedQuestions, createKnowledge, getBadCases, addEvalCase, getEvalLastReport, runEvalAutoCheck,
   listTraces, getChatTrace, getWorkflowTrace, listTracePool, labelTraceSample, dismissTraceSample, runTraceSampling, getTraceStats,
-  getUsageCost, listQuotas, saveQuota, deleteQuota, listDepartments, listUsers
+  getUsageCost, listQuotas, saveQuota, deleteQuota, listDepartments, listUsers, listTenants
 } from '../api'
+import { isSuperadminSync } from '../utils/auth'
 
 const tab = ref('overview')
 const qCols = [
@@ -757,34 +763,52 @@ const quotas = ref([])
 const quotaLoading = ref(false)
 const quotaModal = ref(false)
 const quotaForm = ref({ id: null, scope: 'user', scopeId: undefined, period: 'month',
-  tokenLimit: 0, costLimit: null, enforce: true, remark: '' })
+  tokenLimit: 0, costLimit: null, enforce: true, remark: '', tenantId: undefined })
 const quotaScopeOptions = [{ value: 'tenant', label: '本租户' }, { value: 'department', label: '按部门' }, { value: 'user', label: '按成员' }]
 const deptOptions = ref([])
 const memberOptions = ref([])
-const quotaCols = [
-  { title: '作用域', dataIndex: 'scope', key: 'scope', width: 92, customRender: ({ text }) => ({ tenant: '本租户', department: '部门', user: '成员' }[text] || text) },
-  { title: '对象', dataIndex: 'scopeName', key: 'scopeName', ellipsis: true },
-  { title: '周期', dataIndex: 'period', key: 'period', width: 68, customRender: ({ text }) => (text === 'day' ? '按日' : '按月') },
-  { title: 'token 上限', key: 'tokenLimit', width: 108, align: 'right' },
-  { title: '费用上限', key: 'costLimit', width: 108, align: 'right' },
-  { title: '已用 / 进度', key: 'used', width: 150 },
-  { title: '状态', key: 'state', width: 132 },
-  { title: '操作', key: 'op', width: 110 }
-]
+const tenantOptions = ref([])
+// 平台级管理员能看到别家租户的规则（后端按行归属放开）；清单里出现多个租户时才多出「租户」一列
+const superadmin = isSuperadminSync()
+const quotaCols = computed(() => {
+  const base = [
+    { title: '作用域', dataIndex: 'scope', key: 'scope', width: 92, customRender: ({ text }) => ({ tenant: '本租户', department: '部门', user: '成员' }[text] || text) }
+  ]
+  const ids = new Set((quotas.value || []).map(q => q.tenantId || 'default'))
+  if (ids.size > 1) {
+    base.push({ title: '租户', key: 'tenant', width: 110,
+      customRender: ({ record }) => (tenantOptions.value.find(t => t.value === (record.tenantId || 'default')) || {}).label || record.tenantId || 'default' })
+  }
+  return base.concat([
+    { title: '对象', dataIndex: 'scopeName', key: 'scopeName', ellipsis: true },
+    { title: '周期', dataIndex: 'period', key: 'period', width: 68, customRender: ({ text }) => (text === 'day' ? '按日' : '按月') },
+    { title: 'token 上限', key: 'tokenLimit', width: 108, align: 'right' },
+    { title: '费用上限', key: 'costLimit', width: 108, align: 'right' },
+    { title: '已用 / 进度', key: 'used', width: 150 },
+    { title: '状态', key: 'state', width: 132 },
+    { title: '操作', key: 'op', width: 110 }
+  ])
+})
 const loadQuotas = async () => {
   quotaLoading.value = true
   try {
     const r = await listQuotas()
     if (r.success) quotas.value = r.data || []
     else message.error(r.msg || '配额清单加载失败')
+    if (superadmin && !tenantOptions.value.length) {
+      const rt = await listTenants()
+      if (rt.success) tenantOptions.value = (rt.data || []).map(t => ({ value: t.id, label: t.name || t.id }))
+    }
   } catch (e) { message.error(e.message || '配额清单加载失败') } finally { quotaLoading.value = false }
 }
 const openQuota = async record => {
   quotaForm.value = record ? {
     id: record.id, scope: record.scope, scopeId: record.scopeId || undefined, period: record.period,
     tokenLimit: Number(record.tokenLimit || 0), costLimit: record.costLimit == null ? null : Number(record.costLimit),
-    enforce: Number(record.enforce) !== 0, remark: record.remark || ''
-  } : { id: null, scope: 'user', scopeId: undefined, period: 'month', tokenLimit: 0, costLimit: null, enforce: true, remark: '' }
+    enforce: Number(record.enforce) !== 0, remark: record.remark || '',
+    tenantId: superadmin ? (record.tenantId || 'default') : undefined
+  } : { id: null, scope: 'user', scopeId: undefined, period: 'month', tokenLimit: 0, costLimit: null, enforce: true, remark: '',
+    tenantId: superadmin ? 'default' : undefined }
   if (!deptOptions.value.length || !memberOptions.value.length) {
     try {
       const [d, m] = await Promise.all([listDepartments(), listUsers()])
@@ -804,7 +828,8 @@ const submitQuota = async () => {
   try {
     const r = await saveQuota({ id: f.id, scope: f.scope, scopeId: f.scopeId, period: f.period,
       tokenLimit: Number(f.tokenLimit || 0), costLimit: f.costLimit == null || f.costLimit === '' ? null : Number(f.costLimit),
-      enforce: f.enforce ? 1 : 0, remark: f.remark })
+      enforce: f.enforce ? 1 : 0, remark: f.remark,
+      tenantId: superadmin ? (f.tenantId || 'default') : undefined })
     if (!r.success) { message.error(r.msg || '保存失败'); return }
     message.success('已保存')
     quotaModal.value = false
