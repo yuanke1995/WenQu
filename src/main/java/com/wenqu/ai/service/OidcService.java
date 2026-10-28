@@ -379,8 +379,11 @@ public class OidcService {
     }
 
     private String issue(User u) {
+        // 第 7 参 tokenEpoch：OIDC 签发的令牌也要带会话代数（ep 声明），改密 / 强制下线才能一并踢掉 OIDC 会话，
+        // 与 AuthService / SamlService 的登录签发同口径；会话治理把 issueToken 升到 7 参后漏改这里会编译失败。
         return AuthCrypto.issueToken(authService.secret(), authService.issuer(), authService.audience(),
-                u.getUid(), userRoleService.primaryRole(u.getUid()), authService.ttlSeconds());
+                u.getUid(), userRoleService.primaryRole(u.getUid()), authService.ttlSeconds(),
+                authService.tokenEpoch(u));
     }
 
     private String newToken() {
