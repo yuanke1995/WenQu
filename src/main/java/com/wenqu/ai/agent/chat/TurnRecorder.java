@@ -46,6 +46,18 @@ public final class TurnRecorder {
     public static final String OUTPUT_LOST_SUFFIX =
             "\n\n> ⚠️ 这次回答不完整，有内容在生成过程中丢失，建议重新生成";
 
+    /**
+     * 整轮机器预算用尽的那句话（唯一口径）。三处共用，不许各写一遍：
+     * 存活看门狗的 live warn、框架引擎收尾的落库 warn、以及正文尾部的截断标注。
+     * <p>原先看门狗那句是「回答超时已截断，请重试或缩短问题」——对长任务那是错指引：活干到一半，
+     * 该说的是「发一句继续」，不是「把问题改短」，也不是让人以为重试同一条命令能接着跑。
+     */
+    public static final String TURN_BUDGET_NOTE =
+            "已到整轮时间上限，后面的步骤没有执行。发一句「继续」可以接着做";
+
+    /** 正文尾部的预算截断标注（刷新/历史可见的那一份） */
+    public static final String BUDGET_SUFFIX = "\n\n> ⏹ " + TURN_BUDGET_NOTE;
+
     /** 生成量对账门槛：最终轮输出不足此 token 数时不参与对账（短回答的字符/token 比波动太大） */
     private static final int OUTPUT_LOSS_MIN_TOKENS = 150;
 

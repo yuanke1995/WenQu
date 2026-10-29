@@ -105,6 +105,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     /** 辅助调用（记忆提炼／上下文压缩）的尝试次数：慢一次没人等，不值得再烧一整段静默。 */
     private static final int AUX_MODEL_MAX_ATTEMPTS = 2;
 
+    /**
+     * 「流出过正文，但上游没给末块就把连接收了」的内部指纹——它不是上游原文，所以不参与
+     * 额度／限流那套文案分类，在 {@link #emitRunFailure} 里单独说一句人话。
+     */
+    private static final String UPSTREAM_STREAM_CUT = "wenqu:upstream-stream-cut";
+
     private final ModelRegistryService modelRegistry;
     /** 工作区约定：注入 system prompt 的工作背景段（无工作区/无约定时为空） */
     private final com.wenqu.ai.service.ProjectService projectService;
@@ -835,6 +841,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                             AgentSession.Task current,
                             Recording recording, long startedAt, int contextWindow) {
         long machineBudgetMs = turnSeconds() * 1000L;
+        // 断流对账的读数起点：主链模型包装器按会话常驻、跨轮复用，本轮的断流次数只能取收尾读数
+        // 减开轮读数（见 MeteredModel.abruptCloses）。实例还没建出来时是 null——那一跑连模型都没调，
+        // 也就没有「断流」可判。
+        MeteredModel turnModel = sessions.chatModel(sessions.key(cmd));
+        long abruptBefore = turnModel == null ? 0L : turnModel.abruptCloses();
         // 接流快照改由本轮自己供：外壳开轮时只有「还没出字」那份空快照，而正文/工具卡/时间线
         // 只活在这里的 Recording 与引用池里。不回填的表现为——生成中刷新，气泡接回来是一片空白。
         channel.offerSnapshot(() -> turnSnapshot(cmd, channel, pool, route, recording, turnId, startedAt));
@@ -1028,7 +1039,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 && machineMs(startedAt, humanWaitMs, waitingOnHuman, waitBeganAt) >= machineBudgetMs) {
             session.interrupt();
             ranOutBudget = true;
-            channel.emit(RunEventType.WARN, "已到整轮时间上限，后面的步骤没有执行。发一句「继续」可以接着做");
+            channel.emit(RunEventType.WARN, com.wenqu.ai.agent.chat.TurnRecorder.TURN_BUDGET_NOTE);
             log.warn("[FAIL-LOUD] 整轮机器预算用尽，已叫停框架那一跑: session={} turn={} 预算={}ms",
                     cmd.getSessionId(), turnId, machineBudgetMs);
         }
@@ -1079,6 +1090,15 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 「答好了」的样子把上一轮的正文存进历史——真机 2026-10-15 20:00:49 那轮 401，库里多出一条
         // 597 字助手行、model 记的正是失败那个模型，界面上只收到一个正常 done，失败一个字没提。
         String failure = runFailure(session, current);
+        // 上游把连接直接收了、没给带 finishReason/usage 的末块：框架那一跑看到的是「正常结束」，
+        // executionError 为空、done 帧照发——屏幕上是一段凭空短掉的正文，刷新后连「这一轮断过」
+        // 都读不出来（真机 2026-10-29 用假上游复现：半句正文 + done + fail_msg 为 NULL）。
+        // 框架不报，就只能问渠自己报：这个判据出自模型出口那一层，不靠上游错误文本。
+        if (failure == null && turnModel != null && turnModel.abruptCloses() > abruptBefore) {
+            failure = UPSTREAM_STREAM_CUT;
+            log.warn("[FAIL-LOUD] 本轮上游中途断流（流出过正文但没有末块）: session={} turn={}",
+                    cmd.getSessionId(), turnId);
+        }
         // 界面那一句人话（emitRunFailure 生成的），通知要抄它而不是抄上游原始串：
         // 原始串形如「HTTP transport error during streaming: HTTP request failed with status 403…」，
         // 是英文、带响应体碎片，用户在铃铛里读不出「该充值还是该换模型」
@@ -1156,7 +1176,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         answer = com.wenqu.ai.service.GoalService.stripMarkers(answer);
         finish(cmd, channel, pool, route, hooks.modelRef(), contextWindow, answer, recording,
                 userMessageId, stopped,
-                timedOut, awaiting, machineMs, humanWaitMs, wallMs,
+                timedOut, ranOutBudget, awaiting, machineMs, humanWaitMs, wallMs,
                 session, historyBefore, turnId, planRecord);
         // 站内通知（旁路：内部全捕获，写不进去只记 WARN，绝不影响这一轮收口）。这件事此前只有
         // 屏幕前的人看得见——长轮跑完时人多半已经切走或锁屏，铃铛一声不响等于「跑完没人知道」。
@@ -1168,7 +1188,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 而用户自己叫停的那一轮也会被报成故障。原始串留给日志，不进通知。
         String earlyExit = spokenFailure;
         if (earlyExit == null && neverLaunched) earlyExit = "这一轮模型没有被调用，请重试或新建一条会话再问";
-        if (earlyExit == null && (timedOut || ranOutBudget)) earlyExit = "撞到整轮时间上限，活没干完就停了";
+        if (earlyExit == null && timedOut) earlyExit = "等你确认的那一步超时，这一轮没有继续执行";
+        if (earlyExit == null && ranOutBudget) {
+            earlyExit = com.wenqu.ai.agent.chat.TurnRecorder.TURN_BUDGET_NOTE;
+        }
         if (earlyExit == null && cutByMaxIters) earlyExit = "推理步数已用满，活没干完就停了";
         turnNotify.onTurnSettled(cmd, turnId, machineMs, recording.toolCallList().size(),
                 stopped, awaiting, earlyExit, !answer.isBlank(),
@@ -1199,8 +1222,42 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * @return 那句给用户看的话（站内通知复用它，不再抄上游原始串）
      */
     private String emitRunFailure(WenquSourcePool pool, RunChannel channel, String raw) {
+        // 断流自己说一句：把它塞进上面那套「额度／限流／连不上」的分类会得到一句通用的
+        // 「AI 回复失败，请稍后重试」——可那一轮其实<b>说出了半截话</b>，用户要的是「这段不完整」，
+        // 不是「重试就好」。
+        if (UPSTREAM_STREAM_CUT.equals(raw)) {
+            String msg = "模型这一轮中途断流，上面这段可能不完整：上游没有给出结束标记就收了连接。可以发一句「继续」让它接着说";
+            pool.registrar().degrade("upstreamStreamCut", msg);
+            channel.emit(RunEventType.ERROR, msg);
+            log.info("[agentx] 本轮断流收束: session 侧已提示不完整");
+            return msg;
+        }
+        // 自家配额闸那句已经点名的规则、用了多少、什么时候恢复——比通用那句「额度不足去充值」准，比通用那句「额度不足去充值」准，
+        // 原样交给用户（它本来就是写给人看的中文）。落到下面的通用分类会把「找管理员放宽月度预算」
+        // 说成「去模型供应商充值」，指错方向。
+        if (raw.startsWith(com.wenqu.ai.service.UsageQuotaService.REFUSAL_PREFIX)) {
+            pool.registrar().degrade("tenantQuotaExhausted", raw);
+            channel.emit(RunEventType.ERROR, raw);
+            log.info("[agentx] 本轮被配额闸拦下: {}", raw);
+            return raw;
+        }
         boolean quota = com.wenqu.ai.service.ModelQuotaGuard.isQuotaText(raw);
         boolean limited = !quota && com.wenqu.ai.service.ModelQuotaGuard.isRateLimitedText(raw);
+        // 静默判死那条（ModelUtils 的 timeout 包成 ModelException「Model request timeout after PT60S」，
+        // 重试烧完再包成「Retries exhausted: 2/2」）必须单独说一句：通用那句「请稍后重试」不知道重试
+        // 也是白重试——上游已经按设置的时长判死过两轮。指出的动作是「等一会再问」或「换个响应快的
+        // 模型」，不是原地反复按发送。真机 2026-10-29：假上游收下请求后一个字不发、阈值设 3 秒，
+        // 交上来的原文逐字是 Retries exhausted: 2/2——只认 timeout 这个词的话这一支照样落进通用文案。
+        String lower = raw.toLowerCase(java.util.Locale.ROOT);
+        if (!quota && !limited && (lower.contains("timeout") || lower.contains("timed out")
+                || lower.contains("retries exhausted"))) {
+            String msg = "模型服务没有响应：上游长时间不回内容，已按「模型无响应上限」判死并重试过仍无结果。"
+                    + "稍后再问，或在「智能体 → 模型供应商」换一个响应快的模型";
+            pool.registrar().degrade("modelUnresponsive", msg);
+            channel.emit(RunEventType.ERROR, msg);
+            log.info("[agentx] 本轮上游无响应收束: 原文={}", raw.length() > 200 ? raw.substring(0, 200) : raw);
+            return msg;
+        }
         boolean unreachable = !quota && !limited
                 && raw.toLowerCase(java.util.Locale.ROOT).contains("connect");
         String msg = quota ? "模型服务额度不足：请到「模型供应商」充值，或改用其他模型"
@@ -3416,6 +3473,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         io.agentscope.core.model.Model chatModel = new MeteredModel(baseModel, usageLedger, quotaService, contentSafety,
                 com.wenqu.ai.util.UsageAttr.of(cmd.getUserId(), cmd.getSessionId(), null,
                         cmd.branchTurn() ? "subagent" : "chat"), hooks.modelRef());
+        // 主链那份包装器登记到会话表：它是本轮「断流」计数的唯一来源（实例跨轮复用，收尾读差值）
+        sessions.noteChatModel(sessions.key(cmd), (MeteredModel) chatModel);
         // 可派遣的助手（派遣由框架的 agent_spawn 驱使）：这一份列表同时决定两件事——
         // 注册进框架的子智能体表（模型手上有没有这把能力），以及提示词里那两句路由纪律（教不教它用）。
         // 分成两处判就会漂移成「教了模型一件它没有的能力」，这条坑本仓点过名。
@@ -3687,8 +3746,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 提问卡超时后这一轮本来就不该走到这里（走的是「按未作答继续」那条），所以这里出现的多半是
      * 计划卡或审批卡——用「确认」统称即可，不必替用户猜是哪一种。
      */
-    private static String interruptMarker(boolean stopped, boolean timedOut) {
+    private static String interruptMarker(boolean stopped, boolean timedOut, boolean budget) {
         if (stopped) return com.wenqu.ai.agent.chat.TurnRecorder.STOP_SUFFIX;
+        if (budget) return com.wenqu.ai.agent.chat.TurnRecorder.BUDGET_SUFFIX;
         if (timedOut) return "\n\n> ⏹ 等待确认超时，这一轮没有继续执行";
         return com.wenqu.ai.agent.chat.TurnRecorder.TRUNCATION_SUFFIX;
     }
@@ -3739,7 +3799,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private void finish(ChatCommand cmd, RunChannel channel, WenquSourcePool pool,
                         ModelRegistryService.ModelRoute route, String modelRef, int contextWindow, String answer,
                         Recording recording,
-                        String userMessageId, boolean stopped, boolean timedOut, boolean awaiting,
+                        String userMessageId, boolean stopped, boolean timedOut, boolean budget, boolean awaiting,
                         long elapsedMs, long humanWaitMs, long wallMs,
                         AgentSession session, int historyBefore, String turnId,
                         Map<String, Object> planRecord) {
@@ -3782,10 +3842,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             // 标注就是把同一件事说两遍（与手写引擎同一口径）
             // 只有正文本来就空的那一支才去分隔符：非空正文必须带着「\n\n」拼在尾段，
             // 少了它引用块会粘回最后一句、">" 原样印在屏幕上（trim 掉分隔符实测中过一次）
-            body = supersededRound ? "" : interruptMarker(stopped, timedOut).trim();
-        } else if (realAnswer && (stopped || timedOut)) {
+            body = supersededRound ? "" : interruptMarker(stopped, timedOut, budget).trim();
+        } else if (realAnswer && (stopped || timedOut || budget)) {
             // 半程正文：标注追加在尾部（与手写侧同一口径——用户要看得见「这句只有半截」）
-            body = body + interruptMarker(stopped, timedOut);
+            body = body + interruptMarker(stopped, timedOut, budget);
         }
         boolean persist = realAnswer || (hasProcess && !awaiting);
         // 本轮正文配图清单：正文里的 [图片N] 就是按这份的下标还原的（N → 第 N-1 项）。
@@ -3795,7 +3855,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // LLM 自检——与手写侧同一个实现。换了运行时不该把这道答案质量防线摘掉。
         // 停止轮与「只有过程没有正文」的半程轮都不跑：那两句标注不是答案，跑了对它们就是白报一条
         // 「未标注引用」（半程轮往往还带着工具召回的来源，正好满足那条 fail-loud 的触发条件）。
-        if (!stopped && !timedOut && realAnswer) {
+        if (!stopped && !timedOut && !budget && realAnswer) {
             // 反推本轮真实开始时刻必须用墙钟：拿机器耗时去减会把开始点往后挪，挪进用户读卡那几分钟里，
             // 这道防线读到的「本轮」就成了后半截
             long startedAtMs = System.currentTimeMillis() - wallMs;
@@ -3841,7 +3901,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             if (args != null) toolArgChars += String.valueOf(args).length();
         }
         int accounted = body.length() + recording.thinking.length() + toolArgChars;
-        if (!stopped && !timedOut && !tokens.isEmpty()
+        if (!stopped && !timedOut && !budget && !tokens.isEmpty()
                 && com.wenqu.ai.agent.chat.TurnRecorder.looksLikeOutputLost(finalOutput, accounted, true)) {
             pool.registrar().degrade("outputLost", "模型本轮生成 " + finalOutput
                     + " tokens，仅 " + accounted + " 字进入回答，内容疑似丢失");

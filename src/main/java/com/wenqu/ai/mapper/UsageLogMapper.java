@@ -77,6 +77,10 @@ public interface UsageLogMapper extends BaseMapper<UsageLog> {
      *
      * @param uid    成员档：非空按单人
      * @param deptId 部门档：非空按该部门全体成员（join c_ai_user.department_id）
+     * @param tenantId 租户档：<b>非空按该租户自己的用量</b>。必须显式传——租户过滤那条路只在「线程
+     *                 绑着租户」时生效，而模型出口的配额闸跑在框架的弹性线程上（没有绑定），
+     *                 不传就等于拿<b>全平台用量</b>去比单租户的上限（真机 2026-10-29：default 租户
+     *                 的成员被别家「月 2.00 百万」的规则按「已用 42.99 百万」拦下）。
      * @param kinds  受限用途清单（空=全部）；kind 为空的存量行按 chat 归，与费用报表同一口径
      */
     @Select("<script>SELECT u.model AS model, SUM(u.prompt_tokens) AS p, SUM(u.completion_tokens) AS c "
@@ -84,11 +88,13 @@ public interface UsageLogMapper extends BaseMapper<UsageLog> {
             + "<if test='deptId != null'>JOIN c_ai_user m ON m.uid = u.uid AND m.department_id = #{deptId} </if>"
             + "WHERE u.create_time &gt;= #{since} "
             + "<if test='uid != null'>AND u.uid = #{uid}</if> "
+            + "<if test='tenantId != null'>AND u.tenant_id = #{tenantId}</if> "
             + "<if test='kinds != null and kinds.size() > 0'>AND COALESCE(NULLIF(u.kind, ''), 'chat') "
             + "IN <foreach item='k' collection='kinds' open='(' separator=',' close=')'>#{k}</foreach></if> "
             + "GROUP BY u.model</script>")
     List<Map<String, Object>> sumForQuota(@Param("uid") String uid,
                                           @Param("deptId") String deptId,
+                                          @Param("tenantId") String tenantId,
                                           @Param("since") LocalDateTime since,
                                           @Param("kinds") List<String> kinds);
 }

@@ -67,6 +67,12 @@ public class FrameworkSessions {
     private final Map<String, AgentxStepBudget> stepBudgets = new ConcurrentHashMap<>();
 
     /**
+     * 这一路会话的主链模型包装器（断流计数用）。形态与 {@link #stepBudgets} 相同：
+     * 实例按会话常驻、跨轮复用，所以读的是本轮前后的<b>差值</b>，不是累计值。
+     */
+    private final Map<String, MeteredModel> chatModels = new ConcurrentHashMap<>();
+
+    /**
      * 框架工具的档位闸（全框架化 P1）。形态与 {@link #stepBudgets} 相同：
      * 闸随实例常驻，登记后由引擎在开轮时更新当前轮标签。
      */
@@ -1025,6 +1031,7 @@ public class FrameworkSessions {
             cluster.releaseHeld(key);
             order.remove(key);
             stepBudgets.remove(key);
+            chatModels.remove(key);
             frameworkToolGates.remove(key);
             turnSlots.remove(key);
             followers.remove(key);
@@ -1047,6 +1054,16 @@ public class FrameworkSessions {
     /** 取这一轮所属实例的步数预算闸；实例还没建出来时返回 null（开轮即会建，不该长期为空）。 */
     public AgentxStepBudget stepBudget(String sessionKey) {
         return stepBudgets.get(sessionKey);
+    }
+
+    /** 建实例时登记这一路会话的主链模型包装器（引擎在 {@code buildAgent} 里回调）。 */
+    public void noteChatModel(String sessionKey, MeteredModel model) {
+        if (sessionKey != null && model != null) chatModels.put(sessionKey, model);
+    }
+
+    /** 这一路会话的主链模型包装器；实例没建出来时返回 null（本轮没有模型调用，也就没有断流可判）。 */
+    public MeteredModel chatModel(String sessionKey) {
+        return chatModels.get(sessionKey);
     }
 
     /**

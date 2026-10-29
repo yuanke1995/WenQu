@@ -148,11 +148,14 @@ public class UsageQuotaService {
         return null;
     }
 
+    /** 拒绝文案的固定前缀：分类判据按它认「这是问渠自己的配额闸拦的」，两处必须同串。 */
+    public static final String REFUSAL_PREFIX = "配额已用满，本轮不再发起模型调用：";
+
     /** 拒绝文案：点名哪条规则、用了多少、上限多少、什么时候恢复（用户要能据此决定下一步） */
     private String refusalText(Quota q, UsageAgg agg, String breach) {
         String scope = scopeLabel(q);
         String period = "day".equals(q.getPeriod()) ? "本日" : "本月";
-        StringBuilder sb = new StringBuilder("配额已用满，本轮不再发起模型调用：");
+        StringBuilder sb = new StringBuilder(REFUSAL_PREFIX);
         if ("token".equals(breach)) {
             sb.append(scope).append(' ').append(period).append(" token 上限 ")
                     .append(fmtTokens(q.getTokenLimit())).append("，已用 ").append(fmtTokens(agg.tokens()));
@@ -189,10 +192,15 @@ public class UsageQuotaService {
             case "user" -> uid != null && uid.equals(q.getScopeId());
             case "department" -> deptId != null && deptId.equals(q.getScopeId());
             case "tenant" -> {
-                // 双保险：缓存已按租户分格，这里再认一次规则自己的归属——
-                // 线程绑着租户时，别家租户的预算一律不参与判定（未绑定线程维持原有语义，见 rulesCache 注释）
+                // 双保险：缓存已按租户分格，这里再认一次规则自己的归属。
+                // <b>线程没绑租户时不能放行所有租户的规则</b>——那等于拿别家上限判本轮这一笔，
+                // 而聚合出来的又确实是别家/全平台的用量（真机 2026-10-29：default 租户的成员
+                // 被 stsoft 的「月 2.00 百万」按「已用 42.99 百万」拦下，两句数字谁也对不上）。
+                // 配额闸跑在框架模型出口的弹性线程上，那里天生没有请求线程的租户上下文，
+                // 所以按「这次调用是谁的」来定：线程绑租户优先，取不到就查这个成员的租户。
                 String bound = com.wenqu.ai.util.TenantContext.current();
-                yield bound == null || bound.equals(q.getTenantId() == null || q.getTenantId().isBlank()
+                String owner = bound != null && !bound.isBlank() ? bound : tenantOfUid(uid);
+                yield owner.equals(q.getTenantId() == null || q.getTenantId().isBlank()
                         ? com.wenqu.ai.util.TenantContext.DEFAULT_TENANT : q.getTenantId());
             }
             default -> false;
@@ -252,6 +260,9 @@ public class UsageQuotaService {
             List<Map<String, Object>> rows = usageLogMapper.sumForQuota(
                     "user".equals(q.getScope()) ? q.getScopeId() : null,
                     "department".equals(q.getScope()) ? q.getScopeId() : null,
+                    // 租户档：把规则自己的租户显式交进查询——判闸跑在框架的弹性线程上时线程没绑租户，
+                    // 租户拦截器不过滤，不显式传就会拿全平台用量去比这一家的上限（判据见 matchesScope）
+                    "tenant".equals(q.getScope()) ? tenantOfRule(q) : null,
                     periodStart(q.getPeriod()), kinds);
             long tokens = 0;
             double cost = 0;
@@ -304,6 +315,42 @@ public class UsageQuotaService {
         priceExpiresAt = now + RULES_CACHE_SECONDS * 1000L;
         return priceCache;
     }
+
+    /**
+     * 这个成员属于哪家：租户上下文没绑定时用它兜底（缓存与 {@link #departmentOf} 同一节奏）。
+     * <p>查不到成员（系统侧调用/已销户）就按平台默认租户——不是「放行所有租户」。
+     */
+    private String tenantOfUid(String uid) {
+        if (uid == null || uid.isBlank()) {
+            return com.wenqu.ai.util.TenantContext.DEFAULT_TENANT;
+        }
+        long now = System.currentTimeMillis();
+        CachedTenant hit = tenantCache.get(uid);
+        if (hit != null && now < hit.expiresAt()) return hit.tenantId();
+        String tenantId = com.wenqu.ai.util.TenantContext.DEFAULT_TENANT;
+        try {
+            User u = userMapper.selectById(uid);
+            if (u != null && u.getTenantId() != null && !u.getTenantId().isBlank()) {
+                tenantId = u.getTenantId();
+            }
+        } catch (Exception e) {
+            log.warn("[Quota] 查成员租户失败（按平台默认租户处理，别家租户的预算对它不生效）: uid={} {}",
+                    uid, e.getMessage());
+        }
+        tenantCache.put(uid, new CachedTenant(tenantId, now + RULES_CACHE_SECONDS * 1000L));
+        return tenantId;
+    }
+
+    /** 这条租户档规则归谁家（存量行没有 tenant_id 时按平台默认租户） */
+    private static String tenantOfRule(Quota q) {
+        String t = q.getTenantId();
+        return t == null || t.isBlank() ? com.wenqu.ai.util.TenantContext.DEFAULT_TENANT : t;
+    }
+
+    private record CachedTenant(String tenantId, long expiresAt) {
+    }
+
+    private final Map<String, CachedTenant> tenantCache = new ConcurrentHashMap<>();
 
     private String departmentOf(String uid) {
         long now = System.currentTimeMillis();

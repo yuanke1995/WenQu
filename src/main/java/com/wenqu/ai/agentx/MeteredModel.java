@@ -39,6 +39,17 @@ public final class MeteredModel implements Model {
     private final com.wenqu.ai.service.UsageQuotaService quota;
     /** 内容安全出口闸（Phase 3 · P12）：与 Spring AI 那一路同一个判据，同挂模型出口 */
     private final com.wenqu.ai.service.contentsafety.ContentSafetyService safety;
+    /**
+     * 以「流出过内容、但整条流没有末块」收场的调用次数（断流计数）。
+     * <p>实例按会话常驻、跨轮复用，所以问答侧读的是<b>本轮前后的差值</b>，不是这个数本身。
+     */
+    private final java.util.concurrent.atomic.AtomicLong abruptCloses =
+            new java.util.concurrent.atomic.AtomicLong();
+
+    /** 断流次数（见 {@link #abruptCloses}）：问答侧在开轮时取一次、收尾时再取一次，差值就是本轮的。 */
+    public long abruptCloses() {
+        return abruptCloses.get();
+    }
 
     public MeteredModel(Model delegate, UsageLedgerService ledger,
                         com.wenqu.ai.service.UsageQuotaService quota,
@@ -70,11 +81,16 @@ public final class MeteredModel implements Model {
             String[] chunkId = {null};
             boolean[] tailEmitted = {false};
             boolean[] terminalSeen = {false};
+            // 「这一跑有没有见过末块」的独立判据：上面的 terminalSeen 只在内容安全闸压着尾巴时才置位，
+            // 拿它判断流会把每一轮正常回答都误报成断流。
+            boolean[] sawTerminalBlock = {false};
+            int[] responseCount = {0};
             return delegate.stream(messages, tools, options)
                     .map(response -> {
                         if (response == null) return null;
                         if (response.getId() != null) chunkId[0] = response.getId();
                         boolean terminal = response.getFinishReason() != null || response.getUsage() != null;
+                        if (terminal) sawTerminalBlock[0] = true;
                         ChatResponse filtered = rewrite(gate, response);
                         // 末块要把闸里压着没放的尾巴一起交出去：SSE 收回不了已经下发的字，
                         // 所以尾巴必须等判完才能放，而放的位置只能在「这一次调用的最后一块」里。
@@ -87,6 +103,7 @@ public final class MeteredModel implements Model {
                     })
                     .doOnNext(response -> {
                         if (response == null) return;
+                        responseCount[0]++;
                         if (response.getUsage() != null) last[0] = response.getUsage();
                         String text = textOf(response);
                         if (text != null && !text.isEmpty()) {
@@ -119,6 +136,18 @@ public final class MeteredModel implements Model {
                             ledger.recordEstimated(attr, modelRef,
                                     com.wenqu.ai.util.TokenCounter.estimate(promptText(messages)),
                                     com.wenqu.ai.util.TokenCounter.estimate(received.toString()));
+                        }
+                        // 断流留痕：这条流走到头了，却从没出现过带 finishReason/usage 的末块，
+                        // 也不是取消或报错——那就是「网关把连接直接收了」的样子。框架在这一刻看到的是
+                        // 一个正常完成的 Flux，于是那一跑以「回答完了」收场，屏幕上没有任何一处说得清
+                        // 「这只是半截」（真机 2026-10-29 假上游复现：半句正文 + done + fail_msg 为 NULL）。
+                        // 判据不挂 gotOutput：流式块经框架解析后 content 块可能为空（正文由事件日志那份
+                        // 原始 chunk 渲染），实测两轮都不置位——只有「见过末块没有」这一条靠得住。
+                        // 这里只计数、不改写流：怎么说、说给谁由问答侧收尾决定
+                        // （见 AgentscopeChatEngine 的 UPSTREAM_STREAM_CUT）。
+                        if (signal == reactor.core.publisher.SignalType.ON_COMPLETE
+                                && !sawTerminalBlock[0] && responseCount[0] > 0) {
+                            abruptCloses.incrementAndGet();
                         }
                     });
         });

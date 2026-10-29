@@ -524,7 +524,7 @@ public class ChatService {
                 var dispatchChannel =
                         new com.wenqu.ai.engine.SseRunEventChannel(runtime, emitter, sessionId);
                 // 摘把手 + 收总线 run 是两种引擎共同的收尾（此前只在框架引擎分支做，工作流轮跑完后
-                // 把手挂在会话上——约 5 分钟后被看门狗补发一条假「回答超时已截断」、runStatus 长达
+                // 把手挂在会话上——约 5 分钟后被看门狗补发一条假「已到整轮时间上限」、runStatus 长达
                 // 一个宽限期报「在跑」），现在两个分支各自跑完都收，异常路径的 catch 也收。
                 try {
                     // 绑定了工作流的智能体<b>不进任何一条推理循环</b>：那条路由工作流 end 节点的出参当回答

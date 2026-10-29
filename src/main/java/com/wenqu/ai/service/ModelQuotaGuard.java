@@ -63,7 +63,12 @@ public final class ModelQuotaGuard {
             // 用户等一会重试到永远——这件事的处置和额度不足是同一个（去充值或换模型）
             "free quota exhausted", "quota exhausted", "free quota",
             "account balance", "not in account",   // 「model not in account」：套餐内无此模型权限，实质同为额度问题
-            "insufficient permissions to query the model"  // 同上，OpenAI 表述
+            "insufficient permissions to query the model",  // 同上，OpenAI 表述
+            // 问渠自己的配额闸拒起来发的是中文整句（UsageQuotaService.refusalText）。不收这一条，
+            // 「本月 token 上限用完」会被判成通用的「AI 回复失败，请稍后重试」——用户重试到永远，
+            // 而这件事的处置和上游额度不足是同一件（找管理员放宽或换模型）。真机 2026-10-29 实测：
+            // 本机租户月度配额触顶后界面只给那句通用文案。判据引用常量而不是再抄一遍字面量。
+            UsageQuotaService.REFUSAL_PREFIX
     };
 
     /** 限流语义（与额度不足共用 429，必须靠它把瞬时限流排除出去） */

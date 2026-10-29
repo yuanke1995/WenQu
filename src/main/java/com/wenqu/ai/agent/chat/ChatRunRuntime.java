@@ -215,7 +215,7 @@ public class ChatRunRuntime {
 
     /**
      * 整轮存活看门狗：每 {@link #TOOL_HEARTBEAT_INTERVAL_MS} 检查一次「墙钟 − 人工等待」是否越过预算。
-     * 到点先发 warn（此刻 emitter 还活着，前端气泡真能看到「回答超时已截断」），再 dispose 停流
+     * 到点先发 warn（此刻 emitter 还活着，前端气泡真能看到那句「已到整轮时间上限」），再 dispose 停流
      * （半程正文按截断态落库）并 complete。失联兜底另有 15s 心跳、前端 120s 空闲看门狗与各阶段自身
      * 超时，本看门狗只管「整轮做机器工作太久」。
      * <p>每个 tick 先认一次「这一轮还是不是我登记的那一轮」（见 {@link TurnDeadline#turnId}）：
@@ -237,7 +237,7 @@ public class ChatRunRuntime {
             log.warn("[FAIL-LOUD] 本轮问答超时截断: session={} 机器耗时 {}ms / 预算 {}ms（人工等待 {}ms 不计入）",
                     sessionId, machineMs, d.budgetMs, d.humanWaitMs.get());
             try {
-                sendSseEvent(emitter, "warn", "回答超时已截断，请重试或缩短问题", sessionId);
+                sendSseEvent(emitter, "warn", TurnRecorder.TURN_BUDGET_NOTE, sessionId);
                 completeEmitter(emitter);
             } finally {
                 TurnRegistry.stopDeadline(emitter);
