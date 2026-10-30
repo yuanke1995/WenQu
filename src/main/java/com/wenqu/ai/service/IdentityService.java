@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -50,6 +51,22 @@ public class IdentityService {
         if (uid == null || uid.isBlank()) return List.of();
         return mapper.selectList(new LambdaQueryWrapper<UserIdentity>()
                 .eq(UserIdentity::getUid, uid));
+    }
+
+    /**
+     * 多个账号的外部身份绑定（按 uid 分组，无绑定的 uid 不出现在结果里）。
+     * <p>成员分页表用：逐人 {@link #listOf(String)} 在万级名单上等于每页打几十次库，
+     * 且这张表没有任何缓存兜底，是名单接口里唯一必穿的 N+1。
+     */
+    public java.util.Map<String, List<UserIdentity>> mapOfUids(java.util.Collection<String> uids) {
+        if (uids == null || uids.isEmpty()) return java.util.Map.of();
+        List<UserIdentity> rows = mapper.selectList(new LambdaQueryWrapper<UserIdentity>()
+                .in(UserIdentity::getUid, uids));
+        java.util.Map<String, List<UserIdentity>> out = new java.util.LinkedHashMap<>();
+        for (UserIdentity i : rows) {
+            out.computeIfAbsent(i.getUid(), k -> new ArrayList<>()).add(i);
+        }
+        return out;
     }
 
     /** 某认证源下的全部绑定（LDAP 离员检测：本地绑定 ∖ 远端现存） */

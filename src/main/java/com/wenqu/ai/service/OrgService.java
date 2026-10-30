@@ -169,6 +169,72 @@ public class OrgService {
         return out;
     }
 
+    /** 分页单页上限（前端可选 20/50/100；截住是防有人拿 size 参数把全表再捞一遍） */
+    private static final int PAGE_MAX_SIZE = 100;
+
+    /**
+     * 成员分页查询——万级名单入口（「安全与运维 → 会话治理」）。
+     * <p>与 {@link #listUsersWithRoles()} 的分工是规模口径：那份按全表下发，给选择器和计数用；
+     * 这份把关键字/部门/状态压到 SQL 上，只补当页的角色与身份。成员涨到几万时，
+     * 全表那份一次请求就撑不住（逐人取身份无缓存，是 N+1 里唯一没有兜底的那一条）。
+     * <p>排序固定按最近登录倒序：治理动作找的是「刚动过的人」；MySQL 下 NULL 沉底，从未登录的排最后。
+     *
+     * @return {@code {total, items, page, size}}，items 字段口径与 {@code /user/list} 一致
+     */
+    public java.util.Map<String, Object> pageUsers(String keyword, String departmentId, Integer status,
+                                                   int page, int size) {
+        // 平台级看全部租户的成员，与 listUsersWithRoles 同一口径（跨租户挪人后不能没有找回入口）
+        if (com.wenqu.ai.util.RequestUser.superadmin()) {
+            return com.wenqu.ai.util.TenantContext.asPlatform(
+                    () -> pageUsersScoped(keyword, departmentId, status, page, size));
+        }
+        return pageUsersScoped(keyword, departmentId, status, page, size);
+    }
+
+    private java.util.Map<String, Object> pageUsersScoped(String keyword, String departmentId, Integer status,
+                                                          int page, int size) {
+        int p = Math.max(1, page);
+        int s = Math.min(PAGE_MAX_SIZE, Math.max(1, size));
+        LambdaQueryWrapper<User> w = new LambdaQueryWrapper<>();
+        String kw = keyword == null ? "" : keyword.trim();
+        if (!kw.isEmpty()) {
+            w.and(q -> q.like(User::getUsername, kw).or().like(User::getUid, kw));
+        }
+        if (departmentId != null && !departmentId.isBlank()) w.eq(User::getDepartmentId, departmentId);
+        if (status != null) w.eq(User::getStatus, status);
+        w.orderByDesc(User::getLastLoginTime).orderByAsc(User::getUsername);
+        var pg = userMapper.selectPage(
+                new com.baomidou.mybatisplus.extension.plugins.pagination.Page<User>(p, s), w);
+
+        List<String> uids = new ArrayList<>();
+        for (User u : pg.getRecords()) uids.add(u.getUid());
+        var identities = identityService.mapOfUids(uids);
+
+        List<java.util.Map<String, Object>> items = new java.util.ArrayList<>();
+        for (User u : pg.getRecords()) {
+            java.util.Map<String, Object> m = new java.util.LinkedHashMap<>(
+                    objectMapper.convertValue(u, java.util.Map.class));
+            List<String> roles = userRoleService.rolesOf(u.getUid());
+            m.put("roles", roles);
+            m.put("role", roles.isEmpty() ? "user" : roles.get(0));
+            List<java.util.Map<String, Object>> ids = new java.util.ArrayList<>();
+            for (var i : identities.getOrDefault(u.getUid(), List.of())) {
+                java.util.Map<String, Object> one = new java.util.LinkedHashMap<>();
+                one.put("providerId", i.getProviderId());
+                one.put("externalId", i.getExternalId());
+                ids.add(one);
+            }
+            m.put("identities", ids);
+            items.add(m);
+        }
+        java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("total", pg.getTotal());
+        out.put("items", items);
+        out.put("page", p);
+        out.put("size", s);
+        return out;
+    }
+
     /** 新建用户（必须设置初始密码，否则无法登录；角色须为角色表中启用的角色；落多角色表） */
     public User createUser(String uid, String username, String departmentId, String role, String password) {
         // 成员管理是平台动作（Phase 4）：判据与理由见 asPlatformIfSuper 的注释

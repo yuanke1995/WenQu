@@ -426,7 +426,7 @@ docker compose up -d          # 自包含：redis-stack + meilisearch + 内置 M
 | `GET /api/ai/notification/list`、`/unread-count`、`/counts`、`/preferences`、`POST /notification/read`、`/read-all`、`/delete`、`/clear`、`PUT /preferences` | 站内通知：列表（类型筛选 / 仅未读 / 游标分页）/ 未读数 / 各类型未读计数 / 静音偏好读取与保存 / 标记已读 / 全部已读 / 删除 / 清空（全部或仅已读） |
 | `GET /api/ai/stats/usage`、`/stats/cost` | 个人使用统计聚合（统计卡 / 热力图 / 每日趋势 / 模型用量 / 用途分项）/ 费用口径（区间费用、按用户与按模型、未计价 tokens） |
 | `GET /api/ai/trace/list`、`/chat/{id}`、`/workflow/{runId}`、`/pool`、`/stats`、`POST /trace/pool/{id}/label\|dismiss`、`/sample/run` | 执行 Trace：列表与详情 / 采样池 / 采样统计 / 标注回流 / 忽略 / 立即采样 |
-| `GET /api/ai/user/list`、`/preference`、`/settings`、`POST /user`、`PUT /user/{uid}`、`/{uid}/password`、`/preference`、`/profile`、`/settings`、`DELETE /{uid}`、`/{uid}/oidc-binding` | 成员列表 / 个人偏好（默认模型、记忆开关）读取与保存 / 个人配置覆盖通道（当前无 personal 字段，端点保留）/ 新建用户 / 编辑成员与重置密码 / 保存资料与头像 / 删除 / 解绑单点登录 |
+| `GET /api/ai/user/list`、`/user/page`、`/preference`、`/settings`、`POST /user`、`PUT /user/{uid}`、`/{uid}/password`、`/preference`、`/profile`、`/settings`、`DELETE /{uid}`、`/{uid}/oidc-binding` | 成员列表 / 成员分页（关键字·部门·状态库侧过滤，供万级名单的「会话治理」用）/ 个人偏好（默认模型、记忆开关）读取与保存 / 个人配置覆盖通道（当前无 personal 字段，端点保留）/ 新建用户 / 编辑成员与重置密码 / 保存资料与头像 / 删除 / 解绑单点登录 |
 | `GET /api/ai/role/list`、`/options`、`/{code}/permissions`、`POST /role`、`PUT /{code}`、`/{code}/permissions`、`DELETE /{code}` | 角色管理与统一权限读写（权限 = 菜单 + 名下接口，单棵树勾选） |
 | `GET /api/ai/menu/list`、`/my-layout`、`POST /menu`、`PUT /{id}`、`/my-layout`、`DELETE /{id}` | 菜单维护与个人侧栏布局（顺序、显隐）读写 |
 | `GET /api/ai/department/list`、`POST /department`、`PUT /{id}`、`DELETE /{id}` | 部门树维护 |

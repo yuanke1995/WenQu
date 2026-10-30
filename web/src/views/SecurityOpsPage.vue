@@ -25,7 +25,8 @@
                    show-icon style="margin-bottom:12px"
                    :message="report.overall === 'ok' ? '整体健康' : report.overall === 'warn' ? '整体可用，有要留意的事项' : '有必须处理的问题'" />
 
-          <a-table v-if="report" :data-source="report.checks" row-key="key" :pagination="false" size="middle">
+          <a-table v-if="report" :columns="checkCols" :data-source="report.checks" row-key="key"
+                   :pagination="false" size="middle">
             <template #bodyCell="{ column, record }">
               <template v-if="column.key === 'level'">
                 <a-tag :color="record.level === 'ok' ? 'green' : record.level === 'warn' ? 'orange' : 'red'">
@@ -41,21 +42,63 @@
         <!-- ==================== 会话治理 ==================== -->
         <a-tab-pane key="session" tab="会话治理">
           <div class="form-tip" style="margin-top:0">
-            平台的会话治理只有一种判据：<b>会话代数</b>。本人改密码、管理员重置密码、强制下线都会把代数 +1，
-            该账号已签发的全部令牌（所有设备）当场失效——账号被盗、离职即踢、改完密码怎么还在线，答案都是同一个。
-            令牌本身无状态（不查库），代数比对挂在每请求必查的用户档案上，代价为零。
+            <b>强制下线</b>＝该账号已签发的全部登录态（所有设备）当场失效，含此刻没在发请求的旧令牌；
+            本人改密码、管理员重置密码会自动做同样的事，不必再来点一次。
           </div>
-          <div class="kick-box">
-            <a-select v-model:value="kickUid" show-search option-filter-prop="label"
-                      :options="memberOptions" placeholder="选择要强制下线的成员" style="width:320px" />
-            <a-popconfirm :title="`强制下线 ${kickUid || '该成员'}？其所有设备的登录态将立即失效`"
-                          ok-text="强制下线" cancel-text="取消" @confirm="doForceLogout"
-                          :disabled="!kickUid">
-              <a-button type="primary" danger :disabled="!kickUid" :loading="kicking">强制下线</a-button>
-            </a-popconfirm>
+
+          <div class="kick-toolbar">
+            <a-input v-model:value="kickKw" allow-clear size="small" class="kick-search"
+                     placeholder="搜索昵称 / 登录账号" @change="onKickKw">
+              <template #prefix><search-outlined class="kick-search-ic" /></template>
+            </a-input>
+            <a-select v-model:value="kickDept" allow-clear size="small" class="kick-filter"
+                      placeholder="全部部门" :options="deptOptions" @change="onKickFilter" />
+            <a-select v-model:value="kickStatus" allow-clear size="small" class="kick-filter"
+                      placeholder="全部状态" :options="kickStatusOptions" @change="onKickFilter" />
+            <span class="kick-meta">共 {{ kickTotal }} 人 · 按最近登录排序</span>
           </div>
-          <a-alert type="info" show-icon style="margin-top:12px"
-                   message="相关动作会自动触发下线：本人修改密码、管理员重置密码（同时清除登录锁定）。无需再单独强制下线。" />
+
+          <!-- 取数失败单独露：不能让它塌成「没有这个人」的空表 -->
+          <a-alert v-if="kickError" type="error" show-icon style="margin:10px 0"
+                   :message="`成员名单拉取失败：${kickError}`">
+            <template #action>
+              <a-button size="small" :loading="kickLoading" @click="loadKickPage()">重试</a-button>
+            </template>
+          </a-alert>
+
+          <a-table :columns="kickCols" :data-source="kickRows" row-key="uid" size="middle"
+                   table-layout="fixed" :loading="kickLoading"
+                   :pagination="{ current: kickPage, pageSize: kickSize, total: kickTotal,
+                                  onChange: onKickPage, size: 'small', showSizeChanger: false,
+                                  showTotal: t => `共 ${t} 人` }">
+            <template #bodyCell="{ column, record }">
+              <template v-if="column.key === 'member'">
+                <div class="kick-user">
+                  <UserAvatar :avatar="record.avatar" :name="record.username" :size="26" />
+                  <div class="kick-user-txt">
+                    <span class="kick-name">{{ record.username || '（未命名）' }}</span>
+                    <code class="kick-uid">{{ record.uid }}</code>
+                  </div>
+                </div>
+              </template>
+              <template v-else-if="column.key === 'department'">
+                <span v-if="record.departmentId" class="kick-dept">{{ deptName(record.departmentId) }}</span>
+                <span v-else class="kick-none">未分配</span>
+              </template>
+              <template v-else-if="column.key === 'lastLoginTime'">
+                <span v-if="record.lastLoginTime" :title="fullTime(record.lastLoginTime)">{{ fmtTime(record.lastLoginTime) }}</span>
+                <span v-else class="kick-none">从未登录</span>
+              </template>
+              <template v-else-if="column.key === 'status'">
+                <span class="app-pill" :class="record.status === 0 ? 'warn' : 'ok'">
+                  {{ record.status === 0 ? '已禁用' : '启用' }}
+                </span>
+              </template>
+              <template v-else-if="column.key === 'action'">
+                <a-button type="link" size="small" danger @click="confirmKick(record)">强制下线</a-button>
+              </template>
+            </template>
+          </a-table>
         </a-tab-pane>
 
         <!-- ==================== 平台公告 ==================== -->
@@ -66,7 +109,7 @@
               <plus-outlined /> 发布公告
             </button>
           </div>
-          <a-table :data-source="announcements" row-key="id" :pagination="false" size="middle">
+          <a-table :columns="annCols" :data-source="announcements" row-key="id" :pagination="false" size="middle">
             <template #bodyCell="{ column, record }">
               <template v-if="column.key === 'title'">
                 <div>{{ record.title }}</div>
@@ -123,13 +166,14 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { message } from 'ant-design-vue'
-import { PlusOutlined, ReloadOutlined } from '@ant-design/icons-vue'
+import { message, Modal } from 'ant-design-vue'
+import { PlusOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons-vue'
 import {
   runOpsCheckup, getLastOpsCheckup, forceLogoutUser,
   listAnnouncements, saveAnnouncement, deleteAnnouncement,
-  listUsers, listTenants
+  pageUsers, listDepartments, listTenants
 } from '../api'
+import UserAvatar from '../components/UserAvatar.vue'
 import { isSuperadminSync } from '../utils/auth'
 
 const superadmin = isSuperadminSync()
@@ -137,40 +181,107 @@ const tab = ref('checkup')
 const saving = ref(false)
 
 // ==================== 系统巡检 ====================
+const checkCols = [
+  { title: '巡检项', dataIndex: 'name', key: 'name', width: 150 },
+  { title: '级别', key: 'level', width: 100 },
+  { title: '说明', dataIndex: 'detail', key: 'detail' },
+  { title: '耗时', key: 'ms', width: 88, align: 'right' }
+]
 const report = ref(null)
 const running = ref(false)
 async function runCheckup () {
   running.value = true
   try {
     const r = await runOpsCheckup()
-    if (r.success) { report.value = r.data; message.success('巡检完成：' + (r.data.overall === 'ok' ? '整体健康' : '有需关注项，见下')) }
+    if (r.success) report.value = r.data
     else message.error(r.msg || '巡检失败')
   } catch (e) { message.error(e.message || '巡检失败') }
   finally { running.value = false }
 }
 
 // ==================== 会话治理 ====================
-const memberOptions = ref([])
-const kickUid = ref(undefined)
-const kicking = ref(false)
-async function loadMembers () {
+const kickCols = [
+  { title: '成员', key: 'member' },
+  { title: '部门', key: 'department', width: 150 },
+  { title: '最近登录', key: 'lastLoginTime', width: 150 },
+  { title: '状态', key: 'status', width: 90 },
+  { title: '操作', key: 'action', width: 110 }
+]
+const kickStatusOptions = [{ value: 1, label: '启用中' }, { value: 0, label: '已禁用' }]
+const kickRows = ref([])
+const kickTotal = ref(0)
+const kickPage = ref(1)
+const kickSize = ref(20)
+const kickLoading = ref(false)
+const kickError = ref('')
+const kickKw = ref('')
+const kickDept = ref(undefined)
+const kickStatus = ref(undefined)
+
+const departments = ref([])
+const deptOptions = computed(() => departments.value.map(d => ({ label: d.name, value: d.id })))
+const deptName = id => (departments.value.find(d => d.id === id) || {}).name || '—'
+const fmtTime = s => (s ? String(s).replace('T', ' ').slice(0, 16) : '')
+const fullTime = s => (s ? String(s).replace('T', ' ') : '')
+
+async function loadKickPage () {
+  kickLoading.value = true
+  kickError.value = ''
   try {
-    const r = await listUsers()
-    if (r.success) memberOptions.value = (r.data || []).map(x => ({ value: x.uid, label: (x.username || x.uid) + '（' + x.uid + '）' }))
-  } catch (e) { message.error(e.message || '成员名单加载失败') }
+    const r = await pageUsers({ kw: kickKw.value, departmentId: kickDept.value,
+      status: kickStatus.value, page: kickPage.value, size: kickSize.value })
+    if (r.success) {
+      kickRows.value = r.data.items || []
+      kickTotal.value = r.data.total || 0
+      kickPage.value = r.data.page || 1
+    } else {
+      kickRows.value = []
+      kickTotal.value = 0
+      kickError.value = r.msg || '接口返回失败'
+    }
+  } catch (e) {
+    kickRows.value = []
+    kickTotal.value = 0
+    kickError.value = e.message || '网络错误'
+  } finally { kickLoading.value = false }
 }
-async function doForceLogout () {
-  if (!kickUid.value) return
-  kicking.value = true
+// 关键字防抖：名单是库侧过滤，逐键打库在万级成员下等于自己发起一次压测
+let kickTimer = null
+function onKickKw () {
+  clearTimeout(kickTimer)
+  kickTimer = setTimeout(() => { kickPage.value = 1; loadKickPage() }, 300)
+}
+function onKickFilter () { kickPage.value = 1; loadKickPage() }
+function onKickPage (p, s) { kickPage.value = p; kickSize.value = s; loadKickPage() }
+function confirmKick (record) {
+  Modal.confirm({
+    title: `强制下线 ${record.username || record.uid}？`,
+    content: '该账号所有设备的登录态立即失效，需重新登录。此动作落审计。',
+    okText: '强制下线', okType: 'danger', cancelText: '取消',
+    onOk: async () => {
+      try {
+        const r = await forceLogoutUser(record.uid)
+        if (r.success) { message.success(`已强制下线：${record.uid}`); await loadKickPage() }
+        else message.error(r.msg || '操作失败')
+      } catch (e) { message.error(e.message || '操作失败') }
+    }
+  })
+}
+async function loadDepartments () {
   try {
-    const r = await forceLogoutUser(kickUid.value)
-    if (r.success) { message.success('已强制下线：' + kickUid.value); kickUid.value = undefined }
-    else message.error(r.msg || '操作失败')
-  } catch (e) { message.error(e.message || '操作失败') }
-  finally { kicking.value = false }
+    const r = await listDepartments()
+    if (r.success) departments.value = r.data || []
+  } catch (e) { message.error(e.message || '部门名单加载失败') }
 }
 
 // ==================== 平台公告 ====================
+const annCols = [
+  { title: '标题', key: 'title' },
+  { title: '级别', key: 'level', width: 84 },
+  ...(superadmin ? [{ title: '租户', key: 'tenant', width: 130 }] : []),
+  { title: '状态', key: 'enabled', width: 88 },
+  { title: '操作', key: 'action', width: 120 }
+]
 const announcements = ref([])
 const tenantOptions = ref([])
 const annOpen = ref(false)
@@ -215,7 +326,8 @@ async function onDisableAnnouncement (a) {
 
 onMounted(() => {
   runCheckup()          // 进页先看一眼当前状态（最后一次报告）
-  loadMembers()
+  loadKickPage()
+  loadDepartments()
   loadAnnouncements()
 })
 </script>
@@ -224,7 +336,18 @@ onMounted(() => {
 .form-tip { font-size: 12px; color: var(--app-text-3, #888); line-height: 1.7; }
 .checkup-head { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
 .checkup-meta { font-size: 12px; color: var(--app-text-3, #888); }
-.kick-box { display: flex; gap: 12px; align-items: center; margin-top: 14px; }
+.kick-toolbar { display: flex; align-items: center; gap: 10px; margin: 12px 0 8px; }
+.kick-search { width: 220px; }
+.kick-search-ic { color: var(--app-text3); }
+.kick-filter { width: 130px; flex: none; }
+.kick-filter .ant-select-selector { font-size: 12px; }
+.kick-meta { margin-left: auto; font-size: 12px; color: var(--app-text3); }
+.kick-user { display: inline-flex; align-items: center; gap: 9px; min-width: 0; }
+.kick-user-txt { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.kick-name { color: var(--app-text); }
+.kick-uid { font-size: 11px; color: var(--app-text3); }
+.kick-dept { color: var(--app-text2); }
+.kick-none { font-size: 12px; color: var(--app-text3); }
 .ann-content { font-size: 12px; color: var(--app-text-3, #999); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ann-tenant { font-size: 12px; color: var(--app-text-2, #666); }
 </style>

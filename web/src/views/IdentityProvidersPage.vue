@@ -164,7 +164,7 @@
         IdP 组命中规则时按 priority（大者优先）授予角色/部门，唯一胜者；手动授予的角色永不被覆盖。
         组名须与 IdP 侧一致（SCIM displayName / LDAP cn）。
       </div>
-      <a-table :data-source="mappings" row-key="id" :pagination="false" size="small" style="margin-top:8px">
+      <a-table :columns="mappingCols" :data-source="mappings" row-key="id" :pagination="false" size="small" style="margin-top:8px">
         <template #bodyCell="{ column, record }">
           <template v-if="column.key === 'externalGroup'"><code>{{ record.externalGroup }}</code></template>
           <template v-else-if="column.key === 'roleCode'">
@@ -377,6 +377,12 @@ async function onSync (p) {
 }
 
 // ==================== 组映射 ====================
+const mappingCols = [
+  { title: 'IdP 组名', key: 'externalGroup' },
+  { title: '授予角色', key: 'roleCode', width: 130 },
+  { title: '联动部门', key: 'departmentId', width: 140 },
+  { title: '操作', key: 'action', width: 108 }
+]
 const mappingOpen = ref(false)
 const mappingProvider = ref(null)
 const mappings = ref([])

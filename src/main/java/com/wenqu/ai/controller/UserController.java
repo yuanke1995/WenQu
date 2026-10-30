@@ -39,6 +39,21 @@ public class UserController {
         return ResultJson.ok(orgService.listUsersWithRoles());
     }
 
+    /**
+     * 成员分页查询：万级名单的入口（会话治理）。
+     * <p>刻意不复用 {@code /list}——那份全表下发，成员涨到几万时一次请求既捞不动也发不出。
+     */
+    @Operation(summary = "成员分页查询", description = "关键字（昵称/登录账号）与部门、状态在库侧过滤，按最近登录倒序分页；"
+            + "返回 {total, items, page, size}，items 字段口径同 /user/list")
+    @GetMapping("/page")
+    public ResultJson page(@Parameter(description = "昵称或登录账号关键字") @RequestParam(value = "kw", required = false) String kw,
+                           @Parameter(description = "部门 ID（空=全部）") @RequestParam(value = "departmentId", required = false) String departmentId,
+                           @Parameter(description = "状态：1=启用 0=禁用（空=全部）") @RequestParam(value = "status", required = false) Integer status,
+                           @RequestParam(value = "page", defaultValue = "1") int page,
+                           @RequestParam(value = "size", defaultValue = "20") int size) {
+        return ResultJson.ok(orgService.pageUsers(kw, departmentId, status, page, size));
+    }
+
     @Operation(summary = "新建用户", description = "{\"uid\":\"alice\",\"username\":\"Alice\",\"password\":\"必填\",\"departmentId\":\"可选\",\"role\":\"user|admin|superadmin\"}")
     @PostMapping
     public ResultJson create(@RequestBody Map<String, Object> body) {

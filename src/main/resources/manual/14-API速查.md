@@ -81,7 +81,7 @@
 | `GET /api/ai/auth/oidc/config`、`/login-url`、`/callback`、`POST /auth/oidc/exchange-code`；`GET /api/ai/auth/saml/config`、`GET /auth/saml/login/{id}` | 单点登录流程端点：OIDC 授权码四端点 + SAML 公开清单与发起登录（断言消费走 Spring Security `/saml2/**`）。认证源的管理走 `/api/ai/identity/**`（见下） |
 | `GET /api/ai/identity/providers`、`POST /providers`、`PUT /providers/{id}`、`DELETE /providers/{id}`、`POST /providers/{id}/test`；`GET+POST /identity/mappings`、`PUT /mappings/{id}`、`DELETE /mappings/{id}`；`POST /identity/sync/{id}`、`GET /identity/sync/logs` | 统一认证源（OIDC / SAML / SCIM / LDAP）CRUD 与 LDAP 连接测试、组映射规则 CRUD、手动触发目录同步与同步日志 |
 | `/api/ai/scim/v2/ServiceProviderConfig`、`/Schemas`、`/ResourceTypes`、`/Users`、`/Groups` | SCIM 2.0 入站（RFC 7644）：发现端点与用户 / 组资源，供 Entra / Okta 推送。**凭据为认证源配置的独立 Bearer**（非登录令牌），响应为 SCIM JSON，状态码按协议（201/200/204/400/404/409） |
-| `GET /api/ai/user/list`、`/preference`、`/settings`；`POST /user`；`PUT /user/{uid}`、`/{uid}/password`、`/preference`、`/profile`、`/settings`；`DELETE /user/{uid}`、`/{uid}/oidc-binding` | 成员管理与个人偏好（默认模型、记忆开关） |
+| `GET /api/ai/user/list`、`/user/page`、`/preference`、`/settings`；`POST /user`；`PUT /user/{uid}`、`/{uid}/password`、`/preference`、`/profile`、`/settings`；`DELETE /user/{uid}`、`/{uid}/oidc-binding` | 成员管理（`/page` 按关键字/部门/状态在库侧过滤分页，供万级名单的「会话治理」用）与个人偏好（默认模型、记忆开关） |
 | `GET /api/ai/role/*`、`/menu/*`、`/department/*`、`/api/list` | 角色（含 `/{code}/permissions` 统一权限读写）、菜单与个人侧栏布局、部门树、RBAC 接口清单 |
 | `GET+PUT /api/ai/config`、`GET /config/schema`、`/public`、`/rerank/check`、`/keyword/check`、`POST /config/probe`、`/reset` | 配置读写（脱敏）/ schema 下发 / 免登录公开项 / 重排与关键词连通检查 / 先测后存 / 恢复分组默认 |
 | `GET /api/ai/provider/*` | 模型供应商登记、模型管理与引用清单 |

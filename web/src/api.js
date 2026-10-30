@@ -1494,6 +1494,15 @@ export const updateDocumentShare = (id, shareConfig) =>
   request(`/document/${id}/share`, { method: 'PUT', body: JSON.stringify({ shareConfig: shareConfig || '' }) })
 export const listDepartments = () => request('/department/list')
 export const listUsers = () => request('/user/list')
+/** 成员分页查询（万级名单入口·会话治理）：关键字/部门/状态在库侧过滤，按最近登录倒序。
+ *  status 允许 0，判空只认 undefined/空串，别写成 falsy */
+export const pageUsers = ({ kw = '', departmentId = '', status, page = 1, size = 20 } = {}) => {
+  const q = new URLSearchParams({ page: String(page), size: String(size) })
+  if (kw) q.set('kw', kw)
+  if (departmentId) q.set('departmentId', departmentId)
+  if (status !== undefined && status !== null && status !== '') q.set('status', String(status))
+  return request(`/user/page?${q}`)
+}
 export const createDepartment = body => request('/department', { method: 'POST', body: JSON.stringify(body) })
 export const updateDepartment = (id, body) => request(`/department/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(body) })
 export const deleteDepartment = id => request(`/department/${encodeURIComponent(id)}`, { method: 'DELETE' })
