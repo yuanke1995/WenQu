@@ -62,6 +62,17 @@ public record ToolDescriptor(
         return requiresApproval;
     }
 
+    /**
+     * 这件能力算不算「只读」——供框架权限引擎判只读调研档，见 {@code SpringAiToolAdapter}。
+     * <p>读类与纯计算算只读；出网与变更不算。出网那一条刻意收紧：联网搜索不改沙盒里的东西，
+     * 但它把请求发到平台之外、可能产生外部计费，只读档不给的口径与收紧之前一致。
+     * <p>为什么由等级而不是由名字表决定：档位判据一旦落成名字表，漏写一个名字就等于把那把工具
+     * 判成写操作——只读档的智能体会「看得见、调了就拒」，检索整条静默空掉。
+     */
+    public boolean readOnly() {
+        return sideEffect == SideEffect.PURE || sideEffect == SideEffect.READ;
+    }
+
     /** 卡片展示名：卡片名缺省时退到术语名，两者都缺省退到工具名本身（绝不返回空串给前端） */
     public String displayLabel() {
         if (cardLabel != null && !cardLabel.isBlank()) return cardLabel;

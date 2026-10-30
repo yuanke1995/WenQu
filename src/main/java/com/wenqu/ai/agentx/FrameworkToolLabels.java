@@ -30,7 +30,8 @@ import java.util.Map;
  *
  * @author yuanke
  */
-final class FrameworkToolLabels {
+/** 跨包可见：脚本子调用名册（{@code agent/runcode}）也要用同一份展示名，别再抄一张表。 */
+public final class FrameworkToolLabels {
 
     private FrameworkToolLabels() {
     }
@@ -140,7 +141,7 @@ final class FrameworkToolLabels {
     }
 
     /** 卡片展示名；未知工具返回 null（调用方按注册中心/前端映射兜底，绝不返回英文裸名冒充展示名） */
-    static String label(String toolName) {
+    public static String label(String toolName) {
         return toolName == null ? null : LABELS.get(toolName);
     }
 

@@ -26,9 +26,9 @@ import java.util.function.Supplier;
  * {@code ToolCallback}（schema 由 Spring AI 反射 {@code @Tool} 生成，见 {@code ToolRegistry}）。
  * 框架引擎要拿到<b>同一批</b>工具，只该有这一处翻译，而不是把九族各重写成框架注解方法——
  * 重写会立刻造成两套工具定义漂移，而工具名/说明/参数正是审批、黑名单、权限档位共同的判据。
- * <p>继承 {@link ToolBase} 而不是只实现 {@code AgentTool}：框架对工具自己的
- * {@code checkPermissions} 是不可绕过的，档位与黑名单要落在这里才真拦得住（落在校验前置的
- * 装配层只决定「模型看不看得见」，看得见而绕过装配的路径仍然存在）。
+ * <p>继承 {@link ToolBase} 而不是只实现 {@code AgentTool}：工具的副作用性质要落在框架认得的那份
+ * {@code readOnly} 标记上，档位（只读档）裁剪才有唯一依据；按名黑名单与本方法里「要不要问人」这两件事
+ * 也必须走框架的权限入口——落在校验前置的装配层只决定「模型看不看得见」，看得见而绕过装配的路径仍然存在。
  * <p>身份与本轮配置覆盖的重放不在这里做：由各工具自己按既有约定处理（见 {@code WenquAgentxTools}），
  * 本适配器只负责协议搬运与权限挂载，避免把「一轮的上下文」藏进一个通用组件里。
  */
@@ -61,16 +61,18 @@ public final class SpringAiToolAdapter extends ToolBase {
     private final boolean approvalCanAsk;
 
     /** 固定档位入口（测试与「实例只活一轮」的调用方用）：等价于 {@code () -> policy}。 */
-    public SpringAiToolAdapter(ToolCallback callback, Supplier<Map<String, Object>> contextSupplier,
+    public SpringAiToolAdapter(ToolCallback callback, boolean readOnly,
+                               Supplier<Map<String, Object>> contextSupplier,
                                ExecutionPolicy policy, boolean approvalRequired, boolean approvalCanAsk) {
-        this(callback, contextSupplier, () -> policy, approvalRequired, approvalCanAsk);
+        this(callback, readOnly, contextSupplier, () -> policy, approvalRequired, approvalCanAsk);
     }
 
-    public SpringAiToolAdapter(ToolCallback callback, Supplier<Map<String, Object>> contextSupplier,
+    public SpringAiToolAdapter(ToolCallback callback, boolean readOnly,
+                               Supplier<Map<String, Object>> contextSupplier,
                                Supplier<ExecutionPolicy> policy, boolean approvalRequired,
                                boolean approvalCanAsk) {
         super(callback.getToolDefinition().name(), callback.getToolDefinition().description(),
-                schemaOf(callback), false, true, false, null, false, false);
+                schemaOf(callback), readOnly, true, false, null, false, false);
         this.callback = callback;
         this.contextSupplier = contextSupplier;
         this.policy = policy;
@@ -78,7 +80,7 @@ public final class SpringAiToolAdapter extends ToolBase {
         this.approvalCanAsk = approvalCanAsk;
     }
 
-    /** 保守按「可能有副作用」登记（readOnly=false）：在这里猜只读的代价是越权写被当只读放行。 */
+    /** 入参 schema：Spring AI 那份 JSON 直接 parse 成框架要的 Map；不是合法 JSON 就当场抛，别静默给个空表。 */
     private static Map<String, Object> schemaOf(ToolCallback callback) {
         String schema = callback.getToolDefinition().inputSchema();
         if (schema == null || schema.isBlank()) return Map.of("type", "object", "properties", Map.of());
@@ -94,6 +96,10 @@ public final class SpringAiToolAdapter extends ToolBase {
      * 本轮权限档位对本次调用的裁决，读的是问答侧同一份 {@link ExecutionPolicy}。
      * <p>没有档位一律拒绝（fail-closed）：框架引擎的调用路径上没有本轮状态对象，
      * 忘记传档位是最容易犯的错，而它的默认后果不该是「放行」。
+     * <p><b>这里不判只读档</b>：档位的「只读」语义由框架权限引擎按工具申报的 {@code readOnly}
+     * 决定（{@code PermissionEngine#checkExploreMode}：只读放行、非只读拒），引擎在调用本方法之前就
+     * 裁完了。问渠再判一遍就是第二套口径——漏判的后果是把检索与联网这类读类能力当成写操作拒掉，
+     * 而模型那边只看得到一次没有理由的失败。
      */
     @Override
     public Mono<PermissionDecision> checkPermissions(Map<String, Object> input, PermissionContextState context) {
@@ -105,11 +111,6 @@ public final class SpringAiToolAdapter extends ToolBase {
             return Mono.just(PermissionDecision.deny("该工具已被本轮档位点名禁用：" + getName()));
         }
         PermissionMode mode = context == null ? null : context.getMode();
-        if (mode == PermissionMode.EXPLORE) {
-            // 只读调研档：本适配器一律按「可能有副作用」登记（readOnly 不猜），所以这一档里它不该跑。
-            // 档位收紧的能力必须与「不存在」不可区分——这里拒掉，模型反复重试也拿不到结果。
-            return Mono.just(PermissionDecision.deny("只读调研档不允许执行有副作用的工具：" + getName()));
-        }
         if (approvalRequired && mode != PermissionMode.DONT_ASK) {
             if (!approvalCanAsk) {
                 return Mono.just(PermissionDecision.deny("该工具需要执行前确认，而本轮回合没有可应答的在场通道："

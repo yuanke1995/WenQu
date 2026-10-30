@@ -38,6 +38,9 @@ public class OpsCheckupService {
     private final AuditService audit;
     private final KeywordIndexService keywordIndex;
     private final AppProperties properties;
+    private final com.wenqu.ai.agent.tool.ToolRegistry toolRegistry;
+    private final com.wenqu.ai.agentx.FrameworkSessions frameworkSessions;
+    private final com.wenqu.ai.startup.OrphanTurnRunner orphanTurns;
 
     private final AtomicReference<Map<String, Object>> lastReport = new AtomicReference<>();
 
@@ -55,6 +58,8 @@ public class OpsCheckupService {
         checks.add(checkAuditChain());
         checks.add(checkProviders());
         checks.add(checkLockedAccounts());
+        checks.add(checkToolAssembly());
+        checks.add(checkTurnResume());
 
         String overall = "ok";
         long fail = 0, warn = 0;
@@ -195,6 +200,75 @@ public class OpsCheckupService {
                     System.currentTimeMillis() - t);
         } catch (Exception e) {
             return new Check("login", "登录安全态势", "warn", "检查失败：" + e.getMessage(), System.currentTimeMillis() - t);
+        }
+    }
+
+    /**
+     * 工具装配对账：登记名与实现是否逐字对上、档位名单覆盖的那几把沙盒工具有没有漏进组管理。
+     * <p>为什么值得单列一项：这两件事坏起来都是静默的——少一行登记时清单页与审批判据都问不到那把工具，
+     * 漏一个组时「档位收紧」退化成「模型看得见、调了被拒」，白烧一步预算而屏幕上没有异常。
+     * 这两道本各有启动期 ERROR 日志与每轮双跑比对兜着，这里给的是<b>不用翻日志</b>的那个出口。
+     * <p>没有常驻实例时只核登记面并如实说出来：巡检不该为了看一眼就建一条会话实例。
+     */
+    private Check checkToolAssembly() {
+        long t = System.currentTimeMillis();
+        try {
+            Map<String, String> gaps = toolRegistry.declarationGaps();
+            if (!gaps.isEmpty()) {
+                return new Check("tools", "工具装配对账", "fail",
+                        "登记名与实现不一致：" + String.join("；", gaps.values()), System.currentTimeMillis() - t);
+            }
+            List<String> ungrouped = new ArrayList<>();
+            int instances = 0;
+            for (var toolkit : frameworkSessions.liveToolkits()) {
+                instances++;
+                for (String name : com.wenqu.ai.agentx.WenquAgentxTools.frameworkSurfaceToolNames()) {
+                    if (toolkit.getTool(name) != null && toolkit.getToolGroup(name) == null
+                            && !ungrouped.contains(name)) ungrouped.add(name);
+                }
+            }
+            if (!ungrouped.isEmpty()) {
+                return new Check("tools", "工具装配对账", "warn",
+                        "这几把沙盒/记忆工具没在档位名单的组管理里（模型一直看得到，档位拦不住）："
+                                + String.join("、", ungrouped), System.currentTimeMillis() - t);
+            }
+            return new Check("tools", "工具装配对账", "ok",
+                    instances > 0 ? "登记与实现逐字对上；本进程 " + instances
+                            + " 条常驻会话的沙盒与记忆工具都已进档位名单"
+                            : "登记与实现逐字对上（本进程暂无常驻会话实例，未核对运行中的工具表）",
+                    System.currentTimeMillis() - t);
+        } catch (Exception e) {
+            return new Check("tools", "工具装配对账", "warn", "检查失败：" + e.getMessage(), System.currentTimeMillis() - t);
+        }
+    }
+
+    /**
+     * 长任务接续态势：进程停过之后，那些「发出去了却没人跑完」的轮有没有被接回来。
+     * <p>为什么单列一项：这件事的两种结果都不出现在界面上——接回了，用户只看到答案晚了一点；
+     * 没接回，那条问题旁边就永远空着，而用户不知道平台有没有试过。让管理员一眼看到「试了几条、接了几条」
+     * 是这一项的全部意义。
+     */
+    private Check checkTurnResume() {
+        long t = System.currentTimeMillis();
+        try {
+            var sweep = orphanTurns.lastSweep();
+            if (sweep.at().isBlank()) {
+                return new Check("resume", "长任务接续", "ok",
+                        "这一轮还没扫过（服务起来后立即跑首轮，之后按「长任务接续间隔」）", System.currentTimeMillis() - t);
+            }
+            if (sweep.found() == 0) {
+                return new Check("resume", "长任务接续", "ok",
+                        "没有没答完的轮（最近一次扫描 " + sweep.at() + "）", System.currentTimeMillis() - t);
+            }
+            String line = "最近一次扫描发现 " + sweep.found() + " 条没人答完的轮，已按中断收口 "
+                    + sweep.taken() + " 条";
+            if (sweep.taken() < sweep.found() || !sweep.error().isBlank()) {
+                return new Check("resume", "长任务接续", "warn",
+                        line + "；接不上的原因：" + sweep.error(), System.currentTimeMillis() - t);
+            }
+            return new Check("resume", "长任务接续", "ok", line, System.currentTimeMillis() - t);
+        } catch (Exception e) {
+            return new Check("resume", "长任务接续", "warn", "检查失败：" + e.getMessage(), System.currentTimeMillis() - t);
         }
     }
 

@@ -716,7 +716,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             stepBudget.beginTurn(turnId, tools.maxToolSteps(cmd), (code, message) -> {
                 pool.registrar().degrade(code, message);
                 channel.emit(RunEventType.WARN, message);
-            });
+            }, text -> sessions.steer(cmd.getUserId(), cmd.getSessionId(), text));
         }
         // 框架工具档位闸按轮更新标签（全框架化 P1）：拒了什么要能在日志里追到是哪一轮。
         AgentxFrameworkToolGate toolGate = sessions.frameworkToolGate(sessions.key(cmd));
@@ -807,7 +807,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 工具面按轮落到框架的组激活集上（判据仍取自老装配那一条 exposes，不另写一份），
         // 并把「配置允许的名单」与「框架真正下发给模型的工具表」逐名比对一次——不一致就发 warn，
         // 静默少一道闸正是这套机制最初要治的病。
-        for (String surfaceProblem : sessions.applyToolSurface(cmd, tools.turnGroupedNames(cmd, policy))) {
+        for (String surfaceProblem : sessions.applyToolSurface(cmd, tools.turnGroupedNames(cmd, policy), policy)) {
             channel.emit(RunEventType.WARN, surfaceProblem);
         }
         AgentSession.Task current = multimodal != null
@@ -1414,10 +1414,22 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      *                已经不存在的 writer（2 分钟租约），表现为「目标卡在 EXECUTING 不动」。
      */
     private Following openForContinuation(String sessionId, String userId, String turnId, boolean recover) {
+        return openForContinuation(sessionId, userId, turnId, recover, null);
+    }
+
+    /**
+     * @param guestUid 非空=这一轮原本是<b>免登录分享会话</b>里的一轮：按访客口径挂工具面（沙盒/联网/MCP
+     *                 一概不给），身份仍是发布者。少传这一项，接续出来的那一轮会比原来那一轮宽——
+     *                 「访客接不回」和「访客拿到更多能力」都在这一个参数上。
+     */
+    private Following openForContinuation(String sessionId, String userId, String turnId, boolean recover,
+                                          String guestUid) {
         if (sessionId == null || sessionId.isBlank()) return null;
         ChatCommand cmd = ChatCommand.builder().sessionId(sessionId).question("")
                 .userId(userId == null || userId.isBlank() ? "guest" : userId)
                 .agentId(agentIdOfSession(sessionId))
+                .guestMode(guestUid != null && !guestUid.isBlank())
+                .guestUid(guestUid)
                 .build();
         com.wenqu.ai.service.ChatService.TurnModel turn = modelResolver.apply(cmd);
         String ref = turn.usable() ? turn.ref() : "";
@@ -1455,7 +1467,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         AgentxStepBudget stepBudget = sessions.stepBudget(sessions.key(cmd));
         if (stepBudget != null) {
             stepBudget.beginTurn(turnId, tools.maxToolSteps(cmd), (code, message) -> {
-            });
+            }, text -> sessions.steer(cmd.getUserId(), cmd.getSessionId(), text));
         }
         // 接续轮同样要更新档位闸标签（全框架化 P1）：否则被拒的工具在日志里挂到上一轮头上。
         AgentxFrameworkToolGate toolGate = sessions.frameworkToolGate(sessions.key(cmd));
@@ -1710,12 +1722,23 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 重新推理出了正文，事件全在框架的 Session Log 里，只是没有人在读，正文也就没落库。
      */
     @Override
-    public void follow(String sessionId, String userId, String turnId) {
-        if (sessions.hasFollower((userId == null || userId.isBlank() ? "guest" : userId) + "|" + sessionId)) {
+    public void follow(String sessionId, String userId, String turnId, boolean recover, String guestUid) {
+        String sessionKey = (userId == null || userId.isBlank() ? "guest" : userId) + "|" + sessionId;
+        if (sessions.hasFollower(sessionKey)) {
+            // 必须说出来：扫描器报「已交给引擎接续」而这里因为租约还亮着（可能属于一个刚被硬杀、
+            // 来不及释放的副本）直接不看，用户的屏幕上就还是那条没人回答的问题。
+            log.info("[agentx] 这一轮已有跟随者（或上一副本的租约未到期），本轮不重复接 session={} turn={}",
+                    sessionId, turnId);
             return;
         }
-        Following f = openForContinuation(sessionId, userId, turnId);
-        if (f == null) return;
+        Following f = openForContinuation(sessionId, userId, turnId, recover, guestUid);
+        if (f == null) {
+            // 接不动必须说：扫描器报「已交给引擎接续 N 条」而这里悄悄返回 null，
+            // 用户看到的就是「扫到了、也交接了、什么都没发生」（2026-10-29 真机就是这个形状）。
+            log.warn("[agentx] 这一轮接不回来（模型解析不到或会话重建失败）session={} turn={} user={}",
+                    sessionId, turnId, userId);
+            return;
+        }
         startFollowing(f, taskForTurn(f.session(), turnId));
     }
 
@@ -3416,6 +3439,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 不能等到目标建立再往 Toolkit 里加工具（那需要重建实例）。非目标轮调用会落空返回。
         holders.add(new GoalTools(goalService, slot));
         java.util.Set<String> groupedNames = tools.registerWithGroups(toolkit, holders);
+        // 工具表随实例跨轮稳定，登记到槽位：脚本子调用要把框架申报只读的那几把也纳进名册
+        slot.noteToolkit(toolkit);
         // 这一轮建了组的名单按会话记下来：每轮的激活集只在这份名单里增删，名单外的组（框架技能带出来的）不碰
         sessions.noteGroupedSurface(sessions.key(cmd), groupedNames);
         AgentxStepBudget stepBudget = new AgentxStepBudget();
@@ -3549,6 +3574,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 档位闸必须排在步数闸之后：先判「该不该跑」，再判「还剩几步」，
                 // 否则被档位拒绝的那次会白占一步预算（AgentxStepBudget 的「判过即占一步」口径）。
                 .middleware(toolGate)
+                .middleware(new AgentxSystemCaptureMiddleware(slot))
                 // 流式可见性闸：框架只在一次模型调用结束时才把 chunk 落盘，而观众跟的是落盘后的日志，
                 // 界面上就是「正文一下粘出几百字」。这里把它拆成 200ms 一片（代价见类注释）。
                 .middleware(new AgentxStreamFlushMiddleware())
@@ -4190,7 +4216,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 工具调用会让 prompt 逐轮递增，sum 是账单口径，拿它当基准会把容量条撑到虚高。
         // 传 historyBefore 而非上面夹取过的 from：分类器要靠「index < 该值」认出哪些是历史消息，
         // 传 from 会被 clamp 截断（historyBefore 超出 transcript 长度时）而误把整段当本轮新增。
-        Map<String, Integer> parts = FrameworkCtxParts.of(messages, historyBefore, toolSchemasOf(cmd), lastInput);
+        Map<String, Integer> parts = FrameworkCtxParts.of(messages, historyBefore,
+                toolSchemasOf(cmd), sessions.turnSlot(cmd).systemMessages(), lastInput);
         if (!parts.isEmpty()) tokens.put("parts", parts);
         return tokens;
     }

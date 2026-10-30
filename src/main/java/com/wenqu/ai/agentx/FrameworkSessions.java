@@ -170,14 +170,29 @@ public class FrameworkSessions {
          * <p>为什么要它：跟随循环有墙钟上限（{@code chat.sseTimeoutMs}），到点就退；退了之后卡片仍可答复，
          * 框架也会重新起一轮执行，但没有人在那儿读事件、也没有人落库，用户看到的就是一次「已批准」
          * 加上一件什么都没发生的事（真机实测：续跑跑完了、正文却没落库）。
+         *
+         * @param recover  这是不是进程中断后的接续轮：恢复轮要先封存上一进程残留的会话写者、
+         *                 把未决工具标成未知，否则框架的收件箱会一直等那个已经不存在的 writer
+         * @param guestUid 免登录分享会话的访客号（非访客轮传 null）：接续要按原来那一轮的口径挂工具面
          */
-        void follow(String sessionId, String userId, String turnId);
+        void follow(String sessionId, String userId, String turnId, boolean recover, String guestUid);
     }
 
     private volatile ResumeHandler resumeHandler;
 
     public void bindResume(ResumeHandler handler) {
         this.resumeHandler = handler;
+    }
+
+    /**
+     * 请引擎替一条没人跟的轮补上跟随者（启动/周期扫描用，见 {@code OrphanTurnRunner}）。
+     * <p>该不该起、能不能起仍由引擎那侧的原子占位决定（同一条会话不许两个循环对着跟），
+     * 这里只负责问一声：判据留在扫描器，占位规则留在引擎，别在两边各写一遍。
+     */
+    public void requestFollow(String sessionId, String userId, String turnId, boolean recover, String guestUid) {
+        ResumeHandler h = resumeHandler;
+        if (h == null || turnId == null) return;
+        h.follow(sessionId, userId, turnId, recover, guestUid);
     }
 
     /**
@@ -340,22 +355,37 @@ public class FrameworkSessions {
      * 而实例按会话常驻、换绑重建也不重置它——只在 build 期写一次，第二轮起模型看到的就是上一任配置的
      * 那一份面。{@code initialActiveToolGroups} 只在<b>首次</b>建态时生效，不是每轮的默认值。
      *
-     * <p><b>为什么是相对更新</b>：只在本刀管理的名单里增删。框架的技能工具组由它自己按技能激活，
-     * 整份覆盖会把那些一并关掉。
+     * <p><b>为什么是相对更新</b>：只在<b>问渠管的这张面</b>里增删——名单是建实例那轮按描述符建的组，
+     * 加上框架自带的沙盒文件/命令那几把（build 之后才进工具表，这里就地补建一把一组的 EXTERNAL 组）。
+     * 框架的技能工具组由它自己按技能激活，整份覆盖会把那些一并关掉。
      *
      * <p><b>写不动时选哪一头</b>：框架拒这次状态写入（事件日志有未结算的工具调用、或快照已过期）时，
      * 这一轮沿用旧面并<b>说出来</b>——与改造前的形态同源（那时工具面本来就冻结在建实例那一轮），
      * 而不是静默少一道闸，也不是把整轮打挂。
      *
      * @param allowed 本轮按老装配判据允许的注册名（{@code WenquAgentxTools#turnGroupedNames}）
-     * @return 需要让用户看见的问题；空表=组激活逐字复现了装配判据
+     * @param policy  本轮执行档位：框架那几把沙盒工具没有描述符，只能按档位与按名黑名单判
+     * @return 需要让用户看见的问题；空表=组激活逐字复现了判据
      */
-    public java.util.List<String> applyToolSurface(ChatCommand cmd, java.util.Set<String> allowed) {
+    public java.util.List<String> applyToolSurface(ChatCommand cmd, java.util.Set<String> allowed,
+                                                   com.wenqu.ai.agent.permission.ExecutionPolicy policy) {
         String key = key(cmd);
         Held h = held.get(key);
-        java.util.Set<String> managed = groupedSurfaces.get(key);
-        if (h == null || h.agent() == null || managed == null || managed.isEmpty()) return java.util.List.of();
+        if (h == null || h.agent() == null) return java.util.List.of();
+        java.util.Set<String> stored = groupedSurfaces.get(key);
+        // 框架自带的沙盒文件/命令工具是 build 之后才进工具表的，也没有问渠描述符：
+        // 在这一刻补进同一张组管理面，档位收紧才能在模型的工具表上生效（而不是调用后被拒）。
+        io.agentscope.core.tool.Toolkit surfaceToolkit = h.agent().getToolkit();
+        java.util.Set<String> managed = new java.util.LinkedHashSet<>(
+                stored == null ? java.util.Set.<String>of() : stored);
+        java.util.Set<String> frameworkManaged = WenquAgentxTools.groupFrameworkSurface(surfaceToolkit, managed);
+        if (managed.isEmpty()) return java.util.List.of();
         String uid = cmd.getUserId() == null || cmd.getUserId().isBlank() ? "guest" : cmd.getUserId();
+        // 两组名字两套判据，都不在这里新写：描述符那批问老装配（族开关/三态/游客/档位/黑名单/在场），
+        // 框架沙盒那批按档位与黑名单判（判据与档位闸执行期那条同源）。
+        java.util.function.Predicate<String> want = name -> frameworkManaged.contains(name)
+                ? WenquAgentxTools.tierAllows(policy, surfaceToolkit.getTool(name))
+                : (allowed != null && allowed.contains(name));
         java.util.List<String> problems = new java.util.ArrayList<>();
         java.util.List<String> activated;
         try {
@@ -365,9 +395,9 @@ public class FrameworkSessions {
             java.util.List<String> toAdd = new java.util.ArrayList<>();
             java.util.List<String> toRemove = new java.util.ArrayList<>();
             for (String name : managed) {
-                boolean want = allowed != null && allowed.contains(name);
-                if (want && !current.contains(name)) toAdd.add(name);
-                if (!want && current.contains(name)) toRemove.add(name);
+                boolean wanted = want.test(name);
+                if (wanted && !current.contains(name)) toAdd.add(name);
+                if (!wanted && current.contains(name)) toRemove.add(name);
             }
             if (!toAdd.isEmpty() || !toRemove.isEmpty()) {
                 toolContext.replaceActivatedGroups(toRemove, toAdd);
@@ -392,10 +422,10 @@ public class FrameworkSessions {
             java.util.List<String> missing = new java.util.ArrayList<>();
             java.util.List<String> extra = new java.util.ArrayList<>();
             for (String name : managed) {
-                boolean want = allowed != null && allowed.contains(name);
+                boolean wanted = want.test(name);
                 boolean seen = schemaNames.contains(name);
-                if (want && !seen) missing.add(name);
-                if (!want && seen) extra.add(name);
+                if (wanted && !seen) missing.add(name);
+                if (!wanted && seen) extra.add(name);
             }
             if (!missing.isEmpty() || !extra.isEmpty()) {
                 log.error("[agentx] 工具面双跑不一致（session={}）：应挂未挂={}，不该挂却挂着={}",
@@ -528,6 +558,19 @@ public class FrameworkSessions {
     }
 
     /**
+     * 当前进程里活着的框架会话的工具表（系统巡检用）。
+     * <p>只读快照，不新建实例：巡检要答的是「这个进程里挂着的会话有没有漏闸」，
+     * 为了看一眼就建实例等于凭空多一份状态。
+     */
+    public java.util.List<io.agentscope.core.tool.Toolkit> liveToolkits() {
+        java.util.List<io.agentscope.core.tool.Toolkit> out = new java.util.ArrayList<>();
+        for (Held h : held.values()) {
+            if (h.agent() != null && h.agent().getToolkit() != null) out.add(h.agent().getToolkit());
+        }
+        return out;
+    }
+
+    /**
      * 答复之后确认「有人把这一轮跟到收尾」，没有就补起一个。
      * <p>归属记录（{@code c_ai_tool_approval} 那一行）在这一刻已经是终态，所以 turnId 只能从表里取——
      * 它是续跑那一跑的记账身份（待办、任务清单、步数预算都挂在它下面）。
@@ -538,7 +581,7 @@ public class FrameworkSessions {
         var row = hitl.findApproval(requestId);
         if (row == null) return;
         // 该不该起、能不能起（同一条会话不许两个循环对着跟）由引擎那侧的原子占坑决定，这里只负责问一声
-        h.follow(row.getSessionId(), row.getUserId(), row.getTurnId());
+        h.follow(row.getSessionId(), row.getUserId(), row.getTurnId(), false, null);
     }
 
     /**

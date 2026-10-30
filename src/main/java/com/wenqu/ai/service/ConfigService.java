@@ -581,6 +581,8 @@ public class ConfigService {
         d.put("chat.sseTimeoutMs", "300000");              // H4：问答 SSE 超时(ms)
         d.put("chat.askTimeoutMs", "600000");              // 人在回路提问卡等待上限(ms)（2026-10-09 补：schema 早已声明，defaults 漏登记 → 设置页改了回显不出）
         d.put("chat.modelStallTimeoutMs", "60000");         // 单次模型调用的静默判死上限(ms)：0=不判（框架默认 5 分钟），见 AgentscopeChatEngine.modelExecutionConfig
+        d.put("chat.turnResumeScanMs", "120000");           // 长任务接续扫描间隔(ms)：0=暂停（见 ScheduleCenter 与 OrphanTurnRunner）
+        d.put("chat.turnResumeWindowMinutes", "60");        // 接续窗口(分钟)：只接窗口内没答完的轮
         // 目标模式（Goal Mode）已无任何平台参数（2026-10-22 对齐 DSH）：
         // 不设预算/轮数旋钮，也没有确认卡等待——目标建好就自己往下跑，助手自报完成即停；
         // 开关只剩智能体级 goal_enabled 那一格，自动续跑上限由 GoalSettings 的 chat.goal.maxRounds 控制（默认 40）。

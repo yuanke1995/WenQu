@@ -42,6 +42,12 @@ public class ToolRegistry {
     private final Map<String, String> modelDescriptions = new LinkedHashMap<>();
     /** 族 → 提供方（一条族只有一个提供方；装配顺序与「这条族归谁判」都查它） */
     private final Map<ToolFamily, ToolFamilyProvider> providerByFamily = new LinkedHashMap<>();
+    /**
+     * 声明名与实际 {@code @Tool} 名对不上的族（启动期那次核对的留痕，供系统巡检读）。
+     * <p>为什么留痕而不只打日志：这类漏项的坏法是静默的——清单页少一行、卡片名解析不出、
+     * 档位与审批判据都问不到那把工具。日志会滚掉，巡检中心里那一行才是运维看得见的地方。
+     */
+    private final Map<String, String> declarationGaps = new LinkedHashMap<>();
 
     public ToolRegistry(List<ToolFamilyProvider> providers) {
         this.providers = providers == null ? List.of() : providers;
@@ -100,11 +106,18 @@ public class ToolRegistry {
             List<String> undeclared = actual.stream().filter(n -> !declared.contains(n)).toList();
             List<String> phantom = declared.stream().filter(n -> !actual.contains(n)).toList();
             if (!undeclared.isEmpty() || !phantom.isEmpty()) {
+                declarationGaps.put(p.family().code(), "未声明却真实存在=" + undeclared
+                        + "；声明了却不存在=" + phantom);
                 log.error("[TOOL-REGISTRY] 族 {} 声明与实现不一致——未声明却真实存在的工具（清单会缺行、"
                                 + "审批与卡片名无从解析）={}；声明了却不存在的方法（笔误）={}",
                         p.family().code(), undeclared, phantom);
             }
         }
+    }
+
+    /** 启动期声明核对留下的偏差（空表=每族的登记名与 {@code @Tool} 名逐字对上）。 */
+    public Map<String, String> declarationGaps() {
+        return Map.copyOf(declarationGaps);
     }
 
     /** 模型可见说明（@Tool description）；未注册过的返回 null */

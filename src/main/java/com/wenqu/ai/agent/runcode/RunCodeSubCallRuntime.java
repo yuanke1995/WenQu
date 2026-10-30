@@ -178,7 +178,12 @@ public class RunCodeSubCallRuntime {
         org.springframework.ai.tool.definition.ToolDefinition def = cb.getToolDefinition();
         String name = def == null ? "" : def.name();
         String label = toolRegistry.find(name).map(com.wenqu.ai.agent.tool.ToolDescriptor::displayLabel)
-                .orElse(name);
+                // 框架原生那几把没有描述符（名册只纳了它们申报只读的），展示名取自框架工具名册那一份，
+                // 不在这里另抄一张表——否则脚本清单里出现的是 read_file 这种英文裸名
+                .orElseGet(() -> {
+                    String fw = com.wenqu.ai.agentx.FrameworkToolLabels.label(name);
+                    return fw == null ? name : fw;
+                });
         List<String> params = new ArrayList<>();
         Map<String, String> docs = new LinkedHashMap<>();
         List<String> required = new ArrayList<>();

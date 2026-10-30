@@ -241,16 +241,88 @@ public class WenquAgentxTools {
     }
 
     /**
-     * 本刀交给框架组管理的族。
-     * <p>沙盒与 MCP 刻意留在「无组=永远可见」那一侧：前者与审批档、权限档位耦合最深，后者按用户登记
-     * 动态合入、压根没有静态描述符，两条都要连着改档位闸才有意义（第二刀）。
+     * 交给框架组管理的族（注册名经别名换算后逐把建组）。
+     * <p>MCP 刻意不在这里：动态工具没有静态描述符，激活集无从按 {@code exposes} 问它，
+     * 由 {@link FrameworkSessions#applyToolSurface} 那侧按档位与黑名单单独算（下一刀收口）。
      */
     private static final java.util.List<com.wenqu.ai.agent.tool.ToolFamily> GROUPED_FAMILIES =
             java.util.List.of(com.wenqu.ai.agent.tool.ToolFamily.BUILTIN,
                     com.wenqu.ai.agent.tool.ToolFamily.KNOWLEDGE,
                     com.wenqu.ai.agent.tool.ToolFamily.WEBSEARCH,
                     com.wenqu.ai.agent.tool.ToolFamily.ARTIFACT,
-                    com.wenqu.ai.agent.tool.ToolFamily.TODO);
+                    com.wenqu.ai.agent.tool.ToolFamily.TODO,
+                    // 沙盒族（run_code）：档位裁剪与审批档都已在 exposes 里，进组后
+                    // 「只读档不给脚本」才真的做到「模型看不见」，而不是调了被拒
+                    com.wenqu.ai.agent.tool.ToolFamily.SANDBOX);
+
+    /**
+     * 建实例之后才出现在工具表里、又没有问渠描述符的那批框架工具（文件七把、产物交付、记忆与会话日志）。
+     * <p>它们也得进同一张组管理面：手册对「只读调研」写的是<b>命令执行与写入不暴露给模型</b>，
+     * 留在无组状态就等于「永远看得见、调了才被拒」——白烧一步预算，也与档位语义不符。
+     * 记忆那批一起纳入：只读档不该让模型看见「写长期记忆」这出口（{@code memory_save} 申报非只读，
+     * 读类三把与 {@code session_*} 申报只读、照常可见）。子智能体轮的「不许写记忆」另有那道闸，
+     * 档位与「这一轮有没有人能答卡」是两件事，不互相顶替。
+     */
+    static final java.util.List<String> FRAMEWORK_SURFACE_TOOLS = java.util.List.of(
+            FrameworkToolLabels.FilesystemToolNames.READ_FILE,
+            FrameworkToolLabels.FilesystemToolNames.WRITE_FILE,
+            FrameworkToolLabels.FilesystemToolNames.EDIT_FILE,
+            FrameworkToolLabels.FilesystemToolNames.GREP_FILES,
+            FrameworkToolLabels.FilesystemToolNames.GLOB_FILES,
+            FrameworkToolLabels.FilesystemToolNames.LIST_FILES,
+            FrameworkToolLabels.FilesystemToolNames.EXECUTE,
+            "deliver_artifact",
+            "memory_save",
+            "memory_get",
+            "memory_search",
+            "session_search",
+            "session_list",
+            "session_history");
+
+    /** 档位名单覆盖的那几把框架沙盒工具名（系统巡检按它核「有没有漏建组=漏一道闸」）。 */
+    public static java.util.List<String> frameworkSurfaceToolNames() {
+        return FRAMEWORK_SURFACE_TOOLS;
+    }
+
+    /**
+     * 给那批框架沙盒工具补建「一把一组」的 EXTERNAL 组（幂等，可在每轮调）。
+     *
+     * @param managedOut 这条会话的组管理面，本方法把新纳入的名字并进去
+     * @return 当前工具表里真实存在、且按档位判的那批名字（调用方据此走档位判据，不走过装配判据）
+     */
+    static java.util.Set<String> groupFrameworkSurface(io.agentscope.core.tool.Toolkit toolkit,
+                                                       java.util.Set<String> managedOut) {
+        java.util.Set<String> frameworkManaged = new java.util.LinkedHashSet<>();
+        if (toolkit == null) return frameworkManaged;
+        for (String name : FRAMEWORK_SURFACE_TOOLS) {
+            if (toolkit.getTool(name) == null) continue;   // 沙盒没开、框架没挂：不建空组
+            if (toolkit.getToolGroup(name) == null) {
+                toolkit.createToolGroup(name, "wenqu:" + name, true,
+                        io.agentscope.core.tool.ToolGroupScope.EXTERNAL);
+                toolkit.addToolToGroup(name, name);
+            }
+            frameworkManaged.add(name);
+            managedOut.add(name);
+        }
+        return frameworkManaged;
+    }
+
+    /**
+     * 沙盒工具在这个档位下该不该出现在模型的工具表里：只读档只放<b>自己申报只读</b>的那几把，
+     * 其余档全放；按名黑名单一律优先。
+     * <p>判据与 {@code AgentxFrameworkToolGate} 执行期那条同源——都读工具申报的只读标记，
+     * 两边各自列名单迟早对不上，而错的那一侧总是静默的那一侧。
+     */
+    static boolean tierAllows(ExecutionPolicy policy, io.agentscope.core.tool.AgentTool tool) {
+        if (tool == null) return false;
+        if (policy == null) return false;
+        if (policy.denies(tool.getName())) return false;
+        if (policy.sandboxMode() != com.wenqu.ai.agent.permission.SandboxMode.READ_ONLY) return true;
+        // 远端自己报的只读位不算判据（理由见 AgentxFrameworkToolGate#readOnly）：
+        // 一句 readOnlyHint=true 不该同时免掉档位与「执行前确认」。
+        if (tool instanceof io.agentscope.core.tool.ToolBase base && base.isMcp()) return false;
+        return tool.isReadOnly();
+    }
 
     /**
      * 描述符名 → 框架 Toolkit 里的真实注册名。
@@ -414,6 +486,27 @@ public class WenquAgentxTools {
             if (name == null) continue;
             if (asksHuman && toolRegistry.requiresApproval(name, configService::getBoolean)) continue;
             forScript.add(cb);
+        }
+        // 框架原生的只读工具也进脚本名册（批量读文件、跨文件搜索、查记忆与会话日志——
+        // 这些正是「一次模型往返换几十次脚本调用」要用的）。判据只用框架自己那份申报：
+        // 只读=不改世界、框架侧免审批，扇出几十次也不会挂出一排没人点的确认卡；
+        // 写文件/编辑/命令/交付/写长期记忆一把都不给（与「脚本里不给 execute」同一条理由）。
+        var scriptToolkit = slot.toolkit();
+        if (scriptToolkit != null) {
+            io.agentscope.core.agent.RuntimeContext rc = io.agentscope.core.agent.RuntimeContext.builder()
+                    .userId(cmd.getUserId() == null || cmd.getUserId().isBlank() ? "guest" : cmd.getUserId())
+                    .sessionId(cmd.getSessionId())
+                    .build();
+            long subCallTimeoutMs = configService.getLong("tool.runcode.subCallTimeoutMs", 60_000L);
+            for (String fwName : FRAMEWORK_SURFACE_TOOLS) {
+                var fwTool = scriptToolkit.getTool(fwName);
+                if (fwTool == null || !fwTool.isReadOnly()) continue;
+                // 只读位要问得来路才算：MCP 那批是远端自己报的，不当问渠的判据（同 tierAllows）
+                if (fwTool instanceof io.agentscope.core.tool.ToolBase base && base.isMcp()) continue;
+                if (t.policy() != null && t.policy().denies(fwName)) continue;
+                forScript.add(new com.wenqu.ai.agent.runcode.FrameworkToolCallback(
+                        fwTool, () -> rc, subCallTimeoutMs));
+            }
         }
         subCall.prepareSubCallPipeline(turn, forScript);
         if (asksHuman) {
@@ -665,9 +758,13 @@ public class WenquAgentxTools {
             // 要不要问人沿用问渠的登记（未登记一律要审批，fail-closed）——不在框架侧另判一次「像不像写操作」
             boolean needsApproval = asksHuman(policy)
                     && toolRegistry.requiresApproval(name, configService::getBoolean);
+            // 只读标记同样只问登记处那一份等级（读类/纯计算=只读）。未登记的名字按非只读处理，
+            // 与上面那条审批口径一致：宁可少给，不给「平台不知道它会干什么」的工具放行。
+            boolean readOnly = toolRegistry.find(name)
+                    .map(com.wenqu.ai.agent.tool.ToolDescriptor::readOnly).orElse(false);
             // 上下文在<b>每次调用</b>时现建：槽位里是本轮最新的 pool/channel/hooks。
             // 闭包只捕获会话级的 slot 与这个工具名，不捕获任何一轮对象。
-            holders.add(new SpringAiToolAdapter(cb,
+            holders.add(new SpringAiToolAdapter(cb, readOnly,
                     () -> withBaseContext(slot.require(), enrichment.apply(name)),
                     () -> policyOf(slot, policy),
                     needsApproval, approvalCanAsk));

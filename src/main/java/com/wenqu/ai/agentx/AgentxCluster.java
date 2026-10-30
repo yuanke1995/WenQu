@@ -42,10 +42,18 @@ public class AgentxCluster {
     private static final String CH_ANSWER = "wenqu:agentx:answer";
     private static final String CH_ANSWER_REP = "wenqu:agentx:answer:rep:";
 
-    /** 实例租约存活时间：每次 open/接管都续；进程没了最迟这么久别人可接管重建 */
-    private static final Duration HELD_TTL = Duration.ofMinutes(30);
-    /** 跟随位存活时间：跟的是「一轮跑到收尾」，取问答墙钟上限的上一档，退出时显式释放 */
-    private static final Duration FOLLOW_TTL = Duration.ofMinutes(30);
+    /**
+     * 实例租约与跟随位的存活时间：<b>活着的进程每 30 秒续一次</b>，所以 90 秒足以判死。
+     * <p>为什么不是原来的 30 分钟：进程被 kill -9（部署脚本、OOM、容器被驱逐）时没人能释放租约，
+     * 那条 30 分钟的僵尸跟随位会把「重启后把没跑完的轮接回来」挡在门外——真机 2026-10-29 实测：
+     * 扫描器认出了孤儿轮也交给了引擎，引擎却因为租约还亮着而静默早退，用户看到的仍是一条没人回答的问题。
+     * 租约的语义是「持有人还活着吗」，那它就必须按心跳活，而不是按最长可能耗时写死。
+     */
+    private static final Duration HELD_TTL = Duration.ofSeconds(90);
+    /** 跟随位存活时间：同 {@link #HELD_TTL}，靠心跳续，退出时显式释放 */
+    private static final Duration FOLLOW_TTL = HELD_TTL;
+    /** 心跳节拍：TTL 的三分之一，留两次容错（一次 Redis 抖动不该把租约丢掉） */
+    private static final Duration LEASE_TICK = Duration.ofSeconds(30);
     /** 转投答复的等待上限：持有者就在同一台 Redis 上，正常是毫秒级；超时按「没送达到」如实报错 */
     private static final Duration ANSWER_TIMEOUT = Duration.ofSeconds(5);
 
@@ -53,6 +61,9 @@ public class AgentxCluster {
     /** kind → 持有者侧执行方（由 FrameworkSessions 装配） */
     private final Map<String, java.util.function.Function<JSONObject, Boolean>> answerHandlers = new ConcurrentHashMap<>();
     private volatile String myReplyChannel;
+    /** 本副本此刻持有的租约（Redis 键全名），由心跳逐个续 */
+    private final java.util.Set<String> myLeases = ConcurrentHashMap.newKeySet();
+    private java.util.concurrent.ScheduledExecutorService leaser;
 
     public AgentxCluster(ReplicaCoordination coord) {
         this.coord = coord;
@@ -62,6 +73,36 @@ public class AgentxCluster {
     void start() {
         myReplyChannel = coord.replyChannel(CH_ANSWER_REP);
         coord.listen(CH_ANSWER, this::onAnswer);
+        leaser = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "agentx-lease");
+            t.setDaemon(true);
+            return t;
+        });
+        leaser.scheduleWithFixedDelay(this::renewLeases,
+                LEASE_TICK.toMillis(), LEASE_TICK.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS);
+    }
+
+    @jakarta.annotation.PreDestroy
+    void stopLeaser() {
+        if (leaser != null) leaser.shutdownNow();
+    }
+
+    /**
+     * 心跳续租：<b>本副本活着，租约才活着</b>。
+     * <p>续不上就摘掉不再续——键已过期或被别家抢走，都说明这条会话在本副本这里已经不算数了，
+     * 硬抢回来会变成两个副本对着跟同一轮。Redis 抖动只是这一拍没续上，下一拍照试。
+     */
+    private void renewLeases() {
+        for (String key : myLeases) {
+            try {
+                if (!coord.renew(key, HELD_TTL)) {
+                    myLeases.remove(key);
+                    log.info("[agentx] 租约已不归本副本，停止续租 {}", key);
+                }
+            } catch (RuntimeException e) {
+                log.info("[agentx] 租约续期失败（下一拍再试）{}: {}", key, e.toString());
+            }
+        }
     }
 
     public String replicaId() {
@@ -79,10 +120,14 @@ public class AgentxCluster {
 
     /** 本副本建好/接管了这条会话的实例：占住租约（覆盖写，重建不换位） */
     public void claimHeld(String sessionKey) {
+        if (sessionKey == null) return;
         coord.claim(HELD_KEY + sessionKey, HELD_TTL);
+        myLeases.add(HELD_KEY + sessionKey);
     }
 
     public void releaseHeld(String sessionKey) {
+        if (sessionKey == null) return;
+        myLeases.remove(HELD_KEY + sessionKey);
         coord.release(HELD_KEY + sessionKey);
     }
 
@@ -101,16 +146,23 @@ public class AgentxCluster {
 
     /** 抢到跟随位才该起一轮续跑；抢不到=已有人在跟（可能在本进程，也可能在别的副本） */
     public boolean acquireFollow(String sessionKey) {
-        return sessionKey != null && coord.acquire(FOLLOW_KEY + sessionKey, FOLLOW_TTL);
+        if (sessionKey == null) return false;
+        if (!coord.acquire(FOLLOW_KEY + sessionKey, FOLLOW_TTL)) return false;
+        myLeases.add(FOLLOW_KEY + sessionKey);
+        return true;
     }
 
     /** 新一轮的提问者就是权威跟随者：强制占位，覆盖上一轮还没让位的跟随 */
     public void claimFollow(String sessionKey) {
-        if (sessionKey != null) coord.claim(FOLLOW_KEY + sessionKey, FOLLOW_TTL);
+        if (sessionKey == null) return;
+        coord.claim(FOLLOW_KEY + sessionKey, FOLLOW_TTL);
+        myLeases.add(FOLLOW_KEY + sessionKey);
     }
 
     public void releaseFollow(String sessionKey) {
-        if (sessionKey != null) coord.release(FOLLOW_KEY + sessionKey);
+        if (sessionKey == null) return;
+        myLeases.remove(FOLLOW_KEY + sessionKey);
+        coord.release(FOLLOW_KEY + sessionKey);
     }
 
     /** 此刻是否有人（本副本或别的副本）在跟这一轮 */

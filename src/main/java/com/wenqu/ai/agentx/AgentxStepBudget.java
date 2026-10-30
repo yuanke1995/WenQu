@@ -39,6 +39,16 @@ public final class AgentxStepBudget implements MiddlewareBase {
     private static final String DENY_MESSAGE =
             "{\"error\":\"已达到本轮工具调用步数上限(%d)，不再执行工具调用。请基于已有信息直接给出最终回答。\"}";
 
+    /**
+     * 只剩最后一步时插给模型的那句（走框架 steer，下一次调模型前生效）。
+     * <p>为什么要插：真机 2026-10-23 那一轮做好的 20.7 KB 看板页就是这么烂在盘上的——
+     * 步数上限掐在最后一步，模型没有机会调交付，而它不会知道「下一步就是最后一步」。
+     */
+    public static final String WRAP_UP_HINT =
+            "本轮工具调用只剩最后一步。如果已经做出需要交给用户的文件，请用这一步交付"
+                    + "（沙盒里的成品用 deliver_artifact）；其余信息请基于已有内容直接写进回答，"
+                    + "不要再安排新的检索或写入。";
+
     private final Set<ExtensionPoint> points = EnumSet.of(ExtensionPoint.ON_ACTING);
 
     /** 本轮上限：0 或负数=不限制（问渠口径）。 */
@@ -46,18 +56,27 @@ public final class AgentxStepBudget implements MiddlewareBase {
     private volatile String turnKey = "";
     private volatile BiConsumer<String, String> onDeny = (code, message) -> {
     };
+    /** 只剩最后一步时的送达出口（一句给模型的话）；一轮只插一次，不归零就会每步都插。 */
+    private volatile java.util.function.Consumer<String> onLastStep = text -> {
+    };
+    private volatile boolean lastStepNoted;
     private int taken;
 
     /**
-     * 开一轮：归零计数并挂上「拒了要说给谁听」。
+     * 开一轮：归零计数并挂上「拒了要说给谁听」与「只剩一步时要提醒谁」。
      *
      * @param onDeny 可见降级出口（code, message）——静默少跑工具会被读成「配了没生效」
+     * @param onLastStep 插话出口（引擎接框架 steer）；不挂就等于最后一步不提醒
      */
-    public void beginTurn(String turnKey, int max, BiConsumer<String, String> onDeny) {
+    public void beginTurn(String turnKey, int max, BiConsumer<String, String> onDeny,
+                          java.util.function.Consumer<String> onLastStep) {
         this.turnKey = turnKey == null ? "" : turnKey;
         this.max = max;
         this.onDeny = onDeny == null ? (code, message) -> {
         } : onDeny;
+        this.onLastStep = onLastStep == null ? text -> {
+        } : onLastStep;
+        this.lastStepNoted = false;
         this.taken = 0;
     }
 
@@ -114,6 +133,12 @@ public final class AgentxStepBudget implements MiddlewareBase {
      * 拒了必须当场说一句可见降级——判定与告知都在这一层，漏到调用方去补就有「静默少跑工具」的空档。
      */
     Allocation allocate(List<ToolUseBlock> calls, int limit) {
+        // 只剩最后一步：先插一句再切分。不插的话模型只知道「下一步被拒了」，
+        // 而它本来可以把这一步留给交付——真机丢的那份产物就是这么丢的。
+        if (!lastStepNoted && limit > 0 && taken == limit - 1) {
+            lastStepNoted = true;
+            onLastStep.accept(WRAP_UP_HINT);
+        }
         List<ToolUseBlock> allowed = new ArrayList<>();
         List<ToolUseBlock> denied = new ArrayList<>();
         for (ToolUseBlock call : calls) {

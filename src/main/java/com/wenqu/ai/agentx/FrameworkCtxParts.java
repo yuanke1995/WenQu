@@ -28,7 +28,14 @@ import java.util.Set;
  *
  * <p>分类与识别依据（前端 {@code CTX_PART_META} 按同序渲染）：
  * <ol>
- *   <li>{@code system}——{@code role=SYSTEM} 消息（角色提示词 + 工具引导 + related 提示行）；</li>
+ *   <li>{@code system}——本轮<b>真实下发</b>的系统提示词，取 {@link AgentxSystemCaptureMiddleware}
+ *       从模型调用请求里取景的那一份（角色提示词 + 框架的技能目录、子智能体与异步任务指引、
+ *       工作区与记忆上下文、工具引导、related 提示行都在里面）。
+ *       <p>为什么不在 transcript 里找：框架的 {@code SessionViews.transcript()} 只回放
+ *       user/assistant/tool 三类事件，SYSTEM 消息<b>从来不在表里</b>。缺这一段，
+ *       {@link #calibrate} 就把这块真实占用按倍数摊给其余各段、舍入残差落进最大那段——
+ *       真机实测它把 5,708 的「工具声明」虚报成 13,525，容量条就此把人带向错误结论。
+ *       取不到（实例还没跑过模型调用）时回落 transcript 里的 SYSTEM，两条路都空就少这一段。</li>
  *   <li>{@code history}——本轮之前的 {@code USER/ASSISTANT} 对话（用户与助手合为一段：框架不区分
  *       「近期原文」与「早期摘要」，压缩产物落 Session Log，问渠侧拿不到稳定口径，拆开就是造假）；</li>
  *   <li>{@code input}——本轮新增的 {@code USER} 消息，即用户这轮的问题；</li>
@@ -67,14 +74,26 @@ final class FrameworkCtxParts {
      * @param messages     框架会话的全量 transcript（跨轮常驻）
      * @param historyBefore 本轮开跑前的消息条数——{@code index < historyBefore} 即「上一轮及更早」
      * @param toolSchemas  本轮请求下发的工具声明（{@code tools} 字段），可为 null（没挂工具时）
+     * @param capturedSystem 本轮真实下发的 SYSTEM 消息（模型调用请求取景），可为空表（回落 transcript）
      * @param realPrompt   网关实测的本轮 prompt（最终轮输入 token）；<=0 时不校准，如实给估算
      * @return 分类 → token 数，键序即前端渲染序；估不出任何一段时返回空表（前端退化为「无明细」）
      */
     static Map<String, Integer> of(List<Msg> messages, int historyBefore,
-                                   List<ToolSchema> toolSchemas, long realPrompt) {
+                                   List<ToolSchema> toolSchemas, List<Msg> capturedSystem,
+                                   long realPrompt) {
         Map<String, Integer> parts = new LinkedHashMap<>();
         if (messages == null) return parts;
         int from = Math.min(Math.max(historyBefore, 0), messages.size());
+
+        // 系统提示词优先用请求侧取景的那份：transcript 里没有它（见类注释）。
+        // 取景为空才回落数 transcript 里的 SYSTEM——两条路都空时这一段干脆不出现。
+        int captured = 0;
+        if (capturedSystem != null) {
+            for (Msg m : capturedSystem) {
+                if (m != null) captured += textTokens(m);
+            }
+        }
+        boolean useCapture = captured > 0;
 
         int system = 0;
         int history = 0;
@@ -87,9 +106,9 @@ final class FrameworkCtxParts {
             Msg m = messages.get(i);
             if (m == null) continue;
             MsgRole role = m.getRole();
-            // SYSTEM：整条都是提示词，与它在第几条无关（本轮之前/之后都算同一段固定开销）
+            // SYSTEM：取景路径已经有它时这里必须跳过，否则同一段字符被数两次
             if (role == MsgRole.SYSTEM) {
-                system += textTokens(m);
+                if (!useCapture) system += textTokens(m);
                 continue;
             }
             if (i < from) {
@@ -113,7 +132,7 @@ final class FrameworkCtxParts {
             }
         }
 
-        put(parts, "system", system);
+        put(parts, "system", useCapture ? captured : system);
         put(parts, "history", history);
         put(parts, "input", input);
         put(parts, "retrieval", retrieval);

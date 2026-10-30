@@ -104,6 +104,8 @@ public class ScheduleCenter {
     private final com.wenqu.ai.agentx.SessionLogArchive sessionLogArchive;
     /** 会话事件日志换代：搬走的旧代次落在 rotated/ 下，不清理就随轮转次数无限增长。 */
     private final com.wenqu.ai.agentx.JournalRotation journalRotation;
+    /** 进程中断后没人跑完的轮（孤儿轮）扫回来接续 */
+    private final com.wenqu.ai.startup.OrphanTurnRunner orphanTurnRunner;
     private final ScheduleRunLogMapper scheduleRunLogMapper;
 
     /** 仅负责计时（daemon，随 JVM 退出），任务体都在 ThreadPoolManager 里跑 */
@@ -130,6 +132,7 @@ public class ScheduleCenter {
                           com.wenqu.ai.service.NotificationService notificationService,
                           com.wenqu.ai.agentx.SessionLogArchive sessionLogArchive,
                           com.wenqu.ai.agentx.JournalRotation journalRotation,
+                          com.wenqu.ai.startup.OrphanTurnRunner orphanTurnRunner,
                           ScheduleRunLogMapper scheduleRunLogMapper) {
         this.configService = configService;
         this.configSchemaService = configSchemaService;
@@ -150,6 +153,7 @@ public class ScheduleCenter {
         this.notificationService = notificationService;
         this.sessionLogArchive = sessionLogArchive;
         this.journalRotation = journalRotation;
+        this.orphanTurnRunner = orphanTurnRunner;
         this.scheduleRunLogMapper = scheduleRunLogMapper;
         this.auditService = auditService;
     }
@@ -277,7 +281,9 @@ public class ScheduleCenter {
                 "parse.queue.scanIntervalMs",
                 () -> configService.getInt("parse.queue.scanIntervalMs", 5_000),
                 () -> false,
-                () -> parseQueueService.scan());
+                () -> parseQueueService.scan(),
+                "暂停后：上传与「重新解析」只往队列登记一行，没有扫描器推动——文档会一直停在「排队中/解析中」不再变化，界面上看不出是卡住还是在跑；"
+                        + "把间隔改回正数即自动继续，已登记的任务不丢。");
 
         // 网页源定时刷新：扫描到期且开启自动刷新的 url 文档，重新抓网+同名替换重建（间隔 web.refreshScanIntervalMs，默认 60s；≤0 暂停）。
         // 复用 importFromUrl 全套入库链路，next_refresh_at 推进保证单实例不重复触发；刷新失败 fail-loud 不中断其他文档。
@@ -298,6 +304,18 @@ public class ScheduleCenter {
                 () -> configService.getInt("sandbox.cleanupIntervalMs", ConfigDefaults.SANDBOX_CLEANUP_INTERVAL_MS),
                 () -> false,
                 () -> sandboxService.releaseIdle());
+
+        // 长任务接续：进程停过之后，把「发出去了却再没有过回答」的那一轮按中断收口（半程正文留下 + 提示发「继续」）。
+        // 实测边界（2026-10-29，kill -9 复现）：框架的排队任务只覆盖「还没启动的 submit」，跑到一半被硬杀的轮
+        // 不在里面，所以这一刀做的是如实收口、不是自动续跑——想让它接着跑，用户发一句「继续」即可。
+        // 间隔 chat.turnResumeScanMs（≤0=暂停）；窗口 chat.turnResumeWindowMinutes 见任务参数表。
+        // 返回交回引擎的条数：没有孤儿轮就不落执行日志（每 10 分钟一行心跳会把日志刷满）。
+        registerWork("长任务接续扫描", "把「发出去却再没有过回答」的轮按中断收口（留下已生成的部分并提示发「继续」；窗口 chat.turnResumeWindowMinutes）",
+                "chat.turnResumeScanMs",
+                () -> configService.getInt("chat.turnResumeScanMs", 120_000),
+                () -> true,
+                () -> orphanTurnRunner.sweep(),
+                "暂停后：部署或崩溃打断的那一轮会一直停在「只有问题、没有回答」那一行——既不收口，也不会提示发「继续」。");
 
         // 工作流人工审核超时回收：挂起超过节点 timeoutSeconds 的 run落 timeout 终态（审核是人在回路，无自动恢复语义）
         // 间隔 workflow.approvalReapIntervalMs，默认 60s；≤0 = 暂停。
@@ -458,6 +476,7 @@ public class ScheduleCenter {
                     "parse.taskLeaseSeconds", "parse.taskTimeoutMs", "parse.embedConcurrency", "parse.ocrGateConcurrency")),
             Map.entry("网页源定时刷新", List.of("web.refreshEnabled")),
             Map.entry("沙盒空闲回收", List.of("sandbox.idleReleaseMinutes")),
+            Map.entry("长任务接续扫描", List.of("chat.turnResumeWindowMinutes")),
             Map.entry("工作流运行记录清理", List.of("workflow.runLogRetentionDays")),
             Map.entry("工作流定时触发", List.of("workflow.maxSteps", "workflow.runTimeoutSeconds",
                     "workflow.subagentTimeoutMs", "workflow.maxConcurrentRuns", "workflow.runQueueCapacity")),

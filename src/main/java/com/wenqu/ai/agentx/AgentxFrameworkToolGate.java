@@ -27,54 +27,30 @@ import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Flux;
 
 /**
- * 框架原生工具的档位闸（全框架化 P1 / 方案 B）。
+ * 工具执行前的档位闸（全框架化 P1 / 方案 B）。
  *
- * <p><b>为什么需要它</b>：沙箱与文件系统改由框架提供后，那七把工具
- * （{@code read_file}/{@code write_file}/{@code edit_file}/{@code grep_files}/
- * {@code glob_files}/{@code list_files}/{@code execute}）挂在<b>框架自己的 Toolkit</b> 上，
- * 不再经过问渠的 {@code ToolRegistry} 与 {@code ExecutionPolicy#allowsTool} 装配链——
- * 而档位裁剪的语义是「只读档下写类工具<b>不进模型的工具表</b>，不是点了被拒」。
- * 框架工具绕开装配链就等于绕开档位：只读智能体会拿到能写文件的工具。
+ * <p><b>为什么需要它</b>：沙箱与文件系统改由框架提供后，那批工具挂在<b>框架自己的 Toolkit</b> 上，
+ * 不再经过问渠的 {@code ToolRegistry} 与 {@code ExecutionPolicy#allowsTool} 装配链；而问渠还欠两件
+ * 框架没有档位表达的事——目标完成检查轮（只核对不做新工作）与子智能体轮（不许写长期记忆）。
+ * 这里在执行前逐个判、拒的当场回一段<b>中文可解释文本</b>（框架权限引擎那句是英文），形态与
+ * {@link AgentxStepBudget} 一致：装配期挂 middleware、执行期判。
  *
- * <p><b>为什么放在onActing 而不是装配期</b>：框架工具不进问渠注册中心，
- * 装配期没有它的 {@link com.wenqu.ai.agent.tool.ToolDescriptor} 可判（见
- * {@code FrameworkToolLabels} 的注释：把它们塞进 {@code ToolRegistry} 过不了启动期硬核对）。
- * 所以改为在工具执行前逐个判、拒的当场回一段可解释文本——形态与
- * {@link AgentxStepBudget} 完全一致（它也是装配期挂 middleware、执行期判）。
+ * <p><b>判据只有一处</b>：只读档能不能跑，读的是工具自己申报的那份只读标记
+ * （{@code @Tool(readOnly=…)} 换算进 {@code ToolBase}；问渠那批由 {@code SideEffect} 经
+ * {@link SpringAiToolAdapter} 带过来）。框架权限引擎在只读档也按同一份标记裁
+ * （{@code PermissionEngine#checkExploreMode}），本闸只是把拒绝提前一步、并把理由说成人话。
+ * <b>这里不许再列工具名字表</b>：抄一份名单就是第三套口径，漏一个名字会把读类能力判成写操作——
+ * 2026-10-20 的现场是只读档的智能体五发检索全拒、界面上一点错都没有。
  *
- * <p><b>execute 为什么必须一起裁掉</b>：容器没有任何按档位收束命令的机制
- * （provisioner 建容器时不接档位），「能跑命令」就等于「能写文件」——
- * 与 {@code SandboxToolProvider} 里那条判据同源，注释也写着同一个理由。
+ * <p><b>execute 为什么在只读档不给</b>：容器没有任何按档位收束命令的机制（provisioner 建容器时
+ * 不接档位），「能跑命令」就等于「能写文件」，所以框架把它申报成非只读——与
+ * {@code SandboxToolProvider} 里那条判据同源。
  *
  * @see AgentxStepBudget 同一 middleware 链上的另一道闸（步数预算）
  */
 public final class AgentxFrameworkToolGate implements MiddlewareBase {
 
     private static final Logger log = LoggerFactory.getLogger(AgentxFrameworkToolGate.class);
-
-    /**
-     * 框架文件工具的副作用分类（只读 vs 会动外部世界）。
-     *
-     * <p>刻意按<b>工具名</b>而非 descriptor 建表：框架工具没有问渠的 descriptor，
-     * 而这张表要与 {@code SideEffect} 保持同一口径——只读的四把不写、其余三把写。
-     * 框架若改名，这里取不到值即按<b>写类</b>处理（fail-closed：漏判成只读比误判成写更危险）。
-     */
-    private static final Map<String, Boolean> FRAMEWORK_TOOL_WRITES =
-            // Map.of 最多 10 对；这里超了，用 ofEntries 保序
-            Map.ofEntries(
-                    Map.entry("read_file", false),
-                    Map.entry("grep_files", false),
-                    Map.entry("glob_files", false),
-                    Map.entry("list_files", false),
-                    Map.entry("write_file", true),
-                    Map.entry("edit_file", true),
-                    Map.entry("execute", true),
-                    // 记忆四把（框架 P3 注册）：读类不写、memory_save 会写 MEMORY.md 与日账。
-                    // 不登记的话它们会走「未登记副作用=按写类」，只读档下连 memory_search 都被拒。
-                    Map.entry("memory_search", false),
-                    Map.entry("memory_get", false),
-                    Map.entry("session_search", false),
-                    Map.entry("memory_save", true));
 
     /** 拒时的回话。措辞与问渠守卫同族：说清「为什么不能」与「接下来怎么办」，模型才能改道。 */
     private static final String DENY_TEMPLATE =
@@ -94,12 +70,10 @@ public final class AgentxFrameworkToolGate implements MiddlewareBase {
 
     /** 完成检查轮：只允许核对已有产物并提交/记录，不允许做新工作。 */
     private static final String DENY_COMPLETION_CHECK =
-            "当前是目标完成检查轮，只允许 read_file / grep_files / glob_files / list_files 与 "
-                    + "goal_submit / goal_note；%s 会做新工作，本轮不执行。"
-                    + "请直接核对已有产物后调用 goal_submit，或用 goal_note 的 remaining 写清缺口。";
+            "当前是目标完成检查轮，只允许读取与检索类工具与 goal_submit / goal_note；%s 会做新工作，"
+                    + "本轮不执行。请直接核对已有产物后调用 goal_submit，或用 goal_note 的 remaining 写清缺口。";
 
-    private static final Set<String> COMPLETION_CHECK_ALLOWED = Set.of(
-            "read_file", "grep_files", "glob_files", "list_files", "goal_submit", "goal_note");
+    private static final Set<String> COMPLETION_CHECK_EXTRA = Set.of("goal_submit", "goal_note");
 
     private final Set<ExtensionPoint> points = EnumSet.of(ExtensionPoint.ON_ACTING);
 
@@ -185,7 +159,7 @@ public final class AgentxFrameworkToolGate implements MiddlewareBase {
         List<ToolUseBlock> allowed = new ArrayList<>(calls.size());
         List<ToolUseBlock> denied = new ArrayList<>();
         for (ToolUseBlock call : calls) {
-            if (permits(policy, call.getName())) {
+            if (permits(policy, agent, call.getName())) {
                 allowed.add(call);
             } else {
                 denied.add(call);
@@ -258,30 +232,43 @@ public final class AgentxFrameworkToolGate implements MiddlewareBase {
     }
 
     /**
-     * 这个框架工具本轮能不能跑。
+     * 这一把这个工具能不能跑。
      *
-     * <p>按名黑名单优先（与 {@code ExecutionPolicy#allowsTool} 同序），再过只读档裁剪。
-     * 非框架工具（问渠自己的族）一律放行——它们已经过装配链的 {@code allowsTool}，
-     * 在这里再判一次就是第二套口径。
+     * <p>只读档的判据是<b>工具自己申报</b>的那份只读标记，问渠不在这里抄名字表：
+     * 框架原生工具的 {@code @Tool(readOnly=…)} 本来就带得对（read/grep/glob/list/memory_search/
+     * session_search/memory_get 是只读，write_file/edit_file/execute/deliver_artifact 不是），
+     * 问渠那批由 {@code SideEffect} 换算后经 {@link SpringAiToolAdapter} 带进框架工具基类。
+     * 这里再列一份名单就是第三套口径，而它漏一个名字就把检索工具判成写操作。
      */
-    boolean permits(ExecutionPolicy policy, String toolName) {
+    boolean permits(ExecutionPolicy policy, Agent agent, String toolName) {
         if (toolName == null || toolName.isBlank()) return true;
         if (completionCheck) {
-            // 检查轮只做核对：读工具 + goal_submit/goal_note。业务工具的 policy.denies 仍然生效。
-            return COMPLETION_CHECK_ALLOWED.contains(toolName) && !policy.denies(toolName);
+            // 检查轮只做核对：只读类 + goal_submit/goal_note。业务工具的 policy.denies 仍然生效。
+            return (COMPLETION_CHECK_EXTRA.contains(toolName) || readOnly(agent, toolName))
+                    && !policy.denies(toolName);
         }
         if (denyMemoryWrites && "memory_save".equals(toolName)) return false;
         if (policy.denies(toolName)) return false;
-        Boolean writes = FRAMEWORK_TOOL_WRITES.get(toolName);
-        if (writes == null) {
-            // 框架新加的工具：不在表内说明问渠没审过它，按写类处理（只读档下不给），
-            // 并留一条日志让它可被发现，而不是静默放行。
-            log.info("[agentx] 框架新工具未登记副作用分类，按写类处理: {}", toolName);
-            return policy.sandboxMode() != SandboxMode.READ_ONLY;
-        }
-        if (policy.sandboxMode() == SandboxMode.READ_ONLY) {
-            return !writes;
-        }
+        if (policy.sandboxMode() == SandboxMode.READ_ONLY) return readOnly(agent, toolName);
         return true;
+    }
+
+    /**
+     * 这件工具会不会改到外部世界——读它申报给框架的那份只读标记，取不到就按<b>会改</b>处理。
+     * <p>漏判成只读的代价是越权写入，误判成写的代价只是一次可见的拒绝，所以这里 fail-closed
+     * 的方向与问答侧的审批登记一致；工具对象都取不到时留一条日志，别让它静默变成「这把工具永远调不动」。
+     */
+    private boolean readOnly(Agent agent, String toolName) {
+        io.agentscope.core.tool.AgentTool tool = agent == null || agent.getToolkit() == null
+                ? null : agent.getToolkit().getTool(toolName);
+        if (tool == null) {
+            log.info("[agentx] 工具取不到只读标记，按会改动外部世界处理: {}", toolName);
+            return false;
+        }
+        // MCP 工具的只读位是远端服务器自己报的（框架读 MCP 注解的 readOnlyHint 填进来）：
+        // 一句 readOnlyHint=true 就能同时绕过只读档与「执行前确认」，那是别人填写的安全声明，
+        // 不能当问渠的判据用。问渠对这一族的口径一直是「能不能用由档位说，免检由不了它自己说」。
+        if (tool instanceof io.agentscope.core.tool.ToolBase base && base.isMcp()) return false;
+        return tool.isReadOnly();
     }
 }
