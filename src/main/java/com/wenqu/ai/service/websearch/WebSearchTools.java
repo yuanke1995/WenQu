@@ -46,6 +46,80 @@ public class WebSearchTools {
     /** 单条摘要截断字符数（控制工具结果 token 量，配置 webSearch.snippetChars） */
     private static final int DEFAULT_SNIPPET_CHARS = 600;
 
+    /** 重排没跑成时的词面下限（配置 webSearch.fallbackMinOverlap；写 0 = 退回「整批发出不过滤」的旧行为） */
+    private static final double DEFAULT_FALLBACK_MIN_OVERLAP = 0.2;
+
+    /**
+     * 按本轮问题重排这批结果，返回「片段 → 相关度分」；重排实际没跑成时返回空表（调用方按兜底走）。
+     */
+    private Map<String, Double> rankByQuery(List<WebSearchResult> results, String gateQuery) {
+        List<HybridRetrievalService.Hit> toRank = new ArrayList<>();
+        for (WebSearchResult r : results) {
+            toRank.add(new HybridRetrievalService.Hit(null, "", r.title(), r.snippet(),
+                    List.of(), 0d, null, null, null, null));
+        }
+        Map<String, Double> scoreBySnippet = new HashMap<>();
+        for (HybridRetrievalService.Hit h : rerankService.rankForced(toRank, gateQuery)) {
+            if (h.rerankScore() != null) scoreBySnippet.put(h.content(), h.rerankScore());
+        }
+        return scoreBySnippet;
+    }
+
+    /**
+     * 词面重叠度（0~1）：问题里的词有多少出现在标题+摘要里。
+     * <p>中文按<b>二元字组</b>——单字太泛（「法」「条」「题」几乎无处不在），整句又要求逐字一致；
+     * 英文与数字按词，忽略标点与空白。
+     * <p>它<b>不是</b>语义判断，只能剔掉明显不沾边的（本机实测：中文法条查询下引擎返回的
+     * researchgate 树木论文标题与摘要重叠为 0），所以只在重排没跑成时上场，也别拿搜索结果自带的
+     * {@code score} 当相关性——那是位置衰减（1.0/0.5/0.333），毫无相关性含义。
+     */
+    static double lexicalOverlap(String query, String title, String snippet) {
+        java.util.Set<String> q = new java.util.LinkedHashSet<>();
+        collect(query, q);
+        if (q.isEmpty()) return 1d;     // 问题拆不出可比对的词：不裁，交回原口径
+        java.util.Set<String> d = new java.util.HashSet<>();
+        collect(title, d);
+        collect(snippet, d);
+        int hit = 0;
+        for (String g : q) {
+            if (d.contains(g)) hit++;
+        }
+        return (double) hit / q.size();
+    }
+
+    /** 切词面：汉字串按相邻二元组，字母数字串按整词，其余字符是分隔符。 */
+    private static void collect(String text, java.util.Set<String> out) {
+        if (text == null) return;
+        StringBuilder word = new StringBuilder();
+        char prevHan = 0;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (isHan(c)) {
+                if (word.length() > 0) {
+                    out.add(word.toString());
+                    word.setLength(0);
+                }
+                if (prevHan != 0) out.add("" + prevHan + c);
+                prevHan = c;
+            } else if (Character.isLetterOrDigit(c)) {
+                prevHan = 0;
+                word.append(Character.toLowerCase(c));
+            } else {
+                if (word.length() > 0) {
+                    out.add(word.toString());
+                    word.setLength(0);
+                }
+                prevHan = 0;
+            }
+        }
+        if (word.length() > 0) out.add(word.toString());
+    }
+
+    /** 基本汉字区就够：判据要比对的是中文网页标题与摘要，日文假名那类不参与。 */
+    private static boolean isHan(char c) {
+        return c >= 0x4E00 && c <= 0x9FFF;
+    }
+
     /**
      * 本轮问答的落点：注册引用来源 + 扣减单轮配额 + 记录降级提示 + 提供本轮问题（相关度门判据）。
      * 由问答侧经 {@code ToolContext} 随本次调用传入（见 {@link #CTX_SINK}），非流式直接调用时为 null。
@@ -143,40 +217,43 @@ public class WebSearchTools {
         if (gateQuery == null || gateQuery.isBlank()) gateQuery = query.trim();
         List<WebSearchResult> kept = results;
         int filtered = 0;
-        if (rerankService.debugUnavailableReason() == null) {
+        String unavailable = rerankService.debugUnavailableReason();
+        Map<String, Double> scoreBySnippet = unavailable == null
+                ? rankByQuery(results, gateQuery) : Map.of();
+        if (!scoreBySnippet.isEmpty()) {
             double minGate = configService.getDouble("retrieval.minContextScore",
                     ConfigDefaults.RETRIEVAL_MIN_CONTEXT_SCORE);
-            List<HybridRetrievalService.Hit> toRank = new ArrayList<>();
+            kept = new ArrayList<>();
             for (WebSearchResult r : results) {
-                toRank.add(new HybridRetrievalService.Hit(null, "", r.title(), r.snippet(),
-                        List.of(), 0d, null, null, null, null));
-            }
-            // rankForced 返回的是重排后的新 Hit 列表，按 snippet 映射回原结果（同批 ≤5 条，片段撞车概率可忽略）
-            Map<String, Double> scoreBySnippet = new HashMap<>();
-            for (HybridRetrievalService.Hit h : rerankService.rankForced(toRank, gateQuery)) {
-                if (h.rerankScore() != null) scoreBySnippet.put(h.content(), h.rerankScore());
-            }
-            if (!scoreBySnippet.isEmpty()) {
-                kept = new ArrayList<>();
-                for (WebSearchResult r : results) {
-                    Double rr = scoreBySnippet.get(r.snippet());
-                    if (rr != null && minGate > 0 && rr >= minGate) {
-                        kept.add(new WebSearchResult(r.title(), r.url(), r.snippet(), r.siteName(),
-                                r.publishedAt(), r.score(), rr));
-                    } else {
-                        filtered++;
-                        log.debug("[WEB-SEARCH] 相关度不足不过门：{}（rerank={}）", r.title(), rr);
-                    }
-                }
-            } else {
-                log.warn("[WEB-SEARCH] 重排未返回分数（服务不可用或失败），本轮不过相关度门");
-                if (sink != null) {
-                    sink.degrade("webSearchUnfiltered", "重排不可用，联网搜索结果未经相关性过滤，可能包含不相关来源");
+                Double rr = scoreBySnippet.get(r.snippet());
+                if (rr != null && minGate > 0 && rr >= minGate) {
+                    kept.add(new WebSearchResult(r.title(), r.url(), r.snippet(), r.siteName(),
+                            r.publishedAt(), r.score(), rr));
+                } else {
+                    filtered++;
+                    log.debug("[WEB-SEARCH] 相关度不足不过门：{}（rerank={}）", r.title(), rr);
                 }
             }
         } else {
-            log.warn("[WEB-SEARCH] 重排不可用（{}），本轮不过相关度门", rerankService.debugUnavailableReason());
-            if (sink != null) {
+            // 重排没跑成（服务不可用，或这批一条都没拿到分）。此时原样发出去等于把引擎返回的
+            // 首页/机场页当资料——法律这类场景「搜到垃圾」比「搜不到」更危险，所以按词面下限
+            // 先剔掉明显不沾边的；下限写 0 = 退回旧行为（整批发出 + 一句没过滤）。
+            double floor = configService.getDouble("webSearch.fallbackMinOverlap",
+                    DEFAULT_FALLBACK_MIN_OVERLAP);
+            log.warn("[WEB-SEARCH] 重排不可用（{}），本轮改用词面下限 {}",
+                    unavailable == null ? "这批结果没有返回重排分" : unavailable, floor);
+            if (floor > 0) {
+                List<WebSearchResult> pass = new ArrayList<>();
+                for (WebSearchResult r : results) {
+                    if (lexicalOverlap(gateQuery, r.title(), r.snippet()) >= floor) pass.add(r);
+                    else filtered++;
+                }
+                kept = pass;
+                if (sink != null) {
+                    sink.degrade("webSearchLexicalOnly", "重排不可用，本轮按关键词匹配过滤（不是语义相关度），"
+                            + "已滤掉 " + filtered + " 条与问题不沾边的结果");
+                }
+            } else if (sink != null) {
                 sink.degrade("webSearchUnfiltered", "重排不可用，联网搜索结果未经相关性过滤，可能包含不相关来源");
             }
         }

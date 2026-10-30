@@ -2659,6 +2659,24 @@
       ]
     },
     {
+      "backendKey": "webSearch.fallbackMinOverlap",
+      "panel": "webSearch",
+      "section": 1,
+      "group": "webSearch",
+      "key": "fallbackMinOverlap",
+      "path": "webSearch.fallbackMinOverlap",
+      "label": "兜底词面下限(0~1)",
+      "type": "number",
+      "tips": "webSearchFallbackMinOverlap",
+      "def": 0.2,
+      "min": 0,
+      "max": 1,
+      "step": 0.05,
+      "width": 200,
+      "note": "重排不可用时，按「问题里的词出现在标题+摘要里的比例」剔结果；写 0 = 不剔，整批发出",
+      "tier": 3
+    },
+    {
       "backendKey": "webSearch.snippetChars",
       "panel": "webSearch",
       "section": 1,
@@ -4173,6 +4191,7 @@
     "webSearchMaxResults": "单次搜索返回的结果条数上限。服务商实际返回可能少于此值；条数越多上下文占用越大。",
     "webSearchMaxCallsPerTurn": "单轮问答允许的联网搜索次数。防模型陷入「搜→不满意→再搜」烧配额；0 表示不限制。",
     "webSearchTimeoutMs": "单次搜索请求的超时时间。超时按失败处理并给出降级提示，不会阻塞整轮回答。",
+    "webSearchFallbackMinOverlap": "重排服务没跑成时的兜底过滤强度（0~1）：按「问题里出现的词有多大比例出现在网页标题与摘要里」剔掉明显不沾边的结果。这不是语义判断，只当下限——正常路径仍由重排判相关度。写 0 退回旧行为：整批原始结果照发，只附一句「未经相关性过滤」。留这个口子是因为搜索结果自带的分值是位置衰减（1.0/0.5/0.333），毫无相关性含义，兜底时不能拿它当尺。",
     "webSearchSnippetChars": "单条结果摘要的字符上限。摘要是引用自检判定「这句话有没有依据」的证据，截得过短会影响溯源判定。",
     "notificationTurnEnabled": "问答轮次与目标这一类站内通知的总闸：一轮跑完/没跑成/提前停了、计划与审批在等你拍板、目标跑到头，都给会话归属人钉一条。关掉只影响这一类，解析、工作流、定时任务、网页源刷新、模型额度的通知照旧。个人不想收某一类，用个人设置里的通知静音清单，不必动这里的平台级开关。",
     "notificationTurnMinSeconds": "报「这一轮跑完了」的最低机器耗时（秒，不算等人读卡的时间）。设这个门槛是因为短轮的答案当场就在屏幕上，再钉一条通知只是噪音；而能跑到一分钟以上的轮，人多半已经切走或锁屏——那才是需要一条通知把人叫回来的场景。按耗时算而不是按「有没有开页面」算：手机浏览器切后台就收不到流，界面在不在并不能说明人在不在。失败与各类待确认通知不受此门槛约束，三秒就报错的轮同样该喊人。",

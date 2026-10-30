@@ -685,6 +685,7 @@ public class ConfigService {
         d.put("webSearch.maxResults", "5");               // 单次搜索返回条数上限(1~10)
         d.put("webSearch.maxCallsPerTurn", "2");          // 单轮搜索次数上限（防模型反复搜烧配额；0=不限制）
         d.put("webSearch.timeoutMs", "8000");             // 单次请求超时(ms)
+        d.put("webSearch.fallbackMinOverlap", "0.2");     // 重排不可用时的词面下限(0=整批发出不过滤)，判据见 WebSearchTools.lexicalOverlap
         d.put("webSearch.snippetChars", "600");           // 单条摘要截断字符数（控制工具结果 token 量）
         d.put("webSearch.requireApproval", "true");       // 是否纳入"有副作用工具"：true=受智能体 toolApprovalMode=ask 管辖。默认开：联网是唯一会向外部第三方发请求、可能对用户计费的能力，让模型自主决定花谁的钱不该是默认态
         // 技能：内置随版本分发 + 用户自装（user-data/skills-users/{uid}）+ 助手在对话里沉淀到沙盒工作区。

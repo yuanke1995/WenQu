@@ -36,6 +36,8 @@
                   <span style="color:var(--app-text2);font-size:12px">{{ report.message || '' }}</span>
                   <span v-if="report.runTime" style="color:var(--app-text3);font-size:11px">{{ report.runTime }}</span>
                 </div>
+                <a-alert v-if="report.paramsStale" type="warning" show-icon style="margin-bottom:10px"
+                         message="这份指标是在旧参数下测的" :description="paramsDriftText" />
                 <a-table v-if="checkMetricRows.length" :data-source="checkMetricRows" :columns="checkCols" size="small"
                          row-key="name" :pagination="false" :locale="{ emptyText: '暂无指标' }" />
               </template>
@@ -674,6 +676,12 @@ const checkStatusText = computed(() => ({
 const checkPillClass = computed(() => ({
   ok: 'ok', decline: 'err', empty: 'warn', error: 'err'
 }[report.value?.status] || 'muted'))
+// 报告是上一次体检时按当时的线上参数量的；参数改过之后那些数字就不可比了，得当场说出来
+const paramsDriftText = computed(() => {
+  const d = report.value?.paramsDrift
+  if (!d || !d.length) return '线上检索参数已改动，本期数字与新参数不可比；点右上角「立即体检」按当前参数重测一次'
+  return '已改动：' + d.join('；') + '。点右上角「立即体检」按当前参数重测一次，之后的对比才落在同一口径上'
+})
 const doAutoCheck = async () => {
   checkLoading.value = true
   try {
