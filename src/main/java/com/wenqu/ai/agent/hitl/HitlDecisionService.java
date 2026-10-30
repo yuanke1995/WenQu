@@ -589,17 +589,37 @@ public class HitlDecisionService {
      * 倒计时以 DB 的 {@code createdAt} + 当前窗口换算，与后端阻塞超时同源。
      */
     public List<Map<String, Object>> listPendingAsks(String sessionId, String uid) {
+        if (uid == null || uid.isBlank()) return new ArrayList<>();
+        return queryPendingAsks(sessionId, uid);
+    }
+
+    /**
+     * 按会话列待答提问卡，<b>不比对 user_id</b>。
+     * <p>免登录分享链路的提问卡行记的是<b>发布者</b> uid（游客轮按发布者身份装载检索与默认模型，
+     * 见 {@code ShareController.chat} 的 {@code .userId(owner.getUid())}），所以游客侧没法按 uid 认归属——
+     * 那会把 `share-visitor:{id}` 一律挡在门外，卡片刷新后就再也取不回来。
+     * <p>调用方<b>必须</b>先自行确认「这个会话属于这个访客」（{@code sessionService.assertOwned}），
+     * 与游客侧 stop / feedback / chat-run 三个端点同一套两跳判据。
+     */
+    public List<Map<String, Object>> listPendingAsksForSession(String sessionId) {
+        return queryPendingAsks(sessionId, null);
+    }
+
+    /** uid 传 null = 只按会话查（游客侧用），非 null = 叠加归属比对（登录侧用） */
+    private List<Map<String, Object>> queryPendingAsks(String sessionId, String uid) {
         List<Map<String, Object>> out = new ArrayList<>();
-        if (sessionId == null || sessionId.isBlank() || uid == null || uid.isBlank()) return out;
+        if (sessionId == null || sessionId.isBlank()) return out;
         long window = askTimeoutMs();
         try {
-            List<ToolApproval> rows = toolApprovalMapper.selectList(
-                    new LambdaQueryWrapper<ToolApproval>()
-                            .eq(ToolApproval::getSessionId, sessionId)
-                            .eq(ToolApproval::getUserId, uid)
-                            .eq(ToolApproval::getToolName, "askUser")
-                            .eq(ToolApproval::getStatus, "PENDING")
-                            .orderByAsc(ToolApproval::getCreatedAt));
+            LambdaQueryWrapper<ToolApproval> q = new LambdaQueryWrapper<ToolApproval>()
+                    .eq(ToolApproval::getSessionId, sessionId)
+                    .eq(ToolApproval::getToolName, "askUser")
+                    .eq(ToolApproval::getStatus, "PENDING")
+                    .orderByAsc(ToolApproval::getCreatedAt);
+            if (uid != null && !uid.isBlank()) {
+                q.eq(ToolApproval::getUserId, uid);
+            }
+            List<ToolApproval> rows = toolApprovalMapper.selectList(q);
             for (ToolApproval rec : rows) {
                 List<QItem> qs = parseQuestions(rec.getRequestArgs());
                 if (qs.isEmpty()) continue;
@@ -823,17 +843,33 @@ public class HitlDecisionService {
      * （进程重启/多副本），批准送不到模型，前端按「本轮已结束」提示。
      */
     public List<Map<String, Object>> listPendingPlans(String sessionId, String uid) {
+        if (uid == null || uid.isBlank()) return new ArrayList<>();
+        return queryPendingPlans(sessionId, uid);
+    }
+
+    /**
+     * 按会话列待批计划卡，<b>不比对 user_id</b>。与 {@link #listPendingAsksForSession} 同因：
+     * 免登录分享链路的卡片行记的是发布者 uid，游客侧按 uid 过滤永远取不回卡片。
+     * 调用方必须先自行确认会话归属（ShareController 走 assertOwned(sessionId, visitorUid)）。
+     */
+    public List<Map<String, Object>> listPendingPlansForSession(String sessionId) {
+        return queryPendingPlans(sessionId, null);
+    }
+
+    private List<Map<String, Object>> queryPendingPlans(String sessionId, String uid) {
         List<Map<String, Object>> out = new ArrayList<>();
-        if (sessionId == null || sessionId.isBlank() || uid == null || uid.isBlank()) return out;
+        if (sessionId == null || sessionId.isBlank()) return out;
         long window = planTimeoutMs();
         try {
-            List<ToolApproval> rows = toolApprovalMapper.selectList(
-                    new LambdaQueryWrapper<ToolApproval>()
+            LambdaQueryWrapper<ToolApproval> q = new LambdaQueryWrapper<ToolApproval>()
                             .eq(ToolApproval::getSessionId, sessionId)
-                            .eq(ToolApproval::getUserId, uid)
                             .eq(ToolApproval::getToolName, "planApproval")
                             .orderByDesc(ToolApproval::getCreatedAt)
-                            .last("LIMIT 30"));
+                            .last("LIMIT 30");
+            if (uid != null && !uid.isBlank()) {
+                q.eq(ToolApproval::getUserId, uid);
+            }
+            List<ToolApproval> rows = toolApprovalMapper.selectList(q);
             if (rows.isEmpty()) return out;
             // 自最新往前收集本轮版本链（PENDING/REVISED 继续、遇到终态即止）。
             // 最近一条已是终态（批准/取代/拒绝/超时，绝大多数会话进来看的就是这种情况）⇒ 链为空，

@@ -83,6 +83,15 @@ public class ShareController {
     private final MessageMapper messageMapper;
     private final QaLogService qaLogService;
 
+    /**
+     * 人在回路提问卡。免登录链路此前<b>没有</b>作答端点：智能体一发 ask_user，
+     * 服务端就持续 keepalive 等一个永远不来的答案，分享页读起来是「卡住了」。
+     * 登录态那条 {@code /api/ai/ask-user/{id}} 按 uid 比对归属，而游客轮的 DB 行记的是
+     * <b>发布者</b> uid（检索与默认模型按发布者装载），游客 uid 过不去——所以必须另开口子。
+     */
+    private final com.wenqu.ai.agent.hitl.HitlDecisionService hitl;
+    private final com.wenqu.ai.agentx.FrameworkSessions frameworkSessions;
+
     /** 单条提问长度上限（与对话页同量级的防滥用口径） */
     private static final int MAX_QUESTION_CHARS = 8000;
 
@@ -269,6 +278,9 @@ public class ShareController {
         }
         // 重新生成：必须在会话归属确认之后解析（校验要拿 sessionId 比对消息归属）
         String replaceMessageId = resolveReplaceTarget(body.getReplaceMessageId(), sessionId);
+        // 会话行记下作答方：免登录链路的作答方恒等于被发布的那个智能体，分享页「我的历史会话」按它列、
+        // 闲置访客会话按它回收，两处都读这一列。登录对话页刻意不写（会话不钉住智能体）。
+        sessionService.recordTurnAgent(sessionId, ctx.agent().getId(), ctx.agent().getName());
 
         // 游客对话同样不设容器级 SSE 超时：整轮截断由 ChatRunRuntime 的存活看门狗按机器耗时判定
         SseEmitter emitter = new SseEmitter(0L);
@@ -544,6 +556,131 @@ public class ShareController {
         audit.record("[AUDIT] 游客停止本轮 ip={} agent={} session={} stopped={}",
                 clientIp(httpRequest), ctx.agent().getId(), sessionId, stopped);
         return ResultJson.ok(stopped ? "已停止本轮" : "这一会话没有在跑的回答（可能刚结束）");
+    }
+
+    /**
+     * 游客回答智能体提问（人在回路）。
+     * <p><b>归属为什么不能照抄登录态</b>：提问卡落库时 {@code user_id} 写的是发布者 uid
+     * （游客轮 {@code ChatCommand.userId} 就是发布者，见 {@link #chat}），而
+     * {@code hitl.resolveAsk(askId, answers, uid)} 第一步就是 {@code uid.equals(rec.getUserId())}——
+     * 拿 {@code share-visitor:{id}} 去比必然被拒。所以这里换成两跳：askId → 那一行的 sessionId →
+     * 该会话是否属于这个访客，与 {@link #guestStopChatTurn} / {@code feedback} 完全同口径。
+     * <p>唤醒只走框架通道且<b>不回落</b>：框架句柄没了就直接报失效，绝不去碰
+     * {@code hitl.resolveAsk}（uid 必然不匹配），也不指望 {@code resume()} 兜底——那条接续走的是
+     * 不带 guestUid 的重载，会把这一轮按发布者身份与发布者工具面跑起来，比卡住更糟。
+     */
+    @Operation(summary = "游客回答提问卡", description = "回答 ask_user 下发的结构化提问：按「提问行 → 会话 → 访客」两跳认归属，"
+            + "答案送回正在阻塞的那一轮。body 传 {answers:[...]} 作答，传 {ignore:true} 忽略（不替用户编答案）。"
+            + "返回错误表示这一轮已收尾或唤醒句柄已随进程重启消失。")
+    @PostMapping("/{token}/ask-user/{askId}")
+    public ResultJson guestAnswerAsk(
+            @Parameter(description = "分享令牌") @PathVariable("token") String token,
+            @Parameter(description = "提问 ID（ask_user 事件下发）") @PathVariable("askId") String askId,
+            @Parameter(description = "访客 ID（客户端随机）") @RequestParam("visitorId") String visitorId,
+            @RequestBody Map<String, Object> body,
+            HttpServletRequest httpRequest) {
+        if (visitorId == null || visitorId.isBlank()) return ResultJson.error("缺少访客 ID");
+        var ctx = agentShareService.resolveGuest(token);
+        rateLimitService.checkRateLimit("chat", "ip:" + clientIp(httpRequest));
+        String visitorUid = AgentShareService.visitorUid(visitorId);
+        var row = hitl.findApproval(askId);
+        if (row == null) return ResultJson.error("提问不存在或已结束");
+        sessionService.assertOwned(row.getSessionId(), visitorUid);
+        boolean ignore = Boolean.TRUE.equals(body.get("ignore"));
+        // 忽略也走 respondAsk：框架那侧没有独立的「忽略」出口，送一句「用户点了忽略」原样回给模型，
+        // 与超时/留空同词根——三种「没答」在模型眼里不该是三种形状，更不能替用户选一个答案
+        String answerText = ignore
+                ? "（用户未回答这一题（点了忽略））"
+                : ChatController.frameworkAskText(ChatController.answersFromBody(body));
+        boolean ok = frameworkSessions.respondAsk(askId, answerText);
+        audit.record("[AUDIT] 游客回答提问 ip={} agent={} session={} ask={} ignore={} ok={}",
+                clientIp(httpRequest), ctx.agent().getId(), row.getSessionId(), askId, ignore, ok);
+        if (!ok) return ResultJson.error("这一轮的提问已失效（服务已重启或本轮已收尾），请重新提问");
+        return ResultJson.ok(ignore ? "已忽略，智能体将自行判断" : "已提交");
+    }
+
+    @Operation(summary = "游客待答提问（恢复）", description = "刷新页面或换设备后按会话取回仍挂在 PENDING 的提问卡。"
+            + "归属先按访客认会话，再列该会话的卡（提问行记的是发布者 uid，不能按 uid 过滤，否则游客永远取不回来）。"
+            + "live=false 表示唤醒句柄已不在，作答送不到模型。")
+    @GetMapping("/{token}/ask-user/pending")
+    public ResultJson guestPendingAsks(
+            @Parameter(description = "分享令牌") @PathVariable("token") String token,
+            @Parameter(description = "会话 ID") @RequestParam("sessionId") String sessionId,
+            @Parameter(description = "访客 ID（客户端随机）") @RequestParam("visitorId") String visitorId) {
+        if (sessionId == null || sessionId.isBlank() || visitorId == null || visitorId.isBlank()) {
+            return ResultJson.ok(Map.of("items", List.of()));
+        }
+        agentShareService.resolveGuest(token);
+        String visitorUid = AgentShareService.visitorUid(visitorId);
+        sessionService.assertOwned(sessionId.trim(), visitorUid);
+        return ResultJson.ok(Map.of("items", ChatController.markFrameworkLive(
+                hitl.listPendingAsksForSession(sessionId.trim()), frameworkSessions)));
+    }
+
+    /**
+     * 游客裁决计划卡（人在回路）。
+     * <p><b>注意：这一条在当前配置下打不到</b>，是留着兜底的第二道闸，不是现网缺陷的修复。
+     * 游客轮有两道独立拦截让计划卡发不出来：
+     * <ol>
+     *   <li>{@code ShareChatRequest} 没有 {@code planMode} 字段——游客开不了计划开关；</li>
+     *   <li>模型自己调 {@code plan_enter} 会被只读档当场拦掉（实测回执：「当前是只读…plan_enter 会修改
+     *       沙盒里的文件或状态，因此本轮不执行」）。游客被 {@code PermissionPolicyResolver} 硬钉在
+     *       {@code RESEARCH}（{@code READ_ONLY}），这道拦截不会随平台上限放开而消失。</li>
+     * </ol>
+     * <p>那为什么还留这条：分享页原先没接 {@code onPlanApproval}，卡片一旦到达就是
+     * 「服务端等裁决、页面永不出 done」的死锁——和提问卡那条同形、且已证实真实可达的死锁同一个形状。
+     * 装配面与档位哪天动一处，这个形状就会从"够不到"变成"卡死用户"。留着它换的是这个确定性。
+     * <p>只走框架通道、不回落 {@code hitl.resolvePlanApproval}（游客 uid 不匹配），也不靠 resume 兜底。
+     */
+    @Operation(summary = "游客裁决计划卡", description = "批准（{approved:true,plan:可选编辑后全文}）/ "
+            + "退回重出（{revise:true,plan:修改意见}）/ 继续对话（{supersede:true,plan:修改意见}）/ "
+            + "拒绝（{approved:false}）。归属按「卡片行 → 会话 → 访客」两跳认。")
+    @PostMapping("/{token}/plan-approval/{planApprovalId}")
+    public ResultJson guestResolvePlan(
+            @Parameter(description = "分享令牌") @PathVariable("token") String token,
+            @Parameter(description = "计划批准 ID（plan_approval 事件下发）")
+            @PathVariable("planApprovalId") String planApprovalId,
+            @Parameter(description = "访客 ID（客户端随机）") @RequestParam("visitorId") String visitorId,
+            @RequestBody Map<String, Object> body,
+            HttpServletRequest httpRequest) {
+        if (visitorId == null || visitorId.isBlank()) return ResultJson.error("缺少访客 ID");
+        var ctx = agentShareService.resolveGuest(token);
+        rateLimitService.checkRateLimit("chat", "ip:" + clientIp(httpRequest));
+        String visitorUid = AgentShareService.visitorUid(visitorId);
+        var row = hitl.findApproval(planApprovalId);
+        if (row == null) return ResultJson.error("计划卡不存在或已结束");
+        sessionService.assertOwned(row.getSessionId(), visitorUid);
+        boolean approved = Boolean.TRUE.equals(body.get("approved"));
+        boolean revise = Boolean.TRUE.equals(body.get("revise"));
+        boolean supersede = Boolean.TRUE.equals(body.get("supersede"));
+        Object p = body.get("plan");
+        String plan = p == null ? null : String.valueOf(p);
+        String supersedeReason = plan == null || plan.isBlank() ? "用户带着意见继续对话，本版计划作废" : plan;
+        boolean ok = frameworkSessions.respondPlanApproval(planApprovalId, approved,
+                revise ? plan : (supersede ? supersedeReason : (approved ? null : "用户拒绝了这版计划")),
+                approved ? "approve" : (supersede ? "supersede" : (revise ? "revise" : "reject")));
+        audit.record("[AUDIT] 游客裁决计划 ip={} agent={} session={} plan={} approved={} revise={} supersede={} ok={}",
+                clientIp(httpRequest), ctx.agent().getId(), row.getSessionId(), planApprovalId,
+                approved, revise, supersede, ok);
+        if (!ok) return ResultJson.error("这一轮的计划已失效（服务已重启或已收尾），请重新提问");
+        return ResultJson.ok(approved ? "已批准" : "已退回");
+    }
+
+    @Operation(summary = "游客待批计划（恢复）", description = "刷新或换设备后按会话取回仍挂在 PENDING 的计划卡（含版本链）。"
+            + "归属先按访客认会话，再列该会话的卡。")
+    @GetMapping("/{token}/plan-approval/pending")
+    public ResultJson guestPendingPlans(
+            @Parameter(description = "分享令牌") @PathVariable("token") String token,
+            @Parameter(description = "会话 ID") @RequestParam("sessionId") String sessionId,
+            @Parameter(description = "访客 ID（客户端随机）") @RequestParam("visitorId") String visitorId) {
+        if (sessionId == null || sessionId.isBlank() || visitorId == null || visitorId.isBlank()) {
+            return ResultJson.ok(Map.of("items", List.of()));
+        }
+        agentShareService.resolveGuest(token);
+        String visitorUid = AgentShareService.visitorUid(visitorId);
+        sessionService.assertOwned(sessionId.trim(), visitorUid);
+        return ResultJson.ok(Map.of("items", ChatController.markFrameworkLive(
+                hitl.listPendingPlansForSession(sessionId.trim()), frameworkSessions)));
     }
 
     /** 客户端 IP（X-Forwarded-For 首段优先；与 ChatController 同口径） */

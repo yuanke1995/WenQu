@@ -76,11 +76,17 @@
 
     <!-- 输入区与主对话页同一个组件（chat/ChatInput.vue）：卡片、正文与附件/图片 chip 同流、
          工具条、拖拽落点、发送/停止键都是一份实现，所以这页不再自己拼一套。
-         分享页没有 + 面板/@ 引用/技能/计划模式，那些插槽一个都不填——「只填自己有的」。
+         分享页没有 + 面板/@ 引用/技能，那些插槽一个都不填——「只填自己有的」。
          页脚放进 #below：它得跟卡片同一个内边距列才居中对齐，包在外面就对不上了。 -->
+    <!-- 待裁决计划卡与待答提问卡都整块顶替打字框：模型正卡在工具线程上等答案，
+         此时打字框发出去也没人接。裁决后面板撤下、输入框回归，记录以工具卡形态留在气泡原位。 -->
+    <SharePlanPanel v-if="pendingPlan" ref="planPanelRef" :plan="pendingPlan" @resolve="resolvePlan" />
+    <ShareAskPanel v-if="pendingAsk" ref="askPanelRef" :ask="pendingAsk"
+                   @submit="submitAsk" @ignore="ignoreAsk" />
     <ChatInput
+      v-if="!pendingAsk && !pendingPlan"
       ref="inputRef" v-model="draft" :resolve="chipOf" :placeholder="placeholder"
-      :sending="sending" :can-send="canSend" :can-attach="canAttach" :attach-title="attachTitle"
+      :sending="sending" :can-send="canSend" :can-attach="canAttach"
       :accept="acceptAttr"
       @attach="openPicker" @send="send" @stop="stop" @files="onDropFiles"
       @paste="onComposerPaste" @keydown="onInputKeydown" @update:keys="onKeys"
@@ -107,7 +113,8 @@ import { useRoute, useRouter } from 'vue-router'
 // 都已随对应叶子进各自组件（这里留着就成了「看着像在用」的死导入）
 import { HistoryOutlined, PlusOutlined } from '@ant-design/icons-vue'
 import { getShareInfo, getShareHistory, listShareSessions, clearShareSessions, sendShareMessage, getShareRunStatus,
-         resumeShareTurn, stopShareTurn, uploadShareAttachment, submitShareFeedback } from '../api'
+         resumeShareTurn, stopShareTurn, uploadShareAttachment, submitShareFeedback,
+         answerShareAsk, listSharePendingAsks, answerSharePlan, listSharePendingPlans } from '../api'
 import AgentAvatar from '../components/AgentAvatar.vue'
 import BrandMark from '../components/BrandMark.vue'
 // 正文与浮层与主聊天页同源：图片、引用角标、来源弹窗、灯箱都走同一套，不再各写一份
@@ -116,6 +123,11 @@ import AnswerViewerHost from '../components/AnswerViewerHost.vue'
 import ChatInput from '../chat/ChatInput.vue'
 // 消息列表外壳（与主对话页同一份）：行/块/气泡布局 + 提问随行材料 + 降级条 + 引用来源 + 动作行
 import ChatThread from '../chat/ChatThread.vue'
+// 提问卡（人在回路）：智能体一发 ask_user，服务端就挂着这一轮等答案，
+// 分享页此前没接这个事件，用户读到的是「莫名其妙不动了」。待答时整块顶替打字框。
+import ShareAskPanel from '../components/ShareAskPanel.vue'
+// 计划卡：模型进了计划模式就要等人裁决才继续，分享页此前同样没接，死锁形状与提问卡一致
+import SharePlanPanel from '../components/SharePlanPanel.vue'
 import { openImages } from '../chat/answerViewer'
 import { fmtSize, resumedStartAt } from '../chat/projections'
 // 取材判定层与主聊天页同源（白名单/限额/被拒文案只有一份，改一处两页同时生效）
@@ -127,6 +139,13 @@ const route = useRoute()
 const router = useRouter()
 const token = computed(() => String(route.params.token || ''))
 const isEmbed = computed(() => route.query.embed === '1')
+
+/** 待答提问卡（人在回路）。非空时整块顶替打字框——模型正卡在那根工具线程上等答案。 */
+const pendingAsk = ref(null)
+const askPanelRef = ref(null)
+/** 待批计划卡（人在回路）。与提问卡同形：待裁决时整块顶替打字框。 */
+const pendingPlan = ref(null)
+const planPanelRef = ref(null)
 
 const info = ref({ name: '', description: '', icon: '', isBuiltin: false })
 /**
@@ -342,6 +361,8 @@ onMounted(async () => {
       scrollBottom()
     } catch (e) { /* 历史失败不阻塞对话 */ } finally { loading.value = false }
     attachRunning()   // 刷新时这一轮可能还在跑（关掉页面它照旧继续），接回来给它长完
+    restorePendingAsk() // 更要紧的是这一轮可能正卡在提问上——不取回卡片就是「看不见、后端一直等」
+    restorePendingPlan() // 计划卡同理
   }
 })
 onUnmounted(() => {
@@ -599,8 +620,90 @@ function shareStreamHandlers (ai) {
       if (!ai.content) ai.content = '⚠️ ' + (msg || '回答失败')
       else message.warning(msg || '本轮中断')
       scrollBottom()
+    },
+    // 提问卡：payload 是 {askId,questions,timeoutMs}。这一帧到达时 SSE 还开着、
+    // 服务端正阻塞等答案，所以这里**不能**收尾 sending —— 答案送出后同一条流会继续吐字。
+    onAskUser: payload => {
+      try {
+        const p = JSON.parse(payload)
+        if (!p || !p.askId || !Array.isArray(p.questions) || !p.questions.length) return
+        pendingAsk.value = { ...p, expired: false, live: true }
+        scrollBottom()
+      } catch (e) { /* 形状不对就当没收到，不能让一张坏卡把整页打挂 */ }
+    },
+    onPlanApproval: payload => {
+      try {
+        const p = typeof payload === 'string' ? JSON.parse(payload) : payload
+        if (!p || !p.planApprovalId) return
+        pendingPlan.value = { ...p, expired: false, live: true }
+        scrollBottom()
+      } catch (e) { /* 同上 */ }
     }
   }
+}
+
+/** 裁决计划：四种出口都走同一个端点，语义与登录态一致 */
+async function resolvePlan (payload) {
+  const card = pendingPlan.value
+  if (!card) return
+  try {
+    const r = await answerSharePlan(token.value, card.planApprovalId, visitorId(), payload)
+    if (r && r.success === false) throw new Error(r.msg || '裁决没送达')
+    planPanelRef.value?.settle(true)
+    setTimeout(() => { pendingPlan.value = null }, 700)
+  } catch (e) {
+    planPanelRef.value?.settle(false)
+    message.error(e?.message || '这一轮的计划已失效，请重新提问')
+    pendingPlan.value = null
+  }
+}
+
+/** 提交/忽略提问：走游客作答端点，归属按「提问行 → 会话 → 访客」两跳认 */
+async function submitAsk (answers) {
+  const ask = pendingAsk.value
+  if (!ask) return
+  try {
+    const r = await answerShareAsk(token.value, ask.askId, visitorId(), { answers })
+    if (r && r.success === false) throw new Error(r.msg || '作答没送达')
+    askPanelRef.value?.settle(true)
+    // 面板撤下要等一小会儿，让「已提交」这个态被看见
+    setTimeout(() => { pendingAsk.value = null }, 700)
+  } catch (e) {
+    askPanelRef.value?.settle(false)
+    message.error(e?.message || '这一轮的提问已失效，请重新提问')
+    pendingAsk.value = null
+  }
+}
+
+async function ignoreAsk () {
+  const ask = pendingAsk.value
+  if (!ask) return
+  try {
+    await answerShareAsk(token.value, ask.askId, visitorId(), { ignore: true })
+  } catch (e) { /* 忽略失败不拦用户：超时路径自己会把这一轮收掉 */ }
+  pendingAsk.value = null
+}
+
+/** 刷新/换设备后把还挂着的提问卡取回来，否则「卡片看不见、后端一直等」这半条死锁还在 */
+async function restorePendingAsk () {
+  if (!sessionId.value) return
+  try {
+    const r = await listSharePendingAsks(token.value, sessionId.value, visitorId())
+    const items = r?.data?.items || []
+    const live = items.filter(i => !i.expired)
+    if (live.length) pendingAsk.value = { ...live[0], expired: false, live: !!live[0].live }
+  } catch (e) { /* 取不回卡片不影响正常聊天 */ }
+}
+
+/** 计划卡同理：刷新后不取回来，就是「卡片看不见、后端一直等」的那半条死锁 */
+async function restorePendingPlan () {
+  if (!sessionId.value) return
+  try {
+    const r = await listSharePendingPlans(token.value, sessionId.value, visitorId())
+    const items = r?.data?.items || []
+    const live = items.filter(i => !i.expired)
+    if (live.length) pendingPlan.value = { ...live[0], expired: false, live: !!live[0].live }
+  } catch (e) { /* 同上 */ }
 }
 
 /**

@@ -483,16 +483,19 @@ public class ChatController {
     public ResultJson listPendingToolApprovals(
             @Parameter(description = "会话 ID") @RequestParam("sessionId") String sessionId) {
         return ResultJson.ok(java.util.Map.of("items",
-                markFrameworkLive(hitl.listPendingApprovals(sessionId, com.wenqu.ai.util.RequestUser.uid()))));
+                markFrameworkLive(hitl.listPendingApprovals(sessionId, com.wenqu.ai.util.RequestUser.uid()), frameworkSessions)));
     }
 
     /**
      * 框架引擎的待办活在 {@code AgentSession} 上，而恢复端点的 {@code live} 是按旧通道的内存表判的
      * ——不改的话框架卡一律被标成「卡片还在但没人能唤醒」，用户取回一张答不了的卡。
      * <p>只改明确属于框架会话的那些 id，其余原样返回（两条通道不双写同一个号，判归属也一样）。
+     * <p>静态且把 {@code frameworkSessions} 作参数传入，是因为免登录分享侧的待答恢复
+     * （{@code ShareController} 的 {@code /ask-user/pending}）要认同一件事；不复制这份循环。
      */
-    private java.util.List<java.util.Map<String, Object>> markFrameworkLive(
-            java.util.List<java.util.Map<String, Object>> items) {
+    static java.util.List<java.util.Map<String, Object>> markFrameworkLive(
+            java.util.List<java.util.Map<String, Object>> items,
+            com.wenqu.ai.agentx.FrameworkSessions frameworkSessions) {
         if (items == null) return java.util.List.of();
         for (java.util.Map<String, Object> item : items) {
             Object id = item.get("approvalId") != null ? item.get("approvalId")
@@ -578,7 +581,7 @@ public class ChatController {
     public ResultJson listPendingAsks(
             @Parameter(description = "会话 ID") @RequestParam("sessionId") String sessionId) {
         return ResultJson.ok(java.util.Map.of("items",
-                markFrameworkLive(hitl.listPendingAsks(sessionId, com.wenqu.ai.util.RequestUser.uid()))));
+                markFrameworkLive(hitl.listPendingAsks(sessionId, com.wenqu.ai.util.RequestUser.uid()), frameworkSessions)));
     }
 
     @Operation(summary = "工具完整输出（外溢原文读回）", description = "读回一条被外溢存储的工具原文（沙盒输出、读到的整份文件等）。"
@@ -670,7 +673,7 @@ public class ChatController {
     public ResultJson listPendingPlans(
             @Parameter(description = "会话 ID") @RequestParam("sessionId") String sessionId) {
         return ResultJson.ok(java.util.Map.of("items",
-                markFrameworkLive(hitl.listPendingPlans(sessionId, com.wenqu.ai.util.RequestUser.uid()))));
+                markFrameworkLive(hitl.listPendingPlans(sessionId, com.wenqu.ai.util.RequestUser.uid()), frameworkSessions)));
     }
 
     @Operation(summary = "会话列表", description = "游标分页列出当前用户的会话（含 anonymous 历史兼容池；置顶优先、按更新时间倒序）。"

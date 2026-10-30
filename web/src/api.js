@@ -1273,6 +1273,29 @@ export function uploadShareAttachment(token, visitorId, file, onProgress) {
  * <p>不能走登录态的 {@code /feedback}——那条按 RequestUser.uid() 校验归属，游客是 anonymous，一律 403。
  * 服务端改为按访客 uid 校验：由 messageId 取回消息，再比对消息所属会话是否属于该访客。
  */
+/** 游客回答提问卡（人在回路）：归属按「提问行 → 会话 → 访客」两跳认，见后端 guestAnswerAsk。
+ *  答案送回当前那条还开着的 SSE 流里正在阻塞的工具线程，本轮继续，不另起一轮。 */
+export const answerShareAsk = (token, askId, visitorId, payload) =>
+  request(`/share/${encodeURIComponent(token)}/ask-user/${encodeURIComponent(askId)}?visitorId=${encodeURIComponent(visitorId)}`, {
+    method: 'POST',
+    body: JSON.stringify(payload || {})
+  })
+
+/** 游客待答提问（刷新或换设备后把卡片取回来） */
+export const listSharePendingAsks = (token, sessionId, visitorId) =>
+  request(`/share/${encodeURIComponent(token)}/ask-user/pending?sessionId=${encodeURIComponent(sessionId)}&visitorId=${encodeURIComponent(visitorId)}`)
+
+/** 游客裁决计划卡：与提问卡同一套两跳归属（卡片行记发布者 uid，不能按 uid 认） */
+export const answerSharePlan = (token, planApprovalId, visitorId, payload) =>
+  request(`/share/${encodeURIComponent(token)}/plan-approval/${encodeURIComponent(planApprovalId)}?visitorId=${encodeURIComponent(visitorId)}`, {
+    method: 'POST',
+    body: JSON.stringify(payload || {})
+  })
+
+/** 游客待批计划（刷新后取回卡片与版本链） */
+export const listSharePendingPlans = (token, sessionId, visitorId) =>
+  request(`/share/${encodeURIComponent(token)}/plan-approval/pending?sessionId=${encodeURIComponent(sessionId)}&visitorId=${encodeURIComponent(visitorId)}`)
+
 export const submitShareFeedback = (token, payload) =>
   request(`/share/${encodeURIComponent(token)}/feedback`, {
     method: 'POST',
