@@ -92,8 +92,16 @@ public class ShareController {
     private final com.wenqu.ai.agent.hitl.HitlDecisionService hitl;
     private final com.wenqu.ai.agentx.FrameworkSessions frameworkSessions;
 
-    /** 单条提问长度上限（与对话页同量级的防滥用口径） */
-    private static final int MAX_QUESTION_CHARS = 8000;
+    /**
+     * 单条提问长度上限（防滥用口径，默认与对话页同量级）。
+     * 配置键 chat.maxQuestionChars，保存即生效——表单设计助手这类分享每轮要把整份
+     * 设计 schema 回传（几万字起步），8000 会把第二轮起全部拒掉，发布方按需调大。
+     */
+    private static final int DEFAULT_MAX_QUESTION_CHARS = 8000;
+
+    private int maxQuestionChars() {
+        return Math.max(200, configService.getInt("chat.maxQuestionChars", DEFAULT_MAX_QUESTION_CHARS));
+    }
 
     /**
      * 会话只读分享（免登录）：按 token 取回被分享会话的标题与消息。
@@ -135,7 +143,7 @@ public class ShareController {
         out.put("maxImageMb", maxImageMb());
         out.put("maxAttachments", maxAttachmentsPerMessage());
         out.put("maxAttachmentMb", maxAttachmentMb());
-        out.put("maxQuestionChars", MAX_QUESTION_CHARS);
+        out.put("maxQuestionChars", maxQuestionChars());
         return ResultJson.ok(out);
     }
 
@@ -252,8 +260,9 @@ public class ShareController {
 
         String message = body.getMessage();
         if (message == null || message.isBlank()) throw new BizException("请输入内容");
-        if (message.length() > MAX_QUESTION_CHARS) {
-            throw new BizException("单条内容过长（最多 " + MAX_QUESTION_CHARS + " 字）");
+        int maxChars = maxQuestionChars();
+        if (message.length() > maxChars) {
+            throw new BizException("单条内容过长（最多 " + maxChars + " 字）");
         }
         String visitorUid = AgentShareService.visitorUid(body.getVisitorId());
         // 多模态：先过发布者的能力开关，再过形状/数量/体积。顺序不能反——开关关着的时候

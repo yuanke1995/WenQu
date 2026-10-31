@@ -212,7 +212,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_message` (
     `id`          VARCHAR(50)  NOT NULL COMMENT '主键ID (UUID无横线)',
     `session_id`  VARCHAR(50)  NOT NULL COMMENT '所属会话ID',
     `role`        VARCHAR(20)  NOT NULL COMMENT '角色: user / assistant',
-    `content`     TEXT         NOT NULL COMMENT '消息内容',
+    `content`     MEDIUMTEXT   NOT NULL COMMENT '消息内容（表单设计助手等分享每轮回传整份 schema，几万字起步，TEXT 的 64KB 字节上限装不下）',
     `thinking`    TEXT         DEFAULT NULL COMMENT '思考过程全文(深度思考)',
     `images`      TEXT         DEFAULT NULL COMMENT '关联图片URL (JSON数组字符串)',
     `sources`     TEXT         DEFAULT NULL COMMENT '引用来源 (JSON数组字符串)',

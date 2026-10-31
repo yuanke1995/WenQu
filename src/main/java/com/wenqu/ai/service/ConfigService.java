@@ -637,6 +637,9 @@ public class ConfigService {
         // 原先写死在消费方代码里的行为参数（直读 configService，保存即生效）
         d.put("chat.maxImagesPerMessage", "9");
         d.put("chat.maxImageMb", "10");
+        // 单条提问字数上限（ShareController 读取点）：默认防滥用口径；表单设计助手等
+        // 每轮要整份 schema 回传的分享按需调大，消息落 c_ai_message.content（MEDIUMTEXT）
+        d.put("chat.maxQuestionChars", "8000");
         // 聊天附件：上传换 fileId 落盘，超保留期由 ScheduleCenter 清理（0=不清理）
         d.put("chat.uploadRetentionHours", "24");
         d.put("chat.uploadCleanupIntervalMs", "3600000");

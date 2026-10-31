@@ -433,6 +433,22 @@
       "tier": 3
     },
     {
+      "backendKey": "chat.maxQuestionChars",
+      "panel": "chat",
+      "section": 4,
+      "group": "chat",
+      "key": "maxQuestionChars",
+      "path": "chat.maxQuestionChars",
+      "label": "单条提问字数上限",
+      "type": "number",
+      "tips": "maxQuestionChars",
+      "def": 8000,
+      "min": 200,
+      "max": 200000,
+      "width": 200,
+      "tier": 3
+    },
+    {
       "backendKey": "chat.uploadRetentionHours",
       "panel": "chat",
       "section": 4,
@@ -4144,6 +4160,7 @@
     "visionRetryCount": "单张图片描述失败后的自动重试次数。本地 Ollama 偶发超时/500，重试可显著降低\"图片无描述\"的降级率。0=不重试。",
     "maxImagesPerMessage": "单条消息最多携带的图片张数。超限直接拒绝，防止 base64 大载荷压垮解码与视觉处理。默认 9。",
     "maxImageMb": "单张图片的体积上限（MB，按原图计；base64 编码后约为 4/3 倍）。超限拒绝发送。默认 10。",
+    "maxQuestionChars": "单条提问的字数上限（防滥用口径，默认 8000）。调大不影响普通提问，只是放宽天花板；表单设计助手等分享从第二轮起要把整份画布 schema 随消息回传（每个控件几百字，大表几万字起步），不改会全部被 8000 拒掉，建议用到那类分享时调到 60000。",
     "ocrDpi": "PDF 扫描页 OCR 渲染 DPI：越高小字越清晰、识别率越好，但内存与耗时随之增加。默认 200。",
     "toolEnabled": "问渠工具总开关：开启后把问渠注册的工具声明给大模型，由模型在回答过程中自主决定是否调用。默认开启。它不控制 AgentScope 原生的文件/命令、记忆、技能工具——那些由权限档位与各自的配置控制。单个工具是否可用，再按智能体三态与平台停用名单收口。",
     "toolKnowledgeRetrievalMaxHits": "精确检索工具单次返回的知识块上限（1~5）。调大单次信息更全但占用上下文预算；模型可能多次调用，注意累计开销。",
@@ -4269,6 +4286,7 @@
     "vision.retryCount": "视觉模型：单图描述失败重试次数(降低降级率)",
     "chat.maxImagesPerMessage": "对话：单条消息最多图片张数",
     "chat.maxImageMb": "对话：单张图片体积上限(MB)",
+    "chat.maxQuestionChars": "对话：单条提问字数上限（表单设计助手等分享需调大）",
     "tool.enabled": "工具调用：总开关（默认开；开启后模型可调用 @Tool 工具，如知识库精确检索、产物交付）",
     "tool.knowledgeRetrieval.maxHits": "工具调用：精确检索工具单次返回命中块上限(1~5)",
     "agent.consultMaxPerTurn": "智能体咨询（P5）：一轮最多派给几位助手（默认 3）",
