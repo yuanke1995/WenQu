@@ -216,11 +216,24 @@
                             placeholder="写清职责范围与典型问题（如：负责《操作手册》的界面操作与表单填写问题）" />
                 <div class="ap-hint">主智能体按名称 + 描述决定把问题交给谁，职责互不重叠更不容易派错。</div>
               </a-form-item>
-              <a-form-item v-if="runMode !== 'workflow'" label="系统提示词" class="ap-field ap-field-last">
-                <a-textarea v-model:value="form.systemPrompt" :rows="5"
-                            placeholder="填写后完全替换全局系统提示词；留空沿用全局" />
-                <div class="ap-hint">智能体不绑定模型：回答用哪套模型由用户在对话页选择或个人设置默认。</div>
-              </a-form-item>
+              <div v-if="runMode !== 'workflow'" class="ap-field ap-field-last">
+                <div class="ap-prompt-head">
+                  <label class="ap-field-label" style="margin:0">系统提示词</label>
+                  <!-- 布局三档：编辑=全宽书写（长提示词不用挤半栏），分屏=边写边看，预览=纯阅读；选择记住，下次进来保持 -->
+                  <a-radio-group v-model:value="promptPane" size="small" class="ap-pane-mode">
+                    <a-radio-button value="edit">编辑</a-radio-button>
+                    <a-radio-button value="split">分屏</a-radio-button>
+                    <a-radio-button value="preview">预览</a-radio-button>
+                  </a-radio-group>
+                </div>
+                <MdEditor v-if="promptPane !== 'preview'" :key="promptPane" v-model="form.systemPrompt"
+                          editor-id="ap-system-prompt" language="zh-CN" :theme="mdTheme" :toolbars="mdToolbars"
+                          :no-prettier="true" :footers="[]" :preview="promptPane === 'split'" @on-save="save"
+                          placeholder="填写后完全替换全局系统提示词；留空沿用全局" class="ap-md-editor" />
+                <MdPreview v-else editor-id="ap-system-prompt-view" :model-value="form.systemPrompt"
+                           :theme="mdTheme" class="ap-md-editor ap-md-preview" />
+                <div class="ap-hint">提示词通常是 markdown（如 npm run spec 生成的组件契约）；分屏里右侧实时预览，⌘S 直接保存。</div>
+              </div>
               <div v-else class="ap-hint ap-field">
                 工作流模式下不使用系统提示词；切回问答助手后这份内容仍在。
               </div>
@@ -680,7 +693,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import {
   ArrowLeftOutlined, ReloadOutlined, SearchOutlined, IdcardOutlined,
@@ -704,6 +717,9 @@ import SkillContentModal from '../components/SkillContentModal.vue'
 import { ensureAuth, isAdminSync } from '../utils/auth'
 import { loadModelIndex } from '../utils/modelRef'
 import { locateField } from '../utils/fieldLocate'
+import { MdEditor, MdPreview } from 'md-editor-v3'
+import 'md-editor-v3/lib/style.css'
+import { themeState } from '../utils/theme'
 
 // ==================== 能力定义 ====================
 // path：该能力在全局配置里的开关路径；gate：还受此总闸制约（关掉总闸时能力不生效）
@@ -1023,6 +1039,20 @@ function buildQueryParams (rr) {
 }
 
 const form = ref(blankForm())
+
+// 系统提示词 md 编辑器（md-editor-v3）：提示词一般是 markdown（组件契约由 npm run spec 生成），
+// 主体工作是「整份粘贴 + 校对」，不是从零写作——工具栏只留基础排版与撤销，图片上传/图表/公式
+// 这些会把 base64 或大段语法塞进纯文本契约的项一律不要；预览与全屏保留（356 行长文档要能看能铺开）。
+const mdToolbars = ['bold', 'underline', 'italic', '-', 'strikeThrough', 'quote', 'unorderedList', 'orderedList',
+  '-', 'code', 'codeRow', 'table', '-', 'revoke', 'next', '=', 'preview', 'previewOnly', 'pageFullscreen', 'fullscreen']
+const mdTheme = computed(() => (themeState.value === 'dark' ? 'dark' : 'light'))
+
+// 布局偏好跟人走：记 localStorage，下次打开这页保持（编辑=全宽书写，分屏=边写边看，预览=纯阅读）。
+// :key 带 promptPane 是因为编辑器的 preview 等只认初始值，换档重挂一次最稳（内容在 v-model 里不丢）。
+const PROMPT_PANE_KEY = 'wenqu-agent-prompt-pane'
+const promptPane = ref(['edit', 'split', 'preview'].includes(localStorage.getItem(PROMPT_PANE_KEY))
+  ? localStorage.getItem(PROMPT_PANE_KEY) : 'split')
+watch(promptPane, v => localStorage.setItem(PROMPT_PANE_KEY, v))
 
 // 运行方式：决定页面里哪些配置参与，以及保存时 isSubagent / workflowId 怎么写。
 const runModeOptions = computed(() => [
@@ -2001,6 +2031,19 @@ onMounted(async () => { })
 }
 .ap-form { display: flex; flex-direction: column; gap: 12px; min-width: 0; max-width: none; margin: 0; }
 .ap-form > section { margin: 0; }
+/* 系统提示词 md 编辑器：高度跟视口走（长提示词在页内就铺得开，不用全屏才能写）；
+   编辑器自带浅/深配色，只把圆角对齐本页卡片 */
+.ap-md-editor { height: clamp(460px, 62vh, 860px); border-radius: 10px; --md-bk-color: var(--app-panel-2, #fff); }
+.ap-md-editor.md-editor-dark { --md-bk-color: var(--app-panel-2, #1e1e1e); }
+.ap-prompt-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ap-pane-mode { flex: none; }
+.ap-md-preview { overflow: auto; }
+/* 全屏纯编辑是主书写面：限一栏舒适行宽、字号提一档，别一行排满整幅屏幕 */
+.ap-md-editor.md-editor-fullscreen :deep(.md-editor-input) { max-width: 960px; margin: 0 auto; font-size: 15px; line-height: 1.8; }
+/* 库默认 word-break:break-all + 16px：窄列里长 code 名（extraValidationUrl）会被按字母切碎成竖排。
+   改按词换行 + 收字号，让非全屏的半幅预览也能凑合读；全屏（右上角按钮）才是校对长契约的主战场 */
+.ap-md-editor :deep(.md-editor-preview) { word-break: break-word; font-size: 13.5px; }
+.ap-md-editor :deep(.md-editor-preview th), .ap-md-editor :deep(.md-editor-preview td) { word-break: break-word; }
 .ap-form :deep(.ant-form-item) { margin-bottom: 0; }
 .ap-form :deep(.ant-form-item-label) { padding-bottom: 4px; }
 .ap-form :deep(.ant-form-item-label > label) { font-size: 12px; color: var(--app-text2); height: auto; }
