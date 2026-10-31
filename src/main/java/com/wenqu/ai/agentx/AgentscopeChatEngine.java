@@ -3434,7 +3434,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             // 降级出口也按轮走：实例复用后这里的 channel 是建实例那一轮的，必须从槽位现取。
             AgentxTurnSlot.Turn t = slot.current();
             if (t != null) t.channel().emit(RunEventType.WARN, message);
-        }, true);
+        // 游客轮 approvalCanAsk=false：分享页没有审批卡通道，漏挂的需审批工具在适配器层直接 deny
+        // （fail-closed 拒答，模型收到报错改路）而不是 ask 挂 120s 超时。主闸在
+        // ToolMountContext.turnAllows 的 guestMode 轴，这里是兜底。
+        }, !cmd.isGuestMode());
         // 目标模式的控制工具常驻注册：实例按会话常驻，目标可能在建实例之后才建立，
         // 不能等到目标建立再往 Toolkit 里加工具（那需要重建实例）。非目标轮调用会落空返回。
         holders.add(new GoalTools(goalService, slot));

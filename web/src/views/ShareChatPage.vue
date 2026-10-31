@@ -224,6 +224,16 @@ function rememberSession (id) {
   } catch (e) { /* 隐私模式下 localStorage 不可用，只是刷新后不记忆，不影响对话 */ }
 }
 
+/** 首轮就先生成 sessionId 随请求带上：服务端 ensureSession 会按这个 id 落会话并归属当前访客。
+ *  此前 id 要等 done 帧才回传，流死在 done 之前时前端永远不知道 sessionId——
+ *  停止（POST /chat/stop 缺参被挡）、续聊全都点不到名。 */
+function mintSessionId () {
+  if (sessionId.value) return sessionId.value
+  const sid = (crypto.randomUUID ? crypto.randomUUID() : 's' + Date.now() + Math.random().toString(36).slice(2)).replace(/-/g, '')
+  rememberSession(sid)
+  return sid
+}
+
 /** 历史消息 → 页面消息（首屏恢复与切换会话同一份口径）。
  *  <p>messageId / degradations 都取自后端**已经在下发**的字段（SessionService.toMessageMap）：
  *  此前只留 role/content/images/sources，于是降级提示看不见、评价也没有落点。 */
@@ -552,7 +562,7 @@ function send () {
   scrollBottom()
   controller = new AbortController()
   sendShareMessage(token.value, {
-    sessionId: sessionId.value, visitorId: visitorId(), message: text, images, attachments
+    sessionId: mintSessionId(), visitorId: visitorId(), message: text, images, attachments
   }, {
     signal: controller.signal,
     ...shareStreamHandlers(ai)
@@ -871,7 +881,7 @@ async function regenerate (aiIndex) {
   scrollBottom()
   controller = new AbortController()
   sendShareMessage(token.value, {
-    sessionId: sessionId.value, visitorId: visitorId(), message: q.content,
+    sessionId: mintSessionId(), visitorId: visitorId(), message: q.content,
     images, attachments, regenerate: true, replaceMessageId: replaceId
   }, {
     signal: controller.signal,
