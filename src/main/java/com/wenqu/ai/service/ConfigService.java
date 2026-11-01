@@ -229,6 +229,12 @@ public class ConfigService {
      * 存量明文密钥迁移：敏感项（*.apiKey / *.clientSecret）无 JWE: 前缀的值加密回写 DB 与缓存。
      * 读取兼容明文（get 透明解密对无前缀值原样返回），迁移只为尽快消除库中明文；
      * 多实例部署由 Redis 广播 reload 触发各自迁移，幂等。
+     *
+     * <p><b>只认明文，不碰旧密文</b>：{@code RSA:…} 开头的是改造前的分块 RSA 密文（LegacyRsaCipher
+     * 的领域），必须留给 {@code SecretRotationRunner} 解密后重封 JWE。本方法跑在构造期（早于
+     * ApplicationRunner），若把旧密文当明文再封一层 JWE，token 本体就埋进两层密文——
+     * v2 私钥退场后彻底解不开（2026-10-27 真机：sandbox.token 被套成 RSA:v2 套 JWE，
+     * 运行时把内层密文当 token 发给 provisioner ⇒ 401 invalid provisioner credentials）。
      */
     private void migratePlainSecrets() {
         try {
@@ -236,7 +242,8 @@ public class ConfigService {
             for (Map.Entry<String, String> e : cache.entrySet()) {
                 String k = e.getKey();
                 String v = e.getValue();
-                if (isSensitiveKey(k) && v != null && !v.isBlank() && !crypto.isEncrypted(v)) {
+                if (isSensitiveKey(k) && v != null && !v.isBlank()
+                        && !crypto.isEncrypted(v) && !v.startsWith("RSA:")) {
                     encrypted.put(k, crypto.encrypt(v));
                 }
             }
@@ -254,7 +261,7 @@ public class ConfigService {
             newCache.putAll(encrypted);
             cache = newCache;
             syncProperties();
-            log.info("[Config] 存量明文密钥已迁移为 RSA 加密存储: {}", encrypted.keySet());
+            log.info("[Config] 存量明文密钥已迁移为 JWE 加密存储: {}", encrypted.keySet());
         } catch (Exception e) {
             log.warn("[Config] 明文密钥加密迁移失败（不影响启动，读取兼容明文）: {}", e.getMessage());
         }
