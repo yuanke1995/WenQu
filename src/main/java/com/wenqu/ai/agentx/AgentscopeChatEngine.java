@@ -2121,6 +2121,28 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
          * 而同一份代码在多轮会话里就会落成上一轮的内容）。
          */
         private final StringBuffer answerText = new StringBuffer();
+        /**
+         * 本轮已处理过的事件 seq（见 translate() 的幂等闸）。
+         * <p>两条跟随路径读同一条 Session Log，重投件靠它拦下；HashSet 按轮新建、轮末即弃，
+         * 一轮几千条的量级没有内存顾虑。synchronizedSet：两条路径并发 add 各自的 seq。
+         */
+        private final java.util.Set<Long> seenEventSeqs =
+                java.util.Collections.synchronizedSet(new java.util.HashSet<>());
+
+        /** 首次见到这条事件返回 true；重投（另一条跟随路径已处理过）返回 false，调用方整条跳过。 */
+        boolean firstDelivery(long seq) {
+            return seenEventSeqs.add(seq);
+        }
+
+        /** 已记录正文是否包含该片段（收尾聚合帧的重复识别用；全文 indexOf，按帧头 60 字粗筛 + 全文确认）。 */
+        boolean answerContains(String piece) {
+            String full = answerText.toString();
+            if (piece.isEmpty() || piece.length() > full.length()) return false;
+            String probe = piece.length() > 60 ? piece.substring(0, 60) : piece;
+            int at = full.indexOf(probe);
+            return at >= 0 && full.regionMatches(at, piece, 0, piece.length());
+        }
+
         private final java.util.List<java.util.Map<String, Object>> toolCalls =
                 java.util.Collections.synchronizedList(new java.util.ArrayList<>());
         /** 工具大输出外溢的落盘标识（{@code 工具名|spillId}），收尾时挂回对应工具卡，卡片才有「查看完整输出」。 */
@@ -2871,6 +2893,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 没有前端对应物的帧——前端对认不出的事件名会打 warn（{@code api.js:158}），不如不发。
      */
     private void translate(SessionEvent event, RunChannel channel, Recording recording) {
+        // 事件幂等闸：同一轮可能有两条跟随路径（原跟随循环 + ensureFollowing 补位）各自从 Session Log
+        // 读事件喂进来，重投的那份若照收，正文就会被整段记录/重发两遍——2026-10-31 真机实测：42 组件
+        // 大表流式到 ~2 万字处补位循环接手，接缝并发喂同一把 RelatedStreamFilter（非线程安全）丢了
+        // 24 字（"showQuickJumper" 凭空消失），尾部 7980 字整段重投（逐字节对账 extra==body[20003..]）。
+        // 框架事件自带轮内单调 seq，这里按「本轮已见 seq」跳过重投件：谁先到谁处理，后到的直接丢。
+        if (!recording.firstDelivery(event.seq())) return;
         Map<String, Object> data = event.data() == null ? Map.of() : event.data();
         switch (event.type()) {
             case "model/chunk" -> {
@@ -2883,6 +2911,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 if (!"REASONING".equals(String.valueOf(data.get("purpose")))) return;
                 if (!(data.get("chunk") instanceof Map<?, ?> chunk)) return;
                 if (!(chunk.get("content") instanceof List<?> blocks)) return;
+                // 收尾聚合帧拦截（2026-11-01 真机字节级对账）：框架在流末会再发一条携带 finishReason 的
+                // 「聚合后段」帧——正文在 ~2 万字处被一分为二，delta 流已完整覆盖全文，聚合帧只重发后段；
+                // 照收等于尾部整段重投 + 接缝错位（FormCopilot 42 组件表连坏三场的真凶）。识别规则：
+                // finishReason 在场且帧文本已被已记录正文包含（纯重复）→ 整块跳过；正常收尾帧
+                // （空正文/真正的续写）不受影响。
+                boolean aggregateTail = chunk.get("finishReason") != null;
                 for (Object block : blocks) {
                     if (!(block instanceof Map<?, ?> b)) continue;
                     if ("thinking".equals(b.get("type"))) {
@@ -2890,9 +2924,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         recording.thinking(thinkingDelta);
                         emit(channel, RunEventType.THINKING, thinkingDelta);
                     } else if ("text".equals(b.get("type"))) {
+                        String rawText = str(b.get("text"));
+                        if (aggregateTail && rawText.length() > 0 && recording.answerContains(rawText)) {
+                            continue;
+                        }
                         // 正文开始 = 这一段思考收场：补一条 thinking_done，前端据此停转圈并折叠就地那段
                         closeThinkingFrame(channel, recording);
-                        String clean = recording.related.feed(str(b.get("text")));
+                        String clean = recording.related.feed(rawText);
                         if (!clean.isEmpty()) {
                             recording.answer(clean);
                             emit(channel, RunEventType.TOKEN, clean);
@@ -3466,6 +3504,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         //    token 里 2,705 是 reasoning，24.7 秒静默全花在这上面）。两条请求参数不同，只能是两个实例；
         //    transport 提出来复用，否则多建一个 OkHttp 客户端＝多一份连接池。
         // 两处的用量各按 kind 分开记账（chat/subagent/memory/compress），窗口都照抄登记值。
+        // 传输层实验（2026-11-01）已回退：JDK HttpClient 与 OkHttp 同样在长流式 ~2 万字处丢字，
+        // 丢失点在框架 ingestion 共用层（AgentScope 2.1.0-BETA1，供应商网线连续干净、直连同模型
+        // 6/6 全净——字节级对账见 copilot-long-output-corruption 记忆），换传输无收益，回退基线。
         io.agentscope.core.model.transport.OkHttpTransport modelTransport =
                 io.agentscope.core.model.transport.OkHttpTransport.builder()
                         .config(io.agentscope.core.model.transport.HttpTransportConfig.builder()
