@@ -512,6 +512,8 @@
         <!-- 游客 MCP 授权名单：MCP 是发布者个人资产，必须按 server 粒度亮出而不是一刀切——
              勾中的 server 的工具对游客可见且免逐次审批（分享页没有审批卡通道，不预批就是
              挂上了也一把调不动）。勾选项只列自己已启用的 server，与后端发布校验同口径 -->
+        <!-- 勾选项=智能体配置里实际绑定的 MCP 服务（指定模式列它绑的、跟随全局列全部已启用），
+             与运行期「游客名单 ∩ 智能体具体项选择」的装配口径一致 -->
         <div v-if="pubEnabled && myMcpServerChoices.length" class="pub-field" style="margin-top:12px">
           <span class="pub-label">游客可用 MCP 工具</span>
           <a-checkbox-group v-model:value="pubGuestMcp" class="pub-mcp-checks" @change="savePublish">
@@ -520,6 +522,9 @@
             </a-checkbox>
           </a-checkbox-group>
           <div class="pub-switch-d" style="margin-top:6px">勾选后这些 MCP 服务的工具对访客开放且免逐次审批；智能体的「工具执行确认」档不能是「禁用」</div>
+        </div>
+        <div v-else-if="pubEnabled" class="pub-switch-d" style="margin-top:12px">
+          没有可对游客开放的 MCP 工具：该智能体的「MCP 外部工具」为「不使用」或未指定任何服务，或者你名下没有已启用的 MCP 服务
         </div>
       </div>
 
@@ -1298,8 +1303,30 @@ const pubGuestImages = ref(false)
 const pubGuestFiles = ref(false)
 /** 游客可用 MCP server 勾选（server 名数组；空=关闭。MCP 是发布者个人资产，按 server 粒度亮出） */
 const pubGuestMcp = ref([])
-/** 勾选项：发布者自己已启用的 MCP server（与后端发布校验同口径；未连接的也列出，标注即可） */
+/** 勾选项：发布者自己已启用、且落在**被发布智能体的 MCP 配置范围内**的 server（openPublish 时按智能体算；
+ *  未连接的也列出，标注即可）。运行期 McpToolProvider 本来就拿「游客名单 ∩ 智能体具体项选择」装配，
+ *  勾选列表与智能体配置对齐后，这里勾到的每一项都是真能挂上的，不会出现「勾了但智能体根本没配」的死选项 */
 const myMcpServerChoices = ref([])
+/** 发布者名下全部已启用的 MCP server（loadLists 时取一次；具体勾选项在 openPublish 按智能体配置收窄） */
+const myMcpServers = ref([])
+/**
+ * 被发布智能体的 MCP 具体项范围 → 裸服务名数组。
+ *   toolMcp=0（不使用）           → []（整族不挂，无可勾）
+ *   toolMcp=1（指定）             → agent.mcps 引用串解析成名字。引用是 {uid}/{name} 精确绑定（个人资产），
+ *                                   裸名是存量配置的弱匹配——与后端 ResourceRefs.resolve 同一套口径
+ *   toolMcp=null（跟随全局）      → null（智能体未指定具体项，运行期挂发布者全部已启用 server）
+ */
+const agentMcpScopeNames = a => {
+  const tri = triStr(a.toolMcp)
+  if (tri === '0') return []
+  if (tri === '1') {
+    return splitList(a.mcps).map(r => {
+      const slash = r.indexOf('/')
+      return slash < 0 ? r : r.slice(slash + 1)
+    }).filter(n => n)
+  }
+  return null
+}
 /** 模型目录（ref → 展示信息，含 visionCapable）：只用来判断"选中的模型能不能看图"。
  *  loadModelIndex 自带 10s TTL 缓存且失败静默，拿不到就按"能看"放过——宁可少提示一句，
  *  也不要因为一次取数失败就在发布弹窗里报一个假警 */
@@ -1370,6 +1397,12 @@ async function openPublish (a) {
   pubTab.value = 'link'
   pubVisitCount.value = 0
   pubLastVisitAt.value = ''
+  // 勾选项跟随被发布智能体的 MCP 配置走：指定模式只列它绑定的那几个，不使用则一项不列，
+  // 跟随全局（未指定具体项）才亮出发布者全部已启用 server——运行期装配就是按这个交集来的
+  const mcpScope = agentMcpScopeNames(a)
+  myMcpServerChoices.value = mcpScope
+    ? myMcpServers.value.filter(s => mcpScope.includes(s.name))
+    : myMcpServers.value.slice()
   // 模型目录用于「允许发图」那条就地提示；不 await：它是 10s TTL 的展示索引，
   // 晚到一步只影响那行提示什么时候出现，不该拖住弹窗打开
   loadModelIndex().then(ix => { modelIndex.value = ix || {} }).catch(() => {})
@@ -1380,7 +1413,12 @@ async function openPublish (a) {
       pubMcpEnabled.value = !!r.data.mcpEnabled
       pubGuestImages.value = !!r.data.guestImages
       pubGuestFiles.value = !!r.data.guestFiles
-      pubGuestMcp.value = Array.isArray(r.data.guestMcpServers) ? r.data.guestMcpServers.slice() : []
+      // 已存名单先按本次勾选项收口：智能体配置改过（或 server 被删）后，名单里的残留名
+      // 运行期装配时交集为空、勾了也白勾——回显就剪掉，下次保存自然把库里那份一起清掉
+      const allowNames = new Set(myMcpServerChoices.value.map(s => s.name))
+      pubGuestMcp.value = Array.isArray(r.data.guestMcpServers)
+        ? r.data.guestMcpServers.filter(n => allowNames.has(n))
+        : []
       pubModelRef.value = r.data.modelRef || ''
       pubToken.value = r.data.token || ''
       pubVisitCount.value = r.data.visitCount || 0
@@ -1634,8 +1672,9 @@ const reload = async () => {
         value: s.ref || s.name,
         label: s.name + (s.connected ? '' : '（未连接）')
       }))
-      // 发布弹窗「游客可用 MCP 工具」的勾选项：只列已启用的 server（未启用的后端校验也不认）
-      myMcpServerChoices.value = (mr.data.servers || [])
+      // 发布弹窗「游客可用 MCP 工具」的候选池：只留已启用的 server（未启用的后端发布校验也不认）；
+      // 具体勾选项等 openPublish 拿到智能体自己的 MCP 配置后再收窄
+      myMcpServers.value = (mr.data.servers || [])
         .filter(s => s.enabled)
         .map(s => ({ name: s.name, connected: !!s.connected }))
     }
