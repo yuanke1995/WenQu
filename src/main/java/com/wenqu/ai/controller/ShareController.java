@@ -192,6 +192,9 @@ public class ShareController {
             return ResultJson.ok(List.of()); // 404/403 一律按空历史（不泄露会话存在性）
         }
         var history = sessionService.getRecentHistory(sessionId, 20);
+        // 读失败时 getRecentHistory 返回 null（fail-loud）：这里必须显式回错误，
+        // 否则下面 signMessageMedia/history.stream() 会 NPE，前端只看到「历史加载失败（500）」
+        if (history == null) return ResultJson.error("历史读取失败，请稍后重试");
         // 与登录态会话历史同一套出参签名口径（ImageUrlSigner.signMessageMedia）：库里存的是原始 URL，
         // 签名是一次性凭据不能落库，所以每次响应现场签。少了这一步，游客刷新页面后图片全 404
         // （首轮能看到图，因为 SSE 下发时已签过）。
