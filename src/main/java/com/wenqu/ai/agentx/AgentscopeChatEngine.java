@@ -3489,10 +3489,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         sessions.noteStepBudget(sessions.key(cmd), stepBudget);
         // 框架工具的档位闸（全框架化 P1）：沙箱/文件工具改由框架提供后不再过问渠装配链，
         // 档位裁剪挪到执行前逐个判。策略按轮取（同实例多轮可能不同档）。
+        // 游客 MCP 授权名单一并传入：名单内工具按「发布者预批」在闸上放行（只读档的
+        // readOnly 判据对 MCP 恒拒，不认名单就永远调不动，见 AgentxFrameworkToolGate）。
         AgentxFrameworkToolGate toolGate = new AgentxFrameworkToolGate(() -> {
             AgentxTurnSlot.Turn t = slot.current();
             return t == null ? policy : t.policy();
-        });
+        }, cmd.getGuestMcpServers());
         sessions.noteFrameworkToolGate(sessions.key(cmd), toolGate);
         // 子轮只读记忆：框架四把记忆工具打包注册，没有「只摘写」的开关；
         // 这里在执行前拒 memory_save，保留注入与 memory_search/get（只读也读得到）。
@@ -3608,8 +3610,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // Redis 连不上时应用起不来——宁可启动失败，也不要带着「每轮失忆」对外服务。
                 .stateStore(stateStore())
                 // 权限由框架持有：档位→模式、按名黑名单→deny 规则；工具级不可绕过的判定落在
-                // SpringAiToolAdapter#checkPermissions
-                .permissionContext(AgentxPermissions.contextOf(policy))
+                // SpringAiToolAdapter#checkPermissions。游客 MCP 授权名单一并传入：
+                // 名单非空的游客轮框架模式从 EXPLORE 提到 DEFAULT（EXPLORE 对非只读工具
+                // 无条件拒，名单工具永远调不动），判定回落到工具适配器（见 AgentxPermissions）
+                .permissionContext(AgentxPermissions.contextOf(policy, cmd.getGuestMcpServers()))
                 // 待办持久化 + 答复后自动接续原任务，是这套执行形态的立身之处
                 .enablePendingToolRecovery(true)
                 // 步数预算闸（对标 StepBudgetGuard）：maxIters 限的是推理轮数而不是工具调用次数，

@@ -55,7 +55,8 @@ public class AgentShareService {
      * 顺序写反了编译器也不拦。对象化之后加开关不再动签名，每个开关还自带名字。
      */
     public record PublishSpec(boolean enabled, boolean mcpEnabled, boolean guestImages,
-                              boolean guestFiles, String modelRef) {
+                              boolean guestFiles, String modelRef,
+                              java.util.Set<String> guestMcpServers) {
     }
 
     /** 游客发图是否开启（列可能为 NULL——存量行由 SchemaMigrator 补列前就是 NULL，按关闭兜底） */
@@ -66,6 +67,27 @@ public class AgentShareService {
     /** 游客上传附件是否开启（NULL 按关闭兜底，同上） */
     public static boolean guestFilesOn(AgentShare share) {
         return share != null && share.getGuestFilesEnabled() != null && share.getGuestFilesEnabled() == 1;
+    }
+
+    /**
+     * 游客可用 MCP server 名单（CSV 列解析；NULL/空白按空集兜底——未授权=关闭）。
+     * 名单内容发布时已按「发布者自己登记且启用」过滤，这里只做无脑拆分，不再校验：
+     * 发布者删掉 server 后的残留名在装配期自然解析不到（等于该项静默失效）。
+     */
+    public static java.util.Set<String> guestMcpServersOf(AgentShare share) {
+        if (share == null || share.getGuestMcpServers() == null || share.getGuestMcpServers().isBlank()) {
+            return java.util.Set.of();
+        }
+        return java.util.Arrays.stream(share.getGuestMcpServers().split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+    }
+
+    /** 名单落库形态：空集=null（列清空），否则 CSV */
+    static String guestMcpServersCsv(java.util.Set<String> servers) {
+        if (servers == null || servers.isEmpty()) return null;
+        return String.join(",", servers);
     }
 
     /** 按智能体取分享配置（未发布返回 null） */
@@ -102,13 +124,15 @@ public class AgentShareService {
         share.setGuestImagesEnabled(spec.guestImages() ? 1 : 0);
         share.setGuestFilesEnabled(spec.guestFiles() ? 1 : 0);
         share.setModelRef(spec.modelRef() == null || spec.modelRef().isBlank() ? null : spec.modelRef().trim());
+        share.setGuestMcpServers(guestMcpServersCsv(spec.guestMcpServers()));
         if (share.getId() == null) {
             shareMapper.insert(share);
         } else {
             shareMapper.updateById(share);
         }
-        audit.record("[AUDIT] 智能体分享发布 operator={} agent={} enabled={} mcp={} 游客发图={} 游客附件={} token={}***",
+        audit.record("[AUDIT] 智能体分享发布 operator={} agent={} enabled={} mcp={} 游客发图={} 游客附件={} 游客MCP={} token={}***",
                 uid, agentId, spec.enabled(), spec.mcpEnabled(), spec.guestImages(), spec.guestFiles(),
+                spec.guestMcpServers() == null ? 0 : spec.guestMcpServers().size(),
                 share.getToken().substring(0, 6));
         return share;
     }

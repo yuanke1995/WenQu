@@ -85,6 +85,13 @@ public final class ChatCommand {
      */
     final String guestUid;
     /**
+     * 游客轮经发布者显式授权的 MCP server 名单（仅 guestMode 有值；空/缺=未授权，MCP 照旧不挂）。
+     * <p>从分享配置的 {@code guest_mcp_servers} 来，经 ShareController 填进命令——工具装配
+     * （{@code McpToolProvider}）与执行期预批（{@code WenquAgentxTools#mountFrom}）都读这一份，
+     * 名单之外的个人 MCP server 对游客照旧不可见。
+     */
+    final java.util.Set<String> guestMcpServers;
+    /**
      * 重新生成/自动重试的重发标记：该问题的用户消息已随上一轮<b>即时落库</b>，
      * true 时跳过开始期的用户消息落库，避免重发产生重复历史行。
      */

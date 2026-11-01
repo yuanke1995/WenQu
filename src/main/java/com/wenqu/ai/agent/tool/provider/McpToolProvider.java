@@ -52,13 +52,23 @@ public class McpToolProvider implements ToolFamilyProvider {
     }
 
     /**
-     * 连的是**当前用户**登记的 server（连接池按 uid 分池），因此匿名访客一律不给——
-     * 这条从前靠游客分支提前返回顺带实现，现在六族都走循环了，得在本族说清楚。
+     * 连的是**当前用户**登记的 server（连接池按 uid 分池）——游客轮的 uid 就是发布者
+     * （问答侧把 userId 装成发布者），所以「发布者授权名单」天然解析得到发布者名下的连接。
+     * 匿名访客默认仍一律不给；唯一例外是发布者在分享配置里按 server 粒度勾选的
+     * {@code guestMcpServers} 名单——名单是发布者对自己个人资产的显式亮出，勾了才挂、
+     * 挂了按 {@code guestPreapproved} 免逐次审批（分享页没有审批卡通道）。
      */
     @Override
     public List<ToolCallback> callbacks(ToolMountContext mc) {
-        if (mc == null || mc.guestMode() || !mc.masterOn()
+        if (mc == null || !mc.masterOn()
                 || !mc.approvalPolicyAllows(ToolFamily.MCP)) {
+            return List.of();
+        }
+        // 游客白名单：未授权（空名单）整族照旧不挂；授权后与智能体自己的具体项选择取交集——
+        // 两道独立的闸，交集为空=没有任何 server 同时满足两者，等于不挂
+        java.util.Set<String> guestAllow = mc.guestMode() ? mc.guestMcpServers() : null;
+        if (guestAllow != null && guestAllow.isEmpty()) {
+            log.info("[MCP] 游客轮未授权名单，MCP 不挂 uid={}", mc.userId());
             return List.of();
         }
         Integer flag = mc.agentFlag(ToolFamily.MCP);
@@ -68,6 +78,17 @@ public class McpToolProvider implements ToolFamilyProvider {
         java.util.Set<String> refs = mc.agentSelection(ToolFamily.MCP);
         ResourceRefs.Scope scope = ResourceRefs.resolve(refs, mc.userId());
         java.util.Set<String> onlyServers = scope.names();
+        if (guestAllow != null) {
+            java.util.Set<String> narrowed = new java.util.HashSet<>(guestAllow);
+            if (onlyServers != null) narrowed.retainAll(onlyServers);
+            if (narrowed.isEmpty()) {
+                log.info("[MCP] 游客授权名单与智能体具体项选择交集为空，MCP 不挂 uid={} 名单={} agent选择={}",
+                        mc.userId(), guestAllow, onlyServers);
+                return List.of();
+            }
+            onlyServers = narrowed;
+            log.info("[MCP] 游客轮按授权名单挂载 uid={} servers={}", mc.userId(), onlyServers);
+        }
         // 别人的服务不顶替、自己没登记的要说出来，否则「智能体挂了这个外部工具」会静默变成
         // 「什么都没挂」。空集合=显式不使用，不算缺失，所以判据看引用集合而不是解析后的名字集合。
         if (refs != null && !refs.isEmpty()) {

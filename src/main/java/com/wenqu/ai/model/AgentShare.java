@@ -68,6 +68,19 @@ public class AgentShare {
      */
     private Integer guestFilesEnabled;
 
+    /**
+     * 游客可用的 MCP server 名单（逗号分隔的 server 名，空/NULL=全部关闭，默认关）。
+     * <p>为什么是名单而不是布尔：MCP server 是发布者的<b>个人资产</b>，一个发布者名下往往
+     * 挂着内网数据库查询这类绝不给匿名访客碰的服务——一刀切的「游客可用 MCP」等于把
+     * 全部个人 server 都亮给访客。按 server 粒度勾选，发布者只亮特定用途的那几个
+     * （如表单设计助手勾「动态表单服务」），其余照旧不可见。
+     * <p>名单里的名字必须是发布者<b>自己登记且启用</b>的 server（发布时按 uid 校验过滤）；
+     * 游客轮的 MCP 连接池本来就按发布者 uid 解析，这里只是可见性的收窄，不产生新凭据。
+     * 发布者后续删掉某 server 后，名单里的残留名在装配期自然解析不到，等于该项静默失效。
+     */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private String guestMcpServers;
+
     /** 创建人（游客对话以该用户身份执行检索可见性） */
     private String createdBy;
 

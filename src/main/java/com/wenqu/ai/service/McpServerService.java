@@ -516,11 +516,14 @@ public class McpServerService {
         long timeoutMs = Math.max(30_000, configService.getInt("mcp.server.timeoutMs", ConfigDefaults.MCP_SERVER_TIMEOUT_MS));
         CollectingSseEmitter sink = new CollectingSseEmitter();
         try {
-            // guestMode=true：工具白名单收窄（知识检索+内置），身份按发布者装载
+            // guestMode=true：工具白名单收窄（知识检索+内置），身份按发布者装载。
+            // MCP 授权名单与网页分享同一份：发布者在分享配置里勾了哪些 server，经本端点接入的
+            // 外部客户端同样只在名单内获得 MCP 工具（预批语义与 ShareController 同口径）
             chatService.chat(ChatCommand.builder()
                     .sessionId(sessionId).question(question).userId(r.owner().getUid())
                     .userImages(List.of()).attachments(List.of()).skills(List.of())
                     .agentId(r.agent().getId()).modelOverride(r.modelRef()).guestMode(true)
+                    .guestMcpServers(AgentShareService.guestMcpServersOf(r.share()))
                     .build(), sink);
             if (!sink.awaitDone(timeoutMs)) {
                 return toolError("执行超时（" + timeoutMs + " ms 内未收到完成事件）");

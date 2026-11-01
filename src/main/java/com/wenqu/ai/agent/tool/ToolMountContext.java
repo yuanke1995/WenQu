@@ -33,6 +33,29 @@ public interface ToolMountContext {
     boolean guestMode();
 
     /**
+     * 游客轮里发布者显式授权的 MCP server 名单（空/缺=未授权，MCP 照旧整族不挂）。
+     * <p>来源：分享配置的 {@code guest_mcp_servers}（发布者在发布弹窗按 server 粒度勾选，
+     * 且发布时已校验「是自己登记且启用的 server」）。游客轮的 MCP 连接池按<b>发布者</b> uid
+     * 解析（问答侧 userId 本来就是发布者），这份名单只是可见性收窄——名单之外的个人
+     * server 照旧对游客不可见，名单之内的工具挂上后按 {@link #guestPreapproved} 免逐次审批。
+     */
+    default java.util.Set<String> guestMcpServers() {
+        return java.util.Set.of();
+    }
+
+    /**
+     * 游客轮里这个名字是否已被发布者预批（装配与执行期共用这一份判据）。
+     * <p>口径：<b>只有</b> guestMode + 名单非空 + 名字像 MCP 工具三者同时成立才预批。
+     * 这是安全的，因为游客轮里 MCP 回调只可能来自名单内的 server（{@code McpToolProvider}
+     * 按名单收窄过）——「挂上了的 MCP 工具」与「预批的」天然同集；非游客轮恒 false，
+     * 审批语义逐字不变。
+     */
+    default boolean guestPreapproved(String toolName) {
+        return guestMode() && !guestMcpServers().isEmpty()
+                && ToolFamily.looksLikeMcpTool(toolName);
+    }
+
+    /**
      * 本轮是不是<b>子智能体分支</b>（P3a 全循环：父轮派出去、跑在一条临时会话里的那一轮）。
      * <p>默认 false = 用户在对话里直接发起的轮，行为与引入本字段之前逐字相同。它为的是把一件
      * 只有分支才有的事实说清楚：<b>没有人在看那条会话</b>，所以「要等人点」的能力在分支里

@@ -304,6 +304,9 @@ public class ShareController {
                 .userImages(images).attachments(attachments).skills(List.of())
                 .agentId(ctx.agent().getId()).modelOverride(modelRef).guestMode(true)
                 .guestUid(visitorUid)
+                // 游客 MCP 授权名单（发布者在分享配置按 server 粒度勾选）：装配与预批都读这一份，
+                // 名单之外的个人 MCP server 照旧不可见（见 McpToolProvider 的游客分支）
+                .guestMcpServers(AgentShareService.guestMcpServersOf(ctx.share()))
                 // 附件的字节在**访客**的目录里（上传通道按 share-visitor 隔离落盘），
                 // 而 userId 是发布者（检索可见性按他执行）——两者必须分开说，
                 // 否则附件正文会被当成"已过期"读不出来（见 ChatCommand#attachmentOwnerUid）

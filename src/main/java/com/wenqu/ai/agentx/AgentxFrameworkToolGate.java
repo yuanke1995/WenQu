@@ -115,8 +115,22 @@ public final class AgentxFrameworkToolGate implements MiddlewareBase {
             AgentscopeChatEngine.Recording> recordingSupplier;
 
     public AgentxFrameworkToolGate(Supplier<ExecutionPolicy> policySupplier) {
-        this.policySupplier = policySupplier;
+        this(policySupplier, java.util.Set.of());
     }
+
+    /**
+     * @param guestMcpAllow 游客轮发布者授权的 MCP server 名单（非空=名单内 MCP 工具按「发布者预批」
+     *                      在本闸放行）。只读档的判据读不到 MCP 工具的真实性质——{@code readOnly()}
+     *                      对 MCP 一律按「会改」处理（远端自报的 readOnlyHint 不可信）——名单是
+     *                      发布者对自己个人资产的显式亮出，是这里唯一可认的授权凭据；名单之外的
+     *                      MCP 工具照旧按只读档拒绝。
+     */
+    public AgentxFrameworkToolGate(Supplier<ExecutionPolicy> policySupplier, java.util.Set<String> guestMcpAllow) {
+        this.policySupplier = policySupplier;
+        this.guestMcpAllow = guestMcpAllow == null ? java.util.Set.of() : guestMcpAllow;
+    }
+
+    private final java.util.Set<String> guestMcpAllow;
 
     /** 挂上本轮的工具卡记录器（每轮开轮时由引擎调用）。 */
     public void bindRecording(AgentscopeChatEngine.Recording recording) {
@@ -249,6 +263,11 @@ public final class AgentxFrameworkToolGate implements MiddlewareBase {
         }
         if (denyMemoryWrites && "memory_save".equals(toolName)) return false;
         if (policy.denies(toolName)) return false;
+        // 游客授权名单内的 MCP 工具按「发布者预批」放行（口径与装配期 guestPreapproved 一致）；
+        // 名单外的 MCP 工具照旧落进下面的只读判据（对 MCP 恒为拒绝）
+        if (!guestMcpAllow.isEmpty() && com.wenqu.ai.agent.tool.ToolFamily.looksLikeMcpTool(toolName)) {
+            return true;
+        }
         if (policy.sandboxMode() == SandboxMode.READ_ONLY) return readOnly(agent, toolName);
         return true;
     }

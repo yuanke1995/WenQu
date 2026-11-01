@@ -509,6 +509,18 @@
           <exclamation-circle-outlined />
           <span>MCP 端点依赖公开分享，且需管理员在「系统设置 → MCP 服务（双向）」开启「对外提供 MCP 端点」</span>
         </div>
+        <!-- 游客 MCP 授权名单：MCP 是发布者个人资产，必须按 server 粒度亮出而不是一刀切——
+             勾中的 server 的工具对游客可见且免逐次审批（分享页没有审批卡通道，不预批就是
+             挂上了也一把调不动）。勾选项只列自己已启用的 server，与后端发布校验同口径 -->
+        <div v-if="pubEnabled && myMcpServerChoices.length" class="pub-field" style="margin-top:12px">
+          <span class="pub-label">游客可用 MCP 工具</span>
+          <a-checkbox-group v-model:value="pubGuestMcp" class="pub-mcp-checks" @change="savePublish">
+            <a-checkbox v-for="s in myMcpServerChoices" :key="s.name" :value="s.name">
+              {{ s.name }}<template v-if="!s.connected">（未连接）</template>
+            </a-checkbox>
+          </a-checkbox-group>
+          <div class="pub-switch-d" style="margin-top:6px">勾选后这些 MCP 服务的工具对访客开放且免逐次审批；智能体的「工具执行确认」档不能是「禁用」</div>
+        </div>
       </div>
 
       <!-- 游客输入：访客能发什么。默认全关——游客模型由上面那一项选定，看不懂图的模型收到图片
@@ -1284,6 +1296,10 @@ const pubToken = ref('')
 /** 游客输入开关（默认关；发布者显式打开才给访客多模态入口） */
 const pubGuestImages = ref(false)
 const pubGuestFiles = ref(false)
+/** 游客可用 MCP server 勾选（server 名数组；空=关闭。MCP 是发布者个人资产，按 server 粒度亮出） */
+const pubGuestMcp = ref([])
+/** 勾选项：发布者自己已启用的 MCP server（与后端发布校验同口径；未连接的也列出，标注即可） */
+const myMcpServerChoices = ref([])
 /** 模型目录（ref → 展示信息，含 visionCapable）：只用来判断"选中的模型能不能看图"。
  *  loadModelIndex 自带 10s TTL 缓存且失败静默，拿不到就按"能看"放过——宁可少提示一句，
  *  也不要因为一次取数失败就在发布弹窗里报一个假警 */
@@ -1350,6 +1366,7 @@ async function openPublish (a) {
   pubModelRef.value = ''
   pubGuestImages.value = false
   pubGuestFiles.value = false
+  pubGuestMcp.value = []
   pubTab.value = 'link'
   pubVisitCount.value = 0
   pubLastVisitAt.value = ''
@@ -1363,6 +1380,7 @@ async function openPublish (a) {
       pubMcpEnabled.value = !!r.data.mcpEnabled
       pubGuestImages.value = !!r.data.guestImages
       pubGuestFiles.value = !!r.data.guestFiles
+      pubGuestMcp.value = Array.isArray(r.data.guestMcpServers) ? r.data.guestMcpServers.slice() : []
       pubModelRef.value = r.data.modelRef || ''
       pubToken.value = r.data.token || ''
       pubVisitCount.value = r.data.visitCount || 0
@@ -1376,13 +1394,14 @@ async function savePublish () {
   if (!pubEnabled.value) pubMcpEnabled.value = false
   // 游客输入同理依赖分享本身：链接都停了就无所谓"访客能不能发图"，收了才不会回显出
   // 「未发布 + 已允许发图」这种自相矛盾的状态（后端也归一成关，两边口径一致）
-  if (!pubEnabled.value) { pubGuestImages.value = false; pubGuestFiles.value = false }
+  if (!pubEnabled.value) { pubGuestImages.value = false; pubGuestFiles.value = false; pubGuestMcp.value = [] }
   try {
     const r = await publishAgent(pubAgentId.value, {
       enabled: pubEnabled.value,
       mcpEnabled: pubMcpEnabled.value,
       guestImages: pubGuestImages.value,
       guestFiles: pubGuestFiles.value,
+      guestMcpServers: pubGuestMcp.value.slice(),
       modelRef: pubModelRef.value || ''
     })
     if (r && r.success !== false && r.data) {
@@ -1391,6 +1410,7 @@ async function savePublish () {
       // 以后端归一后的值为准（停用分享时它会把两个能力位一起压成 false）
       pubGuestImages.value = !!r.data.guestImages
       pubGuestFiles.value = !!r.data.guestFiles
+      if (Array.isArray(r.data.guestMcpServers)) pubGuestMcp.value = r.data.guestMcpServers.slice()
       // 同步列表行：卡片上的「已发布」标记即时反映，不用重拉列表
       const row = agents.value.find(x => x.id === pubAgentId.value)
       if (row) row.published = pubEnabled.value ? 1 : 0
@@ -1614,6 +1634,10 @@ const reload = async () => {
         value: s.ref || s.name,
         label: s.name + (s.connected ? '' : '（未连接）')
       }))
+      // 发布弹窗「游客可用 MCP 工具」的勾选项：只列已启用的 server（未启用的后端校验也不认）
+      myMcpServerChoices.value = (mr.data.servers || [])
+        .filter(s => s.enabled)
+        .map(s => ({ name: s.name, connected: !!s.connected }))
     }
     // 可委派的子智能体：名字后面带上它被派出去会怎么跑（交要点/全循环），
     // 勾定时就能看出"派出去的是拿资料的还是干活的"，不用一个个点进配置页
@@ -2237,6 +2261,9 @@ onMounted(async () => { })
 .pub-switch-row > .ant-switch { margin-top: 1px; flex: none; }
 .pub-switch-label { font-size: 13px; color: var(--app-text); }
 .pub-switch-d { font-size: 12px; color: var(--app-text3); margin-top: 2px; line-height: 1.6; }
+/* 游客 MCP 勾选组：竖排防长名挤压，勾选行紧凑 */
+.pub-mcp-checks { display: flex; flex-direction: column; gap: 4px; }
+.pub-mcp-checks .ant-checkbox-wrapper { font-size: 13px; color: var(--app-text); }
 .pub-warn {
   display: flex; align-items: flex-start; gap: 7px; margin-top: 10px;
   font-size: 12px; line-height: 1.6; color: var(--app-warn-text);

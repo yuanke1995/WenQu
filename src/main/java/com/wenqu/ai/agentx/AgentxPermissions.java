@@ -37,13 +37,37 @@ public final class AgentxPermissions {
     }
 
     /**
+     * 档位 → 框架权限模式（游客 MCP 授权名单感知版）。
+     * <p>游客轮带非空授权名单时把 EXPLORE 提到 DEFAULT：框架的 EXPLORE 对非只读工具是
+     * <b>无条件拒</b>（{@code checkExploreMode} 只看 {@code isReadOnly}，不认 allow 规则），
+     * 名单工具挂上了也永远调不动。提到 DEFAULT 后判定回落到
+     * {@link SpringAiToolAdapter#checkPermissions}——挂载面没变（游客只挂 guestAllowed
+     * 描述符工具 + 名单内 MCP），既有工具在两种模式下判定一致（装配期已把要等人的
+     * 描述符工具全部收掉），名单内 MCP 按「发布者预批」免审批放行。名单为空的游客轮
+     * 行为逐字不变。
+     */
+    public static PermissionMode modeOf(ExecutionPolicy policy, java.util.Set<String> guestMcpAllow) {
+        if (guestMcpAllow != null && !guestMcpAllow.isEmpty()
+                && policy != null && policy.preset() == PermissionPreset.RESEARCH) {
+            return PermissionMode.DEFAULT;
+        }
+        return modeOf(policy);
+    }
+
+    /**
      * 按名黑名单落成框架的 deny 规则（MCP 那族没有静态描述符，只能按名字判，这条与问答侧同口径）。
      * <p>{@code ask} 规则不在这里生成：要不要问人取决于「这个工具本轮挂没挂、登记过没有」，
      * 那份判据在 {@code ToolRegistry#requiresApproval} 上，由工具自己带进
      * {@link SpringAiToolAdapter#checkPermissions}，避免这里再抄一份登记表面。
      */
     public static PermissionContextState contextOf(ExecutionPolicy policy) {
-        PermissionContextState.Builder builder = PermissionContextState.builder().mode(modeOf(policy));
+        return contextOf(policy, null);
+    }
+
+    /** 同上，游客轮带授权名单时按名单感知版选模式（见 {@link #modeOf(ExecutionPolicy, java.util.Set)}）。 */
+    public static PermissionContextState contextOf(ExecutionPolicy policy, java.util.Set<String> guestMcpAllow) {
+        PermissionContextState.Builder builder = PermissionContextState.builder()
+                .mode(modeOf(policy, guestMcpAllow));
         if (policy != null && policy.deny() != null) {
             for (String name : policy.deny()) {
                 if (name == null || name.isBlank()) continue;

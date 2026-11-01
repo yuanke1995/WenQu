@@ -46,6 +46,8 @@ public class AgentController {
     private final AgentService agentService;
     private final com.wenqu.ai.service.AgentShareService agentShareService;
     private final com.wenqu.ai.service.ModelRegistryService modelRegistryService;
+    /** MCP 连接池读口：游客名单校验「是不是发布者自己登记且启用的 server」用 */
+    private final com.wenqu.ai.service.McpClientService mcpClientService;
     /** 工具注册中心的对外读口（能力名册）：智能体配置页的工具可选项从这里来，不再前端手抄 */
     private final com.wenqu.ai.service.ToolInventoryService toolInventoryService;
     /** 权限档位（P2）名册：配置页的档位选项与「管理员有没有放开这一档」从这里来，不在前端抄第二份 */
@@ -258,13 +260,14 @@ public class AgentController {
         // 未发布时能力位一律 false：多模态开关与分享同生命周期，分享没开就没有"游客能不能发图"这回事
         if (share == null) {
             return ResultJson.ok(Map.of("enabled", false, "mcpEnabled", false,
-                    "guestImages", false, "guestFiles", false));
+                    "guestImages", false, "guestFiles", false, "guestMcpServers", List.of()));
         }
         java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
         out.put("enabled", share.getEnabled() != null && share.getEnabled() == 1);
         out.put("mcpEnabled", share.getMcpEnabled() != null && share.getMcpEnabled() == 1);
         out.put("guestImages", AgentShareService.guestImagesOn(share));
         out.put("guestFiles", AgentShareService.guestFilesOn(share));
+        out.put("guestMcpServers", List.copyOf(AgentShareService.guestMcpServersOf(share)));
         out.put("token", share.getToken() == null ? "" : share.getToken());
         out.put("modelRef", share.getModelRef() == null ? "" : share.getModelRef());
         // 发布出去之后唯一能看到的反馈：被问过几次、最近一次是什么时候（会话内容不对发布者开放）
@@ -273,11 +276,13 @@ public class AgentController {
         return ResultJson.ok(out);
     }
 
-    @Operation(summary = "发布/更新公开分享", description = "body: {enabled, mcpEnabled, guestImages, guestFiles, modelRef}——开启后 /s/{token} 免登录可对话；"
+    @Operation(summary = "发布/更新公开分享", description = "body: {enabled, mcpEnabled, guestImages, guestFiles, modelRef, guestMcpServers}——开启后 /s/{token} 免登录可对话；"
             + "mcpEnabled=true 时同一个 token 兼作 MCP 端点 /ai/mcp/{token}（Streamable HTTP，供 Claude/Cursor 等接入）；"
             + "guestImages/guestFiles 分别控制访客能否发图、能否上传文档附件（默认都关）；"
+            + "guestMcpServers 为游客可用的 MCP server 名单（须为发布者自己登记且启用的 server，空=关闭；"
+            + "名单内 server 的工具对游客可见且免逐次审批）；"
             + "modelRef 为游客对话模型引用（须为自己可用的供应商模型，空=回退本人个人默认模型）；首次发布生成 token，此后不变。"
-            + "游客能力收窄：沙盒/产物/MCP/技能执行不暴露，检索可见性与默认模型按发布者执行")
+            + "游客能力收窄：沙盒/产物/MCP(未授权名单)/技能执行不暴露，检索可见性与默认模型按发布者执行")
     @PostMapping("/{id}/publish")
     public ResultJson publish(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
@@ -287,6 +292,13 @@ public class AgentController {
         boolean guestFiles = Boolean.parseBoolean(String.valueOf(body.get("guestFiles")));
         Object refObj = body.get("modelRef");
         String modelRef = refObj == null ? "" : String.valueOf(refObj).trim();
+        // 游客 MCP 名单：只收字符串数组，去重去空
+        java.util.Set<String> guestMcpServers = new java.util.LinkedHashSet<>();
+        if (body.get("guestMcpServers") instanceof List<?> raw) {
+            for (Object o : raw) {
+                if (o != null && !String.valueOf(o).isBlank()) guestMcpServers.add(String.valueOf(o).trim());
+            }
+        }
         // MCP 端点是分享的附加形态：分享停用（enabled=0）时链接与端点一并失效，
         // 因此"开了 MCP 却没开分享"是无效组合，显式拒绝而不是让用户发布完才发现端点不通
         if (mcpEnabled && !enabled) {
@@ -298,6 +310,25 @@ public class AgentController {
             guestImages = false;
             guestFiles = false;
         }
+        // 游客 MCP 名单同样依赖分享本体，且必须是发布者自己登记且启用的 server（fail-loud：
+        // 名单对不上=发布弹窗开着的时候 server 被删过，让发布者重开弹窗再勾，而不是静默丢勾选）
+        java.util.Set<String> guestMcpAllow;
+        if (!enabled || guestMcpServers.isEmpty()) {
+            guestMcpAllow = java.util.Set.of();
+        } else {
+            java.util.Set<String> mine = java.util.Set.of();
+            try {
+                mine = mcpClientService.serverNames(RequestUser.uid());
+            } catch (Exception ignored) {
+                // 连接池读失败按空名单处理：下面的校验会要求发布者先修好 server 列表
+            }
+            java.util.Set<String> registered = mine;
+            List<String> notMine = guestMcpServers.stream().filter(n -> !registered.contains(n)).toList();
+            if (!notMine.isEmpty()) {
+                return ResultJson.error("游客 MCP 名单里有你未登记或已停用的服务：" + String.join("、", notMine));
+            }
+            guestMcpAllow = guestMcpServers;
+        }
         // 模型引用归属校验：只能用自己可用的供应商（平台级 + 自己登记的个人级），发布时 fail-loud
         if (enabled && !modelRef.isBlank()) {
             modelRegistryService.assertUsable(modelRef, RequestUser.uid(), RequestUser.role());
@@ -306,13 +337,15 @@ public class AgentController {
         // 拦了会把正确配置也挡在门外。改为发布弹窗就地提示（前端按 ModelSelect 选中的模型给警示），
         // 把判断留给最清楚自己用哪个模型的人
         var share = agentShareService.publish(id,
-                new AgentShareService.PublishSpec(enabled, mcpEnabled, guestImages, guestFiles, modelRef),
+                new AgentShareService.PublishSpec(enabled, mcpEnabled, guestImages, guestFiles, modelRef,
+                        guestMcpAllow),
                 RequestUser.uid());
         java.util.Map<String, Object> ok = new java.util.LinkedHashMap<>();
         ok.put("enabled", enabled);
         ok.put("mcpEnabled", mcpEnabled);
         ok.put("guestImages", AgentShareService.guestImagesOn(share));
         ok.put("guestFiles", AgentShareService.guestFilesOn(share));
+        ok.put("guestMcpServers", List.copyOf(AgentShareService.guestMcpServersOf(share)));
         ok.put("token", share.getToken() == null ? "" : share.getToken());
         ok.put("modelRef", share.getModelRef() == null ? "" : share.getModelRef());
         return ResultJson.ok(ok);

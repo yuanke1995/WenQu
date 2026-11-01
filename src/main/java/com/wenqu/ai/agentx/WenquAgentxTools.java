@@ -187,7 +187,7 @@ public class WenquAgentxTools {
                                        java.util.function.BiConsumer<String, String> onDegrade,
                                        boolean approvalCanAsk) {
         var mc = toolAssembly.mountContext(agentOf(cmd), cmd.getUserId(), cmd.isGuestMode(),
-                cmd.branchTurn(), onDegrade, policy);
+                cmd.branchTurn(), onDegrade, policy, cmd.getGuestMcpServers());
         List<Object> holders = new java.util.ArrayList<>(turnTools(cmd, slot));
         // 建实例时才能定下来的工具面：脚本子调用要用同一批回调，逐轮只换轮号/通道/台账。
         // 工具闭包里<b>只允许</b>捕获这个会话级槽位（slot），按轮的数据一律调用时现取——
@@ -354,7 +354,7 @@ public class WenquAgentxTools {
      */
     public java.util.Set<String> turnGroupedNames(ChatCommand cmd, ExecutionPolicy policy) {
         var mc = toolAssembly.mountContext(agentOf(cmd), cmd.getUserId(), cmd.isGuestMode(),
-                cmd.branchTurn(), (code, message) -> { }, policy);
+                cmd.branchTurn(), (code, message) -> { }, policy, cmd.getGuestMcpServers());
         java.util.Set<String> out = new java.util.LinkedHashSet<>();
         for (var family : GROUPED_FAMILIES) {
             for (var d : toolRegistry.ofFamily(family)) {
@@ -733,7 +733,7 @@ public class WenquAgentxTools {
         if (cmd.branchTurn() || cmd.isGuestMode()) return false;
         var mc = toolAssembly.mountContext(agentOf(cmd), cmd.getUserId(), cmd.isGuestMode(),
                 cmd.branchTurn(), (code, message) -> {
-                }, policy);
+                }, policy, cmd.getGuestMcpServers());
         if (!mc.masterOn() || mc.approvalOff() || (mc.branchTurn() && mc.approvalAsk())) return false;
         var p = mc.permissionPolicy();
         if (p != null && p.sandboxMode() == com.wenqu.ai.agent.permission.SandboxMode.READ_ONLY) return false;
@@ -755,9 +755,13 @@ public class WenquAgentxTools {
             if (AskUserTool.NAME.equals(name)) continue;   // 由框架原生 AskUserTool 顶替
             rawCallbacks.add(cb);
             if (provider.family() == com.wenqu.ai.agent.tool.ToolFamily.MCP) mcpToolNames.add(name);
-            // 要不要问人沿用问渠的登记（未登记一律要审批，fail-closed）——不在框架侧另判一次「像不像写操作」
+            // 要不要问人沿用问渠的登记（未登记一律要审批，fail-closed）——不在框架侧另判一次「像不像写操作」。
+            // 唯一豁免：游客轮里发布者授权名单内的 MCP 工具按「发布者预批」处理——分享页没有审批卡
+            // 通道（approvalCanAsk=false），不豁免的话名单挂上了也一把调不动，逐个 deny 白烧步数。
+            // 名单外的一切照旧：装配期根本不会挂，这里也拦不到。
             boolean needsApproval = asksHuman(policy)
-                    && toolRegistry.requiresApproval(name, configService::getBoolean);
+                    && toolRegistry.requiresApproval(name, configService::getBoolean)
+                    && !mc.guestPreapproved(name);
             // 只读标记同样只问登记处那一份等级（读类/纯计算=只读）。未登记的名字按非只读处理，
             // 与上面那条审批口径一致：宁可少给，不给「平台不知道它会干什么」的工具放行。
             boolean readOnly = toolRegistry.find(name)

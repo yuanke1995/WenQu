@@ -63,6 +63,18 @@ public class ToolAssemblyService {
     public ToolMountContext mountContext(Agent agent, String userId, boolean guestMode,
                                          boolean branchTurn, BiConsumer<String, String> degradationSink,
                                          ExecutionPolicy turnPolicy) {
+        return mountContext(agent, userId, guestMode, branchTurn, degradationSink, turnPolicy, null);
+    }
+
+    /**
+     * 带游客 MCP 授权名单的重载（分享链路用）：名单非空时游客轮按它挂 MCP 并预批。
+     * 不带名单的旧签名保留——非游客路径与提示词侧的判据逐字不变。
+     */
+    public ToolMountContext mountContext(Agent agent, String userId, boolean guestMode,
+                                         boolean branchTurn, BiConsumer<String, String> degradationSink,
+                                         ExecutionPolicy turnPolicy, java.util.Set<String> guestMcpServers) {
+        java.util.Set<String> guestAllow = guestMode && guestMcpServers != null
+                ? guestMcpServers : java.util.Set.of();
         return new ToolMountContext() {
             @Override
             public String userId() {
@@ -77,6 +89,11 @@ public class ToolAssemblyService {
             @Override
             public boolean guestMode() {
                 return guestMode;
+            }
+
+            @Override
+            public java.util.Set<String> guestMcpServers() {
+                return guestAllow;
             }
 
             @Override
