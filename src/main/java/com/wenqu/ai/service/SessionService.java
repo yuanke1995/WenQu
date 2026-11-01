@@ -1328,8 +1328,10 @@ public class SessionService {
         // 超长的直接后果不是「存一半」——是 MysqlDataTruncation 让**整条消息**（正文/工具卡/时间线/用量）
         // 一起落库失败（2026-10-22 线上实测：一轮异常长的思考把 thinking 列撑爆，助手消息整体没存进库）。
         // 落库侧截断兜底而不是只靠源头自律：思考与过程独白是回放性内容，截掉尾部只少看一点过程；
-        // 消息本体丢了才是不可逆的。content 的护栏在 Java 侧判一次（TEXT 装不下的回答同样会让全行失败）。
-        final String contentCapped = capForTextColumn(content);
+        // 消息本体丢了才是不可逆的。content 已升 MEDIUMTEXT（单条提问 6 万字那次的 ALTER），
+        // 走自己的护栏（CONTENT_COLUMN_MAX_CHARS）——TEXT 的 2 万字旧护栏会把长回答（表单助手
+        // 一轮 2 万字以上的 schema）拦腰截断，截断副本落库后，回放/读库侧拿到的都是残缺 JSON。
+        final String contentCapped = capForColumn(content, CONTENT_COLUMN_MAX_CHARS);
         final String thinkingCapped = capForTextColumn(thinking);
         final String processTextCapped = capForTextColumn(processText);
         return transactionTemplate.execute(status -> {
@@ -1397,9 +1399,20 @@ public class SessionService {
      */
     private static final int TEXT_COLUMN_MAX_CHARS = 20_000;
 
+    /**
+     * content 列的字符数护栏。content 已升 MEDIUMTEXT（16MB 字节），TEXT 时代的 2 万字护栏
+     * 会让长回答（表单设计助手一轮 2 万字以上的整份 schema）落库即残缺；这里只留一道
+     * 兜底（100 万字 ≈ 最坏 4MB 字节，远在列容量内，也是现实回答上限的数倍），挡失控输出。
+     */
+    private static final int CONTENT_COLUMN_MAX_CHARS = 1_000_000;
+
     private static String capForTextColumn(String s) {
-        if (s == null || s.length() <= TEXT_COLUMN_MAX_CHARS) return s;
-        return s.substring(0, TEXT_COLUMN_MAX_CHARS) + "\n…（超过单列容量，已截断）";
+        return capForColumn(s, TEXT_COLUMN_MAX_CHARS);
+    }
+
+    private static String capForColumn(String s, int limit) {
+        if (s == null || s.length() <= limit) return s;
+        return s.substring(0, limit) + "\n…（超过单列容量，已截断）";
     }
 
     /**
@@ -2284,11 +2297,12 @@ public class SessionService {
                     }
                     msg.setSessionId(sessionId);
                     msg.setRole(role);
-                    msg.setContent(content);
+                    msg.setContent(capForColumn(content, CONTENT_COLUMN_MAX_CHARS));
                     msg.setImages(imagesJson);
                     Object thinkingObj = m.get("thinking");
                     if (thinkingObj != null) {
-                        msg.setThinking(String.valueOf(thinkingObj));
+                        // 降级缓存里的 thinking 是未截断原文：直接落 TEXT 列会重演 2026-10-22 的整行落库失败
+                        msg.setThinking(capForTextColumn(String.valueOf(thinkingObj)));
                     }
                     Object sourcesObj = m.get("sources");
                     if (sourcesObj != null) {
