@@ -502,29 +502,40 @@
           <a-switch v-model:checked="pubMcpEnabled" :disabled="!pubEnabled" size="small" @change="savePublish" />
           <div class="pub-switch-t">
             <div class="pub-switch-label">开放 MCP 端点</div>
-            <div class="pub-switch-d">开启后同一个 token 兼作 MCP 凭据，Claude / Cursor 等客户端可直连</div>
+            <div class="pub-switch-d">开启后同一个 token 兼作 MCP 凭据，Claude / Cursor 等客户端可直连，并可挑选对游客开放的 MCP 工具</div>
+            <!-- 游客 MCP 授权名单：挂在端点开关之下（从属关系一眼可见），端点关着时不出现——
+                 此前只跟总开关走，端点关着照样能勾，勾了也保存了但运行期什么都不挂，
+                 「配置了却不生效」。勾选项=智能体配置里实际绑定的 MCP 服务（指定模式列它绑的、
+                 跟随全局列全部已启用），与运行期「游客名单 ∩ 智能体具体项选择」的装配口径一致 -->
+            <div v-if="pubMcpEnabled && myMcpServerChoices.length" class="pub-mcp-sub">
+              <div class="pub-mcp-sub-h">
+                <span class="pub-label">游客可用 MCP 工具</span>
+                <span class="pub-mcp-sub-act">
+                  <button class="app-link-btn" @click="pubGuestMcp = myMcpServerChoices.filter(s => s.connected).map(s => s.name); saveMcpChecks()">全选</button>
+                  <button class="app-link-btn" @click="pubGuestMcp = []; saveMcpChecks()">清空</button>
+                </span>
+              </div>
+              <a-checkbox-group v-model:value="pubGuestMcp" class="pub-mcp-checks" @change="saveMcpChecks">
+                <a-checkbox v-for="s in myMcpServerChoices" :key="s.name" :value="s.name" :disabled="!s.connected">
+                  {{ s.name }}<template v-if="!s.connected">（未连接，暂不可勾）</template>
+                </a-checkbox>
+              </a-checkbox-group>
+              <div class="pub-switch-d">勾选后这些 MCP 服务的工具对访客开放且免逐次审批</div>
+              <!-- 档位=禁用是确定翻车：运行期 approvalPolicyAllows 直接不挂 MCP 工具族，游客一个都调不动。
+                   只在这种确定场景就地警告，不再无条件念规则 -->
+              <div v-if="pubAgentApprovalOff" class="pub-warn">
+                <exclamation-circle-outlined />
+                <span>该智能体的「工具执行确认」当前是「禁用」：游客一个 MCP 工具都调不动。请到「配置 → 工具执行确认」改成「自动执行」或「执行前确认」</span>
+              </div>
+            </div>
+            <div v-else-if="pubMcpEnabled" class="pub-switch-d" style="margin-top:8px">
+              没有可对游客开放的 MCP 工具：该智能体的「MCP 外部工具」为「不使用」或未指定任何服务，或者你名下没有已启用的 MCP 服务
+            </div>
           </div>
         </div>
         <div v-if="!pubEnabled" class="pub-warn">
           <exclamation-circle-outlined />
           <span>MCP 端点依赖公开分享，且需管理员在「系统设置 → MCP 服务（双向）」开启「对外提供 MCP 端点」</span>
-        </div>
-        <!-- 游客 MCP 授权名单：MCP 是发布者个人资产，必须按 server 粒度亮出而不是一刀切——
-             勾中的 server 的工具对游客可见且免逐次审批（分享页没有审批卡通道，不预批就是
-             挂上了也一把调不动）。勾选项只列自己已启用的 server，与后端发布校验同口径 -->
-        <!-- 勾选项=智能体配置里实际绑定的 MCP 服务（指定模式列它绑的、跟随全局列全部已启用），
-             与运行期「游客名单 ∩ 智能体具体项选择」的装配口径一致 -->
-        <div v-if="pubEnabled && myMcpServerChoices.length" class="pub-field" style="margin-top:12px">
-          <span class="pub-label">游客可用 MCP 工具</span>
-          <a-checkbox-group v-model:value="pubGuestMcp" class="pub-mcp-checks" @change="savePublish">
-            <a-checkbox v-for="s in myMcpServerChoices" :key="s.name" :value="s.name">
-              {{ s.name }}<template v-if="!s.connected">（未连接）</template>
-            </a-checkbox>
-          </a-checkbox-group>
-          <div class="pub-switch-d" style="margin-top:6px">勾选后这些 MCP 服务的工具对访客开放且免逐次审批；智能体的「工具执行确认」档不能是「禁用」</div>
-        </div>
-        <div v-else-if="pubEnabled" class="pub-switch-d" style="margin-top:12px">
-          没有可对游客开放的 MCP 工具：该智能体的「MCP 外部工具」为「不使用」或未指定任何服务，或者你名下没有已启用的 MCP 服务
         </div>
       </div>
 
@@ -1296,6 +1307,10 @@ const pubAgentName = ref('')
 const pubAgent = ref({ name: '', icon: '', isBuiltin: 0 })
 const pubEnabled = ref(false)
 const pubMcpEnabled = ref(false)
+/** 被发布智能体的「工具执行确认」是否为「禁用」（openPublish 时取一次）。
+ *  禁用档在运行期 approvalPolicyAllows 处直接不挂 MCP 工具族（ToolAssemblyService 精确匹配 "off"，
+ *  跟随档位''/auto/ask 都不算），勾了名单也一个工具都调不动——这是确定翻车的组合，就地警告 */
+const pubAgentApprovalOff = ref(false)
 const pubModelRef = ref('')
 const pubToken = ref('')
 /** 游客输入开关（默认关；发布者显式打开才给访客多模态入口） */
@@ -1390,6 +1405,7 @@ async function openPublish (a) {
   pubToken.value = ''
   pubEnabled.value = false
   pubMcpEnabled.value = false
+  pubAgentApprovalOff.value = (a.toolApprovalMode || '') === 'off'
   pubModelRef.value = ''
   pubGuestImages.value = false
   pubGuestFiles.value = false
@@ -1427,7 +1443,13 @@ async function openPublish (a) {
   } catch (e) { message.error(e.message || '分享配置加载失败') }
 }
 
-async function savePublish () {
+/** 大动作（总开关 / 端点开关 / 模型 / 游客输入开关）保存后给一句确认 */
+async function savePublish () { return doSave(true) }
+/** 勾选名单的细粒度改动走静默保存：勾三个服务弹三个「已发布」，toast 就成了噪音，
+ *  勾选框本身已是反馈。全选/清空也走这里 */
+async function saveMcpChecks () { return doSave(false) }
+
+async function doSave (toast) {
   // MCP 端点是分享的附加形态：分享停用后链接与端点一并失效，前端同步关掉避免发布出无效组合
   if (!pubEnabled.value) pubMcpEnabled.value = false
   // 游客输入同理依赖分享本身：链接都停了就无所谓"访客能不能发图"，收了才不会回显出
@@ -1452,7 +1474,7 @@ async function savePublish () {
       // 同步列表行：卡片上的「已发布」标记即时反映，不用重拉列表
       const row = agents.value.find(x => x.id === pubAgentId.value)
       if (row) row.published = pubEnabled.value ? 1 : 0
-      message.success(pubEnabled.value ? '已发布，链接可访问' : '已停用')
+      if (toast) message.success(pubEnabled.value ? '已发布，链接可访问' : '已停用')
     } else message.error(r?.msg || '保存失败')
   } catch (e) { message.error(e.message || '保存失败') }
 }
@@ -2300,9 +2322,21 @@ onMounted(async () => { })
 .pub-switch-row > .ant-switch { margin-top: 1px; flex: none; }
 .pub-switch-label { font-size: 13px; color: var(--app-text); }
 .pub-switch-d { font-size: 12px; color: var(--app-text3); margin-top: 2px; line-height: 1.6; }
-/* 游客 MCP 勾选组：竖排防长名挤压，勾选行紧凑 */
-.pub-mcp-checks { display: flex; flex-direction: column; gap: 4px; }
-.pub-mcp-checks .ant-checkbox-wrapper { font-size: 13px; color: var(--app-text); }
+/* 游客 MCP 勾选组：挂在端点开关文字列之下的内嵌块，从属关系一眼可见 */
+.pub-mcp-sub {
+  margin-top: 8px; padding: 10px 12px;
+  border: 1px solid var(--app-border); border-radius: var(--app-radius-sm);
+  background: var(--app-panel-2);
+}
+.pub-mcp-sub-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pub-mcp-sub-act { flex: none; display: flex; gap: 2px; }
+.pub-mcp-sub .pub-switch-d { margin-top: 6px; }
+.pub-mcp-sub .pub-warn { margin-top: 8px; }
+/* 游客 MCP 勾选组：竖排防长名挤压，勾选行紧凑。
+   align-self: stretch 是必须的——antd 给 .ant-checkbox-group 注入了 align-self:center，
+   不覆盖的话勾选框会缩成内容宽、居中漂在弹窗中间 */
+.pub-mcp-checks { display: flex; flex-direction: column; gap: 4px; align-self: stretch; margin-top: 6px; }
+.pub-mcp-checks .ant-checkbox-wrapper { font-size: 13px; color: var(--app-text); align-items: center; }
 .pub-warn {
   display: flex; align-items: flex-start; gap: 7px; margin-top: 10px;
   font-size: 12px; line-height: 1.6; color: var(--app-warn-text);
