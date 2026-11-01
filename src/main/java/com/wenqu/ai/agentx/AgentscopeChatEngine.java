@@ -90,7 +90,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 再按这个间隔回查一次。取 2 秒的依据：那一跑真死掉时，最坏晚 2 秒才收，而机器预算与看门狗都在
      * 更长的线上兜着；反过来若把它压回 200ms，就把刚省下来的全量重读又请回来了。
      */
-    private static final long STATE_RECHECK_MS = 2_000L;
+    // 权威回查间隔：tasks() 对每条历史命令各做一次从 head 倒走的全量 scan，万级事件日志上一次
+    // 秒级（2026-11-01 纸表轮实测把跟随循环拖成秒拍）。它只是租约过期/inbox 拒绝这类「不落事件」
+    // 状态的兜底，正常结算走镜像的 run/end，十秒级的兜底延迟没有可感知的后果。
+    private static final long STATE_RECHECK_MS = 10_000L;
 
     /** 本轮提交离队的宽限：投递循环 100ms 一跳，超过这一段还没启动就是被闸门锁住了。 */
     private static final long LAUNCH_GRACE_MS = 30_000L;
@@ -868,8 +871,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         long emitFrom = startCursor;
         int announcedRefs = 0;
         Set<String> announcedApprovals = new LinkedHashSet<>();
-        // 流式用量帧的「上一次算过的 transcript 条数」，见 emitLiveUsage
-        long[] usageStamp = { -1 };
+        // 流式用量帧的「上一次算过的 transcript 条数 + 上一次发包墙钟」，见 emitLiveUsage
+        long[] usageStamp = { -1, -1 };
         boolean stopped = false;
         // 等待预算用尽：卡片已落终态，收尾时不再对用户说「答完会自动接着跑」
         boolean timedOut = false;
@@ -1002,7 +1005,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 迟到的待办：任务判「结算」与待办出现之间没有原子边界，只复查 150ms 那一次会漏。
                 // 漏掉的后果是这张卡永远悬着——用户答了也没有活着的循环去接续（框架侧那轮已经收）。
                 // 所以这里宁可再等一拍：等下去也有预算封顶（approvalTimeoutMs），不会无限挂着。
-                if (!session.pending().isEmpty()) {
+                // 这一次复查改走「增量 drain + 镜像」：pending() 是从 head 沿父链倒走的全量回放，
+                // 万级事件日志上一次就是十几秒（2026-11-01 纸表轮收口空窗 57s 的主力），这里若再
+                // 权威读一遍等于把那笔白付两遍。本 run 的卡必然落账在 run/end 之前，drain 完的镜像
+                // 不可能漏；跨 run 的迟到件由收尾那一次权威快照兜底。
+                cursor = drain(session, cursor, emitFrom, channel, recording, mirror);
+                if (mirror.hasPending()) {
                     sleep(200);
                     continue;
                 }
@@ -1062,19 +1070,24 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         //     在库里根本不存在，界面上凭空消失，只剩第一句提问；
         //  2) 卡片留在 PENDING → 恢复端点还能把它重建出来，但答了没人接，成了「点了没反应」。
         // 所以按超时收口：待办落 TIMEOUT、这一轮走 timedOut 那条落库与文案（半程内容据此可见）。
-        if (!stopped && !timedOut && !superseded && !neverLaunched && !session.pending().isEmpty()) {
+        // 收尾的权威待办快照只做一次：pending() 按 256 一批从 0 倒走整条 commit 链，万级事件
+        // 日志上一次就是十几秒（2026-11-01 纸表轮收口空窗 57s 的主力），下面四处各读一遍等于
+        // 四份白付。abandon 结算掉的卡在快照里仍挂着——那几支已经把 timedOut 置真，awaiting
+        // 的 !timedOut 正好把这笔陈旧性挡掉；真还在等人的卡快照如实保留，语义不变。
+        Map<String, SessionEvent> pendingAtClose = session.pending();
+        if (!stopped && !timedOut && !superseded && !neverLaunched && !pendingAtClose.isEmpty()) {
             channel.emit(RunEventType.WARN, "本轮已超时结束，等你确认的那一步已作废");
             timedOut = true;
         }
 
-        if (!stopped && !timedOut && !superseded && session.pending().size() > 0) {
+        if (!stopped && !timedOut && !superseded && pendingAtClose.size() > 0) {
             // 「答完会自动接着跑」只对还活着的等待成立：超时那一支已经把待办落成终态，
             // 再说这句就是在承诺一件不会发生的事
             channel.emit(RunEventType.WARN, "有工具在等你确认，答完会自动接着跑（可稍后回来接着看它）");
         }
         // 这一轮到此不再有人跟随：还挂在人身上的待办当场收口（框架结算 + 卡片终态 + 待办行落库）。
         // neverLaunched 那一支不碰——那些待办属于**上一轮**，卡片可能正等用户答，本轮没启动不是它的错。
-        if (!neverLaunched) abandonPendingInteractions(session, cmd, channel, recording, stopped);
+        if (!neverLaunched) abandonPendingInteractions(session, cmd, channel, recording, stopped, pendingAtClose);
         sessions.setPlanMode(cmd, false);
         // 正文取哪一份：优先本轮实际流出来的那一截（与发出去的 token 帧同源）；只有它为空、且这一轮
         // 本身没失败，才回退到会话里最后一条有正文的助手消息。反过来先查会话会出两件坏事：被叫停的那一跑在 Transcript 里
@@ -1150,7 +1163,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 来了历史里还多出一条气泡（同一个问题两个助手回答）。
         // 继续对话取代的那一轮不算「暂时没人跟」：中断之后不会再有跟随者，而这一版的「已被取代」
         // 必须随行落库（历史里要有这一版计划，新一轮也靠它取上一版），所以放行到 persist。
-        boolean awaiting = !timedOut && !superseded && !session.pending().isEmpty();
+        boolean awaiting = !timedOut && !superseded && !pendingAtClose.isEmpty();
         long wallMs = System.currentTimeMillis() - startedAt;
         long machineMs = Math.max(0L, wallMs - humanWaitMs);
         // 报出去的「本轮耗时」说的是机器干活用了多久，不是这一轮在墙上挂了多久：人在计划卡上读了
@@ -2035,8 +2048,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * @param stopped true=用户叫停，false=等待预算用尽（落库状态与卡片措辞都按它分）
      */
     private void abandonPendingInteractions(AgentSession session, ChatCommand cmd, RunChannel channel,
-                                            Recording recording, boolean stopped) {
-        Map<String, SessionEvent> pending = new java.util.LinkedHashMap<>(session.pending());
+                                            Recording recording, boolean stopped,
+                                            Map<String, SessionEvent> pendingAtClose) {
+        // 用收尾那份权威快照，不再自己读一遍（pending() 全量回放在万级事件日志上要十几秒）
+        Map<String, SessionEvent> pending = new java.util.LinkedHashMap<>(pendingAtClose);
         if (pending.isEmpty()) return;
         String why = stopped ? "本轮已停止" : "等待超时";
         // 结构性收口排在发帧之前：通道可能已经被停止/断开收掉了，那一帧发不出去是小事，
@@ -4198,6 +4213,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                                int contextWindow) {
         // 上下文没添新行就不必读全量日志去问「添了几条」：transcript() 走的是从 head 回走的整条 commit 链
         if (!transcriptChanged) return;
+        // 墙钟节流（stamp[1]）：tool/result 会让 transcriptChanged 每步都真，大表轮 20 来步就是
+        // 20 来次全量读，全折进轮内延迟（2026-11-01 纸表轮实测）。容量圆环 4 秒刷一次没有可感知损失。
+        long now = System.currentTimeMillis();
+        if (stamp[1] > 0 && now - stamp[1] < 4_000L) return;
+        stamp[1] = now;
         int size = session.transcript().messages().size();
         if (size == stamp[0]) return;
         stamp[0] = size;
