@@ -94,12 +94,20 @@ public class OpsController {
                 announcementService.save(a, str(body.get("tenantId")))));
     }
 
-    @Operation(summary = "下线公告", description = "保留行不真删——发出去让全员看见的事要有痕迹，误下线可恢复")
+    @Operation(summary = "下线公告", description = "保留行不真删——发出去让全员看见的事要有痕迹，误下线可恢复；要彻底清除走删除端点")
     @DeleteMapping("/announcement/{id}")
     public ResultJson deleteAnnouncement(@PathVariable("id") String id, HttpServletRequest request) {
         if (!adminGuard.isAdmin(request)) return ResultJson.error("公告管理仅管理员可操作");
         com.wenqu.ai.util.TenantContext.asPlatformIfSuper(() -> announcementService.disable(id));
         return ResultJson.ok("已下线");
+    }
+
+    @Operation(summary = "删除公告", description = "物理删除，仅已下线的公告可删（发布中的先下线再删）；删除动作带标题入审计")
+    @DeleteMapping("/announcement/{id}/purge")
+    public ResultJson purgeAnnouncement(@PathVariable("id") String id, HttpServletRequest request) {
+        if (!adminGuard.isAdmin(request)) return ResultJson.error("公告管理仅管理员可操作");
+        com.wenqu.ai.util.TenantContext.asPlatformIfSuper(() -> announcementService.purge(id));
+        return ResultJson.ok("已删除");
     }
 
     @Operation(summary = "当前生效公告（登录用户）", description = "本租户发布中的公告，登录后横幅数据源；任何登录用户可读")

@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * 平台公告：发布 / 下线 / 成员侧读取。
+ * 平台公告：发布 / 下线 / 删除 / 成员侧读取。
  * <p>
  * 跨租户口径与配额、成员名单一致（{@code TenantContext.asPlatformIfSuper}）：平台级管理员管全部租户的
  * 公告，租户管理员只管本租户的。成员侧读取（登录后横幅）走普通租户过滤——每人只看到本租户发布中的公告。
@@ -75,13 +75,26 @@ public class AnnouncementService {
         return a;
     }
 
-    /** 下线（保留行）：误下线可一键恢复，所以不提供物理删除——发出去让全员看见的事要有痕迹 */
+    /** 下线（保留行）：误下线可一键恢复；要彻底清除走 {@link #purge}（同样入审计） */
     public void disable(String id) {
         Announcement a = mapper.selectById(id);
         if (a == null) throw new BizException("公告不存在");
         a.setEnabled(0);
         mapper.updateById(a);
         audit.record("[AUDIT] 下线公告 id={} title={}", a.getId(), a.getTitle());
+    }
+
+    /**
+     * 物理删除（仅已下线的公告可删）：发布中的先下线再删，避免横幅正挂着被直接抽走。
+     * 删掉后行没了，痕迹全靠审计链——所以审计里带齐 id/租户/标题/级别。
+     */
+    public void purge(String id) {
+        Announcement a = mapper.selectById(id);
+        if (a == null) throw new BizException("公告不存在");
+        if (a.getEnabled() != null && a.getEnabled() == 1) throw new BizException("发布中的公告请先下线再删除");
+        mapper.deleteById(id);
+        audit.record("[AUDIT] 删除公告 id={} tenant={} title={} level={}",
+                a.getId(), a.getTenantId(), a.getTitle(), a.getLevel());
     }
 
     /** 成员侧：本租户发布中的公告（横幅数据源，最多 5 条，按发布时间倒序） */

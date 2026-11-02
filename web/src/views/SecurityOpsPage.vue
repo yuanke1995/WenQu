@@ -104,7 +104,7 @@
         <!-- ==================== 平台公告 ==================== -->
         <a-tab-pane key="announcement" tab="平台公告">
           <div class="checkup-head">
-            <span class="form-tip" style="margin:0">停机窗口 / 升级 / 新功能通知：按租户发布，登录后横幅常显，直到下线。下线保留历史，可恢复。</span>
+            <span class="form-tip" style="margin:0">停机窗口 / 升级 / 新功能通知：按租户发布，登录后横幅常显，直到下线。下线保留历史，可恢复；已下线的可删除，动作入审计。</span>
             <button class="app-btn" style="margin-left:auto" @click="openAnnouncement()">
               <plus-outlined /> 发布公告
             </button>
@@ -132,6 +132,10 @@
                   <a-popconfirm v-if="record.enabled === 1" title="下线该公告？（保留历史，可再编辑重新发布）"
                                 ok-text="下线" cancel-text="取消" @confirm="onDisableAnnouncement(record)">
                     <a-button type="link" size="small" danger>下线</a-button>
+                  </a-popconfirm>
+                  <a-popconfirm v-else title="删除该公告？物理删除不可恢复（动作入审计）"
+                                ok-text="删除" cancel-text="取消" @confirm="onPurgeAnnouncement(record)">
+                    <a-button type="link" size="small" danger>删除</a-button>
                   </a-popconfirm>
                 </a-space>
               </template>
@@ -170,7 +174,7 @@ import { message, Modal } from 'ant-design-vue'
 import { PlusOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons-vue'
 import {
   runOpsCheckup, getLastOpsCheckup, forceLogoutUser,
-  listAnnouncements, saveAnnouncement, deleteAnnouncement,
+  listAnnouncements, saveAnnouncement, deleteAnnouncement, purgeAnnouncement,
   pageUsers, listDepartments, listTenants
 } from '../api'
 import UserAvatar from '../components/UserAvatar.vue'
@@ -322,6 +326,13 @@ async function onDisableAnnouncement (a) {
     if (r.success) { message.success('已下线'); await loadAnnouncements() }
     else message.error(r.msg || '下线失败')
   } catch (e) { message.error(e.message || '下线失败') }
+}
+async function onPurgeAnnouncement (a) {
+  try {
+    const r = await purgeAnnouncement(a.id)
+    if (r.success) { message.success('已删除'); await loadAnnouncements() }
+    else message.error(r.msg || '删除失败')
+  } catch (e) { message.error(e.message || '删除失败') }
 }
 
 onMounted(() => {

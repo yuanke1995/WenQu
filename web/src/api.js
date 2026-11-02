@@ -1601,6 +1601,9 @@ export const saveAnnouncement = body =>
 /** 下线公告（保留行，可恢复） */
 export const deleteAnnouncement = id =>
   request(`/ops/announcement/${encodeURIComponent(id)}`, { method: 'DELETE' })
+/** 物理删除公告（仅已下线的可删）：删除动作带标题入审计 */
+export const purgeAnnouncement = id =>
+  request(`/ops/announcement/${encodeURIComponent(id)}/purge`, { method: 'DELETE' })
 /** 当前生效公告（登录后横幅数据源，所有登录用户） */
 export const getActiveAnnouncements = () => request('/ops/announcement/active')
 
