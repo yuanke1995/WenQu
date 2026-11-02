@@ -113,7 +113,10 @@ public class ShareController {
     @Operation(summary = "会话只读分享", description = "按分享 token 取回会话标题与消息（只读，免登录）")
     @GetMapping("/session/{token}")
     public ResultJson sharedSession(
-            @Parameter(description = "分享令牌") @PathVariable("token") String token) {
+            @Parameter(description = "分享令牌") @PathVariable("token") String token,
+            HttpServletRequest httpRequest) {
+        // 读端点同样前置限流：resolveGuest/publicHistory 都要打库，免登录入口不能无限打
+        rateLimitService.checkRateLimit("share-read", "ip:" + clientIp(httpRequest));
         var share = sessionShareService.resolvePublic(token);
         if (share == null) throw new BizException(404, "分享链接无效或已停止访问");
         Map<String, Object> out = new java.util.LinkedHashMap<>();
@@ -125,7 +128,9 @@ public class ShareController {
 
     @Operation(summary = "分享信息", description = "token 换取智能体公开信息（名称/描述/图标 + 游客能力位与限额；不含提示词与知识库配置）")
     @GetMapping("/{token}/info")
-    public ResultJson info(@Parameter(description = "分享令牌") @PathVariable("token") String token) {
+    public ResultJson info(@Parameter(description = "分享令牌") @PathVariable("token") String token,
+                           HttpServletRequest httpRequest) {
+        rateLimitService.checkRateLimit("share-read", "ip:" + clientIp(httpRequest));
         var ctx = agentShareService.resolveGuest(token);
         Map<String, Object> out = new java.util.LinkedHashMap<>();
         out.put("name", ctx.agent().getName() == null ? "" : ctx.agent().getName());
@@ -164,7 +169,10 @@ public class ShareController {
     @GetMapping("/session/{token}/artifact")
     public org.springframework.http.ResponseEntity<org.springframework.core.io.Resource> downloadArtifact(
             @Parameter(description = "分享令牌") @PathVariable("token") String token,
-            @Parameter(description = "会话内产物序号") @RequestParam("seq") int seq) {
+            @Parameter(description = "会话内产物序号") @RequestParam("seq") int seq,
+            HttpServletRequest httpRequest) {
+        // 文件 IO 端点：下载可被脚本化重放，限流防打满磁盘与带宽
+        rateLimitService.checkRateLimit("share-read", "ip:" + clientIp(httpRequest));
         var artifact = sessionShareService.sharedArtifact(token, seq);
         if (artifact == null) throw new BizException(404, "产物不存在或分享链接已失效");
         // 中文文件名必须按 RFC 5987 编码，否则部分浏览器/客户端落盘乱码
@@ -183,7 +191,9 @@ public class ShareController {
     public ResultJson history(
             @Parameter(description = "分享令牌") @PathVariable("token") String token,
             @Parameter(description = "游客会话 ID") @RequestParam("sessionId") String sessionId,
-            @RequestParam("visitorId") String visitorId) {
+            @RequestParam("visitorId") String visitorId,
+            HttpServletRequest httpRequest) {
+        rateLimitService.checkRateLimit("share-read", "ip:" + clientIp(httpRequest));
         agentShareService.resolveGuest(token); // 链接失效则历史同样拒绝
         String visitorUid = AgentShareService.visitorUid(visitorId);
         try {
@@ -221,7 +231,9 @@ public class ShareController {
     @GetMapping("/{token}/sessions")
     public ResultJson sessions(
             @Parameter(description = "分享令牌") @PathVariable("token") String token,
-            @Parameter(description = "访客 ID") @RequestParam("visitorId") String visitorId) {
+            @Parameter(description = "访客 ID") @RequestParam("visitorId") String visitorId,
+            HttpServletRequest httpRequest) {
+        rateLimitService.checkRateLimit("share-read", "ip:" + clientIp(httpRequest));
         var ctx = agentShareService.resolveGuest(token);
         return ResultJson.ok(Map.of("items", sessionService.listSessionsForAgent(
                 AgentShareService.visitorUid(visitorId), ctx.agent().getId(), 50)));
@@ -234,6 +246,8 @@ public class ShareController {
             @Parameter(description = "访客 ID") @RequestParam("visitorId") String visitorId,
             HttpServletRequest httpRequest) {
         var ctx = agentShareService.resolveGuest(token);
+        // 批量删除同样按 IP 限频：免登录的写动作（虽然是删自己的）
+        rateLimitService.checkRateLimit("share-read", "ip:" + clientIp(httpRequest));
         int deleted = sessionService.deleteSessionsOfVisitor(
                 AgentShareService.visitorUid(visitorId), ctx.agent().getId());
         audit.record("[AUDIT] 游客清除会话 ip={} agent={} 会话数={}",
@@ -621,10 +635,12 @@ public class ShareController {
     public ResultJson guestPendingAsks(
             @Parameter(description = "分享令牌") @PathVariable("token") String token,
             @Parameter(description = "会话 ID") @RequestParam("sessionId") String sessionId,
-            @Parameter(description = "访客 ID（客户端随机）") @RequestParam("visitorId") String visitorId) {
+            @Parameter(description = "访客 ID（客户端随机）") @RequestParam("visitorId") String visitorId,
+            HttpServletRequest httpRequest) {
         if (sessionId == null || sessionId.isBlank() || visitorId == null || visitorId.isBlank()) {
             return ResultJson.ok(Map.of("items", List.of()));
         }
+        rateLimitService.checkRateLimit("share-read", "ip:" + clientIp(httpRequest));
         agentShareService.resolveGuest(token);
         String visitorUid = AgentShareService.visitorUid(visitorId);
         sessionService.assertOwned(sessionId.trim(), visitorUid);
@@ -687,10 +703,12 @@ public class ShareController {
     public ResultJson guestPendingPlans(
             @Parameter(description = "分享令牌") @PathVariable("token") String token,
             @Parameter(description = "会话 ID") @RequestParam("sessionId") String sessionId,
-            @Parameter(description = "访客 ID（客户端随机）") @RequestParam("visitorId") String visitorId) {
+            @Parameter(description = "访客 ID（客户端随机）") @RequestParam("visitorId") String visitorId,
+            HttpServletRequest httpRequest) {
         if (sessionId == null || sessionId.isBlank() || visitorId == null || visitorId.isBlank()) {
             return ResultJson.ok(Map.of("items", List.of()));
         }
+        rateLimitService.checkRateLimit("share-read", "ip:" + clientIp(httpRequest));
         agentShareService.resolveGuest(token);
         String visitorUid = AgentShareService.visitorUid(visitorId);
         sessionService.assertOwned(sessionId.trim(), visitorUid);
@@ -698,10 +716,11 @@ public class ShareController {
                 hitl.listPendingPlansForSession(sessionId.trim()), frameworkSessions)));
     }
 
-    /** 客户端 IP（X-Forwarded-For 首段优先；与 ChatController 同口径） */
+    /**
+     * 客户端 IP：统一收口到 {@link com.wenqu.ai.util.ClientIp}。
+     * 旧口径「XFF 首段优先」是客户端可伪造的——伪造 XFF 即可无限轮换限流身份并污染审计 IP。
+     */
     private String clientIp(HttpServletRequest request) {
-        String xff = request.getHeader("X-Forwarded-For");
-        String ip = (xff != null && !xff.isBlank()) ? xff.split(",")[0].trim() : request.getRemoteAddr();
-        return ip == null ? "unknown" : ip;
+        return com.wenqu.ai.util.ClientIp.of(request);
     }
 }

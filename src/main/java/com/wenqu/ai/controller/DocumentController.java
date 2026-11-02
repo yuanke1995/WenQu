@@ -572,12 +572,10 @@ public ResultJson rebuildKb(
         return ResultJson.ok("回滚成功");
     }
 
-    /** 限流维度标识：有用户身份用 user:xxx，否则落到 IP 维度 */
+    /** 限流维度标识：有用户身份用 user:xxx，否则落到 IP 维度（解析收口到 ClientIp） */
     private String rateIdentity(HttpServletRequest request) {
         String uid = RequestUser.uid();
         if (!RequestUser.ANONYMOUS.equals(uid)) return "user:" + uid;
-        String xff = request.getHeader("X-Forwarded-For");
-        String ip = (xff != null && !xff.isBlank()) ? xff.split(",")[0].trim() : request.getRemoteAddr();
-        return "ip:" + ip;
+        return "ip:" + com.wenqu.ai.util.ClientIp.of(request);
     }
 }

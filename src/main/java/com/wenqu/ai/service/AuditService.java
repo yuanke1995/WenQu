@@ -541,16 +541,9 @@ public class AuditService {
         }
     }
 
+    /** 审计 IP：统一收口到 {@link com.wenqu.ai.util.ClientIp}——审计里的 IP 必须不可被请求方指定 */
     private static String clientIp(HttpServletRequest request) {
-        String[] headers = {"X-Forwarded-For", "X-Real-IP"};
-        for (String h : headers) {
-            String v = request.getHeader(h);
-            if (v != null && !v.isBlank() && !"unknown".equalsIgnoreCase(v)) {
-                int comma = v.indexOf(',');
-                return (comma > 0 ? v.substring(0, comma) : v).trim();
-            }
-        }
-        return request.getRemoteAddr();
+        return com.wenqu.ai.util.ClientIp.of(request);
     }
 
     private static String csv(Object v) {

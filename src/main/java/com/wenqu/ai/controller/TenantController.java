@@ -164,13 +164,9 @@ public class TenantController {
         }
     }
 
+    /** 客户端 IP：统一收口到 {@link com.wenqu.ai.util.ClientIp}（XFF 首段可伪造，不再盲信） */
     private static String clientIp(HttpServletRequest request) {
-        String x = request.getHeader("X-Forwarded-For");
-        if (x != null && !x.isBlank()) {
-            int comma = x.indexOf(',');
-            return (comma > 0 ? x.substring(0, comma) : x).trim();
-        }
-        return request.getRemoteAddr();
+        return com.wenqu.ai.util.ClientIp.of(request);
     }
 
     @Operation(summary = "租户落点清单（备份与恢复用）",

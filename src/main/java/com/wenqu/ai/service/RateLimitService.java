@@ -177,6 +177,9 @@ public class RateLimitService {
             // 免登录的公开写入端点：不能沿用「未知桶 30/分钟」的通用兜底——那是给登录用户用的量级，
             // 对一个没有登录态、谁都能打的入口来说太宽
             case "apply" -> 5;
+            // 游客分享的读端点（info/history/sessions/产物下载等）：与 chat 分桶——分享页一次打开
+            // 要连打 4~5 个读接口，挤 chat 桶（10/分钟）会把正常对话锁死；独立 30/分钟约够 6~7 次整页加载
+            case "share-read" -> 30;
             default -> 30;
         };
     }

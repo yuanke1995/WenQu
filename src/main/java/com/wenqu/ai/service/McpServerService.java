@@ -995,11 +995,19 @@ public class McpServerService {
         return McpSchema.CallToolResult.builder().addTextContent(text).build();
     }
 
-    /** 客户端 IP：X-Forwarded-For 首段优先（与 ChatController 同口径） */
+    /**
+     * 客户端 IP（MCP 调用审计落库用）：统一收口到 {@link com.wenqu.ai.util.ClientIp}。
+     * 从 servletRequest 取直连地址交给同一套可信代理判定；拿不到直连地址时不信任 XFF（落 "unknown"）。
+     */
     private static String clientIp(ServerRequest req) {
-        String xff = req.headers().firstHeader("X-Forwarded-For");
-        if (xff == null || xff.isBlank()) return "";
-        return xff.split(",")[0].trim();
+        String remote = "";
+        try {
+            var sr = req.servletRequest();
+            if (sr != null) remote = sr.getRemoteAddr();
+        } catch (Exception ignore) {
+            // 拿不到直连地址就按不可信处理：resolve 会拒绝 XFF、落 "unknown"
+        }
+        return com.wenqu.ai.util.ClientIp.resolve(req.headers().firstHeader("X-Forwarded-For"), remote);
     }
 
     private static String agentName(Agent agent) {

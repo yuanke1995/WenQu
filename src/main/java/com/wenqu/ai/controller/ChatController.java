@@ -1155,12 +1155,8 @@ public class ChatController {
         return ResultJson.ok(Map.of("restored", restored), "已恢复该轮对话");
     }
 
-    /** 客户端真实 IP（nginx 反代场景取 X-Forwarded-For 首段，兜底 remoteAddr） */
+    /** 客户端真实 IP：统一收口到 {@link com.wenqu.ai.util.ClientIp}（XFF 首段可伪造，不再盲信） */
     private String clientIp(HttpServletRequest request) {
-        String xff = request.getHeader("X-Forwarded-For");
-        if (xff != null && !xff.isBlank()) {
-            return xff.split(",")[0].trim();
-        }
-        return request.getRemoteAddr();
+        return com.wenqu.ai.util.ClientIp.of(request);
     }
 }
