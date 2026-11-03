@@ -52,16 +52,19 @@ public class UserContextInterceptor implements HandlerInterceptor {
     private final AuthService authService;
     private final com.wenqu.ai.service.UserRoleService userRoleService;
     private final com.wenqu.ai.service.ApiKeyService apiKeyService;
+    private final com.wenqu.ai.service.ServiceAccountService serviceAccountService;
     private final ObjectMapper objectMapper;
 
     public UserContextInterceptor(UserMapper userMapper, AuthService authService,
                                   com.wenqu.ai.service.UserRoleService userRoleService,
                                   com.wenqu.ai.service.ApiKeyService apiKeyService,
+                                  com.wenqu.ai.service.ServiceAccountService serviceAccountService,
                                   ObjectMapper objectMapper) {
         this.userMapper = userMapper;
         this.authService = authService;
         this.userRoleService = userRoleService;
         this.apiKeyService = apiKeyService;
+        this.serviceAccountService = serviceAccountService;
         this.objectMapper = objectMapper;
     }
 
@@ -100,6 +103,19 @@ public class UserContextInterceptor implements HandlerInterceptor {
             com.wenqu.ai.util.TenantContext.bind(
                     u.getTenantId() == null || u.getTenantId().isBlank()
                             ? com.wenqu.ai.util.TenantContext.DEFAULT_TENANT : u.getTenantId());
+            return true;
+        }
+        // 无令牌：先看是不是服务账号通道（批次 C3，非人类身份），再看 API Key，都不是才落匿名。
+        // 服务账号的判定口径与人类用户完全一致（角色绑在 c_ai_user_role，uid=svc:{id}）——
+        // 差异只在「凭据是长期机器令牌、不在 c_ai_user 表、不能登录网页」。
+        String svcToken = request.getHeader("X-Service-Token");
+        if (svcToken != null && !svcToken.isBlank() && com.wenqu.ai.service.ServiceAccountService.isServiceToken(svcToken)) {
+            com.wenqu.ai.model.ServiceAccount acc = serviceAccountService.verify(svcToken);
+            if (acc == null) return reject(response, "服务账号令牌无效、已停用或已过期");
+            String svcUid = com.wenqu.ai.service.ServiceAccountService.uidOf(acc);
+            request.setAttribute(ATTR_AUTHENTICATED, Boolean.TRUE);
+            RequestUser.set(svcUid, null, userRoleService.rolesOf(svcUid));
+            com.wenqu.ai.util.TenantContext.bind(com.wenqu.ai.util.TenantContext.DEFAULT_TENANT);
             return true;
         }
         // 无令牌：先看是不是 API Key 通道（集成方专用），也不是才落匿名。

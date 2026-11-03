@@ -615,6 +615,20 @@ CREATE TABLE IF NOT EXISTS `c_ai_permission` (
     PRIMARY KEY (`code`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='授权点目录（事实源在代码 @Permission 注解，扫描器自动登记）';
 
+CREATE TABLE IF NOT EXISTS `c_ai_service_account` (
+    `id`          VARCHAR(50)  NOT NULL COMMENT '主键（UUID）；角色绑定行用 svc:{id} 作为 uid 挂 c_ai_user_role',
+    `name`        VARCHAR(100) NOT NULL COMMENT '名称（展示与审计可读）',
+    `description` VARCHAR(255) DEFAULT NULL COMMENT '说明（用途/负责人）',
+    `token_hash`  CHAR(64)     NOT NULL COMMENT '令牌 SHA-256（明文只在创建/轮换时返回一次）',
+    `status`      INT          DEFAULT 1 COMMENT '状态: 1=启用, 0=停用（停用即全部调用 401）',
+    `expire_at`   DATETIME     DEFAULT NULL COMMENT '到期时刻（NULL=永久，到期自动失效）',
+    `created_by`  VARCHAR(64)  DEFAULT NULL COMMENT '创建人',
+    `create_time` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time` DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_sa_token` (`token_hash`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='服务账号（批次 C3：非人类身份，X-Service-Token 鉴权，角色绑定复用 c_ai_user_role）';
+
 CREATE TABLE IF NOT EXISTS `c_ai_role_permission` (
     `role_code`       VARCHAR(50) NOT NULL COMMENT '角色编码（c_ai_role.code）',
     `permission_code` VARCHAR(50) NOT NULL COMMENT '授权点编码（c_ai_permission.code）',

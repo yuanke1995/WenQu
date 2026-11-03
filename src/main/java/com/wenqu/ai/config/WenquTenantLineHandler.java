@@ -46,6 +46,8 @@ public class WenquTenantLineHandler implements TenantLineHandler {
             // RBAC 授权点层（批次 A）：角色与授权点的定义是平台全局模板（D4 拍板保持全局，
             // 批次 F 租户化时随 c_ai_role 一起迁）——不进名单租户插件就会拼出 tenant_id 谓词炸掉判定
             "c_ai_permission", "c_ai_role_permission",
+            // 服务账号（批次 C3）：平台级机器身份，v1 不按租户隔离（绑定角色后经 RBAC 判定，租户域由角色决定）
+            "c_ai_service_account",
             "c_ai_provider", "c_ai_model", "c_ai_config", "c_ai_image_desc",
             "c_ai_market_item", "c_ai_market_install");
 
