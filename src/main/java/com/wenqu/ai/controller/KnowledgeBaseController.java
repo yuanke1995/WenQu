@@ -28,14 +28,13 @@ import java.util.Map;
 /**
  * 知识库接口：**用户可自建自管**（2026-09-26 从"仅管理员"放开）。
  * <p>
- * 数据隔离口径（{@link ResourceVisibilityService}，资源类型 KNOWLEDGE_BASE）——谁建归谁：
+ * 数据隔离口径（{@link ResourceVisibilityService}）——谁建归谁：
  * <ul>
- *   <li>创建者 → 可管理自己的库（新建/编辑/删除/移文档/传文档）；未配置共享＝私有，仅创建者与管理员级可见；</li>
- *   <li>他人 → 仅按库显式配置的 share_config 共享范围可见；普通用户对别人的库**封顶只读**（看文档、检索引用），不能改；</li>
- *   <li>个人默认知识库（问渠，每人一张、系统懒创建）是归属人的私有库：仅创建者与管理员级可见可管。</li>
+ *   <li>创建者 → 可管理自己的库（新建/编辑/删除/移文档/传文档）；非创建者不可见不可管；</li>
+ *   <li>个人默认知识库（问渠，每人一张、系统懒创建）是归属人的私有库。</li>
  * </ul>
  * 官方内置库（问渠使用手册，builtin=1）例外：管理页（列表/详情/文档/知识块/回收站）仅管理员级可见——
- * 普通用户的消费入口是帮助中心（/manual 独立只读端点）与对话检索（read_scope=global），不受影响。
+ * 普通用户的消费入口是帮助中心（/manual 独立只读端点）与对话检索（消费侧登录即可读），不受影响。
  * 管理员照旧全量可见可管。检索链路的可见性过滤由既有检索层负责，与本接口口径同源。
  *
  * @author yuanke
@@ -65,13 +64,12 @@ public class KnowledgeBaseController {
                 RequestUser.uid(), RequestUser.departmentId(), RequestUser.role());
     }
 
-    /** 校验"能管理该库"（数据按 userId 隔离：创建者或共享 manage 命中），否则抛业务异常（前端显示具体原因，不触发全局 403 提示） */
+    /** 校验"能管理该库"（谁建归谁：仅创建者），否则抛业务异常（前端显示具体原因，不触发全局 403 提示） */
     private void requireManage(KnowledgeBase kb) {
-        if (kb == null) throw new BizException("仅可管理自己创建或被授权管理的知识库");
-        // 官方内置库（builtin=1）：createdBy=system + 共享全员只读 ⇒ 任何人都拿不到 MANAGE（管理员级也不例外，
-        // 见 ResourceVisibilityService.resolve：共享只授 READ）。但它同样需要维护检索/解析参数（如绑定重排模型
-        // ——不绑则引用门退化到融合分门（minFusionScore，默认 0.5），词面重叠的弱相关块更容易进引用面板），
-        // 故对管理员级单独放行；
+        if (kb == null) throw new BizException("仅可管理自己创建的知识库");
+        // 官方内置库（builtin=1）：createdBy=system，谁建归谁判定下任何人都拿不到 MANAGE。
+        // 但它同样需要维护检索/解析参数（如绑定重排模型——不绑则引用门退化到融合分门
+        // （minFusionScore，默认 0.5），词面重叠的弱相关块更容易进引用面板），故对管理员级单独放行；
         // 能改哪些字段由服务层白名单兜住（KnowledgeBaseService.update），内容/删除仍不可动。
         if (kb.getBuiltin() != null && kb.getBuiltin() == 1) {
             if (!roleService.isAdminAny(com.wenqu.ai.util.RequestUser.roles())) {
@@ -79,9 +77,8 @@ public class KnowledgeBaseController {
             }
             return;
         }
-        if (!visibility.canManage(principal(), kb.getShareConfig(), kb.getCreatedBy(),
-                ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
-            throw new BizException("仅可管理自己创建或被授权管理的知识库");
+        if (!visibility.canManage(principal(), kb.getCreatedBy())) {
+            throw new BizException("仅可管理自己创建的知识库");
         }
     }
 
@@ -147,7 +144,7 @@ public class KnowledgeBaseController {
         return ResultJson.ok(configSchemaService.tipsByKey(keys));
     }
 
-    @Operation(summary = "知识库列表", description = "含每个库的文档数量；个人默认库（问渠）排最前；所有人只返回自己创建的（含个人默认库）与显式共享给自己的（数据按 userId 隔离）")
+    @Operation(summary = "知识库列表", description = "含每个库的文档数量；个人默认库（问渠）排最前；只返回自己创建的（含个人默认库），谁建归谁")
     @GetMapping("/list")
     public ResultJson list() {
         // 进知识库页即确保本人已有个人默认库（问渠）：懒创建只挂在写路径的话，
@@ -156,9 +153,7 @@ public class KnowledgeBaseController {
         if (uid != null && !uid.isBlank()) kbService.defaultId(uid);
         List<Map<String, Object>> all = kbService.listWithCounts();
         var p = principal();
-        all = all.stream().filter(m -> visibility.canRead(p,
-                (String) m.get("shareConfig"), (String) m.get("createdBy"),
-                ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)).toList();
+        all = all.stream().filter(m -> visibility.canRead(p, (String) m.get("createdBy"))).toList();
         // 官方内置库（问渠使用手册）：知识库管理页仅管理员可见——它是系统资源而非用户资产，
         // 普通用户在这里看到只会误以为可翻可改。消费入口不受影响：帮助中心（/manual 独立只读端点）
         // 与对话检索链路（read_scope=global）仍全员可读。
@@ -168,7 +163,7 @@ public class KnowledgeBaseController {
         return ResultJson.ok(all);
     }
 
-    @Operation(summary = "知识库详情", description = "仅自己创建的（含个人默认库）与共享范围内可见的库可查（不可见按不存在处理，不泄露存在性）")
+    @Operation(summary = "知识库详情", description = "仅自己创建的（含个人默认库）可查（不可见按不存在处理，不泄露存在性）")
     @GetMapping("/{id}")
     public ResultJson get(@PathVariable("id") String id) {
         KnowledgeBase kb = kbService.get(id);
@@ -178,15 +173,14 @@ public class KnowledgeBaseController {
                 && !roleService.isAdminAny(RequestUser.roles())) {
             return ResultJson.error("知识库不存在");
         }
-        if (!visibility.canRead(principal(), kb.getShareConfig(), kb.getCreatedBy(),
-                ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
+        if (!visibility.canRead(principal(), kb.getCreatedBy())) {
             return ResultJson.error("知识库不存在");
         }
         return ResultJson.ok(kb);
     }
 
     @Operation(summary = "新建知识库", description = "body: name(必填)/description/icon(emoji 字符，省略=默认库图标；"
-            + "wenqu 品牌标为个人默认库专属，新建不可用)/embeddingRef(必填,绑定向量模型)/queryParams/parseParams/shareConfig；"
+            + "wenqu 品牌标为个人默认库专属，新建不可用)/embeddingRef(必填,绑定向量模型)/queryParams/parseParams；"
             + "queryParams/parseParams 为 JSON 字符串，留空表示继承全局检索/解析设置；创建人=当前用户。"
             + "默认知识库（问渠）每人一个、系统自动创建，不经此接口")
     @PostMapping
@@ -199,7 +193,7 @@ public class KnowledgeBaseController {
 
     @Operation(summary = "编辑知识库", description = "仅更新 body 中出现的字段；queryParams/parseParams 传 null/空串表示清空并恢复继承全局；"
             + "icon（wenqu 品牌标为默认库专属）与 name 仅默认库不可修改（默认库恒为 wenqu 品牌标，名称/图标改值报错）；"
-            + "embeddingRef（绑定向量模型）必填，变更时自动按库重嵌入（异步，模型不可达则保持原绑定）；仅创建者/被授权人/管理员可改")
+            + "embeddingRef（绑定向量模型）必填，变更时自动按库重嵌入（异步，模型不可达则保持原绑定）；仅创建者可改")
     @PutMapping("/{id}")
     public ResultJson update(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         KnowledgeBase before = mustGet(id);
@@ -217,7 +211,7 @@ public class KnowledgeBaseController {
         return ResultJson.ok(kb);
     }
 
-    @Operation(summary = "删除知识库", description = "逻辑删除；默认库、以及库下仍有文档时拒绝删除（避免文档失去归属导致检索范围突变）；仅创建者/被授权人/管理员可删")
+    @Operation(summary = "删除知识库", description = "逻辑删除；默认库、以及库下仍有文档时拒绝删除（避免文档失去归属导致检索范围突变）；仅创建者可删")
     @DeleteMapping("/{id}")
     public ResultJson delete(@PathVariable("id") String id) {
         requireManage(mustGet(id));
@@ -227,7 +221,7 @@ public class KnowledgeBaseController {
     }
 
     @Operation(summary = "导出知识库", description = "打包为 zip（manifest.json + 各文档源文件；url 文档带源地址不带文件）。"
-            + "只带源料不带产物——向量按导入库的绑定重嵌，知识块随解析重算。仅创建者/被授权人/管理员可导")
+            + "只带源料不带产物——向量按导入库的绑定重嵌，知识块随解析重算。仅创建者可导")
     @GetMapping("/{id}/export")
     public void export(@PathVariable("id") String id, jakarta.servlet.http.HttpServletResponse response) throws java.io.IOException {
         var kb = mustGet(id);
@@ -241,7 +235,7 @@ public class KnowledgeBaseController {
     }
 
     @Operation(summary = "导入文档包到知识库", description = "上传导出 zip → 目标库逐文档走既有上传/URL 导入管线（解析/分块/向量化/索引全自动，"
-            + "向量按目标库绑定重嵌）；同名 upsert，重复导入安全。仅创建者/被授权人/管理员可导")
+            + "向量按目标库绑定重嵌）；同名 upsert，重复导入安全。仅创建者可导")
     @PostMapping("/{id}/import")
     public ResultJson importZip(@PathVariable("id") String id,
                                 @org.springframework.web.bind.annotation.RequestParam("file") org.springframework.web.multipart.MultipartFile file) {
@@ -260,12 +254,11 @@ public class KnowledgeBaseController {
         com.wenqu.ai.model.AiDocument before = documentService.getDoc(docId);
         if (before == null) return ResultJson.error("文档不存在");
         String fromKbId = before.getKbId();
-        // 文档本身也要有管理权（创建者或共享 manage 命中），防止拿别人的文档当搬运工
-        if (!visibility.canManage(principal(), before.getShareConfig(), before.getCreatedBy(),
-                ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
-            throw new BizException("仅可管理自己上传或被授权管理的文档");
+        // 文档本身也要有管理权（创建者），防止拿别人的文档当搬运工
+        if (!visibility.canManage(principal(), before.getCreatedBy())) {
+            throw new BizException("仅可管理自己上传的文档");
         }
-        // 源库/目标库都要有管理权（kbId 为空=自己的默认库，同样按其库配置判定）
+        // 源库/目标库都要有管理权（kbId 为空=自己的默认库，同样按归属判定）
         requireManage(fromKbId == null ? null : kbService.get(fromKbId));
         String defId = kbService.defaultId(RequestUser.uid());
         KnowledgeBase toKb = toKbId == null ? kbService.get(defId) : kbService.get(toKbId);

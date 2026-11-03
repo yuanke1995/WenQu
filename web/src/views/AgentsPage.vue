@@ -58,7 +58,7 @@
               <span class="ap-group-count">{{ sec.members.length }}</span>
             </div>
             <div class="ap-grid">
-              <!-- 卡片点击直达配置：仅可管理的智能体（普通用户看内置问渠/仅可读共享时点卡片不做任何事，
+              <!-- 卡片点击直达配置：仅可管理的智能体（不可管理时点卡片不做任何事，
                    否则弹出的编辑框保存必被后端拒绝，是"点了报错"的死路） -->
               <article v-for="a in sec.members" :key="sec.key + '-' + a.id" class="ap-card"
                        :class="{ 'ap-card-readonly': !a.manageable }" @click="a.manageable && openEdit(a)">
@@ -83,15 +83,12 @@
                   <span v-if="a.published === 1" class="ap-chip ap-chip-on"
                         title="公开发布中：拿到链接的人可免登录与该智能体对话，点「发布」可管理链接">已发布</span>
                   <span v-for="c in capsForcedOn(a)" :key="c" class="ap-chip ap-chip-on">{{ c }}</span>
-                  <span v-if="!isBuiltin(a) && scopeLabel(a)" class="ap-chip ap-chip-warn" title="已限制共享范围，点「共享」查看或修改">{{ scopeLabel(a) }}</span>
                 </div>
                 <div class="ap-card-foot">
-                  <!-- 管理入口按后端回填的 manageable 收起：普通用户看内置问渠/仅可读的共享智能体时，
-                       不给"点了报错"的死路（写路径后端还会按共享范围二次判定） -->
+                  <!-- 管理入口按后端回填的 manageable 收起：不可管理的智能体不给"点了报错"的死路
+                       （写路径后端还会按归属二次判定） -->
                   <template v-if="a.manageable">
                     <button class="app-link-btn" @click.stop="openEdit(a)">配置</button>
-                    <!-- 内置问渠全员可读（可读性走内置豁免，共享范围不参与判定），共享对它不生效，不给死路入口 -->
-                    <button v-if="!isBuiltin(a)" class="app-link-btn" @click.stop="openShare(a)">共享</button>
                     <button class="app-link-btn" @click.stop="openPublish(a)">发布</button>
                     <!-- 「设为默认」是全局动作（影响所有人下拉的预选），后端仅管理员放行，故对普通用户不显示 -->
                     <button v-if="!isSub(a) && !isDefault(a) && isAdmin" class="app-link-btn" @click.stop="doSetDefault(a.id)">设为默认</button>
@@ -416,10 +413,6 @@
       </div>
     </template>
 
-    <!-- 共享范围（公共组件：与文档 / API Key 同一套两区表单） -->
-    <ShareScopeModal v-model:open="shareVisible" resource-label="智能体" read-verb="使用"
-                     :share-config="shareTarget.shareConfig" :save-fn="saveShareFn" @saved="reload" />
-
     <!-- 配置历史版本：每次保存落一版快照（人设/知识范围/工具集等调优字段），可查字段级 diff、一键回滚 -->
     <a-drawer v-model:open="verOpen" title="配置历史版本" :width="'min(680px, 94vw)'" destroy-on-close>
       <p class="ap-block-hint" style="margin-top:0">
@@ -733,11 +726,10 @@ import {
   CopyOutlined, ExportOutlined, LinkOutlined, ExclamationCircleOutlined
 } from '@ant-design/icons-vue'
 import { listAgents, createAgent, updateAgent, deleteAgent, batchDeleteAgents, setAgentDefault, listKnowledgeBases,
-         listAvailableSkills, getMcpStatus, listSubAgents, getToolCatalog, getPermissionPresets, updateAgentShare,
+         listAvailableSkills, getMcpStatus, listSubAgents, getToolCatalog, getPermissionPresets,
          getAgentConfigDefaults,
          getAgentPublish, publishAgent, revokeAgentPublish, listWorkflows, createWorkflowFromAgent,
          listAgentVersions, rollbackAgent } from '../api'
-import ShareScopeModal from './ShareScopeModal.vue'
 import ProviderIcon from '../components/ProviderIcon.vue'
 import ModelSelect from '../components/ModelSelect.vue'
 import AgentAvatar from '../components/AgentAvatar.vue'
@@ -1272,33 +1264,6 @@ const edgeCls = e => {
 }
 const nodeCls = key => (hoverRelated.value && !hoverRelated.value.has(key) ? 'dim' : '')
 
-// ==================== 共享范围（弹窗为公共组件 ShareScopeModal） ====================
-const shareVisible = ref(false)
-const shareTarget = ref({ id: '', shareConfig: '' })
-const saveShareFn = json => updateAgentShare(shareTarget.value.id, json)
-// 卡片上的共享范围标记：仅显式共享时显示（未配置=私有即默认，不显示以免噪音）
-function scopeLabel (a) {
-  if (!a.shareConfig || !String(a.shareConfig).trim()) return ''
-  let parsed = null
-  try { parsed = JSON.parse(a.shareConfig) } catch (e) { return '' }
-  const r = (parsed && parsed.read_scope) || {}
-  const lvl = r.access_level || 'global'
-  if (lvl === 'global') return '全员共享'
-  if (lvl === 'department') {
-    const n = Array.isArray(r.department_ids) ? r.department_ids.length : 0
-    return n ? '限 ' + n + ' 个部门' : '部门可见'
-  }
-  if (lvl === 'user') {
-    const n = Array.isArray(r.user_uids) ? r.user_uids.length : 0
-    return n ? '限 ' + n + ' 人' : '指定人可见'
-  }
-  return ''
-}
-function openShare (a) {
-  shareTarget.value = { id: a.id, shareConfig: a.shareConfig || '' }
-  shareVisible.value = true
-}
-
 // ==================== 公开发布（/s/{token} 免登录对话 + iframe 嵌入） ====================
 const pubVisible = ref(false)
 const pubAgentId = ref('')
@@ -1667,10 +1632,10 @@ const reload = async () => {
       // 全局默认值：同上，失败写 agentDefaultsError，界面上给重试入口
       loadAgentDefaults()
     ])
-    // /workflow/list 的 data 是分栏对象 { mine:[], shared:[] }（非数组），必须摊平再用，
-    // 否则下面 .filter/.find 直接抛 "is not a function"（WorkflowPanel 同源数据按 mine/shared 解）
+    // /workflow/list 的 data 是分栏对象 { mine:[] }（非数组），必须摊平再用，
+    // 否则下面 .filter/.find 直接抛 "is not a function"（WorkflowPanel 同源数据按 mine 解）
     const wd = (wr && wr.success && wr.data) || {}
-    workflowRows.value = [...(wd.mine || []), ...(wd.shared || [])]
+    workflowRows.value = wd.mine || []
     if (ar.success && ar.data) agents.value = ar.data
     // 批量勾选与现存列表对账：已被删掉的 id 从选中集合里清掉（避免批量操作撞「不存在」）
     const alive = new Set(agents.value.map(x => x.id))
@@ -2090,7 +2055,7 @@ onMounted(async () => { })
   display: flex; align-items: center; justify-content: flex-end; gap: 2px;
   border-top: 1px dashed var(--app-border); padding-top: 6px; margin-top: auto;
 }
-/* 不可管理时占位提示（内置问渠=系统默认，共享只读=仅可使用） */
+/* 不可管理时占位提示（内置问渠=系统默认，仅管理员可配置） */
 .ap-readonly-hint { margin-right: auto; font-size: 12px; color: var(--app-text3); }
 /* 不可管理的卡片：无点击态暗示（cursor 保持默认，区别于可点击进入配置的卡片） */
 .ap-card-readonly { cursor: default; }

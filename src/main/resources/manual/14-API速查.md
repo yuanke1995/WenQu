@@ -33,7 +33,7 @@
 | `POST /api/ai/document/upload`、`/upload/batch`、`/import-url` | 上传 / 批量上传 / 网页导入 |
 | `GET /api/ai/document/list`、`/queue/stats`、`/stats`、`/health`、`/{id}/source`、`/{id}/vector-diagnose` | 列表 / 队列状态 / 统计 / 解析健康 / 源文件 / 向量诊断 |
 | `POST /api/ai/document/{id}/reparse`、`/batch/reparse`、`/{id}/rollback`、`/{id}/backfill-descriptions`、`/rebuild-kb`、`/{id}/restore`、`/{id}/purge` | 重解析 / 批量重解析 / 版本回滚 / 补图片描述 / 整库重建 / 恢复 / 彻底删除 |
-| `GET /api/ai/document/{id}/versions`、`/recycle`、`PUT /{id}/status\|share\|refresh-config\|tags`、`DELETE /{id}` | 版本历史 / 回收站 / 启停用 / 共享范围 / 网页自动刷新配置 / 标签 / 删除 |
+| `GET /api/ai/document/{id}/versions`、`/recycle`、`PUT /{id}/status\|reparse\|backfill-descriptions\|rollback\|refresh-config\|tags`、`DELETE /{id}` | 版本历史 / 回收站 / 启停用 / 网页自动刷新配置 / 标签 / 删除 |
 | `GET /api/ai/knowledge/list?docId=`、`/knowledge/search`、`/knowledge/{id}`、`/knowledge/unmatched`、`POST /knowledge`、`PUT /knowledge/{id}[/status]`、`DELETE /knowledge/{id}` | 知识块预览 / 跨文档搜索 / 详情 / 无命中问题 / 手动建块 / 编辑（自动重向量化）/ 启停用 / 删除 |
 | `POST /api/ai/debug/retrieval` | 检索链路分步调试 |
 | `POST /api/ai/eval/generate`、`/eval/run`、`/eval/run-auto`、`/eval/case`、`GET /eval/set`、`/last-report`、`/answer/report`、`POST /eval/answer/run` | 评估集生成 / 参数组对比 / 自动体检 / 加用例 / 评估集与体检报告 / 答案质量评测 |
@@ -44,7 +44,7 @@
 
 | 端点 | 说明 |
 |------|------|
-| `GET /api/ai/agent/list`、`/available`、`/consultable`、`/sub`、`/config-defaults`、`/tool-catalog`、`/permission-presets`、`/{id}/versions`；`POST /agent`、`/{id}/rollback`、`/{id}/default`、`/batch-delete`；`PUT /agent/{id}`、`/{id}/share`；`DELETE /{id}` | 智能体 CRUD、对话页与委派用列表、工具目录与权限档位选项、配置版本与回滚、设默认、共享范围 |
+| `GET /api/ai/agent/list`、`/available`、`/consultable`、`/sub`、`/config-defaults`、`/tool-catalog`、`/permission-presets`、`/{id}/versions`；`POST /agent`、`/{id}/rollback`、`/{id}/default`、`/batch-delete`；`PUT /agent/{id}`；`DELETE /{id}` | 智能体 CRUD、对话页与委派用列表、工具目录与权限档位选项、配置版本与回滚、设默认 |
 | `GET+POST+DELETE /api/ai/agent/{id}/publish` | 公开发布：查询 / 发布（免登录对话与 MCP 端点）/ 撤销 |
 | `GET /api/ai/share/{token}/info`、`/history`、`/artifact`、`POST /share/{token}/chat`（SSE）、`/attachment`、`/feedback`、`/chat/stop`、`GET /chat/run`、`/chat/resume` | 游客通道（免登录、按 IP 限频、工具白名单收窄、不携带个人记忆） |
 | `GET /api/ai/skill/available`、`/list`、`/detail`、`/content`、`/file`、`/download`；`POST /skill`、`/install`、`/install/zip`；`PUT /skill/{name}`、`/{name}/disabled`；`DELETE /skill/{name}` | 技能：选用清单 / 管理列表 / 详情与正文 / 附属文件 / 下载 / 新建 / URL 安装 / zip 安装 / 编辑 / 个人停用 / 删除 |
@@ -58,11 +58,11 @@
 
 | 端点 | 说明 |
 |------|------|
-| `GET /api/ai/workflow/list`、`/templates`、`/config-defaults`、`/{id}`、`/{id}/export`、`/{id}/versions`；`POST /workflow`、`/import`、`/validate`、`/{id}/publish`、`/{id}/unpublish`、`/{id}/rollback/{version}`、`/batch-publish`、`/batch-unpublish`、`/batch-delete`、`/from-agent/{agentId}`；`PUT /workflow/{id}`、`POST /{id}/share`；`DELETE /{id}` | 工作流定义 CRUD、DSL 校验与编译 dry-run、发布下线回滚、批量操作、模板与导入导出、由智能体转工作流 |
+| `GET /api/ai/workflow/list`、`/templates`、`/config-defaults`、`/{id}`、`/{id}/export`、`/{id}/versions`；`POST /workflow`、`/import`、`/validate`、`/{id}/publish`、`/{id}/unpublish`、`/{id}/rollback/{version}`、`/batch-publish`、`/batch-unpublish`、`/batch-delete`、`/from-agent/{agentId}`；`PUT /workflow/{id}`；`DELETE /{id}` | 工作流定义 CRUD、DSL 校验与编译 dry-run、发布下线回滚、批量操作、模板与导入导出、由智能体转工作流 |
 | `POST /api/ai/workflow/{id}/run`、`/run/{runId}/cancel`、`/run/{runId}/resume`、`/schedule/run-now`；`GET /{id}/run/list`、`/{id}/run/{runId}`、`/{id}/run/{runId}/stream`（SSE）、`GET+POST /{id}/run/{runId}/approval`；`GET+PUT /{id}/automation` | 运行与取消续跑、运行历史与详情、实时进度流、人工审核读取与裁决、定时与回调配置 |
 | `GET+POST+PUT+DELETE /api/ai/credential` | 工作流凭据（值加密落库、出参脱敏，运行时按运行发起人解密填入） |
 | `POST /api/ai/v1/workflows/{id}/run`、`GET /api/ai/v1/workflows/{id}/run/{runId}` | 对外触发：持 API Key（`X-Api-Key`）跑**已发布**版本 / 按 runId 查结果 |
-| `GET /api/ai/api-key/list`、`POST /api-key`、`PUT /{id}`、`/{id}/disabled`、`/{id}/mcp`、`/{id}/share`、`DELETE /{id}` | 对外 API Key：列表 / 签发（明文仅一次）/ 编辑 / 吊销 / MCP 授权 / 共享范围 / 删除 |
+| `GET /api/ai/api-key/list`、`POST /api-key`、`PUT /{id}`、`/{id}/disabled`、`/{id}/mcp`、`DELETE /{id}` | 对外 API Key：列表 / 签发（明文仅一次）/ 编辑 / 吊销 / MCP 授权 / 删除 |
 
 ## 工作区、沙盒与产物
 

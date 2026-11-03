@@ -64,15 +64,14 @@ public class KnowledgeController {
                 RequestUser.uid(), RequestUser.departmentId(), RequestUser.role());
     }
 
-    /** 文档可读（列块/搜索命中的门槛）：文档未配置共享时跟随所属库（数据按 userId 隔离） */
+    /** 文档可读（列块/搜索命中的门槛）：文档跟随所属库（谁建归谁） */
     private void requireDocReadable(AiDocument doc) {
-        var kind = com.wenqu.ai.service.ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE;
-        if (doc == null || !visibility.canReadDocFollowKb(principal(), doc.getShareConfig(), doc.getCreatedBy())) {
+        if (doc == null) {
             throw new BizException("无权访问该文档的知识块");
         }
         if (doc.getKbId() != null) {
             var kb = kbService.get(doc.getKbId());
-            if (kb == null || !visibility.canRead(principal(), kb.getShareConfig(), kb.getCreatedBy(), kind)) {
+            if (kb == null || !visibility.canRead(principal(), kb.getCreatedBy())) {
                 throw new BizException("无权访问该文档的知识块");
             }
             // 官方内置库（手册篇目）：管理侧知识块仅管理员可读（/list 与 /search 共用此门槛）；
@@ -84,11 +83,10 @@ public class KnowledgeController {
         }
     }
 
-    /** 文档可管理（改块/删块的门槛）：创建者/被授权人（数据按 userId 隔离） */
+    /** 文档可管理（改块/删块的门槛）：创建者（谁建归谁） */
     private void requireDocManageable(AiDocument doc) {
-        if (doc == null || !visibility.canManage(principal(), doc.getShareConfig(), doc.getCreatedBy(),
-                com.wenqu.ai.service.ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
-            throw new BizException("仅可管理自己上传或被授权管理的文档的知识块");
+        if (doc == null || !visibility.canManage(principal(), doc.getCreatedBy())) {
+            throw new BizException("仅可管理自己上传的文档的知识块");
         }
     }
 

@@ -363,8 +363,8 @@ public class McpServerService {
                             RequestUser.uid(), RequestUser.departmentId(), RequestUser.role());
                     List<Map<String, Object>> out = new ArrayList<>();
                     for (KnowledgeBase kb : knowledgeBaseService.list()) {
-                        if (!visibility.canRead(p, kb.getShareConfig(), kb.getCreatedBy(),
-                                ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) continue;
+                        // 消费侧库门：官方内置库（手册）登录即可读；其余谁建归谁
+                        if (!visibility.canReadBuiltinKb(p, kb.getBuiltin(), kb.getCreatedBy())) continue;
                         Map<String, Object> m = new LinkedHashMap<>();
                         m.put("id", kb.getId());
                         m.put("name", kb.getName() == null ? "" : kb.getName());
@@ -718,8 +718,7 @@ public class McpServerService {
                 RequestUser.uid(), RequestUser.departmentId(), RequestUser.role());
         java.util.Set<String> ids = new java.util.HashSet<>();
         for (KnowledgeBase kb : knowledgeBaseService.list()) {
-            if (visibility.canRead(p, kb.getShareConfig(), kb.getCreatedBy(),
-                                ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
+            if (visibility.canReadBuiltinKb(p, kb.getBuiltin(), kb.getCreatedBy())) {
                 ids.add(kb.getId());
             }
         }

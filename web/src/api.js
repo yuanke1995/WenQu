@@ -670,7 +670,7 @@ export const batchToggleScheduledJobs = (ids, enabled) =>
   request('/scheduled/batch-enabled', { method: 'POST', body: JSON.stringify({ ids, enabled }) })
 
 // ---------- 工作流（DSL 唯一真源；画布只是编辑器） ----------
-/** 列表：分栏返回 {mine:[我创建的], shared:[共享给我的]}；每条带 myPermission（MANAGE/READ）与 mine */
+/** 列表：谁建归谁，恒为本人创建的 {mine:[...]}; 每条带 myPermission 与 mine */
 export const listWorkflows = () => request('/workflow/list')
 /** 节点表单「留空跟随全局」的当前全局值：{chat.temperature, retrieval.minContextScore} */
 export const getWorkflowConfigDefaults = () => request('/workflow/config-defaults')
@@ -772,10 +772,7 @@ export const unpublishWorkflow = id => request(`/workflow/${id}/unpublish`, { me
 export const listWorkflowVersions = id => request(`/workflow/${id}/versions`)
 /** 回滚到指定版本：以该版本 DSL 再发一版（返回 {version, rolledBackTo}） */
 export const rollbackWorkflow = (id, version) => request(`/workflow/${id}/rollback/${version}`, { method: 'POST' })
-// ---------- 第 1 期：共享范围 + 定时触发 + 终态回调 ----------
-/** 设置共享范围：shareConfig 为 v2 JSON（空串=清空回落私有）；仅创建者/管理范围可改 */
-export const shareWorkflow = (id, shareConfig) =>
-  request(`/workflow/${id}/share`, { method: 'POST', body: JSON.stringify({ shareConfig }) })
+// ---------- 第 1 期：定时触发 + 终态回调 ----------
 /** 自动化配置（定时 + 回调）：{scheduleEnabled, cron, timezone, nextRunAt, callbackUrl, callbackSecretSet, published} */
 export const getWorkflowAutomation = id => request(`/workflow/${id}/automation`)
 /** 保存自动化配置：body {scheduleEnabled, cron, timezone, callbackUrl, callbackSecret} */
@@ -955,9 +952,11 @@ export const setApiKeyDisabled = (id, disabled) =>
 /** 授权 / 收回该 Key 访问平台级 MCP 入口（/ai/mcp）的资格 */
 export const setApiKeyMcp = (id, mcpEnabled) =>
   request(`/api-key/${id}/mcp`, { method: 'PUT', body: JSON.stringify({ mcpEnabled }) })
-/** 编辑 Key：用途名称与有效期（expireAt 传 'yyyy-MM-dd'，空串=长期有效）；Key 本身不可改 */
+/** 编辑 Key：用途名称与有效期（expireAt 传 'yyyy-MM-dd'，空串=长期有效）；Key 本身与发问身份不可改 */
 export const updateApiKey = (id, body) =>
   request(`/api-key/${id}`, { method: 'PUT', body: JSON.stringify(body) })
+/** 回显 Key 明文（列表「眼睛」/复制）：仅创建者，服务端每次落审计日志 */
+export const revealApiKey = id => request(`/api-key/${id}/reveal`)
 export const deleteApiKey = id => request(`/api-key/${id}`, { method: 'DELETE' })
 
 // ==================== 智能体 Agent 配置（4.1：模型/知识库/工具/提示词） ====================
@@ -1112,12 +1111,6 @@ export const listAgentVersions = id => request(`/agent/${id}/versions`)
 /** 回滚到历史版本（把该版配置重新应用并落一版新快照，历史不被改写） */
 export const rollbackAgent = (id, version) =>
   request(`/agent/${id}/rollback`, { method: 'POST', body: JSON.stringify({ version }) })
-
-// ==================== 资源共享范围（文档 / 智能体 / API Key 同构，空串=清空回落私有：仅自己） ====================
-export const updateAgentShare = (id, shareConfig) =>
-  request(`/agent/${id}/share`, { method: 'PUT', body: JSON.stringify({ shareConfig: shareConfig || '' }) })
-export const updateApiKeyShare = (id, shareConfig) =>
-  request(`/api-key/${id}/share`, { method: 'PUT', body: JSON.stringify({ shareConfig: shareConfig || '' }) })
 
 // ==================== 智能体公开分享（发布管理 + 游客通道） ====================
 /** 查询智能体的公开分享配置（未发布返回 enabled=false） */
@@ -1490,8 +1483,6 @@ export const batchPurgeRecycled = ids =>
 /** 删除文档 */
 export const deleteDocument = id => request(`/document/${id}`, { method: 'DELETE' })
 
-export const updateDocumentShare = (id, shareConfig) =>
-  request(`/document/${id}/share`, { method: 'PUT', body: JSON.stringify({ shareConfig: shareConfig || '' }) })
 export const listDepartments = () => request('/department/list')
 export const listUsers = () => request('/user/list')
 /** 成员分页查询（万级名单入口·会话治理）：关键字/部门/状态在库侧过滤，按最近登录倒序。

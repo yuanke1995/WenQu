@@ -249,15 +249,8 @@ public class WorkflowController {
     }
 
     // --------------------------------------------------------------------------------------------------
-    // 第 1 期：共享范围 + 定时触发 + 终态回调
+    // 第 1 期：定时触发 + 终态回调
     // --------------------------------------------------------------------------------------------------
-
-    @Operation(summary = "设置共享范围", description = "body: {shareConfig}（v2 JSON，空串=清空共享回落私有）。"
-            + "仅创建者 / 管理范围命中可改；写入前强校验 version=2 且 manage ⊆ read。共享只读者可查看画布（只读）与运行已发布版本")
-    @PostMapping("/{id}/share")
-    public ResultJson share(@PathVariable("id") String id, @RequestBody(required = false) Map<String, Object> body) {
-        return ResultJson.ok(workflowService.share(id, body == null ? null : str(body, "shareConfig")));
-    }
 
     @Operation(summary = "自动化配置（定时 + 回调）", description = "定时 cron（5 段）+ 时区 + 开关 + 回调地址/密钥；"
             + "定时只跑已发布版本，未发布时触发会被跳过。回调密钥只回是否已设置（不回明文）")

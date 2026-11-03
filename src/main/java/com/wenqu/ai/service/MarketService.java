@@ -362,8 +362,7 @@ public class MarketService {
             ResourceVisibilityService.Principal p = principalOf(uid);
             for (String kbId : splitCsv(kbIds)) {
                 KnowledgeBase kb = kbMapper.selectById(kbId);
-                if (kb != null && visibility.canRead(p, kb.getShareConfig(), kb.getCreatedBy(),
-                        ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
+                if (kb != null && visibility.canReadBuiltinKb(p, kb.getBuiltin(), kb.getCreatedBy())) {
                     keep.add(kbId);
                 } else {
                     dropped.add(kb != null ? kb.getName() : kbId);

@@ -13,9 +13,13 @@ import org.springframework.stereotype.Component;
  * {@code uk_oidc_sub} 两个旧唯一索引——角色已由 {@code c_ai_user_role}（多角色）承载、
  * 外部身份已由 {@code c_ai_user_identity}（多认证源）承载，服务层自批次 2 起停读写旧列。
  * <p>
+ * 2026-11-02 追加：共享范围功能整体移除，删除 5 张资源表上的 {@code share_config} 列
+ * （{@code c_ai_knowledge_base / c_ai_document / c_ai_agent / c_ai_api_key / c_ai_workflow}）——
+ * 实体已删字段、服务层停读写；列上无需保留的数据（功能随代码退役，配置即废弃）。
+ * <p>
  * <b>顺序保证</b>：本类 {@code @Order(3)}，跑在 {@link IdentityMigrationRunner}（@Order(2)，
  * 旧列数据 → 统一身份表的一次性桥接）之后——先复制、后删列，同一启动周期内完成，无丢失窗口；
- * 新装库（schema.sql 已无这三列）三步守卫全部跳过，天然幂等。删列失败仅告警不阻塞启动
+ * 新装库（schema.sql 已无这些列）守卫全部跳过，天然幂等。删列失败仅告警不阻塞启动
  * （列在也无害，业务代码已不触碰）。
  *
  * @author yuanke
@@ -30,6 +34,10 @@ public class DropLegacyColumnsRunner implements ApplicationRunner {
     /** 旧列上的索引（uk_oidc_provider_sub 复合唯一、uk_oidc_sub 历史单列唯一） */
     private static final String[] LEGACY_INDEXES = {"uk_oidc_provider_sub", "uk_oidc_sub"};
 
+    /** 共享范围（share_config）随功能移除而退役的资源表 */
+    private static final String[] SHARE_CONFIG_TABLES = {
+            "c_ai_knowledge_base", "c_ai_document", "c_ai_agent", "c_ai_api_key", "c_ai_workflow"};
+
     private final JdbcTemplate jdbcTemplate;
 
     public DropLegacyColumnsRunner(JdbcTemplate jdbcTemplate) {
@@ -42,6 +50,29 @@ public class DropLegacyColumnsRunner implements ApplicationRunner {
             dropLegacy();
         } catch (Exception e) {
             log.warn("[DropLegacy] 旧列下线失败（不阻塞启动，业务已不读写旧列）：{}", e.getMessage());
+        }
+        try {
+            dropShareConfigColumns();
+        } catch (Exception e) {
+            log.warn("[DropLegacy] share_config 列下线失败（不阻塞启动，业务已不读写该列）：{}", e.getMessage());
+        }
+    }
+
+    /**
+     * share_config 列下线（2026-11-02 共享范围功能移除）：实体/服务层已无该字段，
+     * 存量库的列只是死数据——逐表判存在后删除，新装库（schema.sql 已无此列）自然跳过。
+     * 不与 {@link #dropLegacy} 的用户表守卫挂钩：共享配置没有「先迁移后删除」的前置，
+     * 功能退役即废弃，无需保留窗口。
+     */
+    void dropShareConfigColumns() {
+        for (String table : SHARE_CONFIG_TABLES) {
+            if (!tableExists(table) || !columnExists(table, "share_config")) continue;
+            try {
+                jdbcTemplate.execute("ALTER TABLE " + table + " DROP COLUMN share_config");
+                log.info("[DropLegacy] 已删除旧列 {}.share_config（共享范围功能已移除，谁建归谁）", table);
+            } catch (Exception e) {
+                log.warn("[DropLegacy] 删除旧列 {}.share_config 失败：{}", table, e.getMessage());
+            }
         }
     }
 

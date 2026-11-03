@@ -866,8 +866,8 @@ public class GraphRagService {
                     com.wenqu.ai.util.RequestUser.role());
             Set<String> visible = new HashSet<>();
             for (KnowledgeBase kb : kbMapper.selectList(null)) {
-                if (visibility.canRead(p, kb.getShareConfig(), kb.getCreatedBy(),
-                        ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
+                // 消费侧库门：官方内置库（手册）登录即可读；其余谁建归谁
+                if (visibility.canReadBuiltinKb(p, kb.getBuiltin(), kb.getCreatedBy())) {
                     visible.add(kb.getId());
                 }
             }
@@ -881,8 +881,8 @@ public class GraphRagService {
     /**
      * 扩展候选块涉及的文档里，本轮用户可见且生效中的 docId 集合。
      * 生效判据与主检索 {@code loadNonRetrievableDocIds} 同口径（status=0 且未删——弃用 1/解析中 2/
-     * 解析失败 3 的块不复活）；可见判据与主检索晚绑定过滤同源（canReadDocFollowKb，未配置共享跟随库）。
-     * 手动知识块（docId 空）不在文档 ACL 管辖内，调用方按主检索同一口径直接放行。
+     * 解析失败 3 的块不复活）；可见判据与主检索晚绑定过滤同源（文档恒跟随所属库，库门即判定）。
+     * 手动知识块（docId 空）不在文档管辖内，调用方按主检索同一口径直接放行。
      */
     private Set<String> allowedDocIdsOf(Collection<Knowledge> chunks) {
         Set<String> docIds = chunks.stream()
@@ -900,7 +900,6 @@ public class GraphRagService {
                     .in(AiDocument::getId, docIds))) {
                 if (d.getStatus() == null || d.getStatus() != 0) continue;
                 if (d.getDeleted() != null && d.getDeleted() != 0) continue;
-                if (!visibility.canReadDocFollowKb(p, d.getShareConfig(), d.getCreatedBy())) continue;
                 allowed.add(String.valueOf(d.getId()));
             }
             return allowed;

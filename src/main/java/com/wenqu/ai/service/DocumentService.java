@@ -125,8 +125,6 @@ public class DocumentService {
     }
     private final ConfigService configService;
     private final KeywordIndexService keywordIndexService;
-    /** 知识块引用关系（交叉引用识别 + 1-hop 扩散）：与块/文档同生命周期重建 */
-    private final ResourceVisibilityService resourceVisibilityService;
     /** 视觉模型服务：解析期按知识库 visionRef/ocrRef 双槽位描述图片与扫描页 OCR（线程局部作用域） */
     private final VisionService visionService;
     /** 模型注册中心：上传时校验文档级视觉模型覆盖引用可解析（fail-loud，不留到解析期静默跳过） */
@@ -1644,25 +1642,6 @@ public class DocumentService {
         } catch (Exception e) {
             log.warn("[{}] 关键词索引同步失败（可稍后 /reindex 修复）: {}", docId, e.getMessage());
         }
-    }
-
-    /**
-     * 设置文档共享范围（写入侧强校验 manage⊆read；空串=恢复全局可见）。
-     * 仅改 share_config 列与缓存，不影响解析状态/向量。
-     */
-    public void updateShareConfig(String docId, String shareConfigJson, String operator) {
-        AiDocument doc = documentMapper.selectById(docId);
-        if (doc == null) throw new BizException("文档不存在");
-        resourceVisibilityService.validateShareConfig(shareConfigJson);
-        String normalized = (shareConfigJson == null || shareConfigJson.isBlank()) ? null : shareConfigJson;
-        // 必须用 set(..., null) 显式置空：MyBatis-Plus 默认更新策略为 NOT_NULL，updateById 会跳过
-        // null 字段 → 「改回全员共享」会静默不生效（保存成功但范围没放开）
-        documentMapper.update(null, new LambdaUpdateWrapper<AiDocument>()
-                .eq(AiDocument::getId, docId)
-                .set(AiDocument::getShareConfig, normalized));
-        documentMetaCache.invalidate(docId);
-        audit.record("[AUDIT] 设置文档共享范围 operator={} docId={} scope={}", operator, docId,
-                normalized == null ? "global" : "custom");
     }
 
     /**

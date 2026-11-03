@@ -9,7 +9,6 @@
       <h1 class="app-page-title sr-only">工作流</h1>
       <span class="head-count">
         共 <b>{{ totalCount }}</b> 个 · 已发布 <b>{{ publishedCount }}</b> · 草稿 <b>{{ draftCount }}</b>
-        <template v-if="shared.length"> · 共享给我的 <b>{{ shared.length }}</b> 个</template>
       </span>
       <span class="head-hint-plain" title="把「检索 → LLM → 条件 → 输出」画成一张图">把「检索 → LLM → 条件 → 输出」画成一张图</span>
       <!-- M5 模板库与导入导出：模板选用即创建；导入吃导出的 JSON 文件；导出下载 DSL -->
@@ -48,11 +47,6 @@
 
         <template v-else>
           <div v-for="sec in sections" :key="sec.key">
-            <!-- 共享给我的分栏头（他人创建、对我可见） -->
-            <div v-if="sec.key === 'shared' && sec.rows.length" class="wf-sec-head">
-              <span class="wf-sec-title">共享给我的</span>
-              <span class="wf-meta">他人创建；只读工作流可查看画布与运行已发布版本，可管理的可直接编辑</span>
-            </div>
             <div v-if="sec.rows.length" class="wf-list">
               <div v-for="r in sec.rows" :key="r.id" class="app-card wf-card">
                 <div class="wf-head">
@@ -65,7 +59,6 @@
                   </span>
                   <span v-if="r.scheduleEnabled" class="wf-tag-sched"><clock-circle-outlined /> 定时</span>
                   <span v-if="r.callbackUrl" class="wf-tag-sched"><api-outlined /> 回调</span>
-                  <span v-if="!r.mine" class="wf-tag-shared">共享</span>
                   <span class="wf-meta">{{ summary(r.dsl) }}</span>
                   <!-- 最近一次运行：右侧对齐，扫一眼知道"这个工作流现在能不能跑" -->
                   <span class="wf-last">
@@ -89,9 +82,6 @@
                     <tags-outlined /> 版本
                   </button>
                   <template v-if="canManage(r)">
-                    <button class="app-btn ghost small" @click="openShare(r)">
-                      <team-outlined /> 共享
-                    </button>
                     <button class="app-btn ghost small" @click="openAutomation(r)">
                       <clock-circle-outlined /> 定时/回调
                     </button>
@@ -119,7 +109,7 @@
     </div>
   </template>
 
-    <!-- 画布编辑器：整页替换列表（返回即回列表并刷新）。只读=共享给我且无管理权 -->
+    <!-- 画布编辑器：整页替换列表（返回即回列表并刷新）。工作流是谁建归谁的个人资产，恒可编辑 -->
     <FlowEditor v-if="editingId !== null" :workflow-id="editingId" :readonly="editorReadonly" @back="closeEditor" @saved="load" />
 
     <!-- 运行历史页（M4：独立页，含 trace 回放与待审批裁决） -->
@@ -165,10 +155,6 @@
         </div>
       </a-spin>
     </a-modal>
-
-    <!-- 第 1 期：共享范围（复用统一共享弹窗，v2 share_config，与知识库/智能体同款） -->
-    <ShareScopeModal v-model:open="shareModal" resource-label="工作流" read-verb="查看并运行"
-                     :share-config="shareRow ? shareRow.shareConfig : ''" :save-fn="saveShare" @saved="load" />
 
     <!-- 第 1 期：定时触发 + 终态回调 -->
     <a-modal v-model:open="autoModal" :title="`定时与回调${autoRow ? ' · ' + autoRow.name : ''}`"
@@ -225,24 +211,22 @@ import { message, Modal } from 'ant-design-vue'
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, HistoryOutlined, CloudUploadOutlined,
   StopOutlined, RollbackOutlined, TagsOutlined, AppstoreOutlined, UploadOutlined, DownloadOutlined,
-  TeamOutlined, ClockCircleOutlined, ApiOutlined, PlayCircleOutlined
+  ClockCircleOutlined, ApiOutlined, PlayCircleOutlined
 } from '@ant-design/icons-vue'
 import FlowEditor from './FlowEditor.vue'
 import WorkflowRunHistory from './WorkflowRunHistory.vue'
-import ShareScopeModal from './ShareScopeModal.vue'
 import {
   listWorkflows, deleteWorkflow, publishWorkflow, unpublishWorkflow,
   listWorkflowVersions, rollbackWorkflow,
   listWorkflowTemplates, createWorkflow, getWorkflow,
   batchDeleteWorkflows, batchPublishWorkflows, batchUnpublishWorkflows,
-  shareWorkflow, getWorkflowAutomation, saveWorkflowAutomation, runWorkflowScheduleNow
+  getWorkflowAutomation, saveWorkflowAutomation, runWorkflowScheduleNow
 } from '../api'
 
-const mine = ref([])            // 我创建的
-const shared = ref([])          // 共享给我的（他人创建、对我可读/可管理）
+const mine = ref([])            // 我创建的（谁建归谁）
 const loading = ref(false)
 const editingId = ref(null)     // null = 列表；'' = 新建；'id' = 编辑
-const editorReadonly = ref(false)   // 画布只读（共享给我且无管理权）
+const editorReadonly = ref(false)   // 画布只读开关（个人资产恒为 false，保留参数位）
 const historyId = ref(null)     // 非 null = 运行历史页
 const historyName = ref('')
 const initialRunId = ref(null)  // 通知深链：打开运行历史后自动选中并定位到该 run（审批用）
@@ -254,17 +238,16 @@ const versionRow = ref(null)
 const versions = ref([])
 
 /** 是否有可展示的工作流 */
-const hasAny = computed(() => mine.value.length + shared.value.length > 0)
-/** 分栏：我创建的 / 共享给我的（空栏不渲染） */
+const hasAny = computed(() => mine.value.length > 0)
+/** 分栏：仅本人创建（谁建归谁） */
 const sections = computed(() => [
-  { key: 'mine', rows: mine.value },
-  { key: 'shared', rows: shared.value }
+  { key: 'mine', rows: mine.value }
 ])
-/** 页头统计：共 = 我创建的 + 共享给我的；已发布/草稿按全部可见条目拆分（与卡片状态口径一致） */
-const totalCount = computed(() => mine.value.length + shared.value.length)
-const publishedCount = computed(() => [...mine.value, ...shared.value].filter(r => r.status === 'published').length)
+/** 页头统计：已发布/草稿按全部条目拆分（与卡片状态口径一致） */
+const totalCount = computed(() => mine.value.length)
+const publishedCount = computed(() => mine.value.filter(r => r.status === 'published').length)
 const draftCount = computed(() => totalCount.value - publishedCount.value)
-/** 是否可管理（编辑/发布/共享/删除）；共享只读为 false */
+/** 是否可管理（编辑/发布/删除）；个人资产恒为真，字段保留与后端回填对齐 */
 const canManage = r => r.myPermission === 'MANAGE'
 
 // ---- 批量操作：卡片勾选 + 全选 + 批量发布/下线/导出/删除 ----
@@ -383,7 +366,6 @@ const load = async () => {
     const r = await listWorkflows()
     const d = (r && r.data) || {}
     mine.value = d.mine || []
-    shared.value = d.shared || []
     // 勾选与现存列表对账：已被删掉的 id 从选中集合里清掉（避免批量操作撞「不存在」）
     const alive = new Set(mine.value.map(x => x.id))
     selected.value = selected.value.filter(id => alive.has(id))
@@ -392,7 +374,6 @@ const load = async () => {
   } catch (e) {
     message.error('工作流加载失败：' + (e.message || '请刷新重试'))
     mine.value = []
-    shared.value = []
   } finally {
     loading.value = false
   }
@@ -407,7 +388,7 @@ const maybeDeepLink = () => {
   const wf = route.query.wf
   const run = route.query.run
   if (!wf) return
-  const found = [...mine.value, ...shared.value].find(x => x.id === wf)
+  const found = mine.value.find(x => x.id === wf)
   if (!found) return
   if (route.query.wfedit) { openEditor(found.id, !canManage(found)); return }
   openHistory(found)
@@ -501,13 +482,7 @@ const doRollback = async v => {
   })
 }
 
-// ---- 第 1 期：共享范围 / 定时与回调 ----
-const shareModal = ref(false)
-const shareRow = ref(null)
-const openShare = row => { shareRow.value = row; shareModal.value = true }
-/** 共享弹窗保存回调：json 为 v2 share_config（空串=私有），由后端强校验 manage ⊆ read */
-const saveShare = json => shareWorkflow(shareRow.value.id, json)
-
+// ---- 第 1 期：定时与回调 ----
 const autoModal = ref(false)
 const autoRow = ref(null)
 const autoSaving = ref(false)
@@ -730,7 +705,7 @@ const fmtTime = t => (t ? String(t).replace('T', ' ').slice(0, 16) : '—')
 
 onMounted(load)
 // 通知深链：停留在工作流 Tab 时再次点击不同通知 → 重新定位 run
-watch(() => [route.query.wf, route.query.run, route.query.wfedit], () => { if (mine.value.length || shared.value.length) maybeDeepLink() })
+watch(() => [route.query.wf, route.query.run, route.query.wfedit], () => { if (mine.value.length) maybeDeepLink() })
 </script>
 
 <style scoped>
@@ -778,15 +753,12 @@ watch(() => [route.query.wf, route.query.run, route.query.wfedit], () => { if (m
 /* M5 模板库弹窗卡片 */
 .wf-tpl-list { display: flex; flex-direction: column; gap: 10px; }
 .wf-tpl { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; }
-/* 第 1 期：共享分栏头 + 卡片上的定时/回调/共享小标 */
-.wf-sec-head { display: flex; align-items: baseline; gap: 10px; margin: 18px 0 8px; flex-wrap: wrap; }
-.wf-sec-title { font-size: 13px; font-weight: 500; color: var(--app-text); }
-.wf-tag-sched, .wf-tag-shared {
+/* 第 1 期：卡片上的定时/回调小标 */
+.wf-tag-sched {
   display: inline-flex; align-items: center; gap: 3px; font-size: 11px; line-height: 1;
   padding: 2px 7px; border-radius: 10px; flex: none;
 }
 .wf-tag-sched { color: var(--app-accent); background: var(--app-accent-weak); }
-.wf-tag-shared { color: var(--app-text2); background: var(--app-bg); border: 1px solid var(--app-border); }
 /* 定时与回调弹窗 */
 .auto-block { margin-bottom: 16px; }
 .auto-block:last-of-type { margin-bottom: 0; }

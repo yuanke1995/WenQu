@@ -17,7 +17,7 @@ import java.time.LocalDateTime;
  *   <li>回滚 = 把历史版本配置重新保存一遍（落新版本，reason 记「回滚自 vX」）——历史不被改写，
  *       回滚动作本身也可被再次回滚；</li>
  *   <li>只快照「调优内容」（{@link com.wenqu.ai.service.AgentService#VERSION_FIELDS} 白名单），
- *       isDefault/shareConfig/manageable 等非调优元数据不进快照，回滚也不会动它们。</li>
+ *       isDefault/manageable 等非调优元数据不进快照，回滚也不会动它们。</li>
  * </ul>
  * 保留份数可配（config: {@code agent.versionKeep}，默认 20），超出按版本号最小先删。
  *

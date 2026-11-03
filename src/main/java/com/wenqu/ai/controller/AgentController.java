@@ -25,12 +25,11 @@ import java.util.Map;
 /**
  * 智能体配置接口：**用户可自建自管**（2026-09-26 从"仅管理员"放开）。
  * <p>
- * 数据隔离口径（{@link ResourceVisibilityService}，资源类型 AGENT）——谁建归谁，按 userId 隔离：
+ * 数据隔离口径（{@link ResourceVisibilityService}）——谁建归谁，按 userId 隔离：
  * <ul>
- *   <li>创建者 → 可管理自己的智能体（创建者短路）；未配置共享＝私有，仅创建者可见；</li>
- *   <li>他人 → 仅按智能体显式配置的 share_config 共享范围可见可用；</li>
+ *   <li>创建者 → 可管理自己的智能体（创建者短路）；非创建者不可见；</li>
  *   <li>内置「问渠」是系统默认：所有登录用户可读可用，<b>管理员级可配置</b>（不再依赖 created_by 恰好是管理员 uid）；</li>
- *   <li>列表/编辑/删除/共享都按上述范围判定，看不见的智能体当不存在（不泄露存在性）。</li>
+ *   <li>列表/编辑/删除都按上述范围判定，看不见的智能体当不存在（不泄露存在性）。</li>
  * </ul>
  * 刻意保留管理员专属：{@code /{id}/default}（设默认是全局动作，影响所有人的下拉预选），
  * 该路径不在 SecurityConfig 用户白名单内，仍由拦截器拦下。
@@ -54,7 +53,7 @@ public class AgentController {
     private final com.wenqu.ai.agent.permission.PermissionPolicyResolver permissionPolicyResolver;
 
     /**
-     * 当前用户能否管理该智能体（数据按 userId 隔离：创建者或共享 manage 命中；内置「问渠」为管理员级可配置）。
+     * 当前用户能否管理该智能体（谁建归谁：创建者；内置「问渠」为管理员级可配置）。
      * <p>统一委托 {@link AgentService#manageable}，与写路径 {@code ensureManageable} 同一入口——此处此前自带一份
      * 判定，与服务层口径不一致：内置行在服务层被 {@link ResourceVisibilityService} 判 NONE，列表的
      * {@code manageable} 字段却按另一套算，前端据此把管理员本可编辑的内置行收起了编辑入口。</p>
@@ -239,16 +238,6 @@ public class AgentController {
     public ResultJson setDefault(@PathVariable("id") String id) {
         agentService.setDefault(id);
         return ResultJson.ok(Map.of("id", id, "isDefault", 1));
-    }
-
-    @Operation(summary = "设置共享范围", description = "body: {shareConfig}——空串 = 清空（回落私有：仅自己可见）；"
-            + "非空须为 version 2 JSON，且管理范围不得宽于读取范围。共享范围之外的人不可见、不可用、不可管理该智能体")
-    @PutMapping("/{id}/share")
-    public ResultJson updateShare(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
-        if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
-        Object v = body == null ? null : body.get("shareConfig");
-        agentService.updateShareConfig(id, v == null ? null : String.valueOf(v));
-        return ResultJson.ok("共享范围已保存");
     }
 
     @Operation(summary = "查询公开分享配置", description = "返回 {enabled, mcpEnabled, guestImages, guestFiles, token, modelRef, visitCount, lastVisitAt}；"

@@ -13,7 +13,6 @@ import com.wenqu.ai.mapper.AgentVersionMapper;
 import com.wenqu.ai.model.Agent;
 import com.wenqu.ai.model.AgentVersion;
 import com.wenqu.ai.service.ResourceVisibilityService.Principal;
-import com.wenqu.ai.service.ResourceVisibilityService.ResourceKind;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -83,7 +82,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
 
     /**
      * 配置快照字段白名单（有序：字段 → 中文名），只快照「调优内容」——改动才产生新版本的字段。
-     * <p>刻意不含 {@code isDefault}（全局下拉预选，非调优）、{@code shareConfig}（可见性，走独立接口）、
+     * <p>刻意不含 {@code isDefault}（全局下拉预选，非调优）、
      * {@code isBuiltin}（系统标记）——这些不是"改砸了要回滚"的对象，回滚也不该顺带改动它们。
      * 新增可调优字段时记得在此登记（否则该字段的改动不进快照、也无法回滚）。</p>
      */
@@ -161,16 +160,9 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
                 return;
             }
             if (builtins.size() == 1) {
-                // 内置「问渠」可读性走 readable() 的内置豁免，shareConfig 永不参与判定——
-                // 存量环境若残留过共享配置（历史上接口未拦），在此归一清掉，避免界面上出现误导性的共享范围标记
                 Agent keeper = builtins.get(0);
                 LambdaUpdateWrapper<Agent> fix = new LambdaUpdateWrapper<Agent>().eq(Agent::getId, keeper.getId());
                 boolean dirty = false;
-                if (keeper.getShareConfig() != null) {
-                    fix.set(Agent::getShareConfig, null);
-                    dirty = true;
-                    log.info("[AGENT] 内置「问渠」共享范围不参与可见性判定，已清除残留配置: {}（{}）", keeper.getName(), keeper.getId());
-                }
                 // 用途/图标同为身份锁死项（配置页已隐藏、接口层已拒绝改动）：存量环境里若残留历史错值，
                 // 在此归一回来——否则库里存着 is_subagent=1 / 非品牌标，界面上已无从纠正
                 if (Integer.valueOf(1).equals(keeper.getIsSubagent())) {
@@ -215,37 +207,33 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
     }
 
     /**
-     * 当前用户是否可读取该智能体。归属口径（谁建归谁）：未配置共享＝私有（仅创建者/管理员级）；
+     * 当前用户是否可读取该智能体。归属口径（谁建归谁）：仅创建者可见；
      * 内置「问渠」是系统默认——给每个人用，所有登录用户可读（配置仍只由管理员级维护）。
      */
     public boolean readable(Agent a) {
         if (a != null && Integer.valueOf(1).equals(a.getIsBuiltin())) return true;
-        return resourceVisibilityService.canRead(principal(), a == null ? null : a.getShareConfig(),
-                a == null ? null : a.getCreatedBy(), ResourceKind.AGENT);
+        return resourceVisibilityService.canRead(principal(), a == null ? null : a.getCreatedBy());
     }
 
     /**
-     * 当前用户是否可管理该智能体（可配置/设默认/改共享/删除；不可删除者由调用方按 isBuiltin 再拦）。
+     * 当前用户是否可管理该智能体（可配置/设默认/删除；不可删除者由调用方按 isBuiltin 再拦）。
      * <p><b>与 {@link #readable} 的内置豁免对称</b>：内置「问渠」全员可读，<b>管理员级可配置</b>。
-     * 此前 {@code ensureManageable} 只走通用判定，而 {@link ResourceVisibilityService#resolve}
-     * 在「数据按 userId 隔离」之后<b>不再有任何角色的全量短路</b>（含 superadmin），
-     * 且新环境播种的内置行 {@code created_by='system'} 永不等于任何登录 uid、
-     * {@code share_config} 为空 → 判定恒为 NONE。结果新环境第一个注册的管理员
-     * 反而改不了自己的内置智能体（存量库靠 created_by 恰好等于管理员 uid 的创建者短路侥幸正常）。
-     * 故可管理判定在此收口，与 {@link #readable} 的产品语义对齐。</p>
+     * 新环境播种的内置行 {@code created_by='system'} 永不等于任何登录 uid，通用判定恒为 NONE——
+     * 新环境第一个注册的管理员反而改不了自己的内置智能体，故可管理判定在此收口，
+     * 与 {@link #readable} 的产品语义对齐。</p>
      */
     public boolean manageable(Agent a) {
         if (a == null) return false;
         if (Integer.valueOf(1).equals(a.getIsBuiltin())) {
             return roleService.isAdminAny(RequestUser.roles());
         }
-        return resourceVisibilityService.canManage(principal(), a.getShareConfig(), a.getCreatedBy(), ResourceKind.AGENT);
+        return resourceVisibilityService.canManage(principal(), a.getCreatedBy());
     }
 
     /** 当前用户是否可管理该智能体（出现在管理端点前先过这道闸） */
     private void ensureManageable(Agent a) {
         if (!manageable(a)) {
-            throw new BizException(403, "无权管理该智能体（不在其共享管理范围内）");
+            throw new BizException(403, "无权管理该智能体");
         }
     }
 
@@ -508,7 +496,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
      * 显式 set body 中出现过的字段（**含 null**），只更新这些列。
      * <p><b>不能用 {@code updateById}</b>：MyBatis-Plus 默认更新策略是 NOT_NULL，会跳过 null 列，
      * 于是「清空描述」「把能力改回跟随全局（tool*=null / *范围=null）」「知识库范围改回全部文档」
-     * 这类操作都会静默不生效——与 {@link #updateShareConfig} 同因，故一律用显式 set。</p>
+     * 这类操作都会静默不生效，故一律用显式 set。</p>
      */
     private void updateColumns(String id, Map<String, Object> body, Agent a) {
         Map<String, Object> b = body == null ? java.util.Collections.emptyMap() : body;
@@ -583,29 +571,6 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         a.setUpdateTime(LocalDateTime.now());
         mapper.updateById(a);
         log.info("[AGENT] 设默认智能体 {}", id);
-    }
-
-    /**
-     * 写入共享范围（空串 = 清空 → 回落私有：仅自己与管理员级可见）。
-     * <p>校验口径与文档一致：必须 {@code version=2}，且管理范围不得宽于读取范围。</p>
-     * <p><b>必须用 {@code set(..., null)} 显式置空</b>：MyBatis-Plus 默认更新策略是 NOT_NULL，
-     * {@code updateById} 会跳过 null 字段，导致「恢复私有」静默不生效。</p>
-     */
-    public void updateShareConfig(String id, String shareConfigJson) {
-        Agent existing = mapper.selectById(id);
-        if (existing == null) throw new BizException(404, "智能体不存在");
-        // 内置「问渠」readable() 直接豁免共享判定（人人可读），shareConfig 对它是不生效的死数据——fail-loud 拒绝
-        if (Integer.valueOf(1).equals(existing.getIsBuiltin())) {
-            throw new BizException("内置「问渠」为系统默认智能体，全员可用，无需配置共享范围");
-        }
-        ensureManageable(existing);
-        resourceVisibilityService.validateShareConfig(shareConfigJson);
-        String normalized = (shareConfigJson == null || shareConfigJson.isBlank()) ? null : shareConfigJson;
-        mapper.update(null, new LambdaUpdateWrapper<Agent>()
-                .eq(Agent::getId, id)
-                .set(Agent::getShareConfig, normalized)
-                .set(Agent::getUpdateTime, LocalDateTime.now()));
-        log.info("[AGENT] 共享范围更新 id={} scope={}", id, normalized == null ? "私有（仅自己）" : "受限共享");
     }
 
     /** 把请求体字段映射到实体（仅覆盖 body 中出现的字段，其余保持原值） */
@@ -738,8 +703,8 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         if (id == null) return null;
         var wf = workflowMapper.selectById(id);
         if (wf == null) throw new BizException("工作流不存在：" + id);
-        if (!resourceVisibilityService.canRead(principal(), wf.getShareConfig(), wf.getUid(), ResourceKind.WORKFLOW)) {
-            throw new BizException(403, "无权绑定该工作流（不在其共享范围内）");
+        if (!resourceVisibilityService.canRead(principal(), wf.getUid())) {
+            throw new BizException(403, "无权绑定该工作流");
         }
         if (!"published".equals(wf.getStatus())) {
             throw new BizException("工作流「" + wf.getName() + "」尚未发布：请先在画布发布，再绑定到智能体");

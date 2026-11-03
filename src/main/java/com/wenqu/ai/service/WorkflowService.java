@@ -52,9 +52,8 @@ import java.util.function.Consumer;
  * 工作流管理：DSL 是唯一真源（架构决策见排班计划），本服务做
  * 存储 + 校验 + 编译 dry-run 的编排，以及调试运行（run）与运行记录查询。
  * <p>
- * 归属口径：M0~M3 仅<b>创建者本人</b>可见可管；M4 起启用发布语义与两级可见性——
- * {@code share_config} 同款（{@link ResourceVisibilityService#canRead}），
- * 共享给他人的是「可触发/可读」，管理权仍只在创建者与共享范围里的管理级。
+ * 归属口径：谁建归谁——仅<b>创建者本人</b>可见可管（{@link ResourceVisibilityService#canRead}），
+ * 启用发布语义后 api/agent 触发同样要求「对触发者可见」。
  * <p>
  * M4 的三种触发与各自跑的 DSL：
  * <ul>
@@ -154,16 +153,8 @@ public class WorkflowService {
         }
     }
 
-    /**
-     * 可见的工作流列表：{@code {mine:[...], shared:[...]}}（我创建的 / 共享给我的）。
-     * <p>
-     * 「共享给我的」= 他人创建且显式配置了 share_config、且当前用户命中读取范围的工作流。
-     * 共享范围存在 JSON 列里无法下推到 SQL，故先按「非本人 + 有 share_config」粗筛再逐个判定
-     * （个人资产量级下可接受；判定与执行期 {@link #loadVisible} 完全同口径，不会出现"列表可见却打不开"）。
-     */
-    /**
-     * 某个工作区下**本人**的工作流（工作区页用）。
-     * <p>只返回本人的：工作区是单用户容器，别人的工作流即便共享也不该混进这个工作区的「自己的编排」。
+    /** 某个工作区下**本人**的工作流（工作区页用）。
+     * <p>只返回本人的：工作区是单用户容器，别人的工作流即便可读也不该混进这个工作区的「自己的编排」。
      */
     public java.util.List<java.util.Map<String, Object>> listByProject(String uid, String projectId) {
         if (uid == null || uid.isBlank() || projectId == null || projectId.isBlank()) return java.util.List.of();
@@ -184,30 +175,16 @@ public class WorkflowService {
         return out;
     }
 
+    /** 可见的工作流列表：谁建归谁，恒为本人创建的（mine） */
     public Map<String, Object> listVisible() {
         Principal p = Principal.current();
-        ResourceVisibilityService.Principal vp = vp(p);
         List<Workflow> mine = workflowMapper.selectList(new LambdaQueryWrapper<Workflow>()
                 .eq(Workflow::getUid, p.uid())
                 .orderByDesc(Workflow::getUpdateTime));
-        List<Workflow> candidates = workflowMapper.selectList(new LambdaQueryWrapper<Workflow>()
-                .ne(Workflow::getUid, p.uid())
-                .isNotNull(Workflow::getShareConfig)
-                .ne(Workflow::getShareConfig, "")
-                .orderByDesc(Workflow::getUpdateTime));
-        List<Workflow> shared = new ArrayList<>();
-        for (Workflow w : candidates) {
-            if (visibility.canRead(vp, w.getShareConfig(), w.getUid(), ResourceVisibilityService.ResourceKind.WORKFLOW)) {
-                shared.add(w);
-            }
-        }
         fillLastRun(mine);
-        fillLastRun(shared);
         for (Workflow w : mine) decorate(w, p, true);
-        for (Workflow w : shared) decorate(w, p, false);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("mine", mine);
-        out.put("shared", shared);
         return out;
     }
 
@@ -242,8 +219,7 @@ public class WorkflowService {
     /** 派生字段填充 + 敏感字段脱敏（回调签名密钥只回"是否已设置"，不回明文） */
     private void decorate(Workflow w, Principal p, boolean mine) {
         w.setMine(mine);
-        w.setMyPermission(visibility.canManage(vp(p), w.getShareConfig(), w.getUid(),
-                ResourceVisibilityService.ResourceKind.WORKFLOW) ? "MANAGE" : "READ");
+        w.setMyPermission(visibility.canManage(vp(p), w.getUid()) ? "MANAGE" : "READ");
         w.setCallbackSecretSet(w.getCallbackSecret() != null && !w.getCallbackSecret().isBlank());
         w.setCallbackSecret(null);
     }
@@ -252,13 +228,12 @@ public class WorkflowService {
         return new ResourceVisibilityService.Principal(p.uid(), p.departmentId(), p.role());
     }
 
-    /** 取一条工作流并要求管理权（创建者或管理范围命中）；不存在与无权都按 404（不泄露存在性） */
+    /** 取一条工作流并要求管理权（创建者）；不存在与无权都按 404（不泄露存在性） */
     public Workflow requireManage(String id) {
         Principal p = Principal.current();
         Workflow row = workflowMapper.selectById(id);
         if (row == null) throw new BizException(404, "工作流不存在");
-        if (!visibility.canManage(vp(p), row.getShareConfig(), row.getUid(),
-                ResourceVisibilityService.ResourceKind.WORKFLOW)) {
+        if (!visibility.canManage(vp(p), row.getUid())) {
             throw new BizException(404, "工作流不存在");
         }
         return row;
@@ -271,7 +246,7 @@ public class WorkflowService {
 
     /**
      * 取一条工作流并要求管理权。保留方法名以兼容既有调用点（更新/删除/发布/下线/回滚）；
-     * 语义已从「仅创建者」放宽为「创建者或共享管理范围命中」——只读共享者仍拿不到管理权。
+     * 语义即「仅创建者」（谁建归谁）。
      */
     public Workflow getOwn(String id) {
         return requireManage(id);
@@ -713,7 +688,7 @@ public class WorkflowService {
     /**
      * 外部 API Key 触发：跑<b>已发布</b> DSL。
      * <p>
-     * 权限：工作流对该 Key 的归属用户可读（创建者短路或 share_config 命中）才允许触发；
+     * 权限：工作流对该 Key 的归属用户可读（创建者）才允许触发；
      * 不存在/不可见一律 404（不泄露存在性）。未发布 → 400 fail-loud（外部系统集成在发布前调
      * 会拿到明确原因，而不是跑一份随时会变的草稿）。
      * <b>人工审核节点不支持</b>：API 调用方没有审批卡交互面，直接 fail-loud 说明——
@@ -761,7 +736,7 @@ public class WorkflowService {
         Workflow row = workflowMapper.selectById(workflowId);
         if (row == null) throw new BizException(404, "工作流不存在");
         if (!visibility.canRead(new ResourceVisibilityService.Principal(p.uid(), p.departmentId(), p.role()),
-                row.getShareConfig(), row.getUid(), ResourceVisibilityService.ResourceKind.WORKFLOW)) {
+                row.getUid())) {
             throw new BizException(404, "工作流不存在");
         }
         return row;
@@ -789,7 +764,7 @@ public class WorkflowService {
             throw new BizException("绑定的工作流「" + row.getName() + "」尚未发布：请先在画布发布后再使用该智能体");
         }
         if (!visibility.canRead(new ResourceVisibilityService.Principal(p.uid(), p.departmentId(), p.role()),
-                row.getShareConfig(), row.getUid(), ResourceVisibilityService.ResourceKind.WORKFLOW)) {
+                row.getUid())) {
             throw new BizException(404, "工作流不存在");
         }
         assertNoApprovalNode(parseDsl(row.getPublishedDsl()), "智能体对话");
@@ -849,14 +824,13 @@ public class WorkflowService {
         return run;
     }
 
-    /** 本次调试运行要跑哪份 DSL（管理权→草稿；共享只读→已发布版本，未发布则 fail-loud） */
+    /** 本次调试运行要跑哪份 DSL（管理权→草稿；非创建者走不到这里——可见即本人） */
     private RunTarget resolveRunTarget(Workflow row, Principal p) {
-        if (visibility.canManage(vp(p), row.getShareConfig(), row.getUid(),
-                ResourceVisibilityService.ResourceKind.WORKFLOW)) {
+        if (visibility.canManage(vp(p), row.getUid())) {
             return new RunTarget(row.getDsl(), null, "draft");
         }
         if (!"published".equals(row.getStatus()) || row.getPublishedDsl() == null || row.getPublishedDsl().isBlank()) {
-            throw new BizException("工作流「" + row.getName() + "」尚未发布：共享只读用户只能运行已发布版本");
+            throw new BizException("工作流「" + row.getName() + "」尚未发布：请先在画布发布后再运行");
         }
         return new RunTarget(row.getPublishedDsl(), row.getPublishedVersion(), "published");
     }
@@ -1514,30 +1488,6 @@ public class WorkflowService {
     public org.springframework.web.servlet.mvc.method.annotation.SseEmitter subscribeRunStream(String workflowId, String runId) {
         WorkflowRun run = getRun(workflowId, runId);
         return stream.subscribe(runId, run.getStatus(), parseTraceList(run.getNodeTraces()));
-    }
-
-    // --------------------------------------------------------------------------------------------------
-    // 第 1 期：共享范围（谁建归谁为默认，共享=显式授权）
-    // --------------------------------------------------------------------------------------------------
-
-    /**
-     * 设置共享范围（仅创建者 / 管理范围命中可改）：写入前走
-     * {@link ResourceVisibilityService#validateShareConfig} 强校验（version=2 且 manage ⊆ read）；
-     * 空串 = 清空共享（回落「谁建归谁」的私有语义）。
-     */
-    public Map<String, Object> share(String id, String shareConfigJson) {
-        Workflow row = requireManage(id);
-        visibility.validateShareConfig(shareConfigJson);
-        String value = shareConfigJson == null || shareConfigJson.isBlank() ? null : shareConfigJson.trim();
-        // share_config 可为 NULL：updateById 的 NOT_NULL 策略会跳过 null 列（清空共享写不进去），
-        // 必须走 LambdaUpdateWrapper 显式 set（与 ScheduledJobService 置空 next_run_at 是同一个坑）
-        workflowMapper.update(null, new LambdaUpdateWrapper<Workflow>()
-                .eq(Workflow::getId, row.getId())
-                .set(Workflow::getShareConfig, value)
-                .set(Workflow::getUpdateTime, LocalDateTime.now()));
-        log.info("[WORKFLOW] 设置共享范围 {}（{}）uid={} 共享={}", row.getName(), row.getId(), row.getUid(),
-                value == null ? "私有" : value);
-        return Map.of("id", row.getId(), "shareConfig", value == null ? "" : value);
     }
 
     // --------------------------------------------------------------------------------------------------

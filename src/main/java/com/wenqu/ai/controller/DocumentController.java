@@ -59,12 +59,11 @@ public class DocumentController {
                 RequestUser.uid(), RequestUser.departmentId(), RequestUser.role());
     }
 
-    /** 文档管理权：创建者（文档 share_config 的 manage 命中亦可）；库语义 KNOWLEDGE_BASE */
+    /** 文档管理权：创建者（谁建归谁） */
     private void requireDocManage(com.wenqu.ai.model.AiDocument doc) {
         if (doc == null) throw new BizException("文档不存在");
-        if (!visibility.canManage(principal(), doc.getShareConfig(), doc.getCreatedBy(),
-                com.wenqu.ai.service.ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
-            throw new BizException("仅可管理自己上传或被授权管理的文档");
+        if (!visibility.canManage(principal(), doc.getCreatedBy())) {
+            throw new BizException("仅可管理自己上传的文档");
         }
     }
 
@@ -79,19 +78,15 @@ public class DocumentController {
     }
 
     /**
-     * 文档可读：所属库可见（个人默认库=归属人私有），且文档显式配置了共享时按配置判
-     * （未配置=跟随库——谁建归谁语义下，文档分享是显式例外）。不可见按不存在处理，不泄露存在性。
+     * 文档可读：所属库可见（个人默认库=归属人私有；谁建归谁）。
+     * 不可见按不存在处理，不泄露存在性。
      */
     private void requireDocRead(com.wenqu.ai.model.AiDocument doc) {
         if (doc == null) throw new BizException("文档不存在");
         var p = principal();
-        var kind = com.wenqu.ai.service.ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE;
-        if (!visibility.canReadDocFollowKb(p, doc.getShareConfig(), doc.getCreatedBy())) {
-            throw new BizException("文档不存在");
-        }
         if (doc.getKbId() != null) {
             var kb = kbService.get(doc.getKbId());
-            if (kb == null || !visibility.canRead(p, kb.getShareConfig(), kb.getCreatedBy(), kind)) {
+            if (kb == null || !visibility.canRead(p, kb.getCreatedBy())) {
                 throw new BizException("文档不存在");
             }
             // 官方内置库文档（手册篇目）：管理侧仅管理员可读——普通用户的消费入口在帮助中心
@@ -102,7 +97,7 @@ public class DocumentController {
         }
     }
 
-    /** 目标库管理权（上传/移动的落点校验；kbId 空=默认库，同样按其库配置判定） */
+    /** 目标库管理权（上传/移动的落点校验；kbId 空=默认库，同样按归属判定） */
     private void requireKbManage(String kbId) {
         String id = (kbId == null || kbId.isBlank()) ? kbService.defaultId(RequestUser.uid()) : kbId;
         var kb = id == null ? null : kbService.get(id);
@@ -110,9 +105,8 @@ public class DocumentController {
         if (kb != null && kb.getBuiltin() != null && kb.getBuiltin() == 1) {
             throw new BizException("「" + kb.getName() + "」为官方内置知识库，内容由系统随版本同步，不接受上传");
         }
-        if (kb == null || !visibility.canManage(principal(), kb.getShareConfig(), kb.getCreatedBy(),
-                com.wenqu.ai.service.ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
-            throw new BizException("仅可向自己创建或被授权管理的知识库上传文档");
+        if (kb == null || !visibility.canManage(principal(), kb.getCreatedBy())) {
+            throw new BizException("仅可向自己创建的知识库上传文档");
         }
     }
 
@@ -210,16 +204,15 @@ public class DocumentController {
 
     @Operation(summary = "文档列表", description = "获取文档列表（含解析状态、分块数、文件大小等）；"
             + "kbId 传知识库 ID 时只返回该库文档（默认库含 kb_id 为空的历史文档），不传返回全部；"
-            + "普通用户仅返回自己创建的、默认库与共享范围内的库及其中文档")
+            + "普通用户仅返回自己创建的、默认库及其中文档")
     @GetMapping("/list")
     public ResultJson list(@Parameter(description = "知识库 ID（可选）") @RequestParam(value = "kbId", required = false) String kbId) {
         List<com.wenqu.ai.model.AiDocument> docs = documentService.list(kbId);
-        // 所有人：库可见（个人默认库=归属人私有）+ 文档显式共享判定（未配置=跟随库），双重过滤（库不可见时按空列表处理，不泄露存在性）
+        // 库可见（个人默认库=归属人私有；谁建归谁），双重过滤（库不可见时按空列表处理，不泄露存在性）
         var p = principal();
-        var kind = com.wenqu.ai.service.ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE;
         if (kbId != null && !kbId.isBlank()) {
             var kb = kbService.get(kbId);
-            if (kb == null || !visibility.canRead(p, kb.getShareConfig(), kb.getCreatedBy(), kind)) {
+            if (kb == null || !visibility.canRead(p, kb.getCreatedBy())) {
                 return ResultJson.ok(List.of());
             }
             // 官方内置库：与 /kb 列表同口径仅管理员可见——不可见按空列表处理，不泄露存在性
@@ -231,12 +224,11 @@ public class DocumentController {
         for (var kb : kbService.list()) {
             // 全量视图同样剔除：官方内置库不进普通用户的可见库集合（手册篇目不混进「全部文档」）
             if (kb.getBuiltin() != null && kb.getBuiltin() == 1 && !admin()) continue;
-            if (visibility.canRead(p, kb.getShareConfig(), kb.getCreatedBy(), kind)) {
+            if (visibility.canRead(p, kb.getCreatedBy())) {
                 visibleKbIds.add(kb.getId());
             }
         }
         List<com.wenqu.ai.model.AiDocument> out = docs.stream()
-                .filter(d -> visibility.canReadDocFollowKb(p, d.getShareConfig(), d.getCreatedBy()))
                 // kb_id 为空=默认库语义（与检索侧一致）；连默认库都不存在时保守过滤掉
                 .filter(d -> {
                     String kid = d.getKbId() == null ? kbService.defaultId(RequestUser.uid()) : d.getKbId();
@@ -274,16 +266,15 @@ public class DocumentController {
     }
 
     @Operation(summary = "回收站列表", description = "软删文档（内容保留可恢复）；kbId 过滤时默认库并入 kb_id 为空的历史行，最近 500 条；"
-            + "管理员全量，普通用户仅自己上传/被授权管理的行（官方内置库的旧篇目CreatedBy=system，无 manage 授予，天然不可见）")
+            + "管理员全量，普通用户仅自己上传的行（官方内置库的旧篇目CreatedBy=system，无人可管，天然不可见）")
     @GetMapping("/recycle")
     public ResultJson recycle(@Parameter(description = "知识库 ID（空=全部）")
                               @RequestParam(value = "kbId", required = false) String kbId) {
         // 原先这里不过滤任何权限：普通用户不传 kbId 能翻到全平台（含官方手册库同步替换下来的
         // 旧篇目）的软删内容。可见口径与操作权对齐（restore/purge 走 canManage）：
         // 管理员全量（页头回收站徽标语义），普通用户按行判管理权。
-        var kind = com.wenqu.ai.service.ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE;
         return ResultJson.ok(documentService.recycleList(kbId).stream()
-                .filter(d -> admin() || visibility.canManage(principal(), d.getShareConfig(), d.getCreatedBy(), kind))
+                .filter(d -> admin() || visibility.canManage(principal(), d.getCreatedBy()))
                 .toList());
     }
 
@@ -385,19 +376,6 @@ public class DocumentController {
         return ResultJson.ok("操作成功");
     }
 
-    @Operation(summary = "设置文档共享范围", description = "写入 share_config（JSON，snake_case：read_scope/manage_scope 各含 access_level/global|department|user、department_ids、user_uids）。空串=恢复全局可见。写入时强校验 manage⊆read")
-    @PutMapping("/{id}/share")
-    public ResultJson updateShare(
-            @Parameter(description = "文档 ID") @PathVariable("id") String id,
-            @Parameter(description = "{\"shareConfig\": \"...\"}（空串=全局）")
-            @RequestBody Map<String, String> body,
-            HttpServletRequest httpRequest) {
-        String shareConfig = body.get("shareConfig");
-        requireDocManage(documentService.getDoc(id));
-        documentService.updateShareConfig(id, shareConfig, RequestUser.uid());
-        return ResultJson.ok("操作成功");
-    }
-
     @Operation(summary = "重解析文档", description = "复用源文件重新解析+向量化，适用于文档内容更新后重新入库")
     @PostMapping("/{id}/reparse")
     public ResultJson reparse(
@@ -450,8 +428,7 @@ public class DocumentController {
         List<String> allowed = new ArrayList<>();
         for (String docId : ids) {
             var doc = documentService.getDoc(docId);
-            if (doc != null && visibility.canManage(principal(), doc.getShareConfig(), doc.getCreatedBy(),
-                    com.wenqu.ai.service.ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
+            if (doc != null && visibility.canManage(principal(), doc.getCreatedBy())) {
                 allowed.add(docId);
             } else {
                 audit.warn("[AUDIT] 批量删除跳过无权限文档 operator={} docId={}", RequestUser.uid(), docId);
@@ -502,8 +479,7 @@ public class DocumentController {
         List<String> allowed = new ArrayList<>();
         for (String docId : ids) {
             var doc = documentService.getDoc(docId);
-            if (doc != null && visibility.canManage(principal(), doc.getShareConfig(), doc.getCreatedBy(),
-                    com.wenqu.ai.service.ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
+            if (doc != null && visibility.canManage(principal(), doc.getCreatedBy())) {
                 allowed.add(docId);
             }
         }

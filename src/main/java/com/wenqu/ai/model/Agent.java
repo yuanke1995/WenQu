@@ -201,9 +201,6 @@ public class Agent {
     /** 创建人（登录用户 uid） */
     private String createdBy;
 
-    /** 共享范围(JSON: {read_scope:{access_level:global|department|user,department_ids[],user_uids[]},manage_scope:{同}}; 空=私有，仅创建者与管理员级可见) */
-    private String shareConfig;
-
     /**
      * 当前请求者是否可管理（列表接口按登录态回填，仅供前端收起配置/共享/发布/删除入口；
      * 真正的判权在写路径按 ResourceVisibilityService 再走一遍，此处不做授权依据）。

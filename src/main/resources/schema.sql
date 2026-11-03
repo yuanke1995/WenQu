@@ -26,7 +26,6 @@ CREATE TABLE IF NOT EXISTS `c_ai_knowledge_base` (
     `is_default`   INT          DEFAULT 0 COMMENT '是否个人默认库: 1=该归属人的默认库（问渠，每人一张、系统懒创建；未指定库的文档兜底归属）',
     `builtin`      INT          DEFAULT 0 COMMENT '官方内置库: 1=系统随版本同步的内置知识库（如问渠使用手册；全员只读、不接受上传/编辑/删除，内容按源文件指纹增量重建）',
     `created_by`   VARCHAR(64)  DEFAULT NULL COMMENT '创建人（登录用户 uid；未登录为 anonymous）',
-    `share_config` TEXT         DEFAULT NULL COMMENT '共享范围(JSON: {read_scope:{access_level:global|department|user,department_ids[],user_uids[]},manage_scope:{同}}; 空=私有：仅创建者与管理员级可见（谁建归谁，2026-10）)',
     `create_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     `deleted`      INT          DEFAULT 0 COMMENT '逻辑删除: 0=未删除, 1=已删除',
@@ -53,7 +52,6 @@ CREATE TABLE IF NOT EXISTS `c_ai_document` (
     `tags`         VARCHAR(500) DEFAULT NULL COMMENT '文档标签（逗号分隔，如 部门A,合同,2026；空=无标签。供智能体检索标签收窄与文档筛选用）',
     `version`      INT          DEFAULT 0 COMMENT '版本号（每次解析+1，用于版本管理）',
     `created_by`   VARCHAR(64)  DEFAULT NULL COMMENT '创建人（登录用户 uid；未登录为 anonymous）',
-    `share_config` TEXT         DEFAULT NULL COMMENT '共享范围(JSON: {read_scope:{access_level:global|department|user,department_ids[],user_uids[]},manage_scope:{同}}; 空=私有：仅创建者与管理员级可见（谁建归谁，2026-10）)',
     `create_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     `auto_refresh`    INT          DEFAULT 0 COMMENT '网页源自动刷新: 0=关闭 1=开启（仅 file_type=url 生效）',
@@ -326,14 +324,15 @@ CREATE TABLE IF NOT EXISTS `c_ai_api_key` (
     `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`           VARCHAR(50)  NOT NULL COMMENT '主键ID',
     `name`         VARCHAR(200) DEFAULT NULL COMMENT '用途名称（如"报表系统集成"）',
-    `key_hash`     VARCHAR(64)  NOT NULL COMMENT 'Key 的 SHA-256 哈希（十六进制小写）',
+    `key_hash`     VARCHAR(64)  NOT NULL COMMENT 'Key 的 SHA-256 哈希（十六进制小写；请求校验凭据）',
     `key_prefix`   VARCHAR(32)  DEFAULT NULL COMMENT '明文前缀（列表展示用）',
+    `key_cipher`   TEXT         DEFAULT NULL COMMENT 'Key 明文的 JWE 密文（部署密钥加密保管，列表「眼睛」回显/复制用；与模型供应商 api_key 同一套加密。NULL=签发于回显功能上线前的存量 Key，不可回显）',
     `disabled`     INT          DEFAULT 0 COMMENT '是否停用: 0=启用, 1=停用（吊销）',
     `mcp_enabled`  INT          DEFAULT 0 COMMENT 'MCP 端点: 1=该 Key 可访问平台级 MCP 入口 /ai/mcp（元工具集），0=不可',
     `expire_at`    DATETIME     DEFAULT NULL COMMENT '过期时间（NULL=长期有效）',
     `last_used_at` DATETIME     DEFAULT NULL COMMENT '最近使用时间',
+    `act_as_uid`   VARCHAR(64)  DEFAULT NULL COMMENT '恒为签发人本人（2026-11-02 定稿：Key 以谁签发的身份发问，不支持指定/改绑别人；NULL=存量未绑定旧 Key，问答链路拒绝，编辑传签发人 uid 可补齐）',
     `created_by`   VARCHAR(64)  DEFAULT NULL COMMENT '创建人',
-    `share_config` TEXT         DEFAULT NULL COMMENT '共享范围(JSON: {read_scope:{access_level:global|department|user,department_ids[],user_uids[]},manage_scope:{同}}; 空=私有：仅创建者与管理员级可见（谁建归谁，2026-10）)',
     `create_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
@@ -353,7 +352,6 @@ CREATE TABLE IF NOT EXISTS `c_ai_agent` (
     `icon`            VARCHAR(32)  DEFAULT NULL COMMENT '图标: wenqu=问渠品牌标 / emoji 字符; NULL=默认展示（内置「问渠」默认用问渠品牌标，其余用机器人图标）',
     `description`     VARCHAR(500) DEFAULT NULL COMMENT '描述',
     `created_by`   VARCHAR(64)  DEFAULT NULL COMMENT '创建人（登录用户 uid；未登录为 anonymous）',
-    `share_config` TEXT         DEFAULT NULL COMMENT '共享范围(JSON: {read_scope:{access_level:global|department|user,department_ids[],user_uids[]},manage_scope:{同}}; 空=私有：仅创建者与管理员级可见（谁建归谁，2026-10）)',
     `query_params` TEXT         DEFAULT NULL COMMENT '检索开关覆盖(JSON: {"rerank.enabled":"false"}; 空=继承全局; 阈值/权重/召回量归知识库或全局)',
     `system_prompt`   TEXT         DEFAULT NULL COMMENT '系统提示词覆盖（空=继承全局）',
     `knowledge_scope` VARCHAR(2000) DEFAULT NULL COMMENT '知识库范围：all 或 文档ID逗号分隔（空=all）',
@@ -406,7 +404,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_agent_version` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='智能体配置版本快照（保存即落一版，回滚=再存一版）';
 
 -- ============================================
--- 2026-09-16: 多用户协作（用户 + 部门 + 共享范围）
+-- 2026-09-16: 多用户协作（用户 + 部门；资源按创建者隔离，谁建归谁）
 -- c_ai_user 存画像/归属与登录凭据（密码哈希加盐存储）；鉴权由本服务本地登录（JWT）完成。
 -- 用户由管理员在「成员管理」建档；未登录请求归属 anonymous（与会话兼容池同理）。
 -- ============================================
@@ -930,7 +928,6 @@ CREATE TABLE IF NOT EXISTS `c_ai_workflow` (
     `description`  VARCHAR(500)  DEFAULT NULL COMMENT '描述',
     `dsl`          MEDIUMTEXT    NOT NULL COMMENT '工作流 DSL（JSON：version/nodes/edges，画布坐标存 position）',
     `status`       VARCHAR(16)   NOT NULL DEFAULT 'draft' COMMENT '状态: draft=草稿 published=已发布（M4 启用发布语义）',
-    `share_config` VARCHAR(2000) DEFAULT NULL COMMENT '共享范围(JSON，与知识库/智能体同款两级可见性；空=仅本人，M4 前不启用)',
     `published_dsl` MEDIUMTEXT   DEFAULT NULL COMMENT 'M4：已发布版本锁定的 DSL（发布时从 dsl 拷贝；草稿继续改不影响已发布行为）',
     `published_version` INT      DEFAULT NULL COMMENT 'M4：当前发布版本号（对应 c_ai_workflow_version.version）',
     `published_at` DATETIME      DEFAULT NULL COMMENT 'M4：最近一次发布时间',

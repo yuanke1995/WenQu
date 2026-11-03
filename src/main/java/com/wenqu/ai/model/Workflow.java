@@ -29,7 +29,7 @@ public class Workflow {
     @TableId(type = IdType.INPUT)
     private String id;
 
-    /** 创建者 uid（M4 前仅本人可见可管，share_config 字段预留） */
+    /** 创建者 uid（谁建归谁：仅本人可见可管） */
     private String uid;
 
     /** 工作流名称 */
@@ -43,9 +43,6 @@ public class Workflow {
 
     /** 状态: draft=草稿 published=已发布（M4 启用发布语义） */
     private String status;
-
-    /** 共享范围(JSON，与知识库/智能体同款两级可见性；空=仅本人，M4 前不启用) */
-    private String shareConfig;
 
     // ---- M4：发布与版本 ----
     /** 已发布版本锁定的 DSL（发布时从 dsl 拷贝；草稿继续改不影响已发布行为；未发布为 NULL） */

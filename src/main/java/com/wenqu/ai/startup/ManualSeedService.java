@@ -46,8 +46,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *   <li><b>幂等增量</b>：按源文件 SHA-256 指纹（c_ai_document.source_hash）判定——
  *       指纹未变且状态生效则跳过（<b>跳过不花钱</b>）；变更/新增整篇重建
  *       （删旧文档走 {@link DocumentService#delete} 全套清理）；</li>
- *   <li><b>权限语义</b>：库 createdBy=system + share_config 全员只读 ⇒ 现有 ResourceVisibilityService
- *       天然「人人可读、无人可管」，检索可见性零改动；服务层 update/delete 另有 builtin 拦截双保险；</li>
+ *   <li><b>权限语义</b>：库 builtin=1 ⇒ 消费侧（检索/对话/帮助中心）经
+ *       ResourceVisibilityService.canReadBuiltinKb 登录即可读；管理侧入口仅管理员级；
+ *       服务层 update/delete 另有 builtin 拦截双保险；</li>
  *   <li><b>向量模型</b>：优先沿用已解析可用的现有绑定；否则取既有知识库绑定的众数，
  *       再退到注册表第一个可用 embedding（{@link ModelRegistryService#firstAvailableEmbeddingRef()}）；
  *       绑定变化触发全篇重建（向量空间与索引一一对应）。**没有任何可用向量模型时明确 ERROR 并跳过本轮**，
@@ -70,8 +71,6 @@ public class ManualSeedService {
     private static final String MANUAL_KB_ICON = "📘";
     /** 手册文档固定描述（文档页展示） */
     private static final String MANUAL_DOC_DESC = "问渠官方使用手册（随版本自动同步，不可编辑）";
-    /** 全员只读共享配置（v2：read_scope=global；manage_scope 缺失=除创建者外无人可管理——system 不会命中任何 uid） */
-    private static final String READ_GLOBAL_SHARE = "{\"version\":2,\"read_scope\":{\"access_level\":\"global\"}}";
 
     private final KnowledgeBaseMapper kbMapper;
     private final AiDocumentMapper documentMapper;
@@ -157,7 +156,6 @@ public class ManualSeedService {
             kb.setIsDefault(0);
             kb.setBuiltin(1);
             kb.setCreatedBy("system");
-            kb.setShareConfig(READ_GLOBAL_SHARE);
             kb.setEmbeddingRef(ref);
             kb.setDeleted(0);
             LocalDateTime now = LocalDateTime.now();

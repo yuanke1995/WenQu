@@ -122,7 +122,6 @@
             <span class="col-name">
               <span class="file-ic" :style="{ background: typeColor(d.fileType).bg, color: typeColor(d.fileType).fg }">{{ (d.fileType || '?').toUpperCase().slice(0, 4) }}</span>
               <span class="file-name" :title="d.fileName + (d.description ? ' · ' + d.description : '') + (d.sourceUrl ? ' · 来源: ' + d.sourceUrl : '')">{{ d.fileName }}<i v-if="d.description" class="file-desc">{{ d.description }}</i></span>
-              <span v-if="scopeLabel(d)" class="app-pill warn scope-tag" title="已限制共享范围，点「共享」查看或修改">{{ scopeLabel(d) }}</span>
               <span v-if="docTags(d).length" class="doc-tags">
                 <a-tag v-for="t in docTags(d)" :key="t" class="doc-tag-chip">{{ t }}</a-tag>
               </span>
@@ -415,11 +414,6 @@
       </a-spin>
     </a-modal>
 
-    <!-- 共享范围（公共组件：与智能体 / API Key 共用同一套两区表单） -->
-    <ShareScopeModal v-model:open="shareVisible" resource-label="文档" read-verb="查看并检索"
-                     :share-config="shareTarget.shareConfig" :save-fn="saveShareFn"
-                     :tip="SCOPE_TIP" @saved="fetchList" />
-
     <!-- 文档标签：从行内 ⋯ 打开（即改即存，检索侧直接生效，无需重建索引） -->
     <a-modal v-model:open="tagVisible" :title="'文档标签 · ' + tagDocName" :width="480" ok-text="保存" @ok="saveTags">
       <a-select v-model:value="tagDraft" mode="tags" style="width:100%" :token-separators="[',', '，']"
@@ -470,11 +464,10 @@ import { listDocuments, uploadDocumentsBatch, updateDocumentStatus, reparseDocum
          batchDeleteDocuments, batchUpdateDocumentStatus, getDocumentStats, listKnowledgeByDoc, getKnowledgeDetail,
          updateKnowledge, deleteKnowledge, listDocumentVersions, rollbackDocument,
          getRuntimeConfig, batchReparseDocuments, updateKnowledgeStatus, searchKnowledge,
-         downloadDocumentSource, updateDocumentShare, listKnowledgeBases, moveDocToKb, importDocumentFromUrl, refreshConfigDocument,
+         downloadDocumentSource, listKnowledgeBases, moveDocToKb, importDocumentFromUrl, refreshConfigDocument,
          getDocumentQueueStats, listAvailableModels, backfillDescriptions, setDocumentTags,
          listRecycleDocuments, restoreDocument, purgeDocument, purgeRecycleBin,
          batchRestoreRecycled, batchPurgeRecycled } from '../api'
-import ShareScopeModal from './ShareScopeModal.vue'
 import KnowledgeBaseEditModal from '../components/KnowledgeBaseEditModal.vue'
 import KnowledgeGraphModal from '../components/KnowledgeGraphModal.vue'
 import ModelSelect from '../components/ModelSelect.vue'
@@ -1127,7 +1120,6 @@ function rowMenu (d) {
   if (!canManageDoc(d)) return []
   const items = []
   if (d.status === 0) items.push({ key: 'versions', label: '版本历史' })
-  if (d.status !== 2) items.push({ key: 'share', label: '共享范围' })
   if (d.status === 0 || d.status === 3) {
     items.push({ key: 'reparse', label: '重新解析', disabled: reparsingId.value === d.id,
                  tip: '复用源文件重新解析+向量化，适用于文档内容更新后重新入库' })
@@ -1144,7 +1136,6 @@ function rowMenu (d) {
 }
 function onRowMenu (d, key) {
   if (key === 'versions') openVersions(d)
-  else if (key === 'share') openShare(d)
   else if (key === 'reparse') reparse(d.id)
   else if (key === 'backfill') backfillDesc(d.id)
   else if (key === 'tags') openTagEdit(d)
@@ -1158,45 +1149,6 @@ function onRowMenu (d, key) {
 }
 function showFailReason (record) {
   Modal.info({ title: `解析失败 - ${record.fileName}`, content: record.failReason || '未知原因，可点击"重解析"重试' })
-}
-
-// ==================== 共享范围（弹窗为公共组件 ShareScopeModal） ====================
-const shareVisible = ref(false)
-const shareTarget = ref({ id: '', shareConfig: '' })
-// 保存回调透传给组件：组件只负责表单与校验，打哪个接口由调用方决定
-const saveShareFn = json => updateDocumentShare(shareTarget.value.id, json)
-
-/**
- * 文档共享范围弹窗里的「分库建议」提示（组件仅在读取范围非全局时显示）。
- *
- * <p>为什么建议分库而不是靠文档级权限硬扛：文档级可见性是<b>召回后剔除</b>（库级才下推），
- * 同一个库里的无权文档仍会先占掉向量 topK 名额，别人能搜到的内容就少了。
- * 分库后整库口径一致，库门在候选阶段就挡掉，召回名额一个不浪费。
- */
-const SCOPE_TIP = '建议把不同可见范围的文档分到不同知识库：同一库内混有别人看不到的文档时，其他人可能搜不到本该搜到的内容。'
-
-// 文档行的共享范围标记：仅显式共享时显示（未配置=跟随库即默认，不显示以免噪音）
-function scopeLabel (d) {
-  if (!d.shareConfig || !String(d.shareConfig).trim()) return ''
-  let cfg = null
-  try { cfg = JSON.parse(d.shareConfig) } catch (e) { return '' }
-  const r = (cfg && cfg.read_scope) || {}
-  const lvl = r.access_level || 'global'
-  if (lvl === 'global') return '全员共享'
-  if (lvl === 'department') {
-    const n = Array.isArray(r.department_ids) ? r.department_ids.length : 0
-    return n ? '限 ' + n + ' 个部门' : '部门可见'
-  }
-  if (lvl === 'user') {
-    const n = Array.isArray(r.user_uids) ? r.user_uids.length : 0
-    return n ? '限 ' + n + ' 人' : '指定人可见'
-  }
-  return ''
-}
-
-function openShare (d) {
-  shareTarget.value = { id: d.id, shareConfig: d.shareConfig || '' }
-  shareVisible.value = true
 }
 
 // ==================== 知识块 ====================
@@ -1709,8 +1661,6 @@ const fmtTime = t => {
 .parse-desc { font-size: 11px; color: var(--app-text3); display: inline-block; max-width: 150px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* 解析队列指示：队列非空时常驻页头，点工具栏按钮/刷新不会丢 */
 .queue-chip { flex: none; cursor: default; }
-/* 共享范围列表标记（弹窗两区表单已抽为公共组件 ShareScopeModal） */
-.scope-tag { flex: none; }
 /* 文档标签：贴在文件名后的小号 chip；标签多时行内收起（悬浮 title 仍全量可见） */
 .doc-tags { display: inline-flex; gap: 4px; flex-wrap: wrap; margin-left: 8px; max-width: 260px; overflow: hidden; max-height: 22px; }
 .doc-tag-chip { margin-inline-end: 0; font-size: 11px; line-height: 16px; padding: 0 6px; border-radius: 4px; }

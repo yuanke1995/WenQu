@@ -1079,8 +1079,8 @@ public class HybridRetrievalService {
      * 当前用户可读的知识库 id 集合（<b>库门下推的唯一来源，每次实时计算</b>）。
      *
      * <p><b>为什么库级能下推而文档级不能</b>：库集合是几十量级、每轮实时算（<b>无陈旧问题</b>），
-     * 且能整库挡掉召回；文档级是「未配置共享=跟随库」这种依赖 DB 状态的规则，
-     * 索引层无法表达，只能在应用层逐条判（晚绑定，见 {@link DocumentAclTags} 类注释）。
+     * 且能整库挡掉召回；文档级可见性曾依赖 per-row 配置（share_config），现已随共享功能移除——
+     * 文档恒跟随所属库，库门即全部判定。
      *
      * <p><b>查库表而非文档表</b>：库数量是几十量级，文档表会随使用持续增长。
      *
@@ -1093,8 +1093,8 @@ public class HybridRetrievalService {
                     RequestUser.uid(), RequestUser.departmentId(), RequestUser.role());
             Set<String> visible = new LinkedHashSet<>();
             for (com.wenqu.ai.model.KnowledgeBase kb : knowledgeBaseService.list()) {
-                if (resourceVisibilityService.canRead(p, kb.getShareConfig(), kb.getCreatedBy(),
-                        ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE)) {
+                // 消费侧库门：官方内置库（手册）登录即可读；其余谁建归谁
+                if (resourceVisibilityService.canReadBuiltinKb(p, kb.getBuiltin(), kb.getCreatedBy())) {
                     visible.add(kb.getId());
                 }
             }
@@ -1110,14 +1110,14 @@ public class HybridRetrievalService {
      *
      * <p><b>为什么是「按命中块查」而不是「全表算不可见集」</b>（2026-10-05 晚绑定改造）：
      * 旧实现每问一次都 {@code selectList} 全表 {@code c_ai_document}（无 WHERE）并逐行解析
-     * {@code share_config}，文档量涨上去就是硬伤；更本质的问题是它与「写入侧把 ACL 烘焙进向量
-     * metadata」并存，导致<b>同一份 share_config 被两处各解析一次</b>，口径易漂移
+     * 权限配置，文档量涨上去就是硬伤；更本质的问题是它与「写入侧把 ACL 烘焙进向量
+     * metadata」并存，<b>同一份权限被两处各解析一次</b>，口径易漂移
      * （「OR 门里没有标签=永不可见」那次 bug 即由此而来）。
      * <p>现在只查本轮命中的那些文档（向量路 metadata + 关键词路 docId 合并去重），
-     * 走主键索引、亚毫秒级；<b>改共享范围下次检索即生效，不需要重写任何索引</b>。
+     * 走主键索引、亚毫秒级。
      *
      * <p><b>两级判定，与管理接口同源</b>（全部走 {@link ResourceVisibilityService}，判定逻辑只此一处）：
-     * 文档可见 = 所属库可读 <b>且</b> 文档自身可读（未配置共享时跟随库）。
+     * 文档可见 = 所属库可读（共享功能移除后文档恒跟随所属库，库门即唯一文档级判定）。
      *
      * <p><b>异常时的取向</b>：查询失败返回<b>空集</b>（=什么都不可见）而非放行全部。
      * 这是与旧实现相反的取舍，理由是<b>权限判定失败应当 fail-closed</b>：
@@ -1146,7 +1146,7 @@ public class HybridRetrievalService {
             ResourceVisibilityService.Principal p = new ResourceVisibilityService.Principal(
                     RequestUser.uid(), RequestUser.departmentId(), RequestUser.role());
 
-            // 库级：可见库集合（几十行，逐个 JSON 判；库级已下推进索引，这里是文档级的库门复核）
+            // 库级：可见库集合（几十行，逐个判；库级已下推进索引，这里是文档级的库门复核）
             Set<String> visibleKbIds = loadVisibleKbIds();
             if (visibleKbIds == null) {
                 log.error("[FAIL-LOUD] 可见库集合查询失败，本轮按「全部不可见」处理（fail-closed）");
@@ -1163,9 +1163,7 @@ public class HybridRetrievalService {
                 }
                 // 未挂任何库的文档（kbId 空）按默认库判定（kb_id 空=默认库语义，与管理接口一致）
                 boolean kbVisible = kbId == null || kbId.isBlank() || visibleKbIds.contains(kbId);
-                boolean docVisible = resourceVisibilityService.canReadDocFollowKb(
-                        p, d.getShareConfig(), d.getCreatedBy());
-                if (kbVisible && docVisible) visible.add(String.valueOf(d.getId()));
+                if (kbVisible) visible.add(String.valueOf(d.getId()));
             }
             return visible;
         } catch (Exception e) {

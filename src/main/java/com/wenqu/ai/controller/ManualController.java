@@ -31,7 +31,7 @@ import java.util.Map;
  * 帮助中心 / 官方内置手册只读接口。
  * <p>
  * 数据源即 {@link ManualSeedService} 同步出的官方内置知识库（builtin=1）：
- * 登录即可读（库 share_config 为全员只读，与网页检索可见性同源），
+ * 登录即可读（消费侧经 ResourceVisibilityService.canReadBuiltinKb 对内置库豁免，与网页检索可见性同源），
  * 不暴露任何非手册内容——篇目与内容都限定在内置库内。
  * 内容优先回 classpath 原文（阅读体验与源文件逐字一致），资源缺失时回退知识块拼装
  * （标题行在分块时被抽作块 title，拼装时按块标题还原为小节）。

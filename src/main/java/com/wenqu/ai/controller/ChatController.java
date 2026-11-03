@@ -316,7 +316,6 @@ public class ChatController {
             throw new BizException("一次最多引用 " + max + " 个知识库/文档/智能体");
         }
         boolean admin = adminGuard.isAdmin(httpRequest);
-        var kind = com.wenqu.ai.service.ResourceVisibilityService.ResourceKind.KNOWLEDGE_BASE;
         var principal = new com.wenqu.ai.service.ResourceVisibilityService.Principal(
                 RequestUser.uid(), RequestUser.departmentId(), RequestUser.role());
         List<ChatRequest.Mention> out = new java.util.ArrayList<>();
@@ -330,8 +329,9 @@ public class ChatController {
             ChatRequest.Mention normalized = new ChatRequest.Mention();
             if ("kb".equals(type)) {
                 var kb = kbService.get(id);
+                // 消费侧库门：官方内置库（手册）登录即可读；其余谁建归谁（管理员另有全量管理视角，不在此放开）
                 if (kb == null || (!admin
-                        && !visibility.canRead(principal, kb.getShareConfig(), kb.getCreatedBy(), kind))) {
+                        && !visibility.canReadBuiltinKb(principal, kb.getBuiltin(), kb.getCreatedBy()))) {
                     throw new BizException("引用的知识库不存在或无权访问");
                 }
                 normalized.setType("kb");
@@ -339,14 +339,13 @@ public class ChatController {
                 normalized.setName(kb.getName());
             } else if ("doc".equals(type)) {
                 var doc = documentMapper.selectById(id);
-                if (doc == null || (!admin
-                        && !visibility.canReadDocFollowKb(principal, doc.getShareConfig(), doc.getCreatedBy()))) {
+                if (doc == null) {
                     throw new BizException("引用的文档不存在或无权访问");
                 }
-                // 文档所属库同样须可见（与文档列表接口的两级过滤一致）
+                // 文档恒跟随所属库：库可见即文档可见（与文档列表接口的过滤一致）
                 if (!admin && doc.getKbId() != null) {
                     var kb = kbService.get(doc.getKbId());
-                    if (kb == null || !visibility.canRead(principal, kb.getShareConfig(), kb.getCreatedBy(), kind)) {
+                    if (kb == null || !visibility.canReadBuiltinKb(principal, kb.getBuiltin(), kb.getCreatedBy())) {
                         throw new BizException("引用的文档不存在或无权访问");
                     }
                 }

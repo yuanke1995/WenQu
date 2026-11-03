@@ -27,7 +27,7 @@
 | 可视化工作流 | DSL 唯一真源 + StateGraph 执行引擎、13 类节点（含技能节点与 MCP 工具节点）、画布编辑器与节点级 trace 回放、版本发布 / 回滚、API 触发、cron 定时触发、终态回调、运行实时流 |
 | 技能与市场 | 技能三层来源（内置 / 我的 / 工作区）、zip 与 URL 安装、平台与个人两级停用；团队内市场分发技能、应用模板与工作流，安装即复制并提示「有更新」 |
 | MCP 双向 | 接入任意外部 MCP Server（请求头凭据加密、JSON 粘贴导入、工具逐条命名）；智能体发布为 MCP 端点，平台级 MCP 入口对外提供四项工具；入站与出站调用统一审计 |
-| 安全管控 | RBAC 菜单与接口两级管控、多认证源 OIDC 单点登录、部门与共享范围、API Key（仅存哈希）、接口限流、操作审计、数据按归属隔离 |
+| 安全管控 | RBAC 菜单与接口两级管控、多认证源 OIDC 单点登录、部门、API Key（仅存哈希）、接口限流、操作审计、数据按归属隔离 |
 | 运营闭环 | 个人使用统计（Token 热力图 / 趋势 / 模型用量 / 用途分项 / 累计费用）、数据看板（无命中率、热门与无命中问题、差评回流、知识缺口补块、执行 Trace、采样池、费用）、检索量化评估（recall@k / MRR / 忠实度与相关性评分）、检索链路分步调试 |
 | 通知与可感知 | 站内通知中心覆盖解析、工作流、网页源刷新、定时任务、审批等待、模型额度等异步事件，未读计数、按类型静音、铃铛与列表双入口 |
 | 长期记忆 | 问答后异步提炼用户画像与事实、跨会话注入、按工作区隔离；个人设置提供记忆查看、编辑与清空，平台另有总闸 |
@@ -241,7 +241,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 
 ### 知识库与检索增强（`/knowledge`）
 
-- **多库管理**：每库可设解析参数与检索参数（**稀疏覆盖**留空跟随全局、保存即固化、逐库生效）、共享范围与标签；**检索可见性两级判定**（文档自身 + 所属库共享范围）；个人默认库「问渠」自动创建，未指定库的上传归入它；官方内置库《问渠使用手册》全员可读不可编辑，管理员可维护其检索与解析参数
+- **多库管理**：每库可设解析参数与检索参数（**稀疏覆盖**留空跟随全局、保存即固化、逐库生效）与标签；检索可见性谁建归谁（文档跟随所属库）；个人默认库「问渠」自动创建，未指定库的上传归入它；官方内置库《问渠使用手册》全员可读不可编辑，管理员可维护其检索与解析参数
 - **文档解析**：docx（表格转 Markdown、结构感知切分）/ pdf（扫描件自动 OCR）/ xlsx / ppt / pptx / txt / md / csv 与网页 URL 导入；上传只登记持久化解析任务，后台按并发抢占执行「解析 → 分块 → 入库 → 向量化 → 关键词索引」，队列有界、排满即拒绝；进度、失败原因与队列状态（排队 / 执行）在文档列表实时可见
 - **文档治理**：版本历史与一键回滚、增量重解析（按内容指纹只重嵌变更块）、回收站（恢复 / 彻底删除 / 清空）、批量启用 / 弃用 / 删除 / 重解析、跨库移动（前后库向量模型不同时自动异步迁移向量）、库与文档导出导入（zip 含源文件与清单）、标签、全局搜索知识块、补图片描述
 - **网页导入**：一次最多 20 个 URL，抓取正文后按上传同链路入库；源文件为 HTML 快照，重解析离线提取不重新抓网；仅公网 http/https，逐跳校验防内网探测；可开文档级 cron **定时自动刷新**，到期重抓并同名替换重建
@@ -306,7 +306,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 ### 安全与权限
 
 - **RBAC 两级管控**：角色-菜单（侧栏入口与页内 Tab 可逐项授权）+ 角色-接口（端点白名单，后端 fail-closed）；权限管理页以单棵树呈现菜单与其名下接口，勾选菜单即连带授权名下接口，未授权接口数量在页上直接告警；内置角色 `superadmin`（全部权限，含最后一名保护）/ `admin`（管理端全量）/ `user`（问答与个人资源）
-- **资源可见性**：知识库、文档、智能体、工作流、API Key 全部按创建者与显式共享范围隔离，共享范围支持全局 / 指定部门 / 指定用户三档，管理范围不得宽于阅读范围；普通用户对他人知识库封顶只读；未配置共享即私有
+- **资源可见性**：知识库、文档、智能体、工作流、API Key 全部按创建者隔离（谁建归谁）；管理员与普通用户同口径，无全量短路（无归属的历史数据已迁给 admin）；官方内置手册库登录即可读
 - **认证**：本地账号（PBKDF2 密码哈希 + 失败锁定）+ 多认证源 OIDC 授权码单点登录（各 IdP 独立维护 issuer / clientId / clientSecret（RSA 加密，仅回显后 4 位）/ 重定向 / 前端基址 / scopes / 身份映射与建号规则；`(provider, sub)` 复合唯一防账号漂移；成员管理可按账号解绑）
 - **密钥安全**：模型 API Key 与 MCP 请求头 RSA 加密入库 + 掩码回显；对外 API Key 只存 SHA-256 哈希 + 前 8 位前缀（明文仅签发时返回一次），权限固定为问答链路——即便持有 Key 也访问不了管理端点；图片、产物与工作区文件走 HMAC 签名 URL；RSA 密钥文件不入库、不打进构建产物
 - **运行防护**：问答 / 上传按用户（无身份按 IP）Redis 固定窗口限频，超限返回 429，Redis 不可用自动放行；上传魔数校验、产物文件名白名单净化、隐藏名称拒绝写入；路径逐段校验并按真实路径比对前缀；工作区有轮次正在执行时拒绝改名 / 移动 / 删除该目录内文件；管理操作 `[AUDIT]` 审计
@@ -394,7 +394,7 @@ docker compose up -d          # 自包含：redis-stack + meilisearch + 内置 M
 | `POST /api/ai/document/upload`、`/upload/batch`、`/import-url` | 上传（异步解析）/ 批量上传 / 网页导入 |
 | `GET /api/ai/document/list`、`/queue/stats`、`/stats`、`/health`、`/{id}/source`、`/{id}/vector-diagnose` | 文档列表 / 解析队列状态 / 统计 / 解析链路健康 / 源文件下载 / 向量诊断 |
 | `POST /api/ai/document/{id}/reparse`、`/batch/reparse`、`/{id}/rollback`、`/{id}/backfill-descriptions`、`/{id}/restore`、`/{id}/purge`、`/rebuild-kb` | 重解析 / 批量重解析 / 版本回滚 / 补图片描述 / 恢复 / 彻底删除 / 整库重建 |
-| `GET /api/ai/document/{id}/versions`、`/recycle`、`POST /recycle/purge\|batch/restore\|batch/purge`、`PUT /{id}/status\|share\|refresh-config\|tags`、`DELETE /{id}` | 版本历史 / 回收站及批量处置 / 启停用 / 共享范围 / 网页自动刷新配置 / 标签 / 删除（进回收站） |
+| `GET /api/ai/document/{id}/versions`、`/recycle`、`POST /recycle/purge\|batch/restore\|batch/purge`、`PUT /{id}/status\|refresh-config\|tags`、`DELETE /{id}` | 版本历史 / 回收站及批量处置 / 启停用 / 网页自动刷新配置 / 标签 / 删除（进回收站） |
 | `GET /api/ai/knowledge/list?docId=`、`/knowledge/search`、`/knowledge/{id}`、`/knowledge/unmatched`、`POST /knowledge`、`PUT /knowledge/{id}`、`/{id}/status`、`DELETE /{id}` | 知识块预览（切片列表 / 结构导图）/ 跨文档搜索 / 详情 / 无命中问题 / 手动建块 / 编辑（自动重向量化）/ 启停用 / 删除 |
 | `POST /api/ai/debug/retrieval` | 检索链路分步调试 |
 | `GET /api/ai/eval/set`、`/last-report`、`/answer/report`、`POST /eval/generate\|case\|run\|run-auto\|answer/run` | 检索评估集与体检报告 / 逐条答案质量评测 / 生成评估集 / 加用例 / 参数组对比 / 自动体检 / 答案质量评测 |
@@ -403,7 +403,7 @@ docker compose up -d          # 自包含：redis-stack + meilisearch + 内置 M
 | `GET /api/ai/desc-cache/stats`、`POST /desc-cache/prune`、`DELETE /desc-cache` | 图片描述缓存运维 |
 | `GET /api/ai/ocr/health` | PDF 深度解析引擎（PP-StructureV3 / MinerU）逐引擎探活 |
 | `GET /api/ai/provider/list`、`/available`、`/{id}/models`、`/{id}/references`、`POST /provider`、`/models/fetch`、`/test`、`/batch-enabled`、`/batch-delete`、`/{id}/clear-session-models`、`PUT /{id}`、`/{id}/models`、`/{id}/enabled`、`DELETE /{id}` | 模型供应商：登记（平台级 / 个人级）/ 可用列表 / 模型清单 / 引用清单 / 新建 / 拉取候选模型 / 连通测试 / 批量启停与删除 / 清除历史会话选择 / 编辑 / 保存模型 / 单个启停 / 删除 |
-| `GET /api/ai/agent/list`、`/available`、`/consultable`、`/sub`、`/config-defaults`、`/tool-catalog`、`/permission-presets`、`/{id}/versions`、`POST /agent`、`/{id}/rollback`、`/{id}/default`、`/batch-delete`、`PUT /{id}`、`/{id}/share`、`DELETE /{id}` | 智能体 CRUD / 对话页精简列表 / 可咨询列表 / 子智能体列表 / 默认值 / 工具目录 / 权限档位选项 / 配置版本与回滚 / 设默认 / 批量删除 / 共享范围 / 删除 |
+| `GET /api/ai/agent/list`、`/available`、`/consultable`、`/sub`、`/config-defaults`、`/tool-catalog`、`/permission-presets`、`/{id}/versions`、`POST /agent`、`/{id}/rollback`、`/{id}/default`、`/batch-delete`、`PUT /{id}`、`DELETE /{id}` | 智能体 CRUD / 对话页精简列表 / 可咨询列表 / 子智能体列表 / 默认值 / 工具目录 / 权限档位选项 / 配置版本与回滚 / 设默认 / 批量删除 / 删除 |
 | `GET /POST /DELETE /api/ai/agent/{id}/publish` | 公开发布：查询 / 发布（生成 token 与 iframe 嵌入，可另开 MCP 端点）/ 撤销 |
 | `GET /api/ai/share/{token}/info`、`/history`、`/session/{token}`、`/artifact`、`POST /share/{token}/chat`（SSE）、`/attachment`、`/feedback`、`/chat/stop`、`GET /chat/run`、`/chat/resume`、`GET/DELETE /{token}/sessions` | 游客通道（免登录）：分享信息 / 历史 / 产物 / 流式对话 / 附件 / 反馈 / 停止 / 断线重连 / 游客会话查询与删除 |
 | `GET /api/ai/skill/available`、`/list`、`/detail`、`/content`、`/file`、`/download`、`POST /skill`、`/install`、`/install/zip`、`PUT /skill/{name}`、`/{name}/disabled`、`DELETE /skill/{name}` | 技能：对话选用清单 / 管理页列表（来源、停用、体积、可否编辑）/ 详情（正文 + 文件清单）/ 正文 / 附属文件 / 下载 zip / 新建 / URL 安装 / zip 安装 / 编辑 / 个人停用 / 删除 |
@@ -413,7 +413,7 @@ docker compose up -d          # 自包含：redis-stack + meilisearch + 内置 M
 | `POST /ai/mcp/{token}`（`GET` 同路径；**不在 `/api` 之下**，token 即凭据） | MCP Server·per-agent 端点：一个智能体一个工具 |
 | `POST /ai/mcp`（`GET` 同路径；`Authorization: Bearer sk-…` 或 `X-Api-Key`） | MCP Server·平台级入口：固定元工具集（检索 / 提问 / 列库 / 列智能体） |
 | `GET /api/ai/scheduled/list`、`POST /scheduled`、`PUT /scheduled/{id}`、`DELETE /scheduled/{id}`、`PUT /{id}/enabled`、`POST /{id}/run`、`GET /{id}/runs`、`/batch-delete`、`/batch-enabled` | 定时任务：列表 / 新建 / 编辑 / 删除 / 启停 / 立即执行 / 执行记录 / 批量操作 |
-| `GET /api/ai/workflow/list`、`/templates`、`/config-defaults`、`/{id}/export`、`POST /workflow`、`/import`、`/{id}/run`、`/run/{runId}/cancel\|resume`、`/validate`、`/{id}/publish\|unpublish\|rollback/{version}`、`/batch-publish\|unpublish\|delete`、`/from-agent/{agentId}`、`PUT /{id}`、`POST /{id}/share`、`DELETE /{id}` | 工作流：列表 / 内置模板 / 节点默认值 / 导出 DSL / 新建 / 导入 / 运行 / 取消与续跑 / DSL 校验 + 编译 dry-run / 发布下线回滚 / 批量操作 / 由智能体转工作流 / 编辑 / 共享 / 删除 |
+| `GET /api/ai/workflow/list`、`/templates`、`/config-defaults`、`/{id}/export`、`POST /workflow`、`/import`、`/{id}/run`、`/run/{runId}/cancel\|resume`、`/validate`、`/{id}/publish\|unpublish\|rollback/{version}`、`/batch-publish\|unpublish\|delete`、`/from-agent/{agentId}`、`PUT /{id}`、`DELETE /{id}` | 工作流：列表 / 内置模板 / 节点默认值 / 导出 DSL / 新建 / 导入 / 运行 / 取消与续跑 / DSL 校验 + 编译 dry-run / 发布下线回滚 / 批量操作 / 由智能体转工作流 / 编辑 / 删除 |
 | `GET /api/ai/workflow/{id}/run/list`、`/run/{runId}`、`/run/{runId}/stream`（SSE）、`GET+POST /{id}/run/{runId}/approval`、`/versions`、`GET+PUT /{id}/automation`、`POST /{id}/schedule/run-now` | 运行历史与详情 / 实时进度流 / 人工审核读取与裁决 / 版本 / 定时与回调配置 / 立即运行一次 |
 | `GET /api/ai/credential/list`、`POST /credential`、`PUT /{id}`、`DELETE /{id}` | 工作流凭据（值加密落库、出参脱敏，运行时按运行发起人解密填入） |
 | `POST /api/ai/v1/workflows/{id}/run`、`GET /api/ai/v1/workflows/{id}/run/{runId}` | 对外工作流接口：持 API Key 触发**已发布**版本 / 按 runId 查结果 |
@@ -422,7 +422,7 @@ docker compose up -d          # 自包含：redis-stack + meilisearch + 内置 M
 | `GET /api/ai/sandbox/state`、`/tree`、`/files`、`/download`、`/files/download`、`POST /files/artifact`、`/run`、`GET /procs`、`/procs/live`、`POST /procs/kill` | 沙盒：容器状态 / 目录树 / 文件列表与下载 / 存为产物 / 执行 python·node·bash / 后台进程清单 / 实时探测 / 停止进程（连子进程一起） |
 | `POST /api/ai/sandbox/tool-call` | 沙盒脚本回程调用本服务工具（一次性运行令牌） |
 | `GET /api/ai/artifact/list`、`/{id}/content`、`PUT /artifact/{id}/project`、`POST /refresh-sign`、`/batch-delete`、`DELETE /{id}` | 我的产物：列表 / 读文本原文（预览台用，只回前 256KB 带 `truncated`）/ 移动到其他工作区 / 换发新鲜签名下载地址 / 批量删除 / 删除 |
-| `GET /api/ai/api-key/list`、`POST /api-key`、`PUT /{id}`、`/{id}/disabled`、`/{id}/mcp`、`/{id}/share`、`DELETE /{id}` | 对外 API Key：列表 / 签发（明文仅一次）/ 改名称与有效期 / 吊销 / MCP 授权 / 共享范围 / 删除 |
+| `GET /api/ai/api-key/list`、`POST /api-key`、`PUT /{id}`、`/{id}/disabled`、`/{id}/mcp`、`DELETE /{id}` | 对外 API Key：列表 / 签发（明文仅一次）/ 改名称与有效期 / 吊销 / MCP 授权 / 删除 |
 | `GET /api/ai/notification/list`、`/unread-count`、`/counts`、`/preferences`、`POST /notification/read`、`/read-all`、`/delete`、`/clear`、`PUT /preferences` | 站内通知：列表（类型筛选 / 仅未读 / 游标分页）/ 未读数 / 各类型未读计数 / 静音偏好读取与保存 / 标记已读 / 全部已读 / 删除 / 清空（全部或仅已读） |
 | `GET /api/ai/stats/usage`、`/stats/cost` | 个人使用统计聚合（统计卡 / 热力图 / 每日趋势 / 模型用量 / 用途分项）/ 费用口径（区间费用、按用户与按模型、未计价 tokens） |
 | `GET /api/ai/trace/list`、`/chat/{id}`、`/workflow/{runId}`、`/pool`、`/stats`、`POST /trace/pool/{id}/label\|dismiss`、`/sample/run` | 执行 Trace：列表与详情 / 采样池 / 采样统计 / 标注回流 / 忽略 / 立即采样 |
@@ -537,7 +537,7 @@ spring:
 |------|------|
 | 平台全局 | 设置页 179 项中除 `rerank.model` 之外全部 |
 | 个人专属 | `rerank.model`（无全局槽位，只对登记人生效）；另有个人在「个人设置」里的默认模型与记忆开关两项（走 `c_ai_user`，不占设置页） |
-| 资源级绑定 | 知识库的向量 / 视觉 / OCR / 重排 / 图谱抽取模型与解析、检索参数；文档的图片理解模型与共享范围；智能体的人设、能力开关、权限档位、工具确认模式、步数上限、目标模式开关；会话的模型与上下文窗口档位；用户的 MCP 服务与技能 |
+| 资源级绑定 | 知识库的向量 / 视觉 / OCR / 重排 / 图谱抽取模型与解析、检索参数；文档的图片理解模型；智能体的人设、能力开关、权限档位、工具确认模式、步数上限、目标模式开关；会话的模型与上下文窗口档位；用户的 MCP 服务与技能 |
 
 **敏感项按后缀判定**（`.apiKey` / `.clientSecret` / `.token`）：RSA 加密入库、页面仅回显 `****后4位`、「恢复默认」跳过敏感项。多副本部署时动态配置经 Redis pub/sub 广播即时生效，另有 5 分钟兜底轮询。
 
@@ -663,7 +663,7 @@ WenQu/                               # 工作区根（git 仓库名 WenQu；本�
     ├── src/chat/                    # 对话装配：Composer（内联 chip）/ ChatThread / TurnBar / SourceList /
     │                                #   引擎与投影（projections、useChatEngine）/ 附件与输入校验 / 通知与恢复
     ├── src/components/              # 计划卡、目标卡、提问记录、子智能体卡、执行过程卡、会话事件面板、
-    │                                #   预览台宿主、帮助中心、模型选择器、共享范围弹窗、超时档位等
+    │                                #   预览台宿主、帮助中心、模型选择器、超时档位等
     ├── src/h5/                      # 移动端原生壳（会话、附件、状态与来源、本轮操作等 sheet）
     └── src/views/                   # AppLayout / ChatPage / ProjectPage / KnowledgeBasePage / DocumentsPage /
                                      #   AgentsHubPage（页内 Tab 由菜单数据驱动）/ ProvidersPage / AgentsPage /
