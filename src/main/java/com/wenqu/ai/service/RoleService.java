@@ -73,6 +73,7 @@ public class RoleService {
     private final UserMapper userMapper;
     private final com.wenqu.ai.mapper.UserRoleMapper userRoleMapper;
     private final com.wenqu.ai.mapper.RolePermissionMapper rolePermissionMapper;
+    private final com.wenqu.ai.mapper.PermissionCatalogMapper permissionCatalogMapper;
     private final ReplicaCoordination replicaCoordination;
 
     private final AntPathMatcher pathMatcher = new AntPathMatcher();
@@ -653,6 +654,57 @@ public class RoleService {
         invalidateCaches();
         audit.record("[AUDIT] 保存角色权限绑定 code={} menus={} apis={}", code,
                 menuIds == null ? 0 : menuIds.size(), apiIds == null ? 0 : apiIds.size());
+    }
+
+    /**
+     * 按授权点保存角色权限（A7 主路径：前端权限页以授权点粒度勾选）。
+     * 双跑窗口内反向双写：授权点 → 名下全部端点折算回 {@code c_ai_role_api}
+     * （legacy 判定数据源必须与新语义一致，否则 shadow 差异全是假阳性）；
+     * 管理员级角色不落行（D5，与正向双写同口径）。enforce 稳定后折算段退役。
+     */
+    @Transactional
+    public void savePermissionPoints(String code, List<String> menuIds, List<String> permissionCodes) {
+        requireRole(code);
+        Set<String> validMenus = menuIdSet();
+        roleMenuMapper.unbindAllOfRole(code);
+        if (menuIds != null) {
+            for (String id : menuIds) {
+                if (id != null && validMenus.contains(id)) roleMenuMapper.bind(code, id);
+            }
+        }
+        Set<String> knownPerms = new java.util.HashSet<>(permissionCatalogMapper.allCodes());
+        rolePermissionMapper.unbindAllOfRole(code);
+        Set<String> granted = new java.util.LinkedHashSet<>();
+        if (permissionCodes != null) {
+            for (String perm : permissionCodes) {
+                if (perm == null || perm.isBlank() || !knownPerms.contains(perm)) continue;
+                if (granted.add(perm)) rolePermissionMapper.bindAllow(code, perm);
+            }
+        }
+        Role roleDef = roles().get(code);
+        if (roleDef == null || roleDef.getAdminFlag() == null || roleDef.getAdminFlag() != 1) {
+            roleApiMapper.unbindAllOfRole(code);
+            if (!granted.isEmpty()) {
+                for (String perm : granted) {
+                    for (ApiEndpoint api : apiEndpointMapper.selectList(new LambdaQueryWrapper<ApiEndpoint>()
+                            .eq(ApiEndpoint::getPermissionCode, perm))) {
+                        try {
+                            roleApiMapper.bind(code, api.getId());
+                        } catch (Exception ignored) {
+                            // 唯一键冲突（同端点已被其它授权点路径写入）忽略
+                        }
+                    }
+                }
+            }
+        }
+        invalidateCaches();
+        audit.record("[AUDIT] 保存角色权限绑定（授权点）code={} permissions={} menus={}", code,
+                granted.size(), menuIds == null ? 0 : menuIds.size());
+    }
+
+    /** 授权点目录（权限页分组展示；事实源在代码注解，此处只读） */
+    public List<Map<String, Object>> permissionCatalog() {
+        return permissionCatalogMapper.listAll();
     }
 
     private void requireRole(String code) {

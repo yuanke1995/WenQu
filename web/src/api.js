@@ -1521,6 +1521,13 @@ export const deleteRole = code => request(`/role/${encodeURIComponent(code)}`, {
 export const getRolePermissions = code => request(`/role/${encodeURIComponent(code)}/permissions`)
 export const saveRolePermissions = (code, menuIds, apiIds) =>
   request(`/role/${encodeURIComponent(code)}/permissions`, { method: 'PUT', body: JSON.stringify({ menuIds, apiIds }) })
+/** 授权点目录（RBAC 批次 A：权限页按授权点粒度勾选；目录事实源在代码注解，扫描器启动登记） */
+export const getPermissionCatalog = () => request('/role/permission-catalog')
+/** 按授权点保存角色权限（menuIds + permissions；后端反向折算回接口绑定） */
+export const saveRolePermissionPoints = (code, menuIds, permissions) =>
+  request(`/role/${encodeURIComponent(code)}/permissions`, { method: 'PUT', body: JSON.stringify({ menuIds, permissions }) })
+/** 有效授权点视图（给定 uid 算实际可用授权点集；排查「为什么进不去/为什么进得来」用） */
+export const getEffectivePermissions = uid => request(`/role/effective/${encodeURIComponent(uid)}`)
 
 /** 提交回答反馈（messageId 关联；rating 1=有帮助 0=没帮助） */
 export const submitFeedback = (messageId, rating, feedbackText) =>

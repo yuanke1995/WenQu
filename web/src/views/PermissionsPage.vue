@@ -39,6 +39,7 @@
           <span class="app-list-count">{{ countText }}</span>
           <button v-if="tab === 'menus'" class="app-btn rb-new" @click="openMenuCreate"><plus-outlined /> 新建菜单</button>
           <button v-else-if="tab === 'apis'" class="app-btn rb-new" @click="openApiCreate"><plus-outlined /> 登记接口</button>
+          <button v-if="tab === 'roles'" class="app-btn" @click="openEffective">有效权限视图</button>
           <button v-else class="app-btn rb-new" @click="openRoleCreate"><plus-outlined /> 新建角色</button>
         </div>
 
@@ -285,6 +286,30 @@
     </a-modal>
 
     <!-- 角色弹窗 -->
+    <a-modal v-model:open="effectiveModal" title="有效权限视图" :width="560" :footer="null">
+      <p class="form-tip" style="margin-top:0">
+        给定登录账号，算出他实际可用的授权点集合（各角色 allow 并集 − 全局 deny；管理员级显示 admin:all-allow）。排查「为什么进不去 / 为什么进得来」从这里入手。
+      </p>
+      <a-input-search v-model:value="effectiveUid" placeholder="输入登录账号（uid）" enter-button="计算"
+                      :loading="effectiveLoading" @search="queryEffective" />
+      <div v-if="effectiveError" class="form-tip" style="color:var(--app-danger,#c0392b)">{{ effectiveError }}</div>
+      <template v-if="effectiveResult">
+        <div class="form-tip" style="margin:10px 0 4px">
+          <b>{{ effectiveResult.uid }}</b> · 角色：
+          <code v-for="r in effectiveResult.roles" :key="r" class="rb-uid" style="margin-right:6px">{{ r }}</code>
+          · 判定模式：<code class="rb-uid">{{ effectiveResult.mode }}</code>
+        </div>
+        <a-tree v-if="effectiveGroups.length" default-expand-all :selectable="false" :tree-data="effectiveGroups">
+          <template #title="node">
+            <span class="tree-menu">
+              <span class="rb-name">{{ node.module }}</span>
+              <span class="tree-count">{{ (node.children || []).length }}</span>
+            </span>
+          </template>
+        </a-tree>
+        <div v-else class="rb-empty" style="padding:20px 0">该账号当前没有任何可用授权点</div>
+      </template>
+    </a-modal>
     <a-modal v-model:open="roleModal" :title="roleForm.isEdit ? '编辑角色' : '新建角色'" :width="460"
              :confirm-loading="saving" ok-text="保存" cancel-text="取消" @ok="saveRole">
       <a-form layout="vertical" style="margin-top:4px">
@@ -317,44 +342,44 @@
     <a-drawer v-model:open="drawer" :title="drawerTitle" :width="580" destroy-on-close>
       <a-alert v-if="drawerRole && drawerRole.adminFlag === 1" type="info" show-icon style="margin-bottom:12px"
                message="管理员级角色天然拥有全部权限，以下绑定仅对普通角色生效" />
-      <a-alert v-if="gapCount > 0" type="warning" show-icon style="margin-bottom:12px"
-               :message="`检测到 ${gapCount} 个接口未授权`"
-               description="已勾选菜单下仍有接口未勾选，该角色调用时会返回 403。">
-        <template #action>
-          <button class="app-btn primary gap-fill-btn" @click="fillAllGaps">一键补齐</button>
-        </template>
-      </a-alert>
       <p class="form-tip" style="margin-top:0">
-        勾选菜单会连同其名下接口一并勾上（可再单独取消）；接口也可脱离菜单单独勾选。未勾选的接口调用将返回 403。
+        侧栏菜单控制「看得见」，功能授权点控制「调得动」——按业务动作授权，同一动作跨端点只勾一次。未授予的授权点调用将返回 403。
       </p>
       <a-input v-model:value="drawerKeyword" allow-clear size="small" class="drawer-search"
-               placeholder="搜索菜单名称 / 接口路径">
+               placeholder="搜索菜单名称 / 授权点编码">
         <template #prefix><search-outlined class="rb-search-ic" /></template>
       </a-input>
-      <a-tree v-if="drawer && drawerTree.length" checkable default-expand-all :selectable="false"
-              :check-strictly="true" :checked-keys="treeCheckedKeys" @check="onTreeCheck"
-              :tree-data="drawerTree">
-        <template #title="node">
-          <span v-if="node.kind === 'api'" class="tree-api">
-            <span class="method-pill" :class="'m-' + (node.method || 'ALL').toLowerCase()">{{ node.method }}</span>
-            <code class="rb-path">{{ node.label }}</code>
-            <span v-if="node.shared" class="tree-shared" title="该接口同时归属多个菜单，勾选任一菜单都会带上它">共属</span>
-          </span>
-          <span v-else class="tree-menu">
-            <component v-if="node.kind === 'menu'" :is="iconOf(node.icon)" class="rb-menu-ic" />
-            <span class="rb-name">{{ node.kind === 'group' ? node.groupName : node.menuName }}</span>
-            <span v-if="node.ownedCount" class="tree-count"
-                  :class="{ warn: node.grantedCount < node.ownedCount && (node.kind === 'group' || node.menuChecked) }">
-              {{ node.grantedCount }}/{{ node.ownedCount }} 接口
-              <template v-if="node.kind === 'menu' && node.menuChecked && node.grantedCount < node.ownedCount">
-                ，{{ node.ownedCount - node.grantedCount }} 个未授权
-              </template>
+      <template v-if="drawer && (menuDrawerTreeFiltered.length || permDrawerTree.length)">
+        <div class="drawer-sec-title">侧栏菜单</div>
+        <a-tree v-if="menuDrawerTreeFiltered.length" checkable default-expand-all :selectable="false"
+                :check-strictly="true" :checked-keys="menuCheckedKeys" @check="onMenuCheck"
+                :tree-data="menuDrawerTreeFiltered">
+          <template #title="node">
+            <span class="tree-menu">
+              <component :is="iconOf(node.icon)" class="rb-menu-ic" />
+              <span class="rb-name">{{ node.name }}</span>
             </span>
-          </span>
-        </template>
-      </a-tree>
+          </template>
+        </a-tree>
+        <div class="drawer-sec-title">功能授权点</div>
+        <a-tree v-if="permDrawerTree.length" checkable default-expand-all :selectable="false"
+                :check-strictly="true" :checked-keys="permCheckedKeys" @check="onPermCheck"
+                :tree-data="permDrawerTree">
+          <template #title="node">
+            <span v-if="node.kind === 'perm'" class="tree-api">
+              <code class="rb-path">{{ node.label }}</code>
+            </span>
+            <span v-else class="tree-menu">
+              <span class="rb-name">{{ node.groupName }}</span>
+              <span class="tree-count" :class="{ warn: node.grantedCount < node.ownedCount }">
+                {{ node.grantedCount }}/{{ node.ownedCount }}
+              </span>
+            </span>
+          </template>
+        </a-tree>
+      </template>
       <div v-else-if="drawer" class="drawer-empty">
-        {{ drawerKeyword ? '没有匹配的菜单或接口' : '暂无可配置的菜单或接口' }}
+        {{ drawerKeyword ? '没有匹配的菜单或授权点' : '暂无可配置的菜单或授权点' }}
       </div>
       <template #footer>
         <button class="app-btn" style="margin-right:8px" @click="drawer = false">取消</button>
@@ -376,7 +401,8 @@ import { SearchOutlined, PlusOutlined, MessageOutlined, RobotOutlined, DatabaseO
 import { listMenus, createMenu, updateMenu, deleteMenu,
          listApis, createApi, updateApi, deleteApi,
          listRoles, createRole, updateRole, deleteRole,
-         getRolePermissions, saveRolePermissions } from '../api'
+         getRolePermissions, saveRolePermissions,
+         getPermissionCatalog, saveRolePermissionPoints, getEffectivePermissions } from '../api'
 import { ensureAuth } from '../utils/auth'
 import IdentityProvidersPage from './IdentityProvidersPage.vue'
 import AuditLogPage from './AuditLogPage.vue'
@@ -658,6 +684,48 @@ async function saveRole () {
   } catch (e) { message.error(e.message || '保存失败') }
   finally { saving.value = false }
 }
+// ==================== 有效权限视图（D-3 最小形态） ====================
+const effectiveModal = ref(false)
+const effectiveUid = ref('')
+const effectiveLoading = ref(false)
+const effectiveResult = ref(null)
+const effectiveError = ref('')
+function openEffective () {
+  effectiveUid.value = ''
+  effectiveResult.value = null
+  effectiveError.value = ''
+  effectiveModal.value = true
+}
+async function queryEffective () {
+  const uid = String(effectiveUid.value || '').trim()
+  if (!uid) { message.warning('请输入登录账号'); return }
+  effectiveLoading.value = true
+  effectiveError.value = ''
+  try {
+    const r = await getEffectivePermissions(uid)
+    if (r.success) {
+      effectiveResult.value = r.data
+      if (r.data.permissions.includes('admin:all-allow')) {
+        effectiveError.value = ''
+      }
+    } else { effectiveError.value = r.msg || '查询失败' }
+  } catch (e) { effectiveError.value = e.message || '查询失败' }
+  finally { effectiveLoading.value = false }
+}
+/** 有效授权点按模块分组展示（目录里没有的编码（如 admin 标记）落「其他」组） */
+const effectiveGroups = computed(() => {
+  if (!effectiveResult.value) return []
+  const perms = effectiveResult.value.permissions || []
+  const byModule = new Map()
+  for (const code of perms) {
+    const meta = permCatalog.value.find(p => p.code === code)
+    const mod = code === 'admin:all-allow' ? '管理员级' : (meta ? (meta.module || '其他') : '未登记（退役授权点？）')
+    if (!byModule.has(mod)) byModule.set(mod, [])
+    byModule.get(mod).push({ key: code, title: code })
+  }
+  return [...byModule.entries()].map(([mod, items]) => ({ key: 'eff:' + mod, module: mod, children: items }))
+})
+
 async function delRole (code) {
   try {
     const r = await deleteRole(code)
@@ -666,23 +734,17 @@ async function delRole (code) {
   } catch (e) { message.error(e.message || '删除失败') }
 }
 
-// ==================== 权限抽屉（单树：菜单 + 名下接口，勾选联动） ====================
+// ==================== 权限抽屉（菜单树 + 授权点分组树，RBAC 批次 A7） ====================
 const drawer = ref(false)
 const drawerRole = ref(null)
 const drawerSaving = ref(false)
 const drawerTitle = computed(() => drawerRole.value ? `角色权限 · ${drawerRole.value.name}` : '角色权限')
 
-/** 源状态（树的勾选由两者派生；同一接口多归属多实例天然同步） */
+/** 源状态：菜单 id 集 + 授权点编码集（树的勾选由两者派生） */
 const checkedMenuIds = ref([])
-const checkedApiIds = ref([])
+const checkedPerms = ref([])
 const checkedMenuSet = computed(() => new Set(checkedMenuIds.value))
-const checkedApiSet = computed(() => new Set(checkedApiIds.value))
-
-/** 未挂到任何现存菜单的接口（挂「其他接口」伪分组） */
-const ungroupedApis = computed(() => {
-  const menuIdSet = new Set(menus.value.map(m => m.id))
-  return apis.value.filter(a => !(a.menuIds || []).some(mid => menuIdSet.has(mid)))
-})
+const checkedPermSet = computed(() => new Set(checkedPerms.value))
 
 /** 菜单 id → 直属子菜单 id 列表 */
 const menuChildrenMap = computed(() => {
@@ -708,163 +770,95 @@ function menuSubtreeIds (menuId) {
   return out
 }
 
-/** 给定菜单集合名下（直接归属）的全部接口 id */
-function apiIdsOfMenus (menuIds) {
-  const set = new Set(menuIds)
-  const out = []
-  for (const a of apis.value) {
-    if ((a.menuIds || []).some(mid => set.has(mid))) out.push(a.id)
-  }
-  return out
-}
-
-const UNGROUPED_KEY = '__ungrouped__'
-const apiLeafKey = (groupId, apiId) => `api:${groupId}:${apiId}`
-const byPath = (x, y) => (x.path || '').localeCompare(y.path || '')
-
-/** 权限树：菜单树 + 各菜单名下接口叶子（多归属多实例）+ 其他接口分组；节点内容由 #title 插槽渲染 */
-const bindTree = computed(() => {
-  const menuIdSet = new Set(menus.value.map(m => m.id))
-  const byMenu = new Map()
-  for (const a of apis.value) {
-    for (const mid of (a.menuIds || []).filter(id => menuIdSet.has(id))) {
-      if (!byMenu.has(mid)) byMenu.set(mid, [])
-      byMenu.get(mid).push(a)
-    }
-  }
-  const leafNode = (groupId, a) => ({
-    key: apiLeafKey(groupId, a.id),
-    kind: 'api',
-    apiId: a.id,
-    method: a.method,
-    label: `${a.path}${a.name ? ' · ' + a.name : ''}`,
-    shared: (a.menuIds || []).filter(id => menuIdSet.has(id)).length > 1
+/** 菜单树（不再挂接口叶子：接口能力走授权点，语义粒度由后端折算回端点绑定） */
+const menuDrawerTree = computed(() => {
+  const menuNode = m => ({
+    key: m.id,
+    name: m.name,
+    icon: m.icon,
+    children: (m.children || []).map(menuNode)
   })
-  const menuNode = m => {
-    const owned = (byMenu.get(m.id) || []).slice().sort(byPath)
-    return {
-      key: m.id,
-      kind: 'menu',
-      menuName: m.name,
-      icon: m.icon,
-      ownedCount: owned.length,
-      grantedCount: owned.filter(a => checkedApiSet.value.has(a.id)).length,
-      menuChecked: checkedMenuSet.value.has(m.id),
-      children: [
-        ...((m.children || []).map(menuNode)),
-        ...owned.map(a => leafNode(m.id, a))
-      ]
-    }
+  return buildTree(menus.value).map(menuNode)
+})
+const menuCheckedKeys = computed(() => [...checkedMenuIds.value])
+
+/** 授权点目录：module 分组 → 授权点（组级全选；目录来自 /role/permission-catalog） */
+const permCatalog = ref([])
+const permGrouped = computed(() => {
+  const byModule = new Map()
+  for (const p of permCatalog.value) {
+    const mod = p.module || '其他'
+    if (!byModule.has(mod)) byModule.set(mod, [])
+    byModule.get(mod).push(p)
   }
-  const roots = buildTree(menus.value).map(menuNode)
-  const rest = ungroupedApis.value.slice().sort(byPath)
-  if (rest.length) {
-    roots.push({
-      key: UNGROUPED_KEY,
+  return [...byModule.entries()]
+    .sort((a, b) => String(a[0]).localeCompare(String(b[0]), 'zh'))
+    .map(([mod, items]) => ({
+      key: 'module:' + mod,
       kind: 'group',
-      groupName: '其他接口',
-      ownedCount: rest.length,
-      grantedCount: rest.filter(a => checkedApiSet.value.has(a.id)).length,
-      children: rest.map(a => leafNode(UNGROUPED_KEY, a))
-    })
-  }
-  return roots
+      groupName: mod,
+      ownedCount: items.length,
+      grantedCount: items.filter(p => checkedPermSet.value.has(p.code)).length,
+      children: items
+        .slice()
+        .sort((a, b) => String(a.code).localeCompare(String(b.code)))
+        .map(p => ({ key: p.code, kind: 'perm', label: `${p.code}${p.name && p.name !== p.code ? ' · ' + p.name : ''}` }))
+    }))
 })
 
-/** 受控勾选 keys：由源状态派生（接口在所有归属分支同步勾选；其他接口全选时组节点勾选） */
-const treeCheckedKeys = computed(() => {
-  const keys = [...checkedMenuIds.value]
-  const menuIdSet = new Set(menus.value.map(m => m.id))
-  for (const a of apis.value) {
-    if (!checkedApiSet.value.has(a.id)) continue
-    const owners = (a.menuIds || []).filter(mid => menuIdSet.has(mid))
-    if (owners.length) { for (const mid of owners) keys.push(apiLeafKey(mid, a.id)) }
-    else keys.push(apiLeafKey(UNGROUPED_KEY, a.id))
-  }
-  const rest = ungroupedApis.value
-  if (rest.length && rest.every(a => checkedApiSet.value.has(a.id))) keys.push(UNGROUPED_KEY)
-  return keys
-})
-
-/** 抽屉内搜索：命中菜单名保留整条分支；命中接口路径/名称保留其父链与叶子；
-    仅影响展示，勾选状态与保存仍以源状态为准 */
 const drawerKeyword = ref('')
-const drawerTree = computed(() => {
+const permDrawerTree = computed(() => {
   const k = drawerKeyword.value.trim().toLowerCase()
-  if (!k) return bindTree.value
-  const hit = s => String(s || '').toLowerCase().includes(k)
+  if (!k) return permGrouped.value
+  const hit = x => String(x || '').toLowerCase().includes(k)
+  return permGrouped.value
+    .map(g => {
+      if (hit(g.groupName)) return g
+      const children = g.children.filter(c => hit(c.label))
+      if (!children.length) return null
+      return { ...g, children,
+               ownedCount: children.length,
+               grantedCount: children.filter(c => checkedPermSet.value.has(c.key)).length }
+    })
+    .filter(Boolean)
+})
+const menuDrawerTreeFiltered = computed(() => {
+  const k = drawerKeyword.value.trim().toLowerCase()
+  if (!k) return menuDrawerTree.value
+  const hit = x => String(x || '').toLowerCase().includes(k)
   const prune = node => {
-    if (node.kind === 'api') return hit(node.label) ? node : null
-    if (hit(node.kind === 'group' ? node.groupName : node.menuName)) return node
+    if (hit(node.name)) return { ...node }
     const children = (node.children || []).map(prune).filter(Boolean)
-    if (!children.length) return null
-    // 分支未命中被剪枝后，「x/y 接口」按可见子集重算，避免计数与警示失真
-    const leaves = children.filter(c => c.kind === 'api')
-    return { ...node, children, ownedCount: leaves.length,
-             grantedCount: leaves.filter(c => checkedApiSet.value.has(c.apiId)).length }
+    return children.length ? { ...node, children } : null
   }
-  return bindTree.value.map(prune).filter(Boolean)
+  return menuDrawerTree.value.map(prune).filter(Boolean)
 })
 
-/** 勾选联动：勾菜单 → 带全子树菜单与名下接口；取消 → 接口仍属其它已勾菜单则保留；接口/组节点独立增删 */
-function onTreeCheck (_keys, e) {
+/** 菜单勾选：勾/取消连同子树（菜单只管侧栏可见性，不再联动接口） */
+function onMenuCheck (_keys, e) {
   const on = !!e?.checked
-  const node = e?.node || {}
-  if (node.kind === 'api') {
-    const id = node.apiId
-    if (on) { if (!checkedApiSet.value.has(id)) checkedApiIds.value = [...checkedApiIds.value, id] }
-    else checkedApiIds.value = checkedApiIds.value.filter(x => x !== id)
-    return
-  }
-  if (node.kind === 'group') {
-    const ids = ungroupedApis.value.map(a => a.id)
-    const set = new Set(ids)
-    checkedApiIds.value = on
-      ? [...new Set([...checkedApiIds.value, ...ids])]
-      : checkedApiIds.value.filter(x => !set.has(x))
-    return
-  }
-  const menuId = node.key
-  const subtree = menuSubtreeIds(menuId)
+  const subtree = menuSubtreeIds(e?.node?.key)
   if (on) {
     checkedMenuIds.value = [...new Set([...checkedMenuIds.value, ...subtree])]
-    const add = apiIdsOfMenus(subtree).filter(id => !checkedApiSet.value.has(id))
-    if (add.length) checkedApiIds.value = [...checkedApiIds.value, ...add]
   } else {
-    const remain = checkedMenuIds.value.filter(id => !subtree.has(id))
-    checkedMenuIds.value = remain
-    const remainSet = new Set(remain)
-    const scope = new Set(apiIdsOfMenus(subtree))
-    const keep = new Set()
-    for (const a of apis.value) {
-      if (!scope.has(a.id)) continue
-      if ((a.menuIds || []).some(mid => remainSet.has(mid))) keep.add(a.id)
-    }
-    checkedApiIds.value = checkedApiIds.value.filter(id => !scope.has(id) || keep.has(id))
+    checkedMenuIds.value = checkedMenuIds.value.filter(id => !subtree.has(id))
   }
 }
 
-/** 存量缺口：已勾选菜单（含子树）名下有接口未勾选（“菜单配了但接口没配”的 403 隐患） */
-const gapCount = computed(() => {
-  const scope = new Set()
-  for (const mid of checkedMenuIds.value) {
-    for (const id of apiIdsOfMenus(menuSubtreeIds(mid))) scope.add(id)
+/** 授权点勾选：组节点=全选/清空该模块；叶子=单个授权点 */
+function onPermCheck (_keys, e) {
+  const on = !!e?.checked
+  const node = e?.node || {}
+  if (node.kind === 'perm') {
+    if (on) { if (!checkedPermSet.value.has(node.key)) checkedPerms.value = [...checkedPerms.value, node.key] }
+    else checkedPerms.value = checkedPerms.value.filter(x => x !== node.key)
+    return
   }
-  let n = 0
-  for (const id of scope) if (!checkedApiSet.value.has(id)) n++
-  return n
-})
-
-/** 一键补齐：与勾选联动同语义，把已勾选菜单子树下的菜单与接口全部勾上 */
-function fillAllGaps () {
-  const addMenus = new Set(checkedMenuIds.value)
-  for (const mid of checkedMenuIds.value) {
-    for (const id of menuSubtreeIds(mid)) addMenus.add(id)
-  }
-  const addApis = new Set(checkedApiIds.value)
-  for (const id of apiIdsOfMenus(addMenus)) addApis.add(id)
-  checkedMenuIds.value = [...addMenus]
-  checkedApiIds.value = [...addApis]
+  const ids = (node.children || []).map(c => c.key)
+  const set = new Set(ids)
+  checkedPerms.value = on
+    ? [...new Set([...checkedPerms.value, ...ids])]
+    : checkedPerms.value.filter(x => !set.has(x))
 }
 
 async function openDrawer (role) {
@@ -872,19 +866,26 @@ async function openDrawer (role) {
   drawer.value = true
   // 先清空再回显（抽屉 destroy-on-close，直接加载）
   checkedMenuIds.value = []
-  checkedApiIds.value = []
+  checkedPerms.value = []
   drawerKeyword.value = ''
   try {
-    // 树的菜单/归属数据直接吃 menus、apis：从角色页签直接打开时，这两个页签的数据可能还没加载过
-    await Promise.all([ensureData('menus'), ensureData('apis')])
+    // 菜单与授权点目录：从角色页签直接打开时可能还没加载过
+    await Promise.all([ensureData('menus'), loadPermCatalog()])
     const r = await getRolePermissions(role.code)
     const d = (r && r.data) || {}
-    // 只回显仍存在的绑定（菜单/接口被删后库里可能残留旧 id）
+    // 只回显仍存在的绑定（菜单/授权点退役后库里可能残留旧值）
     const validMenus = new Set(menus.value.map(m => m.id))
-    const validApis = new Set(apis.value.map(a => a.id))
+    const validPerms = new Set(permCatalog.value.map(p => p.code))
     checkedMenuIds.value = ((d.menuIds) || []).filter(id => validMenus.has(id))
-    checkedApiIds.value = ((d.apiIds) || []).filter(id => validApis.has(id))
+    checkedPerms.value = ((d.permissions) || []).filter(code => validPerms.has(code))
   } catch (e) { message.error(e.message || '加载角色权限失败') }
+}
+
+/** 授权点目录懒加载（抽屉打开时才拉；失败留空，下次打开重试） */
+async function loadPermCatalog () {
+  if (permCatalog.value.length) return
+  const r = await getPermissionCatalog()
+  permCatalog.value = (r && r.data) || []
 }
 
 async function saveDrawer () {
@@ -892,7 +893,7 @@ async function saveDrawer () {
   if (!role) return
   drawerSaving.value = true
   try {
-    const r = await saveRolePermissions(role.code, checkedMenuIds.value, checkedApiIds.value)
+    const r = await saveRolePermissionPoints(role.code, checkedMenuIds.value, checkedPerms.value)
     if (r.success) { message.success('权限已保存'); drawer.value = false }
     else message.error(r.msg || '保存失败')
   } catch (e) { message.error(e.message || '保存失败') }
