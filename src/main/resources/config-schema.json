@@ -70,11 +70,6 @@
       ]
     },
     {
-      "key": "apiKey",
-      "title": "API 密钥（对外开放问答能力）",
-      "sections": []
-    },
-    {
       "key": "skills",
       "title": "技能",
       "sections": [

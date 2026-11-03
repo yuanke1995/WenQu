@@ -581,7 +581,7 @@ const applyFieldDeepLink = async () => {
 
 // 无「恢复本组默认」的分组（API Key 由数据库管理；调试组的落库键前缀是 chat，
 // 按 panel 名重置匹配不到键，且两个调试开关默认即关、重置价值低）
-const NO_RESET = ['maintenance', 'apiKey', 'debug']
+const NO_RESET = ['maintenance', 'debug']
 
 // 分组顶部说明已整体删除：逐条核对后，它们说的都是分节标题、字段旁的 ? 说明或页内已有的话
 // （「关闭后怎样」「≤0=暂停」「重排归知识库」等在对应字段上都有），横幅只会把视线从参数上挪走
