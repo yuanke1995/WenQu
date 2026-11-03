@@ -5,6 +5,18 @@
       <span class="head-hint-plain">管理账号、部门与角色归属；角色能做什么在「权限管理」里配置</span>
     </div>
 
+    <!-- C1：临时授权到期提醒（未来 7 天内到期的角色绑定；无则不渲染） -->
+    <a-alert v-if="expiring.length" type="warning" show-icon style="margin-bottom:12px">
+      <template #message>
+        {{ expiring.length }} 项临时授权将在 7 天内到期
+      </template>
+      <template #description>
+        <div v-for="e in expiring" :key="e.uid + e.roleCode" class="form-tip">
+          <code>{{ e.uid }}</code> 的 <b>{{ e.roleCode }}</b> 将于 {{ String(e.expireAt).replace('T', ' ').slice(0, 16) }} 到期（到期后自动回收）
+        </div>
+      </template>
+    </a-alert>
+
     <!-- 页签式 Tab：与「智能体工作台」同一形态。此处只承载导航，内容用下方共用卡片按 tab 渲染；
          页签状态落 URL(?tab=)，刷新/回退/分享可还原 -->
     <a-tabs v-model:active-key="tab" class="pg-tabs">
@@ -350,8 +362,19 @@ import { listUsers, createUser, updateUser, deleteUser, resetUserPassword,
          listDepartments, createDepartment, updateDepartment, deleteDepartment,
          listRoleOptions, listIdentityProviders, unbindIdentity,
          listTenants, createTenant, setTenantStatus, moveMemberTenant,
-         listTenantRequests, approveTenantRequest, rejectTenantRequest } from '../api'
+         listTenantRequests, approveTenantRequest, rejectTenantRequest,
+         getExpiringRoles } from '../api'
 import UserAvatar from '../components/UserAvatar.vue'
+import { onMounted } from 'vue'
+
+/* ==================== C1：临时授权到期提醒 ==================== */
+const expiring = ref([])
+onMounted(async () => {
+  try {
+    const r = await getExpiringRoles(7)
+    if (r && r.success) expiring.value = (r.data || []).slice(0, 8)
+  } catch (e) { /* 提醒拉取失败不打扰主流程 */ }
+})
 
 /* ==================== 页签：状态落 URL / 数据懒加载 / 各页签独立记忆筛选 ==================== */
 const route = useRoute()

@@ -1448,9 +1448,11 @@ CREATE TABLE IF NOT EXISTS `c_ai_user_role` (
     `uid`         VARCHAR(64) NOT NULL COMMENT 'c_ai_user.uid',
     `role_code`   VARCHAR(20) NOT NULL COMMENT 'c_ai_role.code',
     `granted_by`  VARCHAR(20) DEFAULT 'manual' COMMENT '授权来源: idp | manual',
+    `expire_at`   DATETIME    DEFAULT NULL COMMENT '到期时刻（NULL=永久；批次 C1 临时授权，到期自动回收）',
     `create_time` DATETIME    DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     PRIMARY KEY (`uid`, `role_code`),
-    KEY `idx_role` (`role_code`)
+    KEY `idx_role` (`role_code`),
+    KEY `idx_ur_expire` (`expire_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户-角色多对多（取代 c_ai_user.role 单值）';
 
 -- 组→角色/部门 自动映射（治理核心，优先级裁决）

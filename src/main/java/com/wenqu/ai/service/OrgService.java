@@ -291,11 +291,19 @@ public class OrgService {
      * 旧调用传单 {@code role} 时按单元素集合处理（兼容存量调用方，语义不变）。
      */
     public void updateUser(String uid, String username, String departmentId, List<String> roles, Integer status) {
-        // 成员管理是平台动作（Phase 4）：判据与理由见 asPlatformIfSuper 的注释
-        asPlatformIfSuperVoid(() -> updateUserScoped(uid, username, departmentId, roles, status));
+        updateUser(uid, username, departmentId, roles, status, java.util.Map.of());
     }
 
-    private void updateUserScoped(String uid, String username, String departmentId, List<String> roles, Integer status) {
+    /** C1 重载：roleExpires = {角色编码 → 到期时刻}，临时授权用（空 Map=全部永久） */
+    public void updateUser(String uid, String username, String departmentId, List<String> roles, Integer status,
+                           java.util.Map<String, java.time.LocalDateTime> roleExpires) {
+        // 成员管理是平台动作（Phase 4）：判据与理由见 asPlatformIfSuper 的注释
+        asPlatformIfSuperVoid(() -> updateUserScoped(uid, username, departmentId, roles, status,
+                roleExpires == null ? java.util.Map.of() : roleExpires));
+    }
+
+    private void updateUserScoped(String uid, String username, String departmentId, List<String> roles, Integer status,
+                                  java.util.Map<String, java.time.LocalDateTime> roleExpires) {
         User user = userMapper.selectById(uid);
         if (user == null) throw new BizException("用户不存在");
         List<String> normalized = new ArrayList<>();
@@ -325,7 +333,7 @@ public class OrgService {
         // 档案整行被请求侧缓存 60s：改完不逐出，禁用/改角色/改部门要多等一分钟才对新的请求生效
         com.wenqu.ai.config.UserContextInterceptor.evict(uid);
         // 角色全量替换写多角色表（granted_by='manual' 行；idp 行不动——IdP 权威）
-        userRoleService.setManualRoles(uid, normalized);
+        userRoleService.setManualRoles(uid, normalized, roleExpires);
     }
 
     public void deleteUser(String uid) {

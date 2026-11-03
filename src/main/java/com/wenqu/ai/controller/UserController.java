@@ -97,7 +97,22 @@ public class UserController {
             String single = str(body.get("role"));
             roles = single == null ? null : List.of(single);
         }
-        orgService.updateUser(uid, str(body.get("username")), str(body.get("departmentId")), roles, status);
+        // C1 临时授权：roleExpires = {角色编码: ISO 到期时刻}（可选；未提及=永久）
+        java.util.Map<String, java.time.LocalDateTime> roleExpires = new java.util.LinkedHashMap<>();
+        Object expRaw = body.get("roleExpires");
+        if (expRaw instanceof java.util.Map<?, ?> m) {
+            for (java.util.Map.Entry<?, ?> e : m.entrySet()) {
+                if (e.getKey() == null || e.getValue() == null) continue;
+                String v = String.valueOf(e.getValue()).trim();
+                if (v.isEmpty()) continue;
+                try {
+                    roleExpires.put(String.valueOf(e.getKey()), java.time.LocalDateTime.parse(v.length() > 10 && v.indexOf('T') < 0 ? v.replace(' ', 'T') : v));
+                } catch (Exception ignored) {
+                    // 非法时间格式忽略该键（角色仍按永久授予）
+                }
+            }
+        }
+        orgService.updateUser(uid, str(body.get("username")), str(body.get("departmentId")), roles, status, roleExpires);
         return ResultJson.ok("已保存");
     }
 

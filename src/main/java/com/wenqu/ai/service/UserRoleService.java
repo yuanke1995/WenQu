@@ -95,6 +95,8 @@ public class UserRoleService {
         try {
             List<UserRole> rows = mapper.selectList(new LambdaQueryWrapper<UserRole>()
                     .eq(UserRole::getUid, uid));
+            // C1：过期行当场不认（定时回收是 5 分钟粒度的清理，判定必须即刻生效——回收窗口内不给僵尸角色续命）
+            rows.removeIf(r -> r.getExpireAt() != null && r.getExpireAt().isBefore(java.time.LocalDateTime.now()));
             if (rows.isEmpty()) return List.of("user");
             // 稳定序：管理员级在前（主角色裁决），同级按授予时间
             Map<Boolean, Set<String>> split = new LinkedHashMap<>();
@@ -136,6 +138,16 @@ public class UserRoleService {
      */
     @Transactional
     public void setManualRoles(String uid, Collection<String> codes) {
+        setManualRoles(uid, codes, java.util.Map.of());
+    }
+
+    /**
+     * 全量替换手动角色（C1 重载：带到期时刻）。{@code expires} 键=角色编码、值=到期时刻；
+     * 未提及的角色行永久（expire_at=NULL）。临时授权回收三重保险：读侧即滤（loadRoles）、
+     * 定时清行（{@link #sweepExpired}）、广播让各副本当场逐出缓存。
+     */
+    @Transactional
+    public void setManualRoles(String uid, Collection<String> codes, Map<String, java.time.LocalDateTime> expires) {
         if (uid == null || uid.isBlank()) throw new BizException("用户不能为空");
         Set<String> normalized = new LinkedHashSet<>();
         if (codes != null) {
@@ -155,6 +167,8 @@ public class UserRoleService {
             r.setUid(uid);
             r.setRoleCode(code);
             r.setGrantedBy("manual");
+            java.time.LocalDateTime expireAt = expires.get(code);
+            if (expireAt != null) r.setExpireAt(expireAt);
             try {
                 mapper.insert(r);
             } catch (org.springframework.dao.DuplicateKeyException e) {
@@ -162,7 +176,11 @@ public class UserRoleService {
             }
         }
         invalidateAndBroadcast(uid);
-        audit.record("[AUDIT] 设置用户角色 uid={} roles={}", uid, normalized);
+        // C1：临时授权在审计里显形（哪天到期一清二楚）
+        Map<String, java.time.LocalDateTime> tmp = new java.util.LinkedHashMap<>(expires);
+        tmp.keySet().retainAll(normalized);
+        audit.record("[AUDIT] 设置用户角色 uid={} roles={} expires={}", uid, normalized,
+                tmp.isEmpty() ? "永久" : tmp.toString());
     }
 
     /**
@@ -245,6 +263,36 @@ public class UserRoleService {
         Long n = mapper.selectCount(new LambdaQueryWrapper<UserRole>()
                 .in(UserRole::getRoleCode, adminCodes));
         return n != null && n <= 1;
+    }
+
+    /**
+     * C1：定时回收已到期角色行（对齐既有 @Scheduled 基建，5 分钟节拍）。
+     * 先取受影响 uid 再删：删完逐个广播逐出各副本缓存；审计记条数不记明细（明细在删之前已过期，无泄漏价值）。
+     *
+     * @return 本轮回收的 (uid, role) 行数
+     */
+    @org.springframework.scheduling.annotation.Scheduled(fixedDelay = 300_000, initialDelay = 90_000)
+    public int sweepExpired() {
+        java.time.LocalDateTime now = java.time.LocalDateTime.now();
+        List<UserRole> expired = mapper.selectList(new LambdaQueryWrapper<UserRole>()
+                .isNotNull(UserRole::getExpireAt).lt(UserRole::getExpireAt, now));
+        if (expired.isEmpty()) return 0;
+        Set<String> uids = new LinkedHashSet<>();
+        for (UserRole r : expired) uids.add(r.getUid());
+        mapper.delete(new LambdaQueryWrapper<UserRole>()
+                .isNotNull(UserRole::getExpireAt).lt(UserRole::getExpireAt, now));
+        for (String uid : uids) invalidateAndBroadcast(uid);
+        audit.record("[AUDIT] 临时授权到期回收 rows={} uids={}", expired.size(), uids);
+        return expired.size();
+    }
+
+    /** 即将过期清单（C1 提醒）：未来 days 天内到期的行（含已过期未清扫的） */
+    public List<UserRole> expiringWithinDays(int days) {
+        java.time.LocalDateTime now = java.time.LocalDateTime.now();
+        return mapper.selectList(new LambdaQueryWrapper<UserRole>()
+                .isNotNull(UserRole::getExpireAt)
+                .lt(UserRole::getExpireAt, now.plusDays(Math.max(1, days)))
+                .orderByAsc(UserRole::getExpireAt));
     }
 
     /** 某用户角色变更后失效缓存（仅本地；跨副本写路径请走 {@link #invalidateAndBroadcast}） */

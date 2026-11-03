@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
@@ -133,6 +134,22 @@ public class RoleController {
             roleService.savePermissions(code, idList(body, "menuIds"), idList(body, "apiIds"));
         }
         return ResultJson.ok("权限已保存");
+    }
+
+    @Operation(summary = "即将到期的临时授权", description = "未来 days 天内到期的角色绑定行（含已过期未清扫的），批次 C1 提醒清单；{uid, roleCode, expireAt, grantedBy}")
+    @Permission("role:read")
+    @GetMapping("/expiring")
+    public ResultJson expiring(@Parameter(description = "未来天数，默认 7") @RequestParam(value = "days", defaultValue = "7") Integer days) {
+        java.util.List<java.util.Map<String, Object>> out = new java.util.ArrayList<>();
+        for (com.wenqu.ai.model.UserRole r : userRoleService.expiringWithinDays(days == null ? 7 : days)) {
+            java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
+            m.put("uid", r.getUid());
+            m.put("roleCode", r.getRoleCode());
+            m.put("expireAt", r.getExpireAt());
+            m.put("grantedBy", r.getGrantedBy());
+            out.add(m);
+        }
+        return ResultJson.ok(out);
     }
 
     @Operation(summary = "各角色成员数", description = "role_code → 用户数（角色列表徽标用，批次 D-2）")

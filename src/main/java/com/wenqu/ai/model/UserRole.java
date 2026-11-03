@@ -27,5 +27,8 @@ public class UserRole {
     /** 授权来源: idp | manual（idp=组映射/目录同步授予，IdP 权威口径下不被手动改动静默覆盖） */
     private String grantedBy;
 
+    /** 到期时刻（NULL=永久；批次 C1 临时授权——读侧即滤过期行，定时任务负责清行） */
+    private LocalDateTime expireAt;
+
     private LocalDateTime createTime;
 }

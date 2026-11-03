@@ -1534,6 +1534,8 @@ export const getRoleMemberCounts = () => request('/role/members-counts')
 export const getRoleMembers = code => request(`/role/${encodeURIComponent(code)}/members`)
 /** 授权点 → 已授权角色映射（接口页反查列，批次 D-1） */
 export const getPermissionRoles = () => request('/role/permission-roles')
+/** 即将到期的临时授权清单（批次 C1 提醒） */
+export const getExpiringRoles = days => request(`/role/expiring?days=${days || 7}`)
 
 /** 提交回答反馈（messageId 关联；rating 1=有帮助 0=没帮助） */
 export const submitFeedback = (messageId, rating, feedbackText) =>

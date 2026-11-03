@@ -140,6 +140,7 @@ public class RbacSeedRunner implements ApplicationRunner {
     private final RoleService roleService;
     private final com.wenqu.ai.mapper.ApiEndpointMapper apiEndpointMapper;
     private final com.wenqu.ai.mapper.RolePermissionMapper rolePermissionMapper;
+    private final com.wenqu.ai.mapper.RoleApiMapper roleApiMapper;
 
     @Override
     public void run(ApplicationArguments args) {
@@ -297,6 +298,23 @@ public class RbacSeedRunner implements ApplicationRunner {
         if (perms != null) {
             for (String perm : perms) {
                 pp += rolePermissionMapper.bindAllow(code, perm);
+            }
+            // 双跑窗口一致性（与 A7 保存路径同口径）：授权点反向折算成端点绑定写回 c_ai_role_api，
+            // 否则 legacy 模式判定走 role_api 时，纯授权点种子角色等于零绑定（全员 403）。
+            // enforce 稳定后此段随 role_api 一起退役。
+            java.util.Map<String, List<com.wenqu.ai.model.ApiEndpoint>> byPerm = new java.util.LinkedHashMap<>();
+            for (com.wenqu.ai.model.ApiEndpoint api : apiEndpointMapper.selectList(null)) {
+                if (api.getPermissionCode() == null || api.getPermissionCode().isBlank()) continue;
+                byPerm.computeIfAbsent(api.getPermissionCode(), k -> new java.util.ArrayList<>()).add(api);
+            }
+            for (String perm : perms) {
+                for (com.wenqu.ai.model.ApiEndpoint api : byPerm.getOrDefault(perm, List.of())) {
+                    try {
+                        roleApiMapper.bind(code, api.getId());
+                    } catch (Exception ignored) {
+                        // 唯一键冲突忽略（同端点已被其它授权点路径写入）
+                    }
+                }
             }
         }
         log.info("[RbacSeed] 已预置受限管理员角色 {}（菜单 {} 条，授权点 {} 个）", code, pm, pp);
