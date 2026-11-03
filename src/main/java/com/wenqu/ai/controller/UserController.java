@@ -12,6 +12,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.Map;
+import com.wenqu.ai.security.Permission;
 
 /**
  * 用户管理：列表供「共享范围」选择器使用，增删改供「成员管理」页使用。
@@ -34,6 +35,7 @@ public class UserController {
     private final com.wenqu.ai.agentx.FrameworkSessions frameworkSessions;
 
     @Operation(summary = "用户列表", description = "返回全部用户（按昵称升序）：User 全字段 + roles（角色集）+ role（主角色）")
+    @Permission("user:read")
     @GetMapping("/list")
     public ResultJson list() {
         return ResultJson.ok(orgService.listUsersWithRoles());
@@ -45,6 +47,7 @@ public class UserController {
      */
     @Operation(summary = "成员分页查询", description = "关键字（昵称/登录账号）与部门、状态在库侧过滤，按最近登录倒序分页；"
             + "返回 {total, items, page, size}，items 字段口径同 /user/list")
+    @Permission("user:read")
     @GetMapping("/page")
     public ResultJson page(@Parameter(description = "昵称或登录账号关键字") @RequestParam(value = "kw", required = false) String kw,
                            @Parameter(description = "部门 ID（空=全部）") @RequestParam(value = "departmentId", required = false) String departmentId,
@@ -55,6 +58,7 @@ public class UserController {
     }
 
     @Operation(summary = "新建用户", description = "{\"uid\":\"alice\",\"username\":\"Alice\",\"password\":\"必填\",\"departmentId\":\"可选\",\"role\":\"user|admin|superadmin\"}")
+    @Permission("user:write")
     @PostMapping
     public ResultJson create(@RequestBody Map<String, Object> body) {
         return ResultJson.ok(orgService.createUser(
@@ -64,6 +68,7 @@ public class UserController {
 
     @Operation(summary = "重置密码", description = "{\"password\":\"新密码\"}；同时清除登录失败锁定。"
             + "普通用户仅可改自己的密码（本端点对普通用户开放，改别人由管理员端点拦截）")
+    @Permission("self:password")
     @PutMapping("/{uid}/password")
     public ResultJson resetPassword(
             @Parameter(description = "登录账号（uid）") @PathVariable("uid") String uid,
@@ -78,6 +83,7 @@ public class UserController {
     }
 
     @Operation(summary = "修改用户", description = "{\"username\":\"\",\"departmentId\":\"\",\"roles\":[\"user\",\"admin\"],\"status\":1|0}；roles 为角色集（manual 全量替换），兼容旧的单 role 字段")
+    @Permission("user:write")
     @PutMapping("/{uid}")
     public ResultJson update(
             @Parameter(description = "登录账号（uid）") @PathVariable("uid") String uid,
@@ -96,6 +102,7 @@ public class UserController {
     }
 
     @Operation(summary = "删除用户", description = "最后一名超级管理员不可删除")
+    @Permission("user:delete")
     @DeleteMapping("/{uid}")
     public ResultJson delete(@Parameter(description = "登录账号（uid）") @PathVariable("uid") String uid) {
         orgService.deleteUser(uid);
@@ -103,6 +110,7 @@ public class UserController {
     }
 
     @Operation(summary = "解绑 OIDC 单点登录", description = "清除该账号在统一身份表的全部外部身份绑定；解绑后须重新走对应 IdP 登录才能再次绑定。仅管理员可操作他人")
+    @Permission("user:delete")
     @DeleteMapping("/{uid}/oidc-binding")
     public ResultJson unbindOidc(@Parameter(description = "登录账号（uid）") @PathVariable("uid") String uid) {
         orgService.unbindOidc(uid);
@@ -110,6 +118,7 @@ public class UserController {
     }
 
     @Operation(summary = "逐源解绑身份", description = "只清除该账号在指定认证源下的外部身份绑定，其他认证源不动；解绑后须重新走对应认证源登录才能再次绑定。仅管理员可操作他人")
+    @Permission("user:delete")
     @DeleteMapping("/{uid}/identity-binding/{providerId}")
     public ResultJson unbindIdentity(@Parameter(description = "登录账号（uid）") @PathVariable("uid") String uid,
                                      @Parameter(description = "认证源 id") @PathVariable("providerId") String providerId) {
@@ -118,6 +127,7 @@ public class UserController {
     }
 
     @Operation(summary = "个人偏好读取", description = "本人个人设置：defaultModel（个人默认聊天模型引用，空=跟随系统全局）+ models（可用聊天模型清单，选择器数据源）")
+    @Permission("self:preference")
     @GetMapping("/preference")
     public ResultJson preference() {
         return ResultJson.ok(orgService.getPreference(com.wenqu.ai.util.RequestUser.uid(),
@@ -129,6 +139,7 @@ public class UserController {
             + "memoryEnabled=用户级长期记忆自动提炼开关（仅关生成，已存记忆仍注入）。"
             + "重排/记忆向量等「模型默认」不走本端点：重排归知识库检索设置绑定；问答对生成与 GraphRAG 抽取"
             + "已回落个人默认聊天模型（本端点的 defaultModel），无需单独配置")
+    @Permission("self:preference")
     @PutMapping("/preference")
     public ResultJson setPreference(@RequestBody Map<String, Object> body) {
         String uid = com.wenqu.ai.util.RequestUser.uid();
@@ -145,6 +156,7 @@ public class UserController {
     @Operation(summary = "修改我的资料", description = "{\"username\":\"新昵称\",\"avatar\":\"emoji 或上传图片 URL 或空串清除\"}；"
             + "仅本人（uid 取登录态，不可改 uid）；字段缺省(null)=不修改，avatar 空串=清除头像回落昵称首字。"
             + "头像图片地址须为本人上传返回的 /ai/images/avatar/ 路径（防止存入任意 URL）")
+    @Permission("self:preference")
     @PutMapping("/profile")
     public ResultJson updateOwnProfile(@RequestBody Map<String, Object> body) {
         orgService.updateOwnProfile(com.wenqu.ai.util.RequestUser.uid(),
@@ -156,6 +168,7 @@ public class UserController {
     @Operation(summary = "上传我的头像", description = "multipart file（PNG/JPEG/GIF/WebP，≤2MB）；仅本人。"
             + "服务端校验图片类型与魔数、落盘到 images/avatar/、写入用户头像（自动清理旧上传图），返回 {url}（/ai/images/avatar/...）。"
             + "该 URL 是公开可访问的头像图（不可猜 UUID），可直接在 <img> 中加载，无需携带令牌")
+    @Permission("self:preference")
     @PostMapping(value = "/avatar", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResultJson uploadAvatar(
             @Parameter(description = "头像图片") @RequestParam("file") MultipartFile file) {
@@ -167,6 +180,7 @@ public class UserController {
             + "+ 本人当前个人值 + 系统全局值（界面展示「跟随系统」参照）。"
             + "当前 schema 里没有标记 personal 的字段（原「回答偏好」五项已连同它们在系统设置里的全局那一份一起下线），"
             + "本端点作为配置四档的个人层通道保留，fields 返回空数组")
+    @Permission("self:preference")
     @GetMapping("/settings")
     public ResultJson getSettings() {
         return ResultJson.ok(userConfigService.describe(com.wenqu.ai.util.RequestUser.uid()));
@@ -175,6 +189,7 @@ public class UserController {
     @Operation(summary = "保存个人偏好", description = "扁平的 {配置键: 值}（键必须在 config-schema.json 标记 personal，"
             + "当前无此类键，任何提交都会被拒）；字段缺省=不修改，空串=清除该项回落系统全局。"
             + "模型引用须归属本人登记（他人供应商拒用）且类型与字段一致；保存即生效（仅对本人问答/本人资源生效）")
+    @Permission("self:preference")
     @PutMapping("/settings")
     public ResultJson saveSettings(@RequestBody Map<String, Object> body) {
         return ResultJson.ok(userConfigService.save(com.wenqu.ai.util.RequestUser.uid(),

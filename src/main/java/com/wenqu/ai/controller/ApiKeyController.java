@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Map;
+import com.wenqu.ai.security.Permission;
 
 /**
  * API Key 管理接口（个人资产，2026-11-02 下放自服务）：签发 / 列表 / 编辑 / 启停 / 删除 / 明文回显。
@@ -43,6 +44,7 @@ public class ApiKeyController {
     private final ApiKeyService apiKeyService;
 
     @Operation(summary = "Key 列表", description = "不含明文与哈希，仅前缀与使用/过期状态；谁建归谁（只看得到自己签发的 Key）")
+    @Permission("apikey:read")
     @GetMapping("/list")
     public ResultJson list() {
         return ResultJson.ok(apiKeyService.list());
@@ -52,6 +54,7 @@ public class ApiKeyController {
             + "body: {\"name\":\"…\",\"expireAt\":\"yyyy-MM-dd\"}——Key 恒以签发人本人身份发问，"
             + "不支持指定代表账号（请求里带别人的 actAsUid 会被拒绝）。"
             + "改密/资料/技能/MCP 配置等账号自服务面一律不从 Key 走")
+    @Permission("apikey:write")
     @PostMapping
     public ResultJson create(@RequestBody Map<String, String> body) {
         String name = body.get("name");
@@ -67,6 +70,7 @@ public class ApiKeyController {
 
     @Operation(summary = "回显明文", description = "返回该 Key 的明文 apiKey（列表「眼睛」/复制按钮的数据源）；"
             + "仅创建者可回显，每次都落审计日志。存量 Key（回显功能上线前签发）无密文，会明确提示重签")
+    @Permission("apikey:read")
     @GetMapping("/{id}/reveal")
     public ResultJson reveal(@PathVariable("id") String id) {
         return ResultJson.ok(Map.of("apiKey", apiKeyService.reveal(id)));
@@ -75,6 +79,7 @@ public class ApiKeyController {
     @Operation(summary = "编辑 Key", description = "改用途名称与有效期（expireAt 缺省/空串=改为长期有效）。"
             + "绑定恒为签发人、不可改；存量未绑定的 Key 传 actAsUid=签发人 可补齐绑定。"
             + "body: {\"name\": \"…\", \"expireAt\": \"…\"}")
+    @Permission("apikey:write")
     @PutMapping("/{id}")
     public ResultJson update(@PathVariable("id") String id, @RequestBody Map<String, String> body) {
         String name = body.get("name");
@@ -84,6 +89,7 @@ public class ApiKeyController {
     }
 
     @Operation(summary = "启用/停用", description = "停用即吊销（保留记录便于审计）；body: {\"disabled\": true}")
+    @Permission("apikey:write")
     @PutMapping("/{id}/disabled")
     public ResultJson setDisabled(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         boolean disabled = Boolean.TRUE.equals(body.get("disabled"));
@@ -93,6 +99,7 @@ public class ApiKeyController {
 
     @Operation(summary = "授权 MCP 入口", description = "body: {\"mcpEnabled\": true}——允许该 Key 访问平台级 MCP 入口 /ai/mcp"
             + "（元工具集：知识检索 / 问答 / 列知识库 / 列智能体）。默认不授权；停用该 Key 时入口一并不可用")
+    @Permission("apikey:write")
     @PutMapping("/{id}/mcp")
     public ResultJson setMcpEnabled(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         boolean enabled = Boolean.TRUE.equals(body.get("mcpEnabled"));
@@ -101,6 +108,7 @@ public class ApiKeyController {
     }
 
     @Operation(summary = "删除 Key", description = "物理删除记录（不再需要时清理；日常吊销建议用停用）")
+    @Permission("apikey:delete")
     @DeleteMapping("/{id}")
     public ResultJson delete(@PathVariable("id") String id) {
         apiKeyService.delete(id);

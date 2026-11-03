@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
+import com.wenqu.ai.security.Permission;
 
 /**
  * 图片描述缓存运维：查统计 / 手动清理过期与旧版本 / 一键清空（清空后重解析全量重新描述）
@@ -25,12 +26,14 @@ public class DescCacheController {
     private final ImageDescCache imageDescCache;
 
     @Operation(summary = "缓存统计（总条数/模型数/最新与最旧命中时间）")
+    @Permission("desc-cache:manage")
     @GetMapping("/stats")
     public ResultJson<Map<String, Object>> stats() {
         return ResultJson.ok(imageDescCache.stats());
     }
 
     @Operation(summary = "清理过期与旧版本缓存（TTL 到期行 + 版本号变更后的旧 key）")
+    @Permission("desc-cache:manage")
     @PostMapping("/prune")
     public ResultJson<String> prune() {
         imageDescCache.prune();
@@ -38,6 +41,7 @@ public class DescCacheController {
     }
 
     @Operation(summary = "清空图片描述缓存（下次重解析全量重新描述，用于模型/提示词变更后强制重生成）")
+    @Permission("desc-cache:manage")
     @DeleteMapping
     public ResultJson<String> clear() {
         imageDescCache.clear();

@@ -36,6 +36,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import com.wenqu.ai.security.Permission;
 
 /**
  * MCP 外部工具管理接口：**每个用户管自己登记的 Server**（新增/编辑/启停/删除 + 连接状态/重连/探测）。
@@ -68,6 +69,7 @@ public class McpController {
     private final ConfigCryptoService cryptoService;
 
     @Operation(summary = "连接状态一览", description = "工具调用总开关 + 本人每个 server 的地址/类型/启停/连接状态/可用工具数（连接失败带原因）；立即返回，尚未连上的服务状态为 connecting（后台建连中，前端轮询到收敛）；retryBroken=true 时先对未连上的服务补一次同步重连（点「刷新」用，连接中的服务会跳过）")
+    @Permission("mcp:read")
     @GetMapping("/status")
     public ResultJson status(@RequestParam(value = "retryBroken", required = false) Boolean retryBroken,
                              // verifyOnline=true 才对已连接服务做在线校验（远程 listTools，慢）；只拿服务清单的
@@ -86,6 +88,7 @@ public class McpController {
     }
 
     @Operation(summary = "新增 MCP 服务", description = "body: {name, url, type?, enabled?, headers?}；headers 为键值对象（整块 RSA 加密入库）；保存即尝试连接，失败不阻断（状态可在 /status 查看）")
+    @Permission("mcp:write")
     @PostMapping("/servers")
     public ResultJson add(@RequestBody Map<String, Object> body) {
         String uid = RequestUser.uid();
@@ -117,6 +120,7 @@ public class McpController {
 
     @Operation(summary = "编辑 MCP 服务", description = "body: {name?, url?, type?, enabled?, headers?, clearHeaders?}；只传要改的字段。"
             + "headers 不传 = 保持原值，传对象 = 整块替换，clearHeaders=true = 清除凭据；改完自动重连")
+    @Permission("mcp:write")
     @PutMapping("/servers/{id}")
     public ResultJson update(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         UserMcp row = own(id);
@@ -152,6 +156,7 @@ public class McpController {
     }
 
     @Operation(summary = "启停 MCP 服务", description = "body: {\"enabled\": true}；停用即断开连接且不再暴露其工具")
+    @Permission("mcp:write")
     @PostMapping("/servers/{id}/enabled")
     public ResultJson setEnabled(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         UserMcp row = own(id);
@@ -163,6 +168,7 @@ public class McpController {
 
     @Operation(summary = "设置工具中文名", description = "body: {tool: 工具名, label: 中文名}；label 传空串 = 恢复展示原名。"
             + "MCP 工具的中文名只由用户手工维护（不自动翻译），只改自己的服务")
+    @Permission("mcp:write")
     @PutMapping("/servers/{id}/tool-label")
     public ResultJson setToolLabel(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         UserMcp row = own(id);
@@ -174,6 +180,7 @@ public class McpController {
     }
 
     @Operation(summary = "删除 MCP 服务", description = "连带关闭该连接（只删自己的）")
+    @Permission("mcp:delete")
     @DeleteMapping("/servers/{id}")
     public ResultJson delete(@PathVariable("id") String id) {
         UserMcp row = own(id);
@@ -189,6 +196,7 @@ public class McpController {
 
     @Operation(summary = "批量删除 MCP 服务", description = "body: {ids:[...]}；只删自己的（逐条按单条口径）；"
             + "返回 {succeeded:[id], failed:[{id,name,error}]}；删除后统一重建本人连接池")
+    @Permission("mcp:delete")
     @PostMapping("/servers/batch-delete")
     public ResultJson batchDelete(@RequestBody Map<String, Object> body) {
         List<String> ids = BatchResults.parseIds(body);
@@ -211,6 +219,7 @@ public class McpController {
 
     @Operation(summary = "批量启用/停用 MCP 服务", description = "body: {ids:[...], enabled:true|false}；逐条按单条口径"
             + "（停用即断开连接、不再暴露其工具）；返回 {succeeded:[id], failed:[{id,name,error}]}；改完统一重建本人连接池")
+    @Permission("mcp:write")
     @PostMapping("/servers/batch-enabled")
     public ResultJson batchEnabled(@RequestBody Map<String, Object> body) {
         List<String> ids = BatchResults.parseIds(body);
@@ -234,6 +243,7 @@ public class McpController {
     }
 
     @Operation(summary = "重连", description = "按当前配置重建本人的全部连接（改完通常已自动生效；此接口用于失败重试），立即返回、重建在后台进行，最终状态由 /status 轮询得到")
+    @Permission("mcp:write")
     @PostMapping("/reload")
     public ResultJson reload() {
         String uid = RequestUser.uid();
@@ -243,6 +253,7 @@ public class McpController {
 
     @Operation(summary = "测试连接", description = "临时连接一个 MCP 服务（不落配置），返回是否可达与工具清单；用于\"先测再存\"。"
             + "headers 不传且给了 serverId 时，使用该服务已保存的凭据（编辑态回显只有键名，拿不到明文）")
+    @Permission("mcp:write")
     @PostMapping("/probe")
     public ResultJson probe(@RequestBody Map<String, Object> body) {
         // 是否「显式给了 headers」要和「给了但为空」分开：后者是明确不带凭据（清除后测试），
@@ -255,6 +266,7 @@ public class McpController {
 
     @Operation(summary = "批量导入 MCP 服务", description = "body: {servers:[{name,url,type?,headers?}]}；逐条按单条口径校验"
             + "（名称/地址/重名/配额），只重连一次；返回 {added:[{id,name}], skipped:[{name,reason}]}")
+    @Permission("mcp:write")
     @PostMapping("/servers/import")
     public ResultJson importServers(@RequestBody Map<String, Object> body) {
         Object raw = body.get("servers");
@@ -311,6 +323,7 @@ public class McpController {
     // ==================== MCP 调用审计（仅管理员） ====================
 
     @Operation(summary = "MCP 调用审计-明细", description = "两个方向的全量记录：入站（外部客户端调 /ai/mcp/{token} 与 /ai/mcp）与出站（模型调用用户接入的外部工具）。字段：渠道/工具/凭据指代/归属/IP/耗时/结果。仅管理员；按时间倒序分页，支持渠道/工具/结果筛选")
+    @Permission("mcp:read")
     @GetMapping("/audit/logs")
     public ResultJson auditLogs(@RequestParam(value = "channel", required = false) String channel,
                                 @RequestParam(value = "tool", required = false) String tool,
@@ -339,6 +352,7 @@ public class McpController {
     }
 
     @Operation(summary = "MCP 调用审计-汇总", description = "总调用/成功/失败/平均耗时 + 按工具×渠道分组统计（调用量倒序前 20；含出站渠道）。仅管理员")
+    @Permission("mcp:read")
     @GetMapping("/audit/summary")
     public ResultJson auditSummary(HttpServletRequest httpRequest) {
         requireAdmin(httpRequest);

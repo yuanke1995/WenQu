@@ -25,6 +25,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.util.Map;
+import com.wenqu.ai.security.Permission;
 
 /**
  * 认证源与身份同步管理（管理员端点，RBAC fail-closed——不在任何白名单，未授权即 403）：
@@ -48,6 +49,7 @@ public class IdentityAdminController {
     // ==================== 认证源 CRUD ====================
 
     @Operation(summary = "认证源清单", description = "SAML/SCIM/LDAP；config 敏感字段掩码回显；含绑定账号数")
+    @Permission("identity:read")
     @GetMapping("/providers")
     public ResultJson list() {
         return ResultJson.ok(providerService.list());
@@ -55,6 +57,7 @@ public class IdentityAdminController {
 
     @Operation(summary = "新建认证源", description = "type=saml|scim|ldap；config 敏感字段整块 RSA 加密入库；"
             + "tenantId 留空＝归当前管理员的租户，归到别的租户仅平台级管理员可执行")
+    @Permission("identity:manage")
     @PostMapping("/providers")
     public ResultJson create(@RequestBody Map<String, Object> body) {
         return ResultJson.ok(providerService.toView(providerService.create(
@@ -66,6 +69,7 @@ public class IdentityAdminController {
     }
 
     @Operation(summary = "编辑认证源", description = "config 中敏感字段为 \"******\" 时保留原值不覆盖；tenantId 留空＝归属不动")
+    @Permission("identity:manage")
     @PutMapping("/providers/{id}")
     public ResultJson update(@PathVariable String id, @RequestBody Map<String, Object> body) {
         return ResultJson.ok(providerService.toView(providerService.update(
@@ -76,6 +80,7 @@ public class IdentityAdminController {
     }
 
     @Operation(summary = "删除认证源", description = "仍有用户绑定即拒")
+    @Permission("identity:manage")
     @DeleteMapping("/providers/{id}")
     public ResultJson delete(@PathVariable String id) {
         providerService.delete(id);
@@ -83,6 +88,7 @@ public class IdentityAdminController {
     }
 
     @Operation(summary = "测试 LDAP 连接", description = "bind + baseDn 可搜索即通过；仅 ldap 类型")
+    @Permission("identity:manage")
     @PostMapping("/providers/{id}/test")
     public ResultJson test(@PathVariable String id) {
         IdentityProvider p = providerService.getByIdForAdmin(id);
@@ -99,12 +105,14 @@ public class IdentityAdminController {
     // ==================== 组映射规则 ====================
 
     @Operation(summary = "组映射规则清单", description = "某认证源下的 组→角色/部门 规则（priority 大者优先）")
+    @Permission("identity:read")
     @GetMapping("/mappings")
     public ResultJson mappings(@RequestParam("providerId") String providerId) {
         return ResultJson.ok(mappingService.listByProvider(providerId));
     }
 
     @Operation(summary = "新建映射规则", description = "roleCode 可空（组先登记、规则后配）；同认证源下组名唯一")
+    @Permission("identity:manage")
     @PostMapping("/mappings")
     public ResultJson createMapping(@RequestBody Map<String, Object> body) {
         return ResultJson.ok(mappingService.create(str(body.get("providerId")), str(body.get("externalGroup")),
@@ -112,6 +120,7 @@ public class IdentityAdminController {
     }
 
     @Operation(summary = "编辑映射规则", description = "角色/部门变更只影响之后的裁决；要立即重算请触发手动同步")
+    @Permission("identity:manage")
     @PutMapping("/mappings/{id}")
     public ResultJson updateMapping(@PathVariable String id, @RequestBody Map<String, Object> body) {
         return ResultJson.ok(mappingService.update(id, str(body.get("roleCode")),
@@ -119,6 +128,7 @@ public class IdentityAdminController {
     }
 
     @Operation(summary = "删除映射规则", description = "顺带回收按该规则拿到角色的用户的 idp 角色行（手动角色不动）")
+    @Permission("identity:manage")
     @DeleteMapping("/mappings/{id}")
     public ResultJson deleteMapping(@PathVariable String id) {
         mappingService.delete(id);
@@ -128,6 +138,7 @@ public class IdentityAdminController {
     // ==================== 同步 ====================
 
     @Operation(summary = "立即同步（LDAP）", description = "diff：远端建号/恢复/离员禁用 + 组映射裁决；返回本轮日志")
+    @Permission("identity:manage")
     @PostMapping("/sync/{providerId}")
     public ResultJson syncNow(@PathVariable String providerId) {
         IdentityProvider p = providerService.getByIdForAdmin(providerId);
@@ -138,6 +149,7 @@ public class IdentityAdminController {
     }
 
     @Operation(summary = "同步日志", description = "某认证源的 c_ai_sync_job_log 最近记录（新→旧，默认 20 条）")
+    @Permission("identity:read")
     @GetMapping("/sync/logs")
     public ResultJson syncLogs(@RequestParam("providerId") String providerId,
                                @RequestParam(value = "limit", defaultValue = "20") int limit) {

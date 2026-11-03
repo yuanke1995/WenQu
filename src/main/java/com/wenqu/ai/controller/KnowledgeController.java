@@ -26,6 +26,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import com.wenqu.ai.security.Permission;
 
 /**
  * 知识块管理（预览/搜索/编辑/删除）以及无命中问题查询。
@@ -96,6 +97,7 @@ public class KnowledgeController {
     }
 
     @Operation(summary = "无命中问题列表", description = "获取最近 30 天内无检索命中的问题列表（按频次降序，最多 50 条），供一键入库补齐知识缺口")
+    @Permission("knowledge:admin")
     @GetMapping("/knowledge/unmatched")
     public ResultJson listUnmatched() {
         return ResultJson.ok(qaLogService.listUnmatched());
@@ -103,6 +105,7 @@ public class KnowledgeController {
 
     @Operation(summary = "按文档列知识块", description = "获取指定文档下的所有知识块（含标题、正文、图片），用于知识块预览；"
             + "仅文档可读者可用（未配置共享跟随所属库，谁建归谁）")
+    @Permission("knowledge:read")
     @GetMapping("/knowledge/list")
     public ResultJson listByDoc(
             @Parameter(description = "文档 ID") @RequestParam("docId") String docId) {
@@ -131,6 +134,7 @@ public class KnowledgeController {
     }
 
     @Operation(summary = "启停用知识块", description = "块级启停用：停用后不参与召回（关键词/向量/引用扩散同步剔除），用于诊断屏蔽坏块。停用移除关键词索引、恢复回写；答案缓存同步失效")
+    @Permission("knowledge:write")
     @PutMapping("/knowledge/{id}/status")
     public ResultJson updateKnowledgeStatus(
             @Parameter(description = "知识块 ID") @PathVariable("id") String id,
@@ -165,6 +169,7 @@ public class KnowledgeController {
 
     @Operation(summary = "跨文档搜索知识块", description = "按关键词搜索知识块；命中按请求者可见文档过滤（谁建归谁），"
             + "管理员级全局（含已停用，带状态标记）排查坏块；返回最多 50 条")
+    @Permission("knowledge:read")
     @GetMapping("/knowledge/search")
     public ResultJson searchKnowledge(
             @Parameter(description = "搜索关键词") @RequestParam("keyword") String keyword,
@@ -226,6 +231,7 @@ public class KnowledgeController {
     }
 
     @Operation(summary = "新增知识块", description = "手动创建知识块（自动生成向量），用于补充知识库缺口。可关联已有文档或独立创建")
+    @Permission("knowledge:write")
     @PostMapping("/knowledge")
     public ResultJson createKnowledge(
             @Parameter(description = "{\"title\": \"问题/标题\", \"content\": \"回答内容\", \"docId\": \"可选关联文档ID\"}")
@@ -270,6 +276,7 @@ public class KnowledgeController {
     }
 
     @Operation(summary = "编辑知识块", description = "修改知识块标题/正文（图片保留），并重新向量化；仅文档可管理者可用")
+    @Permission("knowledge:write")
     @PutMapping("/knowledge/{id}")
     public ResultJson updateKnowledge(
             @Parameter(description = "知识块 ID") @PathVariable("id") String id,
@@ -283,6 +290,7 @@ public class KnowledgeController {
     }
 
     @Operation(summary = "删除知识块", description = "删除知识块（同步移除向量并扣减文档知识块数）；仅文档可管理者可用")
+    @Permission("knowledge:delete")
     @DeleteMapping("/knowledge/{id}")
     public ResultJson deleteKnowledge(
             @Parameter(description = "知识块 ID") @PathVariable("id") String id) {

@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import com.wenqu.ai.security.Permission;
 
 /**
  * 模型供应商接口：供应商 CRUD + 远程拉取模型列表 + 可用模型清单（登录即可用，
@@ -43,6 +44,7 @@ public class ProviderController {
     @Operation(summary = "供应商列表", description = "按归属过滤：仅见自己登记的（数据按 userId 隔离）。apiKey 脱敏；"
             + "每行带 ownerUid/manageable。<b>已停用的行额外带 refCount</b>（仍有几处在用它的模型，含本人的会话级覆盖）"
             + "——停用不是终点，卡片要能持续提醒还剩几处没改干净；启用中的行不扫，省掉每页五张表的全量查询")
+    @Permission("provider:read")
     @GetMapping
     public ResultJson list() {
         String uid = RequestUser.uid();
@@ -62,6 +64,7 @@ public class ProviderController {
     }
 
     @Operation(summary = "新建供应商", description = "{\"name\":\"DeepSeek\",\"icon\":\"deepseek\",\"baseUrl\":\"https://api.deepseek.com\",\"apiKey\":\"明文（保存时 RSA 加密）\",\"completionsPath\":\"可选\",\"embeddingsPath\":\"可选\",\"enabled\":true}。谁建归谁：仅创建人可见可用")
+    @Permission("provider:write")
     @PostMapping
     public ResultJson create(@RequestBody Map<String, Object> body) {
         return ResultJson.ok(modelRegistryService.saveProvider(
@@ -72,6 +75,7 @@ public class ProviderController {
     }
 
     @Operation(summary = "更新供应商", description = "字段同新建；apiKey 留空或 **** 掩码表示不修改已存密钥。仅可改自己登记的")
+    @Permission("provider:write")
     @PutMapping("/{id}")
     public ResultJson update(
             @Parameter(description = "供应商ID") @PathVariable("id") String id,
@@ -88,6 +92,7 @@ public class ProviderController {
     @Operation(summary = "启用/停用供应商", description = "{\"enabled\":true|false}；停用后其模型不出现在可用清单。"
             + "普通用户仅可操作自己登记的。<b>停用不阻挡也不自动改引用</b>：前端停用成功后接着调 "
             + "{id}/references，把仍在用它的地方逐处引导去改")
+    @Permission("provider:write")
     @PutMapping("/{id}/enabled")
     public ResultJson setEnabled(
             @Parameter(description = "供应商ID") @PathVariable("id") String id,
@@ -99,6 +104,7 @@ public class ProviderController {
     }
 
     @Operation(summary = "删除供应商", description = "连同其模型登记一并删除；仍被智能体/用户偏好/系统配置引用时拒绝。普通用户仅可删自己登记的")
+    @Permission("provider:delete")
     @DeleteMapping("/{id}")
     public ResultJson delete(
             @Parameter(description = "供应商ID") @PathVariable("id") String id) {
@@ -112,6 +118,7 @@ public class ProviderController {
             + "文档图片理解模型、定时任务、工作流节点、个人默认模型、历史个人配置、系统配置槽位、游客对话模型、本人的历史会话覆盖），"
             + "每条带类型标签、可读名称、后果与跳转参数。用于额度不足/停用/删除前定位「该去改哪几处」；三处同一口径。返回 "
             + "{total, editableCount, hasBlocking, sessionOverrideCount, byKind, items:[{kind,label,name,id,hint,editable}]}")
+    @Permission("provider:read")
     @GetMapping("/{id}/references")
     public ResultJson references(
             @Parameter(description = "供应商ID") @PathVariable("id") String id) {
@@ -125,6 +132,7 @@ public class ProviderController {
     @Operation(summary = "清除指向该供应商的会话模型选择", description = "本人在聊天页里选过这个供应商下模型的会话，"
             + "停用/删除之后那些会话仍会每轮撞上「模型已停用」；这里一次清除它们的选择（清除后回到跟随各自的默认模型）。"
             + "只动本人自己的会话，返回 {cleared} 条数")
+    @Permission("provider:write")
     @PostMapping("/{id}/clear-session-models")
     public ResultJson clearSessionModels(
             @Parameter(description = "供应商ID") @PathVariable("id") String id) {
@@ -141,6 +149,7 @@ public class ProviderController {
 
     @Operation(summary = "批量删除供应商", description = "body: {ids:[...]}；逐条按单条口径判权（仅可删自己登记的），"
             + "仍被引用的条目失败并带原因；返回 {succeeded:[id], failed:[{id,name,error}]}")
+    @Permission("provider:write")
     @PostMapping("/batch-delete")
     public ResultJson batchDelete(@RequestBody Map<String, Object> body) {
         List<String> ids = BatchResults.parseIds(body);
@@ -169,6 +178,7 @@ public class ProviderController {
 
     @Operation(summary = "批量启用/停用供应商", description = "body: {ids:[...], enabled:true|false}；逐条按单条口径判权；"
             + "停用后其模型不出现在可用清单；返回 {succeeded:[id], failed:[{id,name,error}]}")
+    @Permission("provider:write")
     @PostMapping("/batch-enabled")
     public ResultJson batchEnabled(@RequestBody Map<String, Object> body) {
         List<String> ids = BatchResults.parseIds(body);
@@ -197,6 +207,7 @@ public class ProviderController {
     }
 
     @Operation(summary = "供应商模型列表", description = "某供应商下已登记的模型（含类型/启停）；属管理动作，普通用户仅可查自己登记的")
+    @Permission("provider:read")
     @GetMapping("/{id}/models")
     public ResultJson models(
             @Parameter(description = "供应商ID") @PathVariable("id") String id) {
@@ -206,6 +217,7 @@ public class ProviderController {
     }
 
     @Operation(summary = "批量保存供应商模型", description = "全量同步语义：[{modelId, modelType(chat/vision/embedding/rerank/audio/omni/other), visionCapable(图片理解三态 1/0/auto), toolCapable(工具调用三态 1/0/auto), thinking(auto/none/switchable/always), reasoningLevels(思考强度档位数组), defaultReasoningLevel(默认强度，须在档位内), displayName?, enabled?, remark?}]；不在清单中的已登记模型会被删除。普通用户仅可改自己登记的")
+    @Permission("provider:write")
     @PutMapping("/{id}/models")
     public ResultJson saveModels(
             @Parameter(description = "供应商ID") @PathVariable("id") String id,
@@ -217,6 +229,7 @@ public class ProviderController {
     }
 
     @Operation(summary = "远程拉取模型列表", description = "GET {baseUrl}/v1/models（Bearer 鉴权）获取网关模型候选，不入库；返回 [{modelId, guessedType(自动分类), guessVisionCapable(图片理解自动预填), exists(已登记)}]。providerId 传入时 apiKey 可用 **** 掩码（用库中真实 Key），但须对该供应商有管理权")
+    @Permission("provider:write")
     @PostMapping("/models/fetch")
     public ResultJson fetchModels(@RequestBody Map<String, Object> body) {
         String providerId = str(body.get("providerId"));
@@ -229,6 +242,7 @@ public class ProviderController {
     }
 
     @Operation(summary = "供应商连通性测试", description = "先测后存：用表单未保存值探测（modelType 决定探测方式：chat/vision/omni 发最小补全、embedding 发真实向量、rerank 探测服务、audio 探网关可达）；providerId 传入时 apiKey 可用掩码（用库中真实密钥），但须对该供应商有管理权")
+    @Permission("provider:write")
     @PostMapping("/test")
     public ResultJson test(@RequestBody Map<String, Object> body) {
         String providerId = str(body.get("providerId"));

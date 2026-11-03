@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import com.wenqu.ai.security.Permission;
 
 /**
  * 关键词索引运维：引擎状态 / 全量重建 / 清空。
@@ -42,6 +43,7 @@ public class SearchIndexController {
     }
 
     @Operation(summary = "引擎状态与索引统计（indexedCount 与 mysqlCount 对比可发现索引漂移）")
+    @Permission("search-index:manage")
     @GetMapping("/stats")
     public ResultJson<Map<String, Object>> stats() {
         if (!admin()) throw new BizException("仅管理员可查看关键词索引状态");
@@ -62,6 +64,7 @@ public class SearchIndexController {
     }
 
     @Operation(summary = "全量重建索引（切换引擎保存配置时已自动触发；漂移修复或手动重建用）")
+    @Permission("search-index:manage")
     @PostMapping("/reindex")
     public ResultJson<String> reindex() {
         if (!admin()) throw new BizException("仅管理员可重建关键词索引");
@@ -73,6 +76,7 @@ public class SearchIndexController {
     }
 
     @Operation(summary = "清空索引全部文档")
+    @Permission("search-index:manage")
     @DeleteMapping
     public ResultJson<String> clear() {
         if (!admin()) throw new BizException("仅管理员可清空关键词索引");

@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.util.Map;
+import com.wenqu.ai.security.Permission;
 
 /**
  * 接口管理接口（权限管理页）：RBAC 鉴权数据源的维护。
@@ -49,6 +50,7 @@ public class ApiEndpointController {
     }
 
     @Operation(summary = "接口列表", description = "module 传模块名过滤（all=全部）；keyword 模糊匹配路径/名称；返回含 menuIds 归属")
+    @Permission("api-endpoint:read")
     @GetMapping("/list")
     public ResultJson list(@RequestParam(value = "module", required = false) String module,
                            @RequestParam(value = "keyword", required = false) String keyword) {
@@ -56,6 +58,7 @@ public class ApiEndpointController {
     }
 
     @Operation(summary = "手工登记接口", description = "body: method(GET/POST/PUT/DELETE/PATCH/ALL)/path(以 /api/ 开头)/name/module/menuIds(归属菜单多值，可选)")
+    @Permission("api-endpoint:manage")
     @PostMapping
     public ResultJson create(@RequestBody Map<String, Object> body) {
         return ResultJson.ok(apiEndpointService.create(str(body, "method"), str(body, "path"),
@@ -63,6 +66,7 @@ public class ApiEndpointController {
     }
 
     @Operation(summary = "编辑接口", description = "扫描登记的仅可改名称/模块/归属；手工的可全改；menuIds 不传=归属不变，传 []=清空")
+    @Permission("api-endpoint:manage")
     @PutMapping("/{id}")
     public ResultJson update(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         apiEndpointService.update(id, str(body, "method"), str(body, "path"),
@@ -71,6 +75,7 @@ public class ApiEndpointController {
     }
 
     @Operation(summary = "删除接口", description = "级联清理角色绑定；代码中仍存在的端点重启后会重新登记")
+    @Permission("api-endpoint:manage")
     @DeleteMapping("/{id}")
     public ResultJson delete(@Parameter(description = "接口 ID") @PathVariable("id") String id) {
         apiEndpointService.delete(id);

@@ -9,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
+import com.wenqu.ai.security.Permission;
 
 /**
  * 部门管理：列表供「共享范围」选择器使用，增删改供「成员管理」页使用。
@@ -24,12 +25,14 @@ public class DepartmentController {
     private final OrgService orgService;
 
     @Operation(summary = "部门列表", description = "返回全部部门（按名称升序，平铺；含 parentId，前端组树/TreeSelect）")
+    @Permission("department:read")
     @GetMapping("/list")
     public ResultJson list() {
         return ResultJson.ok(orgService.listDepartments());
     }
 
     @Operation(summary = "新建部门", description = "{\"name\": \"研发部\", \"description\": \"可选\", \"parentId\": \"可选，父部门ID\"}")
+    @Permission("department:manage")
     @PostMapping
     public ResultJson create(@RequestBody Map<String, String> body) {
         return ResultJson.ok(orgService.createDepartment(body.get("name"), body.get("description"),
@@ -37,6 +40,7 @@ public class DepartmentController {
     }
 
     @Operation(summary = "修改部门", description = "{\"name\": \"研发部\", \"description\": \"可选\", \"parentId\": \"可选，父部门ID（变更做环检测）\"}")
+    @Permission("department:manage")
     @PutMapping("/{id}")
     public ResultJson update(
             @Parameter(description = "部门 ID") @PathVariable("id") String id,
@@ -46,6 +50,7 @@ public class DepartmentController {
     }
 
     @Operation(summary = "删除部门", description = "部门下仍有用户时拒绝删除")
+    @Permission("department:manage")
     @DeleteMapping("/{id}")
     public ResultJson delete(@Parameter(description = "部门 ID") @PathVariable("id") String id) {
         orgService.deleteDepartment(id);

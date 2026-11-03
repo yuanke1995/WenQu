@@ -28,6 +28,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import com.wenqu.ai.security.Permission;
 
 /**
  * 沙盒目录浏览 + 回答内代码执行（右栏「沙盒」卡的数据源 / 代码块「在沙盒中运行」按钮的后端）。
@@ -80,6 +81,7 @@ public class SandboxController {
     }
 
     @Operation(summary = "沙盒状态", description = "当前会话沙盒是否在运行（只探测不创建）+ 用户数据虚拟根路径")
+    @Permission("sandbox:read")
     @GetMapping("/state")
     public ResultJson state(@RequestParam("sessionId") String sessionId) {
         if (!enabled()) {
@@ -93,6 +95,7 @@ public class SandboxController {
     }
 
     @Operation(summary = "列目录", description = "列出沙盒内某目录条目（path/isDir/size）；path 缺省为用户数据根")
+    @Permission("sandbox:read")
     @GetMapping("/tree")
     public ResultJson tree(@RequestParam("sessionId") String sessionId, @RequestParam(value = "path", required = false) String path) {
         if (!enabled()) {
@@ -132,6 +135,7 @@ public class SandboxController {
     }
 
     @Operation(summary = "下载文件", description = "下载沙盒内指定文件（字节流；目录/不存在返回错误）")
+    @Permission("sandbox:read")
     @GetMapping("/download")
     public Object download(@RequestParam("sessionId") String sessionId, @RequestParam("path") String path,
                            jakarta.servlet.http.HttpServletResponse response) {
@@ -176,6 +180,7 @@ public class SandboxController {
      */
     @Operation(summary = "会话沙盒文件清单", description = "列出本会话沙盒目录里的文件（递归、按修改时间倒序，"
             + "隐藏项与依赖目录不列）；读宿主目录，容器回收后照样取得到。可预览的条目另带签名 viewUrl")
+    @Permission("sandbox:read")
     @GetMapping("/files")
     public ResultJson files(@RequestParam("sessionId") String sessionId) {
         if (!enabled()) {
@@ -194,6 +199,7 @@ public class SandboxController {
 
     @Operation(summary = "下载会话沙盒文件", description = "按会话目录内的相对路径取一个文件（字节流）；"
             + "越界、隐藏项、不存在按错误回")
+    @Permission("sandbox:read")
     @GetMapping("/files/download")
     public Object downloadFile(@RequestParam("sessionId") String sessionId, @RequestParam("path") String path,
                                jakarta.servlet.http.HttpServletResponse response) {
@@ -237,6 +243,7 @@ public class SandboxController {
     @Operation(summary = "沙盒文件取回为产物", description = "把本会话沙盒目录里的一个文件登记进「我的产物」"
             + "（与模型交付同一条落库路：写盘 + 登记 + 实时下发产物卡片）。"
             + "受产物侧既有约束：扩展名白名单、单文件 1MB 上限")
+    @Permission("sandbox:run")
     @PostMapping("/files/artifact")
     public ResultJson deliverFile(@RequestBody Map<String, Object> body) {
         if (!enabled()) {
@@ -285,6 +292,7 @@ public class SandboxController {
      * 语言白名单 + 超时上限：交互式按钮触发的执行不该成为「跑十分钟的任务」通道。
      */
     @Operation(summary = "运行代码", description = "在当前会话沙盒里执行一段代码（python/node/bash），返回输出与退出码")
+    @Permission("sandbox:run")
     @PostMapping("/run")
     public ResultJson run(@RequestBody(required = false) Map<String, Object> body) {
         if (!enabled()) {
@@ -335,6 +343,7 @@ public class SandboxController {
      */
     @Operation(summary = "沙盒后台进程清单", description = "列本会话沙盒里带归属标记、此刻仍在跑的进程树"
             + "（命令行/起了多久/占用的端口/是谁起的）；只探测不创建容器")
+    @Permission("sandbox:read")
     @GetMapping("/procs")
     public ResultJson procs(@RequestParam("sessionId") String sessionId) {
         if (!enabled()) {
@@ -358,6 +367,7 @@ public class SandboxController {
      */
     @Operation(summary = "各会话沙盒后台进程数", description = "批量扫过当前用户所有活着的沙盒，"
             + "按进程归属会话汇总进程树数（供侧栏会话行标记用）；partial=true 表示本轮没扫全，结果只多不少")
+    @Permission("sandbox:read")
     @GetMapping("/procs/live")
     public ResultJson liveProcs() {
         if (!enabled()) {
@@ -373,6 +383,7 @@ public class SandboxController {
      */
     @Operation(summary = "停止沙盒后台进程", description = "按进程标识停掉那棵树（先 TERM、一秒后对幸存补 KILL），"
             + "端口随之释放。仅当该进程归属的会话是你自己的才停得动")
+    @Permission("sandbox:run")
     @PostMapping("/procs/kill")
     public ResultJson killProc(@RequestBody Map<String, Object> body) {
         if (!enabled()) {

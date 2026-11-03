@@ -4,14 +4,17 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenqu.ai.mapper.ApiEndpointMapper;
 import com.wenqu.ai.mapper.MenuApiMapper;
 import com.wenqu.ai.mapper.MenuMapper;
+import com.wenqu.ai.mapper.PermissionCatalogMapper;
 import com.wenqu.ai.model.ApiEndpoint;
 import com.wenqu.ai.model.Menu;
+import com.wenqu.ai.security.Permission;
 import com.wenqu.ai.service.RoleService;
 import io.swagger.v3.oas.annotations.Operation;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.annotation.AnnotatedElementUtils;
 import org.springframework.stereotype.Component;
 import org.springframework.web.method.HandlerMethod;
@@ -23,6 +26,7 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -48,11 +52,15 @@ import java.util.stream.Collectors;
  * </ul>
  * 登记完成后 {@link RoleService#invalidateApiPatterns()} 失效鉴权缓存。
  * 扫描失败仅告警不阻塞启动（fail-safe：鉴权按库内既有数据执行）。
+ * <p>@Order(10)：晚于 RbacSeedRunner（角色/菜单先就位，默认菜单归属才有可挂的 id），
+ * 早于 RbacPermissionMigrationRunner（存量 c_ai_role_api → c_ai_role_permission 折算
+ * 依赖本扫描器写入的 permission_code）。
  *
  * @author yuanke
  */
 @Slf4j
 @Component
+@org.springframework.core.annotation.Order(10)
 public class ApiEndpointScanner implements ApplicationRunner {
 
     private final RequestMappingHandlerMapping requestMappingHandlerMapping;
@@ -61,6 +69,14 @@ public class ApiEndpointScanner implements ApplicationRunner {
     private final MenuApiMapper menuApiMapper;
     private final com.wenqu.ai.mapper.RoleApiMapper roleApiMapper;
     private final RoleService roleService;
+    private final PermissionCatalogMapper permissionCatalogMapper;
+
+    /**
+     * 授权点标注强制开关（方案 A2/A.5）：true 时「未标注且非公开通道的端点」升级为启动 WARN 逐条列出。
+     * 默认 false——标注是按 Controller 分批推进的（附录 A），全部标完前不刷屏；标完后由发布配置打开。
+     */
+    @Value("${ai-app.rbac.require-annotation:false}")
+    private boolean requireAnnotation;
 
     /**
      * 模块汉化对照：Controller 类名（去 Controller 后缀）→ 中文模块名。
@@ -170,13 +186,15 @@ public class ApiEndpointScanner implements ApplicationRunner {
                               MenuMapper menuMapper,
                               MenuApiMapper menuApiMapper,
                               com.wenqu.ai.mapper.RoleApiMapper roleApiMapper,
-                              RoleService roleService) {
+                              RoleService roleService,
+                              PermissionCatalogMapper permissionCatalogMapper) {
         this.requestMappingHandlerMapping = requestMappingHandlerMapping;
         this.apiEndpointMapper = apiEndpointMapper;
         this.menuMapper = menuMapper;
         this.menuApiMapper = menuApiMapper;
         this.roleApiMapper = roleApiMapper;
         this.roleService = roleService;
+        this.permissionCatalogMapper = permissionCatalogMapper;
     }
 
     @Override
@@ -222,10 +240,16 @@ public class ApiEndpointScanner implements ApplicationRunner {
         Map<String, List<String>> backfillMenus = new HashMap<>();
         // Tab 拆分迁移（2026-10-08）：归属恰好还是旧默认 menu-agents 的内置接口 → 迁到对应 Tab 菜单
         Map<String, List<String>> remapMenus = new HashMap<>();
+        // 授权点（方案批次 A）：注解读取结果回写存量行 + 目录表登记
+        Map<String, ApiEndpoint> permissionUpdates = new LinkedHashMap<>();
+        Map<String, String> permissionCatalog = new LinkedHashMap<>();
+        List<String> unannotated = new ArrayList<>();
         for (Map.Entry<RequestMappingInfo, HandlerMethod> e : handlerMethods.entrySet()) {
             RequestMappingInfo info = e.getKey();
             HandlerMethod hm = e.getValue();
             List<String> defMenus = resolveDefaultMenus(hm, validMenuIds);
+            String perm = resolvePermission(hm);
+            if (perm != null) permissionCatalog.put(perm, resolveModule(hm));
 
             Set<String> patterns = extractPatterns(info);
             Set<org.springframework.web.bind.annotation.RequestMethod> methods =
@@ -253,6 +277,15 @@ public class ApiEndpointScanner implements ApplicationRunner {
                                 remapMenus.put(existed.getId(), defMenus);
                             }
                         }
+                        // 授权点回写：仅内置行（扫描器所有物）；注解变了或此前未标注 → 幂等更新。
+                        // 方法级注解对同方法多路径只可能给出一个值，注解冲突在编译期/映射期已不存在
+                        if (perm != null && isBuiltin(existed) && !perm.equals(existed.getPermissionCode())) {
+                            permissionUpdates.put(existed.getId(), existed);
+                            existed.setPermissionCode(perm);
+                        }
+                        if (perm == null && needsAnnotation(controllerKey(hm), m, pattern)) {
+                            unannotated.add(m + " " + pattern);
+                        }
                         continue;
                     }
                     ApiEndpoint api = new ApiEndpoint();
@@ -261,10 +294,14 @@ public class ApiEndpointScanner implements ApplicationRunner {
                     api.setPath(pattern);
                     api.setName(resolveName(hm));
                     api.setModule(resolveModule(hm));
+                    api.setPermissionCode(perm);
                     api.setBuiltin(1);
                     toInsert.add(api);
                     existing.put(key, api);
                     if (!defMenus.isEmpty()) newApiMenus.put(api.getId(), defMenus);
+                    if (perm == null && needsAnnotation(controllerKey(hm), m, pattern)) {
+                        unannotated.add(m + " " + pattern);
+                    }
                 }
             }
         }
@@ -298,6 +335,40 @@ public class ApiEndpointScanner implements ApplicationRunner {
         if (added > 0) roleService.invalidateApiPatterns();
         if (backfilled > 0) log.info("[ApiScan] 默认菜单归属补齐：{} 个存量接口（此前零归属）", backfillMenus.size());
         if (remapped > 0) log.info("[ApiScan] Tab 拆分迁移：{} 个内置接口归属从 menu-agents 细化到对应 Tab 菜单", remapped);
+        // 授权点（批次 A）：注解回写存量行 + 目录表登记。两者都幂等：注解未变则零写
+        int permUpdated = 0;
+        for (ApiEndpoint api : permissionUpdates.values()) {
+            try {
+                ApiEndpoint patch = new ApiEndpoint();
+                patch.setId(api.getId());
+                patch.setPermissionCode(api.getPermissionCode());
+                apiEndpointMapper.updateById(patch);
+                permUpdated++;
+            } catch (Exception ex) {
+                log.debug("[ApiScan] 授权点回写跳过 {} {}: {}", api.getMethod(), api.getPath(), ex.getMessage());
+            }
+        }
+        int cataloged = 0;
+        for (Map.Entry<String, String> e : permissionCatalog.entrySet()) {
+            try {
+                cataloged += permissionCatalogMapper.register(e.getKey(), permissionDisplayName(e.getKey()), e.getValue());
+            } catch (Exception ex) {
+                log.debug("[ApiScan] 授权点目录登记跳过 {}: {}", e.getKey(), ex.getMessage());
+            }
+        }
+        if (permUpdated > 0 || cataloged > 0) {
+            log.info("[ApiScan] 授权点回写 {} 个端点，目录登记 {} 个新授权点", permUpdated, cataloged);
+        }
+        // 标注覆盖自检（A.5）：受控端点未标注 → 汇总日志；require-annotation 打开后升级为逐条 WARN
+        if (!unannotated.isEmpty()) {
+            if (requireAnnotation) {
+                log.warn("[ApiScan] 存在未标注 @Permission 的受控端点（{} 个，判定侧将按未授权点端点拒绝）：{} 等",
+                        unannotated.size(), unannotated.subList(0, Math.min(10, unannotated.size())));
+            } else {
+                log.info("[ApiScan] 未标注 @Permission 的受控端点：{} 个（ai-app.rbac.require-annotation=true 时升级为 WARN）",
+                        unannotated.size());
+            }
+        }
         // 已退役端点清理：本次扫描没再命中的**内置登记**行（builtin=1）说明控制器或方法已删。
         // 不删就是权限页上的僵尸条目——接口清单里还列着、角色还能勾，实际打过去 404。
         // 手工登记的行（builtin=0，非 Spring 端点或管理员自建的修正）一律不动。
@@ -344,6 +415,49 @@ public class ApiEndpointScanner implements ApplicationRunner {
     private static String resolveModule(HandlerMethod hm) {
         String key = controllerKey(hm);
         return MODULE_ZH.getOrDefault(key, key);
+    }
+
+    /**
+     * 设计上的公开通道控制器（方案 A.2b）：整类不需要 @Permission——它们走显式公开端点集，
+     * 标注反而会被误当受控端点。仅影响标注自检的豁免名单，不参与任何判定。
+     * 注意 {@code Auth} 里若混入受控端点（如自助改密），A2 标注扫描时按端点单独标，不受本豁免影响。
+     */
+    private static final Set<String> PUBLIC_CONTROLLER_KEYS = Set.of(
+            "Share", "Scim", "Auth", "Oidc", "Saml", "ProjectFileView",
+            "SandboxToolCallback", "ToolInventory");
+
+    /** 端点级公开豁免（与 isPublicUserEndpoint 白名单里的公开只读/公开写入口一一对应；A4 收口时并入显式公开端点集） */
+    private static final Set<String> PUBLIC_ENDPOINTS = Set.of(
+            "GET /api/ai/agent/available",
+            "GET /api/ai/auth/me",
+            "GET /api/ai/config/public",
+            "GET /api/ai/manual/documents",
+            "GET /api/ai/manual/documents/{id}/content",
+            "GET /api/ai/provider/available",
+            "POST /api/ai/tenant/apply");
+
+    /** 标注自检是否需要盯这个端点：公开通道控制器与显式公开端点豁免 */
+    private static boolean needsAnnotation(String controllerKey, String method, String path) {
+        if (PUBLIC_CONTROLLER_KEYS.contains(controllerKey)) return false;
+        return !PUBLIC_ENDPOINTS.contains(method + " " + path);
+    }
+
+    /** 授权点归属：方法级 {@code @Permission} 优先，缺省回落类级默认；都没有 → null（未标注） */
+    private static String resolvePermission(HandlerMethod hm) {
+        try {
+            Permission onMethod = AnnotatedElementUtils.findMergedAnnotation(hm.getMethod(), Permission.class);
+            if (onMethod != null && !onMethod.value().isBlank()) return onMethod.value().trim();
+            Permission onClass = AnnotatedElementUtils.findMergedAnnotation(hm.getBeanType(), Permission.class);
+            if (onClass != null && !onClass.value().isBlank()) return onClass.value().trim();
+            return null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /** 授权点展示名（M1 先与编码同形；A2 逐 Controller 复核时换成可读名） */
+    private static String permissionDisplayName(String code) {
+        return code;
     }
 
     /** 默认菜单归属：Controller 对照表 ∩ 现存菜单（未收录或菜单已退役 → 空，接口显示在「其他接口」分组） */

@@ -21,6 +21,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import com.wenqu.ai.security.Permission;
 
 /**
  * 文档管理控制器
@@ -124,6 +125,7 @@ public class DocumentController {
     }
 
     @Operation(summary = "上传文档", description = "上传单个文档（docx/pdf/xlsx/ppt/pptx/txt/md/csv），异步解析，返回文档 ID 和解析状态；按用户限频（ratelimit.uploadPerMinute）。visionRef 可选：文档级视觉模型覆盖（引用 {providerId}/{modelId}），对该文档所有图片理解生效；空=跟随知识库")
+    @Permission("document:write")
     @PostMapping("/upload")
     public ResultJson upload(
             @Parameter(description = "文档文件") @RequestParam("file") MultipartFile file,
@@ -145,6 +147,7 @@ public class DocumentController {
 
     @Operation(summary = "网页 URL 导入", description = "抓取网页 HTML 快照入库（file_type=url），异步走与上传相同的解析/向量化链路；"
             + "仅支持 http/https 公网地址，重定向逐跳校验（防内网探测）；同名页面重复导入按替换语义走增量重解析")
+    @Permission("document:write")
     @PostMapping("/import-url")
     public ResultJson importUrl(
             @Parameter(description = "网页 URL") @RequestParam("url") String url,
@@ -163,6 +166,7 @@ public class DocumentController {
     }
 
     @Operation(summary = "批量上传文档", description = "批量上传多个文档，逐个提交异步解析，返回每个文件的上传结果；按用户限频（ratelimit.uploadPerMinute）。visionRef 可选：文档级视觉模型覆盖（应用到所有文件；空=跟随知识库）")
+    @Permission("document:write")
     @PostMapping("/upload/batch")
     public ResultJson uploadBatch(
             @Parameter(description = "文档文件列表") @RequestParam("file") MultipartFile[] files,
@@ -197,6 +201,7 @@ public class DocumentController {
 
     @Operation(summary = "解析队列状态", description = "当前解析队列的排队数/执行数/终态数（前端展示「排队 N / 执行 M」，并对齐轮询）；"
             + "kbId 传知识库 ID 时只统计该库的任务（文档管理页页头用，默认库含 kb_id 为空的历史任务），不传=全平台")
+    @Permission("document:read")
     @GetMapping("/queue/stats")
     public ResultJson queueStats(@Parameter(description = "知识库 ID（可选）") @RequestParam(value = "kbId", required = false) String kbId) {
         return ResultJson.ok(documentService.queueStats(kbId), "解析队列状态");
@@ -205,6 +210,7 @@ public class DocumentController {
     @Operation(summary = "文档列表", description = "获取文档列表（含解析状态、分块数、文件大小等）；"
             + "kbId 传知识库 ID 时只返回该库文档（默认库含 kb_id 为空的历史文档），不传返回全部；"
             + "普通用户仅返回自己创建的、默认库及其中文档")
+    @Permission("document:read")
     @GetMapping("/list")
     public ResultJson list(@Parameter(description = "知识库 ID（可选）") @RequestParam(value = "kbId", required = false) String kbId) {
         List<com.wenqu.ai.model.AiDocument> docs = documentService.list(kbId);
@@ -239,6 +245,7 @@ public class DocumentController {
     }
 
     @Operation(summary = "下载源文件", description = "取回上传的原始文件（个人文件区：备份/本地查看用）")
+    @Permission("document:read")
     @GetMapping("/{id}/source")
     public org.springframework.http.ResponseEntity<org.springframework.core.io.Resource> downloadSource(
             @Parameter(description = "文档 ID") @PathVariable("id") String id) {
@@ -255,6 +262,7 @@ public class DocumentController {
     }
 
     @Operation(summary = "删除文档", description = "进入回收站（软删保留内容，可恢复）；解析中的文档直接彻底删除。回收站见 GET /document/recycle")
+    @Permission("document:delete")
     @DeleteMapping("/{id}")
     public ResultJson delete(
             @Parameter(description = "文档 ID") @PathVariable("id") String id,
@@ -267,6 +275,7 @@ public class DocumentController {
 
     @Operation(summary = "回收站列表", description = "软删文档（内容保留可恢复）；kbId 过滤时默认库并入 kb_id 为空的历史行，最近 500 条；"
             + "管理员全量，普通用户仅自己上传的行（官方内置库的旧篇目CreatedBy=system，无人可管，天然不可见）")
+    @Permission("document:restore")
     @GetMapping("/recycle")
     public ResultJson recycle(@Parameter(description = "知识库 ID（空=全部）")
                               @RequestParam(value = "kbId", required = false) String kbId) {
@@ -279,6 +288,7 @@ public class DocumentController {
     }
 
     @Operation(summary = "从回收站恢复", description = "同名生效文档冲突或所属知识库已删除时拒绝；向量未动，恢复即检索可用")
+    @Permission("document:restore")
     @PostMapping("/{id}/restore")
     public ResultJson restore(@Parameter(description = "文档 ID") @PathVariable("id") String id) {
         requireRecycledManage(id);
@@ -287,6 +297,7 @@ public class DocumentController {
     }
 
     @Operation(summary = "彻底删除", description = "物理清除向量/知识块/源文件/图片/版本快照，不可恢复（回收站行专用）")
+    @Permission("document:delete")
     @PostMapping("/{id}/purge")
     public ResultJson purgeDoc(@Parameter(description = "文档 ID") @PathVariable("id") String id) {
         requireRecycledManage(id);
@@ -295,6 +306,7 @@ public class DocumentController {
     }
 
     @Operation(summary = "清空回收站", description = "逐条彻底删除该库回收站的文档；无管理权限的文档跳过并计数")
+    @Permission("document:delete")
     @PostMapping("/recycle/purge")
     public ResultJson purgeRecycle(@Parameter(description = "知识库 ID") @RequestParam("kbId") String kbId) {
         int ok = 0;
@@ -312,6 +324,7 @@ public class DocumentController {
     }
 
     @Operation(summary = "批量恢复", description = "从回收站批量恢复（{ids:[...]}）；逐个校验管理权与同名/所属库冲突，失败项跳过并回传原因")
+    @Permission("document:restore")
     @PostMapping("/recycle/batch/restore")
     public ResultJson batchRestore(@Parameter(description = "{\"ids\": [\"docId1\", \"docId2\"]}")
                                    @RequestBody Map<String, List<String>> body) {
@@ -330,6 +343,7 @@ public class DocumentController {
     }
 
     @Operation(summary = "批量彻底删除", description = "批量物理清除回收站文档（{ids:[...]}）；仅接受回收站行，生效文档不会被本接口删除")
+    @Permission("document:delete")
     @PostMapping("/recycle/batch/purge")
     public ResultJson batchPurge(@Parameter(description = "{\"ids\": [\"docId1\", \"docId2\"]}")
                                  @RequestBody Map<String, List<String>> body) {
@@ -365,6 +379,7 @@ public class DocumentController {
     }
 
     @Operation(summary = "启停用文档", description = "设置文档状态：0=生效（参与检索），1=弃用（不参与检索）")
+    @Permission("document:write")
     @PutMapping("/{id}/status")
     public ResultJson updateStatus(
             @Parameter(description = "文档 ID") @PathVariable("id") String id,
@@ -377,6 +392,7 @@ public class DocumentController {
     }
 
     @Operation(summary = "重解析文档", description = "复用源文件重新解析+向量化，适用于文档内容更新后重新入库")
+    @Permission("document:write")
     @PostMapping("/{id}/reparse")
     public ResultJson reparse(
             @Parameter(description = "文档 ID") @PathVariable("id") String id) {
@@ -387,6 +403,7 @@ public class DocumentController {
 
     @Operation(summary = "设置网页源自动刷新", description = "为 file_type=url 的文档配置自动刷新开关与 cron（5段，如 0 3 * * *）；" +
             "开启后由调度中心按 cron 重新抓网重建，关闭则清空下次刷新时刻")
+    @Permission("document:write")
     @PutMapping("/{id}/refresh-config")
     public ResultJson refreshConfig(
             @Parameter(description = "文档 ID") @PathVariable("id") String id,
@@ -398,6 +415,7 @@ public class DocumentController {
     }
 
     @Operation(summary = "补齐图片描述", description = "对解析时未描述成功的图片后台补描述并回写知识块（重新向量化+索引同步）")
+    @Permission("document:write")
     @PostMapping("/{id}/backfill-descriptions")
     public ResultJson backfillDescriptions(
             @Parameter(description = "文档 ID") @PathVariable("id") String id) {
@@ -408,6 +426,7 @@ public class DocumentController {
 
     @Operation(summary = "设置文档标签", description = "tags：逗号分隔（如 部门A,合同,2026），空串=清空；"
             + "规范化去重后落库。供智能体检索标签收窄（knowledgeTags）与文档筛选用，late-binding 即时生效无需重建索引")
+    @Permission("document:write")
     @PutMapping("/{id}/tags")
     public ResultJson setTags(
             @Parameter(description = "文档 ID") @PathVariable("id") String id,
@@ -418,6 +437,7 @@ public class DocumentController {
     }
 
     @Operation(summary = "批量删除文档", description = "批量删除多个文档（进入回收站，可恢复）；解析中的文档直接彻底删除")
+    @Permission("document:delete")
     @PostMapping("/batch/delete")
     public ResultJson batchDelete(
             @Parameter(description = "{\"ids\": [\"docId1\", \"docId2\"]}")
@@ -440,6 +460,7 @@ public class DocumentController {
     }
 
     @Operation(summary = "批量重解析", description = "批量复用源文件重新解析+向量化，逐个返回结果（解析中的文档跳过并提示）")
+    @Permission("document:write")
     @PostMapping("/batch/reparse")
     public ResultJson batchReparse(
             @Parameter(description = "{\"ids\": [\"docId1\", \"docId2\"]}")
@@ -467,6 +488,7 @@ public class DocumentController {
     }
 
     @Operation(summary = "批量启停用", description = "批量设置多个文档的启用/弃用状态")
+    @Permission("document:write")
     @PostMapping("/batch/status")
     public ResultJson batchStatus(
             @Parameter(description = "{\"ids\": [\"docId1\"], \"status\": 0|1}")
@@ -488,6 +510,7 @@ public class DocumentController {
     }
 
     @Operation(summary = "文档命中统计", description = "从问答日志聚合各文档的命中次数（跨资源视图，仅管理员）")
+    @Permission("document:admin")
     @GetMapping("/stats")
     public ResultJson stats() {
         if (!admin()) throw new BizException("仅管理员可查看文档命中统计");
@@ -496,6 +519,7 @@ public class DocumentController {
 
     @Operation(summary = "知识库健康度", description = "按库聚合：文档态分布（生效/弃用/解析中/失败）、块规模与未向量化数，"
             + "附全局关键词索引漂移信号（indexedCount vs 有效块数）。只读聚合，不触发对账/修复。仅管理员")
+    @Permission("document:admin")
     @GetMapping("/health")
     public ResultJson health() {
         if (!admin()) throw new BizException("仅管理员可查看知识库健康度");
@@ -504,6 +528,7 @@ public class DocumentController {
 
     @Operation(summary = "向量索引诊断", description = "诊断某知识库向量索引：ACL 可过滤字段是否就绪、存量向量是否已带 ACL 标签"
             + "（两者含义不同——字段齐备≠标签已回填，FT.ALTER 只改 schema 不动历史 JSON）。仅管理员")
+@Permission("document:admin")
 @GetMapping("/vector-diagnose")
 public ResultJson vectorDiagnose(
         @Parameter(description = "知识库 ID") @RequestParam("kbId") String kbId) {
@@ -513,6 +538,7 @@ public ResultJson vectorDiagnose(
 
 @Operation(summary = "同模型重建库向量", description = "不换向量模型，DROP 该库索引后按当前绑定重新向量化写回（异步）。"
             + "用途：存量向量补 ACL 标签（让检索期过滤下推生效）、修复被动过的索引 schema。仅管理员")
+@Permission("document:admin")
 @PostMapping("/rebuild-kb")
 public ResultJson rebuildKb(
         @Parameter(description = "知识库 ID") @RequestParam("kbId") String kbId) {
@@ -527,6 +553,7 @@ public ResultJson rebuildKb(
 }
 
 @Operation(summary = "文档版本列表", description = "获取文档的历史版本列表（倒序）；共享范围内可见")
+    @Permission("document:read")
     @GetMapping("/{id}/versions")
     public ResultJson versions(
             @Parameter(description = "文档 ID") @PathVariable("id") String id) {
@@ -535,6 +562,7 @@ public ResultJson rebuildKb(
     }
 
     @Operation(summary = "回滚文档版本", description = "回滚到指定版本：重建该版本的知识块与向量（历史引用仍可溯源）")
+    @Permission("document:admin")
     @PostMapping("/{id}/rollback")
     public ResultJson rollback(
             @Parameter(description = "文档 ID") @PathVariable("id") String id,

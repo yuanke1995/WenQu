@@ -34,6 +34,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import com.wenqu.ai.security.Permission;
 
 /**
  * AI 聊天控制器（SSE 流式）
@@ -93,6 +94,7 @@ public class ChatController {
     @Operation(summary = "上传聊天附件", description = "把聊天附件先上传换 fileId（问答请求体只带 fileId，不再内联 base64）；"
             + "文件按用户隔离落盘、超期自动清理；按用户限频（ratelimit.uploadPerMinute）")
     @ApiResponse(responseCode = "200", description = "返回 {fileId,name,mime,size}")
+    @Permission("chat:use")
     @PostMapping("/chat/attachment")
     public ResultJson uploadAttachment(
             @Parameter(description = "附件文件") @RequestParam("file") org.springframework.web.multipart.MultipartFile file,
@@ -112,6 +114,7 @@ public class ChatController {
             description = "入参为 fileId 的 JSON 数组，返回其中仍可读回的子集 live；"
                     + "只查当前用户自己的上传目录，形态非法或不属于本人的 id 一律按不在处理。一次最多 50 个")
     @ApiResponse(responseCode = "200", description = "返回 {live:[fileId]}")
+    @Permission("chat:use")
     @PostMapping("/chat/attachment/live")
     public ResultJson liveAttachments(
             @Parameter(description = "待校验的 fileId 数组") @RequestBody List<String> fileIds) {
@@ -147,6 +150,7 @@ public class ChatController {
             description = "发送问题（可含图片），通过 SSE 流式返回 AI 回答。事件类型：thinking（深度思考增量）、thinking_done（思考结束）、token（文本增量）、image（图片 URL 列表）、done（引用来源/相关推荐/消息ID/思考全文）、error（错误信息）。按用户限频（ratelimit.chatPerMinute）")
     @ApiResponse(responseCode = "200", description = "SSE 流式响应",
             content = @Content(mediaType = "text/event-stream"))
+    @Permission("chat:use")
     @PostMapping("/chat")
     public SseEmitter chat(@RequestBody @Valid ChatRequest request, HttpServletRequest httpRequest) {
         String userId = RequestUser.uid();
@@ -409,6 +413,7 @@ public class ChatController {
             + "并解开正在等待的人工裁决，使会话立刻可以发下一问。与前端断开连接不同——断开在等人作答时"
             + "的语义是后台继续跑完，这里是要它真的停。仅本轮发起者本人可停；没有在跑的轮或不是本人的轮"
             + "返回 stopped=false。")
+    @Permission("chat:use")
     @PostMapping("/chat/stop")
     public ResultJson stopChatTurn(@RequestBody Map<String, String> body) {
         String sessionId = body == null ? null : body.get("sessionId");
@@ -423,6 +428,7 @@ public class ChatController {
             + "返回的 messageId 供前端挂到那颗气泡上。本轮收尾时还没被模型收上的，随 done 事件回落由前端作为同一句话续发。"
             + "单条最长 800 字；没有在跑的轮 / 不是本人的轮 / 框架拒收（这一轮已经不在执行中）时返回 accepted=false，"
             + "前端把内容放回输入框即可。")
+    @Permission("chat:use")
     @PostMapping("/chat/steer")
     public ResultJson steerChatTurn(@RequestBody Map<String, String> body) {
         String sessionId = body == null ? null : body.get("sessionId");
@@ -441,6 +447,7 @@ public class ChatController {
     @Operation(summary = "断线重连·探测", description = "问这个会话是否还有一轮正在跑（只在内存里判，服务重启后没有）。"
             + "running=true 时前端再开一条 GET /chat/resume 接回这一轮。归属只认发起本轮的那个 uid："
             + "别人的会话既查不到有没有在跑，也接不走。")
+    @Permission("chat:use")
     @GetMapping("/chat/run")
     public ResultJson chatRunStatus(
             @Parameter(description = "会话 ID") @RequestParam("sessionId") String sessionId) {
@@ -455,6 +462,7 @@ public class ChatController {
             + "送 snapshot{running:false} 后立即关闭，前端按历史回显即可。")
     @ApiResponse(responseCode = "200", description = "SSE 流式响应",
             content = @Content(mediaType = "text/event-stream"))
+    @Permission("chat:use")
     @GetMapping("/chat/resume")
     public SseEmitter resumeChatTurn(
             @Parameter(description = "会话 ID") @RequestParam("sessionId") String sessionId) {
@@ -469,6 +477,7 @@ public class ChatController {
 
     @Operation(summary = "工具执行审批", description = "裁决智能体的工具执行请求（approval_required 事件下发）：仅本轮用户本人可批，"
             + "拒绝/超时后模型会收到未执行错误并继续回答；审批挂起为内存态，刷新页面即失效")
+    @Permission("chat:approve")
     @PostMapping("/tool-approval/{approvalId}")
     public ResultJson resolveToolApproval(
             @Parameter(description = "审批请求 ID（approval_required 事件下发）") @PathVariable("approvalId") String approvalId,
@@ -485,6 +494,7 @@ public class ChatController {
 
     @Operation(summary = "工具审批记录（恢复）", description = "按审批 ID 取本人的审批记录（tool.approval 通知点击后重建审批卡用）；" +
             "不存在/非本人返回 null。内存态可能已失效（进程重启/超时），此时记录状态为终态，卡片提示已处理。")
+    @Permission("chat:approve")
     @GetMapping("/tool-approval/pending")
     public ResultJson listPendingToolApprovals(
             @Parameter(description = "会话 ID") @RequestParam("sessionId") String sessionId) {
@@ -513,6 +523,7 @@ public class ChatController {
         return items;
     }
 
+    @Permission("chat:approve")
     @GetMapping("/tool-approval/{approvalId}")
     public ResultJson getToolApproval(
             @Parameter(description = "审批请求 ID") @PathVariable("approvalId") String approvalId) {
@@ -524,6 +535,7 @@ public class ChatController {
             + "等待期间客户端断开不中止本轮，故刷新页面/换设备后仍可经 /ask-user/pending 取回卡片作答。"
             + "body 传 {answers:[...]} 为作答（与问题下标对齐，兼容旧式单答案 {answer}）；传 {ignore:true} 为忽略（不作答）。"
             + "超时与忽略都不替用户选答案。返回 false 表示这次作答没能送达（已收尾，或唤醒句柄随进程重启消失）。")
+    @Permission("chat:approve")
     @PostMapping("/ask-user/{askId}")
     public ResultJson answerAgentAsk(
             @Parameter(description = "提问 ID（ask_user 事件下发）") @PathVariable("askId") String askId,
@@ -583,6 +595,7 @@ public class ChatController {
     @Operation(summary = "待答提问（恢复）", description = "按会话列本人仍挂在 PENDING 的 askUser 提问卡，"
             + "供前端在会话加载/切换与点开 tool.ask 通知时重建卡片。返回 items：{askId,questions,timeoutMs,"
             + "remainingMs,createdAt,expired,live}；live=false 表示唤醒句柄已不在（进程重启），作答送不到模型。")
+    @Permission("chat:approve")
     @GetMapping("/ask-user/pending")
     public ResultJson listPendingAsks(
             @Parameter(description = "会话 ID") @RequestParam("sessionId") String sessionId) {
@@ -596,6 +609,7 @@ public class ChatController {
             + "带 line=按<b>行</b>窗口读（自动给命中行留上文，翻日志与检索跳读用它，一次最多 500 行）。"
             + "整份找词用 /tool-output/{spillId}/search。"
             + "归属只认发起人本人（目录按 uid 哈希 + meta 二次校验），非本人/已过期清理/未开启外溢一律报错而不是回空壳。")
+    @Permission("chat:tool-output")
     @GetMapping("/tool-output/{spillId}")
     public ResultJson getToolOutput(
             @Parameter(description = "外溢标识（工具卡片 spillId / argsSpillId）") @PathVariable("spillId") String spillId,
@@ -615,6 +629,7 @@ public class ChatController {
     @Operation(summary = "工具完整输出·服务端检索", description = "在盘上那份<b>整份</b>留存原文里按行找关键字，返回命中行号与字符偏移"
             + "（上限 200 条命中，超出用 limited=true 交代还有多少）。前端只筛已读回那一段时，"
             + "「那句报错在 300 万字的日志里」永远筛不到——这条补齐「搜到 → 跳到那一段」。归属判据与读回同一条。")
+    @Permission("chat:tool-output")
     @GetMapping("/tool-output/{spillId}/search")
     public ResultJson searchToolOutput(
             @Parameter(description = "外溢标识") @PathVariable("spillId") String spillId,
@@ -628,6 +643,7 @@ public class ChatController {
             + "人在回路三张卡、产物、子智能体编排、停止与失败，按写入顺序分轮列出（仅本人，默认最近 5 轮、上限 200 条）。"
             + "带 turn=<消息的 turnId> 时只返回那一轮（对话页逐气泡「过程」的取数）。"
             + "账本只服务事后回看与审计，不参与模型输入；正文与逐字增量不在这里（那些随消息落库）。")
+    @Permission("session:read")
     @GetMapping("/session/{sessionId}/events")
     public ResultJson listSessionEvents(
             @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId,
@@ -644,6 +660,7 @@ public class ChatController {
             + "仅本轮用户本人可裁决；记录持久化在 c_ai_tool_approval（tool_name=planApproval，"
             + "PENDING→REVISED/APPROVED/REJECTED/SUPERSEDED/TIMEOUT/STOPPED/INTERRUPTED），等待期间断开不中止本轮，"
             + "刷新/换设备后仍可经 /plan-approval/pending 取回卡片（含版本链）继续裁决。")
+    @Permission("chat:approve")
     @PostMapping("/plan-approval/{planApprovalId}")
     public ResultJson resolvePlanApproval(
             @Parameter(description = "计划批准 ID（plan_approval 事件下发）") @PathVariable("planApprovalId") String planApprovalId,
@@ -675,6 +692,7 @@ public class ChatController {
             + "供前端在会话加载/切换与点开 tool.approval 通知时重建卡片。返回 items："
             + "{planApprovalId,plan,timeoutMs,remainingMs,createdAt,expired,live}；live=false 表示唤醒句柄已不在"
             + "（进程重启），批准送不到模型。")
+    @Permission("chat:approve")
     @GetMapping("/plan-approval/pending")
     public ResultJson listPendingPlans(
             @Parameter(description = "会话 ID") @RequestParam("sessionId") String sessionId) {
@@ -685,6 +703,7 @@ public class ChatController {
     @Operation(summary = "会话列表", description = "游标分页列出当前用户的会话（含 anonymous 历史兼容池；置顶优先、按更新时间倒序）。"
             + "首页不传 cursor，后续页传上一页返回的 nextCursor；keyword 按标题或消息内容模糊搜索（分页同样生效）。"
             + "返回 items / nextCursor / hasMore / groupCounts（置顶/今天/7天内/更早分组总数，仅统计有消息的会话） / total")
+    @Permission("session:read")
     @GetMapping("/sessions")
     public ResultJson listSessions(
             @Parameter(description = "搜索关键词（可选，按标题/消息内容模糊匹配）")
@@ -700,6 +719,7 @@ public class ChatController {
     }
 
     @Operation(summary = "置顶/取消置顶会话", description = "设置会话置顶状态，置顶会话排在列表最前")
+    @Permission("session:write")
     @PutMapping("/session/{sessionId}/pin")
     public ResultJson updatePin(
             @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId,
@@ -711,6 +731,7 @@ public class ChatController {
     }
 
     @Operation(summary = "收藏/取消收藏会话", description = "设置会话收藏状态，收藏会话可在侧边栏筛选")
+    @Permission("session:write")
     @PutMapping("/session/{sessionId}/favorite")
     public ResultJson updateFavorite(
             @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId,
@@ -722,6 +743,7 @@ public class ChatController {
     }
 
     @Operation(summary = "重命名会话", description = "修改会话标题（≤50 字；校验归属）")
+    @Permission("session:write")
     @PutMapping("/session/{sessionId}/rename")
     public ResultJson renameSession(
             @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId,
@@ -743,6 +765,7 @@ public class ChatController {
                     + "它当前能不能用（modelIssue 非空=已停用/已被移除，界面据此标出失效态），"
                     + "以及会话级上下文窗口档（contextWindow，null=没选过、按模型登记上限走）。"
                     + "聊天页切到列表未加载的会话（通知/分享深链进老会话）时按需拉取，保证选择器显示与实际作答一致")
+    @Permission("session:read")
     @GetMapping("/session/{sessionId}/model")
     public ResultJson getSessionModel(
             @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId,
@@ -763,6 +786,7 @@ public class ChatController {
     @Operation(summary = "当前会话所属工作区",
             description = "聊天页头部标识用：工作区名 + 是否带约定（约定每轮生效）。"
                     + "没有工作区 / 工作区已不存在 / 非本人会话一律返回 data=null（标识不显示，不编名字）")
+    @Permission("session:read")
     @GetMapping("/session/{sessionId}/workspace")
     public ResultJson sessionWorkspace(
             @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId) {
@@ -772,6 +796,7 @@ public class ChatController {
     @Operation(summary = "移动会话到其他工作区",
             description = "连同该会话的产物一起改归属；projectId 传空串或 __none__ = 摘掉归属。"
                     + "此前在旧工作区目录里产生的文件仍留在原处（已落盘的文件不搬家）")
+    @Permission("session:write")
     @PutMapping("/session/{sessionId}/project")
     public ResultJson moveSessionProject(
             @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId,
@@ -786,6 +811,7 @@ public class ChatController {
                     + "两个键各自独立：<b>不出现=本次不动那一项</b>，所以只改档位的请求不会把模型清掉。"
                     + "model 传空串 = 清除覆盖回到跟随个人默认；contextWindow 传 null/0/空串 = 清除档位回到模型登记上限。"
                     + "窗口档越界不在这里拒：问答侧按模型登记的 [最小窗口, 窗口] 收敛，登记值改了自动跟着收敛")
+    @Permission("session:write")
     @PutMapping("/session/{sessionId}/model")
     public ResultJson setSessionModel(
             @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId,
@@ -830,6 +856,7 @@ public class ChatController {
             + "{todos:{turnId,items:[{content,status}],updatedAt}} 或 null。切会话/刷新后输入框上方那条「任务清单」据此回显；"
             + "校验会话归属。清单的权威存储是框架 AgentState（todo_write 工具的同一份），"
             + "本进程内没有该会话实例时回落会话表里最后落的那份（服务重启后的兜底）。")
+    @Permission("session:read")
     @GetMapping("/session/{sessionId}/todos")
     public ResultJson getSessionTodos(
             @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId) {
@@ -846,6 +873,7 @@ public class ChatController {
     }
 
     @Operation(summary = "会话历史", description = "获取指定会话的完整对话历史（含图片与引用来源；校验会话归属）")
+    @Permission("session:read")
     @GetMapping("/session/{sessionId}")
     public ResultJson getHistory(
             @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId,
@@ -883,6 +911,7 @@ public class ChatController {
                     + "可选入参 {instruction:\"…\"}＝这一次摘要的附加要求（最长 200 字），"
                     + "并进框架的摘要提示词，只作用这一次压缩、不残留到之后的轮次")
     @ApiResponse(responseCode = "200", description = "压缩结果统计（含摘要全文，供前端展示）")
+    @Permission("session:write")
     @PostMapping("/session/{sessionId}/compact")
     public ResultJson compactSession(
             @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId,
@@ -925,6 +954,7 @@ public class ChatController {
             + "每次压缩都把更早的对话并入同一份、覆盖点往后推，所以返回的始终是生效中的那一版，不是当时那一瞬的快照。"
             + "返回 {summary, summaryTokens, untilSeq, keepTurns}；从未压缩过时 summary 为空串。")
     @ApiResponse(responseCode = "200", description = "当前摘要与覆盖点")
+    @Permission("session:read")
     @GetMapping("/session/{sessionId}/history-summary")
     public ResultJson historySummary(
             @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId) {
@@ -946,6 +976,7 @@ public class ChatController {
     }
 
     @Operation(summary = "删除会话", description = "删除指定会话（MySQL 软删除 + Redis 清理；校验会话归属）")
+    @Permission("session:delete")
     @DeleteMapping("/session/{sessionId}")
     public ResultJson deleteSession(
             @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId,
@@ -955,6 +986,7 @@ public class ChatController {
     }
 
     @Operation(summary = "清空会话", description = "清空当前账号名下的全部会话数据")
+    @Permission("session:delete")
     @DeleteMapping("/sessions")
     public ResultJson clearAllSessions(HttpServletRequest httpRequest) {
         sessionService.clearAll(RequestUser.uid());
@@ -962,6 +994,7 @@ public class ChatController {
     }
 
     @Operation(summary = "批量删除会话", description = "按 ID 列表软删除多个会话（逐个校验归属，单条失败不中断）；返回成功删除数")
+    @Permission("session:delete")
     @PostMapping("/sessions/batch-delete")
     public ResultJson batchDeleteSessions(
             @Parameter(description = "{\"ids\": [\"会话ID\", ...]}") @org.springframework.web.bind.annotation.RequestBody Map<String, Object> body,
@@ -975,6 +1008,7 @@ public class ChatController {
 
     @Operation(summary = "新建会话", description = "取一个空白会话供「新建对话」使用：优先复用当前用户已有的空会话（空会话恒为 1 条），没有才新建；返回会话 ID。"
             + "可选 projectId：把这条新对话归到指定工作区；不传=归兜底容器（历史兼容）；传 __none__=不挂任何工作区")
+    @Permission("session:write")
     @PostMapping("/session/new")
     public ResultJson newSession(
             @Parameter(description = "目标工作区（可选）；不传=兜底容器；__none__=不挂工作区")
@@ -985,6 +1019,7 @@ public class ChatController {
     }
 
     @Operation(summary = "知识块详情", description = "获取指定知识块的全文内容（引用溯源：弹窗展示来源知识块全文与图片）")
+    @Permission("knowledge:read")
     @GetMapping("/knowledge/{knowledgeId}")
     public ResultJson knowledgeDetail(
             @Parameter(description = "知识块 ID") @PathVariable("knowledgeId") String knowledgeId) {
@@ -1016,6 +1051,7 @@ public class ChatController {
      * 否则用户会以为"没分享过"，而实际是链接散出去了但自己已经无从关闭。
      */
     @Operation(summary = "我的会话分享列表", description = "枚举当前用户分享过的全部会话，含状态、访问量与悬空标记")
+    @Permission("session:share")
     @GetMapping("/session-shares")
     public ResultJson listMySessionShares() {
         return ResultJson.ok(sessionShareService.listMine(RequestUser.uid()));
@@ -1029,6 +1065,7 @@ public class ChatController {
      * 这里按 created_by 鉴权——分享记录本身就是归属凭据。
      */
     @Operation(summary = "按会话停用分享", description = "分享管理页停用；会话已删除的悬空记录同样可停")
+    @Permission("session:share")
     @DeleteMapping("/session-shares/{sessionId}")
     public ResultJson stopShareBySession(
             @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId) {
@@ -1050,6 +1087,7 @@ public class ChatController {
      * 这是它们唯一的清理出口。
      */
     @Operation(summary = "清除分享记录", description = "物理删除一条**已停止**的分享记录；生效中的返回 400，须先停止分享")
+    @Permission("session:share")
     @DeleteMapping("/session-shares/{sessionId}/record")
     public ResultJson purgeShareRecord(
             @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId) {
@@ -1066,6 +1104,7 @@ public class ChatController {
     }
 
     @Operation(summary = "查询会话分享状态", description = "返回 {enabled, token, visitCount, lastVisitAt}；未分享返回 enabled=false。仅会话所有者可查")
+    @Permission("session:share")
     @GetMapping("/session/{sessionId}/share")
     public ResultJson getSessionShare(
             @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId) {
@@ -1082,6 +1121,7 @@ public class ChatController {
 
     @Operation(summary = "开启会话分享", description = "生成（或重新生成）只读分享链接；停止后重新开启会换新 token，"
             + "旧链接立即失效。仅会话所有者可操作")
+    @Permission("session:share")
     @PostMapping("/session/{sessionId}/share")
     public ResultJson enableSessionShare(
             @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId) {
@@ -1094,6 +1134,7 @@ public class ChatController {
     }
 
     @Operation(summary = "停止会话分享", description = "停用后链接立即失效（记录保留，再次开启会换新 token）")
+    @Permission("session:share")
     @DeleteMapping("/session/{sessionId}/share")
     public ResultJson disableSessionShare(
             @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId) {
@@ -1103,6 +1144,7 @@ public class ChatController {
     }
 
     @Operation(summary = "删除一轮对话", description = "按对话组删除：指定该轮回答（assistant 消息）ID，连同其前面的用户问题一起软删除，并清理 Redis 兜底缓存。立即生效，前端 5 秒内可调撤销接口恢复")
+    @Permission("session:delete")
     @DeleteMapping("/message-group/{assistantMessageId}")
     public ResultJson deleteMessageGroup(
             @Parameter(description = "该轮回答（assistant 消息）ID") @PathVariable("assistantMessageId") String assistantMessageId,
@@ -1118,6 +1160,7 @@ public class ChatController {
     @Operation(summary = "切换消息分支版本", description = "编辑重发/重新生成的多版本切换：messageId 为当前可见版本的"
             + "代表消息 ID（编辑分支=用户消息；重新生成分支=回答），delta=±1 沿版本序列偏移。当前分支整体软删留档、"
             + "目标版本按快照恢复；旧版本数据已被保留期清理时返回 410")
+    @Permission("session:write")
     @PostMapping("/message-group/switch")
     public ResultJson switchMessageVariant(
             @Parameter(description = "{\"messageId\": \"当前版本的消息 ID\", \"delta\": -1 或 1}")
@@ -1145,6 +1188,7 @@ public class ChatController {
     }
 
     @Operation(summary = "撤销删除一轮对话", description = "恢复最近一次按组删除的对话（回答 + 同组用户问题），撤销期内有效")
+    @Permission("session:write")
     @PostMapping("/message-group/undo")
     public ResultJson undoDeleteMessageGroup(
             @Parameter(description = "{\"messageId\": \"该轮回答（assistant 消息）ID\"}")

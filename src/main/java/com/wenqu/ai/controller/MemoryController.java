@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
+import com.wenqu.ai.security.Permission;
 
 /**
  * 个人长期记忆面板（仅本人）：查看、编辑 {@code MEMORY.md}、按天查看/删除日账、清空、按上限裁剪。
@@ -33,12 +34,14 @@ public class MemoryController {
     private final MemoryService memoryService;
 
     @Operation(summary = "我的记忆概览", description = "返回 MEMORY.md 内容、大小/token、上限、日账清单与最后合并时间")
+    @Permission("self:memory")
     @GetMapping
     public ResultJson overview() {
         return ResultJson.ok(memoryService.overview(RequestUser.uid()));
     }
 
     @Operation(summary = "读取某个记忆文件", description = "path=MEMORY.md 或 memory/YYYY-MM-DD.md；日账只读")
+    @Permission("self:memory")
     @GetMapping("/content")
     public ResultJson content(
             @Parameter(description = "MEMORY.md 或 memory/YYYY-MM-DD.md") @RequestParam("path") String path) {
@@ -46,24 +49,28 @@ public class MemoryController {
     }
 
     @Operation(summary = "保存 MEMORY.md", description = "{\"content\":\"...\"}；仅本人；超过 token 上限拒绝")
+    @Permission("self:memory")
     @PutMapping
     public ResultJson save(@RequestBody Map<String, String> body) {
         return ResultJson.ok(memoryService.saveMemoryMd(RequestUser.uid(), body.get("content")), "已保存");
     }
 
     @Operation(summary = "按上限裁剪 MEMORY.md", description = "把 MEMORY.md 确定性裁剪到 memory.maxMdTokens 对应的字符预算")
+    @Permission("self:memory")
     @PostMapping("/compact")
     public ResultJson compact() {
         return ResultJson.ok(memoryService.compact(RequestUser.uid()), "已裁剪");
     }
 
     @Operation(summary = "清空我的全部记忆", description = "删除 MEMORY.md、全部日账、归档与 consolidation 游标；不可恢复")
+    @Permission("self:memory")
     @DeleteMapping
     public ResultJson clear() {
         return ResultJson.ok(memoryService.clearAll(RequestUser.uid()), "已清空");
     }
 
     @Operation(summary = "删除某天日账", description = "date=YYYY-MM-DD；只删那一天的原始记录，不回改 MEMORY.md")
+    @Permission("self:memory")
     @DeleteMapping("/daily")
     public ResultJson deleteDaily(
             @Parameter(description = "YYYY-MM-DD") @RequestParam("date") String date) {

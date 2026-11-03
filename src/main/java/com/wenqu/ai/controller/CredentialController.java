@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
+import com.wenqu.ai.security.Permission;
 
 /**
  * 工作流凭据管理接口（第 3 期）：个人资产，归属取登录令牌 uid。
@@ -34,12 +35,14 @@ public class CredentialController {
     private final CredentialService credentialService;
 
     @Operation(summary = "我的凭据列表", description = "值脱敏为 ****后4位，永不回明文")
+    @Permission("credential:read")
     @GetMapping("/list")
     public ResultJson list() {
         return ResultJson.ok(credentialService.list(RequestUser.uid()));
     }
 
     @Operation(summary = "新建凭据", description = "body: {name, value, remark?}；名称同用户内唯一")
+    @Permission("credential:write")
     @PostMapping
     public ResultJson create(@RequestBody Map<String, Object> body) {
         return ResultJson.ok(credentialService.create(RequestUser.uid(),
@@ -47,6 +50,7 @@ public class CredentialController {
     }
 
     @Operation(summary = "编辑凭据", description = "body: {name?, value?, remark?}；value 留空或以 **** 开头 = 保持不变")
+    @Permission("credential:write")
     @PutMapping("/{id}")
     public ResultJson update(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         return ResultJson.ok(credentialService.update(RequestUser.uid(), id,
@@ -54,6 +58,7 @@ public class CredentialController {
     }
 
     @Operation(summary = "删除凭据", description = "只删本人的；已引用它的工作流节点运行时会 fail-loud 提示未配置")
+    @Permission("credential:delete")
     @DeleteMapping("/{id}")
     public ResultJson delete(@PathVariable("id") String id) {
         credentialService.delete(RequestUser.uid(), id);

@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.util.Map;
+import com.wenqu.ai.security.Permission;
 
 /**
  * 角色管理接口（权限管理页）：角色 CRUD 与菜单/接口绑定。
@@ -33,6 +34,7 @@ import java.util.Map;
 public class RoleController {
 
     private final RoleService roleService;
+    private final com.wenqu.ai.service.UserRoleService userRoleService;
 
     private static String str(Map<String, Object> body, String key) {
         Object v = body == null ? null : body.get(key);
@@ -58,18 +60,21 @@ public class RoleController {
     }
 
     @Operation(summary = "角色列表", description = "内置角色在前；含停用角色（权限管理页展示全量）")
+    @Permission("role:read")
     @GetMapping("/list")
     public ResultJson list() {
         return ResultJson.ok(roleService.list());
     }
 
     @Operation(summary = "角色下拉选项", description = "仅启用角色（成员管理建档用）：code/name/adminFlag/builtin")
+    @Permission("role:read")
     @GetMapping("/options")
     public ResultJson options() {
         return ResultJson.ok(roleService.options());
     }
 
     @Operation(summary = "新建角色", description = "body: code(小写字母开头≤20字符)/name(必填)/description/adminFlag(1=管理员级)")
+    @Permission("role:manage")
     @PostMapping
     public ResultJson create(@RequestBody Map<String, Object> body) {
         return ResultJson.ok(roleService.create(str(body, "code"), str(body, "name"),
@@ -77,6 +82,7 @@ public class RoleController {
     }
 
     @Operation(summary = "编辑角色", description = "内置角色仅可改名称/描述（管理员级与状态锁定）；自定义可全改")
+    @Permission("role:manage")
     @PutMapping("/{code}")
     public ResultJson update(@PathVariable("code") String code, @RequestBody Map<String, Object> body) {
         roleService.update(code, str(body, "name"), str(body, "description"),
@@ -85,6 +91,7 @@ public class RoleController {
     }
 
     @Operation(summary = "删除角色", description = "内置角色与在用角色不可删；级联清菜单/接口绑定")
+    @Permission("role:manage")
     @DeleteMapping("/{code}")
     public ResultJson delete(@Parameter(description = "角色编码") @PathVariable("code") String code) {
         roleService.delete(code);
@@ -92,6 +99,7 @@ public class RoleController {
     }
 
     @Operation(summary = "角色的权限绑定", description = "返回该角色绑定的菜单与接口 id：{menuIds, apiIds}（权限配置页单树回显）")
+    @Permission("role:read")
     @GetMapping("/{code}/permissions")
     public ResultJson permissions(@PathVariable("code") String code) {
         Role r = roleService.get(code);
@@ -100,9 +108,22 @@ public class RoleController {
     }
 
     @Operation(summary = "保存角色的权限绑定", description = "body: {menuIds:[...], apiIds:[...]} 全量替换；管理员级角色无需绑定（天然全量）")
+    @Permission("role:manage")
     @PutMapping("/{code}/permissions")
     public ResultJson savePermissions(@PathVariable("code") String code, @RequestBody Map<String, Object> body) {
         roleService.savePermissions(code, idList(body, "menuIds"), idList(body, "apiIds"));
         return ResultJson.ok("权限已保存");
+    }
+
+    @Operation(summary = "用户的有效授权点视图", description = "给定 uid 算出其实际可用的授权点集合（各角色 allow 并集 − 全局 deny；管理员级返回 admin:all-allow 标记）。权限排查与验收用（方案 D-3 最小形态）")
+    @Permission("role:read")
+    @GetMapping("/effective/{uid}")
+    public ResultJson effective(@PathVariable("uid") String uid) {
+        var roles = userRoleService.rolesOf(uid);
+        return ResultJson.ok(Map.of(
+                "uid", uid,
+                "roles", roles,
+                "permissions", roleService.effectivePermissionsOfUser(roles),
+                "mode", roleService.permissionMode()));
     }
 }

@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.*;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import com.wenqu.ai.security.Permission;
 
 /**
  * 检索量化评估：评估集生成/读取 + 批量参数组对比运行（recall@k/MRR/命中率 + 弃用断言 + 多路对比）
@@ -32,6 +33,7 @@ public class EvaluationController {
 
     /** 从历史问答回放生成评估集 */
     @Operation(summary = "追加单条评估 case", description = "差评回流：把「问题 → 引用过的知识块」加入评估集（按问题去重，失效期望块自动剔除）")
+    @Permission("eval:write")
     @PostMapping("/case")
     public ResultJson addCase(
             @Parameter(description = "{\"question\": \"问题\", \"knowledgeIds\": [\"期望知识块ID\"]}")
@@ -43,6 +45,7 @@ public class EvaluationController {
     }
 
     @Operation(summary = "生成评估集（回放 c_ai_message.sources）")
+    @Permission("eval:write")
     @PostMapping("/generate")
     public ResultJson<RetrievalEvaluationService.EvalSet> generate(@RequestBody(required = false) Map<String, Object> body) {
         int maxCases = body != null && body.get("maxCases") != null
@@ -52,6 +55,7 @@ public class EvaluationController {
 
     /** 读取当前评估集 */
     @Operation(summary = "读取评估集")
+    @Permission("eval:read")
     @GetMapping("/set")
     public ResultJson<RetrievalEvaluationService.EvalSet> getSet() {
         return ResultJson.ok(evalService.load());
@@ -59,6 +63,7 @@ public class EvaluationController {
 
     /** 最近一次自动体检报告（从未运行返回 null） */
     @Operation(summary = "最近自动体检报告", description = "定时体检（默认每日）与手动触发共用；含指标、相对上期变化与红黄绿状态")
+    @Permission("eval:read")
     @GetMapping("/last-report")
     public ResultJson getLastReport() {
         return ResultJson.ok(evalService.lastAutoReport());
@@ -66,6 +71,7 @@ public class EvaluationController {
 
     /** 手动触发自动体检（同步执行，评估集大时耗时数十秒，前端 loading 等待） */
     @Operation(summary = "立即自动体检", description = "按当前线上参数跑全量评估集并对比上期，结果写 eval.lastReport")
+    @Permission("eval:write")
     @PostMapping("/run-auto")
     public ResultJson runAuto() {
         return ResultJson.ok(evalService.runAutoCheck());
@@ -73,6 +79,7 @@ public class EvaluationController {
 
     @Operation(summary = "启动答案级评测（异步）", description = "每条用例：检索 → 生成回答（eval.answerModel，空=复用评判模型）→ 评判模型打忠实度/相关性两维分。"
             + "每条真实调用两次模型，手动触发、单次上限 50 条；进度与结果经 GET /eval/answer/report 轮询")
+    @Permission("eval:write")
     @PostMapping("/answer/run")
     public ResultJson startAnswerEval(@RequestBody(required = false) Map<String, Object> body) {
         int caseCount = body == null || body.get("caseCount") == null ? 10 : Integer.parseInt(String.valueOf(body.get("caseCount")));
@@ -82,6 +89,7 @@ public class EvaluationController {
     }
 
     @Operation(summary = "答案级评测进度与最近报告", description = "running=true 时按 progress.done/total 展示进度；report=最近一期完整报告（含逐条得分与问题说明），history=最近 10 期摘要")
+    @Permission("eval:read")
     @GetMapping("/answer/report")
     public ResultJson answerEvalStatus() {
         return ResultJson.ok(evalService.answerEvalStatus());
@@ -89,6 +97,7 @@ public class EvaluationController {
 
     /** 批量运行评估（多组参数对比） */
     @Operation(summary = "运行评估（参数组对比）")
+    @Permission("eval:write")
     @PostMapping("/run")
     public ResultJson<RetrievalEvaluationService.EvalResult> run(@RequestBody(required = false) Map<String, Object> body) {
         if (body == null) {

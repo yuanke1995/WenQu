@@ -24,6 +24,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import com.wenqu.ai.security.Permission;
 
 /**
  * 知识库接口：**用户可自建自管**（2026-09-26 从"仅管理员"放开）。
@@ -97,6 +98,7 @@ public class KnowledgeBaseController {
     @Operation(summary = "知识库参数默认值", description = "库级检索/解析参数的当前生效默认值（新建库模板预填 + 表单占位符展示）；"
             + "重排模型返回「本人个人值（未设即空，personalOnly 无全局层）」；rerank.enabled 供智能体表单展示"
             + "「跟随全局」的当前状态；rerank.platformRef 为平台兜底层，原样返回供前端点名默认模型")
+    @Permission("kb:read")
     @GetMapping("/param-defaults")
     public ResultJson paramDefaults() {
         Map<String, String> out = new LinkedHashMap<>();
@@ -135,6 +137,7 @@ public class KnowledgeBaseController {
      * 需要给小白看人话解释（这是什么 / 什么时候才需要调），故经本端点下发。
      */
     @Operation(summary = "知识库参数说明", description = "检索/解析参数的人话解释（弹窗问号 tooltip 数据源；仅文案，不含任何配置值）")
+    @Permission("kb:read")
     @GetMapping("/param-tips")
     public ResultJson paramTips() {
         java.util.Set<String> keys = new java.util.LinkedHashSet<>();
@@ -145,6 +148,7 @@ public class KnowledgeBaseController {
     }
 
     @Operation(summary = "知识库列表", description = "含每个库的文档数量；个人默认库（问渠）排最前；只返回自己创建的（含个人默认库），谁建归谁")
+    @Permission("kb:read")
     @GetMapping("/list")
     public ResultJson list() {
         // 进知识库页即确保本人已有个人默认库（问渠）：懒创建只挂在写路径的话，
@@ -164,6 +168,7 @@ public class KnowledgeBaseController {
     }
 
     @Operation(summary = "知识库详情", description = "仅自己创建的（含个人默认库）可查（不可见按不存在处理，不泄露存在性）")
+    @Permission("kb:read")
     @GetMapping("/{id}")
     public ResultJson get(@PathVariable("id") String id) {
         KnowledgeBase kb = kbService.get(id);
@@ -183,6 +188,7 @@ public class KnowledgeBaseController {
             + "wenqu 品牌标为个人默认库专属，新建不可用)/embeddingRef(必填,绑定向量模型)/queryParams/parseParams；"
             + "queryParams/parseParams 为 JSON 字符串，留空表示继承全局检索/解析设置；创建人=当前用户。"
             + "默认知识库（问渠）每人一个、系统自动创建，不经此接口")
+    @Permission("kb:write")
     @PostMapping
     public ResultJson create(@RequestBody Map<String, Object> body) {
         if (body.get("name") == null || String.valueOf(body.get("name")).isBlank()) {
@@ -194,6 +200,7 @@ public class KnowledgeBaseController {
     @Operation(summary = "编辑知识库", description = "仅更新 body 中出现的字段；queryParams/parseParams 传 null/空串表示清空并恢复继承全局；"
             + "icon（wenqu 品牌标为默认库专属）与 name 仅默认库不可修改（默认库恒为 wenqu 品牌标，名称/图标改值报错）；"
             + "embeddingRef（绑定向量模型）必填，变更时自动按库重嵌入（异步，模型不可达则保持原绑定）；仅创建者可改")
+    @Permission("kb:write")
     @PutMapping("/{id}")
     public ResultJson update(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         KnowledgeBase before = mustGet(id);
@@ -212,6 +219,7 @@ public class KnowledgeBaseController {
     }
 
     @Operation(summary = "删除知识库", description = "逻辑删除；默认库、以及库下仍有文档时拒绝删除（避免文档失去归属导致检索范围突变）；仅创建者可删")
+    @Permission("kb:delete")
     @DeleteMapping("/{id}")
     public ResultJson delete(@PathVariable("id") String id) {
         requireManage(mustGet(id));
@@ -222,6 +230,7 @@ public class KnowledgeBaseController {
 
     @Operation(summary = "导出知识库", description = "打包为 zip（manifest.json + 各文档源文件；url 文档带源地址不带文件）。"
             + "只带源料不带产物——向量按导入库的绑定重嵌，知识块随解析重算。仅创建者可导")
+    @Permission("kb:export")
     @GetMapping("/{id}/export")
     public void export(@PathVariable("id") String id, jakarta.servlet.http.HttpServletResponse response) throws java.io.IOException {
         var kb = mustGet(id);
@@ -236,6 +245,7 @@ public class KnowledgeBaseController {
 
     @Operation(summary = "导入文档包到知识库", description = "上传导出 zip → 目标库逐文档走既有上传/URL 导入管线（解析/分块/向量化/索引全自动，"
             + "向量按目标库绑定重嵌）；同名 upsert，重复导入安全。仅创建者可导")
+    @Permission("kb:import")
     @PostMapping("/{id}/import")
     public ResultJson importZip(@PathVariable("id") String id,
                                 @org.springframework.web.bind.annotation.RequestParam("file") org.springframework.web.multipart.MultipartFile file) {
@@ -246,6 +256,7 @@ public class KnowledgeBaseController {
     @Operation(summary = "移动文档到知识库", description = "body: {kbId}——传空表示移回自己的默认知识库（问渠）；"
             + "前后两库向量模型不同时自动异步迁移该文档向量；需要对源、目标两个库都有管理权；"
             + "官方内置知识库不接受外部文档移入（内容随版本自动同步）")
+    @Permission("kb:write")
     @PutMapping("/doc/{docId}")
     public ResultJson moveDoc(@PathVariable("docId") String docId, @RequestBody Map<String, Object> body) {
         Object kbId = body.get("kbId");

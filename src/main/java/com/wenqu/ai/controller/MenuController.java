@@ -24,6 +24,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import com.wenqu.ai.security.Permission;
 
 /**
  * 菜单管理接口（权限管理页）：侧边栏菜单数据源的增删改查。
@@ -59,6 +60,7 @@ public class MenuController {
     }
 
     @Operation(summary = "菜单列表", description = "全量平铺（含隐藏），按 sortOrder 升序；前端组树")
+    @Permission("menu:read")
     @GetMapping("/list")
     public ResultJson list() {
         return ResultJson.ok(menuService.list());
@@ -67,6 +69,7 @@ public class MenuController {
     @Operation(summary = "新建菜单",
             description = "body: parentId(可选)/name(必填)/icon/path/sortOrder/visible(1显0隐)/renderAs(sidebar|tab|group|hidden)。"
                     + "tab 型必须指定父菜单；group 型不可配路径")
+    @Permission("menu:manage")
     @PostMapping
     public ResultJson create(@RequestBody Map<String, Object> body) {
         Menu m = menuService.create(str(body, "parentId"), str(body, "name"), str(body, "icon"),
@@ -75,6 +78,7 @@ public class MenuController {
     }
 
     @Operation(summary = "编辑菜单", description = "仅更新 body 中出现的字段；父级变更做环检测；renderAs 组合校验在合并后的最终态上做")
+    @Permission("menu:manage")
     @PutMapping("/{id}")
     public ResultJson update(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         menuService.update(id, str(body, "parentId"), str(body, "name"), str(body, "icon"),
@@ -83,6 +87,7 @@ public class MenuController {
     }
 
     @Operation(summary = "删除菜单", description = "内置菜单与含子菜单的不可删；级联清理角色绑定")
+    @Permission("menu:manage")
     @DeleteMapping("/{id}")
     public ResultJson delete(@Parameter(description = "菜单 ID") @PathVariable("id") String id) {
         menuService.delete(id);
@@ -93,6 +98,7 @@ public class MenuController {
             description = "返回 {customized, order:[menuId…], hidden:[menuId…], menus:[侧栏可调项全集]}。"
                     + "customized=false 表示走菜单表默认；menus 是**未施加个人偏好**的 sidebar/group 顶级项"
                     + "（含已被自己隐藏的），抽屉据此渲染开关行——侧栏实际渲染的 /auth/me menus 里没有隐藏项")
+    @Permission("self:preference")
     @GetMapping("/my-layout")
     public ResultJson myLayout() {
         User u = userMapper.selectById(RequestUser.uid());
@@ -110,6 +116,7 @@ public class MenuController {
             description = "body: { order:[menuId…], hidden:[menuId…], reset?:true }。"
                     + "只接受本人有权看到的菜单（越权/已删除的 id 静默丢弃）；"
                     + "reset=true 恢复默认顺序与全部显示。纯个人偏好，不改变其他人侧栏")
+    @Permission("self:preference")
     @PutMapping("/my-layout")
     public ResultJson saveMyLayout(@RequestBody Map<String, Object> body) {
         menuService.saveMyPref(RequestUser.uid(), strList(body.get("order")),

@@ -34,6 +34,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import com.wenqu.ai.security.Permission;
 
 /**
  * 技能（Skills）：清单 / 正文审阅 / 用户自助安装与管理。
@@ -68,6 +69,7 @@ public class SkillController {
 
     @Operation(summary = "可用技能清单",
             description = "内置 + 用户自装（+ 指定会话的沙盒工作区技能）；不含正文，同名只给生效那条")
+    @Permission("skill:read")
     @GetMapping("/available")
     public ResultJson available(@RequestParam(value = "sessionId", required = false) String sessionId) {
         String uid = uid();
@@ -82,6 +84,7 @@ public class SkillController {
 
     @Operation(summary = "技能管理清单",
             description = "管理页数据源：来源/停用（平台或本人）/可否编辑删除/体积/文件数，附带远程安装开关与安装限制")
+    @Permission("skill:read")
     @GetMapping("/list")
     public ResultJson list(@RequestParam(value = "sessionId", required = false) String sessionId) {
         String uid = uid();
@@ -100,6 +103,7 @@ public class SkillController {
 
     @Operation(summary = "技能详情",
             description = "元信息 + 正文（模型看到的同源正文）+ raw（用户自装技能的 SKILL.md 原文，编辑用）+ 文件清单")
+    @Permission("skill:read")
     @GetMapping("/detail")
     public ResultJson detail(@RequestParam("name") String name,
                              @RequestParam(value = "sessionId", required = false) String sessionId) {
@@ -137,6 +141,7 @@ public class SkillController {
 
     @Operation(summary = "技能正文",
             description = "按名取 SKILL.md 正文（含已停用的那条）；与模型本轮吃到的那份同源")
+    @Permission("skill:read")
     @GetMapping("/content")
     public ResultJson content(@RequestParam("name") String name,
                               @RequestParam(value = "sessionId", required = false) String sessionId) {
@@ -155,6 +160,7 @@ public class SkillController {
     }
 
     @Operation(summary = "技能文件正文", description = "用户自装技能目录下的文本文件（references/scripts 等），供详情页预览")
+    @Permission("skill:read")
     @GetMapping("/file")
     public ResultJson file(@RequestParam("name") String name,
                            @RequestParam("path") String path) {
@@ -166,6 +172,7 @@ public class SkillController {
     // ==================== 写：新建 / 安装 ====================
 
     @Operation(summary = "新建技能", description = "body: {name, description, content, overwrite?}；落到当前账号的 uid 级技能目录")
+    @Permission("skill:write")
     @PostMapping
     public ResultJson create(@RequestBody Map<String, Object> body) {
         String uid = uid();
@@ -180,6 +187,7 @@ public class SkillController {
 
     @Operation(summary = "从 URL 安装技能",
             description = "body: {url, name?, overwrite?}；仅 http/https 的 SKILL.md 原文（须含 frontmatter），来源域名白名单见系统设置")
+    @Permission("skill:write")
     @PostMapping("/install")
     public ResultJson install(@RequestBody Map<String, Object> body) {
         String uid = uid();
@@ -190,6 +198,7 @@ public class SkillController {
 
     @Operation(summary = "上传 zip 安装技能",
             description = "multipart: file（含 SKILL.md，可带 references/scripts）+ name? + overwrite?；逐条目做路径与体积校验")
+    @Permission("skill:write")
     @PostMapping("/install/zip")
     public ResultJson installZip(@RequestParam("file") MultipartFile file,
                                  @RequestParam(value = "name", required = false) String name,
@@ -202,6 +211,7 @@ public class SkillController {
     // ==================== 写：编辑 / 删除 / 停用 ====================
 
     @Operation(summary = "编辑技能", description = "body: {description?, content}；只能改自己安装的技能，技能名不可改")
+    @Permission("skill:write")
     @PutMapping("/{name}")
     public ResultJson update(@PathVariable("name") String name, @RequestBody Map<String, Object> body) {
         String uid = uid();
@@ -212,6 +222,7 @@ public class SkillController {
     }
 
     @Operation(summary = "删除技能", description = "只能删自己安装的技能；内置技能只读，工作区技能随会话走")
+    @Permission("skill:delete")
     @DeleteMapping("/{name}")
     public ResultJson delete(@PathVariable("name") String name) {
         String uid = uid();
@@ -221,6 +232,7 @@ public class SkillController {
     }
 
     @Operation(summary = "启用/停用技能", description = "body: {\"disabled\": true}；个人级停用，只影响自己；内置技能只能停用不能覆盖")
+    @Permission("skill:write")
     @PutMapping("/{name}/disabled")
     public ResultJson disabled(@PathVariable("name") String name, @RequestBody Map<String, Object> body) {
         String uid = uid();
@@ -237,6 +249,7 @@ public class SkillController {
     }
 
     @Operation(summary = "下载技能包", description = "把自己安装的技能打成 zip（备份/分享）；只有本人技能可下载")
+    @Permission("skill:read")
     @GetMapping("/download")
     public void download(@RequestParam("name") String name, HttpServletResponse response) throws IOException {
         String uid = uid();

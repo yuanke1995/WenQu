@@ -40,6 +40,9 @@ public class ApiEndpoint {
     /** 扫描登记: 1=启动期自动登记 */
     private Integer builtin;
 
+    /** 授权点编码（@Permission 注解声明，扫描器写入；NULL=未标注，判定侧按未授权点端点处理） */
+    private String permissionCode;
+
     private LocalDateTime createTime;
 
     private LocalDateTime updateTime;

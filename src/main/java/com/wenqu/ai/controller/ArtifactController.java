@@ -20,6 +20,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import com.wenqu.ai.security.Permission;
 
 /**
  * 产物接口（我的产物）：模型在回答中生成的可下载文件。
@@ -41,6 +42,7 @@ public class ArtifactController {
     @Operation(summary = "我的产物列表",
             description = "当前用户生成的产物（时间倒序；keyword 匹配文件名）；url 为可直接下载的签名地址。"
                     + "可选 projectId：只看某个工作区的产物；传 __unassigned__ 只看没挂工作区的存量产物；不传=全部")
+    @Permission("artifact:read")
     @GetMapping("/list")
     public ResultJson list(@RequestParam(value = "keyword", required = false) String keyword,
                            @RequestParam(value = "projectId", required = false) String projectId) {
@@ -50,6 +52,7 @@ public class ArtifactController {
     @Operation(summary = "移动产物到其他工作区",
             description = "body: {projectId}；传空串或 __none__ = 摘掉归属（退回「会话」一档）。"
                     + "归档区可作为目标；移动不碰文件本身")
+    @Permission("artifact:write")
     @PutMapping("/{id}/project")
     public ResultJson moveProject(@PathVariable("id") String id,
                                   @RequestBody(required = false) Map<String, String> body) {
@@ -63,6 +66,7 @@ public class ArtifactController {
     }
 
     @Operation(summary = "删除产物", description = "删除自己的产物（同时删除文件）；删他人的返回 403")
+    @Permission("artifact:delete")
     @DeleteMapping("/{id}")
     public ResultJson delete(@PathVariable("id") String id) {
         try {
@@ -87,6 +91,7 @@ public class ArtifactController {
      */
     @Operation(summary = "换发产物签名", description = "按产物 id 返回带新鲜签名的下载地址（签名 1 小时过期，"
             + "对话页长时间停留后需换发）；取不回的（不存在/已删/无权/文件已清理）直接跳过")
+    @Permission("artifact:write")
     @PostMapping("/refresh-sign")
     public ResultJson refreshSign(@RequestBody RefreshSignReq req) {
         if (req == null || req.ids() == null || req.ids().isEmpty()) {
@@ -102,6 +107,7 @@ public class ArtifactController {
      */
     @Operation(summary = "读产物文本原文", description = "按产物 id 取文本内容，只回前一段并带 truncated 标记；"
             + "非文本类型/无权/文件已清理回可读错误")
+    @Permission("artifact:read")
     @GetMapping("/{id}/content")
     public ResultJson content(@PathVariable("id") String id) {
         try {
@@ -117,6 +123,7 @@ public class ArtifactController {
 
     @Operation(summary = "批量删除产物", description = "逐条删除（逐条校验归属，复用单条口径）；"
             + "返回 {deleted, skipped}，skipped 为不存在/已删除/无权的 id")
+    @Permission("artifact:delete")
     @PostMapping("/batch-delete")
     public ResultJson deleteBatch(@RequestBody BatchDeleteReq req) {
         if (req == null || req.ids() == null || req.ids().isEmpty()) {

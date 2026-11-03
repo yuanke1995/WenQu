@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import com.wenqu.ai.security.Permission;
 
 /**
  * 智能体配置接口：**用户可自建自管**（2026-09-26 从"仅管理员"放开）。
@@ -65,6 +66,7 @@ public class AgentController {
     @Operation(summary = "智能体列表", description = "默认智能体在前；其余按创建时间倒序；所有人只返回自己创建的、内置问渠与显式共享给自己的"
             + "（数据按 userId 隔离）；每行带 manageable（是否可管理，供前端收起配置/共享/发布/删除入口）"
             + "与 published（公开发布中 1/0，供卡片标「已发布」）")
+    @Permission("agent:read")
     @GetMapping("/list")
     public ResultJson list() {
         List<com.wenqu.ai.model.Agent> agents = agentService.list();
@@ -93,6 +95,7 @@ public class AgentController {
     @Operation(summary = "可读助手名称表", description = "本轮可咨询范围内的 id+名称（含子智能体，按可读性过滤）。"
             + "与 /available 的差别：那份剔除子智能体（不能当问答角色），而咨询清单包含它们——"
             + "前端还原「本轮咨询了谁」的徽标需要这一份，否则子智能体只能显示裸 id")
+    @Permission("agent:read")
     @GetMapping("/consultable")
     public ResultJson consultable() {
         return ResultJson.ok(agentService.consultable());
@@ -100,6 +103,7 @@ public class AgentController {
 
     @Operation(summary = "可委派的子智能体", description = "只返回 is_subagent=1 的智能体（id/name/description/"
             + "subagentMode 这一支实际怎么跑 + subagentModeInherited 是否跟随平台默认），供主智能体配置页勾选允许委派的对象")
+    @Permission("agent:read")
     @GetMapping("/sub")
     public ResultJson subAgents() {
         return ResultJson.ok(agentService.subAgents());
@@ -112,6 +116,7 @@ public class AgentController {
      */
     @Operation(summary = "智能体默认值", description = "配置页各「跟随默认」项的当前生效值（子智能体执行档/"
             + "单轮工具步数/工具总闸/联网搜索/重排开关），均为枚举码、布尔与整数，不含地址与密钥")
+    @Permission("agent:read")
     @GetMapping("/config-defaults")
     public ResultJson configDefaults() {
         return ResultJson.ok(agentService.configDefaults());
@@ -127,6 +132,7 @@ public class AgentController {
      */
     @Operation(summary = "能力名册", description = "返回平台已声明工具的 family/familyLabel/name/label/cardLabel，"
             + "供智能体配置页生成「指定内置工具」的可选项（中文名以工具注册中心为唯一来源）")
+    @Permission("agent:read")
     @GetMapping("/tool-catalog")
     public ResultJson toolCatalog() {
         return ResultJson.ok(toolInventoryService.agentCatalog());
@@ -141,6 +147,7 @@ public class AgentController {
      */
     @Operation(summary = "权限档位名册", description = "返回可选档位：code/label/summary/沙盒执行档/审批建议值，"
             + "以及该档当前是否可用（available）与被平台上限禁掉的原因（unavailableReason）")
+    @Permission("agent:read")
     @GetMapping("/permission-presets")
     public ResultJson permissionPresets() {
         return ResultJson.ok(permissionPolicyResolver.catalog());
@@ -154,6 +161,7 @@ public class AgentController {
             + "skills/mcps/builtinTools(具体项范围：省略=跟随全局、空串=不使用、逗号串=仅这些)/"
             + "isSubagent(1=子智能体)/subAgentIds(主智能体可委派的子智能体ID)/"
             + "subagentMode(被委派时怎么跑 digest=检索要点 full=全循环，省略=跟随平台默认 agent.subagentMode)/isDefault；创建者=当前用户")
+    @Permission("agent:write")
     @PostMapping
     public ResultJson create(@RequestBody Map<String, Object> body) {
         return ResultJson.ok(agentService.create(body));
@@ -161,6 +169,7 @@ public class AgentController {
 
     @Operation(summary = "编辑智能体", description = "仅更新 body 中出现的字段（icon：wenqu=问渠品牌标（内置「问渠」专属）/ emoji；内置智能体的名称不可修改）；"
             + "工具开关传 null 表示恢复继承；仅创建者/被授权人/管理员可改")
+    @Permission("agent:write")
     @PutMapping("/{id}")
     public ResultJson update(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
@@ -168,6 +177,7 @@ public class AgentController {
     }
 
     @Operation(summary = "删除智能体", description = "物理删除；仅创建者/被授权人/管理员可删")
+    @Permission("agent:delete")
     @DeleteMapping("/{id}")
     public ResultJson delete(@PathVariable("id") String id) {
         if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
@@ -178,6 +188,7 @@ public class AgentController {
     @Operation(summary = "配置版本列表", description = "每次保存落一版（人设/知识范围/工具集等调优字段快照），新→旧返回；"
             + "每版带 config（配置对象）、changes（与上一版的字段级差异 [{field,label,from,to}]）、"
             + "current（是否最新版记录）、identical（内容是否与当前配置一致）；仅可管理者可见")
+    @Permission("agent:read")
     @GetMapping("/{id}/versions")
     public ResultJson versions(@PathVariable("id") String id) {
         if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
@@ -186,6 +197,7 @@ public class AgentController {
 
     @Operation(summary = "回滚配置到历史版本", description = "body: {version}——把该历史版本的调优字段重新应用，并落一版新快照（reason 记「回滚自 vX」）；"
             + "历史版本本身不被改写，回滚动作可再次回滚；仅可管理者可操作")
+    @Permission("agent:write")
     @PostMapping("/{id}/rollback")
     public ResultJson rollback(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
@@ -206,6 +218,7 @@ public class AgentController {
 
     @Operation(summary = "批量删除智能体", description = "body: {ids:[...]}；逐条按单条删除口径判权"
             + "（创建者/被授权人/管理员，内置智能体不可删）；返回 {succeeded:[id], failed:[{id,name,error}]}")
+    @Permission("agent:delete")
     @PostMapping("/batch-delete")
     public ResultJson batchDelete(@RequestBody Map<String, Object> body) {
         List<String> ids = BatchResults.parseIds(body);
@@ -234,6 +247,7 @@ public class AgentController {
     }
 
     @Operation(summary = "设为默认", description = "设为默认智能体（其余清零）；仅影响前端下拉预选，不自动强制应用。全局动作，仅管理员")
+    @Permission("agent:write")
     @PostMapping("/{id}/default")
     public ResultJson setDefault(@PathVariable("id") String id) {
         agentService.setDefault(id);
@@ -242,6 +256,7 @@ public class AgentController {
 
     @Operation(summary = "查询公开分享配置", description = "返回 {enabled, mcpEnabled, guestImages, guestFiles, token, modelRef, visitCount, lastVisitAt}；"
             + "未发布返回 enabled=false（仅可管理者可见）")
+    @Permission("agent:publish")
     @GetMapping("/{id}/publish")
     public ResultJson getPublish(@PathVariable("id") String id) {
         if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
@@ -272,6 +287,7 @@ public class AgentController {
             + "名单内 server 的工具对游客可见且免逐次审批）；"
             + "modelRef 为游客对话模型引用（须为自己可用的供应商模型，空=回退本人个人默认模型）；首次发布生成 token，此后不变。"
             + "游客能力收窄：沙盒/产物/MCP(未授权名单)/技能执行不暴露，检索可见性与默认模型按发布者执行")
+    @Permission("agent:publish")
     @PostMapping("/{id}/publish")
     public ResultJson publish(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");
@@ -341,6 +357,7 @@ public class AgentController {
     }
 
     @Operation(summary = "撤销公开分享", description = "删除分享配置（链接立即失效）；重新发布会生成新 token")
+    @Permission("agent:publish")
     @DeleteMapping("/{id}/publish")
     public ResultJson revokePublish(@PathVariable("id") String id) {
         if (!canManage(agentService.get(id))) return ResultJson.error("仅可管理自己创建或被授权管理的智能体");

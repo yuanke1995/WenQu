@@ -15,6 +15,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
+import com.wenqu.ai.security.Permission;
 
 /**
  * 问答反馈与数据看板
@@ -34,6 +35,7 @@ public class QaController {
     private final SessionService sessionService;
 
     @Operation(summary = "提交回答反馈", description = "对 AI 回答进行 👍👎 评价，可选填写反馈文本（仅能评价本人会话内的消息）")
+    @Permission("chat:use")
     @PostMapping("/feedback")
     public ResultJson feedback(
             @Parameter(description = "{\"messageId\": \"消息ID\", \"rating\": 1|0, \"feedbackText\": \"可选反馈文本\"}")
@@ -56,6 +58,7 @@ public class QaController {
     }
 
     @Operation(summary = "差评样本列表", description = "👎 样本按时间倒序（含问题/回答摘要/反馈说明/引用块），供看板反馈回流：加入评估集或补知识块")
+    @Permission("stats:read")
     @GetMapping("/analytics/badcases")
     public ResultJson badCases(
             @Parameter(description = "返回上限（默认 50，最大 100）")
@@ -64,6 +67,7 @@ public class QaController {
     }
 
     @Operation(summary = "看板统计", description = "获取数据看板聚合统计：问答量、满意率、引用率、无命中率、热门问题 TOP10、无命中问题 TOP10")
+    @Permission("stats:read")
     @GetMapping("/analytics/summary")
     public ResultJson analytics() {
         return ResultJson.ok(qaLogService.analyticsSummary());

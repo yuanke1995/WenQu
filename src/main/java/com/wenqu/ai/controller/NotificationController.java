@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.util.Map;
+import com.wenqu.ai.security.Permission;
 
 /**
  * 站内通知接口（铃铛）：列表 / 未读数 / 已读。
@@ -35,6 +36,7 @@ public class NotificationController {
 
     @Operation(summary = "通知列表", description = "当前用户的通知（新→旧）；支持 type 类型筛选、unreadOnly 仅未读、cursor 游标分页。" +
             "返回 {items:[通知], nextCursor, hasMore, total, unreadCount}")
+    @Permission("self:notification")
     @GetMapping("/list")
     public ResultJson list(@RequestParam(value = "limit", defaultValue = "50") int limit,
                            @RequestParam(value = "type", required = false) String type,
@@ -44,12 +46,14 @@ public class NotificationController {
     }
 
     @Operation(summary = "未读数", description = "当前用户未读通知条数（铃铛 Badge 轮询用）")
+    @Permission("self:notification")
     @GetMapping("/unread-count")
     public ResultJson unreadCount() {
         return ResultJson.ok(Map.of("count", notificationService.unreadCount(RequestUser.uid())));
     }
 
     @Operation(summary = "各类型未读计数", description = "返回 {counts:{类型:未读数}, unread:总未读}；通知中心筛选角标用")
+    @Permission("self:notification")
     @GetMapping("/counts")
     public ResultJson counts() {
         Map<String, Long> counts = notificationService.countsByType(RequestUser.uid());
@@ -57,6 +61,7 @@ public class NotificationController {
     }
 
     @Operation(summary = "标记已读", description = "body: {ids:[通知ID]}；只影响属于自己的未读通知")
+    @Permission("self:notification")
     @PostMapping("/read")
     public ResultJson markRead(@RequestBody Map<String, Object> body) {
         Object raw = body == null ? null : body.get("ids");
@@ -65,12 +70,14 @@ public class NotificationController {
     }
 
     @Operation(summary = "全部已读", description = "当前用户全部未读通知标记已读")
+    @Permission("self:notification")
     @PostMapping("/read-all")
     public ResultJson markAllRead() {
         return ResultJson.ok(Map.of("updated", notificationService.markAllRead(RequestUser.uid())));
     }
 
     @Operation(summary = "删除通知", description = "body: {ids:[通知ID]}；只删除属于自己的通知")
+    @Permission("self:notification")
     @PostMapping("/delete")
     public ResultJson delete(@RequestBody Map<String, Object> body) {
         Object raw = body == null ? null : body.get("ids");
@@ -79,6 +86,7 @@ public class NotificationController {
     }
 
     @Operation(summary = "清空通知", description = "body: {scope:'all'|'read'}；all=清空全部，read=仅清已读；都只清自己的")
+    @Permission("self:notification")
     @PostMapping("/clear")
     public ResultJson clear(@RequestBody Map<String, Object> body) {
         String scope = body == null ? "all" : String.valueOf(body.getOrDefault("scope", "all"));
@@ -86,12 +94,14 @@ public class NotificationController {
     }
 
     @Operation(summary = "通知类型偏好（静音）", description = "返回本用户已静音的通知类型列表（类型常量数组）")
+    @Permission("self:notification")
     @GetMapping("/preferences")
     public ResultJson getPreferences() {
         return ResultJson.ok(Map.of("mutedTypes", notificationService.getMutedTypes(RequestUser.uid())));
     }
 
     @Operation(summary = "保存通知类型偏好（静音）", description = "body: {mutedTypes:[类型常量...]}；空数组=恢复接收全部类型")
+    @Permission("self:notification")
     @PutMapping("/preferences")
     public ResultJson savePreferences(@RequestBody Map<String, Object> body) {
         Object raw = body == null ? null : body.get("mutedTypes");

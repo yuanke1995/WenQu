@@ -26,6 +26,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import com.wenqu.ai.security.Permission;
 
 /**
  * 帮助中心 / 官方内置手册只读接口。
@@ -88,6 +89,7 @@ public class ManualController {
      */
     @Operation(summary = "手动同步官方手册", description = "把随包分发的 classpath:manual/*.md 同步进官方内置库（幂等增量："
             + "指纹未变的篇目跳过、不产生向量调用）。仅管理员。升级后需手动触发一次——不会随启动自动执行")
+    @Permission("manual:sync")
     @PostMapping("/sync")
     public ResultJson sync() {
         Map<String, Object> r = manualSeedService.syncNow();

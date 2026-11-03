@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import com.wenqu.ai.security.Permission;
 
 /**
  * 内容安全规则管理（Phase 3 · P12）。
@@ -44,6 +45,7 @@ public class ContentSafetyController {
 
     @Operation(summary = "规则清单（管理）",
             description = "全部规则（含未启用的），按排序号升序。判定顺序就是这个顺序，先命中的那条说话。")
+    @Permission("content-safety:manage")
     @GetMapping
     public ResultJson<List<ContentRule>> list(HttpServletRequest request) {
         if (!adminGuard.isAdmin(request)) return ResultJson.error("内容安全规则仅管理员可查看");
@@ -53,6 +55,7 @@ public class ContentSafetyController {
     @Operation(summary = "闸门状态（管理）",
             description = "此刻生效中的输入/输出规则条数、外部服务选择与坏正则清单。"
                     + "「配了规则却不生效」的两种成因都在这里露出来：规则被禁用，或正则无法编译被跳过。")
+    @Permission("content-safety:manage")
     @GetMapping("/status")
     public ResultJson<Map<String, Object>> status(HttpServletRequest request) {
         if (!adminGuard.isAdmin(request)) return ResultJson.error("内容安全规则仅管理员可查看");
@@ -63,6 +66,7 @@ public class ContentSafetyController {
             description = "stage=input|output|both；matchType=keyword|regex；action=block|warn。"
                     + "关键词支持逗号或换行分隔多条。出口规则建议先 warn 跑一个观察期再改 block："
                     + "已经流到屏幕上的字收不回来，出口命中只能当场截断。")
+    @Permission("content-safety:manage")
     @PostMapping
     public ResultJson<Map<String, Object>> save(@RequestBody ContentRule rule, HttpServletRequest request) {
         if (!adminGuard.isAdmin(request)) return ResultJson.error("内容安全规则仅管理员可修改");
@@ -73,6 +77,7 @@ public class ContentSafetyController {
     }
 
     @Operation(summary = "删除规则", description = "删除即停止判定（正在跑的那一轮按已生效的判定走完）")
+    @Permission("content-safety:manage")
     @DeleteMapping("/{id}")
     public ResultJson delete(@PathVariable("id") String id, HttpServletRequest request) {
         if (!adminGuard.isAdmin(request)) return ResultJson.error("内容安全规则仅管理员可删除");
@@ -83,6 +88,7 @@ public class ContentSafetyController {
     @Operation(summary = "试跑规则",
             description = "给一段文本与侧别（input/output），返回会命中哪几条、各自会怎么处置。"
                     + "不落库、不写审计、不改任何东西——改词表时先看这一步，别靠真发一句话去猜。")
+    @Permission("content-safety:manage")
     @PostMapping("/dry-run")
     public ResultJson<Map<String, Object>> dryRun(@RequestBody Map<String, String> body,
                                                   HttpServletRequest request) {

@@ -582,6 +582,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_api` (
     `name`        VARCHAR(100) DEFAULT NULL COMMENT '接口名称（展示用）',
     `module`      VARCHAR(50)  DEFAULT NULL COMMENT '所属模块（Controller 分组，可编辑）',
     `builtin`     INT          DEFAULT 0 COMMENT '扫描登记: 1=启动期自动登记（路径删除后重启会重新登记）',
+    `permission_code` VARCHAR(50) DEFAULT NULL COMMENT '授权点编码（@Permission 注解，扫描器写入；NULL=未标注）',
     `create_time` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time` DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
@@ -599,6 +600,31 @@ CREATE TABLE IF NOT EXISTS `c_ai_role_api` (
     `api_id`    VARCHAR(50) NOT NULL COMMENT '接口ID（c_ai_api.id）',
     PRIMARY KEY (`role_code`, `api_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='角色-接口绑定';
+
+-- ============================================
+-- RBAC 升级（2026-11-03）：授权点层（docs/rbac-upgrade-plan.md 批次 A）
+-- 授权判定从「角色 → HTTP 端点」升级为「角色 → 授权点 → 端点」；
+-- 端点归属由 @Permission 注解声明、ApiEndpointScanner 启动时写入 c_ai_api.permission_code。
+-- ============================================
+
+CREATE TABLE IF NOT EXISTS `c_ai_permission` (
+    `code`        VARCHAR(50)  NOT NULL COMMENT '授权点编码（domain:action，如 kb:read / document:delete）',
+    `name`        VARCHAR(100) NOT NULL COMMENT '授权点名称（展示用）',
+    `module`      VARCHAR(50)  DEFAULT NULL COMMENT '所属模块（Controller 分组，扫描器写入）',
+    `create_time` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`code`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='授权点目录（事实源在代码 @Permission 注解，扫描器自动登记）';
+
+CREATE TABLE IF NOT EXISTS `c_ai_role_permission` (
+    `role_code`       VARCHAR(50) NOT NULL COMMENT '角色编码（c_ai_role.code）',
+    `permission_code` VARCHAR(50) NOT NULL COMMENT '授权点编码（c_ai_permission.code）',
+    `effect`          VARCHAR(8)  NOT NULL DEFAULT 'allow' COMMENT '效果: allow | deny（deny 优先于 allow，方案 D3）',
+    `exempt`          INT         DEFAULT 0 COMMENT '豁免: 1=本条 deny 只在该角色内部生效，不压其它角色给的 allow（D3 豁免开关）',
+    `create_time`     DATETIME    DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (`role_code`, `permission_code`),
+    KEY `idx_rp_perm` (`permission_code`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='角色-授权点绑定（allow/deny；授权判定数据源）';
+
 
 CREATE TABLE IF NOT EXISTS `c_ai_menu_api` (
     `menu_id` VARCHAR(50) NOT NULL COMMENT '菜单ID（c_ai_menu.id）',

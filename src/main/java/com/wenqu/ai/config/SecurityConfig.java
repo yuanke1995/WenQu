@@ -69,7 +69,34 @@ public class SecurityConfig implements WebMvcConfigurer {
      * 对话页智能体下拉（GET /agent/available，只读精简字段）。
      */
 
-    private boolean isPublicUserEndpoint(String method, String path) {
+    /**
+     * 显式公开端点集（enforce 模式的白名单替身，方案 A.2b）：设计上的公开通道<b>逐条列名</b>，
+     * 不许前缀通配——这是 G3（"看着像同一段就被漏掉自动放行"）的结构性收口。
+     * 与 {@link #isPublicUserEndpoint}（legacy/shadow 模式的问答白名单）的区别：
+     * 这里只放"没有登录态/没有角色语义也必须可达"的通道；普通用户的能力全部走角色授权点。
+     */
+    public static boolean isPublicChannelEndpoint(String method, String path) {
+        if (method == null || path == null) return false;
+        // SCIM 2.0 入站：认证源专属 Bearer，鉴权在 ScimService 逐入口强校验
+        if (isScimEndpoint(path)) return true;
+        // 登录引导（含 /auth/me）：登录前可达，逐条列在 isAuthBootstrapEndpoint
+        if (isAuthBootstrapEndpoint(method, path)) return true;
+        // 游客分享通道：分享 token 即凭据
+        if (isShareGuestEndpoint(path)) return true;
+        // 租户开通申请：免登录的唯一写入端点（精确 POST）
+        if (isTenantApplyEndpoint(method, path)) return true;
+        // 沙盒脚本回调：一次性运行凭据
+        if (isSandboxCallbackEndpoint(method, path)) return true;
+        // 公开只读：运行时公开配置、对话页智能体下拉（脱敏只读）
+        if ("GET".equals(method) && ("/api/ai/config/public".equals(path)
+                || "/api/ai/agent/available".equals(path))) return true;
+        // 帮助中心（官方内置手册，只读；入口是全局悬浮按钮，所有角色可用）
+        if ("GET".equals(method) && ("/api/ai/manual/documents".equals(path)
+                || path.matches("/api/ai/manual/documents/[^/]+/content"))) return true;
+        return false;
+    }
+
+    public static boolean isPublicUserEndpoint(String method, String path) {
         if (method == null || path == null) return false;
         // 会话管理（含全部方法：GET/DELETE/PUT/POST）
         if (path.equals("/api/ai/session") || path.startsWith("/api/ai/session/")
@@ -477,12 +504,16 @@ public class SecurityConfig implements WebMvcConfigurer {
                         ResultJson.error(401, "请先登录")));
                 return false;
             }
-            // 3. 问答用户白名单之外 → RBAC 判定（fail-closed）：
+            // 3. RBAC 判定（fail-closed），按 permission-mode 分流（方案 §8 M2 双跑）：
             //    ① 管理员级角色（内置 superadmin/admin 或自定义 admin_flag=1）直通；
-            //    ② 其余角色按 c_ai_role_api 绑定匹配（method + AntPathMatcher，/{id} 占位可匹配），
-            //       未绑定一律 403——权限在权限管理页「角色 → 接口权限」里显式授予。
+            //    ② legacy/shadow：问答用户白名单之外的端点走判定（canAccessAny 内部按模式分流，
+            //       shadow 只记录新旧判定差异、仍按旧结果放行）；
+            //    ③ enforce：白名单收口为「显式公开端点集」（isPublicChannelEndpoint，A4/G18），
+            //       其余一切端点都进判定——新端点默认拒绝，不再有"落进前缀就自动放行"。
             //    OPTIONS 预检放行（浏览器 CORS 预检不携带语义，交给 CORS 配置处理）。
-            if (!isPublicUserEndpoint(method, path)) {
+            boolean enforce = roleService.permissionModeEnforced();
+            if (enforce ? !isPublicChannelEndpoint(method, path)
+                    : !isPublicUserEndpoint(method, path)) {
                 var roles = com.wenqu.ai.util.RequestUser.roles();
                 boolean pass = "OPTIONS".equals(method)
                         || roleService.isAdminAny(roles)

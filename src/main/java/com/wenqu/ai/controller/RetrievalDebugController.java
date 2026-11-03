@@ -18,6 +18,7 @@ import org.springframework.ai.document.Document;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.*;
+import com.wenqu.ai.security.Permission;
 
 /**
  * 检索调试：分步展示"关键词命中 → 向量命中 → 合并 → 重排 → 最终上下文 → 被排除"，
@@ -47,6 +48,7 @@ public class RetrievalDebugController {
 
     @Operation(summary = "检索链路调试",
             description = "分步展示检索全链路：关键词命中、向量命中（含相似度分）、合并结果、重排结果、最终上下文（Top 8）、被排除的候选。用于排查召回质量问题。可选 kbIds 限定库范围（对照实验/单库排查）")
+    @Permission("retrieval-debug:run")
     @PostMapping("/retrieval")
     public ResultJson debug(
             @Parameter(description = "{\"question\": \"检索问题\", \"kbIds\": [\"可选，限定库范围\"]}")

@@ -28,6 +28,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import com.wenqu.ai.security.Permission;
 
 /**
  * 工作区容器接口：把「一个工作目录 + 若干次会话 + 若干份产物」收在一个可持续的根下。
@@ -58,6 +59,7 @@ public class ProjectController {
     @Operation(summary = "我的工作区列表",
             description = "implicit 兜底容器在前（每人一个、后台懒创建），其余按创建时间倒序。"
                     + "首次调用若还没有兜底容器会自动创建——用户不建工作区也能正常问答，只是产物开始有归属")
+    @Permission("project:read")
     @GetMapping("/list")
     public ResultJson list() {
         String uid = RequestUser.uid();
@@ -96,6 +98,7 @@ public class ProjectController {
     }
 
     @Operation(summary = "工作区详情", description = "名称 / 工作区约定 / 默认助手；不存在或不属于你返回可读错误")
+    @Permission("project:read")
     @GetMapping("/{id}")
     public ResultJson detail(@PathVariable("id") String id) {
         try {
@@ -113,6 +116,7 @@ public class ProjectController {
     @Operation(summary = "工作区轮次占用状态",
             description = "busy=true 时返回占用者（kind: user/scheduled/workflow，name，sessionId，startedAt，elapsedMs）；"
                     + "workdirShared=false 的工作区不取轮次锁，恒为空闲")
+    @Permission("project:read")
     @GetMapping("/{id}/turn-guard")
     public ResultJson turnGuard(@PathVariable("id") String id) {
         try {
@@ -144,6 +148,7 @@ public class ProjectController {
             description = "name / instructions（工作区约定，对该工作区所有会话生效，变更自动留痕）/ defaultAgentId（工作区默认助手）/ "
                     + "kbIds（绑定知识库清单=默认检索域，传空数组清空）/ sharedWorkdir（共用工作目录开关）/ "
                     + "memoryIsolated（记忆隔离：本区会话不注入也不写入个人记忆）。传才改，空=清空")
+    @Permission("project:write")
     @PutMapping("/{id}")
     public ResultJson update(@PathVariable("id") String id, @RequestBody UpdateReq req) {
         try {
@@ -165,6 +170,7 @@ public class ProjectController {
     }
 
     @Operation(summary = "归档 / 恢复工作区", description = "body: {status: active|archived}。归档不动会话与产物，implicit 兜底容器不可归档")
+    @Permission("project:write")
     @PutMapping("/{id}/status")
     public ResultJson status(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         try {
@@ -184,6 +190,7 @@ public class ProjectController {
                     + "dirs 是全目录的文件夹清单（「移动到…」用），names 是全目录的文件名（产物去重用）。"
                     + "可预览的条目另带 viewUrl：一条签名地址（默认 1 小时有效），前端直接开成浏览器标签页。"
                     + "目录不存在=正常空态；宿主目录读不到（如沙盒在另一台机器）如实返回不可用")
+    @Permission("project:read")
     @GetMapping("/{id}/files")
     public ResultJson files(@PathVariable("id") String id,
                             @RequestParam(value = "dir", required = false) String dir) {
@@ -200,6 +207,7 @@ public class ProjectController {
             description = "multipart：file 可多份（一次最多 50 个）、dir=落进哪个文件夹（空=根目录）、"
                     + "overwrite=true 时同名覆盖（默认拒绝并报出那个名字）。"
                     + "单文件上限见系统设置「工作区上传单文件上限」；归档中的工作区不收文件")
+    @Permission("project:write")
     @PostMapping("/{id}/files")
     public ResultJson uploadFiles(@PathVariable("id") String id,
                                   @RequestParam("file") List<MultipartFile> files,
@@ -220,6 +228,7 @@ public class ProjectController {
     }
 
     @Operation(summary = "在工作区里新建文件夹", description = "body: {path: 相对路径}，父目录必须已存在；名称不能以点开头（这里不显示隐藏文件）")
+    @Permission("project:write")
     @PostMapping("/{id}/dir")
     public ResultJson createDir(@PathVariable("id") String id, @RequestBody DirReq req) {
         try {
@@ -241,6 +250,7 @@ public class ProjectController {
             description = "body: {from, to}（都是相对工作区的 POSIX 路径）。文件和文件夹都走这一条；"
                     + "目标父目录必须已存在、位置上不能有同名条目，也不能把文件夹挪进它自己里面。"
                     + "工作区里有任务正在跑时拒绝（那一轮以为文件还在原位）")
+    @Permission("project:write")
     @PutMapping("/{id}/file")
     public ResultJson moveFile(@PathVariable("id") String id, @RequestBody MoveReq req) {
         try {
@@ -263,6 +273,7 @@ public class ProjectController {
             description = "body: {paths:[...], op: move|delete, dir?}。op 必须写——「移动」和「删除」两个分支一个是整理、"
                     + "一个是不可恢复地删文件，不能靠某个字段留没留下来猜意图。op=move 时 dir 是目标文件夹（空串＝根目录）；"
                     + "删除文件夹会连里面的内容一起删；已经不在了的条目算成功。一次最多 500 项")
+    @Permission("project:write")
     @PostMapping("/{id}/files/batch")
     public ResultJson batch(@PathVariable("id") String id, @RequestBody BatchReq req) {
         try {
@@ -294,6 +305,7 @@ public class ProjectController {
     @Operation(summary = "打包导出工作区目录",
             description = "整个工作区目录打成 zip（流式；隐藏文件与 node_modules 等排除在名单外）。"
                     + "文件数 >2000 或总量 >100MB 明确拒绝（响应开流前就失败，不会给出坏掉的包）")
+    @Permission("project:export")
     @GetMapping("/{id}/export")
     public void export(@PathVariable("id") String id, jakarta.servlet.http.HttpServletResponse resp) throws java.io.IOException {
         String uid = RequestUser.uid();
@@ -323,6 +335,7 @@ public class ProjectController {
     }
 
     @Operation(summary = "下载工作区文件", description = "按工作区目录内的相对路径下载；越界路径（../、绝对路径）一律 400")
+    @Permission("project:read")
     @GetMapping("/{id}/file")
     public org.springframework.http.ResponseEntity<org.springframework.core.io.Resource> download(
             @PathVariable("id") String id,
@@ -346,6 +359,7 @@ public class ProjectController {
     @Operation(summary = "读工作区文件的文本原文",
             description = "预览台里「读字」那一档用（Markdown / 代码 / 分隔符表）：按 uid + 工作区 + 相对路径逐条校归属，"
                     + "非文本类型与越界路径回可读错误；超过上限只回前一段并带 truncated 标记，不假装是全文")
+    @Permission("project:read")
     @GetMapping("/{id}/file/content")
     public ResultJson fileContent(@PathVariable("id") String id,
                                   @RequestParam("path") String path) {
@@ -357,6 +371,7 @@ public class ProjectController {
     }
 
     @Operation(summary = "工作区的工作流", description = "本工作区下本人的工作流（名称/状态/更新时间）；触发仍走 /workflow/{id}/run")
+    @Permission("project:read")
     @GetMapping("/{id}/workflows")
     public ResultJson workflows(@PathVariable("id") String id) {
         try {
@@ -377,6 +392,7 @@ public class ProjectController {
     @Operation(summary = "工作区运行记录",
             description = "合流定时任务执行记录与工作流运行记录（按开始时刻倒序，默认 50 条）。"
                     + "kind=scheduled 的行带 sessionId（结果会话）；kind=workflow 的行带 workflowId 与 run id（运行历史深链）")
+    @Permission("project:read")
     @GetMapping("/{id}/runs")
     public ResultJson runs(@PathVariable("id") String id,
                            @RequestParam(value = "limit", required = false, defaultValue = "50") int limit) {
@@ -398,6 +414,7 @@ public class ProjectController {
     @Operation(summary = "新建工作区",
             description = "用户显式创建一个工作区。fromProjectId 可选：从本人另一个工作区复制设置"
                     + "（约定/绑定资料域/共用目录/记忆隔离），会话与文件一概不带。implicit 兜底容器不用建、也不可删")
+    @Permission("project:write")
     @PostMapping
     public ResultJson create(@RequestBody CreateReq req) {
         try {
@@ -415,6 +432,7 @@ public class ProjectController {
     @Operation(summary = "约定留痕",
             description = "本工作区约定被替换掉的旧版（按被替换时刻倒序，最多 20 条）；"
                     + "content=null 表示当时约定为空。恢复=把旧值存回约定（走更新接口，会再次留痕）")
+    @Permission("project:read")
     @GetMapping("/{id}/instruction-history")
     public ResultJson instructionHistory(@PathVariable("id") String id) {
         try {
@@ -428,6 +446,7 @@ public class ProjectController {
 
     @Operation(summary = "工作区事项清单",
             description = "未完成在前（新添的在上），已完成按完成时刻倒序收尾。归属校验同其他工作区端点")
+    @Permission("project:read")
     @GetMapping("/{id}/todos")
     public ResultJson todos(@PathVariable("id") String id) {
         try {
@@ -438,6 +457,7 @@ public class ProjectController {
     }
 
     @Operation(summary = "新增事项", description = "body: {title}（一句话，≤200 字）")
+    @Permission("project:write")
     @PostMapping("/{id}/todos")
     public ResultJson createTodo(@PathVariable("id") String id, @RequestBody TodoReq req) {
         try {
@@ -449,6 +469,7 @@ public class ProjectController {
     }
 
     @Operation(summary = "更新事项", description = "body: {title?, done?}（传才改）。done=true 勾完成并记时刻，false 取消完成")
+    @Permission("project:write")
     @PutMapping("/{id}/todos/{todoId}")
     public ResultJson updateTodo(@PathVariable("id") String id, @PathVariable("todoId") String todoId,
                                  @RequestBody TodoReq req) {
@@ -461,6 +482,7 @@ public class ProjectController {
     }
 
     @Operation(summary = "删除事项", description = "逻辑删除；已完成与未完成都可删")
+    @Permission("project:delete")
     @DeleteMapping("/{id}/todos/{todoId}")
     public ResultJson deleteTodo(@PathVariable("id") String id, @PathVariable("todoId") String todoId) {
         try {
@@ -483,6 +505,7 @@ public class ProjectController {
     @Operation(summary = "删除工作区",
             description = "删除后其下会话与产物仍然保留（只摘掉工作区归属）。implicit 兜底容器不可删。"
                     + "deleteFiles=true 时连工作目录一起删（不可恢复，先删文件失败则整单失败）")
+    @Permission("project:delete")
     @DeleteMapping("/{id}")
     public ResultJson delete(@PathVariable("id") String id,
                              @RequestParam(value = "deleteFiles", required = false, defaultValue = "false") boolean deleteFiles) {

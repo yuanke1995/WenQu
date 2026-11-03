@@ -17,6 +17,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeSet;
+import com.wenqu.ai.security.Permission;
 
 /**
  * 模型配置接口（配置界面）
@@ -39,6 +40,7 @@ public class ConfigController {
     private final com.wenqu.ai.service.UserConfigService userConfigService;
 
     @Operation(summary = "获取全量配置", description = "获取所有模型配置项（分组展示 + editable 标记；apiKey 脱敏显示）")
+    @Permission("config:read")
     @GetMapping
     public ResultJson getConfig() {
         return ResultJson.ok(configService.snapshot());
@@ -49,6 +51,7 @@ public class ConfigController {
      * <p>前端据此渲染表单（不再内置字段副本），字段的属性/范围/文案与后端校验规则来自同一份定义。
      */
     @Operation(summary = "获取配置字段定义", description = "面板、字段（类型/范围/默认值/条件显隐/文案）")
+    @Permission("config:read")
     @GetMapping("/schema")
     public ResultJson schema() {
         return ResultJson.ok(configSchemaService.describe());
@@ -64,6 +67,7 @@ public class ConfigController {
             description = "不带 keys：回三处清单的对账结果（定义有而默认无 / 默认有而库里无行 / 存量值不合字段定义）。"
                     + "带 keys（逗号分隔）：逐键给出生效值、哪一层在说话、出厂默认、库里是否有行、这行值合不合定义，"
                     + "传 uid 时另给该成员的个人覆盖值。敏感项只回掩码。")
+    @Permission("config:read")
     @GetMapping("/trace")
     public ResultJson<Map<String, Object>> trace(
             @Parameter(description = "逗号分隔的配置键；留空=只回对账汇总")
@@ -164,6 +168,7 @@ public class ConfigController {
 
     /** 重排服务可用性探测（设置页"启用重排"开关打开前校验；绕过缓存真实请求） */
     @Operation(summary = "探测重排服务", description = "强制探测 rerank 服务（/v1/models），返回 available 供前端开启开关前校验")
+    @Permission("config:read")
     @GetMapping("/rerank/check")
     public ResultJson checkRerank() {
         return ResultJson.ok(Map.of("available", rerankService.checkAvailable()));
@@ -171,6 +176,7 @@ public class ConfigController {
 
     /** Meilisearch 可用性探测（设置页切换关键词引擎前校验；绕过缓存真实请求） */
     @Operation(summary = "探测 Meilisearch", description = "强制探测 Meilisearch /health，返回 available 供前端切换引擎前校验")
+    @Permission("config:read")
     @GetMapping("/keyword/check")
     public ResultJson checkKeyword() {
         return ResultJson.ok(Map.of("available", keywordIndexService.checkAvailable()));
@@ -182,6 +188,7 @@ public class ConfigController {
      */
     @Operation(summary = "测试连通", description = "用传入的（未保存）配置真实探测模型网关或服务是否可达。"
             + "group=chat|vision|embedding|rerank|keyword|sandbox|webSearch；返回 {available, latencyMs, detail}")
+    @Permission("config:manage")
     @PostMapping("/probe")
     public ResultJson probe(
             @Parameter(description = "{\"group\":\"chat\",\"baseUrl\":\"..\",\"apiKey\":\"..\",\"model\":\"..\",\"path\":\"..\"}")
@@ -197,6 +204,7 @@ public class ConfigController {
     /** 向量模型全量重嵌入已退役：向量模型归各知识库绑定，重嵌入随知识库编辑/切换向量模型按库触发 */
     @Operation(summary = "保存配置", description = "保存可编辑的模型配置项（vision.prompt、检索/解析参数等），保存即生效无需重启；*.apiKey 以 RSA 加密入库。业务模型已归属使用者：知识库绑定向量/解析视觉/检索重排模型，聊天模型走会话覆盖>个人默认。"
             + "提交里出现字段定义外的键时整笔拒绝（400 并点名该键），不会保存一半再返回成功")
+    @Permission("config:manage")
     @PutMapping
     public ResultJson updateConfig(
             @Parameter(description = "{\"chat\": {\"citationCheckEnabled\": \"true\"}, \"vision\": {\"prompt\": \"..\"}}")
@@ -212,6 +220,7 @@ public class ConfigController {
     }
 
     @Operation(summary = "恢复分组默认值", description = "将指定配置分组（chat/vision/chunk/parse/upload/retrieval/rerank/keyword/context/ratelimit）恢复为出厂默认。不触碰 embedding 组与各模型 API Key，防止误触发全量重嵌入/误清密钥")
+    @Permission("config:manage")
     @PostMapping("/reset")
     public ResultJson resetGroup(@Parameter(description = "{\"groups\": [\"chat\"]}")
                                  @RequestBody Map<String, Object> body) {

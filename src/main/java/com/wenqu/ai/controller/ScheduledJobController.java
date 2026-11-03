@@ -21,6 +21,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import com.wenqu.ai.security.Permission;
 
 /**
  * 定时执行智能体接口（个人资产）：每人管自己的任务，归属校验在 Service（{@code mustOwn}）里做。
@@ -39,6 +40,7 @@ public class ScheduledJobController {
     private final ScheduledJobService scheduledJobService;
 
     @Operation(summary = "我的定时任务", description = "按创建时间倒序，附最近一次执行状态")
+    @Permission("scheduled:read")
     @GetMapping("/list")
     public ResultJson list(
             @org.springframework.web.bind.annotation.RequestParam(value = "projectId", required = false) String projectId) {
@@ -46,6 +48,7 @@ public class ScheduledJobController {
     }
 
     @Operation(summary = "任务详情")
+    @Permission("scheduled:read")
     @GetMapping("/{id}")
     public ResultJson detail(@PathVariable("id") String id) {
         try {
@@ -56,6 +59,7 @@ public class ScheduledJobController {
     }
 
     @Operation(summary = "新建定时任务", description = "cron 为 5 段（分 时 日 月 周），按 timezone 解释")
+    @Permission("scheduled:write")
     @PostMapping
     public ResultJson create(@RequestBody Map<String, Object> body) {
         try {
@@ -66,6 +70,7 @@ public class ScheduledJobController {
     }
 
     @Operation(summary = "修改定时任务", description = "改 cron / 时区 / 启停后会自动重算下次执行时刻")
+    @Permission("scheduled:write")
     @PutMapping("/{id}")
     public ResultJson update(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         try {
@@ -76,6 +81,7 @@ public class ScheduledJobController {
     }
 
     @Operation(summary = "删除定时任务", description = "软删；已产生的执行记录与结果会话保留")
+    @Permission("scheduled:delete")
     @DeleteMapping("/{id}")
     public ResultJson delete(@PathVariable("id") String id) {
         try {
@@ -92,6 +98,7 @@ public class ScheduledJobController {
 
     @Operation(summary = "批量删除定时任务", description = "body: {ids:[...]}；只删本人的（逐条按单条口径）；"
             + "返回 {succeeded:[id], failed:[{id,name,error}]}；已产生的执行记录与结果会话保留")
+    @Permission("scheduled:delete")
     @PostMapping("/batch-delete")
     public ResultJson batchDelete(@RequestBody Map<String, Object> body) {
         List<String> ids = BatchResults.parseIds(body);
@@ -113,6 +120,7 @@ public class ScheduledJobController {
 
     @Operation(summary = "批量启用/停用定时任务", description = "body: {ids:[...], enabled:true|false}；只操作本人的；"
             + "启用时从当前时刻往后重算下次执行；返回 {succeeded:[id], failed:[{id,name,error}]}")
+    @Permission("scheduled:write")
     @PostMapping("/batch-enabled")
     public ResultJson batchEnabled(@RequestBody Map<String, Object> body) {
         List<String> ids = BatchResults.parseIds(body);
@@ -145,6 +153,7 @@ public class ScheduledJobController {
     }
 
     @Operation(summary = "启用/停用", description = "body: {enabled: true|false}；启用时从当前时刻往后重算下次执行")
+    @Permission("scheduled:write")
     @PutMapping("/{id}/enabled")
     public ResultJson toggle(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         try {
@@ -157,6 +166,7 @@ public class ScheduledJobController {
     }
 
     @Operation(summary = "立即执行一次", description = "异步执行（不等结果）；状态与回答看执行历史与该任务的结果会话")
+    @Permission("scheduled:run")
     @PostMapping("/{id}/run")
     public ResultJson runNow(@PathVariable("id") String id) {
         try {
@@ -168,6 +178,7 @@ public class ScheduledJobController {
     }
 
     @Operation(summary = "执行历史", description = "最近 N 次执行的触发方式/状态/回答摘录（正文在结果会话里）")
+    @Permission("scheduled:read")
     @GetMapping("/{id}/runs")
     public ResultJson runs(@PathVariable("id") String id,
                            @RequestParam(value = "limit", required = false, defaultValue = "20") int limit) {

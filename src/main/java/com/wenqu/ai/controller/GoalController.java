@@ -17,6 +17,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import com.wenqu.ai.security.Permission;
 
 /**
  * 目标模式 REST。
@@ -37,6 +38,7 @@ public class GoalController {
     @Operation(summary = "创建目标", description = "把一件事交给目标模式：{sessionId,objective}。"
             + "建行即入队，由调度器起轮；助手提交的证据通过核验后才自动停下。"
             + "同会话已有未结束目标时拒绝（先改它、继续它或删除它）。")
+    @Permission("chat:goal")
     @PostMapping("/goal")
     public ResultJson<Map<String, Object>> start(@RequestBody Map<String, Object> body) {
         String uid = RequestUser.uid();
@@ -56,6 +58,7 @@ public class GoalController {
     @Operation(summary = "目标动作", description = "pause=停止（可再继续）；resume=继续；"
             + "edit=改目标原文（{objective}）；clear=删除（界面撤下，历史保留）。"
             + "完成由模型 goal_submit 提交证据、平台核验；不需要用户逐条勾选验收标准。")
+    @Permission("chat:goal")
     @PostMapping("/goal/{goalId}")
     public ResultJson<Map<String, Object>> act(
             @Parameter(description = "目标 ID") @PathVariable("goalId") String goalId,
@@ -78,6 +81,7 @@ public class GoalController {
 
     @Operation(summary = "当前目标", description = "按会话取当前目标（目标条回显与恢复用）。"
             + "重启/换副本后状态以库里为准。")
+    @Permission("chat:goal")
     @GetMapping("/goal/pending")
     public ResultJson<Map<String, Object>> pending(
             @Parameter(description = "会话 ID") @RequestParam("sessionId") String sessionId) {
@@ -86,6 +90,7 @@ public class GoalController {
 
     @Operation(summary = "会话当前/最近目标", description = "右栏「目标」面板回显：当前/最近一条目标（读 DB）。"
             + "已删除（CANCELLED）的目标不再回显——删了就不该在面板里又冒出来。")
+    @Permission("chat:goal")
     @GetMapping("/session/{sessionId}/goal")
     public ResultJson<Map<String, Object>> sessionGoal(
             @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId) {
@@ -99,6 +104,7 @@ public class GoalController {
 
     @Operation(summary = "目标过程账本", description = "按 goal_id 聚合的事件（过程面板深链：一个目标覆盖多轮）；"
             + "afterId 用于断线增量读取。")
+    @Permission("chat:goal")
     @GetMapping("/session/{sessionId}/goal/events")
     public ResultJson<List<Map<String, Object>>> goalEvents(
             @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId,

@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.util.Map;
+import com.wenqu.ai.security.Permission;
 
 /**
  * 运维保障与治理（管理员面）：系统巡检 / 会话治理 / 平台公告。
@@ -44,6 +45,7 @@ public class OpsController {
 
     @Operation(summary = "立即巡检", description = "MySQL/Redis/关键词引擎/落盘磁盘/审计链/供应商/登录安全态势 "
             + "逐项体检，overall 取最差项；报告入审计，进程内保留最近一次供回看")
+    @Permission("ops:manage")
     @PostMapping("/checkup")
     public ResultJson<Map<String, Object>> runCheckup(HttpServletRequest request) {
         if (!adminGuard.isAdmin(request)) return ResultJson.error("系统巡检仅管理员可执行");
@@ -51,6 +53,7 @@ public class OpsController {
     }
 
     @Operation(summary = "最近一次巡检报告", description = "进程内缓存：后端重启后为空（如实显示「未巡检过」，不假装记得）")
+    @Permission("ops:read")
     @GetMapping("/checkup/last")
     public ResultJson<Map<String, Object>> lastCheckup(HttpServletRequest request) {
         if (!adminGuard.isAdmin(request)) return ResultJson.error("系统巡检仅管理员可查看");
@@ -61,6 +64,7 @@ public class OpsController {
 
     @Operation(summary = "强制下线", description = "该账号已签发的全部令牌（所有设备）当场失效：会话代数 +1。"
             + "适用：账号疑似被盗、离职即踢。本人改密/管理员重置密码会自动做同一件事")
+    @Permission("ops:manage")
     @PostMapping("/user/{uid}/force-logout")
     public ResultJson forceLogout(@PathVariable("uid") String uid, HttpServletRequest request) {
         if (!adminGuard.isAdmin(request)) return ResultJson.error("强制下线仅管理员可操作");
@@ -71,6 +75,7 @@ public class OpsController {
     // ==================== 平台公告 ====================
 
     @Operation(summary = "公告管理清单", description = "含下线的（历史可查）；平台级管理员看全部租户，租户管理员看本租户")
+    @Permission("ops:read")
     @GetMapping("/announcement")
     public ResultJson<List<Announcement>> listAnnouncements(HttpServletRequest request) {
         if (!adminGuard.isAdmin(request)) return ResultJson.error("公告管理仅管理员可查看");
@@ -79,6 +84,7 @@ public class OpsController {
 
     @Operation(summary = "发布/更新公告", description = "level: info=通知 warn=警示 danger=紧急。"
             + "tenantId 仅平台级管理员可指定（跨租户发布）；租户管理员固定发本租户")
+    @Permission("ops:manage")
     @PostMapping("/announcement")
     public ResultJson<Announcement> saveAnnouncement(@RequestBody Map<String, Object> body,
                                                      HttpServletRequest request) {
@@ -95,6 +101,7 @@ public class OpsController {
     }
 
     @Operation(summary = "下线公告", description = "保留行不真删——发出去让全员看见的事要有痕迹，误下线可恢复；要彻底清除走删除端点")
+    @Permission("ops:manage")
     @DeleteMapping("/announcement/{id}")
     public ResultJson deleteAnnouncement(@PathVariable("id") String id, HttpServletRequest request) {
         if (!adminGuard.isAdmin(request)) return ResultJson.error("公告管理仅管理员可操作");
@@ -103,6 +110,7 @@ public class OpsController {
     }
 
     @Operation(summary = "删除公告", description = "物理删除，仅已下线的公告可删（发布中的先下线再删）；删除动作带标题入审计")
+    @Permission("ops:manage")
     @DeleteMapping("/announcement/{id}/purge")
     public ResultJson purgeAnnouncement(@PathVariable("id") String id, HttpServletRequest request) {
         if (!adminGuard.isAdmin(request)) return ResultJson.error("公告管理仅管理员可操作");
@@ -111,6 +119,7 @@ public class OpsController {
     }
 
     @Operation(summary = "当前生效公告（登录用户）", description = "本租户发布中的公告，登录后横幅数据源；任何登录用户可读")
+    @Permission("ops:read")
     @GetMapping("/announcement/active")
     public ResultJson<List<Announcement>> activeAnnouncements(HttpServletRequest request) {
         return ResultJson.ok(announcementService.active());

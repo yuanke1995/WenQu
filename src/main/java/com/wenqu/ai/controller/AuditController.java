@@ -22,6 +22,7 @@ import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import com.wenqu.ai.security.Permission;
 
 /**
  * 统一审计事件的查询、导出与链校验（Phase 3 · P11）。
@@ -45,6 +46,7 @@ public class AuditController {
             description = "按时间/操作人/动作/关键字分页查（时间倒序）。默认只看得到<b>本租户</b>的事件；"
                     + "平台级（superadmin）可带 tenant=某租户 跨租户审阅。actions 给下拉选项，"
                     + "droppedSinceStart=本进程因队列满未入库的条数（非 0 说明审计有缺口，日志里仍有全文）")
+    @Permission("audit:read")
     @GetMapping
     public ResultJson<Map<String, Object>> list(@RequestParam(value = "days", defaultValue = "7") int days,
                                                 @RequestParam(value = "actor", required = false) String actor,
@@ -68,6 +70,7 @@ public class AuditController {
     @Operation(summary = "合规导出（CSV）",
             description = "按同一套查询条件导出 CSV（最多 10 万行，逐批写出）。导出头部含留存期与链校验结论，"
                     + "接收方能判断这份材料是否完整可信")
+    @Permission("audit:read")
     @GetMapping("/export")
     public void export(@RequestParam(value = "days", defaultValue = "30") int days,
                        @RequestParam(value = "actor", required = false) String actor,
@@ -105,6 +108,7 @@ public class AuditController {
     @Operation(summary = "哈希链校验",
             description = "逐副本按序号验审计链：报告序号断裂、链头不接、内容被改写三类断点。"
                     + "problems 为空＝这份审计自校验通过（留存清理删掉的最老一批不算断点）")
+    @Permission("audit:verify")
     @GetMapping("/verify")
     public ResultJson<Map<String, Object>> verify(@RequestParam(value = "maxRows", defaultValue = "50000") int maxRows,
                                                   HttpServletRequest request) {

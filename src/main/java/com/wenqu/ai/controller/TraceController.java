@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 import java.util.Map;
+import com.wenqu.ai.security.Permission;
 
 /**
  * 执行 Trace 与运营闭环（P1，Coze Loop 模式）。
@@ -34,6 +35,7 @@ public class TraceController {
 
     @Operation(summary = "执行列表", description = "kind=chat 对话 / workflow 工作流（两类各自分页）。"
             + "筛选：keyword 关键词、hasCitation 有无引用（对话）、rating 评分 1/0（对话）、days 最近 N 天（0=不限）、agentId 智能体")
+    @Permission("trace:read")
     @GetMapping("/list")
     public ResultJson list(@RequestParam(value = "kind", defaultValue = "chat") String kind,
                            @RequestParam(value = "page", defaultValue = "1") int page,
@@ -48,18 +50,21 @@ public class TraceController {
 
     @Operation(summary = "对话型详情", description = "日志 + 回答消息全过程（sources/toolCalls/tokens/timeline）+ 反馈 + 采样状态；"
             + "存量行（无 message_id 关联）为摘要视图")
+    @Permission("trace:read")
     @GetMapping("/chat/{id}")
     public ResultJson chatDetail(@PathVariable("id") String id) {
         return ResultJson.ok(traceService.chatDetail(id));
     }
 
     @Operation(summary = "工作流型详情", description = "run 全量（含节点级 node_traces）+ 工作流名")
+    @Permission("trace:read")
     @GetMapping("/workflow/{runId}")
     public ResultJson workflowDetail(@PathVariable("runId") String runId) {
         return ResultJson.ok(traceService.workflowDetail(runId));
     }
 
     @Operation(summary = "采样池列表", description = "status=pending/labeled/dismissed/all")
+    @Permission("trace:read")
     @GetMapping("/pool")
     public ResultJson pool(@RequestParam(value = "status", defaultValue = "pending") String status,
                            @RequestParam(value = "page", defaultValue = "1") int page,
@@ -69,6 +74,7 @@ public class TraceController {
 
     @Operation(summary = "标注并回流评测集", description = "body: {knowledgeIds:[知识块ID...], note?}——期望命中的知识块至少 1 个，"
             + "回流走评测集 addCase（版本化机制不变），成功才置 labeled")
+    @Permission("trace:manage")
     @PostMapping("/pool/{id}/label")
     public ResultJson label(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
         @SuppressWarnings("unchecked")
@@ -78,18 +84,21 @@ public class TraceController {
     }
 
     @Operation(summary = "忽略样本", description = "不回流，置 dismissed")
+    @Permission("trace:manage")
     @PostMapping("/pool/{id}/dismiss")
     public ResultJson dismiss(@PathVariable("id") String id) {
         return ResultJson.ok(traceService.dismiss(id));
     }
 
     @Operation(summary = "手动触发一次采样", description = "与定时任务同一逻辑（差评必采 + 无引用/随机按配置数量），幂等可重复点")
+    @Permission("trace:manage")
     @PostMapping("/sample/run")
     public ResultJson sampleNow() {
         return ResultJson.ok(traceService.sampleDaily());
     }
 
     @Operation(summary = "采样池概览", description = "各状态计数 + 最近入池时间（看板小卡数据源）")
+    @Permission("trace:read")
     @GetMapping("/stats")
     public ResultJson stats() {
         return ResultJson.ok(traceService.stats());

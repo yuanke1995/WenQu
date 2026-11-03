@@ -20,6 +20,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import com.wenqu.ai.security.Permission;
 
 /**
  * 租户注册与成员归属（Phase 4 · P9）。
@@ -47,6 +48,7 @@ public class TenantController {
     @Operation(summary = "租户清单（管理）",
             description = "每个租户的名称、启停状态与成员数（成员数跨租户统计，是平台视角）。"
                     + "平台级管理员看全量；租户级管理员只看自家一行——别家客户的存在与名字不外泄")
+    @Permission("tenant:read")
     @GetMapping
     public ResultJson<List<Map<String, Object>>> list(HttpServletRequest request) {
         if (!adminGuard.isAdmin(request)) return ResultJson.error("租户管理仅管理员可查看");
@@ -61,6 +63,7 @@ public class TenantController {
     @Operation(summary = "开通租户",
             description = "{\"id\":\"标识（小写字母数字-_，2-32 位，直接作为数据归属标识）\",\"name\":\"显示名\","
                     + "\"contact\":\"联系人\",\"note\":\"备注\"}。新租户初始为空：成员要从「成员管理」里把账号归属改过来")
+    @Permission("tenant:manage")
     @PostMapping
     public ResultJson<Map<String, Object>> create(@RequestBody Map<String, String> body,
                                                   HttpServletRequest request) {
@@ -76,6 +79,7 @@ public class TenantController {
 
     @Operation(summary = "启停租户",
             description = "{\"enabled\":true|false}。停用只挡该租户成员登录，数据一律保留；默认租户不能停用")
+    @Permission("tenant:manage")
     @PostMapping("/{id}/status")
     public ResultJson status(@PathVariable("id") String id, @RequestBody Map<String, Object> body,
                              HttpServletRequest request) {
@@ -88,6 +92,7 @@ public class TenantController {
     @Operation(summary = "变更成员归属",
             description = "{\"uid\":\"成员账号\",\"tenantId\":\"目标租户\"}。只改账号归属："
                     + "他已产出的会话、知识库、工作流留在原租户（要合并资源走显式的资源转移，不藏在改归属里）")
+    @Permission("tenant:manage")
     @PostMapping("/member")
     public ResultJson moveMember(@RequestBody Map<String, String> body, HttpServletRequest request) {
         requirePlatform(request);
@@ -115,6 +120,7 @@ public class TenantController {
     }
 
     @Operation(summary = "开通申请清单", description = "status 留空=全部（待审优先由前端排）；仅平台级管理员可看")
+    @Permission("tenant:read")
     @GetMapping("/requests")
     public ResultJson<List<Map<String, Object>>> requests(@RequestParam(value = "status", required = false) String status,
                                                           HttpServletRequest request) {
@@ -125,6 +131,7 @@ public class TenantController {
     @Operation(summary = "批准开通申请",
             description = "开租户 + 建首位管理员账号（标识 <租户>-admin，随机口令只在这次结果里出现一次）。"
                     + "申请人没填期望标识时必须在这里给一个。")
+    @Permission("tenant:manage")
     @PostMapping("/requests/{id}/approve")
     public ResultJson<Map<String, Object>> approveRequest(@PathVariable("id") String id,
                                                           @RequestBody(required = false) Map<String, String> body,
@@ -135,6 +142,7 @@ public class TenantController {
     }
 
     @Operation(summary = "驳回开通申请", description = "驳回不动任何数据，只把这一单结掉并留说明")
+    @Permission("tenant:manage")
     @PostMapping("/requests/{id}/reject")
     public ResultJson<Map<String, Object>> rejectRequest(@PathVariable("id") String id,
                                                          @RequestBody(required = false) Map<String, String> body,
@@ -172,6 +180,7 @@ public class TenantController {
     @Operation(summary = "租户落点清单（备份与恢复用）",
             description = "该租户在库里与盘上的全部落点：成员、按租户归属的表与行数、磁盘目录（记忆/沙盒工作区/产物/附件/外溢原文/自装技能）、"
                     + "Redis 键形态，以及不随租户走的全局部分。备份脚本按这份清单取数，路径规则不在脚本里重抄一遍。仅平台级可用。")
+    @Permission("tenant:read")
     @GetMapping("/{id}/inventory")
     public ResultJson<Map<String, Object>> inventory(@PathVariable("id") String id, HttpServletRequest request) {
         if (!adminGuard.isAdmin(request)) return ResultJson.error("租户落点清单仅平台级管理员可查");

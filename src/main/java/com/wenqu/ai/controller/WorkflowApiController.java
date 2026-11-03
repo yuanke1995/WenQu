@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
+import com.wenqu.ai.security.Permission;
 
 /**
  * 对外工作流 API（M4）：持 API Key 的外部系统触发<b>已发布</b>工作流。
@@ -42,6 +43,7 @@ public class WorkflowApiController {
             + "跑的是<b>已发布版本</b>的 DSL（草稿改动不影响），返回 run 全量信息："
             + "status / outputs（结束节点出参）/ nodeTraces（节点级输入输出与耗时）/ durationMs。"
             + "失败不抛 500——返回 status=failed 的 run，error 与 trace 可定位失败节点。")
+    @Permission("workflow:api")
     @PostMapping("/{id}/run")
     public ResultJson run(@PathVariable("id") String id, @RequestBody(required = false) Map<String, Object> body,
                           HttpServletRequest request) {
@@ -56,6 +58,7 @@ public class WorkflowApiController {
 
     @Operation(summary = "查询运行结果", description = "按 runId 查本次运行的状态与结果（触发方与归属一致的才可见）；"
             + "用于外部系统异步核对（同步触发已直接返回，此接口供补查/回溯）")
+    @Permission("workflow:api")
     @GetMapping("/{id}/run/{runId}")
     public ResultJson runDetail(@PathVariable("id") String id, @PathVariable("runId") String runId,
                                 HttpServletRequest request) {
