@@ -279,6 +279,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { CheckOutlined, CopyOutlined } from '@ant-design/icons-vue'
+import { writeClipboard } from '../utils/clipboard'
 
 const router = useRouter()
 
@@ -323,7 +324,7 @@ data: {
 
 const copied = ref('')
 const copy = async (k, text) => {
-  try { await navigator.clipboard.writeText(text); copied.value = k } catch (e) { copied.value = '' }
+  copied.value = (await writeClipboard(text)) ? k : ''
 }
 
 // 章节滚动跟随：进视口比例最高的章节高亮（与 HelpCenter 的选中形态一致）

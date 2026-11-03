@@ -33,19 +33,23 @@
       <button class="app-btn ghost small" @click="keyKeyword = ''">清除搜索</button>
     </div>
 
-    <a-table v-else :data-source="filteredKeys" size="small" row-key="id" :pagination="false" :scroll="{ x: 880 }">
-      <a-table-column title="名称" key="name" ellipsis>
-        <template #default="{ record }">
+    <a-table v-else :data-source="filteredKeys" :columns="keyCols" size="small" row-key="id"
+             :pagination="false" table-layout="fixed" :scroll="{ x: 1010 }">
+      <template #bodyCell="{ column, record }">
+        <template v-if="column.key === 'name'">
           <span class="key-name-wrap">
             <span class="key-name">{{ record.name || '未命名' }}</span>
             <span v-if="record.expired" class="app-pill err key-tag">已过期</span>
+            <a-tooltip v-else-if="!record.actAsUid"
+                       title="这把 Key 签发于身份绑定规则之前，没有代表账号，调用问答会直接被拒；删掉重签即可恢复">
+              <span class="app-pill warn key-tag">问答不可用</span>
+            </a-tooltip>
           </span>
         </template>
-      </a-table-column>
-      <a-table-column title="Key" key="prefix" width="230">
-        <template #default="{ record }">
+        <template v-else-if="column.key === 'prefix'">
           <span class="key-cell">
-            <code class="key-prefix" :class="{ plain: !!revealed[record.id] }">{{ revealed[record.id] || (record.keyPrefix + '••••••••') }}</code>
+            <code class="key-prefix" :class="{ plain: !!revealed[record.id] }"
+                  :title="revealed[record.id] || ''">{{ revealed[record.id] || (record.keyPrefix + '••••••••') }}</code>
             <button class="key-mini" :disabled="revealingId === record.id"
                     :title="revealed[record.id] ? '隐藏明文' : '显示明文'" @click="toggleReveal(record)">
               <eye-invisible-outlined v-if="revealed[record.id]" /><eye-outlined v-else />
@@ -55,50 +59,34 @@
             </button>
           </span>
         </template>
-      </a-table-column>
-      <a-table-column title="代表账号" key="actAs" width="100">
-        <template #default="{ record }">
-          <span v-if="record.actAsUid" class="key-act-as">{{ record.actAsUid }}</span>
-          <a-tooltip v-else title="未设代表账号：这把 Key 打不了问答（仅剩 MCP 入口等以创建人身份执行的用途）">
-            <span class="app-pill warn key-tag">未设</span>
-          </a-tooltip>
-        </template>
-      </a-table-column>
-      <a-table-column title="状态" key="status" width="70">
-        <template #default="{ record }">
+        <template v-else-if="column.key === 'status'">
           <a-tooltip :title="record.expired ? '已过期，不可启用' : (record.disabled ? '已停用，点击启用' : '生效中，点击停用')">
             <a-switch size="small" :checked="!record.disabled" :disabled="!!record.expired"
                       :loading="keyTogglingId === record.id" @change="toggleKey(record)" />
           </a-tooltip>
         </template>
-      </a-table-column>
-      <a-table-column title="MCP" key="mcp" width="64">
-        <template #default="{ record }">
+        <template v-else-if="column.key === 'mcp'">
           <a-tooltip :title="record.mcpEnabled ? '可访问平台级 MCP 入口 /ai/mcp' : '未授权 MCP 入口（点击授权）'">
             <a-switch size="small" :checked="!!record.mcpEnabled"
                       :loading="keyMcpTogglingId === record.id" @change="toggleKeyMcp(record)" />
           </a-tooltip>
         </template>
-      </a-table-column>
-      <a-table-column title="最近使用" key="lastUsed" width="120">
-        <template #default="{ record }">
+        <template v-else-if="column.key === 'lastUsed'">
           <span :class="{ 'key-dim': !record.lastUsedAt }">{{ record.lastUsedAt ? fmtTs(record.lastUsedAt) : '从未使用' }}</span>
         </template>
-      </a-table-column>
-      <a-table-column title="创建时间" key="created" width="100">
-        <template #default="{ record }"><span class="key-dim">{{ fmtDate(record.createTime) }}</span></template>
-      </a-table-column>
-      <a-table-column title="有效期" key="expire" width="86">
-        <template #default="{ record }"><span class="key-dim">{{ record.expireAt ? fmtDate(record.expireAt) : '长期' }}</span></template>
-      </a-table-column>
-      <a-table-column title="操作" key="act" width="90">
-        <template #default="{ record }">
+        <template v-else-if="column.key === 'created'">
+          <span class="key-dim">{{ fmtDate(record.createTime) }}</span>
+        </template>
+        <template v-else-if="column.key === 'expire'">
+          <span class="key-dim">{{ record.expireAt ? fmtDate(record.expireAt) : '长期' }}</span>
+        </template>
+        <template v-else-if="column.key === 'act'">
           <button class="app-link-btn" @click="openEditKey(record)">编辑</button>
           <a-popconfirm title="删除该 Key？调用方将立即失效" ok-text="删除" cancel-text="取消" @confirm="delKey(record.id)">
             <button class="app-link-btn danger">删除</button>
           </a-popconfirm>
         </template>
-      </a-table-column>
+      </template>
     </a-table>
     <!-- 如何使用：拿到 Key 之后怎么调，比堆一段说明文字有用 -->
     <div class="key-usage">
@@ -194,38 +182,31 @@
             </button>
           </a-tooltip>
         </div>
-        <a-table :data-source="auditRows" size="small" row-key="id" :pagination="false" :loading="auditLoading" :scroll="{ x: 820 }">
-          <a-table-column title="时间" key="time" width="130">
-            <template #default="{ record }"><span class="key-dim">{{ fmtTs(record.createdAt) }}</span></template>
-          </a-table-column>
-          <a-table-column title="渠道" key="channel" width="100">
-            <template #default="{ record }">
+        <a-table :data-source="auditRows" :columns="auditCols" size="small" row-key="id" :pagination="false"
+                 :loading="auditLoading" table-layout="fixed" :scroll="{ x: 900 }">
+          <template #bodyCell="{ column, record }">
+            <template v-if="column.key === 'time'">
+              <span class="key-dim">{{ fmtTs(record.createdAt) }}</span>
+            </template>
+            <template v-else-if="column.key === 'channel'">
               <span class="audit-chip" :class="record.channel">{{ auditChannelText(record.channel) }}</span>
             </template>
-          </a-table-column>
-          <a-table-column title="工具" key="tool" width="180" ellipsis>
-            <template #default="{ record }"><code class="audit-mono">{{ record.toolName }}</code></template>
-          </a-table-column>
-          <a-table-column title="凭据" key="cred" width="150" ellipsis>
-            <template #default="{ record }"><code class="audit-mono">{{ record.credentialRef || '—' }}</code></template>
-          </a-table-column>
-          <a-table-column title="归属" key="owner" width="120" ellipsis>
-            <template #default="{ record }">{{ record.ownerUid || '—' }}</template>
-          </a-table-column>
-          <a-table-column title="调用者 IP" key="ip" width="120" ellipsis>
-            <template #default="{ record }">{{ record.callerIp || '—' }}</template>
-          </a-table-column>
-          <a-table-column title="耗时" key="dur" width="90">
-            <template #default="{ record }">{{ record.durationMs }}ms</template>
-          </a-table-column>
-          <a-table-column title="结果" key="ok">
-            <template #default="{ record }">
+            <template v-else-if="column.key === 'tool'">
+              <code class="audit-mono">{{ record.toolName }}</code>
+            </template>
+            <template v-else-if="column.key === 'cred'">
+              <code class="audit-mono">{{ record.credentialRef || '—' }}</code>
+            </template>
+            <template v-else-if="column.key === 'owner'">{{ record.ownerUid || '—' }}</template>
+            <template v-else-if="column.key === 'ip'">{{ record.callerIp || '—' }}</template>
+            <template v-else-if="column.key === 'dur'">{{ record.durationMs }}ms</template>
+            <template v-else-if="column.key === 'ok'">
               <a-tooltip v-if="!record.success && record.errorMsg" :title="record.errorMsg">
                 <span class="audit-chip fail">失败</span>
               </a-tooltip>
               <span v-else class="audit-chip pass">成功</span>
             </template>
-          </a-table-column>
+          </template>
         </a-table>
         <div class="audit-pager">
           <span class="key-dim">共 {{ auditTotal }} 条</span>
@@ -321,8 +302,8 @@
  *   ② 明文由服务端加密保管（JWE），列表「眼睛」随时回显、「复制」直接拷贝；
  *      存量 Key（回显上线前签发）无密文，眼睛会明确提示重签。
  *   ③ MCP 调用审计：管理视角的折叠块，仅管理员渲染。
- * 列表按归属过滤（谁建归谁）：普通用户进来看到的是自己的 Key，
- * 管理员看到的是全平台的——同一份组件不需要分叉。
+ * 列表按归属过滤（谁建归谁）：只返回本人签发的 Key，管理员也没有全量短路，
+ * 所以同一份组件不需要分叉，也不需要一列「代表账号」（恒等于本人）。
  */
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
@@ -332,9 +313,34 @@ import { CheckOutlined, CopyOutlined, EyeInvisibleOutlined, EyeOutlined, ReloadO
 import { listApiKeys, createApiKey, setApiKeyDisabled, setApiKeyMcp, deleteApiKey,
          updateApiKey, revealApiKey, getMcpAuditLogs, getMcpAuditSummary } from '../api'
 import { authUser } from '../utils/auth'
+import { writeClipboard } from '../utils/clipboard'
 
 const keys = ref([])
 const keysLoading = ref(false)
+// 列宽只能走 :columns + table-layout="fixed"：写成 <a-table-column width="..."> 不进 colgroup，
+// 浏览器按内容排宽——点「眼睛」回显 48 字明文时 Key 列被撑到 500px，其余列挤成竖排两行字，行高翻三倍。
+// 「代表账号」列已去掉：服务端把 actAsUid 恒写成签发人，列表又只返回本人建的 Key，每行都是同一个 uid；
+// 它唯一有信息量的状态（存量 Key 未绑定 → 问答 401）改在名称后面挂牌。
+const keyCols = [
+  { title: '名称', key: 'name', ellipsis: true },
+  { title: 'Key', key: 'prefix', width: 380 },
+  { title: '启用', key: 'status', width: 54 },
+  { title: 'MCP 入口', key: 'mcp', width: 84 },
+  { title: '最近使用', key: 'lastUsed', width: 130 },
+  { title: '创建时间', key: 'created', width: 90 },
+  { title: '有效期', key: 'expire', width: 90 },
+  { title: '操作', key: 'act', width: 84 }
+]
+const auditCols = [
+  { title: '时间', key: 'time', width: 118 },
+  { title: '渠道', key: 'channel', width: 100 },
+  { title: '工具', key: 'tool', width: 170, ellipsis: true },
+  { title: '凭据', key: 'cred', width: 150, ellipsis: true },
+  { title: '归属', key: 'owner', width: 110, ellipsis: true },
+  { title: '调用者 IP', key: 'ip', width: 110, ellipsis: true },
+  { title: '耗时', key: 'dur', width: 70 },
+  { title: '结果', key: 'ok', width: 80 }
+]
 const keyKeyword = ref('')
 const keyTogglingId = ref('')
 const keyMcpTogglingId = ref('')
@@ -377,12 +383,16 @@ const toggleReveal = async rec => {
   }
   await ensureRevealed(rec)
 }
-const copyKey = async rec => {
-  const plain = await ensureRevealed(rec)
-  if (!plain) return
-  const ok = await copyText(plain)
+const copyKey = rec => {
+  // 明文已在手时同步发起写入：await 过一轮网络就把用户手势丢了，Safari 那类浏览器会直接拒绝剪贴板写入
+  const cached = revealed.value[rec.id]
+  if (cached) return writePlain(rec, cached, true)
+  ensureRevealed(rec).then(plain => plain && writePlain(rec, plain, false))
+}
+const writePlain = async (rec, plain, hadPlain) => {
+  const ok = await writeClipboard(plain)
   copiedKeyId.value = ok ? rec.id : ''
-  if (!ok) message.warning('浏览器未授权剪贴板，请手动选中复制')
+  if (!ok) message.warning(hadPlain ? '复制失败：请检查浏览器的剪贴板权限' : '明文已取出，再点一次复制图标')
 }
 
 const activeKeyCount = computed(() => keys.value.filter(k => !k.disabled && !k.expired).length)
@@ -405,9 +415,6 @@ const loadKeys = async () => {
     if (r.success && Array.isArray(r.data)) keys.value = r.data
   } catch (e) { /* 拉取失败不打扰，保留上次列表 */ }
   finally { keysLoading.value = false }
-}
-const copyText = async t => {
-  try { await navigator.clipboard.writeText(t); return true } catch (e) { return false }
 }
 /** 有效期选择 → 提交给后端的 expireAt（yyyy-MM-dd；空串=长期）。创建与编辑两个弹窗共用 */
 const expirePayload = form => {
@@ -479,18 +486,18 @@ const submitCreateKey = async () => {
     if (r.success) {
       createdKey.value = { name: r.data?.name || createForm.value.name.trim(), apiKey: r.data?.apiKey || '' }
       createStep.value = 'done'
-      copiedKey.value = await copyText(createdKey.value.apiKey)
+      copiedKey.value = await writeClipboard(createdKey.value.apiKey)
     } else message.error(r.msg || '创建失败')
   } catch (e) { message.error(e.message || '创建失败') }
   finally { keyCreating.value = false }
 }
 const copyCreatedKey = async () => {
-  const ok = await copyText(createdKey.value.apiKey)
+  const ok = await writeClipboard(createdKey.value.apiKey)
   copiedKey.value = ok
   if (!ok) message.warning('浏览器未授权剪贴板，请手动选中复制')
 }
 const copySample = async (k, text) => {
-  const ok = await copyText(text)
+  const ok = await writeClipboard(text)
   copiedSample.value = ok ? k : ''
   if (!ok) message.warning('浏览器未授权剪贴板，请手动选中复制')
 }
@@ -607,11 +614,13 @@ onMounted(loadKeys)
 .key-name-wrap { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; }
 .key-name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .key-tag { font-size: 11px; flex: none; line-height: 18px; }
-.key-prefix { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--app-text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.key-prefix.plain { color: var(--app-text); }
+.key-prefix { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 22px; color: var(--app-text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 明文整串都要看得见：不截断，在格内换行（67 字约 484px，列宽 436 装不下一行） */
+.key-prefix.plain { color: var(--app-text); white-space: normal; word-break: break-all; overflow: visible; text-overflow: clip; }
 /* Key 单元格：密文态 + 眼睛/复制（回显是敏感动作，图标做小、悬停才有着色） */
-.key-cell { display: inline-flex; align-items: center; gap: 2px; max-width: 100%; min-width: 0; }
-.key-cell .key-prefix { flex: 0 1 auto; }
+/* flex（非 inline-flex）+ min-width:0：明文 48 字不换行，只有让 code 能缩到内容以下才会截断而不是撑开整列 */
+.key-cell { display: flex; align-items: flex-start; gap: 2px; min-width: 0; }
+.key-cell .key-prefix { flex: 1 1 auto; min-width: 0; }
 .key-mini {
   border: none; background: transparent; color: var(--app-text3); cursor: pointer;
   width: 22px; height: 22px; border-radius: 5px; flex: none; padding: 0;
@@ -619,7 +628,6 @@ onMounted(loadKeys)
 }
 .key-mini:hover { background: var(--app-accent-weak); color: var(--app-accent); }
 .key-mini:disabled { opacity: .5; cursor: wait; }
-.key-act-as { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--app-text2); }
 /* 空态 */
 .key-empty { text-align: center; padding: 36px 20px; border: 1px dashed var(--app-border); border-radius: 8px; }
 .key-empty-title { font-size: 13px; font-weight: 500; margin-bottom: 6px; }

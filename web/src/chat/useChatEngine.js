@@ -2884,6 +2884,9 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         msg.content = msg.planStopped ? '（计划未批准，本轮已停止）' : '（已停止生成）'
       }
       msg.loading = false
+      // 叫停那一轮：服务端确认停掉后把「⏹ 已停止本轮」补进正文（与落库那份同形）。
+      // 上面那条 abort 可能先于 /chat/stop 的响应收尾，两边都调一次、由 endsWith 去重
+      if (st.serverStopped) markStoppedTurn(msg)
       // 整轮已收口：提问卡（若还在）撤掉——超时/忽略走的是 done 前的 tool_status 终态，此处兜底
       // 队列一起清：这一轮不会再有可答的卡了
       msg.ask = null
@@ -3103,6 +3106,22 @@ const closeRunningTools = (msg, why) => {
   }
 }
 
+/** 与后端 {@code TurnRecorder.STOP_SUFFIX} 同一份文案（改一处要同步改另一处，否则当场与刷新后不同形） */
+const STOP_SUFFIX = '\n\n> ⏹ 已停止本轮，以上为已生成的部分'
+
+/**
+ * 把「已停止本轮」补到这一轮正文尾部。
+ * <p>服务端只把它追加在<b>落库</b>的那一份上，而叫停时这条通道已经 abort，终态帧赶不上来——
+ * 不就地补这一句，用户要刷新才看得见（真机 2026-11-03）。
+ * <p>只在整轮收尾后补：正文还在流式累积时补，下一帧 flush 会把 `full` 盖回来、把这半句冲掉。
+ * 空正文那一支不补——那支服务端不落助手消息，界面由「（已停止生成）」收束语说。
+ */
+const markStoppedTurn = (msg) => {
+  if (!msg || msg.loading) return
+  if (msg.content === '' || msg.content.endsWith(STOP_SUFFIX)) return
+  msg.content += STOP_SUFFIX
+}
+
 const stop = () => {
   // 只停当前会话的流；其它会话的后台流不受影响
   const st = chatStreams.get(currentSessionId.value)
@@ -3111,7 +3130,14 @@ const stop = () => {
     chatStreams.delete(sid)
     // 先请服务端真停：abort 只断本地通道，而通道断开在「正等你作答 / 批准计划」那一轮的语义是
     // **转后台把本轮跑完**，还占着会话互斥直到人工等待超时（表现：按了停止，下一问发不出去、额度照烧）。
-    stopChatTurn(sid).catch(() => message.warning('服务端没能停止本轮，它可能仍在后台跑完'))
+    stopChatTurn(sid).then(r => {
+      // 只认服务端确认停掉的那一次：stopped=false 说明这一轮并不归这次停止管（多半刚自己结束），
+      // 那一份落库正文里没有终止标注，凭空补一句就是刷新后又消失
+      if (r?.data?.stopped === true) {
+        st.serverStopped = true
+        markStoppedTurn(st.msg)
+      }
+    }).catch(() => message.warning('服务端没能停止本轮，它可能仍在后台跑完'))
     // 服务端补发的终态帧已经赶不上这条通道（abort 就在下一行），不在这里定格就是：
     // 正文已经写了「已停止本轮」，那张工具卡还在转圈，要等刷新读库里那份才收
     closeRunningTools(st.msg, '本轮已停止')

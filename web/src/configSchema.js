@@ -2,8 +2,10 @@
 //
 // 字段/面板/文案的唯一来源是后端的 src/main/resources/config-schema.json
 // （经 GET /api/ai/config/schema 下发）：同一份定义同时驱动前端渲染与后端保存校验。
-// 此前这里是一份 78 字段的硬编码数组，靠 scripts/codegen/gen_config_schema.js 与后端逐个比对来维持一致——
-// 一旦漏改就会出现"设置页少字段"或"提交被后端静默丢弃"（脚本自身的正则还解析不了带点的键名）。
+// 此前这里是一份 78 字段的硬编码数组，与后端逐个手工比对来维持一致——
+// 一旦漏改就会出现"设置页少字段"或"提交被后端静默丢弃"。
+// 字段定义 ↔ ConfigService.defaults() 的差集现在由启动对账兜住：错位会打 [Config][对账] WARN，
+// 也可查 GET /api/ai/config/trace。
 //
 // 下面三个容器保持"引用不变"：applyServerSchema() 填充后，所有消费方
 // （SettingsPage.vue / SchemaField.vue）无需改造成异步读取。

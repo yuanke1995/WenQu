@@ -472,6 +472,7 @@ import KnowledgeBaseEditModal from '../components/KnowledgeBaseEditModal.vue'
 import KnowledgeGraphModal from '../components/KnowledgeGraphModal.vue'
 import ModelSelect from '../components/ModelSelect.vue'
 import { renderMd, prepKnowledgeContent, resolveImg, onImgError, copyCode } from '../utils/markdown'
+import { copyText } from '../utils/clipboard'
 import { estimateTokens, fmtTokens } from '../utils/token'
 import { isAdminSync, ensureAuth } from '../utils/auth'
 import { mobileShell } from '../h5/mobile'
@@ -1286,12 +1287,7 @@ const kbChunkHtml = record => {
   const d = (kbExpandedDetail.value && kbExpandedDetail.value.id === record.id) ? kbExpandedDetail.value : record
   return renderMd(prepKnowledgeContent(d.content, d.images || []), d.images || [])
 }
-const copyKbContent = async record => {
-  try {
-    await navigator.clipboard.writeText(record.content || '')
-    message.success('已复制知识块内容')
-  } catch (e) { message.warning('浏览器未授权剪贴板，请手动选中复制') }
-}
+const copyKbContent = record => copyText(record.content || '', '已复制知识块内容')
 const kbCollapseWs = t => String(t || '').replace(/\s+/g, ' ')
 /** 搜索词高亮分段（大小写不敏感）：返回 [{t, hit}] 供模板逐段渲染，避免 v-html 注入 */
 const kbHighlightParts = text => {

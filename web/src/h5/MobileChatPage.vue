@@ -543,6 +543,7 @@ import { useApprovalRecovery } from '../chat/useApprovalRecovery'
 import { submitFeedback as apiSubmitFeedback, getKnowledgeDetail } from '../api'
 import { renderMd, prepKnowledgeContent, enhanceDiagrams } from '../utils/markdown'
 import { fmtTokens } from '../utils/token'
+import { copyText } from '../utils/clipboard'
 import { preferMobileShell } from './mobile'
 import { addSheet, removeSheet } from './sheetStack'
 import { startSessionTabSync, stopSessionTabSync } from '../views/store'
@@ -848,13 +849,6 @@ const openPasteView = a => {
   pasteView.open = true
 }
 
-const copyText = async (txt, okMsg = '已复制到剪贴板') => {
-  if (!txt) { message.warning('没有可复制的内容'); return }
-  try {
-    if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(txt); message.success(okMsg) }
-    else { message.warning('当前环境不支持自动复制，请长按选择文本') }
-  } catch (e) { message.warning('复制失败，请长按选择文本') }
-}
 const copyAnswer = m => copyText((m?.content || '').trim())
 const copyUserMessage = m => copyText((m?.content || '').trim())
 

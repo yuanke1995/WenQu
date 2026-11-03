@@ -737,6 +737,7 @@ import SkillContentModal from '../components/SkillContentModal.vue'
 import { ensureAuth, isAdminSync } from '../utils/auth'
 import { loadModelIndex } from '../utils/modelRef'
 import { locateField } from '../utils/fieldLocate'
+import { copyText } from '../utils/clipboard'
 import { MdEditor, MdPreview } from 'md-editor-v3'
 import 'md-editor-v3/lib/style.css'
 import { themeState } from '../utils/theme'
@@ -1456,12 +1457,6 @@ async function doRevoke () {
   } catch (e) { message.error(e.message || '撤销失败') }
 }
 
-async function copyText (text, tip) {
-  try {
-    await navigator.clipboard.writeText(text)
-    message.success(tip || '已复制')
-  } catch (e) { message.error('复制失败，请手动选择复制') }
-}
 /** 卡片上只标出「显式开启」的能力——跟随全局的不占位置 */
 const capsForcedOn = a => CAPS.filter(c => a[c.key] === 1).map(c => c.label)
 

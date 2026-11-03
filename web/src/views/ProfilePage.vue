@@ -1074,8 +1074,9 @@ watch(current, v => { if (v === 'notify') refreshPushState().then(refreshCap).ca
 .pf-nav-item.active { background: var(--app-accent-weak); color: var(--app-text); font-weight: 500; }
 .pf-content { flex: 1; min-width: 0; overflow-y: auto; padding: 14px 20px 24px; }
 .pf-card { max-width: 640px; padding: 18px 20px; }
-/* API 密钥面板：表格比其它个人设置卡宽，不限 640 上限（内边距与 pf-card 一致） */
-.akp-card { max-width: 960px; padding: 18px 20px; }
+/* API 密钥面板：表格比其它个人设置卡宽，不限 640 上限（内边距与 pf-card 一致）。
+   8 列定宽合计 948 + 名称列，内容框要 1060 才不用横向滚动 */
+.akp-card { max-width: 1240px; padding: 18px 20px; }
 .pf-hint { font-size: 12px; color: var(--app-text2); margin: 0 0 12px; }
 .pf-hint-top { margin-bottom: 18px; line-height: 1.65; }
 .pf-sub-hint { font-size: 11px; color: var(--app-text3); margin: 10px 0 0; }

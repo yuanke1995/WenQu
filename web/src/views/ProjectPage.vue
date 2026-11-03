@@ -590,6 +590,7 @@ import DeleteProjectModal from '../components/DeleteProjectModal.vue'
 import { sessionStore, rememberSession } from './store'
 // 产物地址要过 resolveImg：后端给的是 /ai/artifacts/**，开发态不经媒体前缀会落到 SPA 回退，下载到的是 index.html
 import { resolveImg } from '../utils/markdown'
+import { copyText } from '../utils/clipboard'
 import { canPreview, artifactExt } from '../utils/artifactView'
 // 移动壳下不给跳往桌面专属页的入口（/agents 被 DesktopOnlyGuard 挡着，点了只会撞引导卡）
 import { mobileShell } from '../h5/mobile'
@@ -1113,14 +1114,7 @@ const restoreNote = async row => {
 }
 
 const workdirLabel = computed(() => form.value.workdirPath || ('projects/' + id.value))
-const copyPath = async () => {
-  try {
-    await navigator.clipboard.writeText(workdirLabel.value)
-    message.success('工作目录已复制')
-  } catch (e) {
-    message.error('复制失败，请手动选中复制')
-  }
-}
+const copyPath = () => copyText(workdirLabel.value, '工作目录已复制')
 
 const toggleArchive = async () => {
   const next = form.value.status === 'archived' ? 'active' : 'archived'
