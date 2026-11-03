@@ -50,6 +50,8 @@ const routes = [
   { path: '/stats', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/StatsPage.vue')) }], meta: { title: '使用统计' } },
   // 帮助中心：官方内置手册（问渠使用手册）只读视图，所有登录用户可见
   { path: '/help', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/HelpPage.vue')) }], meta: { title: '帮助中心' } },
+  // 对接文档：API Key 对外集成的在线手册（怎么用 / 有什么能力 / 接哪些），所有登录用户可读
+  { path: '/docs', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/ApiDocsPage.vue')) }], meta: { title: '对接文档' } },
   { path: '/members', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/MembersPage.vue')) }], meta: { requiresAdmin: true, title: '成员管理' } },
   // 租户与开通（Phase 4 · P9）：租户清单/启停/直开 + 自助开通申请的批准与驳回；
   // 平台级动作（启停/直开/审批/落点清单）页内按 superadmin 显隐，服务端同判据兜底

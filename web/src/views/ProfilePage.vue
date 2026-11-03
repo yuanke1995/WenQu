@@ -366,6 +366,11 @@
             </div>
           </a-spin>
         </div>
+
+        <!-- API 密钥（个人资产）：自己的 Key 恒绑自己，开放自己智能体的全能力，不经管理员；
+             管理员在这里为机器号代签并看到全平台列表。整块面板从系统设置迁来（2026-11-02 下放自服务）。
+             卡片放宽：密钥表格比个人设置其它卡宽（pf-card 的 640px 装不下），akp-card 不限宽 -->
+        <ApiKeysPanel v-else-if="current === 'apikeys'" class="app-card akp-card" />
       </section>
     </div>
   </div>
@@ -388,6 +393,7 @@ import { changePasswordApi, getUserPreference, setUserPreference, updateMyProfil
          getMemoryOverview, getMemoryContent, saveMemoryMd, compactMemory, clearMyMemory,
          deleteMemoryDaily } from '../api'
 import ModelSelect from '../components/ModelSelect.vue'
+import ApiKeysPanel from '../components/ApiKeysPanel.vue'
 import UserAvatar from '../components/UserAvatar.vue'
 import { isNarrow } from '../h5/mobile'
 // Web Push 的浏览器侧（能力判定 / 订阅 / 测试）：这一屏是它唯一的入口，判定与文案都从这里出
@@ -405,6 +411,7 @@ const navs = [
   { key: 'notify', label: '通知与推送' },
   { key: 'memory', label: '我的记忆' },
   { key: 'shares', label: '分享管理' },
+  { key: 'apikeys', label: 'API 密钥' },
   { key: 'security', label: '账号安全' }
 ]
 // ?panel= 深链（配置引导建议项「去配置」直达对应面板）；未知值回落个人资料
@@ -1067,6 +1074,8 @@ watch(current, v => { if (v === 'notify') refreshPushState().then(refreshCap).ca
 .pf-nav-item.active { background: var(--app-accent-weak); color: var(--app-text); font-weight: 500; }
 .pf-content { flex: 1; min-width: 0; overflow-y: auto; padding: 14px 20px 24px; }
 .pf-card { max-width: 640px; padding: 18px 20px; }
+/* API 密钥面板：表格比其它个人设置卡宽，不限 640 上限（内边距与 pf-card 一致） */
+.akp-card { max-width: 960px; padding: 18px 20px; }
 .pf-hint { font-size: 12px; color: var(--app-text2); margin: 0 0 12px; }
 .pf-hint-top { margin-bottom: 18px; line-height: 1.65; }
 .pf-sub-hint { font-size: 11px; color: var(--app-text3); margin: 10px 0 0; }
@@ -1266,6 +1275,7 @@ watch(current, v => { if (v === 'notify') refreshPushState().then(refreshCap).ca
   /* 内容区与卡片：全宽（640/720 上限在 412px 上只会让右侧留白不齐） */
   .pf-content { padding: 12px 12px calc(24px + var(--sab, 0px)); }
   .pf-card, .mem-card, .shm-card { max-width: none; padding: 14px; }
+  .akp-card { max-width: none; padding: 14px; }
 
   /* 表单行换行：昵称输入 + 保存按钮并排会挤压（保存两字被压成竖排） */
   .pf-row { flex-wrap: wrap; }

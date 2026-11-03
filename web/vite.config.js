@@ -27,6 +27,8 @@ export default defineConfig({
   server: {
     port: 5800,
     strictPort: true,
+    // 监听 0.0.0.0，允许局域网内其他设备用内网 IP 访问（如 http://192.168.31.x:5800）
+    host: true,
     proxy: {
       // 前端调 /proxy/**，转发到 AI 服务 http://localhost:8090/ai/**
       '/proxy': {

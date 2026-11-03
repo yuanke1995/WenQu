@@ -32,6 +32,13 @@ public class ApiKey {
     /** 明文前缀（展示用，如 sk-a1b2c3d4…） */
     private String keyPrefix;
 
+    /**
+     * Key 明文的 JWE 密文（部署密钥加密保管，列表「眼睛」回显/复制的数据源）。
+     * <p>与哈希并存：哈希负责请求校验（不可逆），密文负责可回显（与模型供应商 api_key 同一套
+     * {@link ConfigCryptoService}）。NULL=签发于「明文回显」上线前的存量 Key，不可回显、只能重签。
+     */
+    private String keyCipher;
+
     /** 是否启用（0=启用，1=停用/吊销） */
     private Integer disabled;
 
@@ -47,11 +54,15 @@ public class ApiKey {
     /** 最近使用时间 */
     private LocalDateTime lastUsedAt;
 
+    /**
+     * 代表账号（集成方身份）：这把 Key 的问答请求以哪个账号执行。
+     * <p>null=不代表任何账号，问答链路直接拒绝——「带对 Key 就等价于拿到某个人的身份」
+     * 必须显式指定，不能靠创建人推断（创建人往往是管理员）。
+     */
+    private String actAsUid;
+
     /** 创建人（登录用户 uid） */
     private String createdBy;
-
-    /** 共享范围(JSON: {read_scope:{access_level:global|department|user,department_ids[],user_uids[]},manage_scope:{同}}; 空=全员可见) */
-    private String shareConfig;
 
     /** 创建时间 */
     private LocalDateTime createTime;

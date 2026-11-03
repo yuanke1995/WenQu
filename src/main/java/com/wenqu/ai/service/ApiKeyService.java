@@ -6,7 +6,6 @@ import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.mapper.ApiKeyMapper;
 import com.wenqu.ai.model.ApiKey;
 import com.wenqu.ai.service.ResourceVisibilityService.Principal;
-import com.wenqu.ai.service.ResourceVisibilityService.ResourceKind;
 import com.wenqu.ai.util.RequestUser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -26,10 +25,19 @@ import java.util.Map;
  * <p>
  * 设计要点：
  * <ul>
- *   <li>明文只在创建时返回一次；库里存 SHA-256 哈希 + 前 8 位前缀（列表可辨识，不泄露全文）</li>
+ *   <li>明文保管两份口径：SHA-256 哈希用于请求校验（不可逆）；明文本体以部署密钥 JWE 加密存
+ *       {@code key_cipher}，供列表「眼睛」回显/复制（与模型供应商 api_key 同一套
+ *       {@link ConfigCryptoService}）。存量 Key（上线回显前签发）无密文，不可回显、只能重签</li>
  *   <li>校验走哈希等值查询（索引命中），命中后还要判停用/过期</li>
  *   <li>热路径（每次带 Key 的请求）只做一次 update 记录 last_used_at，失败不影响放行</li>
- *   <li>Key 权限固定为问答链路（调用方 SecurityConfig 只放行白名单端点），不授予管理端点</li>
+ *   <li>Key 权限固定为问答链路（调用方 SecurityConfig 只放行白名单端点，白名单之外对 Key 身份
+ *       一律 403），不授予管理端点；问答链路里再剔掉「账号自服务与能力配置面」（改密/资料/偏好/
+ *       技能/MCP 配置/定时任务与会话删除，以及 Key 管理本身），见
+ *       {@code SecurityConfig#isKeyDeniedEndpoint}——一把 Key 拿到的是「以某个账号发问」的能力，
+ *       不是「成为那个账号」</li>
+ *   <li>恒绑签发人（2026-11-02 定稿）：Key 以「谁签发」的身份发问，不存在指定/改绑任何别人——
+ *       平台没有机器号概念，也不给「把 Key 指到任意成员」留口子。签名授权交给 1c 硬边界：
+ *       无论签发人是什么角色，Key 的 API 面恒为问答白名单</li>
  * </ul>
  *
  * @author yuanke
@@ -46,6 +54,7 @@ public class ApiKeyService {
 
     private final ApiKeyMapper mapper;
     private final ResourceVisibilityService resourceVisibilityService;
+    private final ConfigCryptoService crypto;
     private static final SecureRandom RANDOM = new SecureRandom();
 
     /** 当前请求者（可见性/可管性判定的输入） */
@@ -53,10 +62,10 @@ public class ApiKeyService {
         return new Principal(RequestUser.uid(), RequestUser.departmentId(), RequestUser.role());
     }
 
-    /** 管理动作前的权限闸：不在共享管理范围内则拒绝（未配置共享＝全局，行为与从前一致） */
+    /** 管理动作前的权限闸：非创建者则拒绝（Key 是个人资产，谁建归谁） */
     private void ensureManageable(ApiKey k) {
-        if (k != null && !resourceVisibilityService.canManage(principal(), k.getShareConfig(), k.getCreatedBy(), ResourceKind.API_KEY)) {
-            throw new BizException(403, "无权管理该 API Key（不在其共享管理范围内）");
+        if (k != null && !resourceVisibilityService.canManage(principal(), k.getCreatedBy())) {
+            throw new BizException(403, "无权管理该 API Key");
         }
     }
 
@@ -65,8 +74,8 @@ public class ApiKeyService {
      *
      * @param name      用途名称
      * @param expireAt  过期时间（null=长期有效）
-     * @param createdBy 创建人标识
-     * @return {id, name, keyPrefix, apiKey}——apiKey 为明文，**仅此一次返回**
+     * @param createdBy 创建人标识（= 代表账号：Key 恒以签发人身份发问）
+     * @return {id, name, keyPrefix, actAsUid, apiKey}——apiKey 为明文，此后可在列表「眼睛」回显
      */
     public Map<String, Object> create(String name, LocalDateTime expireAt, String createdBy) {
         byte[] buf = new byte[RANDOM_BYTES];
@@ -76,30 +85,53 @@ public class ApiKeyService {
         k.setName(name == null || name.isBlank() ? "未命名 Key" : name.trim());
         k.setKeyHash(sha256(plain));
         k.setKeyPrefix(plain.substring(0, PREFIX.length() + 8));
+        // 明文本体加密保管（JWE，部署密钥）：列表「眼睛」随时回显；哈希仍是唯一的校验凭据
+        k.setKeyCipher(crypto.encrypt(plain));
         k.setDisabled(0);
         k.setExpireAt(expireAt);
+        // 恒绑签发人本人（2026-11-02 定稿）：Key 就是以「谁签发」的身份发问，不存在指定别人——
+        // 也就不存在「管理员把 Key 指到任意成员」的口子。签发人必然存在且未停用（能登录才能签）。
+        k.setActAsUid(createdBy);
         k.setCreatedBy(createdBy);
         k.setCreateTime(LocalDateTime.now());
         mapper.insert(k);
-        log.info("[API-KEY] 签发 {}（{}），过期 {}", k.getName(), k.getKeyPrefix() + "…",
-                expireAt == null ? "长期" : expireAt);
+        log.info("[API-KEY] 签发 {}（{}），以签发人 {} 身份发问，过期 {}", k.getName(), k.getKeyPrefix() + "…",
+                createdBy, expireAt == null ? "长期" : expireAt);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("id", k.getId());
         out.put("name", k.getName());
         out.put("keyPrefix", k.getKeyPrefix());
+        out.put("actAsUid", k.getActAsUid());
         out.put("apiKey", plain);
         return out;
     }
 
-    /** 列表（不含哈希，仅前缀等元信息），按创建时间倒序 */
+    /**
+     * 回显 Key 明文（列表「眼睛」/复制按钮的数据源）。
+     * <p>明文以部署密钥 JWE 加密存 {@code key_cipher}，只有能管理该 Key 的人（创建者）可解；
+     * 每次回显记一行审计日志。存量 Key（上线回显前签发）没有密文——当场说清，让持有人重签，
+     * 不静默返回空串（那会被当成"复制到了空 Key"）。
+     */
+    public String reveal(String id) {
+        ApiKey k = mapper.selectById(id);
+        ensureManageable(k);
+        if (k == null || k.getKeyCipher() == null || k.getKeyCipher().isBlank()) {
+            throw new BizException("该 Key 签发于「明文回显」上线之前，无法回显：请重新签发一把（新 Key 恒以签发人身份发问）");
+        }
+        String plain = crypto.decrypt(k.getKeyCipher());
+        log.info("[API-KEY] 回显明文 {}（{}）by {}", k.getId(), k.getKeyPrefix() + "…", RequestUser.uid());
+        return plain;
+    }
+
+    /** 列表（不含哈希与密文，仅前缀等元信息），按创建时间倒序 */
     public List<Map<String, Object>> list() {
         Principal p = principal();
         List<ApiKey> keys = mapper.selectList(new LambdaQueryWrapper<ApiKey>()
                 .orderByDesc(ApiKey::getCreateTime));
         LocalDateTime now = LocalDateTime.now();
         return keys.stream()
-                // 共享范围之外的人看不到该 Key 记录（未配置共享＝全局；创建者/超管始终可见）
-                .filter(k -> resourceVisibilityService.canRead(p, k.getShareConfig(), k.getCreatedBy(), ResourceKind.API_KEY))
+                // Key 是个人资产：仅创建者可见（谁建归谁）
+                .filter(k -> resourceVisibilityService.canRead(p, k.getCreatedBy()))
                 .map(k -> {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", k.getId());
@@ -110,29 +142,42 @@ public class ApiKeyService {
             m.put("expired", k.getExpireAt() != null && k.getExpireAt().isBefore(now));
             m.put("expireAt", k.getExpireAt());
             m.put("lastUsedAt", k.getLastUsedAt());
+            m.put("actAsUid", k.getActAsUid());
             m.put("createdBy", k.getCreatedBy());
-            // 必须回传共享范围原文：前端「共享」弹窗靠它预填，缺了会默认「全员」
-            // 并在一次保存后把已有范围静默清空
-            m.put("shareConfig", k.getShareConfig());
             m.put("createTime", k.getCreateTime());
             return m;
         }).toList();
     }
 
     /**
-     * 编辑 Key 的可改属性：用途名称与有效期（Key 本身不可改——明文只在签发时回显一次）。
+     * 编辑 Key 的可改属性：用途名称与有效期。绑定（act_as_uid）恒为签发人、不可改；
+     * Key 本身不可改（明文加密保管，列表「眼睛」可回显）。
      * <p><b>{@code expireAt} 必须走 {@code set(...)} 显式写入</b>：MyBatis-Plus 默认更新策略是 NOT_NULL，
-     * {@code updateById} 会跳过 null 字段，「改回长期有效」就会静默不生效（与 {@link #updateShareConfig} 同一个坑）。</p>
+     * {@code updateById} 会跳过 null 字段，「改回长期有效」就会静默不生效。
+     * <p>存量兼容：上线「恒绑签发人」之前的 Key 可能没有绑定（act_as_uid 为空、打不了问答）——
+     * 编辑时请求里带了 {@code actAsUid=签发人} 即补上这层绑定（只允许补成签发人，方向不放开）。
      */
-    public void updateInfo(String id, String name, LocalDateTime expireAt) {
-        ensureManageable(mapper.selectById(id));
+    public void updateInfo(String id, String name, LocalDateTime expireAt, String actAsUid) {
+        ApiKey existing = mapper.selectById(id);
+        ensureManageable(existing);
         String trimmed = name.length() > 200 ? name.substring(0, 200) : name;
-        mapper.update(null, new LambdaUpdateWrapper<ApiKey>()
+        String self = RequestUser.uid();
+        boolean fixupLegacyBinding = existing != null
+                && (existing.getActAsUid() == null || existing.getActAsUid().isBlank())
+                && actAsUid != null && !actAsUid.isBlank() && actAsUid.trim().equals(existing.getCreatedBy());
+        if (actAsUid != null && !actAsUid.isBlank() && !fixupLegacyBinding
+                && existing != null && !actAsUid.trim().equals(existing.getCreatedBy())) {
+            throw new BizException("API Key 恒以签发人身份执行，不支持改绑代表账号；要换身份请用该账号重新签发");
+        }
+        LambdaUpdateWrapper<ApiKey> upd = new LambdaUpdateWrapper<ApiKey>()
                 .eq(ApiKey::getId, id)
                 .set(ApiKey::getName, trimmed)
                 .set(ApiKey::getExpireAt, expireAt)
-                .set(ApiKey::getUpdateTime, LocalDateTime.now()));
-        log.info("[API-KEY] 编辑 {}：名称 {}，有效期 {}", id, trimmed, expireAt == null ? "长期" : expireAt);
+                .set(ApiKey::getUpdateTime, LocalDateTime.now());
+        if (fixupLegacyBinding) upd = upd.set(ApiKey::getActAsUid, self);
+        mapper.update(null, upd);
+        log.info("[API-KEY] 编辑 {}：名称 {}，有效期 {}{}", id, trimmed, expireAt == null ? "长期" : expireAt,
+                fixupLegacyBinding ? "（补齐签发人绑定）" : "");
     }
 
     /** 启用/停用（吊销即停用；不物理删除，保留审计线索） */
@@ -166,22 +211,6 @@ public class ApiKeyService {
         ensureManageable(mapper.selectById(id));
         mapper.deleteById(id);
         log.info("[API-KEY] 删除 {}", id);
-    }
-
-    /**
-     * 写入共享范围（空串 = 清空 → 回落全局共享）。
-     * <p><b>必须用 {@code set(..., null)} 显式置空</b>：MyBatis-Plus 默认更新策略是 NOT_NULL，
-     * {@code updateById} 会跳过 null 字段，导致「恢复全员共享」静默不生效。</p>
-     */
-    public void updateShareConfig(String id, String shareConfigJson) {
-        ensureManageable(mapper.selectById(id));
-        resourceVisibilityService.validateShareConfig(shareConfigJson);
-        String normalized = (shareConfigJson == null || shareConfigJson.isBlank()) ? null : shareConfigJson;
-        mapper.update(null, new LambdaUpdateWrapper<ApiKey>()
-                .eq(ApiKey::getId, id)
-                .set(ApiKey::getShareConfig, normalized)
-                .set(ApiKey::getUpdateTime, LocalDateTime.now()));
-        log.info("[API-KEY] 共享范围更新 id={} scope={}", id, normalized == null ? "全局" : "受限");
     }
 
     /**

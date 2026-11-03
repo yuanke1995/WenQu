@@ -16,8 +16,10 @@ import java.util.Map;
 /**
  * 请求入口解析当前用户身份并装载到 {@link RequestUser}（ThreadLocal）。
  * <p>
- * 身份来源唯一：{@code Authorization: Bearer <JWT>}（本地登录）。令牌失效、或用户不存在/被禁用 → 直接 401。
- * 未携带令牌 → {@link RequestUser#ANONYMOUS}（不读任何客户端自报请求头，避免伪造身份/越权提权）。
+ * 身份来源两处：① {@code Authorization: Bearer <JWT>}（本地登录，含 OIDC/SAML 换来的令牌）；
+ * ② {@code X-Api-Key} + 该 Key 的「代表账号」（集成方专用，见下方通道注释）。
+ * 令牌失效、或用户不存在/被禁用 → 直接 401。
+ * 两者都没带 → {@link RequestUser#ANONYMOUS}（不读任何客户端自报请求头，避免伪造身份/越权提权）。
  * <p>
  * 经令牌认证成功时在请求上打 {@link #ATTR_AUTHENTICATED} 标记，供 SecurityConfig 判断「是否已登录」。
  *
@@ -28,6 +30,9 @@ public class UserContextInterceptor implements HandlerInterceptor {
 
     /** 请求属性名：本次请求已通过登录令牌认证 */
     public static final String ATTR_AUTHENTICATED = "ai.authenticated";
+
+    /** 请求属性名：本次请求通过 API Key 建立身份，且该身份是哪个账号 */
+    public static final String ATTR_API_KEY_UID = "ai.apiKeyUid";
 
     /**
      * 用户档案 60s 进程内缓存：每个 /api/** 请求都会走 {@code selectById}（JWT 是本地校验无 IO，
@@ -46,13 +51,17 @@ public class UserContextInterceptor implements HandlerInterceptor {
     private final UserMapper userMapper;
     private final AuthService authService;
     private final com.wenqu.ai.service.UserRoleService userRoleService;
+    private final com.wenqu.ai.service.ApiKeyService apiKeyService;
     private final ObjectMapper objectMapper;
 
     public UserContextInterceptor(UserMapper userMapper, AuthService authService,
-                                  com.wenqu.ai.service.UserRoleService userRoleService, ObjectMapper objectMapper) {
+                                  com.wenqu.ai.service.UserRoleService userRoleService,
+                                  com.wenqu.ai.service.ApiKeyService apiKeyService,
+                                  ObjectMapper objectMapper) {
         this.userMapper = userMapper;
         this.authService = authService;
         this.userRoleService = userRoleService;
+        this.apiKeyService = apiKeyService;
         this.objectMapper = objectMapper;
     }
 
@@ -93,7 +102,36 @@ public class UserContextInterceptor implements HandlerInterceptor {
                             ? com.wenqu.ai.util.TenantContext.DEFAULT_TENANT : u.getTenantId());
             return true;
         }
-        // 无令牌：匿名。不再回落到客户端自报的 X-User-Id——那等价于把身份（含管理员角色）
+        // 无令牌：先看是不是 API Key 通道（集成方专用），也不是才落匿名。
+        //
+        // 这条通道等价于「长期免密的某个账号」，所以边界写在两处：① 必须有显式代表账号
+        // （不靠 created_by 推断——签发人往往是管理员，让第三方拿着 Key 变成管理员是反的）；
+        // ② 能碰哪些端点由 SecurityConfig 那一侧收窄（账号自服务与能力配置面不从 Key 走）。
+        // 身份装在这里、端点判定装在那里，是因为下游一切按 RequestUser 走：会话归属、沙盒工作区、
+        // 个人 MCP 与技能、长期记忆、产物归属、模型默认值、租户行级过滤、限流分池全都要一个真 uid，
+        // 少装这一步这些能力不是报错，是静默落到 anonymous 上（与那几条「弹性线程丢身份」同一个形状）。
+        String plainKey = request.getHeader("X-Api-Key");
+        if (plainKey != null && !plainKey.isBlank()) {
+            com.wenqu.ai.model.ApiKey rec = apiKeyService.verify(plainKey);
+            if (rec != null) {
+                String actAs = rec.getActAsUid();
+                if (actAs == null || actAs.isBlank()) {
+                    return reject(response, "该 API Key 未设「代表账号」，不能用于问答链路：在 API Key 管理里指定一个专用账号");
+                }
+                User u = safeLoad(actAs);
+                if (u == null || (u.getStatus() != null && u.getStatus() == 0)) {
+                    return reject(response, "该 API Key 的代表账号不存在或已被禁用：" + actAs);
+                }
+                request.setAttribute(ATTR_AUTHENTICATED, Boolean.TRUE);
+                request.setAttribute(ATTR_API_KEY_UID, u.getUid());
+                RequestUser.set(u.getUid(), u.getDepartmentId(), userRoleService.rolesOf(u.getUid()));
+                com.wenqu.ai.util.TenantContext.bind(
+                        u.getTenantId() == null || u.getTenantId().isBlank()
+                                ? com.wenqu.ai.util.TenantContext.DEFAULT_TENANT : u.getTenantId());
+                return true;
+            }
+        }
+        // 匿名。不再回落到客户端自报的 X-User-Id——那等价于把身份（含管理员角色）
         // 交给请求方自行声明，require-login=false 时可伪造管理员。管理员只能靠登录令牌获得。
         RequestUser.set(RequestUser.ANONYMOUS, null, "user");
         // 匿名不绑租户：分享/开放端点在各自的入口处按归属人绑定（访客看到的是发布者租户里的资源，

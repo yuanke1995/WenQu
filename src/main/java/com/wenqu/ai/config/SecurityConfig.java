@@ -192,6 +192,11 @@ public class SecurityConfig implements WebMvcConfigurer {
         if (path.equals("/api/ai/project") || path.startsWith("/api/ai/project/")) return true;
         // 定时执行智能体（个人资产）：每人管自己的任务（ScheduledJobController 内按 uid 归属校验）
         if (path.equals("/api/ai/scheduled") || path.startsWith("/api/ai/scheduled/")) return true;
+        // API 密钥（2026-11-02 下放为个人资产）：登录用户自管自己的 Key——普通用户签发即绑本人，
+        // 列表按共享范围过滤、改动走 ensureManageable（资源级判定在 ApiKeyService 内做）。
+        // 这组端点同时在 isKeyDeniedEndpoint 内：Key 本身不能管理 Key（否则一把泄露的 Key
+        // 能给自己签发续命、改绑定换身份）
+        if (path.equals("/api/ai/api-key") || path.startsWith("/api/ai/api-key/")) return true;
         // 站内通知（铃铛，个人资产）：列表/未读数/标记已读——接收人一律取登录 uid（NotificationController 内过滤），
         // 每人只看得到并只操作得了自己的通知，所有角色可用
         if (path.equals("/api/ai/notification") || path.startsWith("/api/ai/notification/")) return true;
@@ -220,6 +225,42 @@ public class SecurityConfig implements WebMvcConfigurer {
         // 与普通用户白名单同层（API Key 走第 1 层放行分支）；权限面收在 WorkflowService 内：
         // 工作流对该身份可读才可触发，不可见/未发布一律拒绝，不因端点开放而放宽资源级判定。
         if (path.startsWith("/api/ai/v1/workflows")) return true;
+        return false;
+    }
+
+    /**
+     * API Key 身份**不允许**碰的端点：问答白名单里的「账号自服务与能力配置面」那一段。
+     * <p>
+     * 为什么要在问答白名单之外再窄一层：Key 一旦设了代表账号，下游一切按那个账号走——
+     * 而问答白名单的口径是「普通用户能不能用这个功能」，那个账号在界面里当然能改自己的密码、
+     * 配自己的技能与 MCP、清空自己的会话。这些能力对**坐在浏览器前的那个人**是对的，
+     * 对**一把贴在配置文件里的长期密钥**就是另一回事：泄露一把 Key 等于能改掉那个账号的密码。
+     * <p>
+     * 判据方向要说清：这里是「白名单 ∩ 非拒绝名单」，所以将来问答白名单里新增端点会**自动**
+     * 对 Key 开放。新增端点的人要么把它同时列进这里，要么就接受它对集成方可见——
+     * 拒绝名单只有 8 条，比再造一份 30 条的允许名单更容易核对。
+     */
+    private static boolean isKeyDeniedEndpoint(String method, String path) {
+        if (path == null) return true;
+        // Key 管理本身（2026-11-02 起对登录用户开放的自服务端点）：带 Key 的调用方不能列 Key /
+        // 签发 Key / 改代表账号——否则一把泄露的 Key 能给自己签发续命，还能改绑定换身份
+        if (path.equals("/api/ai/api-key") || path.startsWith("/api/ai/api-key/")) return true;
+        // 账号自服务：改密、资料、偏好、系统设置
+        if (path.equals("/api/ai/user") || path.startsWith("/api/ai/user/")) return true;
+        if (path.equals("/api/ai/auth/me")) return false;  // 只读身份回显，集成方拿它自检代表账号是否正确
+        // 能力配置面：技能、MCP、内置工具、市场、定时任务、凭据、工作流编排
+        if (path.equals("/api/ai/skill") || path.startsWith("/api/ai/skill/")) return true;
+        if (path.equals("/api/ai/mcp") || path.startsWith("/api/ai/mcp/")) return true;
+        if (path.equals("/api/ai/market") || path.startsWith("/api/ai/market/")) return true;
+        if (path.equals("/api/ai/scheduled") || path.startsWith("/api/ai/scheduled/")) return true;
+        if (path.equals("/api/ai/credential") || path.startsWith("/api/ai/credential/")) return true;
+        // 资源破坏性动作与共享管理：会话可以建、可以读、可以问，但不能删别人的历史
+        if (path.equals("/api/ai/session-shares") || path.startsWith("/api/ai/session-shares/")) return true;
+        if ("DELETE".equals(method)
+                && (path.equals("/api/ai/session") || path.startsWith("/api/ai/session/")
+                || path.equals("/api/ai/sessions") || path.startsWith("/api/ai/sessions/"))) return true;
+        // 智能体的发布/分享配置（Key 不该能改代表账号发出去的分享口子）
+        if (path.startsWith("/api/ai/agent/") && (path.endsWith("/publish") || path.contains("/share"))) return true;
         return false;
     }
 
@@ -386,12 +427,42 @@ public class SecurityConfig implements WebMvcConfigurer {
             if (isScimEndpoint(path)) return true;
             // 1. API Key 认证（对外开放问答能力的入口）：带对 X-Api-Key 且命中问答白名单 → 放行。
             //    未带 / 校验失败的 Key 不在此处拦截，继续走登录门禁与管理员判定。
+            //    身份（RequestUser）已由 UserContextInterceptor 按 Key 的代表账号装载好，这里只管"能碰哪些端点"。
             String plainKey = request.getHeader("X-Api-Key");
             var rec = apiKeyService.verify(plainKey);
-            if (rec != null && !isAuthEndpoint(path) && isPublicUserEndpoint(method, path)) {
+            if (rec != null && !isAuthEndpoint(path) && isPublicUserEndpoint(method, path)
+                    && !isKeyDeniedEndpoint(method, path)) {
                 request.setAttribute(ATTR_API_KEY_ID, rec.getId());
                 apiKeyService.touchLastUsed(rec.getId());
                 return true;
+            }
+            // 1b. Key 命中问答白名单但在收窄名单里：当场拒绝并说清原因，不静默走到登录门禁去——
+            //     那一层的判据是「这个账号能不能用这个端点」，而代表账号在界面里当然能改自己的密码，
+            //     放过去等于让一把 Key 拥有该账号的账号自服务能力（改密/改设置/清会话）。fail-loud 才看得见。
+            if (rec != null && !isAuthEndpoint(path) && isPublicUserEndpoint(method, path)
+                    && isKeyDeniedEndpoint(method, path)) {
+                response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                response.setContentType("application/json;charset=UTF-8");
+                response.getWriter().write(objectMapper.writeValueAsString(ResultJson.error(403,
+                        "该 API Key 不能访问这个端点：Key 只开放问答链路，账号自服务与能力配置面"
+                                + "（改密/资料/偏好/技能/MCP 配置/共享管理/定时任务/删除会话）请用登录态在界面里做")));
+                return false;
+            }
+            // 1c. Key 身份的硬边界（fail-closed）：Key 认证的请求没走上面白名单放行的，到此一律 403，
+            //     不再进入登录门禁与 RBAC。没有这一层，Key 请求会带着「代表账号的角色」落进第 3 层
+            //     RBAC——代表账号是管理员级就直通全部管理端点（包括用 Key 再签发 Key），「Key 只开放
+            //     问答链路」的承诺就只剩一句注释。绑定侧已在 ApiKeyService 禁掉管理员级代表账号，
+            //     这里是结构性兜底：就算日后有人把代表账号的角色改成管理员，Key 的 API 面也恒为问答白名单。
+            //     唯一例外 /auth/me：只读回显代表账号身份，供集成方自检（与 isKeyDeniedEndpoint 同口径）。
+            //     判据用「身份是否由 Key 装载」（ATTR_API_KEY_UID）而不是「请求里带了可用 Key」：
+            //     后者会让「JWT + 顺手带了个 Key 头」的管理员请求被误伤。
+            if (request.getAttribute(UserContextInterceptor.ATTR_API_KEY_UID) != null) {
+                if (path.equals("/api/ai/auth/me")) return true;
+                response.setStatus(HttpServletResponse.SC_FORBIDDEN);
+                response.setContentType("application/json;charset=UTF-8");
+                response.getWriter().write(objectMapper.writeValueAsString(ResultJson.error(403,
+                        "该 API Key 只开放问答链路（问答 / 会话 / 反馈 / 引用溯源等）：这个端点不对 Key 开放")));
+                return false;
             }
             // 2. 登录门禁：require-login=true 时，除登录引导端点、游客分享端点、租户开通申请与沙盒脚本回调外
             //    必须持有效登录令牌

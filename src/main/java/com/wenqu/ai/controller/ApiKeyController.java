@@ -21,11 +21,16 @@ import java.time.LocalDateTime;
 import java.util.Map;
 
 /**
- * API Key 管理接口（管理员）：签发 / 列表 / 编辑 / 启停 / 删除 / 共享范围。
+ * API Key 管理接口（个人资产，2026-11-02 下放自服务）：签发 / 列表 / 编辑 / 启停 / 删除 / 明文回显。
  *
- * <p>Key 的权限固定为「问答链路」——持有 Key 的调用方走 X-Api-Key 头，
- * 仅能访问与普通用户等价的端点（问答/会话/反馈/引用溯源等），管理端点一律拒绝。
- * 本控制器自身不在白名单内，因此天然需要管理员身份。
+ * <p><b>谁能用</b>：全部登录用户（端点在 SecurityConfig 问答白名单内）；能看见/管到哪些 Key 由
+ * {@code ResourceVisibilityService} 判定——谁建归谁（只看得到自己签发的）。本控制器同时在
+ * Key 拒绝名单内——Key 本身不能管理 Key，否则一把泄露的 Key 能给自己签发续命。
+ *
+ * <p><b>绑定规则（代表账号）</b>：Key 恒以签发人本人身份发问，签发即绑本人、不支持指定/改绑别人
+ * （请求里带别人的 actAsUid 会被拒绝；存量未绑定旧 Key 编辑传签发人 uid 可补齐）。
+ * Key 的权限固定为「问答链路」——持有 Key 的调用方走 X-Api-Key 头，仅能访问与普通用户等价的
+ * 端点（问答/会话/反馈/引用溯源等），白名单之外对 Key 身份一律 403（SecurityConfig 1c 层）。
  *
  * @author yuanke
  */
@@ -37,29 +42,44 @@ public class ApiKeyController {
 
     private final ApiKeyService apiKeyService;
 
-    @Operation(summary = "Key 列表", description = "不含明文与哈希，仅前缀与使用/过期状态；按共享范围过滤（范围外不可见）")
+    @Operation(summary = "Key 列表", description = "不含明文与哈希，仅前缀与使用/过期状态；谁建归谁（只看得到自己签发的 Key）")
     @GetMapping("/list")
     public ResultJson list() {
         return ResultJson.ok(apiKeyService.list());
     }
 
-    @Operation(summary = "签发 Key", description = "返回明文 apiKey——仅此一次，请立即保存；库里只存哈希")
+    @Operation(summary = "签发 Key", description = "返回明文 apiKey（此后可在列表点「眼睛」回显/复制——明文以部署密钥加密保管）。"
+            + "body: {\"name\":\"…\",\"expireAt\":\"yyyy-MM-dd\"}——Key 恒以签发人本人身份发问，"
+            + "不支持指定代表账号（请求里带别人的 actAsUid 会被拒绝）。"
+            + "改密/资料/技能/MCP 配置等账号自服务面一律不从 Key 走")
     @PostMapping
     public ResultJson create(@RequestBody Map<String, String> body) {
         String name = body.get("name");
         LocalDateTime expireAt = parseExpire(body.get("expireAt"));
+        String requested = body.get("actAsUid");
+        if (requested != null && !requested.isBlank() && !requested.trim().equals(RequestUser.uid())) {
+            throw new BizException("API Key 恒以签发人本人身份执行，不支持指定代表账号");
+        }
         // 归属用「当前登录身份」（RequestUser）：与文档/智能体的 created_by 口径一致，
         // 否则创建者短路会因身份来源不同而失效
         return ResultJson.ok(apiKeyService.create(name, expireAt, RequestUser.uid()));
     }
 
-    @Operation(summary = "编辑 Key", description = "改用途名称与有效期，不影响 Key 本身与调用方；"
-            + "body: {\"name\": \"…\", \"expireAt\": \"yyyy-MM-dd\"}——expireAt 缺省/空串=改为长期有效")
+    @Operation(summary = "回显明文", description = "返回该 Key 的明文 apiKey（列表「眼睛」/复制按钮的数据源）；"
+            + "仅创建者可回显，每次都落审计日志。存量 Key（回显功能上线前签发）无密文，会明确提示重签")
+    @GetMapping("/{id}/reveal")
+    public ResultJson reveal(@PathVariable("id") String id) {
+        return ResultJson.ok(Map.of("apiKey", apiKeyService.reveal(id)));
+    }
+
+    @Operation(summary = "编辑 Key", description = "改用途名称与有效期（expireAt 缺省/空串=改为长期有效）。"
+            + "绑定恒为签发人、不可改；存量未绑定的 Key 传 actAsUid=签发人 可补齐绑定。"
+            + "body: {\"name\": \"…\", \"expireAt\": \"…\"}")
     @PutMapping("/{id}")
     public ResultJson update(@PathVariable("id") String id, @RequestBody Map<String, String> body) {
         String name = body.get("name");
         if (name == null || name.isBlank()) throw new BizException("名称不能为空");
-        apiKeyService.updateInfo(id, name.trim(), parseExpire(body.get("expireAt")));
+        apiKeyService.updateInfo(id, name.trim(), parseExpire(body.get("expireAt")), body.get("actAsUid"));
         return ResultJson.ok(Map.of("id", id, "name", name.trim()));
     }
 
@@ -85,15 +105,6 @@ public class ApiKeyController {
     public ResultJson delete(@PathVariable("id") String id) {
         apiKeyService.delete(id);
         return ResultJson.ok(Map.of("id", id));
-    }
-
-    @Operation(summary = "设置共享范围", description = "body: {shareConfig}——空串 = 清空（回落全局）；"
-            + "非空须为 version 2 JSON，且管理范围不得宽于读取范围")
-    @PutMapping("/{id}/share")
-    public ResultJson updateShare(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
-        Object v = body == null ? null : body.get("shareConfig");
-        apiKeyService.updateShareConfig(id, v == null ? null : String.valueOf(v));
-        return ResultJson.ok("共享范围已保存");
     }
 
     /** 过期时间：接受 yyyy-MM-dd（当天 23:59:59 失效）或 yyyy-MM-ddTHH:mm[:ss]；空=长期有效 */
