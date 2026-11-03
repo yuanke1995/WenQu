@@ -11,6 +11,7 @@ import com.wenqu.ai.mapper.UserMapper;
 import com.wenqu.ai.model.ApiEndpoint;
 import com.wenqu.ai.model.Role;
 import com.wenqu.ai.model.User;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -37,7 +38,10 @@ import java.util.regex.Pattern;
  *       角色绑定的接口（method + AntPathMatcher path，支持 {@code /{id}} 占位）逐一匹配，
  *       未命中一律拒绝（fail-closed 由拦截器保证）。</li>
  * </ul>
- * 缓存一致性：本进程单实例部署形态，volatile 引用替换即生效，无需跨节点失效。
+ * 缓存一致性（多副本）：写操作后经 {@code ReplicaCoordination} 广播让所有副本当场失效，
+ * 主通道是广播；快照另带 60s TTL（与 {@code UserRoleService} 同口径）作为
+ * 单机 / 无 Redis / 广播丢包形态下的兜底——权限回收最迟 60s 生效，不再依赖重启。
+ * Redis 不可用时广播如实失败（原语层已兜底），TTL 是唯一保险，系统照常运行。
  *
  * @author yuanke
  */
@@ -55,6 +59,12 @@ public class RoleService {
     /** 内置管理员级角色编码（硬编码直通，不依赖种子数据是否就绪） */
     private static final Set<String> BUILTIN_ADMIN = Set.of("superadmin", "admin");
 
+    /** 跨副本角色失效广播频道（scope=role|api；本副本自己发的已被原语层滤掉） */
+    public static final String CHANNEL_RBAC_INVALIDATE = "rbac:invalidate";
+
+    /** 快照 TTL：多副本下广播是主通道，TTL 是单机/无 Redis 形态的唯一保险（与 UserRoleService 60s 同口径） */
+    private static final long SNAPSHOT_TTL_MS = 60_000;
+
     private final RoleMapper roleMapper;
     private final RoleMenuMapper roleMenuMapper;
     private final RoleApiMapper roleApiMapper;
@@ -62,6 +72,7 @@ public class RoleService {
     private final ApiEndpointMapper apiEndpointMapper;
     private final UserMapper userMapper;
     private final com.wenqu.ai.mapper.UserRoleMapper userRoleMapper;
+    private final ReplicaCoordination replicaCoordination;
 
     private final AntPathMatcher pathMatcher = new AntPathMatcher();
 
@@ -79,16 +90,38 @@ public class RoleService {
     /** 角色绑定的接口 id 快照（roleCode → [apiId]，权限页回显与 canAccess 同源失效） */
     private volatile Map<String, List<String>> apiIdSnapshot = Map.of();
 
+    /** 快照构建时刻 + TTL 的到期点；0 = 已失效，下次访问重建（被动过期只清本地，绝不广播） */
+    private volatile long snapshotExpireAt = 0L;
+
     /** 接口 pattern（method + path 二元组） */
     private record ApiPattern(String method, String path) {
     }
 
-    /** 角色快照（懒加载：首次访问时从库构建；角色写操作后失效） */
+    /** 启动即订阅跨副本失效广播：别的副本改了角色/绑定，本副本当场清快照。订阅失败只告警（退化为仅 TTL） */
+    @PostConstruct
+    void subscribeReplicaInvalidation() {
+        try {
+            replicaCoordination.listen(CHANNEL_RBAC_INVALIDATE, (payload, from) -> {
+                String scope = payload == null ? null : payload.getString("scope");
+                if ("api".equals(scope)) invalidateApiPatternsLocal();
+                else invalidateCachesLocal();
+                log.info("[RBAC] 收到副本 {} 的权限失效广播（scope={}），快照已清除", from, scope);
+            });
+        } catch (Exception e) {
+            log.warn("[RBAC] 订阅跨副本权限失效广播失败（退化为仅 TTL 兜底）: {}", e.getMessage());
+        }
+    }
+
+    private boolean snapshotStale() {
+        return System.currentTimeMillis() >= snapshotExpireAt;
+    }
+
+    /** 角色快照（懒加载：首次访问/过期时从库构建；角色写操作后失效） */
     private Map<String, Role> roles() {
         Map<String, Role> snap = roleSnapshot;
-        if (!snap.isEmpty()) return snap;
+        if (!snap.isEmpty() && !snapshotStale()) return snap;
         synchronized (this) {
-            if (roleSnapshot.isEmpty()) rebuildRoleSnapshot();
+            if (roleSnapshot.isEmpty() || snapshotStale()) rebuildRoleSnapshot();
             return roleSnapshot;
         }
     }
@@ -97,20 +130,46 @@ public class RoleService {
         Map<String, Role> m = new LinkedHashMap<>();
         for (Role r : roleMapper.selectList(null)) m.put(r.getCode(), r);
         roleSnapshot = m;
+        snapshotExpireAt = System.currentTimeMillis() + SNAPSHOT_TTL_MS;
     }
 
-    /** 角色或其绑定变化后调用：整体失效（表小，重建成本低） */
-    public synchronized void invalidateCaches() {
+    /** 只清本地（被动过期与收到远端广播时用；不广播，否则两台副本互相触发成死循环） */
+    private synchronized void invalidateCachesLocal() {
         roleSnapshot = Map.of();
         apiPatternSnapshot = Map.of();
         menuBindingSnapshot = Map.of();
         apiIdSnapshot = Map.of();
+        snapshotExpireAt = 0L;
     }
 
-    /** 接口表变化（扫描登记/增删改）后调用：仅失效接口相关缓存 */
-    public synchronized void invalidateApiPatterns() {
+    private synchronized void invalidateApiPatternsLocal() {
         apiPatternSnapshot = Map.of();
         apiIdSnapshot = Map.of();
+        snapshotExpireAt = 0L;
+    }
+
+    /**
+     * 角色或其绑定变化后调用：本地整体失效（表小，重建成本低）+ 广播其它副本当场失效。
+     * 写路径统一走这里；被动过期与广播接收侧走 {@link #invalidateCachesLocal()}。
+     */
+    public synchronized void invalidateCaches() {
+        invalidateCachesLocal();
+        broadcastInvalidation("role");
+    }
+
+    /** 接口表变化（扫描登记/增删改）后调用：仅失效接口相关缓存 + 广播 */
+    public synchronized void invalidateApiPatterns() {
+        invalidateApiPatternsLocal();
+        broadcastInvalidation("api");
+    }
+
+    private void broadcastInvalidation(String scope) {
+        try {
+            replicaCoordination.broadcast(CHANNEL_RBAC_INVALIDATE, Map.of("scope", scope));
+        } catch (Exception e) {
+            // 广播失败不阻断写操作：对方最迟 60s 由 TTL 兜底
+            log.debug("[RBAC] 跨副本失效广播失败（scope={}，对方最迟 60s 由 TTL 兜底）: {}", scope, e.getMessage());
+        }
     }
 
     // ==================== 判定（每请求热路径） ====================
@@ -182,9 +241,18 @@ public class RoleService {
         return false;
     }
 
+    /** 按角色懒加载缓存入口统一先过 TTL：过期则整体清空（含角色快照），下一次访问按需重建 */
+    private void refreshIfStale() {
+        if (!snapshotStale()) return;
+        synchronized (this) {
+            if (snapshotStale()) invalidateCachesLocal();
+        }
+    }
+
     /** 角色绑定的接口 id（权限管理页回显用，与 canAccess 同源缓存） */
     public List<String> apiIdsOf(String role) {
         if (role == null || role.isBlank()) return List.of();
+        refreshIfStale();
         List<String> cached = apiIdSnapshot.get(role);
         if (cached != null) return cached;
         synchronized (this) {
@@ -199,6 +267,7 @@ public class RoleService {
     }
 
     private List<ApiPattern> apiPatternsOf(String role) {
+        refreshIfStale();
         List<ApiPattern> cached = apiPatternSnapshot.get(role);
         if (cached != null) return cached;
         synchronized (this) {
@@ -223,6 +292,7 @@ public class RoleService {
     /** 角色绑定的菜单 id（/auth/me 下发侧边栏用） */
     public List<String> menuIdsOf(String role) {
         if (role == null || role.isBlank()) return List.of();
+        refreshIfStale();
         List<String> cached = menuBindingSnapshot.get(role);
         if (cached != null) return cached;
         synchronized (this) {

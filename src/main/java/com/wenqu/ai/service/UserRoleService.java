@@ -5,6 +5,7 @@ import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.mapper.UserMapper;
 import com.wenqu.ai.mapper.UserRoleMapper;
 import com.wenqu.ai.model.UserRole;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -33,6 +34,10 @@ import java.util.concurrent.ConcurrentHashMap;
  * </ul>
  * 缓存：60s 进程内 TTL（与 {@code UserContextInterceptor} 用户档案缓存同口径），角色变更最迟 60s 生效；
  * 本服务内所有写操作即时失效对应 uid。
+ * <p>
+ * 多副本一致性：写操作（{@code setManualRoles}/{@code grant}/{@code revokeIdpRole}/{@code removeAll}）
+ * 经 {@code ReplicaCoordination} 广播让其它副本当场失效对应 uid——SCIM/LDAP 自动授权与成员管理
+ * 不再依赖 60s TTL 或重启才在别的副本生效。广播失败不阻断写操作（TTL 兜底）。
  *
  * @author yuanke
  */
@@ -47,6 +52,10 @@ public class UserRoleService {
     private final UserRoleMapper mapper;
     private final RoleService roleService;
     private final UserMapper userMapper;
+    private final ReplicaCoordination replicaCoordination;
+
+    /** 跨副本用户角色失效广播频道（payload.uid；本副本自己发的已被原语层滤掉） */
+    public static final String CHANNEL_USER_ROLE_INVALIDATE = "rbac:user-role-invalidate";
 
     /** 角色 TTL 缓存：uid → (roles, expireAt) */
     private record Cached(List<String> roles, long expireAt) {
@@ -54,6 +63,21 @@ public class UserRoleService {
 
     private final ConcurrentHashMap<String, Cached> cache = new ConcurrentHashMap<>();
     private static final long TTL_MS = 60_000;
+
+    /** 启动即订阅：别的副本改了某人的角色，本副本当场逐出该 uid（订阅失败只告警，退化为仅 TTL） */
+    @PostConstruct
+    void subscribeReplicaInvalidation() {
+        try {
+            replicaCoordination.listen(CHANNEL_USER_ROLE_INVALIDATE, (payload, from) -> {
+                String uid = payload == null ? null : payload.getString("uid");
+                if (uid == null || uid.isBlank()) return;
+                cache.remove(uid);
+                log.debug("[USER-ROLE] 收到副本 {} 的角色失效广播 uid={}，本地缓存已逐出", from, uid);
+            });
+        } catch (Exception e) {
+            log.warn("[USER-ROLE] 订阅跨副本角色失效广播失败（退化为仅 TTL 兜底）: {}", e.getMessage());
+        }
+    }
 
     /** 用户的角色集合（无角色行 → ["user"]） */
     public List<String> rolesOf(String uid) {
@@ -137,7 +161,7 @@ public class UserRoleService {
                 // 同角色已有 idp 行：复合主键冲突，跳过（幂等，不重复授）
             }
         }
-        invalidate(uid);
+        invalidateAndBroadcast(uid);
         audit.record("[AUDIT] 设置用户角色 uid={} roles={}", uid, normalized);
     }
 
@@ -152,7 +176,7 @@ public class UserRoleService {
         r.setRoleCode(roleCode.trim().toLowerCase());
         r.setGrantedBy(grantedBy == null || grantedBy.isBlank() ? "manual" : grantedBy);
         mapper.insert(r);
-        invalidate(uid);
+        invalidateAndBroadcast(uid);
     }
 
     /**
@@ -166,14 +190,14 @@ public class UserRoleService {
                 .eq(UserRole::getUid, uid)
                 .eq(UserRole::getRoleCode, roleCode.trim().toLowerCase())
                 .eq(UserRole::getGrantedBy, "idp"));
-        invalidate(uid);
+        invalidateAndBroadcast(uid);
     }
 
     /** 删除用户的全部角色行（账号删除/离职回收时级联清理） */
     public void removeAll(String uid) {
         if (uid == null || uid.isBlank()) return;
         mapper.delete(new LambdaQueryWrapper<UserRole>().eq(UserRole::getUid, uid));
-        invalidate(uid);
+        invalidateAndBroadcast(uid);
     }
 
     /** 持有某角色的用户数（删除角色的守门依据） */
@@ -206,9 +230,29 @@ public class UserRoleService {
         return n != null && n <= 1;
     }
 
-    /** 某用户角色变更后失效缓存 */
+    /** 某用户角色变更后失效缓存（仅本地；跨副本写路径请走 {@link #invalidateAndBroadcast}） */
     public void invalidate(String uid) {
         if (uid != null) cache.remove(uid);
+    }
+
+    /**
+     * 角色写路径的统一收口：本地逐出 + 用户档案缓存顺手逐出（{@code setManualRoles} 有不经过
+     * {@code OrgService.updateUserScoped} 的调用方——SCIM/目录同步/租户成员变更，那条路原来
+     * 不逐档案缓存）+ 广播其它副本当场失效。广播失败只 debug（对方最迟 60s 由 TTL 兜底）。
+     */
+    private void invalidateAndBroadcast(String uid) {
+        invalidate(uid);
+        if (uid == null || uid.isBlank()) return;
+        try {
+            com.wenqu.ai.config.UserContextInterceptor.evict(uid);
+        } catch (Exception ignored) {
+            // 档案缓存逐出失败不影响角色缓存正确性
+        }
+        try {
+            replicaCoordination.broadcast(CHANNEL_USER_ROLE_INVALIDATE, Map.of("uid", uid));
+        } catch (Exception e) {
+            log.debug("[USER-ROLE] 跨副本失效广播失败 uid={}（对方最迟 60s 由 TTL 兜底）: {}", uid, e.getMessage());
+        }
     }
 
     /** 全量失效（角色表结构变化等少见场景） */
