@@ -79,8 +79,10 @@ public class SecurityConfig implements WebMvcConfigurer {
         if (method == null || path == null) return false;
         // SCIM 2.0 入站：认证源专属 Bearer，鉴权在 ScimService 逐入口强校验
         if (isScimEndpoint(path)) return true;
-        // 登录引导（含 /auth/me）：登录前可达，逐条列在 isAuthBootstrapEndpoint
+        // 登录引导：登录前可达，逐条列在 isAuthBootstrapEndpoint
         if (isAuthBootstrapEndpoint(method, path)) return true;
+        // 身份回显：所有登录用户都可查自己（/auth/me 未必在登录引导清单里，显式单列）
+        if ("GET".equals(method) && "/api/ai/auth/me".equals(path)) return true;
         // 游客分享通道：分享 token 即凭据
         if (isShareGuestEndpoint(path)) return true;
         // 租户开通申请：免登录的唯一写入端点（精确 POST）

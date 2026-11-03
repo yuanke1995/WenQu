@@ -43,6 +43,9 @@ public class WenquTenantLineHandler implements TenantLineHandler {
             // 开通申请发生在「还没有租户」的时候（Phase 4 刀三）：给它编一个归属等于把「谁申请的」写成假值
             "c_ai_tenant_request",
             "c_ai_menu", "c_ai_menu_api", "c_ai_api", "c_ai_role", "c_ai_role_menu", "c_ai_role_api",
+            // RBAC 授权点层（批次 A）：角色与授权点的定义是平台全局模板（D4 拍板保持全局，
+            // 批次 F 租户化时随 c_ai_role 一起迁）——不进名单租户插件就会拼出 tenant_id 谓词炸掉判定
+            "c_ai_permission", "c_ai_role_permission",
             "c_ai_provider", "c_ai_model", "c_ai_config", "c_ai_image_desc",
             "c_ai_market_item", "c_ai_market_install");
 
