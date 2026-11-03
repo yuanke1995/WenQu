@@ -165,17 +165,30 @@ public class UserRoleService {
         audit.record("[AUDIT] 设置用户角色 uid={} roles={}", uid, normalized);
     }
 
-    /** 授予单角色（服务内部建档用：OIDC 默认角色/初始化超管；granted_by 可传 manual 或 idp） */
+    /**
+     * 授予单角色（服务内部建档用：OIDC 默认角色/初始化超管；granted_by 可传 manual 或 idp）。
+     * G9 修复（2026-11）：delete 不再不限 granted_by 通吃——只删同来源行；
+     * 异源行冲突（复合主键）时按 D1 语义静默保位：IdP 权威不覆盖手动，手动授权遇到同点 idp 行
+     * 则角色已在位（结果等价，来源保持 idp，成员页按只读口径展示）。
+     */
     @Transactional
     public void grant(String uid, String roleCode, String grantedBy) {
         if (roleCode == null || roleCode.isBlank()) return;
+        String src = grantedBy == null || grantedBy.isBlank() ? "manual" : grantedBy.trim().toLowerCase();
         mapper.delete(new LambdaQueryWrapper<UserRole>()
-                .eq(UserRole::getUid, uid).eq(UserRole::getRoleCode, roleCode));
+                .eq(UserRole::getUid, uid)
+                .eq(UserRole::getRoleCode, roleCode.trim().toLowerCase())
+                .eq(UserRole::getGrantedBy, src));
         UserRole r = new UserRole();
         r.setUid(uid);
         r.setRoleCode(roleCode.trim().toLowerCase());
-        r.setGrantedBy(grantedBy == null || grantedBy.isBlank() ? "manual" : grantedBy);
-        mapper.insert(r);
+        r.setGrantedBy(src);
+        try {
+            mapper.insert(r);
+        } catch (org.springframework.dao.DuplicateKeyException e) {
+            // 同点异源行已在位：按 D1 不覆盖（IdP 不吃手动、手动也不吃 IdP），角色结果等价
+            log.info("[USER-ROLE] grant 遇同点异源行（uid={} code={} 本来源={}），按 D1 保位不覆盖", uid, roleCode, src);
+        }
         invalidateAndBroadcast(uid);
         // G12：SCIM/LDAP/OIDC 的自动授权变更此前完全无留痕——补上（grantedBy 区分来源）
         audit.record("[AUDIT] 授予角色 uid={} code={} grantedBy={}", uid, r.getRoleCode(), r.getGrantedBy());
