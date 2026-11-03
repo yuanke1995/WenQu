@@ -158,6 +158,13 @@ public class ChatController {
         usageQuota.assertWithinBudget(RequestUser.ANONYMOUS.equals(userId) ? null : userId, "chat");
 
         String question = request.getQuestion().trim();
+        // 单条字数上限走配置（chat.maxQuestionChars），与游客分享链路同一把尺子：
+        // 原先这里写死 @Size(8000)，而集成方（表单设计器助手）每轮要把当前画布 schema 带上，
+        // 一张大表就超 8000 —— 写死的注解会让「配置调到 60000」在登录态/Key 这条路上根本不生效。
+        int maxQuestionChars = Math.max(200, configService.getInt("chat.maxQuestionChars", 8000));
+        if (question.length() > maxQuestionChars) {
+            throw new BizException("单条内容过长（最多 " + maxQuestionChars + " 字）");
+        }
 
         // 聊天传图上限：数量与单张体积（防 base64 洪峰压垮解码/视觉处理；数据 URL 字符量≈体积×4/3）
         List<String> images = request.getImages();

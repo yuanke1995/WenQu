@@ -19,7 +19,6 @@ public class ChatRequest {
     private String sessionId;
 
     @NotBlank(message = "请输入问题")
-    @Size(max = 8000, message = "问题过长（最多 8000 字）")
     @Schema(description = "用户问题", example = "如何创建评分组件？", requiredMode = Schema.RequiredMode.REQUIRED)
     private String question;
 

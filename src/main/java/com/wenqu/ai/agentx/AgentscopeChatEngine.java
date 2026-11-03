@@ -3289,7 +3289,17 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         boolean thinkingOn = cmd.isDeepThink()
                 || ModelRegistryService.THINK_ALWAYS.equals(modelRegistry.referenceThinking(ref));
         if (!thinkingOn) {
-            return b.temperature(configService.getDouble("chat.temperature")).build();
+            b.temperature(configService.getDouble("chat.temperature"));
+            // 未勾深度思考 ≠ 一言不发：DeepSeek V4／豆包这类网关<b>默认开思考</b>的模型，
+            // 不显式下发关闭字段就吃网关默认——界面上「思考强度：未开启」、实际单轮照烧
+            // 几万 reasoning token（2026-11-02 表单设计助手实测：单轮 thinking 2.7万~5.9万
+            // token，占总耗时 2 分钟的大头）。与辅助链路（auxGenerateOptions）同一条口径：
+            // reasoningOffBody 只对登记为「可开关思考」的模型给关闭方言；恒思考（R1/QwQ）、
+            // 未识别方言、OpenAI 系与 GLM（拒绝 disabled，400）都返回空 Map，行为与不下发一致。
+            for (Map.Entry<String, Object> e : modelRegistry.reasoningOffBody(ref).entrySet()) {
+                b.additionalBodyParam(e.getKey(), e.getValue());
+            }
+            return b.build();
         }
         if (thinkLevel == null) {
             // 与手写侧同一件事：没登记档位就没有可映射的方言字段（思考开关本身走模型的默认行为）
