@@ -6,8 +6,8 @@ import lombok.Data;
  * OIDC 认证源配置视图：<b>不再映射独立表</b>——数据统一存 {@code c_ai_identity_provider}
  * （type='oidc'），协议参数收纳进 {@code config} JSON（键名与本类字段一致，clientSecret 为
  * RSA 密文），name/enabled/defaultRole/defaultDepartment/autoCreateUser/sortOrder 用统一表列。
- * {@code OidcProviderService} 负责行 ↔ 视图互转；存量库由 {@code IdentityMigrationRunner}
- * 从旧表 c_ai_oidc_provider（已退役）桥接而来，键名与本类对齐。
+ * {@code OidcProviderService} 负责行 ↔ 视图互转；存量行由旧表 c_ai_oidc_provider（已退役）
+ * 一次性桥接而来，键名与本类对齐。
  *
  * @author yuanke
  */

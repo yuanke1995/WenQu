@@ -26,16 +26,14 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-GRPS="dr redis services codegen loadtest mac win"
+GRPS="dr services loadtest mac win"
 INFRA_NAMES="mysql redis meili searxng sandbox ocr"
 
 # ===================== 脚本分组 =====================
 desc_of() {
   case "$1" in
     dr/tenant-dr.py)                           echo "备份与按租户恢复（list/inventory/backup/restore/verify）" ;;
-    redis/rename-ai-doc-indexes-2026-10-17.sh) echo "存量索引名 ai-doc-* 收到 wenqu-*" ;;
     services/mcp-test-server.py)             echo "最小 MCP 测试服务(:8931)" ;;
-    codegen/gen_config_schema.js)            echo "配置字段 ↔ defaults 一致性校验" ;;
     loadtest/mock-gateway.mjs)               echo "压测 mock 网关(:9101)" ;;
     loadtest/loadtest.mjs)                   echo "100 路并发压测" ;;
     mac/check-enterprise.py)                  echo "企业级基底自检：审计链/停用租户/跨租户重置密码（--fixtures 建临时数据并自清）" ;;

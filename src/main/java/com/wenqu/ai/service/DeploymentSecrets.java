@@ -39,9 +39,9 @@ import java.util.regex.Pattern;
  * <p><b>RSA 密钥环</b>是密钥目录里的一批标准 PEM 私钥（{@code {dir}/rsa/v3.key}，文件名里的数字就是版本）：
  * 解析交给 BouncyCastle 的 PEMParser（PKCS#1 / PKCS#8 / OpenSSL 3 的 v2 都认，JCA 自己会报
  * {@code algid parse error}），加密走 JCA/Nimbus，版本号进 JWE header 的 kid。轮换＝往目录里丢一把
- * 更高版本的 PEM 再重启：新写入用当前版本，老密文按自己 kid 里的版本取钥，启动时
- * SecretRotationRunner 把存量重封到当前版本，重封完旧文件即可撤——双密钥过渡期是这套机制自带的，
- * 不需要停机，也不存在读到解不开的路径。
+ * 更高版本的 PEM 再重启：新写入用当前版本，老密文按自己 kid 里的版本取钥。<b>密文不批量重封</b>，
+ * 所以每个用过的版本都要留一把密钥文件在目录里——撤掉旧文件等于让那批密文永远解不开
+ * （读侧按原值返回，表现为凭据 401，不是数据被改坏）。
  *
  * @author yuanke
  */
@@ -98,11 +98,6 @@ public class DeploymentSecrets {
     /** 当前用于加密的 RSA 密钥版本（无密钥时为 0） */
     public int currentRsaVersion() {
         return rsaRing.isEmpty() ? 0 : rsaRing.get(0).version();
-    }
-
-    /** JWE header 里的 kid（密钥版本的标址名，轮换与解密都按它取钥） */
-    public String currentKid() {
-        return kidOf(currentRsaVersion());
     }
 
     public String kidOf(int version) {

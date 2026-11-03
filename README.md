@@ -349,7 +349,7 @@ docker compose up -d          # 自包含：redis-stack + meilisearch + 内置 M
 5. **总并发核算**：解析并发为「副本数 × `parse.concurrency`」，embedding 与视觉模型调用是共享瓶颈
 6. **向量模型换绑为全实例串行**：Redis 分布式锁互斥，锁持有期间向量检索自动降级关键词路；任务每批续期锁，实例崩溃后锁 TTL 自愈
 7. **启动对账/巡检开关需收敛为单点**：多副本上线前把 `keyword.reconcileOnStartup` 置 false（启动对账收敛为单点）
-8. **密钥目录必须共享**：默认 `{AI_IMAGES_DIR}/secret`（`AI_SECRETS_DIR` 覆盖），敏感数据用其中 `rsa/vN.key` 的 PEM 私钥做 JWE 信封加密（密钥版本记在密文里）——各副本挂同一目录，否则 A 实例加密的 key 在 B 实例解不开；轮换＝放一把更高版本的 PEM 再重启，存量由启动流程重封，无需停机
+8. **密钥目录必须共享**：默认 `{AI_IMAGES_DIR}/secret`（`AI_SECRETS_DIR` 覆盖），敏感数据用其中 `rsa/vN.key` 的 PEM 私钥做 JWE 信封加密（密钥版本记在密文里）——各副本挂同一目录，否则 A 实例加密的 key 在 B 实例解不开；轮换＝放一把更高版本的 PEM 再重启，此后新写入用新版本；存量密文按自己记录的版本解密、不批量重封，故历史版本的密钥文件必须一直留着（无需停机）
 9. **会话状态与事件日志**：框架会话状态在 Redis；会话事件日志与代次轮换写在宿主 `~/.wenqu/agent-journal`，事件账本内容按会话导出为 JSONL 归档（`chat.sessionLogArchive.*`），归档目录须指向共享卷
 10. **目标模式与定时任务**：目标推进由 `GoalScheduler` 按租约抢占执行（DB 条件更新保证唯一执行权），定时任务调度中心先推进 `next_run_at` 再执行，多副本无需额外中间件
 
@@ -629,8 +629,8 @@ WenQu/                               # 工作区根（git 仓库名 WenQu；本�
 │   ├── parser/                      # DocumentParser 接口 + Docx / Pdf（扫描件 OCR）/ Excel / Ppt / Text 解析器
 │   ├── model/ + mapper/ + dto/      # 57 张表的实体 + Mapper + DTO
 │   ├── schedule/                    # ScheduleCenter（周期任务注册、运行状态快照、执行日志）
-│   ├── startup/                     # RbacSeedRunner（菜单与角色幂等补齐）· ManualSeedService（官方手册同步）·
-│   │                                #   MarketBuiltinSeeder（内置工作流模板）· OidcMigrationRunner
+│   ├── startup/                     # RbacSeedRunner（菜单与角色幂等补齐）· ApiEndpointScanner（接口清单扫描）·
+│   │                                #   MarketBuiltinSeeder（内置工作流模板）· ManualSeedService（官方手册同步，手动触发）
 │   └── util/                        # TokenCounter（jtokkit BPE）· ImageCompressor · RequestUser（登录态）
 ├── config/
 │   └── application-local.yml        # 本地开发私有配置（含密钥与数据目录，.gitignore 忽略，不打进构建产物）
@@ -652,8 +652,8 @@ WenQu/                               # 工作区根（git 仓库名 WenQu；本�
 │   └── sandbox-provisioner/         # 沙盒 provisioner：app.py（FastAPI）+ Dockerfile + compose + run.sh + sandbox.env
 │       └── sandbox-image/Dockerfile # 派生沙盒镜像（容器内无 sudo，运行时依赖必须烧进镜像层）
 ├── scripts/                         # 启动与运维脚本：wenqu.sh（统一调度器）、mac/ 与 win/（平台启动器、开发栈按需拉起）、
-│   │                                #   setup/（Node 环境准备）、services/（MCP 测试服务）、redis/（一次性迁移）、
-│   │                                #   mcp-stats/（本地只读统计 Server）、codegen/（配置 schema 校验与生成）、loadtest/（压测）
+│   │                                #   setup/（Node 环境准备）、services/（MCP 测试服务）、mcp-stats/（本地只读统计 Server）、
+│   │                                #   loadtest/（压测）、dr/（按租户备份与恢复）
 └── web/                             # 前端单页应用（Vite，.nvmrc 固定 Node 22 LTS）
     ├── vite.config.js               # /proxy → http://localhost:8090/ai（端口固定 5800，strictPort）
     ├── src/router.js                # 路由：/chat /m/chat /project/:id /knowledge /knowledge/:kbId/docs /agents

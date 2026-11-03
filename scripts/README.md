@@ -7,9 +7,7 @@
 | 目录 | 内容 | 运行方式 |
 |---|---|---|
 | `dr/` | 备份与按租户恢复（Phase 4 刀三） | `python3 scripts/dr/tenant-dr.py backup --tenant acme --out /backup/wenqu` |
-| `redis/` | Redis / Meilisearch 侧的一次性迁移 | `bash scripts/redis/xxx.sh` |
 | `services/` | 独立运行的服务 / 测试进程（MCP 测试服务） | `python3 scripts/services/xxx.py` |
-| `codegen/` | Node 代码生成 / 一致性校验 | `node scripts/codegen/xxx.js` |
 | `loadtest/` | 压测（mock 网关 + 并发脚本） | `node scripts/loadtest/mock-gateway.mjs` 等 |
 | `mac/` | macOS 启动器（开发栈、后端 jar） | `bash scripts/mac/xxx.sh` |
 | `win/` | Windows 启动器（后端 jar） | `scripts\win\xxx.bat` |
@@ -31,7 +29,7 @@
 示例：
 ```bash
 ./wenqu.sh                          # 看全貌
-./wenqu.sh run gen_config_schema.js # 跑配置一致性校验
+./wenqu.sh run mcp-test-server.py   # 起最小 MCP 测试服务
 ./wenqu.sh mac dev-stack status    # 看本机开发栈状态
 ```
 
@@ -76,16 +74,8 @@
 
 ## 各脚本说明
 
-### redis/（Redis / Meilisearch 侧一次性迁移）
-- `rename-ai-doc-indexes-2026-10-17.sh` — 把存量索引名从 `ai-doc-*` 收到 `wenqu-*`：Meilisearch 关键词索引 PATCH 改名、
-  Redis 各库旧向量索引在「新索引文档数已齐平」后 `FT.DROPINDEX`（不带 DD，向量数据不动）。默认只报告，`--apply` 才动手；
-  退役的全局索引 `ai-doc-index` 要连数据删需另加 `--purge-global-index`
-
 ### services/（Python，独立进程）
 - `mcp-test-server.py` — 最小 MCP 测试服务（:8931），验证 MCP 外部工具接入
-
-### codegen/（Node）
-- `gen_config_schema.js` — 配置字段 ↔ `ConfigService.defaults()` 一致性校验
 
 ### loadtest/
 - `mock-gateway.mjs` — 压测 mock 网关（:9101）

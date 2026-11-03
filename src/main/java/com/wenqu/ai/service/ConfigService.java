@@ -230,11 +230,11 @@ public class ConfigService {
      * 读取兼容明文（get 透明解密对无前缀值原样返回），迁移只为尽快消除库中明文；
      * 多实例部署由 Redis 广播 reload 触发各自迁移，幂等。
      *
-     * <p><b>只认明文，不碰旧密文</b>：{@code RSA:…} 开头的是改造前的分块 RSA 密文（LegacyRsaCipher
-     * 的领域），必须留给 {@code SecretRotationRunner} 解密后重封 JWE。本方法跑在构造期（早于
-     * ApplicationRunner），若把旧密文当明文再封一层 JWE，token 本体就埋进两层密文——
-     * v2 私钥退场后彻底解不开（2026-10-27 真机：sandbox.token 被套成 RSA:v2 套 JWE，
-     * 运行时把内层密文当 token 发给 provisioner ⇒ 401 invalid provisioner credentials）。
+     * <p><b>只认明文，不碰 {@code RSA:…} 旧密文</b>：那是 JWE 改造前的分块 RSA 形态，读取器已退役
+     * ——本机库里已无此类行；从旧备份恢复出来的话，它既不迁移也不解密（读侧按原值返回，参与调用即 401），
+     * 要用对应版本旧私钥手工解出后重填。本方法跑在构造期（早于任何启动钩子），若把旧密文当明文再封一层 JWE，
+     * token 本体就埋进两层密文——v2 私钥退场后彻底解不开（2026-10-27 真机：sandbox.token 被套成
+     * RSA:v2 套 JWE，运行时把内层密文当 token 发给 provisioner ⇒ 401 invalid provisioner credentials）。
      */
     private void migratePlainSecrets() {
         try {

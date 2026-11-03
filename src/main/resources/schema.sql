@@ -438,7 +438,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_user` (
     `memory_enabled` INT DEFAULT 1 COMMENT '用户级长期记忆自动提炼开关（个人设置可改）: 1=开, 0=关；历史行加列时按默认 1（保持原行为）',
     -- role / oidc_sub / oidc_provider 三列已随统一身份模型退役（2026-10-26）：
     -- 角色 → c_ai_user_role（多角色），外部身份 → c_ai_user_identity（多认证源绑定）；
-    -- 存量库由 DropLegacyColumnsRunner 迁移完成后删除，新库不再建。
+    -- 新库不再建，存量残留列需运维手工 ALTER 下线（role 是 NOT NULL，残留会让建号失败）。
     -- default_rerank_model 已随「重排归知识库检索设置」退役（存量库该列无害保留）
     -- default_vision_model 已随「聊天图片理解只看模型能力位」下线（存量库该列无害保留）
     `menu_pref`    TEXT        DEFAULT NULL COMMENT '个人侧栏偏好 JSON：{"order":[menuId...],"hidden":[menuId...]}。仅重排/隐藏「本人有权看到」的菜单，不越权；空=未自定义（走菜单表默认顺序与显隐）',
@@ -453,8 +453,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_user` (
 -- ============================================
 -- 2026-10：OIDC 多认证源（多 IdP）——旧表 c_ai_oidc_provider 已随统一身份模型退役（2026-10-26）：
 -- 认证源统一登记在 c_ai_identity_provider(type='oidc')，协议参数收纳进 config JSON。
--- 存量库由 IdentityMigrationRunner 桥接、DropLegacyColumnsRunner 删表；oidc.* 旧配置键
--- 仍由 OidcMigrationRunner 直接组装成统一表 default 行。
+-- 存量库的一次性桥接与旧表删除已完成，对应启动钩子已退役；仍带旧表/旧列的库需手工迁移。
 -- ============================================
 
 -- ============================================
@@ -1379,7 +1378,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_webpush_subscription` (
 -- 2026-10：统一身份认证源（OIDC/SAML/LDAP/SCIM）
 -- 取代 c_ai_oidc_provider 专用表：用 type 区分协议，协议参数统一收纳进 config JSON
 -- （敏感字段整块 RSA 加密，沿用 ConfigCryptoService 口径）。
--- 存量 c_ai_oidc_provider 由 IdentityMigrationRunner 一次性迁入本表（type=oidc），无兼容双写。
+-- 存量 c_ai_oidc_provider 已一次性迁入本表（type=oidc），无兼容双写。
 -- ============================================
 
 CREATE TABLE IF NOT EXISTS `c_ai_identity_provider` (

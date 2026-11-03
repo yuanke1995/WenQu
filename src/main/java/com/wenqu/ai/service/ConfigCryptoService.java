@@ -18,7 +18,8 @@ import org.springframework.stereotype.Service;
  *   <li>信封加密由 JOSE 完成，取代原来「RSA 每 190 字节分块直接加密」——分块 RSA 没有完整性保护，
  *       GCM 认证标签是自带的；长 JSON 也不再受 RSA 分组上限约束。</li>
  *   <li>密钥版本走 JWE header 的 {@code kid}，按 kid 从 {@link DeploymentSecrets} 的密钥环取钥解密；
- *       轮换＝放一把更高版本的 PEM 私钥并重启，启动时 SecretRotationRunner 把存量重封到新 kid。</li>
+ *       轮换＝放一把更高版本的 PEM 私钥并重启，此后新写入用新版本，历史密文照旧按自己的 kid 解密
+ *       ——<b>存量密文不会被批量重封</b>，对应版本的密钥文件必须一直留着，撤下即解不开。</li>
  *   <li>无 {@value #PREFIX} 前缀的值视为历史明文，原样返回（明文列不批量改写）。</li>
  * </ul>
  * 加密失败明文入库并 fail-loud；解密失败返回原值（调用方网关 401 快速暴露密钥不一致），不静默吞。
@@ -38,25 +39,9 @@ public class ConfigCryptoService {
         this.secrets = secrets;
     }
 
-    /** 当前加密所用密钥版本（密钥环为空时 0） */
-    public int currentVersion() {
-        return secrets.currentRsaVersion();
-    }
-
     /** 是否已加密 */
     public boolean isEncrypted(String value) {
         return value != null && value.startsWith(PREFIX);
-    }
-
-    /**
-     * 是否已由当前密钥保护——SecretRotationRunner 的判据，false 就要重封。
-     * 旧的分块 RSA 形态（{@code RSA:…}）不属于 JWE，由 Runner 里的旧格式读取器负责搬到 JWE。
-     */
-    public boolean onCurrentKey(String stored) {
-        if (!isEncrypted(stored)) {
-            return false;
-        }
-        return secrets.currentKid().equals(kidOf(stored));
     }
 
     /** 加密（空值/已加密值原样返回；密钥缺失或异常时明文返回并 fail-loud，不阻塞保存流程） */
@@ -95,23 +80,7 @@ public class ConfigCryptoService {
         return plain;
     }
 
-    /**
-     * 用当前密钥重封存量密文（轮换收尾）。
-     * <p>只在确实解得开时产出新密文，解不开返回 null 让调用方跳过——把解不开的密文当明文再封一层，
-     * 等于把「密钥不一致」这个可诊断故障洗成不可逆的数据损坏。
-     */
-    public String reencrypt(String stored) {
-        if (!isEncrypted(stored)) {
-            return null;
-        }
-        String plain = tryDecrypt(stored);
-        if (plain == null || plain.isBlank()) {
-            return null;
-        }
-        return encrypt(plain);
-    }
-
-    /** 解出明文；解不开返回 null（不写日志，由调用方决定原值返回还是跳过重封） */
+    /** 解出明文；解不开返回 null（不写日志，由调用方决定怎么暴露这个故障） */
     private String tryDecrypt(String stored) {
         DeploymentSecrets.RsaKey key = secrets.byKid(kidOf(stored));
         if (key == null) {

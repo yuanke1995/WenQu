@@ -38,16 +38,26 @@
  * <b>不在启动路径上</b>。本条红线只有文档、没有代码守卫：以后有人想在启动时做点「顺手的事」，
  * 先回来看这段，而不是散落在各处注释里的口头约定。
  *
- * <h3>本包现状（2026-10-06 审计，2026-10-17 复核清单未变）</h3>
+ * <h3>本包现状（2026-11-03 复核：统一身份/OIDC 的一次性迁移钩子、密钥轮换的存量重封钩子均已退役）</h3>
  * <table border="1">
  *   <caption>启动钩子清单</caption>
  *   <tr><th>类</th><th>触发</th><th>动什么数据</th><th>是否烧额度</th></tr>
- *   <tr><td>{@link com.wenqu.ai.startup.SchemaMigrator}</td><td>ApplicationRunner</td>
- *       <td>按 schema.sql 增量补缺列/索引（只增不删不建全量）</td><td>否</td></tr>
- *   <tr><td>{@link com.wenqu.ai.startup.RbacSeedRunner}</td><td>ApplicationRunner</td>
- *       <td>角色/菜单种子，仅表空时插入</td><td>否</td></tr>
+ *   <tr><td>{@link com.wenqu.ai.startup.SchemaMigrator}</td><td>ApplicationRunner @Order(0)</td>
+ *       <td>按 schema.sql 增量补建表/缺列/缺索引，并把 {@code tenant_id} 归一到默认租户（只增不删）</td><td>否</td></tr>
+ *   <tr><td>{@link com.wenqu.ai.startup.RbacSeedRunner}</td><td>ApplicationRunner @Order(1)</td>
+ *       <td>角色/菜单种子，仅表空或缺项时补齐</td><td>否</td></tr>
+ *   <tr><td>{@link com.wenqu.ai.startup.TenantSeedRunner}</td><td>ApplicationRunner @Order(1)</td>
+ *       <td>登记 {@code default} 租户行</td><td>否</td></tr>
  *   <tr><td>{@link com.wenqu.ai.startup.ApiEndpointScanner}</td><td>ApplicationRunner</td>
  *       <td>扫描 Spring 端点清单入库（供权限页勾选）</td><td>否</td></tr>
+ *   <tr><td>{@link com.wenqu.ai.startup.ContentSafetySeedRunner}</td><td>ApplicationRunner @Order(6)</td>
+ *       <td>逐租户登记两条只告警的个人信息规则（该租户名下已有规则则一条不加）</td><td>否</td></tr>
+ *   <tr><td>{@link com.wenqu.ai.startup.MarketBuiltinSeeder}</td><td>ApplicationRunner @Order(20)</td>
+ *       <td>官方工作流模板种入市场（幂等；管理员下架过的不复活）</td><td>否</td></tr>
+ *   <tr><td>{@link com.wenqu.ai.startup.OrphanTurnRunner}</td><td><b>无启动钩子</b>——由
+ *       {@code ScheduleCenter} 按 {@code chat.turnResumeScanMs} 周期调度（服务一起来先接一次）</td>
+ *       <td>扫中断轮并重建跟随循环</td>
+ *       <td><b>接续的那一轮会继续调模型</b>，故可从调度中心暂停</td></tr>
  *   <tr><td>{@link com.wenqu.ai.startup.ManualSeedService}</td><td><b>无启动钩子（手动触发）</b></td>
  *       <td>官方手册同步：建库 + 逐篇分块向量化</td><td><b>是，已改为手动</b></td></tr>
  * </table>
