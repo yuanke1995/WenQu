@@ -721,6 +721,14 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 channel.emit(RunEventType.WARN, message);
             }, text -> sessions.steer(cmd.getUserId(), cmd.getSessionId(), text));
         }
+        // 重复调用闸同样按轮归零：不归零就是上一轮的调用签名判这一轮
+        AgentxRepeatGuard repeatGuard = sessions.repeatGuard(sessions.key(cmd));
+        if (repeatGuard != null) {
+            repeatGuard.beginTurn((code, message) -> {
+                pool.registrar().degrade(code, message);
+                channel.emit(RunEventType.WARN, message);
+            });
+        }
         // 框架工具档位闸按轮更新标签（全框架化 P1）：拒了什么要能在日志里追到是哪一轮。
         AgentxFrameworkToolGate toolGate = sessions.frameworkToolGate(sessions.key(cmd));
         if (toolGate != null) {
@@ -1116,8 +1124,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 原始串形如「HTTP transport error during streaming: HTTP request failed with status 403…」，
         // 是英文、带响应体碎片，用户在铃铛里读不出「该充值还是该换模型」
         String spokenFailure = null;
-        if (answer.isBlank() && failure == null) answer = stripFallbackBody(recording, lastAssistantText(session));
-        // 框架那一跑本身失败（上游 402 额度、网关异常、运行被拒……）必须说出来的那一件事：双跑实测——
+        if (answer.isBlank() && failure == null) {
+            answer = stripFallbackBody(recording, lastAssistantText(session, historyBefore));
+        }        // 框架那一跑本身失败（上游 402 额度、网关异常、运行被拒……）必须说出来的那一件事：双跑实测——
         // 同一问题手写引擎发 error 帧，框架只发了一条「done + 空正文」，用户看到的是「它答了个空」，
         // 而不是「这次没答出来，原因是额度不足」。失败判据用框架自己留的 executionError / 任务终态。
         if (neverLaunched) {
@@ -1482,6 +1491,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             stepBudget.beginTurn(turnId, tools.maxToolSteps(cmd), (code, message) -> {
             }, text -> sessions.steer(cmd.getUserId(), cmd.getSessionId(), text));
         }
+        // 续跑轮同样要归零重复调用闸：不归零，上一轮最后那条命令会把这一轮的第一步判成重复
+        AgentxRepeatGuard repeatGuard = sessions.repeatGuard(sessions.key(cmd));
+        if (repeatGuard != null) repeatGuard.beginTurn(null);
         // 接续轮同样要更新档位闸标签（全框架化 P1）：否则被拒的工具在日志里挂到上一轮头上。
         AgentxFrameworkToolGate toolGate = sessions.frameworkToolGate(sessions.key(cmd));
         if (toolGate != null) {
@@ -2097,7 +2109,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             recording.toolCall(name, status, args, elapsed, beganAt, charged, result);
             try {
                 emit(channel, RunEventType.TOOL_STATUS,
-                        toolCard(recording.uid, name, status, elapsed, beganAt, charged, args, result));
+                        toolCard(recording.uid, name, status, elapsed, beganAt, charged, args, result, null));
             } catch (RuntimeException gone) {
                 log.info("[agentx] 待办终态帧没发出去（通道已收），落库那份仍在: session={} tool={}",
                         cmd.getSessionId(), name);
@@ -2466,9 +2478,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
          *                  <b>必须和 SSE 那一帧同形落库</b>：以前只有流里带 result，刷新后读落库那份
          *                  就只剩入参——工具卡上是一个看不出原因的红叉，「这步为什么失败」只能回去翻服务端日志
          */
-        void toolCall(String name, String status, String args, long elapsedMs, long beganAtMs, long waitedMs,
+        // 返回这一把（若是咨询类工具）的 subChat，供实时 tool_status 终态帧一并下发——
+        // 此前只落库不实时发，导致咨询卡的结果（问/答/资料/子对话）直播看不见、刷新才冒出来。
+        java.util.Map<String, Object> toolCall(String name, String status, String args, long elapsedMs, long beganAtMs, long waitedMs,
                       String result) {
-            if (name == null || name.isBlank()) return;
+            if (name == null || name.isBlank()) return null;
             boolean runCode = com.wenqu.ai.service.SandboxTools.RUN_CODE_TOOL_NAME.equals(name);
             for (int i = toolCalls.size() - 1; i >= 0; i--) {
                 java.util.Map<String, Object> prior = toolCalls.get(i);
@@ -2480,14 +2494,17 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                     if (spill != null) prior.put("spill", spill);
                     // 咨询卡片挂那一问一答（与手写侧同一个实现与同一把长度尺）：刷新后仍点得开。
                     // 派遣改由框架驱使后工具名换成 agent_spawn，认哪几把见 CONSULT_CARD_TOOLS
+                    // 同一份 subChat 既落库也通过下方返回的引用交回实时帧：直播与刷新同构，
+                    // 不再出现「当场只见一张空卡、刷新后才长出结果」的错位
+                    java.util.Map<String, Object> subChat = null;
                     if (CONSULT_CARD_TOOLS.contains(name)) {
-                        Map<String, Object> subChat = com.wenqu.ai.agent.chat.TurnRecorder
+                        subChat = com.wenqu.ai.agent.chat.TurnRecorder
                                 .consultCardSubChat(consultLedger, args);
                         if (subChat != null) prior.put("subChat", subChat);
                     }
                     // run_code 终态：停面板 ticker 并把扇出清单与这次运行的结构化结果挂上卡片
                     if (runCode) prior.putAll(tools.finishRunCodeCard(hooks));
-                    return;
+                    return subChat;
                 }
             }
             java.util.Map<String, Object> entry = new java.util.LinkedHashMap<>();
@@ -2511,6 +2528,14 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             toolCalls.add(entry);
             // 脚本开始跑：开这块实时面板（作用域是一次运行，两段脚本各自复位）
             if (runCode) tools.beginRunCode(hooks);
+            // 终态事件先于 start 到达（如从游标中途接流）时这条新卡也照挂 subChat，免得直播缺这块
+            if (CONSULT_CARD_TOOLS.contains(name)) {
+                java.util.Map<String, Object> subChat = com.wenqu.ai.agent.chat.TurnRecorder
+                        .consultCardSubChat(consultLedger, args);
+                if (subChat != null) entry.put("subChat", subChat);
+                return subChat;
+            }
+            return null;
         }
 
         /**
@@ -2993,7 +3018,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 实时工具卡。发 "running" 会让前端把这张当终态卡 push 出去，随后的 done 又找不到可合并的
                 // start 卡再 push 一张——一次调用渲染成两张，其中停在 "running" 的那张显示为失败(❌)。
                 emit(channel, RunEventType.TOOL_STATUS,
-                        toolCard(recording.uid, recording.lastToolName, "start", 0L, beganAt, 0L, recording.lastToolInput, null));
+                        toolCard(recording.uid, recording.lastToolName, "start", 0L, beganAt, 0L, recording.lastToolInput, null, null));
             }
             case "tool/result" -> {
                 String name = toolNameOf(data.get("message"));
@@ -3016,9 +3041,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 long charged = recording.takeToolCharge(callKey);
                 long elapsed = beganAt <= 0L ? 0L
                         : Math.max(0L, System.currentTimeMillis() - beganAt - covered);
-                recording.toolCall(name, failed ? "error" : "done", args, elapsed, beganAt, charged, resultText);
+                java.util.Map<String, Object> subChat = recording.toolCall(name, failed ? "error" : "done", args, elapsed, beganAt, charged, resultText);
                 emit(channel, RunEventType.TOOL_STATUS, toolCard(recording.uid, name, failed ? "error" : "done",
-                        elapsed, beganAt, charged, args, resultText));
+                        elapsed, beganAt, charged, args, resultText, subChat));
             }
             case "tool/decision" -> {
                 // 权限判定由框架说出（实测字段 decision=allowed|denied）：拒绝必须让用户看见，
@@ -3512,6 +3537,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         AgentxStepBudget stepBudget = new AgentxStepBudget();
         // 实例常驻、闸随实例走，登记到会话表好让引擎在开轮时归零它
         sessions.noteStepBudget(sessions.key(cmd), stepBudget);
+        // 重复调用闸：步数预算限不了「每一步都是同一句命令」，见 AgentxRepeatGuard 类注释
+        AgentxRepeatGuard repeatGuard = new AgentxRepeatGuard();
+        sessions.noteRepeatGuard(sessions.key(cmd), repeatGuard);
         // 框架工具的档位闸（全框架化 P1）：沙箱/文件工具改由框架提供后不再过问渠装配链，
         // 档位裁剪挪到执行前逐个判。策略按轮取（同实例多轮可能不同档）。
         // 游客 MCP 授权名单一并传入：名单内工具按「发布者预批」在闸上放行（只读档的
@@ -3641,6 +3669,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 .permissionContext(AgentxPermissions.contextOf(policy, cmd.getGuestMcpServers()))
                 // 待办持久化 + 答复后自动接续原任务，是这套执行形态的立身之处
                 .enablePendingToolRecovery(true)
+                // 重复调用闸：同一工具同一参数连续第 3 次起拒掉。order=2 排在步数闸外侧，
+                // 空转的重复调用不占步数预算——它不该挤掉真正要做的事的那几步
+                .middleware(repeatGuard)
                 // 步数预算闸（对标 StepBudgetGuard）：maxIters 限的是推理轮数而不是工具调用次数，
                 // 一轮里模型可以一次要好几把工具，账单闸只能在 onActing 里数
                 .middleware(stepBudget)
@@ -4357,9 +4388,15 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 空正文的停止轮会落到「只有过程、没有正文」那一支——界面上只剩工具卡与「已停止本轮」标注，
      * 这才是这一轮真实留下的东西（真机 2026-10-20 22:06 那一轮屏幕上是一句英文客套话）。
      * 判据用框架自己留的 generateReason，不比对文案。
+     * <p><b>只看这一跑添的那几行</b>（与 {@link #usageOf} 同一个 {@code historyBefore} 口径）：
+     * 回退要补的是「模型答了、正文没进过流式剥离器」，而这一跑一个字也没添时，transcript 尾部那条
+     * 必然属于上一轮——拿它当本轮正文存档，就是把别人的话记在这一轮名下。实例被重建过尤其如此：
+     * 框架的执行异常留在旧实例里，新实例读不到失败痕迹，光靠 {@code failure == null} 挡不住
+     * （真机 2026-11-03 21:49 线上：接续一条已失败的轮，库里凭空多出一条与上一轮逐字相同的回答）。
      */
-    private static String lastAssistantText(AgentSession session) {
+    private static String lastAssistantText(AgentSession session, int historyBefore) {
         List<Msg> messages = session.transcript().messages();
+        if (messages.size() <= historyBefore) return "";
         for (int i = messages.size() - 1; i >= 0; i--) {
             Msg m = messages.get(i);
             if (!"ASSISTANT".equals(String.valueOf(m.getRole()))) continue;
@@ -4377,10 +4414,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * "You have failed to generate response within the maximum iterations" 是框架的内部提示词，
      * 跟着文案走等于把判据挂在别人会改的东西上。
      * <p>只看<b>最后一条</b>助手消息、不往前翻：往前翻会把上一轮撞上限的那条捞给这一轮存档
-     * （{@link #lastAssistantText} 的注释记过同一类串轮坑）。
+     * （{@link #lastAssistantText} 的注释记过同一类串轮坑）。同一条护栏：这一跑没往 transcript
+     * 添过行就没有「本轮的收尾」可取。
      */
-    private static String maxIterationsWrapUp(AgentSession session) {
+    private static String maxIterationsWrapUp(AgentSession session, int historyBefore) {
         List<Msg> messages = session.transcript().messages();
+        if (messages.size() <= historyBefore) return null;
         for (int i = messages.size() - 1; i >= 0; i--) {
             Msg m = messages.get(i);
             if (!"ASSISTANT".equals(String.valueOf(m.getRole()))) continue;
@@ -4470,7 +4509,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 「从第一个操作到最后一个操作」的真实跨度；拿前端收到帧的本地时刻去减，接流/后台节流就会把跨度算歪。
      */
     private String toolCard(String uid, String name, String status, long elapsedMs, long startedAtMs, long waitedMs,
-                            String args, String result) {
+                            String args, String result, java.util.Map<String, Object> subChat) {
         StringBuilder sb = new StringBuilder("{\"name\":\"").append(esc(name)).append("\"");
         String label = displayNames.label(uid, name);
         if (label != null) sb.append(",\"label\":\"").append(esc(label)).append("\"");
@@ -4488,6 +4527,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         if (args != null && !args.isBlank()) sb.append(",\"args\":").append(com.alibaba.fastjson2.JSON.toJSONString(args));
         // 输出（截断）：展开卡的「输出」段读它；缺了只剩入参，看不到工具到底返回了什么
         if (result != null && !result.isBlank()) sb.append(",\"result\":").append(com.alibaba.fastjson2.JSON.toJSONString(result));
+        // 咨询卡（子智能体/取数助手等）的终态一问一答：直播与刷新同一份 subChat（落库那份同源），
+        // 漏发就是「直播只见一张空卡、刷新才长出结果」——与下方 done 帧、刷新读库三条路径必须同构
+        if (subChat != null && !subChat.isEmpty()) sb.append(",\"subChat\":").append(com.alibaba.fastjson2.JSON.toJSONString(subChat));
         return sb.append("}").toString();
     }
 

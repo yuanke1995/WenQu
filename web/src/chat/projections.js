@@ -1062,6 +1062,9 @@ const mergeDoneToolCalls = (m, doneCalls) => {
       if (d.error) live.error = d.error
       if (d.attempts != null) live.attempts = d.attempts
       if (d.result != null) live.result = d.result
+      // 咨询卡（子智能体/取数助手）的终态一问一答：done 这份带全量 subChat（与落库同源），
+      // 漏搬就是「实时帧丢了这张卡或没带 subChat，done 这份又没补」→ 当场看不见、刷新才长出结果
+      if (d.subChat) live.subChat = d.subChat
       // 外溢留存标识必须跟着搬：实时流里的 tool_status 只是短摘要副本（不带 spillId），
       // 全文是 done 这份才有——漏搬的后果是「历史刷新后卡片有『查看完整输出』、当场没有」
       if (d.spillId) live.spillId = d.spillId
