@@ -569,7 +569,7 @@ spring:
 | `artifact.*` | `retentionDays`(90)、`cleanupIntervalMs`(1d) | 产物超期清理 |
 | `schedule.*` | `runLogRetentionDays`(7)、`runLogCleanupIntervalMs`(1d) | 调度中心执行日志 |
 | `sandbox.*` | `projectWorkdirEnabled`(**true**)、`projectUploadMaxMb`(100)、`commandTimeoutSeconds`(180)、`idleReleaseMinutes`(60)、`project.turnGuard.leaseTtlMs`(2h)；`cleanupIntervalMs`(10min)、`maxOutputBytes`(256KB)、`keepaliveIntervalSeconds`(30)、`deleteTimeoutSeconds`(120) 为内部默认 | 保存即生效（客户端懒构建）。连接地址 / 令牌 / 回调地址 / 虚拟根走环境变量；`projectUploadMaxMb` 服务端再钳到 256（multipart 上限）；轮次租约用于「有轮次在跑时禁止改名移动删除」 |
-| `mcp.server.*` | `enabled`(**false**)、`timeoutMs`(180000)、`allowedOrigins`("") | `allowedOrigins` 为空时仅允许本机回环（Origin 校验防 DNS rebinding） |
+| `mcp.server.*` | `enabled`(**false**)、`timeoutMs`(50000)、`allowedOrigins`("") | `allowedOrigins` 为空时仅允许本机回环（Origin 校验防 DNS rebinding）；`timeoutMs` 压在多数 MCP 客户端自身的 60 秒请求超时之下，到点中止那一轮而不是让它在后台跑完 |
 | `chat.agentscope*` / `chat.sessionLogArchive.*`（调试设置） | `agentscopeMaxIters`(12，0=不限制)、`agentscopeStateDir`(`user-data/agentscope`)、`agentscopeRedisPrefix`(`agentscope:session:`)、`sessionLogArchive.enabled`(true)、`.keepDays`(90)、`agentscopeJournalRotateEvents`(12000)、`agentscopeJournalRotateKeepDays`(30) | 框架引擎推理步数上限、状态目录与 Redis 前缀、会话事件日志归档与换代；多副本必须把状态与归档目录指向共享卷 |
 
 ### 设置页 10 个导航项（15 个配置面板，179 项参数）

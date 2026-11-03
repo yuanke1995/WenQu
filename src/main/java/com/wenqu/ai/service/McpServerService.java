@@ -110,6 +110,8 @@ public class McpServerService {
     private final AgentShareService agentShareService;
     private final SessionService sessionService;
     private final ChatService chatService;
+    /** 超时要把那一轮真的叫停（见 {@link #askPlatformBody} 与 {@link #ask} 的超时分支） */
+    private final ChatRunRuntime runRuntime;
     private final RateLimitService rateLimitService;
     private final ModelRegistryService modelRegistryService;
     private final ConfigService configService;
@@ -124,7 +126,8 @@ public class McpServerService {
     private final UserRoleService userRoleService;
 
     public McpServerService(AgentShareService agentShareService, SessionService sessionService,
-                            ChatService chatService, RateLimitService rateLimitService,
+                            ChatService chatService, ChatRunRuntime runRuntime,
+                            RateLimitService rateLimitService,
                             ModelRegistryService modelRegistryService, ConfigService configService,
                             ApiKeyService apiKeyService, UserMapper userMapper,
                             KnowledgeRetrievalTool knowledgeRetrievalTool,
@@ -134,6 +137,7 @@ public class McpServerService {
         this.agentShareService = agentShareService;
         this.sessionService = sessionService;
         this.chatService = chatService;
+        this.runRuntime = runRuntime;
         this.rateLimitService = rateLimitService;
         this.modelRegistryService = modelRegistryService;
         this.configService = configService;
@@ -339,7 +343,10 @@ public class McpServerService {
                         .agentId(agentId.isEmpty() ? null : agentId).modelOverride("")
                         .build(), sink);
                 if (!sink.awaitDone(timeoutMs)) {
-                    return toolError("执行超时（" + timeoutMs + " ms 内未收到完成事件）");
+                    // 外部客户端的耐心比这里短（MCP TypeScript 客户端默认 60s，且进度通知不延长它），
+                    // 它先判死而这一轮还在流水线里跑——不叫停就是把一整轮的 token 烧在没人等的回答上。
+                    runRuntime.stopTurn(sid, key.getCreatedBy());
+                    return toolError("执行超时（" + timeoutMs / 1000 + " 秒），本轮已中止");
                 }
                 if (sink.lastError() != null && !sink.lastError().isBlank()) {
                     return toolError(sink.lastError());
@@ -526,7 +533,9 @@ public class McpServerService {
                     .guestMcpServers(AgentShareService.guestMcpServersOf(r.share()))
                     .build(), sink);
             if (!sink.awaitDone(timeoutMs)) {
-                return toolError("执行超时（" + timeoutMs + " ms 内未收到完成事件）");
+                // 同上：客户端先判死，这一轮不能留给它自己跑完烧完（口径见 askPlatformBody）
+                runRuntime.stopTurn(sessionId, r.owner().getUid());
+                return toolError("执行超时（" + timeoutMs / 1000 + " 秒），本轮已中止");
             }
             if (sink.lastError() != null && !sink.lastError().isBlank()) {
                 return toolError(sink.lastError());
@@ -956,12 +965,16 @@ public class McpServerService {
             // 消息行还是载荷投影——提交前复验时就卡在"看起来对，但不知道走的哪条路"。
             log.info("[MCP] 本轮来源 {} 条（取自消息行 session={}）", sources.size(), sessionId);
         }
+        String text = appendSourcesBlock(sink.answer(), sources, total);
         Map<String, Object> structured = new LinkedHashMap<>();
         if (extraFields != null) structured.putAll(extraFields);
+        // 正文必须在这份里也有一份：只认 structuredContent 的客户端（实测 Qoder）读不到 content 文本时，
+        // 拿到的就是「只有 sessionId 和空 sources」——服务端明明答了，客户端看起来像没答。
+        structured.put("answer", text);
         structured.put("sessionId", sessionId);
         structured.put("sources", sources);
         return McpSchema.CallToolResult.builder()
-                .addTextContent(appendSourcesBlock(sink.answer(), sources, total))
+                .addTextContent(text)
                 .structuredContent(structured)
                 .build();
     }
@@ -991,7 +1004,18 @@ public class McpServerService {
     }
 
     private static McpSchema.CallToolResult ok(String text) {
-        return McpSchema.CallToolResult.builder().addTextContent(text).build();
+        return McpSchema.CallToolResult.builder().addTextContent(text)
+                .structuredContent(resultOf(text)).build();
+    }
+
+    /**
+     * 只给正文文本用的结构化输出：与 {@code content} 同一份，别出现「一份有、一份空」——
+     * 只认 {@code structuredContent} 的客户端读空的那份就会当成没结果。
+     */
+    private static Map<String, Object> resultOf(String text) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("result", text == null ? "" : text);
+        return m;
     }
 
     /**
@@ -1034,7 +1058,8 @@ public class McpServerService {
     }
 
     private static McpSchema.CallToolResult toolError(String message) {
-        return McpSchema.CallToolResult.builder().addTextContent(message).isError(Boolean.TRUE).build();
+        return McpSchema.CallToolResult.builder().addTextContent(message)
+                .structuredContent(resultOf(message)).isError(Boolean.TRUE).build();
     }
 
     /** 纯 JSON 错误响应（未建立 MCP 会话时的失败，如 token 无效） */

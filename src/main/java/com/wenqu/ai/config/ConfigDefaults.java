@@ -57,8 +57,12 @@ public final class ConfigDefaults {
     public static final int MENTION_DOC_MAX_CHARS = 20_000;
     /** @ 文档提及正文注入的总字符预算（一次 @ 十份文档不设总闸会把本轮输入顶爆） */
     public static final int MENTION_DOC_TOTAL_MAX_CHARS = 30_000;
-    /** mcp.server.timeoutMs：MCP Server 单次工具调用等待超时 */
-    public static final int MCP_SERVER_TIMEOUT_MS = 180_000;
+    /**
+     * mcp.server.timeoutMs：MCP Server 单次工具调用等待超时。
+     * <p>定在 50s 而不是更宽：MCP 客户端侧的请求超时是 60s（TypeScript SDK 默认值，且进度通知不延长它），
+     * 比它宽的等待只会让客户端先判死、服务端那一轮再白跑完。
+     */
+    public static final int MCP_SERVER_TIMEOUT_MS = 50_000;
     /** artifact.retentionDays：产物保留天数（0=不清理） */
     public static final int ARTIFACT_RETENTION_DAYS = 90;
     /** cleanup.visitorIdleDays：访客会话闲置多少天后回收（分享页与 MCP 端点产生，没有主人会去删） */
