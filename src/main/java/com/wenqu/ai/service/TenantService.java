@@ -46,6 +46,7 @@ public class TenantService {
     private final UserMapper userMapper;
     private final AuditService audit;
     private final com.wenqu.ai.startup.ContentSafetySeedRunner contentSafetySeed;
+    private final com.wenqu.ai.startup.RbacSeedRunner rbacSeedRunner;
     private final com.wenqu.ai.service.contentsafety.ContentSafetyService contentSafety;
 
     private record Cached(String tenantId, long expireAt) {
@@ -115,6 +116,13 @@ public class TenantService {
         t.setNote(note == null || note.isBlank() ? null : note.trim());
         t.setStatus(1);
         tenantMapper.insert(t);
+        // 批次 F3：新租户开通即种入角色域（内置三件套 + user 基础菜单 + 受限管理员预设）——
+        // 不种的话该租户用户一登录就是零角色（角色表按租户过滤，default 套里的角色看不见）
+        try {
+            rbacSeedRunner.seedTenantRoles(t.getId(), java.util.Set.of());
+        } catch (Exception e) {
+            log.warn("[TENANT] 租户 {} 的角色种子失败（可在权限页手工补建）: {}", t.getId(), e.getMessage());
+        }
         // 词表按租户各一份（Phase 4），所以新租户一开就给它登记首批只告警示例：
         // 空表的新租户看不出闸门在不在跑，管理员只能靠真发一句话去猜。失败不阻断开通——
         // 规则随时能在界面上补，租户开不出来才是事故。

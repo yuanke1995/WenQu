@@ -46,7 +46,7 @@ import java.util.stream.Collectors;
  */
 @Slf4j
 @Component
-@Order(1)
+@Order(2)
 @RequiredArgsConstructor
 public class RbacSeedRunner implements ApplicationRunner {
 
@@ -141,6 +141,7 @@ public class RbacSeedRunner implements ApplicationRunner {
     private final com.wenqu.ai.mapper.ApiEndpointMapper apiEndpointMapper;
     private final com.wenqu.ai.mapper.RolePermissionMapper rolePermissionMapper;
     private final com.wenqu.ai.mapper.RoleApiMapper roleApiMapper;
+    private final org.springframework.jdbc.core.JdbcTemplate jdbc;
 
     @Override
     public void run(ApplicationArguments args) {
@@ -153,13 +154,6 @@ public class RbacSeedRunner implements ApplicationRunner {
 
     void seed() {
         boolean seeded = false;
-        if (roleMapper.selectCount(null) == 0) {
-            insertRole("superadmin", "超级管理员", "内置：全部权限，含最后一名保护", 1);
-            insertRole("admin", "管理员", "内置：管理端全量权限", 1);
-            insertRole("user", "普通用户", "内置：问答与个人资产", 0);
-            seeded = true;
-            log.info("[RbacSeed] 已预置角色 superadmin/admin/user");
-        }
         // 菜单清单：按 id 补齐缺失的内置菜单（新增菜单随版本自动登记，不需要手工 SQL）。
         // 与「角色-菜单绑定」刻意分开：绑定仍只在空表时灌——管理员在权限页的解绑不该被启动逻辑恢复；
         // 新菜单默认对普通角色不可见（管理员直通全部菜单），需在「权限管理」里勾选，fail-closed。
@@ -233,8 +227,77 @@ public class RbacSeedRunner implements ApplicationRunner {
             roleService.invalidateCaches();
             log.info("[RbacSeed] 已为 user 角色补绑基础菜单 {}", userMenuAdded);
         }
-        seedRestrictedAdmins(existingMenuIds);
+        // 批次 F3：角色按租户各一套——遍历现存租户（default 恒在）逐租户种角色/绑定/预设。
+        // 菜单是全局共享的（上面种一次），角色域在租户上下文内写入，tenant_id 由插件按当前上下文盖戳。
+        Set<String> existingMenuIdsFinal = existingMenuIds;
+        for (String tenantId : distinctTenants()) {
+            try {
+                com.wenqu.ai.util.TenantContext.bind(tenantId);
+                seeded |= seedTenantRoles(tenantId, existingMenuIdsFinal);
+            } finally {
+                com.wenqu.ai.util.TenantContext.bind(null);
+            }
+        }
         if (seeded) roleService.invalidateCaches();
+    }
+
+    /** 全部租户 id（c_ai_user 的 distinct tenant_id ∪ default）——租户域角色要按租户各一套 */
+    private List<String> distinctTenants() {
+        Set<String> out = new java.util.LinkedHashSet<>();
+        out.add(com.wenqu.ai.util.TenantContext.DEFAULT_TENANT);
+        try {
+            for (String t : jdbc.queryForList("SELECT DISTINCT tenant_id FROM c_ai_user", String.class)) {
+                if (t != null && !t.isBlank()) out.add(t);
+            }
+        } catch (Exception e) {
+            log.warn("[RbacSeed] 租户清单查询失败（按 default 单租户种）: {}", e.getMessage());
+        }
+        return List.copyOf(out);
+    }
+
+    /**
+     * 单租户角色种子（批次 F3）：内置三件套（该租户没有才建）+ user 基础菜单绑定 + 受限管理员预设。
+     * 幂等：绑定按项补齐、角色按 id 查缺，管理员在权限页的调整不被启动逻辑恢复。
+     *
+     * @return 是否发生了写入（供外层决定是否失效缓存）
+     */
+    public boolean seedTenantRoles(String tenantId, Set<String> validMenuIds) {
+        // 开通动作跑在平台视图里（asPlatform）：本方法必须自己绑到目标租户——
+        // 否则存在性检查会看到 default 套的角色而整段跳过，INSERT 也盖错租户戳
+        try {
+            com.wenqu.ai.util.TenantContext.bind(tenantId);
+            return seedTenantRolesBound(tenantId, validMenuIds);
+        } finally {
+            com.wenqu.ai.util.TenantContext.bind(null);
+        }
+    }
+
+    private boolean seedTenantRolesBound(String tenantId, Set<String> validMenuIds) {
+        boolean changed = false;
+        for (String[] trio : new String[][]{
+                {"superadmin", "超级管理员", "内置：全部权限，含最后一名保护", "1"},
+                {"admin", "管理员", "内置：管理端全量权限", "1"},
+                {"user", "普通用户", "内置：问答与个人资产", "0"}}) {
+            // 显式按 (tenant_id, code) 查：平台视图下 selectById 不带谓词会误判"已存在"
+            Role exist = roleMapper.selectOne(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<Role>()
+                    .eq(Role::getCode, trio[0]).apply("tenant_id = {0}", tenantId));
+            if (exist != null) continue;
+            insertRole(trio[0], trio[1], trio[2], Integer.parseInt(trio[3]));
+            changed = true;
+            log.info("[RbacSeed] 租户 {} 已预置角色 {}", tenantId, trio[0]);
+        }
+        // user 基础菜单绑定：按项补齐（每租户的 user 角色各绑各的）
+        Set<String> userMenuIds = new HashSet<>(roleMenuMapper.menuIdsOfRole("user"));
+        List<String> userMenuAdded = USER_MENUS.stream().filter(userMenuIds::add).collect(Collectors.toList());
+        if (!userMenuAdded.isEmpty()) {
+            for (String mid : userMenuAdded) roleMenuMapper.bind("user", mid);
+            log.info("[RbacSeed] 租户 {} 的 user 角色补绑基础菜单 {}", tenantId, userMenuAdded);
+            changed = true;
+        }
+        seedRestrictedAdmins(validMenuIds);
+        // 种子写完后当前租户快照作废（本租户判定立刻读新数据）
+        roleService.invalidateCaches();
+        return changed;
     }
 
     /**
@@ -278,7 +341,10 @@ public class RbacSeedRunner implements ApplicationRunner {
     /** 单个受限管理员预设：角色缺失才建（幂等），建完绑菜单（限定在现存菜单内）与授权点 */
     private void seedPresetRole(String code, String name, String desc, List<String> perms,
                                 java.util.Set<String> wantedMenus, Set<String> validMenuIds) {
-        if (roleMapper.selectById(code) != null) return;
+        // 同上：显式 (tenant_id, code) 查缺，防平台视图下的全局可见性误判
+        Role presetExist = roleMapper.selectOne(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<Role>()
+                .eq(Role::getCode, code).apply("tenant_id = {0}", com.wenqu.ai.util.TenantContext.current()));
+        if (presetExist != null) return;
         Role r = new Role();
         r.setCode(code);
         r.setName(name);

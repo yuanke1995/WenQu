@@ -76,6 +76,7 @@ public class RoleService {
     private final com.wenqu.ai.mapper.PermissionCatalogMapper permissionCatalogMapper;
     private final com.wenqu.ai.mapper.RoleDataScopeMapper roleDataScopeMapper;
     private final com.wenqu.ai.service.ResourceVisibilityService resourceVisibilityService;
+    private final org.springframework.jdbc.core.JdbcTemplate jdbc;
     private final ReplicaCoordination replicaCoordination;
 
     private final AntPathMatcher pathMatcher = new AntPathMatcher();
@@ -84,22 +85,61 @@ public class RoleService {
     @org.springframework.beans.factory.annotation.Value("${ai-app.rbac.permission-mode:legacy}")
     private String permissionMode = "legacy";
 
-    // ==================== 缓存 ====================
+    // ==================== 缓存（批次 F2：按租户键控） ====================
 
-    /** 角色全量快照（code → Role；含停用角色，启用状态由调用方按需判断） */
-    private volatile Map<String, Role> roleSnapshot = Map.of();
+    /**
+     * 每租户一份角色快照（批次 F2）：角色/绑定全部按租户隔离后，判定热路径必须按
+     * {@code TenantContext} 键控取各自的快照，否则 A 租户能读到 B 租户的角色定义（直接越权源）。
+     * 键规则：平台视图（asPlatform）与未绑定线程（启动任务/调度器）共用 {@link #PLATFORM_KEY}
+     * ——这两类线程本来就跨租户遍历，快照不做租户过滤（与租户化前的全局口径一致）；
+     * 绑定态请求按租户各建各的。表小（每租户 ≤几十行），整份重建成本可忽略。
+     */
+    private record Snap(Map<String, Role> roles,
+                        Map<String, List<ApiPattern>> apiPatterns,
+                        Map<String, List<String>> menuBindings,
+                        Map<String, List<String>> apiIds,
+                        Map<String, RolePermBinding> permBindings,
+                        long expireAt) {
+        static Snap empty() {
+            return new Snap(Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), 0L);
+        }
+    }
 
-    /** 角色绑定的接口 pattern 快照（roleCode → [(method, path)]；method 大写或 ALL） */
-    private volatile Map<String, List<ApiPattern>> apiPatternSnapshot = Map.of();
+    private static final String PLATFORM_KEY = "\u0000platform";
+    private final ConcurrentHashMap<String, Snap> snapshots = new ConcurrentHashMap<>();
 
-    /** 角色绑定的菜单 id 快照（roleCode → [menuId]） */
-    private volatile Map<String, List<String>> menuBindingSnapshot = Map.of();
+    private static String tenantKey() {
+        if (com.wenqu.ai.util.TenantContext.inPlatformView()) return PLATFORM_KEY;
+        String t = com.wenqu.ai.util.TenantContext.current();
+        return t == null || t.isBlank() ? PLATFORM_KEY : t;
+    }
 
-    /** 角色绑定的接口 id 快照（roleCode → [apiId]，权限页回显与 canAccess 同源失效） */
-    private volatile Map<String, List<String>> apiIdSnapshot = Map.of();
+    private Snap snap() {
+        String key = tenantKey();
+        Snap s = snapshots.get(key);
+        if (s != null && System.currentTimeMillis() < s.expireAt()) return s;
+        synchronized (this) {
+            s = snapshots.get(key);
+            if (s == null || System.currentTimeMillis() >= s.expireAt()) {
+                s = rebuildSnap(s);
+                snapshots.put(key, s);
+            }
+            return s;
+        }
+    }
 
-    /** 快照构建时刻 + TTL 的到期点；0 = 已失效，下次访问重建（被动过期只清本地，绝不广播） */
-    private volatile long snapshotExpireAt = 0L;
+    /** 重建整份快照：角色全量 + 各按角色懒加载的绑定表清零（随访问重建） */
+    /** 角色快照（按租户键控，懒加载/过期重建在 {@link #snap()} 内） */
+    private Map<String, Role> roles() {
+        return snap().roles();
+    }
+
+    private Snap rebuildSnap(Snap old) {
+        Map<String, Role> roles = new LinkedHashMap<>();
+        for (Role r : roleMapper.selectList(null)) roles.put(r.getCode(), r);
+        return new Snap(roles, Map.of(), Map.of(), Map.of(), Map.of(),
+                System.currentTimeMillis() + SNAPSHOT_TTL_MS);
+    }
 
     /** 接口 pattern（method + path 二元组） */
     private record ApiPattern(String method, String path) {
@@ -120,49 +160,22 @@ public class RoleService {
         }
     }
 
-    private boolean snapshotStale() {
-        return System.currentTimeMillis() >= snapshotExpireAt;
-    }
-
-    /** 角色快照（懒加载：首次访问/过期时从库构建；角色写操作后失效） */
-    private Map<String, Role> roles() {
-        Map<String, Role> snap = roleSnapshot;
-        if (!snap.isEmpty() && !snapshotStale()) return snap;
-        synchronized (this) {
-            if (roleSnapshot.isEmpty() || snapshotStale()) rebuildRoleSnapshot();
-            return roleSnapshot;
-        }
-    }
-
-    private synchronized void rebuildRoleSnapshot() {
-        Map<String, Role> m = new LinkedHashMap<>();
-        for (Role r : roleMapper.selectList(null)) m.put(r.getCode(), r);
-        roleSnapshot = m;
-        snapshotExpireAt = System.currentTimeMillis() + SNAPSHOT_TTL_MS;
-    }
-
-    /** 只清本地（被动过期与收到远端广播时用；不广播，否则两台副本互相触发成死循环） */
+    /** 只清本地（被动过期与收到远端广播时用；不广播，否则两台副本互相触发成死循环）。
+     *  广播可能来自任一租户的写操作，失效按全租户清（表小重建便宜，正确性优先）。 */
     private synchronized void invalidateCachesLocal() {
-        roleSnapshot = Map.of();
-        apiPatternSnapshot = Map.of();
-        menuBindingSnapshot = Map.of();
-        apiIdSnapshot = Map.of();
-        permBindingSnapshot = Map.of();
+        snapshots.clear();
         apiPermExact = Map.of();
         apiPermPatterns = List.of();
         apiPermLoaded = false;
         shadowDiffs.clear();
-        snapshotExpireAt = 0L;
     }
 
     private synchronized void invalidateApiPatternsLocal() {
-        apiPatternSnapshot = Map.of();
-        apiIdSnapshot = Map.of();
-        // 端点表变了 → 端点→授权点映射同样作废（permission_code 挂在 c_ai_api 行上）
+        // 端点表变了 → 端点→授权点映射作废（permission_code 挂在 c_ai_api 行上，全局表）+ 各租户 pattern 表清零
         apiPermExact = Map.of();
         apiPermPatterns = List.of();
         apiPermLoaded = false;
-        snapshotExpireAt = 0L;
+        snapshots.replaceAll((k, v) -> new Snap(v.roles(), Map.of(), v.menuBindings(), Map.of(), v.permBindings(), v.expireAt()));
     }
 
     /**
@@ -198,9 +211,6 @@ public class RoleService {
     /** 端点 → 授权点 的匹配条目（pattern 路径单列，热路径少做一次精确查找） */
     private record ApiPermEntry(String method, String path, String perm) {
     }
-
-    /** 角色 → 授权点绑定（懒加载；invalidateCaches / TTL 与其它快照同生命周期） */
-    private volatile Map<String, RolePermBinding> permBindingSnapshot = Map.of();
 
     /** 端点 → 授权点 的精确映射（"METHOD path"/"ALL path" → perm；不含 {id} 占位路径） */
     private volatile Map<String, String> apiPermExact = Map.of();
@@ -336,21 +346,21 @@ public class RoleService {
         }
     }
 
-    /** 角色的授权点绑定（懒加载 + 缓存；角色不存在/停用 → null，按无绑定处理） */
+    /** 角色的授权点绑定（懒加载 + 缓存；角色不存在/停用 → 空绑定，按无授权处理） */
     private RolePermBinding permBindingOf(String role) {
-        if (role == null || role.isBlank()) return null;
-        refreshIfStale();
-        RolePermBinding cached = permBindingSnapshot.get(role);
+        if (role == null || role.isBlank()) return new RolePermBinding(Set.of(), Map.of());
+        Snap s = snap();
+        RolePermBinding cached = s.permBindings().get(role);
         if (cached != null) return cached;
         synchronized (this) {
-            cached = permBindingSnapshot.get(role);
+            s = snap();
+            cached = s.permBindings().get(role);
             if (cached != null) return cached;
-            Role r = roles().get(role);
+            Role r = s.roles().get(role);
             if (r == null || (r.getStatus() != null && r.getStatus() == 0)) {
                 RolePermBinding none = new RolePermBinding(Set.of(), Map.of());
-                Map<String, RolePermBinding> next = new ConcurrentHashMap<>(permBindingSnapshot);
-                next.put(role, none);
-                permBindingSnapshot = next;
+                putSnap(cur -> new Snap(cur.roles(), cur.apiPatterns(), cur.menuBindings(),
+                        cur.apiIds(), put(cur.permBindings(), role, none), cur.expireAt()));
                 return none;
             }
             Set<String> allows = new java.util.LinkedHashSet<>();
@@ -358,16 +368,25 @@ public class RoleService {
             for (Map<String, Object> row : rolePermissionMapper.rowsOfRole(role)) {
                 String perm = String.valueOf(row.get("permissionCode"));
                 boolean deny = "deny".equalsIgnoreCase(String.valueOf(row.get("effect")));
-                if (deny) denies.put(perm, Integer.valueOf(1).equals(((Number) row.get("exempt")).intValue())
-                        || Integer.valueOf(1).equals(safeInt(row.get("exempt"))));
+                if (deny) denies.put(perm, Integer.valueOf(1).equals(safeInt(row.get("exempt"))));
                 else allows.add(perm);
             }
             RolePermBinding b = new RolePermBinding(Set.copyOf(allows), Map.copyOf(denies));
-            Map<String, RolePermBinding> next = new ConcurrentHashMap<>(permBindingSnapshot);
-            next.put(role, b);
-            permBindingSnapshot = next;
+            putSnap(cur -> new Snap(cur.roles(), cur.apiPatterns(), cur.menuBindings(),
+                    cur.apiIds(), put(cur.permBindings(), role, b), cur.expireAt()));
             return b;
         }
+    }
+
+    /** 单键 copy-on-write 写回当前租户快照（compute 原子，防并发丢写） */
+    private void putSnap(java.util.function.UnaryOperator<Snap> fn) {
+        snapshots.compute(tenantKey(), (k, cur) -> fn.apply(cur == null ? Snap.empty() : cur));
+    }
+
+    private static <V> Map<String, V> put(Map<String, V> m, String k, V v) {
+        Map<String, V> next = new ConcurrentHashMap<>(m);
+        next.put(k, v);
+        return next;
     }
 
     private static Integer safeInt(Object o) {
@@ -504,37 +523,35 @@ public class RoleService {
         return false;
     }
 
-    /** 按角色懒加载缓存入口统一先过 TTL：过期则整体清空（含角色快照），下一次访问按需重建 */
+    /** 按角色懒加载缓存入口统一先触达 snap()：TTL 过期在其内部重建（含绑定表清零） */
     private void refreshIfStale() {
-        if (!snapshotStale()) return;
-        synchronized (this) {
-            if (snapshotStale()) invalidateCachesLocal();
-        }
+        snap();
     }
 
     /** 角色绑定的接口 id（权限管理页回显用，与 canAccess 同源缓存） */
     public List<String> apiIdsOf(String role) {
         if (role == null || role.isBlank()) return List.of();
-        refreshIfStale();
-        List<String> cached = apiIdSnapshot.get(role);
+        Snap s = snap();
+        List<String> cached = s.apiIds().get(role);
         if (cached != null) return cached;
         synchronized (this) {
-            cached = apiIdSnapshot.get(role);
+            s = snap();
+            cached = s.apiIds().get(role);
             if (cached != null) return cached;
             List<String> ids = List.copyOf(roleApiMapper.apiIdsOfRole(role));
-            Map<String, List<String>> next = new ConcurrentHashMap<>(apiIdSnapshot);
-            next.put(role, ids);
-            apiIdSnapshot = next;
+            putSnap(cur -> new Snap(cur.roles(), cur.apiPatterns(), cur.menuBindings(),
+                    put(cur.apiIds(), role, ids), cur.permBindings(), cur.expireAt()));
             return ids;
         }
     }
 
     private List<ApiPattern> apiPatternsOf(String role) {
-        refreshIfStale();
-        List<ApiPattern> cached = apiPatternSnapshot.get(role);
+        Snap s = snap();
+        List<ApiPattern> cached = s.apiPatterns().get(role);
         if (cached != null) return cached;
         synchronized (this) {
-            cached = apiPatternSnapshot.get(role);
+            s = snap();
+            cached = s.apiPatterns().get(role);
             if (cached != null) return cached;
             List<String> ids = roleApiMapper.apiIdsOfRole(role);
             List<ApiPattern> built = new ArrayList<>();
@@ -545,9 +562,8 @@ public class RoleService {
                 }
             }
             // 写回快照：copy-on-write，避免并发遍历旧引用被清空
-            Map<String, List<ApiPattern>> next = new ConcurrentHashMap<>(apiPatternSnapshot);
-            next.put(role, List.copyOf(built));
-            apiPatternSnapshot = next;
+            putSnap(cur -> new Snap(cur.roles(), put(cur.apiPatterns(), role, List.copyOf(built)),
+                    cur.menuBindings(), cur.apiIds(), cur.permBindings(), cur.expireAt()));
             return built;
         }
     }
@@ -555,27 +571,42 @@ public class RoleService {
     /** 角色绑定的菜单 id（/auth/me 下发侧边栏用） */
     public List<String> menuIdsOf(String role) {
         if (role == null || role.isBlank()) return List.of();
-        refreshIfStale();
-        List<String> cached = menuBindingSnapshot.get(role);
+        Snap s = snap();
+        List<String> cached = s.menuBindings().get(role);
         if (cached != null) return cached;
         synchronized (this) {
-            cached = menuBindingSnapshot.get(role);
+            s = snap();
+            cached = s.menuBindings().get(role);
             if (cached != null) return cached;
             List<String> ids = List.copyOf(roleMenuMapper.menuIdsOfRole(role));
-            Map<String, List<String>> next = new ConcurrentHashMap<>(menuBindingSnapshot);
-            next.put(role, ids);
-            menuBindingSnapshot = next;
+            putSnap(cur -> new Snap(cur.roles(), cur.apiPatterns(),
+                    put(cur.menuBindings(), role, ids), cur.apiIds(), cur.permBindings(), cur.expireAt()));
             return ids;
         }
     }
 
     // ==================== 角色 CRUD ====================
 
-    /** 角色列表（内置在前，其余按编码排序） */
+    /** 角色列表（内置在前，其余按编码排序；平台视图混排多租户时带 tenantId 供前端标注，批次 F4） */
     public List<Role> list() {
-        return roleMapper.selectList(new LambdaQueryWrapper<Role>()
+        List<Role> out = roleMapper.selectList(new LambdaQueryWrapper<Role>()
                 .orderByDesc(Role::getBuiltin)
                 .orderByAsc(Role::getCode));
+        try {
+            Map<String, String> codeTenant = new LinkedHashMap<>();
+            for (Map<String, Object> row : roleTenantRows()) {
+                codeTenant.put(String.valueOf(row.get("code")), String.valueOf(row.get("tenant_id")));
+            }
+            for (Role r : out) r.setTenantId(codeTenant.get(r.getCode()));
+        } catch (Exception ignored) {
+            // 展示字段填充失败不影响主表
+        }
+        return out;
+    }
+
+    /** code → tenant_id 全量映射（原生 SQL 绕过租户谓词——展示字段要跨租户标注，范围由主查询圈定） */
+    private List<Map<String, Object>> roleTenantRows() {
+        return jdbc.queryForList("SELECT tenant_id, code FROM c_ai_role");
     }
 
     /** 角色下拉选项（用户建档用：仅启用角色，含内置） */

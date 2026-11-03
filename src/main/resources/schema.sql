@@ -547,16 +547,17 @@ CREATE TABLE IF NOT EXISTS `c_ai_user_mcp` (
 -- ============================================
 
 CREATE TABLE IF NOT EXISTS `c_ai_role` (
-    `code`        VARCHAR(20)  NOT NULL COMMENT '角色编码（c_ai_user.role 的值域，小写字母开头）',
+    `tenant_id`   VARCHAR(32)  NOT NULL DEFAULT 'default' COMMENT '租户ID（批次 F：角色按租户隔离；内置角色每个租户各有一套种子）',
+    `code`        VARCHAR(20)  NOT NULL COMMENT '角色编码（租户内唯一，小写字母开头）',
     `name`        VARCHAR(50)  NOT NULL COMMENT '角色名称',
     `description` VARCHAR(255) DEFAULT NULL COMMENT '角色描述',
     `admin_flag`  INT          DEFAULT 0 COMMENT '管理员级: 1=视同管理员（放行全部接口与菜单；仅自定义角色可改）',
-    `builtin`     INT          DEFAULT 0 COMMENT '内置角色: 1=预置（superadmin/admin/user，不可删、admin_flag/状态不可改）',
+    `builtin`     INT          DEFAULT 0 COMMENT '内置角色: 1=预置（superadmin/admin/user 等，不可删、admin_flag/状态不可改）',
     `status`      INT          DEFAULT 1 COMMENT '状态: 1=启用, 0=停用（停用后该角色仅保留问答白名单能力）',
     `create_time` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time` DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-    PRIMARY KEY (`code`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 角色表（RBAC：单角色，绑定菜单与接口）';
+    PRIMARY KEY (`tenant_id`, `code`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 角色表（RBAC：按租户隔离的角色，绑定菜单与接口）';
 
 CREATE TABLE IF NOT EXISTS `c_ai_menu` (
     `id`          VARCHAR(50)  NOT NULL COMMENT '主键（内置菜单固定 id 如 menu-chat，自定义为 UUID）',
@@ -590,16 +591,18 @@ CREATE TABLE IF NOT EXISTS `c_ai_api` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 接口表（RBAC 鉴权数据源）';
 
 CREATE TABLE IF NOT EXISTS `c_ai_role_menu` (
-    `role_code` VARCHAR(50) NOT NULL COMMENT '角色编码（c_ai_role.code）',
-    `menu_id`   VARCHAR(50) NOT NULL COMMENT '菜单ID（c_ai_menu.id）',
-    PRIMARY KEY (`role_code`, `menu_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='角色-菜单绑定';
+    `tenant_id` VARCHAR(32) NOT NULL DEFAULT 'default' COMMENT '租户ID（批次 F：跟随角色租户）',
+    `role_code` VARCHAR(50) NOT NULL COMMENT '角色编码（c_ai_role.code，租户内）',
+    `menu_id`   VARCHAR(50) NOT NULL COMMENT '菜单ID（c_ai_menu.id，菜单全局共享）',
+    PRIMARY KEY (`tenant_id`, `role_code`, `menu_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='角色-菜单绑定（按租户）';
 
 CREATE TABLE IF NOT EXISTS `c_ai_role_api` (
-    `role_code` VARCHAR(50) NOT NULL COMMENT '角色编码（c_ai_role.code）',
+    `tenant_id` VARCHAR(32) NOT NULL DEFAULT 'default' COMMENT '租户ID（批次 F：跟随角色租户）',
+    `role_code` VARCHAR(50) NOT NULL COMMENT '角色编码（c_ai_role.code，租户内）',
     `api_id`    VARCHAR(50) NOT NULL COMMENT '接口ID（c_ai_api.id）',
-    PRIMARY KEY (`role_code`, `api_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='角色-接口绑定';
+    PRIMARY KEY (`tenant_id`, `role_code`, `api_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='角色-接口绑定（按租户）';
 
 -- ============================================
 -- RBAC 升级（2026-11-03）：授权点层（docs/rbac-upgrade-plan.md 批次 A）
@@ -616,13 +619,14 @@ CREATE TABLE IF NOT EXISTS `c_ai_permission` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='授权点目录（事实源在代码 @Permission 注解，扫描器自动登记）';
 
 CREATE TABLE IF NOT EXISTS `c_ai_role_data_scope` (
+    `tenant_id`     VARCHAR(32) NOT NULL DEFAULT 'default' COMMENT '租户ID（批次 F：跟随角色租户）',
     `role_code`     VARCHAR(50) NOT NULL COMMENT '角色编码（c_ai_role.code，每角色一行）',
     `scope_type`    VARCHAR(30) NOT NULL DEFAULT 'own' COMMENT '范围: all | own | department | department_and_children',
     `department_id` VARCHAR(50) DEFAULT NULL COMMENT '生效部门（department/department_and_children 时可为空=取成员自己部门）',
     `create_time`   DATETIME    DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`   DATETIME    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-    PRIMARY KEY (`role_code`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='角色数据范围（批次 C2：角色自带数据范围，资源侧无共享入口）';
+    PRIMARY KEY (`tenant_id`, `role_code`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='角色数据范围（批次 C2/C1：按租户；资源侧无共享入口）';
 
 CREATE TABLE IF NOT EXISTS `c_ai_service_account` (
     `id`          VARCHAR(50)  NOT NULL COMMENT '主键（UUID）；角色绑定行用 svc:{id} 作为 uid 挂 c_ai_user_role',
@@ -639,14 +643,15 @@ CREATE TABLE IF NOT EXISTS `c_ai_service_account` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='服务账号（批次 C3：非人类身份，X-Service-Token 鉴权，角色绑定复用 c_ai_user_role）';
 
 CREATE TABLE IF NOT EXISTS `c_ai_role_permission` (
-    `role_code`       VARCHAR(50) NOT NULL COMMENT '角色编码（c_ai_role.code）',
+    `tenant_id`       VARCHAR(32) NOT NULL DEFAULT 'default' COMMENT '租户ID（批次 F：跟随角色租户）',
+    `role_code`       VARCHAR(50) NOT NULL COMMENT '角色编码（c_ai_role.code，租户内）',
     `permission_code` VARCHAR(50) NOT NULL COMMENT '授权点编码（c_ai_permission.code）',
     `effect`          VARCHAR(8)  NOT NULL DEFAULT 'allow' COMMENT '效果: allow | deny（deny 优先于 allow，方案 D3）',
     `exempt`          INT         DEFAULT 0 COMMENT '豁免: 1=本条 deny 只在该角色内部生效，不压其它角色给的 allow（D3 豁免开关）',
     `create_time`     DATETIME    DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    PRIMARY KEY (`role_code`, `permission_code`),
+    PRIMARY KEY (`tenant_id`, `role_code`, `permission_code`),
     KEY `idx_rp_perm` (`permission_code`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='角色-授权点绑定（allow/deny；授权判定数据源）';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='角色-授权点绑定（allow/deny，按租户；授权判定数据源）';
 
 
 CREATE TABLE IF NOT EXISTS `c_ai_menu_api` (

@@ -177,6 +177,12 @@
                 <span class="app-pill" :class="record.adminFlag === 1 ? 'ok' : ''">{{ record.adminFlag === 1 ? '是' : '否' }}</span>
               </template>
             </a-table-column>
+            <a-table-column title="租户" key="tenant" width="100">
+              <template #default="{ record }">
+                <code v-if="record.tenantId" class="rb-uid">{{ record.tenantId }}</code>
+                <span v-else class="rb-none">—</span>
+              </template>
+            </a-table-column>
             <a-table-column title="成员数" key="members" width="90">
               <template #default="{ record }">
                 <span class="tree-count" :class="{ warn: memberCountOf(record.code) === 0 && record.builtin !== 1 }">{{ memberCountOf(record.code) }}</span>

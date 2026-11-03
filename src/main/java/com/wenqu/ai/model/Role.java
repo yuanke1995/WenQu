@@ -42,5 +42,9 @@ public class Role {
 
     private LocalDateTime createTime;
 
+    /** 租户 ID（批次 F4 列表展示用；非表字段——入库由租户插件按当前上下文盖戳，实体不落该列） */
+    @com.baomidou.mybatisplus.annotation.TableField(exist = false)
+    private String tenantId;
+
     private LocalDateTime updateTime;
 }

@@ -48,15 +48,18 @@ public class RbacPermissionMigrationRunner implements ApplicationRunner {
     private final RoleApiMapper roleApiMapper;
     private final RolePermissionMapper rolePermissionMapper;
     private final com.wenqu.ai.mapper.ApiEndpointMapper apiEndpointMapper;
+    private final org.springframework.jdbc.core.JdbcTemplate jdbc;
 
     public RbacPermissionMigrationRunner(RoleMapper roleMapper,
                                          RoleApiMapper roleApiMapper,
                                          RolePermissionMapper rolePermissionMapper,
-                                         com.wenqu.ai.mapper.ApiEndpointMapper apiEndpointMapper) {
+                                         com.wenqu.ai.mapper.ApiEndpointMapper apiEndpointMapper,
+                                         org.springframework.jdbc.core.JdbcTemplate jdbc) {
         this.roleMapper = roleMapper;
         this.roleApiMapper = roleApiMapper;
         this.rolePermissionMapper = rolePermissionMapper;
         this.apiEndpointMapper = apiEndpointMapper;
+        this.jdbc = jdbc;
     }
 
     @Override
@@ -69,6 +72,33 @@ public class RbacPermissionMigrationRunner implements ApplicationRunner {
     }
 
     void migrate() {
+        // 批次 F：折算/种子按租户跑——绑定行要盖上各自租户的戳，default 一把梭会把
+        // huazhang/lanwan 租户的折算行全归错租户（读侧按租户过滤后等于没折算）
+        for (String tenantId : distinctTenants()) {
+            try {
+                com.wenqu.ai.util.TenantContext.bind(tenantId);
+                migrateTenant();
+            } finally {
+                com.wenqu.ai.util.TenantContext.bind(null);
+            }
+        }
+    }
+
+    /** 全部租户 id（c_ai_user 的 distinct tenant_id ∪ default），与 RbacSeedRunner 同口径 */
+    private List<String> distinctTenants() {
+        Set<String> out = new java.util.LinkedHashSet<>();
+        out.add(com.wenqu.ai.util.TenantContext.DEFAULT_TENANT);
+        try {
+            for (String t : jdbc.queryForList("SELECT DISTINCT tenant_id FROM c_ai_user", String.class)) {
+                if (t != null && !t.isBlank()) out.add(t);
+            }
+        } catch (Exception e) {
+            log.warn("[RbacPerm] 租户清单查询失败（按 default 单租户折算）: {}", e.getMessage());
+        }
+        return List.copyOf(out);
+    }
+
+    private void migrateTenant() {
         List<ApiEndpoint> apis = apiEndpointMapper.selectList(null);
         // 端点 → 授权点映射（扫描器已在本 Runner 之前写入 permission_code）
         Map<String, String> apiId2Perm = new LinkedHashMap<>();
@@ -83,7 +113,10 @@ public class RbacPermissionMigrationRunner implements ApplicationRunner {
         Set<String> whitelistPerms = deriveUserPermissions(apis);
 
         int convertedRoles = 0, convertedRows = 0;
-        for (Role role : roleMapper.selectList(null)) {
+        List<Role> tenantRoles = roleMapper.selectList(null);
+        log.info("[RbacPerm][DBG] 租户={} 角色数={} 白名单点数={}", com.wenqu.ai.util.TenantContext.current(),
+                tenantRoles.size(), whitelistPerms.size());
+        for (Role role : tenantRoles) {
             String code = role.getCode();
             boolean adminLevel = role.getAdminFlag() != null && role.getAdminFlag() == 1;
             if (adminLevel && !"user".equals(code)) {
@@ -121,6 +154,7 @@ public class RbacPermissionMigrationRunner implements ApplicationRunner {
             log.info("[RbacPerm] 授权点迁移检查完成：无需折算（已迁移过或无存量绑定）");
         }
     }
+
 
     /**
      * 白名单推导：授权点入选 ⇔ 名下<b>全部</b>端点都满足 {@code isPublicUserEndpoint}
