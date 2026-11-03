@@ -48,6 +48,7 @@ public class OrgService {
     private final UserRoleService userRoleService;
     private final IdentityService identityService;
     private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+    private final com.wenqu.ai.mapper.UserRoleMapper userRoleMapper;
     private final AppProperties properties;
     /** 账号删除时一并清理个人记忆文件（MEMORY.md + 日账）；不清理会在磁盘上留下无主数据。 */
     private final com.wenqu.ai.memory.MemoryService memoryService;
@@ -156,6 +157,16 @@ public class OrgService {
             List<String> roles = userRoleService.rolesOf(u.getUid());
             m.put("roles", roles);
             m.put("role", roles.isEmpty() ? "user" : roles.get(0));
+            // D-5：IdP 授予的明细（role_code → granted_by）——成员页据此把组映射角色置灰
+            //（界面一直写着「组映射授予的角色在成员管理中不可改」，此前没实现：勾了也勾不动 IdP 行，
+            // 表现为静默无效）。enabledRoles 取启用角色全集，与 roles 对齐口径。
+            java.util.Map<String, String> roleSources = new java.util.LinkedHashMap<>();
+            for (com.wenqu.ai.model.UserRole ur : userRoleMapper.selectList(
+                    new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<com.wenqu.ai.model.UserRole>()
+                            .eq(com.wenqu.ai.model.UserRole::getUid, u.getUid()))) {
+                roleSources.put(ur.getRoleCode(), ur.getGrantedBy());
+            }
+            m.put("roleSources", roleSources);
             // 身份来源（统一身份表）：成员管理「单点登录」列与解绑判定的数据源
             // （旧 oidc_sub/oidc_provider 两列不再写入，批次 2 起新绑定只落这里）
             List<java.util.Map<String, Object>> ids = new java.util.ArrayList<>();
@@ -217,6 +228,16 @@ public class OrgService {
             List<String> roles = userRoleService.rolesOf(u.getUid());
             m.put("roles", roles);
             m.put("role", roles.isEmpty() ? "user" : roles.get(0));
+            // D-5：IdP 授予的明细（role_code → granted_by）——成员页据此把组映射角色置灰
+            //（界面一直写着「组映射授予的角色在成员管理中不可改」，此前没实现：勾了也勾不动 IdP 行，
+            // 表现为静默无效）。enabledRoles 取启用角色全集，与 roles 对齐口径。
+            java.util.Map<String, String> roleSources = new java.util.LinkedHashMap<>();
+            for (com.wenqu.ai.model.UserRole ur : userRoleMapper.selectList(
+                    new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<com.wenqu.ai.model.UserRole>()
+                            .eq(com.wenqu.ai.model.UserRole::getUid, u.getUid()))) {
+                roleSources.put(ur.getRoleCode(), ur.getGrantedBy());
+            }
+            m.put("roleSources", roleSources);
             List<java.util.Map<String, Object>> ids = new java.util.ArrayList<>();
             for (var i : identities.getOrDefault(u.getUid(), List.of())) {
                 java.util.Map<String, Object> one = new java.util.LinkedHashMap<>();

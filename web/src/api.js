@@ -1528,6 +1528,12 @@ export const saveRolePermissionPoints = (code, menuIds, permissions) =>
   request(`/role/${encodeURIComponent(code)}/permissions`, { method: 'PUT', body: JSON.stringify({ menuIds, permissions }) })
 /** 有效授权点视图（给定 uid 算实际可用授权点集；排查「为什么进不去/为什么进得来」用） */
 export const getEffectivePermissions = uid => request(`/role/effective/${encodeURIComponent(uid)}`)
+/** 各角色成员数（角色列表徽标，批次 D-2） */
+export const getRoleMemberCounts = () => request('/role/members-counts')
+/** 角色成员清单（批次 D-2） */
+export const getRoleMembers = code => request(`/role/${encodeURIComponent(code)}/members`)
+/** 授权点 → 已授权角色映射（接口页反查列，批次 D-1） */
+export const getPermissionRoles = () => request('/role/permission-roles')
 
 /** 提交回答反馈（messageId 关联；rating 1=有帮助 0=没帮助） */
 export const submitFeedback = (messageId, rating, feedbackText) =>

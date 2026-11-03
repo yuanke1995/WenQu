@@ -699,8 +699,9 @@ public class RoleService {
             }
         }
         invalidateCaches();
+        // G12：审计记明细（id 清单），不只记个数——事后要能回答「当时到底授权了哪些接口」
         audit.record("[AUDIT] 保存角色权限绑定 code={} menus={} apis={}", code,
-                menuIds == null ? 0 : menuIds.size(), apiIds == null ? 0 : apiIds.size());
+                menuIds == null ? List.of() : menuIds, apiIds == null ? List.of() : apiIds);
     }
 
     /**
@@ -745,8 +746,9 @@ public class RoleService {
             }
         }
         invalidateCaches();
+        // G12：授权点 id 清单入 detail（不只记个数）
         audit.record("[AUDIT] 保存角色权限绑定（授权点）code={} permissions={} menus={}", code,
-                granted.size(), menuIds == null ? 0 : menuIds.size());
+                List.copyOf(granted), menuIds == null ? List.of() : menuIds);
     }
 
     /**
@@ -770,12 +772,59 @@ public class RoleService {
             }
         }
         invalidateCaches();
-        audit.record("[AUDIT] 保存角色 deny 规则 code={} denies={} ", code, n);
+        audit.record("[AUDIT] 保存角色 deny 规则 code={} denies={}", code,
+                denies == null ? List.of() : denies);
     }
 
     /** 某角色的 deny 行（权限页回显） */
     public List<Map<String, Object>> denyRulesOfRole(String code) {
         return rolePermissionMapper.denyRowsOfRole(code);
+    }
+
+    // ==================== 反查（批次 D-1/D-2） ====================
+
+    /** 各角色成员数（角色列表出参用；一次全量，表小） */
+    public Map<String, Long> memberCountsByRole() {
+        Map<String, Long> out = new LinkedHashMap<>();
+        for (com.wenqu.ai.model.UserRole ur : userRoleMapper.selectList(null)) {
+            out.merge(ur.getRoleCode(), 1L, Long::sum);
+        }
+        return out;
+    }
+
+    /** 角色成员清单（谁挂着这个角色；granted_by 区分手动/IdP 授予） */
+    public List<Map<String, Object>> membersOfRole(String code) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (com.wenqu.ai.model.UserRole ur : userRoleMapper.selectList(
+                new LambdaQueryWrapper<com.wenqu.ai.model.UserRole>()
+                        .eq(com.wenqu.ai.model.UserRole::getRoleCode, code))) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("uid", ur.getUid());
+            m.put("grantedBy", ur.getGrantedBy());
+            User u = userMapper.selectById(ur.getUid());
+            if (u != null) {
+                m.put("username", u.getUsername());
+                m.put("status", u.getStatus());
+            } else {
+                m.put("username", null);   // 用户已删但角色行残留（脏数据显形）
+                m.put("status", null);
+            }
+            out.add(m);
+        }
+        return out;
+    }
+
+    /** 授权点 → 绑定角色清单全量映射（接口页「已授权角色」列用，D-1） */
+    public Map<String, List<String>> rolesByPermission() {
+        Map<String, List<String>> out = new LinkedHashMap<>();
+        for (Role role : list()) {
+            RolePermBinding b = permBindingOf(role.getCode());
+            if (b == null) continue;
+            for (String perm : b.allows()) {
+                out.computeIfAbsent(perm, k -> new ArrayList<>()).add(role.getCode());
+            }
+        }
+        return out;
     }
 
     /** 授权点目录（权限页分组展示；事实源在代码注解，此处只读） */

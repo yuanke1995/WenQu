@@ -248,6 +248,8 @@ public class AuditService {
         String[][] candidates = {
                 {"docId", "doc"}, {"knowledgeId", "kb"}, {"kbId", "kb"}, {"agentId", "agent"},
                 {"uid", "user"}, {"targetUid", "user"}, {"userId", "user"}, {"roleId", "role"},
+                // 角色事件统一用 code={} 落键（G12：target_type 恒 null 的修复）；code 在角色 CRUD 语境即角色编码
+                {"code", "role"},
                 {"menuId", "menu"}, {"providerId", "provider"}, {"credentialId", "credential"},
                 {"sessionId", "session"}, {"apiKeyId", "apikey"}, {"mcpId", "mcp"}, {"skill", "skill"},
                 {"modelId", "model"}, {"workflowId", "workflow"}, {"id", "resource"}, {"key", "config"},

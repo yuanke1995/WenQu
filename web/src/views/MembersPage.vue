@@ -439,7 +439,15 @@ const fmtLoginTime = s => (s ? String(s).replace('T', ' ').slice(0, 16) : '')
 const fullTime = s => (s ? String(s).replace('T', ' ') : '')
 
 const deptOptions = computed(() => departments.value.map(d => ({ label: d.name, value: d.id })))
-const roleOptions = computed(() => roles.value.map(r => ({ label: r.name, value: r.code })))
+const roleOptions = computed(() => roles.value.map(r => {
+  const src = (userForm.value.roleSources || {})[r.code]
+  const idpLocked = src === 'idp'
+  return {
+    label: r.name + (idpLocked ? '（组映射授予，不可改）' : ''),
+    value: r.code,
+    disabled: idpLocked
+  }
+}))
 const roleTip = computed(() => {
   const picked = userForm.value.roles || []
   if (!picked.length) return '至少保留一个角色，否则按「成员」权限判定。'
@@ -618,7 +626,9 @@ function openUserEdit (r) {
     roles: (r.roles && r.roles.length ? r.roles : ['user']).slice(),
     status: r.status === 0 ? 0 : 1,
     tenantId: r.tenantId || defaultTenant,
-    origTenant: r.tenantId || defaultTenant
+    origTenant: r.tenantId || defaultTenant,
+    // D-5：IdP 授予明细（code → granted_by），组映射角色在选择器里置灰（兑现 449 行那句提示）
+    roleSources: r.roleSources || {}
   }
   uidError.value = ''
   userModal.value = true

@@ -135,6 +135,29 @@ public class RoleController {
         return ResultJson.ok("权限已保存");
     }
 
+    @Operation(summary = "各角色成员数", description = "role_code → 用户数（角色列表徽标用，批次 D-2）")
+    @Permission("role:read")
+    @GetMapping("/members-counts")
+    public ResultJson memberCounts() {
+        return ResultJson.ok(roleService.memberCountsByRole());
+    }
+
+    @Operation(summary = "角色成员清单", description = "挂着该角色的用户（uid/昵称/授予来源 granted_by=manual|idp/状态），批次 D-2；IdP 授予项在成员页只读不可改（D-5 同口径）")
+    @Permission("role:read")
+    @GetMapping("/{code}/members")
+    public ResultJson members(@PathVariable("code") String code) {
+        Role r = roleService.get(code);
+        if (r == null) return ResultJson.error("角色不存在");
+        return ResultJson.ok(roleService.membersOfRole(code));
+    }
+
+    @Operation(summary = "授权点 → 已授权角色", description = "permission_code → 绑定它的角色编码清单（接口页「已授权角色」列用，批次 D-1；启用与停用角色都算）")
+    @Permission("role:read")
+    @GetMapping("/permission-roles")
+    public ResultJson permissionRoles() {
+        return ResultJson.ok(roleService.rolesByPermission());
+    }
+
     @Operation(summary = "用户的有效授权点视图", description = "给定 uid 算出其实际可用的授权点集合（各角色 allow 并集 − 全局 deny）与全局 deny 清单；管理员级返回 admin:all-allow 标记 + 对其生效的 deny。权限排查与验收用（方案 D-3）")
     @Permission("role:read")
     @GetMapping("/effective/{uid}")

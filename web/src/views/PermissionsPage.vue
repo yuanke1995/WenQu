@@ -125,6 +125,18 @@
                 <span v-else class="rb-none">—</span>
               </template>
             </a-table-column>
+            <a-table-column title="授权点 / 已授权角色" key="perm" width="230">
+              <template #default="{ record }">
+                <template v-if="record.permissionCode">
+                  <code class="rb-path" style="margin-right:6px">{{ record.permissionCode }}</code>
+                  <span v-if="rolesOfPermission(record.permissionCode).length" class="tree-count">
+                    {{ rolesOfPermission(record.permissionCode).join('、') }}
+                  </span>
+                  <span v-else class="rb-none">未授权给任何角色</span>
+                </template>
+                <span v-else class="rb-none">公开 / 未标注</span>
+              </template>
+            </a-table-column>
             <a-table-column title="所属菜单" key="menus" width="200">
               <template #default="{ record }">
                 <template v-if="(record.menuIds || []).length">
@@ -163,6 +175,11 @@
             <a-table-column title="管理员级" key="adminFlag" width="110">
               <template #default="{ record }">
                 <span class="app-pill" :class="record.adminFlag === 1 ? 'ok' : ''">{{ record.adminFlag === 1 ? '是' : '否' }}</span>
+              </template>
+            </a-table-column>
+            <a-table-column title="成员数" key="members" width="90">
+              <template #default="{ record }">
+                <span class="tree-count" :class="{ warn: memberCountOf(record.code) === 0 && record.builtin !== 1 }">{{ memberCountOf(record.code) }}</span>
               </template>
             </a-table-column>
             <a-table-column title="状态" key="status" width="90">
@@ -402,7 +419,8 @@ import { listMenus, createMenu, updateMenu, deleteMenu,
          listApis, createApi, updateApi, deleteApi,
          listRoles, createRole, updateRole, deleteRole,
          getRolePermissions, saveRolePermissions,
-         getPermissionCatalog, saveRolePermissionPoints, getEffectivePermissions } from '../api'
+         getPermissionCatalog, saveRolePermissionPoints, getEffectivePermissions,
+         getRoleMemberCounts, getPermissionRoles } from '../api'
 import { ensureAuth } from '../utils/auth'
 import IdentityProvidersPage from './IdentityProvidersPage.vue'
 import AuditLogPage from './AuditLogPage.vue'
@@ -684,6 +702,19 @@ async function saveRole () {
   } catch (e) { message.error(e.message || '保存失败') }
   finally { saving.value = false }
 }
+// ==================== 反查（批次 D-1/D-2）：已授权角色 / 成员数 ====================
+const memberCounts = ref({})
+const permRoles = ref({})
+async function loadReverseData () {
+  try {
+    const [a, b] = await Promise.all([getRoleMemberCounts(), getPermissionRoles()])
+    memberCounts.value = (a && a.data) || {}
+    permRoles.value = (b && b.data) || {}
+  } catch (e) { /* 反查列失败不阻塞主表 */ }
+}
+const memberCountOf = code => (memberCounts.value || {})[code] || 0
+const rolesOfPermission = code => (permRoles.value || {})[code] || []
+
 // ==================== 有效权限视图（D-3 最小形态） ====================
 const effectiveModal = ref(false)
 const effectiveUid = ref('')
@@ -914,6 +945,7 @@ async function loadApis () {
 async function loadRoles () {
   const r = await listRoles()
   roles.value = (r && r.data) || []
+  loadReverseData()
 }
 const LOADERS = { menus: loadMenus, apis: loadApis, roles: loadRoles }
 

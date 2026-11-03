@@ -177,6 +177,8 @@ public class UserRoleService {
         r.setGrantedBy(grantedBy == null || grantedBy.isBlank() ? "manual" : grantedBy);
         mapper.insert(r);
         invalidateAndBroadcast(uid);
+        // G12：SCIM/LDAP/OIDC 的自动授权变更此前完全无留痕——补上（grantedBy 区分来源）
+        audit.record("[AUDIT] 授予角色 uid={} code={} grantedBy={}", uid, r.getRoleCode(), r.getGrantedBy());
     }
 
     /**
@@ -191,6 +193,8 @@ public class UserRoleService {
                 .eq(UserRole::getRoleCode, roleCode.trim().toLowerCase())
                 .eq(UserRole::getGrantedBy, "idp"));
         invalidateAndBroadcast(uid);
+        // G12 对偶：IdP 自动回收（组移除/组删除联动）同样补留痕
+        audit.record("[AUDIT] 撤销 IdP 角色 uid={} code={}", uid, roleCode.trim().toLowerCase());
     }
 
     /** 删除用户的全部角色行（账号删除/离职回收时级联清理） */
