@@ -1536,6 +1536,11 @@ export const getRoleMembers = code => request(`/role/${encodeURIComponent(code)}
 export const getPermissionRoles = () => request('/role/permission-roles')
 /** 即将到期的临时授权清单（批次 C1 提醒） */
 export const getExpiringRoles = days => request(`/role/expiring?days=${days || 7}`)
+/** 角色数据范围（批次 C2） */
+export const getRoleDataScope = code => request(`/role/${encodeURIComponent(code)}/data-scope`)
+/** 保存角色数据范围（批次 C2） */
+export const saveRoleDataScope = (code, scopeType, departmentId) =>
+  request(`/role/${encodeURIComponent(code)}/data-scope`, { method: 'PUT', body: JSON.stringify({ scopeType, departmentId }) })
 
 /** 提交回答反馈（messageId 关联；rating 1=有帮助 0=没帮助） */
 export const submitFeedback = (messageId, rating, feedbackText) =>

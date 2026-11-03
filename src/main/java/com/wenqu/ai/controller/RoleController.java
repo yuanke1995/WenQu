@@ -152,6 +152,23 @@ public class RoleController {
         return ResultJson.ok(out);
     }
 
+    @Operation(summary = "角色数据范围", description = "该角色的部门数据范围（批次 C2）：{scopeType, departmentId}；无行=own（谁建归谁）")
+    @Permission("role:read")
+    @GetMapping("/{code}/data-scope")
+    public ResultJson dataScope(@PathVariable("code") String code) {
+        Role r = roleService.get(code);
+        if (r == null) return ResultJson.error("角色不存在");
+        return ResultJson.ok(roleService.dataScopeOf(code));
+    }
+
+    @Operation(summary = "保存角色数据范围", description = "body: {scopeType: all|own|department|department_and_children, departmentId?}；范围授予 READ（看），管理权仍在创建者")
+    @Permission("role:manage")
+    @PutMapping("/{code}/data-scope")
+    public ResultJson saveDataScope(@PathVariable("code") String code, @RequestBody Map<String, Object> body) {
+        roleService.saveDataScope(code, str(body, "scopeType"), str(body, "departmentId"));
+        return ResultJson.ok("数据范围已保存");
+    }
+
     @Operation(summary = "各角色成员数", description = "role_code → 用户数（角色列表徽标用，批次 D-2）")
     @Permission("role:read")
     @GetMapping("/members-counts")

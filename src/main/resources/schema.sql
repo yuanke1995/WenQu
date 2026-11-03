@@ -615,6 +615,15 @@ CREATE TABLE IF NOT EXISTS `c_ai_permission` (
     PRIMARY KEY (`code`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='授权点目录（事实源在代码 @Permission 注解，扫描器自动登记）';
 
+CREATE TABLE IF NOT EXISTS `c_ai_role_data_scope` (
+    `role_code`     VARCHAR(50) NOT NULL COMMENT '角色编码（c_ai_role.code，每角色一行）',
+    `scope_type`    VARCHAR(30) NOT NULL DEFAULT 'own' COMMENT '范围: all | own | department | department_and_children',
+    `department_id` VARCHAR(50) DEFAULT NULL COMMENT '生效部门（department/department_and_children 时可为空=取成员自己部门）',
+    `create_time`   DATETIME    DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    `update_time`   DATETIME    DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (`role_code`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='角色数据范围（批次 C2：角色自带数据范围，资源侧无共享入口）';
+
 CREATE TABLE IF NOT EXISTS `c_ai_service_account` (
     `id`          VARCHAR(50)  NOT NULL COMMENT '主键（UUID）；角色绑定行用 svc:{id} 作为 uid 挂 c_ai_user_role',
     `name`        VARCHAR(100) NOT NULL COMMENT '名称（展示与审计可读）',

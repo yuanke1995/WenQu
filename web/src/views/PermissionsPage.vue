@@ -352,6 +352,19 @@
           </a-radio-group>
           <div class="form-tip">停用后该角色仅保留问答白名单能力，绑定全部失效。</div>
         </a-form-item>
+        <a-form-item label="数据范围">
+          <a-select v-model:value="roleForm.scopeType" style="width:100%"
+                    :options="[
+                      { label: '本人创建的（默认，谁建归谁）', value: 'own' },
+                      { label: '本部门创建的可读', value: 'department' },
+                      { label: '本部门及下级部门创建的可读', value: 'department_and_children' },
+                      { label: '全部资源可读（只读口径）', value: 'all' }]" />
+          <div class="form-tip">范围只授予「看」（READ），管理权仍在创建者手里；资源侧没有共享入口（批次 C2）。</div>
+        </a-form-item>
+        <a-form-item v-if="roleForm.scopeType === 'department' || roleForm.scopeType === 'department_and_children'" label="生效部门">
+          <a-select v-model:value="roleForm.scopeDepartmentId" :options="scopeDeptOptions" allow-clear
+                    placeholder="空=按成员自己的部门判定" style="width:100%" />
+        </a-form-item>
       </a-form>
     </a-modal>
 
@@ -420,7 +433,8 @@ import { listMenus, createMenu, updateMenu, deleteMenu,
          listRoles, createRole, updateRole, deleteRole,
          getRolePermissions, saveRolePermissions,
          getPermissionCatalog, saveRolePermissionPoints, getEffectivePermissions,
-         getRoleMemberCounts, getPermissionRoles } from '../api'
+         getRoleMemberCounts, getPermissionRoles, listDepartments,
+         getRoleDataScope, saveRoleDataScope } from '../api'
 import { ensureAuth } from '../utils/auth'
 import IdentityProvidersPage from './IdentityProvidersPage.vue'
 import AuditLogPage from './AuditLogPage.vue'
@@ -680,12 +694,28 @@ const filteredRoles = computed(() => {
 const roleModal = ref(false)
 const roleForm = ref(blankRole())
 const roleAdmin = ref(false)
-function blankRole () { return { isEdit: false, code: '', name: '', description: '', status: 1, builtin: 0 } }
-function openRoleCreate () { roleForm.value = blankRole(); roleAdmin.value = false; roleModal.value = true }
-function openRoleEdit (r) {
-  roleForm.value = { isEdit: true, code: r.code, name: r.name || '', description: r.description || '', status: r.status === 0 ? 0 : 1, builtin: r.builtin || 0 }
+function blankRole () { return { isEdit: false, code: '', name: '', description: '', status: 1, builtin: 0, scopeType: 'own', scopeDepartmentId: null } }
+const scopeDeptOptions = ref([])
+const scopeDeptLoaded = ref(false)
+async function ensureScopeDepts () {
+  if (scopeDeptLoaded.value) return
+  try {
+    const r = await listDepartments()
+    scopeDeptOptions.value = ((r && r.data) || []).map(d => ({ label: d.name, value: d.id }))
+    scopeDeptLoaded.value = true
+  } catch (e) { /* 部门选项失败不阻塞弹窗（可留空按成员部门判定） */ }
+}
+function openRoleCreate () { roleForm.value = blankRole(); roleAdmin.value = false; roleModal.value = true; ensureScopeDepts() }
+async function openRoleEdit (r) {
+  roleForm.value = { isEdit: true, code: r.code, name: r.name || '', description: r.description || '', status: r.status === 0 ? 0 : 1, builtin: r.builtin || 0, scopeType: 'own', scopeDepartmentId: null }
   roleAdmin.value = r.adminFlag === 1
   roleModal.value = true
+  ensureScopeDepts()
+  try {
+    const d = await getRoleDataScope(r.code)
+    roleForm.value.scopeType = (d && d.data && d.data.scopeType) || 'own'
+    roleForm.value.scopeDepartmentId = (d && d.data && d.data.departmentId) || null
+  } catch (e) { /* 回显失败按默认 own */ }
 }
 async function saveRole () {
   const f = roleForm.value
@@ -697,7 +727,11 @@ async function saveRole () {
   try {
     const body = { name: f.name, description: f.description, adminFlag: roleAdmin.value ? 1 : 0, status: f.status }
     const r = f.isEdit ? await updateRole(f.code, body) : await createRole({ ...body, code: String(f.code).trim() })
-    if (r.success) { message.success('已保存'); roleModal.value = false; await refresh('roles') }
+    if (r.success) {
+      // C2：数据范围随角色保存（创建的角色也要落范围行）
+      try { await saveRoleDataScope(String(f.code).trim() || f.code, f.scopeType || 'own', f.scopeDepartmentId || null) } catch (e) { /* 范围保存失败不阻塞角色保存 */ }
+      message.success('已保存'); roleModal.value = false; await refresh('roles')
+    }
     else message.error(r.msg || '保存失败')
   } catch (e) { message.error(e.message || '保存失败') }
   finally { saving.value = false }

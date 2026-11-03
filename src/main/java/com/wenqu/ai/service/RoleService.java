@@ -74,6 +74,8 @@ public class RoleService {
     private final com.wenqu.ai.mapper.UserRoleMapper userRoleMapper;
     private final com.wenqu.ai.mapper.RolePermissionMapper rolePermissionMapper;
     private final com.wenqu.ai.mapper.PermissionCatalogMapper permissionCatalogMapper;
+    private final com.wenqu.ai.mapper.RoleDataScopeMapper roleDataScopeMapper;
+    private final com.wenqu.ai.service.ResourceVisibilityService resourceVisibilityService;
     private final ReplicaCoordination replicaCoordination;
 
     private final AntPathMatcher pathMatcher = new AntPathMatcher();
@@ -655,6 +657,7 @@ public class RoleService {
         roleMenuMapper.unbindAllOfRole(code);
         roleApiMapper.unbindAllOfRole(code);
         rolePermissionMapper.unbindAllOfRoleById(code); // 删除角色连 deny 行一并清
+        roleDataScopeMapper.deleteById(code);           // 数据范围行一并清（C2）
         invalidateCaches();
         audit.record("[AUDIT] 删除角色 code={} name={}", code, r.getName());
     }
@@ -825,6 +828,41 @@ public class RoleService {
             }
         }
         return out;
+    }
+
+    // ==================== 数据范围（批次 C2） ====================
+
+    /** 某角色的数据范围（无行=own，谁建归谁） */
+    public com.wenqu.ai.model.RoleDataScope dataScopeOf(String code) {
+        com.wenqu.ai.model.RoleDataScope ds = roleDataScopeMapper.selectById(code);
+        if (ds != null) return ds;
+        com.wenqu.ai.model.RoleDataScope d = new com.wenqu.ai.model.RoleDataScope();
+        d.setRoleCode(code);
+        d.setScopeType("own");
+        return d;
+    }
+
+    /** 保存角色数据范围（C2：角色自带数据范围，资源侧无共享入口） */
+    @Transactional
+    public void saveDataScope(String code, String scopeType, String departmentId) {
+        requireRole(code);
+        String st = scopeType == null ? "own" : scopeType.trim();
+        if (!java.util.Set.of("all", "own", "department", "department_and_children").contains(st)) {
+            throw new BizException("非法数据范围类型");
+        }
+        com.wenqu.ai.model.RoleDataScope ds = roleDataScopeMapper.selectById(code);
+        boolean create = ds == null;
+        if (create) {
+            ds = new com.wenqu.ai.model.RoleDataScope();
+            ds.setRoleCode(code);
+        }
+        ds.setScopeType(st);
+        ds.setDepartmentId("department".equals(st) || "department_and_children".equals(st)
+                ? (departmentId == null || departmentId.isBlank() ? null : departmentId.trim()) : null);
+        if (create) roleDataScopeMapper.insert(ds);
+        else roleDataScopeMapper.updateById(ds);
+        resourceVisibilityService.invalidateScopes();
+        audit.record("[AUDIT] 保存角色数据范围 code={} scopeType={} departmentId={}", code, st, ds.getDepartmentId());
     }
 
     /** 授权点目录（权限页分组展示；事实源在代码注解，此处只读） */
