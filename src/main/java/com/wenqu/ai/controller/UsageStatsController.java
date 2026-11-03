@@ -77,7 +77,7 @@ public class UsageStatsController {
             @Parameter(description = "统计范围（天）：7 或 30")
             @RequestParam(value = "range", defaultValue = "30") Integer range,
             HttpServletRequest request) {
-        if (!adminGuard.isAdmin(request)) {
+        if (!adminGuard.requirePermission(request, "stats:read")) {
             return ResultJson.error("费用报表仅管理员可查看");
         }
         return ResultJson.ok(usageStatsService.adminCost(range));

@@ -38,9 +38,21 @@ public interface RolePermissionMapper {
     int bindDeny(@Param("roleCode") String roleCode, @Param("permissionCode") String permissionCode,
                  @Param("exempt") int exempt);
 
-    /** 清空某角色的全部绑定（保存为「全量替换」语义） */
+    /** 清空某角色的 allow 绑定（保存为「全量替换」语义；deny 行不动） */
+    @Delete("DELETE FROM c_ai_role_permission WHERE role_code = #{roleCode} AND effect = 'allow'")
+    int unbindAllowsOfRole(@Param("roleCode") String roleCode);
+
+    /** 清空某角色的 deny 行（deny 全量替换语义） */
+    @Delete("DELETE FROM c_ai_role_permission WHERE role_code = #{roleCode} AND effect = 'deny'")
+    int unbindDeniesOfRole(@Param("roleCode") String roleCode);
+
+    /** 删除角色时的级联清理（allow + deny 全部行） */
     @Delete("DELETE FROM c_ai_role_permission WHERE role_code = #{roleCode}")
-    int unbindAllOfRole(@Param("roleCode") String roleCode);
+    int unbindAllOfRoleById(@Param("roleCode") String roleCode);
+
+    /** 某角色的 deny 行（permission_code + exempt） */
+    @Select("SELECT permission_code AS permissionCode, exempt FROM c_ai_role_permission WHERE role_code = #{roleCode} AND effect = 'deny'")
+    List<Map<String, Object>> denyRowsOfRole(@Param("roleCode") String roleCode);
 
     /** 授权点退役时清理引用 */
     @Delete("DELETE FROM c_ai_role_permission WHERE permission_code = #{permissionCode}")

@@ -56,7 +56,7 @@ public class AuditController {
                                                 @RequestParam(value = "size", defaultValue = "50") int size,
                                                 @RequestParam(value = "tenant", required = false) String tenant,
                                                 HttpServletRequest request) {
-        if (!adminGuard.isAdmin(request)) return ResultJson.error("审计事件仅管理员可查");
+        if (!adminGuard.requirePermission(request, "audit:read")) return ResultJson.error("审计事件仅管理员可查");
         TimeRange range = rangeOf(days);
         String t = crossTenant(tenant, request);
         if (t == null) {
@@ -79,7 +79,7 @@ public class AuditController {
                        @RequestParam(value = "tenant", required = false) String tenant,
                        HttpServletRequest request,
                        jakarta.servlet.http.HttpServletResponse response) throws java.io.IOException {
-        if (!adminGuard.isAdmin(request)) {
+        if (!adminGuard.requirePermission(request, "audit:read")) {
             response.setStatus(403);
             response.getWriter().write("审计事件仅管理员可导出");
             return;
@@ -112,7 +112,7 @@ public class AuditController {
     @GetMapping("/verify")
     public ResultJson<Map<String, Object>> verify(@RequestParam(value = "maxRows", defaultValue = "50000") int maxRows,
                                                   HttpServletRequest request) {
-        if (!adminGuard.isAdmin(request)) return ResultJson.error("仅管理员可校验审计链");
+        if (!adminGuard.requirePermission(request, "audit:verify")) return ResultJson.error("仅管理员可校验审计链");
         List<Map<String, Object>> problems = auditService.verify(maxRows);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("ok", problems.isEmpty());

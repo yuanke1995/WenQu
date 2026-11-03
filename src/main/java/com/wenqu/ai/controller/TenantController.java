@@ -51,7 +51,7 @@ public class TenantController {
     @Permission("tenant:read")
     @GetMapping
     public ResultJson<List<Map<String, Object>>> list(HttpServletRequest request) {
-        if (!adminGuard.isAdmin(request)) return ResultJson.error("租户管理仅管理员可查看");
+        if (!adminGuard.requirePermission(request, "tenant:read")) return ResultJson.error("租户管理仅管理员可查看");
         List<Map<String, Object>> rows = tenantService.listWithCounts();
         if (!com.wenqu.ai.util.RequestUser.superadmin()) {
             String mine = com.wenqu.ai.util.TenantContext.current();
@@ -154,7 +154,7 @@ public class TenantController {
 
     /** 批准＝开一家新客户，只有平台级能做（租户管理员批准等于自己给自己开租户） */
     private void requireSuper(HttpServletRequest request) {
-        if (!adminGuard.isAdmin(request)) throw new com.wenqu.ai.common.BizException("开通申请仅管理员可处理");
+        if (!adminGuard.requirePermission(request, "tenant:manage")) throw new com.wenqu.ai.common.BizException("开通申请仅管理员可处理");
         if (!com.wenqu.ai.util.RequestUser.superadmin()) {
             throw new com.wenqu.ai.common.BizException("批准租户开通申请仅平台级管理员可执行");
         }
@@ -166,7 +166,7 @@ public class TenantController {
      * 故与「批准开通申请」同款判据：必须是平台级管理员。
      */
     private void requirePlatform(HttpServletRequest request) {
-        if (!adminGuard.isAdmin(request)) throw new com.wenqu.ai.common.BizException("租户管理仅管理员可操作");
+        if (!adminGuard.requirePermission(request, "tenant:manage")) throw new com.wenqu.ai.common.BizException("租户管理仅管理员可操作");
         if (!com.wenqu.ai.util.RequestUser.superadmin()) {
             throw new com.wenqu.ai.common.BizException("该动作是平台级租户管理，仅平台级管理员可执行");
         }
@@ -183,7 +183,7 @@ public class TenantController {
     @Permission("tenant:read")
     @GetMapping("/{id}/inventory")
     public ResultJson<Map<String, Object>> inventory(@PathVariable("id") String id, HttpServletRequest request) {
-        if (!adminGuard.isAdmin(request)) return ResultJson.error("租户落点清单仅平台级管理员可查");
+        if (!adminGuard.requirePermission(request, "tenant:read")) return ResultJson.error("租户落点清单仅平台级管理员可查");
         if (!com.wenqu.ai.util.RequestUser.superadmin()) {
             throw new com.wenqu.ai.common.BizException("租户落点清单会摊出磁盘路径与库内行数，仅平台级管理员可查");
         }

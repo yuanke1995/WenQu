@@ -48,7 +48,7 @@ public class OpsController {
     @Permission("ops:manage")
     @PostMapping("/checkup")
     public ResultJson<Map<String, Object>> runCheckup(HttpServletRequest request) {
-        if (!adminGuard.isAdmin(request)) return ResultJson.error("系统巡检仅管理员可执行");
+        if (!adminGuard.requirePermission(request, "ops:manage")) return ResultJson.error("系统巡检仅管理员可执行");
         return ResultJson.ok(checkupService.run());
     }
 
@@ -56,7 +56,7 @@ public class OpsController {
     @Permission("ops:read")
     @GetMapping("/checkup/last")
     public ResultJson<Map<String, Object>> lastCheckup(HttpServletRequest request) {
-        if (!adminGuard.isAdmin(request)) return ResultJson.error("系统巡检仅管理员可查看");
+        if (!adminGuard.requirePermission(request, "ops:manage")) return ResultJson.error("系统巡检仅管理员可查看");
         return ResultJson.ok(checkupService.last());
     }
 
@@ -67,7 +67,7 @@ public class OpsController {
     @Permission("ops:manage")
     @PostMapping("/user/{uid}/force-logout")
     public ResultJson forceLogout(@PathVariable("uid") String uid, HttpServletRequest request) {
-        if (!adminGuard.isAdmin(request)) return ResultJson.error("强制下线仅管理员可操作");
+        if (!adminGuard.requirePermission(request, "ops:manage")) return ResultJson.error("强制下线仅管理员可操作");
         authService.forceLogout(uid);
         return ResultJson.ok("已强制下线");
     }
@@ -78,7 +78,7 @@ public class OpsController {
     @Permission("ops:read")
     @GetMapping("/announcement")
     public ResultJson<List<Announcement>> listAnnouncements(HttpServletRequest request) {
-        if (!adminGuard.isAdmin(request)) return ResultJson.error("公告管理仅管理员可查看");
+        if (!adminGuard.requirePermission(request, "ops:read")) return ResultJson.error("公告管理仅管理员可查看");
         return ResultJson.ok(com.wenqu.ai.util.TenantContext.asPlatformIfSuper(announcementService::adminList));
     }
 
@@ -88,7 +88,7 @@ public class OpsController {
     @PostMapping("/announcement")
     public ResultJson<Announcement> saveAnnouncement(@RequestBody Map<String, Object> body,
                                                      HttpServletRequest request) {
-        if (!adminGuard.isAdmin(request)) return ResultJson.error("公告管理仅管理员可操作");
+        if (!adminGuard.requirePermission(request, "ops:manage")) return ResultJson.error("公告管理仅管理员可操作");
         Announcement a = new Announcement();
         a.setId(str(body.get("id")));
         a.setTitle(str(body.get("title")));
@@ -104,7 +104,7 @@ public class OpsController {
     @Permission("ops:manage")
     @DeleteMapping("/announcement/{id}")
     public ResultJson deleteAnnouncement(@PathVariable("id") String id, HttpServletRequest request) {
-        if (!adminGuard.isAdmin(request)) return ResultJson.error("公告管理仅管理员可操作");
+        if (!adminGuard.requirePermission(request, "ops:manage")) return ResultJson.error("公告管理仅管理员可操作");
         com.wenqu.ai.util.TenantContext.asPlatformIfSuper(() -> announcementService.disable(id));
         return ResultJson.ok("已下线");
     }
@@ -113,7 +113,7 @@ public class OpsController {
     @Permission("ops:manage")
     @DeleteMapping("/announcement/{id}/purge")
     public ResultJson purgeAnnouncement(@PathVariable("id") String id, HttpServletRequest request) {
-        if (!adminGuard.isAdmin(request)) return ResultJson.error("公告管理仅管理员可操作");
+        if (!adminGuard.requirePermission(request, "ops:manage")) return ResultJson.error("公告管理仅管理员可操作");
         com.wenqu.ai.util.TenantContext.asPlatformIfSuper(() -> announcementService.purge(id));
         return ResultJson.ok("已删除");
     }

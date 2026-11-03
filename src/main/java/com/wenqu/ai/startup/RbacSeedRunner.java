@@ -138,6 +138,8 @@ public class RbacSeedRunner implements ApplicationRunner {
     private final RoleMenuMapper roleMenuMapper;
     private final MenuApiMapper menuApiMapper;
     private final RoleService roleService;
+    private final com.wenqu.ai.mapper.ApiEndpointMapper apiEndpointMapper;
+    private final com.wenqu.ai.mapper.RolePermissionMapper rolePermissionMapper;
 
     @Override
     public void run(ApplicationArguments args) {
@@ -230,7 +232,74 @@ public class RbacSeedRunner implements ApplicationRunner {
             roleService.invalidateCaches();
             log.info("[RbacSeed] 已为 user 角色补绑基础菜单 {}", userMenuAdded);
         }
+        seedRestrictedAdmins(existingMenuIds);
         if (seeded) roleService.invalidateCaches();
+    }
+
+    /**
+     * 受限管理员预设（批次 B4）：「只读管理员」「运维管理员」。
+     * 授权点集合是数据不是代码——管理员可在权限页随时调整；种子只负责首次建角色。
+     * 均为非管理员级（admin_flag=0）：判定按授权点走，不再依赖 admin_flag 直通（B1 降级）。
+     */
+    private void seedRestrictedAdmins(Set<String> validMenuIds) {
+        // 只读管理员：全部「只读型」授权点（名下端点全为 GET）+ 个人资产 self 点；
+        // 看得见全部页面（全菜单绑定），改不动任何东西（没有 write/delete/publish/manage 允许行）
+        List<String> readonlyPerms = new java.util.ArrayList<>();
+        java.util.Map<String, List<com.wenqu.ai.model.ApiEndpoint>> byPerm = new java.util.LinkedHashMap<>();
+        for (com.wenqu.ai.model.ApiEndpoint api : apiEndpointMapper.selectList(null)) {
+            if (api.getPermissionCode() == null || api.getPermissionCode().isBlank()) continue;
+            byPerm.computeIfAbsent(api.getPermissionCode(), k -> new java.util.ArrayList<>()).add(api);
+        }
+        for (java.util.Map.Entry<String, List<com.wenqu.ai.model.ApiEndpoint>> e : byPerm.entrySet()) {
+            boolean allReadonly = e.getKey().startsWith("self:");
+            if (!allReadonly) {
+                allReadonly = true;
+                for (com.wenqu.ai.model.ApiEndpoint api : e.getValue()) {
+                    if (!"GET".equalsIgnoreCase(api.getMethod()) && !"ALL".equalsIgnoreCase(api.getMethod())) {
+                        allReadonly = false;
+                        break;
+                    }
+                }
+            }
+            if (allReadonly) readonlyPerms.add(e.getKey());
+        }
+        // 运维管理员：运维域整包（数据清单；运行期可在权限页增删）
+        List<String> opsPerms = List.of("ops:read", "ops:manage", "trace:read", "trace:manage", "audit:read",
+                "audit:verify", "stats:read", "search-index:manage", "desc-cache:manage", "config:read",
+                "content-safety:manage", "quota:read", "manual:sync", "retrieval-debug:run");
+        seedPresetRole("readonly-admin", "只读管理员", "内置：全部页面可见，全部动作只读（写类端点 403）",
+                readonlyPerms, validMenuIds, validMenuIds);
+        seedPresetRole("ops-admin", "运维管理员", "内置：运维域（巡检/追踪/审计/统计/索引维护），不碰业务配置",
+                opsPerms, java.util.Set.of("menu-dashboard", "menu-settings", "menu-audit-events", "menu-stats",
+                        "menu-evaluation"), validMenuIds);
+    }
+
+    /** 单个受限管理员预设：角色缺失才建（幂等），建完绑菜单（限定在现存菜单内）与授权点 */
+    private void seedPresetRole(String code, String name, String desc, List<String> perms,
+                                java.util.Set<String> wantedMenus, Set<String> validMenuIds) {
+        if (roleMapper.selectById(code) != null) return;
+        Role r = new Role();
+        r.setCode(code);
+        r.setName(name);
+        r.setDescription(desc);
+        r.setAdminFlag(0);
+        r.setBuiltin(1);
+        r.setStatus(1);
+        r.setCreateTime(java.time.LocalDateTime.now());
+        roleMapper.insert(r);
+        int pm = 0, pp = 0;
+        if (wantedMenus != null) {
+            for (String mid : wantedMenus) {
+                if (validMenuIds != null && !validMenuIds.contains(mid)) continue; // 预设菜单已退役则跳过
+                pm += roleMenuMapper.bind(code, mid);
+            }
+        }
+        if (perms != null) {
+            for (String perm : perms) {
+                pp += rolePermissionMapper.bindAllow(code, perm);
+            }
+        }
+        log.info("[RbacSeed] 已预置受限管理员角色 {}（菜单 {} 条，授权点 {} 个）", code, pm, pp);
     }
 
     private void insertRole(String code, String name, String desc, int adminFlag) {

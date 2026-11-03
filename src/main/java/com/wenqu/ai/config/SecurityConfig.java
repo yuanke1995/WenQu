@@ -517,9 +517,12 @@ public class SecurityConfig implements WebMvcConfigurer {
             if (enforce ? !isPublicChannelEndpoint(method, path)
                     : !isPublicUserEndpoint(method, path)) {
                 var roles = com.wenqu.ai.util.RequestUser.roles();
+                // B1 降级：enforce 下管理员级不再直通——授权点判定内部展开为「全量 allow，仍受 deny」
+                //（只读管理员 = 全 allow + deny 写类授权点，短路一放它就死了）；legacy/shadow 保持旧口径。
                 boolean pass = "OPTIONS".equals(method)
-                        || roleService.isAdminAny(roles)
-                        || roleService.canAccessAny(roles, method, path);
+                        || (enforce
+                                ? roleService.canAccessAny(roles, method, path)
+                                : (roleService.isAdminAny(roles) || roleService.canAccessAny(roles, method, path)));
                 if (!pass) {
                     response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                     response.setContentType("application/json;charset=UTF-8");

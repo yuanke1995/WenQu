@@ -85,7 +85,7 @@ public class WebPushController {
     @Permission("webpush:manage")
     @PostMapping("/keys")
     public ResultJson keys(HttpServletRequest request) {
-        if (!adminGuard.isAdmin(request)) {
+        if (!adminGuard.requirePermission(request, "webpush:manage")) {
             throw new BizException(403, "仅管理员可生成 VAPID 密钥");
         }
         return ResultJson.ok(webPush.generateKeys());

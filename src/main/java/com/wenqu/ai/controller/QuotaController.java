@@ -49,7 +49,7 @@ public class QuotaController {
     @Permission("quota:read")
     @GetMapping
     public ResultJson<List<Map<String, Object>>> list(HttpServletRequest request) {
-        if (!adminGuard.isAdmin(request)) return ResultJson.error("配额管理仅管理员可查看");
+        if (!adminGuard.requirePermission(request, "quota:read")) return ResultJson.error("配额管理仅管理员可查看");
         // 平台级管理员跨租户看全量（行里带 tenantId 供前端分组），租户管理员仍只看本租户；
         // 聚合侧由 listWithUsage 按行归属租户显式绑定，平台视图不会把别家台账加总进来
         return ResultJson.ok(com.wenqu.ai.util.TenantContext.asPlatformIfSuper(quotaService::listWithUsage));
@@ -64,7 +64,7 @@ public class QuotaController {
     @PostMapping
     public ResultJson<Map<String, Object>> save(@RequestBody Map<String, Object> body,
                                                 HttpServletRequest request) {
-        if (!adminGuard.isAdmin(request)) return ResultJson.error("配额管理仅管理员可修改");
+        if (!adminGuard.requirePermission(request, "quota:manage")) return ResultJson.error("配额管理仅管理员可修改");
         Long tokenLimit = body.get("tokenLimit") == null ? 0L
                 : ((Number) body.get("tokenLimit")).longValue();
         BigDecimal costLimit = body.get("costLimit") == null || String.valueOf(body.get("costLimit")).isBlank()
@@ -84,7 +84,7 @@ public class QuotaController {
     @Permission("quota:manage")
     @DeleteMapping("/{id}")
     public ResultJson delete(@PathVariable("id") String id, HttpServletRequest request) {
-        if (!adminGuard.isAdmin(request)) return ResultJson.error("配额管理仅管理员可删除");
+        if (!adminGuard.requirePermission(request, "quota:manage")) return ResultJson.error("配额管理仅管理员可删除");
         // 平台视图放开 selectById 的租户过滤：superadmin 删别家租户的规则不至于「规则不存在」
         com.wenqu.ai.util.TenantContext.asPlatformIfSuper(() -> quotaService.delete(id));
         return ResultJson.ok("已删除");

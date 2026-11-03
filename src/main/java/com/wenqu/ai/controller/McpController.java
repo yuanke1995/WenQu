@@ -380,7 +380,7 @@ public class McpController {
      * 所以这里必须<b>方法内自查 admin</b>（fail-closed），不能依赖拦截器。
      */
     private void requireAdmin(HttpServletRequest request) {
-        if (!adminGuard.isAdmin(request)) {
+        if (!adminGuard.requirePermission(request, "mcp:read")) {
             throw new BizException(403, "仅管理员可查看 MCP 调用审计");
         }
     }

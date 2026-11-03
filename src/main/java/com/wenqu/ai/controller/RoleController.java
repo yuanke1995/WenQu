@@ -59,6 +59,12 @@ public class RoleController {
         return v instanceof List ? (List<String>) v : null;
     }
 
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> idMapList(Map<String, Object> body, String key) {
+        Object v = body == null ? null : body.get(key);
+        return v instanceof List ? (List<Map<String, Object>>) v : null;
+    }
+
     @Operation(summary = "角色列表", description = "内置角色在前；含停用角色（权限管理页展示全量）")
     @Permission("role:read")
     @GetMapping("/list")
@@ -129,15 +135,34 @@ public class RoleController {
         return ResultJson.ok("权限已保存");
     }
 
-    @Operation(summary = "用户的有效授权点视图", description = "给定 uid 算出其实际可用的授权点集合（各角色 allow 并集 − 全局 deny；管理员级返回 admin:all-allow 标记）。权限排查与验收用（方案 D-3 最小形态）")
+    @Operation(summary = "用户的有效授权点视图", description = "给定 uid 算出其实际可用的授权点集合（各角色 allow 并集 − 全局 deny）与全局 deny 清单；管理员级返回 admin:all-allow 标记 + 对其生效的 deny。权限排查与验收用（方案 D-3）")
     @Permission("role:read")
     @GetMapping("/effective/{uid}")
     public ResultJson effective(@PathVariable("uid") String uid) {
         var roles = userRoleService.rolesOf(uid);
+        var eff = roleService.effectivePermissionsOfUser(roles);
         return ResultJson.ok(Map.of(
                 "uid", uid,
                 "roles", roles,
-                "permissions", roleService.effectivePermissionsOfUser(roles),
+                "permissions", eff.get("permissions"),
+                "globalDenies", eff.get("globalDenies"),
                 "mode", roleService.permissionMode()));
+    }
+
+    @Operation(summary = "角色的 deny 规则", description = "返回该角色的 deny 行：[{permissionCode, exempt}]（批次 B2；exempt=1 只在该角色内生效）")
+    @Permission("role:read")
+    @GetMapping("/{code}/denies")
+    public ResultJson denies(@PathVariable("code") String code) {
+        Role r = roleService.get(code);
+        if (r == null) return ResultJson.error("角色不存在");
+        return ResultJson.ok(roleService.denyRulesOfRole(code));
+    }
+
+    @Operation(summary = "保存角色的 deny 规则", description = "body: {denies:[{permissionCode, exempt}]} 全量替换（只动 deny 行，allow 绑定不受影响）。deny 优先于 allow（D3）；exempt=1 只在该角色内生效")
+    @Permission("role:manage")
+    @PutMapping("/{code}/denies")
+    public ResultJson saveDenies(@PathVariable("code") String code, @RequestBody Map<String, Object> body) {
+        roleService.saveDenyRules(code, idMapList(body, "denies"));
+        return ResultJson.ok("deny 规则已保存");
     }
 }

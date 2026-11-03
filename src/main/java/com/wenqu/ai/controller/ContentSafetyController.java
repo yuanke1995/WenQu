@@ -48,7 +48,7 @@ public class ContentSafetyController {
     @Permission("content-safety:manage")
     @GetMapping
     public ResultJson<List<ContentRule>> list(HttpServletRequest request) {
-        if (!adminGuard.isAdmin(request)) return ResultJson.error("内容安全规则仅管理员可查看");
+        if (!adminGuard.requirePermission(request, "content-safety:manage")) return ResultJson.error("内容安全规则仅管理员可查看");
         return ResultJson.ok(safety.listRules());
     }
 
@@ -58,7 +58,7 @@ public class ContentSafetyController {
     @Permission("content-safety:manage")
     @GetMapping("/status")
     public ResultJson<Map<String, Object>> status(HttpServletRequest request) {
-        if (!adminGuard.isAdmin(request)) return ResultJson.error("内容安全规则仅管理员可查看");
+        if (!adminGuard.requirePermission(request, "content-safety:manage")) return ResultJson.error("内容安全规则仅管理员可查看");
         return ResultJson.ok(safety.status());
     }
 
@@ -69,7 +69,7 @@ public class ContentSafetyController {
     @Permission("content-safety:manage")
     @PostMapping
     public ResultJson<Map<String, Object>> save(@RequestBody ContentRule rule, HttpServletRequest request) {
-        if (!adminGuard.isAdmin(request)) return ResultJson.error("内容安全规则仅管理员可修改");
+        if (!adminGuard.requirePermission(request, "content-safety:manage")) return ResultJson.error("内容安全规则仅管理员可修改");
         ContentRule saved = safety.save(rule);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("id", saved.getId());
@@ -80,7 +80,7 @@ public class ContentSafetyController {
     @Permission("content-safety:manage")
     @DeleteMapping("/{id}")
     public ResultJson delete(@PathVariable("id") String id, HttpServletRequest request) {
-        if (!adminGuard.isAdmin(request)) return ResultJson.error("内容安全规则仅管理员可删除");
+        if (!adminGuard.requirePermission(request, "content-safety:manage")) return ResultJson.error("内容安全规则仅管理员可删除");
         safety.delete(id);
         return ResultJson.ok("已删除");
     }
@@ -92,7 +92,7 @@ public class ContentSafetyController {
     @PostMapping("/dry-run")
     public ResultJson<Map<String, Object>> dryRun(@RequestBody Map<String, String> body,
                                                   HttpServletRequest request) {
-        if (!adminGuard.isAdmin(request)) return ResultJson.error("内容安全规则仅管理员可使用");
+        if (!adminGuard.requirePermission(request, "content-safety:manage")) return ResultJson.error("内容安全规则仅管理员可使用");
         String text = body == null ? null : body.get("text");
         String stage = body == null ? null : body.get("stage");
         Map<String, Object> out = new LinkedHashMap<>();

@@ -75,7 +75,7 @@ public class ConfigController {
             @Parameter(description = "查这位成员的个人覆盖（可选）")
             @RequestParam(value = "uid", required = false) String uid,
             jakarta.servlet.http.HttpServletRequest request) {
-        if (!adminGuard.isAdmin(request)) return ResultJson.error("配置来源追踪仅管理员可查看");
+        if (!adminGuard.requirePermission(request, "config:read")) return ResultJson.error("配置来源追踪仅管理员可查看");
         Map<String, Object> out = new LinkedHashMap<>(configService.driftReport());
         List<Map<String, Object>> items = new ArrayList<>();
         for (String key : splitKeys(keys)) {

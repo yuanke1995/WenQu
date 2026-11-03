@@ -245,24 +245,59 @@ public class RoleService {
     public boolean canAccessAnyByPermission(Collection<String> roles, String method, String path) {
         if (roles == null || roles.isEmpty() || method == null || path == null) return false;
         String perm = permissionOfEndpoint(method, path);
-        if (perm == null) return false;
+        if (perm == null) {
+            // 未标注端点（批次 A.5）：enforce 下管理员级可达（新端点先对管理员开），其余角色拒——
+            // 标注自检会把它揪出来进权限页「未标注」分组
+            return hasAdminLevel(roles);
+        }
+        return judgePermission(roles, perm);
+    }
+
+    /** 管理员级展开（B1）：admin_flag=1 / 内置管理员 ⇒ 全量 allow，仍受全局 deny 约束（D5/D3） */
+    private boolean hasAdminLevel(Collection<String> roles) {
+        for (String role : roles) {
+            if (isAdminCode(role)) return true;
+        }
+        return false;
+    }
+
+    /**
+     * 授权点判定公共核：先收集<b>全部角色</b>（含管理员级角色自己挂的 deny——「只读管理员」
+     * 正是 admin_flag 角色 + deny 写类授权点，先跳过它就收不到 deny 了）的全局 deny，
+     * 再做管理员级展开与 allow 并集。
+     */
+    private boolean judgePermission(Collection<String> roles, String perm) {
+        refreshIfStale();
         Set<String> globalDenies = new java.util.HashSet<>();
         List<RolePermBinding> bindings = new ArrayList<>();
+        boolean admin = false;
         for (String role : roles) {
             RolePermBinding b = permBindingOf(role);
             if (b == null) continue;
+            if (isAdminCode(role)) admin = true;
             bindings.add(b);
             for (Map.Entry<String, Boolean> d : b.denies().entrySet()) {
                 if (!Boolean.TRUE.equals(d.getValue())) globalDenies.add(d.getKey());
             }
         }
         if (globalDenies.contains(perm)) return false;
+        if (admin) return true;
         for (RolePermBinding b : bindings) {
             if (!b.allows().contains(perm)) continue;
             if (Boolean.TRUE.equals(b.denies().get(perm))) continue;
             return true;
         }
         return false;
+    }
+
+    /**
+     * 授权点直查（B3 收口：控制器内 adminGuard.isAdmin() 的替代判定入口）。
+     * 语义与端点判定一致：全局 deny 压过一切；管理员级 = 全量 allow（仍受 deny）；
+     * 其余角色按 allow 并集（exempt deny 只压本角色）。
+     */
+    public boolean hasPermission(Collection<String> roles, String permission) {
+        if (roles == null || roles.isEmpty() || permission == null || permission.isBlank()) return false;
+        return judgePermission(roles, permission.trim());
     }
 
     /** 端点归属的授权点：精确 (method|ALL, path) → 占位 pattern 匹配；未标注/未登记 → null */
@@ -375,27 +410,39 @@ public class RoleService {
         return b == null ? List.of() : List.copyOf(b.allows());
     }
 
-    /** 用户的「有效授权点」视图（D-3 最小形态）：各角色 allow 并集 − 全局 deny；管理员级角色返回 ALL 标记 */
-    public List<String> effectivePermissionsOfUser(Collection<String> roles) {
-        if (roles == null || roles.isEmpty()) return List.of();
+    /**
+     * 用户的「有效授权点」视图（D-3）：各角色 allow 并集 − 全局 deny；
+     * 管理员级返回 admin 标记 + 全局 deny 清单（B1 降级后管理员不再万能，deny 要显形）。
+     */
+    public Map<String, Object> effectivePermissionsOfUser(Collection<String> roles) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (roles == null || roles.isEmpty()) {
+            out.put("permissions", List.of());
+            out.put("globalDenies", List.of());
+            return out;
+        }
         Set<String> globalDenies = new java.util.HashSet<>();
         Set<String> allows = new java.util.LinkedHashSet<>();
         boolean admin = false;
         for (String role : roles) {
-            if (isAdminCode(role)) { admin = true; continue; }
             RolePermBinding b = permBindingOf(role);
             if (b == null) continue;
+            if (isAdminCode(role)) admin = true;
             allows.addAll(b.allows());
             for (Map.Entry<String, Boolean> d : b.denies().entrySet()) {
                 if (!Boolean.TRUE.equals(d.getValue())) globalDenies.add(d.getKey());
             }
         }
         if (admin) {
-            // 管理员级 = 全量 allow（B1 将降级为「仍受 deny 约束」，当前保持旧口径）
-            return List.of("(admin:all-allow)");
+            // B1 降级口径：管理员级 = 全量 allow − 全局 deny；deny 清单显形供排查
+            out.put("permissions", List.of("(admin:all-allow)"));
+            out.put("globalDenies", List.copyOf(globalDenies));
+            return out;
         }
         allows.removeAll(globalDenies);
-        return List.copyOf(allows);
+        out.put("permissions", List.copyOf(allows));
+        out.put("globalDenies", List.copyOf(globalDenies));
+        return out;
     }
 
     // ==================== 判定（每请求热路径） ====================
@@ -607,7 +654,7 @@ public class RoleService {
         roleMapper.deleteById(code);
         roleMenuMapper.unbindAllOfRole(code);
         roleApiMapper.unbindAllOfRole(code);
-        rolePermissionMapper.unbindAllOfRole(code);
+        rolePermissionMapper.unbindAllOfRoleById(code); // 删除角色连 deny 行一并清
         invalidateCaches();
         audit.record("[AUDIT] 删除角色 code={} name={}", code, r.getName());
     }
@@ -640,7 +687,7 @@ public class RoleService {
         // enforce 稳定后 role_api 写路径随该表一起退役。
         Role roleDef = roles().get(code);
         if (roleDef == null || roleDef.getAdminFlag() == null || roleDef.getAdminFlag() != 1) {
-            rolePermissionMapper.unbindAllOfRole(code);
+            rolePermissionMapper.unbindAllowsOfRole(code); // 只清 allow；deny 行归 saveDenyRules 管（B2）
             if (apiIds != null && !apiIds.isEmpty()) {
                 Set<String> perms = new java.util.LinkedHashSet<>();
                 for (ApiEndpoint api : apiEndpointMapper.selectBatchIds(apiIds)) {
@@ -673,7 +720,7 @@ public class RoleService {
             }
         }
         Set<String> knownPerms = new java.util.HashSet<>(permissionCatalogMapper.allCodes());
-        rolePermissionMapper.unbindAllOfRole(code);
+        rolePermissionMapper.unbindAllowsOfRole(code); // 只清 allow；deny 行归 saveDenyRules 管（B2）
         Set<String> granted = new java.util.LinkedHashSet<>();
         if (permissionCodes != null) {
             for (String perm : permissionCodes) {
@@ -700,6 +747,35 @@ public class RoleService {
         invalidateCaches();
         audit.record("[AUDIT] 保存角色权限绑定（授权点）code={} permissions={} menus={}", code,
                 granted.size(), menuIds == null ? 0 : menuIds.size());
+    }
+
+    /**
+     * 保存角色的 deny 规则（B2 全量替换，只动 deny 行）：{permissionCode, exempt} 列表。
+     * deny 落在授权点粒度；exempt=1 表示只在该角色内部生效、不压其它角色给的 allow（D3 豁免）。
+     */
+    @Transactional
+    public void saveDenyRules(String code, List<Map<String, Object>> denies) {
+        requireRole(code);
+        Set<String> knownPerms = new java.util.HashSet<>(permissionCatalogMapper.allCodes());
+        rolePermissionMapper.unbindDeniesOfRole(code);
+        int n = 0;
+        if (denies != null) {
+            for (Map<String, Object> d : denies) {
+                if (d == null) continue;
+                String perm = d.get("permissionCode") == null ? null : String.valueOf(d.get("permissionCode")).trim();
+                if (perm == null || perm.isEmpty() || !knownPerms.contains(perm)) continue;
+                boolean exempt = Integer.valueOf(1).equals(safeInt(d.get("exempt")));
+                rolePermissionMapper.bindDeny(code, perm, exempt ? 1 : 0);
+                n++;
+            }
+        }
+        invalidateCaches();
+        audit.record("[AUDIT] 保存角色 deny 规则 code={} denies={} ", code, n);
+    }
+
+    /** 某角色的 deny 行（权限页回显） */
+    public List<Map<String, Object>> denyRulesOfRole(String code) {
+        return rolePermissionMapper.denyRowsOfRole(code);
     }
 
     /** 授权点目录（权限页分组展示；事实源在代码注解，此处只读） */
