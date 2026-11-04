@@ -13,12 +13,9 @@
           <button type="button" class="app-link-btn" @click.stop="pickDir">更换</button>
         </template>
       </div>
-      <div class="wq-hint">
-        <template v-if="executor">会在「{{ executor.name }}」这台电脑上弹出系统选择框</template>
-        <template v-else>
-          还没有在线的执行器
-          <button type="button" class="app-link-btn" @click="$emit('open-pairing')">去授权这台电脑</button>
-        </template>
+      <div v-if="!executor" class="wq-hint">
+        还没有在线的执行器
+        <button type="button" class="app-link-btn" @click="$emit('open-pairing')">去授权这台电脑</button>
       </div>
 
       <div class="wq-label">工作区名称</div>
