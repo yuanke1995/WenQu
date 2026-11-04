@@ -16,7 +16,7 @@
  * 「点了没反应的按钮」——那正是这轮要治的病，不该由接线方式再引入一次。锚点的 href 保持是那份
  * 真签名地址，所以 Ctrl/中键点击仍开真标签，右键「链接另存为」也还灵。
  */
-import { artifactContent, projectFileContent } from '../api'
+import { artifactContent, projectFileContent, turnChangesDiff } from '../api'
 import { PV, artifactExt, hasViewportTiers, previewKindOf } from './artifactView'
 import { copyCode, enhanceDiagrams, renderMd } from './markdown'
 
@@ -185,6 +185,82 @@ const bodyHint = (total, shown, truncated, cap) => {
   return parts.join(' · ')
 }
 
+// ==================== 每轮文件改动的差异（diff 档） ====================
+//
+// 数据是执行器现算的 hunk（文件内容不出用户电脑）；这里只负责摆。hunk 行自带 '+/‑/ ' 前缀，
+// 与统一 diff 同约定。渲染上限只管「画多少行」，总数不受它影响——那是「看一眼」与「读全文」的分界。
+
+const MAX_DIFF_LINES = 5000
+
+const showDiffBody = async src => {
+  const { body } = layer
+  const seq = ++layer.reqSeq
+  body.textContent = ''
+  body.appendChild(el('div', 'ps-note', '正在读取差异…'))
+  let data
+  try {
+    data = await turnChangesDiff(src.messageId, src.index)
+  } catch (e) {
+    if (!layer || seq !== layer.reqSeq) return
+    body.textContent = ''
+    const err = el('div', 'ps-error')
+    err.appendChild(el('p', null, '差异读取失败：' + (e && e.message ? e.message : '未知错误')))
+    const acts = el('div', 'ps-error-acts')
+    const retry = el('button', 'ps-btn', '重试')
+    retry.type = 'button'
+    retry.addEventListener('click', () => showDiffBody(src))
+    acts.appendChild(retry)
+    body.appendChild(err)
+    body.appendChild(acts)
+    return
+  }
+  if (!layer || seq !== layer.reqSeq) return
+  body.textContent = ''
+  const file = (data && data.data) || {}
+  if (file.kind === 'binary') {
+    body.appendChild(el('div', 'ps-note', '这是二进制文件，不显示差异'))
+    return
+  }
+  if (file.kind === 'oversized') {
+    body.appendChild(el('div', 'ps-note', '文件过大，不显示差异'))
+    return
+  }
+  const host = el('div', 'ps-diff')
+  const hunks = Array.isArray(file.hunks) ? file.hunks : []
+  let rendered = 0
+  for (const h of hunks) {
+    if (rendered >= MAX_DIFF_LINES) break
+    const oldStart = Number(h.oldStart) || 1
+    const newStart = Number(h.newStart) || 1
+    host.appendChild(el('div', 'ps-diff-hunk-head',
+      `@@ -${oldStart},${Number(h.oldLines) || 0} +${newStart},${Number(h.newLines) || 0} @@`))
+    let oldNo = oldStart
+    let newNo = newStart
+    for (const line of (Array.isArray(h.lines) ? h.lines : [])) {
+      if (rendered >= MAX_DIFF_LINES) break
+      const kind = line.startsWith('+') ? 'ps-diff-add' : line.startsWith('-') ? 'ps-diff-del' : 'ps-diff-ctx'
+      const row = el('div', 'ps-diff-line ' + kind)
+      // 双列行号：删除行只占旧列、新增行只占新列、上下文两边都占——与 git 客户端同一读法
+      const no = el('span', 'ps-diff-no')
+      no.appendChild(el('span', 'ps-diff-no-col', line.startsWith('+') ? '' : String(oldNo)))
+      no.appendChild(el('span', 'ps-diff-no-col', line.startsWith('-') ? '' : String(newNo)))
+      if (line.startsWith('+')) newNo++
+      else if (line.startsWith('-')) oldNo++
+      else { oldNo++; newNo++ }
+      row.appendChild(no)
+      row.appendChild(el('span', 'ps-diff-text', line.slice(1)))
+      host.appendChild(row)
+      rendered++
+    }
+  }
+  if (!hunks.length) host.appendChild(el('div', 'ps-note', '两个版本的内容一致'))
+  body.appendChild(host)
+  if (file.coarse) body.appendChild(el('div', 'ps-note', '这份差异是整文件替换的粗略对比（改动过密，细比对超出预算）'))
+  if (rendered >= MAX_DIFF_LINES) body.appendChild(el('div', 'ps-note', `差异太长，只显示前 ${MAX_DIFF_LINES} 行`))
+  if (file.before === false) body.appendChild(el('div', 'ps-note ps-note-foot', '这个文件是本轮新建的'))
+  else if (file.after === false) body.appendChild(el('div', 'ps-note ps-note-foot', '这个文件在本轮被删除'))
+}
+
 const showTextBody = async (src, kind) => {
   const { body } = layer
   const seq = ++layer.reqSeq
@@ -331,19 +407,22 @@ const openStage = (anchor, src, kind) => {
   }
 
   const acts = el('div', 'ps-acts')
-  const mk = (cls, text, title) => {
-    const a = el('a', cls, text)
-    a.href = anchor.href
-    a.title = title
-    a.target = '_blank'
-    a.rel = 'noopener'
-    acts.appendChild(a)
-    return a
+  // diff 档没有真实文件地址：不给「新标签/下载」（那是给签名地址用的），只留关闭
+  if (kind !== PV.DIFF) {
+    const mk = (cls, text, title) => {
+      const a = el('a', cls, text)
+      a.href = anchor.href
+      a.title = title
+      a.target = '_blank'
+      a.rel = 'noopener'
+      acts.appendChild(a)
+      return a
+    }
+    mk('ps-btn', '新标签', '在浏览器新标签页打开（真实整屏视口）')
+    const dl = mk('ps-btn', '下载', '下载这份文件')
+    dl.setAttribute('download', src.name)
+    dl.target = '_self'
   }
-  mk('ps-btn', '新标签', '在浏览器新标签页打开（真实整屏视口）')
-  const dl = mk('ps-btn', '下载', '下载这份文件')
-  dl.setAttribute('download', src.name)
-  dl.target = '_self'
   const close = el('button', 'ps-close', '×')
   close.type = 'button'
   close.title = '关闭（Esc）'
@@ -391,6 +470,8 @@ const openStage = (anchor, src, kind) => {
       body.textContent = ''
       body.appendChild(el('div', 'ps-error', '图片读取失败：地址可能已过期，请刷新页面或点「新标签」重试'))
     })
+  } else if (kind === PV.DIFF) {
+    showDiffBody(src)
   } else {
     showTextBody(src, kind)
   }
@@ -418,6 +499,18 @@ if (typeof document !== 'undefined') {
     const a = e.target && e.target.closest ? e.target.closest('a[data-pv]') : null
     if (!a) return
     const d = a.dataset
+    // 每轮文件改动的差异：messageId+index 寻址，不走扩展名判据
+    if (d.pvChanges) {
+      if (!d.pvChanges) return
+      e.preventDefault()
+      openStage(a, {
+        name: d.pvName || '改动差异',
+        size: '',
+        messageId: d.pvChanges,
+        index: Number(d.pvChangesIndex) || 0
+      }, PV.DIFF)
+      return
+    }
     const src = {
       name: d.pvName || 'preview',
       size: d.pvSize || '',

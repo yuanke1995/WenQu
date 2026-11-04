@@ -97,6 +97,10 @@ export const artifactContent = id => request(`/artifact/${encodeURIComponent(id)
 // 而用户看到的只是「点开是空白」。这一条走登录态，归属按 uid + 工作区 + 相对路径逐条校。
 export const projectFileContent = (id, path) =>
   request(`/project/${encodeURIComponent(id)}/file/content?path=${encodeURIComponent(path)}`)
+// 每轮文件改动：取一轮里第 index 个文件的差异 hunk（由本机执行器现算，快照过期回 400 可读错误）。
+// index 是消息 changes.files 里的下标，改动卡行上带着。
+export const turnChangesDiff = (messageId, index) =>
+  request(`/message/${encodeURIComponent(messageId)}/changes/${index}/diff`)
 
 /**
  * XHR 上传（multipart，支持进度百分比回调）

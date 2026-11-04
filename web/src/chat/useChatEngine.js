@@ -1197,6 +1197,8 @@ const switchSession = async sid => {
             // 分支版本（编辑重发/重新生成的持久化多版本）：‹ n/N › 切换器的数据源，无版本的消息为 null
             variantCount: m.variantCount || null,
             variantIndex: m.variantIndex || null,
+            // 每轮文件改动（随助手消息落库）：改动卡刷新后仍在的数据源，旧消息无此字段则为 null
+            changes: (m.changes && typeof m.changes === 'object') ? m.changes : null,
             retrieved: (() => { try { return m.retrieved ? JSON.parse(m.retrieved) : null } catch (e) { return null } })(),
             // 回答时间线（随消息落库）：重建后刷新页仍是「正文—工具—产物」交错的过程视图
             timeline: []
@@ -2854,6 +2856,8 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         }
         if (Array.isArray(p.finalImages)) msg.images = p.finalImages
         if (Array.isArray(p.artifacts) && p.artifacts.length) msg.artifacts = p.artifacts
+        // 每轮文件改动：随 done 下发（本轮没跑/没改动/执行器不在都没有这个键，保留原值不覆盖）
+        if (p.changes && typeof p.changes === 'object') msg.changes = p.changes
         // 过程独白以 done 下发的落库版为准（须先于 timeline 恢复赋值：过程段区间指向它）
         if (typeof p.processText === 'string') msg.processText = p.processText
         // done 工具终态原地合并（不整组替换）：保住 timeline 引用与实时到达顺序，终态字段覆盖

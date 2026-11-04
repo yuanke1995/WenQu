@@ -98,6 +98,29 @@ body.ps-lock { overflow: hidden; }
 .ps-table td { color: var(--app-text); }
 .ps-table tbody tr:hover td { background: var(--app-panel-2); }
 
+/* 每轮文件改动的差异（diff 档）：统一 hunk，增删行按语义色铺底；等宽字体对齐行号 */
+.ps-diff {
+  max-width: 920px; margin: 0 auto; padding: 16px 0 40px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px; line-height: 1.55;
+}
+.ps-diff-hunk-head {
+  padding: 6px 26px 2px; color: var(--app-text3);
+  font-size: var(--app-fs-xs); user-select: none;
+}
+.ps-diff-line { display: flex; padding: 0 26px; white-space: pre-wrap; word-break: break-all; }
+.ps-diff-no {
+  flex: none; min-width: 84px; padding-right: 10px; text-align: right;
+  color: var(--app-text3); user-select: none; font-variant-numeric: tabular-nums;
+  display: flex; gap: 4px; justify-content: flex-end;
+}
+.ps-diff-no-col { display: inline-block; width: 38px; overflow: hidden; }
+.ps-diff-text { flex: 1; min-width: 0; }
+.ps-diff-add { background: var(--app-ok-weak); color: var(--app-text); }
+.ps-diff-del { background: var(--app-danger-weak); color: var(--app-text); }
+.ps-diff-add .ps-diff-no { color: var(--app-ok); }
+.ps-diff-del .ps-diff-no { color: var(--app-danger); }
+
 /* 窄屏：顶栏换两行，档位条横向滚，按钮热区抬到 34px */
 @media (max-width: 720px) {
   .ps-bar { flex-wrap: wrap; align-items: flex-start; padding: 6px 8px; }
@@ -107,4 +130,6 @@ body.ps-lock { overflow: hidden; }
   .ps-btn, .ps-close { min-height: 34px; }
   .ps-doc { padding: 16px 14px 32px; }
   .ps-note-foot { padding: 10px 14px; }
+  .ps-diff-line, .ps-diff-hunk-head { padding-left: 10px; padding-right: 10px; }
+  .ps-diff-no { min-width: 64px; }
 }

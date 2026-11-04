@@ -566,6 +566,9 @@
                   </span>
                 </div>
               </div>
+              <!-- 每轮文件改动卡：这一轮在本机工作区里改了哪些文件、各多少行；行点击进预览台 diff 档。
+                   停止/中断的轮也可能改过文件——只要服务端对比出来就照挂，刷新后按消息行的 changes 重建 -->
+              <TurnChangesCard v-if="m.role === 'ai' && m.changes" :changes="m.changes" :message-id="m.messageId || ''" />
           </template>
           <template #sources="{ m, i }">
               <SourceList v-if="m.role === 'ai' && (retrievalLineTitle(m) || toolSearchQueries(m).length || (m.sources && m.sources.length))"
@@ -1810,6 +1813,7 @@ import { useChatEngine } from '../chat/useChatEngine'
 import { useChatSearch } from '../chat/useChatSearch'
 import Composer from '../chat/Composer.vue'
 import PlanCard from '../components/PlanCard.vue'
+import TurnChangesCard from '../components/TurnChangesCard.vue'
 import { splitAtts } from '../chat/attachments'
 import { SUPPORTED_EXTS, extOf } from '../chat/intake'
 // 正文浮层的共享状态：右栏来源联动（hoveredRef / 点角标定位）与灯箱开关要用

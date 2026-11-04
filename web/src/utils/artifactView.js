@@ -20,6 +20,8 @@ export const PV = {
   MD: 'md',
   TABLE: 'table',
   TEXT: 'text',
+  /** 每轮文件改动的差异：不由扩展名推断，锚点带 data-pv-changes 时显式指定 */
+  DIFF: 'diff',
   NONE: 'none'
 }
 

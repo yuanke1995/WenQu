@@ -378,6 +378,10 @@
           </div>
         </div>
 
+        <!-- 每轮文件改动卡：与 PC 气泡同一组件同一数据源（行点击进预览台 diff 档，浮层两端通吃） -->
+        <TurnChangesCard v-if="m.role === 'ai' && m.changes" class="tcc-mobile"
+                         :changes="m.changes" :message-id="m.messageId || ''" />
+
         <!-- 降级/警告：与 PC 那份 DegradationBar 同一套判据（同一屏只出一份，失败原因由错误卡说） -->
         <div v-if="degradationItems(m).length" class="warn-bar">
           <span v-for="(d, di) in degradationItems(m)" :key="di">{{ d.msg }}</span>
@@ -465,6 +469,7 @@ import {
   toolCardOpen, toggleToolCard
 } from '../chat/projections'
 import AskRecordCard from '../components/AskRecordCard.vue'
+import TurnChangesCard from '../components/TurnChangesCard.vue'
 import NoteTag from '../components/NoteTag.vue'
 import NoteBody from '../components/NoteBody.vue'
 import PlanCard from '../components/PlanCard.vue'
