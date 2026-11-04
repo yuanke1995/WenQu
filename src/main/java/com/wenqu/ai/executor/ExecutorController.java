@@ -50,6 +50,48 @@ public class ExecutorController {
         return ok(rows);
     }
 
+    @Operation(summary = "浏览执行器上的目录", description = "只列目录（单层）。path 为空 = 列出执行器授权的根目录。用于「选择工作区目录」")
+    @GetMapping("/browse")
+    public Map<String, Object> browse(@RequestParam("executorId") String executorId,
+                                      @RequestParam(value = "path", required = false) String path) {
+        if (!executorService.belongsTo(RequestUser.uid(), executorId)) {
+            Map<String, Object> err = new LinkedHashMap<>();
+            err.put("success", false);
+            err.put("code", 403);
+            err.put("msg", "这台执行器不属于你");
+            err.put("data", null);
+            return err;
+        }
+        Map<String, Object> args = new LinkedHashMap<>();
+        args.put("path", path == null ? "" : path);
+        ExecutorRegistry.Result r = registry.call(executorId, "list", args, 25_000);
+        if (!r.ok()) {
+            Map<String, Object> err = new LinkedHashMap<>();
+            err.put("success", false);
+            err.put("code", 502);
+            err.put("msg", r.message() == null ? "执行器没有返回" : r.message());
+            err.put("data", null);
+            return err;
+        }
+        List<Map<String, Object>> dirs = new java.util.ArrayList<>();
+        Object raw = r.data().get("entries");
+        if (raw instanceof List<?> list) {
+            for (Object item : list) {
+                if (!(item instanceof Map<?, ?> m)) continue;
+                boolean isDir = Boolean.TRUE.equals(m.get("isDir"));
+                if (!isDir) continue;
+                Map<String, Object> d = new LinkedHashMap<>();
+                d.put("path", m.get("path"));
+                d.put("name", m.get("name"));
+                dirs.add(d);
+            }
+        }
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("path", path == null ? "" : path);
+        data.put("dirs", dirs);
+        return ok(data);
+    }
+
     @Operation(summary = "删除执行器", description = "撤销令牌，立即失效")
     @DeleteMapping("/device/{id}")
     public Map<String, Object> revoke(@PathVariable("id") String id) {

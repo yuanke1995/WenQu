@@ -52,13 +52,15 @@ const log = (...a) => console.log(`[${new Date().toISOString()}]`, ...a)
 
 // ==================== 路径围栏 ====================
 
-/** 解析并校验：只允许落在 ROOTS 内；越界抛错，绝不放宽。 */
+/** 解析并校验：只允许落在本次工作区 root 内，且 root 必须在授权目录里；越界一律拒绝。
+ *  判据从"授权名单"收紧到"本次 root"——同一台机器给多个目录时，A 工作区摸不到 B 目录。 */
 function resolveInRoot(p) {
   const raw = String(p || payloadRoot() || '').trim()
   if (!raw) throw err('E_IO', '缺少路径')
   const abs = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(curRoot(), raw)
   const allowed = ROOTS.some(root => abs === root || abs.startsWith(root + path.sep))
-  if (!allowed) throw err('E_PATH_OUTSIDE', `路径不在授权目录内：${abs}`)
+  const withinRoot = !currentRoot || abs === currentRoot || abs.startsWith(currentRoot + path.sep)
+  if (!allowed || !withinRoot) throw err('E_PATH_OUTSIDE', `路径不在授权目录内：${abs}`)
   return abs
 }
 
@@ -85,6 +87,12 @@ async function confirm(action, detail) {
 // ==================== 操作实现 ====================
 
 async function opList({ path: p }) {
+  // 没有路径 = 「列出这台机器授权的根目录」，供网页里的「选择工作区目录」起步
+  if (!p) {
+    return {
+      entries: ROOTS.map(r => ({ path: r, name: path.basename(r) || r, isDir: true, size: 0, mtimeMs: 0 }))
+    }
+  }
   const dir = resolveInRoot(p)
   const entries = await fsp.readdir(dir, { withFileTypes: true })
   const out = []

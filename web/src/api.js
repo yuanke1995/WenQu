@@ -543,6 +543,18 @@ export const listArtifacts = (keyword, projectId) => {
   if (projectId) qs.push('projectId=' + encodeURIComponent(projectId))
   return request('/artifact/list' + (qs.length ? '?' + qs.join('&') : ''))
 }
+// ==== 本机执行器：设备登记 / 目录浏览 / 工作区绑定 ====
+// 执行器在用户电脑上主动长轮询；这里只做登记与目录浏览，按钮文案与 DSH 的「选择工作区」同口径
+export const listExecutors = () => request('/executor/devices')
+export const registerExecutor = body =>
+  request('/executor/device', { method: 'POST', body: JSON.stringify(body || {}) })
+export const revokeExecutor = id => request(`/executor/device/${encodeURIComponent(id)}`, { method: 'DELETE' })
+export const browseExecutor = (executorId, path) =>
+  request(`/executor/browse?executorId=${encodeURIComponent(executorId)}&path=${encodeURIComponent(path || '')}`, { timeout: 30000 })
+export const bindProjectExecutor = (projectId, executorId, rootPath) =>
+  request(`/project/${encodeURIComponent(projectId)}/executor`, {
+    method: 'PUT', body: JSON.stringify({ executorId, rootPath })
+  })
 // 我的工作区容器（implicit 兜底容器在前，前端会过滤掉）；首次调用会懒创建 implicit 行
 export const listProjects = () => request('/project/list')
 // fromProjectId 可选：从本人另一个工作区复制设置（约定/资料域/共用目录/记忆隔离），会话与文件不带

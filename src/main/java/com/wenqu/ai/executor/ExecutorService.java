@@ -56,7 +56,16 @@ public class ExecutorService {
 
     public List<Map<String, Object>> list(String uid) {
         return jdbc.queryForList(
-                "select id, name, os, last_seen, revoked from c_ai_executor where uid = ? order by create_time desc", uid);
+                "select id, name, os, last_seen, revoked from c_ai_executor where uid = ? and revoked = 0 order by create_time desc", uid);
+    }
+
+    /** 这台执行器是不是这个用户的（绑工作区前必须过这一关）。 */
+    public boolean belongsTo(String uid, String executorId) {
+        if (uid == null || executorId == null || executorId.isBlank()) return false;
+        Integer n = jdbc.queryForObject(
+                "select count(*) from c_ai_executor where id = ? and uid = ? and revoked = 0",
+                Integer.class, executorId, uid);
+        return n != null && n > 0;
     }
 
     public void revoke(String uid, String id) {

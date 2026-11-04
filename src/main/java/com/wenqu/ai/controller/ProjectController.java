@@ -55,6 +55,7 @@ public class ProjectController {
     private final ScheduledJobService scheduledJobService;
     private final ProjectTodoService projectTodoService;
     private final ProjectTurnGuard projectTurnGuard;
+    private final com.wenqu.ai.executor.ExecutorService executorService;
 
     @Operation(summary = "我的工作区列表",
             description = "implicit 兜底容器在前（每人一个、后台懒创建），其余按创建时间倒序。"
@@ -446,8 +447,13 @@ public class ProjectController {
         try {
             Object ex = body == null ? null : body.get("executorId");
             Object root = body == null ? null : body.get("rootPath");
+            String executorId = ex == null ? "" : String.valueOf(ex);
+            // 只能绑自己登记的执行器：不知道归属就绑得过、等于把别人的电脑当自己的目录用
+            if (!executorId.isBlank() && !executorService.belongsTo(RequestUser.uid(), executorId)) {
+                return ResultJson.error(403, "这台执行器不属于你，请先在这台电脑上登记");
+            }
             return ResultJson.ok(toDto(projectService.bindExecutor(RequestUser.uid(), id,
-                    ex == null ? "" : String.valueOf(ex), root == null ? null : String.valueOf(root))), "已保存");
+                    executorId, root == null ? null : String.valueOf(root))), "已保存");
         } catch (IllegalArgumentException e) {
             return ResultJson.error(400, e.getMessage());
         }

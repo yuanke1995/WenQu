@@ -170,6 +170,9 @@
                             :saving="moveSaving"
                             @moved="doMoveSession" />
 
+      <!-- 添加本机目录：选一台本机执行器上的目录作为工作区（照 DSH 的「选择工作区目录」流程） -->
+      <LocalWorkspaceDialog v-model:open="localWsOpen" @created="onLocalWsCreated" />
+
       <!-- 删除工作区二选一：保留文件（默认）/ 连文件一起删；侧栏不知道目录大小，不编数字 -->
       <DeleteProjectModal v-model:open="delOpen"
                           :project-name="delTarget ? (delTarget.name || '未命名工作区') : ''"
@@ -227,6 +230,10 @@
                   <arrows-alt-outlined v-else />
                 </button>
                 <button class="side-sec-op" title="新建工作区" @click.stop="openCreateSpace"><plus-outlined /></button>
+                <!-- 添加本机目录：选一台本机执行器上的目录作为工作区（目录在用户电脑上） -->
+                <button class="side-sec-op" title="添加本机目录" @click.stop="localWsOpen = true">
+                  <folder-open-outlined />
+                </button>
               </span>
               <!-- 「会话」段同样给一个 +（不挂工作区的新对话）：两段表头的操作位对齐，
                    新建对话不必绕去顶栏。动作就是 newChat() 不带 projectId——与顶栏「新建对话」同一入口，
@@ -507,6 +514,7 @@ import DesktopOnlyGuard from '../h5/DesktopOnlyGuard.vue'
 import UserAvatar from '../components/UserAvatar.vue'
 import SetupGuide from '../components/SetupGuide.vue'
 import MoveToWorkspaceModal from '../components/MoveToWorkspaceModal.vue'
+import LocalWorkspaceDialog from '../components/LocalWorkspaceDialog.vue'
 import DeleteProjectModal from '../components/DeleteProjectModal.vue'
 import { exportSessionMarkdown } from './exportMd'
 import './app.css'
@@ -1164,6 +1172,15 @@ const searchKw = ref('')
 // 侧栏把会话按工作区收束；工作区落到数据模型就是后端一行 Project 容器（一个工作目录 + 一组会话与产物），
 // 界面上只叫「工作区」。新建 / 重命名 / 归档 / 删除都在各自的 ⋯ 菜单里，不再做一个全局下拉。
 const createOpen = ref(false)
+/** 添加本机目录（选择工作区目录）弹窗 */
+const localWsOpen = ref(false)
+const onLocalWsCreated = async id => {
+  await loadSessions(undefined, { refreshProjects: true })
+  if (id) {
+    setNewSessionProject(id)
+    router.push('/project/' + id)
+  }
+}
 const createName = ref('')
 /** 新工作区的目录位置：managed=服务器托管（默认）；local=用户电脑上的目录（句柄只存浏览器） */
 const createMode = ref('managed')
