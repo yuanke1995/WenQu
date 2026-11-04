@@ -109,14 +109,13 @@ public class ApiKeyService {
     /**
      * 回显 Key 明文（列表「眼睛」/复制按钮的数据源）。
      * <p>明文以部署密钥 JWE 加密存 {@code key_cipher}，只有能管理该 Key 的人（创建者）可解；
-     * 每次回显记一行审计日志。存量 Key（上线回显前签发）没有密文——当场说清，让持有人重签，
-     * 不静默返回空串（那会被当成"复制到了空 Key"）。
+     * 每次回显记一行审计日志。没有密文的行是残缺数据——当场说清让持有人重签，不静默返回空串。
      */
     public String reveal(String id) {
         ApiKey k = mapper.selectById(id);
         ensureManageable(k);
         if (k == null || k.getKeyCipher() == null || k.getKeyCipher().isBlank()) {
-            throw new BizException("该 Key 签发于「明文回显」上线之前，无法回显：请重新签发一把（新 Key 恒以签发人身份发问）");
+            throw new BizException("该 Key 没有可回显的密文，请重新签发一把（新 Key 恒以签发人身份发问）");
         }
         String plain = crypto.decrypt(k.getKeyCipher());
         log.info("[API-KEY] 回显明文 {}（{}）by {}", k.getId(), k.getKeyPrefix() + "…", RequestUser.uid());
@@ -154,30 +153,18 @@ public class ApiKeyService {
      * Key 本身不可改（明文加密保管，列表「眼睛」可回显）。
      * <p><b>{@code expireAt} 必须走 {@code set(...)} 显式写入</b>：MyBatis-Plus 默认更新策略是 NOT_NULL，
      * {@code updateById} 会跳过 null 字段，「改回长期有效」就会静默不生效。
-     * <p>存量兼容：上线「恒绑签发人」之前的 Key 可能没有绑定（act_as_uid 为空、打不了问答）——
-     * 编辑时请求里带了 {@code actAsUid=签发人} 即补上这层绑定（只允许补成签发人，方向不放开）。
      */
-    public void updateInfo(String id, String name, LocalDateTime expireAt, String actAsUid) {
+    public void updateInfo(String id, String name, LocalDateTime expireAt) {
         ApiKey existing = mapper.selectById(id);
         ensureManageable(existing);
         String trimmed = name.length() > 200 ? name.substring(0, 200) : name;
-        String self = RequestUser.uid();
-        boolean fixupLegacyBinding = existing != null
-                && (existing.getActAsUid() == null || existing.getActAsUid().isBlank())
-                && actAsUid != null && !actAsUid.isBlank() && actAsUid.trim().equals(existing.getCreatedBy());
-        if (actAsUid != null && !actAsUid.isBlank() && !fixupLegacyBinding
-                && existing != null && !actAsUid.trim().equals(existing.getCreatedBy())) {
-            throw new BizException("API Key 恒以签发人身份执行，不支持改绑代表账号；要换身份请用该账号重新签发");
-        }
         LambdaUpdateWrapper<ApiKey> upd = new LambdaUpdateWrapper<ApiKey>()
                 .eq(ApiKey::getId, id)
                 .set(ApiKey::getName, trimmed)
                 .set(ApiKey::getExpireAt, expireAt)
                 .set(ApiKey::getUpdateTime, LocalDateTime.now());
-        if (fixupLegacyBinding) upd = upd.set(ApiKey::getActAsUid, self);
         mapper.update(null, upd);
-        log.info("[API-KEY] 编辑 {}：名称 {}，有效期 {}{}", id, trimmed, expireAt == null ? "长期" : expireAt,
-                fixupLegacyBinding ? "（补齐签发人绑定）" : "");
+        log.info("[API-KEY] 编辑 {}：名称 {}，有效期 {}", id, trimmed, expireAt == null ? "长期" : expireAt);
     }
 
     /** 启用/停用（吊销即停用；不物理删除，保留审计线索） */

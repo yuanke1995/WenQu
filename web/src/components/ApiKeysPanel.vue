@@ -40,10 +40,6 @@
           <span class="key-name-wrap">
             <span class="key-name">{{ record.name || '未命名' }}</span>
             <span v-if="record.expired" class="app-pill err key-tag">已过期</span>
-            <a-tooltip v-else-if="!record.actAsUid"
-                       title="这把 Key 签发于身份绑定规则之前，没有代表账号，调用问答会直接被拒；删掉重签即可恢复">
-              <span class="app-pill warn key-tag">问答不可用</span>
-            </a-tooltip>
           </span>
         </template>
         <template v-else-if="column.key === 'prefix'">
@@ -319,8 +315,7 @@ const keys = ref([])
 const keysLoading = ref(false)
 // 列宽只能走 :columns + table-layout="fixed"：写成 <a-table-column width="..."> 不进 colgroup，
 // 浏览器按内容排宽——点「眼睛」回显 48 字明文时 Key 列被撑到 500px，其余列挤成竖排两行字，行高翻三倍。
-// 「代表账号」列已去掉：服务端把 actAsUid 恒写成签发人，列表又只返回本人建的 Key，每行都是同一个 uid；
-// 它唯一有信息量的状态（存量 Key 未绑定 → 问答 401）改在名称后面挂牌。
+// 「代表账号」列不展示：服务端把 actAsUid 恒写成签发人，列表又只返回本人建的 Key，每行都是同一个 uid。
 const keyCols = [
   { title: '名称', key: 'name', ellipsis: true },
   { title: 'Key', key: 'prefix', width: 380 },

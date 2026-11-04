@@ -29,7 +29,7 @@ import com.wenqu.ai.security.Permission;
  * Key 拒绝名单内——Key 本身不能管理 Key，否则一把泄露的 Key 能给自己签发续命。
  *
  * <p><b>绑定规则（代表账号）</b>：Key 恒以签发人本人身份发问，签发即绑本人、不支持指定/改绑别人
- * （请求里带别人的 actAsUid 会被拒绝；存量未绑定旧 Key 编辑传签发人 uid 可补齐）。
+ * （请求里带别人的 actAsUid 会被拒绝）。
  * Key 的权限固定为「问答链路」——持有 Key 的调用方走 X-Api-Key 头，仅能访问与普通用户等价的
  * 端点（问答/会话/反馈/引用溯源等），白名单之外对 Key 身份一律 403（SecurityConfig 1c 层）。
  *
@@ -51,25 +51,20 @@ public class ApiKeyController {
     }
 
     @Operation(summary = "签发 Key", description = "返回明文 apiKey（此后可在列表点「眼睛」回显/复制——明文以部署密钥加密保管）。"
-            + "body: {\"name\":\"…\",\"expireAt\":\"yyyy-MM-dd\"}——Key 恒以签发人本人身份发问，"
-            + "不支持指定代表账号（请求里带别人的 actAsUid 会被拒绝）。"
+            + "body: {\"name\":\"…\",\"expireAt\":\"yyyy-MM-dd\"}——Key 恒以签发人本人身份发问。"
             + "改密/资料/技能/MCP 配置等账号自服务面一律不从 Key 走")
     @Permission("apikey:write")
     @PostMapping
     public ResultJson create(@RequestBody Map<String, String> body) {
         String name = body.get("name");
         LocalDateTime expireAt = parseExpire(body.get("expireAt"));
-        String requested = body.get("actAsUid");
-        if (requested != null && !requested.isBlank() && !requested.trim().equals(RequestUser.uid())) {
-            throw new BizException("API Key 恒以签发人本人身份执行，不支持指定代表账号");
-        }
         // 归属用「当前登录身份」（RequestUser）：与文档/智能体的 created_by 口径一致，
         // 否则创建者短路会因身份来源不同而失效
         return ResultJson.ok(apiKeyService.create(name, expireAt, RequestUser.uid()));
     }
 
     @Operation(summary = "回显明文", description = "返回该 Key 的明文 apiKey（列表「眼睛」/复制按钮的数据源）；"
-            + "仅创建者可回显，每次都落审计日志。存量 Key（回显功能上线前签发）无密文，会明确提示重签")
+            + "仅创建者可回显，每次都落审计日志")
     @Permission("apikey:read")
     @GetMapping("/{id}/reveal")
     public ResultJson reveal(@PathVariable("id") String id) {
@@ -77,14 +72,13 @@ public class ApiKeyController {
     }
 
     @Operation(summary = "编辑 Key", description = "改用途名称与有效期（expireAt 缺省/空串=改为长期有效）。"
-            + "绑定恒为签发人、不可改；存量未绑定的 Key 传 actAsUid=签发人 可补齐绑定。"
-            + "body: {\"name\": \"…\", \"expireAt\": \"…\"}")
+            + "绑定恒为签发人、不可改。body: {\"name\": \"…\", \"expireAt\": \"…\"}")
     @Permission("apikey:write")
     @PutMapping("/{id}")
     public ResultJson update(@PathVariable("id") String id, @RequestBody Map<String, String> body) {
         String name = body.get("name");
         if (name == null || name.isBlank()) throw new BizException("名称不能为空");
-        apiKeyService.updateInfo(id, name.trim(), parseExpire(body.get("expireAt")), body.get("actAsUid"));
+        apiKeyService.updateInfo(id, name.trim(), parseExpire(body.get("expireAt")));
         return ResultJson.ok(Map.of("id", id, "name", name.trim()));
     }
 
