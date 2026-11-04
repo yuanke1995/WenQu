@@ -3,7 +3,7 @@
        用 span 不用 button：它长在别人的按钮里，button 套 button 不是合法 HTML。
        字号走 --note-tag-fs：PC 与移动壳差一档，但样式只这一份，不各写一遍。 -->
   <span class="tl-note-tag" :class="{ grow: noteGrowing(m, note) }"
-        role="button" @click.stop="toggleNote(m, note)">{{ noteTag(m, note) }}</span>
+        role="button" @click.stop="toggleNote(m, note)">{{ noteTag(note) }}</span>
 </template>
 
 <script setup>

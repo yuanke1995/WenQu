@@ -574,7 +574,7 @@ const clusterLiveText = cl => (clusterRunning(cl) || !(clusterTools(cl).length))
 /** 跑轮中帽体的轻量清单（一行一步）：自动开着的簇不再把全量工具卡摊到顶层（那会把页面撑长），
  *  改由簇分支就地渲染一个固定高度帽体，里面是这份轻量行——图标 + 动词 + 参数摘要，
  *  与右栏过程卡同一份口径（toolLabel/toolBrief/toolDuration）。思考/独白段不单独占行，
- *  并成它之后第一个工具行的行尾（与点开态的挂法一致）；还没换来工具的尾部思考自成一节
+ *  并到它之后第一个工具行的展开详情里（与点开态的挂法一致）；还没换来工具的尾部思考自成一节
  *  （它正是「当前这一步」，不能因为还没有工具就看不见）。 */
 const clusterLiveRows = cl => {
   const rows = []
@@ -591,12 +591,14 @@ const clusterLiveRows = cl => {
       }
     }
   }
-  if (notes) rows.push({ tail: notes[notes.length - 1], extra: notes.length - 1 })
+  // 末尾还挂不出去的思考/独白（还没换来工具的那一段）：整组留着，行上按组渲染——
+  // 原先只留最后一段的标签（「深度思考 N 字 等 M 段」），同组里更早的那几段在这一行彻底看不见。
+  if (notes) rows.push({ tailNotes: notes })
   return rows
 }
 
 /** 展开态的簇＝「一行一步」轻量清单（clusterLiveRows）：思考段与过程独白段不再各占一行标题，
- *  挂到它之后第一个工具那一行的行尾（那里本来就是「想了这些才动手」的那个位置）。
+ *  落进它之后第一个工具那一行的展开详情（那里本来就是「想了这些才动手」的那个位置）。
  *  末尾挂不出去的段（正在想、还没调工具）自成一节：它正是「当前这一步」，不能因为还没有工具就看不见。
  *  曾有配套的 clusterSteps（摊平成 group/notes 段给顶层渲染全量工具卡），随摊平形态一并退役。 */
 
@@ -605,13 +607,33 @@ const clusterLiveRows = cl => {
 const groupHasBar = seg => (seg?.tools || []).length > 1
 
 /** 行尾那一项（思考/独白）的四个口径统一出口：模板两端各写一遍 kind 判断必然漂移。
- *  标签带字数——原来那一行标题什么量级都没说，展开前猜不出这一点值不值得点。 */
+ *  标签只写类别名，不写字数/段数：量级展开后自己看得到，写进标题就得在「单段 vs 整组合计」
+ *  之间选口径，口径一变留下的就是「1369 字 等 2 段」这类自相矛盾的文案。 */
 const noteText = (m, n) => (n.kind === 'think' ? thinkSlice(m, n) : procSlice(m, n))
-const noteTag = (m, n) => (n.kind === 'think' ? '深度思考 ' : '过程说明 ') + noteText(m, n).length + ' 字'
+const noteTag = n => (n.kind === 'think' ? '深度思考' : '过程说明')
 const noteOpen = (m, n) => (n.kind === 'think' ? thinkSegOpen(m, n) : procOpen(m, n))
 /** 正在长的那一段：思考有专门的判据，独白的判据就是「流式期它还自动开着」（procOpen 同一把尺） */
 const noteGrowing = (m, n) => (n.kind === 'think' ? thinkGrowing(m, n) : !!(m && m.loading && procOpen(m, n)))
 const toggleNote = (m, n) => (n.kind === 'think' ? toggleThinkSeg(m, n) : toggleProc(m, n))
+
+/** 帽体尾行（挂不到工具上的那批思考/独白）的整组口径：只给类别名（思考+独白混合＝思考与说明）。
+ *  字数/段数一律不进标题：几段、一共多少字都在展开后的正文里，宿主还给多段之间画了段界。
+ *  转圈交给 tailNotesGrowing（真的还在长才转），开合交给 tailOpen，点开看整组正文。 */
+const tailNotesTag = notes => {
+  const ns = notes || []
+  if (!ns.length) return ''
+  const kinds = new Set(ns.map(n => n.kind))
+  return kinds.size > 1 ? '思考与说明' : (ns[0].kind === 'process' ? '过程说明' : '深度思考')
+}
+/** 尾行整组是否正在长（真在长才转圈；答完了就是静止的一行） */
+const tailNotesGrowing = (m, notes) => (notes || []).some(n => noteGrowing(m, n))
+/** 帽体尾行的开合态：挂在消息上（段对象每帧重算，状态不能挂段上），键用簇的 key。 */
+const tailOpen = (m, cl) => !!(m && cl && m._tailOpen && m._tailOpen[cl.key])
+const toggleTail = (m, cl) => {
+  if (!m || !cl) return
+  if (!m._tailOpen) m._tailOpen = {}
+  m._tailOpen[cl.key] = !tailOpen(m, cl)
+}
 
 /** 渲染行＝timelineView 原样。曾在这里把「用户点开的簇」摊平成兄弟段（顶层复用 group/notes
  *  分支渲染全量工具卡），实测把页面撑成长卷（几十个操作一字排开）——与 DSH 参考一致，
@@ -1558,6 +1580,7 @@ export {
   clusterize, clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterProcCount,
   clusterKinds, clusterTitle, clusterHeadKind, clusterLiveText, CLUSTER_KIND_DONE, CLUSTER_KIND_LIVE,
   clusterAutoOpen, clusterLiveRows, groupHasBar, noteText, noteTag, noteOpen, noteGrowing, toggleNote,
+  tailNotesTag, tailNotesGrowing, tailOpen, toggleTail,
   turnRows, turnOpen, toggleTurn, turnShow, turnWarn, turnExpandable, turnHead, turnTitle, turnElapsedMs, turnWaitMs,
   resumedStartAt, earlierStart, settledTurnMs,
   turnTop, turnBottom, turnToggleable,

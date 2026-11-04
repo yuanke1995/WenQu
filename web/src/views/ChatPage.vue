@@ -204,7 +204,7 @@
                               :images="m.images" :sources="m.sources" :msg-index="i"
                               runnable :session-id="currentSessionId" :streaming="m.loading" />
                   <!-- 思考段（簇外）：这一轮模型在想什么，就地一行。只有正在长的那一段自动展开，其余折叠。
-                       被过程簇收进去的那些不走这一支——它们并成帽体清单里所属那一步的行尾（见 projections 的 clusterLiveRows） -->
+                       被过程簇收进去的那些不走这一支——它们落在帽体清单里所属那一步的展开详情内（见 projections 的 clusterLiveRows） -->
                   <div v-else-if="seg.kind === 'think'" class="tl-think-block">
                     <button class="tl-think-head" type="button" @click="toggleThinkSeg(m, seg)">
                       <span class="tl-think-title" :class="{ running: thinkGrowing(m, seg) }">深度思考</span>
@@ -251,11 +251,21 @@
                             <span class="tl-live-sep" aria-hidden="true"></span>
                             <span class="tl-live-brief" :class="{ shimmer: lr.t.status === 'start' && !lr.t.denied }">{{ toolBrief(lr.t) }}</span>
                           </template>
-                          <span @click.stop><NoteTag v-for="(nn, ni) in lr.notes || []" :key="'n' + ni" :m="m" :note="nn" /></span>
                           <span v-if="lr.t.denied" class="tl-live-flag" title="被守卫挡下，没有真正执行">被挡下</span>
                         </div>
-                        <!-- 单步详情（点行展开，DSH 的 IN/OUT 卡同构）：分段 grid、每段独立内滚、段间细分割线 -->
-                        <div v-if="lr.t && lr.t._open && (lr.t.args || liveOutput(lr.t) || lr.t.error)" class="tl-live-detail" @click.stop>
+                        <!-- 单步详情（点行展开，DSH 的 IN/OUT 卡同构）：分段 grid、每段独立内滚、段间细分割线。
+                             这一步之前/之后的思考挂在这里：原先挂在行尾当一颗「深度思考 N 字」标签，
+                             被摘要的弹性宽度顶到整行最右、飘在页面空白处（且帽体里没有正文，点开也没东西看）。 -->
+                        <div v-if="lr.t && lr.t._open && (lr.t.args || liveOutput(lr.t) || lr.t.error || (lr.notes && lr.notes.length))" class="tl-live-detail" @click.stop>
+                          <template v-if="lr.notes && lr.notes.length">
+                            <div class="tl-live-think">
+                              <div class="tl-live-think-label">思考</div>
+                              <div v-for="(nn, ni) in lr.notes" :key="'n' + ni" class="tl-think-seg">
+                                <NoteBody :m="m" :note="nn" always bare />
+                              </div>
+                            </div>
+                            <div v-if="lr.t.args || liveOutput(lr.t) || lr.t.error" class="tl-io-div" aria-hidden="true"></div>
+                          </template>
                           <div v-if="lr.t.args" class="tl-io-sec">
                             <div class="tl-io-label">入参</div>
                             <div class="tl-io-body">
@@ -280,12 +290,28 @@
                             </div>
                           </div>
                         </div>
-                        <!-- 还没换来工具的尾部思考/独白：它就是「当前这一步」，自成一节、按在跑的样式高亮。
-                             注意用 v-if="!lr.t" 而不是 v-else——上面插着详情分支，v-else 会错配到它 -->
-                        <div v-if="!lr.t" class="tl-live-row run">
-                          <span class="tl-live-ic"><span class="tl-ic-a"><loading-outlined spin /></span></span>
-                          <span class="tl-live-name shimmer">{{ noteTag(m, lr.tail) }}<template v-if="lr.extra"> 等 {{ lr.extra + 1 }} 段</template></span>
-                        </div>
+                        <!-- 还没换来工具的尾部思考/独白：它就是「当前这一步」，自成一节。
+                             转圈只在真的还在长时出现（此前是写死的 loading，本轮答完它还在转）；
+                             整组可点开看正文（此前是纯文字，点了没反应）。正文另起一块，不能挤在 flex 行里。 -->
+                        <template v-if="!lr.t">
+                          <div class="tl-live-row" :class="{ run: tailNotesGrowing(m, lr.tailNotes), open: tailOpen(m, seg) }">
+                            <button type="button" class="tl-live-tail-btn" @click.stop="toggleTail(m, seg)">
+                              <span class="tl-live-ic">
+                                <span class="tl-ic-a">
+                                  <loading-outlined v-if="tailNotesGrowing(m, lr.tailNotes)" spin />
+                                  <check-outlined v-else />
+                                </span>
+                                <span class="tl-ic-c"><down-outlined /></span>
+                              </span>
+                              <span class="tl-live-name" :class="{ shimmer: tailNotesGrowing(m, lr.tailNotes) }">{{ tailNotesTag(lr.tailNotes) }}</span>
+                            </button>
+                          </div>
+                          <div v-if="tailOpen(m, seg)" class="tl-live-tail-body">
+                            <div v-for="(nn, ni) in lr.tailNotes" :key="'t' + ni" class="tl-think-seg">
+                              <NoteBody :m="m" :note="nn" always bare />
+                            </div>
+                          </div>
+                        </template>
                       </template>
                     </div>
                   </div>
@@ -347,7 +373,7 @@
                       <span v-if="fanRun(t)" class="fan-run">{{ fanRun(t) }}</span>
                           <span v-if="t.status === 'error'" class="tool-fail">失败</span>
                           <!-- 这一轮的思考/独白并到步的行尾（原来各占一行标题，展开态一半高度是它买单的）：
-                               它本来就长在「想了这些才动手」的那个位置，字数在展开前就说清这一点值不值得点 -->
+                               它本来就长在「想了这些才动手」的那个位置；标签只写类别名，量级展开后自己看 -->
                           <NoteTag v-if="ti === 0 && !groupHasBar(seg)" v-for="(nt, ni) in seg.notes" :key="ni" :m="m" :note="nt" />
                           <span class="tl-caret tl-caret-btn" :class="{ open: toolCardOpen(t) }"><caret-right-outlined /></span>
                         </button>
@@ -1737,7 +1763,8 @@ import { toolLabel, toolDesc, toolCallsView, executedCount, toolRunning, toolDur
          toolBrief, prettyIo, liveOutput, groupRunning,
          clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterProcCount,
          clusterAutoOpen, clusterLiveRows, clusterTitle, clusterLiveText, clusterHeadKind,
-         groupHasBar, noteOpen, toggleNote, noteTag,
+         groupHasBar, noteOpen, toggleNote,
+         tailNotesTag, tailNotesGrowing, tailOpen, toggleTail,
          groupHasError, toolSearchQueries, retrievalLineTitle,
          fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget, fanRun, runBoardText,
          fmtWindow, externalOrigin, sourceName, fmtSourceScore, scoreTitle,
@@ -4399,8 +4426,13 @@ onMounted(async () => {
 .tl-live-ic { position: relative; flex: none; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; color: inherit; }
 .tl-live-ic .tl-ic-a, .tl-live-ic .tl-ic-c { position: absolute; inset: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; transition: opacity .1s ease; }
 .tl-live-ic .tl-ic-c { opacity: 0; }
-.tl-live-row.open .tl-ic-a { opacity: 0; }
-.tl-live-row.open .tl-ic-c { opacity: 1; transform: rotate(180deg); }
+/* 帽体尾行（还没换来工具的思考/独白）：整行可点开看正文，展开后图标位让位给上收箭头。
+   转圈只在真的还在长时出现——写死 loading 会让答完的这一轮永远转下去。 */
+.tl-live-tail-btn { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0;
+  border: 0; background: none; padding: 0; margin: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.tl-live-row.open .tl-live-ic .tl-ic-a { opacity: 0; }
+.tl-live-row.open .tl-live-ic .tl-ic-c { opacity: 1; transform: rotate(180deg); }
+.tl-live-tail-body { margin: 2px 0 4px 22px; max-height: 260px; overflow-y: auto; }
 .tl-live-ic .ic-err { color: var(--app-danger); }
 .tl-live-name { flex: none; color: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tl-live-row.run .tl-live-name { color: var(--app-text2); }
@@ -4418,6 +4450,12 @@ onMounted(async () => {
 .tl-live-detail .tl-io-body { min-width: 0; }
 .tl-live-detail .tl-io-div { height: 0.5px; background: var(--app-border); }
 .tl-live-detail .tl-io { margin: 0; max-height: none; overflow: visible; }
+/* 这一步前后的思考：整段成文的话走 markdown 排版，不与 IN/OUT 抢两列 grid；
+   只留一层滚动（内容自己不再内滚，见 NoteBody 的 bare） */
+.tl-live-think { padding: 10px 14px; max-height: 220px; overflow-y: auto; }
+.tl-live-think-label { margin: 0 0 4px; font-size: 10.5px; color: var(--app-text3); }
+/* 多段连排时给段界：展开后看得出每一段从哪开始 */
+.tl-think-seg + .tl-think-seg { margin-top: 8px; padding-top: 8px; border-top: 0.5px solid var(--app-border); }
 /* 簇内＝一行一步的紧凑清单：卡片去描边去卡底、行首补序号、整簇共一条左轨。
    簇外的工具组仍是原来的描边卡——那是一步插在正文之间，不是一串清单，收掉描边反而读不出边界。 */
 .tl-group.inCluster { margin: 0 0 0 12px; }

@@ -89,7 +89,7 @@
                         runnable :session-id="sessionId" :streaming="m.loading"
                         :viewer="false" @citation="onBodyCitation" @preview="onBodyPreview" />
             <!-- 思考段（簇外）：这一轮在想什么就长在哪一行，只有正在长的那一段自动展开。
-                 被过程簇收进去的那些不走这一支——并成帽体清单里所属那一步的行尾（与 PC 同一份 clusterLiveRows） -->
+                 被过程簇收进去的那些不走这一支——落在帽体清单里所属那一步的展开详情内（与 PC 同一份 clusterLiveRows） -->
             <div v-else-if="seg.kind === 'think'" class="card think-card">
               <button class="card-head" type="button" @click.stop="toggleThinkSeg(m, seg)">
                 <span class="card-title">深度思考</span>
@@ -137,10 +137,19 @@
                       <span class="live-sep" aria-hidden="true"></span>
                       <span class="live-brief">{{ toolBrief(lr.t) }}</span>
                     </template>
-                    <span @click.stop><NoteTag v-for="(nn, ni) in lr.notes || []" :key="'n' + ni" :m="m" :note="nn" /></span>
                     <span v-if="lr.t.denied" class="live-flag">被挡下</span>
                   </div>
-                  <div v-if="lr.t && lr.t._open && (lr.t.args || liveOutput(lr.t) || lr.t.error)" class="live-detail" @click.stop>
+                  <div v-if="lr.t && lr.t._open && (lr.t.args || liveOutput(lr.t) || lr.t.error || (lr.notes && lr.notes.length))" class="live-detail" @click.stop>
+                    <template v-if="lr.notes && lr.notes.length">
+                      <div class="live-think">
+                        <div class="live-think-label">思考</div>
+                        <div v-for="(nn, ni) in lr.notes" :key="'n' + ni" class="think-seg">
+                          <NoteBody :m="m" :note="nn" always bare :viewer="false"
+                                    @citation="onBodyCitation" @preview="onBodyPreview" />
+                        </div>
+                      </div>
+                      <div v-if="lr.t.args || liveOutput(lr.t) || lr.t.error" class="io-div" aria-hidden="true"></div>
+                    </template>
                     <div v-if="lr.t.args" class="io-sec">
                       <div class="io-label">入参</div>
                       <div class="io-body">
@@ -165,14 +174,31 @@
                       </div>
                     </div>
                   </div>
-                  <div v-if="!lr.t" class="live-row run">
-                    <span class="tl-cluster-ic live-ic"><span class="tl-ic-a"><loading-outlined spin /></span></span>
-                    <span class="live-name shimmer">{{ noteTag(m, lr.tail) }}<template v-if="lr.extra"> 等 {{ lr.extra + 1 }} 段</template></span>
-                  </div>
+                  <!-- 尾行：转圈只在真的还在长时出现；整组可点开看正文（与 PC 同一份口径） -->
+                  <template v-if="!lr.t">
+                    <div class="live-row" :class="{ run: tailNotesGrowing(m, lr.tailNotes), open: tailOpen(m, seg) }">
+                      <button type="button" class="live-tail-btn" @click.stop="toggleTail(m, seg)">
+                        <span class="tl-cluster-ic live-ic">
+                          <span class="tl-ic-a">
+                            <loading-outlined v-if="tailNotesGrowing(m, lr.tailNotes)" spin />
+                            <check-outlined v-else />
+                          </span>
+                          <span class="tl-ic-c"><down-outlined /></span>
+                        </span>
+                        <span class="live-name" :class="{ shimmer: tailNotesGrowing(m, lr.tailNotes) }">{{ tailNotesTag(lr.tailNotes) }}</span>
+                      </button>
+                    </div>
+                    <div v-if="tailOpen(m, seg)" class="live-tail-body">
+                      <div v-for="(nn, ni) in lr.tailNotes" :key="'t' + ni" class="think-seg">
+                        <NoteBody :m="m" :note="nn" always bare :viewer="false"
+                                  @citation="onBodyCitation" @preview="onBodyPreview" />
+                      </div>
+                    </div>
+                  </template>
                 </template>
               </div>
             </div>
-            <!-- 过程独白段（簇外）：标题行常驻、内容可折叠。被簇收进去的并成所属那一步行尾的「过程说明 N 字」 -->
+            <!-- 过程独白段（簇外）：标题行常驻、内容可折叠。被簇收进去的落在所属那一步的展开详情里 -->
             <div v-else-if="seg.kind === 'process'" class="card proc-card">
               <button class="card-head" type="button" @click.stop="toggleProc(m, seg)">
                 <span class="card-title">执行过程</span>
@@ -224,7 +250,7 @@
                     <span v-if="t.attempts > 1" class="card-dim">重试 {{ t.attempts - 1 }} 次</span>
                     <span v-if="fanHasBoard(t.fanOut)" class="card-dim">{{ fanHead(t) }}</span>
                     <span v-if="fanRun(t)" class="fan-run">{{ fanRun(t) }}</span>
-                    <!-- 这一轮的思考/独白并到步的行尾（与 PC 同形）：字数在展开前就说清这一点值不值得点 -->
+                    <!-- 这一轮的思考/独白并到步的行尾（与 PC 同形）：标签只写类别名，量级展开后自己看 -->
                     <NoteTag v-if="ti === 0 && !groupHasBar(seg)" v-for="(nt, ni) in seg.notes" :key="ni" :m="m" :note="nt" />
                     <caret-right-outlined class="caret" :class="{ open: toolCardOpen(t) }" />
                   </button>
@@ -427,8 +453,9 @@ import {
   turnRows, turnOpen,
   thinkSegOpen, toggleThinkSeg, thinkSlice, thinkGrowing, toolLabel, toolBrief, spawnAnchorOf,
   clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterProcCount,
-  clusterAutoOpen, clusterLiveRows, clusterTitle, clusterLiveText, clusterHeadKind, noteTag, toolDuration,
+  clusterAutoOpen, clusterLiveRows, clusterTitle, clusterLiveText, clusterHeadKind, toolDuration,
   groupHasBar, noteOpen, toggleNote,
+  tailNotesTag, tailNotesGrowing, tailOpen, toggleTail,
   prettyIo, liveOutput, toolRunning, groupRunning, groupHasError,
   fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget, fanRun, runBoardText,
   toolCallsView, executedCount, toolSearchQueries, retrievalLineTitle,
@@ -663,6 +690,14 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
 .live-detail .io-body { min-width: 0; }
 .live-detail .io-div { height: 0.5px; background: var(--app-border); }
 .live-detail .io-pre { margin: 0; max-height: none; overflow: visible; }
+/* 这一步前后的思考 / 簇尾挂不出去的那一组：都只留一层滚动（内容走 NoteBody 的 bare 裸排） */
+.live-think { padding: 8px 12px; max-height: 180px; overflow-y: auto; }
+.live-think-label { margin: 0 0 4px; font-size: 11px; color: var(--app-text3); }
+.live-tail-btn { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0;
+  border: 0; background: none; padding: 0; margin: 0; font: inherit; color: inherit; text-align: left; cursor: pointer; }
+.live-tail-body { margin: 2px 0 4px 22px; max-height: 220px; overflow-y: auto; }
+/* 多段连排时给段界：展开后看得出每一段从哪开始 */
+.think-seg + .think-seg { margin-top: 6px; padding-top: 6px; border-top: 0.5px solid var(--app-border); }
 .tl-group { display: flex; flex-direction: column; gap: 6px; }
 .tl-group.inCluster { margin-left: 12px; }
 .tl-group.inCluster .tl-group-body { gap: 0; padding: 0 0 0 8px; border-left: 2px solid var(--app-border); }
