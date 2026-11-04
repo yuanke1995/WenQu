@@ -486,6 +486,7 @@ const clusterize = out => {
  *  曾在这里把尾部裸 group 临时包成簇（旧 clusterize 单段 run 不包簇），② 放开后
  *  clusterize 恒产簇，这里只剩标记职责。 */
 const markGrowingCluster = view => {
+  for (const s of view) if (s.kind === 'cluster') s.grow = false
   const last = view[view.length - 1]
   if (last && last.kind === 'cluster') last.grow = true
   return view
@@ -566,8 +567,11 @@ const clusterHeadKind = cl => {
   if (!clusterTools(cl).length) return 'thinking'
   return clusterKinds(cl)[0] || 'thinking'
 }
-/** 跑动中的标题（shimmer 那一句）；收尾等待期回退到折叠标题。 */
-const clusterLiveText = cl => (clusterRunning(cl) || !(clusterTools(cl).length))
+/** 跑动中的标题（shimmer 那一句）；收尾等待期回退到折叠标题。
+ *  关键：进行中的这一簇（m.loading && cl.grow）恒亮「正在…」+ 扫光，不因为单步之间的间隙
+ *  （上一步刚结束、下一步还没发出，此刻簇内没有 status==='start' 的工具）来回切回「已调用工具」，
+ *  否则簇头会跟着每条命令闪一下。整轮收尾（m.loading 置否）才回退到「已调用工具」。 */
+const clusterLiveText = (m, cl) => (clusterRunning(cl) || (m && m.loading && cl.grow))
   ? CLUSTER_KIND_LIVE[clusterHeadKind(cl)]
   : null
 

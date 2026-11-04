@@ -112,8 +112,8 @@
                   </span>
                   <span class="tl-ic-c"><down-outlined /></span>
                 </span>
-                <span class="card-title" :class="{ shimmer: clusterRunning(seg) }">
-                  {{ clusterLiveText(seg) || clusterTitle(seg) }}<template v-if="clusterRunning(seg) && runBoardText(m)"> · {{ runBoardText(m) }}</template>
+                <span class="card-title" :class="{ shimmer: clusterRunning(seg) || (m.loading && seg.grow) }">
+                  {{ clusterLiveText(m, seg) || clusterTitle(seg) }}<template v-if="clusterRunning(seg) && runBoardText(m)"> · {{ runBoardText(m) }}</template>
                 </span>
               </button>
               <!-- 帽体：跑轮中自动开并贴底跟随、用户点开停顶部。固定高度裸排清单（180px 内滚、边缘渐隐），
