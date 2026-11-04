@@ -1,7 +1,7 @@
 <template>
   <!-- 行尾那一项点开后的全文，长在它所属那一步的下面。思考走 markdown（它本来就是一段成文的话），
        过程独白保持纯文本（模型原话，不做二次排版）。 -->
-  <div v-show="noteOpen(m, note)" class="tl-note-body">
+  <div v-show="noteOpen(m, note)" v-follow-bottom="noteGrowing(m, note)" class="tl-note-body">
     <AnswerBody v-if="note.kind === 'think'" :content="noteText(m, note)" :viewer="viewer"
                 :streaming="noteGrowing(m, note)" @citation="$emit('citation', $event)" @preview="$emit('preview', $event)" />
     <div v-else class="tl-note-plain">{{ noteText(m, note) }}</div>
@@ -10,6 +10,7 @@
 
 <script setup>
 import AnswerBody from './AnswerBody.vue'
+import { vFollowBottom } from '../chat/followBottom'
 import { noteText, noteOpen, noteGrowing } from '../chat/projections'
 
 defineProps({

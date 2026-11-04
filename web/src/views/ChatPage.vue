@@ -360,7 +360,8 @@
                 <div class="mec-actions">
                   <button class="app-btn ghost small" @click="regenerate(i)"><redo-outlined /> 重新生成</button>
                 </div>
-                <details class="mec-detail">
+                <!-- spoken 的 headline 就是原文本身，折叠里再摆一遍同一句话没有信息量 -->
+                <details v-if="m.errorCard.kind !== 'spoken'" class="mec-detail">
                   <summary>异常详情</summary>
                   <pre class="mec-raw">{{ m.errorCard.message }}</pre>
                 </details>
@@ -1638,6 +1639,8 @@ import ChatInput from '../chat/ChatInput.vue'
 // 本页只保留 SourceList 的直接引用——#sources 插槽给的是带检索词与原文片段的版本
 import ChatThread from '../chat/ChatThread.vue'
 import SourceList from '../chat/SourceList.vue'
+// 定高内滚块（深度思考正文、过程簇里的思考/独白）的贴底跟随，与 NoteBody 共用一份指令
+import { vFollowBottom } from '../chat/followBottom'
 // 窄屏专属 UI 组件（PC 态不渲染，详见 src/h5/README.md）
 import MobileChatHead from '../h5/MobileChatHead.vue'
 import AskRecordCard from '../components/AskRecordCard.vue'
@@ -1854,45 +1857,20 @@ const onMessagesScroll = () => {
   updateRailActive()
 }
 
-/* 定高内滚容器的贴底跟随（深度思考正文用）：那块有 320px 高度帽，模型还在想时新句子全落在
-   帽沿以下，不贴底就等于用户看到的永远是开头几行、要自己滚。值传「这一段是否正在长」：
-   不长的段不接管（历史段展开后停在顶部，从头读）。用户往上滚回去读前面即停跟随，滚回底部自动续上。
-   ⚠️ 段落行是按序号 key 的，同一个 DOM 节点可能先后代表不同段，故接管/交棒时都要复位贴底态。 */
-const FOLLOW_BOTTOM_MARGIN = 24
-const vFollowBottom = {
-  mounted(el, binding) {
-    el._stick = true
-    el._followOn = binding.value === true
-    el._onScroll = () => {
-      el._stick = el.scrollHeight - el.scrollTop - el.clientHeight < FOLLOW_BOTTOM_MARGIN
-    }
-    el.addEventListener('scroll', el._onScroll, { passive: true })
-    if (el._followOn) el.scrollTop = el.scrollHeight
-  },
-  updated(el, binding) {
-    const on = binding.value === true
-    // 刚接管这一段（含节点被复用时换段）：贴底态复位，否则上一段留下的「用户已上翻」会静默关掉跟随
-    if (on && el._followOn !== true) el._stick = true
-    el._followOn = on
-    if (on && el._stick) el.scrollTop = el.scrollHeight
-  },
-  unmounted(el) {
-    el.removeEventListener('scroll', el._onScroll)
-  }
-}
-
 // 右侧状态栏：默认展开（持久化），数据全部来自已有消息/配置，不造数
 // ⚠️ panelStored 的初值必须**逐字保留**原表达式里的 `window.innerWidth > 1200`：
 //   769~1200px 的桌面窗口下右栏是浮层（≤1200 媒体查询），初值必须为收起；
 //   若简化为 !isNarrow（阈值 768），1000px 宽的桌面窗口会变成默认展开 —— 那是 PC 行为变更。
 //   同理 isNarrow 只是把 ≤768 的窄屏从「占位列」切换为「浮层」，宽屏语义完全不变。
-const panelStored = ref(localStorage.getItem('app_panel') !== '0' && window.innerWidth > 1200)
+// 存储读取兜在 try 里（cookie 全禁/安全策略下裸读抛错会让本页白屏），取不到按「未存过」走
+const panelStoredRaw = (() => { try { return localStorage.getItem('app_panel') } catch (e) { return null } })()
+const panelStored = ref(panelStoredRaw !== '0' && window.innerWidth > 1200)
 const panelOpen = computed(() => !isNarrow.value && panelStored.value)
 const mPanelOpen = ref(false)
 const togglePanel = () => {
   if (isNarrow.value) { mPanelOpen.value = !mPanelOpen.value; return }
   panelStored.value = !panelStored.value
-  localStorage.setItem('app_panel', panelStored.value ? '1' : '0')
+  try { localStorage.setItem('app_panel', panelStored.value ? '1' : '0') } catch (e) { /* 忽略：本次会话内仍然可用 */ }
 }
 
 // 右栏「过程」卡的数据：最近一条 AI 消息（含跑轮中 loading 的那条，别用 lastAi——它刻意跳过 loading）。
