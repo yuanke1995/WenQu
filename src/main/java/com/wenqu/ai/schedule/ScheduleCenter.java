@@ -556,7 +556,12 @@ public class ScheduleCenter {
         }
         task.lastRunAt = System.currentTimeMillis();
         task.lastTrigger = "manual";
-        ThreadPoolManager.execute(() -> runBody(task));
+        // 提交被拒（队列满/池关闭）时 lambda 永不执行，runBody finally 里的复位就够不着——
+        // running 永久 true：之后自动触发每轮 CAS 失败白跑、手动触发永远「上一轮还在执行中」，直到重启
+        if (!ThreadPoolManager.execute(() -> runBody(task))) {
+            task.running.set(false);
+            return Map.of("accepted", false, "reason", "线程池繁忙，本轮未执行，请稍后再试");
+        }
         return Map.of("accepted", true);
     }
 

@@ -222,15 +222,18 @@ public class UsageQuotaService {
         CachedRules hit = rulesCache.get(key);
         if (hit != null && now < hit.expireAt()) return hit.rules();
         List<Quota> rows;
+        boolean failed = false;
         try {
             rows = quotaMapper.selectList(new LambdaQueryWrapper<Quota>()
                     .orderByAsc(Quota::getScope).orderByAsc(Quota::getPeriod));
         } catch (Exception e) {
             log.error("[Quota] 读取配额规则失败（本轮按不限额放行，但必须显形）: {}", e.getMessage());
             rows = List.of();
+            // 失败结果不进缓存：一次 DB 抖动不该换来满 TTL 的「无规则=不限额」免检窗口（持续抖动会无限续期）
+            failed = true;
         }
         List<Quota> safe = rows == null ? List.of() : List.copyOf(rows);
-        rulesCache.put(key, new CachedRules(safe, now + RULES_CACHE_SECONDS * 1000L));
+        if (!failed) rulesCache.put(key, new CachedRules(safe, now + RULES_CACHE_SECONDS * 1000L));
         return safe;
     }
 
@@ -256,6 +259,7 @@ public class UsageQuotaService {
         if (hit != null && now < hit.expiresAt()) return hit.usage();
         List<String> kinds = kindList(q);
         UsageAgg agg = UsageAgg.zero();
+        boolean failed = false;
         try {
             List<Map<String, Object>> rows = usageLogMapper.sumForQuota(
                     "user".equals(q.getScope()) ? q.getScopeId() : null,
@@ -278,8 +282,10 @@ public class UsageQuotaService {
             agg = new UsageAgg(tokens, cost, rows.size());
         } catch (Exception e) {
             log.error("[Quota] 用量聚合失败（这条规则本轮不拦，账目异常需人工看）: quota={} {}", q.getId(), e.getMessage());
+            // 零用量结果不进缓存：盖满 TTL = 这条规则 30s 免检（持续抖动会无限续期）
+            failed = true;
         }
-        usageCache.put(cacheKey, new CachedUsage(agg, now + USAGE_CACHE_SECONDS * 1000L));
+        if (!failed) usageCache.put(cacheKey, new CachedUsage(agg, now + USAGE_CACHE_SECONDS * 1000L));
         return agg;
     }
 

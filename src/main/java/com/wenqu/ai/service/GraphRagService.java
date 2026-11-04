@@ -173,7 +173,7 @@ public class GraphRagService {
         // 身份兜底：抽取模型判权按库主（extractDoc 内解析）；库主缺失时才回落到触发者身份
         String uid = com.wenqu.ai.util.RequestUser.uid();
         String role = com.wenqu.ai.util.RequestUser.role();
-        ThreadPoolManager.execute(() -> {
+        boolean submitted = ThreadPoolManager.execute(() -> {
             try {
                 for (AiDocument d : docs) {
                     try {
@@ -191,6 +191,12 @@ public class GraphRagService {
                         kbId, p.done.get(), p.total, p.extracted, p.failed.get());
             }
         });
+        if (!submitted) {
+            // 提交被拒（队列满/池关闭）时 lambda 永不执行，finally 里的复位够不着——不摘掉就是
+            // 该库永久显示「构建中」、再点构建永远被拒
+            buildProgress.remove(kbId);
+            throw new BizException("线程池繁忙，图谱构建未能启动，请稍后再试");
+        }
         return Map.of("started", true, "total", docs.size());
     }
 

@@ -495,7 +495,9 @@ public class KeywordIndexService {
             log.info("[Reindex] 全量重建进行中，跳过本次触发");
             return;
         }
-        ThreadPoolManager.execute(() -> {
+        // 提交被拒（队列满/池关闭）时 lambda 永不执行，finally 里的复位够不着——reindexing 永久
+        // true，之后对账与重建全部静默跳过（自愈机制失效，直到重启）。拒了就地复位。
+        if (!ThreadPoolManager.execute(() -> {
             long total = 0;
             try {
                 String lastId = "";
@@ -520,7 +522,10 @@ public class KeywordIndexService {
             } finally {
                 reindexing.set(false);
             }
-        });
+        })) {
+            reindexing.set(false);
+            log.error("[Reindex] 提交线程池被拒（队列满/池已关闭），全量重建未执行");
+        }
     }
 
     /**

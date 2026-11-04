@@ -344,9 +344,14 @@ public class ScheduledJobService {
                         .set(ScheduledJob::getNextRunAt, null));
                 continue;
             }
-            // 先推进 next_run_at 再执行：即使执行很久，也不会在下一拍被重复触发
-            job.setNextRunAt(nextRunAt(job.getCron(), job.getTimezone(), now));
-            jobMapper.updateById(job);
+            // 先推进 next_run_at 再执行：即使执行很久，也不会在下一拍被重复触发。
+            // 必须显式 wrapper 写列：updateById 的默认策略跳过 null 列，cron 永不再命中时 next 为 null
+            // 写不进去，next_run_at 停在过去——之后每一拍都重新选中这条任务，整条问答流水线无限重跑
+            LocalDateTime next = nextRunAt(job.getCron(), job.getTimezone(), now);
+            job.setNextRunAt(next);
+            jobMapper.update(null, new LambdaUpdateWrapper<ScheduledJob>()
+                    .eq(ScheduledJob::getId, job.getId())
+                    .set(ScheduledJob::getNextRunAt, next));
             dispatch(job, "scheduled");
         }
         return due.size();
