@@ -188,7 +188,7 @@ const toolCallsView = list => {
 /** 「执行了 N 个操作」的计数口径：只数真执行过的。
  *  被守卫在执行前挡下的那几条（denied，如本轮工具步数已用完）工具体一次没跑，
  *  卡片仍留一行说明为什么没跑，但计入操作数会把「平台只让它试了 4 次」读成「它试了 8 次还没找到」。
- *  分支卡上的「跑了 N 步工具」在后端按同一口径统计（工具卡的 denied 标记由 TurnRecorder.recordToolStatus 落记）。 */
+ *  denied 由后端 ToolPipelineFactory 在被守卫挡下时写入工具卡（框架引擎路径同源）。 */
 const executedCount = list => (Array.isArray(list) ? list : []).filter(t => t && !t.denied).length
 // ==================== askUser（向用户提问）问答记录 ====================
 // 工具入参 args 为 {questions:[{topic?,question,options}]} 或旧式 {topic?,question,options} JSON 字符串；
@@ -975,8 +975,8 @@ const liveOutput = t => {
     if (!t.liveOutput) return ''
     return (t.outputTruncated ? '…（前面输出已省略）\n' : '') + t.liveOutput.slice(-LIVE_TAIL_CHARS)
   }
-  // 终态：后端落库字段 result 为准；output 是手写运行时时代的历史字段，读历史行时兜底
-  return t.result != null ? t.result : (t.output || '')
+  // 终态：后端落库字段只有 result（工具卡输出统一写 result，无 output 这一说）
+  return t.result != null ? t.result : ''
 }
 // ==================== 工具卡折叠：头部那颗开关到底管到哪些块 ====================
 /* 普通卡：头部只管下面的入参/输出原文（默认收起，点开才见）。
@@ -1163,7 +1163,7 @@ const retrievalLineTitle = m => {
 }
 /** 深度思考按模型库登记的能力三态：none=不支持(隐藏) switchable=可开关 always=恒思考(锁定)；
  *  模型不在模型库（遗留裸名）按可开关处理。开关记忆按模型分开存（ai_deep_think: {ref:0|1}，
- *  旧版单个 '1'/'0' 迁移为所有模型的初始默认）。 */
+ *  __default 是所有模型的初始默认）。 */
 const THINK_CAPS = {
   none: { visible: false, locked: false, on: false },
   switchable: { visible: true, locked: false, on: null }, // on=null → 读按模型记忆

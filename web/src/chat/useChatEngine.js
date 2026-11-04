@@ -1905,12 +1905,6 @@ function buildAskCard (j, remainingMs) {
   }
 }
 
-/** 把一张提问卡挂到气泡上（同一轮一张的位置；多张请走 attachAskCard 排队） */
-function mountAskCard (m, j, remainingMs) {
-  m.ask = buildAskCard(j, remainingMs)
-  return m.ask
-}
-
 /**
  * 挂一张待答卡，位置被占就排进队列。
  * <p>为什么要队列：并行工具调用能在**同一轮**挂出两张提问卡（服务端按 askId 各自阻塞、各自可答），

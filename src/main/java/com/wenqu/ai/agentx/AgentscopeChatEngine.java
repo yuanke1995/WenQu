@@ -228,7 +228,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private static final long GOAL_RETRY_DELAY_MS = 1_500L;
     private static final int GOAL_RETRY_MAX = 20;
     /**
-     * 工具展示名与悬停说明的解析入口（与手写侧 {@code TurnRecorder#recordToolStatus} 同一个来源）。
+     * 工具展示名与悬停说明的解析入口（落库的工具卡按这里补全展示字段）。
      * <p>框架引擎原先把工具<b>裸名</b>当 {@code label} 下发（{@code toolCard} 里的 {@code esc(name)}），
      * 前端 {@code toolLabel} 认得出「这不是展示名」而回落本地映射，于是这一路上的卡片全靠那份手抄表撑着——
      * 表里没有的（{@code consultAgent}、{@code writeTodo}、{@code plan_*}）就现出英文裸名。
@@ -2525,7 +2525,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             }
             java.util.Map<String, Object> entry = new java.util.LinkedHashMap<>();
             entry.put("name", name);
-            // 展示名与悬停说明随后端下发（与手写侧 TurnRecorder#recordToolStatus 同源）：
+            // 展示名与悬停说明随后端下发：
             // 落库的这份是刷新后重建工具卡的唯一依据，写裸名等于把中文名全押在前端那份手抄映射上
             displayNames.putDisplayFields(entry, uid, name);
             entry.put("status", status);
