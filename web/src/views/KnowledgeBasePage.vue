@@ -128,21 +128,28 @@ const openGraph = kb => {
 }
 
 const onDelete = row => {
-  // 有确认才敢点：后端会拦住「库里还有文档」的那一类，所以这里删掉的是空壳库，
+  // 直接删库：后端会先级联彻底删除本库下全部文档（含回收站）与库级图谱，再删库本体。
   // 真正静默的后果是级联——所有绑定它的智能体（含子智能体）当场失去这份资料域，向量索引一并清理。
   Modal.confirm({
     title: `删除知识库「${row.name || '未命名'}」？`,
-    content: '库里必须已无文档才能删。删除后，绑定过它的智能体会自动摘除这个知识库，'
-      + '该库的向量索引同时清理，且不可恢复。',
+    content: `将一并永久删除该库下的 ${row.docCount || 0} 个文档（含回收站的软删文档）及其向量索引与图谱，且不可恢复；`
+      + '绑定过它的智能体会自动摘除这个知识库。',
     okText: '删除', okType: 'danger', cancelText: '取消',
     onOk: async () => {
-      const r = await deleteKnowledgeBase(row.id)
-      if (r && r.success === false) {
-        message.warning(r.msg || '无法删除')
-        return
+      const hide = message.loading('正在删除知识库及其全部文档…', 0)
+      try {
+        const r = await deleteKnowledgeBase(row.id)
+        if (r && r.success === false) {
+          message.warning(r.msg || '无法删除')
+          return
+        }
+        message.success('已删除（库内文档与关联智能体已一并清理）')
+        await load()
+      } catch (e) {
+        message.error(e.message || '删除失败')
+      } finally {
+        hide()
       }
-      message.success('已删除（关联智能体已同步摘除该库）')
-      await load()
     }
   })
 }

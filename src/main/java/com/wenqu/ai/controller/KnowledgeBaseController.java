@@ -218,11 +218,21 @@ public class KnowledgeBaseController {
         return ResultJson.ok(kb);
     }
 
-    @Operation(summary = "删除知识库", description = "逻辑删除；默认库、以及库下仍有文档时拒绝删除（避免文档失去归属导致检索范围突变）；仅创建者可删")
+    @Operation(summary = "删除知识库", description = "先级联彻底删除本库下全部文档（含回收站）与库级图谱，再逻辑删除知识库自身；默认库与官方内置库不可删；仅创建者可删")
     @Permission("kb:delete")
     @DeleteMapping("/{id}")
     public ResultJson delete(@PathVariable("id") String id) {
         requireManage(mustGet(id));
+        KnowledgeBase kb = mustGet(id);
+        if (kb.getIsDefault() != null && kb.getIsDefault() == 1) {
+            return ResultJson.error("默认知识库不可删除");
+        }
+        if (kb.getBuiltin() != null && kb.getBuiltin() == 1) {
+            return ResultJson.error("官方内置知识库不可删除（内容随版本自动同步）");
+        }
+        // 先级联彻底删除本库全部文档与库级图谱，再删库本体：
+        // 避免「库删了、文档还在」导致文档失去归属、检索范围突变、向量成孤儿索引。
+        documentService.purgeByKb(id);
         String reason = kbService.delete(id);
         if (reason != null) return ResultJson.error(reason);
         return ResultJson.ok(Map.of("id", id));

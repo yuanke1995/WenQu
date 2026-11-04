@@ -1587,6 +1587,36 @@ public class DocumentService {
     }
 
     /**
+     * 级联彻底删除某个知识库的<b>全部</b>文档（活跃 + 回收站），供删库前调用：
+     * 向量 → 附加索引 → GraphRAG 三元组 → 知识块 → 关键词索引 → 版本快照 → 文档行 → 图片/源文件，
+     * 全部逐条走 {@link #purge(String)}（与「回收站彻底删除」同语义、可重试不产生孤儿）。
+     * <p>库级 GraphRAG 实体与抽取记录按 kb 维度残留（purge 只按 doc 删三元组，
+     * 跨文档共享的实体不会随单文档删除消失），故末尾再 {@code graphRagService.clear(kbId)} 兜底。
+     * <p>本方法只清文档与图谱，<b>不删知识库自身行</b>（由 {@code KnowledgeBaseService.delete} 负责）。
+     * 任一文档向量删除失败会抛 {@code BizException} 中止；已删部分不回滚，重试即可——
+     * 与单文档 purge「删库属用户显式意图、中途失败可重试」的语义一致。
+     *
+     * @param kbId 知识库 ID（默认库/官方内置库调用方已先行拦截，不应传入）
+     */
+    public void purgeByKb(String kbId) {
+        // 1) 活跃文档：逐条彻底删除
+        for (String docId : kbService.docIdsOf(java.util.List.of(kbId))) {
+            purge(docId);
+        }
+        // 2) 回收站内仍属本库的软删文档：库删了之后这些行无法恢复，必须一并清掉，否则成永久垃圾数据
+        for (com.wenqu.ai.model.AiDocument d : recycleList(kbId)) {
+            purge(d.getId());
+        }
+        // 3) 库级 GraphRAG 兜底：实体与抽取记录不会随单文档 purge 消失
+        try {
+            graphRagService.clear(kbId);
+        } catch (Exception e) {
+            log.warn("[GRAPH] 清理知识库 {} 的图谱实体/抽取记录失败（不影响删库，可事后重建或手工清理）: {}",
+                    kbId, e.getMessage());
+        }
+    }
+
+    /**
      * 文档列表
      */
     public List<AiDocument> list() {

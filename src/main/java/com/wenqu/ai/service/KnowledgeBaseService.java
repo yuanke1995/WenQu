@@ -275,7 +275,11 @@ public class KnowledgeBaseService {
     }
 
     /**
-     * 逻辑删除；**默认库与仍含文档的库禁止删除**（删了会让文档失去归属、检索范围突变）。
+     * 逻辑删除知识库自身（删库行 + 摘智能体引用 + 清向量索引）。
+     * <p><b>级联删除由调用方负责</b>：删库接口会先 {@code DocumentService.purgeByKb(id)} 把本库全部
+     * 文档（含回收站）与库级图谱彻底清掉，再调本方法删库本体——避免「库删了、文档还在」导致文档失去归属、
+     * 检索范围突变、向量成孤儿索引。本方法只做兜底：若仍检测到活跃文档（级联清理后并发新增等极端情况），
+     * 拒绝删库本体，保护残留文档不失去归属。
      *
      * @return null 表示可删并已删除；否则返回不可删的原因
      */
@@ -284,8 +288,9 @@ public class KnowledgeBaseService {
         if (kb == null) return "知识库不存在";
         if (kb.getIsDefault() != null && kb.getIsDefault() == 1) return "默认知识库不可删除";
         if (kb.getBuiltin() != null && kb.getBuiltin() == 1) return "官方内置知识库不可删除（内容随版本自动同步）";
+        // 兜底：级联清理后理论上已无活跃文档；若仍有（并发新增等），拒绝删库本体而非留下孤儿文档
         long n = docMapper.selectCount(new LambdaQueryWrapper<AiDocument>().eq(AiDocument::getKbId, id));
-        if (n > 0) return "该知识库下还有 " + n + " 个文档，请先移出或删除文档";
+        if (n > 0) return "该知识库下仍有 " + n + " 个文档未完成清理，请稍后重试删除";
         // 必须走 deleteById（MyBatis-Plus 的逻辑删除语句）：deleted 是全局 logic-delete-field，
         // updateById 生成的 SET 子句会剔除该列（只在 WHERE 补 deleted=0）⇒
         // 「setDeleted(1) + updateById」静默无效，库删了还在列表里（与产物删除同一坑）。
