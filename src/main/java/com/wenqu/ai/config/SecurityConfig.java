@@ -398,6 +398,17 @@ public class SecurityConfig implements WebMvcConfigurer {
     }
 
     /**
+     * 本机执行器通道：执行器用设备令牌（Authorization: Bearer &lt;device-token&gt;）自证，
+     * 令牌校验在 {@code ExecutorController} 入口按哈希完成。不放进这里的话，登录门禁会先把
+     * 轮询判成「请先登录」——设备令牌不是用户 JWT，永远过不了那一关。
+     */
+    private static boolean isExecutorEndpoint(String method, String path) {
+        if (path == null) return false;
+        if ("GET".equals(method) && "/api/ai/executor/poll".equals(path)) return true;
+        return "POST".equals(method) && "/api/ai/executor/result".equals(path);
+    }
+
+    /**
      * 模型供应商的自助端点（普通用户可访问）。
      * <p>
      * 覆盖：列表 / 新建（{@code /provider}）、单个的改删与启停、单个的模型登记、
@@ -499,7 +510,8 @@ public class SecurityConfig implements WebMvcConfigurer {
             if (!authenticated
                     && !isAuthBootstrapEndpoint(method, path) && !isShareGuestEndpoint(path)
                     && !isTenantApplyEndpoint(method, path)
-                    && !isSandboxCallbackEndpoint(method, path)) {
+                    && !isSandboxCallbackEndpoint(method, path)
+                    && !isExecutorEndpoint(method, path)) {
                 response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
                 response.setContentType("application/json;charset=UTF-8");
                 response.getWriter().write(objectMapper.writeValueAsString(
