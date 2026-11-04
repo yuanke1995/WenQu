@@ -54,9 +54,12 @@ public class SchemaMigrator implements ApplicationRunner {
 
     /** 已退役列（表 → 列）：存量库若还有就删；新库 schema.sql 已不再建这些列 */
     private static final Map<String, List<String>> RETIRED_COLUMNS = Map.of(
+            // 只列「已改名」的旧预算列（budget_turns→budget_rounds、budget_minutes→budget_ms）。
+            // budget_tokens/budget_tool_calls 曾是退役列，2026-10-23 随预算四档装回 schema.sql，
+            // 留在名单里会让本类先补列再删列，实体 SELECT 直接 Unknown column。
             "c_ai_goal", List.of("criteria_json", "constraints_json", "subject_version",
                     "verifications_json", "contract_version", "state_revision",
-                    "budget_turns", "budget_tokens", "budget_tool_calls", "budget_minutes"),
+                    "budget_turns", "budget_minutes"),
             "c_ai_user", List.of("role", "oidc_sub", "oidc_provider",
                     "default_rerank_model", "default_vision_model"));
 
@@ -120,7 +123,7 @@ public class SchemaMigrator implements ApplicationRunner {
         }
         int tenantFixed = normalizeTenantColumns();
         int scopeRenamed = migrateQuotaScope();
-        int retiredDropped = dropRetiredColumns();
+        int retiredDropped = dropRetiredColumns(tables);
         log.info("[SchemaMigrator] schema 演进检查完成：{} 张表，补列 {} 个，补索引 {} 个{}{}{}",
                 tables.size(), addedCols, addedIdx,
                 autoIndex ? "" : "（索引自动补齐已关闭）",
@@ -133,13 +136,21 @@ public class SchemaMigrator implements ApplicationRunner {
      * 已退役但仍可能留在存量库里的列：删掉，不再让「旧结构」跟着库走。
      * <p>列名来自已删除的实体/读写路径，schema.sql 也不再建；存量库若还有，删列是纯减法。
      * 用 information_schema 先查再删，幂等；单列失败只告警，不阻塞其余列。
+     * <p>名单与 schema.sql 撞名（同一列既声明要建又声明要删）时**跳过不删并告警**：
+     * 撞名说明名单没跟着「列装回」一起清，删下去会让实体每次查询报 Unknown column。
      */
-    private int dropRetiredColumns() {
+    private int dropRetiredColumns(Map<String, TableDef> tables) {
         int dropped = 0;
         for (Map.Entry<String, List<String>> e : RETIRED_COLUMNS.entrySet()) {
             List<String> existing = queryColumns(e.getKey());
             if (existing == null) continue;
+            TableDef schemaDef = tables.get(e.getKey());
             for (String col : e.getValue()) {
+                if (schemaDef != null && schemaDef.columns().containsKey(col)) {
+                    log.warn("[SchemaMigrator] 退役名单里的 {}.{} 在 schema.sql 中仍是有效列，已跳过删除"
+                            + "（请把该列从 RETIRED_COLUMNS 移除）", e.getKey(), col);
+                    continue;
+                }
                 if (!existing.contains(col)) continue;
                 try {
                     jdbcTemplate.execute("ALTER TABLE `" + e.getKey() + "` DROP COLUMN `" + col + "`");
