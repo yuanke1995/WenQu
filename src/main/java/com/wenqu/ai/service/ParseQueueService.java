@@ -299,6 +299,9 @@ public class ParseQueueService {
         boolean fatal = isFatal(e);
         if (fatal) {
             parseTaskMapper.markDead(taskId, msg);
+            // 文档同步落终态：致命错误在 processUpload 里已置失败；这里补的是「预检失败」等
+            // 没走到 processUpload 的路径，以及偶发错误重试耗尽后仍停在「解析中」的行
+            documentService.markParseFailed(docId, msg);
             notifyParseOutcome(docId, msg);   // 终态失败才通知（retryable 还有退避重试，属中间态）
             log.warn("[PARSE-QUEUE] 任务终态失败（不重试） task={} doc={}: {}", taskId, docId, msg);
         } else {
@@ -307,6 +310,7 @@ public class ParseQueueService {
                 if (isDead(taskId)) {
                     // markRetryable 的 SQL 在 attempt 触顶时把行直接翻成 dead —— 这一刻它就是终态失败。
                     // 不补通知的话「重试耗尽」是队列里唯一不吭一声的失败口径（fatal 分支才有铃铛与批量告警）
+                    documentService.markParseFailed(docId, msg);
                     notifyParseOutcome(docId, msg);
                     log.warn("[PARSE-QUEUE] 任务重试耗尽转终态 task={} doc={}: {}", taskId, docId, msg);
                 } else {
@@ -317,6 +321,7 @@ public class ParseQueueService {
                 log.error("[PARSE-QUEUE] 任务失败且无法记录退避 task={} doc={}: {}", taskId, docId, inner.getMessage());
                 try {
                     parseTaskMapper.markDead(taskId, msg);
+                    documentService.markParseFailed(docId, msg);
                 } catch (Exception dead2) {
                     log.error("[PARSE-QUEUE] 任务失败记录落库失败 task={} doc={}: {}", taskId, docId, dead2.getMessage());
                 }

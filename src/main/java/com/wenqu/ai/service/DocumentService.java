@@ -1068,7 +1068,10 @@ public class DocumentService {
     }
 
     /**
-     * 异步解析核心：解析 → MySQL 元数据 + 向量 → 状态置 0；失败置 3 + 原因 + 补偿清理
+     * 异步解析核心：解析 → MySQL 元数据 + 向量 → 状态置 0；失败按错误类型分流 + 补偿清理 + 异常上抛
+     * <p>
+     * 失败必须上抛给 {@link ParseQueueService}：队列据此判定 retryable/dead 并发终态通知。
+     * 在此吞掉异常会让队列把任务记成 succeeded 并发「解析完成」通知，而文档实际是失败态。
      */
     private void processUpload(String docId, String fileName, Path source, DocumentParser parser) {
         AiDocument doc = documentMapper.selectById(docId);
@@ -1305,15 +1308,25 @@ public class DocumentService {
             if (childFailed) doneDesc += "；子块索引失败";
             if (!swept) doneDesc += "；孤儿清扫失败";
             updateProgress(docId, 100, doneDesc, true);
+            // 终态回写只写该写的列。**不能用 updateById(doc)**：doc 是解析开始前读的那一行，
+            // 全列回写会把刚由 updateProgress 落库的 parse_progress/parse_desc 覆盖回陈旧值
+            // （终态描述退回「重新解析中（已入队）」）；且 updateById 走 MyBatis-Plus 的
+            // NOT_NULL 策略，failReason=null 会被跳过 → 上一次的失败原因残留在已入库文档上。
+            documentMapper.update(null, new LambdaUpdateWrapper<AiDocument>()
+                    .eq(AiDocument::getId, docId)
+                    .set(AiDocument::getChunkCount, chunks.size())
+                    .set(AiDocument::getStatus, 0)
+                    .set(AiDocument::getFailReason, null));
             doc.setChunkCount(chunks.size());
             doc.setStatus(0);
             doc.setFailReason(null);
-            documentMapper.updateById(doc);
             // 版本管理：成功解析后版本号 +1 并保存快照
             try {
                 int newVersion = (doc.getVersion() == null ? 0 : doc.getVersion()) + 1;
                 doc.setVersion(newVersion);
-                documentMapper.updateById(doc);
+                documentMapper.update(null, new LambdaUpdateWrapper<AiDocument>()
+                        .eq(AiDocument::getId, docId)
+                        .set(AiDocument::getVersion, newVersion));
                 saveSnapshot(docId, newVersion);
             } catch (Exception e) {
                 log.warn("[{}] 保存版本快照失败: {}", docId, e.getMessage());
@@ -1348,19 +1361,43 @@ public class DocumentService {
             }
             // 关键词索引同步：删除本次新增块（best-effort）
             keywordIndexService.deleteChunks(aiDocs.stream().map(Document::getId).toList());
+            // 状态分流：**终态错误**（内容/格式类，重试也不会成功）→ 置失败；**偶发错误**（超时/IO/上游 5xx）
+            // → 保持「解析中」，等队列退避重试。两者都必须把异常上抛给队列层——否则队列收不到失败信号，
+            // 会把任务记成 succeeded 并发「解析完成」通知（文档却是失败态），且偶发错误永远得不到重试。
+            String failDesc;
+            Integer failStatus;
+            String failReason;
             if (hadExistingContent) {
                 // 重解析失败：未变旧块仍在（变更块已被 diff 清理），回退到生效状态继续可用
-                doc.setStatus(0);
-                doc.setFailReason("重解析失败，已保留上一版内容: " + truncate(e.getMessage()));
-            } else {
+                failStatus = 0;
+                failReason = "重解析失败，已保留上一版内容: " + truncate(e.getMessage());
+                failDesc = "解析失败(已回退旧内容)";
+            } else if (isFatalParseError(e)) {
                 // 全新解析失败：无旧内容可回退，清理图片目录并置失败
                 cleanupImages(docId);
-                doc.setStatus(3);
-                doc.setFailReason(truncate(e.getMessage()));
+                failStatus = 3;
+                failReason = truncate(e.getMessage());
+                failDesc = "解析失败";
+            } else {
+                // 偶发失败：文档保持「解析中」，由队列退避后重试；重试耗尽时队列会把它翻成 dead
+                failStatus = 2;
+                failReason = null;
+                failDesc = "解析失败(将自动重试)";
             }
-            documentMapper.updateById(doc);
-            // 失败：进度保留最后值，desc 区分回退/失败
-            updateProgress(docId, progressGuard.getOrDefault(docId, 0), hadExistingContent ? "解析失败(已回退旧内容)" : "解析失败", true);
+            // 只写该写的列：全列 updateById(doc) 会把陈旧的 parse_progress/parse_desc 写回，
+            // 且 failReason=null 被 NOT_NULL 策略跳过 → 上一次的失败原因残留。
+            documentMapper.update(null, new LambdaUpdateWrapper<AiDocument>()
+                    .eq(AiDocument::getId, docId)
+                    .set(AiDocument::getStatus, failStatus)
+                    .set(AiDocument::getFailReason, failReason));
+            doc.setStatus(failStatus);
+            doc.setFailReason(failReason);
+            // 失败：进度保留最后值，desc 与状态口径一致（解析中就说重试，失败才说失败）
+            updateProgress(docId, progressGuard.getOrDefault(docId, 0), failDesc, true);
+            // 上抛给队列层：任务状态（retryable/dead）与终态通知由它统一收口。
+            // ParseFatalException 原样上抛（队列按它判终态不重试）；其余包成 RuntimeException 走退避重试。
+            if (e instanceof ParseFatalException) throw (ParseFatalException) e;
+            throw new RuntimeException(e.getMessage() == null ? e.toString() : e.getMessage(), e);
         } finally {
             // 清理解析线程引用与删除标志（delete() 的 DB 物理删除仍可兜底 isDocAlive）
             parseThreads.remove(docId);
@@ -1986,7 +2023,13 @@ public class DocumentService {
         doc.setVersion(version);
         doc.setStatus(0);
         doc.setFailReason(null);
-        documentMapper.updateById(doc);
+        // 只写该写的列：全列 updateById + NOT_NULL 策略会让 failReason=null 被跳过，旧失败原因残留
+        documentMapper.update(null, new LambdaUpdateWrapper<AiDocument>()
+                .eq(AiDocument::getId, docId)
+                .set(AiDocument::getChunkCount, snapshot.size())
+                .set(AiDocument::getVersion, version)
+                .set(AiDocument::getStatus, 0)
+                .set(AiDocument::getFailReason, null));
         versionMapper.delete(new LambdaQueryWrapper<com.wenqu.ai.model.AiDocumentVersion>()
                 .eq(com.wenqu.ai.model.AiDocumentVersion::getDocId, docId)
                 .gt(com.wenqu.ai.model.AiDocumentVersion::getVersion, version));
@@ -2170,7 +2213,12 @@ public class DocumentService {
         // 也不清空图片目录：内容寻址文件名下，未变图片文件保留供复用块引用，变更/删除图的旧文件由 processUpload 成功后孤儿清扫
         doc.setStatus(2);
         doc.setFailReason(null);
-        documentMapper.updateById(doc);
+        // 只写该写的列：updateById 全列回写 + NOT_NULL 策略会让 failReason=null 被跳过，
+        // 上一次的失败原因残留在文档上（重解析成功后仍挂着旧错误）
+        documentMapper.update(null, new LambdaUpdateWrapper<AiDocument>()
+                .eq(AiDocument::getId, docId)
+                .set(AiDocument::getStatus, 2)
+                .set(AiDocument::getFailReason, null));
         documentMetaCache.invalidate(docId);
         updateProgress(docId, 0, "重新解析中（已入队）");
 
@@ -2221,6 +2269,34 @@ public class DocumentService {
                 .set(AiDocument::getParseDesc, hasOldChunks ? "解析失败(已回退旧内容)" : "解析失败"));
         progressGuard.remove(doc.getId());
         return new ParseFatalException(msg);
+    }
+
+    /**
+     * 解析终态失败的文档收口：由解析队列在任务判 dead 时调用（致命错误，或可重试错误退避耗尽）。
+     * <p>
+     * 为什么需要它：偶发失败时 {@code processUpload} 会把文档留在「解析中」等队列重试——
+     * 若任务最终被判死（不再重试），文档必须同步落到终态，否则用户永远看到「解析中」，
+     * 且 {@code tryLockParsing} 的 CAS 会永久拒绝再次重解析（只剩删除能点）。
+     * 状态口径与 {@link #preflightFailure} 一致：有旧块回退生效、无旧块置失败。
+     */
+    public void markParseFailed(String docId, String msg) {
+        try {
+            AiDocument doc = documentMapper.selectById(docId);
+            if (doc == null) return;
+            boolean hasOldChunks = knowledgeMapper.selectCount(
+                    new LambdaQueryWrapper<Knowledge>().eq(Knowledge::getDocId, docId)) > 0;
+            documentMapper.update(null, new LambdaUpdateWrapper<AiDocument>()
+                    .eq(AiDocument::getId, docId)
+                    .eq(AiDocument::getStatus, 2)   // 只收自己置的「解析中」，不覆盖用户在这期间的停用/弃用
+                    .set(AiDocument::getStatus, hasOldChunks ? 0 : 3)
+                    .set(AiDocument::getFailReason, truncate(hasOldChunks ? "重解析失败，已保留上一版内容: " + msg : msg))
+                    .set(AiDocument::getParseProgress, 0)
+                    .set(AiDocument::getParseDesc, hasOldChunks ? "解析失败(已回退旧内容)" : "解析失败"));
+            documentMetaCache.invalidate(docId);
+            progressGuard.remove(docId);
+        } catch (Exception e) {
+            log.warn("[{}] 解析终态失败收口失败: {}", docId, e.getMessage());
+        }
     }
 
     /** 解析队列统计（全平台口径） */
@@ -2299,7 +2375,14 @@ public class DocumentService {
             existing.setVisionRef(visionRef);
             existing.setStatus(2);
             existing.setFailReason(null);
-            documentMapper.updateById(existing);
+            // 只写该写的列：全列 updateById + NOT_NULL 策略会让 failReason=null 被跳过，旧失败原因残留
+            documentMapper.update(null, new LambdaUpdateWrapper<AiDocument>()
+                    .eq(AiDocument::getId, docId)
+                    .set(AiDocument::getFileSize, existing.getFileSize())
+                    .set(AiDocument::getDescription, existing.getDescription())
+                    .set(AiDocument::getVisionRef, existing.getVisionRef())
+                    .set(AiDocument::getStatus, 2)
+                    .set(AiDocument::getFailReason, null));
             documentMetaCache.invalidate(docId);
             updateProgress(docId, 0, "已提交,等待解析");
 
@@ -2477,6 +2560,19 @@ public class DocumentService {
     private String truncate(String s) {
         if (s == null) return "未知错误";
         return s.length() > 200 ? s.substring(0, 200) : s;
+    }
+
+    /**
+     * 是否终态错误（重试也不会成功）：与队列 {@code ParseQueueService.isFatal} 同一判据。
+     * <p>
+     * 判据口径必须与队列一致——两边都判终态才置文档失败态；只有一边判终态，
+     * 就会出现「文档已置失败、任务却还在退避重试」的错位（重试成功后又得回写状态）。
+     */
+    private boolean isFatalParseError(Throwable e) {
+        for (Throwable c = e; c != null; c = c.getCause()) {
+            if (c instanceof ParseFatalException) return true;
+        }
+        return false;
     }
 
     /**
