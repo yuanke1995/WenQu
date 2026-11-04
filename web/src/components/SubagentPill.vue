@@ -37,7 +37,6 @@
           </span>
           <span class="sap-dur" :class="{ run: r.running, bad: r.failed }">{{ durOf(r) }}</span>
         </button>
-        <div class="sap-foot">点一行定位到回答里那张卡</div>
       </div>
     </template>
   </div>
@@ -155,7 +154,6 @@ function pick (r) {
 .sap-dur { flex: none; padding-top: 1px; font-size: 11.5px; color: var(--app-text3); font-variant-numeric: tabular-nums; }
 .sap-dur.run { color: var(--app-accent); }
 .sap-dur.bad { color: var(--app-danger); }
-.sap-foot { padding: 6px 10px; font-size: 11px; color: var(--app-text3); background: var(--app-panel-2); }
 
 /* 触屏：整行热区放大，名单从底部升起（窄屏没有常驻右栏，浮层放不下） */
 .sap-pop-m {
