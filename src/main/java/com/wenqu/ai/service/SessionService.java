@@ -230,7 +230,10 @@ public class SessionService {
             m.put("roots", roots);
             m.put("executorOnline", p.getExecutorId() != null && !p.getExecutorId().isBlank()
                     && executorRegistry.online(p.getExecutorId()));
-            m.put("permissionPreset", s.getPermissionPreset() == null ? "" : s.getPermissionPreset());
+            // 档位只对工作区有意义：implicit 容器里的会话不汇报（前端的选择器也不摆这一档）
+            m.put("permissionPreset", s.getPermissionPreset() == null
+                    || Project.SELECTION_IMPLICIT.equals(p.getSelectionStatus())
+                    ? "" : s.getPermissionPreset());
             return m;
         } catch (Exception e) {
             log.warn("[PROJECT] 会话工作区标识解析失败（按无工作区处理）session={}: {}", sessionId, e.getMessage());
@@ -259,10 +262,17 @@ public class SessionService {
         }
         String target = projectService.resolveMoveTarget(uid, projectId);
         if (Objects.equals(target, s.getProjectId())) return;   // 幂等：原地移动直接成功
-        // 置空必须走 wrapper 显式 set：updateById 的 NOT_NULL 策略会跳过 null 列（摘归属会静默失效）
-        sessionMapper.update(null, new LambdaUpdateWrapper<Session>()
+        // 目标不是真工作区（摘归属 / implicit 兜底容器）时，权限档位一起清掉：
+        // 档位只对工作区有意义，留着会在一个没有工作区目录的会话上悄悄生效，而界面上已经没有改它的入口
+        Project targetProject = target == null ? null : projectService.byId(target);
+        boolean dropPreset = targetProject == null
+                || Project.SELECTION_IMPLICIT.equals(targetProject.getSelectionStatus());
+        var sessionUpdate = new LambdaUpdateWrapper<Session>()
                 .eq(Session::getId, sessionId)
-                .set(Session::getProjectId, target));
+                .set(Session::getProjectId, target);
+        if (dropPreset) sessionUpdate.set(Session::getPermissionPreset, null);
+        // 置空必须走 wrapper 显式 set：updateById 的 NOT_NULL 策略会跳过 null 列（摘归属会静默失效）
+        sessionMapper.update(null, sessionUpdate);
         artifactMapper.update(null, new LambdaUpdateWrapper<com.wenqu.ai.model.Artifact>()
                 .eq(com.wenqu.ai.model.Artifact::getSessionId, sessionId)
                 .set(com.wenqu.ai.model.Artifact::getProjectId, target));
@@ -749,15 +759,23 @@ public class SessionService {
      *
      * <p>档位码的合法性在这里校：写进库再发现认不出，问答侧只能回落到更低的档位，
      * 用户看到的「已切到完全权限」就成了一句假话。
+     *
+     * <p><b>只有工作区会话能设档位</b>：档位管的是「工作区目录里的读写与命令」，侧栏「会话」
+     * （implicit 兜底容器）没有目录——存下去既没有指代对象，界面上也没了改回来的入口。
+     * 清除（follow）不拦：给库里残值留一条出路。
      */
     public String setPermissionPreset(String userId, String sessionId, String code) {
-        assertOwned(sessionId, userId);
+        Session owned = assertOwned(sessionId, userId);
         String v = code == null ? "" : code.trim();
         if (v.isEmpty() || "follow".equalsIgnoreCase(v) || "default".equalsIgnoreCase(v)) {
             sessionMapper.update(null, new LambdaUpdateWrapper<Session>()
                     .eq(Session::getId, sessionId)
                     .set(Session::getPermissionPreset, null));
             return null;
+        }
+        if (!inRealWorkspace(owned)) {
+            throw new com.wenqu.ai.common.BizException(400,
+                    "权限档位只对工作区会话生效：这个会话没有挂工作区");
         }
         com.wenqu.ai.agent.permission.PermissionPreset p =
                 com.wenqu.ai.agent.permission.PermissionPreset.fromCode(v);
@@ -772,12 +790,25 @@ public class SessionService {
         return p.code();
     }
 
-    /** 会话当前选的档位码（系统侧读取，不校验归属；null=没选过）。 */
+    /** 这条会话是不是挂在一个<b>真</b>工作区下：没挂 / 工作区已删 / implicit 兜底容器（侧栏「会话」）都不算。 */
+    private boolean inRealWorkspace(Session s) {
+        if (s == null || s.getProjectId() == null || s.getProjectId().isBlank()) return false;
+        Project p = projectService.byId(s.getProjectId());
+        return p != null && !Project.SELECTION_IMPLICIT.equals(p.getSelectionStatus());
+    }
+
+    /**
+     * 会话当前选的档位码（系统侧读取，不校验归属；null=没选过）。
+     *
+     * <p>不在真工作区里的会话一律按「没选过」返回：档位只对工作区目录有意义，
+     * 存量残值（设过档位后把会话移出工作区 / 工作区被删）不该在这些会话上悄悄生效。
+     */
     public String permissionPresetOf(String sessionId) {
         if (sessionId == null || sessionId.isBlank()) return null;
         try {
             Session s = sessionMapper.selectById(sessionId);
-            return s == null ? null : s.getPermissionPreset();
+            if (s == null || s.getPermissionPreset() == null) return null;
+            return inRealWorkspace(s) ? s.getPermissionPreset() : null;
         } catch (Exception e) {
             return null;
         }

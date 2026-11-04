@@ -411,10 +411,23 @@ public class ProjectFileService {
 
     /** 打开工作区主目录（执行器所在电脑上的系统文件管理器）。 */
     public void openInOS(String uid, String projectId) {
+        openInOS(uid, projectId, null);
+    }
+
+    /**
+     * 打开工作区里的某个文件夹（执行器所在电脑上的系统文件管理器）。
+     *
+     * <p>{@code path} 是文件栏那套虚拟路径（{@code 别名/相对路径}，裸别名=源文件夹本身），空值＝主目录。
+     * 聊天页的文件栏要能精确到某一层子目录，所以这里不写死主目录；路径仍走 {@link #target} 认别名＋
+     * 逐段校验，落到执行器那头的绝对路径只在 roots 里，越界在服务端就挡住了。
+     */
+    public void openInOS(String uid, String projectId, String path) {
         Project p = projectService.detail(uid, projectId);
         List<ProjectRoot> roots = requireRoots(p);
-        ProjectRoot primary = primary(roots);
-        executorFiles.openPath(executorId(p), roots, primary.getPath());
+        Target t = target(p, roots, path, true);
+        // 不先 stat 一遍：页面上点得到的只有目录行，多一次往返只会多一条失败路径
+        // （stat 会拒软链，而源文件夹本身是软链时 openPath 打得开、stat 反倒会拦下来）
+        executorFiles.openPath(executorId(p), roots, abs(t.root, t.rel));
     }
 
     public String createDir(String uid, String projectId, String path) {

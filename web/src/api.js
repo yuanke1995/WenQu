@@ -566,9 +566,10 @@ export const browseExecutor = (executorId, path) =>
 /** 让执行器在它那台电脑上弹系统目录选择框（等用户点，超时给足） */
 export const pickExecutorDir = executorId =>
   request('/executor/pick-dir', { method: 'POST', body: JSON.stringify({ executorId }), timeout: 130000 })
-/** 让那台电脑用系统文件管理器打开工作区主文件夹 */
-export const openProjectFolder = projectId =>
-  request(`/project/${encodeURIComponent(projectId)}/open`, { method: 'POST' })
+/** 让那台电脑用系统文件管理器打开工作区文件夹：path 缺省＝主文件夹，也可给虚拟路径打开某个子目录 */
+export const openProjectFolder = (projectId, path) =>
+  request(`/project/${encodeURIComponent(projectId)}/open`
+    + (path ? `?path=${encodeURIComponent(path)}` : ''), { method: 'POST' })
 export const bindProjectExecutor = (projectId, executorId, roots) =>
   request(`/project/${encodeURIComponent(projectId)}/executor`, {
     method: 'PUT', body: JSON.stringify({ executorId, roots })

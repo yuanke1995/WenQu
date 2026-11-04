@@ -483,12 +483,14 @@ public class ProjectController {
 
     @Operation(summary = "在电脑上打开工作区文件夹",
             description = "让那台电脑用系统文件管理器打开主源文件夹（Finder / Explorer / 文件管理器）。"
-                    + "执行器离线 503；没有绑定目录 400")
+                    + "可选 query 参数 path（虚拟路径「别名/相对路径」，裸别名=源文件夹本身）指定打开哪个子目录，"
+                    + "缺省＝主目录。执行器离线 503；没有绑定目录/路径越界 400")
     @Permission("project:read")
     @PostMapping("/{id}/open")
-    public ResultJson openFolder(@PathVariable("id") String id) {
+    public ResultJson openFolder(@PathVariable("id") String id,
+                                 @RequestParam(value = "path", required = false) String path) {
         try {
-            projectFileService.openInOS(RequestUser.uid(), id);
+            projectFileService.openInOS(RequestUser.uid(), id, path);
             return ResultJson.ok(null, "已在电脑上打开文件夹");
         } catch (IllegalArgumentException e) {
             return ResultJson.error(400, e.getMessage());

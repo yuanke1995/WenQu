@@ -1192,8 +1192,9 @@
         chip 是文档里的节点，能排在字与字之间，全选复制也就带得上它们（见 chat/Composer.vue） -->
         <template #left-lead>
           <!-- 会话级权限档位：仅可查看 / 工作区内修改 / 完全权限。改的是这条会话，
-               下一次工具调用起生效；会话没建时先记住，建好后落到那条会话上。 -->
-          <a-dropdown :trigger="['click']" placement="topLeft">
+               下一次工具调用起生效。只在真工作区的会话里出现：档位管的是「工作区目录里的读写」，
+               侧栏「会话」（implicit 兜底容器）没有目录，摆一档下来只会让人以为按它执行了。 -->
+          <a-dropdown v-if="inWorkspaceSession" :trigger="['click']" placement="topLeft">
             <button class="perm-pill" :class="{ on: !!sessionPermission && sessionPermission !== 'autonomous', danger: sessionPermission === 'autonomous' }"
                     type="button"
                     :title="'权限：' + (sessionPermission === 'autonomous' ? '完全访问' : permissionLabel) + '（只对这条会话生效，可随时改）'">
@@ -1419,16 +1420,23 @@
           <button type="button" class="rp-sb-retry" @click="loadSandboxFiles">重试</button>
         </div>
         <template v-for="row in sandboxRows" :key="row.key">
-          <button v-if="row.type === 'dir'" type="button" class="rp-sb-dir"
-                  @click="toggleSandboxDir(row.dir.path)"
-                  :title="(row.open ? '收起 ' : '展开 ') + row.dir.path + '/（' + row.dir.count + ' 个文件 · ' + fmtSize(row.dir.size) + '）'">
-            <span v-for="i in row.depth" :key="i" class="rp-sb-ind" />
-            <caret-right-outlined class="tl-caret" :class="{ open: row.open }" />
-            <folder-open-outlined v-if="row.open" class="rp-art-ic" />
-            <folder-outlined v-else class="rp-art-ic" />
-            <span class="rp-sb-name">{{ row.dir.name }}/</span>
+          <!-- 目录行：开合钮只占名字那一段，行尾留给「在电脑上打开」——本机工作区的每个目录都是
+               用户电脑上真实存在的文件夹，要拿到 Finder 里接着干时不必再绕回工作区页 -->
+          <div v-if="row.type === 'dir'" class="rp-sb-dir">
+            <button type="button" class="rp-sb-dir-main"
+                    @click="toggleSandboxDir(row.dir.path)"
+                    :title="(row.open ? '收起 ' : '展开 ') + row.dir.path + '/（' + row.dir.count + ' 个文件 · ' + fmtSize(row.dir.size) + '）'">
+              <span v-for="i in row.depth" :key="i" class="rp-sb-ind" />
+              <caret-right-outlined class="tl-caret" :class="{ open: row.open }" />
+              <folder-open-outlined v-if="row.open" class="rp-art-ic" />
+              <folder-outlined v-else class="rp-art-ic" />
+              <span class="rp-sb-name">{{ row.dir.name }}/</span>
+            </button>
             <span class="rp-sb-meta">{{ row.dir.count }} 个 · {{ sbSize(row.dir.size) }}</span>
-          </button>
+            <button v-if="sessionWorkspace && sessionWorkspace.isLocal" type="button" class="rp-art-act rp-sb-btn"
+                    :title="'在电脑上打开「' + row.dir.name + '」文件夹（Finder / 资源管理器）'"
+                    @click="openLocalFolder(row.dir.path)"><export-outlined /></button>
+          </div>
           <div v-else class="rp-art">
             <span v-for="i in row.depth" :key="i" class="rp-sb-ind" />
             <span class="rp-art-name"
@@ -1758,13 +1766,13 @@ import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, Close
          CloseOutlined, DatabaseOutlined, SearchOutlined, UpOutlined, ShareAltOutlined,
          HistoryOutlined, SwapOutlined, InfoCircleOutlined,
          AppstoreOutlined, ClockCircleOutlined, BookOutlined,
-         OrderedListOutlined, LeftOutlined, FolderOpenOutlined, FolderOutlined,
+         OrderedListOutlined, LeftOutlined, FolderOpenOutlined, FolderOutlined, ExportOutlined,
          AimOutlined, EyeOutlined, SaveOutlined, ReloadOutlined, BulbOutlined,
          SafetyCertificateOutlined } from '@ant-design/icons-vue'
 import { debugRetrieval, deleteMessageGroup, submitFeedback as apiSubmitFeedback,
          addEvalCase, getSessionShare, enableSessionShare, disableSessionShare,
          getSessionWorkspace, getPermissionPresets, setSessionPermission,
-         listSessions, setNewSessionProject } from '../api'
+         listSessions, setNewSessionProject, openProjectFolder } from '../api'
 import { renderMd, resolveImg, onImgError } from '../utils/markdown'
 import { canPreview, artifactExt } from '../utils/artifactView'
 import { loadSessions, sessionStore } from './store'
@@ -3689,6 +3697,9 @@ watch(() => messages.value, () => nextTick(() => { updateTailSpacer(); scrollFor
 // 取数口径与后端 ProjectService.projectContextOfSession 同源（session → project），
 // 切换会话即刷新；取不到（无工作区/非本人/接口异常）一律不显示，不用侧栏分组猜。
 const sessionWorkspace = ref(null)
+/** 这条会话是不是真挂在一个工作区下：implicit 兜底容器（侧栏「会话」那一栏）不算——
+ *  它没有目录，会话走服务器沙盒，「工作区内修改」这一档没有指代对象。 */
+const inWorkspaceSession = computed(() => !!(sessionWorkspace.value && !sessionWorkspace.value.implicit))
 // ---------- 会话级权限档位（本机工作区的文件/命令能干什么） ----------
 const permissionPresets = ref([])
 /** 当前会话选的档位码；''=跟随智能体。切会话时从 sessionWorkspace 恢复。 */
@@ -3736,35 +3747,18 @@ const pickPermission = async key => {
     dangerOpen.value = true
     return
   }
-  if (!currentSessionId.value) {
-    // 会话还没建：先记住，currentSessionId 出现后由 watch 落到那条会话上
-    sessionPermission.value = key === 'follow' ? '' : key
-    return
-  }
   await applyPermission(key)
 }
 const confirmDanger = async () => {
   if (!dangerAck.value || dangerSaving.value) return
   dangerSaving.value = true
   try {
-    if (!currentSessionId.value) {
-      sessionPermission.value = 'autonomous'
-      dangerOpen.value = false
-      return
-    }
     const ok = await applyPermission('autonomous')
     if (ok) dangerOpen.value = false
   } finally {
     dangerSaving.value = false
   }
 }
-// 新会话建好后，把开聊前选的档位补写到会话上
-watch(currentSessionId, async sid => {
-  if (!sid || !sessionPermission.value) return
-  try {
-    await setSessionPermission(sid, sessionPermission.value)
-  } catch (e) { /* 下一轮仍按智能体档位，用户可再点一次 */ }
-})
 // 正文弹窗按名字现取清单里的那条：停用/恢复后清单重拉，弹窗里的按钮状态才会跟着翻面
 // （存条目快照会一直显示改动前的那一份）
 const skillDocEntry = computed(() => skillList.value.find(s => s.name === skillDoc.value) || {})
@@ -3839,6 +3833,20 @@ const goBindWorkspace = () => {
   if (!pid) return
   router.push({ path: '/project/' + pid, query: { settings: '1' } })
 }
+
+/** 右栏文件卡里点目录行尾那枚「在电脑上打开」：让那台电脑用系统文件管理器打开这个文件夹。
+ *  路径直接给文件卡那套虚拟路径（别名/相对路径），与预览、下载同一条认路规矩；
+ *  离线是最常见的失败原因，所以失败话术直接指向它，而不是干巴巴一句「失败」。 */
+const openLocalFolder = async path => {
+  const pid = sessionWorkspace.value && sessionWorkspace.value.projectId
+  if (!pid) return
+  try {
+    await openProjectFolder(pid, path || '')
+    message.success('已在电脑上打开文件夹')
+  } catch (e) {
+    message.warning(e.message || '打开失败：先确认那台电脑上的执行器在线')
+  }
+}
 const workspaceRefreshing = ref(false)
 const refreshSessionWorkspace = async () => {
   const sid = currentSessionId.value
@@ -3856,9 +3864,10 @@ const refreshSessionWorkspace = async () => {
   }
 }
 
-// 会话级权限档位跟着会话走：切会话就恢复那条会话自己的选择（没有=跟随智能体）
+// 会话级权限档位跟着会话走：切会话就恢复那条会话自己的选择（没有=跟随智能体）。
+// 无工作区/隐式容器的会话不认这个档位——选择器不出现，库里残值也不该悄悄生效。
 watch(sessionWorkspace, ws => {
-  sessionPermission.value = ws && ws.permissionPreset ? String(ws.permissionPreset) : ''
+  sessionPermission.value = ws && !ws.implicit && ws.permissionPreset ? String(ws.permissionPreset) : ''
 }, { immediate: true })
 
 // ==================== 输入框内联 chip（正文与引用同一条流） ====================
@@ -5322,8 +5331,10 @@ onMounted(async () => {
 .rp-proc-kill:disabled { opacity: .7; cursor: default; }
 .rp-proc-unknown { flex: none; font-size: 11px; color: var(--app-text3); }
 @media (prefers-reduced-motion: reduce) { .rp-proc-dot { animation: none; } }
-/* 目录行：整行是开合按钮（button 要自带重置，antd reset 不清底色边框）；计数与合计体积贴右 */
-.rp-sb-dir { display: flex; align-items: center; gap: 6px; width: 100%; padding: 4px 0;
+/* 目录行：整行是 flex，开合钮只占名字那一段（行尾还要放「在电脑上打开」），计数与合计体积贴右。
+   button 要自带重置，antd reset 不清底色边框 */
+.rp-sb-dir { display: flex; align-items: center; gap: 6px; width: 100%; }
+.rp-sb-dir-main { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; padding: 4px 0;
   background: none; border: 0; cursor: pointer; font: inherit; text-align: left; }
 .rp-sb-dir:hover .rp-sb-name { color: var(--app-accent); }
 .rp-sb-name { flex: 1; min-width: 0; font-size: 12px; color: var(--app-text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -5670,17 +5681,17 @@ onMounted(async () => {
 .perm-pill { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 9px;
   border: 1px solid var(--app-border); border-radius: 999px; background: var(--app-surface);
   color: var(--app-text2); font-size: 12px; cursor: pointer; white-space: nowrap; }
-.perm-pill:hover { border-color: var(--app-accent-border); color: var(--app-text1); }
+.perm-pill:hover { border-color: var(--app-accent-border); color: var(--app-text); }
 .perm-pill.on { color: var(--app-accent); border-color: var(--app-accent-border); background: var(--app-accent-weak); }
 .perm-pill.danger { color: #d4380d; border-color: #ff7875; background: #fff1f0; }
 .perm-pill.danger:hover { color: #a8071a; border-color: #ff4d4f; }
 .danger-confirm { display: flex; flex-direction: column; gap: 14px; }
 .danger-lead { display: flex; gap: 8px; margin: 0; padding: 10px 12px; border-radius: 8px;
-  background: #fff7e6; color: var(--app-text1); font-size: 13px; line-height: 1.75; }
+  background: #fff7e6; color: var(--app-text); font-size: 13px; line-height: 1.75; }
 .danger-ic { color: #fa8c16; margin-top: 3px; flex: none; }
 .danger-actions { display: flex; justify-content: flex-end; gap: 10px; }
 .perm-menu { max-width: 320px; }
-.perm-mi-t { font-size: 13px; color: var(--app-text1); line-height: 1.5; }
+.perm-mi-t { font-size: 13px; color: var(--app-text); line-height: 1.5; }
 .perm-mi-d { font-size: 12px; color: var(--app-text3); line-height: 1.5; white-space: normal; }
 
 /* 无障碍：系统开启「减少动态效果」时不播 sheet 上滑 */
