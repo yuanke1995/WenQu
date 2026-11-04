@@ -7,9 +7,10 @@
     "node": "^20.19.0 || >=22.12.0"
   },
   "scripts": {
-    "dev": "vite",
+    "dev": "node ../scripts/mac/dev-with-agent.mjs",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "dev:web": "vite"
   },
   "dependencies": {
     "@ant-design/icons-vue": "^7.0.0",
