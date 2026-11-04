@@ -25,3 +25,22 @@ export const vFollowBottom = {
     el.removeEventListener('scroll', el._onScroll)
   }
 }
+
+/** 帽体上下边缘渐隐：内容还能往上/往下滚时给对应边缘压一道 24px 渐隐，滚到边即撤。
+ *  跑轮中的簇帽体用（DSH 同款观感）：步骤只增不删，帽内永远停在最新一步，上沿渐隐
+ *  就是「上面还有历史步骤」的那一眼可读的暗示。指令只切 ef-top / ef-bot 两个 class，
+ *  渐隐本体（mask-image）由页面的样式定义——指令不掺样式，暗色亮色同过一套令牌。 */
+export const vEdgeFade = {
+  mounted(el) {
+    el._efSync = () => {
+      const top = el.scrollTop > 1
+      const bot = el.scrollHeight - el.scrollTop - el.clientHeight > 1
+      if (el._efTop !== top) { el._efTop = top; el.classList.toggle('ef-top', top) }
+      if (el._efBot !== bot) { el._efBot = bot; el.classList.toggle('ef-bot', bot) }
+    }
+    el.addEventListener('scroll', el._efSync, { passive: true })
+    el._efSync()
+  },
+  updated(el) { el._efSync() },
+  unmounted(el) { el.removeEventListener('scroll', el._efSync) }
+}

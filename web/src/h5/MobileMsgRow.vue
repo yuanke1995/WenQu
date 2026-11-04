@@ -113,6 +113,30 @@
                 <span v-if="runBoardText(m)" class="run-board">{{ runBoardText(m) }}</span>
                 <caret-right-outlined class="caret" :class="{ open: clusterOpen(m, seg) }" />
               </button>
+              <!-- 跑轮中的帽体：固定高度轻量清单（180px 内滚、贴底跟随、边缘渐隐），与 PC 同构 -->
+              <div v-if="clusterAutoOpen(m, seg)" v-follow-bottom="clusterAutoOpen(m, seg)" v-edge-fade class="cluster-live">
+                <template v-for="(lr, li) in clusterLiveRows(seg)" :key="li">
+                  <div v-if="lr.t" class="live-row"
+                       :class="{ run: lr.t.status === 'start' && !lr.t.denied, err: lr.t.status === 'error', off: lr.t.denied }">
+                    <span class="live-idx">{{ lr.idx }}</span>
+                    <loading-outlined v-if="lr.t.status === 'start' && !lr.t.denied" spin class="ic-dim" />
+                    <check-outlined v-else-if="lr.t.status === 'done'" class="ic-ok" />
+                    <close-circle-outlined v-else-if="lr.t.status === 'error'" class="ic-err" />
+                    <pause-circle-outlined v-else class="ic-dim" />
+                    <span class="live-name" :title="lr.t.hint">{{ toolLabel(lr.t.name, lr.t.label) }}</span>
+                    <code v-if="toolBrief(lr.t)" class="live-brief">{{ toolBrief(lr.t) }}</code>
+                    <NoteTag v-for="(nn, ni) in lr.notes || []" :key="'n' + ni" :m="m" :note="nn" />
+                    <span v-if="lr.t.denied" class="live-dur">被挡下</span>
+                    <span v-else-if="lr.t.status === 'start'" class="live-dur is-run">进行中</span>
+                    <span v-else-if="lr.t.elapsedMs != null" class="live-dur">{{ toolDuration(Number(lr.t.elapsedMs) || 0) }}</span>
+                  </div>
+                  <div v-else class="live-row run">
+                    <span class="live-idx"></span>
+                    <loading-outlined spin class="ic-dim" />
+                    <span class="live-name">{{ noteTag(m, lr.tail) }}<template v-if="lr.extra"> 等 {{ lr.extra + 1 }} 段</template></span>
+                  </div>
+                </template>
+              </div>
             </div>
             <!-- 过程独白段（簇外）：标题行常驻、内容可折叠。被簇收进去的并成所属那一步行尾的「过程说明 N 字」 -->
             <div v-else-if="seg.kind === 'process'" class="card proc-card">
@@ -356,10 +380,13 @@ import {
   CaretRightOutlined, CheckOutlined, CloseCircleOutlined, CopyOutlined, EditOutlined, LikeOutlined,
   DislikeOutlined, ReloadOutlined, RedoOutlined, RobotOutlined, ThunderboltOutlined, SearchOutlined,
   FileTextOutlined, DownloadOutlined, PaperClipOutlined, ExclamationCircleOutlined, MoreOutlined,
-  QuestionCircleOutlined, CheckCircleOutlined, PauseCircleOutlined, EyeOutlined, AimOutlined
+  QuestionCircleOutlined, CheckCircleOutlined, PauseCircleOutlined, EyeOutlined, AimOutlined,
+  LoadingOutlined
 } from '@ant-design/icons-vue'
 import { resolveImg } from '../utils/markdown'
 import { canPreview, artifactExt } from '../utils/artifactView'
+// 跑轮中簇帽体的贴底跟随与上下边缘渐隐（与 PC 共用同一份指令）
+import { vFollowBottom, vEdgeFade } from '../chat/followBottom'
 import AnswerBody from '../components/AnswerBody.vue'
 import { fmtTokens } from '../utils/token'
 import {
@@ -367,6 +394,7 @@ import {
   turnRows, turnOpen,
   thinkSegOpen, toggleThinkSeg, thinkSlice, thinkGrowing, toolLabel, toolBrief, spawnAnchorOf,
   clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterProcCount,
+  clusterAutoOpen, clusterLiveRows, noteTag, toolDuration,
   groupHasBar, noteOpen, toggleNote,
   prettyIo, liveOutput, toolRunning, groupRunning, groupHasError,
   fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget, fanRun, runBoardText,
@@ -556,6 +584,26 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
    展开后是一行一步的清单：去描边去卡底、行首补序号、整簇共一条左轨；
    触屏行高仍守 .card-head 的 40px，只撤掉每张卡自己的壳。 */
 .proc-cluster { background: var(--app-panel); }
+/* 跑轮中的簇帽体：固定高度轻量步骤清单（与 PC 同构，帽按触屏口径收成 180px）。
+   一行一步贴底跟随最新一步；上下 20px 渐隐由 vEdgeFade 切 ef-top/ef-bot。 */
+.cluster-live {
+  max-height: 180px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable;
+  margin: 4px 10px 10px; padding: 3px 8px;
+  background: var(--app-panel-2); border: 1px solid var(--app-border); border-radius: 10px;
+}
+.cluster-live.ef-top { mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 100%); }
+.cluster-live.ef-bot { mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 20px), transparent 100%); }
+.cluster-live.ef-top.ef-bot { mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 20px), transparent 100%); }
+.live-row { display: flex; align-items: center; gap: 6px; min-height: 26px; font-size: 12px; color: var(--app-text3); }
+.live-idx { flex: none; width: 16px; text-align: right; font-size: 11px; color: var(--app-text3); opacity: .7; font-variant-numeric: tabular-nums; }
+.live-row .ic-dim { flex: none; font-size: 11px; color: var(--app-text3); }
+.live-name { flex: none; color: var(--app-text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.live-row.run .live-name { color: var(--app-text); }
+.live-row.err .live-name { color: var(--app-danger); }
+.live-row.off .live-name { color: var(--app-text3); }
+.live-brief { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--app-text3); background: none; padding: 0; }
+.live-dur { flex: none; font-size: 11px; color: var(--app-text3); font-variant-numeric: tabular-nums; }
+.live-dur.is-run { color: var(--app-accent); }
 .tl-group { display: flex; flex-direction: column; gap: 6px; }
 .tl-group.inCluster { margin-left: 12px; }
 .tl-group.inCluster .tl-group-body { gap: 0; padding: 0 0 0 8px; border-left: 2px solid var(--app-border); }

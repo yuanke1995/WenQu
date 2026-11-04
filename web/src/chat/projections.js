@@ -481,10 +481,18 @@ const clusterize = out => {
 }
 
 /** 簇内正在长的那一簇（仅末尾簇）标记 grow：流式期自动展开它，本轮结束自动收起，
- *  与 procOpen / thinkSegOpen 同款约定；用户点过就以用户为准（m._clOpen）。 */
-const markGrowingCluster = view => {
+ *  与 procOpen / thinkSegOpen 同款约定；用户点过就以用户为准（m._clOpen）。
+ *  裸 group 段（单工具组的跑轮：一轮并行检索、中间没有思考段把它和别的段连成 run）
+ *  在 clusterize 里不成簇、走它自己的分支，而帽体挂在簇分支上——流式期把它临时包成
+ *  一节簇并标 grow，帽体照出；本轮结束 timelineView 重算，loading 变 false 后不再包装，
+ *  完成态渲染与历史轮完全一致（点开 TurnBar 还是原来那张组卡，不多一层簇条）。 */
+const markGrowingCluster = (view, m) => {
   const last = view[view.length - 1]
-  if (last && last.kind === 'cluster') last.grow = true
+  if (!last) return view
+  if (last.kind === 'cluster') { last.grow = true; return view }
+  if (m && m.loading && last.kind === 'group') {
+    view[view.length - 1] = { kind: 'cluster', segs: [last], key: 'c' + (view.length - 1), grow: true }
+  }
   return view
 }
 
@@ -518,6 +526,30 @@ const clusterHasError = cl => clusterTools(cl).some(t => t.status === 'error')
 /** 簇内「说了几段」的计数：过程独白与思考段同属一类（一个工具都没跑时它是簇头唯一的信息量，
  *  只数独白会让纯思考簇报成「0 段说明」）。 */
 const clusterProcCount = cl => (cl?.segs || []).filter(s => s && (s.kind === 'process' || s.kind === 'think')).length
+
+/** 跑轮中帽体的轻量清单（一行一步）：自动开着的簇不再把全量工具卡摊到顶层（那会把页面撑长），
+ *  改由簇分支就地渲染一个固定高度帽体，里面是这份轻量行——图标 + 动词 + 参数摘要，
+ *  与右栏过程卡同一份口径（toolLabel/toolBrief/toolDuration）。思考/独白段不单独占行，
+ *  并成它之后第一个工具行的行尾（与点开态的挂法一致）；还没换来工具的尾部思考自成一节
+ *  （它正是「当前这一步」，不能因为还没有工具就看不见）。 */
+const clusterLiveRows = cl => {
+  const rows = []
+  let notes = null
+  let n = 0
+  for (const s of cl?.segs || []) {
+    if (!s) continue
+    if (s.kind === 'think' || s.kind === 'process') { (notes || (notes = [])).push(s); continue }
+    if (s.kind === 'group') {
+      for (const t of s.tools || []) {
+        const row = { t, idx: ++n }
+        if (notes) { row.notes = notes; notes = null }
+        rows.push(row)
+      }
+    }
+  }
+  if (notes) rows.push({ tail: notes[notes.length - 1], extra: notes.length - 1 })
+  return rows
+}
 
 /** 展开态的簇摊平成「一行一步」：思考段与过程独白段不再各占一行标题，挂到它之后第一个工具组那一行的
  *  行尾（那里本来就是「想了这些才动手」的那个位置，一行一标题把展开态的高度吃掉一半）。
@@ -558,26 +590,18 @@ const toggleNote = (m, n) => (n.kind === 'think' ? toggleThinkSeg(m, n) : toggle
  *  flat：簇内只有一个工具组时，组条与簇头数的是同一批操作（真机「SpringAi框架怎么用」这条
  *  两行都报 7 个操作，点一层还有一层）——那一层组条不再出，卡片直接摊在簇头下。
  *  两个以上组才留各自组条：那时它数的是不同的子集，是有信息量的下一层。
- *  自动开着的那一簇只摊末一节＝当前这一步（它自己的思考挂在它行尾，不再另占一行）：
- *  已经收场的步骤收进簇头，簇头上那个一直在涨的操作数就是它们的合计。 */
-/** 自动开着时该露哪几行＝「当前这一步」：末节通常就是正在跑的那一组操作；
- *  但模型想下一段的时候工具组已经收场、思考还没换来新的一步，末节会是一条只有思考的行——
- *  只给它的话，刚跑完那一步会当场从视野里消失（跑着的界面来回跳）。所以这一种连上一步一起露。 */
-const currentStepRows = rows => {
-  const last = rows[rows.length - 1]
-  if (!last) return rows
-  return last.kind === 'notes' ? rows.slice(-2) : rows.slice(-1)
-}
-
+ *  自动开着的那一簇（跑轮中、用户没点过）不摊平：全量摊到顶层会把页面撑成长卷。
+ *  它改由簇分支就地渲染固定高度帽体（clusterLiveRows 轻量行、贴底跟随最新一步）——
+ *  历史步骤不再收进簇头数字里，帽内往下滚就能看到，与右栏过程卡同一份口径。
+ *  用户点开（_clOpen）才给全量工具卡的摊平形态：那是明确的「我要看细节」。 */
 const timelineRows = m => {
   const out = []
   for (const s of timelineView(m)) {
     out.push(s)
-    if (s.kind === 'cluster' && clusterOpen(m, s)) {
+    if (s.kind === 'cluster' && clusterOpen(m, s) && !clusterAutoOpen(m, s)) {
       const rows = clusterSteps(s)
       const groups = rows.filter(r => r.kind === 'group')
-      const keep = clusterAutoOpen(m, s) ? currentStepRows(rows) : rows
-      for (const r of keep) out.push({ ...r, inCluster: true, flat: groups.length === 1 })
+      for (const r of rows) out.push({ ...r, inCluster: true, flat: groups.length === 1 })
     }
   }
   return out
@@ -899,7 +923,7 @@ const timelineView = m => {
   flushMerge()
   flushGroup()
   if (len > maxTo) out.push({ kind: 'text', from: maxTo, to: len })
-  return markGrowingCluster(clusterize(out))
+  return markGrowingCluster(clusterize(out), m)
 }
 
 
@@ -1520,7 +1544,7 @@ export {
   pushTimelineThink, extendTimelineThink, thinkSlice, thinkGrowing, thinkSegOpen, toggleThinkSeg, ensureThinkSegment,
   restoreTimeline, SENTENCE_END_CHARS, endsSentence, timelineView, timelineRows, TOOL_BRIEF_KEYS, oneLine,
   clusterize, clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterProcCount,
-  clusterSteps, groupHasBar, noteText, noteTag, noteOpen, noteGrowing, toggleNote,
+  clusterAutoOpen, clusterLiveRows, clusterSteps, groupHasBar, noteText, noteTag, noteOpen, noteGrowing, toggleNote,
   turnRows, turnOpen, toggleTurn, turnShow, turnWarn, turnExpandable, turnHead, turnTitle, turnElapsedMs, turnWaitMs,
   resumedStartAt, earlierStart, settledTurnMs,
   turnTop, turnBottom, turnToggleable,

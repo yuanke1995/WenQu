@@ -226,6 +226,34 @@
                       <span v-if="runBoardText(m)" class="run-board">{{ runBoardText(m) }}</span>
                       <span class="tl-caret" :class="{ open: clusterOpen(m, seg) }"><caret-right-outlined /></span>
                     </button>
+                    <!-- 跑轮中的帽体：自动开着的簇（用户没点过）在这里就地渲染固定高度轻量清单——
+                         一行一步（图标+动词+参数摘要+行尾思考），min(400px,50vh) 内滚、贴底跟随最新一步、
+                         上下边缘 24px 渐隐。历史步骤不再只收进簇头数字，帽内往下滚就在。
+                         用户点开簇头后走全量工具卡摊平形态（timelineRows），帽体随之让位。 -->
+                    <div v-if="clusterAutoOpen(m, seg)" v-follow-bottom="clusterAutoOpen(m, seg)" v-edge-fade class="tl-cluster-live">
+                      <template v-for="(lr, li) in clusterLiveRows(seg)" :key="li">
+                        <div v-if="lr.t" class="tl-live-row"
+                             :class="{ run: lr.t.status === 'start' && !lr.t.denied, err: lr.t.status === 'error', off: lr.t.denied }">
+                          <span class="tl-live-idx">{{ lr.idx }}</span>
+                          <loading-outlined v-if="lr.t.status === 'start' && !lr.t.denied" spin class="tool-ic tool-ic-run" />
+                          <check-outlined v-else-if="lr.t.status === 'done'" class="tool-ic tool-ic-ok" />
+                          <close-circle-outlined v-else-if="lr.t.status === 'error'" class="tool-ic tool-ic-err" />
+                          <pause-circle-outlined v-else class="tool-ic" />
+                          <span class="tl-live-name" :title="toolDesc(lr.t.name, lr.t.hint)">{{ toolLabel(lr.t.name, lr.t.label) }}</span>
+                          <code v-if="toolBrief(lr.t)" class="tl-live-brief">{{ toolBrief(lr.t) }}</code>
+                          <NoteTag v-for="(nn, ni) in lr.notes || []" :key="'n' + ni" :m="m" :note="nn" />
+                          <span v-if="lr.t.denied" class="tl-live-dur" title="被守卫挡下，没有真正执行">被挡下</span>
+                          <span v-else-if="lr.t.status === 'start'" class="tl-live-dur is-run">进行中</span>
+                          <span v-else-if="lr.t.elapsedMs != null" class="tl-live-dur">{{ toolDuration(Number(lr.t.elapsedMs) || 0) }}</span>
+                        </div>
+                        <!-- 还没换来工具的尾部思考/独白：它就是「当前这一步」，自成一节、按在跑的样式高亮 -->
+                        <div v-else class="tl-live-row run">
+                          <span class="tl-live-idx"></span>
+                          <loading-outlined spin class="tool-ic tool-ic-run" />
+                          <span class="tl-live-name">{{ noteTag(m, lr.tail) }}<template v-if="lr.extra"> 等 {{ lr.extra + 1 }} 段</template></span>
+                        </div>
+                      </template>
+                    </div>
                   </div>
                   <!-- 过程独白段（簇外）：区间指向 m.processText（与正文分流），标题行常驻、内容可折叠。
                        被簇收进去的那些不走这一支，并成所属那一步行尾的「过程说明 N 字」 -->
@@ -1639,8 +1667,9 @@ import ChatInput from '../chat/ChatInput.vue'
 // 本页只保留 SourceList 的直接引用——#sources 插槽给的是带检索词与原文片段的版本
 import ChatThread from '../chat/ChatThread.vue'
 import SourceList from '../chat/SourceList.vue'
-// 定高内滚块（深度思考正文、过程簇里的思考/独白）的贴底跟随，与 NoteBody 共用一份指令
-import { vFollowBottom } from '../chat/followBottom'
+// 定高内滚块（深度思考正文、过程簇里的思考/独白）的贴底跟随，与 NoteBody 共用一份指令；
+// 跑轮中簇帽体的上下边缘渐隐（ef-top/ef-bot 切 class）用同一文件里的 vEdgeFade
+import { vFollowBottom, vEdgeFade } from '../chat/followBottom'
 // 窄屏专属 UI 组件（PC 态不渲染，详见 src/h5/README.md）
 import MobileChatHead from '../h5/MobileChatHead.vue'
 import AskRecordCard from '../components/AskRecordCard.vue'
@@ -1669,11 +1698,12 @@ import { splitAtts } from '../chat/attachments'
 // 正文浮层的共享状态：右栏来源联动（hoveredRef / 点角标定位）与灯箱开关要用
 import { openImages, previewUrl, openSource, hoveredRef } from '../chat/answerViewer'
 import { useApprovalRecovery } from '../chat/useApprovalRecovery'
-import { toolLabel, toolDesc, toolCallsView, executedCount, toolRunning, hasTimelineBlocks,
+import { toolLabel, toolDesc, toolCallsView, executedCount, toolRunning, toolDuration, hasTimelineBlocks,
          procOpen, toggleProc, procSlice, thinkSegOpen, toggleThinkSeg, thinkSlice, thinkGrowing,
          turnRows, turnOpen,
          toolBrief, prettyIo, liveOutput, groupRunning,
          clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterProcCount,
+         clusterAutoOpen, clusterLiveRows,
          groupHasBar, noteOpen, toggleNote,
          groupHasError, toolSearchQueries, retrievalLineTitle,
          fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget, fanRun, runBoardText,
@@ -4293,6 +4323,27 @@ onMounted(async () => {
 }
 .tl-cluster-bar:hover { border-color: var(--app-accent); color: var(--app-text); }
 .tl-cluster-bar span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 跑轮中的簇帽体：固定高度内滚的轻量步骤清单（DSH 同参 min(400px,50vh)，H5 在移动壳里收成 180px）。
+   一行一步贴底跟随最新一步；上下边缘 24px 渐隐由 vEdgeFade 按「还能不能滚」切 ef-top/ef-bot。
+   帽体与簇头用同一套边框语言，视觉上连成一张卡；left 轨与点开态的 inCluster 对齐。 */
+.tl-cluster-live {
+  max-height: min(400px, 50vh); overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable;
+  margin: 4px 0 0 12px; padding: 3px 8px 3px 10px;
+  background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 8px;
+}
+.tl-cluster-live.ef-top { mask-image: linear-gradient(to bottom, transparent 0, #000 24px, #000 100%); }
+.tl-cluster-live.ef-bot { mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 24px), transparent 100%); }
+.tl-cluster-live.ef-top.ef-bot { mask-image: linear-gradient(to bottom, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%); }
+.tl-live-row { display: flex; align-items: center; gap: 6px; min-height: 24px; font-size: 12px; color: var(--app-text3); }
+.tl-live-idx { flex: none; width: 16px; text-align: right; font-size: 11px; color: var(--app-text3); opacity: .7; font-variant-numeric: tabular-nums; }
+.tl-live-row .tool-ic { flex: none; font-size: 11px; }
+.tl-live-name { flex: none; color: var(--app-text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tl-live-row.run .tl-live-name { color: var(--app-text); }
+.tl-live-row.err .tl-live-name { color: var(--app-danger); }
+.tl-live-row.off .tl-live-name { color: var(--app-text3); }
+.tl-live-brief { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--app-text3); background: none; padding: 0; }
+.tl-live-dur { flex: none; font-size: 11px; color: var(--app-text3); font-variant-numeric: tabular-nums; }
+.tl-live-dur.is-run { color: var(--app-accent); }
 /* 簇内＝一行一步的紧凑清单：卡片去描边去卡底、行首补序号、整簇共一条左轨。
    簇外的工具组仍是原来的描边卡——那是一步插在正文之间，不是一串清单，收掉描边反而读不出边界。 */
 .tl-group.inCluster { margin: 0 0 0 12px; }
