@@ -242,7 +242,7 @@
             </div>
           </div>
           <div class="app-card">
-            <div class="app-card-title">按部门<span class="card-sub">成员归属部门汇总；未归部门（含匿名与系统调用）单列一条</span></div>
+            <div class="app-card-title">按部门<span class="card-sub">成员归属部门汇总；未归部门（含系统调用）单列一条</span></div>
             <a-table :data-source="cost.byDepartment || []" :columns="costDeptCols" size="small"
                      :row-key="r => r.departmentId || 'none'" :loading="costLoading" :pagination="costPager"
                      :locale="{ emptyText: '该时间范围内没有用量' }">

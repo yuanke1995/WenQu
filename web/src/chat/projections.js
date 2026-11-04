@@ -145,14 +145,9 @@ const TOOL_DESCS = {
 }
 // ⚠️ 与 McpClientService 的 clientInfo name 对应。Spring AI 的 SyncMcpToolCallback 用
 // clientInfo.name 经 McpToolUtils.prefixedToolName → shorten() 生成前缀：非字母数字段丢弃、
-// 小写、用_ 连接、无分隔符。clientInfo.name="wen-qu" ⇒ 前缀 "wen_qu"（2026-10-05 反编译 1.1.8 核实，
-// 原注释写的 w_q_ 是错的，导致剥前缀失效、MCP 工具名全部落到「裸名原样展示」）。
-// w_q_ 保留兼容：历史记录里若已有按旧口径写入的名字，仍能剥掉。
-const MCP_CLIENT_PREFIXES = ['wen_qu', 'w_q_']
-const bareToolName = n => {
-  const pre = MCP_CLIENT_PREFIXES.find(p => n.startsWith(p))
-  return pre ? n.slice(pre.length) : n
-}
+// 小写、用_ 连接、无分隔符。clientInfo.name="wen-qu" ⇒ 前缀 "wen_qu"（2026-10-05 反编译 1.1.8 核实）。
+const MCP_CLIENT_PREFIX = 'wen_qu'
+const bareToolName = n => n.startsWith(MCP_CLIENT_PREFIX) ? n.slice(MCP_CLIENT_PREFIX.length) : n
 const toolLabel = (n, label) => {
   // 后端下发的展示名优先（工具注册中心 → tool_status / approval 载荷），拿不到才用本地这份兜底。
   // 但当它只是工具裸名时不算展示名——那会让英文裸名顶掉中文映射（一次调用全显示
@@ -166,32 +161,14 @@ const toolLabel = (n, label) => {
   return TOOL_LABELS[bare] || label || bare
 }
 const toolDesc = (n, hint) => (hint || TOOL_DESCS[n] || TOOL_DESCS[bareToolName(n)] || '')
-const toolCallsView = list => {
-  if (!Array.isArray(list)) return []
-  // 去重要认「同名**且**同入参」那一对：档位闸重复记录的历史行就是同名同参两张。
-  // 只按名字去重会在并发派遣上出事——三位助手各一张 agent_spawn 卡同名不同参，
-  // 一位一收尾，另两张正在跑的卡就一起从正文里消失了（顶栏药丸跟着数成 1）。
-  const sameArgs = (a, b) => {
-    const x = a && a.args
-    const y = b && b.args
-    return !x || !y || String(x) === String(y)
-  }
-  const closed = list.filter(t => !(t.status === 'start'
-    && list.some(x => x !== t && x.name === t.name && x.status !== 'start' && sameArgs(t, x))))
-  // 存量兼容：框架工具的档位闸曾经在引擎之外再记一张 start/done 卡，同一次调用在库里是两条——
-  // 闸那条只有 name/args/status（没有 elapsedMs/result），引擎那条带耗时与输出。
-  // 这里只合并「同名同入参、另一条确实带耗时，而本条既无耗时也无输出」的那一种，
-  // 真正跑过两次的同名调用两张都带耗时/输出，不会被并掉（新数据已从写入侧修掉，这里仅兜历史行）。
-  return closed.filter(t => !(t.status === 'done' && t.elapsedMs == null && !t.result && !t.error && !t.subChat
-    && closed.some(x => x !== t && x.name === t.name && x.args === t.args && x.elapsedMs != null)))
-}
+const toolCallsView = list => Array.isArray(list) ? list : []
 /** 「执行了 N 个操作」的计数口径：只数真执行过的。
  *  被守卫在执行前挡下的那几条（denied，如本轮工具步数已用完）工具体一次没跑，
  *  卡片仍留一行说明为什么没跑，但计入操作数会把「平台只让它试了 4 次」读成「它试了 8 次还没找到」。
  *  denied 由后端 ToolPipelineFactory 在被守卫挡下时写入工具卡（框架引擎路径同源）。 */
 const executedCount = list => (Array.isArray(list) ? list : []).filter(t => t && !t.denied).length
 // ==================== askUser（向用户提问）问答记录 ====================
-// 工具入参 args 为 {questions:[{topic?,question,options}]} 或旧式 {topic?,question,options} JSON 字符串；
+// 工具入参 args 为 {questions:[{topic?,question,options}]} JSON 字符串；
 // result=批量答案：多问题为与问题下标对齐的 JSON 数组字符串，单问题退化为纯文本
 // （超时/忽略/留空的题回一句「（用户未回答这一题…」，本模块渲染成「未作答」，见 askAnswerLabel）。
 //
@@ -209,45 +186,37 @@ const askAnswerLabel = a => (typeof a === 'string' && a.startsWith(UNANSWERED_PR
 const askNoticeText = s => typeof s === 'string' && s.length > 1
   && s.startsWith('（') && s.endsWith('）') && !s.startsWith(UNANSWERED_PREFIX)
 const askUserView = t => {
-  let topic = '', question = '', options = null, questions = null, qMulti = false
+  let questions = []
   try {
     const j = JSON.parse(t?.args || 'null')
-    if (j && Array.isArray(j.questions) && j.questions.length) {
+    if (j && Array.isArray(j.questions)) {
       questions = j.questions.map(x => ({
         topic: x.topic || '',
         question: x.question || '',
         options: Array.isArray(x.options) ? x.options : null,
         multi: x.multi === true || String(x.multi) === 'true'
       }))
-    } else if (j) {
-      topic = j.topic || ''
-      question = j.question || ''
-      options = Array.isArray(j.options) ? j.options : null
-      qMulti = j.multi === true || String(j.multi) === 'true'
     }
-  } catch (e) { /* 入参截断/旧数据：仅显示答案 */ }
-  const raw = (t && (t.result || t.output)) || ''
-  // 多问题答案：尝试解析为 JSON 数组（与 questions 下标对齐）
+  } catch (e) { /* 入参截断：仅显示答案 */ }
+  const raw = (t && t.result) || ''
   let answers = null
-  if (questions) {
-    try { const p = JSON.parse(raw); if (Array.isArray(p)) answers = p } catch (e) { /* 非数组：按单问处理 */ }
+  try { const p = JSON.parse(raw); if (Array.isArray(p)) answers = p } catch (e) { /* 非数组：单问退化为纯文本 */ }
+  if (!questions.length) {
+    return { topic: '', question: '', options: null, answer: askAnswerLabel(raw), notice: true }
   }
-  if (questions) {
-    // ① 没发出去的卡：result 是说明文本，按单条展示（问句压根没问过，不配一行「问」）
-    if (!answers) {
-      if (questions.length === 1 && !askNoticeText(raw)) answers = [raw]
-      else return { topic: '', question: '', options: null, answer: raw, notice: true }
-    }
-    // ② 截断过的历史数据：只渲染有答案的部分
-    const list = questions.slice(0, answers.length).map((q, i) => ({
-      topic: q.topic, question: q.question, options: q.options, multi: q.multi,
-      // 多问答案=JSON 数组；单问=纯文本，已在 ① 里补成单元素数组
-      answer: askAnswerLabel(answers[i])
-    }))
-    // many=一卡多问（一张卡里几个问句）；multi=一题多选（一题能勾几个候选）。两个词各管一件事
-    return { many: true, questions: list }
+  // ① 没发出去的卡：result 是说明文本，按单条展示（问句压根没问过，不配一行「问」）
+  if (!answers) {
+    if (questions.length === 1 && !askNoticeText(raw)) answers = [raw]
+    else return { topic: '', question: '', options: null, answer: raw, notice: true }
   }
-  return { topic, question, options, multi: qMulti, answer: askAnswerLabel(raw) }
+  // ② 截断过的历史数据：只渲染有答案的部分
+  const list = questions.slice(0, answers.length).map((q, i) => ({
+    topic: q.topic, question: q.question, options: q.options, multi: q.multi,
+    // 多问答案=JSON 数组；单问=纯文本，已在 ① 里补成单元素数组
+    answer: askAnswerLabel(answers[i])
+  }))
+  // many=一卡多问（一张卡里几个问句）；multi=一题多选（一题能勾几个候选）。两个词各管一件事
+  return { many: true, questions: list }
 }
 /** 耗时文案：<1s 用 ms，1~60s 留一位小数，≥60s 换成「3m46s」，≥60m 再换成「1h2m」——226.0s 这种长小数读不出量级 */
 const toolDuration = ms => {
@@ -310,13 +279,10 @@ const consultChatView = t => {
     } : null).filter(Boolean),
     dur: toolDuration(Number(s.elapsedMs) || 0),
     sources: (Array.isArray(s.sources) ? s.sources : []).filter(x => x && x.ref),
-    // 产物：新格式 {f,u,s,e} 对象（可点），旧格式纯文件名字符串（只展示）——双兼容
-    artifacts: (Array.isArray(s.artifacts) ? s.artifacts : []).map(a => {
-      if (a && typeof a === 'object') {
-        return { name: String(a.f || ''), url: a.u ? String(a.u) : '', size: Number(a.s) || 0, ext: String(a.e || '') }
-      }
-      return a ? { name: String(a), url: '', size: 0, ext: '' } : null
-    }).filter(Boolean),
+    // 产物：{f,u,s,e} 明细（可点）
+    artifacts: (Array.isArray(s.artifacts) ? s.artifacts : []).filter(a => a && typeof a === 'object').map(a => ({
+      name: String(a.f || ''), url: a.u ? String(a.u) : '', size: Number(a.s) || 0, ext: String(a.e || '')
+    })),
     failed: status !== 'done',
     timeout: status === 'timeout',
     error: s.error || ''
@@ -1547,7 +1513,7 @@ const goalEchoTipOf = (g, goalId) => {
 
 
 export {
-  TOOL_LABELS, TOOL_DESCS, MCP_CLIENT_PREFIXES, bareToolName, toolLabel, toolDesc, toolCallsView, executedCount,
+  TOOL_LABELS, TOOL_DESCS, bareToolName, toolLabel, toolDesc, toolCallsView, executedCount,
   toolDuration, toolRunning, consultChatView, consultNameOf, rememberAgents, hasTimelineBlocks, extendTimelineText, askUserView,
   isDispatchTool, dispatchTaskOf, spawnAnchorOf, subagentRunsOf, stepBriefOf,
   extendTimelineProcess, procOpen, toggleProc, procSlice, pushTimelineTool, pushTimelineArtifact, pushTimelineSteer,

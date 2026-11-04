@@ -66,16 +66,10 @@ const reasoningLevelsOf = ref => {
   const raw = modelIndex.value[ref]?.reasoningLevels
   return Array.isArray(raw) ? raw : []
 }
-/** 思考开关的按模型记忆。旧版是全局单值（'1'/'0'），现按模型分存 {ref: 0|1}。
- *  读到旧格式就地迁成新格式并回写 localStorage——回写后这条浏览器就只走新路径。 */
+/** 思考开关的按模型记忆：{ref: 0|1}（可带 __default 作未单独选择时的默认）。 */
 const deepThinkDefaults = (() => {
   try {
     const raw = localStorage.getItem('ai_deep_think')
-    if (raw === '1' || raw === '0') {
-      const migrated = { __default: raw === '1' }
-      localStorage.setItem('ai_deep_think', JSON.stringify(migrated))
-      return migrated
-    }
     const parsed = raw ? JSON.parse(raw) : {}
     return typeof parsed === 'object' && parsed ? parsed : {}
   } catch (e) { return {} }
@@ -1871,24 +1865,15 @@ const askHintText = (a, page) => {
  * 后台生成，要靠 pollRestoredAnswer 轮询历史取回。
  */
 function buildAskCard (j, remainingMs) {
-  let questions
-  if (Array.isArray(j.questions) && j.questions.length) {
-    questions = j.questions.map(x => ({
+  const questions = Array.isArray(j.questions)
+    ? j.questions.map(x => ({
       topic: x.topic || '',
       question: x.question || '',
       options: Array.isArray(x.options) ? x.options : [],
-      // multi 缺字段=单选：存量卡片与旧数据不用回填，显式 false 与不写两种写法在这里同形
+      // multi 缺字段=单选：显式 false 与不写两种写法在这里同形
       multi: x.multi === true || String(x.multi) === 'true'
     }))
-  } else if (j.question) {
-    // 兼容旧式单问题（等价于一题一卡）
-    questions = [{
-      topic: j.topic || '', question: j.question, options: j.options || [],
-      multi: j.multi === true || String(j.multi) === 'true'
-    }]
-  } else {
-    questions = []
-  }
+    : []
   const n = questions.length
   const ms = Number(remainingMs != null ? remainingMs : j.timeoutMs) || 0
   return {
@@ -2527,7 +2512,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
           if (last && last.kind === 'think') last.to = j.thinking.length
           msg.thinking = j.thinking
         }
-      } catch (e) { /* 兼容旧 payload */ }
+      } catch (e) { /* 无负载（停止生成等） */ }
     },
     onToken: (t, ev) => { gotToken = true; full += dropResumedOverlap(full, t, ev); flushSoon(); msg.thinkLoading = false; thinkRoundOpen = false },
     onProcess: (t, ev) => {

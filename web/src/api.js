@@ -1260,7 +1260,7 @@ export function uploadChatAttachment(file, onProgress) {
  * 游客附件上传（免登录分享链路）：返回形态与登录态一致（{fileId,name,mime,size}），但打的是
  * {@code /share/{token}/attachment}——那个端点按 {@code share-visitor:{visitorId}} 落盘，
  * 于是每个访客各有自己的目录。**不能复用** {@code /chat/attachment}：那条按登录 uid 分目录，
- * 而游客 uid 恒为 anonymous，所有访客会挤进同一个目录，彼此的 fileId 都能 stat 到。
+ * 而游客没有登录 uid，所有访客会挤进同一个目录，彼此的 fileId 都能 stat 到。
  * <p>服务端要求发布者已开启「允许游客上传附件」，未开启时返回明确错误（不静默丢弃）。
  */
 export function uploadShareAttachment(token, visitorId, file, onProgress) {
@@ -1271,7 +1271,7 @@ export function uploadShareAttachment(token, visitorId, file, onProgress) {
 
 /**
  * 游客提交回答反馈（👍/👎，可选文字）：发布者在公开链接上唯一拿得到的内容质量信号。
- * <p>不能走登录态的 {@code /feedback}——那条按 RequestUser.uid() 校验归属，游客是 anonymous，一律 403。
+ * <p>不能走登录态的 {@code /feedback}——那条按 RequestUser.uid() 校验归属，游客没有登录 uid，一律 403。
  * 服务端改为按访客 uid 校验：由 messageId 取回消息，再比对消息所属会话是否属于该访客。
  */
 /** 游客回答提问卡（人在回路）：归属按「提问行 → 会话 → 访客」两跳认，见后端 guestAnswerAsk。
