@@ -1066,6 +1066,9 @@ onMounted(async () => {
 onUnmounted(() => {
   window.removeEventListener('resize', onViewportChange)
   stopSessionTabSync()
+  // 提问卡秒表只由 watcher 摘除，而 watcher 随组件卸载停止——卸载后没人能停它，
+  // 1s 心跳永续空转（写已死的 ref）直到整页刷新
+  if (mAskTimer) { clearInterval(mAskTimer); mAskTimer = null }
   // 全屏层随页面走：栈里不能留死条目，否则下一次返回会去关一个已经不存在的界面
   if (lbToken) { removeSheet(lbToken); lbToken = 0 }
   if (editToken) { removeSheet(editToken); editToken = 0 }

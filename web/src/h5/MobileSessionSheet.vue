@@ -162,7 +162,7 @@ const onToggleTheme = () => toggleTheme()
 // 这排入口的收起态：默认收起（键不存在即收起），展开与否记本地——sticky 贴底的一整排
 // 按钮会常驻占掉约 220px 的列表高度，收成一行账户条（约 74px）才把位置还给会话。
 const FOOT_KEY = 'app_h5_foot_open'
-const footOpen = ref(localStorage.getItem(FOOT_KEY) === '1')
+const footOpen = ref((() => { try { return localStorage.getItem(FOOT_KEY) === '1' } catch (e) { return false } })())
 const toggleFoot = () => {
   footOpen.value = !footOpen.value
   try { localStorage.setItem(FOOT_KEY, footOpen.value ? '1' : '0') } catch (e) { /* 忽略：隐私模式下写不进，本次会话内仍然可用 */ }

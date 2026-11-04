@@ -277,7 +277,6 @@
                     <span v-if="batchMode" class="batch-check" :class="{ on: batchSel.has(s.id) }">
                       <check-outlined v-if="batchSel.has(s.id)" />
                     </span>
-                    <pushpin-outlined v-if="s.isPinned === 1" class="sess-pin-flag" />
                     <!-- 这个会话背上有启用的定时任务：不用进工作区页才知道它到点会自己跑 -->
                     <a-tooltip v-if="jobsOfSession(s.id).length" :title="jobsTip(s.id)">
                       <clock-circle-outlined class="sess-clock-flag" />
@@ -789,11 +788,12 @@ function clearFlipOffsets () {
 const dragRow = computed(() =>
   editDragId.value ? navEditRows.value.find(r => r.id === editDragId.value) || null : null)
 
-// 侧边栏折叠（持久化）
-const collapsed = ref(localStorage.getItem('app_sidebar') === '1')
+// 侧边栏折叠（持久化）。读写在 try 里：存储被禁（cookie 全禁/安全策略）时 setup 顶层裸奔
+// 会当场抛错整壳白屏，兜底成默认态只是丢了记忆，页面照用
+const collapsed = ref((() => { try { return localStorage.getItem('app_sidebar') === '1' } catch (e) { return false } })())
 const toggleFold = () => {
   collapsed.value = !collapsed.value
-  localStorage.setItem('app_sidebar', collapsed.value ? '1' : '0')
+  try { localStorage.setItem('app_sidebar', collapsed.value ? '1' : '0') } catch (e) { /* 忽略：本次会话内仍然可用 */ }
   // 收起时顺带结束侧栏编辑：折叠是用户明确表示「收起这列」，编辑态跟着一起结束。
   // 不这么做的话，编辑行/操作条只判 navEditing 不判 collapsed，会挤进 56px 图标条——
   // 带文字和开关的行在图标条里必然溢出（实测：开关悬在条外、「恢复默认」文字糊成一团）。
@@ -1829,7 +1829,6 @@ watch(() => route.fullPath, () => {
 .sess-op:hover { color: var(--app-accent); }
 /* 置顶/收藏的快捷按钮在触屏上没有 hover，常显（≤1024 的媒体查询也会兜一层） */
 .sess-op.on { opacity: 1; color: var(--app-accent); }
-.sess-pin-flag { color: var(--app-accent); font-size: 10px; flex: none; margin-right: 3px; }
 /* 分享标记：与置顶/收藏同级常显（不是 hover 才出现的操作按钮）——它是"这段对话正在对外"
    的状态告知，藏起来就失去了感知意义。琥珀色区别于置顶的强调色，避免两者混淆 */
 .sess-share-flag { color: var(--app-warn); font-size: 10px; flex: none; margin-right: 3px; cursor: pointer; }
