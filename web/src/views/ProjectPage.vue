@@ -1889,12 +1889,12 @@ watch(id, () => {
 .pj-icon.on { border-color: var(--app-accent); color: var(--app-accent); background: transparent; }
 .pj-colors { display: flex; flex-wrap: wrap; gap: 8px; }
 .pj-color { width: 20px; height: 20px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; }
-.pj-color.on { outline: 2px solid var(--app-text1); outline-offset: 2px; }
+.pj-color.on { outline: 2px solid var(--app-text); outline-offset: 2px; }
 .pj-color-check { color: #fff; font-size: 12px; line-height: 1; pointer-events: none;
   filter: drop-shadow(0 0 1px rgba(0,0,0,.55)); }
 .pj-color { display: inline-flex; align-items: center; justify-content: center; }
 .pj-root-row { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 3px 0; }
-.pj-root-name { flex: none; font-size: 12px; color: var(--app-text1); }
+.pj-root-name { flex: none; font-size: 12px; color: var(--app-text); }
 .pj-root-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-size: 12px; color: var(--app-text3); }
 .pj-root-ops { display: flex; gap: 8px; margin-top: 4px; flex-wrap: wrap; }

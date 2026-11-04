@@ -45,7 +45,9 @@
       <div class="wq-label">工作区颜色</div>
       <div class="wq-colors">
         <button v-for="c in COLORS" :key="c" type="button" class="wq-color"
-                :class="{ on: color === c }" :style="{ background: c }" @click="color = c" />
+                :class="{ on: color === c }" :style="{ background: c }" :title="c" @click="color = c">
+          <check-outlined v-if="color === c" class="wq-color-check" />
+        </button>
       </div>
 
       <div class="wq-foot">
@@ -61,7 +63,7 @@
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
-import { FolderOpenOutlined, PlusOutlined } from '@ant-design/icons-vue'
+import { CheckOutlined, FolderOpenOutlined, PlusOutlined } from '@ant-design/icons-vue'
 import { WORKSPACE_ICONS, WORKSPACE_COLORS, workspaceIconOf } from '../utils/workspaceIcons'
 import { createProject, listExecutors, pickExecutorDir, updateProject } from '../api'
 
@@ -176,7 +178,7 @@ onMounted(() => { if (props.open) loadDevice() })
 
 <style scoped>
 .wq { display: flex; flex-direction: column; gap: 8px; }
-.wq-label { margin-top: 6px; font-size: 13px; font-weight: 600; color: var(--app-text1); }
+.wq-label { margin-top: 6px; font-size: 13px; font-weight: 600; color: var(--app-text); }
 .wq-label-row { display: flex; align-items: center; justify-content: space-between; }
 .wq-dirs { display: flex; flex-direction: column; gap: 6px; }
 .wq-dir { display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 0 10px;
@@ -184,7 +186,7 @@ onMounted(() => { if (props.open) loadDevice() })
   background: var(--app-surface2, rgba(0,0,0,.02)); }
 .wq-dir-ic { color: var(--app-accent); }
 .wq-dir-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: 13px; color: var(--app-text1); }
+  font-size: 13px; color: var(--app-text); }
 .wq-primary { font-size: 11px; line-height: 18px; padding: 0 6px; border-radius: 4px;
   color: var(--app-accent); background: color-mix(in srgb, var(--app-accent) 12%, transparent); }
 .wq-mini { font-size: 11px; }
@@ -202,8 +204,14 @@ onMounted(() => { if (props.open) loadDevice() })
   cursor: pointer; color: var(--app-text2); font-size: 16px; }
 .wq-icon.on { border-color: var(--app-accent); color: var(--app-accent); background: transparent; }
 .wq-colors { display: flex; flex-wrap: wrap; gap: 10px; }
-.wq-color { width: 22px; height: 22px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; }
-.wq-color.on { outline: 2px solid var(--app-text1); outline-offset: 2px; }
+/* 选中态不能只靠 outline：这里曾写成 var(--app-text1)（主题里没有这个变量），
+   整条 outline 简写在计算期作废、环一个都看不见，点颜色像是没反应。
+   现在以对勾为主、取 --app-text 的描边为辅，暗色块上也认得出来 */
+.wq-color { width: 22px; height: 22px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center; }
+.wq-color.on { outline: 2px solid var(--app-text); outline-offset: 2px; }
+.wq-color-check { color: #fff; font-size: 12px; line-height: 1; pointer-events: none;
+  filter: drop-shadow(0 0 1px rgba(0,0,0,.55)); }
 .wq-foot { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; padding-top: 12px;
   border-top: 1px solid var(--app-border, rgba(0,0,0,.08)); }
 </style>

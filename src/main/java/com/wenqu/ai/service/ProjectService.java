@@ -320,10 +320,12 @@ public class ProjectService {
         if (Project.SELECTION_IMPLICIT.equals(p.getSelectionStatus())) {
             throw new IllegalArgumentException("「会话」栏不是一个工作区，不能删除");
         }
-        // 先摘归属（两条 update 都是集合操作，幂等；即便随后工作区行删除失败也不会留下悬空引用）
+        // 先摘归属（两条 update 都是集合操作，幂等；即便随后工作区行删除失败也不会留下悬空引用）。
+        // 会话级权限档位一并清掉：它只对工作区有意义，跟着会话留在「会话」栏里就成了没有入口的隐性约束
         sessionMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Session>()
                 .eq(Session::getProjectId, p.getId())
-                .set(Session::getProjectId, null));
+                .set(Session::getProjectId, null)
+                .set(Session::getPermissionPreset, null));
         artifactMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Artifact>()
                 .eq(Artifact::getProjectId, p.getId())
                 .set(Artifact::getProjectId, null));
@@ -610,11 +612,15 @@ public class ProjectService {
                     .set(Project::getInstructions, p.getInstructions())
                     .set(Project::getDefaultAgentId, p.getDefaultAgentId())
                     .set(Project::getKbIds, p.getKbIds())
-                        .set(Project::getMemoryIsolated, p.getMemoryIsolated())
+                    .set(Project::getMemoryIsolated, p.getMemoryIsolated())
+                    // 外观两列也必须进列集：漏了它们，接口照样返回「已保存」和带 icon/color 的 DTO，
+                    // 库里却一个字没动，刷新/重进后图标颜色又回到默认——比直接报错更难查
+                    .set(Project::getIcon, p.getIcon())
+                    .set(Project::getColor, p.getColor())
                     .set(Project::getUpdateTime, p.getUpdateTime()));
-            log.info("[PROJECT] 更新工作区设置 uid={} id={} name={} hasInstructions={} defaultAgent={} kbIds={} memoryIsolated={}",
+            log.info("[PROJECT] 更新工作区设置 uid={} id={} name={} hasInstructions={} defaultAgent={} kbIds={} memoryIsolated={} icon={} color={}",
                     uid, p.getId(), p.getName(), p.getInstructions() != null, p.getDefaultAgentId(),
-                    p.getKbIds(), p.getMemoryIsolated());
+                    p.getKbIds(), p.getMemoryIsolated(), p.getIcon(), p.getColor());
         }
         return p;
     }

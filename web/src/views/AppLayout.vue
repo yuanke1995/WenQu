@@ -194,8 +194,7 @@
               <!-- 整段折叠的常驻指示：与「已归档」同一个箭头口径（折起 = >，展开 = 转 90° 向下）。
                    它不能跟着 hover 才出现——这一行能不能点，靠的就是这个箭头告知。 -->
               <right-outlined class="group-caret sec-caret" :class="{ open: !secHidden(sec) }" />
-              <span v-if="sec.spacesSection" class="side-sec-ops" :class="{ pinned: sessionStore.loading }">
-                <a-spin v-if="sessionStore.loading" size="small" />
+              <span v-if="sec.spacesSection" class="side-sec-ops">
                 <!-- 一键展开/折叠全部工作区：图标随当前态翻转（全展开时才给「折叠」，混合态一律给「展开」，
                      与逐个折叠头的常见口径一致）。整段已收起、或搜索态（store 强制全展开，见 spaceHidden）
                      都不给这个按钮——前者要的是「展开这一段」，后者点了只会在清空搜索后凭空冒出一排折叠的工作区。
@@ -1695,7 +1694,6 @@ watch(() => route.fullPath, () => {
    与 logo 行 .side-logo-ops 同一套口径（触发区只给所在那一行，鼠标扫过列表时不该有东西在闪）。
    :has(:focus-visible) 兜键盘：Tab 到按钮才显形，看不见的按钮等于没入口；
    刻意不用 :focus-within —— 鼠标点完焦点会留在按钮上，会把图标一直钉在屏幕上（logo 行实测踩过）。
-   .pinned 给表头：整栏刷新时的转圈是「这里在发生什么」的提示，不能跟着隐身。
    写在 .space-op/.side-sec-ops 基础规则之后：媒体查询不加 specificity，顺序决定谁生效。 */
 @media (hover: hover) and (pointer: fine) {
   .side-sec-ops,
@@ -1703,7 +1701,6 @@ watch(() => route.fullPath, () => {
   .space-add { opacity: 0; }
   .side-sec-head:hover .side-sec-ops,
   .side-sec-ops:has(:focus-visible),
-  .side-sec-ops.pinned,
   .space-head:hover .space-op,
   .space-head:hover .space-add,
   .space-head:has(:focus-visible) .space-op,
