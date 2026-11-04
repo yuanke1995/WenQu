@@ -21,9 +21,9 @@ import org.springframework.stereotype.Component;
  * <p>
  * 归属与 scope 的来源：会话 id 与用户 uid 都走 {@code ToolContext}（与产物交付工具同一约定），
  * 由 ChatService 发起流式请求时注入。注意：工具回调跑在 Spring AI 响应式 I/O 线程上，
- * 而 {@code RequestUser} 是流水线线程装载的 ThreadLocal，跨线程读不到（回落 anonymous），
+ * 而 {@code RequestUser} 是流水线线程装载的 ThreadLocal，跨线程读不到（回落 SYSTEM），
  * 所以这里必须读 toolContext 透传的 uid，而不是 RequestUser.uid()——否则沙盒会被建到
- * {@code shared/anonymous/workspace}（已踩坑）。
+ * {@code shared/system/workspace}（已踩坑）。
  *
  * @author yuanke
  */
@@ -278,12 +278,12 @@ public class SandboxTools {
             Object s = toolContext.getContext().get(PresentArtifactTool.CTX_SESSION_ID);
             if (s != null) sessionId = String.valueOf(s);
             // 用户归属必须走 toolContext 透传（CTX_USER_ID），不能读 RequestUser.uid()：
-            // 工具回调执行在 Spring AI 响应式 I/O 线程，RequestUser 的 ThreadLocal 在该线程上未装载、回落 anonymous。
+            // 工具回调执行在 Spring AI 响应式 I/O 线程，RequestUser 的 ThreadLocal 在该线程上未装载、回落 SYSTEM。
             Object u = toolContext.getContext().get(PresentArtifactTool.CTX_USER_ID);
             if (u != null) uid = String.valueOf(u);
         }
         if (uid == null || uid.isBlank()) {
-            // 跨线程身份透传缺失（理论上 ChatService 必然注入 CTX_USER_ID）——显式报警，绝不静默回落 anonymous 建沙盒。
+            // 跨线程身份透传缺失（理论上 ChatService 必然注入 CTX_USER_ID）——显式报警，绝不静默回落 SYSTEM 建沙盒。
             log.warn("[FAIL-LOUD] 沙盒工具缺少 toolContext 用户归属，拒绝建沙盒（session={}）", sessionId);
             return null;
         }

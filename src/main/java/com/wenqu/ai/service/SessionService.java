@@ -74,7 +74,7 @@ public class SessionService {
     /**
      * 「显式不挂工作区」占位符（{@code /session/new?projectId=__none__}）。
      *
-     * <p>与「不传 projectId」区分开：不传仍按历史兼容口径落 implicit 兜底容器；
+     * <p>与「不传 projectId」区分开：不传仍按默认口径落 implicit 兜底容器；
      * 显式传这个值才创建 {@code project_id=NULL} 的会话。侧栏顶部「新建对话」用它，
      * 这样「对话」才真正不属于任何工作区，而不是悄悄挂到兜底容器。
      */
@@ -106,7 +106,7 @@ public class SessionService {
     /**
      * 创建新会话（MySQL + Redis）
      *
-     * @param userId 归属用户（null/空白归入 anonymous 历史兼容池）
+     * @param userId 归属用户（必须是真实登录用户；空值或 SYSTEM 直接 401）
      */
     public String createSession(String userId) {
         return createSession(userId, KIND_CHAT);
@@ -139,12 +139,12 @@ public class SessionService {
         try {
             Session session = new Session();
             session.setId(sessionId);
-            session.setUserId(normalizeUser(userId));
+            session.setUserId(requireUser(userId));
             session.setKind(kind);
             session.setMessageCount(0);
             // 只有用户会话挂工作区：temp 是平台内部派出的一轮（子智能体分支、工作流子智能体节点），
             // 挂进工作区会让「工作区里的对话」混进用户看不见的系统轮次。
-            // 工作区解析失败/用户匿名/显式不挂工作区 → projectId 留 null，问答链路照常（可空是一等状态）。
+            // 工作区解析失败/无真实用户/显式不挂工作区 → projectId 留 null，问答链路照常（可空是一等状态）。
             if (!KIND_TEMP.equals(kind)) {
                 String resolved = projectResolved
                         ? projectId
@@ -163,7 +163,7 @@ public class SessionService {
     /**
      * 解析本轮的目标工作区：显式传入 → 校验归属；未传 → 该用户的 implicit 兜底容器。
      *
-     * @return 工作区 id；匿名/解析不出返回 null（问答照常，只是无归属）
+     * @return 工作区 id；无真实用户身份/解析不出返回 null（问答照常，只是无归属）
      * @throws com.wenqu.ai.common.BizException 显式传了但工作区不存在或不属于本人
      */
     private String resolveTargetProject(String uid, String projectId) {
@@ -199,9 +199,8 @@ public class SessionService {
             Session s = sessionMapper.selectById(sessionId);
             if (s == null) return null;
             String uid = RequestUser.uid();
-            // 归属校验：只给自己会话的标识（anonymous 池会话对未登录访客可见，同口径放行）
-            boolean mine = Objects.equals(s.getUserId(), uid)
-                    || (RequestUser.ANONYMOUS.equals(uid) && RequestUser.ANONYMOUS.equals(s.getUserId()));
+            // 归属校验：只给自己会话的标识
+            boolean mine = Objects.equals(s.getUserId(), uid);
             if (!mine) return null;
             String pid = s.getProjectId();
             if (pid == null || pid.isBlank()) return null;
@@ -272,12 +271,12 @@ public class SessionService {
     /**
      * 新建对话（可指定工作区）。
      *
-     * @param projectId 目标工作区；空/null = 兜底容器（历史兼容）；{@code "__none__"} = 显式不挂工作区。
+     * @param projectId 目标工作区；空/null = 兜底容器；{@code "__none__"} = 显式不挂工作区。
      *                  传了具体工作区就必须是本人的工作区（否则 BizException，不做静默回落——
      *                  把用户明确选的工作区悄悄换掉，比拒绝更难排查）
      */
     public String createOrReuseEmptySession(String userId, String projectId) {
-        final String uid = normalizeUser(userId);
+        final String uid = requireUser(userId);
         // 目标工作区在加锁之前解析：解析失败要尽早暴露，不要让用户等一个锁
         final String targetProject = resolveTargetProject(uid, projectId);
         final String lockKey = KEY_PREFIX + "empty-lock:" + uid;
@@ -347,9 +346,7 @@ public class SessionService {
     }
 
     /**
-     * 归属校验：会话不存在抛 404；存在但不属于该用户则抛 403。
-     * anonymous 名下的存量会话仅未登录（anonymous）调用方可访问；登录用户一律严格隔离，
-     * 不允许读取他人（含历史匿名）会话。
+     * 归属校验：会话不存在抛 404；存在但不属于该用户则抛 403。登录用户严格隔离，不存在共享会话池。
      *
      * @return 校验通过的会话实体
      */
@@ -359,10 +356,9 @@ public class SessionService {
             throw new com.wenqu.ai.common.BizException(404, "会话不存在或已被删除");
         }
         String owner = session.getUserId() == null || session.getUserId().isBlank()
-                ? RequestUser.ANONYMOUS : session.getUserId();
-        String uid = normalizeUser(userId);
-        boolean anonymousSession = RequestUser.ANONYMOUS.equals(owner);
-        if (!owner.equals(uid) && !(anonymousSession && canAccessAnonymousPool(userId))) {
+                ? RequestUser.SYSTEM : session.getUserId();
+        String uid = requireUser(userId);
+        if (!owner.equals(uid)) {
             throw new com.wenqu.ai.common.BizException(403, "无权访问该会话");
         }
         return session;
@@ -374,26 +370,23 @@ public class SessionService {
         return sessionMapper.selectById(sessionId);
     }
 
-    /** anonymous 池访问门槛：仅调用方自身为 anonymous（未登录）时可访问 */
-    private boolean canAccessAnonymousPool(String userId) {
-        return RequestUser.ANONYMOUS.equals(normalizeUser(userId));
-    }
-
-    /** 用户标识规范化：空值归 anonymous */
-    private String normalizeUser(String userId) {
-        return userId == null || userId.isBlank()
-                ? RequestUser.ANONYMOUS : userId;
+    /** 会话归属必须是真实登录用户；空值或 SYSTEM 一律按未登录拒绝（fail-loud）。 */
+    private String requireUser(String userId) {
+        if (userId == null || userId.isBlank() || RequestUser.SYSTEM.equals(userId)) {
+            throw new com.wenqu.ai.common.BizException(401, "请先登录");
+        }
+        return userId;
     }
 
     /**
-     * 确保指定 ID 的会话存在且归属当前用户（chat 传入不存在/已被删除的 sessionId 时补建，兼容旧客户端行为）
+     * 确保指定 ID 的会话存在且归属当前用户（chat/分享/定时任务传入尚未落库的 sessionId 时补建）
      *
      * @return 校验/补建后的会话 ID
      */
     public String ensureSession(String sessionId, String userId) {
         Session session = new Session();
         session.setId(sessionId);
-        session.setUserId(normalizeUser(userId));
+        session.setUserId(requireUser(userId));
         session.setMessageCount(0);
         // 补建的用户会话同样挂到 implicit 兜底容器——否则「老客户端直接带 sessionId 进来」
         // 这条路上的会话会永远没有归属，而它恰恰是最常见的入口（前端新建对话后立刻发问）
@@ -409,7 +402,7 @@ public class SessionService {
     }
 
     /**
-     * 查询会话列表（游标分页版；仅当前用户；未登录调用方额外并入 anonymous 存量会话；支持关键词搜索）。
+     * 查询会话列表（游标分页版；仅当前用户；支持关键词搜索）。
      * <p>
      * 排序口径与旧版一致：置顶优先、其余按更新时间倒序（id 兜底同刻排序）。分页设计：
      * <ul>
@@ -437,9 +430,7 @@ public class SessionService {
      *                  侧栏顶部「会话」用）；{@code null}=不限（现状行为）。工作区不是权限边界，只是归属与过滤维度。
      */
     public SessionPage listSessions(String userId, String keyword, String cursor, int size, String projectId) {
-        final String uid = normalizeUser(userId);
-        // anonymous 兼容池口径：仅调用方自身为 anonymous 时并入（等价于旧 canAccessAnonymousPool 判定）
-        final boolean anonPool = RequestUser.ANONYMOUS.equals(uid);
+        final String uid = requireUser(userId);
         final int pageSize = Math.max(1, Math.min(size, 100));
         final String kw = (keyword == null || keyword.isBlank()) ? null : keyword.trim();
         // 「不属于任何真实工作区」：在真没挂工作区之外，并入该用户的 implicit 兜底容器。
@@ -448,7 +439,7 @@ public class SessionService {
                 ? projectService.implicitIdOf(uid) : null;
 
         // ---------- 分组计数：窄列查询（is_pinned/update_time/message_count）+ Java 分桶，一次查询覆盖全部桶 ----------
-        LambdaQueryWrapper<Session> countQ = baseWrapper(uid, anonPool, kw, projectId, noSpaceImplicitId);
+        LambdaQueryWrapper<Session> countQ = baseWrapper(uid, kw, projectId, noSpaceImplicitId);
         countQ.select(Session::getIsPinned, Session::getUpdateTime, Session::getMessageCount);
         LocalDateTime startOfToday = LocalDateTime.now().toLocalDate().atStartOfDay();
         LocalDateTime weekStart = startOfToday.minusDays(6);
@@ -470,12 +461,12 @@ public class SessionService {
         // ---------- 本页条目：置顶（仅首页） + 非置顶游标页 ----------
         List<SessionInfo> items = new ArrayList<>();
         if (cursor == null || cursor.isBlank()) {
-            LambdaQueryWrapper<Session> pinnedQ = baseWrapper(uid, anonPool, kw, projectId, noSpaceImplicitId);
+            LambdaQueryWrapper<Session> pinnedQ = baseWrapper(uid, kw, projectId, noSpaceImplicitId);
             pinnedQ.eq(Session::getIsPinned, 1)
                     .orderByDesc(Session::getUpdateTime);
             sessionMapper.selectList(pinnedQ).forEach(s -> items.add(toInfo(s)));
         }
-        LambdaQueryWrapper<Session> pageQ = baseWrapper(uid, anonPool, kw, projectId, noSpaceImplicitId);
+        LambdaQueryWrapper<Session> pageQ = baseWrapper(uid, kw, projectId, noSpaceImplicitId);
         pageQ.eq(Session::getIsPinned, 0);
         boolean hasCursor = cursor != null && !cursor.isBlank();
         if (hasCursor) {
@@ -507,19 +498,16 @@ public class SessionService {
         return page;
     }
 
-    /** 会话列表公共过滤条件：归属（+anonymous 兼容池）、种类（排除内部临时会话）、仅含消息的会话，
+    /** 会话列表公共过滤条件：归属（严格本人）、种类（排除内部临时会话）、仅含消息的会话，
      *  供计数/置顶/分页三路查询复用（避免 OR 分组被重复拼装）。
      *  <p>「仅含消息」必须下推到 SQL：侧栏展示层隐藏空会话，若只靠前端过滤，空会话仍占游标分页的
      *  页容量——一旦积攒了 20+ 条空会话（如验证脚本直插、异常流程残留），最新的真实对话会被挤到
      *  第二页之后，侧栏整页"暂无会话"而组头计数正常（2026-10-14 实测）。空会话的复用由
      *  {@code createOrReuseEmptySession} 在服务端管理，不依赖列表返回空会话。 */
-    private LambdaQueryWrapper<Session> baseWrapper(String uid, boolean anonPool, String kw,
+    private LambdaQueryWrapper<Session> baseWrapper(String uid, String kw,
                                                     String projectId, String noSpaceImplicitId) {
         LambdaQueryWrapper<Session> wrapper = new LambdaQueryWrapper<>();
-        wrapper.and(w -> {
-            w.eq(Session::getUserId, uid);
-            if (anonPool) w.or().eq(Session::getUserId, RequestUser.ANONYMOUS);
-        });
+        wrapper.eq(Session::getUserId, uid);
         wrapper.ne(Session::getKind, KIND_TEMP);
         wrapper.gt(Session::getMessageCount, 0);
         // 工作区过滤（可选）：
@@ -670,7 +658,7 @@ public class SessionService {
     public List<SessionInfo> listSessionsForAgent(String userId, String agentId, int limit) {
         if (agentId == null || agentId.isBlank()) return List.of();
         LambdaQueryWrapper<Session> q = new LambdaQueryWrapper<>();
-        q.eq(Session::getUserId, normalizeUser(userId))
+        q.eq(Session::getUserId, requireUser(userId))
                 .eq(Session::getAgentId, agentId)
                 .ne(Session::getKind, KIND_TEMP)
                 .gt(Session::getMessageCount, 0)
@@ -801,7 +789,7 @@ public class SessionService {
      */
     public int deleteSessionsOfVisitor(String userId, String agentId) {
         if (agentId == null || agentId.isBlank()) return 0;
-        final String uid = normalizeUser(userId);
+        final String uid = requireUser(userId);
         LambdaQueryWrapper<Session> q = new LambdaQueryWrapper<>();
         q.select(Session::getId)
                 .eq(Session::getUserId, uid)
@@ -1552,7 +1540,7 @@ public class SessionService {
     public int countModelOverridesOf(String userId, String providerId) {
         if (providerId == null || providerId.isBlank()) return 0;
         return Math.toIntExact(sessionMapper.selectCount(new LambdaQueryWrapper<Session>()
-                .eq(Session::getUserId, normalizeUser(userId))
+                .eq(Session::getUserId, requireUser(userId))
                 .likeRight(Session::getModel, providerId.trim() + "/")));
     }
 
@@ -1568,7 +1556,7 @@ public class SessionService {
         int count = countModelOverridesOf(userId, providerId);
         if (count == 0) return 0;
         sessionMapper.update(null, new LambdaUpdateWrapper<Session>()
-                .eq(Session::getUserId, normalizeUser(userId))
+                .eq(Session::getUserId, requireUser(userId))
                 .likeRight(Session::getModel, providerId.trim() + "/")
                 .set(Session::getModel, null));
         return count;
@@ -1618,10 +1606,10 @@ public class SessionService {
     }
 
     /**
-     * 清空当前用户的会话（anonymous 用户清空匿名池；MySQL 软删 + Redis 清理）
+     * 清空当前用户的会话（MySQL 软删 + Redis 清理）
      */
     public void clearAll(String userId) {
-        String uid = normalizeUser(userId);
+        String uid = requireUser(userId);
         try {
             // 先取该用户名下的会话 ID（Redis 按 sessionId 清理需要）
             List<Session> own = sessionMapper.selectList(new LambdaQueryWrapper<Session>()

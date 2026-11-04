@@ -19,8 +19,8 @@ import java.util.concurrent.TimeUnit;
  * - 主路径：Redis 固定窗口计数（INCR + 首次 EXPIRE，跨副本统一），维度由调用方给
  *   （chat=按用户/IP 限频，upload=按用户/IP 限频，配置 ratelimit.chatPerMinute 等）
  * - 桶键是「桶名 : 租户段 : 维度」（Phase 4）：同一出口 IP 后面可能站着两家客户，
- *   不分池就是一个租户的流量刷挂另一个租户的额度；匿名与未绑定线程不带租户段，理由见 {@code tenantSegment()}
- * - 匿名请求（未登录）落到 IP 维度，避免匿名共享池互相挤兑
+ *   不分池就是一个租户的流量刷挂另一个租户的额度； SYSTEM 与未绑定线程不带租户段，理由见 {@code tenantSegment()}
+ * - SYSTEM 请求落到 IP 维度，避免共享池互相挤兑
  * - 超限抛 BizException(429)，全局异常处理器转为 HTTP 429
  * - <b>Redis 不可用不再放行</b>（Phase 0 P8）：降级到本进程 Bucket4j 令牌桶并照样拒绝超额。
  *   原先的 fail-open 等于「Redis 一抖，全平台限流同时消失」，正好是最大的 DoS 面；
@@ -125,7 +125,7 @@ public class RateLimitService {
 
     /**
      * 租户分池段（Phase 4）：同一个办公网出口 IP 可以同时站着两家客户，不分池就是一家的流量能刷挂另一家的额度。
-     * <p>匿名与未绑定线程<b>不带</b>这一段——它们落共享桶，而键名里少一段也正是「这条线程没绑租户」的可见痕迹，
+     * <p> SYSTEM 与未绑定线程<b>不带</b>这一段——它们落共享桶，而键名里少一段也正是「这条线程没绑租户」的可见痕迹，
      * 比悄悄并进 default 池好查（与 {@code TenantContext.current()} 不兜底的口径一致）。
      */
     private static String tenantSegment() {

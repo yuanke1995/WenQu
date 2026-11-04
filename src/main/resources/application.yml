@@ -180,8 +180,6 @@ ai-app:
     jwt-secret: ${AI_JWT_SECRET:}
     # 令牌有效期（小时，默认 7 天）
     token-ttl-hours: ${AI_TOKEN_TTL_HOURS:168}
-    # 是否要求登录：true=除登录引导端点外必须持有效令牌；false=放行未登录请求（身份为 anonymous，仅能访问公开端点与历史兼容池）
-    require-login: ${AI_AUTH_REQUIRE_LOGIN:true}
     # 登录失败锁定
     max-login-failures: ${AI_MAX_LOGIN_FAILURES:5}
     lock-minutes: ${AI_LOCK_MINUTES:15}

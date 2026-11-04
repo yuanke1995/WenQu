@@ -672,7 +672,7 @@ public class ProvisionerSandboxBackend implements SandboxFsBackend {
     /**
      * 给一条会话上下文里的 backend 生成进程归属标记。
      *
-     * @return null=没有会话上下文（匿名/空 id），这一路起的进程不进「后台进程」清单
+     * @return null=没有会话上下文（SYSTEM/空 id），这一路起的进程不进「后台进程」清单
      */
     public static String procTagFor(String sessionId) {
         if (sessionId == null || sessionId.isBlank()) return null;

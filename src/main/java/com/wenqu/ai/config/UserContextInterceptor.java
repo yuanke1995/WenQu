@@ -11,6 +11,7 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -19,7 +20,7 @@ import java.util.Map;
  * 身份来源两处：① {@code Authorization: Bearer <JWT>}（本地登录，含 OIDC/SAML 换来的令牌）；
  * ② {@code X-Api-Key} + 该 Key 的「代表账号」（集成方专用，见下方通道注释）。
  * 令牌失效、或用户不存在/被禁用 → 直接 401。
- * 两者都没带 → {@link RequestUser#ANONYMOUS}（不读任何客户端自报请求头，避免伪造身份/越权提权）。
+ * 两者都没带 → {@link RequestUser#SYSTEM}（不读任何客户端自报请求头，避免伪造身份/越权提权）。
  * <p>
  * 经令牌认证成功时在请求上打 {@link #ATTR_AUTHENTICATED} 标记，供 SecurityConfig 判断「是否已登录」。
  *
@@ -70,11 +71,14 @@ public class UserContextInterceptor implements HandlerInterceptor {
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) throws Exception {
+        // 先清上一请求可能遗留的身份（preHandle 返回 false 时 afterCompletion 不一定执行，线程池会复用线程）
+        RequestUser.clear();
+        com.wenqu.ai.util.TenantContext.clear();
         // SCIM 2.0 入站（机器凭据）：Authorization 是认证源专属 Bearer 而非用户 JWT，
         // 这里不做解析/不设登录态，整条链对它豁免——鉴权由 ScimService.authenticate 强校验
         String scimPath = request.getRequestURI().substring(request.getContextPath().length());
         if (scimPath.startsWith("/api/ai/scim/")) {
-            RequestUser.set(RequestUser.ANONYMOUS, null, "user");
+            RequestUser.set(RequestUser.SYSTEM, null, List.of());
             return true;
         }
         String token = bearerToken(request);
@@ -88,11 +92,10 @@ public class UserContextInterceptor implements HandlerInterceptor {
                 return reject(response, "账号不存在或已被禁用");
             }
             // 会话治理：令牌 ep 与用户当前会话代数不符即失效——改密/管理员强制下线后，旧令牌（含其他
-            // 设备与被盗会话）当场作废。存量令牌没有 ep 声明按代数 0 兼容：升级不踢人，安全动作才踢。
+            // 设备与被盗会话）当场作废。没有 ep 声明同样拒：本类只签发带 ep 的令牌，缺声明即非法形态。
             long want = u.getTokenEpoch() == null ? 0L : u.getTokenEpoch();
             Object ep = claims.get("ep");
-            long got = ep instanceof Number n ? n.longValue() : 0L;
-            if (got != want) {
+            if (!(ep instanceof Number n) || n.longValue() != want) {
                 return reject(response, "登录状态已失效（账号安全状态已变更或被强制下线），请重新登录");
             }
             request.setAttribute(ATTR_AUTHENTICATED, Boolean.TRUE);
@@ -105,7 +108,7 @@ public class UserContextInterceptor implements HandlerInterceptor {
                             ? com.wenqu.ai.util.TenantContext.DEFAULT_TENANT : u.getTenantId());
             return true;
         }
-        // 无令牌：先看是不是服务账号通道（批次 C3，非人类身份），再看 API Key，都不是才落匿名。
+        // 无令牌：先看是不是服务账号通道（批次 C3，非人类身份），再看 API Key，都不是才落 SYSTEM。
         // 服务账号的判定口径与人类用户完全一致（角色绑在 c_ai_user_role，uid=svc:{id}）——
         // 差异只在「凭据是长期机器令牌、不在 c_ai_user 表、不能登录网页」。
         String svcToken = request.getHeader("X-Service-Token");
@@ -114,18 +117,24 @@ public class UserContextInterceptor implements HandlerInterceptor {
             if (acc == null) return reject(response, "服务账号令牌无效、已停用或已过期");
             String svcUid = com.wenqu.ai.service.ServiceAccountService.uidOf(acc);
             request.setAttribute(ATTR_AUTHENTICATED, Boolean.TRUE);
+            // 先装载归属租户，再取角色。两处都不能省：
+            // ① 租户取建号时记下的那一个，不写死 default——角色定义快照按租户键控（批次 F），
+            //    绑错租户的症状是「角色行查得到、但该租户的角色表里没这条定义」，
+            //    于是判定静默按停用角色处理，调用方只拿到一句 403，看不出问题在哪；
+            // ② 顺序反了则角色查询跑在无租户上下文里（谓词不注入），读到的是跨租户全集。
+            com.wenqu.ai.util.TenantContext.bind(acc.getTenantId() == null || acc.getTenantId().isBlank()
+                    ? com.wenqu.ai.util.TenantContext.DEFAULT_TENANT : acc.getTenantId());
             RequestUser.set(svcUid, null, userRoleService.rolesOf(svcUid));
-            com.wenqu.ai.util.TenantContext.bind(com.wenqu.ai.util.TenantContext.DEFAULT_TENANT);
             return true;
         }
-        // 无令牌：先看是不是 API Key 通道（集成方专用），也不是才落匿名。
+        // 无令牌：先看是不是 API Key 通道（集成方专用），也不是才落 SYSTEM。
         //
         // 这条通道等价于「长期免密的某个账号」，所以边界写在两处：① 必须有显式代表账号
         // （不靠 created_by 推断——签发人往往是管理员，让第三方拿着 Key 变成管理员是反的）；
         // ② 能碰哪些端点由 SecurityConfig 那一侧收窄（账号自服务与能力配置面不从 Key 走）。
         // 身份装在这里、端点判定装在那里，是因为下游一切按 RequestUser 走：会话归属、沙盒工作区、
         // 个人 MCP 与技能、长期记忆、产物归属、模型默认值、租户行级过滤、限流分池全都要一个真 uid，
-        // 少装这一步这些能力不是报错，是静默落到 anonymous 上（与那几条「弹性线程丢身份」同一个形状）。
+        // 少装这一步这些能力不是报错，是静默落到 SYSTEM 上（与那几条「弹性线程丢身份」同一个形状）。
         String plainKey = request.getHeader("X-Api-Key");
         if (plainKey != null && !plainKey.isBlank()) {
             com.wenqu.ai.model.ApiKey rec = apiKeyService.verify(plainKey);
@@ -147,11 +156,10 @@ public class UserContextInterceptor implements HandlerInterceptor {
                 return true;
             }
         }
-        // 匿名。不再回落到客户端自报的 X-User-Id——那等价于把身份（含管理员角色）
-        // 交给请求方自行声明，require-login=false 时可伪造管理员。管理员只能靠登录令牌获得。
-        RequestUser.set(RequestUser.ANONYMOUS, null, "user");
-        // 匿名不绑租户：分享/开放端点在各自的入口处按归属人绑定（访客看到的是发布者租户里的资源，
-        // 不是「无租户」）；这里保持未绑定，让系统线程与匿名兜底走同一套不过滤语义
+        // 没有真实身份（公开端点 / 登录引导）。SYSTEM 不是可登录账号，roles 为空，不能借它拿权限。
+        RequestUser.set(RequestUser.SYSTEM, null, List.of());
+        // SYSTEM 不绑租户：分享/开放端点在各自的入口处按归属人绑定（访客看到的是发布者租户里的资源，
+        // 不是「无租户」）；这里保持未绑定，让系统线程与公开端点走同一套不过滤语义
         return true;
     }
 
@@ -183,7 +191,7 @@ public class UserContextInterceptor implements HandlerInterceptor {
             }
             return u;
         } catch (Exception ignored) {
-            // 用户表未就绪/查询异常都不应阻断请求：降级为匿名可见范围
+            // 用户表未就绪/查询异常都不应阻断请求：降级为 SYSTEM 可见范围
             return null;
         }
     }

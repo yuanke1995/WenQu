@@ -12,7 +12,7 @@ import org.springframework.stereotype.Component;
  * <p>
  * 权限模型（2026-09-26 RBAC 化）：管理员级 = 内置 admin / superadmin，
  * 或自定义角色 {@code c_ai_role.admin_flag=1 且 status=1}（判定走 {@link RoleService} 缓存）。
- * 未登录（anonymous）或普通角色一律拒绝（fail-closed）。
+ * 未登录（SYSTEM）或普通角色一律拒绝（fail-closed）。
  * <p>
  * RBAC 批次 B3 收口（2026-11）：控制器内的散落判定统一走 {@link #requirePermission}——
  * 按<b>授权点</b>判（全局 deny 压过一切；管理员级展开为全量 allow 仍受 deny；其余角色 allow 并集），

@@ -17,13 +17,13 @@ import java.util.regex.Pattern;
  * 内部鉴权拦截器：三层控制
  * <ol>
  *   <li>API Key 认证：带对 X-Api-Key 且命中问答白名单 → 放行（管理端点不放行）</li>
- *   <li>登录门禁：require-login=true 时除登录引导端点外须持有效登录令牌</li>
+ *   <li>登录门禁：除登录引导端点、游客分享、租户申请与沙盒回调外须持有效登录令牌</li>
  *   <li>权限模型（RBAC）：白名单只放显式公开通道；其余端点按「端点 → 授权点 → 角色绑定」
  *       判定，管理员级角色展开为全量 allow（仍受 deny 约束），未授权 403 fail-closed
  *       （判定见 {@link com.wenqu.ai.service.RoleService}）</li>
  * </ol>
  * <p>登录鉴权由 {@link UserContextInterceptor} 解析 Authorization: Bearer JWT 完成；
- * require-login 开启时，除登录引导端点（login/first-run/initialize/logout）外均需有效登录令牌。
+ * 除登录引导端点（login/first-run/initialize/logout）等公开通道外均需有效登录令牌。
  * 身份只认登录令牌，不接受任何客户端自报的用户标识请求头。</p>
  *
  * @author yuanke
@@ -32,7 +32,6 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 public class SecurityConfig implements WebMvcConfigurer {
 
-    private final AppProperties properties;
     private final ObjectMapper objectMapper;
     private final com.wenqu.ai.service.ApiKeyService apiKeyService;
     private final UserContextInterceptor userContextInterceptor;
@@ -179,10 +178,10 @@ public class SecurityConfig implements WebMvcConfigurer {
         // 管理端 /api/ai/agent/list 等仍走管理员判定。
         if ("GET".equals(method) && path.equals("/api/ai/agent/available")) return true;
         // 技能与 MCP 已于 2026-09-26 从「管理员全局设置」下沉为「个人资产」：控制器统一按
-        // RequestUser.uid() 过滤（看不到也改不了别人的），因此不再要求管理员；未登录请求受 require-login
-        // 门禁保护（放行时归属 anonymous）。技能侧现有清单/正文/详情/**用户自助安装与管理**：
+        // RequestUser.uid() 过滤（看不到也改不了别人的），因此不再要求管理员；未登录请求由登录门禁挡下。
+        // 技能侧现有清单/正文/详情/**用户自助安装与管理**：
         // 内置技能只读，用户自装（user-data/skills-users/{uid}）可增删改，工作区那一路要求会话归属；
-        // 所有写端点的归属判定在 SkillController 内做（匿名直接 401），这里只按端点放行。
+        // 所有写端点的归属判定在 SkillController 内做（SYSTEM 直接 401），这里只按端点放行。
         if (path.equals("/api/ai/skill") || path.startsWith("/api/ai/skill/")) return true;
         // 市场（技能市场 v1，个人资产同口径）：浏览/上架/安装/管理。浏览对全员开放（上架中的物品），
         // 上架/管理/安装的归属判定在 MarketService 内做（上架=本人安装的技能、管理=作者或管理员、
@@ -416,7 +415,7 @@ public class SecurityConfig implements WebMvcConfigurer {
 
     /**
      * 登录引导端点：未登录也必须可访问，否则无法登录（否则死锁）。<b>精确枚举，不做前缀放行</b>。
-     * 其余端点在校验完平台信任 token 后，若开启 require-login 则要求携带有效登录令牌。
+     * 其余端点在校验完平台信任 token 后，要求携带有效登录令牌。
      * <p>注意：{@code isAuthEndpoint}（API Key 一律不得访问 auth 前缀）保留前缀匹配——那是
      * fail-closed 方向的拒绝，与这里的放行清单无关。</p>
      */
@@ -493,10 +492,9 @@ public class SecurityConfig implements WebMvcConfigurer {
                         "该 API Key 只开放问答链路（问答 / 会话 / 反馈 / 引用溯源等）：这个端点不对 Key 开放")));
                 return false;
             }
-            // 2. 登录门禁：require-login=true 时，除登录引导端点、游客分享端点、租户开通申请与沙盒脚本回调外
-            //    必须持有效登录令牌
+            // 2. 登录门禁：除登录引导端点、游客分享端点、租户开通申请与沙盒脚本回调外，必须持有效登录令牌
             boolean authenticated = Boolean.TRUE.equals(request.getAttribute(UserContextInterceptor.ATTR_AUTHENTICATED));
-            if (properties.getAuth().isRequireLogin() && !authenticated
+            if (!authenticated
                     && !isAuthBootstrapEndpoint(method, path) && !isShareGuestEndpoint(path)
                     && !isTenantApplyEndpoint(method, path)
                     && !isSandboxCallbackEndpoint(method, path)) {

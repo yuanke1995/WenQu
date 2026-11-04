@@ -179,11 +179,6 @@ public class AppProperties {
         private String jwtSecret = "";
         /** 令牌有效期（小时，默认 7 天） */
         private int tokenTtlHours = 168;
-        /**
-         * 是否要求登录：true（默认）＝除公开端点外必须持有效令牌；
-         * false＝放行未登录请求（身份为 anonymous，仅能访问公开端点与历史兼容池）。
-         */
-        private boolean requireLogin = true;
         /** 令牌签发者 */
         private String issuer = "wenqu";
         /** 令牌受众 */

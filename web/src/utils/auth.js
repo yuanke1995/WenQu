@@ -53,7 +53,7 @@ export async function ensureAuth (force = false) {
     // api.js request() 返回整个 ResultJson（success/code/msg/data）——身份在 data 里
     const info = (body && typeof body === 'object' && body.data) || body || {}
     cached = {
-      user: info.user || 'anonymous',
+      user: info.user || '',
       username: info.username || '',
       avatar: info.avatar || '',
       role: info.role || 'user',
@@ -63,7 +63,7 @@ export async function ensureAuth (force = false) {
     }
     try { localStorage.setItem('ai_role', cached.admin ? 'admin' : 'user') } catch (e) { /* ignore */ }
   } catch (e) {
-    cached = { user: 'anonymous', username: '', role: 'user', admin: false, superadmin: false, menus: [] }
+    cached = { user: '', username: '', role: '', admin: false, superadmin: false, menus: [] }
   }
   authUser.value = cached
   return cached

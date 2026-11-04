@@ -79,10 +79,10 @@ public class UserRoleService {
         }
     }
 
-    /** 用户的角色集合（无角色行 → ["user"]） */
+    /** 用户的角色集合（真实用户无角色行 → ["user"]；SYSTEM/空 → 空表，fail-closed） */
     public List<String> rolesOf(String uid) {
-        if (uid == null || uid.isBlank() || com.wenqu.ai.util.RequestUser.ANONYMOUS.equals(uid)) {
-            return List.of("user");
+        if (uid == null || uid.isBlank() || com.wenqu.ai.util.RequestUser.SYSTEM.equals(uid)) {
+            return List.of();
         }
         Cached c = cache.get(uid);
         if (c != null && c.expireAt() > System.currentTimeMillis()) return c.roles();
@@ -235,17 +235,20 @@ public class UserRoleService {
         invalidateAndBroadcast(uid);
     }
 
-    /** 持有某角色的用户数（删除角色的守门依据） */
+    /**
+     * 持有某角色的用户数（删除角色的守门依据）。
+     * <p>过期行不算（批次 C1）：一条已失效的临时授权不该继续把角色钉成「删不掉」。
+     */
     public long countOfRole(String roleCode) {
-        Long n = mapper.selectCount(new LambdaQueryWrapper<UserRole>()
+        Long n = mapper.selectCount(RoleService.activeRoleRows()
                 .eq(UserRole::getRoleCode, roleCode));
         return n == null ? 0 : n;
     }
 
-    /** 持有任一给定角色的 uid 清单（按角色圈定收件人等场景；去重） */
+    /** 持有任一给定角色的 uid 清单（按角色圈定收件人等场景；去重；过期行不算） */
     public List<String> uidsWithAnyRole(Collection<String> roleCodes) {
         if (roleCodes == null || roleCodes.isEmpty()) return List.of();
-        List<UserRole> rows = mapper.selectList(new LambdaQueryWrapper<UserRole>()
+        List<UserRole> rows = mapper.selectList(RoleService.activeRoleRows()
                 .in(UserRole::getRoleCode, roleCodes));
         if (rows.isEmpty()) return List.of();
         Set<String> uids = new LinkedHashSet<>();
@@ -256,11 +259,13 @@ public class UserRoleService {
     /**
      * 是否仅剩最后一名管理员级账号（删除/降级守门）：
      * 持有任一管理员级角色（含 admin_flag=1 自定义）的用户数 ≤ 1。
+     * <p>过期行不算——到期即失效的授权不构成「还在位的管理员」，判定侧（{@link #loadRoles}）
+     * 与本处必须同一口径，否则一条早就过期的临时管理员行会长期挡住正常的管理员调整。
      */
     public boolean isLastAdminAccount() {
         List<String> adminCodes = roleService.adminCodes();
         if (adminCodes.isEmpty()) return false;
-        Long n = mapper.selectCount(new LambdaQueryWrapper<UserRole>()
+        Long n = mapper.selectCount(RoleService.activeRoleRows()
                 .in(UserRole::getRoleCode, adminCodes));
         return n != null && n <= 1;
     }
