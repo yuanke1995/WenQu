@@ -516,6 +516,41 @@ public class McpClientService {
     }
 
     /**
+     * 重连某个用户的<b>单个</b>服务（卡片上的「重连」按钮）：只断开并重连这一个，其余健康连接、
+     * 在途建连与失败退避都不受牵连（与「任一开关只动它自己」同源）。已停用的服务不建连。
+     * 立即返回——该服务状态由 connecting → connected/failed，由 /status 轮询看到。
+     *
+     * @param uid 归属用户（只动这个人的服务）
+     * @param row 已校验归属与启停的服务记录（地址/类型/请求头拿最新配置建连）
+     */
+    public void reconnect(String uid, UserMcp row) {
+        if (uid == null || uid.isBlank()) return;
+        if (!Integer.valueOf(1).equals(row.getEnabled())) return; // 停用态不建连（启用=自动重连）
+        String name = row.getName();
+        if (name == null || name.isBlank() || row.getUrl() == null || row.getUrl().isBlank()) return;
+        // 先确保池与配置已对齐（含本服务最新配置），指纹未变时只是更新 lastAccess 立即返回
+        UserPool pool = ensureConnections(uid);
+        List<McpSyncClient> stale;
+        synchronized (pool) {
+            if ("connecting".equals(pool.states.get(name))) return; // 已有在途建连，避免重复互踩+泄漏连接
+            // 保证池清单含本服务（状态展示顺序一致），不存在则补一条
+            if (!pool.rows.stream().anyMatch(r -> name.equals(r.getName()))) {
+                pool.rows = new ArrayList<>(pool.rows);
+                pool.rows.add(row);
+            }
+            // 摘旧连接 + 作废该服务在途任务（detachServer 已 bumpToken 一次）
+            stale = detachServer(pool, name);
+            pool.states.put(name, "connecting");
+            pool.specs.put(name, specOf(row));
+            int token = bumpToken(pool, name); // 再前进一代：本次重连的回写判定用当前代次
+            ConnectTarget target = new ConnectTarget(row, token);
+            pool.tasks.removeIf(Future::isDone);
+            pool.tasks.add(connectExecutor.submit(() -> connectAsync(uid, pool, List.of(target))));
+        }
+        closeQuietly(stale); // 旧连接锁外关闭：closeGracefully 是远程 IO，不进临界区
+    }
+
+    /**
      * 临时连接测试（"添加服务"弹窗里用）：**不落配置、不进该用户的连接池**，连上取工具清单即关闭。
      * 用于"先测再存"，避免填错地址还得先保存再回来删。
      *

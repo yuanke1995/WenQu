@@ -84,6 +84,10 @@
                 <a-switch size="small" :checked="!!s.enabled" :loading="togglingId === s.id"
                           @change="v => toggleEnabled(s, v)" />
               </a-tooltip>
+              <a-tooltip :title="s.enabled ? '只重连这一个服务（远程抖动/卡连接中/假绿时手动拉一把）' : '启用后再重连'">
+                <button class="app-link-btn" :disabled="!s.enabled || !!reconnectingId"
+                        @click="reconnectServer(s)">{{ reconnectingId === s.id ? '重连中…' : '重连' }}</button>
+              </a-tooltip>
               <button class="app-link-btn" @click="openEdit(s)">编辑</button>
               <a-popconfirm title="删除该服务？其工具将不再可用" ok-text="删除" cancel-text="取消" @confirm="removeServer(s)">
                 <button class="app-link-btn danger">删除</button>
@@ -227,7 +231,7 @@ import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { message, Modal } from 'ant-design-vue'
 import { SearchOutlined, ReloadOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons-vue'
 import { getMcpStatus, reloadMcp, probeMcp, addMcpServer, updateMcpServer, setMcpServerEnabled, deleteMcpServer,
-         batchDeleteMcpServers, batchSetMcpServersEnabled, importMcpServers, setMcpToolLabel } from '../api'
+         reconnectMcpServer, batchDeleteMcpServers, batchSetMcpServersEnabled, importMcpServers, setMcpToolLabel } from '../api'
 
 const servers = ref([])
 const toolsEnabled = ref(true)   // 平台「工具调用」总开关（管理员控制），关了连上也没用
@@ -237,6 +241,7 @@ const checkedAt = ref('')
 const keyword = ref('')
 const expanded = ref('')
 const togglingId = ref('')
+const reconnectingId = ref('')
 const saving = ref(false)
 const formOpen = ref(false)
 const form = ref({ id: '', name: '', url: '', type: 'streamable', hasHeaders: false })
@@ -619,6 +624,20 @@ const removeServer = async s => {
     if (r.success) { message.success('已删除'); await loadStatus() }
     else message.error(r.msg || '删除失败')
   } catch (e) { message.error(e.message || '删除失败') }
+}
+
+/** 单个服务重连：只重连这一个，其余连接不受影响；发起后即返回，状态由后台建连 + 轮询收敛 */
+const reconnectServer = async s => {
+  if (reconnectingId.value || !s.enabled) return
+  reconnectingId.value = s.id
+  try {
+    const r = await reconnectMcpServer(s.id)
+    if (r.success) {
+      apply(r.data)
+      message.success('已发起重连，连接完成后状态自动刷新')
+    } else message.error(r.msg || '重连失败')
+  } catch (e) { message.error(e.message || '重连失败') }
+  finally { reconnectingId.value = '' }
 }
 
 onMounted(loadStatus)

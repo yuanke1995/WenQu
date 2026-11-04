@@ -251,6 +251,15 @@ public class McpController {
         return status(null, null, null); // 重连刚整池重建过，无需再补重连
     }
 
+    @Operation(summary = "重连单个 MCP 服务", description = "只按当前配置重建这一个服务（卡片「重连」按钮：远程抖动/卡 connecting/假绿时手动拉一把）；只动这一个，其余连接不受影响。立即返回，最终状态由 /status 轮询得到")
+    @Permission("mcp:write")
+    @PostMapping("/servers/{id}/reconnect")
+    public ResultJson reconnect(@PathVariable("id") String id) {
+        UserMcp row = own(id); // 不存在或不是本人的按不存在处理（fail-closed）
+        mcpClientService.reconnect(RequestUser.uid(), row);
+        return status(null, null, null); // 刚触发单服务重连，无需再补重连
+    }
+
     @Operation(summary = "测试连接", description = "临时连接一个 MCP 服务（不落配置），返回是否可达与工具清单；用于\"先测再存\"。"
             + "headers 不传且给了 serverId 时，使用该服务已保存的凭据（编辑态回显只有键名，拿不到明文）")
     @Permission("mcp:write")
