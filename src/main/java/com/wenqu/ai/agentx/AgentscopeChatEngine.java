@@ -802,7 +802,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 于是发了图模型也一概看不见（它只会如实回答"没有看到图片"）。
         // 目标模式：用户这一轮也带上当前目标的一句上下文（跨轮目标不能只活在更早的提示词里，
         // 压缩/换设备之后仍然要让助手知道自己正在做什么）。没有当前目标时拼空串。
-        // 续跑轮不走这里（GoalCopy.roundPrompt 自带完整目标），不会重复。
+        // 续跑轮不走这里（续跑提示词由 GoalPromptBuilder 自带完整目标），不会重复。
         // 必须拼在 buildMultimodalMsg 之前：多模态那一支是从 modelInput 拍的快照，晚拼就丢了。
         // 判据与界面入口同源（goalService.enabledFor）：助手关掉目标模式后，界面不再露入口，
         // 这一轮也不再把目标塞给模型——两边必须说同一句话。
@@ -3657,7 +3657,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 .enablePlanMode()
                 // 目标模式（Goal Mode）：不再借框架的任务上下文投影（Scope/要求/验证）——那一套
                 // 是「验收标准」范式的载体，已经随产品简化退役。当前目标改由问渠自己带进模型输入
-                // （交互轮拼 GoalCopy.contextNote，续跑轮用 GoalCopy.roundPrompt），副作用是
+                // （交互轮拼目标上下文，续跑轮用 GoalPromptBuilder 的续跑提示词），副作用是
                 // task_requirement_propose 不再注册（模型没有地方、也没有必要「提议验收标准」）。
                 // 任务清单的投影不受影响：TaskContextProjection 仍照常渲染 todo 状态，它只看自己的
                 // tasksContext 存储，与这里的开关无关。

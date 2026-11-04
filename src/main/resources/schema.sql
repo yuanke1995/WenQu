@@ -1283,6 +1283,16 @@ DROP TABLE IF EXISTS `c_ai_builtin_skill_override`;
 DROP TABLE IF EXISTS `c_ai_user_memory`;
 
 -- ============================================
+-- 退役清理（RBAC 批次 A/F：判定链路切「角色 → 授权点 → 端点」）
+-- c_ai_role_api 是旧的「角色 → 接口绑定」表，判定链路已整体切到 c_ai_role_permission
+-- （授权点粒度）。退役前逐行对过账：四个租户的全部非管理员级角色，旧表覆盖的每一个端点
+-- 都已被授权点链路 100% 覆盖（old_covered == also_new，无一遗漏），故删表不会丢权限。
+-- 注意区分同名的 c_ai_menu_api：那张表存的是「接口归属哪个菜单」，只给权限页分组展示，
+-- 不参与鉴权，按方案明确不退役。
+-- ============================================
+DROP TABLE IF EXISTS `c_ai_role_api`;
+
+-- ============================================
 -- 退役配置键清理（2026-10：全框架化收口 + 死键盘点）
 -- 这些键已从 defaults() / config-schema.json 删除，代码里没有任何读取点（rerank.model 例外：
 -- 它是 schema personalOnly 键，全局行按设计永远不会被读取）；存量库里的旧行只会让

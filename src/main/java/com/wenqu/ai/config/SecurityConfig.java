@@ -70,9 +70,9 @@ public class SecurityConfig implements WebMvcConfigurer {
      */
 
     /**
-     * 显式公开端点集（enforce 模式的白名单替身，方案 A.2b）：设计上的公开通道<b>逐条列名</b>，
+     * 显式公开端点集（白名单的唯一形态，方案 A.2b）：设计上的公开通道<b>逐条列名</b>，
      * 不许前缀通配——这是 G3（"看着像同一段就被漏掉自动放行"）的结构性收口。
-     * 与 {@link #isPublicUserEndpoint}（legacy/shadow 模式的问答白名单）的区别：
+     * 与 {@link #isPublicUserEndpoint}（API Key 的问答白名单）的区别：
      * 这里只放"没有登录态/没有角色语义也必须可达"的通道；普通用户的能力全部走角色授权点。
      */
     public static boolean isPublicChannelEndpoint(String method, String path) {

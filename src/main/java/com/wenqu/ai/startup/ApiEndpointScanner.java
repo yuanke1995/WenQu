@@ -218,9 +218,9 @@ public class ApiEndpointScanner implements ApplicationRunner {
         Set<String> validMenuIds = menuMapper.selectList(null).stream().map(Menu::getId).collect(Collectors.toSet());
         Set<String> boundApiIds = new HashSet<>(menuApiMapper.boundApiIds());
         // Tab 拆分迁移的前提数据：apiId → 当前归属菜单列表（判定「归属恰好还是旧默认」）
-        Map<String, List<String>> legacyOwners = new HashMap<>();
+        Map<String, List<String>> currentOwners = new HashMap<>();
         for (Map<String, Object> row : menuApiMapper.all()) {
-            legacyOwners.computeIfAbsent(String.valueOf(row.get("api_id")), k -> new ArrayList<>())
+            currentOwners.computeIfAbsent(String.valueOf(row.get("api_id")), k -> new ArrayList<>())
                     .add(String.valueOf(row.get("menu_id")));
         }
 
@@ -272,7 +272,7 @@ public class ApiEndpointScanner implements ApplicationRunner {
                         // 判据刻意收窄：管理员调过的（归属≠旧默认或多归属）一律不动；迁移后归属=新默认，
                         // 下次启动条件不再成立，天然幂等。归属不参与鉴权，迁移零风险。
                         else if (!defMenus.isEmpty() && isBuiltin(existed) && !defMenus.contains("menu-agents")) {
-                            List<String> cur = legacyOwners.get(existed.getId());
+                            List<String> cur = currentOwners.get(existed.getId());
                             if (cur != null && cur.size() == 1 && "menu-agents".equals(cur.get(0))) {
                                 remapMenus.put(existed.getId(), defMenus);
                             }

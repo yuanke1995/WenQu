@@ -197,7 +197,7 @@
                       <div class="io-label">入参</div><pre class="io-pre">{{ prettyIo(t.args) }}</pre>
                       <ToolSpillButton v-if="t.argsSpillId" :id="t.argsSpillId" :tool="t.name" kind="入参" />
                     </template>
-                    <template v-if="t.status === 'start' ? t.output : (t.result || t.output)">
+                    <template v-if="liveOutput(t)">
                       <div class="io-label">{{ t.status === 'start' ? '实时输出' : (t.result ? '输出' : '输出（执行期）') }}</div>
                       <pre class="io-pre" :class="{ live: t.status === 'start' }">{{ liveOutput(t) }}</pre>
                       <ToolSpillButton v-if="t.spillId" :id="t.spillId" :tool="t.name" kind="输出" />

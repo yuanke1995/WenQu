@@ -180,16 +180,7 @@ public class ToolRegistry {
     }
 
     /**
-     * 各族提供方（装配循环用）。
-     * <p>装配处只负责「问每个族本轮要挂什么」，不再自己抄判据；没迁移的族 {@code callbacks()}
-     * 返回空列表，仍由问答侧的老分支挂载——绞杀式的过渡态就长这样，一族迁完删一段老代码。
-     */
-    public List<ToolFamilyProvider> providers() {
-        return List.copyOf(providers);
-    }
-
-    /**
-     * 按 {@link ToolFamily} 声明顺序排的提供方（装配循环用这个而不是 {@link #providers()}）。
+     * 按 {@link ToolFamily} 声明顺序排的提供方（装配循环用这个）。
      * <p>Spring 注入的 bean 列表顺序跟类扫描结果走，不保证稳定；工具表顺序虽然不影响语义，但
      * 「本次启用 N 个工具」这条日志是排障时对着看的，顺序每次变会让人怀疑是不是装配改了。
      */

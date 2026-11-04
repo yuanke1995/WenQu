@@ -971,9 +971,11 @@ const prettyIo = s => {
 const LIVE_TAIL_CHARS = 4000
 const liveOutput = t => {
   if (t.status === 'start') {
-    if (!t.output) return ''
-    return (t.outputTruncated ? '…（前面输出已省略）\n' : '') + t.output.slice(-LIVE_TAIL_CHARS)
+    // 运行中：只有前端本地累积的 liveOutput（不落库），后端的 result 此刻还没写
+    if (!t.liveOutput) return ''
+    return (t.outputTruncated ? '…（前面输出已省略）\n' : '') + t.liveOutput.slice(-LIVE_TAIL_CHARS)
   }
+  // 终态：后端落库字段 result 为准；output 是手写运行时时代的历史字段，读历史行时兜底
   return t.result != null ? t.result : (t.output || '')
 }
 // ==================== 工具卡折叠：头部那颗开关到底管到哪些块 ====================

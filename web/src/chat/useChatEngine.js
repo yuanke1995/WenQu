@@ -66,10 +66,16 @@ const reasoningLevelsOf = ref => {
   const raw = modelIndex.value[ref]?.reasoningLevels
   return Array.isArray(raw) ? raw : []
 }
+/** 思考开关的按模型记忆。旧版是全局单值（'1'/'0'），现按模型分存 {ref: 0|1}。
+ *  读到旧格式就地迁成新格式并回写 localStorage——回写后这条浏览器就只走新路径。 */
 const deepThinkDefaults = (() => {
   try {
     const raw = localStorage.getItem('ai_deep_think')
-    if (raw === '1' || raw === '0') return { __default: raw === '1' } // 旧版全局开关 → 迁移为默认值
+    if (raw === '1' || raw === '0') {
+      const migrated = { __default: raw === '1' }
+      localStorage.setItem('ai_deep_think', JSON.stringify(migrated))
+      return migrated
+    }
     const parsed = raw ? JSON.parse(raw) : {}
     return typeof parsed === 'object' && parsed ? parsed : {}
   } catch (e) { return {} }
@@ -2732,9 +2738,12 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         const live = [...list].reverse().find(x => x.name === o.name && x.status === 'start')
         if (!live) return
         const MAX = 65536
-        let out = (live.output || '') + o.delta
+        // 字段名带 live 前缀：这是**前端本地**的增量累积，与后端落库的 result/output 是两回事。
+        // 早先叫 output，与后端字段撞名，读侧于是分不清「本地累积」与「历史字段」，
+        // 只能写成 t.result || t.output 这种看着同源、实际异义的三元。
+        let out = (live.liveOutput || '') + o.delta
         if (out.length > MAX) { out = out.slice(out.length - MAX); live.outputTruncated = true }
-        live.output = out
+        live.liveOutput = out
       } catch (e) { /* 忽略 */ }
     },
     onSubagentStep: payload => {

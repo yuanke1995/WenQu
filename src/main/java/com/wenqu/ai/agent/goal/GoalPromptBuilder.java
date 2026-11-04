@@ -7,9 +7,9 @@ import org.springframework.stereotype.Component;
 /**
  * 目标续跑提示词的唯一出口。
  *
- * <p>与旧版 {@link GoalCopy#roundPrompt} 的区别：旧版每轮只把 objective 重新贴一遍，
- * 进度全靠聊天历史；这里把 {@link GoalContinuation} 的权威视图（阶段/计划/事实/产物/失败尝试/
- * 缺口/预算）一起带上，模型不需要从几十条历史里猜「做到哪了」。
+ * <p>与早期「每轮只把 objective 重新贴一遍、进度全靠聊天历史」的写法相比：这里把
+ * {@link GoalContinuation} 的权威视图（阶段/计划/事实/产物/失败尝试/缺口/预算）一起带上，
+ * 模型不需要从几十条历史里猜「做到哪了」。
  *
  * <p>提示词是<b>模型侧</b>文案，允许出现 goal_note / goal_submit 这类工具名；
  * 用户可见文案的纪律仍归 {@link GoalCopy}（不写内部机制、不写沙盒路径）。

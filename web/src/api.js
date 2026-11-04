@@ -1527,8 +1527,6 @@ export const createRole = body => request('/role', { method: 'POST', body: JSON.
 export const updateRole = (code, body) => request(`/role/${encodeURIComponent(code)}`, { method: 'PUT', body: JSON.stringify(body) })
 export const deleteRole = code => request(`/role/${encodeURIComponent(code)}`, { method: 'DELETE' })
 export const getRolePermissions = code => request(`/role/${encodeURIComponent(code)}/permissions`)
-export const saveRolePermissions = (code, menuIds, apiIds) =>
-  request(`/role/${encodeURIComponent(code)}/permissions`, { method: 'PUT', body: JSON.stringify({ menuIds, apiIds }) })
 /** 授权点目录（RBAC 批次 A：权限页按授权点粒度勾选；目录事实源在代码注解，扫描器启动登记） */
 export const getPermissionCatalog = () => request('/role/permission-catalog')
 /** 按授权点保存角色权限（menuIds + permissions；后端反向折算回接口绑定） */

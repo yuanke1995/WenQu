@@ -287,14 +287,9 @@ public class OrgService {
     }
 
     /**
-     * 编辑用户（批次 5 多角色化）：{@code roles} 为角色集（manual 全量替换，idp 行不动）；
-     * 旧调用传单 {@code role} 时按单元素集合处理（兼容存量调用方，语义不变）。
+     * 编辑用户（批次 5 多角色化）：{@code roles} 为角色集（manual 全量替换，idp 行不动）。
+     * <p>{@code roleExpires} = {角色编码 → 到期时刻}，临时授权用（空 Map=全部永久）。
      */
-    public void updateUser(String uid, String username, String departmentId, List<String> roles, Integer status) {
-        updateUser(uid, username, departmentId, roles, status, java.util.Map.of());
-    }
-
-    /** C1 重载：roleExpires = {角色编码 → 到期时刻}，临时授权用（空 Map=全部永久） */
     public void updateUser(String uid, String username, String departmentId, List<String> roles, Integer status,
                            java.util.Map<String, java.time.LocalDateTime> roleExpires) {
         // 成员管理是平台动作（Phase 4）：判据与理由见 asPlatformIfSuper 的注释

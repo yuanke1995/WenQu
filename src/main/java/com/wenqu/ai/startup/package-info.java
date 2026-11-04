@@ -38,7 +38,7 @@
  * <b>不在启动路径上</b>。本条红线只有文档、没有代码守卫：以后有人想在启动时做点「顺手的事」，
  * 先回来看这段，而不是散落在各处注释里的口头约定。
  *
- * <h3>本包现状（2026-11-03 复核：统一身份/OIDC 的一次性迁移钩子、密钥轮换的存量重封钩子均已退役）</h3>
+ * <h3>本包现状（2026-11-04 复核：RBAC 旧判定链路的一次性迁移钩子已全部退役）</h3>
  * <table border="1">
  *   <caption>启动钩子清单</caption>
  *   <tr><th>类</th><th>触发</th><th>动什么数据</th><th>是否烧额度</th></tr>
@@ -50,6 +50,8 @@
  *       <td>登记 {@code default} 租户行</td><td>否</td></tr>
  *   <tr><td>{@link com.wenqu.ai.startup.ApiEndpointScanner}</td><td>ApplicationRunner</td>
  *       <td>扫描 Spring 端点清单入库（供权限页勾选）</td><td>否</td></tr>
+ *   <tr><td>{@link com.wenqu.ai.startup.RbacUserRoleSeeder}</td><td>ApplicationRunner @Order(12)</td>
+ *       <td>给 {@code user} 角色按问答白名单推导授权点（该租户已有授权点行则整租户跳过）</td><td>否</td></tr>
  *   <tr><td>{@link com.wenqu.ai.startup.ContentSafetySeedRunner}</td><td>ApplicationRunner @Order(6)</td>
  *       <td>逐租户登记两条只告警的个人信息规则（该租户名下已有规则则一条不加）</td><td>否</td></tr>
  *   <tr><td>{@link com.wenqu.ai.startup.MarketBuiltinSeeder}</td><td>ApplicationRunner @Order(20)</td>
@@ -61,6 +63,16 @@
  *   <tr><td>{@link com.wenqu.ai.startup.ManualSeedService}</td><td><b>无启动钩子（手动触发）</b></td>
  *       <td>官方手册同步：建库 + 逐篇分块向量化</td><td><b>是，已改为手动</b></td></tr>
  * </table>
+ *
+ * <p><b>已退役的启动钩子（口径：一次性迁移用完即删）</b>：
+ * <ul>
+ *   <li>{@code RbacPermissionMigrationRunner}——把 {@code c_ai_role_api} 存量绑定折算成授权点行。
+ *       判定链路已整体切到授权点，旧表随之退役（schema.sql 内置 DROP），折算职责一并消失。
+ *       新库改由 {@link com.wenqu.ai.startup.RbacUserRoleSeeder} 兜底；</li>
+ *   <li>{@code RbacTenantKeyRetrofitRunner}——角色域四表主键补 {@code tenant_id}。
+ *       全租户主键已含 {@code tenant_id}，该 Runner 每次启动都空转，已整类删除；</li>
+ *   <li>密钥轮换的批量重封与五个一次性迁移 Runner（2026-10 退役）。</li>
+ * </ul>
  *
  * <p>另外两个<b>不在本包但仍会在启动期动数据</b>的（散在 service 里，刻意未搬动——搬动会牵连大量注入关系）：
  * <ul>

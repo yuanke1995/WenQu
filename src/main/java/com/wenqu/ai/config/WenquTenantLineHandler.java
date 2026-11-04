@@ -42,13 +42,14 @@ public class WenquTenantLineHandler implements TenantLineHandler {
             "c_ai_tenant",
             // 开通申请发生在「还没有租户」的时候（Phase 4 刀三）：给它编一个归属等于把「谁申请的」写成假值
             "c_ai_tenant_request",
-            // 批次 F：角色域五张表按租户隔离（c_ai_role/c_ai_role_menu/c_ai_role_api/c_ai_role_permission/
+            // 批次 F：角色域四张表按租户隔离（c_ai_role/c_ai_role_menu/c_ai_role_permission/
             // c_ai_role_data_scope 已移出全局名单——菜单与接口定义仍全局共享，租户只分叉角色层）
             "c_ai_menu", "c_ai_menu_api", "c_ai_api",
             // 授权点目录（批次 A）：授权点定义是代码注解的投影，平台全局——角色域的绑定表
             // （c_ai_role_permission/c_ai_role_data_scope）已随批次 F 租户化，不在此列
             "c_ai_permission",
-            // 服务账号（批次 C3）：平台级机器身份，v1 不按租户隔离（绑定角色后经 RBAC 判定，租户域由角色决定）
+            // 服务账号（批次 C3）：平台级机器身份，v1 不按租户隔离（绑定角色后经 RBAC 判定，
+            // 归属租户记在行上、由令牌校验时装载——见 c_ai_service_account.tenant_id）
             "c_ai_service_account",
             "c_ai_provider", "c_ai_model", "c_ai_config", "c_ai_image_desc",
             "c_ai_market_item", "c_ai_market_install");

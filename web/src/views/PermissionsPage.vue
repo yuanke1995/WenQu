@@ -437,7 +437,7 @@ import { SearchOutlined, PlusOutlined, MessageOutlined, RobotOutlined, DatabaseO
 import { listMenus, createMenu, updateMenu, deleteMenu,
          listApis, createApi, updateApi, deleteApi,
          listRoles, createRole, updateRole, deleteRole,
-         getRolePermissions, saveRolePermissions,
+         getRolePermissions,
          getPermissionCatalog, saveRolePermissionPoints, getEffectivePermissions,
          getRoleMemberCounts, getPermissionRoles, listDepartments,
          getRoleDataScope, saveRoleDataScope } from '../api'
