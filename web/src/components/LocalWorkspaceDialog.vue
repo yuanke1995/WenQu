@@ -24,6 +24,14 @@
         <button class="app-btn ghost" @click="refreshDevices">我已经启动了，刷新</button>
       </div>
 
+      <!-- 原生选择器（在宿主那台电脑上弹框）；弹不出来时下面还有逐层浏览兜底 -->
+      <div class="lwd-row">
+        <span class="lwd-k"></span>
+        <button class="app-btn" :disabled="!executorId || picking" @click="pickNative">
+          {{ picking ? '等待那台电脑上选择…' : '在这台电脑上选择目录…' }}
+        </button>
+        <span class="lwd-tip">会在那台电脑上弹出系统的选择框</span>
+      </div>
       <!-- 目录浏览：路径条（可点每一段回退） + 上一级 + 文件夹列表 -->
       <div class="lwd-pathbar">
         <button class="lwd-up" type="button" :disabled="!canGoUp" title="上一级" @click="goUp">↑</button>
@@ -59,7 +67,7 @@
 import { computed, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { FolderOutlined } from '@ant-design/icons-vue'
-import { browseExecutor, createProject, bindProjectExecutor, listExecutors, registerExecutor } from '../api'
+import { browseExecutor, createProject, bindProjectExecutor, listExecutors, pickExecutorDir, registerExecutor } from '../api'
 
 const props = defineProps({ open: { type: Boolean, default: false } })
 const emit = defineEmits(['update:open', 'created'])
@@ -73,6 +81,7 @@ const startPath = ref('')
 const loading = ref(false)
 const error = ref('')
 const creating = ref(false)
+const picking = ref(false)
 const registering = ref(false)
 const freshToken = ref('')
 
@@ -136,6 +145,24 @@ async function browse (p) {
 }
 
 const reload = () => browse('')
+
+async function pickNative () {
+  if (!executorId.value) return
+  picking.value = true
+  try {
+    const r = await pickExecutorDir(executorId.value)
+    if (r && r.success === false) {
+      message.warning(r.msg || '那台电脑上没有选到目录')
+      return
+    }
+    const picked = (r && r.data && r.data.path) || ''
+    if (picked) await browse(picked)
+  } catch (e) {
+    message.warning('没有选到目录：' + (e.message || ''))
+  } finally {
+    picking.value = false
+  }
+}
 const enter = p => browse(p)
 const canGoUp = computed(() => !!path.value && path.value !== startPath.value)
 const crumbs = computed(() => {

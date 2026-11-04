@@ -101,6 +101,23 @@ public class ExecutorController {
         return ok(data);
     }
 
+    @Operation(summary = "在宿主上弹原生目录选择框", description = "远程浏览器够不到宿主桌面时由执行器代弹系统选择框，返回绝对路径")
+    @PostMapping("/pick-dir")
+    public Map<String, Object> pickDir(@RequestBody(required = false) Map<String, Object> body) {
+        String executorId = body == null || body.get("executorId") == null ? "" : String.valueOf(body.get("executorId"));
+        if (!executorService.belongsTo(RequestUser.uid(), executorId)) {
+            return fail(403, "这台执行器不属于你");
+        }
+        if (!registry.online(executorId)) {
+            return fail(503, "执行器不在线：先在那台电脑上启动 wenqu-agent 再试");
+        }
+        ExecutorRegistry.Result r = registry.call(executorId, "pickDir", new LinkedHashMap<>(), 120_000);
+        if (!r.ok()) return fail(502, r.code() + "：" + r.message());
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("path", r.data().get("path"));
+        return ok(data);
+    }
+
     @Operation(summary = "删除执行器", description = "撤销令牌，立即失效")
     @DeleteMapping("/device/{id}")
     public Map<String, Object> revoke(@PathVariable("id") String id) {
@@ -151,6 +168,15 @@ public class ExecutorController {
         if (header == null) return null;
         String h = header.trim();
         return h.startsWith("Bearer ") ? h.substring(7).trim() : h;
+    }
+
+    private static Map<String, Object> fail(int code, String msg) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("success", false);
+        m.put("code", code);
+        m.put("msg", msg);
+        m.put("data", null);
+        return m;
     }
 
     private static Map<String, Object> ok(Object data) {

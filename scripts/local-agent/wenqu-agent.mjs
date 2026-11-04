@@ -19,7 +19,7 @@ import fsp from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import readline from 'node:readline'
-import { spawn } from 'node:child_process'
+import { spawn, execFile } from 'node:child_process'
 
 const argv = process.argv.slice(2)
 const arg = (name, dflt) => {
@@ -213,8 +213,44 @@ async function opExec({ command, timeoutSeconds }) {
 
 // ==================== 轮询循环 ====================
 
+/** 在宿主这台机器上弹系统原生的目录选择框，返回选中的绝对路径。
+ *  这就是 DSH 的 native 选择器：远程浏览器够不到宿主桌面时，才退回逐层浏览。 */
+async function opPickDir() {
+  const platform = process.platform
+  let cmd
+  let args
+  if (platform === 'darwin') {
+    cmd = 'osascript'
+    args = ['-e', 'POSIX path of (choose folder with prompt "选择工作区目录")']
+  } else if (platform === 'win32') {
+    cmd = 'powershell'
+    args = ['-NoProfile', '-Command',
+      'Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.FolderBrowserDialog; if ($f.ShowDialog() -eq "OK") { $f.SelectedPath }']
+  } else {
+    cmd = 'zenity'
+    args = ['--file-selection', '--directory', '--title=选择工作区目录']
+  }
+  const selected = await new Promise((resolve, reject) => {
+    execFile(cmd, args, { timeout: 300000 }, (e, stdout) => {
+      if (e) {
+        // osascript 用户取消时退出码 1、stderr 里带 "User canceled"
+        if (/cancel/i.test(String(e.message || '')) || e.code === 1) return reject(err('E_CANCELLED', '没有选择目录'))
+        return reject(err('E_PICK_UNAVAILABLE', '这台电脑弹不出选择框：' + (e.message || '')))
+      }
+      resolve(String(stdout || '').trim())
+    })
+  })
+  const picked = selected.replace(/\/+$/, '') || '/'
+  if (!picked) throw err('E_CANCELLED', '没有选择目录')
+  if (!(picked === ROOT || picked.startsWith(ROOT + path.sep))) {
+    throw err('E_PATH_OUTSIDE', `所选目录在浏览起点（${ROOT}）之外：${picked}`)
+  }
+  return { path: picked }
+}
+
 const HANDLERS = {
   list: opList,
+  pickDir: opPickDir,
   find: opFind,
   read: opRead,
   readBytes: opReadBytes,

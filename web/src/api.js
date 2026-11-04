@@ -551,6 +551,9 @@ export const registerExecutor = body =>
 export const revokeExecutor = id => request(`/executor/device/${encodeURIComponent(id)}`, { method: 'DELETE' })
 export const browseExecutor = (executorId, path) =>
   request(`/executor/browse?executorId=${encodeURIComponent(executorId)}&path=${encodeURIComponent(path || '')}`, { timeout: 30000 })
+/** 让执行器在它那台电脑上弹系统目录选择框（等用户点，超时给足） */
+export const pickExecutorDir = executorId =>
+  request('/executor/pick-dir', { method: 'POST', body: JSON.stringify({ executorId }), timeout: 130000 })
 export const bindProjectExecutor = (projectId, executorId, rootPath) =>
   request(`/project/${encodeURIComponent(projectId)}/executor`, {
     method: 'PUT', body: JSON.stringify({ executorId, rootPath })
