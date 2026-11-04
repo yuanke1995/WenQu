@@ -10,6 +10,10 @@
       <a-tooltip v-if="queueText" :title="'上传只登记解析任务，后台队列按并发逐个执行（队列满会直接拒绝新上传，不会先收下再丢）+ 失败任务可点「重解析」重试'">
         <span class="app-pill warn queue-chip">{{ queueText }}</span>
       </a-tooltip>
+      <!-- 作废（终态失败）任务：可点击下钻看明细并处理，不是悬空数字 -->
+      <a-tooltip v-if="queueStats.dead > 0" title="终态失败的解析任务——点击查看明细，可重解析或清理">
+        <span class="app-pill err queue-chip dead-chip" @click="openDeadDrawer">作废 {{ queueStats.dead }}</span>
+      </a-tooltip>
       <div class="doc-tools">
         <!-- 标签筛选（本库内按文档标签过滤列表）：标签即智能体检索收窄与文档治理的同一套元数据 -->
         <a-select v-if="tagOptions.length" v-model:value="tagFilter" allow-clear :options="tagOptions"
@@ -384,6 +388,29 @@
       </a-table>
     </a-modal>
 
+    <!-- 作废（终态失败）解析任务明细：下钻看是哪些任务失败、为何失败，可重解析或清理孤儿任务 -->
+    <a-drawer v-model:open="deadDrawerVisible" title="作废的解析任务" width="640" :footer="null">
+      <a-spin :spinning="deadLoading">
+        <a-empty v-if="!deadLoading && deadList.length === 0" description="没有终态失败的解析任务" />
+        <div v-else class="dead-list">
+          <div v-for="row in deadList" :key="row.taskId" class="dead-card">
+            <div class="dead-card-head">
+              <span class="dead-name">{{ row.fileName }}</span>
+              <span class="dead-meta">尝试 {{ row.attempt }}/{{ row.maxAttempt }}</span>
+            </div>
+            <div class="dead-reason">{{ row.error }}</div>
+            <div class="dead-foot">
+              <span class="dead-time">{{ row.finishTime || '—' }}</span>
+              <span class="dead-acts">
+                <a-button size="small" type="link" :loading="deadReparsingId === row.taskId" @click="reparseFromDead(row)">重解析</a-button>
+                <a-button size="small" type="link" danger :loading="deadDeletingId === row.taskId" @click="deleteDeadTask(row)">删除任务</a-button>
+              </span>
+            </div>
+          </div>
+        </div>
+      </a-spin>
+    </a-drawer>
+
     <!-- 知识块详情（全局搜索打开）：加载/失败态齐全，失败可重试 -->
     <a-modal v-model:open="kbDetailVisible" :title="kbDetail?.title || '知识块详情'" :footer="null" :width="720" :keyboard="!kbImgUrl">
       <a-spin :spinning="kbDetailLoading">
@@ -466,6 +493,7 @@ import { listDocuments, uploadDocumentsBatch, updateDocumentStatus, reparseDocum
          getRuntimeConfig, batchReparseDocuments, updateKnowledgeStatus, searchKnowledge,
          downloadDocumentSource, listKnowledgeBases, moveDocToKb, importDocumentFromUrl, refreshConfigDocument,
          getDocumentQueueStats, listAvailableModels, backfillDescriptions, setDocumentTags,
+         getDocumentDeadTasks, deleteParseTask,
          listRecycleDocuments, restoreDocument, purgeDocument, purgeRecycleBin,
          batchRestoreRecycled, batchPurgeRecycled } from '../api'
 import KnowledgeBaseEditModal from '../components/KnowledgeBaseEditModal.vue'
@@ -607,7 +635,6 @@ const queueText = computed(() => {
   const parts = []
   if (q.queued > 0) parts.push('排队 ' + q.queued)
   if (q.running > 0) parts.push('执行 ' + q.running)
-  if (q.dead > 0) parts.push('作废 ' + q.dead)
   return parts.join(' · ')
 })
 async function fetchQueueStats () {
@@ -622,6 +649,51 @@ async function fetchQueueStats () {
       }
     }
   } catch (e) { /* 队列统计是附加信息，失败不影响列表主流程 */ }
+}
+/** 「作废」抽屉：下钻看终态失败任务的明细（文档名/原因/完成时间），可重解析或清理孤儿任务 */
+const deadDrawerVisible = ref(false)
+const deadLoading = ref(false)
+const deadList = ref([])
+async function openDeadDrawer () {
+  deadDrawerVisible.value = true
+  await fetchDeadList()
+}
+async function fetchDeadList () {
+  deadLoading.value = true
+  try {
+    const r = await getDocumentDeadTasks(currentKbId.value || route.params.kbId)
+    deadList.value = (r && r.success ? (r.data || []) : []).map(it => ({
+      taskId: it.task_id,
+      docId: it.doc_id,
+      kbId: it.kb_id,
+      fileName: it.file_name || '（文档已删除/缺失）',
+      attempt: Number(it.attempt || 0),
+      maxAttempt: Number(it.max_attempt || 0),
+      error: it.error || '',
+      finishTime: it.finish_time || ''
+    }))
+  } catch (e) { message.error(e.message || '加载作废任务失败') }
+  finally { deadLoading.value = false }
+}
+const deadReparsingId = ref('')
+async function reparseFromDead (row) {
+  deadReparsingId.value = row.taskId
+  try {
+    const r = await reparseDocument(row.docId)
+    if (r.success) { message.success('已重新提交解析'); await fetchDeadList(); fetchQueueStats() }
+    else message.error(r.msg || '操作失败')
+  } catch (e) { message.error(e.message || '操作失败') }
+  finally { deadReparsingId.value = '' }
+}
+const deadDeletingId = ref('')
+async function deleteDeadTask (row) {
+  deadDeletingId.value = row.taskId
+  try {
+    const r = await deleteParseTask(row.taskId)
+    if (r.success) { message.success(r.msg || '已删除任务'); await fetchDeadList(); fetchQueueStats() }
+    else message.error(r.msg || '操作失败')
+  } catch (e) { message.error(e.message || '操作失败') }
+  finally { deadDeletingId.value = '' }
 }
 /** 是否还在等队列：有文档在解析中，或队列里还有没消化的任务。
  *  封顶 tick 数——队列长时间不消化（如闸门卡死）时不再空转刷新。 */
@@ -1657,6 +1729,18 @@ const fmtTime = t => {
 .parse-desc { font-size: 11px; color: var(--app-text3); display: inline-block; max-width: 150px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* 解析队列指示：队列非空时常驻页头，点工具栏按钮/刷新不会丢 */
 .queue-chip { flex: none; cursor: default; }
+/* 作废胶囊：可点击下钻，区别于排队/执行的只读指示 */
+.dead-chip { cursor: pointer; }
+.dead-chip:hover { filter: brightness(0.96); }
+.dead-list { display: flex; flex-direction: column; gap: 10px; }
+.dead-card { border: 1px solid var(--app-border); border-radius: 8px; padding: 10px 12px; background: var(--app-panel); }
+.dead-card-head { display: flex; align-items: center; gap: 8px; }
+.dead-name { flex: 1; min-width: 0; font-size: 13px; color: var(--app-text); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dead-meta { flex: none; font-size: 11px; color: var(--app-text3); }
+.dead-reason { margin-top: 6px; font-size: 12px; color: var(--app-danger); line-height: 1.5; word-break: break-all; }
+.dead-foot { margin-top: 8px; display: flex; align-items: center; gap: 8px; }
+.dead-time { flex: 1; font-size: 11px; color: var(--app-text3); }
+.dead-acts { flex: none; }
 /* 文档标签：贴在文件名后的小号 chip；标签多时行内收起（悬浮 title 仍全量可见） */
 .doc-tags { display: inline-flex; gap: 4px; flex-wrap: wrap; margin-left: 8px; max-width: 260px; overflow: hidden; max-height: 22px; }
 .doc-tag-chip { margin-inline-end: 0; font-size: 11px; line-height: 16px; padding: 0 6px; border-radius: 4px; }

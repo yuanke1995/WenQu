@@ -405,7 +405,7 @@
     <SkillContentModal :open="!!skillDoc" :name="skillDoc" :entry="skillDocEntry"
                        :session-id="currentSessionId || ''"
                        @update:open="v => { if (!v) skillDoc = '' }" />
-    <MobileRefSheet :open="refOpen" @close="refOpen = false" @source="openSourceDetail" />
+    <MobileRefSheet :open="refOpen" @close="refOpen = false" @source="openSourceDetail" @open-hitl="focusHitlM" />
     <MobileNotifSheet :open="notifOpen" @close="notifOpen = false" />
     <MobileRoundSheet :open="roundOpen" :index="roundIdx" @close="roundOpen = false" @events="openRoundEvents" />
     <!-- 过程回放（事件账本）：顶栏入口看整个会话，单轮 sheet 里的那一项只看那一轮。
@@ -937,6 +937,17 @@ watch(currentSessionId, () => {
 
 // 来源详情（移动端用 sheet 展示，替代 PC 的弹窗）
 const src = reactive({ visible: false, title: '', snippet: '', content: '', images: [], url: '', loading: false })
+// 「状态与来源」里点「等你作答 / 等你批准」那一行：先关掉这层 sheet（底下就是裁决区），
+// 审批卡长在气泡里的那一种再滚到那张卡。落点找不到就不动，不假装跳转。
+function focusHitlM (kind) {
+  refOpen.value = false
+  if (kind !== 'approval') return
+  nextTick(() => {
+    const el = document.querySelector('.approval')
+    if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  })
+}
+
 const openSourceDetail = async s => {
   if (!s) return
   src.visible = true

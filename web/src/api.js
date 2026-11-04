@@ -1444,6 +1444,12 @@ export const refreshConfigDocument = (id, autoRefresh, refreshCron) =>
  *  kbId 传当前库时只统计该库的任务（页头指标不串库），不传=全平台 */
 export const getDocumentQueueStats = (kbId) => request('/document/queue/stats' + (kbId ? `?kbId=${encodeURIComponent(kbId)}` : ''))
 
+/** 作废（终态失败）解析任务清单：文档管理页「作废」胶囊下钻，列出 status=4 的任务明细 */
+export const getDocumentDeadTasks = (kbId) => request('/document/queue/dead' + (kbId ? `?kbId=${encodeURIComponent(kbId)}` : ''))
+
+/** 删除一条解析任务（清理已无意义的作废/孤儿任务行） */
+export const deleteParseTask = (taskId) => request(`/document/queue/task/${taskId}`, { method: 'DELETE' })
+
 // ==================== 检索索引运维（管理员：设置 · 定时任务 · 运行状态页签） ====================
 /** 关键词索引状态：indexedCount 与 mysqlCount 对比可发现索引漂移 */
 export const searchIndexStats = () => request('/search-index/stats')

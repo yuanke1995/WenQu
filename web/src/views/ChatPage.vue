@@ -531,7 +531,7 @@
                    刷新/换设备后由 hydratePendingPlans 按落库记录重建（restored 卡同样可裁决） -->
               <PlanCard v-if="m.planCard" :card="m.planCard" />
               <!-- 工具执行审批（人在回路）：智能体开启"执行前确认"后，有副作用工具（沙盒/MCP）执行前需用户批准 -->
-              <div v-if="m.approval" class="approval-card">
+              <div v-if="m.approval" class="approval-card" data-approval-card>
                 <div class="approval-title" :title="toolDesc(m.approval.tool, m.approval.hint)"><exclamation-circle-outlined /> 智能体请求执行工具「{{ toolLabel(m.approval.tool, m.approval.label) }}」</div>
                 <pre v-if="m.approval.args" class="approval-args">{{ m.approval.args }}</pre>
                 <div class="approval-actions">
@@ -1286,9 +1286,10 @@
       <button v-if="isNarrow" class="rp-sheet-close" type="button" title="关闭" @click="mPanelOpen = false">
         <close-outlined />
       </button>
-      <!-- 过程卡（常驻首位）：跑轮时实时滚动工具步，空闲时收成上一轮摘要。
-           会话里还没有 AI 消息时整卡不渲染（新会话不占位）。其余三卡仍是「有数据才显示」。 -->
-      <RightProcessCard :msg="processMsg" @open-events="openEvents()" />
+      <!-- 本轮卡（常驻首位）：跑轮时实时滚动「哪几步、每步在做什么事」，答完收成这一轮的动作清单。
+           单步耗时不在这里报（整轮用时归气泡那条状态行），要点「查看全部步骤」进账本弹窗。
+           会话里还没有 AI 消息时整卡不渲染（新会话不占位）。其余各卡仍是「有数据才显示」。 -->
+      <RightProcessCard :msg="processMsg" @open-events="openEvents()" @open-hitl="focusHitl" />
       <!-- 引用来源：右栏交互最重的一张卡（点片段看原文 / 角标号定位正文 / hover 高亮角标 / 分组展开），过程卡之后的第一张。
            原先排在末尾，等于把「核查答案」这个最高频动作排到最需要滚动才看得到的位置——
            正文里刚亮起的角标，用户得点开侧栏再往下翻。移动端 sheet 一直把它排第一，这里对齐。
@@ -1984,6 +1985,22 @@ function focusSpawn ({ run, msg }) {
   openDispatchCard(msg, t)
   const el = box.value && box.value.querySelector('[data-spawn="' + spawnAnchorOf(t) + '"]')
   if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+}
+
+// 右栏「等你…」那一行的落点：审批卡长在气泡里（滚到那条回答），提问/计划面板顶替打字框（本来就在
+// 屏幕下沿，滚到最近可见即可并把键盘焦点交给第一个选项，键盘导航随即能用）。
+// 落点找不到就不动，不假装跳转。
+function focusHitl (kind) {
+  if (kind === 'approval') {
+    const el = box.value && box.value.querySelector('[data-approval-card]')
+    if (el) el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    return
+  }
+  const panel = document.querySelector('.askp-box, .planp-box')
+  if (!panel) return
+  panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  const first = panel.querySelector('.askp-opt:not([disabled]), .planp-opt:not([disabled])')
+  if (first) first.focus()
 }
 
 
@@ -4247,7 +4264,9 @@ onMounted(async () => {
 /* 会话内查找条：标题栏与消息流之间的一条，随查找开关出现/消失 */
 .chat-search {
   display: flex; align-items: center; gap: 6px; flex: none;
-  margin: 8px 16px 0; padding: 5px 8px;
+  /* 与正文列（--chat-col=860px）同宽并居中，否则查找条会比消息正文宽出一截 */
+  margin: 8px auto 0; padding: 5px 8px; width: 100%; box-sizing: border-box;
+  max-width: var(--chat-col);
   background: var(--app-panel); border: 1px solid var(--app-border);
   border-radius: var(--app-radius-sm); box-shadow: var(--app-shadow-sm);
 }
