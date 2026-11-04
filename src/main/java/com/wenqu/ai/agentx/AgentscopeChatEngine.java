@@ -857,6 +857,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 也就没有「断流」可判。
         MeteredModel turnModel = sessions.chatModel(sessions.key(cmd));
         long abruptBefore = turnModel == null ? 0L : turnModel.abruptCloses();
+        long modelErrBefore = turnModel == null ? 0L : turnModel.modelErrors();
         // 接流快照改由本轮自己供：外壳开轮时只有「还没出字」那份空快照，而正文/工具卡/时间线
         // 只活在这里的 Recording 与引用池里。不回填的表现为——生成中刷新，气泡接回来是一片空白。
         channel.offerSnapshot(() -> turnSnapshot(cmd, channel, pool, route, recording, turnId, startedAt));
@@ -1124,9 +1125,24 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 原始串形如「HTTP transport error during streaming: HTTP request failed with status 403…」，
         // 是英文、带响应体碎片，用户在铃铛里读不出「该充值还是该换模型」
         String spokenFailure = null;
-        if (answer.isBlank() && failure == null) {
-            answer = stripFallbackBody(recording, lastAssistantText(session, historyBefore));
-        }        // 框架那一跑本身失败（上游 402 额度、网关异常、运行被拒……）必须说出来的那一件事：双跑实测——
+        // 框架把「重试烧完」压成一句 Retries exhausted: 2/2，真正的 429/额度文案留在它挂住的
+        // 那次失败里；只看这句会把「额度耗尽」说成「模型无响应」，指的方向正好反了
+        // （真机 2026-11-03 21:48 线上：上游 429 AccountQuotaExceeded，屏幕上给的是「换一个响应快的
+        // 模型」）。只往<b>已判定失败</b>的那一句并原文——重试成功的那一轮同样会记一次错误，
+        // 拿它当失败就是把答好了的一轮报成故障。
+        // 并原文也只认「Retries exhausted」这一句本身：doOnError 对每次失败的尝试都计数，
+        // 重试救回的旧错也在 modelErrors 差值里——只看差值就会把无关的 429 拼上断流轮，
+        // 而 emitRunFailure 对断流哨兵是<b>全等</b>匹配，一拼就失配、断流文案永远不再出现。
+        if (failure != null && turnModel != null && turnModel.modelErrors() > modelErrBefore
+                && failure.toLowerCase(java.util.Locale.ROOT).contains("retries exhausted")) {
+            String detail = turnModel.lastModelError();
+            if (detail != null && !detail.isBlank() && !failure.contains(detail)) {
+                failure = failure + " | " + detail;
+            }
+        }
+        if (answer.isBlank() && failure == null) answer = stripFallbackBody(
+                recording, lastAssistantText(session, historyBefore));
+        // 框架那一跑本身失败（上游 402 额度、网关异常、运行被拒……）必须说出来的那一件事：双跑实测——
         // 同一问题手写引擎发 error 帧，框架只发了一条「done + 空正文」，用户看到的是「它答了个空」，
         // 而不是「这次没答出来，原因是额度不足」。失败判据用框架自己留的 executionError / 任务终态。
         if (neverLaunched) {
@@ -1151,7 +1167,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 只在<b>流里确有正文</b>时补：空正文那一支上面已经把这条收尾消息回退取走了（同一个
         // RelatedStreamFilter 喂两遍还会把推荐芯片数成两份）。真机 2026-10-23 21:44 那一轮走的就是
         // 空正文那一支——模型把整段收尾写成了工具调用文本，被 DSML 闸吞掉，正文只剩截断标记。
-        String wrapUp = maxIterationsWrapUp(session);
+        String wrapUp = maxIterationsWrapUp(session, historyBefore);
         boolean cutByMaxIters = wrapUp != null && !stopped && !timedOut && !neverLaunched && failure == null;
         if (cutByMaxIters && streamedBody) {
             // 过同一个剥离器：这条收尾正文同样可能被模型塞进 <related>／<process>，
@@ -4397,7 +4413,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private static String lastAssistantText(AgentSession session, int historyBefore) {
         List<Msg> messages = session.transcript().messages();
         if (messages.size() <= historyBefore) return "";
-        for (int i = messages.size() - 1; i >= 0; i--) {
+        // 下界必须停在 historyBefore：submit 后用户行必然已 commit，本轮 transcript 里再没有
+        // 可用的 assistant 正文时（思考吃光 max_tokens 的 0-token 轮、出字前被叫停），
+        // 一路扫到 0 就穿透进上一轮——把上一轮的回答当本轮正文存档（线上出现过逐字相同的复制轮）
+        for (int i = messages.size() - 1; i >= historyBefore; i--) {
             Msg m = messages.get(i);
             if (!"ASSISTANT".equals(String.valueOf(m.getRole()))) continue;
             if (GenerateReason.INTERRUPTED == m.getGenerateReason()) return "";

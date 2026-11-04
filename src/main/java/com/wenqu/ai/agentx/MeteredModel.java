@@ -51,6 +51,55 @@ public final class MeteredModel implements Model {
         return abruptCloses.get();
     }
 
+    /**
+     * 以<b>报错</b>收场的模型调用次数与最后一次的真错误原文。
+     * <p>要它是因为框架把重试压成了一句 "Retries exhausted: 2/2" 交给上层——429 的响应体、
+     * {@code AccountQuotaExceeded} 这类额度语义全留在它挂住的那次失败里，问答侧按那句分类
+     * 只能得到「模型无响应」，而该给的是「额度不足，去充值或换模型」。
+     * <p>实例按会话常驻、跨轮复用，所以问答侧读的是<b>差值</b>；原文只取最深一层能说出原因的那几句。
+     */
+    private final java.util.concurrent.atomic.AtomicLong modelErrors =
+            new java.util.concurrent.atomic.AtomicLong();
+    private final java.util.concurrent.atomic.AtomicReference<String> lastModelError =
+            new java.util.concurrent.atomic.AtomicReference<>("");
+
+    /** 报错次数（见 {@link #modelErrors}）：开轮取一次、收尾再取一次。 */
+    public long modelErrors() {
+        return modelErrors.get();
+    }
+
+    /** 最后一次报错的剥链原文（没有过就是空串）：只用于失败分类，不直接给用户看。 */
+    public String lastModelError() {
+        return lastModelError.get();
+    }
+
+    /**
+     * 一次失败的全部原文：顶层 + cause 链 + 抑制项，逐层拼起来。
+     * <p>三个都要：Reactor 重试烧完时抛的是只带一句描述的异常，最后一次真错误挂在 cause 或
+     * suppressed 上（各家版本不同），只读 {@code getMessage()} 就又回到那句没有信息量的话上。
+     */
+    private static String errorText(Throwable err) {
+        if (err == null) return "";
+        StringBuilder sb = new StringBuilder();
+        java.util.Deque<Throwable> stack = new java.util.ArrayDeque<>();
+        java.util.Set<Throwable> seen =
+                java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        stack.push(err);
+        while (!stack.isEmpty()) {
+            Throwable t = stack.pop();
+            if (t == null || !seen.add(t)) continue;
+            String m = t.getMessage();
+            if (m != null && !m.isBlank()) {
+                if (sb.length() > 0) sb.append(" | ");
+                sb.append(m.strip());
+            }
+            if (t.getCause() != null) stack.push(t.getCause());
+            for (Throwable suppressed : t.getSuppressed()) stack.push(suppressed);
+        }
+        String out = sb.toString();
+        return out.length() > 900 ? out.substring(0, 900) : out;
+    }
+
     public MeteredModel(Model delegate, UsageLedgerService ledger,
                         com.wenqu.ai.service.UsageQuotaService quota,
                         com.wenqu.ai.service.contentsafety.ContentSafetyService safety,
@@ -86,6 +135,10 @@ public final class MeteredModel implements Model {
             boolean[] sawTerminalBlock = {false};
             int[] responseCount = {0};
             return delegate.stream(messages, tools, options)
+                    .doOnError(err -> {
+                        modelErrors.incrementAndGet();
+                        lastModelError.set(errorText(err));
+                    })
                     .map(response -> {
                         if (response == null) return null;
                         if (response.getId() != null) chunkId[0] = response.getId();

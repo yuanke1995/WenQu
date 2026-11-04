@@ -62,6 +62,11 @@ public final class ModelQuotaGuard {
             // 不收这一条的后果：两条运行时的流错误都被判成通用的「AI 回复失败，请稍后重试」，
             // 用户等一会重试到永远——这件事的处置和额度不足是同一个（去充值或换模型）
             "free quota exhausted", "quota exhausted", "free quota",
+            // 火山系（DeepSeek 官方 API）的 5 小时窗口配额：code 是连写的 AccountQuotaExceeded，
+            // 文案是 "You have exceeded the 5-hour usage quota"。上面两条带空格的判据都够不着它，
+            // 于是这条真额度问题会被判成「瞬时限流」或「无响应」——而窗口配额虽然会自己恢复，
+            // 用户要等的是一整段窗口，与「稍后重试」说的几十秒不是一件事（真机 2026-11-03 21:48 线上 429）
+            "quotaexceeded", "usage quota",
             "account balance", "not in account",   // 「model not in account」：套餐内无此模型权限，实质同为额度问题
             "insufficient permissions to query the model",  // 同上，OpenAI 表述
             // 问渠自己的配额闸拒起来发的是中文整句（UsageQuotaService.refusalText）。不收这一条，

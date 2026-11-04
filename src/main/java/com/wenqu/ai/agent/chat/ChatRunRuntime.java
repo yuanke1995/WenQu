@@ -97,7 +97,10 @@ public class ChatRunRuntime {
     }
 
     /**
-     * fail-loud：按 code 去重添加降级事件（全部 debug 级，由 chat.retrievalDebugEnabled 开关控制，默认不展示）。
+     * fail-loud：按 code 去重添加降级事件（全部 debug 级，由 chat.retrievalDebugEnabled 开关控制）。
+     * <p>该开关默认<b>开</b>（2026-10-18 由 false 改 true，理由见 ConfigService 里那一段）：它管的不只是
+     * 排障项，「无命中 / 改写失败 / 图片剔除」这类降级信息关掉就等于系统性地不告诉用户这一轮检索没按
+     * 预期发生。关掉它时这里不再登记，前端与库里的降级条一起消失。
      * <p>并行工具调用会同时走到这里（典型：同一轮 4 路 search_knowledge 各自发现重排不可用）：
      * {@code Set.add} 与 {@code List.add} 都必须串行，否则两个普通集合会被并发写坏。
      * 锁放在 {@code codes} 上，与 {@code WenquSourcePool} 读取快照用的是同一把。

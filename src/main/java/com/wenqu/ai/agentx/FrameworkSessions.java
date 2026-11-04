@@ -67,6 +67,12 @@ public class FrameworkSessions {
     private final Map<String, AgentxStepBudget> stepBudgets = new ConcurrentHashMap<>();
 
     /**
+     * 每条常驻会话的重复调用闸：形态与 {@link #stepBudgets} 相同——middleware 只能在 build 期登记、
+     * 计数按轮归零，所以建实例时进本表、开轮时由引擎拿<b>这一个实例自己的</b>那把闸归零。
+     */
+    private final Map<String, AgentxRepeatGuard> repeatGuards = new ConcurrentHashMap<>();
+
+    /**
      * 这一路会话的主链模型包装器（断流计数用）。形态与 {@link #stepBudgets} 相同：
      * 实例按会话常驻、跨轮复用，所以读的是本轮前后的<b>差值</b>，不是累计值。
      */
@@ -1074,6 +1080,7 @@ public class FrameworkSessions {
             cluster.releaseHeld(key);
             order.remove(key);
             stepBudgets.remove(key);
+            repeatGuards.remove(key);
             chatModels.remove(key);
             frameworkToolGates.remove(key);
             turnSlots.remove(key);
@@ -1097,6 +1104,16 @@ public class FrameworkSessions {
     /** 取这一轮所属实例的步数预算闸；实例还没建出来时返回 null（开轮即会建，不该长期为空）。 */
     public AgentxStepBudget stepBudget(String sessionKey) {
         return stepBudgets.get(sessionKey);
+    }
+
+    /** 建实例时登记这一路会话的重复调用闸（与 {@link #noteStepBudget} 同一套登记口）。 */
+    public void noteRepeatGuard(String sessionKey, AgentxRepeatGuard guard) {
+        if (sessionKey != null && guard != null) repeatGuards.put(sessionKey, guard);
+    }
+
+    /** 取这一轮所属实例的重复调用闸；实例还没建出来时返回 null。 */
+    public AgentxRepeatGuard repeatGuard(String sessionKey) {
+        return repeatGuards.get(sessionKey);
     }
 
     /** 建实例时登记这一路会话的主链模型包装器（引擎在 {@code buildAgent} 里回调）。 */

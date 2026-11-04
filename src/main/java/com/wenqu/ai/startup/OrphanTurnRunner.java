@@ -33,9 +33,13 @@ import org.springframework.stereotype.Component;
  * 不按轮号找那条缺失的回答也是因为这个：消息表带逻辑删除，按轮号判会把「重新生成」取代掉的
  * 旧轮当成断了（本机实测：软删的旧回答 335 条，按会话看最后一条的判据一条都不误接）。
  *
- * <p><b>两类轮明确不接</b>：① 待办还开着的（{@code PENDING}）——那一轮在等人，不是断了，
+ * <p><b>三类轮明确不接</b>：① 待办还开着的（{@code PENDING}）——那一轮在等人，不是断了，
  * 由卡片答复那条路接（{@code ensureFollowing}）；② 已经有跟随者的——同一条会话不许两个循环对着跟，
- * 这条由引擎侧的原子占位兜住，这里只是少做一遍无用重建。
+ * 这条由引擎侧的原子占位兜住，这里只是少做一遍无用重建；③ <b>已经交代过结局的</b>——那一问身上带着
+ * 失败原因（{@code fail_msg}）或终止原因（{@code end_reason}）时，那一轮是按失败/叫停收的口，只是
+ * 刻意没落助手行。重跑它等于替用户决定「再试一次」；而接续那一跑在新实例上读不到旧实例留的失败痕迹，
+ * 正文回退会把上一轮的答复当本轮正文存档（真机 2026-11-03 线上：上游 429 额度耗尽、21:48:45 已报错
+ * 收口的一轮被 21:49:24 的扫描重跑，库里多出一条与上一轮逐字相同的回答）。
  *
  * <p>扫描按调度中心的节拍跑（间隔 {@code chat.turnResumeScanMs}，服务一起来就先接一次），
  * 因此它出现在「系统设置 → 定时任务」的运行状态与执行日志里，也能从那里暂停。
@@ -147,16 +151,21 @@ public class OrphanTurnRunner {
     }
 
     /**
-     * 窗口内「问完了却再没有过回答」的轮。
+     * 窗口内「问完了却再没有过回答、也没交代过结局」的轮。
      * <p>判据刻意不看<b>同轮号有没有助手消息</b>：消息表带逻辑删除，「重新生成」软删的那份旧回答
      * 根本查不出来，按轮号判就会把用户已经取代掉的旧轮当成断了的重跑一遍——屏幕上凭空多一条迟到的回答。
      * 改成「这条问题之后，同一会话里再也没有出现过任何助手消息」：旧轮后面跟着新回答，自然排除；
      * 而用户真的盯着空白屏幕等的那一类，最后一条就是他发出去的问题。
+     * <p>只看「有没有回答」还漏了一整类：失败轮与叫停轮<b>本来就不落助手行</b>（失败只在那一问上挂
+     * {@code fail_msg}，零产出的停止挂 {@code end_reason}），它们后面同样空着，却早就交代完了。
+     * 这两类要按列名排除，否则每一轮扫描都会把一条已经说过「没跑成」的提问重跑一遍。
      */
     private List<Message> findOrphans() {
         List<Message> asks = messageMapper.selectList(new LambdaQueryWrapper<Message>()
                 .eq(Message::getRole, "user")
                 .isNotNull(Message::getTurnId)
+                .isNull(Message::getFailMsg)
+                .isNull(Message::getEndReason)
                 .ge(Message::getCreateTime, windowFrom())
                 .notExists("select 1 from c_ai_message a where a.session_id = c_ai_message.session_id"
                         + " and a.role = 'assistant' and a.create_time >= c_ai_message.create_time")
