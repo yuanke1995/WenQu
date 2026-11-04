@@ -543,11 +543,15 @@ export const listArtifacts = (keyword, projectId) => {
   if (projectId) qs.push('projectId=' + encodeURIComponent(projectId))
   return request('/artifact/list' + (qs.length ? '?' + qs.join('&') : ''))
 }
-// ==== 本机执行器：设备登记 / 目录浏览 / 工作区绑定 ====
-// 执行器在用户电脑上主动长轮询；这里只做登记与目录浏览，按钮文案与 DSH 的「选择工作区」同口径
+// ==== 本机执行器：授权码配对 / 目录浏览 / 工作区绑定 ====
+// 执行器在用户电脑上主动长轮询；配对由执行器发起（终端打印链接+6 位码），这里只做确认与目录浏览
 export const listExecutors = () => request('/executor/devices')
-export const registerExecutor = body =>
-  request('/executor/device', { method: 'POST', body: JSON.stringify(body || {}) })
+/** 确认页：看这个码对应哪台电脑（不确认） */
+export const readExecutorPairing = code =>
+  request(`/executor/device-code?code=${encodeURIComponent(code || '')}`)
+/** 确认页：把这次授权绑定到当前登录账号 */
+export const approveExecutorPairing = code =>
+  request('/executor/device-code/approve', { method: 'POST', body: JSON.stringify({ code }) })
 export const revokeExecutor = id => request(`/executor/device/${encodeURIComponent(id)}`, { method: 'DELETE' })
 export const browseExecutor = (executorId, path) =>
   request(`/executor/browse?executorId=${encodeURIComponent(executorId)}&path=${encodeURIComponent(path || '')}`, { timeout: 30000 })

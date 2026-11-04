@@ -95,7 +95,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { getFirstRun, loginApi, initializeAdmin, getOidcConfig, getOidcLoginUrl } from '../api'
@@ -111,6 +111,12 @@ const isInit = ref(false)
 const loading = ref(false)
 const error = ref('')
 const form = ref({ identifier: '', uid: '', username: '', password: '', confirm: '' })
+
+// 登录后回哪个页面：路由守卫带过来的 redirect（如执行器授权确认页）；只接受站内路径
+const redirectTarget = computed(() => {
+  const r = route.query.redirect
+  return typeof r === 'string' && r.startsWith('/') && !r.startsWith('//') ? r : '/chat'
+})
 
 // 单点登录：入口只在后端回报「已启用且配置完整」的认证源时出现（配置只填一半就显示按钮，点下去必然撞错误页）
 const oidcProviders = ref([])
@@ -136,7 +142,7 @@ async function submitOidc (providerId) {
   error.value = ''
   oidcLoading.value = providerId
   try {
-    const r = await getOidcLoginUrl(providerId, '/chat')
+    const r = await getOidcLoginUrl(providerId, redirectTarget.value)
     const url = r && r.data && r.data.loginUrl
     if (!url) { error.value = (r && r.msg) || '单点登录暂不可用'; return }
     // 跳转到 IdP：整页跳转（授权码流程必须由浏览器完成重定向）
@@ -171,7 +177,7 @@ async function submit () {
     // 会话/工作区缓存——SPA 内不整页刷新，缓存里 projectsLoaded 置位后侧栏甚至不再重拉
     resetSessionStore()
     message.success(isInit.value ? '管理员已创建' : '登录成功')
-    router.replace('/chat')
+    router.replace(redirectTarget.value)
   } catch (e) {
     error.value = e.message || '登录失败'
   } finally {

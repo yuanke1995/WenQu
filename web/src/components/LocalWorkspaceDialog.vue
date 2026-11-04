@@ -7,21 +7,19 @@
         <span class="lwd-k">这台电脑</span>
         <a-select v-if="devices.length" v-model:value="executorId" class="lwd-v"
                   :options="deviceOptions" @change="reload" />
-        <span v-else-if="!freshToken" class="lwd-empty">还没有添加这台电脑</span>
-        <button v-if="!devices.length && !freshToken" class="app-btn" :disabled="registering" @click="addDevice">
-          {{ registering ? '登记中…' : '添加这台电脑' }}
-        </button>
-        <button v-else-if="devices.length" class="app-link-btn" :disabled="registering" @click="addDevice">再添加一台</button>
+        <span v-else class="lwd-empty">还没有添加这台电脑</span>
       </div>
 
-      <!-- 刚登记的令牌（只显示一次） -->
-      <div v-if="freshToken" class="lwd-token">
-        <div class="lwd-token-t">设备令牌（只显示这一次）：</div>
-        <code class="lwd-token-v">{{ freshToken }}</code>
-        <div class="lwd-token-t">在这台电脑上运行：</div>
-        <pre class="lwd-cmd">node scripts/local-agent/wenqu-agent.mjs --server {{ serverBase }} --token {{ freshToken }} --root ~</pre>
+      <!-- 授权入口交给执行器自己发起：终端打印链接 + 6 位码，浏览器确认后自动落令牌 -->
+      <div class="lwd-pair">
+        <div class="lwd-token-t">{{ devices.length ? '在另一台电脑上添加：' : '在那台电脑的终端里运行：' }}</div>
+        <pre class="lwd-cmd">node scripts/local-agent/wenqu-agent.mjs --server {{ serverBase }} --root ~</pre>
+        <div class="lwd-token-t">
+          按终端提示打开链接、登录后点确认；授权完成后
+          <button class="app-link-btn" @click="refreshDevices">刷新</button>
+          这台电脑的清单。
+        </div>
         <div class="lwd-token-t">要能选整块磁盘就把 --root 换成 /（默认只从家目录开始浏览）。</div>
-        <button class="app-btn ghost" @click="refreshDevices">我已经启动了，刷新</button>
       </div>
 
       <!-- 原生选择器（在宿主那台电脑上弹框）；弹不出来时下面还有逐层浏览兜底 -->
@@ -45,7 +43,7 @@
         <a-spin v-if="loading" size="small" />
       </div>
       <div class="lwd-list">
-        <div v-if="!executorId" class="lwd-empty">先从上面添加这台电脑</div>
+        <div v-if="!executorId" class="lwd-empty">执行器还没连上来：先在那台电脑的终端里运行上面的命令</div>
         <div v-else-if="error" class="lwd-empty lwd-err">{{ error }}</div>
         <div v-else-if="!dirs.length && !loading" class="lwd-empty">这个目录下没有子目录</div>
         <button v-for="d in dirs" :key="d.path" type="button" class="lwd-dir" @click="enter(d.path)">
@@ -67,7 +65,7 @@
 import { computed, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { FolderOutlined } from '@ant-design/icons-vue'
-import { browseExecutor, createProject, bindProjectExecutor, listExecutors, pickExecutorDir, registerExecutor } from '../api'
+import { browseExecutor, createProject, bindProjectExecutor, listExecutors, pickExecutorDir } from '../api'
 
 const props = defineProps({ open: { type: Boolean, default: false } })
 const emit = defineEmits(['update:open', 'created'])
@@ -82,10 +80,12 @@ const loading = ref(false)
 const error = ref('')
 const creating = ref(false)
 const picking = ref(false)
-const registering = ref(false)
-const freshToken = ref('')
 
-const serverBase = computed(() => `${location.origin}/ai`)
+/** 执行器要连的后端根：开发态走 vite 的 /proxy，生产态是 dist 同域的 /ai */
+const serverBase = computed(() => {
+  const api = import.meta.env.VITE_API_BASE || '/proxy/api/ai'
+  return `${location.origin}${api.startsWith('/proxy') ? '/proxy' : '/ai'}`
+})
 const deviceOptions = computed(() => devices.value.map(d => ({
   value: d.id,
   label: `${d.name || d.id}（${d.online ? '在线' : '离线'}）`,
@@ -105,19 +105,6 @@ async function refreshDevices () {
     }
   } catch (e) {
     message.error('取执行器清单失败：' + (e.message || ''))
-  }
-}
-
-async function addDevice () {
-  registering.value = true
-  try {
-    const r = await registerExecutor({ name: '我的电脑', os: navigator.platform || '' })
-    freshToken.value = (r && r.data && r.data.token) || ''
-    await refreshDevices()
-  } catch (e) {
-    message.error('登记失败：' + (e.message || ''))
-  } finally {
-    registering.value = false
   }
 }
 
@@ -205,7 +192,6 @@ async function choose () {
 
 watch(() => props.open, open => {
   if (!open) return
-  freshToken.value = ''
   devices.value = []
   executorId.value = ''
   dirs.value = []
@@ -241,9 +227,8 @@ watch(() => props.open, open => {
 .lwd-dir:hover { background: var(--app-surface2, rgba(0,0,0,.04)); }
 .lwd-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .lwd-tip { font-size: 12px; color: var(--app-text3); }
-.lwd-token { border: 1px dashed var(--app-border, rgba(0,0,0,.16)); border-radius: 8px; padding: 10px; font-size: 12px; }
+.lwd-pair { border: 1px dashed var(--app-border, rgba(0,0,0,.16)); border-radius: 8px; padding: 10px; font-size: 12px; }
 .lwd-token-t { color: var(--app-text2); margin-bottom: 4px; }
-.lwd-token-v { display: block; word-break: break-all; margin-bottom: 8px; }
 .lwd-cmd { margin: 0 0 8px; padding: 8px; background: var(--app-surface2, rgba(0,0,0,.04)); border-radius: 6px;
   white-space: pre-wrap; word-break: break-all; font-size: 11px; }
 </style>

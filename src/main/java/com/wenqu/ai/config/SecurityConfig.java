@@ -90,6 +90,11 @@ public class SecurityConfig implements WebMvcConfigurer {
         if (isSandboxCallbackEndpoint(method, path)) return true;
         // 本机执行器通道：执行器用设备令牌自证（Authorization: Bearer <device-token>），不走登录态
         if (path.equals("/api/ai/executor/poll") || path.equals("/api/ai/executor/result")) return true;
+        // 执行器授权码配对：申请/换取令牌由执行器（无登录态）发起；查看/确认由登录用户在浏览器里做，
+        // 权限归属在服务端按「码绑定到当前账号」判定，不走 RBAC 授权点
+        if (path.equals("/api/ai/executor/device-code")
+                || path.equals("/api/ai/executor/device-code/token")
+                || path.equals("/api/ai/executor/device-code/approve")) return true;
         // 公开只读：运行时公开配置、对话页智能体下拉（脱敏只读）
         if ("GET".equals(method) && ("/api/ai/config/public".equals(path)
                 || "/api/ai/agent/available".equals(path))) return true;
@@ -405,7 +410,12 @@ public class SecurityConfig implements WebMvcConfigurer {
     private static boolean isExecutorEndpoint(String method, String path) {
         if (path == null) return false;
         if ("GET".equals(method) && "/api/ai/executor/poll".equals(path)) return true;
-        return "POST".equals(method) && "/api/ai/executor/result".equals(path);
+        if ("POST".equals(method) && "/api/ai/executor/result".equals(path)) return true;
+        // 授权码配对的前两步是执行器（还没有任何凭据）发起的，必须免登录门禁；
+        // 确认/查看两步仍要登录态，不在此列
+        return "POST".equals(method)
+                && ("/api/ai/executor/device-code".equals(path)
+                || "/api/ai/executor/device-code/token".equals(path));
     }
 
     /**

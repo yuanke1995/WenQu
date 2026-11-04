@@ -15,7 +15,11 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 本机执行器通道：设备登记（登录态） + 轮询/回传（设备令牌）。
+ * 本机执行器通道：设备授权码配对 + 轮询/回传（设备令牌）。
+ *
+ * <p>配对方向是<b>执行器发起</b>（与 gh auth login / aws sso login 同形）：执行器匿名申请一个
+ * 6 位码并打印链接，用户在浏览器里登录自己的账号确认，令牌才一次性回给执行器——
+ * 令牌不经过命令行、shell 历史和环境变量。
  *
  * <p>为什么是长轮询而不是 WebSocket：执行器在用户内网，服务端不能反连；长轮询用普通 HTTP 就够，
  * 穿任何反代都不需要额外配置。执行器取走调用后立刻发起下一次轮询，空转成本只有一次挂起请求。
@@ -23,23 +27,69 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/ai/executor")
 @RequiredArgsConstructor
-@Tag(name = "本机执行器", description = "用户电脑上的执行器：登记设备、长轮询取工具调用、回传结果")
+@Tag(name = "本机执行器", description = "用户电脑上的执行器：授权码配对、长轮询取工具调用、回传结果")
 public class ExecutorController {
 
     private final ExecutorService executorService;
     private final ExecutorRegistry registry;
+    private final ExecutorPairingService pairing;
 
-    @Operation(summary = "登记本机执行器", description = "返回一次性设备令牌（只回这一次）；令牌只存哈希")
-    @PostMapping("/device")
-    public Map<String, Object> register(@RequestBody(required = false) Map<String, Object> body) {
+    @Operation(summary = "执行器申请授权码", description = "匿名；返回 deviceCode（执行器轮询用）与 userCode（用户在浏览器里输的 6 位码）")
+    @PostMapping("/device-code")
+    public Map<String, Object> createDeviceCode(@RequestBody(required = false) Map<String, Object> body) {
         String name = body == null || body.get("name") == null ? "" : String.valueOf(body.get("name"));
         String os = body == null || body.get("os") == null ? "" : String.valueOf(body.get("os"));
-        ExecutorRegistry.Paired paired = executorService.register(RequestUser.uid(), name, os);
+        try {
+            return ok(pairing.create(name, os));
+        } catch (ExecutorPairingService.PairingException e) {
+            return fail(e.code(), e.getMessage());
+        }
+    }
+
+    @Operation(summary = "执行器轮询授权结果", description = "deviceCode 自证；用户确认后一次性返回设备令牌")
+    @PostMapping("/device-code/token")
+    public Map<String, Object> deviceCodeToken(@RequestBody(required = false) Map<String, Object> body) {
+        String deviceCode = body == null || body.get("deviceCode") == null ? "" : String.valueOf(body.get("deviceCode"));
+        ExecutorPairingService.Redeemed redeemed = pairing.redeem(deviceCode);
         Map<String, Object> data = new LinkedHashMap<>();
-        data.put("id", paired.device().id());
-        data.put("name", paired.device().name());
-        data.put("token", paired.token());
+        data.put("status", redeemed.status().name().toLowerCase());
+        data.put("name", redeemed.name());
+        if (redeemed.token() != null) {
+            data.put("token", redeemed.token());
+            data.put("executorId", redeemed.executorId());
+        }
         return ok(data);
+    }
+
+    @Operation(summary = "查看待确认的授权码", description = "登录态；返回这台电脑的名字与系统，供确认页展示")
+    @GetMapping("/device-code")
+    public Map<String, Object> readDeviceCode(@RequestParam("code") String code) {
+        try {
+            return ok(infoData(pairing.lookup(code, RequestUser.uid())));
+        } catch (ExecutorPairingService.PairingException e) {
+            return fail(e.code(), e.getMessage());
+        }
+    }
+
+    @Operation(summary = "确认授权这台电脑", description = "登录态；确认后执行器即可取走设备令牌")
+    @PostMapping("/device-code/approve")
+    public Map<String, Object> approveDeviceCode(@RequestBody(required = false) Map<String, Object> body) {
+        String code = body == null || body.get("code") == null ? "" : String.valueOf(body.get("code"));
+        try {
+            return ok(infoData(pairing.approve(code, RequestUser.uid())));
+        } catch (ExecutorPairingService.PairingException e) {
+            return fail(e.code(), e.getMessage());
+        }
+    }
+
+    private static Map<String, Object> infoData(ExecutorPairingService.Info info) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("userCode", info.userCode());
+        data.put("name", info.name());
+        data.put("os", info.os());
+        data.put("expiresAt", info.expiresAt());
+        data.put("status", info.status().name().toLowerCase());
+        return data;
     }
 
     @Operation(summary = "已登记的执行器", description = "当前用户的设备清单（不含令牌）")

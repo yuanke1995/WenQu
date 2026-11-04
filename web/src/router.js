@@ -24,6 +24,8 @@ const routes = [
   { path: '/error', component: page(() => import('./views/HttpErrorPage.vue')), meta: { title: '出错了', public: true } },
   // 租户开通申请（Phase 4 刀三 · 自助开通）：免登录的公开表单，提交后仍需平台管理员批准
   { path: '/apply', component: page(() => import('./views/TenantApplyPage.vue')), meta: { title: '申请开通', public: true, pageFlow: true } },
+  // 本机执行器授权确认页：执行器在终端打印 /pair?code=XXXXXX，登录后确认即完成配对
+  { path: '/pair', component: page(() => import('./views/PairDevicePage.vue')), meta: { title: '授权本机', pageFlow: true } },
   { path: '/chat', component: page(() => import('./views/AppLayout.vue')), children: [{ path: '', component: page(() => import('./views/ChatPage.vue')) }] },
   // 移动原生壳（M2）：不经 AppLayout 工作台外壳，独立布局；手机访问 /chat 由守卫重定向到这里。
   // 与管理页的 DesktopOnlyGuard 白名单无关（那套只管 AppLayout 子路由）。
@@ -73,7 +75,8 @@ const router = createRouter({ history: createWebHistory(), routes })
 // 普通角色若其角色绑定的菜单包含该路径（RBAC 授权）也放行，否则回对话页
 router.beforeEach(async to => {
   if (to.path === '/login' || to.meta.public) return true
-  if (!isLoggedIn()) return { path: '/login', replace: true }
+  // 带上原路径：授权确认页这类「必须登录才能完成」的入口，登录后要能回到原处
+  if (!isLoggedIn()) return { path: '/login', query: { redirect: to.fullPath }, replace: true }
   // 未拉取过身份则先向 /auth/me 确认（同时下发菜单树）。必须先于任何登录页放行：
   // 布局层（侧栏头像/昵称）直接读 authUser，而「全新浏览器首次登录」时 main.js 启动阶段
   // 还没有令牌、不会预拉身份，登录后首次进入布局页会在渲染期读到 null 而报错。
