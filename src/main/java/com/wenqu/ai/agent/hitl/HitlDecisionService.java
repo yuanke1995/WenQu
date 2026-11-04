@@ -697,34 +697,25 @@ public class HitlDecisionService {
         return answerJson;
     }
 
-    /** 从落库 request_args 还原问题列表（兼容旧式单问题 {question,options} 与一卡多问 {questions}）。
-     *  {@code multi} 走 {@code getBooleanValue}：缺字段与显式 false 都是单选，历史数据不用回填。 */
+    /** 从落库 request_args 还原问题列表（{questions:[{topic?,question,options}]}）。
+     *  {@code multi} 走 {@code getBooleanValue}：缺字段与显式 false 都是单选。 */
     public List<QItem> parseQuestions(String argsJson) {
         List<QItem> out = new ArrayList<>();
         try {
             JSONObject args = JSON.parseObject(argsJson);
             if (args == null) return out;
             JSONArray arr = args.getJSONArray("questions");
-            if (arr != null) {
-                for (int i = 0; i < arr.size(); i++) {
-                    JSONObject o = arr.getJSONObject(i);
-                    if (o == null) continue;
-                    String q = o.getString("question");
-                    if (q == null || q.isEmpty()) continue;
-                    JSONArray opts = o.getJSONArray("options");
-                    List<String> os = opts == null ? List.of() : opts.toJavaList(String.class);
-                    out.add(new QItem(o.getString("topic") == null ? "" : o.getString("topic"),
-                            q, os, o.getBooleanValue("multi")));
-                }
-                return out;
+            if (arr == null) return out;
+            for (int i = 0; i < arr.size(); i++) {
+                JSONObject o = arr.getJSONObject(i);
+                if (o == null) continue;
+                String q = o.getString("question");
+                if (q == null || q.isEmpty()) continue;
+                JSONArray opts = o.getJSONArray("options");
+                List<String> os = opts == null ? List.of() : opts.toJavaList(String.class);
+                out.add(new QItem(o.getString("topic") == null ? "" : o.getString("topic"),
+                        q, os, o.getBooleanValue("multi")));
             }
-            // 旧式单问题
-            String q = args.getString("question");
-            if (q == null || q.isEmpty()) return out;
-            JSONArray opts = args.getJSONArray("options");
-            List<String> os = opts == null ? List.of() : opts.toJavaList(String.class);
-            out.add(new QItem(args.getString("topic") == null ? "" : args.getString("topic"),
-                    q, os, args.getBooleanValue("multi")));
         } catch (Exception e) {
             log.warn("[ASK] 解析提问参数失败: {}", e.getMessage());
         }

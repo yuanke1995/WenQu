@@ -133,7 +133,7 @@ public class WorkflowService {
     /**
      * 运行主体（触发者身份）：M4 起触发者不一定是登录用户——外部 API Key 触发时身份是
      * <b>Key 的归属用户</b>（{@code c_ai_api_key.created_by}），故身份显式封装传递，
-     * 不直接读 {@link RequestUser}（API Key 请求没有登录令牌，ThreadLocal 是 anonymous）。
+     * 不直接读 {@link RequestUser}（API Key 请求没有登录令牌，ThreadLocal 是 SYSTEM）。
      */
     public record Principal(String uid, String departmentId, String role) {
         public static Principal current() {
@@ -244,14 +244,6 @@ public class WorkflowService {
         return loadVisible(id, Principal.current());
     }
 
-    /**
-     * 取一条工作流并要求管理权。保留方法名以兼容既有调用点（更新/删除/发布/下线/回滚）；
-     * 语义即「仅创建者」（谁建归谁）。
-     */
-    public Workflow getOwn(String id) {
-        return requireManage(id);
-    }
-
     /** 归属本人可管的工作流（不存在 / 无管理权返回 null）——市场上架附带绑定工作流用，不 fail-loud */
     public Workflow getOwnOrNull(String id) {
         if (id == null || id.isBlank()) return null;
@@ -297,7 +289,7 @@ public class WorkflowService {
 
     /** 带工作区归属的更新（projectId 非 null 才改；空串=解除关联） */
     public Workflow update(String id, String name, String description, String dslText, String projectId) {
-        Workflow row = getOwn(id);
+        Workflow row = requireManage(id);
         if (projectId != null) row.setProjectId(resolveProjectId(projectId));
         if (name != null) {
             if (name.isBlank()) throw new BizException("工作流名称不能为空");
@@ -321,7 +313,7 @@ public class WorkflowService {
 
     /** 删除（本人的）：连带运行记录保留（审计与回放价值独立于定义存在） */
     public void delete(String id) {
-        Workflow row = getOwn(id);
+        Workflow row = requireManage(id);
         workflowMapper.deleteById(row.getId());
     }
 
@@ -578,7 +570,7 @@ public class WorkflowService {
      * 都是 {@code published_dsl}（对齐 Dify/Coze 的「发布版本」语义）。
      */
     public Map<String, Object> publish(String id, String note) {
-        Workflow row = getOwn(id);
+        Workflow row = requireManage(id);
         WorkflowDsl dsl = parseDsl(row.getDsl());
         List<String> errors = validator.validate(dsl);
         if (!errors.isEmpty()) throw new BizException("工作流校验未通过，无法发布：" + String.join("；", errors));
@@ -606,7 +598,7 @@ public class WorkflowService {
 
     /** 下线（回到草稿态）：已发布版本记录保留（历史可查，再发布即新版本） */
     public Map<String, Object> unpublish(String id) {
-        Workflow row = getOwn(id);
+        Workflow row = requireManage(id);
         if (!"published".equals(row.getStatus())) {
             throw new BizException("该工作流当前不是已发布状态（" + row.getStatus() + "）");
         }
@@ -641,7 +633,7 @@ public class WorkflowService {
      * 不改写历史——回滚动作本身也是一次发布，可再次回滚（写指针式回滚会让历史不可追溯）。
      */
     public Map<String, Object> rollback(String id, int targetVersion) {
-        Workflow row = getOwn(id);
+        Workflow row = requireManage(id);
         WorkflowVersion target = versionMapper.selectOne(new LambdaQueryWrapper<WorkflowVersion>()
                 .eq(WorkflowVersion::getWorkflowId, row.getId())
                 .eq(WorkflowVersion::getVersion, targetVersion)
@@ -718,7 +710,7 @@ public class WorkflowService {
 
     /**
      * 触发者身份解析：带 API Key → Key 的归属用户（外部调用方没有登录令牌，
-     * ThreadLocal 里是 anonymous，必须回查 Key 归属）；否则 → 当前登录用户。
+     * ThreadLocal 里是 SYSTEM，必须回查 Key 归属）；否则 → 当前登录用户。
      */
     private Principal resolvePrincipal(String apiKeyId) {
         if (apiKeyId != null && !apiKeyId.isBlank()) {

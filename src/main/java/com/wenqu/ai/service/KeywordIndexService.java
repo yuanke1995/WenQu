@@ -42,8 +42,8 @@ import java.util.concurrent.atomic.AtomicLong;
  * - 配置（baseUrl/timeout）变更自动重建客户端并重置探测
  * - 写索引全部 best-effort（失败只告警不抛），最终一致由周期精确对账兜底：按 (id, contentHash)
  *   逐块比对 MySQL 有效块与索引文档，仅定向修复差异块（缺失/过期按主键批量拉取比对、孤儿由计数
- *   差值门控后才全量扫描、多副本用 MySQL 命名锁互斥；按主键拉取不可用时整轮降级两侧全量拉取比对，
- *   兼容旧版 Meilisearch。schedule 包调度中心驱动：启动先跑一次 + keyword.reconcileIntervalMs
+ *   差值门控后才全量扫描、多副本用 MySQL 命名锁互斥；按主键拉取不可用时本轮告警跳过。
+ *   schedule 包调度中心驱动：启动先跑一次 + keyword.reconcileIntervalMs
  *   周期执行；差异过大降级全量重建。切换引擎保存配置时也自动全量重建，运维可调 /api/ai/search-index/reindex）
  */
 @Slf4j
@@ -544,8 +544,8 @@ public class KeywordIndexService {
      *   <li><b>多副本安全</b>：MySQL 命名锁（GET_LOCK）互斥，其他实例持锁时跳过本轮；锁能力不可用
      *       （外部库不支持等）退化为单机防重继续——对账幂等，不能因锁缺失而停摆。</li>
      * </ul>
-     * 按主键拉取不可用（旧版 Meilisearch 不支持 documents 过滤、settings 异步任务未落地等）时整轮
-     * 降级旧算法 {@link #legacyReconcile()}（两侧全量拉取比对，内存 O(N)），老版本行为不回归。
+     * 按主键拉取不可用（settings 异步任务未落地、索引不是可过滤结构等）时本轮告警跳过，下轮重试；
+     * 不再回退到两侧全量拉取的旧算法。
      * 调度（启动首轮 + 周期间隔，见 keyword.reconcileOnStartup / keyword.reconcileIntervalMs）
      * 由 schedule 包 ScheduleCenter 驱动；失败只告警不抛，下轮重试。
      */
@@ -602,8 +602,7 @@ public class KeywordIndexService {
             for (Knowledge k : batch) batchIds.add(k.getId());
             Map<String, String> idx = fetchHashesByIds(batchIds);
             if (idx == null) {
-                log.info("[Reconcile] 按主键批量拉取不可用，本轮降级旧算法（两侧全量拉取比对）");
-                legacyReconcile();
+                log.warn("[Reconcile] 按主键批量拉取索引指纹不可用，本轮跳过（请确认 Meilisearch 支持 documents 过滤）");
                 return;
             }
             for (Knowledge k : batch) {
@@ -649,51 +648,6 @@ public class KeywordIndexService {
         log.info("[Reconcile] 修复完成：补写 {} 块、删除 {} 块", stale.size(), orphans.size());
     }
 
-    /**
-     * 旧对账算法（降级保留）：两侧全量拉取构建 id→hash 映射后双向比对，内存 O(N)、
-     * Meili 侧 offset 深分页——仅在不支持按主键过滤拉取的旧版 Meilisearch / settings 未落地时整轮退到此路。
-     */
-    private void legacyReconcile() {
-        Map<String, String> effective = loadEffectiveHashes();
-        Map<String, String> indexed = loadIndexedHashes();
-        if (effective == null || indexed == null) return; // 读侧失败，下轮重试
-
-        List<String> stale = new ArrayList<>(); // 缺失或内容过期的块 id → 补写
-        for (Map.Entry<String, String> e : effective.entrySet()) {
-            String idxHash = indexed.get(e.getKey());
-            // MySQL 侧 hash 为空（存量老块）只做存在性比较，避免每轮误判重灌；重解析后块带 hash 自然收敛
-            if (idxHash == null || (!e.getValue().isEmpty() && !e.getValue().equals(idxHash))) {
-                stale.add(e.getKey());
-            }
-        }
-        List<String> extra = new ArrayList<>(); // 索引多余块 id（已删块/已删文档/弃用文档的块）→ 删除
-        for (String id : indexed.keySet()) {
-            if (!effective.containsKey(id)) extra.add(id);
-        }
-
-        if (stale.isEmpty() && extra.isEmpty()) {
-            log.info("[Reconcile] 关键词索引一致（有效块 {} = 索引 {}），无需修复", effective.size(), indexed.size());
-            return;
-        }
-        log.warn("[Reconcile] 索引漂移：缺失/过期 {} 块、多余 {} 块（有效 {}，索引 {}）→ 定向修复",
-                stale.size(), extra.size(), effective.size(), indexed.size());
-        for (int i = 0; i < extra.size(); i += 1000) {
-            deleteChunks(extra.subList(i, Math.min(i + 1000, extra.size())));
-        }
-        if (stale.size() > Math.max(1000, effective.size() / 3)) {
-            // 差异过大（首轮 hash 补齐 / 长期漂移）：逐块补写不如全量重灌划算
-            log.info("[Reconcile] 差异过大（{} 块），转全量重建", stale.size());
-            reindexAll();
-        } else {
-            for (int i = 0; i < stale.size(); i += 1000) {
-                List<Knowledge> rows = knowledgeMapper.selectBatchIds(
-                        stale.subList(i, Math.min(i + 1000, stale.size())));
-                indexChunks(rows);
-            }
-        }
-        log.info("[Reconcile] 修复完成：补写 {} 块、删除 {} 块", stale.size(), extra.size());
-    }
-
     /** 有效块查询条件（全量重建/对账同口径）：手动块（docId IS NULL）+ 启用且未删文档的块 */
     private LambdaQueryWrapper<Knowledge> effectiveChunkQuery() {
         return new LambdaQueryWrapper<Knowledge>()
@@ -708,74 +662,10 @@ public class KeywordIndexService {
         return n == null ? 0 : n;
     }
 
-    /** MySQL 有效块 id → contentHash（status=0 文档的块 + 手动块 docId IS NULL；扫描失败返回 null） */
-    private Map<String, String> loadEffectiveHashes() {
-        try {
-            Map<String, String> map = new LinkedHashMap<>();
-            String lastId = "";
-            while (true) {
-                List<Knowledge> batch = knowledgeMapper.selectList(
-                        effectiveChunkQuery()
-                                .select(Knowledge::getId, Knowledge::getContentHash)
-                                .gt(Knowledge::getId, lastId)
-                                .orderByAsc(Knowledge::getId)
-                                .last("LIMIT 1000"));
-                if (batch.isEmpty()) break;
-                for (Knowledge k : batch) {
-                    map.put(k.getId(), k.getContentHash() == null ? "" : k.getContentHash());
-                }
-                lastId = batch.get(batch.size() - 1).getId();
-                if (batch.size() < 1000) break;
-            }
-            return map;
-        } catch (Exception e) {
-            log.warn("[Reconcile] 有效块扫描失败: {}", e.getMessage());
-            return null;
-        }
-    }
-
-    /** 索引文档 id → contentHash（分页拉取全部；服务异常返回 null；索引不存在视为空集合） */
-    private Map<String, String> loadIndexedHashes() {
-        Map<String, String> map = new LinkedHashMap<>();
-        try {
-            int offset = 0;
-            while (true) {
-                final int off = offset;
-                String resp = client().get()
-                        .uri(b -> b.path("/indexes/" + index() + "/documents")
-                                .queryParam("fields", "id,contentHash")
-                                .queryParam("limit", 1000)
-                                .queryParam("offset", off)
-                                .build())
-                        .retrieve().body(String.class);
-                // Meilisearch v1：GET /documents 返回 {"results":[...], "offset":.., "limit":.., "total":..}（对象包装），
-                // 旧版裸数组格式已废弃——按 results 字段解析，否则 JSON 解析必失败（illegal input）
-                JSONObject body = resp == null ? null : JSON.parseObject(resp);
-                JSONArray docs = body == null ? null : body.getJSONArray("results");
-                if (docs == null || docs.isEmpty()) break;
-                for (int i = 0; i < docs.size(); i++) {
-                    JSONObject d = docs.getJSONObject(i);
-                    String id = d.getString("id");
-                    if (id != null && !id.isBlank()) {
-                        String h = d.getString("contentHash");
-                        map.put(id, h == null ? "" : h);
-                    }
-                }
-                offset += docs.size();
-            }
-            return map;
-        } catch (Exception e) {
-            // 索引尚未创建（404 index_not_found）= 空集合：全部判缺失走全量重建，不是服务故障
-            if (e.getMessage() != null && e.getMessage().contains("index_not_found")) return map;
-            markFailed("对账拉取索引文档", e);
-            return null;
-        }
-    }
-
     /**
      * 按主键批量拉回索引指纹（POST /documents/fetch，filter: id IN [...]；需 filterableAttributes 含 id，
      * ensureIndex 已写入）。只保留本批指纹，内存 O(批大小)。
-     * 失败返回 null，调用方整轮降级 {@link #legacyReconcile()}（兼容不支持 documents 过滤的旧版 Meilisearch）。
+     * 失败返回 null，调用方本轮告警跳过。
      */
     private Map<String, String> fetchHashesByIds(List<String> ids) {
         try {

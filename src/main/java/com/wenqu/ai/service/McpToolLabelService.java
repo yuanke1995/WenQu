@@ -144,12 +144,10 @@ public class McpToolLabelService {
      * 剥 clientInfo 前缀，还原 server 侧的裸工具名。
      * <p>前缀规则已反编译 spring-ai-mcp 1.1.8 核实：{@code prefixedToolName} 把
      * {@code clientInfo.name}（"wen-qu"）格式化成 {@code wen_qu} 后<b>无分隔符直拼</b>裸名
-     * （{@code wen_qusql_query}）；历史口径 {@code w_q_} 带下划线，保留兼容。与前端
-     * {@code projections.js#bareToolName} 同一条规则。
+     * （{@code wen_qusql_query}）。与前端 {@code projections.js#bareToolName} 同一条规则。
      */
     static String stripPrefix(String name) {
         if (name.startsWith("wen_qu") && name.length() > 6) return name.substring(6);
-        if (name.startsWith("w_q_") && name.length() > 4) return name.substring(4);
         return null;
     }
 }

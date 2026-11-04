@@ -70,6 +70,6 @@ public enum ToolFamily {
 
     /** MCP 工具名由外部 server 自定，按名归属族时的兜底判定（前缀由 McpClientService 生成） */
     public static boolean looksLikeMcpTool(String name) {
-        return name != null && (name.startsWith("wen_qu") || name.startsWith("w_q_"));
+        return name != null && name.startsWith("wen_qu");
     }
 }

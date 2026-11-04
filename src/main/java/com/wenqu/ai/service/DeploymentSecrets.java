@@ -54,7 +54,6 @@ public class DeploymentSecrets {
     }
 
     private static final Pattern KEY_FILE = Pattern.compile("^v(\\d+)\\.key$");
-    private static final String LEGACY_SINGLE_KEY = "config-rsa.key";
     private static final int KEY_SIZE = 2048;
     /** local profile＝仓库内的本机私有配置，允许临时密钥 */
     private static final String DEV_PROFILE = "local";
@@ -158,7 +157,6 @@ public class DeploymentSecrets {
 
     private List<RsaKey> loadRsaRing() {
         Path dir = secretsDir().resolve("rsa");
-        importLegacyKeys(dir);
         unreadableKeyPresent = false;
         List<RsaKey> ring = readRingDir(dir);
         if (ring.isEmpty() && unreadableKeyPresent) {
@@ -197,99 +195,6 @@ public class DeploymentSecrets {
             log.error("[Secrets] 读取密钥环目录 {} 失败: {}", dir, e.getMessage());
         }
         return found;
-    }
-
-    /**
-     * 旧密钥形态一次性迁入标准 PEM：本目录改造前的 {@code secret/config-rsa.key}（两行 base64）与
-     * 中间态的 {@code secret/rsa/vN.key}（同格式）都转成 PKCS#8 PEM。环内文件就地替换
-     * （临时文件 + ATOMIC_MOVE），且替换前回读校验——迁完即没有第二条读取路径，运行期只认 PEM，
-     * 所以宁可留着旧文件报错，也不能写坏一把唯一还能解存量密文的密钥。
-     */
-    private void importLegacyKeys(Path dir) {
-        if (Files.isDirectory(dir)) {
-            try (var stream = Files.list(dir)) {
-                for (Path p : stream.sorted().toList()) {
-                    String name = p.getFileName().toString();
-                    Matcher m = KEY_FILE.matcher(name);
-                    if (!m.matches() || isPem(p)) {
-                        continue;
-                    }
-                    int version = Integer.parseInt(m.group(1));
-                    RsaKey key = readTwoLineKeyFileQuietly(p, version);
-                    if (key == null || !rewriteAsPemVerified(p, key)) {
-                        log.error("[Secrets] 旧格式密钥 {} 未能转成 PEM（保留原文件，请人工转换为 PKCS#8 PEM）", p);
-                    } else {
-                        log.info("[Secrets] 密钥 {} 已就地转成标准 PEM 私钥", p);
-                    }
-                }
-            } catch (Exception e) {
-                log.error("[Secrets] 扫描旧密钥文件失败: {}", e.getMessage());
-            }
-        }
-        Path single = secretsDir().resolve(LEGACY_SINGLE_KEY);
-        if (!Files.isReadable(single)) {
-            return;
-        }
-        RsaKey key = readTwoLineKeyFileQuietly(single, 1);
-        if (key == null) {
-            log.error("[Secrets] 旧密钥 {} 无法解析，未迁入密钥环", single);
-            return;
-        }
-        Path target = dir.resolve("v1.key");
-        if (Files.exists(target)) {
-            log.warn("[Secrets] 已有密钥 {}，旧文件 {} 保留不覆盖", target, single);
-            return;
-        }
-        try {
-            Files.createDirectories(dir);
-            writePem(target, key);
-            Files.delete(single);
-            log.info("[Secrets] 旧密钥 {} 已迁入密钥环 v1（{}），旧文件已删除", single, target);
-        } catch (Exception e) {
-            log.error("[Secrets] 迁入旧密钥 {} 失败: {}", single, e.getMessage());
-        }
-    }
-
-    private RsaKey readTwoLineKeyFileQuietly(Path file, int version) {
-        try {
-            return readTwoLineKeyFile(file, version);
-        } catch (Exception e) {
-            log.error("[Secrets] 解析旧格式密钥 {} 失败: {}", file, e.getMessage());
-            return null;
-        }
-    }
-
-    /** 就地转 PEM：写临时文件 → 回读校验能解出同一把模数 → 原子替换 */
-    private boolean rewriteAsPemVerified(Path file, RsaKey key) {
-        Path temp = file.resolveSibling(file.getFileName().toString() + ".converting");
-        try {
-            writePem(temp, key);
-            RsaKey reread = readPemKeyFile(temp, key.version());
-            if (reread == null || !java.util.Arrays.equals(reread.privateKey().getEncoded(),
-                    key.privateKey().getEncoded())) {
-                Files.deleteIfExists(temp);
-                return false;
-            }
-            Files.move(temp, file, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
-                    java.nio.file.StandardCopyOption.ATOMIC_MOVE);
-            return true;
-        } catch (Exception e) {
-            log.error("[Secrets] 转换密钥 {} 失败: {}", file, e.getMessage());
-            try {
-                Files.deleteIfExists(temp);
-            } catch (Exception ignored) {
-                // 临时文件清不掉不影响结论
-            }
-            return false;
-        }
-    }
-
-    private boolean isPem(Path p) {
-        try {
-            return Files.readString(p, StandardCharsets.UTF_8).contains("-----BEGIN");
-        } catch (Exception e) {
-            return false;
-        }
     }
 
     private void generateInto(Path dir, int version) {
@@ -342,24 +247,6 @@ public class DeploymentSecrets {
             }
             return toRsaKey(version, privateKey);
         }
-    }
-
-    /** 改造前的两行 base64 格式：public=X509 / private=PKCS8（前缀长度 public= 7、private= 8，写错会丢首字符） */
-    private RsaKey readTwoLineKeyFile(Path file, int version) throws Exception {
-        String privateB64 = null;
-        for (String line : Files.readAllLines(file, StandardCharsets.UTF_8)) {
-            if (line.startsWith("private=")) {
-                privateB64 = line.substring(8).trim();
-            }
-        }
-        if (privateB64 == null) {
-            return null;
-        }
-        KeyFactory factory = KeyFactory.getInstance("RSA");
-        java.security.PrivateKey privateKey = factory.generatePrivate(
-                new java.security.spec.PKCS8EncodedKeySpec(
-                        java.util.Base64.getMimeDecoder().decode(privateB64)));
-        return toRsaKey(version, privateKey);
     }
 
     private RsaKey toRsaKey(int version, java.security.PrivateKey privateKey) throws Exception {

@@ -878,13 +878,6 @@ public class GoalService {
         }
     }
 
-    /** 旧签名兼容（引擎在未传 failure 的路径调用）。 */
-    public void onTurnEnd(String sessionId, String userId, String turnId, long machineMs, int toolCalls,
-                          RunChannel channel, String answer, boolean turnHealthy, boolean stopped) {
-        onRoundSettled(sessionId, userId, turnId, machineMs, toolCalls, channel, answer,
-                turnHealthy, stopped, null);
-    }
-
     /**
      * 用户自己那一轮开跑时调用：后台目标轮还在飞就让位（用户优先），目标转暂停。
      * <p>没有在飞的目标轮就不动——目标在队列里等调度，不需要为用户的一句话让位。
@@ -935,11 +928,6 @@ public class GoalService {
             releaseLease(goal);
             emitState(goal, null);
         }
-    }
-
-    /** 旧签名兼容。 */
-    public void continueAfterTurn(String sessionId, String uid, String endedTurnId) {
-        onUserTurnEnd(sessionId, uid, endedTurnId);
     }
 
     /** 后台轮被用户打断/自行失败：目标转 PAUSED（不是终态——回来可续）。 */
@@ -1870,7 +1858,7 @@ public class GoalService {
         return v == null ? 0 : v;
     }
 
-    // ==================== 兼容/占位 ====================
+    // ==================== 小件 ====================
 
     private static String goalId(Goal goal) {
         return goal == null ? null : goal.getId();

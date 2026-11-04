@@ -93,7 +93,7 @@ public final class AuthCrypto {
      * 签发访问令牌（有效期 ttlSeconds；epoch=签发时的会话代数，写进 ep 声明）。
      * <p>会话治理判据在 {@code UserContextInterceptor}：令牌 ep 与用户当前代数不符即失效——
      * 改密 / 强制下线把代数 +1，此人所有已签发令牌（含其他设备）当场作废。
-     * 存量令牌没有 ep 声明，按代数 0 兼容：升级不踢人，安全动作才踢。
+     * 没有 ep 声明的令牌一律无效：本类只签发带 ep 的令牌。
      */
     public static String issueToken(String secret, String issuer, String audience,
                                     String uid, String role, long ttlSeconds, long epoch) {
