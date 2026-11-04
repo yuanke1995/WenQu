@@ -230,8 +230,8 @@
                   <arrows-alt-outlined v-else />
                 </button>
                 <button class="side-sec-op" title="新建工作区" @click.stop="openCreateSpace"><plus-outlined /></button>
-                <!-- 添加本机目录：选一台本机执行器上的目录作为工作区（目录在用户电脑上） -->
-                <button class="side-sec-op" title="添加本机目录" @click.stop="localWsOpen = true">
+                <!-- 添加本机目录：直接在那台电脑上弹系统目录选择框，选完即建工作区（多台/离线时才进对话框） -->
+                <button class="side-sec-op" title="添加本机目录" @click.stop="openLocalPicker">
                   <folder-open-outlined />
                 </button>
               </span>
@@ -494,7 +494,8 @@ import { PlusOutlined, MessageOutlined, RobotOutlined, FolderOutlined, BarChartO
 import { deleteSessionApi, logoutApi, renameSessionApi, pinSession, favoriteSession, batchDeleteSessionsApi,
          getMyMenuLayout, saveMyMenuLayout, setNewSessionProject,
          updateProject, deleteProject, createProject, setProjectStatus,
-         listProjects, moveSessionProject } from '../api'
+         listProjects, moveSessionProject,
+         listExecutors, pickExecutorDir, bindProjectExecutor } from '../api'
 import { useNotifications, notifIcon, notifClass, notifTime } from '../chat/useNotifications'
 import { saveLocalDirHandle } from '../chat/localDir'
 import { themeState, toggleTheme } from '../utils/theme'
@@ -1179,6 +1180,48 @@ const onLocalWsCreated = async id => {
   if (id) {
     setNewSessionProject(id)
     router.push('/project/' + id)
+  }
+}
+/** 添加本机目录：在线执行器只有一台时，直接在那台电脑上弹系统选择框，选完即建工作区；
+ *  没有在线执行器或不止一台时才打开对话框（选设备 / 逐层浏览 / 登记新电脑）。 */
+const openLocalPicker = async () => {
+  let online = []
+  try {
+    const r = await listExecutors()
+    online = ((r && r.data) || []).filter(d => d.online)
+  } catch (e) {
+    message.error('取执行器状态失败：' + (e.message || ''))
+    return
+  }
+  if (online.length !== 1) {
+    localWsOpen.value = true
+    return
+  }
+  const executor = online[0]
+  let picked
+  try {
+    picked = await pickExecutorDir(executor.id)
+  } catch (e) {
+    message.error('没有选到目录：' + (e.message || ''))
+    return
+  }
+  if (!picked || picked.success === false) {
+    const msg = String((picked && picked.msg) || '')
+    if (!/没有选择目录/.test(msg)) message.warning(msg || '没有选到目录')
+    return
+  }
+  const dir = (picked.data && picked.data.path) || ''
+  if (!dir) return
+  const name = dir.replace(/\/+$/, '').split('/').pop() || '本机工作区'
+  try {
+    const created = await createProject(name, undefined, 'local')
+    const id = (created && created.data && created.data.id) || ''
+    if (!id) throw new Error('创建工作区没有返回 id')
+    await bindProjectExecutor(id, executor.id, dir)
+    message.success(`已添加工作区「${name}」`)
+    await onLocalWsCreated(id)
+  } catch (e) {
+    message.error('添加失败：' + (e.message || ''))
   }
 }
 const createName = ref('')
