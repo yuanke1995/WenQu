@@ -26,7 +26,8 @@ import java.util.regex.Pattern;
  * 解决"存量表加列/加索引需手动 ALTER"的运维痛点——schema.sql 变更后老库启动即自动升级，
  * 避免新装库与存量库结构漂移。补列/补索引失败仅告警不阻塞启动（保证只读/降级场景可用）。
  * <p>
- * 边界：只做"增量补齐"，不改列类型、不删除或重建同名索引（避免误伤线上数据）；
+ * 边界：补列/补索引之外只做两类明确动作——租户列归一（历史 NULL 行会从行级过滤里消失）
+ * 与 {@link #RETIRED_COLUMNS} 白名单里的退役列删除；不改列类型、不删除或重建同名索引。
  * 同名索引若定义与 schema.sql 不一致只告警，需运维手工处理。
  * 大表补索引可能耗时较久，可用 ai-app.schema-auto-index=false 关闭索引自动补齐。
  */
@@ -50,6 +51,14 @@ public class SchemaMigrator implements ApplicationRunner {
     /** 非列定义行前缀（PRIMARY KEY / KEY / UNIQUE / 外键 / 全文索引等，列名均以反引号开头故不会误判） */
     private static final List<String> NON_COLUMN_PREFIX =
             List.of("PRIMARY", "KEY", "UNIQUE", "CONSTRAINT", "INDEX", "FULLTEXT", "FOREIGN", "--");
+
+    /** 已退役列（表 → 列）：存量库若还有就删；新库 schema.sql 已不再建这些列 */
+    private static final Map<String, List<String>> RETIRED_COLUMNS = Map.of(
+            "c_ai_goal", List.of("criteria_json", "constraints_json", "subject_version",
+                    "verifications_json", "contract_version", "state_revision",
+                    "budget_turns", "budget_tokens", "budget_tool_calls", "budget_minutes"),
+            "c_ai_user", List.of("role", "oidc_sub", "oidc_provider",
+                    "default_rerank_model", "default_vision_model"));
 
     private final JdbcTemplate jdbcTemplate;
 
@@ -111,18 +120,45 @@ public class SchemaMigrator implements ApplicationRunner {
         }
         int tenantFixed = normalizeTenantColumns();
         int scopeRenamed = migrateQuotaScope();
+        int retiredDropped = dropRetiredColumns();
         log.info("[SchemaMigrator] schema 演进检查完成：{} 张表，补列 {} 个，补索引 {} 个{}{}{}",
                 tables.size(), addedCols, addedIdx,
                 autoIndex ? "" : "（索引自动补齐已关闭）",
                 tenantFixed > 0 ? "，租户列归一 " + tenantFixed + " 张表" : "",
-                scopeRenamed > 0 ? "，配额作用域改名 " + scopeRenamed + " 条" : "");
+                scopeRenamed > 0 ? "，配额作用域改名 " + scopeRenamed + " 条" : "",
+                retiredDropped > 0 ? "，退役列删除 " + retiredDropped + " 个" : "");
+    }
+
+    /**
+     * 已退役但仍可能留在存量库里的列：删掉，不再让「旧结构」跟着库走。
+     * <p>列名来自已删除的实体/读写路径，schema.sql 也不再建；存量库若还有，删列是纯减法。
+     * 用 information_schema 先查再删，幂等；单列失败只告警，不阻塞其余列。
+     */
+    private int dropRetiredColumns() {
+        int dropped = 0;
+        for (Map.Entry<String, List<String>> e : RETIRED_COLUMNS.entrySet()) {
+            List<String> existing = queryColumns(e.getKey());
+            if (existing == null) continue;
+            for (String col : e.getValue()) {
+                if (!existing.contains(col)) continue;
+                try {
+                    jdbcTemplate.execute("ALTER TABLE `" + e.getKey() + "` DROP COLUMN `" + col + "`");
+                    dropped++;
+                    log.info("[SchemaMigrator] 已删除退役列 {}.{}", e.getKey(), col);
+                } catch (Exception ex) {
+                    log.warn("[SchemaMigrator] 删除退役列 {}.{} 失败（请手工处理）: {}",
+                            e.getKey(), col, ex.getMessage());
+                }
+            }
+        }
+        return dropped;
     }
 
     /**
      * 租户列归一（Phase 4 刀二）：把所有 {@code tenant_id} 统一成 {@code VARCHAR(32) NOT NULL DEFAULT 'default'}，
      * 并把历史 NULL 行回填成默认租户。
      *
-     * <p><b>为什么这是本类「只补不改」边界唯一的例外</b>：Phase 1/P3 那批表留的是可空占位列
+     * <p><b>为什么必须在这里改数据</b>：Phase 1/P3 那批表留的是可空占位列
      * （注释写着「Phase4 启用，当前 NULL」）。租户行级过滤一上线，读侧谓词就是 {@code tenant_id = 'default'}，
      * 而 SQL 里 {@code NULL = 'default'} 不为真 —— 那些行会<b>在界面上集体消失</b>。真机实测到两处：
      * 审计页 27 条变 0 条、内容安全规则读成空集＝<b>闸门静默失效</b>。这里改的不是类型，是「数据看不看得见」。

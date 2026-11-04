@@ -19,13 +19,13 @@ CREATE TABLE IF NOT EXISTS `c_ai_knowledge_base` (
     `icon`         VARCHAR(32)  DEFAULT NULL COMMENT '图标: wenqu=问渠品牌标 / emoji 字符; NULL=默认库图标（默认库恒为 wenqu 且不可修改，其余库空=默认库图标）',
     `query_params` TEXT         DEFAULT NULL COMMENT '检索参数(库级召回池: retrieval.vecThreshold/vectorWeight/keywordWeight + rerank.model; 空=继承全局)',
     `parse_params` TEXT         DEFAULT NULL COMMENT '解析参数(JSON: chunk.maxSize/overlap/maxChunks/maxImages/structural/structuralRatio/headingDepth + visionRef; 空=全部继承全局解析设置)',
-    `embedding_ref` VARCHAR(255) DEFAULT NULL COMMENT '本库绑定向量模型（引用 providerId/modelId；必填，迁移工具会把历史空值回填为退役前的全局 embedding.model）',
+    `embedding_ref` VARCHAR(255) DEFAULT NULL COMMENT '本库绑定向量模型（引用 providerId/modelId；必填）',
     `embedding_dimensions` INT DEFAULT NULL COMMENT '本库向量索引维度（绑定/切换向量模型重嵌后回写）',
     `graph_enabled` INT DEFAULT 0 COMMENT 'GraphRAG 开关（库级，默认关）: 1=解析后抽实体关系三元组，检索时一跳图扩展',
     `graph_model_ref` VARCHAR(255) DEFAULT NULL COMMENT 'GraphRAG 抽取模型（引用 providerId/modelId；归库主，判权按库主可用；空=回落库主个人默认聊天模型，再空则抽取 fail-loud）',
     `is_default`   INT          DEFAULT 0 COMMENT '是否个人默认库: 1=该归属人的默认库（问渠，每人一张、系统懒创建；未指定库的文档兜底归属）',
     `builtin`      INT          DEFAULT 0 COMMENT '官方内置库: 1=系统随版本同步的内置知识库（如问渠使用手册；全员只读、不接受上传/编辑/删除，内容按源文件指纹增量重建）',
-    `created_by`   VARCHAR(64)  DEFAULT NULL COMMENT '创建人（登录用户 uid；未登录为 anonymous）',
+    `created_by`   VARCHAR(64)  DEFAULT NULL COMMENT '创建人（登录用户 uid；系统内置为 system）',
     `create_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     `deleted`      INT          DEFAULT 0 COMMENT '逻辑删除: 0=未删除, 1=已删除',
@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_document` (
     `vision_ref`   VARCHAR(255) DEFAULT NULL COMMENT '文档级视觉模型覆盖（上传时指定，引用 providerId/modelId；空=跟随知识库。对本文档所有图片理解生效）',
     `tags`         VARCHAR(500) DEFAULT NULL COMMENT '文档标签（逗号分隔，如 部门A,合同,2026；空=无标签。供智能体检索标签收窄与文档筛选用）',
     `version`      INT          DEFAULT 0 COMMENT '版本号（每次解析+1，用于版本管理）',
-    `created_by`   VARCHAR(64)  DEFAULT NULL COMMENT '创建人（登录用户 uid；未登录为 anonymous）',
+    `created_by`   VARCHAR(64)  DEFAULT NULL COMMENT '创建人（登录用户 uid；系统内置为 system）',
     `create_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     `auto_refresh`    INT          DEFAULT 0 COMMENT '网页源自动刷新: 0=关闭 1=开启（仅 file_type=url 生效）',
@@ -183,14 +183,14 @@ CREATE TABLE IF NOT EXISTS `c_ai_user_config` (
 CREATE TABLE IF NOT EXISTS `c_ai_session` (
     `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`            VARCHAR(50)  NOT NULL COMMENT '主键ID (UUID无横线)',
-    `user_id`       VARCHAR(64)  NOT NULL DEFAULT 'anonymous' COMMENT '归属用户（登录用户 uid；anonymous=历史兼容池全局可见）',
+    `user_id`       VARCHAR(64)  NOT NULL DEFAULT 'system' COMMENT '归属用户（登录用户 uid；system=无真实用户身份）',
     `title`         VARCHAR(200) DEFAULT NULL COMMENT '会话标题 (取自首条用户问题)',
     `message_count` INT          DEFAULT 0 COMMENT '消息条数',
     `is_pinned`     INT          DEFAULT 0 COMMENT '置顶: 0=否, 1=是',
     `is_favorite`   INT          DEFAULT 0 COMMENT '收藏: 0=否, 1=是',
     `agent_id`      VARCHAR(50)  DEFAULT NULL COMMENT '最近一次作答的智能体（P5：不再是会话锁定值，每轮按请求重新解析；供分享页按智能体列会话与访客会话回收使用）',
     `agent_name`    VARCHAR(100) DEFAULT NULL COMMENT '绑定时的智能体名称快照（智能体改名/删除后会话仍可展示原名称）',
-    `model`         VARCHAR(190) DEFAULT NULL COMMENT '会话级模型覆盖（聊天页手动切换模型时写入，引用或遗留名；NULL=跟随个人默认）',
+    `model`         VARCHAR(190) DEFAULT NULL COMMENT '会话级模型覆盖（聊天页手动切换模型时写入，引用 providerId/modelId；NULL=跟随个人默认）',
     `context_window` INT          DEFAULT NULL COMMENT '会话级上下文窗口档（token，聊天页手动改档位时写入；NULL=没选过，按模型登记上限走）。框架的压缩阈值与输入上限都由它推导，故改动会在下一轮重建常驻实例',
     `history_summary`   MEDIUMTEXT DEFAULT NULL COMMENT '滚动历史摘要（上下文压缩：更早轮次压缩后的摘要，注入 prompt 的「早期对话摘要」段；NULL=未压缩过）',
     `summary_until_seq` BIGINT     DEFAULT 0 COMMENT '摘要已覆盖的消息条数（压缩由 AgentScope 框架执行，问渠只在压缩完成后把摘要与这一计数落一份，供「已压缩上下文」那条线的「查看摘要」读；0=本会话从没压过）',
@@ -199,7 +199,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_session` (
     `update_time`   DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     `deleted`       INT          DEFAULT 0 COMMENT '逻辑删除: 0=未删除, 1=已删除',
     `kind`          VARCHAR(16)  NOT NULL DEFAULT 'chat' COMMENT '会话种类：chat=用户发起的对话（进会话列表）；temp=平台内部临时会话（子智能体分支、工作流子智能体节点各跑一整轮，跑完即删），既不出现在会话列表也不参与「新建对话」的空会话复用',
-    `project_id`    VARCHAR(64)  DEFAULT NULL COMMENT '所属工作区（c_ai_project.id；NULL=没挂工作区，存量行为此值。可空是一等状态：所有读路径都必须容忍 NULL，不按时间/文件名猜测回填）',
+    `project_id`    VARCHAR(64)  DEFAULT NULL COMMENT '所属工作区（c_ai_project.id；NULL=没挂工作区。可空是一等状态：所有读路径都必须容忍 NULL，不按时间/文件名猜测回填）',
     PRIMARY KEY (`id`),
     KEY `idx_deleted_update` (`deleted`, `update_time` DESC),
     KEY `idx_user_update` (`user_id`, `deleted`, `update_time` DESC),
@@ -224,7 +224,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_message` (
     `timeline`    TEXT         DEFAULT NULL COMMENT '回答时间线 (JSON数组：正文区间段 / 过程区间段 / 工具下标段 / 产物下标段，记录交错顺序，刷新后还原过程视图)',
     `process_text` TEXT        DEFAULT NULL COMMENT '过程独白全文 (<process> 标签内的模型思考叙述，与正文分流；时间线 process 段区间指向本字段)',
     `tokens`      TEXT         DEFAULT NULL COMMENT '本轮运行统计 (JSON: context/budget/hits/output/prompt/outputIsReal/total/thinkingChars; compacted=这一轮内框架自动压缩过上下文，「已压缩上下文」分隔线只认这一个键; turnElapsedMs=这一轮机器耗时即墙钟扣掉人在回路、humanWaitMs=其中被等你读卡答题盖住的时长且只在真等过时才写) —— 气泡顶部那条整轮耗时读这两个键，不落库则刷新即没数',
-    `model`       VARCHAR(190) DEFAULT NULL COMMENT '本轮生效模型引用（助手消息落库；用量统计按模型分组的依据，存量行为 NULL 归入未知）',
+    `model`       VARCHAR(190) DEFAULT NULL COMMENT '本轮生效模型引用（助手消息落库；用量统计按模型分组的依据，NULL 归入未知）',
     `attachments` TEXT         DEFAULT NULL COMMENT '附件元信息 (JSON数组: [{name,mime,size}]，不含内容本体)',
     `agent_id`    VARCHAR(50)  DEFAULT NULL COMMENT '本轮生效的智能体（取自会话级绑定的当轮快照；NULL=未使用智能体）',
     `agent_name`  VARCHAR(100) DEFAULT NULL COMMENT '本轮智能体名称快照（智能体改名/删除后历史消息仍可展示原名称）',
@@ -234,7 +234,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_message` (
     `history_refs` TEXT         DEFAULT NULL COMMENT '# 历史引用 (JSON数组字符串: [{messageId,role,content}])；用户消息常驻标注，刷新/历史回显均保留',
     `plan`        TEXT         DEFAULT NULL COMMENT '计划批准卡 (JSON: {plan,status=approved|rejected})；助手消息落库，刷新/历史按轮重建执行计划卡；NULL=本轮未走计划模式',
     `goal_command` VARCHAR(64) DEFAULT NULL COMMENT '目标指令回声（值=目标 id）：这条**用户提问**是把一件事设为目标，气泡上挂命令标注、不挂普通消息动作。目标行只留「什么时候定的什么目标」；NULL=普通提问',
-    `turn_id`     VARCHAR(64)  DEFAULT NULL COMMENT '本轮身份（一问一答共用一个 turnId，与 c_ai_session_event.turn_id 同源）；消息→事件账本的关联键，逐气泡「过程回放」靠它。存量行为 NULL=该轮没有过程记录可回放',
+    `turn_id`     VARCHAR(64)  DEFAULT NULL COMMENT '本轮身份（一问一答共用一个 turnId，与 c_ai_session_event.turn_id 同源）；消息→事件账本的关联键，逐气泡「过程回放」靠它。NULL=该轮没有过程记录可回放',
     `end_reason`  VARCHAR(16)  DEFAULT NULL COMMENT '本轮终止原因（记在**用户提问**上）：stopped=用户叫停且本轮没产出任何回答。刻意不落一条「已停止」的空回答——空的回答留在对话里比不留更碍眼；「这一问没有回答」本就是那一问的事实',
     `fail_msg`    TEXT         DEFAULT NULL COMMENT '本轮失败原因（最后一条 error 帧原文）：有回答挂在回答上，什么都没产出挂在那一问上。只随流下发一次时用户当场看见的「模型不可用/额度不足/被拒绝」刷新即蒸发，而这一轮确实没答出来。NULL=本轮没失败',
     `sequence`    INT          NOT NULL DEFAULT 0 COMMENT '消息序号 (会话内递增)',
@@ -260,7 +260,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_qa_log` (
     `hit_doc_ids`     VARCHAR(1000) DEFAULT NULL COMMENT '命中文档ID列表(逗号分隔)',
     `has_citation`    INT          DEFAULT 0 COMMENT '是否有引用标注',
     `elapsed_ms`      INT          DEFAULT 0 COMMENT '回答耗时(ms)',
-    `message_id`      VARCHAR(50)  DEFAULT NULL COMMENT 'P1：本轮回答消息ID（trace 详情还原 toolCalls/sources/tokens 的关联键；存量行为 NULL）',
+    `message_id`      VARCHAR(50)  DEFAULT NULL COMMENT 'P1：本轮回答消息ID（trace 详情还原 toolCalls/sources/tokens 的关联键；NULL=无关联）',
     `agent_id`        VARCHAR(50)  DEFAULT NULL COMMENT 'P1：本轮生效智能体ID（trace 按智能体筛选；未用智能体为 NULL）',
     `created_at`      DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     PRIMARY KEY (`id`),
@@ -326,12 +326,12 @@ CREATE TABLE IF NOT EXISTS `c_ai_api_key` (
     `name`         VARCHAR(200) DEFAULT NULL COMMENT '用途名称（如"报表系统集成"）',
     `key_hash`     VARCHAR(64)  NOT NULL COMMENT 'Key 的 SHA-256 哈希（十六进制小写；请求校验凭据）',
     `key_prefix`   VARCHAR(32)  DEFAULT NULL COMMENT '明文前缀（列表展示用）',
-    `key_cipher`   TEXT         DEFAULT NULL COMMENT 'Key 明文的 JWE 密文（部署密钥加密保管，列表「眼睛」回显/复制用；与模型供应商 api_key 同一套加密。NULL=签发于回显功能上线前的存量 Key，不可回显）',
+    `key_cipher`   TEXT         DEFAULT NULL COMMENT 'Key 明文的 JWE 密文（部署密钥加密保管，列表「眼睛」回显/复制用；与模型供应商 api_key 同一套加密。NULL=无密文，不可回显）',
     `disabled`     INT          DEFAULT 0 COMMENT '是否停用: 0=启用, 1=停用（吊销）',
     `mcp_enabled`  INT          DEFAULT 0 COMMENT 'MCP 端点: 1=该 Key 可访问平台级 MCP 入口 /ai/mcp（元工具集），0=不可',
     `expire_at`    DATETIME     DEFAULT NULL COMMENT '过期时间（NULL=长期有效）',
     `last_used_at` DATETIME     DEFAULT NULL COMMENT '最近使用时间',
-    `act_as_uid`   VARCHAR(64)  DEFAULT NULL COMMENT '恒为签发人本人（2026-11-02 定稿：Key 以谁签发的身份发问，不支持指定/改绑别人；NULL=存量未绑定旧 Key，问答链路拒绝，编辑传签发人 uid 可补齐）',
+    `act_as_uid`   VARCHAR(64)  DEFAULT NULL COMMENT '恒为签发人本人（Key 以谁签发的身份发问，不支持指定/改绑别人）',
     `created_by`   VARCHAR(64)  DEFAULT NULL COMMENT '创建人',
     `create_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     `update_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
@@ -351,7 +351,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_agent` (
     `name`            VARCHAR(200) NOT NULL COMMENT '智能体名称',
     `icon`            VARCHAR(32)  DEFAULT NULL COMMENT '图标: wenqu=问渠品牌标 / emoji 字符; NULL=默认展示（内置「问渠」默认用问渠品牌标，其余用机器人图标）',
     `description`     VARCHAR(500) DEFAULT NULL COMMENT '描述',
-    `created_by`   VARCHAR(64)  DEFAULT NULL COMMENT '创建人（登录用户 uid；未登录为 anonymous）',
+    `created_by`   VARCHAR(64)  DEFAULT NULL COMMENT '创建人（登录用户 uid；系统内置为 system）',
     `query_params` TEXT         DEFAULT NULL COMMENT '检索开关覆盖(JSON: {"rerank.enabled":"false"}; 空=继承全局; 阈值/权重/召回量归知识库或全局)',
     `system_prompt`   TEXT         DEFAULT NULL COMMENT '系统提示词覆盖（空=继承全局）',
     `knowledge_scope` VARCHAR(2000) DEFAULT NULL COMMENT '知识库范围：all 或 文档ID逗号分隔（空=all）',
@@ -406,7 +406,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_agent_version` (
 -- ============================================
 -- 2026-09-16: 多用户协作（用户 + 部门；资源按创建者隔离，谁建归谁）
 -- c_ai_user 存画像/归属与登录凭据（密码哈希加盐存储）；鉴权由本服务本地登录（JWT）完成。
--- 用户由管理员在「成员管理」建档；未登录请求归属 anonymous（与会话兼容池同理）。
+-- 用户由管理员在「成员管理」建档；无请求身份记为 system（非登录账号，不拥有业务资源）。
 -- ============================================
 
 CREATE TABLE IF NOT EXISTS `c_ai_department` (
@@ -432,15 +432,12 @@ CREATE TABLE IF NOT EXISTS `c_ai_user` (
     `password_hash` VARCHAR(255) DEFAULT NULL COMMENT '密码哈希（PBKDF2；空=未设置，不能本地登录）',
     `login_fail_count` INT      DEFAULT 0 COMMENT '连续登录失败次数',
     `locked_until` DATETIME     DEFAULT NULL COMMENT '锁定至（失败过多时；空=未锁定）',
-    `token_epoch`  BIGINT       DEFAULT 0 COMMENT '会话代数（会话治理）：改密/管理员强制下线时 +1，已签发令牌的 ep 声明与代数不符即全端失效；存量令牌无 ep 声明按代数 0 兼容',
+    `token_epoch`  BIGINT       DEFAULT 0 COMMENT '会话代数（会话治理）：改密/管理员强制下线时 +1，已签发令牌的 ep 声明与代数不符即全端失效',
     `last_login_time` DATETIME  DEFAULT NULL COMMENT '最近一次登录成功时间（本地登录与 SSO 回调均记；空=从未登录）',
     `default_model` VARCHAR(255) DEFAULT NULL COMMENT '个人默认聊天模型（引用 providerId/modelId；空=不设默认，对话时手动选择）',
-    `memory_enabled` INT DEFAULT 1 COMMENT '用户级长期记忆自动提炼开关（个人设置可改）: 1=开, 0=关；历史行加列时按默认 1（保持原行为）',
-    -- role / oidc_sub / oidc_provider 三列已随统一身份模型退役（2026-10-26）：
-    -- 角色 → c_ai_user_role（多角色），外部身份 → c_ai_user_identity（多认证源绑定）；
-    -- 新库不再建，存量残留列需运维手工 ALTER 下线（role 是 NOT NULL，残留会让建号失败）。
-    -- default_rerank_model 已随「重排归知识库检索设置」退役（存量库该列无害保留）
-    -- default_vision_model 已随「聊天图片理解只看模型能力位」下线（存量库该列无害保留）
+    `memory_enabled` INT DEFAULT 1 COMMENT '用户级长期记忆自动提炼开关（个人设置可改）: 1=开, 0=关',
+    -- 角色见 c_ai_user_role（多角色），外部身份见 c_ai_user_identity（多认证源绑定）；本表不存 role/oidc_* 列。
+    -- 重排模型归知识库检索设置、图片理解只看模型能力位；本表不存 default_rerank_model/default_vision_model 列。
     `menu_pref`    TEXT        DEFAULT NULL COMMENT '个人侧栏偏好 JSON：{"order":[menuId...],"hidden":[menuId...]}。仅重排/隐藏「本人有权看到」的菜单，不越权；空=未自定义（走菜单表默认顺序与显隐）',
     `avatar`       VARCHAR(512) DEFAULT NULL COMMENT '用户头像：空=昵称首字；emoji=表情头像；以 / 开头=上传图片 URL（/ai/images/avatar/...）',
     `create_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -451,16 +448,15 @@ CREATE TABLE IF NOT EXISTS `c_ai_user` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 用户表（画像/归属 + 本地登录凭据）';
 
 -- ============================================
--- 2026-10：OIDC 多认证源（多 IdP）——旧表 c_ai_oidc_provider 已随统一身份模型退役（2026-10-26）：
--- 认证源统一登记在 c_ai_identity_provider(type='oidc')，协议参数收纳进 config JSON。
--- 存量库的一次性桥接与旧表删除已完成，对应启动钩子已退役；仍带旧表/旧列的库需手工迁移。
+-- 2026-10：OIDC 多认证源（多 IdP）——认证源统一登记在 c_ai_identity_provider(type='oidc')，
+-- 协议参数收纳进 config JSON。旧表 c_ai_oidc_provider 由文件末尾的退役清理删除。
 -- ============================================
 
 -- ============================================
 -- 2026-09-25: 模型供应商管理（多供应商 + 模型库分类型）
 -- 供应商 = OpenAI 兼容网关（baseUrl + apiKey + 路径覆盖）；模型库按类型（chat/vision/embedding/rerank/other）
 -- 分类登记。模型引用格式 `{providerId}/{modelId}` 贯穿 chat.model / agent.model / 用户偏好等所有存模型处；
--- 遗留纯模型名仍按全局 chat.* 网关解析（兼容存量数据）。
+-- 模型一律以该引用格式登记，裸模型名不参与路由。
 -- ============================================
 
 CREATE TABLE IF NOT EXISTS `c_ai_provider` (
@@ -476,7 +472,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_provider` (
     `remark`           VARCHAR(255) DEFAULT NULL COMMENT '备注',
     `sort_order`       INT          DEFAULT 0 COMMENT '排序（小在前）',
     `created_by`       VARCHAR(64)  DEFAULT NULL COMMENT '创建人 uid',
-    `owner_uid`        VARCHAR(64)  DEFAULT NULL COMMENT '归属用户：谁建归谁（仅归属人可见可用，2026-10，不存在平台共享）；历史遗留空值=无主行，启动回填',
+    `owner_uid`        VARCHAR(64)  DEFAULT NULL COMMENT '归属用户：谁建归谁（仅归属人可见可用，不存在平台共享）',
     `quota_status`     VARCHAR(16)  DEFAULT NULL COMMENT '额度状态: NULL=正常 exhausted=额度不足（余额耗尽/配额用尽/套餐到期）。纯被动：真实调用失败时登记，任一次成功调用即清除',
     `quota_message`    VARCHAR(512) DEFAULT NULL COMMENT '额度异常原因（网关返回原文摘要，供界面与通知展示；正常时 NULL）',
     `quota_model_id`   VARCHAR(255) DEFAULT NULL COMMENT '触发额度不足的模型名（裸模型名，不含 providerId 前缀；正常时 NULL）',
@@ -704,7 +700,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_project` (
     `instructions`     TEXT         DEFAULT NULL COMMENT '工作区约定：写一次即对该工作区**所有会话**生效（每轮注入 system prompt 的工作背景段）。这是「工作区」与「分类标签」的分界——没有它，每条对话都得重新交代背景',
     `default_agent_id` VARCHAR(50)  DEFAULT NULL COMMENT '工作区默认助手：会话归属该工作区且用户没显式选助手时用它作答，其知识库范围随助手生效（工作区因此有自己的资料域）',
     `kb_ids`           VARCHAR(512) DEFAULT NULL COMMENT '工作区绑定知识库（逗号分隔，c_ai_knowledge_base.id；空=不收窄）。这是**默认检索域**不是权限墙：本区会话没有显式域（助手未绑库且未 @ 库）时只搜这些库，@ 提及其他库仍可越出（显式动作优先于默认值），助手绑定的库也优先于它',
-    `shared_workdir`   INT          NOT NULL DEFAULT 0 COMMENT '共用工作目录: 1=本工作区所有会话的沙盒挂 projects/{id}（跨会话互见文件、上传的材料模型直接可读）0=各会话各自 sessions/{会话}。存量行与 implicit 兜底容器一律 0（不共享），只有 create() 显式给新建工作区置 1；另受全局总闸 sandbox.projectWorkdirEnabled 约束（应急时一键全退回会话级）',
+    `shared_workdir`   INT          NOT NULL DEFAULT 0 COMMENT '共用工作目录: 1=本工作区所有会话的沙盒挂 projects/{id}（跨会话互见文件、上传的材料模型直接可读）0=各会话各自 sessions/{会话}。只有 create() 显式给新建工作区置 1；另受全局总闸 sandbox.projectWorkdirEnabled 约束（应急时一键全退回会话级）',
     `memory_isolated`  INT          NOT NULL DEFAULT 0 COMMENT '记忆隔离: 1=本区会话是「干净房间」——不注入本人已沉淀的个人记忆（MEMORY.md/记忆工具全关），也不往里写；工作区的上下文由约定+绑定资料域+目录文件承担。0=照常共用个人记忆。给敏感项目/客户现场一个不串味的场子',
     `status`           VARCHAR(20)  NOT NULL DEFAULT 'active' COMMENT 'active=正常 / archived=归档（只读保留，二期）',
     `deleted`          INT          NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0=正常, 1=已删除（删工作区不删其下会话与产物，只把它们的 project_id 置 NULL）',
@@ -815,7 +811,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_tool_approval` (
     `session_id`   VARCHAR(50)   DEFAULT NULL COMMENT '归属会话',
     `user_id`      VARCHAR(64)   DEFAULT NULL COMMENT '发起问答的用户（仅本人可裁决）',
     `tool_name`    VARCHAR(100)  DEFAULT NULL COMMENT '挂的是哪张卡：审批类=工具名、提问类=askUser、计划类=planApproval。三类各有各的超时窗口，遗留清理按它分开收（缺这一列整条清理静默失败，只剩一行 WARN）',
-    `turn_id`      VARCHAR(64)   DEFAULT NULL COMMENT '归属轮次（与 c_ai_message.turn_id 同源）：断线重连时把卡片挂回它自己那一轮；补列前的存量记录与工作流画布的审批为 NULL（没有问答轮次可言），前端按原口径处理不猜轮次',
+    `turn_id`      VARCHAR(64)   DEFAULT NULL COMMENT '归属轮次（与 c_ai_message.turn_id 同源）：断线重连时把卡片挂回它自己那一轮；NULL=无问答轮次',
     `status`       VARCHAR(16)   NOT NULL DEFAULT 'PENDING' COMMENT '状态: PENDING/APPROVED/REJECTED/TIMEOUT/STOPPED(用户叫停本轮)/INTERRUPTED(无人查看宽限中止)/REVISED/SUPERSEDED(计划版本链)',
     `request_args` TEXT          DEFAULT NULL COMMENT '工具入参摘要（审批类截 2000 字符；计划类存 {plan} JSON、提问类存 {questions} JSON，一份多步计划常态超 2000 字，故整列放宽成 TEXT）',
     `answer`       TEXT          DEFAULT NULL COMMENT '裁决内容：提问类（askUser）记录存用户所选/输入的答案；超时/忽略不代答时落给模型的「未作答」说明',
@@ -840,20 +836,11 @@ CREATE TABLE IF NOT EXISTS `c_ai_goal` (
     `user_id`           VARCHAR(64)  DEFAULT NULL COMMENT '发起用户（仅本人可操作）',
     `agent_id`          VARCHAR(50)  DEFAULT NULL COMMENT '发起时绑定的智能体（换智能体即换实例，目标照旧）',
     `objective`         VARCHAR(4000) NOT NULL COMMENT '目标原文（续跑提示词逐字带上；产品上限 4000）',
-    -- 下面四列是上一版「验收标准/验证」范式的遗留（2026-10-22 退役）：不再读写，存量库保留不删
-    `criteria_json`     JSON         DEFAULT NULL COMMENT '【已退役】旧的验收标准快照',
-    `constraints_json`  JSON         DEFAULT NULL COMMENT '【已退役】旧的约束快照',
-    `subject_version`   VARCHAR(2000) DEFAULT NULL COMMENT '【已退役】旧的工件指纹',
-    `verifications_json` JSON        DEFAULT NULL COMMENT '【已退役】旧的验证记录',
-    `status`            VARCHAR(32)  NOT NULL DEFAULT 'PAUSED' COMMENT '阶段: RUNNING=自动推进/PAUSED=停下可继续/ACHIEVED=已完成/CANCELLED=已删除（老行其余状态读取时归一）',
-    -- 预算四列（budget_turns/budget_tokens/budget_tool_calls/budget_minutes）已退役（2026-10-21）；
-    -- 存量库里的列留着不删（无读取方，删列是不可逆动作，交给运维窗口）
+    `status`            VARCHAR(32)  NOT NULL DEFAULT 'PAUSED' COMMENT '阶段: RUNNING=自动推进/PAUSED=停下可继续/ACHIEVED=已完成/CANCELLED=已删除',
     `used_turns`        INT          NOT NULL DEFAULT 0 COMMENT '目标区间内的问答轮数（含用户插话轮）',
     `used_tokens`       BIGINT       NOT NULL DEFAULT 0 COMMENT '已用 token（按 c_ai_usage_log 聚合）',
     `used_tool_calls`   INT          NOT NULL DEFAULT 0 COMMENT '已用工具调用（按目标区间累计）',
     `used_ms`           BIGINT       NOT NULL DEFAULT 0 COMMENT '已用机器毫秒（每轮 machineMs 累计）',
-    `contract_version`  BIGINT       NOT NULL DEFAULT 0 COMMENT '【已退役】框架 contractVersion 水位',
-    `state_revision`    BIGINT       NOT NULL DEFAULT 0 COMMENT '【已退役】框架 TaskContextState.revision 水位',
     `first_turn_id`     VARCHAR(64)  DEFAULT NULL COMMENT '目标覆盖的首轮（过程面板按它聚合）',
     `last_turn_id`      VARCHAR(64)  DEFAULT NULL COMMENT '目标覆盖的末轮',
     `turn_counter`      INT          NOT NULL DEFAULT 0 COMMENT '自动续跑已起的轮数（幂等键 goal:{id}:{n} 的 n）',
@@ -1178,7 +1165,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_usage_log` (
     `uid`               VARCHAR(64)  DEFAULT NULL COMMENT '归属用户（NULL=无用户上下文的系统调用：索引/评测/探测等）',
     `session_id`        VARCHAR(64)  DEFAULT NULL COMMENT '触发该次调用的会话（可空）',
     `message_id`        VARCHAR(64)  DEFAULT NULL COMMENT '触发该次调用的回答消息（可空：调用先于消息落库或无归属回答）',
-    `model`             VARCHAR(190) DEFAULT NULL COMMENT '模型引用 providerId/modelId（迁移前遗留名原样）',
+    `model`             VARCHAR(190) DEFAULT NULL COMMENT '模型引用 providerId/modelId',
     `kind`              VARCHAR(32)  NOT NULL DEFAULT 'chat' COMMENT '调用用途: chat=问答主链路 subagent=子智能体分支 memory=记忆提取 compress=历史压缩 citecheck=引用自检 workflow=工作流节点 graphrag=图谱 index=索引 probe=探测 eval=评测 other',
     `prompt_tokens`     BIGINT       NOT NULL DEFAULT 0 COMMENT '输入 token（含缓存命中部分，与网关 usage.prompt_tokens 同口径）',
     `completion_tokens` BIGINT       NOT NULL DEFAULT 0 COMMENT '输出 token（含思考过程与工具调用参数生成）',
@@ -1398,6 +1385,8 @@ DELETE FROM `c_ai_config` WHERE `config_key` IN (
 -- 建表定义已从本文件删除；这里对存量库补一次 DROP（幂等，口径同上面的 DELETE 名单：开发期直接覆盖，不留旧副本）。
 DROP TABLE IF EXISTS `c_ai_answer_cache`;
 DROP TABLE IF EXISTS `c_ai_knowledge_ref`;
+-- 统一身份模型之后，OIDC 认证源只存 c_ai_identity_provider(type='oidc')；旧专用表不再保留。
+DROP TABLE IF EXISTS `c_ai_oidc_provider`;
 
 DELETE FROM `c_ai_user_config` WHERE `config_key` IN (
     'parse.qaModel', 'graphrag.modelRef', 'memory.embeddingRef', 'rerank.model',
@@ -1408,6 +1397,33 @@ DELETE FROM `c_ai_user_config` WHERE `config_key` IN (
     -- 技能停用只剩平台一层：成员那份个人清单不再被 WenquSkillRepository 合并
     'skill.disabled'
 );
+
+-- 死数据清理：缺代表账号的旧 API Key 不能问答，也没有任何可用路径，直接删。
+-- （只缺明文密文的 Key 仍可正常调用，保留；只是列表不能回显。）
+DELETE FROM `c_ai_api_key`
+WHERE `act_as_uid` IS NULL OR `act_as_uid` = '';
+
+-- 旧 MCP 工具名前缀 w_q_ → 现行 wen_qu_（只改 name 字段，不动 result 里的历史文本）。
+UPDATE `c_ai_message`
+SET `tool_calls` = REGEXP_REPLACE(`tool_calls`,
+        '("name"[[:space:]]*:[[:space:]]*)"w_q_', '$1"wen_qu_')
+WHERE `tool_calls` LIKE '%w_q_%';
+
+-- 匿名会话池退役：未登录身份不再落会话，旧池连同其消息/事件/审批/QA 日志一并清掉。
+ALTER TABLE `c_ai_session` ALTER COLUMN `user_id` SET DEFAULT 'system';
+DELETE FROM `c_ai_session_event`
+WHERE `session_id` IN (SELECT `id` FROM `c_ai_session` WHERE `user_id` = 'anonymous');
+DELETE FROM `c_ai_tool_approval`
+WHERE `session_id` IN (SELECT `id` FROM `c_ai_session` WHERE `user_id` = 'anonymous');
+DELETE FROM `c_ai_qa_log`
+WHERE `session_id` IN (SELECT `id` FROM `c_ai_session` WHERE `user_id` = 'anonymous');
+DELETE FROM `c_ai_usage_log`
+WHERE `session_id` IN (SELECT `id` FROM `c_ai_session` WHERE `user_id` = 'anonymous');
+DELETE FROM `c_ai_session_share`
+WHERE `session_id` IN (SELECT `id` FROM `c_ai_session` WHERE `user_id` = 'anonymous');
+DELETE FROM `c_ai_message`
+WHERE `session_id` IN (SELECT `id` FROM `c_ai_session` WHERE `user_id` = 'anonymous');
+DELETE FROM `c_ai_session` WHERE `user_id` = 'anonymous';
 
 -- ============================================
 -- 2026-10-26: Web Push 订阅（站内通知推到浏览器系统级通知）
