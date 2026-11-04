@@ -243,8 +243,7 @@
                           <code v-if="toolBrief(lr.t)" class="tl-live-brief">{{ toolBrief(lr.t) }}</code>
                           <NoteTag v-for="(nn, ni) in lr.notes || []" :key="'n' + ni" :m="m" :note="nn" />
                           <span v-if="lr.t.denied" class="tl-live-dur" title="被守卫挡下，没有真正执行">被挡下</span>
-                          <span v-else-if="lr.t.status === 'start'" class="tl-live-dur is-run">进行中</span>
-                          <span v-else-if="lr.t.elapsedMs != null" class="tl-live-dur">{{ toolDuration(Number(lr.t.elapsedMs) || 0) }}</span>
+                          <span v-else-if="lr.t.status !== 'start' && lr.t.elapsedMs != null" class="tl-live-dur">{{ toolDuration(Number(lr.t.elapsedMs) || 0) }}</span>
                         </div>
                         <!-- 还没换来工具的尾部思考/独白：它就是「当前这一步」，自成一节、按在跑的样式高亮 -->
                         <div v-else class="tl-live-row run">
@@ -4343,7 +4342,6 @@ onMounted(async () => {
 .tl-live-row.off .tl-live-name { color: var(--app-text3); }
 .tl-live-brief { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--app-text3); background: none; padding: 0; }
 .tl-live-dur { flex: none; font-size: 11px; color: var(--app-text3); font-variant-numeric: tabular-nums; }
-.tl-live-dur.is-run { color: var(--app-accent); }
 /* 簇内＝一行一步的紧凑清单：卡片去描边去卡底、行首补序号、整簇共一条左轨。
    簇外的工具组仍是原来的描边卡——那是一步插在正文之间，不是一串清单，收掉描边反而读不出边界。 */
 .tl-group.inCluster { margin: 0 0 0 12px; }

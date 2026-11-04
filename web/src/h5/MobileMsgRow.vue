@@ -127,8 +127,7 @@
                     <code v-if="toolBrief(lr.t)" class="live-brief">{{ toolBrief(lr.t) }}</code>
                     <NoteTag v-for="(nn, ni) in lr.notes || []" :key="'n' + ni" :m="m" :note="nn" />
                     <span v-if="lr.t.denied" class="live-dur">被挡下</span>
-                    <span v-else-if="lr.t.status === 'start'" class="live-dur is-run">进行中</span>
-                    <span v-else-if="lr.t.elapsedMs != null" class="live-dur">{{ toolDuration(Number(lr.t.elapsedMs) || 0) }}</span>
+                    <span v-else-if="lr.t.status !== 'start' && lr.t.elapsedMs != null" class="live-dur">{{ toolDuration(Number(lr.t.elapsedMs) || 0) }}</span>
                   </div>
                   <div v-else class="live-row run">
                     <span class="live-idx"></span>
@@ -603,7 +602,6 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
 .live-row.off .live-name { color: var(--app-text3); }
 .live-brief { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--app-text3); background: none; padding: 0; }
 .live-dur { flex: none; font-size: 11px; color: var(--app-text3); font-variant-numeric: tabular-nums; }
-.live-dur.is-run { color: var(--app-accent); }
 .tl-group { display: flex; flex-direction: column; gap: 6px; }
 .tl-group.inCluster { margin-left: 12px; }
 .tl-group.inCluster .tl-group-body { gap: 0; padding: 0 0 0 8px; border-left: 2px solid var(--app-border); }
