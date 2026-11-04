@@ -1,5 +1,5 @@
 <template>
-  <a-modal :open="open" title="选择工作区目录" :footer="null" width="580"
+  <a-modal :open="open" title="选择工作区目录" :footer="null" :width="580"
            @cancel="close">
     <div class="lwd">
       <!-- 这台电脑：执行器设备 -->
