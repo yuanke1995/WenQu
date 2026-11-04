@@ -3,7 +3,7 @@
  * 问渠本机执行器：只负责执行，不拿知识库、不拿模型 Key。
  *
  * 用法：
- *   node scripts/local-agent/wenqu-agent.mjs --server http://127.0.0.1:8090/ai --token <设备令牌> --dir ~/proj
+ *   node scripts/local-agent/wenqu-agent.mjs --server http://127.0.0.1:8090/ai --token <设备令牌> [--root ~]
  *
  * 可选：
  *   --yes            写文件/跑命令不再逐次确认（自动化用；默认每次确认）
@@ -11,7 +11,7 @@
  *   --timeout <秒>   单次轮询挂起时长（默认 25）
  *
  * 约束：
- *   - 每次调用只允许落在 --dir 指定的目录内（可多次给 --dir）；越界一律 E_PATH_OUTSIDE。
+ *   - --root 只是"浏览起点"（默认家目录；--root / 即整盘）；每次调用只允许落在本次工作区根内，越界一律 E_PATH_OUTSIDE。
  *   - 写文件走临时文件 + rename，避免写一半留下坏文件。
  */
 import fs from 'node:fs'
@@ -40,8 +40,11 @@ const TOKEN = arg('token', process.env.WENQU_EXECUTOR_TOKEN || '')
 const NAME = arg('name', os.hostname())
 const WAIT = Math.max(5, Math.min(30, Number(arg('timeout', '25')) || 25))
 const AUTO_YES = flag('yes')
-const ROOTS = (mult('dir').length ? mult('dir') : [process.cwd()])
-  .map(d => path.resolve(d.replace(/^~(?=$|\/)/, os.homedir())))
+/** 浏览与执行的起点（默认家目录；`--root /` 即整盘）。
+ *  与 DSH 同一口径：宿主把目录树交给界面浏览，选中的目录成为工作区根；
+ *  每次调用再单独校验"落在本次工作区根内"——起点的宽窄不代替工作区边界。 */
+const ROOT = path.resolve((arg('root', arg('dir', os.homedir())) || os.homedir())
+  .replace(/^~(?=$|\/)/, os.homedir()))
 
 if (!TOKEN) {
   console.error('缺少 --token（在问渠「本机执行器」里添加这台电脑后拿到的设备令牌）')
@@ -58,15 +61,15 @@ function resolveInRoot(p) {
   const raw = String(p || payloadRoot() || '').trim()
   if (!raw) throw err('E_IO', '缺少路径')
   const abs = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(curRoot(), raw)
-  const allowed = ROOTS.some(root => abs === root || abs.startsWith(root + path.sep))
+  const inStartRoot = abs === ROOT || abs.startsWith(ROOT + path.sep)
   const withinRoot = !currentRoot || abs === currentRoot || abs.startsWith(currentRoot + path.sep)
-  if (!allowed || !withinRoot) throw err('E_PATH_OUTSIDE', `路径不在授权目录内：${abs}`)
+  if (!inStartRoot || !withinRoot) throw err('E_PATH_OUTSIDE', `路径不在授权目录内：${abs}`)
   return abs
 }
 
 let currentRoot = null
 const payloadRoot = () => currentRoot
-const curRoot = () => currentRoot || ROOTS[0]
+const curRoot = () => currentRoot || ROOT
 
 function err(code, message) {
   const e = new Error(message)
@@ -87,10 +90,12 @@ async function confirm(action, detail) {
 // ==================== 操作实现 ====================
 
 async function opList({ path: p }) {
-  // 没有路径 = 「列出这台机器授权的根目录」，供网页里的「选择工作区目录」起步
+  // 没有路径 = 「从起点目录起步浏览」，供网页里的「选择工作区目录」进入
   if (!p) {
+    const st = await fsp.stat(ROOT).catch(() => null)
     return {
-      entries: ROOTS.map(r => ({ path: r, name: path.basename(r) || r, isDir: true, size: 0, mtimeMs: 0 }))
+      entries: [{ path: ROOT, name: path.basename(ROOT) || ROOT, isDir: true,
+        size: 0, mtimeMs: st ? st.mtimeMs : 0 }]
     }
   }
   const dir = resolveInRoot(p)
@@ -261,7 +266,7 @@ async function once() {
 
 async function main() {
   log(`执行器启动：${SERVER}  设备=${NAME}`)
-  log(`授权目录：${ROOTS.join(', ')}`)
+  log(`浏览起点：${ROOT}`)
   if (AUTO_YES) log('注意：--yes 已开启，写文件与命令不再逐次确认')
   let backoff = 1000
   for (;;) {

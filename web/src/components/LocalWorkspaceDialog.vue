@@ -19,7 +19,8 @@
         <div class="lwd-token-t">设备令牌（只显示这一次）：</div>
         <code class="lwd-token-v">{{ freshToken }}</code>
         <div class="lwd-token-t">在这台电脑上运行：</div>
-        <pre class="lwd-cmd">node scripts/local-agent/wenqu-agent.mjs --server {{ serverBase }} --token {{ freshToken }} --dir ~</pre>
+        <pre class="lwd-cmd">node scripts/local-agent/wenqu-agent.mjs --server {{ serverBase }} --token {{ freshToken }} --root ~</pre>
+        <div class="lwd-token-t">要能选整块磁盘就把 --root 换成 /（默认只从家目录开始浏览）。</div>
         <button class="app-btn ghost" @click="refreshDevices">我已经启动了，刷新</button>
       </div>
 
