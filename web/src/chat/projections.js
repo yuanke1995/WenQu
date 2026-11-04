@@ -453,10 +453,11 @@ const ensureThinkSegment = m => {
  * 让它断簇等于每一轮思考都新开一行标题，用户要的「及时合并」恰恰合并不到它身上——
  * 收场后 TurnBar 把整块过程藏起来，才让人产生「输出完才合并」的错觉。
  *
- * 判定边界（两条都不能越）：
+ * 判定边界：
  *   ① 只在「游程内不含任何 text 段」时成立——即这一段过程与正文无交错、纯属执行细节；
  *      任何一段正文都断簇，否则会把「说完一段→查一下→接着说」的交错节奏一并压平。
- *   ② 只有一段时不包——否则单个工具组会被套上两层壳，白白多一次点击。
+ *   ② 单段的 think/process 游程不包（单个思考段套簇壳=多一次点击）；单段 group 照包——
+ *      组卡形态（组条+全量卡连排）已被帽体取代，单批工具同样要进帽，否则页面照样被撑长。
  *
  * 簇键用序号 c{N}（N = res.length）。序号稳定性论证：时间线只追加不重排，text 段到来时
  * 已 flush 的簇其 res 下标不会变动，新簇一律追加在尾部，故历史键不会错位到别的簇上。
@@ -467,7 +468,7 @@ const clusterize = out => {
   let run = []
   const flush = () => {
     if (!run.length) return
-    if (run.length === 1) res.push(run[0])
+    if (run.length === 1 && run[0].kind !== 'group') res.push(run[0])
     else res.push({ kind: 'cluster', segs: run, key: 'c' + res.length })
     run = []
   }
@@ -482,17 +483,11 @@ const clusterize = out => {
 
 /** 簇内正在长的那一簇（仅末尾簇）标记 grow：流式期自动展开它，本轮结束自动收起，
  *  与 procOpen / thinkSegOpen 同款约定；用户点过就以用户为准（m._clOpen）。
- *  裸 group 段（单工具组的跑轮：一轮并行检索、中间没有思考段把它和别的段连成 run）
- *  在 clusterize 里不成簇、走它自己的分支，而帽体挂在簇分支上——流式期把它临时包成
- *  一节簇并标 grow，帽体照出；本轮结束 timelineView 重算，loading 变 false 后不再包装，
- *  完成态渲染与历史轮完全一致（点开 TurnBar 还是原来那张组卡，不多一层簇条）。 */
-const markGrowingCluster = (view, m) => {
+ *  曾在这里把尾部裸 group 临时包成簇（旧 clusterize 单段 run 不包簇），② 放开后
+ *  clusterize 恒产簇，这里只剩标记职责。 */
+const markGrowingCluster = view => {
   const last = view[view.length - 1]
-  if (!last) return view
-  if (last.kind === 'cluster') { last.grow = true; return view }
-  if (m && m.loading && last.kind === 'group') {
-    view[view.length - 1] = { kind: 'cluster', segs: [last], key: 'c' + (view.length - 1), grow: true }
-  }
+  if (last && last.kind === 'cluster') last.grow = true
   return view
 }
 
@@ -551,29 +546,14 @@ const clusterLiveRows = cl => {
   return rows
 }
 
-/** 展开态的簇摊平成「一行一步」：思考段与过程独白段不再各占一行标题，挂到它之后第一个工具组那一行的
- *  行尾（那里本来就是「想了这些才动手」的那个位置，一行一标题把展开态的高度吃掉一半）。
- *  多工具组仍出它自己的组条（并行批次折叠着只占一行，是省高度的），此时那一项挂在组条上而不是首张卡上——
- *  挂错地方的后果是真机量出来的：批次一折叠，挂在首卡行尾的思考就跟着看不见了。
+/** 展开态的簇＝「一行一步」轻量清单（clusterLiveRows）：思考段与过程独白段不再各占一行标题，
+ *  挂到它之后第一个工具那一行的行尾（那里本来就是「想了这些才动手」的那个位置）。
  *  末尾挂不出去的段（正在想、还没调工具）自成一节：它正是「当前这一步」，不能因为还没有工具就看不见。
- *  idxFrom＝这一节首张卡在本簇里的序号，自动态与点开态、收起再展开都数得连贯。 */
-const clusterSteps = cl => {
-  const rows = []
-  let notes = []
-  let n = 0
-  const push = group => { rows.push({ ...group, notes, idxFrom: n }); notes = []; n += (group.tools || []).length }
-  for (const s of cl?.segs || []) {
-    if (!s) continue
-    if (s.kind === 'think' || s.kind === 'process') { notes.push(s); continue }
-    if (s.kind === 'group') push(s)
-  }
-  if (notes.length) rows.push({ kind: 'notes', notes, idxFrom: n })
-  return rows
-}
+ *  曾有配套的 clusterSteps（摊平成 group/notes 段给顶层渲染全量工具卡），随摊平形态一并退役。 */
 
-/** 这一组要不要出自己的组条（＝它是并行批次且不是簇内唯一的一组）。
- *  组条在不在，决定行尾那一项挂在组条上还是挂在首张卡上——判据只写这一处，两端模板共用。 */
-const groupHasBar = seg => (seg?.tools || []).length > 1 && !seg?.flat
+/** 这一组要不要出自己的组条（＝它是并行批次）。组条在不在，决定行尾那一项挂在组条上
+ *  还是挂在首张卡上——判据只写这一处，两端模板共用。 */
+const groupHasBar = seg => (seg?.tools || []).length > 1
 
 /** 行尾那一项（思考/独白）的四个口径统一出口：模板两端各写一遍 kind 判断必然漂移。
  *  标签带字数——原来那一行标题什么量级都没说，展开前猜不出这一点值不值得点。 */
@@ -584,28 +564,11 @@ const noteOpen = (m, n) => (n.kind === 'think' ? thinkSegOpen(m, n) : procOpen(m
 const noteGrowing = (m, n) => (n.kind === 'think' ? thinkGrowing(m, n) : !!(m && m.loading && procOpen(m, n)))
 const toggleNote = (m, n) => (n.kind === 'think' ? toggleThinkSeg(m, n) : toggleProc(m, n))
 
-/** 渲染行＝timelineView 的扁平化：簇头一行，簇展开时紧跟其内各段（标记 inCluster）。
- *  用「摊平 + 原分支复用」而不是在模板里嵌套 v-for，是为了不复制一份工具组/独白渲染代码——
- *  两份模板必然漂移（PC 与 H5 已经各有第三份了）。折叠即不产出内段，无需 v-show 维持其状态。
- *  flat：簇内只有一个工具组时，组条与簇头数的是同一批操作（真机「SpringAi框架怎么用」这条
- *  两行都报 7 个操作，点一层还有一层）——那一层组条不再出，卡片直接摊在簇头下。
- *  两个以上组才留各自组条：那时它数的是不同的子集，是有信息量的下一层。
- *  自动开着的那一簇（跑轮中、用户没点过）不摊平：全量摊到顶层会把页面撑成长卷。
- *  它改由簇分支就地渲染固定高度帽体（clusterLiveRows 轻量行、贴底跟随最新一步）——
- *  历史步骤不再收进簇头数字里，帽内往下滚就能看到，与右栏过程卡同一份口径。
- *  用户点开（_clOpen）才给全量工具卡的摊平形态：那是明确的「我要看细节」。 */
-const timelineRows = m => {
-  const out = []
-  for (const s of timelineView(m)) {
-    out.push(s)
-    if (s.kind === 'cluster' && clusterOpen(m, s) && !clusterAutoOpen(m, s)) {
-      const rows = clusterSteps(s)
-      const groups = rows.filter(r => r.kind === 'group')
-      for (const r of rows) out.push({ ...r, inCluster: true, flat: groups.length === 1 })
-    }
-  }
-  return out
-}
+/** 渲染行＝timelineView 原样。曾在这里把「用户点开的簇」摊平成兄弟段（顶层复用 group/notes
+ *  分支渲染全量工具卡），实测把页面撑成长卷（几十个操作一字排开）——与 DSH 参考一致，
+ *  展开态也收在簇分支内部的固定高度帽体里（clusterLiveRows 轻量行），单步详情点行内展开。
+ *  摊平形态连同 inCluster / flat / idxFrom 标记一并退役。 */
+const timelineRows = m => timelineView(m)
 
 // ==================== 「整轮用时」那一条（跑着在正文末尾，答完在回答顶上） ====================
 // 一轮回答的耗时只报这一处。原先簇头、组条、每张工具卡各挂一个数：一屏六个读数读不出重点，
@@ -1544,7 +1507,7 @@ export {
   pushTimelineThink, extendTimelineThink, thinkSlice, thinkGrowing, thinkSegOpen, toggleThinkSeg, ensureThinkSegment,
   restoreTimeline, SENTENCE_END_CHARS, endsSentence, timelineView, timelineRows, TOOL_BRIEF_KEYS, oneLine,
   clusterize, clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterProcCount,
-  clusterAutoOpen, clusterLiveRows, clusterSteps, groupHasBar, noteText, noteTag, noteOpen, noteGrowing, toggleNote,
+  clusterAutoOpen, clusterLiveRows, groupHasBar, noteText, noteTag, noteOpen, noteGrowing, toggleNote,
   turnRows, turnOpen, toggleTurn, turnShow, turnWarn, turnExpandable, turnHead, turnTitle, turnElapsedMs, turnWaitMs,
   resumedStartAt, earlierStart, settledTurnMs,
   turnTop, turnBottom, turnToggleable,

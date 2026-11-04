@@ -204,7 +204,7 @@
                               :images="m.images" :sources="m.sources" :msg-index="i"
                               runnable :session-id="currentSessionId" :streaming="m.loading" />
                   <!-- 思考段（簇外）：这一轮模型在想什么，就地一行。只有正在长的那一段自动展开，其余折叠。
-                       被过程簇收进去的那些不走这一支——它们并成下一张工具卡行尾的一项（见 projections 的 clusterSteps） -->
+                       被过程簇收进去的那些不走这一支——它们并成帽体清单里所属那一步的行尾（见 projections 的 clusterLiveRows） -->
                   <div v-else-if="seg.kind === 'think'" class="tl-think-block">
                     <button class="tl-think-head" type="button" @click="toggleThinkSeg(m, seg)">
                       <span class="tl-think-title" :class="{ running: thinkGrowing(m, seg) }">深度思考</span>
@@ -226,14 +226,14 @@
                       <span v-if="runBoardText(m)" class="run-board">{{ runBoardText(m) }}</span>
                       <span class="tl-caret" :class="{ open: clusterOpen(m, seg) }"><caret-right-outlined /></span>
                     </button>
-                    <!-- 跑轮中的帽体：自动开着的簇（用户没点过）在这里就地渲染固定高度轻量清单——
-                         一行一步（图标+动词+参数摘要+行尾思考），min(400px,50vh) 内滚、贴底跟随最新一步、
-                         上下边缘 24px 渐隐。历史步骤不再只收进簇头数字，帽内往下滚就在。
-                         用户点开簇头后走全量工具卡摊平形态（timelineRows），帽体随之让位。 -->
-                    <div v-if="clusterAutoOpen(m, seg)" v-follow-bottom="clusterAutoOpen(m, seg)" v-edge-fade class="tl-cluster-live">
+                    <!-- 帽体：跑轮中自动开（贴底跟随最新一步）、用户点开也开（停在顶部从头看，不跟底）。
+                         一行一步（图标+动词+参数摘要+行尾耗时），min(400px,50vh) 内滚、上下边缘 24px 渐隐。
+                         点行展开该步详情（入参/输出/错误）——全量清单永远在帽内滚，页面不再被撑长。 -->
+                    <div v-if="clusterOpen(m, seg)" v-follow-bottom="clusterAutoOpen(m, seg)" v-edge-fade class="tl-cluster-live">
                       <template v-for="(lr, li) in clusterLiveRows(seg)" :key="li">
                         <div v-if="lr.t" class="tl-live-row"
-                             :class="{ run: lr.t.status === 'start' && !lr.t.denied, err: lr.t.status === 'error', off: lr.t.denied }">
+                             :class="{ run: lr.t.status === 'start' && !lr.t.denied, err: lr.t.status === 'error', off: lr.t.denied, open: lr.t._open }"
+                             @click="lr.t._open = !lr.t._open">
                           <span class="tl-live-idx">{{ lr.idx }}</span>
                           <loading-outlined v-if="lr.t.status === 'start' && !lr.t.denied" spin class="tool-ic tool-ic-run" />
                           <check-outlined v-else-if="lr.t.status === 'done'" class="tool-ic tool-ic-ok" />
@@ -241,12 +241,33 @@
                           <pause-circle-outlined v-else class="tool-ic" />
                           <span class="tl-live-name" :title="toolDesc(lr.t.name, lr.t.hint)">{{ toolLabel(lr.t.name, lr.t.label) }}</span>
                           <code v-if="toolBrief(lr.t)" class="tl-live-brief">{{ toolBrief(lr.t) }}</code>
-                          <NoteTag v-for="(nn, ni) in lr.notes || []" :key="'n' + ni" :m="m" :note="nn" />
+                          <span @click.stop><NoteTag v-for="(nn, ni) in lr.notes || []" :key="'n' + ni" :m="m" :note="nn" /></span>
                           <span v-if="lr.t.denied" class="tl-live-dur" title="被守卫挡下，没有真正执行">被挡下</span>
                           <span v-else-if="lr.t.status !== 'start' && lr.t.elapsedMs != null" class="tl-live-dur">{{ toolDuration(Number(lr.t.elapsedMs) || 0) }}</span>
+                          <span class="tl-caret tl-caret-btn" :class="{ open: lr.t._open }"><caret-right-outlined /></span>
                         </div>
-                        <!-- 还没换来工具的尾部思考/独白：它就是「当前这一步」，自成一节、按在跑的样式高亮 -->
-                        <div v-else class="tl-live-row run">
+                        <!-- 单步详情（点行展开）：入参/输出/错误，与工具卡 body 同一套 io 渲染；
+                             展开在帽内滚——全量清单不离开帽，页面高度恒定 -->
+                        <div v-if="lr.t && lr.t._open && (lr.t.args || liveOutput(lr.t) || lr.t.error)" class="tl-live-detail" @click.stop>
+                          <template v-if="lr.t.args">
+                            <div class="tl-io-label">入参</div>
+                            <pre class="tl-io">{{ prettyIo(lr.t.args) }}</pre>
+                            <ToolSpillButton v-if="lr.t.argsSpillId" :id="lr.t.argsSpillId" :tool="lr.t.name" kind="入参" />
+                          </template>
+                          <template v-if="liveOutput(lr.t)">
+                            <div class="tl-io-label">{{ lr.t.status === 'start' ? '实时输出' : (lr.t.result ? '输出' : '输出（执行期）') }}</div>
+                            <pre class="tl-io" :class="{ live: lr.t.status === 'start' }">{{ liveOutput(lr.t) }}</pre>
+                            <ToolSpillButton v-if="lr.t.spillId" :id="lr.t.spillId" :tool="lr.t.name" kind="输出" />
+                          </template>
+                          <template v-if="lr.t.error">
+                            <div class="tl-io-label">错误</div>
+                            <pre class="tl-io tl-io-err">{{ lr.t.error }}</pre>
+                            <ToolSpillButton v-if="lr.t.spillId" :id="lr.t.spillId" :tool="lr.t.name" kind="输出" />
+                          </template>
+                        </div>
+                        <!-- 还没换来工具的尾部思考/独白：它就是「当前这一步」，自成一节、按在跑的样式高亮。
+                             注意用 v-if="!lr.t" 而不是 v-else——上面插着详情分支，v-else 会错配到它 -->
+                        <div v-if="!lr.t" class="tl-live-row run">
                           <span class="tl-live-idx"></span>
                           <loading-outlined spin class="tool-ic tool-ic-run" />
                           <span class="tl-live-name">{{ noteTag(m, lr.tail) }}<template v-if="lr.extra"> 等 {{ lr.extra + 1 }} 段</template></span>
@@ -282,7 +303,7 @@
                       </div>
                     </div>
                   </div>
-                  <div v-else class="tl-group" :class="{ inCluster: seg.inCluster, flat: seg.flat }">
+                  <div v-else class="tl-group">
                     <button v-if="groupHasBar(seg)" class="tl-group-bar" type="button" @click="seg.tools[0]._groupOpen = !seg.tools[0]._groupOpen">
                       <loading-outlined v-if="groupRunning(seg)" spin class="tool-ic tool-ic-run" />
                       <close-circle-outlined v-else-if="groupHasError(seg)" class="tool-ic tool-ic-err" />
@@ -294,11 +315,10 @@
                     </button>
                     <!-- 有组条时全文挂在组条下面（批次折叠着也点得开）；没有组条时挂在它所属那张卡下面 -->
                     <NoteBody v-if="groupHasBar(seg)" v-for="(nt, ni) in seg.notes" :key="'note' + ni" :m="m" :note="nt" />
-                    <div v-if="seg.tools.length === 1 || seg.flat || seg.tools[0]._groupOpen" class="tl-group-body" :class="{ solo: seg.tools.length === 1 }">
+                    <div v-if="seg.tools.length === 1 || seg.tools[0]._groupOpen" class="tl-group-body" :class="{ solo: seg.tools.length === 1 }">
                       <div v-for="(t, ti) in seg.tools" :key="ti" class="tl-card" :data-spawn="spawnAnchorOf(t)"
                            :class="{ run: t.status === 'start', err: t.status === 'error' }">
                         <button class="tl-card-head" type="button" @click="toggleToolCard(t)">
-                          <span v-if="seg.inCluster" class="tl-idx">{{ seg.idxFrom + ti + 1 }}</span>
                           <loading-outlined v-if="t.status === 'start'" spin class="tool-ic tool-ic-run" />
                           <check-outlined v-else-if="t.status === 'done'" class="tool-ic tool-ic-ok" />
                           <close-circle-outlined v-else class="tool-ic tool-ic-err" />
@@ -1703,7 +1723,7 @@ import { toolLabel, toolDesc, toolCallsView, executedCount, toolRunning, toolDur
          toolBrief, prettyIo, liveOutput, groupRunning,
          clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterProcCount,
          clusterAutoOpen, clusterLiveRows,
-         groupHasBar, noteOpen, toggleNote,
+         groupHasBar, noteOpen, toggleNote, noteTag,
          groupHasError, toolSearchQueries, retrievalLineTitle,
          fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget, fanRun, runBoardText,
          fmtWindow, externalOrigin, sourceName, fmtSourceScore, scoreTitle,
@@ -4342,6 +4362,15 @@ onMounted(async () => {
 .tl-live-row.off .tl-live-name { color: var(--app-text3); }
 .tl-live-brief { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--app-text3); background: none; padding: 0; }
 .tl-live-dur { flex: none; font-size: 11px; color: var(--app-text3); font-variant-numeric: tabular-nums; }
+/* 点行展开单步详情：行即按钮（hover 提示可点、open 态挂在行上供样式钩住），行尾 caret 同款 */
+.tl-live-row { cursor: pointer; border-radius: 5px; padding: 0 4px 0 0; }
+.tl-live-row:hover { background: var(--app-panel-2); }
+.tl-live-row .tl-caret-btn { flex: none; margin-left: auto; font-size: 10px; color: var(--app-text3); transition: transform .15s; }
+.tl-live-row .tl-caret-btn.open { transform: rotate(90deg); }
+.tl-live-detail { margin: 1px 0 5px 34px; padding: 6px 8px; border-left: 2px solid var(--app-border);
+  display: flex; flex-direction: column; gap: 4px; }
+.tl-live-detail .tl-io-label { font-size: 10.5px; color: var(--app-text3); }
+.tl-live-detail .tl-io { margin: 0; max-height: 200px; overflow: auto; }
 /* 簇内＝一行一步的紧凑清单：卡片去描边去卡底、行首补序号、整簇共一条左轨。
    簇外的工具组仍是原来的描边卡——那是一步插在正文之间，不是一串清单，收掉描边反而读不出边界。 */
 .tl-group.inCluster { margin: 0 0 0 12px; }

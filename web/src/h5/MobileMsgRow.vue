@@ -89,7 +89,7 @@
                         runnable :session-id="sessionId" :streaming="m.loading"
                         :viewer="false" @citation="onBodyCitation" @preview="onBodyPreview" />
             <!-- 思考段（簇外）：这一轮在想什么就长在哪一行，只有正在长的那一段自动展开。
-                 被过程簇收进去的那些不走这一支——并成下一张工具卡行尾的一项（与 PC 同一份 clusterSteps） -->
+                 被过程簇收进去的那些不走这一支——并成帽体清单里所属那一步的行尾（与 PC 同一份 clusterLiveRows） -->
             <div v-else-if="seg.kind === 'think'" class="card think-card">
               <button class="card-head" type="button" @click.stop="toggleThinkSeg(m, seg)">
                 <span class="card-title">深度思考</span>
@@ -113,11 +113,13 @@
                 <span v-if="runBoardText(m)" class="run-board">{{ runBoardText(m) }}</span>
                 <caret-right-outlined class="caret" :class="{ open: clusterOpen(m, seg) }" />
               </button>
-              <!-- 跑轮中的帽体：固定高度轻量清单（180px 内滚、贴底跟随、边缘渐隐），与 PC 同构 -->
-              <div v-if="clusterAutoOpen(m, seg)" v-follow-bottom="clusterAutoOpen(m, seg)" v-edge-fade class="cluster-live">
+              <!-- 帽体：跑轮中自动开（贴底跟随）、用户点开也开（停在顶部）。固定高度轻量清单
+                   （180px 内滚、边缘渐隐），与 PC 同构；点行展开该步详情（入参/输出/错误）。 -->
+              <div v-if="clusterOpen(m, seg)" v-follow-bottom="clusterAutoOpen(m, seg)" v-edge-fade class="cluster-live">
                 <template v-for="(lr, li) in clusterLiveRows(seg)" :key="li">
                   <div v-if="lr.t" class="live-row"
-                       :class="{ run: lr.t.status === 'start' && !lr.t.denied, err: lr.t.status === 'error', off: lr.t.denied }">
+                       :class="{ run: lr.t.status === 'start' && !lr.t.denied, err: lr.t.status === 'error', off: lr.t.denied, open: lr.t._open }"
+                       @click.stop="lr.t._open = !lr.t._open">
                     <span class="live-idx">{{ lr.idx }}</span>
                     <loading-outlined v-if="lr.t.status === 'start' && !lr.t.denied" spin class="ic-dim" />
                     <check-outlined v-else-if="lr.t.status === 'done'" class="ic-ok" />
@@ -125,11 +127,27 @@
                     <pause-circle-outlined v-else class="ic-dim" />
                     <span class="live-name" :title="lr.t.hint">{{ toolLabel(lr.t.name, lr.t.label) }}</span>
                     <code v-if="toolBrief(lr.t)" class="live-brief">{{ toolBrief(lr.t) }}</code>
-                    <NoteTag v-for="(nn, ni) in lr.notes || []" :key="'n' + ni" :m="m" :note="nn" />
+                    <span @click.stop><NoteTag v-for="(nn, ni) in lr.notes || []" :key="'n' + ni" :m="m" :note="nn" /></span>
                     <span v-if="lr.t.denied" class="live-dur">被挡下</span>
                     <span v-else-if="lr.t.status !== 'start' && lr.t.elapsedMs != null" class="live-dur">{{ toolDuration(Number(lr.t.elapsedMs) || 0) }}</span>
+                    <caret-right-outlined class="caret live-caret" :class="{ open: lr.t._open }" />
                   </div>
-                  <div v-else class="live-row run">
+                  <div v-if="lr.t && lr.t._open && (lr.t.args || liveOutput(lr.t) || lr.t.error)" class="live-detail" @click.stop>
+                    <template v-if="lr.t.args">
+                      <div class="io-label">入参</div><pre class="io-pre">{{ prettyIo(lr.t.args) }}</pre>
+                      <ToolSpillButton v-if="lr.t.argsSpillId" :id="lr.t.argsSpillId" :tool="lr.t.name" kind="入参" />
+                    </template>
+                    <template v-if="liveOutput(lr.t)">
+                      <div class="io-label">{{ lr.t.status === 'start' ? '实时输出' : (lr.t.result ? '输出' : '输出（执行期）') }}</div>
+                      <pre class="io-pre" :class="{ live: lr.t.status === 'start' }">{{ liveOutput(lr.t) }}</pre>
+                      <ToolSpillButton v-if="lr.t.spillId" :id="lr.t.spillId" :tool="lr.t.name" kind="输出" />
+                    </template>
+                    <template v-if="lr.t.error">
+                      <div class="io-label">错误</div><pre class="io-pre io-err">{{ lr.t.error }}</pre>
+                      <ToolSpillButton v-if="lr.t.spillId" :id="lr.t.spillId" :tool="lr.t.name" kind="输出" />
+                    </template>
+                  </div>
+                  <div v-if="!lr.t" class="live-row run">
                     <span class="live-idx"></span>
                     <loading-outlined spin class="ic-dim" />
                     <span class="live-name">{{ noteTag(m, lr.tail) }}<template v-if="lr.extra"> 等 {{ lr.extra + 1 }} 段</template></span>
@@ -162,7 +180,7 @@
                 </div>
               </div>
             </div>
-            <div v-else-if="seg.kind === 'group'" class="tl-group" :class="{ inCluster: seg.inCluster, flat: seg.flat }">
+            <div v-else-if="seg.kind === 'group'" class="tl-group">
               <button v-if="groupHasBar(seg)" class="card-head" type="button" @click.stop="seg.tools[0]._groupOpen = !seg.tools[0]._groupOpen">
                 <span v-if="groupRunning(seg)" class="spinner"></span>
                 <check-outlined v-else-if="!groupHasError(seg)" class="ic-ok" />
@@ -175,11 +193,10 @@
               <!-- 有组条时全文挂在组条下面（批次折叠着也点得开）；没有组条时挂在它所属那张卡下面 -->
               <NoteBody v-if="groupHasBar(seg)" v-for="(nt, ni) in seg.notes" :key="'note' + ni"
                         :m="m" :note="nt" :viewer="false" @citation="onBodyCitation" @preview="onBodyPreview" />
-              <div v-if="seg.tools.length === 1 || seg.flat || seg.tools[0]._groupOpen" class="tl-group-body">
+              <div v-if="seg.tools.length === 1 || seg.tools[0]._groupOpen" class="tl-group-body">
                 <div v-for="(t, ti) in seg.tools" :key="ti" class="card tool-card" :data-spawn="spawnAnchorOf(t)"
                      :class="{ run: t.status === 'start', err: t.status === 'error' }">
                   <button class="card-head" type="button" @click.stop="toggleToolCard(t)">
-                    <span v-if="seg.inCluster" class="tl-idx">{{ seg.idxFrom + ti + 1 }}</span>
                     <span v-if="t.status === 'start'" class="spinner"></span>
                     <check-outlined v-else-if="t.status === 'done'" class="ic-ok" />
                     <close-circle-outlined v-else class="ic-err" />
@@ -602,6 +619,13 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
 .live-row.off .live-name { color: var(--app-text3); }
 .live-brief { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--app-text3); background: none; padding: 0; }
 .live-dur { flex: none; font-size: 11px; color: var(--app-text3); font-variant-numeric: tabular-nums; }
+/* 点行展开单步详情：行即按钮；行尾 caret 复用全局 .caret 旋转，只补 flex 与字号 */
+.live-row { cursor: pointer; border-radius: 6px; padding: 0 4px; }
+.live-row:active { background: var(--app-panel-2); }
+.live-row .live-caret { flex: none; font-size: 10px; }
+.live-detail { margin: 1px 4px 6px 34px; padding: 4px 8px; border-left: 2px solid var(--app-border); }
+.live-detail .io-label { margin: 6px 0 2px; font-size: 11px; }
+.live-detail .io-pre { margin: 0; max-height: 160px; overflow: auto; }
 .tl-group { display: flex; flex-direction: column; gap: 6px; }
 .tl-group.inCluster { margin-left: 12px; }
 .tl-group.inCluster .tl-group-body { gap: 0; padding: 0 0 0 8px; border-left: 2px solid var(--app-border); }
