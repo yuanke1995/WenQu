@@ -295,11 +295,11 @@
           </div>
         </div>
 
-        <!-- 降级/警告 -->
-        <div v-if="m.degradations && m.degradations.length" class="warn-bar">
-          <span v-for="(d, di) in m.degradations" :key="di">{{ d.msg }}</span>
+        <!-- 降级/警告：与 PC 那份 DegradationBar 同一套判据（同一屏只出一份，失败原因由错误卡说） -->
+        <div v-if="degradationItems(m).length" class="warn-bar">
+          <span v-for="(d, di) in degradationItems(m)" :key="di">{{ d.msg }}</span>
         </div>
-        <div v-if="m.warnMsg" class="warn-bar">{{ m.warnMsg }}</div>
+        <div v-else-if="degradationWarn(m)" class="warn-bar">{{ degradationWarn(m) }}</div>
 
         <!-- 检索行：折叠看检索词与引用片段 -->
         <div v-if="retrievalLineTitle(m) || toolSearchQueries(m).length || (m.sources && m.sources.length)" class="card">
@@ -373,6 +373,7 @@ import {
   toolCallsView, executedCount, toolSearchQueries, retrievalLineTitle,
   fmtMsgTime, fmtSize, errorBrief, sourceName, canSwitchPrev, canSwitchNext, verLabel, agentBadgeOf,
   pasteTitle, pasteSub, isPastedText, usageCtxTokens, goalEchoStateOf, goalEchoTipOf,
+  degradationItems, degradationWarn,
   toolCardOpen, toggleToolCard
 } from '../chat/projections'
 import AskRecordCard from '../components/AskRecordCard.vue'

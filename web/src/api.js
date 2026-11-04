@@ -267,11 +267,14 @@ function streamChatSse (start, opts) {
   let ended = false
   let donePayload = null
   // kind 区分失败性质，供 UI 决定文案与「重试」语义：
+  //   'spoken'      —— 服务端 error 帧里那句人话（额度／限流／无响应／没启动都由后端说过一遍）。
+  //                    再按文本分类一遍会把它落进兜底那句「生成失败，可重试或更换模型」，
+  //                    后端挑好的指引就白写了——原样显示才是这一类的正确用法。
   //   'interrupted' —— 断线/读失败/连接被掐断/idle 超时。**后端已把半程回答按截断态落库**
   //                    （TurnRecorder.persistPartialAnswer，尾部带「⏹ 中断」标记），
   //                    所以「重试」= 重新生成本轮，后端会软删那条截态回答并挂进同一版本组。
   //   'aborted'     —— 用户主动停止（signal abort），属正常结束。
-  //   其他/未传      —— 业务错误（4xx/5xx、模型报错等）。
+  //   其他/未传      —— 本地这条流出问题（fetch 抛错、非 2xx 响应体里的 msg），才需要按文本分类。
   // 断线重连：内核本身**不自动重发**——重发整个 POST /chat 会被后端当成一轮全新问答（重复落库+重复计费）。
   // 接流走 resumeChat() 那条通道：后端一轮的执行已与连接解耦（ChatRunBus），它按事件序号只送快照之后的增量。
   const end = (err, kind) => {
@@ -312,7 +315,7 @@ function streamChatSse (start, opts) {
           const d = parseChatEvent(line)
           if (!d) continue
           if (d.type === 'done') { donePayload = d.content; end(); return } // content 为 {sources,related,finalImages,degradations,…} JSON 字符串
-          if (d.type === 'error') { end(d.content); return }
+          if (d.type === 'error') { end(d.content || '回答失败', 'spoken'); return }
           if (!seqOk(d)) continue              // 快照已含过这条事件，重复应用会多出一行
           dispatchChatEvent(d, opts)
         }
@@ -883,6 +886,8 @@ export const setMcpServerEnabled = (id, enabled) =>
 export const setMcpToolLabel = (id, tool, label) =>
   request(`/mcp/servers/${id}/tool-label`, { method: 'PUT', body: JSON.stringify({ tool, label }) })
 export const deleteMcpServer = id => request('/mcp/servers/' + id, { method: 'DELETE' })
+/** 单个服务重连（卡片「重连」按钮）：只重连这一个，其余连接不受影响 */
+export const reconnectMcpServer = id => request('/mcp/servers/' + id + '/reconnect', { method: 'POST' })
 // 批量（只碰自己的）：返回 {succeeded:[id], failed:[{id,name,error}]}；改完连接池统一重建
 export const batchDeleteMcpServers = ids =>
   request('/mcp/servers/batch-delete', { method: 'POST', body: JSON.stringify({ ids }) })
@@ -1180,7 +1185,7 @@ function streamShareSse (url, init, opts) {
       if (!d) return
       armIdle()
       if (d.type === 'done') { settle(); onDone(d); return }
-      if (d.type === 'error') { settle(); onError(d.content || '回答失败'); return }
+      if (d.type === 'error') { settle(); onError(d.content || '回答失败', 'spoken'); return }
       if (!seqOk(d)) return
       dispatchChatEvent(d, opts)
     }
@@ -1202,8 +1207,11 @@ function streamShareSse (url, init, opts) {
     })
   }).catch(e => {
     settle()
-    if (e.name === 'AbortError') onError('已停止生成')
-    else onError(e.message || '网络错误')
+    // 用户主动停止按正常结束收尾（与主链路 streamChatSse 的 end() 同口径）：服务端那一支已把已生成的
+    // 部分按「⏹ 已停止本轮」落库，报成错误只会让游客读到一张「生成失败，可重试或更换模型」——
+    // 把用户自己按下的按钮说成故障
+    if (e.name === 'AbortError') { onDone({}); return }
+    onError(e.message || '网络错误')
   })
 }
 

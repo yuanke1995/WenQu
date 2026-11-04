@@ -704,6 +704,26 @@ const toggleTurn = m => { if (m) m._turnOpen = !turnOpen(m) }
 /** 这条底下到底有没有过程可展开：有时间线过程段、或有无时间线时的兜底工具列表。
  *  没有就别挂折叠三角——点开一片空比不挂更坏。 */
 const turnExpandable = m => hasTimelineBlocks(m) || !!(m && Array.isArray(m.toolCalls) && m.toolCalls.length)
+/** 本轮终态标注的原文（与后端 {@code TurnRecorder} 同一组常量，逐字一致）。
+ *  这里只留「界面要认得它」所需的那几份：正文里出现了就是服务端说过这件事，不再由别处补第二遍。
+ *  抄第二份的代价已经踩过一次——当场与刷新后不同形（见 useChatEngine 里原来那份 STOP_SUFFIX）。 */
+export const TURN_STOP_SUFFIX = '\n\n> ⏹ 已停止本轮，以上为已生成的部分'
+const TURN_TRUNC_SUFFIX = '\n\n> ⏹ 回答在此处被中断，以上为已生成的部分'
+const TURN_BUDGET_SUFFIX = '\n\n> ⏹ 已到整轮时间上限，后面的步骤没有执行。发一句「继续」可以接着做'
+const TURN_TIMEOUT_SUFFIX = '\n\n> ⏹ 等待确认超时，这一轮没有继续执行'
+
+/** 这一轮正文尾部带的是哪一种终态标注（没有则空串）。
+ *  认的是我们自己写下的整串字面量，不是拿关键词猜——猜出来的判据会在文案改字那天静默失效。 */
+const turnMarker = m => {
+  const c = m && typeof m.content === 'string' ? m.content : ''
+  if (!c) return ''
+  if (c.endsWith(TURN_STOP_SUFFIX)) return 'stopped'
+  if (c.endsWith(TURN_BUDGET_SUFFIX)) return 'budget'
+  if (c.endsWith(TURN_TIMEOUT_SUFFIX)) return 'timeout'
+  if (c.endsWith(TURN_TRUNC_SUFFIX)) return 'truncated'
+  return ''
+}
+
 /** 这一刻点它有没有意义：只有答完（这一条当总览用）之后才给开关，跑着的时候它是一行状态。 */
 const turnToggleable = m => turnShow(m) && !!(m && !m.loading) && turnExpandable(m)
 /** 这条要不要占一行：跑着（它就是这一轮的进行中指示）、有数可报、或确有过程可展开。
@@ -714,13 +734,25 @@ const turnShow = m => !!(m && m.loading) || turnElapsedMs(m) > 0 || turnExpandab
 const turnWarn = m => !!(m && m.loading && m.retrying)
 /** 收尾只报用时，不报步数：步数数的是 toolCalls，展开出来的却是时间线那一份。引用自检改过正文时
  *  整条时间线作废（后端 timelineJson 返回 null），那句「5 步操作」点开会是一片空——一个兑不了现的数。 */
+/** 终态标注 → 状态行那一档的说法（只此一处，PC/H5/分享页共用） */
+const TURN_MARKER_HEAD = {
+  stopped: '这一轮已停止', budget: '这一轮已到时间上限',
+  timeout: '这一轮等待确认超时', truncated: '这一轮中断'
+}
 const turnHead = m => {
   const ms = turnElapsedMs(m)
   const dur = ms ? '，用时 ' + durZh(ms) : ''
   // 进行中这一句是本轮唯一的状态行，压缩那二十多秒也说在这儿（不再另起一条分隔线——一轮里
   // 框架可以压好几次，另起的那条每压完一次撤走、下一次又长出来，看着就是反复弹出）
   if (m && m.loading) return (m.retrying ? '连接中断，正在自动重试' : m.compacting ? '正在压缩上下文' : '正在溯源') + dur + ' …'
-  if (m && (m.errorCard || m.failed)) return '这一轮中断' + dur
+  // 终态要说清是哪一种：叫停、到时间上限、等确认超时都不算「完成」，也不该报成「中断」。
+  // 判据取正文尾注那一份（当场与刷新后同源），兜不住的是正文为空那一支——由引擎在确认停掉时打旗标
+  const mark = m ? turnMarker(m) : ''
+  const spoken = mark === 'truncated' || !!(m && (m.errorCard || m.failed))
+  if (spoken) return (TURN_MARKER_HEAD[mark] || '这一轮中断') + dur
+  if (mark) return TURN_MARKER_HEAD[mark] + dur
+  // 正文为空那一支没有尾注可认（服务端不落正文），认引擎与计划卡打下的旗标
+  if (m && (m.stoppedTurn || m.planStopped)) return '这一轮已停止' + dur
   return '已完成' + dur
 }
 /** 这条躺哪儿：跑着的时候跟在正文最后面（眼睛在最新长出来的那一行，它又是跟着秒走的计时器），
@@ -1291,11 +1323,15 @@ const fmtMsgTime = ts => {
   if (d.toDateString() === yest.toDateString()) return '昨天 ' + hm
   return String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0') + ' ' + hm
 }
-/** 错误分类文案（原始异常收进「异常详情」折叠；映射常见失败原因给出可行动提示） */
 /** 错误分类文案。kind 由 api.js 给出（'interrupted'=断线/超时/连接被掐断），优先于按文本猜测：
  *  中断类在后端已把半程回答按截断态落库，文案要告诉用户「内容没丢」并说明重新生成会重新计费。 */
 const errorBrief = (raw, kind) => {
   const s = String(raw || '')
+  // 'spoken'——服务端 error 帧里那句人话（emitRunFailure 挑好的：额度该充值、断流发「继续」、
+  //  平台配额找管理员）。再按文本分类一遍会把它落进兜底「生成失败，可重试或更换模型」，
+  //  后端指好的方向就全白写了（断流轮的「重新生成」按钮恰是最不该按的那个）——原样返回。
+  // 真机 2026-11-04：上游 429 那一轮屏幕上写的是兜底那句，而服务端交上来的是「模型服务限流，请稍后重试」。
+  if (kind === 'spoken') return s.trim() || '生成失败，可重试或更换模型'
   if (kind === 'interrupted') {
     if (/timeout|timed?\s*out|长时间未收到响应/i.test(s)) return '响应超时：连接已中断'
     if (/提前关闭/.test(s)) return '连接已断开：回答未正常结束'
@@ -1313,6 +1349,32 @@ const errorBrief = (raw, kind) => {
   if (/429|rate\s*limit/i.test(s)) return '请求过于频繁：模型服务限流，稍后重试'
   if (/5\d{2}|Bad Gateway|Service Unavailable/i.test(s)) return '模型服务异常：稍后重试，或到「模型供应商」检查该供应商状态'
   return '生成失败，可重试或更换模型'
+}
+
+/** 「这一轮没答成」那几条降级 code（后端 emitRunFailure 同时走 degrade 与 error 帧两条通道）。
+ *  数据一条不删、照旧落库照旧下发；这里只决定「同一件事在这一屏画几遍」。 */
+const FAIL_SPOKEN_CODES = new Set(['streamError', 'modelQuotaExhausted', 'tenantQuotaExhausted',
+  'modelUnresponsive', 'upstreamStreamCut', 'frameworkNotLaunched'])
+/** 降级条该画哪几条：这一行自己已经挂了错误卡时，失败原因由卡说，不在条上再画一遍。
+ *  <p>判据只认<b>这一行</b>的错误卡，不认 m.failed——分享页把失败记在 failed 上却画不出错误卡，
+ *  拿 failed 当判据等于把游客侧唯一的原因出口一起删掉（那是消音，不是去重）。 */
+const degradationItems = m => {
+  const list = Array.isArray(m && m.degradations) ? m.degradations : []
+  if (!m || !m.errorCard) return list
+  return list.filter(d => !(d && FAIL_SPOKEN_CODES.has(d.code)))
+}
+/** 与正文尾注说同一件终态的那几句警示（后端把 warn 帧与尾注两条通道各写了一遍，措辞不同）。
+ *  只列我们自己写得出的整句、且<b>只在正文确实带了对应终态标注时</b>才并掉——
+ *  拿关键词猜或无条件屏蔽，会把无关警示一起吃掉，那是消音不是去重。 */
+const TERMINAL_WARN_LINES = ['本轮已超时结束，等你确认的那一步已作废']
+/** 警示条那一句要不要单列：同一件终态正文里已经写过了就不再并排画第二遍。 */
+const degradationWarn = m => {
+  const w = m && typeof m.warnMsg === 'string' ? m.warnMsg.trim() : ''
+  if (!w) return ''
+  const c = m && typeof m.content === 'string' ? m.content : ''
+  if (c.includes(w)) return ''
+  if (TERMINAL_WARN_LINES.includes(w) && turnMarker(m) === 'timeout') return ''
+  return w
 }
 // ==================== 重新生成多版本（同一问题的多次回答可来回切换） ====================
 // 语义：v1 是首次回答；每次「重新生成」把新完成的回答追加为新版本，气泡底部出现 ‹ 1/2 › 切换器。
@@ -1504,6 +1566,7 @@ export {
   usageCtxTokens, usageTip,
   groupSources, externalOrigin, sourceName,
   fmtSourceScore, scoreTitle, fmtSize, histItemTitle, histItemDigest, fmtMsgTime, errorBrief, agentBadgeOf,
+  degradationItems, degradationWarn,
   pasteTitle, pasteSub, isPastedText, PASTE_TEXT_BASE,
   snapshotVersion, applyVersion, verLocal, canSwitchPrev, canSwitchNext, verLabel,
   goalTerminalOf, goalBarVisibleOf, goalPhraseOf, goalStateLabelOf, goalStateClassOf,

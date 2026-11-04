@@ -301,6 +301,12 @@ async function openSession (id) {
     loading.value = false
     scrollBottom()
   }
+  // 提问/计划卡是页面级单例，换会话必须先撤下旧会话的那张，再按新会话取回自己的——
+  // 不撤就是 X 的待答面板顶在 Y 的会话上，答题目标完全错位
+  pendingAsk.value = null
+  pendingPlan.value = null
+  restorePendingAsk()
+  restorePendingPlan()
   attachRunning()
 }
 
@@ -700,7 +706,8 @@ async function restorePendingAsk () {
   try {
     const r = await listSharePendingAsks(token.value, sessionId.value, visitorId())
     const items = r?.data?.items || []
-    const live = items.filter(i => !i.expired)
+    // live=false=服务重启后唤醒句柄已失，挂出来用户填完提交必吃「已失效」——不挂（引擎侧同口径）
+    const live = items.filter(i => !i.expired && i.live !== false)
     if (live.length) pendingAsk.value = { ...live[0], expired: false, live: !!live[0].live }
   } catch (e) { /* 取不回卡片不影响正常聊天 */ }
 }
@@ -711,7 +718,7 @@ async function restorePendingPlan () {
   try {
     const r = await listSharePendingPlans(token.value, sessionId.value, visitorId())
     const items = r?.data?.items || []
-    const live = items.filter(i => !i.expired)
+    const live = items.filter(i => !i.expired && i.live !== false)
     if (live.length) pendingPlan.value = { ...live[0], expired: false, live: !!live[0].live }
   } catch (e) { /* 同上 */ }
 }
@@ -733,6 +740,9 @@ async function attachRunning () {
     running = !!(r && r.data && r.data.running)
   } catch (e) { /* 探测失败不打扰：分享页首要还是能用，实在在跑的话下一次刷新再接 */ } finally { attaching.value = false }
   if (!running) return
+  // 探测这一跳的窗口里页面可能已变（游客点了另一段历史、或已发了新问题在途）：
+  // 气泡要 push 进的线程、要锁的输入框、要覆盖的 controller 都已换主——不作废就串台/停不掉
+  if (sessionId.value !== sid || sending.value) return
   const ai = newAiMessage()
   messages.value.push(ai)
   sending.value = true

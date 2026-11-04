@@ -31,7 +31,7 @@ import SourceList from './SourceList.vue'
 import AnswerActions from './AnswerActions.vue'
 import TurnBar from '../components/TurnBar.vue'
 import { AimOutlined } from '@ant-design/icons-vue'
-import { retrievalLineTitle, goalEchoStateOf, goalEchoTipOf } from './projections'
+import { retrievalLineTitle, goalEchoStateOf, goalEchoTipOf, degradationItems, degradationWarn } from './projections'
 
 const props = defineProps({
   /** 消息数组（两页的形状一致：role/content/images/sources/messageId/fb/degradations…） */
@@ -114,8 +114,10 @@ function sourceTitle (m) {
 
         <slot name="body-after" :m="m" :i="i" />
 
-        <!-- 降级提示：后端一直在 done 里下发，两个页面都必须把它显出来（本来就不该靠页面自觉） -->
-        <DegradationBar v-if="m.role === 'ai'" :items="m.degradations" :warn="m.warnMsg" />
+        <!-- 降级提示：后端一直在 done 里下发，两个页面都必须把它显出来（本来就不该靠页面自觉）。
+             唯一去重的是「这一行自己已经挂了错误卡」那几条失败 code——同一件事由卡说一遍；
+             数据照旧落库下发，分享页画不出错误卡，那里橙条一条都不减 -->
+        <DegradationBar v-if="m.role === 'ai'" :items="degradationItems(m)" :warn="degradationWarn(m)" />
 
         <slot name="sources" :m="m" :i="i">
           <SourceList v-if="m.role === 'ai' && hasSources(m)" :sources="m.sources"

@@ -30,7 +30,7 @@ import { THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel, CTX_WINDOW_ST
          goalTerminalOf, goalBarVisibleOf, goalPhraseOf, goalStateLabelOf, goalStateClassOf,
          goalBlockReasonOf, goalBarTitleOf, goalBarMetaOf, goalRoundLineOf,
          goalCanPauseOf, goalCanResumeOf, goalCanEditOf,
-         rememberAgents, isDispatchTool, consultNameOf, stepBriefOf } from './projections'
+         rememberAgents, isDispatchTool, consultNameOf, stepBriefOf, TURN_STOP_SUFFIX } from './projections'
 
 export function useChatEngine (hooks = {}) {
   const route = useRoute()
@@ -1203,8 +1203,8 @@ const switchSession = async sid => {
           }
           if (Array.isArray(m.timeline)) msg.timeline = restoreTimeline(msg, m.timeline)
           // 失败轮的错误卡按库里那句重建：实时那颗长在同一行上（有回答挂回答、零产出挂那一问），
-          // kind 留空——它是服务端说的那句业务错误，不是本地这条流断掉（interrupted 那套文案不适用）
-          if (msg.failMsg) msg.errorCard = { message: msg.failMsg, kind: '', at: msg.time || 0 }
+          // kind 记 'spoken'——它是服务端说过的那句业务错误，原样显示，不再按文本猜一遍
+          if (msg.failMsg) msg.errorCard = { message: msg.failMsg, kind: 'spoken', at: msg.time || 0 }
           // 存量消息没落思考分段（改动前只存一整块全文）：补一段在头部，别让它从界面上消失
           ensureThinkSegment(msg)
           return msg
@@ -1602,6 +1602,9 @@ async function goalAct (action, extra) {
   if (g.busy) return null
   g.busy = true
   g.actionError = ''
+  // 会话在 await 前就定格：响应回来前用户切走的话，currentSessionId 已是别的会话，
+  // 写它就是把 A 的目标态盖进 B 的视图（A 的 RUNNING 记录反而滞留）
+  const sid = currentSessionId.value
   try {
     const r = await goalActionApi(g.goalId, action, extra || {})
     if (r && r.success === false) {
@@ -1612,11 +1615,11 @@ async function goalAct (action, extra) {
     }
     // 删除是「从界面上撤下」：即便服务端回的是 CANCELLED 视图，也不把它重新贴回右栏面板，
     // 否则用户点了删除还看见一张「已结束」的目标卡。刷新后端点也会对 CANCELLED 回 null。
-    if (action === 'clear') setGoal(currentSessionId.value, null)
-    else if (r && r.data) setGoal(currentSessionId.value, { ...r.data })
+    if (action === 'clear') setGoal(sid, null)
+    else if (r && r.data) setGoal(sid, { ...r.data })
     // 继续（以及改目标后仍在跑）都可能当场有新的一轮在飞：接流不等探测那一跳
-    if (action === 'resume' || (action === 'edit' && sessionGoal.value?.status === 'RUNNING')) {
-      watchGoalTurn(currentSessionId.value)
+    if (action === 'resume' || (action === 'edit' && goalsMap.value[sid]?.status === 'RUNNING')) {
+      watchGoalTurn(sid)
     }
     return r && r.data ? r.data : null
   } catch (e) {
@@ -1625,7 +1628,7 @@ async function goalAct (action, extra) {
     g.busy = false
     return null
   } finally {
-    const cur = goalsMap.value[currentSessionId.value]
+    const cur = goalsMap.value[sid]
     if (cur) cur.busy = false
   }
 }
@@ -2811,9 +2814,9 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         related = Array.isArray(p.related) ? p.related : []
         messageId = p.messageId || null
         degradations = Array.isArray(p.degradations) ? p.degradations : []
-        // 计划模式被拒/超时：done 载荷带 planCancelled（plan_cancelled 事件已置过，这里是双保险——
-        // 正文为空时收束语按「计划未批准」口径而不是「已停止生成」）；被「继续对话」取代同理由
-        // planSuperseded 置位，但那轮正文留空（状态只写在计划卡角标上）
+        // 计划模式被拒/超时：done 载荷带 planCancelled（plan_cancelled 事件已置过，这里是双保险）；
+        // 被「继续对话」取代同理由 planSuperseded 置位。两支都不往正文写收束语——
+        // 「未批准 · 已停止本轮」与「已被取代」已经标在计划卡角标上，两句并排是重复
         if (p.planCancelled) msg.planStopped = true
         if (p.planSuperseded) msg.planSuperseded = true
         // 插话队列结算：本轮收尾（答完/被停/失败）时结算一次——还没点「立即发送」的在这里
@@ -2878,15 +2881,19 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         // 落库时间线没带思考分段（正文被重建导致整条作废、或后端是旧版）：头部补一段，不许看不见
         ensureThinkSegment(msg)
       } catch (e) { /* 旧版/停止生成：无负载 */ }
-      // 计划模式被拒/超时的整轮：无正文，气泡收束语与「已停止生成」区分开（计划卡停在「未批准」态）。
-      // 被「继续对话」取代的整轮不写收束语——「已被取代」已经标在计划卡角标上，两句并排是重复
-      if (msg.content === '' && !msg.planSuperseded) {
-        msg.content = msg.planStopped ? '（计划未批准，本轮已停止）' : '（已停止生成）'
-      }
       msg.loading = false
       // 叫停那一轮：服务端确认停掉后把「⏹ 已停止本轮」补进正文（与落库那份同形）。
       // 上面那条 abort 可能先于 /chat/stop 的响应收尾，两边都调一次、由 endsWith 去重
-      if (st.serverStopped) markStoppedTurn(msg)
+      if (st.serverStopped) {
+        msg.stoppedTurn = true
+        markStoppedTurn(msg)
+      }
+      // 空正文那一支的收束语排在补尾注<b>之后</b>，两者只出一个。早先排在之前，尾注那句的「正文为空
+      // 就不补」判据被自己刚填的那句骗过，界面上就是「（已停止生成）」与「已停止本轮」并排（真机 2026-11-04）。
+      // 计划被拒/超时、被「继续对话」取代那两支都不写：卡片角标已经说了同一件事（「未批准 · 已停止本轮」/「已被取代」）。
+      if (msg.content === '' && !msg.planStopped && !msg.planSuperseded) {
+        msg.content = STOP_PLACEHOLDER
+      }
       // 整轮已收口：提问卡（若还在）撤掉——超时/忽略走的是 done 前的 tool_status 终态，此处兜底
       // 队列一起清：这一轮不会再有可答的卡了
       msg.ask = null
@@ -3000,8 +3007,9 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       if (chatStreams.get(sid) === st) chatStreams.delete(sid)
       // 中断类（断线/切后台冻结/连接被掐断）不弹 toast：这类几乎都是移动网络状态问题，
       // toast 会盖住用户真正要点的「重新生成」按钮，而错误卡已经把话说清楚了。
-      // 业务错误仍弹 —— 那是需要立即知道的服务端异常。
-      if (kind !== 'interrupted') message.error(e)
+      // 业务错误只在<b>本轮不在眼前</b>时弹：错误卡说的就是同一句话，同屏弹两份是重复；
+      // 切到别的会话时那一屏看不见卡，那时不弹才是真消音。
+      if (kind !== 'interrupted' && !viewing()) message.error(e)
       // 同上：已上翻看历史的会话原地停留（错误卡与「重新生成」在回答末尾，回到底部按钮足够引导）
       liveScroll()
     }
@@ -3106,20 +3114,26 @@ const closeRunningTools = (msg, why) => {
   }
 }
 
-/** 与后端 {@code TurnRecorder.STOP_SUFFIX} 同一份文案（改一处要同步改另一处，否则当场与刷新后不同形） */
-const STOP_SUFFIX = '\n\n> ⏹ 已停止本轮，以上为已生成的部分'
+/** 空正文那一支的占位收束语：与「⏹ 已停止本轮」是同一件事的两种说法，只能留一个 */
+const STOP_PLACEHOLDER = '（已停止生成）'
 
 /**
  * 把「已停止本轮」补到这一轮正文尾部。
  * <p>服务端只把它追加在<b>落库</b>的那一份上，而叫停时这条通道已经 abort，终态帧赶不上来——
  * 不就地补这一句，用户要刷新才看得见（真机 2026-11-03）。
  * <p>只在整轮收尾后补：正文还在流式累积时补，下一帧 flush 会把 `full` 盖回来、把这半句冲掉。
- * 空正文那一支不补——那支服务端不落助手消息，界面由「（已停止生成）」收束语说。
+ * <p>/chat/stop 的确认与 done 收尾谁先到不确定（桩流真机 2026-11-04 实测两条顺序都会出）：
+ * 占位语已经写上时由正式标注<b>顶掉它</b>，不并列——否则界面上就是「（已停止生成）」与
+ * 「已停止本轮」两句并排，而它们说的是同一件事。
  */
 const markStoppedTurn = (msg) => {
   if (!msg || msg.loading) return
-  if (msg.content === '' || msg.content.endsWith(STOP_SUFFIX)) return
-  msg.content += STOP_SUFFIX
+  if (msg.content === STOP_PLACEHOLDER) {
+    msg.content = TURN_STOP_SUFFIX.trim()
+    return
+  }
+  if (msg.content === '' || msg.content.endsWith(TURN_STOP_SUFFIX)) return
+  msg.content += TURN_STOP_SUFFIX
 }
 
 const stop = () => {
@@ -3135,6 +3149,7 @@ const stop = () => {
       // 那一份落库正文里没有终止标注，凭空补一句就是刷新后又消失
       if (r?.data?.stopped === true) {
         st.serverStopped = true
+        st.msg.stoppedTurn = true
         markStoppedTurn(st.msg)
       }
     }).catch(() => message.warning('服务端没能停止本轮，它可能仍在后台跑完'))
@@ -3828,6 +3843,9 @@ onMounted(() => window.addEventListener('app:sandbox-ran', onSandboxRan))
 onUnmounted(() => {
   window.removeEventListener('app:sandbox-ran', onSandboxRan)
   if (procTimer) { clearInterval(procTimer); procTimer = null }
+  // 恢复态轮询的自停条件只看「会话没变」，组件卸载改变不了它——不摘就是离开聊天页后
+  // 每 4s 一次 getHistory 最多再打 45 跳
+  stopRestoredPoll()
 })
 
   return {
