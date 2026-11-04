@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import json
 import logging
 import os
 import random
@@ -88,6 +89,16 @@ PERSISTENT_SANDBOX_MOUNT_ROOTS = (
     "/home/gem/user-data",
     "/home/gem/projects",
 )
+# 本机文件接入：把宿主目录以只读方式挂进沙盒，让智能体读得到用户本机的东西。
+# 挂载点落在沙盒根之下（而不是 /mnt/host 这类独立路径）是刻意的：后端侧的文件授权根就是
+# 沙盒根那一条，挂在其下现有的 ls/read_file/grep 直接可用，不需要第二条授权通道；
+# 写入则由 ro bind 在文件系统层挡住，与权限档位无关。
+HOST_READ_MOUNT_ROOT = "/home/gem/user-data/local_files"
+# 白名单两处来源：env 给部署侧固化，文件给本机临时调整——provisioner 容器改 env 必须重建，
+# 本机那份端口覆盖配置（macOS 上 172.17.0.1 绑定必失败）不值得为它重来一次。
+HOST_READ_ALLOW_FILE = Path(
+    os.getenv("SANDBOX_HOST_READ_ALLOW_FILE", "/app/user-data/host-read-allow.txt")
+)
 # 沙盒容器内运行时用户（镜像约定 gem 1000:1000；k8s 初始化脚本 normalize() 同值）。
 # 会话沙盒目录必须归它所有，否则 Linux 宿主上沙盒写文件报 Permission denied。
 SANDBOX_RUNTIME_UID = 1000
@@ -105,6 +116,74 @@ def _is_persistent_sandbox_mount_path(path: str) -> bool:
         path == root or path.startswith(f"{root}/")
         for root in PERSISTENT_SANDBOX_MOUNT_ROOTS
     )
+
+
+def host_read_allow_prefixes() -> tuple[Path, ...]:
+    """允许被挂进沙盒的宿主目录前缀（两份来源取并集；空 = 一律拒绝）。"""
+    raw: list[str] = [item for item in os.getenv("SANDBOX_HOST_READ_ALLOW", "").split(",")]
+    try:
+        raw.extend(HOST_READ_ALLOW_FILE.read_text(encoding="utf-8").splitlines())
+    except OSError:
+        # 没有配置文件是常态（该特性默认关闭），env 那份照样生效
+        pass
+    prefixes: list[Path] = []
+    for item in raw:
+        candidate = item.strip()
+        if not candidate or candidate.startswith("#"):
+            continue
+        # 不 resolve：本容器里的软链视图与宿主不同（/tmp 之类根本不是宿主那个 /tmp），
+        # 白名单与请求路径一律按字面比较，交给 daemon 去解释宿主路径。
+        prefixes.append(Path(candidate))
+    return tuple(prefixes)
+
+
+def resolve_host_read_mounts(host_read_dirs: list[str] | None) -> dict[str, str]:
+    """宿主目录 → 容器内只读挂载点；任一条不过白名单就整条请求拒掉。"""
+    mounts: dict[str, str] = {}
+    prefixes = host_read_allow_prefixes()
+    for item in host_read_dirs or []:
+        candidate = str(item or "").strip()
+        if not candidate:
+            continue
+        if not candidate.startswith("/"):
+            raise ValueError(f"host_read_dirs must be an absolute host path: {candidate}")
+        if ".." in PurePosixPath(candidate).parts:
+            raise ValueError(f"host_read_dirs cannot contain '..': {candidate}")
+        # 不能在这里 stat：provisioner 容器只看得到自己那份 /app/user-data，
+        # 宿主路径是「将要传给 daemon 的字符串」而不是本进程可访问的文件。
+        # 目录是否存在由调用方（后端在宿主上）把关；这里只守白名单与只读。
+        resolved = Path(candidate)
+        if not any(
+            str(resolved) == str(prefix) or str(resolved).startswith(f"{prefix}/")
+            for prefix in prefixes
+        ):
+            raise ValueError(f"host_read_dirs is outside the host allowlist: {candidate}")
+        destination = f"{HOST_READ_MOUNT_ROOT}/{resolved.name}"
+        if destination in mounts.values():
+            raise ValueError(f"host_read_dirs name collides in the sandbox: {candidate}")
+        if destination == HOST_READ_MOUNT_ROOT:
+            raise ValueError(f"host_read_dirs cannot be the mount root itself: {candidate}")
+        mounts[str(resolved)] = destination
+    return mounts
+
+
+def host_read_mounts_label(mounts: dict[str, str]) -> str:
+    return json.dumps(
+        {key: mounts[key] for key in sorted(mounts)}, ensure_ascii=False, separators=(",", ":")
+    )
+
+
+def parse_host_read_mounts_label(labels: dict | None) -> dict[str, str]:
+    raw = str((labels or {}).get("host-read-dirs") or "").strip()
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    return {str(key): str(value) for key, value in parsed.items()}
 
 
 def canonical_backend_name(backend: str) -> str:
@@ -339,6 +418,7 @@ class CreateSandboxRequest(BaseModel):
     uid: str
     env: dict[str, str] = Field(default_factory=dict)
     inherit_env: bool = True
+    host_read_dirs: list[str] = Field(default_factory=list)
 
 
 class SandboxResponse(BaseModel):
@@ -493,7 +573,12 @@ class MemoryProvisionerBackend:
         *,
         workdir_path: str | None = None,
         inherit_env: bool = True,
+        host_read_dirs: list[str] | None = None,
     ) -> SandboxRecord:
+        if host_read_dirs:
+            raise ValueError(
+                "host_read_dirs 只有 docker 后端支持（memory 后端没有真容器可挂宿主目录）"
+            )
         _ = thread_id
         _ = uid
         _ = env
@@ -836,7 +921,9 @@ class LocalContainerProvisionerBackend:
             actual_mounts.get(destination) == source
             for destination, source in expected_mounts.items()
         )
-        allowed_persistent_mounts = {"/home/gem/user-data"}
+        allowed_persistent_mounts = {"/home/gem/user-data"} | set(
+            parse_host_read_mounts_label(container.labels or {}).values()
+        )
         return expected and all(
             not _is_persistent_sandbox_mount_path(destination)
             or destination in allowed_persistent_mounts
@@ -1042,6 +1129,7 @@ class LocalContainerProvisionerBackend:
         *,
         workdir_path: str | None = None,
         inherit_env: bool = True,
+        host_read_dirs: list[str] | None = None,
     ) -> SandboxRecord:
         with self._sandbox_lock(sandbox_id):
             safe_thread_id = self._validate_thread_id(thread_id)
@@ -1050,6 +1138,11 @@ class LocalContainerProvisionerBackend:
                 normalize_workdir_path(workdir_path) if workdir_path else None
             )
             ephemeral_storage = not inherit_env and safe_workdir_path is None
+            requested_host_reads = resolve_host_read_mounts(host_read_dirs)
+            if requested_host_reads and ephemeral_storage:
+                raise ValueError(
+                    "host_read_dirs requires a persistent sandbox (no host bind under an ephemeral root)"
+                )
             existing = self._get_container(sandbox_id)
             if existing is not None:
                 existing.reload()
@@ -1092,6 +1185,16 @@ class LocalContainerProvisionerBackend:
                 ):
                     logger.info(
                         "Recreating sandbox %s because user-data mounts are stale",
+                        sandbox_id,
+                    )
+                    self.delete(sandbox_id)
+                    existing = None
+                elif requested_host_reads and parse_host_read_mounts_label(
+                    labels
+                ) != requested_host_reads:
+                    # 请求不表态（空）时保留现状：后端目前还不认识这个参数
+                    logger.info(
+                        "Recreating sandbox %s because host read-only mounts changed",
                         sandbox_id,
                     )
                     self.delete(sandbox_id)
@@ -1150,6 +1253,7 @@ class LocalContainerProvisionerBackend:
                     "uid": safe_uid,
                     "workdir-path": safe_workdir_path or "",
                     "storage-mode": "ephemeral" if ephemeral_storage else "persistent",
+                    "host-read-dirs": host_read_mounts_label(requested_host_reads),
                     "managed-by": "wenqu-sandbox-provisioner",
                 },
                 "volumes": {},
@@ -1175,6 +1279,12 @@ class LocalContainerProvisionerBackend:
                 if safe_workdir_path:
                     # 挂载源目录即沙盒根目录，容器内不再有 projects/{id} 这一层
                     run_kwargs["working_dir"] = "/home/gem/user-data"
+            # 本机文件（只读）：挂成沙盒根的子目录，见 HOST_READ_MOUNT_ROOT 的注释
+            for host_source, container_destination in requested_host_reads.items():
+                run_kwargs["volumes"][host_source] = {
+                    "bind": container_destination,
+                    "mode": "ro",
+                }
             sandbox_env = (
                 merged_sandbox_env(self._sandbox_env, env or {}) if inherit_env else {}
             )
@@ -1593,7 +1703,12 @@ class KubernetesProvisionerBackend:
         *,
         workdir_path: str | None = None,
         inherit_env: bool = True,
+        host_read_dirs: list[str] | None = None,
     ) -> SandboxRecord:
+        if host_read_dirs:
+            raise ValueError(
+                "host_read_dirs 只有 docker 后端支持（Pod 挂的是 PVC，挂不到宿主目录）"
+            )
         from kubernetes.client.rest import ApiException
 
         with self._lock:
@@ -2032,6 +2147,7 @@ def create_sandbox(payload: CreateSandboxRequest):
                         payload.env,
                         workdir_path=payload.workdir_path,
                         inherit_env=payload.inherit_env,
+                        host_read_dirs=payload.host_read_dirs,
                     )
                 except TimeoutError as exc:
                     raise HTTPException(
