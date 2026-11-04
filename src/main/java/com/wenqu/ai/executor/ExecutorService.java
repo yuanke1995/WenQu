@@ -33,7 +33,7 @@ public class ExecutorService {
     /** 签发设备令牌（只回一次）；同名设备不重复创建。 */
     public ExecutorRegistry.Paired register(String uid, String name, String os) {
         ExecutorRegistry.Paired paired = registry.register(uid, name, os);
-        jdbc.update("insert into c_ai_executor (id, uid, name, token_hash, os, last_seen) values (?,?,?,?,?,now())",
+        jdbc.update("insert into c_ai_executor (id, uid, name, token_hash, os) values (?,?,?,?,?)",
                 paired.device().id(), uid, paired.device().name(), sha256(paired.token()), os);
         return paired;
     }

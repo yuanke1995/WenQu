@@ -62,6 +62,15 @@ public class ExecutorController {
             err.put("data", null);
             return err;
         }
+        if (!registry.online(executorId)) {
+            // 离线必须立刻说，别挂满 25 秒再超时——那在界面上表现为永远"加载中…"
+            Map<String, Object> err = new LinkedHashMap<>();
+            err.put("success", false);
+            err.put("code", 503);
+            err.put("msg", "执行器不在线：先在那台电脑上启动 wenqu-agent 再试");
+            err.put("data", null);
+            return err;
+        }
         Map<String, Object> args = new LinkedHashMap<>();
         args.put("path", path == null ? "" : path);
         ExecutorRegistry.Result r = registry.call(executorId, "list", args, 25_000);

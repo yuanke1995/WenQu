@@ -73,7 +73,9 @@ public class ExecutorRegistry {
         Device device = new Device(id, uid, name == null || name.isBlank() ? "我的电脑" : name, os);
         devices.put(id, device);
         queues.put(id, new LinkedBlockingQueue<>());
-        lastSeen.put(id, System.currentTimeMillis());
+        // 登记不等于在线：只有执行器发起轮询才更新 lastSeen（否则刚点「添加」的 70 秒内
+        // 界面会显示「在线」，然后目录列表卡在加载等一次永远不来的应答）
+        lastSeen.remove(id);
         log.info("[EXECUTOR] 设备已登记 uid={} id={} name={}", uid, id, device.name());
         return new Paired(device, token);
     }
