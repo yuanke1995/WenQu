@@ -47,7 +47,8 @@ public class ResourceVisibilityService {
 
     /** 当前操作者抽象（从登录态 RequestUser 派生） */
     public record Principal(String uid, String departmentId, String role) {
-        public static final Principal ANONYMOUS = new Principal("anonymous", null, "user");
+        public static final Principal SYSTEM = new Principal(
+                com.wenqu.ai.util.RequestUser.SYSTEM, null, "system");
         public boolean superadmin() { return "superadmin".equals(role); }
     }
 
@@ -63,55 +64,78 @@ public class ResourceVisibilityService {
         this.departmentMapper = departmentMapper;
     }
 
-    /** 数据范围快照 TTL（60s，与角色/用户缓存同口径；写路径 invalidate 后当场重建） */
-    private volatile Map<String, RoleDataScope> scopeSnapshot = Map.of();
-    private volatile long scopeExpireAt = 0L;
+    /**
+     * 数据范围与部门树快照（按租户键控，TTL 60s；写路径 invalidate 后当场重建）。
+     * <p>{@code c_ai_role_data_scope} 已随批次 F 租户化，租户谓词由框架拼在查询上；
+     * 若还像原先那样存成一张全局 volatile 快照，租户 A 的请求建好快照后，
+     * B 的请求在 TTL 内会直接复用 <b>A 的范围配置</b>——与 {@code RoleService} 里
+     * 「A 租户能读到 B 租户的角色定义（直接越权源）」是同一条注释描述的那个形状，那处修了、这处漏了。
+     * 键规则与 {@code RoleService.tenantKey()} 一致：平台视图与未绑定线程共用一个不过滤键。
+     */
+    private record Timed<T>(T value, long expireAt) {
+    }
+
+    private static final String PLATFORM_KEY = "\u0000platform";
+    private final java.util.concurrent.ConcurrentHashMap<String, Timed<Map<String, RoleDataScope>>> scopeSnapshots =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.concurrent.ConcurrentHashMap<String, Timed<Map<String, String>>> deptParentSnapshots =
+            new java.util.concurrent.ConcurrentHashMap<>();
     private static final long SCOPE_TTL_MS = 60_000;
 
-    /** 部门父子映射 TTL 缓存（部门表极小，整表快照） */
-    private volatile Map<String, String> deptParentSnapshot = Map.of();
-    private volatile long deptExpireAt = 0L;
+    private static String tenantKey() {
+        if (com.wenqu.ai.util.TenantContext.inPlatformView()) return PLATFORM_KEY;
+        String t = com.wenqu.ai.util.TenantContext.current();
+        return t == null || t.isBlank() ? PLATFORM_KEY : t;
+    }
 
     private Map<String, RoleDataScope> scopes() {
-        if (!scopeSnapshot.isEmpty() && System.currentTimeMillis() < scopeExpireAt) return scopeSnapshot;
+        String key = tenantKey();
+        long now = System.currentTimeMillis();
+        Timed<Map<String, RoleDataScope>> cached = scopeSnapshots.get(key);
+        if (cached != null && cached.expireAt() > now) return cached.value();
         synchronized (this) {
-            if (scopeSnapshot.isEmpty() || System.currentTimeMillis() >= scopeExpireAt) {
+            cached = scopeSnapshots.get(key);
+            if (cached == null || cached.expireAt() <= System.currentTimeMillis()) {
                 Map<String, RoleDataScope> m = new LinkedHashMap<>();
                 try {
                     for (RoleDataScope ds : roleDataScopeMapper.selectList(null)) m.put(ds.getRoleCode(), ds);
-                    scopeSnapshot = m;
                 } catch (Exception e) {
                     // 表未就绪等异常：按无范围处理（fail-closed 回到谁建归谁），不阻塞请求
                     log.warn("[DATA-SCOPE] 数据范围查询失败（按无范围处理）: {}", e.getMessage());
-                    scopeSnapshot = m;
                 }
-                scopeExpireAt = System.currentTimeMillis() + SCOPE_TTL_MS;
+                cached = new Timed<>(m, System.currentTimeMillis() + SCOPE_TTL_MS);
+                scopeSnapshots.put(key, cached);
             }
-            return scopeSnapshot;
+            return cached.value();
         }
     }
 
-    /** 数据范围写路径失效（RoleService.saveDataScope 调用） */
+    /**
+     * 数据范围写路径失效（RoleService.saveDataScope 调用）。
+     * <p>广播可能来自任一租户的写操作，故按全租户清（表小，重建便宜，正确性优先）——与 RoleService 同口径。
+     */
     public void invalidateScopes() {
-        scopeSnapshot = Map.of();
-        scopeExpireAt = 0L;
+        scopeSnapshots.clear();
     }
 
     private Map<String, String> deptParents() {
-        if (!deptParentSnapshot.isEmpty() && System.currentTimeMillis() < deptExpireAt) return deptParentSnapshot;
+        String key = tenantKey();
+        long now = System.currentTimeMillis();
+        Timed<Map<String, String>> cached = deptParentSnapshots.get(key);
+        if (cached != null && cached.expireAt() > now) return cached.value();
         synchronized (this) {
-            if (deptParentSnapshot.isEmpty() || System.currentTimeMillis() >= deptExpireAt) {
+            cached = deptParentSnapshots.get(key);
+            if (cached == null || cached.expireAt() <= System.currentTimeMillis()) {
                 Map<String, String> m = new LinkedHashMap<>();
                 try {
                     for (Department d : departmentMapper.selectList(null)) m.put(d.getId(), d.getParentId());
-                    deptParentSnapshot = m;
                 } catch (Exception e) {
                     log.warn("[DATA-SCOPE] 部门树查询失败（按无部门处理）: {}", e.getMessage());
-                    deptParentSnapshot = m;
                 }
-                deptExpireAt = System.currentTimeMillis() + SCOPE_TTL_MS;
+                cached = new Timed<>(m, System.currentTimeMillis() + SCOPE_TTL_MS);
+                deptParentSnapshots.put(key, cached);
             }
-            return deptParentSnapshot;
+            return cached.value();
         }
     }
 
@@ -155,14 +179,15 @@ public class ResourceVisibilityService {
      * 解析用户的<b>有效权限</b>：创建者 → MANAGE（短路）；否则按角色数据范围授予 READ；无范围 → NONE。
      */
     public Permission resolve(Principal p, String createdBy) {
-        if (p == null) p = Principal.ANONYMOUS;
+        if (p == null) p = Principal.SYSTEM;
         if (createdBy != null && !createdBy.isBlank() && createdBy.equals(p.uid())) {
             return Permission.MANAGE; // 创建者短路（范围再小也管自己的东西）
         }
-        if (p.uid() == null || p.uid().isBlank() || com.wenqu.ai.util.RequestUser.ANONYMOUS.equals(p.uid())) {
+        if (p.uid() == null || p.uid().isBlank() || com.wenqu.ai.util.RequestUser.SYSTEM.equals(p.uid())) {
             return Permission.NONE;
         }
         int best = 0; // 0=无 2=department 3=children 4=all（own 不经由范围路径：创建者短路已覆盖）
+        RoleDataScope bestScope = null;
         for (String role : rolesOf(p)) {
             RoleDataScope ds = scopes().get(role);
             if (ds == null) continue;
@@ -172,17 +197,28 @@ public class ResourceVisibilityService {
                 case "department" -> 2;
                 default -> 0;
             };
-            if (rank > best) best = rank;
+            if (rank > best) {
+                best = rank;
+                bestScope = ds;   // 锚点跟着取胜的那一行走，否则多角色时「谁的范围」说不清
+            }
         }
         if (best <= 0) return Permission.NONE;
+        // all 不再排在归属人部门之后判：原来的顺序是 ownerDept==null 先 return NONE，
+        // 于是「没配部门的创建者」的资源，对 scope=all 的角色永远看不见——那是功能坏掉，不是收紧。
+        if (best == 4) return Permission.READ;
         String ownerDept = departmentOfOwner(createdBy);
         if (ownerDept == null) return Permission.NONE;
-        String callerDept = p.departmentId();
+        // 锚点（该范围的 department_id 列）：配了=这个角色成员看「那个部门（含下级）」的资源，
+        // 不必自己就在那个部门里；没配=沿用「看自己部门」（原语义）。
+        // 这列 schema 注释一直写着「可为空=取成员自己部门」，判定侧从来没读它——
+        // 于是权限页上的「生效部门」是个存得进、显示得出、但不参与判定的死字段。
+        String anchor = bestScope != null && bestScope.getDepartmentId() != null
+                && !bestScope.getDepartmentId().isBlank() ? bestScope.getDepartmentId() : p.departmentId();
+        if (anchor == null) return Permission.NONE;
         return switch (best) {
-            case 4 -> Permission.READ;
-            case 3 -> callerDept != null && (inSubtree(callerDept, ownerDept) || callerDept.equals(ownerDept))
-                    ? Permission.READ : Permission.NONE;
-            case 2 -> callerDept != null && callerDept.equals(ownerDept) ? Permission.READ : Permission.NONE;
+            // inSubtree 自含「相等」：锚点就是归属人所在部门时也算命中
+            case 3 -> inSubtree(anchor, ownerDept) ? Permission.READ : Permission.NONE;
+            case 2 -> anchor.equals(ownerDept) ? Permission.READ : Permission.NONE;
             default -> Permission.NONE;
         };
     }
