@@ -699,6 +699,8 @@ CREATE TABLE IF NOT EXISTS `c_ai_project` (
     `directory_mode`   VARCHAR(20)  NOT NULL DEFAULT 'managed' COMMENT 'managed=平台托管目录（服务器沙盒） / local=执行器目录（用户电脑上的目录，由本机执行器读写）',
     `executor_id`      VARCHAR(64)  DEFAULT NULL COMMENT '本机执行器 id（c_ai_executor.id）；非空=本工作区的文件读写走那台电脑上的执行器，空=走服务器沙盒',
     `root_path`        VARCHAR(1024) DEFAULT NULL COMMENT '执行器上的工作区根目录（绝对路径）。执行器负责校验每次调用都落在这个目录内',
+    `icon`             VARCHAR(32)  DEFAULT NULL COMMENT '工作区图标（预设图标名，空=默认文件夹）',
+    `color`            VARCHAR(16)  DEFAULT NULL COMMENT '工作区颜色（十六进制，空=默认色）',
     `instructions`     TEXT         DEFAULT NULL COMMENT '工作区约定：写一次即对该工作区**所有会话**生效（每轮注入 system prompt 的工作背景段）。这是「工作区」与「分类标签」的分界——没有它，每条对话都得重新交代背景',
     `default_agent_id` VARCHAR(50)  DEFAULT NULL COMMENT '工作区默认助手：会话归属该工作区且用户没显式选助手时用它作答，其知识库范围随助手生效（工作区因此有自己的资料域）',
     `kb_ids`           VARCHAR(512) DEFAULT NULL COMMENT '工作区绑定知识库（逗号分隔，c_ai_knowledge_base.id；空=不收窄）。这是**默认检索域**不是权限墙：本区会话没有显式域（助手未绑库且未 @ 库）时只搜这些库，@ 提及其他库仍可越出（显式动作优先于默认值），助手绑定的库也优先于它',

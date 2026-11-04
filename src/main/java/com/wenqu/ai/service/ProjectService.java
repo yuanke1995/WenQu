@@ -444,8 +444,23 @@ public class ProjectService {
     public Project update(String uid, String projectId, String name, String instructions,
                           String defaultAgentId, List<String> kbIds, Boolean sharedWorkdir,
                           Boolean memoryIsolated) {
+        return update(uid, projectId, name, instructions, defaultAgentId, kbIds, sharedWorkdir, memoryIsolated, null, null);
+    }
+
+    /** 同上，另加外观（图标/颜色）：新建弹窗用它，传 null 不动。 */
+    public Project update(String uid, String projectId, String name, String instructions,
+                          String defaultAgentId, List<String> kbIds, Boolean sharedWorkdir,
+                          Boolean memoryIsolated, String icon, String color) {
         Project p = ownedProject(uid, projectId);
         boolean changed = false;
+        if (icon != null) {
+            p.setIcon(icon.isBlank() ? null : icon.trim());
+            changed = true;
+        }
+        if (color != null) {
+            p.setColor(color.isBlank() ? null : color.trim());
+            changed = true;
+        }
         if (name != null) {
             String n = name.trim();
             if (!Project.SELECTION_IMPLICIT.equals(p.getSelectionStatus()) && n.isEmpty()) {

@@ -67,6 +67,12 @@ public class Project {
     /** 执行器上的工作区根目录（绝对路径）；执行器负责校验每次调用都落在这个目录内 */
     private String rootPath;
 
+    /** 工作区图标（预设图标名；空=默认文件夹） */
+    private String icon;
+
+    /** 工作区颜色（十六进制；空=默认色） */
+    private String color;
+
     /**
      * 工作区约定：写一次即对该工作区<b>所有会话</b>生效（每轮注入 system prompt 的工作背景段）。
      * <p>这是「工作区」与「分类标签」的分界——没有它，用户在同一个工作区里每开一条对话都要重新交代

@@ -98,6 +98,8 @@ public class ProjectController {
         m.put("directoryMode", p.getDirectoryMode() == null ? Project.MODE_MANAGED : p.getDirectoryMode());
         m.put("executorId", p.getExecutorId() == null ? "" : p.getExecutorId());
         m.put("rootPath", p.getRootPath() == null ? "" : p.getRootPath());
+        m.put("icon", p.getIcon() == null ? "" : p.getIcon());
+        m.put("color", p.getColor() == null ? "" : p.getColor());
         m.put("createTime", p.getCreateTime() == null ? null : p.getCreateTime().toString());
         return m;
     }
@@ -163,7 +165,9 @@ public class ProjectController {
                     req == null ? null : req.defaultAgentId(),
                     req == null ? null : req.kbIds(),
                     req == null ? null : req.sharedWorkdir(),
-                    req == null ? null : req.memoryIsolated());
+                    req == null ? null : req.memoryIsolated(),
+                    req == null ? null : req.icon(),
+                    req == null ? null : req.color());
             return ResultJson.ok(toDto(updated), "已保存");
         } catch (IllegalArgumentException e) {
             return ResultJson.error(400, e.getMessage());
@@ -171,7 +175,8 @@ public class ProjectController {
     }
 
     public record UpdateReq(String name, String instructions, String defaultAgentId,
-                            List<String> kbIds, Boolean sharedWorkdir, Boolean memoryIsolated) {
+                            List<String> kbIds, Boolean sharedWorkdir, Boolean memoryIsolated,
+                            String icon, String color) {
     }
 
     @Operation(summary = "归档 / 恢复工作区", description = "body: {status: active|archived}。归档不动会话与产物，implicit 兜底容器不可归档")
