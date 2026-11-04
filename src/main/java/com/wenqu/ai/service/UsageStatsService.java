@@ -65,7 +65,7 @@ public class UsageStatsService {
     private final com.wenqu.ai.mapper.DepartmentMapper departmentMapper;
     private final com.wenqu.ai.mapper.TenantMapper tenantMapper;
 
-    /** 空结果（未登录匿名身份无可归属的个人用量，不展示匿名兼容池数据） */
+    /** 空结果（无真实用户身份时没有可归属的个人用量） */
     public static Map<String, Object> empty() {
         Map<String, Object> cards = new LinkedHashMap<>();
         cards.put("totalTokens", 0L);
@@ -305,7 +305,7 @@ public class UsageStatsService {
         }
         double total = 0;
         long unpricedTokens = 0;
-        // uid -> {tokens, cost}；model -> {tokens, cost, priced}；dept -> {tokens, cost}（""＝无部门/匿名）
+        // uid -> {tokens, cost}；model -> {tokens, cost, priced}；dept -> {tokens, cost}（""＝无部门/系统）
         Map<String, long[]> userTok = new LinkedHashMap<>();
         Map<String, long[]> deptTok = new LinkedHashMap<>();
         Map<String, double[]> deptCost = new HashMap<>();
@@ -383,7 +383,7 @@ public class UsageStatsService {
                     m.put("uid", e.getKey());
                     // 台账里留着、成员表里已没有的 uid＝已注销（压测用户被删后正是这种），
                     // 只报裸 uid 会被读成「这人的名字怎么是一串代号」
-                    m.put("name", e.getKey().isBlank() ? "匿名（未登录）"
+                    m.put("name", e.getKey().isBlank() ? "系统（无用户）"
                             : names.getOrDefault(e.getKey(), e.getKey() + "（已注销）"));
                     m.put("promptTokens", e.getValue()[0]);
                     m.put("completionTokens", e.getValue()[1]);
@@ -420,7 +420,7 @@ public class UsageStatsService {
                     Map<String, Object> m = new LinkedHashMap<String, Object>();
                     double[] cost = deptCost.get(e.getKey());
                     m.put("departmentId", e.getKey());
-                    m.put("name", e.getKey().isBlank() ? "未归部门（含匿名与系统调用）"
+                    m.put("name", e.getKey().isBlank() ? "未归部门（含系统调用）"
                             : deptNames.getOrDefault(e.getKey(), e.getKey() + "（部门已删）"));
                     m.put("promptTokens", e.getValue()[0]);
                     m.put("completionTokens", e.getValue()[1]);

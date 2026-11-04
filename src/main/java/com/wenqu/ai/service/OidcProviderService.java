@@ -24,8 +24,7 @@ import java.util.Map;
  * OIDC 的管理面（CRUD/启停/删除）已退役（2026-10-27）：四类认证源统一走
  * {@link IdentityProviderService}（「认证源」页签）；本服务只服务登录链路（{@link OidcService}）。
  * <p>
- * config JSON 的密文形态兼容两种（读侧按 "RSA:" 前缀判断）：存量行是明文 JSON +
- * clientSecret 字段级 RSA（旧表桥接产物）；新写入由统一认证源侧整块加密。
+ * config JSON 由统一认证源侧整块加密（JWE）；读取时解密后按 JSON 解析。
  *
  * @author yuanke
  */
@@ -115,7 +114,7 @@ public class OidcProviderService {
         return p == null || blank(p.getClientSecret()) ? null : crypto.decrypt(p.getClientSecret());
     }
 
-    /** config JSON 解析（兼容整块 RSA 加密与明文两种形态；坏配置返回 null） */
+    /** config JSON 解析（解密后按 JSON 读；坏配置返回 null） */
     private JsonNode parseConfig(String raw) {
         if (raw == null || raw.isBlank()) return null;
         raw = crypto.decrypt(raw);

@@ -215,6 +215,7 @@ public class ExternalUserService {
      * 会互相踩对方的文件。本租户过滤下查出「没占用」、插入时撞主键，只会把一条清楚的报错换成一次 500。
      */
     public String ensureUniqueUid(String base, String seed) {
+        if ("system".equalsIgnoreCase(base)) base = "user_system";
         if (!uidTaken(base)) return base;
         String suffix = "_" + shortHash(seed);
         String candidate = base;

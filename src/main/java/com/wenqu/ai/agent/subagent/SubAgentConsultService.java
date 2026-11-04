@@ -270,10 +270,9 @@ public class SubAgentConsultService {
         chat.put("elapsedMs", ms);
         chat.put("sources", registered);
         // 干活视角（2026-10-25）：逐步执行记录随卡落库，刷新后卡上那条「执行过程」时间线的真身；
-        // 产物从纯文件名升级为 {f,u,s,e} 明细（前端对旧消息的字符串数组双兼容）
+        // 产物是 {f,u,s,e} 明细（可点）
         chat.put("steps", report.stepsOrEmpty());
-        chat.put("artifacts", report.artifactsOrEmpty().isEmpty()
-                ? report.artifactFilesOrEmpty() : report.artifactsOrEmpty());
+        chat.put("artifacts", report.artifactsOrEmpty());
         return new Rendered(sb.toString(), chat);
     }
 }

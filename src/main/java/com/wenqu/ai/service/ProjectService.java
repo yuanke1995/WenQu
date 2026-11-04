@@ -94,12 +94,12 @@ public class ProjectService {
     /**
      * 该用户的 implicit 兜底容器；不存在则创建。
      *
-     * @param uid 用户 uid；空/匿名返回 null（不建工作区，调用方按「无工作区」继续）
+     * @param uid 用户 uid；空/SYSTEM 返回 null（不建工作区，调用方按「无工作区」继续）
      * @return 兜底容器；uid 不可用时返回 null
      */
     public Project ensureImplicit(String uid) {
-        if (uid == null || uid.isBlank() || com.wenqu.ai.util.RequestUser.ANONYMOUS.equals(uid)) {
-            // 匿名/游客不建工作区：他们没有一个可持续的身份，建了也无从归属（分享页访客会话同理）
+        if (uid == null || uid.isBlank() || com.wenqu.ai.util.RequestUser.SYSTEM.equals(uid)) {
+            // SYSTEM/游客不建工作区：他们没有一个可持续的身份，建了也无从归属（分享页访客会话同理）
             return null;
         }
         Project existing = findImplicit(uid);
@@ -259,7 +259,7 @@ public class ProjectService {
      * @throws IllegalArgumentException 名字非法或模板工作区不存在/不属于该用户
      */
     public Project create(String uid, String name, String fromProjectId) {
-        if (uid == null || uid.isBlank() || com.wenqu.ai.util.RequestUser.ANONYMOUS.equals(uid)) {
+        if (uid == null || uid.isBlank() || com.wenqu.ai.util.RequestUser.SYSTEM.equals(uid)) {
             throw new IllegalArgumentException("请先登录后再新建工作区");
         }
         String trimmed = name == null ? "" : name.trim();

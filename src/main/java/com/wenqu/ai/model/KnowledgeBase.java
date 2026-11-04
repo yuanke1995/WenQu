@@ -92,7 +92,7 @@ public class KnowledgeBase {
      */
     private Integer builtin;
 
-    /** 创建人（登录用户 uid；未登录为 anonymous） */
+    /** 创建人（登录用户 uid；系统内置为 system） */
     private String createdBy;
 
     /** 创建时间 */

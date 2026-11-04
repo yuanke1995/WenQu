@@ -58,7 +58,7 @@ public class NotificationService {
     /**
      * 产生一条通知（旁路语义：内部全捕获，失败只记 WARN 不向上抛）。
      *
-     * @param uid      接收人（必填，空/anonymous 直接跳过——没有归属人的事件没有通知对象）
+     * @param uid      接收人（必填，空/SYSTEM 直接跳过——没有归属人的事件没有通知对象）
      * @param type     类型常量（Notification.TYPE_*）
      * @param title    一句话标题
      * @param content  详情（可空；超 990 字符截断，与列宽 1000 留余量）
@@ -80,7 +80,7 @@ public class NotificationService {
     public void create(String uid, String type, String title, String content, String refType,
                         String refId, String dedupKey, String refSub) {
         try {
-            if (uid == null || uid.isBlank() || RequestUser.ANONYMOUS.equals(uid)) {
+            if (uid == null || uid.isBlank() || RequestUser.SYSTEM.equals(uid)) {
                 log.debug("[NOTIFY] 跳过无归属通知 type={} title={}", type, title);
                 return;
             }

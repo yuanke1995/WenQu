@@ -131,10 +131,10 @@ public class MarketController {
 
     // ==================== 内部 ====================
 
-    /** 写操作不接受匿名（与 SkillController 同口径：不能往 anonymous 名下装东西）。 */
+    /** 写操作不接受 SYSTEM（与 SkillController 同口径：不能往 SYSTEM 名下装东西）。 */
     private static String uid() {
         String uid = RequestUser.uid();
-        if (uid == null || uid.isBlank() || RequestUser.ANONYMOUS.equals(uid)) {
+        if (uid == null || uid.isBlank() || RequestUser.SYSTEM.equals(uid)) {
             throw new BizException(401, "请先登录后再使用市场");
         }
         return uid;

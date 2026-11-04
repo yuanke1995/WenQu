@@ -767,7 +767,7 @@ public class GraphRagService {
         // 库级权限收口：graph_enabled 只说明「哪些库开了图谱」，不说明这一轮的用户看得见它们。
         // 不与可见库求交的话，kbIds 为空（非围墙轮）时 scope 就是全平台开了图谱的库——别人的
         // 私有库会经三元组扩进本轮上下文。判定与主检索同一来源（ResourceVisibilityService）；
-        // 查不了就放弃本轮扩展（fail-closed，宁少扩不越权），无请求身份的线程按匿名判定同口径。
+        // 查不了就放弃本轮扩展（fail-closed，宁少扩不越权），无请求身份的线程按 SYSTEM 判定同口径。
         Set<String> visibleKbIds = visibleKbIdsOf();
         if (visibleKbIds == null) return hits;
         scope.retainAll(visibleKbIds);

@@ -503,7 +503,7 @@ public class ChatService {
             pipelineExecutor.execute(() -> {
                 // 流水线线程**没有请求上下文**：检索的库门下推与文档可见性晚绑定
                 // （HybridRetrievalService.buildAclFilter / loadVisibleDocIdsOfHits 读 RequestUser）
-                // 会拿到 anonymous ⇒ 可见库集合为空/受限，配了共享范围（department/user）
+                // 会拿到 SYSTEM ⇒ 可见库集合为空/受限，配了共享范围（department/user）
                 // 的文档被判为不可见并被过滤，表现就是"共享给我的资料，我在问答里检索不到"。
                 // 这里按本轮 userId 从用户档案装载身份，让过滤按**真实用户**算（来源是用户表，
                 // 与调用线程无关：网页问答的 Tomcat 线程、定时任务的池线程同一个来源）。
@@ -828,9 +828,9 @@ public class ChatService {
         String uid = cmd.getUserId();
         com.wenqu.ai.model.User prefUser = loadPrefUser(uid);
         // 归属这条判据只在「问的就是请求者自己能不能用这个供应商」时才成立：游客对话用的是分享主登记的
-        // 模型、匿名兼容池的会话没有 uid，按他们的身份判必然判成「不属于你」，于是把好用的模型判死
+        // 模型、SYSTEM 身份的会话没有可判归属的用户，按他们的身份判必然判成「不属于你」，于是把好用的模型判死
         boolean judgeOwnership = !cmd.isGuestMode() && uid != null && !uid.isBlank()
-                && !com.wenqu.ai.util.RequestUser.ANONYMOUS.equals(uid);
+                && !com.wenqu.ai.util.RequestUser.SYSTEM.equals(uid);
         String role = prefUser != null ? userRoleService.primaryRole(prefUser.getUid())
                 : com.wenqu.ai.util.RequestUser.role();
         java.util.function.Function<String, com.wenqu.ai.service.ModelRegistryService.Usability> probe =
@@ -881,12 +881,12 @@ public class ChatService {
                         + "，这一轮没有作答。请在个人设置里改一次，或直接在这一轮选一个模型。");
     }
 
-    /** 个人偏好用户行（含三类个人默认模型）；匿名/未登录/查询失败返回 null（全部走空语义） */
+    /** 个人偏好用户行（含三类个人默认模型）；SYSTEM/空 uid/查询失败返回 null（全部走空语义） */
     /**
      * 在流水线线程内装载本轮用户身份（uid / 部门 / 角色），供检索的文档可见性过滤按**真实用户**判定。
      * <p>背景：问答流水线跑在独立线程池、没有请求上下文，而 {@code HybridRetrievalService} 的
      * 库门下推（{@code loadVisibleKbIds}）与文档可见性晚绑定（{@code loadVisibleDocIdsOfHits}）
-     * 都从 {@code RequestUser} 取身份 ⇒ 只会拿到 anonymous。其后果是：配了共享范围
+     * 都从 {@code RequestUser} 取身份 ⇒ 只会拿到 SYSTEM。其后果是：配了共享范围
      * （{@code access_level=department/user}）的文档，对**包括被授权者在内**的所有人都判为不可见并被过滤——
      * 也就是"共享给我、或我自己限定范围的资料，在问答里检索不到"。
      * <p>身份从用户档案读，与调用线程无关：网页问答（Tomcat 线程）与定时任务（池线程，uid 由参数传入）
@@ -896,8 +896,8 @@ public class ChatService {
      */
     private boolean loadIdentity(String userId) {
         if (userId == null || userId.isBlank()
-                || com.wenqu.ai.util.RequestUser.ANONYMOUS.equals(userId)) {
-            // 匿名池（历史兼容会话）：保持 anonymous 语义，不做任何提升
+                || com.wenqu.ai.util.RequestUser.SYSTEM.equals(userId)) {
+            // SYSTEM / 空 uid 没有可装载的用户档案，保持无身份
             return false;
         }
         try {
@@ -906,15 +906,15 @@ public class ChatService {
             com.wenqu.ai.util.RequestUser.set(u.getUid(), u.getDepartmentId(), userRoleService.rolesOf(u.getUid()));
             return true;
         } catch (Exception e) {
-            // 装载失败按匿名继续（不打断问答），但必须留痕：否则又变成"共享资料检索不到"且无迹可查
-            log.warn("[FAIL-LOUD] 流水线线程装载用户身份失败（本轮检索可见性按匿名判定）uid={}: {}",
+            // 装载失败按 SYSTEM 继续（不打断问答），但必须留痕：否则又变成"共享资料检索不到"且无迹可查
+            log.warn("[FAIL-LOUD] 流水线线程装载用户身份失败（本轮检索可见性按 SYSTEM 判定）uid={}: {}",
                     userId, e.getMessage());
             return false;
         }
     }
 
     private com.wenqu.ai.model.User loadPrefUser(String userId) {
-        if (userId == null || userId.isBlank() || com.wenqu.ai.util.RequestUser.ANONYMOUS.equals(userId)) {
+        if (userId == null || userId.isBlank() || com.wenqu.ai.util.RequestUser.SYSTEM.equals(userId)) {
             return null;
         }
         try {

@@ -502,7 +502,6 @@ ai-app:
   auth:
     jwt-secret: ${AI_JWT_SECRET:}          # 多副本必须一致；非 local profile 缺失即启动失败
     token-ttl-hours: 168
-    require-login: ${AI_AUTH_REQUIRE_LOGIN:true}
     max-login-failures: 5                  # 连续失败次数
     lock-minutes: 15                       # 锁定时长
 

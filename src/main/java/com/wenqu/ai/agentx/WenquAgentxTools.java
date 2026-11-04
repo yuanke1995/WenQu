@@ -102,7 +102,7 @@ public class WenquAgentxTools {
      * 工具卡（{@code spills}），这些都是「这一轮」的东西，而框架的工具在弹性线程上跑、
      * 又没有手写运行时的 {@code TurnState}，只能按轮显式传进来——藏进单例就是别人的轮串到这一轮。
      * <p>{@code userId} 也必须显式带：{@code RequestUser} 是 ThreadLocal，在框架的弹性线程上读出来
-     * 是 anonymous，留痕就会记到匿名头上（这条坑本方案已实测踩过两次）。
+     * 是 SYSTEM，留痕就会记到 SYSTEM 头上（这条坑本方案已实测踩过两次）。
      */
     public record TurnHooks(String sessionId, String userId, String modelRef,
                             java.util.function.Supplier<String> turnId,
@@ -593,7 +593,7 @@ public class WenquAgentxTools {
      * 交给框架 Toolkit 的工具持有对象（框架反射收集 {@code @Tool}，schema 由框架生成）。
      * <p>库界口径与主链路一致：只有免登录分享轮才是权限墙，登录轮按使用者可见库收口。
      * <p>身份与配置覆盖<b>必须在发起线程（这里=问答流水线线程）取快照</b>：框架把工具派到自己的
-     * 弹性线程上执行，不重放身份就是 anonymous → 可见库集合为空 → 检索恒空且一声不响；不重放覆盖
+     * 弹性线程上执行，不重放身份就是 SYSTEM → 可见库集合为空 → 检索恒空且一声不响；不重放覆盖
      * 则是设置页那份 {@code retrieval.*} 对工具侧静默失效。两个坑都是实测踩过的。
      */
     public List<Object> turnTools(ChatCommand cmd, AgentxTurnSlot slot) {
@@ -862,7 +862,7 @@ public class WenquAgentxTools {
     /**
      * 每次调用都带上「这一轮是谁、哪条会话、这一轮的清单往哪写」。沙盒与产物族按前两个键取会话归属
      * （{@code PresentArtifactTool.CTX_SESSION_ID/CTX_USER_ID}）：跨线程读不到 {@code RequestUser}，
-     * 缺了就建不出沙盒——而它必须显式透传，绝不静默回落 anonymous 建沙盒（那是越权归属）。
+     * 缺了就建不出沙盒——而它必须显式透传，绝不静默回落 SYSTEM 建沙盒（那是越权归属）。
      * <p>任务清单写入器同样放在这份共用落点上：主链路的 {@code toolContext} 就是全族一张表，
      * 按族挂会漏（{@code writeTodo} 属任务清单族而不是内置族，真机错过一次）。
      */

@@ -2,6 +2,7 @@ package com.wenqu.ai.memory;
 
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.service.ConfigService;
+import com.wenqu.ai.util.RequestUser;
 
 import java.nio.file.Path;
 
@@ -49,7 +50,7 @@ public final class MemoryPaths {
 
     public static String requireUid(String uid) {
         String u = uid == null ? "" : uid.trim();
-        if (u.isEmpty() || "anonymous".equalsIgnoreCase(u)) {
+        if (u.isEmpty() || RequestUser.SYSTEM.equalsIgnoreCase(u)) {
             throw new BizException(401, "未登录");
         }
         if (!u.matches(UID_PATTERN)) {

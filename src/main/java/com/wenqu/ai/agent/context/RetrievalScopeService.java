@@ -77,10 +77,10 @@ public class RetrievalScopeService {
         return out;
     }
 
-    /** 内置「问渠」的默认库解析 = 本轮使用者自己的默认库（非内置/匿名/解析失败返回 null）。 */
+    /** 内置「问渠」的默认库解析 = 本轮使用者自己的默认库（非内置/SYSTEM/解析失败返回 null）。 */
     private String builtinDefaultKbId(Agent agent, String userId) {
         if (agent == null || !Integer.valueOf(1).equals(agent.getIsBuiltin())) return null;
-        if (userId == null || userId.isBlank() || com.wenqu.ai.util.RequestUser.ANONYMOUS.equals(userId)) return null;
+        if (userId == null || userId.isBlank() || com.wenqu.ai.util.RequestUser.SYSTEM.equals(userId)) return null;
         try {
             return knowledgeBaseService.defaultId(userId);
         } catch (Exception e) {

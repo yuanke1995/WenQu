@@ -154,7 +154,7 @@ public class TenantRequestService {
         try {
             admin = orgService.createUser(adminUid,
                     (r.getContactName() == null || r.getContactName().isBlank() ? r.getOrgName() : r.getContactName()) + " 管理员",
-                    null, "admin", password);
+                    null, java.util.List.of("admin"), password);
         } catch (Exception e) {
             // 租户已开出来，账号没建成：把两件事分开说清楚，别让人以为整单失败了去重复批准
             r.setStatus("approved");

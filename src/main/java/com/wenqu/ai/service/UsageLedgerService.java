@@ -93,7 +93,7 @@ public class UsageLedgerService {
         String tenant = com.wenqu.ai.util.TenantContext.current();
         row.setTenantId(tenant == null || tenant.isBlank()
                 ? com.wenqu.ai.util.TenantContext.DEFAULT_TENANT : tenant);
-        row.setUid(uid == null || uid.isBlank() || "anonymous".equals(uid) ? null : uid);
+        row.setUid(uid == null || uid.isBlank() || RequestUser.SYSTEM.equals(uid) ? null : uid);
         row.setSessionId(attr == null ? null : attr.sessionId());
         row.setMessageId(attr == null ? null : attr.messageId());
         row.setModel(modelRef);

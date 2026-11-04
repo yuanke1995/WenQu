@@ -55,7 +55,7 @@ public class User {
     private LocalDateTime lockedUntil;
 
     /** 会话代数（会话治理）：本人改密 / 管理员重置密码 / 强制下线时 +1。已签发令牌的 ep 声明与代数
-     *  不符即全端失效；存量令牌无 ep 声明按代数 0 兼容（升级不踢人，安全动作才踢） */
+     *  不符即全端失效 */
     private Long tokenEpoch;
 
     /** 最近一次登录成功时间（本地登录与 OIDC 回调均记；空=从未登录） */

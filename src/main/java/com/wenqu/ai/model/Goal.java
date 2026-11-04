@@ -20,9 +20,7 @@ import java.time.LocalDateTime;
  * 运行异常停下）、{@code ACHIEVED}（助手自报完成）、{@code CANCELLED}（用户删除）。
  * 同会话至多一条未结束目标。
  *
- * <p>历史上那几列 {@code criteria_json}/{@code constraints_json}/{@code verifications_json} 等
- * 已不再读写（表里保留，老行不迁移；删列是不可逆动作，交给运维窗口）。目标原文就是模型这一侧
- * 唯一要看到的东西，每轮由续跑提示词原样带上。
+ * <p>目标原文就是模型这一侧唯一要看到的东西，每轮由续跑提示词原样带上。
  *
  * @author yuanke
  */

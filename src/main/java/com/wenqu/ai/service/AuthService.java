@@ -75,7 +75,7 @@ public class AuthService {
         return AuthCrypto.parseToken(resolvedSecret, issuer(), audience(), token);
     }
 
-    /** 该用户当前的会话代数（签发令牌时写进 ep；null 视为 0，与存量行兼容） */
+    /** 该用户当前的会话代数（签发令牌时写进 ep；列默认 0） */
     public long tokenEpoch(User user) {
         return user == null || user.getTokenEpoch() == null ? 0L : user.getTokenEpoch();
     }
@@ -91,6 +91,9 @@ public class AuthService {
     @Transactional
     public Map<String, Object> initializeAdmin(String uid, String username, String password) {
         String u = required(uid, "登录账号");
+        if (com.wenqu.ai.util.RequestUser.SYSTEM.equalsIgnoreCase(u)) {
+            throw new BizException("system 是平台保留标识，不能作为登录账号");
+        }
         String name = required(username, "用户昵称");
         checkPassword(password);
         if (!needsInitialize()) throw new BizException("系统已初始化，请直接登录或由管理员添加账号");

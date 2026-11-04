@@ -402,9 +402,9 @@ public class HybridRetrievalService {
             // 本轮参数覆盖（全局 < 知识库 < 智能体的合并结果）：ThreadLocal 不随任务提交跨线程继承，
             // 必须在提交前取快照、在子线程内重放；否则多路并行检索静默退化为全局配置（库级/智能体级策略全丢）
             Map<String, String> runOverrides = configService.currentOverrides();
-            // 身份同理不跨线程：RequestUser 是裸 ThreadLocal，池线程里 loadVisibleKbIds 按匿名判定
+            // 身份同理不跨线程：RequestUser 是裸 ThreadLocal，池线程里 loadVisibleKbIds 按 SYSTEM 判定
             // → 私有/部门共享库静默搜不到（评测基线与单路口径不一致的根源）。发起线程取快照、
-            // 子线程 callAs 重放；调用线程没装载身份时重放的就是匿名，与现状等价、不会更差
+            // 子线程 callAs 重放；调用线程没装载身份时重放的就是 SYSTEM，与现状等价、不会更差
             RequestUser.Snapshot identity = RequestUser.snapshot();
             // 多路是否开补采：按「路数 × 补采倍数」的总 KNN 成本设闸。
             // 补采只补 1 次但 topK 最高放大到 MAX_TOPK_CAP(=60)，即单路最坏 2 倍 KNN；
@@ -795,8 +795,8 @@ public class HybridRetrievalService {
                 QueryWrapper<Knowledge> wrapper = new QueryWrapper<Knowledge>()
                         .and(w -> w.inSql("doc_id", "SELECT id FROM c_ai_document WHERE status=0 AND deleted=0")
                                 .or().isNull("doc_id"))
-                        // 块级停用过滤（status 默认 0；NULL 兼容存量行）
-                        .and(w -> w.eq("status", 0).or().isNull("status"));
+                        // 块级停用过滤（status 默认 0）
+                        .eq("status", 0);
                 // 词元之间必须是 OR（任一命中即可）——用 or(Consumer) 承载后续词元。
                 // 注意不能写成 `w.or(); w.and(t -> ...)`：and(Consumer) 会强制以 AND 连接该嵌套段，
                 // 把前一个 or() 覆盖掉，词元被 AND 串联（词元越多命中越少，长问句直接 0 命中）。

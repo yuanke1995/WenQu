@@ -1874,7 +1874,7 @@ public class DocumentService {
         List<Knowledge> rebuilt = new ArrayList<>();
         int idx = 0;
         for (Map<String, Object> item : snapshot) {
-            // 快照字段：id/title/content/titlePath/images（旧快照无 titlePath 按 null 兼容）
+            // 快照字段：id/title/content/titlePath/images（缺字段按 null/空处理）
             String oldId = item.get("id") == null ? null : String.valueOf(item.get("id"));
             String title = item.get("title") == null ? "" : String.valueOf(item.get("title"));
             String content = item.get("content") == null ? "" : String.valueOf(item.get("content"));

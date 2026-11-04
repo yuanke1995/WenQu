@@ -263,10 +263,10 @@ public class SkillController {
 
     // ==================== 内部 ====================
 
-    /** 登录身份：写操作不接受匿名（require-login 关闭时也不能往 anonymous 名下装东西）。 */
+    /** 登录身份：写操作不接受 SYSTEM（没有真实登录身份时也不能往 SYSTEM 名下装东西）。 */
     private static String uid() {
         String uid = RequestUser.uid();
-        if (uid == null || uid.isBlank() || RequestUser.ANONYMOUS.equals(uid)) {
+        if (uid == null || uid.isBlank() || RequestUser.SYSTEM.equals(uid)) {
             throw new BizException(401, "请先登录后再管理技能");
         }
         return uid;

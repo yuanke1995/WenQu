@@ -489,7 +489,10 @@ public class KnowledgeBaseService {
      * 绑定归使用者（只能用自己登记的供应商），首次使用前在知识库页自行绑定（storeForKb 对空绑定 fail-loud）。
      */
     public String defaultId(String uid) {
-        String owner = (uid == null || uid.isBlank()) ? "anonymous" : uid.trim();
+        if (uid == null || uid.isBlank() || com.wenqu.ai.util.RequestUser.SYSTEM.equals(uid)) {
+            throw new com.wenqu.ai.common.BizException(401, "请先登录");
+        }
+        String owner = uid.trim();
         String cached = defaultIdByUid.get(owner);
         if (cached != null) return cached;
         synchronized (this) {

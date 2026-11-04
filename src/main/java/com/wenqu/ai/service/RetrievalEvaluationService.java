@@ -314,15 +314,15 @@ public class RetrievalEvaluationService {
     /**
      * asUid：评测执行身份。检索层按该用户可读范围过滤文档（loadVisibleDocIdsOfHits 读 RequestUser），
      * 评测线程池不继承请求线程的 ThreadLocal，必须显式装载到每个执行线程（finally 清理）。
-     * 此前评测线程身份恒为 anonymous：私有库整库被可见性过滤剔除，recall 恒 0 —— 工装缺陷，非检索质量问题。
+     * 此前评测线程没有装载身份（SYSTEM）：私有库整库被可见性过滤剔除，recall 恒 0 —— 工装缺陷，非检索质量问题。
      */
     public EvalResult run(List<EvalCase> cases, List<EvalParams> groups, List<Integer> kList, String asUid) {
         long start = System.currentTimeMillis();
-        final String evalUid = (asUid == null || asUid.isBlank()) ? RequestUser.ANONYMOUS : asUid;
+        final String evalUid = (asUid == null || asUid.isBlank()) ? RequestUser.SYSTEM : asUid;
         final String evalDept;
         final String evalRole;
-        if (RequestUser.ANONYMOUS.equals(evalUid)) {
-            log.warn("[Eval] 评测身份为匿名：可见范围只含公开/内置库，私有库语料的期望块将全部被过滤（recall 恒 0）。"
+        if (RequestUser.SYSTEM.equals(evalUid)) {
+            log.warn("[Eval] 评测身份为 SYSTEM：可见范围只含公开/内置库，私有库语料的期望块将全部被过滤（recall 恒 0）。"
                     + "HTTP 触发时自动取当前登录用户；定时体检无登录态，需另行指定评测身份");
             evalDept = null;
             evalRole = "user";
@@ -868,7 +868,7 @@ public class RetrievalEvaluationService {
                 Math.min(Math.min(Math.max(1, caseCount), ANSWER_EVAL_MAX_CASES), set.cases().size()));
         // 触发时刻解析执行身份：检索可见性与生产问答同源（同 run() 的坑——评测线程无登录态，私有库整库消失）
         final String uid = RequestUser.uid();
-        final User u = com.wenqu.ai.util.RequestUser.ANONYMOUS.equals(uid) ? null : userMapper.selectById(uid);
+        final User u = com.wenqu.ai.util.RequestUser.SYSTEM.equals(uid) ? null : userMapper.selectById(uid);
         final String dept = u == null ? null : u.getDepartmentId();
         final String role = u == null ? "user" : userRoleService.primaryRole(uid);
         AnswerRun run = new AnswerRun(cases.size());

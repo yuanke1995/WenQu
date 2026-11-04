@@ -837,7 +837,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             // 本轮彻底收尾（跟随位已释放）才接目标的下一轮：放在收尾里发会被「已有跟随者」挡掉。
             // 传这一轮的 turnId：服务端据此区分「用户轮收尾」（把让位停下的目标自动接上）
             // 与「目标轮收尾」（不重复接）。
-            goalService.continueAfterTurn(cmd.getSessionId(), cmd.getUserId(), turnId);
+            goalService.onUserTurnEnd(cmd.getSessionId(), cmd.getUserId(), turnId);
         }
     }
 
@@ -1196,7 +1196,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 截断与卡死排障要看的是墙钟，成本与性能看的是机器时间——少一个数就必然有人拿错一个数对账。
         log.info("[TURN] 本轮收口: session={} 机器耗时={}ms 墙钟={}ms 人工等待={}ms",
                 cmd.getSessionId(), machineMs, wallMs, humanWaitMs);
-        // 目标模式轮终一拍：记账 → 判完成/受阻/安全帽 →（由 continueAfterTurn 决定）续跑。
+        // 目标模式轮终一拍：记账 → 判完成/受阻/安全帽 →（由 onUserTurnEnd 决定）续跑。
         // 放在 finish 之前：finish 会落库并发 done，目标态要先于那一帧定下来，前端才看得到一致的状态。
         // 工具调用数取本轮实例自己的步数闸（taken 是判过即占一步的口径，含被拒的）。
         // 本轮正文一起交给目标服务：助手在末尾写【目标完成】就是平台停下来的信号（见 GoalCopy.DONE_MARKER），
@@ -1616,7 +1616,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 跟随位释放之后再接下一轮（放在收尾里发会被「已有跟随者」挡掉，目标循环走不到第三轮）。
                 // 传这一轮的 turnId，服务端据此区分用户轮收尾与目标轮收尾（让位停下的目标会自动接上）。
                 if (turnId != null && turnId.startsWith("goal:")) {
-                    goalService.continueAfterTurn(f.cmd().getSessionId(), f.cmd().getUserId(), turnId);
+                    goalService.onUserTurnEnd(f.cmd().getSessionId(), f.cmd().getUserId(), turnId);
                 }
             }
         });

@@ -1522,7 +1522,7 @@ public class WorkflowEngine {
             String ref = v == null ? "" : String.valueOf(v).trim();
             if (ref.isEmpty()) {
                 com.wenqu.ai.model.User pref = ctx.uid == null || ctx.uid.isBlank()
-                        || com.wenqu.ai.util.RequestUser.ANONYMOUS.equals(ctx.uid)
+                        || com.wenqu.ai.util.RequestUser.SYSTEM.equals(ctx.uid)
                         ? null : userMapper.selectById(ctx.uid);
                 ref = pref == null || pref.getDefaultModel() == null ? "" : pref.getDefaultModel().trim();
             }

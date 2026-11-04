@@ -31,7 +31,7 @@ import java.util.List;
  *   <li>会话有工作区 ⇒ scope = <b>工作区 id</b>，workdir = 工作区的 {@code projects/{工作区 id}}。
  *       同一工作区的多个会话因此共用同一个容器与同一个工作区——这是「围绕一件事反复干活」
  *       这件事在盘上的落地；容器空闲回收后 workdir 仍在，<b>文件不丢</b>；</li>
- *   <li>会话无工作区（存量会话、匿名、没挂工作区）⇒ scope = <b>会话 id</b>，workdir 仍是 {@code null}。
+ *   <li>会话无工作区（存量会话、SYSTEM、没挂工作区）⇒ scope = <b>会话 id</b>，workdir 仍是 {@code null}。
  *       <b>与本次改动之前逐字相同</b>，保证不建工作区的用户行为零变化。</li>
  * </ul>
  *

@@ -340,7 +340,7 @@ public class ShareController {
      * 游客上传文档附件：返回 {@code {fileId,name,mime,size}}，后续提问只带 fileId。
      *
      * <p><b>为什么不复用登录态的 {@code POST /chat/attachment}</b>：那个端点按 {@code RequestUser.uid()}
-     * 分目录落盘，而游客的 uid 恒为 {@code "anonymous"}——所有访客会共用同一个上传目录，而
+     * 分目录落盘，而游客没有登录身份——所有访客会落到同一个目录，而
      * {@code stat()/read()} 的归属判定是"文件在我目录里即为我的"。跨访客引用就只剩下
      * "fileId 是 32 位随机 UUID 猜不到"这一层挡着，那不是隔离，是运气。
      * 本端点改用 {@code share-visitor:{visitorId}} 作 uid，落盘目录随之逐访客派生，
@@ -376,7 +376,7 @@ public class ShareController {
      * 游客提交回答反馈（👍/👎，可选文字）：发布者在公开链接上唯一拿得到的内容质量信号。
      *
      * <p>不能复用登录态的 {@code POST /feedback}：那条走 {@code assertOwned(sessionId, RequestUser.uid())}，
-     * 游客的 uid 是 {@code anonymous}，一律 403。这里换成按<b>访客 uid</b>校验归属：
+     * 游客没有登录 uid，一律 403。这里换成按<b>访客 uid</b>校验归属：
      * 先由 messageId 取回消息，再拿消息自己的 sessionId 去比对（调用方不必传会话 ID，
      * 也就少一个可以被伪造的参数）。
      */

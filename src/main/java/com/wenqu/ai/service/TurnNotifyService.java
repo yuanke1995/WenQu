@@ -20,7 +20,7 @@ import org.springframework.stereotype.Service;
  *
  * <p><b>异步线程没有登录态</b>，所以归属一律按 sessionId 回查会话行
  * （{@code c_ai_session.user_id}），任何时候都不许在这里读 {@code RequestUser}：流水线线程与后台续跑
- * 池线程不重放登录态会回落 anonymous，而续跑重建命令时把空 uid 落成了字面量 {@code guest}
+ * 池线程不重放登录态会回落 SYSTEM，而续跑重建命令时把空 uid 落成了字面量 {@code guest}
  * （{@code AgentscopeChatEngine#openForContinuation}）——{@code guest} 过得了
  * {@link NotificationService#create} 那道「无归属就跳过」的闸，通知会写进一个不存在的账号。
  *
@@ -264,7 +264,7 @@ public class TurnNotifyService {
         Session s = sessionService.sessionById(sessionId);
         if (s == null || s.getUserId() == null || s.getUserId().isBlank()) return null;
         String uid = s.getUserId();
-        if (RequestUser.ANONYMOUS.equals(uid) || "guest".equals(uid)) return null;
+        if (RequestUser.SYSTEM.equals(uid) || "guest".equals(uid)) return null;
         if (uid.startsWith(AgentShareService.VISITOR_UID_PREFIX)) return null;
         return uid;
     }

@@ -247,7 +247,7 @@ public class TenantService {
      * 也是「这个账号还没搬」，不是「它可以看所有租户」。
      */
     public String tenantOf(String uid) {
-        if (uid == null || uid.isBlank() || com.wenqu.ai.util.RequestUser.ANONYMOUS.equals(uid)) return null;
+        if (uid == null || uid.isBlank() || com.wenqu.ai.util.RequestUser.SYSTEM.equals(uid)) return null;
         Cached hit = userTenantCache.get(uid);
         if (hit != null && hit.expireAt() > System.currentTimeMillis()) {
             return MISS.equals(hit.tenantId()) ? null : hit.tenantId();

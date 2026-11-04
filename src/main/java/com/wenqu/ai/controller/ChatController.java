@@ -38,7 +38,7 @@ import com.wenqu.ai.security.Permission;
 
 /**
  * AI 聊天控制器（SSE 流式）
- * 用户身份：登录用户 uid（未登录为 anonymous）；会话按用户隔离
+ * 用户身份：登录用户 uid（无真实身份时是 SYSTEM 哨兵）；会话按用户隔离
  *
  * @author yuanke
  */
@@ -100,7 +100,7 @@ public class ChatController {
             @Parameter(description = "附件文件") @RequestParam("file") org.springframework.web.multipart.MultipartFile file,
             HttpServletRequest httpRequest) {
         String userId = RequestUser.uid();
-        rateLimitService.checkRateLimit("upload", RequestUser.ANONYMOUS.equals(userId)
+        rateLimitService.checkRateLimit("upload", RequestUser.SYSTEM.equals(userId)
                 ? "ip:" + clientIp(httpRequest) : "user:" + userId);
         return ResultJson.ok(chatUploadService.save(file, userId), "上传完成");
     }
@@ -154,12 +154,12 @@ public class ChatController {
     @PostMapping("/chat")
     public SseEmitter chat(@RequestBody @Valid ChatRequest request, HttpServletRequest httpRequest) {
         String userId = RequestUser.uid();
-        // 按用户限频（anonymous 落到 IP 维度，避免匿名共享池互相挤兑）
-        rateLimitService.checkRateLimit("chat", RequestUser.ANONYMOUS.equals(userId)
+        // 按用户限频（SYSTEM 落到 IP 维度）
+        rateLimitService.checkRateLimit("chat", RequestUser.SYSTEM.equals(userId)
                 ? "ip:" + clientIp(httpRequest) : "user:" + userId);
         // 配额闸在入口先判一次：模型出口那道闸是硬保证，这一道是为了让用户当场看到「哪条规则、用了多少、何时恢复」
         // 而不是看一条转了很久才失败的流（真正的强制仍在出口，两处共用 UsageQuotaService 一份判据）
-        usageQuota.assertWithinBudget(RequestUser.ANONYMOUS.equals(userId) ? null : userId, "chat");
+        usageQuota.assertWithinBudget(RequestUser.SYSTEM.equals(userId) ? null : userId, "chat");
 
         String question = request.getQuestion().trim();
         // 单条字数上限走配置（chat.maxQuestionChars），与游客分享链路同一把尺子：
@@ -217,7 +217,7 @@ public class ChatController {
         if (sessionId == null || sessionId.isEmpty()) {
             sessionId = sessionService.createSession(userId);
         } else {
-            // 客户端传入会话 ID：存在则校验归属（防跨用户读写），不存在则按当前用户补建会话记录（兼容旧客户端行为）
+            // 客户端传入会话 ID：存在则校验归属（防跨用户读写），不存在则按当前用户补建会话记录
             try {
                 sessionService.assertOwned(sessionId, userId);
             } catch (BizException e) {
@@ -533,7 +533,7 @@ public class ChatController {
     @Operation(summary = "回答智能体提问", description = "回答智能体的结构化提问（ask_user 事件下发，人在回路）：仅本轮用户本人可答，"
             + "答案作为工具结果回给模型继续本轮回答。提问卡持久化在 c_ai_tool_approval（PENDING→终态），"
             + "等待期间客户端断开不中止本轮，故刷新页面/换设备后仍可经 /ask-user/pending 取回卡片作答。"
-            + "body 传 {answers:[...]} 为作答（与问题下标对齐，兼容旧式单答案 {answer}）；传 {ignore:true} 为忽略（不作答）。"
+            + "body 传 {answers:[...]} 为作答（与问题下标对齐）；传 {ignore:true} 为忽略（不作答）。"
             + "超时与忽略都不替用户选答案。返回 false 表示这次作答没能送达（已收尾，或唤醒句柄随进程重启消失）。")
     @Permission("chat:approve")
     @PostMapping("/ask-user/{askId}")
@@ -543,7 +543,7 @@ public class ChatController {
         boolean ignore = Boolean.TRUE.equals(body.get("ignore"));
         String uid = com.wenqu.ai.util.RequestUser.uid();
         // 一卡多问：answers 为与问题下标对齐的答案数组（一题一项，多选的那几项已由前端并成一项里的
-        // 一个串）；兼容旧式单答案 {answer}。两处出口共用这一份解析，不再各抄一遍取数
+        // 一个串）。两处出口共用这一份解析，不再各抄一遍取数
         java.util.List<String> answers = answersFromBody(body);
         // 框架引擎的提问卡走框架待办（挂起→答复→由框架接续原任务），不属于它才回落旧通道；
         // 忽略＝把「用户没答」原样送回模型，绝不替用户编一个答案
@@ -562,14 +562,12 @@ public class ChatController {
         return ResultJson.ok(ignore ? "已忽略，智能体将自行判断" : "已提交");
     }
 
-    /** 作答请求体 → 与问题下标对齐的答案数组（旧式单答案 {@code {answer}} 也归一成一项）。 */
+    /** 作答请求体 → 与问题下标对齐的答案数组。 */
     static java.util.List<String> answersFromBody(java.util.Map<String, Object> body) {
         java.util.List<String> out = new java.util.ArrayList<>();
         Object raw = body.get("answers");
         if (raw instanceof java.util.List<?> list) {
             for (Object x : list) if (x != null) out.add(String.valueOf(x));
-        } else if (body.get("answer") != null) {
-            out.add(String.valueOf(body.get("answer")));
         }
         return out;
     }
@@ -700,7 +698,7 @@ public class ChatController {
                 markFrameworkLive(hitl.listPendingPlans(sessionId, com.wenqu.ai.util.RequestUser.uid()), frameworkSessions)));
     }
 
-    @Operation(summary = "会话列表", description = "游标分页列出当前用户的会话（含 anonymous 历史兼容池；置顶优先、按更新时间倒序）。"
+    @Operation(summary = "会话列表", description = "游标分页列出当前用户的会话（置顶优先、按更新时间倒序）。"
             + "首页不传 cursor，后续页传上一页返回的 nextCursor；keyword 按标题或消息内容模糊搜索（分页同样生效）。"
             + "返回 items / nextCursor / hasMore / groupCounts（置顶/今天/7天内/更早分组总数，仅统计有消息的会话） / total")
     @Permission("session:read")
@@ -921,7 +919,7 @@ public class ChatController {
         String userId = RequestUser.uid();
         sessionService.assertOwned(sessionId, userId);
         // 摘要调用按 chat 桶限频，防连点刷额度（框架那一路也要过这道，不然连点能一直重建实例）
-        rateLimitService.checkRateLimit("chat", RequestUser.ANONYMOUS.equals(userId)
+        rateLimitService.checkRateLimit("chat", RequestUser.SYSTEM.equals(userId)
                 ? "ip:" + clientIp(httpRequest) : "user:" + userId);
         // 这一次摘要的附加要求（摘要弹窗「带要求重新压缩」填的那句）：并进框架的摘要提示词。
         // 上限与输入框那道 maxlength 一致，超了如实报错，不静默截断半句要求
@@ -1007,7 +1005,7 @@ public class ChatController {
     }
 
     @Operation(summary = "新建会话", description = "取一个空白会话供「新建对话」使用：优先复用当前用户已有的空会话（空会话恒为 1 条），没有才新建；返回会话 ID。"
-            + "可选 projectId：把这条新对话归到指定工作区；不传=归兜底容器（历史兼容）；传 __none__=不挂任何工作区")
+            + "可选 projectId：把这条新对话归到指定工作区；不传=归兜底容器；传 __none__=不挂任何工作区")
     @Permission("session:write")
     @PostMapping("/session/new")
     public ResultJson newSession(

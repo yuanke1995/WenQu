@@ -171,7 +171,7 @@ public class AuditService {
         // 上下文只能在调用线程取：写线程没有 RequestUser 与请求属性
         try {
             String uid = RequestUser.uid();
-            row.setActorUid(RequestUser.ANONYMOUS.equals(uid) || uid == null || uid.isBlank() ? null : uid);
+            row.setActorUid(RequestUser.SYSTEM.equals(uid) || uid == null || uid.isBlank() ? null : uid);
         } catch (Exception ignored) {
             row.setActorUid(null);
         }

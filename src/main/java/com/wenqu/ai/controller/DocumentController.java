@@ -579,7 +579,7 @@ public ResultJson rebuildKb(
     /** 限流维度标识：有用户身份用 user:xxx，否则落到 IP 维度（解析收口到 ClientIp） */
     private String rateIdentity(HttpServletRequest request) {
         String uid = RequestUser.uid();
-        if (!RequestUser.ANONYMOUS.equals(uid)) return "user:" + uid;
+        if (!RequestUser.SYSTEM.equals(uid)) return "user:" + uid;
         return "ip:" + com.wenqu.ai.util.ClientIp.of(request);
     }
 }

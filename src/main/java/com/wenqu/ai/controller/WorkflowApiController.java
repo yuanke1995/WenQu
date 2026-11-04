@@ -62,7 +62,7 @@ public class WorkflowApiController {
     @GetMapping("/{id}/run/{runId}")
     public ResultJson runDetail(@PathVariable("id") String id, @PathVariable("runId") String runId,
                                 HttpServletRequest request) {
-        // 与触发端点同口径：带 API Key 的调用方按 Key 归属身份判权（否则匿名身份在内部归属校验处 404）；
+        // 与触发端点同口径：带 API Key 的调用方按 Key 归属身份判权（否则 SYSTEM 身份在内部归属校验处 404）；
         // 未带 Key（登录令牌调用）时为 null → resolvePrincipal 走当前登录用户，行为不变
         Object keyId = request.getAttribute(SecurityConfig.ATTR_API_KEY_ID);
         return ResultJson.ok(workflowService.getRunForApi(id, runId, keyId == null ? null : String.valueOf(keyId)));

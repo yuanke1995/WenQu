@@ -356,7 +356,7 @@ public class UserSkillStore {
     /**
      * 从本地 zip 文件安装（市场/站内分发用）：与上传 zip 同一条校验链（路径/体积/解压总量）。
      * <p>文件来源是服务端管理的市场快照包，不是用户直传——但内容仍可能是别的用户上架的，
-     * 所以校验一条不少：市场安装的信任边界与匿名上传相同。
+     * 所以校验一条不少：市场安装的信任边界与普通用户上传相同。
      */
     public InstalledSkill installZipFile(String uid, Path zip, String nameOverride,
                                          boolean overwrite, Set<String> reserved) {

@@ -22,7 +22,7 @@ import com.wenqu.ai.security.Permission;
 /**
  * 使用统计（个人用量）控制器。
  * 数据口径：推理用量台账 c_ai_usage_log（所有经多供应商路由的 LLM 调用统一记账）；
- * 未登录（匿名）无可归属的个人用量，返回空结构而不展示匿名兼容池的数据。
+ * 无真实用户身份（SYSTEM）时没有可归属的个人用量，返回空结构。
  *
  * @author yuanke
  */
@@ -47,7 +47,7 @@ public class UsageStatsController {
             @Parameter(description = "趋势与模型占比的时间范围（天）：7 或 30")
             @RequestParam(value = "range", defaultValue = "30") Integer range) {
         String uid = RequestUser.uid();
-        if (RequestUser.ANONYMOUS.equals(uid)) {
+        if (RequestUser.SYSTEM.equals(uid)) {
             return ResultJson.ok(UsageStatsService.empty());
         }
         return ResultJson.ok(usageStatsService.usage(uid, range));
@@ -60,7 +60,7 @@ public class UsageStatsController {
     @GetMapping("/stats/quota")
     public ResultJson<List<Map<String, Object>>> myQuota() {
         String uid = RequestUser.uid();
-        if (RequestUser.ANONYMOUS.equals(uid)) return ResultJson.ok(List.of());
+        if (RequestUser.SYSTEM.equals(uid)) return ResultJson.ok(List.of());
         return ResultJson.ok(usageQuota.mine(uid));
     }
 
