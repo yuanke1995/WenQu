@@ -102,6 +102,8 @@ public class SessionService {
     private final ModelRegistryService modelRegistryService;
     /** 工作区容器：新建会话时挂到该用户的 implicit 兜底容器（不建工作区也能问，只是产物无归属） */
     private final ProjectService projectService;
+    /** 本机执行器在线状态：聊天页要如实说「那台电脑现在连没连上」，不能等一轮跑失败才知道 */
+    private final com.wenqu.ai.executor.ExecutorRegistry executorRegistry;
 
     /**
      * 创建新会话（MySQL + Redis）
@@ -210,12 +212,25 @@ public class SessionService {
             m.put("projectId", p.getId());
             // implicit 兜底容器没有名字：显示「会话」（与侧栏那一栏同名，不另造名词）
             m.put("name", p.getName() == null || p.getName().isBlank() ? "会话" : p.getName());
+            m.put("implicit", Project.SELECTION_IMPLICIT.equals(p.getSelectionStatus()));
             m.put("hasInstructions", p.getInstructions() != null && !p.getInstructions().isBlank());
             m.put("archived", Project.STATUS_ARCHIVED.equals(p.getStatus()));
-            // 目录在哪决定"文件走哪条路"：local=用户电脑（句柄只在浏览器）；managed=服务器沙盒
-            m.put("directoryMode", p.getDirectoryMode() == null ? Project.MODE_MANAGED : p.getDirectoryMode());
-            // 有执行器=文件/命令走本机执行器（此时浏览器不再参与写盘）
+            m.put("isLocal", projectService.isLocal(p));
             m.put("executorId", p.getExecutorId() == null ? "" : p.getExecutorId());
+            // 目录清单：聊天页标题的悬浮提示与「本机文件」入口要用；不把绝对路径塞进页面正文
+            java.util.List<Map<String, Object>> roots = new java.util.ArrayList<>();
+            for (com.wenqu.ai.model.ProjectRoot r : projectService.rootsOf(p)) {
+                Map<String, Object> one = new LinkedHashMap<>();
+                one.put("alias", r.getAlias());
+                one.put("path", r.getPath());
+                one.put("primary", r.getPrimaryRoot() != null
+                        && r.getPrimaryRoot() == com.wenqu.ai.model.ProjectRoot.PRIMARY);
+                roots.add(one);
+            }
+            m.put("roots", roots);
+            m.put("executorOnline", p.getExecutorId() != null && !p.getExecutorId().isBlank()
+                    && executorRegistry.online(p.getExecutorId()));
+            m.put("permissionPreset", s.getPermissionPreset() == null ? "" : s.getPermissionPreset());
             return m;
         } catch (Exception e) {
             log.warn("[PROJECT] 会话工作区标识解析失败（按无工作区处理）session={}: {}", sessionId, e.getMessage());
@@ -633,6 +648,7 @@ public class SessionService {
         // 实例的那一个值，界面不回显它就会出现「选择器显示上限、实际按另一档在压上下文」
         info.setContextWindow(s.getContextWindow());
         info.setModel(s.getModel() == null ? "" : s.getModel());
+        info.setPermissionPreset(s.getPermissionPreset());
         // 这一列存的是某次点选留下的引用，而它随时可能变成不能用（供应商停用、模型被移除）：
         // 判不出来就只能等回答时撞上游报错，用户读到的是「网关坏了」而不是「你选的这个模型没了」。
         // 反过来，还没有消息的行（「新建对话」会复用空行）上的失效值是历史脏值，不是这个对话的选择——
@@ -726,6 +742,45 @@ public class SessionService {
         update.setId(sessionId);
         update.setTitle(t);
         sessionMapper.updateById(update);
+    }
+
+    /**
+     * 设置会话级权限档位（校验归属）。{@code code} 空或 {@code follow} = 清除覆盖，回到跟随智能体。
+     *
+     * <p>档位码的合法性在这里校：写进库再发现认不出，问答侧只能回落到更低的档位，
+     * 用户看到的「已切到完全权限」就成了一句假话。
+     */
+    public String setPermissionPreset(String userId, String sessionId, String code) {
+        assertOwned(sessionId, userId);
+        String v = code == null ? "" : code.trim();
+        if (v.isEmpty() || "follow".equalsIgnoreCase(v) || "default".equalsIgnoreCase(v)) {
+            sessionMapper.update(null, new LambdaUpdateWrapper<Session>()
+                    .eq(Session::getId, sessionId)
+                    .set(Session::getPermissionPreset, null));
+            return null;
+        }
+        com.wenqu.ai.agent.permission.PermissionPreset p =
+                com.wenqu.ai.agent.permission.PermissionPreset.fromCode(v);
+        if (p == null) {
+            throw new com.wenqu.ai.common.BizException(400, "认不出的权限档位：" + v);
+        }
+        Session update = new Session();
+        update.setId(sessionId);
+        update.setPermissionPreset(p.code());
+        sessionMapper.updateById(update);
+        log.info("[SESSION] 权限档位已切换 uid={} sid={} preset={}", userId, sessionId, p.code());
+        return p.code();
+    }
+
+    /** 会话当前选的档位码（系统侧读取，不校验归属；null=没选过）。 */
+    public String permissionPresetOf(String sessionId) {
+        if (sessionId == null || sessionId.isBlank()) return null;
+        try {
+            Session s = sessionMapper.selectById(sessionId);
+            return s == null ? null : s.getPermissionPreset();
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /**

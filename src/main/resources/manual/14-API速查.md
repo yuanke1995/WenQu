@@ -18,7 +18,7 @@
 | `POST /api/ai/session/{id}/compact`、`GET /session/{id}/history-summary` | 手动压缩上下文（可带摘要要求）/ 当前生效摘要 |
 | `GET /api/ai/session/{id}/events`、`GET /session/{id}/todos` | 会话事件账本（按轮过程回放）/ 任务清单快照 |
 | `GET /api/ai/tool-output/{spillId}`、`GET /tool-output/{spillId}/search` | 工具大输出留存原文读回 / 在原文中检索 |
-| `GET /api/ai/sessions`、`POST /session/new`、`GET /session/{id}`、`PUT /session/{id}/rename\|pin\|favorite\|model\|project`、`DELETE /session/{id}`、`DELETE /sessions`、`POST /sessions/batch-delete` | 会话列表（游标分页 + 搜索）/ 新建 / 历史恢复 / 重命名 / 置顶 / 收藏 / 模型与窗口档位 / 移动工作区 / 删除 / 清空 / 批量删除 |
+| `GET /api/ai/sessions`、`POST /session/new`、`GET /session/{id}`、`PUT /session/{id}/rename\|pin\|favorite\|model\|project\|permission`、`DELETE /session/{id}`、`DELETE /sessions`、`POST /sessions/batch-delete` | 会话列表（游标分页 + 搜索）/ 新建 / 历史恢复 / 重命名 / 置顶 / 收藏 / 模型与窗口档位 / 移动工作区 / 会话级权限档位 / 删除 / 清空 / 批量删除 |
 | `GET+POST+DELETE /api/ai/session/{id}/share`、`GET /session-shares`、`DELETE /session-shares/{sessionId}[/record]` | 会话只读分享：查询 / 开启 / 关闭 / 管理 |
 | `DELETE /api/ai/message-group/{assistantMessageId}`、`POST /message-group/undo`、`POST /message-group/switch` | 删除本轮 / 撤销删除 / 切换回答版本 |
 | `POST /api/ai/chat/goal`、`POST /chat/goal/{goalId}`、`GET /chat/goal/pending`、`GET /chat/session/{id}/goal[/events]` | 目标模式：创建 / 动作（`pause`·`resume`·`edit`·`clear`）/ 待处理恢复 / 目标视图与过程账本 |
@@ -68,7 +68,7 @@
 
 | 端点 | 说明 |
 |------|------|
-| `GET /api/ai/project/list`、`/{id}`、`/{id}/files`、`/{id}/file`、`/{id}/file/content`、`/{id}/export`、`/{id}/workflows`、`/{id}/runs`、`/{id}/instruction-history`、`/{id}/todos`、`/{id}/turn-guard`；`POST /project`、`/{id}/files`、`/{id}/dir`、`/{id}/files/batch`、`/{id}/todos`；`PUT /project/{id}`、`/{id}/status`、`/{id}/file`、`/{id}/todos/{todoId}`；`DELETE /{id}`、`/{id}/todos/{todoId}` | 工作区容器、目录单层列表、上传下载、改名移动、批量、打包导出、约定历史、事项、归档与删除、轮次占用检查 |
+| `GET /api/ai/project/list`、`/{id}`、`/{id}/files`、`/{id}/file`、`/{id}/file/content`、`/{id}/export`、`/{id}/workflows`、`/{id}/runs`、`/{id}/instruction-history`、`/{id}/todos`、`/{id}/turn-guard`；`POST /project`、`/{id}/files`、`/{id}/dir`、`/{id}/files/batch`、`/{id}/todos`；`PUT /project/{id}`、`PUT /{id}/executor`、`POST /{id}/open`、`/{id}/status`、`/{id}/file`、`/{id}/todos/{todoId}`；`DELETE /{id}`、`/{id}/todos/{todoId}` | 工作区容器（绑定本机执行器与源文件夹，`POST /project` body 为 `{name, executorId, roots:[{path, alias}]}`）、本机目录单层列表、上传下载、改名移动、批量、打包导出、在电脑上打开文件夹、约定历史、事项、归档与删除、轮次占用检查；删除只摘归属，本机文件不动 |
 | `GET /ai/project-files/{token}` | 工作区文件签名预览（可直接在浏览器打开的类型；`/api` 之外，token 带过期） |
 | `GET /api/ai/sandbox/state`、`/tree`、`/files`、`/download`、`/files/download`、`/procs`、`/procs/live`；`POST /sandbox/files/artifact`、`/run`、`/procs/kill`；`POST /sandbox/tool-call` | 沙盒：容器状态、目录与文件、存为产物、执行 python/node/bash、后台进程清单与停止、脚本回程调用 |
 | `GET /api/ai/artifact/list`、`/{id}/content`；`PUT /artifact/{id}/project`；`POST /refresh-sign`、`/batch-delete`；`DELETE /{id}` | 我的产物：列表 / 读文本原文 / 移动工作区 / 换发新鲜签名下载地址 / 批量与单条删除 |

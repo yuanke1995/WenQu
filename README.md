@@ -22,7 +22,7 @@
 | 长任务执行 | 计划模式（执行计划卡：确认 / 继续对话 / 取消）、目标模式（自动续跑，助手提交证据、平台逐条核验后判定完成）、四项硬预算与软阈值收敛、任务清单进度、工具执行确认与智能体提问卡（人在回路） |
 | 知识库（RAG） | docx / pdf / xlsx / ppt / pptx / txt / md / csv 解析与网页导入（扫描件 OCR）、混合检索（向量 + 中文分词词面）+ GraphRAG 图谱扩展、父子分块与问答对增强、网页定时刷新、文档版本与回收站、知识块预览与单块编辑 |
 | 智能体 | 人设 / 知识范围 / 能力开关可配、会话级不锁定、按需委派（跨主题问题派给职责对口助手）、子智能体两种执行形态、配置历史版本回滚、公开发布与 MCP 端点、定时执行 |
-| 工作区 | 一个工作目录 + 一份约定 + 一位默认助手；文件管理（上传 / 新建文件夹 / 重命名 / 移动 / 删除 / 打包导出 / 整屏预览）、会话与自动化归集、动态时间线、事项清单、资料域绑定、共用目录与记忆隔离 |
+| 工作区 | 你电脑上的一个或多个真实文件夹 + 一份约定 + 一位默认助手；文件只在本机（本机执行器读写，服务器不存副本），支持多目录、上传 / 新建 / 重命名 / 移动 / 删除 / 打包导出 / 整屏预览；会话级权限档位（仅可查看 / 工作区内修改 / 完全权限）、图标与颜色、会话与自动化归集、动态时间线、事项清单、资料域绑定、记忆隔离 |
 | 工具与沙盒 | 内置工具 + 联网搜索（Tavily / 博查 / SearXNG）+ 技能包 + MCP 工具；Docker 沙盒隔离执行命令与读写文件（输出实时回传）、后台进程查看与停止、脚本批量执行；产物与沙盒文件整屏预览台 |
 | 可视化工作流 | DSL 唯一真源 + StateGraph 执行引擎、13 类节点（含技能节点与 MCP 工具节点）、画布编辑器与节点级 trace 回放、版本发布 / 回滚、API 触发、cron 定时触发、终态回调、运行实时流 |
 | 技能与市场 | 技能三层来源（内置 / 我的 / 工作区）、zip 与 URL 安装、平台与个人两级停用；团队内市场分发技能、应用模板与工作流，安装即复制并提示「有更新」 |
@@ -108,7 +108,7 @@ bash deploy/sandbox-provisioner/run.sh docker-down    # 停止
 bash deploy/sandbox-provisioner/run.sh docker-logs    # 跟踪日志
 ```
 
-> 需要 Docker Desktop；首次 `docker-up` 会构建 provisioner 镜像并拉取沙盒运行时镜像（约 12GB，之后免拉取）。沙盒持久卷在工作区 `user-data/shared/{uid}/workspace/`（bind 给容器内 `/home/gem/user-data`），会话目录按 `sessions/{会话id}` 隔离，工作区共用目录开启时挂该工作区目录；用户自装技能在宿主 `user-data/skills-users/{uid}/`（跨会话、不依赖沙箱）；助手在对话里沉淀的技能写当前会话的沙盒工作区。provisioner 访问令牌默认 `wenqu-local-dev-sandbox-provisioner-token`（compose 默认值，应用侧用环境变量 `SANDBOX_PROVISIONER_TOKEN` 配同一个值，≥32 字符）。沙盒运行时镜像如需 JDK/Node 等依赖，用 `sandbox-image/Dockerfile` 派生新镜像并在 `.env` 设 `SANDBOX_IMAGE`（容器内无 sudo，依赖必须烧进镜像层）。
+> 需要 Docker Desktop；首次 `docker-up` 会构建 provisioner 镜像并拉取沙盒运行时镜像（约 12GB，之后免拉取）。服务器沙盒只服务「会话」栏与平台内部轮次：持久卷在 `user-data/shared/{uid}/workspace/`（bind 给容器内 `/home/gem/user-data`），会话目录按 `sessions/{会话id}` 隔离；**工作区的文件不走服务器沙盒**，由用户电脑上的执行器直接读写本机目录；用户自装技能在宿主 `user-data/skills-users/{uid}/`（跨会话、不依赖沙箱）；助手在对话里沉淀的技能写当前会话的沙盒工作区。provisioner 访问令牌默认 `wenqu-local-dev-sandbox-provisioner-token`（compose 默认值，应用侧用环境变量 `SANDBOX_PROVISIONER_TOKEN` 配同一个值，≥32 字符）。沙盒运行时镜像如需 JDK/Node 等依赖，用 `sandbox-image/Dockerfile` 派生新镜像并在 `.env` 设 `SANDBOX_IMAGE`（容器内无 sudo，依赖必须烧进镜像层）。
 
 ### 2. 配置环境变量
 
@@ -155,6 +155,15 @@ export SPRINGDOC_ENABLED=false            # Swagger/OpenAPI 开关（默认关�
 ```
 
 > **行为参数与模型配置不走环境变量**：检索 / 重排 / 解析 / 上下文 / 工具 / 联网搜索 / 目标模式 / 沙盒 / 记忆 / 定时任务 / 限流等 **179 项**行为参数统一在**系统设置页**维护（`config-schema.json` → `c_ai_config`，保存即生效）；聊天 / 视觉 / 向量 / 重排 / OCR 等模型走**模型供应商**登记 + 引用绑定（API Key RSA 加密入库，**无全局兜底**——聊天模型缺失或引用无效会 fail-loud 引导选择）。`application.yml` 不存任何模型网关与密钥。
+
+**本机执行器（工作区文件）**：工作区的文件在用户电脑上，需要在**那台电脑**上跑执行器：
+```bash
+node scripts/local-agent/wenqu-agent.mjs --server http://<服务器>/ai
+# 首次启动打印链接 + 6 位码；浏览器登录后确认，令牌落到 ~/.wenqu/executor.json
+# 工作区源文件夹需要能被执行器访问（默认浏览起点 ~；--root / 可看整盘）
+# 默认不在终端逐次确认（页面上的权限档位才是闸门）；需要终端确认时加 --ask
+```
+开发态 `cd web && npm run dev`（scripts/mac/dev-with-agent.mjs）会同时拉起 vite 与执行器。
 
 **本地开发**：无需 export。密钥、数据目录等环境相关值放在工作区根 `config/application-local.yml`（Spring Boot 外部配置目录，已被 .gitignore 忽略，**不打进构建产物**——密钥不会随 jar 分发），再以 `local` profile 启动（application.yml 已默认激活 local）：
 - IDEA：Run Configuration → Active profiles 填 `local`
@@ -206,7 +215,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 3. 在「知识库」新建库（绑定向量模型）→ 上传文档（或粘贴网页 URL）→ 等待解析完成
 4. 回到「对话」提问：句末 `[N]` 角标点开即见来源全文与原文图片
 5. 在「智能体 → 技能 / MCP 外部工具」装配能力，或在系统设置开启沙盒后让助手执行命令、交付产物（`/artifacts` 查看下载）
-6. 需要把一件事的对话、文件与产物放在一起时，在侧栏新建**工作区**；需要长任务自动推进时用 `/目标`，需要先确认方案时用 `/plan`
+6. 需要把一件事的对话、文件与产物放在一起时，在侧栏新建**工作区**（选你电脑上的文件夹，可多个）；需要长任务自动推进时用 `/目标`，需要先确认方案时用 `/plan`
 
 ## 功能详解
 
@@ -231,13 +240,15 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 
 ### 工作区（`/project/{id}`）
 
-- **一个容器收三样**：一个工作目录 + 一份工作区约定（每轮注入，对该工作区所有对话生效）+ 一位默认助手；会话、产物、定时任务、工作流都按 `project_id` 归到它名下。每人另有一个兜底容器，界面上就是侧栏「会话」栏
-- **五栏内容区**：**文件 / 会话 / 自动化 / 动态 / 事项**，各自记住条数并切栏重拉；栏右上角搜索框跨栏过滤，当前栏无命中时直接提示命中所在栏并可跳转。进入工作区默认先看「动态」——对话、交付产物、定时任务与工作流运行的合流时间线，顶部「接下来」给出未完成事项、上次聊到哪、哪次运行失败、下一趟定时任务时间
-- **文件栏可管理**：逐级浏览（面包屑返回任意层）＋ 上传（按钮或拖拽，多文件、重名默认拒绝并可勾「重名时覆盖」）＋ 新建文件夹 ＋ 行内 ⋯ 菜单（重命名 / 移动到… / 删除）＋ 批量移动或删除 ＋ 单个预览 / 下载 ＋ 整区打包导出；同一份文件既是文件又是产物时只列一行并带「已交付」角标；读取失败时说明原因并提供重试，不显示为空
-- **约定**：描述「这里的规矩」（依据要求、口径基准、禁止推测的范围），保存后即对该工作区之后的每条对话生效；每次修改或清空自动留痕，「历史」可查看最近 20 版并一键恢复
-- **设置弹层**：默认助手、**工作区资料**（绑定若干知识库作为默认检索域，未点名其他库且助手未绑库时只搜这些库）、**共用目录**（本区对话共用同一个工作目录，另有系统级总闸）、**记忆隔离**（开启后本区对话不带入也不写入个人记忆）、复用设置（按此配置再建一个）、工作目录路径复制、归档与删除
-- **事项**：记下要做的事 → 点「去聊」新建归属本工作区的对话并预填内容（不自动发送）→ 做完勾掉，勾掉的收进「已完成」分组
-- **归档与删除**：归档后侧栏收进折叠区，会话、文件、产物保持不动，文件栏仍可查看下载与预览但不能写入，随时可恢复；删除只解除归属，工作目录中的文件将无法再访问、约定一并丢失
+- **工作区 = 你电脑上的目录**：新建时选择本机上的一个或多个文件夹（首个为主目录，命令执行与相对路径以它为基准），文件只存在于你的电脑；问渠服务器只记「哪台电脑、哪些绝对路径、叫什么」，读写由那台电脑上的本机执行器完成。每人另有一个兜底容器，界面上就是侧栏「会话」栏
+- **本机执行器**：终端运行 `wenqu-agent`，首次按提示在浏览器里完成设备授权；执行器主动长轮询取任务，服务端不开入站端口。离线时聊天页明确提示，不会静默退回服务器执行
+- **五栏内容区**：**文件 / 会话 / 自动化 / 动态 / 事项**，各自记住条数并切栏重拉；栏右上角搜索框跨栏过滤，当前栏无命中时直接提示命中所在栏并可跳转。进入工作区默认先看「动态」
+- **文件栏直接管本机**：顶层是源文件夹，逐级浏览；上传 / 新建文件夹 / 重命名 / 移动 / 删除 / 下载 / 预览 / 整区导出都经执行器落到你的目录（不落服务器副本）；同一份文件既是文件又是产物时只列一行并带「已交付」角标
+- **会话级权限**：输入框左侧选择「仅可查看 / 工作区内修改 / 完全权限」，只对当前会话生效；完全权限需勾选风险确认，生效后权限胶囊变红。仍受平台上限与游客只读闸约束
+- **约定**：描述「这里的规矩」，保存后即对该工作区之后的每条对话生效；每次修改或清空自动留痕，「历史」可查看最近 20 版并一键恢复
+- **设置弹层**：默认助手、**工作区资料**（默认检索域）、**记忆隔离**、**源文件夹**（增删、主目录、复制路径）、**外观**（图标与颜色）、归档与删除
+- **事项**：记下要做的事 → 点「去聊」新建归属本工作区的对话并预填内容（不自动发送）→ 做完勾掉
+- **归档与删除**：归档后侧栏收进折叠区，文件栏仍可查看下载与预览但不能写入，随时可恢复；删除只解除服务器上的归属，**本机目录与文件一个都不动**，没有「连本机文件一起删」的选项
 
 ### 知识库与检索增强（`/knowledge`）
 
@@ -256,7 +267,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 页内六个 Tab（清单与顺序由菜单数据驱动，可逐项授权）：**模型供应商 · 智能体 · 技能 Skills · MCP 外部工具 · 工作流 · 定时任务**。
 
 - **配置分四节**：运行方式（问答助手 / 子智能体 / 工作流三选一，子智能体可选被委派时的执行方式）、身份与角色（图标、名称、描述、系统提示词；智能体不绑定模型）、资料范围（全部知识库 / 指定知识库 / 不使用，可再按标签收窄）、能力开关（知识库检索、内置高频工具、产物交付、技能、MCP 外部工具、联网搜索、目标模式，除目标模式外每项都可「跟随全局」）
-- **高级设置**：权限档位（只读调研 / 常规 / 全自主）、工具执行确认（跟随档位 / 自动执行 / 执行前确认 / 禁用）、单轮工具步数上限、检索重排覆盖、工具黑名单、子智能体委派关系；右侧「生效摘要」列出与全局不同的 N 处并可逐项恢复跟随
+- **高级设置**：权限档位（仅可查看 / 工作区内修改 / 完全权限）、工具执行确认（跟随档位 / 自动执行 / 执行前确认 / 禁用）、单轮工具步数上限、检索重排覆盖、工具黑名单、子智能体委派关系；右侧「生效摘要」列出与全局不同的 N 处并可逐项恢复跟随
 - **配置历史**：每次保存生成版本快照（字段级 diff），可查看历史并回滚到任一版本（回滚产生新版本，不改写历史）
 - **按需委派**：当前助手缺少资料而另一位助手的职责范围明显匹配时，模型把该问委派给对方查询——对方在自己的知识范围内执行一条子轮并交回结论与引用；被委派方有**检索要点**（只交资料，开销小）与**全循环**（按完整问答执行、可生成与交付文件）两种形态；顶栏状态条显示本轮派出几位、几位在跑与最长一支耗时，执行中可查看当前步骤
 - **资料收敛**：交回的资料按**本轮问题**再过一道相关度门与引用配额，未通过的条数如实告知模型；免登录分享页与被委派的助手本身不再向外委派
@@ -270,7 +281,7 @@ Vite 将 `/proxy/**` 代理到 `http://localhost:8090/ai`。环境配置见 `web
 - **内置工具**：算术计算（递归下降表达式求值，仅四则 / 幂 / 括号，不执行任意代码）、当前时间与日期差、知识库精确检索（命中块进引用流）、产物交付、技能读取、任务清单、联网搜索；工具族为内置 / 知识检索 / 联网搜索 / 产物交付 / 技能 / 任务清单 / 沙盒执行 / MCP 外部工具八类，设置页提供只读工具名册
 - **沙盒隔离执行**：模型在隔离 Linux 容器内使用命令执行、读文件、写文件、编辑文件、列目录、检索内容、按模式查找文件与交付产物（后两类由框架原生工具承担，界面统一给中文名），命令输出实时流式回传；作用域挂在会话上，同会话文件跨轮保留，空闲默认 60 分钟回收容器
 - **沙盒脚本**：开启后模型可写一段 Python 或 JavaScript 在沙盒中批量执行本轮已挂载的同类调用（如逐份文档汇总），只把打印结果带回对话；脚本内调用走同一套管控与配额，不是旁路，停止本轮时运行凭据当场作废
-- **权限档位**：只读调研（只留读文件与列目录，命令执行与写入不进入工具表，外部工具逐项确认）、常规（可执行命令、可在沙盒目录内读写，越界写入被拒）、全自主（不收束路径、不逐项确认）。管理员可设**平台上限**（高于上限的智能体按上限执行并在过程面板说明被收紧）与**平台停用工具名单**
+- **权限档位**：仅可查看（只留读文件与列目录，命令执行与写入不进入工具表，外部工具逐项确认）、工作区内修改（可执行命令、在工作区目录内读写，越界写入被拒）、完全权限（不收束路径、不逐项确认；会话选择时需二次确认并标红）。管理员可设**平台上限**（高于上限的按上限执行并在过程面板说明被收紧）与**平台停用工具名单**；每个会话还可以在输入框左侧单独覆盖（DSH 的会话级 permission/preset）
 - **联网搜索**：服务商 Tavily / 博查 / 自建 SearXNG；结果与知识库来源共用 `[N]` 编号进引用体系，并按本轮问题重排过相关度门，低于阈值的不列为引用、不交给模型；重排不可用时明确提示本轮结果未经相关性过滤；单轮调用次数配额可配
 - **文件与产物**：对话右栏「沙盒文件」卡按目录树列出该会话沙盒目录，可打开、下载或存为产物；「我的产物」页（`/artifacts`）汇总助手主动交付的文件，支持预览、下载（签名 URL）、移动到其他工作区与删除；交付文件按扩展名白名单净化，单份 ≤1MB
 
@@ -382,7 +393,7 @@ docker compose up -d          # 自包含：redis-stack + meilisearch + 内置 M
 | `GET /api/ai/session/{id}/events`、`GET /session/{id}/todos` | 会话事件账本（按轮过程回放）/ 任务清单快照 |
 | `GET /api/ai/tool-output/{spillId}`、`GET /tool-output/{spillId}/search` | 工具大输出外溢原文读回 / 在留存原文中检索 |
 | `GET /api/ai/sessions`、`POST /session/new`、`GET /session/{id}`、`PUT /session/{id}/rename\|pin\|favorite\|model\|project`、`DELETE /session/{id}`、`DELETE /sessions`、`POST /sessions/batch-delete` | 会话列表（游标分页 + 搜索）/ 新建 / 历史恢复 / 重命名 / 置顶 / 收藏 / 模型与会话窗口档位 / 移动到工作区 / 删除 / 清空 / 批量删除 |
-| `GET /api/ai/session/{id}/model`、`GET /session/{id}/workspace` | 会话记录的模型与档位 / 所属工作区 |
+| `GET /api/ai/session/{id}/model`、`PUT /session/{id}/permission`、`GET /session/{id}/workspace` | 会话记录的模型与档位 / 会话级权限档位（research·standard·autonomous，空=跟随智能体）/ 所属工作区与源文件夹 |
 | `GET+POST+DELETE /api/ai/session/{id}/share`、`GET /session-shares`、`DELETE /session-shares/{sessionId}`、`DELETE /session-shares/{sessionId}/record` | 会话只读分享：查询 / 开启（返回 token）/ 关闭 / 列表管理 / 清除记录 |
 | `DELETE /api/ai/message-group/{assistantMessageId}`、`POST /message-group/undo`、`POST /message-group/switch` | 按消息组删除本轮 / 撤销删除 / 切换回答版本 |
 | `POST /api/ai/chat/goal`、`POST /chat/goal/{goalId}`、`GET /chat/goal/pending`、`GET /chat/session/{id}/goal`、`/goal/events` | 目标模式：创建（`{sessionId,objective}`）/ 动作（`pause`·`resume`·`edit`·`clear`）/ 待处理目标恢复 / 会话当前目标视图 / 目标过程账本 |
@@ -417,7 +428,7 @@ docker compose up -d          # 自包含：redis-stack + meilisearch + 内置 M
 | `GET /api/ai/workflow/{id}/run/list`、`/run/{runId}`、`/run/{runId}/stream`（SSE）、`GET+POST /{id}/run/{runId}/approval`、`/versions`、`GET+PUT /{id}/automation`、`POST /{id}/schedule/run-now` | 运行历史与详情 / 实时进度流 / 人工审核读取与裁决 / 版本 / 定时与回调配置 / 立即运行一次 |
 | `GET /api/ai/credential/list`、`POST /credential`、`PUT /{id}`、`DELETE /{id}` | 工作流凭据（值加密落库、出参脱敏，运行时按运行发起人解密填入） |
 | `POST /api/ai/v1/workflows/{id}/run`、`GET /api/ai/v1/workflows/{id}/run/{runId}` | 对外工作流接口：持 API Key 触发**已发布**版本 / 按 runId 查结果 |
-| `GET /api/ai/project/list`、`/{id}`、`/{id}/files`、`/{id}/file`、`/{id}/file/content`、`/{id}/export`、`/{id}/workflows`、`/{id}/runs`、`/{id}/instruction-history`、`/{id}/todos`、`/{id}/turn-guard`、`POST /project`、`/{id}/files`、`/{id}/dir`、`/{id}/files/batch`、`/{id}/todos`、`PUT /project/{id}`、`/{id}/status`、`/{id}/file`、`/{id}/todos/{todoId}`、`DELETE /{id}`、`/todos/{todoId}` | 工作区：列表（含约定与默认助手）/ 详情 / 单层目录（带全区合计与 `agentShared`）/ 下载 / 读文本原文 / 打包导出 / 名下工作流与运行记录 / 约定改动历史 / 事项清单与新增 / 轮次占用检查 / 新建 / 上传 / 新建文件夹 / 批量移动删除 / 改名与移动 / 设置与归档恢复 / 删除 |
+| `GET /api/ai/project/list`、`/{id}`、`/{id}/files`、`/{id}/file`、`/{id}/file/content`、`/{id}/export`、`/{id}/workflows`、`/{id}/runs`、`/{id}/instruction-history`、`/{id}/todos`、`/{id}/turn-guard`、`POST /project`、`/{id}/files`、`/{id}/dir`、`/{id}/files/batch`、`/{id}/todos`、`PUT /project/{id}`、`PUT /{id}/executor`、`POST /{id}/open`、`/{id}/status`、`/{id}/file`、`/{id}/todos/{todoId}`、`DELETE /{id}`、`/todos/{todoId}` | 工作区：列表（含约定、默认助手、executorId 与 roots）/ 详情 / 本机目录单层浏览（虚拟路径 alias/相对路径，带全区合计）/ 下载 / 读文本原文 / 打包导出 / 名下工作流与运行记录 / 约定改动历史 / 事项清单与新增 / 轮次占用检查 / 新建（`{name, executorId, roots}`）/ 上传 / 新建文件夹 / 批量移动删除 / 改名与移动 / 替换源文件夹 / 设置与归档恢复 / 删除（本机文件不动） |
 | `GET /ai/project-files/{token}` | 工作区文件签名预览（浏览器可直接打开的类型；`/api` 之外，token 带过期） |
 | `GET /api/ai/sandbox/state`、`/tree`、`/files`、`/download`、`/files/download`、`POST /files/artifact`、`/run`、`GET /procs`、`/procs/live`、`POST /procs/kill` | 沙盒：容器状态 / 目录树 / 文件列表与下载 / 存为产物 / 执行 python·node·bash / 后台进程清单 / 实时探测 / 停止进程（连子进程一起） |
 | `POST /api/ai/sandbox/tool-call` | 沙盒脚本回程调用本服务工具（一次性运行令牌） |
@@ -567,7 +578,7 @@ spring:
 | `notification.*` | `retentionDays`(30)、`dedupWindow`(1440 分钟)、`cleanupIntervalMs`(1d) | 站内通知保留期、同类去重窗口与清理间隔 |
 | `artifact.*` | `retentionDays`(90)、`cleanupIntervalMs`(1d) | 产物超期清理 |
 | `schedule.*` | `runLogRetentionDays`(7)、`runLogCleanupIntervalMs`(1d) | 调度中心执行日志 |
-| `sandbox.*` | `projectWorkdirEnabled`(**true**)、`projectUploadMaxMb`(100)、`commandTimeoutSeconds`(180)、`idleReleaseMinutes`(60)、`project.turnGuard.leaseTtlMs`(2h)；`cleanupIntervalMs`(10min)、`maxOutputBytes`(256KB)、`keepaliveIntervalSeconds`(30)、`deleteTimeoutSeconds`(120) 为内部默认 | 保存即生效（客户端懒构建）。连接地址 / 令牌 / 回调地址 / 虚拟根走环境变量；`projectUploadMaxMb` 服务端再钳到 256（multipart 上限）；轮次租约用于「有轮次在跑时禁止改名移动删除」 |
+| `sandbox.*` | `projectUploadMaxMb`(100)、`commandTimeoutSeconds`(180)、`idleReleaseMinutes`(60)、`project.turnGuard.leaseTtlMs`(2h)；`cleanupIntervalMs`(10min)、`maxOutputBytes`(256KB)、`keepaliveIntervalSeconds`(30)、`deleteTimeoutSeconds`(120) 为内部默认 | 保存即生效（客户端懒构建）。连接地址 / 令牌 / 回调地址 / 虚拟根走环境变量；`projectUploadMaxMb` 服务端再钳到 256（multipart 上限）；轮次租约用于「有轮次在跑时禁止改名移动删除」 |
 | `mcp.server.*` | `enabled`(**false**)、`timeoutMs`(50000)、`allowedOrigins`("") | `allowedOrigins` 为空时仅允许本机回环（Origin 校验防 DNS rebinding）；`timeoutMs` 压在多数 MCP 客户端自身的 60 秒请求超时之下，到点中止那一轮而不是让它在后台跑完 |
 | `chat.agentscope*` / `chat.sessionLogArchive.*`（调试设置） | `agentscopeMaxIters`(12，0=不限制)、`agentscopeStateDir`(`user-data/agentscope`)、`agentscopeRedisPrefix`(`agentscope:session:`)、`sessionLogArchive.enabled`(true)、`.keepDays`(90)、`agentscopeJournalRotateEvents`(12000)、`agentscopeJournalRotateKeepDays`(30) | 框架引擎推理步数上限、状态目录与 Redis 前缀、会话事件日志归档与换代；多副本必须把状态与归档目录指向共享卷 |
 
@@ -723,7 +734,7 @@ bash deploy/sandbox-provisioner/run.sh status
 **默认关闭项（安全边界）**
 - `tool.sandbox.enabled` / `tool.runcode.enabled` / `webSearch.enabled` / `mcp.server.enabled` 默认关闭，需管理员显式开启；**问渠工具总开关 `tool.enabled` 默认开**，基础工具开箱即用
 - 智能体无全局启用开关（全员默认可用）；MCP 客户端无全局开关（每人登记自己的 Server）
-- 高风险工具的范围由**权限档位**（只读调研 / 常规 / 全自主）与逐工具黑名单收敛，管理员另可设平台上限与平台停用名单
+- 高风险工具的范围由**权限档位**（仅可查看 / 工作区内修改 / 完全权限）与逐工具黑名单收敛，管理员另可设平台上限与平台停用名单
 - 沙盒 token：应用侧环境变量 `SANDBOX_PROVISIONER_TOKEN` 须与 provisioner 侧一致且 ≥32 字符（不足 fail-closed 拒绝启用）；token 校验推迟到首次使用，未启用沙盒的部署不因缺 token 起不来
 
 **配置生效时机**

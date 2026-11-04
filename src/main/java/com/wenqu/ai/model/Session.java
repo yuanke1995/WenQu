@@ -101,4 +101,16 @@ public class Session {
      * <p>会话与工作区是**多对一**：一个工作区下可以有很多次对话，这也是为什么不能「把每个会话变成一个工作区」。
      */
     private String projectId;
+
+    /**
+     * 会话级权限档位：research=仅可查看 / standard=工作区内修改 / autonomous=完全权限。
+     *
+     * <p><b>为什么档位要落在会话上</b>：同一个工作区里，「让它在目录里改代码」和「只让它看资料别动文件」
+     * 是两种活，按智能体级配置一刀切会让用户每换一种活就去改智能体（还会影响别的会话）。
+     * 会话级覆盖是 DSH 的形状：permission/preset 是会话事件，选择器就在输入框旁边。
+     *
+     * <p>NULL=没在这个会话里选过 → 跟随智能体档位；仍受平台上限 {@code agent.permissionPreset.max} 钳制，
+     * 游客会话无论选什么都按只读档执行（见 {@code PermissionPolicyResolver}）。
+     */
+    private String permissionPreset;
 }

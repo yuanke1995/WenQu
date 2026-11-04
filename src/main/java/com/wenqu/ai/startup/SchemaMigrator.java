@@ -54,6 +54,8 @@ public class SchemaMigrator implements ApplicationRunner {
 
     /** 已退役列（表 → 列）：存量库若还有就删；新库 schema.sql 已不再建这些列 */
     private static final Map<String, List<String>> RETIRED_COLUMNS = Map.of(
+            // 2026-11-04: 工作区改为用户本机目录，服务器目录形态整体退役
+            "c_ai_project", List.of("workdir_path", "directory_mode", "root_path", "shared_workdir"),
             // 只列「已改名」的旧预算列（budget_turns→budget_rounds、budget_minutes→budget_ms）。
             // budget_tokens/budget_tool_calls 曾是退役列，2026-10-23 随预算四档装回 schema.sql，
             // 留在名单里会让本类先补列再删列，实体 SELECT 直接 Unknown column。

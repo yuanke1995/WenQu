@@ -3,10 +3,14 @@
     <div class="app-page-head">
       <!-- 名字只在这一处编辑：点「改名」就地换，不再单开一行输入框（此前标题/输入框/删除弹窗三份名字） -->
       <h1 v-if="!nameEditing" class="app-page-title pj-title">
+        <component v-if="!isImplicit" :is="workspaceIconOf(form.icon, true)"
+                   class="pj-head-ic" :style="form.color ? { color: form.color } : null" />
         {{ displayName }}
-        <span v-if="!isImplicit" class="app-pill muted pj-state" :title="form.directoryMode === 'local' ? '目录在你这台电脑上，读写都要你授权' : '目录在服务器的沙盒里'">
-          {{ form.directoryMode === 'local' ? '本机目录' : '服务器目录' }}
+        <span v-if="!isImplicit" class="app-pill muted pj-state"
+              :title="form.roots.length ? '文件都在你电脑上的这些文件夹里，读写由本机执行器完成' : '还没有绑定本机目录'">
+          {{ form.roots.length ? '本机目录' : '未绑定目录' }}
         </span>
+        <button v-if="!isImplicit && form.roots.length" class="pj-pen" type="button" @click="openFolder">在电脑上打开</button>
         <span v-if="isArchived" class="app-pill muted pj-state">已归档</span>
         <button class="pj-pen" type="button" @click="startRename">改名</button>
       </h1>
@@ -40,30 +44,58 @@
                 </div>
                 <div class="pj-set-note">绑定后，这个场子里的对话没点名别的库、助手也没绑库时，检索只搜这里选的库——进了场子就搜场子里的资料；@ 某个别的库仍可临时越出</div>
                 <div class="pj-set-row">
-                  <span class="pj-k">共用目录</span>
-                  <a-switch class="pj-sw" :checked="form.sharedWorkdir === 1" :disabled="archiving" @change="saveShared" />
-                </div>
-                <div class="pj-set-note">开启后本区所有对话共用一个工作目录：这里放的文件模型直接可读、跨对话互相可见；关闭则每条对话各自一份目录，互相看不见</div>
-                <div class="pj-set-row">
                   <span class="pj-k">记忆隔离</span>
                   <a-switch class="pj-sw" :checked="form.memoryIsolated === 1" :disabled="archiving" @change="saveMemoryIsolated" />
                 </div>
                 <div class="pj-set-note">开启后这是个「干净房间」：对话不带入也不写入你的个人记忆（改设置后新开轮次生效），上下文全靠约定、资料域和目录里的文件；给敏感项目用</div>
-                <div class="pj-set-div"></div>
-                <div class="pj-set-row">
-                  <span class="pj-k">复用</span>
-                  <button class="app-btn ghost" @click="openTpl">复制</button>
-                </div>
-                <div class="pj-set-note">新工作区带上这里的约定、资料域与开关；对话、文件、事项不带过去</div>
               </template>
               <div class="pj-set-row pj-set-row-top">
-                <span class="pj-k">工作目录</span>
-                <div class="pj-path-cell">
-                  <div class="pj-set-path" :title="workdirLabel">{{ workdirLabel }}</div>
-                  <button class="pj-act" type="button" @click="copyPath"><copy-outlined /> 复制路径</button>
+                <span class="pj-k">外观</span>
+                <div class="pj-look">
+                  <div class="pj-icons">
+                    <button v-for="ic in WORKSPACE_ICONS" :key="ic.name" type="button" class="pj-icon"
+                            :class="{ on: form.icon === ic.name }" :title="ic.label"
+                            @click="saveLook({ icon: ic.name })">
+                      <component :is="workspaceIconOf(ic.name, true)" />
+                    </button>
+                  </div>
+                  <div class="pj-colors">
+                    <button v-for="c in WORKSPACE_COLORS" :key="c" type="button" class="pj-color"
+                            :class="{ on: form.color === c }" :style="{ background: c }"
+                            :title="c" @click="saveLook({ color: c })">
+                      <check-outlined v-if="form.color === c" class="pj-color-check" />
+                    </button>
+                  </div>
                 </div>
               </div>
-              <div class="pj-set-note">这里写下的文件都在下面的「文件」栏里</div>
+              <div class="pj-set-note">侧栏与页面标题用这个图标和颜色，一眼区分不同工作区</div>
+              <div class="pj-set-row pj-set-row-top">
+                <span class="pj-k">源文件夹</span>
+                <div class="pj-path-cell">
+                  <div v-for="(r, i) in rootDraft" :key="r.path" class="pj-root-row">
+                    <span class="pj-root-name"><b>{{ r.alias }}</b>{{ i === 0 ? '（主要）' : '' }}</span>
+                    <span class="pj-root-path" :title="r.path">{{ r.path }}</span>
+                    <button type="button" class="pj-act pj-act-danger" :disabled="rootSaving"
+                            @click="removeRoot(i)">移除</button>
+                  </div>
+                  <div v-if="!rootDraft.length" class="pj-set-path">还没有绑定本机目录</div>
+                  <div v-if="!projectExecutorId" class="pj-root-ops">
+                    <a-select size="small" style="min-width:180px" :options="executorOptions"
+                              placeholder="选择一台在线的电脑" @change="v => projectExecutorId = v" />
+                    <span class="pj-set-note" style="margin:0">选中后才能添加文件夹</span>
+                  </div>
+                  <div class="pj-root-ops">
+                    <button type="button" class="pj-act" :disabled="rootPicking || rootSaving || !projectExecutorId" @click="addRoot">
+                      {{ rootPicking ? '选择中…' : '+ 添加文件夹' }}
+                    </button>
+                    <button type="button" class="pj-act" :disabled="rootSaving || !rootsDirty" @click="saveRoots">
+                      {{ rootSaving ? '保存中…' : '保存文件夹' }}
+                    </button>
+                    <button type="button" class="pj-act" @click="copyPath"><copy-outlined /> 复制主目录</button>
+                  </div>
+                </div>
+              </div>
+              <div class="pj-set-note">对话里的读写/命令只在这些文件夹里执行；删工作区不会删除这些文件。第一个是主目录（cwd 与相对路径基准）</div>
               <div class="pj-set-div"></div>
               <div class="pj-set-row">
                 <span class="pj-k">归档</span>
@@ -80,7 +112,7 @@
                     {{ deleting ? '删除中…' : '删除工作区' }}
                   </button>
                 </div>
-                <div class="pj-set-note pj-set-warn">只解除归属：工作目录里的文件将再也打不开，约定一起丢。此操作不可撤销。</div>
+                <div class="pj-set-note pj-set-warn">只解除服务器上的归属：本机目录与文件一个都不动，留在你的电脑上。约定一起丢，不可撤销。</div>
               </template>
             </div>
           </template>
@@ -161,15 +193,15 @@
               <div class="pj-filebar-act">
                 <a-checkbox v-model:checked="overwrite" class="pj-overwrite"
                             title="上传时同名文件直接换掉；不勾则报出那个名字，让你先改名或删掉">重名时覆盖</a-checkbox>
-                <button class="pj-act" type="button" :disabled="!!uploading || isArchived || !!filesError"
-                        :title="isArchived ? '工作区已归档，恢复后才能放文件' : ''" @click="pickFiles()">
+                <button class="pj-act" type="button" :disabled="!!uploading || isArchived || !!filesError || !form.roots.length"
+                        :title="isArchived ? '工作区已归档，恢复后才能放文件' : (!form.roots.length ? '先绑定本机目录' : '')" @click="pickFiles()">
                   <upload-outlined /> 上传
                 </button>
-                <button class="pj-act" type="button" :disabled="isArchived || !!filesError"
-                        :title="isArchived ? '工作区已归档，恢复后才能放文件' : ''" @click="openMkdir()">
+                <button class="pj-act" type="button" :disabled="isArchived || !!filesError || !form.roots.length"
+                        :title="isArchived ? '工作区已归档，恢复后才能放文件' : (!form.roots.length ? '先绑定本机目录' : '')" @click="openMkdir()">
                   <folder-add-outlined /> 新建文件夹
                 </button>
-                <button class="pj-act" type="button" :disabled="exporting || !filesAll" @click="doExportZip">
+                <button class="pj-act" type="button" :disabled="exporting || !filesAll || !form.roots.length" @click="doExportZip">
                   {{ exporting ? '导出中…' : '打包导出' }}
                 </button>
               </div>
@@ -178,23 +210,19 @@
                    @change="onPickFiles" @click="onInputClick" />
 
             <div v-if="uploading" class="pj-hint pj-tabnote" role="status" aria-live="polite">{{ uploading }}</div>
-            <!-- 目录不同步这件事必须在这里说出来：模型用的是每条对话各自的沙盒目录时，用户传完去对话里
-                 问「读一下我传的文件」只会得到「查无此文件」。没共用有两种原因（本区开关没开 / 管理员关了
-                 总闸），各自的解法不同，提示必须分开说——判据由服务端随列表给，前端不猜配置。 -->
-            <div v-if="!agentShared && !filesError" class="pj-hint pj-tabnote">
-              {{ sharedHint }}
-              <button v-if="form.sharedWorkdir !== 1 && !isArchived" class="pj-link-btn"
-                      @click="saveShared(true)">打开共用目录</button>
-            </div>
             <!-- 截断：根目录条目太多只回了最近这些；子文件夹里超了的在树里各自说明 -->
             <div v-if="rootLayer && rootLayer.truncated && !filesError" class="pj-hint pj-tabnote">
               根目录只列了最近 {{ (rootLayer.entries || []).length }} 项（共 {{ fileTotal }} 项），更早的可用打包导出整份查看
             </div>
             <div v-if="artifactsError && !filesError" class="pj-hint pj-tabnote">
-              {{ artifactsError }}，下面只列了工作目录里的文件（交付成产物的那些没并进来）
+              {{ artifactsError }}，下面只列了源文件夹里的文件（交付成产物的那些没并进来）
               <button class="pj-link-btn" @click="loadFiles">重试</button>
             </div>
-            <div v-if="filesError" class="pj-empty pj-err">
+            <div v-if="!isImplicit && !form.roots.length" class="pj-empty">
+              这个工作区还没有绑定本机目录。先在设置里添加至少一个文件夹，文件栏才会读到你电脑上的文件。
+              <button class="pj-link-btn" @click="settingsOpen = true">去设置里添加</button>
+            </div>
+            <div v-else-if="filesError" class="pj-empty pj-err">
               {{ filesError }}
               <button class="pj-link-btn" @click="loadFiles">重试</button>
             </div>
@@ -517,12 +545,9 @@
       </template>
     </div>
 
-    <!-- 删除二选一：保留工作目录（默认）/ 连文件一起删；会话与产物不受影响 -->
+    <!-- 删除工作区：只摘归属，本机文件不动 -->
     <DeleteProjectModal v-model:open="delOpen"
                         :project-name="form.name || '未命名工作区'"
-                        files-known
-                        :file-count="filesAll"
-                        :total-size="bytesAll"
                         :saving="deleting"
                         @confirm="doRemoveProject" />
 
@@ -553,13 +578,6 @@
       <div v-if="dirChoices.length < 2" class="pj-mnote">这个工作区只有根目录。想分类存放，先「新建文件夹」再回来挪。</div>
     </a-modal>
 
-    <!-- 以此工作区为模板再建一个：只带设置（约定/资料域/开关），不带历史 -->
-    <a-modal v-model:open="tplOpen" title="新建同款工作区" :confirm-loading="tplSaving"
-             ok-text="创建" cancel-text="取消" :width="modalWidth" @ok="doCreateFromTpl">
-      <a-input v-model:value="tplName" :maxlength="60" placeholder="新工作区名" @press-enter="doCreateFromTpl" />
-      <div class="pj-mnote">会带上：约定、绑定的资料域、共用目录与记忆隔离开关。对话、文件、事项、运行记录不带过去。</div>
-    </a-modal>
-
     <!-- 约定历史：被替换掉的旧版（留痕），恢复=把旧值再存一版（同样留痕） -->
     <a-modal v-model:open="histOpen" title="约定改动历史" :footer="null" :width="modalWidth">
       <div v-if="histLoading" class="pj-mnote">加载中…</div>
@@ -582,15 +600,16 @@
 import { ref, computed, onMounted, onUnmounted, watch, nextTick, defineComponent, h } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
-import { PlusOutlined, CopyOutlined, UploadOutlined, FolderAddOutlined, FolderFilled, MoreOutlined, CaretRightOutlined } from '@ant-design/icons-vue'
-import { getProject, updateProject, deleteProject, listArtifacts, listSessions, listAvailableAgents, listKnowledgeBases, listProjectFiles,
+import { PlusOutlined, CopyOutlined, UploadOutlined, FolderAddOutlined, FolderFilled, MoreOutlined, CaretRightOutlined, CheckOutlined } from '@ant-design/icons-vue'
+import { getProject, updateProject, deleteProject, bindProjectExecutor, pickExecutorDir, openProjectFolder, listExecutors, listArtifacts, listSessions, listAvailableAgents, listKnowledgeBases, listProjectFiles,
          downloadProjectFile, listScheduledJobs, createScheduledJob, runScheduledJob, listProjectWorkflows, runWorkflow,
          setProjectStatus, setNewSessionProject, getProjectRuns, getProjectTurnGuard,
          exportProjectZip, uploadProjectFiles, createProjectDir, moveProjectEntry, projectBatch,
          listProjectTodos, createProjectTodo, updateProjectTodo, deleteProjectTodo,
          listInstructionHistory } from '../api'
 import DeleteProjectModal from '../components/DeleteProjectModal.vue'
-import { sessionStore, rememberSession } from './store'
+import { sessionStore, rememberSession, loadSessions as refreshSidebarSessions } from './store'
+import { WORKSPACE_ICONS, WORKSPACE_COLORS, workspaceIconOf } from '../utils/workspaceIcons'
 // 产物地址要过 resolveImg：后端给的是 /ai/artifacts/**，开发态不经媒体前缀会落到 SPA 回退，下载到的是 index.html
 import { resolveImg } from '../utils/markdown'
 import { copyText } from '../utils/clipboard'
@@ -598,7 +617,7 @@ import { canPreview, artifactExt } from '../utils/artifactView'
 // 移动壳下不给跳往桌面专属页的入口（/agents 被 DesktopOnlyGuard 挡着，点了只会撞引导卡）
 import { mobileShell } from '../h5/mobile'
 
-const HEAD_HINT = '一个工作目录 + 自己的约定 + 自己的助手；这里发生的一切都归到它名下'
+const HEAD_HINT = '你电脑上的文件夹 + 自己的约定 + 自己的助手；这里发生的一切都归到它名下'
 
 const route = useRoute()
 const router = useRouter()
@@ -627,9 +646,69 @@ const isImplicit = ref(false)
 /** 归档=收工：新建对话/任务/运行一律禁用（后端同样拒绝，双保险；这里先给可见的反馈） */
 const isArchived = computed(() => form.value.status === 'archived')
 /** saved = 服务端当前值（读态显示它）；form = 编辑中的副本。分开才判得出「未保存」 */
-const saved = ref({ instructions: '', defaultAgentId: '', name: '', kbIds: [], sharedWorkdir: 0, memoryIsolated: 0 })
-const form = ref({ name: '', instructions: '', defaultAgentId: undefined, workdirPath: '', status: 'active',
-                   kbIds: [], sharedWorkdir: 0, memoryIsolated: 0 })
+const saved = ref({ instructions: '', defaultAgentId: '', name: '', kbIds: [], memoryIsolated: 0, icon: '', color: '' })
+const form = ref({ name: '', instructions: '', defaultAgentId: undefined, status: 'active',
+                   kbIds: [], memoryIsolated: 0, roots: [], icon: '', color: '' })
+// 源文件夹草稿：与 form 分开，改完点「保存文件夹」才写回服务器（选择目录是多次操作）
+const rootDraft = ref([])
+const rootSaving = ref(false)
+const rootPicking = ref(false)
+const projectExecutorId = ref('')
+const executors = ref([])
+const executorOptions = computed(() => executors.value.filter(e => e.online).map(e => ({
+  value: e.id, label: `${e.name || e.id}（在线）`
+})))
+const loadExecutors = async () => {
+  try {
+    const r = await listExecutors()
+    executors.value = (r && r.data) || []
+  } catch (e) {
+    executors.value = []
+  }
+}
+const rootsDirty = computed(() => JSON.stringify(rootDraft.value.map(r => [r.path, r.alias]))
+  !== JSON.stringify((form.value.roots || []).map(r => [r.path, r.alias])))
+const baseNameOf = p => {
+  const s = String(p || '').replace(/[/\\]+$/, '')
+  const i = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'))
+  return (i >= 0 ? s.slice(i + 1) : s) || '文件夹'
+}
+const addRoot = async () => {
+  if (!projectExecutorId.value) { message.warning('这个工作区还没有绑定执行器'); return }
+  rootPicking.value = true
+  try {
+    const r = await pickExecutorDir(projectExecutorId.value)
+    if (r && r.success === false) {
+      const msg = String(r.msg || '')
+      if (!/没有选择目录/.test(msg)) message.warning(msg || '没有选到目录')
+      return
+    }
+    const picked = (r && r.data && r.data.path) || ''
+    if (!picked) return
+    if (rootDraft.value.some(x => x.path === picked)) { message.info('这个文件夹已经添加过了'); return }
+    rootDraft.value.push({ path: picked, alias: baseNameOf(picked), primary: false })
+  } catch (e) {
+    message.warning('没有选到目录：' + (e.message || ''))
+  } finally {
+    rootPicking.value = false
+  }
+}
+const removeRoot = i => { rootDraft.value.splice(i, 1) }
+const saveRoots = async () => {
+  if (!projectExecutorId.value) { message.warning('这个工作区还没有绑定执行器'); return }
+  if (!rootDraft.value.length) { message.warning('至少保留一个文件夹'); return }
+  rootSaving.value = true
+  try {
+    await bindProjectExecutor(id.value, projectExecutorId.value,
+      rootDraft.value.map(r => ({ path: r.path, alias: r.alias })))
+    message.success('源文件夹已保存')
+    await load()
+  } catch (e) {
+    message.error('保存失败：' + (e.message || '请重试'))
+  } finally {
+    rootSaving.value = false
+  }
+}
 const sessions = ref([])
 /** 会话总数（列表接口只返回首页 50 条，计数要用 total） */
 const sessionTotal = ref(0)
@@ -655,7 +734,7 @@ const bytesAll = ref(0)
 const filesCapped = ref(false)
 const dirsAll = ref([])
 const namesAll = ref([])
-/** 这个目录是否就是沙盒在用的那一份（服务端随列表给，前端不读配置猜） */
+/** 模型看到的是不是同一批目录（本机工作区恒为 true） */
 const agentShared = ref(true)
 // ---------- 文件管理（上传 / 新建 / 改名 / 移动 / 删除）的在途状态 ----------
 /** 一次只让一个写动作在跑：批量删除与改名并发改同一条路径会撞出看不懂的错 */
@@ -724,11 +803,6 @@ const agentName = computed(() => {
 const kbOptions = computed(() => kbList.value
   .filter(k => !k.builtin)
   .map(k => ({ value: k.id, label: k.name || k.id })))
-/** 没共用有两种原因，解法不同：本区开关没开（就地打开）/ 管理员关了总闸（只能去找管理员） */
-const sharedHint = computed(() => form.value.sharedWorkdir === 1
-  ? '管理员在系统设置里关掉了「工作区共用目录」总闸：模型现在用的是每条对话各自的沙盒目录，这里放的文件它看不到。'
-  : '这个工作区没开「共用目录」：模型用的是每条对话各自的沙盒目录，这里放的文件它看不到。打开后对话就能跟着这个目录干活。')
-
 const toMs = v => {
   if (v == null) return 0
   if (typeof v === 'number') return v
@@ -837,8 +911,14 @@ const dirChoices = computed(() => {
     moving.add(p)
     for (const d of dirsAll.value) if (d.startsWith(p + '/')) moving.add(d)
   }
-  return [{ value: '', label: '根目录' },
-    ...dirsAll.value.filter(d => !moving.has(d)).map(d => ({ value: d, label: d }))]
+  const roots = (form.value.roots || []).map(r => ({
+    value: r.alias,
+    label: r.alias + (r.primary ? '（主要）' : '')
+  }))
+  return [
+    ...roots,
+    ...dirsAll.value.filter(d => !moving.has(d)).map(d => ({ value: d, label: d }))
+  ]
 })
 /** 拖拽提示里的落点名——根目录要叫「根目录」，别显示成空串 */
 const dropTipAt = computed(() => (dropAt.value ? '「' + dropAt.value + '」里' : '根目录'))
@@ -1054,14 +1134,32 @@ const saveKb = async list => {
     next.length ? '已绑定，这个场子里的对话默认检索这些库' : '已解绑，检索沿用我的全部知识库')
   if (!ok) form.value.kbIds = [...(saved.value.kbIds || [])]
 }
-/** 共用目录开关：后端立即生效（新开轮次按新值挂目录），前端顺手重拉文件列表刷新「模型看得见吗」 */
-const saveShared = async v => {
-  const next = v === true || v === 1 ? 1 : 0
-  form.value.sharedWorkdir = next
-  const ok = await patch({ sharedWorkdir: next },
-    next ? '已开启：之后的对话共用这个工作目录' : '已关闭：每条对话各自一份目录')
-  if (!ok) form.value.sharedWorkdir = saved.value.sharedWorkdir || 0
+/** 工作区外观：点一下即存（图标/颜色不是需要草稿的配置，看见就是结果） */
+const saveLook = async patch => {
+  const next = {
+    icon: patch.icon !== undefined ? patch.icon : form.value.icon,
+    color: patch.color !== undefined ? patch.color : form.value.color
+  }
+  const prev = { icon: form.value.icon, color: form.value.color }
+  // 先落到界面：颜色/图标是「点一下就该看见」的东西，不等网络回来才变
+  form.value.icon = next.icon
+  form.value.color = next.color
+  try {
+    await updateProject(id.value, next)
+    saved.value.icon = next.icon
+    saved.value.color = next.color
+  } catch (e) {
+    form.value.icon = prev.icon
+    form.value.color = prev.color
+    message.error('外观保存失败：' + (e.message || '请重试'))
+    return
+  }
+  // 侧栏刷新失败不回滚外观：服务器已经存下了，回滚只会让用户以为「刚才那一下没生效」
+  try {
+    await refreshSidebarSessions(undefined, { refreshProjects: true })
+  } catch (e) { /* 侧栏下次刷新会跟上 */ }
 }
+
 /** 记忆隔离：引擎在实例重建后生效（下一轮按新档装配），提示里说清这一点 */
 const saveMemoryIsolated = async v => {
   const next = v === true || v === 1 ? 1 : 0
@@ -1071,30 +1169,6 @@ const saveMemoryIsolated = async v => {
   if (!ok) form.value.memoryIsolated = saved.value.memoryIsolated || 0
 }
 // ---------- 以此为模板再建一个（只带设置，不带历史） ----------
-const tplOpen = ref(false)
-const tplName = ref('')
-const tplSaving = ref(false)
-const openTpl = () => {
-  tplName.value = (form.value.name || '工作区') + ' · 副本'
-  tplOpen.value = true
-}
-const doCreateFromTpl = async () => {
-  const n = tplName.value.trim()
-  if (!n) { message.warning('给新工作区起个名'); return }
-  tplSaving.value = true
-  try {
-    const r = await createProject(n, id.value)
-    tplOpen.value = false
-    settingsOpen.value = false
-    message.success('已创建同款工作区')
-    const created = (r && r.data && r.data.id) || ''
-    if (created) router.push('/project/' + created)
-  } catch (e) {
-    message.error(e.message || '创建失败，请重试')
-  } finally {
-    tplSaving.value = false
-  }
-}
 // ---------- 约定历史（被替换的旧版） ----------
 const histOpen = ref(false)
 const histLoading = ref(false)
@@ -1116,8 +1190,18 @@ const restoreNote = async row => {
   if (ok) histOpen.value = false
 }
 
-const workdirLabel = computed(() => form.value.workdirPath || ('projects/' + id.value))
-const copyPath = () => copyText(workdirLabel.value, '工作目录已复制')
+const openFolder = async () => {
+  try {
+    await openProjectFolder(id.value)
+    message.success('已在电脑上打开文件夹')
+  } catch (e) {
+    message.warning(e.message || '打开失败：先确认那台电脑上的执行器在线')
+  }
+}
+const copyPath = () => {
+  const primary = form.value.roots.find(r => r.primary) || form.value.roots[0]
+  copyText(primary ? primary.path : '', '主目录路径已复制')
+}
 
 const toggleArchive = async () => {
   const next = form.value.status === 'archived' ? 'active' : 'archived'
@@ -1303,7 +1387,8 @@ const doRename = async () => {
 const openMove = paths => {
   if (isArchived.value) { message.warning('工作区已归档，恢复后才能整理文件'); return }
   movePaths.value = paths.slice()
-  moveDest.value = ''
+  const primaryRoot = (form.value.roots || []).find(r => r.primary) || (form.value.roots || [])[0]
+  moveDest.value = primaryRoot ? primaryRoot.alias : ''
   moveOpen.value = true
 }
 const doMove = async () => {
@@ -1442,6 +1527,18 @@ const FILES_LAZY_AHEAD = 40   // 一口气预取的文件夹数上限；更多�
 let filesSeq = 0
 const loadFiles = async () => {
   const seq = ++filesSeq
+  if (!isImplicit.value && !form.value.roots.length) {
+    // 没绑目录：这是配置缺失，不是「空文件夹」。不要把加载失败当作没有文件
+    layers.value = {}
+    fileViewRows.value = []
+    filesError.value = ''
+    fileTotal.value = 0
+    filesAll.value = 0
+    bytesAll.value = 0
+    dirsAll.value = []
+    namesAll.value = []
+    return
+  }
   try {
     const d = ((await listProjectFiles(id.value, '')) || {}).data || {}
     if (seq !== filesSeq) return
@@ -1572,6 +1669,8 @@ const load = async () => {
     const r = await getProject(id.value)
     const p = (r && r.data) || {}
     isImplicit.value = Boolean(p.isImplicit)
+    projectExecutorId.value = p.executorId || ''
+    rootDraft.value = Array.isArray(p.roots) ? p.roots.map(r => ({ ...r })) : []
     // 约定正在就地编辑时别把草稿冲掉——改助手、归档都会走这里
     const keepDraft = instrEdit.value && instrDirty.value
     const draft = form.value.instructions
@@ -1580,23 +1679,24 @@ const load = async () => {
       defaultAgentId: p.defaultAgentId || '',
       name: p.name || '',
       kbIds: Array.isArray(p.kbIds) ? p.kbIds : [],
-      sharedWorkdir: p.sharedWorkdir || 0,
-      memoryIsolated: p.memoryIsolated || 0
+      memoryIsolated: p.memoryIsolated || 0,
+      icon: p.icon || '',
+      color: p.color || ''
     }
     form.value = {
       name: p.name || '',
       instructions: keepDraft ? draft : (p.instructions || ''),
       defaultAgentId: p.defaultAgentId || undefined,
-      workdirPath: p.workdirPath || '',
-      directoryMode: p.directoryMode || 'managed',
       status: p.status || 'active',
       kbIds: Array.isArray(p.kbIds) ? [...p.kbIds] : [],
-      sharedWorkdir: p.sharedWorkdir || 0,
-      memoryIsolated: p.memoryIsolated || 0
+      memoryIsolated: p.memoryIsolated || 0,
+      roots: Array.isArray(p.roots) ? p.roots : [],
+      icon: p.icon || '',
+      color: p.color || ''
     }
     if (!keepDraft) instrEdit.value = false
     instrFull.value = false
-    await Promise.all([loadSessions(), loadFiles(), loadAuto(), loadRuns(), loadTodos()])
+    await Promise.all([loadSessions(), loadFiles(), loadAuto(), loadRuns(), loadTodos(), loadExecutors()])
     // 落点只在首次决定：有动静先看动态（这个场子最近发生过什么）；空工作区则给「新建对话」的会话空态，
     // 有文件没动静（刚传完材料还没聊）给文件栏
     const want = activityRows.value.length ? 'activity'
@@ -1636,12 +1736,12 @@ const openGuardSession = () => {
   if (turnGuard.value.sessionId) router.push({ path: '/chat', query: { sid: turnGuard.value.sessionId } })
 }
 
-/** 删除二选一：withFiles=false 保留工作目录（默认）；true 连文件一起删（后端先删文件、失败即整单失败） */
-const doRemoveProject = async withFiles => {
+/** 删除工作区：只摘归属；本机目录里的文件一个都不动 */
+const doRemoveProject = async () => {
   deleting.value = true
   try {
-    await deleteProject(id.value, withFiles)
-    message.success(withFiles ? '已删除，工作目录已一起删除' : '已删除')
+    await deleteProject(id.value)
+    message.success('已删除（本机文件仍在你的电脑上）')
     delOpen.value = false
     router.push('/chat')
   } catch (e) {
@@ -1653,7 +1753,10 @@ const doRemoveProject = async withFiles => {
 
 onMounted(async () => {
   document.addEventListener('visibilitychange', onAppVisible)
-  load()
+  await load()
+  if (route.query.settings === '1') {
+    settingsOpen.value = true
+  }
   // 占用条 10s 轮询：工作区页是旁观位，不必秒级实时；挂到页面生命周期上，离开即停
   loadTurnGuard()
   guardTimer = setInterval(loadTurnGuard, 10000)
@@ -1681,9 +1784,9 @@ onUnmounted(() => {
 watch(id, () => {
   loadedOnce.value = false
   kw.value = ''
-  saved.value = { instructions: '', defaultAgentId: '', name: '', kbIds: [], sharedWorkdir: 0, memoryIsolated: 0 }
-  form.value = { name: '', instructions: '', defaultAgentId: undefined, workdirPath: '', status: 'active',
-                 kbIds: [], sharedWorkdir: 0, memoryIsolated: 0 }
+  saved.value = { instructions: '', defaultAgentId: '', name: '', kbIds: [], memoryIsolated: 0, icon: '', color: '' }
+  form.value = { name: '', instructions: '', defaultAgentId: undefined, status: 'active',
+                 kbIds: [], memoryIsolated: 0, roots: [], icon: '', color: '' }
   sessions.value = []
   sessionTotal.value = 0
   sessionError.value = ''
@@ -1716,7 +1819,6 @@ watch(id, () => {
   todos.value = []
   todosError.value = ''
   todoDraft.value = ''
-  tplOpen.value = false
   histOpen.value = false
   instrEdit.value = false
   instrFull.value = false
@@ -1778,6 +1880,24 @@ watch(id, () => {
 .pj-set-note { font-size: var(--app-fs-xs); line-height: 1.6; color: var(--app-label-tertiary); }
 .pj-set-warn { color: var(--app-danger-text); }
 .pj-set-div { height: 1px; background: var(--app-border-l1); margin: 2px 0; }
+.pj-head-ic { margin-right: 8px; font-size: 22px; vertical-align: -2px; }
+.pj-look { display: flex; flex-direction: column; gap: 8px; }
+.pj-icons { display: flex; flex-wrap: wrap; gap: 6px; }
+.pj-icon { width: 30px; height: 30px; border: 1px solid transparent; border-radius: 7px;
+  display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
+  background: var(--app-surface2, rgba(0,0,0,.04)); color: var(--app-text2); font-size: 15px; }
+.pj-icon.on { border-color: var(--app-accent); color: var(--app-accent); background: transparent; }
+.pj-colors { display: flex; flex-wrap: wrap; gap: 8px; }
+.pj-color { width: 20px; height: 20px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; }
+.pj-color.on { outline: 2px solid var(--app-text1); outline-offset: 2px; }
+.pj-color-check { color: #fff; font-size: 12px; line-height: 1; pointer-events: none;
+  filter: drop-shadow(0 0 1px rgba(0,0,0,.55)); }
+.pj-color { display: inline-flex; align-items: center; justify-content: center; }
+.pj-root-row { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 3px 0; }
+.pj-root-name { flex: none; font-size: 12px; color: var(--app-text1); }
+.pj-root-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 12px; color: var(--app-text3); }
+.pj-root-ops { display: flex; gap: 8px; margin-top: 4px; flex-wrap: wrap; }
 /* 工作目录：路径是一串 UUID，必须整条看得见（换行而不是省略号），所以值那一格改成竖排 */
 .pj-set-row-top { align-items: start; }
 .pj-set-row-top .pj-k { line-height: 20px; }

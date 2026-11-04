@@ -4,16 +4,22 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenqu.ai.mapper.ArtifactMapper;
 import com.wenqu.ai.mapper.ProjectMapper;
 import com.wenqu.ai.mapper.ProjectNoteLogMapper;
+import com.wenqu.ai.mapper.ProjectRootMapper;
 import com.wenqu.ai.mapper.SessionMapper;
 import com.wenqu.ai.model.Artifact;
 import com.wenqu.ai.model.Project;
 import com.wenqu.ai.model.ProjectNoteLog;
+import com.wenqu.ai.model.ProjectRoot;
 import com.wenqu.ai.model.Session;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * 工作区容器（{@code c_ai_project}）的服务层。
@@ -42,6 +48,8 @@ public class ProjectService {
     private final ArtifactMapper artifactMapper;
     /** 约定留痕：update() 改约定时把被替换的旧版抄一行进来（leaf mapper，直接注入无环） */
     private final ProjectNoteLogMapper noteLogMapper;
+    /** 工作区源文件夹（本机目录）：工作区 = 一台本机上的一个或多个真实目录。 */
+    private final ProjectRootMapper projectRootMapper;
     /**
      * 校验「工作区默认助手」确实是本人可读的助手。
      * <p><b>必须惰性取</b>：直接注入 AgentService 会形成
@@ -56,16 +64,6 @@ public class ProjectService {
      * 直接注入会构成构造器环（Spring Boot 3 默认禁止，启动直接失败）。归档是低频动作，用到时再取即可。
      */
     private final org.springframework.beans.factory.ObjectProvider<ScheduledJobService> scheduledJobProvider;
-    /**
-     * 删工作区时按用户选择连工作目录一起删。
-     * <p>同样惰性取：{@code ProjectFileService} 的构造器依赖本类（{@code baseDir} 里的归属校验）。
-     */
-    private final org.springframework.beans.factory.ObjectProvider<ProjectFileService> projectFileProvider;
-    /**
-     * 共用工作目录的全局总闸（{@code sandbox.projectWorkdirEnabled}）。
-     * <p>直接注入安全：ConfigService 只依赖配置侧的 mapper/redis/schema，不反向依赖本类。
-     */
-    private final ConfigService configService;
 
     /**
      * 校验「工作区绑定知识库」确实存在且对本人可见。
@@ -75,19 +73,17 @@ public class ProjectService {
 
     public ProjectService(ProjectMapper projectMapper, SessionMapper sessionMapper,
                           ArtifactMapper artifactMapper, ProjectNoteLogMapper noteLogMapper,
+                          ProjectRootMapper projectRootMapper,
                           org.springframework.beans.factory.ObjectProvider<AgentService> agentProvider,
                           org.springframework.beans.factory.ObjectProvider<ScheduledJobService> scheduledJobProvider,
-                          org.springframework.beans.factory.ObjectProvider<ProjectFileService> projectFileProvider,
-                          ConfigService configService,
                           org.springframework.beans.factory.ObjectProvider<KnowledgeBaseService> kbProvider) {
         this.projectMapper = projectMapper;
         this.sessionMapper = sessionMapper;
         this.artifactMapper = artifactMapper;
         this.noteLogMapper = noteLogMapper;
+        this.projectRootMapper = projectRootMapper;
         this.agentProvider = agentProvider;
         this.scheduledJobProvider = scheduledJobProvider;
-        this.projectFileProvider = projectFileProvider;
-        this.configService = configService;
         this.kbProvider = kbProvider;
     }
 
@@ -114,19 +110,14 @@ public class ProjectService {
         p.setUid(uid);
         p.setName(null); // implicit 不给名字：它不是用户建的工作区，界面上只体现为侧栏「会话」栏
         p.setSelectionStatus(Project.SELECTION_IMPLICIT);
-        p.setDirectoryMode(Project.MODE_MANAGED);
         p.setStatus(Project.STATUS_ACTIVE);
-        // 兜底容器不是工作区：「会话」栏那批对话保持各自一份目录（引入工作区前的行为），
-        // 共用目录只对用户显式建的场子生效——随口一问的两次聊天不该互相看得见对方的中间文件
-        p.setSharedWorkdir(0);
         p.setDeleted(0);
         // 显式给时间：insert 不会回读 DB 默认值，不设的话创建响应里 createTime 是 null（列表里又有值，前后不一致）
         p.setCreateTime(java.time.LocalDateTime.now());
         p.setIdempotencyKey(Project.IMPLICIT_IDEMPOTENCY_KEY);
-        p.setWorkdirPath(p.resolveWorkdirPath());
         try {
             projectMapper.insert(p);
-            log.info("[PROJECT] 懒创建 implicit 兜底容器 uid={} id={} workdir={}", uid, p.getId(), p.getWorkdirPath());
+            log.info("[PROJECT] 懒创建 implicit 兜底容器 uid={} id={}", uid, p.getId());
             return p;
         } catch (DuplicateKeyException e) {
             // 并发抢插：另一个线程已经建好了，回到"查得到"那条路
@@ -191,7 +182,7 @@ public class ProjectService {
     }
 
     /**
-     * 由会话反推所属工作区行（沙盒要同时拿 id 与 workdir_path，故除 {@link #projectIdOfSession} 外再给一条）。
+     * 由会话反推所属工作区行（本机执行器的源文件夹、权限与钩子都要这一行，故除 {@link #projectIdOfSession} 外再给一条）。
      *
      * @return 工作区；会话不存在/没挂工作区/工作区已删/查询失败一律 null
      */
@@ -249,27 +240,19 @@ public class ProjectService {
     }
 
     /**
-     * 用户显式新建一个工作区（{@code selection_status=selectable}）。
+     * 用户显式新建一个本机工作区。
      *
-     * @param name          工作区名；空白拒绝（用户自建工作区必须有名字，否则和 implicit 无法区分）
-     * @param fromProjectId 可选模板：从「我的」另一个工作区复制<em>设置</em>（约定/绑定资料域/
-     *                      共用目录/记忆隔离）——写一套好约定的经验该能复用；会话、文件、事项、
-     *                      运行记录一概不带（那是那个场子的历史，不是配置）
-     * @return 新建的工作区
-     * @throws IllegalArgumentException 名字非法或模板工作区不存在/不属于该用户
-     */
-    public Project create(String uid, String name, String fromProjectId) {
-        return create(uid, name, fromProjectId, null);
-    }
-
-    /**
-     * 新建工作区。
+     * <p><b>工作区 = 用户电脑上的一个或多个真实目录</b>：{@code roots} 至少一项，第一项为主目录
+     * （框架 cwd、相对路径与命令执行的基准），其余为附加根；它们必须都在同一台执行器上。
+     * 服务器只记「哪台机器、哪些绝对路径、显示成什么名」，不保存用户文件的副本。
      *
-     * @param directoryMode {@code managed}=服务器托管目录（默认）；{@code local}=本机工作区，
-     *                      目录在用户电脑上，句柄只在浏览器里，服务器只记类型与名字。
-     *                      传空 = 沿用托管；其它值一律拒绝（目录模式决定"文件在哪"，不能写错）
+     * @param fromProjectId 可选模板：从本人另一个工作区复制<b>设置</b>（约定/资料域/两个开关），
+     *                      目录与执行器一概不抄——模板是规矩，不是那台机器上的历史
+     * @param executorId    本机执行器 id（c_ai_executor.id）；必须属于该用户
+     * @param roots         源文件夹（绝对路径 + 可选别名）；第一项为主目录
      */
-    public Project create(String uid, String name, String fromProjectId, String directoryMode) {
+    @Transactional
+    public Project create(String uid, String name, String fromProjectId, String executorId, List<RootSpec> roots) {
         if (uid == null || uid.isBlank() || com.wenqu.ai.util.RequestUser.SYSTEM.equals(uid)) {
             throw new IllegalArgumentException("请先登录后再新建工作区");
         }
@@ -280,46 +263,40 @@ public class ProjectService {
         if (trimmed.length() > MAX_NAME_LEN) {
             throw new IllegalArgumentException("工作区名过长（最多 " + MAX_NAME_LEN + " 字）");
         }
-        String mode = directoryMode == null || directoryMode.isBlank()
-                ? Project.MODE_MANAGED : directoryMode.trim();
-        if (!Project.MODE_MANAGED.equals(mode) && !Project.MODE_LOCAL.equals(mode)) {
-            throw new IllegalArgumentException("未知的工作区类型：" + mode);
+        if (executorId == null || executorId.isBlank()) {
+            throw new IllegalArgumentException("工作区必须绑定一台本机执行器：先在你这台电脑上启动并授权 wenqu-agent");
         }
+        List<RootSpec> normalized = normalizeRoots(roots);
         Project tpl = null;
         if (fromProjectId != null && !fromProjectId.isBlank()) {
             tpl = ownedProject(uid, fromProjectId);
         }
         Project p = new Project();
-        // 同 ensureImplicit：id 必须先自己生成，workdir 要用它分片
         p.setId(java.util.UUID.randomUUID().toString().replace("-", ""));
         p.setUid(uid);
         p.setName(trimmed);
         p.setSelectionStatus(Project.SELECTION_SELECTABLE);
-        p.setDirectoryMode(mode);
+        p.setExecutorId(executorId.trim());
         p.setStatus(Project.STATUS_ACTIVE);
-        // 新建工作区默认共用目录：工作区的核心承诺就是「传进来的材料这个场子里的对话都看得见」，
-        // 默认关等于每个新场子都要先撞一次「模型说查无此文件」。不想要的场子在设置里一键关回会话级
-        p.setSharedWorkdir(1);
         if (tpl != null) {
-            // 模板复制只抄「规矩」不抄「历史」：约定/资料域/两个开关；目录模式不抄（linked 位未实现）
             p.setInstructions(tpl.getInstructions());
             p.setKbIds(tpl.getKbIds());
-            p.setSharedWorkdir(tpl.getSharedWorkdir() == null ? 1 : tpl.getSharedWorkdir());
             p.setMemoryIsolated(tpl.getMemoryIsolated() == null ? 0 : tpl.getMemoryIsolated());
         }
         p.setDeleted(0);
         p.setCreateTime(java.time.LocalDateTime.now());
-        p.setWorkdirPath(p.resolveWorkdirPath());
         projectMapper.insert(p);
-        log.info("[PROJECT] 新建工作区 uid={} id={} name={} fromTemplate={}",
-                uid, p.getId(), trimmed, tpl != null ? tpl.getId() : "-");
+        insertRoots(uid, p.getId(), normalized);
+        log.info("[PROJECT] 新建本机工作区 uid={} id={} name={} executor={} roots={}",
+                uid, p.getId(), trimmed, executorId, normalized.size());
         return p;
     }
 
-    /** 保持旧签名（不带模板） */
+    /** 保持旧签名（不带模板）：所有新工作区都必须给执行器与目录，这个入口只用于内部/测试的兜底。 */
     public Project create(String uid, String name) {
-        return create(uid, name, null);
+        throw new IllegalArgumentException("工作区必须选择本机目录后再创建");
     }
+
 
     /**
      * 删除一个工作区。
@@ -332,28 +309,16 @@ public class ProjectService {
      *   <li>工作区行本身：逻辑删除（{@code deleted=1}）。</li>
      * </ul>
      *
-     * <p><b>工作目录（{@code deleteFiles=true}）</b>：默认不删——删了行就再也找不到那个目录，
-     * 它会作为孤儿永远躺在盘上。所以给用户一个「连文件一起删」的显式选项，且**先删文件、
-     * 失败即整单失败**（行保留可重试），不搞"行删了文件没删掉"的不可逆组合。
+     * <p><b>本机文件不删</b>：目录在用户电脑上，问渠只摘服务器上的归属；删除工作区绝不等于删硬盘。
      *
      * <p><b>implicit 兜底容器不可删</b>：它是每个人的兜底归属，删了会让新会话无处可挂。
      *
-     * @param deleteFiles true = 连同工作区目录一起删除（不可恢复）；false = 文件留在盘上
      * @throws IllegalArgumentException 工作区不存在/不属于该用户/implicit 容器
-     * @throws IllegalStateException      选择连文件一起删但删除失败（工作区行不动，可重试）
      */
-    public void delete(String uid, String projectId, boolean deleteFiles) {
+    public void delete(String uid, String projectId) {
         Project p = ownedProject(uid, projectId);
         if (Project.SELECTION_IMPLICIT.equals(p.getSelectionStatus())) {
             throw new IllegalArgumentException("「会话」栏不是一个工作区，不能删除");
-        }
-        if (deleteFiles) {
-            ProjectFileService files = projectFileProvider.getIfAvailable();
-            if (files == null) {
-                throw new IllegalStateException("文件服务暂不可用，暂时无法连文件一起删除，请稍后重试");
-            }
-            // 先删文件：失败即抛，下面两行摘归属与删行都不会执行（行留着，目录就还找得到）
-            files.deleteWorkdir(uid, projectId);
         }
         // 先摘归属（两条 update 都是集合操作，幂等；即便随后工作区行删除失败也不会留下悬空引用）
         sessionMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Session>()
@@ -362,15 +327,13 @@ public class ProjectService {
         artifactMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Artifact>()
                 .eq(Artifact::getProjectId, p.getId())
                 .set(Artifact::getProjectId, null));
+        // 目录绑定随工作区一起清理（逻辑删工作区行，物理删根目录映射；绝对路径本身不动）
+        projectRootMapper.delete(new LambdaQueryWrapper<ProjectRoot>()
+                .eq(ProjectRoot::getProjectId, p.getId()));
         // 逻辑删除工作区行（@TableLogic 自动写 deleted=1，select 自动过滤）
         projectMapper.deleteById(p.getId());
-        log.info("[PROJECT] 删除工作区（会话/产物已摘归属，未删除{}）uid={} id={} name={}",
-                deleteFiles ? "，工作目录已删" : "", uid, p.getId(), p.getName());
-    }
-
-    /** 保持原签名（不删文件）；新调用方显式传 {@code deleteFiles} */
-    public void delete(String uid, String projectId) {
-        delete(uid, projectId, false);
+        log.info("[PROJECT] 删除工作区（会话/产物已摘归属，本机文件未动）uid={} id={} name={}",
+                uid, p.getId(), p.getName());
     }
 
     /**
@@ -408,29 +371,134 @@ public class ProjectService {
     }
 
     /**
-     * 把工作区绑到一台本机执行器上的目录（或解绑）。
+     * 把工作区绑到一台本机执行器上的一个或多个目录（替换式：传进来的这一批就是全部）。
      *
-     * <p>绑上之后，本工作区所有会话的文件/命令工具都落到那台电脑上执行；解绑（executorId 空）
-     * 退回服务器沙盒。目录由执行器侧再校验一次，这里只记路径与设备。
+     * <p>工作区不再有「服务器目录」这一形态：{@code roots} 至少一项，第一项为主目录。
+     * 替换只动「服务器记的路径映射」，用户硬盘上的文件一个都不动。
      */
-    public Project bindExecutor(String uid, String projectId, String executorId, String rootPath) {
+    @Transactional
+    public Project bindRoots(String uid, String projectId, String executorId, List<RootSpec> roots) {
         Project p = ownedProject(uid, projectId);
-        String ex = executorId == null ? "" : executorId.trim();
-        if (ex.isEmpty()) {
-            p.setExecutorId(null);
-            p.setRootPath(null);
-            p.setDirectoryMode(Project.MODE_MANAGED);
-        } else {
-            String root = rootPath == null ? "" : rootPath.trim();
-            if (root.isEmpty() || !root.startsWith("/")) {
-                throw new IllegalArgumentException("工作区目录必须是执行器上的绝对路径");
-            }
-            p.setExecutorId(ex);
-            p.setRootPath(root);
-            p.setDirectoryMode(Project.MODE_LOCAL);
+        if (Project.SELECTION_IMPLICIT.equals(p.getSelectionStatus())) {
+            throw new IllegalArgumentException("「会话」栏不是一个工作区，不能绑定目录");
         }
+        if (executorId == null || executorId.isBlank()) {
+            throw new IllegalArgumentException("工作区必须绑定一台本机执行器：先在你这台电脑上启动并授权 wenqu-agent");
+        }
+        List<RootSpec> normalized = normalizeRoots(roots);
+        projectRootMapper.delete(new LambdaQueryWrapper<ProjectRoot>()
+                .eq(ProjectRoot::getProjectId, p.getId()));
+        insertRoots(uid, p.getId(), normalized);
+        p.setExecutorId(executorId.trim());
         projectMapper.updateById(p);
+        log.info("[PROJECT] 工作区目录已绑定 uid={} project={} executor={} roots={}",
+                uid, p.getId(), executorId, normalized.size());
         return p;
+    }
+
+
+    /**
+     * 工作区的源文件夹（按展示顺序，第一项即主目录）。没有绑定目录返回空表——
+     * 界面据此显示「未绑定目录」，不做任何猜路径的兜底。
+     */
+    public List<ProjectRoot> rootsOf(Project p) {
+        if (p == null || p.getId() == null) return List.of();
+        List<ProjectRoot> rows = projectRootMapper.selectList(new LambdaQueryWrapper<ProjectRoot>()
+                .eq(ProjectRoot::getProjectId, p.getId())
+                .orderByAsc(ProjectRoot::getSortNo));
+        return rows == null ? List.of() : rows;
+    }
+
+    public List<ProjectRoot> rootsOf(String projectId) {
+        return rootsOf(byId(projectId));
+    }
+
+    /** 主目录（相对路径与命令执行的根）。没有目录绑定时返回 null。 */
+    public ProjectRoot primaryRootOf(Project p) {
+        List<ProjectRoot> roots = rootsOf(p);
+        for (ProjectRoot r : roots) {
+            if (r.getPrimaryRoot() != null && r.getPrimaryRoot() == ProjectRoot.PRIMARY) return r;
+        }
+        return roots.isEmpty() ? null : roots.get(0);
+    }
+
+    /** 这个工作区是不是「本机目录」形态：绑了执行器且有主目录。 */
+    public boolean isLocal(Project p) {
+        return p != null && p.getExecutorId() != null && !p.getExecutorId().isBlank();
+    }
+
+    /** 新建/重绑时的入参：绝对路径 + 可选别名（空=取目录名）。 */
+    public record RootSpec(String path, String alias) {
+    }
+
+    /**
+     * 规范化目录清单：至少一项、最多 8 项；路径必须绝对；别名缺失取目录名并自动去重；
+     * 同一路径不能绑两次（用户的同一个文件夹在一个工作区里出现两遍只会让移动/删除指代不清）。
+     */
+    private static List<RootSpec> normalizeRoots(List<RootSpec> roots) {
+        if (roots == null || roots.isEmpty()) {
+            throw new IllegalArgumentException("请先选择至少一个本机文件夹");
+        }
+        if (roots.size() > 8) {
+            throw new IllegalArgumentException("一个工作区最多绑定 8 个文件夹");
+        }
+        List<RootSpec> out = new ArrayList<>();
+        LinkedHashSet<String> seenPaths = new LinkedHashSet<>();
+        LinkedHashSet<String> seenAliases = new LinkedHashSet<>();
+        for (RootSpec raw : roots) {
+            String path = raw == null || raw.path() == null ? "" : raw.path().trim();
+            if (path.isEmpty()) {
+                throw new IllegalArgumentException("文件夹路径不能为空");
+            }
+            if (!isAbsolutePath(path)) {
+                throw new IllegalArgumentException("文件夹必须是那台电脑上的绝对路径：" + path);
+            }
+            if (!seenPaths.add(path)) {
+                throw new IllegalArgumentException("同一个文件夹不能重复添加：" + path);
+            }
+            String alias = raw.alias() == null ? "" : raw.alias().trim();
+            if (alias.isEmpty()) alias = baseName(path);
+            if (alias.length() > 60) alias = alias.substring(0, 60);
+            if (alias.isEmpty() || ".".equals(alias) || "..".equals(alias)
+                    || alias.indexOf('/') >= 0 || alias.indexOf('\\') >= 0) {
+                throw new IllegalArgumentException("文件夹名称不合法：" + alias);
+            }
+            String unique = alias;
+            int n = 2;
+            while (!seenAliases.add(unique.toLowerCase(Locale.ROOT))) {
+                unique = alias + "-" + n++;
+            }
+            out.add(new RootSpec(path.replaceAll("[/\\\\]+$", ""), unique));
+        }
+        return out;
+    }
+
+    private static boolean isAbsolutePath(String path) {
+        if (path.startsWith("/")) return true;
+        return path.length() >= 3 && Character.isLetter(path.charAt(0))
+                && path.charAt(1) == ':' && (path.charAt(2) == '/' || path.charAt(2) == '\\');
+    }
+
+    private static String baseName(String path) {
+        String p = path == null ? "" : path.replaceAll("[/\\\\]+$", "");
+        int slash = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
+        String name = slash >= 0 ? p.substring(slash + 1) : p;
+        return name.isBlank() ? "文件夹" : name;
+    }
+
+    private void insertRoots(String uid, String projectId, List<RootSpec> roots) {
+        for (int i = 0; i < roots.size(); i++) {
+            RootSpec r = roots.get(i);
+            ProjectRoot row = new ProjectRoot();
+            row.setUid(uid);
+            row.setProjectId(projectId);
+            row.setAlias(r.alias());
+            row.setPath(r.path());
+            row.setPrimaryRoot(i == 0 ? ProjectRoot.PRIMARY : ProjectRoot.ADDITIONAL);
+            row.setSortNo(i);
+            row.setCreateTime(java.time.LocalDateTime.now());
+            projectRootMapper.insert(row);
+        }
     }
 
     /**
@@ -442,14 +510,14 @@ public class ProjectService {
      * 「当时生效的是哪版」必须可查（恢复=把旧值再存一版，不另做回滚通道）。
      */
     public Project update(String uid, String projectId, String name, String instructions,
-                          String defaultAgentId, List<String> kbIds, Boolean sharedWorkdir,
+                          String defaultAgentId, List<String> kbIds,
                           Boolean memoryIsolated) {
-        return update(uid, projectId, name, instructions, defaultAgentId, kbIds, sharedWorkdir, memoryIsolated, null, null);
+        return update(uid, projectId, name, instructions, defaultAgentId, kbIds, memoryIsolated, null, null);
     }
 
     /** 同上，另加外观（图标/颜色）：新建弹窗用它，传 null 不动。 */
     public Project update(String uid, String projectId, String name, String instructions,
-                          String defaultAgentId, List<String> kbIds, Boolean sharedWorkdir,
+                          String defaultAgentId, List<String> kbIds,
                           Boolean memoryIsolated, String icon, String color) {
         Project p = ownedProject(uid, projectId);
         boolean changed = false;
@@ -525,13 +593,6 @@ public class ProjectService {
             p.setKbIds(clean.isEmpty() ? null : String.join(",", clean));
             changed = true;
         }
-        if (sharedWorkdir != null) {
-            if (Project.SELECTION_IMPLICIT.equals(p.getSelectionStatus())) {
-                throw new IllegalArgumentException("「会话」栏不是一个工作区，没有共用目录可开");
-            }
-            p.setSharedWorkdir(Boolean.TRUE.equals(sharedWorkdir) ? 1 : 0);
-            changed = true;
-        }
         if (memoryIsolated != null) {
             if (Project.SELECTION_IMPLICIT.equals(p.getSelectionStatus())) {
                 throw new IllegalArgumentException("「会话」栏不是一个工作区，没有记忆隔离可开");
@@ -549,12 +610,11 @@ public class ProjectService {
                     .set(Project::getInstructions, p.getInstructions())
                     .set(Project::getDefaultAgentId, p.getDefaultAgentId())
                     .set(Project::getKbIds, p.getKbIds())
-                    .set(Project::getSharedWorkdir, p.getSharedWorkdir())
-                    .set(Project::getMemoryIsolated, p.getMemoryIsolated())
+                        .set(Project::getMemoryIsolated, p.getMemoryIsolated())
                     .set(Project::getUpdateTime, p.getUpdateTime()));
-            log.info("[PROJECT] 更新工作区设置 uid={} id={} name={} hasInstructions={} defaultAgent={} kbIds={} sharedWorkdir={} memoryIsolated={}",
+            log.info("[PROJECT] 更新工作区设置 uid={} id={} name={} hasInstructions={} defaultAgent={} kbIds={} memoryIsolated={}",
                     uid, p.getId(), p.getName(), p.getInstructions() != null, p.getDefaultAgentId(),
-                    p.getKbIds(), p.getSharedWorkdir(), p.getMemoryIsolated());
+                    p.getKbIds(), p.getMemoryIsolated());
         }
         return p;
     }
@@ -624,19 +684,6 @@ public class ProjectService {
             if (!t.isEmpty()) out.add(t);
         }
         return out;
-    }
-
-    /**
-     * 该工作区是否与沙盒<b>实际共用</b>工作目录 = 本区开关（{@code sharedWorkdir}）
-     * ＋ 全局总闸（{@code sandbox.projectWorkdirEnabled}，应急时一键全退回会话级）。
-     *
-     * <p>全仓唯一的生效判据：沙盒作用域（{@code SandboxService}）、工作区页的「模型看得见吗」提示
-     * （{@code ProjectFileService}）与工作区轮次互斥（{@code ChatService}）都读这里，
-     * 三处各写一份迟早漂移成「提示说看得见、沙盒却挂的会话目录」。
-     */
-    public boolean workdirShared(Project p) {
-        if (p == null || p.getSharedWorkdir() == null || p.getSharedWorkdir() != 1) return false;
-        return configService.getBoolean("sandbox.projectWorkdirEnabled");
     }
 
     /**

@@ -1,22 +1,35 @@
 <template>
   <a-modal :open="open" title="新建工作区" :footer="null" :width="560" @cancel="close">
     <div class="wq">
-      <div class="wq-label">源文件夹</div>
-      <div class="wq-drop" :class="{ filled: !!dir, busy: picking }" @click="pickDir">
-        <template v-if="!dir">
+      <div class="wq-label wq-label-row">
+        <span>源文件夹</span>
+        <button type="button" class="app-link-btn" :disabled="picking || !executor" @click="pickDir">
+          <plus-outlined /> 添加
+        </button>
+      </div>
+      <div class="wq-dirs">
+        <div v-for="(d, i) in dirs" :key="d.path" class="wq-dir">
+          <FolderOpenOutlined class="wq-dir-ic" />
+          <span class="wq-dir-name" :title="d.path">{{ d.name }}</span>
+          <span v-if="i === 0" class="wq-primary">主要</span>
+          <button v-else type="button" class="app-link-btn wq-mini" @click="makePrimary(i)">设为主要</button>
+          <button type="button" class="wq-remove" title="移除" @click="removeDir(i)">×</button>
+        </div>
+        <button v-if="!dirs.length" type="button" class="wq-drop" :class="{ busy: picking }" @click="pickDir">
           <FolderOpenOutlined class="wq-drop-ic" />
-          <span>{{ picking ? '在那台电脑上选择中…' : '点击添加可读写文件夹' }}</span>
-        </template>
-        <template v-else>
-          <FolderOpenOutlined class="wq-drop-ic" />
-          <span class="wq-drop-path" :title="dir">{{ dir }}</span>
-          <button type="button" class="app-link-btn" @click.stop="pickDir">更换</button>
-        </template>
+          <span>{{ picking ? '在那台电脑上选择中…' : '点击添加可读写文件夹（可多个）' }}</span>
+        </button>
+        <div v-else-if="picking" class="wq-hint">在那台电脑上选择中…</div>
       </div>
       <div v-if="!executor" class="wq-hint">
         还没有在线的执行器
         <button type="button" class="app-link-btn" @click="$emit('open-pairing')">去授权这台电脑</button>
       </div>
+      <div v-else-if="devices.length > 1" class="wq-hint">
+        这些文件夹会绑定到：
+        <a-select v-model:value="executorId" size="small" style="min-width:180px" :options="deviceOptions" />
+      </div>
+      <div v-else class="wq-hint">文件夹会绑定到「{{ executor.name }}」（这台电脑）</div>
 
       <div class="wq-label">工作区名称</div>
       <a-input v-model:value="name" :maxlength="60" placeholder="输入名称…" />
@@ -25,7 +38,7 @@
       <div class="wq-icons">
         <button v-for="ic in ICONS" :key="ic.name" type="button" class="wq-icon"
                 :class="{ on: icon === ic.name }" @click="icon = ic.name">
-          <component :is="ic.cmp" />
+          <component :is="workspaceIconOf(ic.name, true)" />
         </button>
       </div>
 
@@ -37,7 +50,7 @@
 
       <div class="wq-foot">
         <button type="button" class="app-btn ghost" @click="close">取消</button>
-        <button type="button" class="app-btn" :disabled="!dir || !name.trim() || creating" @click="create">
+        <button type="button" class="app-btn" :disabled="!canCreate || creating" @click="create">
           {{ creating ? '创建中…' : '创建' }}
         </button>
       </div>
@@ -46,64 +59,60 @@
 </template>
 
 <script setup>
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
-import {
-  FolderOpenOutlined, FolderOutlined, CoffeeOutlined, ExperimentOutlined, RobotOutlined,
-  AimOutlined, AppstoreOutlined, SettingOutlined, ThunderboltOutlined, BookOutlined,
-  CodeOutlined, DatabaseOutlined, FileTextOutlined, StarOutlined
-} from '@ant-design/icons-vue'
-import { bindProjectExecutor, createProject, listExecutors, pickExecutorDir, updateProject } from '../api'
+import { FolderOpenOutlined, PlusOutlined } from '@ant-design/icons-vue'
+import { WORKSPACE_ICONS, WORKSPACE_COLORS, workspaceIconOf } from '../utils/workspaceIcons'
+import { createProject, listExecutors, pickExecutorDir, updateProject } from '../api'
 
 const props = defineProps({ open: { type: Boolean, default: false } })
 const emit = defineEmits(['update:open', 'created', 'open-pairing'])
 
-const ICONS = [
-  { name: 'folder', cmp: FolderOutlined },
-  { name: 'coffee', cmp: CoffeeOutlined },
-  { name: 'experiment', cmp: ExperimentOutlined },
-  { name: 'robot', cmp: RobotOutlined },
-  { name: 'aim', cmp: AimOutlined },
-  { name: 'appstore', cmp: AppstoreOutlined },
-  { name: 'setting', cmp: SettingOutlined },
-  { name: 'thunderbolt', cmp: ThunderboltOutlined },
-  { name: 'book', cmp: BookOutlined },
-  { name: 'code', cmp: CodeOutlined },
-  { name: 'database', cmp: DatabaseOutlined },
-  { name: 'file', cmp: FileTextOutlined },
-  { name: 'star', cmp: StarOutlined }
-]
-const COLORS = [
-  '#3f7f5f', '#2f6fed', '#f08a24', '#f0b429', '#e5484d', '#d6338c', '#7b4fd1',
-  '#4f66d1', '#1f9ec9', '#2aa198', '#6b7280', '#111827', '#b39ddb', '#5cb85c'
-]
-
-const dir = ref('')
+const ICONS = WORKSPACE_ICONS
+const COLORS = WORKSPACE_COLORS
+const devices = ref([])
+const executorId = ref('')
+const dirs = ref([])
 const name = ref('')
 const icon = ref('folder')
 const color = ref(COLORS[0])
 const creating = ref(false)
 const picking = ref(false)
-const executor = ref(null)
+
+const executor = computed(() => devices.value.find(d => d.id === executorId.value) || null)
+const deviceOptions = computed(() => devices.value.filter(d => d.online).map(d => ({
+  value: d.id,
+  label: `${d.name || d.id}（在线）`
+})))
+const canCreate = computed(() => dirs.value.length > 0 && name.value.trim() && executorId.value)
+
+const baseName = p => {
+  const s = String(p || '').replace(/[/\\]+$/, '')
+  const i = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'))
+  return (i >= 0 ? s.slice(i + 1) : s) || '文件夹'
+}
 
 async function loadDevice () {
   try {
     const r = await listExecutors()
-    const online = ((r && r.data) || []).filter(d => d.online)
-    executor.value = online[0] || null
+    devices.value = ((r && r.data) || []).filter(d => d.online)
+    if (!executorId.value || !devices.value.some(d => d.id === executorId.value)) {
+      executorId.value = devices.value[0]?.id || ''
+    }
   } catch (e) {
-    executor.value = null
+    devices.value = []
+    executorId.value = ''
   }
 }
 
 async function pickDir () {
-  if (!executor.value) {
+  if (!executorId.value) {
     message.warning('还没有在线的执行器：先在那台电脑上启动 wenqu-agent')
     return
   }
   picking.value = true
   try {
-    const r = await pickExecutorDir(executor.value.id)
+    const r = await pickExecutorDir(executorId.value)
     if (r && r.success === false) {
       const msg = String(r.msg || '')
       if (!/没有选择目录/.test(msg)) message.warning(msg || '没有选到目录')
@@ -111,8 +120,12 @@ async function pickDir () {
     }
     const picked = (r && r.data && r.data.path) || ''
     if (!picked) return
-    dir.value = picked
-    if (!name.value.trim()) name.value = picked.replace(/\/+$/, '').split('/').pop() || '本机工作区'
+    if (dirs.value.some(d => d.path === picked)) {
+      message.info('这个文件夹已经添加过了')
+      return
+    }
+    dirs.value.push({ path: picked, name: baseName(picked) })
+    if (!name.value.trim()) name.value = baseName(picked)
   } catch (e) {
     message.warning('没有选到目录：' + (e.message || ''))
   } finally {
@@ -120,16 +133,25 @@ async function pickDir () {
   }
 }
 
+function removeDir (i) {
+  dirs.value.splice(i, 1)
+}
+function makePrimary (i) {
+  if (i <= 0) return
+  const [d] = dirs.value.splice(i, 1)
+  dirs.value.unshift(d)
+}
+
 const close = () => emit('update:open', false)
 
 async function create () {
-  if (!dir.value || !name.value.trim() || !executor.value) return
+  if (!canCreate.value) return
   creating.value = true
   try {
-    const created = await createProject(name.value.trim(), undefined, 'local')
+    const roots = dirs.value.map(d => ({ path: d.path, alias: d.name }))
+    const created = await createProject(name.value.trim(), undefined, executorId.value, roots)
     const id = (created && created.data && created.data.id) || ''
     if (!id) throw new Error('创建工作区没有返回 id')
-    await bindProjectExecutor(id, executor.value.id, dir.value)
     await updateProject(id, { icon: icon.value, color: color.value })
     emit('created', id)
     close()
@@ -142,7 +164,7 @@ async function create () {
 
 watch(() => props.open, open => {
   if (!open) return
-  dir.value = ''
+  dirs.value = []
   name.value = ''
   icon.value = 'folder'
   color.value = COLORS[0]
@@ -155,16 +177,25 @@ onMounted(() => { if (props.open) loadDevice() })
 <style scoped>
 .wq { display: flex; flex-direction: column; gap: 8px; }
 .wq-label { margin-top: 6px; font-size: 13px; font-weight: 600; color: var(--app-text1); }
-.wq-drop { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 96px;
+.wq-label-row { display: flex; align-items: center; justify-content: space-between; }
+.wq-dirs { display: flex; flex-direction: column; gap: 6px; }
+.wq-dir { display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 0 10px;
+  border: 1px solid var(--app-border, rgba(0,0,0,.08)); border-radius: 8px;
+  background: var(--app-surface2, rgba(0,0,0,.02)); }
+.wq-dir-ic { color: var(--app-accent); }
+.wq-dir-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 13px; color: var(--app-text1); }
+.wq-primary { font-size: 11px; line-height: 18px; padding: 0 6px; border-radius: 4px;
+  color: var(--app-accent); background: color-mix(in srgb, var(--app-accent) 12%, transparent); }
+.wq-mini { font-size: 11px; }
+.wq-remove { border: 0; background: none; cursor: pointer; color: var(--app-text3); font-size: 16px; line-height: 1; }
+.wq-drop { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 78px;
   border: 1px dashed var(--app-border, rgba(0,0,0,.2)); border-radius: 10px; cursor: pointer;
-  color: var(--app-text2); font-size: 13px; padding: 12px; transition: border-color .15s, background .15s; }
+  color: var(--app-text2); font-size: 13px; padding: 12px; background: none; }
 .wq-drop:hover { border-color: var(--app-accent); background: var(--app-surface2, rgba(0,0,0,.02)); }
-.wq-drop.filled { justify-content: flex-start; }
 .wq-drop.busy { opacity: .7; pointer-events: none; }
 .wq-drop-ic { font-size: 18px; color: var(--app-accent); }
-.wq-drop-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: 12px; color: var(--app-text1); }
-.wq-hint { font-size: 12px; color: var(--app-text3); }
+.wq-hint { font-size: 12px; color: var(--app-text3); display: flex; align-items: center; gap: 6px; }
 .wq-icons { display: flex; flex-wrap: wrap; gap: 8px; }
 .wq-icon { width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center;
   border: 1px solid transparent; border-radius: 8px; background: var(--app-surface2, rgba(0,0,0,.04));

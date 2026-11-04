@@ -2,6 +2,7 @@ package com.wenqu.ai.controller;
 
 import com.wenqu.ai.dto.ResultJson;
 import com.wenqu.ai.model.Project;
+import com.wenqu.ai.model.ProjectRoot;
 import com.wenqu.ai.service.ProjectFileService;
 import com.wenqu.ai.service.ProjectService;
 import com.wenqu.ai.service.ProjectTodoService;
@@ -13,6 +14,7 @@ import com.wenqu.ai.util.RequestUser;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -43,6 +45,7 @@ import com.wenqu.ai.security.Permission;
  *
  * @author yuanke
  */
+@Slf4j
 @RestController
 @RequestMapping("/api/ai/project")
 @RequiredArgsConstructor
@@ -56,6 +59,7 @@ public class ProjectController {
     private final ProjectTodoService projectTodoService;
     private final ProjectTurnGuard projectTurnGuard;
     private final com.wenqu.ai.executor.ExecutorService executorService;
+    private final com.wenqu.ai.executor.ExecutorRegistry executorRegistry;
 
     @Operation(summary = "我的工作区列表",
             description = "implicit 兜底容器在前（每人一个、后台懒创建），其余按创建时间倒序。"
@@ -75,7 +79,7 @@ public class ProjectController {
         return ResultJson.ok(out);
     }
 
-    private static Map<String, Object> toDto(Project p) {
+    private Map<String, Object> toDto(Project p) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", p.getId());
         m.put("name", p.getName());
@@ -90,14 +94,22 @@ public class ProjectController {
         // 默认检索域（绑定知识库）与两个开关：工作区页设置弹层编辑，检索收敛/沙盒挂载/记忆闸用
         m.put("kbIds", p.getKbIds() == null || p.getKbIds().isBlank()
                 ? List.of() : new java.util.ArrayList<>(java.util.Arrays.asList(p.getKbIds().split(","))));
-        m.put("sharedWorkdir", p.getSharedWorkdir() == null ? 0 : p.getSharedWorkdir());
         m.put("memoryIsolated", p.getMemoryIsolated() == null ? 0 : p.getMemoryIsolated());
         m.put("isImplicit", Project.SELECTION_IMPLICIT.equals(p.getSelectionStatus()));
-        m.put("workdirPath", p.getWorkdirPath());
-        // managed=目录在服务器（沙盒挂载）；local=目录在用户自己的电脑（句柄只在浏览器，服务器不碰）
-        m.put("directoryMode", p.getDirectoryMode() == null ? Project.MODE_MANAGED : p.getDirectoryMode());
+        m.put("isLocal", projectService.isLocal(p));
         m.put("executorId", p.getExecutorId() == null ? "" : p.getExecutorId());
-        m.put("rootPath", p.getRootPath() == null ? "" : p.getRootPath());
+        m.put("executorOnline", p.getExecutorId() != null && !p.getExecutorId().isBlank()
+                && executorRegistry.online(p.getExecutorId()));
+        List<Map<String, Object>> roots = new ArrayList<>();
+        for (ProjectRoot r : projectService.rootsOf(p)) {
+            Map<String, Object> one = new LinkedHashMap<>();
+            one.put("id", r.getId());
+            one.put("alias", r.getAlias());
+            one.put("path", r.getPath());
+            one.put("primary", r.getPrimaryRoot() != null && r.getPrimaryRoot() == ProjectRoot.PRIMARY);
+            roots.add(one);
+        }
+        m.put("roots", roots);
         m.put("icon", p.getIcon() == null ? "" : p.getIcon());
         m.put("color", p.getColor() == null ? "" : p.getColor());
         m.put("createTime", p.getCreateTime() == null ? null : p.getCreateTime().toString());
@@ -122,7 +134,7 @@ public class ProjectController {
      */
     @Operation(summary = "工作区轮次占用状态",
             description = "busy=true 时返回占用者（kind: user/scheduled/workflow，name，sessionId，startedAt，elapsedMs）；"
-                    + "workdirShared=false 的工作区不取轮次锁，恒为空闲")
+                    + "本机工作区同一批目录只允许一轮在跑")
     @Permission("project:read")
     @GetMapping("/{id}/turn-guard")
     public ResultJson turnGuard(@PathVariable("id") String id) {
@@ -139,7 +151,7 @@ public class ProjectController {
                 m.put("elapsedMs", System.currentTimeMillis() - lease.startedAt());
                 m.put("describe", lease.describe());
             }
-            m.put("workdirShared", projectService.workdirShared(p));
+            m.put("local", projectService.isLocal(p));
             return ResultJson.ok(m);
         } catch (IllegalArgumentException e) {
             return ResultJson.error(400, e.getMessage());
@@ -149,11 +161,11 @@ public class ProjectController {
     /**
      * 更新工作区设置。各字段都是「传才改」：不传保持原值，传空串/空列表表示清空。
      * <p>工作区约定与默认助手是「真实工作区」与「分类标签」的分界，故这里单独成端点而不是混在重命名里。
-     * kbIds 是默认检索域（绑定的知识库），sharedWorkdir 是共用工作目录开关（再受全局总闸约束）。
+     * kbIds 是默认检索域（绑定的知识库）。
      */
     @Operation(summary = "更新工作区设置",
             description = "name / instructions（工作区约定，对该工作区所有会话生效，变更自动留痕）/ defaultAgentId（工作区默认助手）/ "
-                    + "kbIds（绑定知识库清单=默认检索域，传空数组清空）/ sharedWorkdir（共用工作目录开关）/ "
+                    + "kbIds（绑定知识库清单=默认检索域，传空数组清空）/ "
                     + "memoryIsolated（记忆隔离：本区会话不注入也不写入个人记忆）。传才改，空=清空")
     @Permission("project:write")
     @PutMapping("/{id}")
@@ -164,7 +176,6 @@ public class ProjectController {
                     req == null ? null : req.instructions(),
                     req == null ? null : req.defaultAgentId(),
                     req == null ? null : req.kbIds(),
-                    req == null ? null : req.sharedWorkdir(),
                     req == null ? null : req.memoryIsolated(),
                     req == null ? null : req.icon(),
                     req == null ? null : req.color());
@@ -175,7 +186,7 @@ public class ProjectController {
     }
 
     public record UpdateReq(String name, String instructions, String defaultAgentId,
-                            List<String> kbIds, Boolean sharedWorkdir, Boolean memoryIsolated,
+                            List<String> kbIds, Boolean memoryIsolated,
                             String icon, String color) {
     }
 
@@ -313,57 +324,70 @@ public class ProjectController {
     }
 
     @Operation(summary = "打包导出工作区目录",
-            description = "整个工作区目录打成 zip（流式；隐藏文件与 node_modules 等排除在名单外）。"
-                    + "文件数 >2000 或总量 >100MB 明确拒绝（响应开流前就失败，不会给出坏掉的包）")
+            description = "把本机工作区的全部源文件夹打成 zip（流式；隐藏文件与依赖目录跳过）。"
+                    + "文件数 >2000 或总量 >100MB 在响应头发出前明确拒绝，不会给出坏掉的包")
     @Permission("project:export")
     @GetMapping("/{id}/export")
     public void export(@PathVariable("id") String id, jakarta.servlet.http.HttpServletResponse resp) throws java.io.IOException {
         String uid = RequestUser.uid();
-        Project project;
-        List<java.nio.file.Path> files;
+        ProjectFileService.ExportPlan plan;
         try {
-            project = projectService.detail(uid, id);   // 归属校验（fail-loud）
-            files = projectFileService.collectExportFiles(uid, id);
+            plan = projectFileService.prepareExport(uid, id);
         } catch (IllegalArgumentException e) {
-            // 还没开流：可以正经给 400 + 原因
-            resp.setStatus(400);
-            resp.setContentType("application/json;charset=UTF-8");
-            resp.getWriter().write("{\"success\":false,\"code\":400,\"msg\":\"" + e.getMessage() + "\",\"data\":null}");
+            writeJsonError(resp, 400, e.getMessage());
             return;
         } catch (IllegalStateException e) {
-            resp.setStatus(503);
-            resp.setContentType("application/json;charset=UTF-8");
-            resp.getWriter().write("{\"success\":false,\"code\":503,\"msg\":\"" + e.getMessage() + "\",\"data\":null}");
+            writeJsonError(resp, 503, e.getMessage());
             return;
         }
-        String zipName = ((project.getName() == null || project.getName().isBlank()) ? "工作区" : project.getName()) + ".zip";
-        String encoded = java.net.URLEncoder.encode(zipName, java.nio.charset.StandardCharsets.UTF_8).replace("+", "%20");
+        String encoded = java.net.URLEncoder.encode(plan.name(), java.nio.charset.StandardCharsets.UTF_8).replace("+", "%20");
         resp.setStatus(200);
         resp.setContentType("application/zip");
         resp.setHeader("Content-Disposition", "attachment; filename=\"" + encoded + "\"; filename*=UTF-8''" + encoded);
-        projectFileService.writeZip(uid, id, files, resp.getOutputStream());
+        try {
+            projectFileService.writeExport(uid, id, plan, resp.getOutputStream());
+        } catch (IllegalStateException e) {
+            // 已经开流：只能中断；前端会看到下载失败，原因写进服务端日志
+            log.warn("[PROJECT] 工作区导出中途失败 project={}: {}", id, e.getMessage());
+        }
     }
 
-    @Operation(summary = "下载工作区文件", description = "按工作区目录内的相对路径下载；越界路径（../、绝对路径）一律 400")
+    private static void writeJsonError(jakarta.servlet.http.HttpServletResponse resp, int status, String msg)
+            throws java.io.IOException {
+        resp.setStatus(status);
+        resp.setContentType("application/json;charset=UTF-8");
+        java.util.Map<String, Object> body = new LinkedHashMap<>();
+        body.put("success", false);
+        body.put("code", status);
+        body.put("msg", msg);
+        body.put("data", null);
+        resp.getWriter().write(com.alibaba.fastjson2.JSON.toJSONString(body));
+    }
+
+    @Operation(summary = "下载工作区文件",
+            description = "按本机工作区内的虚拟路径（alias/相对路径）流式下载；越界路径一律 400，执行器离线 503")
     @Permission("project:read")
     @GetMapping("/{id}/file")
-    public org.springframework.http.ResponseEntity<org.springframework.core.io.Resource> download(
-            @PathVariable("id") String id,
-            @RequestParam("path") String path) {
+    public void download(@PathVariable("id") String id,
+                         @RequestParam("path") String path,
+                         jakarta.servlet.http.HttpServletResponse resp) throws java.io.IOException {
+        ProjectFileService.Download d;
         try {
-            java.nio.file.Path file = projectFileService.resolveDownload(RequestUser.uid(), id, path);
-            String name = file.getFileName().toString();
-            // 文件名可能含中文：用 RFC 5987 的 filename* 编码，避免部分浏览器把名字截成乱码
-            String encoded = java.net.URLEncoder.encode(name, java.nio.charset.StandardCharsets.UTF_8)
-                    .replace("+", "%20");
-            return org.springframework.http.ResponseEntity.ok()
-                    .header("Content-Disposition",
-                            "attachment; filename=\"" + encoded + "\"; filename*=UTF-8''" + encoded)
-                    .contentType(org.springframework.http.MediaType.APPLICATION_OCTET_STREAM)
-                    .body(new org.springframework.core.io.FileSystemResource(file));
+            d = projectFileService.download(RequestUser.uid(), id, path);
         } catch (IllegalArgumentException e) {
-            return org.springframework.http.ResponseEntity.badRequest().build();
+            writeJsonError(resp, 400, e.getMessage());
+            return;
+        } catch (IllegalStateException e) {
+            writeJsonError(resp, 503, e.getMessage());
+            return;
         }
+        String encoded = java.net.URLEncoder.encode(d.name(), java.nio.charset.StandardCharsets.UTF_8).replace("+", "%20");
+        resp.setStatus(200);
+        resp.setContentType("application/octet-stream");
+        resp.setHeader("Content-Disposition", "attachment; filename=\"" + encoded + "\"; filename*=UTF-8''" + encoded);
+        if (d.size() <= Integer.MAX_VALUE) resp.setContentLengthLong(d.size());
+        d.writer().writeTo(resp.getOutputStream());
+        resp.getOutputStream().flush();
     }
 
     @Operation(summary = "读工作区文件的文本原文",
@@ -421,44 +445,90 @@ public class ProjectController {
         return ResultJson.ok(out.size() > n ? out.subList(0, n) : out);
     }
 
-    @Operation(summary = "新建工作区",
-            description = "用户显式创建一个工作区。fromProjectId 可选：从本人另一个工作区复制设置"
-                    + "（约定/绑定资料域/共用目录/记忆隔离），会话与文件一概不带。"
-                    + "directoryMode：managed=目录在服务器（默认）；local=本机工作区，目录在用户电脑上，"
-                    + "服务器只记类型与名字，句柄由浏览器保存。implicit 兜底容器不用建、也不可删")
+    @Operation(summary = "新建本机工作区",
+            description = "body: {name, executorId, roots:[{path, alias?}], fromProjectId?}。"
+                    + "工作区是用户电脑上的一个或多个真实目录：roots 至少一项，第一项为主目录（cwd 与相对路径基准），"
+                    + "全部目录必须在同一台执行器上。服务器只记路径映射，不保存文件副本。"
+                    + "fromProjectId 可选：从另一个工作区复制约定/资料域/两个开关，目录不抄。")
     @Permission("project:write")
     @PostMapping
     public ResultJson create(@RequestBody CreateReq req) {
         try {
-            Project p = projectService.create(RequestUser.uid(),
-                    req == null ? null : req.name(), req == null ? null : req.fromProjectId(),
-                    req == null ? null : req.directoryMode());
+            String uid = RequestUser.uid();
+            String executorId = req == null || req.executorId() == null ? "" : req.executorId().trim();
+            if (executorId.isEmpty()) {
+                return ResultJson.error(400, "请先选择一台在线的本机执行器，再选文件夹");
+            }
+            if (!executorService.belongsTo(uid, executorId)) {
+                return ResultJson.error(403, "这台执行器不属于你，请先在这台电脑上授权");
+            }
+            List<com.wenqu.ai.service.ProjectService.RootSpec> roots = new ArrayList<>();
+            if (req.roots() != null) {
+                for (RootReq r : req.roots()) {
+                    if (r != null) roots.add(new com.wenqu.ai.service.ProjectService.RootSpec(r.path(), r.alias()));
+                }
+            }
+            Project p = projectService.create(uid, req.name(), req.fromProjectId(), executorId, roots);
             return ResultJson.ok(toDto(p), "已创建");
         } catch (IllegalArgumentException e) {
             return ResultJson.error(400, e.getMessage());
         }
     }
 
-    public record CreateReq(String name, String fromProjectId, String directoryMode) {
+    public record CreateReq(String name, String fromProjectId, String executorId, List<RootReq> roots) {
     }
 
-    @Operation(summary = "绑定本机执行器目录",
-            description = "body: {executorId, rootPath}。非空=本工作区会话的文件/命令工具落到那台电脑上的该目录；"
-                    + "executorId 传空=解绑，退回服务器沙盒。rootPath 必须是执行器上的绝对路径")
+    public record RootReq(String path, String alias) {
+    }
+
+    @Operation(summary = "在电脑上打开工作区文件夹",
+            description = "让那台电脑用系统文件管理器打开主源文件夹（Finder / Explorer / 文件管理器）。"
+                    + "执行器离线 503；没有绑定目录 400")
+    @Permission("project:read")
+    @PostMapping("/{id}/open")
+    public ResultJson openFolder(@PathVariable("id") String id) {
+        try {
+            projectFileService.openInOS(RequestUser.uid(), id);
+            return ResultJson.ok(null, "已在电脑上打开文件夹");
+        } catch (IllegalArgumentException e) {
+            return ResultJson.error(400, e.getMessage());
+        } catch (IllegalStateException e) {
+            return ResultJson.error(503, e.getMessage());
+        }
+    }
+
+    @Operation(summary = "绑定本机目录（替换式）",
+            description = "body: {executorId, roots:[{path, alias?}]}。"
+                    + "这一批目录就是工作区的全部源文件夹，第一项为主目录；只改服务器记的路径映射，不动用户硬盘上的文件。"
+                    + "executorId 必须属于当前用户。想解绑目录请直接删除工作区（文件会留在电脑上）。")
     @Permission("project:write")
     @PutMapping("/{id}/executor")
     public ResultJson bindExecutor(@PathVariable("id") String id,
                                    @RequestBody(required = false) Map<String, Object> body) {
         try {
+            String uid = RequestUser.uid();
             Object ex = body == null ? null : body.get("executorId");
-            Object root = body == null ? null : body.get("rootPath");
-            String executorId = ex == null ? "" : String.valueOf(ex);
-            // 只能绑自己登记的执行器：不知道归属就绑得过、等于把别人的电脑当自己的目录用
-            if (!executorId.isBlank() && !executorService.belongsTo(RequestUser.uid(), executorId)) {
-                return ResultJson.error(403, "这台执行器不属于你，请先在这台电脑上登记");
+            String executorId = ex == null ? "" : String.valueOf(ex).trim();
+            if (executorId.isEmpty()) {
+                return ResultJson.error(400, "工作区必须绑定一台本机执行器");
             }
-            return ResultJson.ok(toDto(projectService.bindExecutor(RequestUser.uid(), id,
-                    executorId, root == null ? null : String.valueOf(root))), "已保存");
+            if (!executorService.belongsTo(uid, executorId)) {
+                return ResultJson.error(403, "这台执行器不属于你，请先在这台电脑上授权");
+            }
+            List<com.wenqu.ai.service.ProjectService.RootSpec> roots = new ArrayList<>();
+            Object rawRoots = body == null ? null : body.get("roots");
+            if (rawRoots instanceof List<?> list) {
+                for (Object o : list) {
+                    if (o instanceof Map<?, ?> m) {
+                        Object path = m.get("path");
+                        Object alias = m.get("alias");
+                        roots.add(new com.wenqu.ai.service.ProjectService.RootSpec(
+                                path == null ? null : String.valueOf(path),
+                                alias == null ? null : String.valueOf(alias)));
+                    }
+                }
+            }
+            return ResultJson.ok(toDto(projectService.bindRoots(uid, id, executorId, roots)), "已保存");
         } catch (IllegalArgumentException e) {
             return ResultJson.error(400, e.getMessage());
         }
@@ -534,21 +604,18 @@ public class ProjectController {
     /**
      * 删除工作区。语义：<b>只摘归属，不删东西</b>——其下会话与产物的 {@code project_id} 置 NULL
      * （成果归人这条设计意图不许被级联删除破坏），工作区行逻辑删除。兜底容器不可删。
-     * <p>{@code deleteFiles=true} 时连同工作目录一起删（先删文件、失败即整单失败，行保留可重试）；
-     * 不传则文件留在盘上——删了行就再也找不到那个目录，这是给用户的显式选择而不是默认行为。
+     * <p>本机目录里的文件一个都不动：删工作区只摘服务器上的归属。
      */
     @Operation(summary = "删除工作区",
-            description = "删除后其下会话与产物仍然保留（只摘掉工作区归属）。implicit 兜底容器不可删。"
-                    + "deleteFiles=true 时连工作目录一起删（不可恢复，先删文件失败则整单失败）")
+            description = "删除后其下会话与产物仍然保留（只摘掉工作区归属）；本机目录里的文件一个都不动。"
+                    + "implicit 兜底容器不可删。")
     @Permission("project:delete")
     @DeleteMapping("/{id}")
-    public ResultJson delete(@PathVariable("id") String id,
-                             @RequestParam(value = "deleteFiles", required = false, defaultValue = "false") boolean deleteFiles) {
+    public ResultJson delete(@PathVariable("id") String id) {
         try {
-            projectService.delete(RequestUser.uid(), id, deleteFiles);
-            return ResultJson.ok(null, deleteFiles
-                    ? "已删除（其下会话与产物已保留，工作目录已一起删除）"
-                    : "已删除（其下会话与产物已保留，仅摘掉归属）");
+            projectService.delete(RequestUser.uid(), id);
+            return ResultJson.ok(null,
+                    "已删除（其下会话与产物已保留；本机文件留在你的电脑上）");
         } catch (IllegalArgumentException e) {
             return ResultJson.error(400, e.getMessage());
         } catch (IllegalStateException e) {

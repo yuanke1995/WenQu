@@ -209,14 +209,14 @@ public class SandboxController {
         String uid = RequestUser.uid();
         try {
             sessionService.assertOwned(sessionId, uid);
-            java.nio.file.Path file = projectFileService.resolveSessionDownload(uid, sessionId, path);
-            String filename = file.getFileName().toString();
-            String encoded = URLEncoder.encode(filename, StandardCharsets.UTF_8).replace("+", "%20");
+            com.wenqu.ai.service.ProjectFileService.Download d =
+                    projectFileService.downloadSessionFile(uid, sessionId, path);
+            String encoded = URLEncoder.encode(d.name(), StandardCharsets.UTF_8).replace("+", "%20");
             response.setContentType("application/octet-stream");
             response.setHeader("Content-Disposition",
                     "attachment; filename=\"" + encoded + "\"; filename*=UTF-8''" + encoded);
-            response.setContentLength((int) java.nio.file.Files.size(file));
-            java.nio.file.Files.copy(file, response.getOutputStream());
+            response.setContentLengthLong(d.size());
+            d.writer().writeTo(response.getOutputStream());
             response.getOutputStream().flush();
             return null;
         } catch (com.wenqu.ai.common.BizException e) {
@@ -257,9 +257,15 @@ public class SandboxController {
         }
         try {
             sessionService.assertOwned(sessionId, uid);
-            java.nio.file.Path file = projectFileService.resolveSessionDownload(uid, sessionId, path);
-            Map<String, Object> info = artifactService.writeBytes(sessionId, file.getFileName().toString(),
-                    java.nio.file.Files.readAllBytes(file), str(body, "description").isBlank()
+            com.wenqu.ai.service.ProjectFileService.Download d =
+                    projectFileService.downloadSessionFile(uid, sessionId, path);
+            if (d.size() > 2L * 1024 * 1024) {
+                return ResultJson.error(400, "文件超过 2MB，产物交付上限是 1MB；请压缩或换一份");
+            }
+            java.io.ByteArrayOutputStream buf = new java.io.ByteArrayOutputStream();
+            d.writer().writeTo(buf);
+            Map<String, Object> info = artifactService.writeBytes(sessionId, d.name(),
+                    buf.toByteArray(), str(body, "description").isBlank()
                             ? null : str(body, "description").strip());
             // 产物卡片当场出现：只落库不推的话，右栏「产物」要等下一轮或刷新才认得到这份新产物
             artifactService.publish(sessionId, "artifact", com.alibaba.fastjson2.JSON.toJSONString(info));

@@ -12,7 +12,6 @@ import io.agentscope.harness.agent.filesystem.model.LsResult;
 import io.agentscope.harness.agent.filesystem.model.ReadResult;
 import io.agentscope.harness.agent.filesystem.model.WriteResult;
 import io.agentscope.harness.agent.filesystem.sandbox.BaseSandboxFilesystem;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.LinkedHashMap;
@@ -25,29 +24,38 @@ import org.slf4j.LoggerFactory;
 /**
  * 把框架的文件/命令工具接到<b>用户电脑上的执行器</b>。
  *
- * <p>与 {@link ProvisionerSandboxFilesystem} 同一层：都是 {@link BaseSandboxFilesystem} 的实现，
- * 上层工具、权限档位、审批卡完全不变；区别只是执行发生在本机执行器而不是服务器的沙盒容器。
- * 服务端不碰用户文件——它只把「读/写/列/跑」这些调用经长轮询交给执行器，执行器在授权目录内执行。
+ * <p>工作区 = 用户本机上的一个或多个真实目录。主目录（primary）是相对路径与命令执行的根；
+ * 附加目录用绝对路径或别名访问。服务端不碰用户文件——只把「读/写/列/跑」经长轮询交给执行器，
+ * 执行器在授权目录内执行；{@code danger-full-access} 档才允许越出这些目录。
  *
- * <p>路径口径：框架传来的是工作区内的路径（相对或带前导 /）。这里统一解析成执行器上的绝对路径，
- * 越界由执行器再独立校验一次（服务端解析 + 执行器白名单，两道）。
+ * <p>路径口径：框架传来的是工作区内的路径（相对或带前导 /）。这里统一解析成执行器上的绝对路径；
+ * 越界由执行器再独立校验一次（服务端解析 + 执行器围栏，两道）。
  */
 public class ExecutorFilesystem extends BaseSandboxFilesystem {
 
     private static final Logger log = LoggerFactory.getLogger(ExecutorFilesystem.class);
 
-    /** 单次调用的等待上限：执行器侧按 timeoutSeconds 掐命令，这里再加网络余量。 */
     private static final long DEFAULT_TIMEOUT_MS = 60_000;
+
+    /** 工作区的一个源文件夹；{@code alias} 是虚拟路径首段（工作区文件页用它寻址）。 */
+    public record Root(String alias, String path, boolean primary) {
+    }
 
     private final ExecutorRegistry registry;
     private final String executorId;
-    private final String rootPath;
+    private final List<Root> roots;
+    private final String primaryPath;
+    /** danger-full-access：不再把路径收束在工作区目录内（执行器按 policy 放开） */
+    private final boolean unrestricted;
     private final LocalJournalStorage journalStorage;
 
-    public ExecutorFilesystem(ExecutorRegistry registry, String executorId, String rootPath) {
+    public ExecutorFilesystem(ExecutorRegistry registry, String executorId, List<Root> roots, boolean unrestricted) {
         this.registry = Objects.requireNonNull(registry, "registry is required");
         this.executorId = Objects.requireNonNull(executorId, "executorId is required");
-        this.rootPath = rootPath == null || rootPath.isBlank() ? "/" : rootPath;
+        this.roots = roots == null ? List.of() : List.copyOf(roots);
+        this.primaryPath = this.roots.stream().filter(Root::primary).map(Root::path).findFirst()
+                .orElse(this.roots.isEmpty() ? "/" : this.roots.get(0).path());
+        this.unrestricted = unrestricted;
         this.journalStorage = new LocalJournalStorage(LocalJournalStorage.defaultRoot());
     }
 
@@ -67,20 +75,48 @@ public class ExecutorFilesystem extends BaseSandboxFilesystem {
 
     // ==================== 路径与调用 ====================
 
-    /** 工作区路径 → 执行器上的绝对路径。带前导 / 的按工作区相对处理（框架就是这样传的）。 */
+    private static String trimTrailing(String p) {
+        String s = p == null ? "" : p.replace('\\', '/');
+        while (s.length() > 1 && s.endsWith("/")) s = s.substring(0, s.length() - 1);
+        return s;
+    }
+
+    /**
+     * 工作区路径 → 执行器上的绝对路径。
+     * <p>空/相对路径以主目录为根；首段命中某个根别名时映射到那个根的剩余路径；
+     * 已经是绝对路径的原样交给执行器（由它按 roots + policy 再校验）。
+     */
     String resolve(String path) {
         String p = path == null ? "" : path.trim().replace('\\', '/');
-        String root = rootPath.endsWith("/") ? rootPath.substring(0, rootPath.length() - 1) : rootPath;
-        if (p.isEmpty() || ".".equals(p)) return root;
-        if (p.equals(root) || p.startsWith(root + "/")) return p;
-        while (p.startsWith("/")) p = p.substring(1);
-        return root + "/" + p;
+        String primary = trimTrailing(primaryPath);
+        if (p.isEmpty() || ".".equals(p)) return primary;
+        if (p.startsWith("/") || p.matches("^[A-Za-z]:/.*")) return p;
+        for (Root r : roots) {
+            if (r.alias() == null || r.alias().isBlank()) continue;
+            String a = r.alias();
+            if (p.equals(a)) return trimTrailing(r.path());
+            if (p.startsWith(a + "/")) return trimTrailing(r.path()) + "/" + p.substring(a.length() + 1);
+        }
+        return primary + "/" + p;
+    }
+
+    private Map<String, Object> payload(Map<String, Object> args) {
+        Map<String, Object> out = new LinkedHashMap<>(args);
+        List<Map<String, Object>> rs = new ArrayList<>();
+        for (Root r : roots) {
+            Map<String, Object> one = new LinkedHashMap<>();
+            one.put("alias", r.alias());
+            one.put("path", r.path());
+            one.put("primary", r.primary());
+            rs.add(one);
+        }
+        out.put("roots", rs);
+        out.put("policy", unrestricted ? "danger-full-access" : "workspace-write");
+        return out;
     }
 
     private ExecutorRegistry.Result call(String op, Map<String, Object> args, long timeoutMs) {
-        Map<String, Object> payload = new LinkedHashMap<>(args);
-        payload.put("root", rootPath);
-        return registry.call(executorId, op, payload, timeoutMs);
+        return registry.call(executorId, op, payload(args), timeoutMs);
     }
 
     private static String errorText(ExecutorRegistry.Result r) {
@@ -206,8 +242,8 @@ public class ExecutorFilesystem extends BaseSandboxFilesystem {
         return out;
     }
 
-    /** 供上层判断"这个路径是不是工作区内"，不参与工具调用。 */
+    /** 主目录绝对路径（提示词/日志用）。 */
     public String rootPath() {
-        return rootPath;
+        return primaryPath;
     }
 }

@@ -492,6 +492,10 @@ export const updateSessionModelApi = (sid, model) =>
 export const updateSessionWindowApi = (sid, contextWindow) =>
   request(`/session/${sid}/model`, { method: 'PUT', body: JSON.stringify({ contextWindow }) })
 
+/** 会话级权限档位：research=仅可查看 / standard=工作区内修改 / autonomous=完全权限；空串=跟随智能体 */
+export const setSessionPermission = (sid, preset) =>
+  request(`/session/${sid}/permission`, { method: 'PUT', body: JSON.stringify({ preset: preset || '' }) })
+
 /** 读取会话已存的模型覆盖与窗口档（切到列表未加载的会话时按需恢复选择器） */
 export const getSessionModelApi = sid => request(`/session/${sid}/model`)
 /** 当前会话所属工作区摘要（聊天页头部标识）：无工作区/非本人会话返回 data=null */
@@ -558,20 +562,24 @@ export const browseExecutor = (executorId, path) =>
 /** 让执行器在它那台电脑上弹系统目录选择框（等用户点，超时给足） */
 export const pickExecutorDir = executorId =>
   request('/executor/pick-dir', { method: 'POST', body: JSON.stringify({ executorId }), timeout: 130000 })
-export const bindProjectExecutor = (projectId, executorId, rootPath) =>
+/** 让那台电脑用系统文件管理器打开工作区主文件夹 */
+export const openProjectFolder = projectId =>
+  request(`/project/${encodeURIComponent(projectId)}/open`, { method: 'POST' })
+export const bindProjectExecutor = (projectId, executorId, roots) =>
   request(`/project/${encodeURIComponent(projectId)}/executor`, {
-    method: 'PUT', body: JSON.stringify({ executorId, rootPath })
+    method: 'PUT', body: JSON.stringify({ executorId, roots })
   })
 // 我的工作区容器（implicit 兜底容器在前，前端会过滤掉）；首次调用会懒创建 implicit 行
 export const listProjects = () => request('/project/list')
-// fromProjectId 可选：从本人另一个工作区复制设置（约定/资料域/共用目录/记忆隔离），会话与文件不带
-export const createProject = (name, fromProjectId, directoryMode) =>
-  said(request('/project', { method: 'POST', body: JSON.stringify({ name, fromProjectId, directoryMode }) }), { k: 'spaces' })
+// 工作区 = 本机上的一个或多个真实目录；roots[0] 是主目录（cwd 与相对路径基准）
+// fromProjectId 可选：从本人另一个工作区复制设置（约定/资料域/记忆隔离），会话与文件不带
+export const createProject = (name, fromProjectId, executorId, roots) =>
+  said(request('/project', { method: 'POST', body: JSON.stringify({ name, fromProjectId, executorId, roots }) }), { k: 'spaces' })
 /** 约定留痕（被替换掉的旧版，倒序最多 20 条）；恢复=把旧值走 updateProject 存回约定 */
 export const listInstructionHistory = id => request(`/project/${id}/instruction-history`)
-// 删除工作区：只摘归属，其下会话与产物仍然保留（后端语义）
-export const deleteProject = (id, deleteFiles = false) =>
-  said(request(`/project/${id}${deleteFiles ? '?deleteFiles=true' : ''}`, { method: 'DELETE' }), { k: 'spaces' })
+// 删除工作区：只摘归属，其下会话与产物仍然保留；本机目录里的文件一个都不动
+export const deleteProject = id =>
+  said(request(`/project/${id}`, { method: 'DELETE' }), { k: 'spaces' })
 // 工作区详情：名称 / 工作区约定（对该工作区所有会话生效）/ 默认助手
 export const getProject = id => request(`/project/${id}`)
 // 工作区轮次占用状态：共用目录的工作区当前有没有轮次在跑、是谁在跑（会话/定时任务/工作流子智能体）与跑了多久

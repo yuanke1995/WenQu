@@ -46,6 +46,8 @@ public class WenquAgentxTools {
     private final com.wenqu.ai.service.TodoBridge todoBridge;
     private final com.wenqu.ai.service.ToolSpillService toolSpillService;
     private final com.wenqu.ai.service.SessionEventService sessionEventService;
+    /** 会话级权限档位（工作区会话的「仅可查看 / 工作区内修改 / 完全权限」选择器存在 c_ai_session） */
+    private final com.wenqu.ai.service.SessionService sessionService;
     private final com.wenqu.ai.agent.subagent.SubAgentConsultService consultService;
     private final com.wenqu.ai.agent.subagent.SubAgentBranchRuntime branchRuntime;
     private final com.wenqu.ai.agent.runcode.RunCodeSubCallRuntime subCall;
@@ -67,6 +69,7 @@ public class WenquAgentxTools {
                             com.wenqu.ai.service.TodoBridge todoBridge,
                             com.wenqu.ai.service.ToolSpillService toolSpillService,
                             com.wenqu.ai.service.SessionEventService sessionEventService,
+                               com.wenqu.ai.service.SessionService sessionService,
                             com.wenqu.ai.agent.subagent.SubAgentConsultService consultService,
                             com.wenqu.ai.agent.subagent.SubAgentBranchRuntime branchRuntime,
                             com.wenqu.ai.agent.runcode.RunCodeSubCallRuntime subCall,
@@ -85,6 +88,7 @@ public class WenquAgentxTools {
         this.todoBridge = todoBridge;
         this.toolSpillService = toolSpillService;
         this.sessionEventService = sessionEventService;
+        this.sessionService = sessionService;
         this.consultService = consultService;
         this.branchRuntime = branchRuntime;
         this.subCall = subCall;
@@ -522,7 +526,8 @@ public class WenquAgentxTools {
      */
     public com.wenqu.ai.agent.permission.ExecutionPolicy policyFor(
             ChatCommand cmd, java.util.function.BiConsumer<String, String> onClamp) {
-        return toolAssembly.resolvePermissionPolicy(agentOf(cmd), cmd.isGuestMode(), onClamp);
+        String sessionPreset = cmd.getSessionId() == null ? null : sessionService.permissionPresetOf(cmd.getSessionId());
+        return toolAssembly.resolvePermissionPolicy(agentOf(cmd), sessionPreset, cmd.isGuestMode(), onClamp);
     }
 
     /**

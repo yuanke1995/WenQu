@@ -35,7 +35,7 @@ public class ProvisionerSandboxState extends SandboxState {
     @JsonProperty("wenquUid")
     private String uid;
 
-    /** 工作区相对路径；{@code projectWorkdirEnabled} 开启时为 {@code projects/{id}}，否则为 null。 */
+    /** 沙盒工作区相对路径（服务器沙盒只剩会话级作用域时通常为 null；工作区目录已改走本机执行器）。 */
     @JsonProperty("wenquWorkdirPath")
     private String workdirPath;
 

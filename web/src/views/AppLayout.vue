@@ -131,29 +131,6 @@
         <button v-if="searchKw" class="sess-search-clear" title="清除搜索" @click="clearSearch"><close-outlined /></button>
       </div>
 
-      <!-- 新建工作区：侧栏直接建，不必先去「我的产物」页。
-           全站只有「工作区」这一个词：侧栏分组、工作区页、弹窗都用它，
-           数据模型里的工作区容器（一个工作目录 + 一组会话与产物）不再另起名字。 -->
-      <a-modal v-model:open="createOpen" title="新建工作区" :confirm-loading="createSaving"
-               ok-text="创建" cancel-text="取消" @ok="doCreateProject">
-        <a-input v-model:value="createName" :maxlength="60" placeholder="工作区名，例如：考勤系统改造"
-                 @press-enter="doCreateProject" />
-        <div class="pj-modal-hint">一个工作区就是一个工作目录加一份约定：之后的对话、文件与产物都归到它名下。</div>
-        <div class="pj-mode-row">
-          <span class="pj-mode-label">目录位置</span>
-          <a-radio-group v-model:value="createMode" size="small">
-            <a-radio-button value="managed">服务器目录</a-radio-button>
-            <a-radio-button value="local">本机目录</a-radio-button>
-          </a-radio-group>
-        </div>
-        <div v-if="createMode === 'local'" class="pj-modal-hint">
-          <button type="button" class="app-link-btn" @click="pickCreateDir">
-            {{ createDirName ? '已选：' + createDirName + '（点击更换）' : '选择这台电脑上的目录…' }}
-          </button>
-          <span class="pj-mode-tail">文件只在你授权的这个目录里读写，服务器不保存副本。</span>
-        </div>
-      </a-modal>
-
       <!-- 工作区重命名：用页内弹窗而不是 Modal.confirm（后者没有输入框） -->
       <a-modal v-model:open="renameOpen" title="重命名工作区" :confirm-loading="renameSaving"
                ok-text="保存" cancel-text="取消" @ok="doRenameProject">
@@ -170,11 +147,10 @@
                             :saving="moveSaving"
                             @moved="doMoveSession" />
 
-      <!-- 添加本机目录：选一台本机执行器上的目录作为工作区（照 DSH 的「选择工作区目录」流程） -->
-      <LocalWorkspaceDialog v-model:open="localWsOpen" @created="onLocalWsCreated" />
-      <NewWorkspaceDialog v-model:open="newWsOpen" @created="onLocalWsCreated" @open-pairing="localWsOpen = true" />
+      <!-- 新建工作区：选本机目录（可多个），首个为主目录 -->
+      <NewWorkspaceDialog v-model:open="newWsOpen" @created="onLocalWsCreated" @open-pairing="showPairingHint" />
 
-      <!-- 删除工作区二选一：保留文件（默认）/ 连文件一起删；侧栏不知道目录大小，不编数字 -->
+      <!-- 删除工作区：只摘归属，本机文件不动 -->
       <DeleteProjectModal v-model:open="delOpen"
                           :project-name="delTarget ? (delTarget.name || '未命名工作区') : ''"
                           :saving="delSaving"
@@ -230,11 +206,8 @@
                   <shrink-outlined v-if="allSpacesExpanded" />
                   <arrows-alt-outlined v-else />
                 </button>
-                <button class="side-sec-op" title="新建工作区" @click.stop="openCreateSpace"><plus-outlined /></button>
-                <!-- 添加本机目录：直接在那台电脑上弹系统目录选择框，选完即建工作区（多台/离线时才进对话框） -->
-                <button class="side-sec-op" title="添加本机目录" @click.stop="newWsOpen = true">
-                  <folder-open-outlined />
-                </button>
+                <!-- 工作区块只有一个入口：选本机目录即建工作区（目录可多个，首个为主目录） -->
+                <button class="side-sec-op" title="新建工作区" @click.stop="newWsOpen = true"><plus-outlined /></button>
               </span>
               <!-- 「会话」段同样给一个 +（不挂工作区的新对话）：两段表头的操作位对齐，
                    新建对话不必绕去顶栏。动作就是 newChat() 不带 projectId——与顶栏「新建对话」同一入口，
@@ -259,8 +232,7 @@
                      @keydown.enter.self.prevent="toggleSpace(row)"
                      @keydown.space.self.prevent="toggleSpace(row)">
                   <span class="space-icon" :style="row.color ? { color: row.color } : null">
-                    <folder-open-outlined v-if="!spaceHidden(row)" />
-                    <folder-outlined v-else />
+                    <component :is="workspaceIconOf(row.icon, !spaceHidden(row))" />
                   </span>
                   <span class="space-name">{{ row.name }}</span>
                   <a-spin v-if="row.loading" class="space-spin" size="small" />
@@ -268,7 +240,9 @@
                     <button class="space-op" title="工作区操作" @click.stop><more-outlined /></button>
                     <template #overlay>
                       <a-menu @click="({ key }) => spaceMenu(row, key)">
-                        <a-menu-item key="open" :disabled="row.virtual"><folder-open-outlined /> 打开工作区</a-menu-item>
+                        <a-menu-item key="open" :disabled="row.virtual"><folder-open-outlined /> 打开工作区页</a-menu-item>
+                        <a-menu-item key="folder" :disabled="row.virtual"><export-outlined /> 在电脑上打开文件夹</a-menu-item>
+                        <a-menu-item key="edit" :disabled="row.virtual"><setting-outlined /> 编辑工作区</a-menu-item>
                         <a-menu-item key="rename" :disabled="row.virtual"><edit-outlined /> 重命名</a-menu-item>
                         <a-menu-divider />
                         <a-menu-item v-if="row.status === 'archived'" key="restore"><reload-outlined /> 恢复</a-menu-item>
@@ -350,7 +324,7 @@
             <!-- 整段收起时空态也不留：那一块位置此刻正被「分区标题 (N) >」这一行表达 -->
             <div v-if="sec.spacesSection && !secHidden(sec) && !sec.count && !sessionStore.loading" class="side-empty">
               {{ searchKw ? '没有匹配的会话' : '暂无工作区' }}
-              <button v-if="!searchKw" class="side-inline-btn" @click="openCreateSpace">新建工作区</button>
+              <button v-if="!searchKw" class="side-inline-btn" @click="newWsOpen = true">新建工作区</button>
             </div>
           </section>
         </template>
@@ -491,13 +465,13 @@ import { PlusOutlined, MessageOutlined, RobotOutlined, FolderOutlined, BarChartO
          CheckOutlined, CheckSquareOutlined, QuestionCircleOutlined, PieChartOutlined, ShareAltOutlined,
          RightOutlined, DownOutlined, BellOutlined, UnorderedListOutlined,
          ClockCircleOutlined, FolderOpenOutlined, InboxOutlined, ReloadOutlined,
-         ArrowsAltOutlined, ShrinkOutlined, SafetyCertificateOutlined, ApartmentOutlined } from '@ant-design/icons-vue'
+         ArrowsAltOutlined, ShrinkOutlined, SafetyCertificateOutlined, ApartmentOutlined,
+         ExportOutlined } from '@ant-design/icons-vue'
 import { deleteSessionApi, logoutApi, renameSessionApi, pinSession, favoriteSession, batchDeleteSessionsApi,
          getMyMenuLayout, saveMyMenuLayout, setNewSessionProject,
          updateProject, deleteProject, createProject, setProjectStatus,
-         listProjects, moveSessionProject } from '../api'
+         listProjects, moveSessionProject, openProjectFolder } from '../api'
 import { useNotifications, notifIcon, notifClass, notifTime } from '../chat/useNotifications'
-import { saveLocalDirHandle } from '../chat/localDir'
 import { themeState, toggleTheme } from '../utils/theme'
 import { authUser, ensureAuth, isAdminSync, clearAuth } from '../utils/auth'
 import { chatDone, chatReady, defaultReady, embeddingReady, pendingCount, refreshSetupGuide, setupGuide,
@@ -515,9 +489,9 @@ import DesktopOnlyGuard from '../h5/DesktopOnlyGuard.vue'
 import UserAvatar from '../components/UserAvatar.vue'
 import SetupGuide from '../components/SetupGuide.vue'
 import MoveToWorkspaceModal from '../components/MoveToWorkspaceModal.vue'
-import LocalWorkspaceDialog from '../components/LocalWorkspaceDialog.vue'
 import NewWorkspaceDialog from '../components/NewWorkspaceDialog.vue'
 import DeleteProjectModal from '../components/DeleteProjectModal.vue'
+import { workspaceIconOf } from '../utils/workspaceIcons'
 import { exportSessionMarkdown } from './exportMd'
 import './app.css'
 
@@ -1171,12 +1145,11 @@ const confirmDelete = s => {
 // 会话搜索（300ms 防抖走后端 keyword 检索；空串恢复全量）
 const searchKw = ref('')
 // ==================== 工作区操作 ====================
-// 侧栏把会话按工作区收束；工作区落到数据模型就是后端一行 Project 容器（一个工作目录 + 一组会话与产物），
+// 侧栏把会话按工作区收束；工作区落到数据模型就是后端一行 Project（绑定本机执行器与源文件夹），
 // 界面上只叫「工作区」。新建 / 重命名 / 归档 / 删除都在各自的 ⋯ 菜单里，不再做一个全局下拉。
-const createOpen = ref(false)
-/** 添加本机目录（选择工作区目录）弹窗 */
-const localWsOpen = ref(false)
 const newWsOpen = ref(false)
+/** 侧栏「没有在线执行器」时的授权提示：执行器在终端发起授权，页面这里只把话说清 */
+const showPairingHint = () => message.info('在那台电脑的终端里启动 wenqu-agent，按终端提示打开链接并确认授权')
 const onLocalWsCreated = async id => {
   await loadSessions(undefined, { refreshProjects: true })
   if (id) {
@@ -1184,13 +1157,11 @@ const onLocalWsCreated = async id => {
     router.push('/project/' + id)
   }
 }
-const createSaving = ref(false)
 const renameOpen = ref(false)
 const renameTarget = ref(null)
 const renameName = ref('')
 const renameSaving = ref(false)
 
-const openCreateSpace = () => { createName.value = ''; createOpen.value = true }
 const openRenameSpace = space => {
   renameTarget.value = space
   renameName.value = space.name || ''
@@ -1201,6 +1172,17 @@ const spaceMenu = (space, key) => {
   if (!space) return
   if (key === 'open') {
     if (space.id) router.push('/project/' + space.id).catch(() => {})
+    return
+  }
+  if (key === 'folder') {
+    if (!space.id) return
+    openProjectFolder(space.id)
+      .then(() => message.success('已在电脑上打开文件夹'))
+      .catch(e => message.warning(e.message || '打开失败：先确认那台电脑上的执行器在线'))
+    return
+  }
+  if (key === 'edit') {
+    if (space.id) router.push({ path: '/project/' + space.id, query: { settings: '1' } })
     return
   }
   if (key === 'rename') { openRenameSpace(space); return }
@@ -1222,17 +1204,17 @@ const spaceMenu = (space, key) => {
   }
 }
 
-// ==================== 删除工作区（二选一：保留文件 / 连文件一起删） ====================
+// ==================== 删除工作区（只摘归属，本机文件不动） ====================
 const delOpen = ref(false)
 const delTarget = ref(null)
 const delSaving = ref(false)
-const doDeleteProject = async withFiles => {
+const doDeleteProject = async () => {
   const space = delTarget.value
   if (!space) return
   delSaving.value = true
   try {
-    await deleteProject(space.id, withFiles)
-    message.success(withFiles ? '已删除，工作目录已一起删除' : '已删除')
+    await deleteProject(space.id)
+    message.success('已删除（本机文件仍在你的电脑上）')
     delOpen.value = false
     // 删掉的正是「下次新对话」的目标工作区 → 清掉，否则新会话会带一个不存在的 projectId
     setNewSessionProject('')
@@ -1241,46 +1223,6 @@ const doDeleteProject = async withFiles => {
     message.error('删除失败：' + (e.message || '请重试'))
   } finally {
     delSaving.value = false
-  }
-}
-
-const doCreateProject = async () => {
-  const name = (createName.value || '').trim()
-  if (!name) {
-    message.warning('请填写工作区名')
-    return
-  }
-  if (createMode.value === 'local' && !createDirHandle.value) {
-    message.warning('本机目录工作区要先选择目录')
-    return
-  }
-  createSaving.value = true
-  try {
-    const r = await createProject(name, undefined, createMode.value === 'local' ? 'local' : 'managed')
-    const created = (r && r.data && r.data.id) || ''
-    // 句柄只存在浏览器（IndexedDB），服务器只记「这是本机工作区」；存不上就当场说清，别让人以为已经绑好
-    if (created && createMode.value === 'local') {
-      try {
-        await saveLocalDirHandle(created, createDirHandle.value)
-      } catch (e) {
-        message.warning('工作区已建，但目录授权没能保存：' + (e.message || '请重新授权'))
-      }
-    }
-    createOpen.value = false
-    message.success('工作区已创建')
-    await loadSessions(undefined, { refreshProjects: true })
-    // 建完直接落到它的工作区页：第一件事就是写约定（空工作区时约定区默认就是编辑态）
-    if (created) {
-      setNewSessionProject(created)
-      router.push('/project/' + created)
-    }
-  } catch (e) {
-    message.error('创建失败：' + (e.message || '请重试'))
-  } finally {
-    createSaving.value = false
-    createMode.value = 'managed'
-    createDirHandle.value = null
-    createDirName.value = ''
   }
 }
 
@@ -2021,7 +1963,7 @@ watch(() => route.fullPath, () => {
 .notif-popover .notif-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--app-accent); margin-left: 6px; vertical-align: middle; }
 .notif-popover .notif-content { font-size: 12px; color: var(--app-text2); line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: break-all; }
 .notif-popover .notif-time { font-size: 11px; color: var(--app-text3); }
-/* 新建工作区：目录位置选择（服务器 / 本机） */
+/* 新建工作区：本机源文件夹（可多个） */
 .pj-mode-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
 .pj-mode-label { font-size: 12px; color: var(--app-text2); white-space: nowrap; }
 .pj-mode-tail { margin-left: 8px; color: var(--app-text3); }

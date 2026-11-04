@@ -779,11 +779,15 @@
         @paste="onComposerPaste" @keydown="onInputKeydown" @input="syncPanelQuery"
         @click="syncPanelQuery" @update:keys="onKeys" @chip-click="onChipClick" @ready="syncChips">
         <template #above>
-          <!-- 本机工作区未授权：照 DSH「选中工作区前输入不可用」，只留一个选择入口 -->
-          <div v-if="sessionWorkspace && sessionWorkspace.directoryMode === 'local' && !sessionWorkspace.executorId && localDirPerm !== 'granted'" class="local-ws-hint">
-            <span>本机工作区还没有选定目录，选定后才能开始对话</span>
-            <button type="button" class="app-link-btn" @click="grantWorkspaceDir">
-              {{ localDirPerm === 'missing' ? '选择工作区' : '重新授权' }}
+          <!-- 工作区没准备好（未绑目录 / 执行器离线）：一句人话 + 一个能直接点的动作，不挡对话 -->
+          <div v-if="workspaceSetupHint" class="local-ws-hint" role="status" aria-live="polite">
+            <FolderOpenOutlined class="lwh-ic" />
+            <span class="lwh-text">{{ workspaceSetupHint }}</span>
+            <button v-if="!sessionWorkspace?.roots?.length" type="button" class="lwh-act"
+                    @click="goBindWorkspace">去绑定文件夹</button>
+            <button v-else type="button" class="lwh-act" :disabled="workspaceRefreshing"
+                    @click="refreshSessionWorkspace">
+              {{ workspaceRefreshing ? '检查中…' : '重新检查执行器' }}
             </button>
           </div>
           <!-- 附件/图片/技能/@ 引用/# 历史引用/计划模式全部内联进正文那一条流（见 chat/Composer.vue），
@@ -1184,6 +1188,30 @@
         <!-- 正文与附件/图片/技能/@ 引用/# 历史引用/计划模式在同一条文字流里：
         chip 是文档里的节点，能排在字与字之间，全选复制也就带得上它们（见 chat/Composer.vue） -->
         <template #left-lead>
+          <!-- 会话级权限档位：仅可查看 / 工作区内修改 / 完全权限。改的是这条会话，
+               下一次工具调用起生效；会话没建时先记住，建好后落到那条会话上。 -->
+          <a-dropdown :trigger="['click']" placement="topLeft">
+            <button class="perm-pill" :class="{ on: !!sessionPermission && sessionPermission !== 'autonomous', danger: sessionPermission === 'autonomous' }"
+                    type="button"
+                    :title="'权限：' + (sessionPermission === 'autonomous' ? '完全访问' : permissionLabel) + '（只对这条会话生效，可随时改）'">
+              <ExclamationCircleOutlined v-if="sessionPermission === 'autonomous'" />
+              <SafetyCertificateOutlined v-else />
+              <span v-if="!isNarrow" class="perm-pill-name">{{ sessionPermission === 'autonomous' ? '完全访问' : permissionLabel }}</span>
+            </button>
+            <template #overlay>
+              <a-menu class="perm-menu" :selected-keys="[sessionPermission || 'follow']"
+                      @click="({ key }) => pickPermission(key)">
+                <a-menu-item key="follow">
+                  <div class="perm-mi-t">跟随智能体</div>
+                  <div class="perm-mi-d">用智能体自己的权限档位（默认）</div>
+                </a-menu-item>
+                <a-menu-item v-for="p in permissionPresets" :key="p.code" :disabled="p.available === false">
+                  <div class="perm-mi-t">{{ p.label }}</div>
+                  <div class="perm-mi-d">{{ p.available === false ? p.unavailableReason : p.summary }}</div>
+                </a-menu-item>
+              </a-menu>
+            </template>
+          </a-dropdown>
           <a-dropdown v-model:open="agentPickerOpen" :trigger="['click']" placement="topLeft">
           <button class="agent-pill" :class="{ on: !!currentAgentId, open: agentPickerOpen, 'as-icon': isNarrow }"
           title="选择作答的智能体：换人立即生效（下一问起就是它）；不挑就沿用本会话上一问的智能体，新会话用默认助手。模型在右侧选择">
@@ -1263,6 +1291,26 @@
           @option-hover="onModelOptionHover" @open-change="onModelSelectOpenChange" />
         </template>
       </ChatInput>
+      <!-- 完全权限二次确认：这是一次「把围栏放下」的显式动作，必须看清风险再勾选 -->
+      <a-modal v-model:open="dangerOpen" title="确认启用完全权限？" :footer="null" :width="480"
+               :mask-closable="!dangerSaving" @cancel="dangerOpen = false">
+        <div class="danger-confirm">
+          <p class="danger-lead">
+            <ExclamationCircleOutlined class="danger-ic" />
+            启用完全权限后，智能体将减少确认步骤，并且可以直接执行更多操作，包括敏感操作、文件修改或外部命令。仅建议在你信任当前任务时使用。
+          </p>
+          <a-checkbox v-model:checked="dangerAck" :disabled="dangerSaving">
+            我已了解风险，并愿意继续
+          </a-checkbox>
+          <div class="danger-actions">
+            <button type="button" class="app-btn ghost" :disabled="dangerSaving" @click="dangerOpen = false">取消</button>
+            <button type="button" class="app-btn danger" :disabled="!dangerAck || dangerSaving" @click="confirmDanger">
+              {{ dangerSaving ? '启用中…' : '启用完全权限' }}
+            </button>
+          </div>
+        </div>
+      </a-modal>
+
       <input ref="attachInput" type="file" multiple style="display:none" @click.stop @change="onAttachChange" />
     </div>
 
@@ -1361,7 +1409,7 @@
            接口给的是摊平的一维清单，这里按相对路径折回目录树：整条路径摊在一行时名字全被截断，
            认不出哪份是成品；折成树之后行内只剩文件名，腾出的位置给大小。 -->
       <div v-if="sandboxFiles.length || sandboxErr || sandboxLoading" class="rp-card">
-        <div class="rp-label">沙盒文件 · {{ sandboxCount }} 个{{ sandboxBytes ? ' · ' + sbSize(sandboxBytes) : '' }}</div>
+        <div class="rp-label">{{ sessionWorkspace && sessionWorkspace.isLocal ? '本机文件' : '沙盒文件' }} · {{ sandboxCount }} 个{{ sandboxBytes ? ' · ' + sbSize(sandboxBytes) : '' }}</div>
         <div v-if="sandboxLoading" class="rp-sb-hint">正在读取沙盒目录…</div>
         <div v-else-if="sandboxErr" class="rp-sb-err">
           <span>{{ sandboxErr }}</span>
@@ -1708,10 +1756,11 @@ import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, Close
          HistoryOutlined, SwapOutlined, InfoCircleOutlined,
          AppstoreOutlined, ClockCircleOutlined, BookOutlined,
          OrderedListOutlined, LeftOutlined, FolderOpenOutlined, FolderOutlined,
-         AimOutlined, EyeOutlined, SaveOutlined, ReloadOutlined, BulbOutlined } from '@ant-design/icons-vue'
+         AimOutlined, EyeOutlined, SaveOutlined, ReloadOutlined, BulbOutlined,
+         SafetyCertificateOutlined } from '@ant-design/icons-vue'
 import { debugRetrieval, deleteMessageGroup, submitFeedback as apiSubmitFeedback,
          addEvalCase, getSessionShare, enableSessionShare, disableSessionShare,
-         getSessionWorkspace,
+         getSessionWorkspace, getPermissionPresets, setSessionPermission,
          listSessions, setNewSessionProject } from '../api'
 import { renderMd, resolveImg, onImgError } from '../utils/markdown'
 import { canPreview, artifactExt } from '../utils/artifactView'
@@ -1763,7 +1812,6 @@ import Composer from '../chat/Composer.vue'
 import PlanCard from '../components/PlanCard.vue'
 import { splitAtts } from '../chat/attachments'
 import { SUPPORTED_EXTS, extOf } from '../chat/intake'
-import { loadLocalDirHandle, queryDirPermission, requestDirPermission, saveLocalDirHandle } from '../chat/localDir'
 // 正文浮层的共享状态：右栏来源联动（hoveredRef / 点角标定位）与灯箱开关要用
 import { openImages, previewUrl, openSource, hoveredRef } from '../chat/answerViewer'
 import { useApprovalRecovery } from '../chat/useApprovalRecovery'
@@ -2306,109 +2354,6 @@ const onAttachChange = e => {
   closeAddPanel()
 }
 
-/** 工作区目录：模型只有一个——「一个目录 + 一组权限」。
- *  目录句柄来自浏览器（File System Access），所有读写都被它圈在这个目录内；服务器只记类型与名字。 */
-const FOLDER_PICK_MAX = 5
-const FOLDER_PICK_MAX_MB = 15
-const FOLDER_JUNK = new Set(['node_modules', '.git', 'dist', 'target', 'build', '.idea', '.venv', 'venv', '__pycache__'])
-const localDir = shallowRef(null)
-const localWriting = ref(false)
-/** granted=可直接读写；prompt=要用户点一下重新授权；missing=这个工作区还没绑目录 */
-const localDirPerm = ref('')
-/** workspace=从本机工作区继承来的目录 */
-const localDirSource = ref('')
-/** 把已授权目录里有用的文件按相对路径挂进本轮（最多 5 个）；句柄留着给写回用 */
-const ingestDirHandle = async (handle, { silent = false } = {}) => {
-  const picked = []
-  let scanned = 0
-  const walk = async (dir, prefix, depth) => {
-    if (depth > 3 || scanned > 400 || picked.length >= FOLDER_PICK_MAX) return
-    for await (const [name, hnd] of dir.entries()) {
-      if (picked.length >= FOLDER_PICK_MAX || scanned > 400) return
-      if (FOLDER_JUNK.has(name)) continue
-      const rel = prefix ? prefix + '/' + name : name
-      if (hnd.kind === 'directory') { await walk(hnd, rel, depth + 1); continue }
-      scanned++
-      if (!SUPPORTED_EXTS.includes(extOf(name))) continue
-      const f = await hnd.getFile()
-      if (f.size > FOLDER_PICK_MAX_MB * 1024 * 1024) continue
-      picked.push(new File([f], rel, { type: f.type || 'text/plain', lastModified: f.lastModified }))
-    }
-  }
-  await walk(handle, '', 0)
-  if (!picked.length) {
-    if (!silent) message.warning(`「${handle.name}」里没有可读的文件（只收文本/代码/Office/PDF，最多 ${FOLDER_PICK_MAX} 个）`)
-    return
-  }
-  addFiles(picked)
-  if (!silent) closeAddPanel()
-}
-/** 写回约定：模型在回答末尾为每个要改的文件写一段「单独一行 wenqu-write:相对路径，随后是完整新内容」，
- *  代码块包不包都认。页面直接写进已授权的目录；服务器始终只拿到"要写什么"，落盘发生在浏览器，
- *  能写到哪由浏览器对目录的把关决定（与 DSH 的"目录隔离"是同一个边界）。 */
-const parseWrites = txt => {
-  const out = []
-  let cur = null
-  const flush = () => {
-    if (!cur) return
-    while (cur.lines.length && !cur.lines[0].trim()) cur.lines.shift()
-    while (cur.lines.length && !cur.lines[cur.lines.length - 1].trim()) cur.lines.pop()
-    if (cur.path) out.push({ path: cur.path, content: cur.lines.join('\n') })
-    cur = null
-  }
-  for (const raw of String(txt || '').split('\n')) {
-    const line = raw.trim()
-    const head = /^wenqu-write:\s*(.+?)\s*$/.exec(line)
-    if (head) { flush(); cur = { path: head[1], lines: [] }; continue }
-    if (!cur) continue
-    // 围栏只在已有内容时才算结束：模型常把开场 ``` 写在标记之后，按"空块收尾"处理会把正文丢光
-    if (line === '```') { if (cur.lines.some(l => l.trim())) flush(); continue }
-    cur.lines.push(raw)
-  }
-  flush()
-  // 空内容一律不写：那多半是解析没对上，真写下去就是清空用户文件
-  return out.filter(w => w.path && w.content.trim())
-}
-const writeInstruction = () => `\n\n[本机目录已授权：${localDir.value.name}（可读写）。本轮附件名就是该目录下的相对路径，内容已在上下文里；不要在沙盒里找这些文件，也不要用 shell 去改它们。要改文件时，在回答最后为每个文件写一段：单独一行 wenqu-write:相对路径，紧接着是该文件的完整新内容（用三反引号包起来更清楚）。我确认后由页面写回本机。]`
-const applyLocalWrites = async writes => {
-  const root = localDir.value?.handle
-  if (!root) return
-  localWriting.value = true
-  try {
-    for (const w of writes) {
-      const parts = w.path.split('/').filter(p => p && p !== '.' && p !== '..')
-      if (!parts.length) continue
-      let dir = root
-      for (const seg of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(seg, { create: true })
-      const fh = await dir.getFileHandle(parts[parts.length - 1], { create: true })
-      const stream = await fh.createWritable()
-      await stream.write(w.content)
-      await stream.close()
-    }
-    message.success(`已写回本机 ${writes.length} 个文件：${writes.map(w => w.path).join('、')}`)
-  } catch (e) {
-    message.error('写回失败：' + (e && e.message ? e.message : e))
-  } finally {
-    localWriting.value = false
-  }
-}
-const confirmLocalWrites = writes => {
-  Modal.confirm({
-    title: `写回本机目录「${localDir.value.name}」？`,
-    width: 620,
-    okText: '写入',
-    cancelText: '取消',
-    content: h('div', { class: 'local-write-confirm' }, [
-      h('p', { style: 'margin:0 0 8px' }, `以下 ${writes.length} 个文件将被覆盖/新建（只在这个目录内）：`),
-      ...writes.map(w => h('div', { style: 'margin:6px 0;padding:8px;border:1px solid #eee;border-radius:6px' }, [
-        h('div', { style: 'font-weight:600' }, w.path),
-        h('pre', { style: 'margin:4px 0 0;max-height:120px;overflow:auto;font-size:12px;white-space:pre-wrap' },
-          w.content.slice(0, 600) + (w.content.length > 600 ? '\n…' : ''))
-      ]))
-    ]),
-    onOk: () => applyLocalWrites(writes)
-  })
-}
 /** 敲 @ 唤起「+」面板并停在「引用」页：不再有独立的 @ 弹窗，两个入口同一块面板。
  *  与点「+」进来的差别只在筛选词从哪来——这里由 syncPanelQuery 实时取正文里「@ 到光标」那一段。
  *  只能逐个关其它面板：调用点（onInputKeydown）刚把 @ 的位置记进 panelTriggerPos/Ch，
@@ -2974,16 +2919,8 @@ const inlineSlash = () => {
   if (plan) { text.value = ''; runPlanCommand(plan[1] || ''); return true }
   return false
 }
-/** 本机工作区：每轮开跑前把目录里的材料挂上（用户不该每次重选），并等上传收尾再发 */
-const ensureWorkspaceFiles = async () => {
-  if (sessionWorkspace.value?.directoryMode !== 'local' || localDirPerm.value !== 'granted') return
-  if (!localDir.value?.handle || pendingFiles.value.length) return
-  await ingestDirHandle(localDir.value.handle, { silent: true })
-  for (let i = 0; i < 40 && hasUploadingFile(); i++) await new Promise(r => setTimeout(r, 250))
-}
 const sendNow = async (steerNow = false) => {
   if (inlineSlash()) { closeAllPanels(); return }
-  await ensureWorkspaceFiles()
   if (goalModeOn.value && goalArmed.value && !sessionGoal.value && String(text.value || '').trim()) {
     goalArmed.value = false
     // 互斥兜底（开启点已保证收掉，防 localStorage 恢复等边缘残留）：目标这轮带不走计划标记
@@ -2997,8 +2934,6 @@ const sendNow = async (steerNow = false) => {
   }
   // 目标创建中：这一下是重复触发（连按 Enter / 发送键），不落到普通发送
   if (goalStarting.value) return
-  // 授权过本机目录才附写入约定：写回要用户确认，这里只是告诉模型"你可以改这些文件"
-  if (localDir.value && String(text.value || '').trim()) text.value = String(text.value).trimEnd() + writeInstruction()
   closeAddPanel(); send(steerNow ? { steerNow: true } : {})
 }
 
@@ -3750,6 +3685,82 @@ watch(() => messages.value, () => nextTick(() => { updateTailSpacer(); scrollFor
 // 取数口径与后端 ProjectService.projectContextOfSession 同源（session → project），
 // 切换会话即刷新；取不到（无工作区/非本人/接口异常）一律不显示，不用侧栏分组猜。
 const sessionWorkspace = ref(null)
+// ---------- 会话级权限档位（本机工作区的文件/命令能干什么） ----------
+const permissionPresets = ref([])
+/** 当前会话选的档位码；''=跟随智能体。切会话时从 sessionWorkspace 恢复。 */
+const sessionPermission = ref('')
+const permissionSaving = ref(false)
+/** 完全权限二次确认：勾选「已了解风险」才能启用（DSH 同款闸门） */
+const dangerOpen = ref(false)
+const dangerAck = ref(false)
+const dangerSaving = ref(false)
+const permissionLabel = computed(() => {
+  if (!sessionPermission.value) return '跟随智能体'
+  const p = permissionPresets.value.find(x => x.code === sessionPermission.value)
+  return p ? p.label : sessionPermission.value
+})
+const loadPermissionPresets = async () => {
+  try {
+    const r = await getPermissionPresets()
+    permissionPresets.value = (r && r.success && Array.isArray(r.data)) ? r.data : []
+  } catch (e) {
+    permissionPresets.value = []
+  }
+}
+const applyPermission = async code => {
+  const sid = currentSessionId.value
+  if (!sid) return false
+  permissionSaving.value = true
+  try {
+    await setSessionPermission(sid, code === 'follow' ? '' : code)
+    sessionPermission.value = code === 'follow' ? '' : code
+    message.success('权限已切换为「' + permissionLabel.value + '」，从下一次工具调用起生效')
+    return true
+  } catch (e) {
+    message.error('切换权限失败：' + (e.message || '请重试'))
+    return false
+  } finally {
+    permissionSaving.value = false
+  }
+}
+const pickPermission = async key => {
+  if (permissionSaving.value) return
+  // 完全权限：先过风险确认，勾选后才能启用；取消就什么都不改
+  if (key === 'autonomous') {
+    if (sessionPermission.value === 'autonomous') return
+    dangerAck.value = false
+    dangerOpen.value = true
+    return
+  }
+  if (!currentSessionId.value) {
+    // 会话还没建：先记住，currentSessionId 出现后由 watch 落到那条会话上
+    sessionPermission.value = key === 'follow' ? '' : key
+    return
+  }
+  await applyPermission(key)
+}
+const confirmDanger = async () => {
+  if (!dangerAck.value || dangerSaving.value) return
+  dangerSaving.value = true
+  try {
+    if (!currentSessionId.value) {
+      sessionPermission.value = 'autonomous'
+      dangerOpen.value = false
+      return
+    }
+    const ok = await applyPermission('autonomous')
+    if (ok) dangerOpen.value = false
+  } finally {
+    dangerSaving.value = false
+  }
+}
+// 新会话建好后，把开聊前选的档位补写到会话上
+watch(currentSessionId, async sid => {
+  if (!sid || !sessionPermission.value) return
+  try {
+    await setSessionPermission(sid, sessionPermission.value)
+  } catch (e) { /* 下一轮仍按智能体档位，用户可再点一次 */ }
+})
 // 正文弹窗按名字现取清单里的那条：停用/恢复后清单重拉，弹窗里的按钮状态才会跟着翻面
 // （存条目快照会一直显示改动前的那一份）
 const skillDocEntry = computed(() => skillList.value.find(s => s.name === skillDoc.value) || {})
@@ -3797,12 +3808,7 @@ const newChatInWs = () => {
 
 watch(currentSessionId, async sid => {
   sessionWorkspace.value = null
-  // 手选的目录只属于刚才那个会话：换会话就摘掉，别把 A 会话的授权带进 B
-  if (localDirSource.value === 'manual') {
-    localDir.value = null
-    localDirPerm.value = ''
-    localDirSource.value = ''
-  }
+  sessionPermission.value = ''
   if (!sid) return
   try {
     const r = await getSessionWorkspace(sid)
@@ -3812,65 +3818,44 @@ watch(currentSessionId, async sid => {
   }
 }, { immediate: true })
 
-// 本机工作区：工作区类型是 local 时，把浏览器里保存的目录句柄接上。
-// 句柄存得住不等于有权限——权限掉了就挂一条提示等用户点一下（重新授权必须在点击事件里发起）。
-watch(sessionWorkspace, async ws => {
-  // 执行器接管时浏览器不写盘：文件与命令都走那台电脑上的执行器
-  if (ws && ws.executorId) {
-    localDir.value = null
-    localDirPerm.value = ''
-    localDirSource.value = ''
-    return
-  }
-  if (localDirSource.value === 'manual') return
-  if (!ws || ws.directoryMode !== 'local') {
-    if (localDirSource.value === 'workspace') {
-      localDir.value = null
-      localDirPerm.value = ''
-      localDirSource.value = ''
-    }
-    return
-  }
-  localDirSource.value = 'workspace'
-  const handle = await loadLocalDirHandle(ws.projectId)
-  if (!handle) {
-    localDir.value = null
-    localDirPerm.value = 'missing'
-    return
-  }
-  localDir.value = { handle, name: handle.name || ws.name, projectId: ws.projectId }
-  localDirPerm.value = await queryDirPermission(handle)
-}, { immediate: true })
-
-/** 点一下授权本机工作区的目录（首次选目录，之后只补权限） */
-const grantWorkspaceDir = async () => {
+/** 工作区没准备好时的一句话（空=不展示）：没绑目录优先于执行器离线——先得有目录才谈连没连上 */
+const workspaceSetupHint = computed(() => {
   const ws = sessionWorkspace.value
-  if (!ws || ws.directoryMode !== 'local') return
-  if (!window.showDirectoryPicker) {
-    message.warning('当前浏览器不支持选择本机目录，请用 Chrome / Edge')
-    return
+  if (!ws || ws.implicit) return ''
+  if (!ws.roots || !ws.roots.length) {
+    return `「${ws.name || '这个工作区'}」还没绑定本机文件夹，文件与命令暂不可用。`
   }
-  let handle = localDir.value?.handle
-  if (!handle) {
-    try {
-      handle = await window.showDirectoryPicker({ id: 'wenqu-workspace-dir', mode: 'readwrite' })
-    } catch (e) {
-      return // 用户取消
-    }
-    await saveLocalDirHandle(ws.projectId, handle).catch(() => {})
-    localDir.value = { handle, name: handle.name, projectId: ws.projectId }
-    localDirSource.value = 'workspace'
+  if (ws.isLocal && ws.executorOnline === false) {
+    return '本机执行器不在线，文件与命令暂不可用。'
   }
-  const perm = await requestDirPermission(handle)
-  localDirPerm.value = perm
-  if (perm === 'granted') {
-    // 授权成功就把目录里的材料挂进本轮（与 DSH 选完工作区即可开工同一个口径）
-    await ingestDirHandle(handle, { silent: true })
-    if (!pendingFiles.value.length) message.success(`已选择工作区目录「${handle.name}」`)
-  } else {
-    message.warning('没有拿到目录权限，读写都不会生效')
+  return ''
+})
+const goBindWorkspace = () => {
+  const pid = sessionWorkspace.value && sessionWorkspace.value.projectId
+  if (!pid) return
+  router.push({ path: '/project/' + pid, query: { settings: '1' } })
+}
+const workspaceRefreshing = ref(false)
+const refreshSessionWorkspace = async () => {
+  const sid = currentSessionId.value
+  if (!sid || workspaceRefreshing.value) return
+  workspaceRefreshing.value = true
+  try {
+    const r = await getSessionWorkspace(sid)
+    sessionWorkspace.value = (r && r.data) || null
+    if (sessionWorkspace.value && sessionWorkspace.value.executorOnline) message.success('执行器已连上')
+    else message.warning('还没连上：去那台电脑的终端确认 wenqu-agent 正在运行')
+  } catch (e) {
+    message.warning('检查失败：' + (e.message || '请稍后再试'))
+  } finally {
+    workspaceRefreshing.value = false
   }
 }
+
+// 会话级权限档位跟着会话走：切会话就恢复那条会话自己的选择（没有=跟随智能体）
+watch(sessionWorkspace, ws => {
+  sessionPermission.value = ws && ws.permissionPreset ? String(ws.permissionPreset) : ''
+}, { immediate: true })
 
 // ==================== 输入框内联 chip（正文与引用同一条流） ====================
 // 两条单向通道，避免双向对账打转：
@@ -4329,27 +4314,6 @@ watch(messages, () => {
   if (editingIdx.value == null) return
   if ((messages.value[editingIdx.value] || {}).messageId !== editingMessageId.value) cancelEdit()
 })
-// 本机目录写回：一轮结束（loading 落回 false）后扫一次正文末尾的写入块。
-// 不监听消息对象：气泡内容是普通字段，流式增量不会触发；而 loading 是引擎里真会翻转的那个信号。
-let lastWriteScanKey = ''
-const scanLocalWrites = () => {
-  if (!localDir.value) return true
-  const m = messages.value[messages.value.length - 1]
-  if (!m || (m.role !== 'assistant' && m.role !== 'ai') || m.loading) return false   // 气泡还没收尾：交给下一拍再试
-  const txt = m.content || ''
-  const key = (m.messageId || '') + '|' + txt.length
-  if (key === lastWriteScanKey) return true
-  lastWriteScanKey = key
-  const writes = parseWrites(txt)
-  if (writes.length) confirmLocalWrites(writes)
-  return true
-}
-/** loading 落回 false 后，气泡收尾可能还慢一拍：连试几次，别只在下一 tick 赌一次 */
-const scheduleLocalWriteScan = (tries = 0) => {
-  if (scanLocalWrites() || tries >= 8) return
-  setTimeout(() => scheduleLocalWriteScan(tries + 1), 300)
-}
-watch(loading, v => { if (!v) nextTick(() => scheduleLocalWriteScan()) })
 // Mermaid/ECharts 图表的补画已随正文下沉到 AnswerBody（每个 .md 容器画自己那份）：
 // 流式期间也画——echarts 半截 JSON 有截断探测兜底（pending→补全自愈），mermaid 落
 // 「接收中」提示等流结束补画，节流与流结束边沿的处理都在 AnswerBody 的 watch 里。
@@ -4363,6 +4327,7 @@ onMounted(async () => {
   // click 在 touchend 之后才派发，面板内的 @mousedown.stop.prevent 拦不住它
   document.addEventListener('pointerdown', onDocPointerDown)
   refreshSetupGuide()  // 欢迎区引导卡状态（TTL 去重：AppLayout 挂载时已 force 过，通常直接复用）
+  loadPermissionPresets()
   await ready()
   // 「带着一句要问的话来」：工作区事项的「去聊」带 ask 进来，落进输入框等用户确认发送。
   // 不自动发——事项措辞是给清单看的一句话，发给模型前该让用户过目改写。消费后摘掉参数，
@@ -5685,14 +5650,34 @@ onMounted(async () => {
    在 Surface 之类「(pointer:coarse) 与 (hover:hover) 同时成立」的设备上，
    按钮会被渲染出来又被这条 CSS 藏掉，而 hover 通路已被 onModelOptionHover
    的 isCoarse 早退堵死 —— 深度思考入口彻底消失。判据必须只有 isCoarse 一个。 */
-/* 本机工作区提示条：坐在输入框上方，说明这轮的文件在用户电脑上、写回要确认 */
-.local-ws-bar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; margin-bottom: 6px;
-  font-size: 12px; color: var(--app-text2); background: var(--app-surface2, rgba(0,0,0,.03));
-  border: 1px solid var(--app-border, rgba(0,0,0,.08)); border-radius: 8px; }
-.local-ws-bar .lwb-ic { color: var(--app-accent); }
-.local-ws-bar .lwb-name { font-weight: 600; color: var(--app-text1); }
-.local-ws-bar .lwb-state { color: var(--app-text3); }
-.local-ws-bar .lwb-state.warn { color: #c67a00; }
+/* 工作区未准备好的提示：一行、可操作，不占对话区；没有目录时给「去绑定」，离线时给「重新检查」 */
+.local-ws-hint { display: flex; width: fit-content; max-width: min(100%, 620px);
+  align-items: center; justify-content: center; gap: 8px; margin: 0 auto 8px;
+  padding: 6px 10px; border: 1px solid #f0c36d; border-radius: 8px;
+  background: #fffbe6; color: #8a5a00; font-size: 12px; line-height: 1.5; }
+.local-ws-hint .lwh-ic { flex: none; font-size: 14px; color: #d48806; }
+.local-ws-hint .lwh-text { flex: 1; min-width: 0; }
+.local-ws-hint .lwh-act { flex: none; border: 1px solid #d48806; border-radius: 6px;
+  background: #fff; color: #ad6800; font-size: 12px; padding: 2px 8px; cursor: pointer; }
+.local-ws-hint .lwh-act:hover:not(:disabled) { background: #fff7e6; }
+.local-ws-hint .lwh-act:disabled { opacity: .6; cursor: default; }
+
+/* 会话级权限药丸：坐在工具条最左，与智能体药丸同形但语义不同（一个换谁答，一个换能干什么） */
+.perm-pill { display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 9px;
+  border: 1px solid var(--app-border); border-radius: 999px; background: var(--app-surface);
+  color: var(--app-text2); font-size: 12px; cursor: pointer; white-space: nowrap; }
+.perm-pill:hover { border-color: var(--app-accent-border); color: var(--app-text1); }
+.perm-pill.on { color: var(--app-accent); border-color: var(--app-accent-border); background: var(--app-accent-weak); }
+.perm-pill.danger { color: #d4380d; border-color: #ff7875; background: #fff1f0; }
+.perm-pill.danger:hover { color: #a8071a; border-color: #ff4d4f; }
+.danger-confirm { display: flex; flex-direction: column; gap: 14px; }
+.danger-lead { display: flex; gap: 8px; margin: 0; padding: 10px 12px; border-radius: 8px;
+  background: #fff7e6; color: var(--app-text1); font-size: 13px; line-height: 1.75; }
+.danger-ic { color: #fa8c16; margin-top: 3px; flex: none; }
+.danger-actions { display: flex; justify-content: flex-end; gap: 10px; }
+.perm-menu { max-width: 320px; }
+.perm-mi-t { font-size: 13px; color: var(--app-text1); line-height: 1.5; }
+.perm-mi-d { font-size: 12px; color: var(--app-text3); line-height: 1.5; white-space: normal; }
 
 /* 无障碍：系统开启「减少动态效果」时不播 sheet 上滑 */
 @media (prefers-reduced-motion: reduce) {

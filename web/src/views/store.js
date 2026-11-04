@@ -153,11 +153,14 @@ let projectsLoaded = false
 // ---------- 工作区结构 ----------
 
 /** 空的工作区骨架。selectable=false：没挂工作区 / 全部会话这种虚拟分组，不给工作区操作入口 */
-function makeSpace ({ id = '', key = '', name, isImplicit = false, status = 'active', virtual = false, selectable = true }) {
+function makeSpace ({ id = '', key = '', name, isImplicit = false, status = 'active', virtual = false, selectable = true,
+                      icon = '', color = '' }) {
   return {
     id,
     key,
     name,
+    icon,
+    color,
     isImplicit,
     status,
     virtual,
@@ -184,6 +187,8 @@ function spaceOfProject (p) {
     id: p.id,
     key: p.id,
     name: p.displayName || p.name || '未命名工作区',
+    icon: p.icon || '',
+    color: p.color || '',
     isImplicit: !!p.isImplicit,
     status: p.status || 'active'
   })

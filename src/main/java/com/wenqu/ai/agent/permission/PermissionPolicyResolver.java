@@ -69,7 +69,26 @@ public class PermissionPolicyResolver {
      */
     public ExecutionPolicy resolve(String agentPresetCode, String agentApprovalMode, boolean guestMode,
                                    String agentToolDeny, BiConsumer<String, String> onClamp) {
+        return resolve(null, agentPresetCode, agentApprovalMode, guestMode, agentToolDeny, onClamp);
+    }
+
+    /**
+     * 带会话级覆盖的解析：会话选的档位优先于智能体（DSH 的 {@code permission/preset} 是会话事件），
+     * 仍受平台上限与游客只读两道闸约束。
+     *
+     * @param sessionPresetCode 会话级档位码（null/空=没选过，跟随智能体；认不出时回落智能体并报警）
+     */
+    public ExecutionPolicy resolve(String sessionPresetCode, String agentPresetCode, String agentApprovalMode,
+                                   boolean guestMode, String agentToolDeny, BiConsumer<String, String> onClamp) {
         PermissionPreset preset = requestedPreset(agentPresetCode);
+        if (sessionPresetCode != null && !sessionPresetCode.isBlank()) {
+            PermissionPreset sessionPreset = PermissionPreset.fromCode(sessionPresetCode);
+            if (sessionPreset != null) {
+                preset = sessionPreset;
+            } else {
+                log.error("[PERM] 会话级权限档位无法识别（按智能体档位执行，请修正库里的值）: code={}", sessionPresetCode);
+            }
+        }
         PermissionPreset ceiling = platformCeiling();
         if (guestMode) {
             // 游客会话强制只读档。今天游客拿不到沙盒/MCP 靠的是各族描述符的 guestAllowed 与 provider 自查，

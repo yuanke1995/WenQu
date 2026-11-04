@@ -149,7 +149,18 @@ public class ToolAssemblyService {
     /** 档位解析（装配判据与执行守卫的唯一入口）。 */
     public ExecutionPolicy resolvePermissionPolicy(Agent agent, boolean guestMode,
                                                    BiConsumer<String, String> onClamp) {
+        return resolvePermissionPolicy(agent, null, guestMode, onClamp);
+    }
+
+    /**
+     * 带会话级覆盖的档位解析：会话选择器切的那一档优先于智能体。
+     *
+     * @param sessionPresetCode 会话级档位码（null/空=没选过，跟随智能体）
+     */
+    public ExecutionPolicy resolvePermissionPolicy(Agent agent, String sessionPresetCode, boolean guestMode,
+                                                   BiConsumer<String, String> onClamp) {
         return permissionPolicyResolver.resolve(
+                sessionPresetCode,
                 agent == null ? null : agent.getPermissionPreset(),
                 agent == null ? null : agent.getToolApprovalMode(),
                 guestMode,

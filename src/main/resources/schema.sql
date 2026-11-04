@@ -200,7 +200,8 @@ CREATE TABLE IF NOT EXISTS `c_ai_session` (
     `deleted`       INT          DEFAULT 0 COMMENT '逻辑删除: 0=未删除, 1=已删除',
     `kind`          VARCHAR(16)  NOT NULL DEFAULT 'chat' COMMENT '会话种类：chat=用户发起的对话（进会话列表）；temp=平台内部临时会话（子智能体分支、工作流子智能体节点各跑一整轮，跑完即删），既不出现在会话列表也不参与「新建对话」的空会话复用',
     `project_id`    VARCHAR(64)  DEFAULT NULL COMMENT '所属工作区（c_ai_project.id；NULL=没挂工作区。可空是一等状态：所有读路径都必须容忍 NULL，不按时间/文件名猜测回填）',
-    PRIMARY KEY (`id`),
+        `permission_preset` VARCHAR(32) DEFAULT NULL COMMENT '会话级权限档位：research=仅可查看 / standard=工作区内修改 / autonomous=完全权限；NULL=跟随智能体与平台默认（高于平台上限时按上限执行）',
+PRIMARY KEY (`id`),
     KEY `idx_deleted_update` (`deleted`, `update_time` DESC),
     KEY `idx_user_update` (`user_id`, `deleted`, `update_time` DESC),
     KEY `idx_project` (`project_id`)
@@ -365,7 +366,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_agent` (
     `tool_websearch`  INT          DEFAULT NULL COMMENT '联网搜索工具(webSearch): 1=开 0=关 NULL=继承（结果为网页来源，进引用体系）',
     `goal_enabled`    INT          DEFAULT NULL COMMENT '目标模式开关: 1=开 0=关 NULL=开（平台级总闸已去掉，这一格是唯一判据）。关=界面无入口、引擎不接目标上下文、续跑不接管',
     `tool_approval_mode` VARCHAR(10) DEFAULT NULL COMMENT '有副作用工具(沙盒/MCP)执行审批: auto=自动执行 ask=执行前需用户确认 off=禁用 NULL=跟随权限档位建议值(只读→确认/全自主→自动)',
-    `permission_preset` VARCHAR(32) DEFAULT NULL COMMENT '权限档位(P2,捆沙盒执行档+审批建议值): research=只读调研 standard=常规 autonomous=全自主; NULL=跟随平台默认 agent.permissionPreset.default,高于 agent.permissionPreset.max 时按上限执行',
+    `permission_preset` VARCHAR(32) DEFAULT NULL COMMENT '权限档位(P2,捆沙盒执行档+审批建议值): research=仅可查看 standard=工作区内修改 autonomous=完全权限; NULL=跟随平台默认 agent.permissionPreset.default,高于 agent.permissionPreset.max 时按上限执行',
     `tool_deny` VARCHAR(1000) DEFAULT NULL COMMENT '工具黑名单(P2): 逗号分隔工具名,本轮这些工具不进模型工具表、被调到也拒; 与族级三态/具体项白名单并列(其余照旧、只拿掉点名这几个),也是 MCP 动态工具唯一的粒度; NULL/空=不禁',
     `max_tool_steps`  INT          DEFAULT NULL COMMENT '单轮工具调用步数上限(全部工具合计; NULL=用全局 agent.maxToolSteps; 0=不限制)',
     `skills`          VARCHAR(1000) DEFAULT NULL COMMENT '技能范围: NULL=跟随全局 空串=不使用 逗号分隔=仅用这些',
@@ -695,16 +696,12 @@ CREATE TABLE IF NOT EXISTS `c_ai_project` (
     `uid`              VARCHAR(64)  NOT NULL COMMENT '归属用户（c_ai_user.uid；单用户容器，不做共享）',
     `name`             VARCHAR(255) DEFAULT NULL COMMENT '工作区名；implicit 容器可为空（不给它起名，界面只体现为侧栏「会话」栏）',
     `selection_status` VARCHAR(20)  NOT NULL DEFAULT 'selectable' COMMENT 'implicit=每人一个自动默认（不可删、不进切换器） / selectable=用户显式创建可选中',
-    `workdir_path`     VARCHAR(512) NOT NULL COMMENT '工作区目录（相对 user-data 根的 POSIX 相对路径，形如 projects/{id}；provisioner 侧 normalize_workdir_path 会拒绝对路径与非法分量）',
-    `directory_mode`   VARCHAR(20)  NOT NULL DEFAULT 'managed' COMMENT 'managed=平台托管目录（服务器沙盒） / local=执行器目录（用户电脑上的目录，由本机执行器读写）',
-    `executor_id`      VARCHAR(64)  DEFAULT NULL COMMENT '本机执行器 id（c_ai_executor.id）；非空=本工作区的文件读写走那台电脑上的执行器，空=走服务器沙盒',
-    `root_path`        VARCHAR(1024) DEFAULT NULL COMMENT '执行器上的工作区根目录（绝对路径）。执行器负责校验每次调用都落在这个目录内',
+    `executor_id`      VARCHAR(64)  DEFAULT NULL COMMENT '本机执行器 id（c_ai_executor.id）：工作区的源文件夹都在这台电脑上；implicit 容器为空',
     `icon`             VARCHAR(32)  DEFAULT NULL COMMENT '工作区图标（预设图标名，空=默认文件夹）',
     `color`            VARCHAR(16)  DEFAULT NULL COMMENT '工作区颜色（十六进制，空=默认色）',
     `instructions`     TEXT         DEFAULT NULL COMMENT '工作区约定：写一次即对该工作区**所有会话**生效（每轮注入 system prompt 的工作背景段）。这是「工作区」与「分类标签」的分界——没有它，每条对话都得重新交代背景',
     `default_agent_id` VARCHAR(50)  DEFAULT NULL COMMENT '工作区默认助手：会话归属该工作区且用户没显式选助手时用它作答，其知识库范围随助手生效（工作区因此有自己的资料域）',
     `kb_ids`           VARCHAR(512) DEFAULT NULL COMMENT '工作区绑定知识库（逗号分隔，c_ai_knowledge_base.id；空=不收窄）。这是**默认检索域**不是权限墙：本区会话没有显式域（助手未绑库且未 @ 库）时只搜这些库，@ 提及其他库仍可越出（显式动作优先于默认值），助手绑定的库也优先于它',
-    `shared_workdir`   INT          NOT NULL DEFAULT 0 COMMENT '共用工作目录: 1=本工作区所有会话的沙盒挂 projects/{id}（跨会话互见文件、上传的材料模型直接可读）0=各会话各自 sessions/{会话}。只有 create() 显式给新建工作区置 1；另受全局总闸 sandbox.projectWorkdirEnabled 约束（应急时一键全退回会话级）',
     `memory_isolated`  INT          NOT NULL DEFAULT 0 COMMENT '记忆隔离: 1=本区会话是「干净房间」——不注入本人已沉淀的个人记忆（MEMORY.md/记忆工具全关），也不往里写；工作区的上下文由约定+绑定资料域+目录文件承担。0=照常共用个人记忆。给敏感项目/客户现场一个不串味的场子',
     `status`           VARCHAR(20)  NOT NULL DEFAULT 'active' COMMENT 'active=正常 / archived=归档（只读保留，二期）',
     `deleted`          INT          NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0=正常, 1=已删除（删工作区不删其下会话与产物，只把它们的 project_id 置 NULL）',
@@ -719,6 +716,24 @@ CREATE TABLE IF NOT EXISTS `c_ai_project` (
 -- 2026-11-04: 本机执行器
 -- 用户电脑上跑的一个小程序，只负责执行工具调用（读写文件/跑命令）；云端保留知识库、会话与模型。
 -- 令牌只存哈希；连接本身是执行器主动发起的长轮询，服务端不开任何入站端口。
+-- 2026-11-04: 工作区源文件夹（工作区 = 用户本机上的一个或多个真实目录）
+-- primary_root=1 的那一行是主目录：框架 cwd、相对路径与命令执行都以它为根；
+-- 其余是附加根（DSH 的 additional workspace roots），模型用绝对路径或别名访问。
+CREATE TABLE IF NOT EXISTS `c_ai_project_root` (
+    `tenant_id`    VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户）',
+    `id`           VARCHAR(64)   NOT NULL COMMENT '主键ID (UUID)',
+    `uid`          VARCHAR(64)   NOT NULL COMMENT '归属用户（c_ai_user.uid）',
+    `project_id`   VARCHAR(64)   NOT NULL COMMENT '所属工作区（c_ai_project.id）',
+    `alias`        VARCHAR(120)  NOT NULL COMMENT '展示名 / 虚拟路径首段（工作区内唯一，不含斜杠）',
+    `path`         VARCHAR(1024) NOT NULL COMMENT '执行器上的绝对路径（本机目录）',
+    `primary_root` INT           NOT NULL DEFAULT 0 COMMENT '1=主目录（cwd 与相对路径基准，每个工作区恰好一个）',
+    `sort_no`      INT           NOT NULL DEFAULT 0 COMMENT '展示顺序（0 起）',
+    `create_time`  DATETIME      DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_project_alias` (`project_id`, `alias`),
+    KEY `idx_project` (`project_id`, `sort_no`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工作区源文件夹（用户本机上的真实目录）';
+
 CREATE TABLE IF NOT EXISTS `c_ai_executor` (
     `tenant_id`    VARCHAR(32)  NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户）',
     `id`           VARCHAR(64)  NOT NULL COMMENT '执行器 id',

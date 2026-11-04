@@ -20,14 +20,14 @@ package com.wenqu.ai.agent.permission;
 public enum PermissionPreset {
 
     /** 只读调研：沙盒只留读文件与列目录，命令执行、写入、交付产物、写长期记忆与外部工具（联网搜索、MCP）都不进工具表 */
-    RESEARCH("research", "只读调研", SandboxMode.READ_ONLY, "ask",
-            "只看不动：沙盒里能读已有文件、列目录；执行命令、写文件、交付产物、写长期记忆、联网搜索与外部工具都不提供给助手"),
+    RESEARCH("research", "仅可查看", SandboxMode.READ_ONLY, "ask",
+            "只看不动：工作区目录里能读文件、列目录；执行命令、写文件、改文件、删文件、交付产物、写长期记忆、联网搜索与外部工具都不提供给助手"),
     /** 常规：平台默认档，沙盒写操作收束在沙盒目录内，工具执行确认完全跟随智能体自己的设置 */
-    STANDARD("standard", "常规", SandboxMode.WORKSPACE_WRITE, null,
-            "日常默认：沙盒里能跑命令、能在自己的沙盒目录写文件，写到沙盒目录外会被拒绝"),
+    STANDARD("standard", "工作区内修改", SandboxMode.WORKSPACE_WRITE, null,
+            "日常默认：能在工作区目录里读写、改文件、跑命令；写到工作区目录之外会被拒绝"),
     /** 全自主：写入位置不再由平台收束（沙盒层的可写根一并放开）、命令不逐项确认（平台准不准用这一档由 agent.permissionPreset.max 决定） */
-    AUTONOMOUS("autonomous", "全自主", SandboxMode.DANGER_FULL_ACCESS, "auto",
-            "不设限：沙盒里写文件不再限于沙盒目录、命令直接执行、不再逐个确认（管理员可整体禁用这一档）");
+    AUTONOMOUS("autonomous", "完全权限", SandboxMode.DANGER_FULL_ACCESS, "auto",
+            "不设限：可以读写工作区目录之外的路径、命令直接执行、不再逐个确认（管理员可整体禁用这一档）");
 
     private final String code;
     private final String label;

@@ -401,7 +401,7 @@ public class ScheduledJobService {
     private String awaitWorkspaceFree(ScheduledJob job) {
         if (job.getProjectId() == null || job.getProjectId().isBlank()) return null;
         Project p = projectService.byId(job.getProjectId());
-        if (p == null || !projectService.workdirShared(p)) return null;   // 不共用目录的工作区没有这把锁
+        if (p == null || !projectService.isLocal(p)) return null;   // 没挂本机目录的会话没有这把锁
         long[] backoffs = {30_000L, 120_000L};
         TurnLease holder = projectTurnGuard.current(p.getId());
         for (long backoff : backoffs) {

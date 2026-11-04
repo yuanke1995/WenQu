@@ -2721,21 +2721,6 @@
       "tips": "webSearchRequireApproval"
     },
     {
-      "backendKey": "sandbox.projectWorkdirEnabled",
-      "panel": "sandbox",
-      "section": 0,
-      "group": "sandbox",
-      "key": "projectWorkdirEnabled",
-      "path": "sandbox.projectWorkdirEnabled",
-      "label": "工作区共用目录总闸",
-      "type": "switch",
-      "tips": "sandboxProjectWorkdir",
-      "def": true,
-      "note": "每个工作区在自己页面的设置里决定是否共用目录（新建工作区默认共用）；这里是全局总闸，关掉后所有工作区一律退回每个会话各一份目录。改动对新建的会话立即生效",
-      "vif": "tool.sandbox.enabled",
-      "tier": 2
-    },
-    {
       "backendKey": "sandbox.projectUploadMaxMb",
       "panel": "sandbox",
       "section": 0,

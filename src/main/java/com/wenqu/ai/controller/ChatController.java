@@ -804,6 +804,22 @@ public class ChatController {
         return ResultJson.ok(null, "已移动");
     }
 
+    @Operation(summary = "切换会话权限档位",
+            description = "body: {preset}。research=仅可查看 / standard=工作区内修改 / autonomous=完全权限；"
+                    + "空串或 follow = 清除会话覆盖、跟随智能体。仍受平台上限 agent.permissionPreset.max 与游客只读闸约束。")
+    @Permission("session:write")
+    @PutMapping("/session/{sessionId}/permission")
+    public ResultJson setSessionPermission(
+            @Parameter(description = "会话 ID") @PathVariable("sessionId") String sessionId,
+            @RequestBody(required = false) Map<String, Object> body) {
+        Object raw = body == null ? null : body.get("preset");
+        String applied = sessionService.setPermissionPreset(RequestUser.uid(), sessionId,
+                raw == null ? "" : String.valueOf(raw));
+        java.util.Map<String, Object> out = new java.util.HashMap<>();
+        out.put("permissionPreset", applied == null ? "" : applied);
+        return ResultJson.ok(out);
+    }
+
     @Operation(summary = "切换会话模型/窗口档",
             description = "设置会话级模型覆盖与上下文窗口档（聊天页选择器改动即存，刷新/换端/续跑后仍保留）。"
                     + "两个键各自独立：<b>不出现=本次不动那一项</b>，所以只改档位的请求不会把模型清掉。"

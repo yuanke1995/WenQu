@@ -1537,12 +1537,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * <p>拿不到时返回 null（沙盒不可用）——框架会退回默认文件系统，形态与 P1 之前一致，
      * 不为了「有工具就挂」而给一个指向宿主的文件系统：那会让隔离静默失效。
      */
-    private io.agentscope.harness.agent.filesystem.AbstractFilesystem frameworkFilesystem(ChatCommand cmd) {
+    private io.agentscope.harness.agent.filesystem.AbstractFilesystem frameworkFilesystem(
+            ChatCommand cmd, boolean unrestrictedWrites) {
         if (sandboxService == null) return null;
         String uid = cmd.getUserId();
         String sessionId = cmd.getSessionId();
         if (uid == null || uid.isBlank() || sessionId == null || sessionId.isBlank()) return null;
-        return sandboxService.frameworkFilesystem(sessionId, uid, /* unrestrictedWrites */ false);
+        return sandboxService.frameworkFilesystem(sessionId, uid, unrestrictedWrites);
     }
 
     /**
@@ -3762,7 +3763,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 两者都从 builder 字段取，**不看 RuntimeContext**。
                 // 所以此前每轮往 ctx 里 put AbstractFilesystem 是无效动作（真机验证已证：
                 // execute("pwd") 返回宿主项目目录）。必须用 abstractFilesystem(...) 在 build 期传进去。
-                .abstractFilesystem(frameworkFilesystem(cmd))
+                .abstractFilesystem(frameworkFilesystem(cmd,
+                        policy.sandboxMode() == com.wenqu.ai.agent.permission.SandboxMode.DANGER_FULL_ACCESS))
                 .artifactDeliveryTarget(new com.wenqu.ai.sandbox.WenquArtifactDeliveryTarget(artifactService))
                 .disableWebTools();
 

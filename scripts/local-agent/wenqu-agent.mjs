@@ -12,12 +12,14 @@
  * 可选：
  *   --token <设备令牌>  手工指定（仅兼容旧用法；平时不需要）
  *   --web <页面地址>    授权链接的页面地址，默认按 --server 推断（如 http://<host>）
- *   --yes            写文件/跑命令不再逐次确认（自动化用；默认每次确认）
+ *   --ask            写文件/跑命令前在终端逐次确认（默认不问：权限档位已经由页面选择器定好，
+ *                    执行器再弹一次终端确认会让浏览器里的这一轮一直等不到返回）
  *   --name <名字>    设备名（默认主机名）
  *   --timeout <秒>   单次轮询挂起时长（默认 25）
  *
  * 约束：
- *   - --root 只是"浏览起点"（默认家目录；--root / 即整盘）；每次调用只允许落在本次工作区根内，越界一律 E_PATH_OUTSIDE。
+ *   - --root 只是"浏览起点"（默认家目录；--root / 即整盘）；工作区调用只允许落在本次工作区的源文件夹内，
+ *     越界一律 E_PATH_OUTSIDE；只有 danger-full-access 档才放开。
  *   - 写文件走临时文件 + rename，避免写一半留下坏文件。
  */
 import fs from 'node:fs'
@@ -45,6 +47,8 @@ const SERVER = (arg('server', 'http://127.0.0.1:8090/ai') || '').replace(/\/+$/,
 const NAME = arg('name', os.hostname())
 const WAIT = Math.max(5, Math.min(30, Number(arg('timeout', '25')) || 25))
 const AUTO_YES = flag('yes')
+/** 只有显式 --ask 才在终端逐次确认；默认信任服务端下发的权限档位（页面上的选择器才是闸门） */
+const ASK = flag('ask')
 /** 浏览与执行的起点（默认家目录；`--root /` 即整盘）。
  *  与 DSH 同一口径：宿主把目录树交给界面浏览，选中的目录成为工作区根；
  *  每次调用再单独校验"落在本次工作区根内"——起点的宽窄不代替工作区边界。 */
@@ -179,21 +183,35 @@ async function authorize () {
 
 // ==================== 路径围栏 ====================
 
-/** 解析并校验：只允许落在本次工作区 root 内，且 root 必须在授权目录里；越界一律拒绝。
- *  判据从"授权名单"收紧到"本次 root"——同一台机器给多个目录时，A 工作区摸不到 B 目录。 */
+/** 本次调用的根目录集合（工作区可以绑定多个源文件夹，首个为主目录）。 */
+let currentRoots = []
+let primaryRoot = null
+let currentPolicy = 'workspace-write'
+const curRoot = () => primaryRoot || ROOT
+
+/** 解析并校验：只允许落在本次工作区的某个源文件夹内。
+ *  主目录是相对路径与命令执行的基准；`danger-full-access` 档才允许越出这些目录（与 DSH 的完全权限同义）。 */
 function resolveInRoot(p) {
-  const raw = String(p || payloadRoot() || '').trim()
+  const raw = String(p || '').trim()
   if (!raw) throw err('E_IO', '缺少路径')
   const abs = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(curRoot(), raw)
-  const inStartRoot = abs === ROOT || abs.startsWith(ROOT + path.sep)
-  const withinRoot = !currentRoot || abs === currentRoot || abs.startsWith(currentRoot + path.sep)
-  if (!inStartRoot || !withinRoot) throw err('E_PATH_OUTSIDE', `路径不在授权目录内：${abs}`)
+  if (currentPolicy === 'danger-full-access') return abs
+  if (currentRoots.length === 0) {
+    // 没有工作区根（比如「选择目录」的逐层浏览）：只允许落在浏览起点内
+    if (abs === ROOT || abs.startsWith(ROOT + path.sep)) return abs
+    throw err('E_PATH_OUTSIDE', `路径不在浏览起点内：${abs}`)
+  }
+  const inside = currentRoots.some(r => abs === r || abs.startsWith(r + path.sep))
+  if (!inside) throw err('E_PATH_OUTSIDE', `路径不在工作区目录内：${abs}`)
   return abs
 }
 
-let currentRoot = null
-const payloadRoot = () => currentRoot
-const curRoot = () => currentRoot || ROOT
+/** 工作区里的软链一律拒绝：它可能把一次读写引出源文件夹（lexical 前缀是对的，真实路径不是）。 */
+async function rejectSymlink(file) {
+  const st = await fsp.lstat(file)
+  if (st.isSymbolicLink()) throw err('E_PATH_OUTSIDE', `软链接不参与工作区操作：${file}`)
+  return st
+}
 
 function err(code, message) {
   const e = new Error(message)
@@ -204,8 +222,8 @@ function err(code, message) {
 // ==================== 确认 ====================
 
 let rl = null
-async function confirm(action, detail) {
-  if (AUTO_YES) return true
+async function confirm(action, detail, userInitiated) {
+  if (AUTO_YES || userInitiated || !ASK) return true
   if (!rl) rl = readline.createInterface({ input: process.stdin, output: process.stdout })
   const ans = await new Promise(resolve => rl.question(`\n[问渠] ${action}\n${detail}\n允许吗？(y/N) `, resolve))
   return /^y(es)?$/i.test(String(ans).trim())
@@ -214,15 +232,20 @@ async function confirm(action, detail) {
 // ==================== 操作实现 ====================
 
 async function opList({ path: p }) {
-  // 没有路径 = 列起点目录本身（网页打开对话框时直接看到家目录里的内容）
-  const dir = p ? resolveInRoot(p) : ROOT
+  // 没有路径 = 列主目录；没有工作区根时列浏览起点（网页「选择目录」逐层浏览用）
+  const dir = p ? resolveInRoot(p) : (currentRoots.length ? curRoot() : ROOT)
   const entries = await fsp.readdir(dir, { withFileTypes: true })
   const out = []
   for (const e of entries) {
     const full = path.join(dir, e.name)
     let st = null
-    try { st = await fsp.stat(full) } catch { /* 断链忽略 */ }
-    out.push({ path: full, name: e.name, isDir: e.isDirectory(), size: st ? st.size : 0, mtimeMs: st ? st.mtimeMs : 0 })
+    try { st = await fsp.lstat(full) } catch { continue }   // 断链忽略
+    // 软链不参与：它可能指向工作区外，列表/预览/删除都不该把它当普通条目
+    if (st.isSymbolicLink()) {
+      out.push({ path: full, name: e.name, isDir: false, isSymlink: true, size: 0, mtimeMs: 0 })
+      continue
+    }
+    out.push({ path: full, name: e.name, isDir: st.isDirectory(), isSymlink: false, size: st.size, mtimeMs: st.mtimeMs })
   }
   out.sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1))
   return { path: dir, entries: out }
@@ -240,6 +263,7 @@ async function opFind({ path: p, pattern }) {
     for (const e of entries) {
       if (out.length >= 5000) return
       const full = path.join(d, e.name)
+      if (e.isSymbolicLink()) continue
       if (e.isDirectory()) {
         if (e.name === 'node_modules' || e.name === '.git') continue
         await walk(full)
@@ -267,6 +291,7 @@ function globToRegExp(g) {
 
 async function opRead({ path: p, offset, limit }) {
   const file = resolveInRoot(p)
+  await rejectSymlink(file)
   const buf = await fsp.readFile(file)
   if (buf.includes(0)) return { content: '', encoding: 'base64', binary: true }
   const text = buf.toString('utf8')
@@ -276,24 +301,150 @@ async function opRead({ path: p, offset, limit }) {
   return { content: lines.slice(start, end).join('\n'), encoding: 'utf-8', totalLines: lines.length }
 }
 
-async function opReadBytes({ path: p }) {
+async function opReadBytes({ path: p, offset, length }) {
   const file = resolveInRoot(p)
-  const buf = await fsp.readFile(file)
-  return { contentBase64: buf.toString('base64'), size: buf.length }
+  const st = await rejectSymlink(file)
+  const start = Math.max(0, Number(offset) || 0)
+  const want = Number(length) > 0 ? Math.min(Number(length), st.size - start) : st.size - start
+  if (start > st.size) return { contentBase64: '', size: 0, totalBytes: st.size }
+  const fh = await fsp.open(file, 'r')
+  try {
+    const buf = Buffer.alloc(Math.max(0, want))
+    await fh.read(buf, 0, buf.length, start)
+    return { contentBase64: buf.toString('base64'), size: buf.length, totalBytes: st.size }
+  } finally {
+    await fh.close()
+  }
 }
 
-async function opWrite({ path: p, content }, { confirmText } = {}) {
+async function opStat({ path: p }) {
   const file = resolveInRoot(p)
-  const ok = await confirm('写入文件', `${file}\n（${Buffer.byteLength(content || '')} 字节）`)
+  const st = await rejectSymlink(file)
+  return { path: file, name: path.basename(file), isDir: st.isDirectory(), size: st.size, mtimeMs: st.mtimeMs }
+}
+
+/** 递归列出目录（相对路径），跳过隐藏项与依赖目录；条数与深度都设上限。 */
+async function opTree({ path: p, maxFiles, maxDepth }) {
+  const dir = resolveInRoot(p)
+  const cap = Math.max(1, Math.min(Number(maxFiles) || 5000, 50000))
+  const depthCap = Math.max(1, Math.min(Number(maxDepth) || 8, 32))
+  const out = []
+  let capped = false
+  const walk = async (d, rel, depth) => {
+    if (out.length >= cap) { capped = true; return }
+    if (depth > depthCap) return
+    let entries = []
+    try { entries = await fsp.readdir(d, { withFileTypes: true }) } catch { return }
+    for (const e of entries) {
+      if (out.length >= cap) { capped = true; return }
+      if (e.name.startsWith('.') || e.name === 'node_modules' || e.name === '__pycache__' || e.name === '.git') continue
+      const full = path.join(d, e.name)
+      const next = rel ? rel + '/' + e.name : e.name
+      let st = null
+      try { st = await fsp.lstat(full) } catch { continue }
+      if (st.isSymbolicLink()) continue
+      if (st.isDirectory()) {
+        out.push({ path: next, name: e.name, isDir: true, size: 0, mtimeMs: st.mtimeMs })
+        await walk(full, next, depth + 1)
+      } else if (st.isFile()) {
+        out.push({ path: next, name: e.name, isDir: false, size: st.size, mtimeMs: st.mtimeMs })
+      }
+    }
+  }
+  await walk(dir, '', 1)
+  return { path: dir, entries: out, capped }
+}
+
+async function opMkdir({ path: p, userInitiated }) {
+  const dir = resolveInRoot(p)
+  const ok = await confirm('新建文件夹', dir, userInitiated)
+  if (!ok) throw err('E_DENIED', '用户拒绝了这次新建')
+  await fsp.mkdir(dir, { recursive: false })
+  return { path: dir }
+}
+
+async function opMove({ from, to, replace, userInitiated }) {
+  const src = resolveInRoot(from)
+  const dst = resolveInRoot(to)
+  if (src === dst) return { path: dst }
+  const ok = await confirm('移动/重命名', `${src}\n→ ${dst}`, userInitiated)
+  if (!ok) throw err('E_DENIED', '用户拒绝了这次移动')
+  const st = await rejectSymlink(src)
+  try { await rejectSymlink(dst) } catch (e) { if (e.code !== 'ENOENT') throw e }
+  if (replace) {
+    try { await fsp.rm(dst, { recursive: true, force: true }) } catch { /* 不存在 */ }
+  } else {
+    try { await fsp.lstat(dst); throw err('E_EXISTS', `目标位置已存在：${dst}`) } catch (e) { if (e.code === 'E_EXISTS') throw e }
+  }
+  if (st.isDirectory()) {
+    // 不能把文件夹挪进它自己里面
+    if ((dst + path.sep).startsWith(src + path.sep)) throw err('E_INVALID', '不能把文件夹放进它自己里面')
+    await fsp.rename(src, dst)
+  } else {
+    await fsp.mkdir(path.dirname(dst), { recursive: true })
+    try {
+      await fsp.rename(src, dst)
+    } catch (e) {
+      if (e.code !== 'EXDEV') throw e
+      await fsp.copyFile(src, dst)
+      await fsp.unlink(src)
+    }
+  }
+  return { path: dst }
+}
+
+async function opRemove({ path: p, userInitiated }) {
+  const target = resolveInRoot(p)
+  if (currentRoots.includes(target)) throw err('E_INVALID', '不能删除工作区根目录本身')
+  await rejectSymlink(target)
+  const ok = await confirm('删除', target, userInitiated)
+  if (!ok) throw err('E_DENIED', '用户拒绝了这次删除')
+  await fsp.rm(target, { recursive: true, force: false })
+  return { removed: true, path: target }
+}
+
+/** 在宿主那台电脑上用系统文件管理器打开一个目录（Finder / Explorer / 文件管理器）。 */
+async function opOpenPath({ path: p }) {
+  const target = resolveInRoot(p)
+  const platform = process.platform
+  const cmd = platform === 'darwin' ? 'open' : (platform === 'win32' ? 'explorer' : 'xdg-open')
+  await new Promise((resolve, reject) => {
+    execFile(cmd, [target], { timeout: 15000 }, e => {
+      if (e) return reject(err('E_IO', '打不开文件夹：' + (e.message || '')))
+      resolve()
+    })
+  })
+  return { path: target }
+}
+
+async function opWriteChunk({ path: p, offset, contentBase64 }) {
+  const file = resolveInRoot(p)
+  try { await rejectSymlink(file) } catch (e) { if (e.code !== 'ENOENT') throw e }
+  const buf = Buffer.from(contentBase64 || '', 'base64')
+  const off = Math.max(0, Number(offset) || 0)
+  const fh = await fsp.open(file, off === 0 ? 'w' : 'r+')
+  try {
+    await fh.write(buf, 0, buf.length, off)
+  } finally {
+    await fh.close()
+  }
+  return { path: file, bytes: buf.length, offset: off }
+}
+
+async function opWrite({ path: p, content, userInitiated }, { confirmText } = {}) {
+  const file = resolveInRoot(p)
+  try { await rejectSymlink(file) } catch (e) { if (e.code !== 'ENOENT') throw e }
+  const ok = await confirm('写入文件', `${file}\n（${Buffer.byteLength(content || '')} 字节）`, userInitiated)
   if (!ok) throw err('E_DENIED', '用户拒绝了这次写入')
   await writeAtomic(file, Buffer.from(content || '', 'utf8'))
   return { path: file, bytes: Buffer.byteLength(content || '') }
 }
 
-async function opWriteBytes({ path: p, contentBase64 }) {
+async function opWriteBytes({ path: p, contentBase64, userInitiated }) {
   const file = resolveInRoot(p)
+  try { await rejectSymlink(file) } catch (e) { if (e.code !== 'ENOENT') throw e }
   const buf = Buffer.from(contentBase64 || '', 'base64')
-  const ok = await confirm('写入文件', `${file}\n（${buf.length} 字节）`)
+  const ok = await confirm('写入文件', `${file}\n（${buf.length} 字节）`, userInitiated)
   if (!ok) throw err('E_DENIED', '用户拒绝了这次写入')
   await writeAtomic(file, buf)
   return { path: file, bytes: buf.length }
@@ -306,8 +457,8 @@ async function writeAtomic(file, buf) {
   await fsp.rename(tmp, file)
 }
 
-async function opExec({ command, timeoutSeconds }) {
-  const ok = await confirm('执行命令', `cwd: ${curRoot()}\n$ ${command}`)
+async function opExec({ command, timeoutSeconds, userInitiated }) {
+  const ok = await confirm('执行命令', `cwd: ${curRoot()}\n$ ${command}`, userInitiated)
   if (!ok) throw err('E_DENIED', '用户拒绝了这次命令')
   const seconds = Math.max(1, Number(timeoutSeconds) || 120)
   return await new Promise(resolve => {
@@ -376,8 +527,15 @@ const HANDLERS = {
   find: opFind,
   read: opRead,
   readBytes: opReadBytes,
+  stat: opStat,
+  tree: opTree,
+  openPath: opOpenPath,
+  mkdir: opMkdir,
+  move: opMove,
+  remove: opRemove,
   write: opWrite,
   writeBytes: opWriteBytes,
+  writeChunk: opWriteChunk,
   exec: opExec
 }
 
@@ -399,7 +557,16 @@ async function once() {
   if (res.status === 204) return
   if (!res.ok) throw err('E_IO', `轮询失败 HTTP ${res.status}`)
   const call = await res.json()
-  currentRoot = call.args && call.args.root ? path.resolve(call.args.root) : null
+  const args = call.args || {}
+  currentRoots = Array.isArray(args.roots)
+    ? args.roots.map(r => path.resolve(String(r.path || ''))).filter(Boolean)
+    : (args.root ? [path.resolve(String(args.root))] : [])
+  primaryRoot = currentRoots[0] || null
+  if (Array.isArray(args.roots)) {
+    const p = args.roots.find(r => r && r.primary && r.path)
+    if (p) primaryRoot = path.resolve(String(p.path))
+  }
+  currentPolicy = args.policy === 'danger-full-access' ? 'danger-full-access' : 'workspace-write'
   const handler = HANDLERS[call.op]
   if (!handler) {
     await postResult(call.id, false, null, { code: 'E_UNSUPPORTED', message: '不支持的调用：' + call.op })
@@ -411,8 +578,9 @@ async function once() {
     log(`${call.op} 完成 ${Date.now() - started}ms`, call.args && call.args.path ? call.args.path : '')
     await postResult(call.id, true, data, null)
   } catch (e) {
-    log(`${call.op} 失败: ${e.code || 'E_IO'} ${e.message}`)
-    await postResult(call.id, false, null, { code: e.code || 'E_IO', message: e.message })
+    const code = e.code === 'ENOENT' ? 'E_NOT_FOUND' : (e.code || 'E_IO')
+    log(`${call.op} 失败: ${code} ${e.message}`)
+    await postResult(call.id, false, null, { code, message: e.message })
   }
 }
 

@@ -37,6 +37,8 @@ public class SessionInfo {
     private String projectId;
 
     private String model;
+    @Schema(description = "会话级权限档位：research=仅可查看 / standard=工作区内修改 / autonomous=完全权限；null=跟随智能体")
+    private String permissionPreset;
     @Schema(description = "会话级上下文窗口档（token，聊天页改过档位才有值；null=没选过，按模型登记上限走）。"
             + "框架的压缩阈值与输入上限都由它推导，前端据此恢复该会话的档位，不按本台机器的缓存猜")
     private Integer contextWindow;

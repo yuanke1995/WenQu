@@ -438,13 +438,11 @@ public class ChatService {
         }
         // 本轮身份在这一刻起可用（早于工作区取锁与流状态构造）：账本的每条事件都挂得到同一个 turnId
         final String turnId = java.util.UUID.randomUUID().toString().replace("-", "");
-        // 工作区级轮次守卫：仅在**实际共用**工作目录的工作区里需要（共用判据 ProjectService#workdirShared：
-        // 本区开关＋全局总闸）——同一份目录里，用户对话 / 到点的定时任务 / 跑着的工作流三方并发写会互相
-        // 覆盖。目录各一份的工作区没有这个风险，也不再陪着锁：两条对话可以同时跑。与会话锁同一风格：
-        // 快速失败，不让人对着输入框等几分钟；租约记下占用者，抢不到就立刻说清是谁在跑。
+        // 工作区级轮次守卫：本机工作区的所有会话操作同一批真实目录，用户对话 / 到点的定时任务 /
+        // 跑着的工作流三方并发写会互相覆盖。租约记下占用者，抢不到就立刻说清是谁在跑。
         final com.wenqu.ai.model.Project turnProject = projectService.projectOfSession(sessionId);
         final String projectId = turnProject == null ? null : turnProject.getId();
-        if (projectId != null && projectService.workdirShared(turnProject)) {
+        if (projectId != null && projectService.isLocal(turnProject)) {
             String kind = cmd.getSource();
             String name = cmd.getSourceName();
             if (name == null || name.isBlank()) {

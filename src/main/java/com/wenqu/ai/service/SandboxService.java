@@ -94,23 +94,8 @@ public class SandboxService {
      * <p>解析失败一律退回会话级——沙盒是"能干活"的能力，不该因为工作区归属读不到而整轮不可用。
      */
     private SandboxScope scopeOf(String sessionId) {
-        // 共用目录按**工作区各自**决定（Project.sharedWorkdir，新建工作区默认开、「会话」栏恒关），
-        // 全局那个键降级为应急总闸：一键把所有工作区退回会话级作用域。
-        // 历史记录：2026-10-17 曾因真机遇到「带 workdir 建沙盒 404」而收成全局开关，2026-10-18 端到端
-        // 复验未再复现（建沙盒 / 落盘 / 删容器重建 / 跨会话互读 四项均通过）；2026-10-24 起默认值
-        // 翻转为开——「传进来的材料模型看不见」这个更大的坑压过了那个未复现的 404，总闸保留作退路。
-        if (!configService.getBoolean("sandbox.projectWorkdirEnabled")) {
-            return new SandboxScope(sessionId, null);
-        }
-        try {
-            Project project = projectService.projectOfSession(sessionId);
-            // 生效判据统一走 ProjectService#workdirShared（本区开关＋总闸一份实现，别在这里再抄一份）
-            if (project != null && projectService.workdirShared(project)) {
-                return new SandboxScope(project.getId(), project.getWorkdirPath());
-            }
-        } catch (Exception e) {
-            log.warn("[SANDBOX] 工作区作用域解析失败，退回会话级 (session={}): {}", sessionId, e.getMessage());
-        }
+        // 工作区的文件/命令走本机执行器，不再有「服务器上的工作区目录」；服务器沙盒只剩
+        // 会话级作用域（没挂工作区的「会话」栏、工作流/定时任务等平台内部轮次）。
         return new SandboxScope(sessionId, null);
     }
 
@@ -140,6 +125,14 @@ public class SandboxService {
         if (uid == null || uid.isBlank()) {
             throw new IllegalArgumentException("沙盒需要用户上下文（uid）");
         }
+        Project local = projectService.projectOfSession(sessionId);
+        if (local != null && !Project.SELECTION_IMPLICIT.equals(local.getSelectionStatus())) {
+            // 用户建的工作区只走本机执行器：这里再建服务器沙盒会把文件弄成两份
+            if (!projectService.isLocal(local)) {
+                throw new IllegalStateException("这个工作区还没有绑定本机目录：先在设置里添加源文件夹");
+            }
+            throw new IllegalStateException("本机工作区没有服务器沙盒：文件与命令都走你那台电脑上的执行器");
+        }
         SandboxScope scope = scopeOf(sessionId);
         return new ProvisionerSandboxBackend(provider, scope.scopeId(), uid, scope.workdirPath(),
                 true, true, unrestrictedWrites, ProvisionerSandboxBackend.procTagFor(sessionId));
@@ -164,13 +157,28 @@ public class SandboxService {
         }
         try {
             SandboxScope scope = scopeOf(sessionId);
-            // 本机执行器：工作区绑了设备与目录时，文件/命令工具直接落到用户电脑上（不经服务器沙盒）
+            // 工作区 = 用户本机目录：文件/命令工具直接落到那台电脑上的执行器。
+            // 用户建的工作区若还没绑目录，宁可不给文件工具，也不退回服务器沙盒——否则用户以为在改本机，
+            // 实际写进了服务器的一份副本。
             Project boundProject = projectService.projectOfSession(sessionId);
-            if (boundProject != null
-                    && boundProject.getExecutorId() != null && !boundProject.getExecutorId().isBlank()
-                    && boundProject.getRootPath() != null && !boundProject.getRootPath().isBlank()) {
+            boolean userWorkspace = boundProject != null
+                    && !Project.SELECTION_IMPLICIT.equals(boundProject.getSelectionStatus());
+            if (userWorkspace && !projectService.isLocal(boundProject)) {
+                log.warn("[SANDBOX] 工作区未绑定本机目录，文件工具不可用 project={}", boundProject.getId());
+                return null;
+            }
+            if (boundProject != null && projectService.isLocal(boundProject)) {
+                java.util.List<ExecutorFilesystem.Root> roots = new java.util.ArrayList<>();
+                for (com.wenqu.ai.model.ProjectRoot r : projectService.rootsOf(boundProject)) {
+                    roots.add(new ExecutorFilesystem.Root(r.getAlias(), r.getPath(),
+                            r.getPrimaryRoot() != null && r.getPrimaryRoot() == com.wenqu.ai.model.ProjectRoot.PRIMARY));
+                }
+                if (roots.isEmpty()) {
+                    log.warn("[SANDBOX] 本机工作区没有源文件夹，文件工具不可用 project={}", boundProject.getId());
+                    return null;
+                }
                 ExecutorFilesystem executorFs = new ExecutorFilesystem(
-                        executorRegistry, boundProject.getExecutorId(), boundProject.getRootPath());
+                        executorRegistry, boundProject.getExecutorId(), roots, unrestrictedWrites);
                 return memoryRouted(executorFs, uid);
             }
             ProvisionerSandboxBackend backend = new ProvisionerSandboxBackend(
@@ -318,6 +326,14 @@ public class SandboxService {
         }
         if (uid == null || uid.isBlank()) {
             throw new IllegalArgumentException("沙盒需要用户上下文（uid）");
+        }
+        Project local = projectService.projectOfSession(sessionId);
+        if (local != null && !Project.SELECTION_IMPLICIT.equals(local.getSelectionStatus())) {
+            // 用户建的工作区只走本机执行器：这里再建服务器沙盒会把文件弄成两份
+            if (!projectService.isLocal(local)) {
+                throw new IllegalStateException("这个工作区还没有绑定本机目录：先在设置里添加源文件夹");
+            }
+            throw new IllegalStateException("本机工作区没有服务器沙盒：文件与命令都走你那台电脑上的执行器");
         }
         SandboxScope scope = scopeOf(sessionId);
         return new ProvisionerSandboxBackend(provider, scope.scopeId(), uid, scope.workdirPath(), false, true);
