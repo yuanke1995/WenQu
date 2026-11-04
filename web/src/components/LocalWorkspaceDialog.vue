@@ -24,19 +24,22 @@
         <button class="app-btn ghost" @click="refreshDevices">我已经启动了，刷新</button>
       </div>
 
-      <!-- 目录浏览 -->
-      <div class="lwd-row lwd-row-dir">
-        <span class="lwd-k">目录</span>
-        <div class="lwd-path">
-          <span class="lwd-path-txt">{{ path || '选择这台电脑上的目录' }}</span>
-          <button v-if="path" class="app-link-btn" @click="goUp">上一级</button>
+      <!-- 目录浏览：路径条（可点每一段回退） + 上一级 + 文件夹列表 -->
+      <div class="lwd-pathbar">
+        <button class="lwd-up" type="button" :disabled="!canGoUp" title="上一级" @click="goUp">↑</button>
+        <div class="lwd-crumbs">
+          <template v-for="(c, i) in crumbs" :key="c.path">
+            <span v-if="i" class="lwd-sep">/</span>
+            <button type="button" class="lwd-crumb" :title="c.path" @click="enter(c.path)">{{ c.name }}</button>
+          </template>
+          <span v-if="!path" class="lwd-path-txt">选择这台电脑上的目录</span>
         </div>
+        <a-spin v-if="loading" size="small" />
       </div>
       <div class="lwd-list">
         <div v-if="!executorId" class="lwd-empty">先从上面添加这台电脑</div>
-        <div v-else-if="loading" class="lwd-empty">加载中…</div>
         <div v-else-if="error" class="lwd-empty lwd-err">{{ error }}</div>
-        <div v-else-if="!dirs.length" class="lwd-empty">这个目录下没有子目录</div>
+        <div v-else-if="!dirs.length && !loading" class="lwd-empty">这个目录下没有子目录</div>
         <button v-for="d in dirs" :key="d.path" type="button" class="lwd-dir" @click="enter(d.path)">
           <FolderOutlined />
           <span>{{ d.name }}</span>
@@ -65,6 +68,8 @@ const devices = ref([])
 const executorId = ref('')
 const dirs = ref([])
 const path = ref('')
+/** 起点（执行器授权的根）：再往上点会被执行器拒，所以路径条与「上一级」到这儿为止 */
+const startPath = ref('')
 const loading = ref(false)
 const error = ref('')
 const creating = ref(false)
@@ -121,7 +126,7 @@ async function browse (p) {
     const data = (r && r.data) || {}
     dirs.value = Array.isArray(data.dirs) ? data.dirs : []
     path.value = data.path || p || ''
-    if (!data.path && p) path.value = p
+    if (!startPath.value || !p) startPath.value = path.value
   } catch (e) {
     error.value = '读取目录失败：' + (e.message || '')
     dirs.value = []
@@ -132,10 +137,24 @@ async function browse (p) {
 
 const reload = () => browse('')
 const enter = p => browse(p)
+const canGoUp = computed(() => !!path.value && path.value !== startPath.value)
+const crumbs = computed(() => {
+  if (!path.value) return []
+  const parts = path.value.split('/').filter(Boolean)
+  const all = []
+  let acc = ''
+  for (const part of parts) {
+    acc += '/' + part
+    all.push({ name: part, path: acc })
+  }
+  const idx = all.findIndex(c => c.path === startPath.value)
+  return idx >= 0 ? all.slice(idx) : all
+})
 const goUp = () => {
+  if (!canGoUp.value) return
   const cut = path.value.replace(/\/+$/, '')
-  const up = cut.slice(0, cut.lastIndexOf('/'))
-  browse(up && up !== cut ? up : '')
+  const up = cut.slice(0, cut.lastIndexOf('/')) || '/'
+  browse(up)
 }
 
 async function choose () {
@@ -164,6 +183,7 @@ watch(() => props.open, open => {
   executorId.value = ''
   dirs.value = []
   path.value = ''
+  startPath.value = ''
   error.value = ''
   refreshDevices()
 })
@@ -179,6 +199,15 @@ watch(() => props.open, open => {
 .lwd-row-dir { align-items: flex-start; }
 .lwd-path { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; }
 .lwd-path-txt { font-size: 12px; color: var(--app-text1); word-break: break-all; }
+/* 路径条：上一级 + 可点面包屑 */
+.lwd-pathbar { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 8px;
+  border: 1px solid var(--app-border, rgba(0,0,0,.08)); background: var(--app-surface2, rgba(0,0,0,.03)); }
+.lwd-up { border: 0; background: none; cursor: pointer; color: var(--app-text2); font-size: 14px; padding: 0 4px; }
+.lwd-up:disabled { opacity: .3; cursor: default; }
+.lwd-crumbs { flex: 1; display: flex; align-items: center; gap: 2px; min-width: 0; overflow: hidden; white-space: nowrap; }
+.lwd-crumb { border: 0; background: none; padding: 0 2px; cursor: pointer; font-size: 12px; color: var(--app-text1); }
+.lwd-crumb:hover { color: var(--app-accent); text-decoration: underline; }
+.lwd-sep { color: var(--app-text3); font-size: 12px; }
 .lwd-list { max-height: 240px; overflow: auto; border: 1px solid var(--app-border, rgba(0,0,0,.08)); border-radius: 8px; padding: 4px; }
 .lwd-dir { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 0; background: none;
   text-align: left; cursor: pointer; border-radius: 6px; font-size: 13px; color: var(--app-text1); }

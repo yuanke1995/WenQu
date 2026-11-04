@@ -96,7 +96,7 @@ public class ExecutorController {
             }
         }
         Map<String, Object> data = new LinkedHashMap<>();
-        data.put("path", path == null ? "" : path);
+        data.put("path", r.data().get("path") == null ? (path == null ? "" : path) : r.data().get("path"));
         data.put("dirs", dirs);
         return ok(data);
     }

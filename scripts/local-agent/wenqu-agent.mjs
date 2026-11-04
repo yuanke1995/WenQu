@@ -90,15 +90,8 @@ async function confirm(action, detail) {
 // ==================== 操作实现 ====================
 
 async function opList({ path: p }) {
-  // 没有路径 = 「从起点目录起步浏览」，供网页里的「选择工作区目录」进入
-  if (!p) {
-    const st = await fsp.stat(ROOT).catch(() => null)
-    return {
-      entries: [{ path: ROOT, name: path.basename(ROOT) || ROOT, isDir: true,
-        size: 0, mtimeMs: st ? st.mtimeMs : 0 }]
-    }
-  }
-  const dir = resolveInRoot(p)
+  // 没有路径 = 列起点目录本身（网页打开对话框时直接看到家目录里的内容）
+  const dir = p ? resolveInRoot(p) : ROOT
   const entries = await fsp.readdir(dir, { withFileTypes: true })
   const out = []
   for (const e of entries) {
@@ -107,7 +100,8 @@ async function opList({ path: p }) {
     try { st = await fsp.stat(full) } catch { /* 断链忽略 */ }
     out.push({ path: full, name: e.name, isDir: e.isDirectory(), size: st ? st.size : 0, mtimeMs: st ? st.mtimeMs : 0 })
   }
-  return { entries: out }
+  out.sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1))
+  return { path: dir, entries: out }
 }
 
 /** 递归找文件：按 basename 通配（* 和 ?），只回文件。 */
