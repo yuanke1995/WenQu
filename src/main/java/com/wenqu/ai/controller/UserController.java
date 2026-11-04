@@ -57,13 +57,18 @@ public class UserController {
         return ResultJson.ok(orgService.pageUsers(kw, departmentId, status, page, size));
     }
 
-    @Operation(summary = "新建用户", description = "{\"uid\":\"alice\",\"username\":\"Alice\",\"password\":\"必填\",\"departmentId\":\"可选\",\"role\":\"user|admin|superadmin\"}")
+    @Operation(summary = "新建用户", description = "{\"uid\":\"alice\",\"username\":\"Alice\",\"password\":\"必填\",\"departmentId\":\"可选\",\"roles\":[\"user\"]}")
     @Permission("user:write")
     @PostMapping
     public ResultJson create(@RequestBody Map<String, Object> body) {
+        List<String> roles = new java.util.ArrayList<>();
+        if (body.get("roles") instanceof List<?> l) {
+            for (Object x : l) if (x != null) roles.add(String.valueOf(x));
+        }
+        if (roles.isEmpty()) roles.add("user");
         return ResultJson.ok(orgService.createUser(
                 str(body.get("uid")), str(body.get("username")), str(body.get("departmentId")),
-                str(body.get("role")), str(body.get("password"))), "已创建");
+                roles, str(body.get("password"))), "已创建");
     }
 
     @Operation(summary = "重置密码", description = "{\"password\":\"新密码\"}；同时清除登录失败锁定。"
@@ -82,20 +87,17 @@ public class UserController {
         return ResultJson.ok("密码已重置");
     }
 
-    @Operation(summary = "修改用户", description = "{\"username\":\"\",\"departmentId\":\"\",\"roles\":[\"user\",\"admin\"],\"status\":1|0}；roles 为角色集（manual 全量替换），兼容旧的单 role 字段")
+    @Operation(summary = "修改用户", description = "{\"username\":\"\",\"departmentId\":\"\",\"roles\":[\"user\",\"admin\"],\"status\":1|0}；roles 为角色集（manual 全量替换）")
     @Permission("user:write")
     @PutMapping("/{uid}")
     public ResultJson update(
             @Parameter(description = "登录账号（uid）") @PathVariable("uid") String uid,
             @RequestBody Map<String, Object> body) {
         Integer status = body.get("status") == null ? null : Integer.parseInt(String.valueOf(body.get("status")));
-        List<String> roles;
+        List<String> roles = null;
         Object rolesRaw = body.get("roles");
         if (rolesRaw instanceof List<?> l) {
             roles = l.stream().map(String::valueOf).toList();
-        } else {
-            String single = str(body.get("role"));
-            roles = single == null ? null : List.of(single);
         }
         // C1 临时授权：roleExpires = {角色编码: ISO 到期时刻}（可选；未提及=永久）
         java.util.Map<String, java.time.LocalDateTime> roleExpires = new java.util.LinkedHashMap<>();

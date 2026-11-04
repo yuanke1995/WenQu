@@ -257,12 +257,12 @@ public class OrgService {
     }
 
     /** 新建用户（必须设置初始密码，否则无法登录；角色须为角色表中启用的角色；落多角色表） */
-    public User createUser(String uid, String username, String departmentId, String role, String password) {
+    public User createUser(String uid, String username, String departmentId, List<String> roles, String password) {
         // 成员管理是平台动作（Phase 4）：判据与理由见 asPlatformIfSuper 的注释
-        return asPlatformIfSuper(() -> createUserScoped(uid, username, departmentId, role, password));
+        return asPlatformIfSuper(() -> createUserScoped(uid, username, departmentId, roles, password));
     }
 
-    private User createUserScoped(String uid, String username, String departmentId, String role, String password) {
+    private User createUserScoped(String uid, String username, String departmentId, List<String> roles, String password) {
         String u = normalizeUid(uid);
         // 账号标识是平台级命名空间（判据与后果见 ExternalUserService.ensureUniqueUid 的注释）：
         // 只查本租户会「查无此人」然后撞主键，把一句清楚的提示变成一次 500。
@@ -271,7 +271,9 @@ public class OrgService {
         }
         String name = trimOrNull(username);
         if (name != null) ensureUsernameUnique(name, null);
-        String r = normalizeRole(role);
+        List<String> rs = roles == null || roles.isEmpty() ? List.of("user") : roles.stream()
+                .filter(java.util.Objects::nonNull).map(this::normalizeRole).distinct().toList();
+        if (rs.isEmpty()) rs = List.of("user");
         ensureDeptExists(departmentId);
         User user = new User();
         user.setUid(u);
@@ -281,8 +283,8 @@ public class OrgService {
         user.setPasswordHash(authService.hashNewPassword(password));
         user.setLoginFailCount(0);
         userMapper.insert(user);
-        userRoleService.grant(u, r, "manual");
-        audit.record("[AUDIT] 新建用户 uid={} roles=[{}] dept={}", u, r, user.getDepartmentId());
+        for (String r : rs) userRoleService.grant(u, r, "manual");
+        audit.record("[AUDIT] 新建用户 uid={} roles={} dept={}", u, rs, user.getDepartmentId());
         return user;
     }
 
@@ -574,6 +576,9 @@ public class OrgService {
     private static String normalizeUid(String uid) {
         String u = uid == null ? "" : uid.trim();
         if (u.isEmpty()) throw new BizException("登录账号不能为空");
+        if (com.wenqu.ai.util.RequestUser.SYSTEM.equalsIgnoreCase(u)) {
+            throw new BizException("system 是平台保留标识，不能作为登录账号");
+        }
         if (!u.matches(UID_PATTERN)) throw new BizException("登录账号含非法字符（仅允许字母/数字/_@.-）");
         if (u.length() > 64) throw new BizException("登录账号过长");
         return u;
