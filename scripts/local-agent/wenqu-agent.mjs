@@ -242,9 +242,7 @@ async function opPickDir() {
   })
   const picked = selected.replace(/\/+$/, '') || '/'
   if (!picked) throw err('E_CANCELLED', '没有选择目录')
-  if (!(picked === ROOT || picked.startsWith(ROOT + path.sep))) {
-    throw err('E_PATH_OUTSIDE', `所选目录在浏览起点（${ROOT}）之外：${picked}`)
-  }
+  // 原生选择框本身就是用户授权：不再拿 --root 去卡它（--root 只约束逐层浏览的起点）
   return { path: picked }
 }
 
