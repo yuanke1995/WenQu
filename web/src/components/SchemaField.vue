@@ -145,7 +145,7 @@ const props = defineProps({
   /** 裸控件模式：不套 a-form-item（见模板顶部注释）。标签与说明由使用方负责 */
   bare: { type: Boolean, default: false },
   /** 这项此刻由哪一层说话（后端 snapshot 的 source/invalid，见 ConfigService#resolve）。
-      只在「不是平台设置」或「库里那行不合字段定义」时出现，正常情况不打扰 */
+      只在「不是平台设置」或「库里那行用不了」时出现，正常情况不打扰 */
   source: { type: Object, default: null }
 })
 const emit = defineEmits(['change'])
@@ -164,13 +164,13 @@ const value = computed({
 })
 
 // 「谁在说话」徽标：平台设置（库里那行）是常态，不打扰；
-// 只有生效值不是来自平台设置、或库里那行根本不合字段定义时才说一句——
+// 只有生效值不是来自平台设置、或库里那行根本用不了（值不合定义 / 密钥是解不出的旧密文）时才说一句——
 // 那正是「界面写着 A、实际跑的是 B」唯一的界面线索
 const srcTag = computed(() => {
   const s = props.source
   if (!s) return null
   if (s.invalid) {
-    return { text: '值不合定义', color: 'error', tip: '库里这行的值不符合字段定义：' + s.invalid + '。生效的就是这个越界值，与界面写的可能不一样 — 重新保存一次即可修正。' }
+    return { text: '值有问题', color: 'error', tip: '库里这行的值用不了：' + s.invalid + '。生效的就是库里这个值，与界面写的可能不一样 — 重新填一次并保存即可修正。' }
   }
   if (s.source === 'CODE_DEFAULT') {
     return { text: '出厂默认', color: 'warning', tip: '配置表里没有这一行，此刻生效的是代码默认值；在这里改一次就会写入配置表。' }

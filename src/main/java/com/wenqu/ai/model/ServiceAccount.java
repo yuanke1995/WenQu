@@ -28,6 +28,15 @@ public class ServiceAccount {
     @TableId(type = IdType.ASSIGN_UUID)
     private String id;
 
+    /**
+     * 归属租户（建号时创建人的租户）。
+     * <p>表本身不参与行级过滤（令牌校验发生在租户还没装载的那一刻），但角色绑定落在
+     * {@code c_ai_user_role} 那张<b>按租户过滤</b>的表里——所以令牌校验后必须按这一列把租户上下文装上，
+     * 否则非默认租户建出来的服务账号读自己的绑定时查不到行，等于零角色。
+     * 界面上的归属守门也看它：清单按它过滤，改/删/轮换跨租户一律拒。
+     */
+    private String tenantId;
+
     /** 名称（展示与审计可读） */
     private String name;
 

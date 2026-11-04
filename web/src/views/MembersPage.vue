@@ -17,6 +17,12 @@
       </template>
     </a-alert>
 
+    <!-- 到期清单读不出来要说清并给重试：静默当作「没有临期」会让保存把已有的到期洗成永久 -->
+    <div v-if="expiringFailed" class="form-tip mem-expire-warn" style="margin-bottom:12px">
+      临时授权到期清单没读到，编辑成员里的保存会暂时被挡住。
+      <button class="app-link-btn" @click="loadExpiring">重试</button>
+    </div>
+
     <!-- 页签式 Tab：与「智能体工作台」同一形态。此处只承载导航，内容用下方共用卡片按 tab 渲染；
          页签状态落 URL(?tab=)，刷新/回退/分享可还原 -->
     <a-tabs v-model:active-key="tab" class="pg-tabs">
@@ -197,6 +203,32 @@
                     placeholder="至少选一个角色" />
           <div class="form-tip">{{ roleTip }}</div>
         </a-form-item>
+        <!-- C1：临时授权到期。默认折成一行摘要——「这个角色什么时候失效」不是每次编辑都要动的事，
+             但不给口就等於只能永久授权（批次 C1 落地时后端有参数、界面没入口） -->
+        <a-form-item v-if="userForm.isEdit && manualRoleList.length" label="临时授权">
+          <div v-if="!expiryKnown" class="form-tip mem-expire-warn">
+            到期时间没读到，保存会被挡住。
+            <button class="app-link-btn" @click="loadExpiring">重试</button>
+          </div>
+          <div v-else-if="!expiryOpen" class="form-tip">
+            {{ expirySummary }}
+            <button class="app-link-btn" style="margin-left:8px" @click="expiryOpen = true">调整到期</button>
+          </div>
+          <div v-else class="mem-expire-list">
+            <div v-for="c in manualRoleList" :key="c" class="mem-expire-row">
+              <code class="mem-expire-role">{{ c }}</code>
+              <a-date-picker :value="(userForm.roleExpires || {})[c]"
+                             :disabled-date="d => d && d.valueOf() < Date.now() - 86400000"
+                             @update:value="v => setExpiry(c, v)"
+                             show-time size="small" value-format="YYYY-MM-DDTHH:mm:ss"
+                             placeholder="永久" style="width:196px" />
+              <button v-if="(userForm.roleExpires || {})[c]" class="app-link-btn"
+                      @click="setExpiry(c, null)">改回永久</button>
+            </div>
+            <div class="form-tip">填了就是临期，到期当天自动回收、无需回来改；留空 = 永久有效。</div>
+            <button class="app-link-btn" @click="expiryOpen = false">收起</button>
+          </div>
+        </a-form-item>
         <a-form-item v-if="multiTenant" label="所属租户">
           <a-select v-model:value="userForm.tenantId" :options="tenantOptionsList" style="width:100%" />
           <div class="form-tip">只改这个账号属于哪个租户；他已产出的会话、知识库与工作流留在原租户。</div>
@@ -367,14 +399,62 @@ import { listUsers, createUser, updateUser, deleteUser, resetUserPassword,
 import UserAvatar from '../components/UserAvatar.vue'
 import { onMounted } from 'vue'
 
-/* ==================== C1：临时授权到期提醒 ==================== */
-const expiring = ref([])
-onMounted(async () => {
-  try {
-    const r = await getExpiringRoles(7)
-    if (r && r.success) expiring.value = (r.data || []).slice(0, 8)
-  } catch (e) { /* 提醒拉取失败不打扰主流程 */ }
+/* ==================== C1：临时授权到期（提醒 + 编辑口） ==================== */
+/** 全部带到期时刻的角色绑定（编辑弹窗按 uid 取当前值，保存时原样带回——不带回等于把到期清空变永久） */
+const expiringAll = ref([])
+const expiryKnown = ref(false)
+const expiringFailed = ref(false)
+
+/** 顶部提醒：只说 7 天内要到期的那批 */
+const expiring = computed(() => {
+  const soon = Date.now() + 7 * 86400_000
+  return expiringAll.value.filter(e => new Date(String(e.expireAt).replace(' ', 'T')).getTime() <= soon).slice(0, 8)
 })
+
+async function loadExpiring () {
+  expiringFailed.value = false
+  try {
+    const r = await getExpiringRoles(3650)
+    if (r && r.success) {
+      expiringAll.value = r.data || []
+      expiryKnown.value = true
+    } else {
+      expiringFailed.value = true
+    }
+  } catch (e) {
+    expiringFailed.value = true
+  }
+}
+onMounted(loadExpiring)
+
+/** 某账号当前的角色到期时刻（code → ISO 秒）；只认手动行，IdP 行的到期由组映射自己管 */
+function expiryOf (uid) {
+  const out = {}
+  for (const e of expiringAll.value) {
+    if (e.uid !== uid || e.grantedBy === 'idp') continue
+    if (e.roleCode && e.expireAt) out[e.roleCode] = String(e.expireAt).slice(0, 19)
+  }
+  return out
+}
+const expiryOpen = ref(false)
+/** 能手填到期的角色：手动授予的那些（IdP 组映射的行不在这张表单的替换范围内） */
+const manualRoleList = computed(() => {
+  const f = userForm.value
+  return (f.roles || []).filter(c => c && (!f.roleSources || f.roleSources[c] !== 'idp'))
+})
+const expirySummary = computed(() => {
+  const f = userForm.value
+  const hits = manualRoleList.value.filter(c => f.roleExpires && f.roleExpires[c])
+  if (!hits.length) return '全部永久有效'
+  return `${hits.length} 个角色是临期的：` + hits.map(c => `${c} 至 ${String(f.roleExpires[c]).replace('T', ' ').slice(0, 16)}`).join('、')
+})
+function setExpiry (code, v) {
+  const f = userForm.value
+  const next = { ...(f.roleExpires || {}) }
+  if (v) next[code] = v
+  else delete next[code]
+  f.roleExpires = next
+}
 
 /* ==================== 页签：状态落 URL / 数据懒加载 / 各页签独立记忆筛选 ==================== */
 const route = useRoute()
@@ -638,8 +718,8 @@ const userModal = ref(false)
 const userForm = ref(blankUser())
 const uidError = ref('')
 const pwdError = ref('')
-function blankUser () { return { isEdit: false, uid: '', username: '', password: '', confirm: '', departmentId: undefined, roles: ['user'], status: 1, tenantId: defaultTenant, origTenant: defaultTenant } }
-function openUserCreate () { userForm.value = blankUser(); uidError.value = ''; userModal.value = true }
+function blankUser () { return { isEdit: false, uid: '', username: '', password: '', confirm: '', departmentId: undefined, roles: ['user'], status: 1, tenantId: defaultTenant, origTenant: defaultTenant, roleExpires: {}, roleSources: {} } }
+function openUserCreate () { userForm.value = blankUser(); uidError.value = ''; expiryOpen.value = false; userModal.value = true }
 function openUserEdit (r) {
   userForm.value = {
     isEdit: true,
@@ -651,8 +731,11 @@ function openUserEdit (r) {
     tenantId: r.tenantId || defaultTenant,
     origTenant: r.tenantId || defaultTenant,
     // D-5：IdP 授予明细（code → granted_by），组映射角色在选择器里置灰（兑现 449 行那句提示）
-    roleSources: r.roleSources || {}
+    roleSources: r.roleSources || {},
+    // C1：该账号当前的到期时刻（原样带回保存，否则手动角色会被重置成永久）
+    roleExpires: expiryOf(r.uid)
   }
+  expiryOpen.value = Object.keys(userForm.value.roleExpires).length > 0
   uidError.value = ''
   userModal.value = true
 }
@@ -669,9 +752,16 @@ async function saveUser () {
   }
   saving.value = true
   try {
+    // 到期清单没读到时不保存：后端按「全量替换手动角色」写，缺了 roleExpires 就是把已有的临期改成永久
+    if (f.isEdit && !expiryKnown.value) {
+      message.error('临时授权的到期时间没读到，本次不能保存（保存会把已有的临期改成永久）。请重试。')
+      return
+    }
     const base = { username: f.username, departmentId: f.departmentId || '', roles: (f.roles && f.roles.length ? f.roles : ['user']) }
+    const roleExpires = {}
+    for (const c of manualRoleList.value) if (f.roleExpires && f.roleExpires[c]) roleExpires[c] = f.roleExpires[c]
     const r = f.isEdit
-      ? await updateUser(f.uid, { ...base, status: f.status })
+      ? await updateUser(f.uid, { ...base, status: f.status, roleExpires })
       : await createUser({ ...base, uid: String(f.uid).trim(), password: f.password })
     if (!r.success) { message.error(r.msg || '保存失败'); return }
     // 归属变更是另一个动作（只改账号归属，不动他已产出的资源），所以单独一步、单独报错
@@ -680,7 +770,7 @@ async function saveUser () {
       if (!mv.success) { message.error(mv.msg || '归属变更失败'); return }
       await loadData(['tenants'], { force: true })
     }
-    message.success('已保存'); userModal.value = false; await loadData(['users'], { force: true })
+    message.success('已保存'); userModal.value = false; await loadData(['users'], { force: true }); loadExpiring()
   } catch (e) { message.error(e.message || '保存失败') }
   finally { saving.value = false }
 }
@@ -816,4 +906,10 @@ async function delDept (id) {
 
 .mem-empty { padding: 28px 0; color: var(--app-text3); font-size: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .form-tip { margin-top: 6px; font-size: 12px; color: var(--app-text3); line-height: 1.5; }
+/* 临时授权到期（批次 C1 界面口） */
+.mem-expire-list { display: flex; flex-direction: column; gap: 6px; }
+.mem-expire-row { display: flex; align-items: center; gap: 8px; }
+.mem-expire-role { font-size: 12px; background: var(--app-panel-2); border: 1px solid var(--app-border);
+                   border-radius: 4px; padding: 1px 6px; min-width: 72px; }
+.mem-expire-warn { color: var(--app-danger, #c0392b); }
 </style>

@@ -62,13 +62,14 @@ public class ServiceAccountController {
         return ResultJson.ok(out, "已创建");
     }
 
-    @Operation(summary = "编辑服务账号", description = "body: {name?, description?, status?(0/1), expireAt?(ISO)}；停用即全部调用 401")
+    @Operation(summary = "编辑服务账号", description = "body: {name?, description?, status?(0/1), expireAt?(ISO；传空串=改回永久，不带这个键=不改到期)}；停用即全部调用 401")
     @Permission("service-account:manage")
     @PutMapping("/{id}")
     public ResultJson update(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
+        boolean touchExpire = body != null && body.containsKey("expireAt");
         serviceAccountService.update(id, str(body.get("name")), str(body.get("description")),
                 body.get("status") == null ? null : Integer.parseInt(String.valueOf(body.get("status"))),
-                parseTime(body.get("expireAt")));
+                touchExpire ? parseTime(body.get("expireAt")) : null, touchExpire);
         return ResultJson.ok("已保存");
     }
 

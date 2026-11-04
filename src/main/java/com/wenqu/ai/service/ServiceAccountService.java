@@ -109,9 +109,36 @@ public class ServiceAccountService {
 
     // ==================== CRUD ====================
 
+    /**
+     * 清单：按归属租户过滤，平台视图（平台级管理动作）看全量。
+     * <p>本表刻意不参与行级过滤（令牌校验时租户还没装载），所以归属只能在这一层显式写——
+     * 少写一句，B 租户的管理员就能在界面里看到并管理 A 租户的服务账号。
+     */
     public List<ServiceAccount> list() {
-        return mapper.selectList(new LambdaQueryWrapper<ServiceAccount>()
-                .orderByDesc(ServiceAccount::getCreateTime));
+        LambdaQueryWrapper<ServiceAccount> q = new LambdaQueryWrapper<ServiceAccount>()
+                .orderByDesc(ServiceAccount::getCreateTime);
+        if (!com.wenqu.ai.util.TenantContext.inPlatformView()) {
+            q.eq(ServiceAccount::getTenantId, currentTenant());
+        }
+        return mapper.selectList(q);
+    }
+
+    /** 当前请求线程的租户（未绑定按默认租户，与拦截器口径一致） */
+    private static String currentTenant() {
+        String t = com.wenqu.ai.util.TenantContext.current();
+        return t == null || t.isBlank() ? com.wenqu.ai.util.TenantContext.DEFAULT_TENANT : t;
+    }
+
+    /**
+     * 归属守门：本租户管不着别租户的服务账号。
+     * <p>表不参与行级过滤 ⇒ {@code selectById} 谁都能命中，id 又是不透明 UUID，
+     * 但「猜不到」不等于「拦得住」——越界必须在这一句上拒掉。
+     */
+    private void ensureHomeTenant(ServiceAccount acc) {
+        if (com.wenqu.ai.util.TenantContext.inPlatformView()) return;
+        String owner = acc.getTenantId() == null || acc.getTenantId().isBlank()
+                ? com.wenqu.ai.util.TenantContext.DEFAULT_TENANT : acc.getTenantId();
+        if (!owner.equals(currentTenant())) throw new BizException("该服务账号不属于当前租户");
     }
 
     /**
@@ -130,6 +157,9 @@ public class ServiceAccountService {
         acc.setStatus(1);
         acc.setExpireAt(expireAt);
         acc.setCreatedBy(currentUid());
+        // 归属租户=创建人的租户：角色绑定行会跟着这个租户写进 c_ai_user_role（那张表按租户过滤），
+        // 令牌校验时装载的也必须是同一个租户，否则建完就是零角色（403，且没人看得出问题在哪）
+        acc.setTenantId(currentTenant());
         mapper.insert(acc);
         if (roleCodes != null) {
             for (String code : roleCodes) {
@@ -141,21 +171,36 @@ public class ServiceAccountService {
         return new Object[]{acc, token};
     }
 
+    /**
+     * 编辑账号。
+     *
+     * @param touchExpire 本次是否要写到期时刻（{@code expireAt} 为 null 时即「改回永久」）。
+     *                    只靠「参数为空」同时表达「没改」和「改成永久」两件事，
+     *                    界面上那个清空到期时间的键就会变成一个静默无效的按钮。
+     */
     @Transactional
-    public void update(String id, String name, String description, Integer status, LocalDateTime expireAt) {
+    public void update(String id, String name, String description, Integer status,
+                       LocalDateTime expireAt, boolean touchExpire) {
         ServiceAccount acc = mapper.selectById(id);
         if (acc == null) throw new BizException("服务账号不存在");
+        ensureHomeTenant(acc);
         if (name != null && !name.isBlank()) acc.setName(name.trim());
         if (description != null) acc.setDescription(description.isBlank() ? null : description.trim());
         if (status != null) {
             if (status != 0 && status != 1) throw new BizException("非法状态");
             acc.setStatus(status);
         }
-        if (expireAt != null) acc.setExpireAt(expireAt);
-        mapper.updateById(acc);
+        if (touchExpire) acc.setExpireAt(expireAt);
+        if (touchExpire && expireAt == null) {
+            // updateById 按「非空字段」拼 SET，把到期改成 NULL 落不进去（本仓 model_ref 上踩过同一条）
+            mapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<ServiceAccount>()
+                    .eq(ServiceAccount::getId, id).set(ServiceAccount::getExpireAt, null));
+        } else {
+            mapper.updateById(acc);
+        }
         invalidate(acc);
         audit.record("[AUDIT] 编辑服务账号 id={} name={} status={} expireAt={}", id, acc.getName(),
-                acc.getStatus(), expireAt == null ? "不变" : expireAt.toString());
+                acc.getStatus(), !touchExpire ? "不变" : (expireAt == null ? "永久" : expireAt.toString()));
     }
 
     /** 轮换令牌：旧明文立刻作废，新明文只此一次返回 */
@@ -163,6 +208,7 @@ public class ServiceAccountService {
     public String rotateToken(String id) {
         ServiceAccount acc = mapper.selectById(id);
         if (acc == null) throw new BizException("服务账号不存在");
+        ensureHomeTenant(acc);
         String oldHash = acc.getTokenHash();
         String token = "svcq-" + UUID.randomUUID().toString().replace("-", "");
         acc.setTokenHash(sha256(token));
@@ -184,6 +230,7 @@ public class ServiceAccountService {
     public void delete(String id) {
         ServiceAccount acc = mapper.selectById(id);
         if (acc == null) throw new BizException("服务账号不存在");
+        ensureHomeTenant(acc);
         mapper.deleteById(id);
         userRoleService.removeAll(uidOf(acc));
         invalidate(acc);
@@ -203,7 +250,7 @@ public class ServiceAccountService {
     private static String currentUid() {
         try {
             String uid = com.wenqu.ai.util.RequestUser.uid();
-            return uid == null || uid.isBlank() || com.wenqu.ai.util.RequestUser.ANONYMOUS.equals(uid) ? null : uid;
+            return uid == null || uid.isBlank() || com.wenqu.ai.util.RequestUser.SYSTEM.equals(uid) ? null : uid;
         } catch (Exception e) {
             return null;
         }

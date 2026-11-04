@@ -496,7 +496,7 @@ import { useRoute, useRouter } from 'vue-router'
 const route = useRoute()
 const router = useRouter()
 
-// 分组导航（沿用旧版锚点短名）
+// 分组导航短名
 const NAV_LABELS = {
   chat: '对话模型', vision: '图片描述', chunk: '文档解析', retrieval: '检索设置',
   context: '上下文控制', tool: '工具调用', webSearch: '联网搜索',
@@ -642,7 +642,7 @@ const fetchAndFill = async () => {
   finally { loading.value = false }
 }
 
-// ==================== 提交载荷与脏检测（与旧版同一管线） ====================
+// ==================== 提交载荷与脏检测 ====================
 const buildPayload = () => {
   const out = {}
   for (const f of FIELDS) {

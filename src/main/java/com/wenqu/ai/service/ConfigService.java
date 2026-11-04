@@ -167,7 +167,9 @@ public class ConfigService {
             if (!seeds.containsKey(e.getKey()) || !schema.isEditable(e.getKey())) continue;
             String v = e.getValue();
             if (v == null || v.isBlank()) continue;
-            String bad = schema.validate(e.getKey(), isSensitiveKey(e.getKey()) ? crypto.decrypt(v) : v);
+            String plain = isSensitiveKey(e.getKey()) ? crypto.decrypt(v) : v;
+            String bad = schema.validate(e.getKey(), plain);
+            if (bad == null) bad = doubleWrappedSecret(e.getKey(), plain);
             if (bad != null) badRows.add(bad);
         }
         java.util.Collections.sort(onlyDefined);
@@ -230,11 +232,14 @@ public class ConfigService {
      * 读取兼容明文（get 透明解密对无前缀值原样返回），迁移只为尽快消除库中明文；
      * 多实例部署由 Redis 广播 reload 触发各自迁移，幂等。
      *
-     * <p><b>只认明文，不碰 {@code RSA:…} 旧密文</b>：那是 JWE 改造前的分块 RSA 形态，读取器已退役
-     * ——本机库里已无此类行；从旧备份恢复出来的话，它既不迁移也不解密（读侧按原值返回，参与调用即 401），
+     * <p><b>只认明文，不碰旧密文</b>（{@code RSA:…} 与 {@code JWE:…} 开头都算密文，判据见
+     * {@link ConfigCryptoService#looksLikeCiphertext}）：前者是 JWE 改造前的分块 RSA 形态，读取器已退役
+     * ——从旧备份恢复出来的话，它既不迁移也不解密（读侧按原值返回，参与调用即 401），
      * 要用对应版本旧私钥手工解出后重填。本方法跑在构造期（早于任何启动钩子），若把旧密文当明文再封一层 JWE，
      * token 本体就埋进两层密文——v2 私钥退场后彻底解不开（2026-10-27 真机：sandbox.token 被套成
-     * RSA:v2 套 JWE，运行时把内层密文当 token 发给 provisioner ⇒ 401 invalid provisioner credentials）。
+     * RSA:v2 套 JWE，运行时把内层密文当 token 发给 provisioner ⇒ 401 invalid provisioner credentials；
+     * 线上 keyword.apiKey 同样被套，2026-11-01 起关键词路静默降级 MySQL 三天，见
+     * {@link #doubleWrappedSecret} 的界面告警）。
      */
     private void migratePlainSecrets() {
         try {
@@ -243,7 +248,7 @@ public class ConfigService {
                 String k = e.getKey();
                 String v = e.getValue();
                 if (isSensitiveKey(k) && v != null && !v.isBlank()
-                        && !crypto.isEncrypted(v) && !v.startsWith("RSA:")) {
+                        && !crypto.looksLikeCiphertext(v)) {
                     encrypted.put(k, crypto.encrypt(v));
                 }
             }
@@ -912,6 +917,22 @@ public class ConfigService {
     }
 
     /**
+     * 敏感项解密后的明文<b>仍是密文</b> ⇒ 这行是历史「双重加密」（旧 RSA 密文被明文迁移再封一层 JWE），
+     * 内层读取器已退役，当前版本解不出真值。发出去只会被对端拒（401/403），而界面上一律表现成
+     * 「key 不对」——线上实测 keyword.apiKey 被套成这样后，关键词路静默降级 MySQL 三天。
+     * <p>这里把它点名成配置错位，三条通路共用同一判据：启动对账日志、{@code GET /api/ai/config/trace}、
+     * 设置页该字段的徽标（{@code SchemaField} 读 snapshot 的 invalid）。
+     * <p>不自动改、也不回退出厂默认：那会把「这行被某次迁移弄坏了」这个事实洗成系统本来就这样。
+     *
+     * @param plainValue {@link #get} 口径的解密后明文（非敏感项不判：普通文本以这两个前缀开头不算异常）
+     */
+    private String doubleWrappedSecret(String key, String plainValue) {
+        if (!isSensitiveKey(key) || plainValue == null || plainValue.isBlank()) return null;
+        return crypto.looksLikeCiphertext(plainValue)
+                ? key + " 存的是套了两层的旧密文，解不出真实密钥，请在设置页重填该项" : null;
+    }
+
+    /**
      * 键是否为「活跃槽位」：只有 {@link #defaults()} 定义的键才会被设置页渲染、保存校验、默认值灌入。
      * <p>退役键（chat.model / vision.model / embedding.model）不在其中——存量行对用户不可见也不可改，
      * 引用校验若仍认它们，会形成界面无处解除的死锁（删供应商被看不见的槽位挡住）。</p>
@@ -1030,6 +1051,8 @@ public class ConfigService {
         // sandbox.* 等）没有定义，validate 会一律回「未知配置项」，那是误报不是错位。
         String stored = box[0] == Layer.PLATFORM_DB && schema.isEditable(key) ? cache.get(key) : null;
         String invalid = stored == null || stored.isBlank() ? null : schema.validate(key, stored);
+        // 敏感项另判双重加密（解出来还是密文）：value 已是解密口径，直接判形态，不再解一次
+        if (invalid == null && stored != null) invalid = doubleWrappedSecret(key, value);
         return new Resolution(key, value, box[0] == null ? Layer.UNREGISTERED : box[0],
                 type, seed == null ? "" : seed, invalid);
     }
