@@ -214,63 +214,77 @@
                       <AnswerBody :content="thinkSlice(m, seg)" :streaming="thinkGrowing(m, seg)" />
                     </div>
                   </div>
-                  <!-- 过程簇头：连续的「思考+独白+工具」收成一行。展开后是一行一步的清单，
-                       思考与独白挂在它们所属那一步的行尾；纯说明簇（一个工具都没跑）退化为「N 段说明」 -->
+                  <!-- 过程簇头（DSH ProcessGroupHeader 同构）：无边框一行，行首活动图标（悬停/展开让位给下开三角），
+                       文字=做过什么的罗列（收起）或正在做什么（跑动，带扫光）。展开后帽体清单直接长在下面。 -->
                   <div v-else-if="seg.kind === 'cluster'" class="tl-cluster" :class="{ open: clusterOpen(m, seg) }">
-                    <button class="tl-cluster-bar" type="button" @click="toggleCluster(m, seg)">
-                      <loading-outlined v-if="clusterRunning(seg)" spin class="tool-ic tool-ic-run" />
-                      <close-circle-outlined v-else-if="clusterHasError(seg)" class="tool-ic tool-ic-err" />
-                      <check-outlined v-else class="tool-ic tool-ic-ok" />
-                      <span v-if="clusterTools(seg).length">已执行 {{ executedCount(clusterTools(seg)) }} 个操作</span>
-                      <span v-else>执行过程 · {{ clusterProcCount(seg) }} 段说明</span>
-                      <span v-if="runBoardText(m)" class="run-board">{{ runBoardText(m) }}</span>
-                      <span class="tl-caret" :class="{ open: clusterOpen(m, seg) }"><caret-right-outlined /></span>
+                    <button class="tl-cluster-bar" type="button" :aria-expanded="clusterOpen(m, seg)" @click="toggleCluster(m, seg)">
+                      <span class="tl-cluster-ic">
+                        <span class="tl-ic-a">
+                          <close-circle-outlined v-if="clusterHasError(seg) && !clusterRunning(seg)" class="ic-err" />
+                          <component :is="clusterIconOf(seg)" v-else />
+                        </span>
+                        <span class="tl-ic-c"><down-outlined /></span>
+                      </span>
+                      <span class="tl-cluster-label" :class="{ shimmer: clusterRunning(seg) }">
+                        {{ clusterLiveText(seg) || clusterTitle(seg) }}<template v-if="clusterRunning(seg) && runBoardText(m)"> · {{ runBoardText(m) }}</template>
+                      </span>
                     </button>
-                    <!-- 帽体：跑轮中自动开（贴底跟随最新一步）、用户点开也开（停在顶部从头看，不跟底）。
-                         一行一步（图标+动词+参数摘要+行尾耗时），min(400px,50vh) 内滚、上下边缘 24px 渐隐。
-                         点行展开该步详情（入参/输出/错误）——全量清单永远在帽内滚，页面不再被撑长。 -->
-                    <div v-if="clusterOpen(m, seg)" v-follow-bottom="clusterAutoOpen(m, seg)" v-edge-fade class="tl-cluster-live">
+                    <!-- 帽体（DSH 的 .body 同参）：跑轮中自动开并贴底跟随最新一步、用户点开停顶部从头看；
+                         min(400px,50vh) 内滚、上下边缘 24px 渐隐。一行一步（图标+动词+2px 点+参数摘要），
+                         点行在帽内展开该步详情（入参/输出/错误）——页面高度恒定。 -->
+                    <div v-if="clusterOpen(m, seg)" v-follow-bottom="!!(m.loading && seg.grow)" v-edge-fade class="tl-cluster-live">
                       <template v-for="(lr, li) in clusterLiveRows(seg)" :key="li">
                         <div v-if="lr.t" class="tl-live-row"
                              :class="{ run: lr.t.status === 'start' && !lr.t.denied, err: lr.t.status === 'error', off: lr.t.denied, open: lr.t._open }"
                              @click="lr.t._open = !lr.t._open">
-                          <span class="tl-live-idx">{{ lr.idx }}</span>
-                          <loading-outlined v-if="lr.t.status === 'start' && !lr.t.denied" spin class="tool-ic tool-ic-run" />
-                          <check-outlined v-else-if="lr.t.status === 'done'" class="tool-ic tool-ic-ok" />
-                          <close-circle-outlined v-else-if="lr.t.status === 'error'" class="tool-ic tool-ic-err" />
-                          <pause-circle-outlined v-else class="tool-ic" />
+                          <span class="tl-live-ic">
+                            <span class="tl-ic-a">
+                              <loading-outlined v-if="lr.t.status === 'start' && !lr.t.denied" spin />
+                              <check-outlined v-else-if="lr.t.status === 'done'" />
+                              <close-circle-outlined v-else-if="lr.t.status === 'error'" class="ic-err" />
+                              <pause-circle-outlined v-else />
+                            </span>
+                            <span class="tl-ic-c"><down-outlined /></span>
+                          </span>
                           <span class="tl-live-name" :title="toolDesc(lr.t.name, lr.t.hint)">{{ toolLabel(lr.t.name, lr.t.label) }}</span>
-                          <code v-if="toolBrief(lr.t)" class="tl-live-brief">{{ toolBrief(lr.t) }}</code>
+                          <template v-if="toolBrief(lr.t)">
+                            <span class="tl-live-sep" aria-hidden="true"></span>
+                            <span class="tl-live-brief" :class="{ shimmer: lr.t.status === 'start' && !lr.t.denied }">{{ toolBrief(lr.t) }}</span>
+                          </template>
                           <span @click.stop><NoteTag v-for="(nn, ni) in lr.notes || []" :key="'n' + ni" :m="m" :note="nn" /></span>
-                          <span v-if="lr.t.denied" class="tl-live-dur" title="被守卫挡下，没有真正执行">被挡下</span>
-                          <span v-else-if="lr.t.status !== 'start' && lr.t.elapsedMs != null" class="tl-live-dur">{{ toolDuration(Number(lr.t.elapsedMs) || 0) }}</span>
-                          <span class="tl-caret tl-caret-btn" :class="{ open: lr.t._open }"><caret-right-outlined /></span>
+                          <span v-if="lr.t.denied" class="tl-live-flag" title="被守卫挡下，没有真正执行">被挡下</span>
                         </div>
-                        <!-- 单步详情（点行展开）：入参/输出/错误，与工具卡 body 同一套 io 渲染；
-                             展开在帽内滚——全量清单不离开帽，页面高度恒定 -->
+                        <!-- 单步详情（点行展开，DSH 的 IN/OUT 卡同构）：分段 grid、每段独立内滚、段间细分割线 -->
                         <div v-if="lr.t && lr.t._open && (lr.t.args || liveOutput(lr.t) || lr.t.error)" class="tl-live-detail" @click.stop>
-                          <template v-if="lr.t.args">
+                          <div v-if="lr.t.args" class="tl-io-sec">
                             <div class="tl-io-label">入参</div>
-                            <pre class="tl-io">{{ prettyIo(lr.t.args) }}</pre>
-                            <ToolSpillButton v-if="lr.t.argsSpillId" :id="lr.t.argsSpillId" :tool="lr.t.name" kind="入参" />
-                          </template>
-                          <template v-if="liveOutput(lr.t)">
+                            <div class="tl-io-body">
+                              <pre class="tl-io">{{ prettyIo(lr.t.args) }}</pre>
+                              <ToolSpillButton v-if="lr.t.argsSpillId" :id="lr.t.argsSpillId" :tool="lr.t.name" kind="入参" />
+                            </div>
+                          </div>
+                          <div v-if="lr.t.args && liveOutput(lr.t)" class="tl-io-div" aria-hidden="true"></div>
+                          <div v-if="liveOutput(lr.t)" class="tl-io-sec">
                             <div class="tl-io-label">{{ lr.t.status === 'start' ? '实时输出' : (lr.t.result ? '输出' : '输出（执行期）') }}</div>
-                            <pre class="tl-io" :class="{ live: lr.t.status === 'start' }">{{ liveOutput(lr.t) }}</pre>
-                            <ToolSpillButton v-if="lr.t.spillId" :id="lr.t.spillId" :tool="lr.t.name" kind="输出" />
-                          </template>
-                          <template v-if="lr.t.error">
+                            <div class="tl-io-body">
+                              <pre class="tl-io" :class="{ live: lr.t.status === 'start' }">{{ liveOutput(lr.t) }}</pre>
+                              <ToolSpillButton v-if="lr.t.spillId" :id="lr.t.spillId" :tool="lr.t.name" kind="输出" />
+                            </div>
+                          </div>
+                          <div v-if="(lr.t.args || liveOutput(lr.t)) && lr.t.error" class="tl-io-div" aria-hidden="true"></div>
+                          <div v-if="lr.t.error" class="tl-io-sec">
                             <div class="tl-io-label">错误</div>
-                            <pre class="tl-io tl-io-err">{{ lr.t.error }}</pre>
-                            <ToolSpillButton v-if="lr.t.spillId" :id="lr.t.spillId" :tool="lr.t.name" kind="输出" />
-                          </template>
+                            <div class="tl-io-body">
+                              <pre class="tl-io tl-io-err">{{ lr.t.error }}</pre>
+                              <ToolSpillButton v-if="lr.t.spillId" :id="lr.t.spillId" :tool="lr.t.name" kind="输出" />
+                            </div>
+                          </div>
                         </div>
                         <!-- 还没换来工具的尾部思考/独白：它就是「当前这一步」，自成一节、按在跑的样式高亮。
                              注意用 v-if="!lr.t" 而不是 v-else——上面插着详情分支，v-else 会错配到它 -->
                         <div v-if="!lr.t" class="tl-live-row run">
-                          <span class="tl-live-idx"></span>
-                          <loading-outlined spin class="tool-ic tool-ic-run" />
-                          <span class="tl-live-name">{{ noteTag(m, lr.tail) }}<template v-if="lr.extra"> 等 {{ lr.extra + 1 }} 段</template></span>
+                          <span class="tl-live-ic"><span class="tl-ic-a"><loading-outlined spin /></span></span>
+                          <span class="tl-live-name shimmer">{{ noteTag(m, lr.tail) }}<template v-if="lr.extra"> 等 {{ lr.extra + 1 }} 段</template></span>
                         </div>
                       </template>
                     </div>
@@ -1660,7 +1674,7 @@ import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, Close
          HistoryOutlined, SwapOutlined, InfoCircleOutlined,
          AppstoreOutlined, ClockCircleOutlined, BookOutlined,
          OrderedListOutlined, LeftOutlined, FolderOpenOutlined, FolderOutlined,
-         AimOutlined, EyeOutlined, SaveOutlined, ReloadOutlined } from '@ant-design/icons-vue'
+         AimOutlined, EyeOutlined, SaveOutlined, ReloadOutlined, BulbOutlined } from '@ant-design/icons-vue'
 import { debugRetrieval, deleteMessageGroup, submitFeedback as apiSubmitFeedback,
          addEvalCase, getSessionShare, enableSessionShare, disableSessionShare,
          getSessionWorkspace,
@@ -1722,7 +1736,7 @@ import { toolLabel, toolDesc, toolCallsView, executedCount, toolRunning, toolDur
          turnRows, turnOpen,
          toolBrief, prettyIo, liveOutput, groupRunning,
          clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterProcCount,
-         clusterAutoOpen, clusterLiveRows,
+         clusterAutoOpen, clusterLiveRows, clusterTitle, clusterLiveText, clusterHeadKind,
          groupHasBar, noteOpen, toggleNote, noteTag,
          groupHasError, toolSearchQueries, retrievalLineTitle,
          fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget, fanRun, runBoardText,
@@ -1731,6 +1745,10 @@ import { toolLabel, toolDesc, toolCallsView, executedCount, toolRunning, toolDur
          pasteTitle, pasteSub, isPastedText,
          THINK_LEVEL_ON, levelLabel, stopTick, agentBadgeOf,
          usageCtxTokens, usageTip, oneLine, toolCardOpen, toggleToolCard, spawnAnchorOf, openDispatchCard } from '../chat/projections'
+
+// 簇头的活动图标（DSH ProcessGroupHeader 的 activityIcon 同位）：类别 → 图标，收起时常显、悬停/展开让位给下开三角
+const CLUSTER_ICONS = { search: SearchOutlined, tools: ApiOutlined, thinking: BulbOutlined }
+const clusterIconOf = seg => CLUSTER_ICONS[clusterHeadKind(seg)] || BulbOutlined
 
 const router = useRouter()
 const route = useRoute()
@@ -4331,46 +4349,74 @@ onMounted(async () => {
 @media (prefers-reduced-motion: reduce) { .tl-think-title.running { animation: none; color: var(--app-accent); } }
 .tl-think { margin: 2px 0; padding: 2px 10px; border-left: 2px solid var(--app-border); color: var(--app-text3); font-size: 12.5px; line-height: 1.7; max-height: 320px; overflow-y: auto; }
 .tl-think :deep(.md > p) { margin: 4px 0; }
-/* 过程簇头：把连续的「独白+工具」收成一行（此前一轮过程会散成 6 行折叠头）。
-   展开后其内各段由摊平那一步接着渲染，视觉上是一棵树、DOM 上是同级兄弟。 */
-.tl-cluster { margin: 3px 0; }
+/* 过程簇头（DSH ProcessGroupHeader 同款）：无底无框一行文字，行首 16px 活动图标位——
+   收起时常显活动图标，悬停/展开让位给下开三角（同一叠位换 opacity）。跑动中文字扫光。 */
+.tl-cluster { margin: 3px 0; min-width: 0; }
 .tl-cluster-bar {
-  display: inline-flex; align-items: center; gap: 6px; width: fit-content; max-width: 100%;
-  padding: 3px 9px; font-size: 12px; color: var(--app-text2); text-align: left;
-  background: var(--app-bg); border: 1px solid var(--app-border); border-radius: 8px;
-  cursor: pointer; user-select: none;
+  display: flex; align-items: center; gap: 6px; max-width: 100%;
+  padding: 0; border: 0; background: none;
+  color: var(--app-text3); font: inherit; font-size: 14px; line-height: 24px;
+  text-align: left; cursor: pointer; user-select: none; transition: color .1s ease;
 }
-.tl-cluster-bar:hover { border-color: var(--app-accent); color: var(--app-text); }
-.tl-cluster-bar span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* 跑轮中的簇帽体：固定高度内滚的轻量步骤清单（DSH 同参 min(400px,50vh)，H5 在移动壳里收成 180px）。
-   一行一步贴底跟随最新一步；上下边缘 24px 渐隐由 vEdgeFade 按「还能不能滚」切 ef-top/ef-bot。
-   帽体与簇头用同一套边框语言，视觉上连成一张卡；left 轨与点开态的 inCluster 对齐。 */
+.tl-cluster-bar:hover { color: var(--app-text2); }
+.tl-cluster.open .tl-cluster-bar { padding-bottom: 8px; }
+/* 活动图标与下开三角同叠位：三角默认隐形，悬停/展开浮现、图标退场 */
+.tl-cluster-ic { position: relative; flex: none; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; color: inherit; }
+.tl-cluster-ic .tl-ic-a, .tl-cluster-ic .tl-ic-c { position: absolute; inset: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; transition: opacity .1s ease; }
+.tl-cluster-ic .tl-ic-c { opacity: 0; }
+.tl-cluster-bar:hover .tl-ic-a, .tl-cluster.open .tl-cluster-bar .tl-ic-a { opacity: 0; }
+.tl-cluster-bar:hover .tl-ic-c, .tl-cluster.open .tl-cluster-bar .tl-ic-c { opacity: 1; }
+.tl-cluster-ic .ic-err { color: var(--app-danger); }
+.tl-cluster-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 扫光文字（DSH TextShimmer 简化版）：次要灰底上一道高光横扫，替代转圈/呼吸的「活着」表达 */
+.shimmer, .tl-live-name.shimmer {
+  color: transparent; background: linear-gradient(105deg, var(--app-text3) 0%, var(--app-text3) 40%, var(--app-text) 50%, var(--app-text3) 60%, var(--app-text3) 100%);
+  background-size: 220% 100%; -webkit-background-clip: text; background-clip: text;
+  animation: wq-shimmer 1.8s linear infinite;
+}
+@keyframes wq-shimmer { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .shimmer, .tl-live-name.shimmer { animation: none; color: var(--app-text3); background: none; }
+  .tl-cluster-ic .tl-ic-a, .tl-cluster-ic .tl-ic-c { transition: none; }
+}
+/* 跑轮中的簇帽体（DSH 的 .body 同款）：固定高度内滚的裸排清单——无卡底无边框无缩进，
+   行与行 4px 间距；DSH 同参 min(400px,50vh)，H5 在移动壳里收成 180px。
+   一行一步贴底跟随最新一步；上下边缘 24px 渐隐由 vEdgeFade 按「还能不能滚」切 ef-top/ef-bot。 */
 .tl-cluster-live {
   max-height: min(400px, 50vh); overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable;
-  margin: 4px 0 0 12px; padding: 3px 8px 3px 10px;
-  background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 8px;
+  padding: 2px 0 0;
 }
+.tl-cluster-live > * + * { margin-top: 4px; }
 .tl-cluster-live.ef-top { mask-image: linear-gradient(to bottom, transparent 0, #000 24px, #000 100%); }
 .tl-cluster-live.ef-bot { mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 24px), transparent 100%); }
 .tl-cluster-live.ef-top.ef-bot { mask-image: linear-gradient(to bottom, transparent 0, #000 24px, #000 calc(100% - 24px), transparent 100%); }
-.tl-live-row { display: flex; align-items: center; gap: 6px; min-height: 24px; font-size: 12px; color: var(--app-text3); }
-.tl-live-idx { flex: none; width: 16px; text-align: right; font-size: 11px; color: var(--app-text3); opacity: .7; font-variant-numeric: tabular-nums; }
-.tl-live-row .tool-ic { flex: none; font-size: 11px; }
-.tl-live-name { flex: none; color: var(--app-text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tl-live-row.run .tl-live-name { color: var(--app-text); }
-.tl-live-row.err .tl-live-name { color: var(--app-danger); }
-.tl-live-row.off .tl-live-name { color: var(--app-text3); }
-.tl-live-brief { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--app-text3); background: none; padding: 0; }
-.tl-live-dur { flex: none; font-size: 11px; color: var(--app-text3); font-variant-numeric: tabular-nums; }
-/* 点行展开单步详情：行即按钮（hover 提示可点、open 态挂在行上供样式钩住），行尾 caret 同款 */
-.tl-live-row { cursor: pointer; border-radius: 5px; padding: 0 4px 0 0; }
-.tl-live-row:hover { background: var(--app-panel-2); }
-.tl-live-row .tl-caret-btn { flex: none; margin-left: auto; font-size: 10px; color: var(--app-text3); transition: transform .15s; }
-.tl-live-row .tl-caret-btn.open { transform: rotate(90deg); }
-.tl-live-detail { margin: 1px 0 5px 34px; padding: 6px 8px; border-left: 2px solid var(--app-border);
-  display: flex; flex-direction: column; gap: 4px; }
-.tl-live-detail .tl-io-label { font-size: 10.5px; color: var(--app-text3); }
-.tl-live-detail .tl-io { margin: 0; max-height: 200px; overflow: auto; }
+/* 步骤行（DSH ToolRow 折叠态同款）：24px 一行——[16px 图标位] 6 [13px 动词] 8 [2px 点] 8 [13px 摘要省略]。
+   整行可点展开详情；悬停只加深文字色（状态图标保持原样——✓/错误图标是每行的身份，hover 不动它），
+   行真正展开后图标位才让位给上收箭头。 */
+.tl-live-row { display: flex; align-items: center; gap: 6px; min-height: 24px; font-size: 13px; color: var(--app-text3); cursor: pointer; transition: color .1s ease; }
+.tl-live-row:hover { color: var(--app-text2); }
+.tl-live-ic { position: relative; flex: none; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; color: inherit; }
+.tl-live-ic .tl-ic-a, .tl-live-ic .tl-ic-c { position: absolute; inset: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; transition: opacity .1s ease; }
+.tl-live-ic .tl-ic-c { opacity: 0; }
+.tl-live-row.open .tl-ic-a { opacity: 0; }
+.tl-live-row.open .tl-ic-c { opacity: 1; }
+.tl-live-ic .ic-err { color: var(--app-danger); }
+.tl-live-name { flex: none; color: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tl-live-row.run .tl-live-name { color: var(--app-text2); }
+/* 标题与摘要之间那颗 2×2 分隔点（DSH .sep）：摘要缺席时整颗跟着缺席 */
+.tl-live-sep { flex: none; width: 2px; height: 2px; border-radius: 1px; margin: 0 2px; background: currentColor; opacity: .55; }
+.tl-live-brief { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: inherit; }
+/* 失败行：摘要读成错误色（DSH errorSummary 同语言）；被挡下行尾一面小旗 */
+.tl-live-row.err .tl-live-brief, .tl-live-row.err .tl-live-name { color: var(--app-danger); }
+.tl-live-flag { flex: none; font-size: 11px; color: var(--app-text3); }
+/* 单步详情（DSH 的 IN/OUT 卡同构）：细边框圆角卡，分段 grid——左列段名、右列内容，
+   每段独立内滚 150px 上限（长入参不埋短输出），段与段之间 0.5px 细分割线，段名贴段顶随滚。 */
+.tl-live-detail { margin: 4px 0 4px 4px; border: 0.5px solid var(--app-border); border-radius: 8px; background: var(--app-panel-2); overflow: hidden; }
+.tl-live-detail .tl-io-sec { display: grid; grid-template-columns: max-content 1fr; column-gap: 14px; align-items: baseline; padding: 10px 14px; max-height: 150px; overflow-y: auto; }
+.tl-live-detail .tl-io-label { position: sticky; top: 0; align-self: start; font-size: 10.5px; color: var(--app-text3); }
+.tl-live-detail .tl-io-body { min-width: 0; }
+.tl-live-detail .tl-io-div { height: 0.5px; background: var(--app-border); }
+.tl-live-detail .tl-io { margin: 0; max-height: none; overflow: visible; }
 /* 簇内＝一行一步的紧凑清单：卡片去描边去卡底、行首补序号、整簇共一条左轨。
    簇外的工具组仍是原来的描边卡——那是一步插在正文之间，不是一串清单，收掉描边反而读不出边界。 */
 .tl-group.inCluster { margin: 0 0 0 12px; }

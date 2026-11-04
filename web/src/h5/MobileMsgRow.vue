@@ -101,56 +101,73 @@
                             :streaming="thinkGrowing(m, seg)" />
               </div>
             </div>
-            <!-- 过程簇头：连续的「思考+独白+工具」收成一行（与 PC 同判据、同文案）。
-                 展开后是一行一步的清单，思考与独白挂在它们所属那一步的行尾 -->
+            <!-- 过程簇头（与 PC 同构，DSH ProcessGroupHeader 同款文案法则）：
+                 行首活动图标（展开让位下开三角），文字=做过什么的罗列 / 跑动中带扫光的进行时 -->
             <div v-else-if="seg.kind === 'cluster'" class="card proc-cluster" :class="{ open: clusterOpen(m, seg) }">
-              <button class="card-head" type="button" @click.stop="toggleCluster(m, seg)">
-                <span v-if="clusterRunning(seg)" class="spinner"></span>
-                <check-outlined v-else-if="!clusterHasError(seg)" class="ic-ok" />
-                <close-circle-outlined v-else class="ic-err" />
-                <span v-if="clusterTools(seg).length" class="card-title">已执行 {{ executedCount(clusterTools(seg)) }} 个操作</span>
-                <span v-else class="card-title">执行过程 · {{ clusterProcCount(seg) }} 段说明</span>
-                <span v-if="runBoardText(m)" class="run-board">{{ runBoardText(m) }}</span>
-                <caret-right-outlined class="caret" :class="{ open: clusterOpen(m, seg) }" />
+              <button class="card-head tl-head" type="button" @click.stop="toggleCluster(m, seg)">
+                <span class="tl-cluster-ic">
+                  <span class="tl-ic-a">
+                    <close-circle-outlined v-if="clusterHasError(seg) && !clusterRunning(seg)" class="ic-err" />
+                    <component :is="clusterIconOf(seg)" v-else />
+                  </span>
+                  <span class="tl-ic-c"><down-outlined /></span>
+                </span>
+                <span class="card-title" :class="{ shimmer: clusterRunning(seg) }">
+                  {{ clusterLiveText(seg) || clusterTitle(seg) }}<template v-if="clusterRunning(seg) && runBoardText(m)"> · {{ runBoardText(m) }}</template>
+                </span>
               </button>
-              <!-- 帽体：跑轮中自动开（贴底跟随）、用户点开也开（停在顶部）。固定高度轻量清单
-                   （180px 内滚、边缘渐隐），与 PC 同构；点行展开该步详情（入参/输出/错误）。 -->
-              <div v-if="clusterOpen(m, seg)" v-follow-bottom="clusterAutoOpen(m, seg)" v-edge-fade class="cluster-live">
+              <!-- 帽体：跑轮中自动开并贴底跟随、用户点开停顶部。固定高度裸排清单（180px 内滚、边缘渐隐），
+                   与 PC 同构；点行在帽内展开该步详情（入参/输出/错误）。 -->
+              <div v-if="clusterOpen(m, seg)" v-follow-bottom="!!(m.loading && seg.grow)" v-edge-fade class="cluster-live">
                 <template v-for="(lr, li) in clusterLiveRows(seg)" :key="li">
                   <div v-if="lr.t" class="live-row"
                        :class="{ run: lr.t.status === 'start' && !lr.t.denied, err: lr.t.status === 'error', off: lr.t.denied, open: lr.t._open }"
                        @click.stop="lr.t._open = !lr.t._open">
-                    <span class="live-idx">{{ lr.idx }}</span>
-                    <loading-outlined v-if="lr.t.status === 'start' && !lr.t.denied" spin class="ic-dim" />
-                    <check-outlined v-else-if="lr.t.status === 'done'" class="ic-ok" />
-                    <close-circle-outlined v-else-if="lr.t.status === 'error'" class="ic-err" />
-                    <pause-circle-outlined v-else class="ic-dim" />
+                    <span class="tl-cluster-ic live-ic">
+                      <span class="tl-ic-a">
+                        <loading-outlined v-if="lr.t.status === 'start' && !lr.t.denied" spin />
+                        <check-outlined v-else-if="lr.t.status === 'done'" />
+                        <close-circle-outlined v-else-if="lr.t.status === 'error'" class="ic-err" />
+                        <pause-circle-outlined v-else />
+                      </span>
+                      <span class="tl-ic-c"><down-outlined /></span>
+                    </span>
                     <span class="live-name" :title="lr.t.hint">{{ toolLabel(lr.t.name, lr.t.label) }}</span>
-                    <code v-if="toolBrief(lr.t)" class="live-brief">{{ toolBrief(lr.t) }}</code>
+                    <template v-if="toolBrief(lr.t)">
+                      <span class="live-sep" aria-hidden="true"></span>
+                      <span class="live-brief">{{ toolBrief(lr.t) }}</span>
+                    </template>
                     <span @click.stop><NoteTag v-for="(nn, ni) in lr.notes || []" :key="'n' + ni" :m="m" :note="nn" /></span>
-                    <span v-if="lr.t.denied" class="live-dur">被挡下</span>
-                    <span v-else-if="lr.t.status !== 'start' && lr.t.elapsedMs != null" class="live-dur">{{ toolDuration(Number(lr.t.elapsedMs) || 0) }}</span>
-                    <caret-right-outlined class="caret live-caret" :class="{ open: lr.t._open }" />
+                    <span v-if="lr.t.denied" class="live-flag">被挡下</span>
                   </div>
                   <div v-if="lr.t && lr.t._open && (lr.t.args || liveOutput(lr.t) || lr.t.error)" class="live-detail" @click.stop>
-                    <template v-if="lr.t.args">
-                      <div class="io-label">入参</div><pre class="io-pre">{{ prettyIo(lr.t.args) }}</pre>
-                      <ToolSpillButton v-if="lr.t.argsSpillId" :id="lr.t.argsSpillId" :tool="lr.t.name" kind="入参" />
-                    </template>
-                    <template v-if="liveOutput(lr.t)">
+                    <div v-if="lr.t.args" class="io-sec">
+                      <div class="io-label">入参</div>
+                      <div class="io-body">
+                        <pre class="io-pre">{{ prettyIo(lr.t.args) }}</pre>
+                        <ToolSpillButton v-if="lr.t.argsSpillId" :id="lr.t.argsSpillId" :tool="lr.t.name" kind="入参" />
+                      </div>
+                    </div>
+                    <div v-if="lr.t.args && liveOutput(lr.t)" class="io-div" aria-hidden="true"></div>
+                    <div v-if="liveOutput(lr.t)" class="io-sec">
                       <div class="io-label">{{ lr.t.status === 'start' ? '实时输出' : (lr.t.result ? '输出' : '输出（执行期）') }}</div>
-                      <pre class="io-pre" :class="{ live: lr.t.status === 'start' }">{{ liveOutput(lr.t) }}</pre>
-                      <ToolSpillButton v-if="lr.t.spillId" :id="lr.t.spillId" :tool="lr.t.name" kind="输出" />
-                    </template>
-                    <template v-if="lr.t.error">
-                      <div class="io-label">错误</div><pre class="io-pre io-err">{{ lr.t.error }}</pre>
-                      <ToolSpillButton v-if="lr.t.spillId" :id="lr.t.spillId" :tool="lr.t.name" kind="输出" />
-                    </template>
+                      <div class="io-body">
+                        <pre class="io-pre" :class="{ live: lr.t.status === 'start' }">{{ liveOutput(lr.t) }}</pre>
+                        <ToolSpillButton v-if="lr.t.spillId" :id="lr.t.spillId" :tool="lr.t.name" kind="输出" />
+                      </div>
+                    </div>
+                    <div v-if="(lr.t.args || liveOutput(lr.t)) && lr.t.error" class="io-div" aria-hidden="true"></div>
+                    <div v-if="lr.t.error" class="io-sec">
+                      <div class="io-label">错误</div>
+                      <div class="io-body">
+                        <pre class="io-pre io-err">{{ lr.t.error }}</pre>
+                        <ToolSpillButton v-if="lr.t.spillId" :id="lr.t.spillId" :tool="lr.t.name" kind="输出" />
+                      </div>
+                    </div>
                   </div>
                   <div v-if="!lr.t" class="live-row run">
-                    <span class="live-idx"></span>
-                    <loading-outlined spin class="ic-dim" />
-                    <span class="live-name">{{ noteTag(m, lr.tail) }}<template v-if="lr.extra"> 等 {{ lr.extra + 1 }} 段</template></span>
+                    <span class="tl-cluster-ic live-ic"><span class="tl-ic-a"><loading-outlined spin /></span></span>
+                    <span class="live-name shimmer">{{ noteTag(m, lr.tail) }}<template v-if="lr.extra"> 等 {{ lr.extra + 1 }} 段</template></span>
                   </div>
                 </template>
               </div>
@@ -397,7 +414,7 @@ import {
   DislikeOutlined, ReloadOutlined, RedoOutlined, RobotOutlined, ThunderboltOutlined, SearchOutlined,
   FileTextOutlined, DownloadOutlined, PaperClipOutlined, ExclamationCircleOutlined, MoreOutlined,
   QuestionCircleOutlined, CheckCircleOutlined, PauseCircleOutlined, EyeOutlined, AimOutlined,
-  LoadingOutlined
+  LoadingOutlined, DownOutlined, ApiOutlined, BulbOutlined
 } from '@ant-design/icons-vue'
 import { resolveImg } from '../utils/markdown'
 import { canPreview, artifactExt } from '../utils/artifactView'
@@ -410,7 +427,7 @@ import {
   turnRows, turnOpen,
   thinkSegOpen, toggleThinkSeg, thinkSlice, thinkGrowing, toolLabel, toolBrief, spawnAnchorOf,
   clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterProcCount,
-  clusterAutoOpen, clusterLiveRows, noteTag, toolDuration,
+  clusterAutoOpen, clusterLiveRows, clusterTitle, clusterLiveText, clusterHeadKind, noteTag, toolDuration,
   groupHasBar, noteOpen, toggleNote,
   prettyIo, liveOutput, toolRunning, groupRunning, groupHasError,
   fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget, fanRun, runBoardText,
@@ -428,6 +445,10 @@ import TurnBar from '../components/TurnBar.vue'
 import SubAgentChatCard from '../components/SubAgentChatCard.vue'
 import ToolSpillButton from '../components/ToolSpillButton.vue'
 import AgentAvatar from '../components/AgentAvatar.vue'
+
+// 簇头活动图标（与 PC 同位）：类别 → 图标，收起时常显、展开让位给下开三角（触屏无 hover）
+const CLUSTER_ICONS = { search: SearchOutlined, tools: ApiOutlined, thinking: BulbOutlined }
+const clusterIconOf = seg => CLUSTER_ICONS[clusterHeadKind(seg)] || BulbOutlined
 
 const props = defineProps({
   m: { type: Object, required: true },
@@ -596,36 +617,52 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
 .ic-ok { color: var(--app-ok); }
 .ic-err { color: var(--app-danger); }
 .ic-accent { color: var(--app-accent); }
-/* 过程簇：连续的「独白+工具」收成一张卡（PC 端同构，见 ChatPage.vue .tl-cluster）。
-   展开后是一行一步的清单：去描边去卡底、行首补序号、整簇共一条左轨；
-   触屏行高仍守 .card-head 的 40px，只撤掉每张卡自己的壳。 */
+/* 过程簇（与 PC 同构，DSH 文案法则）：簇头=活动图标+罗列文字（触屏无 hover，展开让位下开三角）；
+   帽体=固定高度裸排清单（触屏口径 180px），行与行 4px 间距。 */
 .proc-cluster { background: var(--app-panel); }
-/* 跑轮中的簇帽体：固定高度轻量步骤清单（与 PC 同构，帽按触屏口径收成 180px）。
+.proc-cluster .tl-head { color: var(--app-text3); }
+.proc-cluster .card-title { font-weight: 400; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 活动图标与下开三角同叠位：展开时三角浮现、图标退场（触屏没有 hover） */
+.tl-cluster-ic { position: relative; flex: none; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; color: inherit; }
+.tl-cluster-ic .tl-ic-a, .tl-cluster-ic .tl-ic-c { position: absolute; inset: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; transition: opacity .1s ease; }
+.tl-cluster-ic .tl-ic-c { opacity: 0; }
+.proc-cluster.open .tl-cluster-ic .tl-ic-a, .live-row.open .live-ic .tl-ic-a { opacity: 0; }
+.proc-cluster.open .tl-cluster-ic .tl-ic-c, .live-row.open .live-ic .tl-ic-c { opacity: 1; }
+.tl-cluster-ic .ic-err { color: var(--app-danger); }
+/* 扫光文字（与 PC 同一份动效参数） */
+.shimmer, .live-name.shimmer {
+  color: transparent; background: linear-gradient(105deg, var(--app-text3) 0%, var(--app-text3) 40%, var(--app-text) 50%, var(--app-text3) 60%, var(--app-text3) 100%);
+  background-size: 220% 100%; -webkit-background-clip: text; background-clip: text;
+  animation: wq-shimmer 1.8s linear infinite;
+}
+@keyframes wq-shimmer { from { background-position: 120% 0; } to { background-position: -120% 0; } }
+@media (prefers-reduced-motion: reduce) { .shimmer, .live-name.shimmer { animation: none; color: var(--app-text3); background: none; } }
+/* 跑轮中的簇帽体：固定高度裸排清单（与 PC 同构，帽按触屏口径收成 180px；无内嵌卡壳）。
    一行一步贴底跟随最新一步；上下 20px 渐隐由 vEdgeFade 切 ef-top/ef-bot。 */
 .cluster-live {
   max-height: 180px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable;
-  margin: 4px 10px 10px; padding: 3px 8px;
-  background: var(--app-panel-2); border: 1px solid var(--app-border); border-radius: 10px;
+  margin: 0 12px 10px; padding: 2px 0 0;
 }
+.cluster-live > * + * { margin-top: 4px; }
 .cluster-live.ef-top { mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 100%); }
 .cluster-live.ef-bot { mask-image: linear-gradient(to bottom, #000 0, #000 calc(100% - 20px), transparent 100%); }
 .cluster-live.ef-top.ef-bot { mask-image: linear-gradient(to bottom, transparent 0, #000 20px, #000 calc(100% - 20px), transparent 100%); }
-.live-row { display: flex; align-items: center; gap: 6px; min-height: 26px; font-size: 12px; color: var(--app-text3); }
-.live-idx { flex: none; width: 16px; text-align: right; font-size: 11px; color: var(--app-text3); opacity: .7; font-variant-numeric: tabular-nums; }
-.live-row .ic-dim { flex: none; font-size: 11px; color: var(--app-text3); }
-.live-name { flex: none; color: var(--app-text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.live-row.run .live-name { color: var(--app-text); }
-.live-row.err .live-name { color: var(--app-danger); }
-.live-row.off .live-name { color: var(--app-text3); }
-.live-brief { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--app-text3); background: none; padding: 0; }
-.live-dur { flex: none; font-size: 11px; color: var(--app-text3); font-variant-numeric: tabular-nums; }
-/* 点行展开单步详情：行即按钮；行尾 caret 复用全局 .caret 旋转，只补 flex 与字号 */
-.live-row { cursor: pointer; border-radius: 6px; padding: 0 4px; }
-.live-row:active { background: var(--app-panel-2); }
-.live-row .live-caret { flex: none; font-size: 10px; }
-.live-detail { margin: 1px 4px 6px 34px; padding: 4px 8px; border-left: 2px solid var(--app-border); }
-.live-detail .io-label { margin: 6px 0 2px; font-size: 11px; }
-.live-detail .io-pre { margin: 0; max-height: 160px; overflow: auto; }
+/* 步骤行（与 PC 同款）：图标位+动词+2px 点+摘要；触屏热区 32px */
+.live-row { display: flex; align-items: center; gap: 6px; min-height: 32px; font-size: 13px; color: var(--app-text3); cursor: pointer; }
+.live-ic { color: inherit; }
+.live-name { flex: none; color: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.live-row.run .live-name { color: var(--app-text2); }
+.live-sep { flex: none; width: 2px; height: 2px; border-radius: 1px; margin: 0 2px; background: currentColor; opacity: .55; }
+.live-brief { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: inherit; }
+.live-row.err .live-brief, .live-row.err .live-name { color: var(--app-danger); }
+.live-flag { flex: none; font-size: 11px; color: var(--app-text3); }
+/* 单步详情（与 PC 同款 IN/OUT 卡）：细边框圆角、分段 grid 独立内滚、段间细分割线 */
+.live-detail { margin: 4px 0 4px 4px; border: 0.5px solid var(--app-border); border-radius: 8px; background: var(--app-panel-2); overflow: hidden; }
+.live-detail .io-sec { display: grid; grid-template-columns: max-content 1fr; column-gap: 12px; align-items: baseline; padding: 8px 12px; max-height: 150px; overflow-y: auto; }
+.live-detail .io-label { position: sticky; top: 0; align-self: start; margin: 0; font-size: 11px; color: var(--app-text3); }
+.live-detail .io-body { min-width: 0; }
+.live-detail .io-div { height: 0.5px; background: var(--app-border); }
+.live-detail .io-pre { margin: 0; max-height: none; overflow: visible; }
 .tl-group { display: flex; flex-direction: column; gap: 6px; }
 .tl-group.inCluster { margin-left: 12px; }
 .tl-group.inCluster .tl-group-body { gap: 0; padding: 0 0 0 8px; border-left: 2px solid var(--app-border); }

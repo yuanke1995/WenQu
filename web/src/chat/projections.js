@@ -522,6 +522,55 @@ const clusterHasError = cl => clusterTools(cl).some(t => t.status === 'error')
  *  只数独白会让纯思考簇报成「0 段说明」）。 */
 const clusterProcCount = cl => (cl?.segs || []).filter(s => s && (s.kind === 'process' || s.kind === 'think')).length
 
+// ---- 簇头标题（DSH 的 processTitle 文案法则，问渠词表）----
+/* 折叠簇头不再报「已执行 N 个操作」：数字要展开数一遍才有感，而罗列**做过什么**一眼就读完
+ * （「已检索知识库并调用工具」「已完成分析，已检索知识库等」）。簇内的事归三类：
+ * 检索（kb/检索词类工具）、调用工具（其余工具）、分析（思考与过程独白）。 */
+const CLUSTER_KIND_DONE = { search: '已检索知识库', tools: '已调用工具', thinking: '已完成分析' }
+const CLUSTER_KIND_LIVE = { search: '正在检索知识库', tools: '正在调用工具', thinking: '正在分析' }
+const clusterKindOfTool = t => {
+  const s = String((t && (t.name || t.label)) || '')
+  return /search|kb|检索|知识库|知识/i.test(s) ? 'search' : 'tools'
+}
+/** 簇内按发生顺序去重的类别表：罗列与簇头图标都按这个顺序取。 */
+const clusterKinds = cl => {
+  const seen = []
+  for (const s of cl?.segs || []) {
+    if (!s) continue
+    if (s.kind === 'think' || s.kind === 'process') { if (!seen.includes('thinking')) seen.push('thinking'); continue }
+    if (s.kind === 'group') for (const t of s.tools || []) {
+      const k = clusterKindOfTool(t)
+      if (!seen.includes(k)) seen.push(k)
+    }
+  }
+  return seen
+}
+/** 折叠态标题：1 类直说；2 类「A并B」（共享「已」字头时第二个省掉前缀，与 DSH 同一条法则）；
+ *  3 类以上取前三个顿号罗列再收「等」。 */
+const clusterTitle = cl => {
+  const kinds = clusterKinds(cl)
+  if (!kinds.length) return CLUSTER_KIND_DONE.thinking
+  if (kinds.length === 1) return CLUSTER_KIND_DONE[kinds[0]]
+  if (kinds.length === 2) {
+    const a = CLUSTER_KIND_DONE[kinds[0]]
+    const b = CLUSTER_KIND_DONE[kinds[1]]
+    return b.startsWith('已') ? a + '并' + b.slice(1) : a + '并' + b
+  }
+  return kinds.slice(0, 3).map(k => CLUSTER_KIND_DONE[k]).join('，') + '等'
+}
+/** 簇头此刻的活动（定图标与跑动标题）：在跑的工具说了算；没有就说明还在想（尾部思考段）；
+ *  两样皆无说明这一簇在等收尾，按已发生的头一类报。 */
+const clusterHeadKind = cl => {
+  const running = clusterTools(cl).find(t => t.status === 'start' && !t.denied)
+  if (running) return clusterKindOfTool(running)
+  if (!clusterTools(cl).length) return 'thinking'
+  return clusterKinds(cl)[0] || 'thinking'
+}
+/** 跑动中的标题（shimmer 那一句）；收尾等待期回退到折叠标题。 */
+const clusterLiveText = cl => (clusterRunning(cl) || !(clusterTools(cl).length))
+  ? CLUSTER_KIND_LIVE[clusterHeadKind(cl)]
+  : null
+
 /** 跑轮中帽体的轻量清单（一行一步）：自动开着的簇不再把全量工具卡摊到顶层（那会把页面撑长），
  *  改由簇分支就地渲染一个固定高度帽体，里面是这份轻量行——图标 + 动词 + 参数摘要，
  *  与右栏过程卡同一份口径（toolLabel/toolBrief/toolDuration）。思考/独白段不单独占行，
@@ -1507,6 +1556,7 @@ export {
   pushTimelineThink, extendTimelineThink, thinkSlice, thinkGrowing, thinkSegOpen, toggleThinkSeg, ensureThinkSegment,
   restoreTimeline, SENTENCE_END_CHARS, endsSentence, timelineView, timelineRows, TOOL_BRIEF_KEYS, oneLine,
   clusterize, clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterProcCount,
+  clusterKinds, clusterTitle, clusterHeadKind, clusterLiveText, CLUSTER_KIND_DONE, CLUSTER_KIND_LIVE,
   clusterAutoOpen, clusterLiveRows, groupHasBar, noteText, noteTag, noteOpen, noteGrowing, toggleNote,
   turnRows, turnOpen, toggleTurn, turnShow, turnWarn, turnExpandable, turnHead, turnTitle, turnElapsedMs, turnWaitMs,
   resumedStartAt, earlierStart, settledTurnMs,
