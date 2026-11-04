@@ -70,7 +70,7 @@ public final class TenantContext {
         if (Boolean.TRUE.equals(RESOLVING.get())) return null;
         java.util.function.Function<String, String> r = resolver;
         String uid = RequestUser.uid();
-        if (r == null || uid == null || RequestUser.ANONYMOUS.equals(uid)) return null;
+        if (r == null || uid == null || RequestUser.SYSTEM.equals(uid)) return null;
         RESOLVING.set(Boolean.TRUE);
         try {
             String t = r.apply(uid);
