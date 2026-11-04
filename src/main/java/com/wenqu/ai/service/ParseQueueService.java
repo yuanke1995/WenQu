@@ -91,6 +91,9 @@ public class ParseQueueService {
     private volatile ThreadPoolExecutor parseExecutor;
     /** 任务运行句柄：taskId → 线程/起点，看门狗据此判定超时并中断 */
     private final Map<String, TaskHandle> handles = new ConcurrentHashMap<>();
+    /** 本实例在解析中的任务 id：scan 每 5s 一轮，selectMine 返回的是<b>全部</b>在跑任务——不判重的话
+     *  每个新抢占都会把仍在解析的任务再投一遍，两个 worker 并发写同一文档（重复块/向量双份/embedding 翻倍） */
+    private final java.util.Set<String> inFlight = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private final AtomicBoolean scanning = new AtomicBoolean(false);
 
     private final ScheduledExecutorService watchdog = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -189,9 +192,14 @@ public class ParseQueueService {
     }
 
     private void submit(ParseTask task) {
+        // 在跑判重：scan 抢到任意新任务都会把 selectMine 捞出的全部在跑任务重投一遍（upload A
+        // 还在解析时上传 B，A 立刻被二次提交）——两个并发 parse 各自按同一份旧块快照 insert，
+        // 块与向量全量翻倍，交错时序下还会互相当 stale 清掉
+        if (!inFlight.add(task.getId())) return;
         try {
             parseExecutor.submit(() -> runTask(task.getId(), task.getDocId()));
         } catch (RejectedExecutionException e) {
+            inFlight.remove(task.getId());
             // CallerRunsPolicy 基本不会抛（除线程池已 shutdown）；真抛了说明任务手上是有的，
             // 原样退回可重试（退避 5s）等下一轮——落了库的任务绝不丢弃
             log.warn("[PARSE-QUEUE] 线程池拒绝任务 task={} doc={}，退回队列下轮再试", task.getId(), task.getDocId());
@@ -225,6 +233,7 @@ public class ParseQueueService {
         } catch (Throwable e) {
             handleFailure(taskId, docId, e);
         } finally {
+            inFlight.remove(taskId);
             handles.remove(taskId);
         }
     }

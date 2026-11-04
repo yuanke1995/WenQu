@@ -924,10 +924,6 @@ public class DocumentService {
                 // 同 ref 不等于同索引：索引/键前缀按 kbId 隔离（每库独立 RediSearch 索引），
                 // 模型相同只是「无需重嵌入」——向量仍要从旧库索引搬运到新库索引，否则新库向量路
                 // 召回不到（同名 upsert 跨库导入、同模型库间移动文档都会踩中）。
-                boolean sameModel = fromRef.equals(toRef);
-                if (!vectorIds.isEmpty() && !sameModel) {
-                    from.delete(vectorIds);
-                }
                 // QA/子块向量随迁：从旧库索引删除，新库从落库行恢复（不调 LLM）；同 ref 分支也照搬（索引按库隔离）
                 try {
                     List<String> extras = new ArrayList<>(qaIndexService.vectorIdsByDoc(docId));
@@ -946,6 +942,12 @@ public class DocumentService {
                     if (k.getImages() != null) metadata.put("images", k.getImages());
                     to.add(List.of(new org.springframework.ai.document.Document(k.getId(),
                             buildEmbedText(k.getTitle(), k.getTitlePath(), k.getContent(), null), metadata)));
+                }
+                // 主块向量「先拷后删」，删不分模型同不同：同模型分支此前只搬不删，旧库索引永久残留
+                // 这份已搬走的文档，A 库检索照样命中它（可见性按文档当前 kbId 判定，跨库泄漏/白占
+                // topK），直到重建索引。放在 to.add 全部成功之后：迁移中途失败时旧库召回还在，不会两头都空。
+                if (!vectorIds.isEmpty()) {
+                    from.delete(vectorIds);
                 }
                 log.info("[DOC-MIGRATE] 文档 {} 向量已迁移: {} → {}（{} 块）", docId, fromRef, toRef, rows.size());
             } catch (Exception e) {
@@ -1046,7 +1048,16 @@ public class DocumentService {
     }
 
     private void updateProgress(String docId, int progress, String desc) {
-        boolean terminal = "解析完成".equals(desc) || "解析失败".equals(desc);
+        updateProgress(docId, progress, desc, false);
+    }
+
+    /**
+     * terminal=true 的终态描述（解析完成/失败/补描述失败）不许被「进度没变」节流吞掉：
+     * 失败回退与补描述 fail-loud 都发生在进度已到过同一值之后（回退取 guard 现值、补描述恒 100），
+     * 吞掉就是状态页永远停在「向量化 12/30」这类半程文案上。终态判定也不能靠 desc 字符串反推——
+     * 实际文案从不等于「解析完成/解析失败」裸串，老判据在主路径上从来没命中过。
+     */
+    private void updateProgress(String docId, int progress, String desc, boolean terminal) {
         Integer last = progressGuard.get(docId);
         if (last != null && last.equals(progress) && !terminal) return;
         progressGuard.put(docId, progress);
@@ -1293,7 +1304,7 @@ public class DocumentService {
             if (childCount > 0) doneDesc += "；子块 " + childCount;
             if (childFailed) doneDesc += "；子块索引失败";
             if (!swept) doneDesc += "；孤儿清扫失败";
-            updateProgress(docId, 100, doneDesc);
+            updateProgress(docId, 100, doneDesc, true);
             doc.setChunkCount(chunks.size());
             doc.setStatus(0);
             doc.setFailReason(null);
@@ -1349,7 +1360,7 @@ public class DocumentService {
             }
             documentMapper.updateById(doc);
             // 失败：进度保留最后值，desc 区分回退/失败
-            updateProgress(docId, progressGuard.getOrDefault(docId, 0), hadExistingContent ? "解析失败(已回退旧内容)" : "解析失败");
+            updateProgress(docId, progressGuard.getOrDefault(docId, 0), hadExistingContent ? "解析失败(已回退旧内容)" : "解析失败", true);
         } finally {
             // 清理解析线程引用与删除标志（delete() 的 DB 物理删除仍可兜底 isDocAlive）
             parseThreads.remove(docId);
@@ -2557,7 +2568,7 @@ public class DocumentService {
                         AiDocument d2 = documentMapper.selectById(docId);
                         String base = d2 == null || d2.getParseDesc() == null ? "" : d2.getParseDesc();
                         updateProgress(docId, 100,
-                                (base.isEmpty() ? "" : base + "；") + "补描述后仍有 " + remaining + " 张图无描述");
+                                (base.isEmpty() ? "" : base + "；") + "补描述后仍有 " + remaining + " 张图无描述", true);
                     } catch (Exception ignored) {
                     }
                 }
@@ -2575,7 +2586,7 @@ public class DocumentService {
             try {
                 AiDocument d = documentMapper.selectById(docId);
                 String base = d == null || d.getParseDesc() == null ? "" : d.getParseDesc();
-                updateProgress(docId, 100, (base.isEmpty() ? "" : base + "；") + "补描述未执行（后台队列满，可稍后重试）");
+                updateProgress(docId, 100, (base.isEmpty() ? "" : base + "；") + "补描述未执行（后台队列满，可稍后重试）", true);
             } catch (Exception ignored) {
             }
         }
