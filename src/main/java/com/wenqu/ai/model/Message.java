@@ -81,6 +81,13 @@ public class Message {
     /** Token 用量 (JSON: context/budget/hits/output/prompt/outputIsReal/total)，随助手消息落库供历史回看 */
     private String tokens;
 
+    /**
+     * 每轮文件改动 (JSON: {turnId, files:[{path,added,deleted,binary?,oversized?}], total, added, deleted})。
+     * 只存相对路径与行数，不含任何文件内容——内容留在执行器本机的快照/捕获里，点开差异时现算。
+     * NULL=该轮没记录（非本机工作区/执行器离线/快照失败/没有改动）。
+     */
+    private String changes;
+
     /** 本轮生效模型引用（助手消息落库；用量统计按模型分组的依据，存量行为 NULL 归入未知） */
     private String model;
 

@@ -1749,6 +1749,23 @@ public class SessionService {
     }
 
     /**
+     * 每轮文件改动补写到回答消息行（appendMessage 不为此扩参，与 setMessageVariant 同一理由；
+     * 轮末对比要在收尾处等执行器，落库时点在回答落库之后）。
+     * <p>只存相对路径与行数：文件内容留在执行器本机的快照/捕获里，点开差异时再让执行器现算。
+     */
+    public void setMessageChanges(String messageId, String changesJson) {
+        if (messageId == null || messageId.isBlank() || changesJson == null || changesJson.isBlank()) return;
+        try {
+            messageMapper.update(null, new LambdaUpdateWrapper<Message>()
+                    .eq(Message::getId, messageId)
+                    .set(Message::getChanges, changesJson));
+        } catch (Exception e) {
+            // 改动卡写不进去只是这一轮「回头看不见」，回答本体不受影响；日志留痕即可
+            log.warn("[CHANGES] 每轮文件改动写入失败 (messageId={}): {}", messageId, e.getMessage());
+        }
+    }
+
+    /**
      * 本轮降级事件补写（回答落库后另发一条 UPDATE，只在**真有降级**时调用——正常轮次不产生这次往返）。
      * <p>为什么不塞进 appendMessage 那串 21 个位置参数：那条签名已是 P6 的搬迁对象，为一个偶发字段
      * 再加一位会让调用点更难对齐；且降级列表在落库时点之后还会增长（工具链路与换路重试都可能在之后登记）。
@@ -2187,6 +2204,14 @@ public class SessionService {
                 map.put("toolCalls", JSON.parseArray(m.getToolCalls(), Map.class)); // 工具调用过程（历史回显）
             } catch (Exception e) {
                 // toolCalls 解析失败忽略
+            }
+        }
+        // 每轮文件改动（历史回显：改动卡刷新后仍在；只含相对路径与行数，差异按需再取）
+        if (m.getChanges() != null && !m.getChanges().isBlank()) {
+            try {
+                map.put("changes", JSON.parse(m.getChanges()));
+            } catch (Exception e) {
+                // changes 解析失败忽略
             }
         }
         if (m.getPlan() != null && !m.getPlan().isBlank()) {

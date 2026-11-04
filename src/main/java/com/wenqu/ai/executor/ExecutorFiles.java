@@ -50,6 +50,9 @@ public class ExecutorFiles {
         if (r.ok()) return r;
         String code = r.code() == null ? "E_IO" : r.code();
         String msg = r.message() == null ? "执行器返回失败" : r.message();
+        if ("E_UNSUPPORTED".equals(code)) {
+            throw new IllegalStateException("本机执行器版本过旧：请在那台电脑上重启 wenqu-agent（拉取最新脚本）后重试");
+        }
         if ("E_PATH_OUTSIDE".equals(code) || "E_INVALID".equals(code) || "E_EXISTS".equals(code)
                 || "E_NOT_FOUND".equals(code)) {
             throw new IllegalArgumentException(msg);
@@ -147,6 +150,29 @@ public class ExecutorFiles {
     /** 在用户那台电脑上用系统文件管理器打开一个源文件夹。 */
     public void openPath(String executorId, List<ProjectRoot> roots, String absPath) {
         call(executorId, roots, "openPath", Map.of("path", absPath), true);
+    }
+
+    // ==================== 每轮文件改动（turn changes） ====================
+    //
+    // 轮前/轮后快照与逐文件差异，全部由执行器在本机算（内容不出用户电脑）；这里只是三根管道。
+    // turnStart/turnEnd 读操作不弹终端确认，也不参与页面写闸。
+
+    /** 轮前快照：对工作区每个源文件夹定位 git 仓库并写一棵快照树（不在仓库里的源文件夹走捕获兜底）。 */
+    public Map<String, Object> turnStart(String executorId, List<ProjectRoot> roots, String turnId) {
+        return call(executorId, roots, "turnStart", Map.of("turnId", turnId), false).data();
+    }
+
+    /** 轮末对比：再拍一次快照并 diff，返回 {supported, files, total, added, deleted}。 */
+    public Map<String, Object> turnEnd(String executorId, List<ProjectRoot> roots, String turnId) {
+        return call(executorId, roots, "turnEnd", Map.of("turnId", turnId), false).data();
+    }
+
+    /** 取轮内某个文件的差异（执行器现算 hunk；快照数据过期回 E_NOT_FOUND → 400）。 */
+    public Map<String, Object> turnDiff(String executorId, List<ProjectRoot> roots, String turnId, String path) {
+        Map<String, Object> args = new LinkedHashMap<>();
+        args.put("turnId", turnId);
+        args.put("path", path);
+        return call(executorId, roots, "turnDiff", args, false).data();
     }
 
     @SuppressWarnings("unchecked")

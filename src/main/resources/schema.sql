@@ -226,6 +226,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_message` (
     `process_text` TEXT        DEFAULT NULL COMMENT '过程独白全文 (<process> 标签内的模型思考叙述，与正文分流；时间线 process 段区间指向本字段)',
     `tokens`      TEXT         DEFAULT NULL COMMENT '本轮运行统计 (JSON: context/budget/hits/output/prompt/outputIsReal/total/thinkingChars; compacted=这一轮内框架自动压缩过上下文，「已压缩上下文」分隔线只认这一个键; turnElapsedMs=这一轮机器耗时即墙钟扣掉人在回路、humanWaitMs=其中被等你读卡答题盖住的时长且只在真等过时才写) —— 气泡顶部那条整轮耗时读这两个键，不落库则刷新即没数',
     `model`       VARCHAR(190) DEFAULT NULL COMMENT '本轮生效模型引用（助手消息落库；用量统计按模型分组的依据，NULL 归入未知）',
+    `changes`     TEXT         DEFAULT NULL COMMENT '每轮文件改动 (JSON: {turnId, files:[{path,added,deleted,binary?,oversized?}], total, added, deleted})。只存工作区内相对路径与增删行数，不含任何文件内容——内容留在执行器本机的快照/捕获里，点开差异时由执行器现算。NULL=该轮没记录（非本机工作区/执行器离线/快照失败/没有改动）',
     `attachments` TEXT         DEFAULT NULL COMMENT '附件元信息 (JSON数组: [{name,mime,size}]，不含内容本体)',
     `agent_id`    VARCHAR(50)  DEFAULT NULL COMMENT '本轮生效的智能体（取自会话级绑定的当轮快照；NULL=未使用智能体）',
     `agent_name`  VARCHAR(100) DEFAULT NULL COMMENT '本轮智能体名称快照（智能体改名/删除后历史消息仍可展示原名称）',

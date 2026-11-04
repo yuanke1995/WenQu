@@ -119,6 +119,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private final com.wenqu.ai.service.ProjectService projectService;
     /** 工作目录简报的来源：工作背景段旁边再给模型一份「目录里有什么」的清单（见 {@link #projectContext}） */
     private final com.wenqu.ai.service.ProjectFileService projectFileService;
+    /** 每轮文件改动：轮前快照 / 轮末对比 / 逐文件差异（只经执行器，内容不出用户电脑） */
+    private final com.wenqu.ai.service.ProjectTurnChangesService turnChangeService;
     private final ConfigService configService;
     private final AppProperties properties;
     private final WenquAgentxTools tools;
@@ -269,6 +271,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                                com.wenqu.ai.agent.tool.ToolRegistry toolRegistry,
                                com.wenqu.ai.service.ProjectService projectService,
                                com.wenqu.ai.service.ProjectFileService projectFileService,
+                               com.wenqu.ai.service.ProjectTurnChangesService turnChangeService,
                                com.wenqu.ai.skill.WenquSkillRepository skillRepository,
                                com.wenqu.ai.service.OrgService orgService,
                                com.wenqu.ai.service.UsageLedgerService usageLedger,
@@ -285,6 +288,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         this.modelRegistry = modelRegistry;
         this.projectService = projectService;
         this.projectFileService = projectFileService;
+        this.turnChangeService = turnChangeService;
         this.configService = configService;
         this.properties = properties;
         this.tools = tools;
@@ -821,6 +825,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         for (String surfaceProblem : sessions.applyToolSurface(cmd, tools.turnGroupedNames(cmd, policy), policy)) {
             channel.emit(RunEventType.WARN, surfaceProblem);
         }
+        // 每轮文件改动：提交前先让执行器拍轮前快照（异步入队、FIFO 先于本轮第一次写）。
+        // 非本机工作区/执行器离线都在服务内部静默跳过；轮末对比在 finish 里等齐。
+        turnChangeService.start(cmd.getSessionId(), turnId);
         AgentSession.Task current = multimodal != null
                 ? session.submit(multimodal)
                 : session.submit(modelInput);
@@ -3954,6 +3961,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 落库这一轮：框架引擎此前只发帧不落库，界面上点进去是空会话（真机被这个抓到）。
         // 走 SessionService 同一入口，不另写一套消息表——会话列表、历史、引用面板都吃这份数据
         String body = answer == null ? "" : answer;
+        // 每轮文件改动：轮末对比（轮前快照在这里等齐）。非本机工作区/失败=不出卡，绝不给收尾添错。
+        Map<String, Object> turnChanges = turnChangeService.settle(cmd.getSessionId(), turnId);
         // 推荐块两道护栏，都住在 RelatedStreamFilter 里：条目数超过要的那 N 条＝整块是被塞进来的正文
         // （全数并回、一颗芯片不出），否则只并回长过正文量级的那几条。真机 2026-10-18 21:00 那轮模型把
         // 摘要骨架整块写进 {@code <related>}，71 条短行条条过单条长度闸，界面上是一整屏绿芯片。
@@ -4097,6 +4106,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         if (replaceGroup != null && assistantMessageId != null) {
             sessionService.setMessageVariant(assistantMessageId, replaceGroup);
         }
+        // 每轮文件改动随消息行落库：只存相对路径与行数，点开差异时再找执行器现算
+        if (persist && assistantMessageId != null && turnChanges != null) {
+            sessionService.setMessageChanges(assistantMessageId,
+                    com.alibaba.fastjson2.JSON.toJSONString(turnChanges));
+        }
         // 警示条也要活过刷新：它此前只随 warn 帧下发一次，用户当场看见「沙盒写入未执行」，
         // 刷新一次就等于没发生过——而这一轮确实被沙盒挡下过一次（与 degradations 那条同一个错法）
         sessionService.saveMessageWarn(assistantMessageId, channel.lastWarn());
@@ -4141,6 +4155,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         done.put("humanWaitMs", humanWaitMs);
         done.put("tokens", tokens);
         done.put("toolCalls", recording.toolCallList());
+        // 每轮文件改动：改了哪些文件、各多少行（本轮没跑/没改动/执行器不在都不给键）
+        if (turnChanges != null) done.put("changes", turnChanges);
         done.put("artifacts", artifactsJson == null ? List.of()
                 : com.alibaba.fastjson2.JSON.parseArray(artifactsJson));
         done.put("related", relatedChips);

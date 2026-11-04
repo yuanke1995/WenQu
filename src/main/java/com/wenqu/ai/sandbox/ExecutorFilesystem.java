@@ -48,14 +48,22 @@ public class ExecutorFilesystem extends BaseSandboxFilesystem {
     /** danger-full-access：不再把路径收束在工作区目录内（执行器按 policy 放开） */
     private final boolean unrestricted;
     private final LocalJournalStorage journalStorage;
+    /** 本会话当前轮的 turnId 供给方（调用期读取；实例可能跨轮被缓存，不能烘焙进构造器）。可为 null。 */
+    private final java.util.function.Supplier<String> turnIdSupplier;
 
     public ExecutorFilesystem(ExecutorRegistry registry, String executorId, List<Root> roots, boolean unrestricted) {
+        this(registry, executorId, roots, unrestricted, null);
+    }
+
+    public ExecutorFilesystem(ExecutorRegistry registry, String executorId, List<Root> roots, boolean unrestricted,
+                              java.util.function.Supplier<String> turnIdSupplier) {
         this.registry = Objects.requireNonNull(registry, "registry is required");
         this.executorId = Objects.requireNonNull(executorId, "executorId is required");
         this.roots = roots == null ? List.of() : List.copyOf(roots);
         this.primaryPath = this.roots.stream().filter(Root::primary).map(Root::path).findFirst()
                 .orElse(this.roots.isEmpty() ? "/" : this.roots.get(0).path());
         this.unrestricted = unrestricted;
+        this.turnIdSupplier = turnIdSupplier;
         this.journalStorage = new LocalJournalStorage(LocalJournalStorage.defaultRoot());
     }
 
@@ -112,6 +120,12 @@ public class ExecutorFilesystem extends BaseSandboxFilesystem {
         }
         out.put("roots", rs);
         out.put("policy", unrestricted ? "danger-full-access" : "workspace-write");
+        // 每轮文件改动：变更型调用带上当前轮身份，执行器据此在改动前抓一份原文（内容不出那台电脑）。
+        // 读类调用带不带都行——执行器只在写类操作上读它。
+        if (turnIdSupplier != null) {
+            String turnId = turnIdSupplier.get();
+            if (turnId != null && !turnId.isBlank()) out.put("turnId", turnId);
+        }
         return out;
     }
 

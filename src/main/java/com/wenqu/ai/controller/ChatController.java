@@ -73,6 +73,9 @@ public class ChatController {
     private final RateLimitService rateLimitService;
     /** 配额预检（Phase 2）：到额就在入口拒，不给用户一条「转了半天才报错」的流 */
     private final com.wenqu.ai.service.UsageQuotaService usageQuota;
+
+    /** 每轮文件改动：逐文件差异按需取（内容由本机执行器现算，服务端不留缓存） */
+    private final com.wenqu.ai.service.ProjectTurnChangesService turnChanges;
     /** 内容安全输入闸（Phase 3 · P12）：插话也是一句用户打进来的话，走同一道闸 */
     private final com.wenqu.ai.service.contentsafety.ContentSafetyService contentSafety;
     /** 租户（Phase 4 · P9）：只用于在 /auth/me 里说一句「现在看的是哪个租户的数据」 */
@@ -420,6 +423,20 @@ public class ChatController {
         if (sessionId == null || sessionId.isBlank()) return ResultJson.error("缺少会话 ID");
         boolean stopped = runtime.stopTurn(sessionId.trim(), com.wenqu.ai.util.RequestUser.uid());
         return ResultJson.ok(java.util.Map.of("stopped", stopped));
+    }
+
+    @Operation(summary = "取一轮里某个文件的改动差异",
+            description = "改动卡上点开某个文件时取它的差异 hunk（由本机执行器现算；文件内容不出那台电脑）。"
+                    + "index 是消息 changes.files 里的下标；快照已过期/执行器不在线回 400 可读错误")
+    @Permission("chat:use")
+    @GetMapping("/message/{messageId}/changes/{index}/diff")
+    public ResultJson turnChangesDiff(@PathVariable("messageId") String messageId,
+                                      @PathVariable("index") int index) {
+        try {
+            return ResultJson.ok(turnChanges.fileDiff(com.wenqu.ai.util.RequestUser.uid(), messageId, index));
+        } catch (IllegalArgumentException e) {
+            return ResultJson.error(400, e.getMessage());
+        }
     }
 
     @Operation(summary = "运行中插话", description = "本轮还在跑时补一句方向（steer）：这句话交给框架会话自己送进<b>正在跑的那一轮</b>，"

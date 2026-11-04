@@ -70,14 +70,18 @@ public class SandboxService {
     private final ProjectService projectService;
     /** 工作区目录开关（默认关，见 scopeOf 的注释） */
     private final ConfigService configService;
+    /** 每轮文件改动：本机工作区的框架文件工具要带当前轮身份（执行器据此做改动前捕获） */
+    private final ProjectTurnChangesService turnChanges;
 
     public SandboxService(ProvisionerSandboxProvider provider, ProjectService projectService,
                           ConfigService configService,
-                          com.wenqu.ai.executor.ExecutorRegistry executorRegistry) {
+                          com.wenqu.ai.executor.ExecutorRegistry executorRegistry,
+                          ProjectTurnChangesService turnChanges) {
         this.provider = provider;
         this.projectService = projectService;
         this.configService = configService;
         this.executorRegistry = executorRegistry;
+        this.turnChanges = turnChanges;
     }
 
     /**
@@ -178,7 +182,10 @@ public class SandboxService {
                     return null;
                 }
                 ExecutorFilesystem executorFs = new ExecutorFilesystem(
-                        executorRegistry, boundProject.getExecutorId(), roots, unrestrictedWrites);
+                        executorRegistry, boundProject.getExecutorId(), roots, unrestrictedWrites,
+                        // 本机工作区：框架的写类调用带当前轮身份，执行器据此做「改动前捕获」（每轮文件改动）。
+                        // 供给方调用期读取——文件系统实例可能被框架缓存跨轮复用，不能把 turnId 烘焙进来。
+                        () -> turnChanges.currentTurnId(sessionId));
                 return memoryRouted(executorFs, uid);
             }
             ProvisionerSandboxBackend backend = new ProvisionerSandboxBackend(
