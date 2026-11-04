@@ -13,7 +13,7 @@ import java.time.LocalDateTime;
  * {@code c_ai_user.role} 的值域即本表 {@code code}（单角色模型）。
  * 内置三角色：superadmin / admin（管理员级，直通全部接口与菜单）、user（普通）；
  * 自定义角色可标记 {@code adminFlag=1} 升为管理员级，否则按
- * {@code c_ai_role_menu}（侧边栏菜单）与 {@code c_ai_role_api}（可调接口）绑定授权。
+ * {@code c_ai_role_menu}（侧边栏菜单）与 {@code c_ai_role_permission}（可调授权点）绑定授权。
  *
  * @author yuanke
  */

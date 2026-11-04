@@ -18,9 +18,9 @@ import java.util.regex.Pattern;
  * <ol>
  *   <li>API Key 认证：带对 X-Api-Key 且命中问答白名单 → 放行（管理端点不放行）</li>
  *   <li>登录门禁：require-login=true 时除登录引导端点外须持有效登录令牌</li>
- *   <li>权限模型（2026-09-26 RBAC 化）：白名单端点全员可用；其余端点
- *       管理员级角色直通，非管理员角色按角色绑定的接口（c_ai_role_api）匹配，
- *       未授权 403 fail-closed（判定见 {@link com.wenqu.ai.service.RoleService}）</li>
+ *   <li>权限模型（RBAC）：白名单只放显式公开通道；其余端点按「端点 → 授权点 → 角色绑定」
+ *       判定，管理员级角色展开为全量 allow（仍受 deny 约束），未授权 403 fail-closed
+ *       （判定见 {@link com.wenqu.ai.service.RoleService}）</li>
  * </ol>
  * <p>登录鉴权由 {@link UserContextInterceptor} 解析 Authorization: Bearer JWT 完成；
  * require-login 开启时，除登录引导端点（login/first-run/initialize/logout）外均需有效登录令牌。
@@ -506,23 +506,15 @@ public class SecurityConfig implements WebMvcConfigurer {
                         ResultJson.error(401, "请先登录")));
                 return false;
             }
-            // 3. RBAC 判定（fail-closed），按 permission-mode 分流（方案 §8 M2 双跑）：
-            //    ① 管理员级角色（内置 superadmin/admin 或自定义 admin_flag=1）直通；
-            //    ② legacy/shadow：问答用户白名单之外的端点走判定（canAccessAny 内部按模式分流，
-            //       shadow 只记录新旧判定差异、仍按旧结果放行）；
-            //    ③ enforce：白名单收口为「显式公开端点集」（isPublicChannelEndpoint，A4/G18），
-            //       其余一切端点都进判定——新端点默认拒绝，不再有"落进前缀就自动放行"。
+            // 3. RBAC 判定（fail-closed）：白名单只放「显式公开通道」（isPublicChannelEndpoint，
+            //    逐条列名、不许前缀通配）；其余一切端点都进判定——新端点默认拒绝，
+            //    没有「落进前缀就自动放行」这一层。
             //    OPTIONS 预检放行（浏览器 CORS 预检不携带语义，交给 CORS 配置处理）。
-            boolean enforce = roleService.permissionModeEnforced();
-            if (enforce ? !isPublicChannelEndpoint(method, path)
-                    : !isPublicUserEndpoint(method, path)) {
+            if (!isPublicChannelEndpoint(method, path)) {
                 var roles = com.wenqu.ai.util.RequestUser.roles();
-                // B1 降级：enforce 下管理员级不再直通——授权点判定内部展开为「全量 allow，仍受 deny」
-                //（只读管理员 = 全 allow + deny 写类授权点，短路一放它就死了）；legacy/shadow 保持旧口径。
-                boolean pass = "OPTIONS".equals(method)
-                        || (enforce
-                                ? roleService.canAccessAny(roles, method, path)
-                                : (roleService.isAdminAny(roles) || roleService.canAccessAny(roles, method, path)));
+                // 判定只剩一个入口：管理员级展开在 RoleService 内，因为它必须能被 deny 压住
+                // （「只读管理员」= admin_flag 角色 + deny 写类授权点）。
+                boolean pass = "OPTIONS".equals(method) || roleService.canAccessAny(roles, method, path);
                 if (!pass) {
                     response.setStatus(HttpServletResponse.SC_FORBIDDEN);
                     response.setContentType("application/json;charset=UTF-8");

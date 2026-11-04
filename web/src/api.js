@@ -1529,9 +1529,22 @@ export const deleteRole = code => request(`/role/${encodeURIComponent(code)}`, {
 export const getRolePermissions = code => request(`/role/${encodeURIComponent(code)}/permissions`)
 /** 授权点目录（RBAC 批次 A：权限页按授权点粒度勾选；目录事实源在代码注解，扫描器启动登记） */
 export const getPermissionCatalog = () => request('/role/permission-catalog')
-/** 按授权点保存角色权限（menuIds + permissions；后端反向折算回接口绑定） */
-export const saveRolePermissionPoints = (code, menuIds, permissions) =>
-  request(`/role/${encodeURIComponent(code)}/permissions`, { method: 'PUT', body: JSON.stringify({ menuIds, permissions }) })
+/** 按授权点保存角色权限（menuIds + permissions + denies）
+ *  denies=[{permissionCode, exempt}]：不传这个参数=本次不动 deny 行，传空表=清空 */
+export const saveRolePermissionPoints = (code, menuIds, permissions, denies) =>
+  request(`/role/${encodeURIComponent(code)}/permissions`, {
+    method: 'PUT',
+    body: JSON.stringify(denies === undefined ? { menuIds, permissions } : { menuIds, permissions, denies })
+  })
+/** 服务账号（批次 C3）：清单 / 建号（响应含明文令牌，只此一次）/ 编辑 / 轮换 / 删除 / 角色回显 */
+export const listServiceAccounts = () => request('/service-account/list')
+export const createServiceAccount = body => request('/service-account', { method: 'POST', body: JSON.stringify(body) })
+export const updateServiceAccount = (id, body) =>
+  request(`/service-account/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify(body) })
+export const rotateServiceAccountToken = id =>
+  request(`/service-account/${encodeURIComponent(id)}/rotate`, { method: 'POST' })
+export const deleteServiceAccount = id => request(`/service-account/${encodeURIComponent(id)}`, { method: 'DELETE' })
+export const getServiceAccountRoles = id => request(`/service-account/${encodeURIComponent(id)}/roles`)
 /** 有效授权点视图（给定 uid 算实际可用授权点集；排查「为什么进不去/为什么进得来」用） */
 export const getEffectivePermissions = uid => request(`/role/effective/${encodeURIComponent(uid)}`)
 /** 各角色成员数（角色列表徽标，批次 D-2） */

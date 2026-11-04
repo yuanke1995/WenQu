@@ -5,7 +5,6 @@ import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.mapper.ApiEndpointMapper;
 import com.wenqu.ai.mapper.MenuApiMapper;
 import com.wenqu.ai.mapper.MenuMapper;
-import com.wenqu.ai.mapper.RoleApiMapper;
 import com.wenqu.ai.model.ApiEndpoint;
 import com.wenqu.ai.model.Menu;
 import lombok.RequiredArgsConstructor;
@@ -27,7 +26,7 @@ import java.util.Set;
  * 数据主体来自启动期 {@code ApiEndpointScanner} 自动扫描（{@code builtin=1}）；
  * 本服务支持手工登记（如网关代理的非 Spring 端点）与名称/模块/菜单归属维护。
  * 菜单归属存 {@code c_ai_menu_api}（多归属，仅权限页分组展示与勾选联动，不参与鉴权）。
- * 任何写操作后需 {@link RoleService#invalidateApiPatterns()} 失效鉴权缓存。
+ * 任何写操作后需 {@link RoleService#invalidateEndpointCache()} 失效鉴权缓存。
  *
  * @author yuanke
  */
@@ -42,7 +41,6 @@ public class ApiEndpointService {
     private static final Set<String> METHODS = Set.of("GET", "POST", "PUT", "DELETE", "PATCH", "ALL");
 
     private final ApiEndpointMapper apiEndpointMapper;
-    private final RoleApiMapper roleApiMapper;
     private final MenuApiMapper menuApiMapper;
     private final MenuMapper menuMapper;
     private final RoleService roleService;
@@ -86,7 +84,7 @@ public class ApiEndpointService {
         api.setBuiltin(0);
         apiEndpointMapper.insert(api);
         bindMenus(api.getId(), menuIds);
-        roleService.invalidateApiPatterns();
+        roleService.invalidateEndpointCache();
         audit.record("[AUDIT] 手工登记接口 id={} {} {} menus={}", api.getId(), m, p, menuIds == null ? 0 : menuIds.size());
         return api;
     }
@@ -116,12 +114,12 @@ public class ApiEndpointService {
             menuApiMapper.unbindByApi(id);
             bindMenus(id, menuIds);
         }
-        roleService.invalidateApiPatterns();
+        roleService.invalidateEndpointCache();
         audit.record("[AUDIT] 编辑接口 id={} {} {}", id, api.getMethod(), api.getPath());
     }
 
     /**
-     * 删除接口并清理角色绑定与菜单归属。扫描登记的接口若代码中仍存在，下次重启会重新登记
+     * 删除接口与菜单归属。扫描登记的接口若代码中仍存在，下次重启会重新登记
      * （重启前该接口对所有非管理员角色 403，fail-closed）；已下线的接口删除后不会复活。
      */
     @Transactional
@@ -129,9 +127,8 @@ public class ApiEndpointService {
         ApiEndpoint api = apiEndpointMapper.selectById(id);
         if (api == null) throw new BizException("接口不存在");
         apiEndpointMapper.deleteById(id);
-        roleApiMapper.unbindByApi(id);
         menuApiMapper.unbindByApi(id);
-        roleService.invalidateApiPatterns();
+        roleService.invalidateEndpointCache();
         audit.record("[AUDIT] 删除接口 id={} {} {}", id, api.getMethod(), api.getPath());
     }
 

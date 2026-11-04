@@ -4,7 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.mapper.ApiEndpointMapper;
 import com.wenqu.ai.mapper.MenuMapper;
-import com.wenqu.ai.mapper.RoleApiMapper;
+import com.wenqu.ai.mapper.MenuMapper;
 import com.wenqu.ai.mapper.RoleMapper;
 import com.wenqu.ai.mapper.RoleMenuMapper;
 import com.wenqu.ai.mapper.UserMapper;
@@ -30,13 +30,14 @@ import java.util.regex.Pattern;
 /**
  * 角色服务（RBAC 核心）：角色 CRUD、管理员判定、接口鉴权匹配、菜单/接口绑定。
  * <p>
- * 鉴权两个入口（每请求都会走，故全走内存缓存）：
+ * 鉴权入口（每请求都会走，故全走内存缓存）：
  * <ul>
  *   <li>{@link #isAdminCode(String)}：内置 superadmin/admin 直通；自定义角色看 {@code admin_flag=1 且 status=1}。
  *       角色表极小（≤几十行），缓存为全量快照，任何角色写操作后整体失效重建。</li>
- *   <li>{@link #canAccess(String, String, String)}：非管理员角色的接口级校验——
- *       角色绑定的接口（method + AntPathMatcher path，支持 {@code /{id}} 占位）逐一匹配，
- *       未命中一律拒绝（fail-closed 由拦截器保证）。</li>
+ *   <li>{@link #canAccessAny(Collection, String, String)}：唯一的接口判定入口——
+ *       端点 → 授权点（{@code c_ai_api.permission_code}，扫描器按 {@code @Permission} 写入）
+ *       → 角色授权点绑定（{@code c_ai_role_permission}）。未标注端点只有管理员级可达，
+ *       未绑定一律拒绝（fail-closed 由拦截器保证）。</li>
  * </ul>
  * 缓存一致性（多副本）：写操作后经 {@code ReplicaCoordination} 广播让所有副本当场失效，
  * 主通道是广播；快照另带 60s TTL（与 {@code UserRoleService} 同口径）作为
@@ -67,7 +68,6 @@ public class RoleService {
 
     private final RoleMapper roleMapper;
     private final RoleMenuMapper roleMenuMapper;
-    private final RoleApiMapper roleApiMapper;
     private final MenuMapper menuMapper;
     private final ApiEndpointMapper apiEndpointMapper;
     private final UserMapper userMapper;
@@ -81,10 +81,6 @@ public class RoleService {
 
     private final AntPathMatcher pathMatcher = new AntPathMatcher();
 
-    /** 授权点判定模式（方案 §8 M2 双跑）：legacy=旧端点绑定链路；shadow=新旧都算、按旧放行、记录差异；enforce=授权点判定生效 */
-    @org.springframework.beans.factory.annotation.Value("${ai-app.rbac.permission-mode:legacy}")
-    private String permissionMode = "legacy";
-
     // ==================== 缓存（批次 F2：按租户键控） ====================
 
     /**
@@ -95,13 +91,11 @@ public class RoleService {
      * 绑定态请求按租户各建各的。表小（每租户 ≤几十行），整份重建成本可忽略。
      */
     private record Snap(Map<String, Role> roles,
-                        Map<String, List<ApiPattern>> apiPatterns,
                         Map<String, List<String>> menuBindings,
-                        Map<String, List<String>> apiIds,
                         Map<String, RolePermBinding> permBindings,
                         long expireAt) {
         static Snap empty() {
-            return new Snap(Map.of(), Map.of(), Map.of(), Map.of(), Map.of(), 0L);
+            return new Snap(Map.of(), Map.of(), Map.of(), 0L);
         }
     }
 
@@ -137,12 +131,7 @@ public class RoleService {
     private Snap rebuildSnap(Snap old) {
         Map<String, Role> roles = new LinkedHashMap<>();
         for (Role r : roleMapper.selectList(null)) roles.put(r.getCode(), r);
-        return new Snap(roles, Map.of(), Map.of(), Map.of(), Map.of(),
-                System.currentTimeMillis() + SNAPSHOT_TTL_MS);
-    }
-
-    /** 接口 pattern（method + path 二元组） */
-    private record ApiPattern(String method, String path) {
+        return new Snap(roles, Map.of(), Map.of(), System.currentTimeMillis() + SNAPSHOT_TTL_MS);
     }
 
     /** 启动即订阅跨副本失效广播：别的副本改了角色/绑定，本副本当场清快照。订阅失败只告警（退化为仅 TTL） */
@@ -151,7 +140,7 @@ public class RoleService {
         try {
             replicaCoordination.listen(CHANNEL_RBAC_INVALIDATE, (payload, from) -> {
                 String scope = payload == null ? null : payload.getString("scope");
-                if ("api".equals(scope)) invalidateApiPatternsLocal();
+                if ("api".equals(scope)) invalidateEndpointSnapshotLocal();
                 else invalidateCachesLocal();
                 log.info("[RBAC] 收到副本 {} 的权限失效广播（scope={}），快照已清除", from, scope);
             });
@@ -167,15 +156,13 @@ public class RoleService {
         apiPermExact = Map.of();
         apiPermPatterns = List.of();
         apiPermLoaded = false;
-        shadowDiffs.clear();
     }
 
-    private synchronized void invalidateApiPatternsLocal() {
-        // 端点表变了 → 端点→授权点映射作废（permission_code 挂在 c_ai_api 行上，全局表）+ 各租户 pattern 表清零
+    /** 端点表变了（扫描登记/接口增删改）：端点→授权点映射作废，下次判定重建 */
+    private synchronized void invalidateEndpointSnapshotLocal() {
         apiPermExact = Map.of();
         apiPermPatterns = List.of();
         apiPermLoaded = false;
-        snapshots.replaceAll((k, v) -> new Snap(v.roles(), Map.of(), v.menuBindings(), Map.of(), v.permBindings(), v.expireAt()));
     }
 
     /**
@@ -187,9 +174,9 @@ public class RoleService {
         broadcastInvalidation("role");
     }
 
-    /** 接口表变化（扫描登记/增删改）后调用：仅失效接口相关缓存 + 广播 */
-    public synchronized void invalidateApiPatterns() {
-        invalidateApiPatternsLocal();
+    /** 端点表变化（扫描登记/增删改）后调用：失效「端点→授权点」映射 + 广播 */
+    public synchronized void invalidateEndpointCache() {
+        invalidateEndpointSnapshotLocal();
         broadcastInvalidation("api");
     }
 
@@ -221,47 +208,18 @@ public class RoleService {
     /** apiPerm 快照是否已构建（全库无标注时靠它避免每请求重建） */
     private volatile boolean apiPermLoaded = false;
 
-    /** shadow 模式差异记录：key → 计数（M2 切流观察用；enforce 稳定后随双跑一起删） */
-    private final ConcurrentHashMap<String, long[]> shadowDiffs = new ConcurrentHashMap<>();
-
-    /** 多角色接口鉴权（判定入口）：按 permission-mode 三态分流（方案 §8 M2） */
-    public boolean canAccessAny(Collection<String> roles, String method, String path) {
-        boolean legacy = canAccessAnyLegacy(roles, method, path);
-        String mode = permissionMode == null ? "legacy" : permissionMode.trim().toLowerCase();
-        if ("legacy".equals(mode) || mode.isBlank()) return legacy;
-        boolean next = canAccessAnyByPermission(roles, method, path);
-        if ("shadow".equals(mode)) {
-            recordShadowDiff(method, path, roles, legacy, next);
-            return legacy;
-        }
-        return next;
-    }
-
-    /** 旧链路（角色 → c_ai_role_api 端点绑定匹配）；enforce 稳定后随 c_ai_role_api 一起退役 */
-    private boolean canAccessAnyLegacy(Collection<String> roles, String method, String path) {
-        if (roles == null || roles.isEmpty()) return false;
-        for (String r : roles) {
-            if (canAccess(r, method, path)) return true;
-        }
-        return false;
-    }
-
     /**
-     * 授权点链路判定（方案 A3/D3）：
+     * 多角色接口鉴权（唯一判定入口）：端点 → 授权点（{@code @Permission} 扫描结果）→ 角色绑定。
      * <ul>
-     *   <li>端点未标注授权点 → false（fail-closed；管理员级直通在拦截器先行判定，不受此影响）；</li>
-     *   <li>任一角色对该授权点有<b>非豁免 deny</b> → 全局拒绝（deny 压过其它角色的 allow，D3 拍板）；</li>
-     *   <li>否则任一角色 allow（且该角色自身未对它下 exempt deny）→ 放行（并集放大权限）。</li>
+     *   <li>未标注授权点的端点：只有管理员级可达（新端点默认对管理员开，其余拒绝，fail-closed）；</li>
+     *   <li>其余走 {@link #judgePermission}：全局 deny 压过一切，管理员级展开为全量 allow，
+     *       普通角色按 allow 并集（exempt deny 只压本角色）。</li>
      * </ul>
      */
-    public boolean canAccessAnyByPermission(Collection<String> roles, String method, String path) {
+    public boolean canAccessAny(Collection<String> roles, String method, String path) {
         if (roles == null || roles.isEmpty() || method == null || path == null) return false;
         String perm = permissionOfEndpoint(method, path);
-        if (perm == null) {
-            // 未标注端点（批次 A.5）：enforce 下管理员级可达（新端点先对管理员开），其余角色拒——
-            // 标注自检会把它揪出来进权限页「未标注」分组
-            return hasAdminLevel(roles);
-        }
+        if (perm == null) return hasAdminLevel(roles);
         return judgePermission(roles, perm);
     }
 
@@ -359,8 +317,8 @@ public class RoleService {
             Role r = s.roles().get(role);
             if (r == null || (r.getStatus() != null && r.getStatus() == 0)) {
                 RolePermBinding none = new RolePermBinding(Set.of(), Map.of());
-                putSnap(cur -> new Snap(cur.roles(), cur.apiPatterns(), cur.menuBindings(),
-                        cur.apiIds(), put(cur.permBindings(), role, none), cur.expireAt()));
+                putSnap(cur -> new Snap(cur.roles(), cur.menuBindings(),
+                        put(cur.permBindings(), role, none), cur.expireAt()));
                 return none;
             }
             Set<String> allows = new java.util.LinkedHashSet<>();
@@ -372,8 +330,8 @@ public class RoleService {
                 else allows.add(perm);
             }
             RolePermBinding b = new RolePermBinding(Set.copyOf(allows), Map.copyOf(denies));
-            putSnap(cur -> new Snap(cur.roles(), cur.apiPatterns(), cur.menuBindings(),
-                    cur.apiIds(), put(cur.permBindings(), role, b), cur.expireAt()));
+            putSnap(cur -> new Snap(cur.roles(), cur.menuBindings(),
+                    put(cur.permBindings(), role, b), cur.expireAt()));
             return b;
         }
     }
@@ -396,33 +354,6 @@ public class RoleService {
         } catch (Exception e) {
             return 0;
         }
-    }
-
-    private void recordShadowDiff(String method, String path, Collection<String> roles, boolean legacy, boolean next) {
-        if (legacy == next) return;
-        String key = method + " " + path + " => " + (legacy ? "旧链路放行" : "旧链路拒绝") + "/" + (next ? "授权点放行" : "授权点拒绝");
-        if (shadowDiffs.size() < 512) {
-            long[] c = shadowDiffs.computeIfAbsent(key, k -> {
-                log.info("[RBAC][SHADOW] 判定差异首次出现: {}（roles={}）", k, roles);
-                return new long[1];
-            });
-            c[0]++;
-        }
-    }
-
-    /** 当前是否 enforce（拦截器分流用：true=白名单收口为显式公开端点集 + 授权点判定生效） */
-    public boolean permissionModeEnforced() {
-        return "enforce".equalsIgnoreCase(permissionMode == null ? "" : permissionMode.trim());
-    }
-
-    /** 当前判定模式（诊断/前端展示用） */
-    public String permissionMode() {
-        return permissionMode == null ? "legacy" : permissionMode.trim().toLowerCase();
-    }
-
-    /** shadow 差异条数（运维排障 / M2 看板取数用） */
-    public int shadowDiffCount() {
-        return shadowDiffs.size();
     }
 
     /** 某角色的 allow 授权点集（权限页回显 / 反查用） */
@@ -506,66 +437,9 @@ public class RoleService {
         return out;
     }
 
-    /**
-     * 非管理员角色的接口级鉴权：按角色绑定的接口（method + path pattern）匹配。
-     * 匹配规则：method 相等（或绑定侧为 ALL）；path 用 AntPathMatcher（{@code /api/ai/agent/{id}} 可匹配实际路径）。
-     * 角色不存在/停用/无绑定 → false。
-     */
-    public boolean canAccess(String role, String method, String path) {
-        if (role == null || role.isBlank() || method == null || path == null) return false;
-        Role r = roles().get(role);
-        if (r == null || (r.getStatus() != null && r.getStatus() == 0)) return false;
-        List<ApiPattern> patterns = apiPatternsOf(role);
-        for (ApiPattern p : patterns) {
-            boolean methodOk = "ALL".equalsIgnoreCase(p.method()) || p.method().equalsIgnoreCase(method);
-            if (methodOk && pathMatcher.match(p.path(), path)) return true;
-        }
-        return false;
-    }
-
     /** 按角色懒加载缓存入口统一先触达 snap()：TTL 过期在其内部重建（含绑定表清零） */
     private void refreshIfStale() {
         snap();
-    }
-
-    /** 角色绑定的接口 id（权限管理页回显用，与 canAccess 同源缓存） */
-    public List<String> apiIdsOf(String role) {
-        if (role == null || role.isBlank()) return List.of();
-        Snap s = snap();
-        List<String> cached = s.apiIds().get(role);
-        if (cached != null) return cached;
-        synchronized (this) {
-            s = snap();
-            cached = s.apiIds().get(role);
-            if (cached != null) return cached;
-            List<String> ids = List.copyOf(roleApiMapper.apiIdsOfRole(role));
-            putSnap(cur -> new Snap(cur.roles(), cur.apiPatterns(), cur.menuBindings(),
-                    put(cur.apiIds(), role, ids), cur.permBindings(), cur.expireAt()));
-            return ids;
-        }
-    }
-
-    private List<ApiPattern> apiPatternsOf(String role) {
-        Snap s = snap();
-        List<ApiPattern> cached = s.apiPatterns().get(role);
-        if (cached != null) return cached;
-        synchronized (this) {
-            s = snap();
-            cached = s.apiPatterns().get(role);
-            if (cached != null) return cached;
-            List<String> ids = roleApiMapper.apiIdsOfRole(role);
-            List<ApiPattern> built = new ArrayList<>();
-            if (!ids.isEmpty()) {
-                for (ApiEndpoint api : apiEndpointMapper.selectBatchIds(ids)) {
-                    built.add(new ApiPattern(api.getMethod() == null ? "ALL" : api.getMethod().toUpperCase(),
-                            api.getPath()));
-                }
-            }
-            // 写回快照：copy-on-write，避免并发遍历旧引用被清空
-            putSnap(cur -> new Snap(cur.roles(), put(cur.apiPatterns(), role, List.copyOf(built)),
-                    cur.menuBindings(), cur.apiIds(), cur.permBindings(), cur.expireAt()));
-            return built;
-        }
     }
 
     /** 角色绑定的菜单 id（/auth/me 下发侧边栏用） */
@@ -579,8 +453,8 @@ public class RoleService {
             cached = s.menuBindings().get(role);
             if (cached != null) return cached;
             List<String> ids = List.copyOf(roleMenuMapper.menuIdsOfRole(role));
-            putSnap(cur -> new Snap(cur.roles(), cur.apiPatterns(),
-                    put(cur.menuBindings(), role, ids), cur.apiIds(), cur.permBindings(), cur.expireAt()));
+            putSnap(cur -> new Snap(cur.roles(),
+                    put(cur.menuBindings(), role, ids), cur.permBindings(), cur.expireAt()));
             return ids;
         }
     }
@@ -679,16 +553,17 @@ public class RoleService {
         if (r == null) throw new BizException("角色不存在");
         if (r.getBuiltin() != null && r.getBuiltin() == 1) throw new BizException("内置角色不可删除");
         // 占用计数走 c_ai_user_role（多角色模型）；直接依赖 Mapper 而非 UserRoleService，避免服务环依赖
+        // 过期行不占位（批次 C1）：到期即失效的临时授权不该把角色钉成「删不掉」
         Long used = userRoleMapper.selectCount(
-                new LambdaQueryWrapper<com.wenqu.ai.model.UserRole>().eq(com.wenqu.ai.model.UserRole::getRoleCode, code));
+                activeRoleRows().eq(com.wenqu.ai.model.UserRole::getRoleCode, code));
         if (used != null && used > 0) {
             throw new BizException("仍有 " + used + " 名用户使用该角色，请先调整其角色");
         }
         roleMapper.deleteById(code);
         roleMenuMapper.unbindAllOfRole(code);
-        roleApiMapper.unbindAllOfRole(code);
         rolePermissionMapper.unbindAllOfRoleById(code); // 删除角色连 deny 行一并清
         roleDataScopeMapper.deleteById(code);           // 数据范围行一并清（C2）
+        resourceVisibilityService.invalidateScopes();   // 范围快照别等到 TTL
         invalidateCaches();
         audit.record("[AUDIT] 删除角色 code={} name={}", code, r.getName());
     }
@@ -696,56 +571,14 @@ public class RoleService {
     // ==================== 菜单 / 接口绑定 ====================
 
     /**
-     * 保存菜单 + 接口绑定（权限配置页单次提交；两者均为全量替换语义）。
-     * 单事务、单次缓存失效；校验角色与 id 存在性（不存在的 id 静默丢弃）。
+     * 权限页唯一写入路径：菜单 + 授权点 allow + deny，一次事务全量替换。
+     * <p>判定数据源只有 {@code c_ai_role_permission} 一张表。
+     *
+     * @param denies null=本次不动 deny 行；空表=清空
      */
     @Transactional
-    public void savePermissions(String code, List<String> menuIds, List<String> apiIds) {
-        requireRole(code);
-        Set<String> validMenus = menuIdSet();
-        roleMenuMapper.unbindAllOfRole(code);
-        if (menuIds != null) {
-            for (String id : menuIds) {
-                if (id != null && validMenus.contains(id)) roleMenuMapper.bind(code, id);
-            }
-        }
-        Set<String> validApis = apiIdSet();
-        roleApiMapper.unbindAllOfRole(code);
-        if (apiIds != null) {
-            for (String id : apiIds) {
-                if (id != null && validApis.contains(id)) roleApiMapper.bind(code, id);
-            }
-        }
-        // 授权点链路双写（方案 A6/A7，双跑窗口内两表并存）：接口绑定折算成授权点 allow 行。
-        // 管理员级角色不落行——判定按 admin_flag 展开（D5：不写 106 行绑定，新增授权点不漏配）。
-        // enforce 稳定后 role_api 写路径随该表一起退役。
-        Role roleDef = roles().get(code);
-        if (roleDef == null || roleDef.getAdminFlag() == null || roleDef.getAdminFlag() != 1) {
-            rolePermissionMapper.unbindAllowsOfRole(code); // 只清 allow；deny 行归 saveDenyRules 管（B2）
-            if (apiIds != null && !apiIds.isEmpty()) {
-                Set<String> perms = new java.util.LinkedHashSet<>();
-                for (ApiEndpoint api : apiEndpointMapper.selectBatchIds(apiIds)) {
-                    if (api.getPermissionCode() != null && !api.getPermissionCode().isBlank()) {
-                        perms.add(api.getPermissionCode());
-                    }
-                }
-                for (String perm : perms) rolePermissionMapper.bindAllow(code, perm);
-            }
-        }
-        invalidateCaches();
-        // G12：审计记明细（id 清单），不只记个数——事后要能回答「当时到底授权了哪些接口」
-        audit.record("[AUDIT] 保存角色权限绑定 code={} menus={} apis={}", code,
-                menuIds == null ? List.of() : menuIds, apiIds == null ? List.of() : apiIds);
-    }
-
-    /**
-     * 按授权点保存角色权限（A7 主路径：前端权限页以授权点粒度勾选）。
-     * 双跑窗口内反向双写：授权点 → 名下全部端点折算回 {@code c_ai_role_api}
-     * （legacy 判定数据源必须与新语义一致，否则 shadow 差异全是假阳性）；
-     * 管理员级角色不落行（D5，与正向双写同口径）。enforce 稳定后折算段退役。
-     */
-    @Transactional
-    public void savePermissionPoints(String code, List<String> menuIds, List<String> permissionCodes) {
+    public void savePermissionPoints(String code, List<String> menuIds, List<String> permissionCodes,
+                                     List<Map<String, Object>> denies) {
         requireRole(code);
         Set<String> validMenus = menuIdSet();
         roleMenuMapper.unbindAllOfRole(code);
@@ -755,7 +588,9 @@ public class RoleService {
             }
         }
         Set<String> knownPerms = new java.util.HashSet<>(permissionCatalogMapper.allCodes());
-        rolePermissionMapper.unbindAllowsOfRole(code); // 只清 allow；deny 行归 saveDenyRules 管（B2）
+        // 清 allow 不分管理员级：管理员级只是「不落 allow 行」，不是「不清旧行」——
+        // 否则关掉 admin_flag 时历史绑定会原样复活
+        rolePermissionMapper.unbindAllowsOfRole(code);
         Set<String> granted = new java.util.LinkedHashSet<>();
         if (permissionCodes != null) {
             for (String perm : permissionCodes) {
@@ -763,26 +598,12 @@ public class RoleService {
                 if (granted.add(perm)) rolePermissionMapper.bindAllow(code, perm);
             }
         }
-        Role roleDef = roles().get(code);
-        if (roleDef == null || roleDef.getAdminFlag() == null || roleDef.getAdminFlag() != 1) {
-            roleApiMapper.unbindAllOfRole(code);
-            if (!granted.isEmpty()) {
-                for (String perm : granted) {
-                    for (ApiEndpoint api : apiEndpointMapper.selectList(new LambdaQueryWrapper<ApiEndpoint>()
-                            .eq(ApiEndpoint::getPermissionCode, perm))) {
-                        try {
-                            roleApiMapper.bind(code, api.getId());
-                        } catch (Exception ignored) {
-                            // 唯一键冲突（同端点已被其它授权点路径写入）忽略
-                        }
-                    }
-                }
-            }
-        }
+        // deny 与 allow 同源提交；管理员级也要能写 deny——「只读管理员」= admin_flag + deny 写类授权点
+        int denyWritten = writeDenies(code, granted, denies);
         invalidateCaches();
-        // G12：授权点 id 清单入 detail（不只记个数）
-        audit.record("[AUDIT] 保存角色权限绑定（授权点）code={} permissions={} menus={}", code,
-                List.copyOf(granted), menuIds == null ? List.of() : menuIds);
+        audit.record("[AUDIT] 保存角色权限绑定（授权点）code={} permissions={} menus={}{}", code,
+                List.copyOf(granted), menuIds == null ? List.of() : menuIds,
+                denyWritten < 0 ? "" : " denies=" + denies);
     }
 
     /**
@@ -792,22 +613,39 @@ public class RoleService {
     @Transactional
     public void saveDenyRules(String code, List<Map<String, Object>> denies) {
         requireRole(code);
-        Set<String> knownPerms = new java.util.HashSet<>(permissionCatalogMapper.allCodes());
-        rolePermissionMapper.unbindDeniesOfRole(code);
-        int n = 0;
-        if (denies != null) {
-            for (Map<String, Object> d : denies) {
-                if (d == null) continue;
-                String perm = d.get("permissionCode") == null ? null : String.valueOf(d.get("permissionCode")).trim();
-                if (perm == null || perm.isEmpty() || !knownPerms.contains(perm)) continue;
-                boolean exempt = Integer.valueOf(1).equals(safeInt(d.get("exempt")));
-                rolePermissionMapper.bindDeny(code, perm, exempt ? 1 : 0);
-                n++;
-            }
-        }
+        int n = writeDenies(code, permBindingOf(code).allows(), denies);
         invalidateCaches();
         audit.record("[AUDIT] 保存角色 deny 规则 code={} denies={}", code,
                 denies == null ? List.of() : denies);
+    }
+
+    /**
+     * deny 行的实际写入（全量替换语义）；返回真实写入条数。denies 为 null 表示本次不动 deny。
+     * <p>同一授权点不能同时出现在 allow 与 deny 里：表主键不含 effect，同键第二行会被
+     * {@code INSERT IGNORE} 静默丢弃，结果是「保存成功但权限没收紧」——这里当场拒绝并点名。
+     */
+    private int writeDenies(String code, Set<String> allows, List<Map<String, Object>> denies) {
+        if (denies == null) return -1;
+        Set<String> knownPerms = new java.util.HashSet<>(permissionCatalogMapper.allCodes());
+        List<String> conflicts = new ArrayList<>();
+        for (Map<String, Object> d : denies) {
+            if (d == null) continue;
+            String perm = d.get("permissionCode") == null ? null : String.valueOf(d.get("permissionCode")).trim();
+            if (perm != null && !perm.isEmpty() && allows != null && allows.contains(perm)) conflicts.add(perm);
+        }
+        if (!conflicts.isEmpty()) {
+            throw new BizException("同一授权点不能同时允许和禁止：" + String.join("、", conflicts));
+        }
+        rolePermissionMapper.unbindDeniesOfRole(code);
+        int n = 0;
+        for (Map<String, Object> d : denies) {
+            if (d == null) continue;
+            String perm = d.get("permissionCode") == null ? null : String.valueOf(d.get("permissionCode")).trim();
+            if (perm == null || perm.isEmpty() || !knownPerms.contains(perm)) continue;
+            boolean exempt = Integer.valueOf(1).equals(safeInt(d.get("exempt")));
+            n += rolePermissionMapper.bindDeny(code, perm, exempt ? 1 : 0);
+        }
+        return n;
     }
 
     /** 某角色的 deny 行（权限页回显） */
@@ -820,18 +658,29 @@ public class RoleService {
     /** 各角色成员数（角色列表出参用；一次全量，表小） */
     public Map<String, Long> memberCountsByRole() {
         Map<String, Long> out = new LinkedHashMap<>();
-        for (com.wenqu.ai.model.UserRole ur : userRoleMapper.selectList(null)) {
+        for (com.wenqu.ai.model.UserRole ur : userRoleMapper.selectList(activeRoleRows())) {
             out.merge(ur.getRoleCode(), 1L, Long::sum);
         }
         return out;
+    }
+
+    /**
+     * 未过期的角色行条件（批次 C1）：到期行既不给权限，也不算「这个角色还有人」。
+     * <p>反查/守门口径必须与判定同侧——{@code delete(code)} 的占用数、成员徽标、最后一名管理员
+     * 保护原来都数原始行，一条已过期的管理员授权会同时骗过这三处：界面说角色删不掉、
+     * 徽标说还有人挂着、并且挡住下一次管理员调整说「不能删最后一个」。
+     */
+    static LambdaQueryWrapper<com.wenqu.ai.model.UserRole> activeRoleRows() {
+        return new LambdaQueryWrapper<com.wenqu.ai.model.UserRole>()
+                .and(w -> w.isNull(com.wenqu.ai.model.UserRole::getExpireAt)
+                        .or().gt(com.wenqu.ai.model.UserRole::getExpireAt, java.time.LocalDateTime.now()));
     }
 
     /** 角色成员清单（谁挂着这个角色；granted_by 区分手动/IdP 授予） */
     public List<Map<String, Object>> membersOfRole(String code) {
         List<Map<String, Object>> out = new ArrayList<>();
         for (com.wenqu.ai.model.UserRole ur : userRoleMapper.selectList(
-                new LambdaQueryWrapper<com.wenqu.ai.model.UserRole>()
-                        .eq(com.wenqu.ai.model.UserRole::getRoleCode, code))) {
+                activeRoleRows().eq(com.wenqu.ai.model.UserRole::getRoleCode, code))) {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("uid", ur.getUid());
             m.put("grantedBy", ur.getGrantedBy());
@@ -910,12 +759,6 @@ public class RoleService {
     private Set<String> menuIdSet() {
         Set<String> s = new java.util.HashSet<>();
         for (com.wenqu.ai.model.Menu m : menuMapper.selectList(null)) s.add(m.getId());
-        return s;
-    }
-
-    private Set<String> apiIdSet() {
-        Set<String> s = new java.util.HashSet<>();
-        for (ApiEndpoint a : apiEndpointMapper.selectList(null)) s.add(a.getId());
         return s;
     }
 

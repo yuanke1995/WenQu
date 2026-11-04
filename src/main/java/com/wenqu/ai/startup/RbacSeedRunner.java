@@ -87,6 +87,14 @@ public class RbacSeedRunner implements ApplicationRunner {
             {"menu-content-safety", "内容安全", "/permissions?tab=content", "80", "menu-permissions"};
 
     /**
+     * 服务账号（批次 C3）：机器身份的管理面板，挂在「认证源」旁边——同一层「谁能调用」的授权对象。
+     * 后端（建号/轮换/删除）2026-11-02 就到位了，一直没有界面入口，等于只能靠 REST 调；
+     * 排序 25 让它紧跟认证源（15）、在审计事件之前。
+     */
+    private static final String[] SERVICE_ACCOUNT_TAB_MENU =
+            {"menu-service-accounts", "服务账号", "/permissions?tab=service", "25", "menu-permissions"};
+
+    /**
      * 内置 Tab 菜单（renderAs=tab）：id / 名称 / path / 排序 / 父菜单。
      * <p>
      * 2026-10-08 把「智能体工作台」硬编码的 6 个页内 Tab 收编进菜单表 —— Tab 变成真菜单后，
@@ -112,6 +120,7 @@ public class RbacSeedRunner implements ApplicationRunner {
             new String[]{"menu-agents-tab-workflow", "工作流", "/agents?tab=workflow", "50", "menu-agents"},
             new String[]{"menu-agents-tab-scheduled", "定时任务", "/agents?tab=scheduled", "60", "menu-agents"},
             IDENTITY_TAB_MENU,
+            SERVICE_ACCOUNT_TAB_MENU,
             AUDIT_TAB_MENU,
             CONTENT_SAFETY_TAB_MENU
     );
@@ -140,7 +149,6 @@ public class RbacSeedRunner implements ApplicationRunner {
     private final RoleService roleService;
     private final com.wenqu.ai.mapper.ApiEndpointMapper apiEndpointMapper;
     private final com.wenqu.ai.mapper.RolePermissionMapper rolePermissionMapper;
-    private final com.wenqu.ai.mapper.RoleApiMapper roleApiMapper;
     private final org.springframework.jdbc.core.JdbcTemplate jdbc;
 
     @Override
@@ -364,23 +372,6 @@ public class RbacSeedRunner implements ApplicationRunner {
         if (perms != null) {
             for (String perm : perms) {
                 pp += rolePermissionMapper.bindAllow(code, perm);
-            }
-            // 双跑窗口一致性（与 A7 保存路径同口径）：授权点反向折算成端点绑定写回 c_ai_role_api，
-            // 否则 legacy 模式判定走 role_api 时，纯授权点种子角色等于零绑定（全员 403）。
-            // enforce 稳定后此段随 role_api 一起退役。
-            java.util.Map<String, List<com.wenqu.ai.model.ApiEndpoint>> byPerm = new java.util.LinkedHashMap<>();
-            for (com.wenqu.ai.model.ApiEndpoint api : apiEndpointMapper.selectList(null)) {
-                if (api.getPermissionCode() == null || api.getPermissionCode().isBlank()) continue;
-                byPerm.computeIfAbsent(api.getPermissionCode(), k -> new java.util.ArrayList<>()).add(api);
-            }
-            for (String perm : perms) {
-                for (com.wenqu.ai.model.ApiEndpoint api : byPerm.getOrDefault(perm, List.of())) {
-                    try {
-                        roleApiMapper.bind(code, api.getId());
-                    } catch (Exception ignored) {
-                        // 唯一键冲突忽略（同端点已被其它授权点路径写入）
-                    }
-                }
             }
         }
         log.info("[RbacSeed] 已预置受限管理员角色 {}（菜单 {} 条，授权点 {} 个）", code, pm, pp);

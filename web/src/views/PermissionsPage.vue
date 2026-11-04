@@ -28,7 +28,7 @@
     <component v-if="activeExtra" :is="TAB_COMPONENTS[activeExtra.key]" />
     <div v-else class="app-page-body">
       <div class="app-card" style="padding:0;overflow:hidden">
-        <!-- 工具栏：搜索 + 计数 + 新建（app-list-bar 全局类，卡片内嵌 in-card 变体） -->
+        <!-- 工具栏：搜索 + 新建（app-list-bar 全局类，卡片内嵌 in-card 变体）；计数只由页签徽标说 -->
         <div class="app-list-bar in-card">
           <a-input v-model:value="keyword" allow-clear size="small" class="rb-search"
                    :placeholder="tab === 'apis' ? '搜索路径 / 名称' : tab === 'menus' ? '搜索菜单名称 / 路径' : '搜索角色编码 / 名称'">
@@ -36,11 +36,12 @@
           </a-input>
           <a-select v-if="tab === 'apis'" v-model:value="moduleFilter" allow-clear size="small" class="rb-filter"
                     placeholder="全部模块" :options="moduleFilterOptions" />
-          <span class="app-list-count">{{ countText }}</span>
-          <button v-if="tab === 'menus'" class="app-btn rb-new" @click="openMenuCreate"><plus-outlined /> 新建菜单</button>
-          <button v-else-if="tab === 'apis'" class="app-btn rb-new" @click="openApiCreate"><plus-outlined /> 登记接口</button>
-          <button v-if="tab === 'roles'" class="app-btn" @click="openEffective">有效权限视图</button>
-          <button v-else class="app-btn rb-new" @click="openRoleCreate"><plus-outlined /> 新建角色</button>
+          <div class="rb-acts">
+            <button v-if="tab === 'roles'" class="app-btn" @click="openEffective">有效权限视图</button>
+            <button v-if="tab === 'menus'" class="app-btn" @click="openMenuCreate"><plus-outlined /> 新建菜单</button>
+            <button v-else-if="tab === 'apis'" class="app-btn" @click="openApiCreate"><plus-outlined /> 登记接口</button>
+            <button v-else class="app-btn" @click="openRoleCreate"><plus-outlined /> 新建角色</button>
+          </div>
         </div>
 
         <a-spin :spinning="loading">
@@ -320,7 +321,6 @@
         <div class="form-tip" style="margin:10px 0 4px">
           <b>{{ effectiveResult.uid }}</b> · 角色：
           <code v-for="r in effectiveResult.roles" :key="r" class="rb-uid" style="margin-right:6px">{{ r }}</code>
-          · 判定模式：<code class="rb-uid">{{ effectiveResult.mode }}</code>
         </div>
         <a-tree v-if="effectiveGroups.length" default-expand-all :selectable="false" :tree-data="effectiveGroups">
           <template #title="node">
@@ -370,6 +370,10 @@
         <a-form-item v-if="roleForm.scopeType === 'department' || roleForm.scopeType === 'department_and_children'" label="生效部门">
           <a-select v-model:value="roleForm.scopeDepartmentId" :options="scopeDeptOptions" allow-clear
                     placeholder="空=按成员自己的部门判定" style="width:100%" />
+          <div class="form-tip">
+            指定后：该角色成员看<b>那个部门</b>（含下级）创建的资源，自己不必在里面——审计、巡检这类岗位就这么配，
+            也是服务账号（本身没有部门）唯一能套上部门范围的写法。留空 = 沿用「看自己所在部门」。
+          </div>
         </a-form-item>
       </a-form>
     </a-modal>
@@ -377,9 +381,10 @@
     <!-- 角色权限抽屉（单树：菜单 + 名下接口；勾菜单自动带上接口） -->
     <a-drawer v-model:open="drawer" :title="drawerTitle" :width="580" destroy-on-close>
       <a-alert v-if="drawerRole && drawerRole.adminFlag === 1" type="info" show-icon style="margin-bottom:12px"
-               message="管理员级角色天然拥有全部权限，以下绑定仅对普通角色生效" />
+               message="管理员级角色天然拥有全部授权点；要收它的口子请用行尾的「排除」" />
       <p class="form-tip" style="margin-top:0">
         侧栏菜单控制「看得见」，功能授权点控制「调得动」——按业务动作授权，同一动作跨端点只勾一次。未授予的授权点调用将返回 403。
+        行尾「排除」压过勾选：勾了也调不动，对管理员级角色同样生效（「只读管理员」就是这么配的）。
       </p>
       <a-input v-model:value="drawerKeyword" allow-clear size="small" class="drawer-search"
                placeholder="搜索菜单名称 / 授权点编码">
@@ -404,12 +409,22 @@
           <template #title="node">
             <span v-if="node.kind === 'perm'" class="tree-api">
               <code class="rb-path">{{ node.label }}</code>
+              <button class="app-link-btn rb-deny" :class="{ on: deniedSet.has(node.key) }"
+                      :title="deniedSet.has(node.key) ? '取消排除' : '排除：勾了也调不动（压过本角色与其它角色的授权）'"
+                      @click.stop="toggleDeny(node.key)">
+                {{ deniedSet.has(node.key) ? '已排除' : '排除' }}
+              </button>
+              <button v-if="deniedSet.has(node.key)" class="app-link-btn rb-deny rb-deny-exempt"
+                      :class="{ on: denyMap[node.key] === 1 }"
+                      title="只压本角色自己给的授权：别人（或管理员级）仍能用这个动作"
+                      @click.stop="toggleExempt(node.key)">只压本角色</button>
             </span>
             <span v-else class="tree-menu">
               <span class="rb-name">{{ node.groupName }}</span>
               <span class="tree-count" :class="{ warn: node.grantedCount < node.ownedCount }">
                 {{ node.grantedCount }}/{{ node.ownedCount }}
               </span>
+              <span v-if="groupDeniedCount(node)" class="tree-count deny">排除 {{ groupDeniedCount(node) }}</span>
             </span>
           </template>
         </a-tree>
@@ -443,6 +458,7 @@ import { listMenus, createMenu, updateMenu, deleteMenu,
          getRoleDataScope, saveRoleDataScope } from '../api'
 import { ensureAuth } from '../utils/auth'
 import IdentityProvidersPage from './IdentityProvidersPage.vue'
+import ServiceAccountsPage from './ServiceAccountsPage.vue'
 import AuditLogPage from './AuditLogPage.vue'
 import ContentSafetyPage from './ContentSafetyPage.vue'
 
@@ -453,7 +469,8 @@ const router = useRouter()
 /** 本页固有的三个页签：它们就是「权限管理」本身，不作为菜单行存在 */
 const BASE_TABS = ['menus', 'apis', 'roles']
 /** tabKey → 组件。菜单表不知道组件的存在，这张表是数据与视图之间唯一的桥（同 AgentsHubPage） */
-const TAB_COMPONENTS = { identity: IdentityProvidersPage, audit: AuditLogPage, content: ContentSafetyPage }
+const TAB_COMPONENTS = { identity: IdentityProvidersPage, service: ServiceAccountsPage,
+                         audit: AuditLogPage, content: ContentSafetyPage }
 /** 从 tab 菜单的 path（/permissions?tab=key）解析组件映射 key */
 const tabKeyOf = p => {
   try { return new URLSearchParams(String(p || '').split('?')[1] || '').get('tab') } catch (e) { return null }
@@ -551,11 +568,6 @@ const menuTree = computed(() => {
   const prune = list => list.filter(hit).map(n => ({ ...n, children: n.children ? prune(n.children) : undefined }))
   return prune(tree)
 })
-const countText = computed(() =>
-  tab.value === 'menus' ? `${menus.value.length} 个菜单`
-    : tab.value === 'apis' ? `${filteredApis.value.length} 个接口`
-      : `${filteredRoles.value.length} 个角色`)
-
 const menuModal = ref(false)
 const menuForm = ref(blankMenu())
 function blankMenu () { return { id: '', parentId: undefined, name: '', icon: undefined, path: '', sort: 0, renderAs: 'sidebar' } }
@@ -817,6 +829,30 @@ const checkedPerms = ref([])
 const checkedMenuSet = computed(() => new Set(checkedMenuIds.value))
 const checkedPermSet = computed(() => new Set(checkedPerms.value))
 
+/**
+ * 排除规则（deny）：授权点编码 → exempt（1=只压本角色自己给的授权，0=压过其它角色与管理员级）。
+ * <p>画在授权点行尾而不是另开一棵树：一条能力只有一个出口，勾选=允许、行尾=禁止，
+ * 不用再回答「这两处哪一处说了算」。
+ */
+const denyMap = ref({})
+const deniedSet = computed(() => new Set(Object.keys(denyMap.value)))
+function toggleDeny (code) {
+  const next = { ...denyMap.value }
+  if (code in next) delete next[code]
+  else next[code] = 0
+  denyMap.value = next
+}
+function toggleExempt (code) {
+  if (!(code in denyMap.value)) return
+  denyMap.value = { ...denyMap.value, [code]: denyMap.value[code] ? 0 : 1 }
+}
+function groupDeniedCount (node) {
+  return (node.children || []).filter(c => deniedSet.value.has(c.key)).length
+}
+function deniesPayload () {
+  return Object.entries(denyMap.value).map(([permissionCode, exempt]) => ({ permissionCode, exempt }))
+}
+
 /** 菜单 id → 直属子菜单 id 列表 */
 const menuChildrenMap = computed(() => {
   const map = new Map()
@@ -938,6 +974,7 @@ async function openDrawer (role) {
   // 先清空再回显（抽屉 destroy-on-close，直接加载）
   checkedMenuIds.value = []
   checkedPerms.value = []
+  denyMap.value = {}
   drawerKeyword.value = ''
   try {
     // 菜单与授权点目录：从角色页签直接打开时可能还没加载过
@@ -949,6 +986,12 @@ async function openDrawer (role) {
     const validPerms = new Set(permCatalog.value.map(p => p.code))
     checkedMenuIds.value = ((d.menuIds) || []).filter(id => validMenus.has(id))
     checkedPerms.value = ((d.permissions) || []).filter(code => validPerms.has(code))
+    const dm = {}
+    for (const row of (d.denies || [])) {
+      if (!row || !validPerms.has(row.permissionCode)) continue
+      dm[row.permissionCode] = Number(row.exempt) === 1 ? 1 : 0
+    }
+    denyMap.value = dm
   } catch (e) { message.error(e.message || '加载角色权限失败') }
 }
 
@@ -964,7 +1007,8 @@ async function saveDrawer () {
   if (!role) return
   drawerSaving.value = true
   try {
-    const r = await saveRolePermissionPoints(role.code, checkedMenuIds.value, checkedPerms.value)
+    const r = await saveRolePermissionPoints(role.code, checkedMenuIds.value, checkedPerms.value,
+            deniesPayload())
     if (r.success) { message.success('权限已保存'); drawer.value = false }
     else message.error(r.msg || '保存失败')
   } catch (e) { message.error(e.message || '保存失败') }
@@ -1054,7 +1098,9 @@ watch(tab, t => {
 .rb-search { width: 240px; }
 .rb-search-ic { color: var(--app-text3); }
 .rb-filter { width: 140px; flex: none; }
-.rb-new { margin-left: auto; }
+/* 操作按钮成组贴右：逐颗挂 margin-left:auto 会把剩余空间平分给两颗，
+   于是一颗落在一排中间、一颗落在最右 */
+.rb-acts { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; flex: none; }
 .rb-inline { display: inline-flex; align-items: center; gap: 8px; }
 .rb-menu { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 .rb-menu-ic { color: var(--app-text3); font-size: 13px; }
@@ -1084,6 +1130,14 @@ watch(tab, t => {
 .tree-menu { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 .tree-count { font-size: 11px; color: var(--app-text3); }
 .tree-count.warn { color: #9a6700; background: #fff3d6; padding: 0 6px; border-radius: 999px; }
+/* 排除（deny）态：与「已授予」的勾选分开一套颜色，避免把勾和禁看成同一种动作 */
+.tree-count.deny { color: var(--app-danger, #c0392b); margin-left: 6px; }
+.rb-deny { margin-left: 8px; font-size: 11px; color: var(--app-text3); opacity: .55; }
+.rb-deny:hover { opacity: 1; }
+.rb-deny.on { color: var(--app-danger, #c0392b); opacity: 1; }
+.rb-deny-exempt { border: 1px solid var(--app-border); border-radius: 999px; padding: 0 6px; }
+.rb-deny-exempt.on { background: var(--app-warn-weak, #faf3e6); border-color: var(--app-warn-border, #f0dfb6); color: var(--app-warn-text, #a3691b); }
+
 .tree-api { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 .tree-shared { flex: none; font-size: 10px; line-height: 16px; padding: 0 6px; border-radius: 999px; color: var(--app-text3); border: 1px solid var(--app-border); }
 .gap-fill-btn { flex: none; }

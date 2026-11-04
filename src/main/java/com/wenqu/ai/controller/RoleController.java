@@ -105,15 +105,17 @@ public class RoleController {
         return ResultJson.ok("已删除");
     }
 
-    @Operation(summary = "角色的权限绑定", description = "返回该角色绑定的菜单 id、接口 id 与授权点集：{menuIds, apiIds, permissions}（权限配置页回显；管理员级角色 permissions/apiIds 恒空——判定时展开）")
+    @Operation(summary = "角色的权限绑定", description = "返回该角色绑定的菜单 id、授权点 allow 集与 deny 行：{menuIds, permissions, denies}（权限配置页回显；管理员级角色 permissions 恒空——判定时展开，deny 行照常回显）")
     @Permission("role:read")
     @GetMapping("/{code}/permissions")
     public ResultJson permissions(@PathVariable("code") String code) {
         Role r = roleService.get(code);
         if (r == null) return ResultJson.error("角色不存在");
-        return ResultJson.ok(Map.of("menuIds", roleService.menuIdsOf(code),
-                "apiIds", roleService.apiIdsOf(code),
-                "permissions", roleService.allowPermissionsOfRole(code)));
+        java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("menuIds", roleService.menuIdsOf(code));
+        out.put("permissions", roleService.allowPermissionsOfRole(code));
+        out.put("denies", roleService.denyRulesOfRole(code));
+        return ResultJson.ok(out);
     }
 
     @Operation(summary = "授权点目录", description = "全部授权点（module 分组展示用）；目录事实源在代码 @Permission 注解，扫描器启动时登记")
@@ -123,16 +125,13 @@ public class RoleController {
         return ResultJson.ok(roleService.permissionCatalog());
     }
 
-    @Operation(summary = "保存角色的权限绑定", description = "body: {menuIds:[...], permissions:[...]}（授权点粒度，A7 主路径；反向折算回接口绑定）或 {menuIds:[...], apiIds:[...]}（端点粒度，兼容窗口）。全量替换；管理员级角色无需绑定（天然全量）")
+    @Operation(summary = "保存角色的权限绑定", description = "body: {menuIds:[...], permissions:[...], denies?:[{permissionCode, exempt}]}（授权点粒度，唯一写入路径）。全量替换；管理员级角色无需 allow 绑定（判定时展开），deny 对管理员级同样生效")
     @Permission("role:manage")
     @PutMapping("/{code}/permissions")
     public ResultJson savePermissions(@PathVariable("code") String code, @RequestBody Map<String, Object> body) {
-        List<String> permissions = idList(body, "permissions");
-        if (permissions != null) {
-            roleService.savePermissionPoints(code, idList(body, "menuIds"), permissions);
-        } else {
-            roleService.savePermissions(code, idList(body, "menuIds"), idList(body, "apiIds"));
-        }
+        // deny 与 allow 一次提交、一个事务：分两次存会出现「收紧的那半没落上」的半态
+        roleService.savePermissionPoints(code, idList(body, "menuIds"),
+                idList(body, "permissions"), idMapList(body, "denies"));
         return ResultJson.ok("权限已保存");
     }
 
@@ -202,8 +201,7 @@ public class RoleController {
                 "uid", uid,
                 "roles", roles,
                 "permissions", eff.get("permissions"),
-                "globalDenies", eff.get("globalDenies"),
-                "mode", roleService.permissionMode()));
+                "globalDenies", eff.get("globalDenies")));
     }
 
     @Operation(summary = "角色的 deny 规则", description = "返回该角色的 deny 行：[{permissionCode, exempt}]（批次 B2；exempt=1 只在该角色内生效）")

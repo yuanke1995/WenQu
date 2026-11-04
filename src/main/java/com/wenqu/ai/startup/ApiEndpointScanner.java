@@ -50,11 +50,9 @@ import java.util.stream.Collectors;
  *       新登记接口自动归属；零归属的内置接口启动时幂等补齐（已有任一归属则不动，尊重管理员调整）。
  *       归属不参与鉴权，管理员可在权限页任意调整。</li>
  * </ul>
- * 登记完成后 {@link RoleService#invalidateApiPatterns()} 失效鉴权缓存。
+ * 登记完成后 {@link RoleService#invalidateEndpointCache()} 失效鉴权缓存。
  * 扫描失败仅告警不阻塞启动（fail-safe：鉴权按库内既有数据执行）。
- * <p>@Order(10)：晚于 RbacSeedRunner（角色/菜单先就位，默认菜单归属才有可挂的 id），
- * 早于 RbacPermissionMigrationRunner（存量 c_ai_role_api → c_ai_role_permission 折算
- * 依赖本扫描器写入的 permission_code）。
+ * <p>@Order(10)：晚于 RbacSeedRunner（角色/菜单先就位，默认菜单归属才有可挂的 id）。
  *
  * @author yuanke
  */
@@ -67,16 +65,8 @@ public class ApiEndpointScanner implements ApplicationRunner {
     private final ApiEndpointMapper apiEndpointMapper;
     private final MenuMapper menuMapper;
     private final MenuApiMapper menuApiMapper;
-    private final com.wenqu.ai.mapper.RoleApiMapper roleApiMapper;
     private final RoleService roleService;
     private final PermissionCatalogMapper permissionCatalogMapper;
-
-    /**
-     * 授权点标注强制开关（方案 A2/A.5）：true 时「未标注且非公开通道的端点」升级为启动 WARN 逐条列出。
-     * 默认 false——标注是按 Controller 分批推进的（附录 A），全部标完前不刷屏；标完后由发布配置打开。
-     */
-    @Value("${ai-app.rbac.require-annotation:false}")
-    private boolean requireAnnotation;
 
     /**
      * 模块汉化对照：Controller 类名（去 Controller 后缀）→ 中文模块名。
@@ -112,6 +102,7 @@ public class ApiEndpointScanner implements ApplicationRunner {
             Map.entry("Qa", "问答看板"),
             Map.entry("RetrievalDebug", "检索调试"),
             Map.entry("Role", "角色"),
+            Map.entry("ServiceAccount", "服务账号"),
             Map.entry("Sandbox", "沙盒"),
             Map.entry("Schedule", "任务调度"),
             Map.entry("ScheduledJob", "定时任务"),
@@ -157,6 +148,7 @@ public class ApiEndpointScanner implements ApplicationRunner {
             Map.entry("Qa", List.of("menu-dashboard")),
             Map.entry("RetrievalDebug", List.of("menu-evaluation")),
             Map.entry("Role", List.of("menu-permissions")),
+            Map.entry("ServiceAccount", List.of("menu-service-accounts", "menu-permissions")),
             Map.entry("Schedule", List.of("menu-agents-tab-scheduled")),
             Map.entry("ScheduledJob", List.of("menu-agents-tab-scheduled")),
             Map.entry("SearchIndex", List.of("menu-settings")),
@@ -185,14 +177,12 @@ public class ApiEndpointScanner implements ApplicationRunner {
                               ApiEndpointMapper apiEndpointMapper,
                               MenuMapper menuMapper,
                               MenuApiMapper menuApiMapper,
-                              com.wenqu.ai.mapper.RoleApiMapper roleApiMapper,
                               RoleService roleService,
                               PermissionCatalogMapper permissionCatalogMapper) {
         this.requestMappingHandlerMapping = requestMappingHandlerMapping;
         this.apiEndpointMapper = apiEndpointMapper;
         this.menuMapper = menuMapper;
         this.menuApiMapper = menuApiMapper;
-        this.roleApiMapper = roleApiMapper;
         this.roleService = roleService;
         this.permissionCatalogMapper = permissionCatalogMapper;
     }
@@ -332,7 +322,7 @@ public class ApiEndpointScanner implements ApplicationRunner {
             }
             remapped++;
         }
-        if (added > 0) roleService.invalidateApiPatterns();
+        if (added > 0) roleService.invalidateEndpointCache();
         if (backfilled > 0) log.info("[ApiScan] 默认菜单归属补齐：{} 个存量接口（此前零归属）", backfillMenus.size());
         if (remapped > 0) log.info("[ApiScan] Tab 拆分迁移：{} 个内置接口归属从 menu-agents 细化到对应 Tab 菜单", remapped);
         // 授权点（批次 A）：注解回写存量行 + 目录表登记。两者都幂等：注解未变则零写
@@ -359,15 +349,11 @@ public class ApiEndpointScanner implements ApplicationRunner {
         if (permUpdated > 0 || cataloged > 0) {
             log.info("[ApiScan] 授权点回写 {} 个端点，目录登记 {} 个新授权点", permUpdated, cataloged);
         }
-        // 标注覆盖自检（A.5）：受控端点未标注 → 汇总日志；require-annotation 打开后升级为逐条 WARN
+        // 标注覆盖自检：受控端点未标注 → WARN 逐条列出。判定侧对未标注端点只放管理员级，
+        // 所以漏标不会造成越权，但会让普通角色突然 403——启动日志必须点名。
         if (!unannotated.isEmpty()) {
-            if (requireAnnotation) {
-                log.warn("[ApiScan] 存在未标注 @Permission 的受控端点（{} 个，判定侧将按未授权点端点拒绝）：{} 等",
-                        unannotated.size(), unannotated.subList(0, Math.min(10, unannotated.size())));
-            } else {
-                log.info("[ApiScan] 未标注 @Permission 的受控端点：{} 个（ai-app.rbac.require-annotation=true 时升级为 WARN）",
-                        unannotated.size());
-            }
+            log.warn("[ApiScan] 存在未标注 @Permission 的受控端点（{} 个，非管理员角色将 403）：{}",
+                    unannotated.size(), unannotated);
         }
         // 已退役端点清理：本次扫描没再命中的**内置登记**行（builtin=1）说明控制器或方法已删。
         // 不删就是权限页上的僵尸条目——接口清单里还列着、角色还能勾，实际打过去 404。
@@ -378,12 +364,11 @@ public class ApiEndpointScanner implements ApplicationRunner {
             if (!isBuiltin(a)) continue;
             if (liveKeys.contains(a.getMethod().toUpperCase() + " " + a.getPath())) continue;
             menuApiMapper.unbindByApi(a.getId());
-            roleApiMapper.unbindByApi(a.getId());
             apiEndpointMapper.deleteById(a.getId());
             pruned++;
         }
         if (pruned > 0) {
-            roleService.invalidateApiPatterns();
+            roleService.invalidateEndpointCache();
             log.info("[ApiScan] 清理已退役端点：{} 个（扫描不再命中，行与菜单/角色归属一并删除）", pruned);
         }
         log.info("[ApiScan] 接口扫描完成：命中 {} 个端点，新登记 {} 个，默认菜单归属 {} 条", total, added, bound);

@@ -539,11 +539,11 @@ CREATE TABLE IF NOT EXISTS `c_ai_user_mcp` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='个人 MCP Server 表（替代原全局配置 mcp.servers）';
 
 -- ============================================
--- 2026-09-26: RBAC 权限管理（角色 / 菜单 / 接口）
+-- 2026-09-26: RBAC 权限管理（角色 / 菜单）
 -- 模型：c_ai_user.role 引用 c_ai_role.code（单角色）；
--- 角色（非管理员级）按 c_ai_role_menu 控制侧边栏菜单、按 c_ai_role_api 控制可调接口
--- （拦截器 AntPathMatcher 匹配 method+path，未绑定一律 403 fail-closed；
---   superadmin 与 admin_flag=1 的角色直通全部接口与菜单）。
+-- 角色（非管理员级）按 c_ai_role_menu 控制侧边栏菜单、按 c_ai_role_permission 控制可调授权点
+-- （授权点 → @Permission 标注的端点群；未绑定一律 403 fail-closed；
+--   superadmin 与 admin_flag=1 的角色展开为全量授权，仍受 deny 约束）。
 -- ============================================
 
 CREATE TABLE IF NOT EXISTS `c_ai_role` (
@@ -597,19 +597,6 @@ CREATE TABLE IF NOT EXISTS `c_ai_role_menu` (
     PRIMARY KEY (`tenant_id`, `role_code`, `menu_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='角色-菜单绑定（按租户）';
 
-CREATE TABLE IF NOT EXISTS `c_ai_role_api` (
-    `tenant_id` VARCHAR(32) NOT NULL DEFAULT 'default' COMMENT '租户ID（批次 F：跟随角色租户）',
-    `role_code` VARCHAR(50) NOT NULL COMMENT '角色编码（c_ai_role.code，租户内）',
-    `api_id`    VARCHAR(50) NOT NULL COMMENT '接口ID（c_ai_api.id）',
-    PRIMARY KEY (`tenant_id`, `role_code`, `api_id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='角色-接口绑定（按租户）';
-
--- ============================================
--- RBAC 升级（2026-11-03）：授权点层（docs/rbac-upgrade-plan.md 批次 A）
--- 授权判定从「角色 → HTTP 端点」升级为「角色 → 授权点 → 端点」；
--- 端点归属由 @Permission 注解声明、ApiEndpointScanner 启动时写入 c_ai_api.permission_code。
--- ============================================
-
 CREATE TABLE IF NOT EXISTS `c_ai_permission` (
     `code`        VARCHAR(50)  NOT NULL COMMENT '授权点编码（domain:action，如 kb:read / document:delete）',
     `name`        VARCHAR(100) NOT NULL COMMENT '授权点名称（展示用）',
@@ -630,6 +617,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_role_data_scope` (
 
 CREATE TABLE IF NOT EXISTS `c_ai_service_account` (
     `id`          VARCHAR(50)  NOT NULL COMMENT '主键（UUID）；角色绑定行用 svc:{id} 作为 uid 挂 c_ai_user_role',
+    `tenant_id`   VARCHAR(32)  NOT NULL DEFAULT 'default' COMMENT '归属租户（表身不参与行级过滤，令牌全局唯一；校验通过后按这一列装载租户上下文，角色绑定才看得见）',
     `name`        VARCHAR(100) NOT NULL COMMENT '名称（展示与审计可读）',
     `description` VARCHAR(255) DEFAULT NULL COMMENT '说明（用途/负责人）',
     `token_hash`  CHAR(64)     NOT NULL COMMENT '令牌 SHA-256（明文只在创建/轮换时返回一次）',
@@ -1291,6 +1279,10 @@ DROP TABLE IF EXISTS `c_ai_user_memory`;
 -- 不参与鉴权，按方案明确不退役。
 -- ============================================
 DROP TABLE IF EXISTS `c_ai_role_api`;
+
+-- 影子判定差异台账（c_ai_rbac_shadow_diff）随双跑机制一起退役：判定只剩授权点一条链路，
+-- 「两套结果不一致」这个概念本身不存在了，台账与它的读取端点一并删除。
+DROP TABLE IF EXISTS `c_ai_rbac_shadow_diff`;
 
 -- ============================================
 -- 退役配置键清理（2026-10：全框架化收口 + 死键盘点）
