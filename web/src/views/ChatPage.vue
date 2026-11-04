@@ -225,8 +225,8 @@
                         </span>
                         <span class="tl-ic-c"><down-outlined /></span>
                       </span>
-                      <span class="tl-cluster-label" :class="{ shimmer: clusterRunning(seg) }">
-                        {{ clusterLiveText(seg) || clusterTitle(seg) }}<template v-if="clusterRunning(seg) && runBoardText(m)"> · {{ runBoardText(m) }}</template>
+                      <span class="tl-cluster-label" :class="{ shimmer: clusterRunning(seg) || (m.loading && seg.grow) }">
+                        {{ clusterLiveText(m, seg) || clusterTitle(seg) }}<template v-if="clusterRunning(seg) && runBoardText(m)"> · {{ runBoardText(m) }}</template>
                       </span>
                     </button>
                     <!-- 帽体（DSH 的 .body 同参）：跑轮中自动开并贴底跟随最新一步、用户点开停顶部从头看；
@@ -779,6 +779,17 @@
         @paste="onComposerPaste" @keydown="onInputKeydown" @input="syncPanelQuery"
         @click="syncPanelQuery" @update:keys="onKeys" @chip-click="onChipClick" @ready="syncChips">
         <template #above>
+          <!-- 本机工作区：目录在你自己的电脑上。读写都在这个目录里，写回前还会再确认一次 -->
+          <div v-if="sessionWorkspace && sessionWorkspace.directoryMode === 'local'" class="local-ws-bar">
+            <FolderOpenOutlined class="lwb-ic" />
+            <span class="lwb-name">本机工作区：{{ sessionWorkspace.name }}</span>
+            <span v-if="localDirPerm === 'granted'" class="lwb-state">已授权 · 写回前会再让你确认</span>
+            <span v-else-if="localDirPerm === 'missing'" class="lwb-state warn">还没绑定目录</span>
+            <span v-else class="lwb-state warn">需要重新授权</span>
+            <button v-if="localDirPerm !== 'granted'" type="button" class="app-link-btn" @click="grantWorkspaceDir">
+              {{ localDirPerm === 'missing' ? '选择目录' : '授权' }}
+            </button>
+          </div>
           <!-- 附件/图片/技能/@ 引用/# 历史引用/计划模式全部内联进正文那一条流（见 chat/Composer.vue），
           这里不再各起一行 chip 轨；「引用只对本轮生效」这类说明收进 chip 的悬浮提示。 -->
           <!-- 任务清单：本会话最近一次 writeTodo 的整表快照。坐在输入框正上方、
@@ -1257,6 +1268,10 @@
         </template>
       </ChatInput>
       <input ref="attachInput" type="file" multiple style="display:none" @click.stop @change="onAttachChange" />
+      <!-- 本机文件夹：webkitdirectory 让用户在自己这台电脑上选一个目录，浏览器只把文件内容交出来，
+           不做任何写入（原文件不会被改）。整条通道复用附件管线，后端无需改动 -->
+      <input ref="folderInput" type="file" webkitdirectory directory multiple style="display:none"
+             @click.stop @change="onFolderChange" />
     </div>
 
     <!-- 左侧问题锚点轨：一条刻度 = 一轮提问。不常驻——鼠标进聊天区才淡入（离开即收）；
@@ -1688,9 +1703,9 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch, shallowRef, h } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { message } from 'ant-design-vue'
+import { message, Modal } from 'ant-design-vue'
 import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, CloseCircleOutlined, FileTextOutlined, DownloadOutlined, GlobalOutlined, ApiOutlined,
          ExclamationCircleOutlined, CopyOutlined, LikeOutlined, DislikeOutlined, MoreOutlined,
          DeleteOutlined, BugOutlined, EditOutlined, PlusOutlined, PaperClipOutlined, PauseCircleOutlined,
@@ -1755,6 +1770,8 @@ import { useChatSearch } from '../chat/useChatSearch'
 import Composer from '../chat/Composer.vue'
 import PlanCard from '../components/PlanCard.vue'
 import { splitAtts } from '../chat/attachments'
+import { SUPPORTED_EXTS, extOf } from '../chat/intake'
+import { loadLocalDirHandle, queryDirPermission, requestDirPermission, saveLocalDirHandle } from '../chat/localDir'
 // 正文浮层的共享状态：右栏来源联动（hoveredRef / 点角标定位）与灯箱开关要用
 import { openImages, previewUrl, openSource, hoveredRef } from '../chat/answerViewer'
 import { useApprovalRecovery } from '../chat/useApprovalRecovery'
@@ -2296,6 +2313,171 @@ const onAttachChange = e => {
   addFiles(files)
   closeAddPanel()
 }
+
+/** 本机文件夹：浏览器（webkitdirectory）只交出选中目录里的文件内容，原文件一律不写。
+ *  选完仍走附件管线（类型/体积/数量口径与「上传文件」完全一致），因此后端不需要任何改动。
+ *  目录里的杂项（依赖、构建产物、隐藏目录）先剔掉，免得 5 个名额全被 node_modules 吃掉。 */
+const FOLDER_PICK_MAX = 5
+const FOLDER_PICK_MAX_MB = 15
+const FOLDER_JUNK = new Set(['node_modules', '.git', 'dist', 'target', 'build', '.idea', '.venv', 'venv', '__pycache__'])
+const folderInput = ref(null)
+/** 已授权的本机目录（Chromium 的 File System Access API）：有了它才谈得上"写回"。
+ *  句柄只活在页面内存里，刷新即失效——写盘永远需要用户当场授权，这是浏览器定的。 */
+const localDir = shallowRef(null)
+const localWriting = ref(false)
+/** 目录权限：granted=可直接读写；prompt=要用户点一下重新授权；missing=这个工作区还没绑目录 */
+const localDirPerm = ref('')
+/** manual=本轮手选的目录；workspace=从「本机工作区」继承来的 */
+const localDirSource = ref('')
+const pickLocalFolder = async () => {
+  // 本机工作区已绑定目录：直接用那个目录，不再每次手选
+  if (localDirSource.value === 'workspace' && localDir.value?.handle) {
+    if (localDirPerm.value !== 'granted') { message.warning('先在本机工作区那一条上授权目录'); return }
+    await ingestDirHandle(localDir.value.handle)
+    return
+  }
+  if (window.showDirectoryPicker) {
+    let handle
+    try {
+      handle = await window.showDirectoryPicker({ id: 'wenqu-local-dir', mode: 'readwrite' })
+    } catch (e) {
+      return // 用户取消，什么也不做
+    }
+    localDir.value = { handle, name: handle.name }
+    await ingestDirHandle(handle)
+    return
+  }
+  folderInput.value?.click() // 不支持目录写权限的浏览器：退化成只读选择（走 input webkitdirectory）
+}
+/** 把已授权目录里有用的文件按相对路径挂进本轮（最多 5 个）；句柄留着给写回用 */
+const ingestDirHandle = async handle => {
+  const picked = []
+  let scanned = 0
+  const walk = async (dir, prefix, depth) => {
+    if (depth > 3 || scanned > 400 || picked.length >= FOLDER_PICK_MAX) return
+    for await (const [name, hnd] of dir.entries()) {
+      if (picked.length >= FOLDER_PICK_MAX || scanned > 400) return
+      if (FOLDER_JUNK.has(name)) continue
+      const rel = prefix ? prefix + '/' + name : name
+      if (hnd.kind === 'directory') { await walk(hnd, rel, depth + 1); continue }
+      scanned++
+      if (!SUPPORTED_EXTS.includes(extOf(name))) continue
+      const f = await hnd.getFile()
+      if (f.size > FOLDER_PICK_MAX_MB * 1024 * 1024) continue
+      picked.push(new File([f], rel, { type: f.type || 'text/plain', lastModified: f.lastModified }))
+    }
+  }
+  await walk(handle, '', 0)
+  if (!picked.length) {
+    message.warning(`「${handle.name}」里没有可发送的文件（只收文本/代码/Office/PDF，最多 ${FOLDER_PICK_MAX} 个）`)
+    return
+  }
+  addFiles(picked)
+  closeAddPanel()
+  message.success(`已授权本机目录「${handle.name}」：加入 ${picked.length} 个文件；模型要改文件时，确认后写回这个目录`)
+}
+/** 写回约定：模型在回答末尾为每个要改的文件写一段「单独一行 wenqu-write:相对路径，随后是完整新内容」，
+ *  代码块包不包都认。页面在用户点确认后写盘；服务器始终只拿到"要写什么"，落盘发生在浏览器，
+ *  能写到哪由浏览器对已授权目录的把关决定。 */
+const parseWrites = txt => {
+  const out = []
+  let cur = null
+  const flush = () => {
+    if (!cur) return
+    while (cur.lines.length && !cur.lines[0].trim()) cur.lines.shift()
+    while (cur.lines.length && !cur.lines[cur.lines.length - 1].trim()) cur.lines.pop()
+    if (cur.path) out.push({ path: cur.path, content: cur.lines.join('\n') })
+    cur = null
+  }
+  for (const raw of String(txt || '').split('\n')) {
+    const line = raw.trim()
+    const head = /^wenqu-write:\s*(.+?)\s*$/.exec(line)
+    if (head) { flush(); cur = { path: head[1], lines: [] }; continue }
+    if (!cur) continue
+    // 围栏只在已有内容时才算结束：模型常把开场 ``` 写在标记之后，按"空块收尾"处理会把正文丢光
+    if (line === '```') { if (cur.lines.some(l => l.trim())) flush(); continue }
+    cur.lines.push(raw)
+  }
+  flush()
+  // 空内容一律不写：那多半是解析没对上，真写下去就是清空用户文件
+  return out.filter(w => w.path && w.content.trim())
+}
+const writeInstruction = () => `\n\n[本机目录已授权：${localDir.value.name}（可读写）。本轮附件名就是该目录下的相对路径，内容已在上下文里；不要在沙盒里找这些文件，也不要用 shell 去改它们。要改文件时，在回答最后为每个文件写一段：单独一行 wenqu-write:相对路径，紧接着是该文件的完整新内容（用三反引号包起来更清楚）。我确认后由页面写回本机。]`
+const applyLocalWrites = async writes => {
+  const root = localDir.value?.handle
+  if (!root) return
+  localWriting.value = true
+  try {
+    for (const w of writes) {
+      const parts = w.path.split('/').filter(p => p && p !== '.' && p !== '..')
+      if (!parts.length) continue
+      let dir = root
+      for (const seg of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(seg, { create: true })
+      const fh = await dir.getFileHandle(parts[parts.length - 1], { create: true })
+      const stream = await fh.createWritable()
+      await stream.write(w.content)
+      await stream.close()
+    }
+    message.success(`已写回本机 ${writes.length} 个文件：${writes.map(w => w.path).join('、')}`)
+  } catch (e) {
+    message.error('写回失败：' + (e && e.message ? e.message : e))
+  } finally {
+    localWriting.value = false
+  }
+}
+const confirmLocalWrites = writes => {
+  Modal.confirm({
+    title: `写回本机目录「${localDir.value.name}」？`,
+    width: 620,
+    okText: '写入',
+    cancelText: '取消',
+    content: h('div', { class: 'local-write-confirm' }, [
+      h('p', { style: 'margin:0 0 8px' }, `以下 ${writes.length} 个文件将被覆盖/新建（只在这个目录内）：`),
+      ...writes.map(w => h('div', { style: 'margin:6px 0;padding:8px;border:1px solid #eee;border-radius:6px' }, [
+        h('div', { style: 'font-weight:600' }, w.path),
+        h('pre', { style: 'margin:4px 0 0;max-height:120px;overflow:auto;font-size:12px;white-space:pre-wrap' },
+          w.content.slice(0, 600) + (w.content.length > 600 ? '\n…' : ''))
+      ]))
+    ]),
+    onOk: () => applyLocalWrites(writes)
+  })
+}
+const onFolderChange = e => {
+  const picked = []
+  let skippedJunk = 0
+  let skippedType = 0
+  let skippedSize = 0
+  const all = Array.from(e.target.files || [])
+  e.target.value = ''
+  if (!all.length) return
+  const sorted = all
+    .filter(f => {
+      const rel = f.webkitRelativePath || f.name
+      if (rel.split('/').some(p => FOLDER_JUNK.has(p))) { skippedJunk++; return false }
+      return true
+    })
+    .sort((a, b) => (a.webkitRelativePath || a.name).localeCompare(b.webkitRelativePath || b.name))
+  for (const f of sorted) {
+    if (picked.length >= FOLDER_PICK_MAX) break
+    const rel = f.webkitRelativePath || f.name
+    if (!SUPPORTED_EXTS.includes(extOf(rel))) { skippedType++; continue }
+    if (f.size > FOLDER_PICK_MAX_MB * 1024 * 1024) { skippedSize++; continue }
+    // 名字用相对路径，模型才知道文件在目录里的哪一层
+    picked.push(new File([f], rel, { type: f.type || 'text/plain', lastModified: f.lastModified }))
+  }
+  const notes = []
+  if (skippedType) notes.push(`${skippedType} 个类型不支持`)
+  if (skippedSize) notes.push(`${skippedSize} 个超过 ${FOLDER_PICK_MAX_MB}MB`)
+  const rest = sorted.length - picked.length - skippedType - skippedSize
+  if (rest > 0) notes.push(`${rest} 个超出 ${FOLDER_PICK_MAX} 个上限`)
+  if (!picked.length) {
+    message.warning('这个文件夹里没有可发送的文件' + (notes.length ? `（跳过：${notes.join('、')}）` : ''))
+    return
+  }
+  addFiles(picked)
+  closeAddPanel()
+  message.success(`已从本机文件夹加入 ${picked.length} 个文件` + (notes.length ? `，跳过：${notes.join('、')}` : ''))
+}
 /** 敲 @ 唤起「+」面板并停在「引用」页：不再有独立的 @ 弹窗，两个入口同一块面板。
  *  与点「+」进来的差别只在筛选词从哪来——这里由 syncPanelQuery 实时取正文里「@ 到光标」那一段。
  *  只能逐个关其它面板：调用点（onInputKeydown）刚把 @ 的位置记进 panelTriggerPos/Ch，
@@ -2624,6 +2806,9 @@ const addRootRows = computed(() => {
       desc: edit ? '文件读出正文供模型看，图片压缩后随这一问重发；也可直接粘贴进来（各最多 5 个）'
                  : '也可直接粘贴或拖进来：文件读出正文供模型看，图片压缩后随本轮提问（各最多 5 个）',
       badge: () => s.files.value.length + s.images.value.length, run: () => s.pickFiles() },
+    ...(!edit ? [{ key: 'folder', name: '本机文件夹', icon: FolderOpenOutlined,
+      desc: `从这台电脑选一个文件夹，挑最多 ${FOLDER_PICK_MAX} 个文件随本轮发送；只读，原文件不会被改动`,
+      badge: () => 0, run: () => pickLocalFolder() }] : []),
     { key: 'ref', name: '引用资料', icon: BookOutlined, kbd: edit ? '' : '@',
       desc: `知识库 / 文档 / 智能体 / 技能，只对${scope}生效`,
       badge: () => s.mentions.value.length + s.skills.value.length, run: () => switchAddTab('ref') },
@@ -2876,6 +3061,8 @@ const sendNow = async (steerNow = false) => {
   }
   // 目标创建中：这一下是重复触发（连按 Enter / 发送键），不落到普通发送
   if (goalStarting.value) return
+  // 授权过本机目录才附写入约定：写回要用户确认，这里只是告诉模型"你可以改这些文件"
+  if (localDir.value && String(text.value || '').trim()) text.value = String(text.value).trimEnd() + writeInstruction()
   closeAddPanel(); send(steerNow ? { steerNow: true } : {})
 }
 
@@ -3674,6 +3861,12 @@ const newChatInWs = () => {
 
 watch(currentSessionId, async sid => {
   sessionWorkspace.value = null
+  // 手选的目录只属于刚才那个会话：换会话就摘掉，别把 A 会话的授权带进 B
+  if (localDirSource.value === 'manual') {
+    localDir.value = null
+    localDirPerm.value = ''
+    localDirSource.value = ''
+  }
   if (!sid) return
   try {
     const r = await getSessionWorkspace(sid)
@@ -3682,6 +3875,54 @@ watch(currentSessionId, async sid => {
     sessionWorkspace.value = null   // 标识是增强信息：取不到不打扰聊天
   }
 }, { immediate: true })
+
+// 本机工作区：工作区类型是 local 时，把浏览器里保存的目录句柄接上。
+// 句柄存得住不等于有权限——权限掉了就挂一条提示等用户点一下（重新授权必须在点击事件里发起）。
+watch(sessionWorkspace, async ws => {
+  if (localDirSource.value === 'manual') return
+  if (!ws || ws.directoryMode !== 'local') {
+    if (localDirSource.value === 'workspace') {
+      localDir.value = null
+      localDirPerm.value = ''
+      localDirSource.value = ''
+    }
+    return
+  }
+  localDirSource.value = 'workspace'
+  const handle = await loadLocalDirHandle(ws.projectId)
+  if (!handle) {
+    localDir.value = null
+    localDirPerm.value = 'missing'
+    return
+  }
+  localDir.value = { handle, name: handle.name || ws.name, projectId: ws.projectId }
+  localDirPerm.value = await queryDirPermission(handle)
+}, { immediate: true })
+
+/** 点一下授权本机工作区的目录（首次选目录，之后只补权限） */
+const grantWorkspaceDir = async () => {
+  const ws = sessionWorkspace.value
+  if (!ws || ws.directoryMode !== 'local') return
+  if (!window.showDirectoryPicker) {
+    message.warning('当前浏览器不支持选择本机目录，请用 Chrome / Edge')
+    return
+  }
+  let handle = localDir.value?.handle
+  if (!handle) {
+    try {
+      handle = await window.showDirectoryPicker({ id: 'wenqu-workspace-dir', mode: 'readwrite' })
+    } catch (e) {
+      return // 用户取消
+    }
+    await saveLocalDirHandle(ws.projectId, handle).catch(() => {})
+    localDir.value = { handle, name: handle.name, projectId: ws.projectId }
+    localDirSource.value = 'workspace'
+  }
+  const perm = await requestDirPermission(handle)
+  localDirPerm.value = perm
+  if (perm === 'granted') message.success(`已授权本机目录「${handle.name}」`)
+  else message.warning('没有拿到目录权限，写回不会生效')
+}
 
 // ==================== 输入框内联 chip（正文与引用同一条流） ====================
 // 两条单向通道，避免双向对账打转：
@@ -4140,6 +4381,27 @@ watch(messages, () => {
   if (editingIdx.value == null) return
   if ((messages.value[editingIdx.value] || {}).messageId !== editingMessageId.value) cancelEdit()
 })
+// 本机目录写回：一轮结束（loading 落回 false）后扫一次正文末尾的写入块。
+// 不监听消息对象：气泡内容是普通字段，流式增量不会触发；而 loading 是引擎里真会翻转的那个信号。
+let lastWriteScanKey = ''
+const scanLocalWrites = () => {
+  if (!localDir.value) return true
+  const m = messages.value[messages.value.length - 1]
+  if (!m || (m.role !== 'assistant' && m.role !== 'ai') || m.loading) return false   // 气泡还没收尾：交给下一拍再试
+  const txt = m.content || ''
+  const key = (m.messageId || '') + '|' + txt.length
+  if (key === lastWriteScanKey) return true
+  lastWriteScanKey = key
+  const writes = parseWrites(txt)
+  if (writes.length) confirmLocalWrites(writes)
+  return true
+}
+/** loading 落回 false 后，气泡收尾可能还慢一拍：连试几次，别只在下一 tick 赌一次 */
+const scheduleLocalWriteScan = (tries = 0) => {
+  if (scanLocalWrites() || tries >= 8) return
+  setTimeout(() => scheduleLocalWriteScan(tries + 1), 300)
+}
+watch(loading, v => { if (!v) nextTick(() => scheduleLocalWriteScan()) })
 // Mermaid/ECharts 图表的补画已随正文下沉到 AnswerBody（每个 .md 容器画自己那份）：
 // 流式期间也画——echarts 半截 JSON 有截断探测兜底（pending→补全自愈），mermaid 落
 // 「接收中」提示等流结束补画，节流与流结束边沿的处理都在 AnswerBody 的 watch 里。
@@ -5475,6 +5737,15 @@ onMounted(async () => {
    在 Surface 之类「(pointer:coarse) 与 (hover:hover) 同时成立」的设备上，
    按钮会被渲染出来又被这条 CSS 藏掉，而 hover 通路已被 onModelOptionHover
    的 isCoarse 早退堵死 —— 深度思考入口彻底消失。判据必须只有 isCoarse 一个。 */
+/* 本机工作区提示条：坐在输入框上方，说明这轮的文件在用户电脑上、写回要确认 */
+.local-ws-bar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; margin-bottom: 6px;
+  font-size: 12px; color: var(--app-text2); background: var(--app-surface2, rgba(0,0,0,.03));
+  border: 1px solid var(--app-border, rgba(0,0,0,.08)); border-radius: 8px; }
+.local-ws-bar .lwb-ic { color: var(--app-accent); }
+.local-ws-bar .lwb-name { font-weight: 600; color: var(--app-text1); }
+.local-ws-bar .lwb-state { color: var(--app-text3); }
+.local-ws-bar .lwb-state.warn { color: #c67a00; }
+
 /* 无障碍：系统开启「减少动态效果」时不播 sheet 上滑 */
 @media (prefers-reduced-motion: reduce) {
   .right-panel.as-sheet, .mention-panel, .think-float, .ctxcap-float { animation: none; }

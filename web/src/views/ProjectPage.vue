@@ -4,6 +4,9 @@
       <!-- 名字只在这一处编辑：点「改名」就地换，不再单开一行输入框（此前标题/输入框/删除弹窗三份名字） -->
       <h1 v-if="!nameEditing" class="app-page-title pj-title">
         {{ displayName }}
+        <span v-if="!isImplicit" class="app-pill muted pj-state" :title="form.directoryMode === 'local' ? '目录在你这台电脑上，读写都要你授权' : '目录在服务器的沙盒里'">
+          {{ form.directoryMode === 'local' ? '本机目录' : '服务器目录' }}
+        </span>
         <span v-if="isArchived" class="app-pill muted pj-state">已归档</span>
         <button class="pj-pen" type="button" @click="startRename">改名</button>
       </h1>
@@ -1585,6 +1588,7 @@ const load = async () => {
       instructions: keepDraft ? draft : (p.instructions || ''),
       defaultAgentId: p.defaultAgentId || undefined,
       workdirPath: p.workdirPath || '',
+      directoryMode: p.directoryMode || 'managed',
       status: p.status || 'active',
       kbIds: Array.isArray(p.kbIds) ? [...p.kbIds] : [],
       sharedWorkdir: p.sharedWorkdir || 0,

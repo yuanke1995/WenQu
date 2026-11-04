@@ -139,6 +139,19 @@
         <a-input v-model:value="createName" :maxlength="60" placeholder="工作区名，例如：考勤系统改造"
                  @press-enter="doCreateProject" />
         <div class="pj-modal-hint">一个工作区就是一个工作目录加一份约定：之后的对话、文件与产物都归到它名下。</div>
+        <div class="pj-mode-row">
+          <span class="pj-mode-label">目录位置</span>
+          <a-radio-group v-model:value="createMode" size="small">
+            <a-radio-button value="managed">服务器目录</a-radio-button>
+            <a-radio-button value="local">本机目录</a-radio-button>
+          </a-radio-group>
+        </div>
+        <div v-if="createMode === 'local'" class="pj-modal-hint">
+          <button type="button" class="app-link-btn" @click="pickCreateDir">
+            {{ createDirName ? '已选：' + createDirName + '（点击更换）' : '选择这台电脑上的目录…' }}
+          </button>
+          <span class="pj-mode-tail">文件只在你授权的这个目录里读写，服务器不保存副本。</span>
+        </div>
       </a-modal>
 
       <!-- 工作区重命名：用页内弹窗而不是 Modal.confirm（后者没有输入框） -->
@@ -476,6 +489,7 @@ import { deleteSessionApi, logoutApi, renameSessionApi, pinSession, favoriteSess
          updateProject, deleteProject, createProject, setProjectStatus,
          listProjects, moveSessionProject } from '../api'
 import { useNotifications, notifIcon, notifClass, notifTime } from '../chat/useNotifications'
+import { saveLocalDirHandle } from '../chat/localDir'
 import { themeState, toggleTheme } from '../utils/theme'
 import { authUser, ensureAuth, isAdminSync, clearAuth } from '../utils/auth'
 import { chatDone, chatReady, defaultReady, embeddingReady, pendingCount, refreshSetupGuide, setupGuide,
@@ -1151,6 +1165,24 @@ const searchKw = ref('')
 // 界面上只叫「工作区」。新建 / 重命名 / 归档 / 删除都在各自的 ⋯ 菜单里，不再做一个全局下拉。
 const createOpen = ref(false)
 const createName = ref('')
+/** 新工作区的目录位置：managed=服务器托管（默认）；local=用户电脑上的目录（句柄只存浏览器） */
+const createMode = ref('managed')
+const createDirHandle = ref(null)
+const createDirName = ref('')
+const pickCreateDir = async () => {
+  if (!window.showDirectoryPicker) {
+    message.warning('当前浏览器不支持选择本机目录，请用 Chrome / Edge')
+    return
+  }
+  try {
+    const handle = await window.showDirectoryPicker({ id: 'wenqu-workspace-dir', mode: 'readwrite' })
+    createDirHandle.value = handle
+    createDirName.value = handle.name
+    if (!(createName.value || '').trim()) createName.value = handle.name
+  } catch (e) {
+    // 用户取消：保持原选择
+  }
+}
 const createSaving = ref(false)
 const renameOpen = ref(false)
 const renameTarget = ref(null)
@@ -1217,10 +1249,22 @@ const doCreateProject = async () => {
     message.warning('请填写工作区名')
     return
   }
+  if (createMode.value === 'local' && !createDirHandle.value) {
+    message.warning('本机目录工作区要先选择目录')
+    return
+  }
   createSaving.value = true
   try {
-    const r = await createProject(name)
+    const r = await createProject(name, undefined, createMode.value === 'local' ? 'local' : 'managed')
     const created = (r && r.data && r.data.id) || ''
+    // 句柄只存在浏览器（IndexedDB），服务器只记「这是本机工作区」；存不上就当场说清，别让人以为已经绑好
+    if (created && createMode.value === 'local') {
+      try {
+        await saveLocalDirHandle(created, createDirHandle.value)
+      } catch (e) {
+        message.warning('工作区已建，但目录授权没能保存：' + (e.message || '请重新授权'))
+      }
+    }
     createOpen.value = false
     message.success('工作区已创建')
     await loadSessions(undefined, { refreshProjects: true })
@@ -1233,6 +1277,9 @@ const doCreateProject = async () => {
     message.error('创建失败：' + (e.message || '请重试'))
   } finally {
     createSaving.value = false
+    createMode.value = 'managed'
+    createDirHandle.value = null
+    createDirName.value = ''
   }
 }
 
@@ -1973,4 +2020,8 @@ watch(() => route.fullPath, () => {
 .notif-popover .notif-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--app-accent); margin-left: 6px; vertical-align: middle; }
 .notif-popover .notif-content { font-size: 12px; color: var(--app-text2); line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: break-all; }
 .notif-popover .notif-time { font-size: 11px; color: var(--app-text3); }
+/* 新建工作区：目录位置选择（服务器 / 本机） */
+.pj-mode-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+.pj-mode-label { font-size: 12px; color: var(--app-text2); white-space: nowrap; }
+.pj-mode-tail { margin-left: 8px; color: var(--app-text3); }
 </style>

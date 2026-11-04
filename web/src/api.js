@@ -546,8 +546,8 @@ export const listArtifacts = (keyword, projectId) => {
 // 我的工作区容器（implicit 兜底容器在前，前端会过滤掉）；首次调用会懒创建 implicit 行
 export const listProjects = () => request('/project/list')
 // fromProjectId 可选：从本人另一个工作区复制设置（约定/资料域/共用目录/记忆隔离），会话与文件不带
-export const createProject = (name, fromProjectId) =>
-  said(request('/project', { method: 'POST', body: JSON.stringify({ name, fromProjectId }) }), { k: 'spaces' })
+export const createProject = (name, fromProjectId, directoryMode) =>
+  said(request('/project', { method: 'POST', body: JSON.stringify({ name, fromProjectId, directoryMode }) }), { k: 'spaces' })
 /** 约定留痕（被替换掉的旧版，倒序最多 20 条）；恢复=把旧值走 updateProject 存回约定 */
 export const listInstructionHistory = id => request(`/project/${id}/instruction-history`)
 // 删除工作区：只摘归属，其下会话与产物仍然保留（后端语义）

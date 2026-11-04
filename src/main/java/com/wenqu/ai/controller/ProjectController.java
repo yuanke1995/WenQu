@@ -93,6 +93,8 @@ public class ProjectController {
         m.put("memoryIsolated", p.getMemoryIsolated() == null ? 0 : p.getMemoryIsolated());
         m.put("isImplicit", Project.SELECTION_IMPLICIT.equals(p.getSelectionStatus()));
         m.put("workdirPath", p.getWorkdirPath());
+        // managed=目录在服务器（沙盒挂载）；local=目录在用户自己的电脑（句柄只在浏览器，服务器不碰）
+        m.put("directoryMode", p.getDirectoryMode() == null ? Project.MODE_MANAGED : p.getDirectoryMode());
         m.put("createTime", p.getCreateTime() == null ? null : p.getCreateTime().toString());
         return m;
     }
@@ -413,20 +415,23 @@ public class ProjectController {
 
     @Operation(summary = "新建工作区",
             description = "用户显式创建一个工作区。fromProjectId 可选：从本人另一个工作区复制设置"
-                    + "（约定/绑定资料域/共用目录/记忆隔离），会话与文件一概不带。implicit 兜底容器不用建、也不可删")
+                    + "（约定/绑定资料域/共用目录/记忆隔离），会话与文件一概不带。"
+                    + "directoryMode：managed=目录在服务器（默认）；local=本机工作区，目录在用户电脑上，"
+                    + "服务器只记类型与名字，句柄由浏览器保存。implicit 兜底容器不用建、也不可删")
     @Permission("project:write")
     @PostMapping
     public ResultJson create(@RequestBody CreateReq req) {
         try {
             Project p = projectService.create(RequestUser.uid(),
-                    req == null ? null : req.name(), req == null ? null : req.fromProjectId());
+                    req == null ? null : req.name(), req == null ? null : req.fromProjectId(),
+                    req == null ? null : req.directoryMode());
             return ResultJson.ok(toDto(p), "已创建");
         } catch (IllegalArgumentException e) {
             return ResultJson.error(400, e.getMessage());
         }
     }
 
-    public record CreateReq(String name, String fromProjectId) {
+    public record CreateReq(String name, String fromProjectId, String directoryMode) {
     }
 
     @Operation(summary = "约定留痕",

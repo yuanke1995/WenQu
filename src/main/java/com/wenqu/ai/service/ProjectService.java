@@ -259,6 +259,17 @@ public class ProjectService {
      * @throws IllegalArgumentException 名字非法或模板工作区不存在/不属于该用户
      */
     public Project create(String uid, String name, String fromProjectId) {
+        return create(uid, name, fromProjectId, null);
+    }
+
+    /**
+     * 新建工作区。
+     *
+     * @param directoryMode {@code managed}=服务器托管目录（默认）；{@code local}=本机工作区，
+     *                      目录在用户电脑上，句柄只在浏览器里，服务器只记类型与名字。
+     *                      传空 = 沿用托管；其它值一律拒绝（目录模式决定"文件在哪"，不能写错）
+     */
+    public Project create(String uid, String name, String fromProjectId, String directoryMode) {
         if (uid == null || uid.isBlank() || com.wenqu.ai.util.RequestUser.SYSTEM.equals(uid)) {
             throw new IllegalArgumentException("请先登录后再新建工作区");
         }
@@ -268,6 +279,11 @@ public class ProjectService {
         }
         if (trimmed.length() > MAX_NAME_LEN) {
             throw new IllegalArgumentException("工作区名过长（最多 " + MAX_NAME_LEN + " 字）");
+        }
+        String mode = directoryMode == null || directoryMode.isBlank()
+                ? Project.MODE_MANAGED : directoryMode.trim();
+        if (!Project.MODE_MANAGED.equals(mode) && !Project.MODE_LOCAL.equals(mode)) {
+            throw new IllegalArgumentException("未知的工作区类型：" + mode);
         }
         Project tpl = null;
         if (fromProjectId != null && !fromProjectId.isBlank()) {
@@ -279,7 +295,7 @@ public class ProjectService {
         p.setUid(uid);
         p.setName(trimmed);
         p.setSelectionStatus(Project.SELECTION_SELECTABLE);
-        p.setDirectoryMode(Project.MODE_MANAGED);
+        p.setDirectoryMode(mode);
         p.setStatus(Project.STATUS_ACTIVE);
         // 新建工作区默认共用目录：工作区的核心承诺就是「传进来的材料这个场子里的对话都看得见」，
         // 默认关等于每个新场子都要先撞一次「模型说查无此文件」。不想要的场子在设置里一键关回会话级

@@ -129,6 +129,13 @@ public class Project {
 
     public static final String MODE_MANAGED = "managed";
 
+    /**
+     * 本机工作区：目录在用户自己的电脑上，不在服务器。
+     * <p>服务器只记「这是一个本机工作区」与它的展示名；真正的目录句柄只存在于浏览器（File System
+     * Access API），读写都由浏览器在用户授权的那个目录内完成——服务器既不挂载也碰不到这些文件。
+     */
+    public static final String MODE_LOCAL = "local";
+
     /** implicit 容器的幂等键固定值：{@code (uid, idempotency_key)} 唯一索引保证每人只有一行 */
     public static final String IMPLICIT_IDEMPOTENCY_KEY = "__implicit__";
 
