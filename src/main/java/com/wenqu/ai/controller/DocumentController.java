@@ -207,6 +207,27 @@ public class DocumentController {
         return ResultJson.ok(documentService.queueStats(kbId), "解析队列状态");
     }
 
+    @Operation(summary = "作废（终态失败）解析任务清单", description = "文档管理页「作废」胶囊下钻：列出已终态失败（status=4）的解析任务，"
+            + "含文档名（文档已删则为 null）、失败原因、完成时间；kbId 不传=全平台，传则只列该库（默认库并上 kb_id 为空的历史任务）")
+    @Permission("document:read")
+    @GetMapping("/queue/dead")
+    public ResultJson deadTasks(@Parameter(description = "知识库 ID（可选）") @RequestParam(value = "kbId", required = false) String kbId) {
+        return ResultJson.ok(documentService.deadTasks(kbId), "作废任务清单");
+    }
+
+    @Operation(summary = "删除一条解析任务", description = "清理已无意义的作废/孤儿解析任务行（如源文件缺失、文档已入库却残留的过期失败记录）。"
+            + "仅删任务行，不碰文档内容与向量；文档还在时仍优先用「重解析」。仅能删终态失败（status=4）的任务")
+    @Permission("document:write")
+    @DeleteMapping("/queue/task/{taskId}")
+    public ResultJson deleteTask(
+            @Parameter(description = "解析任务 ID") @PathVariable("taskId") String taskId) {
+        // 文档还在则校验管理权；文档已删（孤儿任务）仅凭证 document:write 即放行清理
+        var doc = documentService.getDocByTask(taskId);
+        if (doc != null) requireDocManage(doc);
+        int n = documentService.deleteParseTask(taskId);
+        return ResultJson.ok(n, n > 0 ? "已删除任务" : "任务不存在");
+    }
+
     @Operation(summary = "文档列表", description = "获取文档列表（含解析状态、分块数、文件大小等）；"
             + "kbId 传知识库 ID 时只返回该库文档（默认库含 kb_id 为空的历史文档），不传返回全部；"
             + "普通用户仅返回自己创建的、默认库及其中文档")

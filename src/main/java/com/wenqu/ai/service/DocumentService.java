@@ -2222,8 +2222,8 @@ public class DocumentService {
         documentMetaCache.invalidate(docId);
         updateProgress(docId, 0, "重新解析中（已入队）");
 
-        // 作废同一文档上未结束的旧任务，避免两个任务抢跑同一文档（runParseTask 侧也有 lease 保护）
-        parseQueue.killActiveByDoc(docId);
+        // 清掉该文档全部既有任务（含作废/孤儿行），随后 enqueue 一条新任务——保证同一文档只有一条有效任务
+        parseQueue.purgeByDoc(docId);
         // 登记驱动：手动重解析优先级高于自动排队（priority=1）
         parseQueue.enqueue(docId, doc.getKbId(), 1);
     }
@@ -2317,6 +2317,37 @@ public class DocumentService {
     }
 
     /**
+     * 终态失败（作废）解析任务清单：文档管理页「作废」胶囊下钻用。
+     * 默认库口径与 {@link #list(String)} 一致：并上 kb_id 为空的历史任务。
+     */
+    public List<Map<String, Object>> deadTasks(String kbId) {
+        if (kbId == null || kbId.isBlank()) return parseQueue.deadTasks(null, false);
+        com.wenqu.ai.model.KnowledgeBase kb = kbMapper.selectById(kbId);
+        boolean includeNullKb = kb != null && Integer.valueOf(1).equals(kb.getIsDefault());
+        return parseQueue.deadTasks(kbId, includeNullKb);
+    }
+
+    /** 删除一条作废/孤儿解析任务行（清理界面上「作废」计数里已无意义的记录） */
+    public int deleteParseTask(String taskId) {
+        return parseQueue.deleteTask(taskId);
+    }
+
+    /**
+     * 按解析任务 ID 取所属文档（删除任务前校验管理权用）：任务行可能对应已删文档，
+     * 此时返回 null，调用方据此放行「孤儿任务清理」。
+     */
+    public AiDocument getDocByTask(String taskId) {
+        try {
+            String docId = parseQueue.getTaskDocId(taskId);
+            if (docId == null) return null;
+            return documentMapper.selectById(docId);
+        } catch (Exception e) {
+            log.warn("[DOC] 按任务查文档失败 task={}: {}", taskId, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
      * 同名复用目标：查同名文档（status 0/2/3，弃用记录保留），优先复用最近一条 status 0（生效）、其次 status 3（失败）的，
      * 其余同名文档（含正在解析 status=2 的旧任务）删除，保持"替换"语义。无可复用返回 null。
      */
@@ -2387,7 +2418,7 @@ public class DocumentService {
             updateProgress(docId, 0, "已提交,等待解析");
 
             // 登记驱动：入队一行任务即返回（解析由扫描器抢占执行，不再受线程池容量影响）
-            parseQueue.killActiveByDoc(docId);
+            parseQueue.purgeByDoc(docId);
             parseQueue.enqueue(docId, existing.getKbId(), 0);
             submitted = true;
             return existing;

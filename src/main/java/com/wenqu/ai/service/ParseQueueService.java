@@ -139,13 +139,44 @@ public class ParseQueueService {
         return task.getId();
     }
 
-    /** 作废同一文档上未结束的旧任务（重解析时避免同一文档两个任务抢跑） */
-    public void killActiveByDoc(String docId) {
+    /** 重解析/重新上传前清掉该文档的全部既有任务行（含作废/孤儿行），由调用方随后 enqueue 一条新任务 */
+    public void purgeByDoc(String docId) {
         try {
-            int n = parseTaskMapper.killActiveByDoc(docId);
-            if (n > 0) log.info("[PARSE-QUEUE] 已作废 doc={} 的 {} 个未结束任务", docId, n);
+            int n = parseTaskMapper.purgeByDoc(docId);
+            if (n > 0) log.info("[PARSE-QUEUE] 已清理 doc={} 的 {} 条既有任务", docId, n);
         } catch (Exception e) {
-            log.warn("[PARSE-QUEUE] 作废旧任务失败 doc={}: {}", docId, e.getMessage());
+            log.warn("[PARSE-QUEUE] 清理既有任务失败 doc={}: {}", docId, e.getMessage());
+        }
+    }
+
+    /** 终态失败任务清单（文档管理页「作废」抽屉下钻用）：LEFT JOIN 文档拿文件名，文档已删的行 file_name 为 null */
+    public List<Map<String, Object>> deadTasks(String kbId, boolean includeNullKb) {
+        try {
+            return parseTaskMapper.listDead(kbId, includeNullKb);
+        } catch (Exception e) {
+            log.warn("[PARSE-QUEUE] 查作废任务失败: {}", e.getMessage());
+            return List.of();
+        }
+    }
+
+    /** 删除一条终态失败（status=4）的解析任务行：仅用于清理已无意义的作废/孤儿任务；运行中任务不被删 */
+    public int deleteTask(String taskId) {
+        try {
+            return parseTaskMapper.deleteDead(taskId);
+        } catch (Exception e) {
+            log.warn("[PARSE-QUEUE] 删除任务失败 task={}: {}", taskId, e.getMessage());
+            return 0;
+        }
+    }
+
+    /** 取任务所属文档 ID（删除任务前校验管理权用；任务/文档已删返回 null） */
+    public String getTaskDocId(String taskId) {
+        try {
+            ParseTask t = parseTaskMapper.selectById(taskId);
+            return t == null ? null : t.getDocId();
+        } catch (Exception e) {
+            log.warn("[PARSE-QUEUE] 查任务失败 task={}: {}", taskId, e.getMessage());
+            return null;
         }
     }
 

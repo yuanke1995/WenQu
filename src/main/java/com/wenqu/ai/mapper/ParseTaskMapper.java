@@ -55,6 +55,10 @@ public interface ParseTaskMapper extends BaseMapper<ParseTask> {
             + "error = #{error} where id = #{id}")
     int markDead(@Param("id") String id, @Param("error") String error);
 
+    /** 仅删除终态失败（status=4）的任务行：防止误删正在排队/执行的任务（UI 只对此类暴露删除） */
+    @Delete("delete from c_ai_parse_task where id = #{id} and status = 4")
+    int deleteDead(@Param("id") String id);
+
     /** 任务可重试：attempt 未达上限则退避后回到 queued，否则转 dead */
     @Update({"<script>",
             "update c_ai_parse_task set ",
@@ -66,12 +70,33 @@ public interface ParseTaskMapper extends BaseMapper<ParseTask> {
             "</script>"})
     int markRetryable(@Param("id") String id, @Param("error") String error, @Param("backoffSec") int backoffSec);
 
-    /** 本实例重解析时：把同文档尚未结束的旧任务作废（避免同一文档两个任务抢跑） */
-    @Update({"<script>",
-            "update c_ai_parse_task set status = 4, finish_time = now(), lease_until = null, worker = null, ",
-            "error = '被新的解析任务取代' where doc_id = #{docId} and status in (0, 1, 3)",
+    /**
+     * 重解析/重新上传前清掉该文档的全部既有任务行（含作废/孤儿行），随后由调用方 enqueue 一条新任务，
+     * 保证同一文档始终只有一条有效任务——否则反复重解析会让过期作废行越积越多，页头「作废 N」降不下来。
+     * 删正在 running 的行也无妨：执行壳的 markSucceeded/markDead 按 id 更新会落 0 行（文档状态已由调用方置「解析中」）。
+     */
+    @Delete("delete from c_ai_parse_task where doc_id = #{docId}")
+    int purgeByDoc(@Param("docId") String docId);
+
+    /**
+     * 终态失败任务清单（文档管理页「作废」抽屉下钻）：LEFT JOIN 文档拿文件名，
+     * 文档已删的行 file_name 为 null（孤儿任务——重解析会报文档不存在，只能清理）。
+     * 按完成时间倒序，最近的失败排最前。
+     */
+    @Select({"<script>",
+            "select t.id as task_id, t.doc_id, t.kb_id, t.attempt, t.max_attempt, t.error, t.finish_time, ",
+            "d.file_name as file_name ",
+            "from c_ai_parse_task t left join c_ai_document d on d.id = t.doc_id ",
+            "where t.status = 4 ",
+            "<if test='kbId != null and kbId != \"\"'>",
+            "  and (<choose>",
+            "    <when test='includeNullKb'> (t.kb_id = #{kbId} or t.kb_id is null) </when>",
+            "    <otherwise> t.kb_id = #{kbId} </otherwise>",
+            "  </choose>) ",
+            "</if>",
+            "order by t.finish_time desc",
             "</script>"})
-    int killActiveByDoc(@Param("docId") String docId);
+    java.util.List<java.util.Map<String, Object>> listDead(@Param("kbId") String kbId, @Param("includeNullKb") boolean includeNullKb);
 
     /**
      * 队列统计（前端展示「排队 N / 执行 M」）。
