@@ -4360,12 +4360,13 @@ onMounted(async () => {
 }
 .tl-cluster-bar:hover { color: var(--app-text2); }
 .tl-cluster.open .tl-cluster-bar { padding-bottom: 8px; }
-/* 活动图标与下开三角同叠位：三角默认隐形，悬停/展开浮现、图标退场 */
+/* 活动图标与收起箭头同叠位：收起时恒显活动图标（悬停不换——图标是这一步的身份，不是开关），
+   真正展开后才让位给朝上的收起箭头 */
 .tl-cluster-ic { position: relative; flex: none; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; color: inherit; }
-.tl-cluster-ic .tl-ic-a, .tl-cluster-ic .tl-ic-c { position: absolute; inset: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; transition: opacity .1s ease; }
+.tl-cluster-ic .tl-ic-a, .tl-cluster-ic .tl-ic-c { position: absolute; inset: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; transition: opacity .1s ease, transform .1s ease; }
 .tl-cluster-ic .tl-ic-c { opacity: 0; }
-.tl-cluster-bar:hover .tl-ic-a, .tl-cluster.open .tl-cluster-bar .tl-ic-a { opacity: 0; }
-.tl-cluster-bar:hover .tl-ic-c, .tl-cluster.open .tl-cluster-bar .tl-ic-c { opacity: 1; }
+.tl-cluster.open .tl-cluster-bar .tl-ic-a { opacity: 0; }
+.tl-cluster.open .tl-cluster-bar .tl-ic-c { opacity: 1; transform: rotate(180deg); }
 .tl-cluster-ic .ic-err { color: var(--app-danger); }
 .tl-cluster-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 扫光文字（DSH TextShimmer 简化版）：次要灰底上一道高光横扫，替代转圈/呼吸的「活着」表达 */
@@ -4399,7 +4400,7 @@ onMounted(async () => {
 .tl-live-ic .tl-ic-a, .tl-live-ic .tl-ic-c { position: absolute; inset: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; transition: opacity .1s ease; }
 .tl-live-ic .tl-ic-c { opacity: 0; }
 .tl-live-row.open .tl-ic-a { opacity: 0; }
-.tl-live-row.open .tl-ic-c { opacity: 1; }
+.tl-live-row.open .tl-ic-c { opacity: 1; transform: rotate(180deg); }
 .tl-live-ic .ic-err { color: var(--app-danger); }
 .tl-live-name { flex: none; color: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tl-live-row.run .tl-live-name { color: var(--app-text2); }

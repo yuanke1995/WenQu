@@ -622,12 +622,12 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
 .proc-cluster { background: var(--app-panel); }
 .proc-cluster .tl-head { color: var(--app-text3); }
 .proc-cluster .card-title { font-weight: 400; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* 活动图标与下开三角同叠位：展开时三角浮现、图标退场（触屏没有 hover） */
+/* 活动图标与收起箭头同叠位：收起时恒显活动图标（触屏无悬停），展开后让位给朝上的收起箭头 */
 .tl-cluster-ic { position: relative; flex: none; display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; color: inherit; }
-.tl-cluster-ic .tl-ic-a, .tl-cluster-ic .tl-ic-c { position: absolute; inset: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; transition: opacity .1s ease; }
+.tl-cluster-ic .tl-ic-a, .tl-cluster-ic .tl-ic-c { position: absolute; inset: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; transition: opacity .1s ease, transform .1s ease; }
 .tl-cluster-ic .tl-ic-c { opacity: 0; }
 .proc-cluster.open .tl-cluster-ic .tl-ic-a, .live-row.open .live-ic .tl-ic-a { opacity: 0; }
-.proc-cluster.open .tl-cluster-ic .tl-ic-c, .live-row.open .live-ic .tl-ic-c { opacity: 1; }
+.proc-cluster.open .tl-cluster-ic .tl-ic-c, .live-row.open .live-ic .tl-ic-c { opacity: 1; transform: rotate(180deg); }
 .tl-cluster-ic .ic-err { color: var(--app-danger); }
 /* 扫光文字（与 PC 同一份动效参数） */
 .shimmer, .live-name.shimmer {
