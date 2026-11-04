@@ -41,10 +41,12 @@ async function registration () {
  * unsupported / insecure / needs-install / not-configured / disabled / denied / ok
  */
 export async function pushCapability () {
+  // 安全上下文必须排在 API 存在性之前：Chromium 在 http 来源根本不下发 navigator.serviceWorker，
+  // 先判 API 就把「http 直连 IP」报成「浏览器不支持」，让人白换浏览器（Notification 在非安全来源也会被自动置 denied）。
+  if (!window.isSecureContext) return { ok: false, reason: 'insecure' }
   if (!('serviceWorker' in navigator) || !('PushManager' in window) || typeof Notification === 'undefined') {
     return { ok: false, reason: 'unsupported' }
   }
-  if (!window.isSecureContext) return { ok: false, reason: 'insecure' }
   if (isIos() && !isStandalone()) return { ok: false, reason: 'needs-install' }
   const p = platform.value
   if (!p.loaded) return { ok: false, reason: 'loading' }
