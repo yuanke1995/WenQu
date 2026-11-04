@@ -408,6 +408,32 @@ public class ProjectService {
     }
 
     /**
+     * 把工作区绑到一台本机执行器上的目录（或解绑）。
+     *
+     * <p>绑上之后，本工作区所有会话的文件/命令工具都落到那台电脑上执行；解绑（executorId 空）
+     * 退回服务器沙盒。目录由执行器侧再校验一次，这里只记路径与设备。
+     */
+    public Project bindExecutor(String uid, String projectId, String executorId, String rootPath) {
+        Project p = ownedProject(uid, projectId);
+        String ex = executorId == null ? "" : executorId.trim();
+        if (ex.isEmpty()) {
+            p.setExecutorId(null);
+            p.setRootPath(null);
+            p.setDirectoryMode(Project.MODE_MANAGED);
+        } else {
+            String root = rootPath == null ? "" : rootPath.trim();
+            if (root.isEmpty() || !root.startsWith("/")) {
+                throw new IllegalArgumentException("工作区目录必须是执行器上的绝对路径");
+            }
+            p.setExecutorId(ex);
+            p.setRootPath(root);
+            p.setDirectoryMode(Project.MODE_LOCAL);
+        }
+        projectMapper.updateById(p);
+        return p;
+    }
+
+    /**
      * 更新工作区设置：名称 / 工作区约定 / 默认助手 / 绑定知识库 / 共用工作目录 / 记忆隔离。
      *
      * <p>各参数都是「传才改」（null = 不动）；空串/空列表表示清空。默认助手与绑定的库

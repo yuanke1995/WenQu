@@ -3,6 +3,7 @@ package com.wenqu.ai.service;
 import com.wenqu.ai.memory.MemoryBudget;
 import com.wenqu.ai.memory.MemoryCappedFilesystem;
 import com.wenqu.ai.model.Project;
+import com.wenqu.ai.sandbox.ExecutorFilesystem;
 import com.wenqu.ai.sandbox.ProvisionerSandboxBackend;
 import com.wenqu.ai.sandbox.ProvisionerSandboxClient;
 import com.wenqu.ai.sandbox.ProvisionerSandboxFilesystem;
@@ -64,16 +65,19 @@ public class SandboxService {
     private static final int MEMORY_MAX_FILE_MB = 64;
 
     private final ProvisionerSandboxProvider provider;
+    private final com.wenqu.ai.executor.ExecutorRegistry executorRegistry;
     /** 工作区解析：决定沙盒作用域与 workdir（无工作区时退回会话级，行为不变） */
     private final ProjectService projectService;
     /** 工作区目录开关（默认关，见 scopeOf 的注释） */
     private final ConfigService configService;
 
     public SandboxService(ProvisionerSandboxProvider provider, ProjectService projectService,
-                          ConfigService configService) {
+                          ConfigService configService,
+                          com.wenqu.ai.executor.ExecutorRegistry executorRegistry) {
         this.provider = provider;
         this.projectService = projectService;
         this.configService = configService;
+        this.executorRegistry = executorRegistry;
     }
 
     /**
@@ -160,6 +164,15 @@ public class SandboxService {
         }
         try {
             SandboxScope scope = scopeOf(sessionId);
+            // 本机执行器：工作区绑了设备与目录时，文件/命令工具直接落到用户电脑上（不经服务器沙盒）
+            Project boundProject = projectService.projectOfSession(sessionId);
+            if (boundProject != null
+                    && boundProject.getExecutorId() != null && !boundProject.getExecutorId().isBlank()
+                    && boundProject.getRootPath() != null && !boundProject.getRootPath().isBlank()) {
+                ExecutorFilesystem executorFs = new ExecutorFilesystem(
+                        executorRegistry, boundProject.getExecutorId(), boundProject.getRootPath());
+                return memoryRouted(executorFs, uid);
+            }
             ProvisionerSandboxBackend backend = new ProvisionerSandboxBackend(
                     provider, scope.scopeId(), uid, scope.workdirPath(),
                     true, true, unrestrictedWrites, ProvisionerSandboxBackend.procTagFor(sessionId));
@@ -202,7 +215,8 @@ public class SandboxService {
      *
      * <p>路由装配失败（拿到非法路径等）就退回不路由：记忆落沙箱是旧行为，比整轮没有文件系统好。
      */
-    private AbstractFilesystem memoryRouted(ProvisionerSandboxFilesystem sandboxFs, String uid) {
+    private AbstractFilesystem memoryRouted(
+            io.agentscope.harness.agent.filesystem.sandbox.AbstractSandboxFilesystem sandboxFs, String uid) {
         try {
             Path base = memoryRoot(uid);
             // MEMORY.md 走带硬上限的文件系统：框架的 consolidation prompt 只是建议，

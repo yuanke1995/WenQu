@@ -95,6 +95,8 @@ public class ProjectController {
         m.put("workdirPath", p.getWorkdirPath());
         // managed=目录在服务器（沙盒挂载）；local=目录在用户自己的电脑（句柄只在浏览器，服务器不碰）
         m.put("directoryMode", p.getDirectoryMode() == null ? Project.MODE_MANAGED : p.getDirectoryMode());
+        m.put("executorId", p.getExecutorId() == null ? "" : p.getExecutorId());
+        m.put("rootPath", p.getRootPath() == null ? "" : p.getRootPath());
         m.put("createTime", p.getCreateTime() == null ? null : p.getCreateTime().toString());
         return m;
     }
@@ -432,6 +434,23 @@ public class ProjectController {
     }
 
     public record CreateReq(String name, String fromProjectId, String directoryMode) {
+    }
+
+    @Operation(summary = "绑定本机执行器目录",
+            description = "body: {executorId, rootPath}。非空=本工作区会话的文件/命令工具落到那台电脑上的该目录；"
+                    + "executorId 传空=解绑，退回服务器沙盒。rootPath 必须是执行器上的绝对路径")
+    @Permission("project:write")
+    @PutMapping("/{id}/executor")
+    public ResultJson bindExecutor(@PathVariable("id") String id,
+                                   @RequestBody(required = false) Map<String, Object> body) {
+        try {
+            Object ex = body == null ? null : body.get("executorId");
+            Object root = body == null ? null : body.get("rootPath");
+            return ResultJson.ok(toDto(projectService.bindExecutor(RequestUser.uid(), id,
+                    ex == null ? "" : String.valueOf(ex), root == null ? null : String.valueOf(root))), "已保存");
+        } catch (IllegalArgumentException e) {
+            return ResultJson.error(400, e.getMessage());
+        }
     }
 
     @Operation(summary = "约定留痕",

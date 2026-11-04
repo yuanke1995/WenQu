@@ -779,15 +779,11 @@
         @paste="onComposerPaste" @keydown="onInputKeydown" @input="syncPanelQuery"
         @click="syncPanelQuery" @update:keys="onKeys" @chip-click="onChipClick" @ready="syncChips">
         <template #above>
-          <!-- 本机工作区：目录在你自己的电脑上。读写都在这个目录里，写回前还会再确认一次 -->
-          <div v-if="sessionWorkspace && sessionWorkspace.directoryMode === 'local'" class="local-ws-bar">
-            <FolderOpenOutlined class="lwb-ic" />
-            <span class="lwb-name">本机工作区：{{ sessionWorkspace.name }}</span>
-            <span v-if="localDirPerm === 'granted'" class="lwb-state">已授权 · 写回前会再让你确认</span>
-            <span v-else-if="localDirPerm === 'missing'" class="lwb-state warn">还没绑定目录</span>
-            <span v-else class="lwb-state warn">需要重新授权</span>
-            <button v-if="localDirPerm !== 'granted'" type="button" class="app-link-btn" @click="grantWorkspaceDir">
-              {{ localDirPerm === 'missing' ? '选择目录' : '授权' }}
+          <!-- 本机工作区未授权：照 DSH「选中工作区前输入不可用」，只留一个选择入口 -->
+          <div v-if="sessionWorkspace && sessionWorkspace.directoryMode === 'local' && !sessionWorkspace.executorId && localDirPerm !== 'granted'" class="local-ws-hint">
+            <span>本机工作区还没有选定目录，选定后才能开始对话</span>
+            <button type="button" class="app-link-btn" @click="grantWorkspaceDir">
+              {{ localDirPerm === 'missing' ? '选择工作区' : '重新授权' }}
             </button>
           </div>
           <!-- 附件/图片/技能/@ 引用/# 历史引用/计划模式全部内联进正文那一条流（见 chat/Composer.vue），
@@ -1268,10 +1264,6 @@
         </template>
       </ChatInput>
       <input ref="attachInput" type="file" multiple style="display:none" @click.stop @change="onAttachChange" />
-      <!-- 本机文件夹：webkitdirectory 让用户在自己这台电脑上选一个目录，浏览器只把文件内容交出来，
-           不做任何写入（原文件不会被改）。整条通道复用附件管线，后端无需改动 -->
-      <input ref="folderInput" type="file" webkitdirectory directory multiple style="display:none"
-             @click.stop @change="onFolderChange" />
     </div>
 
     <!-- 左侧问题锚点轨：一条刻度 = 一轮提问。不常驻——鼠标进聊天区才淡入（离开即收）；
@@ -2314,43 +2306,19 @@ const onAttachChange = e => {
   closeAddPanel()
 }
 
-/** 本机文件夹：浏览器（webkitdirectory）只交出选中目录里的文件内容，原文件一律不写。
- *  选完仍走附件管线（类型/体积/数量口径与「上传文件」完全一致），因此后端不需要任何改动。
- *  目录里的杂项（依赖、构建产物、隐藏目录）先剔掉，免得 5 个名额全被 node_modules 吃掉。 */
+/** 工作区目录：模型只有一个——「一个目录 + 一组权限」。
+ *  目录句柄来自浏览器（File System Access），所有读写都被它圈在这个目录内；服务器只记类型与名字。 */
 const FOLDER_PICK_MAX = 5
 const FOLDER_PICK_MAX_MB = 15
 const FOLDER_JUNK = new Set(['node_modules', '.git', 'dist', 'target', 'build', '.idea', '.venv', 'venv', '__pycache__'])
-const folderInput = ref(null)
-/** 已授权的本机目录（Chromium 的 File System Access API）：有了它才谈得上"写回"。
- *  句柄只活在页面内存里，刷新即失效——写盘永远需要用户当场授权，这是浏览器定的。 */
 const localDir = shallowRef(null)
 const localWriting = ref(false)
-/** 目录权限：granted=可直接读写；prompt=要用户点一下重新授权；missing=这个工作区还没绑目录 */
+/** granted=可直接读写；prompt=要用户点一下重新授权；missing=这个工作区还没绑目录 */
 const localDirPerm = ref('')
-/** manual=本轮手选的目录；workspace=从「本机工作区」继承来的 */
+/** workspace=从本机工作区继承来的目录 */
 const localDirSource = ref('')
-const pickLocalFolder = async () => {
-  // 本机工作区已绑定目录：直接用那个目录，不再每次手选
-  if (localDirSource.value === 'workspace' && localDir.value?.handle) {
-    if (localDirPerm.value !== 'granted') { message.warning('先在本机工作区那一条上授权目录'); return }
-    await ingestDirHandle(localDir.value.handle)
-    return
-  }
-  if (window.showDirectoryPicker) {
-    let handle
-    try {
-      handle = await window.showDirectoryPicker({ id: 'wenqu-local-dir', mode: 'readwrite' })
-    } catch (e) {
-      return // 用户取消，什么也不做
-    }
-    localDir.value = { handle, name: handle.name }
-    await ingestDirHandle(handle)
-    return
-  }
-  folderInput.value?.click() // 不支持目录写权限的浏览器：退化成只读选择（走 input webkitdirectory）
-}
 /** 把已授权目录里有用的文件按相对路径挂进本轮（最多 5 个）；句柄留着给写回用 */
-const ingestDirHandle = async handle => {
+const ingestDirHandle = async (handle, { silent = false } = {}) => {
   const picked = []
   let scanned = 0
   const walk = async (dir, prefix, depth) => {
@@ -2369,16 +2337,15 @@ const ingestDirHandle = async handle => {
   }
   await walk(handle, '', 0)
   if (!picked.length) {
-    message.warning(`「${handle.name}」里没有可发送的文件（只收文本/代码/Office/PDF，最多 ${FOLDER_PICK_MAX} 个）`)
+    if (!silent) message.warning(`「${handle.name}」里没有可读的文件（只收文本/代码/Office/PDF，最多 ${FOLDER_PICK_MAX} 个）`)
     return
   }
   addFiles(picked)
-  closeAddPanel()
-  message.success(`已授权本机目录「${handle.name}」：加入 ${picked.length} 个文件；模型要改文件时，确认后写回这个目录`)
+  if (!silent) closeAddPanel()
 }
 /** 写回约定：模型在回答末尾为每个要改的文件写一段「单独一行 wenqu-write:相对路径，随后是完整新内容」，
- *  代码块包不包都认。页面在用户点确认后写盘；服务器始终只拿到"要写什么"，落盘发生在浏览器，
- *  能写到哪由浏览器对已授权目录的把关决定。 */
+ *  代码块包不包都认。页面直接写进已授权的目录；服务器始终只拿到"要写什么"，落盘发生在浏览器，
+ *  能写到哪由浏览器对目录的把关决定（与 DSH 的"目录隔离"是同一个边界）。 */
 const parseWrites = txt => {
   const out = []
   let cur = null
@@ -2441,42 +2408,6 @@ const confirmLocalWrites = writes => {
     ]),
     onOk: () => applyLocalWrites(writes)
   })
-}
-const onFolderChange = e => {
-  const picked = []
-  let skippedJunk = 0
-  let skippedType = 0
-  let skippedSize = 0
-  const all = Array.from(e.target.files || [])
-  e.target.value = ''
-  if (!all.length) return
-  const sorted = all
-    .filter(f => {
-      const rel = f.webkitRelativePath || f.name
-      if (rel.split('/').some(p => FOLDER_JUNK.has(p))) { skippedJunk++; return false }
-      return true
-    })
-    .sort((a, b) => (a.webkitRelativePath || a.name).localeCompare(b.webkitRelativePath || b.name))
-  for (const f of sorted) {
-    if (picked.length >= FOLDER_PICK_MAX) break
-    const rel = f.webkitRelativePath || f.name
-    if (!SUPPORTED_EXTS.includes(extOf(rel))) { skippedType++; continue }
-    if (f.size > FOLDER_PICK_MAX_MB * 1024 * 1024) { skippedSize++; continue }
-    // 名字用相对路径，模型才知道文件在目录里的哪一层
-    picked.push(new File([f], rel, { type: f.type || 'text/plain', lastModified: f.lastModified }))
-  }
-  const notes = []
-  if (skippedType) notes.push(`${skippedType} 个类型不支持`)
-  if (skippedSize) notes.push(`${skippedSize} 个超过 ${FOLDER_PICK_MAX_MB}MB`)
-  const rest = sorted.length - picked.length - skippedType - skippedSize
-  if (rest > 0) notes.push(`${rest} 个超出 ${FOLDER_PICK_MAX} 个上限`)
-  if (!picked.length) {
-    message.warning('这个文件夹里没有可发送的文件' + (notes.length ? `（跳过：${notes.join('、')}）` : ''))
-    return
-  }
-  addFiles(picked)
-  closeAddPanel()
-  message.success(`已从本机文件夹加入 ${picked.length} 个文件` + (notes.length ? `，跳过：${notes.join('、')}` : ''))
 }
 /** 敲 @ 唤起「+」面板并停在「引用」页：不再有独立的 @ 弹窗，两个入口同一块面板。
  *  与点「+」进来的差别只在筛选词从哪来——这里由 syncPanelQuery 实时取正文里「@ 到光标」那一段。
@@ -2806,9 +2737,6 @@ const addRootRows = computed(() => {
       desc: edit ? '文件读出正文供模型看，图片压缩后随这一问重发；也可直接粘贴进来（各最多 5 个）'
                  : '也可直接粘贴或拖进来：文件读出正文供模型看，图片压缩后随本轮提问（各最多 5 个）',
       badge: () => s.files.value.length + s.images.value.length, run: () => s.pickFiles() },
-    ...(!edit ? [{ key: 'folder', name: '本机文件夹', icon: FolderOpenOutlined,
-      desc: `从这台电脑选一个文件夹，挑最多 ${FOLDER_PICK_MAX} 个文件随本轮发送；只读，原文件不会被改动`,
-      badge: () => 0, run: () => pickLocalFolder() }] : []),
     { key: 'ref', name: '引用资料', icon: BookOutlined, kbd: edit ? '' : '@',
       desc: `知识库 / 文档 / 智能体 / 技能，只对${scope}生效`,
       badge: () => s.mentions.value.length + s.skills.value.length, run: () => switchAddTab('ref') },
@@ -3046,8 +2974,16 @@ const inlineSlash = () => {
   if (plan) { text.value = ''; runPlanCommand(plan[1] || ''); return true }
   return false
 }
+/** 本机工作区：每轮开跑前把目录里的材料挂上（用户不该每次重选），并等上传收尾再发 */
+const ensureWorkspaceFiles = async () => {
+  if (sessionWorkspace.value?.directoryMode !== 'local' || localDirPerm.value !== 'granted') return
+  if (!localDir.value?.handle || pendingFiles.value.length) return
+  await ingestDirHandle(localDir.value.handle, { silent: true })
+  for (let i = 0; i < 40 && hasUploadingFile(); i++) await new Promise(r => setTimeout(r, 250))
+}
 const sendNow = async (steerNow = false) => {
   if (inlineSlash()) { closeAllPanels(); return }
+  await ensureWorkspaceFiles()
   if (goalModeOn.value && goalArmed.value && !sessionGoal.value && String(text.value || '').trim()) {
     goalArmed.value = false
     // 互斥兜底（开启点已保证收掉，防 localStorage 恢复等边缘残留）：目标这轮带不走计划标记
@@ -3879,6 +3815,13 @@ watch(currentSessionId, async sid => {
 // 本机工作区：工作区类型是 local 时，把浏览器里保存的目录句柄接上。
 // 句柄存得住不等于有权限——权限掉了就挂一条提示等用户点一下（重新授权必须在点击事件里发起）。
 watch(sessionWorkspace, async ws => {
+  // 执行器接管时浏览器不写盘：文件与命令都走那台电脑上的执行器
+  if (ws && ws.executorId) {
+    localDir.value = null
+    localDirPerm.value = ''
+    localDirSource.value = ''
+    return
+  }
   if (localDirSource.value === 'manual') return
   if (!ws || ws.directoryMode !== 'local') {
     if (localDirSource.value === 'workspace') {
@@ -3920,8 +3863,13 @@ const grantWorkspaceDir = async () => {
   }
   const perm = await requestDirPermission(handle)
   localDirPerm.value = perm
-  if (perm === 'granted') message.success(`已授权本机目录「${handle.name}」`)
-  else message.warning('没有拿到目录权限，写回不会生效')
+  if (perm === 'granted') {
+    // 授权成功就把目录里的材料挂进本轮（与 DSH 选完工作区即可开工同一个口径）
+    await ingestDirHandle(handle, { silent: true })
+    if (!pendingFiles.value.length) message.success(`已选择工作区目录「${handle.name}」`)
+  } else {
+    message.warning('没有拿到目录权限，读写都不会生效')
+  }
 }
 
 // ==================== 输入框内联 chip（正文与引用同一条流） ====================

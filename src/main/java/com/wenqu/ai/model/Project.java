@@ -58,8 +58,14 @@ public class Project {
      */
     private String workdirPath;
 
-    /** managed=平台托管目录 / linked=关联用户已有目录（暂未实现，保留位） */
+    /** managed=平台托管目录 / local=关联用户已有目录（暂未实现，保留位） */
     private String directoryMode;
+
+    /** 本机执行器 id（c_ai_executor.id）：非空=本工作区的文件读写走那台电脑，空=走服务器沙盒 */
+    private String executorId;
+
+    /** 执行器上的工作区根目录（绝对路径）；执行器负责校验每次调用都落在这个目录内 */
+    private String rootPath;
 
     /**
      * 工作区约定：写一次即对该工作区<b>所有会话</b>生效（每轮注入 system prompt 的工作背景段）。

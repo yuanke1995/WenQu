@@ -696,7 +696,9 @@ CREATE TABLE IF NOT EXISTS `c_ai_project` (
     `name`             VARCHAR(255) DEFAULT NULL COMMENT '工作区名；implicit 容器可为空（不给它起名，界面只体现为侧栏「会话」栏）',
     `selection_status` VARCHAR(20)  NOT NULL DEFAULT 'selectable' COMMENT 'implicit=每人一个自动默认（不可删、不进切换器） / selectable=用户显式创建可选中',
     `workdir_path`     VARCHAR(512) NOT NULL COMMENT '工作区目录（相对 user-data 根的 POSIX 相对路径，形如 projects/{id}；provisioner 侧 normalize_workdir_path 会拒绝对路径与非法分量）',
-    `directory_mode`   VARCHAR(20)  NOT NULL DEFAULT 'managed' COMMENT 'managed=平台托管目录 / linked=关联用户已有目录（暂未实现，保留位）',
+    `directory_mode`   VARCHAR(20)  NOT NULL DEFAULT 'managed' COMMENT 'managed=平台托管目录（服务器沙盒） / local=执行器目录（用户电脑上的目录，由本机执行器读写）',
+    `executor_id`      VARCHAR(64)  DEFAULT NULL COMMENT '本机执行器 id（c_ai_executor.id）；非空=本工作区的文件读写走那台电脑上的执行器，空=走服务器沙盒',
+    `root_path`        VARCHAR(1024) DEFAULT NULL COMMENT '执行器上的工作区根目录（绝对路径）。执行器负责校验每次调用都落在这个目录内',
     `instructions`     TEXT         DEFAULT NULL COMMENT '工作区约定：写一次即对该工作区**所有会话**生效（每轮注入 system prompt 的工作背景段）。这是「工作区」与「分类标签」的分界——没有它，每条对话都得重新交代背景',
     `default_agent_id` VARCHAR(50)  DEFAULT NULL COMMENT '工作区默认助手：会话归属该工作区且用户没显式选助手时用它作答，其知识库范围随助手生效（工作区因此有自己的资料域）',
     `kb_ids`           VARCHAR(512) DEFAULT NULL COMMENT '工作区绑定知识库（逗号分隔，c_ai_knowledge_base.id；空=不收窄）。这是**默认检索域**不是权限墙：本区会话没有显式域（助手未绑库且未 @ 库）时只搜这些库，@ 提及其他库仍可越出（显式动作优先于默认值），助手绑定的库也优先于它',
@@ -711,6 +713,23 @@ CREATE TABLE IF NOT EXISTS `c_ai_project` (
     UNIQUE KEY `uk_uid_idem` (`uid`, `idempotency_key`),
     KEY `idx_uid_status` (`uid`, `selection_status`, `deleted`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工作区容器（把工作目录/会话/产物收在一个可持续的根下）';
+
+-- 2026-11-04: 本机执行器
+-- 用户电脑上跑的一个小程序，只负责执行工具调用（读写文件/跑命令）；云端保留知识库、会话与模型。
+-- 令牌只存哈希；连接本身是执行器主动发起的长轮询，服务端不开任何入站端口。
+CREATE TABLE IF NOT EXISTS `c_ai_executor` (
+    `tenant_id`    VARCHAR(32)  NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户）',
+    `id`           VARCHAR(64)  NOT NULL COMMENT '执行器 id',
+    `uid`          VARCHAR(64)  NOT NULL COMMENT '归属用户（c_ai_user.uid）',
+    `name`         VARCHAR(128) DEFAULT NULL COMMENT '设备名（用户可改）',
+    `token_hash`   VARCHAR(128) NOT NULL COMMENT '设备令牌的 SHA-256（只存哈希）',
+    `os`           VARCHAR(32)  DEFAULT NULL COMMENT '执行器上报的操作系统',
+    `last_seen`    DATETIME     DEFAULT NULL COMMENT '最近一次轮询时间（在线判据）',
+    `revoked`      INT          NOT NULL DEFAULT 0 COMMENT '1=已撤销，令牌立即失效',
+    `create_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_uid` (`uid`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='本机执行器（用户电脑上执行工具调用的进程）';
 
 -- ============================================
 -- 2026-10-24: 工作区事项（这个场子要做的事）

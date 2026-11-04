@@ -214,6 +214,8 @@ public class SessionService {
             m.put("archived", Project.STATUS_ARCHIVED.equals(p.getStatus()));
             // 目录在哪决定"文件走哪条路"：local=用户电脑（句柄只在浏览器）；managed=服务器沙盒
             m.put("directoryMode", p.getDirectoryMode() == null ? Project.MODE_MANAGED : p.getDirectoryMode());
+            // 有执行器=文件/命令走本机执行器（此时浏览器不再参与写盘）
+            m.put("executorId", p.getExecutorId() == null ? "" : p.getExecutorId());
             return m;
         } catch (Exception e) {
             log.warn("[PROJECT] 会话工作区标识解析失败（按无工作区处理）session={}: {}", sessionId, e.getMessage());

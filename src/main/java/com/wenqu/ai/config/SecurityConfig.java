@@ -88,6 +88,8 @@ public class SecurityConfig implements WebMvcConfigurer {
         if (isTenantApplyEndpoint(method, path)) return true;
         // 沙盒脚本回调：一次性运行凭据
         if (isSandboxCallbackEndpoint(method, path)) return true;
+        // 本机执行器通道：执行器用设备令牌自证（Authorization: Bearer <device-token>），不走登录态
+        if (path.equals("/api/ai/executor/poll") || path.equals("/api/ai/executor/result")) return true;
         // 公开只读：运行时公开配置、对话页智能体下拉（脱敏只读）
         if ("GET".equals(method) && ("/api/ai/config/public".equals(path)
                 || "/api/ai/agent/available".equals(path))) return true;
