@@ -4065,9 +4065,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             // 摘要文本也要落库：分隔线上的「查看摘要」按会话读，不落就是压完刷新点进去报「还没有摘要」
             persistCompactionSummary(cmd);
         }
-        // 状态行既下发也落库：只随 done 发的话，刷新后「搜索 N 个关键词，参考 M 段资料」整块消失
+        // 状态行既下发也落库：只随 done 发的话，刷新后「搜索 N 个关键词，参考 M 段资料」整块消失。
+        // 无真实检索时 retrievedJson 返回 null——不下发、落库为 null，前端整行不渲染（见 retrievedJson）
         String lastRetrieved = retrievedJson(cmd, pool, recording);
-        channel.emit(RunEventType.RETRIEVED, lastRetrieved);
+        if (lastRetrieved != null) channel.emit(RunEventType.RETRIEVED, lastRetrieved);
         String artifactList = com.alibaba.fastjson2.JSON.toJSONString(
                 artifactService.settleArtifacts(cmd.getSessionId()));
         String artifactsJson = "[]".equals(artifactList) ? null : artifactList;
@@ -4231,7 +4232,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private int emitRetrieved(ChatCommand cmd, WenquSourcePool pool, RunChannel channel, int announced, Recording recording) {
         int refs = pool.sources().size();
         if (refs == announced) return announced;
-        channel.emit(RunEventType.RETRIEVED, retrievedJson(cmd, pool, recording));
+        // 无真实检索时 retrievedJson 返回 null：本轮尚未（也不必有）召回，跳过这一帧
+        String json = retrievedJson(cmd, pool, recording);
+        if (json != null) channel.emit(RunEventType.RETRIEVED, json);
         return refs;
     }
 
@@ -4240,19 +4243,26 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * <p>抽成一处是为了<b>同一份也落库</b>：只随 done 下发的话，刷新后这一行整块消失——
      * 手写侧是把 {@code retrievedJson} 存进消息行的，两条运行时得给用户同一个观感。
      * <p>{@code terms} 优先取模型本轮实际发出的检索词（{@code search_knowledge} 的 {@code query} 入参，
-     * 见 {@code Recording#searchQueries}）——它比从用户原问句抽的关键词更贴近「模型真搜了什么」；
-     * 收集不到（没走检索工具，或工具名/入参形状变了）才退回问题关键词，保证状态行永不空。
+     * 见 {@code Recording#searchQueries}）——它比从用户原问句抽的关键词更贴近「模型真搜了什么」。
+     * 模型确实检索过、但没捕获到短语（工具名/入参形状变了、或引用池已有片段）时，退回从问句抽主词元作近似。
+     * <p><b>没有真实检索就不出状态行</b>：智能体未配知识库、或本轮没调检索工具时既无检索短语也无召回片段，
+     * 返回 {@code null}——前端据此整行不渲染，避免把问句关键词当成「检索词」展示、误导用户以为搜了库。
+     *
+     * @return 状态行 JSON；无真实检索时返回 null
      */
     private String retrievedJson(ChatCommand cmd, WenquSourcePool pool, Recording recording) {
-        List<String> terms;
         Set<String> actual = recording == null ? null : recording.searchQueries;
+        int refs = pool.sources().size();
+        // 既没发出检索短语、也没召回任何片段：视为本轮未检索知识库，不出状态行
+        if ((actual == null || actual.isEmpty()) && refs == 0) return null;
+        List<String> terms;
         if (actual != null && !actual.isEmpty()) {
             terms = new java.util.ArrayList<>(actual);
         } else {
             terms = keywordExtractor.extractMain(cmd.getQuestion());
         }
         return com.alibaba.fastjson2.JSON.toJSONString(Map.of(
-                "keywords", terms.size(), "refs", pool.sources().size(), "terms", terms));
+                "keywords", terms.size(), "refs", refs, "terms", terms));
     }
 
     /**
