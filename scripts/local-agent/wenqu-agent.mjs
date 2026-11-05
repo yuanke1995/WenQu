@@ -292,6 +292,44 @@ function globToRegExp(g) {
   return new RegExp('^' + s + '$')
 }
 
+/** 递归内容搜索（grep_files 工具）：固定串匹配，跳隐藏/依赖目录与二进制，结果截 200 条。 */
+async function opGrep({ path: p, pattern, glob, limit }) {
+  const needle = String(pattern || '')
+  if (!needle) throw err('E_INVALID', '缺少搜索内容')
+  const base = resolveInRoot(p)
+  const nameRe = glob ? globToRegExp(glob) : null
+  const cap = Math.max(1, Math.min(Number(limit) || 200, 1000))
+  const matches = []
+  let truncated = false
+  const SKIP = new Set(['.git', 'node_modules', '__pycache__'])
+  const walk = async (dir) => {
+    if (truncated) return
+    let entries = []
+    try { entries = await fsp.readdir(dir, { withFileTypes: true }) } catch { return }
+    for (const e of entries) {
+      if (truncated) return
+      if (e.name.startsWith('.') || SKIP.has(e.name)) continue
+      const full = path.join(dir, e.name)
+      if (e.isSymbolicLink()) continue
+      if (e.isDirectory()) { await walk(full); continue }
+      if (!e.isFile()) continue
+      if (nameRe && !nameRe.test(e.name)) continue
+      let buf = null
+      try { buf = await fsp.readFile(full) } catch { continue }
+      if (buf.subarray(0, Math.min(8000, buf.length)).includes(0)) continue   // 二进制
+      const lines = buf.toString('utf8').split('\n')
+      for (let i = 0; i < lines.length; i++) {
+        if (lines[i].includes(needle)) {
+          matches.push({ path: full, line: i + 1, text: lines[i].slice(0, 500) })
+          if (matches.length >= cap) { truncated = true; break }
+        }
+      }
+    }
+  }
+  await walk(base)
+  return { matches, truncated }
+}
+
 async function opRead({ path: p, offset, limit }) {
   const file = resolveInRoot(p)
   await rejectSymlink(file)
@@ -426,6 +464,8 @@ async function opWriteChunk({ path: p, offset, contentBase64, turnId }) {
   const file = resolveInRoot(p)
   try { await rejectSymlink(file) } catch (e) { if (e.code !== 'ENOENT') throw e }
   await captureBeforeMutation(turnId, file)
+  // 与 writeAtomic 同理：上传/分段写也自动补建上级目录（围栏已过）
+  await fsp.mkdir(path.dirname(file), { recursive: true }).catch(e => { if (e.code !== 'EEXIST') throw e })
   const buf = Buffer.from(contentBase64 || '', 'base64')
   const off = Math.max(0, Number(offset) || 0)
   const fh = await fsp.open(file, off === 0 ? 'w' : 'r+')
@@ -460,6 +500,9 @@ async function opWriteBytes({ path: p, contentBase64, userInitiated, turnId }) {
 
 async function writeAtomic(file, buf) {
   const dir = path.dirname(file)
+  // 写文件自动补建上级目录：框架的文件工具没有 mkdir，模型写「子目录/新文件」时
+  // 目录还不存在就直接 ENOENT。父目录已在 resolveInRoot 围栏内，这里建是安全的。
+  await fsp.mkdir(dir, { recursive: true })
   const tmp = path.join(dir, `.wenqu-${Date.now()}-${Math.random().toString(16).slice(2)}.tmp`)
   await fsp.writeFile(tmp, buf)
   await fsp.rename(tmp, file)
@@ -1149,6 +1192,7 @@ const HANDLERS = {
   writeBytes: opWriteBytes,
   writeChunk: opWriteChunk,
   exec: opExec,
+  grep: opGrep,
   turnStart: opTurnStart,
   turnEnd: opTurnEnd,
   turnDiff: opTurnDiff
