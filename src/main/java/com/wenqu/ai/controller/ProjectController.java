@@ -246,6 +246,22 @@ public class ProjectController {
         }
     }
 
+    @Operation(summary = "保存工作区文件的文本",
+            description = "预览区「编辑」用：按 uid + 工作区 + 相对路径校归属后经执行器原子写回；"
+                    + "只允许可读文本类型（Markdown / 代码 / 分隔符表），归档区不可写")
+    @Permission("project:write")
+    @PutMapping("/{id}/file/content")
+    public ResultJson saveFileContent(@PathVariable("id") String id, @RequestBody Map<String, String> body) {
+        String path = body == null ? "" : body.get("path");
+        String content = body == null ? "" : body.get("content");
+        try {
+            projectFileService.saveText(RequestUser.uid(), id, path, content);
+            return ResultJson.ok(true);
+        } catch (IllegalArgumentException e) {
+            return ResultJson.error(400, e.getMessage());
+        }
+    }
+
     @Operation(summary = "新建本机工作区",
             description = "body: {name, executorId, roots:[{path, alias?}]}。"
                     + "工作区是用户电脑上的一个或多个真实目录：roots 至少一项，第一项为主目录（cwd 与相对路径基准），"

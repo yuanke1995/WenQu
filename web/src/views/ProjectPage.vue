@@ -56,6 +56,11 @@
       </div>
 
       <div class="pj-head-actions">
+        <button v-if="inlinePreview" class="pj-icon-btn" type="button"
+                :title="sideCollapsed ? '展开右侧目录' : '收起右侧目录'" @click="toggleSideCollapsed">
+          <menu-unfold-outlined v-if="sideCollapsed" />
+          <menu-fold-outlined v-else />
+        </button>
         <button class="app-btn" :disabled="isArchived"
                 :title="isArchived ? '工作区已归档，恢复后才能新建对话' : ''" @click="goChat">
           <plus-outlined /> 新建对话
@@ -74,6 +79,16 @@
               <file-text-outlined class="pj-pv-ic" />
               <span class="pj-pv-name" :title="previewEntry.name">{{ previewEntry.name }}</span>
               <span class="pj-pv-meta">{{ fmtSize(previewEntry.size) }} · {{ fmtAgo(previewEntry.mtime) }}</span>
+              <span class="pj-spacer"></span>
+              <span v-if="previewEditable && !previewLoading && !previewError" class="pj-pv-acts">
+                <span v-if="previewDirty" class="pj-pv-dirty">未保存</span>
+                <template v-if="previewEditing">
+                  <button class="pj-text-btn" type="button" :disabled="previewSaving || !previewDirty"
+                          @click="saveEdit">{{ previewSaving ? '保存中…' : '保存' }}</button>
+                  <button class="pj-text-btn" type="button" :disabled="previewSaving" @click="cancelEdit">取消</button>
+                </template>
+                <button v-else class="pj-text-btn" type="button" @click="startEdit">编辑</button>
+              </span>
             </div>
             <div class="pj-pv-body">
               <div v-if="!previewEntry" class="pj-pv-empty">
@@ -82,7 +97,12 @@
                 <div class="pj-pv-sub">图片、PDF、Markdown、代码直接看；其他类型可下载</div>
               </div>
               <a-spin v-else :spinning="previewLoading">
-                <div v-if="previewError" class="pj-pv-none">
+                <div v-if="previewEditing" class="pj-pv-editor">
+                  <pre ref="previewEditHlEl" class="pj-pv-edit-hl" aria-hidden="true"><code class="hljs" v-html="previewDraftHtml"></code></pre>
+                  <textarea ref="previewEditEl" v-model="previewDraft" class="pj-pv-edit"
+                            spellcheck="false" wrap="off" @scroll="syncEditScroll"></textarea>
+                </div>
+                <div v-else-if="previewError" class="pj-pv-none">
                   {{ previewError }}
                   <button class="pj-text-btn" type="button" @click="selectFile(previewEntry)">重试</button>
                 </div>
@@ -94,7 +114,7 @@
                 <div v-else-if="previewKind === PV.MD" class="pj-pv-md">
                   <div class="md" v-html="previewHtml"></div>
                 </div>
-                <pre v-else-if="previewKind === PV.TEXT || previewKind === PV.TABLE" class="pj-pv-text">{{ previewText }}</pre>
+                <pre v-else-if="previewKind === PV.TEXT || previewKind === PV.TABLE" class="pj-pv-text"><code class="hljs" v-html="previewCodeHtml"></code></pre>
                 <div v-else class="pj-pv-none">
                   <p>这个类型暂不支持预览</p>
                   <button class="app-btn" type="button" @click="downloadPreview">下载文件</button>
@@ -106,7 +126,7 @@
             </div>
           </section>
 
-          <div class="pj-side">
+          <div v-if="showSide" class="pj-side">
           <!-- 目录：源文件夹 + 当前文件夹内容（只读） -->
           <section class="app-card pj-card pj-dir-card">
             <div class="pj-card-head">
@@ -240,21 +260,22 @@
 <script setup>
 import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { message } from 'ant-design-vue'
+import { message, Modal } from 'ant-design-vue'
 import {
   PlusOutlined, FolderFilled, FileTextOutlined, QuestionCircleOutlined,
-  SafetyOutlined, BgColorsOutlined, CheckOutlined
+  SafetyOutlined, BgColorsOutlined, CheckOutlined, MenuFoldOutlined, MenuUnfoldOutlined
 } from '@ant-design/icons-vue'
+import hljs from 'highlight.js/lib/common'
 import {
   getProject, updateProject, bindProjectExecutor, pickExecutorDir, openProjectFolder,
   listExecutors, listProjectFiles, getWorkspaceMemory, saveWorkspaceMemory,
-  downloadProjectFile, setNewSessionProject, projectFileContent
+  downloadProjectFile, setNewSessionProject, projectFileContent, saveProjectFileContent
 } from '../api'
 import { sessionStore, loadSessions as refreshSidebarSessions } from './store'
 import { WORKSPACE_ICONS, WORKSPACE_COLORS, workspaceIconOf } from '../utils/workspaceIcons'
 import { copyText } from '../utils/clipboard'
 import { resolveImg, renderMd } from '../utils/markdown'
-import { previewKindOf, PV } from '../utils/artifactView'
+import { previewKindOf, artifactExt, PV } from '../utils/artifactView'
 import { mobileShell, isNarrow } from '../h5/mobile'
 
 const route = useRoute()
@@ -402,6 +423,16 @@ const pjWrapEl = ref(null)
 const pjWrapW = ref(Math.max(0, (typeof window !== 'undefined' ? window.innerWidth : 0) - 232))
 const inlinePreview = computed(() => !isNarrow.value && pjWrapW.value >= 880)
 let pjRO = null
+// 右栏收起：按本机记忆，刷新后保持；只有摆得下两栏时才有这个动作
+const SIDE_COLLAPSE_KEY = 'app_pj_side_collapsed'
+const sideCollapsed = ref((() => {
+  try { return localStorage.getItem(SIDE_COLLAPSE_KEY) === '1' } catch (e) { return false }
+})())
+const toggleSideCollapsed = () => {
+  sideCollapsed.value = !sideCollapsed.value
+  try { localStorage.setItem(SIDE_COLLAPSE_KEY, sideCollapsed.value ? '1' : '0') } catch (e) { /* 忽略 */ }
+}
+const showSide = computed(() => !inlinePreview.value || !sideCollapsed.value)
 const previewEntry = ref(null)
 const previewText = ref('')
 const previewTruncated = ref(false)
@@ -411,6 +442,42 @@ let previewSeq = 0
 const previewKind = computed(() => previewKindOf(previewEntry.value))
 const previewUrl = computed(() => (previewEntry.value && previewEntry.value.viewUrl) ? resolveImg(previewEntry.value.viewUrl) : '')
 const previewHtml = computed(() => (previewKind.value === PV.MD ? renderMd(previewText.value) : ''))
+const previewEditing = ref(false)
+const previewSaving = ref(false)
+const previewDraft = ref('')
+const previewEditEl = ref(null)
+const previewEditHlEl = ref(null)
+const previewEditable = computed(() =>
+  (previewKind.value === PV.MD || previewKind.value === PV.TEXT || previewKind.value === PV.TABLE)
+  && !previewTruncated.value)
+const previewDirty = computed(() => previewEditing.value && previewDraft.value !== previewText.value)
+// 代码按扩展名挂 highlight.js 语法；映射不到就按纯文本转义
+const CODE_LANG = {
+  java: 'java', js: 'javascript', mjs: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript',
+  json: 'json', xml: 'xml', html: 'xml', htm: 'xml', vue: 'xml',
+  yaml: 'yaml', yml: 'yaml', css: 'css', scss: 'scss', sql: 'sql', py: 'python', go: 'go', rs: 'rust',
+  sh: 'bash', bash: 'bash', zsh: 'bash', toml: 'ini', ini: 'ini', conf: 'ini', properties: 'ini'
+}
+const escapeHtml = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+const highlightText = (text, lang) => {
+  if (lang && hljs.getLanguage(lang)) {
+    try { return hljs.highlight(text, { language: lang, ignoreIllegals: true }).value } catch (e) { /* 落空走转义 */ }
+  }
+  return escapeHtml(text)
+}
+const previewCodeHtml = computed(() =>
+  highlightText(previewText.value, CODE_LANG[artifactExt(previewEntry.value)] || ''))
+// 编辑态同样要有格式：高亮层垫在透明 textarea 下面，随输入与滚动同步
+const previewDraftHtml = computed(() => {
+  const lang = previewKind.value === PV.MD ? 'markdown' : (CODE_LANG[artifactExt(previewEntry.value)] || '')
+  return highlightText(previewDraft.value, lang)
+})
+const syncEditScroll = e => {
+  const hl = previewEditHlEl.value
+  if (!hl) return
+  hl.scrollTop = e.target.scrollTop
+  hl.scrollLeft = e.target.scrollLeft
+}
 const clearPreview = () => {
   previewSeq++
   previewEntry.value = null
@@ -418,6 +485,9 @@ const clearPreview = () => {
   previewTruncated.value = false
   previewLoading.value = false
   previewError.value = ''
+  previewEditing.value = false
+  previewDraft.value = ''
+  previewSaving.value = false
 }
 
 const activeRoot = computed(() => {
@@ -476,6 +546,7 @@ const loadFiles = async () => {
 
 const selectRoot = root => {
   if (fileDir.value === root.alias) return
+  if (previewEditing.value) { message.warning('正在编辑，先保存或取消'); return }
   fileDir.value = root.alias
   fileKw.value = ''
   clearPreview()
@@ -484,6 +555,7 @@ const selectRoot = root => {
 
 const openDir = path => {
   if (path === fileDir.value) return
+  if (previewEditing.value) { message.warning('正在编辑，先保存或取消'); return }
   fileDir.value = path
   fileKw.value = ''
   clearPreview()
@@ -498,6 +570,9 @@ const selectFile = async e => {
   previewTruncated.value = false
   previewError.value = ''
   previewLoading.value = false
+  previewEditing.value = false
+  previewDraft.value = ''
+  previewSaving.value = false
   const kind = previewKindOf(e)
   // 页面/图片/PDF 直接把签名地址交给 iframe/img，不必再取原文
   if (kind !== PV.MD && kind !== PV.TEXT && kind !== PV.TABLE) return
@@ -516,6 +591,47 @@ const selectFile = async e => {
   }
 }
 
+const startEdit = async () => {
+  if (!previewEditable.value || previewLoading.value) return
+  previewDraft.value = previewText.value
+  previewEditing.value = true
+  await nextTick()
+  if (previewEditEl.value) previewEditEl.value.focus()
+  if (previewEditHlEl.value) { previewEditHlEl.value.scrollTop = 0; previewEditHlEl.value.scrollLeft = 0 }
+}
+
+const cancelEdit = () => {
+  if (!previewDirty.value) { previewEditing.value = false; return }
+  Modal.confirm({
+    title: '放弃未保存的修改？',
+    content: '这次编辑的内容不会保留。',
+    okText: '放弃',
+    cancelText: '继续编辑',
+    onOk: () => { previewEditing.value = false }
+  })
+}
+
+const saveEdit = async () => {
+  const e = previewEntry.value
+  if (!e || previewSaving.value) return
+  if (!previewDirty.value) { previewEditing.value = false; return }
+  previewSaving.value = true
+  try {
+    await saveProjectFileContent(id.value, e.path, previewDraft.value)
+    previewText.value = previewDraft.value
+    previewEditing.value = false
+    message.success('已保存')
+    const path = e.path
+    await loadFiles()
+    const fresh = fileEntries.value.find(x => x.path === path)
+    if (fresh && previewEntry.value && previewEntry.value.path === path) previewEntry.value = fresh
+  } catch (err) {
+    message.error('保存失败：' + (err.message || '请重试'))
+  } finally {
+    previewSaving.value = false
+  }
+}
+
 const downloadPreview = async () => {
   const e = previewEntry.value
   if (!e) return
@@ -528,7 +644,11 @@ const downloadPreview = async () => {
 
 const onFileClick = async e => {
   if (e.kind === 'dir') { openDir(e.path); return }
-  if (inlinePreview.value) { selectFile(e); return }
+  if (inlinePreview.value) {
+    if (previewEditing.value) { message.warning('正在编辑，先保存或取消'); return }
+    selectFile(e)
+    return
+  }
   if (e.viewUrl) {
     const url = resolveImg(e.viewUrl)
     if (url) window.open(url, '_blank', 'noopener')
@@ -892,6 +1012,22 @@ onUnmounted(() => {
 .pj-pv-ic { color: var(--app-text3); font-size: 15px; flex: none; }
 .pj-pv-name { font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pj-pv-meta { font-size: 11px; color: var(--app-text3); white-space: nowrap; flex: none; }
+.pj-pv-acts { display: flex; align-items: center; gap: 12px; flex: none; }
+.pj-pv-dirty { font-size: 11px; color: var(--app-warn); }
+/* 编辑态：高亮层垫在透明 textarea 下面，两层字号/行高/内边距必须完全一致才能对齐 */
+.pj-pv-editor { position: relative; height: 100%; }
+.pj-pv-edit-hl,
+.pj-pv-edit {
+  position: absolute; inset: 0; margin: 0; padding: 16px 20px; border: 0; outline: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.75;
+  white-space: pre; tab-size: 2; letter-spacing: normal;
+}
+.pj-pv-edit-hl { overflow: hidden; color: var(--app-text); pointer-events: none; }
+.pj-pv-edit-hl code.hljs { display: block; padding: 0; background: transparent; overflow: visible; }
+.pj-pv-edit {
+  width: 100%; height: 100%; resize: none; overflow: auto;
+  background: transparent; color: transparent; caret-color: var(--app-text);
+}
 .pj-pv-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .pj-pv-body :deep(.ant-spin-nested-loading) { flex: 1; min-height: 0; }
 .pj-pv-body :deep(.ant-spin-container) { height: 100%; }
@@ -911,8 +1047,10 @@ onUnmounted(() => {
 .pj-pv-text {
   height: 100%; overflow: auto; margin: 0; padding: 16px 20px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.75;
-  color: var(--app-text); white-space: pre;
+  color: var(--app-text); white-space: pre; tab-size: 2;
 }
+/* highlight.js 自带底色与内边距，嵌在我们的 pre 里会多一圈：只留语法着色 */
+.pj-pv-text code.hljs { display: block; padding: 0; background: transparent; overflow: visible; }
 .pj-pv-note {
   flex: none; padding: 8px 16px; border-top: 1px solid var(--app-border);
   font-size: 11.5px; color: var(--app-warn-text); background: var(--app-warn-weak);

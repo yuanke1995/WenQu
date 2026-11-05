@@ -46,6 +46,8 @@ public class ProjectFileService {
     private static final int MAX_ENTRIES = 300;
     private static final int MAX_TREE_DEPTH = 8;
     private static final int DOWNLOAD_CHUNK = 1024 * 1024;
+    /** 预览里编辑保存的文本上限：再大就不是「顺手改一行」，该去电脑上的编辑器 */
+    private static final int MAX_WRITE_CHARS = 2 * 1024 * 1024;
 
     private static final String VIEW_PATH_PREFIX = "/ai/project-files/";
     private static final String TOKEN_SEP = "\n";
@@ -269,6 +271,22 @@ public class ProjectFileService {
         m.put("truncated", truncated);
         m.put("content", content);
         return m;
+    }
+
+    /** 预览「编辑」保存：把文本写回工作区文件（只允许文本类，经执行器原子写）。 */
+    public void saveText(String uid, String projectId, String relPath, String content) {
+        Project p = writableProject(uid, projectId);
+        List<ProjectRoot> roots = requireRoots(p);
+        Target t = target(p, roots, relPath, false);
+        String ext = PreviewTypes.extOf(t.rel.isEmpty() ? t.root.getAlias() : t.rel);
+        if (!PreviewTypes.isReadable(ext)) {
+            throw new IllegalArgumentException("这个类型不支持在应用里编辑，请下载或用电脑上的编辑器");
+        }
+        String text = content == null ? "" : content;
+        if (text.length() > MAX_WRITE_CHARS) {
+            throw new IllegalArgumentException("文件太大（超过 2MB），请在电脑上编辑");
+        }
+        executorFiles.writeText(executorId(p), roots, abs(t.root, t.rel), text);
     }
 
     // ==================== 工作区级记忆（独立于用户级记忆，存工作区根目录 .wenqu/MEMORY.md） ====================
