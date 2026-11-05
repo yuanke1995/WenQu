@@ -259,6 +259,42 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private volatile boolean distributedStoreResolved;
     private volatile UnifiedJedis cachedJedis;
     private volatile boolean jedisResolved;
+    /**
+     * 引擎级共享的模型 HTTP 通道（OkHttp）：连接池跨会话、跨实例常驻。
+     * <p>此前每个会话实例各建一个 transport＝各一份连接池，会话轮与轮之间连接虽能复用，
+     * 但<b>池与池之间不互通</b>，而且空闲连接没有任何保活——网关侧把空闲连接掐掉后，
+     * 下一轮的第一笔请求都要重新 TCP+TLS（方舟裸测：冷连接首包 0.55s，热连接 8ms，
+     * 这 0.5s 正是稳态问答「模型段」的最大单一开销）。共享实例 + HTTP/2 pingInterval
+     * 让活跃供应商的连接始终保持热：ping 对 HTTP/2 连接生效（防网关闲除断连），
+     * 对 HTTP/1.1 连接无感，openai 兼容网关两种形态都覆盖。
+     */
+    private volatile io.agentscope.core.model.transport.OkHttpTransport cachedModelTransport;
+
+    /** 懒建的共享模型传输层（见字段注释）；超时口径沿用原 per-session 配置。 */
+    private io.agentscope.core.model.transport.OkHttpTransport sharedModelTransport() {
+        io.agentscope.core.model.transport.OkHttpTransport t = cachedModelTransport;
+        if (t != null) return t;
+        synchronized (this) {
+            if (cachedModelTransport != null) return cachedModelTransport;
+            okhttp3.OkHttpClient client = new okhttp3.OkHttpClient.Builder()
+                    // 连接超时 8 秒：真机 2026-10-23 22:24 那一轮，第一次模型调用挂满 33.7 秒以
+                    // 「SSE/NDJSON stream failed: Operation timed out」收场，框架重试后第二次 5.8 秒
+                    // 就出了字——那 30 秒（框架默认）是一条已经死掉的连接在慢慢超时。
+                    .connectTimeout(java.time.Duration.ofSeconds(8))
+                    .readTimeout(java.time.Duration.ofMinutes(5))
+                    .writeTimeout(java.time.Duration.ofSeconds(30))
+                    .pingInterval(java.time.Duration.ofSeconds(30))
+                    .connectionPool(new okhttp3.ConnectionPool(16, 5, java.util.concurrent.TimeUnit.MINUTES))
+                    .build();
+            cachedModelTransport = io.agentscope.core.model.transport.OkHttpTransport.builder()
+                    .client(client)
+                    .config(io.agentscope.core.model.transport.HttpTransportConfig.builder()
+                            .connectTimeout(java.time.Duration.ofSeconds(8))
+                            .build())
+                    .build();
+            return cachedModelTransport;
+        }
+    }
 
     public AgentscopeChatEngine(ModelRegistryService modelRegistry, ConfigService configService,
                                AppProperties properties, WenquAgentxTools tools,
@@ -3660,15 +3696,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 传输层实验（2026-11-01）已回退：JDK HttpClient 与 OkHttp 同样在长流式 ~2 万字处丢字，
         // 丢失点在框架 ingestion 共用层（AgentScope 2.1.0-BETA1，供应商网线连续干净、直连同模型
         // 6/6 全净——字节级对账见 copilot-long-output-corruption 记忆），换传输无收益，回退基线。
-        io.agentscope.core.model.transport.OkHttpTransport modelTransport =
-                io.agentscope.core.model.transport.OkHttpTransport.builder()
-                        .config(io.agentscope.core.model.transport.HttpTransportConfig.builder()
-                                // 连接超时从框架默认的 30 秒收到 8 秒：真机 2026-10-23 22:24 那一轮，第一次模型调用
-                                // 挂满 33.7 秒以「SSE/NDJSON stream failed: java.io.IOException: Operation timed out」收场，
-                                // 框架随即重试且第二次 5.8 秒就出了字——那 30 秒是一条已经死掉的连接在慢慢超时。
-                                .connectTimeout(java.time.Duration.ofSeconds(8))
-                                .build())
-                        .build();
+        io.agentscope.core.model.transport.OkHttpTransport modelTransport = sharedModelTransport();
         String completionsPath = route.completionsPath() == null || route.completionsPath().isBlank()
                 ? "/v1/chat/completions" : route.completionsPath();
         OpenAIChatModel.Builder modelBuilder = OpenAIChatModel.builder()
