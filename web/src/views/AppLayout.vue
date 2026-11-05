@@ -215,9 +215,12 @@
         <template v-else>
           <section v-for="sec in sidebarSections" :key="sec.key" class="side-sec">
             <div class="side-sec-head clickable" role="button" :tabindex="0"
+                 :ref="el => setSecHeadEl(sec.key, el)"
+                 :class="{ dragging: sectionDragging.armed && sectionDragging.key === sec.key }"
                  :aria-expanded="String(!secHidden(sec))"
                  :title="(secHidden(sec) ? '展开：' : '收起：') + sec.title"
-                 @click="toggleSection(sec)"
+                 @pointerdown="onSecHeadPointerDown($event, sec)"
+                 @click="onSecHeadClick(sec)"
                  @keydown.enter.self.prevent="toggleSection(sec)"
                  @keydown.space.self.prevent="toggleSection(sec)">
               <span class="side-sec-title" :title="sec.key === 'solo' ? '不属于任何工作区的会话' : ''">{{ sec.title }}</span>
@@ -272,9 +275,8 @@
                     <button class="space-op" title="工作区操作" @click.stop><more-outlined /></button>
                     <template #overlay>
                       <a-menu @click="({ key }) => spaceMenu(row, key)">
-                        <a-menu-item key="open" :disabled="row.virtual"><folder-open-outlined /> 打开工作区页</a-menu-item>
-                        <a-menu-item key="folder" :disabled="row.virtual"><export-outlined /> 在电脑上打开文件夹</a-menu-item>
-                        <a-menu-item key="edit" :disabled="row.virtual"><setting-outlined /> 编辑工作区</a-menu-item>
+                        <a-menu-item key="open" :disabled="row.virtual"><folder-open-outlined /> 进入工作区</a-menu-item>
+                        <a-menu-item key="folder" :disabled="row.virtual"><export-outlined /> 在电脑上打开</a-menu-item>
                         <a-menu-item key="rename" :disabled="row.virtual"><edit-outlined /> 重命名</a-menu-item>
                         <a-menu-divider />
                         <a-menu-item v-if="row.status === 'archived'" key="restore"><reload-outlined /> 恢复</a-menu-item>
@@ -928,6 +930,20 @@ const toggleSpace = space => {
   persistCollapsedSpaces()
 }
 
+/** 「会话 / 工作区」两段的上下顺序：长按表头拖动交换，按本机记忆（与折叠状态同口径） */
+const SEC_ORDER_KEY = 'app_side_sec_order'
+const SEC_KEYS = ['solo', 'spaces']
+const sectionOrder = ref((() => {
+  let saved = []
+  try { saved = JSON.parse(localStorage.getItem(SEC_ORDER_KEY) || '[]') } catch (e) { saved = [] }
+  const out = Array.isArray(saved) ? [...new Set(saved.filter(k => SEC_KEYS.includes(k)))] : []
+  for (const k of SEC_KEYS) if (!out.includes(k)) out.push(k)
+  return out
+})())
+const persistSectionOrder = () => {
+  try { localStorage.setItem(SEC_ORDER_KEY, JSON.stringify(sectionOrder.value)) } catch (e) { /* 忽略 */ }
+}
+
 // 分区数据：第一段「会话」= 不属于任何真实工作区的会话（没挂工作区 + implicit 兜底容器，
 // 后端用 __nospace__ 一次过滤）；第二段「工作区」= 用户新建的工作区 + 已归档。
 // 两段共用同一套行模板，bare 控制有没有工作区头。
@@ -954,7 +970,8 @@ const sidebarSections = computed(() => {
   if (!searchKw.value || rows.length || !soloVisible) {
     out.push({ key: 'spaces', title: '工作区', count: projectSpaces.value.length, rows, bare: false, spacesSection: true })
   }
-  return out
+  // 可见性决定之后，再按用户拖出来的顺序排：搜索态某段没命中时不占位，顺序照样成立
+  return sectionOrder.value.map(k => out.find(s => s.key === k)).filter(Boolean)
 })
 
 /** 表头「展开/折叠全部」的作用域 = 此刻列在「工作区」段里的工作区行
@@ -987,6 +1004,85 @@ function toggleSection (sec) {
   if (foldedSections.has(sec.key)) foldedSections.delete(sec.key)
   else foldedSections.add(sec.key)
   try { localStorage.setItem(SEC_FOLD_KEY, JSON.stringify([...foldedSections])) } catch (e) { /* 忽略 */ }
+}
+
+// ---- 长按表头拖动排序：短按仍是折叠/展开，按住 350ms 后拖过另一段表头中线即交换 ----
+const secHeadEls = new Map()
+const setSecHeadEl = (key, el) => { if (el) secHeadEls.set(key, el); else secHeadEls.delete(key) }
+const sectionDragging = reactive({ key: '', armed: false, startX: 0, startY: 0, reordered: false })
+let secPressTimer = 0
+let secDragClickGuard = false
+
+function swapSections (a, b) {
+  const order = [...sectionOrder.value]
+  const ia = order.indexOf(a)
+  const ib = order.indexOf(b)
+  if (ia < 0 || ib < 0) return
+  order[ia] = b
+  order[ib] = a
+  sectionOrder.value = order
+  sectionDragging.reordered = true
+}
+
+function onSecHeadPointerMove (e) {
+  if (!sectionDragging.key) return
+  const dx = e.clientX - sectionDragging.startX
+  const dy = e.clientY - sectionDragging.startY
+  if (!sectionDragging.armed) {
+    // 没到长按时长就明显挪动：这是一次滚动/划选，取消这次长按
+    if (Math.abs(dx) > 8 || Math.abs(dy) > 8) clearTimeout(secPressTimer)
+    return
+  }
+  e.preventDefault()
+  const keys = sidebarSections.value.map(s => s.key)
+  const i = keys.indexOf(sectionDragging.key)
+  if (i < 0) return
+  const prevKey = keys[i - 1]
+  const nextKey = keys[i + 1]
+  if (prevKey) {
+    const r = secHeadEls.get(prevKey)?.getBoundingClientRect()
+    if (r && e.clientY < r.top + r.height / 2) return swapSections(sectionDragging.key, prevKey)
+  }
+  if (nextKey) {
+    const r = secHeadEls.get(nextKey)?.getBoundingClientRect()
+    if (r && e.clientY > r.top + r.height / 2) swapSections(sectionDragging.key, nextKey)
+  }
+}
+
+function endSecHeadDrag () {
+  clearTimeout(secPressTimer)
+  if (sectionDragging.armed) {
+    // 拖动结束浏览器还会补一次 click：别让它顺手把这一段折叠了
+    secDragClickGuard = true
+    if (sectionDragging.reordered) persistSectionOrder()
+  }
+  sectionDragging.armed = false
+  sectionDragging.key = ''
+  sectionDragging.reordered = false
+  window.removeEventListener('pointermove', onSecHeadPointerMove)
+  window.removeEventListener('pointerup', endSecHeadDrag)
+  window.removeEventListener('pointercancel', endSecHeadDrag)
+}
+
+function onSecHeadPointerDown (e, sec) {
+  if (sectionDragging.armed) return
+  if (e.pointerType === 'mouse' && e.button !== 0) return
+  if (e.target.closest && e.target.closest('.side-sec-op')) return
+  secDragClickGuard = false
+  sectionDragging.key = sec.key
+  sectionDragging.startX = e.clientX
+  sectionDragging.startY = e.clientY
+  sectionDragging.reordered = false
+  clearTimeout(secPressTimer)
+  secPressTimer = setTimeout(() => { sectionDragging.armed = true }, 350)
+  window.addEventListener('pointermove', onSecHeadPointerMove, { passive: false })
+  window.addEventListener('pointerup', endSecHeadDrag)
+  window.addEventListener('pointercancel', endSecHeadDrag)
+}
+
+function onSecHeadClick (sec) {
+  if (secDragClickGuard) { secDragClickGuard = false; return }
+  toggleSection(sec)
 }
 
 // 会话行上的时钟标记：只标启用中的任务（停用的提示「它会自己跑」是假的）
@@ -1255,12 +1351,7 @@ const spaceMenu = (space, key) => {
   if (key === 'folder') {
     if (!space.id) return
     openProjectFolder(space.id)
-      .then(() => message.success('已在电脑上打开文件夹'))
       .catch(e => message.warning(e.message || '打开失败：先确认那台电脑上的执行器在线'))
-    return
-  }
-  if (key === 'edit') {
-    if (space.id) router.push({ path: '/project/' + space.id, query: { settings: '1' } })
     return
   }
   if (key === 'rename') { openRenameSpace(space); return }
@@ -1292,7 +1383,7 @@ const doDeleteProject = async () => {
   delSaving.value = true
   try {
     await deleteProject(space.id)
-    message.success('已删除（本机文件仍在你的电脑上）')
+    message.success('已删除')
     delOpen.value = false
     // 删掉的正是「下次新对话」的目标工作区 → 清掉，否则新会话会带一个不存在的 projectId
     setNewSessionProject('')
@@ -1701,7 +1792,7 @@ watch(() => route.fullPath, () => {
    而不是旧版灰色小标题 + 组内数字角标（视觉重量太轻，撑不起分区）。 */
 .side-sec { display: flex; flex-direction: column; padding: 0 2px; }
 .side-sec + .side-sec { margin-top: 2px; }
-.side-sec-head { display: flex; align-items: center; gap: 4px; padding: 9px 6px 3px; min-height: 28px; }
+.side-sec-head { display: flex; align-items: center; gap: 4px; padding: 9px 6px 3px; min-height: 28px; user-select: none; touch-action: none; }
 .side-sec-title { font-size: 11px; font-weight: 600; color: var(--app-text3); letter-spacing: .04em; }
 .side-sec-count { font-size: 11px; color: var(--app-text3); opacity: .8; }
 .side-sec-ops { margin-left: auto; display: inline-flex; align-items: center; gap: 2px; }
@@ -1729,6 +1820,12 @@ watch(() => route.fullPath, () => {
 .side-sec-head.clickable { cursor: pointer; }
 .side-sec-head.clickable:hover .side-sec-title,
 .side-sec-head.clickable:hover .side-sec-count { color: var(--app-text2); }
+/* 长按进入拖动：整行「抬起来」，抓着的手势 + 阴影告知现在松手就会落位 */
+.side-sec-head.dragging {
+  position: relative; z-index: 3; cursor: grabbing;
+  background: var(--app-bg, #fff); border-radius: 6px;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, .16);
+}
 .sec-caret { margin-left: 0; color: var(--app-text3); }
 
 /* 工作区：一行「图标 + 名字（点名字展开/收起） + ⋯ + 新建对话」。
