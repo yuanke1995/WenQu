@@ -2195,6 +2195,15 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             return at >= 0 && full.regionMatches(at, piece, 0, piece.length());
         }
 
+        /** 已记录思考是否包含该片段：收尾聚合帧对思考的重复识别，与 {@link #answerContains} 同一把尺。 */
+        boolean thinkingContains(String piece) {
+            String full = thinking.toString();
+            if (piece.isEmpty() || piece.length() > full.length()) return false;
+            String probe = piece.length() > 60 ? piece.substring(0, 60) : piece;
+            int at = full.indexOf(probe);
+            return at >= 0 && full.regionMatches(at, piece, 0, piece.length());
+        }
+
         private final java.util.List<java.util.Map<String, Object>> toolCalls =
                 java.util.Collections.synchronizedList(new java.util.ArrayList<>());
         /** 工具大输出外溢的落盘标识（{@code 工具名|spillId}），收尾时挂回对应工具卡，卡片才有「查看完整输出」。 */
@@ -3010,6 +3019,14 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                     if (!(block instanceof Map<?, ?> b)) continue;
                     if ("thinking".equals(b.get("type"))) {
                         String thinkingDelta = str(b.get("thinking"));
+                        // 聚合帧同样会重发思考的尾段：正文有上面那道去重闸，思考没有，尾段就会在
+                        // 回答末尾多出一行「深度思考」（真机 2026-11-05 17:50：一段从半句开始的碎片）。
+                        // 已记录过的一律跳过——它不是新一步的思考，只是同一段的尾巴。
+                        if (aggregateTail && recording.thinkingContains(thinkingDelta)) {
+                            log.info("[TIMELINE] 流末聚合帧重复思考尾段已跳过 {} 字: session={}",
+                                    thinkingDelta.length(), recording.uid);
+                            continue;
+                        }
                         recording.thinking(thinkingDelta);
                         emit(channel, RunEventType.THINKING, thinkingDelta);
                     } else if ("text".equals(b.get("type"))) {

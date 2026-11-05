@@ -961,6 +961,14 @@ const timelineView = m => {
   flushMerge()
   flushGroup()
   if (len > maxTo) out.push({ kind: 'text', from: maxTo, to: len })
+  // 流末聚合帧会把思考尾段再投一次：它落在全部正文之后，且内容就是前一段思考的结尾。
+  // 这种重复段不再单独成行（历史消息里已落库的那一份也在这里清掉）；真实的新收尾思考照常显示。
+  const tail = out[out.length - 1]
+  if (tail && tail.kind === 'think') {
+    const thought = String(m.thinking || '')
+    const piece = thought.slice(tail.from, tail.to)
+    if (piece && thought.slice(0, tail.from).endsWith(piece)) out.pop()
+  }
   return markGrowingCluster(clusterize(out), m)
 }
 
