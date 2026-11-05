@@ -2460,6 +2460,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             if (delta == null || delta.isEmpty()) return;
             if (!thinkingOpen) {
                 thinkingOpen = true;
+                // 先把此前已出的正文落成段：思考段要等 closeThinking 那一刻才追加进时间线，
+                // 而末尾正文只在轮末 timelineJson 才补段。不先落段，这段思考就会记到正文前面，
+                // 刷新后从答案下方（实时按到达顺序）跳到答案上方——工具/插话入口本来就有同样的 flush。
+                flushTimelineText(answerText.length());
                 thinkFrom = thinking.length();
             }
             thinking.append(delta);

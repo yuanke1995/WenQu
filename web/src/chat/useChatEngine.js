@@ -2489,6 +2489,9 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
     model,
     onThinking: t => {
       if (!t) return
+      // 正文增量走 120ms 节流而思考即时到达：不先把缓冲里的正文落屏，这段思考会被记在
+      // 尚未刷出的正文之前（与 onProcess 同一条）；落库版按文本先成段，刷新后会再跳回去
+      flushNow(false)
       const have = msg.thinking || ''
       if (thinkRoundOpen) extendTimelineThink(msg, have.length, have.length + t.length)
       else pushTimelineThink(msg, have.length, have.length + t.length)
