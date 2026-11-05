@@ -12,6 +12,7 @@ import { message } from 'ant-design-vue'
 import { listSessions, listProjects, listScheduledJobs, getNewSessionProject, setNewSessionProject, listLiveSandboxProcs } from '../api'
 import { announce, onAnnounce } from '../utils/tabSync'
 import { getToken } from '../utils/auth'
+import { projectOnThisComputer } from '../utils/localExecutor'
 
 // 每个工作区首屏铺几条。4 条与基准稿（任务/工作区各 4 条后接「查看更多」）一致：
 // 再多一进来就是长列表，再少又看不出这个工作区最近在聊什么。
@@ -328,8 +329,10 @@ export async function loadSessions (keyword, { refreshProjects = false } = {}) {
     // 「不属于任何真实工作区」始终参与取数且排在最前：侧栏第一段「会话」就是它——
     // implicit 兜底容器的会话也算在内，所以它不再出现在「工作区」列表里。
     // 工作区接口不可用时退化成「全部会话」一个分组，此时不再单列这一段（否则同一批会话出现两次）。
+    // 只列这台电脑绑定的工作区：别的电脑上的仍留在库里，换台电脑登录自然出现。
+    // 是否退化仍看接口返回的原始 projects——本机一个工作区都没有是正常状态，不是接口挂了。
     const defs = projects.length
-      ? [noSpaceSpace(), ...projects.filter(p => p.status !== 'archived' && !p.isImplicit).map(spaceOfProject)]
+      ? [noSpaceSpace(), ...projects.filter(p => p.status !== 'archived' && !p.isImplicit && projectOnThisComputer(p)).map(spaceOfProject)]
       : [allSessionsSpace()]
 
     const loaded = await Promise.all(defs.map(async def => {
@@ -350,7 +353,7 @@ export async function loadSessions (keyword, { refreshProjects = false } = {}) {
       // 普通态：用户显式建的工作区即使还空着也保留——刚建完就要看得见，才谈得上往里放会话
       return true
     })
-    sessionStore.archived = projects.filter(p => p.status === 'archived' && !p.isImplicit).map(spaceOfProject)
+    sessionStore.archived = projects.filter(p => p.status === 'archived' && !p.isImplicit && projectOnThisComputer(p)).map(spaceOfProject)
     sessionStore.archivedLoaded = false
     lastSyncAt = Date.now()
     rebuildFlat()
@@ -623,11 +626,11 @@ export async function resyncSessions ({ withProjects = false } = {}) {
     }
     if (gen !== loadGen) return
     const defs = projects.length
-      ? [noSpaceSpace(), ...projects.filter(p => p.status !== 'archived' && !p.isImplicit).map(spaceOfProject)]
+      ? [noSpaceSpace(), ...projects.filter(p => p.status !== 'archived' && !p.isImplicit && projectOnThisComputer(p)).map(spaceOfProject)]
       : [allSessionsSpace()]
     // 结构没变的工作区一律沿用原对象：换成新对象等于把展开态与已加载行一起丢掉
     sessionStore.spaces = defs.map(def => sessionStore.spaces.find(s => s.key === def.key) || def)
-    const archivedDefs = projects.filter(p => p.status === 'archived' && !p.isImplicit).map(spaceOfProject)
+    const archivedDefs = projects.filter(p => p.status === 'archived' && !p.isImplicit && projectOnThisComputer(p)).map(spaceOfProject)
     sessionStore.archived = archivedDefs.map(def => sessionStore.archived.find(s => s.key === def.key) || def)
     const targets = [...sessionStore.spaces, ...(sessionStore.archivedOpen ? sessionStore.archived : [])]
     await Promise.all(targets.map(async space => {

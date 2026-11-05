@@ -45,13 +45,13 @@ public final class FrameworkToolLabels {
             // 问渠侧同名工具已退役（见 SandboxToolProvider#descriptors），模型看到的工具名不变，
             // 但执行方换成框架 FilesystemTool / ShellExecuteTool，卡片文案得跟上，否则界面上
             // 会退回前端自己的英文名映射。
-            Map.entry(FilesystemToolNames.READ_FILE, "读取沙盒文件"),
-            Map.entry(FilesystemToolNames.WRITE_FILE, "写入沙盒文件"),
-            Map.entry(FilesystemToolNames.EDIT_FILE, "编辑沙盒文件"),
-            Map.entry(FilesystemToolNames.GREP_FILES, "检索沙盒内容"),
+            Map.entry(FilesystemToolNames.READ_FILE, "读取文件"),
+            Map.entry(FilesystemToolNames.WRITE_FILE, "写入文件"),
+            Map.entry(FilesystemToolNames.EDIT_FILE, "编辑文件"),
+            Map.entry(FilesystemToolNames.GREP_FILES, "检索内容"),
             Map.entry(FilesystemToolNames.GLOB_FILES, "按模式查找文件"),
-            Map.entry(FilesystemToolNames.LIST_FILES, "列出沙盒目录"),
-            Map.entry(FilesystemToolNames.EXECUTE, "执行沙盒命令"),
+            Map.entry(FilesystemToolNames.LIST_FILES, "列出目录"),
+            Map.entry(FilesystemToolNames.EXECUTE, "执行命令"),
             // 全框架化 P3：技能与记忆也换成框架工具面后，这十一把同样只露裸名。
             // 技能那三把是每次用技能都会露面的一把（load_skill_through_path），漏它的表现
             // 就是界面上出现一个没人看得懂的英文函数名。
@@ -82,13 +82,13 @@ public final class FrameworkToolLabels {
             Map.entry(PlanModeToolsNames.ENTER, "先只读地调研与设计方案，这期间不改任何东西"),
             Map.entry(PlanModeToolsNames.WRITE, "把想好的方案写成计划，你点开就能看"),
             Map.entry(PlanModeToolsNames.EXIT, "计划写完了，请你过目；你同意后它才开始动手"),
-            Map.entry(FilesystemToolNames.READ_FILE, "读云端沙盒里的文件，不会碰你本机的文件"),
-            Map.entry(FilesystemToolNames.WRITE_FILE, "在云端沙盒里新建或覆盖文件"),
-            Map.entry(FilesystemToolNames.EDIT_FILE, "在云端沙盒里替换文件中的某段内容"),
-            Map.entry(FilesystemToolNames.GREP_FILES, "按关键词在沙盒文件里搜，跨很多文件一起找"),
+            Map.entry(FilesystemToolNames.READ_FILE, "读取文件内容"),
+            Map.entry(FilesystemToolNames.WRITE_FILE, "新建或覆盖文件"),
+            Map.entry(FilesystemToolNames.EDIT_FILE, "替换文件里的某段内容"),
+            Map.entry(FilesystemToolNames.GREP_FILES, "按关键词在文件里搜，跨很多文件一起找"),
             Map.entry(FilesystemToolNames.GLOB_FILES, "按文件名规律找文件，比如「所有 .md」"),
-            Map.entry(FilesystemToolNames.LIST_FILES, "列出云端沙盒里某个目录下有哪些文件"),
-            Map.entry(FilesystemToolNames.EXECUTE, "在隔离的云端沙盒里跑一条命令，不影响你本机"),
+            Map.entry(FilesystemToolNames.LIST_FILES, "列出某个目录下有哪些文件"),
+            Map.entry(FilesystemToolNames.EXECUTE, "在隔离的执行环境里跑一条命令，把输出带回来"),
             Map.entry("load_skill_through_path", "把某条技能的正文读出来，它照着那份做"),
             Map.entry("skill_manage", "新建、修改或删除你名下的技能"),
             Map.entry("propose_skill", "先起草一份技能给你过目，同意后才会留下"),

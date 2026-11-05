@@ -602,6 +602,12 @@ export const updateProjectTodo = (id, todoId, body) =>
   request(`/project/${id}/todos/${encodeURIComponent(todoId)}`, { method: 'PUT', body: JSON.stringify(body) })
 export const deleteProjectTodo = (id, todoId) =>
   request(`/project/${id}/todos/${encodeURIComponent(todoId)}`, { method: 'DELETE' })
+// 工作区级记忆（独立于用户级记忆，存工作区根目录 .wenqu/MEMORY.md，经执行器读写）；与个人记忆互不干扰
+export const getWorkspaceMemory = id => request(`/project/${encodeURIComponent(id)}/workspace-memory`)
+export const saveWorkspaceMemory = (id, content) =>
+  request(`/project/${encodeURIComponent(id)}/workspace-memory`, {
+    method: 'PUT', body: JSON.stringify({ content: content || '' })
+  })
 // 归档 / 恢复工作区（不动会话与产物，implicit 兜底容器不可归档）
 export const setProjectStatus = (id, status) =>
   said(request(`/project/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) }), { k: 'spaces' })

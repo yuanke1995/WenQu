@@ -114,8 +114,8 @@
            静默成空列表会被读成「我让它做的文件没了」。折树也吃引擎那一份：接口给的是摊平的一维
            清单，整条路径摊在一行时名字全被截断，认不出哪份是成品。 -->
       <template v-if="sandboxFiles.length || sandboxErr || sandboxLoading">
-        <div class="rs-section">沙盒文件<span v-if="sandboxCount" class="rs-n">{{ sandboxCount }} 个{{ sandboxBytes ? ' · ' + sbSize(sandboxBytes) : '' }}</span></div>
-        <div v-if="sandboxLoading" class="rs-empty">正在读取沙盒目录…</div>
+        <div class="rs-section">会话文件<span v-if="sandboxCount" class="rs-n">{{ sandboxCount }} 个{{ sandboxBytes ? ' · ' + sbSize(sandboxBytes) : '' }}</span></div>
+        <div v-if="sandboxLoading" class="rs-empty">正在读取目录…</div>
         <div v-else-if="sandboxErr" class="rs-sb-err">
           <span>{{ sandboxErr }}</span>
           <button type="button" class="rs-sb-retry" @click="loadSandboxFiles">重试</button>
@@ -172,9 +172,9 @@
           <div class="rs-bg-foot">
             <span class="rs-bg-meta">
               <span>跑了 {{ procAge(p) }}</span>
-              <span v-if="p.ports && p.ports.length"> · 占着端口 {{ p.ports.join(' / ') }}（沙盒内部）</span>
+              <span v-if="p.ports && p.ports.length"> · 占着端口 {{ p.ports.join(' / ') }}（会话内部）</span>
               <span v-if="p.roots > 1"> · {{ p.roots }} 棵进程树</span>
-              <span v-if="!p.own"> · 同沙盒别的会话起的</span>
+              <span v-if="!p.own"> · 同工作区别的会话起的</span>
             </span>
             <button v-if="p.killable" type="button" class="rs-bg-kill" :disabled="killingTag === p.tag"
                     @click="killProc(p)">{{ killingTag === p.tag ? '停止中…' : '停止它' }}</button>

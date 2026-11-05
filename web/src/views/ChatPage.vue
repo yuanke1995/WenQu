@@ -1413,8 +1413,8 @@
            接口给的是摊平的一维清单，这里按相对路径折回目录树：整条路径摊在一行时名字全被截断，
            认不出哪份是成品；折成树之后行内只剩文件名，腾出的位置给大小。 -->
       <div v-if="sandboxFiles.length || sandboxErr || sandboxLoading" class="rp-card">
-        <div class="rp-label">{{ sessionWorkspace && sessionWorkspace.isLocal ? '本机文件' : '沙盒文件' }} · {{ sandboxCount }} 个{{ sandboxBytes ? ' · ' + sbSize(sandboxBytes) : '' }}</div>
-        <div v-if="sandboxLoading" class="rp-sb-hint">正在读取沙盒目录…</div>
+        <div class="rp-label">{{ sessionWorkspace && sessionWorkspace.isLocal ? '本机文件' : '会话文件' }} · {{ sandboxCount }} 个{{ sandboxBytes ? ' · ' + sbSize(sandboxBytes) : '' }}</div>
+        <div v-if="sandboxLoading" class="rp-sb-hint">正在读取目录…</div>
         <div v-else-if="sandboxErr" class="rp-sb-err">
           <span>{{ sandboxErr }}</span>
           <button type="button" class="rp-sb-retry" @click="loadSandboxFiles">重试</button>
@@ -1461,10 +1461,10 @@
            标一句「别的会话起的」——端口是被同一个容器占的，看不见就停不掉。 -->
       <div v-if="procCardVisible" class="rp-card">
         <div class="rp-label rp-proc-head"
-             title="助手在沙盒里起的、不会自己退的进程（比如为了自己看效果起的服务）。到点没跑完只是不再等它，进程照旧活着。">
+             title="助手在会话里起的、不会自己退的进程（比如为了自己看效果起的服务）。到点没跑完只是不再等它，进程照旧活着。">
           <span>后台进程<span class="rp-proc-n">{{ procs.length }}</span><span class="rp-proc-unit">个在跑</span></span>
           <button type="button" class="rp-sb-retry" :disabled="procLoading"
-                  title="重新扫一遍沙盒里的进程" @click="loadSandboxProcs">刷新</button>
+                  title="重新扫一遍会话里的进程" @click="loadSandboxProcs">刷新</button>
         </div>
         <div v-if="procErr" class="rp-sb-err">
           <span>{{ procErr }}</span>
@@ -1481,10 +1481,10 @@
           <div class="rp-proc-foot">
             <span class="rp-proc-meta">
               <span>跑了 {{ procAge(p) }}</span>
-              <span v-if="p.ports && p.ports.length" title="沙盒内部的端口，外部浏览器打不开；这里只说明它占着哪个">
+              <span v-if="p.ports && p.ports.length" title="会话内部的端口，外部浏览器打不开；这里只说明它占着哪个">
                 · 占着端口 {{ p.ports.join(' / ') }}</span>
               <span v-if="p.roots > 1"> · {{ p.roots }} 棵进程树</span>
-              <span v-if="!p.own"> · 同沙盒别的会话起的</span>
+              <span v-if="!p.own"> · 同工作区别的会话起的</span>
             </span>
             <button v-if="p.killable" type="button" class="rp-proc-kill" :disabled="killingTag === p.tag"
                     :title="'停掉它，连同它起走的全部子进程（' + p.pids.length + ' 个）'"
@@ -1780,6 +1780,7 @@ import { exportAnswerMd, exportSessionMarkdown } from './exportMd'
 import { fmtTokens } from '../utils/token'
 import { chatDone, refreshSetupGuide, setupGuide } from '../utils/setupGuide'
 import { copyText } from '../utils/clipboard'
+import { localExecutorId } from '../utils/localExecutor'
 import { useSessionShare } from './shareSession'
 import ModelSelect from '../components/ModelSelect.vue'
 import ProviderIcon from '../components/ProviderIcon.vue'
@@ -2932,6 +2933,10 @@ const inlineSlash = () => {
   return false
 }
 const sendNow = async (steerNow = false) => {
+  if (foreignWorkspace.value) {
+    message.warning('这个工作区属于另一台电脑：请在那台电脑上使用（侧栏「这台电脑」可查看当前设备）')
+    return
+  }
   if (inlineSlash()) { closeAllPanels(); return }
   if (goalModeOn.value && goalArmed.value && !sessionGoal.value && String(text.value || '').trim()) {
     goalArmed.value = false
@@ -3729,7 +3734,6 @@ const applyPermission = async code => {
   try {
     await setSessionPermission(sid, code === 'follow' ? '' : code)
     sessionPermission.value = code === 'follow' ? '' : code
-    message.success('权限已切换为「' + permissionLabel.value + '」，从下一次工具调用起生效')
     return true
   } catch (e) {
     message.error('切换权限失败：' + (e.message || '请重试'))
@@ -3816,10 +3820,20 @@ watch(currentSessionId, async sid => {
   }
 }, { immediate: true })
 
+/** 会话落在另一台电脑的工作区：历史照常能看，但不能在这台电脑上发问（文件读写会派到那台电脑） */
+const foreignWorkspace = computed(() => {
+  const ws = sessionWorkspace.value
+  const id = localExecutorId()
+  return !!(ws && ws.isLocal && id && ws.executorId && ws.executorId !== id)
+})
+
 /** 工作区没准备好时的一句话（空=不展示）：没绑目录优先于执行器离线——先得有目录才谈连没连上 */
 const workspaceSetupHint = computed(() => {
   const ws = sessionWorkspace.value
   if (!ws || ws.implicit) return ''
+  if (foreignWorkspace.value) {
+    return `「${ws.name || '这个工作区'}」的文件夹在另一台电脑上，这台电脑不能继续使用。`
+  }
   if (!ws.roots || !ws.roots.length) {
     return `「${ws.name || '这个工作区'}」还没绑定本机文件夹，文件与命令暂不可用。`
   }

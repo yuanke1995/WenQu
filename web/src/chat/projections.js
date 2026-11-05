@@ -34,14 +34,14 @@ const TOOL_LABELS = {
   askUser: '向用户提问',
   readSkill: '读取技能正文',
   webSearch: '联网搜索',
-  execute: '执行沙盒命令',
-  read_file: '读取沙盒文件',
-  write_file: '写入沙盒文件',
-  edit_file: '编辑沙盒文件',
-  grep_files: '检索沙盒内容',
+  execute: '执行命令',
+  read_file: '读取文件',
+  write_file: '写入文件',
+  edit_file: '编辑文件',
+  grep_files: '检索内容',
   glob_files: '按模式查找文件',
-  list_files: '列出沙盒目录',
-  ls: '列出沙盒目录',
+  list_files: '列出目录',
+  ls: '列出目录',
   // ↓ 这一段是「历史消息」专用：框架引擎（AgentScope）早期把工具裸名当 label 下发，
   // 那几轮消息已经按裸名落进库里了。后端现已改为随卡下发中文名（ToolRegistry → 框架工具表），
   // 新消息不再走这里；留着是为了让刷新回来的老消息也读得懂。
@@ -90,7 +90,7 @@ const TOOL_LABELS = {
 const TOOL_DESCS = {
   searchKnowledge: '在你上传的知识库里检索相关资料片段',
   presentArtifact: '把内容整理成可下载的文件',
-  deliver_artifact: '把云端沙盒里生成的文件存进会话，可查看下载',
+  deliver_artifact: '把生成的文件存进会话，可查看下载',
   calculate: '精确计算算式，避免模型心算出错',
   currentDateTime: '获取今天的日期与时间',
   daysBetween: '计算两个日期之间相差多少天',
@@ -104,18 +104,18 @@ const TOOL_DESCS = {
   askUser: '向你提出问题（可多选的题会标出），点选或输入答案后继续回答',
   readSkill: '按需加载某个技能的详细说明',
   webSearch: '上网搜索相关资料，结果会作为引用来源',
-  execute: '在隔离的云端沙盒里跑一条命令，不影响你本机',
-  read_file: '读云端沙盒里的文件，不会碰你本机的文件',
-  write_file: '在云端沙盒里新建或覆盖文件',
-  edit_file: '在云端沙盒里替换文件中的某段内容',
-  grep_files: '按关键词在沙盒文件里搜，跨很多文件一起找',
+  execute: '在隔离的执行环境里跑一条命令，把输出带回来',
+  read_file: '读取文件内容',
+  write_file: '新建或覆盖文件',
+  edit_file: '替换文件里的某段内容',
+  grep_files: '按关键词在文件里搜，跨很多文件一起找',
   glob_files: '按文件名规律找文件，比如「所有 .md」',
-  list_files: '列出云端沙盒里某个目录下有哪些文件',
-  ls: '列出云端沙盒里某个目录下的文件',
+  list_files: '列出某个目录下有哪些文件',
+  ls: '列出某个目录下的文件',
   // 历史消息专用（同 TOOL_LABELS 里那一段的来由）：措辞与后端 cardHint 保持一致
   consultAgent: '把这一小问交给职责对口的助手去查，它带着自己的知识库把结论与资料交回来',
   writeTodo: '把要做的事列成清单，看得见总共几件、还剩几件',
-  run_code: '在云端沙盒里跑一段 Python：脚本可以自己循环取资料、批量处理，只把结果带回来',
+  run_code: '跑一段 Python：脚本可以自己循环取资料、批量处理，只把结果带回来',
   plan_enter: '先只读地调研与设计方案，这期间不改任何东西',
   plan_write: '把想好的方案写成计划，你点开就能看',
   plan_exit: '计划写完了，请你过目；你同意后它才开始动手',
@@ -1071,8 +1071,8 @@ const fanRun = t => {
   const r = t.run
   if (!r || r.kind === 'ok') return ''
   if (r.kind === 'exit') return `退出码 ${r.exit}：脚本可能没跑完`
-  if (r.kind === 'timeout') return '追踪超时：脚本可能还在沙盒里跑'
-  if (r.kind === 'infra') return '沙盒不可用（不是脚本写错）'
+  if (r.kind === 'timeout') return '追踪超时：脚本可能还在后台跑'
+  if (r.kind === 'infra') return '执行环境不可用（不是脚本写错）'
   return '运行未完成'
 }
 /**

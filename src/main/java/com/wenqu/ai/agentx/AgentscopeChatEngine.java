@@ -2782,6 +2782,28 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     /**
+     * 工作区级记忆（独立于用户级记忆）：读工作区根目录 .wenqu/MEMORY.md 注入为一段上下文。
+     * 无工作区 / 未绑目录 / 文件不存在 / 执行器离线 / 读失败 → 返回空串，绝不拖累一轮对话。
+     * 写由模型经沙盒文件工具完成（edit_file / write 到 .wenqu/MEMORY.md），前端面板也可直接编辑。
+     */
+    private String workspaceMemoryContext(ChatCommand cmd) {
+        try {
+            String projectId = projectService.projectIdOfSession(cmd.getSessionId());
+            if (projectId == null || projectId.isBlank()) return "";
+            String content = projectFileService.readWorkspaceMemory(cmd.getUserId(), projectId);
+            if (content == null || content.isBlank()) return "";
+            return "\n\n【工作区记忆】下面是本工作区长期沉淀的项目事实（存于工作区根目录 .wenqu/MEMORY.md），"
+                    + "本次对话应当参考它们。\n" + content
+                    + "\n\n你可以用文件编辑工具（edit_file / write）更新 .wenqu/MEMORY.md，"
+                    + "把本次对话中获得、对今后在本工作区工作有价值的稳定事实（约定、决策、结构、坑、偏好）沉淀进去；"
+                    + "不要写入临时性或一次性的内容。";
+        } catch (Exception e) {
+            log.warn("[agentx] 读取工作区记忆失败（跳过注入）session={}: {}", cmd.getSessionId(), e.getMessage());
+            return "";
+        }
+    }
+
+    /**
      * 只记账不播报的通道：读历史事件时用它——事件照样进 {@link Recording}（工具卡、思考全文都要落库），
      * 但不再发一遍给观众。
      */
@@ -3639,6 +3661,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 计划阶段里，框架这一路没人再说第二遍，而框架的 PLAN banner 与沙盒工具说明反而主动把
                 // 路径喂给模型——不挂回去，计划卡就变成「它打算在沙盒里怎么写文件」的说明书
                 .sysPrompt(rolePrompt(binding.row()) + projectContext(cmd)
+                        + workspaceMemoryContext(cmd)
                         + (subagentTargets.isEmpty() ? "" : tools.dispatchDiscipline())
                         + PlanCopy.guidance()
                         + com.wenqu.ai.memory.MemoryPrompts.replyDiscipline()

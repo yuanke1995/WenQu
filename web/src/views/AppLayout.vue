@@ -148,7 +148,38 @@
                             @moved="doMoveSession" />
 
       <!-- 新建工作区：选本机目录（可多个），首个为主目录 -->
-      <NewWorkspaceDialog v-model:open="newWsOpen" @created="onLocalWsCreated" @open-pairing="showPairingHint" />
+      <NewWorkspaceDialog v-model:open="newWsOpen" @created="onLocalWsCreated" @pick-device="openLocalDevice" />
+
+      <!-- 这台电脑：设备一旦认出来就锁定，界面不提供改成别的电脑的入口。
+           只有从未识别、或本机设备被撤销后，才需要一次性选择 -->
+      <a-modal v-model:open="localDeviceOpen" title="这台电脑" :footer="null">
+        <div style="color:var(--app-text2);font-size:12px;line-height:1.7;margin-bottom:10px">
+          侧栏只显示这台电脑绑定的工作区。别的电脑上的工作区仍保留，不会删除；换到那台电脑登录即可看到。
+        </div>
+        <template v-if="!needPick">
+          <div style="font-size:13px;padding:8px 0">
+            当前这台电脑：<strong>{{ currentDeviceName }}</strong>
+            <span style="color:var(--app-text3);font-size:12px"> · {{ currentDeviceOnline ? '在线' : '离线' }}</span>
+          </div>
+          <div style="display:flex;justify-content:flex-end;margin-top:16px">
+            <a-button @click="localDeviceOpen = false">关闭</a-button>
+          </div>
+        </template>
+        <template v-else>
+          <div style="color:var(--app-text2);font-size:12px;margin-bottom:8px">
+            还没认出这台电脑（或原来的执行器已被撤销）：选一台在线设备。
+          </div>
+          <a-select v-model:value="localDevicePicked" style="width:100%" :options="localDeviceOptions"
+                    placeholder="选择一台在线设备" />
+          <div v-if="!localDevices.length" style="color:var(--app-text2);font-size:12px;margin-top:8px">
+            还没有在线的执行器：先在这台电脑的终端启动 wenqu-agent 并完成授权。
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px">
+            <a-button @click="localDeviceOpen = false">取消</a-button>
+            <a-button type="primary" :loading="localDeviceSaving" @click="saveLocalDevice">保存</a-button>
+          </div>
+        </template>
+      </a-modal>
 
       <!-- 删除工作区：只摘归属，本机文件不动 -->
       <DeleteProjectModal v-model:open="delOpen"
@@ -205,6 +236,8 @@
                   <shrink-outlined v-if="allSpacesExpanded" />
                   <arrows-alt-outlined v-else />
                 </button>
+                <!-- 这台电脑：侧栏只列这台执行器绑定的工作区，换电脑或重新授权后在这里改 -->
+                <button class="side-sec-op" title="这台电脑" @click.stop="openLocalDevice"><setting-outlined /></button>
                 <!-- 工作区块只有一个入口：选本机目录即建工作区（目录可多个，首个为主目录） -->
                 <button class="side-sec-op" title="新建工作区" @click.stop="newWsOpen = true"><plus-outlined /></button>
               </span>
@@ -469,10 +502,11 @@ import { PlusOutlined, MessageOutlined, RobotOutlined, FolderOutlined, BarChartO
 import { deleteSessionApi, logoutApi, renameSessionApi, pinSession, favoriteSession, batchDeleteSessionsApi,
          getMyMenuLayout, saveMyMenuLayout, setNewSessionProject,
          updateProject, deleteProject, createProject, setProjectStatus,
-         listProjects, moveSessionProject, openProjectFolder } from '../api'
+         listProjects, moveSessionProject, openProjectFolder, listExecutors } from '../api'
 import { useNotifications, notifIcon, notifClass, notifTime } from '../chat/useNotifications'
 import { themeState, toggleTheme } from '../utils/theme'
 import { authUser, ensureAuth, isAdminSync, clearAuth } from '../utils/auth'
+import { localExecutorId, setLocalExecutorId } from '../utils/localExecutor'
 import { chatDone, chatReady, defaultReady, embeddingReady, pendingCount, refreshSetupGuide, setupGuide,
          advPendingCount } from '../utils/setupGuide'
 import { sessionStore, loadSessions, loadTasks, loadSpaceMore, collapseSpace, reloadSpace, toggleArchived, visibleSessions, chatStreams, procSessions, startProcBadgePoll, stopProcBadgePoll, NO_SPACE_KEY, startSessionTabSync, stopSessionTabSync, resetSessionStore } from './store'
@@ -1147,8 +1181,53 @@ const searchKw = ref('')
 // 侧栏把会话按工作区收束；工作区落到数据模型就是后端一行 Project（绑定本机执行器与源文件夹），
 // 界面上只叫「工作区」。新建 / 重命名 / 归档 / 删除都在各自的 ⋯ 菜单里，不再做一个全局下拉。
 const newWsOpen = ref(false)
-/** 侧栏「没有在线执行器」时的授权提示：执行器在终端发起授权，页面这里只把话说清 */
-const showPairingHint = () => message.info('在那台电脑的终端里启动 wenqu-agent，按终端提示打开链接并确认授权')
+
+// ==================== 这台电脑（工作区按设备归属显示） ====================
+// 同一个账号在多台电脑登录时，服务端按账号返回全部工作区；页面记住当前这台电脑的设备 id，
+// store 才只列它名下的工作区。本地开发态由启动脚本注入，线上页面在这里选一次。
+const localDeviceOpen = ref(false)
+const localDevicePicked = ref('')
+// 只放在线设备：历年授权留下的离线设备不能当「这台电脑」，也不该混进候选里
+const localDevices = ref([])
+const localDeviceSaving = ref(false)
+const currentDeviceId = ref(localExecutorId())
+// 已认出本机设备就只读锁定；界面不提供把它改成另一台电脑的入口
+const needPick = computed(() => !currentDeviceId.value)
+const currentDevice = computed(() => localDevices.value.find(d => d.id === currentDeviceId.value) || null)
+const currentDeviceName = computed(() => currentDevice.value
+  ? (currentDevice.value.name || currentDeviceId.value)
+  : '这台电脑的执行器不在线')
+const currentDeviceOnline = computed(() => !!currentDevice.value && !!currentDevice.value.online)
+const localDeviceOptions = computed(() => localDevices.value.map(d => ({
+  value: d.id, label: d.name || d.id
+})))
+const openLocalDevice = async () => {
+  localDeviceOpen.value = true
+  currentDeviceId.value = localExecutorId()
+  localDevicePicked.value = currentDeviceId.value
+  try {
+    const r = await listExecutors()
+    const all = (r && r.data) || []
+    // 本机设备被撤销/删除后自动清掉旧身份，回到一次性选择，不需要用户手动「重新选」
+    if (currentDeviceId.value && !all.some(d => d.id === currentDeviceId.value)) {
+      setLocalExecutorId('')
+      currentDeviceId.value = ''
+      localDevicePicked.value = ''
+    }
+    localDevices.value = all.filter(d => d.online)
+  } catch (e) { localDevices.value = [] }
+}
+const saveLocalDevice = async () => {
+  if (!localDevicePicked.value) { message.warning('先选一台执行器'); return }
+  localDeviceSaving.value = true
+  try {
+    setLocalExecutorId(localDevicePicked.value)
+    currentDeviceId.value = localDevicePicked.value
+    localDeviceOpen.value = false
+    await loadSessions(undefined, { refreshProjects: true })
+  } finally { localDeviceSaving.value = false }
+}
+
 const onLocalWsCreated = async id => {
   await loadSessions(undefined, { refreshProjects: true })
   if (id) {

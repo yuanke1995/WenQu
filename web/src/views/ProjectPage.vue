@@ -48,6 +48,11 @@
                   <a-switch class="pj-sw" :checked="form.memoryIsolated === 1" :disabled="archiving" @change="saveMemoryIsolated" />
                 </div>
                 <div class="pj-set-note">开启后这是个「干净房间」：对话不带入也不写入你的个人记忆（改设置后新开轮次生效），上下文全靠约定、资料域和目录里的文件；给敏感项目用</div>
+                <div class="pj-set-row pj-set-row-top">
+                  <span class="pj-k">工作区记忆</span>
+                  <a-button size="small" :loading="wmLoading" @click="openWorkspaceMemory">{{ wmContent ? '查看 / 编辑' : '添加' }}</a-button>
+                </div>
+                <div class="pj-set-note">只属于这个工作区的长期记忆，存于工作区根目录 <code>.wenqu/MEMORY.md</code>（在那台电脑上）。对话会自动读它，模型也会把学到的项目事实写进去；与个人记忆互不干扰</div>
               </template>
               <div class="pj-set-row pj-set-row-top">
                 <span class="pj-k">外观</span>
@@ -185,8 +190,8 @@
           <a-tab-pane key="files">
             <template #tab><span>文件 <span class="pj-count">{{ fileCount }}</span></span></template>
 
-            <!-- 工具条：整棵树的合计＋三个写动作。层级由树本身表达，不再要面包屑；
-                 上传/新建默认落根目录，要放进某个文件夹就从它的 ⋯ 菜单点 -->
+            <!-- 工具条：整个工作区的合计＋三个写动作。层级由树本身表达，不再要面包屑；
+                 上传/新建默认落主源文件夹，要放进某个子文件夹就从它的 ⋯ 菜单点 -->
             <div class="pj-filebar">
               <span v-if="filesAll && !filesError" class="pj-hint pj-crumb-sum"
                     :title="'整个工作区目录的合计'">全部文件 {{ filesAll }}{{ filesCapped ? '+' : '' }} 个 · {{ fmtSize(bytesAll) }}</span>
@@ -194,14 +199,16 @@
                 <a-checkbox v-model:checked="overwrite" class="pj-overwrite"
                             title="上传时同名文件直接换掉；不勾则报出那个名字，让你先改名或删掉">重名时覆盖</a-checkbox>
                 <button class="pj-act" type="button" :disabled="!!uploading || isArchived || !!filesError || !form.roots.length"
-                        :title="isArchived ? '工作区已归档，恢复后才能放文件' : (!form.roots.length ? '先绑定本机目录' : '')" @click="pickFiles()">
+                        :title="isArchived ? '工作区已归档，恢复后才能放文件' : (!form.roots.length ? '先绑定本机目录' : '上传到主源文件夹；要放进某个子文件夹，从它的 ⋯ 菜单点')" @click="pickFiles()">
                   <upload-outlined /> 上传
                 </button>
                 <button class="pj-act" type="button" :disabled="isArchived || !!filesError || !form.roots.length"
-                        :title="isArchived ? '工作区已归档，恢复后才能放文件' : (!form.roots.length ? '先绑定本机目录' : '')" @click="openMkdir()">
+                        :title="isArchived ? '工作区已归档，恢复后才能放文件' : (!form.roots.length ? '先绑定本机目录' : '在主源文件夹里新建；要在某个子文件夹里建，从它的 ⋯ 菜单点')" @click="openMkdir()">
                   <folder-add-outlined /> 新建文件夹
                 </button>
-                <button class="pj-act" type="button" :disabled="exporting || !filesAll || !form.roots.length" @click="doExportZip">
+                <button class="pj-act" type="button"
+                        :disabled="exporting || !filesAll || !form.roots.length || !!exportBlockReason"
+                        :title="exportBlockReason || '把整个工作区打包成 zip'" @click="doExportZip">
                   {{ exporting ? '导出中…' : '打包导出' }}
                 </button>
               </div>
@@ -255,7 +262,7 @@
                   <span class="pj-acts">操作</span>
                 </div>
                 <template v-for="r in fileViewRows" :key="r.key">
-                  <!-- 文件夹行：个数/体积是整棵子树的，先看计数就知道值不值得展开；拖文件到行上=传进这个文件夹 -->
+                  <!-- 文件夹行：本层条目数（未展开时还没取，显示「…」）；拖文件到行上=传进这个文件夹 -->
                   <div v-if="r.type === 'dir'" class="pj-item pj-item-dir"
                        :class="{ 'pj-item-on': selSet.has(r.dir.path), 'pj-drop-dir': dropAt === r.dir.path }"
                        @click="onRowClick($event, r.dir)" @dragover.stop.prevent="onRowDragOver(r.dir.path)">
@@ -270,8 +277,8 @@
                     <span class="pj-item-title" :title="r.dir.path">
                       <folder-filled class="pj-dir-ic" /><Hl :text="r.dir.name" />
                     </span>
-                    <span class="pj-dir-n">{{ r.layer && !r.layer.error ? r.dir.count + ' 个' : '…' }}</span>
-                    <!-- 目录没有交付状态，也没有可靠的修改时刻（个数与体积都是整棵子树的合计）：
+                    <span class="pj-dir-n">{{ r.layer && !r.layer.error ? r.layer.total + ' 项' : '…' }}</span>
+                    <!-- 目录没有交付状态，也没有可靠的修改时刻：
                          两格留空占位，不然「大小」会跑到表头「时间」底下去 -->
                     <span class="pj-badge-cell"></span>
                     <span class="pj-item-meta pj-size">{{ r.layer && !r.layer.error ? fmtSize(r.dir.size) : '' }}</span>
@@ -593,6 +600,18 @@
       </div>
       <div class="pj-mnote">恢复会把这一版存回约定（当前版本同时留痕）。</div>
     </a-modal>
+
+    <a-modal v-model:open="wmOpen" title="工作区记忆" :footer="null" :width="modalWidth" @cancel="wmOpen = false">
+      <a-spin :spinning="wmLoading">
+        <p class="pj-mnote">存于工作区根目录 <code>.wenqu/MEMORY.md</code>（执行器那台电脑上），只属于这个工作区，与个人记忆相互独立。对话会自动读它，模型也会把学到的项目事实写进去。</p>
+        <a-textarea v-model:value="wmDraft" :rows="14" :disabled="wmSaving"
+                    placeholder="记录这个工作区的稳定事实：约定、决策、结构、坑、偏好…" />
+        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
+          <a-button @click="wmOpen = false">取消</a-button>
+          <a-button type="primary" :loading="wmSaving" @click="saveWorkspaceMemoryNow">保存</a-button>
+        </div>
+      </a-spin>
+    </a-modal>
   </div>
 </template>
 
@@ -606,7 +625,7 @@ import { getProject, updateProject, deleteProject, bindProjectExecutor, pickExec
          setProjectStatus, setNewSessionProject, getProjectRuns, getProjectTurnGuard,
          exportProjectZip, uploadProjectFiles, createProjectDir, moveProjectEntry, projectBatch,
          listProjectTodos, createProjectTodo, updateProjectTodo, deleteProjectTodo,
-         listInstructionHistory } from '../api'
+         listInstructionHistory, getWorkspaceMemory, saveWorkspaceMemory } from '../api'
 import DeleteProjectModal from '../components/DeleteProjectModal.vue'
 import { sessionStore, rememberSession, loadSessions as refreshSidebarSessions } from './store'
 import { WORKSPACE_ICONS, WORKSPACE_COLORS, workspaceIconOf } from '../utils/workspaceIcons'
@@ -723,7 +742,7 @@ const filesTruncated = ref(false)
 /** 树的各层清单：dirPath → { entries, total, truncated, error }。根那次调用带回全部文件夹清单，逐层并行取 */
 const layers = ref({})
 /** 收起的文件夹集合。默认全展开——工作区目录长不出几十层，摊开比一个个点开快 */
-const closedDirs = ref(new Set())
+const openDirs = ref(new Set())
 /** 拖拽落点：null=没拖进列表，''=根目录，path=那个文件夹（行高亮跟落点走） */
 const dropAt = ref(null)
 /** 「在这里上传」的目标：工具条上传=根，文件夹 ⋯ 菜单上传=那个文件夹 */
@@ -817,9 +836,11 @@ const fileTree = computed(() => {
   const root = { name: '', path: '', kind: 'dir', dirs: new Map(), files: [], count: 0, size: 0 }
   for (const layer of Object.values(layers.value)) {
     for (const f of (layer.entries || [])) {
-      if ((f.kind || 'file') !== 'file') continue
+      // 目录行也要建节点：根层只返回源文件夹行，不靠子目录里的文件反推，
+      // 才能「先显示收起的文件夹、点开再取这一层」
+      const isDirRow = (f.kind || 'file') === 'dir'
       const segs = String(f.path || '').split('/').filter(Boolean)
-      segs.pop()   // 末段是文件名，前面的才是目录
+      if (!isDirRow) segs.pop()   // 文件行末段是文件名，前面的才是目录
       let node = root
       let acc = ''
       for (const seg of segs) {
@@ -828,6 +849,7 @@ const fileTree = computed(() => {
         if (!d) { d = { name: seg, path: acc, kind: 'dir', dirs: new Map(), files: [], count: 0, size: 0 }; node.dirs.set(seg, d) }
         node = d
       }
+      if (isDirRow) continue
       node.files.push({ name: f.name, path: f.path, size: f.size, at: toMs(f.mtime), viewUrl: f.viewUrl || '', artifact: null })
     }
   }
@@ -841,7 +863,7 @@ const fileTree = computed(() => {
     if (seen.has(base)) continue
     root.files.push({ name: base, path: '', size: a.size, at: toMs(a.createTime), viewUrl: '', artifact: a })
   }
-  // 目录行上的个数/体积是整棵子树的：一个上百文件的构建目录先看计数就知道值不值得展开
+  // 目录行上的计数按已加载层累计；区级合计另看 filesAll（根层全目录统计）
   const roll = d => {
     for (const f of d.files) { d.count += 1; d.size += Number(f.size) || 0 }
     for (const sub of d.dirs.values()) { roll(sub); d.count += sub.count; d.size += sub.size }
@@ -850,14 +872,22 @@ const fileTree = computed(() => {
   return roll(root)
 })
 const rootLayer = computed(() => layers.value[''] || null)
-const fileCount = computed(() => fileTree.value.count)
-/** 树按收起状态摊平成行：同层文件夹在前（名字序）、文件按修改时间倒序——沿用旧列表的读法。
-    forceOpen=无视收起状态全树摊平（搜索态用）：命中的文件可能正埋在收起的文件夹里 */
+const fileCount = computed(() => filesAll.value || fileTree.value.count)
+/** 打包导出的硬上限与后端 ProjectFileService 一致：超了点下去也是失败，不如先禁用并说清 */
+const EXPORT_MAX_FILES = 2000
+const EXPORT_MAX_BYTES = 100 * 1024 * 1024
+const exportBlockReason = computed(() => {
+  if (filesAll.value > EXPORT_MAX_FILES) return `整个工作区 ${filesAll.value} 个文件，超过打包导出的 ${EXPORT_MAX_FILES} 个上限`
+  if (bytesAll.value > EXPORT_MAX_BYTES) return '整个工作区超过打包导出的 100 MB 上限'
+  return ''
+})
+/** 树按展开状态摊平成行：同层文件夹在前（名字序）、文件按修改时间倒序——沿用旧列表的读法。
+    默认只展开第一层源文件夹，其余点开时才取数据。forceOpen=无视展开状态全树摊平（搜索态用） */
 const flattenTree = (forceOpen) => {
   const out = []
   const walk = (node, depth) => {
     for (const d of [...node.dirs.values()].sort((a, b) => String(a.name).localeCompare(String(b.name)))) {
-      const open = forceOpen || !closedDirs.value.has(d.path)
+      const open = forceOpen || openDirs.value.has(d.path)
       const layer = layers.value[d.path] || null
       out.push({ type: 'dir', key: 'd:' + d.path, depth, dir: d, open, layer })
       if (!open) continue
@@ -1168,6 +1198,43 @@ const saveMemoryIsolated = async v => {
     next ? '已开启：这个场子的对话不带入也不写入你的个人记忆' : '已关闭：对话照常使用你的个人记忆')
   if (!ok) form.value.memoryIsolated = saved.value.memoryIsolated || 0
 }
+// ---------- 工作区记忆（独立于个人记忆，存工作区根目录 .wenqu/MEMORY.md） ----------
+const wmOpen = ref(false)
+const wmLoading = ref(false)
+const wmSaving = ref(false)
+const wmContent = ref('')
+const wmDraft = ref('')
+
+const openWorkspaceMemory = async () => {
+  wmOpen.value = true
+  await loadWorkspaceMemory()
+}
+const loadWorkspaceMemory = async () => {
+  wmLoading.value = true
+  try {
+    const r = (await getWorkspaceMemory(id.value)) || {}
+    wmContent.value = (r.data && r.data.content) || ''
+    wmDraft.value = wmContent.value
+  } catch (e) {
+    message.error('读取工作区记忆失败：' + (e.message || e))
+    wmDraft.value = ''
+  } finally {
+    wmLoading.value = false
+  }
+}
+const saveWorkspaceMemoryNow = async () => {
+  wmSaving.value = true
+  try {
+    await saveWorkspaceMemory(id.value, wmDraft.value)
+    wmContent.value = wmDraft.value
+    message.success('已保存工作区记忆')
+    wmOpen.value = false
+  } catch (e) {
+    message.error('保存失败：' + (e.message || e))
+  } finally {
+    wmSaving.value = false
+  }
+}
 // ---------- 以此为模板再建一个（只带设置，不带历史） ----------
 // ---------- 约定历史（被替换的旧版） ----------
 const histOpen = ref(false)
@@ -1256,14 +1323,14 @@ const onRowClick = (e, f) => {
   if (f.kind === 'dir') toggleDir(f.path)
 }
 
-/** 展开/收起一个文件夹；收起后再展开时若这层数据还没取过（超出预取上限的）就地补取 */
+/** 展开/收起一个文件夹；目录内容只在第一次展开时取，之后复用这一层 */
 const toggleDir = async path => {
-  const next = new Set(closedDirs.value)
-  const closing = !next.has(path)
-  if (closing) next.add(path)
+  const next = new Set(openDirs.value)
+  const opening = !next.has(path)
+  if (opening) next.add(path)
   else next.delete(path)
-  closedDirs.value = next
-  if (!closing && !layers.value[path]) await retryDir(path)
+  openDirs.value = next
+  if (opening && !layers.value[path]) await retryDir(path)
 }
 
 // a-menu 的 click 载荷是对象（key/keyPath/item/domEvent），不是裸 key：直接当 key 用会得到 "[object Object]"，三个动作静默失效
@@ -1519,11 +1586,10 @@ const onAppVisible = () => {
   if (document.visibilityState === 'visible' && Date.now() - filesLoadedAt > FILES_RESIGN_AFTER) loadFiles()
 }
 
-/** 文件栏是整棵树 + 产物的合并视图，一起取才不会一半新一半旧。
-    根那次调用带回全部文件夹清单（dirs）与全区合计，各子文件夹并行补齐；单层失败只在该层标错，
-    不拖垮整棵树。宿主目录读不到（如沙盒在远端）时如实提示，不伪装成空列表；根层失败时全区数字
+/** 文件栏是已展开的层 + 产物的合并视图：根那次调用带回全部文件夹清单（dirs）与全区合计，
+    默认只展开第一层源文件夹，其余目录点开时再取一层；单层失败只在该层标错，不拖垮整棵树。
+    宿主目录读不到（如沙盒在远端）时如实提示，不伪装成空列表；根层失败时全区数字
     一起清掉——留着上一次的「共 12 个」配一条读不到的列表，比报错更骗人 */
-const FILES_LAZY_AHEAD = 40   // 一口气预取的文件夹数上限；更多的等展开时再取，别一进页就打几十个请求
 let filesSeq = 0
 const loadFiles = async () => {
   const seq = ++filesSeq
@@ -1554,16 +1620,11 @@ const loadFiles = async () => {
     filesError.value = ''
     filesLoadedAt = Date.now()
     sel.value = []
-    await Promise.all(dirsAll.value.slice(0, FILES_LAZY_AHEAD).map(async path => {
-      try {
-        const s = ((await listProjectFiles(id.value, path)) || {}).data || {}
-        if (seq !== filesSeq) return
-        layers.value = { ...layers.value, [path]: { entries: s.entries || [], total: s.total || 0, truncated: !!s.truncated, error: '' } }
-      } catch (e2) {
-        if (seq !== filesSeq) return
-        layers.value = { ...layers.value, [path]: { entries: [], total: 0, truncated: false, error: e2.message || '读取失败' } }
-      }
-    }))
+    // 只默认展开第一层源文件夹，其余目录等用户点开时由 toggleDir → retryDir 按需取。
+    // 以前一口气预取 40 个目录，每个都会在服务端重扫整棵目录树，几千文件的工作区进页要等几十次全扫。
+    const firstLevel = (d.entries || []).filter(e => (e.kind || 'file') === 'dir').map(e => e.path)
+    openDirs.value = new Set(firstLevel)
+    await Promise.all(firstLevel.map(path => retryDir(path)))
   } catch (e) {
     if (seq !== filesSeq) return
     layers.value = {}
@@ -1794,8 +1855,8 @@ watch(id, () => {
   artifactsError.value = ''
   layers.value = {}
   filesError.value = ''
-  // 树的收起状态与各落点是上一个工作区的：不一起清，第二个工作区会把别人的文件夹收着、传进别人的路径
-  closedDirs.value = new Set()
+  // 树的展开状态与各落点是上一个工作区的：不一起清，第二个工作区会展开别人的文件夹、传进别人的路径
+  openDirs.value = new Set()
   sel.value = []
   dropAt.value = null
   uploadTarget.value = ''

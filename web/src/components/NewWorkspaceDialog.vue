@@ -3,7 +3,7 @@
     <div class="wq">
       <div class="wq-label wq-label-row">
         <span>源文件夹</span>
-        <button type="button" class="app-link-btn" :disabled="picking || !executor" @click="pickDir">
+        <button type="button" class="app-link-btn" :disabled="picking || !executor || !executor.online" @click="pickDir">
           <plus-outlined /> 添加
         </button>
       </div>
@@ -21,13 +21,12 @@
         </button>
         <div v-else-if="picking" class="wq-hint">在那台电脑上选择中…</div>
       </div>
-      <div v-if="!executor" class="wq-hint">
-        还没有在线的执行器
-        <button type="button" class="app-link-btn" @click="$emit('open-pairing')">去授权这台电脑</button>
+      <div v-if="!executorId || !executor" class="wq-hint">
+        还没指定这台电脑
+        <button type="button" class="app-link-btn" @click="goPickDevice">选择这台电脑</button>
       </div>
-      <div v-else-if="devices.length > 1" class="wq-hint">
-        这些文件夹会绑定到：
-        <a-select v-model:value="executorId" size="small" style="min-width:180px" :options="deviceOptions" />
+      <div v-else-if="!executor.online" class="wq-hint">
+        「{{ executor.name }}」的执行器不在线：去那台电脑的终端确认 wenqu-agent 正在运行
       </div>
       <div v-else class="wq-hint">文件夹会绑定到「{{ executor.name }}」（这台电脑）</div>
 
@@ -65,10 +64,11 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import { CheckOutlined, FolderOpenOutlined, PlusOutlined } from '@ant-design/icons-vue'
 import { WORKSPACE_ICONS, WORKSPACE_COLORS, workspaceIconOf } from '../utils/workspaceIcons'
+import { localExecutorId } from '../utils/localExecutor'
 import { createProject, listExecutors, pickExecutorDir, updateProject } from '../api'
 
 const props = defineProps({ open: { type: Boolean, default: false } })
-const emit = defineEmits(['update:open', 'created', 'open-pairing'])
+const emit = defineEmits(['update:open', 'created', 'pick-device'])
 
 const ICONS = WORKSPACE_ICONS
 const COLORS = WORKSPACE_COLORS
@@ -81,12 +81,15 @@ const color = ref(COLORS[0])
 const creating = ref(false)
 const picking = ref(false)
 
+// 工作区固定建在这台电脑上：设备 id 只从「这台电脑」读，不再让用户挑别的电脑。
+// 设备清单只用于显示本机名字与在线状态（离线设备也要列，否则状态没法说清）。
 const executor = computed(() => devices.value.find(d => d.id === executorId.value) || null)
-const deviceOptions = computed(() => devices.value.filter(d => d.online).map(d => ({
-  value: d.id,
-  label: `${d.name || d.id}（在线）`
-})))
-const canCreate = computed(() => dirs.value.length > 0 && name.value.trim() && executorId.value)
+const canCreate = computed(() => dirs.value.length > 0 && name.value.trim()
+  && !!executorId.value && !!executor.value && !!executor.value.online)
+const goPickDevice = () => {
+  emit('update:open', false)
+  emit('pick-device')
+}
 
 const baseName = p => {
   const s = String(p || '').replace(/[/\\]+$/, '')
@@ -97,19 +100,21 @@ const baseName = p => {
 async function loadDevice () {
   try {
     const r = await listExecutors()
-    devices.value = ((r && r.data) || []).filter(d => d.online)
-    if (!executorId.value || !devices.value.some(d => d.id === executorId.value)) {
-      executorId.value = devices.value[0]?.id || ''
-    }
+    devices.value = (r && r.data) || []
   } catch (e) {
     devices.value = []
-    executorId.value = ''
   }
 }
 
+/** 每次打开都重读一次：用户可能刚在「这台电脑」里换过设备，localStorage 不是响应式的 */
+function refreshLocalDevice () {
+  executorId.value = localExecutorId()
+  loadDevice()
+}
+
 async function pickDir () {
-  if (!executorId.value) {
-    message.warning('还没有在线的执行器：先在那台电脑上启动 wenqu-agent')
+  if (!executorId.value || !executor.value || !executor.value.online) {
+    message.warning('这台电脑的执行器不在线：先在终端启动 wenqu-agent（侧栏「这台电脑」可查看状态）')
     return
   }
   picking.value = true
@@ -170,10 +175,10 @@ watch(() => props.open, open => {
   name.value = ''
   icon.value = 'folder'
   color.value = COLORS[0]
-  loadDevice()
+  refreshLocalDevice()
 })
 
-onMounted(() => { if (props.open) loadDevice() })
+onMounted(() => { if (props.open) refreshLocalDevice() })
 </script>
 
 <style scoped>

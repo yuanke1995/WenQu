@@ -3585,8 +3585,10 @@ const sandboxErr = ref('')
 const sandboxLoading = ref(false)
 /** 本轮已取回成产物的路径：按钮点过一次就改口，不邀请重复点（重复点会落出一条同名重复产物） */
 const sandboxTaken = ref(new Set())
-/** 被收起的目录（默认全展开：这一栏答的是「刚才做的东西在哪」，收着等用户点等于把答案藏回去） */
-const sandboxClosed = ref(new Set())
+/** 被展开的目录。默认<b>全部收起</b>：这个工作区一上来就摊开上百个文件，右栏那点宽度全被目录行占满，
+ *  真正要找的那份成品反而要往下翻。用户点开哪个记哪个（一轮收尾重拉文件列表时保留，不把人家刚点开的收回去），
+ *  切会话才清空——换了份目录，旧路径没有指代对象。 */
+const sandboxOpened = ref(new Set())
 // 沙盒系工具名单：与后端 FrameworkToolLabels.FilesystemToolNames 同口径，另加 run_code（SANDBOX 族仅存的
 // 一把）与 deliver_artifact（把沙盒里做出来的文件存进会话）；ls 是退役老名，只为按裸名落库的老历史兜底。
 const SANDBOX_TOOL_NAMES = new Set(['execute', 'run_code', 'read_file', 'write_file', 'edit_file',
@@ -3680,7 +3682,7 @@ const sandboxRows = computed(() => {
         out.push({ type: 'file', key: k.node.path, depth, file: k.node })
         continue
       }
-      const open = !sandboxClosed.value.has(k.node.path)
+      const open = sandboxOpened.value.has(k.node.path)
       out.push({ type: 'dir', key: 'd:' + k.node.path, depth, dir: k.node, open })
       if (open) walk(k.node, depth + 1)
     }
@@ -3699,10 +3701,10 @@ const sbSize = n => {
     : v >= 1024 ? (v / 1024).toFixed(1) + ' KB' : v + ' B'
 }
 const toggleSandboxDir = path => {
-  const next = new Set(sandboxClosed.value)
+  const next = new Set(sandboxOpened.value)
   if (next.has(path)) next.delete(path)
   else next.add(path)
-  sandboxClosed.value = next
+  sandboxOpened.value = next
 }
 async function sandboxDownload (f) {
   const sid = currentSessionId.value
@@ -3727,7 +3729,7 @@ async function sandboxTake (f) {
 
 // 三个重拉时机，与 PC 原行为逐字等价：切会话（顺带把展开态归零）、一轮收尾（交付物是那轮做出来的，
 // 不重拉就要刷新页面才看得见）、判据翻转（切会话那一瞬判据可能还是上一个会话的旧值）
-watch(currentSessionId, () => { sandboxClosed.value = new Set(); loadSandboxFiles() })
+watch(currentSessionId, () => { sandboxOpened.value = new Set(); loadSandboxFiles() })
 watch(() => loading.value, (v, prev) => { if (prev && !v) loadSandboxFiles() })
 watch(sessionSandboxActive, () => { loadSandboxFiles() })
 
@@ -3772,7 +3774,7 @@ async function loadSandboxProcs () {
     if (currentSessionId.value !== sid || !procScanActive.value) return
     // 「读不到进程表」和「没有后台进程」是两件事，静默成空列表会把一个正占着端口的服务读成不存在
     procs.value = []
-    procErr.value = e?.message || '读不到沙盒里的进程'
+    procErr.value = e?.message || '读不到会话里的进程'
   } finally {
     if (currentSessionId.value === sid) {
       procLoading.value = false

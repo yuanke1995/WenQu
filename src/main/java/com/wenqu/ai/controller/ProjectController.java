@@ -128,6 +128,37 @@ public class ProjectController {
     }
 
     /**
+     * 工作区级记忆（独立于用户级记忆）：读工作区根目录 .wenqu/MEMORY.md。
+     * 无工作区 / 未绑目录 / 文件不存在 / 执行器离线 → 返回空 content，不报错（记忆只是辅助上下文）。
+     */
+    @Operation(summary = "读取工作区记忆", description = "工作区根目录 .wenqu/MEMORY.md 的内容；不存在返回空串")
+    @Permission("project:read")
+    @GetMapping("/{id}/workspace-memory")
+    public ResultJson workspaceMemory(@PathVariable("id") String id) {
+        String uid = RequestUser.uid();
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("content", projectFileService.readWorkspaceMemory(uid, id));
+        return ResultJson.ok(m);
+    }
+
+    /**
+     * 写回工作区级记忆（工作区根目录 .wenqu/MEMORY.md），经执行器原子写。与「记忆隔离」开关互不干扰。
+     */
+    @Operation(summary = "保存工作区记忆", description = "写回工作区根目录 .wenqu/MEMORY.md（经执行器原子写）")
+    @Permission("project:write")
+    @PutMapping("/{id}/workspace-memory")
+    public ResultJson saveWorkspaceMemory(@PathVariable("id") String id, @RequestBody Map<String, String> body) {
+        String uid = RequestUser.uid();
+        String content = body == null ? "" : (body.get("content") == null ? "" : body.get("content"));
+        try {
+            projectFileService.saveWorkspaceMemory(uid, id, content);
+            return ResultJson.ok(true);
+        } catch (IllegalArgumentException e) {
+            return ResultJson.error(400, e.getMessage());
+        }
+    }
+
+    /**
      * 工作区轮次占用状态：共用目录的工作区当前有没有轮次在跑、是谁在跑（会话标题 / 定时任务名 /
      * 工作流子智能体名）与跑了多久。工作区页的占用条轮询它；被拒消息的「指名道姓」与这里同源
      * （都出自租约的 {@code describe()}），两处口径不会漂移。
@@ -207,8 +238,9 @@ public class ProjectController {
             description = "列出工作区目录里的<b>一层</b>内容（文件夹在前、文件按修改时间倒序）；dir 为空=根目录。"
                     + "返回 {dir, entries, total, truncated, files, bytes, capped, dirs, names}——"
                     + "total 是本层条目数（truncated=true 表示只返回了最近若干条），"
-                    + "files/bytes 是整个目录的文件数与合计体积（capped=true 表示统计到 5000 个就停），"
-                    + "dirs 是全目录的文件夹清单（「移动到…」用），names 是全目录的文件名（产物去重用）。"
+                    + "根层请求（dir 为空）另带 files/bytes（整个目录的文件数与合计体积，capped=true 表示统计到 5000 个就停）、"
+                    + "dirs（全目录的文件夹清单，「移动到…」用）、names（全目录的文件名，产物去重用）；"
+                    + "子目录请求只返回本层数据，这四项为空，不重复扫整棵树。"
                     + "可预览的条目另带 viewUrl：一条签名地址（默认 1 小时有效），前端直接开成浏览器标签页。"
                     + "目录不存在=正常空态；宿主目录读不到（如沙盒在另一台机器）如实返回不可用")
     @Permission("project:read")

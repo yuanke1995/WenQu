@@ -144,7 +144,9 @@ public class ProjectFileService {
             totalHere = entries.size();
         }
 
-        Tree tree = scanTree(p, roots);
+        // 全目录统计只给根层用：子目录请求只要本层条目。否则每展开一个文件夹都整树扫一遍，
+        // 几千文件的工作区会把一次点击拖成几十秒（扫描全部走本机执行器的串行调用通道）。
+        Tree tree = (dir == null || dir.isBlank()) ? scanTree(p, roots) : new Tree();
         m.put("dir", echoDir);
         m.put("entries", entries.size() > MAX_ENTRIES ? new ArrayList<>(entries.subList(0, MAX_ENTRIES)) : entries);
         m.put("total", totalHere);
@@ -336,6 +338,47 @@ public class ProjectFileService {
         m.put("truncated", truncated);
         m.put("content", content);
         return m;
+    }
+
+    // ==================== 工作区级记忆（独立于用户级记忆，存工作区根目录 .wenqu/MEMORY.md） ====================
+
+    /** 工作区记忆文件名：放在工作区主根下的隐藏子目录，不污染项目真实文件、也易忽略。 */
+    public static final String WORKSPACE_MEMORY_FILE = ".wenqu/MEMORY.md";
+    private static final int WORKSPACE_MEMORY_READ_CAP = 32 * 1024; // 注入提示词前最多读 32KB
+
+    /**
+     * 读取工作区级记忆（{@code 主根/.wenqu/MEMORY.md}）。无工作区 / 未绑目录 / 文件不存在 / 执行器离线 → 返回空串。
+     * 任何读失败一律吞掉返回空——记忆只是辅助上下文，绝不能因它拖累或中断一轮对话。
+     */
+    public String readWorkspaceMemory(String uid, String projectId) {
+        try {
+            Project p = projectService.detail(uid, projectId);
+            if (!projectService.isLocal(p)) return "";
+            List<ProjectRoot> roots = requireRoots(p);
+            String abs = memoryAbs(roots);
+            if (!executorFiles.online(p.getExecutorId())) return "";
+            if (!executorFiles.exists(p.getExecutorId(), roots, abs)) return "";
+            return executorFiles.readText(p.getExecutorId(), roots, abs, WORKSPACE_MEMORY_READ_CAP);
+        } catch (Exception e) {
+            log.warn("读取工作区记忆失败（视为空）：{}", e.getMessage());
+            return "";
+        }
+    }
+
+    /** 写回工作区级记忆（{@code 主根/.wenqu/MEMORY.md}），经执行器原子写。 */
+    public void saveWorkspaceMemory(String uid, String projectId, String content) {
+        Project p = writableProject(uid, projectId, false);
+        if (!projectService.isLocal(p)) throw new IllegalArgumentException("这个工作区还没有绑定本机目录");
+        List<ProjectRoot> roots = requireRoots(p);
+        String abs = memoryAbs(roots);
+        executorFiles.writeText(p.getExecutorId(), roots, abs, content == null ? "" : content);
+    }
+
+    private static String memoryAbs(List<ProjectRoot> roots) {
+        ProjectRoot r = primary(roots);
+        String base = r.getPath().replace('\\', '/');
+        while (base.length() > 1 && base.endsWith("/")) base = base.substring(0, base.length() - 1);
+        return base + "/" + WORKSPACE_MEMORY_FILE;
     }
 
     // ==================== 写侧 ====================

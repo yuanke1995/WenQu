@@ -8,7 +8,7 @@
   },
   "scripts": {
     "dev": "node ../scripts/mac/dev-with-agent.mjs",
-    "dev:prod": "VITE_PROXY_TARGET=http://49.232.129.201/ai WENQU_EXECUTOR=0 node ../scripts/mac/dev-with-agent.mjs",
+    "dev:prod": "VITE_PROXY_TARGET=http://49.232.129.201/ai node ../scripts/mac/dev-with-agent.mjs",
     "build": "vite build",
     "preview": "vite preview",
     "dev:web": "vite"

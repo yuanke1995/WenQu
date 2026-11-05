@@ -3,6 +3,7 @@ package com.wenqu.ai.executor;
 import com.wenqu.ai.model.ProjectRoot;
 import org.springframework.stereotype.Service;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.LinkedHashMap;
@@ -121,6 +122,28 @@ public class ExecutorFiles {
     }
 
     public record ReadBytes(byte[] bytes, long totalBytes) {
+    }
+
+    /** 读文本文件全文（截断到 maxBytes；<=0 表示不截断），UTF-8 解码。文件夹或读失败由调用方兜底。 */
+    public String readText(String executorId, List<ProjectRoot> roots, String absPath, int maxBytes) {
+        Map<String, Object> st = call(executorId, roots, "stat", Map.of("path", absPath), false).data();
+        if (Boolean.TRUE.equals(st.get("isDir"))) throw new IllegalArgumentException("这是一个文件夹，不能按文本读取");
+        long size = asLong(st.get("size"));
+        int want = maxBytes <= 0 ? Integer.MAX_VALUE : (int) Math.min(size, (long) maxBytes);
+        byte[] buf = readRange(executorId, roots, absPath, 0, want).bytes();
+        return new String(buf, StandardCharsets.UTF_8);
+    }
+
+    /** 整段写文本到执行器上的绝对路径（op "write"，不弹终端确认）。父目录不存在由执行器自动补建。 */
+    public void writeText(String executorId, List<ProjectRoot> roots, String absPath, String text) {
+        Map<String, Object> args = new LinkedHashMap<>();
+        args.put("path", absPath);
+        args.put("content", text == null ? "" : text);
+        call(executorId, roots, "write", args, false);
+    }
+
+    private static long asLong(Object v) {
+        return v instanceof Number n ? n.longValue() : 0L;
     }
 
     public void writeChunk(String executorId, List<ProjectRoot> roots, String absPath, long offset, byte[] bytes) {
