@@ -11,6 +11,8 @@ import com.wenqu.ai.model.ModelInfo;
 import com.wenqu.ai.model.Provider;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.data.redis.RedisProperties;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.stereotype.Service;
@@ -135,6 +137,19 @@ public class ModelRegistryService {
         reload();
         startRedisSync();
         log.info("[Provider] 供应商注册中心加载完成: {} 个供应商, {} 个模型",
+                snap.providers().size(), snap.models().size());
+    }
+
+    /**
+     * 迁移完成后的兜底重载：@PostConstruct 早于所有 ApplicationRunner，而 SchemaMigrator 要到
+     * runner 阶段才补列/删列——首启带新列的版本时，上面那次 selectList 会撞 Unknown column 把快照
+     * 留成空的（2026-11-05 线上表现为「供应商 0 个」，只有下一次任意变更才恢复）。
+     * ApplicationReadyEvent 在所有 runner 之后触发，此时列已补齐，重读一遍即自愈。
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void reloadAfterStartup() {
+        reload();
+        log.info("[Provider] 启动完成后重载注册中心: {} 个供应商, {} 个模型",
                 snap.providers().size(), snap.models().size());
     }
 
