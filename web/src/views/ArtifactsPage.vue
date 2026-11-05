@@ -11,7 +11,7 @@
           <reload-outlined /> 刷新
         </button>
       </div>
-      <div v-if="rows.length" class="art-batch">
+      <div v-if="visibleRows.length" class="art-batch">
         <a-checkbox :checked="allChecked" :indeterminate="someChecked" @change="toggleAll">全选</a-checkbox>
         <button v-if="selectedIds.length" class="app-btn ghost small art-del" :disabled="batchLoading"
                 @click="askBatchDelete">
@@ -21,8 +21,9 @@
     </div>
 
     <div class="app-page-body">
-      <!-- 工作区筛选：只列用户自己建的工作区，与侧栏「工作区」分区同一口径（implicit 兜底容器是归属兜底、
-           没挂工作区只是存量状态，都不值得占一档）；建工作区的入口在侧栏那一区的 ＋，不在这里重复一个 -->
+      <!-- 工作区筛选：只列这台电脑上的工作区，与侧栏「工作区」分区同一口径（侧栏按「这台电脑」过滤，
+           别的电脑上的同名工作区在这里会变成两档分不清的 chip）；implicit 兜底容器是归属兜底、
+           没挂工作区只是存量状态，都不值得占一档；建工作区的入口在侧栏那一区的 ＋，不在这里重复一个 -->
       <div v-if="realProjects.length" class="art-filters">
         <button :class="['art-filter', { active: !activeProject }]" @click="selectProject('')">全部</button>
         <button v-for="p in realProjects" :key="p.id" :class="['art-filter', { active: activeProject === p.id }]"
@@ -30,10 +31,12 @@
       </div>
 
       <a-spin :spinning="loading">
-        <div v-if="!rows.length" class="app-card art-empty">
-          <p class="art-empty-title">{{ keyword.trim() ? '没有匹配的产物' : '还没有产物' }}</p>
+        <div v-if="!visibleRows.length" class="app-card art-empty">
+          <p class="art-empty-title">{{ keyword.trim() ? '没有匹配的产物' : (rows.length ? '产物在别的电脑的工作区里' : '还没有产物') }}</p>
           <p class="head-hint-plain">
-            {{ keyword.trim() ? '换个关键词试试' : '在对话里让 AI「把结果整理成一份清单 / 表格」，生成的文件会出现在这里' }}
+            <template v-if="keyword.trim()">换个关键词试试</template>
+            <template v-else-if="rows.length">「我的产物」只列这台电脑上的工作区，换到那台电脑后可见</template>
+            <template v-else>在对话里让 AI「把结果整理成一份清单 / 表格」，生成的文件会出现在这里</template>
           </p>
         </div>
 
@@ -114,13 +117,20 @@ import { ReloadOutlined, FileTextOutlined, DownloadOutlined, DeleteOutlined, Fol
 import { listArtifacts, listProjects, deleteArtifact, deleteArtifactsBatch, moveArtifactProject } from '../api'
 import { resolveImg } from '../utils/markdown'
 import { canPreview, artifactExt } from '../utils/artifactView'
+import { projectOnThisComputer } from '../utils/localExecutor'
 import MoveToWorkspaceModal from '../components/MoveToWorkspaceModal.vue'
 
 const rows = ref([])
 // 工作区容器：产物按工作区分组展示。空数组时退化成原来的单列表（接口挂掉也不该让页面白屏）
 const projects = ref([])
-// 筛选条只认用户真实建的工作区：implicit 兜底容器不再单独占一档展示
-const realProjects = computed(() => projects.value.filter(p => p.selectionStatus !== 'implicit'))
+// 筛选条只认这台电脑上的工作区，与侧栏「工作区」分区同一口径；implicit 兜底容器不单独占一档
+const realProjects = computed(() => projects.value.filter(p =>
+  p.selectionStatus !== 'implicit' && projectOnThisComputer(p)))
+/** 别的电脑上的工作区：产物仍属账号，但这一页不列（否则同名工作区会出现两档分不清的 chip） */
+const otherComputerIds = computed(() => new Set(
+  projects.value.filter(p => p.selectionStatus !== 'implicit' && !projectOnThisComputer(p)).map(p => p.id)))
+/** 当前要展示的产物：接口按账号返回，这里剔掉属于别的电脑工作区的那部分（勾选/全选也据此算） */
+const visibleRows = computed(() => rows.value.filter(r => !otherComputerIds.value.has(r.projectId)))
 /** implicit 兜底容器的 id：它的产物在分组时并入「会话」栏，不再单独出一个兜底容器分组 */
 const implicitProjectId = computed(() => (projects.value.find(p => p.selectionStatus === 'implicit') || {}).id || '')
 // 当前筛选的工作区：'' = 全部；其余 = 工作区 id
@@ -173,15 +183,14 @@ const loadProjects = async () => {
  */
 const groups = computed(() => {
   const byKey = new Map()
-  for (const r of rows.value) {
+  for (const r of visibleRows.value) {
     const raw = r.projectId || ''
     const k = raw && raw === implicitProjectId.value ? '' : raw
     if (!byKey.has(k)) byKey.set(k, [])
     byKey.get(k).push(r)
   }
   const out = []
-  for (const p of projects.value) {
-    if (p.selectionStatus === 'implicit') continue
+  for (const p of realProjects.value) {
     if (byKey.has(p.id)) out.push({ key: p.id, title: p.displayName || '未命名工作区', rows: byKey.get(p.id) })
   }
   // 接口里已经不存在的工作区（被删）单独兜住，不让这些产物的分组凭空消失
@@ -267,8 +276,8 @@ const askBatchDelete = () => Modal.confirm({
 })
 
 // ==================== 勾选 / 批量删除 ====================
-const allChecked = computed(() => rows.value.length > 0 && selectedIds.value.length === rows.value.length)
-const someChecked = computed(() => selectedIds.value.length > 0 && selectedIds.value.length < rows.value.length)
+const allChecked = computed(() => visibleRows.value.length > 0 && selectedIds.value.length === visibleRows.value.length)
+const someChecked = computed(() => selectedIds.value.length > 0 && selectedIds.value.length < visibleRows.value.length)
 
 const toggle = (id, checked) => {
   selectedIds.value = checked
@@ -276,7 +285,7 @@ const toggle = (id, checked) => {
     : selectedIds.value.filter(x => x !== id)
 }
 const toggleAll = e => {
-  selectedIds.value = e.target.checked ? rows.value.map(x => x.id) : []
+  selectedIds.value = e.target.checked ? visibleRows.value.map(x => x.id) : []
 }
 
 const doDelete = async row => {
