@@ -913,8 +913,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         String sessionKey = sessions.key(cmd);
         sessions.claimFollower(sessionKey);
         try {
+            // 开轮前准备那一段（限流/校验/会话补建/实例装配）只有「服务端收到提问 → submit 之后起表」
+            // 这一条路径量得出来；续跑轮没有收到提问那一刻，宁可不报也不把等人那几天算成准备。
+            long startedAt = System.currentTimeMillis();
+            long prepMs = cmd.getReceivedAtMs() > 0L
+                    ? Math.max(0L, startedAt - cmd.getReceivedAtMs()) : 0L;
             followTurn(session, cmd, channel, pool, route, hooks, turnId, historyBefore, startCursor,
-                    userMessageId, current, recording, System.currentTimeMillis(), binding.contextWindow());
+                    userMessageId, current, recording, startedAt, prepMs, binding.contextWindow());
         } finally {
             sessions.releaseFollower(sessionKey);
             // 收口后清掉本轮落点：之后再有工具调用会明确失败，而不是回落到这一轮的池子里
@@ -935,7 +940,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                             ModelRegistryService.ModelRoute route, WenquAgentxTools.TurnHooks hooks,
                             String turnId, int historyBefore, long startCursor, String userMessageId,
                             AgentSession.Task current,
-                            Recording recording, long startedAt, int contextWindow) {
+                            Recording recording, long startedAt, long prepMs, int contextWindow) {
         long machineBudgetMs = turnSeconds() * 1000L;
         // 断流对账的读数起点：主链模型包装器按会话常驻、跨轮复用，本轮的断流次数只能取收尾读数
         // 减开轮读数（见 MeteredModel.abruptCloses）。实例还没建出来时是 null——那一跑连模型都没调，
@@ -945,7 +950,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         long modelErrBefore = turnModel == null ? 0L : turnModel.modelErrors();
         // 接流快照改由本轮自己供：外壳开轮时只有「还没出字」那份空快照，而正文/工具卡/时间线
         // 只活在这里的 Recording 与引用池里。不回填的表现为——生成中刷新，气泡接回来是一片空白。
-        channel.offerSnapshot(() -> turnSnapshot(cmd, channel, pool, route, recording, turnId, startedAt));
+        channel.offerSnapshot(() -> turnSnapshot(cmd, channel, pool, route, recording, turnId, startedAt, prepMs));
         // 人在回路的累计等待（ms）：引擎自己的墙钟上限与共享台账都按「墙钟 − 这段」判超时。
         // 踩过一次——计划卡挂出后用户还在读卡，机器预算却被这段等待吃光，本轮在用户点批准之前
         // 就被判超时截断（真机 2026-10-15 13:59:53，日志写明「人工等待 0ms 不计入」）。
@@ -1279,8 +1284,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 报出去的「本轮耗时」说的是机器干活用了多久，不是这一轮在墙上挂了多久：人在计划卡上读了
         // 三分钟，读成「它答了三分多钟」就是把人自己的时间记到了机器账上。同一句里把两个数都留下，
         // 截断与卡死排障要看的是墙钟，成本与性能看的是机器时间——少一个数就必然有人拿错一个数对账。
-        log.info("[TURN] 本轮收口: session={} 机器耗时={}ms 墙钟={}ms 人工等待={}ms",
-                cmd.getSessionId(), machineMs, wallMs, humanWaitMs);
+        log.info("[TURN] 本轮收口: session={} 机器耗时={}ms 墙钟={}ms 开轮前准备={}ms 整轮墙钟={}ms 人工等待={}ms",
+                cmd.getSessionId(), machineMs, wallMs, prepMs, wallMs + prepMs, humanWaitMs);
         // 目标模式轮终一拍：记账 → 判完成/受阻/安全帽 →（由 onUserTurnEnd 决定）续跑。
         // 放在 finish 之前：finish 会落库并发 done，目标态要先于那一帧定下来，前端才看得到一致的状态。
         // 工具调用数取本轮实例自己的步数闸（taken 是判过即占一步的口径，含被拒的）。
@@ -1299,7 +1304,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         answer = com.wenqu.ai.service.GoalService.stripMarkers(answer);
         finish(cmd, channel, pool, route, hooks.modelRef(), contextWindow, answer, recording,
                 userMessageId, stopped,
-                timedOut, ranOutBudget, awaiting, machineMs, humanWaitMs, wallMs,
+                timedOut, ranOutBudget, awaiting, machineMs, humanWaitMs, wallMs, prepMs,
                 session, historyBefore, turnId, planRecord);
         // 站内通知（旁路：内部全捕获，写不进去只记 WARN，绝不影响这一轮收口）。这件事此前只有
         // 屏幕前的人看得见——长轮跑完时人多半已经切走或锁屏，铃铛一声不响等于「跑完没人知道」。
@@ -1687,7 +1692,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 那一轮的账本归属就全挂错了
                 followTurn(f.session(), f.cmd(), f.channel(), f.pool(), f.route(), f.hooks(),
                         turnId, f.historyBefore(), f.startCursor(), null, current,
-                        f.recording(), System.currentTimeMillis(), f.contextWindow());
+                        // 续跑轮 prepMs 传 0：这一跑不是新问答，cmd 里那个「收到提问」的时刻属于
+                        // 原来那一拍，拿它当基准会把「人隔了几天才回来答卡」算进开轮前准备。
+                        f.recording(), System.currentTimeMillis(), 0L, f.contextWindow());
                 log.info("[agentx] 续跑已收尾 session={}", f.cmd().getSessionId());
             } catch (Exception e) {
                 log.warn("[agentx] 续跑中断 session={}: {}", f.cmd().getSessionId(), e.toString());
@@ -4113,10 +4120,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * pending 端点恢复；也不含逐字增量，正文取缓冲本身比回放上千条 token 帧快。
      *
      * @param startedAt 本轮开轮时刻（服务端墙上钟，见 {@code followTurn} 的入参）
+     * @param prepMs    开轮前准备那一段（服务端收到提问 → 开轮起表）；0 = 这一跑没有「收到提问」基准
      */
     private Map<String, Object> turnSnapshot(ChatCommand cmd, RunChannel channel, WenquSourcePool pool,
                                              ModelRegistryService.ModelRoute route, Recording recording,
-                                             String turnId, long startedAt) {
+                                             String turnId, long startedAt, long prepMs) {
         Map<String, Object> snap = recording.snapshotFields();
         snap.put("running", true);
         snap.put("phase", "generating");
@@ -4131,7 +4139,15 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 刷新一下「正在溯源，用时 N 秒」就从 0 重新跳一遍——已经跑掉的那段在用户眼里不算数了。
         // 给「跑掉了多久」而不给「绝对开轮时刻」：前端本地钟与 nowTick 都在客户端钟上，跨钟相减会把
         // 两边的偏差直接算进用户眼里；给时长则只差这一帧在路上的时间。
-        snap.put("elapsedMs", Math.max(0L, System.currentTimeMillis() - startedAt));
+        long elapsedMs = Math.max(0L, System.currentTimeMillis() - startedAt);
+        snap.put("elapsedMs", elapsedMs);
+        // 整轮墙钟（含开轮前准备）与那一段准备一起给：接流那端的秒表按这一份起表，
+        // 否则「刷新一次」会把排队+装配那几秒抹掉（用户看见的数凭空变小，与 done 同一件事）。
+        // prepMs=0 的那一跑（续跑轮）不给这两个键：宁可让前端走机器耗时回退，不编一个准备时间。
+        if (prepMs > 0L) {
+            snap.put("wallMs", elapsedMs + prepMs);
+            snap.put("prepMs", prepMs);
+        }
         if (cmd.getAgentId() != null && !cmd.getAgentId().isBlank()) {
             snap.put("agentId", cmd.getAgentId());
             String name = agentNameOf(cmd);
@@ -4143,15 +4159,17 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     /**
      * 收尾：落库、下发 done 帧、进问答台账。
      *
-     * @param elapsedMs   机器耗时（墙钟扣掉人在回路的等待）——界面、看板、台账都说这个数
+     * @param elapsedMs   机器耗时（墙钟扣掉人在回路的等待）——看板与台账说这个数
      * @param humanWaitMs 这一轮里用户读卡/答题累计的等待，随 done 下发供界面上单独说明
-     * @param wallMs      整轮墙钟（开轮那一刻到收尾），只用来反推本轮真实开始时刻与写日志
+     * @param wallMs      本轮墙钟（开轮那一刻到收尾），只用来反推本轮真实开始时刻与写日志
+     * @param prepMs      开轮前准备那一段（服务端收到提问 → 开轮起表）；0 = 这一跑没有收到提问的基准，
+     *                    此时<b>不下发</b>整轮墙钟，让前端走「机器耗时 + 等待」那份回退，而不是编一个数
      */
     private void finish(ChatCommand cmd, RunChannel channel, WenquSourcePool pool,
                         ModelRegistryService.ModelRoute route, String modelRef, int contextWindow, String answer,
                         Recording recording,
                         String userMessageId, boolean stopped, boolean timedOut, boolean budget, boolean awaiting,
-                        long elapsedMs, long humanWaitMs, long wallMs,
+                        long elapsedMs, long humanWaitMs, long wallMs, long prepMs,
                         AgentSession session, int historyBefore, String turnId,
                         Map<String, Object> planRecord) {
         // 落库这一轮：框架引擎此前只发帧不落库，界面上点进去是空会话（真机被这个抓到）。
@@ -4245,6 +4263,15 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // humanWaitMs 只在真等过的时候写：为 0 时不占键位。
         tokens.put("turnElapsedMs", elapsedMs);
         if (humanWaitMs > 0L) tokens.put("humanWaitMs", humanWaitMs);
+        // 整轮墙钟也落库：气泡顶部那条报的是「从发出提问到答完」，屏幕上跳的是这一份、刷新后读的
+        // 必须还是这一份。只落机器耗时的话，刷新一次数字就变小（真机 2026-11-05 量到 6.0s → 3.3s），
+        // 因为排队、限流、会话补建与实例装配那几秒不在 startedAt 之后起表。
+        // prepMs=0（续跑轮、工作流/定时任务/子轮那些没有前端请求体的入口）时两个键都不写：
+        // 那几路本来就没有「收到提问」这一刻，写了就是编数。
+        if (prepMs > 0L) {
+            tokens.put("turnWallMs", wallMs + prepMs);
+            tokens.put("turnPrepMs", prepMs);
+        }
         // 暗截断对账：判据在 TurnRecorder 那一处，两条运行时共用同一把尺，不复制第二份。
         // 「已交代」必须算上思考字符与工具入参——前者漏了就是轮轮误报（deepseek 系恒思考），
         // 后者漏了会把「写文件动辄几百 token」的正常轮判成内容丢失。
@@ -4350,6 +4377,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         done.put("degradations", pool.degradations());
         done.put("elapsedMs", elapsedMs);
         done.put("humanWaitMs", humanWaitMs);
+        // 整轮墙钟（含开轮前准备）与准备那一段：前端气泡顶部的数与悬停拆分都读这两个键，
+        // 缺键时它们退回「机器耗时 + 等待」——那是没有收到提问基准的那几轮唯一诚实的口径。
+        if (prepMs > 0L) {
+            done.put("turnWallMs", wallMs + prepMs);
+            done.put("prepMs", prepMs);
+        }
         done.put("tokens", tokens);
         done.put("toolCalls", recording.toolCallList());
         // 每轮文件改动：改了哪些文件、各多少行（本轮没跑/没改动/执行器不在都不给键）

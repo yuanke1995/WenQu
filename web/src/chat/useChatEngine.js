@@ -2378,7 +2378,10 @@ const applyTurnSnapshot = (msg, snap, sid) => {
   // 那一刻，不换算的话顶部秒表从 0 重新起跳，跑掉的那段在用户眼里不算数。
   // 与本地已有的起表点取**更早**那一份：目标排队那颗占位气泡从按下回车起表，比服务端那份还早，
   // 取新的会让秒数往回跳（占位气泡交接时已把 time 带过来，见 streamAnswer 的 heldStartAt）
-  msg.time = earlierStart(msg.time, resumedStartAt(snap.elapsedMs, Date.now()))
+  // 优先按墙钟接（含开轮前准备与人在回路），旧服务端没有 wallMs 时才退回机器耗时。
+  msg.time = earlierStart(msg.time, resumedStartAt(
+    typeof snap.wallMs === 'number' ? snap.wallMs : snap.elapsedMs, Date.now()))
+  if (typeof snap.prepMs === 'number') msg.turnPrepMs = snap.prepMs
   if (snap.planRecord) msg.planCard = planCardFromRecord(snap.planRecord)
   // 时间线必须在 toolCalls/artifacts 之后重建：段里的下标指向这两份清单，清单没铺好就先建会指空
   if (Array.isArray(snap.timeline) && snap.timeline.length) msg.timeline = restoreTimeline(msg, snap.timeline)
@@ -2884,7 +2887,15 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         // 写回时和本地钟对一次账取更大的一份：目标模式那一轮从按下回车起表（含排队与实例冷启动
         // 那几秒），服务端那份从登记总线才算起——照抄会让数字在答完那一刻变小（见 settledTurnMs）
         if (typeof p.humanWaitMs === 'number') msg.humanWaitMs = p.humanWaitMs
-        if (typeof p.elapsedMs === 'number') msg.turnMs = settledTurnMs(p.elapsedMs, msg.humanWaitMs, msg.time, Date.now())
+        if (typeof p.prepMs === 'number') msg.turnPrepMs = p.prepMs
+        // 整轮墙钟（含开轮前准备与人在回路）：服务端从收到提问起表。与本地钟取更大的一份——
+        // 本地含网络往返，服务端含装配；两边都只在毫秒级上差，谁大听谁，绝不比服务端那份小。
+        // 旧服务端没有这个键时退回原先的「机器耗时 + 等人」口径。
+        if (typeof p.turnWallMs === 'number') {
+          msg.turnMs = Math.max(p.turnWallMs, Math.max(0, Date.now() - (Number(msg.time) || Date.now())))
+        } else if (typeof p.elapsedMs === 'number') {
+          msg.turnMs = settledTurnMs(p.elapsedMs, msg.humanWaitMs, msg.time, Date.now())
+        }
         // 本轮作答方归属（P5：不再有会话锁定，done 的 agentId/agentName 就是这一轮实际作答的智能体）
         if (p.agentId) msg.agentId = p.agentId
         if (p.agentName) msg.agentName = p.agentName

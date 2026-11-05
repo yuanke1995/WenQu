@@ -671,10 +671,19 @@ const durZh = ms => {
 const turnElapsedMs = m => {
   if (!m) return 0
   if (m.loading) return Math.max(0, nowTick.value - (Number(m.time) || nowTick.value))
-  // 机器时间 + 等人那一段＝服务端那侧的墙钟。报墙钟不报机器时间：屏幕上跳着的那一份本来就是
-  // 墙钟，收尾改成机器时间会让数字在答完那一刻变小（真机量过：跳到 5.7 秒 → 已完成 4.2 秒），
-  // 用户读成「计时坏了」。等了多久在悬停里单独交代，见 turnTitle。
-  return (Number(m.turnMs) || Number(m.tokens && m.tokens.turnElapsedMs) || 0) + turnWaitMs(m)
+  // 气泡顶部只报一种数：从发出提问到答完的整轮墙钟（含开轮前准备与人在回路等待）。
+  // 三处同源：现场 done 写回的 turnMs、历史落库的 tokens.turnWallMs、以及存量消息的
+  // 机器耗时 + 等待（老数据没有墙钟那一份）。报墙钟不报机器时间：屏幕上跳着的那一份本来就是
+  // 墙钟，收尾改成机器时间会让数字在答完那一刻变小，刷新后更会直接换一本账（真机 6.0s → 3.3s）。
+  const wall = Number(m.turnMs) || Number(m.tokens && m.tokens.turnWallMs) || 0
+  if (wall > 0) return wall
+  return (Number(m.tokens && m.tokens.turnElapsedMs) || 0) + turnWaitMs(m)
+}
+/** 其中开轮前那一段（限流/校验/会话补建/实例装配/日志对账）：不单独占一个数，
+ *  但要在悬停里交代——否则用户会把准备时间全算到模型头上。存量消息没有这个键，返回 0。 */
+const turnPrepMs = m => {
+  if (!m) return 0
+  return Number(m.turnPrepMs) || Number(m.tokens && m.tokens.turnPrepMs) || 0
 }
 /** 其中被「等你答题/批准」盖掉的时长：不单独占一个数，但要在悬停里说清楚——不然一轮答得慢，
  *  账全算在模型头上。 */
@@ -789,9 +798,16 @@ const turnBottom = m => !!(m && m.loading) && turnShow(m)
 const turnTop = m => !!(m && !m.loading) && turnShow(m)
 /** 悬停说明：口径只在这一处描述，PC 与 H5 共用（两处各写一遍必然写歪） */
 const turnTitle = m => {
-  const w = turnWaitMs(m)
-  return w ? '从发出提问到答完一共 ' + durZh(turnElapsedMs(m)) + '，其中等你答题或批准 ' + durZh(w)
-    : '从发出提问到答完实际用的时间'
+  const ms = turnElapsedMs(m)
+  if (!ms) return '从发出提问到答完实际用的时间'
+  const prep = turnPrepMs(m)
+  const wait = turnWaitMs(m)
+  const parts = []
+  if (prep > 0) parts.push('开始回答前的准备 ' + durZh(prep))
+  const rest = Math.max(0, ms - prep - wait)
+  if (rest > 0) parts.push('模型与工具 ' + durZh(rest))
+  if (wait > 0) parts.push('等你答题或批准 ' + durZh(wait))
+  return '从发出提问到答完一共 ' + durZh(ms) + (parts.length ? '，其中' + parts.join('、') : '')
 }
 /** 顶部那条收起时只留正文行：正文各段本来就是 content 的连续切片（工具不往正文写内容），
  *  连排与全量渲染等价，零失真；展开时回到按到达顺序交错的原始时序。
@@ -1432,6 +1448,7 @@ const snapshotVersion = m => ({
   doneTime: m.doneTime || null,
   // 整轮用时随版本走：不带上就是「切回第 1 版，气泡里那一版的过程配着第 2 版的用时」
   turnMs: m.turnMs || 0,
+  turnPrepMs: m.turnPrepMs || 0,
   humanWaitMs: m.humanWaitMs || 0,
   model: m.model || ''
 })
@@ -1450,6 +1467,7 @@ const applyVersion = (m, v) => {
   m.retrieved = v.retrieved
   m.doneTime = v.doneTime
   m.turnMs = v.turnMs || 0
+  m.turnPrepMs = v.turnPrepMs || 0
   m.humanWaitMs = v.humanWaitMs || 0
   // 模型随版本走：切回旧版本时分隔记录按那一版当时用的模型比对，不串到最新一轮的模型
   m.model = v.model || ''

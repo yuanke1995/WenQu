@@ -262,6 +262,9 @@ public class ShareController {
             @Parameter(description = "分享令牌") @PathVariable("token") String token,
             @RequestBody ShareChatRequest body,
             HttpServletRequest httpRequest) {
+        // 分享页也报「从发出提问到答完」的墙钟：起表点必须早于限流与查询，
+        // 否则刷新后只剩机器耗时，数字会变小（与登录态同一条口径）。
+        long receivedAtMs = System.currentTimeMillis();
         // IP 限频先于任何查询（最便宜的一关）
         rateLimitService.checkRateLimit("chat", "ip:" + clientIp(httpRequest));
         var ctx = agentShareService.resolveGuest(token);
@@ -313,6 +316,7 @@ public class ShareController {
         // guestMode=true：工具白名单收窄（知识检索+内置），身份按发布者装载（检索可见性/默认模型）
         chatService.chat(ChatCommand.builder()
                 .sessionId(sessionId).question(message.trim()).userId(owner.getUid())
+                .receivedAtMs(receivedAtMs)
                 // 接流归属用访客身份（不是发布者）：分享页刷新/换设备能把这一轮接回来，
                 // 而别人即便拿到同一个 token 也接不走不属于自己的会话
                 .userImages(images).attachments(attachments).skills(List.of())

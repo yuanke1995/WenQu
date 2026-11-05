@@ -158,6 +158,9 @@ public class ChatController {
     @Permission("chat:use")
     @PostMapping("/chat")
     public SseEmitter chat(@RequestBody @Valid ChatRequest request, HttpServletRequest httpRequest) {
+        // 气泡顶部报的是「从发出提问到答完」的墙钟：起表点必须早于限流、校验、会话补建与实例装配，
+        // 否则刷新后读库里那份机器耗时，数字会凭空变小（实测 6.0s → 3.3s）。
+        long receivedAtMs = System.currentTimeMillis();
         String userId = RequestUser.uid();
         // 按用户限频（SYSTEM 落到 IP 维度）
         rateLimitService.checkRateLimit("chat", RequestUser.SYSTEM.equals(userId)
@@ -293,6 +296,7 @@ public class ChatController {
         // regenerate：重新生成/自动重试的重发——该问题的用户消息已随上一轮请求即时落库，跳过重复落库
         chatService.chat(ChatCommand.builder()
                 .sessionId(sessionId).question(question).userId(userId)
+                .receivedAtMs(receivedAtMs)
                 .apiKey(httpRequest.getAttribute(com.wenqu.ai.config.SecurityConfig.ATTR_API_KEY_ID) != null)
                 .userImages(images).attachments(attachments).skills(request.getSkills())
                 .mentions(mentions).historyRefs(historyRefs)

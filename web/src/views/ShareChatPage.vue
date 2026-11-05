@@ -586,6 +586,7 @@ const newAiMessage = () => reactive({
 function resetAiTurn (ai) {
   ai.time = Date.now()
   ai.turnMs = 0
+  ai.turnPrepMs = 0
   ai.humanWaitMs = 0
   ai.failed = false
   ai.loading = true
@@ -621,8 +622,11 @@ function shareStreamHandlers (ai) {
         if (Array.isArray(p.degradations)) ai.degradations = p.degradations
         // 落库的消息 ID：评价与「重新生成」都要用它（服务端按它校验归属）
         if (p.messageId) ai.messageId = p.messageId
-        // 整轮用时：与主对话页读同一个数（后端算好的墙钟），那条总览两页才说同一句话
-        if (typeof p.elapsedMs === 'number') ai.turnMs = p.elapsedMs
+        // 整轮用时：与主对话页读同一个数（后端算好的墙钟），那条总览两页才说同一句话。
+        // 旧服务端没有 turnWallMs 时退回机器耗时；prepMs 只进悬停说明。
+        if (typeof p.turnWallMs === 'number') ai.turnMs = p.turnWallMs
+        else if (typeof p.elapsedMs === 'number') ai.turnMs = p.elapsedMs
+        if (typeof p.prepMs === 'number') ai.turnPrepMs = p.prepMs
         if (typeof p.humanWaitMs === 'number') ai.humanWaitMs = p.humanWaitMs
       } catch (e) { /* 汇总解析失败：正文已在流式里累积完，不影响可读 */ }
       // 首轮由服务端建会话：done 带回 sessionId，持久化供刷新恢复

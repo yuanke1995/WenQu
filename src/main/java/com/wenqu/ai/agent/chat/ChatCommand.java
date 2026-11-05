@@ -151,6 +151,15 @@ public final class ChatCommand {
     final String sourceName;
 
 
+    /**
+     * 服务端收到这一问的墙上时刻（epoch ms）。0 = 调用方没给（定时任务/工作流/子轮等没有前端
+     * 请求体的入口）。
+     * <p>为什么要在控制器入口就记：气泡顶部报的是「从按下发送到答完」的墙钟，而机器耗时从
+     * {@code submit} 之后才起表——两者差着排队、限流、会话补建、实例装配那几秒。只落机器时间，
+     * 刷新一次数字就变小（真机 6.0s → 3.3s）。带上它才能把同一本账写到库里。
+     */
+    final long receivedAtMs;
+
     /** 是否处于子智能体分支里（{@link #subagentDepth} &gt; 0 的唯一判定点，别在调用方各写一遍） */
     public boolean branchTurn() {
         return subagentDepth > 0;
