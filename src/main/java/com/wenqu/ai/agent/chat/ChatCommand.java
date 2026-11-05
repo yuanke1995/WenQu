@@ -79,6 +79,12 @@ public final class ChatCommand {
     /** 免登录分享会话（公开链接）：能力白名单收窄、另有恢复语义 */
     final boolean guestMode;
     /**
+     * 本轮由 API Key 发起：Key 只开放问答链路，沙盒/文件/命令工具一律不挂。
+     * <p>与 guestMode 分开：游客是“没有登录态”，API Key 是“有代表账号但能力面收窄”，
+     * 两者后续可能继续分化（例如 Key 是否允许 MCP），不能复用同一个布尔。
+     */
+    final boolean apiKey;
+    /**
      * 这一轮的<b>访客身份</b>（{@code share-visitor:{客户端随机}}，仅 guestMode 有值）。
      * <p>接流总线按它认归属，不能用 {@link #userId}——后者是<b>发布者</b>（免登录问答要按发布者的
      * 资料可见性检索）。少了这一个，要么分享页接不上流，要么任何人都能接走别人会话的流。

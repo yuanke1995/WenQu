@@ -827,7 +827,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         }
         // 每轮文件改动：提交前先让执行器拍轮前快照（异步入队、FIFO 先于本轮第一次写）。
         // 非本机工作区/执行器离线都在服务内部静默跳过；轮末对比在 finish 里等齐。
-        turnChangeService.start(cmd.getSessionId(), turnId);
+        // API Key 轮次没有文件工具，拍快照没有意义。
+        if (!cmd.isApiKey()) turnChangeService.start(cmd.getSessionId(), turnId);
         AgentSession.Task current = multimodal != null
                 ? session.submit(multimodal)
                 : session.submit(modelInput);
@@ -3569,7 +3570,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 游客轮 approvalCanAsk=false：分享页没有审批卡通道，漏挂的需审批工具在适配器层直接 deny
         // （fail-closed 拒答，模型收到报错改路）而不是 ask 挂 120s 超时。主闸在
         // ToolMountContext.turnAllows 的 guestMode 轴，这里是兜底。
-        }, !cmd.isGuestMode());
+        }, !cmd.isGuestMode() && !cmd.isApiKey());
         // 目标模式的控制工具常驻注册：实例按会话常驻，目标可能在建实例之后才建立，
         // 不能等到目标建立再往 Toolkit 里加工具（那需要重建实例）。非目标轮调用会落空返回。
         holders.add(new GoalTools(goalService, slot));
@@ -3983,7 +3984,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 走 SessionService 同一入口，不另写一套消息表——会话列表、历史、引用面板都吃这份数据
         String body = answer == null ? "" : answer;
         // 每轮文件改动：轮末对比（轮前快照在这里等齐）。非本机工作区/失败=不出卡，绝不给收尾添错。
-        Map<String, Object> turnChanges = turnChangeService.settle(cmd.getSessionId(), turnId);
+        Map<String, Object> turnChanges = cmd.isApiKey() ? null
+                : turnChangeService.settle(cmd.getSessionId(), turnId);
         // 推荐块两道护栏，都住在 RelatedStreamFilter 里：条目数超过要的那 N 条＝整块是被塞进来的正文
         // （全数并回、一颗芯片不出），否则只并回长过正文量级的那几条。真机 2026-10-18 21:00 那轮模型把
         // 摘要骨架整块写进 {@code <related>}，71 条短行条条过单条长度闸，界面上是一整屏绿芯片。

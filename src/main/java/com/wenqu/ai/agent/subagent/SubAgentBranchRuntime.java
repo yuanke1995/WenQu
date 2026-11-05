@@ -62,7 +62,7 @@ public class SubAgentBranchRuntime {
     }
 
     public BranchRunner branchRunner(TurnRunner turn, String parentSessionId, String parentTurnId, String userId,
-                                     boolean guestMode, SseEmitter parentEmitter) {
+                                     boolean guestMode, boolean apiKey, SseEmitter parentEmitter) {
         return req -> {
             long start = System.currentTimeMillis();
             String childSession = null;
@@ -130,6 +130,8 @@ public class SubAgentBranchRuntime {
                         .agentId(req.childAgentId())
                         .modelOverride(req.modelRef())
                         .guestMode(guestMode)
+                        // 子轮继承父轮的 API Key 收窄口径：否则 Key 派一支子智能体就能重新拿到文件/命令工具
+                        .apiKey(apiKey)
                         .subagentDepth(req.depth())
                         .parentBrief(req.parentBrief())
                         .parentSessionId(req.parentSessionId())

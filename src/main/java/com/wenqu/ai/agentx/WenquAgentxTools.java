@@ -17,8 +17,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 问渠领域能力 → 框架工具的挂载点。
@@ -29,6 +31,16 @@ import java.util.Map;
 @Slf4j
 @Component
 public class WenquAgentxTools {
+
+    /**
+     * API Key 轮次禁用的沙盒/文件/命令工具（框架原生名 + 问渠 run_code）。
+     * <p>Key 只开放问答链路：知识检索、引用、历史这些照常；一旦允许文件或命令，
+     * 集成方就能借代表账号在服务器容器里读写/执行，超出 Key 的设计能力。
+     */
+    private static final Set<String> API_KEY_DENIED_TOOLS = Set.of(
+            "run_code", "read_file", "write_file", "edit_file", "execute",
+            "shell", "shell_execute", "list_files", "grep_files", "glob_files",
+            "ls", "deliver_artifact");
 
     private final KnowledgeRetrievalTool knowledgeRetrieval;
     private final RetrievalScopeService retrievalScope;
@@ -508,7 +520,16 @@ public class WenquAgentxTools {
     public com.wenqu.ai.agent.permission.ExecutionPolicy policyFor(
             ChatCommand cmd, java.util.function.BiConsumer<String, String> onClamp) {
         String sessionPreset = cmd.getSessionId() == null ? null : sessionService.permissionPresetOf(cmd.getSessionId());
-        return toolAssembly.resolvePermissionPolicy(agentOf(cmd), sessionPreset, cmd.isGuestMode(), onClamp);
+        com.wenqu.ai.agent.permission.ExecutionPolicy policy =
+                toolAssembly.resolvePermissionPolicy(agentOf(cmd), sessionPreset, cmd.isGuestMode(), onClamp);
+        if (!cmd.isApiKey()) return policy;
+        // API Key 只开放问答：把文件/命令工具按名禁用。装配侧（allowsTool）与执行闸
+        // （AgentxFrameworkToolGate.permits）读的是同一份 deny，框架原生工具也拦得住。
+        Set<String> deny = new LinkedHashSet<>(policy.deny());
+        deny.addAll(API_KEY_DENIED_TOOLS);
+        return new com.wenqu.ai.agent.permission.ExecutionPolicy(
+                policy.preset(), policy.sandboxMode(), policy.approvalMode(),
+                policy.enforcement(), policy.writableRoot(), Set.copyOf(deny));
     }
 
     /**
@@ -690,7 +711,7 @@ public class WenquAgentxTools {
                                             Map.of("id", consultedId, "name", consultedName))));
             com.wenqu.ai.agent.subagent.BranchRunner runner = branchTurnRunner == null ? null
                     : branchRuntime.branchRunner(branchTurnRunner, cmd.getSessionId(), t.turnId(),
-                            cmd.getUserId(), cmd.isGuestMode(), t.channel().emitter());
+                            cmd.getUserId(), cmd.isGuestMode(), cmd.isApiKey(), t.channel().emitter());
             // runner=null 时咨询服务自己回一句「通道未就绪」给模型（可见降级），不 NPE 也不静默。
             // asCaller 罩住整次咨询：子轮是在这条弹性线程上「再起一整轮」的，身份与覆盖得跟着进去
             return asCaller(hooks,

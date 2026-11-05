@@ -15,6 +15,7 @@ import com.wenqu.ai.service.QaLogService;
 import com.wenqu.ai.service.ChatService;
 import com.wenqu.ai.service.ConfigService;
 import com.wenqu.ai.service.RateLimitService;
+import com.wenqu.ai.service.ProjectService;
 import com.wenqu.ai.service.SessionService;
 import com.wenqu.ai.service.AuthService;
 import com.wenqu.ai.util.RequestUser;
@@ -66,6 +67,7 @@ public class ChatController {
     /** 对话历史的只读摘要（存量会话分隔线展示）；压缩本身已交 AgentScope 框架 */
     private final com.wenqu.ai.agent.context.HistoryCompactionService historyCompaction;
     private final SessionService sessionService;
+    private final ProjectService projectService;
     private final ImageUrlSigner imageUrlSigner;
     private final KnowledgeMapper knowledgeMapper;
     private final com.wenqu.ai.mapper.MessageMapper messageMapper;
@@ -231,6 +233,7 @@ public class ChatController {
                 }
             }
         }
+        rejectApiKeyForWorkspaceSession(httpRequest, sessionId);
 
         // 请求里带了窗口档就把它记到会话上：窗口档从此只有「会话」这一个权威，问答侧每轮读的是这一列。
         // 聊天页在会话已有 ID 时不再随请求带档位（改档走 PUT），所以这一路实际只服务两种来路：
@@ -297,6 +300,7 @@ public class ChatController {
         // regenerate：重新生成/自动重试的重发——该问题的用户消息已随上一轮请求即时落库，跳过重复落库
         chatService.chat(ChatCommand.builder()
                 .sessionId(sessionId).question(question).userId(userId)
+                .apiKey(httpRequest.getAttribute(com.wenqu.ai.config.SecurityConfig.ATTR_API_KEY_ID) != null)
                 .userImages(images).attachments(attachments).skills(request.getSkills())
                 .mentions(mentions).historyRefs(historyRefs)
                 .deepThink(request.isDeepThink()).agentId(request.getAgentId())
@@ -308,6 +312,19 @@ public class ChatController {
                 .fromSteer(request.isFromSteer())
                 .build(), emitter);
         return emitter;
+    }
+
+    /**
+     * API Key 只开放问答链路：会话一旦绑定本机工作区，工具面就能读写/执行用户电脑上的文件与命令，
+     * 这不是 Key 的设计能力。网页登录态不受影响；集成方请使用不绑定执行器的会话。
+     */
+    private void rejectApiKeyForWorkspaceSession(HttpServletRequest request, String sessionId) {
+        if (request == null || sessionId == null || sessionId.isBlank()) return;
+        if (request.getAttribute(com.wenqu.ai.config.SecurityConfig.ATTR_API_KEY_ID) == null) return;
+        com.wenqu.ai.model.Project project = projectService.projectOfSession(sessionId);
+        if (project != null && projectService.isLocal(project)) {
+            throw new BizException("API Key 不开放绑定了本机工作区的会话：请在网页端使用，或改用不绑定执行器的会话");
+        }
     }
 
     /**
@@ -447,12 +464,13 @@ public class ChatController {
             + "前端把内容放回输入框即可。")
     @Permission("chat:use")
     @PostMapping("/chat/steer")
-    public ResultJson steerChatTurn(@RequestBody Map<String, String> body) {
+    public ResultJson steerChatTurn(@RequestBody Map<String, String> body, HttpServletRequest httpRequest) {
         String sessionId = body == null ? null : body.get("sessionId");
         String text = body == null ? null : body.get("text");
         if (sessionId == null || sessionId.isBlank() || text == null || text.isBlank()) {
             return ResultJson.error("缺少会话 ID 或插话内容");
         }
+        rejectApiKeyForWorkspaceSession(httpRequest, sessionId.trim());
         // 插话同样过输入闸（Phase 3 · P12）：它是用户当场打的一句话，与发问同一身份，不该成为闸外的旁路
         String refused = contentSafety.checkInput(com.wenqu.ai.util.RequestUser.uid(), sessionId, text);
         if (refused != null) return ResultJson.error(refused);
@@ -482,12 +500,14 @@ public class ChatController {
     @Permission("chat:use")
     @GetMapping("/chat/resume")
     public SseEmitter resumeChatTurn(
-            @Parameter(description = "会话 ID") @RequestParam("sessionId") String sessionId) {
+            @Parameter(description = "会话 ID") @RequestParam("sessionId") String sessionId,
+            HttpServletRequest httpRequest) {
         SseEmitter emitter = new SseEmitter(0L);
         if (sessionId == null || sessionId.isBlank()) {
             emitter.complete();
             return emitter;
         }
+        rejectApiKeyForWorkspaceSession(httpRequest, sessionId.trim());
         runtime.resumeTurn(sessionId.trim(), com.wenqu.ai.util.RequestUser.uid(), emitter);
         return emitter;
     }
