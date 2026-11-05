@@ -73,6 +73,40 @@ public class ProvisionerSandboxFilesystem extends BaseSandboxFilesystem {
     /** 会话日志存储：与沙箱容器生命周期无关，落宿主本地（见 {@link #sessionStorage}）。 */
     private final LocalJournalStorage journalStorage;
 
+    // ==================== 空探测负缓存（问答延迟治理） ====================
+
+    /**
+     * 「预期为空」的探测结果缓存。框架在<b>每轮模型调用的 system prompt 组装</b>里
+     * （WorkspaceContextMiddleware 读 AGENTS.md/MEMORY.md/knowledge.md、HarnessSkillMiddleware
+     * glob 沙盒技能清单）都会对本文件系统发起一批探测；工作区里这些文件/目录大多根本不存在，
+     * 但每次探测仍是一次到容器的同步 HTTP 往返（线上线程栈实测正卡在这里，占稳态首包 0.3~0.5s）。
+     *
+     * <p>只缓存两种「空」结果：<b>读不存在的文件</b>与<b>命中 0 条的 glob</b>——内容类操作
+     * （读存在的文件、非空清单）一律实调。失效口径宁粗勿漏：
+     * {@link #write} / {@link #execute}（edit 也由 execute 实现）任何一次成功都全量清空，
+     * 另加 TTL 兜底（防绕过本实例的外部写入，例如人工进容器）。同一实例内模型
+     * 「写完立刻读」的场景不受影响：写动作先清缓存，随后的读必然实调。
+     */
+    private final java.util.concurrent.ConcurrentHashMap<String, Long> emptyProbeCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static final long EMPTY_PROBE_TTL_MS = 60_000;
+
+    private boolean emptyProbeHit(String key) {
+        Long at = emptyProbeCache.get(key);
+        return at != null && System.currentTimeMillis() - at < EMPTY_PROBE_TTL_MS;
+    }
+
+    private void rememberEmptyProbe(String key) {
+        emptyProbeCache.put(key, System.currentTimeMillis());
+    }
+
+    private void invalidateEmptyProbes() {
+        if (!emptyProbeCache.isEmpty()) {
+            emptyProbeCache.clear();
+        }
+    }
+
     public ProvisionerSandboxFilesystem(ProvisionerSandboxBackend backend, String sandboxId) {
         this(backend, sandboxId, null);
     }
@@ -138,6 +172,10 @@ public class ProvisionerSandboxFilesystem extends BaseSandboxFilesystem {
         // 显式传 5 也照样收（真机 2026-10-22 那条 pip 就是这么被掐断的）。
         ProvisionerSandboxBackend.ExecuteResponse r =
                 backend.execute(command, ProvisionerSandboxBackend.floorToolTimeout(timeoutSeconds));
+        // shell 能写任何文件（edit_file 也由 execute 实现）：跑过就当工作区可能变了，
+        // 负缓存全部作废。宁多清不漏清——缓存的价值在轮与轮之间的固定探测，同轮内
+        // 先 execute 后探测的场景实调即可。
+        invalidateEmptyProbes();
         String output = r.output == null ? "" : r.output;
         // 没拿到退出码（沙盒不可达 / 到点还在跑）一律记 124，绝不映射成 0：
         // 0 在这条链路上等于「成功」，卡片会变绿色对勾、输出是空的，模型据此以为这步做完了。
@@ -176,6 +214,8 @@ public class ProvisionerSandboxFilesystem extends BaseSandboxFilesystem {
             String error = responses.isEmpty() ? "沙盒没有返回上传结果" : responses.get(0).error();
             return WriteResult.fail("Failed to write file '" + filePath + "': " + error);
         }
+        // 写成功＝负缓存里所有「空」结论都可能过期（哪怕写的是别的路径，粗失效换不漏判）
+        invalidateEmptyProbes();
         return WriteResult.ok(filePath);
     }
 
@@ -330,11 +370,23 @@ public class ProvisionerSandboxFilesystem extends BaseSandboxFilesystem {
     @Override
     public ReadResult read(RuntimeContext runtimeContext, String filePath, int offset, int limit) {
         // 框架把 limit<=0 当「不限行数」，问渠那份把 null 当不限、把 <=0 当「不请求行」，先对上口径。
-        ProvisionerSandboxBackend.ReadResult read = backend.read(
-                backend.workspaceAbsolutePath(filePath), offset, limit > 0 ? limit : null);
-        return read.error != null
-                ? ReadResult.fail(read.error)
-                : ReadResult.success(new FileData(read.fileData.content, read.fileData.encoding));
+        String target = backend.workspaceAbsolutePath(filePath);
+        // 缺文件的探测（AGENTS.md / MEMORY.md / knowledge.md 这类固定名，多数工作区根本没有）
+        // 在 TTL 内直接复用上次的「not found」，不再打容器（见 emptyProbeCache 类注释）。
+        String probeKey = "read:" + target + ":" + offset + ":" + limit;
+        if (emptyProbeHit(probeKey)) {
+            return ReadResult.fail("Error: File '" + filePath + "' not found");
+        }
+        ProvisionerSandboxBackend.ReadResult read = backend.read(target, offset, limit > 0 ? limit : null);
+        if (read.error != null) {
+            // 与 backend 的同款判据：not found 才值得缓存；权限/体积等错误每次都要如实重试
+            if (read.error.endsWith("not found")) {
+                rememberEmptyProbe(probeKey);
+            }
+            return ReadResult.fail(read.error);
+        }
+        emptyProbeCache.remove(probeKey);
+        return ReadResult.success(new FileData(read.fileData.content, read.fileData.encoding));
     }
 
     /**
@@ -353,6 +405,16 @@ public class ProvisionerSandboxFilesystem extends BaseSandboxFilesystem {
         String target = backend.workspaceAbsolutePath(path);
         String namePattern = pattern != null && pattern.startsWith("**/")
                 ? pattern.substring(3) : pattern;
+        // 0 命中 / 路径不存在的探测（沙盒技能清单、子智能体声明这类框架固定扫描，多数工作区是空的）
+        // 在 TTL 内直接复用上次结果，不再打容器（见 emptyProbeCache 类注释）。
+        // 两种「空」分开记：路径不存在必须继续回 fail——上层靠这个区分「目录没建」和「目录为空」。
+        String probeKey = "glob:" + target + "|" + namePattern;
+        if (emptyProbeHit(probeKey + "|nf")) {
+            return GlobResult.fail("路径不存在：" + target);
+        }
+        if (emptyProbeHit(probeKey + "|empty")) {
+            return GlobResult.success(List.of());
+        }
         java.util.regex.Pattern matcher = toBasenameMatcher(namePattern);
         try {
             List<SandboxRuntimeClient.SandboxFileEntry> listed =
@@ -372,10 +434,17 @@ public class ProvisionerSandboxFilesystem extends BaseSandboxFilesystem {
                     matches.add(FileInfo.ofFile(p, sizeOf(entry), epochMs(entry.modifiedTime())));
                 }
             }
+            if (matches.isEmpty()) {
+                rememberEmptyProbe(probeKey + "|empty");
+            } else {
+                emptyProbeCache.remove(probeKey + "|empty");
+                emptyProbeCache.remove(probeKey + "|nf");
+            }
             matches.sort(java.util.Comparator.comparing(FileInfo::path));
             return GlobResult.success(matches);
         } catch (FileNotFoundError e) {
             // 路径不存在不回「0 命中」：那会让上层把「目录没建起来」读成「目录是空的」。
+            rememberEmptyProbe(probeKey + "|nf");
             return GlobResult.fail("路径不存在：" + target);
         } catch (RuntimeException e) {
             return GlobResult.fail("列举失败（path=" + target + "）：" + e.getMessage());
