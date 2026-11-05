@@ -8,42 +8,12 @@
         <span class="chat-title">{{ currentSessionTitle }}</span>
         <!-- 当前工作区标识：约定每轮注入 system prompt，用户有权在聊天的当场看见它在生效；
              没有工作区/非本人会话时接口返回 null，标识不显示（不编名字）。
-             点开不是跳走，是本区的会话语境：最近的对话就地切、「新建对话」落在本区——
-             在一个场子里干活不该每次都绕回侧栏或工作区页 -->
-        <a-popover v-if="sessionWorkspace" v-model:open="wsPanelOpen" trigger="click" placement="bottomLeft">
-          <template #content>
-            <div class="ws-panel">
-              <div class="ws-panel-head">
-                <span class="ws-panel-name">{{ sessionWorkspace.name }}</span>
-                <span v-if="sessionWorkspace.hasInstructions" class="head-ws-tag">约定生效</span>
-                <span v-if="sessionWorkspace.archived" class="head-ws-tag ws-arch">已归档</span>
-              </div>
-              <div class="ws-panel-sec">本区最近的对话</div>
-              <div v-if="wsSessionsLoading" class="ws-panel-empty">加载中…</div>
-              <div v-else-if="!wsSessions.length" class="ws-panel-empty">这个工作区还没有对话</div>
-              <template v-else>
-                <button v-for="s in wsSessions" :key="s.id" class="ws-panel-row"
-                        :class="{ on: s.id === currentSessionId }" type="button" @click="openWsSession(s)">
-                  <span class="ws-panel-row-title">{{ s.title || '新对话' }}</span>
-                  <span v-if="s.lastMessage" class="ws-panel-row-sub">{{ s.lastMessage }}</span>
-                </button>
-              </template>
-              <div class="ws-panel-acts">
-                <button class="app-btn" type="button" :disabled="sessionWorkspace.archived"
-                        :title="sessionWorkspace.archived ? '工作区已归档，恢复后才能新建对话' : ''"
-                        @click="newChatInWs">新建对话</button>
-                <button class="app-btn ghost" type="button"
-                        @click="router.push('/project/' + sessionWorkspace.projectId)">打开工作区</button>
-              </div>
-            </div>
-          </template>
-          <button class="head-ws" :class="{ 'head-ws-archived': sessionWorkspace.archived }"
-                  :title="wsTitle">
-            <folder-open-outlined class="head-ws-ic" />
-            <span class="head-ws-name">{{ sessionWorkspace.name }}</span>
-            <span v-if="sessionWorkspace.hasInstructions" class="head-ws-tag">约定生效</span>
-          </button>
-        </a-popover>
+             点它直接进工作区页面（目录/记忆/隔离都在那一页） -->
+        <button v-if="sessionWorkspace" class="head-ws" :class="{ 'head-ws-archived': sessionWorkspace.archived }"
+                :title="wsTitle" @click="router.push('/project/' + sessionWorkspace.projectId)">
+          <folder-open-outlined class="head-ws-ic" />
+          <span class="head-ws-name">{{ sessionWorkspace.name }}</span>
+        </button>
         <span class="head-tip" title="查看免责声明" @click="disclaimerVisible = true">AI 回答可能有误，重要信息请核实</span>
         <!-- 头部动作区：右对齐一组，图标按钮无框安静（此前每个按钮各自 margin-left:auto 散落标题栏中间，视觉突兀） -->
         <div class="head-actions">
@@ -1197,7 +1167,7 @@
           <a-dropdown v-if="inWorkspaceSession" :trigger="['click']" placement="topLeft">
             <button class="perm-pill" :class="{ on: !!sessionPermission && sessionPermission !== 'autonomous', danger: sessionPermission === 'autonomous' }"
                     type="button"
-                    :title="'权限：' + (sessionPermission === 'autonomous' ? '完全访问' : permissionLabel) + '（只对这条会话生效，可随时改）'">
+                    :title="'权限：' + (sessionPermission === 'autonomous' ? '完全访问' : permissionLabel)">
               <ExclamationCircleOutlined v-if="sessionPermission === 'autonomous'" />
               <SafetyCertificateOutlined v-else />
               <span v-if="!isNarrow" class="perm-pill-name">{{ sessionPermission === 'autonomous' ? '完全访问' : permissionLabel }}</span>
@@ -1772,7 +1742,7 @@ import { LoadingOutlined, DownOutlined, CaretRightOutlined, CheckOutlined, Close
 import { debugRetrieval, deleteMessageGroup, submitFeedback as apiSubmitFeedback,
          addEvalCase, getSessionShare, enableSessionShare, disableSessionShare,
          getSessionWorkspace, getPermissionPresets, setSessionPermission,
-         listSessions, setNewSessionProject, openProjectFolder } from '../api'
+         openProjectFolder } from '../api'
 import { renderMd, resolveImg, onImgError } from '../utils/markdown'
 import { canPreview, artifactExt } from '../utils/artifactView'
 import { loadSessions, sessionStore } from './store'
@@ -3191,7 +3161,7 @@ const addToEval = async mi => {
     const r = await addEvalCase(question.content, kids)
     if (r && r.success !== false) {
       if (r.data?.added === false) message.info(r.data.reason || '评估集已存在相同问题')
-      else message.success(`已加入评测集（期望块 ${r.data?.expected ?? kids.length} 个，可在检索评估页跑回归）`)
+      else message.success('已加入评测集')
     } else message.error(r?.msg || '加入评测集失败')
   } catch (e) { message.error(e.message || '加入评测集失败') }
 }
@@ -3697,9 +3667,8 @@ watch(qaAnchors, () => nextTick(updateRailActive), { deep: false })
 watch(() => messages.value, () => nextTick(() => { updateTailSpacer(); scrollForce() }))
 
 // ==================== 当前工作区标识（聊天页头部） ====================
-// 约定对该工作区所有会话生效（每轮注入 system prompt）——老会话被无声改约定是最糟的透明度，
-// 所以这里把「我在哪个工作区、有没有约定在生效」摆在标题旁边，点一下进工作区页。
-// 取数口径与后端 ProjectService.projectContextOfSession 同源（session → project），
+// 把「我在哪个工作区」摆在标题旁边，点一下进工作区页（目录/记忆/隔离都在那一页）。
+// 取数口径与后端 SessionService.workspaceOfSession 同源（session → project），
 // 切换会话即刷新；取不到（无工作区/非本人/接口异常）一律不显示，不用侧栏分组猜。
 const sessionWorkspace = ref(null)
 /** 这条会话是不是真挂在一个工作区下：implicit 兜底容器（侧栏「会话」那一栏）不算——
@@ -3770,34 +3739,9 @@ const wsTitle = computed(() => {
   const w = sessionWorkspace.value
   if (!w) return ''
   let t = '当前工作区：' + w.name
-  if (w.hasInstructions) t += '，其约定对本次对话生效'
   if (w.archived) t += '（已归档）'
-  return t + '（点开看本区会话）'
+  return t + '（点开进工作区页）'
 })
-// ---------- 工作区会话面板（点开标识才取数：聊天页首屏不多一条请求） ----------
-const wsPanelOpen = ref(false)
-const wsSessions = ref([])
-const wsSessionsLoading = ref(false)
-watch(wsPanelOpen, open => {
-  if (!open || !sessionWorkspace.value) return
-  wsSessionsLoading.value = true
-  listSessions('', '', 10, sessionWorkspace.value.projectId)
-    .then(r => { wsSessions.value = ((r && r.data) || {}).items || [] })
-    .catch(() => { wsSessions.value = [] })   // 面板是增强信息：拉不到就空着，不打扰聊天
-    .finally(() => { wsSessionsLoading.value = false })
-})
-/** 面板内切会话：与侧栏同一条路（带 sid 的 SPA 导航），先收面板再走 */
-const openWsSession = s => {
-  wsPanelOpen.value = false
-  router.push({ path: '/chat', query: { sid: s.id } })
-}
-/** 在本工作区新建对话：与工作区页「新建对话」同一套路——先写落点、再发跨页新建信号、最后切路由 */
-const newChatInWs = () => {
-  wsPanelOpen.value = false
-  setNewSessionProject(sessionWorkspace.value.projectId)
-  sessionStore.newChatTick++
-  router.push('/chat')
-}
 // ==================== 本会话沙盒目录 ====================
 // 取数、判据（sessionSandboxActive）、折树与三个重拉时机已全部下沉到 chat/useChatEngine.js
 // （2026-10-25 与任务清单同一刀）：过去整块长在本页，移动壳拿不到，于是「助手在沙盒里做了文件」
@@ -3845,7 +3789,7 @@ const workspaceSetupHint = computed(() => {
 const goBindWorkspace = () => {
   const pid = sessionWorkspace.value && sessionWorkspace.value.projectId
   if (!pid) return
-  router.push({ path: '/project/' + pid, query: { settings: '1' } })
+  router.push('/project/' + pid)
 }
 
 /** 右栏文件卡里点目录行尾那枚「在电脑上打开」：让那台电脑用系统文件管理器打开这个文件夹。
@@ -3856,7 +3800,6 @@ const openLocalFolder = async path => {
   if (!pid) return
   try {
     await openProjectFolder(pid, path || '')
-    message.success('已在电脑上打开文件夹')
   } catch (e) {
     message.warning(e.message || '打开失败：先确认那台电脑上的执行器在线')
   }
@@ -4423,9 +4366,8 @@ onMounted(async () => {
   border-bottom: 1px solid var(--app-border); flex: none; background: var(--app-panel);
 }
 .chat-title { font-size: 13px; font-weight: 500; max-width: 40%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* 当前工作区标识：安静的一颗 chip（图标 + 工作区名 [+ 约定生效]），点开是本区会话面板
-   （就近切会话/新建对话/回工作区页）。不用强调色描边——它是状态不是动作；「约定生效」
-   才用弱强调底，让人一眼看出「这个会话有额外规矩在跑」（与侧栏工作区行的存在感同级，不抢标题）。 */
+/* 当前工作区标识：安静的一颗 chip（图标 + 工作区名），点它进工作区页。
+   不用强调色描边——它是状态不是动作（与侧栏工作区行的存在感同级，不抢标题）。 */
 .head-ws {
   display: inline-flex; align-items: center; gap: 5px; flex: none;
   max-width: 220px; height: 22px; padding: 0 8px;
@@ -4435,32 +4377,8 @@ onMounted(async () => {
 .head-ws:hover { color: var(--app-accent); border-color: var(--app-accent); }
 .head-ws-ic { font-size: 12px; flex: none; }
 .head-ws-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.head-ws-tag {
-  flex: none; font-size: 10px; line-height: 14px; padding: 0 5px; border-radius: 4px;
-  background: var(--app-accent-weak); color: var(--app-accent);
-}
 .head-ws-archived { opacity: 0.65; }
 .head-ws-archived .head-ws-name { text-decoration: line-through; }
-/* 工作区会话面板（chip 的 popover）：本区最近的对话就地切。双行行卡（标题+最后一句），
-   当前行用弱强调底标出——「我现在在哪条」必须看得见，否则切错会话只会觉得内容莫名变了 */
-.ws-panel { display: flex; flex-direction: column; gap: 6px; width: 300px; max-width: 86vw; }
-.ws-panel-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.ws-panel-name { font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ws-arch { background: var(--app-warn-weak); color: var(--app-warn-text); }
-.ws-panel-sec { font-size: 11px; color: var(--app-text3); }
-.ws-panel-empty { font-size: 12px; color: var(--app-text3); padding: 4px 0; }
-.ws-panel-row {
-  display: flex; flex-direction: column; gap: 1px; text-align: left; cursor: pointer;
-  border: 0; background: transparent; font: inherit; padding: 6px 8px; border-radius: 6px; min-width: 0;
-}
-.ws-panel-row:hover { background: var(--app-interactive-hover); }
-.ws-panel-row.on { background: var(--app-accent-weak); }
-.ws-panel-row-title { font-size: 12px; color: var(--app-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ws-panel-row-sub {
-  font-size: 11px; color: var(--app-text3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.ws-panel-acts { display: flex; gap: 8px; border-top: 1px solid var(--app-border-l1); padding-top: 8px; }
-.ws-panel-acts .app-btn { flex: 1; justify-content: center; }
 .head-tip { font-size: 11px; color: var(--app-text3); cursor: pointer; user-select: none; }
 .head-tip:hover { color: var(--app-accent); }
 /* 会话内查找条：标题栏与消息流之间的一条，随查找开关出现/消失 */

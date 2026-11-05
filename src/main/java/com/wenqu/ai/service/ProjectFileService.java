@@ -8,10 +8,8 @@ import com.wenqu.ai.sandbox.SandboxPaths;
 import com.wenqu.ai.util.PreviewTypes;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -19,16 +17,13 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Stream;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipOutputStream;
 
 /**
- * 工作区文件：<b>用户本机目录</b>上的浏览、上传、新建、移动、删除、预览、下载与打包导出。
+ * 工作区文件：<b>用户本机目录</b>上的浏览、预览、下载，以及工作区记忆的读写。
  *
  * <p><b>文件在哪</b>：工作区 = 一台本机执行器上的一个或多个源文件夹（{@link ProjectRoot}）。
  * 服务器不挂载、不缓存、不落副本；每个动作都是一次执行器调用，路径由服务端按虚拟路径解析、
@@ -40,8 +35,7 @@ import java.util.zip.ZipOutputStream;
  * 文件页顶层的每一项就是这些别名。对外 URL、预览 token、下载参数全用这一份，重启/换机器不变。
  *
  * <p><b>边界</b>：列表不显示隐藏文件（点开头、{@code node_modules}、{@code __pycache__}）；
- * 新建/上传也不许取这类名字。归档区一概不写；改名/移动/删除在工作区有轮次在跑时拒绝
- * （那一轮以为某个文件还在原位）。上传与新建文件夹不挡轮次锁——补一份材料是合法动作。
+ * 归档区一概不写。
  *
  * @author yuanke
  */
@@ -51,16 +45,6 @@ public class ProjectFileService {
 
     private static final int MAX_ENTRIES = 300;
     private static final int MAX_TREE_DEPTH = 8;
-    private static final int MAX_TREE_FILES = 5000;
-    private static final int MAX_BATCH = 500;
-    private static final int MAX_UPLOAD_FILES = 50;
-    private static final int MAX_NAME_CHARS = 100;
-    private static final int MAX_DIR_CHOICES = 500;
-    private static final int MAX_NAME_SET = 2000;
-    private static final int UPLOAD_MB_FALLBACK = 100;
-    private static final int MAX_EXPORT_FILES = 2000;
-    private static final long MAX_EXPORT_BYTES = 100L * 1024 * 1024;
-    private static final int UPLOAD_CHUNK = 4 * 1024 * 1024;
     private static final int DOWNLOAD_CHUNK = 1024 * 1024;
 
     private static final String VIEW_PATH_PREFIX = "/ai/project-files/";
@@ -70,23 +54,21 @@ public class ProjectFileService {
     private final ProjectService projectService;
     private final ConfigService configService;
     private final ImageUrlSigner imageUrlSigner;
-    private final ProjectTurnGuard projectTurnGuard;
     private final ExecutorFiles executorFiles;
 
     public ProjectFileService(ProjectService projectService, ConfigService configService,
-                              ImageUrlSigner imageUrlSigner, ProjectTurnGuard projectTurnGuard,
+                              ImageUrlSigner imageUrlSigner,
                               ExecutorFiles executorFiles) {
         this.projectService = projectService;
         this.configService = configService;
         this.imageUrlSigner = imageUrlSigner;
-        this.projectTurnGuard = projectTurnGuard;
         this.executorFiles = executorFiles;
     }
 
     // ==================== 浏览 ====================
 
     /**
-     * 列出一层内容，附整个工作区的统计（文件数/体积/文件夹清单/文件名集合）。
+     * 列出一层内容。
      *
      * @param dir 虚拟路径：空=所有源文件夹；{@code alias}=某个源的根；{@code alias/a/b}=源内子目录
      */
@@ -144,21 +126,10 @@ public class ProjectFileService {
             totalHere = entries.size();
         }
 
-        // 全目录统计只给根层用：子目录请求只要本层条目。否则每展开一个文件夹都整树扫一遍，
-        // 几千文件的工作区会把一次点击拖成几十秒（扫描全部走本机执行器的串行调用通道）。
-        Tree tree = (dir == null || dir.isBlank()) ? scanTree(p, roots) : new Tree();
         m.put("dir", echoDir);
         m.put("entries", entries.size() > MAX_ENTRIES ? new ArrayList<>(entries.subList(0, MAX_ENTRIES)) : entries);
         m.put("total", totalHere);
         m.put("truncated", totalHere > MAX_ENTRIES);
-        m.put("files", tree.files);
-        m.put("bytes", tree.bytes);
-        m.put("capped", tree.capped);
-        m.put("dirs", tree.dirPaths);
-        m.put("names", tree.names);
-        // 本机工作区的所有会话看的就是这一批目录，模型与页面永远同一份
-        m.put("agentShared", true);
-        m.put("roots", rootDtos(roots));
         return m;
     }
 
@@ -197,46 +168,6 @@ public class ProjectFileService {
     }
 
     private static final int BRIEF_MAX_ENTRIES = 20;
-
-    private static final class Tree {
-        int files;
-        long bytes;
-        boolean capped;
-        final List<String> dirPaths = new ArrayList<>();
-        final LinkedHashSet<String> names = new LinkedHashSet<>();
-    }
-
-    private Tree scanTree(Project p, List<ProjectRoot> roots) {
-        Tree t = new Tree();
-        for (ProjectRoot r : roots) {
-            List<Map<String, Object>> rows;
-            try {
-                rows = executorFiles.tree(executorId(p), roots, r.getPath(), MAX_TREE_FILES, MAX_TREE_DEPTH);
-            } catch (RuntimeException e) {
-                log.warn("[PROJECT] 本机目录统计失败 project={} root={}: {}", p.getId(), r.getAlias(), e.getMessage());
-                throw e;
-            }
-            for (Map<String, Object> row : rows) {
-                String rel = str(row.get("path"));
-                if (rel.isBlank()) continue;
-                boolean isDir = Boolean.TRUE.equals(row.get("isDir"));
-                String virtual = r.getAlias() + "/" + rel;
-                if (isDir) {
-                    if (t.dirPaths.size() < MAX_DIR_CHOICES) t.dirPaths.add(virtual);
-                } else {
-                    if (t.files >= MAX_TREE_FILES) {
-                        t.capped = true;
-                        break;
-                    }
-                    t.files++;
-                    t.bytes += asLong(row.get("size"));
-                    if (t.names.size() < MAX_NAME_SET) t.names.add(str(row.get("name")));
-                }
-            }
-            if (t.files >= MAX_TREE_FILES) t.capped = true;
-        }
-        return t;
-    }
 
     private void addViewUrl(Map<String, Object> e, String projectId, String virtualPath, long size) {
         String ext = PreviewTypes.extOf(str(e.get("name")));
@@ -367,7 +298,7 @@ public class ProjectFileService {
 
     /** 写回工作区级记忆（{@code 主根/.wenqu/MEMORY.md}），经执行器原子写。 */
     public void saveWorkspaceMemory(String uid, String projectId, String content) {
-        Project p = writableProject(uid, projectId, false);
+        Project p = writableProject(uid, projectId);
         if (!projectService.isLocal(p)) throw new IllegalArgumentException("这个工作区还没有绑定本机目录");
         List<ProjectRoot> roots = requireRoots(p);
         String abs = memoryAbs(roots);
@@ -382,75 +313,6 @@ public class ProjectFileService {
     }
 
     // ==================== 写侧 ====================
-
-    public List<Map<String, Object>> upload(String uid, String projectId, String dir,
-                                            List<MultipartFile> files, boolean overwrite) {
-        Project p = writableProject(uid, projectId, false);
-        List<ProjectRoot> roots = requireRoots(p);
-        Target at = target(p, roots, dir == null || dir.isBlank() ? null : dir, true);
-        if (at == null) at = new Target(primary(roots), "", primary(roots).getAlias());
-        if (files == null || files.isEmpty()) throw new IllegalArgumentException("没有收到文件");
-        if (files.size() > MAX_UPLOAD_FILES) throw new IllegalArgumentException("一次最多上传 " + MAX_UPLOAD_FILES + " 个文件");
-        long cap = uploadMaxMb() * 1024L * 1024L;
-        Map<String, Object> st = executorFiles.stat(executorId(p), roots, abs(at.root, at.rel));
-        if (!Boolean.TRUE.equals(st.get("isDir"))) throw new IllegalArgumentException("目标不是一个文件夹");
-        List<Map<String, Object>> out = new ArrayList<>();
-        for (MultipartFile f : files) {
-            String name = uploadedName(f);
-            if (f.getSize() > cap) {
-                throw new IllegalArgumentException("单个文件最大 " + uploadMaxMb()
-                        + "MB，「" + name + "」有 " + (f.getSize() / 1024 / 1024) + "MB");
-            }
-            String targetRel = at.rel.isEmpty() ? name : at.rel + "/" + name;
-            String absTarget = abs(at.root, targetRel);
-            boolean existed = exists(p, roots, absTarget);
-            if (existed) {
-                Map<String, Object> targetStat = executorFiles.stat(executorId(p), roots, absTarget);
-                if (Boolean.TRUE.equals(targetStat.get("isDir"))) {
-                    throw new IllegalArgumentException("这里有个同名文件夹「" + name + "」，换一个文件名");
-                }
-            }
-            if (existed && !overwrite) {
-                throw new IllegalArgumentException("「" + name + "」已经在这里，要换掉请勾上「重名时覆盖」");
-            }
-            if (existed && overwrite && projectTurnGuard.isBusy(p.getId())) {
-                TurnLease holder = projectTurnGuard.current(p.getId());
-                String who = holder == null ? "某个任务" : holder.describe();
-                throw new IllegalStateException("工作区里" + who + "正在跑，「" + name
-                        + "」可能正被它使用——等任务结束再覆盖，或换一个文件名上传");
-            }
-            String tmpRel = (at.rel.isEmpty() ? "" : at.rel + "/") + ".upload-" + java.util.UUID.randomUUID() + ".part";
-            String absTmp = abs(at.root, tmpRel);
-            try (InputStream in = f.getInputStream()) {
-                long offset = 0;
-                byte[] buf = new byte[UPLOAD_CHUNK];
-                int n;
-                while ((n = in.read(buf)) > 0) {
-                    byte[] chunk = n == buf.length ? buf : java.util.Arrays.copyOf(buf, n);
-                    executorFiles.writeChunk(executorId(p), roots, absTmp, offset, chunk);
-                    offset += n;
-                }
-                executorFiles.move(executorId(p), roots, absTmp, absTarget, true);
-                Map<String, Object> e = new LinkedHashMap<>();
-                e.put("name", name);
-                e.put("path", at.root.getAlias() + "/" + targetRel);
-                e.put("size", offset);
-                out.add(e);
-            } catch (IOException e) {
-                throw new IllegalStateException("上传失败：" + e.getMessage());
-            } catch (RuntimeException e) {
-                try {
-                    executorFiles.remove(executorId(p), roots, absTmp);
-                } catch (RuntimeException ignore) {
-                    // 临时文件清不掉只是盘上多一个隐藏残件，不影响这一单的失败结论
-                }
-                throw e;
-            }
-        }
-        log.info("[PROJECT] 本机工作区上传 uid={} project={} dir={} 个={} 覆盖={}",
-                uid, projectId, at.virtualPath, out.size(), overwrite);
-        return out;
-    }
 
     /** 打开工作区主目录（执行器所在电脑上的系统文件管理器）。 */
     public void openInOS(String uid, String projectId) {
@@ -473,98 +335,7 @@ public class ProjectFileService {
         executorFiles.openPath(executorId(p), roots, abs(t.root, t.rel));
     }
 
-    public String createDir(String uid, String projectId, String path) {
-        Project p = writableProject(uid, projectId, false);
-        List<ProjectRoot> roots = requireRoots(p);
-        Target t = target(p, roots, path, false);
-        if (t.rel.isEmpty()) throw new IllegalArgumentException("不能新建源文件夹本身");
-        checkNewName(lastSegment(t.rel));
-        String absTarget = abs(t.root, t.rel);
-        Map<String, Object> parent = executorFiles.stat(executorId(p), roots,
-                abs(t.root, parentRel(t.rel)));
-        if (!Boolean.TRUE.equals(parent.get("isDir"))) throw new IllegalArgumentException("上级不是一个文件夹");
-        if (exists(p, roots, absTarget)) throw new IllegalArgumentException("这里已经有同名文件夹");
-        executorFiles.mkdir(executorId(p), roots, absTarget);
-        log.info("[PROJECT] 本机工作区新建文件夹 uid={} project={} path={}", uid, projectId, t.virtualPath);
-        return t.virtualPath;
-    }
-
-    public String move(String uid, String projectId, String from, String to) {
-        Project p = writableProject(uid, projectId, true);
-        List<ProjectRoot> roots = requireRoots(p);
-        Target src = target(p, roots, from, false);
-        Target dst = target(p, roots, to, false);
-        if (src.rel.isEmpty() || dst.rel.isEmpty()) throw new IllegalArgumentException("不能移动源文件夹本身");
-        if (!src.root.getAlias().equals(dst.root.getAlias())) {
-            throw new IllegalArgumentException("不能把文件移动到另一个源文件夹；要跨目录请先下载再上传");
-        }
-        checkNewName(lastSegment(dst.rel));
-        if (src.virtualPath.equals(dst.virtualPath)) return dst.virtualPath;
-        if (!exists(p, roots, abs(src.root, src.rel))) throw new IllegalArgumentException("「" + lastSegment(src.rel) + "」已经不在了");
-        if (!Boolean.TRUE.equals(executorFiles.stat(executorId(p), roots,
-                abs(dst.root, parentRel(dst.rel))).get("isDir"))) {
-            throw new IllegalArgumentException("目标文件夹不存在");
-        }
-        if (exists(p, roots, abs(dst.root, dst.rel))) throw new IllegalArgumentException("目标位置已经有同名条目");
-        if (dst.rel.startsWith(src.rel + "/")) throw new IllegalArgumentException("不能把文件夹放进它自己里面");
-        executorFiles.move(executorId(p), roots, abs(src.root, src.rel), abs(dst.root, dst.rel), false);
-        log.info("[PROJECT] 本机工作区改名/移动 uid={} project={} {} -> {}", uid, projectId, src.virtualPath, dst.virtualPath);
-        return dst.virtualPath;
-    }
-
-    public int deleteEntries(String uid, String projectId, List<String> paths) {
-        Project p = writableProject(uid, projectId, true);
-        requireBatch(paths);
-        List<ProjectRoot> roots = requireRoots(p);
-        int deleted = 0;
-        for (String raw : paths) {
-            Target t = target(p, roots, raw, false);
-            if (t.rel.isEmpty()) throw new IllegalArgumentException("源文件夹本身不能在这里删除");
-            String abs = abs(t.root, t.rel);
-            if (!exists(p, roots, abs)) continue;
-            executorFiles.remove(executorId(p), roots, abs);
-            deleted++;
-        }
-        log.info("[PROJECT] 删除本机工作区条目 uid={} project={} 请求={} 实删={}", uid, projectId, paths.size(), deleted);
-        return deleted;
-    }
-
-    public int batchMove(String uid, String projectId, List<String> paths, String destDir) {
-        Project p = writableProject(uid, projectId, true);
-        requireBatch(paths);
-        List<ProjectRoot> roots = requireRoots(p);
-        Target dest = target(p, roots, destDir == null || destDir.isBlank() ? null : destDir, true);
-        if (dest == null) dest = new Target(primary(roots), "", primary(roots).getAlias());
-        if (!Boolean.TRUE.equals(executorFiles.stat(executorId(p), roots,
-                abs(dest.root, dest.rel)).get("isDir"))) {
-            throw new IllegalArgumentException("目标文件夹不存在");
-        }
-        int moved = 0;
-        for (String raw : paths) {
-            Target src = target(p, roots, raw, false);
-            if (src.rel.isEmpty()) continue;
-            if (!src.root.getAlias().equals(dest.root.getAlias())) {
-                throw new IllegalArgumentException("「" + lastSegment(src.rel) + "」在另一个源文件夹里，不能移到这个目录");
-            }
-            String name = lastSegment(src.rel);
-            checkNewName(name);
-            if (parentRel(src.rel).equals(dest.rel)) {
-                moved++;
-                continue;
-            }
-            String targetRel = dest.rel.isEmpty() ? name : dest.rel + "/" + name;
-            String absTarget = abs(dest.root, targetRel);
-            if (exists(p, roots, absTarget)) {
-                throw new IllegalArgumentException("「" + name + "」在目标文件夹里已经存在");
-            }
-            executorFiles.move(executorId(p), roots, abs(src.root, src.rel), absTarget, false);
-            moved++;
-        }
-        log.info("[PROJECT] 批量移动本机工作区条目 uid={} project={} -> {} 项={}", uid, projectId, dest.virtualPath, moved);
-        return moved;
-    }
-
-    // ==================== 下载 / 导出 ====================
+    // ==================== 下载 ====================
 
     /**
      * 一个可流式写出的下载。控制器先拿到文件名与大小设响应头，再调用 {@link Writer#writeTo}——
@@ -596,64 +367,6 @@ public class ProjectFileService {
                 offset += chunk.bytes().length;
             }
         });
-    }
-
-    /** 导出计划：文件清单与总量在响应头发出前算完，超限还能正经回 400。 */
-    public record ExportPlan(String name, List<ExportFile> files) {
-    }
-
-    public record ExportFile(String rootAlias, String rel, long size) {
-    }
-
-    public ExportPlan prepareExport(String uid, String projectId) {
-        Project p = projectService.detail(uid, projectId);
-        List<ProjectRoot> roots = requireRoots(p);
-        List<ExportFile> files = new ArrayList<>();
-        long total = 0;
-        for (ProjectRoot r : roots) {
-            for (Map<String, Object> row : executorFiles.tree(executorId(p), roots, r.getPath(),
-                    MAX_EXPORT_FILES + 1, MAX_TREE_DEPTH)) {
-                if (Boolean.TRUE.equals(row.get("isDir"))) continue;
-                long size = asLong(row.get("size"));
-                total += size;
-                files.add(new ExportFile(r.getAlias(), str(row.get("path")), size));
-                if (files.size() > MAX_EXPORT_FILES) {
-                    throw new IllegalArgumentException("文件太多（超过 " + MAX_EXPORT_FILES + " 个），不做整区导出");
-                }
-                if (total > MAX_EXPORT_BYTES) {
-                    throw new IllegalArgumentException("总量超过 100MB，不做整区导出");
-                }
-            }
-        }
-        if (files.isEmpty()) throw new IllegalArgumentException("这个工作区还没有文件可导出");
-        String name = (p.getName() == null || p.getName().isBlank() ? "工作区" : p.getName()) + ".zip";
-        return new ExportPlan(name, files);
-    }
-
-    /** 按计划流式写 zip；不把整份包或整份文件读进内存。 */
-    public void writeExport(String uid, String projectId, ExportPlan plan, OutputStream out) {
-        Project p = projectService.detail(uid, projectId);
-        List<ProjectRoot> roots = requireRoots(p);
-        try (ZipOutputStream zip = new ZipOutputStream(out)) {
-            for (ExportFile f : plan.files()) {
-                ProjectRoot root = roots.stream().filter(r -> f.rootAlias().equals(r.getAlias()))
-                        .findFirst().orElse(null);
-                if (root == null) continue;
-                String abs = abs(root, f.rel());
-                zip.putNextEntry(new ZipEntry(f.rootAlias() + "/" + f.rel()));
-                long offset = 0;
-                while (offset < f.size()) {
-                    int want = (int) Math.min(DOWNLOAD_CHUNK, f.size() - offset);
-                    ExecutorFiles.ReadBytes chunk = executorFiles.readRange(executorId(p), roots, abs, offset, want);
-                    if (chunk.bytes().length == 0) break;
-                    zip.write(chunk.bytes());
-                    offset += chunk.bytes().length;
-                }
-                zip.closeEntry();
-            }
-        } catch (IOException e) {
-            throw new IllegalStateException("导出失败：" + e.getMessage());
-        }
     }
 
     // ==================== 会话沙盒文件（没挂工作区的「会话」栏） ====================
@@ -726,23 +439,11 @@ public class ProjectFileService {
         return roots.get(0);
     }
 
-    private static List<Map<String, Object>> rootDtos(List<ProjectRoot> roots) {
-        List<Map<String, Object>> out = new ArrayList<>();
-        for (ProjectRoot r : roots) {
-            Map<String, Object> one = new LinkedHashMap<>();
-            one.put("alias", r.getAlias());
-            one.put("path", r.getPath());
-            one.put("primary", r.getPrimaryRoot() != null && r.getPrimaryRoot() == ProjectRoot.PRIMARY);
-            out.add(one);
-        }
-        return out;
-    }
-
     /**
      * 虚拟路径 → 源文件夹 + 相对路径。
      *
      * @param path        空 = 主目录根（rootAllowed=true 时）；否则首段必须是某个源的别名
-     * @param rootAllowed 空路径是否允许（上传/批量移动的目标目录可以是空=主目录根）
+     * @param rootAllowed 空路径是否允许（打开主目录时可以是空）
      */
     private static Target target(Project p, List<ProjectRoot> roots, String path, boolean rootAllowed) {
         String raw = path == null ? "" : path.trim().replace('\\', '/');
@@ -774,10 +475,6 @@ public class ProjectFileService {
         return rel == null || rel.isEmpty() ? base : base + "/" + rel;
     }
 
-    private boolean exists(Project p, List<ProjectRoot> roots, String absPath) {
-        return executorFiles.exists(executorId(p), roots, absPath);
-    }
-
     private static void parseRel(String rel, boolean rootAllowed) {
         String raw = rel == null ? "" : rel.trim().replace('\\', '/');
         while (raw.endsWith("/")) raw = raw.substring(0, raw.length() - 1);
@@ -795,29 +492,6 @@ public class ProjectFileService {
         if (out.size() > MAX_TREE_DEPTH) throw new IllegalArgumentException("层级太深（最多 " + MAX_TREE_DEPTH + " 层）");
     }
 
-    private static String parentRel(String rel) {
-        int i = rel.lastIndexOf('/');
-        return i < 0 ? "" : rel.substring(0, i);
-    }
-
-    private static String lastSegment(String rel) {
-        int i = rel.lastIndexOf('/');
-        return i < 0 ? rel : rel.substring(i + 1);
-    }
-
-    private static void requireBatch(List<String> paths) {
-        if (paths == null || paths.isEmpty()) throw new IllegalArgumentException("没有选中任何文件");
-        if (paths.size() > MAX_BATCH) throw new IllegalArgumentException("一次最多整理 " + MAX_BATCH + " 项");
-    }
-
-    private static void checkNewName(String seg) {
-        if (seg == null || seg.isBlank()) throw new IllegalArgumentException("名称不能为空");
-        if (seg.length() > MAX_NAME_CHARS) throw new IllegalArgumentException("名称太长（最多 " + MAX_NAME_CHARS + " 字）");
-        if (isHiddenName(seg)) {
-            throw new IllegalArgumentException("「" + seg + "」这一类名字在这里不显示（隐藏文件与依赖目录），换一个");
-        }
-    }
-
     private static boolean shownName(String name) {
         return name != null && !name.isBlank() && !isHiddenName(name);
     }
@@ -826,32 +500,10 @@ public class ProjectFileService {
         return name.startsWith(".") || name.equals("node_modules") || name.equals("__pycache__");
     }
 
-    private static String uploadedName(MultipartFile f) {
-        String raw = f.getOriginalFilename();
-        String name = raw == null ? "" : raw.replace('\\', '/');
-        int slash = name.lastIndexOf('/');
-        if (slash >= 0) name = name.substring(slash + 1);
-        name = name.trim();
-        if (name.isEmpty() || ".".equals(name) || "..".equals(name) || name.indexOf('\u0000') >= 0) {
-            throw new IllegalArgumentException("文件名不合法：" + raw);
-        }
-        checkNewName(name);
-        return name;
-    }
-
-    private int uploadMaxMb() {
-        int mb = configService.getInt("sandbox.projectUploadMaxMb", UPLOAD_MB_FALLBACK);
-        if (mb <= 0) return UPLOAD_MB_FALLBACK;
-        return Math.min(mb, 256);
-    }
-
-    private Project writableProject(String uid, String projectId, boolean relocation) {
+    private Project writableProject(String uid, String projectId) {
         Project p = projectService.detail(uid, projectId);
         if (Project.STATUS_ARCHIVED.equals(p.getStatus())) {
-            throw new IllegalArgumentException("工作区已归档：恢复后才能整理这里的文件");
-        }
-        if (relocation && projectTurnGuard.isBusy(p.getId())) {
-            throw new IllegalStateException("这个工作区里有任务正在跑，等它结束后再改名或删除文件");
+            throw new IllegalArgumentException("工作区已归档：恢复后才能写这里的文件");
         }
         return p;
     }

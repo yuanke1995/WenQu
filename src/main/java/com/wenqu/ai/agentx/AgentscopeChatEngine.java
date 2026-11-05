@@ -2765,16 +2765,14 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     /**
-     * 本轮的**工作背景段**：该工作区在工作区页写的约定（对所有会话全程有效）
-     * ＋ 工作区目录的文件简报（目录里有什么，模型才知道该去读哪份）。
-     * <p>两段各自取不到就各自缺席：没写约定不编一段空话，目录不共用/读失败不注入读不到的清单
-     * ——不能因为工作背景读失败就把整轮打挂，也不能凭空塞「这是兜底容器」的噪声（每轮都是纯 token 成本）。
+     * 本轮的**工作背景段**：工作区目录的文件简报（目录里有什么，模型才知道该去读哪份）。
+     * <p>取不到就缺席：目录不共用/读失败不注入读不到的清单——不能因为工作背景读失败就把整轮打挂，
+     * 也不能凭空塞「这是兜底容器」的噪声（每轮都是纯 token 成本）。
      */
     private String projectContext(ChatCommand cmd) {
         try {
-            String ctx = projectService.projectContextOfSession(cmd.getSessionId());
             String files = projectFileService.promptBriefOfSession(cmd.getSessionId());
-            return (ctx == null ? "" : ctx) + (files == null ? "" : files);
+            return files == null ? "" : files;
         } catch (Exception e) {
             log.warn("[agentx] 工作背景读取失败（本轮不注入）session={}: {}", cmd.getSessionId(), e.getMessage());
             return "";

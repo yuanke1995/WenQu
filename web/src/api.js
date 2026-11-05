@@ -577,31 +577,13 @@ export const bindProjectExecutor = (projectId, executorId, roots) =>
 // 我的工作区容器（implicit 兜底容器在前，前端会过滤掉）；首次调用会懒创建 implicit 行
 export const listProjects = () => request('/project/list')
 // 工作区 = 本机上的一个或多个真实目录；roots[0] 是主目录（cwd 与相对路径基准）
-// fromProjectId 可选：从本人另一个工作区复制设置（约定/资料域/记忆隔离），会话与文件不带
-export const createProject = (name, fromProjectId, executorId, roots) =>
-  said(request('/project', { method: 'POST', body: JSON.stringify({ name, fromProjectId, executorId, roots }) }), { k: 'spaces' })
-/** 约定留痕（被替换掉的旧版，倒序最多 20 条）；恢复=把旧值走 updateProject 存回约定 */
-export const listInstructionHistory = id => request(`/project/${id}/instruction-history`)
+export const createProject = (name, executorId, roots) =>
+  said(request('/project', { method: 'POST', body: JSON.stringify({ name, executorId, roots }) }), { k: 'spaces' })
 // 删除工作区：只摘归属，其下会话与产物仍然保留；本机目录里的文件一个都不动
 export const deleteProject = id =>
   said(request(`/project/${id}`, { method: 'DELETE' }), { k: 'spaces' })
-// 工作区详情：名称 / 工作区约定（对该工作区所有会话生效）/ 默认助手
+// 工作区详情：名称 / 外观 / 记忆隔离
 export const getProject = id => request(`/project/${id}`)
-// 工作区轮次占用状态：共用目录的工作区当前有没有轮次在跑、是谁在跑（会话/定时任务/工作流子智能体）与跑了多久
-export const getProjectTurnGuard = id => request(`/project/${id}/turn-guard`)
-// 工作区下的工作流（本人）
-export const listProjectWorkflows = id => request(`/project/${id}/workflows`)
-/** 工作区运行记录（定时任务执行 + 工作流运行合流，按开始时刻倒序） */
-export const getProjectRuns = (id, limit) =>
-  request(`/project/${id}/runs${limit ? '?limit=' + limit : ''}`)
-// 工作区事项（要做的事：记下 → 去做 → 勾掉；「去聊」在前端拼 ask 参数带回输入框）
-export const listProjectTodos = id => request(`/project/${id}/todos`)
-export const createProjectTodo = (id, title) =>
-  request(`/project/${id}/todos`, { method: 'POST', body: JSON.stringify({ title }) })
-export const updateProjectTodo = (id, todoId, body) =>
-  request(`/project/${id}/todos/${encodeURIComponent(todoId)}`, { method: 'PUT', body: JSON.stringify(body) })
-export const deleteProjectTodo = (id, todoId) =>
-  request(`/project/${id}/todos/${encodeURIComponent(todoId)}`, { method: 'DELETE' })
 // 工作区级记忆（独立于用户级记忆，存工作区根目录 .wenqu/MEMORY.md，经执行器读写）；与个人记忆互不干扰
 export const getWorkspaceMemory = id => request(`/project/${encodeURIComponent(id)}/workspace-memory`)
 export const saveWorkspaceMemory = (id, content) =>
@@ -611,33 +593,11 @@ export const saveWorkspaceMemory = (id, content) =>
 // 归档 / 恢复工作区（不动会话与产物，implicit 兜底容器不可归档）
 export const setProjectStatus = (id, status) =>
   said(request(`/project/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) }), { k: 'spaces' })
-// 工作区目录里的内容（单层导航）：{dir, entries, total, truncated, files, bytes, capped, dirs, names}。
+// 工作区目录里的内容（单层导航）：{dir, entries, total, truncated}。
 // entries 里每条带 kind（dir/file），文件夹在前；total 是本层条目数、truncated=true 表示只回了最近若干条；
-// files/bytes 是整个目录的文件数与合计体积（capped=true 表示数到 5000 个就停），dirs 是全目录文件夹清单
-// （「移动到…」用），names 是全目录文件名（产物去重用）。可预览的文件条目带 viewUrl（签名地址，1 小时过期）。
+// 可预览的文件条目带 viewUrl（签名地址，1 小时过期）。
 export const listProjectFiles = (id, dir) =>
   request(`/project/${id}/files${dir ? '?dir=' + encodeURIComponent(dir) : ''}`)
-/** 往工作目录上传文件（dir=目标文件夹，空=根；overwrite=同名覆盖）。onProgress 收 0-100 */
-export function uploadProjectFiles(id, dir, files, overwrite, onProgress) {
-  const fd = new FormData()
-  files.forEach(f => fd.append('file', f))
-  if (dir) fd.append('dir', dir)
-  fd.append('overwrite', overwrite ? 'true' : 'false')
-  return upload(`/project/${id}/files`, fd, onProgress)
-}
-/** 新建文件夹（path=相对工作区的完整路径，父目录必须已存在） */
-export const createProjectDir = (id, path) =>
-  request(`/project/${id}/dir`, { method: 'POST', body: JSON.stringify({ path }) })
-/** 重命名或移动一个条目（文件与文件夹同一条路：换成别的文件夹＝移动，只换末段＝改名） */
-export const moveProjectEntry = (id, from, to) =>
-  request(`/project/${id}/file`, { method: 'PUT', body: JSON.stringify({ from, to }) })
-/** 批量整理工作区条目。op 必须写清（'move' / 'delete'）——一个是整理、一个是不可恢复地删文件，
-    不能靠「dir 字段留没留」来猜意图：往根目录移动时 dir 就是空串，与「没给」长得一样。 */
-export const projectBatch = (id, paths, op, dest) =>
-  request(`/project/${id}/files/batch`, {
-    method: 'POST',
-    body: JSON.stringify(op === 'move' ? { paths, op, dir: dest || '' } : { paths, op })
-  })
 // 下载工作区文件：必须走 fetch 带 Authorization（后端认 JWT，不认 cookie），再落成本地文件。
 // dir 是当前所在文件夹——签名预览地址只覆盖可预览的类型，下载走这条带凭据的路，两者可以并存。
 export const downloadProjectFile = async (id, path, filename, dir) => {
@@ -656,31 +616,7 @@ export const downloadProjectFile = async (id, path, filename, dir) => {
   a.remove()
   setTimeout(() => URL.revokeObjectURL(url), 2000)
 }
-/** 整区导出 zip：流式下载，文件名由服务端定（工作区名.zip） */
-export const exportProjectZip = async id => {
-  const res = await fetch(`${BASE}/project/${id}/export`, { headers: authHeaders() })
-  if (!res.ok) {
-    // 开流前失败会带 JSON 原因；开流后失败只能给状态码
-    let msg = `导出失败(${res.status})`
-    try {
-      const j = await res.json()
-      if (j && j.msg) msg = j.msg
-    } catch (e) { /* 响应不是 JSON（多半是写流到一半失败），用状态码文案 */ }
-    throw new Error(msg)
-  }
-  const cd = res.headers.get('content-disposition') || ''
-  const m = /filename\*=UTF-8''([^;]+)/.exec(cd) || /filename="?([^";]+)"?/.exec(cd)
-  const blob = await res.blob()
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = m ? decodeURIComponent(m[1]) : 'workspace.zip'
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 2000)
-}
-// 更新工作区设置：传才改，空串=清空（name / instructions / defaultAgentId）
+// 更新工作区设置：传才改（name / memoryIsolated / icon / color）
 export const updateProject = (id, body) =>
   said(request(`/project/${id}`, { method: 'PUT', body: JSON.stringify(body || {}) }), { k: 'spaces' })
 export const deleteArtifact = id => request(`/artifact/${id}`, { method: 'DELETE' })

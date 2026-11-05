@@ -684,9 +684,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_artifact` (
 -- 三条设计边界（写下来是为了挡住下一轮"顺手也做了吧"）：
 --   1. 归属 uid，**不是租户也不是部门**：问渠是单公司私有化产品（tenantId 全仓 0 命中），
 --      引入共享工作区等于引入一套新权限模型，不在本表范围；
---   2. **不是权限边界**：project_id 只做归属与过滤；walled 口径维持 P5 的解绑决定。
---      2026-10-24 起检索会读 kb_ids——但那是**默认检索域**（用户自己给本区配的资料范围，
---      显式 @ 库 / 助手绑定都优先于它），不是按归属判定"允许看什么"的墙，边界不破；
+--   2. **不是权限边界**：project_id 只做归属与过滤，不按归属判定"允许看什么"；
 --   3. **不是必填概念**：每人一个 implicit 兜底容器由后台懒创建，用户不建工作区也能照常问答，
 --      只是产物开始有归属。
 -- ============================================
@@ -700,10 +698,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_project` (
     `executor_id`      VARCHAR(64)  DEFAULT NULL COMMENT '本机执行器 id（c_ai_executor.id）：工作区的源文件夹都在这台电脑上；implicit 容器为空',
     `icon`             VARCHAR(32)  DEFAULT NULL COMMENT '工作区图标（预设图标名，空=默认文件夹）',
     `color`            VARCHAR(16)  DEFAULT NULL COMMENT '工作区颜色（十六进制，空=默认色）',
-    `instructions`     TEXT         DEFAULT NULL COMMENT '工作区约定：写一次即对该工作区**所有会话**生效（每轮注入 system prompt 的工作背景段）。这是「工作区」与「分类标签」的分界——没有它，每条对话都得重新交代背景',
-    `default_agent_id` VARCHAR(50)  DEFAULT NULL COMMENT '工作区默认助手：会话归属该工作区且用户没显式选助手时用它作答，其知识库范围随助手生效（工作区因此有自己的资料域）',
-    `kb_ids`           VARCHAR(512) DEFAULT NULL COMMENT '工作区绑定知识库（逗号分隔，c_ai_knowledge_base.id；空=不收窄）。这是**默认检索域**不是权限墙：本区会话没有显式域（助手未绑库且未 @ 库）时只搜这些库，@ 提及其他库仍可越出（显式动作优先于默认值），助手绑定的库也优先于它',
-    `memory_isolated`  INT          NOT NULL DEFAULT 0 COMMENT '记忆隔离: 1=本区会话是「干净房间」——不注入本人已沉淀的个人记忆（MEMORY.md/记忆工具全关），也不往里写；工作区的上下文由约定+绑定资料域+目录文件承担。0=照常共用个人记忆。给敏感项目/客户现场一个不串味的场子',
+    `memory_isolated`  INT          NOT NULL DEFAULT 0 COMMENT '记忆隔离: 1=本区会话是「干净房间」——不注入本人已沉淀的个人记忆（MEMORY.md/记忆工具全关），也不往里写；上下文由目录文件与工作区记忆承担。0=照常共用个人记忆。给敏感项目/客户现场一个不串味的场子',
     `status`           VARCHAR(20)  NOT NULL DEFAULT 'active' COMMENT 'active=正常 / archived=归档（只读保留，二期）',
     `deleted`          INT          NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0=正常, 1=已删除（删工作区不删其下会话与产物，只把它们的 project_id 置 NULL）',
     `idempotency_key`  VARCHAR(128) DEFAULT NULL COMMENT '幂等创建键（自动建 implicit 容器时防并发重复插）',
@@ -749,46 +744,6 @@ CREATE TABLE IF NOT EXISTS `c_ai_executor` (
     KEY `idx_uid` (`uid`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='本机执行器（用户电脑上执行工具调用的进程）';
 
--- ============================================
--- 2026-10-24: 工作区事项（这个场子要做的事）
--- 工作区从「归档柜」走向「推进器」的第一块载体：事项手填、做完勾掉，
--- 「去聊」把事项带回输入框（预填不自动发，措辞让用户过目）。
--- 刻意不做派发到定时任务/工作流的机器可读结构（deadline/依赖/负责人）：
--- 单人工作区的「要做的事」是清单不是项目管理，先让「记下→去做→勾掉」闭环跑起来。
--- ============================================
-
-CREATE TABLE IF NOT EXISTS `c_ai_project_todo` (
-    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
-    `id`          VARCHAR(50)  NOT NULL COMMENT '主键ID (UUID)',
-    `uid`         VARCHAR(64)  NOT NULL COMMENT '归属用户（c_ai_user.uid；与工作区同口径，双保险）',
-    `project_id`  VARCHAR(64)  NOT NULL COMMENT '所属工作区（c_ai_project.id）。删工作区时随归属一起清理',
-    `title`       VARCHAR(200) NOT NULL COMMENT '事项内容（一句话）',
-    `status`      VARCHAR(16)  NOT NULL DEFAULT 'open' COMMENT 'open=待办 done=已完成（done_time 记完成时刻）',
-    `done_time`   DATETIME     DEFAULT NULL COMMENT '完成时刻（null=未完成）',
-    `deleted`     INT          NOT NULL DEFAULT 0 COMMENT '逻辑删除: 0=正常 1=已删除',
-    `create_time` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
-    `update_time` DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
-    PRIMARY KEY (`id`),
-    KEY `idx_project_status` (`project_id`, `deleted`, `status`, `create_time`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工作区事项（要做的事；「记下→去做→勾掉」的最短闭环）';
-
--- ============================================
--- 2026-10-24: 工作区约定留痕
--- 每次约定发生变化（保存新值/清空）前，把**被替换掉的那一版**抄一行进来：
--- 老会话无法回看「我当时生效的是哪版约定」是最糟的透明度（聊天页 chip 只报「约定生效」，
--- 不报内容）；留痕让「谁在什么时候改过规矩」有账可查，恢复=把旧值再存一版（与智能体配置
--- 版本管理同一条思路：最新版=当前配置，回滚即再存）。
--- ============================================
-
-CREATE TABLE IF NOT EXISTS `c_ai_project_note_log` (
-    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
-    `id`          VARCHAR(50)  NOT NULL COMMENT '主键ID (UUID)',
-    `project_id`  VARCHAR(64)  NOT NULL COMMENT '所属工作区（c_ai_project.id）',
-    `content`     TEXT         DEFAULT NULL COMMENT '被替换掉的那一版约定全文（NULL=当时约定为空，即本次是首次写入）',
-    `create_time` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '被替换的时刻',
-    PRIMARY KEY (`id`),
-    KEY `idx_project_time` (`project_id`, `create_time` DESC)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工作区约定留痕（被替换的旧版；恢复=再存一版）';
 
 -- ============================================
 -- 2026-09-26: 定时执行智能体（用户自建的计划任务）

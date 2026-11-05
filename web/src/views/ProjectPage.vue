@@ -1,614 +1,236 @@
 <template>
   <div class="app-page">
-    <div class="app-page-head">
-      <!-- 名字只在这一处编辑：点「改名」就地换，不再单开一行输入框（此前标题/输入框/删除弹窗三份名字） -->
-      <h1 v-if="!nameEditing" class="app-page-title pj-title">
-        <component v-if="!isImplicit" :is="workspaceIconOf(form.icon, true)"
-                   class="pj-head-ic" :style="form.color ? { color: form.color } : null" />
-        {{ displayName }}
-        <span v-if="!isImplicit" class="app-pill muted pj-state"
-              :title="form.roots.length ? '文件都在你电脑上的这些文件夹里，读写由本机执行器完成' : '还没有绑定本机目录'">
-          {{ form.roots.length ? '本机目录' : '未绑定目录' }}
-        </span>
-        <button v-if="!isImplicit && form.roots.length" class="pj-pen" type="button" @click="openFolder">在电脑上打开</button>
-        <span v-if="isArchived" class="app-pill muted pj-state">已归档</span>
-        <button class="pj-pen" type="button" @click="startRename">改名</button>
-      </h1>
+    <div class="app-page-head pj-head">
+      <component :is="workspaceIconOf(form.icon, true)"
+                 class="pj-head-ic" :style="form.color ? { color: form.color } : null" />
+      <template v-if="!nameEditing">
+        <h1 class="app-page-title">{{ displayName }}</h1>
+        <span v-if="isArchived" class="app-pill muted">已归档</span>
+        <button class="pj-link" type="button" @click="startRename">改名</button>
+      </template>
       <template v-else>
-        <a-input ref="nameInput" v-model:value="nameDraft" class="pj-name-inline" :maxlength="60"
-                 :placeholder="isImplicit ? '留空则显示「会话」' : ''"
-                 @press-enter="saveName" @keydown.esc="cancelRename" />
-        <button class="app-btn" :disabled="saving || !nameDirty" @click="saveName">{{ saving ? '保存中…' : '保存' }}</button>
+        <a-input ref="nameInput" v-model:value="nameDraft" class="pj-name-input" :maxlength="60"
+                 placeholder="工作区名称" @press-enter="saveName" @keydown.esc="cancelRename" />
+        <button class="app-btn" :disabled="savingName || !nameDraft.trim()" @click="saveName">
+          {{ savingName ? '保存中…' : '保存' }}
+        </button>
         <button class="app-btn ghost" @click="cancelRename">取消</button>
       </template>
-      <span class="head-hint-plain" :title="isImplicit ? '' : HEAD_HINT">
-        {{ isImplicit ? '这里的会话与文件还没有归到任何工作区下' : HEAD_HINT }}
-      </span>
-      <div class="pj-tools">
-        <a-popover v-model:open="settingsOpen" trigger="click" :placement="mobileShell ? 'bottom' : 'bottomRight'"
-                   :overlay-style="{ width: mobileShell ? 'min(360px, 92vw)' : '400px' }">
-          <template #content>
-            <div class="pj-set">
-              <div class="pj-set-row">
-                <span class="pj-k">默认助手</span>
-                <a-select class="pj-v" :value="form.defaultAgentId || AGENT_NONE" :options="agentOptions" allow-clear
-                          @change="saveAgent" />
-              </div>
-              <div class="pj-set-note">助手带的知识范围与工具会一起生效；只影响这个工作区里以后的新对话</div>
-              <template v-if="!isImplicit">
-                <div class="pj-set-col">
-                  <span class="pj-k">工作区资料</span>
-                  <a-select class="pj-v" mode="multiple" :value="form.kbIds" :options="kbOptions"
-                            placeholder="不绑定：检索沿用我的全部知识库" :max-tag-count="3" allow-clear
-                            :loading="kbLoading" @change="saveKb" />
-                </div>
-                <div class="pj-set-note">绑定后，这个场子里的对话没点名别的库、助手也没绑库时，检索只搜这里选的库——进了场子就搜场子里的资料；@ 某个别的库仍可临时越出</div>
-                <div class="pj-set-row">
-                  <span class="pj-k">记忆隔离</span>
-                  <a-switch class="pj-sw" :checked="form.memoryIsolated === 1" :disabled="archiving" @change="saveMemoryIsolated" />
-                </div>
-                <div class="pj-set-note">开启后这是个「干净房间」：对话不带入也不写入你的个人记忆（改设置后新开轮次生效），上下文全靠约定、资料域和目录里的文件；给敏感项目用</div>
-                <div class="pj-set-row pj-set-row-top">
-                  <span class="pj-k">工作区记忆</span>
-                  <a-button size="small" :loading="wmLoading" @click="openWorkspaceMemory">{{ wmContent ? '查看 / 编辑' : '添加' }}</a-button>
-                </div>
-                <div class="pj-set-note">只属于这个工作区的长期记忆，存于工作区根目录 <code>.wenqu/MEMORY.md</code>（在那台电脑上）。对话会自动读它，模型也会把学到的项目事实写进去；与个人记忆互不干扰</div>
-              </template>
-              <div class="pj-set-row pj-set-row-top">
-                <span class="pj-k">外观</span>
-                <div class="pj-look">
-                  <div class="pj-icons">
-                    <button v-for="ic in WORKSPACE_ICONS" :key="ic.name" type="button" class="pj-icon"
-                            :class="{ on: form.icon === ic.name }" :title="ic.label"
-                            @click="saveLook({ icon: ic.name })">
-                      <component :is="workspaceIconOf(ic.name, true)" />
-                    </button>
-                  </div>
-                  <div class="pj-colors">
-                    <button v-for="c in WORKSPACE_COLORS" :key="c" type="button" class="pj-color"
-                            :class="{ on: form.color === c }" :style="{ background: c }"
-                            :title="c" @click="saveLook({ color: c })">
-                      <check-outlined v-if="form.color === c" class="pj-color-check" />
-                    </button>
-                  </div>
-                </div>
-              </div>
-              <div class="pj-set-note">侧栏与页面标题用这个图标和颜色，一眼区分不同工作区</div>
-              <div class="pj-set-row pj-set-row-top">
-                <span class="pj-k">源文件夹</span>
-                <div class="pj-path-cell">
-                  <div v-for="(r, i) in rootDraft" :key="r.path" class="pj-root-row">
-                    <span class="pj-root-name"><b>{{ r.alias }}</b>{{ i === 0 ? '（主要）' : '' }}</span>
-                    <span class="pj-root-path" :title="r.path">{{ r.path }}</span>
-                    <button type="button" class="pj-act pj-act-danger" :disabled="rootSaving"
-                            @click="removeRoot(i)">移除</button>
-                  </div>
-                  <div v-if="!rootDraft.length" class="pj-set-path">还没有绑定本机目录</div>
-                  <div v-if="!projectExecutorId" class="pj-root-ops">
-                    <a-select size="small" style="min-width:180px" :options="executorOptions"
-                              placeholder="选择一台在线的电脑" @change="v => projectExecutorId = v" />
-                    <span class="pj-set-note" style="margin:0">选中后才能添加文件夹</span>
-                  </div>
-                  <div class="pj-root-ops">
-                    <button type="button" class="pj-act" :disabled="rootPicking || rootSaving || !projectExecutorId" @click="addRoot">
-                      {{ rootPicking ? '选择中…' : '+ 添加文件夹' }}
-                    </button>
-                    <button type="button" class="pj-act" :disabled="rootSaving || !rootsDirty" @click="saveRoots">
-                      {{ rootSaving ? '保存中…' : '保存文件夹' }}
-                    </button>
-                    <button type="button" class="pj-act" @click="copyPath"><copy-outlined /> 复制主目录</button>
-                  </div>
-                </div>
-              </div>
-              <div class="pj-set-note">对话里的读写/命令只在这些文件夹里执行；删工作区不会删除这些文件。第一个是主目录（cwd 与相对路径基准）</div>
-              <div class="pj-set-div"></div>
-              <div class="pj-set-row">
-                <span class="pj-k">归档</span>
-                <button class="app-btn ghost" :disabled="archiving" @click="toggleArchive">
-                  {{ archiving ? '处理中…' : (isArchived ? '恢复工作区' : '归档工作区') }}
-                </button>
-              </div>
-              <div class="pj-set-note">归档后收进侧栏折叠区：定时任务自动暂停，恢复时重新启用；会话与产物一条不动</div>
-              <template v-if="!isImplicit">
-                <div class="pj-set-div"></div>
-                <div class="pj-set-row">
-                  <span class="pj-k">删除</span>
-                  <button class="app-btn danger" :disabled="deleting" @click="removeProject">
-                    {{ deleting ? '删除中…' : '删除工作区' }}
-                  </button>
-                </div>
-                <div class="pj-set-note pj-set-warn">只解除服务器上的归属：本机目录与文件一个都不动，留在你的电脑上。约定一起丢，不可撤销。</div>
-              </template>
+
+      <a-popover v-model:open="lookOpen" trigger="click" placement="bottomLeft"
+                 :overlay-style="{ width: '308px' }">
+        <template #content>
+          <div class="pj-look">
+            <div class="pj-look-title">工作区外观</div>
+            <div class="pj-icons">
+              <button v-for="ic in WORKSPACE_ICONS" :key="ic.name" type="button" class="pj-icon"
+                      :class="{ on: form.icon === ic.name }" :title="ic.label"
+                      @click="saveLook({ icon: ic.name })">
+                <component :is="workspaceIconOf(ic.name, true)" />
+              </button>
             </div>
-          </template>
-          <button class="pj-sum" :class="{ on: settingsOpen }" type="button">
-            助手 <b>{{ agentName || '跟随我的' }}</b><span class="pj-sum-go">设置 ▾</span>
-          </button>
-        </a-popover>
-        <button class="app-btn" :disabled="isArchived" :title="isArchived ? '工作区已归档，恢复后才能新建对话' : ''" @click="goChat">
+            <div class="pj-colors">
+              <button v-for="c in WORKSPACE_COLORS" :key="c" type="button" class="pj-color"
+                      :class="{ on: form.color === c }" :style="{ background: c }"
+                      :title="c" @click="saveLook({ color: c })">
+                <check-outlined v-if="form.color === c" />
+              </button>
+            </div>
+          </div>
+        </template>
+        <button class="pj-icon-btn" type="button" title="外观：图标与颜色">
+          <bg-colors-outlined />
+        </button>
+      </a-popover>
+
+      <div class="pj-iso-inline">
+        <safety-outlined class="pj-iso-shield" />
+        <span class="pj-iso-label">工作区隔离</span>
+        <span class="pj-state" :class="{ on: form.memoryIsolated === 1 }">
+          {{ form.memoryIsolated === 1 ? '已开启' : '未开启' }}
+        </span>
+        <a-tooltip title="开启后，这个工作区里的对话不带入也不写入个人记忆（新开轮次生效）。上下文只来自目录里的文件和这里的工作区记忆，两边互不干扰。">
+          <question-circle-outlined class="pj-help" />
+        </a-tooltip>
+        <a-switch size="small" :checked="form.memoryIsolated === 1" :loading="isoSaving" @change="saveMemoryIsolated" />
+      </div>
+
+      <div class="pj-head-actions">
+        <button class="app-btn" :disabled="isArchived"
+                :title="isArchived ? '工作区已归档，恢复后才能新建对话' : ''" @click="goChat">
           <plus-outlined /> 新建对话
         </button>
       </div>
     </div>
 
-    <!-- 轮次占用条：共用目录的工作区同一时刻只放一轮在跑；谁在跑、跑了多久摆在这里，别等发送被拒才知道 -->
-    <div v-if="turnGuard.busy" class="pj-busy" role="status">
-      <span class="pj-busy-dot" aria-hidden="true"></span>
-      <span class="pj-busy-text">{{ turnGuard.describe || '有任务' }}正在此工作区运行 · 已跑 {{ guardElapsedText }}</span>
-      <button v-if="turnGuard.sessionId" class="pj-link-btn" @click="openGuardSession">去看</button>
-    </div>
+    <div class="app-page-body pj-body">
+      <div class="pj-wrap" ref="pjWrapEl" :class="{ 'pj-single': !inlinePreview }">
+        <a-skeleton v-if="firstLoad" class="pj-skeleton" active :paragraph="{ rows: 6 }" />
 
-    <div class="app-page-body">
-      <a-skeleton v-if="firstLoad" active :paragraph="{ rows: 6 }" />
-
-      <template v-else>
-        <!-- ① 工作区约定：这个工作区区别于「一堆会话」的地方，常驻且就地编辑，不再藏在折叠里 -->
-        <div class="app-card pj-card">
-          <div class="pj-card-head">
-            <span class="pj-label">工作区约定</span>
-            <span class="pj-hint">写一次，这个工作区里之后的每条对话都按它执行</span>
-            <span v-if="instrEditing && instrDirty" class="pj-dirty">未保存</span>
-            <div class="pj-card-act">
-              <template v-if="instrEditing">
-                <button v-if="saved.instructions" class="app-btn ghost" :disabled="saving" @click="cancelInstr">取消</button>
-                <button class="app-btn" :disabled="saving || !instrDirty" @click="saveInstr">
-                  {{ saving ? '保存中…' : '保存约定' }}
-                </button>
-              </template>
-              <template v-else>
-                <button class="app-btn ghost" @click="openHistory">历史</button>
-                <button class="app-btn ghost" @click="instrEdit = true">编辑</button>
-              </template>
+        <template v-else>
+          <!-- 预览：桌面两栏时占左侧主区。放不下两栏（窄屏/窗口窄）时收掉，点击文件仍走「新标签 / 下载」 -->
+          <section v-if="inlinePreview" class="app-card pj-card pj-pv-card">
+            <div v-if="previewEntry" class="pj-pv-head">
+              <file-text-outlined class="pj-pv-ic" />
+              <span class="pj-pv-name" :title="previewEntry.name">{{ previewEntry.name }}</span>
+              <span class="pj-pv-meta">{{ fmtSize(previewEntry.size) }} · {{ fmtAgo(previewEntry.mtime) }}</span>
             </div>
-          </div>
-
-          <a-textarea v-if="instrEditing" v-model:value="form.instructions" :rows="4" :maxlength="2000" show-count
-                      placeholder="例如：回答先给结论；涉及考勤规则必须引用《考勤制度》原文条号；不猜测制度里没写的口径。" />
-          <template v-else>
-            <div class="pj-instr" :class="{ clamped: !instrFull }">{{ saved.instructions }}</div>
-            <button v-if="instrLong" class="pj-link-btn" @click="instrFull = !instrFull">
-              {{ instrFull ? '收起' : '展开全文' }}
-            </button>
-          </template>
-        </div>
-
-        <!-- ② 内容区：计数只在这里出现一次；产物并入文件（同一份内容的两个拷贝不再各列一遍）。
-             搜索框挨着它作用的对象——它过滤的是这四个栏的列表，不是上面那张约定卡 -->
-        <a-tabs v-model:activeKey="tab" class="pj-tabs">
-          <template #rightExtra>
-            <div class="pj-filter">
-              <span v-if="jumpChips.length" class="pj-jump" role="status" aria-live="polite">
-                <span class="pj-jump-k">{{ currentHits ? '别处也有' : '这里没有，去' }}</span>
-                <button v-for="c in jumpChips" :key="c.key" class="pj-jump-chip" type="button" @click="tab = c.key">
-                  {{ c.label }} {{ c.n }}
-                </button>
-              </span>
-              <a-input v-model:value="kw" allow-clear class="pj-search"
-                       placeholder="搜文件 / 会话 / 任务 / 工作流 / 动态…" />
+            <div class="pj-pv-body">
+              <div v-if="!previewEntry" class="pj-pv-empty">
+                <file-text-outlined class="pj-pv-empty-ic" />
+                <div>从右侧目录选一个文件，预览会出现在这里</div>
+                <div class="pj-pv-sub">图片、PDF、Markdown、代码直接看；其他类型可下载</div>
+              </div>
+              <a-spin v-else :spinning="previewLoading">
+                <div v-if="previewError" class="pj-pv-none">
+                  {{ previewError }}
+                  <button class="pj-text-btn" type="button" @click="selectFile(previewEntry)">重试</button>
+                </div>
+                <div v-else-if="previewKind === PV.IMAGE" class="pj-pv-img-wrap">
+                  <img class="pj-pv-img" :src="previewUrl" :alt="previewEntry.name" />
+                </div>
+                <iframe v-else-if="previewKind === PV.PAGE || previewKind === PV.PDF"
+                        class="pj-pv-frame" :src="previewUrl" :title="previewEntry.name"></iframe>
+                <div v-else-if="previewKind === PV.MD" class="pj-pv-md">
+                  <div class="md" v-html="previewHtml"></div>
+                </div>
+                <pre v-else-if="previewKind === PV.TEXT || previewKind === PV.TABLE" class="pj-pv-text">{{ previewText }}</pre>
+                <div v-else class="pj-pv-none">
+                  <p>这个类型暂不支持预览</p>
+                  <button class="app-btn" type="button" @click="downloadPreview">下载文件</button>
+                </div>
+              </a-spin>
+              <div v-if="previewEntry && previewTruncated && !previewError" class="pj-pv-note">
+                文件较大，只读回前一段；完整内容请下载查看。
+              </div>
             </div>
-          </template>
-          <a-tab-pane key="files">
-            <template #tab><span>文件 <span class="pj-count">{{ fileCount }}</span></span></template>
+          </section>
 
-            <!-- 工具条：整个工作区的合计＋三个写动作。层级由树本身表达，不再要面包屑；
-                 上传/新建默认落主源文件夹，要放进某个子文件夹就从它的 ⋯ 菜单点 -->
+          <div class="pj-side">
+          <!-- 目录：源文件夹 + 当前文件夹内容（只读） -->
+          <section class="app-card pj-card pj-dir-card">
+            <div class="pj-card-head">
+              <h2 class="pj-card-title">工作区目录</h2>
+              <span class="pj-spacer"></span>
+              <button class="pj-text-btn" type="button" :disabled="rootPicking || rootBusy" @click="addRoot">
+                {{ rootPicking ? '选择中…' : '＋ 添加文件夹' }}
+              </button>
+            </div>
+
+            <div class="pj-roots">
+              <div v-for="r in form.roots" :key="r.path" class="pj-root"
+                   :class="{ on: activeRoot && activeRoot.alias === r.alias }">
+                <button class="pj-root-main" type="button" :title="'查看「' + r.alias + '」的目录内容'" @click="selectRoot(r)">
+                  <folder-filled class="pj-root-ic" />
+                  <span class="pj-root-name">
+                    {{ r.alias }}<span v-if="r.primary" class="pj-mini-pill" title="主目录：cwd 与相对路径的基准">主要</span>
+                  </span>
+                </button>
+                <button class="pj-root-path" type="button" title="点击复制完整路径" @click="copyRootPath(r)">{{ r.path }}</button>
+                <span class="pj-root-acts">
+                  <button class="pj-text-btn" type="button" @click="openRoot(r)">打开</button>
+                  <button class="pj-text-btn danger" type="button"
+                          :disabled="rootBusy || form.roots.length <= 1" @click="removeRoot(r)">移除</button>
+                </span>
+              </div>
+
+              <div v-if="!form.roots.length" class="pj-empty">
+                还没有绑定本机目录。
+                <button class="pj-text-btn" type="button" @click="addRoot">添加文件夹</button>
+              </div>
+              <div v-if="!executorId" class="pj-exec-pick">
+                <a-select size="small" style="min-width: 200px" :value="executorPick"
+                          :options="executorOptions" placeholder="先选择一台在线的电脑" @change="chooseExecutor" />
+              </div>
+            </div>
+
+            <div class="pj-divider"></div>
+
             <div class="pj-filebar">
-              <span v-if="filesAll && !filesError" class="pj-hint pj-crumb-sum"
-                    :title="'整个工作区目录的合计'">全部文件 {{ filesAll }}{{ filesCapped ? '+' : '' }} 个 · {{ fmtSize(bytesAll) }}</span>
-              <div class="pj-filebar-act">
-                <a-checkbox v-model:checked="overwrite" class="pj-overwrite"
-                            title="上传时同名文件直接换掉；不勾则报出那个名字，让你先改名或删掉">重名时覆盖</a-checkbox>
-                <button class="pj-act" type="button" :disabled="!!uploading || isArchived || !!filesError || !form.roots.length"
-                        :title="isArchived ? '工作区已归档，恢复后才能放文件' : (!form.roots.length ? '先绑定本机目录' : '上传到主源文件夹；要放进某个子文件夹，从它的 ⋯ 菜单点')" @click="pickFiles()">
-                  <upload-outlined /> 上传
-                </button>
-                <button class="pj-act" type="button" :disabled="isArchived || !!filesError || !form.roots.length"
-                        :title="isArchived ? '工作区已归档，恢复后才能放文件' : (!form.roots.length ? '先绑定本机目录' : '在主源文件夹里新建；要在某个子文件夹里建，从它的 ⋯ 菜单点')" @click="openMkdir()">
-                  <folder-add-outlined /> 新建文件夹
-                </button>
-                <button class="pj-act" type="button"
-                        :disabled="exporting || !filesAll || !form.roots.length || !!exportBlockReason"
-                        :title="exportBlockReason || '把整个工作区打包成 zip'" @click="doExportZip">
-                  {{ exporting ? '导出中…' : '打包导出' }}
-                </button>
-              </div>
+              <span class="pj-filebar-title">文件</span>
+              <span class="pj-filebar-count">{{ fileTotal }} 项</span>
+              <span class="pj-spacer"></span>
+              <a-input v-model:value="fileKw" size="small" allow-clear class="pj-search"
+                       placeholder="搜索当前文件夹" />
             </div>
-            <input ref="fileInput" class="pj-file-input" type="file" multiple
-                   @change="onPickFiles" @click="onInputClick" />
 
-            <div v-if="uploading" class="pj-hint pj-tabnote" role="status" aria-live="polite">{{ uploading }}</div>
-            <!-- 截断：根目录条目太多只回了最近这些；子文件夹里超了的在树里各自说明 -->
-            <div v-if="rootLayer && rootLayer.truncated && !filesError" class="pj-hint pj-tabnote">
-              根目录只列了最近 {{ (rootLayer.entries || []).length }} 项（共 {{ fileTotal }} 项），更早的可用打包导出整份查看
+            <div v-if="crumbs.length > 1" class="pj-crumbs">
+              <template v-for="(c, i) in crumbs" :key="c.path">
+                <span v-if="i" class="pj-crumb-sep">/</span>
+                <button class="pj-crumb" :class="{ last: i === crumbs.length - 1 }"
+                        type="button" :disabled="i === crumbs.length - 1" @click="openDir(c.path)">{{ c.label }}</button>
+              </template>
             </div>
-            <div v-if="artifactsError && !filesError" class="pj-hint pj-tabnote">
-              {{ artifactsError }}，下面只列了源文件夹里的文件（交付成产物的那些没并进来）
-              <button class="pj-link-btn" @click="loadFiles">重试</button>
-            </div>
-            <div v-if="!isImplicit && !form.roots.length" class="pj-empty">
-              这个工作区还没有绑定本机目录。先在设置里添加至少一个文件夹，文件栏才会读到你电脑上的文件。
-              <button class="pj-link-btn" @click="settingsOpen = true">去设置里添加</button>
-            </div>
-            <div v-else-if="filesError" class="pj-empty pj-err">
-              {{ filesError }}
-              <button class="pj-link-btn" @click="loadFiles">重试</button>
-            </div>
-            <div v-else-if="!fileViewRows.length" class="pj-empty">
-              {{ kw ? '没有匹配的文件' : '还没有文件。可以直接把文件传进来，也可以让它在这个工作区里跑一段会写文件的命令。' }}
-              <button v-if="!kw && !isArchived" class="pj-link-btn" @click="pickFiles()">上传文件</button>
-              <button v-if="!kw && !isArchived" class="pj-link-btn" @click="goChat">去对话</button>
-            </div>
-            <template v-else>
-              <!-- 批量栏：勾了才出现（页头那种未勾选时全灰的小按钮没人找得到） -->
-              <div v-if="sel.length" class="pj-batchbar" role="status" aria-live="polite">
-                <span class="pj-batch-n">已选 {{ sel.length }} 项</span>
-                <button class="pj-act" type="button" :disabled="busy || isArchived"
-                        :title="isArchived ? '工作区已归档，恢复后才能整理文件' : ''" @click="openMove(sel)">移动到…</button>
-                <button class="pj-act pj-act-danger" type="button" :disabled="busy || isArchived"
-                        @click="askDeletePaths(sel)">删除</button>
-                <button class="pj-link-btn" type="button" @click="sel = []">取消选择</button>
-              </div>
-              <div class="pj-file-list" :class="{ 'pj-drop-on': dropAt !== null }"
-                   @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop">
-                <!-- 表头：每格复用行内同名 class（宽度/对齐由它们定义），所以天然与列对齐；
-                     改行内列宽只改那些 class 一处，表头跟着走 -->
-                <div class="pj-thead">
-                  <span class="pj-check-hit pj-check-void" aria-hidden="true"></span>
-                  <span class="pj-indent" style="width: 0" aria-hidden="true"></span>
-                  <span class="pj-item-title">名称</span>
-                  <span class="pj-badge-cell">状态</span>
-                  <span class="pj-item-meta pj-size">大小</span>
-                  <span class="pj-item-meta pj-time">时间</span>
-                  <span class="pj-acts">操作</span>
-                </div>
-                <template v-for="r in fileViewRows" :key="r.key">
-                  <!-- 文件夹行：本层条目数（未展开时还没取，显示「…」）；拖文件到行上=传进这个文件夹 -->
-                  <div v-if="r.type === 'dir'" class="pj-item pj-item-dir"
-                       :class="{ 'pj-item-on': selSet.has(r.dir.path), 'pj-drop-dir': dropAt === r.dir.path }"
-                       @click="onRowClick($event, r.dir)" @dragover.stop.prevent="onRowDragOver(r.dir.path)">
-                    <span class="pj-check-hit" @click="toggleSel(r.dir)">
-                      <a-checkbox class="pj-check" :checked="selSet.has(r.dir.path)" @click.stop="toggleSel(r.dir)" />
-                    </span>
-                    <span class="pj-indent" :style="{ width: r.depth * 14 + 'px' }" aria-hidden="true"></span>
-                    <button class="pj-caret" type="button" :aria-expanded="r.open"
-                            :title="(r.open ? '收起 ' : '展开 ') + r.dir.path" @click.stop="toggleDir(r.dir.path)">
-                      <caret-right-outlined class="pj-caret-ic" :class="{ open: r.open }" />
-                    </button>
-                    <span class="pj-item-title" :title="r.dir.path">
-                      <folder-filled class="pj-dir-ic" /><Hl :text="r.dir.name" />
-                    </span>
-                    <span class="pj-dir-n">{{ r.layer && !r.layer.error ? r.layer.total + ' 项' : '…' }}</span>
-                    <!-- 目录没有交付状态，也没有可靠的修改时刻：
-                         两格留空占位，不然「大小」会跑到表头「时间」底下去 -->
-                    <span class="pj-badge-cell"></span>
-                    <span class="pj-item-meta pj-size">{{ r.layer && !r.layer.error ? fmtSize(r.dir.size) : '' }}</span>
-                    <span class="pj-item-meta pj-time"></span>
-                    <span class="pj-acts">
-                      <!-- 目录 ⋯：上传/新建可以指定落进这个文件夹，不用先传到根再挪进去。
-                           注释必须待在 #overlay 外面——slot 里多出注释节点会让弹层渲染成空的 -->
-                      <a-dropdown :trigger="['click']" placement="bottomRight">
-                        <button class="pj-act pj-act-more" type="button" title="更多操作" @click.stop>
-                          <more-outlined />
-                        </button>
-                        <template #overlay>
-                          <a-menu @click="info => rowAction(String(info && info.key), r.dir)">
-                            <a-menu-item key="upload-here">在这里上传</a-menu-item>
-                            <a-menu-item key="mkdir-here">新建子文件夹</a-menu-item>
-                            <a-menu-item key="rename">重命名</a-menu-item>
-                            <a-menu-item key="move">移动到…</a-menu-item>
-                            <a-menu-item key="delete"><span class="pj-act-danger">删除</span></a-menu-item>
-                          </a-menu>
-                        </template>
-                      </a-dropdown>
-                    </span>
-                  </div>
-                  <!-- 层内提示（读不到/太大）：缩进对齐子内容，不冒充一行文件 -->
-                  <div v-else-if="r.type === 'note'" class="pj-subnote" :class="{ 'pj-suberr': r.error }"
-                       :style="{ marginLeft: 30 + r.depth * 14 + 'px' }">
-                    {{ r.text }}
-                    <button v-if="r.error" class="pj-link-btn" type="button" @click="retryDir(r.path)">重试</button>
-                  </div>
-                  <div v-else class="pj-item" :class="{ 'pj-item-on': r.file.path && selSet.has(r.file.path) }"
-                       @click="onRowClick($event, r.file)" @dragover.stop.prevent="onRowDragOver(parentOf(r.file.path))">
-                    <!-- 勾选命中区是整个文字前的左侧。内层 checkbox 必须自己接住这一次点击：
-                         它带 @click.stop（防冒泡成整行跳转），只挂在外层 span 上时，
-                         点在那 16px 的框上会被 stop 掉、左侧反而白铺了（真机点验实测） -->
-                    <span v-if="r.file.path" class="pj-check-hit" @click="toggleSel(r.file)">
-                      <a-checkbox class="pj-check" :checked="selSet.has(r.file.path)" @click.stop="toggleSel(r.file)" />
-                    </span>
-                    <span v-else class="pj-check-hit pj-check-void" aria-hidden="true"></span>
-                    <span class="pj-indent" :style="{ width: r.depth * 14 + 'px' }" aria-hidden="true"></span>
-                    <span class="pj-item-title" :title="r.file.path || r.file.name">
-                      <Hl :text="r.file.name" />
-                    </span>
-                    <span class="pj-badge-cell">
-                      <span v-if="r.file.artifact" class="pj-badge" title="已作为产物交付过（与这个文件是同一次产出的两份）">已交付</span>
-                    </span>
-                    <span class="pj-item-meta pj-size">{{ fmtSize(r.file.size) }}</span>
-                    <span class="pj-item-meta pj-time">{{ fmtAgo(r.file.at) }}</span>
-                    <span class="pj-acts">
-                      <!-- 预览＝进预览台（与产物页、聊天区四个产物面同一待遇）：页面设计档给真实视口，读字档在应用里排版。
-                           落进工作目录的那一行用列表接口现签的地址；没落进来的那一行只有产物记录那份签名地址，
-                           判据共用 artifactView 那一份——同一份东西在这个页和聊天区给出不同的按钮集，用户只会当成随机行为。
-                           安全性靠服务端那份 CSP sandbox 头：这里的 HTML 是模型产出的，不带该头时这一跳等于
-                           让模型脚本跑在本域源上、能读登录令牌。Ctrl/中键点击照旧开成真标签页。 -->
-                      <a v-if="r.file.viewUrl || canPreview(r.file.artifact)" class="pj-act"
-                         :href="resolveImg(r.file.viewUrl || r.file.artifact.url)" target="_blank" rel="noopener"
-                         data-pv v-bind="pvAttrs(r.file)"
-                         title="预览（按住 Ctrl 或中键开成新标签页）">预览</a>
-                      <button v-if="r.file.path" class="pj-act" type="button" @click="download(r.file)">下载</button>
-                      <a v-else-if="r.file.artifact" :href="resolveImg(r.file.artifact.url)" :download="r.file.name" class="pj-act">下载</a>
-                      <!-- 行菜单：写动作收在 ⋯ 里，行宽才不会被按钮挤掉 -->
-                      <a-dropdown v-if="r.file.path" :trigger="['click']" placement="bottomRight">
-                        <button class="pj-act pj-act-more" type="button" title="更多操作" @click.stop>
-                          <more-outlined />
-                        </button>
-                        <template #overlay>
-                          <a-menu @click="info => rowAction(String(info && info.key), r.file)">
-                            <a-menu-item key="rename">重命名</a-menu-item>
-                            <a-menu-item key="move">移动到…</a-menu-item>
-                            <a-menu-item key="delete"><span class="pj-act-danger">删除</span></a-menu-item>
-                          </a-menu>
-                        </template>
-                      </a-dropdown>
-                    </span>
-                  </div>
-                </template>
-              </div>
-              <div v-if="dropAt !== null" class="pj-drop-tip" aria-hidden="true">松手就传进{{ dropTipAt }}</div>
-            </template>
-          </a-tab-pane>
 
-          <a-tab-pane key="sessions">
-            <template #tab><span>会话 <span class="pj-count">{{ sessionTotal }}</span></span></template>
-            <div v-if="sessionTotal > sessions.length" class="pj-hint pj-tabnote">
-              这里只列最近 {{ sessions.length }} 条（共 {{ sessionTotal }} 条），更早的在左侧栏这个工作区里翻
-            </div>
-            <div v-if="sessionError" class="pj-empty pj-err">
-              {{ sessionError }}
-              <button class="pj-link-btn" @click="loadSessions">重试</button>
-            </div>
-            <div v-else-if="!filteredSessions.length" class="pj-empty">
-              {{ kw ? '没有匹配的会话' : '还没有对话。' }}
-              <button v-if="!kw && !isArchived" class="pj-link-btn" @click="goChat">新建一条对话</button>
-              <span v-if="!kw">，就会落在这个工作区里，并自动带上上面的约定。</span>
-            </div>
-            <div v-else class="pj-file-list">
-              <a v-for="s in filteredSessions" :key="s.id" class="pj-item" :href="'/chat?sid=' + s.id"
-                 @click.prevent="openProjectSession(s)">
-                <span class="pj-item-title pj-has-sub">
-                  <span class="pj-item-line"><Hl :text="s.title || '新对话'" /></span>
-                  <span v-if="s.lastMessage" class="pj-item-sub"><Hl :text="s.lastMessage" /></span>
-                </span>
-                <span class="pj-item-meta">{{ fmtAgo(toMs(s.updateTime)) }}</span>
-              </a>
-            </div>
-          </a-tab-pane>
-
-          <a-tab-pane key="auto">
-            <template #tab><span>自动化 <span class="pj-count">{{ jobs.length + workflows.length }}</span></span></template>
-
-            <!-- 拉取失败就说失败并给重试：留成空列表会被读成「我建的任务没生效」 -->
-            <div v-if="autoError" class="pj-empty pj-err">
-              {{ autoError }}
-              <button class="pj-link-btn" @click="loadAuto">重试</button>
-            </div>
-            <template v-else>
-            <div class="pj-block">
-              <div class="pj-label">
-                定时任务 <span class="pj-count">{{ jobs.length }}</span>
-                <span class="pj-hint">到点自己跑，结果落进这个工作区</span>
-                <button class="app-btn ghost pj-block-act" :disabled="isArchived"
-                        :title="isArchived ? '工作区已归档，恢复后才能新建任务' : ''" @click="jobFormOpen = !jobFormOpen">
-                  {{ jobFormOpen ? '收起' : '新建任务' }}
-                </button>
+            <div class="pj-files">
+            <a-spin :spinning="fileLoading">
+              <div v-if="fileError" class="pj-empty err">
+                {{ fileError }}
+                <button class="pj-text-btn" type="button" @click="loadFiles">重试</button>
               </div>
-              <div v-if="jobFormOpen" class="pj-job-form">
-                <a-input v-model:value="jobForm.name" placeholder="任务名，例如：每周一汇总上周工单" :maxlength="100" :disabled="isArchived" />
-                <a-textarea v-model:value="jobForm.prompt" :rows="2" :maxlength="2000" :disabled="isArchived"
-                            placeholder="每轮发给智能体的指令，例如：汇总上周新增工单，按处理人分组，输出一份 Markdown" />
-                <div class="pj-row" style="margin-top:0">
-                  <a-input v-model:value="jobForm.cron" placeholder="cron，例如 0 9 * * 1（每周一 9 点）" class="pj-cron-input" :disabled="isArchived" />
-                  <button class="app-btn" :disabled="jobSaving || isArchived" @click="createJob">{{ jobSaving ? '创建中…' : '创建并启用' }}</button>
-                </div>
-              </div>
-              <div v-if="!filteredJobs.length" class="pj-empty">
-                {{ kw ? '没有匹配的定时任务' : '还没有定时任务。建一个，它就能每周自己跑一次。' }}
+              <div v-else-if="!form.roots.length" class="pj-empty">绑定文件夹后，这里会列出目录内容。</div>
+              <div v-else-if="!visibleFiles.length" class="pj-empty">
+                {{ fileKw ? '没有匹配的文件' : '这个文件夹是空的' }}
               </div>
               <div v-else class="pj-file-list">
-                <div v-for="j in filteredJobs" :key="j.id" class="pj-item">
-                  <span class="pj-item-title" :title="j.prompt"><Hl :text="j.name" /></span>
-                  <code class="pj-cron">{{ j.cron }}</code>
-                  <span class="pj-item-meta">{{ j.enabled ? ('下次 ' + fmtTime(j.nextRunAt)) : '已停用' }}</span>
-                  <button class="pj-act" :disabled="isArchived" :title="isArchived ? '工作区已归档，恢复后才能试跑' : ''" @click="runJob(j)">试跑</button>
+                <div class="pj-file-row pj-file-head">
+                  <span></span>
+                  <span>名称</span>
+                  <span class="pj-col-size">大小</span>
+                  <span class="pj-col-time">时间</span>
                 </div>
+                <button v-for="e in visibleFiles" :key="e.path" class="pj-file-row" type="button"
+                        :class="{ on: previewEntry && previewEntry.path === e.path }"
+                        :title="e.kind === 'dir' ? '打开文件夹' : (e.viewUrl || previewKindOf(e) !== PV.NONE ? '预览' : '下载')"
+                        @click="onFileClick(e)">
+                  <folder-filled v-if="e.kind === 'dir'" class="pj-dir-ic" />
+                  <file-text-outlined v-else class="pj-file-ic" />
+                  <span class="pj-file-name">{{ e.name }}</span>
+                  <span class="pj-col-size">{{ e.kind === 'dir' ? '—' : fmtSize(e.size) }}</span>
+                  <span class="pj-col-time">{{ e.kind === 'dir' ? '—' : fmtAgo(e.mtime) }}</span>
+                </button>
               </div>
+              <div v-if="fileTruncated" class="pj-note pj-list-note">
+                这一层只列了前 {{ fileEntries.length }} 项，共 {{ fileTotal }} 项。
+              </div>
+            </a-spin>
             </div>
+          </section>
 
-            <div class="pj-block">
-              <div class="pj-label">
-                工作流 <span class="pj-count">{{ workflows.length }}</span>
-                <span class="pj-hint">可视化编排，手动或定时触发</span>
-                <!-- 移动壳不给「去画布」：/agents 在手机上被守卫挡着，点了只会整页重载撞进引导卡。
-                     工作流列表照旧可见（它们是事实），画布只在电脑端开 -->
-                <a v-if="!mobileShell" class="app-btn ghost pj-block-act" href="/agents?tab=workflow">去画布</a>
-              </div>
-              <div v-if="!filteredWorkflows.length" class="pj-empty">
-                {{ kw ? '没有匹配的工作流' : '还没有工作流。在「智能体 → 工作流」里建一个，保存时把归属选成这个工作区，它就会出现在这里。' }}
-              </div>
-              <div v-else class="pj-file-list">
-                <div v-for="w in filteredWorkflows" :key="w.id" class="pj-item">
-                  <span class="pj-item-title"><Hl :text="w.name" /></span>
-                  <span class="pj-item-meta">{{ w.status === 'published' ? '已发布' : '草稿' }}</span>
-                  <span class="pj-item-meta">{{ fmtAgo(toMs(w.updateTime)) }}</span>
-                  <button class="pj-act" :disabled="isArchived" :title="isArchived ? '工作区已归档，恢复后才能运行' : ''" @click="runWf(w)">运行</button>
-                </div>
-              </div>
+          <!-- 记忆 -->
+          <section class="app-card pj-card pj-mem-card">
+            <div class="pj-card-head">
+              <h2 class="pj-card-title">工作区记忆</h2>
+              <span class="pj-mem-path">.wenqu/MEMORY.md</span>
+              <span class="pj-spacer"></span>
+              <button class="app-btn" type="button" @click="openMemory">{{ wmContent ? '编辑' : '添加' }}</button>
             </div>
-            </template>
-        </a-tab-pane>
-
-        <a-tab-pane key="activity">
-          <template #tab><span>动态 <span class="pj-count">{{ activityRows.length }}</span></span></template>
-          <!-- 合流时间线：会话（带最后一句）+ 交付的产物 + 任务/工作流运行，按发生时刻倒序——
-               这个工作区最近发生过什么，一栏看完，不再只覆盖自动化那一角 -->
-          <!-- 进入即推进：欠着的事、上次聊到哪、哪次跑挂了、下一趟任务——
-               都是页面已取数据的组装，一条建议一个动作，不给泛泛的「欢迎回来」 -->
-          <div v-if="hintChips.length" class="pj-next" role="status">
-            <span class="pj-next-k">接下来</span>
-            <button v-for="c in hintChips" :key="c.key" class="pj-next-chip" type="button" @click="c.go()">
-              <b>{{ c.title }}</b><span v-if="c.sub" class="pj-next-sub">{{ c.sub }}</span>
-            </button>
-          </div>
-          <div v-if="runsError" class="pj-empty pj-err">
-            {{ runsError }}
-            <button class="pj-link-btn" @click="loadRuns">重试</button>
-          </div>
-          <div v-else-if="!filteredActivity.length" class="pj-empty">
-            {{ kw ? '没有匹配的记录' : '这个工作区还没有动静。对话、交付的产物、任务与工作流的运行都会落在这里。' }}
-            <button v-if="!kw && !isArchived" class="pj-link-btn" @click="goChat">新建一条对话</button>
-          </div>
-          <div v-else-if="filteredActivity.length" class="pj-file-list">
-            <template v-for="x in filteredActivity" :key="x.key">
-              <!-- 会话：点开进对话；最后一句作摘要行——标题只说「这条叫什么」，摘要才说「聊到了哪」 -->
-              <a v-if="x.k === 'session'" class="pj-item" :href="'/chat?sid=' + x.id"
-                 @click.prevent="openProjectSession(x)">
-                <span class="run-kind">会话</span>
-                <span class="pj-item-title pj-has-sub">
-                  <span class="pj-item-line"><Hl :text="x.title" /></span>
-                  <span v-if="x.preview" class="pj-item-sub"><Hl :text="x.preview" /></span>
-                </span>
-                <span class="pj-item-meta">{{ fmtAgo(x.at) }}</span>
-              </a>
-              <!-- 产物：交付即一条动态，预览与文件栏同一待遇 -->
-              <a v-else-if="x.k === 'artifact'" class="pj-item"
-                 :href="resolveImg(x.artifact.url)" target="_blank" rel="noopener"
-                 data-pv v-bind="pvAttrs({ artifact: x.artifact })" :title="'预览 ' + x.title">
-                <span class="run-kind">产物</span>
-                <span class="pj-item-title"><Hl :text="x.title" /></span>
-                <span class="pj-item-meta">交付 · {{ fmtAgo(x.at) }}</span>
-              </a>
-              <!-- 运行：定时任务/工作流，状态徽章与深链照旧 -->
-              <div v-else class="pj-item">
-                <span class="pj-item-title">
-                  <span class="run-kind">{{ x.run.kind === 'scheduled' ? '定时任务' : '工作流' }}</span>
-                  <Hl :text="x.run.name" />
-                  <span v-if="x.run.error" class="run-err-ic" :title="x.run.error">!</span>
-                </span>
-                <span class="run-status" :class="'rs-' + x.run.status">{{ runStatusText(x.run.status) }}</span>
-                <span class="pj-item-meta">{{ runTriggerText(x.run.trigger) }}</span>
-                <span class="pj-item-meta">{{ fmtAgo(x.at) }}</span>
-                <span v-if="x.run.kind === 'scheduled' && x.run.sessionId" class="pj-act"
-                      @click="openRunSession(x.run.sessionId)">结果会话</span>
-                <span v-else-if="x.run.kind === 'workflow' && !mobileShell" class="pj-act"
-                      @click="openWfRun(x.run)">运行详情</span>
+            <div class="pj-mem-body">
+            <a-spin :spinning="wmLoading">
+              <div v-if="wmError" class="pj-empty err">
+                读取失败：{{ wmError }}
+                <button class="pj-text-btn" type="button" @click="loadMemory">重试</button>
               </div>
-            </template>
-          </div>
-        </a-tab-pane>
-
-        <a-tab-pane key="todos">
-          <template #tab><span>事项 <span class="pj-count">{{ openTodoCount }}</span></span></template>
-          <!-- 计数是「还没做完的」：清单的意义在于欠着几件，不是一共记过几件 -->
-          <div class="pj-todo-add">
-            <a-input v-model:value="todoDraft" :maxlength="200" :disabled="isArchived"
-                     placeholder="记一件要做的事，回车添加（例如：把周报模板按新表头改一版）"
-                     @press-enter="addTodo" />
-            <button class="app-btn" :disabled="isArchived || todoSaving || !todoDraft.trim()"
-                    @click="addTodo">{{ todoSaving ? '添加中…' : '添加' }}</button>
-          </div>
-          <div v-if="todosError" class="pj-empty pj-err">
-            {{ todosError }}
-            <button class="pj-link-btn" @click="loadTodos">重试</button>
-          </div>
-          <div v-else-if="!filteredTodos.length" class="pj-empty">
-            {{ kw ? '没有匹配的事项' : '还没有事项。想到要做的事就记在这里；点「去聊」带着它开一条对话，做完勾掉。' }}
-          </div>
-          <template v-else>
-            <div v-if="openTodos.length" class="pj-file-list">
-              <div v-for="t in openTodos" :key="t.id" class="pj-item">
-                <a-checkbox :checked="false" @change="toggleTodo(t, true)" />
-                <span class="pj-item-title"><Hl :text="t.title" /></span>
-                <button class="pj-act" :disabled="isArchived"
-                        :title="isArchived ? '工作区已归档，恢复后才能新建对话' : ''"
-                        @click="goTodoChat(t)">去聊</button>
-                <button class="pj-act pj-act-danger" @click="removeTodo(t)">删除</button>
-              </div>
+              <pre v-else-if="wmContent" class="pj-mem-text">{{ wmContent }}</pre>
+              <div v-else class="pj-empty">还没有工作区记忆。</div>
+            </a-spin>
             </div>
-            <template v-if="doneTodos.length">
-              <div class="pj-todo-done-label">已完成 · {{ doneTodos.length }}</div>
-              <div class="pj-file-list">
-                <div v-for="t in doneTodos" :key="t.id" class="pj-item">
-                  <a-checkbox :checked="true" @change="toggleTodo(t, false)" />
-                  <span class="pj-item-title pj-todo-strike"><Hl :text="t.title" /></span>
-                  <span class="pj-item-meta">{{ fmtAgo(toMs(t.doneTime)) }}完成</span>
-                  <button class="pj-act pj-act-danger" @click="removeTodo(t)">删除</button>
-                </div>
-              </div>
-            </template>
-          </template>
-        </a-tab-pane>
-      </a-tabs>
-      </template>
+          </section>
+          </div>
+        </template>
+      </div>
     </div>
 
-    <!-- 删除工作区：只摘归属，本机文件不动 -->
-    <DeleteProjectModal v-model:open="delOpen"
-                        :project-name="form.name || '未命名工作区'"
-                        :saving="deleting"
-                        @confirm="doRemoveProject" />
-
-    <!-- 三个写动作用的小弹窗：改名 / 新建文件夹 / 移动到…。都只改工作区目录，不碰归属 -->
-    <a-modal v-model:open="mkdirOpen" :title="'在' + mkdirLabel + '新建文件夹'" :confirm-loading="busy"
-             ok-text="创建" cancel-text="取消" :width="modalWidth" @ok="doMkdir">
-      <a-input ref="mkdirInput" v-model:value="mkdirName" :maxlength="100" placeholder="文件夹名，例如 素材"
-               @press-enter="doMkdir" />
-      <div class="pj-mnote">名称不能以点开头——这里的列表不显示隐藏文件，传进去就再也找不着了。</div>
-    </a-modal>
-
-    <a-modal v-model:open="renOpen" :title="'重命名「' + renFromName + '」'" :confirm-loading="busy"
-             ok-text="保存" cancel-text="取消" :width="modalWidth" @ok="doRename">
-      <a-input ref="renInput" v-model:value="renToName" :maxlength="100" placeholder="新名称"
-               @press-enter="doRename" />
-      <div class="pj-mnote">仍留在原来的文件夹里，只换名字。</div>
-    </a-modal>
-
-    <a-modal v-model:open="moveOpen" :title="moveCount > 1 ? '移动 ' + moveCount + ' 项到…' : '移动到…'"
-             :confirm-loading="busy" ok-text="移动" cancel-text="取消" :width="modalWidth" @ok="doMove">
-      <div class="pj-dirlist">
-        <button v-for="d in dirChoices" :key="d.value" class="pj-dirrow" :class="{ on: moveDest === d.value }"
-                type="button" @click="moveDest = d.value">
-          <folder-filled v-if="d.value" class="pj-dir-ic" /><span>{{ d.label }}</span>
-          <span v-if="moveDest === d.value" class="pj-dir-on">将放这里</span>
-        </button>
-      </div>
-      <div v-if="dirChoices.length < 2" class="pj-mnote">这个工作区只有根目录。想分类存放，先「新建文件夹」再回来挪。</div>
-    </a-modal>
-
-    <!-- 约定历史：被替换掉的旧版（留痕），恢复=把旧值再存一版（同样留痕） -->
-    <a-modal v-model:open="histOpen" title="约定改动历史" :footer="null" :width="modalWidth">
-      <div v-if="histLoading" class="pj-mnote">加载中…</div>
-      <div v-else-if="!histRows.length" class="pj-mnote">还没有改动记录。约定第一次保存后，每次变化都会在这里留一条。</div>
-      <div v-else class="pj-hist-list">
-        <div v-for="(h, i) in histRows" :key="h.id || i" class="pj-hist-row">
-          <div class="pj-hist-meta">
-            <span>第 {{ histRows.length - i }} 版 · {{ fmtTime(toMs(h.createTime)) }} 被替换</span>
-            <button class="pj-link-btn" @click="restoreNote(h)">恢复这版</button>
-          </div>
-          <div class="pj-hist-body">{{ h.content || '（当时约定为空）' }}</div>
-        </div>
-      </div>
-      <div class="pj-mnote">恢复会把这一版存回约定（当前版本同时留痕）。</div>
-    </a-modal>
-
-    <a-modal v-model:open="wmOpen" title="工作区记忆" :footer="null" :width="modalWidth" @cancel="wmOpen = false">
+    <a-modal v-model:open="wmOpen" title="编辑工作区记忆" :footer="null"
+             :width="mobileShell ? '92vw' : 560" @cancel="wmOpen = false">
       <a-spin :spinning="wmLoading">
-        <p class="pj-mnote">存于工作区根目录 <code>.wenqu/MEMORY.md</code>（执行器那台电脑上），只属于这个工作区，与个人记忆相互独立。对话会自动读它，模型也会把学到的项目事实写进去。</p>
         <a-textarea v-model:value="wmDraft" :rows="14" :disabled="wmSaving"
                     placeholder="记录这个工作区的稳定事实：约定、决策、结构、坑、偏好…" />
-        <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:12px">
-          <a-button @click="wmOpen = false">取消</a-button>
-          <a-button type="primary" :loading="wmSaving" @click="saveWorkspaceMemoryNow">保存</a-button>
+        <div class="pj-modal-foot">
+          <button class="app-btn ghost" type="button" @click="wmOpen = false">取消</button>
+          <button class="app-btn" type="button" :disabled="wmSaving" @click="saveMemory">
+            {{ wmSaving ? '保存中…' : '保存' }}
+          </button>
         </div>
       </a-spin>
     </a-modal>
@@ -616,67 +238,46 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch, nextTick, defineComponent, h } from 'vue'
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { message, Modal } from 'ant-design-vue'
-import { PlusOutlined, CopyOutlined, UploadOutlined, FolderAddOutlined, FolderFilled, MoreOutlined, CaretRightOutlined, CheckOutlined } from '@ant-design/icons-vue'
-import { getProject, updateProject, deleteProject, bindProjectExecutor, pickExecutorDir, openProjectFolder, listExecutors, listArtifacts, listSessions, listAvailableAgents, listKnowledgeBases, listProjectFiles,
-         downloadProjectFile, listScheduledJobs, createScheduledJob, runScheduledJob, listProjectWorkflows, runWorkflow,
-         setProjectStatus, setNewSessionProject, getProjectRuns, getProjectTurnGuard,
-         exportProjectZip, uploadProjectFiles, createProjectDir, moveProjectEntry, projectBatch,
-         listProjectTodos, createProjectTodo, updateProjectTodo, deleteProjectTodo,
-         listInstructionHistory, getWorkspaceMemory, saveWorkspaceMemory } from '../api'
-import DeleteProjectModal from '../components/DeleteProjectModal.vue'
-import { sessionStore, rememberSession, loadSessions as refreshSidebarSessions } from './store'
+import { message } from 'ant-design-vue'
+import {
+  PlusOutlined, FolderFilled, FileTextOutlined, QuestionCircleOutlined,
+  SafetyOutlined, BgColorsOutlined, CheckOutlined
+} from '@ant-design/icons-vue'
+import {
+  getProject, updateProject, bindProjectExecutor, pickExecutorDir, openProjectFolder,
+  listExecutors, listProjectFiles, getWorkspaceMemory, saveWorkspaceMemory,
+  downloadProjectFile, setNewSessionProject, projectFileContent
+} from '../api'
+import { sessionStore, loadSessions as refreshSidebarSessions } from './store'
 import { WORKSPACE_ICONS, WORKSPACE_COLORS, workspaceIconOf } from '../utils/workspaceIcons'
-// 产物地址要过 resolveImg：后端给的是 /ai/artifacts/**，开发态不经媒体前缀会落到 SPA 回退，下载到的是 index.html
-import { resolveImg } from '../utils/markdown'
 import { copyText } from '../utils/clipboard'
-import { canPreview, artifactExt } from '../utils/artifactView'
-// 移动壳下不给跳往桌面专属页的入口（/agents 被 DesktopOnlyGuard 挡着，点了只会撞引导卡）
-import { mobileShell } from '../h5/mobile'
-
-const HEAD_HINT = '你电脑上的文件夹 + 自己的约定 + 自己的助手；这里发生的一切都归到它名下'
+import { resolveImg, renderMd } from '../utils/markdown'
+import { previewKindOf, PV } from '../utils/artifactView'
+import { mobileShell, isNarrow } from '../h5/mobile'
 
 const route = useRoute()
 const router = useRouter()
-/** 必须跟着路由走：/project/A → /project/B 复用同一个组件实例，取一次快照会让第二个工作区打不开 */
 const id = computed(() => String(route.params.id || ''))
-/**
- * 预览台要的取址信息，按行的来源二分：
- * 落进工作目录的那一行按「工作区 id + 相对路径」取原文；没落进来的那一行只有产物记录，按产物 id 取。
- * 两者都传会让读字档优先走产物那一份——同一行显示的是目录里的当前内容，不能被产物的旧副本顶掉。
- */
-const pvAttrs = f => f.path
-  ? { 'data-pv-project': id.value, 'data-pv-path': f.path, 'data-pv-name': f.name }
-  : {
-      'data-pv-id': (f.artifact && f.artifact.id) || '',
-      'data-pv-name': (f.artifact && f.artifact.filename) || f.name,
-      'data-pv-ext': artifactExt(f.artifact),
-      'data-pv-size': (f.artifact && f.artifact.size) || ''
-    }
-const loading = ref(false)
-const saving = ref(false)
-const deleting = ref(false)
-const archiving = ref(false)
-/** 删除二选一弹窗（保留文件 / 连文件一起删） */
-const delOpen = ref(false)
-const isImplicit = ref(false)
-/** 归档=收工：新建对话/任务/运行一律禁用（后端同样拒绝，双保险；这里先给可见的反馈） */
+
+const loading = ref(true)
+const loadedOnce = ref(false)
+const form = ref({ name: '', status: 'active', memoryIsolated: 0, roots: [], icon: '', color: '' })
 const isArchived = computed(() => form.value.status === 'archived')
-/** saved = 服务端当前值（读态显示它）；form = 编辑中的副本。分开才判得出「未保存」 */
-const saved = ref({ instructions: '', defaultAgentId: '', name: '', kbIds: [], memoryIsolated: 0, icon: '', color: '' })
-const form = ref({ name: '', instructions: '', defaultAgentId: undefined, status: 'active',
-                   kbIds: [], memoryIsolated: 0, roots: [], icon: '', color: '' })
-// 源文件夹草稿：与 form 分开，改完点「保存文件夹」才写回服务器（选择目录是多次操作）
-const rootDraft = ref([])
-const rootSaving = ref(false)
-const rootPicking = ref(false)
-const projectExecutorId = ref('')
+const displayName = computed(() => form.value.name || '未命名工作区')
+const firstLoad = computed(() => loading.value && !loadedOnce.value)
+
+// ---------- 执行器与源文件夹 ----------
+const executorId = ref('')
 const executors = ref([])
-const executorOptions = computed(() => executors.value.filter(e => e.online).map(e => ({
-  value: e.id, label: `${e.name || e.id}（在线）`
-})))
+const executorPick = ref(undefined)
+const rootPicking = ref(false)
+const rootBusy = ref(false)
+const executorOptions = computed(() => executors.value
+  .filter(e => e.online)
+  .map(e => ({ value: e.id, label: `${e.name || e.id}（在线）` })))
+
 const loadExecutors = async () => {
   try {
     const r = await listExecutors()
@@ -685,18 +286,39 @@ const loadExecutors = async () => {
     executors.value = []
   }
 }
-const rootsDirty = computed(() => JSON.stringify(rootDraft.value.map(r => [r.path, r.alias]))
-  !== JSON.stringify((form.value.roots || []).map(r => [r.path, r.alias])))
+
 const baseNameOf = p => {
   const s = String(p || '').replace(/[/\\]+$/, '')
   const i = Math.max(s.lastIndexOf('/'), s.lastIndexOf('\\'))
   return (i >= 0 ? s.slice(i + 1) : s) || '文件夹'
 }
+
+/** 目录改完即存：服务端返回整份工作区，根别名以它为准（重名会被它去重） */
+const bindRoots = async (executor, roots) => {
+  const r = await bindProjectExecutor(id.value, executor, roots.map(x => ({ path: x.path, alias: x.alias })))
+  const p = (r && r.data) || {}
+  if (Array.isArray(p.roots)) form.value.roots = p.roots.map(x => ({ ...x }))
+  executorId.value = p.executorId || executor
+  return p
+}
+
+const ensureFileDir = () => {
+  const roots = form.value.roots
+  if (!roots.length) { fileDir.value = ''; return }
+  const ok = roots.some(x => fileDir.value === x.alias || fileDir.value.startsWith(x.alias + '/'))
+  if (!ok) {
+    const primary = roots.find(x => x.primary) || roots[0]
+    fileDir.value = primary ? primary.alias : ''
+  }
+}
+
 const addRoot = async () => {
-  if (!projectExecutorId.value) { message.warning('这个工作区还没有绑定执行器'); return }
+  if (rootPicking.value || rootBusy.value) return
+  const ex = executorId.value || executorPick.value
+  if (!ex) { message.warning('先选择一台在线的电脑'); return }
   rootPicking.value = true
   try {
-    const r = await pickExecutorDir(projectExecutorId.value)
+    const r = await pickExecutorDir(ex)
     if (r && r.success === false) {
       const msg = String(r.msg || '')
       if (!/没有选择目录/.test(msg)) message.warning(msg || '没有选到目录')
@@ -704,407 +326,221 @@ const addRoot = async () => {
     }
     const picked = (r && r.data && r.data.path) || ''
     if (!picked) return
-    if (rootDraft.value.some(x => x.path === picked)) { message.info('这个文件夹已经添加过了'); return }
-    rootDraft.value.push({ path: picked, alias: baseNameOf(picked), primary: false })
+    if (form.value.roots.some(x => x.path === picked)) { message.info('这个文件夹已经添加过了'); return }
+    rootBusy.value = true
+    await bindRoots(ex, [...form.value.roots, { path: picked, alias: baseNameOf(picked) }])
+    const added = form.value.roots.find(x => x.path === picked)
+    if (added) fileDir.value = added.alias
+    message.success('已添加文件夹')
+    await loadFiles()
   } catch (e) {
-    message.warning('没有选到目录：' + (e.message || ''))
+    const msg = String(e.message || '')
+    // 用户在系统选择框里点了取消：不是失败，静默返回
+    if (/没有选择目录|E_CANCELLED/.test(msg)) return
+    message.error('添加失败：' + (msg || '请重试'))
   } finally {
     rootPicking.value = false
+    rootBusy.value = false
   }
 }
-const removeRoot = i => { rootDraft.value.splice(i, 1) }
-const saveRoots = async () => {
-  if (!projectExecutorId.value) { message.warning('这个工作区还没有绑定执行器'); return }
-  if (!rootDraft.value.length) { message.warning('至少保留一个文件夹'); return }
-  rootSaving.value = true
+
+const removeRoot = async root => {
+  if (rootBusy.value || rootPicking.value) return
+  if (form.value.roots.length <= 1) { message.warning('至少保留一个文件夹'); return }
+  if (!executorId.value) { message.warning('这个工作区还没有绑定执行器'); return }
+  rootBusy.value = true
   try {
-    await bindProjectExecutor(id.value, projectExecutorId.value,
-      rootDraft.value.map(r => ({ path: r.path, alias: r.alias })))
-    message.success('源文件夹已保存')
-    await load()
+    await bindRoots(executorId.value, form.value.roots.filter(x => x.path !== root.path))
+    ensureFileDir()
+    message.success('已移除')
+    await loadFiles()
   } catch (e) {
-    message.error('保存失败：' + (e.message || '请重试'))
+    message.error('移除失败：' + (e.message || '请重试'))
   } finally {
-    rootSaving.value = false
+    rootBusy.value = false
   }
 }
-const sessions = ref([])
-/** 会话总数（列表接口只返回首页 50 条，计数要用 total） */
-const sessionTotal = ref(0)
-const sessionError = ref('')
-const artifacts = ref([])
-const filesError = ref('')
-/** 产物那份数据单独报错：文件列出来了但产物没并进来，看着就像「交付的东西凭空少了」 */
-const artifactsError = ref('')
-/** 根层条目数与是否截断（后端给的，别再把「只列最近 300 项」当成「就这些」；子文件夹各自的截断随层存） */
-const fileTotal = ref(0)
-const filesTruncated = ref(false)
-/** 树的各层清单：dirPath → { entries, total, truncated, error }。根那次调用带回全部文件夹清单，逐层并行取 */
-const layers = ref({})
-/** 收起的文件夹集合。默认全展开——工作区目录长不出几十层，摊开比一个个点开快 */
-const openDirs = ref(new Set())
-/** 拖拽落点：null=没拖进列表，''=根目录，path=那个文件夹（行高亮跟落点走） */
-const dropAt = ref(null)
-/** 「在这里上传」的目标：工具条上传=根，文件夹 ⋯ 菜单上传=那个文件夹 */
-const uploadTarget = ref('')
-/** 整个目录的合计与文件夹清单、文件名集合（后端一次遍历给全，删除弹窗与产物去重都要用） */
-const filesAll = ref(0)
-const bytesAll = ref(0)
-const filesCapped = ref(false)
-const dirsAll = ref([])
-const namesAll = ref([])
-/** 模型看到的是不是同一批目录（本机工作区恒为 true） */
-const agentShared = ref(true)
-// ---------- 文件管理（上传 / 新建 / 改名 / 移动 / 删除）的在途状态 ----------
-/** 一次只让一个写动作在跑：批量删除与改名并发改同一条路径会撞出看不懂的错 */
-const busy = ref(false)
-const overwrite = ref(false)
-const uploading = ref('')
-const fileInput = ref(null)
-const sel = ref([])
-const selSet = computed(() => new Set(sel.value))
-const mkdirOpen = ref(false)
-const mkdirName = ref('')
-const mkdirInput = ref(null)
-const renOpen = ref(false)
-const renTarget = ref(null)
-const renToName = ref('')
-const renInput = ref(null)
-const moveOpen = ref(false)
-const movePaths = ref([])
-const moveDest = ref('')
-const jobs = ref([])
-const workflows = ref([])
-/** 定时任务与工作流同栏：任一份拉不到就不能装作「还没有」 */
-const autoError = ref('')
-const runs = ref([])
-const runsError = ref('')
-// ---------- 事项（这个场子要做的事） ----------
-const todos = ref([])
-const todosError = ref('')
-const todoDraft = ref('')
-const todoSaving = ref(false)
-const jobFormOpen = ref(false)
-const jobSaving = ref(false)
-const jobForm = ref({ name: '', prompt: '', cron: '0 9 * * 1' })
-const agents = ref([])
-const kbList = ref([])
-const kbLoading = ref(false)
-const kw = ref('')
-const loadedOnce = ref(false)
-const instrEdit = ref(false)
-const instrFull = ref(false)
-/** 页头「设置」弹层的开合。此前它是一张同页折叠卡，展开要吃掉约定与四个栏之间最贵的一段竖向空间 */
-const settingsOpen = ref(false)
-const nameEditing = ref(false)
-const nameDraft = ref('')
-const nameInput = ref(null)
-const tab = ref('files')
 
-/** 清空助手这件事不能只靠 hover 才显形的小叉：触屏没有 hover，就得有一个正常可点的「不设」项 */
-const AGENT_NONE = '__none__'
-const agentOptions = computed(() => [
-  { value: AGENT_NONE, label: '不设（跟随平台默认智能体' + (defaultAgentName.value ? `：${defaultAgentName.value}` : '') + '）' },
-  ...agents.value.map(a => ({ value: a.id, label: a.name }))
-])
-/** 平台默认智能体叫什么（清单里 isDefault 那一条）：不点名的话「跟随平台默认」等于让用户去猜 */
-const defaultAgentName = computed(() => (agents.value.find(a => a.isDefault === 1 || a.isDefault === true) || {}).name || '')
-const firstLoad = computed(() => loading.value && !loadedOnce.value)
-/** 没写过约定时直接给输入框：第一次进来最该做的事不该藏在「编辑」后面 */
-const instrEditing = computed(() => instrEdit.value || !saved.value.instructions)
-const instrDirty = computed(() => (form.value.instructions || '').trim() !== (saved.value.instructions || '').trim())
-const instrLong = computed(() => (saved.value.instructions || '').length > 120)
-const agentName = computed(() => {
-  const a = agents.value.find(x => x.id === (form.value.defaultAgentId || saved.value.defaultAgentId))
-  return a ? a.name : ''
-})
-/** 绑定候选 = 我的知识库（内置手册库没有名字场景，过滤掉 builtin，避免可选不可用的项） */
-const kbOptions = computed(() => kbList.value
-  .filter(k => !k.builtin)
-  .map(k => ({ value: k.id, label: k.name || k.id })))
-const toMs = v => {
-  if (v == null) return 0
-  if (typeof v === 'number') return v
-  const t = Date.parse(String(v).replace(' ', 'T'))
-  return Number.isFinite(t) ? t : 0
-}
-
-/** 文件区 = 整棵目录树 ∪ 产物（只在根列）。后端一层一列：根那次带回全部文件夹清单（dirs），
-    逐层并行取完按路径折回树；产物是从工作目录复制出去的同一份东西，不再各列一遍——
-    与根层同名就挂「已交付」角标，同名文件在全目录任何位置出现过（names）就整行不列。 */
-const fileTree = computed(() => {
-  const root = { name: '', path: '', kind: 'dir', dirs: new Map(), files: [], count: 0, size: 0 }
-  for (const layer of Object.values(layers.value)) {
-    for (const f of (layer.entries || [])) {
-      // 目录行也要建节点：根层只返回源文件夹行，不靠子目录里的文件反推，
-      // 才能「先显示收起的文件夹、点开再取这一层」
-      const isDirRow = (f.kind || 'file') === 'dir'
-      const segs = String(f.path || '').split('/').filter(Boolean)
-      if (!isDirRow) segs.pop()   // 文件行末段是文件名，前面的才是目录
-      let node = root
-      let acc = ''
-      for (const seg of segs) {
-        acc = acc ? acc + '/' + seg : seg
-        let d = node.dirs.get(seg)
-        if (!d) { d = { name: seg, path: acc, kind: 'dir', dirs: new Map(), files: [], count: 0, size: 0 }; node.dirs.set(seg, d) }
-        node = d
-      }
-      if (isDirRow) continue
-      node.files.push({ name: f.name, path: f.path, size: f.size, at: toMs(f.mtime), viewUrl: f.viewUrl || '', artifact: null })
-    }
-  }
-  const byName = new Map()
-  for (const f of root.files) if (!byName.has(f.name)) byName.set(f.name, f)
-  const seen = new Set(namesAll.value)
-  for (const a of artifacts.value) {
-    const base = String(a.filename || '').split('/').pop()
-    const row = byName.get(base)
-    if (row) { row.artifact = a; continue }
-    if (seen.has(base)) continue
-    root.files.push({ name: base, path: '', size: a.size, at: toMs(a.createTime), viewUrl: '', artifact: a })
-  }
-  // 目录行上的计数按已加载层累计；区级合计另看 filesAll（根层全目录统计）
-  const roll = d => {
-    for (const f of d.files) { d.count += 1; d.size += Number(f.size) || 0 }
-    for (const sub of d.dirs.values()) { roll(sub); d.count += sub.count; d.size += sub.size }
-    return d
-  }
-  return roll(root)
-})
-const rootLayer = computed(() => layers.value[''] || null)
-const fileCount = computed(() => filesAll.value || fileTree.value.count)
-/** 打包导出的硬上限与后端 ProjectFileService 一致：超了点下去也是失败，不如先禁用并说清 */
-const EXPORT_MAX_FILES = 2000
-const EXPORT_MAX_BYTES = 100 * 1024 * 1024
-const exportBlockReason = computed(() => {
-  if (filesAll.value > EXPORT_MAX_FILES) return `整个工作区 ${filesAll.value} 个文件，超过打包导出的 ${EXPORT_MAX_FILES} 个上限`
-  if (bytesAll.value > EXPORT_MAX_BYTES) return '整个工作区超过打包导出的 100 MB 上限'
-  return ''
-})
-/** 树按展开状态摊平成行：同层文件夹在前（名字序）、文件按修改时间倒序——沿用旧列表的读法。
-    默认只展开第一层源文件夹，其余点开时才取数据。forceOpen=无视展开状态全树摊平（搜索态用） */
-const flattenTree = (forceOpen) => {
-  const out = []
-  const walk = (node, depth) => {
-    for (const d of [...node.dirs.values()].sort((a, b) => String(a.name).localeCompare(String(b.name)))) {
-      const open = forceOpen || openDirs.value.has(d.path)
-      const layer = layers.value[d.path] || null
-      out.push({ type: 'dir', key: 'd:' + d.path, depth, dir: d, open, layer })
-      if (!open) continue
-      if (layer && layer.error) {
-        out.push({ type: 'note', key: 'n:' + d.path, depth: depth + 1, path: d.path, error: true,
-                   text: '这个文件夹读不到：' + layer.error })
-      } else if (layer && layer.truncated) {
-        out.push({ type: 'note', key: 'n:' + d.path, depth: depth + 1, path: d.path, error: false,
-                   text: '文件夹太大，只列了最近 ' + (layer.entries || []).length + ' 项（共 ' + layer.total + ' 项），更早的用「打包导出」看整份' })
-      }
-      walk(d, depth + 1)
-    }
-    for (const f of [...node.files].sort((a, b) => b.at - a.at))
-      out.push({ type: 'file', key: f.path ? 'f:' + f.path : 'a:' + (f.artifact && f.artifact.id), depth, file: f })
-  }
-  walk(fileTree.value, 0)
-  return out
-}
-const treeRows = computed(() => flattenTree(false))
-/** 搜索态：强制全树摊平；文件按名字/路径命中，文件夹自己命中或底下有命中的都保留（保留层级，命中文件不会悬空） */
-const searchRows = computed(() => {
-  const q = kw.value.trim().toLowerCase()
-  if (!q) return treeRows.value
-  const m = t => String(t || '').toLowerCase().includes(q)
-  const mark = node => {
-    let any = m(node.name)
-    for (const sub of node.dirs.values()) if (mark(sub)) any = true
-    for (const f of node.files) if (m(f.name) || m(f.path)) any = true
-    node.hit = any
-    return any
-  }
-  mark(fileTree.value)
-  return flattenTree(true).filter(r => r.type === 'file'
-    ? m(r.file.name) || m(r.file.path)
-    : r.type === 'dir' && r.dir.hit)
-})
-const fileViewRows = searchRows
-/** 新建文件夹的落点（'' = 根，目录 ⋯ 菜单=那个文件夹）；说明里的位置名——根目录要叫「根目录」 */
-const mkdirTarget = ref('')
-const mkdirLabel = computed(() => (mkdirTarget.value ? '「' + mkdirTarget.value + '」里' : '根目录'))
-const parentOf = path => (path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '')
-const nameOf = path => String(path).split('/').pop()
-const modalWidth = computed(() => (mobileShell ? '92vw' : 420))
-const renFromName = computed(() => (renTarget.value ? nameOf(renTarget.value.path) : ''))
-const moveCount = computed(() => movePaths.value.length)
-/** 「移动到…」的候选：根目录＋整个目录里的文件夹；要移的那个文件夹自己和它的子孙不能当目的地 */
-const dirChoices = computed(() => {
-  const moving = new Set()
-  for (const p of movePaths.value) {
-    if (!dirsAll.value.includes(p)) continue
-    moving.add(p)
-    for (const d of dirsAll.value) if (d.startsWith(p + '/')) moving.add(d)
-  }
-  const roots = (form.value.roots || []).map(r => ({
-    value: r.alias,
-    label: r.alias + (r.primary ? '（主要）' : '')
-  }))
-  return [
-    ...roots,
-    ...dirsAll.value.filter(d => !moving.has(d)).map(d => ({ value: d, label: d }))
-  ]
-})
-/** 拖拽提示里的落点名——根目录要叫「根目录」，别显示成空串 */
-const dropTipAt = computed(() => (dropAt.value ? '「' + dropAt.value + '」里' : '根目录'))
-
-/** 工作区内搜索：五类都过滤（此前漏了定时任务与工作流，搜任务名一片空白） */
-const hit = (...texts) => {
-  const q = kw.value.trim().toLowerCase()
-  if (!q) return true
-  return texts.some(t => String(t || '').toLowerCase().includes(q))
-}
-const filteredSessions = computed(() => sessions.value.filter(s => hit(s.title || '新对话', s.lastMessage)))
-const filteredJobs = computed(() => jobs.value.filter(j => hit(j.name, j.prompt)))
-const filteredWorkflows = computed(() => workflows.value.filter(w => hit(w.name)))
-/** 动态时间线 = 会话（带最后一句）∪ 交付的产物 ∪ 任务/工作流运行，按发生时刻倒序。
-    三份来源都是页面已取过的数据（loadSessions/loadFiles/loadRuns），这里纯组装、零新增请求 */
-const activityRows = computed(() => {
-  const rows = []
-  for (const s of sessions.value) {
-    rows.push({ k: 'session', key: 's:' + s.id, id: s.id, title: s.title || '新对话',
-                preview: s.lastMessage || '', at: toMs(s.updateTime) })
-  }
-  for (const a of artifacts.value) {
-    rows.push({ k: 'artifact', key: 'a:' + a.id, title: String(a.filename || '').split('/').pop(),
-                artifact: a, at: toMs(a.createTime) })
-  }
-  for (const r of runs.value) {
-    rows.push({ k: 'run', key: 'r:' + r.kind + ':' + r.id, run: r, at: toMs(r.startedAt) })
-  }
-  return rows.sort((a, b) => b.at - a.at)
-})
-const filteredActivity = computed(() =>
-  activityRows.value.filter(x => hit(x.title, x.preview, x.run && x.run.error)))
-// ---------- 事项：未完成在前、完成收尾（后端同序）；计数只认「还没做完的」 ----------
-const openTodos = computed(() => todos.value.filter(t => t.status !== 'done'))
-const doneTodos = computed(() => todos.value.filter(t => t.status === 'done'))
-const openTodoCount = computed(() => openTodos.value.length)
-const filteredTodos = computed(() => todos.value.filter(t => hit(t.title)))
-/** 「接下来」建议条：欠着的事 / 上次聊到哪 / 最近哪次跑挂了 / 下一趟任务什么时候。
-    全部来自页面已取数据，最多三条——建议超过三条就没人看了 */
-const hintChips = computed(() => {
-  const out = []
-  if (openTodoCount.value) {
-    out.push({ key: 'todo', title: openTodoCount.value + ' 件没做完', go: () => { tab.value = 'todos' } })
-  }
-  const last = sessions.value.find(s => s.lastMessage)
-  if (last) {
-    const m = last.lastMessage
-    out.push({ key: 'last', title: '上次聊到', sub: m.length > 24 ? m.slice(0, 24) + '…' : m,
-               go: () => openProjectSession(last) })
-  }
-  const failed = runs.value.find(r => r.status === 'failed' || r.status === 'timeout')
-  if (failed) {
-    out.push({
-      key: 'fail', title: '最近跑挂了', sub: failed.name,
-      go: () => {
-        if (failed.kind === 'scheduled' && failed.sessionId) openRunSession(failed.sessionId)
-        else if (failed.kind === 'workflow' && !mobileShell.value) openWfRun(failed)
-        else if (failed.kind === 'workflow') router.push('/agents?tab=workflow&wf=' + failed.workflowId + '&run=' + failed.id)
-      }
-    })
-  }
-  const nextJob = jobs.value.filter(j => j.enabled && j.nextRunAt)
-    .sort((a, b) => String(a.nextRunAt).localeCompare(String(b.nextRunAt)))[0]
-  if (nextJob) {
-    out.push({ key: 'job', title: '下一趟 ' + fmtTime(nextJob.nextRunAt), sub: nextJob.name,
-               go: () => { tab.value = 'auto' } })
-  }
-  return out.slice(0, 3)
-})
-
-/** 搜索跨四个栏过滤，但一次只显示一个栏：命中在别的栏时必须说出来并可一键跳过去，
-    否则停在「文件」搜会话名会看到「没有匹配的文件」——用户读成搜不到，不会想到换栏 */
-const TAB_LABEL = { files: '文件', sessions: '会话', auto: '自动化', activity: '动态', todos: '事项' }
-const tabHits = computed(() => ({
-  files: searchRows.value.length,
-  sessions: filteredSessions.value.length,
-  auto: filteredJobs.value.length + filteredWorkflows.value.length,
-  activity: filteredActivity.value.length,
-  todos: filteredTodos.value.length
-}))
-const currentHits = computed(() => tabHits.value[tab.value])
-/** 只在真的搜了东西时才提「别处命中」——空关键词下每条记录都算命中，跳转条会常驻不放 */
-const jumpChips = computed(() => {
-  if (!kw.value.trim()) return []
-  return Object.keys(TAB_LABEL)
-    .filter(k => k !== tab.value && tabHits.value[k] > 0)
-    .map(k => ({ key: k, label: TAB_LABEL[k], n: tabHits.value[k] }))
-})
-
-const displayName = computed(() => form.value.name || (isImplicit.value ? '会话' : '未命名工作区'))
-const nameDirty = computed(() => nameDraft.value.trim() !== (form.value.name || ''))
-
-/** 命中的那几个字标出来：跳过去的那一栏里，行可能是靠指令/cron/报错中的词，不标看不出为什么是它。
-    只包 <mark>、不走 v-html——文件名与标题是用户数据，不能当 HTML 喂 */
-const Hl = defineComponent({
-  props: { text: { type: String, default: '' } },
-  setup(props) {
-    return () => {
-      const t = String(props.text)
-      const q = kw.value.trim().toLowerCase()
-      if (!q) return t
-      const low = t.toLowerCase()
-      const out = []
-      let i = 0, j, n = 0
-      while ((j = low.indexOf(q, i)) >= 0) {
-        if (j > i) out.push(t.slice(i, j))
-        out.push(h('mark', { key: 'm' + (n++) }, t.slice(j, j + q.length)))
-        i = j + q.length
-      }
-      return i < t.length ? out.concat(t.slice(i)) : out
-    }
-  }
-})
-
-// ==================== 运行记录（定时任务执行 + 工作流运行合流） ====================
-const RUN_STATUS_TEXT = {
-  success: '成功', succeeded: '成功', failed: '失败', timeout: '超时',
-  running: '进行中', queued: '排队中', waiting_approval: '待审核', skipped: '已跳过'
-}
-const RUN_TRIGGER_TEXT = { manual: '手动', schedule: '定时', scheduled: '定时', agent: '智能体', api: 'API' }
-const runStatusText = s => RUN_STATUS_TEXT[s] || s || '—'
-const runTriggerText = t => RUN_TRIGGER_TEXT[t] || t || '—'
-const loadRuns = async () => {
+const chooseExecutor = async v => {
+  executorPick.value = v
+  if (!form.value.roots.length) return
+  rootBusy.value = true
   try {
-    const r = await getProjectRuns(id.value)
-    runs.value = (r && r.data) || []
-    runsError.value = ''
+    await bindRoots(v, form.value.roots)
+    message.success('已绑定这台电脑')
+    await loadFiles()
   } catch (e) {
-    runs.value = []
-    runsError.value = e.message || '运行记录加载失败'
+    message.error('绑定失败：' + (e.message || '请重试'))
+  } finally {
+    rootBusy.value = false
   }
 }
-/** 定时任务的结果会话（一任务一会话，历史都追加在里面） */
-const openRunSession = sid => router.push({ path: '/chat', query: { sid } })
-/** 工作流运行详情：智能体页工作流面板的运行历史深链（?wf=&run= 原有协议） */
-const openWfRun = x => router.push('/agents?tab=workflow&wf=' + x.workflowId + '&run=' + x.id)
 
-const fmtTime = s => (s ? String(s).replace('T', ' ').slice(0, 16) : '—')
-/** 相对时间：同一天里的七八条用绝对日期根本分不出先后 */
-const fmtAgo = ms => {
-  const v = Number(ms)
-  if (!v) return '—'
-  const d = Date.now() - v
-  if (d < 0) return fmtMtime(v)
-  if (d < 60e3) return '刚刚'
-  if (d < 3600e3) return Math.floor(d / 60e3) + ' 分钟前'
-  if (d < 86400e3) return Math.floor(d / 3600e3) + ' 小时前'
-  if (d < 7 * 86400e3) return Math.floor(d / 86400e3) + ' 天前'
-  return fmtMtime(v)
+const openRoot = async root => {
+  try {
+    await openProjectFolder(id.value, root.alias)
+  } catch (e) {
+    message.warning(e.message || '打开失败：先确认那台电脑上的执行器在线')
+  }
 }
-const fmtMtime = ms => {
-  if (!ms) return '—'
-  const d = new Date(Number(ms))
-  const p = n => String(n).padStart(2, '0')
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+
+const copyRootPath = root => copyText(root.path, '路径已复制')
+
+// ---------- 目录内容（只读） ----------
+const fileDir = ref('')
+const fileEntries = ref([])
+const fileTotal = ref(0)
+const fileTruncated = ref(false)
+const fileError = ref('')
+const fileKw = ref('')
+const fileLoading = ref(false)
+let filesSeq = 0
+
+// ---------- 文件预览（桌面左栏内嵌；放不下两栏时点击文件仍走新标签/下载） ----------
+// 是否摆两栏按内容区实测宽度判：侧栏可折叠（232/56px）、窗口可缩放，只看视口会算错
+const pjWrapEl = ref(null)
+const pjWrapW = ref(Math.max(0, (typeof window !== 'undefined' ? window.innerWidth : 0) - 232))
+const inlinePreview = computed(() => !isNarrow.value && pjWrapW.value >= 880)
+let pjRO = null
+const previewEntry = ref(null)
+const previewText = ref('')
+const previewTruncated = ref(false)
+const previewLoading = ref(false)
+const previewError = ref('')
+let previewSeq = 0
+const previewKind = computed(() => previewKindOf(previewEntry.value))
+const previewUrl = computed(() => (previewEntry.value && previewEntry.value.viewUrl) ? resolveImg(previewEntry.value.viewUrl) : '')
+const previewHtml = computed(() => (previewKind.value === PV.MD ? renderMd(previewText.value) : ''))
+const clearPreview = () => {
+  previewSeq++
+  previewEntry.value = null
+  previewText.value = ''
+  previewTruncated.value = false
+  previewLoading.value = false
+  previewError.value = ''
 }
+
+const activeRoot = computed(() => {
+  const alias = String(fileDir.value || '').split('/')[0]
+  return form.value.roots.find(r => r.alias === alias)
+    || form.value.roots.find(r => r.primary)
+    || form.value.roots[0]
+    || null
+})
+
+const crumbs = computed(() => {
+  const segs = String(fileDir.value || '').split('/').filter(Boolean)
+  const out = []
+  let acc = ''
+  for (const s of segs) {
+    acc = acc ? acc + '/' + s : s
+    out.push({ label: s, path: acc })
+  }
+  return out
+})
+
+const visibleFiles = computed(() => {
+  const q = fileKw.value.trim().toLowerCase()
+  if (!q) return fileEntries.value
+  return fileEntries.value.filter(e => String(e.name || '').toLowerCase().includes(q))
+})
+
+const loadFiles = async () => {
+  const seq = ++filesSeq
+  if (!form.value.roots.length || !fileDir.value) {
+    fileEntries.value = []
+    fileTotal.value = 0
+    fileTruncated.value = false
+    fileError.value = ''
+    return
+  }
+  fileLoading.value = true
+  try {
+    const r = await listProjectFiles(id.value, fileDir.value)
+    if (seq !== filesSeq) return
+    const d = (r && r.data) || {}
+    fileEntries.value = Array.isArray(d.entries) ? d.entries : []
+    fileTotal.value = d.total || 0
+    fileTruncated.value = !!d.truncated
+    fileError.value = ''
+  } catch (e) {
+    if (seq !== filesSeq) return
+    fileEntries.value = []
+    fileTotal.value = 0
+    fileTruncated.value = false
+    fileError.value = e.message || '目录读取失败'
+  } finally {
+    if (seq === filesSeq) fileLoading.value = false
+  }
+}
+
+const selectRoot = root => {
+  if (fileDir.value === root.alias) return
+  fileDir.value = root.alias
+  fileKw.value = ''
+  clearPreview()
+  loadFiles()
+}
+
+const openDir = path => {
+  if (path === fileDir.value) return
+  fileDir.value = path
+  fileKw.value = ''
+  clearPreview()
+  loadFiles()
+}
+
+const selectFile = async e => {
+  if (!e) return
+  const seq = ++previewSeq
+  previewEntry.value = e
+  previewText.value = ''
+  previewTruncated.value = false
+  previewError.value = ''
+  previewLoading.value = false
+  const kind = previewKindOf(e)
+  // 页面/图片/PDF 直接把签名地址交给 iframe/img，不必再取原文
+  if (kind !== PV.MD && kind !== PV.TEXT && kind !== PV.TABLE) return
+  previewLoading.value = true
+  try {
+    const r = await projectFileContent(id.value, e.path)
+    if (seq !== previewSeq) return
+    const d = (r && r.data) || {}
+    previewText.value = String(d.content || '')
+    previewTruncated.value = !!d.truncated
+  } catch (err) {
+    if (seq !== previewSeq) return
+    previewError.value = err.message || '读取失败'
+  } finally {
+    if (seq === previewSeq) previewLoading.value = false
+  }
+}
+
+const downloadPreview = async () => {
+  const e = previewEntry.value
+  if (!e) return
+  try {
+    await downloadProjectFile(id.value, e.path, e.name, fileDir.value)
+  } catch (err) {
+    message.error('下载失败：' + (err.message || '请重试'))
+  }
+}
+
+const onFileClick = async e => {
+  if (e.kind === 'dir') { openDir(e.path); return }
+  if (inlinePreview.value) { selectFile(e); return }
+  if (e.viewUrl) {
+    const url = resolveImg(e.viewUrl)
+    if (url) window.open(url, '_blank', 'noopener')
+    return
+  }
+  try {
+    await downloadProjectFile(id.value, e.path, e.name, fileDir.value)
+  } catch (err) {
+    message.error('下载失败：' + (err.message || '请重试'))
+  }
+}
+
 const fmtSize = n => {
   const v = Number(n) || 0
   if (v >= 1024 * 1024) return (v / 1024 / 1024).toFixed(2) + ' MB'
@@ -1112,661 +548,166 @@ const fmtSize = n => {
   return v + ' B'
 }
 
-const patch = async (body, okMsg) => {
-  saving.value = true
+const fmtTime = ms => {
+  if (!ms) return '—'
+  const d = new Date(Number(ms))
+  const p = n => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+}
+
+const fmtAgo = ms => {
+  const v = Number(ms)
+  if (!v) return '—'
+  const d = Date.now() - v
+  if (d < 0) return fmtTime(v)
+  if (d < 60e3) return '刚刚'
+  if (d < 3600e3) return Math.floor(d / 60e3) + ' 分钟前'
+  if (d < 86400e3) return Math.floor(d / 3600e3) + ' 小时前'
+  if (d < 7 * 86400e3) return Math.floor(d / 86400e3) + ' 天前'
+  return fmtTime(v)
+}
+
+// ---------- 隔离 ----------
+const isoSaving = ref(false)
+const saveMemoryIsolated = async v => {
+  const next = v === true ? 1 : 0
+  const prev = form.value.memoryIsolated
+  form.value.memoryIsolated = next
+  isoSaving.value = true
   try {
-    await updateProject(id.value, body)
-    if (okMsg) message.success(okMsg)
-    await load()
-    return true
+    await updateProject(id.value, { memoryIsolated: next })
+    message.success(next ? '已开启：这个工作区的对话不带入也不写入个人记忆' : '已关闭：对话照常使用个人记忆')
   } catch (e) {
+    form.value.memoryIsolated = prev
     message.error('保存失败：' + (e.message || '请重试'))
-    return false
   } finally {
-    saving.value = false
+    isoSaving.value = false
   }
 }
 
-const saveInstr = async () => {
-  const v = (form.value.instructions || '').trim()
-  if (await patch({ instructions: v }, v ? '约定已保存，之后的对话会按它执行' : '约定已清空')) instrEdit.value = false
+// ---------- 记忆 ----------
+const wmOpen = ref(false)
+const wmLoading = ref(false)
+const wmSaving = ref(false)
+const wmContent = ref('')
+const wmDraft = ref('')
+const wmError = ref('')
+
+const loadMemory = async () => {
+  wmLoading.value = true
+  try {
+    const r = await getWorkspaceMemory(id.value)
+    wmContent.value = (r && r.data && r.data.content) || ''
+    wmError.value = ''
+  } catch (e) {
+    wmContent.value = ''
+    wmError.value = e.message || '读取失败'
+  } finally {
+    wmLoading.value = false
+  }
 }
-const cancelInstr = () => {
-  form.value.instructions = saved.value.instructions
-  instrEdit.value = false
+
+const openMemory = async () => {
+  wmOpen.value = true
+  wmDraft.value = wmContent.value
+  await loadMemory()
+  wmDraft.value = wmContent.value
 }
-// ==================== 改名（页头就地）与默认助手（弹层里改完即落库） ====================
+
+const saveMemory = async () => {
+  wmSaving.value = true
+  try {
+    await saveWorkspaceMemory(id.value, wmDraft.value)
+    wmContent.value = wmDraft.value
+    wmOpen.value = false
+    message.success('已保存工作区记忆')
+  } catch (e) {
+    message.error('保存失败：' + (e.message || '请重试'))
+  } finally {
+    wmSaving.value = false
+  }
+}
+
+// ---------- 页头：改名 / 外观 / 新对话 ----------
+const nameEditing = ref(false)
+const nameDraft = ref('')
+const nameInput = ref(null)
+const savingName = ref(false)
+
 const startRename = () => {
   nameDraft.value = form.value.name || ''
   nameEditing.value = true
   nextTick(() => nameInput.value && nameInput.value.focus({ cursor: 'all' }))
 }
+
 const cancelRename = () => { nameEditing.value = false }
+
 const saveName = async () => {
   const name = nameDraft.value.trim()
-  if (!name && !isImplicit.value) { message.warning('工作区名不能为空'); return }
-  if (await patch({ name }, '名字已更新')) nameEditing.value = false
+  if (!name) { message.warning('工作区名不能为空'); return }
+  savingName.value = true
+  try {
+    await updateProject(id.value, { name })
+    form.value.name = name
+    nameEditing.value = false
+    message.success('名字已更新')
+    refreshSidebarSessions(undefined, { refreshProjects: true }).catch(() => {})
+  } catch (e) {
+    message.error('保存失败：' + (e.message || '请重试'))
+  } finally {
+    savingName.value = false
+  }
 }
-/** 这一项没有「草稿」可言：留着没生效的选择反而骗人，所以改完直接存，失败就退回服务端真值 */
-const saveAgent = async v => {
-  const next = v && v !== AGENT_NONE ? v : undefined
-  form.value.defaultAgentId = next
-  const label = (agents.value.find(a => a.id === v) || {}).name || v
-  const ok = await patch({ defaultAgentId: next || '' },
-    next ? `默认助手已设为「${label}」` : '已取消默认助手，跟随平台默认智能体')
-  if (!ok) form.value.defaultAgentId = saved.value.defaultAgentId || undefined
-}
-/** 绑定知识库＝默认检索域，改完即存（同一理由：留着没生效的选择骗人）；失败退回服务端真值 */
-const saveKb = async list => {
-  const next = Array.isArray(list) ? list.filter(Boolean) : []
-  form.value.kbIds = next
-  const ok = await patch({ kbIds: next },
-    next.length ? '已绑定，这个场子里的对话默认检索这些库' : '已解绑，检索沿用我的全部知识库')
-  if (!ok) form.value.kbIds = [...(saved.value.kbIds || [])]
-}
-/** 工作区外观：点一下即存（图标/颜色不是需要草稿的配置，看见就是结果） */
+
+const lookOpen = ref(false)
 const saveLook = async patch => {
   const next = {
     icon: patch.icon !== undefined ? patch.icon : form.value.icon,
     color: patch.color !== undefined ? patch.color : form.value.color
   }
   const prev = { icon: form.value.icon, color: form.value.color }
-  // 先落到界面：颜色/图标是「点一下就该看见」的东西，不等网络回来才变
   form.value.icon = next.icon
   form.value.color = next.color
   try {
     await updateProject(id.value, next)
-    saved.value.icon = next.icon
-    saved.value.color = next.color
   } catch (e) {
     form.value.icon = prev.icon
     form.value.color = prev.color
     message.error('外观保存失败：' + (e.message || '请重试'))
     return
   }
-  // 侧栏刷新失败不回滚外观：服务器已经存下了，回滚只会让用户以为「刚才那一下没生效」
-  try {
-    await refreshSidebarSessions(undefined, { refreshProjects: true })
-  } catch (e) { /* 侧栏下次刷新会跟上 */ }
-}
-
-/** 记忆隔离：引擎在实例重建后生效（下一轮按新档装配），提示里说清这一点 */
-const saveMemoryIsolated = async v => {
-  const next = v === true || v === 1 ? 1 : 0
-  form.value.memoryIsolated = next
-  const ok = await patch({ memoryIsolated: next },
-    next ? '已开启：这个场子的对话不带入也不写入你的个人记忆' : '已关闭：对话照常使用你的个人记忆')
-  if (!ok) form.value.memoryIsolated = saved.value.memoryIsolated || 0
-}
-// ---------- 工作区记忆（独立于个人记忆，存工作区根目录 .wenqu/MEMORY.md） ----------
-const wmOpen = ref(false)
-const wmLoading = ref(false)
-const wmSaving = ref(false)
-const wmContent = ref('')
-const wmDraft = ref('')
-
-const openWorkspaceMemory = async () => {
-  wmOpen.value = true
-  await loadWorkspaceMemory()
-}
-const loadWorkspaceMemory = async () => {
-  wmLoading.value = true
-  try {
-    const r = (await getWorkspaceMemory(id.value)) || {}
-    wmContent.value = (r.data && r.data.content) || ''
-    wmDraft.value = wmContent.value
-  } catch (e) {
-    message.error('读取工作区记忆失败：' + (e.message || e))
-    wmDraft.value = ''
-  } finally {
-    wmLoading.value = false
-  }
-}
-const saveWorkspaceMemoryNow = async () => {
-  wmSaving.value = true
-  try {
-    await saveWorkspaceMemory(id.value, wmDraft.value)
-    wmContent.value = wmDraft.value
-    message.success('已保存工作区记忆')
-    wmOpen.value = false
-  } catch (e) {
-    message.error('保存失败：' + (e.message || e))
-  } finally {
-    wmSaving.value = false
-  }
-}
-// ---------- 以此为模板再建一个（只带设置，不带历史） ----------
-// ---------- 约定历史（被替换的旧版） ----------
-const histOpen = ref(false)
-const histLoading = ref(false)
-const histRows = ref([])
-const openHistory = async () => {
-  histOpen.value = true
-  histLoading.value = true
-  try {
-    histRows.value = ((await listInstructionHistory(id.value)) || {}).data || []
-  } catch (e) {
-    histRows.value = []
-    message.error(e.message || '历史加载失败，请重试')
-  } finally {
-    histLoading.value = false
-  }
-}
-const restoreNote = async row => {
-  const ok = await patch({ instructions: row.content || '' }, '已恢复该版约定（当前版本同时留痕）')
-  if (ok) histOpen.value = false
-}
-
-const openFolder = async () => {
-  try {
-    await openProjectFolder(id.value)
-    message.success('已在电脑上打开文件夹')
-  } catch (e) {
-    message.warning(e.message || '打开失败：先确认那台电脑上的执行器在线')
-  }
-}
-const copyPath = () => {
-  const primary = form.value.roots.find(r => r.primary) || form.value.roots[0]
-  copyText(primary ? primary.path : '', '主目录路径已复制')
-}
-
-const toggleArchive = async () => {
-  const next = form.value.status === 'archived' ? 'active' : 'archived'
-  archiving.value = true
-  try {
-    await setProjectStatus(id.value, next)
-    form.value.status = next
-    message.success(next === 'archived' ? '已归档（会话与产物一条没动）' : '已恢复')
-  } catch (e) {
-    message.error('操作失败：' + (e.message || '请重试'))
-  } finally {
-    archiving.value = false
-  }
-}
-
-const download = async f => {
-  try {
-    await downloadProjectFile(id.value, f.path, f.name, '')
-  } catch (e) {
-    message.error('下载失败：' + (e.message || '请重试'))
-  }
-}
-
-// ==================== 文件：导航 / 上传 / 新建 / 改名 / 移动 / 删除 ====================
-// 「哪些类型能预览」由服务端判：它只给点得开的条目配 viewUrl，前端不再抄一份扩展名清单
-// （两边各写一份时，加一种类型就会出现「有按钮但点开报错」和「能看却没按钮」两种错位）
-const exporting = ref(false)
-const doExportZip = async () => {
-  exporting.value = true
-  try {
-    await exportProjectZip(id.value)
-    message.success('已导出')
-  } catch (e) {
-    message.error(e.message || '导出失败')
-  } finally {
-    exporting.value = false
-  }
-}
-
-/** 勾选命中区是整个文字前的左侧，而不只是那 16px；点行本身另有含义（见 onRowClick） */
-const toggleSel = f => {
-  if (!f.path) return
-  const i = sel.value.indexOf(f.path)
-  if (i >= 0) sel.value.splice(i, 1)
-  else sel.value.push(f.path)
-}
-/** 有勾选时点整行＝加入/移出勾选（Gmail 式），没勾选时点文件夹行＝展开/收起它。
-    判据用 closest()：a-checkbox 的 @click.stop 只盖得住内层 16px，外层 label 不转发点击 */
-const onRowClick = (e, f) => {
-  if (e.target.closest('.pj-check-hit, .pj-act, .pj-act-more, a, .pj-caret')) return
-  if (sel.value.length) { toggleSel(f); return }
-  if (f.kind === 'dir') toggleDir(f.path)
-}
-
-/** 展开/收起一个文件夹；目录内容只在第一次展开时取，之后复用这一层 */
-const toggleDir = async path => {
-  const next = new Set(openDirs.value)
-  const opening = !next.has(path)
-  if (opening) next.add(path)
-  else next.delete(path)
-  openDirs.value = next
-  if (opening && !layers.value[path]) await retryDir(path)
-}
-
-// a-menu 的 click 载荷是对象（key/keyPath/item/domEvent），不是裸 key：直接当 key 用会得到 "[object Object]"，三个动作静默失效
-const rowAction = (key, f) => {
-  if (key === 'upload-here') { openPicker(f.path); return }
-  if (key === 'mkdir-here') { openMkdir(f.path); return }
-  if (key === 'rename') openRename(f)
-  else if (key === 'move') openMove([f.path])
-  else if (key === 'delete') askDeletePaths([f.path])
-}
-
-/** 一次写动作的公共壳：挡住并发、跑完重拉这一层、失败把服务端那句原因原样报出来 */
-const writeRun = async fn => {
-  busy.value = true
-  try {
-    await fn()
-    await loadFiles()
-    return true
-  } catch (e) {
-    message.error(e.message || '操作失败，请重试')
-    await loadFiles()      // 失败也可能已经改掉了一部分（批量中途停下），不能拿旧列表接着猜
-    return false
-  } finally {
-    busy.value = false
-  }
-}
-
-// ---------- 上传 ----------
-/** 打开系统文件选择器。target=落进哪个文件夹（''=根）——工具条走根，目录 ⋯ 菜单带路径来 */
-const openPicker = (target = '') => {
-  uploadTarget.value = target
-  fileInput.value && fileInput.value.click()
-}
-const pickFiles = () => openPicker('')
-/** 选中同一个文件第二次也要触发 change：input 自己不会因为值相同再报，得由我们清一次 */
-const onInputClick = () => { fileInput.value && (fileInput.value.value = '') }
-const onPickFiles = e => uploadFiles(Array.from(e.target.files || []))
-/** 拖拽落点跟着悬停位置走：null=不在列表上、''=空白处（根目录）、path=某个文件夹行（文件行上=它的父文件夹） */
-const onDragOver = e => {
-  if (isArchived.value || !e.dataTransfer) return
-  e.preventDefault()
-  dropAt.value = ''
-}
-const onRowDragOver = path => { dropAt.value = path }
-const onDragLeave = () => { dropAt.value = null }
-const onDrop = e => {
-  const at = dropAt.value
-  dropAt.value = null
-  if (isArchived.value || at === null) return
-  e.preventDefault()
-  uploadFiles(Array.from((e.dataTransfer && e.dataTransfer.files) || []), at)
-}
-/** 一份一个请求：服务端同名就整单报错，打包发会变成「五个里第三个坏了，那前两个到底进没进」。
-    逐份发就看得见卡在哪一份，坏的也不会假装成功。at 覆盖落点（拖拽进来），缺省用选择器记下的目标 */
-const uploadFiles = async (list, at) => {
-  const target = at !== undefined ? at : uploadTarget.value
-  const picked = list.filter(Boolean)
-  if (!picked.length) return
-  if (isArchived.value) { message.warning('工作区已归档，恢复后才能放文件'); return }
-  busy.value = true
-  dropAt.value = null
-  let ok = 0
-  const bad = []
-  for (let i = 0; i < picked.length; i++) {
-    const f = picked[i]
-    uploading.value = `上传中 ${i + 1}/${picked.length}：${f.name}`
-    try {
-      await uploadProjectFiles(id.value, target, [f], overwrite.value)
-      ok++
-    } catch (e) {
-      bad.push(`${f.name}（${e.message || '失败'}）`)
-    }
-  }
-  uploading.value = ''
-  busy.value = false
-  uploadTarget.value = ''
-  if (fileInput.value) fileInput.value.value = ''
-  await loadFiles()
-  if (!bad.length) message.success(ok > 1 ? `已上传 ${ok} 个文件` : '已上传')
-  else if (ok) message.warning(`传好 ${ok} 个，${bad.length} 个没进去：${bad[0]}`)
-  else message.error(bad[0])
-}
-
-// ---------- 新建文件夹 ----------
-const openMkdir = (target = '') => {
-  mkdirTarget.value = target
-  mkdirName.value = ''
-  mkdirOpen.value = true
-  nextTick(() => mkdirInput.value && mkdirInput.value.focus())
-}
-const doMkdir = async () => {
-  const n = mkdirName.value.trim()
-  if (!n) { message.warning('给文件夹起个名字'); return }
-  const at = mkdirTarget.value
-  if (await writeRun(() => createProjectDir(id.value, at ? at + '/' + n : n))) {
-    mkdirOpen.value = false
-    message.success('已新建文件夹')
-  }
-}
-
-// ---------- 改名 ----------
-const openRename = f => {
-  renTarget.value = f
-  renToName.value = nameOf(f.path)
-  renOpen.value = true
-  nextTick(() => renInput.value && renInput.value.focus({ cursor: 'all' }))
-}
-const doRename = async () => {
-  const f = renTarget.value
-  const n = renToName.value.trim()
-  if (!f || !n) { message.warning('新名称不能为空'); return }
-  if (n === nameOf(f.path)) { renOpen.value = false; return }
-  const parent = parentOf(f.path)
-  if (await writeRun(() => moveProjectEntry(id.value, f.path, parent ? parent + '/' + n : n))) {
-    renOpen.value = false
-    message.success('已改名')
-  }
-}
-
-// ---------- 移动（单个与批量同一条路） ----------
-const openMove = paths => {
-  if (isArchived.value) { message.warning('工作区已归档，恢复后才能整理文件'); return }
-  movePaths.value = paths.slice()
-  const primaryRoot = (form.value.roots || []).find(r => r.primary) || (form.value.roots || [])[0]
-  moveDest.value = primaryRoot ? primaryRoot.alias : ''
-  moveOpen.value = true
-}
-const doMove = async () => {
-  const paths = movePaths.value
-  const dest = moveDest.value
-  if (!paths.length) return
-  if (await writeRun(() => projectBatch(id.value, paths, 'move', dest))) {
-    moveOpen.value = false
-    sel.value = []
-  }
-}
-
-// ---------- 删除（文件夹连内容一起删，所以文案要按类型分开写） ----------
-const askDeletePaths = paths => {
-  if (!paths.length) return
-  const one = paths.length === 1 ? paths[0] : ''
-  const isDir = !!one && dirsAll.value.includes(one)
-  const title = paths.length === 1
-    ? `删除「${nameOf(one)}」？`
-    : `删除选中的 ${paths.length} 项？`
-  const body = paths.length === 1
-    ? (isDir
-        ? '这个文件夹和里面的全部内容都会被删掉。交付成产物的副本不受影响。此操作不可恢复。'
-        : '工作区目录里的这个文件会被删掉。交付成产物的副本不受影响。此操作不可恢复。')
-    : `其中若有文件夹，连同里面的内容一起删掉。交付成产物的副本不受影响。此操作不可恢复。`
-  Modal.confirm({
-    title, content: body, okText: '删除', okType: 'danger', cancelText: '取消',
-    onOk: async () => {
-      if (await writeRun(() => projectBatch(id.value, paths, 'delete'))) sel.value = []
-    }
-  })
-}
-
-/** 工作区页 → 会话：走 SPA 导航，并把这条会话先交给侧栏 store（标题/高亮不用等列表刷新） */
-const openProjectSession = s => {
-  rememberSession(s, id.value)
-  router.push({ path: '/chat', query: { sid: s.id } })
+  refreshSidebarSessions(undefined, { refreshProjects: true }).catch(() => {})
 }
 
 const goChat = () => {
-  // 走 SPA 导航而不是 window.location.href：整页刷新会丢掉模块级的「新会话落点」，
-  // 旧实现于是只打开了最近一条对话（而不是新建）。先写落点、再发跨页新建信号，最后切路由。
   setNewSessionProject(id.value)
   sessionStore.newChatTick++
   router.push('/chat')
 }
 
-/** 定时任务 + 工作流一起取：任一份没拉到，这一栏的「有几个」就说不准，必须报出来而不是留成空列表 */
-const loadAuto = async () => {
-  const errs = []
-  try {
-    jobs.value = ((await listScheduledJobs(id.value)) || {}).data || []
-  } catch (e) {
-    jobs.value = []
-    errs.push('定时任务：' + (e.message || '加载失败'))
-  }
-  try {
-    workflows.value = ((await listProjectWorkflows(id.value)) || {}).data || []
-  } catch (e) {
-    workflows.value = []
-    errs.push('工作流：' + (e.message || '加载失败'))
-  }
-  autoError.value = errs.join('；')
-}
-
-const createJob = async () => {
-  const f = jobForm.value
-  if (!f.name.trim() || !f.prompt.trim() || !f.cron.trim()) {
-    message.warning('任务名、指令、cron 都要填')
-    return
-  }
-  jobSaving.value = true
-  try {
-    await createScheduledJob({
-      name: f.name.trim(), prompt: f.prompt.trim(), cron: f.cron.trim(), enabled: 1, projectId: id.value
-    })
-    message.success('任务已创建并启用')
-    jobForm.value = { name: '', prompt: '', cron: '0 9 * * 1' }
-    jobFormOpen.value = false
-    await loadAuto()
-  } catch (e) {
-    message.error('创建失败：' + (e.message || '请检查 cron 写法'))
-  } finally {
-    jobSaving.value = false
-  }
-}
-
-const runJob = async j => {
-  try {
-    await runScheduledJob(j.id)
-    message.success('已触发一次，结果会落进这个工作区的会话里（稍等片刻）')
-    setTimeout(loadAuto, 4000)
-    setTimeout(load, 6000)
-  } catch (e) {
-    message.error('触发失败：' + (e.message || '请重试'))
-  }
-}
-
-const runWf = async w => {
-  try {
-    const r = await runWorkflow(w.id, {})
-    message.success('已运行：' + ((r && r.data && r.data.status) || '完成'))
-    await loadAuto()
-  } catch (e) {
-    message.error('运行失败：' + (e.message || '请检查工作流是否已发布'))
-  }
-}
-
-// ==================== 分栏取数（切栏即重拉，页头不再常驻「刷新」） ====================
-const loadSessions = async () => {
-  try {
-    const d = ((await listSessions('', '', 50, id.value)) || {}).data || {}
-    sessions.value = d.items || []
-    sessionTotal.value = d.total || sessions.value.length
-    sessionError.value = ''
-  } catch (e) {
-    sessions.value = []
-    sessionTotal.value = 0
-    sessionError.value = e.message || '会话列表加载失败'
-  }
-}
-
-/** 「预览」开的是列表接口现签的地址（服务端默认 1 小时过期）。页面挂一整晚再点会掉进
-    「预览链接无效或已过期」那一页，所以回到前台且列表超过 30 分钟没重取过，就顺手重签一遍 */
-const FILES_RESIGN_AFTER = 30 * 60 * 1000
-let filesLoadedAt = 0
-const onAppVisible = () => {
-  if (document.visibilityState === 'visible' && Date.now() - filesLoadedAt > FILES_RESIGN_AFTER) loadFiles()
-}
-
-/** 文件栏是已展开的层 + 产物的合并视图：根那次调用带回全部文件夹清单（dirs）与全区合计，
-    默认只展开第一层源文件夹，其余目录点开时再取一层；单层失败只在该层标错，不拖垮整棵树。
-    宿主目录读不到（如沙盒在远端）时如实提示，不伪装成空列表；根层失败时全区数字
-    一起清掉——留着上一次的「共 12 个」配一条读不到的列表，比报错更骗人 */
-let filesSeq = 0
-const loadFiles = async () => {
-  const seq = ++filesSeq
-  if (!isImplicit.value && !form.value.roots.length) {
-    // 没绑目录：这是配置缺失，不是「空文件夹」。不要把加载失败当作没有文件
-    layers.value = {}
-    fileViewRows.value = []
-    filesError.value = ''
-    fileTotal.value = 0
-    filesAll.value = 0
-    bytesAll.value = 0
-    dirsAll.value = []
-    namesAll.value = []
-    return
-  }
-  try {
-    const d = ((await listProjectFiles(id.value, '')) || {}).data || {}
-    if (seq !== filesSeq) return
-    layers.value = { '': { entries: d.entries || [], total: d.total || 0, truncated: !!d.truncated, error: '' } }
-    fileTotal.value = d.total || 0
-    filesTruncated.value = !!d.truncated
-    filesAll.value = d.files || 0
-    bytesAll.value = d.bytes || 0
-    filesCapped.value = !!d.capped
-    dirsAll.value = d.dirs || []
-    namesAll.value = d.names || []
-    agentShared.value = d.agentShared !== false
-    filesError.value = ''
-    filesLoadedAt = Date.now()
-    sel.value = []
-    // 只默认展开第一层源文件夹，其余目录等用户点开时由 toggleDir → retryDir 按需取。
-    // 以前一口气预取 40 个目录，每个都会在服务端重扫整棵目录树，几千文件的工作区进页要等几十次全扫。
-    const firstLevel = (d.entries || []).filter(e => (e.kind || 'file') === 'dir').map(e => e.path)
-    openDirs.value = new Set(firstLevel)
-    await Promise.all(firstLevel.map(path => retryDir(path)))
-  } catch (e) {
-    if (seq !== filesSeq) return
-    layers.value = {}
-    fileTotal.value = 0
-    filesTruncated.value = false
-    filesAll.value = 0
-    bytesAll.value = 0
-    filesCapped.value = false
-    dirsAll.value = []
-    namesAll.value = []
-    sel.value = []
-    filesError.value = e.message || '工作区目录暂时读不到'
-  }
-  if (seq !== filesSeq) return
-  try {
-    artifacts.value = ((await listArtifacts(undefined, id.value)) || {}).data || []
-    artifactsError.value = ''
-  } catch (e) {
-    artifacts.value = []
-    artifactsError.value = e.message || '产物列表加载失败'
-  }
-}
-
-/** 单层补取：展开一个还没取过数据的文件夹（超出预取上限的）或该层读失败后重试 */
-const retryDir = async path => {
-  try {
-    const s = ((await listProjectFiles(id.value, path)) || {}).data || {}
-    layers.value = { ...layers.value, [path]: { entries: s.entries || [], total: s.total || 0, truncated: !!s.truncated, error: '' } }
-  } catch (e) {
-    layers.value = { ...layers.value, [path]: { entries: [], total: 0, truncated: false, error: e.message || '读取失败' } }
-  }
-}
-
-const reloadTab = () => {
-  if (tab.value === 'files') return loadFiles()
-  if (tab.value === 'sessions') return loadSessions()
-  if (tab.value === 'auto') return loadAuto()
-  if (tab.value === 'todos') return loadTodos()
-  // 动态：会话与运行两份都重取（产物随文件栏已在取数路径里）
-  return Promise.all([loadRuns(), loadSessions()])
-}
-
-// ==================== 事项（记下 → 去做 → 勾掉） ====================
-const loadTodos = async () => {
-  try {
-    todos.value = ((await listProjectTodos(id.value)) || {}).data || []
-    todosError.value = ''
-  } catch (e) {
-    todos.value = []
-    todosError.value = e.message || '事项清单加载失败'
-  }
-}
-const addTodo = async () => {
-  const t = todoDraft.value.trim()
-  if (!t || todoSaving.value) return
-  todoSaving.value = true
-  try {
-    await createProjectTodo(id.value, t)
-    todoDraft.value = ''
-    await loadTodos()
-  } catch (e) {
-    message.error(e.message || '添加失败，请重试')
-  } finally {
-    todoSaving.value = false
-  }
-}
-/** 勾/取消完成。失败把服务端真值拉回来——勾没勾上不能靠本地猜 */
-const toggleTodo = async (t, done) => {
-  try {
-    await updateProjectTodo(id.value, t.id, { done })
-    await loadTodos()
-  } catch (e) {
-    message.error(e.message || '操作失败，请重试')
-    await loadTodos()
-  }
-}
-const removeTodo = async t => {
-  try {
-    await deleteProjectTodo(id.value, t.id)
-    await loadTodos()
-  } catch (e) {
-    message.error(e.message || '删除失败，请重试')
-  }
-}
-/** 把事项带去对话：落点写进本工作区 → 新建信号 → ask 预填输入框。
-    不自动发——事项措辞是给清单看的一句话，发给模型前该让用户过目改写 */
-const goTodoChat = t => {
-  setNewSessionProject(id.value)
-  sessionStore.newChatTick++
-  router.push({ path: '/chat', query: { ask: t.title } })
-}
-
-/** 切栏就重拉这一栏：定时任务在后台跑完、在别处新建的对话，回到这一屏就该看见 */
-let skipTabWatch = false
-watch(tab, () => {
-  if (skipTabWatch) { skipTabWatch = false; return }
-  reloadTab()
-})
-
+// ---------- 生命周期 ----------
 const load = async () => {
   loading.value = true
   try {
     const r = await getProject(id.value)
     const p = (r && r.data) || {}
-    isImplicit.value = Boolean(p.isImplicit)
-    projectExecutorId.value = p.executorId || ''
-    rootDraft.value = Array.isArray(p.roots) ? p.roots.map(r => ({ ...r })) : []
-    // 约定正在就地编辑时别把草稿冲掉——改助手、归档都会走这里
-    const keepDraft = instrEdit.value && instrDirty.value
-    const draft = form.value.instructions
-    saved.value = {
-      instructions: p.instructions || '',
-      defaultAgentId: p.defaultAgentId || '',
-      name: p.name || '',
-      kbIds: Array.isArray(p.kbIds) ? p.kbIds : [],
-      memoryIsolated: p.memoryIsolated || 0,
-      icon: p.icon || '',
-      color: p.color || ''
+    if (p.isImplicit) {
+      router.replace('/chat')
+      return
     }
     form.value = {
       name: p.name || '',
-      instructions: keepDraft ? draft : (p.instructions || ''),
-      defaultAgentId: p.defaultAgentId || undefined,
       status: p.status || 'active',
-      kbIds: Array.isArray(p.kbIds) ? [...p.kbIds] : [],
       memoryIsolated: p.memoryIsolated || 0,
-      roots: Array.isArray(p.roots) ? p.roots : [],
+      roots: Array.isArray(p.roots) ? p.roots.map(x => ({ ...x })) : [],
       icon: p.icon || '',
       color: p.color || ''
     }
-    if (!keepDraft) instrEdit.value = false
-    instrFull.value = false
-    await Promise.all([loadSessions(), loadFiles(), loadAuto(), loadRuns(), loadTodos(), loadExecutors()])
-    // 落点只在首次决定：有动静先看动态（这个场子最近发生过什么）；空工作区则给「新建对话」的会话空态，
-    // 有文件没动静（刚传完材料还没聊）给文件栏
-    const want = activityRows.value.length ? 'activity'
-      : (fileCount.value ? 'files' : 'sessions')
-    if (!loadedOnce.value && want !== tab.value) {
-      skipTabWatch = true
-      tab.value = want
-    }
+    executorId.value = p.executorId || ''
+    executorPick.value = undefined
+    ensureFileDir()
     loadedOnce.value = true
+    await Promise.all([loadFiles(), loadMemory()])
   } catch (e) {
     message.error('工作区加载失败：' + (e.message || '请重试'))
   } finally {
@@ -1774,464 +715,244 @@ const load = async () => {
   }
 }
 
-/** 弹层里点删除：先收掉弹层，别让二选一弹窗压在还开着的弹层上 */
-const removeProject = () => { settingsOpen.value = false; delOpen.value = true }
-
-// ---- 轮次占用条（租约感知）：共用目录的工作区正在跑谁，进来一眼看到，别等发送被拒才知道 ----
-const turnGuard = ref({ busy: false })
-let guardTimer = null
-const guardElapsedText = computed(() => {
-  const ms = turnGuard.value.elapsedMs || 0
-  if (ms < 60000) return '不足 1 分钟'
-  const min = Math.floor(ms / 60000)
-  if (min < 60) return min + ' 分钟'
-  return Math.floor(min / 60) + ' 小时 ' + (min % 60) + ' 分钟'
-})
-const loadTurnGuard = async () => {
-  try {
-    const r = await getProjectTurnGuard(id.value)
-    turnGuard.value = (r && r.data) || { busy: false }
-  } catch (e) { /* 查询失败静默：占用条是提示不是阻断，失败就当下一次轮询再说 */ }
-}
-const openGuardSession = () => {
-  if (turnGuard.value.sessionId) router.push({ path: '/chat', query: { sid: turnGuard.value.sessionId } })
-}
-
-/** 删除工作区：只摘归属；本机目录里的文件一个都不动 */
-const doRemoveProject = async () => {
-  deleting.value = true
-  try {
-    await deleteProject(id.value)
-    message.success('已删除（本机文件仍在你的电脑上）')
-    delOpen.value = false
-    router.push('/chat')
-  } catch (e) {
-    message.error('删除失败：' + (e.message || '请重试'))
-  } finally {
-    deleting.value = false
-  }
-}
-
-onMounted(async () => {
-  document.addEventListener('visibilitychange', onAppVisible)
-  await load()
-  if (route.query.settings === '1') {
-    settingsOpen.value = true
-  }
-  // 占用条 10s 轮询：工作区页是旁观位，不必秒级实时；挂到页面生命周期上，离开即停
-  loadTurnGuard()
-  guardTimer = setInterval(loadTurnGuard, 10000)
-  try {
-    const r = await listAvailableAgents()
-    agents.value = (r && r.data) || []
-  } catch (e) { agents.value = [] }
-  // 绑定候选：拉取失败只影响设置弹层里的候选清单，不影响本页其他功能
-  kbLoading.value = true
-  try {
-    const r = await listKnowledgeBases()
-    kbList.value = (r && r.data) || []
-  } catch (e) { kbList.value = [] }
-  finally { kbLoading.value = false }
-})
-onUnmounted(() => {
-  document.removeEventListener('visibilitychange', onAppVisible)
-  if (guardTimer) { clearInterval(guardTimer); guardTimer = null }
-})
-
-/**
- * 换工作区：路由复用同一个组件实例，onMounted 不会再跑，所以这里自己结算。
- * 先把上一个工作区的读态清干净再取新的——取不到时留下的必须是空，不能是别的工作区的约定与文件。
- */
 watch(id, () => {
   loadedOnce.value = false
-  kw.value = ''
-  saved.value = { instructions: '', defaultAgentId: '', name: '', kbIds: [], memoryIsolated: 0, icon: '', color: '' }
-  form.value = { name: '', instructions: '', defaultAgentId: undefined, status: 'active',
-                 kbIds: [], memoryIsolated: 0, roots: [], icon: '', color: '' }
-  sessions.value = []
-  sessionTotal.value = 0
-  sessionError.value = ''
-  artifacts.value = []
-  artifactsError.value = ''
-  layers.value = {}
-  filesError.value = ''
-  // 树的展开状态与各落点是上一个工作区的：不一起清，第二个工作区会展开别人的文件夹、传进别人的路径
-  openDirs.value = new Set()
-  sel.value = []
-  dropAt.value = null
-  uploadTarget.value = ''
-  mkdirTarget.value = ''
-  dirsAll.value = []
-  namesAll.value = []
-  agentShared.value = true
-  filesAll.value = 0
-  bytesAll.value = 0
-  filesCapped.value = false
-  fileTotal.value = 0
-  filesTruncated.value = false
-  mkdirOpen.value = false
-  renOpen.value = false
-  moveOpen.value = false
-  jobs.value = []
-  workflows.value = []
-  autoError.value = ''
-  runs.value = []
-  runsError.value = ''
-  todos.value = []
-  todosError.value = ''
-  todoDraft.value = ''
-  histOpen.value = false
-  instrEdit.value = false
-  instrFull.value = false
-  settingsOpen.value = false
   nameEditing.value = false
-  jobFormOpen.value = false
-  // 占用条跟着换工作区：先清旧值再立刻查一次（不等下一个 10s 拍）
-  turnGuard.value = { busy: false }
-  loadTurnGuard()
+  lookOpen.value = false
+  fileDir.value = ''
+  fileEntries.value = []
+  fileKw.value = ''
+  fileTotal.value = 0
+  fileError.value = ''
+  clearPreview()
+  wmContent.value = ''
+  wmError.value = ''
   load()
+})
+
+onMounted(() => {
+  if (pjWrapEl.value && typeof ResizeObserver !== 'undefined') {
+    pjRO = new ResizeObserver(es => {
+      const w = es[0] && es[0].contentRect ? es[0].contentRect.width : 0
+      if (w) pjWrapW.value = Math.round(w)
+    })
+    pjRO.observe(pjWrapEl.value)
+  }
+  loadExecutors()
+  load()
+})
+
+onUnmounted(() => {
+  if (pjRO) pjRO.disconnect()
+  pjRO = null
 })
 </script>
 
 <style scoped>
-/* ---- 页头：名字就地改 + 归档态 + 设置弹层入口 + 唯一的主行动 ---- */
-.pj-tools { margin-left: auto; display: flex; align-items: center; gap: var(--app-sp-2); flex: none; }
-.pj-title { display: flex; align-items: center; gap: var(--app-sp-2); }
+/* ---------- 页头 ---------- */
+.pj-head { flex-wrap: wrap; }
+.pj-head-ic { width: 20px; height: 20px; flex: none; color: var(--app-ok); }
+.pj-name-input { width: 240px; height: 28px; }
+.pj-link {
+  border: 0; background: none; padding: 0; font: inherit; font-size: 12px;
+  color: var(--app-accent); cursor: pointer; flex: none;
+}
+.pj-link:hover { text-decoration: underline; }
+.pj-icon-btn {
+  width: 26px; height: 26px; flex: none; display: grid; place-items: center;
+  border: 1px solid var(--app-border); border-radius: 6px; background: var(--app-panel);
+  color: var(--app-text2); cursor: pointer;
+}
+.pj-icon-btn:hover { color: var(--app-accent); border-color: var(--app-accent-border); }
+.pj-head-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; }
+.pj-iso-inline {
+  display: flex; align-items: center; gap: 8px; flex: none;
+  margin-left: 4px; padding-left: 12px; border-left: 1px solid var(--app-border);
+}
+.pj-iso-shield { color: var(--app-ok); font-size: 15px; }
+.pj-iso-label { font-size: 12px; color: var(--app-text2); white-space: nowrap; }
 
-/* ---- 轮次占用条：弱提示不抢戏（琥珀细条），只是让人在动手前知道场子里有人 ---- */
-.pj-busy {
-  display: flex; align-items: center; gap: 8px;
-  margin-top: 10px; padding: 6px 12px;
-  border: 1px solid var(--app-warn-text); border-radius: 8px;
-  background: var(--app-warn-weak); color: var(--app-warn-text);
-  font-size: var(--app-fs-sm);
+/* ---------- 外观弹层 ---------- */
+.pj-look-title { font-size: 12.5px; font-weight: 600; margin-bottom: 8px; }
+.pj-icons { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
+.pj-icon {
+  height: 32px; border: 1px solid var(--app-border); border-radius: 7px;
+  background: var(--app-panel); display: grid; place-items: center;
+  color: var(--app-text2); font-size: 15px; cursor: pointer;
 }
-.pj-busy-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--app-warn-text); flex: none; animation: pj-busy-pulse 1.6s ease-in-out infinite; }
-@keyframes pj-busy-pulse { 0%, 100% { opacity: .4; } 50% { opacity: 1; } }
-.pj-busy-text { flex: 1; min-width: 0; }
-.pj-pen {
-  border: 0; background: transparent; cursor: pointer; padding: 1px 5px; border-radius: var(--app-radius-sm);
-  color: var(--app-label-tertiary); font-size: var(--app-fs-sm); font-family: inherit;
-}
-.pj-pen:hover { color: var(--app-accent); background: var(--app-accent-weak); }
-.pj-state { flex: none; }
-.pj-name-inline { width: 240px; max-width: 46vw; }
-/* 折叠卡退场后，这个摘要就是「工作区设置」的唯一入口——它只报当前值，不再报目录 */
-.pj-sum {
-  display: inline-flex; align-items: center; gap: 5px; cursor: pointer; font: inherit;
-  font-size: var(--app-fs-sm); color: var(--app-label-secondary);
-  background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 999px;
-  padding: 3px 10px; min-height: 26px;
-}
-.pj-sum b { font-weight: 500; color: var(--app-label-primary); }
-.pj-sum:hover, .pj-sum.on { color: var(--app-accent); border-color: var(--app-accent-border); background: var(--app-accent-weak); }
-.pj-sum:hover b, .pj-sum.on b { color: var(--app-accent); }
-.pj-sum-go { color: var(--app-label-tertiary); }
-.pj-sum:hover .pj-sum-go, .pj-sum.on .pj-sum-go { color: var(--app-accent); }
-
-/* ---- 设置弹层：teleport 到 body，靠元素自身的 data-v 命中 ---- */
-.pj-set { display: flex; flex-direction: column; gap: var(--app-sp-2); }
-.pj-set-row { display: grid; grid-template-columns: 62px 1fr; align-items: center; gap: var(--app-sp-2); }
-.pj-set-row .app-btn { justify-self: start; }   /* 按钮拉满会看着像两块板 */
-.pj-set-row .pj-sw { justify-self: end; }       /* 开关贴右（设置面板惯例）；网格里不加这条会被拉伸成整条胶囊 */
-/* 宽控件行（多选资料域/复用按钮）：标签独占一行、控件通栏，不挤在 62px 标签列旁 */
-.pj-set-col { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
-.pj-k { font-size: var(--app-fs-sm); color: var(--app-label-secondary); }
-.pj-v { width: 100%; }
-.pj-set-note { font-size: var(--app-fs-xs); line-height: 1.6; color: var(--app-label-tertiary); }
-.pj-set-warn { color: var(--app-danger-text); }
-.pj-set-div { height: 1px; background: var(--app-border-l1); margin: 2px 0; }
-.pj-head-ic { margin-right: 8px; font-size: 22px; vertical-align: -2px; }
-.pj-look { display: flex; flex-direction: column; gap: 8px; }
-.pj-icons { display: flex; flex-wrap: wrap; gap: 6px; }
-.pj-icon { width: 30px; height: 30px; border: 1px solid transparent; border-radius: 7px;
-  display: inline-flex; align-items: center; justify-content: center; cursor: pointer;
-  background: var(--app-surface2, rgba(0,0,0,.04)); color: var(--app-text2); font-size: 15px; }
-.pj-icon.on { border-color: var(--app-accent); color: var(--app-accent); background: transparent; }
-.pj-colors { display: flex; flex-wrap: wrap; gap: 8px; }
-.pj-color { width: 20px; height: 20px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; padding: 0; }
-.pj-color.on { outline: 2px solid var(--app-text); outline-offset: 2px; }
-.pj-color-check { color: #fff; font-size: 12px; line-height: 1; pointer-events: none;
-  filter: drop-shadow(0 0 1px rgba(0,0,0,.55)); }
-.pj-color { display: inline-flex; align-items: center; justify-content: center; }
-.pj-root-row { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 3px 0; }
-.pj-root-name { flex: none; font-size: 12px; color: var(--app-text); }
-.pj-root-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: 12px; color: var(--app-text3); }
-.pj-root-ops { display: flex; gap: 8px; margin-top: 4px; flex-wrap: wrap; }
-/* 工作目录：路径是一串 UUID，必须整条看得见（换行而不是省略号），所以值那一格改成竖排 */
-.pj-set-row-top { align-items: start; }
-.pj-set-row-top .pj-k { line-height: 20px; }
-.pj-path-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 1px; min-width: 0; }
-.pj-set-path {
-  font-family: ui-monospace, Menlo, Consolas, monospace; font-size: var(--app-fs-xs); line-height: 20px;
-  color: var(--app-label-secondary); word-break: break-all;
+.pj-icon:hover { color: var(--app-accent); border-color: var(--app-accent-border); }
+.pj-icon.on { color: var(--app-accent); border-color: var(--app-accent); background: var(--app-accent-weak); }
+.pj-colors { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.pj-color {
+  width: 20px; height: 20px; border: 0; border-radius: 50%; cursor: pointer;
+  display: grid; place-items: center; color: #fff; font-size: 11px;
 }
 
-/* ---- 栏内过滤：搜索框与「命中在别处」并排，贴着它们真正作用的四个栏 ---- */
-.pj-filter { display: flex; align-items: center; gap: var(--app-sp-2); }
-.pj-search { width: 262px; }   /* 占位要把五个名词报全，230px 会把「运行」截掉 */
-.pj-jump { display: inline-flex; align-items: center; gap: var(--app-sp-1); font-size: var(--app-fs-sm); }
-.pj-jump-k { color: var(--app-label-tertiary); }
-.pj-jump-chip {
-  font: inherit; font-size: var(--app-fs-sm); cursor: pointer; font-family: inherit;
-  color: var(--app-accent); background: var(--app-accent-weak);
-  border: 1px solid var(--app-accent-border); border-radius: 999px; padding: 1px 8px; min-height: 24px;
+/* ---------- 内容区：固定高度，列表与记忆各自内部滚动 ---------- */
+.pj-body { padding: 14px 20px 16px; display: flex; min-height: 0; overflow: hidden; }
+/* 桌面两栏：左预览（自适应宽）+ 右目录/记忆（384px）；窄屏改单列，见文件末尾媒体查询 */
+.pj-wrap { width: 100%; height: 100%; min-height: 0; display: flex; gap: 12px; }
+.pj-skeleton { flex: 1; }
+.pj-side { width: 384px; flex: none; min-height: 0; display: flex; flex-direction: column; gap: 12px; }
+.pj-card { padding: 0; }
+.pj-dir-card { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.pj-files { flex: 1; min-height: 0; overflow: auto; }
+.pj-mem-card { flex: 0 1 auto; max-height: 34%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.pj-mem-body { flex: 1; min-height: 0; overflow: auto; }
+.pj-card-head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; }
+.pj-card-title { margin: 0; font-size: 13.5px; font-weight: 600; }
+.pj-spacer { flex: 1; }
+.pj-text-btn {
+  border: 0; background: none; padding: 0; font: inherit; font-size: 12px;
+  color: var(--app-accent); cursor: pointer; white-space: nowrap;
 }
-.pj-jump-chip:hover { background: var(--app-accent); color: #fff; }
+.pj-text-btn:hover { text-decoration: underline; }
+.pj-text-btn:disabled { color: var(--app-text3); cursor: not-allowed; text-decoration: none; }
+.pj-text-btn.danger { color: var(--app-text3); }
+.pj-text-btn.danger:hover { color: var(--app-danger-text); }
+.pj-note { font-size: 11.5px; color: var(--app-text3); }
+.pj-empty { padding: 14px 16px; font-size: 12px; color: var(--app-text3); }
+.pj-empty.err { color: var(--app-danger-text); }
 
-.pj-card { padding: var(--app-sp-4); margin-bottom: var(--app-sp-3); }
-.pj-label { font-weight: 600; margin-bottom: var(--app-sp-2); display: flex; align-items: center; gap: var(--app-sp-2); }
-.pj-hint { font-weight: 400; font-size: var(--app-fs-sm); color: var(--app-label-tertiary); }
-.pj-row { display: flex; align-items: center; gap: var(--app-sp-2); margin-top: var(--app-sp-3); flex-wrap: wrap; }
-.pj-row:first-child { margin-top: 0; }
-.pj-row .pj-label { margin-bottom: 0; }
+/* ---------- 隔离 ---------- */
+.pj-state {
+  font-size: 11px; font-weight: 400; line-height: 1; padding: 3px 8px;
+  border-radius: 999px; background: #f1f3f5; color: var(--app-text3);
+}
+.pj-state.on { background: var(--app-ok-weak); color: var(--app-ok); }
+.pj-help { font-size: 13px; color: var(--app-text3); cursor: help; }
+.pj-help:hover { color: var(--app-accent); }
 
-/* 卡片标题行：标题 + 说明靠左、动作靠右，避免动作与说明挤在一起 */
-.pj-card-head { display: flex; align-items: center; gap: var(--app-sp-2); flex-wrap: wrap; margin-bottom: var(--app-sp-2); }
-.pj-card-head .pj-label { margin-bottom: 0; }
-.pj-card-act { margin-left: auto; display: flex; gap: var(--app-sp-2); }
-/* 未保存留痕：编辑区在卡片里，页头按钮看不到，就地提示 */
-.pj-dirty {
-  flex-shrink: 0; font-size: var(--app-fs-xs); line-height: 18px; padding: 0 var(--app-sp-2);
-  border-radius: 999px; background: var(--app-warn-weak); color: var(--app-warn-text);
+/* ---------- 目录 ---------- */
+.pj-roots { padding: 0 8px; }
+.pj-root { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; }
+.pj-root:hover { background: var(--app-panel-2); }
+.pj-root.on { background: var(--app-accent-weak); }
+.pj-root-main {
+  display: inline-flex; align-items: center; gap: 6px; flex: none;
+  border: 0; background: none; padding: 0; font: inherit; cursor: pointer; color: var(--app-text);
 }
+.pj-root-ic { color: #f0ad2d; font-size: 16px; }
+.pj-root-name { font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; gap: 5px; }
+.pj-mini-pill {
+  font-size: 10px; font-weight: 400; line-height: 15px; padding: 0 5px;
+  border: 1px solid var(--app-border); border-radius: 999px; color: var(--app-text3);
+}
+.pj-root-path {
+  flex: 1; min-width: 0; border: 0; background: none; padding: 0; text-align: left;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px;
+  color: var(--app-text3); cursor: copy; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pj-root-path:hover { color: var(--app-text2); }
+.pj-root-acts { display: flex; gap: 10px; flex: none; }
+.pj-exec-pick { padding: 2px 8px 8px; }
+.pj-divider { height: 1px; background: var(--app-border); margin: 4px 16px 0; }
 
-/* 约定读态：保留换行的纯文本，超长先夹三行 */
-.pj-instr {
-  white-space: pre-wrap; word-break: break-word; font-size: var(--app-fs-md); line-height: 1.7;
-  color: var(--app-label-primary);
+/* ---------- 文件 ---------- */
+.pj-filebar { display: flex; align-items: center; gap: 8px; padding: 10px 16px 6px; }
+.pj-filebar-title { font-size: 12px; font-weight: 500; color: var(--app-text2); }
+.pj-filebar-count { font-size: 11.5px; color: var(--app-text3); }
+.pj-search { width: 170px; }
+.pj-crumbs { display: flex; align-items: center; gap: 4px; padding: 0 16px 6px; flex-wrap: wrap; }
+.pj-crumb {
+  border: 0; background: none; padding: 0; font: inherit; font-size: 11.5px;
+  color: var(--app-accent); cursor: pointer;
 }
-.pj-instr.clamped {
-  display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+.pj-crumb:hover { text-decoration: underline; }
+.pj-crumb.last { color: var(--app-text2); cursor: default; text-decoration: none; }
+.pj-crumb-sep { font-size: 11px; color: var(--app-text3); }
+.pj-file-list { padding: 0 8px 10px; }
+.pj-file-row {
+  display: grid; grid-template-columns: 20px minmax(0, 1fr) 90px 90px;
+  align-items: center; gap: 8px; width: 100%; padding: 6px 8px;
+  border: 0; border-radius: 6px; background: none; font: inherit; font-size: 12px;
+  color: var(--app-text); text-align: left; cursor: pointer;
 }
+.pj-file-row:hover { background: var(--app-panel-2); }
+.pj-file-head {
+  position: sticky; top: 0; z-index: 1;
+  background: var(--app-panel);
+  font-size: 11px; color: var(--app-text3); cursor: default; padding-top: 2px; padding-bottom: 4px;
+}
+.pj-file-head:hover { background: none; }
+.pj-dir-ic { color: #f0ad2d; font-size: 15px; }
+.pj-file-ic { color: var(--app-text3); font-size: 15px; }
+.pj-file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pj-col-size, .pj-col-time { font-size: 11.5px; color: var(--app-text3); font-variant-numeric: tabular-nums; }
+.pj-col-time { text-align: right; }
+.pj-list-note { padding: 0 16px 10px; }
+.pj-file-row.on { background: var(--app-accent-weak); }
 
-.pj-cron-input { max-width: 260px; }
-
-/* ---- 事项栏：添加行 / 已完成分组 / 动态栏顶部的未完成提示条 ---- */
-.pj-todo-add { display: flex; gap: var(--app-sp-2); margin-bottom: var(--app-sp-3); }
-.pj-todo-add > :first-child { flex: 1; min-width: 0; }
-.pj-todo-done-label {
-  font-size: var(--app-fs-sm); color: var(--app-label-tertiary);
-  margin: var(--app-sp-4) 0 var(--app-sp-1);
+/* ---------- 预览（桌面左栏） ---------- */
+.pj-pv-card { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden; }
+.pj-pv-head {
+  display: flex; align-items: center; gap: 8px; flex: none;
+  padding: 10px 16px; min-height: 44px; border-bottom: 1px solid var(--app-border);
 }
-.pj-todo-strike { text-decoration: line-through; color: var(--app-label-tertiary); }
-.pj-todo-strip {
-  display: flex; align-items: center; gap: var(--app-sp-2); margin-bottom: var(--app-sp-2);
-  padding: 6px var(--app-sp-2); border-radius: var(--app-radius-sm);
-  background: var(--app-warn-weak); font-size: var(--app-fs-sm); color: var(--app-warn-text);
+.pj-pv-ic { color: var(--app-text3); font-size: 15px; flex: none; }
+.pj-pv-name { font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pj-pv-meta { font-size: 11px; color: var(--app-text3); white-space: nowrap; flex: none; }
+.pj-pv-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.pj-pv-body :deep(.ant-spin-nested-loading) { flex: 1; min-height: 0; }
+.pj-pv-body :deep(.ant-spin-container) { height: 100%; }
+.pj-pv-empty, .pj-pv-none {
+  height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px; padding: 16px; color: var(--app-text3); font-size: 12px; text-align: center;
 }
-.pj-todo-strip b { font-weight: 600; }
-/* ---- 动态栏「接下来」建议条：弱底 chip，一条一个动作 ---- */
-.pj-next {
-  display: flex; align-items: center; flex-wrap: wrap; gap: var(--app-sp-2); margin-bottom: var(--app-sp-2);
+.pj-pv-empty-ic { font-size: 30px; opacity: .5; }
+.pj-pv-sub { font-size: 11px; color: var(--app-text3); }
+.pj-pv-img-wrap {
+  height: 100%; display: flex; align-items: center; justify-content: center;
+  padding: 16px; background: var(--app-panel-2);
 }
-.pj-next-k { font-size: var(--app-fs-sm); color: var(--app-label-tertiary); flex: none; }
-.pj-next-chip {
-  display: inline-flex; align-items: baseline; gap: 6px; max-width: 100%; cursor: pointer; font: inherit;
-  font-size: var(--app-fs-sm); padding: 3px 10px; min-height: 26px; border-radius: 999px;
-  color: var(--app-label-primary); background: var(--app-accent-weak); border: 1px solid var(--app-accent-border);
+.pj-pv-img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 6px; }
+.pj-pv-frame { width: 100%; height: 100%; border: 0; display: block; background: #fff; }
+.pj-pv-md { height: 100%; overflow: auto; padding: 18px 24px; }
+.pj-pv-text {
+  height: 100%; overflow: auto; margin: 0; padding: 16px 20px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; line-height: 1.75;
+  color: var(--app-text); white-space: pre;
 }
-.pj-next-chip b { font-weight: 500; color: var(--app-accent); flex: none; }
-.pj-next-sub { font-size: var(--app-fs-xs); color: var(--app-label-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pj-next-chip:hover { background: var(--app-accent); }
-.pj-next-chip:hover b, .pj-next-chip:hover .pj-next-sub { color: #fff; }
-/* ---- 约定历史弹窗 ---- */
-.pj-hist-list { display: flex; flex-direction: column; gap: var(--app-sp-3); max-height: 52vh; overflow: auto; }
-.pj-hist-row { border: 1px solid var(--app-border-l1); border-radius: var(--app-radius-sm); padding: var(--app-sp-2); }
-.pj-hist-meta {
-  display: flex; align-items: center; justify-content: space-between; gap: var(--app-sp-2);
-  font-size: var(--app-fs-xs); color: var(--app-label-tertiary); margin-bottom: 4px;
-}
-.pj-hist-body {
-  font-size: var(--app-fs-sm); line-height: 1.6; color: var(--app-label-secondary);
-  white-space: pre-wrap; word-break: break-word;
-  display: -webkit-box; -webkit-line-clamp: 4; line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
-}
-
-/* ---- 内容区 ---- */
-/* 运行记录行：来源徽章 + 状态徽章（成功/失败/进行中/待审核各一色，均为弱底不抢标题） */
-.run-kind {
-  flex: none; font-size: 11px; line-height: 16px; padding: 0 5px; margin-right: 6px; border-radius: 4px;
-  background: var(--app-bg-layer-2); color: var(--app-label-secondary);
-}
-.run-status {
-  flex: none; min-width: 44px; text-align: center; font-size: 11px; line-height: 16px; padding: 0 5px;
-  border-radius: 4px; background: var(--app-bg-layer-2); color: var(--app-label-secondary);
-}
-.rs-success, .rs-succeeded { background: var(--app-ok-weak); color: var(--app-ok); }
-.rs-failed, .rs-timeout { background: var(--app-danger-weak); color: var(--app-danger-text); }
-.rs-running, .rs-queued { background: var(--app-accent-weak); color: var(--app-accent); }
-.rs-waiting_approval { background: var(--app-warn-weak); color: var(--app-warn-text); }
-.run-err-ic {
-  display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px;
-  margin-left: 6px; border-radius: 50%; background: var(--app-danger-weak); color: var(--app-danger-text);
-  font-size: 10px; cursor: help; vertical-align: middle;
-}
-.pj-tabs { margin-top: var(--app-sp-1); }
-.pj-block { margin-bottom: var(--app-sp-4); }
-.pj-block:last-child { margin-bottom: 0; }
-.pj-block-act { margin-left: auto; }
-.pj-tabnote { margin-bottom: var(--app-sp-2); }
-/* 整行可点：命中区铺满，行 hover 有反馈（此前只有文字那几个字能点） */
-.pj-item {
-  display: flex; align-items: center; gap: var(--app-sp-2); padding: var(--app-sp-2) var(--app-sp-1);
-  border-bottom: 1px dashed var(--app-border-l1); color: inherit; border-radius: var(--app-radius-sm);
-  margin: 0 calc(-1 * var(--app-sp-1));
-}
-.pj-file-list { border-top: 1px solid var(--app-border-l1); }
-.pj-file-list .pj-item:last-child { border-bottom: none; }
-/* 表头：内边距/负外边距与 .pj-item 同一套，格宽直接复用行内那几个 class——
-   列宽以后只改行内定义，表头跟着走，不留第二份要对账的定宽 */
-.pj-thead {
-  display: flex; align-items: center; gap: var(--app-sp-2);
-  padding: 3px var(--app-sp-1); margin: 0 calc(-1 * var(--app-sp-1));
-  border-bottom: 1px solid var(--app-border-l1);
-  font-size: var(--app-fs-sm); color: var(--app-label-tertiary);
-}
-.pj-thead .pj-check-hit { min-height: 0; }
-/* 三列定宽：动作组以前按内容长短排，「预览+下载+⋯」比只有「下载」宽 70px，
-   同一屏里「大小 / 时间」会随行的按钮数左右漂——表头一加上来就会指着错位的列。
-   定宽按最坏取值留：时间超过 7 天要退化成「2026-09-15 14:32」整串 */
-.pj-size { width: 104px; }
-.pj-time { width: 104px; }
-.pj-acts {
-  flex: none; width: 104px; display: flex; align-items: center; justify-content: flex-end; gap: var(--app-sp-2);
-}
-/* 文件夹的合计个数：单独一格贴右，不塞进名称格——名称格要省略号，塞进去就会被一起截掉 */
-.pj-dir-n { flex: none; font-size: var(--app-fs-sm); color: var(--app-label-tertiary); }
-.pj-item:hover { background: var(--app-interactive-hover); }
-.pj-item-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* 双行标题：标题行 + 「最后一句」摘要行（会话栏与动态栏的会话行）。
-   摘要说「聊到了哪」，标题只说「这条叫什么」——只有标题时看不出该不该点回去 */
-.pj-item-title.pj-has-sub { display: flex; flex-direction: column; gap: 1px; justify-content: center; overflow: hidden; }
-.pj-item-line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pj-item-sub {
-  font-size: var(--app-fs-xs); color: var(--app-label-tertiary);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-/* 命中高亮由 Hl 子组件渲染，父作用域选择器够不到它内部的 mark，必须 :deep */
-.pj-item :deep(mark) {
-  background: var(--app-warn-weak); color: var(--app-label-primary);
-  border-radius: 2px; padding: 0 1px; box-shadow: inset 0 -1px 0 var(--app-warn);
-}
-.pj-item-meta { font-size: var(--app-fs-sm); color: var(--app-label-tertiary); flex-shrink: 0; min-width: 72px; text-align: right; }
-/* 角标占固定宽：不占位的行会把「大小 / 时间」整列拽偏，一屏之内看着像没对齐 */
-.pj-badge-cell { flex: none; width: 54px; display: flex; justify-content: flex-end; }
-.pj-badge {
-  font-size: var(--app-fs-xs); line-height: 18px; padding: 0 var(--app-sp-1);
-  border-radius: var(--app-radius-sm); background: var(--app-accent-weak); color: var(--app-accent); cursor: help;
-}
-.pj-cron {
-  flex-shrink: 0; font-size: var(--app-fs-xs); color: var(--app-label-secondary);
-  background: var(--app-bg-layer-2); padding: 1px 5px; border-radius: var(--app-radius-sm);
-}
-/* 行内动作：看着像链接，实际是按钮（Tab 能到、回车能触发、聚焦有环） */
-.pj-act {
-  flex-shrink: 0; border: 0; background: transparent; cursor: pointer; padding: 0 2px;
-  color: var(--app-accent); font-size: var(--app-fs-sm); font-family: inherit;
-}
-.pj-act:hover { text-decoration: underline; text-underline-offset: 2px; }
-.pj-link-btn {
-  border: 0; background: transparent; padding: 0 2px; cursor: pointer;
-  color: var(--app-accent); font-size: inherit; font-family: inherit;
-  text-decoration: underline; text-underline-offset: 2px;
-}
-.pj-job-form { display: flex; flex-direction: column; gap: var(--app-sp-2); margin-bottom: var(--app-sp-3); }
-.pj-empty { font-size: var(--app-fs-md); color: var(--app-label-tertiary); padding: var(--app-sp-2) 0; }
-.pj-err { color: var(--app-danger-text); }
-.pj-count {
-  font-size: var(--app-fs-xs); line-height: 16px; padding: 0 var(--app-sp-1);
-  border-radius: var(--app-radius-sm); background: var(--app-accent-weak); color: var(--app-accent);
+.pj-pv-note {
+  flex: none; padding: 8px 16px; border-top: 1px solid var(--app-border);
+  font-size: 11.5px; color: var(--app-warn-text); background: var(--app-warn-weak);
 }
 
-/* ---- 文件栏：全区合计 + 写动作（层级由树本身表达） ---- */
-.pj-filebar { display: flex; align-items: center; gap: var(--app-sp-2); margin-bottom: var(--app-sp-2); }
-.pj-crumb-sum { flex: none; }
-/* 树：缩进用固定宽 span（不嵌套 ul，行高与旧列表一致）；展开钮独立命中区，别跟整行点击打架 */
-.pj-indent { flex: none; height: 1px; }
-.pj-caret {
-  flex: none; display: inline-flex; align-items: center; justify-content: center;
-  width: 18px; height: 22px; border: 0; background: transparent; padding: 0;
-  cursor: pointer; color: var(--app-label-tertiary);
+/* ---------- 记忆 ---------- */
+.pj-mem-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px;
+  padding: 1px 6px; border: 1px solid var(--app-border); border-radius: 5px;
+  background: var(--app-panel-2); color: var(--app-text3);
 }
-.pj-caret:hover { color: var(--app-label-primary); }
-.pj-caret-ic { font-size: 11px; transition: transform .15s; }
-.pj-caret-ic.open { transform: rotate(90deg); }
-/* 拖到某个文件夹行上：那行亮成落点 */
-.pj-item.pj-drop-dir { background: var(--app-accent-weak); outline: 1px dashed var(--app-accent-border); outline-offset: -1px; }
-/* 层内提示（读不到/太大）：缩进对齐子内容，不冒充一行文件 */
-.pj-subnote { font-size: var(--app-fs-xs); color: var(--app-label-tertiary); padding: 3px 0; }
-.pj-subnote.pj-suberr { color: var(--app-danger-text); }
-.pj-filebar-act { margin-left: auto; display: flex; align-items: center; gap: var(--app-sp-2); flex: none; }
-.pj-filebar-act .pj-act { padding: 4px 6px; }
-.pj-overwrite { font-size: var(--app-fs-sm); color: var(--app-label-secondary); }
-/* 真控件藏在按钮后面：拖拽区与「上传」共用同一个 input，少一条会漏代码的路径 */
-.pj-file-input { display: none; }
-.pj-drop-on { outline: 2px dashed var(--app-accent-border); outline-offset: -2px; border-radius: var(--app-radius-sm); }
-.pj-drop-tip { margin-top: var(--app-sp-2); font-size: var(--app-fs-sm); color: var(--app-accent); }
-
-/* 批量栏：勾了才出现，浅底圆角条（与文档页 batch-bar 同款），不用未勾选时全灰的小按钮 */
-.pj-batchbar {
-  display: flex; align-items: center; gap: var(--app-sp-2); margin-bottom: var(--app-sp-2);
-  padding: 5px var(--app-sp-2); border-radius: var(--app-radius-sm); background: var(--app-accent-weak);
+.pj-mem-text {
+  margin: 0 16px 12px; padding: 10px 12px;
+  border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-panel-2);
+  font-family: inherit; font-size: 12px; line-height: 1.8;
+  color: var(--app-text); white-space: pre-wrap; word-break: break-word;
 }
-.pj-batch-n { font-size: var(--app-fs-sm); font-weight: 500; color: var(--app-accent); }
-/* 勾选命中区：文字前的整个左侧、整行高；框本身位置不动（像素级零位移是点名过的要求） */
-.pj-check-hit { flex: none; display: flex; align-items: center; width: 30px; min-height: 26px; cursor: pointer; }
-.pj-check-hit.pj-check-void { cursor: default; }
-.pj-check-hit :deep(.ant-checkbox-wrapper) { padding: 0; display: inline-flex; align-items: center; }
-.pj-check-hit :deep(.ant-checkbox) { align-self: auto; }
-.pj-item.pj-item-on { background: var(--app-accent-weak); }
-.pj-dir-ic { flex: none; margin-right: 5px; font-size: 14px; color: var(--app-accent); vertical-align: -2px; }
-.pj-act-more { padding: 0 5px; }
+.pj-modal-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 
-/* 弹窗里的文件夹选择与补充说明 */
-.pj-dirlist { display: flex; flex-direction: column; gap: 2px; max-height: 260px; overflow: auto; }
-.pj-dirrow {
-  display: flex; align-items: center; gap: 6px; text-align: left; cursor: pointer; font: inherit;
-  padding: 6px 8px; border-radius: var(--app-radius-sm); border: 1px solid transparent;
-  background: transparent; color: var(--app-label-primary);
-}
-.pj-dirrow:hover { background: var(--app-interactive-hover); }
-.pj-dirrow.on { border-color: var(--app-accent-border); background: var(--app-accent-weak); }
-.pj-dir-on { margin-left: auto; font-size: var(--app-fs-xs); color: var(--app-accent); }
-.pj-mnote { margin-top: var(--app-sp-2); font-size: var(--app-fs-xs); line-height: 1.6; color: var(--app-label-tertiary); }
-.pj-act-danger { color: var(--app-danger); }
+/* 两栏态：右栏 384px，路径换到第二行，文件行收紧、时间列不折行 */
+.pj-wrap:not(.pj-single) .pj-side .pj-root { flex-wrap: wrap; }
+.pj-wrap:not(.pj-single) .pj-side .pj-root-acts { order: 2; margin-left: auto; }
+.pj-wrap:not(.pj-single) .pj-side .pj-root-path { order: 3; flex-basis: 100%; padding-left: 22px; }
+.pj-wrap:not(.pj-single) .pj-side .pj-file-row { grid-template-columns: 18px minmax(0, 1fr) 54px 96px; gap: 6px; padding: 5px 8px; }
+.pj-wrap:not(.pj-single) .pj-side .pj-col-time { white-space: nowrap; }
 
-/* ==================== 窄屏（手机）：/project 已进守卫白名单，这里做真适配 ====================
-   卡片列表形态天然适合竖排：行内元素允许换行、输入类控件收回全宽、元信息列压缩；
-   页头靠 .app-page-head 的全局折行兜底，过滤行不再挤在 tab 条右侧。 */
-@media (max-width: 768px) {
-  /* 搜索框 + 「别处命中」在 tab 条右侧放不下：让 antd 的 extra 区换行独占第二排 */
-  .pj-tabs :deep(.ant-tabs-nav) { flex-wrap: wrap; }
-  .pj-tabs :deep(.ant-tabs-extra-content) { width: 100%; padding-top: 6px; }
-  .pj-filter { width: 100%; }
-  .pj-search { flex: 1; width: auto; min-width: 0; }
-  .pj-label { white-space: nowrap; }   /* 短标签不许折行：挤的是内容，不该挤标题 */
-  /* 文件/会话/任务/运行行：标题与操作换行后仍对齐，元信息不再占固定 72px */
-  .pj-item { flex-wrap: wrap; row-gap: 4px; }
-  .pj-item-title { flex: 1 1 100%; order: -1; }
-  .pj-item-meta { min-width: 0; }
-  .pj-badge-cell { width: auto; margin-left: auto; }
-  .pj-size, .pj-time { width: auto; }
-  .pj-acts { width: auto; }
-  .pj-thead { display: none; }   /* 行折成竖排后没有列可对，表头只会指错位置 */
-  .pj-act { padding: 6px 4px; }   /* 触摸热区：行内小按钮加到可点尺寸 */
-  /* 表单类控件收回全宽（cron 与就地改名的输入框原本都是定宽横排） */
-  .pj-cron-input { max-width: none; width: 100%; }
-  .pj-name-inline { width: 100%; max-width: none; }
-  .pj-set-row .app-btn { width: 100%; justify-self: stretch; }   /* 触屏上满宽才好点 */
-  .pj-job-form .pj-row { flex-wrap: wrap; row-gap: 8px; }
-  /* 删除弹窗选项说明文字在窄屏占满 */
-  .dp-item .dp-d { white-space: normal; }
-  /* 文件栏工具条：面包屑与合计先占一排，三个写动作自己折一排（340px 宽塞不下四件） */
-  .pj-filebar { flex-wrap: wrap; row-gap: 6px; }
-  .pj-filebar-act { width: 100%; margin-left: 0; flex-wrap: wrap; }
-  .pj-filebar-act .pj-act { padding: 7px 8px; }   /* 触摸热区 */
-  .pj-crumb-item { padding: 5px 6px; }
-  .pj-check-hit { width: 34px; }
-  .pj-batchbar { flex-wrap: wrap; row-gap: 6px; }
-  .pj-dirrow { padding: 9px 8px; }
+/* 单列态（窄屏或内容区放不下两栏）：目录+记忆占满整宽 */
+.pj-wrap.pj-single { flex-direction: column; }
+.pj-wrap.pj-single .pj-side { width: auto; flex: 1; min-height: 0; }
+
+@media (max-width: 720px) {
+  .pj-iso-inline { flex: 1 1 100%; margin-left: 0; padding-left: 0; border-left: 0; }
+  .pj-head-actions { margin-left: 0; width: 100%; }
+  .pj-card-head { flex-wrap: wrap; }
+  .pj-root { flex-wrap: wrap; }
+  .pj-root-path { flex-basis: calc(100% - 24px); }
+  .pj-filebar { flex-wrap: wrap; }
+  .pj-filebar .pj-spacer { display: none; }
+  .pj-search { width: 100%; }
+  .pj-file-row { grid-template-columns: 20px minmax(0, 1fr) 70px; }
+  .pj-col-time { display: none; }
 }
 </style>

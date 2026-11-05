@@ -272,7 +272,7 @@ public class ChatService {
         // @ 智能体（P5 换芯）：不换成它作答，而是要求它被咨询一次。
         // 用户显式点名的咨询不受平台侧编排开关影响：这条是用户指令。
         final Agent forcedConsult = resolveDelegatedAgent(mentions, degradations, degradedCodes);
-        final Agent agent = resolveTurnAgent(sessionId, agentId, degradations, degradedCodes);
+        final Agent agent = resolveTurnAgent(agentId, degradations, degradedCodes);
         final boolean consultSelf = forcedConsult != null && agent != null
                 && forcedConsult.getId().equals(agent.getId());
         if (forcedConsult != null && !consultSelf) {
@@ -683,19 +683,10 @@ public class ChatService {
      * 现在资料域由模型经派遣助手（框架的 agent_spawn）主动派出去查，作答方不需要被锁，也没有"换人请新建会话"这回事。
      * <p>显式指定却解析不到（已删除或无权限）时 fail-loud：静默改用全局配置等于悄悄换人，用户无从察觉。
      */
-    private Agent resolveTurnAgent(String sessionId, String requestedAgentId,
+    private Agent resolveTurnAgent(String requestedAgentId,
                                    List<Map<String, String>> degradations,
                                    Set<String> degradedCodes) {
         if (requestedAgentId == null || requestedAgentId.isBlank()) {
-            // 工作区默认助手：用户在这个工作区里干活，就该由这个工作区配的助手回答
-            // （它的知识库范围/工具集随之生效）。显式请求的 agentId 仍然最优先——那是用户当场点的。
-            String projectAgent = projectService.defaultAgentIdOfSession(sessionId);
-            if (projectAgent != null) {
-                Agent mine = agentService.get(projectAgent);
-                if (mine != null) return mine;
-                runtime.addDegradation(degradations, degradedCodes, "projectAgentGone",
-                        "这个工作区绑定的默认助手已不可用（被删除或不再共享给你），本轮已改用平台默认智能体");
-            }
             return agentService.defaultAgent();
         }
         Agent picked = agentService.get(requestedAgentId);

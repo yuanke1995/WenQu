@@ -3,12 +3,10 @@ package com.wenqu.ai.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenqu.ai.mapper.ArtifactMapper;
 import com.wenqu.ai.mapper.ProjectMapper;
-import com.wenqu.ai.mapper.ProjectNoteLogMapper;
 import com.wenqu.ai.mapper.ProjectRootMapper;
 import com.wenqu.ai.mapper.SessionMapper;
 import com.wenqu.ai.model.Artifact;
 import com.wenqu.ai.model.Project;
-import com.wenqu.ai.model.ProjectNoteLog;
 import com.wenqu.ai.model.ProjectRoot;
 import com.wenqu.ai.model.Session;
 import lombok.extern.slf4j.Slf4j;
@@ -46,45 +44,24 @@ public class ProjectService {
     private final ProjectMapper projectMapper;
     private final SessionMapper sessionMapper;
     private final ArtifactMapper artifactMapper;
-    /** 约定留痕：update() 改约定时把被替换的旧版抄一行进来（leaf mapper，直接注入无环） */
-    private final ProjectNoteLogMapper noteLogMapper;
     /** 工作区源文件夹（本机目录）：工作区 = 一台本机上的一个或多个真实目录。 */
     private final ProjectRootMapper projectRootMapper;
     /**
-     * 校验「工作区默认助手」确实是本人可读的助手。
-     * <p><b>必须惰性取</b>：直接注入 AgentService 会形成
-     * {@code ProjectService → AgentService → ToolRegistry → ArtifactToolProvider → ArtifactService → ProjectService}
-     * 的构造器环（Spring Boot 3 默认禁止循环依赖，启动直接失败，2026-10-17 真实上下文测试当场抓到）。
-     * 校验是低频动作，用到时再取即可。
-     */
-    private final org.springframework.beans.factory.ObjectProvider<AgentService> agentProvider;
-    /**
      * 归档联动停用/恢复定时任务。
-     * <p>同样必须惰性取：{@code ScheduledJobService} 的构造器依赖本类（校验任务的工作区归属），
+     * <p>必须惰性取：{@code ScheduledJobService} 的构造器依赖本类（校验任务的工作区归属），
      * 直接注入会构成构造器环（Spring Boot 3 默认禁止，启动直接失败）。归档是低频动作，用到时再取即可。
      */
     private final org.springframework.beans.factory.ObjectProvider<ScheduledJobService> scheduledJobProvider;
 
-    /**
-     * 校验「工作区绑定知识库」确实存在且对本人可见。
-     * <p><b>必须惰性取</b>：与 AgentService 同理，直接注入会构成构造器环，绑定是低频动作。
-     */
-    private final org.springframework.beans.factory.ObjectProvider<KnowledgeBaseService> kbProvider;
-
     public ProjectService(ProjectMapper projectMapper, SessionMapper sessionMapper,
-                          ArtifactMapper artifactMapper, ProjectNoteLogMapper noteLogMapper,
+                          ArtifactMapper artifactMapper,
                           ProjectRootMapper projectRootMapper,
-                          org.springframework.beans.factory.ObjectProvider<AgentService> agentProvider,
-                          org.springframework.beans.factory.ObjectProvider<ScheduledJobService> scheduledJobProvider,
-                          org.springframework.beans.factory.ObjectProvider<KnowledgeBaseService> kbProvider) {
+                          org.springframework.beans.factory.ObjectProvider<ScheduledJobService> scheduledJobProvider) {
         this.projectMapper = projectMapper;
         this.sessionMapper = sessionMapper;
         this.artifactMapper = artifactMapper;
-        this.noteLogMapper = noteLogMapper;
         this.projectRootMapper = projectRootMapper;
-        this.agentProvider = agentProvider;
         this.scheduledJobProvider = scheduledJobProvider;
-        this.kbProvider = kbProvider;
     }
 
     /**
@@ -246,13 +223,11 @@ public class ProjectService {
      * （框架 cwd、相对路径与命令执行的基准），其余为附加根；它们必须都在同一台执行器上。
      * 服务器只记「哪台机器、哪些绝对路径、显示成什么名」，不保存用户文件的副本。
      *
-     * @param fromProjectId 可选模板：从本人另一个工作区复制<b>设置</b>（约定/资料域/两个开关），
-     *                      目录与执行器一概不抄——模板是规矩，不是那台机器上的历史
      * @param executorId    本机执行器 id（c_ai_executor.id）；必须属于该用户
      * @param roots         源文件夹（绝对路径 + 可选别名）；第一项为主目录
      */
     @Transactional
-    public Project create(String uid, String name, String fromProjectId, String executorId, List<RootSpec> roots) {
+    public Project create(String uid, String name, String executorId, List<RootSpec> roots) {
         if (uid == null || uid.isBlank() || com.wenqu.ai.util.RequestUser.SYSTEM.equals(uid)) {
             throw new IllegalArgumentException("请先登录后再新建工作区");
         }
@@ -267,10 +242,6 @@ public class ProjectService {
             throw new IllegalArgumentException("工作区必须绑定一台本机执行器：先在你这台电脑上启动并授权 wenqu-agent");
         }
         List<RootSpec> normalized = normalizeRoots(roots);
-        Project tpl = null;
-        if (fromProjectId != null && !fromProjectId.isBlank()) {
-            tpl = ownedProject(uid, fromProjectId);
-        }
         Project p = new Project();
         p.setId(java.util.UUID.randomUUID().toString().replace("-", ""));
         p.setUid(uid);
@@ -278,11 +249,6 @@ public class ProjectService {
         p.setSelectionStatus(Project.SELECTION_SELECTABLE);
         p.setExecutorId(executorId.trim());
         p.setStatus(Project.STATUS_ACTIVE);
-        if (tpl != null) {
-            p.setInstructions(tpl.getInstructions());
-            p.setKbIds(tpl.getKbIds());
-            p.setMemoryIsolated(tpl.getMemoryIsolated() == null ? 0 : tpl.getMemoryIsolated());
-        }
         p.setDeleted(0);
         p.setCreateTime(java.time.LocalDateTime.now());
         projectMapper.insert(p);
@@ -290,11 +256,6 @@ public class ProjectService {
         log.info("[PROJECT] 新建本机工作区 uid={} id={} name={} executor={} roots={}",
                 uid, p.getId(), trimmed, executorId, normalized.size());
         return p;
-    }
-
-    /** 保持旧签名（不带模板）：所有新工作区都必须给执行器与目录，这个入口只用于内部/测试的兜底。 */
-    public Project create(String uid, String name) {
-        throw new IllegalArgumentException("工作区必须选择本机目录后再创建");
     }
 
 
@@ -504,23 +465,10 @@ public class ProjectService {
     }
 
     /**
-     * 更新工作区设置：名称 / 工作区约定 / 默认助手 / 绑定知识库 / 共用工作目录 / 记忆隔离。
-     *
-     * <p>各参数都是「传才改」（null = 不动）；空串/空列表表示清空。默认助手与绑定的库
-     * 都必须本人可用，否则抛 IllegalArgumentException——静默忽略会让用户以为绑定生效了。
-     * <p>约定被替换（值真的变了）时把<b>旧版</b>抄进留痕表：聊天页只报「约定生效」不报内容，
-     * 「当时生效的是哪版」必须可查（恢复=把旧值再存一版，不另做回滚通道）。
+     * 更新工作区设置：名称 / 记忆隔离 / 外观。各参数都是「传才改」（null = 不动）。
      */
-    public Project update(String uid, String projectId, String name, String instructions,
-                          String defaultAgentId, List<String> kbIds,
-                          Boolean memoryIsolated) {
-        return update(uid, projectId, name, instructions, defaultAgentId, kbIds, memoryIsolated, null, null);
-    }
-
-    /** 同上，另加外观（图标/颜色）：新建弹窗用它，传 null 不动。 */
-    public Project update(String uid, String projectId, String name, String instructions,
-                          String defaultAgentId, List<String> kbIds,
-                          Boolean memoryIsolated, String icon, String color) {
+    public Project update(String uid, String projectId, String name, Boolean memoryIsolated,
+                          String icon, String color) {
         Project p = ownedProject(uid, projectId);
         boolean changed = false;
         if (icon != null) {
@@ -542,59 +490,6 @@ public class ProjectService {
             p.setName(n.isEmpty() ? null : n);
             changed = true;
         }
-        if (instructions != null) {
-            String ins = instructions.trim();
-            if (ins.length() > MAX_INSTRUCTIONS_LEN) {
-                throw new IllegalArgumentException("工作区约定过长（最多 " + MAX_INSTRUCTIONS_LEN + " 字）");
-            }
-            String old = p.getInstructions();
-            String next = ins.isEmpty() ? null : ins;
-            if (!java.util.Objects.equals(old, next)) {
-                // 只在值真的变了时留痕：空保存（同值重存）不制造一排无意义的历史行
-                ProjectNoteLog logRow = new ProjectNoteLog();
-                logRow.setProjectId(p.getId());
-                logRow.setContent(old);
-                logRow.setCreateTime(java.time.LocalDateTime.now());
-                noteLogMapper.insert(logRow);
-            }
-            p.setInstructions(next);
-            changed = true;
-        }
-        if (defaultAgentId != null) {
-            String id = defaultAgentId.trim();
-            if (id.isEmpty()) {
-                p.setDefaultAgentId(null);
-            } else {
-                // fail-loud：绑一个读不到的助手，用户只会在下一次对话里遇到"怎么还是别人答"
-                AgentService agentService = agentProvider.getIfAvailable();
-                if (agentService == null || agentService.get(id) == null) {
-                    throw new IllegalArgumentException("默认助手不可用（不存在或你无访问权限）");
-                }
-                p.setDefaultAgentId(id);
-            }
-            changed = true;
-        }
-        if (kbIds != null) {
-            KnowledgeBaseService kbService = kbProvider.getIfAvailable();
-            if (kbService == null) {
-                throw new IllegalStateException("知识库组件暂不可用，暂时无法保存绑定，请稍后重试");
-            }
-            java.util.LinkedHashSet<String> clean = new java.util.LinkedHashSet<>();
-            for (String raw : kbIds) {
-                String id = raw == null ? "" : raw.trim();
-                if (id.isEmpty()) continue;
-                // fail-loud：绑一个不存在/别人的库，用户只会在下一次对话里发现"检索还是不搜它"
-                com.wenqu.ai.model.KnowledgeBase kb = kbService.get(id);
-                boolean usable = kb != null
-                        && (uid.equals(kb.getCreatedBy()) || Integer.valueOf(1).equals(kb.getBuiltin()));
-                if (!usable) {
-                    throw new IllegalArgumentException("绑定的知识库不可用（不存在或你没有访问权限）");
-                }
-                clean.add(id);
-            }
-            p.setKbIds(clean.isEmpty() ? null : String.join(",", clean));
-            changed = true;
-        }
         if (memoryIsolated != null) {
             if (Project.SELECTION_IMPLICIT.equals(p.getSelectionStatus())) {
                 throw new IllegalArgumentException("「会话」栏不是一个工作区，没有记忆隔离可开");
@@ -604,23 +499,17 @@ public class ProjectService {
         }
         if (changed) {
             p.setUpdateTime(java.time.LocalDateTime.now());
-            // 走显式列集而不是 updateById：后者的字段策略会跳过 null，「清空约定 / 取消默认助手」
-            // 会返回成功、提示也对，但库里一个字没动，下一次读就把旧值顶回来。
             projectMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Project>()
                     .eq(Project::getId, p.getId())
                     .set(Project::getName, p.getName())
-                    .set(Project::getInstructions, p.getInstructions())
-                    .set(Project::getDefaultAgentId, p.getDefaultAgentId())
-                    .set(Project::getKbIds, p.getKbIds())
                     .set(Project::getMemoryIsolated, p.getMemoryIsolated())
                     // 外观两列也必须进列集：漏了它们，接口照样返回「已保存」和带 icon/color 的 DTO，
                     // 库里却一个字没动，刷新/重进后图标颜色又回到默认——比直接报错更难查
                     .set(Project::getIcon, p.getIcon())
                     .set(Project::getColor, p.getColor())
                     .set(Project::getUpdateTime, p.getUpdateTime()));
-            log.info("[PROJECT] 更新工作区设置 uid={} id={} name={} hasInstructions={} defaultAgent={} kbIds={} memoryIsolated={} icon={} color={}",
-                    uid, p.getId(), p.getName(), p.getInstructions() != null, p.getDefaultAgentId(),
-                    p.getKbIds(), p.getMemoryIsolated(), p.getIcon(), p.getColor());
+            log.info("[PROJECT] 更新工作区设置 uid={} id={} name={} memoryIsolated={} icon={} color={}",
+                    uid, p.getId(), p.getName(), p.getMemoryIsolated(), p.getIcon(), p.getColor());
         }
         return p;
     }
@@ -660,38 +549,6 @@ public class ProjectService {
         return p;
     }
 
-    /** 工作区约定的长度上限（进 system prompt，太长会挤掉真实上下文） */
-    public static final int MAX_INSTRUCTIONS_LEN = 2000;
-
-    /**
-     * 该会话所属工作区的默认助手 id；无工作区/未配置返回 null（调用方回落到平台默认智能体）。
-     */
-    public String defaultAgentIdOfSession(String sessionId) {
-        Project p = projectOfSession(sessionId);
-        return (p == null || p.getDefaultAgentId() == null || p.getDefaultAgentId().isBlank())
-                ? null : p.getDefaultAgentId();
-    }
-
-    /**
-     * 该会话所属工作区的<b>默认检索域</b>：工作区绑定的知识库 id 清单（保序）。
-     *
-     * <p>只在本轮没有任何显式域时被消费（助手未绑库且未 @ 库，见 {@code WenquAgentxTools#newTurn}）
-     * ——它是「没说就搜这里」的默认值，不是权限墙；@ 提他与助手绑定都会盖过它。
-     *
-     * @return 绑定库 id；无工作区/未绑定返回空清单（调用方按「没有默认域」继续，行为不变）
-     */
-    public List<String> kbIdsOfSession(String sessionId) {
-        Project p = projectOfSession(sessionId);
-        if (p == null || p.getKbIds() == null || p.getKbIds().isBlank()) return List.of();
-        // 保序切分（不用 KnowledgeBaseService.splitIds：它返回 HashSet，绑定顺序=检索优先级要保住）
-        java.util.List<String> out = new java.util.ArrayList<>();
-        for (String part : p.getKbIds().split(",")) {
-            String t = part.trim();
-            if (!t.isEmpty()) out.add(t);
-        }
-        return out;
-    }
-
     /**
      * 该会话所属工作区是否开了「记忆隔离」（干净房间：不注入本人个人记忆、也不写入）。
      * <p>消费方只有引擎的记忆闸（{@code AgentscopeChatEngine} 装配期）——按游客档全关
@@ -701,38 +558,6 @@ public class ProjectService {
     public boolean memoryIsolatedOfSession(String sessionId) {
         Project p = projectOfSession(sessionId);
         return p != null && p.getMemoryIsolated() != null && p.getMemoryIsolated() == 1;
-    }
-
-    /**
-     * 约定留痕（被替换的旧版），按被替换时刻倒序，最多 20 条。
-     * content 为 null 表示当时约定为空（首次写入前的状态）。
-     */
-    public List<ProjectNoteLog> instructionHistory(String uid, String projectId) {
-        detail(uid, projectId);   // 归属校验（不存在/他人/已删一律抛）
-        return noteLogMapper.selectList(new LambdaQueryWrapper<ProjectNoteLog>()
-                .eq(ProjectNoteLog::getProjectId, projectId)
-                .orderByDesc(ProjectNoteLog::getCreateTime)
-                .last("LIMIT 20"));
-    }
-
-    /**
-     * 该会话所属工作区的**背景段**（注入 system prompt）。
-     *
-     * <p>只在工作区有约定时返回内容：工作区名单独注入没有价值，反而每轮多花 token。
-     * 约定是用户在工作区页写的「这个工作区的规矩」，它对工作区内所有会话生效——这正是工作区与分类的区别。
-     *
-     * @return 可直接拼接的文本段；无工作区/无约定返回 null
-     */
-    public String projectContextOfSession(String sessionId) {
-        Project p = projectOfSession(sessionId);
-        if (p == null) return null;
-        String ins = p.getInstructions();
-        if (ins == null || ins.isBlank()) return null;
-        // implicit 兜底容器没有名字：这里不给它编一个（界面上不存在的名词会被模型复述出来）
-        String name = (p.getName() == null || p.getName().isBlank()) ? "" : p.getName();
-        // 只给事实与约束，不加"你是…"这类人设话术（人设归智能体，别在这里抢）
-        return "\n\n【当前工作区】" + name
-                + "\n以下是本工作区的约定，对本次对话全程有效，回答时应当遵守：\n" + ins;
     }
 
     private static final int MAX_NAME_LEN = 60;

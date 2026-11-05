@@ -187,10 +187,9 @@ public class SessionService {
     }
 
     /**
-     * 当前会话所属工作区的摘要（聊天页头部标识用）：名字 + 是否带约定 + 是否已归档。
+     * 当前会话所属工作区的摘要（聊天页头部标识用）：名字 + 是否已归档。
      *
-     * <p>约定每轮注入 system prompt 且要求回答遵守——用户有权在聊天的当场看见「我现在处于
-     * 哪个工作区、有没有约定在生效」，否则改过的约定对老会话无声生效，是透明度缺口。
+     * <p>用户有权在聊天的当场看见「我现在处于哪个工作区」，否则工作区归属就是一串看不见的后台字段。
      * <p>没有工作区 / 工作区已不存在 / 非本人会话一律返回 {@code null}（标识不显示）：
      * 不编名字——界面上不存在的名词会被复述出来（与 {@code ProjectService} 同一口径）。
      * 解析失败按无工作区处理，不抛：一个标识不该让聊天页开不了场。
@@ -213,7 +212,6 @@ public class SessionService {
             // implicit 兜底容器没有名字：显示「会话」（与侧栏那一栏同名，不另造名词）
             m.put("name", p.getName() == null || p.getName().isBlank() ? "会话" : p.getName());
             m.put("implicit", Project.SELECTION_IMPLICIT.equals(p.getSelectionStatus()));
-            m.put("hasInstructions", p.getInstructions() != null && !p.getInstructions().isBlank());
             m.put("archived", Project.STATUS_ARCHIVED.equals(p.getStatus()));
             m.put("isLocal", projectService.isLocal(p));
             m.put("executorId", p.getExecutorId() == null ? "" : p.getExecutorId());

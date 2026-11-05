@@ -153,28 +153,6 @@ public class WorkflowService {
         }
     }
 
-    /** 某个工作区下**本人**的工作流（工作区页用）。
-     * <p>只返回本人的：工作区是单用户容器，别人的工作流即便可读也不该混进这个工作区的「自己的编排」。
-     */
-    public java.util.List<java.util.Map<String, Object>> listByProject(String uid, String projectId) {
-        if (uid == null || uid.isBlank() || projectId == null || projectId.isBlank()) return java.util.List.of();
-        java.util.List<Workflow> rows = workflowMapper.selectList(new LambdaQueryWrapper<Workflow>()
-                .eq(Workflow::getUid, uid)
-                .eq(Workflow::getProjectId, projectId)
-                .orderByDesc(Workflow::getUpdateTime));
-        java.util.List<java.util.Map<String, Object>> out = new java.util.ArrayList<>();
-        for (Workflow w : rows) {
-            java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
-            m.put("id", w.getId());
-            m.put("name", w.getName());
-            m.put("status", w.getStatus());
-            m.put("projectId", w.getProjectId());
-            m.put("updateTime", w.getUpdateTime() == null ? null : w.getUpdateTime().toString());
-            out.add(m);
-        }
-        return out;
-    }
-
     /** 可见的工作流列表：谁建归谁，恒为本人创建的（mine） */
     public Map<String, Object> listVisible() {
         Principal p = Principal.current();
@@ -1420,47 +1398,6 @@ public class WorkflowService {
                 .eq(WorkflowRun::getWorkflowId, workflowId)
                 .orderByDesc(WorkflowRun::getStartedAt)
                 .last("LIMIT 50"));
-    }
-
-    /**
-     * 某工作区的工作流运行记录（工作区页「运行」tab 用）。
-     *
-     * <p>{@code run.project_id} 是建运行记录时从工作流快照进来的（工作流绑定工作区那刀落的），
-     * 按它直接查。<b>不按 triggered_by 过滤</b>：共享只读的同事跑我发布的工作流，记录同样落进
-     * 这个工作区——那是这个工作区真实发生过的事，藏起来反而像「没跑」。
-     * <p>结果带 {@code kind=workflow} 与工作流名，供与定时任务执行记录合流展示。
-     */
-    public List<Map<String, Object>> runsByProject(String projectId, int limit) {
-        int n = Math.max(1, Math.min(limit <= 0 ? 50 : limit, 200));
-        List<WorkflowRun> runs = runMapper.selectList(new LambdaQueryWrapper<WorkflowRun>()
-                .eq(WorkflowRun::getProjectId, projectId)
-                .orderByDesc(WorkflowRun::getStartedAt)
-                .last("limit " + n));
-        if (runs.isEmpty()) return List.of();
-        List<String> wids = runs.stream().map(WorkflowRun::getWorkflowId).distinct().toList();
-        Map<String, String> names = new LinkedHashMap<>();
-        for (Workflow w : workflowMapper.selectList(new LambdaQueryWrapper<Workflow>()
-                .in(Workflow::getId, wids))) {
-            names.put(w.getId(), w.getName());
-        }
-        List<Map<String, Object>> out = new ArrayList<>(runs.size());
-        for (WorkflowRun r : runs) {
-            Map<String, Object> m = new LinkedHashMap<>();
-            m.put("kind", "workflow");
-            m.put("id", r.getId());
-            m.put("workflowId", r.getWorkflowId());
-            // 工作流删了记录还在（审计价值独立于定义存在）：名字兜底，不让它变成来路不明的行
-            m.put("name", names.getOrDefault(r.getWorkflowId(), "已删除的工作流"));
-            m.put("status", r.getStatus());
-            m.put("trigger", r.getTriggerType());
-            m.put("startedAt", r.getStartedAt() == null ? null : r.getStartedAt().toString());
-            m.put("finishedAt", r.getFinishedAt() == null ? null : r.getFinishedAt().toString());
-            m.put("durationMs", r.getDurationMs());
-            m.put("error", r.getError());
-            m.put("version", r.getVersion());
-            out.add(m);
-        }
-        return out;
     }
 
     /** 单条运行记录（含完整 trace）：读取权校验 + run 归属该工作流（共享只读者可见） */

@@ -156,7 +156,7 @@ async function create () {
   creating.value = true
   try {
     const roots = dirs.value.map(d => ({ path: d.path, alias: d.name }))
-    const created = await createProject(name.value.trim(), undefined, executorId.value, roots)
+    const created = await createProject(name.value.trim(), executorId.value, roots)
     const id = (created && created.data && created.data.id) || ''
     if (!id) throw new Error('创建工作区没有返回 id')
     await updateProject(id, { icon: icon.value, color: color.value })
