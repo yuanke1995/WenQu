@@ -21,6 +21,13 @@ import org.springframework.stereotype.Service;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * 沙盒生命周期与 backend 装配（本工程特有的那一层薄壳）。
@@ -63,6 +70,31 @@ public class SandboxService {
 
     /** 记忆文件下载上限（MB）：单份 MEMORY.md / 日账远小于此，超了说明读错了对象。 */
     private static final int MEMORY_MAX_FILE_MB = 64;
+
+    /**
+     * 聊天开轮时等沙盒装配的上限。超了就<b>本轮先不挂沙盒</b>，装配继续在后台跑完并进缓存，
+     * 下一轮直接命中——问答本身的路由/检索/模型调用不等它。
+     * <p>为什么必须有这道闸：装配要建沙盒容器（正常 3 秒，provisioner 侧健康检查最长 300 秒），
+     * 而这一步在框架建实例之前，卡住时整轮一个字节都出不来（2026-11-05 线上：一次 create 的
+     * 响应没回来，用户对着「正在溯源」干等 5 分半，模型调用根本没发生）。
+     * <p>取 10 秒：正常创建 + 健康检查在本机实测不到 3 秒；真赶上基础设施慢，本轮退回 P1 之前
+     * 的无沙盒形态，比让用户对着空屏等强。
+     */
+    private static final long ATTACH_TIMEOUT_MS = 10_000;
+
+    /**
+     * 沙盒装配线程池：固定 2 个 daemon 线程、有界队列。队列满时直接拒（AbortPolicy → 调用侧
+     * 当场返回 null），<b>绝不回落到调用线程同步等</b>——那正是要避免的卡顿。
+     * 线程里跑的是 HTTP create，超时后不取消任务：让它把容器建完、进 provider 缓存，下一轮可用。
+     */
+    private final ThreadPoolExecutor attachPool = new ThreadPoolExecutor(
+            2, 2, 60, TimeUnit.SECONDS, new ArrayBlockingQueue<>(8),
+            r -> {
+                Thread t = new Thread(r, "sandbox-attach");
+                t.setDaemon(true);
+                return t;
+            },
+            new ThreadPoolExecutor.AbortPolicy());
 
     private final ProvisionerSandboxProvider provider;
     private final com.wenqu.ai.executor.ExecutorRegistry executorRegistry;
@@ -304,6 +336,44 @@ public class SandboxService {
             log.warn("[SANDBOX] 框架沙箱上下文装配失败，本轮不挂框架沙箱 (session={}): {}", sessionId, e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * {@link #frameworkSandboxContext} 的有界版：聊天开轮只等 {@link #ATTACH_TIMEOUT_MS}。
+     *
+     * <p>超时不取消任务——装配线程继续把容器建出来并进 provider 缓存，下一轮命中即成。
+     * 这样「基础设施慢/卡」的代价只落在第一轮少几个文件工具上，而不是把整条问答按在那里。
+     */
+    public SandboxContext frameworkSandboxContextBounded(String sessionId, String uid, boolean unrestrictedWrites) {
+        if (sessionId == null || sessionId.isBlank() || uid == null || uid.isBlank()) {
+            return null;
+        }
+        Future<SandboxContext> future;
+        try {
+            future = attachPool.submit(() -> frameworkSandboxContext(sessionId, uid, unrestrictedWrites));
+        } catch (RejectedExecutionException e) {
+            log.warn("[SANDBOX] 沙盒装配队列已满，本轮不挂沙盒: session={}", sessionId);
+            return null;
+        }
+        try {
+            return future.get(ATTACH_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            log.warn("[SANDBOX] 沙盒装配超过 {}ms，本轮先不挂沙盒（装配继续在后台，下一轮可用）: session={}",
+                    ATTACH_TIMEOUT_MS, sessionId);
+            return null;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
+        } catch (ExecutionException e) {
+            log.warn("[SANDBOX] 沙盒装配失败，本轮不挂沙盒: session={} {}", sessionId, e.getCause());
+            return null;
+        }
+    }
+
+    /** 停服务时把还在跑的装配线程放掉（daemon 不拦退出，这里只是让热重启/测试干净）。 */
+    @jakarta.annotation.PreDestroy
+    public void shutdownAttachPool() {
+        attachPool.shutdownNow();
     }
 
     /**

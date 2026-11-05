@@ -310,8 +310,11 @@ public class FrameworkSessions {
             String sessionId = cmd.getSessionId();
             if (uid != null && !uid.isBlank() && sessionId != null && !sessionId.isBlank()) {
                 try {
+                    // 有界装配：只等 10 秒。沙盒装配（建容器）挂在开轮路径上，基础设施一慢
+                    // 整轮就一个字节都出不来（2026-11-05 线上 5 分半空屏）；超时本轮退回无沙盒形态，
+                    // 装配继续在后台跑完、下一轮命中。
                     io.agentscope.harness.agent.sandbox.SandboxContext sandboxCtx =
-                            sandboxService.frameworkSandboxContext(sessionId, uid, /* unrestrictedWrites */ false);
+                            sandboxService.frameworkSandboxContextBounded(sessionId, uid, /* unrestrictedWrites */ false);
                     if (sandboxCtx != null) {
                         // 只挂 SandboxContext：文件系统由 build 期的 .abstractFilesystem(...) 那一份负责。
                         // 框架的 FilesystemTool / ShellExecuteTool 在 build 期就绑好了文件系统，

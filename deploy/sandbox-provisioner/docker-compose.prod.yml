@@ -13,17 +13,23 @@
 #   2. cp .env.example .env 填令牌（.env 已 gitignore）
 #   3. docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 #
-# 校验跨容器连通（两条都要 200）：
+# 校验跨容器连通（三条都要 200）：
+#   docker exec wen-qu curl -s http://wenqu-sandbox-provisioner:8002/health
 #   docker exec wen-qu curl -s http://host.docker.internal:8002/health
 #   curl -s http://127.0.0.1:8002/health
-# 数据面地址（PROVISIONER_PUBLIC_URL）已写死 host.docker.internal:8002，app 容器实测可达。
+# 数据面地址（PROVISIONER_PUBLIC_URL）走**容器名**而不是 host.docker.internal：
+# 后者要经过宿主机端口映射（docker-proxy），uvicorn 关空闲连接时 FIN 可能传不到客户端，
+# JDK HttpClient 把死连接留在池里复用 ⇒ 下一次 create 的响应回不来，只能等请求超时
+# （2026-11-05 线上：聊天对着「正在溯源」空屏 5 分半，模型一次都没调）。容器名走
+# compose 内部网络直连，没有这层代理；app 容器内 `getent hosts wenqu-sandbox-provisioner`
+# 与 `curl /health` 均已实测。
 services:
   sandbox-provisioner:
     # 基础文件里是 http://127.0.0.1:8002，那是本机直跑的取值。线上 app 在容器里，
     # 这个值决定 provisioner 返回给 API 的 proxy 地址（sandbox_proxy_url），必须换成
     # app 容器真能连上的服务名，否则 API 侧拿到不可达地址。
     environment:
-      PROVISIONER_PUBLIC_URL: http://host.docker.internal:8002
+      PROVISIONER_PUBLIC_URL: http://wenqu-sandbox-provisioner:8002
 
     # 主 compose 的网络，external 表示由主 compose 创建与持有，本文件不重复定义。
     # 网络名不对时 compose 会报 "network ... not found"，用 docker network ls 核对。

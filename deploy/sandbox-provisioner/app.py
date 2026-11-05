@@ -2086,6 +2086,22 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="WenQu Sandbox Provisioner", lifespan=lifespan)
 
 
+@app.middleware("http")
+async def _close_connection(request: Request, call_next):
+    """每个响应都声明 connection: close，不让调用方复用连接。
+
+    控制面调用（create/discover/touch/delete + 沙盒 proxy）都是低频、几毫秒的本地请求，
+    复用连接省不下什么；但线上 app 走的是 host.docker.internal 这条**宿主机端口映射**，
+    uvicorn 默认 5 秒 keep-alive 关掉的连接，FIN 经 docker-proxy 后客户端可能收不到，
+    JDK HttpClient 会把这条死连接留在池里复用——下一次 create 的响应就永远回不来，
+    客户端只能等自己的 330 秒请求超时（2026-11-05 线上：连等两次，聊天对着「正在溯源」
+    空屏 5 分半，模型一次都没被调用）。改成一条请求一条连接，这类僵尸连接就不可能存在。
+    """
+    response = await call_next(request)
+    response.headers["Connection"] = "close"
+    return response
+
+
 def sandbox_response(record: SandboxRecord) -> SandboxResponse:
     return SandboxResponse(
         sandbox_id=record.sandbox_id,
