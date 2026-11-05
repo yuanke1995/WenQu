@@ -235,13 +235,6 @@ public class ChatController {
         }
         rejectApiKeyForWorkspaceSession(httpRequest, sessionId);
 
-        // 请求里带了窗口档就把它记到会话上：窗口档从此只有「会话」这一个权威，问答侧每轮读的是这一列。
-        // 聊天页在会话已有 ID 时不再随请求带档位（改档走 PUT），所以这一路实际只服务两种来路：
-        // 首问（那时还没有会话 ID）与直接调 API 的集成方。
-        if (request.getContextWindow() != null && request.getContextWindow() > 0) {
-            sessionService.updateContextWindow(userId, sessionId, request.getContextWindow());
-        }
-
         // 同步段这几道校验都是「一句话还没发出去就被挡下」，抛 400。以前挡下就什么都不留：
         // 用户那句提问是当场打出去的，刷一下页面连问带错一起消失，读到的就成了「软件吞了我一句话」。
         // 400 的语义照旧（前端 toast 与错误卡都认它），只在抛之前补一笔留痕。
@@ -307,7 +300,6 @@ public class ChatController {
                 .modelOverride(request.getModel())
                 .regenerate(request.isRegenerate()).replaceMessageId(request.getReplaceMessageId())
                 .reasoningLevel(request.getReasoningLevel())
-                .requestedContextWindow(request.getContextWindow())
                 .editVariantGroup(editVariantGroup).planMode(request.isPlanMode())
                 .fromSteer(request.isFromSteer())
                 .build(), emitter);
@@ -795,10 +787,9 @@ public class ChatController {
         return ResultJson.ok("操作成功");
     }
 
-    @Operation(summary = "读取会话模型与窗口档",
+    @Operation(summary = "读取会话模型",
             description = "返回该会话当前生效的模型引用（手动切换与每轮补记共用一列；空串=尚未用过，跟随个人默认）、"
-                    + "它当前能不能用（modelIssue 非空=已停用/已被移除，界面据此标出失效态），"
-                    + "以及会话级上下文窗口档（contextWindow，null=没选过、按模型登记上限走）。"
+                    + "它当前能不能用（modelIssue 非空=已停用/已被移除，界面据此标出失效态）。"
                     + "聊天页切到列表未加载的会话（通知/分享深链进老会话）时按需拉取，保证选择器显示与实际作答一致")
     @Permission("session:read")
     @GetMapping("/session/{sessionId}/model")
@@ -810,11 +801,9 @@ public class ChatController {
         String issue = model.isBlank() ? ""
                 : modelRegistryService.issueText(modelRegistryService
                         .referenceUsability(model, null, null, false).issue());
-        // 窗口档可空是常态（绝大多数会话从没改过档位），Map.of 不接受 null 值会直接 500
         Map<String, Object> data = new java.util.LinkedHashMap<>();
         data.put("model", model);
         data.put("modelIssue", issue);
-        data.put("contextWindow", sessionService.contextWindowOf(sessionId));
         return ResultJson.ok(data);
     }
 
@@ -857,11 +846,9 @@ public class ChatController {
         return ResultJson.ok(out);
     }
 
-    @Operation(summary = "切换会话模型/窗口档",
-            description = "设置会话级模型覆盖与上下文窗口档（聊天页选择器改动即存，刷新/换端/续跑后仍保留）。"
-                    + "两个键各自独立：<b>不出现=本次不动那一项</b>，所以只改档位的请求不会把模型清掉。"
-                    + "model 传空串 = 清除覆盖回到跟随个人默认；contextWindow 传 null/0/空串 = 清除档位回到模型登记上限。"
-                    + "窗口档越界不在这里拒：问答侧按模型登记的 [最小窗口, 窗口] 收敛，登记值改了自动跟着收敛")
+    @Operation(summary = "切换会话模型",
+            description = "设置会话级模型覆盖（聊天页选择器改动即存，刷新/换端/续跑后仍保留）。"
+                    + "model 传空串 = 清除覆盖回到跟随个人默认")
     @Permission("session:write")
     @PutMapping("/session/{sessionId}/model")
     public ResultJson setSessionModel(
@@ -884,23 +871,7 @@ public class ChatController {
             }
             sessionService.updateModel(userId, sessionId, model);
         }
-        if (payload.containsKey("contextWindow")) {
-            sessionService.updateContextWindow(userId, sessionId, parseWindow(payload.get("contextWindow")));
-        }
         return ResultJson.ok("操作成功");
-    }
-
-    /** 窗口档入参宽容取值：数字、数字串都收；null/空串/非数字/≤0 一律按「清除档位」交给服务层。 */
-    private static Integer parseWindow(Object value) {
-        if (value == null) return null;
-        if (value instanceof Number n) return n.intValue();
-        String s = String.valueOf(value).trim();
-        if (s.isEmpty()) return null;
-        try {
-            return Integer.valueOf(s);
-        } catch (NumberFormatException e) {
-            return null;
-        }
     }
 
     @Operation(summary = "任务清单", description = "取本会话当前任务清单：返回 "

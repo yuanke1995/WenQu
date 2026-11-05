@@ -63,7 +63,10 @@ public class SchemaMigrator implements ApplicationRunner {
                     "verifications_json", "contract_version", "state_revision",
                     "budget_turns", "budget_minutes"),
             "c_ai_user", List.of("role", "oidc_sub", "oidc_provider",
-                    "default_rerank_model", "default_vision_model"));
+                    "default_rerank_model", "default_vision_model"),
+            // 2026-11-05: 上下文窗口档位整体退役——会话级档列与模型登记的下限列一并删
+            "c_ai_session", List.of("context_window"),
+            "c_ai_model", List.of("context_window_min"));
 
     private final JdbcTemplate jdbcTemplate;
 

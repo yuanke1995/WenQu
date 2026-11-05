@@ -691,6 +691,48 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
         // 本轮身份（轮级互斥外壳已经登记好 turnId）：待办落库、任务清单留痕、步数预算归零都认它
         String turnId = turnIdOf(cmd);
+
+        // 本轮用户图片：先落盘换 URL，再决定「原图要不要进模型」。
+        // 两条链路的分叉点只有一个——聊天模型能不能读图（visionCapableOf，与发布游客模型时同一个判据）：
+        //   能读：processDirect（落盘 + 保留原图 dataURL 供本轮直发，不丢细节）
+        //   不能：processDisplay（只落盘回显，dataURL 不占内存；本轮在问题里注入诚实说明，见 imgNote）
+        // 无论哪条，**落库的一律是 URL**：data URL 永远不进库（TEXT 列放不下，见 userImages 字段注释）。
+        boolean chatSeesImages = modelRegistry.visionCapableOf(ref);
+        List<String> rawImages = cmd.getUserImages();
+        List<com.wenqu.ai.service.UserImageService.UserImage> userImgs =
+                (rawImages == null || rawImages.isEmpty())
+                        ? List.of()
+                        : (chatSeesImages ? userImages.processDirect(rawImages) : userImages.processDisplay(rawImages));
+        List<String> userImgUrls = userImgs.stream()
+                .map(com.wenqu.ai.service.UserImageService.UserImage::url).toList();
+        // 模型读不了图时必须**说出来**：登记降级（受 chat.retrievalDebugEnabled 控制，与其它降级同一条口径），
+        // 并把说明拼进本轮问题——后者才是生产环境下用户真正看得见的那一层：
+        // 模型据此回答「我看不到图，别猜」，而不是对着看不见的图硬编一段。
+        // 只在真有图片被排除时登记：本轮没传图就无所谓模型支不支持视觉，不该弹「0 张图片仅作展示」
+        String imgNote = "";
+        if (!userImgs.isEmpty() && !chatSeesImages) {
+            imgNote = "\n\n用户上传了 " + userImgs.size()
+                    + " 张图片，但当前模型不支持图片理解，图片内容对你不可见。"
+                    + "请勿猜测图片内容；若图片对回答关键，可建议用户更换支持图片理解的模型后重试。";
+            pool.registrar().degrade("chatModelNoVision",
+                    "当前模型「" + ref.substring(ref.indexOf('/') + 1)
+                            + "」不支持图片理解，本轮 " + userImgs.size()
+                            + " 张图片仅作展示、未参与回答；如需识别图片请更换支持图片理解的模型");
+            log.warn("[FAIL-LOUD] 聊天模型不支持图片理解，图片仅展示: session={} model={} count={}",
+                    cmd.getSessionId(), ref, userImgs.size());
+        } else if (!userImgs.isEmpty()) {
+            log.info("[IMAGE] 聊天模型自带图片理解，图片直发模型: session={} model={} count={}",
+                    cmd.getSessionId(), ref, userImgs.size());
+        }
+
+        // 问题先落库，且必须排在 sessions.open 之前：建实例会先装配沙盒，线上实测一次
+        // sandbox.start() 卡了 5 分半才失败；而侧栏只列「有消息的会话」——等建完再落库的话，
+        // 用户中途停止/刷新时这一问还没进库，整条会话会被当成空会话隐藏（2026-11-05 线上复现：
+        // 点了停止再刷新，1+1=? 那条会话从侧栏消失，5 分钟后才重新出现）。
+        // 附件/@/#历史引用随用户消息一并持久化，刷新后回显不丢。
+        String userMessageId = cmd.isRegenerate() || cmd.isFromSteer() ? null
+                : appendQuestion(cmd, turnId, userImgUrls);
+
         java.util.concurrent.ConcurrentLinkedQueue<String> spills = new java.util.concurrent.ConcurrentLinkedQueue<>();
         WenquAgentxTools.TurnHooks hooks = tools.newHooks(cmd, ref, () -> turnId, spills,
                 consultService.newLedger());
@@ -760,43 +802,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 正文与工具卡当增量再发一遍（前端按 pos 去重只护得住同一条气泡的重复片段，护不住跨轮）
         long startCursor = session.log().head().seq();
 
-        // 本轮用户图片：先落盘换 URL，再决定「原图要不要进模型」。
-        // 两条链路的分叉点只有一个——聊天模型能不能读图（visionCapableOf，与发布游客模型时同一个判据）：
-        //   能读：processDirect（落盘 + 保留原图 dataURL 供本轮直发，不丢细节）
-        //   不能：processDisplay（只落盘回显，dataURL 不占内存；本轮在问题里注入诚实说明，见 imgNote）
-        // 无论哪条，**落库的一律是 URL**：data URL 永远不进库（TEXT 列放不下，见 userImages 字段注释）。
-        boolean chatSeesImages = modelRegistry.visionCapableOf(ref);
-        List<String> rawImages = cmd.getUserImages();
-        List<com.wenqu.ai.service.UserImageService.UserImage> userImgs =
-                (rawImages == null || rawImages.isEmpty())
-                        ? List.of()
-                        : (chatSeesImages ? userImages.processDirect(rawImages) : userImages.processDisplay(rawImages));
-        List<String> userImgUrls = userImgs.stream()
-                .map(com.wenqu.ai.service.UserImageService.UserImage::url).toList();
-        // 模型读不了图时必须**说出来**：登记降级（受 chat.retrievalDebugEnabled 控制，与其它降级同一条口径），
-        // 并把说明拼进本轮问题——后者才是生产环境下用户真正看得见的那一层：
-        // 模型据此回答「我看不到图，别猜」，而不是对着看不见的图硬编一段。
-        // 只在真有图片被排除时登记：本轮没传图就无所谓模型支不支持视觉，不该弹「0 张图片仅作展示」
-        String imgNote = "";
-        if (!userImgs.isEmpty() && !chatSeesImages) {
-            imgNote = "\n\n用户上传了 " + userImgs.size()
-                    + " 张图片，但当前模型不支持图片理解，图片内容对你不可见。"
-                    + "请勿猜测图片内容；若图片对回答关键，可建议用户更换支持图片理解的模型后重试。";
-            pool.registrar().degrade("chatModelNoVision",
-                    "当前模型「" + ref.substring(ref.indexOf('/') + 1)
-                            + "」不支持图片理解，本轮 " + userImgs.size()
-                            + " 张图片仅作展示、未参与回答；如需识别图片请更换支持图片理解的模型");
-            log.warn("[FAIL-LOUD] 聊天模型不支持图片理解，图片仅展示: session={} model={} count={}",
-                    cmd.getSessionId(), ref, userImgs.size());
-        } else if (!userImgs.isEmpty()) {
-            log.info("[IMAGE] 聊天模型自带图片理解，图片直发模型: session={} model={} count={}",
-                    cmd.getSessionId(), ref, userImgs.size());
-        }
-
-        // 问题先落库：这一轮哪怕中途停掉或出错，界面上也不该出现「问出去了却什么都没有」的空档
-        // （与手写运行时的即时落库同一条口径）。附件/@/#历史引用随用户消息一并持久化，刷新后回显不丢。
-        String userMessageId = cmd.isRegenerate() || cmd.isFromSteer() ? null
-                : appendQuestion(cmd, turnId, userImgUrls);
         Recording recording = new Recording(spills, hooks.consultLedger(), tools, hooks, displayNames,
                 cmd.getUserId());
         bindFrameworkToolGate(cmd, recording);
@@ -1833,28 +1838,14 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 把 0 塞进去等于向框架声明「窗口=0」，框架随即改用 64000 的兜底输入上限。真机 2026-10-25：
      * 一台 1M 窗口的模型因此被压成「对话约 44K 就折一次上下文」，24 小时内自动压缩 7 次，
      * 而界面上的容量条一直显示 2.8%。
-     * <p>取值链：<b>本轮请求显式带的档 ＞ 会话钉住的档 ＞ 模型登记上限</b>。会话那一层是给续跑轮用的：
-     * 目标续跑、后台轮、断线重连重建的 {@link ChatCommand} 不带请求档，只认请求时这些轮会退回登记上限，
-     * 用户手动降过的档就在中途悄悄变回去——窗口变了，压缩阈值跟着变，而界面上看不出来。
-     * <p>越界值在服务端收敛到模型登记的 {@code [contextWindowMin, contextWindow]} 区间
-     * （前端面板只在区间内给档位，但前端校验不是边界）：超上限抬到上限——否则压缩阈值被抬到
-     * window−20k，基本不压缩直到上游 overflow；低于下限压到下限——否则每次模型调用都触发压缩。
-     * 只登记上限、没登记可选区间（min 空）时档位选择整个不生效，按登记上限走。
+     * <p>窗口一律取模型登记上限。界面上的「上下文窗口档位」选择已整条退役（前端不再下发、会话行不再钉档），
+     * 因为「选小窗口」省下的只是压缩时机，代价是检索资料被提前折掉且界面看不出差别——
+     * 用户要的是「带上更多资料」，那件事该由检索与压缩参数管，不该由一个窗口下拉框代答。
      */
-    private int modelContextWindow(ChatCommand cmd, String modelRef) {
+    private int modelContextWindow(String modelRef) {
         com.wenqu.ai.model.ModelInfo mi = modelRegistry.modelInfoOf(modelRef);
         Integer max = mi == null ? null : mi.getContextWindow();
-        if (max == null || max <= 0) return 0;
-        Integer min = mi.getContextWindowMin();
-        boolean adjustable = min != null && min > 0 && min <= max;
-        Integer requested = cmd.getRequestedContextWindow();
-        if (requested == null || requested <= 0) {
-            // 会话钉住的那一档只在这台模型本来就有可调区间时才算数：没有区间就谈不上「用户选过」，
-            // 采信历史值等于把窗口永久钉在一个没人选过的数上
-            requested = adjustable ? sessionService.contextWindowOf(cmd.getSessionId()) : null;
-        }
-        if (requested == null || requested <= 0 || !adjustable) return max;
-        return Math.max(min, Math.min(requested, max));
+        return max == null || max <= 0 ? 0 : max;
     }
 
     /**
@@ -2729,9 +2720,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 指纹的话，关掉后要等下一次重建才停，与个人设置里「关掉后下一轮起才停」的说法不符。
         key = key + "|mem=" + orgService.memoryFlushEnabled(cmd.getUserId());
         // 上下文窗口档并进指纹：它决定框架的压缩阈值与输入上限，烤死在实例里，不重建就等于改档位没改。
-        // 之所以敢并：这一档现在归会话行权威（见 modelContextWindow），续跑轮重建的 ChatCommand 虽然
-        // 不带请求档，也会从会话行读到同一份，不会像早先那样「续跑按默认档重建、丢掉用户的选择」。
-        int contextWindow = modelContextWindow(cmd, modelRef);
+        // 窗口现在恒等于模型登记上限（档位选择已退役），并进来是为了管理员改了登记值时这一轮就重建。
+        int contextWindow = modelContextWindow(modelRef);
         key = key + "|ctx=" + contextWindow;
         // 思考开关仍留在指纹外：它同样烤在实例里，但续跑轮的 ChatCommand 复原不了它，并进来会让
         // 续跑按默认档重建。那一档的变更仍欠「按调用传 GenerateOptions」那一刀。

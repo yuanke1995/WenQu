@@ -18,7 +18,7 @@
 | `POST /api/ai/session/{id}/compact`、`GET /session/{id}/history-summary` | 手动压缩上下文（可带摘要要求）/ 当前生效摘要 |
 | `GET /api/ai/session/{id}/events`、`GET /session/{id}/todos` | 会话事件账本（按轮过程回放）/ 任务清单快照 |
 | `GET /api/ai/tool-output/{spillId}`、`GET /tool-output/{spillId}/search` | 工具大输出留存原文读回 / 在原文中检索 |
-| `GET /api/ai/sessions`、`POST /session/new`、`GET /session/{id}`、`PUT /session/{id}/rename\|pin\|favorite\|model\|project\|permission`、`DELETE /session/{id}`、`DELETE /sessions`、`POST /sessions/batch-delete` | 会话列表（游标分页 + 搜索）/ 新建 / 历史恢复 / 重命名 / 置顶 / 收藏 / 模型与窗口档位 / 移动工作区 / 会话级权限档位 / 删除 / 清空 / 批量删除 |
+| `GET /api/ai/sessions`、`POST /session/new`、`GET /session/{id}`、`PUT /session/{id}/rename\|pin\|favorite\|model\|project\|permission`、`DELETE /session/{id}`、`DELETE /sessions`、`POST /sessions/batch-delete` | 会话列表（游标分页 + 搜索）/ 新建 / 历史恢复 / 重命名 / 置顶 / 收藏 / 模型覆盖 / 移动工作区 / 会话级权限档位 / 删除 / 清空 / 批量删除 |
 | `GET+POST+DELETE /api/ai/session/{id}/share`、`GET /session-shares`、`DELETE /session-shares/{sessionId}[/record]` | 会话只读分享：查询 / 开启 / 关闭 / 管理 |
 | `DELETE /api/ai/message-group/{assistantMessageId}`、`POST /message-group/undo`、`POST /message-group/switch` | 删除本轮 / 撤销删除 / 切换回答版本 |
 | `POST /api/ai/chat/goal`、`POST /chat/goal/{goalId}`、`GET /chat/goal/pending`、`GET /chat/session/{id}/goal[/events]` | 目标模式：创建 / 动作（`pause`·`resume`·`edit`·`clear`）/ 待处理恢复 / 目标视图与过程账本 |

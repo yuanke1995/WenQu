@@ -1237,9 +1237,6 @@ const REASONING_LEVELS = [
 /** ON=开启思考（不带强度：模型未登记档位时用），off=关闭思考；其余为具体档位 */
 const THINK_LEVEL_ON = '__on__'
 const levelLabel = v => REASONING_LEVELS.find(x => x.value === v)?.label || '默认强度'
-// ==================== 上下文窗口档位（模型登记 [最小窗口~窗口] 区间时面板可点选，默认=上限） ====================
-/** 可选档位边界（token）：2 的幂序列；区间两端始终入选，落在区间内的幂点全给 */
-const CTX_WINDOW_STEPS = [4096, 8192, 16384, 32768, 65536, 131072, 262144, 524288, 1048576, 2097152, 4194304, 8388608]
 /** K/M 口径窗口格式化：按整除自动选进制——2 的幂登记值走 1024 进制（131072→128K、1048576→1M），
  *  十进制登记值走 1000 进制（100000→100K、200000→200K），两边都不整除才落 1024 一位小数 */
 const fmtWindow = n => {
@@ -1602,7 +1599,7 @@ export {
   fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget, fanRun, runBoardText,
   mergeDoneToolCalls, nowTick, ensureTick, holdTick, stopTick, toolSearchQueries,
   retrievalLineTitle,
-  THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel, CTX_WINDOW_STEPS, fmtWindow,
+  THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel, fmtWindow,
   usageCtxTokens, usageTip,
   groupSources, externalOrigin, sourceName,
   fmtSourceScore, scoreTitle, fmtSize, histItemTitle, histItemDigest, fmtMsgTime, errorBrief, agentBadgeOf,

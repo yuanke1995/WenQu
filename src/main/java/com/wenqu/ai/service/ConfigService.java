@@ -441,7 +441,7 @@ public class ConfigService {
         // 实测框架里 .maxContextTokens(...) 是 WorkspaceContextMiddleware 的「工作区材料注入预算」
         // （AGENTS.md/MEMORY.md/knowledge 注入上限，框架默认 8000），不是压缩阈值；压缩阈值由
         // model.getContextWindowSize() 推导（CompactionMiddleware: window-reserved 20k）。
-        // 用户的窗口档位现落 OpenAIChatModel.contextWindowSize（AgentscopeChatEngine.modelContextWindow）。
+        // 窗口档位已退役：OpenAIChatModel.contextWindowSize 恒取模型登记上限（AgentscopeChatEngine.modelContextWindow）。
         // 数据库遗留该键不影响行为（无读取点），设置页 debug 面板若无对应 schema 行也不会显示。
         // 框架引擎状态恒存 Redis（RedisAgentStateStore），本地文件方案已退役：
         // 容器一重建本地文件就没了，会话上下文随之丢失，多轮对话退化成每轮独立问答

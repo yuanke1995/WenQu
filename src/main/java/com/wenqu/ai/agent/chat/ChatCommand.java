@@ -74,8 +74,6 @@ public final class ChatCommand {
      * null = 本轮不指定强度，只有深度思考开关。
      */
     final String reasoningLevel;
-    /** 前端请求的上下文窗口（与会话级覆盖、模型登记值一起裁决，见 resolveContextWindow） */
-    final Integer requestedContextWindow;
     /** 免登录分享会话（公开链接）：能力白名单收窄、另有恢复语义 */
     final boolean guestMode;
     /**

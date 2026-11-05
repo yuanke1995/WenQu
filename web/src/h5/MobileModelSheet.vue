@@ -67,18 +67,6 @@
         </template>
       </template>
 
-      <!-- ---- 上下文窗口档位 ---- -->
-      <template v-if="ctxOptions.length">
-        <div class="ms-section-title">上下文窗口</div>
-        <div class="ms-chips">
-          <button v-for="o in ctxOptions" :key="o.value" class="ms-chip" :class="{ on: currentCtx === o.value }"
-                  type="button" :disabled="loading" @click="setWindow(o.value)">
-            {{ o.label }}
-          </button>
-        </div>
-        <div class="ms-note">窗口越大能带上更多资料与历史，费用也相应增加</div>
-      </template>
-
       <!-- ---- 上下文压缩（PC 端 /compact 命令的移动入口）---- -->
       <div class="ms-section-title">上下文</div>
       <button class="ms-row" type="button" :disabled="loading || compacting" @click="doCompact">
@@ -110,7 +98,6 @@ const {
   effectiveModelIssue,
   compacting, compactContext,
   thinkCapsOf, levelOptionsOf, currentLevelOf, deepOnOf, setThinkLevel, modelLabelOf,
-  ctxWindowOptionsOf, effectiveCtxWindowOf,
   agentList, currentAgentId, currentAgentName, hasDefaultAgent, pickAgent
 } = engine
 
@@ -173,8 +160,6 @@ const levelOptions = computed(() => levelOptionsOf(effectiveModel.value))
 const levelChips = computed(() => levelOptions.value.filter(o => o.value !== 'off' && o.value !== THINK_LEVEL_ON))
 const currentLevel = computed(() => currentLevelOf(effectiveModel.value))
 const thinkOn = computed(() => deepOnOf(effectiveModel.value))
-const ctxOptions = computed(() => ctxWindowOptionsOf(effectiveModel.value))
-const currentCtx = computed(() => effectiveCtxWindowOf(effectiveModel.value))
 
 const toggleThink = () => {
   if (loading.value) return
@@ -183,7 +168,6 @@ const toggleThink = () => {
   setThinkLevel(first ? first.value : THINK_LEVEL_ON)
 }
 const setLevel = v => setThinkLevel(v)
-const setWindow = v => engine.setCtxWindow(v)
 // 压缩后关掉 sheet：结果条在聊天页消息流底部，留在 sheet 里看不到反馈（失败/无需压缩的原因也走 toast）
 const doCompact = async () => {
   const d = await compactContext()

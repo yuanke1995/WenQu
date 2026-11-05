@@ -9,7 +9,7 @@ import { isAdminSync } from '../utils/auth'
 import { message } from 'ant-design-vue'
 import { sendQuestion, resumeChat, getChatRun, newSession, getHistory, deleteSessionApi, switchMessageVariant, compactSessionApi, sessionHistorySummaryApi, getConfig, getRuntimeConfig, listAvailableAgents, listConsultableAgents,
          listAvailableSkills, getUserPreference, approveToolCall, getToolApproval, answerAgentAsk, ignoreAgentAsk, stopChatTurn, steerChatTurn,
-         listPendingAsks, listPendingApprovals, resolvePlanApproval, supersedePlanApproval, listPendingPlans, updateSessionModelApi, updateSessionWindowApi, getSessionModelApi,
+         listPendingAsks, listPendingApprovals, resolvePlanApproval, supersedePlanApproval, listPendingPlans, updateSessionModelApi, getSessionModelApi,
          listKnowledgeBases, listDocuments, uploadChatAttachment, getSessionTodosApi,
          listSandboxFiles, downloadSandboxFile, sandboxFileToArtifact,
          listSandboxProcs, killSandboxProc,
@@ -23,7 +23,7 @@ import { MAX_IMAGES, MAX_FILES, classifyIntake, rejectText, REJECT, compressImag
 import { fmtTokens } from '../utils/token'
 import { loadModelIndex } from '../utils/modelRef'
 import { approvalStatusText, approvalLeftSec } from './approval'
-import { THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel, CTX_WINDOW_STEPS, fmtWindow,
+import { THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel,
          groupSources, ensureTick, mergeDoneToolCalls, restoreTimeline, extendTimelineText, extendTimelineProcess,
          pushTimelineTool, pushTimelineArtifact, pushTimelineSteer, pushTimelineThink, extendTimelineThink, ensureThinkSegment,
          snapshotVersion, applyVersion, histItemDigest,
@@ -142,80 +142,6 @@ const reasoningLevelParam = computed(() => {
   if (!deepThinkOn.value) return ''
   const v = currentThinkLevel.value
   return (v && v !== 'off' && v !== THINK_LEVEL_ON) ? v : ''
-})
-/** 某模型的窗口可调区间：null=不可调（未登记窗口/下限，或 min≥max）——面板窗口行保持只读 */
-const ctxRangeOf = ref => {
-  const info = modelIndex.value[ref]
-  if (!info) return null
-  const max = info.contextWindow
-  const min = info.contextWindowMin
-  if (!max || max <= 0 || !min || min <= 0 || min >= max) return null
-  return { min, max }
-}
-/** 档位选项：区间内的 2 的幂点 + 两端（下限不在幂上时补头，上限同理补尾）。
- *  标签去重：登记值十进制（如 glm 下限 128000）与幂点（131072）都会格式化成「128K」，
- *  不筛会出现两个同名 128K——两端保留（min 是官方口径下限、max 是实际生效上限），
- *  中间幂点与两端或彼此撞名时丢弃。 */
-const ctxWindowOptionsOf = ref => {
-  const range = ctxRangeOf(ref)
-  if (!range) return []
-  const minLabel = fmtWindow(range.min)
-  const maxLabel = fmtWindow(range.max)
-  const seen = new Set([minLabel, maxLabel])
-  const mids = CTX_WINDOW_STEPS
-    .filter(v => v > range.min && v < range.max)
-    .map(v => ({ value: v, label: fmtWindow(v) }))
-    .filter(o => !seen.has(o.label) && seen.add(o.label))
-  return [{ value: range.min, label: minLabel }, ...mids, { value: range.max, label: maxLabel }]
-}
-/** 按模型记忆的窗口档位（只在「还没有会话 ID」时当种子用——首问要带着它落进会话行）。
- *  会话一旦存在，档位的权威就不在这里：见 sessionCtxMap。 */
-const ctxWindowMap = ref((() => {
-  try {
-    const raw = localStorage.getItem('ai_ctx_window')
-    const parsed = raw ? JSON.parse(raw) : {}
-    return (parsed && typeof parsed === 'object') ? parsed : {}
-  } catch (e) { return {} }
-})())
-/** 会话ID → 会话行上钉住的窗口档（token；无键/null=这个会话没选过，按模型登记上限走）。
- *  这一档决定框架什么时候折上下文，且烤在常驻实例里（改档位下一轮重建实例），所以必须服务端权威：
- *  只存本台机器的话，换台机器就是「没选过」，同一个会话在两端之间来回就把窗口来回盖。 */
-const sessionCtxMap = ref({})
-/** 某模型当前生效窗口：会话钉过用会话那份，其次本台机器的记忆（仅首问前），都没有=登记上限 */
-const effectiveCtxWindowOf = ref => {
-  const range = ctxRangeOf(ref)
-  if (!range) return null
-  const sid = currentSessionId.value
-  // 有键就认服务端那份（键在而值为 null = 后端说这个会话没钉过，显示上限）；
-  // 还没有键只有一种情况：这一条会话刚由首问建出来、列表还没回填，此时本地记忆就是刚发出去的那一档
-  const pinned = sid && sid in sessionCtxMap.value
-    ? sessionCtxMap.value[sid]
-    : ctxWindowMap.value[ref]
-  return (pinned >= range.min && pinned <= range.max) ? pinned : range.max
-}
-/** 面板点选窗口档位：有会话就即时 PUT 到会话行（下一轮起生效并重建实例），首问前只记本地等随载荷落库 */
-const setCtxWindow = (v, modelRef) => {
-  const target = modelRef || effectiveModel.value
-  const sid = currentSessionId.value
-  if (!ctxRangeOf(target)) return
-  if (sid) {
-    // 切换即时落库；失败必须提醒——静默吞掉的话界面显示已改、下一轮仍按旧档压缩
-    sessionCtxMap.value = { ...sessionCtxMap.value, [sid]: v }
-    updateSessionWindowApi(sid, v)
-      .catch(e => message.error(`窗口档位保存失败：${e?.message || '请稍后重试'}`))
-    return
-  }
-  ctxWindowMap.value = { ...ctxWindowMap.value, [target]: v }
-  try {
-    localStorage.setItem('ai_ctx_window', JSON.stringify(ctxWindowMap.value))
-  } catch (e) { /* 存储不可用忽略 */ }
-}
-/** 本轮下发后端的窗口档位：只在还没有会话 ID 时带（那时 PUT 无处可落，后端补建会话后据此落库）。
- *  会话已存在就不带——和模型同一口径：把本台机器的选择盖到服务端权威值上，两端会来回互相覆盖。 */
-const contextWindowParam = computed(() => {
-  if (currentSessionId.value) return null
-  const range = ctxRangeOf(effectiveModel.value)
-  return range ? effectiveCtxWindowOf(effectiveModel.value) : null
 })
 const canSend = computed(() => !!(text.value.trim() || pendingImages.value.length || pendingFiles.value.length))
 // ==================== 技能（输入框「+」菜单选用，仅对本轮生效） ====================
@@ -442,19 +368,14 @@ const currentOverrideModel = computed({
 const seedSessionModels = () => {
   const patch = {}
   const issues = {}
-  const wins = {}
-  for (const s of sessionStore.list) {
+    for (const s of sessionStore.list) {
     if (!s || !s.id) continue
     if (!(s.id in modelMap.value)) patch[s.id] = s.model || ''
     // 可用性每次重算：它随管理员停启用供应商/模型而变，不像选择那样归本地
     issues[s.id] = s.modelIssue || ''
-    // 窗口档每次重算：会话换过模型后，上一台模型留下的档对新模型可能根本不成立，
-    // 界面要显示这一条会话真正在用的那一个数，不是本台机器缓存里的习惯
-    wins[s.id] = s.contextWindow == null ? null : Number(s.contextWindow)
   }
   if (Object.keys(patch).length) modelMap.value = { ...modelMap.value, ...patch }
   modelIssueMap.value = { ...modelIssueMap.value, ...issues }
-  sessionCtxMap.value = { ...sessionCtxMap.value, ...wins }
 }
 // 监听列表本身，而不是在挂载流程里调一次：会话列表由侧栏（AppLayout）与聊天页各自触发加载，
 // 并发时 loadSessions 的加载代次守卫会丢弃较早的一次（列表还没写入），挂载时点读到的可能是空列表。
@@ -1105,8 +1026,6 @@ const switchSession = async sid => {
       // 迟到的响应不覆盖界面上已改的选择（用户在这期间又切了模型）
       if (r && r.success && !(sid in modelMap.value)) {
         modelMap.value = { ...modelMap.value, [sid]: r.data?.model || '' }
-        sessionCtxMap.value = { ...sessionCtxMap.value,
-          [sid]: r.data?.contextWindow == null ? null : Number(r.data.contextWindow) }
       }
     }).catch(() => {})
   }
@@ -1304,6 +1223,9 @@ const retryHistory = async () => {
 }
 
 const creatingSession = ref(false)
+/** 归属可能在会话没换 id 的情况下改变（服务端复用空会话时会改挂），页面上凡是按工作区判的东西
+    （权限档位药丸、目录提示、头部标识）都要靠这个重新取一次工作区摘要 */
+const workspaceEpoch = ref(0)
 /**
  * 新建会话。presetAgentId：由「切换智能体」触发时带上目标智能体，落为新会话的待选值
  * （新会话尚未绑定，首问发出时才由后端锁定）。
@@ -1329,11 +1251,15 @@ const createNewSession = async presetAgentId => {
     return
   }
   creatingSession.value = true
+  const prevSid = currentSessionId.value
   try {
     const r = await newSession()
     if (r.success && r.data?.sessionId) {
       const sid = r.data.sessionId
       currentSessionId.value = sid
+      // 服务端领走的往往就是手上这条空会话：id 没变，但归属已经改挂到这次点名的工作区。
+      // 页面那个「切会话才重取工作区摘要」的判据不会动，所以要单独喊它一次。
+      if (sid === prevSid) workspaceEpoch.value++
       if (presetAgentId !== undefined) {
         agentMap.value = { ...agentMap.value, [sid]: presetAgentId || '' }
       }
@@ -2590,8 +2516,6 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
     planMode: planMode || false,
     // 思考强度档位（低/中/高/超高/极致）：空串=不指定，后端回落模型登记的默认档位
     reasoningLevel: reasoningLevelParam.value,
-    // 上下文窗口档位（token）：仅模型登记了「最小~最大」区间时下发（null=后端用登记上限/全局默认）
-    contextWindow: contextWindowParam.value,
     attachments,
     skills,
     mentions,
@@ -3991,8 +3915,6 @@ onUnmounted(() => {
     // 思考能力 / 档位
     thinkCapsOf, reasoningLevelsOf, deepThinkMap, deepOnOf, deepThinkOn, levelOptionsOf, currentLevelOf,
     levelMap, setThinkLevel, currentThinkLevel, reasoningLevelParam,
-    // 上下文窗口档位（发送载荷 + 思考面板消费）
-    ctxRangeOf, ctxWindowOptionsOf, effectiveCtxWindowOf, setCtxWindow, contextWindowParam,
     // 技能
     skillList, pickedSkills, loadSkills, toggleSkill, skillAvaStyle, skillDoc,
     // 智能体
@@ -4033,7 +3955,7 @@ onUnmounted(() => {
     // # 历史引用（本轮显式指定的会话历史问答）
     MAX_HISTORY_REFS, pendingHistoryRefs, histPool, isHistPicked, toggleHistoryRef, removeHistoryRef,
     // 会话生命周期
-    switchSession, creatingSession, createNewSession, autoPick, handleDeleteSession,
+    switchSession, creatingSession, createNewSession, workspaceEpoch, autoPick, handleDeleteSession,
     // 提问卡恢复（切换会话自动跑；通知深链落到当前会话时页面可再点名一次）
     hydratePendingAsk,
     // 断线重连接流（切换会话自动跑；网络恢复或从后台回到前台时页面可再点名一次）

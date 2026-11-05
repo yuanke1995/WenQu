@@ -1163,22 +1163,20 @@
         <template #left-lead>
           <!-- 会话级权限档位：仅可查看 / 工作区内修改 / 完全权限。改的是这条会话，
                下一次工具调用起生效。只在真工作区的会话里出现：档位管的是「工作区目录里的读写」，
-               侧栏「会话」（implicit 兜底容器）没有目录，摆一档下来只会让人以为按它执行了。 -->
+               侧栏「会话」（implicit 兜底容器）没有目录，摆一档下来只会让人以为按它执行了。
+               胶囊与菜单都只报具体档位，不再有「跟随智能体」这一项：没在本会话选过时，
+               报的就是这位智能体自己的档位（由后端下发的档位名册 + 智能体档位算出）。 -->
           <a-dropdown v-if="inWorkspaceSession" :trigger="['click']" placement="topLeft">
-            <button class="perm-pill" :class="{ on: !!sessionPermission && sessionPermission !== 'autonomous', danger: sessionPermission === 'autonomous' }"
+            <button class="perm-pill" :class="{ on: !!sessionPermission && effectivePermission !== 'autonomous', danger: effectivePermission === 'autonomous' }"
                     type="button"
-                    :title="'权限：' + (sessionPermission === 'autonomous' ? '完全访问' : permissionLabel)">
-              <ExclamationCircleOutlined v-if="sessionPermission === 'autonomous'" />
+                    :title="'权限：' + permissionLabel">
+              <ExclamationCircleOutlined v-if="effectivePermission === 'autonomous'" />
               <SafetyCertificateOutlined v-else />
-              <span v-if="!isNarrow" class="perm-pill-name">{{ sessionPermission === 'autonomous' ? '完全访问' : permissionLabel }}</span>
+              <span v-if="!isNarrow" class="perm-pill-name">{{ permissionLabel }}</span>
             </button>
             <template #overlay>
-              <a-menu class="perm-menu" :selected-keys="[sessionPermission || 'follow']"
+              <a-menu class="perm-menu" :selected-keys="[effectivePermission]"
                       @click="({ key }) => pickPermission(key)">
-                <a-menu-item key="follow">
-                  <div class="perm-mi-t">跟随智能体</div>
-                  <div class="perm-mi-d">用智能体自己的权限档位（默认）</div>
-                </a-menu-item>
                 <a-menu-item v-for="p in permissionPresets" :key="p.code" :disabled="p.available === false">
                   <div class="perm-mi-t">{{ p.label }}</div>
                   <div class="perm-mi-d">{{ p.available === false ? p.unavailableReason : p.summary }}</div>
@@ -1260,6 +1258,9 @@
           <ModelSelect v-model="currentOverrideModel" type="chat" pill allow-clear
           :issue="effectiveModelIssue"
           :placeholder="effectiveModelLabel || '选择模型'"
+          :display-ref="effectiveModel"
+          :badge="pillLevelBadge" :badge-title="pillLevelTitle"
+          :search="false"
           :compact="isNarrow"
           :width="190"
           @option-hover="onModelOptionHover" @open-change="onModelSelectOpenChange" />
@@ -1618,54 +1619,40 @@
     </a-modal>
 
     <!-- 深度思考面板卡：悬浮模型下拉行时在该行右侧弹出（Teleport 到 body + fixed 定位，随悬浮行开合）。
-         展示该模型自己的设置：上下文窗口（登记了「最小~最大」区间时可点选档位，默认最大）+ 思考强度
-         （档位点选即时写入按模型 localStorage 记忆，生效模型下一轮发送立即生效）；模型不支持思考时只展示窗口信息 -->
+         展示该模型自己的设置：上下文窗口（只报登记上限，不可调）+ 思考强度（档位豆平铺，
+         点选即时写入按模型 localStorage 记忆，生效模型下一轮发送立即生效）；模型不支持思考时只展示窗口信息 -->
     <Teleport to="body">
       <div v-if="thinkPanelVisible" ref="thinkPanelEl" class="think-float"
            :style="{ top: thinkPanelPos.top + 'px', left: thinkPanelPos.left + 'px' }"
            @mouseenter="onThinkPanelEnter" @mouseleave="onThinkPanelLeave"
            @mousedown.stop.prevent>
         <div class="thinkp">
-          <div class="thinkp-head">
-            <div class="thinkp-title">深度思考</div>
-            <div class="thinkp-model">{{ thinkPanelModelLabel }}</div>
-          </div>
-          <div v-if="thinkPanelCaps.visible" class="thinkp-desc">回答前先逐步推理，适合数学、代码等复杂问题；关闭后响应更快。</div>
+          <div class="thinkp-title">深度思考</div>
           <div v-if="thinkPanelCtxText || thinkPanelCaps.visible" class="thinkp-row-wrap">
-            <button v-if="thinkPanelCtxText" class="thinkp-row" type="button"
-                    :class="{ expandable: !!thinkPanelCtxRange }"
-                    :title="thinkPanelCtxRange
-                      ? '上下文窗口档位（默认最大，点选调整）。决定检索资料能塞多少：预算 = 窗口×安全系数−最大输出'
-                      : '模型登记的上下文窗口。决定检索资料能塞多少：预算 = 窗口×安全系数−最大输出'"
-                    @click="thinkPanelCtxRange && (thinkCtxOpen = !thinkCtxOpen)">
+            <!-- 上下文窗口只报登记上限：档位选择已退役，窗口一律按模型登记的最大值走 -->
+            <div v-if="thinkPanelCtxText" class="thinkp-row"
+                 title="模型登记的上下文窗口：一次能带进的资料与历史总量，也决定长对话什么时候开始折上下文">
               <span class="thinkp-row-label">上下文窗口</span>
               <span class="thinkp-row-val">{{ thinkPanelCtxText }}</span>
-              <down-outlined v-if="thinkPanelCtxRange" class="thinkp-caret" :class="{ open: thinkCtxOpen }" />
-            </button>
-            <div v-if="thinkCtxOpen && thinkPanelCtxRange" class="thinkp-levels">
-              <button v-for="opt in thinkPanelCtxOptions" :key="opt.value" class="thinkp-opt" type="button"
-                      :class="{ active: opt.value === thinkPanelCurrentCtx }"
-                      @click="setCtxWindow(opt.value, thinkHoverModel)">
-                <span>{{ opt.label }}</span>
-                <check-outlined v-if="opt.value === thinkPanelCurrentCtx" class="thinkp-opt-check" />
-              </button>
             </div>
             <template v-if="thinkPanelCaps.visible">
-              <button class="thinkp-row" type="button"
-                      :class="{ expandable: !thinkPanelCaps.locked }"
-                      @click="!thinkPanelCaps.locked && (thinkLevelsOpen = !thinkLevelsOpen)">
+              <!-- 恒思考：强度由管理员在模型库登记，没有可选项，保持只读一行 -->
+              <div v-if="thinkPanelCaps.locked" class="thinkp-row">
                 <span class="thinkp-row-label">思考强度</span>
-                <span class="thinkp-row-val">{{ thinkPanelStrengthText }}</span>
-                <down-outlined v-if="!thinkPanelCaps.locked" class="thinkp-caret" :class="{ open: thinkLevelsOpen }" />
-              </button>
-              <div v-if="thinkLevelsOpen && !thinkPanelCaps.locked" class="thinkp-levels">
-                <button v-for="opt in thinkPanelLevelOptions" :key="opt.value" class="thinkp-opt" type="button"
-                        :class="{ active: opt.value === thinkPanelCurrentLevel }"
-                        @click="setThinkLevel(opt.value, thinkHoverModel)">
-                  <span>{{ opt.label }}</span>
-                  <check-outlined v-if="opt.value === thinkPanelCurrentLevel" class="thinkp-opt-check" />
-                </button>
+                <span class="thinkp-row-val">恒思考 · {{ thinkPanelStrengthText }}</span>
               </div>
+              <!-- 可切换：档位平铺成一行直接点（与触屏 sheet 同款形态），不再「点行展开列表」；
+                   「关闭」也是一颗档位豆，关掉思考在这张面板里始终有出口 -->
+              <template v-else>
+                <div class="thinkp-sub">思考强度</div>
+                <div class="thinkp-chips">
+                  <button v-for="opt in thinkPanelLevelOptions" :key="opt.value" class="thinkp-chip" type="button"
+                          :class="{ on: opt.value === thinkPanelCurrentLevel }"
+                          :title="opt.label" @click="setThinkLevel(opt.value, thinkHoverModel)">
+                    {{ chipLabelOf(opt.value) }}
+                  </button>
+                </div>
+              </template>
             </template>
           </div>
           <div class="thinkp-foot">{{ thinkPanelFoot }}</div>
@@ -1844,8 +1831,6 @@ const inlineKeys = ref([])
 const thinkHoverRef = ref('')            // 宽屏：当前悬浮的模型引用（''=无，面板隐藏）
 const thinkPanelPos = ref({ top: 0, left: 0 })
 const thinkPanelEl = ref(null)
-/** 「思考强度」行的档位子列表展开态：面板隐藏或换模型后复位为收起 */
-const thinkLevelsOpen = ref(false)
 // 触屏（hover:none）没有「悬浮模型行」这回事，设置面板不可达 —— 由工具条常驻入口
 // （.think-entry，仅粗指针渲染）点开底部 sheet。内容复用同一面板，模型取当前生效模型。
 const mThinkOpen = ref(false)
@@ -1857,7 +1842,6 @@ const thinkHoverModel = computed({
 const thinkPanelVisible = computed(() => (isCoarse.value ? mThinkOpen.value : !!thinkHoverRef.value))
 const toggleThinkSheet = () => {
   mThinkOpen.value = !mThinkOpen.value
-  if (!mThinkOpen.value) { thinkLevelsOpen.value = false; thinkCtxOpen.value = false }
 }
 // 触屏下点面板外关闭：面板自身有 @mousedown.stop.prevent，这里挂 document 只收面板外的点击
 const onDocPointerDown = e => {
@@ -1865,10 +1849,6 @@ const onDocPointerDown = e => {
   if (thinkPanelEl.value && thinkPanelEl.value.contains(e.target)) return
   mThinkOpen.value = false
 }
-const thinkPanelModelLabel = computed(() => {
-  const info = modelIndex.value[thinkHoverModel.value]
-  return info ? info.displayName : thinkHoverModel.value
-})
 const thinkPanelCaps = computed(() => thinkCapsOf(thinkHoverModel.value))
 const thinkPanelLevelOptions = computed(() => levelOptionsOf(thinkHoverModel.value))
 const thinkPanelCurrentLevel = computed(() => currentLevelOf(thinkHoverModel.value))
@@ -1884,17 +1864,37 @@ const thinkPanelFoot = computed(() => {
     ? '该模型始终深度思考，强度由管理员在模型库登记。'
     : '强度越高，思考越深入，回答耗时相应增加。'
 })
-/** 「上下文窗口」行的档位子列表展开态：面板隐藏或换模型后复位为收起（与思考强度行同款） */
-const thinkCtxOpen = ref(false)
-const thinkPanelCtxRange = computed(() => ctxRangeOf(thinkHoverModel.value))
-const thinkPanelCtxOptions = computed(() => ctxWindowOptionsOf(thinkHoverModel.value))
-const thinkPanelCurrentCtx = computed(() => effectiveCtxWindowOf(thinkHoverModel.value))
-/** 窗口行展示值（K/M 口径）：可调模型显示当前生效档位（未选=最大），不可调显示登记窗口；未登记整行隐藏 */
+/**
+ * 模型胶囊尾部的小标记 = 此刻显示的那个模型的思考档位（低/中/高/超高/极致）。
+ * 不思考或不支持思考就不挂标记——标记缺席本身就是「这一轮不思考」的答复，
+ * 硬写个「关」字反而让每一颗胶囊都多一个没人要的字段。
+ * 取的是 currentOverrideModel || effectiveModel，与胶囊里的模型名、图标同一口径（同一个「显示的是谁」）。
+ */
+const pillLevelRef = computed(() => currentOverrideModel.value || effectiveModel.value)
+const pillLevelBadge = computed(() => {
+  const ref = pillLevelRef.value
+  if (!ref || !thinkCapsOf(ref).visible) return ''
+  const lv = currentLevelOf(ref)
+  if (!lv || lv === 'off') return ''
+  return lv === THINK_LEVEL_ON ? '思' : levelLabel(lv)
+})
+const pillLevelTitle = computed(() => {
+  const ref = pillLevelRef.value
+  if (!ref || !pillLevelBadge.value) return ''
+  const lv = currentLevelOf(ref)
+  // 调整入口两端不同：宽屏靠悬浮下拉里的模型行，触屏没有 hover 走旁边的「思考」按钮
+  const how = isCoarse.value ? '点旁边的「思考」可调整' : '悬浮下拉里的模型行可调整'
+  if (thinkCapsOf(ref).locked) return `该模型始终深度思考，强度${levelLabel(lv)}由管理员在模型库登记，不可调`
+  return lv === THINK_LEVEL_ON ? `已开启思考（该模型未登记强度档位），${how}` : `思考强度 ${levelLabel(lv)}，${how}`
+})
+/** 窗口行展示值（K/M 口径）：模型登记的上下文窗口上限；未登记整行隐藏 */
 const thinkPanelCtxText = computed(() => {
   const info = modelIndex.value[thinkHoverModel.value]
   if (!info) return ''
-  return fmtWindow(effectiveCtxWindowOf(thinkHoverModel.value) || info.contextWindow)
+  return fmtWindow(info.contextWindow)
 })
+/** 档位豆的短标签：一行放不下「思考 · 超高」这种长句，完整说法留在悬浮提示里 */
+const chipLabelOf = v => (v === 'off' ? '关闭' : v === THINK_LEVEL_ON ? '开启' : levelLabel(v))
 
 const THINK_PANEL_W = 296      // .thinkp 264 + 面板卡左右内边距 32
 const THINK_PANEL_GAP = 10
@@ -1912,8 +1912,6 @@ const clearThinkTimers = () => {
 const hideThinkPanel = () => {
   clearThinkTimers()
   thinkHoverModel.value = ''
-  thinkLevelsOpen.value = false
-  thinkCtxOpen.value = false
   thinkPanelHovered = false
   thinkPanelRect = null
 }
@@ -1928,7 +1926,7 @@ const repositionThinkPanel = () => {
 }
 // 监听 thinkHoverRef（裸值）而非 thinkHoverModel（computed）：后者在触屏下等于 effectiveModel，
 // 生效模型一变就会触发一次无意义的重定位（触屏面板位置由 CSS 接管，不参与 JS 定位）
-watch([thinkHoverRef, thinkLevelsOpen, thinkCtxOpen], () => nextTick(repositionThinkPanel))
+watch(thinkHoverRef, () => nextTick(repositionThinkPanel))
 /** 悬浮下拉模型行（ModelSelect 透传）：先记下行位置，稍候弹出该模型的设置面板；ref 为空=离开行 */
 const onModelOptionHover = (modelRef, rowEl) => {
   // 触屏没有 hover：模型下拉行的 per-item 设置面板不可达，改由工具条常驻入口
@@ -1942,7 +1940,6 @@ const onModelOptionHover = (modelRef, rowEl) => {
   clearTimeout(thinkEnterTimer)
   thinkEnterTimer = setTimeout(() => {
     thinkEnterTimer = null
-    if (thinkHoverRef.value !== modelRef) { thinkLevelsOpen.value = false; thinkCtxOpen.value = false }
     thinkHoverRef.value = modelRef
     if (rect) {
       // 右侧放不下时翻到行左侧；top 先按行顶对齐，渲染后 repositionThinkPanel 按实际高度收口
@@ -3564,8 +3561,6 @@ const {
   startGoalInlineEdit, saveGoalEdit,
   // 思考能力 / 档位（悬浮面板消费）
   thinkCapsOf, reasoningLevelsOf, deepOnOf, levelOptionsOf, currentLevelOf, setThinkLevel, deepThinkOn,
-  // 上下文窗口档位（面板点选 + 发送载荷）
-  ctxRangeOf, ctxWindowOptionsOf, effectiveCtxWindowOf, setCtxWindow,
   // 技能
   skillList, pickedSkills, toggleSkill, skillAvaStyle, loadSkills, skillDoc,
   // 智能体
@@ -3599,7 +3594,7 @@ const {
   // # 历史引用（上限常量此前漏了，编辑卡里点历史引用会直接抛 ReferenceError）
   pendingHistoryRefs, histPool, isHistPicked, toggleHistoryRef, removeHistoryRef, MAX_HISTORY_REFS,
   // 会话生命周期 / 重新生成 / 分支 / 初始化
-  switchSession, createNewSession, regenerate, variantSwitching, switchBranch, ready,
+  switchSession, createNewSession, workspaceEpoch, regenerate, variantSwitching, switchBranch, ready,
   // 手动压缩上下文（/compact：命令面板、分隔线与摘要弹窗）
   compacting, manualCompacting, compactNotice, compactContext,
   compactSummaryOpen, compactSummary, compactSummaryLoading, openCompactSummary, recompactWith,
@@ -3692,17 +3687,31 @@ const sessionWorkspace = ref(null)
 const inWorkspaceSession = computed(() => !!(sessionWorkspace.value && !sessionWorkspace.value.implicit))
 // ---------- 会话级权限档位（本机工作区的文件/命令能干什么） ----------
 const permissionPresets = ref([])
-/** 当前会话选的档位码；''=跟随智能体。切会话时从 sessionWorkspace 恢复。 */
+/** 当前会话选的档位码；''=这条会话还没选过，按智能体自己的档位执行。切会话时从 sessionWorkspace 恢复。 */
 const sessionPermission = ref('')
 const permissionSaving = ref(false)
 /** 完全权限二次确认：勾选「已了解风险」才能启用（DSH 同款闸门） */
 const dangerOpen = ref(false)
 const dangerAck = ref(false)
 const dangerSaving = ref(false)
+/** 本会话实际生效的档位码：会话选过的 > 这位智能体自己的 > 平台默认档，
+ *  高于平台上限的按上限报。上限与默认档都取自后端下发的名册（available/platformDefault），
+ *  回落口径只有一份，前端不重抄 PermissionPolicyResolver 的规则。 */
+const effectivePermission = computed(() => {
+  const list = permissionPresets.value
+  const code = sessionPermission.value || (currentAgent.value && currentAgent.value.permissionPreset)
+    || (list.find(p => p.platformDefault) || {}).code || ''
+  if (!code) return ''
+  const p = list.find(x => x.code === code)
+  if (!p || p.available !== false) return code
+  // 名册按能力递增排列：可用项里排最后的那一档就是平台上限
+  const ceiling = list.filter(x => x.available !== false).slice(-1)[0]
+  return ceiling ? ceiling.code : code
+})
 const permissionLabel = computed(() => {
-  if (!sessionPermission.value) return '跟随智能体'
-  const p = permissionPresets.value.find(x => x.code === sessionPermission.value)
-  return p ? p.label : sessionPermission.value
+  const code = effectivePermission.value
+  const p = permissionPresets.value.find(x => x.code === code)
+  return p ? p.label : code
 })
 const loadPermissionPresets = async () => {
   try {
@@ -3717,8 +3726,8 @@ const applyPermission = async code => {
   if (!sid) return false
   permissionSaving.value = true
   try {
-    await setSessionPermission(sid, code === 'follow' ? '' : code)
-    sessionPermission.value = code === 'follow' ? '' : code
+    await setSessionPermission(sid, code)
+    sessionPermission.value = code
     return true
   } catch (e) {
     message.error('切换权限失败：' + (e.message || '请重试'))
@@ -3731,7 +3740,8 @@ const pickPermission = async key => {
   if (permissionSaving.value) return
   // 完全权限：先过风险确认，勾选后才能启用；取消就什么都不改
   if (key === 'autonomous') {
-    if (sessionPermission.value === 'autonomous') return
+    // 已经是这一档（智能体自己就是完全权限）时不再弹确认——那一问等于什么都没变
+    if (effectivePermission.value === 'autonomous') return
     dangerAck.value = false
     dangerOpen.value = true
     return
@@ -3768,9 +3778,7 @@ const wsTitle = computed(() => {
 // 折树（sandboxTree / sandboxRows）、计数与体积文案（sandboxCount / sandboxBytes / sandboxRest / sbSize）
 // 全在引擎那一份里：PC 这张卡与移动壳「状态与来源」里那段读的是同一批值。
 
-watch(currentSessionId, async sid => {
-  sessionWorkspace.value = null
-  sessionPermission.value = ''
+const loadSessionWorkspace = async sid => {
   if (!sid) return
   try {
     const r = await getSessionWorkspace(sid)
@@ -3778,7 +3786,17 @@ watch(currentSessionId, async sid => {
   } catch (e) {
     sessionWorkspace.value = null   // 标识是增强信息：取不到不打扰聊天
   }
+}
+
+watch(currentSessionId, async sid => {
+  sessionWorkspace.value = null
+  sessionPermission.value = ''
+  await loadSessionWorkspace(sid)
 }, { immediate: true })
+
+// 「新建对话」领走的那条空会话 id 不变、归属却改了（服务端把它改挂到这次点名的工作区），
+// 上面按 sid 变化的判据不会动；不补这一下，工作区行点＋进来的会话既没有头部标识也没有权限档位药丸。
+watch(workspaceEpoch, () => loadSessionWorkspace(currentSessionId.value))
 
 /** 会话落在另一台电脑的工作区：历史照常能看，但不能在这台电脑上发问（文件读写会派到那台电脑） */
 const foreignWorkspace = computed(() => {
@@ -3837,7 +3855,7 @@ const refreshSessionWorkspace = async () => {
   }
 }
 
-// 会话级权限档位跟着会话走：切会话就恢复那条会话自己的选择（没有=跟随智能体）。
+// 会话级权限档位跟着会话走：切会话就恢复那条会话自己的选择（没选过=按这位智能体的档位显示）。
 // 无工作区/隐式容器的会话不认这个档位——选择器不出现，库里残值也不该悄悄生效。
 watch(sessionWorkspace, ws => {
   sessionPermission.value = ws && !ws.implicit && ws.permissionPreset ? String(ws.permissionPreset) : ''
@@ -5039,36 +5057,28 @@ onMounted(async () => {
   background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 14px;
   box-shadow: 0 10px 32px -8px rgba(16, 24, 40, .18);
 }
-/* 面板头部的模型名胶囊：明确这份设置属于哪个模型（按模型分别记忆） */
-.thinkp-model {
-  margin-top: 6px; width: fit-content; max-width: 100%;
-  padding: 2px 10px; border-radius: 999px; background: var(--app-panel-2);
-  font-size: 12px; color: var(--app-text2);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
 /* 面板卡：标题/描述 + 「思考强度」标签值行（点开展开档位列表）+ 底部提示 */
 .thinkp { width: 264px; }
 .thinkp-title { font-size: 14px; font-weight: 600; color: var(--app-text); }
-.thinkp-desc { margin-top: 4px; font-size: 12px; line-height: 1.6; color: var(--app-text3); }
 .thinkp-row-wrap { margin-top: 12px; border-top: 1px solid var(--app-border); }
 .thinkp-row {
   display: flex; align-items: center; gap: 8px; width: 100%; padding: 10px 0;
   border: none; background: transparent; font-size: 13px; text-align: left;
 }
-.thinkp-row.expandable { cursor: pointer; }
 .thinkp-row-label { color: var(--app-text); }
 .thinkp-row-val { margin-left: auto; color: var(--app-text3); }
-.thinkp-caret { font-size: 11px; color: var(--app-text3); transition: transform .2s; }
-.thinkp-caret.open { transform: rotate(180deg); }
-.thinkp-levels { display: flex; flex-direction: column; gap: 2px; padding-bottom: 10px; }
-.thinkp-opt {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  padding: 7px 10px; border: none; border-radius: 8px; background: transparent;
-  font-size: 13px; color: var(--app-text); text-align: left; cursor: pointer;
+/* 思考强度：标签一行 + 档位豆一行（与触屏 sheet 同款形态，替掉旧的「点行展开列表」） */
+.thinkp-sub { padding: 10px 0 0; font-size: 13px; color: var(--app-text); }
+.thinkp-chips { display: flex; flex-wrap: wrap; gap: 5px; padding: 8px 0 10px; }
+.thinkp-chip {
+  padding: 3px 8px; border: 1px solid var(--app-border); border-radius: 999px;
+  background: transparent; color: var(--app-text2); font-size: 12px; cursor: pointer;
 }
-.thinkp-opt:hover { background: var(--app-panel-2); }
-.thinkp-opt.active { color: var(--app-accent); font-weight: 500; }
-.thinkp-opt-check { font-size: 12px; }
+.thinkp-chip:hover { background: var(--app-panel-2); }
+.thinkp-chip.on {
+  border-color: var(--app-accent-border); background: var(--app-accent-weak);
+  color: var(--app-accent); font-weight: 500;
+}
 .thinkp-foot { margin-top: 2px; padding-top: 10px; border-top: 1px solid var(--app-border); font-size: 12px; line-height: 1.6; color: var(--app-text3); }
 .toolbar-btn-on { color: var(--app-accent) !important; background: var(--app-accent-weak) !important; }
 .model-name {

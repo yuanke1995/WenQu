@@ -26,10 +26,8 @@ export async function loadModelIndex(force = false) {
           // 思考强度：支持档位数组 + 模型默认档位（聊天页等级选择据此给可选项）
           reasoningLevels: Array.isArray(m.reasoningLevels) ? m.reasoningLevels : [],
           defaultReasoningLevel: m.defaultReasoningLevel || '',
-          // 上下文窗口（未登记为 null=用全局默认；聊天页模型悬浮面板展示/调整用）
-          // contextWindowMin：可选下限（null=不可调，面板窗口行保持只读）
-          contextWindow: m.contextWindow ?? null,
-          contextWindowMin: m.contextWindowMin ?? null
+          // 上下文窗口（未登记为 null=用全局默认）：对话页悬浮面板只展示这个上限，不再按它给档位
+          contextWindow: m.contextWindow ?? null
         }
       }
     }

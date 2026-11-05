@@ -356,7 +356,7 @@ export function sendQuestion (sessionId, question, images = [], opts = {}) {
     // 新增事件只改那张表。这里只解构请求体要用的字段。
     deepThink = false, reasoningLevel = '', agentId = '', model = '', attachments = [], skills = [],
     mentions = [], historyRefs = [], regenerate = false, replaceMessageId = '',
-    contextWindow = null, editMessageId = '', planMode = false, fromSteer = false
+    editMessageId = '', planMode = false, fromSteer = false
   } = opts
   return streamChatSse(signal => fetch(`${BASE}/chat`, {
     method: 'POST',
@@ -367,8 +367,6 @@ export function sendQuestion (sessionId, question, images = [], opts = {}) {
       planMode: planMode || undefined,
       // 思考强度档位（低/中/高/超高/极致）：仅在模型库登记了支持档位时由界面给出，空串=用模型默认档位
       reasoningLevel: reasoningLevel || '',
-      // 上下文窗口档位（token）：仅在模型登记了「最小窗口~窗口」区间时由界面给出，空=用模型登记上限
-      contextWindow: contextWindow || undefined,
       agentId: agentId || '', model: model || '',
       // 重新生成/自动重试的重发标记：后端跳过用户消息重复落库（该问题已随上一轮请求入库）
       regenerate: regenerate || undefined,
@@ -494,18 +492,11 @@ export const renameSessionApi = (sid, title) =>
 export const updateSessionModelApi = (sid, model) =>
   request(`/session/${sid}/model`, { method: 'PUT', body: JSON.stringify({ model }) })
 
-/**
- * 会话级上下文窗口档（聊天页改档位即存）。与模型共用一个端点但各键独立：
- * 这份载荷里没有 model，所以不会把会话上钉着的模型清掉。传 0/null = 清除档位回到模型登记上限。
- */
-export const updateSessionWindowApi = (sid, contextWindow) =>
-  request(`/session/${sid}/model`, { method: 'PUT', body: JSON.stringify({ contextWindow }) })
-
 /** 会话级权限档位：research=仅可查看 / standard=工作区内修改 / autonomous=完全权限；空串=跟随智能体 */
 export const setSessionPermission = (sid, preset) =>
   request(`/session/${sid}/permission`, { method: 'PUT', body: JSON.stringify({ preset: preset || '' }) })
 
-/** 读取会话已存的模型覆盖与窗口档（切到列表未加载的会话时按需恢复选择器） */
+/** 读取会话已存的模型覆盖（切到列表未加载的会话时按需恢复选择器） */
 export const getSessionModelApi = sid => request(`/session/${sid}/model`)
 /** 当前会话所属工作区摘要（聊天页头部标识）：无工作区/非本人会话返回 data=null */
 export const getSessionWorkspace = sid => request(`/session/${sid}/workspace`)
@@ -1802,6 +1793,11 @@ export const batchDeleteProviders = ids =>
 export const batchSetProvidersEnabled = (ids, enabled) =>
   request('/provider/batch-enabled', { method: 'POST', body: JSON.stringify({ ids, enabled }) })
 export const listProviderModels = id => request(`/provider/${id}/models`)
+/** 思考参数方言目录：下拉、内置档位值与预算表的唯一数据源（内置表随各家文档修正，前端不抄一份） */
+export const listReasoningDialects = () => request('/provider/reasoning-dialects')
+/** 按模型名判定思考方言（编辑弹窗改了模型名就要重算「不点名时按谁下发」） */
+export const guessReasoningDialect = modelId =>
+  request(`/provider/reasoning-dialect?modelId=${encodeURIComponent(modelId || '')}`)
 export const saveProviderModels = (id, models) =>
   request(`/provider/${id}/models`, { method: 'PUT', body: JSON.stringify(models) })
 /** 远程拉取网关模型列表（候选，不入库）；编辑已存供应商时 apiKey 可传掩码（后端用库中真实 Key） */

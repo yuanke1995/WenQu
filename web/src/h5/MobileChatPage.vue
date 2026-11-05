@@ -802,7 +802,7 @@ watch(() => {
 }, (done) => { if (done) askSubmitAll(pendingAsk.value) })
 
 // ==================== 手动压缩上下文（/compact 的移动入口） ====================
-// 移动壳没有 / 命令面板，入口落在「模型与思考」sheet 的上下文区（与窗口档位同处一块）；
+// 移动壳没有 / 命令面板，入口落在「模型与思考」sheet 的上下文区；
 // 压缩记录以分隔线留在对话流里（判据、摘要面板数据源都在引擎，与 PC 同一份）
 const csumInstrOpen = ref(false)
 const csumInstr = ref('')
