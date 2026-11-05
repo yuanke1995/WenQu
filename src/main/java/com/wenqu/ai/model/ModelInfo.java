@@ -34,7 +34,7 @@ public class ModelInfo {
 
     /**
      * 可空配置列统一 updateStrategy=ALWAYS：saveModels 是全量同步语义，「清空」必须能落库。
-     * 默认 NOT_NULL 策略会跳过 null 字段——用户清空最小窗口/单价/档位后保存，DB 保留旧值，
+     * 默认 NOT_NULL 策略会跳过 null 字段——用户清空窗口/单价/档位后保存，DB 保留旧值，
      * 表现为「配置改了老是不生效」（2026-10-23）。
      */
     @TableField(updateStrategy = FieldStrategy.ALWAYS)
@@ -59,17 +59,20 @@ public class ModelInfo {
     @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String defaultReasoningLevel;
 
+    /**
+     * 思考强度参数映射覆盖（JSON：<code>{"dialect":"GLM","effort":{"low":"minimal"},"budget":{"high":20000}}</code>）。
+     * 三部分都可缺省，缺省即运行时跟随内置方言表与收敛表；只有填了的档位被覆盖。
+     */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
+    private String reasoningParams;
+
     /** 思考能力: auto=按模型名判定 none=不支持 switchable=可开关 always=恒思考（仅聊天模型有意义） */
     @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String thinking;
 
-    /** 上下文窗口上限 token（对话类模型必填，无全局兜底；即用户可选区间的最大值/默认值；上下文预算 = 窗口×安全系数−输出限制） */
+    /** 上下文窗口 token（对话类模型必填，无全局兜底）：框架的压缩阈值与输入侧余量都由它推导 */
     @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private Integer contextWindow;
-
-    /** 上下文窗口下限 token（NULL=不可调；与 contextWindow 构成聊天页用户可选区间 [min,max]，默认取 max） */
-    @TableField(updateStrategy = FieldStrategy.ALWAYS)
-    private Integer contextWindowMin;
 
     /** 最大输出 token（NULL=未声明，不下发 max_tokens 交由厂商默认；作为 max_tokens 随请求下发，同时从窗口预算中预留） */
     @TableField(updateStrategy = FieldStrategy.ALWAYS)

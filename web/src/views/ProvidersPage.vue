@@ -114,8 +114,18 @@
           </div>
         </a-form-item>
         <a-form-item label="API Key">
-          <a-input-password v-model:value="form.apiKey" autocomplete="new-password"
-                            :placeholder="editing ? '未修改时显示掩码，无需重新输入（RSA 加密入库）' : '部分自托管服务（Ollama 等）可留空'" />
+          <!-- 不用 type=password：浏览器会把这张表单当登录框，往「网关地址」塞账号、在密钥框上弹已保存的密码。
+               掩码改由 CSS（-webkit-text-security）实现；不支持该属性的浏览器退回 password 类型 -->
+          <a-input v-model:value="form.apiKey" autocomplete="off"
+                   :type="apiKeyType" class="pv-secret" :class="{ 'is-masked': !apiKeyVisible }"
+                   :placeholder="editing ? '未修改时显示掩码，无需重新输入（RSA 加密入库）' : '部分自托管服务（Ollama 等）可留空'">
+            <template #suffix>
+              <span class="pv-secret-eye" @mousedown.prevent @click="apiKeyVisible = !apiKeyVisible">
+                <eye-outlined v-if="apiKeyVisible" />
+                <eye-invisible-outlined v-else />
+              </span>
+            </template>
+          </a-input>
         </a-form-item>
         <a-collapse ghost class="pv-advanced">
           <a-collapse-panel key="adv" header="高级（路径覆盖，一般留空自动识别）">
@@ -278,41 +288,22 @@
             <div class="pm-field">
               <div class="pm-label">
                 上下文窗口
-                <a-tooltip title="模型一次能处理的最大 token 数（输入 + 输出合计）。决定检索资料能塞多少：预算 = 窗口 × 安全系数 − 最大输出。对话类模型必填（未声明时检索资料无法填入）。">
+                <a-tooltip title="模型一次能处理的最大 token 数（输入 + 输出合计）。对话类模型必填（未声明时保存会被拒）。窗口决定长对话什么时候开始折上下文，也决定输入侧还剩多少：登记小了会提前折、白丢历史，登记大了会在上游提前报超窗。">
                   <question-circle-outlined class="pm-q" />
                 </a-tooltip>
               </div>
               <a-input-number v-model:value="editForm.contextWindow" :min="1" :step="1024"
-                              placeholder="对话类必填，如 131072" style="width:100%" @press-enter="applyModelEdit" />
-              <div class="pm-presets">
-                <button v-for="q in inputPresets" :key="q" class="app-link-btn" @click="editForm.contextWindow = q">{{ fmtK(q) }}</button>
-              </div>
+                              placeholder="对话类必填，如 1000000" style="width:100%" @press-enter="applyModelEdit" />
             </div>
             <div class="pm-field">
               <div class="pm-label">
                 最大输出 Token
-                <a-tooltip title="单次回复最多生成的 token 数（作为 max_tokens 随请求下发），必须小于上下文预算，否则该模型下检索资料无法填入。留空=不主动限制（按厂商默认）。">
+                <a-tooltip title="单次回复最多生成的 token 数（作为 max_tokens 随请求下发），要从窗口里预留：不小于「窗口 × 0.7」时该模型的检索资料将无法填入。留空=不主动限制（按厂商默认）。">
                   <question-circle-outlined class="pm-q" />
                 </a-tooltip>
               </div>
               <a-input-number v-model:value="editForm.maxOutput" :min="1" :step="1024"
                               placeholder="留空=不限制（按厂商默认）" style="width:100%" @press-enter="applyModelEdit" />
-              <div class="pm-presets">
-                <button v-for="q in outputPresets" :key="q" class="app-link-btn" @click="editForm.maxOutput = q">{{ fmtK(q) }}</button>
-              </div>
-            </div>
-            <div class="pm-field">
-              <div class="pm-label">
-                最小窗口
-                <a-tooltip title="聊天页模型面板可选的窗口档位下界：用户可在 最小窗口~上下文窗口 间调档，默认用窗口上限。留空=该模型窗口不可调。">
-                  <question-circle-outlined class="pm-q" />
-                </a-tooltip>
-              </div>
-              <a-input-number v-model:value="editForm.contextWindowMin" :min="1" :step="1024"
-                              placeholder="留空=不可调" style="width:100%" @press-enter="applyModelEdit" />
-              <div class="pm-presets">
-                <button v-for="q in inputPresets" :key="q" class="app-link-btn" @click="editForm.contextWindowMin = q">{{ fmtK(q) }}</button>
-              </div>
             </div>
             <div class="pm-field">
               <div class="pm-label">
@@ -336,9 +327,12 @@
             </div>
           </div>
           <div class="pm-hint">
-            窗口：对话类模型必填（向量/重排/OCR/语音等能力型可留空）；最小窗口留空=聊天页不可调档；最大输出留空=不主动限制（按厂商默认）。
-            上下文预算 = 窗口 × 安全系数 − 最大输出，检索资料按预算填入。
-            <span v-if="budgetConflict" class="pm-hint-bad">当前「最大输出」已不小于窗口，检索资料将无法填入。</span>
+            窗口与最大输出按厂商口径填 token 数（1M 填 1000000）。对话类模型窗口必填，向量/重排/OCR/语音等能力型可留空；最大输出留空=不主动限制（按厂商默认）。
+            带进对话的知识资料由检索参数决定，不受这里影响。
+            <span v-if="budgetConflict" class="pm-hint-bad">
+              最大输出 {{ fmtWindow(editForm.maxOutput) }} 已不小于窗口预算 {{ budgetConflict.toLocaleString('en-US') }} token
+              （窗口 {{ fmtWindow(editForm.contextWindow) }} × 0.7），保存会被拒。
+            </span>
           </div>
 
           <!-- 高级配置：能力位 + 思考（仅对话类模型；向量/重排/OCR/语音是能力型类型，无对话能力可配）。默认展开：能力项是登记模型最常核对的信息 -->
@@ -397,7 +391,7 @@
                     <a-tooltip placement="topLeft">
                       <template #title>
                         <div>勾选该模型真实支持的强度档位（由弱到强），留空 = 只支持思考开关、不支持强度调节。</div>
-                        <div>运行时按厂商方言自动映射下发（OpenAI reasoning_effort / Claude thinking.budget_tokens / Qwen thinking_budget），无需手填参数。</div>
+                        <div>下发哪些字段由下面的「参数方言」决定，默认按模型名判定；每一档实际发什么值可以在「档位参数映射」里覆盖。</div>
                       </template>
                       <question-circle-outlined class="pm-q" />
                     </a-tooltip>
@@ -417,6 +411,63 @@
                   </div>
                   <a-select v-model:value="editForm.defaultReasoningLevel" style="width:220px" allow-clear
                             placeholder="自动（由网关默认决定）" :options="defaultLevelOptions" />
+                </div>
+                <div class="pm-field">
+                  <div class="pm-label">
+                    参数方言
+                    <a-tooltip placement="topLeft">
+                      <template #title>
+                        <div>决定思考强度用哪些字段下发。默认按模型名判定，判定不准就在这里点名。</div>
+                        <div>中转与私有网关常把模型改名，自动判定认不出时一个强度参数都不会发。</div>
+                      </template>
+                      <question-circle-outlined class="pm-q" />
+                    </a-tooltip>
+                  </div>
+                  <a-select v-model:value="editForm.reasoningParams.dialect" style="width:320px" :options="dialectOptions" />
+                  <div class="pm-dialect-now">
+                    此刻按 <b>{{ resolvedLabel }}</b> 下发<span v-if="!editForm.reasoningParams.dialect">（按模型名判定）</span>
+                  </div>
+                </div>
+                <div v-if="dialectWarn" class="pm-dialect-warn">{{ dialectWarn }}</div>
+                <div v-if="editLevels.length" class="pm-field">
+                  <div class="pm-label">
+                    档位参数映射
+                    <a-tooltip placement="topLeft">
+                      <template #title>
+                        <div>留空 = 跟随内置表（内置值随各家文档修正会一起变）；填了 = 这台模型按你填的值发。</div>
+                        <div>清空某一格即回到跟随；没勾选的档位不出现在这张表里。</div>
+                      </template>
+                      <question-circle-outlined class="pm-q" />
+                    </a-tooltip>
+                  </div>
+                  <table class="pm-map">
+                    <thead>
+                      <tr><th>档位</th><th>reasoning_effort</th><th>思考预算 token</th><th>状态</th></tr>
+                    </thead>
+                    <tbody>
+                      <tr v-for="lv in defaultLevelOptions" :key="lv.value">
+                        <td>
+                          <span class="pm-map-lv">{{ lv.label }}</span>
+                          <span class="pm-map-code">{{ lv.value }}</span>
+                        </td>
+                        <td>
+                          <a-input v-model:value="editForm.reasoningParams.effort[lv.value]" size="small"
+                                   :placeholder="builtinEffort(lv.value)" :disabled="!dialectHasEffort" />
+                        </td>
+                        <td>
+                          <a-input-number v-model:value="editForm.reasoningParams.budget[lv.value]" size="small"
+                                          :min="1" :placeholder="builtinBudget(lv.value)" :disabled="!dialectHasBudget" />
+                        </td>
+                        <td>
+                          <template v-if="overridden(lv.value)">
+                            <span class="pm-map-ov">已覆盖</span>
+                            <button type="button" class="app-link-btn" @click="clearOverride(lv.value)">回到跟随</button>
+                          </template>
+                          <span v-else class="pm-map-fl">跟随</span>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
               </template>
               <div v-else class="pm-hint">向量 / 重排 / OCR / 语音是能力型类型，无需配置对话能力。</div>
@@ -482,17 +533,19 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
-import { PlusOutlined, DatabaseOutlined, CloudDownloadOutlined, QuestionCircleOutlined } from '@ant-design/icons-vue'
+import { PlusOutlined, DatabaseOutlined, CloudDownloadOutlined, QuestionCircleOutlined, EyeOutlined, EyeInvisibleOutlined } from '@ant-design/icons-vue'
 import ProviderIcon from '../components/ProviderIcon.vue'
 import { BRAND_PATHS, BRAND_BADGES } from '../assets/providerIcons.js'
+import { fmtWindow } from '../chat/projections'
 import { authUser } from '../utils/auth'
 import { refreshSetupGuide } from '../utils/setupGuide'
 import {
 listProviders, createProvider, updateProvider, setProviderEnabled, deleteProvider,
   listProviderModels, saveProviderModels, fetchProviderModels, testProvider,
+  listReasoningDialects, guessReasoningDialect,
   batchDeleteProviders, batchSetProvidersEnabled, listProviderReferences,
   clearProviderSessionModels
 } from '../api'
@@ -760,6 +813,11 @@ const doBatchDelete = () => {
 const showEdit = ref(false)
 const editing = ref(null)
 const form = ref(blank())
+// API Key 的显隐与掩码：掩码走 CSS 而非 type=password（见模板注释）
+const apiKeyVisible = ref(false)
+const cssTextSecurity = typeof CSS !== 'undefined' && typeof CSS.supports === 'function'
+  && CSS.supports('-webkit-text-security', 'disc')
+const apiKeyType = computed(() => (apiKeyVisible.value || cssTextSecurity ? 'text' : 'password'))
 
 function blank() {
   return { name: '', icon: '', baseUrl: '', apiKey: '', completionsPath: '', embeddingsPath: '', remark: '' }
@@ -880,11 +938,13 @@ const openCreate = () => {
   editing.value = null
   form.value = blank()
   testResult.value = null
+  apiKeyVisible.value = false
   showEdit.value = true
 }
 
 const openEdit = p => {
   editing.value = p
+  apiKeyVisible.value = false
   form.value = {
     name: p.name || '',
     icon: p.icon || '',
@@ -1125,25 +1185,108 @@ const defaultLevelOptions = computed(() => {
       ? reasoningLevelOptions.filter(l => picked.includes(l.value))
       : []
 })
-const inputPresets = [32768, 65536, 131072, 262144]
-const outputPresets = [8192, 16384, 32768, 65536]
-const fmtK = n => (n % 1024 === 0 ? `${n / 1024}K` : `${Math.round(n / 1024)}K`)
+// ==================== 思考参数映射（方言点名 + 档位值覆盖） ====================
+/** 后端方言目录：下拉、内置 effort/budget 占位值都从这里取——收敛表是各家文档调研来的，会随版本修正，前端抄一份就对不上账 */
+const dialectCatalog = ref([])
+const loadDialectCatalog = async () => {
+  try {
+    const r = await listReasoningDialects()
+    dialectCatalog.value = (r && r.data) || []
+  } catch (e) {
+    dialectCatalog.value = []
+  }
+}
+/** 不点名时后端按模型名判定的结果（编辑中改模型名即重算） */
+const autoDialect = ref('')
+let dialectGuessSeq = 0
+const refreshAutoDialect = async modelId => {
+  const seq = ++dialectGuessSeq
+  autoDialect.value = ''
+  if (!modelId) return
+  try {
+    const r = await guessReasoningDialect(modelId)
+    if (seq === dialectGuessSeq) autoDialect.value = (r && r.data && r.data.value) || ''
+  } catch (e) {
+    // 取不到就退回「未判定」显示，不打断编辑
+  }
+}
+const dialectOptions = computed(() => [
+  { value: '', label: '自动（按模型名判定）' },
+  ...dialectCatalog.value.map(d => ({ value: d.value, label: d.label }))
+])
+/** 映射对象的读取形状（v-model 直接落在 editForm.reasoningParams 上，这里只出快照） */
+const paramsShape = p => {
+  const src = p && typeof p === 'object' ? p : {}
+  return { dialect: src.dialect || '', effort: { ...(src.effort || {}) }, budget: { ...(src.budget || {}) } }
+}
+const editParams = computed(() => paramsShape(editForm.value && editForm.value.reasoningParams))
+const resolvedDialect = computed(() => editParams.value.dialect || autoDialect.value || 'NONE')
+const resolvedEntry = computed(() => dialectCatalog.value.find(d => d.value === resolvedDialect.value) || null)
+const resolvedLabel = computed(() => (resolvedEntry.value && resolvedEntry.value.label) || '未判定')
+const dialectHasEffort = computed(() => !!(resolvedEntry.value && resolvedEntry.value.effort))
+const dialectHasBudget = computed(() => !!(resolvedEntry.value && resolvedEntry.value.budget))
+const builtinEffort = lv => {
+  const e = resolvedEntry.value && resolvedEntry.value.effort
+  return e && e[lv] ? e[lv] : '该方言无 effort'
+}
+const builtinBudget = lv => {
+  const b = resolvedEntry.value && resolvedEntry.value.budget
+  return b && b[lv] ? String(b[lv]) : '不发预算'
+}
+const overridden = lv => {
+  const p = editParams.value
+  const e = String(p.effort[lv] == null ? '' : p.effort[lv]).trim()
+  const b = p.budget[lv]
+  return !!e || (b !== null && b !== undefined && b !== '')
+}
+const clearOverride = lv => {
+  const f = editForm.value
+  if (!f || !f.reasoningParams) return
+  delete f.reasoningParams.effort[lv]
+  delete f.reasoningParams.budget[lv]
+}
+/** 无强度语义却勾了档位：档位发不出去，界面先说清，别等保存才发现 */
+const dialectWarn = computed(() => resolvedDialect.value === 'NONE' && editLevels.value.length
+  ? '此刻判定为「无强度语义」，勾选的档位不会下发——用上面「参数方言」点名网关真实那一家。' : '')
+/** 保存与改动快照共用一份口径：只留已勾选档位的覆盖，全空=null（=完全跟随内置表） */
+const paramsPayload = m => {
+  const p = paramsShape(m.reasoningParams)
+  const keep = Array.isArray(m.reasoningLevels) ? m.reasoningLevels : []
+  const effort = {}
+  const budget = {}
+  for (const lv of keep) {
+    const e = String(p.effort[lv] == null ? '' : p.effort[lv]).trim()
+    if (e) effort[lv] = e
+    const b = Number(p.budget[lv])
+    if (b > 0) budget[lv] = b
+  }
+  const out = {}
+  if (p.dialect) out.dialect = p.dialect
+  if (Object.keys(effort).length) out.effort = effort
+  if (Object.keys(budget).length) out.budget = budget
+  return Object.keys(out).length ? out : null
+}
 
 /** 类型门控（与后端 saveModels 的归一口径一致）：图片/档位=对话类，工具=聊天/全模态，思考模式=聊天 */
 const editCapApplies = computed(() => visionApplies(editForm.value || {}))
 const editToolApplies = computed(() => ['chat', 'omni'].includes(editForm.value?.modelType))
 const editChatOnly = computed(() => editForm.value?.modelType === 'chat')
-/** 输出 ≥ 窗口时预算必不够用（精确校验带安全系数，由后端保存时把关，这里提示明显错误） */
+/** 与后端 ModelRegistryService.CONTEXT_SAFETY_FACTOR 同一个系数，改那边要改这里 */
+const CONTEXT_SAFETY_FACTOR = 0.7
+/** 与后端 saveModels 同式的冲突判据：输出吃不掉「窗口 × 安全系数」时检索资料塞不进，返回那份预算 */
 const budgetConflict = computed(() => {
   const f = editForm.value
-  return !!f && f.contextWindow != null && f.maxOutput != null && f.maxOutput >= f.contextWindow
+  if (!f || f.contextWindow == null || f.maxOutput == null) return null
+  const budget = Math.floor(f.contextWindow * CONTEXT_SAFETY_FACTOR)
+  return f.maxOutput >= budget ? budget : null
 })
 
 const blankEditForm = () => ({
   modelId: '', displayName: '', modelType: 'chat',
   visionCapable: 'auto', toolCapable: 'auto', thinking: 'auto',
-  defaultReasoningLevel: undefined, contextWindow: null, contextWindowMin: null, maxOutput: null,
-  inputPrice: null, outputPrice: null
+  defaultReasoningLevel: undefined, contextWindow: null, maxOutput: null,
+  inputPrice: null, outputPrice: null,
+  reasoningParams: { dialect: '', effort: {}, budget: {} }
 })
 
 const openModelAdd = () => {
@@ -1169,12 +1312,14 @@ const openModelEdit = record => {
     thinking: record.thinking || 'auto',   // 登记原值（auto 保持自动，不写死解析结果）
     defaultReasoningLevel: record.defaultReasoningLevel || undefined,
     contextWindow: record.contextWindow ?? null,
-    contextWindowMin: record.contextWindowMin ?? null,
     maxOutput: record.maxOutput ?? null,
     inputPrice: record.inputPrice ?? null,
-    outputPrice: record.outputPrice ?? null
+    outputPrice: record.outputPrice ?? null,
+    reasoningParams: paramsShape(record.reasoningParams)
   }
   editLevels.value = Array.isArray(record.reasoningLevels) ? [...record.reasoningLevels] : []
+  // 已存行后端已带回自动判定结果，先显示着，等模型名一改再重算
+  autoDialect.value = record.reasoningDialectAuto || ''
   editBaseline.value = editSnapshot()
   editOpen.value = true
 }
@@ -1192,7 +1337,7 @@ const resetEditForm = () => {
 /** 新增时按模型家族预填窗口/输出（两项都已填就不覆盖） */
 const onEditModelIdChange = () => {
   const f = editForm.value
-  if (editIsNew.value && f && f.contextWindow == null && f.maxOutput == null && f.contextWindowMin == null) {
+  if (editIsNew.value && f && f.contextWindow == null && f.maxOutput == null) {
     const g = guessCtx(f.modelId)
     if (g) Object.assign(f, g)
   }
@@ -1227,11 +1372,11 @@ const applyModelEdit = () => {
   }
   // 窗口无全局兜底：对话类模型必须声明窗口（后端保存同样强制），能力型类型才可留空
   if (['chat', 'vision', 'omni'].includes(f.modelType) && f.contextWindow == null) {
-    message.warning('对话类模型必须声明上下文窗口（检索预算 = 窗口×安全系数−最大输出）')
+    message.warning('对话类模型必须声明上下文窗口')
     return
   }
-  if (f.contextWindow != null && f.maxOutput != null && f.maxOutput >= f.contextWindow) {
-    message.warning('最大输出必须小于上下文窗口，否则该模型下检索资料无法填入')
+  if (budgetConflict.value) {
+    message.warning(`最大输出必须小于窗口预算 ${budgetConflict.value.toLocaleString('en-US')} token（窗口 × 0.7）`)
     return
   }
   const cap = visionApplies(f)
@@ -1245,8 +1390,8 @@ const applyModelEdit = () => {
     thinking: f.modelType === 'chat' ? (f.thinking || 'auto') : 'auto',
     reasoningLevels: cap ? [...editLevels.value] : [],
     defaultReasoningLevel: cap ? (f.defaultReasoningLevel || null) : null,
+    reasoningParams: cap ? paramsPayload({ reasoningParams: f.reasoningParams, reasoningLevels: editLevels.value }) : null,
     contextWindow: f.contextWindow ?? null,
-    contextWindowMin: f.contextWindowMin ?? null,
     maxOutput: f.maxOutput ?? null,
     inputPrice: f.inputPrice ?? null,
     outputPrice: f.outputPrice ?? null
@@ -1281,39 +1426,34 @@ const capsOf = r => {
   return out
 }
 const ctxText = r => {
-  if (r.contextWindow == null && r.contextWindowMin == null && r.maxOutput == null) return '未声明'
-  const win = r.contextWindowMin != null && r.contextWindow != null
-    ? `${fmtK(r.contextWindowMin)}~${fmtK(r.contextWindow)}`
-    : (r.contextWindow ? fmtK(r.contextWindow) : '默认')
-  return `${win} / ${r.maxOutput ? fmtK(r.maxOutput) : '默认'}`
+  if (r.contextWindow == null && r.maxOutput == null) return '未声明'
+  const win = r.contextWindow ? fmtWindow(r.contextWindow) : '默认'
+  return `${win} / ${r.maxOutput ? fmtWindow(r.maxOutput) : '默认'}`
 }
-const ctxTitle = r => {
-  const win = r.contextWindowMin != null && r.contextWindow != null
-    ? `${fmtK(r.contextWindowMin)}~${fmtK(r.contextWindow)}（可调）`
-    : String(r.contextWindow ?? '默认')
-  return `上下文窗口 ${win} / 最大输出 ${r.maxOutput ?? '默认'} token（窗口对话类必填；最小窗口留空=聊天页不可调档）`
-}
+const ctxTitle = r =>
+  `上下文窗口 ${String(r.contextWindow ?? '默认')} / 最大输出 ${r.maxOutput ?? '默认'} token（窗口对话类必填，对话页按此上限取窗口）`
 
 /** 每行模型的连通性测试状态：rowKey → {loading, ok, latencyMs, text} */
 const testStates = ref({})
 const testState = record => testStates.value[record.rowKey] || { loading: false, ok: null, latencyMs: 0, text: '' }
 
-// 常见模型家族的窗口/输出预填建议：纯表单便利（官方数值随版本会变，保存前请核对），运行时不读它，
-// 留空/清空即回落全局默认——避免重蹈旧「模型窗口映射」写死数值过时变化石的覆辙
+// 常见模型家族的窗口/输出预填建议：纯表单便利（官方数值随版本会变，保存前请核对），运行时不读它。
+// 窗口一律填十进制 1000000 而不是 2 的 20 次方：厂商写「1M」时两种口径都有，填小了只是提前折一次上下文，
+// 填大了会在长轮中途撞上上游的超窗报错。output 留空=不下发 max_tokens，按厂商默认。
 const MODEL_PRESET_HINTS = [
-  { kw: 'deepseek', window: 131072, min: 32768, output: 8192 },
-  { kw: 'qwen', window: 131072, min: 32768, output: 8192 },
-  { kw: 'glm', window: 131072, min: 32768, output: 8192 },
-  { kw: 'gpt', window: 128000, min: 32768, output: 16384 },
-  { kw: 'claude', window: 200000, min: 65536, output: 8192 },
-  { kw: 'gemini', window: 1048576, min: 131072, output: 65536 },
-  { kw: 'kimi', window: 131072, min: 32768, output: 8192 },
-  { kw: 'moonshot', window: 131072, min: 32768, output: 8192 }
+  { kw: 'deepseek', window: 1000000, output: 384000 },
+  { kw: 'qwen', window: 1000000 },
+  { kw: 'glm', window: 1000000, output: 131072 },
+  { kw: 'gpt', window: 1000000 },
+  { kw: 'claude', window: 1000000 },
+  { kw: 'gemini', window: 1000000 },
+  { kw: 'kimi', window: 1000000 },
+  { kw: 'moonshot', window: 1000000 }
 ]
 const guessCtx = modelId => {
   const id = (modelId || '').toLowerCase()
   const hit = MODEL_PRESET_HINTS.find(p => id.includes(p.kw))
-  return hit ? { contextWindow: hit.window, contextWindowMin: hit.min, maxOutput: hit.output } : null
+  return hit ? { contextWindow: hit.window, maxOutput: hit.output ?? null } : null
 }
 
 /** 新增行填写模型名后按家族预填窗口/输出（两项任一已填/手改过就不覆盖） */
@@ -1397,7 +1537,9 @@ const openModels = async p => {
       toolCapable: m.toolCapable == null ? 'auto' : String(m.toolCapable),
       reasoningLevels: Array.isArray(m.reasoningLevels) ? [...m.reasoningLevels] : [],
       defaultReasoningLevel: m.defaultReasoningLevel || null,
-      contextWindow: m.contextWindow ?? null, contextWindowMin: m.contextWindowMin ?? null,
+      reasoningParams: m.reasoningParams || null,
+      reasoningDialectAuto: m.reasoningDialectAuto || '',
+      contextWindow: m.contextWindow ?? null,
       maxOutput: m.maxOutput ?? null,
       inputPrice: m.inputPrice ?? null, outputPrice: m.outputPrice ?? null,
       remark: m.remark || '',
@@ -1420,7 +1562,8 @@ const rowSnapshot = m => JSON.stringify({
   toolCapable: visionApplies(m) ? (m.toolCapable || 'auto') : 'auto',
   reasoningLevels: visionApplies(m) ? (m.reasoningLevels || []) : [],
   defaultReasoningLevel: visionApplies(m) ? (m.defaultReasoningLevel || null) : null,
-  contextWindow: m.contextWindow || null, contextWindowMin: m.contextWindowMin || null,
+  reasoningParams: visionApplies(m) ? paramsPayload(m) : null,
+  contextWindow: m.contextWindow || null,
   maxOutput: m.maxOutput || null,
   inputPrice: m.inputPrice ?? null, outputPrice: m.outputPrice ?? null,
   remark: m.remark || '', enabled: m.enabled !== false
@@ -1480,7 +1623,7 @@ const addCandidate = c => {
     rowKey: 'new-' + (++rowSeq), modelId: c.modelId, displayName: '', thinking: 'auto',
     modelType: c.guessedType, visionCapable: c.guessVisionCapable ? '1' : 'auto',
     toolCapable: 'auto', reasoningLevels: [], defaultReasoningLevel: null,
-    contextWindow: null, contextWindowMin: null, maxOutput: null, enabled: true, isNew: true
+    contextWindow: null, maxOutput: null, enabled: true, isNew: true
   }
   applyCtxPreset(row)
   models.value.push(row)
@@ -1515,8 +1658,8 @@ const saveModels = async () => {
       toolCapable: visionApplies(m) ? (m.toolCapable || 'auto') : 'auto',
       reasoningLevels: visionApplies(m) ? (m.reasoningLevels || []) : [],
       defaultReasoningLevel: visionApplies(m) ? (m.defaultReasoningLevel || null) : null,
+      reasoningParams: visionApplies(m) ? paramsPayload(m) : null,
       contextWindow: m.contextWindow || null,
-      contextWindowMin: m.contextWindowMin || null,
       maxOutput: m.maxOutput || null,
       // 单价/备注必须随全量同步带上：缺了会被后端归一为未配置，每次保存把单价清空（2026-10-23）
       inputPrice: m.inputPrice ?? null,
@@ -1550,7 +1693,11 @@ const handleSetupAction = () => {
   else openCreate()
 }
 
+// 模型名一改就重算「不点名时按谁下发」：判定规则只在后端有一份，界面不能猜
+watch(() => editForm.value && editForm.value.modelId, v => refreshAutoDialect((v || '').trim()))
+
 onMounted(async () => {
+  loadDialectCatalog()
   await load()
   handleSetupAction()
 })
@@ -1653,6 +1800,10 @@ onMounted(async () => {
 }
 .pv-refs-foot button[disabled] { opacity: .55; cursor: not-allowed; }
 .pv-refs-foot-hint { font-size: 11px; color: var(--app-text3, var(--app-text3)); }
+/* API Key 的掩码与眼睛按钮：掩码靠 CSS，浏览器就不会把它识别成密码框 */
+.pv-secret.is-masked :deep(input) { -webkit-text-security: disc; }
+.pv-secret-eye { display: inline-flex; color: var(--app-text3, var(--app-text3)); cursor: pointer; }
+.pv-secret-eye:hover { color: var(--app-text2, var(--app-text2)); }
 .pv-icon-picker {
   display: flex; flex-wrap: wrap; gap: 4px;
   max-height: 132px; overflow-y: auto; padding: 2px;
@@ -1705,11 +1856,6 @@ onMounted(async () => {
   font-size: 13px; color: var(--app-text2); margin-bottom: 6px;
 }
 .pm-q { color: var(--app-text3); font-size: 13px; cursor: help; }
-.pm-presets { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
-.pm-presets .app-link-btn {
-  padding: 1px 8px; border: 1px solid var(--app-border); border-radius: 6px; font-size: 12px;
-}
-.pm-presets .app-link-btn:hover { border-color: var(--app-accent); color: var(--app-accent); }
 .pm-hint { font-size: 12px; color: var(--app-text3); line-height: 1.6; margin: -4px 0 12px; }
 .pm-hint-bad { color: var(--app-danger); }
 .pm-advanced { margin: 2px 0 0; }
@@ -1721,8 +1867,29 @@ onMounted(async () => {
   border: 1px solid var(--app-border); border-radius: 6px; color: var(--app-text3);
 }
 .pm-chips :deep(.ant-tag-checkable-checked) {
-  border-color: var(--app-accent); color: var(--app-accent); background: #e6f4ff;
+  border-color: var(--app-accent); color: var(--app-accent); background: light-dark(#e6f4ff, #1e2636);
 }
+/* 思考参数映射：方言解析结果 + 档位覆盖表 */
+.pm-dialect-now { font-size: 12px; color: var(--app-text3); margin-top: 6px; }
+.pm-dialect-now b { color: var(--app-text2); font-weight: 500; }
+.pm-dialect-warn {
+  font-size: 12px; line-height: 1.6; margin: -6px 0 14px; padding: 7px 10px; border-radius: 6px;
+  color: var(--app-danger-text); background: var(--app-danger-weak, light-dark(#fff2f0, #33201c));
+  border: 1px solid var(--app-danger-border, light-dark(#ffccc7, #5a342a));
+}
+.pm-map { width: 100%; border-collapse: collapse; border: 1px solid var(--app-border); border-radius: 8px; }
+.pm-map th {
+  font-size: 12px; font-weight: 400; color: var(--app-text2); text-align: left;
+  padding: 6px 8px; background: var(--app-panel-2); border-bottom: 1px solid var(--app-border);
+}
+.pm-map td { padding: 6px 8px; border-bottom: 1px solid var(--app-border); vertical-align: middle; }
+.pm-map tr:last-child td { border-bottom: none; }
+.pm-map-lv { font-size: 13px; color: var(--app-text); }
+.pm-map-code { display: block; font-size: 11px; color: var(--app-text3); }
+.pm-map-ov { font-size: 11px; color: var(--app-accent); margin-right: 4px; }
+.pm-map-fl { font-size: 11px; color: var(--app-text3); }
+.pm-map :deep(.ant-input-affix-wrapper-sm), .pm-map :deep(.ant-input-sm) { font-size: 12px; }
+.pm-map :deep(.ant-input-number-sm) { width: 100%; font-size: 12px; }
 .pm-footer { display: flex; align-items: center; }
 .pm-footer-actions { margin-left: auto; display: flex; gap: 8px; }
 </style>

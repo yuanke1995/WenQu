@@ -603,8 +603,11 @@ public class ModelRegistryService {
             // 思考强度：支持档位数组 + 默认档位（编辑弹窗回显；无档位=只支持思考开关）
             m.put("reasoningLevels", reasoningLevelsOf(mi));
             m.put("defaultReasoningLevel", mi.getDefaultReasoningLevel());
+            // 思考参数映射：编辑弹窗回显覆盖项；dialectAuto 是「不点名时按模型名判定」的结果，
+            // 判定规则只在后端有一份，界面要显示「此刻按谁下发」就得从这里取
+            m.put("reasoningParams", reasoningParamsOf(mi));
+            m.put("reasoningDialectAuto", reasoningDialectOf(mi.getModelId()).name());
             m.put("contextWindow", mi.getContextWindow());
-            m.put("contextWindowMin", mi.getContextWindowMin());
             m.put("maxOutput", mi.getMaxOutput());
             // 单价（元/百万 tokens）：编辑弹窗回显用；费用报表按 登记单价×台账 tokens 换算
             m.put("inputPrice", mi.getInputPrice());
@@ -700,7 +703,7 @@ public class ModelRegistryService {
      * <ul>
      *   <li>ANTHROPIC = thinking.type + budget_tokens（Claude 走 token 预算，无 effort 概念）</li>
      *   <li>QWEN_BUDGET = enable_thinking + thinking_budget（Qwen 除 effort 外另支持预算，双保险下发）</li>
-     *   <li>EFFORT_* = 各家 reasoning_effort（OpenAI / DeepSeek / GLM / 豆包 / MiniMax / Kimi / 混元 / 讯飞 星火）</li>
+     *   <li>EFFORT_* = 各家 reasoning_effort（OpenAI / DeepSeek / GLM / 豆包 / MiniMax / Kimi）</li>
      *   <li>NONE = 网关无强度语义，只透传思考开关，不假装生效</li>
      * </ul>
      */
@@ -727,9 +730,9 @@ public class ModelRegistryService {
 
     /**
      * 按模型名判定思考强度方言。
-     * <p>归类依据 2026 年各家官方文档的思考模式说明；未识别的国产模型走 EFFORT_OPENAI 的
-     * 收敛表（推理强度是行业通用约定，多数 OpenAI 兼容网关认 reasoning_effort），
-     * 识别为不支持思考能力时（向量/重排等非对话类型）由调用方先行短路。
+     * <p>归类依据 2026 年各家官方文档的思考模式说明；名字不在关键字表里的（中转改名的、混元/星火这类
+     * 方言未实证的）一律 {@code NONE}=不下发强度，不假装生效。判定错了不必等这里加关键字：
+     * 模型登记页可以把方言点名成真实那一家（{@code reasoning_params.dialect}，见 {@link #dialectOf}）。
      */
     public static ReasoningDialect reasoningDialectOf(String modelId) {
         String m = modelId == null ? "" : modelId.toLowerCase();
@@ -744,6 +747,94 @@ public class ModelRegistryService {
         if (m.contains("minimax") || m.contains("abab")) return ReasoningDialect.MINIMAX;
         if (m.contains("qwen") || m.contains("qwq")) return ReasoningDialect.QWEN;
         return ReasoningDialect.NONE;
+    }
+
+    /** 该模型的思考参数覆盖（{@code reasoning_params}）；未登记或解析不出=无覆盖段，与未填同口径 */
+    private static com.alibaba.fastjson2.JSONObject reasoningParamsOf(ModelInfo mi) {
+        if (mi == null || mi.getReasoningParams() == null || mi.getReasoningParams().isBlank()) return null;
+        try {
+            return JSON.parseObject(mi.getReasoningParams());
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static com.alibaba.fastjson2.JSONObject paramsSection(ModelInfo mi, String section) {
+        com.alibaba.fastjson2.JSONObject p = reasoningParamsOf(mi);
+        return p == null ? null : p.getJSONObject(section);
+    }
+
+    /**
+     * 该模型生效的思考方言：登记里点名的 {@code dialect} 优先，没点名按模型名判定。
+     * <p>点名值不在方言枚举里按没点名处理（保存时已拦一道，这里防手改库把整轮问答复现成「不发参数」）。
+     */
+    public static ReasoningDialect dialectOf(ModelInfo mi) {
+        if (mi == null) return ReasoningDialect.NONE;
+        com.alibaba.fastjson2.JSONObject p = reasoningParamsOf(mi);
+        String d = p == null ? null : p.getString("dialect");
+        if (d != null && !d.isBlank()) {
+            try {
+                return ReasoningDialect.valueOf(d.trim().toUpperCase());
+            } catch (IllegalArgumentException ignored) {
+                // 非法方言名不猜，退回模型名判定
+            }
+        }
+        return reasoningDialectOf(mi.getModelId());
+    }
+
+    /** 该档位的 {@code reasoning_effort} 覆盖值（没覆盖返回 null=走内置收敛表） */
+    private static String effortOverride(ModelInfo mi, String level) {
+        com.alibaba.fastjson2.JSONObject e = paramsSection(mi, "effort");
+        if (e == null) return null;
+        String v = e.getString(level);
+        return v == null || v.isBlank() ? null : v.trim();
+    }
+
+    /** 该档位的思考预算 token：登记覆盖优先，其次该方言的内置预算表；两者都没有=不下发预算 */
+    private static Integer budgetOf(ModelInfo mi, String level, ReasoningDialect d) {
+        com.alibaba.fastjson2.JSONObject b = paramsSection(mi, "budget");
+        if (b != null) {
+            Integer over = b.getInteger(level);
+            if (over != null && over > 0) return over;
+        }
+        return switch (d) {
+            case QWEN -> LEVEL_TOKEN_BUDGET.get(level);
+            case ANTHROPIC -> LEVEL_CLAUDE_BUDGET.get(level);
+            default -> null;
+        };
+    }
+
+    /** 方言在下拉里的名字（登记界面唯一出口，前端不另抄一份） */
+    private static String dialectLabel(ReasoningDialect d) {
+        return switch (d) {
+            case OPENAI -> "OpenAI（reasoning_effort 三档）";
+            case DEEPSEEK -> "DeepSeek（effort + thinking.type）";
+            case GLM -> "智谱 GLM（effort + thinking.type）";
+            case DOUBAO -> "豆包 Seed（effort + thinking.type）";
+            case KIMI -> "Kimi（effort + thinking.type）";
+            case MINIMAX -> "MiniMax（effort + thinking.type）";
+            case QWEN -> "通义 Qwen（effort + enable_thinking + 预算）";
+            case ANTHROPIC -> "Claude（无 effort，只给 budget_tokens）";
+            case NONE -> "无强度语义（只透传思考开关）";
+        };
+    }
+
+    /**
+     * 思考参数方言目录：登记界面的下拉、占位值与「此刻按谁下发」的唯一数据源。
+     * <p>前端不抄内置收敛表——那些值是按各家文档调研来的，会随版本修正，抄一份就对不上账了。
+     */
+    public List<Map<String, Object>> reasoningDialectCatalog() {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (ReasoningDialect d : ReasoningDialect.values()) {
+            Map<String, Object> m = new java.util.LinkedHashMap<>();
+            m.put("value", d.name());
+            m.put("label", dialectLabel(d));
+            m.put("effort", effortTable(d));
+            m.put("budget", d == ReasoningDialect.QWEN ? LEVEL_TOKEN_BUDGET
+                    : d == ReasoningDialect.ANTHROPIC ? LEVEL_CLAUDE_BUDGET : null);
+            out.add(m);
+        }
+        return out;
     }
 
     /** 该方言的 reasoning_effort 收敛表（NONE/ANTHROPIC 无 effort 概念，返回 null） */
@@ -793,18 +884,20 @@ public class ModelRegistryService {
         if (!REASONING_LEVEL_LIST.contains(lv)) return Map.of();
         if (!reasoningLevelsOf(mi).contains(lv)) return Map.of();
         Map<String, Object> body = new java.util.LinkedHashMap<>();
-        ReasoningDialect dialect = reasoningDialectOf(mi.getModelId());
+        ReasoningDialect dialect = dialectOf(mi);
         switch (dialect) {
             case ANTHROPIC -> {
                 // Claude 思考必须显式开并给预算；预算不可为 0，否则网关按「不思考」处理
+                Integer budget = budgetOf(mi, lv, dialect);
                 body.put("thinking", Map.of("type", "enabled",
-                        "budget_tokens", LEVEL_CLAUDE_BUDGET.getOrDefault(lv, 24576)));
+                        "budget_tokens", budget == null ? LEVEL_CLAUDE_BUDGET.getOrDefault(lv, 24576) : budget));
             }
             case QWEN -> {
                 if (thinkingOn) {
                     body.put("enable_thinking", true);
                     // thinking_budget 与原生 reasoning_effort 互补：部分网关只认其中之一
-                    body.put("thinking_budget", LEVEL_TOKEN_BUDGET.getOrDefault(lv, 16384));
+                    Integer budget = budgetOf(mi, lv, dialect);
+                    body.put("thinking_budget", budget == null ? LEVEL_TOKEN_BUDGET.getOrDefault(lv, 16384) : budget);
                 }
             }
             case NONE -> {
@@ -833,7 +926,7 @@ public class ModelRegistryService {
         if (mi == null) return Map.of();
         // 只有登记为「可开关思考」的模型才存在"关"这个动作
         if (!THINK_SWITCHABLE.equals(resolveThinking(mi))) return Map.of();
-        return switch (reasoningDialectOf(mi.getModelId())) {
+        return switch (dialectOf(mi)) {
             case QWEN -> Map.of("enable_thinking", false);
             // GLM（Ark，如 glm-5-3-flash-260828）实测拒绝 thinking.type=disabled：
             // 返回 400 InvalidParameter「thinking.type `disabled` is not supported by this model」——
@@ -857,7 +950,9 @@ public class ModelRegistryService {
         String lv = level.trim().toLowerCase();
         if (!REASONING_LEVEL_LIST.contains(lv)) return null;
         if (!reasoningLevelsOf(mi).contains(lv)) return null;
-        Map<String, String> table = effortTable(reasoningDialectOf(mi.getModelId()));
+        String over = effortOverride(mi, lv);
+        if (over != null) return over;
+        Map<String, String> table = effortTable(dialectOf(mi));
         return table == null ? null : table.getOrDefault(lv, "high");
     }
 
@@ -934,10 +1029,8 @@ public class ModelRegistryService {
                 m.put("reasoningLevels", reasoningLevelsOf(mi));
                 m.put("defaultReasoningLevel", mi.getDefaultReasoningLevel());
                 m.put("thinking", resolveThinking(mi));
-                // 上下文窗口（null=未登记用全局默认）：聊天页模型悬浮面板展示/调整该模型的窗口容量；
-                // contextWindowMin 声明可选下限（null=不可调，面板行保持只读）
+                // 上下文窗口（null=未登记用全局默认）：聊天页模型悬浮面板只展示这个登记上限
                 m.put("contextWindow", mi.getContextWindow());
-                m.put("contextWindowMin", mi.getContextWindowMin());
                 // 额度不足标记（供应商级）：选择器据此把该供应商下所有模型标灰禁选并说明原因。
                 // 整供应商而非单模型——余额/配额是网关账户级的事，一个模型欠费意味着同一 Key
                 // 下全部模型都调不通；个别模型单独不可用（如套餐不含某模型）由网关文案区分，
@@ -1117,8 +1210,9 @@ public class ModelRegistryService {
                         + "），请先勾选该档位或留空由网关默认决定");
             }
             mi.setDefaultReasoningLevel(defLevel == null || defLevel.isBlank() ? null : defLevel);
+            mi.setReasoningParams(normalizeReasoningParams(
+                    item.get("reasoningParams"), reasoningLevelsOf(mi), modelId.trim()));
             mi.setContextWindow(intOrNull(item.get("contextWindow")));
-            mi.setContextWindowMin(intOrNull(item.get("contextWindowMin")));
             mi.setMaxOutput(intOrNull(item.get("maxOutput")));
             // 单价（元/百万 tokens，输入/输出分开）：费用报表的价格源；留空=未配置（该模型费用显示未计价）
             mi.setInputPrice(decOrNull(item.get("inputPrice")));
@@ -1128,14 +1222,7 @@ public class ModelRegistryService {
             if (mi.getContextWindow() == null
                     && (TYPE_CHAT.equals(type) || TYPE_VISION.equals(type) || TYPE_OMNI.equals(type))) {
                 throw new IllegalArgumentException("模型 " + modelId.trim() + " 未声明上下文窗口（对话类模型必填，"
-                        + "检索预算 = 窗口×安全系数−输出）；向量/重排/OCR/语音等能力型类型可留空");
-            }
-            // 窗口区间一致性：下限不大于上限——否则聊天页档位列表区间倒挂，运行时 clamp 也无从谈起
-            //（intOrNull 已把 0/负值归一为 null=未声明，非空即保证 ≥1）
-            if (mi.getContextWindowMin() != null && mi.getContextWindow() != null
-                    && mi.getContextWindowMin() > mi.getContextWindow()) {
-                throw new IllegalArgumentException("模型 " + modelId.trim() + " 的最小窗口（" + mi.getContextWindowMin()
-                        + "）不能大于上下文窗口上限（" + mi.getContextWindow() + "）");
+                        + "窗口决定这一轮的输入总容量与折上下文的时机）；向量/重排/OCR/语音等能力型类型可留空");
             }
             // 跨字段一致性（预算 = 窗口×安全系数−输出限制）：两个都声明时输出不能吃光预算——
             // 否则该模型下上下文预算被运行时托底成 1000，检索资料塞不进。安全系数为平台固定策略。
@@ -1297,6 +1384,84 @@ public class ModelRegistryService {
         String s = String.valueOf(v).trim().toLowerCase();
         if (s.isEmpty() || "auto".equals(s) || "null".equals(s)) return null;
         return ("1".equals(s) || "true".equals(s)) ? 1 : 0;
+    }
+
+    /**
+     * 思考参数映射覆盖归一：只留合法且用得上的段，全空 → null（=完全跟随内置表）。
+     * <p>档位不在该模型已勾选的支持档位里就丢掉——没勾的档位运行时根本不会被选中，
+     * 留着覆盖只会让人以为改了没生效。非法值直接拒绝而不是静默吞：半截覆盖存进库后，
+     * 运行时到底发内置值还是发覆盖值没人说得清。
+     */
+    private static String normalizeReasoningParams(Object v, List<String> levels, String modelId) {
+        if (v == null) return null;
+        com.alibaba.fastjson2.JSONObject in;
+        if (v instanceof CharSequence cs) {
+            if (cs.toString().isBlank()) return null;
+            try {
+                in = JSON.parseObject(cs.toString());
+            } catch (Exception e) {
+                throw new IllegalArgumentException("模型 " + modelId + " 的思考参数映射不是合法 JSON");
+            }
+        } else {
+            Object j = JSON.toJSON(v);
+            if (!(j instanceof com.alibaba.fastjson2.JSONObject o)) {
+                throw new IllegalArgumentException("模型 " + modelId + " 的思考参数映射格式不对，应为对象");
+            }
+            in = o;
+        }
+        if (in == null) return null;
+
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        ReasoningDialect dialect = null;
+        String d = in.getString("dialect");
+        if (d != null && !d.isBlank()) {
+            try {
+                dialect = ReasoningDialect.valueOf(d.trim().toUpperCase());
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException("模型 " + modelId + " 点名的思考参数方言「" + d.trim()
+                        + "」不存在，可选：" + java.util.Arrays.toString(ReasoningDialect.values()));
+            }
+            out.put("dialect", dialect.name());
+        }
+
+        Map<String, String> effort = new java.util.LinkedHashMap<>();
+        com.alibaba.fastjson2.JSONObject eo = in.getJSONObject("effort");
+        if (eo != null) {
+            for (String lv : REASONING_LEVEL_LIST) {
+                String val = eo.getString(lv);
+                if (val == null || val.isBlank() || !levels.contains(lv)) continue;
+                String trimmed = val.trim();
+                if (trimmed.length() > 32) {
+                    throw new IllegalArgumentException("模型 " + modelId + " 的「" + lv + "」档 reasoning_effort 值过长（"
+                            + trimmed.length() + " 字符），应是网关认的档位名");
+                }
+                effort.put(lv, trimmed);
+            }
+        }
+
+        Map<String, Integer> budget = new java.util.LinkedHashMap<>();
+        com.alibaba.fastjson2.JSONObject bo = in.getJSONObject("budget");
+        if (bo != null) {
+            for (String lv : REASONING_LEVEL_LIST) {
+                Integer val = bo.getInteger(lv);
+                if (val == null || val <= 0 || !levels.contains(lv)) continue;
+                if (val > 1_000_000) {
+                    throw new IllegalArgumentException("模型 " + modelId + " 的「" + lv + "」档思考预算（" + val
+                            + "）超过 1000000 token，明显不是预算值");
+                }
+                budget.put(lv, val);
+            }
+        }
+
+        if (!effort.isEmpty()) out.put("effort", effort);
+        if (!budget.isEmpty()) out.put("budget", budget);
+        if (out.isEmpty()) return null;
+        // 无强度语义这一家什么都不发，存着覆盖值等于骗自己「改了会生效」
+        if (dialect == ReasoningDialect.NONE && (!effort.isEmpty() || !budget.isEmpty())) {
+            throw new IllegalArgumentException("模型 " + modelId + " 点名方言为「无强度语义」，"
+                    + "档位参数映射不会下发——请改点名成网关真实那一家，或清空映射");
+        }
+        return JSON.toJSONString(out);
     }
 
     /**

@@ -216,7 +216,28 @@ public class ProviderController {
         return ResultJson.ok(modelRegistryService.listModels(id));
     }
 
-    @Operation(summary = "批量保存供应商模型", description = "全量同步语义：[{modelId, modelType(chat/vision/embedding/rerank/audio/omni/other), visionCapable(图片理解三态 1/0/auto), toolCapable(工具调用三态 1/0/auto), thinking(auto/none/switchable/always), reasoningLevels(思考强度档位数组), defaultReasoningLevel(默认强度，须在档位内), displayName?, enabled?, remark?}]；不在清单中的已登记模型会被删除。普通用户仅可改自己登记的")
+    @Operation(summary = "思考参数方言目录", description = "登记页下拉与占位值的唯一数据源：[{value, label, effort(档位→内置 reasoning_effort 值), budget(档位→内置思考预算 token)}]。内置表随各家文档修正，前端不另抄一份")
+    @Permission("provider:read")
+    @GetMapping("/reasoning-dialects")
+    public ResultJson reasoningDialects() {
+        return ResultJson.ok(modelRegistryService.reasoningDialectCatalog());
+    }
+
+    @Operation(summary = "按模型名判定思考方言", description = "编辑弹窗里模型名一改就要重算「不点名时按谁下发」，判定规则只在后端有一份，这里给个查询口；返回 {value, label}")
+    @Permission("provider:read")
+    @GetMapping("/reasoning-dialect")
+    public ResultJson reasoningDialect(@RequestParam("modelId") String modelId) {
+        ModelRegistryService.ReasoningDialect d = ModelRegistryService.reasoningDialectOf(modelId);
+        Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("value", d.name());
+        out.put("label", modelRegistryService.reasoningDialectCatalog().stream()
+                .filter(x -> d.name().equals(x.get("value")))
+                .map(x -> String.valueOf(x.get("label")))
+                .findFirst().orElse(d.name()));
+        return ResultJson.ok(out);
+    }
+
+    @Operation(summary = "批量保存供应商模型", description = "全量同步语义：[{modelId, modelType(chat/vision/embedding/rerank/audio/omni/other), visionCapable(图片理解三态 1/0/auto), toolCapable(工具调用三态 1/0/auto), thinking(auto/none/switchable/always), reasoningLevels(思考强度档位数组), defaultReasoningLevel(默认强度，须在档位内), reasoningParams(思考参数映射覆盖 {dialect,effort,budget}，缺省段跟随内置表), displayName?, enabled?, remark?}]；不在清单中的已登记模型会被删除。普通用户仅可改自己登记的")
     @Permission("provider:write")
     @PutMapping("/{id}/models")
     public ResultJson saveModels(
