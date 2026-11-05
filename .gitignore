@@ -37,11 +37,13 @@ config/application-local.yml
 /.workbuddy/
 # AgentScope 框架运行时状态目录：本地跑对话时由框架临时建出，含 bus/queues、
 # async-tools、wenqu/tasks 等短生命周期文件（IDE 文件监视器常因此报 ENOENT），
-# 也含个人记忆文件（MEMORY.md、日账、skills、plans）。跑完即清理，不入库。
+# 也含个人记忆文件（MEMORY.md、日账、plans）。跑完即清理，不入库。
+# 例外：/.zcode/skills/ 是仓内开发规范与路线图账本，随仓走（2026-11-06 拍板）。
 /.agentscope/
 /.qoder/
 /.pyenv/
-/.zcode/
+/.zcode/*
+!/.zcode/skills/
 /.md/
 /.vite/
 /.zcodeignore
