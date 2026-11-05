@@ -161,6 +161,19 @@
       "tier": 2
     },
     {
+      "backendKey": "chat.toolDescriptionCompact",
+      "panel": "chat",
+      "section": 1,
+      "group": "chat",
+      "key": "toolDescriptionCompact",
+      "path": "chat.toolDescriptionCompact",
+      "label": "工具说明精简",
+      "type": "switch",
+      "def": true,
+      "note": "把每把工具的使用说明压到一句话再发给模型，减少每一轮都要付的固定上下文开销；工具能力、参数与执行完全不变，关掉即恢复完整说明",
+      "tier": 2
+    },
+    {
       "backendKey": "chat.sseTimeoutMs",
       "panel": "chat",
       "section": 3,

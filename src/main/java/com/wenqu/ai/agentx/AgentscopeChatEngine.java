@@ -3821,6 +3821,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 流式可见性闸：框架只在一次模型调用结束时才把 chunk 落盘，而观众跟的是落盘后的日志，
                 // 界面上就是「正文一下粘出几百字」。这里把它拆成 200ms 一片（代价见类注释）。
                 .middleware(new AgentxStreamFlushMiddleware())
+                // 工具说明精简：换的是请求里那份 ToolSchema 的描述文本，注册表、参数 schema、
+                // 只读档位与权限判定一律不动（关掉即恢复完整说明）。开关每次调用现读，
+                // 因为实例按会话常驻、middleware 只能在 build 期挂上——见类注释。
+                .middleware(new AgentxToolDescriptionCompact(
+                        () -> configService.getBoolean("chat.toolDescriptionCompact", true)))
                 // Phase 0 实测：框架默认装备子智能体/技能/工作区上下文/tools.json 等旁路能力。
                 //
                 // 子智能体由**框架驱使**（2026-10-18 全框架化迁移 P0 启用，2026-10-20 收口成一条）：
@@ -4631,7 +4636,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      */
     private List<io.agentscope.core.model.ToolSchema> toolSchemasOf(ChatCommand cmd) {
         try {
-            return sessions.toolSchemas(cmd);
+            // 与真实请求同口径：精简开着时面板估的也是压过的那一份，否则「工具声明」按完整说明估、
+            // 请求按精简说明发，容量条上那一截凭空多出来，开关一开容量却看不出省了什么
+            return AgentxToolDescriptionCompact.applyAll(sessions.toolSchemas(cmd),
+                    configService.getBoolean("chat.toolDescriptionCompact", true));
         } catch (Exception e) {
             log.warn("[CTX-PARTS] 工具声明读不出来，本轮容量面板少「工具声明」一段: session={}, {}",
                     cmd.getSessionId(), e.toString());

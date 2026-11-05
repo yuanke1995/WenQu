@@ -421,6 +421,7 @@ public class ConfigService {
         // （AppProperties.systemPrompt，yml/env 可覆盖）；附加指令不再提供平台/个人层，存量库中的
         // 旧行成为孤儿数据（无读取方）
         d.put("chat.citationCheckEnabled", "true");         // 引用语义一致性自检（生成后校验：编造/张冠李戴的引用是 RAG 信任根基，默认开；每轮多一次模型调用，超时/失败自动跳过不阻塞）
+        d.put("chat.toolDescriptionCompact", "true");       // 工具说明精简：把每把工具的说明压到一句话再发给模型（工具能力/参数/执行不变；默认开，关掉恢复完整说明）
         // chat.planAutoIntent 已退役（2026-10）：计划模式只由用户显式开关或模型自主调用 plan_enter 决定，
         // 问渠的预判器（PlanModeService）已删除；存量行由 schema.sql 清理。
         // 断线重连接流（P0）：默认开，且**不再露在设置页**——关掉它没有任何收益（刷新/换设备就丢一轮），
