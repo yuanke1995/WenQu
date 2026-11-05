@@ -329,7 +329,7 @@ const toggleOnline = async it => {
   try {
     const r = await setMarketItemStatus(it.id, !it.online)
     if (!r || !r.success) throw new Error((r && r.msg) || '操作失败')
-    message.success(it.online ? '已下架（列表不再展示，已装副本不受影响）' : '已重新上架')
+    message.success(it.online ? '已下架' : '已重新上架')
     load()
   } catch (e) {
     message.error('操作失败：' + errText(e))

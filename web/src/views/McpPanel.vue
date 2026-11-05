@@ -613,7 +613,7 @@ const toggleEnabled = async (s, on) => {
   togglingId.value = s.id
   try {
     const r = await setMcpServerEnabled(s.id, on)
-    if (r.success) { message.success(on ? '已启用，后台连接中' : '已停用'); await loadStatus() }
+    if (r.success) { if (on) message.success('已启用，后台连接中'); await loadStatus() }
     else message.error(r.msg || '操作失败')
   } catch (e) { message.error(e.message || '操作失败') }
   finally { togglingId.value = '' }

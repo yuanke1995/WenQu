@@ -135,7 +135,7 @@ const addToEval = async () => {
     const r = await addEvalCase(q.content, kids)
     if (r && r.success !== false) {
       if (r.data?.added === false) message.info(r.data.reason || '评估集已存在相同问题')
-      else message.success(`已加入评测集（期望块 ${r.data?.expected ?? kids.length} 个，可在检索评估页跑回归）`)
+      else message.success('已加入评测集')
     } else message.error(r?.msg || '加入评测集失败')
   } catch (e) { message.error(e.message || '加入评测集失败') }
 }

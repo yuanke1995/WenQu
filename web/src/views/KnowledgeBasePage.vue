@@ -143,7 +143,7 @@ const onDelete = row => {
           message.warning(r.msg || '无法删除')
           return
         }
-        message.success('已删除（库内文档与关联智能体已一并清理）')
+        message.success('已删除')
         await load()
       } catch (e) {
         message.error(e.message || '删除失败')
@@ -160,7 +160,7 @@ const doExport = async kb => {
   exportingId.value = kb.id
   try {
     await exportKnowledgeBase(kb.id, kb.name)
-    message.success('导出完成（浏览器下载中）')
+    message.success('导出完成')
   } catch (e) { message.error(e.message || '导出失败') }
   finally { exportingId.value = '' }
 }
@@ -211,7 +211,7 @@ const onImportFile = async e => {
     if (r.success) {
       const d = r.data || {}
       const fails = (d.results || []).filter(x => !x.success)
-      message.success(`导入完成：成功 ${d.ok}/${d.total}` + (fails.length ? `，失败 ${fails.length} 个（${fails.map(x => `${x.fileName}: ${x.msg}`).join('；').slice(0, 120)}…）` : ''))
+      message.success(`导入完成：成功 ${d.ok}/${d.total}` + (fails.length ? `，失败 ${fails.length} 个` : ''))
       await load()
     } else message.error(r.msg || '导入失败')
   } catch (err) { message.error(err.message || '导入失败') }

@@ -255,7 +255,7 @@ const doResume = async () => {
     const r = await resumeWorkflowRun(props.workflowId, detail.value.id)
     const run = (r && r.data) || null
     if (run) {
-      message.success(run.status === 'success' ? '续跑完成' : `续跑结束（${runLabel(run.status)}），可再次续跑或重跑`)
+      message.success(run.status === 'success' ? '续跑完成' : `续跑结束：${runLabel(run.status)}`)
       const idx = runs.value.findIndex(x => x.id === run.id)
       if (idx >= 0) runs.value[idx] = run
       detail.value = run

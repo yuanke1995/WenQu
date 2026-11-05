@@ -741,7 +741,7 @@ const submitAdd = async () => {
   addLoading.value = true
   try {
     const r = await createKnowledge(f.title, f.content.trim(), f.docId.trim() || null)
-    if (r.success) { message.success('知识块已创建（含向量召回）'); addVisible.value = false; loadUnmatched() }
+    if (r.success) { message.success('知识块已创建'); addVisible.value = false; loadUnmatched() }
     else message.error(r.msg || '创建失败')
   } catch (e) { message.error(e.message || '创建失败') }
   finally { addLoading.value = false }

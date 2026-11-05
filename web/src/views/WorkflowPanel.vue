@@ -422,7 +422,7 @@ const doPublish = async row => {
   busyId.value = row.id
   try {
     const r = await publishWorkflow(row.id, '')
-    message.success(`已发布 v${r.data.version}（API 触发与智能体绑定将使用这一版）`)
+    message.success(`已发布 v${r.data.version}`)
     await load()
   } catch (e) {
     message.error('发布失败：' + (e.message || ''))
@@ -552,7 +552,7 @@ const doRunScheduleNow = async () => {
   try {
     const r = await runWorkflowScheduleNow(autoRow.value.id)
     const run = (r && r.data) || {}
-    if (run.status === 'success') message.success('定时运行成功（已发布版本）')
+    if (run.status === 'success') message.success('定时运行成功')
     else message.error('定时运行结束：' + runLabel(run.status) + (run.error ? '：' + run.error : ''))
     await load()
   } catch (e) {

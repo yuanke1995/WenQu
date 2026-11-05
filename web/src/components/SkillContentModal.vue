@@ -31,7 +31,7 @@
           <p class="sc-hint">这是你自己安装的技能，可在「智能体 → 技能」里编辑、停用或删除；其他成员看不到它。</p>
         </template>
         <template v-else-if="entry.platformDisabled">
-          <p class="sc-hint">这条已由平台统一停用，所有成员都用不了。本轮仍可在输入框里点名用它一次。</p>
+          <p class="sc-hint">这条已由平台统一停用。本轮仍可在输入框里点名用它一次。</p>
         </template>
         <template v-else-if="entry.disabled">
           <p class="sc-hint">你已停用这条技能，它不再进模型清单。可在「智能体 → 技能」里重新启用。</p>

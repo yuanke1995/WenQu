@@ -104,7 +104,7 @@
           <div class="pf-field">
             <div class="pf-field-head">
               <span class="pf-label">收哪些类</span>
-              <span class="pf-sub-hint">关掉即不再接收该类通知（只影响你本人，平台照常生成）</span>
+              <span class="pf-sub-hint">关掉即不再接收该类通知</span>
             </div>
             <div class="np-grid">
               <label v-for="t in NOTIF_TYPES" :key="t.type" class="np-item">
@@ -493,7 +493,7 @@ const onEnablePush = async () => {
 }
 const onDisablePush = async () => {
   const r = await disablePush()
-  if (r.ok) message.success('已取消这台设备的系统级通知（其它设备不受影响）')
+  if (r.ok) message.success('已取消这台设备的系统级通知')
   else message.error('取消失败：' + (r.error || '未知错误'))
   await refreshCap()
 }
@@ -648,7 +648,6 @@ const toggleMemAuto = async checked => {
     const r = await setUserPreference({ memoryEnabled: checked })
     if (r && r.success !== false) {
       memAutoEnabled.value = checked
-      message.success(checked ? '已开启自动提炼记忆' : '已关闭自动提炼记忆')
     } else { message.error(r?.msg || '保存失败'); await load() }
   } catch (e) {
     message.error(e.message || '保存失败')

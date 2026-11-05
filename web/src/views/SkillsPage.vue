@@ -47,7 +47,7 @@
         <template v-for="g in groups" :key="g.key">
           <div class="res-group-title">{{ g.label }} <span class="res-group-n">{{ g.list.length }}</span></div>
           <div class="skill-tip" v-if="g.key === 'builtin'">
-            随版本分发的公共技能，所有人可见。你只能停用（只对自己生效），不能修改或删除。
+            随版本分发的公共技能，所有人可见。你只能停用，不能修改或删除。
           </div>
           <div class="skill-tip" v-else-if="g.key === 'workspace'">
             助手在对话里沉淀到当前会话的技能，随会话走；换个会话就看不到了。
@@ -431,7 +431,7 @@ const toggleFromDetail = async checked => {
     const r = await setSkillDisabled(s.name, !checked)
     if (!r || !r.success) throw new Error((r && r.msg) || '操作失败')
     detail.value = { ...s, disabled: !checked, userDisabled: !checked }
-    message.success(checked ? '已启用' : '已停用（只对你生效）')
+    if (!checked) message.success('已停用')
     await load()
   } catch (e) {
     message.error('操作失败：' + errText(e))
@@ -482,7 +482,7 @@ const toggle = async s => {
   try {
     const r = await setSkillDisabled(s.name, !s.disabled)
     if (!r || !r.success) throw new Error((r && r.msg) || '操作失败')
-    message.success(r.msg || (s.disabled ? '已启用' : '已停用'))
+    if (!s.disabled) message.success(r.msg || '已停用')
     await load()
   } catch (e) {
     message.error('操作失败：' + errText(e))

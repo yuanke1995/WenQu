@@ -284,11 +284,6 @@ const currentAgentId = computed({
 const pickAgent = id => {
   agentPickerOpen.value = false
   agentMap.value = { ...agentMap.value, [currentSessionId.value]: id || '' }
-  if (!id) message.success('已切回「默认助手」')
-  else {
-    const a = agentList.value.find(x => x.id === id)
-    if (a) message.success(`已切换为「${a.name}」，下一问起由它作答`)
-  }
 }
 /** 当前生效的智能体名（空=默认助手；P5 起没有"锁定"这一说，换人立即生效） */
 const currentAgentName = computed(() => {
@@ -3453,8 +3448,7 @@ const compactContext = async (instruction = '') => {
     }
     // 只报用户要的结果（腾出多少），不复述内部计数
     const freed = Number(d.freedTokens) || 0
-    message.success(`已压缩早期对话${freed > 0 ? `，为后续腾出约 ${fmtTokens(freed)} tokens` : ''}`
-      + (d.partial ? '（会话很长，可再次执行 /compact 继续）' : ''))
+    message.success(`已压缩早期对话${freed > 0 ? `，为后续腾出约 ${fmtTokens(freed)} tokens` : ''}`)
     return d
   } catch (e) {
     message.error(e?.message || '压缩失败，请稍后重试')

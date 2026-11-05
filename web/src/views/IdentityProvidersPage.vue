@@ -341,7 +341,7 @@ async function save () {
 async function onToggle (p, v) {
   try {
     const r = await updateIdentityProvider(p.id, { ...p, enabled: v ? 1 : 0, config: p.config })
-    if (r.success) { p.enabled = v ? 1 : 0; message.success(v ? '已启用' : '已停用') }
+    if (r.success) { p.enabled = v ? 1 : 0 }
     else message.error(r.msg || '操作失败')
   } catch (e) { message.error(e.message || '操作失败') }
 }

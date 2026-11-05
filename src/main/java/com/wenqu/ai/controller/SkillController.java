@@ -245,7 +245,7 @@ public class SkillController {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("name", e.skill().getName());
         m.put("disabled", disabled);
-        return ResultJson.ok(m, disabled ? "已停用（只对你生效）" : "已启用");
+        return ResultJson.ok(m, disabled ? "已停用" : "已启用");
     }
 
     @Operation(summary = "下载技能包", description = "把自己安装的技能打成 zip（备份/分享）；只有本人技能可下载")

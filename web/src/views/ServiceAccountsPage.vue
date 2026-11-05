@@ -223,7 +223,7 @@ async function toggleStatus (acc, on) {
   try {
     const r = await updateServiceAccount(acc.id, { status: on ? 1 : 0 })
     if (r && r.success === false) { message.error(r.msg || '操作失败'); return }
-    message.success(on ? '已启用' : '已停用，它的调用会全部被拒')
+    if (!on) message.success('已停用，它的调用会全部被拒')
     await load()
   } catch (e) {
     message.error(e.message || '操作失败')

@@ -363,7 +363,7 @@ const doRun = async row => {
 const doToggle = async row => {
   try {
     const r = await toggleScheduledJob(row.id, !row.enabled)
-    if (r && r.success) { message.success(row.enabled ? '已停用' : '已启用'); await load() }
+    if (r && r.success) await load()
     else message.error((r && r.msg) || '操作失败')
   } catch (e) {
     message.error('操作失败：' + (e.message || ''))

@@ -165,7 +165,6 @@ const pick = ref_ => {
     if (g) { message.warning(blockedTipOf(g)); return }
   }
   currentOverrideModel.value = ref_ || ''
-  message.success(ref_ ? `已切换为「${modelLabelOf(ref_)}」` : '已跟随个人默认模型')
 }
 
 const caps = computed(() => thinkCapsOf(effectiveModel.value))

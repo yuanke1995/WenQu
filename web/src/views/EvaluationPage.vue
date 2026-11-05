@@ -428,7 +428,7 @@ function scheduleAnswerPoll () {
       answerHistory.value = r.data?.history || []
       if (!answerRunning.value && answerTimer) {
         clearInterval(answerTimer); answerTimer = null
-        message.success(answerReport.value?.skippedReason ? '答案评测结束（有跳过项，见提示）' : '答案评测完成')
+        message.success(answerReport.value?.skippedReason ? '答案评测结束' : '答案评测完成')
       }
     } catch (e) { /* 单次轮询失败下次再试 */ }
   }, 3000)
@@ -455,7 +455,7 @@ async function startAnswerEval () {
   try {
     const r = await runAnswerEval(answerCaseCount.value)
     if (r.success) {
-      message.success(`答案评测已启动（${answerCaseCount.value} 条，每条 2 次模型调用）`)
+      message.success('答案评测已启动')
       answerRunning.value = true
       answerProgress.value = { done: 0, total: answerCaseCount.value }
       scheduleAnswerPoll()

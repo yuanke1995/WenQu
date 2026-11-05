@@ -1162,7 +1162,7 @@ function applyConfig() {
     if (dangling.length) removeEdges(dangling)
   }
   dirty.value = true
-  message.success('已应用到画布（保存后才写入工作流）')
+  message.success('已应用到画布')
   void oldConfig
 }
 
@@ -1240,7 +1240,7 @@ async function doPublish() {
     const r = await publishWorkflow(workflowId.value, '')
     const d = r.data || {}
     publishedVersion.value = d.version
-    message.success(`已发布 v${d.version}（API 触发与智能体绑定将使用这一版）`)
+    message.success(`已发布 v${d.version}`)
     emit('saved')
   } catch (e) {
     message.error('发布失败：' + (e.message || ''))
@@ -1344,7 +1344,7 @@ async function finalizeRun (payload) {
   // 兜底：done 里若有增量未覆盖的节点（正常不会），按终态重染一遍
   for (const t of traces) applyTrace(t)
   if (runResult.value.status === 'success') {
-    message.success(`运行成功（${fmtMs(payload && payload.durationMs)}），点击节点看输入输出`)
+    message.success('运行成功')
   } else if (runResult.value.status === 'waiting_approval') {
     try {
       const ar = await getWorkflowPendingApproval(workflowId.value, runResult.value.runId)
@@ -1391,7 +1391,7 @@ async function doApprove(approved) {
     approvalInfo.value = null
     await replayTraces()
     if (runResult.value.status === 'success') {
-      message.success(`已${approved ? '批准' : '拒绝'}，续跑完成（${fmtMs(run.durationMs)}）`)
+      message.success(`已${approved ? '批准' : '拒绝'}，续跑完成`)
     } else {
       message.error('续跑失败：' + (runResult.value.error || '未知原因'))
     }

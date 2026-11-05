@@ -988,7 +988,7 @@ async function submitImportUrl () {
 async function toggleStatus (record, status) {
   try {
     const r = await updateDocumentStatus(record.id, status)
-    if (r.success) { message.success(status === 0 ? '已启用' : '已弃用'); fetchList() }
+    if (r.success) fetchList()
     else message.error(r.msg || '操作失败')
   } catch (e) { message.error(e.message || '操作失败') }
 }

@@ -942,7 +942,6 @@ const onToggle = async (p, v) => {
     p.enabled = v
     if (v) {
       p.refCount = 0
-      message.success('已启用')
       return
     }
     const d = await loadRefs(p)

@@ -57,7 +57,7 @@ const doExport = async () => {
   exporting.value = true
   try {
     await exportAuditCsv(query().replace(/page=\d+&?/, '').replace(/&size=\d+/, ''))
-    message.success('已导出 CSV（按当前筛选条件）')
+    message.success('已导出 CSV')
   } catch (e) { message.error(e.message || '导出失败') } finally { exporting.value = false }
 }
 const doVerify = async () => {

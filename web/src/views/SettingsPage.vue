@@ -697,7 +697,7 @@ const save = async () => {
       const n = r.data && typeof r.data === 'object' ? Object.keys(r.data).length : 0
       if (n === 0) message.warning('没有可保存的配置项（后端未识别提交的键），请检查后重试')
       else {
-        message.success(`配置已保存并生效（更新 ${n} 项）`)
+        message.success('配置已保存并生效')
         initialPayload.value = buildPayload()
         // 停用清单变了，清单区的「平台停用」标记要跟着变
         if (payload.skill && Object.prototype.hasOwnProperty.call(payload.skill, 'disabled')) loadSkillOptions()
@@ -731,8 +731,7 @@ const doResetGroup = async (key, label) => {
       ? await saveConfig(panelDefaultPayload('skills'))
       : await resetConfig([key])
     if (r.success) {
-      const cnt = r.data && typeof r.data === 'object' ? Object.keys(r.data).length : 0
-      message.success(`「${label}」已恢复默认（${cnt} 项）`)
+      message.success(`「${label}」已恢复默认`)
       await fetchAndFill()
       // 停用清单被清空后，技能名册里的「平台停用」标记也要跟着消失
       if (key === 'skills') loadSkillOptions()
@@ -887,7 +886,7 @@ const skillGroups = computed(() => {
 /** 技能芯片的悬浮说明：描述 + 停用口径 + 来源 */
 const skillTip = s => [
   s.description,
-  s.platformDisabled ? '平台已停用（所有成员都用不了）' : (s.userDisabled ? '你已停用（只影响自己）' : ''),
+  s.platformDisabled ? '平台已停用' : (s.userDisabled ? '你已停用' : ''),
   s.source === 'workspace' ? '沙盒工作区技能（随会话）' : ''
 ].filter(Boolean).join('；') || s.name
 const fieldOptions = f => f.backendKey === 'skill.disabled' ? skillOptions.value : denyOptions.value
@@ -1033,7 +1032,7 @@ const saveInterval = async (record, ms) => {
   try {
     const r = await saveConfig({ [field.group]: { [field.submitKey || field.key]: String(ms) } })
     if (r.success) {
-      message.success(`「${record.name}」间隔已改为 ${fmtInterval(ms)}，下一节拍（约 10s）生效`)
+      message.success(`「${record.name}」间隔已改为 ${fmtInterval(ms)}`)
       writeForm(form.value, field.path || (field.group + '.' + field.key), ms)
       initialPayload.value = buildPayload()
       loadSchedule()
@@ -1066,7 +1065,7 @@ const toggleTaskPause = record => {
         const target = pausing ? 0 : defVal
         const r = await saveConfig({ [field.group]: { [field.submitKey || field.key]: String(target) } })
         if (r.success) {
-          message.success(pausing ? `「${record.name}」已暂停` : `「${record.name}」已恢复（间隔 ${defVal}ms）`)
+          message.success(pausing ? `「${record.name}」已暂停` : `「${record.name}」已恢复`)
           writeForm(form.value, field.path || (field.group + '.' + field.key), target)
           initialPayload.value = buildPayload()
           loadSchedule()

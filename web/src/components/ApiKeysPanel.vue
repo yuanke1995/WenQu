@@ -521,7 +521,7 @@ const toggleKey = async rec => {
   keyTogglingId.value = rec.id
   try {
     const r = await setApiKeyDisabled(rec.id, !rec.disabled)
-    if (r.success) { message.success(rec.disabled ? '已启用' : '已停用'); loadKeys() }
+    if (r.success) loadKeys()
     else message.error(r.msg || '操作失败')
   } catch (e) { message.error(e.message || '操作失败') }
   finally { keyTogglingId.value = '' }
@@ -532,7 +532,7 @@ const toggleKeyMcp = async rec => {
   keyMcpTogglingId.value = rec.id
   try {
     const r = await setApiKeyMcp(rec.id, !rec.mcpEnabled)
-    if (r.success) { message.success(rec.mcpEnabled ? '已收回 MCP 入口' : '已授权 MCP 入口'); loadKeys() }
+    if (r.success) loadKeys()
     else message.error(r.msg || '操作失败')
   } catch (e) { message.error(e.message || '操作失败') }
   finally { keyMcpTogglingId.value = '' }

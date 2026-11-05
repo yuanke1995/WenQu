@@ -708,7 +708,7 @@ async function doTenantStatus (t, enabled) {
   try {
     const r = await setTenantStatus(t.id, enabled)
     if (!r.success) { message.error(r.msg || '操作失败'); return }
-    message.success(enabled ? '已启用' : '已停用（数据保留）')
+    if (!enabled) message.success('已停用')
     await loadData(['tenants'], { force: true })
   } catch (e) { message.error(e.message || '操作失败') }
 }

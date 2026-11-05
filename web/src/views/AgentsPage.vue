@@ -761,11 +761,11 @@ const CAPS = [
   // 只对该资源的归属人生效（别人的同名资源不会被拿来顶替）；内置技能存裸名，对所有人按名字生效。
   // 两者都没有独立的全局开关（配置里已无 skill.enabled / mcp.enabled），只受「工具调用」总闸制约。
   { key: 'toolSkill', label: '技能 Skills', desc: '按需调用技能，正文逐字进提示词', icon: AppstoreOutlined,
-    detail: '限定用哪几个技能：内置技能对所有人生效；你名下的技能只对你生效',
+    detail: '限定用哪几个技能',
     kind: 'list', modeKey: 'skillMode', listKey: 'skills', optionsKey: 'skillOptions',
     gate: ['tool', 'enabled'] },
   { key: 'toolMcp', label: 'MCP 外部工具', desc: '连接外部 MCP 服务', icon: ApiOutlined,
-    detail: '限定连哪几个 MCP 服务（仅对你生效）；也可以「不使用」或按名禁用其中几个',
+    detail: '限定连哪几个 MCP 服务；也可以「不使用」或按名禁用其中几个',
     kind: 'list', modeKey: 'mcpMode', listKey: 'mcps', optionsKey: 'mcpOptions',
     gate: ['tool', 'enabled'] },
   { key: 'toolWebsearch', label: '联网搜索', desc: '联网检索，结果登记为网页来源', icon: GlobalOutlined,
@@ -1602,7 +1602,6 @@ const resetOverrides = () => {
       form.value.toolDeny = []
       form.value.maxToolSteps = null
       form.value.subAgentIds = []
-      message.success('已恢复跟随全局')
     }
   })
 }

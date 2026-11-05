@@ -232,7 +232,7 @@ async function load () {
 async function onToggleTenant (t, v) {
   try {
     const r = await setTenantStatus(t.id, v)
-    if (r.success) { t.status = v ? 1 : 0; message.success(v ? '已启用' : '已停用（数据保留，成员登录被挡）') }
+    if (r.success) { t.status = v ? 1 : 0; if (!v) message.success('已停用') }
     else message.error(r.msg || '操作失败')
   } catch (e) { message.error(e.message || '操作失败') }
 }
@@ -251,7 +251,7 @@ async function submitCreate () {
   saving.value = true
   try {
     const r = await createTenant({ id: f.id.trim(), name: f.name.trim(), contact: f.contact, note: f.note })
-    if (r.success) { message.success('已开通租户（空租户：成员从成员管理里归属过来）'); createOpen.value = false; await load() }
+    if (r.success) { message.success('已开通租户'); createOpen.value = false; await load() }
     else message.error(r.msg || '开通失败')
   } catch (e) { message.error(e.message || '开通失败') }
   finally { saving.value = false }

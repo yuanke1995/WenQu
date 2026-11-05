@@ -463,7 +463,7 @@ const doBuild = async () => {
   try {
     const r = await graphBuild(kbId())
     if (r.success) {
-      message.success(`构建已开始（${r.data?.total || 0} 个文档），可点「刷新」看进度`)
+      message.success('构建已开始')
       const timer = setInterval(() => {
         if (!props.open) { clearInterval(timer); return }
         graphStatus(kbId()).then(st => {
