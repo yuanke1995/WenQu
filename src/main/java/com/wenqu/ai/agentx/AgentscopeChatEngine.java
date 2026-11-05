@@ -3877,6 +3877,17 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         if (distributedStore != null) {
             agentBuilder.distributedStore(distributedStore);
         }
+        // 消息总线/异步工具注册表换成无操作实现：问渠不使用这两个通道（steer 走 SessionInbox，
+        // 异步工具未启用），不换的话框架回落到沙盒文件系统版——InboxMiddleware 每轮在模型调用前
+        // 做 inboxDrain + findStale，两次判定各打一次到沙盒容器的同步 HTTP（线上线程栈实测），
+        // 全部换回空列表（NoopBusComponents 类注释有完整机制说明）。
+        agentBuilder.messageBus(NoopBusComponents.MESSAGE_BUS);
+        agentBuilder.asyncToolRegistry(NoopBusComponents.ASYNC_TOOL_REGISTRY);
+        // 动态子智能体声明关掉：问渠的子智能体全部走 subagentFactory 静态注册，工作区里从不放
+        // subagents/*.md 声明文件——而 DynamicSubagentsMiddleware 每轮模型调用前都会 glob 扫一遍
+        // 工作区（经沙盒文件系统 = 一次容器 HTTP + provisioner touch），线上线程栈实测正卡在这。
+        // 只关「声明文件扫描」这一支，spawn 工具与静态注册的子智能体不受影响。
+        agentBuilder.disableDynamicSubagents();
         // 问渠的助手登记成框架的子智能体（派遣改由框架 agent_spawn 驱使，问渠不再挂 consultAgent）。
         // agent_id 逐字用问渠的智能体 id：卡片归属、台账与提示词里的 id 才是同一个东西。
         // 工厂造出来的实现体不是框架的模型循环，而是「起一条完整问答轮」那条通路（见 WenquConsultSubagent）——

@@ -182,6 +182,7 @@ public class SkillController {
         boolean overwrite = flag(body.get("overwrite"));
         UserSkillStore.InstalledSkill s = store.create(uid, name, description, content,
                 overwrite, reserved());
+        skills.invalidate(null);
         return ResultJson.ok(view(uid, requireEntry(uid, null, s.name()), metaOf(mine(uid), s.name()), false), "已创建");
     }
 
@@ -193,6 +194,7 @@ public class SkillController {
         String uid = uid();
         UserSkillStore.InstalledSkill s = store.installUrl(uid, text(body.get("url")),
                 text(body.get("name")), flag(body.get("overwrite")), reserved());
+        skills.invalidate(null);
         return ResultJson.ok(view(uid, requireEntry(uid, null, s.name()), metaOf(mine(uid), s.name()), false), "已安装");
     }
 
@@ -205,6 +207,7 @@ public class SkillController {
                                  @RequestParam(value = "overwrite", required = false, defaultValue = "false") boolean overwrite) {
         String uid = uid();
         UserSkillStore.InstalledSkill s = store.installZip(uid, file, name, overwrite, reserved());
+        skills.invalidate(null);
         return ResultJson.ok(view(uid, requireEntry(uid, null, s.name()), metaOf(mine(uid), s.name()), false), "已安装");
     }
 
@@ -218,6 +221,7 @@ public class SkillController {
         requireMine(uid, name);
         UserSkillStore.InstalledSkill s = store.update(uid, name,
                 text(body.get("description")), text(body.get("content")));
+        skills.invalidate(null);
         return ResultJson.ok(view(uid, requireEntry(uid, null, s.name()), metaOf(mine(uid), s.name()), false), "已保存");
     }
 
@@ -228,6 +232,7 @@ public class SkillController {
         String uid = uid();
         requireMine(uid, name);
         store.delete(uid, name);
+        skills.invalidate(null);
         return ResultJson.ok(Map.of("name", name), "已删除");
     }
 
@@ -242,6 +247,7 @@ public class SkillController {
         }
         boolean disabled = flag(body.get("disabled"));
         store.setDisabled(uid, e.skill().getName(), disabled);
+        skills.invalidate(null);
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("name", e.skill().getName());
         m.put("disabled", disabled);

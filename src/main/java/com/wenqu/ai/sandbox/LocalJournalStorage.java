@@ -56,6 +56,45 @@ public class LocalJournalStorage implements AtomicSessionStorage {
     private static final int VERSION_HEADER = Long.BYTES;
 
     /**
+     * 不可变路径的读缓存。JournalSessionLog 的 commit 链（{@code commits/{id}.json}）与
+     * 大 payload（{@code blobs/{hash}}）都是<b>写一次永不改</b>的内容寻址文件——但
+     * {@code SessionTurns.read} 每轮从 0 全量回放（框架 BETA1 未做稳定前缀缓存），对同一批
+     * 文件反复 {@code read + Jackson parse + hash 校验}，会话越长每轮开头的这段越贵
+     * （线上 4C4G 实测占 PRE_REASONING 前数百毫秒，线程栈抓到时正卡在 parse 上）。
+     * 在 storage 层缓存 bytes：IO 归零，语义零风险（内容不可变，缓存永不会 stale；
+     * 轮转归档把旧目录搬走后，缓存条目返回的仍是同一份 bytes，且那些路径本就不再被读）。
+     * parse 与 hash 在框架类内部，动不了——这里的缓存先砍掉 IO 与重复读这两层。
+     */
+    private final java.util.concurrent.ConcurrentHashMap<String, Value> immutableCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** 缓存字节量记账：超过上限整体清空（清了只是重读文件，不损正确性）。 */
+    private final java.util.concurrent.atomic.AtomicLong immutableCacheBytes =
+            new java.util.concurrent.atomic.AtomicLong();
+
+    /** 缓存字节上限：commit 体积≈每轮几十 KB、千轮长会话也就几十 MB，256MB 足够宽裕。 */
+    private static final long IMMUTABLE_CACHE_MAX_BYTES = 256L * 1024 * 1024;
+
+    /**
+     * 不可变路径判据：JournalSessionLog 只有两类内容寻址文件——commit 段（{@code commits/*.json}）
+     * 与 payload blob（{@code blobs/{hash}}）。head.json / inbox 等可变路径一律不缓存。
+     */
+    private static boolean immutablePath(String path) {
+        return path.contains("/commits/") || path.contains("/blobs/");
+    }
+
+    /** 测试口子：不可变路径判据与 {@link #immutablePath} 同源。 */
+    static boolean isImmutablePathForTest(String path) {
+        return immutablePath(path);
+    }
+
+    /** 供测试与运维手动清空缓存（例如外部直接改了 journal 目录后）。 */
+    public void clearImmutableCache() {
+        immutableCache.clear();
+        immutableCacheBytes.set(0);
+    }
+
+    /**
      * 读一份日志。
  *
  * <p><b>返回 null 而不是空 Value</b>：{@code JournalSessionLog#head} 是这么写的——
@@ -65,6 +104,30 @@ public class LocalJournalStorage implements AtomicSessionStorage {
  */
 @Override
     public Value read(String path) {
+        if (immutablePath(path)) {
+            Value cached = immutableCache.get(path);
+            if (cached != null) {
+                return cached;
+            }
+            Value fresh = readFromDisk(path);
+            if (fresh != null) {
+                // putIfAbsent：并发首次读同一 commit 时不覆盖，谁先落地都是同一份 bytes
+                Value winner = immutableCache.putIfAbsent(path, fresh);
+                if (winner != null) {
+                    return winner;
+                }
+                if (immutableCacheBytes.addAndGet(
+                        (long) fresh.bytes().length + VERSION_HEADER) > IMMUTABLE_CACHE_MAX_BYTES) {
+                    // 粗粒度清空：缓存丢失只多一次文件读，不值得精细淘汰
+                    clearImmutableCache();
+                }
+            }
+            return fresh;
+        }
+        return readFromDisk(path);
+    }
+
+    private Value readFromDisk(String path) {
         Path f = resolve(path);
         if (!Files.exists(f)) {
             return null;
@@ -111,6 +174,13 @@ public class LocalJournalStorage implements AtomicSessionStorage {
             } catch (java.nio.file.AtomicMoveNotSupportedException e) {
                 // 某些文件系统不支持原子移动，退化为普通替换（先删后移，避免残留半截文件）
                 Files.move(tmp, f, StandardCopyOption.REPLACE_EXISTING);
+            }
+            // 写成功的不可变路径直接进缓存：全量回放与后续 CAS 版本校验都命中，
+            // 不再回盘（commit 写一次永不改，缓存语义与磁盘一致）
+            if (immutablePath(path)) {
+                immutableCache.put(path, new Value(next, bytes == null ? new byte[0] : bytes));
+                immutableCacheBytes.addAndGet(
+                        (long) (bytes == null ? 0 : bytes.length) + VERSION_HEADER);
             }
             return true;
         } catch (IOException e) {

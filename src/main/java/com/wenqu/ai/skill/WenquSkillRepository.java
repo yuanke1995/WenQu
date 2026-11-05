@@ -318,15 +318,49 @@ public class WenquSkillRepository implements RuntimeContextSkillRepository {
 
     // ==================== 内部 ====================
 
+    /** 目录 → 最近一次解析结果（TTL 内直接复用，见 {@link #readAll}）。 */
+    private record CachedSkills(List<AgentSkill> skills, long cachedAt) {
+    }
+
+    /**
+     * 技能目录解析缓存。框架的 {@code getAllSkills(RuntimeContext)} 每轮问答都会走
+     * {@code catalog}，此前每次都 {@code new FileSystemSkillRepository} 并全量扫描 +
+     * 解析 frontmatter（内置 + 用户两个目录；线上容器实测每轮稳定两行
+     * 「FileSystemSkillRepository initialized」日志、数百毫秒）。技能目录的变化频率
+     * 是「天级」（管理员装/停、用户装包），配 15s TTL：解析成本归零，装新技能最迟
+     * 15s 生效（管理页写路径还会主动失效，见 {@link #invalidate}）。
+     */
+    private final java.util.concurrent.ConcurrentHashMap<String, CachedSkills> skillCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static final long SKILL_CACHE_TTL_MS = 15_000;
+
+    /** 管理页安装/删除技能后调用：下一次 catalog 立刻重扫。传空串清全部。 */
+    public void invalidate(String dir) {
+        if (dir == null || dir.isBlank()) {
+            skillCache.clear();
+        } else {
+            skillCache.remove(dir.toString());
+        }
+    }
+
     /** 读一个目录下的全部技能（框架仓库负责解析 frontmatter）。 */
     private List<AgentSkill> readAll(Path baseDir) {
         if (baseDir == null || !Files.isDirectory(baseDir)) {
             return List.of();
         }
+        String key = baseDir.toString();
+        CachedSkills cached = skillCache.get(key);
+        long now = System.currentTimeMillis();
+        if (cached != null && now - cached.cachedAt() < SKILL_CACHE_TTL_MS) {
+            return cached.skills();
+        }
         try {
             FileSystemSkillRepository repo = new FileSystemSkillRepository(baseDir, false, baseDir.toString());
             List<AgentSkill> skills = repo.getAllSkills();
-            return skills == null ? List.of() : skills;
+            List<AgentSkill> result = skills == null ? List.of() : skills;
+            skillCache.put(key, new CachedSkills(result, now));
+            return result;
         } catch (RuntimeException e) {
             // 目录损坏不该让整轮问答失败：记日志并按「该来源无技能」继续。
             log.warn("[SKILL] 读取技能目录失败 dir={}: {}", baseDir, e.toString());
