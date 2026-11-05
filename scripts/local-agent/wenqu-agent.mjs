@@ -16,6 +16,10 @@
  *                    执行器再弹一次终端确认会让浏览器里的这一轮一直等不到返回）
  *   --name <名字>    设备名（默认主机名）
  *   --timeout <秒>   单次轮询挂起时长（默认 25）
+ *   --data-dir <目录> 轮文件改动快照的本地存储目录（默认 ~/.wenqu/executor；内容不出这台电脑）
+ *   --turn-ttl-days <天>    快照保留天数（默认 14）
+ *   --turn-max <轮数>       最多保留多少轮（默认 200）
+ *   --turn-cache-max-mb <MB> 快照目录容量上限（默认 2048）
  *
  * 约束：
  *   - --root 只是"浏览起点"（默认家目录；--root / 即整盘）；工作区调用只允许落在本次工作区的源文件夹内，
@@ -542,13 +546,21 @@ async function opExec({ command, timeoutSeconds, userInitiated }) {
 // DSH workspace-changes 同款口径：轮前/轮后各给工作树拍一份 git 快照（私有 object store +
 // 私有 index，用户的仓库全程只读），轮末 diff-tree --numstat 得出每个文件的增删行数；
 // 快照覆盖不到的路径（非 git 目录、被 ignore 的文件）靠「写类调用改动前整文件捕获」兜底。
-// 快照对象与捕获副本全部留在这台电脑的临时目录里，内容永不出机器——回传给服务端的只有
-// 「相对路径 + 行数」，点开某个文件的差异时才由这里现算 hunk。
+// 快照对象与捕获副本全部留在这台电脑的磁盘里（默认 ~/.wenqu/executor/turns，0700），
+// 重启执行器后仍能按 turnId 找回；回传给服务端的只有「相对路径 + 行数」，
+// 点开某个文件的差异时才由这里现算 hunk。
 
-/** 每轮快照/捕获的保留时长：之后服务端还能取差异，超时即清（TTL 扫描在轮询循环里做）。 */
-const TURN_TTL_MS = 24 * 60 * 60 * 1000
-/** 最多同时保留多少轮的状态；超出的最旧一轮先清。 */
-const TURN_MAX_STATES = 40
+/** 快照数据的本地根目录；turns/ 下每轮一个目录（state.json + 私有对象 + 改动前副本）。 */
+const DATA_DIR = path.resolve(
+  (arg('data-dir', process.env.WENQU_EXECUTOR_DATA || '') || path.join(os.homedir(), '.wenqu', 'executor'))
+    .replace(/^~(?=$|\/)/, os.homedir()))
+const TURN_STORE = path.join(DATA_DIR, 'turns')
+/** 保留时长、轮数、总容量：三者先到先清，按最旧淘汰。 */
+const TURN_TTL_MS = Math.max(1, Number(arg('turn-ttl-days', '14')) || 14) * 24 * 60 * 60 * 1000
+const TURN_MAX_STATES = Math.max(1, Number(arg('turn-max', '200')) || 200)
+const TURN_CACHE_MAX_BYTES = Math.max(1, Number(arg('turn-cache-max-mb', '2048')) || 2048) * 1024 * 1024
+/** 没有 state.json 的目录过了这个宽限期才清：避免误删另一个执行器进程正在写的轮。 */
+const TURN_ORPHAN_GRACE_MS = 60 * 60 * 1000
 /** 单文件捕获/读回上限（字节）：超过只列出、不给差异。 */
 const TURN_FILE_CAP = 2 * 1024 * 1024
 /** 单条 git 命令的超时与输出上限。 */
@@ -563,15 +575,146 @@ const TURN_MAX_FILES = 200
 /** 判二进制：前 8000 字节里有没有 NUL。 */
 const BINARY_PROBE_BYTES = 8000
 
-/** turnId → 本轮状态。scratch 目录在本机临时目录下（0700），永不回传内容。 */
+/** turnId → 本轮状态（内存索引；落盘副本在 TURN_STORE 下，进程重启时由 loadTurnStates 读回）。 */
 const turnStates = new Map()
 
 function turnStateOf (id) {
   return turnStates.get(String(id || '')) || null
 }
 
-/**
- * 规范化路径拼写：git 回报的是真实路径（macOS 的 /var 会展开成 /private/var），
+/** 状态目录名：turnId 可能带冒号等字符（目标轮），统一转成文件系统安全的名字。 */
+function turnDirName (id) {
+  return /^[A-Za-z0-9_-]{1,120}$/.test(id) ? id : 'h-' + createHash('sha1').update(String(id)).digest('hex')
+}
+
+function turnStatePath (id) {
+  return path.join(TURN_STORE, turnDirName(String(id || '')))
+}
+
+/** 目录实际占用（对象 + 副本 + state.json），用于容量淘汰。 */
+async function dirBytes (dir) {
+  let total = 0
+  let entries
+  try { entries = await fsp.readdir(dir, { withFileTypes: true }) } catch { return 0 }
+  for (const e of entries) {
+    const p = path.join(dir, e.name)
+    if (e.isDirectory()) total += await dirBytes(p)
+    else if (e.isFile()) { try { total += (await fsp.stat(p)).size } catch { /* 读不到就不计 */ } }
+  }
+  return total
+}
+
+/** 轮状态落盘：state.json 原子写；review 是 Map，存成 [展示路径, 来源] 数组。 */
+async function saveTurnState (state) {
+  const file = path.join(state.scratch, 'state.json')
+  const body = {
+    version: 1,
+    turnId: state.turnId,
+    createdAt: state.createdAt,
+    done: !!state.done,
+    bytes: state.bytes || 0,
+    roots: state.roots,
+    repos: state.repos.map(r => ({
+      root: r.root, gitDir: r.gitDir, repoObjects: r.repoObjects,
+      rootPaths: r.rootPaths, tree: r.tree || null, afterTree: r.afterTree || null
+    })),
+    review: [...state.review.entries()]
+  }
+  await writeAtomic(file, Buffer.from(JSON.stringify(body), 'utf8'))
+  await fsp.chmod(file, 0o600).catch(() => {})
+}
+
+/** 状态目录 → 内存状态；格式不认/目录名与 turnId 不符时抛错（由调用方决定是否清理）。 */
+async function parseTurnState (dir) {
+  const raw = JSON.parse(await fsp.readFile(path.join(dir, 'state.json'), 'utf8'))
+  if (!raw || raw.version !== 1 || typeof raw.turnId !== 'string' || !raw.turnId
+      || !Array.isArray(raw.review) || !Array.isArray(raw.repos)) {
+    throw new Error('轮状态格式不认')
+  }
+  if (turnDirName(raw.turnId) !== path.basename(dir)) throw new Error('轮状态目录与 turnId 不符')
+  const repos = raw.repos.map(r => ({
+    root: String(r.root || ''),
+    gitDir: String(r.gitDir || ''),
+    repoObjects: String(r.repoObjects || ''),
+    rootPaths: Array.isArray(r.rootPaths) ? r.rootPaths : [],
+    tree: r.tree || null,
+    afterTree: r.afterTree || null,
+    scratchDir: dir,
+    env: {
+      GIT_OBJECT_DIRECTORY: path.join(dir, 'objects'),
+      GIT_ALTERNATE_OBJECT_DIRECTORIES: String(r.repoObjects || '')
+    }
+  }))
+  const review = new Map()
+  for (const row of raw.review) {
+    if (Array.isArray(row) && row.length === 2 && typeof row[0] === 'string'
+        && row[1] && typeof row[1] === 'object') {
+      review.set(row[0], row[1])
+    }
+  }
+  return {
+    turnId: raw.turnId,
+    scratch: dir,
+    roots: Array.isArray(raw.roots) ? raw.roots : [],
+    repos,
+    captures: new Map(),
+    review,
+    createdAt: Number(raw.createdAt) || 0,
+    done: raw.done === true,
+    bytes: Number(raw.bytes) || 0
+  }
+}
+
+/** 启动时把落盘的轮状态读回内存；坏条目清掉，缺 state.json 的目录留一个宽限期。 */
+async function loadTurnStates () {
+  await fsp.mkdir(TURN_STORE, { recursive: true, mode: 0o700 }).catch(() => {})
+  await fsp.chmod(TURN_STORE, 0o700).catch(() => {})
+  let names = []
+  try { names = await fsp.readdir(TURN_STORE) } catch (e) {
+    log('读取轮状态目录失败：', e.message)
+    return
+  }
+  const gitExe = await resolveGitExecutable()
+  let restored = 0
+  for (const name of names) {
+    const dir = path.join(TURN_STORE, name)
+    try {
+      const st = await parseTurnState(dir)
+      st.repos.forEach(r => { r.gitExe = gitExe })
+      turnStates.set(st.turnId, st)
+      restored++
+    } catch (e) {
+      if (e.code === 'ENOENT') {
+        const mtime = await fsp.stat(dir).then(s => s.mtimeMs).catch(() => 0)
+        if (mtime && Date.now() - mtime > TURN_ORPHAN_GRACE_MS) {
+          await fsp.rm(dir, { recursive: true, force: true }).catch(() => {})
+        }
+      } else {
+        await fsp.rm(dir, { recursive: true, force: true }).catch(() => {})
+        log('轮状态不可用，已清理：', name, e.message)
+      }
+    }
+  }
+  // 内存 Map 靠插入顺序淘汰最旧的轮：恢复时按 createdAt 排一遍
+  const sorted = [...turnStates.entries()].sort((a, b) => a[1].createdAt - b[1].createdAt)
+  turnStates.clear()
+  for (const [id, st] of sorted) turnStates.set(id, st)
+  if (restored) log(`已恢复 ${restored} 轮文件改动快照（${TURN_STORE}）`)
+}
+
+/** 按 turnId 从磁盘重读一份状态（另一个执行器进程可能刚收尾，内存里还没有）。 */
+async function readTurnState (id) {
+  try {
+    const st = await parseTurnState(turnStatePath(id))
+    const gitExe = await resolveGitExecutable()
+    st.repos.forEach(r => { r.gitExe = gitExe })
+    return st
+  } catch {
+    return null
+  }
+}
+
+/** 规范化路径拼写：git 回报的是真实路径（macOS 的 /var 会展开成 /private/var），
  * 服务端给的源文件夹路径没展开过——两边不统一，改动就全被「不在工作区内」误滤掉。
  * 文件还不存在时规范其所在目录再拼回文件名。
  */
@@ -586,20 +729,40 @@ async function canonicalPath (abs) {
   }
 }
 
-/** 清掉过期与超额的轮状态：服务端崩溃没收尾的那几轮，靠这里兜底删 scratch。 */
-function sweepTurns () {
+function dropTurn (id) {
+  const st = turnStates.get(id)
+  turnStates.delete(id)
+  if (st) fsp.rm(st.scratch, { recursive: true, force: true }).catch(() => {})
+}
+
+/** 清掉过期与超额的轮状态（TTL / 轮数 / 总容量，按最旧淘汰），落盘目录一并删。
+ *  轮数与容量只淘汰已收尾的轮：跨会话可能有正在跑的轮，不能把它连同快照删掉。 */
+async function sweepTurns () {
   const now = Date.now()
-  for (const [id, st] of turnStates) {
-    if (now - st.createdAt > TURN_TTL_MS) {
-      turnStates.delete(id)
-      fsp.rm(st.scratch, { recursive: true, force: true }).catch(() => {})
+  for (const [id, st] of [...turnStates]) {
+    if (now - st.createdAt > TURN_TTL_MS) dropTurn(id)
+  }
+  for (const st of turnStates.values()) {
+    if (!st.bytes) st.bytes = await dirBytes(st.scratch)
+  }
+  const dropOldestDone = () => {
+    for (const [id, st] of turnStates) {
+      if (!st.done) continue
+      dropTurn(id)
+      return true
     }
+    return false
   }
   while (turnStates.size > TURN_MAX_STATES) {
-    const oldest = turnStates.keys().next().value
-    const st = turnStates.get(oldest)
-    turnStates.delete(oldest)
-    if (st) fsp.rm(st.scratch, { recursive: true, force: true }).catch(() => {})
+    if (!dropOldestDone()) break
+  }
+  const totalBytes = () => {
+    let sum = 0
+    for (const st of turnStates.values()) sum += st.bytes || 0
+    return sum
+  }
+  while (totalBytes() > TURN_CACHE_MAX_BYTES && turnStates.size > 1) {
+    if (!dropOldestDone()) break
   }
 }
 
@@ -674,7 +837,7 @@ async function locateRepo (rootDir, scratch) {
   const objects = path.join(scratch, 'objects')
   await fsp.mkdir(objects, { recursive: true })
   const env = { GIT_OBJECT_DIRECTORY: objects, GIT_ALTERNATE_OBJECT_DIRECTORIES: repoObjects }
-  return { root: repoRoot, gitDir, env, gitExe, rootPaths: [], scratchDir: scratch }
+  return { root: repoRoot, gitDir, repoObjects, env, gitExe, rootPaths: [], scratchDir: scratch }
 }
 
 /**
@@ -918,13 +1081,18 @@ async function opTurnStart ({ turnId }) {
   const id = String(turnId || '').trim()
   if (!id) throw err('E_INVALID', '缺少 turnId')
   if (turnStates.has(id)) return { started: true }
-  sweepTurns()
-  const scratch = await fsp.mkdtemp(path.join(os.tmpdir(), 'wenqu-turns-'))
+  await sweepTurns()
+  // 目录落在持久化根下：进程重启后还能按 turnId 找回这一轮的快照
+  const scratch = turnStatePath(id)
+  await fsp.mkdir(TURN_STORE, { recursive: true, mode: 0o700 }).catch(() => {})
+  await fsp.chmod(TURN_STORE, 0o700).catch(() => {})
+  await fsp.rm(scratch, { recursive: true, force: true }).catch(() => {})
+  await fsp.mkdir(scratch, { recursive: true, mode: 0o700 })
   await fsp.chmod(scratch, 0o700).catch(() => {})
   const state = {
     turnId: id, scratch,
     roots: await Promise.all(currentRootRecords.map(async r => ({ ...r, path: await canonicalPath(r.path) }))),
-    repos: [], captures: new Map(), review: new Map(), createdAt: Date.now()
+    repos: [], captures: new Map(), review: new Map(), createdAt: Date.now(), done: false
   }
   turnStates.set(id, state)
   // 同一个仓库被多个源文件夹引用时只留一份（rootPaths 合并）
@@ -954,11 +1122,22 @@ async function opTurnStart ({ turnId }) {
     }
   }
   log(`turnStart: ${state.repos.length} 个仓库, git=${state.repos.some(r => r.tree) ? '可用' : '不可用'}`)
+  state.bytes = await dirBytes(scratch)
+  try {
+    await saveTurnState(state)
+  } catch (e) {
+    log('轮状态落盘失败（重启后将读不到这轮差异）:', e.message)
+  }
   return { started: true, repos: state.repos.filter(r => r.tree).length }
 }
 
 async function opTurnEnd ({ turnId }) {
-  const state = turnStateOf(turnId)
+  let state = turnStateOf(turnId)
+  if (!state) {
+    // 轮中途执行器重启过：落盘状态还在就把对比补完（非 git 目录的改动前副本只在内存里，补不回来）
+    state = await readTurnState(String(turnId || ''))
+    if (state) turnStates.set(state.turnId, state)
+  }
   if (!state) return { supported: false, files: [], total: 0, added: 0, deleted: 0 }
   /** 绝对路径 → 列表行 */
   const listed = new Map()
@@ -1007,9 +1186,21 @@ async function opTurnEnd ({ turnId }) {
     })
   }
   const all = [...listed.values()].sort((a, b) => String(a.display).localeCompare(String(b.display)))
-  for (const row of all) state.review.set(row.display, row.src)
   const kept = all.slice(0, TURN_MAX_FILES)
   log(`turnEnd: ${all.length} 个文件已更改 +${all.reduce((s, r) => s + r.added, 0)} -${all.reduce((s, r) => s + r.deleted, 0)}`)
+  if (all.length === 0) {
+    // 没有改动就没有改动卡，快照留着也没人点：当场清掉
+    dropTurn(state.turnId)
+    return { supported: true, files: [], total: 0, added: 0, deleted: 0 }
+  }
+  for (const row of all) state.review.set(row.display, row.src)
+  state.done = true
+  state.bytes = await dirBytes(state.scratch)
+  try {
+    await saveTurnState(state)
+  } catch (e) {
+    log('轮状态落盘失败（重启后将读不到这轮差异）:', e.message)
+  }
   return {
     supported: true,
     files: kept.map(r => ({
@@ -1076,18 +1267,34 @@ function parseUnifiedPatch (out) {
 }
 
 async function opTurnDiff ({ turnId, path: display }) {
-  const state = turnStateOf(turnId)
-  const src = state && state.review.get(String(display || ''))
+  const id = String(turnId || '')
+  const key = String(display || '')
+  let state = turnStateOf(id)
+  let src = state && state.review.get(key)
+  if (!src) {
+    // 进程重启后内存里没有，或另一个执行器进程刚收尾：从落盘状态补读一次
+    const fresh = await readTurnState(id)
+    if (fresh) {
+      turnStates.set(id, fresh)
+      state = fresh
+      src = fresh.review.get(key)
+    }
+  }
   if (!src) throw err('E_NOT_FOUND', '改动详情已过期或不存在')
   if (src.kind === 'git') {
     const repo = state.repos[src.repoIdx]
-    if (!repo) throw err('E_NOT_FOUND', '改动详情已过期或不存在')
+    if (!repo || !repo.gitExe) throw err('E_NOT_FOUND', '改动详情已过期或不存在')
     const patch = await gitRun(repo.gitExe,
       ['diff-tree', '-r', '-M', '-p', '--no-color', '--no-ext-diff', '--no-textconv', '--unified=3',
         src.before, src.after, '--', src.rel],
       { cwd: repo.root, env: repo.env })
     if (patch.exitCode !== 0 && patch.exitCode !== 1) {
-      throw err('E_IO', 'git diff-tree 失败：' + String(patch.stderr).trim())
+      const detail = String(patch.stderr).trim()
+      // 快照对象被清理、仓库已不在：对用户仍报「过期」，不抛 git 噪音
+      if (patch.exitCode === 'ENOENT' || /bad object|not a valid object|unable to read|could not parse/i.test(detail)) {
+        throw err('E_NOT_FOUND', '改动详情已过期或不存在')
+      }
+      throw err('E_IO', 'git diff-tree 失败：' + detail)
     }
     const parsed = parseUnifiedPatch(patch.stdout)
     if (parsed.binary) return { kind: 'binary', path: display }
@@ -1097,9 +1304,18 @@ async function opTurnDiff ({ turnId, path: display }) {
       hunks: parsed.hunks
     }
   }
-  const readCap = cap => cap.kind === 'file'
-    ? { exists: true, oversized: false, binary: cap.binary, text: fs.readFileSync(cap.file, 'utf8') }
-    : (cap.kind === 'oversized' ? { exists: true, oversized: true } : { exists: false })
+  const readCap = cap => {
+    if (cap.kind !== 'file') {
+      return cap.kind === 'oversized'
+        ? { exists: true, oversized: true }
+        : { exists: false }
+    }
+    try {
+      return { exists: true, oversized: false, binary: cap.binary, text: fs.readFileSync(cap.file, 'utf8') }
+    } catch {
+      throw err('E_NOT_FOUND', '改动详情已过期或不存在')
+    }
+  }
   const before = readCap(src.beforeCap)
   const after = readCap(src.afterCap)
   if (before.oversized || after.oversized) return { kind: 'oversized', path: display }
@@ -1209,7 +1425,7 @@ async function postResult(id, ok, data, error) {
 }
 
 async function once() {
-  sweepTurns()
+  await sweepTurns()
   const res = await fetch(`${SERVER}/api/ai/executor/poll?wait=${WAIT}`, {
     headers: { Authorization: 'Bearer ' + TOKEN }
   })
@@ -1263,6 +1479,9 @@ async function main() {
     }
   }
   if (!TOKEN && !(await authorize())) process.exit(2)
+
+  await loadTurnStates()
+  await sweepTurns()
 
   let backoff = 1000
   for (;;) {

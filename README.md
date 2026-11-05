@@ -162,6 +162,8 @@ node scripts/local-agent/wenqu-agent.mjs --server http://<服务器>/ai
 # 首次启动打印链接 + 6 位码；浏览器登录后确认，令牌落到 ~/.wenqu/executor.json
 # 工作区源文件夹需要能被执行器访问（默认浏览起点 ~；--root / 可看整盘）
 # 默认不在终端逐次确认（页面上的权限档位才是闸门）；需要终端确认时加 --ask
+# 每轮文件改动快照落在 ~/.wenqu/executor/turns，重启后仍可看差异；默认保留 14 天/200 轮/2GB，
+# 可用 --data-dir / --turn-ttl-days / --turn-max / --turn-cache-max-mb 调整
 ```
 开发态 `cd web && npm run dev`（scripts/mac/dev-with-agent.mjs）会同时拉起 vite 与执行器。
 
