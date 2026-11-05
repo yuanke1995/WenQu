@@ -2,12 +2,15 @@ package com.wenqu.ai.sandbox;
 
 import com.wenqu.ai.executor.ExecutorRegistry;
 import io.agentscope.core.agent.RuntimeContext;
+import io.agentscope.harness.agent.filesystem.model.EditResult;
 import io.agentscope.harness.agent.filesystem.model.ExecuteResponse;
 import io.agentscope.harness.agent.filesystem.model.FileData;
 import io.agentscope.harness.agent.filesystem.model.FileDownloadResponse;
 import io.agentscope.harness.agent.filesystem.model.FileInfo;
 import io.agentscope.harness.agent.filesystem.model.FileUploadResponse;
 import io.agentscope.harness.agent.filesystem.model.GlobResult;
+import io.agentscope.harness.agent.filesystem.model.GrepMatch;
+import io.agentscope.harness.agent.filesystem.model.GrepResult;
 import io.agentscope.harness.agent.filesystem.model.LsResult;
 import io.agentscope.harness.agent.filesystem.model.ReadResult;
 import io.agentscope.harness.agent.filesystem.model.WriteResult;
@@ -214,6 +217,90 @@ public class ExecutorFilesystem extends BaseSandboxFilesystem {
             out.add(FileDownloadResponse.success(path, Base64.getDecoder().decode(b64)));
         }
         return out;
+    }
+
+    /**
+     * 精确字符串替换（edit_file 工具）。
+     *
+     * <p>不用框架默认实现——那条路把替换命令拼进 shell 交给 execute，既依赖本机 shell 与辅助程序，
+     * 又丢掉问渠围栏与「改动前捕获」的语义。这里直接走已覆写的 read/write：同样的路径解析、
+     * 同样的执行器围栏、同样挂每轮文件改动的账。
+     */
+    @Override
+    public EditResult edit(RuntimeContext runtimeContext, String filePath, String oldString,
+                           String newString, boolean replaceAll) {
+        if (oldString == null || oldString.isEmpty()) {
+            return EditResult.fail("old_string 不能为空");
+        }
+        ReadResult r = read(runtimeContext, filePath, 0, 0);
+        if (!r.isSuccess()) {
+            return EditResult.fail("Error: File '" + filePath + "' not found or unreadable");
+        }
+        String content = r.fileData() == null ? null : r.fileData().content();
+        if (content == null) return EditResult.fail("Error: File '" + filePath + "' is empty");
+        int count = countOccurrences(content, oldString);
+        if (count == 0) {
+            String brief = oldString.length() > 120 ? oldString.substring(0, 120) + "…" : oldString;
+            return EditResult.fail("Error: String not found in file: '" + brief + "'");
+        }
+        if (count > 1 && !replaceAll) {
+            return EditResult.fail("Error: Found " + count + " occurrences of the string. "
+                    + "Set replace_all=true to replace all, or provide a longer unique string.");
+        }
+        String replacement = newString == null ? "" : newString;
+        String replaced;
+        if (replaceAll) {
+            replaced = content.replace(oldString, replacement);
+        } else {
+            int at = content.indexOf(oldString);
+            replaced = content.substring(0, at) + replacement + content.substring(at + oldString.length());
+        }
+        WriteResult w = write(runtimeContext, filePath, replaced);
+        return w.error() == null || w.error().isEmpty()
+                ? EditResult.ok(filePath, count)
+                : EditResult.fail(w.error());
+    }
+
+    private static int countOccurrences(String s, String needle) {
+        int n = 0;
+        for (int i = s.indexOf(needle); i >= 0; i = s.indexOf(needle, i + needle.length())) n++;
+        return n;
+    }
+
+    /**
+     * 内容搜索（grep_files 工具）。执行器端递归做固定串匹配（跳依赖与隐藏目录、二进制跳过、
+     * 结果截断），框架默认实现把 `grep -r` 拼进 shell——Windows 执行器上没有这条命路。
+     */
+    @Override
+    public GrepResult grep(RuntimeContext runtimeContext, String pattern, String path, String glob) {
+        if (pattern == null || pattern.isEmpty()) {
+            return GrepResult.fail("搜索内容不能为空");
+        }
+        Map<String, Object> args = new LinkedHashMap<>();
+        args.put("path", resolve(path == null || path.isBlank() ? "" : path));
+        args.put("pattern", pattern);
+        if (glob != null && !glob.isBlank()) args.put("glob", glob.startsWith("**/")
+                ? glob.substring(3) : glob);
+        ExecutorRegistry.Result r = call("grep", args, DEFAULT_TIMEOUT_MS * 2);
+        if (!r.ok()) return GrepResult.fail(errorText(r));
+        List<GrepMatch> matches = new ArrayList<>();
+        Object raw = r.data().get("matches");
+        if (raw instanceof List<?> list) {
+            for (Object item : list) {
+                if (!(item instanceof Map<?, ?> m)) continue;
+                matches.add(new GrepMatch(
+                        String.valueOf(m.get("path")),
+                        m.get("line") instanceof Number n ? n.intValue() : 0,
+                        String.valueOf(m.get("text"))));
+            }
+        }
+        return GrepResult.success(matches);
+    }
+
+    @Override
+    public boolean exists(RuntimeContext runtimeContext, String path) {
+        if (path == null || path.isBlank()) return false;
+        return call("stat", Map.of("path", resolve(path)), DEFAULT_TIMEOUT_MS).ok();
     }
 
     @Override
