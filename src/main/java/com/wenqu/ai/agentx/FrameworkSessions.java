@@ -57,6 +57,15 @@ public class FrameworkSessions {
 
     private final Map<String, Held> held = new ConcurrentHashMap<>();
     private final ConcurrentLinkedDeque<String> order = new ConcurrentLinkedDeque<>();
+    /**
+     * 本会话最近一次建实例时<b>沙盒装配是否成功</b>（key 与 {@link #held} 同一套）。
+     * <p>为什么要传下去：装配超时后 {@code openLocked} 只是不挂 {@code SandboxContext}，
+     * 可框架建实例时 {@code WorkspaceManager.validate()} 还会对 workspace 做一次 {@code exists()}，
+     * 而那份 AbstractFilesystem 是 {@code buildAgent} 另外装配的沙盒文件系统；沙盒还没建好时
+     * 这个 exists 正好卡在仍在进行的 create 上（实测 33 秒，provisioner 恢复才放行）。
+     * 所以引擎要按这个标记决定「本轮是否把沙盒文件系统交给框架」——没装上就退回本地文件系统。
+     */
+    private final Map<String, Boolean> sandboxAttached = new ConcurrentHashMap<>();
     /** 待办 → 所属会话：{@code /tool-approval/{approvalId}} 只带得到审批号，得靠它找回是哪条会话。 */
     private final Map<String, String> pendingOwner = new ConcurrentHashMap<>();
     /**
@@ -305,6 +314,7 @@ public class FrameworkSessions {
         // 沙盒上下文（框架化 P1）：挂上后框架的文件工具与 ShellExecuteTool 才有沙箱可用。
         // 取不到时返回 null（沙盒不可用 / 无会话），此时本轮不挂框架沙箱，
         // 形态与 P1 之前一致——模型退回无沙箱工具，而不是整轮失败。
+        boolean sandboxOk = false;
         if (sandboxService != null) {
             String uid = cmd.getUserId();
             String sessionId = cmd.getSessionId();
@@ -316,6 +326,7 @@ public class FrameworkSessions {
                     io.agentscope.harness.agent.sandbox.SandboxContext sandboxCtx =
                             sandboxService.frameworkSandboxContextBounded(sessionId, uid, /* unrestrictedWrites */ false);
                     if (sandboxCtx != null) {
+                        sandboxOk = true;
                         // 只挂 SandboxContext：文件系统由 build 期的 .abstractFilesystem(...) 那一份负责。
                         // 框架的 FilesystemTool / ShellExecuteTool 在 build 期就绑好了文件系统，
                         // 往这里再塞一份 AbstractFilesystem 只会多出一个「与内部消费者不同源」的第二实例
@@ -330,6 +341,7 @@ public class FrameworkSessions {
                 }
             }
         }
+        sandboxAttached.put(key, sandboxOk);
         // 本轮落点槽位必须进 RuntimeContext：重建实例时 buildAgent 里的工具闭包要捕获它，
         // 而工具调用发生在框架的弹性线程上，只有 ctx 里的这一份能保证「同一个会话同一个槽位」。
         ctxBuilder.put(AgentxTurnSlot.class, turnSlot(key));
@@ -1197,6 +1209,14 @@ public class FrameworkSessions {
         return (cmd.getUserId() == null ? "guest" : cmd.getUserId()) + "|" + cmd.getSessionId();
     }
 
+    /**
+     * 本会话这一轮建实例时沙盒是否装配成功（见 {@link #sandboxAttached}）。
+     * 只在 <b>build 期间</b>有意义：openLocked 在调 agentFactory 之前写，引擎在 buildAgent 里读。
+     */
+    public boolean sandboxAttached(String sessionKey) {
+        return Boolean.TRUE.equals(sandboxAttached.get(sessionKey));
+    }
+
     private void touch(String key) {
         order.remove(key);
         order.addLast(key);
@@ -1221,6 +1241,7 @@ public class FrameworkSessions {
     }
 
     private void closeQuietly(String key, Held h) {
+        sandboxAttached.remove(key);
         try {
             h.session().close();
         } catch (Exception e) {

@@ -1592,7 +1592,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         String uid = cmd.getUserId();
         String sessionId = cmd.getSessionId();
         if (uid == null || uid.isBlank() || sessionId == null || sessionId.isBlank()) return null;
-        return sandboxService.frameworkFilesystem(sessionId, uid, unrestrictedWrites);
+        return sandboxService.frameworkFilesystem(sessionId, uid, unrestrictedWrites,
+                sessions.sandboxAttached(sessions.key(cmd)));
     }
 
     /**

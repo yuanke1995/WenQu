@@ -67,6 +67,13 @@ public class ProvisionerSandboxProvider {
     private final ConcurrentHashMap<String, SandboxConnection> connections = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, Double> lastTouchAt = new ConcurrentHashMap<>();
 
+    /**
+     * 装配超时、后台 create 仍未返回的作用域：这期间其余的沙盒取用一律当场失败（见 {@link #get}）。
+     * 由 {@code SandboxService#frameworkSandboxContextBounded} 超时时打标，create 返回后由 {@link #get}
+     * 的 finally 摘掉——标记的寿命恰好就是「后台那次 create 还在飞」的窗口。
+     */
+    private final java.util.Set<String> assemblyPending = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     /** 懒构建的 provisioner 客户端：按（url, token, 删除超时）三元组缓存，配置改了下次使用即生效。 */
     private volatile SandboxProvisionerClient client;
     private volatile String clientKey;
@@ -307,6 +314,13 @@ public class ProvisionerSandboxProvider {
                 ? null
                 : SandboxPaths.normalizeWorkdirPath(workdirPath);
         String cacheKey = sandboxKey(uid, threadId);
+        // 装配已超时、后台 create 还没回来的作用域：本轮任何「取/建沙盒」的调用一律当场失败，
+        // 不要再去抢那把 scope 锁——锁正被后台 create 持有，等它就是又一次长静默
+        //（2026-11-05：开轮等了 10 秒放弃后，框架建实例时的 exists() 又撞上去，干等 33 秒）。
+        if (createIfMissing && assemblyPending.contains(cacheKey)) {
+            throw new SandboxProvisionerException(
+                    "sandbox is still being created; skip sandbox access for this turn");
+        }
         ReentrantLock lock = threadLock(cacheKey);
         lock.lock();
         try {
@@ -359,7 +373,17 @@ public class ProvisionerSandboxProvider {
             return recordToConnection(cacheKey, threadId, uid, record);
         } finally {
             lock.unlock();
+            // 这次「建/取」已经落地（成功或失败）：装配超时标记的作用到此为止，下一轮照常重试。
+            if (createIfMissing) assemblyPending.remove(cacheKey);
         }
+    }
+
+    /**
+     * 标记「这个作用域的装配已经等超时了，后台 create 还在飞」。在本轮后续的沙盒取用里快速失败，
+     * 不再去抢被 create 持有的 scope 锁。{@code create} 返回时由 {@link #get} 的 finally 自动摘掉。
+     */
+    public void markAssemblyPending(String threadId, String uid) {
+        assemblyPending.add(sandboxKey(uid, threadId));
     }
 
     public void release(

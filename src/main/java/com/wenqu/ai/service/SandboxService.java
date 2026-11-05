@@ -187,7 +187,13 @@ public class SandboxService {
      * <p>作用域与 {@link #frameworkSandboxContext} 同源（同一 {@link #scopeOf}），
      * 因此框架工具与问渠自研工具看到的是同一个容器、同一份工作区文件。
      */
+    /** 不知道本轮装配结果时的取法（技能清单等旁路）：按「沙盒可用」处理，与既有行为一致。 */
     public AbstractFilesystem frameworkFilesystem(String sessionId, String uid, boolean unrestrictedWrites) {
+        return frameworkFilesystem(sessionId, uid, unrestrictedWrites, true);
+    }
+
+    public AbstractFilesystem frameworkFilesystem(String sessionId, String uid, boolean unrestrictedWrites,
+                                                 boolean sandboxReady) {
         if (sessionId == null || sessionId.isBlank() || uid == null || uid.isBlank()) {
             return null;
         }
@@ -221,6 +227,13 @@ public class SandboxService {
                         // 上一轮轮号：模型第一次写可能抢在服务端 turnStart 前，补拍快照时用它做用户改动对账
                         () -> turnChanges.currentPreviousTurnId(sessionId));
                 return memoryRouted(executorFs, uid);
+            }
+            if (!sandboxReady) {
+                // 本轮装配超时/失败：别把沙盒文件系统交给框架。框架建实例时 WorkspaceManager.validate()
+                // 会对它做一次 exists()，这一步恰好卡在仍在后台进行的 create 上（实测 33 秒，
+                // provisioner 恢复才放行）。退回本地文件系统 = P1 之前的形态，本轮少几个文件工具。
+                log.warn("[SANDBOX] 本轮沙盒未装配成功，框架文件系统退回本地（不挂沙盒）: session={}", sessionId);
+                return null;
             }
             ProvisionerSandboxBackend backend = new ProvisionerSandboxBackend(
                     provider, scope.scopeId(), uid, scope.workdirPath(),
@@ -358,6 +371,9 @@ public class SandboxService {
         try {
             return future.get(ATTACH_TIMEOUT_MS, TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
+            // 打标：后台那次 create 还在飞，本轮其余沙盒取用（工具调用/框架 build）直接失败，
+            // 不要再去抢它持有的 scope 锁；create 返回时标记自动摘掉。
+            provider.markAssemblyPending(sessionId, uid);
             log.warn("[SANDBOX] 沙盒装配超过 {}ms，本轮先不挂沙盒（装配继续在后台，下一轮可用）: session={}",
                     ATTACH_TIMEOUT_MS, sessionId);
             return null;
