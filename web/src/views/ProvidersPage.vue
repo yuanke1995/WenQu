@@ -84,7 +84,7 @@
         </div>
         <div v-else-if="!loading" class="app-card pv-empty">
           <div class="pv-empty-title">还没有供应商</div>
-          <div class="pv-empty-desc">新建一个 OpenAI 兼容网关（DeepSeek / 智谱GLM / 通义百炼 / Kimi / Ollama 自托管服务等），登记 API Key 后即可远程拉取模型列表。你自己建的供应商只有你能看到和使用。</div>
+          <div class="pv-empty-desc">新建一个 OpenAI 兼容网关（DeepSeek / 智谱GLM / 通义百炼 / Kimi / Ollama 自托管服务等），登记 API Key 后即可远程拉取模型列表。</div>
         </div>
       </a-spin>
     </div>

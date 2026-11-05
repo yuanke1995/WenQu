@@ -361,7 +361,7 @@
         <a-form-item label="数据范围">
           <a-select v-model:value="roleForm.scopeType" style="width:100%"
                     :options="[
-                      { label: '本人创建的（默认，谁建归谁）', value: 'own' },
+                      { label: '本人创建的（默认）', value: 'own' },
                       { label: '本部门创建的可读', value: 'department' },
                       { label: '本部门及下级部门创建的可读', value: 'department_and_children' },
                       { label: '全部资源可读（只读口径）', value: 'all' }]" />

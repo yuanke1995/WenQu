@@ -10,7 +10,7 @@
         共 <b>{{ servers.length }}</b> 个服务 · 已连接 <b>{{ connectedCount }}</b>
         <span v-if="checkedAt" class="head-dim">· 更新于 {{ checkedAt }}</span>
       </span>
-      <span class="head-hint-plain" title="接入外部 MCP 服务，它的工具自动注册给模型，与内置工具一样可被调用">接入外部 MCP 服务，它的工具自动注册给模型，与内置工具一样可被调用；服务只属于你自己</span>
+      <span class="head-hint-plain" title="接入外部 MCP 服务，它的工具自动注册给模型，与内置工具一样可被调用">接入外部 MCP 服务，它的工具自动注册给模型，与内置工具一样可被调用</span>
       <!-- 页头右侧一组（对齐智能体 Tab）：搜索 + 刷新 + 重连 + 添加 + 批量区（分隔线独立成区） -->
       <div class="head-r">
         <a-input v-model:value="keyword" class="head-search" size="small" allow-clear placeholder="搜索名称或地址">
@@ -51,7 +51,6 @@
         <div class="key-empty-title">还没有 MCP 服务</div>
         <div class="key-empty-desc">
           接入外部 MCP 服务（如时间工具、内部系统查询），它的工具会自动注册给模型，与内置工具一样可被调用。
-          这里加的服务只属于你自己，不影响其他人的问答。
         </div>
         <button class="app-btn small" @click="openAdd">添加第一个服务</button>
       </div>
@@ -321,7 +320,7 @@ const doBatchEnabled = async on => {
 const doBatchDelete = () => {
   Modal.confirm({
     title: `删除选中的 ${selected.value.length} 个服务？`,
-    content: '删除后其工具将不再可用（连接池统一重建）；只删你自己登记的服务。',
+    content: '删除后其工具将不再可用（连接池统一重建）。',
     okText: '删除', okType: 'danger', cancelText: '取消',
     onOk: async () => {
       batchBusy.value = true

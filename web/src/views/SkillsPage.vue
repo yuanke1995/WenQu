@@ -6,7 +6,7 @@
     <div class="app-page-head">
       <h1 class="app-page-title sr-only">技能</h1>
       <span class="head-count">共 <b>{{ skills.length }}</b> 个 · 生效中 <b>{{ activeCount }}</b></span>
-      <span class="head-hint-plain" title="技能用来固化「这类问题该怎么做」：步骤、输出格式、禁忌。模型先看清单，需要时再读正文。自己装的技能只有自己能用">
+      <span class="head-hint-plain" title="技能用来固化「这类问题该怎么做」：步骤、输出格式、禁忌。模型先看清单，需要时再读正文">
         固化「这类问题该怎么做」的做法，模型按需读取后照做
       </span>
       <div class="head-r">
@@ -29,7 +29,6 @@
         <div class="key-empty-title">还没有技能</div>
         <div class="key-empty-desc">
           技能用来固化「这类问题该怎么做」——步骤、输出格式、禁忌。模型按需读取后照做，不必每次在提问里重复交代。
-          新建或安装的技能只有自己能用，别人看不见。
         </div>
         <div class="key-empty-ops">
           <button class="app-btn" @click="openCreate">新建第一个技能</button>

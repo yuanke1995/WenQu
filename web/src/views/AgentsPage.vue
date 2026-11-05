@@ -6,7 +6,7 @@
         <!-- 页名与 Tab 名重复，标题仅保留给读屏器（sr-only），视觉上从统计起头 -->
         <h1 class="app-page-title sr-only">智能体</h1>
         <span class="ap-count">共 <b>{{ agents.length }}</b> 个</span>
-        <span class="head-hint-plain" title="一个智能体就是一组对话预设：写好角色提示词、圈定知识库范围、按需开启能力；模型在对话页选择，这一轮问答就按它走">一组对话预设：角色提示词、知识库范围与能力开关（模型在对话页选）</span>
+        <span class="head-hint-plain" title="一个智能体就是一组对话预设：写好角色提示词、圈定知识库范围、按需开启能力；模型在对话页选择，这一轮问答就按它走">一组对话预设：角色提示词、知识库范围与能力开关</span>
         <div class="ap-head-r">
           <a-input v-model:value="keyword" class="ap-search" size="small" allow-clear placeholder="搜索名称或描述">
             <template #prefix><search-outlined class="ap-search-ic" /></template>

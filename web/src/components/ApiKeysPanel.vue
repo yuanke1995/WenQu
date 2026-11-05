@@ -247,7 +247,7 @@
       </template>
       <template v-else>
         <div class="key-done-warn">
-          可先复制保存；之后也能随时在列表点「眼睛」回显（明文由服务端加密保管，仅创建者可读）
+          可先复制保存；之后也能随时在列表点「眼睛」回显（明文由服务端加密保管）
         </div>
         <div class="key-done-meta">用途：<b>{{ createdKey.name }}</b></div>
         <div class="key-done-box">
