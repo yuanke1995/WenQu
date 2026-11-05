@@ -132,6 +132,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 建实例与换代必须同一个值，写两处就会漂成「轮转搬走的不是问答正在写的那一份」。
      */
     static final String AGENT_ID = "wenqu";
+    /**
+     * 轮首用户改动对账最多等这么久：执行器拍完快照顺手 diff 很快，但大仓库可能慢；
+     * 等不到就不注入（对账是增强，不能拖住每一轮）。快照本身仍在后台继续，轮末照常等齐。
+     */
+    private static final long DRIFT_NOTE_WAIT_MS = 3000L;
     private final com.wenqu.ai.service.SessionService sessionService;
     /** 附件元信息落库的共用口径（与工作流路径同一个方法，见 metasJson 的类注释）。 */
     private final ChatAttachmentService attachments;
@@ -692,7 +697,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 本轮落点：工具表在 build 期定型、实例按会话常驻，pool/channel/hooks 只能放进会话级槽位，
         // 由这里在 submit 之前换掉。早于 sessions.open 是为了让建实例期的降级也能发到当轮通道上。
         AgentxTurnSlot slot = sessions.turnSlot(cmd);
-        slot.begin(tools.newTurn(cmd, pool, channel, policy, hooks));
+        slot.begin(tools.newTurn(cmd, pool, channel, policy, hooks, slot.workspaceMemoryTainted()));
+        // 每轮文件改动：提交前先让执行器拍轮前快照（异步入队、FIFO 先于本轮第一次写），
+        // 顺带对账「用户上一次回答之后改了什么」。对账结果在下文拼进本轮输入；快照本身仍由
+        // settle 在轮末等齐。非本机工作区/执行器离线都在服务内部静默跳过。
+        // API Key 轮次没有文件工具，拍快照没有意义。
+        com.wenqu.ai.service.ProjectTurnChangesService.Start changes =
+                cmd.isApiKey() ? null : turnChangeService.start(cmd.getSessionId(), turnId);
         // 本轮智能体绑定一次解析：实例重建判据、人设、技能白名单三处共用同一份（避免一轮读三遍库，
         // 也避免「判据说没换、人设却按另一份装配」这种自相矛盾）
         AgentBinding binding = bindingOf(cmd, policy, ref);
@@ -709,6 +720,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         }
         // run_code 的脚本通道按轮现装：工具面在 build 期固定，轮号/通道/台账必须是当轮的
         tools.ensureRunCodeTurn(slot, cmd);
+        // 首轮 build 之后才知道系统提示词里有没有工作区记忆：补标到本轮（缓存命中时上面 begin 已带上）
+        if (slot.workspaceMemoryTainted() && slot.current() != null) {
+            slot.current().taint().mark("workspace-memory");
+        }
         // 起轮缝里先给这条会话的事件日志换一次代：框架每轮开始要把整条事件链从头读好几遍，
         // 代价按事件数的平方算（实测 3.5k→1.1s、14k→4.7s、9.2 万→单是最贵的一趟 40.2s），
         // 而本轮第一个这样的读就是下面的 reconcileStalledTurn（它读 SessionTurns.read）。
@@ -801,6 +816,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 它如实回答「没有看到您上传的文件」）——落库只保证人能回看到，不等于模型收到了。
         String modelInput = userContentWithContext(cmd, binding.skillFilter(),
                 tools.agentMentionDirective(cmd, policy)) + imgNote;
+        // 用户改动对账（轮首）：只等一小会儿，快照慢就跳过——对账是增强，不能把每一轮都拖住。
+        // 放在 modelInput 而不是系统提示词里：系统提示词是 build 期烤进常驻实例的，轮级事实进不去。
+        String driftNote = turnChangeService.driftNote(cmd.getSessionId(), changes, DRIFT_NOTE_WAIT_MS);
+        if (!driftNote.isEmpty()) modelInput = modelInput + driftNote;
         // 模型能读图时，把原图作为 image_url 内容部件随本轮一起送进去。此前这里只有 submit(String)，
         // 图片在「问题正文」里没有任何落点——附件有 buildContextText 抽正文，图片没有等价的通道，
         // 于是发了图模型也一概看不见（它只会如实回答"没有看到图片"）。
@@ -825,10 +844,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         for (String surfaceProblem : sessions.applyToolSurface(cmd, tools.turnGroupedNames(cmd, policy), policy)) {
             channel.emit(RunEventType.WARN, surfaceProblem);
         }
-        // 每轮文件改动：提交前先让执行器拍轮前快照（异步入队、FIFO 先于本轮第一次写）。
-        // 非本机工作区/执行器离线都在服务内部静默跳过；轮末对比在 finish 里等齐。
-        // API Key 轮次没有文件工具，拍快照没有意义。
-        if (!cmd.isApiKey()) turnChangeService.start(cmd.getSessionId(), turnId);
         AgentSession.Task current = multimodal != null
                 ? session.submit(multimodal)
                 : session.submit(modelInput);
@@ -1598,7 +1613,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         }
         // 接回的那一轮也要占住槽位：工具与脚本通道读的是「当前轮」，不 begin 就会拿到上一轮
         AgentxTurnSlot slot = sessions.turnSlot(f.cmd());
-        slot.begin(tools.newTurn(f.cmd(), f.pool(), f.channel(), f.policy(), f.hooks()));
+        slot.begin(tools.newTurn(f.cmd(), f.pool(), f.channel(), f.policy(), f.hooks(),
+                slot.workspaceMemoryTainted()));
         tools.ensureRunCodeTurn(slot, f.cmd());
         String turnId = f.hooks().turnId().get();
         RESUME_POOL.execute(() -> {
@@ -2804,8 +2820,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             if (projectId == null || projectId.isBlank()) return "";
             String content = projectFileService.readWorkspaceMemory(cmd.getUserId(), projectId);
             if (content == null || content.isBlank()) return "";
+            // 记忆是用户可直接编辑、也可能被上一轮读到的外部文档污染的文件：按「资料」处理，
+            // 消毒后套信封。持久注入最怕的是它长得像系统指令——信封先于攻击到达模型。
+            String body = com.wenqu.ai.util.UntrustedContent.toolResult(
+                    "工作区记忆 .wenqu/MEMORY.md", content);
             return "\n\n【工作区记忆】下面是本工作区长期沉淀的项目事实（存于工作区根目录 .wenqu/MEMORY.md），"
-                    + "本次对话应当参考它们。\n" + content
+                    + "本次对话应当参考它们。\n" + body
                     + "\n\n你可以用文件编辑工具（edit_file / write）更新 .wenqu/MEMORY.md，"
                     + "把本次对话中获得、对今后在本工作区工作有价值的稳定事实（约定、决策、结构、坑、偏好）沉淀进去；"
                     + "不要写入临时性或一次性的内容。";
@@ -3670,6 +3690,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 分成两处判就会漂移成「教了模型一件它没有的能力」，这条坑本仓点过名。
         List<WenquAgentxTools.SubagentTarget> subagentTargets =
                 tools.consultSubagentTargets(cmd, policy, slot);
+        // 工作区记忆只读一次：既要拼进系统提示词，也要让本轮污点知道「上下文里已经混有可编辑资料」
+        String workspaceMemory = workspaceMemoryContext(cmd);
+        // 记忆是持久注入面：本轮后续的破坏性命令/越界写要回到人面前确认（见 AgentxTaint）。
+        // 实例按会话常驻，这个标记跟着实例走；记忆文件之后新增/清空要等重建才换，方向是「更保守」。
+        slot.noteWorkspaceMemoryTainted(!workspaceMemory.isEmpty());
         HarnessAgent.Builder agentBuilder = HarnessAgent.builder()
                 .agentId(AGENT_ID)
                 .name("wenqu")
@@ -3681,7 +3706,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 计划阶段里，框架这一路没人再说第二遍，而框架的 PLAN banner 与沙盒工具说明反而主动把
                 // 路径喂给模型——不挂回去，计划卡就变成「它打算在沙盒里怎么写文件」的说明书
                 .sysPrompt(rolePrompt(binding.row()) + projectContext(cmd)
-                        + workspaceMemoryContext(cmd)
+                        + workspaceMemory
                         + (subagentTargets.isEmpty() ? "" : tools.dispatchDiscipline())
                         + PlanCopy.guidance()
                         + com.wenqu.ai.memory.MemoryPrompts.replyDiscipline()
@@ -3851,7 +3876,84 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         }
         HarnessAgent agent = agentBuilder.build();
         alignWriteFileDescription(agent);
+        applyNativeToolGuards(agent, slot, cmd);
         return agent;
+    }
+
+    /**
+     * 框架原生文件/命令工具的统一护栏（全框架化 P1 的注入防护补全）。
+     *
+     * <p>与 {@link #alignWriteFileDescription} 同一做法：build 之后按同名重新注册。框架在 build 期
+     * 把 {@code FilesystemTool / ShellExecuteTool} 注册进 toolkit 的副本，问渠只能在这个副本上覆盖；
+     * 包一层后名字、schema、只读位、执行全部不变，只多「结果加信封」与「污点时强制确认」。
+     *
+     * <p>只包会返回外部内容的几把：read/grep/glob/list/execute。write/edit 只管越界确认，
+     * 不包结果（它们返回的是「成功/失败」，不是数据）。
+     */
+    private void applyNativeToolGuards(HarnessAgent agent, AgentxTurnSlot slot, ChatCommand cmd) {
+        Toolkit toolkit = agent.getToolkit();
+        if (toolkit == null) return;
+        List<String> roots = workspaceRootsOf(cmd);
+        // 游客分享/API Key 轮没有审批卡通道：污点触发时直接拒，别挂一张没人答的卡等超时
+        boolean canAsk = !cmd.isGuestMode() && !cmd.isApiKey();
+        wrapNative(toolkit, slot, roots, canAsk, FrameworkToolLabels.FilesystemToolNames.READ_FILE,
+                AgentxNativeToolGuard.Kind.DATA);
+        wrapNative(toolkit, slot, roots, canAsk, FrameworkToolLabels.FilesystemToolNames.GREP_FILES,
+                AgentxNativeToolGuard.Kind.DATA);
+        wrapNative(toolkit, slot, roots, canAsk, FrameworkToolLabels.FilesystemToolNames.GLOB_FILES,
+                AgentxNativeToolGuard.Kind.DATA);
+        wrapNative(toolkit, slot, roots, canAsk, FrameworkToolLabels.FilesystemToolNames.LIST_FILES,
+                AgentxNativeToolGuard.Kind.DATA);
+        wrapNative(toolkit, slot, roots, canAsk, FrameworkToolLabels.FilesystemToolNames.EXECUTE,
+                AgentxNativeToolGuard.Kind.EXEC);
+        wrapNative(toolkit, slot, roots, canAsk, FrameworkToolLabels.FilesystemToolNames.WRITE_FILE,
+                AgentxNativeToolGuard.Kind.WRITE);
+        wrapNative(toolkit, slot, roots, canAsk, FrameworkToolLabels.FilesystemToolNames.EDIT_FILE,
+                AgentxNativeToolGuard.Kind.EDIT);
+    }
+
+    private static void wrapNative(Toolkit toolkit, AgentxTurnSlot slot, List<String> roots,
+                                   boolean canAsk, String name, AgentxNativeToolGuard.Kind kind) {
+        AgentTool tool = toolkit.getTool(name);
+        if (tool == null || tool instanceof AgentxNativeToolGuard) return;
+        toolkit.registerAgentTool(new AgentxNativeToolGuard(tool, kind, slot, roots, canAsk));
+    }
+
+    /**
+     * 工作区根的绝对路径（用于「越界写」的词法判断）。
+     * 绑了本机目录就取源文件夹；服务器沙盒/无工作区返回空表——空表时任何绝对路径都按越界处理，
+     * 方向偏保守（最多多一张确认卡），不会把外部路径误判成工作区内。
+     */
+    private List<String> workspaceRootsOf(ChatCommand cmd) {
+        List<String> out = new ArrayList<>();
+        try {
+            com.wenqu.ai.model.Project p = projectService.projectOfSession(cmd.getSessionId());
+            if (p == null || !projectService.isLocal(p)) return out;
+            com.wenqu.ai.model.ProjectRoot primary = projectService.primaryRootOf(p);
+            // 主根必须排第一：相对路径（含 ..）按主根解析，AgentxDestructiveCommands 取 roots.get(0)
+            if (primary != null && primary.getPath() != null && !primary.getPath().isBlank()) {
+                out.add(realRoot(primary.getPath()));
+            }
+            for (com.wenqu.ai.model.ProjectRoot r : projectService.rootsOf(p)) {
+                if (r == null || r.getPath() == null || r.getPath().isBlank()) continue;
+                if (primary != null && r.getPath().equals(primary.getPath())) continue;
+                out.add(realRoot(r.getPath()));
+            }
+        } catch (Exception e) {
+            log.warn("[agentx] 工作区根解析失败（越界写确认按无根处理）session={}: {}",
+                    cmd.getSessionId(), e.getMessage());
+        }
+        return out;
+    }
+
+    private static String realRoot(String raw) {
+        String p = raw == null ? "" : raw.trim();
+        if (p.isEmpty()) return p;
+        try {
+            return Path.of(p).toRealPath().toString();
+        } catch (Exception e) {
+            return Path.of(p).toAbsolutePath().normalize().toString();
+        }
     }
 
     /**
@@ -4667,6 +4769,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             }
         }
         String s = sb.toString().trim();
+        if (s.isEmpty()) return null;
+        // 工具卡展示的是结果本身，不是防护措辞：信封/数据声明只服务模型上下文
+        s = com.wenqu.ai.util.UntrustedContent.displayText(s);
         if (s.isEmpty()) return null;
         return s.length() > 2000 ? s.substring(0, 2000) + "…（已截断）" : s;
     }

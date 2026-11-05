@@ -347,6 +347,7 @@ function callContext (args, deadline) {
     primaryRoot,
     realRoots: roots.map(mark),
     policy: args.policy === 'danger-full-access' ? 'danger-full-access' : 'workspace-write',
+    previousTurnId: String(args.previousTurnId || '').trim(),
     deadline: Number(deadline) || 0
   }
 }
@@ -517,10 +518,12 @@ async function opGrep({ path: p, pattern, glob, limit }, ctx) {
   return { matches, truncated }
 }
 
-async function opRead({ path: p, offset, limit }, ctx) {
+async function opRead({ path: p, offset, limit, turnId }, ctx) {
   const file = resolveInRoot(p, ctx)
   await rejectSymlink(file)
   const buf = await fsp.readFile(file)
+  // 用户改动对账：模型读到最新内容后，这一轮允许覆盖该文件（仍然要过 write 的 expectedHash 之外的围栏）
+  await clearDriftAfterRead(turnId, file)
   if (buf.includes(0)) return { content: '', encoding: 'base64', binary: true }
   const text = buf.toString('utf8')
   const lines = text.split('\n')
@@ -681,6 +684,9 @@ async function opWriteChunk({ path: p, offset, contentBase64, turnId }, ctx) {
 async function opWrite({ path: p, content, expectedHash, userInitiated, turnId }, ctx) {
   const file = resolveInRoot(p, ctx)
   try { await rejectSymlink(file) } catch (e) { if (e.code !== 'ENOENT') throw e }
+  // write_file 没有 expectedHash：用户上一次答复后改过的文件，模型必须先读再覆盖。
+  // 这条与 edit 的 expectedHash 是两回事——edit 有原文可校，write 是整文件替换，没这道就静默丢用户改动。
+  await assertNoUserDrift(turnId, file, userInitiated)
   // 读-改-写冲突检测：服务端读到的原文哈希必须仍是盘上的原文。
   // 没有这一道，用户在编辑器里同时改同一文件，模型的整文件写入会静默覆盖。
   if (expectedHash) {
@@ -858,8 +864,9 @@ async function opExec({ command, timeoutSeconds, userInitiated, turnId }, ctx) {
 // 私有 index，用户的仓库全程只读），轮末 diff-tree --numstat 得出每个文件的增删行数；
 // 快照覆盖不到的路径（非 git 目录、被 ignore 的文件）靠「写类调用改动前整文件捕获」兜底。
 // 快照对象与捕获副本全部留在这台电脑的磁盘里（默认 ~/.wenqu/executor/turns，0700），
-// 重启执行器后仍能按 turnId 找回；回传给服务端的只有「相对路径 + 行数」，
-// 点开某个文件的差异时才由这里现算 hunk。
+// 重启执行器后仍能按 turnId 找回；回传给服务端的只有「相对路径 + 行数」，点开某个文件的差异时
+// 才由这里现算 hunk。例外：轮首用户改动对账（detectDrift）会主动带回一小段 diff（≤3 文件/200 行），
+// 只用于让模型先读再改，服务端不落库。
 
 /** 快照数据的本地根目录；turns/ 下每轮一个目录（state.json + 私有对象 + 改动前副本）。 */
 const DATA_DIR = path.resolve(
@@ -925,6 +932,8 @@ async function saveTurnState (state) {
     done: !!state.done,
     bytes: state.bytes || 0,
     roots: state.roots,
+    drift: [...(state.drift || [])],
+    postCaptures: [...(state.postCaptures || [])],
     repos: state.repos.map(r => ({
       root: r.root, gitDir: r.gitDir, repoObjects: r.repoObjects,
       rootPaths: r.rootPaths, tree: r.tree || null, afterTree: r.afterTree || null
@@ -967,6 +976,10 @@ async function parseTurnState (dir) {
     turnId: raw.turnId,
     scratch: dir,
     roots: Array.isArray(raw.roots) ? raw.roots : [],
+    drift: new Set(Array.isArray(raw.drift) ? raw.drift : []),
+    // 上一轮写后副本：非 git 源文件夹没有 afterTree，用它兜底做用户改动对账
+    postCaptures: new Map(Array.isArray(raw.postCaptures)
+      ? raw.postCaptures.filter(r => Array.isArray(r) && r.length === 2) : []),
     repos,
     captures: new Map(),
     review,
@@ -1216,13 +1229,28 @@ async function captureFile (abs, dir) {
   }
 }
 
-/** 两次捕获是否已知内容相同：都 absent 相同；都是 file 且哈希同文件相同；大小与改动时刻都没变的大文件也算没动。 */
+/** 两次捕获是否已知内容相同：都 absent 相同；都是 file 且内容哈希相同；大小与改动时刻都没变的大文件也算没动。
+ *  捕获文件按内容 SHA-1 命名，跨轮目录不同但哈希相同=内容相同（用户改动对账要用到这一条）。 */
 function sameCapture (a, b) {
   if (a.kind === 'absent' || b.kind === 'absent') return a.kind === b.kind
   if (a.kind === 'oversized' || b.kind === 'oversized') {
     return a.kind === b.kind && a.mtimeMs === b.mtimeMs && a.size === b.size
   }
-  return a.file === b.file
+  return a.file === b.file || path.basename(a.file) === path.basename(b.file)
+}
+
+/**
+ * 本轮写过的文件在收尾时的副本（按内容哈希存在 scratch/captures）。
+ * 下一轮对账拿它当非 git 源文件夹的基线：用户改了模型上一轮碰过的文件就能被发现。
+ * 内容不在 state.json 里，只存这份副本的引用（file 指向本机 scratch）。
+ */
+async function snapshotPostCaptures (state) {
+  if (!state.postCaptures) state.postCaptures = new Map()
+  for (const abs of state.captures.keys()) {
+    if (state.postCaptures.has(abs)) continue
+    const cap = await captureFile(abs, path.join(state.scratch, 'captures'))
+    if (cap) state.postCaptures.set(abs, cap)
+  }
 }
 
 /** 服务端在写类调用上带了 turnId：本轮第一次碰这个路径前抓一份，供轮末比对（内容不出这台电脑）。 */
@@ -1234,7 +1262,8 @@ async function ensureTurnState (turnId, ctx) {
   const id = String(turnId || '').trim()
   if (!id || turnStates.has(id)) return
   if (!turnStarts.has(id)) {
-    const p = opTurnStart({ turnId: id }, ctx)
+    // 写类调用可能抢在服务端 turnStart 前：请求里也带了上一轮轮号，补拍快照时照样能做用户改动对账
+    const p = opTurnStart({ turnId: id, previousTurnId: ctx && ctx.previousTurnId }, ctx)
       .catch(e => log('自动补轮前快照失败（本轮只走改动前捕获兜底）:', e.message))
       .finally(() => turnStarts.delete(id))
     turnStarts.set(id, p)
@@ -1252,6 +1281,48 @@ async function captureBeforeMutation (turnId, absPath, ctx) {
   if (st.captures.has(key)) return
   const cap = await captureFile(key, path.join(st.scratch, 'captures'))
   if (cap) st.captures.set(key, cap)
+}
+
+/**
+ * 模型读过某个文件之后，解除「用户上次之后改过它」的覆盖禁令。
+ * 只认本轮的 read：上一轮读过的内容不能当最新版（用户正是那一轮之后改的）。
+ */
+async function clearDriftAfterRead (turnId, absPath) {
+  const id = String(turnId || '').trim()
+  if (!id) return
+  const st = turnStateOf(id)
+  if (!st || !st.drift || st.drift.size === 0) return
+  try {
+    st.drift.delete(await canonicalPath(absPath))
+  } catch { /* 规范化失败就不解除：宁可多拦一次 */ }
+}
+
+/** write_file 整文件覆盖前：用户在上次答复后改过的文件必须先读。 */
+async function assertNoUserDrift (turnId, absPath, userInitiated) {
+  if (userInitiated) return
+  const id = String(turnId || '').trim()
+  if (!id) return
+  const st = turnStateOf(id)
+  if (!st || !st.drift || st.drift.size === 0) return
+  const key = await canonicalPath(absPath)
+  if (!st.drift.has(key)) return
+  // 用户把文件删了：没有「最新内容」可读，write_file 就是重新创建。解除禁令放行，
+  // 否则 read 报 E_NOT_FOUND、永远清不掉，模型这一轮再也写不回这个路径。
+  const exists = await fsp.stat(key).then(s => s.isFile()).catch(() => false)
+  if (!exists) {
+    st.drift.delete(key)
+    return
+  }
+  throw err('E_CONFLICT',
+    `用户在你上一次回答之后改过「${safeDisplay(displayOf(st, key))}」，直接整文件覆盖会丢掉这些改动；`
+    + '请先读取最新内容，再决定怎么改')
+}
+
+/** 错误/卡片里展示的本机路径：剥控制字符并截断，避免文件名本身成为一条注入或撑爆一条错误。 */
+function safeDisplay (s) {
+  return String(s == null ? '' : s)
+    .replace(/[\u0000-\u001F\u007F-\u009F]/g, '')
+    .slice(0, 240)
 }
 
 /** 展示路径：别名/相对路径；两个源文件夹之外的就给文件名。 */
@@ -1410,10 +1481,122 @@ function capturedTextOf (cap) {
 
 // ---- 三个轮级 op ----
 
-async function opTurnStart ({ turnId }, ctx) {
+/** 用「当前仓库 env + 额外对象库」跑 git：上一轮的 afterTree 对象在它自己的 scratch 里。 */
+function alternateObjectsEnv (repo, extraDirs) {
+  const alts = [repo.env.GIT_ALTERNATE_OBJECT_DIRECTORIES, ...extraDirs].filter(Boolean)
+  return { ...repo.env, GIT_ALTERNATE_OBJECT_DIRECTORIES: alts.join(path.delimiter) }
+}
+
+/**
+ * 用户改动对账：当前工作树（本轮 turnStart 的快照 tree）vs 上一轮 afterTree。
+ * 只覆盖 git 仓库；非 git 源文件夹没有全量快照，宁可报 supported=false 也不假装没改。
+ * 命中的绝对路径记进 state.drift，本轮 write_file 覆盖它之前必须先 read。
+ */
+async function detectDrift (state, previousTurnId) {
+  const id = String(previousTurnId || '').trim()
+  if (!id) return { supported: false, files: [] }
+  let base = turnStateOf(id)
+  if (!base) base = await readTurnState(id)
+  if (!base || !Array.isArray(base.repos)) return { supported: false, files: [] }
+  const baseObjects = path.join(base.scratch, 'objects')
+  const byAbs = new Map()
+  let matched = false
+  for (const repo of state.repos) {
+    if (!repo.tree || !repo.gitExe) continue
+    const prev = base.repos.find(r => r.root === repo.root)
+    if (!prev || !prev.afterTree) continue
+    matched = true
+    if (prev.afterTree === repo.tree) continue
+    try {
+      const env = alternateObjectsEnv(repo, [baseObjects])
+      const diff = await gitRun(repo.gitExe,
+        ['diff-tree', '-r', '-M', '-z', '--numstat', prev.afterTree, repo.tree],
+        { cwd: repo.root, env })
+      if (diff.exitCode !== 0) throw err('E_IO', 'git diff-tree 失败：' + String(diff.stderr).trim())
+      for (const entry of parseNumstat(String(diff.stdout))) {
+        const abs = path.resolve(repo.root, entry.path)
+        if (!insideRoots(state, abs)) continue
+        byAbs.set(abs, {
+          display: displayOf(state, abs),
+          added: entry.added, deleted: entry.deleted,
+          ...(entry.binary ? { binary: true } : {}),
+          repo, env, rel: entry.path, before: prev.afterTree, after: repo.tree
+        })
+      }
+    } catch (e) {
+      log('turnStart 用户改动对账失败（这个仓库本轮跳过）:', repo.root, e.message)
+    }
+  }
+  // 非 git 源文件夹的兜底：上一轮写过、且当时抓了「写后副本」的文件，现在再抓一份比。
+  // 只覆盖模型上一轮碰过的文件；从没碰过、又不是 git 的文件没有基线，无法发现（不假装发现）。
+  const baseCaps = base.postCaptures || new Map()
+  for (const [abs, beforeCap] of baseCaps) {
+    if (byAbs.has(abs) || !insideRoots(state, abs)) continue
+    matched = true
+    try {
+      const after = await captureFile(abs, path.join(state.scratch, 'captures'))
+      if (!after || sameCapture(beforeCap, after)) continue
+      const display = displayOf(state, abs)
+      if (beforeCap.kind === 'oversized' || after.kind === 'oversized') {
+        byAbs.set(abs, { display, added: 0, deleted: 0, oversized: true })
+        continue
+      }
+      if ((beforeCap.kind === 'file' && beforeCap.binary) || (after.kind === 'file' && after.binary)) {
+        byAbs.set(abs, { display, added: 0, deleted: 0, binary: true })
+        continue
+      }
+      const counts = compareCaptured(capturedTextOf(beforeCap), capturedTextOf(after))
+      byAbs.set(abs, { display, added: counts.added, deleted: counts.deleted, captureDiff: counts })
+    } catch (e) {
+      log('turnStart 非 git 文件对账失败（跳过）:', abs, e.message)
+    }
+  }
+  if (!matched) return { supported: false, files: [] }
+  // 必要时自动读回 diff：只取小文件、总行数有预算；内容留在本机，随 turnStart 结果回传少量派生文本
+  const diffs = []
+  let diffLines = 0
+  for (const row of byAbs.values()) {
+    if (diffs.length >= 3 || diffLines >= 160 || row.binary || row.oversized) continue
+    if (row.captureDiff) {
+      const count = row.captureDiff.hunks.reduce((s, h) => s + h.lines.length, 0)
+      if (diffLines + count > 200) continue
+      diffs.push({ path: row.display, hunks: row.captureDiff.hunks })
+      diffLines += count
+      continue
+    }
+    try {
+      const patch = await gitRun(row.repo.gitExe,
+        ['diff-tree', '-r', '-M', '-p', '--no-color', '--no-ext-diff', '--no-textconv', '--unified=2',
+          row.before, row.after, '--', row.rel],
+        { cwd: row.repo.root, env: { ...row.env, GIT_LITERAL_PATHSPECS: '1' } })
+      if (patch.exitCode !== 0 && patch.exitCode !== 1) continue
+      const parsed = parseUnifiedPatch(patch.stdout)
+      if (parsed.binary || !parsed.hunks.length) continue
+      const count = parsed.hunks.reduce((s, h) => s + h.lines.length, 0)
+      if (diffLines + count > 200) continue
+      diffs.push({ path: row.display, hunks: parsed.hunks })
+      diffLines += count
+    } catch { /* 单文件 diff 失败不影响清单 */ }
+  }
+  const files = [...byAbs.values()].map(r => ({
+    path: r.display, added: r.added, deleted: r.deleted,
+    ...(r.binary ? { binary: true } : {}), ...(r.oversized ? { oversized: true } : {})
+  }))
+  state.drift = new Set(byAbs.keys())
+  return {
+    supported: true, files: files.slice(0, TURN_MAX_FILES), total: files.length,
+    ...(diffs.length ? { diffs } : {})
+  }
+}
+
+async function opTurnStart ({ turnId, previousTurnId }, ctx) {
   const id = String(turnId || '').trim()
   if (!id) throw err('E_INVALID', '缺少 turnId')
-  if (turnStates.has(id)) return { started: true }
+  if (turnStates.has(id)) {
+    // 写类调用抢跑时已经补拍过：把当时算出的对账结果原样给服务端，别让晚到的 turnStart 丢掉注入口径
+    const st = turnStates.get(id)
+    return { started: true, ...(st && st.driftResult ? { drift: st.driftResult } : {}) }
+  }
   await sweepTurns()
   // 目录落在持久化根下：进程重启后还能按 turnId 找回这一轮的快照
   const scratch = turnStatePath(id)
@@ -1425,7 +1608,8 @@ async function opTurnStart ({ turnId }, ctx) {
   const state = {
     turnId: id, scratch,
     roots: await Promise.all(ctx.rootRecords.map(async r => ({ ...r, path: await canonicalPath(r.path) }))),
-    repos: [], captures: new Map(), review: new Map(), createdAt: Date.now(), done: false
+    repos: [], captures: new Map(), postCaptures: new Map(), review: new Map(), drift: new Set(),
+    createdAt: Date.now(), done: false
   }
   turnStates.set(id, state)
   // 同一个仓库被多个源文件夹引用时只留一份（rootPaths 合并）
@@ -1455,13 +1639,17 @@ async function opTurnStart ({ turnId }, ctx) {
     }
   }
   log(`turnStart: ${state.repos.length} 个仓库, git=${state.repos.some(r => r.tree) ? '可用' : '不可用'}`)
+  // 用户改动对账排在快照之后：current tree 就是本轮开场时的工作树
+  const drift = await detectDrift(state, previousTurnId)
+  state.driftResult = drift
+  if (drift.supported) log(`turnStart 用户改动: 基线=${previousTurnId} 命中 ${drift.total} 个文件`)
   state.bytes = await dirBytes(scratch)
   try {
     await saveTurnState(state)
   } catch (e) {
     log('轮状态落盘失败（重启后将读不到这轮差异）:', e.message)
   }
-  return { started: true, repos: state.repos.filter(r => r.tree).length }
+  return { started: true, repos: state.repos.filter(r => r.tree).length, drift }
 }
 
 async function opTurnEnd ({ turnId }) {
@@ -1521,9 +1709,21 @@ async function opTurnEnd ({ turnId }) {
   const all = [...listed.values()].sort((a, b) => String(a.display).localeCompare(String(b.display)))
   const kept = all.slice(0, TURN_MAX_FILES)
   log(`turnEnd: ${all.length} 个文件已更改 +${all.reduce((s, r) => s + r.added, 0)} -${all.reduce((s, r) => s + r.deleted, 0)}`)
+  // 写后副本：非 git 源文件夹下一轮对账的基线（git 仓库另有 afterTree，重复时对账会跳过）
+  await snapshotPostCaptures(state)
   if (all.length === 0) {
-    // 没有改动就没有改动卡，快照留着也没人点：当场清掉
-    dropTurn(state.turnId)
+    // 没有改动就没有改动卡；但快照仍要落盘——下一轮的用户改动对账要拿它当基线。
+    // 原注释「没人点就清掉」只考虑了展示，忽略了对账也要这一棵 afterTree。
+    for (const repo of state.repos) {
+      if (repo.tree) repo.afterTree = repo.tree
+    }
+    state.done = true
+    state.bytes = await dirBytes(state.scratch)
+    try {
+      await saveTurnState(state)
+    } catch (e) {
+      log('轮状态落盘失败（下一轮对账会跳过）:', e.message)
+    }
     return { supported: true, files: [], total: 0, added: 0, deleted: 0 }
   }
   for (const row of all) state.review.set(row.display, row.src)

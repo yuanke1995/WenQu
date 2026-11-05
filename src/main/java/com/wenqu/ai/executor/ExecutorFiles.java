@@ -187,9 +187,14 @@ public class ExecutorFiles {
     // 轮前/轮后快照与逐文件差异，全部由执行器在本机算（内容不出用户电脑）；这里只是三根管道。
     // turnStart/turnEnd 读操作不弹终端确认，也不参与页面写闸。
 
-    /** 轮前快照：对工作区每个源文件夹定位 git 仓库并写一棵快照树（不在仓库里的源文件夹走捕获兜底）。 */
-    public Map<String, Object> turnStart(String executorId, List<ProjectRoot> roots, String turnId) {
-        return callWithTimeout(executorId, roots, "turnStart", Map.of("turnId", turnId), false, TURN_TIMEOUT_MS).data();
+    /** 轮前快照：对工作区每个源文件夹定位 git 仓库并写一棵快照树（不在仓库里的源文件夹走捕获兜底）。
+     *  {@code previousTurnId} 是上一轮的轮号：执行器据此对比「用户在你上次之后改了什么」，随快照一并返回。 */
+    public Map<String, Object> turnStart(String executorId, List<ProjectRoot> roots, String turnId,
+                                         String previousTurnId) {
+        Map<String, Object> args = new LinkedHashMap<>();
+        args.put("turnId", turnId);
+        if (previousTurnId != null && !previousTurnId.isBlank()) args.put("previousTurnId", previousTurnId);
+        return callWithTimeout(executorId, roots, "turnStart", args, false, TURN_TIMEOUT_MS).data();
     }
 
     /** 轮末对比：再拍一次快照并 diff，返回 {supported, files, total, added, deleted}。 */

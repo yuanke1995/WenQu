@@ -44,6 +44,17 @@ public interface MessageMapper extends BaseMapper<Message> {
             "ORDER BY sequence DESC LIMIT 1")
     Message selectLastOfTurn(@Param("sessionId") String sessionId, @Param("turnId") String turnId);
 
+    /**
+     * 该会话在 {@code excludeTurnId} 之前最近一个落过库的 turnId（用户改动对账的基线）。
+     * <p>本轮用户消息在开轮时已经落库，所以必须排除自己；查的是上一轮的一问一答，
+     * 与执行器落盘的 afterTree 按 turnId 对上。取不到（首轮/历史被清）返回 null，drift 静默跳过。
+     */
+    @Select("SELECT turn_id FROM c_ai_message WHERE session_id = #{sessionId} AND deleted = 0 "
+            + "AND turn_id IS NOT NULL AND turn_id <> '' AND turn_id <> #{excludeTurnId} "
+            + "ORDER BY sequence DESC LIMIT 1")
+    String selectLastTurnIdBefore(@Param("sessionId") String sessionId,
+                                  @Param("excludeTurnId") String excludeTurnId);
+
     /** 给某一问写终止原因（stopped=用户叫停且本轮无回答） */
     @Update("UPDATE c_ai_message SET end_reason = #{reason} WHERE id = #{id}")
     int updateEndReason(@Param("id") String id, @Param("reason") String reason);
