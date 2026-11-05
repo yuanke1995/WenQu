@@ -4,9 +4,10 @@
       <component :is="workspaceIconOf(form.icon, true)"
                  class="pj-head-ic" :style="form.color ? { color: form.color } : null" />
       <template v-if="!nameEditing">
-        <h1 class="app-page-title">{{ displayName }}</h1>
+        <h1 class="app-page-title">
+          <button class="pj-title-btn" type="button" title="点击改名" @click="startRename">{{ displayName }}</button>
+        </h1>
         <span v-if="isArchived" class="app-pill muted">已归档</span>
-        <button class="pj-link" type="button" @click="startRename">改名</button>
       </template>
       <template v-else>
         <a-input ref="nameInput" v-model:value="nameDraft" class="pj-name-input" :maxlength="60"
@@ -873,11 +874,12 @@ onUnmounted(() => {
 .pj-head { flex-wrap: wrap; }
 .pj-head-ic { width: 20px; height: 20px; flex: none; color: var(--app-ok); }
 .pj-name-input { width: 240px; height: 28px; }
-.pj-link {
-  border: 0; background: none; padding: 0; font: inherit; font-size: 12px;
-  color: var(--app-accent); cursor: pointer; flex: none;
+/* 页名即改名入口：外观保持标题原样，悬停才提示可点 */
+.pj-title-btn {
+  border: 0; background: none; padding: 0; font: inherit; color: inherit;
+  cursor: pointer; text-align: left;
 }
-.pj-link:hover { text-decoration: underline; }
+.pj-title-btn:hover { text-decoration: underline; }
 .pj-icon-btn {
   width: 26px; height: 26px; flex: none; display: grid; place-items: center;
   border: 1px solid var(--app-border); border-radius: 6px; background: var(--app-panel);

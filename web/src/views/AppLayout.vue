@@ -131,13 +131,6 @@
         <button v-if="searchKw" class="sess-search-clear" title="清除搜索" @click="clearSearch"><close-outlined /></button>
       </div>
 
-      <!-- 工作区重命名：用页内弹窗而不是 Modal.confirm（后者没有输入框） -->
-      <a-modal v-model:open="renameOpen" title="重命名工作区" :confirm-loading="renameSaving"
-               ok-text="保存" cancel-text="取消" @ok="doRenameProject">
-        <a-input v-model:value="renameName" :maxlength="60" placeholder="工作区名"
-                 @press-enter="doRenameProject" />
-      </a-modal>
-
       <!-- 移动到工作区：会话菜单进入；产物随会话一起走，文件留在旧工作区（note 说清） -->
       <MoveToWorkspaceModal v-model:open="moveOpen"
                             :projects="moveProjects"
@@ -269,9 +262,16 @@
                   <span class="space-icon" :style="row.color ? { color: row.color } : null">
                     <component :is="workspaceIconOf(row.icon, !spaceHidden(row))" />
                   </span>
-                  <span class="space-name">{{ row.name }}</span>
+                  <!-- 重命名就地改：名字换成输入框，回车/失焦保存、Esc 取消（同 VS Code 侧栏口径） -->
+                  <input v-if="renameProjectId === row.id" :ref="setRenameInputEl"
+                         v-model="renameDraft" class="space-name-input" :maxlength="60"
+                         placeholder="工作区名" @click.stop
+                         @keydown.enter.prevent="commitProjectRename(row)"
+                         @keydown.esc.prevent="cancelProjectRename"
+                         @blur="commitProjectRename(row)" />
+                  <span v-else class="space-name">{{ row.name }}</span>
                   <a-spin v-if="row.loading" class="space-spin" size="small" />
-                  <a-dropdown v-if="row.selectable" trigger="['click']" placement="bottomRight">
+                  <a-dropdown v-if="row.selectable && renameProjectId !== row.id" trigger="['click']" placement="bottomRight">
                     <button class="space-op" title="工作区操作" @click.stop><more-outlined /></button>
                     <template #overlay>
                       <a-menu @click="({ key }) => spaceMenu(row, key)">
@@ -286,7 +286,8 @@
                     </template>
                   </a-dropdown>
                   <!-- 新建对话：直接落进这个工作区（归档工作区不提供） -->
-                  <button v-if="row.selectable && row.status !== 'archived'" class="space-add"
+                  <button v-if="row.selectable && row.status !== 'archived' && renameProjectId !== row.id"
+                          class="space-add"
                           title="在此工作区新建对话" @click.stop="newChat(row.id)">
                     <plus-outlined />
                   </button>
@@ -1331,15 +1332,36 @@ const onLocalWsCreated = async id => {
     router.push('/project/' + id)
   }
 }
-const renameOpen = ref(false)
-const renameTarget = ref(null)
-const renameName = ref('')
-const renameSaving = ref(false)
+// 工作区重命名就地编辑：同一时刻只允许一行进入编辑态
+const renameProjectId = ref('')
+const renameDraft = ref('')
+const renameInputEl = ref(null)
+const setRenameInputEl = el => { renameInputEl.value = el }
 
-const openRenameSpace = space => {
-  renameTarget.value = space
-  renameName.value = space.name || ''
-  renameOpen.value = true
+const startProjectRename = space => {
+  renameProjectId.value = space.id
+  renameDraft.value = space.name || ''
+  nextTick(() => {
+    const el = renameInputEl.value
+    if (el) { el.focus(); el.select() }
+  })
+}
+
+const cancelProjectRename = () => { renameProjectId.value = '' }
+
+const commitProjectRename = async row => {
+  if (renameProjectId.value !== row.id) return
+  const name = (renameDraft.value || '').trim()
+  renameProjectId.value = ''
+  if (!name || name === (row.name || '')) return
+  try {
+    await updateProject(row.id, { name })
+    row.name = name
+    message.success('已重命名')
+    loadSessions(undefined, { refreshProjects: true }).catch(() => {})
+  } catch (e) {
+    message.error('重命名失败：' + (e.message || '请重试'))
+  }
 }
 
 const spaceMenu = (space, key) => {
@@ -1354,7 +1376,7 @@ const spaceMenu = (space, key) => {
       .catch(e => message.warning(e.message || '打开失败：先确认那台电脑上的执行器在线'))
     return
   }
-  if (key === 'rename') { openRenameSpace(space); return }
+  if (key === 'rename') { startProjectRename(space); return }
   if (key === 'archive' || key === 'restore') {
     const next = key === 'archive' ? 'archived' : 'active'
     setProjectStatus(space.id, next).then(async () => {
@@ -1395,25 +1417,6 @@ const doDeleteProject = async () => {
   }
 }
 
-const doRenameProject = async () => {
-  const p = renameTarget.value
-  const name = (renameName.value || '').trim()
-  if (!p || !name) {
-    message.warning('工作区名不能为空')
-    return
-  }
-  renameSaving.value = true
-  try {
-    await updateProject(p.id, { name })
-    message.success('已重命名')
-    renameOpen.value = false
-    await loadSessions(undefined, { refreshProjects: true })
-  } catch (e) {
-    message.error('重命名失败：' + (e.message || '请重试'))
-  } finally {
-    renameSaving.value = false
-  }
-}
 let searchTimer = null
 // 会话区滚动容器：换搜索词（或清空）后回到顶部，否则用户停在上一屏的位置，
 // 看到的是「搜索结果之外」的旧区域，像是搜索没生效
@@ -1846,6 +1849,14 @@ watch(() => route.fullPath, () => {
   flex: 1; min-width: 0; font-size: 12.5px; font-weight: 500; color: var(--app-text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* 就地改名：输入框顶替名字那一格，字号对齐；负外边距抵掉自身高度，行高保持不变 */
+.space-name-input {
+  flex: 1; min-width: 0; height: 24px; margin: -3px 0; padding: 0 5px;
+  font: inherit; font-size: 12.5px; font-weight: 500; color: var(--app-text);
+  border: 1px solid var(--app-accent-border); border-radius: 5px;
+  background: var(--app-panel); outline: none;
+}
+.space-name-input:focus { border-color: var(--app-accent); }
 .space-spin { flex: none; margin-right: 2px; }
 /* ⋯ 与 ＋：触屏/窄屏没有 hover，走这里的常显档（压到 .8 不与工作区名抢注意力）；
    有鼠标的环境下默认隐身、移到这一行才浮现（见下方 hover 媒体查询）。
