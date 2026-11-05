@@ -1255,7 +1255,7 @@
           <!-- 深度思考设置挂到下拉模型行上：悬浮哪行就弹那个模型的设置面板（Teleport 在模板末尾），
           档位点选即时写入按模型 localStorage 记忆；对生效模型下一轮发送立即生效，
           对其它模型则先记住、选中该模型时生效 -->
-          <ModelSelect v-model="currentOverrideModel" type="chat" pill allow-clear
+          <ModelSelect v-model="currentOverrideModel" type="chat" pill
           :issue="effectiveModelIssue"
           :placeholder="effectiveModelLabel || '选择模型'"
           :display-ref="effectiveModel"

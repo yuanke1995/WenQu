@@ -491,16 +491,6 @@ watch([() => props.modelValue, () => groups.value, inheritText,
 .ms-pill :deep(.ant-select-selection-search-input) {
   height: 26px !important;
 }
-/* 有值时悬浮出「清除」钮：antd 把它压在箭头同一格，并铺一块不透明底去盖箭头。
-   幽灵胶囊是透明底，白块盖不住灰箭头，两个图标叠成一团（用户报的「没对齐」就是这里）。
-   改成清除钮透明底 + 悬浮时收起箭头，两者不再同框。 */
-.ms-pill :deep(.ant-select-clear) {
-  background: transparent !important;
-  color: var(--app-text3);
-}
-.ms-pill.ms-has-value:hover :deep(.ant-select-arrow) {
-  opacity: 0;
-}
 /* 覆盖层不吃指针事件：点图标/标记等于点胶囊，下拉照常展开 */
 .ms-pill-icon {
   position: absolute;
