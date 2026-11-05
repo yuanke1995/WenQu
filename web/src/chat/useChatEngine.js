@@ -8,7 +8,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { isAdminSync } from '../utils/auth'
 import { message } from 'ant-design-vue'
 import { sendQuestion, resumeChat, getChatRun, newSession, getHistory, deleteSessionApi, switchMessageVariant, compactSessionApi, sessionHistorySummaryApi, getConfig, getRuntimeConfig, listAvailableAgents, listConsultableAgents,
-         listAvailableSkills, getUserPreference, approveToolCall, answerAgentAsk, ignoreAgentAsk, stopChatTurn, steerChatTurn,
+         listAvailableSkills, getUserPreference, approveToolCall, getToolApproval, answerAgentAsk, ignoreAgentAsk, stopChatTurn, steerChatTurn,
          listPendingAsks, listPendingApprovals, resolvePlanApproval, supersedePlanApproval, listPendingPlans, updateSessionModelApi, updateSessionWindowApi, getSessionModelApi,
          listKnowledgeBases, listDocuments, uploadChatAttachment, getSessionTodosApi,
          listSandboxFiles, downloadSandboxFile, sandboxFileToArtifact,
@@ -22,6 +22,7 @@ import { MAX_IMAGES, MAX_FILES, classifyIntake, rejectText, REJECT, compressImag
          isLongPaste, pasteNameOf } from './intake'
 import { fmtTokens } from '../utils/token'
 import { loadModelIndex } from '../utils/modelRef'
+import { approvalStatusText, approvalLeftSec } from './approval'
 import { THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel, CTX_WINDOW_STEPS, fmtWindow,
          groupSources, ensureTick, mergeDoneToolCalls, restoreTimeline, extendTimelineText, extendTimelineProcess,
          pushTimelineTool, pushTimelineArtifact, pushTimelineSteer, pushTimelineThink, extendTimelineThink, ensureThinkSegment,
@@ -1125,7 +1126,7 @@ const switchSession = async sid => {
   }
   // 同步 URL query：侧边栏高亮与刷新恢复都依赖 sid 在地址上。
   // 必须保留兄弟参数：?approval=<id>（工具审批通知深链）直接写 query:{sid} 会被抹掉，
-  // 恢复横幅能否出现变成异步时序的侥幸（fetch 先回才亮），刷新后则永久丢失。
+  // 「点通知定位到那张审批卡」就变成异步时序的侥幸（fetch 先回才亮），刷新后则永久丢失。
   router.replace({ path: hooks.chatPath, query: { ...route.query, sid } }).catch(() => {})
   // 同一会话已在加载：复用它的结果，别再发一次请求、也别让两份快照互相覆盖
   if (historyLoads.has(sid)) return historyLoads.get(sid)
@@ -1241,8 +1242,14 @@ const switchSession = async sid => {
       if (!live || !live.msg.ask) hydratePendingAsk(sid)
       // 计划批准卡恢复（同上）：计划等待期间断线不中止本轮，刷新/换设备后仍能批准（回答转后台生成落库）
       if (!live || !live.msg.planCard) hydratePendingPlans(sid)
-      // 工具审批卡恢复：接流形态下这是第四张卡——本轮豁免宽限一直等人批准，卡片看不见就成了「莫名不动」
-      if (live && !live.msg.approval) hydratePendingApprovals(sid)
+      // 工具审批卡恢复：接流形态下这是第四张卡——本轮豁免宽限一直等人批准，卡片看不见就成了「莫名不动」。
+      // 深链带了 approval 时只挂它点名的那一张：同一轮可能并行挂着多张，先挂「最新一张」会占掉卡位、
+      // 让用户点通知进来却看到另一张
+      const deepApproval = route.query.approval ? String(route.query.approval) : ''
+      if (!live || !live.msg.approval) hydratePendingApprovals(sid, deepApproval)
+      // 通知深链点名的审批：落到对话里那张卡上并闪一圈；已处理/已失效只提示一句。
+      // 放在历史与接流之后——此时气泡和 turnId 才能对上，卡片不会挂到错误的一轮
+      if (deepApproval) void handleApprovalDeepLink(sid, deepApproval)
       // 先按新列表重算尾随留白、等它落屏再贴底：落点是本轮问题置顶
       //（列表短于一屏时留白为 0，落点即内容底）
       hooks.scrollForce?.()
@@ -1348,6 +1355,15 @@ const createNewSession = async presetAgentId => {
 watch(() => route.query.sid, sid => {
   if (route.path !== hooks.chatPath || !sid) return
   if (sid !== currentSessionId.value) switchSession(sid)
+})
+// 通知深链的 approval：会话已经落在当前页时（点通知时页面没跳走）也要能定位。
+// 切会话那一次由 switchSession 末尾统一处理；这里只管「当前会话内的 query 变化」，
+// 并且避开正在加载的窗口——否则同一张卡会被两条链路各挂一遍。
+watch(() => route.query.approval, id => {
+  if (!id) return
+  const sid = String(route.query.sid || '')
+  if (!sid || sid !== currentSessionId.value || historyLoads.has(sid)) return
+  void handleApprovalDeepLink(sid, String(id))
 })
 // 侧边栏「新建对话」信号（消费后回写 seen，跨页积累的 tick 只消费一次）
 // 注意不依赖 route.query 状态：tick 触发时路由 push 可能尚未完成，条件里查 sid 会偶发落空
@@ -1460,7 +1476,15 @@ async function resolveApproval (m, approved) {
   // 与 ignoreAsk 同理：等待响应期间本轮的审批终态事件可能已把 m.approval 清空，卡片引用先落本地
   const a = m && m.approval
   if (!a || a.busy) return
+  // 倒计时已到点：后端马上会按拒绝收尾，按钮不再发一个必然失败的请求
+  if (a.deadline && approvalLeftSecOf(a) <= 0) {
+    message.warning('这个审批已超时，本轮将按拒绝继续')
+    return
+  }
   a.busy = true
+  // 恢复出来的卡：本设备没有这一轮的流，批准后回答在后台生成，轮询到落库再重载；
+  // 挂在本机接流气泡上的不算（那条流会自己把后续事件送回来，别再插一条轮询）
+  const background = !!a.restored && !(chatStreams.get(currentSessionId.value)?.msg === m)
   try {
     const r = await approveToolCall(a.id, approved)
     if (r && r.success === false) {
@@ -1469,7 +1493,8 @@ async function resolveApproval (m, approved) {
       return
     }
     m.approval = null
-    hooks.scrollSoft?.()
+    if (background) pollRestoredAnswer(currentSessionId.value)
+    else hooks.scrollSoft?.()
   } catch (e) {
     message.error(e.message || '审批提交失败')
     if (m.approval) m.approval.busy = false
@@ -2093,34 +2118,46 @@ const hydratePendingPlans = async sid => {
  * 会话加载/接流后恢复「等你批准执行」的审批卡（与提问卡、计划卡同一套人在回路恢复口径）。
  * 审批只有 120 秒时限、此前只在实时流里下发过一次：刷新或换设备接回这一轮时看不见那张卡，
  * 而本轮又豁免断线宽限、会一直等——用户读到的就是「智能体莫名其妙不动了」。
- * 只重建**未过期且唤醒句柄还在**（live）的最新一张，并按记录带的 turnId 挂回它自己那一轮的气泡：
+ * 只重建**未过期且唤醒句柄还在**（live）的审批卡；{@code onlyId} 是通知深链点名的
+ * 那一张（同一轮挂着多张时也只挂它），并按记录带的 turnId 挂回它自己那一轮的气泡：
  * 那一轮在这台设备的视图里还没有气泡时补占位泡（live 就代表它真的卡在审批上，不挂等于看不见）。
+ *
+ * @returns {Promise<'mounted'|'exists'|'dead'|'gone'|'none'>}
+ *   mounted=这次挂上了；exists=屏上已有同一张；dead=还在 120 秒窗口里但唤醒句柄已不在；
+ *   gone=窗口已过/已不在待批列表；none=与当前会话无关
  */
-const hydratePendingApprovals = async sid => {
-  if (!sid) return
+const hydratePendingApprovals = async (sid, onlyId = '') => {
+  if (!sid) return 'none'
   const st = chatStreams.get(sid)
-  if (st && st.msg && st.msg.approval) return   // 实时卡还挂在这一轮上，不重复挂
+  // 实时卡还挂在这一轮上：深链点名的就是它时直接算「已在屏上」，别重复挂
+  if (st && st.msg && st.msg.approval && (!onlyId || st.msg.approval.id === onlyId)) return 'exists'
   let items
   try {
     const r = await listPendingApprovals(sid)
     items = (r && r.data && Array.isArray(r.data.items)) ? r.data.items : []
-  } catch (e) { return }   // 拉不动不提示：审批自己有超时兜底，不该打断正常浏览
-  if (currentSessionId.value !== sid) return   // 快速切会话：晚到响应不覆盖当前视图
-  const alive = items.filter(x => x && x.live && x.approvalId)
-  if (!alive.length) return
+  } catch (e) { return 'error' }   // 拉不动不提示：审批自己有超时兜底，不该打断正常浏览
+  if (currentSessionId.value !== sid) return 'none'   // 快速切会话：晚到响应不覆盖当前视图
+  const matched = items.filter(x => x && x.approvalId && (!onlyId || x.approvalId === onlyId))
+  const alive = matched.filter(x => x.live)
+  const dead = matched.filter(x => !x.live)
+  if (!alive.length) {
+    if (!onlyId) return 'none'
+    return dead.length ? 'dead' : 'gone'
+  }
   const item = alive[alive.length - 1]
-  // timeoutMs 传「还剩多少」而不是整窗：卡片那行「未处理将在 N 秒后按拒绝处理」直接读它，
+  const remainMs = Number(item.remainingMs) || 0
+  // timeoutMs 传「还剩多少」而不是整窗：卡片倒计时直接读 deadline，
   // 恢复出来的卡若给整窗，用户会以为还有两分钟，实际下一秒就超时按拒绝了
   const card = {
     id: item.approvalId, tool: item.tool, label: item.label, hint: item.hint, args: item.args,
-    timeoutMs: Number(item.remainingMs) || 0, busy: false, restored: true
+    timeoutMs: remainMs, deadline: remainMs > 0 ? Date.now() + remainMs : 0, busy: false, restored: true
   }
   const target = cardTargetFor(st, item.turnId)
-  if (target && target.approval) return   // 这张卡已经挂着了
+  if (target && target.approval) return 'exists'   // 这张卡已经挂着了
   if (target) {
     target.approval = card
-    hooks.scrollForce?.()
-    return
+    if (!onlyId) hooks.scrollForce?.()
+    return 'mounted'
   }
   // 这一轮在这台设备的视图里没有气泡（在别的设备上跑、或本轮的助手消息还没落库）：
   // 补一个「等你批准执行」的占位泡。那一轮是真的卡在审批上（live=唤醒句柄还在），
@@ -2132,7 +2169,94 @@ const hydratePendingApprovals = async sid => {
     model: '', approval: null, turnId: item.turnId || '' })
   anchor.approval = card
   messages.value = [...messages.value, anchor]
-  hooks.scrollForce?.()
+  if (!onlyId) hooks.scrollForce?.()
+  return 'mounted'
+}
+
+// 审批倒计时：只在屏上还有带 deadline 的审批卡时走表（停/批准后自动停），
+// 与计划卡的 planNow 同一套节奏。PC 与移动壳都读这一份。
+const approvalNow = ref(Date.now())
+let approvalTimer = null
+watch(() => messages.value.some(m => m && m.approval && m.approval.deadline), v => {
+  if (v && !approvalTimer) approvalTimer = setInterval(() => { approvalNow.value = Date.now() }, 1000)
+  if (!v && approvalTimer) { clearInterval(approvalTimer); approvalTimer = null }
+})
+onUnmounted(() => { if (approvalTimer) { clearInterval(approvalTimer); approvalTimer = null } })
+const approvalLeftSecOf = card => approvalLeftSec(card, approvalNow.value)
+
+/** 清掉地址栏的 approval 参数（刷新不再把已经处理过/失效的卡再恢复一遍） */
+const clearApprovalQuery = approvalId => {
+  if (String(route.query.approval || '') !== String(approvalId)) return
+  const q = { ...route.query }
+  delete q.approval
+  router.replace({ path: hooks.chatPath, query: q }).catch(() => {})
+}
+
+/** 撤掉屏上同一张（另一页签已裁决/已超时）：别留两颗点了只会报错的按钮 */
+const clearApprovalCard = approvalId => {
+  let changed = false
+  for (const m of messages.value) {
+    if (m && m.approval && String(m.approval.id) === String(approvalId)) {
+      m.approval = null
+      changed = true
+    }
+  }
+  if (changed) hooks.scrollSoft?.()
+}
+
+/**
+ * 通知深链（/chat?sid=&approval=<id>）的落点：
+ * - 还在等批准：挂回对话里那一步，滚动过去并闪一圈（hooks.revealApproval），不再另画顶部横幅；
+ * - 已批准/已拒绝/已超时：只给一句结果，并把 approval 参数清掉；
+ * - 窗口过了或唤醒句柄已不在：直接说失效，不给一个点了只会报错的按钮。
+ */
+const handleApprovalDeepLink = async (sid, approvalId) => {
+  if (!sid || !approvalId || currentSessionId.value !== sid) return
+  let rec
+  try {
+    const r = await getToolApproval(approvalId)
+    rec = (r && r.data) || null
+  } catch (e) {
+    message.error('恢复审批失败：' + (e.message || '网络异常'))
+    return
+  }
+  if (currentSessionId.value !== sid) return
+  if (!rec) {
+    message.info('该审批请求不存在或已失效')
+    clearApprovalCard(approvalId)
+    clearApprovalQuery(approvalId)
+    return
+  }
+  // 链接里的审批不属于当前会话（旧链接/会话已切走）：不在这里裁决，也不冒充「已失效」
+  if (rec.sessionId && String(rec.sessionId) !== String(sid)) {
+    clearApprovalQuery(approvalId)
+    return
+  }
+  if (rec.status !== 'PENDING') {
+    message.info('该审批已处理：' + approvalStatusText(rec.status))
+    clearApprovalCard(approvalId)
+    clearApprovalQuery(approvalId)
+    return
+  }
+  const res = await hydratePendingApprovals(sid, approvalId)
+  if (currentSessionId.value !== sid) return
+  if (res === 'mounted' || res === 'exists') {
+    hooks.revealApproval?.(approvalId)
+    clearApprovalQuery(approvalId)
+    return
+  }
+  if (res === 'error') {
+    // 待批列表没取回来：别把它说成「已失效」，也别清参数——刷新还能再试
+    message.warning('待审批记录没取回来，稍后刷新再试')
+    return
+  }
+  if (res === 'dead') {
+    message.warning('该审批已失效（本轮已结束或服务已重启），无法再批准')
+  } else {
+    message.warning('该审批已超时或已失效，无法再批准')
+  }
+  clearApprovalCard(approvalId)
+  clearApprovalQuery(approvalId)
 }
 
 /**
@@ -2578,10 +2702,13 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       } catch (e) { /* 忽略 */ }
     },
     onApprovalRequired: payload => {
-      // 工具执行审批（人在回路）：卡片挂到当前 AI 气泡，批准/拒绝后模型继续走
+      // 工具执行审批（人在回路）：卡片挂到当前 AI 气泡，批准/拒绝后模型继续走。
+      // deadline 让卡片自己走真实倒计时（timeoutMs 是事件下发那一刻的整窗，不能当剩余秒数用）
       try {
         const j = typeof payload === 'string' ? JSON.parse(payload) : payload
-        msg.approval = { id: j.approvalId, tool: j.tool, label: j.label, hint: j.hint, args: j.args, timeoutMs: j.timeoutMs, busy: false }
+        const timeoutMs = Number(j.timeoutMs) || 120000
+        msg.approval = { id: j.approvalId, tool: j.tool, label: j.label, hint: j.hint, args: j.args,
+          timeoutMs, deadline: Date.now() + timeoutMs, busy: false }
         liveScroll()
       } catch (e) { /* 忽略 */ }
     },
@@ -2885,9 +3012,10 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         msg.content = STOP_PLACEHOLDER
       }
       // 整轮已收口：提问卡（若还在）撤掉——超时/忽略走的是 done 前的 tool_status 终态，此处兜底
-      // 队列一起清：这一轮不会再有可答的卡了
+      // 审批卡同理：超时后后端按拒绝继续，这张卡不该在答案出来以后还挂着
       msg.ask = null
       msg.askQueue = []
+      msg.approval = null
       // 整轮结束时刻（右栏「生成回答」行的 duration 用它）；历史恢复的消息无此值则不显示
       msg.doneTime = Date.now()
       // 生成完成：编排卡片收起为一行（用户未手动干预时），避免答案出来后还占着版面
@@ -2989,6 +3117,8 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       flushNow()
       msg.loading = false
       msg.retrying = false
+      // 这一轮已经断了，审批卡不会再有结果：撤掉，别留两颗必然点不动的按钮
+      msg.approval = null
       // 本轮失败：正在长的那一段思考必须停下进行中标记（它认的是「这一轮还在流」，
       // 而 loading 已假 → 该段自然收起），否则那一行会永远转下去，把「这一轮断了」读成「它还在想」
       msg.thinkLoading = false
@@ -3850,6 +3980,8 @@ onUnmounted(() => {
     planModeOn, setPlanMode, submitPlanApproval, continuePlanConversation, hydratePendingPlans,
     // 待批准卡的派生态与倒计时（确认栏顶替打字框的判据，两端共用）
     pendingPlan, curPlanCard, planExpired, planCountdownText,
+    // 工具审批卡倒计时：PC 直接调 approvalLeftSecOf(card)，移动壳把 approvalNow 传给消息行
+    approvalLeftSecOf, approvalNow,
     // 目标模式：会话级目标态、条子口径与全部动作（改目标原文 / 停止 / 继续 / 删除）
     sessionGoal, goalModeOn, startGoal, goalAct, runGoalAction,
     // 目标条与详情面的状态口径（词汇、显隐、动作可用性）＋就地编辑态：两端共用一份，不在页面里各写一遍

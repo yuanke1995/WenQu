@@ -68,20 +68,8 @@
         <button class="app-icon-btn" title="关闭查找" @click="closeSearch"><close-outlined /></button>
       </div>
 
-      <!-- 工具审批恢复横幅：点开 tool.approval 通知直达会话时，按 approvalId 重建审批卡
-           （刷新丢失的 SSE 卡据此补回；内存态可能已失效，此时 status 为终态并提示） -->
-      <div v-if="recoveryApproval" class="approval-recovery">
-        <div class="ar-title"><exclamation-circle-outlined /> 工具审批待处理：{{ recoveryApproval.toolName }}</div>
-        <pre v-if="recoveryApproval.requestArgs" class="ar-args">{{ recoveryApproval.requestArgs }}</pre>
-        <div class="ar-foot">
-          <span class="ar-status" :class="'ar-' + recoveryStatusClass">{{ recoveryStatusText }}</span>
-          <template v-if="recoveryApproval.status === 'PENDING'">
-            <button class="app-btn small" :disabled="recoveryBusy" @click="resolveRecovery(true)">批准执行</button>
-            <button class="app-btn ghost small" :disabled="recoveryBusy" @click="resolveRecovery(false)">拒绝</button>
-          </template>
-          <button class="app-btn ghost small" @click="dismissRecovery">关闭</button>
-        </div>
-      </div>
+      <!-- 工具审批走对话里的内联卡（见消息区的 .approval-card）：通知深链由引擎按 approvalId
+           定位到那一张并闪一圈，不再在顶部另画一张横幅。已处理/已失效只弹一句提示。 -->
 
       <!-- 智能体提问不走顶部横幅：卡片已落库、等待期间断线不中止本轮，恢复由引擎在会话加载时
            按待答记录重建底部答题面板（hydratePendingAsk），与实时卡同一处、同一套交互。 -->
@@ -500,14 +488,26 @@
                    （与提问卡同形，见 pendingPlan / planp-*）；卡片本体两端共用 chat/PlanCard.vue，
                    刷新/换设备后由 hydratePendingPlans 按落库记录重建（restored 卡同样可裁决） -->
               <PlanCard v-if="m.planCard" :card="m.planCard" />
-              <!-- 工具执行审批（人在回路）：智能体开启"执行前确认"后，有副作用工具（沙盒/MCP）执行前需用户批准 -->
-              <div v-if="m.approval" class="approval-card" data-approval-card>
-                <div class="approval-title" :title="toolDesc(m.approval.tool, m.approval.hint)"><exclamation-circle-outlined /> 智能体请求执行工具「{{ toolLabel(m.approval.tool, m.approval.label) }}」</div>
-                <pre v-if="m.approval.args" class="approval-args">{{ m.approval.args }}</pre>
+              <!-- 工具执行审批（人在回路）：智能体开启"执行前确认"后，有副作用工具（沙盒/MCP）执行前需用户批准。
+                   通知深链也定位到这一张（引擎 hydratePendingApprovals → 滚动 + 闪一圈），顶部不再另画横幅 -->
+              <div v-if="m.approval" class="approval-card" data-approval-card :data-approval-id="m.approval.id">
+                <div class="approval-head">
+                  <exclamation-circle-outlined class="approval-warn" />
+                  <span class="approval-lead">需要你批准</span>
+                  <span class="approval-tool" :title="toolDesc(m.approval.tool, m.approval.hint)">{{ toolLabel(m.approval.tool, m.approval.label) }}</span>
+                  <code v-if="m.approval.label && m.approval.label !== m.approval.tool" class="approval-raw">{{ m.approval.tool }}</code>
+                  <span class="approval-clock" :class="{ over: approvalLeftSecOf(m.approval) <= 0 }">
+                    <clock-circle-outlined />
+                    {{ approvalLeftSecOf(m.approval) > 0 ? '剩 ' + approvalLeftSecOf(m.approval) + ' 秒' : '已超时' }}
+                  </span>
+                </div>
+                <pre v-if="approvalArgsText(m.approval.args)" class="approval-args">{{ approvalArgsText(m.approval.args) }}</pre>
                 <div class="approval-actions">
-                  <button class="app-btn small" :disabled="m.approval.busy" @click="resolveApproval(m, true)">批准执行</button>
-                  <button class="app-btn ghost small" :disabled="m.approval.busy" @click="resolveApproval(m, false)">拒绝</button>
-                  <span class="approval-hint">未处理将在 {{ Math.round((m.approval.timeoutMs || 120000) / 1000) }} 秒后按拒绝处理</span>
+                  <span class="approval-hint">{{ approvalLeftSecOf(m.approval) > 0 ? '批准后立即执行这一步' : '已超时，本轮将按拒绝继续' }}</span>
+                  <button class="app-btn ghost small" :disabled="m.approval.busy || approvalLeftSecOf(m.approval) <= 0"
+                          @click="resolveApproval(m, false)">拒绝</button>
+                  <button class="app-btn small" :disabled="m.approval.busy || approvalLeftSecOf(m.approval) <= 0"
+                          @click="resolveApproval(m, true)">批准执行</button>
                 </div>
               </div>
               <!-- 智能体提问（askUser）的「待答」态不再渲染在气泡里：桌面壳把底部聊天输入框整块
@@ -1797,7 +1797,7 @@ import { splitAtts } from '../chat/attachments'
 import { SUPPORTED_EXTS, extOf } from '../chat/intake'
 // 正文浮层的共享状态：右栏来源联动（hoveredRef / 点角标定位）与灯箱开关要用
 import { openImages, previewUrl, openSource, hoveredRef } from '../chat/answerViewer'
-import { useApprovalRecovery } from '../chat/useApprovalRecovery'
+import { approvalArgsText } from '../chat/approval'
 import { toolLabel, toolDesc, toolCallsView, executedCount, toolRunning, toolDuration, hasTimelineBlocks,
          procOpen, toggleProc, procSlice, thinkSegOpen, toggleThinkSeg, thinkSlice, thinkGrowing,
          turnRows, turnOpen,
@@ -1827,10 +1827,8 @@ const goalArmed = ref(false)
 // 重复触发——否则连按第二下 Enter/发送键会落到普通发送，把残留的附件当成普通问题发出去
 const goalStarting = ref(false)
 
-// ==================== 工具审批恢复（通知 → 会话）：按 approvalId 重建审批卡 ====================
-// 状态机与移动壳共用（src/chat/useApprovalRecovery.js）：两端「批准/拒绝 → 重取状态」口径一致
-const { approval: recoveryApproval, busy: recoveryBusy, statusText: recoveryStatusText,
-        statusClass: recoveryStatusClass, resolve: resolveRecovery, dismiss: dismissRecovery } = useApprovalRecovery()
+// 工具审批的恢复与定位都在引擎里（useChatEngine 的 handleApprovalDeepLink）：
+// 通知只负责把对话滚到那张内联审批卡并闪一圈；已处理/已失效只提示一句，不再在顶部画横幅。
 
 // 注：智能体提问不走 approval 那种顶部横幅——卡片已落库且等待作答期间断线不中止本轮，
 // 恢复改由引擎在会话加载时按待答记录重建提问卡（hydratePendingAsk），仍挂在底部答题面板原位。
@@ -2041,6 +2039,21 @@ function focusHitl (kind) {
   panel.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
   const first = panel.querySelector('.askp-opt:not([disabled]), .planp-opt:not([disabled])')
   if (first) first.focus()
+}
+
+// 通知深链落到审批卡：引擎挂好卡后回调这里，滚到那一张并闪一圈（不新增任何常驻 UI）
+function revealApprovalCard (id) {
+  nextTick(() => {
+    const key = String(id || '')
+    const safe = (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(key) : key
+    const el = box.value && box.value.querySelector('[data-approval-id="' + safe + '"]')
+    if (!el) return
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    el.classList.remove('flash')
+    void el.offsetWidth
+    el.classList.add('flash')
+    setTimeout(() => el.classList.remove('flash'), 1800)
+  })
 }
 
 
@@ -3539,6 +3552,8 @@ const {
   // 计划模式（人在回路）：斜杠命令开关 + 计划卡裁决动作
   planModeOn, setPlanMode, submitPlanApproval, continuePlanConversation,
   pendingPlan, curPlanCard, planExpired, planCountdownText,
+  // 工具审批卡倒计时（真实剩余秒数；到点按钮锁住）
+  approvalLeftSecOf,
   // 目标模式：平台总闸 goalModeOn + 会话级目标态 + 全部动作。
   // 摘要条与就地编辑的词汇、显隐、可用性都在引擎侧（与移动壳共用一份），本页只画形状
   sessionGoal, goalModeOn, startGoal, runGoalAction,
@@ -3598,6 +3613,7 @@ const {
   scrollFollow: () => nextTick(() => { updateTailSpacer(); scroll() }),
   scrollForce: () => nextTick(() => { updateTailSpacer(); scrollForce() }),
   scrollSoft: () => scroll(),
+  revealApproval: revealApprovalCard,
   closePanels: closeAllPanels,
   focusInput
 })
@@ -4822,6 +4838,10 @@ onMounted(async () => {
   opacity: 0; transition: opacity .15s;
 }
 .msg-block:hover .msg-edit-row { opacity: 1; }
+/* 操作行是绝对定位、不占流：按钮底边到气泡下沿 27px，比默认的 20px 行间距还多 7px，
+   下一轮开头那条细线（生成中的状态行顶线、流尾压缩记录）正好从操作行中间穿过。
+   主对话页只在用户行把这段间距让到 28px，让线落到操作行下面（分享页没有这行，不受影响） */
+.messages :deep(.row.user) { margin-bottom: 28px; }
 /* 就地编辑卡：原位替换该用户气泡（右对齐紧凑卡，对齐主流产品「编辑=原地重写这一问」），
    不再全宽悬浮盖住回答。起步单行随内容长高；图片/附件/@ 引用 chips 随行展示，可增删 */
 .msg-block.user.editing > .bubble, .msg-block.user.editing > .msg-edit-row { display: none; }
@@ -5331,26 +5351,28 @@ onMounted(async () => {
 .dbg-title { font-weight: 500; font-size: 13px; }
 .dbg-snippet { margin-top: 3px; font-size: 12px; color: var(--app-text3); word-break: break-all; }
 
-/* 工具执行审批（人在回路） */
-.approval-card { margin-top: 8px; border: 1px solid var(--app-warn-border); background: var(--app-warn-weak); border-radius: 8px; padding: 10px 12px; max-width: 640px; }
-.approval-title { font-size: 13px; font-weight: 600; color: var(--app-warn-text); display: flex; align-items: center; gap: 6px; }
+/* 工具执行审批（人在回路）：贴着被审批的那一步，通知深链也落在这里 */
+.approval-card { margin-top: 8px; border: 1px solid var(--app-warn-border); border-left: 3px solid #dda23f; background: var(--app-warn-weak); border-radius: 8px; padding: 10px 12px; max-width: 640px; }
+.approval-card.flash { animation: approvalFlash 1.6s ease-out; }
+@keyframes approvalFlash {
+  0% { box-shadow: 0 0 0 0 rgba(199, 124, 20, .42); }
+  28% { box-shadow: 0 0 0 5px rgba(199, 124, 20, .18); }
+  100% { box-shadow: 0 0 0 0 rgba(199, 124, 20, 0); }
+}
+.approval-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.approval-warn { color: #b07818; flex: 0 0 auto; }
+.approval-lead { font-size: 13px; font-weight: 600; color: var(--app-warn-text); white-space: nowrap; }
+.approval-tool { font-size: 13px; font-weight: 600; color: var(--app-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.approval-raw { font-size: 11px; color: var(--app-text3); font-family: "SF Mono", Menlo, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 34%; }
+.approval-clock { flex: 0 0 auto; margin-left: auto; display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--app-warn-text); background: var(--app-panel); border: 1px solid var(--app-warn-border); border-radius: 5px; padding: 1px 7px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.approval-clock.over { color: var(--app-text3); background: var(--app-panel-2); border-color: var(--app-border); }
 .approval-args { margin: 8px 0 0; background: var(--app-panel); border: 1px solid var(--app-warn-border); border-radius: 6px; padding: 8px; font-size: 12px; font-family: "SF Mono", Menlo, monospace; white-space: pre-wrap; word-break: break-all; max-height: 140px; overflow-y: auto; }
 .approval-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
-.approval-hint { font-size: 12px; color: var(--app-text3); }
-
-/* 工具审批恢复横幅（通知 → 会话，重建刷新丢失的 SSE 审批卡） */
-.approval-recovery { margin: 10px 0 0; border: 1px solid var(--app-warn-border); background: var(--app-warn-weak); border-radius: 8px; padding: 10px 12px; max-width: 720px; }
+.approval-hint { font-size: 12px; color: var(--app-text3); margin-right: auto; }
 
 /* ==================== 计划模式：执行计划卡 ==================== */
 /* 卡片样式随组件走（两端共用），见 chat/PlanCard.vue；这里只留页面内的计划相关角标 */
 .plan-chip { border-color: var(--app-warn-border); background: var(--app-warn-weak); }
-
-.ar-title { font-size: 13px; font-weight: 600; color: var(--app-warn-text); display: flex; align-items: center; gap: 6px; }
-.ar-args { margin: 8px 0 0; background: var(--app-panel); border: 1px solid var(--app-warn-border); border-radius: 6px; padding: 8px; font-size: 12px; font-family: "SF Mono", Menlo, monospace; white-space: pre-wrap; word-break: break-all; max-height: 160px; overflow-y: auto; }
-.ar-foot { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
-.ar-status { font-size: 12px; margin-right: auto; }
-.ar-status.ar-pending { color: var(--app-warn-text); }
-.ar-status.ar-ok { color: var(--app-ok); }
 
 /* askUser 问答记录由共用组件 AskRecordCard 承载（自带折叠头与样式） */
 
@@ -5431,7 +5453,6 @@ onMounted(async () => {
    面板的主行动是「回答 / 批准」，停止是退出路径，不该抢视觉焦点 */
 .p-stop { color: var(--app-danger-text); border-color: var(--app-danger-border); }
 .p-stop:hover:not(:disabled) { background: var(--app-danger-weak); border-color: var(--app-danger-border); }
-.ar-status.ar-err { color: var(--app-danger); }
 
 /* ==================== 目标模式 ==================== */
 /* 目标条坐在输入卡片内部、正文之上：它已经是卡片的一部分，不再画第二层边框/底色/阴影，

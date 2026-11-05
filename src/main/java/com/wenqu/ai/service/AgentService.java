@@ -516,7 +516,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         if (b.containsKey("toolArtifact")) uw.set(Agent::getToolArtifact, a.getToolArtifact());
         if (b.containsKey("toolMcp")) uw.set(Agent::getToolMcp, a.getToolMcp());
         if (b.containsKey("toolWebsearch")) uw.set(Agent::getToolWebsearch, a.getToolWebsearch());
-        // 工具执行审批三态（auto/ask/off；null=auto）
+        // 工具执行审批三态（auto/ask/off；null=跟随权限档位的建议值）
         if (b.containsKey("toolApprovalMode")) uw.set(Agent::getToolApprovalMode, a.getToolApprovalMode());
         // 权限档位（P2；null=跟随平台默认档）
         if (b.containsKey("permissionPreset")) uw.set(Agent::getPermissionPreset, a.getPermissionPreset());
@@ -607,10 +607,12 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         if (body.containsKey("toolWebsearch")) a.setToolWebsearch(toTri(body.get("toolWebsearch")));
         // 目标模式（资源级三态）：与任务态投影/候选要求工具同源判据，改它要重建常驻实例
         if (body.containsKey("goalEnabled")) a.setGoalEnabled(toTri(body.get("goalEnabled")));
-        // 工具执行审批三态（auto/ask/off；null 归一为 auto）
+        // 工具执行审批三态（auto/ask/off；null/空=跟随权限档位的建议值）
+        // auto 必须原样落库：null 的含义是「跟随档位」，常规档的建议值又是 ask，把 auto 归一成 null
+        // 会让「自动执行」保存后回显成「执行前确认」，且实际仍然逐次弹卡。
         if (body.containsKey("toolApprovalMode")) {
             String m = body.get("toolApprovalMode") == null ? null : String.valueOf(body.get("toolApprovalMode")).trim();
-            a.setToolApprovalMode("ask".equals(m) || "off".equals(m) ? m : null);
+            a.setToolApprovalMode("auto".equals(m) || "ask".equals(m) || "off".equals(m) ? m : null);
         }
         // 权限档位（P2）：null/空=跟随平台默认档；认不出的值直接拒绝——静默归 null 等于把「写错了的
         // 全自主」变成「其实没设」，配置页上看着有值、跑的是平台默认，那种漂移没人能从界面上看出来

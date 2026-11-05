@@ -350,15 +350,24 @@
           <PlanCard :card="m.planCard" />
         </div>
 
-        <!-- 工具审批（人在回路） -->
-        <div v-if="m.approval" class="approval">
-          <div class="approval-title"><exclamation-circle-outlined /> 请求执行工具「{{ toolLabel(m.approval.tool, m.approval.label) }}」</div>
-          <pre v-if="m.approval.args" class="io-pre">{{ m.approval.args }}</pre>
-          <div class="approval-actions">
-            <button class="btn-primary" :disabled="m.approval.busy" @click.stop="$emit('approve', m, true)">批准执行</button>
-            <button class="btn-ghost" :disabled="m.approval.busy" @click.stop="$emit('approve', m, false)">拒绝</button>
+        <!-- 工具审批（人在回路）：贴着被审批的那一步；通知深链也定位到这一张 -->
+        <div v-if="m.approval" class="approval" :data-approval-id="m.approval.id">
+          <div class="approval-head">
+            <exclamation-circle-outlined class="approval-warn" />
+            <span class="approval-lead">需要你批准</span>
+            <span class="approval-tool">{{ toolLabel(m.approval.tool, m.approval.label) }}</span>
+            <code v-if="m.approval.label && m.approval.label !== m.approval.tool" class="approval-raw">{{ m.approval.tool }}</code>
+            <span class="approval-clock" :class="{ over: approvalLeftOf(m.approval) <= 0 }">
+              <clock-circle-outlined />
+              {{ approvalLeftOf(m.approval) > 0 ? '剩 ' + approvalLeftOf(m.approval) + ' 秒' : '已超时' }}
+            </span>
           </div>
-          <div class="card-dim">未处理将在 {{ Math.round((m.approval.timeoutMs || 120000) / 1000) }} 秒后按拒绝处理</div>
+          <pre v-if="approvalArgsText(m.approval.args)" class="io-pre">{{ approvalArgsText(m.approval.args) }}</pre>
+          <div class="approval-actions">
+            <span class="approval-hint">{{ approvalLeftOf(m.approval) > 0 ? '批准后立即执行这一步' : '已超时，本轮将按拒绝继续' }}</span>
+            <button class="btn-ghost" :disabled="m.approval.busy || approvalLeftOf(m.approval) <= 0" @click.stop="$emit('approve', m, false)">拒绝</button>
+            <button class="btn-primary" :disabled="m.approval.busy || approvalLeftOf(m.approval) <= 0" @click.stop="$emit('approve', m, true)">批准执行</button>
+          </div>
         </div>
 
         <!-- 产物：预览＝进预览台（与 PC 气泡、产物页、工作区文件同一判据同一待遇），下载走同一份签名地址。
@@ -444,9 +453,10 @@ import {
   DislikeOutlined, ReloadOutlined, RedoOutlined, RobotOutlined, ThunderboltOutlined, SearchOutlined,
   FileTextOutlined, DownloadOutlined, PaperClipOutlined, ExclamationCircleOutlined, MoreOutlined,
   QuestionCircleOutlined, CheckCircleOutlined, PauseCircleOutlined, EyeOutlined, AimOutlined,
-  LoadingOutlined, DownOutlined, ApiOutlined, BulbOutlined
+  LoadingOutlined, DownOutlined, ApiOutlined, BulbOutlined, ClockCircleOutlined
 } from '@ant-design/icons-vue'
 import { resolveImg } from '../utils/markdown'
+import { approvalArgsText, approvalLeftSec } from '../chat/approval'
 import { canPreview, artifactExt } from '../utils/artifactView'
 // 跑轮中簇帽体的贴底跟随与上下边缘渐隐（与 PC 共用同一份指令）
 import { vFollowBottom, vEdgeFade } from '../chat/followBottom'
@@ -499,10 +509,14 @@ const props = defineProps({
   loading: { type: Boolean, default: false },
   variantSwitching: { type: Boolean, default: false },
   /** 会话当前目标：回声胶囊的状态词只认它那一条 goalId（与 PC 共用外壳同一判据） */
-  goal: { type: Object, default: null }
+  goal: { type: Object, default: null },
+  /** 审批倒计时基准（引擎每秒推进的 approvalNow）：与 PC 的 approvalLeftSecOf 同一份口径 */
+  approvalNow: { type: Number, default: 0 }
 })
 const emit = defineEmits(['activate', 'preview', 'paste-view', 'source', 'retry', 'edit', 'feedback', 'approve',
   'switch-version', 'ask', 'copy', 'copy-user', 'more'])
+
+const approvalLeftOf = card => approvalLeftSec(card, props.approvalNow)
 
 // 操作行的出现条件（触屏没有 hover）：选中那条、或最后一条回答。
 // 目标指令回声撤的只是里面的动作键（见 showUserActs），行本身照挂——时间要看得见
@@ -754,9 +768,22 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
 .err-card.net .err-head { color: var(--app-warn-text); }
 .err-tip { font-size: 12px; color: var(--app-text2); }
 
-.approval { border: 1px solid var(--app-warn-border); background: var(--app-warn-weak); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
-.approval-title { font-size: 13px; font-weight: 600; color: var(--app-warn-text); display: flex; align-items: center; gap: 6px; }
-.approval-actions { display: flex; gap: 8px; }
+.approval { border: 1px solid var(--app-warn-border); border-left: 3px solid #dda23f; background: var(--app-warn-weak); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; align-items: stretch; }
+.approval.flash { animation: approvalFlash 1.6s ease-out; }
+@keyframes approvalFlash {
+  0% { box-shadow: 0 0 0 0 rgba(199, 124, 20, .42); }
+  28% { box-shadow: 0 0 0 5px rgba(199, 124, 20, .18); }
+  100% { box-shadow: 0 0 0 0 rgba(199, 124, 20, 0); }
+}
+.approval-head { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.approval-warn { color: #b07818; flex: 0 0 auto; }
+.approval-lead { font-size: 13px; font-weight: 600; color: var(--app-warn-text); white-space: nowrap; }
+.approval-tool { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.approval-raw { font-size: 10.5px; color: var(--app-text3); font-family: "SF Mono", Menlo, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 34%; }
+.approval-clock { flex: 0 0 auto; margin-left: auto; display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--app-warn-text); background: var(--app-panel); border: 1px solid var(--app-warn-border); border-radius: 5px; padding: 1px 6px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.approval-clock.over { color: var(--app-text3); background: var(--app-panel-2); border-color: var(--app-border); }
+.approval-actions { display: flex; align-items: center; gap: 8px; width: 100%; }
+.approval-hint { font-size: 11.5px; color: var(--app-text3); margin-right: auto; }
 .btn-primary { border: none; border-radius: 8px; background: var(--app-accent); color: #fff; font-size: 13px; padding: 8px 14px; min-height: 36px; touch-action: manipulation; }
 .btn-primary:disabled { background: var(--app-accent-disabled); }
 .btn-ghost { border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-panel); color: var(--app-text2); font-size: 13px; padding: 8px 14px; min-height: 36px; display: inline-flex; align-items: center; gap: 5px; touch-action: manipulation; }

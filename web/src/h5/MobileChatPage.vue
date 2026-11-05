@@ -51,21 +51,8 @@
       <button class="mf-btn" type="button" title="关闭查找" aria-label="关闭查找" @click="closeSearch"><close-outlined /></button>
     </div>
 
-    <!-- 工具审批恢复横幅：点开 tool.approval 通知直达会话时，按 approvalId 重建审批卡
-         （随刷新丢失的内联卡据此补回；内存态可能已失效，此时 status 为终态并提示）。
-         与 PC 壳顶部横幅是同一份状态机（chat/useApprovalRecovery.js）。 -->
-    <div v-if="recApproval" class="m-rec">
-      <div class="m-rec-title"><exclamation-circle-outlined /> 工具审批待处理：{{ recApproval.toolName }}</div>
-      <pre v-if="recApproval.requestArgs" class="m-rec-args">{{ recApproval.requestArgs }}</pre>
-      <div class="m-rec-foot">
-        <span class="m-rec-status" :class="'rec-' + recStatusClass">{{ recStatusText }}</span>
-        <template v-if="recApproval.status === 'PENDING'">
-          <button class="m-rec-btn primary" type="button" :disabled="recBusy" @click="resolveRecovery(true)">批准执行</button>
-          <button class="m-rec-btn" type="button" :disabled="recBusy" @click="resolveRecovery(false)">拒绝</button>
-        </template>
-        <button class="m-rec-btn ghost" type="button" @click="dismissRecovery">关闭</button>
-      </div>
-    </div>
+    <!-- 工具审批走对话里的内联卡（MobileMsgRow 的 .approval）：通知深链由引擎按 approvalId
+         定位到那一张并闪一圈，不再在顶部另画一张横幅。已处理/已失效只弹一句提示。 -->
 
     <!-- 智能体提问不走顶部横幅（与 PC 壳同口径）：卡片已落库、等待期间断线不中止本轮，
          会话加载时由引擎按待答记录重建底部答题面板；答复后问答记录以工具卡形态留在气泡里。 -->
@@ -111,6 +98,7 @@
           :last-round="m === panelAi"
           :debug-display="debugDisplayVisible" :session-id="currentSessionId || ''" :loading="loading"
           :variant-switching="variantSwitching" :goal="sessionGoal"
+          :approval-now="approvalNow"
           @activate="activeIdx = $event"
           @preview="openPreview"
           @paste-view="openPasteView"
@@ -539,7 +527,6 @@ import { pasteTitle, pasteSub, spawnAnchorOf, openDispatchCard } from '../chat/p
 import { useChatEngine } from '../chat/useChatEngine'
 import { useChatSearch } from '../chat/useChatSearch'
 import { useNotifications } from '../chat/useNotifications'
-import { useApprovalRecovery } from '../chat/useApprovalRecovery'
 import { submitFeedback as apiSubmitFeedback, getKnowledgeDetail } from '../api'
 import { renderMd, prepKnowledgeContent, enhanceDiagrams } from '../utils/markdown'
 import { fmtTokens } from '../utils/token'
@@ -625,10 +612,9 @@ const notif = useNotifications()
 provide('wqNotif', notif)
 const notifUnread = notif.unreadCount
 
-// ==================== 工具审批恢复（通知 → 会话） ====================
-// 与 PC 壳顶部横幅同一份状态机：?approval=<id> 到达时重建审批卡（两端「批准/拒绝 → 重取状态」同口径）
-const { approval: recApproval, busy: recBusy, statusText: recStatusText, statusClass: recStatusClass,
-        resolve: resolveRecovery, dismiss: dismissRecovery } = useApprovalRecovery()
+// ==================== 工具审批（通知 → 会话） ====================
+// 恢复/定位都在引擎里（与 PC 同一份 handleApprovalDeepLink）：通知只负责把对话滚到那张内联卡并闪一圈，
+// 已处理/已失效只提示一句，不再在顶部画横幅。
 
 // 注：智能体提问不走这层横幅（与 PC 壳同口径）——卡片已落库、等待期间断线不中止本轮，
 // 恢复由引擎在会话加载时按待答记录重建底部答题面板（hydratePendingAsk）。
@@ -640,6 +626,7 @@ const engine = useChatEngine({
   scrollFollow: scroll,
   scrollForce,
   scrollSoft: scroll,
+  revealApproval: revealApprovalCard,
   closePanels: closeSheets,
   // 移动壳有计划卡了（底部 m-planp + 气泡 PlanCard），开关可以放行；分享页仍不给，
   // 那里没有裁决入口，开了只会发出一轮「没人能批准」的计划问答
@@ -666,6 +653,7 @@ const {
   // 确认栏在本页打字框原位，卡片本体共用 PlanCard
   planModeOn, setPlanMode, submitPlanApproval, continuePlanConversation,
   pendingPlan, curPlanCard, planExpired, planCountdownText,
+  approvalNow,
   // 目标模式：摘要条常驻在输入卡上方，改原文开底部 sheet，目标卡在「状态与来源」sheet。
   // 词汇、显隐、动作可用性与编辑字段全在引擎侧（与 PC 共用一份），本页只画形状。
   // 没有待确认/验收/倒计时那一档——目标建好就直接跑，跑到头由助手自己停。
@@ -948,6 +936,21 @@ function focusHitlM (kind) {
   })
 }
 
+// 通知深链落到审批卡：引擎挂好卡后回调这里，滚到那一张并闪一圈（不新增常驻 UI）
+function revealApprovalCard (id) {
+  nextTick(() => {
+    const key = String(id || '')
+    const safe = (typeof CSS !== 'undefined' && CSS.escape) ? CSS.escape(key) : key
+    const el = box.value && box.value.querySelector('.approval[data-approval-id="' + safe + '"]')
+    if (!el) return
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    el.classList.remove('flash')
+    void el.offsetWidth
+    el.classList.add('flash')
+    setTimeout(() => el.classList.remove('flash'), 1800)
+  })
+}
+
 const openSourceDetail = async s => {
   if (!s) return
   src.visible = true
@@ -1099,7 +1102,7 @@ onUnmounted(() => {
      一行正文拉到 1000px 宽，眼睛回不了行。手机取 100% —— 这条对 ≤720px 的屏零影响。 */
   --m-col: min(100%, 720px);
 }
-.m-list > *, .m-composer > *, .m-find, .m-rec { width: var(--m-col); margin-inline: auto }
+.m-list > *, .m-composer > *, .m-find { width: var(--m-col); margin-inline: auto }
 
 /* ---- 顶栏（安全区让开刘海）---- */
 .m-bar {
@@ -1149,23 +1152,7 @@ onUnmounted(() => {
 .mf-btn:disabled { color: var(--app-text3); opacity: .5; }
 .mf-btn:active { background: var(--app-accent-weak); color: var(--app-accent); }
 
-/* ---- 工具审批恢复横幅（?approval= 深链）---- */
-.m-rec {
-  flex: none; margin: 8px 10px 0; padding: 10px 12px;
-  border: 1px solid var(--app-warn-border); background: var(--app-warn-weak); border-radius: 10px;
-  display: flex; flex-direction: column; gap: 8px;
-}
-.m-rec-title { font-size: 13px; font-weight: 600; color: var(--app-warn-text); display: flex; align-items: center; gap: 6px; }
-.m-rec-args {
-  margin: 0; background: var(--app-panel); border: 1px solid var(--app-warn-border); border-radius: 8px;
-  padding: 8px; font-size: 12px; font-family: "SF Mono", Menlo, monospace;
-  white-space: pre-wrap; word-break: break-all; max-height: 120px; overflow-y: auto; color: var(--app-text2);
-}
-.m-rec-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.m-rec-status { font-size: 12px; margin-right: auto; }
-.m-rec-status.rec-pending { color: var(--app-warn-text); }
-.m-rec-status.rec-ok { color: var(--app-ok); }
-.m-rec-status.rec-err { color: var(--app-danger); }
+/* ---- 计划确认栏的按钮（m-rec-btn 原先是审批横幅的按钮样式，横幅下线后由计划面板继续用）---- */
 .m-rec-btn {
   min-height: 36px; padding: 0 14px; border: 1px solid var(--app-border); border-radius: 9px;
   background: var(--app-panel); color: var(--app-text2); font-size: 13px; touch-action: manipulation;
