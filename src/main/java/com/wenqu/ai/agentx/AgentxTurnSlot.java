@@ -42,7 +42,8 @@ public final class AgentxTurnSlot {
                        RunChannel channel,
                        WenquAgentxTools.TurnHooks hooks,
                        ExecutionPolicy policy,
-                       KnowledgeRetrievalTool.KbScope scope) {
+                       KnowledgeRetrievalTool.KbScope scope,
+                       AgentxTaint taint) {
     }
 
     /**
@@ -59,6 +60,20 @@ public final class AgentxTurnSlot {
 
     private volatile Turn current;
     private volatile Surface surface = Surface.empty();
+
+    /**
+     * 实例装配时是否注入了工作区记忆（.wenqu/MEMORY.md）。build 期定，随实例跨轮稳定：
+     * 记忆注入是持久注入面，本轮一开场就应按「已读过可编辑资料」处理，后续破坏性命令要确认。
+     */
+    private volatile boolean workspaceMemoryTainted = false;
+
+    public void noteWorkspaceMemoryTainted(boolean tainted) {
+        this.workspaceMemoryTainted = tainted;
+    }
+
+    public boolean workspaceMemoryTainted() {
+        return workspaceMemoryTainted;
+    }
 
     /**
      * 这个会话实例的工具表（build 期由引擎登记）。

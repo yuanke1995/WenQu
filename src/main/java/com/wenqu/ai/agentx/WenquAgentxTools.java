@@ -431,6 +431,18 @@ public class WenquAgentxTools {
     public AgentxTurnSlot.Turn newTurn(ChatCommand cmd, WenquSourcePool pool,
                                        com.wenqu.ai.engine.RunChannel channel,
                                        ExecutionPolicy policy, TurnHooks hooks) {
+        return newTurn(cmd, pool, channel, policy, hooks, false);
+    }
+
+    /**
+     * 本轮落点（可按实例状态预置污点）。
+     * <p>{@code workspaceMemoryTainted} 取自会话槽位：实例装配时注入了 .wenqu/MEMORY.md，
+     * 本轮一开场就该按「上下文里已有可编辑资料」处理，不能等模型先读一次文件才收紧。
+     */
+    public AgentxTurnSlot.Turn newTurn(ChatCommand cmd, WenquSourcePool pool,
+                                       com.wenqu.ai.engine.RunChannel channel,
+                                       ExecutionPolicy policy, TurnHooks hooks,
+                                       boolean workspaceMemoryTainted) {
         KnowledgeRetrievalTool.KbScope scope =
                 retrievalScope.resolve(agentOf(cmd), cmd.getUserId(), cmd.isGuestMode());
         java.util.Set<String> mentionedKbIds = mentionedKbIdsOf(cmd);
@@ -443,7 +455,9 @@ public class WenquAgentxTools {
                     scope.kbIds() == null ? mentionedKbIds : scope.kbIds(),
                     scope.docIds(), mentionedKbIds);
         }
-        return new AgentxTurnSlot.Turn(hooks.turnId().get(), pool, channel, hooks, policy, scope);
+        AgentxTaint taint = new AgentxTaint();
+        if (workspaceMemoryTainted) taint.mark("workspace-memory");
+        return new AgentxTurnSlot.Turn(hooks.turnId().get(), pool, channel, hooks, policy, scope, taint);
     }
 
     /** 本轮 @ 提及里 kb 类型的 id 集合（保序去重；无提及返回空集）。 */
@@ -778,7 +792,17 @@ public class WenquAgentxTools {
             holders.add(new SpringAiToolAdapter(cb, readOnly,
                     () -> withBaseContext(slot.require(), enrichment.apply(name)),
                     () -> policyOf(slot, policy),
-                    needsApproval, approvalCanAsk));
+                    needsApproval, approvalCanAsk,
+                    // MCP 与沙盒脚本的返回是外部数据：统一加信封并标脏本轮（见适配器字段注释）。
+                    // 检索/联网/文档几族的信封在各自工具内，不在这里重复。
+                    provider.family() == com.wenqu.ai.agent.tool.ToolFamily.MCP
+                            || provider.family() == com.wenqu.ai.agent.tool.ToolFamily.SANDBOX,
+                    // 沙盒脚本（run_code）会跑任意代码：污点时即使档位 auto 也要问一次
+                    provider.family() == com.wenqu.ai.agent.tool.ToolFamily.SANDBOX,
+                    () -> {
+                        AgentxTurnSlot.Turn t = slot.current();
+                        return t == null ? null : t.taint();
+                    }));
         }
     }
 

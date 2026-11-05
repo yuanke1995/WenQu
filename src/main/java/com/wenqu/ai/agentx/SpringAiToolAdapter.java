@@ -2,6 +2,7 @@ package com.wenqu.ai.agentx;
 
 import com.alibaba.fastjson2.JSON;
 import com.wenqu.ai.agent.permission.ExecutionPolicy;
+import com.wenqu.ai.util.UntrustedContent;
 import io.agentscope.core.agent.RuntimeContext;
 import io.agentscope.core.message.ToolResultBlock;
 import io.agentscope.core.permission.PermissionContextState;
@@ -59,6 +60,19 @@ public final class SpringAiToolAdapter extends ToolBase {
      * 由引擎传 true，权限判定本身不改。
      */
     private final boolean approvalCanAsk;
+    /**
+     * 这把工具的返回值是外部数据（MCP 远端结果、沙箱脚本输出）：进上下文前统一加数据声明与信封，
+     * 并把本轮标脏——之后破坏性命令/越界写要回到人面前确认。
+     * <p>知识检索、联网搜索、@ 文档这几族已在各自工具内部加过信封，不能在这里再包一层。
+     */
+    private final boolean untrustedResult;
+    /** 本轮污点（实例跨轮常驻，调用期现取；可为 null = 不需要标脏）。 */
+    private final Supplier<AgentxTaint> taint;
+    /**
+     * 这把工具会跑任意代码/命令（沙盒脚本）：本轮读过外部内容后，即使档位是「自动执行」也要问一次。
+     * <p>与 {@link #untrustedResult} 分开：MCP 只是数据出口，不因为它读过资料就把每次远端调用都挂卡。
+     */
+    private final boolean taintSensitive;
 
     /** 固定档位入口（测试与「实例只活一轮」的调用方用）：等价于 {@code () -> policy}。 */
     public SpringAiToolAdapter(ToolCallback callback, boolean readOnly,
@@ -71,6 +85,15 @@ public final class SpringAiToolAdapter extends ToolBase {
                                Supplier<Map<String, Object>> contextSupplier,
                                Supplier<ExecutionPolicy> policy, boolean approvalRequired,
                                boolean approvalCanAsk) {
+        this(callback, readOnly, contextSupplier, policy, approvalRequired, approvalCanAsk,
+                false, false, null);
+    }
+
+    public SpringAiToolAdapter(ToolCallback callback, boolean readOnly,
+                               Supplier<Map<String, Object>> contextSupplier,
+                               Supplier<ExecutionPolicy> policy, boolean approvalRequired,
+                               boolean approvalCanAsk, boolean untrustedResult,
+                               boolean taintSensitive, Supplier<AgentxTaint> taint) {
         super(callback.getToolDefinition().name(), callback.getToolDefinition().description(),
                 schemaOf(callback), readOnly, true, false, null, false, false);
         this.callback = callback;
@@ -78,6 +101,9 @@ public final class SpringAiToolAdapter extends ToolBase {
         this.policy = policy;
         this.approvalRequired = approvalRequired;
         this.approvalCanAsk = approvalCanAsk;
+        this.untrustedResult = untrustedResult;
+        this.taintSensitive = taintSensitive;
+        this.taint = taint;
     }
 
     /** 入参 schema：Spring AI 那份 JSON 直接 parse 成框架要的 Map；不是合法 JSON 就当场抛，别静默给个空表。 */
@@ -110,6 +136,19 @@ public final class SpringAiToolAdapter extends ToolBase {
         if (current.denies(getName())) {
             return Mono.just(PermissionDecision.deny("该工具已被本轮档位点名禁用：" + getName()));
         }
+        // 污点策略：本轮读过外部内容后，会跑任意代码/命令的工具必须回到人面前确认一次。
+        // 与 approvalRequired 分开——它是「这一档本来就要问」，这里问的是「这一轮上下文可能被污染」。
+        if (taintSensitive && isTainted()) {
+            if (!approvalCanAsk) {
+                return Mono.just(PermissionDecision.deny("本轮已读取过外部内容，而本轮回合没有可应答的确认通道，"
+                        + "脚本/命令类工具按最保守处理不执行：" + getName()));
+            }
+            return Mono.just(PermissionDecision.builder()
+                    .behavior(io.agentscope.core.permission.PermissionBehavior.ASK)
+                    .message("本轮已读取过外部内容，执行脚本/命令可能改动工作区数据，需要你先确认。")
+                    .decisionReason("safety: taint-command")
+                    .build());
+        }
         PermissionMode mode = context == null ? null : context.getMode();
         if (approvalRequired && mode != PermissionMode.DONT_ASK) {
             if (!approvalCanAsk) {
@@ -133,14 +172,35 @@ public final class SpringAiToolAdapter extends ToolBase {
                             param.getRuntimeContext(), param.getAgent());
                     if (state != null) context.put(CTX_AGENT_STATE, state);
                     String result = callback.call(JSON.toJSONString(input), new ToolContext(context));
-                    return ToolResultBlock.text(result);
+                    if (!untrustedResult) return ToolResultBlock.text(result);
+                    markTainted();
+                    return ToolResultBlock.text(UntrustedContent.toolResult("工具 " + getName(),
+                            result == null ? "" : result));
                 })
                 // 工具是真阻塞调用（检索/HTTP/沙盒等待），必须离开框架的响应式线程
                 .subscribeOn(Schedulers.boundedElastic())
                 .onErrorResume(e -> e instanceof io.agentscope.core.tool.ToolSuspendException
                         // 挂起是框架的「等人回答」信号，必须原样交回框架去记待办；
                         // 在这里吞掉就变成一条普通工具失败，待办与接续执行都不会发生
-                        ? Mono.error(e) : Mono.just(ToolResultBlock.error(rootMessage(e))));
+                        ? Mono.error(e) : Mono.just(errorResult(e)));
+    }
+
+    /** 失败文本同样是远端返回的数据，可能夹带指令：同样标脏并套信封，不让错误通道成为旁路。 */
+    private ToolResultBlock errorResult(Throwable e) {
+        String message = rootMessage(e);
+        if (!untrustedResult) return ToolResultBlock.error(message);
+        markTainted();
+        return ToolResultBlock.error(UntrustedContent.toolResult("工具 " + getName() + "（失败）", message));
+    }
+
+    private void markTainted() {
+        AgentxTaint t = taint == null ? null : taint.get();
+        if (t != null) t.mark(getName());
+    }
+
+    private boolean isTainted() {
+        AgentxTaint t = taint == null ? null : taint.get();
+        return t != null && t.tainted();
     }
 
     private static String rootMessage(Throwable e) {
