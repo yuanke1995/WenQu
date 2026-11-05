@@ -732,6 +732,18 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 附件/@/#历史引用随用户消息一并持久化，刷新后回显不丢。
         String userMessageId = cmd.isRegenerate() || cmd.isFromSteer() ? null
                 : appendQuestion(cmd, turnId, userImgUrls);
+        // 装配前已点停止（流水线排队/建实例之前）：这一问照样留在库里，但不再建实例、不调模型。
+        // 必须排在 appendQuestion 之后——早于落库就返回会让用户「问出去了，刷新后连问题都没有」。
+        // 目标态的收尾照常走：onRoundSettled(stopped=true) 会把目标轮结算并转暂停，
+        // 跳过它等于用户按了停止、目标还在后台接着跑。
+        if (tools.stopRequested(cmd)) {
+            log.info("[agentx] 本轮在装配前已被用户停止，跳过实例与模型调用: session={} turn={}",
+                    cmd.getSessionId(), turnId);
+            goalService.onRoundSettled(cmd.getSessionId(), cmd.getUserId(), turnId, 0L, 0,
+                    channel, "", true, true, null);
+            goalService.onUserTurnEnd(cmd.getSessionId(), cmd.getUserId(), turnId);
+            return;
+        }
 
         java.util.concurrent.ConcurrentLinkedQueue<String> spills = new java.util.concurrent.ConcurrentLinkedQueue<>();
         WenquAgentxTools.TurnHooks hooks = tools.newHooks(cmd, ref, () -> turnId, spills,
@@ -849,9 +861,18 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         for (String surfaceProblem : sessions.applyToolSurface(cmd, tools.turnGroupedNames(cmd, policy), policy)) {
             channel.emit(RunEventType.WARN, surfaceProblem);
         }
-        AgentSession.Task current = multimodal != null
-                ? session.submit(multimodal)
-                : session.submit(modelInput);
+        // 装配期（沙盒/实例要几十秒到几分钟）用户点了停止：不再发起模型调用，直接交给下面的跟随循环
+        // 按停止收口（它第一跳就会 interrupt 并退出）。不在这里 return 是因为 slot / 跟随位 / 目标接续
+        // 的收尾都在 followTurn 的 finally 里，跳过去就少收一样。
+        AgentSession.Task current = null;
+        if (tools.stopRequested(cmd)) {
+            log.info("[agentx] 装配完成时本轮已被停止，不再发起模型调用: session={} turn={}",
+                    cmd.getSessionId(), turnId);
+        } else {
+            current = multimodal != null
+                    ? session.submit(multimodal)
+                    : session.submit(modelInput);
+        }
         // 占住这一条会话的跟随位，收尾让位：答复端点据此判断「这次答完有没有人接着跑」
         String sessionKey = sessions.key(cmd);
         sessions.claimFollower(sessionKey);

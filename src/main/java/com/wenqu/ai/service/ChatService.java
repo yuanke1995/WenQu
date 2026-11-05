@@ -946,8 +946,12 @@ public class ChatService {
     private Map<String, Object> resumeSnapshot(String sessionId, String turnId) {
         Map<String, Object> snap = new LinkedHashMap<>();
         TurnHandle h = TurnRegistry.handle(sessionId);
-        if (h == null || !turnId.equals(h.turnId())) {
-            snap.put("running", false);   // 本轮已收尾（把手已摘）
+        // stopped 与「把手已摘」同列：用户已经点过停止的这一轮不再是「在跑的轮」。装配期（沙盒要
+        // 几十秒到几分钟）线程还卡在 sessions.open，把手与总线 run 都还在，若不在这里判 stopped，
+        // 刷新就会把刚停掉的那一轮接回来继续显示「正在溯源」（2026-11-05 线上：21:42:43 停止、
+        // 21:42:46 刷新接回，直到装配超时才收）。
+        if (h == null || !turnId.equals(h.turnId()) || h.stopped().get()) {
+            snap.put("running", false);
             return snap;
         }
         // 框架运行时没有问渠侧的状态袋：前置阶段（检索/思考）与生成中共用「pre」快照，

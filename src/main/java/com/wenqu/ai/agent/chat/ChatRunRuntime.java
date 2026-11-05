@@ -140,6 +140,10 @@ public class ChatRunRuntime {
         h.stopped().set(true);
         STOP_MARKS.put(sessionId, h.turnId());
         sessionEventService.append(sessionId, h.userId(), h.turnId(), "stop", "用户停止本轮");
+        // 总线当场收摊：别的标签/设备上还挂着的观众立刻收尾，注册表里的「在跑」也一并摘掉。
+        // 不收的后果是装配期（沙盒要几十秒到几分钟）点了停止，所有页面都还挂着「正在溯源」，
+        // 刷新还能接回来——引擎线程那时还没走到检查点，run 只好一直亮着（2026-11-05 线上复现）。
+        chatRunBus.finish(sessionId);
         completeEmitter(h.emitter());
         // 不在这里给那一问打终止标记：本轮此刻还没真正退场（引擎线程要等下一个检查点才断），
         // 此刻判「有没有回答」会抢在落库之前。标记统一由 chat 流水线 finally 打（见该方法注释）。
@@ -577,6 +581,12 @@ public class ChatRunRuntime {
             return out;
         }
         boolean mine = run != null && userId != null && userId.equals(run.userId());
+        if (mine) {
+            // 已点停止的轮不再算「在跑」：装配期（沙盒最长几百秒）线程还没走到检查点，把手与总线 run
+            // 都还在——不按 stopped 短路，刷新就会把用户刚停掉的那一轮接回来继续显示「正在溯源」。
+            TurnHandle h = TurnRegistry.handle(sessionId);
+            mine = h == null || !run.turnId().equals(h.turnId()) || !h.stopped().get();
+        }
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("running", mine);
         if (mine) {
@@ -624,7 +634,10 @@ public class ChatRunRuntime {
         emitter.onTimeout(() -> chatRunBus.drop(emitter));
         emitter.onError(t -> chatRunBus.drop(emitter));
         Map<String, Object> snapshot = chatRunBus.attach(run, emitter);
-        if (!sendFrame(emitter, "snapshot", JSON.toJSONString(snapshot), sessionId, snapshot.get("seq"))) {
+        boolean sent = sendFrame(emitter, "snapshot", JSON.toJSONString(snapshot), sessionId, snapshot.get("seq"));
+        // 快照说「不在跑了」（本轮已在接流这一拍收尾，或用户已点停止而引擎线程还没走到检查点）：
+        // 这一帧发完就把通道收掉。留着它，前端虽然按历史重显了，那条 async 请求还要挂到轮真正结束。
+        if (!sent || !Boolean.TRUE.equals(snapshot.get("running"))) {
             chatRunBus.drop(emitter);
             completeEmitter(emitter);
             return;

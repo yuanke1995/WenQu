@@ -62,6 +62,8 @@ public class OrphanTurnRunner {
     private final com.wenqu.ai.mapper.AgentShareMapper shareMapper;
     private final FrameworkSessions sessions;
     private final com.wenqu.ai.service.ConfigService configService;
+    /** 运行总线：用来区分「真孤儿」与「还活着的轮」（见 {@link #sweep()}） */
+    private final com.wenqu.ai.service.ChatRunBus chatRunBus;
 
     /**
      * 最近一次扫描的结果（系统巡检读它）。
@@ -76,13 +78,15 @@ public class OrphanTurnRunner {
     public OrphanTurnRunner(MessageMapper messageMapper, SessionMapper sessionMapper,
                             ToolApprovalMapper approvalMapper, com.wenqu.ai.mapper.AgentShareMapper shareMapper,
                             FrameworkSessions sessions,
-                            com.wenqu.ai.service.ConfigService configService) {
+                            com.wenqu.ai.service.ConfigService configService,
+                            com.wenqu.ai.service.ChatRunBus chatRunBus) {
         this.messageMapper = messageMapper;
         this.sessionMapper = sessionMapper;
         this.approvalMapper = approvalMapper;
         this.shareMapper = shareMapper;
         this.sessions = sessions;
         this.configService = configService;
+        this.chatRunBus = chatRunBus;
     }
 
     /** 最近一次扫描（时间、发现几条、接了几条、最后一次报错）。 */
@@ -117,6 +121,18 @@ public class OrphanTurnRunner {
         int taken = 0;
         String error = "";
         for (Message ask : orphans) {
+            // 这一轮在本副本上还活着（轮次把手或总线 run 还在）：它只是「慢」，不是孤儿。典型形态是
+            // 沙盒装配卡住几分钟——消息表里当然还没有回答、也还没有 end_reason，但原线程马上会接着跑；
+            // 这里再接一次就是同一问两条流水线（2026-11-05 线上：用户已点停止、装配线程还没醒，
+            // 扫描器把这轮当成孤儿接走，屏幕上又「继续跑」了一趟）。
+            // 只看本副本：进程真的死过时这两处都是空的，重启后的首轮扫描照旧立刻接。
+            boolean alive = com.wenqu.ai.agent.chat.TurnRegistry.handle(ask.getSessionId()) != null
+                    || chatRunBus.running(ask.getSessionId()) != null;
+            if (alive) {
+                log.info("[RECOVER] 这一轮还在跑（可能卡在装配期），不按孤儿接: session={} turn={}",
+                        ask.getSessionId(), ask.getTurnId());
+                continue;
+            }
             try {
                 Owner owner = ownerOf(ask.getSessionId());
                 if (owner == null || owner.uid() == null || owner.uid().isBlank()) {
