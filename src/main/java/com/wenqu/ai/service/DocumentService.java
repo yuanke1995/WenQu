@@ -1689,6 +1689,12 @@ public class DocumentService {
         return def == null ? null : def.getId();
     }
 
+    /** kb_id 为空的历史行归默认库（与上传/检索链路的口径一致）；默认库也不存在时才留空 */
+    private String resolveOwnKb(Object rawKb, String defaultKbId) {
+        String kbId = rawKb == null ? "" : String.valueOf(rawKb);
+        return kbId.isBlank() && defaultKbId != null ? defaultKbId : kbId;
+    }
+
     /**
      * 启停用文档（改 MySQL status + 缓存 + 关键词索引同步）。
      * 向量保留，检索侧按 status 过滤即时生效；索引同步使 Meilisearch 与有效块集合保持一致：
@@ -2086,34 +2092,50 @@ public class DocumentService {
     public Map<String, Object> healthReport() {
         Map<String, Object> out = new LinkedHashMap<>();
 
-        // 文档态分布（kbId 可能为 null：历史空值/脏数据，原样透出）
+        // 文档态分布（kbId 可能为 null：历史空值按默认库归属，与上传链路同口径）
         record DocStat(long total, long active, long deprecated, long parsing, long failed) {}
+        String defaultKbId = defaultKbIdOf();
         Map<String, DocStat> byKb = new LinkedHashMap<>();
         for (Map<String, Object> row : documentMapper.selectMaps(new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<AiDocument>()
                 .select("kb_id", "COUNT(*) AS total", "SUM(status=0) AS active", "SUM(status=1) AS deprecated",
                         "SUM(status=2) AS parsing", "SUM(status=3) AS failed")
                 .eq("deleted", 0)
                 .groupBy("kb_id"))) {
-            String kbId = row.get("kb_id") == null ? "" : String.valueOf(row.get("kb_id"));
+            String kbId = resolveOwnKb(row.get("kb_id"), defaultKbId);
             byKb.put(kbId, new DocStat(num(row, "total"), num(row, "active"), num(row, "deprecated"),
                     num(row, "parsing"), num(row, "failed")));
         }
 
-        // 块规模与未向量化：块表无 kb_id，按 doc_id 聚合后经文档归属折算到库
-        Map<String, String> docKb = new HashMap<>();
-        for (AiDocument d : documentMapper.selectList(new LambdaQueryWrapper<AiDocument>()
-                .select(AiDocument::getId, AiDocument::getKbId))) {
-            docKb.put(d.getId(), d.getKbId());
+        // 块规模与未向量化：块表无 kb_id，按 doc_id 聚合后经文档归属折算到库。
+        // 归属必须绕开 @TableLogic 取全量文档：回收站里的文档（deleted=1，块还在等恢复/清理）也要归回原库，
+        // 否则它们的块会掉进空归属桶，在面板上伪装成「未知库」的脏数据
+        record DocOwner(String kbId, boolean recycled) {}
+        Map<String, DocOwner> docOwner = new HashMap<>();
+        for (Map<String, Object> row : documentMapper.selectOwnershipAll()) {
+            docOwner.put(String.valueOf(row.get("id")),
+                    new DocOwner(resolveOwnKb(row.get("kb_id"), defaultKbId), num(row, "deleted") == 1));
         }
         Map<String, long[]> chunkByKb = new LinkedHashMap<>();
+        long[] orphanChunks = new long[2]; // 真无归属：文档行已物理删除 / 手动块的 docId 为空
         for (Map<String, Object> row : knowledgeMapper.selectMaps(new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Knowledge>()
                 .select("doc_id", "COUNT(*) AS total", "SUM(vector_id IS NULL OR vector_id='') AS no_vector")
                 .eq("deleted", 0)
                 .groupBy("doc_id"))) {
-            String kbId = docKb.getOrDefault(String.valueOf(row.get("doc_id")), "");
-            long[] agg = chunkByKb.computeIfAbsent(kbId, k -> new long[2]);
-            agg[0] += num(row, "total");
-            agg[1] += num(row, "no_vector");
+            DocOwner owner = docOwner.get(String.valueOf(row.get("doc_id")));
+            long total = num(row, "total");
+            if (owner == null) {
+                orphanChunks[0] += total;
+                orphanChunks[1] += num(row, "no_vector");
+                continue;
+            }
+            long[] agg = chunkByKb.computeIfAbsent(owner.kbId(), k -> new long[3]);
+            if (owner.recycled()) {
+                // 回收站文档的块单列：不参与关键词索引，也不该混进「未向量化」的待办数字
+                agg[2] += total;
+            } else {
+                agg[0] += total;
+                agg[1] += num(row, "no_vector");
+            }
         }
 
         // 组装行（库名/内置标记补齐；孤儿库=有块无文档行的也透出）
@@ -2127,10 +2149,11 @@ public class DocumentService {
         for (String kbId : kbIds) {
             KnowledgeBase kb = kbMap.get(kbId);
             DocStat ds = byKb.getOrDefault(kbId, new DocStat(0, 0, 0, 0, 0));
-            long[] cs = chunkByKb.getOrDefault(kbId, new long[2]);
+            long[] cs = chunkByKb.getOrDefault(kbId, new long[3]);
             Map<String, Object> r = new LinkedHashMap<>();
             r.put("kbId", kbId);
-            r.put("kbName", kb == null ? "（未知库 " + kbId + "）" : kb.getName());
+            r.put("kbName", kb != null ? kb.getName()
+                    : (kbId == null || kbId.isBlank() ? "未归属知识库" : "（未知库 " + kbId + "）"));
             r.put("builtin", kb != null && Integer.valueOf(1).equals(kb.getBuiltin()));
             r.put("docTotal", ds.total());
             r.put("docActive", ds.active());
@@ -2139,13 +2162,30 @@ public class DocumentService {
             r.put("docFailed", ds.failed());
             r.put("chunkTotal", cs[0]);
             r.put("chunkNoVector", cs[1]);
+            r.put("chunkRecycled", cs[2]);
+            kbs.add(r);
+        }
+        // 真孤儿块单独一行：名字如实说明「没有文档可归属」，不再借用「未知库」的说法
+        if (orphanChunks[0] > 0) {
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("kbId", "__orphan__");
+            r.put("kbName", "无文档归属的块");
+            r.put("builtin", false);
+            r.put("docTotal", 0L);
+            r.put("docActive", 0L);
+            r.put("docDeprecated", 0L);
+            r.put("docParsing", 0L);
+            r.put("docFailed", 0L);
+            r.put("chunkTotal", orphanChunks[0]);
+            r.put("chunkNoVector", orphanChunks[1]);
+            r.put("chunkRecycled", 0L);
             kbs.add(r);
         }
         kbs.sort((a, b) -> Long.compare((long) b.get("chunkTotal"), (long) a.get("chunkTotal")));
         out.put("kbs", kbs);
 
-        // 全局关键词索引漂移信号（与 /search-index/stats 同口径；-1=拉取失败不判漂移）
-        long effective = knowledgeMapper.selectCount(new LambdaQueryWrapper<>());
+        // 全局关键词索引漂移信号（与 /search-index/stats 同口径：只数有效块；-1=拉取失败不判漂移）
+        long effective = keywordIndexService.countEffectiveChunks();
         long indexed = keywordIndexService.indexedCount();
         Map<String, Object> index = new LinkedHashMap<>();
         index.put("engine", keywordIndexService.engine());

@@ -1,9 +1,7 @@
 package com.wenqu.ai.controller;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.dto.ResultJson;
-import com.wenqu.ai.mapper.KnowledgeMapper;
 import com.wenqu.ai.service.KeywordIndexService;
 import com.wenqu.ai.service.RoleService;
 import com.wenqu.ai.util.RequestUser;
@@ -34,7 +32,6 @@ import com.wenqu.ai.security.Permission;
 public class SearchIndexController {
 
     private final KeywordIndexService keywordIndexService;
-    private final KnowledgeMapper knowledgeMapper;
     private final RoleService roleService;
 
     /** 重建/清空是全平台破坏性运维操作，状态含索引规模信息，整体收紧到管理员 */
@@ -53,13 +50,15 @@ public class SearchIndexController {
         m.put("unavailableReason", keywordIndexService.debugUnavailableReason());
         m.put("indexedCount", keywordIndexService.indexedCount());
         m.put("writeFailCount", keywordIndexService.writeFailCount()); // M12 fail-loud：写失败累计（>0 说明有过写故障）
-        long mysqlCount;
+        // 与重建/对账同口径：只数有效块（生效文档的块 + 手动块）。数全表会把手动删除文档仍留在
+        // 回收站里的块算进来，索引永远追不平，漂移信号常亮成噪声
+        long effectiveChunks;
         try {
-            mysqlCount = knowledgeMapper.selectCount(new LambdaQueryWrapper<>());
+            effectiveChunks = keywordIndexService.countEffectiveChunks();
         } catch (Exception e) {
-            mysqlCount = -1;
+            effectiveChunks = -1;
         }
-        m.put("mysqlCount", mysqlCount);
+        m.put("mysqlCount", effectiveChunks);
         return ResultJson.ok(m);
     }
 

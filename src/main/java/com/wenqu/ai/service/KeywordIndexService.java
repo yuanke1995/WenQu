@@ -656,8 +656,8 @@ public class KeywordIndexService {
                                 "SELECT id FROM c_ai_document WHERE status=0 AND deleted=0"));
     }
 
-    /** 有效块计数（对账孤儿门控用，单条 COUNT） */
-    private long countEffectiveChunks() {
+    /** 有效块计数（对账孤儿门控与面板索引漂移共用，单条 COUNT；与索引灌库同口径） */
+    public long countEffectiveChunks() {
         Long n = knowledgeMapper.selectCount(effectiveChunkQuery());
         return n == null ? 0 : n;
     }

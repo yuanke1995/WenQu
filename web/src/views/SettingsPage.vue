@@ -50,12 +50,15 @@
               <a-tab-pane key="webSearch" tab="联网搜索" />
               <a-tab-pane key="skills" tab="技能" />
             </a-tabs>
-            <!-- 定时任务面板内容多（参数表单 + 任务状态 + 执行日志），用页签组织避免一页滚到底。
-                 页签风格与「智能体」hub 一致（a-tabs）；pane 留空只当页签条，内容在下方按 maintTab 切换 -->
+            <!-- 定时任务面板内容多（参数表单 + 任务状态 + 执行日志 + 索引与健康），用页签组织避免一页滚到底。
+                 页签风格与「智能体」hub 一致（a-tabs）；pane 留空只当页签条，内容在下方按 maintTab 切换。
+                 「索引与健康」不跟任务表同屏：运行状态是 fill 模式（表格体按容器高限高、外层不滚），
+                 把索引/健康卡塞在表格下面会被 overflow:hidden 裁掉，且两者本来就不属于周期任务 -->
             <a-tabs v-if="current === 'maintenance'" v-model:activeKey="maintTab" class="sched-tabs">
               <a-tab-pane key="config" tab="参数配置" />
               <a-tab-pane key="status" tab="运行状态" />
               <a-tab-pane key="logs" tab="执行日志" />
+              <a-tab-pane key="index" tab="索引与健康" />
             </a-tabs>
 
             <a-form :label-col="{ span: 5 }" :wrapper-col="{ span: 18 }" @submit.prevent>
@@ -235,9 +238,14 @@
                       </div>
                     </template>
                   </a-table>
+                </div>
+              </template>
 
-                  <!-- 检索索引运维：关键词索引漂移观察（已索引数 vs 库内块数）+ 向量索引库门诊断。
-                       三个动作接口均仅管理员；重建/清空为后台执行或下次解析增量写回，不阻塞本页 -->
+              <!-- 索引与健康页签：关键词索引漂移观察（已索引数 vs 库内块数）、向量索引库门诊断、知识库健康。
+                   三个动作接口均仅管理员；重建/清空为后台执行或下次解析增量写回，不阻塞本页。
+                   与「运行状态」分开放的缘故见上方页签条注释 -->
+              <template v-if="current === 'maintenance' && maintTab === 'index'">
+                <div class="key-usage-body sched-pane">
                   <div class="idx-ops">
                     <div class="idx-ops-head">
                       <span class="cfg-sub">检索索引</span>
@@ -253,8 +261,8 @@
                         {{ idxStats.engine || '—' }} · {{ idxStats.available ? '可用' : '不可用' }}
                       </span>
                       <span v-if="idxStats.indexedCount != null || idxStats.mysqlCount != null" class="key-dim">
-                        已索引 <b>{{ idxStats.indexedCount ?? '—' }}</b> / 库内块 <b>{{ idxStats.mysqlCount ?? '—' }}</b>
-                        <a-tooltip v-if="idxDrift" title="已索引数与库内块数不一致（写入为最终一致 + 写失败会累积），可执行全量重建对齐">
+                        已索引 <b>{{ idxStats.indexedCount ?? '—' }}</b> / 库内有效块 <b>{{ idxStats.mysqlCount ?? '—' }}</b>
+                        <a-tooltip v-if="idxDrift" title="已索引数与库内有效块数不一致（写入为最终一致 + 写失败会累积），可执行全量重建对齐">
                           <span class="sched-err">!</span>
                         </a-tooltip>
                       </span>
@@ -296,7 +304,7 @@
 
                   <!-- 知识库健康（§8）：文档态分布 / 块规模 / 未向量化 / 索引漂移。
                        只读聚合不触发修复；漂移与未向量化给出「去哪修」的指引 -->
-                  <div class="idx-ops" style="margin-top:8px">
+                  <div class="idx-ops">
                     <div class="idx-ops-head">
                       <span class="cfg-sub">知识库健康</span>
                       <a-tooltip title="刷新健康度">
@@ -309,7 +317,7 @@
                              :message="`关键词索引漂移：索引 ${healthIndex.indexedCount ?? '—'} ≠ 库内有效块 ${healthIndex.mysqlCount ?? '—'}——可在上方「检索索引」执行全量重建对齐`" />
                     <a-table :data-source="healthRows" size="small" row-key="kbId" :loading="healthLoading"
                              :pagination="{ pageSize: 10, size: 'small', hideOnSinglePage: true, showTotal: t => `共 ${t} 条` }"
-                             :scroll="{ x: 720 }" :locale="{ emptyText: '暂无知识库数据' }">
+                             :scroll="{ x: 840 }" :locale="{ emptyText: '暂无知识库数据' }">
                       <a-table-column title="知识库" key="kbName" width="220">
                         <template #default="{ record }">
                           <span>{{ record.kbName }}</span>
@@ -324,6 +332,14 @@
                       </a-table-column>
                       <a-table-column title="知识块" key="chunks" width="100">
                         <template #default="{ record }">{{ record.chunkTotal }}</template>
+                      </a-table-column>
+                      <a-table-column title="回收站块" key="recycled" width="100">
+                        <template #default="{ record }">
+                          <a-tooltip v-if="record.chunkRecycled > 0" title="回收站文档（可恢复，超期后连块一起清理）的块：不参与关键词索引">
+                            <span class="key-dim">{{ record.chunkRecycled }}</span>
+                          </a-tooltip>
+                          <span v-else class="key-dim">0</span>
+                        </template>
                       </a-table-column>
                       <a-table-column title="未向量化" key="nv" width="110">
                         <template #default="{ record }">
@@ -1177,11 +1193,13 @@ watch(activeFormPanel, () => { closedFolds.value = []; cfgKeyword.value = '' })
 // 首次进入「定时任务」面板：maintTab 默认就是 config，watch(maintTab) 不会触发，
 // 但折叠标题的「影响哪个任务」依赖任务快照 ⇒ 进面板即拉一次
 watch(() => current.value, v => {
-  if (v === 'maintenance' && !scheduleTasks.value.length) loadSchedule()
-  if (v === 'maintenance') { loadIndexOps(); loadHealth(); ensureIdxKbOptions() }
+  if (v !== 'maintenance') return
+  if (!scheduleTasks.value.length) loadSchedule()
+  // 停在本页签离开再回来时 maintTab 不变，watch(maintTab) 不触发，进面板补拉一次
+  if (maintTab.value === 'index') { loadIndexOps(); loadHealth(); ensureIdxKbOptions() }
 })
-// 运行状态页签是索引运维卡的唯一宿主：切进来时补拉一次（换库/重建后的最新状态）
-watch(maintTab, v => { if (v === 'status') { loadIndexOps(); loadHealth(); ensureIdxKbOptions() } })
+// 「索引与健康」页签是索引运维卡的唯一宿主：切进来时补拉一次（换库/重建后的最新状态）
+watch(maintTab, v => { if (v === 'index') { loadIndexOps(); loadHealth(); ensureIdxKbOptions() } })
 
 /** 手动触发一次：异步执行，稍后自动刷一次状态与日志 */const doTrigger = async record => {
   try {
@@ -1199,7 +1217,7 @@ watch(maintTab, v => { if (v === 'status') { loadIndexOps(); loadHealth(); ensur
   } catch (e) { message.error(e.message || '触发失败') }
 }
 
-// ── 检索索引运维（运行状态页签底部卡片）：关键词索引状态/重建/清空 + 向量索引库门诊断。
+// ── 检索索引运维（「索引与健康」页签）：关键词索引状态/重建/清空 + 向量索引库门诊断。
 //    接口均仅管理员：非管理员进入本页时请求会 403，状态留空显示为不可用即可，不弹错
 const idxStats = ref({})
 const idxLoading = ref(false)
@@ -1291,6 +1309,8 @@ const fmtInterval = ms => {
   if (ms % 1000 === 0) return (ms / 1000) + ' 秒'
   return ms + ' ms'
 }
+/** 执行日志里的时间是 LocalDateTime 序列化出的 ISO 串（表列只到分钟，秒以下不展示） */
+const fmtTs = s => (s ? String(s).replace('T', ' ').slice(0, 16) : '—')
 /** 任务快照里的时间是纪元毫秒（后端快照统一毫秒，倒计时按同一锚点算）；fmtTs 只认 ISO 串，两者别混用 */
 const fmtEpoch = ms => {
   if (!ms) return '—'
@@ -1488,8 +1508,10 @@ onMounted(() => { fetchAndFill(); loadToolInventory(); loadSkillOptions() })
 .sched-bad { color: var(--app-danger); }
 .audit-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
 .audit-pager { display: flex; align-items: center; gap: 12px; margin-top: 10px; justify-content: flex-end; }
-/* 检索索引运维（运行状态页签底部）：状态行内联排布，与上方任务表同一卡片面板 */
+/* 检索索引运维（「索引与健康」页签）：状态行内联排布，与知识库健康上下相邻 */
 .idx-ops { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--app-border); display: flex; flex-direction: column; gap: 8px; }
+/* 首卡直接接在页签条下，没有上方内容要分隔，去掉虚线与上边距 */
+.sched-pane > .idx-ops:first-child { margin-top: 0; padding-top: 0; border-top: none; }
 .idx-ops-head { display: flex; align-items: center; gap: 8px; }
 .idx-ops-head .cfg-sub { margin: 0; }
 .idx-ops-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }

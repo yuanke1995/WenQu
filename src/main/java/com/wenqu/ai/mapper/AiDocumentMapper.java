@@ -9,6 +9,7 @@ import org.apache.ibatis.annotations.Select;
 import org.apache.ibatis.annotations.Update;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * AI 文档 Mapper
@@ -45,4 +46,11 @@ public interface AiDocumentMapper extends BaseMapper<AiDocument> {
     /** 恢复前同名冲突检查（<=> 空安全等值：默认库的 kb_id NULL 历史行也要参与比对） */
     @Select("SELECT COUNT(*) FROM c_ai_document WHERE deleted = 0 AND kb_id <=> #{kbId} AND file_name = #{fileName}")
     int countActiveSameName(@Param("kbId") String kbId, @Param("fileName") String fileName);
+
+    /**
+     * 全量文档归属（含回收站行）：健康聚合按块折算库用。标准查询会被 @TableLogic 追加 deleted=0，
+     * 回收站文档的块因此找不到归属；这里显式带出 deleted 供调用方区分「生效」与「回收站」。
+     */
+    @Select("SELECT id AS id, kb_id AS kb_id, deleted AS deleted FROM c_ai_document")
+    List<Map<String, Object>> selectOwnershipAll();
 }
