@@ -1,4 +1,5 @@
 <template>
+  <span ref="shellRef" class="ms-shell" :class="{ 'is-pill': pill }" :style="shellVars">
   <a-select
     ref="rootRef"
     :value="modelValue || undefined"
@@ -12,7 +13,7 @@
     popup-class-name="ms-dropdown"
     :dropdown-match-select-width="false"
     option-label-prop="label"
-    show-search
+    :show-search="search"
     option-filter-prop="label"
     @change="onChange"
     @dropdown-visible-change="v => emit('open-change', v)"
@@ -69,6 +70,13 @@
       </div>
     </template>
   </a-select>
+    <!-- 胶囊触发器里的品牌图标 + 思考档位标记。
+         用绝对定位覆盖层而不是 antd 的 #label 插槽：#label 只在「有选中值」时参与渲染，
+         而对话工具栏常态是留空跟随（走占位文案），两种状态得共用一套版式，
+         否则同一颗胶囊会出现「有值带图标、跟随不带」的错位。 -->
+    <span v-if="pillIcon" class="ms-pill-icon"><ProviderIcon :icon="pillIcon.icon" :name="pillIcon.name" :size="14" /></span>
+    <span v-if="pillBadge" class="ms-pill-badge" :title="badgeTitle">{{ pillBadge }}</span>
+  </span>
 </template>
 
 <script setup>
@@ -102,6 +110,17 @@ const props = defineProps({
   allowClear: { type: Boolean, default: false },
   /** 胶囊形态：28px 高全圆角，弱化边框（对话工具栏） */
   pill: { type: Boolean, default: false },
+  /**
+   * 胶囊触发器图标取哪个模型引用：值为空（留空=跟随）时，触发器显示的是占位文案而不是值，
+   * 上层把「此刻真正生效的那个引用」传进来，图标才跟得上文字（不传=只在有值时出图标）。
+   */
+  displayRef: { type: String, default: '' },
+  /** 胶囊尾部的小标记（对话工具栏用它显示思考档位：低/中/高…；空=不显示） */
+  badge: { type: String, default: '' },
+  /** 标记的悬浮说明 */
+  badgeTitle: { type: String, default: '' },
+  /** 是否可在下拉里打字筛选（对话工具栏的胶囊关掉：模型就那十几个，搜索框反而让胶囊像输入框） */
+  search: { type: Boolean, default: true },
   placeholder: { type: String, default: '' },
   /** 宽度：数字=像素；字符串原样使用（如 "100%" 适配表单栅格） */
   width: { type: [Number, String], default: 320 },
@@ -277,6 +296,28 @@ function blockedTip(ref) {
     + '若已充值，点该供应商的「测试连接」验证一下就会恢复可选。'
 }
 
+// ==================== 胶囊触发器覆盖层（品牌图标 + 档位标记） ====================
+/** 触发器此刻显示的是哪个模型：有值=值本身，留空=上层点名的生效模型 */
+const triggerRef = computed(() => (props.modelValue || '').trim() || (props.displayRef || '').trim())
+/** 图标只在胶囊宽屏形态出：窄屏 compact 只有 104px，塞图标会把模型名挤成省略号 */
+const pillIcon = computed(() => {
+  if (!props.pill || props.compact) return null
+  const r = triggerRef.value
+  if (!r || !groups.value.some(g => g.models.some(m => m.ref === r))) return null
+  return { icon: iconOf(r), name: providerNameOf(r) }
+})
+const pillBadge = computed(() => (props.pill && !props.compact && props.badge) ? props.badge : '')
+/** 覆盖层占掉的左右内边距：图标位与标记位都算进宽度，文字才不会被压在它们下面 */
+const badgeW = ref(0)
+const PILL_PL = 12, PILL_PL_ICON = 29, PILL_PR = 24, PILL_BADGE_GAP = 11
+const pillPad = computed(() => ({
+  left: pillIcon.value ? PILL_PL_ICON : PILL_PL,
+  right: props.compact ? 8 : PILL_PR + (pillBadge.value ? badgeW.value + PILL_BADGE_GAP : 0),
+}))
+const shellVars = computed(() => props.pill
+  ? { '--ms-pl': pillPad.value.left + 'px', '--ms-pr': pillPad.value.right + 'px' }
+  : null)
+
 onMounted(() => {
   load()
   if (props.inheritResolve) loadPersonalDefault()
@@ -295,9 +336,9 @@ defineExpose({ refresh: () => { load(true); if (props.inheritResolve) loadPerson
 // canvas 会量窄 ~14%（deepseek-flash 实测：渲染 111px vs canvas 97px），边界名仍会截断；
 // 且 placeholder（生效模型名）是异步解析后到的，必须量渲染结果而不是按 props 时序预估。
 const rootRef = ref(null)
+const shellRef = ref(null)
 const pillWidth = ref(props.width)
 const PILL_MAX = 300      // 极端长名兜底，防挤爆工具栏
-const PILL_CHROME = 40    // 左内边距 12 + 箭头/清除位 24 + 渲染取整缓冲 4
 async function measurePill() {
   if (!props.pill) return
   await nextTick()
@@ -309,14 +350,22 @@ async function measurePill() {
   range.selectNodeContents(item)
   const w = range.getBoundingClientRect().width
   if (!w) return
+  // 标记是绝对定位的覆盖层，宽度得实测后才进得了左右内边距的账
+  const badgeEl = shellRef.value && shellRef.value.querySelector('.ms-pill-badge')
+  badgeW.value = badgeEl ? Math.ceil(badgeEl.getBoundingClientRect().width) : 0
+  const { left, right } = pillPad.value
   // 无下限：宽度严格随文字伸缩（短名收窄、长名放宽），量宽来自渲染后 DOM，不需要防量窄余量
-  pillWidth.value = Math.min(PILL_MAX, Math.ceil(w) + PILL_CHROME)
+  pillWidth.value = Math.min(PILL_MAX, Math.ceil(w) + left + right + 4)
 }
 watch([() => props.modelValue, () => groups.value, inheritText,
-       () => props.placeholder, () => props.pill, () => props.width], measurePill, { immediate: true })
+       () => props.placeholder, () => props.pill, () => props.width,
+       () => props.badge, () => props.displayRef, pillIcon], measurePill, { immediate: true })
 </script>
 
 <style scoped>
+/* 非胶囊形态不生成盒子：设置页/表单里的选择器仍按原来的 DOM 关系参与父容器布局 */
+.ms-shell { display: contents; }
+.ms-shell.is-pill { display: inline-block; position: relative; }
 .ms-option {
   display: flex;
   align-items: center;
@@ -413,7 +462,8 @@ watch([() => props.modelValue, () => groups.value, inheritText,
   background: transparent !important;
   box-shadow: none !important;
   border-radius: 999px !important;
-  padding: 0 24px 0 12px !important;
+  /* 左右内边距由脚本按「有没有图标/标记」实测后写进变量（见 pillPad），CSS 不再各写一套 */
+  padding: 0 var(--ms-pr, 24px) 0 var(--ms-pl, 12px) !important;
   font-size: 13px;
 }
 .ms-pill :deep(.ant-select-selection-item),
@@ -422,9 +472,7 @@ watch([() => props.modelValue, () => groups.value, inheritText,
   color: var(--app-text3);
 }
 /* 已指定模型时文字用前景色，「跟随：…」保持灰 */
-/* 紧凑形态：模型名超宽即省略，不换行、不撑破工具条。
-   padding-right 归零是因为下面已隐藏箭头（compact 时不渲染 suffixIcon）。 */
-.ms-compact :deep(.ant-select-selector) { padding-right: 8px !important; }
+/* 紧凑形态：模型名超宽即省略，不换行、不撑破工具条（右内边距归 8 已由 pillPad 计入变量）。 */
 .ms-compact :deep(.ant-select-selection-item) {
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
@@ -442,6 +490,40 @@ watch([() => props.modelValue, () => groups.value, inheritText,
 }
 .ms-pill :deep(.ant-select-selection-search-input) {
   height: 26px !important;
+}
+/* 有值时悬浮出「清除」钮：antd 把它压在箭头同一格，并铺一块不透明底去盖箭头。
+   幽灵胶囊是透明底，白块盖不住灰箭头，两个图标叠成一团（用户报的「没对齐」就是这里）。
+   改成清除钮透明底 + 悬浮时收起箭头，两者不再同框。 */
+.ms-pill :deep(.ant-select-clear) {
+  background: transparent !important;
+  color: var(--app-text3);
+}
+.ms-pill.ms-has-value:hover :deep(.ant-select-arrow) {
+  opacity: 0;
+}
+/* 覆盖层不吃指针事件：点图标/标记等于点胶囊，下拉照常展开 */
+.ms-pill-icon {
+  position: absolute;
+  left: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  line-height: 0;
+  pointer-events: none;
+}
+.ms-pill-badge {
+  position: absolute;
+  /* 30 = 箭头右内缩 11 + 箭头宽 12 + 与箭头留 7 */
+  right: 30px;
+  /* 不靠盒居中：汉字墨迹落在 11px 盒的底部，盒居中时它比西文基线低 2px（用户点名的「没对齐」）。
+     上提 2px：墨迹底边正好压在西文基线、视觉中心与模型名的字身中心同高（实测 13px 正文下
+     文字 x-height 中线 y20.5，标记中线同为 20.5） */
+  top: calc(50% - 2px);
+  transform: translateY(-50%);
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--app-text3);
+  pointer-events: none;
 }
 </style>
 
