@@ -482,14 +482,11 @@ public class ProjectFileService {
             if (rootAllowed) return;
             throw new IllegalArgumentException("缺少文件路径");
         }
-        List<String> out = new ArrayList<>();
         for (String seg : raw.split("/")) {
             if (seg.isEmpty() || ".".equals(seg) || "..".equals(seg) || seg.indexOf('\u0000') >= 0) {
                 throw new IllegalArgumentException("非法文件路径");
             }
-            out.add(seg);
         }
-        if (out.size() > MAX_TREE_DEPTH) throw new IllegalArgumentException("层级太深（最多 " + MAX_TREE_DEPTH + " 层）");
     }
 
     private static boolean shownName(String name) {
