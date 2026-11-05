@@ -565,13 +565,19 @@ public class ChatService {
                     // 晚一步这里已经出不来了。断线宽限到点的中止也在这一并判：那条路径由总线线程
                     // 摘掉把手，只看 runtime.turnStopRequested 会漏打标记，用户下次进来读到的会是
                     // 「问出去了却什么都没有」的空档。
-                    // 两种终止要分开写：用户点停止 ≠ 没人看超时——后者不是用户做的事，文案不许怪他
-                    if (runtime.takeBareAbort(sessionId, turnId)) {
+                    // 两种终止要分开写：用户点停止 ≠ 没人看超时——后者不是用户做的事，文案不许怪他。
+                    // 显式停止必须排在最前：慢启动（沙盒装配卡住几分钟）时用户先点了停止，随后
+                    // 宽限到点的「无观众中断」也会登记一笔——先取 bareAbort 就会把用户的动作记成
+                    // 系统中断（2026-11-05 线上复现：主动停止的那一问落成 interrupted）。
+                    final boolean userStopped = runtime.takeStopMark(sessionId, turnId);
+                    final boolean bareAbort = runtime.takeBareAbort(sessionId, turnId);
+                    if (userStopped) {
+                        sessionService.markTurnStopped(sessionId, "stopped");
+                    } else if (bareAbort) {
                         sessionService.markTurnStopped(sessionId, "interrupted");
-                    } else if (runtime.takeStopMark(sessionId, turnId)
-                            || runtime.turnStopRequested(sessionId)) {
-                        // stopMark 是用户点停的桥：分派段摘把手在先，turnStopRequested 只剩
-                        // 把手还挂着的路径（如收集型通道）走得到，两条并存时同一语义
+                    } else if (runtime.turnStopRequested(sessionId)) {
+                        // 只剩「把手还挂着」的路径（如收集型通道）靠它判：stopMark 已在上面取过，
+                        // 两种桥同一语义（用户点停）
                         sessionService.markTurnStopped(sessionId, "stopped");
                     }
                     runtime.endTurnMutex(sessionId);
