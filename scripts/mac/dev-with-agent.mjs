@@ -10,6 +10,8 @@
  *   WENQU_EXECUTOR_SERVER  执行器连的服务器，默认取 VITE_PROXY_TARGET，再退 http://127.0.0.1:8090/ai
  *   WENQU_EXECUTOR_ROOT    浏览起点，默认 ~（--root / 可浏览整盘）
  *   WENQU_EXECUTOR_TOKEN   手工令牌，仅兼容旧用法；平时不需要——首次启动按终端提示在浏览器里授权即可
+ *   WENQU_EXECUTOR_REQUIRE_HTTPS=1  强制远程服务器使用 https（默认临时允许 http，只告警）
+ *   WENQU_EXECUTOR_INSECURE=1       与 REQUIRE_HTTPS 同时出现时仍允许 http（应急用）
  *
  * 首次启动时执行器会打印链接 + 6 位码；在浏览器里登录问渠、确认后令牌自动存到
  * ~/.wenqu/executor.json（0600），之后每次启动直接复用。
@@ -53,6 +55,8 @@ const args = [
   '--root', root
 ]
 if (process.env.WENQU_EXECUTOR_TOKEN) args.push('--token', process.env.WENQU_EXECUTOR_TOKEN)
+if (/^(1|true|yes)$/i.test(String(process.env.WENQU_EXECUTOR_REQUIRE_HTTPS || '').trim())) args.push('--require-https')
+if (/^(1|true|yes)$/i.test(String(process.env.WENQU_EXECUTOR_INSECURE || '').trim())) args.push('--insecure')
 let agent = spawn(process.execPath, args, { cwd: repoRoot, stdio: 'inherit' })
 agent.on('exit', code => {
   if (code && code !== 0) console.log(`[dev] 本机执行器已退出（code=${code}），前端继续运行`)

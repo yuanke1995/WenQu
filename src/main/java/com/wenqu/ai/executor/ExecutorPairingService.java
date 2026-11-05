@@ -31,6 +31,10 @@ public class ExecutorPairingService {
     private static final long FAILURE_WINDOW_MS = 10 * 60_000L;
     /** 同一账号 10 分钟内最多试错这么多次，防止遍历 6 位码 */
     private static final int MAX_FAILURES = 10;
+    /** 同一 IP 每分钟最多申请多少个授权码：匿名端点不能让一个人把待确认表灌满 */
+    private static final int MAX_CREATES_PER_IP_PER_MINUTE = 6;
+    /** 同一 IP 同时待确认的授权码上限 */
+    private static final int MAX_PENDING_PER_IP = 20;
     /** 去掉了 0/O/1/I 等易混字符：码要能照着终端手输 */
     private static final String ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
@@ -62,15 +66,17 @@ public class ExecutorPairingService {
         final String userCode;
         final String name;
         final String os;
+        final String ip;
         final long expiresAt;
         volatile String uid;
         volatile boolean consumed;
 
-        Session(String deviceCode, String userCode, String name, String os, long expiresAt) {
+        Session(String deviceCode, String userCode, String name, String os, String ip, long expiresAt) {
             this.deviceCode = deviceCode;
             this.userCode = userCode;
             this.name = name;
             this.os = os;
+            this.ip = ip;
             this.expiresAt = expiresAt;
         }
 
@@ -84,6 +90,10 @@ public class ExecutorPairingService {
     private final Map<String, Session> byDeviceCode = new ConcurrentHashMap<>();
     private final Map<String, Session> byUserCode = new ConcurrentHashMap<>();
     private final Map<String, Deque<Long>> failures = new ConcurrentHashMap<>();
+    /** IP → 最近一分钟的申请时间；匿名申请限频用。 */
+    private final Map<String, Deque<Long>> createHits = new ConcurrentHashMap<>();
+    /** IP → 当前待确认数量；防止单 IP 占满全局待确认表。 */
+    private final Map<String, Integer> pendingByIp = new ConcurrentHashMap<>();
 
     /** 匿名申请：留一个上限，避免被灌爆内存（真正配对只需要极少数几个待确认码） */
     private static final int MAX_PENDING = 1000;
@@ -96,7 +106,16 @@ public class ExecutorPairingService {
 
     /** 执行器启动时申请：deviceCode 给执行器轮询用，userCode 给人在浏览器里照着输。 */
     public Map<String, Object> create(String name, String os) {
+        return create(name, os, null);
+    }
+
+    public Map<String, Object> create(String name, String os, String ip) {
         sweep();
+        String ipKey = ip == null || ip.isBlank() ? "unknown" : ip.trim();
+        checkCreateRate(ipKey);
+        if (pendingByIp.getOrDefault(ipKey, 0) >= MAX_PENDING_PER_IP) {
+            throw new PairingException(429, "这个地址待确认的授权码太多了，请稍后再试");
+        }
         if (byDeviceCode.size() >= MAX_PENDING) {
             throw new PairingException(429, "待确认的授权码太多了，请稍后再试");
         }
@@ -107,10 +126,11 @@ public class ExecutorPairingService {
         } while (byUserCode.containsKey(userCode));
         String deviceCode = HexFormat.of().formatHex(randomBytes(24));
         Session s = new Session(deviceCode, userCode,
-                trim(name, 100, "我的电脑"), trim(os, 20, ""),
+                trim(name, 100, "我的电脑"), trim(os, 20, ""), ipKey,
                 now + TTL_MS);
         byDeviceCode.put(deviceCode, s);
         byUserCode.put(userCode, s);
+        pendingByIp.merge(ipKey, 1, Integer::sum);
         log.info("[EXECUTOR] 授权码已生成 name={} code={}", s.name, userCode);
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("deviceCode", deviceCode);
@@ -176,6 +196,19 @@ public class ExecutorPairingService {
         return new Info(s.userCode, s.name, s.os, s.expiresAt, s.status(System.currentTimeMillis()));
     }
 
+    /** 匿名申请限频：滑动一分钟窗口，按 IP 计。 */
+    private void checkCreateRate(String ip) {
+        Deque<Long> q = createHits.computeIfAbsent(ip, k -> new ArrayDeque<>());
+        long now = System.currentTimeMillis();
+        synchronized (q) {
+            while (!q.isEmpty() && now - q.peekFirst() > 60_000L) q.removeFirst();
+            if (q.size() >= MAX_CREATES_PER_IP_PER_MINUTE) {
+                throw new PairingException(429, "授权码申请过于频繁，请稍后再试");
+            }
+            q.addLast(now);
+        }
+    }
+
     private void checkThrottle(String uid) {
         if (uid == null) return;
         Deque<Long> q = failures.get(uid);
@@ -205,8 +238,11 @@ public class ExecutorPairingService {
     }
 
     private void remove(Session s) {
-        byDeviceCode.remove(s.deviceCode, s);
+        boolean removed = byDeviceCode.remove(s.deviceCode, s);
         byUserCode.remove(s.userCode, s);
+        if (removed && s.ip != null) {
+            pendingByIp.computeIfPresent(s.ip, (k, v) -> v <= 1 ? null : v - 1);
+        }
     }
 
     private String randomUserCode() {

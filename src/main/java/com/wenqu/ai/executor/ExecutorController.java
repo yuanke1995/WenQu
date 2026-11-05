@@ -4,6 +4,7 @@ import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 import com.wenqu.ai.util.RequestUser;
 import io.swagger.v3.oas.annotations.Operation;
+import jakarta.servlet.http.HttpServletRequest;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -36,11 +37,14 @@ public class ExecutorController {
 
     @Operation(summary = "执行器申请授权码", description = "匿名；返回 deviceCode（执行器轮询用）与 userCode（用户在浏览器里输的 6 位码）")
     @PostMapping("/device-code")
-    public Map<String, Object> createDeviceCode(@RequestBody(required = false) Map<String, Object> body) {
+    public Map<String, Object> createDeviceCode(@RequestBody(required = false) Map<String, Object> body,
+                                                HttpServletRequest request) {
         String name = body == null || body.get("name") == null ? "" : String.valueOf(body.get("name"));
         String os = body == null || body.get("os") == null ? "" : String.valueOf(body.get("os"));
+        // 只认 TCP 对端地址：X-Forwarded-For 客户端可伪造，用它做限流等于没有限流
+        String ip = request == null ? null : request.getRemoteAddr();
         try {
-            return ok(pairing.create(name, os));
+            return ok(pairing.create(name, os, ip));
         } catch (ExecutorPairingService.PairingException e) {
             return fail(e.code(), e.getMessage());
         }
@@ -175,18 +179,51 @@ public class ExecutorController {
         return ok(true);
     }
 
+    /** 执行器确认收到调用：取走后的响应可能丢，没 ack 的调用会被重投。 */
+    @Operation(summary = "执行器确认收到调用", description = "设备令牌自证；只标记投递成功，不执行任何操作")
+    @PostMapping("/ack")
+    public ResponseEntity<String> ack(@RequestHeader(value = "Authorization", required = false) String auth,
+                                      @RequestBody(required = false) Map<String, Object> body) {
+        ExecutorRegistry.Device device = executorService.authenticate(bearer(auth), false);
+        if (device == null) return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        String id = body == null || body.get("id") == null ? "" : String.valueOf(body.get("id"));
+        boolean accepted = registry.ack(device.id(), id);
+        return ResponseEntity.ok(JSON.toJSONString(Map.of("accepted", accepted)));
+    }
+
+    /** 执行器心跳：命令执行期间独立刷新在线时间，避免长命令被 70s 在线窗口误判离线。 */
+    @Operation(summary = "执行器心跳", description = "设备令牌自证；只刷新在线时间，不取任务")
+    @PostMapping("/heartbeat")
+    public ResponseEntity<String> heartbeat(@RequestHeader(value = "Authorization", required = false) String auth) {
+        ExecutorRegistry.Device device = executorService.authenticate(bearer(auth));
+        if (device == null) return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
+        registry.heartbeat(device.id());
+        return ResponseEntity.ok(JSON.toJSONString(Map.of("accepted", true)));
+    }
+
     /** 执行器长轮询：没有任务时挂起最多 wait 秒。设备令牌自证，不走登录态。 */
     @GetMapping("/poll")
     public ResponseEntity<String> poll(@RequestHeader(value = "Authorization", required = false) String auth,
+                                       @RequestHeader(value = "X-Wenqu-Executor-Version", required = false) String agentVersion,
                                        @RequestParam(value = "wait", defaultValue = "25") int wait) throws InterruptedException {
         ExecutorRegistry.Device device = executorService.authenticate(bearer(auth));
         if (device == null) return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
-        ExecutorRegistry.Call call = registry.poll(device.id(), wait);
+        // v2 起有 ack 租约；旧 agent 不带版本头，不能因未 ack 重投（否则会重复执行）
+        boolean ackCapable = false;
+        if (agentVersion != null && !agentVersion.isBlank()) {
+            try {
+                ackCapable = Integer.parseInt(agentVersion.trim()) >= 2;
+            } catch (NumberFormatException ignore) {
+                ackCapable = false;
+            }
+        }
+        ExecutorRegistry.Call call = registry.poll(device.id(), wait, ackCapable);
         if (call == null) return ResponseEntity.noContent().build();
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("id", call.id);
         data.put("op", call.op);
         data.put("args", call.args);
+        data.put("deadline", call.deadlineMs);
         return ResponseEntity.ok(JSON.toJSONString(data));
     }
 
@@ -195,7 +232,7 @@ public class ExecutorController {
     @SuppressWarnings("unchecked")
     public ResponseEntity<String> result(@RequestHeader(value = "Authorization", required = false) String auth,
                                          @RequestBody String body) {
-        ExecutorRegistry.Device device = executorService.authenticate(bearer(auth));
+        ExecutorRegistry.Device device = executorService.authenticate(bearer(auth), false);
         if (device == null) return ResponseEntity.status(HttpStatus.UNAUTHORIZED).build();
         JSONObject payload = JSON.parseObject(body);
         String id = payload.getString("id");
@@ -210,7 +247,7 @@ public class ExecutorController {
                     error == null ? "E_IO" : error.getString("code"),
                     error == null ? "执行失败" : error.getString("message"));
         }
-        boolean accepted = registry.complete(id, result);
+        boolean accepted = registry.complete(device.id(), id, result);
         return ResponseEntity.ok(JSON.toJSONString(Map.of("accepted", accepted)));
     }
 

@@ -15,6 +15,8 @@
  *   --ask            写文件/跑命令前在终端逐次确认（默认不问：权限档位已经由页面选择器定好，
  *                    执行器再弹一次终端确认会让浏览器里的这一轮一直等不到返回）
  *   --name <名字>    设备名（默认主机名）
+ *   --require-https  强制远程服务器使用 https（默认临时允许 http，只打印明文告警）
+ *   --insecure       与 --require-https 同时出现时仍允许 http（应急用；也可用 WENQU_EXECUTOR_INSECURE=1）
  *   --timeout <秒>   单次轮询挂起时长（默认 25）
  *   --data-dir <目录> 轮文件改动快照的本地存储目录（默认 ~/.wenqu/executor；内容不出这台电脑）
  *   --turn-ttl-days <天>    快照保留天数（默认 14）
@@ -49,8 +51,37 @@ const mult = name => {
 }
 
 const SERVER = (arg('server', 'http://127.0.0.1:8090/ai') || '').replace(/\/+$/, '')
+const INSECURE = flag('insecure') || /^(1|true|yes)$/i.test(String(process.env.WENQU_EXECUTOR_INSECURE || '').trim())
+/** 临时默认允许远程 http（启动时打印明文警告）；显式加 --require-https 才硬性拒绝。 */
+const REQUIRE_HTTPS = flag('require-https')
+  || /^(1|true|yes)$/i.test(String(process.env.WENQU_EXECUTOR_REQUIRE_HTTPS || '').trim())
 const NAME = arg('name', os.hostname())
 const WAIT = Math.max(5, Math.min(30, Number(arg('timeout', '25')) || 25))
+/** 执行器协议版本：v2 起 poll 会带这个头，服务端据此启用 ack 租约与重投；
+ *  旧服务端不认识也无害（ack 404 时按旧协议放行），旧 agent 不带这个头则服务端按旧协议处理。 */
+const AGENT_VERSION = '2'
+
+/** 远程 HTTP 目前临时放行，但启动时明确告警：设备令牌与文件内容都在 Bearer/HTTP 体里，
+ *  明文过网等于把本机文件读写权交给中间人。正式环境请换 https；
+ *  想现在就强制只允许 https，加 --require-https（本机回环地址始终不受限）。 */
+function checkTransportSecurity (server) {
+  let u
+  try { u = new URL(server) } catch {
+    console.error(`[问渠] 服务器地址不合法：${server}`)
+    process.exit(2)
+  }
+  const host = (u.hostname || '').toLowerCase()
+  const loopback = host === '127.0.0.1' || host === 'localhost' || host === '::1' || host === '[::1]'
+  if (u.protocol === 'https:' || loopback) return
+  if (REQUIRE_HTTPS && !INSECURE) {
+    console.error('[问渠] 已启用 --require-https：远程服务器必须使用 https://。'
+      + '如确需明文，请显式加 --insecure。')
+    process.exit(2)
+  }
+  console.warn('[问渠] 当前用 http 连接远程服务器：设备令牌与文件内容会明文过网。'
+    + '正式环境请改用 https；可用 --require-https 强制校验。')
+}
+checkTransportSecurity(SERVER)
 const AUTO_YES = flag('yes')
 /** 只有显式 --ask 才在终端逐次确认；默认信任服务端下发的权限档位（页面上的选择器才是闸门） */
 const ASK = flag('ask')
@@ -73,6 +104,9 @@ const WEB = (arg('web', process.env.WENQU_WEB_BASE || '') || SERVER.replace(/\/(
 let TOKEN = ''
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
+/** 给 fetch 加硬超时：网络挂起时不要把轮询循环/心跳一起拖死。 */
+const timeoutSignal = ms => (typeof AbortSignal !== 'undefined' && AbortSignal.timeout
+  ? AbortSignal.timeout(ms) : undefined)
 
 function readTokenFile () {
   try { return JSON.parse(fs.readFileSync(TOKEN_FILE, 'utf8')) || {} } catch { return {} }
@@ -112,11 +146,69 @@ function forgetToken () {
   writeTokenFile(cfg)
 }
 
+// ==================== 单实例锁 ====================
+//
+// 同一个服务器只允许一个执行器进程：两个进程用同一令牌会把调用分走，
+// 同一轮的 turnStart / write / turnEnd 可能落在不同进程上，快照和顺序都会乱。
+
+let lockFile = ''
+
+function lockPathOf (server) {
+  const dir = path.join(os.homedir(), '.wenqu', 'locks')
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
+  try { fs.chmodSync(dir, 0o700) } catch { /* ignore */ }
+  return path.join(dir, createHash('sha1').update(String(server)).digest('hex').slice(0, 16) + '.lock')
+}
+
+function releaseSingleInstanceLock () {
+  if (!lockFile) return
+  try { fs.unlinkSync(lockFile) } catch { /* 已被清理 */ }
+  lockFile = ''
+}
+
+function acquireSingleInstanceLock () {
+  const file = lockPathOf(SERVER)
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const fd = fs.openSync(file, 'wx', 0o600)
+      try {
+        fs.writeFileSync(fd, JSON.stringify({
+          pid: process.pid, server: SERVER, startedAt: new Date().toISOString()
+        }))
+      } finally {
+        fs.closeSync(fd)
+      }
+      lockFile = file
+      return
+    } catch (e) {
+      if (e.code !== 'EEXIST') throw e
+      let info = null
+      try { info = JSON.parse(fs.readFileSync(file, 'utf8')) } catch { /* 损坏锁按过期处理 */ }
+      const pid = info && Number(info.pid)
+      let alive = false
+      if (pid) {
+        try { process.kill(pid, 0); alive = true } catch (err) { alive = err.code === 'EPERM' }
+      }
+      if (alive) {
+        log(`同一个服务器已有一个执行器在运行（pid=${pid}），本进程退出。`)
+        process.exit(4)
+      }
+      try { fs.unlinkSync(file) } catch { /* 已被别的进程清掉 */ }
+    }
+  }
+  throw err('E_LOCK', '无法获取执行器单实例锁')
+}
+
+process.on('exit', releaseSingleInstanceLock)
+process.on('SIGINT', () => { releaseSingleInstanceLock(); process.exit(0) })
+process.on('SIGTERM', () => { releaseSingleInstanceLock(); process.exit(0) })
+
 async function postJson (url, body) {
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body || {})
+    body: JSON.stringify(body || {}),
+    signal: timeoutSignal(15_000)
   })
   if (!res.ok) {
     const e = new Error(`HTTP ${res.status}`)
@@ -130,6 +222,48 @@ async function postJson (url, body) {
     throw e
   }
   return (envelope && envelope.data) || {}
+}
+
+// ==================== 心跳 ====================
+//
+// 长轮询只在取任务前后刷新 last_seen；一条 120s 的命令会把执行器「挂」在服务端
+// 的 70s 在线窗口之外，后续调用会被误判离线。心跳独立于轮询，命令执行期间照常发。
+
+let heartbeatTimer = null
+let heartbeatWarned = false
+let heartbeatUnsupported = false
+let legacyServerWarned = false
+
+function startHeartbeat () {
+  if (heartbeatTimer) return
+  const beat = async () => {
+    if (!TOKEN || heartbeatUnsupported) return
+    try {
+      const res = await fetch(`${SERVER}/api/ai/executor/heartbeat`, {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + TOKEN },
+        signal: timeoutSignal(5_000)
+      })
+      if (res.status === 401) {
+        if (!heartbeatWarned) log('心跳被拒（设备令牌失效），等待主循环重新授权')
+        heartbeatWarned = true
+        return
+      }
+      // 旧服务端没有心跳端点：长轮询本身会刷新在线状态，停发即可（别每 20s 刷一条失败日志）
+      if (res.status === 404 || res.status === 405) {
+        if (!heartbeatUnsupported) log('服务端不支持心跳（旧版本），在线状态由长轮询维持')
+        heartbeatUnsupported = true
+        return
+      }
+      if (!res.ok) log('心跳失败:', res.status)
+      else heartbeatWarned = false
+    } catch (e) {
+      log('心跳失败:', e.message)
+    }
+  }
+  heartbeatTimer = setInterval(beat, 20_000)
+  if (heartbeatTimer.unref) heartbeatTimer.unref()
+  beat()
 }
 
 /** 设备授权：打印链接 + 6 位码，等浏览器确认后把令牌写到本地文件。 */
@@ -188,27 +322,76 @@ async function authorize () {
 
 // ==================== 路径围栏 ====================
 
-/** 本次调用的根目录集合（工作区可以绑定多个源文件夹，首个为主目录）。 */
-let currentRoots = []
-/** 同一批 roots 的完整记录（alias/path/primary）：每轮改动快照要用别名拼展示路径。 */
-let currentRootRecords = []
-let primaryRoot = null
-let currentPolicy = 'workspace-write'
-const curRoot = () => primaryRoot || ROOT
+/** 每次调用的上下文：roots/policy 不能放全局——读操作并行后，甲调用会读到乙调用的根。 */
+function callContext (args, deadline) {
+  const validRoot = r => r && String(r.path || '').trim()
+  const roots = Array.isArray(args.roots)
+    ? args.roots.filter(validRoot).map(r => path.resolve(String(r.path)))
+    : (args.root && String(args.root).trim() ? [path.resolve(String(args.root))] : [])
+  const rootRecords = Array.isArray(args.roots)
+    ? args.roots.filter(validRoot)
+        .map(r => ({ alias: String(r.alias || ''), path: path.resolve(String(r.path)), primary: !!r.primary }))
+    : []
+  let primaryRoot = roots[0] || null
+  if (Array.isArray(args.roots)) {
+    const p = args.roots.find(r => validRoot(r) && r.primary)
+    if (p) primaryRoot = path.resolve(String(p.path))
+  }
+  const mark = p => {
+    const abs = path.resolve(String(p || ''))
+    try { return fs.realpathSync.native(abs) } catch { return abs }
+  }
+  return {
+    roots,
+    rootRecords,
+    primaryRoot,
+    realRoots: roots.map(mark),
+    policy: args.policy === 'danger-full-access' ? 'danger-full-access' : 'workspace-write',
+    deadline: Number(deadline) || 0
+  }
+}
+
+const curRoot = ctx => ctx.primaryRoot || ROOT
+
+/** 尽量取真实路径：目标不存在时一路向上找最近的已存在祖先，再把缺失的尾段拼回去。
+ *  只规范一层父目录不够——多级新目录的上级仍可能是软链，围栏会被绕出去。 */
+function realPathLoose (p) {
+  const abs = path.resolve(String(p || ''))
+  const tail = []
+  let cur = abs
+  for (;;) {
+    try {
+      const real = fs.realpathSync.native(cur)
+      return tail.length ? path.join(real, ...tail.reverse()) : real
+    } catch { /* 不存在，继续向上 */ }
+    const parent = path.dirname(cur)
+    if (parent === cur) return abs
+    tail.push(path.basename(cur))
+    cur = parent
+  }
+}
+
+function realRootOfBrowse () {
+  const abs = path.resolve(ROOT)
+  try { return fs.realpathSync.native(abs) } catch { return abs }
+}
 
 /** 解析并校验：只允许落在本次工作区的某个源文件夹内。
- *  主目录是相对路径与命令执行的基准；`danger-full-access` 档才允许越出这些目录（与 DSH 的完全权限同义）。 */
-function resolveInRoot(p) {
+ *  主目录是相对路径与命令执行的基准；`danger-full-access` 档才允许越出这些目录（与 DSH 的完全权限同义）。
+ *  校验按真实路径做——父目录是软链时，词法前缀正确但实际目标可能在根外。 */
+function resolveInRoot(p, ctx) {
   const raw = String(p || '').trim()
   if (!raw) throw err('E_IO', '缺少路径')
-  const abs = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(curRoot(), raw)
-  if (currentPolicy === 'danger-full-access') return abs
-  if (currentRoots.length === 0) {
+  const abs = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(curRoot(ctx), raw)
+  if (ctx.policy === 'danger-full-access') return abs
+  const real = realPathLoose(abs)
+  if (ctx.roots.length === 0) {
     // 没有工作区根（比如「选择目录」的逐层浏览）：只允许落在浏览起点内
-    if (abs === ROOT || abs.startsWith(ROOT + path.sep)) return abs
+    const browseReal = realRootOfBrowse()
+    if (real === browseReal || real.startsWith(browseReal + path.sep)) return abs
     throw err('E_PATH_OUTSIDE', `路径不在浏览起点内：${abs}`)
   }
-  const inside = currentRoots.some(r => abs === r || abs.startsWith(r + path.sep))
+  const inside = ctx.realRoots.some(r => real === r || real.startsWith(r + path.sep))
   if (!inside) throw err('E_PATH_OUTSIDE', `路径不在工作区目录内：${abs}`)
   return abs
 }
@@ -238,9 +421,9 @@ async function confirm(action, detail, userInitiated) {
 
 // ==================== 操作实现 ====================
 
-async function opList({ path: p }) {
+async function opList({ path: p }, ctx) {
   // 没有路径 = 列主目录；没有工作区根时列浏览起点（网页「选择目录」逐层浏览用）
-  const dir = p ? resolveInRoot(p) : (currentRoots.length ? curRoot() : ROOT)
+  const dir = p ? resolveInRoot(p, ctx) : (ctx.roots.length ? curRoot(ctx) : ROOT)
   const entries = await fsp.readdir(dir, { withFileTypes: true })
   const out = []
   for (const e of entries) {
@@ -259,8 +442,8 @@ async function opList({ path: p }) {
 }
 
 /** 递归找文件：按 basename 通配（* 和 ?），只回文件。 */
-async function opFind({ path: p, pattern }) {
-  const dir = resolveInRoot(p)
+async function opFind({ path: p, pattern }, ctx) {
+  const dir = resolveInRoot(p, ctx)
   const re = globToRegExp(pattern || '*')
   const out = []
   const walk = async (d) => {
@@ -297,10 +480,10 @@ function globToRegExp(g) {
 }
 
 /** 递归内容搜索（grep_files 工具）：固定串匹配，跳隐藏/依赖目录与二进制，结果截 200 条。 */
-async function opGrep({ path: p, pattern, glob, limit }) {
+async function opGrep({ path: p, pattern, glob, limit }, ctx) {
   const needle = String(pattern || '')
   if (!needle) throw err('E_INVALID', '缺少搜索内容')
-  const base = resolveInRoot(p)
+  const base = resolveInRoot(p, ctx)
   const nameRe = glob ? globToRegExp(glob) : null
   const cap = Math.max(1, Math.min(Number(limit) || 200, 1000))
   const matches = []
@@ -334,8 +517,8 @@ async function opGrep({ path: p, pattern, glob, limit }) {
   return { matches, truncated }
 }
 
-async function opRead({ path: p, offset, limit }) {
-  const file = resolveInRoot(p)
+async function opRead({ path: p, offset, limit }, ctx) {
+  const file = resolveInRoot(p, ctx)
   await rejectSymlink(file)
   const buf = await fsp.readFile(file)
   if (buf.includes(0)) return { content: '', encoding: 'base64', binary: true }
@@ -346,8 +529,8 @@ async function opRead({ path: p, offset, limit }) {
   return { content: lines.slice(start, end).join('\n'), encoding: 'utf-8', totalLines: lines.length }
 }
 
-async function opReadBytes({ path: p, offset, length }) {
-  const file = resolveInRoot(p)
+async function opReadBytes({ path: p, offset, length }, ctx) {
+  const file = resolveInRoot(p, ctx)
   const st = await rejectSymlink(file)
   const start = Math.max(0, Number(offset) || 0)
   const want = Number(length) > 0 ? Math.min(Number(length), st.size - start) : st.size - start
@@ -362,15 +545,15 @@ async function opReadBytes({ path: p, offset, length }) {
   }
 }
 
-async function opStat({ path: p }) {
-  const file = resolveInRoot(p)
+async function opStat({ path: p }, ctx) {
+  const file = resolveInRoot(p, ctx)
   const st = await rejectSymlink(file)
   return { path: file, name: path.basename(file), isDir: st.isDirectory(), size: st.size, mtimeMs: st.mtimeMs }
 }
 
 /** 递归列出目录（相对路径），跳过隐藏项与依赖目录；条数与深度都设上限。 */
-async function opTree({ path: p, maxFiles, maxDepth }) {
-  const dir = resolveInRoot(p)
+async function opTree({ path: p, maxFiles, maxDepth }, ctx) {
+  const dir = resolveInRoot(p, ctx)
   const cap = Math.max(1, Math.min(Number(maxFiles) || 5000, 50000))
   const depthCap = Math.max(1, Math.min(Number(maxDepth) || 8, 32))
   const out = []
@@ -400,21 +583,31 @@ async function opTree({ path: p, maxFiles, maxDepth }) {
   return { path: dir, entries: out, capped }
 }
 
-async function opMkdir({ path: p, userInitiated }) {
-  const dir = resolveInRoot(p)
+async function opMkdir({ path: p, userInitiated }, ctx) {
+  const dir = resolveInRoot(p, ctx)
   const ok = await confirm('新建文件夹', dir, userInitiated)
   if (!ok) throw err('E_DENIED', '用户拒绝了这次新建')
+  deadlineGuard(ctx)
   await fsp.mkdir(dir, { recursive: false })
   return { path: dir }
 }
 
-async function opMove({ from, to, replace, userInitiated, turnId }) {
-  const src = resolveInRoot(from)
-  const dst = resolveInRoot(to)
+async function opMove({ from, to, replace, userInitiated, turnId }, ctx) {
+  const src = resolveInRoot(from, ctx)
+  const dst = resolveInRoot(to, ctx)
   if (src === dst) return { path: dst }
-  await captureBeforeMutation(turnId, src)
+  // 根目录本身不能作为移动/替换的目标：replace=true 时会把工作区根整个删掉再换掉
+  const srcReal = realPathLoose(src)
+  const dstReal = realPathLoose(dst)
+  if (ctx.roots.includes(src) || ctx.realRoots.includes(srcReal)
+      || ctx.roots.includes(dst) || ctx.realRoots.includes(dstReal)) {
+    throw err('E_INVALID', '不能移动或替换工作区根目录本身')
+  }
+  await captureBeforeMutation(turnId, src, ctx)
   const ok = await confirm('移动/重命名', `${src}\n→ ${dst}`, userInitiated)
   if (!ok) throw err('E_DENIED', '用户拒绝了这次移动')
+  // 确认卡片可能等很久；服务端已超时就不该再动文件
+  deadlineGuard(ctx)
   const st = await rejectSymlink(src)
   try { await rejectSymlink(dst) } catch (e) { if (e.code !== 'ENOENT') throw e }
   if (replace) {
@@ -439,20 +632,24 @@ async function opMove({ from, to, replace, userInitiated, turnId }) {
   return { path: dst }
 }
 
-async function opRemove({ path: p, userInitiated, turnId }) {
-  const target = resolveInRoot(p)
-  if (currentRoots.includes(target)) throw err('E_INVALID', '不能删除工作区根目录本身')
+async function opRemove({ path: p, userInitiated, turnId }, ctx) {
+  const target = resolveInRoot(p, ctx)
+  const targetReal = realPathLoose(target)
+  if (ctx.roots.includes(target) || ctx.realRoots.includes(targetReal)) {
+    throw err('E_INVALID', '不能删除工作区根目录本身')
+  }
   await rejectSymlink(target)
-  await captureBeforeMutation(turnId, target)
+  await captureBeforeMutation(turnId, target, ctx)
   const ok = await confirm('删除', target, userInitiated)
   if (!ok) throw err('E_DENIED', '用户拒绝了这次删除')
+  deadlineGuard(ctx)
   await fsp.rm(target, { recursive: true, force: false })
   return { removed: true, path: target }
 }
 
 /** 在宿主那台电脑上用系统文件管理器打开一个目录（Finder / Explorer / 文件管理器）。 */
-async function opOpenPath({ path: p }) {
-  const target = resolveInRoot(p)
+async function opOpenPath({ path: p }, ctx) {
+  const target = resolveInRoot(p, ctx)
   const platform = process.platform
   const cmd = platform === 'darwin' ? 'open' : (platform === 'win32' ? 'explorer' : 'xdg-open')
   await new Promise((resolve, reject) => {
@@ -464,10 +661,10 @@ async function opOpenPath({ path: p }) {
   return { path: target }
 }
 
-async function opWriteChunk({ path: p, offset, contentBase64, turnId }) {
-  const file = resolveInRoot(p)
+async function opWriteChunk({ path: p, offset, contentBase64, turnId }, ctx) {
+  const file = resolveInRoot(p, ctx)
   try { await rejectSymlink(file) } catch (e) { if (e.code !== 'ENOENT') throw e }
-  await captureBeforeMutation(turnId, file)
+  await captureBeforeMutation(turnId, file, ctx)
   // 与 writeAtomic 同理：上传/分段写也自动补建上级目录（围栏已过）
   await fsp.mkdir(path.dirname(file), { recursive: true }).catch(e => { if (e.code !== 'EEXIST') throw e })
   const buf = Buffer.from(contentBase64 || '', 'base64')
@@ -481,43 +678,157 @@ async function opWriteChunk({ path: p, offset, contentBase64, turnId }) {
   return { path: file, bytes: buf.length, offset: off }
 }
 
-async function opWrite({ path: p, content, userInitiated, turnId }, { confirmText } = {}) {
-  const file = resolveInRoot(p)
+async function opWrite({ path: p, content, expectedHash, userInitiated, turnId }, ctx) {
+  const file = resolveInRoot(p, ctx)
   try { await rejectSymlink(file) } catch (e) { if (e.code !== 'ENOENT') throw e }
-  await captureBeforeMutation(turnId, file)
+  // 读-改-写冲突检测：服务端读到的原文哈希必须仍是盘上的原文。
+  // 没有这一道，用户在编辑器里同时改同一文件，模型的整文件写入会静默覆盖。
+  if (expectedHash) {
+    let current = Buffer.alloc(0)
+    try { current = await fsp.readFile(file) } catch (e) { if (e.code !== 'ENOENT') throw e }
+    const actual = createHash('sha256').update(current).digest('hex')
+    if (actual !== String(expectedHash)) {
+      throw err('E_CONFLICT', '文件已被其他人修改，请重新读取后再改')
+    }
+  }
+  await captureBeforeMutation(turnId, file, ctx)
   const ok = await confirm('写入文件', `${file}\n（${Buffer.byteLength(content || '')} 字节）`, userInitiated)
   if (!ok) throw err('E_DENIED', '用户拒绝了这次写入')
-  await writeAtomic(file, Buffer.from(content || '', 'utf8'))
+  deadlineGuard(ctx)
+  await writeAtomic(file, Buffer.from(content || '', 'utf8'), expectedHash)
   return { path: file, bytes: Buffer.byteLength(content || '') }
 }
 
-async function opWriteBytes({ path: p, contentBase64, userInitiated, turnId }) {
-  const file = resolveInRoot(p)
+async function opWriteBytes({ path: p, contentBase64, userInitiated, turnId }, ctx) {
+  const file = resolveInRoot(p, ctx)
   try { await rejectSymlink(file) } catch (e) { if (e.code !== 'ENOENT') throw e }
-  await captureBeforeMutation(turnId, file)
+  await captureBeforeMutation(turnId, file, ctx)
   const buf = Buffer.from(contentBase64 || '', 'base64')
   const ok = await confirm('写入文件', `${file}\n（${buf.length} 字节）`, userInitiated)
   if (!ok) throw err('E_DENIED', '用户拒绝了这次写入')
+  deadlineGuard(ctx)
   await writeAtomic(file, buf)
   return { path: file, bytes: buf.length }
 }
 
-async function writeAtomic(file, buf) {
+async function writeAtomic(file, buf, expectedHash) {
   const dir = path.dirname(file)
   // 写文件自动补建上级目录：框架的文件工具没有 mkdir，模型写「子目录/新文件」时
   // 目录还不存在就直接 ENOENT。父目录已在 resolveInRoot 围栏内，这里建是安全的。
   await fsp.mkdir(dir, { recursive: true })
   const tmp = path.join(dir, `.wenqu-${Date.now()}-${Math.random().toString(16).slice(2)}.tmp`)
   await fsp.writeFile(tmp, buf)
+  // 最终一致性再查一次：确认卡片可能等了几分钟，用户在等待期间完全可能改过这个文件。
+  if (expectedHash) {
+    let current = Buffer.alloc(0)
+    try {
+      current = await fsp.readFile(file)
+    } catch (e) {
+      if (e.code !== 'ENOENT') {
+        await fsp.unlink(tmp).catch(() => {})
+        throw e
+      }
+    }
+    const actual = createHash('sha256').update(current).digest('hex')
+    if (actual !== String(expectedHash)) {
+      await fsp.unlink(tmp).catch(() => {})
+      throw err('E_CONFLICT', '文件已被其他人修改，请重新读取后再改')
+    }
+  }
   await fsp.rename(tmp, file)
 }
 
-async function opExec({ command, timeoutSeconds, userInitiated }) {
-  const ok = await confirm('执行命令', `cwd: ${curRoot()}\n$ ${command}`, userInitiated)
+// ==================== 命令执行围栏 ====================
+//
+// 文件工具能按 roots 收束，shell 不能靠字符串分析约束。标准档下用 OS 沙箱：
+// macOS = sandbox-exec（写只允许 roots + 临时目录），Linux = bwrap（/ 只读，roots 可写）。
+// 没有可用沙箱就拒绝执行——宁可不跑命令，也不裸跑一条能写全盘的 shell。
+// danger-full-access 是用户显式选择的完全权限，不套沙箱。
+
+function detectShellSandbox () {
+  if (process.platform === 'darwin') {
+    try {
+      fs.accessSync('/usr/bin/sandbox-exec', fs.constants.X_OK)
+      return 'sandbox-exec'
+    } catch { /* 没有就不跑 */ }
+  }
+  if (process.platform === 'linux') {
+    for (const p of ['/usr/bin/bwrap', '/bin/bwrap']) {
+      try {
+        fs.accessSync(p, fs.constants.X_OK)
+        return 'bwrap'
+      } catch { /* 继续找 */ }
+    }
+  }
+  return null
+}
+
+const SHELL_SANDBOX = detectShellSandbox()
+
+function profilePath (p) {
+  return String(p).replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+}
+
+function macShellProfile (roots) {
+  const writable = [
+    ...roots,
+    '/private/tmp', '/tmp',
+    '/private/var/folders', '/var/folders',
+    '/dev'
+  ]
+  const lines = ['(version 1)', '(allow default)', '(deny file-write*)', '(allow file-write*']
+  for (const p of writable) lines.push(`  (subpath "${profilePath(p)}")`)
+  lines.push(')')
+  // 注意：sandbox-exec 的 deny 会被 (allow default) 盖住，读隔离做不到（实测）。
+  // 这里只承诺“写”围栏；读敏感文件仍须靠 standard 默认审批与 autonomous 分层。
+  return lines.join('\n')
+}
+
+function linuxShellArgs (roots, cwd, command) {
+  const args = ['--die-with-parent', '--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--tmpfs', '/tmp', '--chdir', cwd]
+  for (const r of roots) args.push('--bind', r, r)
+  for (const p of ['.wenqu', '.ssh', '.aws', '.kube', '.docker']) {
+    const abs = path.join(os.homedir(), p)
+    if (fs.existsSync(abs)) args.push('--tmpfs', abs)
+  }
+  args.push('/bin/sh', '-c', command)
+  return args
+}
+
+/** 生成这次命令的 spawn 参数；没有可用沙箱时抛错，由上层回 E_SANDBOX_UNAVAILABLE。 */
+function shellSpawn (command, ctx) {
+  if (ctx.policy === 'danger-full-access') {
+    return { cmd: '/bin/sh', args: ['-c', String(command)] }
+  }
+  if (SHELL_SANDBOX === 'sandbox-exec') {
+    return {
+      cmd: '/usr/bin/sandbox-exec',
+      args: ['-p', macShellProfile(ctx.realRoots), '/bin/sh', '-c', String(command)]
+    }
+  }
+  if (SHELL_SANDBOX === 'bwrap') {
+    return {
+      cmd: '/usr/bin/bwrap',
+      args: linuxShellArgs(ctx.realRoots, curRoot(ctx), String(command))
+    }
+  }
+  throw err('E_SANDBOX_UNAVAILABLE',
+    '当前平台没有可用的命令沙箱（macOS 需要 sandbox-exec，Linux 需要 bwrap）：'
+    + '工作区内修改档不执行 shell。请改用文件工具；确实需要命令时请把会话权限调到完全权限。')
+}
+
+async function opExec({ command, timeoutSeconds, userInitiated, turnId }, ctx) {
+  const ok = await confirm('执行命令', `cwd: ${curRoot(ctx)}\n$ ${command}`, userInitiated)
   if (!ok) throw err('E_DENIED', '用户拒绝了这次命令')
-  const seconds = Math.max(1, Number(timeoutSeconds) || 120)
+  if (turnId) await ensureTurnState(turnId, ctx)
+  deadlineGuard(ctx)
+  const requested = Math.max(1, Number(timeoutSeconds) || 120)
+  const remaining = ctx.deadline ? Math.floor((ctx.deadline - Date.now()) / 1000) : requested
+  if (ctx.deadline && remaining <= 0) throw err('E_TIMEOUT', '服务端等待时限已过，命令未执行')
+  const seconds = Math.max(1, Math.min(requested, remaining))
+  const shell = shellSpawn(command, ctx)
   return await new Promise(resolve => {
-    const child = spawn('/bin/sh', ['-c', String(command)], { cwd: curRoot(), env: process.env })
+    const child = spawn(shell.cmd, shell.args, { cwd: curRoot(ctx), env: process.env })
     let out = ''
     let truncated = false
     const cap = 1024 * 1024
@@ -742,6 +1053,9 @@ async function sweepTurns () {
   for (const [id, st] of [...turnStates]) {
     if (now - st.createdAt > TURN_TTL_MS) dropTurn(id)
   }
+  for (const [id, r] of [...callResults]) {
+    if (now - r.at > 10 * 60_000) callResults.delete(id)
+  }
   for (const st of turnStates.values()) {
     if (!st.bytes) st.bytes = await dirBytes(st.scratch)
   }
@@ -912,7 +1226,26 @@ function sameCapture (a, b) {
 }
 
 /** 服务端在写类调用上带了 turnId：本轮第一次碰这个路径前抓一份，供轮末比对（内容不出这台电脑）。 */
-async function captureBeforeMutation (turnId, absPath) {
+const turnStarts = new Map()
+
+/** 首次写（或命令）时还没有轮状态：先补拍一份轮前快照，再允许改动。
+ *  这样即使服务端的 turnStart 还在异步队列里，这一轮也不会漏掉第一个改动。 */
+async function ensureTurnState (turnId, ctx) {
+  const id = String(turnId || '').trim()
+  if (!id || turnStates.has(id)) return
+  if (!turnStarts.has(id)) {
+    const p = opTurnStart({ turnId: id }, ctx)
+      .catch(e => log('自动补轮前快照失败（本轮只走改动前捕获兜底）:', e.message))
+      .finally(() => turnStarts.delete(id))
+    turnStarts.set(id, p)
+  }
+  await turnStarts.get(id)
+}
+
+async function captureBeforeMutation (turnId, absPath, ctx) {
+  if (!turnId) return
+  await ensureTurnState(turnId, ctx)
+  deadlineGuard(ctx)
   const st = turnStateOf(turnId)
   if (!st) return
   const key = await canonicalPath(absPath)
@@ -1077,7 +1410,7 @@ function capturedTextOf (cap) {
 
 // ---- 三个轮级 op ----
 
-async function opTurnStart ({ turnId }) {
+async function opTurnStart ({ turnId }, ctx) {
   const id = String(turnId || '').trim()
   if (!id) throw err('E_INVALID', '缺少 turnId')
   if (turnStates.has(id)) return { started: true }
@@ -1091,7 +1424,7 @@ async function opTurnStart ({ turnId }) {
   await fsp.chmod(scratch, 0o700).catch(() => {})
   const state = {
     turnId: id, scratch,
-    roots: await Promise.all(currentRootRecords.map(async r => ({ ...r, path: await canonicalPath(r.path) }))),
+    roots: await Promise.all(ctx.rootRecords.map(async r => ({ ...r, path: await canonicalPath(r.path) }))),
     repos: [], captures: new Map(), review: new Map(), createdAt: Date.now(), done: false
   }
   turnStates.set(id, state)
@@ -1416,52 +1749,202 @@ const HANDLERS = {
 
 async function postResult(id, ok, data, error) {
   const body = ok ? { id, ok: true, data } : { id, ok: false, error }
-  const res = await fetch(`${SERVER}/api/ai/executor/result`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + TOKEN },
-    body: JSON.stringify(body)
-  })
-  if (!res.ok) log('回传失败:', res.status, await res.text().catch(() => ''))
+  // 回传失败重试：服务端在等这条结果，一次网络抖动不能让它白等到超时。
+  // 401 不重试——令牌失效由主循环重新授权，继续打只会刷日志。
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch(`${SERVER}/api/ai/executor/result`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + TOKEN },
+        body: JSON.stringify(body),
+        signal: timeoutSignal(10_000)
+      })
+      if (res.ok) return true
+      if (res.status === 401) return false
+      log('回传失败:', res.status, await res.text().catch(() => ''))
+    } catch (e) {
+      log('回传异常:', e.message)
+    }
+    await sleep(300 * (attempt + 1))
+  }
+  return false
 }
 
-async function once() {
-  await sweepTurns()
-  const res = await fetch(`${SERVER}/api/ai/executor/poll?wait=${WAIT}`, {
-    headers: { Authorization: 'Bearer ' + TOKEN }
-  })
-  if (res.status === 401) throw err('E_AUTH', '设备令牌无效或已被撤销')
-  if (res.status === 204) return
-  if (!res.ok) throw err('E_IO', `轮询失败 HTTP ${res.status}`)
-  const call = await res.json()
-  const args = call.args || {}
-  currentRoots = Array.isArray(args.roots)
-    ? args.roots.map(r => path.resolve(String(r.path || ''))).filter(Boolean)
-    : (args.root ? [path.resolve(String(args.root))] : [])
-  currentRootRecords = Array.isArray(args.roots)
-    ? args.roots.filter(r => r && r.path)
-        .map(r => ({ alias: String(r.alias || ''), path: path.resolve(String(r.path)), primary: !!r.primary }))
-    : []
-  primaryRoot = currentRoots[0] || null
-  if (Array.isArray(args.roots)) {
-    const p = args.roots.find(r => r && r.primary && r.path)
-    if (p) primaryRoot = path.resolve(String(p.path))
+/** 取到调用后立刻 ack：服务端据此确认投递成功；没 ack 的调用 15s 后会重投。 */
+async function postAck(id) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(`${SERVER}/api/ai/executor/ack`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + TOKEN },
+        body: JSON.stringify({ id }),
+        signal: timeoutSignal(5_000)
+      })
+      if (res.ok) {
+        // 只有服务端确认“等待方还活着、调用未超时”才允许执行。
+        // 服务重启后 owner 的等待方租约过期，ack 会返回 accepted=false，执行器据此跳过，
+        // 不会在没人等结果的时候把文件改了。
+        const body = await res.json().catch(() => null)
+        return !!(body && body.accepted === true)
+      }
+      // 旧服务端没有 /ack（升级过渡期）：按旧协议直接执行。新服务端一定返回 JSON accepted。
+      if (res.status === 404 || res.status === 405) {
+        if (!legacyServerWarned) log('服务端不支持 ack（旧版本），按旧协议执行；升级服务端后自动启用租约')
+        legacyServerWarned = true
+        return true
+      }
+      if (res.status === 401) return false
+    } catch { /* 网络抖动，重试一次 */ }
+    await sleep(200)
   }
-  currentPolicy = args.policy === 'danger-full-access' ? 'danger-full-access' : 'workspace-write'
+  return false
+}
+
+/** 已执行调用的结果缓存：服务端若因网络原因重投同一个 callId，直接回结果，不重复写盘/跑命令。 */
+const callResults = new Map()
+const MAX_CALL_RESULTS = 500
+/** 只有改动型/轮级结果值得缓存幂等回放；read/grep/tree 这些重跑一次没有副作用，也常有几 MB。 */
+const CACHEABLE_OPS = new Set(['write', 'writeBytes', 'writeChunk', 'mkdir', 'move', 'remove', 'exec', 'turnStart', 'turnEnd'])
+
+function rememberCall (op, id, ok, data, error) {
+  if (!CACHEABLE_OPS.has(op)) return
+  // 只缓存小结果：exec 输出最多 1MB，超过 256KB 也不常驻。
+  let size = 0
+  try { size = JSON.stringify(data == null ? error : data).length } catch { size = 0 }
+  if (size > 256 * 1024) {
+    // 大结果不缓存原文，但留一个“已执行”标记：重复投递绝不能再跑一次有副作用的命令
+    callResults.set(id, {
+      ok: false, data: null,
+      error: { code: 'E_DUPLICATE', message: '该调用已执行过，结果过大未缓存' },
+      at: Date.now(), size: 0
+    })
+    return
+  }
+  callResults.set(id, { ok, data, error, at: Date.now(), size })
+  let total = 0
+  for (const r of callResults.values()) total += r.size || 0
+  while (callResults.size > MAX_CALL_RESULTS || total > 32 * 1024 * 1024) {
+    const first = callResults.keys().next().value
+    const r = callResults.get(first)
+    total -= (r && r.size) || 0
+    callResults.delete(first)
+    if (callResults.size === 0) break
+  }
+}
+
+function cachedCall (id) {
+  return callResults.get(id) || null
+}
+
+/** 服务端截止时间：自动补轮快照等步骤过后再查一次，
+ *  避免服务端已经报超时、执行器稍后还去写文件。 */
+function deadlineGuard (ctx) {
+  if (ctx.deadline && Date.now() >= ctx.deadline) {
+    throw err('E_TIMEOUT', '服务端等待时限已过，本次调用未执行')
+  }
+}
+
+// 读操作可以并行（不同工作区互不影响、长命令不再堵住预览/搜索）；
+// 写操作仍严格串行——同一轮 turnStart/write/turnEnd 的顺序和快照一致性不能赌。
+const READ_OPS = new Set(['list', 'find', 'grep', 'read', 'readBytes', 'stat', 'tree'])
+const READ_CONCURRENCY = 4
+const MAX_INFLIGHT = 16
+let readActive = 0
+const readWaiters = []
+let writeChain = Promise.resolve()
+const inFlightCalls = new Map()
+
+async function withReadSlot (fn) {
+  if (readActive < READ_CONCURRENCY) {
+    readActive++
+  } else {
+    // 槽位由完成者直接转交（它不会在 finally 里递减），这里不能再 ++，
+    // 否则「刚被唤醒」和「新来的」会同时认为自己拿到了空位，实际并发超限。
+    await new Promise(resolve => readWaiters.push(resolve))
+  }
+  try {
+    return await fn()
+  } finally {
+    const next = readWaiters.shift()
+    if (next) next()
+    else readActive--
+  }
+}
+
+function runSerial (fn) {
+  const p = writeChain.then(fn, fn)
+  writeChain = p.catch(() => {})
+  return p
+}
+
+async function executeCall (call) {
+  const cached = cachedCall(call.id)
+  if (cached) {
+    await postResult(call.id, cached.ok, cached.data, cached.error)
+    return
+  }
   const handler = HANDLERS[call.op]
   if (!handler) {
     await postResult(call.id, false, null, { code: 'E_UNSUPPORTED', message: '不支持的调用：' + call.op })
     return
   }
+  const args = call.args || {}
   const started = Date.now()
   try {
-    const data = await handler(call.args || {})
-    log(`${call.op} 完成 ${Date.now() - started}ms`, call.args && call.args.path ? call.args.path : '')
+    const ctx = callContext(args, call.deadline)
+    deadlineGuard(ctx)
+    const data = await handler(args, ctx)
+    log(`${call.op} 完成 ${Date.now() - started}ms`, args.path ? args.path : '')
+    rememberCall(call.op, call.id, true, data, null)
     await postResult(call.id, true, data, null)
   } catch (e) {
     const code = e.code === 'ENOENT' ? 'E_NOT_FOUND' : (e.code || 'E_IO')
     log(`${call.op} 失败: ${code} ${e.message}`)
+    rememberCall(call.op, call.id, false, null, { code, message: e.message })
     await postResult(call.id, false, null, { code, message: e.message })
   }
+}
+
+function dispatchCall (call) {
+  if (inFlightCalls.has(call.id)) return inFlightCalls.get(call.id)
+  const run = () => executeCall(call)
+  const queued = READ_OPS.has(call.op) ? withReadSlot(run) : runSerial(run)
+  const tracked = queued.finally(() => inFlightCalls.delete(call.id))
+  tracked.catch(() => { /* executeCall 内部已回传错误；这里只防未处理拒绝 */ })
+  inFlightCalls.set(call.id, tracked)
+  return tracked
+}
+
+async function once() {
+  // 在途调用有上限：服务端队列是有界的，执行器也不能无限往下吞
+  if (inFlightCalls.size >= MAX_INFLIGHT) {
+    await Promise.race([...inFlightCalls.values()])
+  }
+  // 清理只在没有在途调用时做：turnDiff/turnEnd 可能在读同一份轮状态
+  if (inFlightCalls.size === 0) await sweepTurns()
+  const res = await fetch(`${SERVER}/api/ai/executor/poll?wait=${WAIT}`, {
+    headers: {
+      Authorization: 'Bearer ' + TOKEN,
+      'X-Wenqu-Executor-Version': AGENT_VERSION
+    },
+    // 服务端长轮询最多 WAIT 秒；多留 10s 余量，避免网络挂起时主循环永远停在这里
+    signal: timeoutSignal((WAIT + 10) * 1000)
+  })
+  if (res.status === 401) throw err('E_AUTH', '设备令牌无效或已被撤销')
+  if (res.status === 204) return
+  if (!res.ok) throw err('E_IO', `轮询失败 HTTP ${res.status}`)
+  const call = await res.json()
+  const ackOk = await postAck(call.id)
+  if (!ackOk) {
+    log('未获执行许可（等待方已失效或调用已超时），跳过:', call.id)
+    // 明确告诉服务端“本次没有执行”，让等待方立刻拿到错误，而不是一直挂到超时
+    await postResult(call.id, false, null, {
+      code: 'E_ACK_FAILED',
+      message: '执行器未获得执行许可（等待方已失效或调用已超时）'
+    })
+    return
+  }
+  dispatchCall(call)
 }
 
 async function main() {
@@ -1479,6 +1962,9 @@ async function main() {
     }
   }
   if (!TOKEN && !(await authorize())) process.exit(2)
+
+  acquireSingleInstanceLock()
+  startHeartbeat()
 
   await loadTurnStates()
   await sweepTurns()

@@ -3,6 +3,7 @@ package com.wenqu.ai.service;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 import com.wenqu.ai.config.AppProperties;
+import com.wenqu.ai.model.Project;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -66,19 +67,39 @@ public class ToolSpillService {
 
     private final AppProperties properties;
     private final ConfigService configService;
+    private final ProjectService projectService;
 
-    public ToolSpillService(AppProperties properties, ConfigService configService) {
+    public ToolSpillService(AppProperties properties, ConfigService configService,
+                            ProjectService projectService) {
         this.properties = properties;
         this.configService = configService;
+        this.projectService = projectService;
+    }
+
+    /**
+     * 本机工作区的工具原文默认不落服务端磁盘（{@code tool.spillLocalWorkspace=false}）：
+     * 「工作区文件不存副本」必须覆盖到工具输出这一层，否则一次 read_file 的大文件就被外溢存下来了。
+     * 需要保留「查看完整输出」的部署可把该配置改为 true。
+     */
+    private boolean spillsDisabledForSession(String sessionId) {
+        if (configService.getBoolean("tool.spillLocalWorkspace", false)) return false;
+        try {
+            Project project = projectService.projectOfSession(sessionId);
+            return project != null && projectService.isLocal(project);
+        } catch (Exception e) {
+            // 归属查不到时按本机工作区处理：宁可少一份可回看原文，也不把不确定来源的内容落盘
+            return true;
+        }
     }
 
     /**
      * 外溢一份工具原文。
      *
-     * @return spillId；内容为空或落盘失败时返回 null（调用方按原有「截断展示」继续）
+     * @return spillId；内容为空、本机工作区或落盘失败时返回 null（调用方按原有「截断展示」继续）
      */
     public String spill(String sessionId, String uid, String toolName, String text) {
         if (text == null || text.isEmpty() || uid == null || uid.isBlank()) return null;
+        if (spillsDisabledForSession(sessionId)) return null;
         try {
             String id = UUID.randomUUID().toString().replace("-", "");
             Path dir = dirOf(uid);

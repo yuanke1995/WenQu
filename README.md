@@ -159,8 +159,12 @@ export SPRINGDOC_ENABLED=false            # Swagger/OpenAPI 开关（默认关�
 **本机执行器（工作区文件）**：工作区的文件在用户电脑上，需要在**那台电脑**上跑执行器：
 ```bash
 node scripts/local-agent/wenqu-agent.mjs --server http://<服务器>/ai
+# 远程 http 目前临时放行，启动时会打印明文传输告警；正式环境建议换成 https。
+# 想强制只允许 https：加 --require-https（本机回环地址始终可用 http）
 # 首次启动打印链接 + 6 位码；浏览器登录后确认，令牌落到 ~/.wenqu/executor.json
 # 工作区源文件夹需要能被执行器访问（默认浏览起点 ~；--root / 可看整盘）
+# 标准档的 shell 会套 OS 写沙箱：macOS 用 sandbox-exec、Linux 用 bwrap，只允许写工作区 roots；
+# 没有可用沙箱时命令直接拒绝执行（不会裸跑），需要全盘命令请把会话权限调到完全权限
 # 默认不在终端逐次确认（页面上的权限档位才是闸门）；需要终端确认时加 --ask
 # 每轮文件改动快照落在 ~/.wenqu/executor/turns，重启后仍可看差异；默认保留 14 天/200 轮/2GB，
 # 可用 --data-dir / --turn-ttl-days / --turn-max / --turn-cache-max-mb 调整
@@ -365,6 +369,7 @@ docker compose up -d          # 自包含：redis-stack + meilisearch + 内置 M
 8. **密钥目录必须共享**：默认 `{AI_IMAGES_DIR}/secret`（`AI_SECRETS_DIR` 覆盖），敏感数据用其中 `rsa/vN.key` 的 PEM 私钥做 JWE 信封加密（密钥版本记在密文里）——各副本挂同一目录，否则 A 实例加密的 key 在 B 实例解不开；轮换＝放一把更高版本的 PEM 再重启，此后新写入用新版本；存量密文按自己记录的版本解密、不批量重封，故历史版本的密钥文件必须一直留着（无需停机）
 9. **会话状态与事件日志**：框架会话状态在 Redis；会话事件日志与代次轮换写在宿主 `~/.wenqu/agent-journal`，事件账本内容按会话导出为 JSONL 归档（`chat.sessionLogArchive.*`），归档目录须指向共享卷
 10. **目标模式与定时任务**：目标推进由 `GoalScheduler` 按租约抢占执行（DB 条件更新保证唯一执行权），定时任务调度中心先推进 `next_run_at` 再执行，多副本无需额外中间件
+11. **本机执行器队列在 Redis**：调用队列、在线键、ack、结果回投都走 Redis，执行器可以轮询任意副本；等待方绑定发起调用的副本（owner），结果按 owner 回投。服务重启后 owner 的等待方租约 15 秒内过期，执行器 ack 会被拒，不会在“没人等结果”时继续执行；已产生的晚到结果在 Redis 结果队列保留 10 分钟供排障
 
 ### 与平台网关集成
 

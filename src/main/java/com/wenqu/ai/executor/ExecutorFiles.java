@@ -23,6 +23,8 @@ import java.util.Map;
 public class ExecutorFiles {
 
     private static final long TIMEOUT_MS = 60_000;
+    /** 轮级调用要排在一轮里最长的命令之后：命令上限 120s，排队 + 执行留足 5 分钟。 */
+    private static final long TURN_TIMEOUT_MS = 300_000;
 
     private final ExecutorRegistry registry;
 
@@ -40,6 +42,11 @@ public class ExecutorFiles {
      */
     public ExecutorRegistry.Result call(String executorId, List<ProjectRoot> roots, String op,
                                         Map<String, Object> args, boolean userInitiated) {
+        return callWithTimeout(executorId, roots, op, args, userInitiated, TIMEOUT_MS);
+    }
+
+    private ExecutorRegistry.Result callWithTimeout(String executorId, List<ProjectRoot> roots, String op,
+                                                    Map<String, Object> args, boolean userInitiated, long timeoutMs) {
         if (!online(executorId)) {
             throw new IllegalStateException("本机执行器不在线：先在那台电脑上启动 wenqu-agent 再试");
         }
@@ -47,7 +54,7 @@ public class ExecutorFiles {
         payload.put("roots", rootPayload(roots));
         payload.put("policy", "workspace-write");
         if (userInitiated) payload.put("userInitiated", true);
-        ExecutorRegistry.Result r = registry.call(executorId, op, payload, TIMEOUT_MS);
+        ExecutorRegistry.Result r = registry.call(executorId, op, payload, timeoutMs);
         if (r.ok()) return r;
         String code = r.code() == null ? "E_IO" : r.code();
         String msg = r.message() == null ? "执行器返回失败" : r.message();
@@ -55,7 +62,7 @@ public class ExecutorFiles {
             throw new IllegalStateException("本机执行器版本过旧：请在那台电脑上重启 wenqu-agent（拉取最新脚本）后重试");
         }
         if ("E_PATH_OUTSIDE".equals(code) || "E_INVALID".equals(code) || "E_EXISTS".equals(code)
-                || "E_NOT_FOUND".equals(code)) {
+                || "E_NOT_FOUND".equals(code) || "E_CONFLICT".equals(code)) {
             throw new IllegalArgumentException(msg);
         }
         throw new IllegalStateException(code + "：" + msg);
@@ -182,12 +189,12 @@ public class ExecutorFiles {
 
     /** 轮前快照：对工作区每个源文件夹定位 git 仓库并写一棵快照树（不在仓库里的源文件夹走捕获兜底）。 */
     public Map<String, Object> turnStart(String executorId, List<ProjectRoot> roots, String turnId) {
-        return call(executorId, roots, "turnStart", Map.of("turnId", turnId), false).data();
+        return callWithTimeout(executorId, roots, "turnStart", Map.of("turnId", turnId), false, TURN_TIMEOUT_MS).data();
     }
 
     /** 轮末对比：再拍一次快照并 diff，返回 {supported, files, total, added, deleted}。 */
     public Map<String, Object> turnEnd(String executorId, List<ProjectRoot> roots, String turnId) {
-        return call(executorId, roots, "turnEnd", Map.of("turnId", turnId), false).data();
+        return callWithTimeout(executorId, roots, "turnEnd", Map.of("turnId", turnId), false, TURN_TIMEOUT_MS).data();
     }
 
     /** 取轮内某个文件的差异（执行器现算 hunk；快照数据过期回 E_NOT_FOUND → 400）。 */
@@ -195,7 +202,7 @@ public class ExecutorFiles {
         Map<String, Object> args = new LinkedHashMap<>();
         args.put("turnId", turnId);
         args.put("path", path);
-        return call(executorId, roots, "turnDiff", args, false).data();
+        return callWithTimeout(executorId, roots, "turnDiff", args, false, TURN_TIMEOUT_MS).data();
     }
 
     @SuppressWarnings("unchecked")

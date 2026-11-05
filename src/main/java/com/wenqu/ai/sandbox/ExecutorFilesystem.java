@@ -15,8 +15,11 @@ import io.agentscope.harness.agent.filesystem.model.LsResult;
 import io.agentscope.harness.agent.filesystem.model.ReadResult;
 import io.agentscope.harness.agent.filesystem.model.WriteResult;
 import io.agentscope.harness.agent.filesystem.sandbox.BaseSandboxFilesystem;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.Base64;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -180,11 +183,30 @@ public class ExecutorFilesystem extends BaseSandboxFilesystem {
 
     @Override
     public WriteResult write(RuntimeContext runtimeContext, String filePath, String content) {
+        return writeWithExpectedHash(runtimeContext, filePath, content, null);
+    }
+
+    /**
+     * 带内容哈希的写入：读-改-写之间若文件被用户/其他进程改过，执行器拒绝写入而不是静默覆盖。
+     * 只有 edit 走这条路；write_file 是模型明确要整文件覆盖，没有“读到的原文”可比。
+     */
+    private WriteResult writeWithExpectedHash(RuntimeContext runtimeContext, String filePath,
+                                              String content, String expectedHash) {
         Map<String, Object> args = new LinkedHashMap<>();
         args.put("path", resolve(filePath));
         args.put("content", content == null ? "" : content);
+        if (expectedHash != null) args.put("expectedHash", expectedHash);
         ExecutorRegistry.Result r = call("write", args, DEFAULT_TIMEOUT_MS);
         return r.ok() ? WriteResult.ok(filePath) : WriteResult.fail("Failed to write file '" + filePath + "': " + errorText(r));
+    }
+
+    private static String sha256(String text) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("SHA-256");
+            return HexFormat.of().formatHex(md.digest((text == null ? "" : text).getBytes(StandardCharsets.UTF_8)));
+        } catch (Exception e) {
+            throw new IllegalStateException("SHA-256 unavailable", e);
+        }
     }
 
     @Override
@@ -255,7 +277,7 @@ public class ExecutorFilesystem extends BaseSandboxFilesystem {
             int at = content.indexOf(oldString);
             replaced = content.substring(0, at) + replacement + content.substring(at + oldString.length());
         }
-        WriteResult w = write(runtimeContext, filePath, replaced);
+        WriteResult w = writeWithExpectedHash(runtimeContext, filePath, replaced, sha256(content));
         return w.error() == null || w.error().isEmpty()
                 ? EditResult.ok(filePath, count)
                 : EditResult.fail(w.error());

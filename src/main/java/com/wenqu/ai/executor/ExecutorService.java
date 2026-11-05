@@ -40,6 +40,14 @@ public class ExecutorService {
 
     /** 校验设备令牌并确保它在进程内登记表里（进程重启后靠这条恢复）。 */
     public ExecutorRegistry.Device authenticate(String token) {
+        return authenticate(token, true);
+    }
+
+    /**
+     * @param touchLastSeen 是否刷新库里的 last_seen；ack/result 这类高频回传不需要，
+     *                      在线状态由 poll/heartbeat 维护，少一次每调用必做的 DB 写。
+     */
+    public ExecutorRegistry.Device authenticate(String token, boolean touchLastSeen) {
         if (token == null || token.isBlank()) return null;
         List<Map<String, Object>> rows = jdbc.queryForList(
                 "select id, uid, name, os from c_ai_executor where token_hash = ? and revoked = 0", sha256(token));
@@ -50,7 +58,9 @@ public class ExecutorService {
                 r.get("name") == null ? "" : String.valueOf(r.get("name")),
                 r.get("os") == null ? "" : String.valueOf(r.get("os")));
         registry.restore(device);
-        jdbc.update("update c_ai_executor set last_seen = now() where id = ?", device.id());
+        if (touchLastSeen) {
+            jdbc.update("update c_ai_executor set last_seen = now() where id = ?", device.id());
+        }
         return device;
     }
 

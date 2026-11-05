@@ -83,7 +83,8 @@ public class UserContextInterceptor implements HandlerInterceptor {
         }
         // 本机执行器通道：Authorization 是设备令牌（非用户 JWT），身份由控制器用令牌哈希自证。
         // 不在这里解析，否则任何合法设备令牌都会因为"不是 JWT"被判成登录失效。
-        if (scimPath.equals("/api/ai/executor/poll") || scimPath.equals("/api/ai/executor/result")) {
+        if (scimPath.equals("/api/ai/executor/poll") || scimPath.equals("/api/ai/executor/result")
+                || scimPath.equals("/api/ai/executor/heartbeat") || scimPath.equals("/api/ai/executor/ack")) {
             RequestUser.set(RequestUser.SYSTEM, null, List.of());
             return true;
         }
