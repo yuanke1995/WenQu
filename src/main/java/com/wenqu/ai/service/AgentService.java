@@ -268,6 +268,9 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
             // 只由这一格决定；前端入口判据与引擎注入目标上下文的判据（GoalService.enabledFor）同源。
             // 关掉不会杀掉已经在跑的目标（用户可能只是不想再起新的），但不会再往模型输入里带目标上下文。
             m.put("goalEnabled", a.getGoalEnabled() == null ? 1 : a.getGoalEnabled());
+            // 权限档位码：聊天页的权限胶囊要直接点名「这一档是什么」，而不是只说「跟随智能体」。
+            // 只给原始档位码，默认档/上限的判定仍归 PermissionPolicyResolver，前端不抄第二套回落规则。
+            m.put("permissionPreset", a.getPermissionPreset());
             out.add(m);
         }
         return out;
