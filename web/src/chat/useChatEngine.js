@@ -24,7 +24,7 @@ import { fmtTokens } from '../utils/token'
 import { loadModelIndex } from '../utils/modelRef'
 import { approvalStatusText, approvalLeftSec } from './approval'
 import { THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel,
-         groupSources, ensureTick, mergeDoneToolCalls, restoreTimeline, extendTimelineText, extendTimelineProcess,
+         groupSources, ensureTick, alignTick, mergeDoneToolCalls, restoreTimeline, extendTimelineText, extendTimelineProcess,
          pushTimelineTool, pushTimelineArtifact, pushTimelineSteer, pushTimelineThink, extendTimelineThink, ensureThinkSegment,
          snapshotVersion, applyVersion, histItemDigest,
          resumedStartAt, earlierStart, settledTurnMs,
@@ -2382,7 +2382,7 @@ const applyTurnSnapshot = (msg, snap, sid) => {
   if (typeof snap.wallMs === 'number') {
     // 服务端基准只认第一份：重连/再接会拿到更晚生成的快照，按它重锚会把这一帧在路上的时间
     // 从读数里扣掉，秒表往回跳。基准一旦定下就只续算，收尾那份才校正终值。
-    if (!msg.turnClockFromServer) { msg.time = Date.now() - snap.wallMs; msg.turnClockFromServer = true }
+    if (!msg.turnClockFromServer) { msg.time = Date.now() - snap.wallMs; msg.turnClockFromServer = true; alignTick(msg.time) }
   } else {
     msg.time = earlierStart(msg.time, resumedStartAt(snap.elapsedMs, Date.now()))
   }
@@ -2514,7 +2514,11 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       if (!p || typeof p.wallMs !== 'number') return
       // 基准只认第一份（外壳那帧最先到）：引擎开轮后那帧同一基准、只是 prepMs 更准，
       // 再按它重锚会把这一帧在路上的时间从读数里扣掉，秒表往回跳。
-      if (!msg.turnClockFromServer) { msg.time = Date.now() - p.wallMs; msg.turnClockFromServer = true }
+      if (!msg.turnClockFromServer) {
+        msg.time = Date.now() - p.wallMs
+        msg.turnClockFromServer = true
+        alignTick(msg.time)   // 秒针相位对齐到起表点：读数按整秒走，收尾不跳最后一秒
+      }
       if (typeof p.prepMs === 'number') msg.turnPrepMs = p.prepMs
     },
     onSnapshot: payload => {
