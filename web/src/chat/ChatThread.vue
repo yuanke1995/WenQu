@@ -31,7 +31,7 @@ import SourceList from './SourceList.vue'
 import AnswerActions from './AnswerActions.vue'
 import TurnBar from '../components/TurnBar.vue'
 import { AimOutlined } from '@ant-design/icons-vue'
-import { retrievalLineTitle, goalEchoStateOf, goalEchoTipOf, degradationItems, degradationWarn } from './projections'
+import { retrievalLineTitle, goalEchoStateOf, goalEchoTipOf, degradationItems, degradationWarn, turnAnswerText } from './projections'
 
 const props = defineProps({
   /** 消息数组（两页的形状一致：role/content/images/sources/messageId/fb/degradations…） */
@@ -97,19 +97,18 @@ function sourceTitle (m) {
         <slot name="body-before" :m="m" :i="i" />
 
         <slot name="body" :m="m" :i="i">
-          <!-- 共用兜底正文：一轮的进行中提示只有 TurnBar 那一条（与主对话页同一个组件、同一句
-               「正在溯源」），不再另写阶段提示行——跑着的时候它跟在正文末尾（正文未到就只这一行），
-               答完回到回答顶上当总览。 -->
-          <TurnBar v-if="m.role === 'ai' && !m.loading" :m="m" />
+          <!-- 共用兜底正文（分享页）：与主对话页同一口径——正文只取最终答案（turnAnswerText），
+               过程不对外展示；TurnBar 只报用时，不给过程展开三角。 -->
+          <TurnBar v-if="m.role === 'ai' && !m.loading" :m="m" no-toggle />
           <!-- 提问走 literal：图片占位与引用角标都不替换——提问里的 [图片N] / [N] 是用户手打的
                字面量，替换掉会改他的原文、还会让自己的附件多渲染一遍 -->
-          <AnswerBody v-if="m.content" :content="m.content" :msg-index="i"
+          <AnswerBody v-if="turnAnswerText(m)" :content="turnAnswerText(m)" :msg-index="i"
                       :images="m.role === 'ai' ? m.images : []"
                       :sources="m.role === 'ai' ? m.sources : []"
                       :literal="m.role !== 'ai'"
                       :runnable="runnable" :session-id="sessionId"
                       :streaming="!!m.loading" />
-          <TurnBar v-if="m.role === 'ai' && m.loading" :m="m" />
+          <TurnBar v-if="m.role === 'ai' && m.loading" :m="m" no-toggle />
         </slot>
 
         <slot name="body-after" :m="m" :i="i" />

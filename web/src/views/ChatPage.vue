@@ -102,7 +102,7 @@
 
         <!-- 消息列表外壳与公开分享页共用 chat/ChatThread.vue：行/块/气泡布局、四个叶子的
              出现次第（正文 → 降级 → 引用来源 → 动作行）都由它定。本页只往插槽里填登录态专属的东西：
-             消息分隔线、@引用/#历史引用、时间线与工具卡、错误卡、计划与审批卡、产物、
+             消息分隔线、@引用/#历史引用、过程块与工具卡、错误卡、计划与审批卡、产物、
              版本切换器与更多菜单、就地编辑卡。次第换不掉，能换的只是「画什么」。 -->
         <ChatThread :messages="messages" :editing-index="editingIdx" :can-regenerate="() => true"
                     :goal="sessionGoal"
@@ -162,7 +162,7 @@
                 <template v-for="(seg, si) in turnProcessRows(m)" :key="si">
                   <AnswerBody v-if="seg.kind === 'text'" class="tl-text tl-process-text" :content="m.content.slice(seg.from, seg.to)"
                               :images="m.images" runnable :session-id="currentSessionId" :streaming="false" />
-                  <!-- 思考段（簇外）：这一轮模型在想什么，就地一行。只有正在长的那一段自动展开，其余折叠。
+                  <!-- 思考段：这一轮模型在想什么，在过程块里占一行。只有正在长的那一段自动展开，其余折叠。
                        被过程簇收进去的那些不走这一支——它们落在帽体清单里所属那一步的展开详情内（见 projections 的 clusterLiveRows） -->
                   <div v-else-if="seg.kind === 'think'" class="tl-think-block">
                     <button class="tl-think-head" type="button" @click="toggleThinkSeg(m, seg)">
@@ -283,7 +283,7 @@
                     </button>
                     <div v-show="procOpen(m, seg)" class="tl-process">{{ procSlice(m, seg) }}</div>
                   </div>
-                  <!-- 产物段不再就地渲染：产物统一沉底（时间线数据仍保留 artifact 段以备后续） -->
+                  <!-- 产物段不在过程块里渲染：产物统一沉底（时间线数据仍保留 artifact 段以备后续） -->
                   <div v-else class="tl-group">
                     <button v-if="groupHasBar(seg)" class="tl-group-bar" type="button" @click="seg.tools[0]._groupOpen = !seg.tools[0]._groupOpen">
                       <loading-outlined v-if="groupRunning(seg)" spin class="tool-ic tool-ic-run" />
@@ -321,7 +321,7 @@
                         <NoteBody v-if="!groupHasBar(seg)" v-for="(nt, ni) in seg.notes" :key="'note' + ni" :m="m" :note="nt" />
                         <!-- askUser 问答记录：可折叠（默认展开），刷新/历史恢复同构 -->
                         <AskRecordCard v-if="t.name === 'askUser' && t.status !== 'start'" :t="t" />
-                        <!-- 咨询另一位助手：这一问一答就地成卡（那份 subChat 随后端工具卡一起落库，
+                        <!-- 咨询另一位助手：这一问一答在过程块里成卡（那份 subChat 随后端工具卡一起落库，
                              所以刷新/换设备与实时同构）；老消息没这份就不渲染，退回上面的普通工具卡。
                              直播期（subChat 未到、_steps 已有）挂执行中形态：卡内时间线逐步追加 -->
                         <SubAgentChatCard v-if="(t.subChat || (t._steps && t._steps.length)) && toolCardOpen(t)" :t="t"
@@ -429,7 +429,7 @@
               </div>
               <!-- 智能体提问（askUser）的「待答」态不再渲染在气泡里：桌面壳把底部聊天输入框整块
                    替换成提问面板（见 pendingAsk / askp-*），答复后问答记录以工具卡形态留在本气泡 -->
-              <!-- 产物统一沉底展示（不再按生成时刻插在时间线中间，避免把回答切碎）。
+              <!-- 产物统一沉底展示（不参与过程块与正文的排版）。
                    「预览」＝进预览台（整屏 + 可控视口，见 utils/previewStage）：页面设计档给真实视口，
                    读字档把 Markdown/表格/代码在应用里排好版；锚点的 href 仍是那份签名地址，
                    所以 Ctrl/中键点击照旧开真标签。哪些类型怎么摆是 artifactView 里那一份判据，开不了的只给下载 -->

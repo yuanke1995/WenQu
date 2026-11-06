@@ -465,7 +465,7 @@ docker compose up -d          # 自包含：redis-stack + meilisearch + 内置 M
 | `retrieved` | 检索 + 重排 + 上下文填充完成 | 检索概览 `{keywords, refs, terms}`（随消息持久化） |
 | `thinking` | 深度思考开启时 | 思考链增量 |
 | `thinking_done` | 深度思考结束（正常完成或截断降级） | `{status: ok\|degraded, thinking: 完整思考链}` |
-| `process` | 工具模式下模型推理 / 试错独白（与正文分流） | 过程独白增量（前端原位灰字展示；全文随消息持久化） |
+| `process` | 工具模式下模型推理 / 试错独白（与正文分流） | 过程独白增量（收在顶部过程块里展示；全文随消息持久化） |
 | `tool_status` | 调用工具 | 工具名 / 状态（done\|error）/ 结果或错误（含尝试次数 `attempts`） |
 | `tool_output` | 沙盒命令执行中 | 命令输出逐行增量（实时流式） |
 | `approval_required` | 有副作用工具执行前等待确认 | `{approvalId,tool,args,timeoutMs}`（批准 / 拒绝经 `POST /api/ai/tool-approval/{id}`） |
@@ -478,7 +478,7 @@ docker compose up -d          # 自包含：redis-stack + meilisearch + 内置 M
 | `artifact` | 产物交付落盘 | 产物卡片字段 `{id,url,filename,ext,size,description}` |
 | `usage` | 生成开始预下发 prompt 侧用量，`done` 时以网关实测覆盖 | tokens `{window,windowSource,cached,parts,…}` |
 | `warn` | 非致命降级 / 告警 | 提示文案 |
-| `done` | 回答完成 | `sources`、`related`（下一步建议数据源）、`messageId`、`thinking`、`finalContent`/`finalImages`（校验修正后的全文与图片）、`processText`、`timeline`（段数组，刷新后重建交错过程视图的数据源）、`degradations`、`artifacts`、`toolCalls`、`tokens`（窗口与来源、缓存命中 token、七类计量明细、滚动压缩轮数）、`subagentBranches`/`subagentRoute`；缓存命中时仅 `finalContent`/`finalImages` |
+| `done` | 回答完成 | `sources`、`related`（下一步建议数据源）、`messageId`、`thinking`、`finalContent`/`finalImages`（校验修正后的全文与图片）、`processText`、`timeline`（段数组，刷新后重建过程块与最终答案的数据源）、`degradations`、`artifacts`、`toolCalls`、`tokens`（窗口与来源、缓存命中 token、七类计量明细、滚动压缩轮数）、`subagentBranches`/`subagentRoute`；缓存命中时仅 `finalContent`/`finalImages` |
 | `error` | 处理或下发异常 | 错误文案 |
 
 > **完整思考链**在 `done.thinking` 一次性给出；`GET /api/ai/chat/resume`、`GET /api/ai/share/{token}/chat/resume` 与 `GET /api/ai/workflow/{id}/run/{runId}/stream` 复用同一套事件语义，客户端接流后无须区分首发与重放。
