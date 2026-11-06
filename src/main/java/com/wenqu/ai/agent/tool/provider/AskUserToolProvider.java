@@ -5,7 +5,7 @@ import com.wenqu.ai.agent.tool.ToolDescriptor;
 import com.wenqu.ai.agent.tool.ToolFamily;
 import com.wenqu.ai.agent.tool.ToolFamilyProvider;
 import com.wenqu.ai.agent.tool.ToolMountContext;
-import com.wenqu.ai.service.BuiltinTools;
+import com.wenqu.ai.service.AskUserTools;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Component;
 
@@ -24,10 +24,10 @@ import java.util.List;
 @Component
 public class AskUserToolProvider implements ToolFamilyProvider {
 
-    private final BuiltinTools builtinTools;
+    private final AskUserTools askUserTools;
 
-    public AskUserToolProvider(BuiltinTools builtinTools) {
-        this.builtinTools = builtinTools;
+    public AskUserToolProvider(AskUserTools askUserTools) {
+        this.askUserTools = askUserTools;
     }
 
     @Override
@@ -37,7 +37,7 @@ public class AskUserToolProvider implements ToolFamilyProvider {
 
     @Override
     public Object holder() {
-        return builtinTools;
+        return askUserTools;
     }
 
     @Override

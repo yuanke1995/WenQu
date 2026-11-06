@@ -853,7 +853,7 @@ const loadToolCatalog = async () => {
     // 而是「只要智能体用了『指定内置工具』模式，提问卡就永远打不开」——因为挂载判据按选中名单过滤，
     // 名单里给不出一个选不到的项。后端名册按族给全，配置面与挂载判据就此对齐；
     // 存量智能体的已存名单不变（仍不含 askUser），要不要给它开提问卡由用户自己勾。
-    builtinOptions.value = list.filter(t => t.family === 'ask_user' || t.family === 'builtin')
+    builtinOptions.value = list.filter(t => t.family === 'ask_user')
       .map(t => ({ value: t.name, label: t.label || t.cardLabel || t.name }))
     // 工具黑名单的选项=名册<b>全族</b>（族名做前缀：不同族可能有同名工具，裸英文名分不清）。
     // 外部 MCP 工具没有静态声明、进不了名册，所以控件用 tags 模式允许手输名字——

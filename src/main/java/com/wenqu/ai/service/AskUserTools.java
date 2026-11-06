@@ -6,17 +6,16 @@ import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
 
 /**
- * 内置工具：只剩 {@code askUser}（人在回路）。
+ * 提问工具：只剩 {@code askUser}（人在回路）。
  *
  * <p>2026-11-06 物理退役了 10 把纯计算工具（calculate/currentDateTime/daysBetween/addDays/
  * randomNumber/uuid/unitConvert/textStats/base64/hash）：这些能力模型原生具备，常驻只占 schema；
- * 外部世界能力仍走 MCP/Provider 壳。历史消息里那几把工具卡的展示名由前端 projections.js 的
- * 兜底表保留，不影响老会话回显。
+ * 外部世界能力仍走 MCP/Provider 壳。退役工具的描述符、实现与前端展示映射一并删除。
  *
  * @author yuanke
  */
 @Component
-public class BuiltinTools {
+public class AskUserTools {
 
     /** ToolContext 键：askUser 的本轮执行器（ChatService 装配会话态时注入） */
     public static final String CTX_ASK = "wenqu.askUser.fn";

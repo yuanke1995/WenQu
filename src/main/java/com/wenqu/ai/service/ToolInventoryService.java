@@ -23,9 +23,8 @@ import java.util.Map;
  * 模型可见的 description 仍然是反射出来的（{@code @Tool} 注解原文），不另存一份：
  * 那是喂给模型的提示，抄进清单就成了第四份副本。
  * <p>
- * 与「内置工具可选项」（前端 AgentsPage 的 BUILTIN_TOOL_OPTIONS）的关系不变：那边是智能体配置时
- * 的多选框选项，这边是全景清单，口径不同；<b>但 AgentsPage 那份仍是前端手抄</b>——它是登录用户
- * 都要读的，而本接口按既定口径不开普通用户洞（见 ToolInventoryController 注释），留给后续统一。
+ * 与「提问工具可选项」（前端 AgentsPage 的 builtinOptions）的关系不变：那边是智能体配置时的
+ * 多选框选项，这边是全景清单，口径不同；两边都从工具注册中心取值，不再手抄。
  *
  * @author yuanke
  */

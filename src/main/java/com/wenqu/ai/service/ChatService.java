@@ -134,8 +134,8 @@ public class ChatService {
     /** 用户表（个人默认模型解析） */
     private final com.wenqu.ai.mapper.UserMapper userMapper;
     /** 产物交付工具（Function Calling；生成文件并实时推送） */
-    /** 内置高频工具（计算/当前时间/日期差等，随工具总闸启用，按智能体三态/停用名单收口） */
-    private final BuiltinTools builtinTools;
+    /** 提问工具（askUser，人在回路；随工具总闸启用，按智能体三态/停用名单收口） */
+    private final AskUserTools askUserTools;
     /** 联网搜索工具（webSearch.enabled 控制，默认关；结果注册进引用体系，与知识库来源同编号） */
     /** 沙盒（AgentScope 原生文件/命令工具；聊天里的启停由权限档位控制） */
     /** 个人配置覆盖（schema personal 字段）：流水线线程装载 ThreadLocal，本轮 configService.get 优先个人值 */
@@ -320,7 +320,7 @@ public class ChatService {
     private void warmUpToolSchemas() {
         try {
             for (org.springframework.ai.tool.ToolCallback cb :
-                    org.springframework.ai.support.ToolCallbacks.from(builtinTools)) {
+                    org.springframework.ai.support.ToolCallbacks.from(askUserTools)) {
                 cb.getToolDefinition().inputSchema();
             }
             for (org.springframework.ai.tool.ToolCallback cb :
@@ -367,7 +367,7 @@ public class ChatService {
                       ChatAttachmentService chatAttachments,
                       UserImageService userImageService,
                       KnowledgeRetrievalTool knowledgeRetrievalTool,
-                      BuiltinTools builtinTools,
+                      AskUserTools askUserTools,
                       AgentService agentService,
                       KnowledgeBaseService knowledgeBaseService,
                       com.wenqu.ai.mapper.UserMapper userMapper,
@@ -387,7 +387,7 @@ public class ChatService {
         this.chatAttachments = chatAttachments;
         this.userImageService = userImageService;
         this.knowledgeRetrievalTool = knowledgeRetrievalTool;
-        this.builtinTools = builtinTools;
+        this.askUserTools = askUserTools;
         this.agentService = agentService;
         this.knowledgeBaseService = knowledgeBaseService;
         this.userMapper = userMapper;
