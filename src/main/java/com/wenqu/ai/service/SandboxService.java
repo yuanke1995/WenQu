@@ -156,9 +156,13 @@ public class SandboxService {
      * 解析本轮沙盒落在哪个作用域。
      * <p>解析失败一律退回会话级——沙盒是"能干活"的能力，不该因为工作区归属读不到而整轮不可用。
      */
-    private SandboxScope scopeOf(String sessionId) {
-        // 工作区的文件/命令走本机执行器，不再有「服务器上的工作区目录」；服务器沙盒只剩
-        // 会话级作用域（没挂工作区的「会话」栏、工作流/定时任务等平台内部轮次）。
+    private SandboxScope scopeOf(String sessionId, String uid) {
+        // 显式工作区走本机执行器，服务器沙盒只剩无工作区会话；
+        // sandbox.userScope=true 时把无工作区会话收成用户级作用域——同一用户的多个会话复用同一个容器
+        // （热池/热复用），文件落在用户级 user-data 里共享。默认关，保持旧会话级作用域。
+        if (configService.getBoolean("sandbox.userScope", false)) {
+            return new SandboxScope(uid, null);
+        }
         return new SandboxScope(sessionId, null);
     }
 
@@ -196,7 +200,7 @@ public class SandboxService {
             }
             throw new IllegalStateException("本机工作区没有服务器沙盒：文件与命令都走你那台电脑上的执行器");
         }
-        SandboxScope scope = scopeOf(sessionId);
+        SandboxScope scope = scopeOf(sessionId, uid);
         return new ProvisionerSandboxBackend(provider, scope.scopeId(), uid, scope.workdirPath(),
                 true, true, unrestrictedWrites, ProvisionerSandboxBackend.procTagFor(sessionId));
     }
@@ -225,7 +229,7 @@ public class SandboxService {
             return null;
         }
         try {
-            SandboxScope scope = scopeOf(sessionId);
+            SandboxScope scope = scopeOf(sessionId, uid);
             // 工作区 = 用户本机目录：文件/命令工具直接落到那台电脑上的执行器。
             // 用户建的工作区若还没绑目录，宁可不给文件工具，也不退回服务器沙盒——否则用户以为在改本机，
             // 实际写进了服务器的一份副本。
@@ -340,7 +344,7 @@ public class SandboxService {
             return false;
         }
         try {
-            SandboxScope scope = scopeOf(sessionId);
+            SandboxScope scope = scopeOf(sessionId, uid);
             // 只查本副本已建好的连接：不取 provider 的 scope 锁——后台 create 正持着它，
             // 这里再 get/等锁就会把「异步升级」又变成同步等待。
             return provider.isConnected(scope.scopeId(), uid);
@@ -522,7 +526,13 @@ public class SandboxService {
             return null;
         }
         try {
-            SandboxScope scope = scopeOf(sessionId);
+            // 显式工作区走本机执行器（或尚未绑目录），不需要服务器沙盒；此前这里仍会建一个容器，
+            // 文件却全部走执行器，等于白建。直接返回 null，FrameworkSessions 的 sandboxAttached 会置 false。
+            Project bound = projectService.projectOfSession(sessionId);
+            if (bound != null && !Project.SELECTION_IMPLICIT.equals(bound.getSelectionStatus())) {
+                return null;
+            }
+            SandboxScope scope = scopeOf(sessionId, uid);
             // 每用户租约上限：当前作用域还没有连接才核算，已有连接直接复用，不能因为一句普通轮
             // 把用户另一个正在用的沙盒顶掉。超出上限按 LRU 回收最久未用的那条（文件在宿主卷上不丢）。
             if (!provider.isConnected(scope.scopeId(), uid)) {
@@ -604,7 +614,7 @@ public class SandboxService {
             return false;
         }
         try {
-            SandboxScope scope = scopeOf(sessionId);
+            SandboxScope scope = scopeOf(sessionId, uid);
             return provider.get(scope.scopeId(), uid, false, true, scope.workdirPath()) != null;
         } catch (Exception e) {
             log.debug("[SANDBOX] 探测沙盒失败 (session={}): {}", sessionId, e.getMessage());
@@ -633,7 +643,7 @@ public class SandboxService {
             }
             throw new IllegalStateException("本机工作区没有服务器沙盒：文件与命令都走你那台电脑上的执行器");
         }
-        SandboxScope scope = scopeOf(sessionId);
+        SandboxScope scope = scopeOf(sessionId, uid);
         return new ProvisionerSandboxBackend(provider, scope.scopeId(), uid, scope.workdirPath(), false, true);
     }
 
@@ -666,7 +676,7 @@ public class SandboxService {
      * 否则「按会话 id 释放」会找不到容器而静默留下一个（这正是本类最容易写错的一处）。
      */
     public void release(String sessionId, String uid) {
-        SandboxScope scope = scopeOf(sessionId);
+        SandboxScope scope = scopeOf(sessionId, uid);
         provider.release(scope.scopeId(), uid, true, scope.workdirPath());
     }
 

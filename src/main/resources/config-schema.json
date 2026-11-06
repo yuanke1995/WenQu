@@ -4227,6 +4227,19 @@
       "width": 200,
       "note": "每个用户最多持有几个沙盒连接；超出按 LRU 回收最久未用的一条（工作区文件在宿主卷上不丢）。0=不限制",
       "tier": 2
+    },
+    {
+      "backendKey": "sandbox.userScope",
+      "panel": "sandbox",
+      "section": 1,
+      "group": "sandbox",
+      "key": "userScope",
+      "path": "sandbox.userScope",
+      "label": "无工作区会话按用户共享沙盒",
+      "type": "switch",
+      "def": false,
+      "note": "开启后同一用户的多个无工作区会话复用同一个沙盒容器（首个会话热起来后续命中，文件在用户级 user-data 共享）；默认关保持会话级作用域",
+      "tier": 2
     }
   ],
   "tips": {
@@ -4475,6 +4488,7 @@
     "chat.mcpEnabled": "聊天档挂载 MCP（默认关）",
     "chat.asyncWorkspaceUpgrade": "文件意图异步升级工作区（默认关）",
     "chat.asyncWorkspaceMax": "异步升级并发上限",
-    "sandbox.maxPerUser": "每用户沙盒租约上限（0=不限）"
+    "sandbox.maxPerUser": "每用户沙盒租约上限（0=不限）",
+    "sandbox.userScope": "无工作区会话按用户共享沙盒（热池）"
   }
 }
