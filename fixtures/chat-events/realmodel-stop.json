@@ -1,0 +1,186 @@
+{
+  "capturedAt": "2026-11-06T12:12:10.005Z",
+  "events": [
+    {
+      "type": "turn_start",
+      "data": {
+        "wallMs": 12,
+        "prepMs": 12
+      }
+    },
+    {
+      "type": "turn_start",
+      "data": {
+        "wallMs": 165,
+        "prepMs": 165
+      }
+    },
+    {
+      "type": "token",
+      "data": "文文"
+    },
+    {
+      "type": "token",
+      "data": "文"
+    },
+    {
+      "type": "token",
+      "data": "文文文文文文文文文文文文"
+    },
+    {
+      "type": "token",
+      "data": "文文文文"
+    },
+    {
+      "type": "token",
+      "data": "文文文文文——文blo"
+    },
+    {
+      "type": "token",
+      "data": "ck"
+    },
+    {
+      "type": "token",
+      "data": "s 文文文文文文文文文"
+    },
+    {
+      "type": "token",
+      "data": "文文文"
+    },
+    {
+      "type": "usage",
+      "data": {
+        "thinkingChars": 0,
+        "turnElapsedMs": 2518,
+        "profile": "chat",
+        "turnWallMs": 2683,
+        "turnPrepMs": 165
+      }
+    },
+    {
+      "type": "done",
+      "data": {
+        "finalContent": "文文文文文文文文文文文文文文文文文文文文文文文文——文blocks 文文文文文文文文文文文文\n\n> ⏹ 文文文文文文文文文文文文文文文",
+        "messageId": "150206978f996ceced1656cc67dd5a3e",
+        "userMessageId": "48c3f602eff1d7cd1a4148025bf55acf",
+        "turnId": "6a8b7cbb66104d6f93e91ec6b45f736a",
+        "model": "deepseek-v4-flash",
+        "agentId": null,
+        "agentName": null,
+        "sources": [],
+        "finalImages": [],
+        "degradations": [],
+        "elapsedMs": 2518,
+        "humanWaitMs": 0,
+        "turnWallMs": 2683,
+        "prepMs": 165,
+        "tokens": {
+          "thinkingChars": 0,
+          "turnElapsedMs": 2518,
+          "profile": "chat",
+          "turnWallMs": 2683,
+          "turnPrepMs": 165
+        },
+        "toolCalls": [],
+        "blocks": {
+          "v": 1,
+          "turnId": "6a8b7cbb66104d6f93e91ec6b45f736a",
+          "blocks": [
+            {
+              "kind": "text",
+              "channel": "answer",
+              "text": "文文文文文文文文文文文文文文文文文文文文文文文文——文blocks 文文文文文文文文文文文文",
+              "id": "b1"
+            },
+            {
+              "tone": "stopped",
+              "text": "> ⏹ 文文文文文文文文文文文文文文文",
+              "kind": "notice",
+              "id": "b2"
+            },
+            {
+              "kind": "text",
+              "channel": "answer",
+              "text": "\n\n> ⏹ 文文文文文文文文文文文文文文文",
+              "id": "b3"
+            }
+          ]
+        },
+        "artifacts": [],
+        "related": [],
+        "thinking": null
+      }
+    }
+  ],
+  "message": {
+    "turnId": "6a8b7cbb66104d6f93e91ec6b45f736a",
+    "sequence": 2,
+    "role": "assistant",
+    "sources": [],
+    "createTime": "2026-11-06T20:12:09",
+    "blocks": {
+      "v": 1,
+      "turnId": "6a8b7cbb66104d6f93e91ec6b45f736a",
+      "blocks": [
+        {
+          "kind": "text",
+          "channel": "answer",
+          "text": "文文文文文文文文文文文文文文文文文文文文文文文文——文blocks 文文文文文文文文文文文文",
+          "id": "b1"
+        },
+        {
+          "tone": "stopped",
+          "text": "> ⏹ 文文文文文文文文文文文文文文文",
+          "kind": "notice",
+          "id": "b2"
+        },
+        {
+          "kind": "text",
+          "channel": "answer",
+          "text": "\n\n> ⏹ 文文文文文文文文文文文文文文文",
+          "id": "b3"
+        }
+      ]
+    },
+    "messageId": "150206978f996ceced1656cc67dd5a3e",
+    "timeline": [
+      {
+        "kind": "text",
+        "from": 0,
+        "to": 67
+      }
+    ],
+    "tokens": {
+      "thinkingChars": 0,
+      "turnElapsedMs": 2518,
+      "profile": "chat",
+      "turnWallMs": 2683,
+      "turnPrepMs": 165
+    },
+    "model": "deepseek-v4-flash",
+    "content": "文文文文文文文文文文文文文文文文文文文文文文文文——文blocks 文文文文文文文文文文文文\n\n> ⏹ 文文文文文文文文文文文文文文文"
+  },
+  "guestMessage": {
+    "role": "assistant",
+    "content": "文文文文文文文文文文文文文文文文文文文文文文文文——文blocks 文文文文文文文文文文文文\n\n> ⏹ 文文文文文文文文文文文文文文文",
+    "time": null,
+    "blocks": {
+      "v": 1,
+      "blocks": [
+        {
+          "id": "b1",
+          "kind": "text",
+          "channel": "answer",
+          "text": "文文文文文文文文文文文文文文文文文文文文文文文文——文blocks 文文文文文文文文文文文文"
+        },
+        {
+          "id": "b3",
+          "kind": "text",
+          "channel": "answer",
+          "text": "\n\n> ⏹ 文文文文文文文文文文文文文文文"
+        }
+      ]
+    }
+  },
+  "redacted": "CJK→文；路径/URL/邮箱→redacted（events 同步替换）"
+}

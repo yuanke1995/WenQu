@@ -1,0 +1,574 @@
+{
+  "capturedAt": "2026-11-06T12:14:07.213Z",
+  "events": [
+    {
+      "type": "turn_start",
+      "data": {
+        "wallMs": 9,
+        "prepMs": 9
+      }
+    },
+    {
+      "type": "turn_start",
+      "data": {
+        "wallMs": 138,
+        "prepMs": 138
+      }
+    },
+    {
+      "type": "tool_status",
+      "data": {
+        "name": "agent_spawn",
+        "label": "文文文文文文",
+        "hint": "文文文文文文文文文文文文文文文文文文文文文文文",
+        "status": "start",
+        "elapsedMs": 0,
+        "startedAtMs": 1793967148527,
+        "args": "{\"task\":\"blocks 文文文文文文文文文文文文文\",\"label\":\"blocks-e2e-q1\",\"agent_id\":\"11075bfdd3dc3455acd2690a9c5a6033\",\"timeout_seconds\":120}"
+      }
+    },
+    {
+      "type": "agent_consulted",
+      "data": {
+        "name": "blocks E2E 文文文文文文 1793967025622",
+        "id": "11075bfdd3dc3455acd2690a9c5a6033"
+      }
+    },
+    {
+      "type": "tool_status",
+      "data": {
+        "name": "agent_spawn",
+        "label": "文文文文文文",
+        "hint": "文文文文文文文文文文文文文文文文文文文文文文文",
+        "status": "done",
+        "elapsedMs": 93616,
+        "startedAtMs": 1793967148527,
+        "args": "{\"task\":\"blocks 文文文文文文文文文文文文文\",\"label\":\"blocks-e2e-q1\",\"agent_id\":\"11075bfdd3dc3455acd2690a9c5a6033\",\"timeout_seconds\":120}",
+        "result": "\"agent_key: agent:11075bfdd3dc3455acd2690a9c5a6033:3a77e460-9ab5-410b-be83-aed23335b33c\\nagent_id: 11075bfdd3dc3455acd2690a9c5a6033\\nsession_id: sub-08241ece-213c-42e5-bbfb-f3977ac93a87\\nstatus: ok\\nreply:\\n文blocks E2E 文文文文文文 1793967025622文文文文文文文 93 文文文文文文文 0 文文文文文\\n文文文文文文文文文文文文文文文文文文文\"",
+        "subChat": {
+          "agentId": "11075bfdd3dc3455acd2690a9c5a6033",
+          "agentName": "blocks E2E 文文文文文文 1793967025622",
+          "question": "blocks 文文文文文文文文文文文文文",
+          "answer": "文文文文文文文文文文文文文文文文文文文",
+          "status": "done",
+          "toolSteps": 0,
+          "elapsedMs": 93432,
+          "sources": [],
+          "steps": [],
+          "artifacts": []
+        }
+      }
+    },
+    {
+      "type": "usage",
+      "data": {
+        "prompt": 11835,
+        "output": 129,
+        "finalOutput": 129,
+        "total": 11964,
+        "cached": 2048,
+        "context": 11835,
+        "outputIsReal": true,
+        "hits": 0,
+        "window": 1000000,
+        "windowSource": "framework",
+        "parts": {
+          "system": 5935,
+          "input": 30,
+          "toolOutput": 300,
+          "toolSchema": 5570
+        }
+      }
+    },
+    {
+      "type": "token",
+      "data": "bloc"
+    },
+    {
+      "type": "token",
+      "data": "ks 文文"
+    },
+    {
+      "type": "token",
+      "data": "文文文"
+    },
+    {
+      "type": "token",
+      "data": "文文"
+    },
+    {
+      "type": "token",
+      "data": "文"
+    },
+    {
+      "type": "token",
+      "data": "文文"
+    },
+    {
+      "type": "token",
+      "data": "文文文文文文文文文"
+    },
+    {
+      "type": "token",
+      "data": "文文"
+    },
+    {
+      "type": "token",
+      "data": "文文文文文文文文"
+    },
+    {
+      "type": "token",
+      "data": "文文文文文"
+    },
+    {
+      "type": "token",
+      "data": "文文"
+    },
+    {
+      "type": "token",
+      "data": "文文"
+    },
+    {
+      "type": "token",
+      "data": "文文文文文文文文"
+    },
+    {
+      "type": "token",
+      "data": "文文文"
+    },
+    {
+      "type": "token",
+      "data": "文文——文文文文文文文"
+    },
+    {
+      "type": "token",
+      "data": "文文文文文\n\n文文"
+    },
+    {
+      "type": "token",
+      "data": "文文文"
+    },
+    {
+      "type": "token",
+      "data": "文文文block"
+    },
+    {
+      "type": "token",
+      "data": "s "
+    },
+    {
+      "type": "token",
+      "data": "文文文文文"
+    },
+    {
+      "type": "token",
+      "data": "文文文文文"
+    },
+    {
+      "type": "token",
+      "data": "文文"
+    },
+    {
+      "type": "token",
+      "data": "文/"
+    },
+    {
+      "type": "token",
+      "data": "文文文"
+    },
+    {
+      "type": "token",
+      "data": "文文文"
+    },
+    {
+      "type": "token",
+      "data": "文文"
+    },
+    {
+      "type": "token",
+      "data": "文文"
+    },
+    {
+      "type": "token",
+      "data": "文文文文文文文文"
+    },
+    {
+      "type": "token",
+      "data": "文文文文文文文\n\n"
+    },
+    {
+      "type": "token",
+      "data": "**文文"
+    },
+    {
+      "type": "token",
+      "data": "文文文"
+    },
+    {
+      "type": "token",
+      "data": "文文"
+    },
+    {
+      "type": "token",
+      "data": "文"
+    },
+    {
+      "type": "token",
+      "data": "文文文文文"
+    },
+    {
+      "type": "token",
+      "data": "文文**文文文"
+    },
+    {
+      "type": "token",
+      "data": "文\n- 文文"
+    },
+    {
+      "type": "token",
+      "data": "文文文文文\n"
+    },
+    {
+      "type": "token",
+      "data": "- 文文"
+    },
+    {
+      "type": "token",
+      "data": "文 bl"
+    },
+    {
+      "type": "token",
+      "data": "ocks"
+    },
+    {
+      "type": "token",
+      "data": " 文文文文文\n"
+    },
+    {
+      "type": "token",
+      "data": "-"
+    },
+    {
+      "type": "token",
+      "data": " 文文文文文文"
+    },
+    {
+      "type": "token",
+      "data": "文\n"
+    },
+    {
+      "type": "token",
+      "data": "\n文文文文文文文"
+    },
+    {
+      "type": "token",
+      "data": "文文文文文文文"
+    },
+    {
+      "type": "token",
+      "data": " blocks "
+    },
+    {
+      "type": "token",
+      "data": "文"
+    },
+    {
+      "type": "token",
+      "data": "文文文"
+    },
+    {
+      "type": "token",
+      "data": "文文文文文文文文文"
+    },
+    {
+      "type": "token",
+      "data": "文\n"
+    },
+    {
+      "type": "token",
+      "data": "\n"
+    },
+    {
+      "type": "usage",
+      "data": {
+        "prompt": 23965,
+        "output": 301,
+        "finalOutput": 172,
+        "total": 24266,
+        "cached": 8192,
+        "context": 12130,
+        "outputIsReal": true,
+        "hits": 0,
+        "window": 1000000,
+        "windowSource": "framework",
+        "parts": {
+          "system": 6083,
+          "input": 30,
+          "toolOutput": 308,
+          "toolSchema": 5709
+        }
+      }
+    },
+    {
+      "type": "usage",
+      "data": {
+        "prompt": 23965,
+        "output": 301,
+        "finalOutput": 172,
+        "total": 24266,
+        "cached": 8192,
+        "context": 12130,
+        "outputIsReal": true,
+        "hits": 0,
+        "window": 1000000,
+        "windowSource": "framework",
+        "parts": {
+          "system": 6083,
+          "input": 30,
+          "toolOutput": 308,
+          "toolSchema": 5709
+        },
+        "thinkingChars": 0,
+        "turnElapsedMs": 101906,
+        "profile": "chat",
+        "turnWallMs": 102044,
+        "turnPrepMs": 138
+      }
+    },
+    {
+      "type": "done",
+      "data": {
+        "finalContent": "blocks 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文——文文文文文文文文文文文文\n\n文文文文文文文文blocks 文文文文文文文文文文文文文/文文文文文文文文文文文文文文文文文文文文文文文文文\n\n**文文文文文文文文文文文文文文文**文文文文\n- 文文文文文文文\n- 文文文 blocks 文文文文文\n- 文文文文文文文\n\n文文文文文文文文文文文文文文 blocks 文文文文文文文文文文文文文文\n\n",
+        "messageId": "c869718032d098206d8e64ad9f5dd07a",
+        "userMessageId": "9b339f68fbf126f0000f59eee9fd78df",
+        "turnId": "a6754e312c08470ebbe7e742091751e1",
+        "model": "deepseek-v4-flash",
+        "agentId": null,
+        "agentName": null,
+        "sources": [],
+        "finalImages": [],
+        "degradations": [],
+        "elapsedMs": 101906,
+        "humanWaitMs": 0,
+        "turnWallMs": 102044,
+        "prepMs": 138,
+        "tokens": {
+          "prompt": 23965,
+          "output": 301,
+          "finalOutput": 172,
+          "total": 24266,
+          "cached": 8192,
+          "context": 12130,
+          "outputIsReal": true,
+          "hits": 0,
+          "window": 1000000,
+          "windowSource": "framework",
+          "parts": {
+            "system": 6083,
+            "input": 30,
+            "toolOutput": 308,
+            "toolSchema": 5709
+          },
+          "thinkingChars": 0,
+          "turnElapsedMs": 101906,
+          "profile": "chat",
+          "turnWallMs": 102044,
+          "turnPrepMs": 138
+        },
+        "toolCalls": [
+          {
+            "name": "agent_spawn",
+            "label": "文文文文文文",
+            "hint": "文文文文文文文文文文文文文文文文文文文文文文文",
+            "status": "done",
+            "args": "{\"task\":\"blocks 文文文文文文文文文文文文文\",\"label\":\"blocks-e2e-q1\",\"agent_id\":\"11075bfdd3dc3455acd2690a9c5a6033\",\"timeout_seconds\":120}",
+            "startedAtMs": 1793967148527,
+            "elapsedMs": 93616,
+            "result": "\"agent_key: agent:11075bfdd3dc3455acd2690a9c5a6033:3a77e460-9ab5-410b-be83-aed23335b33c\\nagent_id: 11075bfdd3dc3455acd2690a9c5a6033\\nsession_id: sub-08241ece-213c-42e5-bbfb-f3977ac93a87\\nstatus: ok\\nreply:\\n文blocks E2E 文文文文文文 1793967025622文文文文文文文 93 文文文文文文文 0 文文文文文\\n文文文文文文文文文文文文文文文文文文文\"",
+            "subChat": {
+              "agentId": "11075bfdd3dc3455acd2690a9c5a6033",
+              "agentName": "blocks E2E 文文文文文文 1793967025622",
+              "question": "blocks 文文文文文文文文文文文文文",
+              "answer": "文文文文文文文文文文文文文文文文文文文",
+              "status": "done",
+              "toolSteps": 0,
+              "elapsedMs": 93432,
+              "sources": [],
+              "steps": [],
+              "artifacts": []
+            }
+          }
+        ],
+        "blocks": {
+          "v": 1,
+          "turnId": "a6754e312c08470ebbe7e742091751e1",
+          "blocks": [
+            {
+              "name": "agent_spawn",
+              "label": "文文文文文文",
+              "hint": "文文文文文文文文文文文文文文文文文文文文文文文",
+              "status": "done",
+              "args": "{\"task\":\"blocks 文文文文文文文文文文文文文\",\"label\":\"blocks-e2e-q1\",\"agent_id\":\"11075bfdd3dc3455acd2690a9c5a6033\",\"timeout_seconds\":120}",
+              "startedAtMs": 1793967148527,
+              "elapsedMs": 93616,
+              "result": "\"agent_key: agent:11075bfdd3dc3455acd2690a9c5a6033:3a77e460-9ab5-410b-be83-aed23335b33c\\nagent_id: 11075bfdd3dc3455acd2690a9c5a6033\\nsession_id: sub-08241ece-213c-42e5-bbfb-f3977ac93a87\\nstatus: ok\\nreply:\\n文blocks E2E 文文文文文文 1793967025622文文文文文文文 93 文文文文文文文 0 文文文文文\\n文文文文文文文文文文文文文文文文文文文\"",
+              "subChat": {
+                "agentId": "11075bfdd3dc3455acd2690a9c5a6033",
+                "agentName": "blocks E2E 文文文文文文 1793967025622",
+                "question": "blocks 文文文文文文文文文文文文文",
+                "answer": "文文文文文文文文文文文文文文文文文文文",
+                "status": "done",
+                "toolSteps": 0,
+                "elapsedMs": 93432,
+                "sources": [],
+                "steps": [],
+                "artifacts": []
+              },
+              "kind": "tool",
+              "id": "b1"
+            },
+            {
+              "kind": "text",
+              "channel": "answer",
+              "text": "blocks 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文——文文文文文文文文文文文文\n\n文文文文文文文文blocks 文文文文文文文文文文文文文/文文文文文文文文文文文文文文文文文文文文文文文文文\n\n**文文文文文文文文文文文文文文文**文文文文\n- 文文文文文文文\n- 文文文 blocks 文文文文文\n- 文文文文文文文\n\n文文文文文文文文文文文文文文 blocks 文文文文文文文文文文文文文文\n\n",
+              "id": "b2"
+            }
+          ]
+        },
+        "artifacts": [],
+        "related": [
+          "文文文文文文文文文文文",
+          "文文文文文文 blocks 文文文文文文/文文文",
+          "文文文文文文文文文文文文/文文/文文文"
+        ],
+        "thinking": null
+      }
+    }
+  ],
+  "message": {
+    "turnId": "a6754e312c08470ebbe7e742091751e1",
+    "role": "assistant",
+    "sources": [],
+    "blocks": {
+      "v": 1,
+      "turnId": "a6754e312c08470ebbe7e742091751e1",
+      "blocks": [
+        {
+          "name": "agent_spawn",
+          "label": "文文文文文文",
+          "hint": "文文文文文文文文文文文文文文文文文文文文文文文",
+          "status": "done",
+          "args": "{\"task\":\"blocks 文文文文文文文文文文文文文\",\"label\":\"blocks-e2e-q1\",\"agent_id\":\"11075bfdd3dc3455acd2690a9c5a6033\",\"timeout_seconds\":120}",
+          "startedAtMs": 1793967148527,
+          "elapsedMs": 93616,
+          "result": "\"agent_key: agent:11075bfdd3dc3455acd2690a9c5a6033:3a77e460-9ab5-410b-be83-aed23335b33c\\nagent_id: 11075bfdd3dc3455acd2690a9c5a6033\\nsession_id: sub-08241ece-213c-42e5-bbfb-f3977ac93a87\\nstatus: ok\\nreply:\\n文blocks E2E 文文文文文文 1793967025622文文文文文文文 93 文文文文文文文 0 文文文文文\\n文文文文文文文文文文文文文文文文文文文\"",
+          "subChat": {
+            "agentId": "11075bfdd3dc3455acd2690a9c5a6033",
+            "agentName": "blocks E2E 文文文文文文 1793967025622",
+            "question": "blocks 文文文文文文文文文文文文文",
+            "answer": "文文文文文文文文文文文文文文文文文文文",
+            "status": "done",
+            "toolSteps": 0,
+            "elapsedMs": 93432,
+            "sources": [],
+            "steps": [],
+            "artifacts": []
+          },
+          "kind": "tool",
+          "id": "b1"
+        },
+        {
+          "kind": "text",
+          "channel": "answer",
+          "text": "blocks 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文——文文文文文文文文文文文文\n\n文文文文文文文文blocks 文文文文文文文文文文文文文/文文文文文文文文文文文文文文文文文文文文文文文文文\n\n**文文文文文文文文文文文文文文文**文文文文\n- 文文文文文文文\n- 文文文 blocks 文文文文文\n- 文文文文文文文\n\n文文文文文文文文文文文文文文 blocks 文文文文文文文文文文文文文文\n\n",
+          "id": "b2"
+        }
+      ]
+    },
+    "messageId": "c869718032d098206d8e64ad9f5dd07a",
+    "content": "blocks 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文——文文文文文文文文文文文文\n\n文文文文文文文文blocks 文文文文文文文文文文文文文/文文文文文文文文文文文文文文文文文文文文文文文文文\n\n**文文文文文文文文文文文文文文文**文文文文\n- 文文文文文文文\n- 文文文 blocks 文文文文文\n- 文文文文文文文\n\n文文文文文文文文文文文文文文 blocks 文文文文文文文文文文文文文文\n\n",
+    "sequence": 2,
+    "related": [
+      "文文文文文文文文文文文",
+      "文文文文文文 blocks 文文文文文文/文文文",
+      "文文文文文文文文文文文文/文文/文文文"
+    ],
+    "createTime": "2026-11-06T20:14:07",
+    "timeline": [
+      {
+        "kind": "tool",
+        "i": 0
+      },
+      {
+        "kind": "text",
+        "from": 0,
+        "to": 232
+      }
+    ],
+    "tokens": {
+      "prompt": 23965,
+      "output": 301,
+      "finalOutput": 172,
+      "total": 24266,
+      "cached": 8192,
+      "context": 12130,
+      "outputIsReal": true,
+      "hits": 0,
+      "window": 1000000,
+      "windowSource": "framework",
+      "parts": {
+        "system": 6083,
+        "input": 30,
+        "toolOutput": 308,
+        "toolSchema": 5709
+      },
+      "thinkingChars": 0,
+      "turnElapsedMs": 101906,
+      "profile": "chat",
+      "turnWallMs": 102044,
+      "turnPrepMs": 138
+    },
+    "model": "deepseek-v4-flash",
+    "toolCalls": [
+      {
+        "args": "{\"task\":\"blocks 文文文文文文文文文文文文文\",\"label\":\"blocks-e2e-q1\",\"agent_id\":\"11075bfdd3dc3455acd2690a9c5a6033\",\"timeout_seconds\":120}",
+        "result": "\"agent_key: agent:11075bfdd3dc3455acd2690a9c5a6033:3a77e460-9ab5-410b-be83-aed23335b33c\\nagent_id: 11075bfdd3dc3455acd2690a9c5a6033\\nsession_id: sub-08241ece-213c-42e5-bbfb-f3977ac93a87\\nstatus: ok\\nreply:\\n文blocks E2E 文文文文文文 1793967025622文文文文文文文 93 文文文文文文文 0 文文文文文\\n文文文文文文文文文文文文文文文文文文文\"",
+        "subChat": {
+          "agentId": "11075bfdd3dc3455acd2690a9c5a6033",
+          "agentName": "blocks E2E 文文文文文文 1793967025622",
+          "question": "blocks 文文文文文文文文文文文文文",
+          "answer": "文文文文文文文文文文文文文文文文文文文",
+          "status": "done",
+          "toolSteps": 0,
+          "elapsedMs": 93432,
+          "sources": [],
+          "steps": [],
+          "artifacts": []
+        },
+        "hint": "文文文文文文文文文文文文文文文文文文文文文文文",
+        "name": "agent_spawn",
+        "label": "文文文文文文",
+        "startedAtMs": 1793967148527,
+        "status": "done",
+        "elapsedMs": 93616
+      }
+    ]
+  },
+  "guestMessage": {
+    "role": "assistant",
+    "content": "blocks 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文——文文文文文文文文文文文文\n\n文文文文文文文文blocks 文文文文文文文文文文文文文/文文文文文文文文文文文文文文文文文文文文文文文文文\n\n**文文文文文文文文文文文文文文文**文文文文\n- 文文文文文文文\n- 文文文 blocks 文文文文文\n- 文文文文文文文\n\n文文文文文文文文文文文文文文 blocks 文文文文文文文文文文文文文文\n\n",
+    "time": null,
+    "blocks": {
+      "v": 1,
+      "blocks": [
+        {
+          "id": "b2",
+          "kind": "text",
+          "channel": "answer",
+          "text": "blocks 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文——文文文文文文文文文文文文\n\n文文文文文文文文blocks 文文文文文文文文文文文文文/文文文文文文文文文文文文文文文文文文文文文文文文文\n\n**文文文文文文文文文文文文文文文**文文文文\n- 文文文文文文文\n- 文文文 blocks 文文文文文\n- 文文文文文文文\n\n文文文文文文文文文文文文文文 blocks 文文文文文文文文文文文文文文\n\n"
+        }
+      ]
+    }
+  },
+  "redacted": "CJK→文；路径/URL/邮箱→redacted（events 同步替换）"
+}
