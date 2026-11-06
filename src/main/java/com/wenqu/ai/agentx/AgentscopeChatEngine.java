@@ -911,6 +911,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         if (!goalNote.isEmpty()) {
             modelInput = modelInput + goalNote;
         }
+        // 目标工具按轮下发：只有在活跃目标（用户插话轮）里才进模型工具表，普通问答不常驻。
+        slot.noteGoalActive(!goalNote.isEmpty());
         // 框架原生支持多模态：submit(Msg)，Msg 里可混排 TextBlock 与 ImageBlock。
         // buildMultimodalMsg 在图片形态都不可用时会返回 null，那时退回纯文本 submit，不拿 null 去提交
         io.agentscope.core.message.Msg multimodal =
@@ -4038,7 +4040,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 .middleware(new PrefixStabilizerMiddleware(
                         () -> configService.getBoolean("chat.prefixStabilizer", true)))
                 // 异步升级首轮：工作区还没好，不把文件/命令工具暴露给模型，避免 scratch 写了带不进沙盒。
-                .middleware(new AgentxToolSurfaceFilter(slot))
+                .middleware(new AgentxToolSurfaceFilter(slot, !subagentTargets.isEmpty()))
                 // Phase 0 实测：框架默认装备子智能体/技能/工作区上下文/tools.json 等旁路能力。
                 //
                 // 子智能体由**框架驱使**（2026-10-18 全框架化迁移 P0 启用，2026-10-20 收口成一条）：

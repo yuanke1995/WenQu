@@ -97,6 +97,17 @@ public final class AgentxTurnSlot {
         return asyncPending;
     }
 
+    /** 本轮是否有活跃目标（用户插话轮也会置真）；目标工具只在此时下发，普通问答不常驻。 */
+    private volatile boolean goalActive;
+
+    public void noteGoalActive(boolean value) {
+        this.goalActive = value;
+    }
+
+    public boolean goalActive() {
+        return goalActive;
+    }
+
     /**
      * 这个会话实例的工具表（build 期由引擎登记）。
      * <p>为什么放槽位而不是 {@link Surface}：{@code Surface} 在 {@code frameworkTools} 里绑，
@@ -155,6 +166,7 @@ public final class AgentxTurnSlot {
         this.current = turn;
         this.profile = null;
         this.asyncPending = false;
+        this.goalActive = false;
     }
 
     /**
