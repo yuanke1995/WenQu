@@ -664,7 +664,7 @@
         ref="composerRef" v-model="text" :resolve="chipOf" :placeholder="composerPlaceholder"
         :sending="loading" steerable :can-send="canSend" :stop-armed="escArmed"
         attach-title="添加：上传文件图片 / 引用资料 / 引用历史问答 / 快捷命令"
-        :attach-on="(addOpen && !addOnEdit) || pickedSkills.length"
+        :attach-on="(addOpen && !addOnEdit) || pickedSkills.length > 0"
         :replace-box="!!(pendingAsk || pendingPlan)"
         @attach="toggleAddPanel" @send="sendNow" @stop="stopNow" @files="onDropFiles"
         @paste="onComposerPaste" @keydown="onInputKeydown" @input="syncPanelQuery"
