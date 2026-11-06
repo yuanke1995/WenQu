@@ -20,6 +20,10 @@ ARG MCP_VERSION=0.0.84
 ARG PLAYWRIGHT_DOWNLOAD_HOST=
 
 WORKDIR /app
+# 出口过滤脚本要用 iptables；精简基础镜像（含沙盒镜像）通常没带，显式装上
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends iptables \
+    && rm -rf /var/lib/apt/lists/*
 RUN npm init -y >/dev/null \
     && npm i --no-audit --no-fund @playwright/mcp@${MCP_VERSION} \
     && PLAYWRIGHT_DOWNLOAD_HOST=${PLAYWRIGHT_DOWNLOAD_HOST} npx playwright install --with-deps chromium \
