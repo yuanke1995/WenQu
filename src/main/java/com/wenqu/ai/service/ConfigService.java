@@ -738,6 +738,7 @@ public class ConfigService {
         d.put("sandbox.idleReleaseMinutes", "60");                // 空闲多久回收沙盒（分钟，0=不回收）
         d.put("sandbox.maxPerUser", "2");                         // 每个用户最多持有几个沙盒连接；超出按 LRU 回收最久未用（0=不限）
         d.put("sandbox.userScope", "false");                      // 无工作区会话按用户级共享沙盒（热池/热复用）；默认关，保持会话级作用域
+        d.put("sandbox.poolWarmUsers", "0");                      // 启动时预热最近 N 个用户的沙盒（需 userScope=true；0=不预热）
         d.put("sandbox.cleanupIntervalMs", String.valueOf(ConfigDefaults.SANDBOX_CLEANUP_INTERVAL_MS));             // 空闲回收扫描间隔（ms，≤0=暂停）
         // 沙盒里的脚本要回调平台工具（P3b run_code）时的回程地址。容器各自挂在自己的 bridge 网络上，
         // 本机实测 host.docker.internal 可解析且能打到应用端口；生产的拓扑不同，所以这项必须显式配置。

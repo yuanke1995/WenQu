@@ -106,6 +106,27 @@ public class SessionService {
     private final com.wenqu.ai.executor.ExecutorRegistry executorRegistry;
 
     /**
+     * 最近有会话的用户（沙盒热池预热用）：按最后会话时间倒序，去重。
+     * 只读、失败返回空表；预热是优化，绝不拖累启动。
+     */
+    public List<String> recentUserIds(int limit) {
+        if (limit <= 0) return List.of();
+        try {
+            List<Session> rows = sessionMapper.selectList(
+                    new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<Session>()
+                            .select("user_id")
+                            .gt("create_time", LocalDateTime.now().minusDays(14))
+                            .groupBy("user_id")
+                            .last("ORDER BY MAX(create_time) DESC LIMIT " + limit));
+            return rows.stream().map(Session::getUserId)
+                    .filter(Objects::nonNull).filter(s -> !s.isBlank()).toList();
+        } catch (Exception e) {
+            log.warn("读取最近会话用户失败（跳过沙盒预热）: {}", e.toString());
+            return List.of();
+        }
+    }
+
+    /**
      * 创建新会话（MySQL + Redis）
      *
      * @param userId 归属用户（必须是真实登录用户；空值或 SYSTEM 直接 401）

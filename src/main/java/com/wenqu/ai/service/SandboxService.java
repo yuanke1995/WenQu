@@ -359,6 +359,24 @@ public class SandboxService {
      */
     public void provisionAsync(String sessionId, String uid) {
         if (!configService.getBoolean("chat.asyncWorkspaceUpgrade", false)) return;
+        submitProvision(sessionId, uid, "异步升级");
+    }
+
+    /**
+     * 热池预热：把该用户的用户级沙盒提前建好。
+     *
+     * <p>必须 {@code sandbox.userScope=true}——作用域是 uid，之后同一用户任意无工作区会话都会命中
+     * 这个容器；否则预建出来的是会话级容器，没人能复用，纯浪费。伪会话语义（{@code pool:<uid>}）
+     * 只用来占位日志/进程标记，不会落到会话表。
+     */
+    public void prewarmUser(String uid) {
+        if (!configService.getBoolean("sandbox.userScope", false)) return;
+        if (uid == null || uid.isBlank()) return;
+        submitProvision("pool:" + uid, uid, "热池预热");
+    }
+
+    /** 异步升级与热池预热共用的后台装配：单线程有界队列 + 全局在飞上限，去重键为 会话|用户。 */
+    private void submitProvision(String sessionId, String uid, String label) {
         if (sessionId == null || sessionId.isBlank() || uid == null || uid.isBlank()) return;
         String key = sessionId + "|" + uid;
         if (!provisioning.add(key)) return;
@@ -372,12 +390,16 @@ public class SandboxService {
             provisionPool.execute(() -> {
                 long beganAt = System.currentTimeMillis();
                 try {
-                    frameworkSandboxContext(sessionId, uid, false);
-                    log.info("[SANDBOX] 异步升级装配完成 session={} 用时={}ms",
-                            sessionId, System.currentTimeMillis() - beganAt);
+                    SandboxContext ctx = frameworkSandboxContext(sessionId, uid, false);
+                    if (ctx != null) {
+                        log.info("[SANDBOX] {}装配完成 session={} 用时={}ms",
+                                label, sessionId, System.currentTimeMillis() - beganAt);
+                    } else {
+                        log.warn("[SANDBOX] {}未完成（下一轮仍可重试） session={}", label, sessionId);
+                    }
                 } catch (Exception e) {
-                    log.warn("[SANDBOX] 异步升级装配失败（下一轮仍可重试） session={}: {}",
-                            sessionId, e.toString());
+                    log.warn("[SANDBOX] {}装配失败（下一轮仍可重试） session={}: {}",
+                            label, sessionId, e.toString());
                 } finally {
                     provisionInFlight.decrementAndGet();
                     provisioning.remove(key);
@@ -386,7 +408,7 @@ public class SandboxService {
         } catch (RejectedExecutionException e) {
             provisionInFlight.decrementAndGet();
             provisioning.remove(key);
-            log.info("[SANDBOX] 异步升级队列已满，本轮先聊天档 session={}", sessionId);
+            log.info("[SANDBOX] {}队列已满，跳过本次装配 session={}", label, sessionId);
         }
     }
 

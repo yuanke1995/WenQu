@@ -4240,6 +4240,23 @@
       "def": false,
       "note": "开启后同一用户的多个无工作区会话复用同一个沙盒容器（首个会话热起来后续命中，文件在用户级 user-data 共享）；默认关保持会话级作用域",
       "tier": 2
+    },
+    {
+      "backendKey": "sandbox.poolWarmUsers",
+      "panel": "sandbox",
+      "section": 1,
+      "group": "sandbox",
+      "key": "poolWarmUsers",
+      "path": "sandbox.poolWarmUsers",
+      "label": "启动预热用户数",
+      "type": "number",
+      "def": 0,
+      "min": 0,
+      "max": 5,
+      "step": 1,
+      "width": 200,
+      "note": "启动后为该数量最近活跃的用户预建用户级沙盒（需开启上一项；0=不预热）。每个用户一个容器，按用户数据卷隔离，不做跨用户共用",
+      "tier": 2
     }
   ],
   "tips": {
@@ -4489,6 +4506,7 @@
     "chat.asyncWorkspaceUpgrade": "文件意图异步升级工作区（默认关）",
     "chat.asyncWorkspaceMax": "异步升级并发上限",
     "sandbox.maxPerUser": "每用户沙盒租约上限（0=不限）",
-    "sandbox.userScope": "无工作区会话按用户共享沙盒（热池）"
+    "sandbox.userScope": "无工作区会话按用户共享沙盒（热池）",
+    "sandbox.poolWarmUsers": "启动预热最近 N 个用户的沙盒（0=不预热）"
   }
 }
