@@ -442,6 +442,11 @@ public class ProvisionerSandboxProvider {
      * @param ttlSeconds 空闲多久才回收（秒）
      * @return 实际回收的数量
      */
+    /** 本副本是否已持有这个作用域的连接（不取锁、不 touch；异步升级的 readiness 判据）。 */
+    public boolean isConnected(String threadId, String uid) {
+        return connections.get(sandboxKey(uid, threadId)) != null;
+    }
+
     public int releaseIdle(long ttlSeconds) {
         if (ttlSeconds <= 0 || connections.isEmpty()) {
             return 0;

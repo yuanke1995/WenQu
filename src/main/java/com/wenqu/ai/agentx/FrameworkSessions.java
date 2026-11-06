@@ -271,14 +271,25 @@ public class FrameworkSessions {
 
     public AgentSession open(ChatCommand cmd, String modelRef, String bindingKey,
                              Function<RuntimeContext, HarnessAgent> agentFactory) {
+        return open(cmd, modelRef, bindingKey, agentFactory, true);
+    }
+
+    /**
+     * @param attachSandbox false = 本轮是聊天档：不装配沙盒容器，直接建实例；
+     *                      文件系统由调用方换成宿主临时目录（见 {@code SandboxService#chatScratchFilesystem}）。
+     */
+    public AgentSession open(ChatCommand cmd, String modelRef, String bindingKey,
+                             Function<RuntimeContext, HarnessAgent> agentFactory,
+                             boolean attachSandbox) {
         String key = key(cmd);
         synchronized (OPEN_LOCKS[Math.floorMod(key.hashCode(), OPEN_LOCKS.length)]) {
-            return openLocked(cmd, modelRef, bindingKey, agentFactory, key);
+            return openLocked(cmd, modelRef, bindingKey, agentFactory, key, attachSandbox);
         }
     }
 
     private AgentSession openLocked(ChatCommand cmd, String modelRef, String bindingKey,
-                                    Function<RuntimeContext, HarnessAgent> agentFactory, String key) {
+                                    Function<RuntimeContext, HarnessAgent> agentFactory, String key,
+                                    boolean attachSandbox) {
         String wantBinding = bindingKey == null ? "" : bindingKey;
         Held current = held.get(key);
         // /compact 强制压缩那一实例的 triggerMessages(1) 只应作用一轮：下次开轮丢掉它、用默认配置重建。
@@ -315,7 +326,7 @@ public class FrameworkSessions {
         // 取不到时返回 null（沙盒不可用 / 无会话），此时本轮不挂框架沙箱，
         // 形态与 P1 之前一致——模型退回无沙箱工具，而不是整轮失败。
         boolean sandboxOk = false;
-        if (sandboxService != null) {
+        if (attachSandbox && sandboxService != null) {
             String uid = cmd.getUserId();
             String sessionId = cmd.getSessionId();
             if (uid != null && !uid.isBlank() && sessionId != null && !sessionId.isBlank()) {
@@ -1215,6 +1226,11 @@ public class FrameworkSessions {
      */
     public boolean sandboxAttached(String sessionKey) {
         return Boolean.TRUE.equals(sandboxAttached.get(sessionKey));
+    }
+
+    /** 这条会话当前是否有常驻实例（续跑轮判档位时用：有实例就沿用它上一次的档位）。 */
+    public boolean hasHeld(String sessionKey) {
+        return held.containsKey(sessionKey);
     }
 
     private void touch(String key) {

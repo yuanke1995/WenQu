@@ -197,7 +197,9 @@ public class WenquAgentxTools {
                                        com.wenqu.ai.agent.permission.ExecutionPolicy policy,
                                        AgentxTurnSlot slot,
                                        java.util.function.BiConsumer<String, String> onDegrade,
-                                       boolean approvalCanAsk) {
+                                       boolean approvalCanAsk,
+                                       boolean sandboxEnabled,
+                                       boolean mcpEnabled) {
         var mc = toolAssembly.mountContext(agentOf(cmd), cmd.getUserId(), cmd.isGuestMode(),
                 cmd.branchTurn(), onDegrade, policy, cmd.getGuestMcpServers());
         List<Object> holders = new java.util.ArrayList<>(turnTools(cmd, slot));
@@ -208,6 +210,16 @@ public class WenquAgentxTools {
         java.util.Set<String> mcpToolNames = new java.util.HashSet<>();
         for (com.wenqu.ai.agent.tool.ToolFamilyProvider provider : toolRegistry.providersInFamilyOrder()) {
             var family = provider.family();
+            // 聊天档没有沙盒：run_code 这类必须落容器执行的能力整族不挂。
+            // 不是执行期拒绝，而是模型压根看不到——与「被禁的能力与不存在不可区分」同一口径。
+            if (!sandboxEnabled && family == com.wenqu.ai.agent.tool.ToolFamily.SANDBOX) {
+                continue;
+            }
+            // 聊天档不挂 MCP：MCP 是外部进程/网络连接，一个不可达的服务会把开轮拖到超时
+            // （本地实测 10s）；纯问答不需要它，需要外部工具的会话走工作区档。
+            if (!mcpEnabled && family == com.wenqu.ai.agent.tool.ToolFamily.MCP) {
+                continue;
+            }
             if (family == com.wenqu.ai.agent.tool.ToolFamily.KNOWLEDGE) {
                 // 知识族自己走问渠那条 @Tool（框架侧引用注册直接给），但脚本的子调用清单里要有它——
                 // 所以只把回调收进本轮原始清单，不再挂进框架 Toolkit。

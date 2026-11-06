@@ -101,6 +101,8 @@ public class McpClientService {
     private final ConfigCryptoService cryptoService;
     /** 出站调用审计（channel=outbound）：外部工具每次执行落一行，写失败不影响调用 */
     private final McpCallLogMapper mcpCallLogMapper;
+    /** 问答链路等连接的上限：mcp.turnWaitMs（0=不在本轮等，已有工具照用） */
+    private final ConfigService configService;
 
     /** 连接池按用户隔离：uid → 该用户的连接与状态 */
     private final Map<String, UserPool> pools = new ConcurrentHashMap<>();
@@ -124,11 +126,13 @@ public class McpClientService {
     });
 
     public McpClientService(UserMcpMapper userMcpMapper, McpToolLabelService labelService,
-                            ConfigCryptoService cryptoService, McpCallLogMapper mcpCallLogMapper) {
+                            ConfigCryptoService cryptoService, McpCallLogMapper mcpCallLogMapper,
+                            ConfigService configService) {
         this.userMcpMapper = userMcpMapper;
         this.labelService = labelService;
         this.cryptoService = cryptoService;
         this.mcpCallLogMapper = mcpCallLogMapper;
+        this.configService = configService;
     }
 
     @PreDestroy
@@ -176,7 +180,10 @@ public class McpClientService {
         }
         if (uid == null || uid.isBlank()) return List.of();
         UserPool pool = ensureConnections(uid);
-        awaitConnect(pool); // 连接是后台任务：聊天取工具前等它收敛，工具集合与旧的同步行为一致
+        // 连接是后台任务。问答链路只等一个有界窗口：连接没收敛就用已有连接/缓存工具先答，
+        // 后台继续连，下一轮自然拿到新工具。此前固定等 120s——一个不可达的 MCP 服务
+        // 能把新会话的首轮拖到超时（本地实测准备段 10s）。
+        awaitConnect(pool, Math.max(0, configService.getInt("mcp.turnWaitMs", 1500)));
 
         // 锁内只做快照，listTools 在锁外发：问答链路对每个 server 的 listTools（远端挂起可吃满
         // 60s 请求超时）若持着池锁，会把 /status 这类只读本地快照的消费方一起堵在锁上
@@ -875,21 +882,27 @@ public class McpClientService {
      * 等待该用户在途的连接任务收敛（问答链路取工具前调用）。
      * initialize 有 30s 硬超时，任务必然结束；上限给 120s 只是防御性封顶（多 server 串行）。
      */
-    private void awaitConnect(UserPool pool) {
+    private void awaitConnect(UserPool pool, long waitMs) {
         List<Future<?>> pending;
         synchronized (pool) {
             pool.tasks.removeIf(Future::isDone); // 已完成的任务不必再等，也顺带清掉引用
             pending = new ArrayList<>(pool.tasks);
         }
         if (pending.isEmpty()) return;
-        long deadline = System.currentTimeMillis() + 120_000;
+        long deadline = System.currentTimeMillis() + Math.max(0L, waitMs);
         for (Future<?> t : pending) {
             try {
                 long left = deadline - System.currentTimeMillis();
-                if (left <= 0) return;
+                if (left <= 0) {
+                    log.info("[MCP] 连接等待超过 {}ms，本轮先用已有工具/空集合，后台继续连接", waitMs);
+                    return;
+                }
                 t.get(left, TimeUnit.MILLISECONDS);
             } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
+                return;
+            } catch (java.util.concurrent.TimeoutException te) {
+                log.info("[MCP] 连接等待超过 {}ms，本轮先用已有工具/空集合，后台继续连接", waitMs);
                 return;
             } catch (Exception e) {
                 log.warn("[MCP] 等待连接任务收敛异常（按当前已连状态继续）: {}", e.getMessage());

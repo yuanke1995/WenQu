@@ -305,6 +305,14 @@ public class ScheduleCenter {
                 () -> false,
                 () -> sandboxService.releaseIdle());
 
+        // 聊天档宿主临时目录清理：聊天档不建容器，但每会话仍会落一个本地目录；
+        // 按 chat.scratchRetentionHours 删过期目录，避免随会话数无限增长。
+        registerWork("聊天档临时目录清理", "清理超过 chat.scratchRetentionHours 的聊天档宿主临时目录（0=不清理）",
+                "chat.scratchCleanupIntervalMs",
+                () -> configService.getInt("chat.scratchCleanupIntervalMs", 3_600_000),
+                () -> false,
+                () -> sandboxService.cleanupChatScratch());
+
         // 长任务接续：进程停过之后，把「发出去了却再没有过回答」的那一轮按中断收口（半程正文留下 + 提示发「继续」）。
         // 实测边界（2026-10-29，kill -9 复现）：框架的排队任务只覆盖「还没启动的 submit」，跑到一半被硬杀的轮
         // 不在里面，所以这一刀做的是如实收口、不是自动续跑——想让它接着跑，用户发一句「继续」即可。

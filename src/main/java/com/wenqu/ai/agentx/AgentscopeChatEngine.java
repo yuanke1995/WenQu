@@ -49,8 +49,10 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Pattern;
 
 /**
  * 框架引擎：这一轮的<b>控制流完全由 AgentScope 持有</b>——推理循环、工具派发、权限判定、会话状态、
@@ -66,6 +68,24 @@ import java.util.Set;
 public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.ResumeHandler {
 
     private static final Logger log = LoggerFactory.getLogger(AgentscopeChatEngine.class);
+
+    /**
+     * 聊天档/工作区档的意图词。命中就走工作区档（建沙盒、全量工具），否则走聊天档
+     * （宿主临时目录 + 文件工具，无容器、无 shell）。
+     *
+     * <p>这一版刻意「宁可多判工作区」：误判工作区只是多付一次 3 秒装配，误判聊天会让
+     * 「跑/构建/改文件」这类请求失去能力。纯问答（例如 {@code 1+1=?}）不含这些词，直接走聊天档。
+     * 后续可按 shadow 日志收敛词表，或换成显式 UI 选择。
+     */
+    private static final Pattern SANDBOX_INTENT_EN = Pattern.compile(
+            "(?i)\\b(file|folder|directory|project|code|script|run|execute|build|compile|install|deploy|debug|terminal|command|read|write|save|edit|export|package|zip|excel|csv|json|python|node|npm|bash|shell|git|docker)\\b");
+    private static final Pattern SANDBOX_INTENT_EXT = Pattern.compile(
+            "(?i)\\.(py|js|ts|java|html|css|json|csv|md|xlsx|zip|sh|sql)\\b");
+    private static final String[] SANDBOX_INTENT_ZH = {
+            "文件", "目录", "文件夹", "项目", "代码", "脚本", "运行", "执行", "构建", "编译",
+            "安装", "部署", "调试", "终端", "命令行", "读取", "写入", "保存", "编辑", "修改",
+            "导出", "打包", "压缩", "解压", "表格", "数据库"
+    };
 
     /** 推荐块里条目长过这个字数就按正文处理（与手写侧 {@code RELATED_PROSE_MIN_CHARS} 同值同理由）。 */
     private static final int RELATED_PROSE_MIN_CHARS = 80;
@@ -796,13 +816,17 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 cmd.isApiKey() ? null : turnChangeService.start(cmd.getSessionId(), turnId);
         // 本轮智能体绑定一次解析：实例重建判据、人设、技能白名单三处共用同一份（避免一轮读三遍库，
         // 也避免「判据说没换、人设却按另一份装配」这种自相矛盾）
+        boolean sandboxWanted = wantsSandbox(cmd, policy);
+        slot.noteProfile(sandboxWanted ? "workspace" : "chat");
         AgentBinding binding = bindingOf(cmd, policy, ref);
         // 实例键用完整引用而不是裸模型名：同一个模型名可以挂在好几个供应商下（各自的 baseUrl 与 Key 不同），
-        // 只按裸名判「模型没换」就不重建实例，于是换了供应商仍拿旧网关旧 Key 跑，且日志上一切正常
+        // 只按裸名判「模型没换」就不重建实例，于是换了供应商仍拿旧网关旧 Key 跑，且日志上一切正常。
+        // 档位也进键：聊天档/工作区档的工具面与文件系统不同，切档必须重建实例。
         AgentSession session;
         try {
-            session = sessions.open(cmd, ref, binding.key(),
-                    ctx -> buildAgent(cmd, policy, route, hooks, binding, slot));
+            session = sessions.open(cmd, ref, binding.key() + "|sb=" + (sandboxWanted ? "1" : "0"),
+                    ctx -> buildAgent(cmd, policy, route, hooks, binding, slot, sandboxWanted),
+                    sandboxWanted);
         } catch (RuntimeException e) {
             // 建实例失败也要把槽位收回：否则这一会话的「当前轮」永远停在一次没跑起来的轮上
             slot.end(turnId);
@@ -1581,14 +1605,22 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         WenquAgentxTools.TurnHooks hooks = tools.newHooks(cmd, ref, () -> turnId, spills,
                 consultService.newLedger());
         AgentBinding binding = bindingOf(cmd, policy, ref);
+        boolean sandboxWanted = wantsSandbox(cmd, policy);
         AgentxTurnSlot slot = sessions.turnSlot(cmd);
+        slot.noteProfile(sandboxWanted ? "workspace" : "chat");
         AgentSession session;
         try {
-            session = sessions.open(cmd, ref, binding.key(),
-                    ctx -> buildAgent(cmd, policy, route, hooks, binding, slot));
+            session = sessions.open(cmd, ref, binding.key() + "|sb=" + (sandboxWanted ? "1" : "0"),
+                    ctx -> buildAgent(cmd, policy, route, hooks, binding, slot, sandboxWanted),
+                    sandboxWanted);
         } catch (Exception e) {
             log.warn("[agentx] 重建会话失败 session={}: {}", sessionId, e.toString());
             return null;
+        }
+        // 续跑轮和正常轮共用同一道工具组闸：不在这里补，目标/通知续跑建出来的实例里
+        // 框架文件工具没有组，档位收紧就退化成「模型看得见、调了才被拒」（巡检的 tools warn 就是它）。
+        for (String surfaceProblem : sessions.applyToolSurface(cmd, tools.turnGroupedNames(cmd, policy), policy)) {
+            channel.emit(RunEventType.WARN, surfaceProblem);
         }
         // 目标续跑也要先收拾「上一轮没被框架记成结束」的遗留：删掉旧目标/暂停旧目标时，
         // 它可能刚好有一轮进了收件箱还没启动；不归档，新目标的第一轮会一直排在那条死轮后面
@@ -1633,11 +1665,24 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 不为了「有工具就挂」而给一个指向宿主的文件系统：那会让隔离静默失效。
      */
     private io.agentscope.harness.agent.filesystem.AbstractFilesystem frameworkFilesystem(
-            ChatCommand cmd, boolean unrestrictedWrites) {
+            ChatCommand cmd, boolean unrestrictedWrites, boolean sandboxEnabled) {
         if (sandboxService == null) return null;
         String uid = cmd.getUserId();
         String sessionId = cmd.getSessionId();
         if (uid == null || uid.isBlank() || sessionId == null || sessionId.isBlank()) return null;
+        // 聊天档：宿主会话临时目录（文件工具可用，shell 不注册），不建容器。
+        // 工作区档若沙盒没装配成功（超时/失败），也退到同一份临时目录，避免回落到宿主共享目录。
+        boolean localProject = false;
+        try {
+            com.wenqu.ai.model.Project p = projectService.projectOfSession(sessionId);
+            localProject = p != null && projectService.isLocal(p);
+        } catch (RuntimeException e) {
+            log.debug("[PROFILE] 工作区类型解析失败，按沙盒状态判文件系统 session={}: {}",
+                    sessionId, e.toString());
+        }
+        if (!sandboxEnabled || (!localProject && !sessions.sandboxAttached(sessions.key(cmd)))) {
+            return sandboxService.chatScratchFilesystem(sessionId, uid);
+        }
         return sandboxService.frameworkFilesystem(sessionId, uid, unrestrictedWrites,
                 sessions.sandboxAttached(sessions.key(cmd)));
     }
@@ -2767,6 +2812,90 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                                 int contextWindow) {
     }
 
+    /**
+     * 本轮是否走工作区档（建沙盒、全量工具）。聊天档不建容器，直接建实例。
+     *
+     * <p>判据只有三类：
+     * <ol>
+     *   <li>会话绑了显式工作区（本机目录或用户建的工作区）——能力必须完整；</li>
+     *   <li>续跑/空问题——有常驻实例就沿用上一次的档位，没有则保守走工作区；</li>
+     *   <li>问题里有明确的执行/文件意图——走工作区；其余默认聊天。</li>
+     * </ol>
+     * 默认聊天是这刀的目的：{@code 1+1=?} 这种问题不该为「可能用到文件工具」先付 3 秒沙盒。
+     */
+    private boolean wantsSandbox(ChatCommand cmd, ExecutionPolicy policy) {
+        if (!configService.getBoolean("chat.profileAuto", true)) {
+            log.info("[PROFILE] profile=workspace reason=auto-off session={}", cmd.getSessionId());
+            return true;
+        }
+        String key = sessions.key(cmd);
+        // 粘性：已经建过工作区档实例的会话，不因为下一句普通问题降回聊天档——
+        // 否则整条会话会在两档之间反复重建，工具面和文件系统也跟着来回换。
+        if (sessions.hasHeld(key) && sessions.sandboxAttached(key)) {
+            log.info("[PROFILE] profile=workspace reason=sticky session={}", cmd.getSessionId());
+            return true;
+        }
+        try {
+            com.wenqu.ai.model.Project p = projectService.projectOfSession(cmd.getSessionId());
+            if (p != null && (!com.wenqu.ai.model.Project.SELECTION_IMPLICIT.equals(p.getSelectionStatus())
+                    || projectService.isLocal(p))) {
+                log.info("[PROFILE] profile=workspace reason=bound-project session={}",
+                        cmd.getSessionId());
+                return true;
+            }
+        } catch (RuntimeException e) {
+            log.debug("[PROFILE] 工作区解析失败，按问题意图判档 session={}: {}",
+                    cmd.getSessionId(), e.toString());
+        }
+        String q = cmd.getQuestion();
+        if (q == null || q.isBlank()) {
+            boolean sandbox = sessions.hasHeld(key) ? sessions.sandboxAttached(key) : true;
+            log.info("[PROFILE] profile={} reason=continuation session={}",
+                    sandbox ? "workspace" : "chat", cmd.getSessionId());
+            return sandbox;
+        }
+        String lower = q.toLowerCase(Locale.ROOT);
+        String reason = null;
+        if (SANDBOX_INTENT_EXT.matcher(q).find() || SANDBOX_INTENT_EN.matcher(lower).find()) {
+            reason = "intent-en";
+        } else {
+            for (String word : SANDBOX_INTENT_ZH) {
+                if (q.contains(word)) {
+                    reason = "intent-zh:" + word;
+                    break;
+                }
+            }
+        }
+        if (reason == null) {
+            log.info("[PROFILE] profile=chat reason=no-intent session={} q={}",
+                    cmd.getSessionId(), briefQuestion(q));
+            return false;
+        }
+        // 隐式会话的异步升级：首轮先走聊天档（宿主 scratch，不阻塞），后台建沙盒；
+        // 下一轮 isReady 命中后自动切工作区档。默认关，配置 chat.asyncWorkspaceUpgrade 打开。
+        if (configService.getBoolean("chat.asyncWorkspaceUpgrade", false)) {
+            String uid = cmd.getUserId();
+            if (sandboxService.isReady(cmd.getSessionId(), uid)) {
+                log.info("[PROFILE] profile=workspace reason=async-ready:{} session={} q={}",
+                        reason, cmd.getSessionId(), briefQuestion(q));
+                return true;
+            }
+            sandboxService.provisionAsync(cmd.getSessionId(), uid);
+            sessions.turnSlot(cmd).noteAsyncPending(true);
+            log.info("[PROFILE] profile=chat reason=async-provisioning:{} session={} q={}",
+                    reason, cmd.getSessionId(), briefQuestion(q));
+            return false;
+        }
+        log.info("[PROFILE] profile=workspace reason={} session={} q={}",
+                reason, cmd.getSessionId(), briefQuestion(q));
+        return true;
+    }
+
+    private static String briefQuestion(String q) {
+        String s = q.replaceAll("\\s+", " ").trim();
+        return s.length() <= 60 ? s : s.substring(0, 60) + "…";
+    }
+
     private AgentBinding bindingOf(ChatCommand cmd, ExecutionPolicy policy, String modelRef) {
         Agent row = null;
         try {
@@ -3647,7 +3776,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private HarnessAgent buildAgent(ChatCommand cmd, ExecutionPolicy policy,
                                     ModelRegistryService.ModelRoute route,
                                     WenquAgentxTools.TurnHooks hooks, AgentBinding binding,
-                                    AgentxTurnSlot slot) {
+                                    AgentxTurnSlot slot, boolean sandboxEnabled) {
         // 状态目录：相对路径会按工作目录（user.dir）解析，等价于种子默认值 user.dir/user-data/agentscope。
         // 防御式兜底：配置被清空或缺失时退回默认，避免 Path.of("") 抛 InvalidPathException 把整轮打挂。
         String stateDirRaw = configService.get("chat.agentscopeStateDir");
@@ -3671,7 +3800,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 游客轮 approvalCanAsk=false：分享页没有审批卡通道，漏挂的需审批工具在适配器层直接 deny
         // （fail-closed 拒答，模型收到报错改路）而不是 ask 挂 120s 超时。主闸在
         // ToolMountContext.turnAllows 的 guestMode 轴，这里是兜底。
-        }, !cmd.isGuestMode() && !cmd.isApiKey());
+        }, !cmd.isGuestMode() && !cmd.isApiKey(),
+                // 沙盒没装配成功时 run_code 也不该挂：文件系统已退回临时目录，挂一把必然失败的工具
+                // 只会让模型白试一步。
+                sandboxEnabled && sessions.sandboxAttached(sessions.key(cmd)),
+                // MCP 是外部连接：聊天档默认不挂（纯问答不等外部连接）；需要外部工具的部署可开
+                // chat.mcpEnabled，仍受 mcp.turnWaitMs 有界等待。
+                sandboxEnabled || configService.getBoolean("chat.mcpEnabled", false));
         // 目标模式的控制工具常驻注册：实例按会话常驻，目标可能在建实例之后才建立，
         // 不能等到目标建立再往 Toolkit 里加工具（那需要重建实例）。非目标轮调用会落空返回。
         holders.add(new GoalTools(goalService, slot));
@@ -3831,6 +3966,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 因为实例按会话常驻、middleware 只能在 build 期挂上——见类注释。
                 .middleware(new AgentxToolDescriptionCompact(
                         () -> configService.getBoolean("chat.toolDescriptionCompact", true)))
+                // 前缀稳定：框架把会话 id / 容器 id 拼在 system prompt 里，每个新会话都会让
+                // 供应商的 prefix cache 从这里断开。只改模型看到的文本，不动运行时状态。
+                .middleware(new PrefixStabilizerMiddleware(
+                        () -> configService.getBoolean("chat.prefixStabilizer", true)))
+                // 异步升级首轮：工作区还没好，不把文件/命令工具暴露给模型，避免 scratch 写了带不进沙盒。
+                .middleware(new AgentxToolSurfaceFilter(slot))
                 // Phase 0 实测：框架默认装备子智能体/技能/工作区上下文/tools.json 等旁路能力。
                 //
                 // 子智能体由**框架驱使**（2026-10-18 全框架化迁移 P0 启用，2026-10-20 收口成一条）：
@@ -3896,7 +4037,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 所以此前每轮往 ctx 里 put AbstractFilesystem 是无效动作（真机验证已证：
                 // execute("pwd") 返回宿主项目目录）。必须用 abstractFilesystem(...) 在 build 期传进去。
                 .abstractFilesystem(frameworkFilesystem(cmd,
-                        policy.sandboxMode() == com.wenqu.ai.agent.permission.SandboxMode.DANGER_FULL_ACCESS))
+                        policy.sandboxMode() == com.wenqu.ai.agent.permission.SandboxMode.DANGER_FULL_ACCESS,
+                        sandboxEnabled))
                 .artifactDeliveryTarget(new com.wenqu.ai.sandbox.WenquArtifactDeliveryTarget(artifactService))
                 .disableWebTools();
 
@@ -4270,6 +4412,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 收尾只报机器时间会让数字在答完那一刻变小），并在悬停里说清等了多久。
         // humanWaitMs 只在真等过的时候写：为 0 时不占键位。
         tokens.put("turnElapsedMs", elapsedMs);
+        // 本轮档位随 tokens 落库：排障时不必再翻日志找 [PROFILE] 那一行，也方便后续按档位聚合延迟。
+        String profile = sessions.turnSlot(cmd).profile();
+        if (profile != null) {
+            tokens.put("profile", profile);
+        }
         if (humanWaitMs > 0L) tokens.put("humanWaitMs", humanWaitMs);
         // 整轮墙钟也落库：气泡顶部那条报的是「从发出提问到答完」，屏幕上跳的是这一份、刷新后读的
         // 必须还是这一份。只落机器耗时的话，刷新一次数字就变小（真机 2026-11-05 量到 6.0s → 3.3s），

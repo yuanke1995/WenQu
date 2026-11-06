@@ -75,6 +75,28 @@ public final class AgentxTurnSlot {
         return workspaceMemoryTainted;
     }
 
+    /** 本轮档位（chat/workspace）：排障与 tokens 账本用，由引擎在开轮前登记。 */
+    private volatile String profile;
+
+    public void noteProfile(String value) {
+        this.profile = value;
+    }
+
+    public String profile() {
+        return profile;
+    }
+
+    /** 异步升级首轮：工作区还没好，本轮聊天档不向模型暴露文件/命令工具（避免 scratch 写了却带不进沙盒）。 */
+    private volatile boolean asyncPending;
+
+    public void noteAsyncPending(boolean value) {
+        this.asyncPending = value;
+    }
+
+    public boolean asyncPending() {
+        return asyncPending;
+    }
+
     /**
      * 这个会话实例的工具表（build 期由引擎登记）。
      * <p>为什么放槽位而不是 {@link Surface}：{@code Surface} 在 {@code frameworkTools} 里绑，
@@ -131,6 +153,8 @@ public final class AgentxTurnSlot {
 
     public void begin(Turn turn) {
         this.current = turn;
+        this.profile = null;
+        this.asyncPending = false;
     }
 
     /**

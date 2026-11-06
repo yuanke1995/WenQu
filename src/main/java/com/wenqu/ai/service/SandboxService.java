@@ -12,15 +12,21 @@ import com.wenqu.ai.sandbox.ProvisionerSandbox;
 import com.wenqu.ai.sandbox.ProvisionerSandboxState;
 import com.wenqu.ai.sandbox.SandboxConnection;
 import io.agentscope.harness.agent.filesystem.AbstractFilesystem;
+import io.agentscope.harness.agent.filesystem.CompositeFilesystem;
 import io.agentscope.harness.agent.filesystem.RoutedSandboxFilesystem;
 import io.agentscope.harness.agent.filesystem.local.LocalFilesystem;
 import io.agentscope.harness.agent.sandbox.SandboxContext;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Stream;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
@@ -95,6 +101,27 @@ public class SandboxService {
                 return t;
             },
             new ThreadPoolExecutor.AbortPolicy());
+
+    /** 聊天档 scratch 目录只在首次使用时说一次，避免每轮刷日志。 */
+    private volatile boolean scratchDirLogged;
+
+    /**
+     * 隐式会话「文件/执行意图 → 工作区档」的异步升级：首轮先走聊天档，后台建沙盒；
+     * 下一轮 isReady 命中后自动切工作区档。独立单线程 + 有界队列 + 全局在飞上限，
+     * 不占问答 attachPool；默认由 chat.asyncWorkspaceUpgrade 关闭。
+     */
+    private final ThreadPoolExecutor provisionPool = new ThreadPoolExecutor(
+            1, 1, 60, TimeUnit.SECONDS, new ArrayBlockingQueue<>(4),
+            r -> {
+                Thread t = new Thread(r, "sandbox-provision");
+                t.setDaemon(true);
+                return t;
+            },
+            new ThreadPoolExecutor.AbortPolicy());
+    private final java.util.concurrent.atomic.AtomicInteger provisionInFlight =
+            new java.util.concurrent.atomic.AtomicInteger();
+    private final java.util.Set<String> provisioning =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     private final ProvisionerSandboxProvider provider;
     private final com.wenqu.ai.executor.ExecutorRegistry executorRegistry;
@@ -248,6 +275,152 @@ public class SandboxService {
     }
 
     /**
+     * 聊天档文件系统：宿主上的会话级临时目录，不建容器、不执行命令。
+     *
+     * <p>为什么需要它：没有工作区的普通问答不应该为了「可能用到文件工具」而先付 3 秒建沙盒。
+     * 但文件工具本身仍要可用（静态 demo / 清单 / 表格都能直接落盘），所以给一个受限的本地目录：
+     * <ul>
+     *   <li>根目录按 {@code user-data/chat-scratch/{uid}/{sessionId}} 隔离，写操作被
+     *       {@link LocalFilesystem} 的 SANDBOXED 模式锚定在根内；</li>
+     *   <li>MEMORY.md 与 memory/ 仍路由到 uid 级宿主目录，记忆注入/落盘行为不变；</li>
+     *   <li>它不是 {@code AbstractSandboxFilesystem}，框架的 ShellExecuteTool 因此不会注册——
+     *       「聊天档不执行命令」不是靠执行期拒绝，而是压根没有这把工具。</li>
+     * </ul>
+     * 需要命令/构建的会话走工作区档（见 {@code FrameworkSessions} 的沙盒分支）。
+     */
+    public AbstractFilesystem chatScratchFilesystem(String sessionId, String uid) {
+        if (sessionId == null || sessionId.isBlank() || uid == null || uid.isBlank()) {
+            return null;
+        }
+        try {
+            Path root = chatScratchRoot().resolve(uid).resolve(sessionId);
+            Files.createDirectories(root);
+            if (!scratchDirLogged) {
+                scratchDirLogged = true;
+                log.info("[SANDBOX] 聊天档 scratch 目录: {}（多副本请确保为共享卷）",
+                        chatScratchRoot().toAbsolutePath());
+            }
+            LocalFilesystem scratch = new LocalFilesystem(root, true, 64);
+            Path memRoot = memoryRoot(uid);
+            AbstractFilesystem memoryMd = new MemoryCappedFilesystem(
+                    memRoot, MEMORY_MAX_FILE_MB, MemoryBudget.maxChars(configService));
+            AbstractFilesystem memoryDir = new LocalFilesystem(
+                    memRoot.resolve("memory"), true, MEMORY_MAX_FILE_MB);
+            return new CompositeFilesystem(scratch, Map.of(
+                    "/MEMORY.md", memoryMd,
+                    "/memory/", memoryDir));
+        } catch (Exception e) {
+            // 文件系统装配失败不该让整轮失败：退回无文件工具，正文问答照常
+            log.warn("[SANDBOX] 聊天档临时目录装配失败，本轮不挂文件工具 (session={}): {}",
+                    sessionId, e.getMessage());
+            return null;
+        }
+    }
+
+    /** 隐式会话的沙盒是否已就绪（异步升级的下一轮判据）。只看已有连接，不创建、不阻塞。 */
+    public boolean isReady(String sessionId, String uid) {
+        if (sessionId == null || sessionId.isBlank() || uid == null || uid.isBlank()) {
+            return false;
+        }
+        try {
+            SandboxScope scope = scopeOf(sessionId);
+            // 只查本副本已建好的连接：不取 provider 的 scope 锁——后台 create 正持着它，
+            // 这里再 get/等锁就会把「异步升级」又变成同步等待。
+            return provider.isConnected(scope.scopeId(), uid);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * 隐式会话命中文件/执行意图时调用：后台把沙盒建好，本轮先走聊天档不阻塞。
+     * 下一轮 {@link #isReady} 命中后由引擎切工作区档；失败只记日志，下一轮仍可重试。
+     */
+    public void provisionAsync(String sessionId, String uid) {
+        if (!configService.getBoolean("chat.asyncWorkspaceUpgrade", false)) return;
+        if (sessionId == null || sessionId.isBlank() || uid == null || uid.isBlank()) return;
+        String key = sessionId + "|" + uid;
+        if (!provisioning.add(key)) return;
+        int max = Math.max(1, configService.getInt("chat.asyncWorkspaceMax", 2));
+        if (provisionInFlight.incrementAndGet() > max) {
+            provisionInFlight.decrementAndGet();
+            provisioning.remove(key);
+            return;
+        }
+        try {
+            provisionPool.execute(() -> {
+                long beganAt = System.currentTimeMillis();
+                try {
+                    frameworkSandboxContext(sessionId, uid, false);
+                    log.info("[SANDBOX] 异步升级装配完成 session={} 用时={}ms",
+                            sessionId, System.currentTimeMillis() - beganAt);
+                } catch (Exception e) {
+                    log.warn("[SANDBOX] 异步升级装配失败（下一轮仍可重试） session={}: {}",
+                            sessionId, e.toString());
+                } finally {
+                    provisionInFlight.decrementAndGet();
+                    provisioning.remove(key);
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            provisionInFlight.decrementAndGet();
+            provisioning.remove(key);
+            log.info("[SANDBOX] 异步升级队列已满，本轮先聊天档 session={}", sessionId);
+        }
+    }
+
+    /**
+     * 清理聊天档宿主临时目录：按会话目录的最后修改时间，删掉超过
+     * {@code chat.scratchRetentionHours} 的整棵目录（含用户空壳）。返回删除的会话目录数。
+     *
+     * <p>为什么必须定时清：聊天档不建容器，但每会话仍会落一个本地目录；不回收就会随会话数
+     * 无限增长。只删「超期且非最近写入」的目录，活动会话在写文件时 mtime 会被刷新。
+     */
+    public int cleanupChatScratch() {
+        int hours = configService.getInt("chat.scratchRetentionHours", 72);
+        if (hours <= 0) {
+            return 0;
+        }
+        Path root = chatScratchRoot();
+        if (!Files.isDirectory(root)) {
+            return 0;
+        }
+        long cutoff = System.currentTimeMillis() - hours * 3_600_000L;
+        int removed = 0;
+        try (Stream<Path> uids = Files.list(root)) {
+            for (Path uidDir : uids.toList()) {
+                if (!Files.isDirectory(uidDir)) continue;
+                try (Stream<Path> sessions = Files.list(uidDir)) {
+                    for (Path sessionDir : sessions.toList()) {
+                        if (!Files.isDirectory(sessionDir)) continue;
+                        long mtime = Files.getLastModifiedTime(sessionDir).toMillis();
+                        if (mtime > cutoff) continue;
+                        deleteRecursively(sessionDir);
+                        removed++;
+                    }
+                }
+                try (Stream<Path> left = Files.list(uidDir)) {
+                    if (left.findAny().isEmpty()) Files.deleteIfExists(uidDir);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[SANDBOX] 聊天档临时目录清理失败（下次节拍重试）: {}", e.toString());
+        }
+        if (removed > 0) {
+            log.info("[SANDBOX] 聊天档临时目录清理 {} 个（保留 {} 小时）", removed, hours);
+        }
+        return removed;
+    }
+
+    private static void deleteRecursively(Path dir) throws IOException {
+        try (Stream<Path> walk = Files.walk(dir)) {
+            for (Path p : walk.sorted(Comparator.reverseOrder()).toList()) {
+                Files.deleteIfExists(p);
+            }
+        }
+    }
+
+    /**
      * 把记忆从沙箱文件系统里摘出来，钉回 uid 级（P3 遗留的收口）。
      *
      * <p><b>问题是什么</b>：框架的 {@code WorkspaceManager} 用 build 期那份
@@ -304,6 +477,13 @@ public class SandboxService {
         String raw = configService.get(KEY_STATE_DIR);
         if (raw == null || raw.isBlank()) raw = STATE_DIR_DEFAULT;
         return Path.of(raw).resolve(uid);
+    }
+
+    /** 聊天档宿主临时目录根：多副本部署必须把它指到共享卷，否则同一会话切副本会看不到文件。 */
+    private Path chatScratchRoot() {
+        String raw = configService.get("chat.scratchDir");
+        if (raw == null || raw.isBlank()) raw = "user-data/chat-scratch";
+        return Path.of(raw);
     }
 
     /**
@@ -390,6 +570,7 @@ public class SandboxService {
     @jakarta.annotation.PreDestroy
     public void shutdownAttachPool() {
         attachPool.shutdownNow();
+        provisionPool.shutdownNow();
     }
 
     /**

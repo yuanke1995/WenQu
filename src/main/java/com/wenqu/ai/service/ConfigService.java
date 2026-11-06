@@ -422,6 +422,14 @@ public class ConfigService {
         // 旧行成为孤儿数据（无读取方）
         d.put("chat.citationCheckEnabled", "true");         // 引用语义一致性自检（生成后校验：编造/张冠李戴的引用是 RAG 信任根基，默认开；每轮多一次模型调用，超时/失败自动跳过不阻塞）
         d.put("chat.toolDescriptionCompact", "true");       // 工具说明精简：把每把工具的说明压到一句话再发给模型（工具能力/参数/执行不变；默认开，关掉恢复完整说明）
+        d.put("chat.profileAuto", "true");                  // 聊天档/工作区档自动分流：关掉=所有轮次都走工作区（旧行为，用于回滚）
+        d.put("chat.asyncWorkspaceUpgrade", "false");       // 隐式会话文件/执行意图异步升级：首轮聊天档不阻塞，后台建沙盒，下一轮切工作区；默认关
+        d.put("chat.asyncWorkspaceMax", "2");               // 异步升级全局在飞上限；超出直接本轮聊天档，不占问答 attach 池
+        d.put("chat.mcpEnabled", "false");                  // 聊天档是否挂 MCP 外部工具：默认关（纯问答不等外部连接）；开时仍受 mcp.turnWaitMs 有界等待
+        d.put("chat.prefixStabilizer", "true");             // 前缀稳定器：把 system prompt 里的会话/容器 id 换成稳定占位，换供应商前缀缓存；关掉即恢复原样
+        d.put("chat.scratchRetentionHours", "72");          // 聊天档宿主临时目录保留小时数（0=不清理；删除按目录最后修改时间判定）
+        d.put("chat.scratchCleanupIntervalMs", "3600000");  // 聊天档临时目录清理任务间隔(ms，≤0=暂停)
+        d.put("chat.scratchDir", "user-data/chat-scratch"); // 聊天档宿主临时目录；相对路径按应用工作目录解析。多副本必须指向共享卷
         // chat.planAutoIntent 已退役（2026-10）：计划模式只由用户显式开关或模型自主调用 plan_enter 决定，
         // 问渠的预判器（PlanModeService）已删除；存量行由 schema.sql 清理。
         // 断线重连接流（P0）：默认开，且**不再露在设置页**——关掉它没有任何收益（刷新/换设备就丢一轮），
@@ -819,6 +827,7 @@ public class ConfigService {
         d.put("mcp.server.enabled", "false");      // MCP 端点总开关（默认关：不主动对外暴露能力）
         d.put("mcp.server.timeoutMs", String.valueOf(ConfigDefaults.MCP_SERVER_TIMEOUT_MS));   // 单次工具调用等待问答完成的超时（ms）
         d.put("mcp.server.allowedOrigins", "");    // 允许的 Origin 列表（逗号分隔；空=仅允许回环地址）
+        d.put("mcp.turnWaitMs", "1500");           // 问答链路等待 MCP 连接收敛的上限(ms)：0=不在本轮等，已有工具/缓存照用，后台继续连
         return d;
     }
 
