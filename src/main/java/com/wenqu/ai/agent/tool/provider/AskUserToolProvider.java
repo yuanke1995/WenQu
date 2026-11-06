@@ -32,7 +32,7 @@ public class AskUserToolProvider implements ToolFamilyProvider {
 
     @Override
     public ToolFamily family() {
-        return ToolFamily.BUILTIN;
+        return ToolFamily.ASK_USER;
     }
 
     @Override
@@ -49,7 +49,7 @@ public class AskUserToolProvider implements ToolFamilyProvider {
 
     private static ToolDescriptor desc(String name, String label, String cardLabel, String cardHint,
                                        boolean viewerRequired) {
-        return new ToolDescriptor(name, ToolFamily.BUILTIN, label, cardLabel, cardHint,
+        return new ToolDescriptor(name, ToolFamily.ASK_USER, label, cardLabel, cardHint,
                 SideEffect.PURE, null, true, false, null, viewerRequired);
     }
 

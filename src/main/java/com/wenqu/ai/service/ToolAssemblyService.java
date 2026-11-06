@@ -172,7 +172,7 @@ public class ToolAssemblyService {
     public Integer agentFlagFor(ToolFamily family, Agent agent) {
         if (agent == null) return null;
         return switch (family) {
-            case BUILTIN -> agent.getToolBuiltin();
+            case ASK_USER -> agent.getToolBuiltin();
             case KNOWLEDGE -> agent.getToolKnowledge();
             case WEBSEARCH -> agent.getToolWebsearch();
             case ARTIFACT -> agent.getToolArtifact();
@@ -188,7 +188,7 @@ public class ToolAssemblyService {
     public Set<String> agentSelectionFor(ToolFamily family, Agent agent) {
         if (agent == null) return null;
         return switch (family) {
-            case BUILTIN -> scopeOf(agent.getBuiltinTools());
+            case ASK_USER -> scopeOf(agent.getBuiltinTools());
             case MCP -> scopeOf(agent.getMcps());
             default -> null;
         };

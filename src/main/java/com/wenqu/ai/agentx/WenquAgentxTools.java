@@ -246,7 +246,7 @@ public class WenquAgentxTools {
                         name -> sandboxContext(name, slot.require()));
                 continue;
             }
-            if (family == com.wenqu.ai.agent.tool.ToolFamily.BUILTIN) {
+            if (family == com.wenqu.ai.agent.tool.ToolFamily.ASK_USER) {
                 // 提问卡换成框架原生实现（AskUserTool）：内置那个靠阻塞 future 等答案，挂起信号又会被
                 // Spring AI 包掉——框架内只留一套「等人」，不并存
                 holders.add(new AskUserTool());
@@ -270,7 +270,7 @@ public class WenquAgentxTools {
      * 由 {@link FrameworkSessions#applyToolSurface} 那侧按档位与黑名单单独算（下一刀收口）。
      */
     private static final java.util.List<com.wenqu.ai.agent.tool.ToolFamily> GROUPED_FAMILIES =
-            java.util.List.of(com.wenqu.ai.agent.tool.ToolFamily.BUILTIN,
+            java.util.List.of(com.wenqu.ai.agent.tool.ToolFamily.ASK_USER,
                     com.wenqu.ai.agent.tool.ToolFamily.KNOWLEDGE,
                     com.wenqu.ai.agent.tool.ToolFamily.WEBSEARCH,
                     com.wenqu.ai.agent.tool.ToolFamily.ARTIFACT,

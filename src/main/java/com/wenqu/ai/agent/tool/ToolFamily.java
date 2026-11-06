@@ -17,8 +17,8 @@ package com.wenqu.ai.agent.tool;
  */
 public enum ToolFamily {
 
-    /** 内置工具：只剩 askUser（人在回路）；历史纯计算工具已退役（见 BuiltinTools 类注释） */
-    BUILTIN("builtin", "内置工具"),
+    /** 提问工具：只剩 askUser（人在回路）；历史纯计算工具已退役（见 AskUserToolProvider 类注释） */
+    ASK_USER("ask_user", "提问工具"),
     /** 知识库精确检索 */
     KNOWLEDGE("knowledge", "知识库精确检索"),
     /** 联网搜索（Provider 壳，外部计费与配额都在这族） */
