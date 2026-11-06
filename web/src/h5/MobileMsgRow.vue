@@ -360,7 +360,7 @@
             <span class="card-title">{{ retrievalLineTitle(m) }}</span>
             <caret-right-outlined class="caret" :class="{ open: m.rtOpen }" />
           </button>
-          <div v-show="m.rtOpen" class="card-body">
+          <div v-show="m.rtOpen" class="card-body rt-body">
             <div v-if="m.retrieved && m.retrieved.terms && m.retrieved.terms.length" class="rt-terms">检索词：{{ (m.retrieved.terms || []).join('、') }}</div>
             <div v-if="toolSearchQueries(m).length" class="rt-terms">精确检索：{{ toolSearchQueries(m).join('；') }}</div>
             <div v-for="(s, si) in (m.sources || [])" :key="si" class="rt-ref" @click.stop="$emit('source', s)">
@@ -760,6 +760,8 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
 
 .rt-terms { font-size: 12px; color: var(--app-text3); margin-bottom: 6px; }
 .rt-ref { padding: 8px 0; border-top: 1px dashed var(--app-border); font-size: 12px; color: var(--app-text2); cursor: pointer; }
+/* 来源多时限高内部滚动：窄屏一屏本就不高，十几条片段会把下面的追问建议整个推出视野 */
+.rt-body { max-height: 46dvh; overflow-y: auto; overscroll-behavior: contain; }
 .rt-ref-tag { color: var(--app-accent); font-weight: 600; margin-right: 4px; }
 .rt-origin { font-size: 11px; color: var(--app-accent); border: 1px solid var(--app-accent-border); border-radius: 4px; padding: 0 4px; margin-right: 4px; }
 .rt-snip { color: var(--app-text3); margin-top: 4px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }

@@ -66,6 +66,9 @@ const emit = defineEmits(['update:open'])
 .retrieval-detail {
   font-size: 12px; color: var(--app-text2); background: var(--app-panel-2); border: 1px solid var(--app-border);
   border-radius: 8px; padding: 8px 10px; margin: 4px 0 2px; line-height: 1.6;
+  /* 来源多时（十几个片段）整块会顶掉大半屏聊天记录：限高后内部滚动，短列表仍按内容收缩 */
+  max-height: 320px; overflow-y: auto; overscroll-behavior: contain;
+  scrollbar-width: thin; scrollbar-gutter: stable;
 }
 .rt-terms { margin-bottom: 6px; }
 /* 末行不留尾部外边距：卡片内末行若带 margin-bottom，多出的间距会落在 padding 内侧，
