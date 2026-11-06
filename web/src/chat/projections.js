@@ -895,11 +895,29 @@ const endsSentence = s => {
   return SENTENCE_END_CHARS.includes(t.slice(-1))
 }
 
+/** 连排窗口的切点只认强句末：逗号/分号/顿号这类弱停顿处落工具一样会把句子读断；
+ *  英文句点只在其后是空白或段尾时才算。 */
+const STRONG_END_CHARS = '。！？!?…'
+const isStrongEnd = (s, i) => {
+  if (STRONG_END_CHARS.includes(s[i])) return true
+  return s[i] === '.' && (i + 1 >= s.length || /\s/.test(s[i + 1]))
+}
+/** 在 [from,to) 里找第一个能把半句补成完整句子的位置（返回标点后一位；找不到 -1）。
+ *  从 mergeFrom 起数 ```，代码块里的标点不切。 */
+const firstSentenceCut = (content, mergeFrom, from, to) => {
+  let inCode = false
+  for (let i = mergeFrom; i < to; i++) {
+    if (content.startsWith('```', i)) { inCode = !inCode; i += 2; continue }
+    if (i >= from && !inCode && isStrongEnd(content, i)) return i + 1
+  }
+  return -1
+}
+
 /** 时间线渲染视图：把 timeline 段序列转成可渲染序列。
  * 1）连续工具段（中间夹空白文本不算断点）合并为 {kind:'group', tools:[...]} 折叠组；
  * 2）句中工具吸收：模型常在句中发起工具（"先[调工具]检查环境"），半句之后出现的工具延迟渲染，
- *    等出现下一段正文时把两段文本连排渲染（合并区间是 content 的连续切片——工具不往正文写
- *    内容，连排与全量渲染完全等价，零失真），工具并入后续工具游程，组内顺序仍如实保留时序。
+ *    等后续正文把这一句补完（强句末）再连排成一段，工具随后落在它发生的位置。整段正文不连排
+ *    ——否则工具会被一路顶到整段正文末尾（落库视图里工具之后往往就是一整段）。
  *    每帧重算无状态：打字机期间合并窗口由收尾 flush 照常显示，运行中工具的卡片始终可见。
  * 尾部 timeline 未覆盖的正文兜底补段（与旧拼接逻辑等价）。 */
 const timelineView = m => {
@@ -966,18 +984,24 @@ const timelineView = m => {
     const from = Math.min(seg.from, len), to = Math.min(seg.to, len)
     if (to <= from || !content.slice(from, to).trim()) continue // 空白段：不渲染、不打断分组
     if (mergeFrom >= 0) {
-      // 半句连排只吃掉「接着说这一句」的短增量。一旦后面是整段正文（落库视图里工具之后的
-      // 全部正文往往就是一段，且常带换行），再继续吞会把中间调用的工具一路顶到整段正文末尾——
-      // 实时视图按 120ms 切段时工具还在句中，刷新后同一个簇就跑到回答最下面了。
-      // 先把已合并的半句 + 工具结清，这一段按普通正文另起（时序仍是它发生的位置）。
-      const add = content.slice(from, to)
-      if (absorbed.length && (add.length > 120 || add.includes('\n'))) {
+      // 连排只补到「这一句说完」为止：落库视图里工具之后的全部正文常常是一整段，
+      // 等整段结束再结清会把中间调用的工具一路顶到回答末尾；直接在工具边界切又会把句子劈开。
+      // 找到补全这一句的强句末，先把半句 + 工具按顺序结清，剩下的正文再另起一段。
+      const cut = firstSentenceCut(content, mergeFrom, from, to)
+      if (cut > 0) {
+        maxTo = cut
         flushMerge()
-      } else {
-        maxTo = to // 半句连排：窗口向本段延伸
-        if (endsSentence(content.slice(mergeFrom, maxTo))) flushMerge()
+        flushGroup() // 半句文本在前、工具簇紧随其后
+        maxTo = to
+        const rest = content.slice(cut, to)
+        if (rest.trim()) {
+          if (endsSentence(rest)) out.push({ kind: 'text', from: cut, to })
+          else mergeFrom = cut
+        }
         continue
       }
+      maxTo = to // 这一句还没说完：窗口继续向本段延伸
+      continue
     }
     flushGroup()
     maxTo = to
