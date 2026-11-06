@@ -78,15 +78,15 @@
           <AgentAvatar class="agent-tag-ava" :agent="badgeOf(m.agentId, m.agentName)" :size="14" /> 由「{{ m.agentName }}」回答
         </div>
 
-        <!-- 整轮用时那一条：答完之后它在回答顶上当总览（跑着的时候它在正文末尾，见下面进度行后） -->
-        <TurnBar v-if="!m.loading" :m="m" mobile />
+        <!-- 整轮用时那一条：它同时是过程块的开关。跑着的时候过程自动展开，答完收起只留正文 -->
+        <TurnBar :m="m" mobile />
 
-        <!-- 时间线：正文与思考/过程/工具按到达顺序交错（深度思考不再单独堆在气泡顶上） -->
-        <div v-if="hasTimelineBlocks(m)" class="md bubble-md" :data-msg-index="index">
-          <template v-for="(seg, si) in turnRows(m)" :key="si">
-            <AnswerBody v-if="seg.kind === 'text'" class="tl-text" :content="m.content.slice(seg.from, seg.to)"
-                        :images="m.images" :sources="m.sources" :msg-index="index"
-                        runnable :session-id="sessionId" :streaming="m.loading"
+        <!-- 正文 / 过程分离（DSH 口径，与 PC 同构）：过程全部收在顶部过程块，正文只渲染最终答案 -->
+        <div class="md bubble-md" :data-msg-index="index">
+          <div v-if="turnOpen(m) && turnProcessRows(m).length" class="tl-turn-process">
+          <template v-for="(seg, si) in turnProcessRows(m)" :key="si">
+            <AnswerBody v-if="seg.kind === 'text'" class="tl-text tl-process-text" :content="m.content.slice(seg.from, seg.to)"
+                        :images="m.images" runnable :session-id="sessionId" :streaming="false"
                         :viewer="false" @citation="onBodyCitation" @preview="onBodyPreview" />
             <!-- 思考段（簇外）：这一轮在想什么就长在哪一行，只有正在长的那一段自动展开。
                  被过程簇收进去的那些不走这一支——落在帽体清单里所属那一步的展开详情内（与 PC 同一份 clusterLiveRows） -->
@@ -206,23 +206,6 @@
               </button>
               <div v-show="procOpen(m, seg)" class="card-body proc-body">{{ procSlice(m, seg) }}</div>
             </div>
-            <!-- 插话段：用户在这一轮还在跑时补的那句，长在模型真听到它的那个位置（与 PC 同形） -->
-            <div v-else-if="seg.kind === 'steer'" class="tl-steer">
-              <span class="tl-steer-txt">{{ seg.text }}</span>
-            </div>
-            <!-- 簇尾挂不出去的那一段（正在想、还没调工具）：自成一节，它正是「当前这一步」 -->
-            <div v-else-if="seg.kind === 'notes'" class="tl-group inCluster">
-              <div class="tl-group-body">
-                <div v-for="(nt, ni) in seg.notes" :key="ni" class="note-item">
-                  <button class="note-head" type="button" @click.stop="toggleNote(m, nt)">
-                    <span class="tl-idx"></span>
-                    <NoteTag :m="m" :note="nt" />
-                    <caret-right-outlined class="caret" :class="{ open: noteOpen(m, nt) }" />
-                  </button>
-                  <NoteBody :m="m" :note="nt" :viewer="false" @citation="onBodyCitation" @preview="onBodyPreview" />
-                </div>
-              </div>
-            </div>
             <div v-else-if="seg.kind === 'group'" class="tl-group">
               <button v-if="groupHasBar(seg)" class="card-head" type="button" @click.stop="seg.tools[0]._groupOpen = !seg.tools[0]._groupOpen">
                 <span v-if="groupRunning(seg)" class="spinner"></span>
@@ -294,44 +277,19 @@
               </div>
             </div>
           </template>
+          </div>
+          <template v-for="(seg, si) in turnSteerRows(m)" :key="'st' + si">
+            <div class="tl-steer"><span class="tl-steer-txt">{{ seg.text }}</span></div>
+          </template>
+          <AnswerBody v-if="turnAnswerText(m)" class="tl-answer" :content="turnAnswerText(m)"
+                      :images="m.images" :sources="m.sources" :msg-index="index"
+                      runnable :session-id="sessionId"
+                      :streaming="m.loading && !m.failed"
+                      :viewer="false" @citation="onBodyCitation" @preview="onBodyPreview" />
         </div>
-        <!-- 无时间线（整段渲染）。正文为空且在生成中时不渲染气泡壳——
-             否则准备期会露一个空白的圆角框（这一轮的状态由整轮用时那一条说着） -->
-        <AnswerBody v-else-if="m.content || !m.loading" class="bubble-md" :content="m.content || ''"
-                    :images="m.images" :sources="m.sources" :msg-index="index"
-                    runnable :session-id="sessionId"
-                    :streaming="m.loading && !m.failed"
-                    :viewer="false" @citation="onBodyCitation" @preview="onBodyPreview" />
 
         <!-- 智能体提问（askUser）的「待答」态不在气泡里渲染：移动壳与 PC 同语义，把底部输入卡
              整块替换成提问面板（见 MobileChatPage 的 m-askp）；答复后问答记录以工具卡形态留在本气泡 -->
-
-        <!-- 工具列表兜底（历史消息无时间线时）：受顶部那条管辖，整块过程收起时一并出去 -->
-        <div v-if="m.toolCalls && m.toolCalls.length && !hasTimelineBlocks(m) && turnOpen(m)" class="card">
-          <button class="card-head" type="button" @click.stop="m._fbOpen = !m._fbOpen">
-            <span v-if="toolRunning(m)" class="spinner"></span>
-            <check-outlined v-else-if="!m.toolCalls.some(t => t.status === 'error')" class="ic-ok" />
-            <close-circle-outlined v-else class="ic-err" />
-            <span class="card-title">执行了 {{ executedCount(toolCallsView(m.toolCalls)) }} 个操作</span>
-            <caret-right-outlined class="caret" :class="{ open: m._fbOpen }" />
-          </button>
-          <div v-show="m._fbOpen" class="card-body">
-            <template v-for="(t, ti) in toolCallsView(m.toolCalls)" :key="ti">
-              <AskRecordCard v-if="t.name === 'askUser' && t.status !== 'start'" :t="t" />
-              <!-- 咨询另一位助手：这一行整行换成子对话卡（它自带「谁 · 几步 · 多久」，再留一行是重复） -->
-              <SubAgentChatCard v-else-if="t.subChat" :t="t" :sources="m.sources"
-                                :viewer="false" @citation="onBodyCitation" @preview="onBodyPreview" />
-              <div v-else class="tool-line">
-                <check-outlined v-if="t.status === 'done'" class="ic-ok" />
-                <close-circle-outlined v-else-if="t.status === 'error'" class="ic-err" />
-                <span v-else class="spinner"></span>
-                <span class="tool-line-name">{{ toolLabel(t.name, t.label) }}</span>
-                <span v-if="fanHasBoard(t.fanOut)" class="card-dim">{{ fanHead(t) }}</span>
-                    <span v-if="fanRun(t)" class="fan-run">{{ fanRun(t) }}</span>
-              </div>
-            </template>
-          </div>
-        </div>
 
         <!-- 错误卡：保留半程内容，给分类文案 + 重新生成 -->
         <div v-if="m.errorCard" class="err-card" :class="{ net: m.errorCard.kind === 'interrupted' }">
@@ -340,9 +298,6 @@
           <button class="btn-ghost" @click.stop="$emit('retry', index)"><redo-outlined /> 重新生成</button>
         </div>
 
-        <!-- 跑着的时候整轮用时这一条跟在正文最后面：触屏上眼睛盯的就是最新长出来的那一行，
-             它同时也是这一轮唯一的进行中提示（底下不再另挂一行阶段文案） -->
-        <TurnBar v-if="m.loading" :m="m" mobile />
 
         <!-- 执行计划卡（人在回路）：与 PC 同一份组件；裁决入口在底部确认栏，这里只读留痕。
              .stop：卡在卡片里的「查看完整计划/修改记录」不该顺手把整行选中 -->
@@ -463,14 +418,14 @@ import { vFollowBottom, vEdgeFade } from '../chat/followBottom'
 import AnswerBody from '../components/AnswerBody.vue'
 import { fmtTokens } from '../utils/token'
 import {
-  hasTimelineBlocks, procOpen, toggleProc, procSlice,
-  turnRows, turnOpen,
+  procOpen, toggleProc, procSlice,
+  turnAnswerText, turnProcessRows, turnSteerRows, turnOpen,
   thinkSegOpen, toggleThinkSeg, thinkSlice, thinkGrowing, toolLabel, toolBrief, spawnAnchorOf,
   clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterProcCount,
   clusterAutoOpen, clusterLiveRows, clusterTitle, clusterLiveText, clusterHeadKind, toolDuration,
-  groupHasBar, noteOpen, toggleNote,
+  groupHasBar,
   tailNotesTag, tailNotesGrowing, tailOpen, toggleTail,
-  prettyIo, liveOutput, toolRunning, groupRunning, groupHasError,
+  prettyIo, liveOutput, groupRunning, groupHasError,
   fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget, fanRun, runBoardText,
   toolCallsView, executedCount, toolSearchQueries, retrievalLineTitle,
   fmtMsgTime, fmtSize, errorBrief, sourceName, canSwitchPrev, canSwitchNext, verLabel, agentBadgeOf,
@@ -630,7 +585,10 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
   font-size: 15px; line-height: 1.7; min-width: 0; overflow-wrap: anywhere;
 }
 .tl-text { min-width: 0; }
-/* 插话段：右对齐、与用户气泡同一形状；收起过程时这一行仍然显示（那是用户自己说的话） */
+/* 顶部过程块（DSH 口径）：过程与正文彻底分开，展开时整块出现在正文上方 */
+.tl-turn-process { margin: 0 0 10px; }
+.tl-process-text { color: var(--app-text2); opacity: .82; font-size: 13.5px; }
+/* 插话段：右对齐、与用户气泡同一形状；它属于过程，随过程块一起展开/收起 */
 .tl-steer { display: flex; justify-content: flex-end; margin: 8px 0; }
 .tl-steer-txt {
   max-width: 82%; padding: 8px 12px; border-radius: 12px; line-height: 1.6; font-size: 15px;

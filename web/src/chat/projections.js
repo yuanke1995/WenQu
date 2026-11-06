@@ -328,26 +328,19 @@ const stepBriefOf = c => {
   const label = toolLabel(c.name, c.label)
   return brief ? label + ' · ' + brief : label
 }
-// ==================== 时间线（正文与工具交错渲染） ====================
-// 正文与工具卡片按事件到达顺序交错渲染。timeline 是段数组：
+// ==================== 时间线（正文 / 过程分离，DSH 口径） ====================
+// timeline 是事件段数组：
 //   {kind:'text', from, to}  → 指向 m.content 的切片区间（不复制文本，done 换正文时自动跟随）；
-//   {kind:'tool', tool}      → 引用 m.toolCalls 里的同一对象（done/error 原地改状态，卡片自动更新）。
-//   {kind:'think'/'process', from, to} → 同区间写法，分别指向 m.thinking / m.processText。
-// 渲染经 timelineView(m) 生成视图：连续工具合并为折叠组，正文保持段落连续。
-// 时间线随消息落库（正文区间 + 工具/产物下标），历史恢复时由 restoreTimeline 重建，
-// 刷新后仍是「正文—工具—正文」的交错过程视图；旧消息无 timeline 才走底部汇总兜底。
-// data-msg-index 仍挂在外层 .md 容器上，引用角标逻辑零改动。
-// 注：插话（steer）占一条 {kind:'steer', text, messageId} 段，位置＝框架把它写进上下文的那一刻
-// （后端 inbox/applied 时机），所以它夹在正文与工具之间，而不是整段回答的上面或下面。
-// 它同时也是一条落库的用户消息（sequence 排在回答之前）：历史回显时凡 messageId 已被某条时间线
+//   {kind:'tool', tool}      → 引用 m.toolCalls 里的同一对象（done/error 原地改状态，卡片自动更新）；
+//   {kind:'think'/'process', from, to} → 分别指向 m.thinking / m.processText；
+//   {kind:'steer', text, messageId}    → 用户在本轮跑动中补的那句话。
+// 渲染只分两块：正文＝末尾那段连续正文（turnAnswerText），过程＝其余全部段（turnProcessRows）。
+// 过程块里不再做任何位置推断（半句连排/句中工具吸收/强句末切分都已退役）——工具在段之间就按段
+// 渲染，正文永远连续；实时与落库用同一份段数组，刷新前后一致。
+// 时间线随消息落库（正文区间 + 工具/产物下标），历史恢复由 restoreTimeline 重建；旧消息无 timeline
+// 时工具按终态清单成组，正文按整段。data-msg-index 挂在外层 .md 容器上，引用角标逻辑零改动。
+// 注：插话段同时是一条落库用户消息（sequence 排在回答之前）：历史回显时凡 messageId 已被某条时间线
 // 段用掉的，那颗独立气泡就退场（见 useChatEngine 的 steerSegmentIds），一处留痕就够。
-
-/** 是否值得按时间线渲染：有工具段/产物段/过程段/思考段/插话段才有交错意义（纯正文段与整段渲染等价）。 */
-const hasTimelineBlocks = m => {
-  return Array.isArray(m?.timeline)
-    && m.timeline.some(s => s && (s.kind === 'tool' || s.kind === 'artifact'
-      || s.kind === 'process' || s.kind === 'think' || s.kind === 'steer'))
-}
 
 const extendTimelineText = (m, from, to) => {
   if (!m) return
@@ -366,7 +359,7 @@ const extendTimelineProcess = (m, from, to) => {
   else tl.push({ kind: 'process', from, to })
 }
 
-// 过程独白折叠态：键用段起点 from（流式期间 to 随增量增长、from 稳定；timelineView 每帧重算，
+// 过程独白折叠态：键用段起点 from（流式期间 to 随增量增长、from 稳定；过程块每帧重算，
 // 段对象本身不保状态，与工具卡 _open 存在 toolCalls 对象上同理，这里挂在消息上）。
 // 用户点过就认点过的（true/false 写死在 _procOpen 上）；没点过时：流式期间自动展开「正在长的那一段」
 // （过程按 token 增量下发，展开才看得见它逐字长出，而不是等闭合标签到达整块蹦出），本轮结束自动收起
@@ -442,7 +435,7 @@ const ensureThinkSegment = m => {
 }
 
 // ==================== 过程簇（连续思考/过程/工具的二次折叠） ====================
-/* 为什么需要这一层：模型一轮里常是「思考→工具→思考→工具」交替，而 timelineView 遇 think/process 段
+/* 为什么需要这一层：模型一轮里常是「思考→工具→思考→工具」交替，而过程块遇 think/process 段
  * 就 flushGroup（它们天然切断工具分组，时序要如实保留），于是一轮过程被切成 3N 个折叠头
  * （真机「用Java做一个打卡签到的H5」那条：深度思考/执行了4个操作/深度思考/执行了3个操作… 一路排到
  * 屏幕外，实测三十多行）。这里在视图层补一道**后置聚簇**：把 out 里连续的 think/process/group 段
@@ -499,7 +492,7 @@ const clusterOpen = (m, cl) => {
   return !!(m && m.loading && cl.grow)
 }
 /** 这一簇是「自动开着」还是「用户点开」的：自动开着＝正在跑的这一簇、用户没碰过它。
- *  只有这一种情况下展开只给当前这一步（见 timelineRows）——跑着的时候簇会长到几十段，
+ *  只有这一种情况下展开只给当前这一步（见 turnProcessRows）——跑着的时候簇会长到几十段，
  *  全展开就又退回聚簇前的那一排标题行，簇头等于白加。用户主动点开则照旧给全量。 */
 const clusterAutoOpen = (m, cl) => {
   const marked = m && m._clOpen ? m._clOpen[cl.key] : undefined
@@ -639,12 +632,6 @@ const toggleTail = (m, cl) => {
   m._tailOpen[cl.key] = !tailOpen(m, cl)
 }
 
-/** 渲染行＝timelineView 原样。曾在这里把「用户点开的簇」摊平成兄弟段（顶层复用 group/notes
- *  分支渲染全量工具卡），实测把页面撑成长卷（几十个操作一字排开）——与 DSH 参考一致，
- *  展开态也收在簇分支内部的固定高度帽体里（clusterLiveRows 轻量行），单步详情点行内展开。
- *  摊平形态连同 inCluster / flat / idxFrom 标记一并退役。 */
-const timelineRows = m => timelineView(m)
-
 // ==================== 「整轮用时」那一条（跑着在正文末尾，答完在回答顶上） ====================
 // 一轮回答的耗时只报这一处。原先簇头、组条、每张工具卡各挂一个数：一屏六个读数读不出重点，
 // 而且互相打架（组条是首尾跨度、单卡是各自跑掉多久，两个数并排放谁都不认）。现在整块过程收在
@@ -739,12 +726,16 @@ const turnOpen = m => {
   const marked = m._turnOpen
   if (marked === true) return true
   if (marked === false) return false
-  return false
+  // 没有正文可读的轮次（只跑工具/被叫停）：过程块默认展开，否则整条消息只剩一行「已完成」
+  return !turnAnswerText(m) && turnProcessRows(m).length > 0
 }
 const toggleTurn = m => { if (m) m._turnOpen = !turnOpen(m) }
 /** 这条底下到底有没有过程可展开：有时间线过程段、或有无时间线时的兜底工具列表。
  *  没有就别挂折叠三角——点开一片空比不挂更坏。 */
-const turnExpandable = m => hasTimelineBlocks(m) || !!(m && Array.isArray(m.toolCalls) && m.toolCalls.length)
+const turnExpandable = m => {
+  if (!m) return false
+  return turnProcessRows(m).length > 0
+}
 /** 本轮终态标注的原文（与后端 {@code TurnRecorder} 同一组常量，逐字一致）。
  *  这里只留「界面要认得它」所需的那几份：正文里出现了就是服务端说过这件事，不再由别处补第二遍。
  *  抄第二份的代价已经踩过一次——当场与刷新后不同形（见 useChatEngine 里原来那份 STOP_SUFFIX）。 */
@@ -796,9 +787,8 @@ const turnHead = m => {
   if (m && (m.stoppedTurn || m.planStopped)) return '这一轮已停止' + dur
   return '已完成' + dur
 }
-/** 这条躺哪儿：跑着的时候跟在正文最后面（眼睛在最新长出来的那一行，它又是跟着秒走的计时器），
- *  答完之后回到回答顶上，当这一轮的总览。两端模板都只认这两个判据，不各写一份条件。 */
-const turnBottom = m => !!(m && m.loading) && turnShow(m)
+/** 过程块开关固定在回答顶部：跑着时它是状态行，答完是总览（DSH TurnProcessNodeView 同款）。
+ *  turnTop 只决定「已答完且没有过程可展开」时用无三角的纯文字行；跑动中走状态行形态。 */
 const turnTop = m => !!(m && !m.loading) && turnShow(m)
 /** 悬停说明：口径只在这一处描述，PC 与 H5 共用（两处各写一遍必然写歪） */
 const turnTitle = m => {
@@ -812,13 +802,6 @@ const turnTitle = m => {
   if (rest > 0) parts.push('模型与工具 ' + durZh(rest))
   if (wait > 0) parts.push('等你答题或批准 ' + durZh(wait))
   return '从发出提问到答完一共 ' + durZh(ms) + (parts.length ? '，其中' + parts.join('、') : '')
-}
-/** 顶部那条收起时只留正文行：正文各段本来就是 content 的连续切片（工具不往正文写内容），
- *  连排与全量渲染等价，零失真；展开时回到按到达顺序交错的原始时序。
- *  插话段例外——那是用户自己说的话，收起过程时也要看得见，不该跟着工具卡一起藏进折叠里。 */
-const turnRows = m => {
-  const rows = timelineRows(m)
-  return turnOpen(m) ? rows : rows.filter(s => s.kind === 'text' || s.kind === 'steer')
 }
 
 // 历史消息的 processText 可能带前导换行（后端修复前落库的数据，每个 <process> 块标签后的换行
@@ -884,168 +867,105 @@ const restoreTimeline = (m, segs) => {
   return out
 }
 
-/** 句末判定：文本尾部（去空白）以句末标点收尾视为「话已说完」；否则视为半句——后面大概率
- * 接「工具结果回来后继续说」的下半句。尾部有未闭合代码块（``` 为奇数个）时强制视为句末：
- * 跨代码块边界的拼接会让后续正文被吞进代码块。 */
-const SENTENCE_END_CHARS = '。，、；：！？…—～~.!?;:』」》）〉】]'
-const endsSentence = s => {
-  const t = String(s).replace(/\s+$/, '')
-  if (!t) return true
-  if ((t.match(/```/g) || []).length % 2 === 1) return true
-  return SENTENCE_END_CHARS.includes(t.slice(-1))
-}
+// ==================== 完成态：正文 / 过程分离（DSH 口径） ====================
+/* DSH 的轮次模型：最终答案只取最后一轮「不含工具调用」的回复，之前的所有回复、思考与工具
+ * 都属于过程。问渠的时间线没有 step 号，但同样的边界可以用段序列表示：
+ *   - 答案 = 时间线末尾、最后一个非正文段（think/process/tool/steer）之后的**连续正文段**；
+ *     收尾若停在工具/思考上（没有尾随正文），退回最后一段正文，保证答案不为空；
+ *   - 过程 = 其余所有段（正文段按答案起点截断），按发生顺序渲染在顶部过程块里。
+ * 这样前端不再做半句连排/句中工具吸收——正文永远是连续的，过程永远不会插进正文。 */
 
-/** 连排窗口的切点只认强句末：逗号/分号/顿号这类弱停顿处落工具一样会把句子读断；
- *  英文句点只在其后是空白或段尾时才算。 */
-const STRONG_END_CHARS = '。！？!?…'
-const isStrongEnd = (s, i) => {
-  if (STRONG_END_CHARS.includes(s[i])) return true
-  return s[i] === '.' && (i + 1 >= s.length || /\s/.test(s[i + 1]))
-}
-/** 在 [from,to) 里找第一个能把半句补成完整句子的位置（返回标点后一位；找不到 -1）。
- *  从 mergeFrom 起数 ```，代码块里的标点不切。 */
-const firstSentenceCut = (content, mergeFrom, from, to) => {
-  let inCode = false
-  for (let i = mergeFrom; i < to; i++) {
-    if (content.startsWith('```', i)) { inCode = !inCode; i += 2; continue }
-    if (i >= from && !inCode && isStrongEnd(content, i)) return i + 1
+/** 答案在 m.content 里的区间；没有正文返回 null。 */
+const turnAnswerRange = m => {
+  const content = String((m && m.content) || '')
+  const len = content.length
+  if (!len) return null
+  const tl = Array.isArray(m && m.timeline) ? m.timeline : []
+  if (!tl.length) return { from: 0, to: len }
+  let from = null
+  for (let i = tl.length - 1; i >= 0; i--) {
+    const seg = tl[i]
+    if (!seg) continue
+    if (seg.kind === 'artifact') continue
+    if (seg.kind !== 'text') break
+    const f = Math.min(Number(seg.from) || 0, len)
+    const t = Math.min(Number(seg.to) || 0, len)
+    if (t > f && content.slice(f, t).trim()) from = f
   }
-  return -1
-}
-
-/** 时间线渲染视图：把 timeline 段序列转成可渲染序列。
- * 1）连续工具段（中间夹空白文本不算断点）合并为 {kind:'group', tools:[...]} 折叠组；
- * 2）句中工具吸收：模型常在句中发起工具（"先[调工具]检查环境"），半句之后出现的工具延迟渲染，
- *    等后续正文把这一句补完（强句末）再连排成一段，工具随后落在它发生的位置。整段正文不连排
- *    ——否则工具会被一路顶到整段正文末尾（落库视图里工具之后往往就是一整段）。
- *    每帧重算无状态：打字机期间合并窗口由收尾 flush 照常显示，运行中工具的卡片始终可见。
- * 尾部 timeline 未覆盖的正文兜底补段（与旧拼接逻辑等价）。 */
-const timelineView = m => {
-  const len = (m.content || '').length
-  const content = String(m.content || '')
-  const tl = Array.isArray(m.timeline) ? m.timeline : []
-  // 同一工具失败后又被后续调用成功接上（模型重试）：失败那张不再单独占一行，
-  // 否则一次空参重试就能把回答切成两段（真机 2026-11-06：生成产物 {} 失败 → 补一句正文 →
-  // 生成产物 成功）。重试次数挂到成功那张卡上，错误本身仍留在数据里。
-  const superseded = new Set()
-  {
-    const seenDone = new Set()
+  if (from === null) {
+    // 收尾停在工具/思考上：退回最后一段非空正文，答案不能是空
     for (let i = tl.length - 1; i >= 0; i--) {
-      const t = tl[i] && tl[i].kind === 'tool' ? tl[i].tool : null
-      if (!t) continue
-      if (t.status === 'done') seenDone.add(t.name)
-      else if (t.status === 'error' && seenDone.has(t.name)) superseded.add(t)
-    }
-    const retries = new Map()
-    for (const s of tl) {
-      const t = s && s.kind === 'tool' ? s.tool : null
-      if (!t) continue
-      if (t.status === 'error' && superseded.has(t)) retries.set(t.name, (retries.get(t.name) || 0) + 1)
-      else if (t.status === 'done' && t.attempts == null && retries.get(t.name)) t.attempts = retries.get(t.name) + 1
+      const seg = tl[i]
+      if (!seg || seg.kind !== 'text') continue
+      const f = Math.min(Number(seg.from) || 0, len)
+      const t = Math.min(Number(seg.to) || 0, len)
+      if (t > f && content.slice(f, t).trim()) { from = f; break }
     }
   }
+  return from === null ? { from: 0, to: len } : { from, to: len }
+}
+const turnAnswerText = m => {
+  const r = turnAnswerRange(m)
+  return r ? String((m && m.content) || '').slice(r.from, r.to) : ''
+}
+
+/** 过程块：答案之前的正文 + 全部思考/过程/工具/插话，按时间线顺序聚簇。
+ *  不做任何句子推断——工具在段之间就按段渲染，过程块本来就不参与正文排版。 */
+const turnProcessRows = m => {
+  const content = String((m && m.content) || '')
+  const range = turnAnswerRange(m)
+  const limit = range ? range.from : content.length
+  const tl = Array.isArray(m && m.timeline) ? m.timeline : []
   const out = []
   let group = null
-  let maxTo = 0
-  let mergeFrom = -1 // >=0 表示有一个未闭合的半句在等待后续正文连排
-  const absorbed = [] // 半句与下一段正文之间出现的工具（延迟渲染，按到达顺序保真）
   const flushGroup = () => { if (group) { out.push(group); group = null } }
-  const flushMerge = () => {
-    if (mergeFrom < 0) return
-    out.push({ kind: 'text', from: mergeFrom, to: maxTo })
-    for (const t of absorbed) { if (!group) group = { kind: 'group', tools: [] }; group.tools.push(t) }
-    absorbed.length = 0
-    mergeFrom = -1
-  }
   for (const seg of tl) {
     if (!seg) continue
-    if (seg.kind === 'think') {
-      // 思考段：区间指向 m.thinking，就地一行折叠头。与 process 同理不参与句中吸收/工具分组
-      // （它切在正文与工具之间正是「先想了什么才动手」的时序，被吸收掉就等于又叠回一块）
-      flushMerge()
-      flushGroup()
-      const tlen = (m.thinking || '').length
-      const tf = Math.min(Number(seg.from) || 0, tlen)
-      const tt = Math.min(Number(seg.to) || 0, tlen)
-      if (tt > tf) out.push({ kind: 'think', from: tf, to: tt })
+    if (seg.kind === 'text') {
+      const f = Math.min(Number(seg.from) || 0, limit)
+      const t = Math.min(Number(seg.to) || 0, limit)
+      if (t > f && content.slice(f, t).trim()) { flushGroup(); out.push({ kind: 'text', from: f, to: t }) }
       continue
     }
-    if (seg.kind === 'process') {
-      // 过程独白段：区间指向 m.processText（独立累积），原位灰字渲染；
-      // 不参与句中吸收/工具分组，直接断开当前合并窗口与工具组
-      flushMerge()
-      flushGroup()
-      const plen = (m.processText || '').length
-      const pf = Math.min(Number(seg.from) || 0, plen)
-      const pt = Math.min(Number(seg.to) || 0, plen)
-      if (pt > pf) out.push({ kind: 'process', from: pf, to: pt })
-      continue
-    }
-    if (seg.kind === 'steer') {
-      // 插话段：用户在这一刻补的那句，就地一行（渲染成右对齐的用户话）。它既不是正文也不是工具，
-      // 必须断开半句合并窗口与工具组——被吸进下一组里，位置就又错了
-      flushMerge()
-      flushGroup()
-      const t = String(seg.text || '')
-      if (t) out.push({ kind: 'steer', text: t, messageId: seg.messageId || '' })
-      continue
-    }
-    if (seg.kind === 'artifact') {
-      // 产物不再按生成时刻就地渲染（统一沉底展示）：跳过该段，且不打断工具组/合并窗口
-      continue
-    }
+    if (seg.kind === 'artifact') continue
     if (seg.kind === 'tool') {
       if (!seg.tool) continue
-      if (superseded.has(seg.tool)) continue // 失败后已重试成功：不单独成行
-      if (mergeFrom >= 0) { absorbed.push(seg.tool); continue }
       if (!group) group = { kind: 'group', tools: [] }
       group.tools.push(seg.tool)
       continue
     }
-    const from = Math.min(seg.from, len), to = Math.min(seg.to, len)
-    if (to <= from || !content.slice(from, to).trim()) continue // 空白段：不渲染、不打断分组
-    if (mergeFrom >= 0) {
-      // 连排只补到「这一句说完」为止：落库视图里工具之后的全部正文常常是一整段，
-      // 等整段结束再结清会把中间调用的工具一路顶到回答末尾；直接在工具边界切又会把句子劈开。
-      // 找到补全这一句的强句末，先把半句 + 工具按顺序结清，剩下的正文再另起一段。
-      const cut = firstSentenceCut(content, mergeFrom, from, to)
-      if (cut > 0) {
-        maxTo = cut
-        flushMerge()
-        flushGroup() // 半句文本在前、工具簇紧随其后
-        maxTo = to
-        const rest = content.slice(cut, to)
-        if (rest.trim()) {
-          if (endsSentence(rest)) out.push({ kind: 'text', from: cut, to })
-          else mergeFrom = cut
-        }
-        continue
-      }
-      maxTo = to // 这一句还没说完：窗口继续向本段延伸
+    if (seg.kind === 'think') {
+      flushGroup()
+      const tlen = String((m && m.thinking) || '').length
+      const f = Math.min(Number(seg.from) || 0, tlen)
+      const t = Math.min(Number(seg.to) || 0, tlen)
+      if (t > f) out.push({ kind: 'think', from: f, to: t })
       continue
     }
-    flushGroup()
-    maxTo = to
-    if (endsSentence(content.slice(from, to))) {
-      out.push({ kind: 'text', from, to })
-    } else {
-      mergeFrom = from // 半句：开启合并窗口
+    if (seg.kind === 'process') {
+      flushGroup()
+      const plen = String((m && m.processText) || '').length
+      const f = Math.min(Number(seg.from) || 0, plen)
+      const t = Math.min(Number(seg.to) || 0, plen)
+      if (t > f) out.push({ kind: 'process', from: f, to: t })
+      continue
     }
   }
-  flushMerge()
   flushGroup()
-  if (len > maxTo) out.push({ kind: 'text', from: maxTo, to: len })
-  // 流末聚合帧会把思考尾段再投一次：它落在全部正文之后，且内容就是前一段思考的结尾。
-  // 这种重复段不再单独成行（历史消息里已落库的那一份也在这里清掉）；真实的新收尾思考照常显示。
-  const tail = out[out.length - 1]
-  if (tail && tail.kind === 'think') {
-    const thought = String(m.thinking || '')
-    const piece = thought.slice(tail.from, tail.to)
-    if (piece && thought.slice(0, tail.from).endsWith(piece)) out.pop()
+  if (!out.length && m && Array.isArray(m.toolCalls) && m.toolCalls.length) {
+    // 历史恢复/正文重建回退：没有时间线可依，工具按终态清单成组展示
+    const tools = toolCallsView(m.toolCalls)
+    if (tools.length) out.push({ kind: 'group', tools })
   }
   return markGrowingCluster(clusterize(out), m)
 }
 
+/** 插话段单独常驻：那是用户自己说的话，过程块收起时也要看得见（不跟工具卡一起藏起来）。 */
+const turnSteerRows = m => {
+  const tl = Array.isArray(m && m.timeline) ? m.timeline : []
+  return tl.filter(s => s && s.kind === 'steer' && String(s.text || '').trim())
+    .map(s => ({ kind: 'steer', text: String(s.text), messageId: s.messageId || '' }))
+}
 
 // ---- 工具卡片：标题行直接亮出关键参数（命令/路径/检索词），点击展开看完整入参与输出 ----
 const TOOL_BRIEF_KEYS = ['command', 'query', 'path', 'dir', 'filename', 'url', 'kbIds']
@@ -1112,7 +1032,7 @@ const openDispatchCard = (m, t) => {
   if (!m || !t) return
   const show = () => { if (!toolCardOpen(t)) toggleToolCard(t) }
   if (!turnOpen(m)) m._turnOpen = true
-  for (const s of timelineView(m)) {
+  for (const s of turnProcessRows(m)) {
     const segs = s.kind === 'cluster' ? (s.segs || []) : [s]
     for (const g of segs) {
       if (!g || g.kind !== 'group' || !Array.isArray(g.tools) || g.tools.indexOf(t) < 0) continue
@@ -1679,18 +1599,18 @@ const goalEchoTipOf = (g, goalId) => {
 
 export {
   TOOL_LABELS, TOOL_DESCS, bareToolName, toolLabel, toolDesc, toolCallsView, executedCount,
-  toolDuration, toolRunning, consultChatView, consultNameOf, rememberAgents, hasTimelineBlocks, extendTimelineText, askUserView,
+  toolDuration, toolRunning, consultChatView, consultNameOf, rememberAgents, extendTimelineText, askUserView,
   isDispatchTool, dispatchTaskOf, spawnAnchorOf, subagentRunsOf, stepBriefOf,
   extendTimelineProcess, procOpen, toggleProc, procSlice, pushTimelineTool, pushTimelineArtifact, pushTimelineSteer,
   pushTimelineThink, extendTimelineThink, thinkSlice, thinkGrowing, thinkSegOpen, toggleThinkSeg, ensureThinkSegment,
-  restoreTimeline, SENTENCE_END_CHARS, endsSentence, timelineView, timelineRows, TOOL_BRIEF_KEYS, oneLine,
+  restoreTimeline, TOOL_BRIEF_KEYS, oneLine,
   clusterize, clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterProcCount,
   clusterKinds, clusterTitle, clusterHeadKind, clusterLiveText, CLUSTER_KIND_DONE, CLUSTER_KIND_LIVE,
   clusterAutoOpen, clusterLiveRows, groupHasBar, noteText, noteTag, noteOpen, noteGrowing, toggleNote,
   tailNotesTag, tailNotesGrowing, tailOpen, toggleTail,
-  turnRows, turnOpen, toggleTurn, turnShow, turnWarn, turnExpandable, turnHead, turnTitle, turnElapsedMs, turnWaitMs,
+  turnAnswerText, turnProcessRows, turnSteerRows, turnOpen, toggleTurn, turnShow, turnWarn, turnExpandable, turnHead, turnTitle, turnElapsedMs, turnWaitMs,
   resumedStartAt, earlierStart, settledTurnMs,
-  turnTop, turnBottom, turnToggleable,
+  turnTop, turnToggleable,
   durZh,
   toolBrief, prettyIo, LIVE_TAIL_CHARS, liveOutput, groupRunning, groupHasError,
   toolCardOpen, toggleToolCard, openDispatchCard,

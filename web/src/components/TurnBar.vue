@@ -1,9 +1,8 @@
 <template>
-  <!-- 一轮回答的「整轮用时」那一条（判据全在 projections 的 turn* 那组函数里，两端共用）：
-       跑着的时候跟在正文最后面跟着秒走（状态行形态），答完回到回答顶上收成一条总览（簇头形态）。
-       形态与 DSH 对齐：顶部簇头=整行无边框文字+细底线+下开三角；末尾状态行=顶部分割线+活水波纹+扫光文字。
-       耗时只在这一处报——原先簇头、组条、每张工具卡各挂一个数，一屏六个读数读不出重点。 -->
-  <div v-if="turnShow(m)" class="turn-bar" :class="{ 'is-m': mobile, 'is-top': turnTop(m), 'is-bottom': turnBottom(m) }">
+  <!-- 一轮的「过程块」开关（判据全在 projections 的 turn* 那组函数里，两端共用）：
+       固定在回答顶部；跑着时是跟着秒走的状态行，答完收成一行总览（DSH TurnProcessNodeView 同款）。
+       展开后过程块长在它下面、正文上面；正文本身永远连续。耗时只在这一处报。 -->
+  <div v-if="turnShow(m)" class="turn-bar" :class="{ 'is-m': mobile, 'is-top': turnTop(m) }">
     <!-- 完成态·可展开：整行都是热区 -->
     <button v-if="turnToggleable(m)" class="tb-head" :class="{ 'is-open': turnOpen(m) }" type="button" :title="turnTitle(m)" @click.stop="toggleTurn(m)">
       <span class="tb-text" :class="{ warn: turnWarn(m) }">{{ turnHead(m) }}</span>
@@ -27,7 +26,7 @@
 <script setup>
 import { onBeforeUnmount, watch } from 'vue'
 import { DownOutlined } from '@ant-design/icons-vue'
-import { turnShow, turnOpen, toggleTurn, turnHead, turnTitle, turnToggleable, turnWarn, turnTop, turnBottom, holdTick } from '../chat/projections'
+import { turnShow, turnOpen, toggleTurn, turnHead, turnTitle, turnToggleable, turnWarn, turnTop, holdTick } from '../chat/projections'
 
 // 折叠态必须落在消息对象上（m._turnOpen），不能放组件本地 ref：真正决定过程行渲不渲染的是
 // 父级模板里那份摊平结果，本地 ref 管不到它。

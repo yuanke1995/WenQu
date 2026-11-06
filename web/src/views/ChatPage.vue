@@ -153,14 +153,15 @@
               </div>
           </template>
           <template #body="{ m, i }">
-              <!-- 整轮用时那一条：答完之后它在回答顶上当总览（跑着的时候它在正文末尾，见 body-after） -->
-              <TurnBar v-if="m.role === 'ai' && !m.loading" :m="m" />
-              <!-- 深度思考不再叠在气泡顶上：每一轮思考各占一行，长在它发生的那个位置（见时间线里的 think 段） -->
-              <div v-if="hasTimelineBlocks(m)" class="md" :data-msg-index="i">
-                <template v-for="(seg, si) in turnRows(m)" :key="si">
-                  <AnswerBody v-if="seg.kind === 'text'" class="tl-text" :content="m.content.slice(seg.from, seg.to)"
-                              :images="m.images" :sources="m.sources" :msg-index="i"
-                              runnable :session-id="currentSessionId" :streaming="m.loading" />
+              <!-- 整轮用时那一条：它同时是过程块的开关。跑着的时候过程自动展开，答完收起只留正文 -->
+              <TurnBar v-if="m.role === 'ai'" :m="m" />
+              <!-- 正文 / 过程分离（DSH 口径）：过程（中间正文、思考、工具、插话）全收在顶部过程块里；
+                   正文只渲染最终答案（turnAnswerText），永远连续，不再和过程交错。 -->
+              <div v-if="m.role === 'ai'" class="md" :data-msg-index="i">
+                <div v-if="turnOpen(m) && turnProcessRows(m).length" class="tl-turn-process">
+                <template v-for="(seg, si) in turnProcessRows(m)" :key="si">
+                  <AnswerBody v-if="seg.kind === 'text'" class="tl-text tl-process-text" :content="m.content.slice(seg.from, seg.to)"
+                              :images="m.images" runnable :session-id="currentSessionId" :streaming="false" />
                   <!-- 思考段（簇外）：这一轮模型在想什么，就地一行。只有正在长的那一段自动展开，其余折叠。
                        被过程簇收进去的那些不走这一支——它们落在帽体清单里所属那一步的展开详情内（见 projections 的 clusterLiveRows） -->
                   <div v-else-if="seg.kind === 'think'" class="tl-think-block">
@@ -282,25 +283,7 @@
                     </button>
                     <div v-show="procOpen(m, seg)" class="tl-process">{{ procSlice(m, seg) }}</div>
                   </div>
-                  <!-- 插话段：用户在这一轮还在跑时补的那句，就地一行（与用户气泡同一形状）。
-                       它长在「模型真听到它」的那个位置——夹在正文与工具之间，不是整段回答的上面
-                       或下面；库里那条独立用户行已由引擎折叠，一句只显示这一遍。 -->
-                  <div v-else-if="seg.kind === 'steer'" class="tl-steer">
-                    <span class="tl-steer-txt">{{ seg.text }}</span>
-                  </div>
                   <!-- 产物段不再就地渲染：产物统一沉底（时间线数据仍保留 artifact 段以备后续） -->
-                  <div v-else-if="seg.kind === 'notes'" class="tl-group inCluster">
-                    <div class="tl-group-body">
-                      <div v-for="(nt, ni) in seg.notes" :key="ni" class="tl-note-item">
-                        <button class="tl-note-head" type="button" @click="toggleNote(m, nt)">
-                          <span class="tl-idx"></span>
-                          <NoteTag :m="m" :note="nt" />
-                          <span class="tl-caret" :class="{ open: noteOpen(m, nt) }"><caret-right-outlined /></span>
-                        </button>
-                        <NoteBody :m="m" :note="nt" />
-                      </div>
-                    </div>
-                  </div>
                   <div v-else class="tl-group">
                     <button v-if="groupHasBar(seg)" class="tl-group-bar" type="button" @click="seg.tools[0]._groupOpen = !seg.tools[0]._groupOpen">
                       <loading-outlined v-if="groupRunning(seg)" spin class="tool-ic tool-ic-run" />
@@ -383,6 +366,13 @@
                     </div>
                   </div>
                 </template>
+                </div>
+                <template v-for="(seg, si) in turnSteerRows(m)" :key="'st' + si">
+                  <div class="tl-steer"><span class="tl-steer-txt">{{ seg.text }}</span></div>
+                </template>
+                <AnswerBody v-if="turnAnswerText(m)" class="tl-answer" :content="turnAnswerText(m)"
+                            :images="m.images" :sources="m.sources" :msg-index="i"
+                            runnable :session-id="currentSessionId" :streaming="m.loading && !m.failed" />
               </div>
               <!-- 提问与回答同一条排版口径（markdown，breaks:true 所以换行照旧保留）。
                    但**提问走 literal**：图片占位与引用角标都不替换——提问里的 [图片N] / [N]
@@ -410,79 +400,6 @@
                   <summary>异常详情</summary>
                   <pre class="mec-raw">{{ m.errorCard.message }}</pre>
                 </details>
-              </div>
-              <!-- 跑着的时候整轮用时这一条跟在正文最后面：它同时是这一轮唯一的进行中提示，
-                   眼睛盯的是最新长出来的那一行，而它正是那一行的计时器 -->
-              <TurnBar v-if="m.role === 'ai' && m.loading" :m="m" />
-              <!-- 历史恢复/正文重建回退：无 timeline（无法重建交错点），工具按终态列表折叠展示，卡片可展开看全文。
-                   受顶部那条管辖：整块过程收起时它一并出去（否则「已完成」底下还挂一摞操作行） -->
-              <div v-if="m.role === 'ai' && m.toolCalls && m.toolCalls.length && !hasTimelineBlocks(m) && turnOpen(m)" class="tool-status-list">
-                <button class="tl-group-bar" type="button" @click="m._fbOpen = !m._fbOpen">
-                  <loading-outlined v-if="toolRunning(m)" spin class="tool-ic tool-ic-run" />
-                  <close-circle-outlined v-else-if="m.toolCalls.some(t => t.status === 'error')" class="tool-ic tool-ic-err" />
-                  <check-outlined v-else class="tool-ic tool-ic-ok" />
-                  <span>执行了 {{ executedCount(toolCallsView(m.toolCalls)) }} 个操作</span>
-                  <span class="tl-caret" :class="{ open: m._fbOpen }"><caret-right-outlined /></span>
-                </button>
-                <div v-if="m._fbOpen" class="tl-group-body">
-                  <div v-for="(t, ti) in toolCallsView(m.toolCalls)" :key="ti" class="tl-card" :data-spawn="spawnAnchorOf(t)"
-                       :class="{ run: t.status === 'start', err: t.status === 'error' }">
-                    <button class="tl-card-head" type="button" @click="toggleToolCard(t)">
-                      <loading-outlined v-if="t.status === 'start'" spin class="tool-ic tool-ic-run" />
-                      <check-outlined v-else-if="t.status === 'done'" class="tool-ic tool-ic-ok" />
-                      <close-circle-outlined v-else class="tool-ic tool-ic-err" />
-                      <span class="tool-name" :title="toolDesc(t.name, t.hint)">{{ toolLabel(t.name, t.label) }}</span>
-                      <code v-if="toolBrief(t)" class="tl-brief">{{ toolBrief(t) }}</code>
-                      <span v-if="t._live && t.status === 'start'" class="tl-live" :title="t._live">{{ t._live }}</span>
-                      <span v-if="t.attempts > 1" class="tool-dur">重试 {{ t.attempts - 1 }} 次</span>
-                      <!-- 脚本扇出的规模（P3b）：不点开卡片也能看出"这一次跑了多少个子调用" -->
-                      <span v-if="fanHasBoard(t.fanOut)" class="tool-dur">{{ fanHead(t) }}</span>
-                      <span v-if="fanRun(t)" class="fan-run">{{ fanRun(t) }}</span>
-                      <span v-if="t.status === 'error'" class="tool-fail">失败</span>
-                      <span class="tl-caret" :class="{ open: toolCardOpen(t) }"><caret-right-outlined /></span>
-                    </button>
-                    <!-- askUser 问答记录：可折叠（默认展开），刷新/历史恢复同构 -->
-                    <AskRecordCard v-if="t.name === 'askUser' && t.status !== 'start'" :t="t" />
-                    <SubAgentChatCard v-if="(t.subChat || (t._steps && t._steps.length)) && toolCardOpen(t)" :t="t"
-                                      :agent="t.subChat ? agentBadgeOf(agentList, t.subChat.agentId, t.subChat.agentName) : null"
-                                      :sources="m.sources" />
-                    <div v-if="t._open" class="tl-card-body">
-                      <!-- 脚本扇出清单（P3b 过程下钻）：一次运行内部调了什么、各多久、有没有被挡下。
-                           子调用刻意不各占一张顶层卡片（会被刷成一堵墙），结构就收在这里 -->
-                      <template v-if="fanHasBoard(t.fanOut)">
-                        <div class="tl-io-label">{{ fanTitle(t.fanOut) }}</div>
-                        <div class="fan-list">
-                          <div v-for="(s, si) in t.fanOut.items" :key="si" class="fan-row"
-                               :class="{ err: s.status === 'error', run: s.status === 'start' }">
-                            <span class="fan-idx">{{ si + 1 }}</span>
-                            <span class="fan-name">{{ toolLabel(s.name, s.label) }}</span>
-                            <span class="fan-dur">{{ fanRowState(s) }}</span>
-                            <span class="fan-brief">{{ s.brief }}</span>
-                          </div>
-                          <div v-if="t.fanOut.omitted" class="fan-more">另有 {{ t.fanOut.omitted }} 次未列出</div>
-                        </div>
-                        <!-- 额度与并发上限（P3b 实时面板）：跑着的时候看这条才知道"离撞上限还有多远"，
-                             终态那份也带着——刷新后同样能看出这一次占了几成预算 -->
-                        <div v-if="fanBudget(t.fanOut)" class="fan-budget">{{ fanBudget(t.fanOut) }}</div>
-                      </template>
-                      <template v-if="t.args">
-                        <div class="tl-io-label">入参</div>
-                        <pre class="tl-io">{{ prettyIo(t.args) }}</pre>
-                        <ToolSpillButton v-if="t.argsSpillId" :id="t.argsSpillId" :tool="t.name" kind="入参" />
-                      </template>
-                      <template v-if="liveOutput(t)">
-                        <div class="tl-io-label">{{ t.status === 'start' ? '实时输出' : (t.result ? '输出' : '输出（执行期）') }}</div>
-                        <pre class="tl-io" :class="{ live: t.status === 'start' }">{{ liveOutput(t) }}</pre>
-                        <ToolSpillButton v-if="t.spillId" :id="t.spillId" :tool="t.name" kind="输出" />
-                      </template>
-                      <template v-if="t.error">
-                        <div class="tl-io-label">错误</div>
-                        <pre class="tl-io tl-io-err">{{ t.error }}</pre>
-                        <ToolSpillButton v-if="t.spillId" :id="t.spillId" :tool="t.name" kind="输出" />
-                      </template>
-                    </div>
-                  </div>
-                </div>
               </div>
               <!-- 计划模式（人在回路）：执行计划卡（只读）。裁决入口在底部输入框区的计划确认栏
                    （与提问卡同形，见 pendingPlan / planp-*）；卡片本体两端共用 chat/PlanCard.vue，
@@ -1785,13 +1702,13 @@ import { SUPPORTED_EXTS, extOf } from '../chat/intake'
 // 正文浮层的共享状态：右栏来源联动（hoveredRef / 点角标定位）与灯箱开关要用
 import { openImages, previewUrl, openSource, hoveredRef } from '../chat/answerViewer'
 import { approvalArgsText } from '../chat/approval'
-import { toolLabel, toolDesc, toolCallsView, executedCount, toolRunning, toolDuration, hasTimelineBlocks,
+import { toolLabel, toolDesc, toolCallsView, executedCount, toolDuration,
          procOpen, toggleProc, procSlice, thinkSegOpen, toggleThinkSeg, thinkSlice, thinkGrowing,
-         turnRows, turnOpen,
+         turnAnswerText, turnProcessRows, turnSteerRows, turnOpen,
          toolBrief, prettyIo, liveOutput, groupRunning,
          clusterOpen, toggleCluster, clusterTools, clusterRunning, clusterHasError, clusterProcCount,
          clusterAutoOpen, clusterLiveRows, clusterTitle, clusterLiveText, clusterHeadKind,
-         groupHasBar, noteOpen, toggleNote,
+         groupHasBar,
          tailNotesTag, tailNotesGrowing, tailOpen, toggleTail,
          groupHasError, toolSearchQueries, retrievalLineTitle,
          fanHasBoard, fanHead, fanTitle, fanRowState, fanBudget, fanRun, runBoardText,
@@ -4514,17 +4431,20 @@ onMounted(async () => {
   background: rgba(0,0,0,.55); color: #fff; font-size: 12px; line-height: 18px; text-align: center; cursor: pointer; }
 .pending-del:hover { background: var(--app-danger); }
 
-/* ==================== 工具执行卡片 / 折叠组 ====================
- * 正文与工具交错：连续工具合并折叠组（组条窄条化，不把文章剁开）；
- * 卡片标题行亮出关键参数（命令/路径/检索词），展开看完整入参/输出（toolCalls 存 ≤8KB 全文）。 */
+/* ==================== 过程块：思考 / 过程 / 工具 ====================
+ * 过程与正文彻底分开：连续工具合并折叠组，卡片标题行亮出关键参数，展开看完整入参/输出。
+ * 这一段只出现在顶部过程块里，不参与正文排版。 */
 .tool-status-list { margin-top: 8px; }
-/* 正文段贴工具块：压掉 v-html 里 markdown 段落的上下 margin，保持「句间插标签」的连续读感 */
+/* 过程块里的中间正文：与最终答案区分开，读起来知道它是过程而不是结论 */
 .tl-text :deep(*:first-child) { margin-top: 0; }
 .tl-text :deep(*:last-child) { margin-bottom: 0; }
-/* 过程独白段（<process> 标签分流）：灰字弱化 + 左侧细线，与正文区分但不打断交错过程视图 */
+/* 过程独白段（<process> 标签分流）：在过程块里自成一行，与最终答案分开 */
 .tl-process-block { margin: 2px 0; }
+/* 顶部过程块（DSH 口径）：过程与正文彻底分开，展开时整块出现在正文上方 */
+.tl-turn-process { margin: 2px 0 10px; }
+.tl-process-text { color: var(--app-text2); opacity: .82; font-size: 13.5px; }
 /* 插话段：用户在这一轮还在跑时补的那句，长在模型真听到它的那个位置。右对齐＋与用户气泡同一形状，
-   一眼认得出是自己说的话；它不跟着过程折叠藏起来（收起态也留一行，见 projections 的 turnRows）。 */
+   一眼认得出是自己说的话；它属于过程，随过程块一起展开/收起。 */
 .tl-steer { display: flex; justify-content: flex-end; margin: 8px 0; }
 .tl-steer-txt {
   max-width: 78%; padding: 9px 14px; border-radius: 12px; line-height: 1.65;
