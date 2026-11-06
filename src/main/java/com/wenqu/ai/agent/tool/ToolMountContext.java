@@ -190,4 +190,9 @@ public interface ToolMountContext {
         java.util.Set<String> only = agentSelection(family);
         return only == null || (toolName != null && only.contains(toolName));
     }
+
+    /** 智能体是否<b>未配置</b>具体项范围（null=跟随默认集；空串=一个都不要，也算显式）。 */
+    default boolean agentSelectionUnset(ToolFamily family) {
+        return agentSelection(family) == null;
+    }
 }

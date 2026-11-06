@@ -10,6 +10,7 @@ import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Set;
 
 /**
  * 内置高频工具族的声明（纯计算、无副作用、无外部依赖）。
@@ -68,14 +69,23 @@ public class BuiltinToolProvider implements ToolFamilyProvider {
     }
 
     /**
+     * 默认挂载集：这些工具对模型是原生能力，常驻只会白占 schema。其余描述符保留，
+     * 老智能体在 builtinTools 里显式点名时照旧挂回来——默认收窄不破坏存量白名单。
+     */
+    private static final Set<String> DEFAULT_MOUNTED = Set.of("askUser");
+
+    /**
      * 两道闸都要过：工具总闸 + 智能体三态；再叠智能体的「具体项」白名单
-     * （agent.builtinTools：null=全挂，否则只挂选中的那几个）。
+     * （agent.builtinTools：null=默认集，否则只挂选中的那几个）。
      * <p>askUser 也在白名单里跟着走——这条判据同时被提示词的「人机协同三入口」段查询：
      * 提问卡没被选中时那一行不该写给模型，否则模型会对着不存在的工具连环空转。
      */
     @Override
     public boolean exposes(ToolDescriptor d, ToolMountContext mc) {
-        return ToolFamilyProvider.super.exposes(d, mc) && mc.selectedByAgent(family(), d.name());
+        if (!ToolFamilyProvider.super.exposes(d, mc)) return false;
+        // 三态：未配置=默认集；空串=一个都不要；名单=只挂名单（含显式点名的旧内置工具）
+        if (mc.agentSelectionUnset(family())) return DEFAULT_MOUNTED.contains(d.name());
+        return mc.selectedByAgent(family(), d.name());
     }
 
     @Override
