@@ -670,7 +670,12 @@ const durZh = ms => {
  *  「这一轮用了多久」，凑出来的数比空白更容易被当成事实读。 */
 const turnElapsedMs = m => {
   if (!m) return 0
-  if (m.loading) return Math.max(0, nowTick.value - (Number(m.time) || nowTick.value))
+  // 跑动中按整秒报：秒针的相位与服务端起表点天然错开（起表基准要等首帧才到，比秒针晚几百毫秒），
+  // 不取整就会一直显示 0.8、1.8 这种非整秒读数（真机 2026-11-06）——秒表本来就是 1 秒一跳。
+  // 向下取整而不是四舍五入：读数永远不超过收尾那份服务端值，答完那一刻不会往回掉。
+  if (m.loading) {
+    return Math.floor(Math.max(0, nowTick.value - (Number(m.time) || nowTick.value)) / 1000) * 1000
+  }
   // 气泡顶部只报一种数：从发出提问到答完的整轮墙钟（含开轮前准备与人在回路等待）。
   // 三处同源：现场 done 写回的 turnMs、历史落库的 tokens.turnWallMs、以及存量消息的
   // 机器耗时 + 等待（老数据没有墙钟那一份）。报墙钟不报机器时间：屏幕上跳着的那一份本来就是
