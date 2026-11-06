@@ -1,0 +1,1279 @@
+{
+  "capturedAt": "2026-11-06T12:17:30.952Z",
+  "source": "production-real-model",
+  "redacted": "CJK→文；路径/URL/邮箱→redacted；事件同口径；丢弃 sessionId/messageId/model",
+  "events": [
+    {
+      "type": "turn_start",
+      "data": {
+        "prepMs": 37,
+        "wallMs": 37
+      }
+    },
+    {
+      "type": "turn_start",
+      "data": {
+        "prepMs": 180,
+        "wallMs": 180
+      }
+    },
+    {
+      "type": "tool_status",
+      "data": {
+        "name": "search_knowledge",
+        "status": "start",
+        "elapsedMs": 0,
+        "startedAtMs": 1793967448079,
+        "args": "{\"topK\":5,\"query\":\"文文 文文文 文文文文\"}"
+      }
+    },
+    {
+      "type": "tool_status",
+      "data": {
+        "name": "search_knowledge",
+        "status": "start",
+        "elapsedMs": 0,
+        "startedAtMs": 1793967448084,
+        "args": "{\"topK\":5,\"query\":\"文文 文文文文文文 文文\"}"
+      }
+    },
+    {
+      "type": "retrieved",
+      "data": {
+        "terms": [
+          "文文 文文文 文文文文",
+          "文文 文文文文文文 文文"
+        ],
+        "keywords": 2,
+        "refs": 1
+      }
+    },
+    {
+      "type": "tool_status",
+      "data": {
+        "name": "search_knowledge",
+        "status": "done",
+        "elapsedMs": 824,
+        "startedAtMs": 1793967448079,
+        "args": "{\"topK\":5,\"query\":\"文文 文文文 文文文文\"}",
+        "result": "\"文文文 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n文文文1文文文文文文文文文\\n\\n文文文文文\\n文文文WenQu文文文文文文文文文文文文 AI 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 → 文文文文 → 文文文文 → 文文文文 → 文文文文文文文文文文文文文\\n\\n> 文文文文文文文文文文文文文文文文—— 文文文文文文文文\\n\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [3]文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [文文N] 文文文文文文文文文文文文文文文文——文文文文文文文文文\""
+      }
+    },
+    {
+      "type": "tool_status",
+      "data": {
+        "name": "search_knowledge",
+        "status": "done",
+        "elapsedMs": 819,
+        "startedAtMs": 1793967448084,
+        "args": "{\"topK\":5,\"query\":\"文文 文文文文文文 文文\"}",
+        "result": "\"文文文 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n文文文1文文文文文文文文文\\n\\n文文文文文\\n文文文WenQu文文文文文文文文文文文文 AI 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 → 文文文文 → 文文文文 → 文文文文 → 文文文文文文文文文文文文文\\n\\n> 文文文文文文文文文文文文文文文文—— 文文文文文文文文\\n\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [3]文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [文文N] 文文文文文文文文文文文文文文文文——文文文文文文文文文\""
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 8
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 9
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "W",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 10
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "en",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 11
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "Qu",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 12
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 13
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 14
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 15
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 16
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 17
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 18
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 19
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 20
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文 ",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 21
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "A",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 22
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "I ",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 23
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 24
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 25
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 26
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 27
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 28
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 29
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 30
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": " ",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 31
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "[1",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 32
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "]",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 33
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 34
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 35
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 36
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 37
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 38
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 39
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 40
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 41
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 42
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 43
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 44
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 45
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 46
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 47
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 48
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 49
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": " →",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 50
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": " 文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 51
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 52
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 53
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": " ",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 54
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "→ ",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 55
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 56
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 57
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": " ",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 58
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "→ ",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 59
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 60
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文 ",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 61
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "→ ",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 62
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 63
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 64
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 65
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 66
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 67
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 68
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 69
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 70
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 71
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 72
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 73
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": " ",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 74
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "[1",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 75
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "]",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 76
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 77
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 78
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 79
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 80
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 81
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 82
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 83
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 84
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 85
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 86
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 87
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 88
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 89
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 90
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 91
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "—",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 92
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "—",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 93
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 94
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 95
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 96
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 97
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 98
+      }
+    },
+    {
+      "type": "token",
+      "data": [
+        1
+      ]
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 100
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "\n\n文文文文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 101
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 102
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 103
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 104
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 105
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 106
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 107
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文[",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 108
+      }
+    },
+    {
+      "type": "token",
+      "data": 1
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "]",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 110
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文\n",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 111
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "\n",
+        "sessionId": "2dbd2620783f40f6a8909d573313feb9",
+        "seq": 112
+      }
+    },
+    {
+      "type": "usage",
+      "data": {
+        "prompt": 18575,
+        "output": 289,
+        "finalOutput": 172,
+        "total": 18864,
+        "cached": 11264,
+        "context": 9648,
+        "outputIsReal": true,
+        "hits": 1,
+        "window": 1000000,
+        "windowSource": "framework",
+        "parts": {
+          "system": 4631,
+          "input": 21,
+          "retrieval": 1044,
+          "toolSchema": 3952
+        }
+      }
+    },
+    {
+      "type": "usage",
+      "data": {
+        "prompt": 18575,
+        "output": 289,
+        "finalOutput": 172,
+        "total": 18864,
+        "cached": 11264,
+        "context": 9648,
+        "outputIsReal": true,
+        "hits": 1,
+        "window": 1000000,
+        "windowSource": "framework",
+        "parts": {
+          "system": 4631,
+          "input": 21,
+          "retrieval": 1044,
+          "toolSchema": 3952
+        },
+        "thinkingChars": 0,
+        "turnElapsedMs": 4706,
+        "profile": "chat",
+        "turnWallMs": 4886,
+        "turnPrepMs": 180
+      }
+    },
+    {
+      "type": "retrieved",
+      "data": {
+        "terms": [
+          "文文 文文文 文文文文",
+          "文文 文文文文文文 文文"
+        ],
+        "keywords": 2,
+        "refs": 1
+      }
+    },
+    {
+      "type": "done",
+      "data": {
+        "finalContent": "文文文WenQu文文文文文文文文文文文文 AI 文文文文文文文文文文文 [1]文文文文文文文文文文文文文文文文文文文文文文文文文文文文 → 文文文文 → 文文文文 → 文文文文 → 文文文文文文文文文文文文 [1]文文文文文文文文文文文文文文文文文文文文文文文文文文——文文文文文文文 [1]文\n\n文文文文文文文文文文文文文文文[1]文\n\n",
+        "messageId": "c93f5b81d91bd40c66def36eca4d29db",
+        "userMessageId": "a6fef5d76702400bf9a57e3dd28f53d5",
+        "turnId": "7f56a08159fe45c380ab8c3bab791836",
+        "model": "deepseek-flash",
+        "agentId": null,
+        "agentName": null,
+        "sources": [
+          {
+            "ref": 1,
+            "knowledgeId": "ef5208c097de3f7565abd3ef60bc37c1",
+            "docId": "b3e3ba493b7e0b3a3221bd83ec1496f9",
+            "fileName": "01-文文文文.md",
+            "title": "文文文文文",
+            "snippet": "文文文文文\n文文文WenQu文文文文文文文文文文文文 AI 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 → 文文文文 → 文文文文 → 文文文文 → 文文文文文文文文文文文文文\n\n> 文文文文文文文文文文…",
+            "images": [],
+            "origin": "TOOL",
+            "score": 0.749,
+            "rerankScore": 0.979
+          }
+        ],
+        "finalImages": [],
+        "degradations": [],
+        "elapsedMs": 4706,
+        "humanWaitMs": 0,
+        "turnWallMs": 4886,
+        "prepMs": 180,
+        "tokens": {
+          "prompt": 18575,
+          "output": 289,
+          "finalOutput": 172,
+          "total": 18864,
+          "cached": 11264,
+          "context": 9648,
+          "outputIsReal": true,
+          "hits": 1,
+          "window": 1000000,
+          "windowSource": "framework",
+          "parts": {
+            "system": 4631,
+            "input": 21,
+            "retrieval": 1044,
+            "toolSchema": 3952
+          },
+          "thinkingChars": 0,
+          "turnElapsedMs": 4706,
+          "profile": "chat",
+          "turnWallMs": 4886,
+          "turnPrepMs": 180
+        },
+        "toolCalls": [
+          {
+            "name": "search_knowledge",
+            "status": "done",
+            "args": "{\"topK\":5,\"query\":\"文文 文文文 文文文文\"}",
+            "startedAtMs": 1793967448079,
+            "elapsedMs": 824,
+            "result": "\"文文文 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n文文文1文文文文文文文文文\\n\\n文文文文文\\n文文文WenQu文文文文文文文文文文文文 AI 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 → 文文文文 → 文文文文 → 文文文文 → 文文文文文文文文文文文文文\\n\\n> 文文文文文文文文文文文文文文文文—— 文文文文文文文文\\n\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [3]文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [文文N] 文文文文文文文文文文文文文文文文——文文文文文文文文文\""
+          },
+          {
+            "name": "search_knowledge",
+            "status": "done",
+            "args": "{\"topK\":5,\"query\":\"文文 文文文文文文 文文\"}",
+            "result": "\"文文文 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n文文文1文文文文文文文文文\\n\\n文文文文文\\n文文文WenQu文文文文文文文文文文文文 AI 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 → 文文文文 → 文文文文 → 文文文文 → 文文文文文文文文文文文文文\\n\\n> 文文文文文文文文文文文文文文文文—— 文文文文文文文文\\n\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [3]文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [文文N] 文文文文文文文文文文文文文文文文——文文文文文文文文文\"",
+            "startedAtMs": 1793967448084,
+            "elapsedMs": 819
+          }
+        ],
+        "blocks": {
+          "v": 1,
+          "turnId": "7f56a08159fe45c380ab8c3bab791836",
+          "blocks": [
+            {
+              "name": "search_knowledge",
+              "status": "done",
+              "args": "{\"topK\":5,\"query\":\"文文 文文文 文文文文\"}",
+              "startedAtMs": 1793967448079,
+              "elapsedMs": 824,
+              "result": "\"文文文 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n文文文1文文文文文文文文文\\n\\n文文文文文\\n文文文WenQu文文文文文文文文文文文文 AI 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 → 文文文文 → 文文文文 → 文文文文 → 文文文文文文文文文文文文文\\n\\n> 文文文文文文文文文文文文文文文文—— 文文文文文文文文\\n\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [3]文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [文文N] 文文文文文文文文文文文文文文文文——文文文文文文文文文\"",
+              "kind": "tool",
+              "id": "b1"
+            },
+            {
+              "name": "search_knowledge",
+              "status": "done",
+              "args": "{\"topK\":5,\"query\":\"文文 文文文文文文 文文\"}",
+              "result": "\"文文文 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n文文文1文文文文文文文文文\\n\\n文文文文文\\n文文文WenQu文文文文文文文文文文文文 AI 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 → 文文文文 → 文文文文 → 文文文文 → 文文文文文文文文文文文文文\\n\\n> 文文文文文文文文文文文文文文文文—— 文文文文文文文文\\n\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [3]文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [文文N] 文文文文文文文文文文文文文文文文——文文文文文文文文文\"",
+              "startedAtMs": 1793967448084,
+              "elapsedMs": 819,
+              "kind": "tool",
+              "id": "b2"
+            },
+            {
+              "kind": "text",
+              "channel": "answer",
+              "text": "文文文WenQu文文文文文文文文文文文文 AI 文文文文文文文文文文文 [1]文文文文文文文文文文文文文文文文文文文文文文文文文文文文 → 文文文文 → 文文文文 → 文文文文 → 文文文文文文文文文文文文 [1]文文文文文文文文文文文文文文文文文文文文文文文文文文——文文文文文文文 [1]文\n\n文文文文文文文文文文文文文文文[1]文\n\n",
+              "id": "b3"
+            }
+          ]
+        },
+        "artifacts": [],
+        "related": [
+          "文文文文文文文文文文文文文文文文文+文文文+文文文文文",
+          "文文文文文文文文文文文文文文文文文文文文文/文文/文文/文文/文文文文文",
+          "文文文文文文文 AI 文文文文文文文文文文文文文文文"
+        ],
+        "thinking": null
+      }
+    }
+  ],
+  "message": {
+    "turnId": "7f56a08159fe45c380ab8c3bab791836",
+    "role": "ai",
+    "createTime": "2026-11-06 20:17:31",
+    "blocks": {
+      "v": 1,
+      "turnId": "7f56a08159fe45c380ab8c3bab791836",
+      "blocks": [
+        {
+          "name": "search_knowledge",
+          "status": "done",
+          "args": "{\"topK\":5,\"query\":\"文文 文文文 文文文文\"}",
+          "startedAtMs": 1793967448079,
+          "elapsedMs": 824,
+          "result": "\"文文文 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n文文文1文文文文文文文文文\\n\\n文文文文文\\n文文文WenQu文文文文文文文文文文文文 AI 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 → 文文文文 → 文文文文 → 文文文文 → 文文文文文文文文文文文文文\\n\\n> 文文文文文文文文文文文文文文文文—— 文文文文文文文文\\n\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [3]文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [文文N] 文文文文文文文文文文文文文文文文——文文文文文文文文文\"",
+          "kind": "tool",
+          "id": "b1"
+        },
+        {
+          "name": "search_knowledge",
+          "status": "done",
+          "args": "{\"topK\":5,\"query\":\"文文 文文文文文文 文文\"}",
+          "result": "\"文文文 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n文文文1文文文文文文文文文\\n\\n文文文文文\\n文文文WenQu文文文文文文文文文文文文 AI 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 → 文文文文 → 文文文文 → 文文文文 → 文文文文文文文文文文文文文\\n\\n> 文文文文文文文文文文文文文文文文—— 文文文文文文文文\\n\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [3]文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [文文N] 文文文文文文文文文文文文文文文文——文文文文文文文文文\"",
+          "startedAtMs": 1793967448084,
+          "elapsedMs": 819,
+          "kind": "tool",
+          "id": "b2"
+        },
+        {
+          "kind": "text",
+          "channel": "answer",
+          "text": "文文文WenQu文文文文文文文文文文文文 AI 文文文文文文文文文文文 [1]文文文文文文文文文文文文文文文文文文文文文文文文文文文文 → 文文文文 → 文文文文 → 文文文文 → 文文文文文文文文文文文文 [1]文文文文文文文文文文文文文文文文文文文文文文文文文文——文文文文文文文 [1]文\n\n文文文文文文文文文文文文文文文[1]文\n\n",
+          "id": "b3"
+        }
+      ]
+    },
+    "content": "文文文WenQu文文文文文文文文文文文文 AI 文文文文文文文文文文文 [1]文文文文文文文文文文文文文文文文文文文文文文文文文文文文 → 文文文文 → 文文文文 → 文文文文 → 文文文文文文文文文文文文 [1]文文文文文文文文文文文文文文文文文文文文文文文文文文——文文文文文文文 [1]文\n\n文文文文文文文文文文文文文文文[1]文\n\n",
+    "thinking": null,
+    "processText": null,
+    "timeline": [
+      {
+        "kind": "tool",
+        "i": 0
+      },
+      {
+        "kind": "tool",
+        "i": 1
+      },
+      {
+        "from": 0,
+        "to": 170,
+        "kind": "text"
+      }
+    ],
+    "toolCalls": [
+      {
+        "name": "search_knowledge",
+        "status": "done",
+        "args": "{\"topK\":5,\"query\":\"文文 文文文 文文文文\"}",
+        "startedAtMs": 1793967448079,
+        "elapsedMs": 824,
+        "result": "\"文文文 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n文文文1文文文文文文文文文\\n\\n文文文文文\\n文文文WenQu文文文文文文文文文文文文 AI 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 → 文文文文 → 文文文文 → 文文文文 → 文文文文文文文文文文文文文\\n\\n> 文文文文文文文文文文文文文文文文—— 文文文文文文文文\\n\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [3]文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [文文N] 文文文文文文文文文文文文文文文文——文文文文文文文文文\""
+      },
+      {
+        "name": "search_knowledge",
+        "status": "done",
+        "args": "{\"topK\":5,\"query\":\"文文 文文文文文文 文文\"}",
+        "result": "\"文文文 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n文文文1文文文文文文文文文\\n\\n文文文文文\\n文文文WenQu文文文文文文文文文文文文 AI 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 → 文文文文 → 文文文文 → 文文文文 → 文文文文文文文文文文文文文\\n\\n> 文文文文文文文文文文文文文文文文—— 文文文文文文文文\\n\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [3]文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [文文N] 文文文文文文文文文文文文文文文文——文文文文文文文文文\"",
+        "startedAtMs": 1793967448084,
+        "elapsedMs": 819
+      }
+    ],
+    "artifacts": [],
+    "tokens": {
+      "prompt": 18575,
+      "output": 289,
+      "finalOutput": 172,
+      "total": 18864,
+      "cached": 11264,
+      "context": 9648,
+      "outputIsReal": true,
+      "hits": 1,
+      "window": 1000000,
+      "windowSource": "framework",
+      "parts": {
+        "system": 4631,
+        "input": 21,
+        "retrieval": 1044,
+        "toolSchema": 3952
+      },
+      "thinkingChars": 0,
+      "turnElapsedMs": 4706,
+      "profile": "chat",
+      "turnWallMs": 4886,
+      "turnPrepMs": 180
+    }
+  },
+  "guestMessage": null
+}

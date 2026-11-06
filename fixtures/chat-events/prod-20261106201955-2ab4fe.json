@@ -1,0 +1,492 @@
+{
+  "capturedAt": "2026-11-06T12:19:55.191Z",
+  "source": "production-real-model",
+  "redacted": "CJK→文；路径/URL/邮箱→redacted；事件同口径；丢弃 sessionId/messageId/model",
+  "events": [
+    {
+      "type": "turn_start",
+      "data": {
+        "prepMs": 25,
+        "wallMs": 25
+      }
+    },
+    {
+      "type": "turn_start",
+      "data": {
+        "prepMs": 154,
+        "wallMs": 154
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "82ace2a25a9948118d40f1077ecf08b1",
+        "seq": 3
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "82ace2a25a9948118d40f1077ecf08b1",
+        "seq": 4
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "82ace2a25a9948118d40f1077ecf08b1",
+        "seq": 5
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文W",
+        "sessionId": "82ace2a25a9948118d40f1077ecf08b1",
+        "seq": 6
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "en",
+        "sessionId": "82ace2a25a9948118d40f1077ecf08b1",
+        "seq": 7
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "Q",
+        "sessionId": "82ace2a25a9948118d40f1077ecf08b1",
+        "seq": 8
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "u文",
+        "sessionId": "82ace2a25a9948118d40f1077ecf08b1",
+        "seq": 9
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文 ",
+        "sessionId": "82ace2a25a9948118d40f1077ecf08b1",
+        "seq": 10
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "A",
+        "sessionId": "82ace2a25a9948118d40f1077ecf08b1",
+        "seq": 11
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "I ",
+        "sessionId": "82ace2a25a9948118d40f1077ecf08b1",
+        "seq": 12
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "82ace2a25a9948118d40f1077ecf08b1",
+        "seq": 13
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "82ace2a25a9948118d40f1077ecf08b1",
+        "seq": 14
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "82ace2a25a9948118d40f1077ecf08b1",
+        "seq": 15
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "82ace2a25a9948118d40f1077ecf08b1",
+        "seq": 16
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "82ace2a25a9948118d40f1077ecf08b1",
+        "seq": 17
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "82ace2a25a9948118d40f1077ecf08b1",
+        "seq": 18
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "82ace2a25a9948118d40f1077ecf08b1",
+        "seq": 19
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "82ace2a25a9948118d40f1077ecf08b1",
+        "seq": 20
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "82ace2a25a9948118d40f1077ecf08b1",
+        "seq": 21
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "82ace2a25a9948118d40f1077ecf08b1",
+        "seq": 22
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "82ace2a25a9948118d40f1077ecf08b1",
+        "seq": 23
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "82ace2a25a9948118d40f1077ecf08b1",
+        "seq": 24
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "82ace2a25a9948118d40f1077ecf08b1",
+        "seq": 25
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文文",
+        "sessionId": "82ace2a25a9948118d40f1077ecf08b1",
+        "seq": 26
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "82ace2a25a9948118d40f1077ecf08b1",
+        "seq": 27
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文文文文文文",
+        "sessionId": "82ace2a25a9948118d40f1077ecf08b1",
+        "seq": 28
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "82ace2a25a9948118d40f1077ecf08b1",
+        "seq": 29
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "82ace2a25a9948118d40f1077ecf08b1",
+        "seq": 30
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "82ace2a25a9948118d40f1077ecf08b1",
+        "seq": 31
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "82ace2a25a9948118d40f1077ecf08b1",
+        "seq": 32
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "82ace2a25a9948118d40f1077ecf08b1",
+        "seq": 33
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "82ace2a25a9948118d40f1077ecf08b1",
+        "seq": 34
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "82ace2a25a9948118d40f1077ecf08b1",
+        "seq": 35
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "82ace2a25a9948118d40f1077ecf08b1",
+        "seq": 36
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "82ace2a25a9948118d40f1077ecf08b1",
+        "seq": 37
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文\n",
+        "sessionId": "82ace2a25a9948118d40f1077ecf08b1",
+        "seq": 38
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "\n",
+        "sessionId": "82ace2a25a9948118d40f1077ecf08b1",
+        "seq": 39
+      }
+    },
+    {
+      "type": "usage",
+      "data": {
+        "prompt": 8921,
+        "output": 69,
+        "finalOutput": 69,
+        "total": 8990,
+        "cached": 3456,
+        "context": 8921,
+        "outputIsReal": true,
+        "hits": 0,
+        "window": 1000000,
+        "windowSource": "framework",
+        "parts": {
+          "system": 4804,
+          "input": 16,
+          "toolSchema": 4101
+        },
+        "thinkingChars": 0,
+        "turnElapsedMs": 2196,
+        "profile": "chat",
+        "turnWallMs": 2350,
+        "turnPrepMs": 154
+      }
+    },
+    {
+      "type": "done",
+      "data": {
+        "finalContent": "文文文文文WenQu文文 AI 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\n\n",
+        "messageId": "15c88ef65815495ae7a6f71d947722d4",
+        "userMessageId": "a0346671eb3d2be77ddc08c5c44e5d6a",
+        "turnId": "2ab4fef19bbb46d78a5ea12b6833da65",
+        "model": "deepseek-flash",
+        "agentId": null,
+        "agentName": null,
+        "sources": [],
+        "finalImages": [],
+        "degradations": [],
+        "elapsedMs": 2196,
+        "humanWaitMs": 0,
+        "turnWallMs": 2350,
+        "prepMs": 154,
+        "tokens": {
+          "prompt": 8921,
+          "output": 69,
+          "finalOutput": 69,
+          "total": 8990,
+          "cached": 3456,
+          "context": 8921,
+          "outputIsReal": true,
+          "hits": 0,
+          "window": 1000000,
+          "windowSource": "framework",
+          "parts": {
+            "system": 4804,
+            "input": 16,
+            "toolSchema": 4101
+          },
+          "thinkingChars": 0,
+          "turnElapsedMs": 2196,
+          "profile": "chat",
+          "turnWallMs": 2350,
+          "turnPrepMs": 154
+        },
+        "toolCalls": [],
+        "blocks": {
+          "v": 1,
+          "turnId": "2ab4fef19bbb46d78a5ea12b6833da65",
+          "blocks": [
+            {
+              "kind": "text",
+              "channel": "answer",
+              "text": "文文文文文WenQu文文 AI 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\n\n",
+              "id": "b1"
+            }
+          ]
+        },
+        "artifacts": [],
+        "related": [
+          "文文文文文文文文文文文",
+          "文文文文文文文文文文文文文文",
+          "文文文文文文文文文文文文"
+        ],
+        "thinking": null
+      }
+    }
+  ],
+  "message": {
+    "turnId": "2ab4fef19bbb46d78a5ea12b6833da65",
+    "role": "ai",
+    "createTime": "2026-11-06 20:19:55",
+    "blocks": {
+      "v": 1,
+      "turnId": "2ab4fef19bbb46d78a5ea12b6833da65",
+      "blocks": [
+        {
+          "kind": "text",
+          "channel": "answer",
+          "text": "文文文文文WenQu文文 AI 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\n\n",
+          "id": "b1"
+        }
+      ]
+    },
+    "content": "文文文文文WenQu文文 AI 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\n\n",
+    "thinking": null,
+    "processText": null,
+    "timeline": [
+      {
+        "from": 0,
+        "to": 63,
+        "kind": "text"
+      }
+    ],
+    "toolCalls": [],
+    "artifacts": [],
+    "tokens": {
+      "prompt": 8921,
+      "output": 69,
+      "finalOutput": 69,
+      "total": 8990,
+      "cached": 3456,
+      "context": 8921,
+      "outputIsReal": true,
+      "hits": 0,
+      "window": 1000000,
+      "windowSource": "framework",
+      "parts": {
+        "system": 4804,
+        "input": 16,
+        "toolSchema": 4101
+      },
+      "thinkingChars": 0,
+      "turnElapsedMs": 2196,
+      "profile": "chat",
+      "turnWallMs": 2350,
+      "turnPrepMs": 154
+    }
+  },
+  "guestMessage": null
+}

@@ -1,0 +1,3609 @@
+{
+  "capturedAt": "2026-11-06T12:18:42.139Z",
+  "source": "production-real-model",
+  "redacted": "CJK→文；路径/URL/邮箱→redacted；事件同口径；丢弃 sessionId/messageId/model",
+  "events": [
+    {
+      "type": "turn_start",
+      "data": {
+        "prepMs": 33,
+        "wallMs": 33
+      }
+    },
+    {
+      "type": "turn_start",
+      "data": {
+        "prepMs": 6263,
+        "wallMs": 6263
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 3
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 4
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文文文文文文文文文文文文文文文文文文文文文文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 5
+      }
+    },
+    {
+      "type": "tool_status",
+      "data": {
+        "name": "search_knowledge",
+        "status": "start",
+        "elapsedMs": 0,
+        "startedAtMs": 1793967503111,
+        "args": "{\"topK\":5,\"query\":\"文文文文 文文文文文文文 文文 文文\"}"
+      }
+    },
+    {
+      "type": "tool_status",
+      "data": {
+        "name": "search_knowledge",
+        "status": "start",
+        "elapsedMs": 0,
+        "startedAtMs": 1793967503120,
+        "args": "{\"topK\":5,\"query\":\"文文文文文 文文 文文 文文文文\"}"
+      }
+    },
+    {
+      "type": "image",
+      "data": [
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/b78b9f31b18de75e485f13a4837571e2dc2d7c9c60328a044f8e6f16e9f3c701.png?expire=1793971103&sig=e5cf9a56a4727af6280540765da522597695fa270a9c09b41b18a550330eb65e",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/45a8b6d7c16b3563291bfe49c459830daca45325d0a2c2697ed20207512be5c2.png?expire=1793971103&sig=ff0f49aff6859d5225d2a1e43666ddff217338f8e5f22d1e6253b51ba09604d0",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/9e4acc9cf41d1f7597f271024b4098c63863a93e7bb484448fb7b6e92c1b9278.png?expire=1793971103&sig=db2480afc899e2bd2ded42923b0760b83541f8265d622f13506e7a16899608ef"
+      ]
+    },
+    {
+      "type": "image",
+      "data": [
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/b78b9f31b18de75e485f13a4837571e2dc2d7c9c60328a044f8e6f16e9f3c701.png?expire=1793971103&sig=e5cf9a56a4727af6280540765da522597695fa270a9c09b41b18a550330eb65e",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/45a8b6d7c16b3563291bfe49c459830daca45325d0a2c2697ed20207512be5c2.png?expire=1793971103&sig=ff0f49aff6859d5225d2a1e43666ddff217338f8e5f22d1e6253b51ba09604d0",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/9e4acc9cf41d1f7597f271024b4098c63863a93e7bb484448fb7b6e92c1b9278.png?expire=1793971103&sig=db2480afc899e2bd2ded42923b0760b83541f8265d622f13506e7a16899608ef",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/5c7c5247003691c8f30ba133d8392814239c8a5f5a2979b7ae9b867949af6a89.png?expire=1793971103&sig=c28d2727dc8506f6d7a63ce450b3acc5bb57988b21282058982b0d9701e64b61",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/02274b102ed0b8049a0f8a436b78c291cb10657eeb553d2cec7a3538f4490a2c.png?expire=1793971103&sig=7de96d4497f4527fb2ceafd92e88f0ba7d35e6745e0a1441eb6ab03ac94f26c2",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/107960341322444a3a4e8f4b56a1bd5c091c7852f3168b4b65a05dba3084ce92.png?expire=1793971103&sig=271cc175f6cc8cd6677fede439bdcb3a0102ea77ef4eb365df361572da72d4be",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/d0778b55ce2406c716d5476183b336107e170a412487b7082eedf6ebea830674.png?expire=1793971103&sig=a34869465e49bdf070fd59625fe047c026694f692332e500c896418f32e6da13",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/b9e21af3e2a8e8ce4cacc77247f07f5e14aaf023a0ea58c3898b121dcb25c636.png?expire=1793971103&sig=9fb72a72106fc070a85755f2ef1be343521e2bbc5cdca2dabf5ba3e0187ede64",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/bceb03165c4b9eeffbc9b3e379ea3692bd2dfe8a5ed4debfaf0e5f7b24a4c499.png?expire=1793971103&sig=9ec546a4d38cc6e7081ff2af44838d71b698c3644861ab8a11712d955d695b90"
+      ]
+    },
+    {
+      "type": "image",
+      "data": [
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/b78b9f31b18de75e485f13a4837571e2dc2d7c9c60328a044f8e6f16e9f3c701.png?expire=1793971103&sig=e5cf9a56a4727af6280540765da522597695fa270a9c09b41b18a550330eb65e",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/45a8b6d7c16b3563291bfe49c459830daca45325d0a2c2697ed20207512be5c2.png?expire=1793971103&sig=ff0f49aff6859d5225d2a1e43666ddff217338f8e5f22d1e6253b51ba09604d0",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/9e4acc9cf41d1f7597f271024b4098c63863a93e7bb484448fb7b6e92c1b9278.png?expire=1793971103&sig=db2480afc899e2bd2ded42923b0760b83541f8265d622f13506e7a16899608ef",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/5c7c5247003691c8f30ba133d8392814239c8a5f5a2979b7ae9b867949af6a89.png?expire=1793971103&sig=c28d2727dc8506f6d7a63ce450b3acc5bb57988b21282058982b0d9701e64b61",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/02274b102ed0b8049a0f8a436b78c291cb10657eeb553d2cec7a3538f4490a2c.png?expire=1793971103&sig=7de96d4497f4527fb2ceafd92e88f0ba7d35e6745e0a1441eb6ab03ac94f26c2",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/107960341322444a3a4e8f4b56a1bd5c091c7852f3168b4b65a05dba3084ce92.png?expire=1793971103&sig=271cc175f6cc8cd6677fede439bdcb3a0102ea77ef4eb365df361572da72d4be",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/d0778b55ce2406c716d5476183b336107e170a412487b7082eedf6ebea830674.png?expire=1793971103&sig=a34869465e49bdf070fd59625fe047c026694f692332e500c896418f32e6da13",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/b9e21af3e2a8e8ce4cacc77247f07f5e14aaf023a0ea58c3898b121dcb25c636.png?expire=1793971103&sig=9fb72a72106fc070a85755f2ef1be343521e2bbc5cdca2dabf5ba3e0187ede64",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/bceb03165c4b9eeffbc9b3e379ea3692bd2dfe8a5ed4debfaf0e5f7b24a4c499.png?expire=1793971103&sig=9ec546a4d38cc6e7081ff2af44838d71b698c3644861ab8a11712d955d695b90",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/292a49cde702a4cb3801d38fea4ca16029f82d517aa69476b92e2d651b790c7e.png?expire=1793971103&sig=b9567fd1db89497ec9da49d1c6de4589103d3a5c160bbe078b90614a7394c402",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/068bd6d2902ccaad8dd943c4f3cd4ceef389981b4b423f502bb60a091804dd16.png?expire=1793971103&sig=3bc4cc80fcf1627f27ff05af2495e390b7169504bcb6e6c009149ac230496e8e"
+      ]
+    },
+    {
+      "type": "tool_status",
+      "data": {
+        "name": "search_knowledge",
+        "status": "done",
+        "elapsedMs": 813,
+        "startedAtMs": 1793967503111,
+        "args": "{\"topK\":5,\"query\":\"文文文文 文文文文文文文 文文 文文\"}",
+        "result": "\"文文文 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n文文文1文文文文文文文文 > 文文文文 > 文文文文文文 > 文文 / 文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文6文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n文文文文文\\n文文文文文文文文文文文\\n| 文文 | 文文 | 文文 |\\n| --- | --- | --- |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文文文 | 文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文 |…文文文文文\\n\\n\\n文文文2文文文文文文文文 > 文文 / 文文文文文\\n\\n文文\\n文文文文文文文文文 > 文文\\n\\n文文文文文 文文文文文\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文6文文文文\\n文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文文\\n\\n\\n文文文3文文文文文文文文 > 文文 > 文文文文 / 文文文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n\\n文文文4文文文文文文文文 > 文文 > 文文文文文文 / 文文文文文文文文文\\n\\n文文文文文文文文文文文文文文文\\n| 文文 | 文文 | 文文 |\\n| --- | --- | --- |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文文文 | 文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文 | 文文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文文 | 文文文文文文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文文文 | 文文文文文文文文文文文文文文文文 |\\n| 文文文文…文文文文文\\n\\n\\n文文文5文文文文文文文文 > 文文 > 文文文文文文 / 文文文文文文文文文\\n\\n文文文文文文\\n文文文文文文文文文 > 文文 > 文文文文文文\\n\\n文文文 |\\n| 文文文文文文 | 文文 | 文文文文文文文文文文文文文文文文API文文文文文文文文文文文文 |\\n|…文文文文文"
+      }
+    },
+    {
+      "type": "tool_status",
+      "data": {
+        "name": "search_knowledge",
+        "status": "done",
+        "elapsedMs": 804,
+        "startedAtMs": 1793967503120,
+        "args": "{\"topK\":5,\"query\":\"文文文文文 文文 文文 文文文文\"}",
+        "result": "\"文文文 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n文文文6文文文文文文文文 > 文文 > 文文文文 > 文文 / 文文文文文\\n\\n文文\\n文文文文文文文文文 > 文文 > 文文文文 > 文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文]\\n文文文文\\n文文文文文文文\\n1.文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n2.文文文文文文文文文文文文文文文文\\n3.文文文文文文文文文文文文文文文文\\n文文文文文文文文文文\\n1.文文文文文文文文文文文文文文文文文文文\\n2.文文文文文文文文文文文文文文文文文文文文文文文\\n3.文文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文RGB文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“文文文文”文文文文“文文文文文文文文”文]\\n文文文文文文文\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“文文文文”文文文文文文文文文文文文文文文文\\n文文文文文文文\\n文文文文…文文文文文\\n\\n文文文文文文文[文文1][文文2][文文3]\\n\\n文文文7文文文文文文文文 > 文文 > 文文文文文文文 > 文文文文 / 文文文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“2026文8文文文文文文文文”文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文“2026文8文文文文文文文文”文文文文文文文文文文文文文文文文文文]\\n文文文文文文文文文文文文2文\\n[文文文文文文文文文文文“2026文8文文文文文文文文”文文文文文文文文文文文文文文文文文文文文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文“2026文8文文文文文文文文”文“文文文文”文文文文文文文文文文文文文文文文文文文input_108文]\\n文文文文文文文文文文文文文文文文文文\\n文文文文文”xingming“文文文文文文文“文文”文文文文文文文“文文”文文文文文文文文文文“文文文文”文文文文文文文文“文文文”文文文文文文文文“文文文文文文”文文文文文文文文文\\n[文文文文文文文文文文文文文文“2026文8文文文文文文文文”文文文“文文”文文文文文文文文文文文文文文文文xingming文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文…文文文文文\\n\\n文文文文文文文[文文4][文文5][文文6][文文7][文文8][文文9]\\n\\n文文文8文文文文文文文文 > 文文 > 文文文文文文文 > 文文文文 / 文文文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n文文文文“zuopinjieshao”文文文文文文文“文文文文”文文文文文文“文文文文文文”文文文文文文文文“文文文”文\\n[文文文文文文文文文文文文文“2026文8文文文文文文文文”文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“wenjianshangchuan”文文文文文文文“文文文文”文文文文文文文文文文文文文文文“10”文文文文文文文文文文文10000000文MB文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“文文文文文文文文文“文文文文文文文文”文文文“文\\n[文文文WPS文文文文文文文文文文文“2026文8文文…文文文文文"
+      }
+    },
+    {
+      "type": "retrieved",
+      "data": {
+        "terms": [
+          "文文文文 文文文文文文文 文文 文文",
+          "文文文文文 文文 文文 文文文文"
+        ],
+        "keywords": 2,
+        "refs": 8
+      }
+    },
+    {
+      "type": "tool_status",
+      "data": {
+        "name": "search_knowledge",
+        "status": "start",
+        "elapsedMs": 0,
+        "startedAtMs": 1793967505140,
+        "args": "{\"topK\":5,\"query\":\"文文文文 文文文 文文 文文 文文文 文文文文 文文文\"}"
+      }
+    },
+    {
+      "type": "tool_status",
+      "data": {
+        "name": "search_knowledge",
+        "status": "start",
+        "elapsedMs": 0,
+        "startedAtMs": 1793967505140,
+        "args": "{\"topK\":5,\"query\":\"文文文文文文 文文文 文文文 文文 文文文文\"}"
+      }
+    },
+    {
+      "type": "image",
+      "data": [
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/b78b9f31b18de75e485f13a4837571e2dc2d7c9c60328a044f8e6f16e9f3c701.png?expire=1793971105&sig=9c9ee073c69cc48b46527130c755c570b151ea4c1228c20100b1bb8bd7f99fac",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/45a8b6d7c16b3563291bfe49c459830daca45325d0a2c2697ed20207512be5c2.png?expire=1793971105&sig=1eef86a1305e29a26f498fc118805a17bdcb2f065415ddb8e5c480d65c528656",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/9e4acc9cf41d1f7597f271024b4098c63863a93e7bb484448fb7b6e92c1b9278.png?expire=1793971105&sig=8eb8f7ec0fe89163ebcd74b37d7341a697dd5d92e61990d2a757ebd04752b7fd",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/5c7c5247003691c8f30ba133d8392814239c8a5f5a2979b7ae9b867949af6a89.png?expire=1793971105&sig=3770e36eb4df35e1de9c0f19a4a5b3be21ac4a87b25447e06f9292a972b3adb9",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/02274b102ed0b8049a0f8a436b78c291cb10657eeb553d2cec7a3538f4490a2c.png?expire=1793971105&sig=30a5df7eda166c8f1584b92c7d14970f24a8459fc73909818ed998ca466b87b8",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/107960341322444a3a4e8f4b56a1bd5c091c7852f3168b4b65a05dba3084ce92.png?expire=1793971105&sig=ff7b59f9cc7ecfbb7b4461bdde6b6094c23520249286260a22d8306c37d86581",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/d0778b55ce2406c716d5476183b336107e170a412487b7082eedf6ebea830674.png?expire=1793971105&sig=1e19c1827985d1a02a622a2eb1261f24f885a99fb01baccb1629570f9d4b02bc",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/b9e21af3e2a8e8ce4cacc77247f07f5e14aaf023a0ea58c3898b121dcb25c636.png?expire=1793971105&sig=48f36039edd1b3cb3c55a871d2903ca725a424bdb38725b98f5ef653da47e342",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/bceb03165c4b9eeffbc9b3e379ea3692bd2dfe8a5ed4debfaf0e5f7b24a4c499.png?expire=1793971105&sig=acc1de7d694b9b27f16c9df8b720583ed8d0a0ee2db3a0a105081c12af98be0b",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/292a49cde702a4cb3801d38fea4ca16029f82d517aa69476b92e2d651b790c7e.png?expire=1793971105&sig=44e9dd84a5fb7a5bb70151e0f3d3afff84df92211a85b8d8a1c1ef04b76bf097",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/068bd6d2902ccaad8dd943c4f3cd4ceef389981b4b423f502bb60a091804dd16.png?expire=1793971105&sig=a3fe1e864ec16e8432dad458d80df0c45328b1fb1b9e5f4803d50a03e2950db4",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/079e0608c520f3d8b174dbfdf36faadcb392ef3f67edc3eecf2aca81e73faa2a.png?expire=1793971105&sig=f4f0143e1351584465f238665067424180bee44f726f9d7a3aeba27f997f607d",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/d15c047e1d456388f1c5ab9fa22ad4becb5260b84cb3c2d50bffdee9f323928e.png?expire=1793971105&sig=5852d696c943466013d50ce988176596d9dc21017e08d025ced8388415a6234c",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/374074badef578c0ac2b79002adaa4d9e5da4ec3ac81187cb3b44f7042b5fd8a.png?expire=1793971105&sig=4d3b66c4b549c9c9442951028170d590b9f5686aeb296cbde0063a10bf573d2a",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/08f146304356ecf813b4022fe9bb8cc06cc4883c76ce2d0aab00b2a6eea5d499.png?expire=1793971105&sig=374f4caaa4daf0e27086a0f3dc25d2ff1fa54544cf9eb6a927deeb09287b6944",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/cf37ef3a75d05ec40a0df43b6c619e976cf88d8665b539dbc3cf7642e3a70e41.png?expire=1793971105&sig=1f0d92ef6d8ce18815e380f70b5b51277ab6a2c4381a8522f73fc2ca931f8a8d"
+      ]
+    },
+    {
+      "type": "image",
+      "data": [
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/b78b9f31b18de75e485f13a4837571e2dc2d7c9c60328a044f8e6f16e9f3c701.png?expire=1793971105&sig=9c9ee073c69cc48b46527130c755c570b151ea4c1228c20100b1bb8bd7f99fac",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/45a8b6d7c16b3563291bfe49c459830daca45325d0a2c2697ed20207512be5c2.png?expire=1793971105&sig=1eef86a1305e29a26f498fc118805a17bdcb2f065415ddb8e5c480d65c528656",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/9e4acc9cf41d1f7597f271024b4098c63863a93e7bb484448fb7b6e92c1b9278.png?expire=1793971105&sig=8eb8f7ec0fe89163ebcd74b37d7341a697dd5d92e61990d2a757ebd04752b7fd",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/5c7c5247003691c8f30ba133d8392814239c8a5f5a2979b7ae9b867949af6a89.png?expire=1793971105&sig=3770e36eb4df35e1de9c0f19a4a5b3be21ac4a87b25447e06f9292a972b3adb9",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/02274b102ed0b8049a0f8a436b78c291cb10657eeb553d2cec7a3538f4490a2c.png?expire=1793971105&sig=30a5df7eda166c8f1584b92c7d14970f24a8459fc73909818ed998ca466b87b8",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/107960341322444a3a4e8f4b56a1bd5c091c7852f3168b4b65a05dba3084ce92.png?expire=1793971105&sig=ff7b59f9cc7ecfbb7b4461bdde6b6094c23520249286260a22d8306c37d86581",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/d0778b55ce2406c716d5476183b336107e170a412487b7082eedf6ebea830674.png?expire=1793971105&sig=1e19c1827985d1a02a622a2eb1261f24f885a99fb01baccb1629570f9d4b02bc",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/b9e21af3e2a8e8ce4cacc77247f07f5e14aaf023a0ea58c3898b121dcb25c636.png?expire=1793971105&sig=48f36039edd1b3cb3c55a871d2903ca725a424bdb38725b98f5ef653da47e342",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/bceb03165c4b9eeffbc9b3e379ea3692bd2dfe8a5ed4debfaf0e5f7b24a4c499.png?expire=1793971105&sig=acc1de7d694b9b27f16c9df8b720583ed8d0a0ee2db3a0a105081c12af98be0b",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/292a49cde702a4cb3801d38fea4ca16029f82d517aa69476b92e2d651b790c7e.png?expire=1793971105&sig=44e9dd84a5fb7a5bb70151e0f3d3afff84df92211a85b8d8a1c1ef04b76bf097",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/068bd6d2902ccaad8dd943c4f3cd4ceef389981b4b423f502bb60a091804dd16.png?expire=1793971105&sig=a3fe1e864ec16e8432dad458d80df0c45328b1fb1b9e5f4803d50a03e2950db4",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/079e0608c520f3d8b174dbfdf36faadcb392ef3f67edc3eecf2aca81e73faa2a.png?expire=1793971105&sig=f4f0143e1351584465f238665067424180bee44f726f9d7a3aeba27f997f607d",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/d15c047e1d456388f1c5ab9fa22ad4becb5260b84cb3c2d50bffdee9f323928e.png?expire=1793971105&sig=5852d696c943466013d50ce988176596d9dc21017e08d025ced8388415a6234c",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/374074badef578c0ac2b79002adaa4d9e5da4ec3ac81187cb3b44f7042b5fd8a.png?expire=1793971105&sig=4d3b66c4b549c9c9442951028170d590b9f5686aeb296cbde0063a10bf573d2a",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/08f146304356ecf813b4022fe9bb8cc06cc4883c76ce2d0aab00b2a6eea5d499.png?expire=1793971105&sig=374f4caaa4daf0e27086a0f3dc25d2ff1fa54544cf9eb6a927deeb09287b6944",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/cf37ef3a75d05ec40a0df43b6c619e976cf88d8665b539dbc3cf7642e3a70e41.png?expire=1793971105&sig=1f0d92ef6d8ce18815e380f70b5b51277ab6a2c4381a8522f73fc2ca931f8a8d",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/227a595959ef9b6332c98076dcdfe0d9f2fc9f49d4a88619f1c242e67cbd0474.png?expire=1793971105&sig=1e41fea1f70e7346bd150ae4aa834f60d7934600a024390ce10a0f6c682cef4a",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/ab443b8227228e957b0f82ce2d3b0e6f8ac34f11a25a617c2d7f56001aa77763.png?expire=1793971105&sig=76d5857f1d61b10df76bb38ac3b62f352593c78bb444653b379e8799c39cf345",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/dc4c52a3b316f96cdb67e4cc14b371dccefbfbf1996e7b809ab17b5d83f299ed.png?expire=1793971105&sig=84d6a9599b1ade74dc9e830af500dcfb7436c6717a1437de2bb723d498b5e4d5",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/2a54ade05139c04374fbbccbff5f50150af83f8d271aeaa91e1ebe25eb8998d8.png?expire=1793971105&sig=f6038925e3ad0706ec6d2d1250710222937e7b7e033d0eeec02a7426da93c74b",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/52760d4b2f0ebeb22aab1a76589b09bbe6819e04d42d161ae21798748c5822d3.png?expire=1793971105&sig=c4ba06bad58c8840ea58872c05ce710c67444b4a38d2c9d95f73ca51b442df70",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/971200f8bca77b80a968a4135eda7298bef3f8503ffafe7d2f294882cc5e24a8.png?expire=1793971105&sig=a84428659ba6b7de1d366250ff4fef9701936f166ab03c51c9054216fc18974b"
+      ]
+    },
+    {
+      "type": "image",
+      "data": [
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/b78b9f31b18de75e485f13a4837571e2dc2d7c9c60328a044f8e6f16e9f3c701.png?expire=1793971105&sig=9c9ee073c69cc48b46527130c755c570b151ea4c1228c20100b1bb8bd7f99fac",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/45a8b6d7c16b3563291bfe49c459830daca45325d0a2c2697ed20207512be5c2.png?expire=1793971105&sig=1eef86a1305e29a26f498fc118805a17bdcb2f065415ddb8e5c480d65c528656",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/9e4acc9cf41d1f7597f271024b4098c63863a93e7bb484448fb7b6e92c1b9278.png?expire=1793971105&sig=8eb8f7ec0fe89163ebcd74b37d7341a697dd5d92e61990d2a757ebd04752b7fd",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/5c7c5247003691c8f30ba133d8392814239c8a5f5a2979b7ae9b867949af6a89.png?expire=1793971105&sig=3770e36eb4df35e1de9c0f19a4a5b3be21ac4a87b25447e06f9292a972b3adb9",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/02274b102ed0b8049a0f8a436b78c291cb10657eeb553d2cec7a3538f4490a2c.png?expire=1793971105&sig=30a5df7eda166c8f1584b92c7d14970f24a8459fc73909818ed998ca466b87b8",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/107960341322444a3a4e8f4b56a1bd5c091c7852f3168b4b65a05dba3084ce92.png?expire=1793971105&sig=ff7b59f9cc7ecfbb7b4461bdde6b6094c23520249286260a22d8306c37d86581",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/d0778b55ce2406c716d5476183b336107e170a412487b7082eedf6ebea830674.png?expire=1793971105&sig=1e19c1827985d1a02a622a2eb1261f24f885a99fb01baccb1629570f9d4b02bc",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/b9e21af3e2a8e8ce4cacc77247f07f5e14aaf023a0ea58c3898b121dcb25c636.png?expire=1793971105&sig=48f36039edd1b3cb3c55a871d2903ca725a424bdb38725b98f5ef653da47e342",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/bceb03165c4b9eeffbc9b3e379ea3692bd2dfe8a5ed4debfaf0e5f7b24a4c499.png?expire=1793971105&sig=acc1de7d694b9b27f16c9df8b720583ed8d0a0ee2db3a0a105081c12af98be0b",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/292a49cde702a4cb3801d38fea4ca16029f82d517aa69476b92e2d651b790c7e.png?expire=1793971105&sig=44e9dd84a5fb7a5bb70151e0f3d3afff84df92211a85b8d8a1c1ef04b76bf097",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/068bd6d2902ccaad8dd943c4f3cd4ceef389981b4b423f502bb60a091804dd16.png?expire=1793971105&sig=a3fe1e864ec16e8432dad458d80df0c45328b1fb1b9e5f4803d50a03e2950db4",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/079e0608c520f3d8b174dbfdf36faadcb392ef3f67edc3eecf2aca81e73faa2a.png?expire=1793971105&sig=f4f0143e1351584465f238665067424180bee44f726f9d7a3aeba27f997f607d",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/d15c047e1d456388f1c5ab9fa22ad4becb5260b84cb3c2d50bffdee9f323928e.png?expire=1793971105&sig=5852d696c943466013d50ce988176596d9dc21017e08d025ced8388415a6234c",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/374074badef578c0ac2b79002adaa4d9e5da4ec3ac81187cb3b44f7042b5fd8a.png?expire=1793971105&sig=4d3b66c4b549c9c9442951028170d590b9f5686aeb296cbde0063a10bf573d2a",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/08f146304356ecf813b4022fe9bb8cc06cc4883c76ce2d0aab00b2a6eea5d499.png?expire=1793971105&sig=374f4caaa4daf0e27086a0f3dc25d2ff1fa54544cf9eb6a927deeb09287b6944",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/cf37ef3a75d05ec40a0df43b6c619e976cf88d8665b539dbc3cf7642e3a70e41.png?expire=1793971105&sig=1f0d92ef6d8ce18815e380f70b5b51277ab6a2c4381a8522f73fc2ca931f8a8d",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/227a595959ef9b6332c98076dcdfe0d9f2fc9f49d4a88619f1c242e67cbd0474.png?expire=1793971105&sig=1e41fea1f70e7346bd150ae4aa834f60d7934600a024390ce10a0f6c682cef4a",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/ab443b8227228e957b0f82ce2d3b0e6f8ac34f11a25a617c2d7f56001aa77763.png?expire=1793971105&sig=76d5857f1d61b10df76bb38ac3b62f352593c78bb444653b379e8799c39cf345",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/dc4c52a3b316f96cdb67e4cc14b371dccefbfbf1996e7b809ab17b5d83f299ed.png?expire=1793971105&sig=84d6a9599b1ade74dc9e830af500dcfb7436c6717a1437de2bb723d498b5e4d5",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/2a54ade05139c04374fbbccbff5f50150af83f8d271aeaa91e1ebe25eb8998d8.png?expire=1793971105&sig=f6038925e3ad0706ec6d2d1250710222937e7b7e033d0eeec02a7426da93c74b",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/52760d4b2f0ebeb22aab1a76589b09bbe6819e04d42d161ae21798748c5822d3.png?expire=1793971105&sig=c4ba06bad58c8840ea58872c05ce710c67444b4a38d2c9d95f73ca51b442df70",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/971200f8bca77b80a968a4135eda7298bef3f8503ffafe7d2f294882cc5e24a8.png?expire=1793971105&sig=a84428659ba6b7de1d366250ff4fef9701936f166ab03c51c9054216fc18974b",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/adda5aaeba7062132db9728b402839f07c2ff4f96ef6315c12aa0aeb45ede675.png?expire=1793971105&sig=bd14590e6798af7783c6010319c79067c08f0a261cb1e091f85befc7e17856f7",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/944c0c0e0f5902f600bf91cf04870f25cd20ecd5fb14a8e6916ee98c83c7d859.png?expire=1793971105&sig=3f444c858757789e559aba22a5e4483a572a8e69fd3ba39195b7bd700784b590",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/ecdea82e2544a7f64cf4d92cb3a2e91f6538c89c3990026c3a07b0e2594421e6.png?expire=1793971105&sig=a2d6816d9383f3f1170ef8ae20af71ad886fb9a3f6021d8eb5a59b0df3af5848",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/3244549cbc45701e9b5f1be99012fcde9c59cddc4f1670fded940323d9365c15.png?expire=1793971105&sig=f676f56811b8dce86b91a1b87dace39493ec580c343c527b96cdc717f1ffa354"
+      ]
+    },
+    {
+      "type": "image",
+      "data": [
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/b78b9f31b18de75e485f13a4837571e2dc2d7c9c60328a044f8e6f16e9f3c701.png?expire=1793971105&sig=9c9ee073c69cc48b46527130c755c570b151ea4c1228c20100b1bb8bd7f99fac",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/45a8b6d7c16b3563291bfe49c459830daca45325d0a2c2697ed20207512be5c2.png?expire=1793971105&sig=1eef86a1305e29a26f498fc118805a17bdcb2f065415ddb8e5c480d65c528656",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/9e4acc9cf41d1f7597f271024b4098c63863a93e7bb484448fb7b6e92c1b9278.png?expire=1793971105&sig=8eb8f7ec0fe89163ebcd74b37d7341a697dd5d92e61990d2a757ebd04752b7fd",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/5c7c5247003691c8f30ba133d8392814239c8a5f5a2979b7ae9b867949af6a89.png?expire=1793971105&sig=3770e36eb4df35e1de9c0f19a4a5b3be21ac4a87b25447e06f9292a972b3adb9",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/02274b102ed0b8049a0f8a436b78c291cb10657eeb553d2cec7a3538f4490a2c.png?expire=1793971105&sig=30a5df7eda166c8f1584b92c7d14970f24a8459fc73909818ed998ca466b87b8",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/107960341322444a3a4e8f4b56a1bd5c091c7852f3168b4b65a05dba3084ce92.png?expire=1793971105&sig=ff7b59f9cc7ecfbb7b4461bdde6b6094c23520249286260a22d8306c37d86581",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/d0778b55ce2406c716d5476183b336107e170a412487b7082eedf6ebea830674.png?expire=1793971105&sig=1e19c1827985d1a02a622a2eb1261f24f885a99fb01baccb1629570f9d4b02bc",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/b9e21af3e2a8e8ce4cacc77247f07f5e14aaf023a0ea58c3898b121dcb25c636.png?expire=1793971105&sig=48f36039edd1b3cb3c55a871d2903ca725a424bdb38725b98f5ef653da47e342",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/bceb03165c4b9eeffbc9b3e379ea3692bd2dfe8a5ed4debfaf0e5f7b24a4c499.png?expire=1793971105&sig=acc1de7d694b9b27f16c9df8b720583ed8d0a0ee2db3a0a105081c12af98be0b",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/292a49cde702a4cb3801d38fea4ca16029f82d517aa69476b92e2d651b790c7e.png?expire=1793971105&sig=44e9dd84a5fb7a5bb70151e0f3d3afff84df92211a85b8d8a1c1ef04b76bf097",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/068bd6d2902ccaad8dd943c4f3cd4ceef389981b4b423f502bb60a091804dd16.png?expire=1793971105&sig=a3fe1e864ec16e8432dad458d80df0c45328b1fb1b9e5f4803d50a03e2950db4",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/079e0608c520f3d8b174dbfdf36faadcb392ef3f67edc3eecf2aca81e73faa2a.png?expire=1793971105&sig=f4f0143e1351584465f238665067424180bee44f726f9d7a3aeba27f997f607d",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/d15c047e1d456388f1c5ab9fa22ad4becb5260b84cb3c2d50bffdee9f323928e.png?expire=1793971105&sig=5852d696c943466013d50ce988176596d9dc21017e08d025ced8388415a6234c",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/374074badef578c0ac2b79002adaa4d9e5da4ec3ac81187cb3b44f7042b5fd8a.png?expire=1793971105&sig=4d3b66c4b549c9c9442951028170d590b9f5686aeb296cbde0063a10bf573d2a",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/08f146304356ecf813b4022fe9bb8cc06cc4883c76ce2d0aab00b2a6eea5d499.png?expire=1793971105&sig=374f4caaa4daf0e27086a0f3dc25d2ff1fa54544cf9eb6a927deeb09287b6944",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/cf37ef3a75d05ec40a0df43b6c619e976cf88d8665b539dbc3cf7642e3a70e41.png?expire=1793971105&sig=1f0d92ef6d8ce18815e380f70b5b51277ab6a2c4381a8522f73fc2ca931f8a8d",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/227a595959ef9b6332c98076dcdfe0d9f2fc9f49d4a88619f1c242e67cbd0474.png?expire=1793971105&sig=1e41fea1f70e7346bd150ae4aa834f60d7934600a024390ce10a0f6c682cef4a",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/ab443b8227228e957b0f82ce2d3b0e6f8ac34f11a25a617c2d7f56001aa77763.png?expire=1793971105&sig=76d5857f1d61b10df76bb38ac3b62f352593c78bb444653b379e8799c39cf345",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/dc4c52a3b316f96cdb67e4cc14b371dccefbfbf1996e7b809ab17b5d83f299ed.png?expire=1793971105&sig=84d6a9599b1ade74dc9e830af500dcfb7436c6717a1437de2bb723d498b5e4d5",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/2a54ade05139c04374fbbccbff5f50150af83f8d271aeaa91e1ebe25eb8998d8.png?expire=1793971105&sig=f6038925e3ad0706ec6d2d1250710222937e7b7e033d0eeec02a7426da93c74b",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/52760d4b2f0ebeb22aab1a76589b09bbe6819e04d42d161ae21798748c5822d3.png?expire=1793971105&sig=c4ba06bad58c8840ea58872c05ce710c67444b4a38d2c9d95f73ca51b442df70",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/971200f8bca77b80a968a4135eda7298bef3f8503ffafe7d2f294882cc5e24a8.png?expire=1793971105&sig=a84428659ba6b7de1d366250ff4fef9701936f166ab03c51c9054216fc18974b",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/adda5aaeba7062132db9728b402839f07c2ff4f96ef6315c12aa0aeb45ede675.png?expire=1793971105&sig=bd14590e6798af7783c6010319c79067c08f0a261cb1e091f85befc7e17856f7",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/944c0c0e0f5902f600bf91cf04870f25cd20ecd5fb14a8e6916ee98c83c7d859.png?expire=1793971105&sig=3f444c858757789e559aba22a5e4483a572a8e69fd3ba39195b7bd700784b590",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/ecdea82e2544a7f64cf4d92cb3a2e91f6538c89c3990026c3a07b0e2594421e6.png?expire=1793971105&sig=a2d6816d9383f3f1170ef8ae20af71ad886fb9a3f6021d8eb5a59b0df3af5848",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/3244549cbc45701e9b5f1be99012fcde9c59cddc4f1670fded940323d9365c15.png?expire=1793971105&sig=f676f56811b8dce86b91a1b87dace39493ec580c343c527b96cdc717f1ffa354",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/f521b7a1b5f95c10f8f73712a8a79d59e438c921cdb5bc526a66d1c538db6203.png?expire=1793971105&sig=f707ef434824b737ac9dfd94ed73f958b3e78e965ab76f6313c34456cf4562e0"
+      ]
+    },
+    {
+      "type": "image",
+      "data": [
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/b78b9f31b18de75e485f13a4837571e2dc2d7c9c60328a044f8e6f16e9f3c701.png?expire=1793971105&sig=9c9ee073c69cc48b46527130c755c570b151ea4c1228c20100b1bb8bd7f99fac",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/45a8b6d7c16b3563291bfe49c459830daca45325d0a2c2697ed20207512be5c2.png?expire=1793971105&sig=1eef86a1305e29a26f498fc118805a17bdcb2f065415ddb8e5c480d65c528656",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/9e4acc9cf41d1f7597f271024b4098c63863a93e7bb484448fb7b6e92c1b9278.png?expire=1793971105&sig=8eb8f7ec0fe89163ebcd74b37d7341a697dd5d92e61990d2a757ebd04752b7fd",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/5c7c5247003691c8f30ba133d8392814239c8a5f5a2979b7ae9b867949af6a89.png?expire=1793971105&sig=3770e36eb4df35e1de9c0f19a4a5b3be21ac4a87b25447e06f9292a972b3adb9",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/02274b102ed0b8049a0f8a436b78c291cb10657eeb553d2cec7a3538f4490a2c.png?expire=1793971105&sig=30a5df7eda166c8f1584b92c7d14970f24a8459fc73909818ed998ca466b87b8",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/107960341322444a3a4e8f4b56a1bd5c091c7852f3168b4b65a05dba3084ce92.png?expire=1793971105&sig=ff7b59f9cc7ecfbb7b4461bdde6b6094c23520249286260a22d8306c37d86581",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/d0778b55ce2406c716d5476183b336107e170a412487b7082eedf6ebea830674.png?expire=1793971105&sig=1e19c1827985d1a02a622a2eb1261f24f885a99fb01baccb1629570f9d4b02bc",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/b9e21af3e2a8e8ce4cacc77247f07f5e14aaf023a0ea58c3898b121dcb25c636.png?expire=1793971105&sig=48f36039edd1b3cb3c55a871d2903ca725a424bdb38725b98f5ef653da47e342",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/bceb03165c4b9eeffbc9b3e379ea3692bd2dfe8a5ed4debfaf0e5f7b24a4c499.png?expire=1793971105&sig=acc1de7d694b9b27f16c9df8b720583ed8d0a0ee2db3a0a105081c12af98be0b",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/292a49cde702a4cb3801d38fea4ca16029f82d517aa69476b92e2d651b790c7e.png?expire=1793971105&sig=44e9dd84a5fb7a5bb70151e0f3d3afff84df92211a85b8d8a1c1ef04b76bf097",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/068bd6d2902ccaad8dd943c4f3cd4ceef389981b4b423f502bb60a091804dd16.png?expire=1793971105&sig=a3fe1e864ec16e8432dad458d80df0c45328b1fb1b9e5f4803d50a03e2950db4",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/079e0608c520f3d8b174dbfdf36faadcb392ef3f67edc3eecf2aca81e73faa2a.png?expire=1793971105&sig=f4f0143e1351584465f238665067424180bee44f726f9d7a3aeba27f997f607d",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/d15c047e1d456388f1c5ab9fa22ad4becb5260b84cb3c2d50bffdee9f323928e.png?expire=1793971105&sig=5852d696c943466013d50ce988176596d9dc21017e08d025ced8388415a6234c",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/374074badef578c0ac2b79002adaa4d9e5da4ec3ac81187cb3b44f7042b5fd8a.png?expire=1793971105&sig=4d3b66c4b549c9c9442951028170d590b9f5686aeb296cbde0063a10bf573d2a",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/08f146304356ecf813b4022fe9bb8cc06cc4883c76ce2d0aab00b2a6eea5d499.png?expire=1793971105&sig=374f4caaa4daf0e27086a0f3dc25d2ff1fa54544cf9eb6a927deeb09287b6944",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/cf37ef3a75d05ec40a0df43b6c619e976cf88d8665b539dbc3cf7642e3a70e41.png?expire=1793971105&sig=1f0d92ef6d8ce18815e380f70b5b51277ab6a2c4381a8522f73fc2ca931f8a8d",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/227a595959ef9b6332c98076dcdfe0d9f2fc9f49d4a88619f1c242e67cbd0474.png?expire=1793971105&sig=1e41fea1f70e7346bd150ae4aa834f60d7934600a024390ce10a0f6c682cef4a",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/ab443b8227228e957b0f82ce2d3b0e6f8ac34f11a25a617c2d7f56001aa77763.png?expire=1793971105&sig=76d5857f1d61b10df76bb38ac3b62f352593c78bb444653b379e8799c39cf345",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/dc4c52a3b316f96cdb67e4cc14b371dccefbfbf1996e7b809ab17b5d83f299ed.png?expire=1793971105&sig=84d6a9599b1ade74dc9e830af500dcfb7436c6717a1437de2bb723d498b5e4d5",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/2a54ade05139c04374fbbccbff5f50150af83f8d271aeaa91e1ebe25eb8998d8.png?expire=1793971105&sig=f6038925e3ad0706ec6d2d1250710222937e7b7e033d0eeec02a7426da93c74b",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/52760d4b2f0ebeb22aab1a76589b09bbe6819e04d42d161ae21798748c5822d3.png?expire=1793971105&sig=c4ba06bad58c8840ea58872c05ce710c67444b4a38d2c9d95f73ca51b442df70",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/971200f8bca77b80a968a4135eda7298bef3f8503ffafe7d2f294882cc5e24a8.png?expire=1793971105&sig=a84428659ba6b7de1d366250ff4fef9701936f166ab03c51c9054216fc18974b",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/adda5aaeba7062132db9728b402839f07c2ff4f96ef6315c12aa0aeb45ede675.png?expire=1793971105&sig=bd14590e6798af7783c6010319c79067c08f0a261cb1e091f85befc7e17856f7",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/944c0c0e0f5902f600bf91cf04870f25cd20ecd5fb14a8e6916ee98c83c7d859.png?expire=1793971105&sig=3f444c858757789e559aba22a5e4483a572a8e69fd3ba39195b7bd700784b590",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/ecdea82e2544a7f64cf4d92cb3a2e91f6538c89c3990026c3a07b0e2594421e6.png?expire=1793971105&sig=a2d6816d9383f3f1170ef8ae20af71ad886fb9a3f6021d8eb5a59b0df3af5848",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/3244549cbc45701e9b5f1be99012fcde9c59cddc4f1670fded940323d9365c15.png?expire=1793971105&sig=f676f56811b8dce86b91a1b87dace39493ec580c343c527b96cdc717f1ffa354",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/f521b7a1b5f95c10f8f73712a8a79d59e438c921cdb5bc526a66d1c538db6203.png?expire=1793971105&sig=f707ef434824b737ac9dfd94ed73f958b3e78e965ab76f6313c34456cf4562e0",
+        "/ai/images/fd02341cdd637d4b41cd90f018006c8d/471ebea99c005e126cc9db2ad0ca542613147a76e47b39af5ee43a952c82f824.png?expire=1793971105&sig=cf65924886874389a2a341a17ddeaba44d1ac4cbfbbd8ba290c92ec18a160761"
+      ]
+    },
+    {
+      "type": "tool_status",
+      "data": {
+        "name": "search_knowledge",
+        "status": "done",
+        "elapsedMs": 604,
+        "startedAtMs": 1793967505140,
+        "args": "{\"topK\":5,\"query\":\"文文文文 文文文 文文 文文 文文文 文文文文 文文文\"}",
+        "result": "\"文文文 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n文文文9文文文文文文文文 > 文文 > 文文文文 > 文文文文 / 文文文文文文文\\n\\n文文文文\\n文文文文文文文文文 > 文文 > 文文文文 > 文文文文\\n\\n文文文文文文文\\n1.文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文”文文文“文文文文文\\n文文文文文文文文文文文文文文文文文文文文\\n文文文文\\n文文文文文文文\\n| 文文 | 文文 |\\n| --- | --- |\\n| 文文文 | 文文文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文 | 文文文文文文文文文文文文,文文文文文 |\\n| 文文文文 | 文文文文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文文文文 | 文文文文文文文文文文文 |\\n| 文文 | 文文文文文文文文文文文文文文文文文文文文文API文文文文文文文文文文文文文文 |\\n| 文文 | 文文文文文文文文文文文文文文文文文文文文文”文“文文文文文文文文文文文文文文文文文文文 |\\n\\n\\n\\n文文文7文文文文文文文文 > 文文 > 文文文文文文文 > 文文文文 / 文文文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“2026文8文文文文文文文文”文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文“2026文8文文文文文文文文”文文文文文文文文文文文文文文文文文文]\\n文文文文文文文文文文文文2文\\n[文文文文文文文文文文文“2026文8文文文文文文文文”文文文文文文文文文文文文文文文文文文文文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文“2026文8文文文文文文文文”文“文文文文”文文文文文文文文文文文文文文文文文文文input_108文]\\n文文文文文文文文文文文文文文文文文文\\n文文文文文”xingming“文文文文文文文“文文”文文文文文文文“文文”文文文文文文文文文文“文文文文”文文文文文文文文“文文文”文文文文文文文文“文文文文文文”文文文文文文文文文\\n[文文文文文文文文文文文文文文“2026文8文文文文文文文文”文文文“文文”文文文文文文文文文文文文文文文文xingming文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文…文文文文文\\n\\n文文文文文文文[文文4][文文5][文文6][文文7][文文8][文文9]\\n\\n文文文10文文文文文文文文 > 文文 > 文文文文文文 > 文文文文 / 文文文文文文文\\n\\n文文文文\\n文文文文文文文文文 > 文文 > 文文文文文文 > 文文文文\\n\\nenfenzhenghao”文文文文文文文文“文文文”文“文文文文”文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“mobile”文文文文文文文文文文文文文文文文文文“文文文”文“文文文文”文\\n[文文文文文文文文文文文文文文文文文“文文文文文文文”文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“文文”文文文文文文文文文文文文文文文“email”文文文文文文文文文文文文文文文文文文“文文文”文“文文文文”文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文49文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“文文”文文文文文文文文文文文文文文文文“bumen”文文文文文文文“文文文文”文文文文“文文文文文文文”文文文文文文文“文文”文文文文文文文文文文文文文文文文“文文文文”文文文文文文文文文文文文文文“文文”文文文文文文文文“文文文文文文”文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文文“文文文文文文文”文…文文文文文\\n\\n文文文文文文文[文文12][文文13][文文14][文文15][文文16]\\n\\n文文文11文文文文文文文文 > 文文 > 文文文文 > 文文文 / 文…文文文文文"
+      }
+    },
+    {
+      "type": "tool_status",
+      "data": {
+        "name": "search_knowledge",
+        "status": "done",
+        "elapsedMs": 604,
+        "startedAtMs": 1793967505140,
+        "args": "{\"topK\":5,\"query\":\"文文文文文文 文文文 文文文 文文 文文文文\"}",
+        "result": "\"文文文 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n文文文13文文文文文文文文 > 文文 > 文文文文文文 > 文文文文 / 文文文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文“2026文8文文文文文文文文文文”文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文49文文]\\n文文文文文文”shoujibiao“文文文文文文文”文文文“文文文文文文文文文文文文6文文文文文文文文文文6文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文”文文“文文文文文文文文文文文文文文文文文文文”name“文文文”文文文文文文文“文文文文文文文文文”文文文“文”文文文文“文\\n[文文文文文文文文文文文文文文“2026文8文文文文文文文文文文”文文文文文文文文文文文文文文文文文文文文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文”文文“文文文文文文文文文文文文文文文文文文文”xingbie“文文文”文文文文文文文“文文文文文“文文文文”文文文文文文文文文文文文文文文文“文”文“文”文文文文文\\n[文文文文文文文文文文文文文文文文文“文文文文文文文”文文文文文文文文文文文文文文文文文文文文文文文文文文文文49文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“文…文文文文文\\n\\n文文文文文文文[文文23][文文24][文文25][文文26]\\n\\n文文文14文文文文文文文文 > 文文 > 文文文文 > 文文 / 文文文文文\\n\\n文文\\n文文文文文文文文文 > 文文 > 文文文文 > 文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文\\n文文文文\\n文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文“3048”文文文文文文文文163文126文qq文sina文sohu文文文文文文文文文45文文]\\n文2-20 文文文文\\n\\n文文文文文文文[文文27]\\n\\n文文文15文文文文文文文文 > 文文 > 文文文文 / 文文文文文文文\\n\\n文文文文\\n文文文文文文文文文 > 文文 > 文文文文\\n\\n文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文0.5文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n\\n文文文16文文文文文文文文 > 文文 > 文文文文 > 文文文文 / 文文文文文文文\\n\\n文文文文\\n文文文文文文文文文 > 文文 > 文文文文 > 文文文文\\n\\n文文文文文文文文文文文文文\\n文文文文\\n文文文文文文文文文文文文文文文文文\\n \\n文2-21 文文文文文文文文文\\n文文文文文文文文文文文文文文\\n文文文文\\n文文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文“510142”文文文文文文文“文文文文文文文文文”文文文文文文文文文]\\n文2-22 文文文文文文\\n\\n文文文文文文文[文文28]\\n\\n文文文1文文文文文文文文 > 文文文文 > 文文文文文文 > 文文 / 文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文6文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n文文文文文\\n文文文文文文文文文文文\\n| 文文 | 文文 | 文文 |\\n| --- | --- | --- |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 |…文文文文文"
+      }
+    },
+    {
+      "type": "retrieved",
+      "data": {
+        "terms": [
+          "文文文文 文文文文文文文 文文 文文",
+          "文文文文文 文文 文文 文文文文",
+          "文文文文 文文文 文文 文文 文文文 文文文文 文文文",
+          "文文文文文文 文文文 文文文 文文 文文文文"
+        ],
+        "keywords": 4,
+        "refs": 16
+      }
+    },
+    {
+      "type": "artifact",
+      "data": {
+        "type": "artifact",
+        "content": {
+          "id": "7891a5d3461a4f12bef0b910692f9331",
+          "url": "/ai/artifacts/yuanke/202611/7891a5d3461a4f12bef0b910692f9331_文文文文文文文_文文文文.md?expire=1793971118&sig=e660f8d941bc9a2a4a03b207344b82a673a6816d91fef0a410ba6ec182d54852",
+          "filename": "文文文文文文文_文文文文.md",
+          "ext": "md",
+          "size": 7564,
+          "description": "文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文"
+        },
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 24
+      }
+    },
+    {
+      "type": "tool_status",
+      "data": {
+        "name": "presentArtifact",
+        "label": "文文文文",
+        "hint": "文文文文文文文文文文文文",
+        "status": "start",
+        "elapsedMs": 0,
+        "startedAtMs": 1793967518246,
+        "args": "{\"description\":\"文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\",\"filename\":\"文文文文文文文_文文文文.md\",\"content\":\"# 文文文文文文文文文文文文文\\n\\n> 文文文文文文文文文文文文文文文文文文文文文/文文文文文文文文文文文文文文文文文文文文文\\n> 文文文文文文文文文文文 → 文文文文 → 文文文文 → 文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n---\\n\\n## 文文文文文文文文文文\\n\\n| 文文文文 | 文文 | 文文文文文文文文 |\\n| --- | --- | --- |\\n| 文文文文 | 文文文文文文文文文\\\"文文文文文\\\" | 文文文文 / 文文文文 / 文文文文文文文文文文文文文文 |\\n| 文文文 | 文文文文文文文文文文文文文文文文文文文 | 文文文文文 → 文文文文文文文文文 |\\n| 文文文文 | 文文文文文文文文文文文文文文文文 | 文文文 → 文文文文文文文文文文文文 → 文文/文文文文\\\"文文文文\\\" |\\n\\n**文文文文文文**文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n---\\n\\n## 文文文文文文文文文文文文文文文\\n\\n文文文文文文文文文文 6 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [1][2]文文文文文文文文文文文文文文文文文文文文文\\n\\n### 1. 文文文\\n- 文**文文文文**文文文文文 `2026文11文文文文文文文文`文文文文文文文文文文文文文文文文文文文文文文 [1]文\\n- 文文文文**文文文文**文**文文文文**文文文文文文文文文文文文文文文文文文 * 文文文文文文文文 [1]文\\n\\n### 2. 文文文文文文文文\\n- 文**文文文文**文文文文文文文文文文文文 [6]文文文文文文文文 **4 文**文`文文文 + 文文` 文文文文文文文文文文文文文文文文文文文文文文\\n- 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [6]文\\n- 文文文文文文文 12 文文文文文**文文文文**文文文文文文 / 文文文文 / 文文文文 / 文文文文文文文文文文文 [1]文\\n- 文文文文文文文文文文文文文文文文文文文文文文文文文文文文**文文文文**文文文文文文文文文文文 [1]文\\n\\n### 3. 文文文\\n- 文**文文文文**文文文/文文文文文文文文文文文文文文文文文文文文文文 [1]文\\n\\n---\\n\\n## 文文文文文文文文文文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [3]文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [15]文\\n\\n| 文文 | 文文文文 | 文文文文 |\\n| --- | --- | --- |\\n| 文文 | 文文文文 | 文文文文文\\\"文文文文文文文文文文文\\\" |\\n| 文文 | 文文文文 | 文文 + **文文文文**文文文\\\"文 2026010101\\\" |\\n| 文文 | 文文文文 | 文文文文文文 / 文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文\\\"文文文文\\\"文文文 [5] |\\n| 文文文文 | 文文文文-文文文文 | 文文文文文文文文文文\\\"文文文文\\\" [16] |\\n| 文文文 | 文文文文-文文文 | 文文文文文文文文文 [16] |\\n| 文文 | 文文文文-文文 | 文文文文文文文文文文文文文 [14] |\\n| 文文 / 文文 | 文文文文文 文 文文文文 | 文文文文文\\\"文文\\\"文文文文文文文文文文\\\"API\\\"文文文文文文文文[5] |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文 |\\n| 文文文文 / 文文 | 文文文 文 文文文文 | 文文文文文文文文文文文文文文文文文文文 [1] |\\n| 文文文文 / 文文文文 | 文文文文 / 文文文文 | 文文文文文文文文文文文文文文文文文文文文文文文文文文文 [5] |\\n\\n**文文文文**\\n- 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文——文文\\\"文/文文/M\\\"文文文文文文文文文\\n- 文文文文文文文文文文文文文文文文文文文文 [8]文\\n- 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [16]文\\n\\n---\\n\\n## 文文文文文文文文文文文文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文 → 文文文文 → 文文文文文 → 文文文 → 文文文 [7]文\\n\\n1. **文文文**文文文文文文文文文文文文文文文文文文文文文文文文 [9]文文文文文文文文文文文文文文文 `xingming`文`xuehao`文`shoujihao`文文文文 `input_108` 文文文文文 [7]文\\n2. **文文文文**文文文文文文文文文文文文文文文文文文文文文 [9]文文文文文文文文文文文文文文文文文\\\"文文文文文文文\\\"文文文文 [13]文\\n3. **文文**文文文文文文文\\\"?\\\"文文文文文文文文文文文文 [9]文文文文\\\"文文文\\\"文文文文文文文文文文文文文 [7]文\\n4. **文文文文**文\\n   - **文文文**文文文文文文文文文文文文\\\"文文文\\\" [9][11]文\\n   - **文文文文**文文文文文文文文文文文文文文文文文文文文文文文文文 [13][16]文\\n   - **文文文文**文文文文文文文文文/文文文文文文文文文文 [12]文\\n   - **文文文文文文**文文文文文文文文文 [12]文\\n   - **文文文文**文文文文文文文 API 文文文文文文文文文文文文文文 [12]文\\n\\n---\\n\\n## 文文文文文文文文文文文文文\\n\\n- **文文文文文**文文文文文文文文文文文——文文文文文文/文文/文文文文文文文文文文/文文/文文文文文文文文文文文文\\n- **文文文文**文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n- **文文文文文文**文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n- **文文文文文文文文文**文文文文文文文文\\\"文文文文\\\"文文文文文文文文文文文文文文文文文文文文 [6]文\\n- **文文文文文**文文文文文文文文文文文文文文文文4 文文文文文文文文文文文 2 文文文文文\\n\\n---\\n\\n## 文文文文文文文文文\\n\\n- [ ] 文文文文文文文文文文文文文文文文文文文文文文文文文\\n- [ ] 文文文文文文文文文文文文文文文 `input_xxx` 文文\\n- [ ] 文文文文文文文文文文\\\"文文文\\\"\\n- [ ] 文文 / 文文文 / 文文文 / 文文文文文\\\"文文文文\\\"\\n- [ ] 文文文文文文文文文文文文文文文文文文 / 文文 / API文\\n- [ ] 文文文文文文文文文文文文文文文文文文文文文文\\n- [ ] 文文文文文文文文文\\n- [ ] 文文文文文文文文文文文文文文文文文文文文文文文文文\\n- [ ] 文文文文文文文文文文文文文文文文文\\n\\n---\\n\\n## 文文文文文文文文文文文文文文文\\n\\n| 文文 | 文文 | 文文 | 文文 | 文文 |\\n| --- | --- | --- | --- | --- |\\n| 1 | 文文 | 文文文文 | 文 | 文 |\\n| 2 | 文文 | 文文文文 | 文 | 文 |\\n| 3 | 文文 | 文文文文 | 文 | 文 |\\n| 4 | 文文文文 | 文文文文 | 文 | 文 |\\n| 5 | 文文文文 | 文文文文-文文文文 | 文 | 文 |\\n| 6 | 文文文 | 文文文文-文文文 | 文 | 文 |\\n| 7 | 文文 | 文文文文-文文 | 文 | 文 |\\n| 8 | 文文 / 文文 | 文文文文文 | 文 | 文 |\\n| 9 | 文文文文 | 文文文文 | 文 | 文 |\\n| 10 | 文文文文 | 文文文文 | 文 | 文 |\\n| 11 | 文文 | 文文文文 | 文 | 文 |\\n\\n> 文文文文文文文文文文文文文文文文/文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\"}"
+      }
+    },
+    {
+      "type": "usage",
+      "data": {
+        "prompt": 40179,
+        "output": 2460,
+        "finalOutput": 2191,
+        "total": 42639,
+        "cached": 24448,
+        "context": 17031,
+        "outputIsReal": true,
+        "hits": 16,
+        "window": 1000000,
+        "windowSource": "framework",
+        "parts": {
+          "system": 3790,
+          "input": 30,
+          "retrieval": 9227,
+          "toolOutput": 134,
+          "toolSchema": 3850
+        }
+      }
+    },
+    {
+      "type": "tool_status",
+      "data": {
+        "name": "presentArtifact",
+        "label": "文文文文",
+        "hint": "文文文文文文文文文文文文",
+        "status": "done",
+        "elapsedMs": 331,
+        "startedAtMs": 1793967518246,
+        "args": "{\"description\":\"文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\",\"filename\":\"文文文文文文文_文文文文.md\",\"content\":\"# 文文文文文文文文文文文文文\\n\\n> 文文文文文文文文文文文文文文文文文文文文文/文文文文文文文文文文文文文文文文文文文文文\\n> 文文文文文文文文文文文 → 文文文文 → 文文文文 → 文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n---\\n\\n## 文文文文文文文文文文\\n\\n| 文文文文 | 文文 | 文文文文文文文文 |\\n| --- | --- | --- |\\n| 文文文文 | 文文文文文文文文文\\\"文文文文文\\\" | 文文文文 / 文文文文 / 文文文文文文文文文文文文文文 |\\n| 文文文 | 文文文文文文文文文文文文文文文文文文文 | 文文文文文 → 文文文文文文文文文 |\\n| 文文文文 | 文文文文文文文文文文文文文文文文 | 文文文 → 文文文文文文文文文文文文 → 文文/文文文文\\\"文文文文\\\" |\\n\\n**文文文文文文**文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n---\\n\\n## 文文文文文文文文文文文文文文文\\n\\n文文文文文文文文文文 6 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [1][2]文文文文文文文文文文文文文文文文文文文文文\\n\\n### 1. 文文文\\n- 文**文文文文**文文文文文 `2026文11文文文文文文文文`文文文文文文文文文文文文文文文文文文文文文文 [1]文\\n- 文文文文**文文文文**文**文文文文**文文文文文文文文文文文文文文文文文文 * 文文文文文文文文 [1]文\\n\\n### 2. 文文文文文文文文\\n- 文**文文文文**文文文文文文文文文文文文 [6]文文文文文文文文 **4 文**文`文文文 + 文文` 文文文文文文文文文文文文文文文文文文文文文文\\n- 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [6]文\\n- 文文文文文文文 12 文文文文文**文文文文**文文文文文文 / 文文文文 / 文文文文 / 文文文文文文文文文文文 [1]文\\n- 文文文文文文文文文文文文文文文文文文文文文文文文文文文文**文文文文**文文文文文文文文文文文 [1]文\\n\\n### 3. 文文文\\n- 文**文文文文**文文文/文文文文文文文文文文文文文文文文文文文文文文 [1]文\\n\\n---\\n\\n## 文文文文文文文文文文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文��文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [3]文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [15]文\\n\\n| 文文 | 文文文文 | 文文文文 |\\n| --- | --- | --- |\\n| 文文 | 文文文文 | 文文文文文\\\"文文文文文文文文文文文\\\" |\\n| 文文 | 文文文文 | 文文 + **文文文文**文文文\\\"文 2026010101\\\" |\\n| 文文 | 文文文文 | 文文文文文文 / 文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文\\\"文文文文\\\"文文文 [5] |\\n| 文文文文 | 文文文文-文文文文 | 文文文文文文文文文文\\\"文文文文\\\" [16] |\\n| 文文文 | 文文文文-文文文 | 文文文文文文文文文 [16] |\\n| 文文 | 文文文文-文文 | 文文文文文文文文文文文文文 [14] |\\n| 文文 / 文文 | 文文文文文 文 文文文文 | 文文文文文\\\"文文\\\"文文文文文文文文文文\\\"API\\\"文文文文文文文文[5] |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文 |\\n| 文文文文 / 文文 | 文文文 文 文文文文 | 文文文文文文文文文文文文文文文文文文文 [1] |\\n| 文文文文 / 文文文文 | 文文文文 / 文文文文 | 文文文文文文文文文文文文文文文文文文文文文文文文文文文 [5] |\\n\\n**文文文文**\\n- 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文——文文\\\"文/文文/M\\\"文文文文文文文文文\\n- 文文文文文文文文文文文文文文文文文文文文 [8]文\\n- 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [16]文\\n\\n---\\n\\n## 文文文文文文文文文文文文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文 → 文文文文 → 文文文文文 → 文文文 → 文文文 [7]文\\n\\n1. **文文文**文文文文文文文文文文文文文文文文文文文文文文文文 [9]文文文文文文文文文文文文文文文 `xingming`文`xuehao`文`shoujihao`文文文文 `input_108` 文文文文文 [7]文\\n2. **文文文文**文文文文文文文文文文文文文文文文文文文文文 [9]文文文文文文文文文文文文文文文文文\\\"文文文文文文文\\\"文文文文 [13]文\\n3. **文文**文文文文文文文\\\"?\\\"文文文文文文文文文文文文 [9]文文文文\\\"文文文\\\"文文文文文文文文文文文文文 [7]文\\n4. **文文文文**文\\n   - **文文文**文文文文文文文文文文文文\\\"文文文\\\" [9][11]文\\n   - **文文文文**文文文文文文文文文文文文文文文文文文文文文文文文文 [13][16]文\\n   - **文文文文**文文文文文文文文文/文文文文文文文文文文 [12]文\\n   - **文文文文文文**文文文文文文文文文 [12]文\\n   - **文文文文**文文文文文文文 API 文文文文文文文文文文文文文文 [12]文\\n\\n---\\n\\n## 文文文文文文文文文文文文文\\n\\n- **文文文文文**文文文文文文文文文文文——文文文文文文/文文/文文文文文文文文文文/文文/文文文文文文文文文文文文\\n- **文文文文**文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n- **文文文文文文**文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n- **文文文文文文文文文**文文文文文文文文\\\"文文文文\\\"文文文文文文文文文文文文文文文文文文文文 [6]文\\n- **文文文文文**文文文文文文文文文文文文文文文文4 文文文文文文文文文文文 2 文文文文文\\n\\n---\\n\\n## 文文文文文文文文文\\n\\n- [ ] 文文文文文文文文文文文文文文文文文文文文文文文文文\\n- [ ] 文文文文文文文文文文文文文文文 `input_xxx` 文文\\n- [ ] 文文文文文文文文文文\\\"文文文\\\"\\n- [ ] 文文 / 文文文 / 文文文 / 文文文文文\\\"文文文文\\\"\\n- [ ] 文文文文文文文文文文文文文文文文文文 / 文文 / API文\\n- [ ] 文文文文文文文文文文文文文文文文文文文文文文\\n- [ ] 文文文文文文文文文\\n- [ ] 文文文文文文文文文文文文文文文文文文文文文文文文文\\n- [ ] 文文文文文文文文文文文文文文文文文\\n\\n---\\n\\n## 文文文文文文文文文文文文文文文\\n\\n| 文文 | 文文 | 文文 | 文文 | 文文 |\\n| --- | --- | --- | --- | --- |\\n| 1 | 文文 | 文文文文 | 文 | 文 |\\n| 2 | 文文 | 文文文文 | 文 | 文 |\\n| 3 | 文文 | 文文文文 | 文 | 文 |\\n| 4 | 文文文文 | 文文文文 | 文 | 文 |\\n| 5 | 文文文文 | 文文文文-文文文文 | 文 | 文 |\\n| 6 | 文文文 | 文文文文-文文文 | 文 | 文 |\\n| 7 | 文文 | 文文文文-文文 | 文 | 文 |\\n| 8 | 文文 / 文文 | 文文文文文 | 文 | 文 |\\n| 9 | 文文文文 | 文文文文 | 文 | 文 |\\n| 10 | 文文文文 | 文文文文 | 文 | 文 |\\n| 11 | 文文 | 文文文文 | 文 | 文 |\\n\\n> 文文文文文文文文文文文文文文文文/文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\"}",
+        "result": "\"文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 文文文文文/ai/artifacts/yuanke/202611/7891a5d3461a4f12bef0b910692f9331_文文文文文文文_文文文文.md?expire=1793971118&sig=e660f8d941bc9a2a4a03b207344b82a673a6816d91fef0a410ba6ec182d54852\""
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 28
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 29
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 30
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 31
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 32
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 33
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "*",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 34
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "*",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 35
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 36
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 37
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 38
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 39
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文_",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 40
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 41
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 42
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 43
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文.",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 44
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "md",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 45
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "*",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 46
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "*",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 47
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "\n",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 48
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "\n文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 49
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 50
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 51
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 52
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 53
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 54
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 55
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文 ",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 56
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "→",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 57
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": " 文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 58
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 59
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": " ",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 60
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "→",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 61
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": " ",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 62
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 63
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文 ",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 64
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "→",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 65
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": " ",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 66
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 67
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 68
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 69
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 70
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 71
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 72
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 73
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 74
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 75
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 76
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 77
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 78
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文\n",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 79
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "\n",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 80
+      }
+    },
+    {
+      "type": "token",
+      "data": 1
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": ". ",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 82
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "**",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 83
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 84
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 85
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 86
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 87
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文*",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 88
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "*",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 89
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 90
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 91
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 92
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 93
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 94
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 95
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 96
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 97
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 98
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 99
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 100
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 101
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 102
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 103
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 104
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 105
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 106
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 107
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 108
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 109
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 110
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 111
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 112
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 113
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 114
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 115
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "\n",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 116
+      }
+    },
+    {
+      "type": "token",
+      "data": 2
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": ".",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 118
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": " ",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 119
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "*",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 120
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "*",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 121
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 122
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 123
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "*",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 124
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "*文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 125
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 126
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 127
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 128
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 129
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 130
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 131
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 132
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 133
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 134
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 135
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 136
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 137
+      }
+    },
+    {
+      "type": "token",
+      "data": 4
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": " ",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 139
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 140
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 141
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 142
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 143
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 144
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 145
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 146
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 147
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 148
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 149
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 150
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 151
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 152
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 153
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 154
+      }
+    },
+    {
+      "type": "token",
+      "data": 3
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": ".",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 156
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": " ",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 157
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "*",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 158
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "*文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 159
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 160
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "*",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 161
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "*",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 162
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文1",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 163
+      }
+    },
+    {
+      "type": "token",
+      "data": 1
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 165
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 166
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 167
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 168
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 169
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 170
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 171
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 172
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 173
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 174
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 175
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 176
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 177
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 178
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 179
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 180
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 181
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 182
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 183
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 184
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 185
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 186
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 187
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 188
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 189
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 190
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 191
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 192
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 193
+      }
+    },
+    {
+      "type": "token",
+      "data": 4
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": ".",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 195
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": " ",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 196
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "*",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 197
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "*文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 198
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 199
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文*",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 200
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "*文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 201
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文文文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 202
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 203
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 204
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 205
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "——",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 206
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 207
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 208
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 209
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 210
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 211
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 212
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": " `",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 213
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "i",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 214
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "n",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 215
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "p",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 216
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "ut",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 217
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "_",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 218
+      }
+    },
+    {
+      "type": "token",
+      "data": 10
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "8`",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 220
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 221
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 222
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 223
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 224
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 225
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 226
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 227
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 228
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 229
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 230
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文 /",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 231
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": " 文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 232
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 233
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文 ",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 234
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "/ ",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 235
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 236
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 237
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文 ",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 238
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "/",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 239
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": " 文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 240
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 241
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 242
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "\n",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 243
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "5.",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 244
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": " *",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 245
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "*文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 246
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 247
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 248
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 249
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文*",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 250
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "*",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 251
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 252
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 253
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 254
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 255
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 256
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 257
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 258
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 259
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 260
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 261
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 262
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 263
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 264
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 265
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 266
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 267
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 268
+      }
+    },
+    {
+      "type": "token",
+      "data": 6
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": ".",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 270
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": " ",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 271
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "*",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 272
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "*文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 273
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 274
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 275
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 276
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文*",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 277
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "*",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 278
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文9",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 279
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": " 文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 280
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 281
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 282
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 283
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "\n",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 284
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "\n文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 285
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 286
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 287
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 288
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": " ",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 289
+      }
+    },
+    {
+      "type": "token",
+      "data": 1
+    },
+    {
+      "type": "token",
+      "data": 1
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 292
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 293
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 294
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 295
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文文 ",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 296
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "/ ",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 297
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 298
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 299
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": " / ",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 300
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 301
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文文 / 文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 302
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 303
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 304
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 305
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 306
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 307
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 308
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 309
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 310
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 311
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "文\n",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 312
+      }
+    },
+    {
+      "type": "token",
+      "data": {
+        "type": "token",
+        "content": "\n",
+        "sessionId": "383558cc0e0643babf25d627fb5e6ddf",
+        "seq": 313
+      }
+    },
+    {
+      "type": "usage",
+      "data": {
+        "prompt": 59536,
+        "output": 2804,
+        "finalOutput": 344,
+        "total": 62340,
+        "cached": 40448,
+        "context": 19357,
+        "outputIsReal": true,
+        "hits": 16,
+        "window": 1000000,
+        "windowSource": "framework",
+        "parts": {
+          "system": 4308,
+          "input": 34,
+          "retrieval": 10487,
+          "toolOutput": 152,
+          "toolSchema": 4376
+        },
+        "thinkingChars": 0,
+        "turnElapsedMs": 20813,
+        "profile": "workspace",
+        "turnWallMs": 27076,
+        "turnPrepMs": 6263
+      }
+    },
+    {
+      "type": "retrieved",
+      "data": {
+        "terms": [
+          "文文文文 文文文文文文文 文文 文文",
+          "文文文文文 文文 文文 文文文文",
+          "文文文文 文文文 文文 文文 文文文 文文文文 文文文",
+          "文文文文文文 文文文 文文文 文文 文文文文"
+        ],
+        "keywords": 4,
+        "refs": 16
+      }
+    },
+    {
+      "type": "done",
+      "data": {
+        "finalContent": "文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文**文文文文文文文_文文文文.md**\n\n文文文文文文文文文文文 → 文文文文 → 文文文文 → 文文文文文文文文文文文文文文文文文文文文\n\n1. **文文文文文文文文**文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\n2. **文文文**文文文文文文文文文文文文文文文文 4 文文文文文文文文文文文文文文文文文文文文文文文\n3. **文文文**文11 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\n4. **文文文**文文文文文文文文文文文——文文文文文文文文文文 `input_108`文文文文文文文文文文文文文文文文文 / 文文文文 / 文文文文 / 文文文\n5. **文文文文文文**文文文文文文文文文文文文文文文文文文文文文文文\n6. **文文文文文文文**文9 文文文文文文\n\n文文文文文文 11 文文文文文文文文文文 / 文文 / 文文文文 / 文文文文文文文文文文文文文文文\n\n",
+        "messageId": "603b93c1d568c54d0742d7c1a1959484",
+        "userMessageId": "0f8be67e68c474df4af95ccbd8625df7",
+        "turnId": "55b82102c94245229b7b43a9c6b9ddc3",
+        "model": "deepseek-flash",
+        "agentId": null,
+        "agentName": null,
+        "sources": [
+          {
+            "ref": 1,
+            "knowledgeId": "2897c3e76c14d7ab753ccad89868e6c2",
+            "docId": "fd02341cdd637d4b41cd90f018006c8d",
+            "fileName": "文文文文文文文文v3.0.docx",
+            "title": "文文",
+            "snippet": "文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文6文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\n文文文文文\n文文文文文文文文文文文\n| 文文 | …",
+            "images": [],
+            "origin": "TOOL",
+            "score": 0.481,
+            "rerankScore": 0.832
+          },
+          {
+            "ref": 2,
+            "knowledgeId": "5eac3135cb508a370c1fe3898b7a5bcc",
+            "docId": "fd02341cdd637d4b41cd90f018006c8d",
+            "fileName": "文文文文文文文文v3.0.docx",
+            "title": "文文",
+            "snippet": "文文\n文文文文文文文文文 > 文文\n\n文文文文文 文文文文文\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文6文文文文\n文文文文文文文…",
+            "images": [],
+            "origin": "TOOL",
+            "score": 0.484,
+            "rerankScore": 0.822
+          },
+          {
+            "ref": 3,
+            "knowledgeId": "ef62591fe7d03f3e1c57f376277bf7ba",
+            "docId": "fd02341cdd637d4b41cd90f018006c8d",
+            "fileName": "文文文文文文文文v3.0.docx",
+            "title": "文文文文",
+            "snippet": "文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文",
+            "images": [],
+            "origin": "TOOL",
+            "score": 0.456,
+            "rerankScore": 0.76
+          },
+          {
+            "ref": 4,
+            "knowledgeId": "7dadcbc049520fb24dea3645c2810427",
+            "docId": "fd02341cdd637d4b41cd90f018006c8d",
+            "fileName": "文文文文文文文文v3.0.docx",
+            "title": "文文文文文文",
+            "snippet": "文文文文文文文文文文文文文文文\n| 文文 | 文文 | 文文 |\n| --- | --- | --- |\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\n| 文文文文 | 文文文文 | 文文文文文文文文文文文…",
+            "images": [],
+            "origin": "TOOL",
+            "score": 0.464,
+            "rerankScore": 0.691
+          },
+          {
+            "ref": 5,
+            "knowledgeId": "7e9600bdfd5fd893f2d01b7e271d28e4",
+            "docId": "fd02341cdd637d4b41cd90f018006c8d",
+            "fileName": "文文文文文文文文v3.0.docx",
+            "title": "文文文文文文",
+            "snippet": "文文文文文文\n文文文文文文文文文 > 文文 > 文文文文文文\n\n文文文 |\n| 文文文文文文 | 文文 | 文文文文文文文文文文文文文文文文API文文文文文文文文文文文文 |\n| 文文文文文文 | 文文文文 | 文文文文文文文文文文文文文文…",
+            "images": [],
+            "origin": "TOOL",
+            "score": 0.458,
+            "rerankScore": 0.636
+          },
+          {
+            "ref": 6,
+            "knowledgeId": "bd493f42da5bf5748b2152e954a40024",
+            "docId": "fd02341cdd637d4b41cd90f018006c8d",
+            "fileName": "文文文文文文文文v3.0.docx",
+            "title": "文文",
+            "snippet": "文文\n文文文文文文文文文 > 文文 > 文文文文 > 文文\n\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\n文文文文文文文文…",
+            "images": [
+              "/ai/images/fd02341cdd637d4b41cd90f018006c8d/b78b9f31b18de75e485f13a4837571e2dc2d7c9c60328a044f8e6f16e9f3c701.png",
+              "/ai/images/fd02341cdd637d4b41cd90f018006c8d/45a8b6d7c16b3563291bfe49c459830daca45325d0a2c2697ed20207512be5c2.png",
+              "/ai/images/fd02341cdd637d4b41cd90f018006c8d/9e4acc9cf41d1f7597f271024b4098c63863a93e7bb484448fb7b6e92c1b9278.png"
+            ],
+            "origin": "TOOL",
+            "score": 0.741,
+            "rerankScore": 0.964
+          },
+          {
+            "ref": 7,
+            "knowledgeId": "b11df8c5ce5797a1e82b7ed50262c0a3",
+            "docId": "fd02341cdd637d4b41cd90f018006c8d",
+            "fileName": "文文文文文文文文v3.0.docx",
+            "title": "文文文文",
+            "snippet": "文文文文文文文文文文文文文文文文文文文文文文文\n[文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“2026文8文文文文文文文文”文]\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\n[文文文…",
+            "images": [
+              "/ai/images/fd02341cdd637d4b41cd90f018006c8d/5c7c5247003691c8f30ba133d8392814239c8a5f5a2979b7ae9b867949af6a89.png",
+              "/ai/images/fd02341cdd637d4b41cd90f018006c8d/02274b102ed0b8049a0f8a436b78c291cb10657eeb553d2cec7a3538f4490a2c.png",
+              "/ai/images/fd02341cdd637d4b41cd90f018006c8d/107960341322444a3a4e8f4b56a1bd5c091c7852f3168b4b65a05dba3084ce92.png",
+              "/ai/images/fd02341cdd637d4b41cd90f018006c8d/d0778b55ce2406c716d5476183b336107e170a412487b7082eedf6ebea830674.png",
+              "/ai/images/fd02341cdd637d4b41cd90f018006c8d/b9e21af3e2a8e8ce4cacc77247f07f5e14aaf023a0ea58c3898b121dcb25c636.png",
+              "/ai/images/fd02341cdd637d4b41cd90f018006c8d/bceb03165c4b9eeffbc9b3e379ea3692bd2dfe8a5ed4debfaf0e5f7b24a4c499.png"
+            ],
+            "origin": "TOOL",
+            "score": 0.689,
+            "rerankScore": 0.719
+          },
+          {
+            "ref": 8,
+            "knowledgeId": "1109d5ebdf1cb0057b59e76cf799c3da",
+            "docId": "fd02341cdd637d4b41cd90f018006c8d",
+            "fileName": "文文文文文文文文v3.0.docx",
+            "title": "文文文文",
+            "snippet": "文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\n文文文文“zuopinjieshao”文文文文文文文“文文文文”…",
+            "images": [
+              "/ai/images/fd02341cdd637d4b41cd90f018006c8d/292a49cde702a4cb3801d38fea4ca16029f82d517aa69476b92e2d651b790c7e.png",
+              "/ai/images/fd02341cdd637d4b41cd90f018006c8d/068bd6d2902ccaad8dd943c4f3cd4ceef389981b4b423f502bb60a091804dd16.png"
+            ],
+            "origin": "TOOL",
+            "score": 0.191,
+            "rerankScore": 0.686
+          },
+          {
+            "ref": 9,
+            "knowledgeId": "2a8df13d374d7f8e2efafec3951c20ce",
+            "docId": "fd02341cdd637d4b41cd90f018006c8d",
+            "fileName": "文文文文文文文文v3.0.docx",
+            "title": "文文文文",
+            "snippet": "文文文文\n文文文文文文文文文 > 文文 > 文文文文 > 文文文文\n\n文文文文文文文\n1.文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文”文文文“文文文文文\n文文文文文文文文文文文文文文文文文文文文\n文文文文\n文文文文…",
+            "images": [],
+            "origin": "TOOL",
+            "score": 0.626,
+            "rerankScore": 0.973
+          },
+          {
+            "ref": 10,
+            "knowledgeId": "e2011a0f2d1e8fb6625641f2ac86a021",
+            "docId": "fd02341cdd637d4b41cd90f018006c8d",
+            "fileName": "文文文文文文文文v3.0.docx",
+            "title": "文文文文",
+            "snippet": "文文文文\n文文文文文文文文文 > 文文 > 文文文文文文 > 文文文文\n\nenfenzhenghao”文文文文文文文文“文文文”文“文文文文”文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文…",
+            "images": [
+              "/ai/images/fd02341cdd637d4b41cd90f018006c8d/079e0608c520f3d8b174dbfdf36faadcb392ef3f67edc3eecf2aca81e73faa2a.png",
+              "/ai/images/fd02341cdd637d4b41cd90f018006c8d/d15c047e1d456388f1c5ab9fa22ad4becb5260b84cb3c2d50bffdee9f323928e.png",
+              "/ai/images/fd02341cdd637d4b41cd90f018006c8d/374074badef578c0ac2b79002adaa4d9e5da4ec3ac81187cb3b44f7042b5fd8a.png",
+              "/ai/images/fd02341cdd637d4b41cd90f018006c8d/08f146304356ecf813b4022fe9bb8cc06cc4883c76ce2d0aab00b2a6eea5d499.png",
+              "/ai/images/fd02341cdd637d4b41cd90f018006c8d/cf37ef3a75d05ec40a0df43b6c619e976cf88d8665b539dbc3cf7642e3a70e41.png"
+            ],
+            "origin": "TOOL",
+            "score": 0.45,
+            "rerankScore": 0.901
+          },
+          {
+            "ref": 11,
+            "knowledgeId": "cc34ef50d11dca5d81abbc2f4046c10a",
+            "docId": "fd02341cdd637d4b41cd90f018006c8d",
+            "fileName": "文文文文文文文文v3.0.docx",
+            "title": "文文文",
+            "snippet": "文文文\n文文文文文文文文文 > 文文 > 文文文文 > 文文文\n\n| 文文文文文文文文文文文 |\n| 文文文 | 文文文文文文文文文文文文文文文 |\n| 文文 | 文文文文文文文文文文文文文文文文文文文文文”文“文文文文文文文文文文文文文文…",
+            "images": [],
+            "origin": "TOOL",
+            "score": 0.482,
+            "rerankScore": 0.886
+          },
+          {
+            "ref": 12,
+            "knowledgeId": "19a78bec1068ce3742bdc69eaa1edee4",
+            "docId": "fd02341cdd637d4b41cd90f018006c8d",
+            "fileName": "文文文文文文文文v3.0.docx",
+            "title": "文文",
+            "snippet": "文文文文文文文\n1.文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文”文文文“文\n[文文文文文文文文文文文文文文文文文文“文文文文”文文文文文文文文文文文文文文文文文文文文文文“文文文”文文文]\n2.文文文文文文文文文文…",
+            "images": [
+              "/ai/images/fd02341cdd637d4b41cd90f018006c8d/227a595959ef9b6332c98076dcdfe0d9f2fc9f49d4a88619f1c242e67cbd0474.png",
+              "/ai/images/fd02341cdd637d4b41cd90f018006c8d/ab443b8227228e957b0f82ce2d3b0e6f8ac34f11a25a617c2d7f56001aa77763.png",
+              "/ai/images/fd02341cdd637d4b41cd90f018006c8d/dc4c52a3b316f96cdb67e4cc14b371dccefbfbf1996e7b809ab17b5d83f299ed.png",
+              "/ai/images/fd02341cdd637d4b41cd90f018006c8d/2a54ade05139c04374fbbccbff5f50150af83f8d271aeaa91e1ebe25eb8998d8.png",
+              "/ai/images/fd02341cdd637d4b41cd90f018006c8d/52760d4b2f0ebeb22aab1a76589b09bbe6819e04d42d161ae21798748c5822d3.png",
+              "/ai/images/fd02341cdd637d4b41cd90f018006c8d/971200f8bca77b80a968a4135eda7298bef3f8503ffafe7d2f294882cc5e24a8.png"
+            ],
+            "origin": "TOOL",
+            "score": 0.463,
+            "rerankScore": 0.868
+          },
+          {
+            "ref": 13,
+            "knowledgeId": "375c3572ed3c1d635d451d0685d6c0d3",
+            "docId": "fd02341cdd637d4b41cd90f018006c8d",
+            "fileName": "文文文文文文文文v3.0.docx",
+            "title": "文文文文",
+            "snippet": "文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\n[文文文文文文文文文文文文文文文文文文文文文文文文“2026文8文文文文文文文文文文”文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文49文…",
+            "images": [
+              "/ai/images/fd02341cdd637d4b41cd90f018006c8d/adda5aaeba7062132db9728b402839f07c2ff4f96ef6315c12aa0aeb45ede675.png",
+              "/ai/images/fd02341cdd637d4b41cd90f018006c8d/944c0c0e0f5902f600bf91cf04870f25cd20ecd5fb14a8e6916ee98c83c7d859.png",
+              "/ai/images/fd02341cdd637d4b41cd90f018006c8d/ecdea82e2544a7f64cf4d92cb3a2e91f6538c89c3990026c3a07b0e2594421e6.png",
+              "/ai/images/fd02341cdd637d4b41cd90f018006c8d/3244549cbc45701e9b5f1be99012fcde9c59cddc4f1670fded940323d9365c15.png"
+            ],
+            "origin": "TOOL",
+            "score": 0.524,
+            "rerankScore": 0.927
+          },
+          {
+            "ref": 14,
+            "knowledgeId": "d6c05a3d0cbab2dd3a214b4f75dc016f",
+            "docId": "fd02341cdd637d4b41cd90f018006c8d",
+            "fileName": "文文文文文文文文v3.0.docx",
+            "title": "文文",
+            "snippet": "文文\n文文文文文文文文文 > 文文 > 文文文文 > 文文\n\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\n文文文文文文文文文文文文文文\n文文文文\n文文文文文文文文文文文…",
+            "images": [
+              "/ai/images/fd02341cdd637d4b41cd90f018006c8d/f521b7a1b5f95c10f8f73712a8a79d59e438c921cdb5bc526a66d1c538db6203.png"
+            ],
+            "origin": "TOOL",
+            "score": 0.544,
+            "rerankScore": 0.805
+          },
+          {
+            "ref": 15,
+            "knowledgeId": "0bac78b0b93835eb742955eeb80802f6",
+            "docId": "fd02341cdd637d4b41cd90f018006c8d",
+            "fileName": "文文文文文文文文v3.0.docx",
+            "title": "文文文文",
+            "snippet": "文文文文\n文文文文文文文文文 > 文文 > 文文文文\n\n文文文文文文文文文文文文文文文文\n文文文文文文文文文文文文文文文文文文文\n文文文文文文文文文文文文文文文文文文文文文文\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文0…",
+            "images": [],
+            "origin": "TOOL",
+            "score": 0.527,
+            "rerankScore": 0.794
+          },
+          {
+            "ref": 16,
+            "knowledgeId": "145adbaebb0ea32758c23e2f607fb3aa",
+            "docId": "fd02341cdd637d4b41cd90f018006c8d",
+            "fileName": "文文文文文文文文v3.0.docx",
+            "title": "文文文文",
+            "snippet": "文文文文\n文文文文文文文文文 > 文文 > 文文文文 > 文文文文\n\n文文文文文文文文文文文文文\n文文文文\n文文文文文文文文文文文文文文文文文\n \n文2-21 文文文文文文文文文\n文文文文文文文文文文文文文文\n文文文文\n文文文文文文文文文文…",
+            "images": [
+              "/ai/images/fd02341cdd637d4b41cd90f018006c8d/471ebea99c005e126cc9db2ad0ca542613147a76e47b39af5ee43a952c82f824.png"
+            ],
+            "origin": "TOOL",
+            "score": 0.553,
+            "rerankScore": 0.706
+          }
+        ],
+        "finalImages": [
+          "/ai/images/fd02341cdd637d4b41cd90f018006c8d/b78b9f31b18de75e485f13a4837571e2dc2d7c9c60328a044f8e6f16e9f3c701.png?expire=1793971122&sig=0874aab7c96b235e302d0529cc7e0b67d8a4c18693139e9374744867dbab3a9e",
+          "/ai/images/fd02341cdd637d4b41cd90f018006c8d/45a8b6d7c16b3563291bfe49c459830daca45325d0a2c2697ed20207512be5c2.png?expire=1793971122&sig=8fac6a9becda2e483545962e6bc334f554ef757a6333f8b215e50d8d1de82c3e",
+          "/ai/images/fd02341cdd637d4b41cd90f018006c8d/9e4acc9cf41d1f7597f271024b4098c63863a93e7bb484448fb7b6e92c1b9278.png?expire=1793971122&sig=b1490b8960316c712881fa63f7729f40d968d4a2f3bb32af04743d67f72d1147",
+          "/ai/images/fd02341cdd637d4b41cd90f018006c8d/5c7c5247003691c8f30ba133d8392814239c8a5f5a2979b7ae9b867949af6a89.png?expire=1793971122&sig=366910a94b987d6b1d3e888f9eb2ecbb95cce62155db2472f5846fd545aa31fe",
+          "/ai/images/fd02341cdd637d4b41cd90f018006c8d/02274b102ed0b8049a0f8a436b78c291cb10657eeb553d2cec7a3538f4490a2c.png?expire=1793971122&sig=dfb958d46265cc61b61ad91dcc2fabbeb2b29b21a3165c0af6c4d11a728f0826",
+          "/ai/images/fd02341cdd637d4b41cd90f018006c8d/107960341322444a3a4e8f4b56a1bd5c091c7852f3168b4b65a05dba3084ce92.png?expire=1793971122&sig=e3dc9d4c4d5b9ed4401b4fe83f0d8ad000ee587417579811a5f5e5e57a28a9b5",
+          "/ai/images/fd02341cdd637d4b41cd90f018006c8d/d0778b55ce2406c716d5476183b336107e170a412487b7082eedf6ebea830674.png?expire=1793971122&sig=d90392dc0782f0a639eb4b0cee5db75f96a123461a7eff2b884f2f4ac6f4343e",
+          "/ai/images/fd02341cdd637d4b41cd90f018006c8d/b9e21af3e2a8e8ce4cacc77247f07f5e14aaf023a0ea58c3898b121dcb25c636.png?expire=1793971122&sig=4ebbb9e5e4201fbfe1eeff7cf29ea1609f247be568973c6241d0b10f9290a04b",
+          "/ai/images/fd02341cdd637d4b41cd90f018006c8d/bceb03165c4b9eeffbc9b3e379ea3692bd2dfe8a5ed4debfaf0e5f7b24a4c499.png?expire=1793971122&sig=fd4cca1e1294cd0cc88485ef532a789527b942be9e0cdad1dc7c1d7d3f5ec7a5",
+          "/ai/images/fd02341cdd637d4b41cd90f018006c8d/292a49cde702a4cb3801d38fea4ca16029f82d517aa69476b92e2d651b790c7e.png?expire=1793971122&sig=d92404f4d64cfc616923d794127d13890b5ef9e62255f2abc3f0e317d15cefed",
+          "/ai/images/fd02341cdd637d4b41cd90f018006c8d/068bd6d2902ccaad8dd943c4f3cd4ceef389981b4b423f502bb60a091804dd16.png?expire=1793971122&sig=c5a65936320e24b5c13b245818b9a8dc6a3cdd71110a067233c1cafe6acc987d",
+          "/ai/images/fd02341cdd637d4b41cd90f018006c8d/079e0608c520f3d8b174dbfdf36faadcb392ef3f67edc3eecf2aca81e73faa2a.png?expire=1793971122&sig=c4e8da7a93e8b421a672dfec5098f248fa9ce6532baaf0f494e5f6fb1ad916de",
+          "/ai/images/fd02341cdd637d4b41cd90f018006c8d/d15c047e1d456388f1c5ab9fa22ad4becb5260b84cb3c2d50bffdee9f323928e.png?expire=1793971122&sig=b1a6a5ab6a8748f0df19ccd30d38abc5279a245d39876f1344490b9eb49ed4ac",
+          "/ai/images/fd02341cdd637d4b41cd90f018006c8d/374074badef578c0ac2b79002adaa4d9e5da4ec3ac81187cb3b44f7042b5fd8a.png?expire=1793971122&sig=bccee759852236bdd4e7bb09b760c51ed1d9ae8205dbbe2f69b56faaf10ab437",
+          "/ai/images/fd02341cdd637d4b41cd90f018006c8d/08f146304356ecf813b4022fe9bb8cc06cc4883c76ce2d0aab00b2a6eea5d499.png?expire=1793971122&sig=7cb4a9ca7254e036df83ceeea87d6797fd5f090cc07870fa92a6375cab4b862b",
+          "/ai/images/fd02341cdd637d4b41cd90f018006c8d/cf37ef3a75d05ec40a0df43b6c619e976cf88d8665b539dbc3cf7642e3a70e41.png?expire=1793971122&sig=984c096ff664bccce354f53aa95be00d210581a51c392115b5b9080deb379027",
+          "/ai/images/fd02341cdd637d4b41cd90f018006c8d/227a595959ef9b6332c98076dcdfe0d9f2fc9f49d4a88619f1c242e67cbd0474.png?expire=1793971122&sig=327aca9202aa4439dd740c0e0fcad640cc14e1a0f94c9d15df47e2680e35f6d7",
+          "/ai/images/fd02341cdd637d4b41cd90f018006c8d/ab443b8227228e957b0f82ce2d3b0e6f8ac34f11a25a617c2d7f56001aa77763.png?expire=1793971122&sig=9acd38a7eab748be5c2e05bac528ea0611248738b378cafb21b782ee15f58ce6",
+          "/ai/images/fd02341cdd637d4b41cd90f018006c8d/dc4c52a3b316f96cdb67e4cc14b371dccefbfbf1996e7b809ab17b5d83f299ed.png?expire=1793971122&sig=beaf947908759b882a218ec43632fae3ed8289e09c1e2e9090dcdbaec2e3c06e",
+          "/ai/images/fd02341cdd637d4b41cd90f018006c8d/2a54ade05139c04374fbbccbff5f50150af83f8d271aeaa91e1ebe25eb8998d8.png?expire=1793971122&sig=cb88c0a35762a9b24705722e3d1893d3f8ea700ab70e56a2fcd5b04ec646eb2b",
+          "/ai/images/fd02341cdd637d4b41cd90f018006c8d/52760d4b2f0ebeb22aab1a76589b09bbe6819e04d42d161ae21798748c5822d3.png?expire=1793971122&sig=2b4b99f1d9d5521b80294a1eed9b0efb5a1d5642df603b8517c7da6bd96fede5",
+          "/ai/images/fd02341cdd637d4b41cd90f018006c8d/971200f8bca77b80a968a4135eda7298bef3f8503ffafe7d2f294882cc5e24a8.png?expire=1793971122&sig=b655db9063b262bfa66ef624245efe4866354fd116e91c28ab3fab50682290bb",
+          "/ai/images/fd02341cdd637d4b41cd90f018006c8d/adda5aaeba7062132db9728b402839f07c2ff4f96ef6315c12aa0aeb45ede675.png?expire=1793971122&sig=1455f0e122e5ae09d88f344665c0b6fc69da490c20f705458e0b953bcd2716e9",
+          "/ai/images/fd02341cdd637d4b41cd90f018006c8d/944c0c0e0f5902f600bf91cf04870f25cd20ecd5fb14a8e6916ee98c83c7d859.png?expire=1793971122&sig=054bf5f089d7a4e2998babebdd71f8423c4be52837ccb3946ac5682abc72966c",
+          "/ai/images/fd02341cdd637d4b41cd90f018006c8d/ecdea82e2544a7f64cf4d92cb3a2e91f6538c89c3990026c3a07b0e2594421e6.png?expire=1793971122&sig=908da11d5e9ea066d5cdc4ef2ff3347479ab08de4c78d651f08b381b9dcbb4a7",
+          "/ai/images/fd02341cdd637d4b41cd90f018006c8d/3244549cbc45701e9b5f1be99012fcde9c59cddc4f1670fded940323d9365c15.png?expire=1793971122&sig=3ee54dc53ad80844f1d382cd6705196ea858a8badb0d16fd37713d3b75760ea2",
+          "/ai/images/fd02341cdd637d4b41cd90f018006c8d/f521b7a1b5f95c10f8f73712a8a79d59e438c921cdb5bc526a66d1c538db6203.png?expire=1793971122&sig=b740a20951a53c0dc1b3c1ee0ccf2641a2f806c2d91e943adcde4d771c3a190c",
+          "/ai/images/fd02341cdd637d4b41cd90f018006c8d/471ebea99c005e126cc9db2ad0ca542613147a76e47b39af5ee43a952c82f824.png?expire=1793971122&sig=e62637b9d1d5227a358a30f34859dc09daa537a4dd5bdb96c923446d63d983e4"
+        ],
+        "degradations": [
+          {
+            "code": "noCitation",
+            "msg": "文文文文文文文文文",
+            "level": "debug"
+          }
+        ],
+        "elapsedMs": 20813,
+        "humanWaitMs": 0,
+        "turnWallMs": 27076,
+        "prepMs": 6263,
+        "tokens": {
+          "prompt": 59536,
+          "output": 2804,
+          "finalOutput": 344,
+          "total": 62340,
+          "cached": 40448,
+          "context": 19357,
+          "outputIsReal": true,
+          "hits": 16,
+          "window": 1000000,
+          "windowSource": "framework",
+          "parts": {
+            "system": 4308,
+            "input": 34,
+            "retrieval": 10487,
+            "toolOutput": 152,
+            "toolSchema": 4376
+          },
+          "thinkingChars": 0,
+          "turnElapsedMs": 20813,
+          "profile": "workspace",
+          "turnWallMs": 27076,
+          "turnPrepMs": 6263
+        },
+        "toolCalls": [
+          {
+            "name": "search_knowledge",
+            "status": "done",
+            "args": "{\"topK\":5,\"query\":\"文文文文 文文文文文文文 文文 文文\"}",
+            "startedAtMs": 1793967503111,
+            "elapsedMs": 813,
+            "result": "\"文文文 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n文文文1文文文文文文文文 > 文文文文 > 文文文文文文 > 文文 / 文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文6文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n文文文文文\\n文文文文文文文文文文文\\n| 文文 | 文文 | 文文 |\\n| --- | --- | --- |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文文文 | 文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文 |…文文文文文\\n\\n\\n文文文2文文文文文文文文 > 文文 / 文文文文文\\n\\n文文\\n文文文文文文文文文 > 文文\\n\\n文文文文文 文文文文文\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文6文文文文\\n文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文文\\n\\n\\n文文文3文文文文文文文文 > 文文 > 文文文文 / 文文文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n\\n文文文4文文文文文文文文 > 文文 > 文文文文文文 / 文文文文文文文文文\\n\\n文文文文文文文文文文文文文文文\\n| 文文 | 文文 | 文文 |\\n| --- | --- | --- |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文文文 | 文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文 | 文文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文文 | 文文文文文文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文文文 | 文文文文文文文文文文文文文文文文 |\\n| 文文文文…文文文文文\\n\\n\\n文文文5文文文文文文文文 > 文文 > 文文文文文文 / 文文文文文文文文文\\n\\n文文文文文文\\n文文文文文文文文文 > 文文 > 文文文文文文\\n\\n文文文 |\\n| 文文文文文文 | 文文 | 文文文文文文文文文文文文文文文文API文文文文文文文文文文文文 |\\n|…文文文文文"
+          },
+          {
+            "name": "search_knowledge",
+            "status": "done",
+            "args": "{\"topK\":5,\"query\":\"文文文文文 文文 文文 文文文文\"}",
+            "result": "\"文文文 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n文文文6文文文文文文文文 > 文文 > 文文文文 > 文文 / 文文文文文\\n\\n文文\\n文文文文文文文文文 > 文文 > 文文文文 > 文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文]\\n文文文文\\n文文文文文文文\\n1.文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n2.文文文文文文文文文文文文文文文文\\n3.文文文文文文文文文文文文文文文文\\n文文文文文文文文文文\\n1.文文文文文文文文文文文文文文文文文文文\\n2.文文文文文文文文文文文文文文文文文文文文文文文\\n3.文文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文RGB文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“文文文文”文文文文“文文文文文文文文”文]\\n文文文文文文文\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“文文文文”文文文文文文文文文文文文文文文文\\n文文文文文文文\\n文文文文…文文文文文\\n\\n文文文文文文文[文文1][文文2][文文3]\\n\\n文文文7文文文文文文文文 > 文文 > 文文文文文文文 > 文文文文 / 文文文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“2026文8文文文文文文文文”文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文“2026文8文文文文文文文文”文文文文文文文文文文文文文文文文文文]\\n文文文文文文文文文文文文2文\\n[文文文文文文文文文文文“2026文8文文文文文文文文”文文文文文文文文文文文文文文文文文文文文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文“2026文8文文文文文文文文”文“文文文文”文文文文文文文文文文文文文文文文文文文input_108文]\\n文文文文文文文文文文文文文文文文文文\\n文文文文文”xingming“文文文文文文文“文文”文文文文文文文“文文”文文文文文文文文文文“文文文文”文文文文文文文文“文文文”文文文文文文文文“文文文文文文”文文文文文文文文文\\n[文文文文文文文文文文文文文文“2026文8文文文文文文文文”文文文“文文”文文文文文文文文文文文文文文文文xingming文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文…文文文文文\\n\\n文文文文文文文[文文4][文文5][文文6][文文7][文文8][文文9]\\n\\n文文文8文文文文文文文文 > 文文 > 文文文文文文文 > 文文文文 / 文文文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n文文文文“zuopinjieshao”文文文文文文文“文文文文”文文文文文文“文文文文文文”文文文文文文文文“文文文”文\\n[文文文文文文文文文文文文文“2026文8文文文文文文文文”文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“wenjianshangchuan”文文文文文文文“文文文文”文文文文文文文文文文文文文文文“10”文文文文文文文文文文文10000000文MB文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“文文文文文文文文文“文文文文文文文文”文文文“文\\n[文文文WPS文文文文文文文文文文文“2026文8文文…文文文文文",
+            "startedAtMs": 1793967503120,
+            "elapsedMs": 804
+          },
+          {
+            "name": "search_knowledge",
+            "status": "done",
+            "args": "{\"topK\":5,\"query\":\"文文文文 文文文 文文 文文 文文文 文文文文 文文文\"}",
+            "startedAtMs": 1793967505140,
+            "elapsedMs": 604,
+            "result": "\"文文文 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n文文文9文文文文文文文文 > 文文 > 文文文文 > 文文文文 / 文文文文文文文\\n\\n文文文文\\n文文文文文文文文文 > 文文 > 文文文文 > 文文文文\\n\\n文文文文文文文\\n1.文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文”文文文“文文文文文\\n文文文文文文文文文文文文文文文文文文文文\\n文文文文\\n文文文文文文文\\n| 文文 | 文文 |\\n| --- | --- |\\n| 文文文 | 文文文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文 | 文文文文文文文文文文文文,文文文文文 |\\n| 文文文文 | 文文文文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文文文文 | 文文文文文文文文文文文 |\\n| 文文 | 文文文文文文文文文文文文文文文文文文文文文API文文文文文文文文文文文文文文 |\\n| 文文 | 文文文文文文文文文文文文文文文文文文文文文”文“文文文文文文文文文文文文文文文文文文文 |\\n\\n\\n\\n文文文7文文文文文文文文 > 文文 > 文文文文文文文 > 文文文文 / 文文文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“2026文8文文文文文文文文”文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文“2026文8文文文文文文文文”文文文文文文文文文文文文文文文文文文]\\n文文文文文文文文文文文文2文\\n[文文文文文文文文文文文“2026文8文文文文文文文文”文文文文文文文文文文文文文文文文文文文文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文“2026文8文文文文文文文文”文“文文文文”文文文文文文文文文文文文文文文文文文文input_108文]\\n文文文文文文文文文文文文文文文文文文\\n文文文文文”xingming“文文文文文文文“文文”文文文文文文文“文文”文文文文文文文文文文“文文文文”文文文文文文文文“文文文”文文文文文文文文“文文文文文文”文文文文文文文文文\\n[文文文文文文文文文文文文文文“2026文8文文文文文文文文”文文文“文文”文文文文文文文文文文文文文文文文xingming文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文…文文文文文\\n\\n文文文文文文文[文文4][文文5][文文6][文文7][文文8][文文9]\\n\\n文文文10文文文文文文文文 > 文文 > 文文文文文文 > 文文文文 / 文文文文文文文\\n\\n文文文文\\n文文文文文文文文文 > 文文 > 文文文文文文 > 文文文文\\n\\nenfenzhenghao”文文文文文文文文“文文文”文“文文文文”文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“mobile”文文文文文文文文文文文文文文文文文文“文文文”文“文文文文”文\\n[文文文文文文文文文文文文文文文文文“文文文文文文文”文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“文文”文文文文文文文文文文文文文文文“email”文文文文文文文文文文文文文文文文文文“文文文”文“文文文文”文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文49文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“文文”文文文文文文文文文文文文文文文文“bumen”文文文文文文文“文文文文”文文文文“文文文文文文文”文文文文文文文“文文”文文文文文文文文文文文文文文文文“文文文文”文文文文文文文文文文文文文文“文文”文文文文文文文文“文文文文文文”文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文文“文文文文文文文”文…文文文文文\\n\\n文文文文文文文[文文12][文文13][文文14][文文15][文文16]\\n\\n文文文11文文文文文文文文 > 文文 > 文文文文 > 文文文 / 文…文文文文文"
+          },
+          {
+            "name": "search_knowledge",
+            "status": "done",
+            "args": "{\"topK\":5,\"query\":\"文文文文文文 文文文 文文文 文文 文文文文\"}",
+            "result": "\"文文文 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n文文文13文文文文文文文文 > 文文 > 文文文文文文 > 文文文文 / 文文文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文“2026文8文文文文文文文文文文”文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文49文文]\\n文文文文文文”shoujibiao“文文文文文文文”文文文“文文文文文文文文文文文文6文文文文文文文文文文6文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文”文文“文文文文文文文文文文文文文文文文文文文”name“文文文”文文文文文文文“文文文文文文文文文”文文文“文”文文文文“文\\n[文文文文文文文文文文文文文文“2026文8文文文文文文文文文文”文文文文文文文文文文文文文文文文文文文文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文”文文“文文文文文文文文文文文文文文文文文文文”xingbie“文文文”文文文文文文文“文文文文文“文文文文”文文文文文文文文文文文文文文文文“文”文“文”文文文文文\\n[文文文文文文文文文文文文文文文文文“文文文文文文文”文文文文文文文文文文文文文文文文文文文文文文文文文文文文49文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“文…文文文文文\\n\\n文文文文文文文[文文23][文文24][文文25][文文26]\\n\\n文文文14文文文文文文文文 > 文文 > 文文文文 > 文文 / 文文文文文\\n\\n文文\\n文文文文文文文文文 > 文文 > 文文文文 > 文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文\\n文文文文\\n文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文“3048”文文文文文文文文163文126文qq文sina文sohu文文文文文文文文文45文文]\\n文2-20 文文文文\\n\\n文文文文文文文[文文27]\\n\\n文文文15文文文文文文文文 > 文文 > 文文文文 / 文文文文文文文\\n\\n文文文文\\n文文文文文文文文文 > 文文 > 文文文文\\n\\n文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文0.5文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n\\n文文文16文文文文文文文文 > 文文 > 文文文文 > 文文文文 / 文文文文文文文\\n\\n文文文文\\n文文文文文文文文文 > 文文 > 文文文文 > 文文文文\\n\\n文文文文文文文文文文文文文\\n文文文文\\n文文文文文文文文文文文文文文文文文\\n \\n文2-21 文文文文文文文文文\\n文文文文文文文文文文文文文文\\n文文文文\\n文文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文“510142”文文文文文文文“文文文文文文文文文”文文文文文文文文文]\\n文2-22 文文文文文文\\n\\n文文文文文文文[文文28]\\n\\n文文文1文文文文文文文文 > 文文文文 > 文文文文文文 > 文文 / 文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文6文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n文文文文文\\n文文文文文文文文文文文\\n| 文文 | 文文 | 文文 |\\n| --- | --- | --- |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 |…文文文文文",
+            "startedAtMs": 1793967505140,
+            "elapsedMs": 604
+          },
+          {
+            "name": "presentArtifact",
+            "label": "文文文文",
+            "hint": "文文文文文文文文文文文文",
+            "status": "done",
+            "args": "{\"description\":\"文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\",\"filename\":\"文文文文文文文_文文文文.md\",\"content\":\"# 文文文文文文文文文文文文文\\n\\n> 文文文文文文文文文文文文文文文文文文文文文/文文文文文文文文文文文文文文文文文文文文文\\n> 文文文文文文文文文文文 → 文文文文 → 文文文文 → 文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n---\\n\\n## 文文文文文文文文文文\\n\\n| 文文文文 | 文文 | 文文文文文文文文 |\\n| --- | --- | --- |\\n| 文文文文 | 文文文文文文文文文\\\"文文文文文\\\" | 文文文文 / 文文文文 / 文文文文文文文文文文文文文文 |\\n| 文文文 | 文文文文文文文文文文文文文文文文文文文 | 文文文文文 → 文文文文文文文文文 |\\n| 文文文文 | 文文文文文文文文文文文文文文文文 | 文文文 → 文文文文文文文文文文文文 → 文文/文文文文\\\"文文文文\\\" |\\n\\n**文文文文文文**文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n---\\n\\n## 文文文文文文文文文文文文文文文\\n\\n文文文文文文文文文文 6 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [1][2]文文文文文文文文文文文文文文文文文文文文文\\n\\n### 1. 文文文\\n- 文**文文文文**文文文文文 `2026文11文文文文文文文文`文文文文文文文文文文文文文文文文文文文文文文 [1]文\\n- 文文文文**文文文文**文**文文文文**文文文文文文文文文文文文文文文文文文 * 文文文文文文文文 [1]文\\n\\n### 2. 文文文文文文文文\\n- 文**文文文文**文文文文文文文文文文文文 [6]文文文文文文文文 **4 文**文`文文文 + 文文` 文文文文文文文文文文文文文文文文文文文文文文\\n- 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [6]文\\n- 文文文文文文文 12 文文文文文**文文文文**文文文文文文 / 文文文文 / 文文文文 / 文文文文文文文文文文文 [1]文\\n- 文文文文文文文文文文文文文文文文文文文文文文文文文文文文**文文文文**文文文文文文文文文文文 [1]文\\n\\n### 3. 文文文\\n- 文**文文文文**文文文/文文文文文文文文文文文文文文文文文文文文文文 [1]文\\n\\n---\\n\\n## 文文文文文文文文文文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [3]文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [15]文\\n\\n| 文文 | 文文文文 | 文文文文 |\\n| --- | --- | --- |\\n| 文文 | 文文文文 | 文文文文文\\\"文文文文文文文文文文文\\\" |\\n| 文文 | 文文文文 | 文文 + **文文文文**文文文\\\"文 2026010101\\\" |\\n| 文文 | 文文文文 | 文文文文文文 / 文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文\\\"文文文文\\\"文文文 [5] |\\n| 文文文文 | 文文文文-文文文文 | 文文文文文文文文文文\\\"文文文文\\\" [16] |\\n| 文文文 | 文文文文-文文文 | 文文文文文文文文文 [16] |\\n| 文文 | 文文文文-文文 | 文文文文文文文文文文文文文 [14] |\\n| 文文 / 文文 | 文文文文文 文 文文文文 | 文文文文文\\\"文文\\\"文文文文文文文文文文\\\"API\\\"文文文文文文文文[5] |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文 |\\n| 文文文文 / 文文 | 文文文 文 文文文文 | 文文文文文文文文文文文文文文文文文文文 [1] |\\n| 文文文文 / 文文文文 | 文文文文 / 文文文文 | 文文文文文文文文文文文文文文文文文文文文文文文文文文文 [5] |\\n\\n**文文文文**\\n- 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文——文文\\\"文/文文/M\\\"文文文文文文文文文\\n- 文文文文文文文文文文文文文文文文文文文文 [8]文\\n- 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [16]文\\n\\n---\\n\\n## 文文文文文文文文文文文文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文 → 文文文文 → 文文文文文 → 文文文 → 文文文 [7]文\\n\\n1. **文文文**文文文文文文文文文文文文文文文文文文文文文文文文 [9]文文文文文文文文文文文文文文文 `xingming`文`xuehao`文`shoujihao`文文文文 `input_108` 文文文文文 [7]文\\n2. **文文文文**文文文文文文文文文文文文文文文文文文文文文 [9]文文文文文文文文文文文文文文文文文\\\"文文文文文文文\\\"文文文文 [13]文\\n3. **文文**文文文文文文文\\\"?\\\"文文文文文文文文文文文文 [9]文文文文\\\"文文文\\\"文文文文文文文文文文文文文 [7]文\\n4. **文文文文**文\\n   - **文文文**文文文文文文文文文文文文\\\"文文文\\\" [9][11]文\\n   - **文文文文**文文文文文文文文文文文文文文文文文文文文文文文文文 [13][16]文\\n   - **文文文文**文文文文文文文文文/文文文文文文文文文文 [12]文\\n   - **文文文文文文**文文文文文文文文文 [12]文\\n   - **文文文文**文文文文文文文 API 文文文文文文文文文文文文文文 [12]文\\n\\n---\\n\\n## 文文文文文文文文文文文文文\\n\\n- **文文文文文**文文文文文文文文文文文——文文文文文文/文文/文文文文文文文文文文/文文/文文文文文文文文文文文文\\n- **文文文文**文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n- **文文文文文文**文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n- **文文文文文文文文文**文文文文文文文文\\\"文文文文\\\"文文文文文文文文文文文文文文文文文文文文 [6]文\\n- **文文文文文**文文文文文文文文文文文文文文文文4 文文文文文文文文文文文 2 文文文文文\\n\\n---\\n\\n## 文文文文文文文文文\\n\\n- [ ] 文文文文文文文文文文文文文文文文文文文文文文文文文\\n- [ ] 文文文文文文文文文文文文文文文 `input_xxx` 文文\\n- [ ] 文文文文文文文文文文\\\"文文文\\\"\\n- [ ] 文文 / 文文文 / 文文文 / 文文文文文\\\"文文文文\\\"\\n- [ ] 文文文文文文文文文文文文文文文文文文 / 文文 / API文\\n- [ ] 文文文文文文文文文文文文文文文文文文文文文文\\n- [ ] 文文文文文文文文文\\n- [ ] 文文文文文文文文文文文文文文文文文文文文文文文文文\\n- [ ] 文文文文文文文文文文文文文文文文文\\n\\n---\\n\\n## 文文文文文文文文文文文文文文文\\n\\n| 文文 | 文文 | 文文 | 文文 | 文文 |\\n| --- | --- | --- | --- | --- |\\n| 1 | 文文 | 文文文文 | 文 | 文 |\\n| 2 | 文文 | 文文文文 | 文 | 文 |\\n| 3 | 文文 | 文文文文 | 文 | 文 |\\n| 4 | 文文文文 | 文文文文 | 文 | 文 |\\n| 5 | 文文文文 | 文文文文-文文文文 | 文 | 文 |\\n| 6 | 文文文 | 文文文文-文文文 | 文 | 文 |\\n| 7 | 文文 | 文文文文-文文 | 文 | 文 |\\n| 8 | 文文 / 文文 | 文文文文文 | 文 | 文 |\\n| 9 | 文文文文 | 文文文文 | 文 | 文 |\\n| 10 | 文文文文 | 文文文文 | 文 | 文 |\\n| 11 | 文文 | 文文文文 | 文 | 文 |\\n\\n> 文文文文文文文文文文文文文文文文/文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\"}",
+            "startedAtMs": 1793967518246,
+            "elapsedMs": 331,
+            "result": "\"文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 文文文文文/ai/artifacts/yuanke/202611/7891a5d3461a4f12bef0b910692f9331_文文文文文文文_文文文文.md?expire=1793971118&sig=e660f8d941bc9a2a4a03b207344b82a673a6816d91fef0a410ba6ec182d54852\""
+          }
+        ],
+        "blocks": {
+          "v": 1,
+          "turnId": "55b82102c94245229b7b43a9c6b9ddc3",
+          "blocks": [
+            {
+              "kind": "text",
+              "channel": "narration",
+              "text": "文文文文文文文文文文文文文文文文文文文文文文文文文文",
+              "id": "b1"
+            },
+            {
+              "name": "search_knowledge",
+              "status": "done",
+              "args": "{\"topK\":5,\"query\":\"文文文文 文文文文文文文 文文 文文\"}",
+              "startedAtMs": 1793967503111,
+              "elapsedMs": 813,
+              "result": "\"文文文 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n文文文1文文文文文文文文 > 文文文文 > 文文文文文文 > 文文 / 文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文6文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n文文文文文\\n文文文文文文文文文文文\\n| 文文 | 文文 | 文文 |\\n| --- | --- | --- |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文文文 | 文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文 |…文文文文文\\n\\n\\n文文文2文文文文文文文文 > 文文 / 文文文文文\\n\\n文文\\n文文文文文文文文文 > 文文\\n\\n文文文文文 文文文文文\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文6文文文文\\n文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文文\\n\\n\\n文文文3文文文文文文文文 > 文文 > 文文文文 / 文文文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n\\n文文文4文文文文文文文文 > 文文 > 文文文文文文 / 文文文文文文文文文\\n\\n文文文文文文文文文文文文文文文\\n| 文文 | 文文 | 文文 |\\n| --- | --- | --- |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文文文 | 文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文 | 文文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文文 | 文文文文文文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文文文 | 文文文文文文文文文文文文文文文文 |\\n| 文文文文…文文文文文\\n\\n\\n文文文5文文文文文文文文 > 文文 > 文文文文文文 / 文文文文文文文文文\\n\\n文文文文文文\\n文文文文文文文文文 > 文文 > 文文文文文文\\n\\n文文文 |\\n| 文文文文文文 | 文文 | 文文文文文文文文文文文文文文文文API文文文文文文文文文文文文 |\\n|…文文文文文",
+              "kind": "tool",
+              "id": "b2"
+            },
+            {
+              "name": "search_knowledge",
+              "status": "done",
+              "args": "{\"topK\":5,\"query\":\"文文文文文 文文 文文 文文文文\"}",
+              "result": "\"文文文 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n文文文6文文文文文文文文 > 文文 > 文文文文 > 文文 / 文文文文文\\n\\n文文\\n文文文文文文文文文 > 文文 > 文文文文 > 文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文]\\n文文文文\\n文文文文文文文\\n1.文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n2.文文文文文文文文文文文文文文文文\\n3.文文文文文文文文文文文文文文文文\\n文文文文文文文文文文\\n1.文文文文文文文文文文文文文文文文文文文\\n2.文文文文文文文文文文文文文文文文文文文文文文文\\n3.文文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文RGB文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“文文文文”文文文文“文文文文文文文文”文]\\n文文文文文文文\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“文文文文”文文文文文文文文文文文文文文文文\\n文文文文文文文\\n文文文文…文文文文文\\n\\n文文文文文文文[文文1][文文2][文文3]\\n\\n文文文7文文文文文文文文 > 文文 > 文文文文文文文 > 文文文文 / 文文文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“2026文8文文文文文文文文”文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文“2026文8文文文文文文文文”文文文文文文文文文文文文文文文文文文]\\n文文文文文文文文文文文文2文\\n[文文文文文文文文文文文“2026文8文文文文文文文文”文文文文文文文文文文文文文文文文文文文文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文“2026文8文文文文文文文文”文“文文文文”文文文文文文文文文文文文文文文文文文文input_108文]\\n文文文文文文文文文文文文文文文文文文\\n文文文文文”xingming“文文文文文文文“文文”文文文文文文文“文文”文文文文文文文文文文“文文文文”文文文文文文文文“文文文”文文文文文文文文“文文文文文文”文文文文文文文文文\\n[文文文文文文文文文文文文文文“2026文8文文文文文文文文”文文文“文文”文文文文文文文文文文文文文文文文xingming文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文…文文文文文\\n\\n文文文文文文文[文文4][文文5][文文6][文文7][文文8][文文9]\\n\\n文文文8文文文文文文文文 > 文文 > 文文文文文文文 > 文文文文 / 文文文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n文文文文“zuopinjieshao”文文文文文文文“文文文文”文文文文文文“文文文文文文”文文文文文文文文“文文文”文\\n[文文文文文文文文文文文文文“2026文8文文文文文文文文”文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“wenjianshangchuan”文文文文文文文“文文文文”文文文文文文文文文文文文文文文“10”文文文文文文文文文文文10000000文MB文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“文文文文文文文文文“文文文文文文文文”文文文“文\\n[文文文WPS文文文文文文文文文文文“2026文8文文…文文文文文",
+              "startedAtMs": 1793967503120,
+              "elapsedMs": 804,
+              "kind": "tool",
+              "id": "b3"
+            },
+            {
+              "name": "search_knowledge",
+              "status": "done",
+              "args": "{\"topK\":5,\"query\":\"文文文文 文文文 文文 文文 文文文 文文文文 文文文\"}",
+              "startedAtMs": 1793967505140,
+              "elapsedMs": 604,
+              "result": "\"文文文 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n文文文9文文文文文文文文 > 文文 > 文文文文 > 文文文文 / 文文文文文文文\\n\\n文文文文\\n文文文文文文文文文 > 文文 > 文文文文 > 文文文文\\n\\n文文文文文文文\\n1.文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文”文文文“文文文文文\\n文文文文文文文文文文文文文文文文文文文文\\n文文文文\\n文文文文文文文\\n| 文文 | 文文 |\\n| --- | --- |\\n| 文文文 | 文文文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文 | 文文文文文文文文文文文文,文文文文文 |\\n| 文文文文 | 文文文文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文文文文 | 文文文文文文文文文文文 |\\n| 文文 | 文文文文文文文文文文文文文文文文文文文文文API文文文文文文文文文文文文文文 |\\n| 文文 | 文文文文文文文文文文文文文文文文文文文文文”文“文文文文文文文文文文文文文文文文文文文 |\\n\\n\\n\\n文文文7文文文文文文文文 > 文文 > 文文文文文文文 > 文文文文 / 文文文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“2026文8文文文文文文文文”文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文“2026文8文文文文文文文文”文文文文文文文文文文文文文文文文文文]\\n文文文文文文文文文文文文2文\\n[文文文文文文文文文文文“2026文8文文文文文文文文”文文文文文文文文文文文文文文文文文文文文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文“2026文8文文文文文文文文”文“文文文文”文文文文文文文文文文文文文文文文文文文input_108文]\\n文文文文文文文文文文文文文文文文文文\\n文文文文文”xingming“文文文文文文文“文文”文文文文文文文“文文”文文文文文文文文文文“文文文文”文文文文文文文文“文文文”文文文文文文文文“文文文文文文”文文文文文文文文文\\n[文文文文文文文文文文文文文文“2026文8文文文文文文文文”文文文“文文”文文文文文文文文文文文文文文文文xingming文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文…文文文文文\\n\\n文文文文文文文[文文4][文文5][文文6][文文7][文文8][文文9]\\n\\n文文文10文文文文文文文文 > 文文 > 文文文文文文 > 文文文文 / 文文文文文文文\\n\\n文文文文\\n文文文文文文文文文 > 文文 > 文文文文文文 > 文文文文\\n\\nenfenzhenghao”文文文文文文文文“文文文”文“文文文文”文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“mobile”文文文文文文文文文文文文文文文文文文“文文文”文“文文文文”文\\n[文文文文文文文文文文文文文文文文文“文文文文文文文”文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“文文”文文文文文文文文文文文文文文文“email”文文文文文文文文文文文文文文文文文文“文文文”文“文文文文”文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文49文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“文文”文文文文文文文文文文文文文文文文“bumen”文文文文文文文“文文文文”文文文文“文文文文文文文”文文文文文文文“文文”文文文文文文文文文文文文文文文文“文文文文”文文文文文文文文文文文文文文“文文”文文文文文文文文“文文文文文文”文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文文“文文文文文文文”文…文文文文文\\n\\n文文文文文文文[文文12][文文13][文文14][文文15][文文16]\\n\\n文文文11文文文文文文文文 > 文文 > 文文文文 > 文文文 / 文…文文文文文",
+              "kind": "tool",
+              "id": "b4"
+            },
+            {
+              "name": "search_knowledge",
+              "status": "done",
+              "args": "{\"topK\":5,\"query\":\"文文文文文文 文文文 文文文 文文 文文文文\"}",
+              "result": "\"文文文 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n文文文13文文文文文文文文 > 文文 > 文文文文文文 > 文文文文 / 文文文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文“2026文8文文文文文文文文文文”文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文49文文]\\n文文文文文文”shoujibiao“文文文文文文文”文文文“文文文文文文文文文文文文6文文文文文文文文文文6文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文”文文“文文文文文文文文文文文文文文文文文文文”name“文文文”文文文文文文文“文文文文文文文文文”文文文“文”文文文文“文\\n[文文文文文文文文文文文文文文“2026文8文文文文文文文文文文”文文文文文文文文文文文文文文文文文文文文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文”文文“文文文文文文文文文文文文文文文文文文文”xingbie“文文文”文文文文文文文“文文文文文“文文文文”文文文文文文文文文文文文文文文文“文”文“文”文文文文文\\n[文文文文文文文文文文文文文文文文文“文文文文文文文”文文文文文文文文文文文文文文文文文文文文文文文文文文文文49文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“文…文文文文文\\n\\n文文文文文文文[文文23][文文24][文文25][文文26]\\n\\n文文文14文文文文文文文文 > 文文 > 文文文文 > 文文 / 文文文文文\\n\\n文文\\n文文文文文文文文文 > 文文 > 文文文文 > 文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文\\n文文文文\\n文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文“3048”文文文文文文文文163文126文qq文sina文sohu文文文文文文文文文45文文]\\n文2-20 文文文文\\n\\n文文文文文文文[文文27]\\n\\n文文文15文文文文文文文文 > 文文 > 文文文文 / 文文文文文文文\\n\\n文文文文\\n文文文文文文文文文 > 文文 > 文文文文\\n\\n文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文0.5文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n\\n文文文16文文文文文文文文 > 文文 > 文文文文 > 文文文文 / 文文文文文文文\\n\\n文文文文\\n文文文文文文文文文 > 文文 > 文文文文 > 文文文文\\n\\n文文文文文文文文文文文文文\\n文文文文\\n文文文文文文文文文文文文文文文文文\\n \\n文2-21 文文文文文文文文文\\n文文文文文文文文文文文文文文\\n文文文文\\n文文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文“510142”文文文文文文文“文文文文文文文文文”文文文文文文文文文]\\n文2-22 文文文文文文\\n\\n文文文文文文文[文文28]\\n\\n文文文1文文文文文文文文 > 文文文文 > 文文文文文文 > 文文 / 文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文6文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n文文文文文\\n文文文文文文文文文文文\\n| 文文 | 文文 | 文文 |\\n| --- | --- | --- |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 |…文文文文文",
+              "startedAtMs": 1793967505140,
+              "elapsedMs": 604,
+              "kind": "tool",
+              "id": "b5"
+            },
+            {
+              "name": "presentArtifact",
+              "label": "文文文文",
+              "hint": "文文文文文文文文文文文文",
+              "status": "done",
+              "args": "{\"description\":\"文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\",\"filename\":\"文文文文文文文_文文文文.md\",\"content\":\"# 文文文文文文文文文文文文文\\n\\n> 文文文文文文文文文文文文文文文文文文文文文/文文文文文文文文文文文文文文文文文文文文文\\n> 文文文文文文文文文文文 → 文文文文 → 文文文文 → 文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n---\\n\\n## 文文文文文文文文文文\\n\\n| 文文文文 | 文文 | 文文文文文文文文 |\\n| --- | --- | --- |\\n| 文文文文 | 文文文文文文文文文\\\"文文文文文\\\" | 文文文文 / 文文文文 / 文文文文文文文文文文文文文文 |\\n| 文文文 | 文文文文文文文文文文文文文文文文文文文 | 文文文文文 → 文文文文文文文文文 |\\n| 文文文文 | 文文文文文文文文文文文文文文文文 | 文文文 → 文文文文文文文文文文文文 → 文文/文文文文\\\"文文文文\\\" |\\n\\n**文文文文文文**文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n---\\n\\n## 文文文文文文文文文文文文文文文\\n\\n文文文文文文文文文文 6 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [1][2]文文文文文文文文文文文文文文文文文文文文文\\n\\n### 1. 文文文\\n- 文**文文文文**文文文文文 `2026文11文文文文文文文文`文文文文文文文文文文文文文文文文文文文文文文 [1]文\\n- 文文文文**文文文文**文**文文文文**文文文文文文文文文文文文文文文文文文 * 文文文文文文文文 [1]文\\n\\n### 2. 文文文文文文文文\\n- 文**文文文文**文文文文文文文文文文文文 [6]文文文文文文文文 **4 文**文`文文文 + 文文` 文文文文文文文文文文文文文文文文文文文文文文\\n- 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [6]文\\n- 文文文文文文文 12 文文文文文**文文文文**文文文文文文 / 文文文文 / 文文文文 / 文文文文文文文文文文文 [1]文\\n- 文文文文文文文文文文文文文文文文文文文文文文文文文文文文**文文文文**文文文文文文文文文文文 [1]文\\n\\n### 3. 文文文\\n- 文**文文文文**文文文/文文文文文文文文文文文文文文文文文文文文文文 [1]文\\n\\n---\\n\\n## 文文文文文文文文文文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [3]文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [15]文\\n\\n| 文文 | 文文文文 | 文文文文 |\\n| --- | --- | --- |\\n| 文文 | 文文文文 | 文文文文文\\\"文文文文文文文文文文文\\\" |\\n| 文文 | 文文文文 | 文文 + **文文文文**文文文\\\"文 2026010101\\\" |\\n| 文文 | 文文文文 | 文文文文文文 / 文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文\\\"文文文文\\\"文文文 [5] |\\n| 文文文文 | 文文文文-文文文文 | 文文文文文文文文文文\\\"文文文文\\\" [16] |\\n| 文文文 | 文文文文-文文文 | 文文文文文文文文文 [16] |\\n| 文文 | 文文文文-文文 | 文文文文文文文文文文文文文 [14] |\\n| 文文 / 文文 | 文文文文文 文 文文文文 | 文文文文文\\\"文文\\\"文文文文文文文文文文\\\"API\\\"文文文文文文文文[5] |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文 |\\n| 文文文文 / 文文 | 文文文 文 文文文文 | 文文文文文文文文文文文文文文文文文文文 [1] |\\n| 文文文文 / 文文文文 | 文文文文 / 文文文文 | 文文文文文文文文文文文文文文文文文文文文文文文文文文文 [5] |\\n\\n**文文文文**\\n- 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文——文文\\\"文/文文/M\\\"文文文文文文文文文\\n- 文文文文文文文文文文文文文文文文文文文文 [8]文\\n- 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [16]文\\n\\n---\\n\\n## 文文文文文文文文文文文文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文 → 文文文文 → 文文文文文 → 文文文 → 文文文 [7]文\\n\\n1. **文文文**文文文文文文文文文文文文文文文文文文文文文文文文 [9]文文文文文文文文文文文文文文文 `xingming`文`xuehao`文`shoujihao`文文文文 `input_108` 文文文文文 [7]文\\n2. **文文文文**文文文文文文文文文文文文文文文文文文文文文 [9]文文文文文文文文文文文文文文文文文\\\"文文文文文文文\\\"文文文文 [13]文\\n3. **文文**文文文文文文文\\\"?\\\"文文文文文文文文文文文文 [9]文文文文\\\"文文文\\\"文文文文文文文文文文文文文 [7]文\\n4. **文文文文**文\\n   - **文文文**文文文文文文文文文文文文\\\"文文文\\\" [9][11]文\\n   - **文文文文**文文文文文文文文文文文文文文文文文文文文文文文文文 [13][16]文\\n   - **文文文文**文文文文文文文文文/文文文文文文文文文文 [12]文\\n   - **文文文文文文**文文文文文文文文文 [12]文\\n   - **文文文文**文文文文文文文 API 文文文文文文文文文文文文文文 [12]文\\n\\n---\\n\\n## 文文文文文文文文文文文文文\\n\\n- **文文文文文**文文文文文文文文文文文——文文文文文文/文文/文文文文文文文文文文/文文/文文文文文文文文文文文文\\n- **文文文文**文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n- **文文文文文文**文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n- **文文文文文文文文文**文文文文文文文文\\\"文文文文\\\"文文文文文文文文文文文文文文文文文文文文 [6]文\\n- **文文文文文**文文文文文文文文文文文文文文文文4 文文文文文文文文文文文 2 文文文文文\\n\\n---\\n\\n## 文文文文文文文文文\\n\\n- [ ] 文文文文文文文文文文文文文文文文文文文文文文文文文\\n- [ ] 文文文文文文文文文文文文文文文 `input_xxx` 文文\\n- [ ] 文文文文文文文文文文\\\"文文文\\\"\\n- [ ] 文文 / 文文文 / 文文文 / 文文文文文\\\"文文文文\\\"\\n- [ ] 文文文文文文文文文文文文文文文文文文 / 文文 / API文\\n- [ ] 文文文文文文文文文文文文文文文文文文文文文文\\n- [ ] 文文文文文文文文文\\n- [ ] 文文文文文文文文文文文文文文文文文文文文文文文文文\\n- [ ] 文文文文文文文文文文文文文文文文文\\n\\n---\\n\\n## 文文文文文文文文文文文文文文文\\n\\n| 文文 | 文文 | 文文 | 文文 | 文文 |\\n| --- | --- | --- | --- | --- |\\n| 1 | 文文 | 文文文文 | 文 | 文 |\\n| 2 | 文文 | 文文文文 | 文 | 文 |\\n| 3 | 文文 | 文文文文 | 文 | 文 |\\n| 4 | 文文文文 | 文文文文 | 文 | 文 |\\n| 5 | 文文文文 | 文文文文-文文文文 | 文 | 文 |\\n| 6 | 文文文 | 文文文文-文文文 | 文 | 文 |\\n| 7 | 文文 | 文文文文-文文 | 文 | 文 |\\n| 8 | 文文 / 文文 | 文文文文文 | 文 | 文 |\\n| 9 | 文文文文 | 文文文文 | 文 | 文 |\\n| 10 | 文文文文 | 文文文文 | 文 | 文 |\\n| 11 | 文文 | 文文文文 | 文 | 文 |\\n\\n> 文文文文文文文文文文文文文文文文/文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\"}",
+              "startedAtMs": 1793967518246,
+              "elapsedMs": 331,
+              "result": "\"文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 文文文文文/ai/artifacts/yuanke/202611/7891a5d3461a4f12bef0b910692f9331_文文文文文文文_文文文文.md?expire=1793971118&sig=e660f8d941bc9a2a4a03b207344b82a673a6816d91fef0a410ba6ec182d54852\"",
+              "kind": "tool",
+              "id": "b6"
+            },
+            {
+              "kind": "text",
+              "channel": "answer",
+              "text": "文文文文文文文文文文文文文**文文文文文文文_文文文文.md**\n\n文文文文文文文文文文文 → 文文文文 → 文文文文 → 文文文文文文文文文文文文文文文文文文文文\n\n1. **文文文文文文文文**文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\n2. **文文文**文文文文文文文文文文文文文文文文 4 文文文文文文文文文文文文文文文文文文文文文文文\n3. **文文文**文11 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\n4. **文文文**文文文文文文文文文文文——文文文文文文文文文文 `input_108`文文文文文文文文文文文文文文文文文 / 文文文文 / 文文文文 / 文文文\n5. **文文文文文文**文文文文文文文文文文文文文文文文文文文文文文文\n6. **文文文文文文文**文9 文文文文文文\n\n文文文文文文 11 文文文文文文文文文文 / 文文 / 文文文文 / 文文文文文文文文文文文文文文文\n\n",
+              "id": "b7"
+            },
+            {
+              "id": "b8",
+              "url": "/ai/artifacts/yuanke/202611/7891a5d3461a4f12bef0b910692f9331_文文文文文文文_文文文文.md?expire=1793971122&sig=61d46011a5403ad242839691f9bb3237332b0b6c2861b5f3cbd36995aaea2b35",
+              "filename": "文文文文文文文_文文文文.md",
+              "ext": "md",
+              "size": 7564,
+              "description": "文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文",
+              "kind": "artifact"
+            }
+          ]
+        },
+        "artifacts": [
+          {
+            "id": "7891a5d3461a4f12bef0b910692f9331",
+            "url": "/ai/artifacts/yuanke/202611/7891a5d3461a4f12bef0b910692f9331_文文文文文文文_文文文文.md?expire=1793971122&sig=61d46011a5403ad242839691f9bb3237332b0b6c2861b5f3cbd36995aaea2b35",
+            "filename": "文文文文文文文_文文文文.md",
+            "ext": "md",
+            "size": 7564,
+            "description": "文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文"
+          }
+        ],
+        "related": [
+          "文文文文文文文 11 文文文文文文文文文文文文文文 schema JSON",
+          "文文文文文文文文文文文文文文文文文 HTML 文文文文文文文文文文文",
+          "文文文文文文文文文文文文文文文文文文文文文文文文"
+        ],
+        "thinking": null
+      }
+    }
+  ],
+  "message": {
+    "turnId": "55b82102c94245229b7b43a9c6b9ddc3",
+    "role": "ai",
+    "createTime": "2026-11-06 20:18:42",
+    "blocks": {
+      "v": 1,
+      "turnId": "55b82102c94245229b7b43a9c6b9ddc3",
+      "blocks": [
+        {
+          "kind": "text",
+          "channel": "narration",
+          "text": "文文文文文文文文文文文文文文文文文文文文文文文文文文",
+          "id": "b1"
+        },
+        {
+          "name": "search_knowledge",
+          "status": "done",
+          "args": "{\"topK\":5,\"query\":\"文文文文 文文文文文文文 文文 文文\"}",
+          "startedAtMs": 1793967503111,
+          "elapsedMs": 813,
+          "result": "\"文文文 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n文文文1文文文文文文文文 > 文文文文 > 文文文文文文 > 文文 / 文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文6文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n文文文文文\\n文文文文文文文文文文文\\n| 文文 | 文文 | 文文 |\\n| --- | --- | --- |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文文文 | 文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文 |…文文文文文\\n\\n\\n文文文2文文文文文文文文 > 文文 / 文文文文文\\n\\n文文\\n文文文文文文文文文 > 文文\\n\\n文文文文文 文文文文文\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文6文文文文\\n文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文文\\n\\n\\n文文文3文文文文文文文文 > 文文 > 文文文文 / 文文文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n\\n文文文4文文文文文文文文 > 文文 > 文文文文文文 / 文文文文文文文文文\\n\\n文文文文文文文文文文文文文文文\\n| 文文 | 文文 | 文文 |\\n| --- | --- | --- |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文文文 | 文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文 | 文文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文文 | 文文文文文文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文文文 | 文文文文文文文文文文文文文文文文 |\\n| 文文文文…文文文文文\\n\\n\\n文文文5文文文文文文文文 > 文文 > 文文文文文文 / 文文文文文文文文文\\n\\n文文文文文文\\n文文文文文文文文文 > 文文 > 文文文文文文\\n\\n文文文 |\\n| 文文文文文文 | 文文 | 文文文文文文文文文文文文文文文文API文文文文文文文文文文文文 |\\n|…文文文文文",
+          "kind": "tool",
+          "id": "b2"
+        },
+        {
+          "name": "search_knowledge",
+          "status": "done",
+          "args": "{\"topK\":5,\"query\":\"文文文文文 文文 文文 文文文文\"}",
+          "result": "\"文文文 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n文文文6文文文文文文文文 > 文文 > 文文文文 > 文文 / 文文文文文\\n\\n文文\\n文文文文文文文文文 > 文文 > 文文文文 > 文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文]\\n文文文文\\n文文文文文文文\\n1.文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n2.文文文文文文文文文文文文文文文文\\n3.文文文文文文文文文文文文文文文文\\n文文文文文文文文文文\\n1.文文文文文文文文文文文文文文文文文文文\\n2.文文文文文文文文文文文文文文文文文文文文文文文\\n3.文文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文RGB文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“文文文文”文文文文“文文文文文文文文”文]\\n文文文文文文文\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“文文文文”文文文文文文文文文文文文文文文文\\n文文文文文文文\\n文文文文…文文文文文\\n\\n文文文文文文文[文文1][文文2][文文3]\\n\\n文文文7文文文文文文文文 > 文文 > 文文文文文文文 > 文文文文 / 文文文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“2026文8文文文文文文文文”文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文“2026文8文文文文文文文文”文文文文文文文文文文文文文文文文文文]\\n文文文文文文文文文文文文2文\\n[文文文文文文文文文文文“2026文8文文文文文文文文”文文文文文文文文文文文文文文文文文文文文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文“2026文8文文文文文文文文”文“文文文文”文文文文文文文文文文文文文文文文文文文input_108文]\\n文文文文文文文文文文文文文文文文文文\\n文文文文文”xingming“文文文文文文文“文文”文文文文文文文“文文”文文文文文文文文文文“文文文文”文文文文文文文文“文文文”文文文文文文文文“文文文文文文”文文文文文文文文文\\n[文文文文文文文文文文文文文文“2026文8文文文文文文文文”文文文“文文”文文文文文文文文文文文文文文文文xingming文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文…文文文文文\\n\\n文文文文文文文[文文4][文文5][文文6][文文7][文文8][文文9]\\n\\n文文文8文文文文文文文文 > 文文 > 文文文文文文文 > 文文文文 / 文文文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n文文文文“zuopinjieshao”文文文文文文文“文文文文”文文文文文文“文文文文文文”文文文文文文文文“文文文”文\\n[文文文文文文文文文文文文文“2026文8文文文文文文文文”文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“wenjianshangchuan”文文文文文文文“文文文文”文文文文文文文文文文文文文文文“10”文文文文文文文文文文文10000000文MB文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“文文文文文文文文文“文文文文文文文文”文文文“文\\n[文文文WPS文文文文文文文文文文文“2026文8文文…文文文文文",
+          "startedAtMs": 1793967503120,
+          "elapsedMs": 804,
+          "kind": "tool",
+          "id": "b3"
+        },
+        {
+          "name": "search_knowledge",
+          "status": "done",
+          "args": "{\"topK\":5,\"query\":\"文文文文 文文文 文文 文文 文文文 文文文文 文文文\"}",
+          "startedAtMs": 1793967505140,
+          "elapsedMs": 604,
+          "result": "\"文文文 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n文文文9文文文文文文文文 > 文文 > 文文文文 > 文文文文 / 文文文文文文文\\n\\n文文文文\\n文文文文文文文文文 > 文文 > 文文文文 > 文文文文\\n\\n文文文文文文文\\n1.文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文”文文文“文文文文文\\n文文文文文文文文文文文文文文文文文文文文\\n文文文文\\n文文文文文文文\\n| 文文 | 文文 |\\n| --- | --- |\\n| 文文文 | 文文文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文 | 文文文文文文文文文文文文,文文文文文 |\\n| 文文文文 | 文文文文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文文文文 | 文文文文文文文文文文文 |\\n| 文文 | 文文文文文文文文文文文文文文文文文文文文文API文文文文文文文文文文文文文文 |\\n| 文文 | 文文文文文文文文文文文文文文文文文文文文文”文“文文文文文文文文文文文文文文文文文文文 |\\n\\n\\n\\n文文文7文文文文文文文文 > 文文 > 文文文文文文文 > 文文文文 / 文文文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“2026文8文文文文文文文文”文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文“2026文8文文文文文文文文”文文文文文文文文文文文文文文文文文文]\\n文文文文文文文文文文文文2文\\n[文文文文文文文文文文文“2026文8文文文文文文文文”文文文文文文文文文文文文文文文文文文文文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文“2026文8文文文文文文文文”文“文文文文”文文文文文文文文文文文文文文文文文文文input_108文]\\n文文文文文文文文文文文文文文文文文文\\n文文文文文”xingming“文文文文文文文“文文”文文文文文文文“文文”文文文文文文文文文文“文文文文”文文文文文文文文“文文文”文文文文文文文文“文文文文文文”文文文文文文文文文\\n[文文文文文文文文文文文文文文“2026文8文文文文文文文文”文文文“文文”文文文文文文文文文文文文文文文文xingming文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文…文文文文文\\n\\n文文文文文文文[文文4][文文5][文文6][文文7][文文8][文文9]\\n\\n文文文10文文文文文文文文 > 文文 > 文文文文文文 > 文文文文 / 文文文文文文文\\n\\n文文文文\\n文文文文文文文文文 > 文文 > 文文文文文文 > 文文文文\\n\\nenfenzhenghao”文文文文文文文文“文文文”文“文文文文”文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“mobile”文文文文文文文文文文文文文文文文文文“文文文”文“文文文文”文\\n[文文文文文文文文文文文文文文文文文“文文文文文文文”文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“文文”文文文文文文文文文文文文文文文“email”文文文文文文文文文文文文文文文文文文“文文文”文“文文文文”文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文49文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“文文”文文文文文文文文文文文文文文文文“bumen”文文文文文文文“文文文文”文文文文“文文文文文文文”文文文文文文文“文文”文文文文文文文文文文文文文文文文“文文文文”文文文文文文文文文文文文文文“文文”文文文文文文文文“文文文文文文”文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文文“文文文文文文文”文…文文文文文\\n\\n文文文文文文文[文文12][文文13][文文14][文文15][文文16]\\n\\n文文文11文文文文文文文文 > 文文 > 文文文文 > 文文文 / 文…文文文文文",
+          "kind": "tool",
+          "id": "b4"
+        },
+        {
+          "name": "search_knowledge",
+          "status": "done",
+          "args": "{\"topK\":5,\"query\":\"文文文文文文 文文文 文文文 文文 文文文文\"}",
+          "result": "\"文文文 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n文文文13文文文文文文文文 > 文文 > 文文文文文文 > 文文文文 / 文文文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文“2026文8文文文文文文文文文文”文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文49文文]\\n文文文文文文”shoujibiao“文文文文文文文”文文文“文文文文文文文文文文文文6文文文文文文文文文文6文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文”文文“文文文文文文文文文文文文文文文文文文文”name“文文文”文文文文文文文“文文文文文文文文文”文文文“文”文文文文“文\\n[文文文文文文文文文文文文文文“2026文8文文文文文文文文文文”文文文文文文文文文文文文文文文文文文文文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文”文文“文文文文文文文文文文文文文文文文文文文”xingbie“文文文”文文文文文文文“文文文文文“文文文文”文文文文文文文文文文文文文文文文“文”文“文”文文文文文\\n[文文文文文文文文文文文文文文文文文“文文文文文文文”文文文文文文文文文文文文文文文文文文文文文文文文文文文文49文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“文…文文文文文\\n\\n文文文文文文文[文文23][文文24][文文25][文文26]\\n\\n文文文14文文文文文文文文 > 文文 > 文文文文 > 文文 / 文文文文文\\n\\n文文\\n文文文文文文文文文 > 文文 > 文文文文 > 文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文\\n文文文文\\n文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文“3048”文文文文文文文文163文126文qq文sina文sohu文文文文文文文文文45文文]\\n文2-20 文文文文\\n\\n文文文文文文文[文文27]\\n\\n文文文15文文文文文文文文 > 文文 > 文文文文 / 文文文文文文文\\n\\n文文文文\\n文文文文文文文文文 > 文文 > 文文文文\\n\\n文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文0.5文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n\\n文文文16文文文文文文文文 > 文文 > 文文文文 > 文文文文 / 文文文文文文文\\n\\n文文文文\\n文文文文文文文文文 > 文文 > 文文文文 > 文文文文\\n\\n文文文文文文文文文文文文文\\n文文文文\\n文文文文文文文文文文文文文文文文文\\n \\n文2-21 文文文文文文文文文\\n文文文文文文文文文文文文文文\\n文文文文\\n文文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文“510142”文文文文文文文“文文文文文文文文文”文文文文文文文文文]\\n文2-22 文文文文文文\\n\\n文文文文文文文[文文28]\\n\\n文文文1文文文文文文文文 > 文文文文 > 文文文文文文 > 文文 / 文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文6文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n文文文文文\\n文文文文文文文文文文文\\n| 文文 | 文文 | 文文 |\\n| --- | --- | --- |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 |…文文文文文",
+          "startedAtMs": 1793967505140,
+          "elapsedMs": 604,
+          "kind": "tool",
+          "id": "b5"
+        },
+        {
+          "name": "presentArtifact",
+          "label": "文文文文",
+          "hint": "文文文文文文文文文文文文",
+          "status": "done",
+          "args": "{\"description\":\"文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\",\"filename\":\"文文文文文文文_文文文文.md\",\"content\":\"# 文文文文文文文文文文文文文\\n\\n> 文文文文文文文文文文文文文文文文文文文文文/文文文文文文文文文文文文文文文文文文文文文\\n> 文文文文文文文文文文文 → 文文文文 → 文文文文 → 文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n---\\n\\n## 文文文文文文文文文文\\n\\n| 文文文文 | 文文 | 文文文文文文文文 |\\n| --- | --- | --- |\\n| 文文文文 | 文文文文文文文文文\\\"文文文文文\\\" | 文文文文 / 文文文文 / 文文文文文文文文文文文文文文 |\\n| 文文文 | 文文文文文文文文文文文文文文文文文文文 | 文文文文文 → 文文文文文文文文文 |\\n| 文文文文 | 文文文文文文文文文文文文文文文文 | 文文文 → 文文文文文文文文文文文文 → 文文/文文文文\\\"文文文文\\\" |\\n\\n**文文文文文文**文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n---\\n\\n## 文文文文文文文文文文文文文文文\\n\\n文文文文文文文文文文 6 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [1][2]文文文文文文文文文文文文文文文文文文文文文\\n\\n### 1. 文文文\\n- 文**文文文文**文文文文文 `2026文11文文文文文文文文`文文文文文文文文文文文文文文文文文文文文文文 [1]文\\n- 文文文文**文文文文**文**文文文文**文文文文文文文文文文文文文文文文文文 * 文文文文文文文文 [1]文\\n\\n### 2. 文文文文文文文文\\n- 文**文文文文**文文文文文文文文文文文文 [6]文文文文文文文文 **4 文**文`文文文 + 文文` 文文文文文文文文文文文文文文文文文文文文文文\\n- 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [6]文\\n- 文文文文文文文 12 文文文文文**文文文文**文文文文文文 / 文文文文 / 文文文文 / 文文文文文文文文文文文 [1]文\\n- 文文文文文文文文文文文文文文文文文文文文文文文文文文文文**文文文文**文文文文文文文文文文文 [1]文\\n\\n### 3. 文文文\\n- 文**文文文文**文文文/文文文文文文文文文文文文文文文文文文文文文文 [1]文\\n\\n---\\n\\n## 文文文文文文文文文文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [3]文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [15]文\\n\\n| 文文 | 文文文文 | 文文文文 |\\n| --- | --- | --- |\\n| 文文 | 文文文文 | 文文文文文\\\"文文文文文文文文文文文\\\" |\\n| 文文 | 文文文文 | 文文 + **文文文文**文文文\\\"文 2026010101\\\" |\\n| 文文 | 文文文文 | 文文文文文文 / 文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文\\\"文文文文\\\"文文文 [5] |\\n| 文文文文 | 文文文文-文文文文 | 文文文文文文文文文文\\\"文文文文\\\" [16] |\\n| 文文文 | 文文文文-文文文 | 文文文文文文文文文 [16] |\\n| 文文 | 文文文文-文文 | 文文文文文文文文文文文文文 [14] |\\n| 文文 / 文文 | 文文文文文 文 文文文文 | 文文文文文\\\"文文\\\"文文文文文文文文文文\\\"API\\\"文文文文文文文文[5] |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文 |\\n| 文文文文 / 文文 | 文文文 文 文文文文 | 文文文文文文文文文文文文文文文文文文文 [1] |\\n| 文文文文 / 文文文文 | 文文文文 / 文文文文 | 文文文文文文文文文文文文文文文文文文文文文文文文文文文 [5] |\\n\\n**文文文文**\\n- 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文——文文\\\"文/文文/M\\\"文文文文文文文文文\\n- 文文文文文文文文文文文文文文文文文文文文 [8]文\\n- 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [16]文\\n\\n---\\n\\n## 文文文文文文文文文文文文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文 → 文文文文 → 文文文文文 → 文文文 → 文文文 [7]文\\n\\n1. **文文文**文文文文文文文文文文文文文文文文文文文文文文文文 [9]文文文文文文文文文文文文文文文 `xingming`文`xuehao`文`shoujihao`文文文文 `input_108` 文文文文文 [7]文\\n2. **文文文文**文文文文文文文文文文文文文文文文文文文文文 [9]文文文文文文文文文文文文文文文文文\\\"文文文文文文文\\\"文文文文 [13]文\\n3. **文文**文文文文文文文\\\"?\\\"文文文文文文文文文文文文 [9]文文文文\\\"文文文\\\"文文文文文文文文文文文文文 [7]文\\n4. **文文文文**文\\n   - **文文文**文文文文文文文文文文文文\\\"文文文\\\" [9][11]文\\n   - **文文文文**文文文文文文文文文文文文文文文文文文文文文文文文文 [13][16]文\\n   - **文文文文**文文文文文文文文文/文文文文文文文文文文 [12]文\\n   - **文文文文文文**文文文文文文文文文 [12]文\\n   - **文文文文**文文文文文文文 API 文文文文文文文文文文文文文文 [12]文\\n\\n---\\n\\n## 文文文文文文文文文文文文文\\n\\n- **文文文文文**文文文文文文文文文文文——文文文文文文/文文/文文文文文文文文文文/文文/文文文文文文文文文文文文\\n- **文文文文**文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n- **文文文文文文**文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n- **文文文文文文文文文**文文文文文文文文\\\"文文文文\\\"文文文文文文文文文文文文文文文文文文文文 [6]文\\n- **文文文文文**文文文文文文文文文文文文文文文文4 文文文文文文文文文文文 2 文文文文文\\n\\n---\\n\\n## 文文文文文文文文文\\n\\n- [ ] 文文文文文文文文文文文文文文文文文文文文文文文文文\\n- [ ] 文文文文文文文文文文文文文文文 `input_xxx` 文文\\n- [ ] 文文文文文文文文文文\\\"文文文\\\"\\n- [ ] 文文 / 文文文 / 文文文 / 文文文文文\\\"文文文文\\\"\\n- [ ] 文文文文文文文文文文文文文文文文文文 / 文文 / API文\\n- [ ] 文文文文文文文文文文文文文文文文文文文文文文\\n- [ ] 文文文文文文文文文\\n- [ ] 文文文文文文文文文文文文文文文文文文文文文文文文文\\n- [ ] 文文文文文文文文文文文文文文文文文\\n\\n---\\n\\n## 文文文文文文文文文文文文文文文\\n\\n| 文文 | 文文 | 文文 | 文文 | 文文 |\\n| --- | --- | --- | --- | --- |\\n| 1 | 文文 | 文文文文 | 文 | 文 |\\n| 2 | 文文 | 文文文文 | 文 | 文 |\\n| 3 | 文文 | 文文文文 | 文 | 文 |\\n| 4 | 文文文文 | 文文文文 | 文 | 文 |\\n| 5 | 文文文文 | 文文文文-文文文文 | 文 | 文 |\\n| 6 | 文文文 | 文文文文-文文文 | 文 | 文 |\\n| 7 | 文文 | 文文文文-文文 | 文 | 文 |\\n| 8 | 文文 / 文文 | 文文文文文 | 文 | 文 |\\n| 9 | 文文文文 | 文文文文 | 文 | 文 |\\n| 10 | 文文文文 | 文文文文 | 文 | 文 |\\n| 11 | 文文 | 文文文文 | 文 | 文 |\\n\\n> 文文文文文文文文文文文文文文文文/文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\"}",
+          "startedAtMs": 1793967518246,
+          "elapsedMs": 331,
+          "result": "\"文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 文文文文文/ai/artifacts/yuanke/202611/7891a5d3461a4f12bef0b910692f9331_文文文文文文文_文文文文.md?expire=1793971118&sig=e660f8d941bc9a2a4a03b207344b82a673a6816d91fef0a410ba6ec182d54852\"",
+          "kind": "tool",
+          "id": "b6"
+        },
+        {
+          "kind": "text",
+          "channel": "answer",
+          "text": "文文文文文文文文文文文文文**文文文文文文文_文文文文.md**\n\n文文文文文文文文文文文 → 文文文文 → 文文文文 → 文文文文文文文文文文文文文文文文文文文文\n\n1. **文文文文文文文文**文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\n2. **文文文**文文文文文文文文文文文文文文文文 4 文文文文文文文文文文文文文文文文文文文文文文文\n3. **文文文**文11 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\n4. **文文文**文文文文文文文文文文文——文文文文文文文文文文 `input_108`文文文文文文文文文文文文文文文文文 / 文文文文 / 文文文文 / 文文文\n5. **文文文文文文**文文文文文文文文文文文文文文文文文文文文文文文\n6. **文文文文文文文**文9 文文文文文文\n\n文文文文文文 11 文文文文文文文文文文 / 文文 / 文文文文 / 文文文文文文文文文文文文文文文\n\n",
+          "id": "b7"
+        },
+        {
+          "id": "b8",
+          "url": "/ai/artifacts/yuanke/202611/7891a5d3461a4f12bef0b910692f9331_文文文文文文文_文文文文.md?expire=1793971122&sig=61d46011a5403ad242839691f9bb3237332b0b6c2861b5f3cbd36995aaea2b35",
+          "filename": "文文文文文文文_文文文文.md",
+          "ext": "md",
+          "size": 7564,
+          "description": "文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文",
+          "kind": "artifact"
+        }
+      ]
+    },
+    "content": "文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文**文文文文文文文_文文文文.md**\n\n文文文文文文文文文文文 → 文文文文 → 文文文文 → 文文文文文文文文文文文文文文文文文文文文\n\n1. **文文文文文文文文**文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\n2. **文文文**文文文文文文文文文文文文文文文文 4 文文文文文文文文文文文文文文文文文文文文文文文\n3. **文文文**文11 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\n4. **文文文**文文文文文文文文文文文——文文文文文文文文文文 `input_108`文文文文文文文文文文文文文文文文文 / 文文文文 / 文文文文 / 文文文\n5. **文文文文文文**文文文文文文文文文文文文文文文文文文文文文文文\n6. **文文文文文文文**文9 文文文文文文\n\n文文文文文文 11 文文文文文文文文文文 / 文文 / 文文文文 / 文文文文文文文文文文文文文文文\n\n",
+    "thinking": null,
+    "processText": null,
+    "timeline": [
+      {
+        "from": 0,
+        "to": 26,
+        "kind": "text"
+      },
+      {
+        "kind": "tool",
+        "i": 0
+      },
+      {
+        "kind": "tool",
+        "i": 1
+      },
+      {
+        "kind": "tool",
+        "i": 2
+      },
+      {
+        "kind": "tool",
+        "i": 3
+      },
+      {
+        "kind": "tool",
+        "i": 4
+      },
+      {
+        "from": 26,
+        "to": 484,
+        "kind": "text"
+      }
+    ],
+    "toolCalls": [
+      {
+        "name": "search_knowledge",
+        "status": "done",
+        "args": "{\"topK\":5,\"query\":\"文文文文 文文文文文文文 文文 文文\"}",
+        "startedAtMs": 1793967503111,
+        "elapsedMs": 813,
+        "result": "\"文文文 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n文文文1文文文文文文文文 > 文文文文 > 文文文文文文 > 文文 / 文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文6文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n文文文文文\\n文文文文文文文文文文文\\n| 文文 | 文文 | 文文 |\\n| --- | --- | --- |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文文文 | 文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文 |…文文文文文\\n\\n\\n文文文2文文文文文文文文 > 文文 / 文文文文文\\n\\n文文\\n文文文文文文文文文 > 文文\\n\\n文文文文文 文文文文文\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文6文文文文\\n文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文文\\n\\n\\n文文文3文文文文文文文文 > 文文 > 文文文文 / 文文文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n\\n文文文4文文文文文文文文 > 文文 > 文文文文文文 / 文文文文文文文文文\\n\\n文文文文文文文文文文文文文文文\\n| 文文 | 文文 | 文文 |\\n| --- | --- | --- |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文文文 | 文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文 | 文文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文文 | 文文文文文文文文文文文文文文文 |\\n| 文文文文文文 | 文文文文文文 | 文文文文文文文文文文文文文文文文 |\\n| 文文文文…文文文文文\\n\\n\\n文文文5文文文文文文文文 > 文文 > 文文文文文文 / 文文文文文文文文文\\n\\n文文文文文文\\n文文文文文文文文文 > 文文 > 文文文文文文\\n\\n文文文 |\\n| 文文文文文文 | 文文 | 文文文文文文文文文文文文文文文文API文文文文文文文文文文文文 |\\n|…文文文文文"
+      },
+      {
+        "name": "search_knowledge",
+        "status": "done",
+        "args": "{\"topK\":5,\"query\":\"文文文文文 文文 文文 文文文文\"}",
+        "result": "\"文文文 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n文文文6文文文文文文文文 > 文文 > 文文文文 > 文文 / 文文文文文\\n\\n文文\\n文文文文文文文文文 > 文文 > 文文文文 > 文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文]\\n文文文文\\n文文文文文文文\\n1.文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n2.文文文文文文文文文文文文文文文文\\n3.文文文文文文文文文文文文文文文文\\n文文文文文文文文文文\\n1.文文文文文文文文文文文文文文文文文文文\\n2.文文文文文文文文文文文文文文文文文文文文文文文\\n3.文文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文RGB文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“文文文文”文文文文“文文文文文文文文”文]\\n文文文文文文文\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“文文文文”文文文文文文文文文文文文文文文文\\n文文文文文文文\\n文文文文…文文文文文\\n\\n文文文文文文文[文文1][文文2][文文3]\\n\\n文文文7文文文文文文文文 > 文文 > 文文文文文文文 > 文文文文 / 文文文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“2026文8文文文文文文文文”文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文“2026文8文文文文文文文文”文文文文文文文文文文文文文文文文文文]\\n文文文文文文文文文文文文2文\\n[文文文文文文文文文文文“2026文8文文文文文文文文”文文文文文文文文文文文文文文文文文文文文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文“2026文8文文文文文文文文”文“文文文文”文文文文文文文文文文文文文文文文文文文input_108文]\\n文文文文文文文文文文文文文文文文文文\\n文文文文文”xingming“文文文文文文文“文文”文文文文文文文“文文”文文文文文文文文文文“文文文文”文文文文文文文文“文文文”文文文文文文文文“文文文文文文”文文文文文文文文文\\n[文文文文文文文文文文文文文文“2026文8文文文文文文文文”文文文“文文”文文文文文文文文文文文文文文文文xingming文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文…文文文文文\\n\\n文文文文文文文[文文4][文文5][文文6][文文7][文文8][文文9]\\n\\n文文文8文文文文文文文文 > 文文 > 文文文文文文文 > 文文文文 / 文文文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n文文文文“zuopinjieshao”文文文文文文文“文文文文”文文文文文文“文文文文文文”文文文文文文文文“文文文”文\\n[文文文文文文文文文文文文文“2026文8文文文文文文文文”文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“wenjianshangchuan”文文文文文文文“文文文文”文文文文文文文文文文文文文文文“10”文文文文文文文文文文文10000000文MB文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“文文文文文文文文文“文文文文文文文文”文文文“文\\n[文文文WPS文文文文文文文文文文文“2026文8文文…文文文文文",
+        "startedAtMs": 1793967503120,
+        "elapsedMs": 804
+      },
+      {
+        "name": "search_knowledge",
+        "status": "done",
+        "args": "{\"topK\":5,\"query\":\"文文文文 文文文 文文 文文 文文文 文文文文 文文文\"}",
+        "startedAtMs": 1793967505140,
+        "elapsedMs": 604,
+        "result": "\"文文文 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n文文文9文文文文文文文文 > 文文 > 文文文文 > 文文文文 / 文文文文文文文\\n\\n文文文文\\n文文文文文文文文文 > 文文 > 文文文文 > 文文文文\\n\\n文文文文文文文\\n1.文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文”文文文“文文文文文\\n文文文文文文文文文文文文文文文文文文文文\\n文文文文\\n文文文文文文文\\n| 文文 | 文文 |\\n| --- | --- |\\n| 文文文 | 文文文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文 | 文文文文文文文文文文文文,文文文文文 |\\n| 文文文文 | 文文文文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文文文文 | 文文文文文文文文文文文 |\\n| 文文 | 文文文文文文文文文文文文文文文文文文文文文API文文文文文文文文文文文文文文 |\\n| 文文 | 文文文文文文文文文文文文文文文文文文文文文”文“文文文文文文文文文文文文文文文文文文文 |\\n\\n\\n\\n文文文7文文文文文文文文 > 文文 > 文文文文文文文 > 文文文文 / 文文文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“2026文8文文文文文文文文”文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文“2026文8文文文文文文文文”文文文文文文文文文文文文文文文文文文]\\n文文文文文文文文文文文文2文\\n[文文文文文文文文文文文“2026文8文文文文文文文文”文文文文文文文文文文文文文文文文文文文文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文“2026文8文文文文文文文文”文“文文文文”文文文文文文文文文文文文文文文文文文文input_108文]\\n文文文文文文文文文文文文文文文文文文\\n文文文文文”xingming“文文文文文文文“文文”文文文文文文文“文文”文文文文文文文文文文“文文文文”文文文文文文文文“文文文”文文文文文文文文“文文文文文文”文文文文文文文文文\\n[文文文文文文文文文文文文文文“2026文8文文文文文文文文”文文文“文文”文文文文文文文文文文文文文文文文xingming文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文…文文文文文\\n\\n文文文文文文文[文文4][文文5][文文6][文文7][文文8][文文9]\\n\\n文文文10文文文文文文文文 > 文文 > 文文文文文文 > 文文文文 / 文文文文文文文\\n\\n文文文文\\n文文文文文文文文文 > 文文 > 文文文文文文 > 文文文文\\n\\nenfenzhenghao”文文文文文文文文“文文文”文“文文文文”文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“mobile”文文文文文文文文文文文文文文文文文文“文文文”文“文文文文”文\\n[文文文文文文文文文文文文文文文文文“文文文文文文文”文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“文文”文文文文文文文文文文文文文文文“email”文文文文文文文文文文文文文文文文文文“文文文”文“文文文文”文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文49文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“文文”文文文文文文文文文文文文文文文文“bumen”文文文文文文文“文文文文”文文文文“文文文文文文文”文文文文文文文“文文”文文文文文文文文文文文文文文文文“文文文文”文文文文文文文文文文文文文文“文文”文文文文文文文文“文文文文文文”文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文文文“文文文文文文文”文…文文文文文\\n\\n文文文文文文文[文文12][文文13][文文14][文文15][文文16]\\n\\n文文文11文文文文文文文文 > 文文 > 文文文文 > 文文文 / 文…文文文文文"
+      },
+      {
+        "name": "search_knowledge",
+        "status": "done",
+        "args": "{\"topK\":5,\"query\":\"文文文文文文 文文文 文文文 文文 文文文文\"}",
+        "result": "\"文文文 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n文文文13文文文文文文文文 > 文文 > 文文文文文文 > 文文文文 / 文文文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文文文文文文文文文“2026文8文文文文文文文文文文”文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文49文文]\\n文文文文文文”shoujibiao“文文文文文文文”文文文“文文文文文文文文文文文文6文文文文文文文文文文6文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文”文文“文文文文文文文文文文文文文文文文文文文”name“文文文”文文文文文文文“文文文文文文文文文”文文文“文”文文文文“文\\n[文文文文文文文文文文文文文文“2026文8文文文文文文文文文文”文文文文文文文文文文文文文文文文文文文文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文”文文“文文文文文文文文文文文文文文文文文文文”xingbie“文文文”文文文文文文文“文文文文文“文文文文”文文文文文文文文文文文文文文文文“文”文“文”文文文文文\\n[文文文文文文文文文文文文文文文文文“文文文文文文文”文文文文文文文文文文文文文文文文文文文文文文文文文文文文49文文]\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文“文…文文文文文\\n\\n文文文文文文文[文文23][文文24][文文25][文文26]\\n\\n文文文14文文文文文文文文 > 文文 > 文文文文 > 文文 / 文文文文文\\n\\n文文\\n文文文文文文文文文 > 文文 > 文文文文 > 文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文\\n文文文文\\n文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文“3048”文文文文文文文文163文126文qq文sina文sohu文文文文文文文文文45文文]\\n文2-20 文文文文\\n\\n文文文文文文文[文文27]\\n\\n文文文15文文文文文文文文 > 文文 > 文文文文 / 文文文文文文文\\n\\n文文文文\\n文文文文文文文文文 > 文文 > 文文文文\\n\\n文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文文文文文文\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文0.5文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n\\n文文文16文文文文文文文文 > 文文 > 文文文文 > 文文文文 / 文文文文文文文\\n\\n文文文文\\n文文文文文文文文文 > 文文 > 文文文文 > 文文文文\\n\\n文文文文文文文文文文文文文\\n文文文文\\n文文文文文文文文文文文文文文文文文\\n \\n文2-21 文文文文文文文文文\\n文文文文文文文文文文文文文文\\n文文文文\\n文文文文文文文文文文文文文文文文文文文文文文文文\\n[文文文文文文文文文文文文文文文文“510142”文文文文文文文“文文文文文文文文文”文文文文文文文文文]\\n文2-22 文文文文文文\\n\\n文文文文文文文[文文28]\\n\\n文文文1文文文文文文文文 > 文文文文 > 文文文文文文 > 文文 / 文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文6文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n文文文文文\\n文文文文文文文文文文文\\n| 文文 | 文文 | 文文 |\\n| --- | --- | --- |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文文文文文文文文文文 |\\n| 文文文文 | 文文文文 |…文文文文文",
+        "startedAtMs": 1793967505140,
+        "elapsedMs": 604
+      },
+      {
+        "name": "presentArtifact",
+        "label": "文文文文",
+        "hint": "文文文文文文文文文文文文",
+        "status": "done",
+        "args": "{\"description\":\"文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\",\"filename\":\"文文文文文文文_文文文文.md\",\"content\":\"# 文文文文文文文文文文文文文\\n\\n> 文文文文文文文文文文文文文文文文文文文文文/文文文文文文文文文文文文文文文文文文文文文\\n> 文文文文文文文文文文文 → 文文文文 → 文文文文 → 文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n---\\n\\n## 文文文文文文文文文文\\n\\n| 文文文文 | 文文 | 文文文文文文文文 |\\n| --- | --- | --- |\\n| 文文文文 | 文文文文文文文文文\\\"文文文文文\\\" | 文文文文 / 文文文文 / 文文文文文文文文文文文文文文 |\\n| 文文文 | 文文文文文文文文文文文文文文文文文文文 | 文文文文文 → 文文文文文文文文文 |\\n| 文文文文 | 文文文文文文文文文文文文文文文文 | 文文文 → 文文文文文文文文文文文文 → 文文/文文文文\\\"文文文文\\\" |\\n\\n**文文文文文文**文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\\n---\\n\\n## 文文文文文文文文文文文文文文文\\n\\n文文文文文文文文文文 6 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [1][2]文文文文文文文文文文文文文文文文文文文文文\\n\\n### 1. 文文文\\n- 文**文文文文**文文文文文 `2026文11文文文文文文文文`文文文文文文文文文文文文文文文文文文文文文文 [1]文\\n- 文文文文**文文文文**文**文文文文**文文文文文文文文文文文文文文文文文文 * 文文文文文文文文 [1]文\\n\\n### 2. 文文文文文文文文\\n- 文**文文文文**文文文文文文文文文文文文 [6]文文文文文文文文 **4 文**文`文文文 + 文文` 文文文文文文文文文文文文文文文文文文文文文文\\n- 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [6]文\\n- 文文文文文文文 12 文文文文文**文文文文**文文文文文文 / 文文文文 / 文文文文 / 文文文文文文文文文文文 [1]文\\n- 文文文文文文文文文文文文文文文文文文文文文文文文文文文文**文文文文**文文文文文文文文文文文 [1]文\\n\\n### 3. 文文文\\n- 文**文文文文**文文文/文文文文文文文文文文文文文文文文文文文文文文 [1]文\\n\\n---\\n\\n## 文文文文文文文文文文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [3]文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [15]文\\n\\n| 文文 | 文文文文 | 文文文文 |\\n| --- | --- | --- |\\n| 文文 | 文文文文 | 文文文文文\\\"文文文文文文文文文文文\\\" |\\n| 文文 | 文文文文 | 文文 + **文文文文**文文文\\\"文 2026010101\\\" |\\n| 文文 | 文文文文 | 文文文文文文 / 文文文文 |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文文\\\"文文文文\\\"文文文 [5] |\\n| 文文文文 | 文文文文-文文文文 | 文文文文文文文文文文\\\"文文文文\\\" [16] |\\n| 文文文 | 文文文文-文文文 | 文文文文文文文文文 [16] |\\n| 文文 | 文文文文-文文 | 文文文文文文文文文文文文文 [14] |\\n| 文文 / 文文 | 文文文文文 文 文文文文 | 文文文文文\\\"文文\\\"文文文文文文文文文文\\\"API\\\"文文文文文文文文[5] |\\n| 文文文文 | 文文文文 | 文文文文文文文文文文文 |\\n| 文文文文 / 文文 | 文文文 文 文文文文 | 文文文文文文文文文文文文文文文文文文文 [1] |\\n| 文文文文 / 文文文文 | 文文文文 / 文文文文 | 文文文文文文文文文文文文文文文文文文文文文文文文文文文 [5] |\\n\\n**文文文文**\\n- 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文——文文\\\"文/文文/M\\\"文文文文文文文文文\\n- 文文文文文文文文文文文文文文文文文文文文 [8]文\\n- 文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 [16]文\\n\\n---\\n\\n## 文文文文文文文文文文文文文文文文\\n\\n文文文文文文文文文文文文文文文文文文文文 → 文文文文 → 文文文文文 → 文文文 → 文文文 [7]文\\n\\n1. **文文文**文文文文文文文文文文文文文文文文文文文文文文文文 [9]文文文文文文文文文文文文文文文 `xingming`文`xuehao`文`shoujihao`文文文文 `input_108` 文文文文文 [7]文\\n2. **文文文文**文文文文文文文文文文文文文文文文文文文文文 [9]文文文文文文文文文文文文文文文文文\\\"文文文文文文文\\\"文文文文 [13]文\\n3. **文文**文文文文文文文\\\"?\\\"文文文文文文文文文文文文 [9]文文文文\\\"文文文\\\"文文文文文文文文文文文文文 [7]文\\n4. **文文文文**文\\n   - **文文文**文文文文文文文文文文文文\\\"文文文\\\" [9][11]文\\n   - **文文文文**文文文文文文文文文文文文文文文文文文文文文文文文文 [13][16]文\\n   - **文文文文**文文文文文文文文文/文文文文文文文文文文 [12]文\\n   - **文文文文文文**文文文文文文文文文 [12]文\\n   - **文文文文**文文文文文文文 API 文文文文文文文文文文文文文文 [12]文\\n\\n---\\n\\n## 文文文文文文文文文文文文文\\n\\n- **文文文文文**文文文文文文文文文文文——文文文文文文/文文/文文文文文文文文文文/文文/文文文文文文文文文文文文\\n- **文文文文**文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n- **文文文文文文**文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n- **文文文文文文文文文**文文文文文文文文\\\"文文文文\\\"文文文文文文文文文文文文文文文文文文文文 [6]文\\n- **文文文文文**文文文文文文文文文文文文文文文文4 文文文文文文文文文文文 2 文文文文文\\n\\n---\\n\\n## 文文文文文文文文文\\n\\n- [ ] 文文文文文文文文文文文文文文文文文文文文文文文文文\\n- [ ] 文文文文文文文文文文文文文文文 `input_xxx` 文文\\n- [ ] 文文文文文文文文文文\\\"文文文\\\"\\n- [ ] 文文 / 文文文 / 文文文 / 文文文文文\\\"文文文文\\\"\\n- [ ] 文文文文文文文文文文文文文文文文文文 / 文文 / API文\\n- [ ] 文文文文文文文文文文文文文文文文文文文文文文\\n- [ ] 文文文文文文文文文\\n- [ ] 文文文文文文文文文文文文文文文文文文文文文文文文文\\n- [ ] 文文文文文文文文文文文文文文文文文\\n\\n---\\n\\n## 文文文文文文文文文文文文文文文\\n\\n| 文文 | 文文 | 文文 | 文文 | 文文 |\\n| --- | --- | --- | --- | --- |\\n| 1 | 文文 | 文文文文 | 文 | 文 |\\n| 2 | 文文 | 文文文文 | 文 | 文 |\\n| 3 | 文文 | 文文文文 | 文 | 文 |\\n| 4 | 文文文文 | 文文文文 | 文 | 文 |\\n| 5 | 文文文文 | 文文文文-文文文文 | 文 | 文 |\\n| 6 | 文文文 | 文文文文-文文文 | 文 | 文 |\\n| 7 | 文文 | 文文文文-文文 | 文 | 文 |\\n| 8 | 文文 / 文文 | 文文文文文 | 文 | 文 |\\n| 9 | 文文文文 | 文文文文 | 文 | 文 |\\n| 10 | 文文文文 | 文文文文 | 文 | 文 |\\n| 11 | 文文 | 文文文文 | 文 | 文 |\\n\\n> 文文文文文文文文文文文文文文文文/文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文\\n\"}",
+        "startedAtMs": 1793967518246,
+        "elapsedMs": 331,
+        "result": "\"文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文 文文文文文/ai/artifacts/yuanke/202611/7891a5d3461a4f12bef0b910692f9331_文文文文文文文_文文文文.md?expire=1793971118&sig=e660f8d941bc9a2a4a03b207344b82a673a6816d91fef0a410ba6ec182d54852\""
+      }
+    ],
+    "artifacts": [
+      {
+        "id": "7891a5d3461a4f12bef0b910692f9331",
+        "url": "/ai/artifacts/yuanke/202611/7891a5d3461a4f12bef0b910692f9331_文文文文文文文_文文文文.md?expire=1793971122&sig=61d46011a5403ad242839691f9bb3237332b0b6c2861b5f3cbd36995aaea2b35",
+        "filename": "文文文文文文文_文文文文.md",
+        "ext": "md",
+        "size": 7564,
+        "description": "文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文文"
+      }
+    ],
+    "tokens": {
+      "prompt": 59536,
+      "output": 2804,
+      "finalOutput": 344,
+      "total": 62340,
+      "cached": 40448,
+      "context": 19357,
+      "outputIsReal": true,
+      "hits": 16,
+      "window": 1000000,
+      "windowSource": "framework",
+      "parts": {
+        "system": 4308,
+        "input": 34,
+        "retrieval": 10487,
+        "toolOutput": 152,
+        "toolSchema": 4376
+      },
+      "thinkingChars": 0,
+      "turnElapsedMs": 20813,
+      "profile": "workspace",
+      "turnWallMs": 27076,
+      "turnPrepMs": 6263
+    }
+  },
+  "guestMessage": null
+}
