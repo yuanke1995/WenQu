@@ -924,6 +924,26 @@ const timelineView = m => {
   const len = (m.content || '').length
   const content = String(m.content || '')
   const tl = Array.isArray(m.timeline) ? m.timeline : []
+  // 同一工具失败后又被后续调用成功接上（模型重试）：失败那张不再单独占一行，
+  // 否则一次空参重试就能把回答切成两段（真机 2026-11-06：生成产物 {} 失败 → 补一句正文 →
+  // 生成产物 成功）。重试次数挂到成功那张卡上，错误本身仍留在数据里。
+  const superseded = new Set()
+  {
+    const seenDone = new Set()
+    for (let i = tl.length - 1; i >= 0; i--) {
+      const t = tl[i] && tl[i].kind === 'tool' ? tl[i].tool : null
+      if (!t) continue
+      if (t.status === 'done') seenDone.add(t.name)
+      else if (t.status === 'error' && seenDone.has(t.name)) superseded.add(t)
+    }
+    const retries = new Map()
+    for (const s of tl) {
+      const t = s && s.kind === 'tool' ? s.tool : null
+      if (!t) continue
+      if (t.status === 'error' && superseded.has(t)) retries.set(t.name, (retries.get(t.name) || 0) + 1)
+      else if (t.status === 'done' && t.attempts == null && retries.get(t.name)) t.attempts = retries.get(t.name) + 1
+    }
+  }
   const out = []
   let group = null
   let maxTo = 0
@@ -976,6 +996,7 @@ const timelineView = m => {
     }
     if (seg.kind === 'tool') {
       if (!seg.tool) continue
+      if (superseded.has(seg.tool)) continue // 失败后已重试成功：不单独成行
       if (mergeFrom >= 0) { absorbed.push(seg.tool); continue }
       if (!group) group = { kind: 'group', tools: [] }
       group.tools.push(seg.tool)
