@@ -65,6 +65,18 @@ def sql(q):
     return [l.split("\t") for l in p.stdout.strip().split("\n") if l.strip()]
 
 
+def raw_post(path, body, timeout=240):
+    """POST 但不解析响应体：分享问答是 SSE，按 JSON 解会当场炸（旧夹具就是这么坏的）。"""
+    data = json.dumps(body, ensure_ascii=False).encode()
+    req = urllib.request.Request(BASE + path, data=data, method="POST")
+    req.add_header("Content-Type", "application/json;charset=UTF-8")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status, r.read(4096)
+    except urllib.error.HTTPError as e:
+        return e.code, e.read(4096)
+
+
 def sse_chat(token, payload, timeout=240):
     """跑一轮流式问答，返回 (原始帧文本, 解析出的事件列表)。"""
     req = urllib.request.Request(BASE + "/api/ai/chat",
@@ -219,7 +231,7 @@ def main():
 
     # 5) 免登录分享链路：会话归属那一列必须写（分享页按智能体列历史/回收都读它）
     if a.fixtures:
-        rows = sql("select agent_id, created_by, tenant_id from c_ai_agent "
+        rows = sql("select id, created_by, tenant_id from c_ai_agent "
                    "where permission_preset='research' limit 1")
         if not rows:
             skip("访客会话作答方归属", "库里没有 research 档智能体可做夹具")
@@ -230,8 +242,8 @@ def main():
                 "visit_count,guest_images_enabled,guest_files_enabled,tenant_id) values "
                 "('probe-tier','%s','%s','',1,'%s',0,0,0,0,'%s')" % (agent_id, tok, owner, tenant))
             try:
-                st, rr = api("POST", "/api/ai/share/%s/chat" % tok,
-                             {"message": "违约金上限怎么规定？请按资料回答", "visitorId": os.urandom(16).hex()})
+                st, _ = raw_post("/api/ai/share/%s/chat" % tok,
+                                 {"message": "违约金上限怎么规定？请按资料回答", "visitorId": os.urandom(16).hex()})
                 ok = st == 200
                 say(ok, "访客分享问答可跑（免登录链路活着）", "st=%s" % st)
                 # 这一列的消费方：分享页按智能体列访客会话（列不出来 == agent_id 没写）
@@ -239,8 +251,9 @@ def main():
                 say(st2 in (200, 400), "分享页按智能体列历史会话的接口可读", "st=%s" % st2)
             finally:
                 sql("delete from c_ai_agent_share where id='probe-tier'")
-                say(not sql("select count(*) from c_ai_agent_share where id='probe-tier'"),
-                    "探针分享行已清理")
+                left = sql("select count(*) from c_ai_agent_share where id='probe-tier'")
+                # count(*) 恒返一行（值为 "0"）；用列表非空判断会永远 FAIL
+                say(not left or str(left[0][0]) == "0", "探针分享行已清理")
     else:
         skip("访客会话作答方归属", "加 --fixtures 才建临时分享链接")
 

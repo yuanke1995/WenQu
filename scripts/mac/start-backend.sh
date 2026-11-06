@@ -10,6 +10,14 @@ set -e
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 JAR="$ROOT/target/wenqu.jar"
 
+# 本地沙盒 provisioner 的访问令牌：与 deploy/sandbox-provisioner compose 的本地默认值同源。
+# 从 compose 里取而不是在本脚本写死，避免两处默认值漂移；显式传了环境变量则以环境变量为准。
+if [ -z "${SANDBOX_PROVISIONER_TOKEN:-}" ] && [ -f "$ROOT/deploy/sandbox-provisioner/docker-compose.yml" ]; then
+  SANDBOX_PROVISIONER_TOKEN=$(sed -n 's/.*SANDBOX_PROVISIONER_TOKEN: *\${SANDBOX_PROVISIONER_TOKEN:-\([^}]*\)}.*/\1/p' \
+    "$ROOT/deploy/sandbox-provisioner/docker-compose.yml" | head -1)
+  export SANDBOX_PROVISIONER_TOKEN
+fi
+
 # 切到项目根运行：Spring Boot 从 ./config/ 加载外部 application-local.yml（本地密钥不入 jar）
 cd "$ROOT"
 
