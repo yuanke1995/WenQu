@@ -58,6 +58,16 @@ public final class TurnRecorder {
     /** 正文尾部的预算截断标注（刷新/历史可见的那一份） */
     public static final String BUDGET_SUFFIX = "\n\n> ⏹ " + TURN_BUDGET_NOTE;
 
+    /**
+     * 连续无进展时自动叫停本轮的那句话（唯一口径）：warn 帧与正文尾标共用。
+     * <p>不套用停止/预算的措辞——「已停止本轮」会被读成用户自己按的，「时间上限」也不对：
+     * 这一轮是被模型自己的空转耗死的，用户该知道发一句「继续」就能接着做。
+     */
+    public static final String STALL_NOTE = "连续多步没有产生新信息，已自动终止本轮；发一句「继续」可以接着做";
+
+    /** 正文尾部的无进展终止标注（刷新/历史可见的那一份） */
+    public static final String STALL_SUFFIX = "\n\n> ⏹ " + STALL_NOTE;
+
     /** 生成量对账门槛：最终轮输出不足此 token 数时不参与对账（短回答的字符/token 比波动太大） */
     private static final int OUTPUT_LOSS_MIN_TOKENS = 150;
 

@@ -1002,6 +1002,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 流式用量帧的「上一次算过的 transcript 条数 + 上一次发包墙钟」，见 emitLiveUsage
         long[] usageStamp = { -1, -1 };
         boolean stopped = false;
+        // 连续多步没有带回新信息：由引擎叫停（不再等模型自己停下来）
+        boolean stalled = false;
         // 等待预算用尽：卡片已落终态，收尾时不再对用户说「答完会自动接着跑」
         boolean timedOut = false;
         // 本轮有没有真的被框架启动。投递循环 100ms 一跳，正常几百毫秒内就离队；被闸门跳过时它会
@@ -1046,6 +1048,24 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 「本轮已停止」的留痕仍由问答侧那套收束逻辑做——不假装能当场掐断工具。
                 session.interrupt();
                 stopped = true;
+                break;
+            }
+            // 连续无进展：先提醒一次收尾；模型仍不动，就由引擎收口。判据看「结果有没有新信息」，
+            // 不看「调用是不是相同」——后者换个参数/换把工具就能绕过去（线上 2026-11-06：同一段文件
+            // 读 30 次、夹一句 grep 就重置计数，9 分半跑了 154 次工具调用）。提醒与终止分成两条：
+            // 提醒给模型一次自己收尾的机会；终止只在这一跑还没结算时发生——它若恰好答完，
+            // 收尾应按正常轮落库，不该被记成中断轮。
+            if ((current == null || !current.settled()) && recording.progress().takeWrapUp()) {
+                sessions.steer(cmd.getUserId(), cmd.getSessionId(), AgentxTurnProgress.WRAP_UP_TEXT);
+                log.info("[agentx] 连续无进展，已要求模型收尾: session={} turn={} streak={}",
+                        cmd.getSessionId(), turnId, recording.progress().staleStreak());
+            }
+            if (recording.progress().stalled() && (current == null || !current.settled())) {
+                session.interrupt();
+                stalled = true;
+                channel.emit(RunEventType.WARN, com.wenqu.ai.agent.chat.TurnRecorder.STALL_NOTE);
+                log.warn("[FAIL-LOUD] 连续无进展，已叫停框架那一跑: session={} turn={} streak={}",
+                        cmd.getSessionId(), turnId, recording.progress().staleStreak());
                 break;
             }
             // 只有「确实没人在跑这一条会话」才算没启动：另一线程正驱动它时，本轮排在队列里是正常状态。
@@ -1179,6 +1199,17 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             log.warn("[FAIL-LOUD] 整轮机器预算用尽，已叫停框架那一跑: session={} turn={} 预算={}ms",
                     cmd.getSessionId(), turnId, machineBudgetMs);
         }
+        // 跟随循环退场时框架那一跑还活着：这不是正常收尾。它还会继续调模型、继续计费，
+        // 而下一条新轮会在它尚未提交的上下文上从零开始（线上 2026-11-03：用户重发同一问，
+        // 新一轮只看到系统提示词与原问题，把上一轮已经做好的文件又“确认”了 33 次）。
+        // 预算那一条上面已经叫停过；这里兜住其余退出支路，确保「引擎的轮」与「框架的 run」同生共死。
+        if (!stopped && !neverLaunched && !superseded && !ranOutBudget && !timedOut
+                && (current == null || !current.settled())
+                && !session.inspect().activeRuns().isEmpty()) {
+            session.interrupt();
+            log.warn("[FAIL-LOUD] 跟随循环退场时框架那一跑仍在执行，已叫停: session={} turn={}",
+                    cmd.getSessionId(), turnId);
+        }
         // 裁决过的计划卡随助手消息落 plan 列（字段与手写侧 planSnapshot 同名：plan/status/versions/auto）。
         // 不落的表现：刷新后只剩「还在等确认」的那一张（它由待办恢复端点重建），已批过的每张计划都消失，
         // 用户回头看不出这一轮是按哪一版计划跑的。
@@ -1215,7 +1246,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         }
         // 这一轮到此不再有人跟随：还挂在人身上的待办当场收口（框架结算 + 卡片终态 + 待办行落库）。
         // neverLaunched 那一支不碰——那些待办属于**上一轮**，卡片可能正等用户答，本轮没启动不是它的错。
-        if (!neverLaunched) abandonPendingInteractions(session, cmd, channel, recording, stopped, pendingAtClose);
+        if (!neverLaunched) abandonPendingInteractions(session, cmd, channel, recording, stopped || stalled, pendingAtClose);
         sessions.setPlanMode(cmd, false);
         // 正文取哪一份：优先本轮实际流出来的那一截（与发出去的 token 帧同源）；只有它为空、且这一轮
         // 本身没失败，才回退到会话里最后一条有正文的助手消息。反过来先查会话会出两件坏事：被叫停的那一跑在 Transcript 里
@@ -1327,13 +1358,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 用户按了停止同理：停止就是「这一轮到此为止」的意思，不能自动再起一轮把停止撤销掉。
         boolean goalTurnHealthy = failure == null && !neverLaunched;
         goalService.onRoundSettled(cmd.getSessionId(), cmd.getUserId(), turnId, machineMs, goalToolCalls,
-                channel, answer, goalTurnHealthy, stopped, failure);
+                channel, answer, goalTurnHealthy, stopped || stalled, failure);
         // 收尾标记（【目标完成】/【目标受阻】…）是平台控制信号，落库与下发的正文里不出现：
         // 摘在 onTurnEnd 之后、finish 之前，用户读到的最后一条就是干净的交付说明。
         answer = com.wenqu.ai.service.GoalService.stripMarkers(answer);
         finish(cmd, channel, pool, route, hooks.modelRef(), contextWindow, answer, recording,
                 userMessageId, stopped,
-                timedOut, ranOutBudget, awaiting, machineMs, humanWaitMs, wallMs, prepMs,
+                timedOut, ranOutBudget, stalled, awaiting, machineMs, humanWaitMs, wallMs, prepMs,
                 session, historyBefore, turnId, planRecord);
         // 站内通知（旁路：内部全捕获，写不进去只记 WARN，绝不影响这一轮收口）。这件事此前只有
         // 屏幕前的人看得见——长轮跑完时人多半已经切走或锁屏，铃铛一声不响等于「跑完没人知道」。
@@ -1349,9 +1380,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         if (earlyExit == null && ranOutBudget) {
             earlyExit = com.wenqu.ai.agent.chat.TurnRecorder.TURN_BUDGET_NOTE;
         }
+        if (earlyExit == null && stalled) {
+            earlyExit = com.wenqu.ai.agent.chat.TurnRecorder.STALL_NOTE;
+        }
         if (earlyExit == null && cutByMaxIters) earlyExit = "推理步数已用满，活没干完就停了";
         turnNotify.onTurnSettled(cmd, turnId, machineMs, recording.toolCallList().size(),
-                stopped, awaiting, earlyExit, !answer.isBlank(),
+                stopped || stalled, awaiting, earlyExit, !answer.isBlank(),
                 turnId != null && turnId.startsWith(com.wenqu.ai.service.GoalService.GOAL_TURN_ID_PREFIX));
     }
 
@@ -2308,6 +2342,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             return seenEventSeqs.add(seq);
         }
 
+        /** 本轮的进度账：读它判「该收尾/该终止」，写它只在 {@code tool/result} 一处。 */
+        AgentxTurnProgress progress() {
+            return progress;
+        }
+
         /** 已记录正文是否包含该片段（收尾聚合帧的重复识别用；全文 indexOf，按帧头 60 字粗筛 + 全文确认）。 */
         boolean answerContains(String piece) {
             String full = answerText.toString();
@@ -2328,6 +2367,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
         private final java.util.List<java.util.Map<String, Object>> toolCalls =
                 java.util.Collections.synchronizedList(new java.util.ArrayList<>());
+        /**
+         * 本轮「有没有前进」的账（工具结果喂它）：连续无进展由引擎收口，见 {@link AgentxTurnProgress}。
+         * 与工具卡同一份结果文本，避免两处各判一次「这步算不算白做」。
+         */
+        private final AgentxTurnProgress progress = new AgentxTurnProgress();
         /** 工具大输出外溢的落盘标识（{@code 工具名|spillId}），收尾时挂回对应工具卡，卡片才有「查看完整输出」。 */
         private final java.util.Queue<String> spills;
         /** 本轮的咨询台账（卡片要挂的那份「子对话」从这里取）。 */
@@ -3307,6 +3351,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 boolean failed = toolResultFailed(data);
                 // 输出文本只取一次：落库那份和 SSE 那一帧必须是同一串，否则刷新前后两张卡说的不是一件事
                 String resultText = toolResultText(data);
+                // 进度账：失败/被拒的一步没有让任何东西向前走——换一个参数再失败也还是原地踏步
+                recording.progress().note(name, args, resultText, failed || toolResultDenied(data));
                 // 耗时＝墙钟窗口扣掉这段等待：提问卡挂三分钟不是「这个工具跑三分钟」，是「用户读了三分钟」。
                 // 扣掉的那段另发一份 waitedMs：整段跨度减它才剩机器时间，只在单卡上扣会留在区间中间出不去。
                 long beganAt = recording.takeToolStart(callKey);
@@ -3410,6 +3456,27 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             }
         }
         return str(data).toUpperCase().contains("STATE=ERROR");
+    }
+
+    /** 被权限档位/重复闸/步数闸拒掉的一步：结果不是干活的产出，不能算作前进。 */
+    private static boolean toolResultDenied(Map<String, Object> data) {
+        Object top = data.get("state");
+        if (top != null && "denied".equalsIgnoreCase(String.valueOf(top))) return true;
+        Object message = data.get("message");
+        if (message instanceof Map<?, ?> msg) {
+            Object mt = msg.get("state");
+            if (mt != null && "denied".equalsIgnoreCase(String.valueOf(mt))) return true;
+            Object content = msg.get("content");
+            if (content instanceof List<?> blocks) {
+                for (Object b : blocks) {
+                    if (b instanceof Map<?, ?> bm) {
+                        Object s = bm.get("state");
+                        if (s != null && "denied".equalsIgnoreCase(String.valueOf(s))) return true;
+                    }
+                }
+            }
+        }
+        return false;
     }
 
     private static String toolNameOf(Object node) {
@@ -4256,9 +4323,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 提问卡超时后这一轮本来就不该走到这里（走的是「按未作答继续」那条），所以这里出现的多半是
      * 计划卡或审批卡——用「确认」统称即可，不必替用户猜是哪一种。
      */
-    private static String interruptMarker(boolean stopped, boolean timedOut, boolean budget) {
+    private static String interruptMarker(boolean stopped, boolean timedOut, boolean budget, boolean stalled) {
         if (stopped) return com.wenqu.ai.agent.chat.TurnRecorder.STOP_SUFFIX;
         if (budget) return com.wenqu.ai.agent.chat.TurnRecorder.BUDGET_SUFFIX;
+        if (stalled) return com.wenqu.ai.agent.chat.TurnRecorder.STALL_SUFFIX;
         if (timedOut) return "\n\n> ⏹ 等待确认超时，这一轮没有继续执行";
         return com.wenqu.ai.agent.chat.TurnRecorder.TRUNCATION_SUFFIX;
     }
@@ -4318,7 +4386,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private void finish(ChatCommand cmd, RunChannel channel, WenquSourcePool pool,
                         ModelRegistryService.ModelRoute route, String modelRef, int contextWindow, String answer,
                         Recording recording,
-                        String userMessageId, boolean stopped, boolean timedOut, boolean budget, boolean awaiting,
+                        String userMessageId, boolean stopped, boolean timedOut, boolean budget, boolean stalled,
+                        boolean awaiting,
                         long elapsedMs, long humanWaitMs, long wallMs, long prepMs,
                         AgentSession session, int historyBefore, String turnId,
                         Map<String, Object> planRecord) {
@@ -4364,10 +4433,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             // 标注就是把同一件事说两遍（与手写引擎同一口径）
             // 只有正文本来就空的那一支才去分隔符：非空正文必须带着「\n\n」拼在尾段，
             // 少了它引用块会粘回最后一句、">" 原样印在屏幕上（trim 掉分隔符实测中过一次）
-            body = supersededRound ? "" : interruptMarker(stopped, timedOut, budget).trim();
-        } else if (realAnswer && (stopped || timedOut || budget)) {
+            body = supersededRound ? "" : interruptMarker(stopped, timedOut, budget, stalled).trim();
+        } else if (realAnswer && (stopped || timedOut || budget || stalled)) {
             // 半程正文：标注追加在尾部（与手写侧同一口径——用户要看得见「这句只有半截」）
-            body = body + interruptMarker(stopped, timedOut, budget);
+            body = body + interruptMarker(stopped, timedOut, budget, stalled);
         }
         boolean persist = realAnswer || (hasProcess && !awaiting);
         // 本轮正文配图清单：正文里的 [图片N] 就是按这份的下标还原的（N → 第 N-1 项）。
@@ -4377,7 +4446,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // LLM 自检——与手写侧同一个实现。换了运行时不该把这道答案质量防线摘掉。
         // 停止轮与「只有过程没有正文」的半程轮都不跑：那两句标注不是答案，跑了对它们就是白报一条
         // 「未标注引用」（半程轮往往还带着工具召回的来源，正好满足那条 fail-loud 的触发条件）。
-        if (!stopped && !timedOut && !budget && realAnswer) {
+        if (!stopped && !timedOut && !budget && !stalled && realAnswer) {
             // 反推本轮真实开始时刻必须用墙钟：拿机器耗时去减会把开始点往后挪，挪进用户读卡那几分钟里，
             // 这道防线读到的「本轮」就成了后半截
             long startedAtMs = System.currentTimeMillis() - wallMs;
@@ -4435,7 +4504,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             if (args != null) toolArgChars += String.valueOf(args).length();
         }
         int accounted = body.length() + recording.thinking.length() + toolArgChars;
-        if (!stopped && !timedOut && !budget && !tokens.isEmpty()
+        if (!stopped && !timedOut && !budget && !stalled && !tokens.isEmpty()
                 && com.wenqu.ai.agent.chat.TurnRecorder.looksLikeOutputLost(finalOutput, accounted, true)) {
             pool.registrar().degrade("outputLost", "模型本轮生成 " + finalOutput
                     + " tokens，仅 " + accounted + " 字进入回答，内容疑似丢失");

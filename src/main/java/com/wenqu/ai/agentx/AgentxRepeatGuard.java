@@ -39,8 +39,12 @@ import java.util.function.Function;
  * 拒掉的那一步不再进入后面的闸（{@link #order()} 排在步数闸外侧），也不占预算——
  * 空转的重复调用不是「试了 N 次」，不该挤掉真正要做的事的那几步。
  * <p>
- * 只拒这一步，不替模型收尾：结果里写清「别再重复这条调用，换做法或直接作答」，
- * 与 {@link AgentxStepBudget} 的措辞同一口径——被拒的那一步要能直接指导下一步怎么做。
+ * 拒的那一步里写清「别再重复这条调用，换做法或直接作答」，与 {@link AgentxStepBudget} 的措辞
+ * 同一口径——被拒的那一步要能直接指导下一步怎么做。
+ * <p>
+ * 本闸只做「单步拒绝」，不判整轮要不要停：换一个参数、换一把工具就能把「连续相同」打断，
+ * 按调用签名判失控会被绕过去（线上 2026-11-06：同一段文件读 30 次、中间夹一句 grep 就重置计数）。
+ * 整轮层面的判据是「结果有没有带回新信息」，见 {@link AgentxTurnProgress}。
  */
 public final class AgentxRepeatGuard implements MiddlewareBase {
 
