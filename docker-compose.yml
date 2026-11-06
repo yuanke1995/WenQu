@@ -163,6 +163,10 @@ services:
       wenqu-app:
         ipv4_address: ${BROWSER_MCP_IP:-172.28.0.11}
     mem_limit: ${BROWSER_MCP_MEMORY:-2g}
+    # 基础镜像自带的是沙盒端口的健康检查（SANDBOX_SRV_PORT），对本服务永远是 unhealthy：
+    # 误报会让人以为服务坏了。真实探活由后端连 /mcp 的握手承担。
+    healthcheck:
+      disable: true
 
 networks:
   wenqu-app:
