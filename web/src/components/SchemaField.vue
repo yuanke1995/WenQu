@@ -23,7 +23,8 @@
     <template v-else-if="field.type === 'model'">
       <ModelSelect v-model="value" :type="field.modelType || 'chat'" :allow-clear="!!field.allowClear" width="100%" />
     </template>
-    <a-input-password v-else-if="field.type === 'password'" v-model:value="value" size="small" style="width: 120px" />
+    <a-input-password v-else-if="field.type === 'password'" v-model:value="value" size="small" style="width: 120px"
+                      :placeholder="secretHints[field.backendKey] || field.ph" />
     <a-input v-else v-model:value="value" size="small" style="width: 120px" />
   </template>
 
@@ -117,7 +118,7 @@
     <template v-else-if="field.type === 'password'">
       <!-- new-password：这是配置项不是登录表单，阻止浏览器把保存的站点凭据自动填进来 -->
       <a-input-password v-model:value="value" autocomplete="new-password" :style="{ width: (field.width || 420) + 'px' }"
-                        :placeholder="field.ph" />
+                        :placeholder="secretHints[field.backendKey] || field.ph" />
     </template>
 
     <template v-else>
@@ -146,7 +147,9 @@ const props = defineProps({
   bare: { type: Boolean, default: false },
   /** 这项此刻由哪一层说话（后端 snapshot 的 source/invalid，见 ConfigService#resolve）。
       只在「不是平台设置」或「库里那行用不了」时出现，正常情况不打扰 */
-  source: { type: Object, default: null }
+  source: { type: Object, default: null },
+  /** 已存敏感项 backendKey → 占位文案（敏感项不回填掩码，留空＝沿用已存值） */
+  secretHints: { type: Object, default: () => ({}) }
 })
 const emit = defineEmits(['change'])
 

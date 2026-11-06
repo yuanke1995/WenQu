@@ -1218,8 +1218,9 @@ public class ConfigService {
                     + String.join("、", unknownKeys)
                     + "（可能是页面版本过旧，或该项已改名/取消）。请刷新设置页后重试");
         }
-        // 掩码回写保护：snapshot 对敏感项脱敏为 "****后4位"，前端未修改时会把掩码原样提交；
-        // 掩码值（**** 开头）一律跳过更新，避免覆盖库中真实 key（真实 master key 不可能以 **** 开头）
+        // 掩码回写保护：快照对敏感项脱敏为 "****后4位"，仍可能有客户端把掩码原样回传
+        // （设置页已改为不回填、留空不提交）；掩码值（**** 开头）一律跳过更新，
+        // 避免覆盖库中真实 key（真实 master key 不可能以 **** 开头）
         updates.entrySet().removeIf(kv ->
                 isSensitiveKey(kv.getKey()) && kv.getValue() != null && kv.getValue().startsWith("****"));
 

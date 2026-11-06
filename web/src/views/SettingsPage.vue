@@ -97,7 +97,7 @@
                            MCP 的管理界面已迁到「智能体」页的个人 Tab；技能停用清单随本页「技能」页签一起渲染 -->
                       <template v-else-if="blk.type === 'field'">
                         <SchemaField :field="blk.field" :form="form" :tips="TIPS" :options="fieldOptions(blk.field)"
-                                     :source="sources[blk.field.backendKey]">
+                                     :source="sources[blk.field.backendKey]" :secret-hints="secretHints">
                           <template v-if="probeKey(blk.field)" #extra>
                             <button class="app-btn ghost small probe-btn" :disabled="probeStates[probeKey(blk.field)].loading" @click="doProbe(probeKey(blk.field))">
                               {{ probeStates[probeKey(blk.field)].loading ? '测试中…' : '测试连接' }}
@@ -232,7 +232,7 @@
                             <a-tooltip :title="paramTip(f)">
                               <span class="sched-param-label">{{ f.label }}</span>
                             </a-tooltip>
-                            <SchemaField :field="f" :form="form" :tips="TIPS" bare />
+                            <SchemaField :field="f" :form="form" :tips="TIPS" :secret-hints="secretHints" bare />
                           </div>
                         </div>
                       </div>
@@ -616,6 +616,9 @@ const form = ref({ keyword: {} })
 /** 每项此刻由哪一层说话（后端 snapshot 带回来的 source/invalid）：只在异常时出徽标 */
 const sources = ref({})
 
+/** 已存敏感项 backendKey → 占位文案（敏感项不回填掩码，留空＝沿用已存值） */
+const secretHints = ref({})
+
 const fetchAndFill = async () => {
   loading.value = true
   try {
@@ -624,6 +627,7 @@ const fetchAndFill = async () => {
     if (!rs || !rs.success || !rs.data) throw new Error((rs && rs.msg) || '配置字段定义加载失败')
     applyServerSchema(rs.data)
     form.value = buildDefaultForm()
+    secretHints.value = {}
     schemaLoaded.value = true
     applyPanelDeepLink(route.query.panel)
     applyFieldDeepLink()
@@ -643,6 +647,11 @@ const fetchAndFill = async () => {
         // 但表单里就出现「有的库是数组、有的库是字符串」两种形态，拼载荷时要靠运气
         if (f.type === 'multiselect') {
           v = String(raw ?? '').split(/[,\n\r，;；]+/).map(s => s.trim()).filter(Boolean)
+        } else if (f.type === 'password' && typeof raw === 'string' && raw.startsWith('****')) {
+          // 敏感项不回填掩码：输入框留空，提交时跳过（见 buildPayload），后端保留已存值
+          v = ''
+          secretHints.value[f.backendKey] = /apikey/i.test(f.key)
+            ? '留空以沿用当前 API Key' : '留空以沿用当前值'
         } else if (raw === undefined || raw === null || raw === '') {
           v = f.type === 'switch' ? false : (f.type === 'number' ? f.def : (f.def ?? ''))
         } else if (f.type === 'number') v = Number(raw)
@@ -673,7 +682,8 @@ const buildPayload = () => {
     }
     if (typeof v === 'string') {
       v = v.trim()
-      if (/apikey/i.test(f.key) && v.startsWith('****')) continue
+      // 敏感项留空＝沿用已存值，不发空串（否则会把库里的 Key 清掉）
+      if (f.type === 'password' && !v) continue
     } else if (typeof v === 'number' || typeof v === 'boolean') {
       v = String(v)
     } else if (v === undefined || v === null) {

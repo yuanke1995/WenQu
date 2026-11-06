@@ -88,8 +88,9 @@
               <a-form-item label="SP 证书（PEM）" extra="可选，与私钥成对；用于请求签名与加密断言解密">
                 <a-textarea v-model:value="cfg.spCertificate" :rows="3" />
               </a-form-item>
-              <a-form-item label="SP 私钥（PKCS#8 PEM）" extra="敏感字段，RSA 加密入库；回显为 ****** 不覆盖">
-                <a-textarea v-model:value="cfg.spPrivateKey" :rows="3" autocomplete="new-password" />
+              <a-form-item label="SP 私钥（PKCS#8 PEM）" extra="敏感字段，RSA 加密入库；留空以沿用当前值">
+                <a-textarea v-model:value="cfg.spPrivateKey" :rows="3" autocomplete="new-password"
+                            placeholder="留空以沿用当前值" />
               </a-form-item>
             </a-collapse-panel>
           </a-collapse>
@@ -101,8 +102,9 @@
         <!-- SCIM -->
         <template v-else-if="form.type === 'scim'">
           <a-divider orientation="left">SCIM 入站凭据</a-divider>
-          <a-form-item label="Bearer Token" extra="敏感字段，RSA 加密入库；IdP 侧配置到 SCIM 连接；回显 ****** 不覆盖">
-            <a-input-password v-model:value="cfg.bearerToken" autocomplete="new-password" />
+          <a-form-item label="Bearer Token" extra="敏感字段，RSA 加密入库；IdP 侧配置到 SCIM 连接；留空以沿用当前值">
+            <a-input-password v-model:value="cfg.bearerToken" autocomplete="new-password"
+                              placeholder="留空以沿用当前值" />
           </a-form-item>
           <div class="form-tip">
             IdP 侧租户 URL 填 <code>{{ origin }}/api/ai/scim/v2</code>（认证源创建后 id 固定）；
@@ -120,8 +122,9 @@
           <a-form-item label="Bind DN" extra="留空 = 匿名绑定（多数环境需要服务账号）">
             <a-input v-model:value="cfg.bindDn" placeholder="CN=svc-wenqu,DC=corp,DC=com" />
           </a-form-item>
-          <a-form-item label="Bind 密码" extra="敏感字段，RSA 加密入库；回显 ****** 不覆盖">
-            <a-input-password v-model:value="cfg.bindPassword" autocomplete="new-password" />
+          <a-form-item label="Bind 密码" extra="敏感字段，RSA 加密入库；留空以沿用当前值">
+            <a-input-password v-model:value="cfg.bindPassword" autocomplete="new-password"
+                              placeholder="留空以沿用当前值" />
           </a-form-item>
           <a-form-item label="用户过滤器"><a-input v-model:value="cfg.userFilter" placeholder="(objectClass=person)" /></a-form-item>
           <a-form-item label="账号属性"><a-input v-model:value="cfg.uidAttr" placeholder="AD 填 sAMAccountName" /></a-form-item>
@@ -289,11 +292,18 @@ onMounted(load)
 function blank () {
   return { type: 'ldap', name: '', enabled: 1, defaultRole: 'user', autoCreateUser: 1, sortOrder: 0, tenantId: undefined, config: {} }
 }
+
+/** 后端会掩码回显的敏感 config 字段：编辑时不回填，留空＝沿用已存值 */
+const SENSITIVE_FIELDS = ['bearerToken', 'bindPassword', 'spPrivateKey', 'clientSecret']
+const SECRET_MASK = '******'
+const secretSet = ref({})
+
 function openCreate () {
   const b = blank()
   editingId.value = ''
   form.value = { type: b.type, name: b.name, enabled: !!b.enabled, defaultRole: b.defaultRole, autoCreateUser: !!b.autoCreateUser, sortOrder: b.sortOrder, tenantId: undefined }
   cfg.value = {}
+  secretSet.value = {}
   drawerOpen.value = true
 }
 function openEdit (p) {
@@ -303,7 +313,12 @@ function openEdit (p) {
     defaultRole: p.defaultRole || '', autoCreateUser: p.autoCreateUser === 1, sortOrder: p.sortOrder || 0,
     tenantId: p.tenantId
   }
-  cfg.value = { ...(p.config || {}) }
+  const c = { ...(p.config || {}) }
+  secretSet.value = {}
+  for (const k of SENSITIVE_FIELDS) {
+    if (c[k] != null && String(c[k]).trim()) { secretSet.value[k] = true; c[k] = '' }
+  }
+  cfg.value = c
   drawerOpen.value = true
 }
 
@@ -313,6 +328,11 @@ function payload () {
   const f = form.value
   const config = {}
   for (const [k, v] of Object.entries(cfg.value)) {
+    // 留空＝沿用：回传掩码，后端按「掩码不覆盖」保留旧值
+    if (SENSITIVE_FIELDS.includes(k) && secretSet.value[k] && (v == null || String(v).trim() === '')) {
+      config[k] = SECRET_MASK
+      continue
+    }
     if (v === undefined || v === null) continue
     if (typeof v === 'boolean') config[k] = v ? 1 : 0
     else config[k] = v

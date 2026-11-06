@@ -1803,7 +1803,7 @@ export const guessReasoningDialect = modelId =>
   request(`/provider/reasoning-dialect?modelId=${encodeURIComponent(modelId || '')}`)
 export const saveProviderModels = (id, models) =>
   request(`/provider/${id}/models`, { method: 'PUT', body: JSON.stringify(models) })
-/** 远程拉取网关模型列表（候选，不入库）；编辑已存供应商时 apiKey 可传掩码（后端用库中真实 Key） */
+/** 远程拉取网关模型列表（候选，不入库）；编辑已存供应商时 apiKey 留空，后端用库中真实 Key */
 export const fetchProviderModels = (baseUrl, apiKey, providerId) =>
   request('/provider/models/fetch', { method: 'POST', body: JSON.stringify({ baseUrl, apiKey, providerId }), timeout: 20000 })
 /** 供应商连通性测试（先测后存）；modelType 决定探测方式（chat/vision/embedding/rerank/audio/omni）。

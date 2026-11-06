@@ -118,7 +118,7 @@
                掩码改由 CSS（-webkit-text-security）实现；不支持该属性的浏览器退回 password 类型 -->
           <a-input v-model:value="form.apiKey" autocomplete="off"
                    :type="apiKeyType" class="pv-secret" :class="{ 'is-masked': !apiKeyVisible }"
-                   :placeholder="editing ? '未修改时显示掩码，无需重新输入（RSA 加密入库）' : '部分自托管服务（Ollama 等）可留空'">
+                   :placeholder="editing ? '留空以沿用当前 API Key' : '部分自托管服务（Ollama 等）可留空'">
             <template #suffix>
               <span class="pv-secret-eye" @mousedown.prevent @click="apiKeyVisible = !apiKeyVisible">
                 <eye-outlined v-if="apiKeyVisible" />
@@ -949,7 +949,8 @@ const openEdit = p => {
     name: p.name || '',
     icon: p.icon || '',
     baseUrl: p.baseUrl || '',
-    apiKey: p.apiKeyMasked || '',
+    // 不回填掩码：留空提交，后端保留库中已存 Key
+    apiKey: '',
     completionsPath: p.completionsPath || '',
     embeddingsPath: p.embeddingsPath || '',
     remark: p.remark || ''
