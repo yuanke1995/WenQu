@@ -552,21 +552,21 @@ const clusterTitle = cl => {
   }
   return kinds.slice(0, 3).map(k => CLUSTER_KIND_DONE[k]).join('，') + '等'
 }
-/** 簇头此刻的活动（定图标与跑动标题）：在跑的工具说了算；没有就说明还在想（尾部思考段）；
- *  两样皆无说明这一簇在等收尾，按已发生的头一类报。 */
-const clusterHeadKind = cl => {
-  const running = clusterTools(cl).find(t => t.status === 'start' && !t.denied)
-  if (running) return clusterKindOfTool(running)
-  if (!clusterTools(cl).length) return 'thinking'
-  return clusterKinds(cl)[0] || 'thinking'
-}
+/** 簇头的类别（定图标与跑动标题）：按簇内已出现的类别累计取第一个，只增不减。
+ *  不再跟着「当前在跑的那把工具」走——读取文件一起一落就会在检索/工具之间来回切，簇头闪。 */
+const clusterHeadKind = cl => clusterKinds(cl)[0] || 'thinking'
 /** 跑动中的标题（shimmer 那一句）；收尾等待期回退到折叠标题。
- *  关键：进行中的这一簇（m.loading && cl.grow）恒亮「正在…」+ 扫光，不因为单步之间的间隙
- *  （上一步刚结束、下一步还没发出，此刻簇内没有 status==='start' 的工具）来回切回「已调用工具」，
- *  否则簇头会跟着每条命令闪一下。整轮收尾（m.loading 置否）才回退到「已调用工具」。 */
-const clusterLiveText = (m, cl) => (clusterRunning(cl) || (m && m.loading && cl.grow))
-  ? CLUSTER_KIND_LIVE[clusterHeadKind(cl)]
-  : null
+ *  进行中的这一簇（m.loading && cl.grow）恒亮「正在…」+ 扫光；类别按累计集合生成，
+ *  只在「出现新类别」时变一次，不随每条工具起止在「正在检索知识库/正在调用工具」之间来回闪。
+ *  整轮收尾（m.loading 置否）才回退到「已调用工具」。 */
+const clusterLiveText = (m, cl) => {
+  if (!(clusterRunning(cl) || (m && m.loading && cl.grow))) return null
+  const kinds = clusterKinds(cl)
+  if (!kinds.length) return CLUSTER_KIND_LIVE.thinking
+  if (kinds.length === 1) return CLUSTER_KIND_LIVE[kinds[0]]
+  const live = kinds.slice(0, 2).map(k => CLUSTER_KIND_LIVE[k].replace(/^正在/, ''))
+  return '正在' + live.join('并') + (kinds.length > 2 ? '等' : '')
+}
 
 /** 跑轮中帽体的轻量清单（一行一步）：自动开着的簇不再把全量工具卡摊到顶层（那会把页面撑长），
  *  改由簇分支就地渲染一个固定高度帽体，里面是这份轻量行——图标 + 动词 + 参数摘要，
