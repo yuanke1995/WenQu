@@ -8,7 +8,6 @@ import com.wenqu.ai.model.Agent;
 import com.wenqu.ai.model.Tenant;
 import com.wenqu.ai.model.UserMcp;
 import com.wenqu.ai.util.TenantContext;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
@@ -40,7 +39,6 @@ import java.util.UUID;
 @Slf4j
 @Component
 @Order(2)
-@RequiredArgsConstructor
 public class BrowserCapabilitySeeder implements ApplicationRunner {
 
     /**
@@ -63,8 +61,9 @@ public class BrowserCapabilitySeeder implements ApplicationRunner {
     static final String MCP_NAME = "浏览器操作";
 
     /**
-     * 默认地址：本机 {@code @playwright/mcp} 的 streamable 端点。
-     * 容器化部署时由管理员在 MCP 面板把它改成分发的服务地址（平台行仅管理员可编辑）。
+     * 默认地址由 {@code ai-app.mcp.browser-url} 给：本机 IDE 跑后端时是
+     * {@code http://127.0.0.1:8931/mcp}，容器部署时由 compose 设成 {@code http://browser-mcp:8931/mcp}
+     * （容器里的 127.0.0.1 是它自己，连不到宿主上的服务）。播种后管理员也可在 MCP 面板改。
      */
     static final String DEFAULT_URL = "http://127.0.0.1:8931/mcp";
 
@@ -98,6 +97,18 @@ public class BrowserCapabilitySeeder implements ApplicationRunner {
     private final AgentMapper agentMapper;
     private final UserMcpMapper userMcpMapper;
     private final TenantMapper tenantMapper;
+    /** 平台行的默认地址（见 {@link #DEFAULT_URL}） */
+    private final String browserUrl;
+
+    public BrowserCapabilitySeeder(AgentMapper agentMapper, UserMcpMapper userMcpMapper,
+                                   TenantMapper tenantMapper,
+                                   @org.springframework.beans.factory.annotation.Value(
+                                           "${ai-app.mcp.browser-url:" + DEFAULT_URL + "}") String browserUrl) {
+        this.agentMapper = agentMapper;
+        this.userMcpMapper = userMcpMapper;
+        this.tenantMapper = tenantMapper;
+        this.browserUrl = browserUrl;
+    }
 
     @Override
     public void run(ApplicationArguments args) {
@@ -128,12 +139,12 @@ public class BrowserCapabilitySeeder implements ApplicationRunner {
             row.setUid(UserMcp.PLATFORM_UID + ":" + tenant);
             row.setScope(UserMcp.SCOPE_PLATFORM);
             row.setName(MCP_NAME);
-            row.setUrl(DEFAULT_URL);
+            row.setUrl(browserUrl);
             row.setType("streamable");
             row.setEnabled(1);
             row.setToolLabels(toolLabelsJson());
             userMcpMapper.insert(row);
-            log.info("[BROWSER] 已为租户 {} 播种平台级 MCP 服务「{}」（{}）", tenant, MCP_NAME, DEFAULT_URL);
+            log.info("[BROWSER] 已为租户 {} 播种平台级 MCP 服务「{}」（{}）", tenant, MCP_NAME, browserUrl);
         } catch (Exception e) {
             log.warn("[BROWSER] 租户 {} 平台级 MCP 服务播种失败（不影响启动，下次启动重试）: {}", tenant, e.getMessage());
         }

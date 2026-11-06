@@ -99,6 +99,8 @@ services:
       AI_MEILI_KEY: ${AI_MEILI_KEY:-}
       AI_MEILI_INDEX: ${AI_MEILI_INDEX:-wenqu-chunks}
       # 沙盒 / 外部 OCR 服务连接（部署配置，不进设置页）
+      # 平台级「浏览器操作」MCP 的地址：容器内必须用 compose 服务名（127.0.0.1 是容器自己）
+      BROWSER_MCP_URL: ${BROWSER_MCP_URL:-http://browser-mcp:8931/mcp}
       SANDBOX_PROVISIONER_URL: ${SANDBOX_PROVISIONER_URL:-http://host.docker.internal:8002}
       SANDBOX_PROVISIONER_TOKEN: ${SANDBOX_PROVISIONER_TOKEN:-}
       SANDBOX_CALLBACK_BASE_URL: ${SANDBOX_CALLBACK_BASE_URL:-http://host.docker.internal:8090/ai}
@@ -141,6 +143,8 @@ services:
       context: ./deploy/browser-mcp
       args:
         MCP_VERSION: ${BROWSER_MCP_VERSION:-0.0.84}
+        # 受限网络（拉不到 Docker Hub）时指到本地已有、带 node 的 glibc 镜像
+        BASE_IMAGE: ${BROWSER_MCP_BASE_IMAGE:-node:22-bookworm-slim}
     container_name: wen-qu-browser
     restart: unless-stopped
     # Chromium 必须有大共享内存：默认 64MB 会直接崩

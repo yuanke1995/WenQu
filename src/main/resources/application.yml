@@ -192,6 +192,11 @@ ai-app:
   #   openssl genrsa 2048 | openssl pkcs8 -topk8 -nocrypt > data/secret/rsa/v4.key
   secrets:
     dir: ${AI_SECRETS_DIR:}
+  # 平台级「浏览器操作」MCP 服务的默认地址（启动播种平台行用；播种后管理员也可在 MCP 面板改）。
+  # 本机 IDE 跑后端：指向本机 npx 起的那个；容器部署：compose 把 BROWSER_MCP_URL 设成
+  # http://browser-mcp:8931/mcp（容器里的 127.0.0.1 是它自己）。
+  mcp:
+    browser-url: ${BROWSER_MCP_URL:http://127.0.0.1:8931/mcp}
 
 logging:
   level:

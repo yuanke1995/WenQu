@@ -9,7 +9,10 @@
 #   - --isolated：浏览器 profile 只在内存里，会话结束即清，多用户之间不残留登录态；
 #   - --no-webmcp：不允许页面通过 WebMCP 往工具表里注册任何东西。
 # --no-sandbox 的代价由上面三条兜：容器本身可丢弃、出口收敛、profile 不落盘。
-FROM node:22-bookworm-slim
+# 基础镜像可换：内网/受限网络环境（拉不到 Docker Hub）可用本地已有、带 node 的镜像构建——
+# 只要它是 glibc 发行版（Debian/Ubuntu）且 node ≥18，Playwright 的 Chromium 就能正常跑。
+ARG BASE_IMAGE=node:22-bookworm-slim
+FROM ${BASE_IMAGE}
 
 ARG MCP_VERSION=0.0.84
 
