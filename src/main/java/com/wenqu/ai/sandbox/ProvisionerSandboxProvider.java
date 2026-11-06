@@ -447,6 +447,56 @@ public class ProvisionerSandboxProvider {
         return connections.get(sandboxKey(uid, threadId)) != null;
     }
 
+    /** 这个用户在本副本当前持有的沙盒连接（租约核算用；只读快照）。 */
+    public List<SandboxConnection> connectionsOf(String uid) {
+        if (uid == null || uid.isBlank()) return List.of();
+        List<SandboxConnection> out = new ArrayList<>();
+        for (SandboxConnection c : connections.values()) {
+            if (uid.equals(c.getUid())) out.add(c);
+        }
+        return out;
+    }
+
+    /**
+     * 回收这个用户最久未用的一条沙盒连接（不回收 {@code keepThreadId} 指向的当前作用域）。
+     * 用于每用户租约上限：优先动最久未用的一条；删除失败也摘缓存，避免每次重试撞同一堵墙。
+     */
+    public boolean evictOldestForUser(String uid, String keepThreadId) {
+        if (uid == null || uid.isBlank()) return false;
+        String keepKey = keepThreadId == null ? null : sandboxKey(uid, keepThreadId);
+        String oldestKey = null;
+        double oldestAt = Double.MAX_VALUE;
+        for (Map.Entry<String, SandboxConnection> e : connections.entrySet()) {
+            if (!uid.equals(e.getValue().getUid())) continue;
+            if (keepKey != null && keepKey.equals(e.getKey())) continue;
+            double at = lastTouchAt.getOrDefault(e.getKey(), 0d);
+            if (oldestKey == null || at < oldestAt) {
+                oldestKey = e.getKey();
+                oldestAt = at;
+            }
+        }
+        if (oldestKey == null) return false;
+        ReentrantLock lock = threadLock(oldestKey);
+        lock.lock();
+        try {
+            SandboxConnection current = connections.get(oldestKey);
+            if (current == null) return false;
+            try {
+                client().delete(current.getSandboxId(), current.getGeneration());
+            } catch (RuntimeException exc) {
+                log.warn("[SANDBOX] 租约回收删除失败（仅摘缓存） {}: {}",
+                        current.getSandboxId(), exc.toString());
+            }
+            connections.remove(oldestKey);
+            lastTouchAt.remove(oldestKey);
+            log.info("[SANDBOX] 用户 {} 租约回收最久未用沙盒 {}（scope={}）",
+                    uid, current.getSandboxId(), current.getThreadId());
+            return true;
+        } finally {
+            lock.unlock();
+        }
+    }
+
     public int releaseIdle(long ttlSeconds) {
         if (ttlSeconds <= 0 || connections.isEmpty()) {
             return 0;

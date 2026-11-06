@@ -317,6 +317,23 @@ public class SandboxService {
         }
     }
 
+    /** 每用户沙盒租约：超过 sandbox.maxPerUser 时循环回收该用户最久未用的连接，给当前作用域腾位。 */
+    private void ensureUserLease(String uid, String currentScope) {
+        int max = configService.getInt("sandbox.maxPerUser", 2);
+        if (max <= 0) return;
+        int count = provider.connectionsOf(uid).size();
+        if (count < max) return;
+        int evicted = 0;
+        while (count >= max && provider.evictOldestForUser(uid, currentScope)) {
+            count--;
+            evicted++;
+        }
+        if (evicted > 0) {
+            log.info("[SANDBOX] 用户 {} 沙盒租约达上限 {}，回收 {} 个最久未用连接",
+                    uid, max, evicted);
+        }
+    }
+
     /** 隐式会话的沙盒是否已就绪（异步升级的下一轮判据）。只看已有连接，不创建、不阻塞。 */
     public boolean isReady(String sessionId, String uid) {
         if (sessionId == null || sessionId.isBlank() || uid == null || uid.isBlank()) {
@@ -506,6 +523,11 @@ public class SandboxService {
         }
         try {
             SandboxScope scope = scopeOf(sessionId);
+            // 每用户租约上限：当前作用域还没有连接才核算，已有连接直接复用，不能因为一句普通轮
+            // 把用户另一个正在用的沙盒顶掉。超出上限按 LRU 回收最久未用的那条（文件在宿主卷上不丢）。
+            if (!provider.isConnected(scope.scopeId(), uid)) {
+                ensureUserLease(uid, scope.scopeId());
+            }
             ProvisionerSandboxBackend backend = new ProvisionerSandboxBackend(
                     provider, scope.scopeId(), uid, scope.workdirPath(),
                     true, true, unrestrictedWrites, ProvisionerSandboxBackend.procTagFor(sessionId));
