@@ -17,8 +17,8 @@ package com.wenqu.ai.agent.tool;
  */
 public enum ToolFamily {
 
-    /** 内置高频工具：纯计算、无副作用、无外部依赖（准入原则见 BuiltinTools 类注释） */
-    BUILTIN("builtin", "内置高频工具"),
+    /** 内置工具：只剩 askUser（人在回路）；历史纯计算工具已退役（见 BuiltinTools 类注释） */
+    BUILTIN("builtin", "内置工具"),
     /** 知识库精确检索 */
     KNOWLEDGE("knowledge", "知识库精确检索"),
     /** 联网搜索（Provider 壳，外部计费与配额都在这族） */
