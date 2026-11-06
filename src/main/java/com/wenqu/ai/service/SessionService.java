@@ -1121,159 +1121,15 @@ public class SessionService {
     }
 
     /**
-     * 追加消息（MySQL 持久化 → Redis 缓存），返回消息 ID（用于反馈关联）
-     *
-     * @param images   该轮回答关联的图片 URL 列表（可为空）
-     * @param sources  引用来源 JSON 数组字符串（可为空），如 [{"ref":1,"knowledgeId":..,"docId":..,"fileName":..,"title":..,"snippet":..}]
+     * 追加消息（MySQL 持久化 → Redis 缓存），返回消息 ID（用于反馈关联）。
+     * <p>入参对象化：此前 14 个 telescoping 重载把 21 个位置参数一路传到底，新增一列要补一层重载，
+     * 相邻同类型实参写反编译器也不会拦。这里只保留 {@link MessageWrite} 一个写口。
      */
-    public String appendMessage(String sessionId, String role, String content, List<String> images, String sources) {
-        return appendMessage(sessionId, role, content, images, sources, null, null);
-    }
-
-    /**
-     * 追加消息（含深度思考全文）：
-     * MySQL 优先持久化，失败降级 Redis 缓存（Lua 原子追加 + 上限裁剪 + TTL）
-     *
-     * @param thinking 思考过程全文（深度思考，可为空）
-     */
-    public String appendMessage(String sessionId, String role, String content, List<String> images, String sources, String thinking) {
-        return appendMessage(sessionId, role, content, images, sources, thinking, null);
-    }
-
-    /**
-     * 追加消息（含检索状态行数据）：retrieved 为 JSON（keywords/refs/terms），随消息持久化使状态行刷新后仍在
-     * <p>
-     * MySQL 事务写入（会话行锁 + 物理 max 序号，防并发同号与软删复用）→ 瞬时失败延时重试一次 →
-     * 仍失败降级 Redis（标记 mysqlPending，读侧合并并异步补写，保证降级窗口消息不永久不可见）
-     */
-    public String appendMessage(String sessionId, String role, String content, List<String> images, String sources, String thinking, String retrieved) {
-        return appendMessage(sessionId, role, content, images, sources, thinking, retrieved, null);
-    }
-
-    /**
-     * 追加消息（含产物交付清单）：artifacts 为 JSON 数组字符串（[{url,filename,size,description}]），
-     * 存原始 URL（展示层签名），随消息持久化使产物卡片刷新后仍在。
-     */
-    public String appendMessage(String sessionId, String role, String content, List<String> images, String sources, String thinking, String retrieved, String artifacts) {
-        return appendMessage(sessionId, role, content, images, sources, thinking, retrieved, artifacts, null);
-    }
-
-    /**
-     * 追加消息（含工具调用过程）：toolCalls 为 JSON 数组字符串（[{name,status,startedAtMs,elapsedMs,args,result}]），
-     * 随消息持久化使工具调用状态刷新后仍可回显（工具调用状态展示与留存）。
-     * 时长两个字段由框架引擎那份带上：缺位＝这一条没计时，前端据此不显示数字，而不是显示 0 毫秒。
-     */
-    public String appendMessage(String sessionId, String role, String content, List<String> images, String sources,
-                                String thinking, String retrieved, String artifacts, String toolCalls) {
-        return appendMessage(sessionId, role, content, images, sources, thinking, retrieved, artifacts, toolCalls, null);
-    }
-
-    /**
-     * 追加消息（含附件元信息）：attachments 为 JSON 数组字符串（[{name,mime,size}]，不含内容本体），
-     * 随用户消息持久化使附件标签刷新后仍可回显。
-     */
-    public String appendMessage(String sessionId, String role, String content, List<String> images, String sources,
-                                String thinking, String retrieved, String artifacts, String toolCalls,
-                                String attachments) {
-        return appendMessage(sessionId, role, content, images, sources, thinking, retrieved, artifacts,
-                toolCalls, attachments, null);
-    }
-
-    /**
-     * 追加消息（含 Token 用量）：tokens 为 JSON（context/budget/hits/output/prompt/outputIsReal/total），
-     * 随助手消息持久化使「本次用量/会话累计」刷新与历史会话回看时仍可用（此前仅随 done 事件下发、不落库）。
-     */
-    public String appendMessage(String sessionId, String role, String content, List<String> images, String sources,
-                                String thinking, String retrieved, String artifacts, String toolCalls,
-                                String attachments, String tokens) {
-        return appendMessage(sessionId, role, content, images, sources, thinking, retrieved, artifacts,
-                toolCalls, attachments, tokens, null, null);
-    }
-
-    /**
-     * 追加消息（含回答时间线）：timeline 为 JSON 数组字符串（正文区间段/工具下标段/产物下标段，
-     * 另含指向 processText 与 thinking 全文偏移的过程段与思考段），与 content、toolCalls、artifacts
-     * 同源落库，刷新与历史会话据此还原正文与工具/思考/过程的交错顺序。
-     * 不落库则历史回看只能整段正文 + 底部汇总（过程感丢失）。
-     *
-     * @param processText 过程独白全文（&lt;process&gt; 标签内，与正文分流；时间线 process 段区间指向它，可为空）
-     */
-    public String appendMessage(String sessionId, String role, String content, List<String> images, String sources,
-                                String thinking, String retrieved, String artifacts, String toolCalls,
-                                String attachments, String tokens, String timeline, String processText) {
-        return appendMessage(sessionId, role, content, images, sources, thinking, retrieved, artifacts,
-                toolCalls, attachments, tokens, timeline, processText, null, null);
-    }
-
-    /**
-     * 追加消息（含智能体归属）：agentId/agentName 为本轮生效智能体的快照（助手消息专用）。
-     * 落库意义：智能体是会话级绑定的，但归属要随消息留存——改名/删除后历史仍如实回显「这条是谁答的」。
-     */
-    public String appendMessage(String sessionId, String role, String content, List<String> images, String sources,
-                                String thinking, String retrieved, String artifacts, String toolCalls,
-                                String attachments, String tokens, String timeline, String processText,
-                                String agentId, String agentName) {
-        return appendMessage(sessionId, role, content, images, sources, thinking, retrieved, artifacts,
-                toolCalls, attachments, tokens, timeline, processText, agentId, agentName, null);
-    }
-
-    /**
-     * 追加消息（含生效模型）：model 为本轮生效模型引用（助手消息专用，随 tokens 同时落库）。
-     * 用途：使用统计按模型分组聚合（每日趋势/模型用量占比）；存量行 model 为 NULL 归入「未知」。
-     */
-    public String appendMessage(String sessionId, String role, String content, List<String> images, String sources,
-                                String thinking, String retrieved, String artifacts, String toolCalls,
-                                String attachments, String tokens, String timeline, String processText,
-                                String agentId, String agentName, String model) {
-        return appendMessage(sessionId, role, content, images, sources, thinking, retrieved, artifacts,
-                toolCalls, attachments, tokens, timeline, processText, agentId, agentName, model, null, null, null);
-    }
-
-    /**
-     * 追加消息（含相关推荐）：related 为 JSON 数组字符串（「接下来可以」的推荐问句清单）。
-     * 落库意义：此前只随 done 事件下发、不入库，刷新后推荐整块消失；而模型把正文误写进
-     * &lt;related&gt; 时剥离即等于内容永久丢失（ChatService 的 related 护栏要靠这一列留痕）。
-     */
-    public String appendMessage(String sessionId, String role, String content, List<String> images, String sources,
-                                String thinking, String retrieved, String artifacts, String toolCalls,
-                                String attachments, String tokens, String timeline, String processText,
-                                String agentId, String agentName, String model, String related,
-                                String mentions, String historyRefs) {
-        return appendMessage(sessionId, role, content, images, sources, thinking, retrieved, artifacts,
-                toolCalls, attachments, tokens, timeline, processText, agentId, agentName, model, related,
-                mentions, historyRefs, null);
-    }
-
-    /**
-     * 追加消息（含计划批准卡）：plan 为 JSON（{plan,status}，计划模式本轮的执行计划与裁决结果）。
-     * 落库意义：计划卡此前只活在实时流里——刷新/切会话后所有已批准/未批准的计划卡全部消失，
-     * 只剩「还在等确认」的那张能从批准记录重建；随助手消息落库后每轮计划各留一张。
-     */
-    public String appendMessage(String sessionId, String role, String content, List<String> images, String sources,
-                                String thinking, String retrieved, String artifacts, String toolCalls,
-                                String attachments, String tokens, String timeline, String processText,
-                                String agentId, String agentName, String model, String related,
-                                String mentions, String historyRefs, String plan) {
-        return appendMessage(sessionId, role, content, images, sources, thinking, retrieved, artifacts,
-                toolCalls, attachments, tokens, timeline, processText, agentId, agentName, model, related,
-                mentions, historyRefs, plan, null);
-    }
-
-    /**
-     * 追加消息（含本轮身份）：turnId 与 {@code c_ai_session_event.turn_id} 同源，是「这条回答的过程在哪一轮」的关联键。
-     * <p>不带它的代价：过程回放只能整会话列一堆轮次，点不到「这一条回答怎么跑出来的」；
-     * 而账本本身按轮存着，缺的只是消息侧那半只钥匙。写入方（ChatService）手里一直有 turnId，落库时递过来即可。
-     */
-    public String appendMessage(String sessionId, String role, String content, List<String> images, String sources,
-                                String thinking, String retrieved, String artifacts, String toolCalls,
-                                String attachments, String tokens, String timeline, String processText,
-                                String agentId, String agentName, String model, String related,
-                                String mentions, String historyRefs, String plan, String turnId) {
-        // 1. MySQL 持久化
+    public String appendMessage(MessageWrite write) {
+        if (write == null) return null;
+        String sessionId = write.getSessionId();
         try {
-            return appendToMysql(sessionId, role, content, images, sources, thinking, retrieved, artifacts,
-                    toolCalls, attachments, tokens, timeline, processText, agentId, agentName, model, related,
-                    mentions, historyRefs, plan, turnId);
+            return appendToMysql(write);
         } catch (Exception e) {
             log.warn("MySQL 追加消息失败 (session={}): {}", sessionId, e.getMessage());
         }
@@ -1284,107 +1140,51 @@ public class SessionService {
             Thread.currentThread().interrupt();
         }
         try {
-            return appendToMysql(sessionId, role, content, images, sources, thinking, retrieved, artifacts,
-                    toolCalls, attachments, tokens, timeline, processText, agentId, agentName, model, related,
-                    mentions, historyRefs, plan, turnId);
+            return appendToMysql(write);
         } catch (Exception e) {
             log.warn("MySQL 追加消息重试仍失败 (session={}): {}", sessionId, e.getMessage());
         }
 
-        // 2. Redis 缓存（MySQL 持续不可用也不影响前端体验；mysqlPending 标记使读侧能合并补写，防消息丢失）
+        // Redis 缓存（MySQL 持续不可用也不影响前端体验；mysqlPending 标记使读侧能合并补写，防消息丢失）
         try {
             Map<String, Object> redisMsg = new HashMap<>();
-            redisMsg.put("role", role);
-            redisMsg.put("content", content);
+            redisMsg.put("role", write.getRole());
+            redisMsg.put("content", write.getContent());
             redisMsg.put("mysqlPending", true);
-            if (turnId != null && !turnId.isBlank()) {
-                redisMsg.put("turnId", turnId); // 本轮身份（降级缓存也带，补写 MySQL 后过程回放不断线）
+            if (notBlank(write.getTurnId())) {
+                redisMsg.put("turnId", write.getTurnId()); // 本轮身份（降级缓存也带，补写 MySQL 后过程回放不断线）
             }
             // 降级消息自带全局唯一 msgId：补写 MySQL 时按 id 幂等（同一消息不重复插；
-            // 且不再被"与历史消息同文"误判为重复——用户复读完全相同的问题也各自补写，不丢失）
+            // 且不再被「与历史消息同文」误判为重复——用户复读完全相同的问题也各自补写，不丢失）
             redisMsg.put("msgId", UUID.randomUUID().toString().replace("-", ""));
-            if (thinking != null && !thinking.isBlank()) {
-                redisMsg.put("thinking", thinking);
+            if (notBlank(write.getThinking())) {
+                redisMsg.put("thinking", write.getThinking());
             }
-            if (images != null && !images.isEmpty()) {
-                redisMsg.put("images", images);
+            if (write.getImages() != null && !write.getImages().isEmpty()) {
+                redisMsg.put("images", write.getImages());
             }
-            if (sources != null && !sources.isBlank()) {
-                try {
-                    redisMsg.put("sources", JSON.parseArray(sources, Map.class));
-                } catch (Exception ignored) {
-                }
+            putJsonArray(redisMsg, "sources", write.getSources(), Map.class);
+            putJson(redisMsg, "retrieved", write.getRetrieved());
+            putJsonArray(redisMsg, "related", write.getRelated(), String.class);
+            putJson(redisMsg, "artifacts", write.getArtifacts());
+            putJson(redisMsg, "toolCalls", write.getToolCalls());
+            putJsonArray(redisMsg, "attachments", write.getAttachments(), Map.class);
+            putJson(redisMsg, "tokens", write.getTokens());
+            putJsonArray(redisMsg, "timeline", write.getTimeline(), Map.class);
+            if (notBlank(write.getProcessText())) {
+                redisMsg.put("processText", write.getProcessText()); // 过程独白全文（降级缓存也带，读侧原样透出）
             }
-            if (retrieved != null && !retrieved.isBlank()) {
-                try {
-                    redisMsg.put("retrieved", JSON.parse(retrieved));
-                } catch (Exception ignored) {
-                }
+            if (notBlank(write.getAgentId())) {
+                redisMsg.put("agentId", write.getAgentId());   // 智能体归属（降级缓存同样带：补写 MySQL 后归属不丢）
+                redisMsg.put("agentName", write.getAgentName() == null ? "" : write.getAgentName());
             }
-            if (related != null && !related.isBlank()) {
-                try {
-                    redisMsg.put("related", JSON.parseArray(related, String.class));
-                } catch (Exception ignored) {
-                }
+            if (notBlank(write.getModel())) {
+                redisMsg.put("model", write.getModel());       // 生效模型（与 tokens 同口径随降级缓存携带）
             }
-            if (artifacts != null && !artifacts.isBlank()) {
-                try {
-                    redisMsg.put("artifacts", JSON.parse(artifacts));
-                } catch (Exception ignored) {
-                }
-            }
-            if (toolCalls != null && !toolCalls.isBlank()) {
-                try {
-                    redisMsg.put("toolCalls", JSON.parse(toolCalls));
-                } catch (Exception ignored) {
-                }
-            }
-            if (attachments != null && !attachments.isBlank()) {
-                try {
-                    redisMsg.put("attachments", JSON.parseArray(attachments, Map.class));
-                } catch (Exception ignored) {
-                }
-            }
-            if (tokens != null && !tokens.isBlank()) {
-                try {
-                    redisMsg.put("tokens", JSON.parse(tokens));
-                } catch (Exception ignored) {
-                }
-            }
-            if (timeline != null && !timeline.isBlank()) {
-                try {
-                    redisMsg.put("timeline", JSON.parseArray(timeline, Map.class));
-                } catch (Exception ignored) {
-                }
-            }
-            if (processText != null && !processText.isBlank()) {
-                redisMsg.put("processText", processText); // 过程独白全文（降级缓存也带，读侧原样透出）
-            }
-            if (agentId != null && !agentId.isBlank()) {
-                redisMsg.put("agentId", agentId);   // 智能体归属（降级缓存同样带：补写 MySQL 后归属不丢）
-                redisMsg.put("agentName", agentName == null ? "" : agentName);
-            }
-            if (model != null && !model.isBlank()) {
-                redisMsg.put("model", model);       // 生效模型（与 tokens 同口径随降级缓存携带）
-            }
-            if (mentions != null && !mentions.isBlank()) {
-                try {
-                    redisMsg.put("mentions", JSON.parseArray(mentions, Map.class)); // @ 引用（降级缓存也带，补写 MySQL 后不丢）
-                } catch (Exception ignored) {
-                }
-            }
-            if (historyRefs != null && !historyRefs.isBlank()) {
-                try {
-                    redisMsg.put("historyRefs", JSON.parseArray(historyRefs, Map.class)); // # 历史引用（同上）
-                } catch (Exception ignored) {
-                }
-            }
-            if (plan != null && !plan.isBlank()) {
-                try {
-                    redisMsg.put("plan", JSON.parse(plan)); // 计划批准卡（降级缓存也带，补写 MySQL 后计划不丢）
-                } catch (Exception ignored) {
-                }
-            }
+            putJsonArray(redisMsg, "mentions", write.getMentions(), Map.class);
+            putJsonArray(redisMsg, "historyRefs", write.getHistoryRefs(), Map.class);
+            putJson(redisMsg, "plan", write.getPlan());
+            putJson(redisMsg, "blocks", write.getBlocks()); // 显示块（降级缓存也带，补写 MySQL 后新前端不退化）
             String json = objectMapper.writeValueAsString(redisMsg);
             int max = properties.getSession().getMaxHistory() * 2;
             long expireSeconds = properties.getSession().getExpireMinutes() * 60L;
@@ -1396,15 +1196,24 @@ public class SessionService {
         return null;
     }
 
-    /**
-     * 追加消息（只带正文/思考与本轮身份）：给「没有工具、产物、时间线」的轻量留痕消息用
-     * （思考阶段被叫停的留痕、工作流直答的提问行）。
-     * <p>为什么不直接调全参重载：那条链是为了让每个落库点都能带齐自己的列，摊开调用点要写十几个 null，
-     * 而这些 null 的语义就是「本类消息没有这些维度」——写在服务层一处比写在每个调用点清楚。
-     */
-    public String appendMessageWithTurn(String sessionId, String role, String content, String thinking, String turnId) {
-        return appendMessage(sessionId, role, content, List.of(), null, thinking,
-                null, null, null, null, null, null, null, null, null, null, null, null, null, null, turnId);
+    private static boolean notBlank(String s) {
+        return s != null && !s.isBlank();
+    }
+
+    private static void putJson(Map<String, Object> target, String key, String json) {
+        if (!notBlank(json)) return;
+        try {
+            target.put(key, JSON.parse(json));
+        } catch (Exception ignored) {
+        }
+    }
+
+    private static void putJsonArray(Map<String, Object> target, String key, String json, Class<?> itemType) {
+        if (!notBlank(json)) return;
+        try {
+            target.put(key, JSON.parseArray(json, itemType));
+        } catch (Exception ignored) {
+        }
     }
 
     /**
@@ -1412,12 +1221,10 @@ public class SessionService {
      * 序号取物理 max+1（含软删行，删除轮次后不复用，撤销按 seq-1 配对可靠）→ 插入 → 同步会话计数/首问标题。
      * 任一失败抛异常回滚，由调用方决定降级。
      */
-    private String appendToMysql(String sessionId, String role, String content, List<String> images,
-                                 String sources, String thinking, String retrieved, String artifacts,
-                                 String toolCalls, String attachments, String tokens, String timeline,
-                                 String processText, String agentId, String agentName, String model,
-                                 String related, String mentions, String historyRefs, String plan,
-                                 String turnId) {
+    private String appendToMysql(MessageWrite w) {
+        final String sessionId = w.getSessionId();
+        final String role = w.getRole();
+        final String content = w.getContent();
         // 列宽护栏：c_ai_message 的 TEXT 列容量 64KB（utf8mb4 按字节算，中文约 2.1 万字）。
         // 超长的直接后果不是「存一半」——是 MysqlDataTruncation 让**整条消息**（正文/工具卡/时间线/用量）
         // 一起落库失败（2026-10-22 线上实测：一轮异常长的思考把 thinking 列撑爆，助手消息整体没存进库）。
@@ -1426,8 +1233,17 @@ public class SessionService {
         // 走自己的护栏（CONTENT_COLUMN_MAX_CHARS）——TEXT 的 2 万字旧护栏会把长回答（表单助手
         // 一轮 2 万字以上的 schema）拦腰截断，截断副本落库后，回放/读库侧拿到的都是残缺 JSON。
         final String contentCapped = capForColumn(content, CONTENT_COLUMN_MAX_CHARS);
-        final String thinkingCapped = capForTextColumn(thinking);
-        final String processTextCapped = capForTextColumn(processText);
+        final String thinkingCapped = capForTextColumn(w.getThinking());
+        final String processTextCapped = capForTextColumn(w.getProcessText());
+        // blocks 自带全文，超长回答可能比 content 还大；超过两倍正文上限就放弃这一列，
+        // 让消息本体与旧列照常落库（前端退回 timeline），而不是整行插入失败。
+        String blocksValue = w.getBlocks();
+        if (blocksValue != null && blocksValue.length() > CONTENT_COLUMN_MAX_CHARS * 2L) {
+            log.warn("[BLOCKS] 显示块过大，跳过落库（正文与旧列照常）: session={} chars={}",
+                    sessionId, blocksValue.length());
+            blocksValue = null;
+        }
+        final String blocks = blocksValue;
         return transactionTemplate.execute(status -> {
             Session locked = sessionMapper.selectForUpdate(sessionId);
             if (locked == null) {
@@ -1451,25 +1267,26 @@ public class SessionService {
             msg.setRole(role);
             msg.setContent(contentCapped);
             msg.setThinking(thinkingCapped);
-            msg.setImages(images != null && !images.isEmpty() ? JSON.toJSONString(images) : null);
-            msg.setSources(sources);
-            msg.setRetrieved(retrieved);
-            msg.setRelated(related);
-            msg.setArtifacts(artifacts);
-            msg.setToolCalls(toolCalls);
-            msg.setAttachments(attachments);
-            msg.setTokens(tokens);
-            msg.setModel(model);
-            msg.setTimeline(timeline);
+            msg.setImages(w.getImages() != null && !w.getImages().isEmpty() ? JSON.toJSONString(w.getImages()) : null);
+            msg.setSources(w.getSources());
+            msg.setRetrieved(w.getRetrieved());
+            msg.setRelated(w.getRelated());
+            msg.setArtifacts(w.getArtifacts());
+            msg.setToolCalls(w.getToolCalls());
+            msg.setAttachments(w.getAttachments());
+            msg.setTokens(w.getTokens());
+            msg.setModel(w.getModel());
+            msg.setTimeline(w.getTimeline());
             msg.setProcessText(processTextCapped);
-            msg.setAgentId(agentId);
-            msg.setAgentName(agentName);
-            msg.setMentions(mentions);         // @ 引用（轮级注入 → 消息级常驻标注，刷新/历史回显保留）
-            msg.setHistoryRefs(historyRefs);   // # 历史引用（同上）
-            msg.setPlan(plan);                 // 计划批准卡（刷新/历史按轮重建执行计划卡）
+            msg.setBlocks(blocks);
+            msg.setAgentId(w.getAgentId());
+            msg.setAgentName(w.getAgentName());
+            msg.setMentions(w.getMentions());         // @ 引用（轮级注入 → 消息级常驻标注，刷新/历史回显保留）
+            msg.setHistoryRefs(w.getHistoryRefs());   // # 历史引用（同上）
+            msg.setPlan(w.getPlan());                 // 计划批准卡（刷新/历史按轮重建执行计划卡）
             // 本轮身份：与 c_ai_session_event.turn_id 同源，逐气泡「过程」按它取本行那一轮的账本。
             // 空串归一成 NULL——列语义是「没有关联键」，不留一个既查不到东西又占位的空串
-            msg.setTurnId(turnId == null || turnId.isBlank() ? null : turnId);
+            msg.setTurnId(notBlank(w.getTurnId()) ? w.getTurnId() : null);
             msg.setSequence(seq);
             messageMapper.insert(msg);
 
@@ -2263,6 +2080,13 @@ public class SessionService {
         if (m.getProcessText() != null && !m.getProcessText().isBlank()) {
             map.put("processText", m.getProcessText()); // 过程独白全文（历史回显灰字过程段）
         }
+        if (m.getBlocks() != null && !m.getBlocks().isBlank()) {
+            try {
+                map.put("blocks", JSON.parse(m.getBlocks())); // 显示块投影（新前端优先于 timeline）
+            } catch (Exception e) {
+                // blocks 解析失败忽略，前端按 timeline/processText 兜底
+            }
+        }
         if (m.getAttachments() != null && !m.getAttachments().isBlank()) {
             try {
                 map.put("attachments", JSON.parseArray(m.getAttachments(), Map.class)); // 附件标签（历史回显）
@@ -2396,6 +2220,47 @@ public class SessionService {
                     Object sourcesObj = m.get("sources");
                     if (sourcesObj != null) {
                         msg.setSources(JSON.toJSONString(sourcesObj));
+                    }
+                    Object relatedObj = m.get("related");
+                    if (relatedObj != null) {
+                        msg.setRelated(JSON.toJSONString(relatedObj));
+                    }
+                    Object artifactsObj = m.get("artifacts");
+                    if (artifactsObj != null) {
+                        msg.setArtifacts(JSON.toJSONString(artifactsObj));
+                    }
+                    Object toolCallsObj = m.get("toolCalls");
+                    if (toolCallsObj != null) {
+                        msg.setToolCalls(JSON.toJSONString(toolCallsObj));
+                    }
+                    Object attachmentsObj = m.get("attachments");
+                    if (attachmentsObj != null) {
+                        msg.setAttachments(JSON.toJSONString(attachmentsObj));
+                    }
+                    Object tokensObj = m.get("tokens");
+                    if (tokensObj != null) {
+                        msg.setTokens(JSON.toJSONString(tokensObj));
+                    }
+                    Object timelineObj = m.get("timeline");
+                    if (timelineObj != null) {
+                        msg.setTimeline(JSON.toJSONString(timelineObj));
+                    }
+                    Object processTextObj = m.get("processText");
+                    if (processTextObj != null) {
+                        msg.setProcessText(capForTextColumn(String.valueOf(processTextObj)));
+                    }
+                    Object modelObj = m.get("model");
+                    if (modelObj != null) {
+                        msg.setModel(String.valueOf(modelObj));
+                    }
+                    Object agentIdObj = m.get("agentId");
+                    if (agentIdObj != null) {
+                        msg.setAgentId(String.valueOf(agentIdObj));
+                        msg.setAgentName(m.get("agentName") == null ? "" : String.valueOf(m.get("agentName")));
+                    }
+                    Object blocksObj = m.get("blocks");
+                    if (blocksObj != null) {
+                        msg.setBlocks(JSON.toJSONString(blocksObj));
                     }
                     Object mentionsObj = m.get("mentions");
                     if (mentionsObj != null) {

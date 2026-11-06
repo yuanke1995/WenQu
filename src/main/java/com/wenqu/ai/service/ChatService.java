@@ -648,15 +648,18 @@ public class ChatService {
             List<String> urls = userImageService.processDisplay(cmd.getUserImages()).stream()
                     .map(UserImageService.UserImage::url).toList();
             List<ChatRequest.HistoryRef> historyRefs = cmd.getHistoryRefs();
-            sessionService.appendMessage(sessionId, "user", cmd.getQuestion(),
-                    urls.isEmpty() ? null : urls, null, null, null, null, null,
-                    chatAttachments.metasJson(cmd.getAttachments(), cmd.uploadOwnerUid()),
-                    null, null, null, null, null, null, null,
-                    cmd.getMentions() == null || cmd.getMentions().isEmpty()
-                            ? null : com.alibaba.fastjson2.JSON.toJSONString(cmd.getMentions()),
-                    historyRefs == null || historyRefs.isEmpty()
-                            ? null : com.alibaba.fastjson2.JSON.toJSONString(historyRefs),
-                    null, turnId);
+            sessionService.appendMessage(MessageWrite.builder()
+                    .sessionId(sessionId)
+                    .role("user")
+                    .content(cmd.getQuestion())
+                    .images(urls.isEmpty() ? null : urls)
+                    .attachments(chatAttachments.metasJson(cmd.getAttachments(), cmd.uploadOwnerUid()))
+                    .mentions(cmd.getMentions() == null || cmd.getMentions().isEmpty()
+                            ? null : com.alibaba.fastjson2.JSON.toJSONString(cmd.getMentions()))
+                    .historyRefs(historyRefs == null || historyRefs.isEmpty()
+                            ? null : com.alibaba.fastjson2.JSON.toJSONString(historyRefs))
+                    .turnId(turnId)
+                    .build());
         } catch (Exception e) {
             // 问没留住不碍「这一轮被挡下」这件事本身：帧照发、日志照记，只是刷新后读不回这一句
             log.warn("[FAIL-LOUD] 被挡下的提问落库失败: session={} {}", sessionId, e.getMessage());

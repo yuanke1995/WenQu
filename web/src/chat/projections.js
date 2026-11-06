@@ -847,6 +847,10 @@ const restoreTimeline = (m, segs) => {
   return out
 }
 
+// blocks → 现有视图字段的投影独立成纯模块（./blocks.js），这里只做转发，
+// 保持 ChatPage / ShareChatPage 的既有 import 路径不变。
+export { applyBlocks } from './blocks'
+
 // ==================== 完成态：正文 / 过程分离（DSH 口径） ====================
 /* DSH 的轮次模型：最终答案只取最后一轮「不含工具调用」的回复，之前的所有回复、思考与工具
  * 都属于过程。问渠的时间线没有 step 号，但同样的边界可以用段序列表示：
@@ -884,7 +888,26 @@ const turnAnswerRange = m => {
   }
   return from === null ? { from: 0, to: len } : { from, to: len }
 }
+
+/** 新消息的 blocks 投影带显式 channel：返回 answer 文本段；旧消息返回 null 走区间推断。
+ *  用段数组而不是单一区间：答案段理论上连续，但这里不把「连续」当前提，避免多轮场景把后者算进答案。 */
+const explicitAnswerSegments = m => {
+  // 跑动中的一轮仍按实时末尾正文展示；终态切到服务端确定的 answer 通道，
+  // 避免快照之后新到的正文段没有 channel、被误收进过程。
+  if (!m || m.loading) return null
+  const tl = Array.isArray(m && m.timeline) ? m.timeline : []
+  if (!tl.some(seg => seg && seg.kind === 'text' && seg.channel)) return null
+  return tl.filter(seg => seg && seg.kind === 'text' && seg.channel === 'answer')
+}
+
 const turnAnswerText = m => {
+  const segments = explicitAnswerSegments(m)
+  if (segments) {
+    const content = String((m && m.content) || '')
+    return segments.map(seg => content.slice(
+      Math.min(Number(seg.from) || 0, content.length),
+      Math.min(Number(seg.to) || 0, content.length))).join('')
+  }
   const r = turnAnswerRange(m)
   return r ? String((m && m.content) || '').slice(r.from, r.to) : ''
 }
@@ -893,7 +916,8 @@ const turnAnswerText = m => {
  *  不做任何句子推断——工具在段之间就按段渲染，过程块本来就不参与正文排版。 */
 const turnProcessRows = m => {
   const content = String((m && m.content) || '')
-  const range = turnAnswerRange(m)
+  const explicit = explicitAnswerSegments(m)
+  const range = explicit ? null : turnAnswerRange(m)
   const limit = range ? range.from : content.length
   const tl = Array.isArray(m && m.timeline) ? m.timeline : []
   const out = []
@@ -902,6 +926,13 @@ const turnProcessRows = m => {
   for (const seg of tl) {
     if (!seg) continue
     if (seg.kind === 'text') {
+      if (explicit) {
+        if (seg.channel === 'answer') continue
+        const f = Math.min(Number(seg.from) || 0, content.length)
+        const t = Math.min(Number(seg.to) || 0, content.length)
+        if (t > f && content.slice(f, t).trim()) { flushGroup(); out.push({ kind: 'text', from: f, to: t }) }
+        continue
+      }
       const f = Math.min(Number(seg.from) || 0, limit)
       const t = Math.min(Number(seg.to) || 0, limit)
       if (t > f && content.slice(f, t).trim()) { flushGroup(); out.push({ kind: 'text', from: f, to: t }) }

@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.wenqu.ai.mapper.SessionShareMapper;
 import com.wenqu.ai.model.Session;
 import com.wenqu.ai.model.SessionShare;
+import com.wenqu.ai.util.TurnBlocks;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
@@ -292,6 +293,13 @@ public class SessionShareService {
                 if (!slim.isEmpty()) one.put("sources", slim);
             }
             if ("assistant".equals(role)) {
+                // 分享页只展示答案：blocks 只外发 answer 文本块，工具入参/过程/思考不出公开面
+                Map<String, Object> blocks = TurnBlocks.answerOnly(m.get("blocks"));
+                if (blocks != null) {
+                    one.put("blocks", blocks);
+                    String answer = TurnBlocks.answerText(blocks);
+                    if (!answer.isBlank()) one.put("content", answer);
+                }
                 List<Map<String, Object>> arts = publicArtifacts(m.get("artifacts"), artSeq);
                 if (!arts.isEmpty()) {
                     artSeq += arts.size();

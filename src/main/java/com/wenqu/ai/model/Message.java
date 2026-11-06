@@ -78,6 +78,13 @@ public class Message {
      */
     private String processText;
 
+    /**
+     * 显示块投影 (JSON: {v,turnId,blocks:[{id,kind,...}]})：正文/思考/过程/工具/插话/产物各成一块，
+     * 文本块自带全文，工具块自带完整条目，不再用字符区间与并行数组下标。
+     * NULL=旧消息，前端按 {@link #timeline} 与 {@link #processText} 兜底。
+     */
+    private String blocks;
+
     /** Token 用量 (JSON: context/budget/hits/output/prompt/outputIsReal/total)，随助手消息落库供历史回看 */
     private String tokens;
 

@@ -218,7 +218,11 @@ public class GoalService {
     /** 目标指令回声：把这句「设为目标」按普通用户消息落进对话，再补一列标记。 */
     private void echoGoalCommand(String sessionId, String goalId, String objective) {
         try {
-            String messageId = sessionService.appendMessage(sessionId, "user", objective, null, null);
+            String messageId = sessionService.appendMessage(MessageWrite.builder()
+                    .sessionId(sessionId)
+                    .role("user")
+                    .content(objective)
+                    .build());
             sessionService.markGoalCommand(messageId, goalId);
         } catch (Exception e) {
             log.warn("[GOAL] 目标指令回声落库失败（不影响目标）: goal={} {}", goalId, e.getMessage());

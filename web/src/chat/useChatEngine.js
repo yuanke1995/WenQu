@@ -31,7 +31,7 @@ import { THINK_CAPS, REASONING_LEVELS, THINK_LEVEL_ON, levelLabel,
          goalTerminalOf, goalBarVisibleOf, goalPhraseOf, goalStateLabelOf, goalStateClassOf,
          goalBlockReasonOf, goalBarTitleOf, goalBarMetaOf, goalRoundLineOf,
          goalCanPauseOf, goalCanResumeOf, goalCanEditOf,
-         rememberAgents, isDispatchTool, consultNameOf, stepBriefOf, TURN_STOP_SUFFIX } from './projections'
+         rememberAgents, isDispatchTool, consultNameOf, stepBriefOf, TURN_STOP_SUFFIX, applyBlocks } from './projections'
 
 export function useChatEngine (hooks = {}) {
   const route = useRoute()
@@ -1116,9 +1116,15 @@ const switchSession = async sid => {
             changes: (m.changes && typeof m.changes === 'object') ? m.changes : null,
             retrieved: (() => { try { return m.retrieved ? JSON.parse(m.retrieved) : null } catch (e) { return null } })(),
             // 回答时间线（随消息落库）：重建后刷新页仍是「正文—工具—产物」交错的过程视图
-            timeline: []
+            timeline: [],
+            // 显示块投影（新消息才有）：答案/过程/工具/产物的权威顺序与归属，优先于 timeline
+            blocks: (m.blocks && typeof m.blocks === 'object') ? m.blocks : null
           }
-          if (Array.isArray(m.timeline)) msg.timeline = restoreTimeline(msg, m.timeline)
+          if (msg.blocks) {
+            applyBlocks(msg, msg.blocks)
+          } else if (Array.isArray(m.timeline)) {
+            msg.timeline = restoreTimeline(msg, m.timeline)
+          }
           // 失败轮的错误卡按库里那句重建：实时那颗长在同一行上（有回答挂回答、零产出挂那一问），
           // kind 记 'spoken'——它是服务端说过的那句业务错误，原样显示，不再按文本猜一遍
           if (msg.failMsg) msg.errorCard = { message: msg.failMsg, kind: 'spoken', at: msg.time || 0 }
@@ -2390,6 +2396,8 @@ const applyTurnSnapshot = (msg, snap, sid) => {
   if (snap.planRecord) msg.planCard = planCardFromRecord(snap.planRecord)
   // 时间线必须在 toolCalls/artifacts 之后重建：段里的下标指向这两份清单，清单没铺好就先建会指空
   if (Array.isArray(snap.timeline) && snap.timeline.length) msg.timeline = restoreTimeline(msg, snap.timeline)
+  // 接流快照带 blocks 时按它重建：块自带全文，正文/过程/工具的顺序与终态一致
+  if (snap.blocks && typeof snap.blocks === 'object') applyBlocks(msg, snap.blocks)
   // 快照只给思考全文、给不了分段（那一轮跑到一半接上来的）：头部补一段，
   // 之后实时流出的每一轮各起一段，接流方看到的与从头看着的一样
   ensureThinkSegment(msg)
@@ -2952,6 +2960,11 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         }
         // 落库时间线没带思考分段（正文被重建导致整条作废、或后端是旧版）：头部补一段，不许看不见
         ensureThinkSegment(msg)
+        // 显示块是终态权威：有它就不再按时间线反推答案；没有则保持上面的旧路径
+        if (p.blocks && typeof p.blocks === 'object') {
+          applyBlocks(msg, p.blocks)
+          ensureThinkSegment(msg)
+        }
       } catch (e) { /* 旧版/停止生成：无负载 */ }
       msg.loading = false
       // 叫停那一轮：服务端确认停掉后把「⏹ 已停止本轮」补进正文（与落库那份同形）。

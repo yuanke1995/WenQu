@@ -1,10 +1,11 @@
-package com.wenqu.ai.agentx;
+package com.wenqu.ai.agentx.output;
 
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * {@code <related>}／{@code <process>} 两个推荐块的流式剥离器（框架引擎侧），外加一道内部标记闸。
+ * 模型输出的流式解析器：把 {@code <related>}／{@code <process>} 两个推荐块从正文里分流，
+ * 外加一道 DSML 内部标记闸。
  *
  * <p>为什么框架侧要有自己的这一份：主链路的系统提示词里带一句「回答末尾用 &lt;related&gt;…&lt;/related&gt;
  * 输出 N 条下一步建议」（条数与文本走 {@code RelatedPrompt} 同一处，两条运行时不改两份）。模型照做之后，
@@ -17,7 +18,7 @@ import java.util.List;
  * 实时时间线就会错序断词——这里不复现那个坑。
  *
  * <p>{@code <process>} 一并处理：块内内容进 {@link #process()}（落库的过程独白列 + 实时 {@code process} 帧），
- * 不混进正文。
+ * 不混进正文。每次 {@link #feed(String)} 只回本次新增的两路增量，调用方不必再拿累计长度做差。
  *
  * <p><b>内部标记闸</b>（{@link #dsml()}）：DeepSeek 系模型的工具调用标记（{@code <｜｜DSML｜｜…}，
  * 竖线是 U+FF5C 全角）本该只出现在结构化的 {@code tool_calls} 里，上游偶发把它当正文吐进 content。
@@ -25,7 +26,7 @@ import java.util.List;
  * 而它想执行的那一步并没有执行。这里从标记处整段吞到流尾（模型把调用写成文本时这一跑就说完了），
  * 脏文本不进正文、不落库；吞掉的量由调用方记一条降级说明与日志，别让它静默消失。
  */
-public final class RelatedStreamFilter {
+public final class ModelOutputParser {
 
     private static final String REL_OPEN = "<related>";
     private static final String REL_CLOSE = "</related>";
@@ -34,7 +35,6 @@ public final class RelatedStreamFilter {
     /** 工具调用内部标记的前缀（闭合形是 {@code </｜｜DSML｜｜…>}，不会撞这个前缀）。 */
     private static final String DSML_OPEN = "<｜｜DSML｜｜";
 
-    private final StringBuilder body = new StringBuilder();
     private final StringBuilder related = new StringBuilder();
     private final StringBuilder process = new StringBuilder();
     private final StringBuilder dsml = new StringBuilder();
@@ -48,11 +48,53 @@ public final class RelatedStreamFilter {
     private static final int MAX_PREFIX =
             Math.max(DSML_OPEN.length(), Math.max(REL_OPEN.length(), PROC_OPEN.length())) - 1;
 
+    /** 一次增量解析出的两路新内容：正文与过程独白。没有新增的那一路为空串。 */
     /**
-     * 吃进一段正文增量，返回此刻可以下发的部分（可能为空）。
+     * 一次 feed 能吃出两种增量，{@code processFirst} 表示这两段在原文里谁先出现：
+     * 引擎必须按这个顺序下发，否则「过程独白紧跟正文」挤在同一个 delta 时，
+     * 过程块会被劈到正文后面（2026-11-06 富文本夹具里实测到）。
      */
-    public String feed(String delta) {
-        if (delta == null || delta.isEmpty()) return "";
+    public record Delta(String text, String process, boolean processFirst) {
+        public Delta {
+            text = text == null ? "" : text;
+            process = process == null ? "" : process;
+        }
+
+        /** 只有一种增量时顺序无所谓。 */
+        public Delta(String text, String process) {
+            this(text, process, true);
+        }
+    }
+
+    /**
+     * 吃进一段正文增量，返回此刻可以下发的正文与过程增量（可能都为空）。
+     */
+    public synchronized Delta feed(String delta) {
+        if (delta == null || delta.isEmpty()) return new Delta("", "");
+        int processFrom = process.length();
+        seenText = false;
+        seenProcess = false;
+        String text = feedText(delta);
+        boolean processFirst = !textFirstSeen;
+        return new Delta(text, process.substring(processFrom), processFirst);
+    }
+
+    /** 本 feed 内的先后：先出现的那个赢（三个以上片段交替时按首次出现定序）。 */
+    private boolean seenText;
+    private boolean seenProcess;
+    private boolean textFirstSeen;
+
+    private void markText(int len) {
+        if (len <= 0 || seenText) return;
+        seenText = true;
+        if (!seenProcess) textFirstSeen = true;
+    }
+
+    private void markProcess() {
+        seenProcess = true;
+    }
+
+    private String feedText(String delta) {
         pending.append(delta);
         StringBuilder out = new StringBuilder();
         while (pending.length() > 0) {
@@ -69,6 +111,7 @@ public final class RelatedStreamFilter {
                         return out.toString();
                     }
                     out.append(s, 0, s.length() - hold);
+                    markText(s.length() - hold);
                     pending.setLength(0);
                     pending.append(s.substring(s.length() - hold));
                     return out.toString();
@@ -76,6 +119,7 @@ public final class RelatedStreamFilter {
                 boolean isRelated = r >= 0 && cut == r;
                 boolean isDsml = d >= 0 && cut == d;
                 out.append(s, 0, cut);
+                markText(cut);
                 pending.setLength(0);
                 if (isDsml) {
                     // 吞到流尾：调用标记写成文本时这一跑就是说完了，后面不会再有人话
@@ -109,11 +153,13 @@ public final class RelatedStreamFilter {
                     int hold = closePrefixHold(s, PROC_CLOSE);
                     if (hold < 0) return out.toString();
                     process.append(s, 0, s.length() - hold);
+                    markProcess();
                     pending.setLength(0);
                     pending.append(s.substring(s.length() - hold));
                     return out.toString();
                 }
                 process.append(s, 0, end);
+                markProcess();
                 pending.setLength(0);
                 pending.append(s.substring(end + PROC_CLOSE.length()));
                 mode = Mode.BODY;
@@ -127,7 +173,13 @@ public final class RelatedStreamFilter {
      * 剩下的就按它所在的那一块算——与手写侧「未闭合标签从开标签处整段剥掉」同一口径，
      * 否则用户读到的是半截标签。
      */
-    public String finish() {
+    public synchronized Delta finish() {
+        int processFrom = process.length();
+        String text = finishText();
+        return new Delta(text, process.substring(processFrom));
+    }
+
+    private String finishText() {
         String tail = pending.toString();
         pending.setLength(0);
         if (mode == Mode.DSML) {
@@ -144,27 +196,21 @@ public final class RelatedStreamFilter {
         }
         // 正文里最后这点尾巴不是正文（它像标签），但它没长成开标签时才是正文
         if (looksLikeTagStart(tail)) {
-            if (tail.startsWith(REL_OPEN)) return feed(tail.substring(REL_OPEN.length()));
-            if (tail.startsWith(PROC_OPEN)) return feed(tail.substring(PROC_OPEN.length()));
-            if (tail.startsWith(DSML_OPEN)) return feed(tail.substring(DSML_OPEN.length()));
+            if (tail.startsWith(REL_OPEN)) return feed(tail.substring(REL_OPEN.length())).text();
+            if (tail.startsWith(PROC_OPEN)) return feed(tail.substring(PROC_OPEN.length())).text();
+            if (tail.startsWith(DSML_OPEN)) return feed(tail.substring(DSML_OPEN.length())).text();
             return "";
         }
-        body.append(tail);
         return tail;
     }
 
-    /** 已剥出的正文（不含推荐块与过程块）。 */
-    public String body() {
-        return body.toString();
-    }
-
-    /** 已剥出的过程独白。 */
-    public String process() {
+    /** 已剥出的过程独白（累计全文）。 */
+    public synchronized String process() {
         return process.toString();
     }
 
     /** 被吞掉的工具调用内部标记（正常恒为空；非空即这一轮有一步没真跑）。 */
-    public String dsml() {
+    public synchronized String dsml() {
         return dsml.toString();
     }
 
@@ -172,7 +218,7 @@ public final class RelatedStreamFilter {
      * 推荐问句（按 {@code |} 与换行拆条）。两道护栏：整块是文档时一颗不出（{@link #holdsDocument}）、
      * 单条长过正文量级时不当芯片（由调用方并回正文）。
      */
-    public List<String> chips(int proseMinChars, int maxChips) {
+    public synchronized List<String> chips(int proseMinChars, int maxChips) {
         if (holdsDocument(maxChips)) return List.of();
         List<String> chips = new ArrayList<>();
         for (String t : items()) {
@@ -186,7 +232,7 @@ public final class RelatedStreamFilter {
      * 该并回回答的那些条目：整块是文档就全给，否则只给长过正文量级的那几条
      * （短条目仍是正经建议，不该被牵连）。
      */
-    public List<String> prose(int proseMinChars, int maxChips) {
+    public synchronized List<String> prose(int proseMinChars, int maxChips) {
         List<String> proseItems = new ArrayList<>();
         boolean document = holdsDocument(maxChips);
         for (String t : items()) {
@@ -203,7 +249,7 @@ public final class RelatedStreamFilter {
      *
      * @param maxChips 允许的最多条数（配置的条数加两道余量：多给一两条按清单还认，整块文档不认）
      */
-    public boolean holdsDocument(int maxChips) {
+    public synchronized boolean holdsDocument(int maxChips) {
         return items().size() > maxChips;
     }
 
@@ -217,7 +263,7 @@ public final class RelatedStreamFilter {
         return out;
     }
 
-    public boolean hasRelated() {
+    public synchronized boolean hasRelated() {
         return related.length() > 0;
     }
 

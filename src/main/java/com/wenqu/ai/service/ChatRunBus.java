@@ -413,11 +413,25 @@ public class ChatRunBus {
 
     /** 本轮收尾：调用方发完 done/error 之后关闭（幂等）。忘了也有巡检按把手回收 */
     public void finish(String sessionId) {
+        finish(sessionId, null);
+    }
+
+    /**
+     * 收这一轮的总线，但让 {@code keepOpen} 那一只观众的连接留着。
+     * <p>用在「用户点停止」这一条：done 才是终态事实的载体（finalContent/blocks/notice/messageId），
+     * 把发起者一并关掉会让那一轮只剩半截正文——接流方与别的标签页仍然立刻收尾，
+     * 装配期卡住不发的兜底由 {@code ChatRunRuntime} 的宽限期定时器掐。
+     */
+    public void finish(String sessionId, SseEmitter keepOpen) {
         Run run = sessionId == null ? null : runs.get(sessionId);
-        if (run != null) close(run);
+        if (run != null) close(run, keepOpen);
     }
 
     private void close(Run run) {
+        close(run, null);
+    }
+
+    private void close(Run run, SseEmitter keepOpen) {
         synchronized (run) {
             if (run.closed) return;
             run.closed = true;
@@ -430,6 +444,7 @@ public class ChatRunBus {
         // 每个观众的连接都要关掉：本轮结束而通道留着不 complete，那个异步请求会一直挂着
         // （emitter 不带容器超时，接流方自己也只会转圈到空闲看门狗超时）
         for (Sub sub : run.subs) {
+            if (keepOpen != null && sub.emitter == keepOpen) continue;
             try {
                 sub.emitter.complete();
             } catch (Exception ignored) {

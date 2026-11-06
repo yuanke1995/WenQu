@@ -5,6 +5,7 @@ package com.wenqu.ai.agent.chat;
 import com.alibaba.fastjson2.JSON;
 import com.wenqu.ai.service.ChatRunBus;
 import com.wenqu.ai.service.ConfigService;
+import com.wenqu.ai.service.MessageWrite;
 import com.wenqu.ai.service.SessionEventService;
 import com.wenqu.ai.service.SessionService;
 import lombok.extern.slf4j.Slf4j;
@@ -140,11 +141,11 @@ public class ChatRunRuntime {
         h.stopped().set(true);
         STOP_MARKS.put(sessionId, h.turnId());
         sessionEventService.append(sessionId, h.userId(), h.turnId(), "stop", "用户停止本轮");
-        // 总线当场收摊：别的标签/设备上还挂着的观众立刻收尾，注册表里的「在跑」也一并摘掉。
-        // 不收的后果是装配期（沙盒要几十秒到几分钟）点了停止，所有页面都还挂着「正在溯源」，
-        // 刷新还能接回来——引擎线程那时还没走到检查点，run 只好一直亮着（2026-11-05 线上复现）。
-        chatRunBus.finish(sessionId);
-        completeEmitter(h.emitter());
+        // 总线当场收摊（别的标签/设备立刻收尾、注册表摘掉「在跑」——2026-11-05 装配期点停止后
+        // 所有页面挂着「正在溯源」的修复对象），而发起者这一路的连接留给引擎发完 done 再关。
+        SseEmitter initiator = h.emitter();
+        chatRunBus.finish(sessionId, initiator);
+        scheduleEmitterClose(initiator);
         // 不在这里给那一问打终止标记：本轮此刻还没真正退场（引擎线程要等下一个检查点才断），
         // 此刻判「有没有回答」会抢在落库之前。标记统一由 chat 流水线 finally 打（见该方法注释）。
         log.info("[SSE] 用户停止本轮: session={}", sessionId);
@@ -153,6 +154,32 @@ public class ChatRunRuntime {
 
     /** 心跳间隔 15s：小于常见中间代理 60s 读超时与前端 120s 空闲看门狗，留足余量。 */
     private static final long TOOL_HEARTBEAT_INTERVAL_MS = 15_000;
+
+    /**
+     * 提前收轮（用户点停止 / 看门狗判预算用尽）后留给引擎发 done 的宽限期。
+     * <p>done 是终态事实的唯一载体（finalContent/blocks/notice/messageId/tokens），抢先 complete 让客户端
+     * 只收到那句 warn——2026-11-06 本地真跑实测：停止与预算两条支路都是「一帧 done 都没有」，
+     * 界面只能落回本地抄的那句「已停止生成」文案，blocks/工具卡要等刷新才看得见。
+     * <p>引擎收口时自己会关流，这里的定时器只兜「引擎再也走不到收口」的那种；之所以取 90s 而不是几秒：
+     * 中断是协作式的，在途那一次模型调用要跑完（本地实测 16s，模型静默上限由 chat.modelStallTimeoutMs 管），
+     * 3s 宽限期在预算支路上根本等不到 done。
+     */
+    private static final long STOP_CLOSE_GRACE_MS = 90_000L;
+
+    /** 提前收轮的那几条支路共用的兜底关流：到点仍没被引擎关掉才关，重复 complete 是无害的。 */
+    private void scheduleEmitterClose(SseEmitter emitter) {
+        if (emitter == null) return;
+        STOP_CLOSE_POOL.schedule(() -> completeEmitter(emitter),
+                STOP_CLOSE_GRACE_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
+    }
+
+    /** 停止兜底关流的单线程池：与心跳/看门狗分池，慢客户端的 send 不能拖住这里。 */
+    private static final java.util.concurrent.ScheduledExecutorService STOP_CLOSE_POOL =
+            java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "sse-stop-close");
+                t.setDaemon(true);
+                return t;
+            });
 
     /** SSE 心跳调度池（2 线程，守护）：仅供 15s keepalive 注释行下发。与看门狗分池——心跳是
      *  高频周期任务（百级并发 = 每 15s 约两百次 send），看门狗是整轮截断的安全网：同队时一个
@@ -223,8 +250,8 @@ public class ChatRunRuntime {
     /**
      * 整轮存活看门狗：每 {@link #TOOL_HEARTBEAT_INTERVAL_MS} 检查一次「墙钟 − 人工等待」是否越过预算。
      * 到点先发 warn（此刻 emitter 还活着，前端气泡真能看到那句「已到整轮时间上限」），再 dispose 停流
-     * （半程正文按截断态落库）并 complete。失联兜底另有 15s 心跳、前端 120s 空闲看门狗与各阶段自身
-     * 超时，本看门狗只管「整轮做机器工作太久」。
+     * （半程正文按截断态落库），连接留给引擎收口发完 done 再关（见 {@link #scheduleEmitterClose}）。
+     * 失联兜底另有 15s 心跳、前端 120s 空闲看门狗与各阶段自身超时，本看门狗只管「整轮做机器工作太久」。
      * <p>每个 tick 先认一次「这一轮还是不是我登记的那一轮」（见 {@link TurnDeadline#turnId}）：
      * 台账刻意比通道活得久的路不止一条，而它一旦越不过本轮终态就再没有停它的地方——真机 2026-10-23
      * 一个会话里四条，每轮收口后整 600 秒补一条假超时 warn（其中一条还挂到了<b>下一轮</b>的 turnId 上，
@@ -245,7 +272,10 @@ public class ChatRunRuntime {
                     sessionId, machineMs, d.budgetMs, d.humanWaitMs.get());
             try {
                 sendSseEvent(emitter, "warn", TurnRecorder.TURN_BUDGET_NOTE, sessionId);
-                completeEmitter(emitter);
+                // 与用户点停止同一条口径：warn 先到，done 由引擎收口那一侧发（半程正文/blocks/notice
+                // 都在 done 上），这里只排兜底关流。当场 complete 的后果是客户端只有一句 warn、
+                // 半个终态都没有——2026-11-06 本地真跑预算支路实测就是如此。
+                scheduleEmitterClose(emitter);
             } finally {
                 TurnRegistry.stopDeadline(emitter);
             }
@@ -372,8 +402,12 @@ public class ChatRunRuntime {
             log.info("[STEER] 插话未被接收（这一轮不在执行中）: session={} 字数={}", sessionId, capped.length());
             return null;
         }
-        String messageId = sessionService.appendMessage(sessionId, "user", capped, null, null, null, null,
-                null, null, null, null, null, null, null, null, null, null, null, null, null, h.turnId());
+        String messageId = sessionService.appendMessage(MessageWrite.builder()
+                .sessionId(sessionId)
+                .role("user")
+                .content(capped)
+                .turnId(h.turnId())
+                .build());
         h.steerAcks().add(new TurnHandle.SteerAck(receiptId, capped, messageId));
         sessionEventService.append(sessionId, h.userId(), h.turnId(), "steer", capped);
         log.info("[STEER] 插话已送进框架会话（下一次模型调用前生效）: session={} 字数={} msgId={} receipt={}",

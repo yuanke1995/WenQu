@@ -129,7 +129,7 @@ import ShareAskPanel from '../components/ShareAskPanel.vue'
 // 计划卡：模型进了计划模式就要等人裁决才继续，分享页此前同样没接，死锁形状与提问卡一致
 import SharePlanPanel from '../components/SharePlanPanel.vue'
 import { openImages } from '../chat/answerViewer'
-import { fmtSize, resumedStartAt, alignTick } from '../chat/projections'
+import { fmtSize, resumedStartAt, alignTick, applyBlocks } from '../chat/projections'
 // 取材判定层与主聊天页同源（白名单/限额/被拒文案只有一份，改一处两页同时生效）
 import { MAX_IMAGES, MAX_FILES, MAX_FILE_MB, SUPPORTED_EXTS, REJECT, classifyIntake, rejectText,
          compressImage, pasteFilesOf, isLongPaste, pasteNameOf, isImageFile } from '../chat/intake'
@@ -239,7 +239,7 @@ function mintSessionId () {
  *  此前只留 role/content/images/sources，于是降级提示看不见、评价也没有落点。 */
 const mapHistory = rows => (Array.isArray(rows) ? rows : [])
   .filter(m => m && m.content)
-  .map(m => ({
+  .map(m => applyBlocks({
     role: m.role === 'user' ? 'user' : 'ai', content: m.content,
     messageId: m.messageId || '',
     // 图片与引用随消息一起落库（后端 toMessageMap 同源输出），刷新后不必重问一遍才有图
@@ -256,7 +256,7 @@ const mapHistory = rows => (Array.isArray(rows) ? rows : [])
     // 整轮用时随 tokens 落库：不带上它，分享页刷新后「用时」整条消失（主对话页早就带着）
     tokens: (m.tokens && typeof m.tokens === 'object') ? m.tokens : null,
     srcOpen: true
-  }))
+  }, m.blocks))
 
 /** 会话行的时间标签：今天带时分（一天内多段对话靠时间区分），更早给相对/日期标签 */
 function timeText (v) {
@@ -636,6 +636,8 @@ function shareStreamHandlers (ai) {
         if (Array.isArray(p.sources)) ai.sources = p.sources
         if (Array.isArray(p.finalImages)) ai.images = p.finalImages
         if (typeof p.finalContent === 'string' && p.finalContent !== '') ai.content = p.finalContent
+        // 终态显示块：与主对话页同源，分享页仍只渲染答案通道
+        if (p.blocks && typeof p.blocks === 'object') applyBlocks(ai, p.blocks)
         if (Array.isArray(p.degradations)) ai.degradations = p.degradations
         // 落库的消息 ID：评价与「重新生成」都要用它（服务端按它校验归属）
         if (p.messageId) ai.messageId = p.messageId
@@ -788,6 +790,8 @@ async function attachRunning () {
       if (typeof snap.content === 'string') ai.content = snap.content
       if (Array.isArray(snap.images)) ai.images = snap.images
       if (Array.isArray(snap.sources)) ai.sources = snap.sources
+      // 游客快照只带 answer 块：接流时按它把正文收敛为答案
+      if (snap.blocks && typeof snap.blocks === 'object') applyBlocks(ai, snap.blocks)
       // 同主对话页：接上的这一轮按服务端已跑时长续表，不从 0 重新起跳。优先按墙钟接
       //（含开轮前准备），旧服务端没有 wallMs 时退回机器耗时；基准只认第一份，重锚会让秒表往回跳。
       if (typeof snap.wallMs === 'number') {

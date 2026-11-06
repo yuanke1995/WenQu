@@ -14,7 +14,7 @@ public final class RelatedPrompt {
     /**
      * 下一步建议的条数：提示词里要几条、剥推荐块时就按这个数判超限。
      * <p>刻意做成常量而不是配置项——它是回答格式的一部分，不是一个可调的偏好；两处读取点
-     * （挂提示词、{@code RelatedStreamFilter} 的条数闸）分头取值时，改一处会让另一处判错。
+     * （挂提示词、{@code ModelOutputParser} 的条数闸）分头取值时，改一处会让另一处判错。
      */
     public static final int COUNT = 3;
 

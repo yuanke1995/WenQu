@@ -4,9 +4,11 @@ import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONArray;
 import com.wenqu.ai.agent.chat.ChatRunRuntime;
 import com.wenqu.ai.agent.context.HistoryCompactionService;
+import com.wenqu.ai.agentx.turn.TurnDonePayload;
 import com.wenqu.ai.model.Agent;
 import com.wenqu.ai.model.WorkflowRun;
 import com.wenqu.ai.service.ImageUrlSigner;
+import com.wenqu.ai.service.MessageWrite;
 import com.wenqu.ai.service.QaLogService;
 import com.wenqu.ai.service.SessionService;
 import com.wenqu.ai.service.WorkflowService;
@@ -79,6 +81,11 @@ public class ChatflowBridge {
                                  String replaceMessageId, String editVariantGroup, Agent delegatedAgent,
                                  String attachmentsJson, String mentionsJson) {
         runtime.sendSseEvent(emitter, "plan", JSON.toJSONString(List.of("执行工作流")), sessionId);
+        // 起表基准早帧：主链路那一帧在引擎路径上，工作流分支走不到那里。不补的表现为「秒表按本地
+        // 按下回车起表、答完换成服务端墙钟时掉一段」（客户端钟还偏着时掉的更多）。只给时长不给绝对时刻。
+        long openWallMs = Math.max(0L, System.currentTimeMillis() - startTime);
+        runtime.sendSseEvent(emitter, "turn_start",
+                JSON.toJSONString(Map.of("wallMs", openWallMs, "prepMs", openWallMs)), sessionId);
         // 本轮身份（把手在 chat() 入口已登记，工作流分支同样走那一条轮）：问答两侧都挂它，
         // 逐气泡「过程」才取得到本轮的账本事件
         final String workflowTurnId = runtime.turnIdOf(sessionId);
@@ -88,12 +95,14 @@ public class ChatflowBridge {
             if (!regenerate) {
                 // 附件/@ 引用随用户消息一并落库：工作流路径虽不把它们送进图（已登记 workflowInputIgnored
                 // 降级），但用户确实上传/引用了，气泡里凭空消失就是「刷新一次当没发生过」
-                workflowUserMsgId = sessionService.appendMessage(sessionId, "user", question,
-                        null, null, null, null, null, null,
-                        attachmentsJson,
-                        null, null, null, null, null, null, null,
-                        mentionsJson,
-                        null, null, workflowTurnId);
+                workflowUserMsgId = sessionService.appendMessage(MessageWrite.builder()
+                        .sessionId(sessionId)
+                        .role("user")
+                        .content(question)
+                        .attachments(attachmentsJson)
+                        .mentions(mentionsJson)
+                        .turnId(workflowTurnId)
+                        .build());
                 // 编辑重发：新用户消息挂上被替换旧分支的版本组键（与主链路同口径）
                 if (workflowUserMsgId != null && editVariantGroup != null && !editVariantGroup.isBlank()) {
                     sessionService.setMessageVariant(workflowUserMsgId, editVariantGroup);
@@ -106,6 +115,9 @@ public class ChatflowBridge {
             // 原始列表留给落库（历史接口存原始 URL、读时动态签名）。回调抛错不打断工作流（fail-soft 与 tokenSink 同口径）
             List<String> workflowImages = new ArrayList<>();
             WorkflowService.Principal p = WorkflowService.Principal.current();   // 流水线线程已 loadIdentity(userId)
+            // 准备段=用户消息落库到图开始跑之间的那一截（与主链路 prepMs 同义）；整轮墙钟在下面收口时取。
+            // 工作流也按服务端墙钟计时：done 与落库 tokens 用同一个数，前端不再拿本地钟对账。
+            long prepMs = System.currentTimeMillis() - startTime;
             WorkflowRun run = workflowServiceProvider.getObject()
                     .runForAgent(agent.getWorkflowId(), inputs, p, token -> {
                         streamed.append(token);
@@ -129,17 +141,29 @@ public class ChatflowBridge {
             }
             String answer = workflowAnswerOf(run);
             Map<String, Object> tokens = workflowTokensOf(run);
+            long turnWallMs = System.currentTimeMillis() - startTime;
+            // 与主链路同键：历史行读 tokens.turnWallMs/turnPrepMs，现场 done 读同名的载荷键，
+            // 两处取的是同一对变量——答完看到的数字与刷新后看到的必须一模一样。
+            tokens.put("turnWallMs", turnWallMs);
+            tokens.put("turnPrepMs", prepMs);
             // 重新生成：先软删被替换的旧回答并登记分支版本组（与主链路口径一致，多版本可切换）
             String replaceGroup = null;
             if (replaceMessageId != null && !replaceMessageId.isBlank()) {
                 replaceGroup = sessionService.beginAnswerReplace(replaceMessageId);
             }
-            String messageId = sessionService.appendMessage(sessionId, "assistant", answer,
-                    workflowImages.isEmpty() ? null : List.copyOf(workflowImages), null, null, null, null, null,
-                    null, JSON.toJSONString(tokens), null, null,
-                    agent.getId(), agent.getName(),
-                    // model / related / mentions / historyRefs / plan：工作流分支不带这些维度（此前也无落库点）
-                    null, null, null, null, null, workflowTurnId);
+            // 工作流轮只有最终回答、没有推理过程：单 answer 块与主链路同形，前端不必为它单开一套渲染
+            String blocksJson = answerBlocksJson(workflowTurnId, answer);
+            String messageId = sessionService.appendMessage(MessageWrite.builder()
+                    .sessionId(sessionId)
+                    .role("assistant")
+                    .content(answer)
+                    .images(workflowImages.isEmpty() ? null : List.copyOf(workflowImages))
+                    .tokens(JSON.toJSONString(tokens))
+                    .agentId(agent.getId())
+                    .agentName(agent.getName())
+                    .turnId(workflowTurnId)
+                    .blocks(blocksJson)
+                    .build());
             if (replaceGroup != null && messageId != null) {
                 sessionService.setMessageVariant(messageId, replaceGroup);
             }
@@ -147,23 +171,6 @@ public class ChatflowBridge {
             qaLogService.logAsync(sessionId, question, answer, List.of(), false,
                     System.currentTimeMillis() - startTime, false,
                     messageId, agent.getId());
-            Map<String, Object> donePayload = new LinkedHashMap<>();
-            donePayload.put("sources", List.of());
-            donePayload.put("related", List.of());
-            donePayload.put("messageId", messageId);
-            donePayload.put("turnId", workflowTurnId);   // 本轮身份：与消息行同源，当轮气泡即可按轮回看过程
-            // 本轮用户消息 ID（编辑重发后前端给新用户消息挂分支切换器；regenerate 时为 null 不下发）
-            if (workflowUserMsgId != null && !workflowUserMsgId.isBlank()) {
-                donePayload.put("userMessageId", workflowUserMsgId);
-            }
-            donePayload.put("finalContent", answer);
-            // 与主链路一致地动态签名（前端 onDone 用 finalImages 覆盖流式期间已签名的 images；
-            // 落库存的是原始 URL，此处仅对下发副本签名）
-            donePayload.put("finalImages", workflowImages.stream().map(imageUrlSigner::signUrl).toList());
-            donePayload.put("degradations", degradations);
-            donePayload.put("artifacts", List.of());
-            donePayload.put("toolCalls", List.of());
-            donePayload.put("tokens", tokens);
             // 工作流运行信息：前端可展示"本次回答由工作流 v{n} 产出，耗时 xx"
             Map<String, Object> wfInfo = new LinkedHashMap<>();
             wfInfo.put("workflowId", run.getWorkflowId());
@@ -171,18 +178,43 @@ public class ChatflowBridge {
             wfInfo.put("runId", run.getId());
             wfInfo.put("status", run.getStatus());
             wfInfo.put("durationMs", run.getDurationMs());
-            donePayload.put("workflowRun", wfInfo);
-            // 本轮作答方归属（P5）：不再有会话锁定，工作流轮同样按实际作答的智能体下发
-            if (agent != null) {
-                donePayload.put("agentId", agent.getId());
-                donePayload.put("agentName", agent.getName() == null ? "" : agent.getName());
-            }
+            // 分支独有键走 extras；核心键（含计时与 blocks）由 TurnDonePayload 一处构造，
+            // 与主链路同形——工作流没有推理过程，thinking/toolCalls/related 如实给空。
+            Map<String, Object> extras = new LinkedHashMap<>();
+            extras.put("workflowRun", wfInfo);
             // §4 轮级委派归属（与主链路同口径）：工作流智能体被 @ 委派时气泡归属按委派值展示
             if (delegatedAgent != null) {
-                donePayload.put("delegatedAgentId", delegatedAgent.getId());
-                donePayload.put("delegatedAgentName", delegatedAgent.getName() == null ? "" : delegatedAgent.getName());
+                extras.put("delegatedAgentId", delegatedAgent.getId());
+                extras.put("delegatedAgentName", delegatedAgent.getName() == null ? "" : delegatedAgent.getName());
             }
-            runtime.sendSseEvent(emitter, "done", JSON.toJSONString(donePayload), sessionId);
+            String donePayload = TurnDonePayload.toJson(TurnDonePayload.Input.builder()
+                    .finalContent(answer)
+                    .messageId(messageId)
+                    .userMessageId(workflowUserMsgId)
+                    .turnId(workflowTurnId)
+                    // 本轮作答方归属（P5）：不再有会话锁定，工作流轮同样按实际作答的智能体下发
+                    .agentId(agent.getId())
+                    .agentName(agent.getName() == null ? "" : agent.getName())
+                    // 工作流节点各有各的模型，本轮没有一个「整轮模型」可报；前端对空 model 有兜底
+                    .model(null)
+                    .sources(List.of())
+                    // 与主链路一致地动态签名（前端 onDone 用 finalImages 覆盖流式期间已签名的 images；
+                    // 落库存的是原始 URL，此处仅对下发副本签名）
+                    .finalImages(workflowImages.stream().map(imageUrlSigner::signUrl).toList())
+                    .degradations(degradations)
+                    .elapsedMs(turnWallMs)
+                    .humanWaitMs(0L)
+                    .turnWallMs(turnWallMs)
+                    .prepMs(prepMs)
+                    .tokens(tokens)
+                    .toolCalls(List.of())
+                    .blocks(blocksJson == null ? null : JSON.parseObject(blocksJson))
+                    .artifacts(List.of())
+                    .related(List.of())
+                    .thinking(null)
+                    .extras(extras)
+                    .build());
+            runtime.sendSseEvent(emitter, "done", donePayload, sessionId);
             runtime.completeEmitter(emitter);
             // 长期记忆提取已交框架（全框架化P3）：MemoryFlushManager 在上下文压缩时按 MemoryConfig
             // 的触发条件自动 flush，不再由问渠在工作流收尾处手动调模型提炼。
@@ -268,6 +300,21 @@ public class ChatflowBridge {
         tokens.put("output", completion);
         tokens.put("total", prompt + completion);
         return tokens;
+    }
+
+    /** 工作流轮只有最终回答，没有推理过程可交错：单 answer 块即可与主链路同形。 */
+    private static String answerBlocksJson(String turnId, String answer) {
+        if (answer == null || answer.isBlank()) return null;
+        Map<String, Object> block = new LinkedHashMap<>();
+        block.put("id", "b1");
+        block.put("kind", "text");
+        block.put("channel", "answer");
+        block.put("text", answer);
+        Map<String, Object> root = new LinkedHashMap<>();
+        root.put("v", 1);
+        if (turnId != null && !turnId.isBlank()) root.put("turnId", turnId);
+        root.put("blocks", List.of(block));
+        return JSON.toJSONString(root);
     }
 
 }
