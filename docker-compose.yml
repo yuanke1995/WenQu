@@ -145,6 +145,8 @@ services:
         MCP_VERSION: ${BROWSER_MCP_VERSION:-0.0.84}
         # 受限网络（拉不到 Docker Hub）时指到本地已有、带 node 的 glibc 镜像
         BASE_IMAGE: ${BROWSER_MCP_BASE_IMAGE:-node:22-bookworm-slim}
+        # 国内直连 cdn.playwright.dev 会卡在 0%，指到镜像源
+        PLAYWRIGHT_DOWNLOAD_HOST: ${BROWSER_MCP_PW_HOST:-}
     container_name: wen-qu-browser
     restart: unless-stopped
     # Chromium 必须有大共享内存：默认 64MB 会直接崩

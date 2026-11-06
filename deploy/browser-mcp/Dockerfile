@@ -15,11 +15,14 @@ ARG BASE_IMAGE=node:22-bookworm-slim
 FROM ${BASE_IMAGE}
 
 ARG MCP_VERSION=0.0.84
+# Playwright 浏览器下载源（国内直连 cdn.playwright.dev 会卡住）：
+# 设成 https://cdn.npmmirror.com/binaries/playwright 即可，路径结构一致。
+ARG PLAYWRIGHT_DOWNLOAD_HOST=
 
 WORKDIR /app
 RUN npm init -y >/dev/null \
     && npm i --no-audit --no-fund @playwright/mcp@${MCP_VERSION} \
-    && npx playwright install --with-deps chromium \
+    && PLAYWRIGHT_DOWNLOAD_HOST=${PLAYWRIGHT_DOWNLOAD_HOST} npx playwright install --with-deps chromium \
     && rm -rf /var/lib/apt/lists/* /root/.npm
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/root/.cache/ms-playwright \
