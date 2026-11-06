@@ -78,6 +78,7 @@
                      聊天区与工作区页共用。href 是真签名地址，Ctrl/中键点击照旧开成新标签页。 -->
                 <a v-if="canPreview(r)" :href="resolveImg(r.url)" target="_blank" rel="noopener"
                    data-pv :data-pv-name="r.filename" :data-pv-ext="artifactExt(r)"
+                   :data-pv-kind="previewKindOf(r)"
                    :data-pv-size="r.size" :data-pv-id="r.id"
                    class="app-btn ghost small" title="预览（按住 Ctrl 或中键开成新标签页）">
                   <eye-outlined /> 预览
@@ -116,7 +117,7 @@ import { message, Modal } from 'ant-design-vue'
 import { ReloadOutlined, FileTextOutlined, DownloadOutlined, DeleteOutlined, FolderOpenOutlined, EyeOutlined } from '@ant-design/icons-vue'
 import { listArtifacts, listProjects, deleteArtifact, deleteArtifactsBatch, moveArtifactProject } from '../api'
 import { resolveImg } from '../utils/markdown'
-import { canPreview, artifactExt } from '../utils/artifactView'
+import { canPreview, artifactExt, previewKindOf } from '../utils/artifactView'
 import { projectOnThisComputer } from '../utils/localExecutor'
 import MoveToWorkspaceModal from '../components/MoveToWorkspaceModal.vue'
 

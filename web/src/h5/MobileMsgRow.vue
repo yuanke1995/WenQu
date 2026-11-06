@@ -334,6 +334,7 @@
               <a v-if="canPreview(a)" class="artifact-act" :href="resolveImg(a.url)"
                  target="_blank" rel="noopener" data-pv
                  :data-pv-name="a.filename" :data-pv-ext="artifactExt(a)"
+                 :data-pv-kind="previewKindOf(a)"
                  :data-pv-size="a.size" :data-pv-id="a.id"
                  title="预览"><eye-outlined />预览</a>
               <a class="artifact-act" :href="resolveImg(a.url)" :download="a.filename"
@@ -412,7 +413,7 @@ import {
 } from '@ant-design/icons-vue'
 import { resolveImg } from '../utils/markdown'
 import { approvalArgsText, approvalLeftSec } from '../chat/approval'
-import { canPreview, artifactExt } from '../utils/artifactView'
+import { canPreview, artifactExt, previewKindOf } from '../utils/artifactView'
 // 跑轮中簇帽体的贴底跟随与上下边缘渐隐（与 PC 共用同一份指令）
 import { vFollowBottom, vEdgeFade } from '../chat/followBottom'
 import AnswerBody from '../components/AnswerBody.vue'

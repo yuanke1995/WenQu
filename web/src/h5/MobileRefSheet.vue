@@ -101,6 +101,7 @@
             <a v-if="canPreview(a)" class="rs-art-act" :href="resolveImg(a.url)"
                target="_blank" rel="noopener" data-pv
                :data-pv-name="a.filename" :data-pv-ext="artifactExt(a)"
+               :data-pv-kind="previewKindOf(a)"
                :data-pv-size="a.size" :data-pv-id="a.id"
                title="预览"><eye-outlined />预览</a>
             <a class="rs-art-act" :href="resolveImg(a.url)" :download="a.filename"
@@ -249,7 +250,7 @@ import { fmtSourceScore, fmtWindow, usageCtxTokens,
 import { roundSteps, roundHold, roundHeadTail, roundPhase, isRunStep } from '../chat/roundSummary'
 // 产物地址必须过 resolveImg：后端给的是 /ai/artifacts/**，不经媒体前缀在开发态会落到 SPA 回退（下载到 index.html）
 import { resolveImg } from '../utils/markdown'
-import { canPreview, artifactExt } from '../utils/artifactView'
+import { canPreview, artifactExt, previewKindOf } from '../utils/artifactView'
 import { buildSessionMd, saveMd } from '../views/exportMd'
 import { copyText } from '../utils/clipboard'
 import { useSessionShare } from '../views/shareSession'

@@ -266,6 +266,7 @@ public class ProjectFileService {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("filename", name);
         m.put("ext", ext);
+        m.put("preview", PreviewTypes.kindOf(ext));
         m.put("size", size);
         m.put("cap", (long) PreviewTypes.TEXT_BODY_CAP);
         m.put("truncated", truncated);
@@ -399,11 +400,13 @@ public class ProjectFileService {
                         MAX_ENTRIES, MAX_TREE_DEPTH)) {
                     if (Boolean.TRUE.equals(row.get("isDir"))) continue;
                     String virtualPath = r.getAlias() + "/" + str(row.get("path"));
+                    String ext = PreviewTypes.extOf(str(row.get("name")));
                     Map<String, Object> m = new LinkedHashMap<>();
                     m.put("kind", "file");
                     m.put("path", virtualPath);
                     m.put("name", str(row.get("name")));
-                    m.put("ext", PreviewTypes.extOf(str(row.get("name"))));
+                    m.put("ext", ext);
+                    m.put("preview", PreviewTypes.kindOf(ext));
                     m.put("size", asLong(row.get("size")));
                     m.put("mtime", asLong(row.get("mtimeMs")));
                     addViewUrl(m, p.getId(), virtualPath, asLong(row.get("size")));
@@ -589,14 +592,15 @@ public class ProjectFileService {
         String rel = base.relativize(file).toString().replace('\\', '/');
         String name = file.getFileName().toString();
         long size = sizeOf(file);
+        String ext = PreviewTypes.extOf(name);
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("kind", "file");
         m.put("path", rel);
         m.put("name", name);
-        m.put("ext", PreviewTypes.extOf(name));
+        m.put("ext", ext);
+        m.put("preview", PreviewTypes.kindOf(ext));
         m.put("size", size);
         m.put("mtime", lastModifiedMillis(file));
-        String ext = PreviewTypes.extOf(name);
         if (PreviewTypes.viewContentType(ext) != null && PreviewTypes.viewCapError(ext, size) == null) {
             m.put("viewUrl", imageUrlSigner.signUrlRequired(
                     VIEW_PATH_PREFIX + encodeSessionViewToken(sessionId, rel)));

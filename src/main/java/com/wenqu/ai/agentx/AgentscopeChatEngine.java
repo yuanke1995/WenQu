@@ -3650,6 +3650,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                         + workspaceMemory
                         + (subagentTargets.isEmpty() ? "" : tools.dispatchDiscipline())
                         + PlanCopy.guidance()
+                        + com.wenqu.ai.agent.chat.ArtifactPrompt.guidance()
                         + com.wenqu.ai.memory.MemoryPrompts.replyDiscipline()
                         + com.wenqu.ai.agent.chat.RelatedPrompt.line())
                 // 问渠所有供应商都是 OpenAI 兼容网关（c_ai_provider.base_url 实测全是 compatible-mode）。

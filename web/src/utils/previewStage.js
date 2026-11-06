@@ -518,7 +518,11 @@ if (typeof document !== 'undefined') {
       projectId: d.pvProject || '',
       path: d.pvPath || ''
     }
-    const kind = previewKindOf({ ext: d.pvExt, filename: src.name })
+    // 锚点上带的是同一份服务端判据；没有（老锚点/老数据）才回落到扩展名表
+    const told = d.pvKind
+    const kind = (told && Object.values(PV).includes(told))
+      ? told
+      : previewKindOf({ ext: d.pvExt, filename: src.name })
     // 判据与按钮是同一次调用：v-if 说能预览、这里说不能，就是同一份东西两个页面不同表现
     if (kind === PV.NONE) return
     e.preventDefault()

@@ -442,6 +442,7 @@
                     <a v-if="canPreview(a)" class="artifact-act" :href="resolveImg(a.url)"
                        target="_blank" rel="noopener" data-pv
                        :data-pv-name="a.filename" :data-pv-ext="artifactExt(a)"
+                       :data-pv-kind="previewKindOf(a)"
                        :data-pv-size="a.size" :data-pv-id="a.id"
                        :title="'预览 ' + a.filename + '（按住 Ctrl 或中键开成新标签页）'">
                       <eye-outlined /> 预览
@@ -1288,6 +1289,7 @@
           <a v-if="canPreview(a)" class="rp-art-act" :href="resolveImg(a.url)"
              target="_blank" rel="noopener" data-pv
              :data-pv-name="a.filename" :data-pv-ext="artifactExt(a)"
+             :data-pv-kind="previewKindOf(a)"
              :data-pv-size="a.size" :data-pv-id="a.id"
              title="预览（按住 Ctrl 或中键开成新标签页）"><eye-outlined /></a>
           <a class="rp-art-act" :href="resolveImg(a.url)" :download="a.filename"
@@ -1648,7 +1650,7 @@ import { debugRetrieval, deleteMessageGroup, submitFeedback as apiSubmitFeedback
          getSessionWorkspace, getPermissionPresets, setSessionPermission,
          openProjectFolder } from '../api'
 import { renderMd, resolveImg, onImgError } from '../utils/markdown'
-import { canPreview, artifactExt } from '../utils/artifactView'
+import { canPreview, artifactExt, previewKindOf } from '../utils/artifactView'
 import { loadSessions, sessionStore } from './store'
 import { exportAnswerMd, exportSessionMarkdown } from './exportMd'
 import { fmtTokens } from '../utils/token'

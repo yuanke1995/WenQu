@@ -45,7 +45,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * 第二次生成会覆盖第一个且 URL 相同，历史产物直接丢失）。
  * <p>
  * 安全约束：
- * - 文件名白名单扩展名（md/txt/csv/json/html/htm），防任意文件写入
+ * - 文件名白名单扩展名（{@link PreviewTypes#TEXT_ARTIFACT_EXTS} / {@link PreviewTypes#FILE_DELIVERY_EXTS}），
+ *   防任意文件写入；清单只从 {@code PreviewTypes} 派生，别再本地抄一张
  * - 文件名经净化（去路径分隔符/特殊字符），防目录穿越
  * - 单文件上限 1MB；列表/删除按 uid 归属校验（管理员可越权）
  * <p>
@@ -58,12 +59,10 @@ import java.util.concurrent.ConcurrentHashMap;
 @Service
 public class ArtifactService {
 
-    /** 允许生成的产物扩展名（小写，无点） */
-    private static final Set<String> ALLOWED_EXTS = Set.of("md", "txt", "csv", "json", "html", "htm");
-    /** 字节级产物的扩展名白名单（沙盒文件交付）：在文本白名单上放宽到沙盒典型输出（脚本/代码/图片/表格/压缩包） */
-    private static final Set<String> ALLOWED_EXTS_BINARY = Set.of(
-            "md", "txt", "csv", "json", "html", "htm",
-            "py", "java", "log", "png", "jpg", "jpeg", "svg", "xlsx", "xls", "pdf", "zip");
+    /** 允许生成的文本产物扩展名（小写，无点）：与「能预览」同源，见 {@link PreviewTypes#TEXT_ARTIFACT_EXTS} */
+    private static final Set<String> ALLOWED_EXTS = PreviewTypes.TEXT_ARTIFACT_EXTS;
+    /** 字节级产物的扩展名白名单（沙盒文件交付）：在文本白名单上放宽到图片/PDF/Office/压缩包 */
+    private static final Set<String> ALLOWED_EXTS_BINARY = PreviewTypes.FILE_DELIVERY_EXTS;
     /** 单文件内容上限（约 1MB，防止工具把超大内容写盘占满磁盘） */
     private static final int MAX_BYTES = 1024 * 1024;
     /** 文件名最大长度（含扩展名） */
@@ -225,6 +224,7 @@ public class ArtifactService {
                 entry.put("url", "/ai/" + row.getObjectKey());
                 entry.put("filename", row.getFilename());
                 entry.put("ext", row.getExt());
+                entry.put("preview", PreviewTypes.kindOf(row.getExt()));
                 entry.put("size", row.getSize());
                 entry.put("description", row.getDescription() == null ? "" : row.getDescription());
             }
@@ -241,7 +241,7 @@ public class ArtifactService {
      * 生成产物：写盘 + 落库（归属取会话的 user_id），返回可访问（已签名）的 URL。
      * 文件名为空/非法/扩展名不在白名单时抛 IllegalArgumentException（fail-loud，调用方转为工具错误返回）。
      *
-     * @return { id, url, filename, ext, size, description }
+     * @return { id, url, filename, ext, preview, size, description }
      */
     public Map<String, Object> write(String sessionId, String filename, String content, String description) {
         return writeBytes(sessionId, filename,
@@ -252,7 +252,7 @@ public class ArtifactService {
      * 字节级产物写入（沙盒文件交付 {@code deliver_artifact} 用）：与文本产物同一套落盘/登记/推送约定，
      * 差异仅在扩展名白名单放宽到沙盒典型输出（py/png/xlsx/zip 等），大小上限同为 1MB。
      *
-     * @return { id, url, filename, ext, size, description }
+     * @return { id, url, filename, ext, preview, size, description }
      */
     public Map<String, Object> writeBytes(String sessionId, String filename, byte[] bytes, String description) {
         return writeBytes(sessionId, filename, bytes, description, ALLOWED_EXTS_BINARY);
@@ -265,7 +265,8 @@ public class ArtifactService {
         }
         String safeName = sanitizeFilename(filename, allowedExts);
         if (safeName == null) {
-            throw new IllegalArgumentException("产物文件名不合法或扩展名不支持");
+            throw new IllegalArgumentException("产物文件名不合法或扩展名不支持（支持 "
+                    + PreviewTypes.extListHint(allowedExts) + "）");
         }
         if (bytes == null || bytes.length == 0) {
             throw new IllegalArgumentException("产物内容为空");
@@ -310,6 +311,7 @@ public class ArtifactService {
         info.put("url", imageUrlSigner.signUrl(rawUrl));
         info.put("filename", safeName);
         info.put("ext", ext);
+        info.put("preview", PreviewTypes.kindOf(ext));
         info.put("size", bytes.length);
         info.put("description", row.getDescription() == null ? "" : row.getDescription());
         // 记录到会话产物清单（原始 URL 存内存，下发时再签名——与图片同惯例：库里存原始、展示层签名）
@@ -508,6 +510,7 @@ public class ArtifactService {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("filename", row.getFilename());
             m.put("ext", ext);
+            m.put("preview", PreviewTypes.kindOf(ext));
             m.put("size", size);
             m.put("cap", (long) PreviewTypes.TEXT_BODY_CAP);
             m.put("truncated", truncated);
@@ -683,6 +686,7 @@ public class ArtifactService {
         m.put("id", row.getId());
         m.put("filename", row.getFilename());
         m.put("ext", row.getExt());
+        m.put("preview", PreviewTypes.kindOf(row.getExt()));
         m.put("size", row.getSize());
         m.put("description", row.getDescription() == null ? "" : row.getDescription());
         m.put("sessionId", row.getSessionId());

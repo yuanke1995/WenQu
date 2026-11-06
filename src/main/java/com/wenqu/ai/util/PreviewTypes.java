@@ -7,8 +7,16 @@ import java.util.Set;
  *
  * <p><b>为什么要有这个类</b>：产物与工作区文件两条路各自都有一份扩展名清单，一份错了就是「这个页面有预览按钮、
  * 那个页面没有」；前端 {@code utils/artifactView.js} 那一份管的是「拿回来之后怎么摆」（页面档 / 读字档 / 只下载），
- * 与本类的职责不同但必须对账：<b>前端给了按钮而本类说发不出去</b>，用户点到的就是一张白页或一次下载。
- * 两份扩展名清单要人工对账（改一头就顺手比一遍另一头）。
+ * 与本类的职责不同：<b>前端给了按钮而本类说发不出去</b>，用户点到的就是一张白页或一次下载。
+ * 现在这条对账不靠人工——{@link #kindOf} 经接口下发 {@code preview}，前端只认它；那边那张扩展名表
+ * 只兜没有该字段的历史数据。
+ *
+ * <p><b>写侧也从这里派生</b>：{@link #TEXT_ARTIFACT_EXTS} 是「模型能写出成文本产物的类型」，
+ * {@link #FILE_DELIVERY_EXTS} 是「沙盒里能交付成文件的类型」，两张都由上面几档拼出来——
+ * 以前各写一张，结果是 yaml/xml/ts 能预览却写不出来、沙盒交付还拒收代码文件。
+ * 不变式：能写的必然能看（{@code TEXT_ARTIFACT_EXTS ⊆ READABLE_EXTS ∪ PAGE_EXTS}）。
+ * <p>{@link #kindOf} 是「怎么预览」的唯一判据，经接口下发 {@code preview} 字段；前端只认它，
+ * 自己那张扩展名表降为历史数据的兜底。
  *
  * <p><b>为什么不列 ico/avif</b>：{@link #sniffImageType} 认不出的图片类型会兜成 image/jpeg，
  * 发一个错的内容类型出去比不给预览按钮更糊弄人。要加就连带把嗅探表一起补，别只加一头。
@@ -31,6 +39,16 @@ public final class PreviewTypes {
             "md", "markdown", "txt", "log", "csv", "tsv", "json", "yaml", "yml", "xml", "toml", "ini", "conf",
             "properties", "py", "js", "mjs", "ts", "jsx", "tsx", "java", "go", "rs", "sql", "sh", "bash", "zsh",
             "css", "scss", "vue");
+    /** Office：能交付、能下载，但应用内不预览（没有渲染器） */
+    public static final Set<String> OFFICE_EXTS = Set.of("xlsx", "xls", "docx", "pptx");
+    /** 压缩包：只下载不预览 */
+    public static final Set<String> ARCHIVE_EXTS = Set.of("zip");
+
+    /** 模型能写成文本产物的类型：可读文本 + 网页 */
+    public static final Set<String> TEXT_ARTIFACT_EXTS = union(READABLE_EXTS, PAGE_EXTS);
+    /** 沙盒里能交付成文件产物的类型：文本 + 图片 + PDF + Office + 压缩包 */
+    public static final Set<String> FILE_DELIVERY_EXTS =
+            union(READABLE_EXTS, PAGE_EXTS, IMAGE_EXTS, PDF_EXTS, OFFICE_EXTS, ARCHIVE_EXTS);
 
     /** 取原文的字节上限（256KB）：再大就不是「看一眼」，前端会显示「后半部分没取回来」并引导下载 */
     public static final int TEXT_BODY_CAP = 256 * 1024;
@@ -61,6 +79,43 @@ public final class PreviewTypes {
     /** 这个类型该不该按文本读回来给前端排版 */
     public static boolean isReadable(String ext) {
         return ext != null && READABLE_EXTS.contains(ext);
+    }
+
+    /**
+     * 「怎么预览」的唯一判据，取值与前端 {@code artifactView.PV} 同形：
+     * {@code page / image / pdf / md / table / text / none}。
+     * <p>经接口的 {@code preview} 字段下发，前端六个入口面都只认它；{@code none}＝只给下载，
+     * 别再摆一个点开是白页的「预览」按钮。
+     */
+    public static String kindOf(String ext) {
+        if (ext == null || ext.isBlank()) return "none";
+        String e = ext.toLowerCase(java.util.Locale.ROOT);
+        if (PAGE_EXTS.contains(e)) return "page";
+        if (IMAGE_EXTS.contains(e)) return "image";
+        if (PDF_EXTS.contains(e)) return "pdf";
+        if ("md".equals(e) || "markdown".equals(e)) return "md";
+        if ("csv".equals(e) || "tsv".equals(e)) return "table";
+        if (READABLE_EXTS.contains(e)) return "text";
+        return "none";
+    }
+
+    /**
+     * 给拒收类错误消息用的一句话清单（截断，别把 40 个扩展名整个糊进对话框）。
+     * <p>拒收却不说能收什么，模型只能反复猜、用户也不知道该改成哪种——一次说清才谈得上自愈。
+     */
+    public static String extListHint(Set<String> exts) {
+        java.util.List<String> sorted = new java.util.ArrayList<>(exts);
+        java.util.Collections.sort(sorted);
+        int cap = Math.min(sorted.size(), 25);
+        String list = String.join("/", sorted.subList(0, cap));
+        return sorted.size() > cap ? list + " 等 " + sorted.size() + " 种" : list;
+    }
+
+    @SafeVarargs
+    private static Set<String> union(Set<String>... groups) {
+        java.util.Set<String> all = new java.util.HashSet<>();
+        for (Set<String> g : groups) all.addAll(g);
+        return Set.copyOf(all);
     }
 
     /** 是不是「整页/整图」那一档（体积帽比纯文本宽） */

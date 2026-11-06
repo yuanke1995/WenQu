@@ -1,7 +1,9 @@
 package com.wenqu.ai.config;
 
 import com.wenqu.ai.service.ImageUrlSigner;
+import com.wenqu.ai.util.PreviewTypes;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.web.embedded.tomcat.TomcatServletWebServerFactory;
 import org.springframework.boot.web.server.WebServerFactoryCustomizer;
 import org.springframework.context.annotation.Bean;
@@ -19,6 +21,7 @@ import java.nio.file.Paths;
  *
  * @author yuanke
  */
+@Slf4j
 @Configuration
 @RequiredArgsConstructor
 public class ImageWebConfig implements WebMvcConfigurer {
@@ -42,21 +45,46 @@ public class ImageWebConfig implements WebMvcConfigurer {
     }
 
     /**
+     * 网页会以子资源方式引用的类型：产物 HTML 里的 {@code <script src>} / {@code <link>} 靠这条映射
+     * 决定浏览器认不认。把 js 改成 text/plain 会被 {@code nosniff} 直接拒执行，页面就哑了——
+     * 所以这几样即使两张表里都缺条目也不补，保持浏览器默认行为。
+     */
+    private static final java.util.Set<String> WEB_ASSET_EXTS =
+            java.util.Set.of("js", "mjs", "css", "svg", "wasm");
+
+    /**
      * 文本类产物的 Content-Type。md / markdown / py 在 Tomcat 的 {@code MimeTypeMappings.properties}
      * 与 Spring 的 {@code mime.types} 两张表里都没有条目（两个 jar 各翻过一遍），静态资源解析就不发
      * Content-Type——浏览器对顶层导航会嗅探成纯文本显示，但没有任何编码线索时按单字节解，
      * 实测（无头 Edge）中文产物渲染成「# 鏍囬」这类乱码。产物里 md 是主力类型，编码错等于预览是坏的。
-     * <p>只补两张表里都缺的扩展名：{@code addMimeMapping} 会覆盖同名条目，动到 java 这类已有映射的
-     * 会连带改变 /images/ 那条静态路的响应类型；已有条目的补编码靠
-     * {@code server.servlet.encoding.force-response}（见 application.yml）。
+     * <p>现在按 {@link PreviewTypes#TEXT_ARTIFACT_EXTS} 整张扫（逐个点补就是下一次漏一个），并且**一律覆盖**，
+     * 不只是补缺：表里已有的条目并不都适合直接读——{@code ts} 被映射成 {@code video/mp2t}、
+     * {@code rs} 成 {@code application/rls-services+xml}、{@code sql} 成 {@code application/x-sql}，
+     * 顶层导航打开会被当媒体/未知类型处理（下载而不是显示）。产物里的这些类型要看的是源码。
+     * 页面档（html/htm）与 {@link #WEB_ASSET_EXTS} 跳过：前者要真渲染，后者改了会打断产物页子资源。
+     * <p>这条映射作用于整个 context：{@code /images/} 只走图片类型（不在本清单里），不受影响；
+     * {@code /project-files/} 的文本预览走控制器另给类型，静态地址只用于页面/图片/PDF 与新标签。
      */
     @Bean
     WebServerFactoryCustomizer<TomcatServletWebServerFactory> artifactTextMimeMappings() {
         return factory -> factory.addContextCustomizers(context -> {
-            context.addMimeMapping("md", "text/plain;charset=UTF-8");
-            context.addMimeMapping("markdown", "text/plain;charset=UTF-8");
-            context.addMimeMapping("py", "text/plain;charset=UTF-8");
+            java.util.List<String> exts = textArtifactMimeExts();
+            for (String ext : exts) {
+                context.addMimeMapping(ext, "text/plain;charset=UTF-8");
+            }
+            log.info("[ARTIFACT] 文本产物 Content-Type 已设 {} 种：{}", exts.size(), exts);
         });
+    }
+
+    /** 需要给 text/plain;charset=UTF-8 的产物扩展名（排序后）：页面档与网页子资源不在此列 */
+    static java.util.List<String> textArtifactMimeExts() {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        for (String ext : PreviewTypes.TEXT_ARTIFACT_EXTS) {
+            if (PreviewTypes.PAGE_EXTS.contains(ext) || WEB_ASSET_EXTS.contains(ext)) continue;
+            out.add(ext);
+        }
+        java.util.Collections.sort(out);
+        return out;
     }
 
     @Override

@@ -7,8 +7,8 @@
 //     表格、其余走高亮围栏）——这三档直接甩给浏览器是假预览：.md 开出来是满屏原始竖线，csv 干脆掉下载；
 //   image/pdf＝浏览器原生就能看，预览台只负责把它铺满并给缩放。
 //
-// 与服务端那份清单（ProjectFileService.TEXT_PREVIEW_EXTS / IMAGE_PREVIEW_EXTS）对账：那一份管「这条地址
-// 发什么 Content-Type、超没超体积帽」，这一份管「拿回来之后怎么摆」。ico/avif 两边都不列——服务端
+// 判据以服务端为准：接口出参里的 preview 字段（服务端 PreviewTypes.kindOf，扩展名清单只在后端一处）。
+// 下面 BY_EXT 是历史数据的兜底——老产物行、老接口出参没有 preview。ico/avif 两边都不列：服务端
 // sniffImageType 会把未知类型兜成 image/jpeg，给个错 Content-Type 的按钮比不给按钮更糊弄人。
 //
 // 同一份东西在不同页面给出不同按钮集，用户只会当成随机行为，所以六个入口面都只问这一个函数。
@@ -48,8 +48,18 @@ export const artifactExt = a => {
   return i > 0 ? name.slice(i + 1).toLowerCase() : ''
 }
 
-/** 这一份东西怎么预览；返回 PV.NONE 表示只给下载，别摆「预览」按钮骗人 */
-export const previewKindOf = a => (a && BY_EXT[artifactExt(a)]) || PV.NONE
+const SERVER_KINDS = new Set(Object.values(PV))
+
+/**
+ * 这一份东西怎么预览；返回 PV.NONE 表示只给下载，别摆「预览」按钮骗人。
+ * <p>判据以服务端下发的 {@code preview} 为准（扩展名清单只在后端一处，新增类型不用再改这里）；
+ * 本文件的 {@link BY_EXT} 降为历史数据兜底——老产物行与老接口出参没有该字段。
+ */
+export const previewKindOf = a => {
+  const told = a && a.preview
+  if (typeof told === 'string' && SERVER_KINDS.has(told)) return told
+  return BY_EXT[artifactExt(a)] || PV.NONE
+}
 
 /** 给模板用的布尔判据（previewKindOf 返回的是字符串，'none' 也是真值，别直接放进 v-if） */
 export const canPreview = a => previewKindOf(a) !== PV.NONE
