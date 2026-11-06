@@ -1771,6 +1771,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 slot.workspaceMemoryTainted()));
         tools.ensureRunCodeTurn(slot, f.cmd());
         String turnId = f.hooks().turnId().get();
+        if (turnId != null && turnId.startsWith("goal:")) {
+            // 续跑轮的目标工具不依赖用户轮的 goalNote；槽位 begin 刚清过标记，这里补回来。
+            slot.noteGoalActive(true);
+        }
         RESUME_POOL.execute(() -> {
             try {
                 // 用 hooks 里那一个轮号（openForContinuation 传入的那个），不重新问 TurnRegistry：
