@@ -966,9 +966,18 @@ const timelineView = m => {
     const from = Math.min(seg.from, len), to = Math.min(seg.to, len)
     if (to <= from || !content.slice(from, to).trim()) continue // 空白段：不渲染、不打断分组
     if (mergeFrom >= 0) {
-      maxTo = to // 半句连排：窗口向本段延伸
-      if (endsSentence(content.slice(mergeFrom, maxTo))) flushMerge()
-      continue
+      // 半句连排只吃掉「接着说这一句」的短增量。一旦后面是整段正文（落库视图里工具之后的
+      // 全部正文往往就是一段，且常带换行），再继续吞会把中间调用的工具一路顶到整段正文末尾——
+      // 实时视图按 120ms 切段时工具还在句中，刷新后同一个簇就跑到回答最下面了。
+      // 先把已合并的半句 + 工具结清，这一段按普通正文另起（时序仍是它发生的位置）。
+      const add = content.slice(from, to)
+      if (absorbed.length && (add.length > 120 || add.includes('\n'))) {
+        flushMerge()
+      } else {
+        maxTo = to // 半句连排：窗口向本段延伸
+        if (endsSentence(content.slice(mergeFrom, maxTo))) flushMerge()
+        continue
+      }
     }
     flushGroup()
     maxTo = to
