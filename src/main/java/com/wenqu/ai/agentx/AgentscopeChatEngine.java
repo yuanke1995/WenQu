@@ -4153,6 +4153,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         }
         HarnessAgent agent = agentBuilder.build();
         alignWriteFileDescription(agent);
+        alignExecuteDescription(agent);
         applyNativeToolGuards(agent, slot, cmd);
         return agent;
     }
@@ -4267,6 +4268,45 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     private static final String WRITE_FILE_DESCRIPTION =
             "Write content to a file, creating parent directories if needed. "
                     + "If the file already exists its whole content is replaced - use edit_file to change part of it.";
+
+    /**
+     * 给框架 {@code execute} 的说明补一句「退出码取整条命令链的最后一条」。
+     *
+     * <p>线上实测：模型删完文件后用 {@code ls <path>} 验证，文件不在时 {@code ls} 退出 1，
+     * 整条命令因此被判失败（卡片红色），而删除其实已经成功。工具状态只能看退出码，
+     * 不能从输出里猜「其实成功了」——所以把正确的验证写法教给模型：
+     * {@code test ! -e <path>} 在文件不存在时退出 0。
+     *
+     * <p>顺带说明工作区根：执行器/Sandbox 都以工作区根为 cwd，模型不必每条命令都前缀
+     * {@code cd <workspace> &&}；要换目录用 {@code working_directory} 参数。
+     *
+     * <p>与 {@link #alignWriteFileDescription} 同一时机（build 之后、护栏之前）：
+     * 先换说明，再让 {@link AgentxNativeToolGuard} 包住它；反过来会把护栏包在里面，
+     * 下一轮 {@code wrapNative} 就认不出「已经包过」而重复套壳。
+     */
+    private static void alignExecuteDescription(HarnessAgent agent) {
+        Toolkit toolkit = agent.getToolkit();
+        if (toolkit == null) return;
+        AgentTool execute = toolkit.getTool(FrameworkToolLabels.FilesystemToolNames.EXECUTE);
+        if (execute == null) return;
+        String description = execute.getDescription();
+        if (description != null && description.contains(EXECUTE_DESCRIPTION_MARKER)) return;
+        toolkit.registerAgentTool(new DescriptionOverrideTool(execute,
+                (description == null || description.isBlank() ? "" : description + "\n\n")
+                        + EXECUTE_DESCRIPTION_GUIDANCE));
+    }
+
+    /** 用来判断说明是否已经补过，避免每轮 build 一层层套娃。 */
+    private static final String EXECUTE_DESCRIPTION_MARKER =
+            "Exit status is the exit status of the LAST command";
+
+    private static final String EXECUTE_DESCRIPTION_GUIDANCE =
+            EXECUTE_DESCRIPTION_MARKER + " in the chain. "
+                    + "After deleting a file, do not verify with `ls <path>`: when the path is gone `ls` exits 1 "
+                    + "and the whole call is reported as failed even though the delete succeeded. "
+                    + "Verify absence with `test ! -e <path> && echo deleted` (exit 0 when the path is absent). "
+                    + "Commands already run at the workspace root, so a `cd <workspace>` prefix is unnecessary; "
+                    + "use working_directory when a different relative directory is needed.";
 
     /** 只替换工具说明、其余行为原样委托的包装（见 {@link #alignWriteFileDescription}）。 */
     private record DescriptionOverrideTool(AgentTool delegate, String description) implements AgentTool {
