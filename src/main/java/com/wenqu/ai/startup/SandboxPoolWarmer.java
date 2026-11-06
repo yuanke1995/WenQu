@@ -48,4 +48,15 @@ public class SandboxPoolWarmer {
             log.warn("[SANDBOX] 热池预热启动失败（不影响问答）: {}", e.toString());
         }
     }
+
+    /**
+     * 保存即生效：改 {@code sandbox.poolWarmUsers} 后按新上限再预热一次，效果等同于重启。
+     * warm() 自带开关与上限判断（0=不预热），prewarmUser 走在飞集合去重，重复提交不会建出第二个容器。
+     */
+    @jakarta.annotation.PostConstruct
+    void registerWarmHotReload() {
+        configService.addChangeListener(changed -> {
+            if (changed != null && changed.contains("sandbox.poolWarmUsers")) warm();
+        });
+    }
 }

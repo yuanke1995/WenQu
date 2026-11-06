@@ -1,5 +1,6 @@
 package com.wenqu.ai.agentx;
 
+import com.wenqu.ai.config.ConfigDefaults;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 import com.wenqu.ai.service.ConfigService;
@@ -51,9 +52,6 @@ public class SessionLogArchive {
      */
     static final String SINK_NAME = "wenqu-session-archive";
 
-    /** 保留期缺省值（天）：与产物、会话事件账本那几条同一量级，≤0 = 不清理 */
-    private static final int DEFAULT_KEEP_DAYS = 90;
-
     private final ConfigService configService;
 
     public SessionLogArchive(ConfigService configService) {
@@ -89,7 +87,7 @@ public class SessionLogArchive {
     }
 
     /**
-     * 删除超过保留期的归档文件（保留期 {@code chat.sessionLogArchive.keepDays}，≤0 = 不清理）。
+     * 删除超过保留期的归档文件（保留期 {@code cleanup.assetRetentionDays}，用户资产档，≤0 = 不清理）。
      *
      * <p>按<b>文件修改时间</b>判而不是按文件名里的时间判：一条会话可以聊上几个月，按创建时间会把它
      * 正在写的归档删掉。目录名是编码后的归属号，不带时间语义。
@@ -97,7 +95,8 @@ public class SessionLogArchive {
      * @return 删掉的归档文件数
      */
     public int cleanupExpired() {
-        int days = configService.getInt("chat.sessionLogArchive.keepDays", DEFAULT_KEEP_DAYS);
+        int days = configService.getInt("cleanup.assetRetentionDays",
+                ConfigDefaults.CLEANUP_ASSET_RETENTION_DAYS);
         if (days <= 0) return 0;
         Path root = root();
         if (!Files.isDirectory(root)) return 0;

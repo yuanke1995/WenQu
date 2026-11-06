@@ -85,6 +85,26 @@ public final class ConfigDefaults {
     /** sandbox.cleanupIntervalMs：沙盒空闲回收扫描间隔 */
     public static final int SANDBOX_CLEANUP_INTERVAL_MS = 600_000;
 
+    /**
+     * cleanup.intervalMs：清理/回收类任务的共用节拍（原 11 个「每日/每小时清理间隔」键收成一个）。
+     * <p>取族内**最小**的旧默认（1 小时）而不是最大：清理间隔决定的是「过期数据什么时候被扫到」，
+     * 保留期本身没变，扫得勤只是让已过期的东西早一点删，代价是多几轮空扫；反过来把一个原本
+     * 每小时的临时目录/外溢原文清理改成每天一轮，等于让磁盘上最脏的两类文件多堆 23 小时。
+     */
+    public static final int CLEANUP_INTERVAL_MS = 3_600_000;
+
+    /**
+     * cleanup.tempFileRetentionDays：临时件保留天数（附件 / 聊天档临时目录 / 工具外溢原文 /
+     * 任务执行日志 / 聊天图片）。
+     * <p>这一族原先 5 个键各说各的（24 小时、72 小时、7 天、7 天、7 天），折算后按**最长**的 7 天走：
+     * 保留期取短了会真删掉本来该留的东西，取长了只多占几天磁盘。
+     */
+    public static final int CLEANUP_TEMP_FILE_RETENTION_DAYS = 7;
+    /** cleanup.recordRetentionDays：过程记录保留天数（会话 / 会话事件账本 / 访客会话 / 站内通知 / 工作流运行记录 / 换代旧日志） */
+    public static final int CLEANUP_RECORD_RETENTION_DAYS = 30;
+    /** cleanup.assetRetentionDays：用户资产保留天数（产物 / 会话日志归档）——删了就找不回来的那一类 */
+    public static final int CLEANUP_ASSET_RETENTION_DAYS = 90;
+
     private ConfigDefaults() {
     }
 }

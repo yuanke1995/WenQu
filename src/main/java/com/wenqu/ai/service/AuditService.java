@@ -506,9 +506,11 @@ public class AuditService {
         return problems;
     }
 
-    /** 留存清理：删早于 {@code audit.retentionDays} 的事件（≤0=永久保留）；分批删避免长事务锁表 */
+    /** 留存清理：删早于 {@code cleanup.auditRetentionDays} 的事件（≤0=永久保留）；分批删避免长事务锁表 */
     public int purgeExpired() {
-        int days = configService.getInt("audit.retentionDays", 365);
+        // 键名以 config-schema.json 为准：曾写成 audit.retentionDays（该键既不在 schema 也不在 defaults），
+        // 设置页改审计保留天数一直不生效、恒按兜底的 365 天跑
+        int days = configService.getInt("cleanup.auditRetentionDays", 365);
         if (days <= 0) return 0;
         LocalDateTime cutoff = LocalDateTime.now().minusDays(days);
         int total = 0;
@@ -519,7 +521,7 @@ public class AuditService {
             if (total > 5_000_000) break;   // 单次上限：真清不完说明留存期设得过短，交下次调度继续
         }
         if (total > 0) {
-            log.info("[AUDIT] 留存清理：删除 {} 条早于 {} 的审计事件（audit.retentionDays={}）", total, cutoff, days);
+            log.info("[AUDIT] 留存清理：删除 {} 条早于 {} 的审计事件（cleanup.auditRetentionDays={}）", total, cutoff, days);
         }
         return total;
     }

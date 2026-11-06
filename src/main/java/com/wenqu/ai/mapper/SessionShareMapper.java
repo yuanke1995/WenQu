@@ -19,7 +19,7 @@ public interface SessionShareMapper extends BaseMapper<SessionShare> {
      *
      * <p>条件里 {@code enabled = 0} 是硬约束：停用即"我关闭了这件事"，但停用后仍生效的
      * 链接随时可能被访客打开，任何情况下都不能被清理任务删掉。保留期与
-     * {@code cleanup.sessionRetentionDays}（会话撤销窗口）对齐——窗口期内用户还能反悔，
+     * {@code cleanup.recordRetentionDays}（会话撤销窗口）对齐——窗口期内用户还能反悔，
      * 窗口过后没有留着的理由。
      *
      * <p>用 {@code update_time} 而非 {@code create_time}：一条分享可以被停用又被重新开启

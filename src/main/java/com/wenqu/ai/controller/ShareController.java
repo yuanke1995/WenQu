@@ -352,9 +352,9 @@ public class ShareController {
      *
      * <p>三道闸与登录态同源：发布者的「允许上传附件」开关、IP 限频（upload 桶）、
      * 以及 {@link ChatUploadService} 内的类型白名单与体积上限。留盘同样受
-     * {@code chat.uploadRetentionHours}（默认 24h）周期清理。
+     * 临时件保留期 {@code cleanup.tempFileRetentionDays}（默认 7 天）的周期清理。
      */
-    @Operation(summary = "游客上传附件", description = "上传文档类附件换 fileId（按访客隔离落盘、24h 清理）；"
+    @Operation(summary = "游客上传附件", description = "上传文档类附件换 fileId（按访客隔离落盘、超临时件保留期后清理）；"
             + "需发布者开启「允许游客上传附件」，按 IP 限频")
     @ApiResponse(responseCode = "200", description = "返回 {fileId,name,mime,size}")
     @PostMapping("/{token}/attachment")

@@ -1,5 +1,6 @@
 package com.wenqu.ai.service;
 
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.memory.MemoryBudget;
 import com.wenqu.ai.memory.MemoryCappedFilesystem;
 import com.wenqu.ai.model.Project;
@@ -464,21 +465,22 @@ public class SandboxService {
 
     /**
      * 清理聊天档宿主临时目录：按会话目录的最后修改时间，删掉超过
-     * {@code chat.scratchRetentionHours} 的整棵目录（含用户空壳）。返回删除的会话目录数。
+     * {@code cleanup.tempFileRetentionDays}（临时件档）的整棵目录（含用户空壳）。返回删除的会话目录数。
      *
      * <p>为什么必须定时清：聊天档不建容器，但每会话仍会落一个本地目录；不回收就会随会话数
      * 无限增长。只删「超期且非最近写入」的目录，活动会话在写文件时 mtime 会被刷新。
      */
     public int cleanupChatScratch() {
-        int hours = configService.getInt("chat.scratchRetentionHours", 72);
-        if (hours <= 0) {
+        int days = configService.getInt("cleanup.tempFileRetentionDays",
+                ConfigDefaults.CLEANUP_TEMP_FILE_RETENTION_DAYS);
+        if (days <= 0) {
             return 0;
         }
         Path root = chatScratchRoot();
         if (!Files.isDirectory(root)) {
             return 0;
         }
-        long cutoff = System.currentTimeMillis() - hours * 3_600_000L;
+        long cutoff = System.currentTimeMillis() - days * 24L * 3600_000L;
         int removed = 0;
         try (Stream<Path> uids = Files.list(root)) {
             for (Path uidDir : uids.toList()) {
@@ -500,7 +502,7 @@ public class SandboxService {
             log.warn("[SANDBOX] 聊天档临时目录清理失败（下次节拍重试）: {}", e.toString());
         }
         if (removed > 0) {
-            log.info("[SANDBOX] 聊天档临时目录清理 {} 个（保留 {} 小时）", removed, hours);
+            log.info("[SANDBOX] 聊天档临时目录清理 {} 个（保留 {} 天）", removed, days);
         }
         return removed;
     }

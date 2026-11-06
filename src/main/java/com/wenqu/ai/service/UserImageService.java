@@ -13,8 +13,6 @@ import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -32,10 +30,12 @@ import java.util.concurrent.TimeUnit;
 public class UserImageService {
 
     private final AppProperties properties;
-    private final ExecutorService imageExecutor;
+    private final ConfigService configService;
+    private final ThreadPoolExecutor imageExecutor;
 
     public UserImageService(AppProperties properties, ConfigService configService) {
         this.properties = properties;
+        this.configService = configService;
         // 用户图片并发处理（解码/落盘很快，并发上限留小防大图洪峰；vision.userImageConcurrency 可调，默认 2）。
         // 有界队列（20）+ 满即拒绝：避免大图洪峰无限积压
         int concurrency = Math.max(1, configService.getInt("vision.userImageConcurrency", 2));
@@ -45,6 +45,29 @@ public class UserImageService {
             t.setDaemon(true);
             return t;
         }, new ThreadPoolExecutor.AbortPolicy());
+    }
+
+    /** 并发数是运行时旋钮：改设置后直接调池大小，不必重启（池线程按任务现取，改小只影响后续排队） */
+    @jakarta.annotation.PostConstruct
+    void registerConcurrencyHotReload() {
+        configService.addChangeListener(changed -> {
+            if (changed != null && changed.contains("vision.userImageConcurrency")) syncImageConcurrency();
+        });
+    }
+
+    private void syncImageConcurrency() {
+        int want = Math.max(1, configService.getInt("vision.userImageConcurrency", 2));
+        int have = imageExecutor.getCorePoolSize();
+        if (want == have) return;
+        // 调大先改上限、调小先改核心，否则 core>max 会被 ThreadPoolExecutor 拒绝
+        if (want > have) {
+            imageExecutor.setMaximumPoolSize(want);
+            imageExecutor.setCorePoolSize(want);
+        } else {
+            imageExecutor.setCorePoolSize(want);
+            imageExecutor.setMaximumPoolSize(want);
+        }
+        log.info("[image] 用户图片并发已热调为 {}（原 {}，vision.userImageConcurrency）", want, have);
     }
 
     /**

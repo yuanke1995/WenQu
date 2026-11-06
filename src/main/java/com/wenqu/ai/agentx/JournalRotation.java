@@ -1,5 +1,6 @@
 package com.wenqu.ai.agentx;
 
+import com.wenqu.ai.config.ConfigDefaults;
 import com.wenqu.ai.sandbox.LocalJournalStorage;
 import com.wenqu.ai.service.ConfigService;
 import io.agentscope.core.session.JournalSessionLog;
@@ -57,9 +58,6 @@ public class JournalRotation {
      * 而这条会话里一个重活轮就产 8k 条——也就是大约一轮一转，界是硬的而不是「聊久了慢慢变慢」。
      */
     private static final int DEFAULT_ROTATE_EVENTS = 12_000;
-
-    /** 搬走的那一代默认留 30 天：归档 JSONL 是长期件，这份留着只为「刚轮转完就要查原始事件」那几天。 */
-    private static final int DEFAULT_ROTATED_KEEP_DAYS = 30;
 
     /** 搬走的那一代挂在 root 下的这个目录名，同时是清理任务的扫描根。 */
     private static final String ROTATED_DIR = "rotated";
@@ -179,7 +177,7 @@ public class JournalRotation {
     }
 
     /**
-     * 删除超过保留期的旧代次日志目录（保留期 {@code chat.agentscopeJournalRotateKeepDays}，≤0 = 不清理）。
+     * 删除超过保留期的旧代次日志目录（保留期 {@code cleanup.recordRetentionDays}，过程记录档，≤0 = 不清理）。
      *
      * <p>按目录的修改时间判：一次换代之后没人再写它，mtime 就是搬走的时刻。
      * 两个根一起扫：{@code rotated/} 是搬走的旧代，{@code staging/} 里只剩换代失败留下的残渣（正常路径上
@@ -188,7 +186,8 @@ public class JournalRotation {
      * @return 删掉的目录数
      */
     public int cleanupRotated() {
-        int days = configService.getInt("chat.agentscopeJournalRotateKeepDays", DEFAULT_ROTATED_KEEP_DAYS);
+        int days = configService.getInt("cleanup.recordRetentionDays",
+                ConfigDefaults.CLEANUP_RECORD_RETENTION_DAYS);
         if (days <= 0) return 0;
         long cutoff = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(days);
         int cleaned = 0;

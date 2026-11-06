@@ -1319,6 +1319,7 @@ DELETE FROM `c_ai_config` WHERE `config_key` IN (
     -- UserSkillStore/SkillController 真读它做 URL 安装白名单）。曾经误列进本名单，
     -- 而本脚本由 spring.sql.init 在建连接池时执行、早于 ConfigService.ensureDefaults()，
     -- 于是每次重启删行→ensureDefaults 按空默认值补回＝管理员白名单每次重启被清零（远程安装静默关闭）。
+    -- 本键永久禁入退役名单：它是安全策略白名单，「设置页看不见/挪到工程参数分层」都不等于「无读取点」。
     'skill.injectMaxChars', 'skill.maxFileChars',
     'memory.maxPerUser', 'memory.maxInjectCount', 'memory.injectBudgetChars',
     'memory.dedupThreshold', 'memory.useSemanticInject', 'memory.platformEmbeddingRef',

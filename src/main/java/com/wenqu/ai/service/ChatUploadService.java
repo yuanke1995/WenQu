@@ -1,5 +1,6 @@
 package com.wenqu.ai.service;
 
+import com.wenqu.ai.config.ConfigDefaults;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 import com.wenqu.ai.common.BizException;
@@ -27,8 +28,9 @@ import java.util.regex.Pattern;
  * （原名/MIME/体积/归属/时间）。目录名取 uid 的 SHA-256 前 16 位——uid 可能含中文或特殊字符，
  * 直接拿来做目录名会带来路径与编码坑；归属校验也据此完成：文件在该用户目录下即为他的。
  *
- * <p>清理：{@link #cleanupExpired()} 由 ScheduleCenter 周期调用，按 {@code chat.uploadRetentionHours}
- * （默认 24h，≤0 = 不清理）删除过期文件——上传是"当轮看一眼"的轻路径，长时间留盘只是泄漏。
+ * <p>清理：{@link #cleanupExpired()} 由 ScheduleCenter 周期调用，按临时件保留期
+ * {@code cleanup.tempFileRetentionDays}（≤0 = 不清理）删除过期文件——上传是"当轮看一眼"的轻路径，
+ * 长时间留盘只是泄漏。
  *
  * @author yuanke
  */
@@ -139,9 +141,10 @@ public class ChatUploadService {
 
     /** 过期清理（ScheduleCenter 周期调用）：删除超过保留期的附件与其元信息 */
     public int cleanupExpired() {
-        int hours = configService.getInt("chat.uploadRetentionHours", 24);
-        if (hours <= 0) return 0;
-        long deadline = System.currentTimeMillis() - hours * 3600_000L;
+        int days = configService.getInt("cleanup.tempFileRetentionDays",
+                ConfigDefaults.CLEANUP_TEMP_FILE_RETENTION_DAYS);
+        if (days <= 0) return 0;
+        long deadline = System.currentTimeMillis() - days * 24L * 3600_000L;
         Path root = Paths.get(properties.getImages().getDir(), SUB_DIR);
         if (!Files.isDirectory(root)) return 0;
         int removed = 0;
@@ -161,7 +164,7 @@ public class ChatUploadService {
         } catch (Exception e) {
             log.warn("[ATTACH] 过期附件清理失败（下轮重试）: {}", e.getMessage());
         }
-        if (removed > 0) log.info("[ATTACH] 已清理过期聊天附件 {} 件（保留 {} 小时）", removed, hours);
+        if (removed > 0) log.info("[ATTACH] 已清理过期聊天附件 {} 件（保留 {} 天）", removed, days);
         return removed;
     }
 

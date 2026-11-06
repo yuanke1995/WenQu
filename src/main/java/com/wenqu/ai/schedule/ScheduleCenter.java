@@ -63,7 +63,7 @@ public class ScheduleCenter {
     /**
      * 间隔下限：与调度节拍同值（{@link #TICK_MS}），即"一个节拍"。
      * <p>此前取 60s（意图是防误配打爆），但它把秒级扫描任务的配置静默抬到了一分钟：
-     * {@code parse.queue.scanIntervalMs} 默认 5s、工作流/定时智能体扫描 30s，实际都按 60s 跑，
+     * 扫描器们各写的默认值（解析队列 5s、工作流/定时智能体 30s）实际都按 60s 跑，
      * 而设置页「间隔」列照实显示配置值（5 秒）——界面与行为不符，且无人察觉。
      * <p>节拍本身已经是天然且足够的打爆保护：调度线程 10s 才醒一次，
      * 任何任务都不可能跑得比一个节拍更密，所以下限对齐节拍即可，不需要额外抬到分钟级。
@@ -78,6 +78,29 @@ public class ScheduleCenter {
      * （register 的 Runnable 任务体统一包装为该值；registerWork 返回负数同样按恒落处理，防误算漏记）。
      */
     private static final int ALWAYS_LOG = -1;
+
+    /**
+     * 以下是扫描器的内置节拍，不做成配置项：它们决定的是「机器多久看一次有没有活」，
+     * 不是「管理员希望某件事多久发生一次」。改成参数后每次都要有人猜一个数，
+     * 猜小了白烧 CPU、猜大了任务看起来像没在工作，两种都只会在事后被发现。
+     * 需要停某个扫描器请用它的业务总开关（如 {@code web.refreshEnabled}、{@code scheduled.enabled}）。
+     */
+    /** 关键词索引对账：双向比对整表不便宜，一小时一轮足够兜住漂移 */
+    private static final int KEYWORD_RECONCILE_INTERVAL_MS = 3_600_000;
+    /** 定时智能体任务扫描：与解析队列同为「到点即派」型，分钟级会让用户觉得没按时跑 */
+    private static final int SCHEDULED_SCAN_INTERVAL_MS = 30_000;
+    /** 解析队列扫描：上传/重解析全靠它推动，慢一档用户就在「排队中」多等一档 */
+    private static final int PARSE_QUEUE_SCAN_INTERVAL_MS = 5_000;
+    /** 网页源刷新扫描：刷新的是外部 url，分钟级延迟对内容无损 */
+    private static final int WEB_REFRESH_SCAN_INTERVAL_MS = 60_000;
+    /** 孤儿轮接续扫描：进程重启后把中断的那一轮收口，两分钟内可见即可 */
+    private static final int TURN_RESUME_SCAN_INTERVAL_MS = 120_000;
+    /** 工作流审批超时回收 */
+    private static final int WF_APPROVAL_REAP_INTERVAL_MS = 60_000;
+    /** 工作流定时触发扫描 */
+    private static final int WF_SCHEDULE_SCAN_INTERVAL_MS = 30_000;
+    /** 配置缓存兜底刷新：正常路径走 Redis 广播即时生效，这里只补订阅断线期间漏掉的变更 */
+    private static final int CONFIG_RELOAD_INTERVAL_MS = 5 * 60 * 1000;
 
     private final List<PeriodicTask> tasks = new ArrayList<>();
     private final ConfigService configService;
@@ -158,6 +181,42 @@ public class ScheduleCenter {
         this.auditService = auditService;
     }
 
+    /**
+     * 清理/回收类任务的共用节拍（{@code cleanup.intervalMs}）。
+     *
+     * <p>原先每个清理任务各带一个「每日跑一次」的间隔键，11 个键说的是同一件事，改一个留十个。
+     * 收成一个键的代价：界面上「暂停本任务」会连带暂停全部清理与回收任务——所以每个 A 类任务的
+     * 暂停确认里都要写明这一点，别让人以为只停了一个。
+     */
+    private int cleanupIntervalMs() {
+        return configService.getInt("cleanup.intervalMs", ConfigDefaults.CLEANUP_INTERVAL_MS);
+    }
+
+    // ==================== 保留期三档（原 14 个键收成的）====================
+    // 分档判据不是"文件放哪儿"，而是"删错了能不能救回来"：
+    //   临时件（附件/临时目录/外溢原文/执行日志/聊天图片）——多留几天只占磁盘，删早了也能忍；
+    //   过程记录（会话/事件账本/访客/通知/运行记录/旧日志）——排障与回溯的现场；
+    //   用户资产（产物/会话归档）——删了用户真的找不回来，所以默认最长。
+    // 审计保留期单列（cleanup.auditRetentionDays）：合规留存的口径由制度定，不与这三档共用一个旋钮。
+
+    /** 临时件保留天数（≤0 = 不清理） */
+    private int tempFileRetentionDays() {
+        return configService.getInt("cleanup.tempFileRetentionDays",
+                ConfigDefaults.CLEANUP_TEMP_FILE_RETENTION_DAYS);
+    }
+
+    /** 过程记录保留天数（≤0 = 不清理） */
+    private int recordRetentionDays() {
+        return configService.getInt("cleanup.recordRetentionDays",
+                ConfigDefaults.CLEANUP_RECORD_RETENTION_DAYS);
+    }
+
+    /** 用户资产保留天数（≤0 = 不清理） */
+    private int assetRetentionDays() {
+        return configService.getInt("cleanup.assetRetentionDays",
+                ConfigDefaults.CLEANUP_ASSET_RETENTION_DAYS);
+    }
+
     @EventListener(ApplicationReadyEvent.class)
     public void start() {
         // ==================== 周期任务注册处 ====================
@@ -169,40 +228,43 @@ public class ScheduleCenter {
 
         // 关键词索引精确对账：按 (id, contentHash) 双向比对 MySQL 有效块与 Meilisearch 文档，定向修复漂移
         register("关键词索引精确对账", "按 (id, contentHash) 双向比对 MySQL 有效块与 Meilisearch 文档，定向修复索引漂移",
-                "keyword.reconcileIntervalMs",
-                () -> configService.getInt("keyword.reconcileIntervalMs", 3_600_000),
+                null,   // 内置节拍：不做成参数（下面是它真正的家）
+                () -> KEYWORD_RECONCILE_INTERVAL_MS,
                 () -> configService.getBoolean("keyword.reconcileOnStartup"),
                 () -> keywordIndexService.reconcile());
-        // 聊天图片目录清理：防止 data/images/chat 磁盘缓慢泄漏（保留期 images.chatRetentionMillis，默认 7 天）
-        register("聊天图片目录清理", "删除超过保留期的聊天图片文件，防止磁盘缓慢泄漏（保留期 images.chatRetentionMillis）",
-                "images.chatCleanupIntervalMs",
-                () -> configService.getInt("images.chatCleanupIntervalMs", 86_400_000),
+        // 聊天图片目录清理：防止 data/images/chat 磁盘缓慢泄漏（保留期 cleanup.tempFileRetentionDays）
+        register("聊天图片目录清理", "删除超过保留期的聊天图片文件，防止磁盘缓慢泄漏（保留期 cleanup.tempFileRetentionDays）",
+                "cleanup.intervalMs",
+                this::cleanupIntervalMs,
                 () -> false,
-                () -> userImageService.cleanupChatImages(configService.getLong("images.chatRetentionMillis", 7L * 24 * 3600 * 1000)));
+                () -> {
+                    int days = tempFileRetentionDays();
+                    if (days <= 0) return;   // ≤0 = 不清理
+                    userImageService.cleanupChatImages(days * 24L * 3600_000L);
+                });
         // 聊天附件超期清理：上传的附件换 fileId 落盘供问答读取，保留期过后删除
-        //（间隔 chat.uploadCleanupIntervalMs，保留期 chat.uploadRetentionHours，≤0 = 不清理）
-        register("聊天附件超期清理", "删除超过保留期的聊天附件文件（保留期 chat.uploadRetentionHours，≤0 = 不清理）",
-                "chat.uploadCleanupIntervalMs",
-                () -> configService.getInt("chat.uploadCleanupIntervalMs", 3_600_000),
+        register("聊天附件超期清理", "删除超过保留期的聊天附件文件（保留期 cleanup.tempFileRetentionDays，≤0 = 不清理）",
+                "cleanup.intervalMs",
+                this::cleanupIntervalMs,
                 () -> false,
                 () -> chatUploadService.cleanupExpired());
         // 工具外溢原文超期清理：超过展示上限的工具原文整份落盘供「查看完整输出」读回，
-        // 保留期（cleanup.toolSpillRetentionDays，默认 7 天，≤0 不清理）过后随元信息一起删——
+        // 保留期（cleanup.tempFileRetentionDays，≤0 不清理）过后随元信息一起删——
         // 这些是排障用的副本，不是用户资产，留着只会吃磁盘
-        register("工具外溢原文清理", "删除超过保留期的工具大输出外溢原文（保留期 cleanup.toolSpillRetentionDays，≤0 = 不清理）",
-                "tool.spillCleanupIntervalMs",
-                () -> configService.getInt("tool.spillCleanupIntervalMs", 3_600_000),
+        register("工具外溢原文清理", "删除超过保留期的工具大输出外溢原文（保留期 cleanup.tempFileRetentionDays，≤0 = 不清理）",
+                "cleanup.intervalMs",
+                this::cleanupIntervalMs,
                 () -> false,
                 () -> toolSpillService.purgeExpired());
 
         // 检索质量自动体检：按线上参数跑评估集并与上期对比（间隔 eval.autoIntervalMs，默认每日；≤0 停用）。
         // 评估集为空自动跳过并记录（生成评估集后无需重启即生效）；下滑结论落在 eval.lastReport 供看板红绿灯
-        // 审计事件留存清理：与过期会话同一周期跑（cleanup.sessionCleanupIntervalMs），保留期
+        // 审计事件留存清理：与其余清理任务同节拍（cleanup.intervalMs），保留期
         // cleanup.auditRetentionDays（默认 365 天，0=永久）。合规要的是「留够」而不是「永不清」，
         // 天数由管理员设、清理动作固定跑——不跑就等于审计表无限长，最后没人敢查。
         register("审计事件留存清理", "删除超过保留期的统一审计事件（保留期 cleanup.auditRetentionDays，0 = 永久保留）",
-                "cleanup.sessionCleanupIntervalMs",
-                () -> configService.getInt("cleanup.sessionCleanupIntervalMs", 86_400_000),
+                "cleanup.intervalMs",
+                this::cleanupIntervalMs,
                 () -> false,
                 () -> auditService.purgeExpired());
 
@@ -211,36 +273,35 @@ public class ScheduleCenter {
                 () -> configService.getInt("eval.autoIntervalMs", 86_400_000),
                 () -> false,
                 () -> evalService.runAutoCheck());
-        // 配置缓存兜底刷新：Redis 订阅断线期间错过的变更由周期全量重读补齐
-        // （间隔 config.reloadIntervalMs，默认 5 分钟；≤0 = 暂停。暂停后 Redis 一旦断线，
-        //  其他实例收不到广播，配置变更会静默保持旧值直到重启——这是它可暂停的唯一代价）
-        register("配置缓存兜底刷新", "Redis 订阅断线期间错过的配置变更由周期全量重读补齐（暂停后断线期间的变更会丢失直到重启）",
-                "config.reloadIntervalMs",
-                () -> configService.getInt("config.reloadIntervalMs", 5 * 60 * 1000),
+        // 配置缓存兜底刷新：Redis 订阅断线期间错过的变更由周期全量重读补齐（内置节拍 5 分钟）。
+        // 不做成参数：正常路径走广播即时生效，这个补偿轮没有「调快一点」的收益，暂停它只在订阅
+        // 恰好断线时才有代价——把它做成可暂停的旋钮，等于给运维留一个能安静关掉自愈的开关。
+        register("配置缓存兜底刷新", "Redis 订阅断线期间错过的配置变更由周期全量重读补齐（内置节拍 5 分钟，不可暂停）",
+                null,   // 内置节拍：不做成参数（下面是它真正的家）
+                () -> CONFIG_RELOAD_INTERVAL_MS,
                 () -> false,
-                () -> configService.reload(),
-                "暂停后若 Redis 订阅断线，其他实例收不到配置变更广播，期间改过的配置会静默保持旧值直到重启。正常情况下订阅即时生效、暂停无感知，仅在订阅异常时暴露。");
+                () -> configService.reload());
         // 过期数据清理：① 硬删已软删且超保留期的会话/消息/已停用分享（保留期即撤销窗口）；
         // ② 回收闲置超期的**访客**会话——分享页与 MCP 端点产生的会话没有主人会去删，不回收就只增不减；
         // ③ 超期的会话事件账本（一轮十几条，比会话表长得更快，同样只增不减）
-        register("过期会话/消息清理", "硬删已软删且超保留期的会话/消息/已停用分享；回收闲置超期的访客会话；清理超期会话事件账本",
-                "cleanup.sessionCleanupIntervalMs",
-                () -> configService.getInt("cleanup.sessionCleanupIntervalMs", 86_400_000),
+        register("过期会话/消息清理", "硬删已软删且超保留期的会话/消息/已停用分享；回收闲置超期的访客会话；清理超期会话事件账本（保留期 cleanup.recordRetentionDays）",
+                "cleanup.intervalMs",
+                this::cleanupIntervalMs,
                 () -> false,
                 () -> {
-                    sessionService.purgeExpired(configService.getInt("cleanup.sessionRetentionDays", 30));
-                    sessionService.purgeStaleVisitorSessions(
-                            configService.getInt("cleanup.visitorIdleDays", ConfigDefaults.VISITOR_SESSION_IDLE_DAYS));
-                    sessionEventService.purgeExpired(configService.getInt("cleanup.sessionEventRetentionDays", 30));
+                    int days = recordRetentionDays();
+                    sessionService.purgeExpired(days);
+                    sessionService.purgeStaleVisitorSessions(days);
+                    sessionEventService.purgeExpired(days);
                 });
         // 产物超期清理：删超期产物的文件与记录（保留期/间隔配置化；保留期 ≤0 = 不清理）。
         // 产物按用户归属持久化，不清理就会随使用无限增长——与聊天图片清理同一口径。
-        register("产物超期清理", "删除超过保留期的产物文件与记录（保留期 artifact.retentionDays，≤0 = 不清理）",
-                "artifact.cleanupIntervalMs",
-                () -> configService.getInt("artifact.cleanupIntervalMs", 86_400_000),
+        register("产物超期清理", "删除超过保留期的产物文件与记录（保留期 cleanup.assetRetentionDays，≤0 = 不清理）",
+                "cleanup.intervalMs",
+                this::cleanupIntervalMs,
                 () -> false,
                 () -> {
-                    int days = configService.getInt("artifact.retentionDays", ConfigDefaults.ARTIFACT_RETENTION_DAYS);
+                    int days = assetRetentionDays();
                     int cleaned = artifactService.cleanupExpired(days);
                     if (cleaned > 0) {
                         log.info("[ARTIFACT] 超期产物已清理 {} 件（保留 {} 天）", cleaned, days);
@@ -249,115 +310,118 @@ public class ScheduleCenter {
 
         // 会话日志归档超期清理：归档是按会话摊在磁盘上的一份份 JSONL，不清理就随会话数无限增长。
         // 顺带扫日志换代搬走的旧代次（rotated/ 下），它随「会话数 × 换代次数」增长，比归档涨得更快。
-        //（间隔 chat.sessionLogArchive.cleanupIntervalMs，归档保留期 chat.sessionLogArchive.keepDays，
-        //  旧代次保留期 chat.agentscopeJournalRotateKeepDays，各自 ≤0 = 不清理）
+        //（间隔共用 cleanup.intervalMs；归档属用户资产档 cleanup.assetRetentionDays，
+        //  换代搬走的旧日志属过程记录档 cleanup.recordRetentionDays，各自 ≤0 = 不清理）
         register("会话日志归档清理", "删除超过保留期的框架会话事件日志归档文件与换代搬走的旧日志目录"
-                        + "（归档 chat.sessionLogArchive.keepDays、旧代次 chat.agentscopeJournalRotateKeepDays，≤0 = 不清理）",
-                "chat.sessionLogArchive.cleanupIntervalMs",
-                () -> configService.getInt("chat.sessionLogArchive.cleanupIntervalMs", 86_400_000),
+                        + "（归档 cleanup.assetRetentionDays、旧代次 cleanup.recordRetentionDays，≤0 = 不清理）",
+                "cleanup.intervalMs",
+                this::cleanupIntervalMs,
                 () -> false,
                 () -> {
                     int cleaned = sessionLogArchive.cleanupExpired();
                     if (cleaned > 0) {
-                        log.info("[ARCHIVE] 超期归档已清理 {} 份（保留 {} 天）", cleaned,
-                                configService.getInt("chat.sessionLogArchive.keepDays", 90));
+                        log.info("[ARCHIVE] 超期归档已清理 {} 份（保留 {} 天）", cleaned, assetRetentionDays());
                     }
                     journalRotation.cleanupRotated();
                 });
 
-        // 定时执行智能体：扫描到期的用户任务并派发（间隔 scheduled.scanIntervalMs，默认 30s；≤0 暂停）。
+        // 定时执行智能体：扫描到期的用户任务并派发（内置节拍 30s；要停用请用 scheduled.enabled）。
         // 任务体只做"扫描 + 投递到线程池"，实际执行在别的池线程里跑，所以不会被几十秒的长任务拖住。
         // 返回本轮派发数——空跑（无到期任务/总开关关闭）不落执行日志。
         registerWork("定时智能体任务", "扫描到期的用户定时任务并派发执行（scheduled.enabled 总开关之下）",
-                "scheduled.scanIntervalMs",
-                () -> configService.getInt("scheduled.scanIntervalMs", 30_000),
+                null,   // 内置节拍：不做成参数（下面是它真正的家）
+                () -> SCHEDULED_SCAN_INTERVAL_MS,
                 () -> false,
                 () -> scheduledJobService.tick());
 
-        // 文档解析队列扫描：把 c_ai_parse_task 里到期的任务抢占后投给 worker 池执行（间隔 parse.queue.scanIntervalMs，默认 5s；≤0 暂停）。
+        // 文档解析队列扫描：把 c_ai_parse_task 里到期的任务抢占后投给 worker 池执行（内置节拍 5s，不可暂停）。
         // 上传/重解析只往这张表登记一行，解析全靠这里的扫描器推动——批量上传不会因为"队列内存溢出/满"丢任务。
         // 返回本轮抢占数：空跑（无到期任务）不落执行日志；扫描失败上抛落失败行（scan 内部不再吞异常）。
         registerWork("文档解析队列扫描", "把 c_ai_parse_task 里到期的解析任务抢占后投给 worker 池执行（上传/重解析全靠它推动）",
-                "parse.queue.scanIntervalMs",
-                () -> configService.getInt("parse.queue.scanIntervalMs", 5_000),
+                null,   // 内置节拍：不做成参数（下面是它真正的家）
+                () -> PARSE_QUEUE_SCAN_INTERVAL_MS,
                 () -> false,
                 () -> parseQueueService.scan(),
                 "暂停后：上传与「重新解析」只往队列登记一行，没有扫描器推动——文档会一直停在「排队中/解析中」不再变化，界面上看不出是卡住还是在跑；"
                         + "把间隔改回正数即自动继续，已登记的任务不丢。");
 
-        // 网页源定时刷新：扫描到期且开启自动刷新的 url 文档，重新抓网+同名替换重建（间隔 web.refreshScanIntervalMs，默认 60s；≤0 暂停）。
+        // 网页源定时刷新：扫描到期且开启自动刷新的 url 文档，重新抓网+同名替换重建（内置节拍 60s；停用请用 web.refreshEnabled）。
         // 复用 importFromUrl 全套入库链路，next_refresh_at 推进保证单实例不重复触发；刷新失败 fail-loud 不中断其他文档。
         // 返回本轮处理数（含刷失败的文档，逐文档失败不使任务行变红）：空跑（无到期文档）不落执行日志。
         registerWork("网页源定时刷新", "扫描到期且开启自动刷新的 url 文档，重新抓网+同名替换重建（web.refreshEnabled 总开关之下）",
-                "web.refreshScanIntervalMs",
-                () -> configService.getInt("web.refreshScanIntervalMs", 60_000),
+                null,   // 内置节拍：不做成参数（下面是它真正的家）
+                () -> WEB_REFRESH_SCAN_INTERVAL_MS,
                 () -> false,
                 () -> documentService.refreshDueWebSources());
 
         // 沙盒空闲回收：本工程沙盒 scope 挂在会话上（长生命周期），没有"run 结束释放"的时机，
         // 只能按空闲时长回收，否则用过沙盒的会话会永久占着一个容器。
-        // 阈值 sandbox.idleReleaseMinutes（0=不回收）、间隔 sandbox.cleanupIntervalMs（≤0=暂停）。
+        // 阈值 sandbox.idleReleaseMinutes（0=不回收）。
+        // 节拍不进「清理共用节拍」那一族：容器空闲回收要的是「用过就很快还」，跟着每日节拍走会让
+        // 一个空容器再多占一整天。它原先也没有 schema 键（defaults-only），界面本来就改不动。
         // provider 不可达/未配置 token 时 releaseIdle 内部按失败计数并摘除缓存条目，不会拖垮节拍线程。
         // 返回实际回收数：无事可收不落执行日志。
         registerWork("沙盒空闲回收", "回收空闲超过 sandbox.idleReleaseMinutes 的会话沙盒容器（0=不回收）",
-                "sandbox.cleanupIntervalMs",
-                () -> configService.getInt("sandbox.cleanupIntervalMs", ConfigDefaults.SANDBOX_CLEANUP_INTERVAL_MS),
+                null,   // 内置节拍：不做成参数
+                () -> ConfigDefaults.SANDBOX_CLEANUP_INTERVAL_MS,
                 () -> false,
                 () -> sandboxService.releaseIdle());
 
         // 聊天档宿主临时目录清理：聊天档不建容器，但每会话仍会落一个本地目录；
-        // 按 chat.scratchRetentionHours 删过期目录，避免随会话数无限增长。
-        registerWork("聊天档临时目录清理", "清理超过 chat.scratchRetentionHours 的聊天档宿主临时目录（0=不清理）",
-                "chat.scratchCleanupIntervalMs",
-                () -> configService.getInt("chat.scratchCleanupIntervalMs", 3_600_000),
+        // 按 cleanup.tempFileRetentionDays 删过期目录，避免随会话数无限增长。
+        registerWork("聊天档临时目录清理", "清理超过保留期的聊天档宿主临时目录（cleanup.tempFileRetentionDays，0=不清理）",
+                "cleanup.intervalMs",
+                this::cleanupIntervalMs,
                 () -> false,
                 () -> sandboxService.cleanupChatScratch());
 
         // 长任务接续：进程停过之后，把「发出去了却再没有过回答」的那一轮按中断收口（半程正文留下 + 提示发「继续」）。
         // 实测边界（2026-10-29，kill -9 复现）：框架的排队任务只覆盖「还没启动的 submit」，跑到一半被硬杀的轮
         // 不在里面，所以这一刀做的是如实收口、不是自动续跑——想让它接着跑，用户发一句「继续」即可。
-        // 间隔 chat.turnResumeScanMs（≤0=暂停）；窗口 chat.turnResumeWindowMinutes 见任务参数表。
+        // 内置节拍 2 分钟（不可暂停：停掉等于让中断的轮永远停在「只有问题没有回答」那一行）；
+        // 窗口 chat.turnResumeWindowMinutes 见任务参数表。
         // 返回交回引擎的条数：没有孤儿轮就不落执行日志（每 10 分钟一行心跳会把日志刷满）。
         registerWork("长任务接续扫描", "把「发出去却再没有过回答」的轮按中断收口（留下已生成的部分并提示发「继续」；窗口 chat.turnResumeWindowMinutes）",
-                "chat.turnResumeScanMs",
-                () -> configService.getInt("chat.turnResumeScanMs", 120_000),
+                null,   // 内置节拍：不做成参数（下面是它真正的家）
+                () -> TURN_RESUME_SCAN_INTERVAL_MS,
                 () -> true,
                 () -> orphanTurnRunner.sweep(),
                 "暂停后：部署或崩溃打断的那一轮会一直停在「只有问题、没有回答」那一行——既不收口，也不会提示发「继续」。");
 
         // 工作流人工审核超时回收：挂起超过节点 timeoutSeconds 的 run落 timeout 终态（审核是人在回路，无自动恢复语义）
-        // 间隔 workflow.approvalReapIntervalMs，默认 60s；≤0 = 暂停。
+        // 内置节拍 60s（不可暂停）。
         // ⚠ 暂停代价：挂起不批的 run 永远停在 waiting_approval——不占执行线程（挂起时线程已释放），
         //   但运行记录不落终态、审批卡片持续等待，且清理任务显式排除该状态（不会被保留期回收）
         // 返回回收数：无超时挂起不落执行日志。
         registerWork("工作流审批超时回收", "把挂起超过节点 timeoutSeconds 的人工审核 run 落 timeout 终态（⚠ 暂停后挂起的 run 将一直停在「待审核」不收口）",
-                "workflow.approvalReapIntervalMs",
-                () -> configService.getInt("workflow.approvalReapIntervalMs", 60_000),
+                null,   // 内置节拍：不做成参数（下面是它真正的家）
+                () -> WF_APPROVAL_REAP_INTERVAL_MS,
                 () -> false,
                 () -> workflowService.reapApprovalTimeouts(),
                 "挂起不审批的运行将永远停在「待审核」：不占用执行线程（挂起时线程已释放），但运行记录不落终态、审批卡片持续等待，且记录清理任务显式排除该状态（不会被保留期回收）。仅在确实需要超长人工审批窗口时才暂停。");
 
-        // 工作流运行记录清理：c_ai_workflow_run 按保留期物理删除（保留期 workflow.runLogRetentionDays，默认 30 天）。
+        // 工作流运行记录清理：c_ai_workflow_run 按保留期物理删除（保留期 cleanup.recordRetentionDays）。
         // dsl_snapshot + node_traces 是大字段，随运行次数无限膨胀——与任务执行日志清理同一口径；
         // 挂起审批的 run 由清理方法内部排除，不丢人工裁决现场。
-        register("工作流运行记录清理", "物理删除超过保留期（workflow.runLogRetentionDays）的工作流运行记录",
-                "workflow.runCleanupIntervalMs",
-                () -> configService.getInt("workflow.runCleanupIntervalMs", 86_400_000),
+        register("工作流运行记录清理", "物理删除超过保留期（cleanup.recordRetentionDays）的工作流运行记录",
+                "cleanup.intervalMs",
+                this::cleanupIntervalMs,
                 () -> false,
                 () -> {
-                    int days = Math.max(1, configService.getInt("workflow.runLogRetentionDays", 30));
+                    int days = recordRetentionDays();
+                    if (days <= 0) return;   // ≤0 = 不清理；Math.max(1, days) 会把「永不清理」跑成「1 天后删光」
                     int purged = workflowService.cleanupExpiredRuns(days);
                     if (purged > 0) {
                         log.info("[Schedule] 工作流运行记录已清理 {} 条（保留 {} 天）", purged, days);
                     }
                 });
 
-        // 工作流定时触发：扫描到期的启用定时工作流，派发已发布版本运行（间隔 workflow.scheduleScanIntervalMs，默认 30s；≤0 暂停）。
+        // 工作流定时触发：扫描到期的启用定时工作流，派发已发布版本运行（内置节拍 30s；停用请下线工作流本身的定时设置）。
         // 与定时智能体任务同一范式：先推进 next_run_at 再异步派发，防同轮重复触发；只跑已发布版本，失败自动重试 1 次。
         // 返回本轮派发数：空跑（无到期工作流）不落执行日志。
         registerWork("工作流定时触发", "扫描到期的定时工作流并派发已发布版本运行（定时只跑已发布版本）",
-                "workflow.scheduleScanIntervalMs",
-                () -> configService.getInt("workflow.scheduleScanIntervalMs", 30_000),
+                null,   // 内置节拍：不做成参数（下面是它真正的家）
+                () -> WF_SCHEDULE_SCAN_INTERVAL_MS,
                 () -> false,
                 () -> workflowService.tickSchedules());
 
@@ -369,28 +433,30 @@ public class ScheduleCenter {
                 () -> false,
                 () -> traceService.sampleDaily());
 
-        // 任务执行日志清理：c_ai_schedule_run 按保留期物理删除（保留期 schedule.runLogRetentionDays，默认 7 天）。
+        // 任务执行日志清理：c_ai_schedule_run 按保留期物理删除（保留期 cleanup.tempFileRetentionDays）。
         // 空跑不记已收敛高频任务的写入量，但失败与有效执行仍会长期累积，不清理会无限增长。
-        register("任务执行日志清理", "物理删除超过保留期（schedule.runLogRetentionDays）的定时任务执行日志",
-                "schedule.runLogCleanupIntervalMs",
-                () -> configService.getInt("schedule.runLogCleanupIntervalMs", 86_400_000),
+        register("任务执行日志清理", "物理删除超过保留期（cleanup.tempFileRetentionDays）的定时任务执行日志",
+                "cleanup.intervalMs",
+                this::cleanupIntervalMs,
                 () -> false,
                 () -> {
-                    int days = Math.max(1, configService.getInt("schedule.runLogRetentionDays", 7));
+                    int days = tempFileRetentionDays();
+                    if (days <= 0) return;   // ≤0 = 不清理，同 workflow 侧口径
                     int purged = purgeRunLogs(days);
                     if (purged > 0) {
                         log.info("[Schedule] 执行日志已清理 {} 行（保留 {} 天）", purged, days);
                     }
                 });
 
-        // 站内通知清理：c_ai_notification 按保留期物理删除（保留期 notification.retentionDays，默认 30 天）。
+        // 站内通知清理：c_ai_notification 按保留期物理删除（保留期 cleanup.recordRetentionDays）。
         // 通知指向的解析任务/运行记录本身也有保留期，通知活得比它们久没有回溯价值；不区分已读未读。
-        register("站内通知清理", "物理删除超过保留期（notification.retentionDays）的站内通知",
-                "notification.cleanupIntervalMs",
-                () -> configService.getInt("notification.cleanupIntervalMs", 86_400_000),
+        register("站内通知清理", "物理删除超过保留期（cleanup.recordRetentionDays）的站内通知",
+                "cleanup.intervalMs",
+                this::cleanupIntervalMs,
                 () -> false,
                 () -> {
-                    int days = Math.max(1, configService.getInt("notification.retentionDays", 30));
+                    int days = recordRetentionDays();
+                    if (days <= 0) return;   // ≤0 = 不清理；Math.max(1, days) 会把「永不清理」跑成「1 天后删光」
                     int purged = notificationService.cleanupExpired(days);
                     if (purged > 0) {
                         log.info("[Schedule] 站内通知已清理 {} 条（保留 {} 天）", purged, days);
@@ -474,23 +540,23 @@ public class ScheduleCenter {
      */
     private static final Map<String, List<String>> TASK_PARAMS = Map.ofEntries(
             Map.entry("关键词索引精确对账", List.of("keyword.reconcileOnStartup")),
-            Map.entry("聊天图片目录清理", List.of("images.chatRetentionMillis")),
-            Map.entry("聊天附件超期清理", List.of("chat.uploadRetentionHours")),
+            Map.entry("聊天图片目录清理", List.of("cleanup.tempFileRetentionDays")),
+            Map.entry("聊天附件超期清理", List.of("cleanup.tempFileRetentionDays")),
             Map.entry("检索评估自动体检", List.of("eval.judgeEnabled", "eval.judgeModel", "eval.autoThresholdPct")),
-            Map.entry("过期会话/消息清理", List.of("cleanup.sessionRetentionDays", "cleanup.visitorIdleDays")),
-            Map.entry("产物超期清理", List.of("artifact.retentionDays")),
+            Map.entry("过期会话/消息清理", List.of("cleanup.recordRetentionDays")),
+            Map.entry("产物超期清理", List.of("cleanup.assetRetentionDays")),
             Map.entry("定时智能体任务", List.of("scheduled.enabled", "scheduled.maxPerUser", "scheduled.timeoutMs")),
             Map.entry("文档解析队列扫描", List.of("parse.queue.capacity", "parse.concurrency",
                     "parse.taskLeaseSeconds", "parse.taskTimeoutMs", "parse.embedConcurrency", "parse.ocrGateConcurrency")),
             Map.entry("网页源定时刷新", List.of("web.refreshEnabled")),
             Map.entry("沙盒空闲回收", List.of("sandbox.idleReleaseMinutes")),
             Map.entry("长任务接续扫描", List.of("chat.turnResumeWindowMinutes")),
-            Map.entry("工作流运行记录清理", List.of("workflow.runLogRetentionDays")),
+            Map.entry("工作流运行记录清理", List.of("cleanup.recordRetentionDays")),
             Map.entry("工作流定时触发", List.of("workflow.maxSteps", "workflow.runTimeoutSeconds",
                     "workflow.subagentTimeoutMs", "workflow.maxConcurrentRuns", "workflow.runQueueCapacity")),
             Map.entry("Trace 线上采样", List.of("trace.sampleRandomDaily", "trace.sampleNoHitDaily")),
-            Map.entry("任务执行日志清理", List.of("schedule.runLogRetentionDays")),
-            Map.entry("站内通知清理", List.of("notification.retentionDays", "notification.dedupWindow"))
+            Map.entry("任务执行日志清理", List.of("cleanup.tempFileRetentionDays")),
+            Map.entry("站内通知清理", List.of("cleanup.recordRetentionDays", "notification.dedupWindow"))
     );
 
     /** 停机：先停节拍调度（不再触发新任务），池内在跑任务由 ThreadPoolManager 优雅停机收尾 */

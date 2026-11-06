@@ -1,5 +1,6 @@
 package com.wenqu.ai.service;
 
+import com.wenqu.ai.config.ConfigDefaults;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 import com.wenqu.ai.config.AppProperties;
@@ -32,7 +33,7 @@ import java.util.regex.Pattern;
  * 预览加一个 {@code spillId}，卡片给「查看完整输出」按需读回来（读取按人隔离：id 是 32 位 hex，
  * 归属写在同名 {@code .json} 里，非本人一律查不到）。写失败退回原样截断——这是旁路，绝不影响问答。
  *
- * <p>占用的磁盘由两道治理收住：保留期（{@code cleanup.toolSpillRetentionDays}）删过期的，
+ * <p>占用的磁盘由两道治理收住：保留期（{@code cleanup.tempFileRetentionDays}，临时件档）删过期的，
  * 每人配额（{@code tool.spillMaxMbPerUser}）在写入后把该用户目录压回上限内、按落盘时间淘汰最旧的。
  * 被淘汰只影响「查看完整输出」能否读回原文，卡片上的预览与这一轮的结论不受影响。
  *
@@ -301,7 +302,8 @@ public class ToolSpillService {
 
     /** 过期清理（ScheduleCenter 周期调用）：按文件修改时间删超过保留期的原文与其元信息 */
     public int purgeExpired() {
-        int days = configService.getInt("cleanup.toolSpillRetentionDays", 7);
+        int days = configService.getInt("cleanup.tempFileRetentionDays",
+                ConfigDefaults.CLEANUP_TEMP_FILE_RETENTION_DAYS);
         if (days <= 0) return 0;
         long deadline = System.currentTimeMillis() - days * 24L * 3600_000L;
         Path root = Paths.get(properties.getImages().getDir(), SUB_DIR);

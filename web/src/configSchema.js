@@ -31,17 +31,28 @@ export function applyServerSchema (payload) {
 }
 
 /**
+ * 工程参数：tier ≥ 3（工程排障）或被 schema 标了 hidden 的字段。
+ * hidden 用于「键还得留在 fields 里（提交与校验要认），但不该摆在设置页面上」的字段——
+ * 例如超时档卡的四个单项，删出 schema 后档位卡的值就提交不上去了（见 buildPayload）。
+ */
+export const isEngineField = f => Number(f.tier ?? 2) >= 3 || f.hidden === true
+
+/**
  * 按面板取渲染块：分节标题与字段按顺序交织，自定义块由调用方插入。
  * @param form 传入时按 vif 过滤不可见字段——某节字段全被隐藏时标题一并隐藏
  *             （如 MCP「安全与限频」挂在「对外提供端点」开关下）
+ * @param showEngine 假时收起工程参数。**过滤只准落在这里（渲染层）**：
+ *                   buildPayload / dirtyCount / panelDefaultPayload 都以 FIELDS 全集为输入，
+ *                   所收起的字段照样回填、照样脏检测、照样被「恢复本组默认」覆盖；
+ *                   把过滤下沉到那几处会直接变成「改了没存上」和「重置漏项」。
  */
-export function blocksOf (panel, form = null) {
+export function blocksOf (panel, form = null, showEngine = false) {
   const p = PANELS.find(x => x.key === panel)
   // 面板未登记时返回空块而不是读 p.sections 崩掉：panel 由调用方决定（可能是分组 key、
   // 也可能是尚未从后端到达的 key），崩在这里会连带整个设置页白屏并吞掉真实报错
   if (!p) return []
   const blocks = []
-  const keep = f => !form || isVisible(f, form)
+  const keep = f => (!form || isVisible(f, form)) && (showEngine || !isEngineField(f))
   for (let i = 0; i < p.sections.length; i++) {
     const fs = FIELDS.filter(f => f.panel === panel && f.section === i && !f.groupedUnder && keep(f))
     if (!fs.length) continue

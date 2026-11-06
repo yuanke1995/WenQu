@@ -92,6 +92,9 @@ public class ConfigService {
 
     @jakarta.annotation.PostConstruct
     public void init() {
+        // 参数收敛的值迁移**必须在 ensureDefaults() 之前**：新键一旦被告知默认值灌进库，
+        // 「有行」就不再等于「管理员设过」，幂等哨兵与迁移都会失灵。
+        migrateMergedRetentionAndCadence();
         // 缺失的默认项自动补入（存量升级场景：新增 key 自动注入，不覆盖已有配置）
         ensureDefaults();
         reload();
@@ -270,6 +273,155 @@ public class ConfigService {
         } catch (Exception e) {
             log.warn("[Config] 明文密钥加密迁移失败（不影响启动，读取兼容明文）: {}", e.getMessage());
         }
+    }
+
+    // ==================== 参数收敛：同义键的值迁移 ====================
+    // 设置页上「11 个每日清理间隔」「14 个保留期天数」说的是同一件事的不同侧面，收成一个键之后，
+    // 存量库里那些各改各的值必须折算进新键，否则升级当天所有清理任务一起回到出厂默认——
+    // 管理员辛苦调出来的「图片只留 3 天」「外溢原文永不清」会静默失效，最坏情况是真删数据。
+    // 两条纪律：
+    //   · 只在**新键还没有行**时做一次（跑在 ensureDefaults 之前 ⇒ 有行必然是迁来的或人设的）；
+    //   · 取哪个方向的合并值由「这个键决定什么」决定，见 MergeFamily.intervalFamily。
+
+    /** 合并族里各键的单位（旧键有的按小时、有的按毫秒，必须归一后才能比大小） */
+    private enum MergeUnit {MS, HOURS, DAYS}
+
+    /** 一个源旧键：单位是它自己在 defaults() 里的单位 */
+    private record MergeSource(String key, MergeUnit unit) {
+    }
+
+    /**
+     * 一族合并。
+     *
+     * @param intervalFamily true = 节拍族：取 <b>min</b>——清理间隔只决定「多久扫一次」，扫得勤的代价
+     *                       是多几轮空扫；反过来把一个原本每小时的临时目录清理改成每日，磁盘上最脏的
+     *                       两类文件要多堆 23 小时。
+     *                       false = 保留期族：取 <b>max</b>——保留期决定「什么时候真删」，删短了不可回滚，
+     *                       拉长了只多占几天磁盘。
+     *                       两族共用一条判据：任一源键的生效值 ≤0（= 那一头本来就不清理/已暂停）
+     *                       ⇒ 新键写 0 并点名，绝不把「永久保留」洗成「90 天后删光」。
+     */
+    private record MergeFamily(String newKey, MergeUnit unit, boolean intervalFamily,
+                               String humanName, List<MergeSource> sources) {
+    }
+
+    /**
+     * 收敛族清单。旧键的本版本一律<b>不删</b>（defaults() 与 schema 都留着，schema 条目标 hidden）：
+     * 它们已无读取点，留着只是惰性数据，回滚等于 git revert 而无需数据修复。
+     */
+    private static final List<MergeFamily> MERGED_FAMILIES = List.of(
+            new MergeFamily("cleanup.intervalMs", MergeUnit.MS, true, "清理/回收共用节拍", List.of(
+                    new MergeSource("images.chatCleanupIntervalMs", MergeUnit.MS),
+                    new MergeSource("chat.uploadCleanupIntervalMs", MergeUnit.MS),
+                    new MergeSource("tool.spillCleanupIntervalMs", MergeUnit.MS),
+                    new MergeSource("cleanup.sessionCleanupIntervalMs", MergeUnit.MS),
+                    new MergeSource("artifact.cleanupIntervalMs", MergeUnit.MS),
+                    new MergeSource("chat.sessionLogArchive.cleanupIntervalMs", MergeUnit.MS),
+                    new MergeSource("chat.scratchCleanupIntervalMs", MergeUnit.MS),
+                    new MergeSource("workflow.runCleanupIntervalMs", MergeUnit.MS),
+                    new MergeSource("schedule.runLogCleanupIntervalMs", MergeUnit.MS),
+                    new MergeSource("notification.cleanupIntervalMs", MergeUnit.MS))),
+            // 保留期三族：单位不同的旧键（小时 / 毫秒 / 天）先归一到「天」再取 max，向上取整。
+            new MergeFamily("cleanup.tempFileRetentionDays", MergeUnit.DAYS, false, "临时件保留期", List.of(
+                    new MergeSource("chat.uploadRetentionHours", MergeUnit.HOURS),
+                    new MergeSource("chat.scratchRetentionHours", MergeUnit.HOURS),
+                    new MergeSource("cleanup.toolSpillRetentionDays", MergeUnit.DAYS),
+                    new MergeSource("schedule.runLogRetentionDays", MergeUnit.DAYS),
+                    new MergeSource("images.chatRetentionMillis", MergeUnit.MS))),
+            new MergeFamily("cleanup.recordRetentionDays", MergeUnit.DAYS, false, "过程记录保留期", List.of(
+                    new MergeSource("cleanup.sessionRetentionDays", MergeUnit.DAYS),
+                    new MergeSource("cleanup.sessionEventRetentionDays", MergeUnit.DAYS),
+                    new MergeSource("cleanup.visitorIdleDays", MergeUnit.DAYS),
+                    new MergeSource("notification.retentionDays", MergeUnit.DAYS),
+                    new MergeSource("workflow.runLogRetentionDays", MergeUnit.DAYS),
+                    new MergeSource("chat.agentscopeJournalRotateKeepDays", MergeUnit.DAYS))),
+            new MergeFamily("cleanup.assetRetentionDays", MergeUnit.DAYS, false, "用户资产保留期", List.of(
+                    new MergeSource("artifact.retentionDays", MergeUnit.DAYS),
+                    new MergeSource("chat.sessionLogArchive.keepDays", MergeUnit.DAYS))));
+
+    /** 逐族折算存量值并写入新键（单族失败只告警，不阻塞启动——新键读侧有出厂默认兜底） */
+    private void migrateMergedRetentionAndCadence() {
+        for (MergeFamily fam : MERGED_FAMILIES) {
+            try {
+                migrateOneFamily(fam);
+            } catch (Exception e) {
+                log.warn("[Config][收敛] {}（{}）迁移失败，仍按出厂默认运行: {}",
+                        fam.newKey(), e.getClass().getSimpleName(), e.getMessage());
+            }
+        }
+    }
+
+    private void migrateOneFamily(MergeFamily fam) {
+        String newKey = fam.newKey();
+        if (storedValue(newKey) != null) {
+            log.info("[Config][收敛] {} 已有行（值 {}）⇒ 跳过合并，以库里的值为准（迁移只认第一次启动）",
+                    newKey, storedValue(newKey));
+            return;
+        }
+        Map<String, String> defs = defaults();
+        long merged = fam.intervalFamily() ? Long.MAX_VALUE : Long.MIN_VALUE;
+        List<String> offSources = new ArrayList<>();
+        int counted = 0;
+        for (MergeSource src : fam.sources()) {
+            String raw = storedValue(src.key());
+            String v = raw != null ? raw : defs.get(src.key());
+            if (v == null || v.isBlank()) continue;   // schema/defaults/库 三处都没有：不参与
+            long n;
+            try {
+                n = toUnit(Long.parseLong(v.trim()), src.unit(), fam.unit());
+            } catch (NumberFormatException e) {
+                log.warn("[Config][收敛] 源键 {} 的值「{}」不是数字，折算时忽略这一项", src.key(), v);
+                continue;
+            }
+            counted++;
+            if (n <= 0) {
+                offSources.add(src.key() + "=" + v.trim());
+            }
+            merged = fam.intervalFamily() ? Math.min(merged, n) : Math.max(merged, n);
+        }
+        if (counted == 0) {
+            log.info("[Config][收敛] {} 没有可折算的存量值（旧键全部无行），交由默认值生效", newKey);
+            return;
+        }
+        if (!offSources.isEmpty()) {
+            merged = 0;   // ≤0 优先：宁可多占磁盘，不可把「本来不清理」的那一头洗成会删
+        }
+        Config c = new Config();
+        c.setConfigKey(newKey);
+        c.setConfigValue(String.valueOf(merged));
+        c.setRemark(schema.helpOrDefault(newKey, "只读配置"));
+        configMapper.insert(c);
+        log.info("[Config][收敛] {}（{}）= {}{}，由 {} 个旧键折算；改前的各键值可在配置表旧行里核对",
+                newKey, fam.humanName(), merged, fam.unit() == MergeUnit.DAYS ? " 天" : " ms", counted);
+        if (!offSources.isEmpty()) {
+            log.warn("[Config][收敛] 以下旧键原本被单独停用了（≤0）：{}。合并成单一键后无法逐任务停用，"
+                            + "所以 {} 也写成 0 = 这一族整体停用。若只想让其中某件永久不清理，"
+                            + "请改它的保留期键（≤0 = 不清理）；要让清理跑起来，把 {} 改回正数即可。",
+                    offSources, newKey, newKey);
+        }
+    }
+
+    /** 库里这一行的原值；<b>不走缓存</b>（本迁移跑在 reload() 之前，缓存还是空的）。无行回 null。 */
+    private String storedValue(String key) {
+        Config c = configMapper.selectById(key);
+        return c == null ? null : c.getConfigValue();
+    }
+
+    /** 单位归一：毫秒↔小时↔天。换算到「更大单位」时向上取整——保留期宁可多留一天，不可少留一天。 */
+    private static long toUnit(long v, MergeUnit from, MergeUnit to) {
+        if (from == to) {
+            return v;
+        }
+        long ms = switch (from) {
+            case MS -> v;
+            case HOURS -> v * 3_600_000L;
+            case DAYS -> v * 86_400_000L;
+        };
+        return switch (to) {
+            case MS -> ms;
+            case HOURS -> (ms + 3_600_000L - 1) / 3_600_000L;
+            case DAYS -> (ms + 86_400_000L - 1) / 86_400_000L;
+        };
     }
 
     /** 全量重读 c_ai_config 进缓存（本地更新 / Redis 订阅通知 / schedule 包周期兜底均调用） */
@@ -625,6 +777,14 @@ public class ConfigService {
         d.put("eval.autoIntervalMs", "86400000");  // 自动体检周期(ms，≤0=暂停)
         d.put("eval.autoThresholdPct", "10");      // 退化判定：指标相对跌幅百分比阈值
         // 定时任务（schedule 包读取；≤0=暂停对应任务）
+        // 清理/回收类任务的**共用节拍**：原先 11 个「每日清理间隔」各说同一件事，改一个留十个。
+        // 下面这些 *IntervalMs 旧键本版本停止读取（保留登记只为回滚窗口），下一版本连同 schema 条目一起删。
+        d.put("cleanup.intervalMs", String.valueOf(ConfigDefaults.CLEANUP_INTERVAL_MS)); // 清理/回收共用节拍(ms，≤0=暂停全部清理任务)
+        // 保留期三档（原 14 个键收成的）：单位统一为「天」，≤0 = 不清理。
+        // 下面这些旧的 *RetentionDays / *RetentionHours / chatRetentionMillis 同样本版本停止读取、下一版本删除。
+        d.put("cleanup.tempFileRetentionDays", String.valueOf(ConfigDefaults.CLEANUP_TEMP_FILE_RETENTION_DAYS)); // 临时件保留天数（附件/临时目录/外溢原文/执行日志/聊天图片）
+        d.put("cleanup.recordRetentionDays", String.valueOf(ConfigDefaults.CLEANUP_RECORD_RETENTION_DAYS));       // 过程记录保留天数（会话/事件账本/访客/通知/工作流运行/旧日志）
+        d.put("cleanup.assetRetentionDays", String.valueOf(ConfigDefaults.CLEANUP_ASSET_RETENTION_DAYS));         // 用户资产保留天数（产物/会话日志归档）
         d.put("images.chatCleanupIntervalMs", "86400000");   // 聊天图片清理间隔(ms)
         d.put("images.chatRetentionMillis", "604800000");    // 聊天图片保留时长(ms，7天)
         d.put("cleanup.sessionCleanupIntervalMs", "86400000"); // 会话清理间隔(ms)
@@ -648,7 +808,7 @@ public class ConfigService {
         d.put("images.quality", String.valueOf(properties.getImages().getQuality()));            // JPEG 压缩质量
         d.put("images.authEnabled", String.valueOf(properties.getImages().isAuthEnabled()));     // 图片签名鉴权开关（默认开：签名 URL 防盗链）
         d.put("images.authExpireSeconds", String.valueOf(properties.getImages().getAuthExpireSeconds())); // 签名 URL 有效期(秒)
-        d.put("vision.timeoutMillis", String.valueOf(properties.getVision().getTimeoutMillis())); // 视觉模型读取超时(ms，RestClient 构建期读取，需重启生效)
+        d.put("vision.timeoutMillis", String.valueOf(properties.getVision().getTimeoutMillis())); // 视觉模型读取超时(ms，VisionService 每次改配置刷 factory，保存即生效)
         d.put("vision.retryCount", String.valueOf(properties.getVision().getRetryCount()));       // 单图失败重试次数
         d.put("session.maxHistory", String.valueOf(properties.getSession().getMaxHistory()));     // 会话保留轮数
         d.put("session.expireMinutes", String.valueOf(properties.getSession().getExpireMinutes())); // 会话过期(分钟)
@@ -801,8 +961,8 @@ public class ConfigService {
         d.put("notification.dedupWindow", "1440");          // 同类通知合并窗口(分钟)：同目标重复发生的同类通知合并为一条，0=关闭合并
         d.put("webpush.enabled", "false");                  // Web Push 总闸：站内通知同时推到浏览器系统级通知（还需 env 里有 VAPID 密钥对，缺钥时这条开了也不动）
         d.put("webpush.ttlSeconds", "86400");             // 推送载荷在推送服务上能等多久（秒，默认 1 天）：过期就不弹——「这一轮跑完了」不该三天后才跳出来
-        d.put("workflow.maxConcurrentRuns", "4");          // 第 2 期：异步运行并发上限（派发池 core=max；改后需重启生效）
-        d.put("workflow.runQueueCapacity", String.valueOf(ConfigDefaults.WORKFLOW_RUN_QUEUE_CAPACITY));          // 第 2 期：异步运行排队容量（队列满即拒绝，fail-loud 不无限堆积；改后需重启生效）
+        d.put("workflow.maxConcurrentRuns", "4");          // 第 2 期：异步运行并发上限（派发池 core=max；保存即生效，池已建时直接调大小）
+        d.put("workflow.runQueueCapacity", String.valueOf(ConfigDefaults.WORKFLOW_RUN_QUEUE_CAPACITY));          // 第 2 期：异步运行排队容量（队列满即拒绝，fail-loud 不无限堆积；入队前现读，保存即生效）
         d.put("trace.samplingIntervalMs", "86400000");     // P1：Trace 线上采样间隔（ms，默认每日；≤0 暂停）
         d.put("trace.sessionEventEnabled", "true");         // 会话事件账本：每轮结构过程按写入顺序留痕（默认开；关掉后一行不写，问答行为不变）
         d.put("trace.turnIdBackfill", "false");             // 一次性补账开关：默认关（开着等于每次重启都扫一遍历史消息）

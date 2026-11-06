@@ -2377,7 +2377,7 @@ public class SessionService {
      * 与 {@link #purgeExpired} 的区别必须分清：那边硬删的是**已软删**的行（撤销窗口到期），
      * 这里软删的是**仍活跃**的行，判据是会话的最后活跃时间（update_time）。
      * uid 前缀严格限定访客池，真实用户的会话一条都不碰；软删后仍走 purgeExpired 的保留期，
-     * 也就是说访客会话被回收后还有 {@code cleanup.sessionRetentionDays} 天可以被捞回来。
+     * 也就是说访客会话被回收后还有 {@code cleanup.recordRetentionDays} 天可以被捞回来。
      *
      * @param idleDays 闲置天数（<=0 表示停用该回收）
      * @return 回收的会话数

@@ -14,7 +14,7 @@ import java.time.LocalDateTime;
  * <p>
  * 写入约定：<b>只在任务体结束后落行</b>（一次性 insert，不先插 running 再更新——
  * 高频扫描任务（如解析队列 10s 一轮）下双写纯浪费，"执行中"状态由 ScheduleCenter
- * 内存快照表达）。保留期由 {@code schedule.runLogRetentionDays} 控制，超期由
+ * 内存快照表达）。保留期走临时件档 {@code cleanup.tempFileRetentionDays}，超期由
  * 注册在调度中心自己的「任务执行日志清理」任务定期物理删除。
  *
  * @author yuanke

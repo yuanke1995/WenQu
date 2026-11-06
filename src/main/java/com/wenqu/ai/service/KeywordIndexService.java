@@ -43,8 +43,8 @@ import java.util.concurrent.atomic.AtomicLong;
  * - 写索引全部 best-effort（失败只告警不抛），最终一致由周期精确对账兜底：按 (id, contentHash)
  *   逐块比对 MySQL 有效块与索引文档，仅定向修复差异块（缺失/过期按主键批量拉取比对、孤儿由计数
  *   差值门控后才全量扫描、多副本用 MySQL 命名锁互斥；按主键拉取不可用时本轮告警跳过。
- *   schedule 包调度中心驱动：启动先跑一次 + keyword.reconcileIntervalMs
- *   周期执行；差异过大降级全量重建。切换引擎保存配置时也自动全量重建，运维可调 /api/ai/search-index/reindex）
+ *   schedule 包调度中心驱动：启动先跑一次 + 内置节拍（1 小时，ScheduleCenter 常量，
+ *   不再是配置项）周期执行；差异过大降级全量重建。切换引擎保存配置时也自动全量重建，运维可调 /api/ai/search-index/reindex）
  */
 @Slf4j
 @Service
@@ -546,7 +546,7 @@ public class KeywordIndexService {
      * </ul>
      * 按主键拉取不可用（settings 异步任务未落地、索引不是可过滤结构等）时本轮告警跳过，下轮重试；
      * 不再回退到两侧全量拉取的旧算法。
-     * 调度（启动首轮 + 周期间隔，见 keyword.reconcileOnStartup / keyword.reconcileIntervalMs）
+     * 调度（启动首轮开关 keyword.reconcileOnStartup + 内置节拍的周期，见 ScheduleCenter）
      * 由 schedule 包 ScheduleCenter 驱动；失败只告警不抛，下轮重试。
      */
     public void reconcile() {

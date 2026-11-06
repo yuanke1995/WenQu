@@ -194,7 +194,7 @@ public class ArtifactService {
                 .eq(Artifact::getDeleted, 0)
                 .orderByAsc(Artifact::getCreateTime));
         if (rows.isEmpty()) return List.of();
-        int retentionDays = configService.getInt("artifact.retentionDays", ConfigDefaults.ARTIFACT_RETENTION_DAYS);
+        int retentionDays = assetRetentionDays();
         List<Map<String, Object>> fromList = SESSION_ARTIFACTS.remove(fromSessionId);
         List<Map<String, Object>> toList = SESSION_ARTIFACTS.computeIfAbsent(toSessionId,
                 k -> Collections.synchronizedList(new ArrayList<>()));
@@ -345,7 +345,7 @@ public class ArtifactService {
      */
     public List<Map<String, Object>> list(String uid, String keyword, String projectId) {
         if (uid == null || uid.isBlank()) return List.of();
-        int retentionDays = configService.getInt("artifact.retentionDays", ConfigDefaults.ARTIFACT_RETENTION_DAYS);
+        int retentionDays = assetRetentionDays();
         LambdaQueryWrapper<Artifact> w = new LambdaQueryWrapper<Artifact>()
                 .eq(Artifact::getUid, uid)
                 .eq(Artifact::getDeleted, 0)
@@ -536,6 +536,16 @@ public class ArtifactService {
         artifactMapper.deleteById(row.getId());
         log.info("[ARTIFACT] 已删除产物 id={} uid={} file={}", id, row.getUid(), row.getFilename());
         return true;
+    }
+
+    /**
+     * 产物保留天数（用户资产档 {@code cleanup.assetRetentionDays}，≤0 = 不清理）。
+     * <p>界面（列表里的「有效期至」）与清理任务都读这一个数——分两处算就会出现「写着还有 30 天、
+     * 实际昨天就被删了」。
+     */
+    private int assetRetentionDays() {
+        return configService.getInt("cleanup.assetRetentionDays",
+                ConfigDefaults.CLEANUP_ASSET_RETENTION_DAYS);
     }
 
     /**

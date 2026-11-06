@@ -344,7 +344,9 @@ public class NotificationService {
      * @return 删除条数
      */
     public int cleanupExpired(int retentionDays) {
-        LocalDateTime threshold = LocalDateTime.now().minusDays(Math.max(1, retentionDays));
+        // ≤0 = 不清理：Math.max(1, days) 会把「永不清理」跑成「1 天后删光」
+        if (retentionDays <= 0) return 0;
+        LocalDateTime threshold = LocalDateTime.now().minusDays(retentionDays);
         return notificationMapper.delete(new LambdaQueryWrapper<Notification>()
                 .lt(Notification::getCreateTime, threshold));
     }

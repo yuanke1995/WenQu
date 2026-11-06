@@ -57,9 +57,10 @@
  *   <tr><td>{@link com.wenqu.ai.startup.MarketBuiltinSeeder}</td><td>ApplicationRunner @Order(20)</td>
  *       <td>官方工作流模板种入市场（幂等；管理员下架过的不复活）</td><td>否</td></tr>
  *   <tr><td>{@link com.wenqu.ai.startup.OrphanTurnRunner}</td><td><b>无启动钩子</b>——由
- *       {@code ScheduleCenter} 按 {@code chat.turnResumeScanMs} 周期调度（服务一起来先接一次）</td>
+ *       {@code ScheduleCenter} 按内置节拍 2 分钟调度（服务一起来先接一次）</td>
  *       <td>扫中断轮并重建跟随循环</td>
- *       <td><b>接续的那一轮会继续调模型</b>，故可从调度中心暂停</td></tr>
+ *       <td><b>接续的那一轮会继续调模型</b>；节拍不做成配置项，也不给暂停——停掉等于让中断的轮
+ *           一直停在「只有问题没有回答」那一行</td></tr>
  *   <tr><td>{@link com.wenqu.ai.startup.ManualSeedService}</td><td><b>无启动钩子（手动触发）</b></td>
  *       <td>官方手册同步：建库 + 逐篇分块向量化</td><td><b>是，已改为手动</b></td></tr>
  * </table>

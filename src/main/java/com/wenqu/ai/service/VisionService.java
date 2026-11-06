@@ -29,6 +29,7 @@ public class VisionService {
     private final ConfigService configService;
     private final ModelRegistryService modelRegistryService;
     private final ImageDescCache imageDescCache;
+    private final SimpleClientHttpRequestFactory requestFactory;
     private final RestClient restClient;
 
     public VisionService(AppProperties properties, ConfigService configService,
@@ -40,10 +41,26 @@ public class VisionService {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(10000);
         factory.setReadTimeout(properties.getVision().getTimeoutMillis());
+        this.requestFactory = factory;
         // 不设固定 baseUrl：每次调用按引用（visionRef → 供应商表）解析出网关，请求用绝对 URI
         this.restClient = RestClient.builder()
                 .requestFactory(factory)
                 .build();
+    }
+
+    /**
+     * vision.timeoutMillis 是运行时旋钮：SimpleClientHttpRequestFactory 每次请求现读超时，
+     * 改设置只需刷 factory，不必重启（旧写法在构建期固化，保存后一直按启动时的值跑）。
+     */
+    @jakarta.annotation.PostConstruct
+    void registerTimeoutHotReload() {
+        configService.addChangeListener(changed -> {
+            if (changed == null || !changed.contains("vision.timeoutMillis")) return;
+            int want = Math.max(1000, configService.getInt("vision.timeoutMillis",
+                    properties.getVision().getTimeoutMillis()));
+            requestFactory.setReadTimeout(want);
+            log.info("[vision] 图片描述读取超时已热更为 {}ms（vision.timeoutMillis）", want);
+        });
     }
 
     /**

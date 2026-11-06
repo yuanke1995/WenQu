@@ -126,7 +126,7 @@ public class WorkflowService {
      * 异步运行派发池（第 2 期：run 异步化 + 排队可见）：core=max=workflow.maxConcurrentRuns，
      * 有界队列 workflow.runQueueCapacity——队列满即拒绝（fail-loud，不无限堆积）。
      * 与 run 级超时用的 {@link #RUN_POOL} 分开：异步任务若与超时包装同池，池满时会自我等待死锁。
-     * 并发/队列容量在首次使用时读配置（改配置需重启生效）。
+     * 并发上限与队列容量都在运行时现读（见 {@link #registerDispatchHotReload()}、{@link RuntimeCapacityQueue}）。
      */
     private volatile java.util.concurrent.ThreadPoolExecutor dispatchPool;
 
@@ -815,10 +815,9 @@ public class WorkflowService {
         synchronized (this) {
             if (dispatchPool == null) {
                 int concurrency = Math.max(1, configService.getInt("workflow.maxConcurrentRuns", 4));
-                int capacity = Math.max(1, configService.getInt("workflow.runQueueCapacity", ConfigDefaults.WORKFLOW_RUN_QUEUE_CAPACITY));
                 dispatchPool = new java.util.concurrent.ThreadPoolExecutor(concurrency, concurrency,
                         60L, java.util.concurrent.TimeUnit.SECONDS,
-                        new java.util.concurrent.LinkedBlockingQueue<>(capacity),
+                        new RuntimeCapacityQueue(),
                         r -> {
                             Thread t = new Thread(r, "wf-async");
                             t.setDaemon(true);
@@ -827,6 +826,43 @@ public class WorkflowService {
             }
             return dispatchPool;
         }
+    }
+
+    /**
+     * 排队容量现读配置：{@code LinkedBlockingQueue} 的容量是构造期常量，这里在入队前比对现值，
+     * 于是 {@code workflow.runQueueCapacity} 改完即生效（调小只拦后续任务，不动已排队的 run）。
+     */
+    private final class RuntimeCapacityQueue extends java.util.concurrent.LinkedBlockingQueue<Runnable> {
+        @Override
+        public boolean offer(Runnable r) {
+            return size() < Math.max(1, configService.getInt("workflow.runQueueCapacity",
+                    ConfigDefaults.WORKFLOW_RUN_QUEUE_CAPACITY)) && super.offer(r);
+        }
+    }
+
+    /**
+     * 并发上限是运行时旋钮：改 {@code workflow.maxConcurrentRuns} 后直接调池，不必重启。
+     * 池还没被首次使用时不建（保持懒建语义，下次用到自然按新值建）。
+     */
+    @jakarta.annotation.PostConstruct
+    void registerDispatchHotReload() {
+        configService.addChangeListener(changed -> {
+            if (changed == null || !changed.contains("workflow.maxConcurrentRuns")) return;
+            java.util.concurrent.ThreadPoolExecutor p = dispatchPool;
+            if (p == null) return;
+            int want = Math.max(1, configService.getInt("workflow.maxConcurrentRuns", 4));
+            int have = p.getCorePoolSize();
+            if (want == have) return;
+            // 调大先改上限、调小先改核心，否则 core>max 会被 ThreadPoolExecutor 拒绝
+            if (want > have) {
+                p.setMaximumPoolSize(want);
+                p.setCorePoolSize(want);
+            } else {
+                p.setCorePoolSize(want);
+                p.setMaximumPoolSize(want);
+            }
+            log.info("[workflow] 异步运行并发上限已热调为 {}（原 {}，workflow.maxConcurrentRuns）", want, have);
+        });
     }
 
     /**

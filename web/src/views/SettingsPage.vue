@@ -29,6 +29,12 @@
             <button v-if="!NO_RESET.includes(activeFormPanel)" class="app-btn ghost" :disabled="resettingKey === activeFormPanel" @click="onResetGroup(activeFormPanel)">
               恢复本组默认
             </button>
+            <!-- 工程参数铺开开关：放面板头而不是 cfg-fold-bar——工具条只在两组以上出现，
+                 「调试设置」这类全工程参数的面板会被它自己挡掉 -->
+            <label v-if="showEngineSwitch" class="engine-switch">
+              <a-switch size="small" :checked="showEngine" @change="v => { showEngine = v }" />
+              <span>工程参数 {{ engineHiddenCount }} 项<span class="engine-switch-hint">· 排障时才需要</span></span>
+            </label>
           </div>
 
           <div class="app-card set-card">
@@ -69,18 +75,24 @@
               <a-alert v-if="isMaintConfig" type="info" show-icon
                        message="这里只放不属于任何定时任务的通用参数。某个任务自己的间隔与专属参数（保留期、并发、超时等），在「运行状态」页签展开对应任务就地调整。" />
               <!-- 整块与上方页签条之间留一条缝：页签条自身 margin-bottom 是 0，贴着会喘不过气 -->
-              <div v-if="cfgGroupsAll.length" class="cfg-fold-wrap">
+              <div v-if="cfgGroupsAll.length || engineHiddenCount" class="cfg-fold-wrap">
                 <!-- 工具条只在两组以上出现：单组面板里搜索和「全部展开」都只是在重复那一个标题 -->
                 <div v-if="showCfgBar" class="cfg-fold-bar">
                   <a-input v-model:value="cfgKeyword" size="small" allow-clear
                            placeholder="搜参数名 / 配置键，如 重试、graphrag." style="width: 240px">
                     <template #prefix><search-outlined class="res-search-ic" /></template>
                   </a-input>
-                  <span class="key-dim">{{ cfgGroups.length }} 组 · 共 {{ cfgTotalCount }} 项</span>
+                  <span class="key-dim">{{ cfgGroups.length }} 组 · 共 {{ cfgTotalCount }} 项<span v-if="engineHiddenCount && !showEngine">· 另收起 {{ engineHiddenCount }} 项工程参数</span></span>
                   <button class="app-link-btn" @click="toggleAllFold">{{ allCfgOpen ? '全部收起' : '全部展开' }}</button>
                 </div>
                 <div v-if="!cfgGroups.length" class="key-usage-list key-dim">
-                  没有匹配「{{ cfgKeyword }}」的参数
+                  <!-- 空组有两种：搜不到，以及整组都是收起的工程参数。后者不说一句，
+                       看上去就是「这个面板坏了」——「调试设置」11 项全是 tier3，正是这种 -->
+                  <template v-if="cfgKeyword">没有匹配「{{ cfgKeyword }}」的参数</template>
+                  <template v-else>
+                    本组 {{ engineHiddenCount }} 项都是工程参数（排障时才用），默认收起。
+                    <button class="app-link-btn" @click="showEngine = true">显示工程参数</button>
+                  </template>
                 </div>
                 <div v-for="g in cfgGroups" :key="g.title" class="cfg-fold">
                   <div class="fold-head cfg-fold-head" @click="toggleFold(g.title)">
@@ -115,6 +127,21 @@
                 </div>
               </div>
 
+              <!-- 部署属性只读区：这几个键决定数据落在哪个目录/哪个 Redis 前缀下，改一次等于换一批数据
+                   （目录不迁移 → 看上去像"数据消失"），所以不给输入框，只把当前生效值摊开给排障看。
+                   值来自后端 snapshot 的原始载荷，与字段定义无关：它们已从可编辑清单退役。 -->
+              <div v-if="deployRows.length" class="deploy-props">
+                <div class="deploy-props-title">部署属性（只读）</div>
+                <div class="deploy-props-hint key-dim">
+                  请用环境变量或配置表调整。这里改一次不会跟着迁移存量，会话与归档会看起来像"清空"了。
+                </div>
+                <div v-for="r in deployRows" :key="r.key" class="deploy-row">
+                  <span class="key-name">{{ r.label }}</span>
+                  <code>{{ r.value || '（空）' }}</code>
+                  <span v-if="r.isDefault" class="deploy-tag">出厂默认</span>
+                  <code class="deploy-key key-dim">{{ r.key }}</code>
+                </div>
+              </div>
 
               <!-- 定时任务·运行状态页签：ScheduleCenter 内存快照（统计随重启归零）。
                    暂停/恢复即把间隔配置写 0 / 默认值，复用既有保存链路。
@@ -139,7 +166,13 @@
                         <a-tooltip :title="record.desc">
                           <span class="key-name">{{ record.name }}</span>
                         </a-tooltip>
-                        <div v-if="record.configKey" class="sched-cfgkey"><code>{{ record.configKey }}</code></div>
+                        <div v-if="record.configKey" class="sched-cfgkey">
+                          <code>{{ record.configKey }}</code>
+                          <!-- 共用节拍的标记：这一行的间隔/暂停会连带其余同键任务 -->
+                          <a-tooltip v-if="cadenceShareNote(record.configKey)" :title="cadenceShareNote(record.configKey)">
+                            <span class="sched-risk">共{{ (sharedCadence[record.configKey] || []).length }}</span>
+                          </a-tooltip>
+                        </div>
                         <div v-else class="sched-cfgkey key-dim">内置节拍</div>
                       </template>
                     </a-table-column>
@@ -504,7 +537,7 @@ import { getConfig, getConfigSchema, saveConfig, resetConfig,
 import SchemaField from '../components/SchemaField.vue'
 import IntervalEditor from '../components/IntervalEditor.vue'
 import TimeoutPreset from '../components/TimeoutPreset.vue'
-import { FIELDS, PANELS, TIPS, blocksOf, buildDefaultForm, readForm, writeForm, applyServerSchema } from '../configSchema'
+import { FIELDS, PANELS, TIPS, blocksOf, buildDefaultForm, readForm, writeForm, applyServerSchema, isEngineField, isVisible } from '../configSchema'
 import { locateField } from '../utils/fieldLocate'
 import { useRoute, useRouter } from 'vue-router'
 
@@ -536,19 +569,69 @@ const activeFormPanel = computed(() => current.value === 'tool'
   : current.value === 'retrieval' ? ragTab.value : current.value)
 
 /**
+ * 工程参数（tier 3 + hidden）是否铺开。这是**视图偏好**，不是配置值：
+ * 只存 localStorage，绝不进 c_ai_config、不进 buildPayload。
+ * 全局一个开关而不是逐面板：管理员真要找工程参数，通常是在追一条跨面板的链路
+ * （OCR 并发 → 解析队列 → 沙盒），逐面板开关只会逼他来回点。
+ * localStorage 在隐私模式下 setItem 会抛，读写两侧都要包。
+ */
+const ENGINE_KEY = 'wenqu-settings-engine'
+const readEnginePref = () => {
+  try { return localStorage.getItem(ENGINE_KEY) === '1' } catch { return false }
+}
+const showEngine = ref(readEnginePref())
+watch(showEngine, v => { try { localStorage.setItem(ENGINE_KEY, v ? '1' : '0') } catch { /* 隐私模式：偏好不落地就算了 */ } })
+
+/** 当前面板被工程参数收起的项数（开关文案与空态提示共用；镜像 cfgBlocks 的过滤口径） */
+const engineHiddenCount = computed(() => {
+  let fs = FIELDS.filter(f => f.panel === activeFormPanel.value && isEngineField(f) && isVisible(f, form.value))
+  if (isMaintConfig.value) {
+    const owned = taskOwnedKeys.value
+    fs = fs.filter(f => !owned.has(f.backendKey))
+  }
+  return fs.length
+})
+// 「定时任务」的非参数页签各有自己的渲染分支，那里铺开开关只会多一个按了没反应的控件
+const showEngineSwitch = computed(() => engineHiddenCount.value > 0
+  && (current.value !== 'maintenance' || isMaintConfig.value))
+
+/**
  * 字段块 + 「耐心档位」卡：档位只服务对话模型的超时那一节，插在节标题下、第一个超时字段之前。
- * 判据取下一个字段的 backendKey（而不是写死 section 下标）——schema 调整分节顺序时不会插错位置。
+ * 锚点按**节标题**判（不是判下一个字段的 backendKey）：档位卡提交的四个超时单项已是工程参数，
+ * 收起时 `chat.sseTimeoutMs` 根本不在块列表里，照旧判 next 会让整张档位卡跟着消失。
+ */
+const timeoutSectionTitle = () => {
+  const f = FIELDS.find(x => x.backendKey === 'chat.sseTimeoutMs')
+  const p = PANELS.find(x => x.key === 'chat')
+  return f && p && f.section >= 0 ? p.sections[f.section] : null
+}
+/**
+ * 档位卡的落点：先找那一节的标题块；那一节**整节都被收起**时（字段全隐藏 ⇒ blocksOf 连标题一起跳过）
+ * 按节次把「节头 + 档位卡」插回它在 schema 里的位置。不补这一步，四个超时键被收进工程参数后
+ * 整张档位卡就凭空消失——它们是那四个键唯一的人话入口，不能跟着一起被收起。
  */
 const formBlocks = computed(() => {
-  const list = blocksOf(activeFormPanel.value, form.value)
+  const panel = activeFormPanel.value
+  const list = blocksOf(panel, form.value, showEngine.value)
+  const anchor = timeoutSectionTitle()
+  if (!anchor) return list
+  const p = PANELS.find(x => x.key === panel)
+  const anchorIdx = p ? p.sections.indexOf(anchor) : -1
   const out = []
-  for (let i = 0; i < list.length; i++) {
-    out.push(list[i])
-    const next = list[i + 1]
-    if (list[i].type === 'sub' && next?.type === 'field' && next.field.backendKey === 'chat.sseTimeoutMs') {
+  let inserted = false
+  for (const blk of list) {
+    if (!inserted && anchorIdx >= 0 && blk.type === 'sub'
+        && p.sections.indexOf(blk.title) > anchorIdx) {
+      out.push({ type: 'sub', title: anchor }, { type: 'timeoutPreset' })
+      inserted = true
+    }
+    out.push(blk)
+    if (blk.type === 'sub' && blk.title === anchor) {
       out.push({ type: 'timeoutPreset' })
+      inserted = true
     }
   }
+  if (!inserted && anchorIdx >= 0) out.push({ type: 'sub', title: anchor }, { type: 'timeoutPreset' })
   return out
 })
 
@@ -560,6 +643,13 @@ const navPanels = computed(() => {
   return PANELS.filter(p => p.key !== 'webSearch' && p.key !== 'skills'
     && (!groupRag || !ragChildren.has(p.key)))
 })
+
+/** 字段所属节的标题（折叠状态按标题记，与 cfgGroups 同一份口径） */
+const fieldFoldTitle = f => {
+  if (!f) return ''
+  const p = PANELS.find(x => x.key === f.panel)
+  return f.section >= 0 ? (p?.sections[f.section] || '') : '其他'
+}
 
 /**
  * ?panel= 深链：别处（模型供应商的「查看引用」清单）要直接把设置页开到能改的那一组。
@@ -580,17 +670,26 @@ const applyPanelDeepLink = raw => {
   if (host === 'retrieval') ragTab.value = key
   else if (host === 'tool') toolTab.value = key
   current.value = panel
+  // 全工程参数的面板（「调试设置」11 项都是 tier3）落点会是一片空白，看着像页面坏了：
+  // 这一组本来就没有常规参数，直接铺开
+  if (!FIELDS.some(f => f.panel === panel && !isEngineField(f))
+    && FIELDS.some(f => f.panel === panel && isEngineField(f))) showEngine.value = true
 }
 
 /**
  * ?fix=<backendKey> 深链第二步：目标字段多半在收起的参数组里（收起时根本不在 DOM 里，
  * 定位器再怎么等也等不到），先把装着它那一组展开，再交给统一的定位器滚过去＋亮一下。
+ * 从 FIELDS 全集解析而不是查 cfgGroupsAll：工程参数收起时根本不在分组结果里，
+ * 只展开「组」会得到「链接跳过去了、字段却亮不出来」。
  */
 const applyFieldDeepLink = async () => {
   const key = typeof route.query.fix === 'string' ? route.query.fix : ''
   if (!key) return
-  const g = cfgGroupsAll.value.find(x => x.fields.some(f => f.backendKey === key))
-  if (g && closedFolds.value.includes(g.title)) toggleFold(g.title)
+  const f = FIELDS.find(x => x.backendKey === key)
+  if (f && isEngineField(f)) showEngine.value = true
+  const title = fieldFoldTitle(f)
+  if (title && closedFolds.value.includes(title)) toggleFold(title)
+  await nextTick()
   await locateField(key)
   router.replace({ path: route.path, query: { ...route.query, fix: undefined } })
 }
@@ -616,6 +715,32 @@ const form = ref({ keyword: {} })
 /** 每项此刻由哪一层说话（后端 snapshot 带回来的 source/invalid）：只在异常时出徽标 */
 const sources = ref({})
 
+/**
+ * 部署属性（目录与前缀类）：改一次不会迁移存量，看上去就像「数据消失」，所以不做成可编辑参数，
+ * 只在所属面板底部把当前生效值摊开给排障看。
+ * 数据源是后端 snapshot 的原始载荷（组名 → 去掉组前缀的键名），刻意不走 FIELDS：
+ * 这些键不再有字段定义，走 FIELDS 就永远取不到值——只读区会在下一版本删字段后仍然可用。
+ */
+const DEPLOY_ITEMS = [
+  { panel: 'debug', key: 'chat.agentscopeStateDir', label: '框架引擎工作区目录' },
+  { panel: 'debug', key: 'chat.agentscopeRedisPrefix', label: '框架引擎 Redis 前缀' },
+  { panel: 'debug', key: 'chat.sessionLogArchive.dir', label: '会话日志归档目录' },
+  { panel: 'debug', key: 'chat.scratchDir', label: '聊天档临时目录' },
+  { panel: 'sandbox', key: 'workspace.sessionRootBase', label: '会话目录根（执行器上）' },
+]
+const deployRaw = ref({})
+const deployRows = computed(() => {
+  const d = deployRaw.value
+  return DEPLOY_ITEMS.filter(it => it.panel === activeFormPanel.value)
+    .map(it => {
+      const cell = d[it.key.split('.')[0]]?.[it.key.slice(it.key.indexOf('.') + 1)]
+      return { ...it, reported: Boolean(cell), value: cell?.value ?? '', isDefault: cell?.source === 'CODE_DEFAULT' }
+    })
+    // 只丢「后端根本没回这一项」（defaults() 已删＝将来批次 5 之后），那种行没有信息量；
+    // 「回了但值是空」要留着——那是真的没配，写成（空）比凭空少一行更接近实况
+    .filter(it => it.reported)
+})
+
 /** 已存敏感项 backendKey → 占位文案（敏感项不回填掩码，留空＝沿用已存值） */
 const secretHints = ref({})
 
@@ -634,6 +759,7 @@ const fetchAndFill = async () => {
     const r = await getConfig()
     if (r.success && r.data) {
       const d = r.data
+      deployRaw.value = d
       const src = {}
       for (const f of FIELDS) {
         const cell = d[f.group]?.[f.submitKey || f.key]
@@ -930,6 +1056,28 @@ const schedToggling = ref('')
 const schedSavingKey = ref('')
 
 /**
+ * 共用同一个间隔键的任务：{ 配置键: [任务名] }，只保留成员 &gt;1 的项。
+ * 清理/回收类任务从 11 个「每日清理间隔」收成一个 cleanup.intervalMs 之后，
+ * 改一个键会同时改掉全部——必须让界面说清"这一行管的不止这一行"，
+ * 否则"暂停聊天附件清理"看起来像只停了一件小事，实际停了全部清理。
+ */
+const sharedCadence = computed(() => {
+  const by = {}
+  for (const t of scheduleTasks.value) {
+    if (!t.configKey) continue
+    ;(by[t.configKey] ||= []).push(t.name)
+  }
+  return Object.fromEntries(Object.entries(by).filter(([, names]) => names.length > 1))
+})
+
+/** 该间隔键被几个任务共用时的一句话说明（不共用回空） */
+const cadenceShareNote = key => {
+  const names = sharedCadence.value[key || '']
+  if (!names) return ''
+  return `这个间隔被 ${names.length} 个任务共用（${names.join('、')}）：改它、或把它写 0 暂停，这些任务一起变。`
+}
+
+/**
  * 运行状态表格体的最大高度（px，超出则表格内部滚动，表头固定）。
  * 17 个任务行约 58px/行 = 986px，比一屏高 ⇒ 让整页滚的话，用户要滚过整张表
  * 才能看到页头说明，展开某行后要滚两屏。
@@ -1025,9 +1173,9 @@ const confirmClearRunLogs = () => {
   })
 }
 
-/** 执行日志的保留天数（上方表单 schedule.runLogRetentionDays，随配置加载回显） */
+/** 执行日志的保留天数（临时件档 cleanup.tempFileRetentionDays，随配置加载回显） */
 const runLogRetentionDays = computed(() => {
-  const v = readForm(form.value, 'schedule.runLogRetentionDays')
+  const v = readForm(form.value, 'cleanup.tempFileRetentionDays')
   return v == null || v === '' ? 7 : v
 })
 
@@ -1058,7 +1206,9 @@ const saveInterval = async (record, ms) => {
   try {
     const r = await saveConfig({ [field.group]: { [field.submitKey || field.key]: String(ms) } })
     if (r.success) {
-      message.success(`「${record.name}」间隔已改为 ${fmtInterval(ms)}`)
+      const others = (sharedCadence.value[record.configKey] || []).length
+      message.success(`「${record.name}」间隔已改为 ${fmtInterval(ms)}`
+        + (others > 1 ? `（同键的 ${others} 个任务一起改）` : ''))
       writeForm(form.value, field.path || (field.group + '.' + field.key), ms)
       initialPayload.value = buildPayload()
       loadSchedule()
@@ -1075,16 +1225,19 @@ const toggleTaskPause = record => {
   const defVal = Number(field.def ?? 0)
   // 暂停代价说明（后端随快照下发）：停掉自愈类任务会留下不易察觉的副作用，必须在确认前讲清
   const risk = pausing && record.pauseRisk
+  // 共用节拍：停这一个会连带停同键的其它任务，比 pauseRisk 更容易踩到，单独说一句
+  const shared = pausing ? cadenceShareNote(record.configKey) : ''
   Modal.confirm({
     title: pausing ? `暂停「${record.name}」？` : `恢复「${record.name}」？`,
     content: h('div', [
       h('div', pausing
         ? '把间隔配置写为 0，下一个调度节拍（约 10s）生效；期间任务不再自动触发，仍可手动执行。'
         : `把间隔配置恢复为默认值（${defVal}ms），下一个调度节拍生效。`),
+      shared ? h('div', { style: 'margin-top:8px;color:var(--app-warn-text)' }, '⚠ ' + shared) : null,
       risk ? h('div', { style: 'margin-top:8px;color:var(--app-warn-text)' }, '⚠ ' + risk) : null
     ]),
     okText: pausing ? '暂停' : '恢复', cancelText: '取消',
-    okButtonProps: risk ? { danger: true } : null,
+    okButtonProps: risk || shared ? { danger: true } : null,
     onOk: async () => {
       schedToggling.value = record.name
       try {
@@ -1137,7 +1290,7 @@ const cfgBlocks = computed(() => {
     // 等快照到齐再算，宁可先空着（面板顶部本就有 loading 态），也不能闪出一份重复的表单。
     if (!scheduleTasks.value.length) return []
     const owned = taskOwnedKeys.value
-    return blocksOf('maintenance', form.value)
+    return blocksOf('maintenance', form.value, showEngine.value)
       .filter(b => b.type !== 'field' || !owned.has(b.field.backendKey))
   }
   return formBlocks.value
@@ -1162,7 +1315,8 @@ const cfgGroupsAll = computed(() => {
       if (blk.type === 'field') cur.fields.push(blk.field)
     }
   }
-  return out.filter(g => g.fields.length)
+  // 有块就留：只剩「超时档位」卡的那一节字段数虽然是 0，但那张卡是四个超时键唯一的入口
+  return out.filter(g => g.blocks.length)
 })
 
 /** 搜索同时命中参数名、配置键与分组标题——按分组标题命中时保留整组（用户找的是"GraphRAG"这一类） */
@@ -1177,8 +1331,11 @@ const cfgGroups = computed(() => {
 })
 
 const cfgTotalCount = computed(() => cfgGroups.value.reduce((n, g) => n + g.fields.length, 0))
-/** 工具条（搜索 + 计数 + 全部展开）只服务多组面板：单组时它只是在重复那一个标题 */
-const showCfgBar = computed(() => cfgGroupsAll.value.length > 1)
+/**
+ * 工具条（搜索 + 计数 + 全部展开）：多组面板一直要有；单组面板只要「工程参数还没摊开」也要有——
+ * 搜索的用途之一就是找到被收起的那一项（搜到会自动摊开关），把搜索框一起收掉就等于把入口堵死了。
+ */
+const showCfgBar = computed(() => cfgGroupsAll.value.length > 1 || (engineHiddenCount.value > 0 && !showEngine.value))
 const allCfgOpen = computed(() => cfgGroups.value.length > 0 &&
   cfgGroups.value.every(g => !closedFolds.value.includes(g.title)))
 const toggleFold = title => {
@@ -1196,8 +1353,18 @@ const expandedTasks = ref([])
 const onExpandChange = keys => { expandedTasks.value = keys.slice() }
 watch(() => current.value, () => { expandedTasks.value = [] })
 
-// 搜索时把命中的组一并展开：否则用户搜完看到的是一堆折叠标题，还得再点一次
-watch(cfgKeyword, v => { if (v.trim()) closedFolds.value = [] })
+// 搜索时把命中的组一并展开：否则用户搜完看到的是一堆折叠标题，还得再点一次。
+// 命中当前面板的工程参数时同时铺开它们——「搜到了却看不见」是最难自查的状态，
+// 收起只是默认不摆出来，不是搜不到。
+watch(cfgKeyword, v => {
+  const kw = v.trim().toLowerCase()
+  if (!kw) return
+  closedFolds.value = []
+  if (!showEngine.value && FIELDS.some(f => f.panel === activeFormPanel.value && isEngineField(f)
+    && isVisible(f, form.value)
+    && ((f.label || '').toLowerCase().includes(kw)
+      || (f.backendKey || '').toLowerCase().includes(kw)))) showEngine.value = true
+})
 // 换面板/换页签后分组会变，收起状态与搜索词整体重置（否则可能停在一堆已不存在的标题上）
 watch(activeFormPanel, () => { closedFolds.value = []; cfgKeyword.value = '' })
 // 首次进入「定时任务」面板：maintTab 默认就是 config，watch(maintTab) 不会触发，
@@ -1367,6 +1534,9 @@ onMounted(() => { fetchAndFill(); loadToolInventory(); loadSkillOptions() })
    所以这里让 .set-content 自身在 fill 模式下不再滚动，由表格体限高来吸收多余高度。 */
 .set-panel--fill { overflow: hidden; }
 .set-panel-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+/* 工程参数铺开开关：贴着标题走，颜色弱于正文——它是视图偏好，不该比参数本身抢眼 */
+.engine-switch { display: flex; align-items: center; gap: 6px; margin-left: auto; font-size: 12px; color: var(--app-text2); cursor: pointer; }
+.engine-switch-hint { color: var(--app-text3); }
 .set-card { padding: 18px 20px 6px; }
 .cfg-sub { font-size: 12px; font-weight: 500; color: var(--app-text3); margin: 14px 0 2px; padding-bottom: 4px; border-bottom: 1px dashed var(--app-border); }
 .tip-icon { color: var(--app-text3); font-size: 12px; cursor: help; }
@@ -1477,6 +1647,14 @@ onMounted(() => { fetchAndFill(); loadToolInventory(); loadSkillOptions() })
 /* 各配置面板共用的分节折叠块（组标题 = config-schema.json 的 section） */
 /* 页签条自身不留下边距（它的余量算进了运行状态表格高度），折叠区自己顶开一条缝 */
 .cfg-fold-wrap { margin-top: 14px; }
+/* 部署属性只读区：压在参数堆底部，视觉上要和「能改的」拉开——不画输入框，只做一行Label + 值 */
+.deploy-props { margin-top: 18px; padding-top: 12px; border-top: 1px dashed var(--app-border); font-size: 12px; }
+.deploy-props-title { font-weight: 600; color: var(--app-text2); margin-bottom: 2px; }
+.deploy-props-hint { margin-bottom: 8px; line-height: 1.7; }
+.deploy-row { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; line-height: 2; }
+.deploy-row code { background: var(--app-panel-2); padding: 1px 5px; border-radius: 4px; font-size: 11px; }
+.deploy-tag { color: #d48806; }
+.deploy-key { font-size: 11px; }
 .cfg-fold-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
 .cfg-fold { border-bottom: 1px solid var(--app-border); }
 .cfg-fold:last-child { border-bottom: none; }

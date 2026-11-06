@@ -175,6 +175,7 @@
     },
     {
       "backendKey": "chat.sseTimeoutMs",
+      "hidden": true,
       "panel": "chat",
       "section": 3,
       "group": "chat",
@@ -215,6 +216,7 @@
     },
     {
       "backendKey": "chat.approvalTimeoutMs",
+      "hidden": true,
       "panel": "chat",
       "section": 3,
       "group": "chat",
@@ -267,8 +269,9 @@
       "min": 60000,
       "step": 600000,
       "width": 200,
-      "note": "多久找一次「发出去却没人跑完」的问题并交回引擎接着跑（升级、重启打断的长任务靠它接回），默认 10 分钟；填 0 = 暂停这项任务",
-      "tier": 3
+      "note": "【已停用】本键不再被读取，该扫描器改为内置节拍（见 ScheduleCenter 常量）；要停用请用它的业务总开关。多久找一次「发出去却没人跑完」的问题并交回引擎接着跑（升级、重启打断的长任务靠它接回），默认 10 分钟；填 0 = 暂停这项任务",
+      "tier": 3,
+      "hidden": true
     },
     {
       "backendKey": "chat.turnResumeWindowMinutes",
@@ -290,6 +293,7 @@
     },
     {
       "backendKey": "chat.askTimeoutMs",
+      "hidden": true,
       "panel": "chat",
       "section": 3,
       "group": "chat",
@@ -330,6 +334,7 @@
     },
     {
       "backendKey": "chat.planTimeoutMs",
+      "hidden": true,
       "panel": "chat",
       "section": 3,
       "group": "chat",
@@ -469,8 +474,9 @@
       "min": 0,
       "max": 720,
       "width": 200,
-      "note": "聊天附件上传后落盘供问答读取，超过该时长由定时任务删除（0=不清理）；附件是「当轮看一眼」的轻路径，长时间留盘只会占空间",
-      "tier": 3
+      "note": "【已停用】本键不再被读取，保留期已并入 cleanup.tempFileRetentionDays。聊天附件上传后落盘供问答读取，超过该时长由定时任务删除（0=不清理）；附件是「当轮看一眼」的轻路径，长时间留盘只会占空间",
+      "tier": 3,
+      "hidden": true
     },
     {
       "backendKey": "chat.uploadCleanupIntervalMs",
@@ -484,7 +490,7 @@
       "def": 3600000,
       "min": 0,
       "width": 200,
-      "note": "过期附件清理任务的运行间隔（0=暂停）",
+      "note": "【已停用】本键不再被读取，间隔已并入 cleanup.intervalMs（「运行状态」任一行改的都是它）。过期附件清理任务的运行间隔（0=暂停）",
       "tier": 3,
       "presets": [
         [
@@ -503,7 +509,8 @@
           86400000,
           "1 天"
         ]
-      ]
+      ],
+      "hidden": true
     },
     {
       "backendKey": "chat.retrievalDebugEnabled",
@@ -540,6 +547,7 @@
     },
     {
       "backendKey": "chat.agentscopeStateDir",
+      "hidden": true,
       "panel": "debug",
       "section": 0,
       "group": "chat",
@@ -555,6 +563,7 @@
     },
     {
       "backendKey": "chat.agentscopeRedisPrefix",
+      "hidden": true,
       "panel": "debug",
       "section": 0,
       "group": "chat",
@@ -584,6 +593,7 @@
     },
     {
       "backendKey": "chat.sessionLogArchive.dir",
+      "hidden": true,
       "panel": "debug",
       "section": 0,
       "group": "chat",
@@ -611,9 +621,10 @@
       "max": 3650,
       "step": 1,
       "width": 160,
-      "note": "按归档文件的最后写入时间判定（一条会话可以聊几个月，按创建时间会把它正在写的归档删掉）；0 = 不清理",
+      "note": "【已停用】本键不再被读取，保留期已并入 cleanup.assetRetentionDays。按归档文件的最后写入时间判定（一条会话可以聊几个月，按创建时间会把它正在写的归档删掉）；0 = 不清理",
       "debug": true,
-      "tier": 3
+      "tier": 3,
+      "hidden": true
     },
     {
       "backendKey": "chat.sessionLogArchive.cleanupIntervalMs",
@@ -629,9 +640,10 @@
       "max": 604800000,
       "step": 60000,
       "width": 200,
-      "note": "「会话日志归档清理」这条定时任务的间隔，默认 1 天；≤0 暂停该任务",
+      "note": "【已停用】本键不再被读取，间隔已并入 cleanup.intervalMs（「运行状态」任一行改的都是它）。「会话日志归档清理」这条定时任务的间隔，默认 1 天；≤0 暂停该任务",
       "debug": true,
-      "tier": 3
+      "tier": 3,
+      "hidden": true
     },
     {
       "backendKey": "chat.agentscopeJournalRotateEvents",
@@ -665,9 +677,10 @@
       "max": 365,
       "step": 1,
       "width": 160,
-      "note": "换代搬走的那些旧日志目录（rotated/ 下）留多少天，随「会话数 × 换代次数」增长，由「会话日志归档清理」这条任务按目录修改时间删。长期件是归档 JSONL，这里只保「刚换完代就要翻原始事件」那几天；0=不清理",
+      "note": "【已停用】本键不再被读取，保留期已并入 cleanup.recordRetentionDays。换代搬走的那些旧日志目录（rotated/ 下）留多少天，随「会话数 × 换代次数」增长，由「会话日志归档清理」这条任务按目录修改时间删。长期件是归档 JSONL，这里只保「刚换完代就要翻原始事件」那几天；0=不清理",
       "debug": true,
-      "tier": 3
+      "tier": 3,
+      "hidden": true
     },
     {
       "backendKey": "vision.enabled",
@@ -743,7 +756,7 @@
       "min": 1000,
       "step": 5000,
       "width": 200,
-      "note": "单张图片描述的读取超时（客户端启动时构建，改动需重启生效）",
+      "note": "单张图片描述的读取超时（改动保存即生效）",
       "tier": 3,
       "presets": [
         [
@@ -1223,8 +1236,9 @@
       "def": 3600000,
       "min": 0,
       "width": 200,
-      "note": "按 (id, contentHash) 双向比对 MySQL 有效块与 Meilisearch 文档并定向修复漂移的周期（毫秒，默认 1 小时；0=暂停）。只比对索引与数据库，不调用任何模型，不消耗额度",
-      "tier": 3
+      "note": "【已停用】本键不再被读取，该扫描器改为内置节拍（见 ScheduleCenter 常量）；要停用请用它的业务总开关。按 (id, contentHash) 双向比对 MySQL 有效块与 Meilisearch 文档并定向修复漂移的周期（毫秒，默认 1 小时；0=暂停）。只比对索引与数据库，不调用任何模型，不消耗额度",
+      "tier": 3,
+      "hidden": true
     },
     {
       "backendKey": "keyword.reconcileOnStartup",
@@ -1626,8 +1640,9 @@
       "min": 60000,
       "step": 600000,
       "width": 200,
-      "note": "多久扫一次外溢原文目录做超期清理，默认 1 小时",
-      "tier": 3
+      "note": "【已停用】本键不再被读取，间隔已并入 cleanup.intervalMs（「运行状态」任一行改的都是它）。多久扫一次外溢原文目录做超期清理，默认 1 小时",
+      "tier": 3,
+      "hidden": true
     },
     {
       "backendKey": "tool.spillMaxMbPerUser",
@@ -1833,6 +1848,91 @@
       "note": "按写入顺序留痕每轮的结构过程：工具步（含每步耗时与成败）、审批/提问/计划三张卡、产物、子智能体编排、用量与失败。默认开；关掉后一行都不写，问答行为不变。正文与逐字增量不入账本——它只服务过程回放与审计，不参与模型输入"
     },
     {
+      "backendKey": "cleanup.intervalMs",
+      "panel": "maintenance",
+      "section": 3,
+      "group": "cleanup",
+      "key": "intervalMs",
+      "path": "cleanup.intervalMs",
+      "label": "清理/回收共用节拍(ms)",
+      "type": "number",
+      "def": 3600000,
+      "min": 0,
+      "step": 60000,
+      "width": 220,
+      "note": "全部清理与回收任务的运行间隔（毫秒，默认 1 小时）；≤0 = 暂停全部清理/回收任务。原先 11 个各带一份「每日清理间隔」的键已收进这里——「运行状态」里任意一行改的都是这同一个值。保留期决定「什么时候真删」，这里只决定「多久扫一次」，两者不是一个旋钮。",
+      "tier": 3,
+      "presets": [
+        [
+          600000,
+          "10 分钟"
+        ],
+        [
+          3600000,
+          "1 小时"
+        ],
+        [
+          21600000,
+          "6 小时"
+        ],
+        [
+          86400000,
+          "1 天"
+        ]
+      ]
+    },
+    {
+      "backendKey": "cleanup.tempFileRetentionDays",
+      "panel": "maintenance",
+      "section": 3,
+      "group": "cleanup",
+      "key": "tempFileRetentionDays",
+      "path": "cleanup.tempFileRetentionDays",
+      "label": "临时件保留天数",
+      "type": "number",
+      "def": 7,
+      "min": 0,
+      "max": 3650,
+      "step": 1,
+      "width": 160,
+      "tier": 3,
+      "note": "聊天附件、聊天档宿主临时目录、工具外溢原文、定时任务执行日志、聊天图片这一类**可再生副本**的保留天数（默认 7 天）；≤0 = 不清理。原先这五件事各有一个键（24 小时 / 72 小时 / 7 天 / 7 天 / 7 天），现在共用一档：取的是各档里最长的那个，所以只会多留几天，不会把本来该留的删早。"
+    },
+    {
+      "backendKey": "cleanup.recordRetentionDays",
+      "panel": "maintenance",
+      "section": 3,
+      "group": "cleanup",
+      "key": "recordRetentionDays",
+      "path": "cleanup.recordRetentionDays",
+      "label": "过程记录保留天数",
+      "type": "number",
+      "def": 30,
+      "min": 0,
+      "max": 3650,
+      "step": 1,
+      "width": 160,
+      "tier": 3,
+      "note": "会话与消息、会话事件账本、访客闲置会话、站内通知、工作流运行记录、换代搬走的旧事件日志这一类**排障与回溯现场**的保留天数（默认 30 天）；≤0 = 不清理，表会一直涨。原先 6 个键各留各的，现在同一档。"
+    },
+    {
+      "backendKey": "cleanup.assetRetentionDays",
+      "panel": "maintenance",
+      "section": 3,
+      "group": "cleanup",
+      "key": "assetRetentionDays",
+      "path": "cleanup.assetRetentionDays",
+      "label": "用户资产保留天数",
+      "type": "number",
+      "def": 90,
+      "min": 0,
+      "max": 3650,
+      "step": 1,
+      "width": 160,
+      "tier": 3,
+      "note": "产物文件（含模型生成的可下载文件）与会话日志归档的保留天数（默认 90 天）；≤0 = 不清理。这两类删了用户真找不回来，所以单独一档、留得最久。产物列表上的「有效期至」与清理任务读同一个数。"
+    },
+    {
       "backendKey": "cleanup.sessionCleanupIntervalMs",
       "panel": "maintenance",
       "section": 3,
@@ -1846,7 +1946,7 @@
       "min": 0,
       "step": 3600000,
       "width": 220,
-      "note": "扫描并物理删除超保留期会话与其消息的周期（毫秒，默认每天）；≤0 = 暂停（软删记录持续累积，不建议）",
+      "note": "【已停用】本键不再被读取，间隔已并入 cleanup.intervalMs（「运行状态」任一行改的都是它）。扫描并物理删除超保留期会话与其消息的周期（毫秒，默认每天）；≤0 = 暂停（软删记录持续累积，不建议）",
       "tier": 3,
       "presets": [
         [
@@ -1861,7 +1961,8 @@
           604800000,
           "7 天"
         ]
-      ]
+      ],
+      "hidden": true
     },
     {
       "backendKey": "cleanup.sessionRetentionDays",
@@ -1878,8 +1979,9 @@
       "max": 3650,
       "step": 1,
       "width": 200,
-      "note": "软删后仍可撤销的窗口（天数，默认 30）：超期才被清理任务物理删除。调大可保留更久，代价是存储与查询变慢",
-      "tier": 3
+      "note": "【已停用】本键不再被读取，保留期已并入 cleanup.recordRetentionDays。软删后仍可撤销的窗口（天数，默认 30）：超期才被清理任务物理删除。调大可保留更久，代价是存储与查询变慢",
+      "tier": 3,
+      "hidden": true
     },
     {
       "backendKey": "cleanup.sessionEventRetentionDays",
@@ -1896,8 +1998,9 @@
       "max": 3650,
       "step": 1,
       "width": 200,
-      "note": "每轮的过程记录（工具步与耗时、审批/提问/计划三张卡、产物、子智能体编排、停止与失败）保留天数（默认 30），超期由同一个清理任务删除——账本一轮十几条，比会话表长得更快。0 = 不清理，会一直增长",
-      "tier": 3
+      "note": "【已停用】本键不再被读取，保留期已并入 cleanup.recordRetentionDays。每轮的过程记录（工具步与耗时、审批/提问/计划三张卡、产物、子智能体编排、停止与失败）保留天数（默认 30），超期由同一个清理任务删除——账本一轮十几条，比会话表长得更快。0 = 不清理，会一直增长",
+      "tier": 3,
+      "hidden": true
     },
     {
       "backendKey": "cleanup.auditRetentionDays",
@@ -1932,8 +2035,9 @@
       "max": 365,
       "step": 1,
       "width": 160,
-      "note": "工具完整输出留存的原文超过该天数即删（默认 7 天，0 = 不清理）",
-      "tier": 3
+      "note": "【已停用】本键不再被读取，保留期已并入 cleanup.tempFileRetentionDays。工具完整输出留存的原文超过该天数即删（默认 7 天，0 = 不清理）",
+      "tier": 3,
+      "hidden": true
     },
     {
       "backendKey": "cleanup.visitorIdleDays",
@@ -1950,8 +2054,9 @@
       "max": 3650,
       "step": 1,
       "width": 200,
-      "note": "公开链接与 MCP 端点产生的访客对话，距最后一次提问超过该天数即回收（软删，仍受上面的「会话保留天数」保护，期内可捞回）。默认 30 天：这类对话没人会去删，不清就永久堆着",
-      "tier": 3
+      "note": "【已停用】本键不再被读取，保留期已并入 cleanup.recordRetentionDays。公开链接与 MCP 端点产生的访客对话，距最后一次提问超过该天数即回收（软删，仍受上面的「会话保留天数」保护，期内可捞回）。默认 30 天：这类对话没人会去删，不清就永久堆着",
+      "tier": 3,
+      "hidden": true
     },
     {
       "backendKey": "config.reloadIntervalMs",
@@ -1967,7 +2072,7 @@
       "min": 0,
       "step": 60000,
       "width": 220,
-      "note": "多副本配置同步的周期兜底（毫秒，默认 5 分钟）：Redis 订阅正常时配置随广播即时生效，本任务只补订阅断线期间漏掉的变更。≤0 = 暂停——此后若 Redis 断线，配置变更会静默丢失直到重启，故不建议暂停",
+      "note": "【已停用】本键不再被读取，该扫描器改为内置节拍（见 ScheduleCenter 常量）；要停用请用它的业务总开关。多副本配置同步的周期兜底（毫秒，默认 5 分钟）：Redis 订阅正常时配置随广播即时生效，本任务只补订阅断线期间漏掉的变更。≤0 = 暂停——此后若 Redis 断线，配置变更会静默丢失直到重启，故不建议暂停",
       "tier": 3,
       "presets": [
         [
@@ -1982,7 +2087,8 @@
           1800000,
           "30 分钟"
         ]
-      ]
+      ],
+      "hidden": true
     },
     {
       "backendKey": "images.chatCleanupIntervalMs",
@@ -1998,7 +2104,7 @@
       "min": 0,
       "step": 3600000,
       "width": 200,
-      "note": "≤0 = 暂停清理，默认 86400000（每天）",
+      "note": "【已停用】本键不再被读取，间隔已并入 cleanup.intervalMs（「运行状态」任一行改的都是它）。≤0 = 暂停清理，默认 86400000（每天）",
       "tier": 3,
       "presets": [
         [
@@ -2021,7 +2127,8 @@
           259200000,
           "3 天"
         ]
-      ]
+      ],
+      "hidden": true
     },
     {
       "backendKey": "images.chatRetentionMillis",
@@ -2037,7 +2144,7 @@
       "min": 0,
       "step": 86400000,
       "width": 220,
-      "note": "默认 604800000（7 天），超期清理聊天上传图",
+      "note": "【已停用】本键不再被读取，保留期已并入 cleanup.tempFileRetentionDays。默认 604800000（7 天），超期清理聊天上传图",
       "tier": 3,
       "presets": [
         [
@@ -2060,7 +2167,8 @@
           2592000000,
           "30 天"
         ]
-      ]
+      ],
+      "hidden": true
     },
     {
       "backendKey": "skill.disabled",
@@ -2090,8 +2198,8 @@
       "def": "",
       "width": 520,
       "ph": "raw.githubusercontent.com,gist.githubusercontent.com",
-      "note": "逗号分隔，精确匹配域名（不做后缀匹配）；留空=关闭「从 URL 安装」。服务端仍会逐跳校验公网地址（禁内网/本机）并限制体积，内容只保存为文本、不执行。",
-      "tier": 2
+      "note": "逗号分隔，精确匹配域名（不做后缀匹配）；留空=关闭「从 URL 安装」。服务端仍会逐跳校验公网地址（禁内网/本机）并限制体积，内容只保存为文本、不执行。这是安全白名单不是性能参数：一旦清空，全平台的「从 URL 装技能」当场停用，且它只会因为人为改设置而变化。",
+      "tier": 3
     },
     {
       "backendKey": "agent.maxToolSteps",
@@ -2228,9 +2336,10 @@
       "min": 0,
       "step": 30,
       "width": 200,
-      "note": "0=不清理；超期产物的文件与记录一起删除（按用户归属保存，故保留期即用户的取回窗口）",
+      "note": "【已停用】本键不再被读取，保留期已并入 cleanup.assetRetentionDays。0=不清理；超期产物的文件与记录一起删除（按用户归属保存，故保留期即用户的取回窗口）",
       "backendKey": "artifact.retentionDays",
-      "tier": 3
+      "tier": 3,
+      "hidden": true
     },
     {
       "panel": "maintenance",
@@ -2268,7 +2377,9 @@
           259200000,
           "3 天"
         ]
-      ]
+      ],
+      "hidden": true,
+      "note": "【已停用】本键不再被读取，间隔已并入 cleanup.intervalMs（「运行状态」任一行改的都是它）。"
     },
     {
       "panel": "maintenance",
@@ -2349,7 +2460,7 @@
       "min": 0,
       "step": 10000,
       "width": 220,
-      "note": "≤0=暂停扫描（等于临时停掉所有定时任务，但任务配置保留）",
+      "note": "【已停用】本键不再被读取，该扫描器改为内置节拍（见 ScheduleCenter 常量）；要停用请用它的业务总开关。≤0=暂停扫描（等于临时停掉所有定时任务，但任务配置保留）",
       "backendKey": "scheduled.scanIntervalMs",
       "tier": 3,
       "presets": [
@@ -2369,7 +2480,8 @@
           300000,
           "5 分钟"
         ]
-      ]
+      ],
+      "hidden": true
     },
     {
       "backendKey": "web.refreshEnabled",
@@ -2399,7 +2511,7 @@
       "min": 0,
       "step": 10000,
       "width": 220,
-      "note": "≤0=暂停扫描；只需比 cron 精度更频繁地查库",
+      "note": "【已停用】本键不再被读取，该扫描器改为内置节拍（见 ScheduleCenter 常量）；要停用请用它的业务总开关。≤0=暂停扫描；只需比 cron 精度更频繁地查库",
       "tier": 3,
       "presets": [
         [
@@ -2422,7 +2534,8 @@
           1800000,
           "30 分钟"
         ]
-      ]
+      ],
+      "hidden": true
     },
     {
       "backendKey": "tool.sandbox.enabled",
@@ -2813,12 +2926,13 @@
       "type": "number",
       "tips": "scheduleRunLogRetention",
       "def": 7,
-      "min": 1,
+      "min": 0,
       "max": 365,
       "step": 1,
       "width": 200,
-      "note": "定时任务执行日志（c_ai_schedule_run）的保留天数，超期由「任务执行日志清理」任务物理删除。日志只记有信息量的执行（失败/手动触发/有产出），高频扫描任务空跑不落行；即便如此，保留期也别设太长",
-      "tier": 3
+      "note": "【已停用】本键不再被读取，保留期已并入 cleanup.tempFileRetentionDays。定时任务执行日志（c_ai_schedule_run）的保留天数，超期由「任务执行日志清理」任务物理删除。日志只记有信息量的执行（失败/手动触发/有产出），高频扫描任务空跑不落行；即便如此，保留期也别设太长。0 = 不清理",
+      "tier": 3,
+      "hidden": true
     },
     {
       "backendKey": "schedule.runLogCleanupIntervalMs",
@@ -2832,7 +2946,7 @@
       "tips": "scheduleRunLogCleanupIntervalMs",
       "def": 86400000,
       "width": 220,
-      "note": "≤0 = 暂停日志清理任务（日志会持续累积，不建议）",
+      "note": "【已停用】本键不再被读取，间隔已并入 cleanup.intervalMs（「运行状态」任一行改的都是它）。≤0 = 暂停日志清理任务（日志会持续累积，不建议）",
       "min": 0,
       "step": 3600000,
       "tier": 3,
@@ -2849,7 +2963,8 @@
           86400000,
           "1 天"
         ]
-      ]
+      ],
+      "hidden": true
     },
     {
       "backendKey": "workflow.approvalReapIntervalMs",
@@ -2865,7 +2980,7 @@
       "min": 0,
       "step": 10000,
       "width": 220,
-      "note": "扫描挂起待审 run 并把超过节点 timeoutSeconds 的落 timeout 终态的周期（毫秒，默认 60 秒）。⚠ 暂停风险：挂着不批的 run 将一直停在「待审核」不收口（不占线程池，但状态不终结、审批卡一直转）；确需长时间人工审批时才暂停",
+      "note": "【已停用】本键不再被读取，该扫描器改为内置节拍（见 ScheduleCenter 常量）；要停用请用它的业务总开关。扫描挂起待审 run 并把超过节点 timeoutSeconds 的落 timeout 终态的周期（毫秒，默认 60 秒）。⚠ 暂停风险：挂着不批的 run 将一直停在「待审核」不收口（不占线程池，但状态不终结、审批卡一直转）；确需长时间人工审批时才暂停",
       "tier": 3,
       "presets": [
         [
@@ -2880,7 +2995,8 @@
           1800000,
           "30 分钟"
         ]
-      ]
+      ],
+      "hidden": true
     },
     {
       "backendKey": "workflow.maxSteps",
@@ -2969,12 +3085,13 @@
       "type": "number",
       "tips": "workflowRunLogRetention",
       "def": 30,
-      "min": 1,
+      "min": 0,
       "max": 365,
       "step": 1,
       "width": 200,
-      "note": "含 DSL 快照与节点 trace 大字段，超期物理删除；等待审批的运行不清理",
-      "tier": 3
+      "note": "【已停用】本键不再被读取，保留期已并入 cleanup.recordRetentionDays。含 DSL 快照与节点 trace 大字段，超期物理删除；等待人工审批的运行不会被清理。0 = 不清理",
+      "tier": 3,
+      "hidden": true
     },
     {
       "backendKey": "workflow.runCleanupIntervalMs",
@@ -2988,7 +3105,7 @@
       "tips": "workflowRunCleanupInterval",
       "def": 86400000,
       "width": 220,
-      "note": "≤0 = 暂停清理任务（运行记录会持续累积，不建议）",
+      "note": "【已停用】本键不再被读取，间隔已并入 cleanup.intervalMs（「运行状态」任一行改的都是它）。≤0 = 暂停清理任务（运行记录会持续累积，不建议）",
       "min": 0,
       "step": 3600000,
       "tier": 3,
@@ -3005,7 +3122,8 @@
           86400000,
           "1 天"
         ]
-      ]
+      ],
+      "hidden": true
     },
     {
       "backendKey": "workflow.scheduleScanIntervalMs",
@@ -3021,7 +3139,7 @@
       "min": 0,
       "step": 10000,
       "width": 220,
-      "note": "≤0 = 暂停「工作流定时触发」任务（已配的定时工作流不再自动运行）",
+      "note": "【已停用】本键不再被读取，该扫描器改为内置节拍（见 ScheduleCenter 常量）；要停用请用它的业务总开关。≤0 = 暂停「工作流定时触发」任务（已配的定时工作流不再自动运行）",
       "tier": 3,
       "presets": [
         [
@@ -3040,7 +3158,8 @@
           300000,
           "5 分钟"
         ]
-      ]
+      ],
+      "hidden": true
     },
     {
       "backendKey": "workflow.maxConcurrentRuns",
@@ -3057,7 +3176,7 @@
       "max": 64,
       "step": 1,
       "width": 220,
-      "note": "异步调试运行同时执行的上限；改后需重启生效",
+      "note": "异步调试运行同时执行的上限（改动保存即生效）",
       "tier": 3
     },
     {
@@ -3075,7 +3194,7 @@
       "max": 1000,
       "step": 1,
       "width": 220,
-      "note": "队列满即拒绝新运行（fail-loud，不无限堆积）；改后需重启生效",
+      "note": "队列满即拒绝新运行（fail-loud，不无限堆积；改动保存即生效，调小只拦后续运行）",
       "tier": 3
     },
     {
@@ -3121,12 +3240,13 @@
       "type": "number",
       "tips": "notificationRetention",
       "def": 30,
-      "min": 1,
+      "min": 0,
       "max": 365,
       "step": 1,
       "width": 200,
-      "note": "站内通知（铃铛）超期物理删除，不区分已读未读；通知指向的运行记录/解析任务本身也有保留期",
-      "tier": 3
+      "note": "【已停用】本键不再被读取，保留期已并入 cleanup.recordRetentionDays。站内通知（铃铛）超期物理删除，不区分已读未读；通知指向的运行记录/解析任务本身也有保留期。0 = 不清理（此前 min=1，界面填不出去清理的语义）",
+      "tier": 3,
+      "hidden": true
     },
     {
       "backendKey": "notification.dedupWindow",
@@ -3189,7 +3309,7 @@
       "tips": "notificationCleanupInterval",
       "def": 86400000,
       "width": 220,
-      "note": "≤0 = 暂停清理任务（通知会持续累积，不建议）",
+      "note": "【已停用】本键不再被读取，间隔已并入 cleanup.intervalMs（「运行状态」任一行改的都是它）。≤0 = 暂停清理任务（通知会持续累积，不建议）",
       "min": 0,
       "step": 3600000,
       "tier": 3,
@@ -3206,7 +3326,8 @@
           86400000,
           "1 天"
         ]
-      ]
+      ],
+      "hidden": true
     },
     {
       "backendKey": "mcp.server.enabled",
@@ -3259,6 +3380,7 @@
     },
     {
       "backendKey": "graphrag.batchChunks",
+      "hidden": true,
       "panel": "maintenance",
       "section": 8,
       "group": "graphrag",
@@ -3356,7 +3478,7 @@
       "max": 60000,
       "step": 500,
       "width": 140,
-      "note": "≤0=暂停扫描（上传/重解析将停在「排队中」不动）。扫描器探测待解析任务的频率，太小会加重数据库压力",
+      "note": "【已停用】本键不再被读取，该扫描器改为内置节拍（见 ScheduleCenter 常量）；要停用请用它的业务总开关。≤0=暂停扫描（上传/重解析将停在「排队中」不动）。扫描器探测待解析任务的频率，太小会加重数据库压力",
       "tier": 3,
       "presets": [
         [
@@ -3379,7 +3501,8 @@
           60000,
           "1 分钟"
         ]
-      ]
+      ],
+      "hidden": true
     },
     {
       "backendKey": "parse.taskTimeoutMs",
@@ -3674,6 +3797,7 @@
     },
     {
       "backendKey": "chat.goal.retryBaseSeconds",
+      "hidden": true,
       "panel": "goal",
       "section": 1,
       "group": "chat",
@@ -3691,6 +3815,7 @@
     },
     {
       "backendKey": "chat.goal.retryMaxSeconds",
+      "hidden": true,
       "panel": "goal",
       "section": 1,
       "group": "chat",
@@ -3725,6 +3850,7 @@
     },
     {
       "backendKey": "chat.goal.claimBatch",
+      "hidden": true,
       "panel": "goal",
       "section": 2,
       "group": "chat",
@@ -4081,6 +4207,7 @@
     },
     {
       "backendKey": "chat.profileAuto",
+      "hidden": true,
       "panel": "chat",
       "section": 1,
       "group": "chat",
@@ -4094,6 +4221,7 @@
     },
     {
       "backendKey": "chat.prefixStabilizer",
+      "hidden": true,
       "panel": "chat",
       "section": 1,
       "group": "chat",
@@ -4118,8 +4246,9 @@
       "min": 0,
       "step": 1,
       "width": 200,
-      "note": "聊天档宿主临时目录超过这个小时数未写入就清理；0=不清理",
-      "tier": 2
+      "note": "【已停用】本键不再被读取，保留期已并入 cleanup.tempFileRetentionDays。聊天档宿主临时目录超过这个小时数未写入就清理；0=不清理",
+      "tier": 2,
+      "hidden": true
     },
     {
       "backendKey": "chat.scratchCleanupIntervalMs",
@@ -4134,8 +4263,9 @@
       "min": 0,
       "step": 60000,
       "width": 200,
-      "note": "扫描过期聊天档临时目录的间隔；≤0 暂停该任务",
-      "tier": 2
+      "note": "【已停用】本键不再被读取，间隔已并入 cleanup.intervalMs（「运行状态」任一行改的都是它）。扫描过期聊天档临时目录的间隔；≤0 暂停该任务",
+      "tier": 2,
+      "hidden": true
     },
     {
       "backendKey": "mcp.turnWaitMs",
@@ -4155,6 +4285,7 @@
     },
     {
       "backendKey": "chat.scratchDir",
+      "hidden": true,
       "panel": "debug",
       "section": 0,
       "group": "chat",
@@ -4243,6 +4374,7 @@
     },
     {
       "backendKey": "workspace.sessionRootBase",
+      "hidden": true,
       "panel": "sandbox",
       "section": 1,
       "group": "workspace",
@@ -4281,7 +4413,7 @@
       "max": 5,
       "step": 1,
       "width": 200,
-      "note": "启动后为该数量最近活跃的用户预建用户级沙盒（需开启上一项；0=不预热）。每个用户一个容器，按用户数据卷隔离，不做跨用户共用",
+      "note": "为该数量最近活跃的用户预建用户级沙盒（保存后按新数量再预热一次）（需开启上一项；0=不预热）。每个用户一个容器，按用户数据卷隔离，不做跨用户共用",
       "tier": 2
     }
   ],
@@ -4354,7 +4486,7 @@
     "imagesQuality": "JPEG 压缩质量（0~1）。越低体积越小、越省存储与带宽，但文字边缘易糊影响识别。默认 0.9。",
     "imagesAuthEnabled": "图片访问鉴权（HMAC 签名 URL）。开启后图片必须带有效签名才能访问，防止被直接盗链；默认开启，生产环境建议保持开启。关闭则图片 URL 可直接访问。",
     "imagesAuthExpire": "签名 URL 有效期（秒）。超期后旧链接失效（页面刷新会按新签名重新加载）。过短会频繁失效，过长削弱防盗链效果。默认 3600。",
-    "visionTimeout": "单张图片描述的读取超时（ms）。本地大模型出图慢可调大；注意该超时在客户端构建时读取，改动需重启后端生效。默认 30000。",
+    "visionTimeout": "单张图片描述的读取超时（ms）。本地大模型出图慢可调大；改动保存即生效。默认 30000。",
     "visionRetryCount": "单张图片描述失败后的自动重试次数。本地 Ollama 偶发超时/500，重试可显著降低\"图片无描述\"的降级率。0=不重试。",
     "maxImagesPerMessage": "单条消息最多携带的图片张数。超限直接拒绝，防止 base64 大载荷压垮解码与视觉处理。默认 9。",
     "maxImageMb": "单张图片的体积上限（MB，按原图计；base64 编码后约为 4/3 倍）。超限拒绝发送。默认 10。",
@@ -4393,8 +4525,8 @@
     "workflowRunLogRetention": "工作流运行记录（c_ai_workflow_run）的保留天数。每条记录含当时的 DSL 快照与节点级 trace（大字段），随运行次数持续膨胀，超期由「工作流运行记录清理」任务物理删除；等待人工审批的运行不会被清理。",
     "workflowRunCleanupInterval": "工作流运行记录清理任务的执行间隔（ms，默认每日一次）；≤0 = 暂停（记录会持续累积，不建议）。",
     "workflowScheduleScanInterval": "工作流定时触发扫描间隔（ms，默认 30 秒）：扫描到期的定时工作流并派发已发布版本运行。≤0 = 暂停该扫描任务（已配置定时的工作流不再自动触发）。",
-    "workflowMaxConcurrentRuns": "工作流异步调试运行的并发上限（派发池 core=max）。超过上限的运行进入排队队列并显示 queued，可在画布取消排队；改后需重启生效。",
-    "workflowRunQueueCapacity": "工作流异步运行的排队容量：并发满后最多排这么多，再来的直接拒绝并落 failed（fail-loud，不无限堆积）。改后需重启生效。",
+    "workflowMaxConcurrentRuns": "工作流异步调试运行的并发上限（派发池 core=max）。超过上限的运行进入排队队列并显示 queued，可在画布取消排队；改动保存即生效。",
+    "workflowRunQueueCapacity": "工作流异步运行的排队容量：并发满后最多排这么多，再来的直接拒绝并落 failed（fail-loud，不无限堆积）。改动保存即生效（调小只拦后续运行，不动已排队的）。",
     "mcpServerEnabled": "问渠作为 MCP Server 对外提供能力的总开关（默认关），下有两类端点：① per-agent 端点 /ai/mcp/{token}——智能体发布时勾选「MCP 端点」，一个端点就是那一个智能体，token 即凭据，撤销分享立即失效；② 平台级入口 /ai/mcp——一个地址暴露整套能力（检索知识库 / 提问 / 列可见知识库 / 列可用智能体），凭据是请求头的 API Key，且该 Key 必须在「API 密钥」里打开 MCP 开关。两类端点都按调用者/发布者自身的可见范围执行。",
     "mcpServerTimeout": "外部客户端调 MCP 工具时，服务端等一轮问答跑完的上限。到点向客户端报错并中止那一轮——不中止的话那一轮会在后台把 token 跑完，而客户端早就不等了。多数 MCP 客户端自己只等 60 秒，所以默认压在 50 秒；要接慢的智能体，把这里和客户端侧一起调大。",
     "mcpServerAllowedOrigins": "MCP 规范要求 HTTP 传输校验 Origin 头以防御 DNS rebinding 攻击。留空时只允许本机回环（localhost/127.0.0.1）的浏览器请求；需要通过网页跨域调用时把来源地址填进来。",
@@ -4480,7 +4612,7 @@
     "images.quality": "图片：JPEG 压缩质量(0~1)",
     "images.authEnabled": "图片访问鉴权：HMAC 签名 URL 开关(默认开，生产建议保持开启；关闭则图片 URL 可直接访问)",
     "images.authExpireSeconds": "图片访问鉴权：签名 URL 有效期(秒)",
-    "vision.timeoutMillis": "视觉模型：单张图片描述读取超时(ms；客户端在启动时构建，改动需重启生效)",
+    "vision.timeoutMillis": "视觉模型：单张图片描述读取超时(ms；保存即生效)",
     "vision.retryCount": "视觉模型：单图描述失败重试次数(降低降级率)",
     "chat.maxImagesPerMessage": "对话：单条消息最多图片张数",
     "chat.maxImageMb": "对话：单张图片体积上限(MB)",
@@ -4515,8 +4647,8 @@
     "workflow.runLogRetentionDays": "工作流运行记录保留天数（含 DSL 快照与节点 trace，超期物理删除）",
     "workflow.runCleanupIntervalMs": "工作流运行记录清理间隔(ms，≤0=暂停)",
     "workflow.scheduleScanIntervalMs": "工作流定时触发扫描间隔(ms，≤0=暂停)",
-    "workflow.maxConcurrentRuns": "工作流异步运行并发上限（改后需重启）",
-    "workflow.runQueueCapacity": "工作流异步运行排队容量（队列满即拒绝；改后需重启）",
+    "workflow.maxConcurrentRuns": "工作流异步运行并发上限（保存即生效）",
+    "workflow.runQueueCapacity": "工作流异步运行排队容量（队列满即拒绝；保存即生效）",
     "mcp.server.enabled": "MCP 服务端点（对外提供）",
     "graphrag.batchChunks": "GraphRAG：每次 LLM 调用合并的块数（3~5 平衡成本与溯源粒度）",
     "graphrag.maxTriplesPerChunk": "GraphRAG：每块最多抽几条关系（成本闸，超出的丢弃）",
@@ -4535,6 +4667,10 @@
     "workspace.sessionLocal": "会话目录走本机执行器（离线退回云端沙盒）",
     "workspace.sessionRootBase": "会话目录根（执行器工作根下的相对路径）",
     "sandbox.userScope": "无工作区会话按用户共享沙盒（热池）",
-    "sandbox.poolWarmUsers": "启动预热最近 N 个用户的沙盒（0=不预热）"
+    "sandbox.poolWarmUsers": "启动预热最近 N 个用户的沙盒（0=不预热；保存即再预热一次）",
+    "cleanup.intervalMs": "清理/回收类任务的共用节拍(ms，≤0=暂停全部清理任务)",
+    "cleanup.tempFileRetentionDays": "临时件保留天数（≤0=不清理）",
+    "cleanup.recordRetentionDays": "过程记录保留天数（≤0=不清理）",
+    "cleanup.assetRetentionDays": "用户资产保留天数（≤0=不清理）"
   }
 }
