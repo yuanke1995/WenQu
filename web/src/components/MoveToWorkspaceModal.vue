@@ -20,6 +20,7 @@
 
 <script setup>
 import { ref, computed, watch } from 'vue'
+import { projectOnThisComputer } from '../utils/localExecutor'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -37,7 +38,9 @@ const visible = computed({
   set: v => emit('update:open', v)
 })
 const picked = ref('')
-const targets = computed(() => props.projects.filter(p => !p.isImplicit))
+// 与侧栏「工作区」分区同一口径：implicit 兜底容器和别的电脑上的工作区都不列。
+// 后者留在库里，换那台电脑登录自然出现；在这里列出来只会多出一个同名的、分不清的选项。
+const targets = computed(() => props.projects.filter(p => !p.isImplicit && projectOnThisComputer(p)))
 
 // 每次打开都回到当前归属：从半路选错里一眼看出"我在哪"
 watch(() => props.open, v => { if (v) picked.value = props.currentId || '' })
