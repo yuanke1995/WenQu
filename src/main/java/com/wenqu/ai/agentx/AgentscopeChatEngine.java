@@ -3747,7 +3747,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 档位闸必须排在步数闸之后：先判「该不该跑」，再判「还剩几步」，
                 // 否则被档位拒绝的那次会白占一步预算（AgentxStepBudget 的「判过即占一步」口径）。
                 .middleware(toolGate)
-                .middleware(new AgentxSystemCaptureMiddleware(slot))
                 // 流式可见性闸：框架只在一次模型调用结束时才把 chunk 落盘，而观众跟的是落盘后的日志，
                 // 界面上就是「正文一下粘出几百字」。这里把它拆成 200ms 一片（代价见类注释）。
                 .middleware(new AgentxStreamFlushMiddleware())
@@ -4244,7 +4243,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         com.wenqu.ai.agent.chat.TurnHandle handle =
                 com.wenqu.ai.agent.chat.TurnRegistry.handle(cmd.getSessionId());
         String framedTurnId = handle == null ? turnId : handle.turnId();
-        Map<String, Object> tokens = usageOf(session, historyBefore, pool, cmd, contextWindow);
+        Map<String, Object> tokens = usageOf(session, historyBefore, pool, contextWindow);
         // 收尾这一发是终值（与 done 里的 tokens 同一份快照）；流式期间那几发见 emitLiveUsage，
         // 两拨都出自 usageOf，不做第二套估算
         // 整轮结束而思考段还开着（只思考没出正文、或被叫停）：照样补一条收尾帧，别让转圈永远挂着
@@ -4538,7 +4537,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         if (size == stamp[0]) return;
         stamp[0] = size;
         try {
-            Map<String, Object> tokens = usageOf(session, historyBefore, pool, cmd, contextWindow);
+            Map<String, Object> tokens = usageOf(session, historyBefore, pool, contextWindow);
             // 还没有任何一次模型回包带 usage：此刻报不出占用，等下一跳（空表发出去只会让前端清空预览）
             if (tokens.isEmpty()) return;
             channel.emit(RunEventType.USAGE, com.alibaba.fastjson2.JSON.toJSONString(tokens));
@@ -4550,20 +4549,25 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
 
     /**
      * 本轮实测用量：只累计这一轮新增消息的 {@link io.agentscope.core.model.ChatUsage}。
-     * <p>字段名与主链路 {@code TurnRecorder.buildUsageSnapshot} 对齐（前端容量面板只认这套键）；
-     * 分类拆分（{@code parts}）按<b>框架自己的消息结构</b>产出，见 {@link FrameworkCtxParts}——
-     * 手写侧那十类靠拼装 system 时的分段位置切，框架侧没有那四个标记，不套用。
+     * <p><b>出去的每一个数都是网关回传的实测值，没有一个是本地估的。</b>要按类别拆窗口占用（系统提示词
+     * 多少、工具声明多少）得有<b>这个模型自己的分词器</b>——问渠只持有 OpenAI 那套 BPE 词表，对不上
+     * 词表的模型只能估；估出来再摊平到实测总数上，每一格看着严丝合缝、其实都不是实测。
+     * 所以这里只报网关给得起的口径：输入、输出、缓存读取、缓存写入、思考。
+     * <p>占用报 {@code context}（最终轮输入）而不是 {@code prompt}（各轮输入之和）：工具往返会把同一份
+     * 上下文反复送入，几轮下来后者能到前者的两三倍，拿它算占用百分比会把容量条撑到虚高。
      * <p>上下文预算（{@code budget}）框架不给：窗口值（{@code modelContextWindow}）是「模型允许的
      * 上下文上限」，不是问渠「给这一轮留了多少」的预算，报上去会让右栏占用条按一个没人承诺过的数
      * 算百分比。前端对缺字段是「不显示该行」，不填比填个假预算诚实。
      */
     private Map<String, Object> usageOf(AgentSession session, int historyBefore,
-                                        WenquSourcePool pool, ChatCommand cmd, int contextWindow) {
+                                        WenquSourcePool pool, int contextWindow) {
         List<Msg> messages = session.transcript().messages();
         int from = Math.min(Math.max(historyBefore, 0), messages.size());
         long prompt = 0;
         long output = 0;
         long cached = 0;
+        long cacheWrite = 0;
+        long reasoning = 0;
         int lastInput = 0;
         long lastOutput = 0;
         boolean any = false;
@@ -4574,6 +4578,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             prompt += usage.getInputTokens();
             output += usage.getOutputTokens();
             cached += usage.getCachedTokens();
+            cacheWrite += usage.getCacheCreationTokens();
+            reasoning += usage.getReasoningTokens();
             // 最后一轮的 prompt≈本轮结束时的上下文占用（工具结果逐轮进上下文），与主链路口径同源
             lastInput = usage.getInputTokens();
             lastOutput = usage.getOutputTokens();
@@ -4585,7 +4591,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 最终那一轮的输出：暗截断对账只看它（各轮工具调用的输出不参与触顶与丢失判定，与主链路同口径）
         tokens.put("finalOutput", lastOutput);
         tokens.put("total", prompt + output);
+        // 缓存三项是网关分别回传的实测值：读取（cached）、写入（cacheWrite）、未命中即 prompt-cached
         tokens.put("cached", cached);
+        tokens.put("cacheWrite", cacheWrite);
+        tokens.put("reasoning", reasoning);
         tokens.put("context", lastInput);
         tokens.put("outputIsReal", true);
         tokens.put("hits", pool.sources().size());
@@ -4595,14 +4604,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             tokens.put("window", contextWindow);
             tokens.put("windowSource", "framework");
         }
-        // 分类用量：按框架消息结构切分，并按本轮真实 prompt（最终轮输入）校准。
-        // 分类拆的是「本轮结束时的上下文」，所以校准基准用 lastInput 而不是各轮 prompt 之和——
-        // 工具调用会让 prompt 逐轮递增，sum 是账单口径，拿它当基准会把容量条撑到虚高。
-        // 传 historyBefore 而非上面夹取过的 from：分类器要靠「index < 该值」认出哪些是历史消息，
-        // 传 from 会被 clamp 截断（historyBefore 超出 transcript 长度时）而误把整段当本轮新增。
-        Map<String, Integer> parts = FrameworkCtxParts.of(messages, historyBefore,
-                toolSchemasOf(cmd), sessions.turnSlot(cmd).systemMessages(), lastInput);
-        if (!parts.isEmpty()) tokens.put("parts", parts);
         return tokens;
     }
 
@@ -4623,24 +4624,6 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             return;
         }
         sessionService.updateHistorySummary(cmd.getSessionId(), live.text(), live.coveredMessages());
-    }
-
-    /**
-     * 本轮请求下发的工具声明（{@code tools} 字段）：容量面板的「工具声明」一段按它估算。
-     * <p>取不到就返回 null（分类器按「无工具」处理，该段不出现）——工具声明是这轮上下文的固定开销，
-     * 拿不到时宁可少画一段，也不能拿上一轮的工具集冒充本轮。
-     */
-    private List<io.agentscope.core.model.ToolSchema> toolSchemasOf(ChatCommand cmd) {
-        try {
-            // 与真实请求同口径：精简开着时面板估的也是压过的那一份，否则「工具声明」按完整说明估、
-            // 请求按精简说明发，容量条上那一截凭空多出来，开关一开容量却看不出省了什么
-            return AgentxToolDescriptionCompact.applyAll(sessions.toolSchemas(cmd),
-                    configService.getBoolean("chat.toolDescriptionCompact", true));
-        } catch (Exception e) {
-            log.warn("[CTX-PARTS] 工具声明读不出来，本轮容量面板少「工具声明」一段: session={}, {}",
-                    cmd.getSessionId(), e.toString());
-            return null;
-        }
     }
 
     private static void emit(RunChannel channel, RunEventType type, String content) {

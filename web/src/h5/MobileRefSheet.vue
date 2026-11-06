@@ -57,33 +57,27 @@
         </div>
       </div>
 
-      <!-- ---- 本轮用量 ---- 三个数各起各的名：占用 ≠ 输出 ≠ 累计送入（后者含工具往返重发，别拿去跟前两个相加） ---- -->
+      <!-- ---- 本轮用量 ----
+           每一行都是网关 usage 回传的实测值；名里带「未缓存/其中」的是上一行的子项，缩进摆，
+           不并列成能相加的样子（占用 ≠ 累计送入 ≠ 输出，后者含工具往返重发）。
+           PC 端这块是工具栏圆环 + 悬浮容量卡，手机收进这一节。 -->
       <div class="rs-section">本轮用量</div>
       <div v-if="!tokens" class="rs-empty">本轮还没有用量记录</div>
       <template v-else>
-        <div class="rs-kv"><span>上下文占用</span><b>{{ usageCtx }}<template v-if="cap.window > 0"> / {{ cap.window }}（{{ cap.pct }}%）</template></b></div>
-        <div class="rs-kv"><span>输出</span><b>{{ tokens.output ?? '—' }} tokens<template v-if="!tokens.outputIsReal">（估算）</template></b></div>
-        <div v-if="tokens.prompt > 0" class="rs-kv"><span>本轮累计送入</span><b>{{ fmtTokens(tokens.prompt) }} tokens</b></div>
+        <div v-if="ctxCapData.window > 0" class="rs-kv">
+          <span>上下文占用</span>
+          <b>{{ fmtTokens(ctxCapData.used) }} / {{ fmtWindow(ctxCapData.window) }}（{{ ctxCapData.pct }}%）</b>
+        </div>
+        <div v-if="ctxCapData.window > 0" class="cap-bar">
+          <span class="cap-fill" :class="ctxRingLevel" :style="{ width: ctxCapData.fillPct + '%' }" />
+        </div>
+        <div v-for="r in ctxCapData.rows" :key="r.label" class="rs-kv" :class="{ 'is-sub': r.sub }">
+          <span>{{ r.label }}</span>
+          <b><template v-if="r.note">{{ r.note }} · </template>{{ fmtTokens(r.tokens) }}</b>
+        </div>
+        <div v-if="!ctxCapData.rows.length" class="rs-empty">本轮还没有实测用量（随用量事件下发）</div>
         <div v-if="tokens.hits > 0" class="rs-kv"><span>填入上下文</span><b>{{ tokens.hits }} 段</b></div>
-        <div v-if="tokens.cached > 0" class="rs-kv"><span>缓存命中</span><b>{{ tokens.cached }} tokens</b></div>
       </template>
-
-      <!-- ---- 上下文容量（PC 是工具栏圆环 + 悬浮容量卡；手机收进这里）----
-           门控与标题同 PC：窗口未知时退化为纯构成列表（只给分类，不编造分母） -->
-      <div class="rs-section">上下文容量<span v-if="cap.window > 0" class="rs-n">占窗口 {{ cap.pct }}%</span></div>
-      <template v-if="cap.window > 0">
-        <div class="cap-bar">
-          <span v-for="r in cap.rows" :key="r.key" class="cap-seg" :style="{ width: cap.segW(r), background: r.color }" />
-        </div>
-        <div class="cap-meta">
-          {{ fmtWindow(cap.used) }} / {{ fmtWindow(cap.window) }}
-        </div>
-      </template>
-      <div v-for="r in cap.rows" :key="r.key" class="rs-kv">
-        <span class="cap-label"><i class="cap-dot" :style="{ background: r.color }" />{{ r.label }}</span>
-        <b>{{ fmtTokens(r.tokens) }}</b>
-      </div>
-      <div v-if="!cap.window && !cap.rows.length" class="rs-empty">本轮还没有容量明细（随用量事件下发）</div>
 
       <!-- ---- 会话累计 ---- -->
       <div class="rs-section">本会话累计</div>
@@ -245,7 +239,7 @@ import { message } from 'ant-design-vue'
 import BottomSheet from './BottomSheet.vue'
 import GoalCard from '../components/GoalCard.vue'
 import { fmtTokens } from '../utils/token'
-import { fmtSourceScore, fmtWindow, usageCtxTokens,
+import { fmtSourceScore, fmtWindow,
          toolLabel, toolDesc, toolBrief } from '../chat/projections'
 import { roundSteps, roundHold, roundHeadTail, roundPhase, isRunStep } from '../chat/roundSummary'
 // 产物地址必须过 resolveImg：后端给的是 /ai/artifacts/**，不经媒体前缀在开发态会落到 SPA 回退（下载到 index.html）
@@ -262,7 +256,10 @@ const engine = inject('wqChat')
 // 目标模式：与 PC 同一份 sessionGoal（会话级一份，横跨多轮），卡片本体共用 GoalCard——状态词、
 // 轮次与「为什么停在这儿」都由它按 projections 那一份算，本 sheet 只负责把卡片摆上去。
 const { groupedSources, lastTokens, lastSources, sessionTokens, sessionRetrieval, sessionArtifacts,
-  currentSessionId, currentSessionTitle, messages, ctxTokens, modelIndex, effectiveModel,
+  currentSessionId, currentSessionTitle, messages,
+  // 容量与实测用量整份吃引擎那一份：与 PC 悬浮卡同一个算法、同一套行。
+  // 此前移动壳自持一份分类表与 cap 计算，两端各写各的，同一轮的占用被两把尺量出两个数
+  ctxCapData, ctxRingLevel,
   sessionGoal,
   // 沙盒目录：取数、判据、折树、下载与存为产物全吃引擎那一份（与 PC 右栏那张卡同源，
   // 2026-10-25 从 PC 壳下沉），本 sheet 只负责把它摆成触屏形状
@@ -274,38 +271,6 @@ const { groupedSources, lastTokens, lastSources, sessionTokens, sessionRetrieval
   // 本轮过程总览的数据源：与 PC 右栏那张卡同一个对象（跑轮时它就是正在流的那条，结束后是上一轮）
   panelAi } = engine
 
-// 容量构成：与 PC 的 ctxCapData 同一算法（窗口取本轮 tokens.window，回落模型登记窗口；
-// 用量取 prompt，无则 context；分类占窗口比例撑填充段）。分类表是 PC 视图层的同款副本——
-// 纯呈现映射，两端各自持有（抽到共用单元会把两端一起拖住）。
-// 分类按 AgentScope 框架的消息结构（MsgRole + 内容块），与后端 agentx FrameworkCtxParts 同键同序。
-const CTX_PART_META = [
-  { key: 'system', label: '系统提示词', color: '#722ed1' },
-  { key: 'history', label: '历史对话', color: '#1677ff' },
-  { key: 'input', label: '本轮提问', color: '#8c8c8c' },
-  { key: 'retrieval', label: '检索资料', color: '#52c41a' },
-  { key: 'toolOutput', label: '工具结果', color: '#fa8c16' },
-  { key: 'thinking', label: '思考内容', color: '#13c2c2' },
-  { key: 'toolSchema', label: '工具声明', color: '#eb2f96' }
-]
-const cap = computed(() => {
-  const t = ctxTokens.value
-  // 窗口只认 tokens.window（框架按 maxContextTokens 下发），回落模型登记值；
-  // 旧的 tokens.budget 回落已删——那是手写引擎时代的检索配额，框架引擎下不存在
-  const win = (t && Number(t.window)) || Number(modelIndex.value[effectiveModel.value]?.contextWindow) || 0
-  // 用量与 PC 侧同口径：分母取 context（本轮结束时的上下文占用）而非 prompt
-  // （各轮输入之和的账单口径）
-  const used = t ? (Number(t.context) || Number(t.prompt) || 0) : 0
-  const parts = (t && t.parts && typeof t.parts === 'object') ? t.parts : null
-  const rows = parts
-    ? CTX_PART_META.filter(x => Number(parts[x.key]) > 0).map(x => ({ ...x, tokens: Number(parts[x.key]) }))
-    : []
-  return {
-    window: win, used, rows,
-    pct: win > 0 ? Math.min(100, Math.round(used / win * 1000) / 10) : 0,
-    segW: r => win > 0 ? Math.min(100, r.tokens / win * 100).toFixed(2) + '%' : '0%'
-  }
-})
-
 // 分组展开态：PC 侧这份状态在视图层（srcOpen/srcOpenOf/toggleSrc 未进引擎），移动壳按同口径本地实现
 //（key → 开/合，默认展开；存 reactive 容器而非 computed 内，流式更新 sources 后已收起的组不弹回）
 const srcOpen = reactive({})
@@ -315,8 +280,6 @@ const toggleSrc = g => { srcOpen[g.key] = !srcOpenOf(g) }
 const groups = computed(() => groupedSources.value)
 const sources = computed(() => lastSources.value || [])
 const tokens = computed(() => lastTokens.value)
-// 上下文占用（给足原值，不缩成 k）：与下面容量条同一个分子
-const usageCtx = computed(() => usageCtxTokens(tokens.value) || '—')
 const artifacts = computed(() => sessionArtifacts.value)
 
 // ==================== 本轮 ====================
@@ -405,12 +368,14 @@ watch(() => props.open, v => { if (v) { loadSandboxFiles(); loadSandboxProcs() }
 .rs-ic { color: var(--app-text3); flex: none; }
 .rs-kv { display: flex; justify-content: space-between; font-size: 13px; color: var(--app-text2); padding: 7px 2px; border-bottom: 1px dashed var(--app-border); }
 .rs-kv b { color: var(--app-text); font-weight: 500; }
-/* 容量填充条：轨道 8px 圆角，段宽=该分类占窗口的比例（分段之和即用量，天然与用量口径一致） */
+/* 容量填充条：轨道 8px 圆角，填充宽=占用/窗口（与上面那行百分比同一口径，空轨即剩余窗口） */
 .cap-bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--app-panel-2); border: 1px solid var(--app-border); }
-.cap-seg { height: 100%; }
-.cap-meta { font-size: 12px; color: var(--app-text3); padding: 6px 2px 2px; }
-.cap-label { display: inline-flex; align-items: center; gap: 6px; }
-.cap-dot { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+.cap-fill { height: 100%; border-radius: 4px; background: var(--app-accent); transition: width .25s; }
+.cap-fill.warn { background: var(--app-warn); }
+.cap-fill.danger { background: var(--app-danger); }
+/* 子项（未缓存输入 / 其中思考）缩进一档：它是上一行里拆出来的，不是并列的一项 */
+.rs-kv.is-sub { padding-left: 12px; }
+.rs-kv.is-sub > span { color: var(--app-text3); }
 .rs-art { display: flex; align-items: center; gap: 8px; padding: 4px 12px; border: 1px solid var(--app-border); border-radius: 10px; margin-bottom: 6px; color: var(--app-text2); font-size: 13px; }
 .rs-art-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rs-art-acts { flex: none; display: flex; align-items: center; }

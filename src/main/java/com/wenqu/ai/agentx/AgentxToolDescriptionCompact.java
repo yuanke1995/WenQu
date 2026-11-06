@@ -35,9 +35,6 @@ import reactor.core.publisher.Flux;
  * <p><b>开关按调用现读</b>（{@code chat.toolDescriptionCompact}）：会话实例是按 {@code (用户,会话,模型)}
  * 常驻的，middleware 只能在 build 期挂上（见 {@link FrameworkSessions} 的注释），所以挂载与开关解耦——
  * 每次调用问一次配置。设置页改完下一次模型调用就生效，不需要等实例换代。
- *
- * <p>容量面板的「工具声明」一段走 {@link #applyAll}，与这里发出去的是同一份口径，
- * 免得面板按完整说明估、真实请求按精简说明跑。
  */
 public final class AgentxToolDescriptionCompact implements MiddlewareBase {
 
@@ -74,20 +71,6 @@ public final class AgentxToolDescriptionCompact implements MiddlewareBase {
         }
         announce(compacted.size(), input.tools().size());
         return next.apply(new ModelCallInput(input.messages(), compacted, input.options(), input.model()));
-    }
-
-    /** 按当前开关给容量面板一份与真实请求同口径的工具声明（没开就原样返回）。 */
-    public static List<ToolSchema> applyAll(List<ToolSchema> schemas, boolean enabled) {
-        if (!enabled || schemas == null || schemas.isEmpty()) {
-            return schemas;
-        }
-        try {
-            List<ToolSchema> out = compactList(schemas);
-            return out == null ? schemas : out;
-        } catch (Exception e) {
-            log.warn("[agentx] 工具声明估算精简失败，按完整说明估算: {}", e.toString());
-            return schemas;
-        }
     }
 
     private boolean on() {

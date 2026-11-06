@@ -536,26 +536,6 @@ public class FrameworkSessions {
     }
 
     /**
-     * 这条会话当前挂着的工具声明（{@code tools} 字段的 schema），供容量面板估算「工具声明」一段。
-     * <p>取值走常驻实例的 toolkit —— 与真正发出去的那份请求同一份，不是重算一遍：
-     * 工具挂载是建实例时定死的（{@code open} 只在新建或换模型时调 factory），所以读实例
-     * 拿到的就是本轮真实下发的清单。
-     * <p>会话还没建起来时返回空表（调用方按「无工具」处理，该段不出现）——拿不到就少画一段，
-     * 不能拿别的会话的工具集冒充本轮。
-     */
-    public List<io.agentscope.core.model.ToolSchema> toolSchemas(ChatCommand cmd) {
-        Held h = held.get(key(cmd));
-        if (h == null || h.agent() == null) return List.of();
-        try {
-            io.agentscope.core.tool.Toolkit toolkit = h.agent().getToolkit();
-            return toolkit == null ? List.of() : toolkit.getToolSchemas();
-        } catch (Exception e) {
-            log.warn("[agentx] 工具声明读取失败（容量面板少一段）: session={}, {}", key(cmd), e.toString());
-            return List.of();
-        }
-    }
-
-    /**
      * 占住这一条会话的跟随位：占到才该起一轮续跑（占不到说明已经有人在跟，不该有两个循环读同一条会话——
      * 那会各落一条助手消息）。
      */

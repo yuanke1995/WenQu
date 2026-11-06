@@ -88,13 +88,6 @@ public final class UsageAccumulator {
         return best > 0 ? out : completionTotal();
     }
 
-    /** 最终轮的输入 token（容量分类用量校准用：分类拆的是最终上下文而非各轮总和） */
-    public long finalRoundPrompt() {
-        long best = 0;
-        for (long[] r : rounds.values()) best = Math.max(best, r[0]);
-        return best;
-    }
-
     public int rounds() {
         return rounds.size();
     }

@@ -27,8 +27,10 @@ export function estimateTokens (text) {
   return Math.ceil((cjk * 1.0 + words * 1.3 + other * 0.3) * 1.1)
 }
 
-/** 展示用：>=1000 显示为 x.xk */
+/** 展示用：>=1000 显示为 x.xK。token 是个数不是字节，一律十进制——
+ *  与模型登记页「1M 填 1000000」同一条尺；大写 K 与容量卡上的窗口值（fmtWindow）对齐，
+ *  免得同一轮的占用在页脚写成 9.1k、在卡上写成 9.1K */
 export function fmtTokens (n) {
   if (n == null) return '—'
-  return n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n)
+  return n >= 1000 ? (n / 1000).toFixed(1) + 'K' : String(n)
 }

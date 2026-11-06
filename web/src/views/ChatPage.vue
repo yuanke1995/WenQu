@@ -1580,7 +1580,7 @@
       </div>
     </Teleport>
 
-    <!-- 上下文容量卡：悬浮输入框工具栏容量圆环弹出（用量/窗口 + 占用填充条 + 分类明细）。
+    <!-- 上下文容量卡：悬浮输入框工具栏容量圆环弹出（占用/窗口 + 占用填充条 + 网关实测用量）。
          数据来自本轮落库的 tokens（刷新/切回会话仍在），窗口取用户所选档位或模型登记值 -->
     <Teleport to="body">
       <div v-if="ctxCapOpen" ref="ctxCapEl" class="ctxcap-float"
@@ -1592,24 +1592,23 @@
           <div class="ctxcap-head">
             <div class="ctxcap-title">上下文容量</div>
             <div v-if="ctxCapData.window > 0" class="ctxcap-num">
-              {{ fmtWindow(ctxCapData.used) }}/{{ fmtWindow(ctxCapData.window) }}（{{ ctxCapData.pct }}%）
+              {{ fmtTokens(ctxCapData.used) }}/{{ fmtWindow(ctxCapData.window) }}（{{ ctxCapData.pct }}%）
             </div>
           </div>
           <template v-if="ctxCapData.window > 0">
-            <!-- 填充宽=用量/窗口（与标题占用率同口径，空轨即剩余窗口），段宽在填充内按构成比分 -->
+            <!-- 填充宽=用量/窗口（与标题占用率同口径，空轨即剩余窗口） -->
             <div class="ctxcap-bar">
-              <div class="ctxcap-fill" :style="{ width: ctxCapData.fillPct + '%' }">
-                <span v-for="r in ctxCapData.rows" :key="r.key" class="ctxcap-seg"
-                      :style="{ width: ctxCapData.pctOf(r) + '%', background: r.color }"
-                      :title="r.label + ' ' + fmtWindow(r.tokens) + '（占本轮用量 ' + ctxCapData.pctOf(r).toFixed(1) + '%）'"></span>
-              </div>
+              <div class="ctxcap-fill" :class="ctxRingLevel" :style="{ width: ctxCapData.fillPct + '%' }"></div>
             </div>
-            <div v-for="r in ctxCapData.rows" :key="r.key" class="ctxcap-row">
-              <span class="ctxcap-dot" :style="{ background: r.color }"></span>
+            <!-- 每一行都是网关 usage 回传的实测值；名里带「未缓存/其中」的是上一行的子项，
+                 缩进摆，不并列成能相加的样子 -->
+            <div v-for="r in ctxCapData.rows" :key="r.label" class="ctxcap-row" :class="{ 'is-sub': r.sub }">
               <span class="ctxcap-row-label">{{ r.label }}</span>
-              <span class="ctxcap-row-val">{{ fmtWindow(r.tokens) }} · {{ ctxCapData.pctOf(r).toFixed(1) }}%</span>
+              <span class="ctxcap-row-val">
+                <template v-if="r.note">{{ r.note }} · </template>{{ fmtTokens(r.tokens) }}
+              </span>
             </div>
-            <div v-if="!ctxCapData.rows.length" class="ctxcap-empty">本轮无分类明细</div>
+            <div v-if="!ctxCapData.rows.length" class="ctxcap-empty">本轮还没有实测用量（随用量事件下发）</div>
             <!-- 手动压缩上下文的常驻入口（此前只有 /compact 一条键盘路径）：压完本卡数字不动，
                  腾出的量在 toast 里报，占用率要到下一轮落库才反映在这里 -->
             <div class="ctxcap-foot">
@@ -4700,15 +4699,18 @@ onMounted(async () => {
 .ctxcap-title { font-size: 13px; font-weight: 600; }
 .ctxcap-num { font-size: 12px; color: var(--app-text3); }
 .ctxcap-bar { display: flex; height: 6px; border-radius: 3px; overflow: hidden; background: var(--app-accent-weak); }
-.ctxcap-fill { display: flex; height: 100%; }
-.ctxcap-seg { display: block; height: 100%; }
-.ctxcap-row { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 12px; }
-.ctxcap-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.ctxcap-fill { height: 100%; border-radius: 3px; background: var(--app-accent); transition: width .25s; }
+.ctxcap-fill.warn { background: var(--app-warn); }
+.ctxcap-fill.danger { background: var(--app-danger); }
+.ctxcap-row { display: flex; align-items: baseline; gap: 6px; margin-top: 6px; font-size: 12px; }
+/* 子项（未缓存输入 / 其中思考）缩进一档、名字弱一档：一眼看出它是上一行里拆出来的，不是并列的一项 */
+.ctxcap-row.is-sub { padding-left: 12px; }
+.ctxcap-row.is-sub .ctxcap-row-label { color: var(--app-text3); }
 .ctxcap-row-label { color: var(--app-text2); }
-.ctxcap-row-val { margin-left: auto; color: var(--app-text3); }
+.ctxcap-row-val { margin-left: auto; color: var(--app-text3); font-variant-numeric: tabular-nums; }
 .ctxcap-empty { margin-top: 6px; font-size: 12px; color: var(--app-text3); }
 .ctxcap-tip { margin-top: 6px; font-size: 11px; color: var(--app-text3); line-height: 1.5; }
-/* 卡底操作区：与上面的分类明细隔一条线，按钮铺满卡宽（268px 里摆一个小按钮不居中会像漏了一半） */
+/* 卡底操作区：与上面的实测用量行隔一条线，按钮铺满卡宽（268px 里摆一个小按钮不居中会像漏了一半） */
 .ctxcap-foot { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--app-border); }
 .ctxcap-compact { width: 100%; justify-content: center; }
 

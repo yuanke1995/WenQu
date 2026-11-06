@@ -433,8 +433,8 @@ const groupedSources = computed(() => groupSources(lastSources.value))
 
 // 本次用量（Token 消耗可视化，1.9）：来自 done 事件的 tokens（上下文实际/预算/块数 + 输出估算）
 const lastTokens = computed(() => lastAi.value?.tokens || null)
-// 流式中的 prompt 侧用量（后端 usage 事件，第一次模型回包后到、之后每一步各刷一次；
-// onUsage 挂在 msg.tokensPreview）：只看最新一轮 AI 消息——该轮生成中且估算已到才返回；否则为 null
+// 流式中的用量预览（后端 usage 事件：第一次模型回包后到、之后每一步各刷一次，都是已发生那几次调用的
+// 网关实测值；onUsage 挂在 msg.tokensPreview）：只看最新一轮 AI 消息——该轮生成中且预览已到才返回；否则为 null
 // （回落 lastTokens，与旧口径一致：流式期间显示上一完成轮的用量）。done 的实测 tokens 到达后自然切换为终值。
 const liveTokensPreview = computed(() => {
   for (let i = messages.value.length - 1; i >= 0; i--) {
@@ -445,46 +445,47 @@ const liveTokensPreview = computed(() => {
   }
   return null
 })
-// 容量圆环/明细卡数据源：流式估算优先（生成一开始就亮），无估算回落已完成轮的实测 tokens
+// 容量圆环/明细卡数据源：流式预览优先（生成一开始就亮），无预览回落已完成轮的实测 tokens
 const ctxTokens = computed(() => liveTokensPreview.value || lastTokens.value)
-// ==================== 上下文容量面板（工具栏圆环悬浮：用量/窗口 + 分类占比） ====================
-/** 分类展示名与配色（与后端 agentx FrameworkCtxParts 的键一一对应；占比条按此顺序堆叠）。
- *  按 AgentScope 的消息结构分类：MsgRole 只有 SYSTEM/USER/ASSISTANT/TOOL 四种，内容块再按类型细分。
- *  手写运行时（工作流旁路）仍按旧十类下发，本表只认框架那套键——两套分类不同时展示，
- *  键名对不上时那一类不渲染（下面 filter 天然过滤掉），不会出现半截错位的构成条。 */
-const CTX_PART_META = [
-  { key: 'system', label: '系统提示词', color: '#722ed1' },
-  { key: 'history', label: '历史对话', color: '#1677ff' },
-  { key: 'input', label: '本轮提问', color: '#8c8c8c' },
-  { key: 'retrieval', label: '检索资料', color: '#52c41a' },
-  { key: 'toolOutput', label: '工具结果', color: '#fa8c16' },
-  { key: 'thinking', label: '思考内容', color: '#13c2c2' },
-  { key: 'toolSchema', label: '工具声明', color: '#eb2f96' }
-]
+// ==================== 上下文容量面板（工具栏圆环悬浮：占用/窗口 + 网关实测用量） ====================
 /** 容量数据：窗口取模型登记/用户档位（tokens.window 优先，回落 modelIndex），用量取本轮结束时的
  *  上下文占用（tokens.context，无则 prompt）；数据源走 ctxTokens（流式期间=usage 帧，完成后=done 的
  *  实测 tokens），生成一开始即点亮。
- *  用量为什么优先 context 而不是 prompt：prompt 是各轮请求的输入之和（账单口径，工具调用会让它
- *  逐轮累加、远大于真实占用），而本面板回答的是「窗口被占了多少」——分类之和就是按 context 校准的，
- *  分子分母必须同一个口径，否则顶部百分比与下面分段条各说各话。 */
+ *  占用为什么优先 context 而不是 prompt：prompt 是各轮请求的输入之和（账单口径，工具调用会让它
+ *  逐轮累加、远大于真实占用），而本面板回答的是「窗口被占了多少」。
+ *  明细只报网关 usage 回传的实测值，不再按消息结构估分类：估出来的分段每一格都不是实测，
+ *  摊平到总数上只会让界面摆出一本算得平的假账。 */
 const ctxCapData = computed(() => {
   const t = ctxTokens.value
   const info = modelIndex.value[effectiveModel.value]
+  const num = v => Number(v) || 0
   const window_ = (t && t.window) || info?.contextWindow || 0
-  const used = t ? (Number(t.context) || Number(t.prompt) || 0) : 0
-  const parts = (t && t.parts && typeof t.parts === 'object') ? t.parts : null
-  const rows = parts
-    ? CTX_PART_META.filter(m => Number(parts[m.key]) > 0)
-        .map(m => ({ ...m, tokens: Number(parts[m.key]) }))
-    : []
-  const sum = rows.reduce((a, r) => a + r.tokens, 0)
+  const used = t ? (num(t.context) || num(t.prompt)) : 0
+  const prompt = t ? num(t.prompt) : 0
+  const cached = t ? num(t.cached) : 0
+  const cacheWrite = t ? num(t.cacheWrite) : 0
+  const output = t ? num(t.output) : 0
+  const reasoning = t ? num(t.reasoning) : 0
   const pct = window_ > 0 ? Math.min(100, Math.round(used / window_ * 1000) / 10) : 0
+  // 谁含谁写死在行里（sub=缩进、名里带「其中/未缓存」），免得两行并排被人拿去相加
+  const rows = []
+  if (prompt > 0) {
+    rows.push({ label: '本轮送入', tokens: prompt })
+    if (cached > 0) {
+      rows.push({ label: '未缓存输入', tokens: Math.max(0, prompt - cached), sub: true })
+      rows.push({ label: '缓存读取', tokens: cached, sub: true,
+                  note: `命中率 ${Math.round(cached / prompt * 1000) / 10}%` })
+    }
+    if (cacheWrite > 0) rows.push({ label: '缓存写入', tokens: cacheWrite, sub: true })
+  }
+  if (output > 0) {
+    rows.push({ label: '输出', tokens: output })
+    if (reasoning > 0) rows.push({ label: '其中思考', tokens: reasoning, sub: true })
+  }
   return {
-    window: window_, used, pct, rows, sum,
-    // 填充条宽=用量/窗口（不取整：窗口大用量小时 pct 取整会成 0 宽），填充内段宽按构成比分
-    fillPct: window_ > 0 ? Math.min(100, used / window_ * 100) : 0,
-    // 分类占比以分类之和为分母（后端按 context 校准后两者相等；无 parts 时退化为空列表）
-    pctOf: r => sum > 0 ? (r.tokens / sum * 100) : 0
+    window: window_, used, pct, rows,
+    // 填充条宽=用量/窗口（不取整：窗口大用量小时 pct 取整会成 0 宽）
+    fillPct: window_ > 0 ? Math.min(100, used / window_ * 100) : 0
   }
 })
 // 工具栏容量圆环：r=7.5 周长固定，按 pct 撑 stroke-dasharray；告警档位与右栏占用条一致

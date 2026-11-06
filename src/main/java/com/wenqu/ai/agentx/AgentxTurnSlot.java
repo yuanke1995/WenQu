@@ -124,25 +124,6 @@ public final class AgentxTurnSlot {
         return toolkit;
     }
 
-    /**
-     * 本轮真实下发的系统提示词（由 {@link AgentxSystemCaptureMiddleware} 在每次模型调用前取景）。
-     * <p>容量面板需要它：{@code transcript()} 里没有 SYSTEM 消息，缺这一段就会让校准把缺口摊给别的段
-     * （详见该中间件类注释）。与 {@link #toolkit} 同一跨轮口径——它随实例稳定，换绑重建时实例一换、
-     * 下一轮的第一次模型调用就覆盖成新的一份，不会拿旧实例的提示词冒充本轮。
-     * <p>只存引用不存副本：一条系统提示词两万六千字，每次调用复制一份是给堆添麻烦。
-     */
-    private volatile List<io.agentscope.core.message.Msg> systemMessages = List.of();
-
-    /** 取景：每次模型调用覆盖一份（最后一次就是收尾那一轮看到的那份）。 */
-    public void noteSystemMessages(List<io.agentscope.core.message.Msg> messages) {
-        this.systemMessages = messages == null ? List.of() : messages;
-    }
-
-    /** 本轮取景到的系统提示词；没取到（实例还没跑过模型调用）返回空表，容量面板按「少一段」处理。 */
-    public List<io.agentscope.core.message.Msg> systemMessages() {
-        return systemMessages;
-    }
-
     /** 此刻进行中的那一轮；没有（轮间空档/已收口）返回 null。 */
     public Turn current() {
         return current;
