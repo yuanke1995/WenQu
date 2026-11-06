@@ -78,6 +78,39 @@ public class SandboxService {
     private static final int MEMORY_MAX_FILE_MB = 64;
 
     /**
+     * 本会话这一轮是否走本机执行器目录（会按需解析并创建会话目录）。
+     * 供引擎的「文件系统是否可用」判据用——本机后端没有 SandboxContext，不能拿 sandboxAttached 代判。
+     */
+    public boolean localSessionWorkspace(String sessionId, String uid) {
+        SessionWorkspaceService.Workspace ws = sessionWorkspace == null
+                ? null : sessionWorkspace.resolve(sessionId, uid);
+        return ws != null && ws.local();
+    }
+
+    /** 本轮因执行器离线退回云端时给用户的一句说明；null=无需提示。 */
+    public String sessionWorkspaceNotice(String sessionId, String uid) {
+        SessionWorkspaceService.Workspace ws = sessionWorkspace == null
+                ? null : sessionWorkspace.resolve(sessionId, uid);
+        return ws == null ? null : ws.fallbackNotice();
+    }
+
+    /** 这条会话是否已经钉住本机后端（只读库、不探测、不建目录）：分档粘性用。 */
+    public boolean pinnedLocalSessionWorkspace(String sessionId) {
+        return sessionWorkspace != null && sessionWorkspace.pinnedLocal(sessionId);
+    }
+
+    /**
+     * 工作区后端的实例键：框架实例把文件系统烤在 build 期，本机↔云端切换时必须重建。
+     * 返回显式工作区标记（文件系统随工作区配置走，不在本方法判）、本机执行器+目录、或 cloud。
+     */
+    public String sessionWorkspaceKey(String sessionId, String uid) {
+        SessionWorkspaceService.Workspace ws = sessionWorkspace == null
+                ? null : sessionWorkspace.resolve(sessionId, uid);
+        if (ws == null) return "project";
+        return ws.local() ? "local:" + ws.executorId() + ":" + ws.rootPath() : "cloud";
+    }
+
+    /**
      * 聊天开轮时等沙盒装配的上限。超了就<b>本轮先不挂沙盒</b>，装配继续在后台跑完并进缓存，
      * 下一轮直接命中——问答本身的路由/检索/模型调用不等它。
      * <p>为什么必须有这道闸：装配要建沙盒容器（正常 3 秒，provisioner 侧健康检查最长 300 秒），
@@ -127,6 +160,8 @@ public class SandboxService {
     private final com.wenqu.ai.executor.ExecutorRegistry executorRegistry;
     /** 工作区解析：决定沙盒作用域与 workdir（无工作区时退回会话级，行为不变） */
     private final ProjectService projectService;
+    /** 隐式会话的工作区后端：本机执行器目录 / 云端沙盒（离线兜底） */
+    private final SessionWorkspaceService sessionWorkspace;
     /** 工作区目录开关（默认关，见 scopeOf 的注释） */
     private final ConfigService configService;
     /** 每轮文件改动：本机工作区的框架文件工具要带当前轮身份（执行器据此做改动前捕获） */
@@ -135,12 +170,14 @@ public class SandboxService {
     public SandboxService(ProvisionerSandboxProvider provider, ProjectService projectService,
                           ConfigService configService,
                           com.wenqu.ai.executor.ExecutorRegistry executorRegistry,
-                          ProjectTurnChangesService turnChanges) {
+                          ProjectTurnChangesService turnChanges,
+                          SessionWorkspaceService sessionWorkspace) {
         this.provider = provider;
         this.projectService = projectService;
         this.configService = configService;
         this.executorRegistry = executorRegistry;
         this.turnChanges = turnChanges;
+        this.sessionWorkspace = sessionWorkspace;
     }
 
     /**
@@ -256,6 +293,19 @@ public class SandboxService {
                         // 供给方调用期读取——文件系统实例可能被框架缓存跨轮复用，不能把 turnId 烘焙进来。
                         () -> turnChanges.currentTurnId(sessionId),
                         // 上一轮轮号：模型第一次写可能抢在服务端 turnStart 前，补拍快照时用它做用户改动对账
+                        () -> turnChanges.currentPreviousTurnId(sessionId));
+                return memoryRouted(executorFs, uid);
+            }
+            // 隐式会话的本机后端：工作区=用户电脑上的会话目录，不建容器。
+            // 与显式本机工作区同形（ExecutorFilesystem + 轮身份），只是根目录由会话解析给出。
+            SessionWorkspaceService.Workspace sessionWs = sessionWorkspace == null
+                    ? null : sessionWorkspace.resolve(sessionId, uid);
+            if (sessionWs != null && sessionWs.local()) {
+                java.util.List<ExecutorFilesystem.Root> roots = java.util.List.of(
+                        new ExecutorFilesystem.Root("workspace", sessionWs.rootPath(), true));
+                ExecutorFilesystem executorFs = new ExecutorFilesystem(
+                        executorRegistry, sessionWs.executorId(), roots, unrestrictedWrites,
+                        () -> turnChanges.currentTurnId(sessionId),
                         () -> turnChanges.currentPreviousTurnId(sessionId));
                 return memoryRouted(executorFs, uid);
             }
@@ -548,6 +598,12 @@ public class SandboxService {
             return null;
         }
         try {
+            // 隐式会话的本机后端：文件与命令走执行器，不建服务器容器。
+            SessionWorkspaceService.Workspace sessionWs = sessionWorkspace == null
+                    ? null : sessionWorkspace.resolve(sessionId, uid);
+            if (sessionWs != null && sessionWs.local()) {
+                return null;
+            }
             // 显式工作区走本机执行器（或尚未绑目录），不需要服务器沙盒；此前这里仍会建一个容器，
             // 文件却全部走执行器，等于白建。直接返回 null，FrameworkSessions 的 sandboxAttached 会置 false。
             Project bound = projectService.projectOfSession(sessionId);

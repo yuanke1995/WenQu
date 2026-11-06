@@ -104,4 +104,17 @@ public class Session {
      * 游客会话无论选什么都按只读档执行（见 {@code PermissionPolicyResolver}）。
      */
     private String permissionPreset;
+
+    /**
+     * 会话工作区后端：{@code local}=本机执行器上的会话目录 / {@code cloud}=服务器沙盒。
+     * NULL=还没解析过（隐式会话首次真正用到文件时解析并落库）。
+     * 显式工作区（用户建的 selectable）不看这一列，仍走工作区自己的执行器目录。
+     */
+    private String wsBackend;
+
+    /** 本机后端所在的执行器 id（c_ai_executor.id）；cloud 为 NULL。 */
+    private String wsExecutorId;
+
+    /** 本机后端的会话目录（执行器上的绝对路径），首次使用时创建；cloud 为 NULL。 */
+    private String wsRoot;
 }

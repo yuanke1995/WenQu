@@ -332,7 +332,10 @@ public class ExecutorRegistry {
                 throw new IllegalStateException("执行器队列不可用", e);
             }
             if (raw == null) {
-                Thread.sleep(500);
+                // 50ms 而不是 500ms：这是**每一次**执行器调用的固定附加延迟（建会话目录要连做
+                // mkdir 几步，框架建实例时还要连查几个工作区文件，500ms 会叠成数秒）。
+                // 空闲时多几次 Redis pop，对这个量级的设备数不算成本。
+                Thread.sleep(50);
                 continue;
             }
             JSONObject o;

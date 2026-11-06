@@ -4229,6 +4229,32 @@
       "tier": 2
     },
     {
+      "backendKey": "workspace.sessionLocal",
+      "panel": "sandbox",
+      "section": 1,
+      "group": "workspace",
+      "key": "sessionLocal",
+      "path": "workspace.sessionLocal",
+      "label": "会话目录走本机执行器",
+      "type": "switch",
+      "def": true,
+      "note": "隐式会话（侧栏「会话」）的读写与命令交给本机执行器，不再为每轮建服务器沙盒；执行器离线时自动退回云端沙盒，本轮界面会说明文件在服务器",
+      "tier": 2
+    },
+    {
+      "backendKey": "workspace.sessionRootBase",
+      "panel": "sandbox",
+      "section": 1,
+      "group": "workspace",
+      "key": "sessionRootBase",
+      "path": "workspace.sessionRootBase",
+      "label": "会话目录根（执行器上，相对工作根）",
+      "type": "text",
+      "def": "WenQu/workspaces",
+      "note": "每条会话在这里得到一个「日期-标题或短id」子目录；首次用到文件时创建，之后钉住不迁移",
+      "tier": 2
+    },
+    {
       "backendKey": "sandbox.userScope",
       "panel": "sandbox",
       "section": 1,
@@ -4506,6 +4532,8 @@
     "chat.asyncWorkspaceUpgrade": "文件意图异步升级工作区（默认关）",
     "chat.asyncWorkspaceMax": "异步升级并发上限",
     "sandbox.maxPerUser": "每用户沙盒租约上限（0=不限）",
+    "workspace.sessionLocal": "会话目录走本机执行器（离线退回云端沙盒）",
+    "workspace.sessionRootBase": "会话目录根（执行器工作根下的相对路径）",
     "sandbox.userScope": "无工作区会话按用户共享沙盒（热池）",
     "sandbox.poolWarmUsers": "启动预热最近 N 个用户的沙盒（0=不预热）"
   }

@@ -62,7 +62,7 @@ public class ExecutorFiles {
             throw new IllegalStateException("本机执行器版本过旧：请在那台电脑上重启 wenqu-agent（拉取最新脚本）后重试");
         }
         if ("E_PATH_OUTSIDE".equals(code) || "E_INVALID".equals(code) || "E_EXISTS".equals(code)
-                || "E_NOT_FOUND".equals(code) || "E_CONFLICT".equals(code)) {
+                || "EEXIST".equals(code) || "E_NOT_FOUND".equals(code) || "E_CONFLICT".equals(code)) {
             throw new IllegalArgumentException(msg);
         }
         throw new IllegalStateException(code + "：" + msg);
@@ -163,6 +163,26 @@ public class ExecutorFiles {
 
     public void mkdir(String executorId, List<ProjectRoot> roots, String absPath) {
         call(executorId, roots, "mkdir", Map.of("path", absPath), true);
+    }
+
+    /**
+     * 建目录（已存在视为成功）。用于系统准备的目录（会话工作区）：
+     * 少一次 stat 往返，且不会因为并发/上一轮已建好而失败。
+     */
+    public void ensureDir(String executorId, List<ProjectRoot> roots, String absPath) {
+        if (!online(executorId)) {
+            throw new IllegalStateException("本机执行器不在线：先在那台电脑上启动 wenqu-agent 再试");
+        }
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("path", absPath);
+        payload.put("roots", rootPayload(roots));
+        payload.put("policy", "workspace-write");
+        payload.put("userInitiated", true);
+        ExecutorRegistry.Result r = registry.call(executorId, "mkdir", payload, TIMEOUT_MS);
+        // 执行器对 Node 的 fs 错误直传 code（EEXIST），早期映射用 E_EXISTS；两种都算“已存在”
+        if (r.ok() || "E_EXISTS".equals(r.code()) || "EEXIST".equals(r.code())) return;
+        throw new IllegalStateException((r.code() == null ? "E_IO" : r.code()) + "："
+                + (r.message() == null ? "执行器返回失败" : r.message()));
     }
 
     public void move(String executorId, List<ProjectRoot> roots, String fromAbs, String toAbs, boolean replace) {

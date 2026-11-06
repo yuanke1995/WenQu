@@ -46,6 +46,7 @@ public class ProjectTurnChangesService {
     private final ExecutorFiles executorFiles;
     private final MessageMapper messageMapper;
     private final SessionMapper sessionMapper;
+    private final SessionWorkspaceService sessionWorkspace;
 
     /** 单线程发轮前快照：不阻塞问答主链路，FIFO 保证快照先于本轮第一次写到达执行器队列。 */
     private final ExecutorService pool = Executors.newSingleThreadExecutor(r -> {
@@ -75,11 +76,33 @@ public class ProjectTurnChangesService {
     private final ConcurrentHashMap<String, Map<String, Integer>> driftStreaks = new ConcurrentHashMap<>();
 
     public ProjectTurnChangesService(ProjectService projectService, ExecutorFiles executorFiles,
-                                     MessageMapper messageMapper, SessionMapper sessionMapper) {
+                                     MessageMapper messageMapper, SessionMapper sessionMapper,
+                                     SessionWorkspaceService sessionWorkspace) {
         this.projectService = projectService;
         this.executorFiles = executorFiles;
         this.messageMapper = messageMapper;
         this.sessionMapper = sessionMapper;
+        this.sessionWorkspace = sessionWorkspace;
+    }
+
+    /** 这台执行器上要拍快照的一组根：显式本机工作区，或隐式会话的本机会话目录。 */
+    private record FsTarget(String executorId, List<ProjectRoot> roots) {
+    }
+
+    private FsTarget targetOf(String sessionId) {
+        Project p = projectService.projectOfSession(sessionId);
+        if (p != null && projectService.isLocal(p)) {
+            List<ProjectRoot> roots = projectService.rootsOf(p);
+            return roots.isEmpty() ? null : new FsTarget(p.getExecutorId(), roots);
+        }
+        SessionWorkspaceService.Workspace ws = sessionWorkspace == null
+                ? null : sessionWorkspace.existingLocal(sessionId);
+        if (ws == null) return null;
+        ProjectRoot root = new ProjectRoot();
+        root.setAlias("workspace");
+        root.setPath(ws.rootPath());
+        root.setPrimaryRoot(ProjectRoot.PRIMARY);
+        return new FsTarget(ws.executorId(), List.of(root));
     }
 
     /** 本会话当前轮的 turnId（没有进行中的轮返回 null）。 */
@@ -108,11 +131,9 @@ public class ProjectTurnChangesService {
     public Start start(String sessionId, String turnId) {
         if (sessionId == null || sessionId.isBlank() || turnId == null || turnId.isBlank()) return null;
         try {
-            Project p = projectService.projectOfSession(sessionId);
-            if (p == null || !projectService.isLocal(p)) return null;
-            List<ProjectRoot> roots = projectService.rootsOf(p);
-            if (roots.isEmpty()) return null;
-            if (!executorFiles.online(p.getExecutorId())) return null;
+            FsTarget target = targetOf(sessionId);
+            if (target == null) return null;
+            if (!executorFiles.online(target.executorId())) return null;
             activeTurns.put(sessionId, turnId);
             // 上一轮的轮号从消息表取：排除本轮自己（重试/续跑时本轮提问可能已经落库）；
             // 取不到（首轮/历史被清）就不做对账，执行器按 supported=false 静默跳过。
@@ -120,7 +141,7 @@ public class ProjectTurnChangesService {
             if (previousTurnId == null || previousTurnId.isBlank()) activePreviousTurns.remove(sessionId);
             else activePreviousTurns.put(sessionId, previousTurnId);
             CompletableFuture<Map<String, Object>> f = CompletableFuture.supplyAsync(
-                    () -> executorFiles.turnStart(p.getExecutorId(), roots, turnId, previousTurnId), pool);
+                    () -> executorFiles.turnStart(target.executorId(), target.roots(), turnId, previousTurnId), pool);
             pendingStarts.put(sessionId, f);
             return new Start(previousTurnId, f);
         } catch (Exception e) {
@@ -283,9 +304,9 @@ public class ProjectTurnChangesService {
             }
         }
         try {
-            Project p = projectService.projectOfSession(sessionId);
-            if (p == null || !projectService.isLocal(p)) return null;
-            Map<String, Object> r = executorFiles.turnEnd(p.getExecutorId(), projectService.rootsOf(p), turnId);
+            FsTarget target = targetOf(sessionId);
+            if (target == null) return null;
+            Map<String, Object> r = executorFiles.turnEnd(target.executorId(), target.roots(), turnId);
             return summarize(r, turnId);
         } catch (Exception e) {
             log.warn("[CHANGES] 轮末对比失败（这轮不出改动卡）session={} turn={}: {}", sessionId, turnId, e.getMessage());
@@ -324,10 +345,10 @@ public class ProjectTurnChangesService {
         }
         String display = file.get("path") == null ? "" : String.valueOf(file.get("path"));
         if (display.isBlank()) throw new IllegalArgumentException("没有这份文件的改动记录");
-        Project p = projectService.projectOfSession(message.getSessionId());
-        if (p == null || !projectService.isLocal(p)) throw new IllegalArgumentException("这条消息不在本机工作区里");
+        FsTarget target = targetOf(message.getSessionId());
+        if (target == null) throw new IllegalArgumentException("这条消息不在本机工作区里");
         try {
-            return executorFiles.turnDiff(p.getExecutorId(), projectService.rootsOf(p), turnId, display);
+            return executorFiles.turnDiff(target.executorId(), target.roots(), turnId, display);
         } catch (IllegalStateException e) {
             // 执行器离线/超时/版本旧：对用户来说都是「点开太晚或环境不在」，给同一句可读话
             throw new IllegalArgumentException("改动详情暂时读不到（本机执行器不在线或已清理）");

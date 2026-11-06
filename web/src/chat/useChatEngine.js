@@ -3677,6 +3677,8 @@ if (typeof window !== 'undefined') {
 const sandboxFiles = ref([])
 const sandboxTotal = ref(0)
 const sandboxErr = ref('')
+/** 本机执行器离线、当前列的是云端沙盒文件：界面要说明本机旧文件暂时看不到 */
+const sandboxLocalOffline = ref(false)
 const sandboxLoading = ref(false)
 /** 本轮已取回成产物的路径：按钮点过一次就改口，不邀请重复点（重复点会落出一条同名重复产物） */
 const sandboxTaken = ref(new Set())
@@ -3704,6 +3706,7 @@ async function loadSandboxFiles () {
     sandboxFiles.value = []
     sandboxTotal.value = 0
     sandboxErr.value = ''
+    sandboxLocalOffline.value = false
     sandboxLoading.value = false
     return
   }
@@ -3714,6 +3717,7 @@ async function loadSandboxFiles () {
     // 迟到的结果不上屏：await 期间可能已切走会话、或判据翻假（切会话那一瞬 messages 还是
     // 上一个会话的，历史落位才揭出本会话没用过沙盒）——上屏就会把误报/旧文件盖进当前视图
     if (currentSessionId.value !== sid || !sessionSandboxActive.value) return
+    sandboxLocalOffline.value = Boolean(r?.data?.localOffline)
     sandboxFiles.value = (r && r.data && r.data.files) || []
     // 条数认服务端给的总数，不认到手这一截：一屏只回最新 300 个，只报到手数量会把「没列全」说成「就这些」
     sandboxTotal.value = Number(r?.data?.total) || sandboxFiles.value.length
@@ -3723,6 +3727,7 @@ async function loadSandboxFiles () {
     sandboxFiles.value = []
     sandboxTotal.value = 0
     sandboxErr.value = e?.message || '沙盒目录读取失败'
+    sandboxLocalOffline.value = false
   } finally {
     // 只收拾自己这个会话的 loading：切换后新一次加载正在飞，别把它的小字提示掐了
     if (currentSessionId.value === sid) sandboxLoading.value = false
@@ -3981,7 +3986,7 @@ onUnmounted(() => {
     historyError, retryHistory,
     // 沙盒目录：取数、判据与折树一份两用（PC 右栏那张卡与移动壳「状态与来源」里那段同吃）
     sandboxFiles, sandboxRows, sandboxCount, sandboxBytes, sandboxRest,
-    sandboxErr, sandboxLoading, sandboxTaken, sessionSandboxActive,
+    sandboxErr, sandboxLocalOffline, sandboxLoading, sandboxTaken, sessionSandboxActive,
     loadSandboxFiles, toggleSandboxDir, sandboxDownload, sandboxTake, sbSize,
     // 沙盒后台进程：同一族两端口径（露脸判据、秒针、三种停止结果）只算一份
     procs, procErr, procLoading, procCardVisible, procScanActive, killingTag,

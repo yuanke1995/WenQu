@@ -618,13 +618,29 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 也避免「判据说没换、人设却按另一份装配」这种自相矛盾）
         boolean sandboxWanted = wantsSandbox(cmd, policy);
         slot.noteProfile(sandboxWanted ? "workspace" : "chat");
+        // 本机执行器离线时的兜底必须让用户看见：这一轮文件在服务器上，不在他的电脑上。
+        if (sandboxWanted && sandboxService != null) {
+            try {
+                String wsNotice = sandboxService.sessionWorkspaceNotice(cmd.getSessionId(), cmd.getUserId());
+                if (wsNotice != null) {
+                    pool.registrar().degrade("workspaceFallback", wsNotice);
+                    channel.emit(RunEventType.WARN, wsNotice);
+                }
+            } catch (RuntimeException e) {
+                log.warn("[PROFILE] 工作区后端提示解析失败 session={}: {}", cmd.getSessionId(), e.toString());
+            }
+        }
         AgentBinding binding = bindingOf(cmd, policy, ref);
         // 实例键用完整引用而不是裸模型名：同一个模型名可以挂在好几个供应商下（各自的 baseUrl 与 Key 不同），
         // 只按裸名判「模型没换」就不重建实例，于是换了供应商仍拿旧网关旧 Key 跑，且日志上一切正常。
         // 档位也进键：聊天档/工作区档的工具面与文件系统不同，切档必须重建实例。
         AgentSession session;
+        // 文件系统在 build 期固定：本机目录 ↔ 云端沙盒切换必须换实例键，否则会继续用旧的那一套
+        String wsKey = (sandboxWanted && sandboxService != null)
+                ? sandboxService.sessionWorkspaceKey(cmd.getSessionId(), cmd.getUserId()) : "";
         try {
-            session = sessions.open(cmd, ref, binding.key() + "|sb=" + (sandboxWanted ? "1" : "0"),
+            session = sessions.open(cmd, ref,
+                    binding.key() + "|sb=" + (sandboxWanted ? "1" : "0") + "|ws=" + wsKey,
                     ctx -> buildAgent(cmd, policy, route, hooks, binding, slot, sandboxWanted),
                     sandboxWanted);
         } catch (RuntimeException e) {
@@ -1316,8 +1332,11 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         AgentxTurnSlot slot = sessions.turnSlot(cmd);
         slot.noteProfile(sandboxWanted ? "workspace" : "chat");
         AgentSession session;
+        String wsKey = (sandboxWanted && sandboxService != null)
+                ? sandboxService.sessionWorkspaceKey(cmd.getSessionId(), cmd.getUserId()) : "";
         try {
-            session = sessions.open(cmd, ref, binding.key() + "|sb=" + (sandboxWanted ? "1" : "0"),
+            session = sessions.open(cmd, ref,
+                    binding.key() + "|sb=" + (sandboxWanted ? "1" : "0") + "|ws=" + wsKey,
                     ctx -> buildAgent(cmd, policy, route, hooks, binding, slot, sandboxWanted),
                     sandboxWanted);
         } catch (Exception e) {
@@ -1387,7 +1406,18 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
             log.debug("[PROFILE] 工作区类型解析失败，按沙盒状态判文件系统 session={}: {}",
                     sessionId, e.toString());
         }
-        if (!sandboxEnabled || (!localProject && !sessions.sandboxAttached(sessions.key(cmd)))) {
+        // 隐式会话的本机后端（工作区=用户电脑）：没有 SandboxContext，用会话目录是否就绪来判
+        boolean localSession = false;
+        if (sandboxEnabled && !localProject) {
+            try {
+                localSession = sandboxService.localSessionWorkspace(sessionId, uid);
+            } catch (RuntimeException e) {
+                log.warn("[PROFILE] 本机会话目录解析失败，本轮按沙盒状态判文件系统 session={}: {}",
+                        sessionId, e.toString());
+            }
+        }
+        if (!sandboxEnabled || (!localProject && !localSession
+                && !sessions.sandboxAttached(sessions.key(cmd)))) {
             return sandboxService.chatScratchFilesystem(sessionId, uid);
         }
         return sandboxService.frameworkFilesystem(sessionId, uid, unrestrictedWrites,
@@ -2532,7 +2562,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         String key = sessions.key(cmd);
         // 粘性：已经建过工作区档实例的会话，不因为下一句普通问题降回聊天档——
         // 否则整条会话会在两档之间反复重建，工具面和文件系统也跟着来回换。
-        if (sessions.hasHeld(key) && sessions.sandboxAttached(key)) {
+        // 本机会话目录同样算「已进入工作区档」：它没有 SandboxContext，sandboxAttached 永远是 false。
+        boolean pinnedLocal = sandboxService != null && sandboxService.pinnedLocalSessionWorkspace(cmd.getSessionId());
+        if (sessions.hasHeld(key) && (sessions.sandboxAttached(key) || pinnedLocal)) {
             log.info("[PROFILE] profile=workspace reason=sticky session={}", cmd.getSessionId());
             return true;
         }
@@ -2550,7 +2582,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         }
         String q = cmd.getQuestion();
         if (q == null || q.isBlank()) {
-            boolean sandbox = sessions.hasHeld(key) ? sessions.sandboxAttached(key) : true;
+            boolean sandbox = sessions.hasHeld(key)
+                    ? (sessions.sandboxAttached(key)
+                        || (sandboxService != null && sandboxService.pinnedLocalSessionWorkspace(cmd.getSessionId())))
+                    : true;
             log.info("[PROFILE] profile={} reason=continuation session={}",
                     sandbox ? "workspace" : "chat", cmd.getSessionId());
             return sandbox;

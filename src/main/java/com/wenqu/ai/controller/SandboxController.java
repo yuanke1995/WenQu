@@ -9,6 +9,7 @@ import com.wenqu.ai.service.ProjectFileService;
 import com.wenqu.ai.service.SandboxProcService;
 import com.wenqu.ai.service.SandboxService;
 import com.wenqu.ai.service.SessionService;
+import com.wenqu.ai.service.SessionWorkspaceService;
 import com.wenqu.ai.util.RequestUser;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -74,10 +75,19 @@ public class SandboxController {
     private final ProjectFileService projectFileService;
     private final ArtifactService artifactService;
     private final SessionService sessionService;
+    private final SessionWorkspaceService sessionWorkspace;
 
     /** 与工作流沙盒节点同一开关：关闭时沙盒 API 的浏览/运行端点 fail-closed 拒绝。 */
     private boolean enabled() {
         return configService.getBoolean("tool.sandbox.enabled");
+    }
+
+    /**
+     * 文件栏是否可用：沙盒开关关掉时，本机会话目录仍要能浏览/下载——
+     * 那条路不经过沙盒容器，是用户电脑上的目录。
+     */
+    private boolean fileApiEnabled(String sessionId) {
+        return enabled() || (sessionWorkspace != null && sessionWorkspace.existingLocal(sessionId) != null);
     }
 
     @Operation(summary = "沙盒状态", description = "当前会话沙盒是否在运行（只探测不创建）+ 用户数据虚拟根路径")
@@ -183,7 +193,7 @@ public class SandboxController {
     @Permission("sandbox:read")
     @GetMapping("/files")
     public ResultJson files(@RequestParam("sessionId") String sessionId) {
-        if (!enabled()) {
+        if (!fileApiEnabled(sessionId)) {
             return ResultJson.error("沙盒未开启");
         }
         String uid = RequestUser.uid();
@@ -203,7 +213,7 @@ public class SandboxController {
     @GetMapping("/files/download")
     public Object downloadFile(@RequestParam("sessionId") String sessionId, @RequestParam("path") String path,
                                jakarta.servlet.http.HttpServletResponse response) {
-        if (!enabled()) {
+        if (!fileApiEnabled(sessionId)) {
             return ResultJson.error("沙盒未开启");
         }
         String uid = RequestUser.uid();
@@ -246,11 +256,11 @@ public class SandboxController {
     @Permission("sandbox:run")
     @PostMapping("/files/artifact")
     public ResultJson deliverFile(@RequestBody Map<String, Object> body) {
-        if (!enabled()) {
-            return ResultJson.error("沙盒未开启");
-        }
         String sessionId = str(body, "sessionId");
         String path = str(body, "path");
+        if (!fileApiEnabled(sessionId)) {
+            return ResultJson.error("沙盒未开启");
+        }
         String uid = RequestUser.uid();
         if (sessionId.isBlank() || path.isBlank()) {
             return ResultJson.error("缺少会话或文件路径");

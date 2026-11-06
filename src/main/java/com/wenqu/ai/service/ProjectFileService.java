@@ -57,14 +57,17 @@ public class ProjectFileService {
     private final ConfigService configService;
     private final ImageUrlSigner imageUrlSigner;
     private final ExecutorFiles executorFiles;
+    private final SessionWorkspaceService sessionWorkspace;
 
     public ProjectFileService(ProjectService projectService, ConfigService configService,
                               ImageUrlSigner imageUrlSigner,
-                              ExecutorFiles executorFiles) {
+                              ExecutorFiles executorFiles,
+                              SessionWorkspaceService sessionWorkspace) {
         this.projectService = projectService;
         this.configService = configService;
         this.imageUrlSigner = imageUrlSigner;
         this.executorFiles = executorFiles;
+        this.sessionWorkspace = sessionWorkspace;
     }
 
     // ==================== 浏览 ====================
@@ -178,6 +181,34 @@ public class ProjectFileService {
         }
     }
 
+    /** 会话级本机目录的预览地址：token 首段是 {@code s}，openView 再按会话解析回执行器目录。 */
+    private void addSessionViewUrl(Map<String, Object> e, String sessionId, String virtualPath, long size) {
+        String ext = PreviewTypes.extOf(str(e.get("name")));
+        if (PreviewTypes.viewContentType(ext) != null && PreviewTypes.viewCapError(ext, size) == null) {
+            e.put("viewUrl", imageUrlSigner.signUrlRequired(
+                    VIEW_PATH_PREFIX + encodeSessionViewToken(sessionId, virtualPath)));
+        }
+    }
+
+    /**
+     * 会话级本机目录（已钉住且执行器在线）；否则 null。
+     * 钉住了但执行器离线时返回 null，调用方退回云端目录——那一轮的文件确实在服务器上；
+     * 列表会带 {@code localOffline} 标记，界面要说明「本机文件暂时看不到」。
+     */
+    private SessionWorkspaceService.Workspace sessionLocal(String sessionId) {
+        if (sessionWorkspace == null || !sessionWorkspace.localOnline(sessionId)) return null;
+        return sessionWorkspace.existingLocal(sessionId);
+    }
+
+    /** 会话级本机目录 → 一个伪根（只在内存里活一轮：执行器只认 alias/path/primary）。 */
+    private static ProjectRoot sessionRoot(SessionWorkspaceService.Workspace ws) {
+        ProjectRoot r = new ProjectRoot();
+        r.setAlias("workspace");
+        r.setPath(ws.rootPath());
+        r.setPrimaryRoot(ProjectRoot.PRIMARY);
+        return r;
+    }
+
     // ==================== 预览 / 读文本 ====================
 
     /** 预览结果：内容类型 + 字节 + 文件名。 */
@@ -200,6 +231,10 @@ public class ProjectFileService {
             Project p = projectService.projectOfSession(sessionId);
             if (p != null && projectService.isLocal(p)) {
                 return viewFromLocal(p, rest.substring(sep + 1));
+            }
+            SessionWorkspaceService.Workspace sw = sessionLocal(sessionId);
+            if (sw != null) {
+                return viewFromSessionRoot(sw, rest.substring(sep + 1));
             }
             Path file = resolveIn(sessionBase(owner, sessionId), rest.substring(sep + 1));
             return viewFromServer(file);
@@ -225,6 +260,28 @@ public class ProjectFileService {
         if (size > 10L * 1024 * 1024) throw new IllegalArgumentException("文件太大，不能在这里预览，请下载后查看");
         ExecutorFiles.ReadBytes bytes = executorFiles.readRange(
                 executorId(p), roots, abs, 0, (int) size);
+        return new ViewFile(contentType, bytes.bytes(), name);
+    }
+
+    /** 会话级本机目录的预览：虚拟路径首段 {@code workspace} 只是列表口径，读盘前剥掉。 */
+    private ViewFile viewFromSessionRoot(SessionWorkspaceService.Workspace ws, String virtualPath) {
+        List<ProjectRoot> roots = List.of(sessionRoot(ws));
+        String rel = virtualPath == null ? "" : virtualPath.trim().replace('\\', '/');
+        while (rel.startsWith("/")) rel = rel.substring(1);
+        if (rel.startsWith("workspace/")) rel = rel.substring("workspace/".length());
+        parseRel(rel, false);
+        String abs = abs(roots.get(0), rel);
+        Map<String, Object> st = executorFiles.stat(ws.executorId(), roots, abs);
+        if (Boolean.TRUE.equals(st.get("isDir"))) throw new IllegalArgumentException("这是一个文件夹，不能预览");
+        String name = str(st.get("name"));
+        long size = asLong(st.get("size"));
+        String ext = PreviewTypes.extOf(name);
+        String contentType = PreviewTypes.viewContentType(ext);
+        if (contentType == null) throw new IllegalArgumentException("该文件类型不支持预览，请下载后查看");
+        String capError = PreviewTypes.viewCapError(ext, size);
+        if (capError != null) throw new IllegalArgumentException(capError);
+        if (size > 10L * 1024 * 1024) throw new IllegalArgumentException("文件太大，不能在这里预览，请下载后查看");
+        ExecutorFiles.ReadBytes bytes = executorFiles.readRange(ws.executorId(), roots, abs, 0, (int) size);
         return new ViewFile(contentType, bytes.bytes(), name);
     }
 
@@ -388,46 +445,98 @@ public class ProjectFileService {
         });
     }
 
+    /** 会话级本机目录的下载：虚拟路径首段是 {@code workspace}，其余是目录内相对路径。 */
+    private Download downloadFromSessionRoot(SessionWorkspaceService.Workspace ws, String relPath) {
+        List<ProjectRoot> roots = List.of(sessionRoot(ws));
+        String rel = relPath == null ? "" : relPath.trim().replace('\\', '/');
+        while (rel.startsWith("/")) rel = rel.substring(1);
+        if (rel.startsWith("workspace/")) rel = rel.substring("workspace/".length());
+        parseRel(rel, false);
+        String abs = abs(roots.get(0), rel);
+        Map<String, Object> st = executorFiles.stat(ws.executorId(), roots, abs);
+        if (Boolean.TRUE.equals(st.get("isDir"))) throw new IllegalArgumentException("这是一个文件夹");
+        String name = str(st.get("name"));
+        long size = asLong(st.get("size"));
+        return new Download(name, size, out -> {
+            long offset = 0;
+            while (offset < size) {
+                int want = (int) Math.min(DOWNLOAD_CHUNK, size - offset);
+                ExecutorFiles.ReadBytes chunk = executorFiles.readRange(
+                        ws.executorId(), roots, abs, offset, want);
+                if (chunk.bytes().length == 0) break;
+                out.write(chunk.bytes());
+                offset += chunk.bytes().length;
+            }
+        });
+    }
+
     // ==================== 会话沙盒文件（没挂工作区的「会话」栏） ====================
 
     public Map<String, Object> listSessionFiles(String uid, String sessionId) {
         Project p = projectService.projectOfSession(sessionId);
         if (p != null && projectService.isLocal(p)) {
-            List<ProjectRoot> roots = requireRoots(p);
-            List<Map<String, Object>> files = new ArrayList<>();
-            for (ProjectRoot r : roots) {
-                for (Map<String, Object> row : executorFiles.tree(executorId(p), roots, r.getPath(),
-                        MAX_ENTRIES, MAX_TREE_DEPTH)) {
-                    if (Boolean.TRUE.equals(row.get("isDir"))) continue;
-                    String virtualPath = r.getAlias() + "/" + str(row.get("path"));
-                    String ext = PreviewTypes.extOf(str(row.get("name")));
-                    Map<String, Object> m = new LinkedHashMap<>();
-                    m.put("kind", "file");
-                    m.put("path", virtualPath);
-                    m.put("name", str(row.get("name")));
-                    m.put("ext", ext);
-                    m.put("preview", PreviewTypes.kindOf(ext));
-                    m.put("size", asLong(row.get("size")));
-                    m.put("mtime", asLong(row.get("mtimeMs")));
-                    addViewUrl(m, p.getId(), virtualPath, asLong(row.get("size")));
-                    files.add(m);
-                }
-            }
-            files.sort(Comparator.comparingLong((Map<String, Object> x) -> asLong(x.get("mtime"))).reversed());
-            Map<String, Object> out = new LinkedHashMap<>();
-            out.put("files", files.size() > MAX_ENTRIES ? new ArrayList<>(files.subList(0, MAX_ENTRIES)) : files);
-            out.put("total", files.size());
-            out.put("truncated", files.size() > MAX_ENTRIES);
-            out.put("local", true);
-            return out;
+            return localSessionFiles(sessionId, executorId(p), requireRoots(p), p.getId());
         }
-        return listServerSessionFiles(uid, sessionId);
+        // 隐式会话的本机后端（工作区=用户电脑）：只认已经钉住的目录，打开一条问答会话不该建目录
+        SessionWorkspaceService.Workspace sw = sessionLocal(sessionId);
+        if (sw != null) {
+            return localSessionFiles(sessionId, sw.executorId(), List.of(sessionRoot(sw)), null);
+        }
+        Map<String, Object> server = listServerSessionFiles(uid, sessionId);
+        // 钉住了本机目录但执行器离线：这一轮的文件在云端沙盒，列表给的是那一份；
+        // 本机旧文件看不到，界面必须说出来（不能让人以为本机文件没了）。
+        if (sessionWorkspace != null && sessionWorkspace.existingLocal(sessionId) != null) {
+            server.put("localOffline", true);
+        }
+        return server;
+    }
+
+    /**
+     * 本机目录上的会话文件清单。{@code projectId} 非空 = 显式工作区（预览 token 走工作区口径），
+     * 为空 = 会话级本机目录（预览 token 走会话口径）。
+     */
+    private Map<String, Object> localSessionFiles(String sessionId, String executorId,
+                                                  List<ProjectRoot> roots, String projectId) {
+        List<Map<String, Object>> files = new ArrayList<>();
+        for (ProjectRoot r : roots) {
+            for (Map<String, Object> row : executorFiles.tree(executorId, roots, r.getPath(),
+                    MAX_ENTRIES, MAX_TREE_DEPTH)) {
+                if (Boolean.TRUE.equals(row.get("isDir"))) continue;
+                String virtualPath = r.getAlias() + "/" + str(row.get("path"));
+                String ext = PreviewTypes.extOf(str(row.get("name")));
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("kind", "file");
+                m.put("path", virtualPath);
+                m.put("name", str(row.get("name")));
+                m.put("ext", ext);
+                m.put("preview", PreviewTypes.kindOf(ext));
+                m.put("size", asLong(row.get("size")));
+                m.put("mtime", asLong(row.get("mtimeMs")));
+                if (projectId != null) {
+                    addViewUrl(m, projectId, virtualPath, asLong(row.get("size")));
+                } else {
+                    addSessionViewUrl(m, sessionId, virtualPath, asLong(row.get("size")));
+                }
+                files.add(m);
+            }
+        }
+        files.sort(Comparator.comparingLong((Map<String, Object> x) -> asLong(x.get("mtime"))).reversed());
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("files", files.size() > MAX_ENTRIES ? new ArrayList<>(files.subList(0, MAX_ENTRIES)) : files);
+        out.put("total", files.size());
+        out.put("truncated", files.size() > MAX_ENTRIES);
+        out.put("local", true);
+        return out;
     }
 
     public Download downloadSessionFile(String uid, String sessionId, String relPath) {
         Project p = projectService.projectOfSession(sessionId);
         if (p != null && projectService.isLocal(p)) {
             return download(uid, p.getId(), relPath);
+        }
+        SessionWorkspaceService.Workspace sw = sessionLocal(sessionId);
+        if (sw != null) {
+            return downloadFromSessionRoot(sw, relPath);
         }
         Path file = resolveIn(sessionBase(uid, sessionId), relPath);
         String name = file.getFileName().toString();

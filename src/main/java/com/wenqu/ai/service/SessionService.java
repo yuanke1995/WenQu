@@ -249,10 +249,22 @@ public class SessionService {
             m.put("roots", roots);
             m.put("executorOnline", p.getExecutorId() != null && !p.getExecutorId().isBlank()
                     && executorRegistry.online(p.getExecutorId()));
-            // 档位只对工作区有意义：implicit 容器里的会话不汇报（前端的选择器也不摆这一档）
-            m.put("permissionPreset", s.getPermissionPreset() == null
-                    || Project.SELECTION_IMPLICIT.equals(p.getSelectionStatus())
-                    ? "" : s.getPermissionPreset());
+            // 隐式会话的工作区后端（本机执行器目录 / 离线时云端沙盒）：界面按它决定
+            // 「权限档位选择器要不要摆」「文件栏是不是本机目录」。
+            m.put("wsBackend", s.getWsBackend() == null ? "" : s.getWsBackend());
+            m.put("wsRoot", s.getWsRoot() == null ? "" : s.getWsRoot());
+            m.put("wsExecutorId", s.getWsExecutorId() == null ? "" : s.getWsExecutorId());
+            m.put("wsExecutorOnline", s.getWsExecutorId() != null && !s.getWsExecutorId().isBlank()
+                    && executorRegistry.online(s.getWsExecutorId()));
+            boolean pinnedLocal = SessionWorkspaceService.BACKEND_LOCAL.equals(s.getWsBackend());
+            boolean pinnedOnline = pinnedLocal && s.getWsExecutorId() != null
+                    && executorRegistry.online(s.getWsExecutorId());
+            m.put("sessionLocal", pinnedLocal);
+            // 本轮实际后端：钉住本机但执行器离线时文件在云端沙盒，文件栏文案要跟着变
+            m.put("wsEffective", pinnedLocal ? (pinnedOnline ? "local" : "cloud")
+                    : (SessionWorkspaceService.BACKEND_CLOUD.equals(s.getWsBackend()) ? "cloud" : ""));
+            // 权限档位：显式工作区与隐式会话都认（隐式会话现在也有本机目录/云端沙盒）
+            m.put("permissionPreset", s.getPermissionPreset() == null ? "" : s.getPermissionPreset());
             return m;
         } catch (Exception e) {
             log.warn("[PROJECT] 会话工作区标识解析失败（按无工作区处理）session={}: {}", sessionId, e.getMessage());
@@ -776,22 +788,19 @@ public class SessionService {
      * <p>档位码的合法性在这里校：写进库再发现认不出，问答侧只能回落到更低的档位，
      * 用户看到的「已切到完全权限」就成了一句假话。
      *
-     * <p><b>只有工作区会话能设档位</b>：档位管的是「工作区目录里的读写与命令」，侧栏「会话」
-     * （implicit 兜底容器）没有目录——存下去既没有指代对象，界面上也没了改回来的入口。
-     * 清除（follow）不拦：给库里残值留一条出路。
+     * <p><b>会话级档位对显式工作区与隐式会话都生效</b>：隐式会话也有工作区后端（本机执行器目录；
+     * 离线时是云端沙盒），不再存在「没有目录所以没法执行」的会话。目录尚未落库时也允许先存——
+     * 下一轮解析出目录后按这个档位执行，不出现「选了却报错」。
+     * 清除（follow）永远不拦：给库里残值留一条出路。
      */
     public String setPermissionPreset(String userId, String sessionId, String code) {
-        Session owned = assertOwned(sessionId, userId);
+        assertOwned(sessionId, userId);
         String v = code == null ? "" : code.trim();
         if (v.isEmpty() || "follow".equalsIgnoreCase(v) || "default".equalsIgnoreCase(v)) {
             sessionMapper.update(null, new LambdaUpdateWrapper<Session>()
                     .eq(Session::getId, sessionId)
                     .set(Session::getPermissionPreset, null));
             return null;
-        }
-        if (!inRealWorkspace(owned)) {
-            throw new com.wenqu.ai.common.BizException(400,
-                    "权限档位只对工作区会话生效：这个会话没有挂工作区");
         }
         com.wenqu.ai.agent.permission.PermissionPreset p =
                 com.wenqu.ai.agent.permission.PermissionPreset.fromCode(v);
@@ -816,15 +825,14 @@ public class SessionService {
     /**
      * 会话当前选的档位码（系统侧读取，不校验归属；null=没选过）。
      *
-     * <p>不在真工作区里的会话一律按「没选过」返回：档位只对工作区目录有意义，
-     * 存量残值（设过档位后把会话移出工作区 / 工作区被删）不该在这些会话上悄悄生效。
+     * <p>显式工作区与隐式会话一律认库里的值：隐式会话也有工作区后端（本机执行器目录；
+     * 离线时是云端沙盒），档位在这些会话上有真实的执行对象。
      */
     public String permissionPresetOf(String sessionId) {
         if (sessionId == null || sessionId.isBlank()) return null;
         try {
             Session s = sessionMapper.selectById(sessionId);
-            if (s == null || s.getPermissionPreset() == null) return null;
-            return inRealWorkspace(s) ? s.getPermissionPreset() : null;
+            return s == null ? null : s.getPermissionPreset();
         } catch (Exception e) {
             return null;
         }

@@ -1303,7 +1303,8 @@
            接口给的是摊平的一维清单，这里按相对路径折回目录树：整条路径摊在一行时名字全被截断，
            认不出哪份是成品；折成树之后行内只剩文件名，腾出的位置给大小。 -->
       <div v-if="sandboxFiles.length || sandboxErr || sandboxLoading" class="rp-card">
-        <div class="rp-label">{{ sessionWorkspace && sessionWorkspace.isLocal ? '本机文件' : '会话文件' }} · {{ sandboxCount }} 个{{ sandboxBytes ? ' · ' + sbSize(sandboxBytes) : '' }}</div>
+        <div class="rp-label">{{ sessionWorkspace && (sessionWorkspace.isLocal || sessionWorkspace.wsEffective === 'local') ? '本机文件' : '会话文件' }} · {{ sandboxCount }} 个{{ sandboxBytes ? ' · ' + sbSize(sandboxBytes) : '' }}</div>
+        <div v-if="sandboxLocalOffline" class="rp-sb-hint">本机执行器离线，这里显示的是云端沙盒文件；本机上的旧文件要等执行器在线后才能看到</div>
         <div v-if="sandboxLoading" class="rp-sb-hint">正在读取目录…</div>
         <div v-else-if="sandboxErr" class="rp-sb-err">
           <span>{{ sandboxErr }}</span>
@@ -3499,7 +3500,7 @@ const {
   historyError, retryHistory,
   // 沙盒目录同样整族吃引擎：取数、判据、折树、下载与存为产物（2026-10-25 下沉，与任务清单同一刀）
   sandboxFiles, sandboxRows, sandboxCount, sandboxBytes, sandboxRest,
-  sandboxErr, sandboxLoading, sandboxTaken, sessionSandboxActive,
+  sandboxErr, sandboxLocalOffline, sandboxLoading, sandboxTaken, sessionSandboxActive,
   loadSandboxFiles, toggleSandboxDir, sandboxDownload, sandboxTake, sbSize,
   // 后台进程那一族同样吃引擎（2026-10-26 下沉）：本页只留这张卡的摆法
   procs, procErr, procLoading, procCardVisible, killingTag, loadSandboxProcs, procAge, killProc,
@@ -3601,9 +3602,9 @@ watch(() => messages.value, () => nextTick(() => { updateTailSpacer(); scrollFor
 // 取数口径与后端 SessionService.workspaceOfSession 同源（session → project），
 // 切换会话即刷新；取不到（无工作区/非本人/接口异常）一律不显示，不用侧栏分组猜。
 const sessionWorkspace = ref(null)
-/** 这条会话是不是真挂在一个工作区下：implicit 兜底容器（侧栏「会话」那一栏）不算——
- *  它没有目录，会话走服务器沙盒，「工作区内修改」这一档没有指代对象。 */
-const inWorkspaceSession = computed(() => !!(sessionWorkspace.value && !sessionWorkspace.value.implicit))
+/** 这条会话是不是挂在一个工作区下：显式工作区与隐式会话都算——隐式会话现在也有本机执行器目录
+ *  （侧栏「会话」不再等于「没有目录」；离线时退回云端沙盒，文件仍在服务器上有目录可执行）。 */
+const inWorkspaceSession = computed(() => !!sessionWorkspace.value)
 // ---------- 会话级权限档位（本机工作区的文件/命令能干什么） ----------
 const permissionPresets = ref([])
 /** 当前会话选的档位码；''=这条会话还没选过，按智能体自己的档位执行。切会话时从 sessionWorkspace 恢复。 */
@@ -3775,9 +3776,9 @@ const refreshSessionWorkspace = async () => {
 }
 
 // 会话级权限档位跟着会话走：切会话就恢复那条会话自己的选择（没选过=按这位智能体的档位显示）。
-// 无工作区/隐式容器的会话不认这个档位——选择器不出现，库里残值也不该悄悄生效。
+// 隐式会话同样认这个档位：它的工作区目录在本机执行器上（离线时是云端沙盒），不是「没有目录」。
 watch(sessionWorkspace, ws => {
-  sessionPermission.value = ws && !ws.implicit && ws.permissionPreset ? String(ws.permissionPreset) : ''
+  sessionPermission.value = ws && ws.permissionPreset ? String(ws.permissionPreset) : ''
 }, { immediate: true })
 
 // ==================== 输入框内联 chip（正文与引用同一条流） ====================
