@@ -32,6 +32,12 @@ const arg = (name, dft) => {
 const SESSION = arg('session')
 const SHARE = arg('share')
 const SHOT = arg('shot', '/tmp/wenqu-mobile.png')
+const DUMP = arg('dump', '')
+/** 不给 --expect 时按「停止轮」断言（历史默认）；给了就只断言这段话出现且正文够长，可配 --width/--height 看桌面宽度。 */
+const EXPECT = arg('expect', '')
+const W = Number(arg('width', 390))
+const H = Number(arg('height', 844))
+const MOBILE = arg('mobile', '1') !== '0'
 
 if (!existsSync(CHROME)) {
   console.error(`[mobile] 找不到 Chromium：${CHROME}`)
@@ -109,8 +115,8 @@ async function main() {
     await cdp.send('Page.enable')
     await cdp.send('Runtime.enable')
     await cdp.send('Emulation.setDeviceMetricsOverride', {
-      width: 390, height: 844, deviceScaleFactor: 2, mobile: true,
-      screenWidth: 390, screenHeight: 844,
+      width: W, height: H, deviceScaleFactor: MOBILE ? 2 : 1, mobile: MOBILE,
+      screenWidth: W, screenHeight: H,
     })
 
     const token = process.env.WENQU_TOKEN || ''
@@ -130,33 +136,47 @@ async function main() {
       })
       const m = metrics.result.value
       const problems = []
-      if (m.w !== 390) problems.push(`视口宽 ${m.w} ≠ 390`)
+      if (m.w !== W) problems.push(`视口宽 ${m.w} ≠ ${W}`)
       if (m.scrollW > m.w + 1) problems.push(`横向溢出：scrollWidth=${m.scrollW} > ${m.w}`)
       if (!ok) problems.push('页面断言未通过（内容没渲染出来或被裁掉）')
       console.log(`[mobile] ${name}: ${JSON.stringify(m)} ${problems.length ? '✗ ' + problems.join('；') : '✓'}`)
       return problems.length === 0
     }
 
-    const one = await check('主对话(停止轮)', `${BASE}/chat?sid=${encodeURIComponent(SESSION)}`,
-      `const t = document.body.innerText;
-       const b = [...document.querySelectorAll('.bubble.ai')].pop();
-       const bt = b ? b.innerText : '';
-       return bt.includes('已停止本轮') && (bt.match(/已停止本轮/g) || []).length === 1
-         && bt.replace(/\\s/g,'').length > 20
-         && !!document.querySelector('textarea, [contenteditable="true"]')`)
+    const bubble = `const b = [...document.querySelectorAll('.bubble.ai')].pop();
+       const bt = b ? b.innerText : '';`
+    const chatPredicate = EXPECT
+      ? `${bubble}
+         return bt.includes(${JSON.stringify(EXPECT)}) && bt.replace(/\\s/g,'').length > 200
+           && !!document.querySelector('textarea, [contenteditable="true"]')`
+      : `${bubble}
+         return bt.includes('已停止本轮') && (bt.match(/已停止本轮/g) || []).length === 1
+           && bt.replace(/\\s/g,'').length > 20
+           && !!document.querySelector('textarea, [contenteditable="true"]')`
+    const one = await check(EXPECT ? '主对话(真实轮)' : '主对话(停止轮)',
+      `${BASE}/chat?sid=${encodeURIComponent(SESSION)}`, chatPredicate)
 
     let two = true
     if (SHARE) {
-      two = await check('分享页', `${BASE}/shared/${encodeURIComponent(SHARE)}`,
-        `const t = document.body.innerText;
-         return t.includes('对话分享') && t.includes('已停止本轮')
-           && !/已调用工具|向用户提问|过程/.test(t)`)
+      const sharePredicate = EXPECT
+        ? `const t = document.body.innerText;
+           return t.includes('对话分享') && t.includes(${JSON.stringify(EXPECT)})
+             && !/已调用工具|向用户提问|过程/.test(t)`
+        : `const t = document.body.innerText;
+           return t.includes('对话分享') && t.includes('已停止本轮')
+             && !/已调用工具|向用户提问|过程/.test(t)`
+      two = await check('分享页', `${BASE}/shared/${encodeURIComponent(SHARE)}`, sharePredicate)
     }
 
     const shot = await cdp.send('Page.captureScreenshot', { format: 'png' })
     mkdirSync(join(SHOT, '..'), { recursive: true })
     writeFileSync(SHOT, Buffer.from(shot.data, 'base64'))
     console.log(`[mobile] 截图 → ${SHOT}`)
+    if (DUMP) {
+      const text = await cdp.send('Runtime.evaluate', { expression: 'document.body.innerText', returnByValue: true })
+      writeFileSync(DUMP, text.result.value || '')
+      console.log(`[mobile] 文本 → ${DUMP}`)
+    }
     cdp.close()
     return one && two
   } finally {
