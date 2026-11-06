@@ -9,6 +9,7 @@ import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * 产物交付工具（present_artifacts 模式）：模型在回答中调用本工具，把结构化的文本内容
@@ -36,6 +37,22 @@ public class PresentArtifactTool {
      */
     public static final String CTX_USER_ID = "userId";
 
+    /** 「见 xxx.html」这类引用句只可能出现在短内容里；正文产物超过这个长度就不再按引用判。
+     * 2026-11-06 实测：模型把官网写进沙盒后，content 只传了「见 index.html（……）」，
+     * 工具照字面落库成 95 B 产物，还回了「已生成产物」——用户点开只看到一句废话。 */
+    private static final int POINTER_MAX_CHARS = 200;
+
+    /** 文件引用句：以「见/详见/请见/参见/see」开头并点名一个受支持扩展名的文件 */
+    private static final Pattern FILE_REFERENCE = Pattern.compile(
+            "^[\\s\"'“”‘’]*(?:见|参见|详见|请见|见附件|请看|see|refer\\s+to)\\s*[\"'“”‘’]?"
+                    + "[\\w./\\\\-]+\\.(?:html?|md|markdown|csv|tsv|json|txt|log|xml|ya?ml)\\b",
+            Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS);
+
+    /** 整个 content 只有一个文件名（模型把「文件名」当成了「内容」） */
+    private static final Pattern BARE_FILENAME = Pattern.compile(
+            "^[\\s\"'“”‘’]*[\\w./\\\\-]+\\.(?:html?|md|markdown|csv|tsv|json|txt|log|xml|ya?ml)[\\s\"'“”‘’]*$",
+            Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CHARACTER_CLASS);
+
     private final ArtifactService artifactService;
 
     public PresentArtifactTool(ArtifactService artifactService) {
@@ -51,9 +68,11 @@ public class PresentArtifactTool {
      * @param description 给用户的产物说明（简短，一两句话，说明这是什么）
      * @return 产物访问地址与信息
      */
-    @Tool(description = "生成并交付一个文件产物（Markdown/CSV/JSON/HTML）。当用户要求把回答整理成可下载、可预览的清单/表格/文档时调用；产物会实时推送给用户展示为卡片。")
+    @Tool(description = "生成并交付一个文件产物（Markdown/CSV/JSON/HTML）。当用户要求把回答整理成可下载、可预览的清单/表格/文档时调用；产物会实时推送给用户展示为卡片。"
+            + "content 必须是完整文件正文，不能只写文件名或「见 xxx」这类转述；文件已经写在沙盒/工作区时，改用 deliver_artifact 按文件路径交付。")
     public String presentArtifact(
-            @ToolParam(description = "产物内容（纯文本；Markdown 表格用 .md，逗号分隔数据用 .csv，结构化数据用 .json，网页片段用 .html）") String content,
+            @ToolParam(description = "产物完整内容（纯文本；Markdown 表格用 .md，逗号分隔数据用 .csv，结构化数据用 .json，网页用 .html）。"
+                    + "不是文件名/路径，也不要写「见 index.html」之类的引用句") String content,
             @ToolParam(description = "产物文件名（含扩展名，如 操作清单.md / 数据汇总.csv；支持 md/txt/csv/json/html）") String filename,
             @ToolParam(description = "给用户的产物说明（简短，说明这是什么，如“已生成动态子表配置对照表”）") String description,
             ToolContext toolContext) {
@@ -66,6 +85,12 @@ public class PresentArtifactTool {
         if (sessionId == null || sessionId.isBlank()) {
             return "无法定位当前会话，产物交付失败";
         }
+        String rejection = contentRejection(filename, content);
+        if (rejection != null) {
+            log.warn("[ARTIFACT] presentArtifact 拒绝入库 session={} file={} chars={}：{}",
+                    sessionId, filename, content == null ? 0 : content.length(), rejection);
+            return "产物生成失败：" + rejection;
+        }
         try {
             // 落盘 + 登记 c_ai_artifact（归属取会话的 user_id），返回 {id,url,filename,ext,size,description}
             java.util.Map<String, Object> info =
@@ -77,5 +102,31 @@ public class PresentArtifactTool {
         } catch (IllegalArgumentException | IllegalStateException e) {
             return "产物生成失败：" + e.getMessage();
         }
+    }
+
+    /**
+     * content 不是文件正文时返回可执行的拒绝原因；正常返回 null。
+     * <p>必须在落库前拦：presentArtifact 对 content 是「字面照写」，一旦把引用句写进去，
+     * 产物卡片看起来成功、点开却只有一句话，模型也不会重试。
+     */
+    static String contentRejection(String filename, String content) {
+        String text = content == null ? "" : content.trim();
+        String ext = extOf(filename);
+        if (("html".equals(ext) || "htm".equals(ext)) && text.indexOf('<') < 0) {
+            return "content 只有纯文本，不是完整网页。请把 <!DOCTYPE html> 起的完整 HTML 放进 content 重新调用；"
+                    + "页面若已写在沙盒/工作区文件里，改用 deliver_artifact(filePath=文件路径) 交付。";
+        }
+        if (text.length() <= POINTER_MAX_CHARS
+                && (FILE_REFERENCE.matcher(text).find() || BARE_FILENAME.matcher(text).matches())) {
+            return "content 只是对文件的引用（" + text + "），不是文件内容。请把完整内容放进 content 重新调用；"
+                    + "文件若已写在沙盒/工作区，改用 deliver_artifact(filePath=文件路径) 交付。";
+        }
+        return null;
+    }
+
+    private static String extOf(String filename) {
+        if (filename == null) return "";
+        int dot = filename.lastIndexOf('.');
+        return dot < 0 ? "" : filename.substring(dot + 1).toLowerCase();
     }
 }
