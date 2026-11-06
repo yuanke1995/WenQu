@@ -22,7 +22,8 @@
 | 工作区完整版 | 🚧 | A 上下文边界 + B 专注 + C1 动态 ✅（2760e4b8、12d8d433）；**剩 C2 事项清单、C3 进入即推进、A4 记忆分域、D 模板** |
 | 测试地基 | ❌ 结构性债 | 自动化测试近乎为零（RBAC 判定核 19 测是起点，且 src/test/ 约定不入库）；公共件改动目前靠人工回归——这正是「改烂旧功能」风险的主因 |
 | bug 移交池 | 🚧 | 2026-11-04 第二波前后端猎捕移交 13 项（0-token 误标、编辑重发互斥、审批超时绕 finish 等），细节在 11-04 会话记忆 |
-| 延迟线尾巴 | 🚧 | 问答稳态首包 6s→1.2s 已落地（2026-11-06）；**新尾巴（11-06 晨云端实测）：新会话首轮必付「开轮前准备」~3.5s**（HarnessAgent 冷构建，MCP 连接有 reset 现行；同会话重建仅 467ms）+ 机器耗时 1.5s（16.8k prompt 缓存仅中 2k）；16.8k=toolSchema 9551（52 把工具，57%）+system 7206。刀点：会话创建异步预热、toolSchema 继续砍（WIP 勿撞车）、前缀稳定性换缓存 |
+| 延迟线尾巴 | 🚧 | 问答稳态首包 6s→1.2s 已落地（2026-11-06）；**新尾巴（11-06 08:42 云端实测 1+1=?）：整轮 5.1s = 开轮前准备 3.57s + 机器 1.58s**（同会话二轮仅 1.9s）。准备段拆准：沙盒冷创建返回 3.13s（建容器+等 /v1/sandbox 就绪；容器启动到 python-server RUNNING 约 1.56s，剩余约 1.3s 在就绪探测/返回路径）+ HarnessAgent 构建 0.41s——主因是沙盒冷装配，不是构建/MCP。机器段：模型 1.04s（16.8k prompt，缓存只中 0~3.5k）+ 提示词装配 0.22s + 收尾 0.31s；16.8k=toolSchema 9551（52 把工具，57%）+system 7206。缓存不中的实锤：框架把会话 id（`AgentStateStore ID:`）和沙盒容器 id 拼进 system prompt，每个新会话前缀必变；同前缀连发时实测能中 14k。刀点：沙盒预热必须「按意图+全局配额」（线上 4C/3.6G，单空闲沙盒 ~176MB，实测只剩 ~1.5G 可用；不能在 `/session/new` 无条件预热，否则开页即建容器、10k 用户直接打爆）、前缀去每会话 id、toolSchema 继续砍（WIP 勿撞车） |
+| 问答流水线重做 | 🚧 | 参考方案见 `.zcode/plans/plan-chat-pipeline-rebuild.md`（**DSH 问答架构与矩阵**，DeepSeek Harness 开源实现）；问渠自有 A/B 方案已另存 `.zcode/plans/plan-chat-pipeline-wenqu.md`。**M1/M2 代码已完成并本地验证**：聊天档免沙盒（按意图分流）、宿主 scratch（可配 `chat.scratchDir`，多副本须共享卷）、跳过 run_code/MCP（`chat.mcpEnabled` 默认关，开时仍受 `mcp.turnWaitMs` 有界等待）、前缀稳定器、MCP 等待有界、`chat.profileAuto` 回滚开关、scratch 保留清理；tokens 落 `profile=chat/workspace`。本地实测：新会话 `1+1=?` 1.2~1.3s、同会话二轮 0.68~0.72s；聊天档 `write_file`/`presentArtifact` 均无沙盒；`profileAuto=false` 可回滚；挂死 MCP 只等 1.5s；scratch 过期目录 5s 清理；工作区沙盒 E2E 已本地验证（默认 dev token，冷态 4.76s / 热态 2.79s，`write_file` 214ms，文件在容器内）；隐式会话异步升级机制已验证（默认关；首轮 1.33s + 后台 2.1s 建沙盒，二轮 1.08s 切 workspace，粘性 0.48s；首轮按方案 1 隐藏文件/命令工具，mock 验到 `write_file=false`、无 scratch 文件，交接问题关闭）；静态+运行时+分享/访客夹具全过（2 项按参数 SKIP）。**待做**：云端真实模型/前缀缓存验证（需授权部署 `wen-qu`）；M3 剩余：沙盒池化/租约（全局 cap=6 已做，cap=1 实测 1.06s 降级 scratch；续跑组闸已补）、多副本共享存储、核心工具面继续裁剪。 |
 | 市场三期 | ⏸ | 三期 MCP 目录未动；二期（应用模板 fork/工作流导入导出/官方模板）2026-10-25 完毕 26 项 E2E，**当时未提交，入库状态待核** |
 | RBAC 批次 F | ⏸ 排 M7 | v1.0 已于 2026-11-03~04 全量落地（10 提交）；仅剩批次 F 排期 M7；D2 粒度是后续唯一阻塞项 |
 | 工作流升级第 4 期+ | ❓ | 第 0~3 期 ✅（ff637d20 / 5e7fef65 / 78f7053e / ebdea58c）；第 4 期排期随文档散失，**续做前先重建**；11 月 backlog 5 条：事件触发 / KB 写入节点 / 并发可视化 / 工作流市场 / trace 摘要可配 |
@@ -78,3 +79,5 @@
 - 检索两缺口：元数据过滤（c_ai_knowledge 无 metadata/tags 字段）、检索内容注入防护与来源可信度。
 - 「后端有前端没接」5 处（2026-10-07 盘点：单轮删除撤销、清空全部会话、沙盒文件浏览三接口、关键词索引 stats/reindex 无 UI、运维端点无入口）——现状待核，动相关域时顺手核销。
 - 配置默认值三层口径：schema def 只给前端、defaults() 是运行时权威、getDouble fallback 纯防御；多读点 key 默认值进 ConfigDefaults 常量类。
+- 显式本机工作区（ExecutorFilesystem）仍会在 `FrameworkSessions.open` 里建沙盒：文件其实走本机执行器，沙盒是白建一个容器。修法是把 `workspaceProfile` 与 `sandboxAttach` 拆开，等本机执行器配对后真机验证（2026-11-06 代码审计发现）。
+- ~~`scripts/mac/check-agent-runtime.py --fixtures` 与 `c_ai_agent_share` 表结构漂移~~ 已修（2026-11-06）：`c_ai_agent` 选 `id`、分享 SSE 用 raw POST、`count(*)` 断言按首行值判；修复后分享/访客夹具全过。
