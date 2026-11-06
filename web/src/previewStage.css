@@ -77,6 +77,10 @@ body.ps-lock { overflow: hidden; }
 
 /* 读字档：正文宽度收在可读区间，不铺满 4K 屏 */
 .ps-doc { max-width: 920px; margin: 0 auto; padding: 22px 26px 40px; }
+/* 预览台里文本整份摆出来，不沿用气泡那个 360px 代码块内滚动：
+   气泡高 360px 是为了不把对话流撑爆，这里是整屏读文件，外面已有 .ps-body 一条滚动条，
+   再套一层内滚动等于长文件要在一个小窗口里扒。横向仍按 .md pre 的 overflow-x 走。 */
+.ps-doc pre { max-height: none; overflow-y: visible; }
 .ps-note {
   padding: 8px 0; font-size: var(--app-fs-sm); color: var(--app-text2);
   border-top: 1px solid var(--app-border); margin-top: 14px;
