@@ -38,12 +38,14 @@ const EXPECT = arg('expect', '')
 const W = Number(arg('width', 390))
 const H = Number(arg('height', 844))
 const MOBILE = arg('mobile', '1') !== '0'
+/** 只看分享页（免登录）：跳过主对话断言，WENQU_TOKEN 可给任意占位值。 */
+const SHARE_ONLY = process.argv.includes('--share-only')
 
 if (!existsSync(CHROME)) {
   console.error(`[mobile] 找不到 Chromium：${CHROME}`)
   process.exit(2)
 }
-if (!SESSION) {
+if (!SESSION && !SHARE_ONLY) {
   console.error('[mobile] 缺少 --session <会话 id>')
   process.exit(2)
 }
@@ -153,7 +155,7 @@ async function main() {
          return bt.includes('已停止本轮') && (bt.match(/已停止本轮/g) || []).length === 1
            && bt.replace(/\\s/g,'').length > 20
            && !!document.querySelector('textarea, [contenteditable="true"]')`
-    const one = await check(EXPECT ? '主对话(真实轮)' : '主对话(停止轮)',
+    const one = SHARE_ONLY ? true : await check(EXPECT ? '主对话(真实轮)' : '主对话(停止轮)',
       `${BASE}/chat?sid=${encodeURIComponent(SESSION)}`, chatPredicate)
 
     let two = true

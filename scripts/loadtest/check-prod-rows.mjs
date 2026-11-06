@@ -97,11 +97,14 @@ for (const row of rows) {
   const legacyChars = (row.content || '').length + (row.thinking || '').length + (row.process_text || '').length
     + (row.timeline || '').length + (row.tool_calls || '').length + (row.artifacts || '').length
   const ratio = legacyChars ? (row.blocks.length / legacyChars) : Infinity
-  console.log(`[行] ${tag} 块=${blocks.blocks.length}(${blocks.blocks.map((x) => x.kind[0]).join('')}) `
+  /** text 与 tool 首字母都是 t，压成一行时用固定字母表区分。 */
+  const kindChar = { text: 'x', tool: 'T', think: 'k', process: 'p', artifact: 'a', notice: 'n', steer: 's' }
+  console.log(`[行] ${tag} 块=${blocks.blocks.length}(${blocks.blocks.map((x) => kindChar[x.kind] || '?').join('')}) `
     + `answer=${answer.length}字 旁白=${narr} 工具=${view.toolCalls.length} 产物=${artifacts.size} `
     + `think=${(view.thinking || '').length}字 过程=${(view.processText || '').length}字 `
     + `notice=${blocks.blocks.filter((x) => x.kind === 'notice').map((x) => x.tone).join(',') || '-'} `
-    + `旧列和=${legacyChars} blocks=${row.blocks.length}(${ratio.toFixed(2)}×)`)
+    + `旧列和=${legacyChars} blocks=${row.blocks.length}(${ratio.toFixed(2)}×`
+    + `${legacyChars < 200 ? '，短轮：倍数被 JSON 信封支配，不作体积判据' : ''})`)
 }
 
 console.log(`\n[prod-rows] 助手行 ${assistants} 条，其中带 blocks ${withBlocks} 条`)
@@ -119,5 +122,5 @@ console.log('  ✓ 正文 / 工具卡 / 产物 / notice / 答案边界 / 双写 
 SELECT id, session_id, role, create_time, IFNULL(end_reason,''), IFNULL(turn_id,''),
        IFNULL(content,''), IFNULL(thinking,''), IFNULL(process_text,''), IFNULL(timeline,''),
        IFNULL(tool_calls,''), IFNULL(artifacts,''), IFNULL(blocks,''), IFNULL(tokens,'')
-FROM c_ai_message WHERE create_time>='2026-11-06 19:22:45' ORDER BY create_time;
+FROM c_ai_message WHERE create_time>='2026-11-06 19:22:45' AND deleted = 0 ORDER BY create_time;
 */
