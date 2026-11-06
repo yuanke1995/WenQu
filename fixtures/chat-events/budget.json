@@ -1,0 +1,2978 @@
+{
+  "capturedAt": "2026-11-06T09:26:46.137Z",
+  "events": [
+    {
+      "type": "turn_start",
+      "data": {
+        "wallMs": 13,
+        "prepMs": 13
+      }
+    },
+    {
+      "type": "turn_start",
+      "data": {
+        "wallMs": 186,
+        "prepMs": 186
+      }
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "warn",
+      "data": "已到整轮时间上限，后面的步骤没有执行。发一句「继续」可以接着做"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "warn",
+      "data": "已到整轮时间上限，后面的步骤没有执行。发一句「继续」可以接着做"
+    },
+    {
+      "type": "usage",
+      "data": {
+        "thinkingChars": 0,
+        "turnElapsedMs": 30173,
+        "profile": "chat",
+        "turnWallMs": 30359,
+        "turnPrepMs": 186
+      }
+    },
+    {
+      "type": "done",
+      "data": {
+        "finalContent": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测\n\n> ⏹ 已到整轮时间上限，后面的步骤没有执行。发一句「继续」可以接着做",
+        "messageId": "b92688c9998b752525c32abc9e2ac48a",
+        "userMessageId": "c6214b076ec1832434502bf34fa226db",
+        "turnId": "ebfa09875f034990aa17156f3574dea2",
+        "model": "mock-chat",
+        "agentId": null,
+        "agentName": null,
+        "sources": [],
+        "finalImages": [],
+        "degradations": [],
+        "elapsedMs": 30173,
+        "humanWaitMs": 0,
+        "turnWallMs": 30359,
+        "prepMs": 186,
+        "tokens": {
+          "thinkingChars": 0,
+          "turnElapsedMs": 30173,
+          "profile": "chat",
+          "turnWallMs": 30359,
+          "turnPrepMs": 186
+        },
+        "toolCalls": [],
+        "blocks": {
+          "v": 1,
+          "turnId": "ebfa09875f034990aa17156f3574dea2",
+          "blocks": [
+            {
+              "kind": "text",
+              "channel": "answer",
+              "text": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
+              "id": "b1"
+            },
+            {
+              "tone": "budget",
+              "text": "> ⏹ 已到整轮时间上限，后面的步骤没有执行。发一句「继续」可以接着做",
+              "kind": "notice",
+              "id": "b2"
+            },
+            {
+              "kind": "text",
+              "channel": "answer",
+              "text": "\n\n> ⏹ 已到整轮时间上限，后面的步骤没有执行。发一句「继续」可以接着做",
+              "id": "b3"
+            }
+          ]
+        },
+        "artifacts": [],
+        "related": [],
+        "thinking": null
+      }
+    }
+  ],
+  "message": {
+    "turnId": "ebfa09875f034990aa17156f3574dea2",
+    "sequence": 2,
+    "role": "assistant",
+    "sources": [],
+    "createTime": "2026-11-06T17:26:46",
+    "blocks": {
+      "v": 1,
+      "turnId": "ebfa09875f034990aa17156f3574dea2",
+      "blocks": [
+        {
+          "kind": "text",
+          "channel": "answer",
+          "text": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
+          "id": "b1"
+        },
+        {
+          "tone": "budget",
+          "text": "> ⏹ 已到整轮时间上限，后面的步骤没有执行。发一句「继续」可以接着做",
+          "kind": "notice",
+          "id": "b2"
+        },
+        {
+          "kind": "text",
+          "channel": "answer",
+          "text": "\n\n> ⏹ 已到整轮时间上限，后面的步骤没有执行。发一句「继续」可以接着做",
+          "id": "b3"
+        }
+      ]
+    },
+    "messageId": "b92688c9998b752525c32abc9e2ac48a",
+    "timeline": [
+      {
+        "kind": "text",
+        "from": 0,
+        "to": 1445
+      }
+    ],
+    "tokens": {
+      "thinkingChars": 0,
+      "turnElapsedMs": 30173,
+      "profile": "chat",
+      "turnWallMs": 30359,
+      "turnPrepMs": 186
+    },
+    "model": "mock-chat",
+    "content": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测\n\n> ⏹ 已到整轮时间上限，后面的步骤没有执行。发一句「继续」可以接着做",
+    "warnMsg": "已到整轮时间上限，后面的步骤没有执行。发一句「继续」可以接着做"
+  },
+  "guestMessage": {
+    "role": "assistant",
+    "content": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测\n\n> ⏹ 已到整轮时间上限，后面的步骤没有执行。发一句「继续」可以接着做",
+    "time": null,
+    "blocks": {
+      "v": 1,
+      "blocks": [
+        {
+          "id": "b1",
+          "kind": "text",
+          "channel": "answer",
+          "text": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测"
+        },
+        {
+          "id": "b3",
+          "kind": "text",
+          "channel": "answer",
+          "text": "\n\n> ⏹ 已到整轮时间上限，后面的步骤没有执行。发一句「继续」可以接着做"
+        }
+      ]
+    }
+  }
+}

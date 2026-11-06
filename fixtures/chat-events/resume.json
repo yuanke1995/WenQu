@@ -1,0 +1,82 @@
+{
+  "capturedAt": "2026-11-06T10:12:40.259Z",
+  "events": [
+    {
+      "type": "snapshot",
+      "data": {
+        "content": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
+        "processText": "",
+        "toolCalls": [],
+        "timeline": [
+          {
+            "from": 0,
+            "to": 32,
+            "kind": "text"
+          }
+        ],
+        "blocks": {
+          "v": 1,
+          "blocks": [
+            {
+              "kind": "text",
+              "channel": "answer",
+              "text": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
+              "id": "b1"
+            }
+          ]
+        },
+        "running": true,
+        "phase": "generating",
+        "sources": [],
+        "images": [],
+        "artifacts": [],
+        "model": "mock-chat",
+        "turnId": "3cb6470aa4814f8ba20c6ab9f0e9003d",
+        "elapsedMs": 2256,
+        "wallMs": 2452,
+        "prepMs": 196,
+        "uid": "yuanke",
+        "seq": 18,
+        "beganAt": 1793959951809,
+        "events": {}
+      }
+    }
+  ],
+  "message": {
+    "turnId": "3cb6470aa4814f8ba20c6ab9f0e9003d",
+    "sequence": 2,
+    "role": "assistant",
+    "sources": [],
+    "createTime": "2026-11-06T18:12:35",
+    "blocks": {
+      "v": 1,
+      "turnId": "3cb6470aa4814f8ba20c6ab9f0e9003d",
+      "blocks": [
+        {
+          "kind": "text",
+          "channel": "answer",
+          "text": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
+          "id": "b1"
+        }
+      ]
+    },
+    "messageId": "1d339dccdcea8d9bdc0be7b9070f893b",
+    "timeline": [
+      {
+        "kind": "text",
+        "from": 0,
+        "to": 56
+      }
+    ],
+    "tokens": {
+      "thinkingChars": 0,
+      "turnElapsedMs": 3057,
+      "profile": "chat",
+      "turnWallMs": 3253,
+      "turnPrepMs": 196
+    },
+    "model": "mock-chat",
+    "content": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测"
+  },
+  "guestMessage": null
+}

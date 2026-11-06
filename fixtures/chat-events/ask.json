@@ -1,0 +1,332 @@
+{
+  "capturedAt": "2026-11-06T10:12:28.220Z",
+  "events": [
+    {
+      "type": "turn_start",
+      "data": {
+        "prepMs": 9,
+        "wallMs": 9
+      }
+    },
+    {
+      "type": "turn_start",
+      "data": {
+        "prepMs": 155,
+        "wallMs": 155
+      }
+    },
+    {
+      "type": "tool_status",
+      "data": {
+        "name": "askUser",
+        "label": "向用户提问",
+        "hint": "向你提出问题（可多选的题会标出），点选或输入答案后继续回答",
+        "status": "start",
+        "elapsedMs": 0,
+        "startedAtMs": 1793959941570,
+        "args": "{\"options\":[\"方案A：推荐项（超时不代答）\",\"方案B：备选\",\"方案C：备选\"],\"topic\":\"压测提问\",\"question\":\"负载压测提问：请在候选中选择一个方案\"}"
+      }
+    },
+    {
+      "type": "ask_user",
+      "data": {
+        "askId": "call_mock_ask_1",
+        "questions": [
+          {
+            "topic": "压测提问",
+            "question": "负载压测提问：请在候选中选择一个方案",
+            "options": [
+              "方案A：推荐项（超时不代答）",
+              "方案B：备选",
+              "方案C：备选"
+            ]
+          }
+        ],
+        "timeoutMs": 600000
+      }
+    },
+    {
+      "type": "tool_status",
+      "data": {
+        "name": "askUser",
+        "label": "向用户提问",
+        "hint": "向你提出问题（可多选的题会标出），点选或输入答案后继续回答",
+        "status": "done",
+        "elapsedMs": 826,
+        "startedAtMs": 1793959941570,
+        "args": "{\"options\":[\"方案A：推荐项（超时不代答）\",\"方案B：备选\",\"方案C：备选\"],\"topic\":\"压测提问\",\"question\":\"负载压测提问：请在候选中选择一个方案\"}",
+        "result": "方案A：推荐项（超时不代答）"
+      }
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "usage",
+      "data": {
+        "thinkingChars": 0,
+        "turnElapsedMs": 3505,
+        "profile": "chat",
+        "humanWaitMs": 614,
+        "turnWallMs": 4274,
+        "turnPrepMs": 155
+      }
+    },
+    {
+      "type": "done",
+      "data": {
+        "finalContent": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
+        "messageId": "d34e5d097e80283325c1f4bfb168be12",
+        "userMessageId": "3c041289c666ef3c54c7a12029425b63",
+        "turnId": "07adb9ea58724c70bd3cd0012b096a1f",
+        "model": "mock-chat",
+        "agentId": null,
+        "agentName": null,
+        "sources": [],
+        "finalImages": [],
+        "degradations": [],
+        "elapsedMs": 3505,
+        "humanWaitMs": 614,
+        "turnWallMs": 4274,
+        "prepMs": 155,
+        "tokens": {
+          "thinkingChars": 0,
+          "turnElapsedMs": 3505,
+          "profile": "chat",
+          "humanWaitMs": 614,
+          "turnWallMs": 4274,
+          "turnPrepMs": 155
+        },
+        "toolCalls": [
+          {
+            "name": "askUser",
+            "label": "向用户提问",
+            "hint": "向你提出问题（可多选的题会标出），点选或输入答案后继续回答",
+            "status": "done",
+            "args": "{\"options\":[\"方案A：推荐项（超时不代答）\",\"方案B：备选\",\"方案C：备选\"],\"topic\":\"压测提问\",\"question\":\"负载压测提问：请在候选中选择一个方案\"}",
+            "startedAtMs": 1793959941570,
+            "elapsedMs": 826,
+            "result": "方案A：推荐项（超时不代答）"
+          }
+        ],
+        "blocks": {
+          "v": 1,
+          "turnId": "07adb9ea58724c70bd3cd0012b096a1f",
+          "blocks": [
+            {
+              "name": "askUser",
+              "label": "向用户提问",
+              "hint": "向你提出问题（可多选的题会标出），点选或输入答案后继续回答",
+              "status": "done",
+              "args": "{\"options\":[\"方案A：推荐项（超时不代答）\",\"方案B：备选\",\"方案C：备选\"],\"topic\":\"压测提问\",\"question\":\"负载压测提问：请在候选中选择一个方案\"}",
+              "startedAtMs": 1793959941570,
+              "elapsedMs": 826,
+              "result": "方案A：推荐项（超时不代答）",
+              "kind": "tool",
+              "id": "b1"
+            },
+            {
+              "kind": "text",
+              "channel": "answer",
+              "text": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
+              "id": "b2"
+            }
+          ]
+        },
+        "artifacts": [],
+        "related": [],
+        "thinking": null
+      }
+    }
+  ],
+  "message": {
+    "turnId": "07adb9ea58724c70bd3cd0012b096a1f",
+    "sequence": 2,
+    "role": "assistant",
+    "sources": [],
+    "createTime": "2026-11-06T18:12:25",
+    "blocks": {
+      "v": 1,
+      "turnId": "07adb9ea58724c70bd3cd0012b096a1f",
+      "blocks": [
+        {
+          "name": "askUser",
+          "label": "向用户提问",
+          "hint": "向你提出问题（可多选的题会标出），点选或输入答案后继续回答",
+          "status": "done",
+          "args": "{\"options\":[\"方案A：推荐项（超时不代答）\",\"方案B：备选\",\"方案C：备选\"],\"topic\":\"压测提问\",\"question\":\"负载压测提问：请在候选中选择一个方案\"}",
+          "startedAtMs": 1793959941570,
+          "elapsedMs": 826,
+          "result": "方案A：推荐项（超时不代答）",
+          "kind": "tool",
+          "id": "b1"
+        },
+        {
+          "kind": "text",
+          "channel": "answer",
+          "text": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
+          "id": "b2"
+        }
+      ]
+    },
+    "messageId": "d34e5d097e80283325c1f4bfb168be12",
+    "timeline": [
+      {
+        "kind": "tool",
+        "i": 0
+      },
+      {
+        "kind": "text",
+        "from": 0,
+        "to": 56
+      }
+    ],
+    "tokens": {
+      "thinkingChars": 0,
+      "turnElapsedMs": 3505,
+      "profile": "chat",
+      "humanWaitMs": 614,
+      "turnWallMs": 4274,
+      "turnPrepMs": 155
+    },
+    "model": "mock-chat",
+    "toolCalls": [
+      {
+        "args": "{\"options\":[\"方案A：推荐项（超时不代答）\",\"方案B：备选\",\"方案C：备选\"],\"topic\":\"压测提问\",\"question\":\"负载压测提问：请在候选中选择一个方案\"}",
+        "result": "方案A：推荐项（超时不代答）",
+        "hint": "向你提出问题（可多选的题会标出），点选或输入答案后继续回答",
+        "name": "askUser",
+        "label": "向用户提问",
+        "startedAtMs": 1793959941570,
+        "status": "done",
+        "elapsedMs": 826
+      }
+    ],
+    "content": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测"
+  },
+  "guestMessage": {
+    "role": "assistant",
+    "content": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
+    "time": null,
+    "blocks": {
+      "v": 1,
+      "blocks": [
+        {
+          "id": "b2",
+          "kind": "text",
+          "channel": "answer",
+          "text": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测"
+        }
+      ]
+    }
+  }
+}

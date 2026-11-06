@@ -1,0 +1,222 @@
+{
+  "capturedAt": "2026-11-06T10:08:35.828Z",
+  "events": [
+    {
+      "type": "turn_start",
+      "data": {
+        "prepMs": 35,
+        "wallMs": 35
+      }
+    },
+    {
+      "type": "turn_start",
+      "data": {
+        "prepMs": 4949,
+        "wallMs": 4949
+      }
+    },
+    {
+      "type": "tool_status",
+      "data": {
+        "name": "webSearch",
+        "label": "联网搜索",
+        "hint": "上网搜索相关资料，结果会作为引用来源",
+        "status": "start",
+        "elapsedMs": 0,
+        "startedAtMs": 1793959655657,
+        "args": "{\"query\":\"blocks approval case 1\"}"
+      }
+    },
+    {
+      "type": "approval_required",
+      "data": {
+        "approvalId": "call_mock_search_1",
+        "tool": "webSearch",
+        "args": "{query=blocks approval case 1}",
+        "timeoutMs": 60000,
+        "label": "联网搜索",
+        "hint": "上网搜索相关资料，结果会作为引用来源"
+      }
+    },
+    {
+      "type": "warn",
+      "data": "确认等待超时，本轮未继续执行该工具"
+    },
+    {
+      "type": "tool_status",
+      "data": {
+        "name": "webSearch",
+        "label": "联网搜索",
+        "hint": "上网搜索相关资料，结果会作为引用来源",
+        "status": "error",
+        "elapsedMs": 58,
+        "startedAtMs": 1793959655657,
+        "waitedMs": 60080,
+        "args": "{\"query\":\"blocks approval case 1\"}",
+        "result": "等待超时，这一步没有执行"
+      }
+    },
+    {
+      "type": "usage",
+      "data": {
+        "thinkingChars": 0,
+        "turnElapsedMs": 698,
+        "profile": "workspace",
+        "humanWaitMs": 60080,
+        "turnWallMs": 65727,
+        "turnPrepMs": 4949
+      }
+    },
+    {
+      "type": "done",
+      "data": {
+        "finalContent": "> ⏹ 等待确认超时，这一轮没有继续执行",
+        "messageId": "f26645d631391f8dd88d7636527ab34b",
+        "userMessageId": "3504e2057fcfa1777439da4176fd3d57",
+        "turnId": "fa1ac621ee13457b9960f9f6de3c054d",
+        "model": "mock-chat",
+        "agentId": "b1bc75629eda9bd2731000fc96cabc56",
+        "agentName": "blocks E2E 审批智能体 1793959650045",
+        "sources": [],
+        "finalImages": [],
+        "degradations": [],
+        "elapsedMs": 698,
+        "humanWaitMs": 60080,
+        "turnWallMs": 65727,
+        "prepMs": 4949,
+        "tokens": {
+          "thinkingChars": 0,
+          "turnElapsedMs": 698,
+          "profile": "workspace",
+          "humanWaitMs": 60080,
+          "turnWallMs": 65727,
+          "turnPrepMs": 4949
+        },
+        "toolCalls": [
+          {
+            "name": "webSearch",
+            "label": "联网搜索",
+            "hint": "上网搜索相关资料，结果会作为引用来源",
+            "status": "error",
+            "args": "{\"query\":\"blocks approval case 1\"}",
+            "startedAtMs": 1793959655657,
+            "elapsedMs": 58,
+            "waitedMs": 60080,
+            "result": "等待超时，这一步没有执行"
+          }
+        ],
+        "blocks": {
+          "v": 1,
+          "turnId": "fa1ac621ee13457b9960f9f6de3c054d",
+          "blocks": [
+            {
+              "name": "webSearch",
+              "label": "联网搜索",
+              "hint": "上网搜索相关资料，结果会作为引用来源",
+              "status": "error",
+              "args": "{\"query\":\"blocks approval case 1\"}",
+              "startedAtMs": 1793959655657,
+              "elapsedMs": 58,
+              "waitedMs": 60080,
+              "result": "等待超时，这一步没有执行",
+              "kind": "tool",
+              "id": "b1"
+            },
+            {
+              "tone": "timeout",
+              "text": "> ⏹ 等待确认超时，这一轮没有继续执行",
+              "kind": "notice",
+              "id": "b2"
+            },
+            {
+              "kind": "text",
+              "channel": "answer",
+              "text": "> ⏹ 等待确认超时，这一轮没有继续执行",
+              "id": "b3"
+            }
+          ]
+        },
+        "artifacts": [],
+        "related": [],
+        "thinking": null
+      }
+    }
+  ],
+  "message": {
+    "turnId": "fa1ac621ee13457b9960f9f6de3c054d",
+    "agentId": "b1bc75629eda9bd2731000fc96cabc56",
+    "role": "assistant",
+    "sources": [],
+    "blocks": {
+      "v": 1,
+      "turnId": "fa1ac621ee13457b9960f9f6de3c054d",
+      "blocks": [
+        {
+          "name": "webSearch",
+          "label": "联网搜索",
+          "hint": "上网搜索相关资料，结果会作为引用来源",
+          "status": "error",
+          "args": "{\"query\":\"blocks approval case 1\"}",
+          "startedAtMs": 1793959655657,
+          "elapsedMs": 58,
+          "waitedMs": 60080,
+          "result": "等待超时，这一步没有执行",
+          "kind": "tool",
+          "id": "b1"
+        },
+        {
+          "tone": "timeout",
+          "text": "> ⏹ 等待确认超时，这一轮没有继续执行",
+          "kind": "notice",
+          "id": "b2"
+        },
+        {
+          "kind": "text",
+          "channel": "answer",
+          "text": "> ⏹ 等待确认超时，这一轮没有继续执行",
+          "id": "b3"
+        }
+      ]
+    },
+    "messageId": "f26645d631391f8dd88d7636527ab34b",
+    "agentName": "blocks E2E 审批智能体 1793959650045",
+    "content": "> ⏹ 等待确认超时，这一轮没有继续执行",
+    "sequence": 2,
+    "createTime": "2026-11-06T18:08:35",
+    "timeline": [
+      {
+        "kind": "tool",
+        "i": 0
+      },
+      {
+        "kind": "text",
+        "from": 0,
+        "to": 20
+      }
+    ],
+    "tokens": {
+      "thinkingChars": 0,
+      "turnElapsedMs": 698,
+      "profile": "workspace",
+      "humanWaitMs": 60080,
+      "turnWallMs": 65727,
+      "turnPrepMs": 4949
+    },
+    "model": "mock-chat",
+    "toolCalls": [
+      {
+        "args": "{\"query\":\"blocks approval case 1\"}",
+        "result": "等待超时，这一步没有执行",
+        "hint": "上网搜索相关资料，结果会作为引用来源",
+        "name": "webSearch",
+        "label": "联网搜索",
+        "waitedMs": 60080,
+        "startedAtMs": 1793959655657,
+        "status": "error",
+        "elapsedMs": 58
+      }
+    ],
+    "warnMsg": "确认等待超时，本轮未继续执行该工具"
+  },
+  "guestMessage": null
+}

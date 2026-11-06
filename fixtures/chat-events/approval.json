@@ -1,0 +1,419 @@
+{
+  "capturedAt": "2026-11-06T10:07:15.837Z",
+  "events": [
+    {
+      "type": "turn_start",
+      "data": {
+        "prepMs": 12,
+        "wallMs": 12
+      }
+    },
+    {
+      "type": "turn_start",
+      "data": {
+        "prepMs": 3669,
+        "wallMs": 3669
+      }
+    },
+    {
+      "type": "tool_status",
+      "data": {
+        "name": "webSearch",
+        "label": "联网搜索",
+        "hint": "上网搜索相关资料，结果会作为引用来源",
+        "status": "start",
+        "elapsedMs": 0,
+        "startedAtMs": 1793959629605,
+        "args": "{\"query\":\"blocks approval case 1\"}"
+      }
+    },
+    {
+      "type": "approval_required",
+      "data": {
+        "approvalId": "call_mock_search_1",
+        "tool": "webSearch",
+        "args": "{query=blocks approval case 1}",
+        "timeoutMs": 120000,
+        "label": "联网搜索",
+        "hint": "上网搜索相关资料，结果会作为引用来源"
+      }
+    },
+    {
+      "type": "tool_status",
+      "data": {
+        "name": "webSearch",
+        "label": "联网搜索",
+        "hint": "上网搜索相关资料，结果会作为引用来源",
+        "status": "done",
+        "elapsedMs": 1243,
+        "startedAtMs": 1793959629605,
+        "waitedMs": 614,
+        "args": "{\"query\":\"blocks approval case 1\"}",
+        "result": "\"未检索到与问题相关的网页结果（5 条搜索结果相关度不足，已过滤）。请如实说明没有找到可依据的联网资料，不要凭记忆编写内容。\""
+      }
+    },
+    {
+      "type": "tool_status",
+      "data": {
+        "name": "webSearch",
+        "label": "联网搜索",
+        "hint": "上网搜索相关资料，结果会作为引用来源",
+        "status": "start",
+        "elapsedMs": 0,
+        "startedAtMs": 1793959631668,
+        "args": "{\"query\":\"blocks approval case 2\"}"
+      }
+    },
+    {
+      "type": "approval_required",
+      "data": {
+        "approvalId": "call_mock_search_2",
+        "tool": "webSearch",
+        "args": "{query=blocks approval case 2}",
+        "timeoutMs": 120000,
+        "label": "联网搜索",
+        "hint": "上网搜索相关资料，结果会作为引用来源"
+      }
+    },
+    {
+      "type": "tool_status",
+      "data": {
+        "name": "webSearch",
+        "label": "联网搜索",
+        "hint": "上网搜索相关资料，结果会作为引用来源",
+        "status": "done",
+        "elapsedMs": 835,
+        "startedAtMs": 1793959631668,
+        "waitedMs": 608,
+        "args": "{\"query\":\"blocks approval case 2\"}",
+        "result": "\"未检索到与问题相关的网页结果（5 条搜索结果相关度不足，已过滤）。请如实说明没有找到可依据的联网资料，不要凭记忆编写内容。\""
+      }
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "usage",
+      "data": {
+        "thinkingChars": 0,
+        "turnElapsedMs": 5400,
+        "profile": "workspace",
+        "humanWaitMs": 1222,
+        "turnWallMs": 10291,
+        "turnPrepMs": 3669
+      }
+    },
+    {
+      "type": "done",
+      "data": {
+        "finalContent": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
+        "messageId": "8b11f796bd860d9cc7ccbc0e52824ec0",
+        "userMessageId": "4c5f1b244b6dff90f85ab95b509a4a29",
+        "turnId": "99c9630470d148c0b14972a743bacc21",
+        "model": "mock-chat",
+        "agentId": "022ab8bc1f3aba6c9b77f0c5cd584616",
+        "agentName": "blocks E2E 审批智能体 1793959625504",
+        "sources": [],
+        "finalImages": [],
+        "degradations": [
+          {
+            "msg": "重排不可用，本轮按关键词匹配过滤（不是语义相关度），已滤掉 5 条与问题不沾边的结果",
+            "level": "debug",
+            "code": "webSearchLexicalOnly"
+          }
+        ],
+        "elapsedMs": 5400,
+        "humanWaitMs": 1222,
+        "turnWallMs": 10291,
+        "prepMs": 3669,
+        "tokens": {
+          "thinkingChars": 0,
+          "turnElapsedMs": 5400,
+          "profile": "workspace",
+          "humanWaitMs": 1222,
+          "turnWallMs": 10291,
+          "turnPrepMs": 3669
+        },
+        "toolCalls": [
+          {
+            "name": "webSearch",
+            "label": "联网搜索",
+            "hint": "上网搜索相关资料，结果会作为引用来源",
+            "status": "done",
+            "args": "{\"query\":\"blocks approval case 1\"}",
+            "startedAtMs": 1793959629605,
+            "elapsedMs": 1243,
+            "waitedMs": 614,
+            "result": "\"未检索到与问题相关的网页结果（5 条搜索结果相关度不足，已过滤）。请如实说明没有找到可依据的联网资料，不要凭记忆编写内容。\""
+          },
+          {
+            "name": "webSearch",
+            "label": "联网搜索",
+            "hint": "上网搜索相关资料，结果会作为引用来源",
+            "status": "done",
+            "args": "{\"query\":\"blocks approval case 2\"}",
+            "startedAtMs": 1793959631668,
+            "elapsedMs": 835,
+            "waitedMs": 608,
+            "result": "\"未检索到与问题相关的网页结果（5 条搜索结果相关度不足，已过滤）。请如实说明没有找到可依据的联网资料，不要凭记忆编写内容。\""
+          }
+        ],
+        "blocks": {
+          "v": 1,
+          "turnId": "99c9630470d148c0b14972a743bacc21",
+          "blocks": [
+            {
+              "name": "webSearch",
+              "label": "联网搜索",
+              "hint": "上网搜索相关资料，结果会作为引用来源",
+              "status": "done",
+              "args": "{\"query\":\"blocks approval case 1\"}",
+              "startedAtMs": 1793959629605,
+              "elapsedMs": 1243,
+              "waitedMs": 614,
+              "result": "\"未检索到与问题相关的网页结果（5 条搜索结果相关度不足，已过滤）。请如实说明没有找到可依据的联网资料，不要凭记忆编写内容。\"",
+              "kind": "tool",
+              "id": "b1"
+            },
+            {
+              "name": "webSearch",
+              "label": "联网搜索",
+              "hint": "上网搜索相关资料，结果会作为引用来源",
+              "status": "done",
+              "args": "{\"query\":\"blocks approval case 2\"}",
+              "startedAtMs": 1793959631668,
+              "elapsedMs": 835,
+              "waitedMs": 608,
+              "result": "\"未检索到与问题相关的网页结果（5 条搜索结果相关度不足，已过滤）。请如实说明没有找到可依据的联网资料，不要凭记忆编写内容。\"",
+              "kind": "tool",
+              "id": "b2"
+            },
+            {
+              "kind": "text",
+              "channel": "answer",
+              "text": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
+              "id": "b3"
+            }
+          ]
+        },
+        "artifacts": [],
+        "related": [],
+        "thinking": null
+      }
+    }
+  ],
+  "message": {
+    "turnId": "99c9630470d148c0b14972a743bacc21",
+    "agentId": "022ab8bc1f3aba6c9b77f0c5cd584616",
+    "role": "assistant",
+    "sources": [],
+    "blocks": {
+      "v": 1,
+      "turnId": "99c9630470d148c0b14972a743bacc21",
+      "blocks": [
+        {
+          "name": "webSearch",
+          "label": "联网搜索",
+          "hint": "上网搜索相关资料，结果会作为引用来源",
+          "status": "done",
+          "args": "{\"query\":\"blocks approval case 1\"}",
+          "startedAtMs": 1793959629605,
+          "elapsedMs": 1243,
+          "waitedMs": 614,
+          "result": "\"未检索到与问题相关的网页结果（5 条搜索结果相关度不足，已过滤）。请如实说明没有找到可依据的联网资料，不要凭记忆编写内容。\"",
+          "kind": "tool",
+          "id": "b1"
+        },
+        {
+          "name": "webSearch",
+          "label": "联网搜索",
+          "hint": "上网搜索相关资料，结果会作为引用来源",
+          "status": "done",
+          "args": "{\"query\":\"blocks approval case 2\"}",
+          "startedAtMs": 1793959631668,
+          "elapsedMs": 835,
+          "waitedMs": 608,
+          "result": "\"未检索到与问题相关的网页结果（5 条搜索结果相关度不足，已过滤）。请如实说明没有找到可依据的联网资料，不要凭记忆编写内容。\"",
+          "kind": "tool",
+          "id": "b2"
+        },
+        {
+          "kind": "text",
+          "channel": "answer",
+          "text": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
+          "id": "b3"
+        }
+      ]
+    },
+    "messageId": "8b11f796bd860d9cc7ccbc0e52824ec0",
+    "agentName": "blocks E2E 审批智能体 1793959625504",
+    "degradations": [
+      {
+        "msg": "重排不可用，本轮按关键词匹配过滤（不是语义相关度），已滤掉 5 条与问题不沾边的结果",
+        "code": "webSearchLexicalOnly",
+        "level": "debug"
+      }
+    ],
+    "content": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
+    "sequence": 2,
+    "createTime": "2026-11-06T18:07:15",
+    "timeline": [
+      {
+        "kind": "tool",
+        "i": 0
+      },
+      {
+        "kind": "tool",
+        "i": 1
+      },
+      {
+        "kind": "text",
+        "from": 0,
+        "to": 56
+      }
+    ],
+    "tokens": {
+      "thinkingChars": 0,
+      "turnElapsedMs": 5400,
+      "profile": "workspace",
+      "humanWaitMs": 1222,
+      "turnWallMs": 10291,
+      "turnPrepMs": 3669
+    },
+    "model": "mock-chat",
+    "toolCalls": [
+      {
+        "args": "{\"query\":\"blocks approval case 1\"}",
+        "result": "\"未检索到与问题相关的网页结果（5 条搜索结果相关度不足，已过滤）。请如实说明没有找到可依据的联网资料，不要凭记忆编写内容。\"",
+        "hint": "上网搜索相关资料，结果会作为引用来源",
+        "name": "webSearch",
+        "label": "联网搜索",
+        "waitedMs": 614,
+        "startedAtMs": 1793959629605,
+        "status": "done",
+        "elapsedMs": 1243
+      },
+      {
+        "args": "{\"query\":\"blocks approval case 2\"}",
+        "result": "\"未检索到与问题相关的网页结果（5 条搜索结果相关度不足，已过滤）。请如实说明没有找到可依据的联网资料，不要凭记忆编写内容。\"",
+        "hint": "上网搜索相关资料，结果会作为引用来源",
+        "name": "webSearch",
+        "label": "联网搜索",
+        "waitedMs": 608,
+        "startedAtMs": 1793959631668,
+        "status": "done",
+        "elapsedMs": 835
+      }
+    ]
+  },
+  "guestMessage": null
+}

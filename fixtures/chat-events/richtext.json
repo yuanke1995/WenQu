@@ -1,0 +1,164 @@
+{
+  "capturedAt": "2026-11-06T11:15:04.226Z",
+  "events": [
+    {
+      "type": "turn_start",
+      "data": {
+        "prepMs": 29,
+        "wallMs": 29
+      }
+    },
+    {
+      "type": "turn_start",
+      "data": {
+        "prepMs": 401,
+        "wallMs": 401
+      }
+    },
+    {
+      "type": "process",
+      "data": "正在"
+    },
+    {
+      "type": "process",
+      "data": "核对引用编号。"
+    },
+    {
+      "type": "token",
+      "data": "这是最终答案。"
+    },
+    {
+      "type": "thinking",
+      "data": "先想一下：这一步要不要查库。"
+    },
+    {
+      "type": "thinking_done",
+      "data": {
+        "thinking": "先想一下：这一步要不要查库。"
+      }
+    },
+    {
+      "type": "usage",
+      "data": {
+        "thinkingChars": 14,
+        "turnElapsedMs": 1450,
+        "profile": "chat",
+        "turnWallMs": 1851,
+        "turnPrepMs": 401
+      }
+    },
+    {
+      "type": "done",
+      "data": {
+        "finalContent": "这是最终答案。",
+        "messageId": "80b490bcf45248c8e111e52ec227a96a",
+        "userMessageId": "aeb706ea0a04aa83d3424da38cc44f7b",
+        "turnId": "6ee67919e0a247f58eab92a74481a630",
+        "model": "mock-chat",
+        "agentId": null,
+        "agentName": null,
+        "sources": [],
+        "finalImages": [],
+        "degradations": [],
+        "elapsedMs": 1450,
+        "humanWaitMs": 0,
+        "turnWallMs": 1851,
+        "prepMs": 401,
+        "tokens": {
+          "thinkingChars": 14,
+          "turnElapsedMs": 1450,
+          "profile": "chat",
+          "turnWallMs": 1851,
+          "turnPrepMs": 401
+        },
+        "toolCalls": [],
+        "blocks": {
+          "v": 1,
+          "turnId": "6ee67919e0a247f58eab92a74481a630",
+          "blocks": [
+            {
+              "kind": "process",
+              "text": "正在核对引用编号。",
+              "id": "b1"
+            },
+            {
+              "kind": "text",
+              "channel": "answer",
+              "text": "这是最终答案。",
+              "id": "b2"
+            },
+            {
+              "kind": "think",
+              "text": "先想一下：这一步要不要查库。",
+              "id": "b3"
+            }
+          ]
+        },
+        "artifacts": [],
+        "related": [
+          "建议一",
+          "建议二"
+        ],
+        "thinking": "先想一下：这一步要不要查库。"
+      }
+    }
+  ],
+  "message": {
+    "turnId": "6ee67919e0a247f58eab92a74481a630",
+    "role": "assistant",
+    "sources": [],
+    "blocks": {
+      "v": 1,
+      "turnId": "6ee67919e0a247f58eab92a74481a630",
+      "blocks": [
+        {
+          "kind": "process",
+          "text": "正在核对引用编号。",
+          "id": "b1"
+        },
+        {
+          "kind": "text",
+          "channel": "answer",
+          "text": "这是最终答案。",
+          "id": "b2"
+        },
+        {
+          "kind": "think",
+          "text": "先想一下：这一步要不要查库。",
+          "id": "b3"
+        }
+      ]
+    },
+    "messageId": "80b490bcf45248c8e111e52ec227a96a",
+    "thinking": "先想一下：这一步要不要查库。",
+    "content": "这是最终答案。",
+    "processText": "正在核对引用编号。",
+    "sequence": 2,
+    "related": [
+      "建议一",
+      "建议二"
+    ],
+    "createTime": "2026-11-06T19:15:04",
+    "timeline": [
+      {
+        "kind": "text",
+        "from": 0,
+        "to": 7
+      },
+      {
+        "kind": "think",
+        "from": 0,
+        "to": 14
+      }
+    ],
+    "tokens": {
+      "thinkingChars": 14,
+      "turnElapsedMs": 1450,
+      "profile": "chat",
+      "turnWallMs": 1851,
+      "turnPrepMs": 401
+    },
+    "model": "mock-chat"
+  },
+  "guestMessage": null
+}

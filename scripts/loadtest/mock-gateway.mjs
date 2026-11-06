@@ -96,11 +96,19 @@ const server = http.createServer(async (req, res) => {
     const model = body.model ?? 'mock-chat';
     const msgs = Array.isArray(body.messages) ? body.messages : [];
     const hasToolResult = msgs.some((m) => m.role === 'tool');
-    const lastUser = [...msgs].reverse().find((m) => m.role === 'user');
-    const userText = typeof lastUser?.content === 'string'
-      ? lastUser.content
-      : JSON.stringify(lastUser?.content ?? '');
+    // 标记要在**全部** user 消息里找：框架会把记忆/上下文那份 <HARNESS_CONTEXT> 作为最后一条 user
+    // 消息发出来，只看最后一条等于永远判不到 [[ASK]]——B 阶段的 40 路人在回路会静默退化成普通问答。
+    const userText = msgs.filter((m) => m.role === 'user')
+      .map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? '')))
+      .join('\n');
     const wantsAsk = userText.includes('[[ASK]]');
+    const wantsArtifact = userText.includes('[[ARTIFACT]]');
+    const wantsPlan = userText.includes('[[PLAN]]');
+    const wantsApproval = userText.includes('[[APPROVAL]]');
+    const wantsLoop = userText.includes('[[LOOP]]');
+    const wantsRich = userText.includes('[[RICHTEXT]]');
+    // 已经调过哪些工具：按 assistant 消息里的 tool_calls 认（tool 结果消息本身不带名字）
+    const calledTools = msgs.flatMap((m) => (m.tool_calls || []).map((t) => t.function?.name)).filter(Boolean);
 
     if (body.stream !== true) {
       // 实体调用（派遣/委派路由/标题等辅助调用）：返回可解析的「无匹配」判定，走各调用方默认兜底
@@ -113,8 +121,125 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    // 富文本：思考（reasoning_content）+ <process> 过程独白 + 正文 + <related> 推荐块，
+    // 用来验 think/process 两类块与旧列（thinking / process_text）的双写等价。
+    if (wantsRich) {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+      chunk(res, id, model, { role: 'assistant' });
+      await sleep(200);
+      for (const t of ['先想一下：', '这一步要不要查库。']) {
+        chunk(res, id, model, { reasoning_content: t });
+        await sleep(80);
+      }
+      for (const t of ['<process>', '正在核对引用编号。', '</process>',
+        '这是最终答案。', '<related>建议一|建议二</related>']) {
+        chunk(res, id, model, { content: t });
+        await sleep(80);
+      }
+      chunk(res, id, model, {}, 'stop');
+      res.write('data: [DONE]\n\n');
+      res.end();
+      return;
+    }
+
+    // 空转：同一把工具、同一份入参、同一份结果连发多次——progress 判「没带回新信息」，
+    // 连续 5 次后引擎自动终止（STALL_AT=5），用来验 notice#stalled 与 STALL_SUFFIX。
+    if (wantsLoop && calledTools.filter((n) => n === 'read_file').length < 8) {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+      chunk(res, id, model, { role: 'assistant', tool_calls: [{
+        index: 0, id: `call_mock_loop_${calledTools.filter((n) => n === 'read_file').length + 1}`, type: 'function',
+        function: { name: 'read_file', arguments: JSON.stringify({ path: 'README.md' }) },
+      }] });
+      await sleep(120);
+      chunk(res, id, model, {}, 'tool_calls');
+      res.write('data: [DONE]\n\n');
+      res.end();
+      return;
+    }
+
+    // 工具审批：连发两次 webSearch（第二次就是「第二次确认」），每次都要真批一次才会执行。
+    // 只有联网搜索这类「有副作用」工具受 toolApprovalMode 管辖（write_file 在聊天档是自动放行的）。
+    if (wantsApproval && calledTools.filter((n) => n === 'webSearch').length < 2) {
+      const n = calledTools.filter((x) => x === 'webSearch').length + 1;
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+      chunk(res, id, model, { role: 'assistant', tool_calls: [{
+        index: 0, id: `call_mock_search_${n}`, type: 'function',
+        function: {
+          name: 'webSearch',
+          arguments: JSON.stringify({ query: `blocks approval case ${n}` }),
+        },
+      }] });
+      await sleep(200);
+      chunk(res, id, model, {}, 'tool_calls');
+      res.write('data: [DONE]\n\n');
+      res.end();
+      return;
+    }
+
+    if (wantsPlan && !calledTools.includes('plan_write')) {
+      // 计划三步：plan_write（正文）→ plan_exit（确认卡）→ 批准后出答案
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+      chunk(res, id, model, { role: 'assistant', tool_calls: [{
+        index: 0, id: 'call_mock_plan_write_1', type: 'function',
+        function: {
+          name: 'plan_write',
+          arguments: JSON.stringify({
+            content: '## 计划\n1. 先确认需求边界\n2. 再做实现\n3. 最后回归验证',
+          }),
+        },
+      }] });
+      await sleep(200);
+      chunk(res, id, model, {}, 'tool_calls');
+      res.write('data: [DONE]\n\n');
+      res.end();
+      return;
+    }
+
+    if (wantsPlan && !calledTools.includes('plan_exit')) {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+      chunk(res, id, model, { role: 'assistant', tool_calls: [{
+        index: 0, id: 'call_mock_plan_exit_1', type: 'function',
+        function: { name: 'plan_exit', arguments: JSON.stringify({ summary: '按三步走' }) },
+      }] });
+      await sleep(200);
+      chunk(res, id, model, {}, 'tool_calls');
+      res.write('data: [DONE]\n\n');
+      res.end();
+      return;
+    }
+
+    if (!hasToolResult && wantsArtifact) {
+      // 产物交付：真调 presentArtifact（内容过它的 HTML/引用句校验），第二轮再流式给结论。
+      // 用例拿来验「工具卡 → 产物块 → 落库 artifacts 列」三段同源，以及产物卡在页面上的位置。
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+      });
+      chunk(res, id, model, { role: 'assistant', tool_calls: [{
+        index: 0, id: 'call_mock_artifact_1', type: 'function',
+        function: {
+          name: 'presentArtifact',
+          arguments: JSON.stringify({
+            filename: 'blocks-demo.html',
+            description: 'blocks 端到端产物卡用例',
+            content: '<!DOCTYPE html><html><head><meta charset="utf-8"><title>blocks demo</title></head>'
+              + '<body><h1>产物卡用例</h1><p>这份 HTML 由 mock 网关交给 presentArtifact，用于验证产物块与落库列同源。</p></body></html>',
+          }),
+        },
+      }] });
+      await sleep(200);
+      chunk(res, id, model, {}, 'tool_calls');
+      res.write('data: [DONE]\n\n');
+      res.end();
+      return;
+    }
+
     if (!hasToolResult && wantsAsk) {
-      // 第一轮：流式下发 askUser 工具调用（arguments 为一卡多问 schema：questions[].{topic,question,options}）
+      // 第一轮：流式下发 askUser 工具调用。参数面照 AskUserTool 的 schema：
+      // {question(必填), options[], multi, topic}——早先这里发的是 questions[]，工具按 schema 校验
+      // 直接判错（未找到所需属性“question”），于是 B 阶段那 40 路「人在回路」根本没挂起过卡，
+      // 只在工具卡上落了个 error。
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
@@ -124,11 +249,11 @@ const server = http.createServer(async (req, res) => {
         index: 0, id: 'call_mock_ask_1', type: 'function',
         function: {
           name: 'askUser',
-          arguments: JSON.stringify({ questions: [{
+          arguments: JSON.stringify({
             topic: '压测提问',
             question: '负载压测提问：请在候选中选择一个方案',
             options: ['方案A：推荐项（超时不代答）', '方案B：备选', '方案C：备选'],
-          }] }),
+          }),
         },
       }] });
       await sleep(200);

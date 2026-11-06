@@ -1,0 +1,188 @@
+{
+  "capturedAt": "2026-11-06T09:52:10.861Z",
+  "events": [
+    {
+      "type": "turn_start",
+      "data": {
+        "wallMs": 14,
+        "prepMs": 14
+      }
+    },
+    {
+      "type": "turn_start",
+      "data": {
+        "wallMs": 165,
+        "prepMs": 165
+      }
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "usage",
+      "data": {
+        "thinkingChars": 0,
+        "turnElapsedMs": 2338,
+        "profile": "chat",
+        "turnWallMs": 2503,
+        "turnPrepMs": 165
+      }
+    },
+    {
+      "type": "done",
+      "data": {
+        "finalContent": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测\n\n> ⏹ 已停止本轮，以上为已生成的部分",
+        "messageId": "cae15ebb708c12c0d484c1ed9f875e37",
+        "userMessageId": "42f12b66ea4ad4daf4a948d2b54439fb",
+        "turnId": "599bfe88f5ac4c86aeeb439357b56064",
+        "model": "mock-chat",
+        "agentId": null,
+        "agentName": null,
+        "sources": [],
+        "finalImages": [],
+        "degradations": [],
+        "elapsedMs": 2338,
+        "humanWaitMs": 0,
+        "turnWallMs": 2503,
+        "prepMs": 165,
+        "tokens": {
+          "thinkingChars": 0,
+          "turnElapsedMs": 2338,
+          "profile": "chat",
+          "turnWallMs": 2503,
+          "turnPrepMs": 165
+        },
+        "toolCalls": [],
+        "blocks": {
+          "v": 1,
+          "turnId": "599bfe88f5ac4c86aeeb439357b56064",
+          "blocks": [
+            {
+              "kind": "text",
+              "channel": "answer",
+              "text": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
+              "id": "b1"
+            },
+            {
+              "tone": "stopped",
+              "text": "> ⏹ 已停止本轮，以上为已生成的部分",
+              "kind": "notice",
+              "id": "b2"
+            },
+            {
+              "kind": "text",
+              "channel": "answer",
+              "text": "\n\n> ⏹ 已停止本轮，以上为已生成的部分",
+              "id": "b3"
+            }
+          ]
+        },
+        "artifacts": [],
+        "related": [],
+        "thinking": null
+      }
+    }
+  ],
+  "guestMessage": null
+}

@@ -1,0 +1,235 @@
+{
+  "capturedAt": "2026-11-06T10:00:01.747Z",
+  "events": [
+    {
+      "type": "turn_start",
+      "data": {
+        "wallMs": 16,
+        "prepMs": 16
+      }
+    },
+    {
+      "type": "plan",
+      "data": [
+        "执行工作流"
+      ]
+    },
+    {
+      "type": "turn_start",
+      "data": {
+        "wallMs": 13,
+        "prepMs": 13
+      }
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测压测压测压测压测压测压测压测压测压测压测压测"
+    },
+    {
+      "type": "done",
+      "data": {
+        "finalContent": "（工作流未产出回答内容）",
+        "messageId": "7e4080a9310139d0de083ae57d3b7244",
+        "userMessageId": "597dc995e8504ae87013ebdea1944e89",
+        "turnId": "188fd11598174da9822679bce1b2ed37",
+        "model": null,
+        "agentId": "d1c61ec234b6bd020d2a829eeea479ed",
+        "agentName": "blocks E2E 工作流智能体 1793959198750",
+        "sources": [],
+        "finalImages": [],
+        "degradations": [],
+        "elapsedMs": 2868,
+        "humanWaitMs": 0,
+        "turnWallMs": 2868,
+        "prepMs": 238,
+        "tokens": {
+          "prompt": 0,
+          "output": 0,
+          "total": 0,
+          "turnWallMs": 2868,
+          "turnPrepMs": 238
+        },
+        "toolCalls": [],
+        "blocks": {
+          "v": 1,
+          "turnId": "188fd11598174da9822679bce1b2ed37",
+          "blocks": [
+            {
+              "id": "b1",
+              "kind": "text",
+              "channel": "answer",
+              "text": "（工作流未产出回答内容）"
+            }
+          ]
+        },
+        "artifacts": [],
+        "related": [],
+        "thinking": null,
+        "workflowRun": {
+          "workflowId": "dc937b1b-8774-4ef0-912f-d4c0e5d2ac34",
+          "version": 1,
+          "runId": "b35f7ed3-0472-425f-9ae7-e71e45fdcf91",
+          "status": "success",
+          "durationMs": 2619
+        }
+      }
+    }
+  ],
+  "message": {
+    "turnId": "188fd11598174da9822679bce1b2ed37",
+    "sequence": 2,
+    "agentId": "d1c61ec234b6bd020d2a829eeea479ed",
+    "role": "assistant",
+    "createTime": "2026-11-06T18:00:01",
+    "blocks": {
+      "v": 1,
+      "turnId": "188fd11598174da9822679bce1b2ed37",
+      "blocks": [
+        {
+          "id": "b1",
+          "kind": "text",
+          "channel": "answer",
+          "text": "（工作流未产出回答内容）"
+        }
+      ]
+    },
+    "messageId": "7e4080a9310139d0de083ae57d3b7244",
+    "agentName": "blocks E2E 工作流智能体 1793959198750",
+    "tokens": {
+      "prompt": 0,
+      "output": 0,
+      "total": 0,
+      "turnWallMs": 2868,
+      "turnPrepMs": 238
+    },
+    "content": "（工作流未产出回答内容）"
+  },
+  "guestMessage": {
+    "role": "assistant",
+    "content": "（工作流未产出回答内容）",
+    "time": null,
+    "blocks": {
+      "v": 1,
+      "blocks": [
+        {
+          "id": "b1",
+          "kind": "text",
+          "channel": "answer",
+          "text": "（工作流未产出回答内容）"
+        }
+      ]
+    }
+  }
+}

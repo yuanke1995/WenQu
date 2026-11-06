@@ -1,0 +1,235 @@
+{
+  "capturedAt": "2026-11-06T10:12:20.985Z",
+  "events": [
+    {
+      "type": "turn_start",
+      "data": {
+        "prepMs": 13,
+        "wallMs": 13
+      }
+    },
+    {
+      "type": "turn_start",
+      "data": {
+        "prepMs": 144,
+        "wallMs": 144
+      }
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "usage",
+      "data": {
+        "thinkingChars": 0,
+        "turnElapsedMs": 3068,
+        "profile": "chat",
+        "turnWallMs": 3212,
+        "turnPrepMs": 144
+      }
+    },
+    {
+      "type": "done",
+      "data": {
+        "finalContent": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
+        "messageId": "f64167ff57869be1e901ba2001140eda",
+        "userMessageId": "5f66599376665035cfa18d09d4c9ac1d",
+        "turnId": "a7296f84b10f4d078435a10c01911fa1",
+        "model": "mock-chat",
+        "agentId": null,
+        "agentName": null,
+        "sources": [],
+        "finalImages": [],
+        "degradations": [],
+        "elapsedMs": 3068,
+        "humanWaitMs": 0,
+        "turnWallMs": 3212,
+        "prepMs": 144,
+        "tokens": {
+          "thinkingChars": 0,
+          "turnElapsedMs": 3068,
+          "profile": "chat",
+          "turnWallMs": 3212,
+          "turnPrepMs": 144
+        },
+        "toolCalls": [],
+        "blocks": {
+          "v": 1,
+          "turnId": "a7296f84b10f4d078435a10c01911fa1",
+          "blocks": [
+            {
+              "kind": "text",
+              "channel": "answer",
+              "text": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
+              "id": "b1"
+            }
+          ]
+        },
+        "artifacts": [],
+        "related": [],
+        "thinking": null
+      }
+    }
+  ],
+  "message": {
+    "turnId": "a7296f84b10f4d078435a10c01911fa1",
+    "sequence": 2,
+    "role": "assistant",
+    "sources": [],
+    "createTime": "2026-11-06T18:12:20",
+    "blocks": {
+      "v": 1,
+      "turnId": "a7296f84b10f4d078435a10c01911fa1",
+      "blocks": [
+        {
+          "kind": "text",
+          "channel": "answer",
+          "text": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
+          "id": "b1"
+        }
+      ]
+    },
+    "messageId": "f64167ff57869be1e901ba2001140eda",
+    "timeline": [
+      {
+        "kind": "text",
+        "from": 0,
+        "to": 56
+      }
+    ],
+    "tokens": {
+      "thinkingChars": 0,
+      "turnElapsedMs": 3068,
+      "profile": "chat",
+      "turnWallMs": 3212,
+      "turnPrepMs": 144
+    },
+    "model": "mock-chat",
+    "content": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测"
+  },
+  "guestMessage": {
+    "role": "assistant",
+    "content": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
+    "time": null,
+    "blocks": {
+      "v": 1,
+      "blocks": [
+        {
+          "id": "b1",
+          "kind": "text",
+          "channel": "answer",
+          "text": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测"
+        }
+      ]
+    }
+  }
+}

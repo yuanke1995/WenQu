@@ -1,0 +1,398 @@
+{
+  "capturedAt": "2026-11-06T10:03:07.944Z",
+  "events": [
+    {
+      "type": "turn_start",
+      "data": {
+        "prepMs": 10,
+        "wallMs": 10
+      }
+    },
+    {
+      "type": "turn_start",
+      "data": {
+        "prepMs": 6111,
+        "wallMs": 6111
+      }
+    },
+    {
+      "type": "tool_status",
+      "data": {
+        "name": "plan_write",
+        "label": "撰写执行计划",
+        "hint": "把想好的方案写成计划，你点开就能看",
+        "status": "start",
+        "elapsedMs": 0,
+        "startedAtMs": 1793959383458,
+        "args": "{\"content\":\"## 计划\\n1. 先确认需求边界\\n2. 再做实现\\n3. 最后回归验证\"}"
+      }
+    },
+    {
+      "type": "tool_status",
+      "data": {
+        "name": "plan_write",
+        "label": "撰写执行计划",
+        "hint": "把想好的方案写成计划，你点开就能看",
+        "status": "done",
+        "elapsedMs": 205,
+        "startedAtMs": 1793959383458,
+        "args": "{\"content\":\"## 计划\\n1. 先确认需求边界\\n2. 再做实现\\n3. 最后回归验证\"}",
+        "result": "Plan saved to \"plans/PLAN.md\"."
+      }
+    },
+    {
+      "type": "tool_status",
+      "data": {
+        "name": "plan_exit",
+        "label": "提交计划待批准",
+        "hint": "计划写完了，请你过目；你同意后它才开始动手",
+        "status": "start",
+        "elapsedMs": 0,
+        "startedAtMs": 1793959383866,
+        "args": "{\"summary\":\"按三步走\"}"
+      }
+    },
+    {
+      "type": "plan_approval",
+      "data": {
+        "planApprovalId": "call_mock_plan_exit_1",
+        "plan": "## 计划\n1. 先确认需求边界\n2. 再做实现\n3. 最后回归验证",
+        "timeoutMs": 600000
+      }
+    },
+    {
+      "type": "tool_status",
+      "data": {
+        "name": "plan_exit",
+        "label": "提交计划待批准",
+        "hint": "计划写完了，请你过目；你同意后它才开始动手",
+        "status": "done",
+        "elapsedMs": 617,
+        "startedAtMs": 1793959383866,
+        "args": "{\"summary\":\"按三步走\"}",
+        "result": "Plan approved. You are now in BUILD mode and may modify files and run commands. Start executing the plan now. Seed your task list with todo_write (one item per plan step), keep exactly one task in_progress, and update it as you go."
+      }
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "usage",
+      "data": {
+        "thinkingChars": 0,
+        "turnElapsedMs": 3462,
+        "profile": "workspace",
+        "humanWaitMs": 613,
+        "turnWallMs": 10186,
+        "turnPrepMs": 6111
+      }
+    },
+    {
+      "type": "done",
+      "data": {
+        "finalContent": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
+        "messageId": "8e91c0c5499ce18da2f9916d97f12223",
+        "userMessageId": "dbfe9d16e942caf8c2ca9dab6afeec57",
+        "turnId": "2c9c9ed2163b4bff8383efd50c761260",
+        "model": "mock-chat",
+        "agentId": null,
+        "agentName": null,
+        "sources": [],
+        "finalImages": [],
+        "degradations": [],
+        "elapsedMs": 3462,
+        "humanWaitMs": 613,
+        "turnWallMs": 10186,
+        "prepMs": 6111,
+        "tokens": {
+          "thinkingChars": 0,
+          "turnElapsedMs": 3462,
+          "profile": "workspace",
+          "humanWaitMs": 613,
+          "turnWallMs": 10186,
+          "turnPrepMs": 6111
+        },
+        "toolCalls": [
+          {
+            "name": "plan_write",
+            "label": "撰写执行计划",
+            "hint": "把想好的方案写成计划，你点开就能看",
+            "status": "done",
+            "args": "{\"content\":\"## 计划\\n1. 先确认需求边界\\n2. 再做实现\\n3. 最后回归验证\"}",
+            "startedAtMs": 1793959383458,
+            "elapsedMs": 205,
+            "result": "Plan saved to \"plans/PLAN.md\"."
+          },
+          {
+            "name": "plan_exit",
+            "label": "提交计划待批准",
+            "hint": "计划写完了，请你过目；你同意后它才开始动手",
+            "status": "done",
+            "args": "{\"summary\":\"按三步走\"}",
+            "startedAtMs": 1793959383866,
+            "elapsedMs": 617,
+            "result": "Plan approved. You are now in BUILD mode and may modify files and run commands. Start executing the plan now. Seed your task list with todo_write (one item per plan step), keep exactly one task in_progress, and update it as you go."
+          }
+        ],
+        "blocks": {
+          "v": 1,
+          "turnId": "2c9c9ed2163b4bff8383efd50c761260",
+          "blocks": [
+            {
+              "name": "plan_write",
+              "label": "撰写执行计划",
+              "hint": "把想好的方案写成计划，你点开就能看",
+              "status": "done",
+              "args": "{\"content\":\"## 计划\\n1. 先确认需求边界\\n2. 再做实现\\n3. 最后回归验证\"}",
+              "startedAtMs": 1793959383458,
+              "elapsedMs": 205,
+              "result": "Plan saved to \"plans/PLAN.md\".",
+              "kind": "tool",
+              "id": "b1"
+            },
+            {
+              "name": "plan_exit",
+              "label": "提交计划待批准",
+              "hint": "计划写完了，请你过目；你同意后它才开始动手",
+              "status": "done",
+              "args": "{\"summary\":\"按三步走\"}",
+              "startedAtMs": 1793959383866,
+              "elapsedMs": 617,
+              "result": "Plan approved. You are now in BUILD mode and may modify files and run commands. Start executing the plan now. Seed your task list with todo_write (one item per plan step), keep exactly one task in_progress, and update it as you go.",
+              "kind": "tool",
+              "id": "b2"
+            },
+            {
+              "kind": "text",
+              "channel": "answer",
+              "text": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
+              "id": "b3"
+            }
+          ]
+        },
+        "artifacts": [],
+        "related": [],
+        "thinking": null,
+        "planRecord": {
+          "plan": "## 计划\n1. 先确认需求边界\n2. 再做实现\n3. 最后回归验证",
+          "status": "approved",
+          "versions": [
+            {
+              "plan": "## 计划\n1. 先确认需求边界\n2. 再做实现\n3. 最后回归验证"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "message": {
+    "turnId": "2c9c9ed2163b4bff8383efd50c761260",
+    "role": "assistant",
+    "sources": [],
+    "blocks": {
+      "v": 1,
+      "turnId": "2c9c9ed2163b4bff8383efd50c761260",
+      "blocks": [
+        {
+          "name": "plan_write",
+          "label": "撰写执行计划",
+          "hint": "把想好的方案写成计划，你点开就能看",
+          "status": "done",
+          "args": "{\"content\":\"## 计划\\n1. 先确认需求边界\\n2. 再做实现\\n3. 最后回归验证\"}",
+          "startedAtMs": 1793959383458,
+          "elapsedMs": 205,
+          "result": "Plan saved to \"plans/PLAN.md\".",
+          "kind": "tool",
+          "id": "b1"
+        },
+        {
+          "name": "plan_exit",
+          "label": "提交计划待批准",
+          "hint": "计划写完了，请你过目；你同意后它才开始动手",
+          "status": "done",
+          "args": "{\"summary\":\"按三步走\"}",
+          "startedAtMs": 1793959383866,
+          "elapsedMs": 617,
+          "result": "Plan approved. You are now in BUILD mode and may modify files and run commands. Start executing the plan now. Seed your task list with todo_write (one item per plan step), keep exactly one task in_progress, and update it as you go.",
+          "kind": "tool",
+          "id": "b2"
+        },
+        {
+          "kind": "text",
+          "channel": "answer",
+          "text": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
+          "id": "b3"
+        }
+      ]
+    },
+    "messageId": "8e91c0c5499ce18da2f9916d97f12223",
+    "content": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
+    "sequence": 2,
+    "createTime": "2026-11-06T18:03:07",
+    "timeline": [
+      {
+        "kind": "tool",
+        "i": 0
+      },
+      {
+        "kind": "tool",
+        "i": 1
+      },
+      {
+        "kind": "text",
+        "from": 0,
+        "to": 56
+      }
+    ],
+    "tokens": {
+      "thinkingChars": 0,
+      "turnElapsedMs": 3462,
+      "profile": "workspace",
+      "humanWaitMs": 613,
+      "turnWallMs": 10186,
+      "turnPrepMs": 6111
+    },
+    "model": "mock-chat",
+    "toolCalls": [
+      {
+        "args": "{\"content\":\"## 计划\\n1. 先确认需求边界\\n2. 再做实现\\n3. 最后回归验证\"}",
+        "result": "Plan saved to \"plans/PLAN.md\".",
+        "hint": "把想好的方案写成计划，你点开就能看",
+        "name": "plan_write",
+        "label": "撰写执行计划",
+        "startedAtMs": 1793959383458,
+        "status": "done",
+        "elapsedMs": 205
+      },
+      {
+        "args": "{\"summary\":\"按三步走\"}",
+        "result": "Plan approved. You are now in BUILD mode and may modify files and run commands. Start executing the plan now. Seed your task list with todo_write (one item per plan step), keep exactly one task in_progress, and update it as you go.",
+        "hint": "计划写完了，请你过目；你同意后它才开始动手",
+        "name": "plan_exit",
+        "label": "提交计划待批准",
+        "startedAtMs": 1793959383866,
+        "status": "done",
+        "elapsedMs": 617
+      }
+    ],
+    "plan": {
+      "plan": "## 计划\n1. 先确认需求边界\n2. 再做实现\n3. 最后回归验证",
+      "status": "approved",
+      "versions": [
+        {
+          "plan": "## 计划\n1. 先确认需求边界\n2. 再做实现\n3. 最后回归验证"
+        }
+      ]
+    }
+  },
+  "guestMessage": null
+}

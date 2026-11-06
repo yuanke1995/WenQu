@@ -1,0 +1,403 @@
+{
+  "capturedAt": "2026-11-06T10:01:31.670Z",
+  "events": [
+    {
+      "type": "turn_start",
+      "data": {
+        "prepMs": 17,
+        "wallMs": 17
+      }
+    },
+    {
+      "type": "turn_start",
+      "data": {
+        "prepMs": 5912,
+        "wallMs": 5912
+      }
+    },
+    {
+      "type": "tool_status",
+      "data": {
+        "name": "plan_write",
+        "label": "撰写执行计划",
+        "hint": "把想好的方案写成计划，你点开就能看",
+        "status": "start",
+        "elapsedMs": 0,
+        "startedAtMs": 1793959287909,
+        "args": "{\"content\":\"## 计划\\n1. 先确认需求边界\\n2. 再做实现\\n3. 最后回归验证\"}"
+      }
+    },
+    {
+      "type": "tool_status",
+      "data": {
+        "name": "plan_write",
+        "label": "撰写执行计划",
+        "hint": "把想好的方案写成计划，你点开就能看",
+        "status": "done",
+        "elapsedMs": 208,
+        "startedAtMs": 1793959287909,
+        "args": "{\"content\":\"## 计划\\n1. 先确认需求边界\\n2. 再做实现\\n3. 最后回归验证\"}",
+        "result": "Plan saved to \"plans/PLAN.md\"."
+      }
+    },
+    {
+      "type": "tool_status",
+      "data": {
+        "name": "plan_exit",
+        "label": "提交计划待批准",
+        "hint": "计划写完了，请你过目；你同意后它才开始动手",
+        "status": "start",
+        "elapsedMs": 0,
+        "startedAtMs": 1793959288326,
+        "args": "{\"summary\":\"按三步走\"}"
+      }
+    },
+    {
+      "type": "plan_approval",
+      "data": {
+        "planApprovalId": "call_mock_plan_exit_1",
+        "plan": "## 计划\n1. 先确认需求边界\n2. 再做实现\n3. 最后回归验证",
+        "timeoutMs": 600000
+      }
+    },
+    {
+      "type": "tool_status",
+      "data": {
+        "name": "plan_exit",
+        "label": "提交计划待批准",
+        "hint": "计划写完了，请你过目；你同意后它才开始动手",
+        "status": "done",
+        "elapsedMs": 620,
+        "startedAtMs": 1793959288326,
+        "args": "{\"summary\":\"按三步走\"}",
+        "result": "用户拒绝了这版计划"
+      }
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "plan_cancelled",
+      "data": {}
+    },
+    {
+      "type": "usage",
+      "data": {
+        "thinkingChars": 0,
+        "turnElapsedMs": 3545,
+        "profile": "workspace",
+        "humanWaitMs": 610,
+        "turnWallMs": 10067,
+        "turnPrepMs": 5912
+      }
+    },
+    {
+      "type": "done",
+      "data": {
+        "finalContent": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
+        "messageId": "46123b4153ff053199baae00eb60477f",
+        "userMessageId": "d117c41245277577b59bd092d9247f43",
+        "turnId": "52cc932f64164ba486f36a06a58a3010",
+        "model": "mock-chat",
+        "agentId": null,
+        "agentName": null,
+        "sources": [],
+        "finalImages": [],
+        "degradations": [],
+        "elapsedMs": 3545,
+        "humanWaitMs": 610,
+        "turnWallMs": 10067,
+        "prepMs": 5912,
+        "tokens": {
+          "thinkingChars": 0,
+          "turnElapsedMs": 3545,
+          "profile": "workspace",
+          "humanWaitMs": 610,
+          "turnWallMs": 10067,
+          "turnPrepMs": 5912
+        },
+        "toolCalls": [
+          {
+            "name": "plan_write",
+            "label": "撰写执行计划",
+            "hint": "把想好的方案写成计划，你点开就能看",
+            "status": "done",
+            "args": "{\"content\":\"## 计划\\n1. 先确认需求边界\\n2. 再做实现\\n3. 最后回归验证\"}",
+            "startedAtMs": 1793959287909,
+            "elapsedMs": 208,
+            "result": "Plan saved to \"plans/PLAN.md\"."
+          },
+          {
+            "name": "plan_exit",
+            "label": "提交计划待批准",
+            "hint": "计划写完了，请你过目；你同意后它才开始动手",
+            "status": "done",
+            "args": "{\"summary\":\"按三步走\"}",
+            "startedAtMs": 1793959288326,
+            "elapsedMs": 620,
+            "result": "用户拒绝了这版计划"
+          }
+        ],
+        "blocks": {
+          "v": 1,
+          "turnId": "52cc932f64164ba486f36a06a58a3010",
+          "blocks": [
+            {
+              "name": "plan_write",
+              "label": "撰写执行计划",
+              "hint": "把想好的方案写成计划，你点开就能看",
+              "status": "done",
+              "args": "{\"content\":\"## 计划\\n1. 先确认需求边界\\n2. 再做实现\\n3. 最后回归验证\"}",
+              "startedAtMs": 1793959287909,
+              "elapsedMs": 208,
+              "result": "Plan saved to \"plans/PLAN.md\".",
+              "kind": "tool",
+              "id": "b1"
+            },
+            {
+              "name": "plan_exit",
+              "label": "提交计划待批准",
+              "hint": "计划写完了，请你过目；你同意后它才开始动手",
+              "status": "done",
+              "args": "{\"summary\":\"按三步走\"}",
+              "startedAtMs": 1793959288326,
+              "elapsedMs": 620,
+              "result": "用户拒绝了这版计划",
+              "kind": "tool",
+              "id": "b2"
+            },
+            {
+              "kind": "text",
+              "channel": "answer",
+              "text": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
+              "id": "b3"
+            }
+          ]
+        },
+        "artifacts": [],
+        "related": [],
+        "thinking": null,
+        "planCancelled": true,
+        "planRecord": {
+          "plan": "## 计划\n1. 先确认需求边界\n2. 再做实现\n3. 最后回归验证",
+          "status": "rejected",
+          "versions": [
+            {
+              "plan": "## 计划\n1. 先确认需求边界\n2. 再做实现\n3. 最后回归验证"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "message": {
+    "turnId": "52cc932f64164ba486f36a06a58a3010",
+    "role": "assistant",
+    "sources": [],
+    "blocks": {
+      "v": 1,
+      "turnId": "52cc932f64164ba486f36a06a58a3010",
+      "blocks": [
+        {
+          "name": "plan_write",
+          "label": "撰写执行计划",
+          "hint": "把想好的方案写成计划，你点开就能看",
+          "status": "done",
+          "args": "{\"content\":\"## 计划\\n1. 先确认需求边界\\n2. 再做实现\\n3. 最后回归验证\"}",
+          "startedAtMs": 1793959287909,
+          "elapsedMs": 208,
+          "result": "Plan saved to \"plans/PLAN.md\".",
+          "kind": "tool",
+          "id": "b1"
+        },
+        {
+          "name": "plan_exit",
+          "label": "提交计划待批准",
+          "hint": "计划写完了，请你过目；你同意后它才开始动手",
+          "status": "done",
+          "args": "{\"summary\":\"按三步走\"}",
+          "startedAtMs": 1793959288326,
+          "elapsedMs": 620,
+          "result": "用户拒绝了这版计划",
+          "kind": "tool",
+          "id": "b2"
+        },
+        {
+          "kind": "text",
+          "channel": "answer",
+          "text": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
+          "id": "b3"
+        }
+      ]
+    },
+    "messageId": "46123b4153ff053199baae00eb60477f",
+    "content": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
+    "sequence": 2,
+    "createTime": "2026-11-06T18:01:31",
+    "timeline": [
+      {
+        "kind": "tool",
+        "i": 0
+      },
+      {
+        "kind": "tool",
+        "i": 1
+      },
+      {
+        "kind": "text",
+        "from": 0,
+        "to": 56
+      }
+    ],
+    "tokens": {
+      "thinkingChars": 0,
+      "turnElapsedMs": 3545,
+      "profile": "workspace",
+      "humanWaitMs": 610,
+      "turnWallMs": 10067,
+      "turnPrepMs": 5912
+    },
+    "model": "mock-chat",
+    "toolCalls": [
+      {
+        "args": "{\"content\":\"## 计划\\n1. 先确认需求边界\\n2. 再做实现\\n3. 最后回归验证\"}",
+        "result": "Plan saved to \"plans/PLAN.md\".",
+        "hint": "把想好的方案写成计划，你点开就能看",
+        "name": "plan_write",
+        "label": "撰写执行计划",
+        "startedAtMs": 1793959287909,
+        "status": "done",
+        "elapsedMs": 208
+      },
+      {
+        "args": "{\"summary\":\"按三步走\"}",
+        "result": "用户拒绝了这版计划",
+        "hint": "计划写完了，请你过目；你同意后它才开始动手",
+        "name": "plan_exit",
+        "label": "提交计划待批准",
+        "startedAtMs": 1793959288326,
+        "status": "done",
+        "elapsedMs": 620
+      }
+    ],
+    "plan": {
+      "plan": "## 计划\n1. 先确认需求边界\n2. 再做实现\n3. 最后回归验证",
+      "status": "rejected",
+      "versions": [
+        {
+          "plan": "## 计划\n1. 先确认需求边界\n2. 再做实现\n3. 最后回归验证"
+        }
+      ]
+    }
+  },
+  "guestMessage": null
+}

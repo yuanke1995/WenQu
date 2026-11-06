@@ -1,0 +1,372 @@
+{
+  "capturedAt": "2026-11-06T10:02:56.932Z",
+  "events": [
+    {
+      "type": "turn_start",
+      "data": {
+        "prepMs": 15,
+        "wallMs": 15
+      }
+    },
+    {
+      "type": "turn_start",
+      "data": {
+        "prepMs": 165,
+        "wallMs": 165
+      }
+    },
+    {
+      "type": "artifact",
+      "data": {
+        "type": "artifact",
+        "content": {
+          "id": "d5b144b625f44fd892f1bc85469f8699",
+          "url": "/ai/artifacts/yuanke/202611/d5b144b625f44fd892f1bc85469f8699_blocks-demo.html?expire=1793962974&sig=008d20c01d006fe0ba6a1c59a2a3640d7e0e39eb2278f723458d96a75ec1cd38",
+          "filename": "blocks-demo.html",
+          "ext": "html",
+          "size": 227,
+          "description": "blocks 端到端产物卡用例"
+        },
+        "sessionId": "dbb50f80-e3e1-4346-a1f8-68eda939292f",
+        "seq": 3
+      }
+    },
+    {
+      "type": "tool_status",
+      "data": {
+        "name": "presentArtifact",
+        "label": "生成产物",
+        "hint": "把内容整理成可下载的文件",
+        "status": "start",
+        "elapsedMs": 0,
+        "startedAtMs": 1793959374252,
+        "args": "{\"description\":\"blocks 端到端产物卡用例\",\"filename\":\"blocks-demo.html\",\"content\":\"<!DOCTYPE html><html><head><meta charset=\\\"utf-8\\\"><title>blocks demo</title></head><body><h1>产物卡用例</h1><p>这份 HTML 由 mock 网关交给 presentArtifact，用于验证产物块与落库列同源。</p></body></html>\"}"
+      }
+    },
+    {
+      "type": "tool_status",
+      "data": {
+        "name": "presentArtifact",
+        "label": "生成产物",
+        "hint": "把内容整理成可下载的文件",
+        "status": "done",
+        "elapsedMs": 1,
+        "startedAtMs": 1793959374252,
+        "args": "{\"description\":\"blocks 端到端产物卡用例\",\"filename\":\"blocks-demo.html\",\"content\":\"<!DOCTYPE html><html><head><meta charset=\\\"utf-8\\\"><title>blocks demo</title></head><body><h1>产物卡用例</h1><p>这份 HTML 由 mock 网关交给 presentArtifact，用于验证产物块与落库列同源。</p></body></html>\"}",
+        "result": "\"已生成产物：blocks 端到端产物卡用例 访问地址：/ai/artifacts/yuanke/202611/d5b144b625f44fd892f1bc85469f8699_blocks-demo.html?expire=1793962974&sig=008d20c01d006fe0ba6a1c59a2a3640d7e0e39eb2278f723458d96a75ec1cd38\""
+      }
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "token",
+      "data": "压测"
+    },
+    {
+      "type": "usage",
+      "data": {
+        "thinkingChars": 0,
+        "turnElapsedMs": 3259,
+        "profile": "chat",
+        "turnWallMs": 3424,
+        "turnPrepMs": 165
+      }
+    },
+    {
+      "type": "done",
+      "data": {
+        "finalContent": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
+        "messageId": "39c236bce513da6739119ef32a451e63",
+        "userMessageId": "a8ff48e7daa1b0b8a601504fdb31e140",
+        "turnId": "51b9ecdcd1e948a480e03fafe7d597bd",
+        "model": "mock-chat",
+        "agentId": null,
+        "agentName": null,
+        "sources": [],
+        "finalImages": [],
+        "degradations": [],
+        "elapsedMs": 3259,
+        "humanWaitMs": 0,
+        "turnWallMs": 3424,
+        "prepMs": 165,
+        "tokens": {
+          "thinkingChars": 0,
+          "turnElapsedMs": 3259,
+          "profile": "chat",
+          "turnWallMs": 3424,
+          "turnPrepMs": 165
+        },
+        "toolCalls": [
+          {
+            "name": "presentArtifact",
+            "label": "生成产物",
+            "hint": "把内容整理成可下载的文件",
+            "status": "done",
+            "args": "{\"description\":\"blocks 端到端产物卡用例\",\"filename\":\"blocks-demo.html\",\"content\":\"<!DOCTYPE html><html><head><meta charset=\\\"utf-8\\\"><title>blocks demo</title></head><body><h1>产物卡用例</h1><p>这份 HTML 由 mock 网关交给 presentArtifact，用于验证产物块与落库列同源。</p></body></html>\"}",
+            "startedAtMs": 1793959374252,
+            "elapsedMs": 1,
+            "result": "\"已生成产物：blocks 端到端产物卡用例 访问地址：/ai/artifacts/yuanke/202611/d5b144b625f44fd892f1bc85469f8699_blocks-demo.html?expire=1793962974&sig=008d20c01d006fe0ba6a1c59a2a3640d7e0e39eb2278f723458d96a75ec1cd38\""
+          }
+        ],
+        "blocks": {
+          "v": 1,
+          "turnId": "51b9ecdcd1e948a480e03fafe7d597bd",
+          "blocks": [
+            {
+              "name": "presentArtifact",
+              "label": "生成产物",
+              "hint": "把内容整理成可下载的文件",
+              "status": "done",
+              "args": "{\"description\":\"blocks 端到端产物卡用例\",\"filename\":\"blocks-demo.html\",\"content\":\"<!DOCTYPE html><html><head><meta charset=\\\"utf-8\\\"><title>blocks demo</title></head><body><h1>产物卡用例</h1><p>这份 HTML 由 mock 网关交给 presentArtifact，用于验证产物块与落库列同源。</p></body></html>\"}",
+              "startedAtMs": 1793959374252,
+              "elapsedMs": 1,
+              "result": "\"已生成产物：blocks 端到端产物卡用例 访问地址：/ai/artifacts/yuanke/202611/d5b144b625f44fd892f1bc85469f8699_blocks-demo.html?expire=1793962974&sig=008d20c01d006fe0ba6a1c59a2a3640d7e0e39eb2278f723458d96a75ec1cd38\"",
+              "kind": "tool",
+              "id": "b1"
+            },
+            {
+              "kind": "text",
+              "channel": "answer",
+              "text": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
+              "id": "b2"
+            },
+            {
+              "id": "b3",
+              "url": "/ai/artifacts/yuanke/202611/d5b144b625f44fd892f1bc85469f8699_blocks-demo.html?expire=1793962976&sig=67c74ca305de5db36e0c727d8932ee08b6aa642f0232e272b3efe053ca428859",
+              "filename": "blocks-demo.html",
+              "ext": "html",
+              "size": 227,
+              "description": "blocks 端到端产物卡用例",
+              "kind": "artifact"
+            }
+          ]
+        },
+        "artifacts": [
+          {
+            "id": "d5b144b625f44fd892f1bc85469f8699",
+            "url": "/ai/artifacts/yuanke/202611/d5b144b625f44fd892f1bc85469f8699_blocks-demo.html?expire=1793962976&sig=67c74ca305de5db36e0c727d8932ee08b6aa642f0232e272b3efe053ca428859",
+            "filename": "blocks-demo.html",
+            "ext": "html",
+            "size": 227,
+            "description": "blocks 端到端产物卡用例"
+          }
+        ],
+        "related": [],
+        "thinking": null
+      }
+    }
+  ],
+  "message": {
+    "turnId": "51b9ecdcd1e948a480e03fafe7d597bd",
+    "role": "assistant",
+    "sources": [],
+    "blocks": {
+      "v": 1,
+      "turnId": "51b9ecdcd1e948a480e03fafe7d597bd",
+      "blocks": [
+        {
+          "name": "presentArtifact",
+          "label": "生成产物",
+          "hint": "把内容整理成可下载的文件",
+          "status": "done",
+          "args": "{\"description\":\"blocks 端到端产物卡用例\",\"filename\":\"blocks-demo.html\",\"content\":\"<!DOCTYPE html><html><head><meta charset=\\\"utf-8\\\"><title>blocks demo</title></head><body><h1>产物卡用例</h1><p>这份 HTML 由 mock 网关交给 presentArtifact，用于验证产物块与落库列同源。</p></body></html>\"}",
+          "startedAtMs": 1793959374252,
+          "elapsedMs": 1,
+          "result": "\"已生成产物：blocks 端到端产物卡用例 访问地址：/ai/artifacts/yuanke/202611/d5b144b625f44fd892f1bc85469f8699_blocks-demo.html?expire=1793962974&sig=008d20c01d006fe0ba6a1c59a2a3640d7e0e39eb2278f723458d96a75ec1cd38\"",
+          "kind": "tool",
+          "id": "b1"
+        },
+        {
+          "kind": "text",
+          "channel": "answer",
+          "text": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
+          "id": "b2"
+        },
+        {
+          "id": "b3",
+          "url": "/ai/artifacts/yuanke/202611/d5b144b625f44fd892f1bc85469f8699_blocks-demo.html?expire=1793962976&sig=67c74ca305de5db36e0c727d8932ee08b6aa642f0232e272b3efe053ca428859",
+          "filename": "blocks-demo.html",
+          "ext": "html",
+          "size": 227,
+          "description": "blocks 端到端产物卡用例",
+          "kind": "artifact"
+        }
+      ]
+    },
+    "messageId": "39c236bce513da6739119ef32a451e63",
+    "content": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
+    "sequence": 2,
+    "createTime": "2026-11-06T18:02:56",
+    "timeline": [
+      {
+        "kind": "tool",
+        "i": 0
+      },
+      {
+        "kind": "text",
+        "from": 0,
+        "to": 56
+      }
+    ],
+    "tokens": {
+      "thinkingChars": 0,
+      "turnElapsedMs": 3259,
+      "profile": "chat",
+      "turnWallMs": 3424,
+      "turnPrepMs": 165
+    },
+    "model": "mock-chat",
+    "toolCalls": [
+      {
+        "args": "{\"description\":\"blocks 端到端产物卡用例\",\"filename\":\"blocks-demo.html\",\"content\":\"<!DOCTYPE html><html><head><meta charset=\\\"utf-8\\\"><title>blocks demo</title></head><body><h1>产物卡用例</h1><p>这份 HTML 由 mock 网关交给 presentArtifact，用于验证产物块与落库列同源。</p></body></html>\"}",
+        "result": "\"已生成产物：blocks 端到端产物卡用例 访问地址：/ai/artifacts/yuanke/202611/d5b144b625f44fd892f1bc85469f8699_blocks-demo.html?expire=1793962974&sig=008d20c01d006fe0ba6a1c59a2a3640d7e0e39eb2278f723458d96a75ec1cd38\"",
+        "hint": "把内容整理成可下载的文件",
+        "name": "presentArtifact",
+        "label": "生成产物",
+        "startedAtMs": 1793959374252,
+        "status": "done",
+        "elapsedMs": 1
+      }
+    ],
+    "artifacts": [
+      {
+        "ext": "html",
+        "filename": "blocks-demo.html",
+        "size": 227,
+        "description": "blocks 端到端产物卡用例",
+        "id": "d5b144b625f44fd892f1bc85469f8699",
+        "url": "/ai/artifacts/yuanke/202611/d5b144b625f44fd892f1bc85469f8699_blocks-demo.html?expire=1793962976&sig=67c74ca305de5db36e0c727d8932ee08b6aa642f0232e272b3efe053ca428859"
+      }
+    ]
+  },
+  "guestMessage": {
+    "role": "assistant",
+    "content": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测",
+    "time": null,
+    "blocks": {
+      "v": 1,
+      "blocks": [
+        {
+          "id": "b2",
+          "kind": "text",
+          "channel": "answer",
+          "text": "压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测压测"
+        }
+      ]
+    },
+    "artifacts": [
+      {
+        "seq": 0,
+        "filename": "blocks-demo.html",
+        "size": 227,
+        "description": "blocks 端到端产物卡用例"
+      }
+    ]
+  }
+}
