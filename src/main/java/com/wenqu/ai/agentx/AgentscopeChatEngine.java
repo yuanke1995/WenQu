@@ -913,11 +913,16 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         String sessionKey = sessions.key(cmd);
         sessions.claimFollower(sessionKey);
         try {
-            // 开轮前准备那一段（限流/校验/会话补建/实例装配）只有「服务端收到提问 → submit 之后起表」
-            // 这一条路径量得出来；续跑轮没有收到提问那一刻，宁可不报也不把等人那几天算成准备。
+            // 起表基准：网页/分享链路由控制器在请求入口记下 receivedAtMs；定时/目标/工作流这类
+            // 没有请求体的入口以开轮这一刻为准（prepMs=0，不把到达流水线前的等待算成准备）。
+            // 两种入口的整轮墙钟都从这里起表，落库、done、接流快照与前端秒表用的是同一本账。
             long startedAt = System.currentTimeMillis();
             long prepMs = cmd.getReceivedAtMs() > 0L
                     ? Math.max(0L, startedAt - cmd.getReceivedAtMs()) : 0L;
+            // 起表基准早帧：外壳在请求入口已发过一帧（收到提问→此刻），这里用开轮后的准确 prepMs
+            // 再校准一次；两帧同一基准，重锚不会让读数跳。没有请求体的入口这一帧就是它唯一的起表基准。
+            channel.emit(RunEventType.TURN_START, com.alibaba.fastjson2.JSON.toJSONString(
+                    java.util.Map.of("wallMs", prepMs, "prepMs", prepMs)));
             followTurn(session, cmd, channel, pool, route, hooks, turnId, historyBefore, startCursor,
                     userMessageId, current, recording, startedAt, prepMs, binding.contextWindow());
         } finally {
@@ -4148,11 +4153,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         snap.put("elapsedMs", elapsedMs);
         // 整轮墙钟（含开轮前准备）与那一段准备一起给：接流那端的秒表按这一份起表，
         // 否则「刷新一次」会把排队+装配那几秒抹掉（用户看见的数凭空变小，与 done 同一件事）。
-        // prepMs=0 的那一跑（续跑轮）不给这两个键：宁可让前端走机器耗时回退，不编一个准备时间。
-        if (prepMs > 0L) {
-            snap.put("wallMs", elapsedMs + prepMs);
-            snap.put("prepMs", prepMs);
-        }
+        // 没有请求体的入口 prepMs=0、基准就是开轮时刻——照样给，刷新后才接得上同一本账。
+        snap.put("wallMs", elapsedMs + prepMs);
+        snap.put("prepMs", prepMs);
         if (cmd.getAgentId() != null && !cmd.getAgentId().isBlank()) {
             snap.put("agentId", cmd.getAgentId());
             String name = agentNameOf(cmd);
@@ -4167,8 +4170,8 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * @param elapsedMs   机器耗时（墙钟扣掉人在回路的等待）——看板与台账说这个数
      * @param humanWaitMs 这一轮里用户读卡/答题累计的等待，随 done 下发供界面上单独说明
      * @param wallMs      本轮墙钟（开轮那一刻到收尾），只用来反推本轮真实开始时刻与写日志
-     * @param prepMs      开轮前准备那一段（服务端收到提问 → 开轮起表）；0 = 这一跑没有收到提问的基准，
-     *                    此时<b>不下发</b>整轮墙钟，让前端走「机器耗时 + 等待」那份回退，而不是编一个数
+     * @param prepMs      开轮前准备那一段（服务端收到提问 → 开轮起表）；0 = 没有请求体的入口，
+     *                    此时起表基准就是开轮时刻，整轮墙钟照常下发与落库（不含到达流水线前的等待）
      */
     private void finish(ChatCommand cmd, RunChannel channel, WenquSourcePool pool,
                         ModelRegistryService.ModelRoute route, String modelRef, int contextWindow, String answer,
@@ -4271,12 +4274,10 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 整轮墙钟也落库：气泡顶部那条报的是「从发出提问到答完」，屏幕上跳的是这一份、刷新后读的
         // 必须还是这一份。只落机器耗时的话，刷新一次数字就变小（真机 2026-11-05 量到 6.0s → 3.3s），
         // 因为排队、限流、会话补建与实例装配那几秒不在 startedAt 之后起表。
-        // prepMs=0（续跑轮、工作流/定时任务/子轮那些没有前端请求体的入口）时两个键都不写：
-        // 那几路本来就没有「收到提问」这一刻，写了就是编数。
-        if (prepMs > 0L) {
-            tokens.put("turnWallMs", wallMs + prepMs);
-            tokens.put("turnPrepMs", prepMs);
-        }
+        // 所有轮都写：没有请求体的入口 prepMs=0、基准是开轮时刻——照样有「这一轮跑了多久」，
+        // 少了这个键，那些轮答完与刷新后就会各说各的（done 走本地钟回退、历史走机器耗时）。
+        tokens.put("turnWallMs", wallMs + prepMs);
+        tokens.put("turnPrepMs", prepMs);
         // 暗截断对账：判据在 TurnRecorder 那一处，两条运行时共用同一把尺，不复制第二份。
         // 「已交代」必须算上思考字符与工具入参——前者漏了就是轮轮误报（deepseek 系恒思考），
         // 后者漏了会把「写文件动辄几百 token」的正常轮判成内容丢失。
@@ -4383,11 +4384,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         done.put("elapsedMs", elapsedMs);
         done.put("humanWaitMs", humanWaitMs);
         // 整轮墙钟（含开轮前准备）与准备那一段：前端气泡顶部的数与悬停拆分都读这两个键，
-        // 缺键时它们退回「机器耗时 + 等待」——那是没有收到提问基准的那几轮唯一诚实的口径。
-        if (prepMs > 0L) {
-            done.put("turnWallMs", wallMs + prepMs);
-            done.put("prepMs", prepMs);
-        }
+        // 与落库的 tokens.turnWallMs/turnPrepMs 是同一对变量——答完与刷新后必须逐毫秒相等。
+        done.put("turnWallMs", wallMs + prepMs);
+        done.put("prepMs", prepMs);
         done.put("tokens", tokens);
         done.put("toolCalls", recording.toolCallList());
         // 每轮文件改动：改了哪些文件、各多少行（本轮没跑/没改动/执行器不在都不给键）

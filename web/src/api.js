@@ -161,6 +161,9 @@ const CHAT_EVENT_CB = {
   approval_required: 'onApprovalRequired', ask_user: 'onAskUser',
   plan_delta: 'onPlanDelta', plan_approval: 'onPlanApproval', plan_cancelled: 'onPlanCancelled',
   plan_superseded: 'onPlanSuperseded', todo: 'onTodo', snapshot: 'onSnapshot',
+  // turn_start＝本轮的服务端起表基准（时长形式）：开流第一帧把秒表锚到服务端收到提问那一刻，
+  // 收尾换成落库那份墙钟时才不会掉一个网络往返（答完 5.3s → 刷新 5.1s）
+  turn_start: 'onTurnStart',
   // compact_state＝轮内框架自动压缩的开始/结束：那两次摘要模型调用的内容全被按 purpose 滤掉，
   // 不带这一帧，压缩那二十多秒界面上一个字都没有，用户读成「卡住了」
   compact_state: 'onCompactState',

@@ -47,6 +47,10 @@ public enum RunEventType {
     /** 运行中插话<b>被模型听到</b>的那一刻（框架 {@code inbox/applied}）。不是「用户按了发送」——
      *  那一刻由 {@code POST /chat/steer} 自己回执，这条只对应「送进这一轮的上下文」，故带正文与消息 ID。 */
     STEER("steer"),
+    /** 本轮的服务端起表基准（时长形式）：开流第一帧下发，前端据此把秒表锚到服务端收到提问那一拍，
+     *  收尾换成落库那份墙钟时才不会掉一个网络往返。只给时长、不给绝对时刻——两端钟差不会进入读数。
+     *  外壳（请求入口）与引擎（开轮起表）各发一次，同一基准，后一次 prepMs 更准。 */
+    TURN_START("turn_start"),
     SNAPSHOT("snapshot"),
     DONE("done"),
     ERROR("error");

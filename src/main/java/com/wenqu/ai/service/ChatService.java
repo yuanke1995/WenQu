@@ -5,6 +5,7 @@ import com.wenqu.ai.agent.chat.ChatRunRuntime;
 import com.wenqu.ai.agent.chat.TurnDeadline;
 import com.wenqu.ai.agent.chat.TurnHandle;
 import com.wenqu.ai.agent.chat.TurnRegistry;
+import com.wenqu.ai.engine.RunEventType;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
 import com.wenqu.ai.dto.ChatRequest;
@@ -477,12 +478,22 @@ public class ChatService {
         if (chatRunBus.enabled() && runOwner != null && !runOwner.isBlank()
                 && !(emitter instanceof CollectingSseEmitter)) {
             chatRunBus.open(sessionId, turnId, runOwner, emitter,
-                    () -> resumeSnapshot(sessionId, turnId),
+                    () -> resumeSnapshot(sessionId, turnId, cmd.getReceivedAtMs()),
                     () -> runtime.abortTurnWithoutViewer(sessionId),
                     () -> {
                         TurnHandle h = TurnRegistry.handle(sessionId);
                         return h != null && turnId.equals(h.turnId());
                     });
+        }
+        // 起表基准早帧：开流第一秒就把「这一轮从服务端收到提问起已经过了多久」交给前端。
+        // 没有它，屏幕上的秒表只能从本地「按下回车」起表，收尾换成落库那份服务端墙钟时会
+        // 掉一个网络往返（真机 2026-11-06：答完 5.3s、刷新 5.1s）。只给时长不给绝对时刻，
+        // 两端钟差进不来。引擎开轮起表时还会再发一帧校准 prepMs（同一基准，读数不跳）。
+        // 定时/目标/工作流没有请求体（receivedAtMs=0）：基准是引擎开轮时刻，由引擎自己发那一帧。
+        if (cmd.getReceivedAtMs() > 0L && !(emitter instanceof CollectingSseEmitter)) {
+            long elapsed = Math.max(0L, System.currentTimeMillis() - cmd.getReceivedAtMs());
+            runtime.sendSseEvent(emitter, RunEventType.TURN_START.sseName(),
+                    JSON.toJSONString(Map.of("wallMs", elapsed, "prepMs", elapsed)), sessionId);
         }
         // 整轮存活看门狗：emitter 无容器超时，截断由台账按机器耗时判定（人工等待不计入，见 TurnDeadline）。
         // 收集型通道（定时任务/MCP/子智能体节点）不挂：它没有真实响应、节奏由调用方 awaitDone 控制。
@@ -943,7 +954,7 @@ public class ChatService {
      * 那里才有剩余的等待毫秒数与「唤醒句柄是否还在」（进程重启过就答不进去）；逐字增量事件也不含，
      * 正文取缓冲本身比回放上千条 token 事件快得多。
      */
-    private Map<String, Object> resumeSnapshot(String sessionId, String turnId) {
+    private Map<String, Object> resumeSnapshot(String sessionId, String turnId, long receivedAtMs) {
         Map<String, Object> snap = new LinkedHashMap<>();
         TurnHandle h = TurnRegistry.handle(sessionId);
         // stopped 与「把手已摘」同列：用户已经点过停止的这一轮不再是「在跑的轮」。装配期（沙盒要
@@ -958,6 +969,17 @@ public class ChatService {
         // 阶段文案、计划步骤与任务清单由总线镜像在 snapshot.events 里，前端重放即可复现界面
         snap.put("running", true);
         snap.put("phase", "pre");
+        // 这一拍引擎可能还没开轮（限流/校验/会话补建/实例装配要几秒，快照仍由外壳这份顶着）：
+        // 不给「已跑多久」，接流方只能从刷新那一刻重新起跳，已经跑掉的准备时间在用户眼里不算数
+        // （症状：刷新后「正在溯源，用时 0 秒」重新数）。按服务端收到提问起表给时长——与 done、
+        // 落库 tokens.turnWallMs 同一个口径，刷新前后才接得上。
+        // prepMs 此刻把已过去的全部算作准备：这一拍确实还没有开轮，事实如此；引擎开出自己的
+        // 快照供给后由那份给准确值，收尾 done 再以最终值覆盖（只影响跑动中悬停的拆分）。
+        if (receivedAtMs > 0L) {
+            long wallMs = Math.max(0L, System.currentTimeMillis() - receivedAtMs);
+            snap.put("wallMs", wallMs);
+            snap.put("prepMs", wallMs);
+        }
         return snap;
     }
 

@@ -2374,13 +2374,18 @@ const applyTurnSnapshot = (msg, snap, sid) => {
   if (typeof snap.turnId === 'string' && snap.turnId) msg.turnId = snap.turnId
   if (snap.agentName) msg.agentName = snap.agentName
   if (snap.agentId) msg.agentId = snap.agentId
-  // 起表点：这一轮在服务端已经跑掉的毫秒换算成本地钟——刷新接上的这一轮本地 time 记的是接上
+  // 起表点：服务端下发的「这一轮已跑多久」换算成本地钟——刷新接上的那一轮本地 time 记的是接上
   // 那一刻，不换算的话顶部秒表从 0 重新起跳，跑掉的那段在用户眼里不算数。
-  // 与本地已有的起表点取**更早**那一份：目标排队那颗占位气泡从按下回车起表，比服务端那份还早，
-  // 取新的会让秒数往回跳（占位气泡交接时已把 time 带过来，见 streamAnswer 的 heldStartAt）
-  // 优先按墙钟接（含开轮前准备与人在回路），旧服务端没有 wallMs 时才退回机器耗时。
-  msg.time = earlierStart(msg.time, resumedStartAt(
-    typeof snap.wallMs === 'number' ? snap.wallMs : snap.elapsedMs, Date.now()))
+  // 有 wallMs（墙钟，含开轮前准备）就**精确**按服务端基准重锚：外壳与引擎两份快照同一基准，
+  // 收尾与刷新读的又是同一个数，三处必须逐毫秒一致。旧服务端只有机器耗时（elapsedMs）时退回
+  // 原先的取早值——目标占位气泡从检测那一刻起表，取新的会让秒数往回跳（占位交接已把 time 带过来）。
+  if (typeof snap.wallMs === 'number') {
+    // 服务端基准只认第一份：重连/再接会拿到更晚生成的快照，按它重锚会把这一帧在路上的时间
+    // 从读数里扣掉，秒表往回跳。基准一旦定下就只续算，收尾那份才校正终值。
+    if (!msg.turnClockFromServer) { msg.time = Date.now() - snap.wallMs; msg.turnClockFromServer = true }
+  } else {
+    msg.time = earlierStart(msg.time, resumedStartAt(snap.elapsedMs, Date.now()))
+  }
   if (typeof snap.prepMs === 'number') msg.turnPrepMs = snap.prepMs
   if (snap.planRecord) msg.planCard = planCardFromRecord(snap.planRecord)
   // 时间线必须在 toolCalls/artifacts 之后重建：段里的下标指向这两份清单，清单没铺好就先建会指空
@@ -2446,7 +2451,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
   // model 留空，等 done/接流快照带后端那份权威值回来：前端预填的是「生效引用」（覆盖>个人默认），
   // 后端落库的是模型名那一段，两边写法不同却都叫 model——拿引用去和上一条的落库值比，
   // 同一个模型会被判成「已切换」，done 一到又自己消失（刷新后更是从来没有过这条线）
-  const fresh = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkLoading: false, time: Date.now(), turnMs: 0, humanWaitMs: 0, artifacts: [], toolCalls: [], plan: null, planCard: null, timeline: [], errorCard: null, model: '', goalWaiting: false }
+  const fresh = { role: 'ai', content: '', images: [], sources: [], related: [], degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '', thinkLoading: false, time: Date.now(), turnClockFromServer: false, turnMs: 0, humanWaitMs: 0, artifacts: [], toolCalls: [], plan: null, planCard: null, timeline: [], errorCard: null, model: '', goalWaiting: false }
   // 目标排队那颗占位气泡交给接流通道时，起表点留在用户按下回车那一刻：服务端那份 elapsedMs
   // 从登记总线才算起，直接铺会让「用时 8 秒」在接上的一瞬跳回 1 秒——数字变小读成计时坏了
   const heldStartAt = resume && replaceMsg && replaceMsg.goalWaiting ? Number(replaceMsg.time) || 0 : 0
@@ -2499,6 +2504,19 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
   }
   const handlers = {
     signal: abort.signal,
+    // 服务端起表基准（开流第一帧，时长形式）：把秒表锚到服务端收到提问那一刻。
+    // 没有它，秒表只能按本地「按下回车」起表，收尾换成落库那份服务端墙钟时会掉一个网络往返
+    //（真机 2026-11-06：答完 5.3s、刷新 5.1s）。外壳与引擎各发一帧、同一基准（后者 prepMs 更准），
+    // 重锚只校正基准，不会改变已显示的量级。绝对时刻不下发，两端钟差进不来。
+    onTurnStart: payload => {
+      let p = null
+      try { p = typeof payload === 'string' ? JSON.parse(payload) : payload } catch (e) { p = null }
+      if (!p || typeof p.wallMs !== 'number') return
+      // 基准只认第一份（外壳那帧最先到）：引擎开轮后那帧同一基准、只是 prepMs 更准，
+      // 再按它重锚会把这一帧在路上的时间从读数里扣掉，秒表往回跳。
+      if (!msg.turnClockFromServer) { msg.time = Date.now() - p.wallMs; msg.turnClockFromServer = true }
+      if (typeof p.prepMs === 'number') msg.turnPrepMs = p.prepMs
+    },
     onSnapshot: payload => {
       // 接流的第一帧（只有 resume 那条通道会有这一帧）：本轮已产出的东西一次铺进气泡
       let snap = null
@@ -2882,17 +2900,15 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
         // 不补这一笔，提问上方那条线在答完那一刻（liveCompactAt 的 loading 落了）就消失，
         // 刷新读库才回来，用户读成「压没压过要看运气」。
         if (liveCompactedSid.value === sid) msg.tokens = { ...(msg.tokens || {}), compacted: 1 }
-        // 整轮用时（气泡顶部那一条读的数）：done 这份是后端算好的机器时间（墙钟扣掉人在回路的
-        // 等待），与看板、台账同一个数；历史恢复读 tokens 里落库的那一份，两条路同源。
-        // 写回时和本地钟对一次账取更大的一份：目标模式那一轮从按下回车起表（含排队与实例冷启动
-        // 那几秒），服务端那份从登记总线才算起——照抄会让数字在答完那一刻变小（见 settledTurnMs）
+        // 整轮用时（气泡顶部那一条读的数）：只认服务端这一份墙钟——它从收到提问起表（含开轮前
+        // 准备与人在回路），落库的 tokens.turnWallMs 就是同一个数，刷新前后必须一模一样。
+        // 不再与本地钟取大：本地从按下回车起表，比服务端多出的只是一次网络往返；取大会让同一轮
+        // 答完显示 5.3、刷新只剩 5.1（真机 2026-11-06，远端后端往返 0.2s）。
+        // 旧服务端没有这个键时退回原先的「机器耗时 + 等人」口径。
         if (typeof p.humanWaitMs === 'number') msg.humanWaitMs = p.humanWaitMs
         if (typeof p.prepMs === 'number') msg.turnPrepMs = p.prepMs
-        // 整轮墙钟（含开轮前准备与人在回路）：服务端从收到提问起表。与本地钟取更大的一份——
-        // 本地含网络往返，服务端含装配；两边都只在毫秒级上差，谁大听谁，绝不比服务端那份小。
-        // 旧服务端没有这个键时退回原先的「机器耗时 + 等人」口径。
         if (typeof p.turnWallMs === 'number') {
-          msg.turnMs = Math.max(p.turnWallMs, Math.max(0, Date.now() - (Number(msg.time) || Date.now())))
+          msg.turnMs = p.turnWallMs
         } else if (typeof p.elapsedMs === 'number') {
           msg.turnMs = settledTurnMs(p.elapsedMs, msg.humanWaitMs, msg.time, Date.now())
         }

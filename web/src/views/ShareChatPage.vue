@@ -253,6 +253,8 @@ const mapHistory = rows => (Array.isArray(rows) ? rows : [])
     // 既有评价（后端按 messageId 回填，与登录态同口径）：不回填的话刷新后按钮显示成没评过，
     // 游客会以为反馈丢了再点一次
     fb: (m.fb === 0 || m.fb === 1) ? m.fb : null,
+    // 整轮用时随 tokens 落库：不带上它，分享页刷新后「用时」整条消失（主对话页早就带着）
+    tokens: (m.tokens && typeof m.tokens === 'object') ? m.tokens : null,
     srcOpen: true
   }))
 
@@ -578,13 +580,15 @@ function send () {
 /** 一条等待中的回答（发起与接流共用同一形状） */
 const newAiMessage = () => reactive({
   role: 'ai', content: '', images: [], sources: [], degradations: [],
-  messageId: '', fb: null, srcOpen: true, time: Date.now(), turnMs: 0, humanWaitMs: 0, failed: false, loading: true
+  messageId: '', fb: null, srcOpen: true, time: Date.now(), turnClockFromServer: false,
+  turnMs: 0, humanWaitMs: 0, failed: false, loading: true
 })
 
 /** 开一轮要把「整轮用时」那三条数复位：TurnBar 跑着时读 time 当起点，答完读 done 带回的
  *  墙钟。重新生成复用同一个消息对象，漏一下就是上一轮的秒数接着往这轮上加。 */
 function resetAiTurn (ai) {
   ai.time = Date.now()
+  ai.turnClockFromServer = false
   ai.turnMs = 0
   ai.turnPrepMs = 0
   ai.humanWaitMs = 0
@@ -598,6 +602,15 @@ function resetAiTurn (ai) {
  */
 function shareStreamHandlers (ai) {
   return {
+    // 服务端起表基准（开流第一帧）：秒表锚到服务端收到提问那一刻，收尾与刷新才同一个数
+    onTurnStart: payload => {
+      let p = null
+      try { p = typeof payload === 'string' ? JSON.parse(payload) : payload } catch (e) { p = null }
+      if (!p || typeof p.wallMs !== 'number') return
+      // 基准只认第一份（外壳那帧最先到），后一帧只用来校准 prepMs——重锚会让秒表往回跳
+      if (!ai.turnClockFromServer) { ai.time = Date.now() - p.wallMs; ai.turnClockFromServer = true }
+      if (typeof p.prepMs === 'number') ai.turnPrepMs = p.prepMs
+    },
     onToken: t => {
       ai.content += t
       scrollBottom()
@@ -771,8 +784,14 @@ async function attachRunning () {
       if (typeof snap.content === 'string') ai.content = snap.content
       if (Array.isArray(snap.images)) ai.images = snap.images
       if (Array.isArray(snap.sources)) ai.sources = snap.sources
-      // 同主对话页：接上的这一轮按服务端已跑时长续表，不从 0 重新起跳
-      ai.time = resumedStartAt(snap.elapsedMs, Date.now())
+      // 同主对话页：接上的这一轮按服务端已跑时长续表，不从 0 重新起跳。优先按墙钟接
+      //（含开轮前准备），旧服务端没有 wallMs 时退回机器耗时；基准只认第一份，重锚会让秒表往回跳。
+      if (typeof snap.wallMs === 'number') {
+        if (!ai.turnClockFromServer) { ai.time = Date.now() - snap.wallMs; ai.turnClockFromServer = true }
+      } else {
+        ai.time = resumedStartAt(snap.elapsedMs, Date.now())
+      }
+      if (typeof snap.prepMs === 'number') ai.turnPrepMs = snap.prepMs
       scrollBottom()
     }
   })

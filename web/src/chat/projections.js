@@ -664,8 +664,8 @@ const durZh = ms => {
   const m = Math.round(secs / 60) % 60
   return Math.floor(Math.round(secs / 60) / 60) + ' 小时' + (m ? ' ' + m + ' 分' : '')
 }
-/** 这一轮此刻的用时。跑的时候用本地钟跟着 tick 走；收尾后读 done 那两份相加，历史恢复没走过
- *  done，只认 tokens 落库的那两份。
+/** 这一轮此刻的用时。跑的时候用「服务端起表点」跟着 tick 走（服务端 turn_start/快照给基准，
+ *  本地只负责外推）；收尾后只读服务端那一份，历史没走过 done，只认 tokens 落库那份。
  *  两处都没有就返回 0、界面不报数：不拿工具跨度凑一个数出来，那是「跑了多久工具」不是
  *  「这一轮用了多久」，凑出来的数比空白更容易被当成事实读。 */
 const turnElapsedMs = m => {
@@ -713,9 +713,8 @@ const earlierStart = (had, candidate) => {
   return Math.min(a, b)
 }
 /** 收尾那一刻写回气泡的「机器时间」那一份：让 turnMs + 等人时间 等于本地钟量到的整轮墙钟。
- *  目标模式那一轮的本地钟从「按下回车」起表，中间还含着调度排队与实例冷启动那几秒，而服务端那份
- *  从登记上运行总线才开始算——照抄会让跳着的「正在溯源，用时 8 秒」在答完那一刻变成
- *  「已完成，用时 5 秒」，数字变小读成计时坏了（顶部这条一直报墙钟，同一条理由）。
+ *  <b>只给旧服务端用</b>（done 不带 turnWallMs）：那时服务端只有机器耗时，照抄会让跳着的数字
+ *  在答完那一刻变小；新服务端一律以 turnWallMs 为准，不再与本地钟对账。
  *  没有本地起表点（历史消息）时原样返回服务端那份，不拿库里的创建时刻凑。 */
 const settledTurnMs = (serverMs, waitMs, startedAt, settledAt) => {
   const machine = Math.max(0, Number(serverMs) || 0)
