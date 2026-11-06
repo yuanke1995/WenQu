@@ -318,21 +318,27 @@ async function main() {
     })
     console.log(`[setup] 独立压测账号 ${UID}：${created.json?.success ? '已就绪' : created.text}`)
   }
-  const prov = await api('/api/ai/provider', {
-    method: 'POST', token: user,
-    body: { name: 'blocksE2E Mock 网关', baseUrl: process.env.MOCK_BASE_URL || 'http://127.0.0.1:9101', apiKey: 'mock-key', enabled: true },
-  })
-  const pid = prov.json?.data?.id ?? prov.json?.data
-  if (!pid) throw new Error(`供应商创建失败：${prov.text}`)
-  const saved = await api(`/api/ai/provider/${pid}/models`, {
-    method: 'PUT', token: user,
-    body: [{
-      modelId: 'mock-chat', modelType: 'chat', displayName: 'Mock Chat',
-      thinking: 'auto', contextWindow: 32768, maxOutput: 4096, enabled: true,
-    }],
-  })
-  if (!saved.json?.success) throw new Error(`模型登记失败：${saved.text}`)
-  const ref = `${pid}/mock-chat`
+  /** MODEL_REF：直接复用现成（真实）模型引用，跳过 mock 供应商登记；不给就现建 mock。 */
+  let ref = process.env.MODEL_REF?.trim()
+  if (ref) {
+    console.log(`[setup] 复用现成模型引用 ${ref}（MODEL_REF）`)
+  } else {
+    const prov = await api('/api/ai/provider', {
+      method: 'POST', token: user,
+      body: { name: 'blocksE2E Mock 网关', baseUrl: process.env.MOCK_BASE_URL || 'http://127.0.0.1:9101', apiKey: 'mock-key', enabled: true },
+    })
+    const pid = prov.json?.data?.id ?? prov.json?.data
+    if (!pid) throw new Error(`供应商创建失败：${prov.text}`)
+    const saved = await api(`/api/ai/provider/${pid}/models`, {
+      method: 'PUT', token: user,
+      body: [{
+        modelId: 'mock-chat', modelType: 'chat', displayName: 'Mock Chat',
+        thinking: 'auto', contextWindow: 32768, maxOutput: 4096, enabled: true,
+      }],
+    })
+    if (!saved.json?.success) throw new Error(`模型登记失败：${saved.text}`)
+    ref = `${pid}/mock-chat`
+  }
   mkdirSync(FIXTURE_DIR, { recursive: true })
   console.log(`[setup] BASE=${BASE} uid=${UID} model=${ref}`)
 
@@ -892,7 +898,8 @@ async function guestRow(sessionId, token) {
 }
 
 function writeFixture(name, { events, row, guest }) {
-  const file = join(FIXTURE_DIR, `${name}.json`)
+  /** FIXTURE_PREFIX：真模型跑同一个用例时别覆盖 mock 夹具（如 FIXTURE_PREFIX=realmodel-）。 */
+  const file = join(FIXTURE_DIR, `${process.env.FIXTURE_PREFIX || ''}${name}.json`)
   writeFileSync(file, JSON.stringify({
     capturedAt: new Date().toISOString(),
     events: events.map((e) => ({ type: e.type, data: e.data })),

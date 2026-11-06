@@ -1,0 +1,152 @@
+{
+  "capturedAt": "2026-11-06T12:10:30.665Z",
+  "events": [
+    {
+      "type": "turn_start",
+      "data": {
+        "wallMs": 18,
+        "prepMs": 18
+      }
+    },
+    {
+      "type": "plan",
+      "data": [
+        "文文文文文"
+      ]
+    },
+    {
+      "type": "turn_start",
+      "data": {
+        "wallMs": 10,
+        "prepMs": 10
+      }
+    },
+    {
+      "type": "token",
+      "data": "文文文文"
+    },
+    {
+      "type": "token",
+      "data": "文“文文文文文"
+    },
+    {
+      "type": "token",
+      "data": "文”"
+    },
+    {
+      "type": "token",
+      "data": "文"
+    },
+    {
+      "type": "token",
+      "data": "文文文文文文文"
+    },
+    {
+      "type": "token",
+      "data": "文文"
+    },
+    {
+      "type": "token",
+      "data": "文"
+    },
+    {
+      "type": "token",
+      "data": "文文文文文文文文文文文文文文文文文文文文文文文文"
+    },
+    {
+      "type": "done",
+      "data": {
+        "finalContent": "文文文文文文文文文文文文",
+        "messageId": "bfeb86413e38140df489bd09e7d16da8",
+        "userMessageId": "82a94493be8695a346aa935e91ad62bd",
+        "turnId": "c09462e4d9244e229a5239b86ea63a57",
+        "model": null,
+        "agentId": "11075bfdd3dc3455acd2690a9c5a6033",
+        "agentName": "blocks E2E 文文文文文文 1793967025622",
+        "sources": [],
+        "finalImages": [],
+        "degradations": [],
+        "elapsedMs": 4892,
+        "humanWaitMs": 0,
+        "turnWallMs": 4892,
+        "prepMs": 210,
+        "tokens": {
+          "prompt": 92,
+          "output": 126,
+          "total": 218,
+          "turnWallMs": 4892,
+          "turnPrepMs": 210
+        },
+        "toolCalls": [],
+        "blocks": {
+          "v": 1,
+          "turnId": "c09462e4d9244e229a5239b86ea63a57",
+          "blocks": [
+            {
+              "id": "b1",
+              "kind": "text",
+              "channel": "answer",
+              "text": "文文文文文文文文文文文文"
+            }
+          ]
+        },
+        "artifacts": [],
+        "related": [],
+        "thinking": null,
+        "workflowRun": {
+          "workflowId": "34dbf3f4-b8c2-4483-96c8-8933f5909b54",
+          "version": 1,
+          "runId": "9fbc9f54-9ca9-4619-890b-d12e38203977",
+          "status": "success",
+          "durationMs": 4674
+        }
+      }
+    }
+  ],
+  "message": {
+    "turnId": "c09462e4d9244e229a5239b86ea63a57",
+    "sequence": 2,
+    "agentId": "11075bfdd3dc3455acd2690a9c5a6033",
+    "role": "assistant",
+    "createTime": "2026-11-06T20:10:30",
+    "blocks": {
+      "v": 1,
+      "turnId": "c09462e4d9244e229a5239b86ea63a57",
+      "blocks": [
+        {
+          "id": "b1",
+          "kind": "text",
+          "channel": "answer",
+          "text": "文文文文文文文文文文文文"
+        }
+      ]
+    },
+    "messageId": "bfeb86413e38140df489bd09e7d16da8",
+    "agentName": "blocks E2E 文文文文文文 1793967025622",
+    "tokens": {
+      "prompt": 92,
+      "output": 126,
+      "total": 218,
+      "turnWallMs": 4892,
+      "turnPrepMs": 210
+    },
+    "content": "文文文文文文文文文文文文"
+  },
+  "guestMessage": {
+    "role": "assistant",
+    "content": "文文文文文文文文文文文文",
+    "time": null,
+    "blocks": {
+      "v": 1,
+      "blocks": [
+        {
+          "id": "b1",
+          "kind": "text",
+          "channel": "answer",
+          "text": "文文文文文文文文文文文文"
+        }
+      ]
+    }
+  },
+  "redacted": "CJK→文；路径/URL/邮箱→redacted（events 同步替换）"
+}
