@@ -136,7 +136,13 @@ public final class TurnTranscriptRecorder {
         for (Map<String, Object> artifact : artifacts) {
             if (artifact == null || artifact.isEmpty()) continue;
             Block block = add("artifact");
-            block.data = new LinkedHashMap<>(artifact);
+            // 块序列化时 "id" 是块号（b1/b2…），会把产物真实 id 盖掉：前端拿不到 id 就只能
+            // 退化成按工作区路径读内容（projectId 为空 → 404），而下载仍走签名 URL 所以看起来正常。
+            // 产物 id 改存 artifactId，前端投影时再还原。
+            block.data = new LinkedHashMap<>();
+            for (Map.Entry<String, Object> e : artifact.entrySet()) {
+                block.data.put("id".equals(e.getKey()) ? "artifactId" : e.getKey(), e.getValue());
+            }
         }
     }
 

@@ -12,6 +12,14 @@ export const applyBlocks = (m, payload) => {
   const toolCalls = []
   const artifacts = []
   const timeline = []
+  // 存量块的产物 id 曾被块号覆盖：用消息自带的产物清单按 URL 纯路径认领回来，
+  // 否则预览退化成按工作区路径读取（空 projectId → 404），下载却还能用
+  const prevArtifactIdByPath = new Map()
+  if (Array.isArray(m.artifacts)) {
+    for (const a of m.artifacts) {
+      if (a && a.id && a.url) prevArtifactIdByPath.set(String(a.url).split('?')[0], a.id)
+    }
+  }
   for (const b of payload.blocks) {
     if (!b || !b.kind) continue
     if (b.kind === 'text') {
@@ -44,7 +52,14 @@ export const applyBlocks = (m, payload) => {
       toolCalls.push(tool)
       timeline.push({ kind: 'tool', i: toolCalls.length - 1, tool })
     } else if (b.kind === 'artifact') {
-      const { kind, id, ...artifact } = b
+      const { kind, id, artifactId, ...artifact } = b
+      // 产物真实 id 在块里叫 artifactId（"id" 是块号，不能当产物 id 用）；
+      // 旧存量块没有 artifactId，退回按 URL 纯路径从消息自带产物清单里认领
+      if (artifactId) artifact.id = artifactId
+      else {
+        const hit = prevArtifactIdByPath.get(String(artifact.url || '').split('?')[0])
+        if (hit) artifact.id = hit
+      }
       artifacts.push(artifact)
       timeline.push({ kind: 'artifact', i: artifacts.length - 1 })
     } else if (b.kind === 'steer') {
