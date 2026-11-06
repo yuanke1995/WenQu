@@ -53,3 +53,6 @@ services:
       SANDBOX_RUNTIME_PROFILE: ${SANDBOX_RUNTIME_PROFILE:-core}
       SANDBOX_CONTAINER_PORT: "8080"
       SANDBOX_HEALTH_TIMEOUT_SECONDS: "300"
+      # 全局同时在册的沙盒容器上限：4C/3.6G 实测安全上限 4~6；超过直接 503，应用降级到 scratch。
+      # 0=不限制（不推荐，主机内存会被容器数拖爆）。
+      SANDBOX_MAX_CONTAINERS: ${SANDBOX_MAX_CONTAINERS:-6}

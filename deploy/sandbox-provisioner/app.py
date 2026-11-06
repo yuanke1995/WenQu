@@ -2144,6 +2144,22 @@ def create_sandbox(payload: CreateSandboxRequest):
             detail="too many concurrent sandbox creations; retry shortly",
         )
     try:
+        # 全局容器上限：4C/3.6G 这类小机器上，沙盒无上限就是 OOM。超过直接 503 让应用降级，
+        # 不把创建排队到几百个（排队也会占线程/内存）。同 id 的已存在沙盒仍允许走 create 复用。
+        max_containers = max(0, int(os.getenv("SANDBOX_MAX_CONTAINERS", "6")))
+        if max_containers > 0:
+            try:
+                live_records = backend_impl.list()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Failed to count sandboxes for capacity check: %s", exc)
+                live_records = []
+            exists = any(r.sandbox_id == payload.sandbox_id for r in live_records)
+            if not exists and len(live_records) >= max_containers:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"sandbox capacity reached ({len(live_records)}/{max_containers}); "
+                           "retry after idle release",
+                )
         try:
             sandbox_quiescence_gate.acquire_create()
         except RuntimeError as exc:
