@@ -64,7 +64,7 @@
 - **每轮文件改动卡**（DSH workspace-changes 口径，2026-11-05）：执行器快照+捕获+比对、c_ai_message.changes、改动卡+预览台 diff 档。
 - **问答延迟线**（2026-11-06）：五笔根因修四笔半（沙盒往返 / journal 回读 / 技能扫盘 / 方舟冷连），近五笔提交 b6825773 / 93705109 / a91272ac / d2c91185 等。
 - **问答流水线重做 M1/M2/M3**（2026-11-06）：聊天/工作区双档、宿主 scratch、工具面过滤、前缀稳定器、MCP 有界、异步升级、每用户租约、userScope 热复用、启动热池预热。提交 164d3097 / a873bb16 / 22e8380e / f742997b / f4f47ab2 / 8c423b90 / d0fc4fcd；细节与实测见「活跃线·问答流水线重做」。
-- **内置工具退役**（2026-11-06）：10 把纯计算工具（calculate/currentDateTime/daysBetween/addDays/randomNumber/uuid/unitConvert/textStats/base64/hash）已物理退役——`@Tool` 实现、描述符、注册入口全部删除，内置族只剩 `askUser`；`BuiltinToolProvider` 改名 `AskUserToolProvider`。前端 `projections.js` 只保留历史消息的工具卡展示名，不影响老会话回显。提交 93d5d6df（先默认收窄）→ 4079f387（物理退役+改名）。
+- **内置工具退役**（2026-11-06）：10 把纯计算工具（calculate/currentDateTime/daysBetween/addDays/randomNumber/uuid/unitConvert/textStats/base64/hash）已物理退役——`@Tool` 实现、描述符、注册入口全部删除，内置族只剩 `askUser`；`BuiltinToolProvider` 改名 `AskUserToolProvider`。前端 `projections.js` 只保留历史消息的工具卡展示名，不影响老会话回显。提交 93d5d6df（先默认收窄）→ 4079f387（物理退役+改名）→ f1d18e1c（族名改 ASK_USER，code=ask_user、显示名「提问工具」）。
 - **编排工具第 2 档安全子集**（2026-11-06）：`AgentxToolSurfaceFilter` 按本轮能力收窄工具表——无活跃目标隐藏 goal_note/goal_submit，无子智能体隐藏 agent_*/task_*/wait_async_results；目标续跑轮按 turnId=goal: 兜底。plan_*/skill_* 保留为功能入口（隐藏等于关功能，且 plan 支持模型中途 plan_enter）。本地 1+1 隐藏 goal 2 把（当前用户有子智能体，agent/task 保留），workspace 文件链路回归通过。提交 4b0a19e5；续跑轮补标 042b8f2e。
 - **journal 读放大**（2026-11-01）：纸表轮收尾空窗 57s 根因修（逐 token 落账回放），chunk 聚合是上游待办。
 - **定时任务**：容量评估完成、dispatch 队列满泄漏（bf434f3b）与 cron 错峰两 bug 已修。
