@@ -190,15 +190,23 @@ public class McpClientService {
         // （智能体列表转圈的同一根因）。临界区纪律见 {@link UserPool}。
         Map<String, McpSyncClient> snap;
         Map<String, CachedTools> cacheSnap;
+        java.util.Set<String> platformNames = new java.util.HashSet<>();
         synchronized (pool) {
             snap = new LinkedHashMap<>(pool.clients);
             cacheSnap = new LinkedHashMap<>(pool.toolsCache);
+            for (UserMcp row : pool.rows) {
+                if (UserMcp.SCOPE_PLATFORM.equals(row.getScope())) platformNames.add(row.getName());
+            }
         }
         List<ToolCallback> callbacks = new ArrayList<>();
         Map<String, String> failed = new LinkedHashMap<>();
         long now = System.currentTimeMillis();
         for (Map.Entry<String, McpSyncClient> entry : snap.entrySet()) {
             if (onlyServers != null && !onlyServers.contains(entry.getKey())) continue;
+            // 平台服务不参与「未指定 = 全部」：否则浏览器这类能力会随平台升级落进每一个现存助手的
+            // 工具表（25 把外部工具足以把选工具的质量拉下来），而助手作者从未同意过。
+            // 要用就在智能体的 MCP 范围里点名它——点名走 onlyServers，不受这条影响。
+            if (onlyServers == null && platformNames.contains(entry.getKey())) continue;
             McpSyncClient client = entry.getValue();
             CachedTools cached = cacheSnap.get(entry.getKey());
             if (cached != null && cached.fresh(now)) {
@@ -374,8 +382,12 @@ public class McpClientService {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", row.getId());
             m.put("name", row.getName());
-            // 智能体引用串：MCP Server 是个人资产，一律带归属 {uid}/{name}
-            m.put("ref", row.getUid() + "/" + row.getName());
+            // 智能体引用串：个人资产一律带归属 {uid}/{name}（不带就会张冠李戴到别人的同名服务）；
+            // 平台行反而是**裸名**——它的归属人不是任何使用者，带上前缀会让 ResourceRefs 判成
+            // 「别人的资产不可用」，而按名字人人可用才是平台能力的语义（与内置技能同一条口径）。
+            boolean platform = UserMcp.SCOPE_PLATFORM.equals(row.getScope());
+            m.put("scope", platform ? UserMcp.SCOPE_PLATFORM : UserMcp.SCOPE_PERSONAL);
+            m.put("ref", platform ? row.getName() : row.getUid() + "/" + row.getName());
             m.put("url", row.getUrl());
             m.put("type", row.getType());
             // 脱敏回显：只给「有没有凭据」与键名，值永不出服务端
@@ -676,6 +688,7 @@ public class McpClientService {
                 rows = rows.subList(0, MAX_SERVERS);
                 log.warn("[MCP] uid={} 登记的 server 超过上限 {}，其余忽略", uid, MAX_SERVERS);
             }
+            rows = withPlatformServers(rows);
             String fingerprint = fingerprintOf(rows);
             if (fingerprint.equals(pool.fingerprint)) {
                 return pool; // 配置未变，沿用现有连接（空闲回收统一在锁外做，见方法尾）
@@ -700,6 +713,28 @@ public class McpClientService {
         // 理论上的锁序死锁面；两个分支现在统一在锁外做这一步
         evictIdlePools();
         return pool;
+    }
+
+    /**
+     * 并上平台级服务（{@code scope=platform}）。
+     * <p>平台能力的 MCP（如浏览器操作）不是个人资产：要求每人先去面板登记一次地址，
+     * 智能体按名字指定它时就会对没登记的人落空。全员挂载这一行，写路径由接口层收给管理员。
+     * <p>同名时个人行优先——用户自己填了同名服务，说明他要连自己那一个（例如自建实例带登录态），
+     * 平台行让位。平台行不占 {@code MAX_SERVERS}：那个上限管的是「个人能加多少个」，
+     * 一个都没加的人照样要有平台能力。
+     */
+    private List<UserMcp> withPlatformServers(List<UserMcp> personal) {
+        List<UserMcp> platform = userMcpMapper.selectList(new LambdaQueryWrapper<UserMcp>()
+                .eq(UserMcp::getScope, UserMcp.SCOPE_PLATFORM).orderByAsc(UserMcp::getCreateTime));
+        if (platform.isEmpty()) return personal;
+        java.util.Set<String> taken = new java.util.HashSet<>();
+        for (UserMcp r : personal) taken.add(r.getName());
+        List<UserMcp> out = new ArrayList<>(personal);
+        for (UserMcp r : platform) {
+            if (!taken.add(r.getName())) continue;
+            out.add(r);
+        }
+        return out;
     }
 
     /**

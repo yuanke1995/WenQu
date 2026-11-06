@@ -207,11 +207,24 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
     }
 
     /**
+     * 平台预置智能体：启动期播种、全员可用的示例角色（{@code created_by='system'} 且非内置「问渠」）。
+     * <p>为什么不复用 {@code isBuiltin=1}：那一格的语义是「全局唯一的产品默认助手」，启动维护会把
+     * 多出来的降级。平台预置可以有多个，只是可见性同样要跨过「谁建归谁」——归属人 'system'
+     * 不等于任何登录 uid，不在这里开口子，播种出来的行就没有任何人看得到。
+     */
+    public static boolean isPlatformPreset(Agent a) {
+        return a != null && "system".equals(a.getCreatedBy())
+                && !Integer.valueOf(1).equals(a.getIsBuiltin());
+    }
+
+    /**
      * 当前用户是否可读取该智能体。归属口径（谁建归谁）：仅创建者可见；
      * 内置「问渠」是系统默认——给每个人用，所有登录用户可读（配置仍只由管理员级维护）。
+     * 平台预置角色同样全员可读（见 {@link #isPlatformPreset}）。
      */
     public boolean readable(Agent a) {
         if (a != null && Integer.valueOf(1).equals(a.getIsBuiltin())) return true;
+        if (isPlatformPreset(a)) return true;
         return resourceVisibilityService.canRead(principal(), a == null ? null : a.getCreatedBy());
     }
 
@@ -224,7 +237,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
      */
     public boolean manageable(Agent a) {
         if (a == null) return false;
-        if (Integer.valueOf(1).equals(a.getIsBuiltin())) {
+        if (Integer.valueOf(1).equals(a.getIsBuiltin()) || isPlatformPreset(a)) {
             return roleService.isAdminAny(RequestUser.roles());
         }
         return resourceVisibilityService.canManage(principal(), a.getCreatedBy());

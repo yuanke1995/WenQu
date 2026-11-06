@@ -75,9 +75,22 @@ public record ExecutionPolicy(
         return java.util.Set.copyOf(out);
     }
 
-    /** 这个名字是否被本轮点名禁用（MCP 动态工具没有描述符，只能走这条） */
+    /** MCP 动态工具的挂载名前缀（Spring AI 按 clientInfo.name 直拼，见 McpToolLabelService#stripPrefix）。 */
+    private static final String MCP_TOOL_PREFIX = "wen_qu";
+
+    /**
+     * 这个名字是否被本轮点名禁用（MCP 动态工具没有描述符，只能走这条）。
+     * <p>两种写法都认：MCP 工具的挂载名带 clientInfo 前缀（{@code wen_qubrowser_click}），
+     * 而配置黑名单时人写的是 server 自己报的工具本名。只认挂载名会让这条配置对 MCP
+     * 永远不命中（等于是 fail-open），只认本名则前缀一变就失效。
+     */
     public boolean denies(String toolName) {
-        return toolName != null && deny.contains(toolName);
+        if (toolName == null || deny.isEmpty()) return false;
+        if (deny.contains(toolName)) return true;
+        if (!toolName.startsWith(MCP_TOOL_PREFIX)) return false;
+        String bare = toolName.substring(MCP_TOOL_PREFIX.length());
+        if (bare.startsWith("_")) bare = bare.substring(1);
+        return deny.contains(bare);
     }
 
     /**

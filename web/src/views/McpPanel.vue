@@ -67,10 +67,12 @@
                @click="s.connected && toggleTools(s)">
             <div class="mcp-card-info">
               <div class="mcp-card-head">
-                <a-checkbox v-if="batchMode" class="mcp-check" :checked="selected.includes(s.id)"
+                <a-checkbox v-if="batchMode && !isPlatform(s)" class="mcp-check" :checked="selected.includes(s.id)"
                             @click.stop @change="toggleSelect(s.id)" />
                 <span class="mcp-dot" :class="stateCls(s)"></span>
                 <span class="mcp-card-name">{{ s.name }}</span>
+                <span v-if="isPlatform(s)" class="mcp-pill-platform"
+                      title="平台为全员提供：管理员维护地址与工具名，普通用户只读可用">平台</span>
                 <span class="mcp-state" :class="stateCls(s)" :title="s.state || ''">{{ stateText(s) }}</span>
               </div>
               <div class="mcp-card-sub">
@@ -79,7 +81,7 @@
               </div>
             </div>
             <div class="mcp-card-actions" @click.stop>
-              <a-tooltip :title="s.enabled ? '停用后断开连接、不再暴露它的工具' : '启用后自动连接'">
+              <a-tooltip v-if="canEdit(s)" :title="s.enabled ? '停用后断开连接、不再暴露它的工具' : '启用后自动连接'">
                 <a-switch size="small" :checked="!!s.enabled" :loading="togglingId === s.id"
                           @change="v => toggleEnabled(s, v)" />
               </a-tooltip>
@@ -87,8 +89,8 @@
                 <button class="app-link-btn" :disabled="!s.enabled || !!reconnectingId"
                         @click="reconnectServer(s)">{{ reconnectingId === s.id ? '重连中…' : '重连' }}</button>
               </a-tooltip>
-              <button class="app-link-btn" @click="openEdit(s)">编辑</button>
-              <a-popconfirm title="删除该服务？其工具将不再可用" ok-text="删除" cancel-text="取消" @confirm="removeServer(s)">
+              <button v-if="canEdit(s)" class="app-link-btn" @click="openEdit(s)">编辑</button>
+              <a-popconfirm v-if="!isPlatform(s)" title="删除该服务？其工具将不再可用" ok-text="删除" cancel-text="取消" @confirm="removeServer(s)">
                 <button class="app-link-btn danger">删除</button>
               </a-popconfirm>
             </div>
@@ -231,6 +233,12 @@ import { message, Modal } from 'ant-design-vue'
 import { SearchOutlined, ReloadOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons-vue'
 import { getMcpStatus, reloadMcp, probeMcp, addMcpServer, updateMcpServer, setMcpServerEnabled, deleteMcpServer,
          reconnectMcpServer, batchDeleteMcpServers, batchSetMcpServersEnabled, importMcpServers, setMcpToolLabel } from '../api'
+import { isAdminSync } from '../utils/auth'
+
+/** 平台行为全员提供（地址与工具名由管理员维护）：普通用户只读可用，连启停开关都不给 */
+const isAdmin = isAdminSync()
+const isPlatform = s => s.scope === 'platform'
+const canEdit = s => !isPlatform(s) || isAdmin
 
 const servers = ref([])
 const toolsEnabled = ref(true)   // 平台「工具调用」总开关（管理员控制），关了连上也没用
@@ -277,7 +285,7 @@ const toggleBatchMode = () => {
   batchMode.value = !batchMode.value
   if (!batchMode.value) selected.value = []
 }
-const selectableIds = computed(() => filtered.value.map(s => s.id))
+const selectableIds = computed(() => filtered.value.filter(s => !isPlatform(s)).map(s => s.id))
 const allChecked = computed(() =>
   selectableIds.value.length > 0 && selectableIds.value.every(id => selected.value.includes(id)))
 const someChecked = computed(() => selected.value.length > 0 && !allChecked.value)
@@ -676,6 +684,7 @@ onBeforeUnmount(stopPoll) // 离开页面就别再轮询了
 .mcp-card-sub { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: 12px; color: var(--app-text3); }
 .mcp-card-sub .mcp-url { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mcp-type-pill { flex: none; font-size: 11px; padding: 0 6px; border-radius: 3px; background: var(--app-panel-2); color: var(--app-text3); }
+.mcp-pill-platform { flex: none; font-size: 11px; padding: 0 6px; border-radius: 3px; border: 1px solid var(--app-accent); color: var(--app-accent); background: transparent; }
 .mcp-tools { margin-top: 8px; border-top: 1px dashed var(--app-border); padding-top: 6px; }
 .mcp-tool { display: flex; gap: 8px; font-size: 12px; padding: 2px 0; align-items: baseline; }
 .mcp-tool code { flex: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; background: var(--app-panel-2); padding: 1px 5px; border-radius: 4px; }

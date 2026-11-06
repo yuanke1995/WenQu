@@ -108,6 +108,7 @@ public class McpController {
         UserMcp row = new UserMcp();
         row.setId(UUID.randomUUID().toString());
         row.setUid(uid);
+        row.setScope(UserMcp.SCOPE_PERSONAL);
         row.setName(name);
         row.setUrl(url);
         row.setType(type);
@@ -122,8 +123,9 @@ public class McpController {
             + "headers 不传 = 保持原值，传对象 = 整块替换，clearHeaders=true = 清除凭据；改完自动重连")
     @Permission("mcp:write")
     @PutMapping("/servers/{id}")
-    public ResultJson update(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
-        UserMcp row = own(id);
+    public ResultJson update(@PathVariable("id") String id, @RequestBody Map<String, Object> body,
+                            HttpServletRequest request) {
+        UserMcp row = writable(id, request);
         if (body.containsKey("name")) {
             String name = trim(text(body, "name"));
             if (!name.equals(row.getName())) {
@@ -151,18 +153,19 @@ public class McpController {
                     .eq(UserMcp::getId, row.getId())
                     .set(UserMcp::getHeaders, null));
         }
-        mcpClientService.refresh(row.getUid()); // 增量对齐：只有改动的这个服务会重连
+        refreshAfterWrite(row); // 增量对齐：只有改动的这个服务会重连
         return ResultJson.ok(Map.of("id", row.getId(), "name", row.getName()));
     }
 
     @Operation(summary = "启停 MCP 服务", description = "body: {\"enabled\": true}；停用即断开连接且不再暴露其工具")
     @Permission("mcp:write")
     @PostMapping("/servers/{id}/enabled")
-    public ResultJson setEnabled(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
-        UserMcp row = own(id);
+    public ResultJson setEnabled(@PathVariable("id") String id, @RequestBody Map<String, Object> body,
+                                 HttpServletRequest request) {
+        UserMcp row = writable(id, request);
         row.setEnabled(Boolean.TRUE.equals(body.get("enabled")) ? 1 : 0);
         userMcpMapper.updateById(row);
-        mcpClientService.refresh(row.getUid()); // 增量对齐：开关只动它自己，不牵连其他服务
+        refreshAfterWrite(row); // 增量对齐：开关只动它自己，不牵连其他服务
         return ResultJson.ok(Map.of("id", row.getId(), "enabled", Integer.valueOf(1).equals(row.getEnabled())));
     }
 
@@ -170,8 +173,9 @@ public class McpController {
             + "MCP 工具的中文名只由用户手工维护（不自动翻译），只改自己的服务")
     @Permission("mcp:write")
     @PutMapping("/servers/{id}/tool-label")
-    public ResultJson setToolLabel(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {
-        UserMcp row = own(id);
+    public ResultJson setToolLabel(@PathVariable("id") String id, @RequestBody Map<String, Object> body,
+                                   HttpServletRequest request) {
+        UserMcp row = writable(id, request);
         String tool = text(body, "tool");
         String stored = labelService.save(row, tool, text(body, "label"));
         String bare = tool.strip();
@@ -182,10 +186,10 @@ public class McpController {
     @Operation(summary = "删除 MCP 服务", description = "连带关闭该连接（只删自己的）")
     @Permission("mcp:delete")
     @DeleteMapping("/servers/{id}")
-    public ResultJson delete(@PathVariable("id") String id) {
-        UserMcp row = own(id);
+    public ResultJson delete(@PathVariable("id") String id, HttpServletRequest request) {
+        UserMcp row = writableDeletable(id, request);
         userMcpMapper.deleteById(row.getId());
-        mcpClientService.refresh(row.getUid()); // 增量对齐：只断开被删的这一个
+        refreshAfterWrite(row); // 增量对齐：只断开被删的这一个
         return ResultJson.ok(Map.of("id", id));
     }
 
@@ -198,7 +202,7 @@ public class McpController {
             + "返回 {succeeded:[id], failed:[{id,name,error}]}；删除后统一重建本人连接池")
     @Permission("mcp:delete")
     @PostMapping("/servers/batch-delete")
-    public ResultJson batchDelete(@RequestBody Map<String, Object> body) {
+    public ResultJson batchDelete(@RequestBody Map<String, Object> body, HttpServletRequest request) {
         List<String> ids = BatchResults.parseIds(body);
         if (ids.isEmpty()) return ResultJson.error("请先选择要删除的服务");
         String uid = RequestUser.uid();
@@ -206,7 +210,7 @@ public class McpController {
         List<Map<String, Object>> failed = new ArrayList<>();
         for (String id : ids) {
             try {
-                UserMcp row = own(id);
+                UserMcp row = writableDeletable(id, request);
                 userMcpMapper.deleteById(row.getId());
                 succeeded.add(id);
             } catch (Exception e) {
@@ -221,7 +225,7 @@ public class McpController {
             + "（停用即断开连接、不再暴露其工具）；返回 {succeeded:[id], failed:[{id,name,error}]}；改完统一重建本人连接池")
     @Permission("mcp:write")
     @PostMapping("/servers/batch-enabled")
-    public ResultJson batchEnabled(@RequestBody Map<String, Object> body) {
+    public ResultJson batchEnabled(@RequestBody Map<String, Object> body, HttpServletRequest request) {
         List<String> ids = BatchResults.parseIds(body);
         boolean on = Boolean.TRUE.equals(body.get("enabled"));
         if (ids.isEmpty()) return ResultJson.error("请先选择要操作的服务");
@@ -230,7 +234,7 @@ public class McpController {
         List<Map<String, Object>> failed = new ArrayList<>();
         for (String id : ids) {
             try {
-                UserMcp row = own(id);
+                UserMcp row = writable(id, request);
                 row.setEnabled(on ? 1 : 0);
                 userMcpMapper.updateById(row);
                 succeeded.add(id);
@@ -255,7 +259,7 @@ public class McpController {
     @Permission("mcp:write")
     @PostMapping("/servers/{id}/reconnect")
     public ResultJson reconnect(@PathVariable("id") String id) {
-        UserMcp row = own(id); // 不存在或不是本人的按不存在处理（fail-closed）
+        UserMcp row = visible(id); // 不存在或不是本人的按不存在处理（fail-closed）；平台行谁都能重连自己那条连接
         mcpClientService.reconnect(RequestUser.uid(), row);
         return status(null, null, null); // 刚触发单服务重连，无需再补重连
     }
@@ -309,6 +313,7 @@ public class McpController {
                 UserMcp row = new UserMcp();
                 row.setId(UUID.randomUUID().toString());
                 row.setUid(uid);
+                row.setScope(UserMcp.SCOPE_PERSONAL);
                 row.setName(name);
                 row.setUrl(url);
                 row.setType(normalizeType(text(item, "type")));
@@ -394,13 +399,44 @@ public class McpController {
         }
     }
 
-    /** 取本人的一条记录：不存在或不是本人的都按不存在处理（避免按 ID 遍历到别人的服务） */
-    private UserMcp own(String id) {
+    /**
+     * 取本人可见的一条：不存在或非本人的个人行都按不存在处理（避免按 ID 遍历到别人的服务）；
+     * 平台行对全员可见——它的工具要出现在每个人的 MCP 面板和智能体选择里。
+     */
+    private UserMcp visible(String id) {
         UserMcp row = userMcpMapper.selectById(id);
-        if (row == null || !RequestUser.uid().equals(row.getUid())) {
-            throw new BizException("MCP 服务不存在");
+        if (row == null) throw new BizException("MCP 服务不存在");
+        if (UserMcp.SCOPE_PLATFORM.equals(row.getScope())) return row;
+        if (!RequestUser.uid().equals(row.getUid())) throw new BizException("MCP 服务不存在");
+        return row;
+    }
+
+    /** 写判据：个人行只由归属人写；平台行只由管理员级写（普通用户能看能用，不能改地址也不能停）。 */
+    private UserMcp writable(String id, HttpServletRequest request) {
+        UserMcp row = visible(id);
+        if (UserMcp.SCOPE_PLATFORM.equals(row.getScope()) && !adminGuard.isAdmin(request)) {
+            throw new BizException(403, "「" + row.getName() + "」是平台级 MCP 服务，仅管理员可维护");
         }
         return row;
+    }
+
+    /** 平台级服务不可删除：删掉后播种若不重建，全员失去该能力且界面无从恢复。要下线请停用。 */
+    private UserMcp writableDeletable(String id, HttpServletRequest request) {
+        UserMcp row = writable(id, request);
+        if (UserMcp.SCOPE_PLATFORM.equals(row.getScope())) {
+            throw new BizException("「" + row.getName() + "」是平台级 MCP 服务，不可删除；需要下线请停用");
+        }
+        return row;
+    }
+
+    /**
+     * 写完让连接对齐：个人行刷本人。
+     * <p>平台行不刷——它的使用者是全员，逐人刷既做不到也不该做；每个使用者下一次取清单或问答时，
+     * {@code ensureConnections} 按自己池子的指纹发现平台行配置变了，自行增量重连那一个服务。
+     */
+    private void refreshAfterWrite(UserMcp row) {
+        if (UserMcp.SCOPE_PLATFORM.equals(row.getScope())) return;
+        mcpClientService.refresh(row.getUid());
     }
 
     private static void validate(String name, String url) {

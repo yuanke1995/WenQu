@@ -126,6 +126,44 @@ services:
         condition: service_healthy
       meilisearch:
         condition: service_healthy
+    # 第二个网络只通「浏览器操作」服务：它的出口过滤按固定地址放行本容器，
+    # 所以这里必须是固定 IP（见 browser-mcp 服务与 deploy/browser-mcp/README.md）
+    networks:
+      default: {}
+      wenqu-app:
+        ipv4_address: ${BROWSER_MCP_APP_IP:-172.28.0.10}
+
+  # 浏览器操作（可选）：`docker compose --profile browser up -d browser-mcp` 才启动。
+  # 不起它时平台级「浏览器操作」显示未连接，助手调用时明确失败，不会静默降级。
+  browser-mcp:
+    profiles: ["browser"]
+    build:
+      context: ./deploy/browser-mcp
+      args:
+        MCP_VERSION: ${BROWSER_MCP_VERSION:-0.0.84}
+    container_name: wen-qu-browser
+    restart: unless-stopped
+    # Chromium 必须有大共享内存：默认 64MB 会直接崩
+    shm_size: "1gb"
+    # 出口过滤要改本容器 iptables（只放行业务后端，其余内网段 DROP）
+    cap_add:
+      - NET_ADMIN
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      APP_IP: ${BROWSER_MCP_APP_IP:-172.28.0.10}
+      PLAYWRIGHT_BROWSERS_PATH: /root/.cache/ms-playwright
+    # 不发布端口：只经 compose 内网给 app 用；宿主机访问走本机 npx 那条路
+    networks:
+      wenqu-app:
+        ipv4_address: ${BROWSER_MCP_IP:-172.28.0.11}
+    mem_limit: ${BROWSER_MCP_MEMORY:-2g}
+
+networks:
+  wenqu-app:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${BROWSER_MCP_SUBNET:-172.28.0.0/16}
 
 volumes:
   redis-data:

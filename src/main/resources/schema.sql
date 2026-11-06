@@ -525,7 +525,8 @@ CREATE TABLE IF NOT EXISTS `c_ai_model` (
 CREATE TABLE IF NOT EXISTS `c_ai_user_mcp` (
     `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
     `id`          VARCHAR(50)  NOT NULL COMMENT '主键ID (UUID)',
-    `uid`         VARCHAR(64)  NOT NULL COMMENT '归属用户（c_ai_user.uid）',
+    `uid`         VARCHAR(64)  NOT NULL COMMENT '归属用户（c_ai_user.uid；平台级行为 __platform__）',
+    `scope`       VARCHAR(16)  NOT NULL DEFAULT 'personal' COMMENT '归属维度: platform=平台为全员提供（管理员维护、不可删除、个人只读） personal=本人登记的个人资产（默认，存量行即此值）',
     `name`        VARCHAR(60)  NOT NULL COMMENT '服务显示名（个人维度唯一；同时作为工具名前缀防冲突）',
     `url`         VARCHAR(512) NOT NULL COMMENT '服务地址（可含路径；streamable 默认端点 /mcp、sse 默认 /sse）',
     `type`        VARCHAR(16)  DEFAULT 'streamable' COMMENT '传输类型: streamable | sse',

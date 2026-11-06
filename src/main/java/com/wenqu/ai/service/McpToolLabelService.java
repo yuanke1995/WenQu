@@ -82,7 +82,14 @@ public class McpToolLabelService {
         try {
             List<UserMcp> rows = userMcpMapper.selectList(new LambdaQueryWrapper<UserMcp>()
                     .eq(UserMcp::getUid, uid));
+            // 个人行先入：putIfAbsent 语义下即优先，用户给自己服务起的名字盖过平台行的预置名
             for (UserMcp row : rows) {
+                parseItems(row.getToolLabels()).forEach(out::putIfAbsent);
+            }
+            // 平台行的中文名对全员可读：浏览器这类平台能力的名字由平台预置，
+            // 不要求每个人再去面板逐条起一遍（否则工具卡上全是一串英文裸名）
+            for (UserMcp row : userMcpMapper.selectList(new LambdaQueryWrapper<UserMcp>()
+                    .eq(UserMcp::getScope, UserMcp.SCOPE_PLATFORM))) {
                 parseItems(row.getToolLabels()).forEach(out::putIfAbsent);
             }
         } catch (Exception e) {
@@ -113,7 +120,7 @@ public class McpToolLabelService {
 
     /**
      * 设置或清除某个工具的中文名。{@code label} 为空 = 恢复展示原名。
-     * 只动自己这一行（调用方已按 uid 校验归属），写完让该用户的名字缓存失效。
+     * 只动这一行（调用方已按归属校验：个人行归本人，平台行归管理员），写完让读到它的缓存失效。
      *
      * @return 落库后的中文名（清除时为 null）
      */
@@ -134,7 +141,12 @@ public class McpToolLabelService {
         patch.setId(row.getId());
         patch.setToolLabels(JSON.toJSONString(Map.of("items", items)));
         userMcpMapper.updateById(patch);
-        cache.remove(row.getUid());
+        if (UserMcp.SCOPE_PLATFORM.equals(row.getScope())) {
+            // 平台行的读者是全员：按 uid 清只清得掉哨兵那一份，其余人还会拿 15s 旧名。整体清空。
+            cache.clear();
+        } else {
+            cache.remove(row.getUid());
+        }
         return value.isEmpty() ? null : value;
     }
 
