@@ -34,6 +34,10 @@
                  :overlay-inner-style="{ whiteSpace: 'pre-line' }">
         <span style="display:inline-flex;align-items:center">
           <span>{{ field.label }}</span>
+          <!-- 分层角标：必需（没有它系统跑不起来）/ 调优（有人要按场景决定）。工程参数不在这里出现，
+               它们默认就被收起了，露出来时用面板头的开关说明身份 -->
+          <a-tag v-if="Number(field.tier ?? 2) === 1" color="blue" size="small" style="margin-left:4px">必需</a-tag>
+          <a-tag v-else-if="Number(field.tier ?? 2) === 2 && !field.hidden" size="small" style="margin-left:4px">调优</a-tag>
           <a-tag v-if="field.debug" color="warning" size="small" style="margin-left:4px">调试</a-tag>
           <a-tag v-if="field.personal" color="blue" size="small" style="margin-left:4px">个人可覆盖</a-tag>
           <a-tooltip v-if="srcTag" :title="srcTag.tip">
@@ -44,6 +48,8 @@
       </a-tooltip>
       <span v-else style="display:inline-flex;align-items:center">
         <span>{{ field.label }}</span>
+        <a-tag v-if="Number(field.tier ?? 2) === 1" color="blue" size="small" style="margin-left:4px">必需</a-tag>
+        <a-tag v-else-if="Number(field.tier ?? 2) === 2 && !field.hidden" size="small" style="margin-left:4px">调优</a-tag>
         <a-tag v-if="field.debug" color="warning" size="small" style="margin-left:4px">调试</a-tag>
         <a-tag v-if="field.personal" color="blue" size="small" style="margin-left:4px">个人可覆盖</a-tag>
         <a-tooltip v-if="srcTag" :title="srcTag.tip">

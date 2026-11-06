@@ -9,14 +9,26 @@
       </button>
     </div>
 
+    <!-- 全局分层概览：这一页一共多少项、默认露出多少、收起多少（效果图里那条统计带） -->
+    <div v-if="schemaLoaded" class="tier-stat">
+      <span class="tier-stat-main"><b>{{ tierStats.visible }}</b> 项可见</span>
+      <span class="key-dim">= {{ tierStats.must }} 必需 · {{ tierStats.tuned }} 调优</span>
+      <span class="tier-stat-off">收起 {{ tierStats.engine }} 项工程参数<span class="key-dim">（占全部 {{ tierStats.total }} 项的 {{ tierStats.pct }}%）</span></span>
+      <span class="tier-stat-bar" aria-hidden="true">
+        <i class="must" :style="{ width: tierStats.mustPct + '%' }"></i>
+        <i class="tuned" :style="{ width: tierStats.tunedPct + '%' }"></i>
+      </span>
+    </div>
+
     <div v-if="!schemaLoaded" class="app-card" style="margin:16px 20px">
       <span class="head-hint-plain">正在加载配置字段定义…</span>
     </div>
     <div v-else class="set-body">
-      <!-- 左侧分组导航 -->
+      <!-- 左侧分组导航：每项带「默认可见/本组总数」，一眼看出这组被收掉了多少 -->
       <nav class="set-nav">
         <span v-for="p in navPanels" :key="p.key" class="set-nav-item" :class="{ active: current === p.key }" @click="current = p.key">
           {{ groupLabel(p.key) }}
+          <span class="set-nav-count">{{ panelTier(p.key).visible }}/{{ panelTier(p.key).total }}</span>
         </span>
       </nav>
 
@@ -31,9 +43,9 @@
             </button>
             <!-- 工程参数铺开开关：放面板头而不是 cfg-fold-bar——工具条只在两组以上出现，
                  「调试设置」这类全工程参数的面板会被它自己挡掉 -->
-            <label v-if="showEngineSwitch" class="engine-switch">
+            <label v-if="showEngineSwitch" class="engine-switch" :class="{ 'engine-switch--on': showEngine }">
               <a-switch size="small" :checked="showEngine" @change="v => { showEngine = v }" />
-              <span>工程参数 {{ engineHiddenCount }} 项<span class="engine-switch-hint">· 排障时才需要</span></span>
+              <span>工程参数 {{ engineHiddenCount }} 项<span class="engine-switch-hint">{{ showEngine ? '· 已展开' : '· 已收起' }}</span></span>
             </label>
           </div>
 
@@ -95,6 +107,14 @@
                   </template>
                 </div>
                 <div v-for="g in cfgGroups" :key="g.title" class="cfg-fold">
+                  <!-- 整节都是工程参数的占位行：不把这一节整个抹掉（抹掉会让人以为 schema 里没有超时/图片限制这些事），
+                       而是留一行「展开本节 N 项」，点一下按节摊开 -->
+                  <div v-if="g.engineOnly" class="cfg-fold-engine" @click="openEngineSection(g.title)">
+                    <span class="fold-caret">▸</span>
+                    <span>展开本节 {{ g.engineOnly }} 项工程参数</span>
+                    <span class="key-dim">排障/运维用，动之前先看说明</span>
+                  </div>
+                  <template v-else>
                   <div class="fold-head cfg-fold-head" @click="toggleFold(g.title)">
                     <span class="fold-caret">{{ isFoldOpen(g.title) ? '▾' : '▸' }}</span>
                     <span>{{ g.title }}</span>
@@ -123,6 +143,7 @@
                         </SchemaField>
                       </template>
                     </template>
+                  </template>
                   </template>
                 </div>
               </div>
@@ -567,6 +588,40 @@ const ragTab = ref('retrieval')
 const activeFormPanel = computed(() => current.value === 'tool'
   ? toolTab.value
   : current.value === 'retrieval' ? ragTab.value : current.value)
+
+/**
+ * 全局分层概览（设置页顶部那条统计带）：全量字段按 tier 分三档，hidden 统一算进工程参数。
+ * 数字直接从 FIELDS 现算，不写死——schema 一变（本版本加了 4 个键、收了 46 个）这里跟着变。
+ */
+const tierStats = computed(() => {
+  const total = FIELDS.length
+  let must = 0, tuned = 0
+  for (const f of FIELDS) {
+    const t = Number(f.tier ?? 2)
+    if (t === 1) must++
+    else if (t === 2 && !f.hidden) tuned++
+  }
+  const visible = must + tuned
+  const engine = total - visible
+  return {
+    total, must, tuned, visible, engine,
+    pct: total ? Math.round(engine * 100 / total) : 0,
+    mustPct: total ? must * 100 / total : 0,
+    tunedPct: total ? tuned * 100 / total : 0
+  }
+})
+
+/** 各面板的「默认可见 / 总数」，给左侧导航的小角标用 */
+const panelTierMap = computed(() => {
+  const m = {}
+  for (const f of FIELDS) {
+    const o = m[f.panel] || (m[f.panel] = { visible: 0, total: 0 })
+    o.total++
+    if (!isEngineField(f)) o.visible++
+  }
+  return m
+})
+const panelTier = key => panelTierMap.value[key] || { visible: 0, total: 0 }
 
 /**
  * 工程参数（tier 3 + hidden）是否铺开。这是**视图偏好**，不是配置值：
@@ -1316,8 +1371,43 @@ const cfgGroupsAll = computed(() => {
     }
   }
   // 有块就留：只剩「超时档位」卡的那一节字段数虽然是 0，但那张卡是四个超时键唯一的入口
-  return out.filter(g => g.blocks.length)
+  const groups = out.filter(g => g.blocks.length)
+  // 整节都是工程参数的那些节：默认不渲染任何东西，但也不能像现在这样整节消失——
+  // 「超时与等待」「消息图片限制」凭空不见，读起来像是这些问题在系统里不存在。
+  // 插一行占位（engineOnly=N），点一下按节摊开。
+  if (!showEngine.value) {
+    const p = PANELS.find(x => x.key === activeFormPanel.value)
+    if (p) {
+      const owned = isMaintConfig.value ? taskOwnedKeys.value : null
+      const present = new Set(groups.map(g => g.title))
+      for (let i = 0; i < p.sections.length; i++) {
+        const title = p.sections[i]
+        if (present.has(title)) continue
+        const fs = FIELDS.filter(f => f.panel === p.key && f.section === i && !f.groupedUnder
+          && (!owned || !owned.has(f.backendKey)) && isVisible(f, form.value))
+        const engine = fs.filter(f => isEngineField(f))
+        if (fs.length && engine.length === fs.length) {
+          groups.push({ title, blocks: [], fields: [], engineOnly: engine.length })
+        }
+      }
+      const order = t => p.sections.indexOf(t)
+      groups.sort((a, b) => order(a.title) - order(b.title))
+    }
+  }
+  return groups
 })
+
+/** 点「展开本节 N 项工程参数」：摊开全局开关，并把这一节滚动到视野里 */
+const openEngineSection = async title => {
+  showEngine.value = true
+  await nextTick()
+  const i = closedFolds.value.indexOf(title)
+  if (i >= 0) closedFolds.value.splice(i, 1)
+  await nextTick()
+  const el = [...document.querySelectorAll('.cfg-fold')]
+    .find(f => (f.querySelector('.cfg-fold-head')?.innerText || '').includes(title))
+  if (el && el.scrollIntoView) el.scrollIntoView({ block: 'center' })
+}
 
 /** 搜索同时命中参数名、配置键与分组标题——按分组标题命中时保留整组（用户找的是"GraphRAG"这一类） */
 const cfgGroups = computed(() => {
@@ -1525,17 +1615,36 @@ onMounted(() => { fetchAndFill(); loadToolInventory(); loadSkillOptions() })
   width: 150px; flex: none; border-right: 1px solid var(--app-border); background: var(--app-panel);
   padding: 10px 8px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto;
 }
-.set-nav-item { padding: 7px 10px; border-radius: 8px; font-size: 12px; color: var(--app-text2); cursor: pointer; }
+.set-nav-item { display: flex; align-items: center; gap: 6px; padding: 7px 10px; border-radius: 8px; font-size: 12px; color: var(--app-text2); cursor: pointer; }
 .set-nav-item:hover { background: var(--app-accent-weak); }
 .set-nav-item.active { background: var(--app-accent-weak); color: var(--app-text); font-weight: 500; }
+/* 导航角标：默认可见 / 本组总数——一眼看出这组被收掉了多少 */
+.set-nav-count { margin-left: auto; font-size: 10px; color: var(--app-text3); background: var(--app-panel-2); border-radius: 999px; padding: 0 6px; white-space: nowrap; }
+.set-nav-item.active .set-nav-count { background: #fff; }
 .set-content { flex: 1; min-width: 0; overflow-y: auto; padding: 14px 20px 24px; }
+/* 顶部统计带：本页一共多少项、默认露出多少、收起多少（含比例条） */
+.tier-stat { display: flex; align-items: center; gap: 12px; margin: 0 20px 12px; padding: 9px 13px;
+  background: var(--app-card); border: 1px solid var(--app-border); border-radius: 10px; font-size: 12px; }
+.tier-stat-main { color: var(--app-text2); }
+.tier-stat-main b { font-size: 15px; color: var(--app-text); }
+.tier-stat-off { color: var(--app-warn-text); }
+.tier-stat-off .key-dim { margin-left: 4px; }
+.tier-stat-bar { margin-left: auto; width: 230px; height: 9px; border-radius: 6px; overflow: hidden;
+  display: flex; background: var(--app-panel-2); }
+.tier-stat-bar i { display: block; height: 100%; }
+.tier-stat-bar .must { background: #2b5fd9; }
+.tier-stat-bar .tuned { background: #8fb0ef; }
 /* 运行状态页签：整块不再随内容长高，滚动交给内部表格。
    .set-content 是 flex:1 但无固定高度 ⇒ 它跟着内容长高，overflow-y 永不触发；
    所以这里让 .set-content 自身在 fill 模式下不再滚动，由表格体限高来吸收多余高度。 */
 .set-panel--fill { overflow: hidden; }
 .set-panel-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
-/* 工程参数铺开开关：贴着标题走，颜色弱于正文——它是视图偏好，不该比参数本身抢眼 */
-.engine-switch { display: flex; align-items: center; gap: 6px; margin-left: auto; font-size: 12px; color: var(--app-text2); cursor: pointer; }
+/* 工程参数铺开开关：效果图里的「提醒色药丸」。它确实是视图偏好，但被收起的是 100 多项，
+   颜色弱到看不见反而让人以为参数丢了——用 warning 底、字仍是正文色，抢眼但不刺目 */
+.engine-switch { display: flex; align-items: center; gap: 6px; margin-left: auto; font-size: 12px; color: var(--app-text2);
+  cursor: pointer; background: var(--app-warn-weak, #fdf4e6); border: 1px solid var(--app-warn-border, #f0dcb4);
+  border-radius: 7px; padding: 3px 9px; }
+.engine-switch--on { background: var(--app-accent-weak); border-color: var(--app-accent-border, #c9d8f7); }
 .engine-switch-hint { color: var(--app-text3); }
 .set-card { padding: 18px 20px 6px; }
 .cfg-sub { font-size: 12px; font-weight: 500; color: var(--app-text3); margin: 14px 0 2px; padding-bottom: 4px; border-bottom: 1px dashed var(--app-border); }
@@ -1660,6 +1769,10 @@ onMounted(() => { fetchAndFill(); loadToolInventory(); loadSkillOptions() })
 .cfg-fold:last-child { border-bottom: none; }
 .cfg-fold-head { display: flex; align-items: center; gap: 8px; padding: 9px 2px; }
 .cfg-fold-n { font-size: 11px; color: var(--app-text3); background: var(--app-panel-2); border-radius: 999px; padding: 1px 8px; }
+/* 整节都是工程参数时的占位行：虚线框，读起来是「这一节在这儿，只是收着」而不是「这一节不存在」 */
+.cfg-fold-engine { display: flex; align-items: center; gap: 8px; margin: 10px 0; padding: 8px 10px;
+  border: 1px dashed var(--app-border); border-radius: 8px; font-size: 12px; color: var(--app-text2); cursor: pointer; }
+.cfg-fold-engine:hover { border-color: var(--app-accent-border, #c9d8f7); background: var(--app-accent-weak); }
 .sched-cfgkey { font-size: 11px; margin-top: 2px; }
 .sched-cfgkey code { font-size: 11px; color: var(--app-text3); }
 
