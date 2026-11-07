@@ -1,6 +1,7 @@
 package com.wenqu.ai.model;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
@@ -59,6 +60,14 @@ public class Notification {
 
     /** 产生时刻 */
     private LocalDateTime createTime;
+
+    /**
+     * 列表返回时动态判定（不入库）：这条「待处理」指向的审批/运行是否仍在等人处理。
+     * <p>false = 底层已经处理完（通过/拒绝/超时/已续跑），前端不再显示「去处理」。
+     * 判定走底层表的实时状态，因此历史存量通知也能自动纠正，不需要回填。
+     */
+    @TableField(exist = false)
+    private Boolean actionable;
 
     // ==================== 类型常量（与 schema.sql 注释一一对应） ====================
 

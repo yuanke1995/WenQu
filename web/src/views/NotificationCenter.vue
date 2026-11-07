@@ -103,6 +103,7 @@
         :grouped="grouped"
         :has-more="hasMore"
         :total="total"
+        :show-total="bucket !== 'action'"
         :empty-title="emptyTitle"
         :empty-desc="emptyDesc"
         @open="openRow"
@@ -223,10 +224,12 @@ const filterChips = computed(() => {
 const emptyTitle = computed(() => {
   if (debouncedKeyword.value) return `没有找到「${debouncedKeyword.value}」`
   if (hasFilters.value) return '没有符合条件的通知'
+  if (bucket.value === 'action') return '没有待处理的通知'
   return '还没有通知'
 })
 const emptyDesc = computed(() => {
   if (debouncedKeyword.value || hasFilters.value) return '换个关键词，或清除筛选后再看。'
+  if (bucket.value === 'action') return '需要你处理的审批、提问或计划确认会出现在这里。'
   return '解析、工作流、定时任务或对话需要你处理时，会出现在这里。'
 })
 
@@ -243,7 +246,9 @@ const fetchPage = async reset => {
       cursor: reset ? 0 : cursor.value
     })
     const body = r?.data || {}
-    const rows = body.items || []
+    // 「待处理」桶只留还真的在等人的条目：底层审批/运行已处理的不再占位置
+    let rows = body.items || []
+    if (bucket.value === 'action') rows = rows.filter(n => n.actionable !== false)
     if (reset) {
       items.value = rows
       cursor.value = 0

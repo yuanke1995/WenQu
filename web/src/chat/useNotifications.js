@@ -227,7 +227,8 @@ export function groupNotifications (items, { group = true } = {}) {
   const out = []
   for (const item of list) {
     const key = item?.refType && item?.refId ? `${item.refType}|${item.refId}` : null
-    if (key && notifBucket(item.type) === 'action') {
+    // 已处理（actionable=false）不参与聚合：它不再等人操作，没必要和待处理项挤在一起
+    if (key && notifBucket(item.type) === 'action' && item.actionable !== false) {
       let g = grouped.get(key)
       if (!g) {
         g = { kind: 'group', key, items: [], latest: item }

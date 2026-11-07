@@ -3,9 +3,15 @@ package com.wenqu.ai.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.wenqu.ai.mapper.NotificationMapper;
+import com.wenqu.ai.mapper.TenantRequestMapper;
+import com.wenqu.ai.mapper.ToolApprovalMapper;
 import com.wenqu.ai.mapper.UserConfigMapper;
+import com.wenqu.ai.mapper.WorkflowRunMapper;
 import com.wenqu.ai.model.Notification;
+import com.wenqu.ai.model.TenantRequest;
+import com.wenqu.ai.model.ToolApproval;
 import com.wenqu.ai.model.UserConfig;
+import com.wenqu.ai.model.WorkflowRun;
 import com.wenqu.ai.util.RequestUser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -13,9 +19,12 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -45,6 +54,10 @@ public class NotificationService {
     private final NotificationMapper notificationMapper;
     private final UserConfigMapper userConfigMapper;
     private final ConfigService configService;
+    /** 判定「待处理」是否还真的待处理：审批 / 工作流运行 / 租户申请三张底层表的实时状态 */
+    private final ToolApprovalMapper toolApprovalMapper;
+    private final WorkflowRunMapper workflowRunMapper;
+    private final TenantRequestMapper tenantRequestMapper;
     /** 管理员判定（eval.decline 这类平台级预警的收件人范围） */
     private final RoleService roleService;
     /** 用户表（createForAdmins 解析管理员级账号清单） */
@@ -278,6 +291,70 @@ public class NotificationService {
     }
 
     /**
+     * 给「待处理」类条目补 actionable：查底层表的实时状态。
+     * <p>记录已不存在（过保留期/被清理）也按已处理处理，避免一直挂着「去处理」——
+     * 这类历史行不需要回填，列表返回时自动纠正。
+     * <p>只有本页最多 50 条，按三类各做一次 selectBatchIds，不做逐条 N+1。
+     */
+    private void enrichActionable(List<Notification> rows) {
+        if (rows == null || rows.isEmpty()) return;
+        Set<String> toolIds = new HashSet<>();
+        Set<String> runIds = new HashSet<>();
+        Set<String> requestIds = new HashSet<>();
+        for (Notification n : rows) {
+            if (n == null) continue;
+            String type = n.getType();
+            if (Notification.TYPE_TOOL_APPROVAL.equals(type)
+                    || Notification.TYPE_TOOL_ASK.equals(type)
+                    || Notification.TYPE_PLAN_APPROVAL.equals(type)) {
+                if (n.getRefSub() != null && !n.getRefSub().isBlank()) toolIds.add(n.getRefSub());
+            } else if (Notification.TYPE_WORKFLOW_APPROVAL.equals(type)) {
+                if (n.getRefSub() != null && !n.getRefSub().isBlank()) runIds.add(n.getRefSub());
+            } else if (Notification.TYPE_TENANT_REQUEST.equals(type)) {
+                if (n.getRefId() != null && !n.getRefId().isBlank()) requestIds.add(n.getRefId());
+            }
+        }
+
+        Map<String, String> toolStatus = new HashMap<>();
+        if (!toolIds.isEmpty()) {
+            for (ToolApproval t : toolApprovalMapper.selectBatchIds(toolIds)) {
+                if (t != null) toolStatus.put(t.getId(), t.getStatus());
+            }
+        }
+        Map<String, String> runStatus = new HashMap<>();
+        if (!runIds.isEmpty()) {
+            for (WorkflowRun r : workflowRunMapper.selectBatchIds(runIds)) {
+                if (r != null) runStatus.put(r.getId(), r.getStatus());
+            }
+        }
+        Map<String, String> requestStatus = new HashMap<>();
+        if (!requestIds.isEmpty()) {
+            for (TenantRequest t : tenantRequestMapper.selectBatchIds(requestIds)) {
+                if (t != null) requestStatus.put(t.getId(), t.getStatus());
+            }
+        }
+
+        for (Notification n : rows) {
+            if (n == null) continue;
+            String type = n.getType();
+            if (Notification.TYPE_TOOL_APPROVAL.equals(type)
+                    || Notification.TYPE_TOOL_ASK.equals(type)
+                    || Notification.TYPE_PLAN_APPROVAL.equals(type)) {
+                // 找不到记录 = 已被清理/不存在，同样不再让人「去处理」
+                n.setActionable("PENDING".equals(toolStatus.get(n.getRefSub())));
+            } else if (Notification.TYPE_WORKFLOW_APPROVAL.equals(type)) {
+                n.setActionable("waiting_approval".equals(runStatus.get(n.getRefSub())));
+            } else if (Notification.TYPE_TENANT_REQUEST.equals(type)) {
+                n.setActionable("pending".equals(requestStatus.get(n.getRefId())));
+            } else if (Notification.TYPE_MODEL_QUOTA.equals(type)
+                    || Notification.TYPE_USAGE_QUOTA.equals(type)) {
+                // 配额类没有可查的「已处理」表：保留到用户手动清理
+                n.setActionable(true);
+            }
+        }
+    }
+
+    /**
      * 某用户的通知列表（新→旧，支持类型集合/关键词/仅未读/游标分页）。
      *
      * @param limit      单页条数（默认 50，上限 {@value #LIST_MAX_LIMIT}）
@@ -298,6 +375,7 @@ public class NotificationService {
         List<Notification> rows = notificationMapper.selectList(w);
         boolean hasMore = rows.size() > n;
         if (hasMore) rows = rows.subList(0, n);
+        enrichActionable(rows);
         long total = notificationMapper.selectCount(baseWrap(uid, type, types, unreadOnly, q));
         Map<String, Object> out = new java.util.LinkedHashMap<>();
         out.put("items", rows);

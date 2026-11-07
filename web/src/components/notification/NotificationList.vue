@@ -26,6 +26,11 @@
       <b>{{ emptyTitle }}</b>
       <span>{{ emptyDesc }}</span>
       <slot name="empty-action" />
+      <!-- 服务端还有下一页但本页被筛空时，仍给一个手动加载入口（否则空态会堵住继续翻页） -->
+      <button v-if="variant === 'page' && hasMore" class="nl-state-btn" type="button"
+              :disabled="loading" @click="$emit('load-more')">
+        {{ loading ? '加载中…' : '加载更多' }}
+      </button>
     </div>
 
     <template v-else>
@@ -103,7 +108,8 @@
                     </span>
                   </span>
                   <span class="nl-actions">
-                    <button class="nl-go" type="button" @click.stop="$emit('open', child)">去处理 ›</button>
+                    <span v-if="isResolvedAction(child)" class="nl-resolved">已处理</span>
+                    <button v-else class="nl-go" type="button" @click.stop="$emit('open', child)">去处理 ›</button>
                     <NotifKebab :item="child" @mark-unread="$emit('mark-unread', $event)"
                                 @delete="$emit('delete', $event)" />
                   </span>
@@ -139,7 +145,9 @@
                 </span>
               </span>
               <span class="nl-actions">
-                <button v-if="isAction(node.item)" class="nl-go" type="button"
+                <!-- 底层审批/运行已经处理完：不再显示「去处理」，改为「已处理」 -->
+                <span v-if="isResolvedAction(node.item)" class="nl-resolved">已处理</span>
+                <button v-else-if="isAction(node.item)" class="nl-go" type="button"
                         @click.stop="$emit('open', node.item)">去处理 ›</button>
                 <NotifKebab :item="node.item" @mark-unread="$emit('mark-unread', $event)"
                             @delete="$emit('delete', $event)" />
@@ -154,7 +162,7 @@
                 @click="$emit('load-more')">
           {{ loading ? '加载中…' : '加载更多' }}
         </button>
-        <div v-else-if="items.length" class="nl-foot">共 {{ total }} 条</div>
+        <div v-else-if="items.length && showTotal" class="nl-foot">共 {{ total }} 条</div>
       </div>
       <div v-if="variant === 'page'" ref="sentinel" class="nl-sentinel" />
     </template>
@@ -181,6 +189,8 @@ const props = defineProps({
   grouped: { type: Boolean, default: true },
   hasMore: { type: Boolean, default: false },
   total: { type: Number, default: 0 },
+  // 「待处理」桶会滤掉已处理项，服务端 total 仍包含它们，所以那一档不展示总数
+  showTotal: { type: Boolean, default: true },
   emptyTitle: { type: String, default: '还没有通知' },
   emptyDesc: { type: String, default: '解析、工作流、定时任务或对话需要你处理时，会出现在这里。' }
 })
@@ -190,7 +200,8 @@ const emit = defineEmits(['open', 'toggle-select', 'mark-unread', 'delete', 'loa
 const skeletonCount = computed(() => ({ page: 6, popover: 3, sheet: 4 }[props.variant] || 4))
 const iconOf = type => notifIcon(type)
 const toneOf = item => notifClass(item.type)
-const isAction = item => notifBucket(item?.type) === 'action'
+const isAction = item => notifBucket(item?.type) === 'action' && item.actionable !== false
+const isResolvedAction = item => notifBucket(item?.type) === 'action' && item.actionable === false
 
 // ==================== 日期分段 ====================
 const dayStart = d => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
@@ -325,6 +336,7 @@ onBeforeUnmount(() => { observer?.disconnect() })
 .nl-actions { display: flex; align-items: center; gap: 6px; flex: none; padding-top: 1px; }
 .nl-go { border: 0; background: transparent; color: var(--app-accent); font-size: 11px; cursor: pointer; padding: 2px 0; white-space: nowrap; }
 .nl-go:hover { text-decoration: underline; }
+.nl-resolved { font-size: 10.5px; line-height: 1; padding: 3px 7px; border-radius: 999px; color: var(--app-text3); background: var(--app-panel-2); border: 1px solid var(--app-border); white-space: nowrap; }
 .nl-expand { border: 1px solid var(--app-border); background: var(--app-panel); color: var(--app-text2); font-size: 11px; border-radius: 6px; padding: 2px 7px; cursor: pointer; white-space: nowrap; }
 .nl-expand:hover { color: var(--app-accent); border-color: var(--app-accent-border); background: var(--app-accent-weak); }
 
