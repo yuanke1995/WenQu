@@ -3,64 +3,104 @@
 <template>
   <div class="app-page">
     <div class="app-page-head">
-      <h1 class="app-page-title">个人设置</h1>
+      <div class="pf-page-head">
+        <h1 class="app-page-title">个人设置</h1>
+        <p class="pf-page-sub">管理头像昵称、模型与通知偏好，以及记忆、分享和密钥。</p>
+      </div>
     </div>
     <div class="pf-body">
-      <nav ref="pfNavEl" class="pf-nav">
-        <button v-for="n in navs" :key="n.key" class="pf-nav-item"
-                :class="{ active: current === n.key }" @click="current = n.key">
-          {{ n.label }}
-        </button>
+      <nav ref="pfNavEl" class="pf-nav" aria-label="个人设置分类">
+        <div v-for="g in navGroups" :key="g.label" class="pf-nav-group">
+          <div class="pf-nav-group-title">{{ g.label }}</div>
+          <button v-for="n in g.items" :key="n.key" class="pf-nav-item"
+                  :class="{ active: current === n.key }"
+                  :aria-current="current === n.key ? 'page' : null"
+                  @click="current = n.key">
+            <component :is="n.icon" class="pf-nav-icon" />
+            <span class="pf-nav-text">{{ n.label }}</span>
+          </button>
+        </div>
       </nav>
       <section class="pf-content">
-        <!-- 个人资料（自助：仅昵称，登录账号不可改） -->
+        <!-- 个人资料（自助：昵称与头像可改，登录账号只读） -->
         <div v-if="current === 'profile'" class="app-card pf-card">
-          <h2 class="app-card-title">个人资料</h2>
-          <!-- 头像：上传图片（≤2MB）或选一个 emoji；留空=回落昵称首字。改动后侧栏/成员列表立即同步 -->
-          <div class="pf-avatar-block">
-            <div class="pf-avatar-frame">
-              <UserAvatar :avatar="avatarPreview" :name="nickForm.username" :size="72" />
-            </div>
-            <div class="pf-avatar-side">
+          <div class="pf-panel-head">
+            <h2 class="app-card-title">个人资料</h2>
+            <p class="pf-panel-sub">头像和昵称会显示在侧栏、会话与成员列表中，修改后立即同步。</p>
+          </div>
+
+          <!-- 头像：点预览或「上传图片」都能换图；上传图片与选图标互斥，两者都为空则显示昵称首字 -->
+          <div class="pf-identity">
+            <button class="pf-avatar-btn" type="button" :disabled="avatarSaving"
+                    :aria-label="avatarIsImage ? '更换头像图片' : '上传头像图片'" @click="pickAvatar">
+              <UserAvatar :avatar="avatarPreview" :name="nickForm.username" :size="84" />
+              <span class="pf-avatar-mask" aria-hidden="true"><CameraOutlined /></span>
+            </button>
+            <div class="pf-identity-main">
+              <div class="pf-identity-name">{{ nickForm.username || '未设置昵称' }}</div>
+              <div class="pf-identity-state">{{ avatarStateText }}</div>
               <div class="pf-op-row">
-                <label class="app-btn pf-upload" :class="{ busy: avatarSaving }">
-                  {{ avatarSaving ? '处理中…' : '上传图片' }}
-                  <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden
-                         :disabled="avatarSaving" @change="onAvatarFile" />
-                </label>
-                <button class="app-btn ghost" :disabled="!avatarPreview || avatarSaving" @click="clearAvatar">清除头像</button>
+                <button type="button" class="app-btn" :disabled="avatarSaving" @click="pickAvatar">
+                  {{ avatarSaving ? '处理中…' : (avatarIsImage ? '更换图片' : '上传图片') }}
+                </button>
+                <button type="button" class="app-btn ghost" :disabled="!avatarPreview || avatarSaving" @click="clearAvatar">
+                  {{ avatarIsImage ? '清除图片' : '恢复昵称首字' }}
+                </button>
               </div>
               <p class="pf-sub-hint">支持 PNG / JPEG / GIF / WebP，单张不超过 2MB，上传后立即生效。</p>
             </div>
+            <input ref="avatarFileEl" type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden
+                   :disabled="avatarSaving" @change="onAvatarFile" />
           </div>
 
-          <!-- 图标与上传互斥（后设覆盖前设）；两者都为空时显示昵称首字 -->
-          <div class="pf-field">
-            <div class="pf-field-head">
-              <span class="pf-label">或选择一个图标</span>
-              <span class="pf-sub-hint">点选即生效；留空则显示昵称首字</span>
+          <div class="pf-section">
+            <div class="pf-section-head">
+              <div>
+                <span class="pf-label">或选择一个图标</span>
+                <p class="pf-sub-hint">{{ emojiHint }}</p>
+              </div>
             </div>
-            <div class="pf-emoji-pick">
+            <div class="pf-emoji-pick" role="group" aria-label="选择头像图标">
               <button v-for="e in AVATAR_EMOJIS" :key="e" class="pf-emoji-opt" type="button"
                       :class="{ on: avatarPreview === e }" :disabled="avatarSaving"
-                      :aria-label="'使用图标 ' + e" @click="pickEmoji(e)">{{ e }}</button>
+                      :aria-pressed="avatarPreview === e" :aria-label="'使用图标 ' + e"
+                      @click="pickEmoji(e)">{{ e }}</button>
             </div>
           </div>
 
-          <div class="pf-field">
-            <div class="pf-field-head"><span class="pf-label">昵称</span></div>
-            <div class="pf-row">
-              <a-input v-model:value="nickForm.username" :maxlength="100" allow-clear class="pf-nick-input"
-                       placeholder="显示昵称，如 张三" @pressEnter="saveNickname" />
-              <button class="app-btn" :disabled="nickSaving || !nickForm.username.trim()" @click="saveNickname">保存</button>
+          <div class="pf-section">
+            <div class="pf-section-head">
+              <div>
+                <label class="pf-label" for="pf-nickname">昵称</label>
+                <p class="pf-sub-hint">仅用于展示，不影响登录账号；最多 100 个字符。</p>
+              </div>
+              <span class="pf-meta-right">
+                <span v-if="nickDirty" class="pf-dirty">未保存</span>
+                <span class="pf-count">{{ nickForm.username.length }}/100</span>
+              </span>
             </div>
+            <div class="pf-row">
+              <a-input id="pf-nickname" v-model:value="nickForm.username" :maxlength="100" allow-clear class="pf-nick-input"
+                       placeholder="显示昵称，如 张三" @pressEnter="saveNickname" />
+              <button class="app-btn" :disabled="nickSaving || !nickDirty" @click="saveNickname">
+                {{ nickSaving ? '保存中…' : '保存' }}
+              </button>
+            </div>
+          </div>
+
+          <div class="pf-section pf-account-row">
+            <span class="pf-label">登录账号</span>
+            <span class="pf-account-value">{{ authAccount || '—' }}</span>
+            <span class="pf-sub-hint">昵称可改，登录账号不可修改</span>
           </div>
         </div>
 
         <!-- 个人默认聊天模型（选完即存，没有「保存」这一步；「自动提炼记忆」开关在「我的记忆」面板） -->
         <div v-else-if="current === 'chat'" class="app-card pf-card">
-          <h2 class="app-card-title">{{ panelMeta.title }}</h2>
-          <p class="pf-hint">{{ panelMeta.hint }}</p>
+          <div class="pf-panel-head">
+            <h2 class="app-card-title">{{ panelMeta.title }}</h2>
+            <p class="pf-panel-sub">{{ panelMeta.hint }}</p>
+          </div>
           <div class="pf-row">
             <!-- 用组件声明的 v-model（而非 v-model:value——那是透传到根 a-select 的偶然生效路径） -->
             <ModelSelect v-model="pref[panelMeta.field]" type="chat"
@@ -79,8 +119,10 @@
              「收哪些类」过去长在通知中心里（点开一块开关），这次整块搬过来，通知中心只留跳转入口：
              同一批勾选状态不许在两个页面各存一份，两边各写各的迟早对不上。 -->
         <div v-else-if="current === 'notify'" class="app-card pf-card">
-          <h2 class="app-card-title">通知与推送</h2>
-          <p class="pf-hint">这里管两件事：哪些事值得通知你，以及通知要不要跳出浏览器、成为手机或系统上的那条横幅。</p>
+          <div class="pf-panel-head">
+            <h2 class="app-card-title">通知与推送</h2>
+            <p class="pf-panel-sub">这里管两件事：哪些事值得通知你，以及通知要不要跳出浏览器、成为手机或系统上的那条横幅。</p>
+          </div>
 
           <div class="pf-field">
             <div class="pf-field-head">
@@ -104,7 +146,10 @@
           <div class="pf-field">
             <div class="pf-field-head">
               <span class="pf-label">收哪些类</span>
-              <span class="pf-sub-hint">关掉即不再接收该类通知</span>
+              <span class="pf-meta-right">
+                <span v-if="muteDirty" class="pf-dirty">未保存</span>
+                <span class="pf-sub-hint">关掉即不再接收该类通知</span>
+              </span>
             </div>
             <div class="np-grid">
               <label v-for="t in NOTIF_TYPES" :key="t.type" class="np-item">
@@ -115,7 +160,7 @@
             </div>
             <div class="np-foot">
               <span class="pf-sub-hint">改完点「保存」才生效。系统级推送同样尊重这份清单——被关掉的类不会弹横幅。</span>
-              <button class="app-btn small" type="button" :disabled="muteSaving" @click="saveMutes">保存</button>
+              <button class="app-btn small" type="button" :disabled="muteSaving || !muteDirty" @click="saveMutes">保存</button>
             </div>
           </div>
         </div>
@@ -125,16 +170,18 @@
              阅读与编辑都按「分类 → 条目」结构化呈现（parse/serialize 见 utils/memoryDoc.js），
              不要求用户懂 Markdown；原文编辑作为高级项保留，兼容手写/异常格式的内容。 -->
         <div v-else-if="current === 'memory'" class="app-card pf-card mem-card">
-          <h2 class="app-card-title">
-            我的记忆
-            <span v-if="memOverview.daily && memOverview.daily.length" class="mem-count">
-              {{ memOverview.daily.length }} 天日账
-            </span>
-          </h2>
-          <p class="pf-hint">
-            助手会在问答结束后把值得长期记住的信息整理进下面的「长期记忆」，日账则是每天追加的原始记录。
-            日账是只读的，删除后无法恢复。
-          </p>
+          <div class="pf-panel-head">
+            <h2 class="app-card-title">
+              我的记忆
+              <span v-if="memOverview.daily && memOverview.daily.length" class="mem-count">
+                {{ memOverview.daily.length }} 天日账
+              </span>
+            </h2>
+            <p class="pf-panel-sub">
+              助手会在问答结束后把值得长期记住的信息整理进下面的「长期记忆」，日账则是每天追加的原始记录。
+              日账是只读的，删除后无法恢复。
+            </p>
+          </div>
 
           <!-- 长期记忆的生成闸（即时生效，不参与任何保存）：只关「问答后自动提炼」这一步，
                已沉淀的记忆在后续问答里照常被提起。关掉后下一轮起才停（正在跑的那一轮不受影响）。 -->
@@ -288,35 +335,44 @@
 
         <!-- 账号安全 -->
         <div v-else-if="current === 'security'" class="app-card pf-card">
-          <h2 class="app-card-title">修改密码</h2>
+          <div class="pf-panel-head">
+            <h2 class="app-card-title">账号安全</h2>
+            <p class="pf-panel-sub">修改登录密码。修改成功后当前登录会失效，需要用新密码重新登录。</p>
+          </div>
           <a-form layout="vertical" class="pf-form">
             <a-form-item label="当前密码" required>
-              <a-input-password v-model:value="pwdForm.oldPassword" placeholder="请输入当前密码" @pressEnter="submitPwd" />
+              <a-input-password v-model:value="pwdForm.oldPassword" autocomplete="current-password"
+                                placeholder="请输入当前密码" @pressEnter="submitPwd" />
             </a-form-item>
             <a-form-item label="新密码" required>
-              <a-input-password v-model:value="pwdForm.newPassword" placeholder="至少 6 位" />
+              <a-input-password v-model:value="pwdForm.newPassword" autocomplete="new-password"
+                                placeholder="至少 6 位" />
             </a-form-item>
             <a-form-item label="确认新密码" required>
-              <a-input-password v-model:value="pwdForm.confirm" placeholder="再次输入新密码" @pressEnter="submitPwd" />
+              <a-input-password v-model:value="pwdForm.confirm" autocomplete="new-password"
+                                placeholder="再次输入新密码" @pressEnter="submitPwd" />
             </a-form-item>
             <p v-if="pwdError" class="pf-err">{{ pwdError }}</p>
-            <button class="app-btn" :disabled="pwdSaving" @click="submitPwd">修改密码</button>
-            <span class="pf-sub-hint" style="margin-left:10px">修改成功后需重新登录</span>
+            <button class="app-btn" :disabled="pwdSaving" @click="submitPwd">
+              {{ pwdSaving ? '提交中…' : '修改密码' }}
+            </button>
           </a-form>
         </div>
 
         <!-- 分享管理（会话只读分享）：链接发出后就散在各处，这里是统一的回看与停用入口。
              会话内分享面板管"这一条"，这里管"全部"——单条面板无法回答"我一共发出过哪些"。 -->
         <div v-else-if="current === 'shares'" class="app-card pf-card shm-card">
-          <h2 class="app-card-title">
-            分享管理
-            <span v-if="shareOnCount" class="mem-count">{{ shareOnCount }} 条生效中</span>
-          </h2>
-          <p class="pf-hint">
-            会话分享生成的是<strong>只读链接</strong>：拿到链接的人可以查看这段对话，不能继续提问。
-            链接展示的是会话<strong>最新内容而非快照</strong>——分享后继续在这段对话里聊到敏感内容，链接页也会跟着变。
-            停止分享后链接立即失效，记录保留到清理周期结束（与会话保留期一致），也可以随时手动清除。
-          </p>
+          <div class="pf-panel-head">
+            <h2 class="app-card-title">
+              分享管理
+              <span v-if="shareOnCount" class="mem-count">{{ shareOnCount }} 条生效中</span>
+            </h2>
+            <p class="pf-panel-sub">
+              会话分享生成的是<strong>只读链接</strong>：拿到链接的人可以查看这段对话，不能继续提问。
+              链接展示的是会话<strong>最新内容而非快照</strong>——分享后继续在这段对话里聊到敏感内容，链接页也会跟着变。
+              停止分享后链接立即失效，记录保留到清理周期结束（与会话保留期一致），也可以随时手动清除。
+            </p>
+          </div>
           <a-spin :spinning="shareLoading">
             <div v-if="!shares.length" class="mem-empty">
               <div class="mem-empty-ico">🔗</div>
@@ -380,7 +436,11 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
-import { clearAuth, ensureAuth } from '../utils/auth'
+import {
+  BellOutlined, CameraOutlined, DatabaseOutlined, KeyOutlined,
+  SafetyCertificateOutlined, SettingOutlined, ShareAltOutlined, UserOutlined
+} from '@ant-design/icons-vue'
+import { authUser, clearAuth, ensureAuth } from '../utils/auth'
 import { refreshSetupGuide } from '../utils/setupGuide'
 import { copyText } from '../utils/clipboard'
 import { parseMemoryDoc, serializeMemoryDoc, nextEntryId } from '../utils/memoryDoc'
@@ -405,15 +465,23 @@ import {
 const router = useRouter()
 const route = useRoute()
 
-const navs = [
-  { key: 'profile', label: '个人资料' },
-  { key: 'chat', label: '默认模型' },
-  { key: 'notify', label: '通知与推送' },
-  { key: 'memory', label: '我的记忆' },
-  { key: 'shares', label: '分享管理' },
-  { key: 'apikeys', label: 'API 密钥' },
-  { key: 'security', label: '账号安全' }
+// 按用途分组：账号相关在前，偏好居中，数据与集成放最后。图标只做快速扫读，不承担语义。
+const navGroups = [
+  { label: '账号', items: [
+    { key: 'profile', label: '个人资料', icon: UserOutlined },
+    { key: 'security', label: '账号安全', icon: SafetyCertificateOutlined }
+  ] },
+  { label: '偏好', items: [
+    { key: 'chat', label: '默认模型', icon: SettingOutlined },
+    { key: 'notify', label: '通知与推送', icon: BellOutlined }
+  ] },
+  { label: '数据与应用', items: [
+    { key: 'memory', label: '我的记忆', icon: DatabaseOutlined },
+    { key: 'shares', label: '分享管理', icon: ShareAltOutlined },
+    { key: 'apikeys', label: 'API 密钥', icon: KeyOutlined }
+  ] }
 ]
+const navs = navGroups.flatMap(g => g.items)
 // ?panel= 深链（配置引导建议项「去配置」直达对应面板）；未知值回落个人资料
 const PANEL_KEYS = navs.map(n => n.key)
 const current = ref(PANEL_KEYS.includes(route.query.panel) ? route.query.panel : 'profile')
@@ -508,19 +576,28 @@ const onTestPush = async () => {
 
 // 收哪些类（个人静音清单）：从通知中心整块搬来，那边只留跳转入口
 const mutedTypes = ref([])
+const savedMutedTypes = ref([])
 const muteSaving = ref(false)
+// 排序后比对：静音清单是有序数组，开关顺序变化不代表内容变化
+const muteKey = list => [...(list || [])].sort().join('|')
+const muteDirty = computed(() => muteKey(mutedTypes.value) !== muteKey(savedMutedTypes.value))
 const muted = t => mutedTypes.value.includes(t)
 const toggleMute = (t, on) => {
   mutedTypes.value = on ? mutedTypes.value.filter(x => x !== t) : [...new Set([...mutedTypes.value, t])]
 }
 const loadMutes = async () => {
-  try { const r = await notificationPreferences(); mutedTypes.value = (r && r.data && r.data.mutedTypes) || [] }
-  catch (e) { message.error('通知偏好读取失败：' + (e.message || '请重试')) }
+  try {
+    const r = await notificationPreferences()
+    const list = (r && r.data && r.data.mutedTypes) || []
+    mutedTypes.value = list
+    savedMutedTypes.value = [...list]
+  } catch (e) { message.error('通知偏好读取失败：' + (e.message || '请重试')) }
 }
 const saveMutes = async () => {
   muteSaving.value = true
   try {
     await notificationSavePreferences(mutedTypes.value)
+    savedMutedTypes.value = [...mutedTypes.value]
     message.success('已保存')
   } catch (e) { message.error('保存失败：' + (e.message || '')) }
   finally { muteSaving.value = false }
@@ -581,16 +658,23 @@ const submitPwd = async () => {
   finally { pwdSaving.value = false }
 }
 
-// ---- 个人资料：昵称（自助修改；保存后刷新身份缓存，侧栏名立即同步） ----
+// ---- 个人资料：昵称（自助修改；登录账号另展示、不可改） ----
 const nickSaving = ref(false)
 const nickForm = ref({ username: '' })
+const originalNickname = ref('')
+const authAccount = computed(() => (authUser.value && authUser.value.user) || '')
+// 与已保存的昵称比对：未改动或清空时不置灰保存，避免无意义请求
+const nickDirty = computed(() => nickForm.value.username.trim() !== originalNickname.value.trim())
 const saveNickname = async () => {
   const name = nickForm.value.username.trim()
-  if (!name) return
+  if (!name) { message.warning('昵称不能为空'); return }
+  if (!nickDirty.value) return
   nickSaving.value = true
   try {
     const r = await updateMyProfile(name)
     if (r && r.success !== false) {
+      nickForm.value.username = name
+      originalNickname.value = name
       message.success('昵称已保存')
       await ensureAuth(true) // 刷新 /auth/me 缓存 → AppLayout 的 computed userName 立即跟着变
     } else message.error(r?.msg || '保存失败')
@@ -601,15 +685,30 @@ const saveNickname = async () => {
 // ---- 个人资料：头像（emoji 选择 / 图片上传 / 清除；与昵称同源 updateMyProfile，改动后同步身份缓存） ----
 const avatarPreview = ref('')
 const avatarSaving = ref(false)
+const avatarFileEl = ref(null)
+const avatarIsImage = computed(() => (avatarPreview.value || '').trim().startsWith('/'))
+const avatarStateText = computed(() => {
+  const a = (avatarPreview.value || '').trim()
+  if (!a) return '当前显示昵称首字'
+  return a.startsWith('/') ? '当前显示上传图片' : '当前显示图标'
+})
+const emojiHint = computed(() => avatarIsImage.value
+  ? '点选即生效，会替换当前上传的图片'
+  : '点选即生效；不选则显示昵称首字')
 // emoji 可选集（比智能体图标集更生活化，便于个人辨识）
 const AVATAR_EMOJIS = ['🤖', '🧠', '💡', '📚', '⚖️', '📊', '✍️', '🔍', '🛠️', '💬',
   '🎯', '🧭', '📝', '🌐', '⚡', '🌟', '🍀', '🔥', '🌈', '🐱',
   '🐶', '🦊', '🐼', '🌸', '⚓', '🎨', '🚀', '💎', '☕', '🍎']
+const AVATAR_MIMES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp']
+const MAX_AVATAR_BYTES = 2 * 1024 * 1024
+// 头像操作只动 avatar 列：昵称传「已保存值」而非输入框草稿，避免换头像时把未保存的昵称一起提交
+const savedNickname = () => originalNickname.value || nickForm.value.username
+const pickAvatar = () => { if (!avatarSaving.value) avatarFileEl.value?.click() }
 const pickEmoji = async (e) => {
-  if (avatarSaving.value) return
+  if (avatarSaving.value || avatarPreview.value === e) return
   avatarSaving.value = true
   try {
-    const r = await updateMyProfile(nickForm.value.username, e)
+    const r = await updateMyProfile(savedNickname(), e)
     if (r && r.success !== false) { avatarPreview.value = e; await ensureAuth(true); message.success('头像已更新') }
     else message.error(r?.msg || '保存失败')
   } catch (err) { message.error(err.message || '保存失败') }
@@ -618,7 +717,16 @@ const pickEmoji = async (e) => {
 const onAvatarFile = async (ev) => {
   const file = ev.target.files && ev.target.files[0]
   ev.target.value = '' // 允许重复选同一文件
-  if (!file) return
+  if (!file || avatarSaving.value) return
+  // 先在前端拦格式与大小：不满足时直接说清楚，不必白跑一次上传
+  if (file.type && !AVATAR_MIMES.includes(file.type)) {
+    message.error('仅支持 PNG / JPEG / GIF / WebP 格式的图片')
+    return
+  }
+  if (file.size > MAX_AVATAR_BYTES) {
+    message.error('图片超过 2MB，请压缩后再上传')
+    return
+  }
   avatarSaving.value = true
   try {
     const r = await uploadAvatarApi(file)
@@ -630,11 +738,15 @@ const onAvatarFile = async (ev) => {
 }
 const clearAvatar = async () => {
   if (avatarSaving.value) return
+  const wasImage = avatarIsImage.value
   avatarSaving.value = true
   try {
-    const r = await updateMyProfile(nickForm.value.username, '')
-    if (r && r.success !== false) { avatarPreview.value = ''; await ensureAuth(true); message.success('已清除头像') }
-    else message.error(r?.msg || '操作失败')
+    const r = await updateMyProfile(savedNickname(), '')
+    if (r && r.success !== false) {
+      avatarPreview.value = ''
+      await ensureAuth(true)
+      message.success(wasImage ? '已清除上传图片' : '已恢复昵称首字')
+    } else message.error(r?.msg || '操作失败')
   } catch (err) { message.error(err.message || '操作失败') }
   finally { avatarSaving.value = false }
 }
@@ -1039,7 +1151,12 @@ watch(current, v => {
 
 onMounted(() => {
   load()
-  ensureAuth().then(me => { nickForm.value.username = me.username || ''; avatarPreview.value = me.avatar || '' })
+  ensureAuth().then(me => {
+    // 身份返回前用户可能已经开始输入：此时保留输入框内容，只把服务端值记为「已保存值」
+    if (!nickForm.value.username) nickForm.value.username = me.username || ''
+    originalNickname.value = me.username || ''
+    avatarPreview.value = me.avatar || ''
+  })
   // 深链直达（?panel=xxx）时 watch 不会触发，首拉在这里补齐
   if (current.value === 'shares') loadShares()
   if (current.value === 'memory') loadMemory()
@@ -1064,20 +1181,42 @@ watch(current, v => { if (v === 'notify') refreshPushState().then(refreshCap).ca
 .np-foot { display: flex; align-items: center; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
 
 .pf-body { flex: 1; min-height: 0; display: flex; }
+.pf-page-head { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.pf-page-sub { margin: 0; font-size: 12px; color: var(--app-text3); }
 .pf-nav {
-  width: 150px; flex: none; border-right: 1px solid var(--app-border); background: var(--app-panel);
-  padding: 10px 8px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto;
+  width: 168px; flex: none; border-right: 1px solid var(--app-border); background: var(--app-panel);
+  padding: 12px 10px; display: flex; flex-direction: column; gap: 14px; overflow-y: auto;
 }
-.pf-nav-item { padding: 7px 10px; border-radius: 8px; font-size: 12px; color: var(--app-text2); cursor: pointer; border: none; background: transparent; text-align: left; }
-.pf-nav-item:hover { background: var(--app-accent-weak); }
+.pf-nav-group { display: flex; flex-direction: column; gap: 2px; }
+/* 分组小标题：只做扫读锚点，弱色调、不可点击 */
+.pf-nav-group-title {
+  padding: 0 10px 5px; font-size: 11px; color: var(--app-text3);
+  letter-spacing: .02em; user-select: none;
+}
+.pf-nav-item {
+  position: relative; display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px 7px 12px; border-radius: 8px; font-size: 13px;
+  color: var(--app-text2); cursor: pointer; border: none; background: transparent; text-align: left;
+  transition: background .15s, color .15s;
+}
+.pf-nav-item:hover { background: var(--app-accent-weak); color: var(--app-text); }
 .pf-nav-item.active { background: var(--app-accent-weak); color: var(--app-text); font-weight: 500; }
+/* 选中项左侧短竖条：只靠浅底在长列表里不够显眼 */
+.pf-nav-item.active::before {
+  content: ''; position: absolute; left: 0; top: 7px; bottom: 7px; width: 3px;
+  border-radius: 0 3px 3px 0; background: var(--app-accent);
+}
+.pf-nav-icon { flex: none; font-size: 14px; color: var(--app-text3); transition: color .15s; }
+.pf-nav-item:hover .pf-nav-icon, .pf-nav-item.active .pf-nav-icon { color: var(--app-accent); }
+.pf-nav-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pf-content { flex: 1; min-width: 0; overflow-y: auto; padding: 14px 20px 24px; }
 .pf-card { max-width: 640px; padding: 18px 20px; }
 /* API 密钥面板：表格比其它个人设置卡宽，不限 640 上限（内边距与 pf-card 一致）。
    8 列定宽合计 948 + 名称列，内容框要 1060 才不用横向滚动 */
 .akp-card { max-width: 1240px; padding: 18px 20px; }
-.pf-hint { font-size: 12px; color: var(--app-text2); margin: 0 0 12px; }
-.pf-hint-top { margin-bottom: 18px; line-height: 1.65; }
+.pf-panel-head { margin-bottom: 16px; }
+.pf-panel-head .app-card-title { margin-bottom: 3px; }
+.pf-panel-sub { margin: 0; font-size: 12px; color: var(--app-text3); line-height: 1.6; }
 .pf-sub-hint { font-size: 11px; color: var(--app-text3); margin: 10px 0 0; }
 .pf-row { display: flex; align-items: center; gap: 10px; }
 /* 即时保存的进行中提示：选择器在 PUT 期间只是变灰，不写一句看不出「在等什么」 */
@@ -1088,31 +1227,63 @@ watch(current, v => { if (v === 'notify') refreshPushState().then(refreshCap).ca
 .pf-form { max-width: 360px; }
 .pf-err { color: var(--app-danger); font-size: 12px; margin: 0 0 8px; }
 
-/* 头像区：左预览 + 右侧「按钮行 / 说明行」两行，不再把按钮和长说明挤成一条横带 */
-.pf-avatar-block { display: flex; align-items: flex-start; gap: 18px; }
-/* 描边环：上传的图片（多为白底照片）在白卡片上也有边界；用 shadow 不占布局尺寸 */
-.pf-avatar-frame {
-  flex: none; display: inline-flex; border-radius: 50%;
-  box-shadow: 0 0 0 1px var(--app-border), 0 1px 2px rgba(0, 0, 0, .05);
+/* 头像区：左预览（可直接点击换图）+ 右侧身份、按钮与说明 */
+.pf-identity { display: flex; align-items: flex-start; gap: 18px; padding-bottom: 18px; }
+.pf-avatar-btn {
+  position: relative; flex: none; padding: 0; border: none; border-radius: 50%;
+  background: transparent; cursor: pointer; line-height: 0;
 }
-.pf-avatar-side { min-width: 0; display: flex; flex-direction: column; gap: 6px; padding-top: 6px; }
+.pf-avatar-btn:disabled { cursor: default; }
+/* 悬浮遮罩：提示头像是可点击的换图入口，同时不改变圆形裁切 */
+.pf-avatar-mask {
+  position: absolute; inset: 0; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: rgba(0, 0, 0, .4); color: #fff; font-size: 20px;
+  opacity: 0; transition: opacity .15s;
+}
+.pf-avatar-btn:hover .pf-avatar-mask,
+.pf-avatar-btn:focus-visible .pf-avatar-mask { opacity: 1; }
+.pf-identity-main { min-width: 0; display: flex; flex-direction: column; gap: 8px; padding-top: 2px; }
+.pf-identity-name {
+  font-size: 15px; font-weight: 600; line-height: 1.2; color: var(--app-text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pf-identity-state { font-size: 12px; color: var(--app-text3); }
+.pf-identity-main .pf-sub-hint { margin: 0; }
 .pf-op-row { display: flex; align-items: center; gap: 8px; }
-.pf-avatar-side .pf-sub-hint { margin: 0; }
-.pf-upload { cursor: pointer; min-width: 86px; justify-content: center; }
-.pf-upload.busy { opacity: .65; pointer-events: none; }
-/* ghost 按钮 disabled 时全局样式不降透明度，这里补上，避免「清除头像」看着仍可点 */
-.pf-avatar-side .app-btn.ghost:disabled { opacity: .45; color: var(--app-text3); }
+/* ghost 按钮 disabled 时全局样式不降透明度，这里补上，避免「恢复昵称首字」看着仍可点 */
+.pf-identity-main .app-btn.ghost:disabled { opacity: .45; color: var(--app-text3); }
 
-/* 分区：图标区 / 昵称区各自成块，用分隔线分层级（原先三块平铺无区分） */
+/* 分区：图标 / 昵称 / 账号信息各自成块，用分隔线分层级 */
+.pf-section { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--app-border); }
+.pf-section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.pf-section-head .pf-sub-hint { margin: 2px 0 0; }
+.pf-label { font-size: 12px; font-weight: 500; color: var(--app-text); }
+.pf-count { flex: none; font-size: 11px; color: var(--app-text3); font-variant-numeric: tabular-nums; }
+.pf-meta-right { flex: none; display: inline-flex; align-items: center; gap: 8px; }
+.pf-dirty {
+  font-size: 11px; line-height: 1; color: var(--app-warn-text); background: var(--app-warn-weak);
+  border: 1px solid var(--app-warn-border); border-radius: 4px; padding: 3px 6px;
+}
+.pf-account-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pf-account-value {
+  min-width: 0; max-width: 100%;
+  font-family: var(--app-font-mono, ui-monospace, monospace); font-size: 12px;
+  color: var(--app-text2); background: var(--app-panel-2);
+  border: 1px solid var(--app-border); border-radius: 4px; padding: 2px 7px;
+  overflow-wrap: anywhere;
+}
+.pf-account-row .pf-sub-hint { margin: 0; }
+
+/* 分区间距（通知面板沿用旧类名） */
 .pf-field { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--app-border); }
 .pf-field-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
-.pf-label { font-size: 12px; font-weight: 500; color: var(--app-text); }
 .pf-field-head .pf-sub-hint { margin: 0; }
 
-/* 图标集：15 列定宽网格（30 个正好两行、不留残行）；去掉逐格边框与白底，只靠 hover / 选中环表达状态 */
-.pf-emoji-pick { display: grid; grid-template-columns: repeat(15, minmax(0, 1fr)); gap: 6px; }
+/* 图标集：10 列定宽网格（30 个正好三行、不留残行）；去掉逐格边框与白底，只靠 hover / 选中环表达状态 */
+.pf-emoji-pick { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 6px; }
 .pf-emoji-opt {
-  aspect-ratio: 1 / 1; min-width: 0; padding: 0; font-size: 18px; line-height: 1;
+  aspect-ratio: 1 / 1; min-width: 0; padding: 0; font-size: 20px; line-height: 1;
   border: none; border-radius: 9px; background: transparent; cursor: pointer; color: inherit;
   display: inline-flex; align-items: center; justify-content: center;
   transition: background .15s, box-shadow .15s, transform .12s;
@@ -1122,10 +1293,6 @@ watch(current, v => { if (v === 'notify') refreshPushState().then(refreshCap).ca
 .pf-emoji-opt.on { background: var(--app-accent-weak); box-shadow: inset 0 0 0 1.5px var(--app-accent); }
 .pf-emoji-opt:disabled { cursor: not-allowed; opacity: .5; }
 .pf-emoji-opt.on:disabled { opacity: 1; }
-/* 窄屏（扣掉左侧导航后内容区收窄）降到 10 列，30 个仍是整行 */
-@media (max-width: 860px) {
-  .pf-emoji-pick { grid-template-columns: repeat(10, minmax(0, 1fr)); }
-}
 /* 长期记忆：卡片比其他面板略宽（长句记忆要完整换行展示，640 略挤） */
 .mem-card { max-width: 720px; }
 /* 标题旁条数胶囊 */
@@ -1256,7 +1423,8 @@ watch(current, v => { if (v === 'notify') refreshPushState().then(refreshCap).ca
      scoped 只作用于本组件，不影响 /help 等同样用 .app-page-head 的页面 */
   .app-page-head { display: none; }
 
-  /* Tab：左列竖排 → 顶部横滑胶囊（竖排会吃掉 1/3 宽度） */
+  /* Tab：左列竖排 → 顶部横滑胶囊（竖排会吃掉 1/3 宽度）。
+     分组容器改成 contents，让各分组下的按钮直接参与横向排列；分组小标题在手机上隐藏 */
   .pf-body { flex-direction: column; }
   .pf-nav {
     width: auto; flex-direction: row; gap: 6px;
@@ -1265,11 +1433,14 @@ watch(current, v => { if (v === 'notify') refreshPushState().then(refreshCap).ca
     scrollbar-width: none; -webkit-overflow-scrolling: touch;
   }
   .pf-nav::-webkit-scrollbar { display: none; }
+  .pf-nav-group { display: contents; }
+  .pf-nav-group-title { display: none; }
   .pf-nav-item {
     flex: none; white-space: nowrap; min-height: 36px; padding: 8px 14px;
     border: 1px solid var(--app-border); border-radius: 999px; font-size: 13px;
     display: inline-flex; align-items: center; touch-action: manipulation;
   }
+  .pf-nav-item::before { display: none; }
   .pf-nav-item.active { border-color: var(--app-accent-border); color: var(--app-accent); }
 
   /* 内容区与卡片：全宽（640/720 上限在 412px 上只会让右侧留白不齐） */
@@ -1282,13 +1453,14 @@ watch(current, v => { if (v === 'notify') refreshPushState().then(refreshCap).ca
   .pf-nick-input { width: 100%; }
   .pf-form { max-width: none; }
 
-  /* 头像区纵向居中：72px 头像 + 按钮行 + 说明横向放不下（「清除头像」被挤出视口） */
-  .pf-avatar-block { flex-direction: column; align-items: center; gap: 12px; }
-  .pf-avatar-side { align-items: center; padding-top: 0; }
+  /* 头像区纵向居中：84px 头像 + 按钮行 + 说明横向放不下（「恢复昵称首字」会被挤出视口） */
+  .pf-identity { flex-direction: column; align-items: center; gap: 12px; }
+  .pf-identity-main { align-items: center; width: 100%; text-align: center; padding-top: 0; }
   .pf-op-row { flex-wrap: wrap; justify-content: center; }
-  .pf-avatar-side .pf-sub-hint { text-align: center; }
+  .pf-identity-main .pf-sub-hint { text-align: center; }
+  .pf-section-head { align-items: flex-start; }
 
-  /* emoji 网格 8 列：15 列时每格仅 13px 宽，手指点不中（860 块的 10 列同样偏小） */
+  /* emoji 网格 8 列：10 列时每格约 35px，手指容易点偏 */
   .pf-emoji-pick { grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 4px; }
   .pf-emoji-opt { font-size: 20px; }
 
