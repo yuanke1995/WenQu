@@ -103,6 +103,8 @@ public class McpClientService {
     private final McpCallLogMapper mcpCallLogMapper;
     /** 问答链路等连接的上限：mcp.turnWaitMs（0=不在本轮等，已有工具照用） */
     private final ConfigService configService;
+    /** 本机浏览器工具（判定执行器在线用）：在线时云端平台浏览器让位，避免两套浏览器给模型两种结论 */
+    private final LocalBrowserTools localBrowserTools;
 
     /** 连接池按用户隔离：uid → 该用户的连接与状态 */
     private final Map<String, UserPool> pools = new ConcurrentHashMap<>();
@@ -127,12 +129,15 @@ public class McpClientService {
 
     public McpClientService(UserMcpMapper userMcpMapper, McpToolLabelService labelService,
                             ConfigCryptoService cryptoService, McpCallLogMapper mcpCallLogMapper,
-                            ConfigService configService) {
+                            ConfigService configService,
+                            /** 判定「本机执行器在线」用：在线时云端平台浏览器让位给本机 localBrowser*（见 toolCallbacks） */
+                            LocalBrowserTools localBrowserTools) {
         this.userMcpMapper = userMcpMapper;
         this.labelService = labelService;
         this.cryptoService = cryptoService;
         this.mcpCallLogMapper = mcpCallLogMapper;
         this.configService = configService;
+        this.localBrowserTools = localBrowserTools;
     }
 
     @PreDestroy
@@ -201,12 +206,16 @@ public class McpClientService {
         List<ToolCallback> callbacks = new ArrayList<>();
         Map<String, String> failed = new LinkedHashMap<>();
         long now = System.currentTimeMillis();
+        // 本机执行器在线时，云端平台浏览器整族让位：两套浏览器并存会让模型拿到两种结论
+        // （云端看不到 localhost 报「连接被拒绝」，本机却已打开页面），真机表现为回答与窗口对不上。
+        boolean localPreferred = localBrowserTools != null && localBrowserTools.onlineExecutor(uid) != null;
         for (Map.Entry<String, McpSyncClient> entry : snap.entrySet()) {
             if (onlyServers != null && !onlyServers.contains(entry.getKey())) continue;
             // 平台服务不参与「未指定 = 全部」：否则浏览器这类能力会随平台升级落进每一个现存助手的
             // 工具表（25 把外部工具足以把选工具的质量拉下来），而助手作者从未同意过。
             // 要用就在智能体的 MCP 范围里点名它——点名走 onlyServers，不受这条影响。
-            if (onlyServers == null && platformNames.contains(entry.getKey())) continue;
+            // 例外是「本机执行器在线」：即使点名了也让位给本机 localBrowser*（理由见 localPreferred）。
+            if (platformNames.contains(entry.getKey()) && (onlyServers == null || localPreferred)) continue;
             McpSyncClient client = entry.getValue();
             CachedTools cached = cacheSnap.get(entry.getKey());
             if (cached != null && cached.fresh(now)) {
