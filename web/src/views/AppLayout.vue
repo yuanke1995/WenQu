@@ -1611,7 +1611,8 @@ const openNotif = n => {
 }
 
 // 铃铛 → 通知中心页 / 通知设置
-const goNotifCenter = () => { notifOpen.value = false; router.push('/notifications') }
+// 「查看全部通知」语义落在「全部」页签；直接进 /notifications 仍是默认「待处理」
+const goNotifCenter = () => { notifOpen.value = false; router.push('/notifications?bucket=all') }
 const goNotifSettings = () => { notifOpen.value = false; router.push('/profile?panel=notify') }
 onMounted(async () => {
   // 先挂跨页签订阅再拉列表：拉取在途的那几百毫秒里，别的页签改了一次列表不该就这次刷新丢掉

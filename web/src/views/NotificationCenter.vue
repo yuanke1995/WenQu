@@ -125,7 +125,7 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
 import { DownOutlined, SearchOutlined, SettingOutlined } from '@ant-design/icons-vue'
 import {
@@ -138,11 +138,14 @@ import {
 } from '../chat/useNotifications'
 import NotificationList from '../components/notification/NotificationList.vue'
 
+const route = useRoute()
 const router = useRouter()
 
 // ==================== 筛选状态 ====================
 // 默认落在「待处理」：先回答有没有要我做的事，再看全部
-const bucket = ref('action')
+// 入口可带 ?bucket= 指定落点（action/alert/done/all，如铃铛浮层「查看全部通知」→ all）
+const initialBucket = [route.query.bucket].flat().find(b => b === 'all' || b in NOTIF_BUCKETS)
+const bucket = ref(initialBucket || 'action')
 const typeFilter = ref('')
 const unreadOnly = ref(false)
 const keyword = ref('')
@@ -308,6 +311,19 @@ const onBucket = key => {
   typeFilter.value = '' // 桶与单类型互斥：选桶即清类型
   load()
 }
+// 入口落点统一走这里：组件已挂载时再点「查看全部通知」只换 query 不重挂，靠 watcher 接住
+const applyBucket = key => {
+  if (bucket.value === key && !typeFilter.value) return
+  bucket.value = key
+  typeFilter.value = '' // 与选桶同口径：切桶即清类型
+  load()
+}
+watch(() => route.query.bucket, v => {
+  const b = [v].flat().find(x => x === 'all' || x in NOTIF_BUCKETS)
+  if (b) applyBucket(b)
+})
+// 兜底：目标地址与当前完全一致时 vue-router 判重复导航，query 不变，由 AppLayout 派事件补一刀
+const onNotifGoto = e => applyBucket(e.detail?.bucket || 'all')
 const onType = v => {
   typeFilter.value = v || ''
   if (typeFilter.value) bucket.value = 'all' // 选类型即回到全部桶
