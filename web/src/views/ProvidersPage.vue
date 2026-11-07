@@ -1111,7 +1111,7 @@ const savingModels = ref(false)
 let rowSeq = 0
 
 // 表格只做速览：模型名（含展示名副行）/ 类型 / 能力 / 窗口输出，配置进「编辑模型配置」弹窗
-// 窗口列宽度按最宽区间值（如 293K~977K / 375K）预留，窄了会折行
+// 窗口列宽度按最宽单值（如 1M / 977K）预留，窄了会折行（区间登记已退役，列里只会是单值或「未声明」）
 const modelCols = [
   { title: '模型名', key: 'modelId' },
   { title: '类型', key: 'modelType', width: 112 },

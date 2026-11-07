@@ -685,7 +685,8 @@ public class ConfigService {
         d.put("rerank.maxHits", String.valueOf(ConfigDefaults.RERANK_MAX_HITS));
         // context.safetyFactor / context.costCapTokens / context.maxOutputTokens 已退役：
         // 窗口与最大输出按模型在「模型管理」声明（对话类窗口必填），安全系数固定为
-        // ModelRegistryService.CONTEXT_SAFETY_FACTOR，成本软上限移除。存量库中的旧行成为孤儿数据（无读取方）。
+        // ModelRegistryService.CONTEXT_SAFETY_FACTOR，成本软上限移除。存量行由 schema.sql
+        // 启动清理（退役键统编在 c_ai_config 的 DELETE 清单里，同下两行口径）。
         // context.historyCompress / context.compressRatio 已退役（2026-10）：自动历史压缩由 AgentScope
         // CompactionMiddleware 接管，问渠侧那套 assemble/compact 代码已删除；存量行由 schema.sql 清理。
         // context.snippetWindowChars / dedup* / adjacentMerge* 已退役（2026-10）：唯一读点是已删除的
