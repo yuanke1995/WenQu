@@ -792,6 +792,10 @@ public class ConfigService {
         d.put("cleanup.sessionEventRetentionDays", "30");      // 会话事件账本保留天数（≤0=不清理；与上一条同一清理周期）
         d.put("cleanup.auditRetentionDays", "365");            // 审计事件保留天数（≤0=永久保留；合规留存的默认档）
         d.put("cleanup.visitorIdleDays", String.valueOf(ConfigDefaults.VISITOR_SESSION_IDLE_DAYS)); // 访客会话闲置回收天数
+        // 安全与运维：系统巡检（报告落库后自动巡检、趋势与告警的旋钮都在这里）
+        d.put("ops.checkupIntervalMs", String.valueOf(ConfigDefaults.OPS_CHECKUP_INTERVAL_MS)); // 自动巡检间隔(ms，≤0=暂停)
+        d.put("ops.checkupRetentionDays", String.valueOf(ConfigDefaults.OPS_CHECKUP_RETENTION_DAYS)); // 巡检报告保留天数
+        d.put("ops.checkupAlertEnabled", String.valueOf(ConfigDefaults.OPS_CHECKUP_ALERT_ENABLED)); // fail 时给管理员发站内通知
         d.put("artifact.retentionDays", String.valueOf(ConfigDefaults.ARTIFACT_RETENTION_DAYS));                 // 产物保留天数（0=不清理）
         d.put("artifact.cleanupIntervalMs", "86400000");       // 产物超期清理间隔(ms，≤0=暂停)
         d.put("schedule.runLogRetentionDays", "7");            // 定时任务执行日志保留天数（超期物理删除）

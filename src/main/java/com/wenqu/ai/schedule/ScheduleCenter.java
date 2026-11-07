@@ -130,6 +130,8 @@ public class ScheduleCenter {
     /** 进程中断后没人跑完的轮（孤儿轮）扫回来接续 */
     private final com.wenqu.ai.startup.OrphanTurnRunner orphanTurnRunner;
     private final ScheduleRunLogMapper scheduleRunLogMapper;
+    /** 系统巡检：自动体检 + 历史报告清理（报告落库后由这里驱动） */
+    private final com.wenqu.ai.service.OpsCheckupService opsCheckupService;
 
     /** 仅负责计时（daemon，随 JVM 退出），任务体都在 ThreadPoolManager 里跑 */
     private final ScheduledExecutorService scheduler = Executors.newSingleThreadScheduledExecutor(r -> {
@@ -156,7 +158,8 @@ public class ScheduleCenter {
                           com.wenqu.ai.agentx.SessionLogArchive sessionLogArchive,
                           com.wenqu.ai.agentx.JournalRotation journalRotation,
                           com.wenqu.ai.startup.OrphanTurnRunner orphanTurnRunner,
-                          ScheduleRunLogMapper scheduleRunLogMapper) {
+                          ScheduleRunLogMapper scheduleRunLogMapper,
+                          com.wenqu.ai.service.OpsCheckupService opsCheckupService) {
         this.configService = configService;
         this.configSchemaService = configSchemaService;
         this.keywordIndexService = keywordIndexService;
@@ -178,6 +181,7 @@ public class ScheduleCenter {
         this.journalRotation = journalRotation;
         this.orphanTurnRunner = orphanTurnRunner;
         this.scheduleRunLogMapper = scheduleRunLogMapper;
+        this.opsCheckupService = opsCheckupService;
         this.auditService = auditService;
     }
 
@@ -267,6 +271,25 @@ public class ScheduleCenter {
                 this::cleanupIntervalMs,
                 () -> false,
                 () -> auditService.purgeExpired());
+
+        // 系统巡检：后台按配置节拍跑一次（逐租户绑定，登录安全态势才看得到各租户的锁定账号）。
+        // 报告落库后，趋势、历史与 fail 告警都从这里长出来；手动「立即巡检」不受这个间隔影响。
+        register("系统巡检", "按配置节拍对运行状态做一次全面体检，报告落库；fail 时给管理员发站内通知（间隔 ops.checkupIntervalMs，≤0=暂停自动巡检）",
+                "ops.checkupIntervalMs",
+                () -> configService.getInt("ops.checkupIntervalMs", ConfigDefaults.OPS_CHECKUP_INTERVAL_MS),
+                () -> false,
+                () -> opsCheckupService.runScheduled());
+        // 巡检报告清理：趋势只读最近若干天，老报告没有保留价值；保留期 ops.checkupRetentionDays（0=永久）
+        register("巡检报告清理", "删除超过保留期的系统巡检历史报告（保留期 ops.checkupRetentionDays，0 = 永久保留）",
+                "cleanup.intervalMs",
+                this::cleanupIntervalMs,
+                () -> false,
+                () -> {
+                    int days = configService.getInt("ops.checkupRetentionDays",
+                            ConfigDefaults.OPS_CHECKUP_RETENTION_DAYS);
+                    int cleaned = opsCheckupService.purgeExpired(days);
+                    if (cleaned > 0) log.info("[OPS] 超期巡检报告已清理 {} 条（保留 {} 天）", cleaned, days);
+                });
 
         register("检索评估自动体检", "按线上参数跑检索评估集并与上期对比，结论落 eval.lastReport 供看板红绿灯（评估集为空自动跳过）",
                 "eval.autoIntervalMs",
@@ -556,7 +579,9 @@ public class ScheduleCenter {
                     "workflow.subagentTimeoutMs", "workflow.maxConcurrentRuns", "workflow.runQueueCapacity")),
             Map.entry("Trace 线上采样", List.of("trace.sampleRandomDaily", "trace.sampleNoHitDaily")),
             Map.entry("任务执行日志清理", List.of("cleanup.tempFileRetentionDays")),
-            Map.entry("站内通知清理", List.of("cleanup.recordRetentionDays", "notification.dedupWindow"))
+            Map.entry("站内通知清理", List.of("cleanup.recordRetentionDays", "notification.dedupWindow")),
+            Map.entry("系统巡检", List.of("ops.checkupAlertEnabled")),
+            Map.entry("巡检报告清理", List.of("ops.checkupRetentionDays"))
     );
 
     /** 停机：先停节拍调度（不再触发新任务），池内在跑任务由 ThreadPoolManager 优雅停机收尾 */

@@ -34,6 +34,7 @@ export const NOTIF_ICONS = {
   'goal.failed': FlagFilled,
   // 额度不足是「需要人处理」而非「系统故障」：用警告色而非错误色——
   // 红叉会让人以为是 bug，实际是账户该充值了
+  'ops.alert': CloseCircleFilled,
   'model.quota': ExclamationCircleFilled
 }
 const NOTIF_TONES = {
@@ -55,6 +56,7 @@ const NOTIF_TONES = {
   'goal.achieved': 'ok',
   // 目标停住是「等人补东西或决定继不继续」，不是系统坏了：与审批、提问同一档
   'goal.failed': 'warn',
+  'ops.alert': 'err',
   'model.quota': 'warn'
 }
 export const notifIcon = t => NOTIF_ICONS[t] || BellOutlined
@@ -83,6 +85,7 @@ export const NOTIF_LABELS = {
   'chat.turn.failed': '一轮没跑成',
   'goal.achieved': '目标达成',
   'goal.failed': '目标停住',
+  'ops.alert': '巡检异常',
   'model.quota': '模型额度不足'
 }
 export const notifLabel = t => NOTIF_LABELS[t] || t

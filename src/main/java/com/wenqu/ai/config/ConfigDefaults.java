@@ -116,6 +116,15 @@ public final class ConfigDefaults {
     /** cleanup.assetRetentionDays：用户资产保留天数（产物 / 会话日志归档）——删了就找不回来的那一类 */
     public static final int CLEANUP_ASSET_RETENTION_DAYS = 90;
 
+    // ---- 安全与运维（系统巡检） ----
+
+    /** ops.checkupIntervalMs：自动巡检间隔（默认 1 小时；≤0 = 暂停自动巡检） */
+    public static final int OPS_CHECKUP_INTERVAL_MS = 3_600_000;
+    /** ops.checkupRetentionDays：巡检报告保留天数（0 = 永久保留） */
+    public static final int OPS_CHECKUP_RETENTION_DAYS = 90;
+    /** ops.checkupAlertEnabled：巡检出现 fail 时是否给管理员发站内通知 */
+    public static final boolean OPS_CHECKUP_ALERT_ENABLED = true;
+
     private ConfigDefaults() {
     }
 }

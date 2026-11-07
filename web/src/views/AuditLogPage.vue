@@ -16,18 +16,18 @@ const exporting = ref(false)
 const verifying = ref(false)
 const chain = ref(null)
 const dropped = ref(0)
-const filters = ref({ days: 7, actor: '', action: '', keyword: '' })
+const filters = ref({ days: 7, actor: '', action: undefined, keyword: '' })
 const page = ref(1)
 // 每页 15 条：控制列表长度，尽量让一屏放下、不出滚动条（后端 query 对 size 的上限是 500，改这里就够）
 const size = 15
 
 const cols = [
-  { title: '时间', dataIndex: 'ts', key: 'ts', width: 165 },
-  { title: '级别', dataIndex: 'level', key: 'level', width: 68 },
+  { title: '时间', dataIndex: 'ts', key: 'ts', width: 138 },
+  { title: '级别', dataIndex: 'level', key: 'level', width: 56 },
   { title: '动作', dataIndex: 'action', key: 'action', width: 190, ellipsis: true },
   { title: '操作人', dataIndex: 'actor_uid', key: 'actor_uid', width: 110, ellipsis: true },
-  { title: '来源 IP', dataIndex: 'actor_ip', key: 'actor_ip', width: 128, ellipsis: true },
-  { title: '对象', key: 'target', width: 190, ellipsis: true },
+  { title: '来源 IP', dataIndex: 'actor_ip', key: 'actor_ip', width: 98, ellipsis: true },
+  { title: '对象', key: 'target', width: 160, ellipsis: true },
   { title: '详情', dataIndex: 'detail', key: 'detail', ellipsis: true }
 ]
 const query = () => {
@@ -97,10 +97,24 @@ const measureTableY = () => {
   if (!wrap || !wrap.clientHeight) return
   const cs = getComputedStyle(wrap)
   let used = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom)
+  // flex gap 不体现在子元素 offsetHeight 里，漏算会让 scroll.y 偏大、分页条被挤出卡片
+  const gap = parseFloat(cs.rowGap || cs.gap || 0)
+  if (gap > 0) used += gap * Math.max(0, wrap.children.length - 1)
+  const card = wrap.querySelector('.al-card')
   for (const el of wrap.children) {
-    if (el === tableHost.value) continue
+    if (el === card) continue
     const ecs = getComputedStyle(el)
     used += el.offsetHeight + parseFloat(ecs.marginTop) + parseFloat(ecs.marginBottom)
+  }
+  // 卡片自身描边 + 卡片内、表体之外的固定件（工具栏）；表体由 scroll.y 自行封顶
+  if (card) {
+    const ccs = getComputedStyle(card)
+    used += parseFloat(ccs.borderTopWidth || 0) + parseFloat(ccs.borderBottomWidth || 0)
+    for (const el of card.children) {
+      if (el === tableHost.value) continue
+      const ecs = getComputedStyle(el)
+      used += el.offsetHeight + parseFloat(ecs.marginTop) + parseFloat(ecs.marginBottom)
+    }
   }
   // 表格内、表体之外的固定件：拆出来的独立表头 + 分页条（margin 不在 offsetHeight 里）
   const head = wrap.querySelector('.ant-table-header')
@@ -126,22 +140,6 @@ watch([rows, chain, dropped], () => nextTick(measureTableY))
 
 <template>
   <div ref="wrapRef" class="al-wrap">
-    <!-- 筛选栏与系统列表工具栏同一风格（app-list-bar 全局类）：控件 small、搜索输入带前缀图标 -->
-    <div class="app-list-bar">
-      <a-select v-model:value="filters.days" style="width:110px" size="small" @change="search"
-                :options="[{ value: 1, label: '今天' }, { value: 7, label: '近 7 天' }, { value: 30, label: '近 30 天' }, { value: 90, label: '近 90 天' }, { value: 365, label: '近一年' }]" />
-      <a-input v-model:value="filters.actor" placeholder="操作人 uid" style="width:150px" size="small" allow-clear @press-enter="search" />
-      <a-select v-model:value="filters.action" placeholder="动作" style="width:180px" size="small" allow-clear show-search
-                :options="actions.map(a => ({ value: a, label: a }))" @change="search" />
-      <a-input v-model:value="filters.keyword" placeholder="关键字（动作或详情）" style="width:190px" size="small" class="al-search" allow-clear @press-enter="search">
-        <template #prefix><SearchOutlined class="al-ic" /></template>
-      </a-input>
-      <button class="app-link-btn" @click="search">查询</button>
-      <span class="app-list-spacer"></span>
-      <button class="app-link-btn" :disabled="exporting" @click="doExport">{{ exporting ? '导出中…' : '导出 CSV' }}</button>
-      <button class="app-link-btn" :disabled="verifying" @click="doVerify">{{ verifying ? '校验中…' : '校验哈希链' }}</button>
-    </div>
-
     <div v-if="chain" class="app-note" :class="{ warn: !chain.ok }">
       <template v-if="chain.ok">哈希链自校验通过：各副本按序号连续、每行哈希与内容一致。</template>
       <template v-else>
@@ -157,38 +155,100 @@ watch([rows, chain, dropped], () => nextTick(measureTableY))
     <div v-else-if="dropped > 0" class="app-note warn">
       本进程有 {{ dropped }} 条审计事件因队列满未入库（日志里仍有全文，可事后回捞）
     </div>
-
-    <!-- x/y 同时给：antd 按固定布局拆出独立表头，两份表格列宽才不会漂（同「运行状态」表） -->
-    <div ref="tableHost" class="al-table-host">
-      <a-table :data-source="rows" :columns="cols" size="small" row-key="id" :loading="loading"
-               :scroll="{ x: 960, y: tableY }"
-               :pagination="{ current: page, pageSize: size, total, onChange: onPage, showSizeChanger: false, showTotal: t => `共 ${t} 条` }"
-               :locale="{ emptyText: '该条件下没有审计事件' }">
-      <template #bodyCell="{ column, record }">
-        <template v-if="column.key === 'ts'">{{ fmtTs(record.ts) }}</template>
-        <template v-else-if="column.key === 'level'">
-          <a-tag v-if="record.level === 'warn'" color="orange">需关注</a-tag>
-          <span v-else class="al-meta">常规</span>
-        </template>
-        <template v-else-if="column.key === 'target'">{{ targetText(record) }}</template>
-        <template v-else-if="column.key === 'detail'"><span class="al-meta">{{ detailText(record) }}</span></template>
-      </template>
-      </a-table>
+    <div v-else class="app-note al-idle">
+      尚未校验哈希链。点击右侧「校验哈希链」逐副本核验，结果会显示在这里。
     </div>
+
+    <section class="app-card al-card">
+      <!-- 筛选栏与系统列表工具栏同一风格（app-list-bar 全局类）：控件 small、搜索输入带前缀图标 -->
+      <div class="app-list-bar in-card al-toolbar">
+        <a-select v-model:value="filters.days" style="width:110px" size="small" @change="search"
+                  :options="[{ value: 1, label: '今天' }, { value: 7, label: '近 7 天' }, { value: 30, label: '近 30 天' }, { value: 90, label: '近 90 天' }, { value: 365, label: '近一年' }]" />
+        <a-input v-model:value="filters.actor" placeholder="操作人 uid" style="width:150px" size="small" allow-clear @press-enter="search" />
+        <a-select v-model:value="filters.action" placeholder="动作" style="width:180px" size="small" allow-clear show-search
+                  :options="actions.map(a => ({ value: a, label: a }))" @change="search" />
+        <a-input v-model:value="filters.keyword" placeholder="关键字（动作或详情）" style="width:190px" size="small" class="al-search" allow-clear @press-enter="search">
+          <template #prefix><SearchOutlined class="al-ic" /></template>
+        </a-input>
+        <button class="app-link-btn" @click="search">查询</button>
+        <span class="app-list-spacer"></span>
+        <button class="app-link-btn" :disabled="exporting" @click="doExport">{{ exporting ? '导出中…' : '导出 CSV' }}</button>
+        <button class="app-link-btn" :disabled="verifying" @click="doVerify">{{ verifying ? '校验中…' : '校验哈希链' }}</button>
+      </div>
+
+      <!-- x/y 同时给：antd 按固定布局拆出独立表头，两份表格列宽才不会漂（同「运行状态」表） -->
+      <div ref="tableHost" class="al-table-host">
+        <a-table class="al-table" :data-source="rows" :columns="cols" size="small" row-key="id" :loading="loading"
+                 :scroll="{ x: 960, y: tableY }"
+                 :pagination="{ current: page, pageSize: size, total, onChange: onPage, showSizeChanger: false, showTotal: t => `共 ${t} 条` }"
+                 :locale="{ emptyText: '该条件下没有审计事件' }">
+        <template #bodyCell="{ column, record }">
+          <template v-if="column.key === 'ts'">{{ fmtTs(record.ts) }}</template>
+          <template v-else-if="column.key === 'level'">
+            <a-tag v-if="record.level === 'warn'" color="orange">需关注</a-tag>
+            <span v-else class="al-meta">常规</span>
+          </template>
+          <template v-else-if="column.key === 'target'">{{ targetText(record) }}</template>
+          <template v-else-if="column.key === 'detail'"><span class="al-meta">{{ detailText(record) }}</span></template>
+        </template>
+        </a-table>
+      </div>
+    </section>
     <div class="app-list-foot">留存期在「系统设置 → 运维」的「审计事件保留天数」里设（默认 365 天，0 = 永久保留）</div>
   </div>
 </template>
 
 <style scoped>
-/* 本页挂在「权限管理」的页签里，根容器是 .app-page（flex 列、自身不裁不滚）的直系子元素。
+/* 本页原挂在「权限管理」页签，2026-11 迁到「安全与运维」：
+   整块是一张卡片（筛选栏 + 表头 + 表体 + 分页），与巡检/会话列表同一视觉语言。
    页内不滚（overflow hidden）：表格体高度由 tableY 实测封顶，行放不下时在表体内部滚动、
-   表头由 antd 固定（scroll.y 拆出的 .ant-table-header，别给 th 加 position:sticky）。
-   内边距同 .app-page-body，与菜单/接口/角色三个页签对齐。 */
-.al-wrap { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; padding: 16px 20px; }
+   表头由 antd 固定（scroll.y 拆出的 .ant-table-header，别给 th 加 position:sticky）。 */
+.al-wrap {
+  flex: 1; min-height: 0; overflow: hidden;
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 16px 20px;
+}
+.al-wrap .app-note { margin-bottom: 0; padding: 9px 12px; border-radius: 8px; font-size: 11.5px; }
+.al-idle { color: var(--app-text3); }
+.al-card { padding: 0; overflow: hidden; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.al-toolbar { padding: 10px 12px; border-bottom: 1px solid var(--app-border); }
+/* 原型工具栏控件高 28px；antd small 默认 24px，这里统一抬到 28 保持节奏。
+   输入/选择器的上下 padding 必须归零，否则 28px 高度里只剩 18px 内容区，
+   文字下半截会被裁掉（affix 包装器内 input 只占 26px，外面还有 2px 上下边框） */
+.al-toolbar :deep(.ant-input) { height: 28px; line-height: 26px; padding-top: 0; padding-bottom: 0; }
+.al-toolbar :deep(.ant-input-affix-wrapper) { height: 28px; padding-top: 0; padding-bottom: 0; }
+.al-toolbar :deep(.ant-input-affix-wrapper > .ant-input) {
+  height: 26px; line-height: 26px; padding-top: 0; padding-bottom: 0;
+}
+.al-toolbar :deep(.ant-select-single .ant-select-selector),
+.al-toolbar :deep(.ant-picker) { height: 28px; }
+.al-toolbar :deep(.ant-select-single .ant-select-selector .ant-select-selection-item),
+.al-toolbar :deep(.ant-select-single .ant-select-selector .ant-select-selection-placeholder) { line-height: 26px; }
+.al-table-host { flex: 1; min-height: 0; overflow: hidden; }
 .al-search :deep(.ant-input-prefix) { margin-inline-end: 6px; }
-.al-ic { color: var(--app-text-muted, #999); }
-.al-meta { color: var(--app-text-muted, #888); font-size: 12px; }
-.al-problem { color: #d4380d; font-size: 12px; }
-.al-drop { margin-left: 8px; color: #d46b08; }
-.al-table-host { flex: none; min-height: 0; overflow: hidden; }
+.al-ic { color: var(--app-text3); }
+.al-meta { color: var(--app-text2); font-size: 10.5px; }
+.al-problem { color: var(--app-danger); font-size: 11.5px; }
+.al-drop { margin-left: 8px; color: var(--app-warn-text, #a3691b); }
+
+/* Ant 表格默认样式偏松、偏灰；这里收成原型里的紧凑卡片表：浅表头、细行分隔、小字号 */
+.al-table :deep(.ant-table) { font-size: 10.5px; background: transparent; }
+.al-table :deep(.ant-table-container) { border: none; }
+.al-table :deep(.ant-table-thead > tr > th) {
+  background: var(--app-panel-2, #fafbfc); color: var(--app-text3);
+  font-size: 10.5px; font-weight: 500; padding: 8px 5px;
+  border-bottom: 1px solid var(--app-border);
+}
+.al-table :deep(.ant-table-thead > tr > th::before) { display: none; }
+.al-table :deep(.ant-table-tbody > tr > td) {
+  padding: 9px 5px; border-bottom: 1px solid var(--app-border); vertical-align: middle;
+}
+.al-table :deep(.ant-table-thead > tr > th:first-child),
+.al-table :deep(.ant-table-tbody > tr > td:first-child) { padding-left: 14px; }
+.al-table :deep(.ant-table-thead > tr > th:last-child),
+.al-table :deep(.ant-table-tbody > tr > td:last-child) { padding-right: 14px; }
+.al-table :deep(.ant-table-tbody > tr:hover > td) { background: var(--app-accent-weak, #eef2f7); }
+.al-table :deep(.ant-table-tbody > tr:last-child > td) { border-bottom: none; }
+.al-table :deep(.ant-table-pagination.ant-pagination) { margin: 8px 12px; }
+.al-table :deep(.ant-tag) { font-size: 10px; line-height: 16px; padding: 0 5px; margin: 0; }
 </style>

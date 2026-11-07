@@ -459,7 +459,6 @@ import { listMenus, createMenu, updateMenu, deleteMenu,
 import { ensureAuth } from '../utils/auth'
 import IdentityProvidersPage from './IdentityProvidersPage.vue'
 import ServiceAccountsPage from './ServiceAccountsPage.vue'
-import AuditLogPage from './AuditLogPage.vue'
 import ContentSafetyPage from './ContentSafetyPage.vue'
 
 /* ==================== 页签：状态落 URL / 数据懒加载 / 各页签独立记忆筛选 ==================== */
@@ -470,7 +469,7 @@ const router = useRouter()
 const BASE_TABS = ['menus', 'apis', 'roles']
 /** tabKey → 组件。菜单表不知道组件的存在，这张表是数据与视图之间唯一的桥（同 AgentsHubPage） */
 const TAB_COMPONENTS = { identity: IdentityProvidersPage, service: ServiceAccountsPage,
-                         audit: AuditLogPage, content: ContentSafetyPage }
+                         content: ContentSafetyPage }
 /** 从 tab 菜单的 path（/permissions?tab=key）解析组件映射 key */
 const tabKeyOf = p => {
   try { return new URLSearchParams(String(p || '').split('?')[1] || '').get('tab') } catch (e) { return null }

@@ -34,8 +34,29 @@ public class Announcement {
     /** 正文（点开看详情） */
     private String content;
 
+    /** 正文格式: plain=纯文本 markdown=Markdown（横幅按对应渲染器展示） */
+    private String contentFormat;
+
     /** 级别: info=通知 warn=警示 danger=紧急（横幅配色区分，danger 常驻不可关） */
     private String level;
+
+    /** 展示对象: all=全员 department=指定部门 role=指定角色 */
+    private String audienceType;
+
+    /** 展示对象 ID 清单（部门 ID / 角色 code，逗号分隔；all 时为空） */
+    @com.baomidou.mybatisplus.annotation.TableField(
+            updateStrategy = com.baomidou.mybatisplus.annotation.FieldStrategy.ALWAYS)
+    private String audienceIds;
+
+    /** 生效开始（空=发布时间起） */
+    @com.baomidou.mybatisplus.annotation.TableField(
+            updateStrategy = com.baomidou.mybatisplus.annotation.FieldStrategy.ALWAYS)
+    private LocalDateTime startTime;
+
+    /** 生效结束（空=直到手动下线） */
+    @com.baomidou.mybatisplus.annotation.TableField(
+            updateStrategy = com.baomidou.mybatisplus.annotation.FieldStrategy.ALWAYS)
+    private LocalDateTime endTime;
 
     /** 1=发布中 0=下线（保留行，历史可查） */
     private Integer enabled;
@@ -46,4 +67,18 @@ public class Announcement {
     private LocalDateTime createTime;
 
     private LocalDateTime updateTime;
+
+    // ---- 以下字段不落库：由管理清单/成员横幅按需填充 ----
+
+    /** 管理清单的已读人数（按 ann_id 聚合回执，仅 ops:read 列表填充） */
+    @com.baomidou.mybatisplus.annotation.TableField(exist = false)
+    private Long readCount;
+
+    /** 管理清单的受众总数（全员/部门/角色口径；已读进度条的分母） */
+    @com.baomidou.mybatisplus.annotation.TableField(exist = false)
+    private Long audienceCount;
+
+    /** 成员横幅：当前用户是否已读（active 列表填充；管理清单为空） */
+    @com.baomidou.mybatisplus.annotation.TableField(exist = false)
+    private Boolean read;
 }

@@ -1472,13 +1472,17 @@ export const deleteDocument = id => request(`/document/${id}`, { method: 'DELETE
 
 export const listDepartments = () => request('/department/list')
 export const listUsers = () => request('/user/list')
-/** 成员分页查询（万级名单入口·会话治理）：关键字/部门/状态在库侧过滤，按最近登录倒序。
+/** 成员分页查询（万级名单入口·会话与访问）：关键字/部门/状态与风险口径在库侧过滤，按最近登录倒序。
  *  status 允许 0，判空只认 undefined/空串，别写成 falsy */
-export const pageUsers = ({ kw = '', departmentId = '', status, page = 1, size = 20 } = {}) => {
+export const pageUsers = ({ kw = '', departmentId = '', status, locked, minFail, inactiveDays, loggedInToday, page = 1, size = 20 } = {}) => {
   const q = new URLSearchParams({ page: String(page), size: String(size) })
   if (kw) q.set('kw', kw)
   if (departmentId) q.set('departmentId', departmentId)
   if (status !== undefined && status !== null && status !== '') q.set('status', String(status))
+  if (locked) q.set('locked', 'true')
+  if (minFail) q.set('minFail', String(minFail))
+  if (inactiveDays) q.set('inactiveDays', String(inactiveDays))
+  if (loggedInToday) q.set('loggedInToday', 'true')
   return request(`/user/page?${q}`)
 }
 export const createDepartment = body => request('/department', { method: 'POST', body: JSON.stringify(body) })
@@ -1595,16 +1599,26 @@ export const getTenantInventory = id =>
   request(`/tenant/${encodeURIComponent(id)}/inventory`)
 
 // ==================== 运维保障：系统巡检 / 会话治理 / 平台公告 ====================
-/** 立即巡检：MySQL/Redis/关键词引擎/磁盘/审计链/供应商/登录安全态势，overall 取最差项 */
+/** 立即巡检：MySQL/Redis/关键词引擎/磁盘/审计链/供应商/登录安全态势，overall 取最差项，报告落库 */
 export const runOpsCheckup = () => request('/ops/checkup', { method: 'POST' })
-/** 最近一次巡检报告（进程内缓存，后端重启后为空） */
+/** 最近一次巡检报告（优先读库，后端重启后仍可回看；未巡检过返回 null） */
 export const getLastOpsCheckup = () => request('/ops/checkup/last')
+/** 巡检历史摘要（days=7/30，limit=最多返回条数） */
+export const getOpsCheckupHistory = ({ days = 7, limit = 20 } = {}) =>
+  request(`/ops/checkup/history?days=${days}&limit=${limit}`)
+/** 巡检按天趋势 */
+export const getOpsCheckupTrend = (days = 7) => request(`/ops/checkup/trend?days=${days}`)
+/** 单次巡检详情（含逐项 checks） */
+export const getOpsCheckupDetail = id => request(`/ops/checkup/${encodeURIComponent(id)}`)
 /** 强制下线：该账号已签发的全部令牌（所有设备）当场失效 */
 export const forceLogoutUser = uid =>
   request(`/ops/user/${encodeURIComponent(uid)}/force-logout`, { method: 'POST' })
-/** 公告管理清单（含下线的，历史可查） */
+/** 批量强制下线：uids 单次最多 100 个，逐个入审计 */
+export const batchForceLogoutUsers = uids =>
+  request('/ops/user/batch-force-logout', { method: 'POST', body: JSON.stringify({ uids }) })
+/** 公告管理清单（含下线的，历史可查；带 readCount） */
 export const listAnnouncements = () => request('/ops/announcement')
-/** 发布/更新公告 {id?, title, content, level, enabled, tenantId?} */
+/** 发布/更新公告 {id?, title, content, level, enabled, tenantId?, contentFormat, audienceType, audienceIds, startTime, endTime} */
 export const saveAnnouncement = body =>
   request('/ops/announcement', { method: 'POST', body: JSON.stringify(body) })
 /** 下线公告（保留行，可恢复） */
@@ -1613,8 +1627,11 @@ export const deleteAnnouncement = id =>
 /** 物理删除公告（仅已下线的可删）：删除动作带标题入审计 */
 export const purgeAnnouncement = id =>
   request(`/ops/announcement/${encodeURIComponent(id)}/purge`, { method: 'DELETE' })
-/** 当前生效公告（登录后横幅数据源，所有登录用户） */
+/** 当前生效公告（登录后横幅数据源，所有登录用户；含 read 标记） */
 export const getActiveAnnouncements = () => request('/ops/announcement/active')
+/** 标记公告已读（横幅关闭或展开详情时调用，幂等） */
+export const markAnnouncementRead = id =>
+  request(`/ops/announcement/${encodeURIComponent(id)}/read`, { method: 'POST' })
 
 /** 审计事件：查询 / 合规导出地址 / 哈希链校验 */
 export const listAuditEvents = params => request('/audit?' + params)

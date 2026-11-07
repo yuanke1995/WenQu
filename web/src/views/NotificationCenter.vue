@@ -195,6 +195,7 @@ const navOf = n => {
   if (n.refType === 'session' && n.refId) return { path: '/chat', query: { sid: n.refId } }
   // 模型额度不足：直达模型供应商页（供应商管理并入智能体页 ?tab=providers）
   if (n.refType === 'provider' && n.refId) return { path: '/agents', query: { tab: 'providers' } }
+  if (n.refType === 'ops') return { path: '/security' }
   return null
 }
 const openRow = (n, e) => {

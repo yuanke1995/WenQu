@@ -109,4 +109,6 @@ public class Notification {
     public static final String TYPE_GOAL_ACHIEVED = "goal.achieved";
     /** 一个目标停住了（预算耗尽、连续失败、受阻）——与「达成」分两类：一个是好消息，一个要人处理 */
     public static final String TYPE_GOAL_FAILED = "goal.failed";
+    /** 系统巡检发现必须处理的问题（收件人为管理员级账号；按巡检项去重，恢复后不再重复提醒） */
+    public static final String TYPE_OPS_ALERT = "ops.alert";
 }

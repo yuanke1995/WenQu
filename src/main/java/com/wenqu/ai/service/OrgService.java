@@ -18,6 +18,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -184,26 +185,29 @@ public class OrgService {
     private static final int PAGE_MAX_SIZE = 100;
 
     /**
-     * 成员分页查询——万级名单入口（「安全与运维 → 会话治理」）。
+     * 成员分页查询——万级名单入口（「安全与运维 → 会话与访问」）。
      * <p>与 {@link #listUsersWithRoles()} 的分工是规模口径：那份按全表下发，给选择器和计数用；
-     * 这份把关键字/部门/状态压到 SQL 上，只补当页的角色与身份。成员涨到几万时，
+     * 这份把关键字/部门/状态/风险口径（锁定、连续失败、长期未登录）压到 SQL 上，只补当页的角色与身份。
      * 全表那份一次请求就撑不住（逐人取身份无缓存，是 N+1 里唯一没有兜底的那一条）。
      * <p>排序固定按最近登录倒序：治理动作找的是「刚动过的人」；MySQL 下 NULL 沉底，从未登录的排最后。
      *
      * @return {@code {total, items, page, size}}，items 字段口径与 {@code /user/list} 一致
      */
     public java.util.Map<String, Object> pageUsers(String keyword, String departmentId, Integer status,
-                                                   int page, int size) {
+                                                   Boolean locked, Integer minFail, Integer inactiveDays,
+                                                   Boolean loggedInToday, int page, int size) {
         // 平台级看全部租户的成员，与 listUsersWithRoles 同一口径（跨租户挪人后不能没有找回入口）
         if (com.wenqu.ai.util.RequestUser.superadmin()) {
             return com.wenqu.ai.util.TenantContext.asPlatform(
-                    () -> pageUsersScoped(keyword, departmentId, status, page, size));
+                    () -> pageUsersScoped(keyword, departmentId, status, locked, minFail, inactiveDays,
+                            loggedInToday, page, size));
         }
-        return pageUsersScoped(keyword, departmentId, status, page, size);
+        return pageUsersScoped(keyword, departmentId, status, locked, minFail, inactiveDays, loggedInToday, page, size);
     }
 
     private java.util.Map<String, Object> pageUsersScoped(String keyword, String departmentId, Integer status,
-                                                          int page, int size) {
+                                                          Boolean locked, Integer minFail, Integer inactiveDays,
+                                                          Boolean loggedInToday, int page, int size) {
         int p = Math.max(1, page);
         int s = Math.min(PAGE_MAX_SIZE, Math.max(1, size));
         LambdaQueryWrapper<User> w = new LambdaQueryWrapper<>();
@@ -213,6 +217,16 @@ public class OrgService {
         }
         if (departmentId != null && !departmentId.isBlank()) w.eq(User::getDepartmentId, departmentId);
         if (status != null) w.eq(User::getStatus, status);
+        // 会话治理的风险口径：锁定中 / 连续失败达到阈值 / 长期未登录（从未登录也算长期未登录）
+        if (Boolean.TRUE.equals(locked)) w.gt(User::getLockedUntil, LocalDateTime.now());
+        if (minFail != null && minFail > 0) w.ge(User::getLoginFailCount, minFail);
+        if (inactiveDays != null && inactiveDays > 0) {
+            LocalDateTime cutoff = LocalDateTime.now().minusDays(inactiveDays);
+            w.and(q -> q.lt(User::getLastLoginTime, cutoff).or().isNull(User::getLastLoginTime));
+        }
+        if (Boolean.TRUE.equals(loggedInToday)) {
+            w.ge(User::getLastLoginTime, java.time.LocalDate.now().atStartOfDay());
+        }
         w.orderByDesc(User::getLastLoginTime).orderByAsc(User::getUsername);
         var pg = userMapper.selectPage(
                 new com.baomidou.mybatisplus.extension.plugins.pagination.Page<User>(p, s), w);

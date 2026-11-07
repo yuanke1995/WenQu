@@ -204,6 +204,15 @@ public class NotificationService {
      * 同样是旁路语义：解析收件人失败/无管理员时静默跳过，绝不上抛。
      */
     public void createForAdmins(String type, String title, String content, String refType, String refId) {
+        createForAdmins(type, title, content, refType, refId, null);
+    }
+
+    /**
+     * 带合并键的管理员预警：同一巡检项反复失败时只累加未读那一行，避免把铃铛刷爆。
+     * <p>去重键由调用方给（如 {@code ops:checkup:disk}）；null = 不去重。
+     */
+    public void createForAdmins(String type, String title, String content, String refType, String refId,
+                                String dedupKey) {
         try {
             List<String> codes = roleService.adminCodes();
             if (codes.isEmpty()) return;
@@ -220,7 +229,7 @@ public class NotificationService {
                 String bound = com.wenqu.ai.util.TenantContext.current();
                 if (bound != null && !bound.equals(u.getTenantId() == null || u.getTenantId().isBlank()
                         ? com.wenqu.ai.util.TenantContext.DEFAULT_TENANT : u.getTenantId())) continue;
-                create(u.getUid(), type, title, content, refType, refId);
+                create(u.getUid(), type, title, content, refType, refId, dedupKey, null);
             }
         } catch (Exception e) {
             log.warn("[NOTIFY] 管理员通知组装失败（不影响主链路）type={} title={} err={}", type, title, e.getMessage());

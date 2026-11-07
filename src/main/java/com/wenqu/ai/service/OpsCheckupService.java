@@ -1,6 +1,15 @@
 package com.wenqu.ai.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.wenqu.ai.config.AppProperties;
+import com.wenqu.ai.config.ConfigDefaults;
+import com.wenqu.ai.mapper.OpsCheckupReportMapper;
+import com.wenqu.ai.model.Notification;
+import com.wenqu.ai.model.OpsCheckupReport;
+import com.wenqu.ai.util.RequestUser;
+import com.wenqu.ai.util.TenantContext;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.RedisCallback;
@@ -9,13 +18,18 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import java.io.File;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Collectors;
 
 /**
  * 系统巡检（运维保障）：一键把「这套平台现在还能不能正常服务」摸一遍，出一份入审计的报告。
@@ -24,7 +38,11 @@ import java.util.concurrent.atomic.AtomicReference;
  * 但这里是<b>产品能力</b>而不是工程师的命令行——管理员不需要登服务器也能回答「现在平台健康吗」。
  * <p>
  * 各项互相独立：一项挂了不影响其余各项出结果（巡检本身不能成为第二个故障点）。
- * 级别：ok=正常 warn=要留意 fail=必须处理；overall 取最差项。最近一次报告进程内保留供回看。
+ * 级别：ok=正常 warn=要留意 fail=必须处理；overall 取最差项。
+ * <p>
+ * 2026-11：报告从「进程内一份」升级为<b>落库历史</b>。原因是重启即丢的缓存回答不了运维真正的问题
+ * ——「昨天 22 点那次失败长什么样」。落库后定时巡检、趋势与失败告警才有可回溯的底座；
+ * 进程内 {@code lastReport} 只保留作数据库暂不可用时的兜底。
  *
  * @author yuanke
  */
@@ -32,6 +50,10 @@ import java.util.concurrent.atomic.AtomicReference;
 @Service
 @RequiredArgsConstructor
 public class OpsCheckupService {
+
+    private static final String GROUP_DEPS = "平台依赖";
+    private static final String GROUP_SECURITY = "安全与审计";
+    private static final String GROUP_CHAIN = "问答链路";
 
     private final JdbcTemplate jdbc;
     private final StringRedisTemplate redis;
@@ -41,14 +63,24 @@ public class OpsCheckupService {
     private final com.wenqu.ai.agent.tool.ToolRegistry toolRegistry;
     private final com.wenqu.ai.agentx.FrameworkSessions frameworkSessions;
     private final com.wenqu.ai.startup.OrphanTurnRunner orphanTurns;
+    private final OpsCheckupReportMapper reportMapper;
+    private final ObjectMapper objectMapper;
+    private final NotificationService notificationService;
+    private final ConfigService configService;
 
     private final AtomicReference<Map<String, Object>> lastReport = new AtomicReference<>();
 
-    /** 巡检项 */
-    public record Check(String key, String name, String level, String detail, long ms) {
+    /** 巡检项：group 供前端分组，hint 是给管理员的处置建议（不是工程师日志） */
+    public record Check(String key, String group, String name, String level, String detail, long ms, String hint) {
     }
 
+    /** 兼容旧调用点：默认按手动触发 */
     public Map<String, Object> run() {
+        return run("manual");
+    }
+
+    /** 执行一次巡检并落库；返回与历史详情同口径的报告 */
+    public Map<String, Object> run(String trigger) {
         long start = System.currentTimeMillis();
         List<Check> checks = new ArrayList<>();
         checks.add(checkMysql());
@@ -69,21 +101,132 @@ public class OpsCheckupService {
             if ("warn".equals(c.level())) warn++;
         }
         long took = System.currentTimeMillis() - start;
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("overall", overall);
-        out.put("at", LocalDateTime.now().toString());
-        out.put("tookMs", took);
+        LocalDateTime at = LocalDateTime.now();
+        String id = UUID.randomUUID().toString();
+
+        OpsCheckupReport row = new OpsCheckupReport();
+        row.setId(id);
+        // 平台视图下拦截器不加租户谓词；显式写入当前租户（无上下文回落 default），历史才分得清归属
+        String tenant = TenantContext.current();
+        row.setTenantId(tenant == null || tenant.isBlank() ? TenantContext.DEFAULT_TENANT : tenant);
+        row.setAt(at);
+        row.setTriggerType(trigger == null || trigger.isBlank() ? "manual" : trigger);
+        row.setOverall(overall);
+        row.setTookMs(took);
+        row.setFailCount((int) fail);
+        row.setWarnCount((int) warn);
+        row.setChecksJson(serializeChecks(checks));
+        row.setCreatedBy(RequestUser.SYSTEM.equals(RequestUser.uid()) ? null : RequestUser.uid());
+        row.setCreateTime(at);
+        try {
+            reportMapper.insert(row);
+        } catch (Exception e) {
+            // 落库失败不能把巡检本身变成第二个故障点：报告仍返回，进程内缓存兜底
+            log.warn("[OPS] 巡检报告落库失败（本次报告仅在进程内保留）：{}", e.getMessage());
+        }
+
+        Map<String, Object> out = toMap(row, checks);
         out.put("checks", checks);
-        out.put("failCount", fail);
-        out.put("warnCount", warn);
         lastReport.set(out);
-        audit.record("[AUDIT] 系统巡检 overall={} fail={} warn={} tookMs={}", overall, fail, warn, took);
+        audit.record("[AUDIT] 系统巡检 id={} trigger={} overall={} fail={} warn={} tookMs={}",
+                id, row.getTriggerType(), overall, fail, warn, took);
+        alertIfNeeded(id, checks);
         return out;
     }
 
-    /** 最近一次报告（未巡检过返回 null，前端据此显示「从未巡检」） */
+    /**
+     * 定时巡检：逐租户跑一遍。
+     * <p>系统线程没有租户上下文，单跑一次只会把报告写进 default；而登录安全态势这一项
+     * 恰恰要看本租户的账号。逐租户绑定再跑，报告与告警才落在各自的租户里。
+     */
+    public void runScheduled() {
+        for (String tenant : distinctTenants()) {
+            try {
+                TenantContext.as(tenant, () -> {
+                    run("schedule");
+                    return null;
+                });
+            } catch (Exception e) {
+                log.warn("[OPS] 租户 {} 的定时巡检失败：{}", tenant, e.getMessage());
+            }
+        }
+    }
+
+    /** 最近一次报告（优先读库；库不可用时回落进程内缓存） */
     public Map<String, Object> last() {
-        return lastReport.get();
+        try {
+            return TenantContext.asPlatformIfSuper(() -> {
+                OpsCheckupReport row = reportMapper.selectOne(new LambdaQueryWrapper<OpsCheckupReport>()
+                        .orderByDesc(OpsCheckupReport::getAt).last("limit 1"));
+                return row == null ? lastReport.get() : toMap(row, parseChecks(row.getChecksJson()));
+            });
+        } catch (Exception e) {
+            log.warn("[OPS] 读取最近一次巡检报告失败，回落进程内缓存：{}", e.getMessage());
+            return lastReport.get();
+        }
+    }
+
+    /** 历史报告摘要（不含逐项 checks，避免列表把整份 JSON 拖下来） */
+    public List<Map<String, Object>> history(int days, int limit) {
+        int d = Math.max(1, Math.min(90, days));
+        int n = Math.max(1, Math.min(100, limit));
+        LocalDateTime from = LocalDateTime.now().minusDays(d);
+        return TenantContext.asPlatformIfSuper(() -> reportMapper.selectList(
+                        new LambdaQueryWrapper<OpsCheckupReport>()
+                                .ge(OpsCheckupReport::getAt, from)
+                                .orderByDesc(OpsCheckupReport::getAt)
+                                .last("limit " + n)))
+                .stream().map(this::summary).collect(Collectors.toList());
+    }
+
+    /** 按天聚合趋势：每天跑了几次、失败/留意几次、平均耗时与最差结论 */
+    public List<Map<String, Object>> trend(int days) {
+        int d = Math.max(1, Math.min(30, days));
+        LocalDateTime from = LocalDate.now().minusDays(d - 1L).atStartOfDay();
+        List<OpsCheckupReport> rows = TenantContext.asPlatformIfSuper(() -> reportMapper.selectList(
+                new LambdaQueryWrapper<OpsCheckupReport>()
+                        .ge(OpsCheckupReport::getAt, from)
+                        .orderByAsc(OpsCheckupReport::getAt)));
+        Map<String, List<OpsCheckupReport>> byDay = rows.stream().collect(Collectors.groupingBy(
+                r -> r.getAt().toLocalDate().toString(), LinkedHashMap::new, Collectors.toList()));
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map.Entry<String, List<OpsCheckupReport>> e : byDay.entrySet()) {
+            List<OpsCheckupReport> list = e.getValue();
+            String overall = "ok";
+            long failRuns = 0, warnRuns = 0, took = 0;
+            for (OpsCheckupReport r : list) {
+                if ("fail".equals(r.getOverall())) { overall = "fail"; failRuns++; }
+                else if ("warn".equals(r.getOverall()) && !"fail".equals(overall)) overall = "warn";
+                if ("warn".equals(r.getOverall())) warnRuns++;
+                took += r.getTookMs() == null ? 0 : r.getTookMs();
+            }
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("date", e.getKey());
+            m.put("runs", list.size());
+            m.put("fail", failRuns);
+            m.put("warn", warnRuns);
+            m.put("overall", overall);
+            m.put("avgTookMs", list.isEmpty() ? 0 : took / list.size());
+            out.add(m);
+        }
+        out.sort(Comparator.comparing(m -> String.valueOf(m.get("date"))));
+        return out;
+    }
+
+    /** 单次报告详情（含 checks_json） */
+    public Map<String, Object> detail(String id) {
+        return TenantContext.asPlatformIfSuper(() -> {
+            OpsCheckupReport row = reportMapper.selectById(id);
+            return row == null ? null : toMap(row, parseChecks(row.getChecksJson()));
+        });
+    }
+
+    /** 删除超过保留期的报告（0 或负数 = 不清理） */
+    public int purgeExpired(int days) {
+        if (days <= 0) return 0;
+        LocalDateTime before = LocalDateTime.now().minusDays(days);
+        return TenantContext.asPlatform(() -> reportMapper.delete(
+                new LambdaQueryWrapper<OpsCheckupReport>().lt(OpsCheckupReport::getAt, before)));
     }
 
     // ==================== 各巡检项 ====================
@@ -92,9 +235,13 @@ public class OpsCheckupService {
         long t = System.currentTimeMillis();
         try {
             String version = jdbc.queryForObject("select version()", String.class);
-            return new Check("mysql", "MySQL 数据库", "ok", "连接正常，版本 " + version, System.currentTimeMillis() - t);
+            return new Check("mysql", GROUP_DEPS, "MySQL 数据库", "ok",
+                    "连接正常，版本 " + version, System.currentTimeMillis() - t,
+                    "无需处理；版本升级请走维护窗口，避免在业务高峰做 DDL。");
         } catch (Exception e) {
-            return new Check("mysql", "MySQL 数据库", "fail", "连不上：" + e.getMessage(), System.currentTimeMillis() - t);
+            return new Check("mysql", GROUP_DEPS, "MySQL 数据库", "fail",
+                    "连不上：" + e.getMessage(), System.currentTimeMillis() - t,
+                    "先确认数据库进程与连接串；数据库不可用时成员/会话/配置/审计全部不可用。");
         }
     }
 
@@ -105,10 +252,14 @@ public class OpsCheckupService {
             if (!"PONG".equals(pong)) throw new IllegalStateException("ping 返回 " + pong);
             Properties mem = redis.execute((RedisCallback<Properties>) c -> c.info("memory"));
             String used = mem == null ? "?" : String.valueOf(mem.getProperty("used_memory_human", "?")).trim();
-            return new Check("redis", "Redis（运行态与协调态）", "ok",
-                    "在线，内存占用 " + used + "；启动期硬依赖：Redis 不在线后端起不来", System.currentTimeMillis() - t);
+            return new Check("redis", GROUP_DEPS, "Redis（运行态与协调态）", "ok",
+                    "在线，内存占用 " + used + "；启动期硬依赖：Redis 不在线后端起不来",
+                    System.currentTimeMillis() - t,
+                    "内存接近上限时先查会话缓存与检索缓存；扩容前确认淘汰策略不会误删锁键。");
         } catch (Exception e) {
-            return new Check("redis", "Redis（运行态与协调态）", "fail", "不可用：" + e.getMessage(), System.currentTimeMillis() - t);
+            return new Check("redis", GROUP_DEPS, "Redis（运行态与协调态）", "fail",
+                    "不可用：" + e.getMessage(), System.currentTimeMillis() - t,
+                    "Redis 是启动期硬依赖：先恢复实例再重启后端，否则后端会起不来。");
         }
     }
 
@@ -116,16 +267,20 @@ public class OpsCheckupService {
         long t = System.currentTimeMillis();
         try {
             if (!keywordIndex.enabled()) {
-                return new Check("keyword", "关键词召回引擎", "ok",
-                        "当前用 mysql LIKE（零依赖），meilisearch 未启用", System.currentTimeMillis() - t);
+                return new Check("keyword", GROUP_DEPS, "关键词召回引擎", "ok",
+                        "当前用 mysql LIKE（零依赖），meilisearch 未启用", System.currentTimeMillis() - t,
+                        "无需处理；启用 meilisearch 后这里会开始探测可达性。");
             }
             boolean ok = keywordIndex.checkAvailable();
             String reason = ok ? "" : ("，不可用原因：" + keywordIndex.debugUnavailableReason());
-            return new Check("keyword", "关键词召回引擎", ok ? "ok" : "warn",
+            return new Check("keyword", GROUP_DEPS, "关键词召回引擎", ok ? "ok" : "warn",
                     "meilisearch " + (ok ? "可达" : "不可达（检索已自动降级回 mysql LIKE，不影响问答，只影响召回质量）") + reason,
-                    System.currentTimeMillis() - t);
+                    System.currentTimeMillis() - t,
+                    "不可达先查 meili 容器与防火墙；检索已自动降级，问答仍可用，不必停服。");
         } catch (Exception e) {
-            return new Check("keyword", "关键词召回引擎", "warn", "检查失败：" + e.getMessage(), System.currentTimeMillis() - t);
+            return new Check("keyword", GROUP_DEPS, "关键词召回引擎", "warn",
+                    "检查失败：" + e.getMessage(), System.currentTimeMillis() - t,
+                    "先看 meili 连通性；该项失败不影响问答，只影响召回质量。");
         }
     }
 
@@ -134,18 +289,27 @@ public class OpsCheckupService {
         try {
             File root = new File(properties.getImages().getDir());
             if (!root.exists()) {
-                return new Check("disk", "落盘数据目录", "fail", "目录不存在：" + root.getAbsolutePath(), System.currentTimeMillis() - t);
+                return new Check("disk", GROUP_DEPS, "落盘数据目录", "fail",
+                        "目录不存在：" + root.getAbsolutePath(), System.currentTimeMillis() - t,
+                        "先确认数据卷挂载与目录权限；目录不存在时源文件/图片/产物写入都会失败。");
             }
             long free = root.getFreeSpace(), total = root.getTotalSpace();
             if (total <= 0) {
-                return new Check("disk", "落盘数据目录", "warn", "无法读取磁盘容量（" + root.getAbsolutePath() + "）", System.currentTimeMillis() - t);
+                return new Check("disk", GROUP_DEPS, "落盘数据目录", "warn",
+                        "无法读取磁盘容量（" + root.getAbsolutePath() + "）", System.currentTimeMillis() - t,
+                        "确认容器内的文件系统是否暴露容量信息；容量不可读时按未检查成功处理。");
             }
             int pctUsed = (int) Math.round(100.0 * (total - free) / total);
             String detail = root.getAbsolutePath() + " 所在盘已用 " + pctUsed + "%（剩余 " + gb(free) + " / 共 " + gb(total) + "）";
             String level = pctUsed >= 90 ? "fail" : pctUsed >= 80 ? "warn" : "ok";
-            return new Check("disk", "落盘数据目录", level, detail + (pctUsed >= 90 ? "：剩余不足 10%，源文件/图片/产物写入随时会失败" : ""), System.currentTimeMillis() - t);
+            return new Check("disk", GROUP_DEPS, "落盘数据目录", level,
+                    detail + (pctUsed >= 90 ? "：剩余不足 10%，源文件/图片/产物写入随时会失败" : ""),
+                    System.currentTimeMillis() - t,
+                    "优先清理超过保留期的聊天附件、工具外溢原文与临时目录；再看产物与归档。不要直接删目录。");
         } catch (Exception e) {
-            return new Check("disk", "落盘数据目录", "warn", "检查失败：" + e.getMessage(), System.currentTimeMillis() - t);
+            return new Check("disk", GROUP_DEPS, "落盘数据目录", "warn",
+                    "检查失败：" + e.getMessage(), System.currentTimeMillis() - t,
+                    "先确认数据目录存在且当前进程有读权限；容量不可读时按未检查成功处理。");
         }
     }
 
@@ -160,9 +324,12 @@ public class OpsCheckupService {
             String detail = tampered > 0
                     ? "哈希链被改写 " + tampered + " 处——审计记录被人为改动，必须立即追责排查"
                     : "抽验 2000 行无内容改写" + (others > 0 ? "；另有 " + others + " 处历史序号洞（修复前遗留，按设计如实报，非新问题）" : "");
-            return new Check("audit", "审计链完整性", level, detail, System.currentTimeMillis() - t);
+            return new Check("audit", GROUP_SECURITY, "审计链完整性", level, detail, System.currentTimeMillis() - t,
+                    "发现内容被改写先冻结写入、导出 CSV 留证，再按审计事件定位操作人；序号洞先确认是否修复前遗留。");
         } catch (Exception e) {
-            return new Check("audit", "审计链完整性", "fail", "校验跑不起来：" + e.getMessage(), System.currentTimeMillis() - t);
+            return new Check("audit", GROUP_SECURITY, "审计链完整性", "fail",
+                    "校验跑不起来：" + e.getMessage(), System.currentTimeMillis() - t,
+                    "审计链校验失败本身就要处理：先确认审计表可读、副本配置正确，再重跑校验。");
         }
     }
 
@@ -177,14 +344,19 @@ public class OpsCheckupService {
             long enabled = ((Number) row.get("enabled_count")).longValue();
             long noKey = row.get("no_key") == null ? 0 : ((Number) row.get("no_key")).longValue();
             if (enabled == 0) {
-                return new Check("providers", "模型供应商", "fail", "没有启用的供应商——问答链路整体不可用", System.currentTimeMillis() - t);
+                return new Check("providers", GROUP_CHAIN, "模型供应商", "fail",
+                        "没有启用的供应商——问答链路整体不可用", System.currentTimeMillis() - t,
+                        "至少启用一家有 Key 的供应商，否则问答整体不可用。");
             }
             String level = noKey > 0 ? "warn" : "ok";
-            return new Check("providers", "模型供应商", level,
+            return new Check("providers", GROUP_CHAIN, "模型供应商", level,
                     "启用 " + enabled + " 家" + (noKey > 0 ? "，其中 " + noKey + " 家未配 API Key（调用会失败）" : "，均配了凭据"),
-                    System.currentTimeMillis() - t);
+                    System.currentTimeMillis() - t,
+                    noKey > 0 ? "缺 Key 的供应商一调用就失败：补凭据或先停用，别让默认模型指向它。" : "无需处理。");
         } catch (Exception e) {
-            return new Check("providers", "模型供应商", "warn", "检查失败：" + e.getMessage(), System.currentTimeMillis() - t);
+            return new Check("providers", GROUP_CHAIN, "模型供应商", "warn",
+                    "检查失败：" + e.getMessage(), System.currentTimeMillis() - t,
+                    "先确认 c_ai_provider 可读；检查失败不等于供应商不可用，但不要当成正常。");
         }
     }
 
@@ -192,14 +364,20 @@ public class OpsCheckupService {
     private Check checkLockedAccounts() {
         long t = System.currentTimeMillis();
         try {
-            Integer locked = jdbc.queryForObject(
-                    "select count(*) from c_ai_user where locked_until is not null and locked_until > now()", Integer.class);
+            String tenant = TenantContext.current();
+            String sql = "select count(*) from c_ai_user where locked_until is not null and locked_until > now()";
+            Integer locked = (tenant == null || tenant.isBlank())
+                    ? jdbc.queryForObject(sql, Integer.class)
+                    : jdbc.queryForObject(sql + " and tenant_id = ?", Integer.class, tenant);
             int n = locked == null ? 0 : locked;
-            return new Check("login", "登录安全态势", n > 0 ? "warn" : "ok",
+            return new Check("login", GROUP_SECURITY, "登录安全态势", n > 0 ? "warn" : "ok",
                     n > 0 ? n + " 个账号处于登录锁定态（连续失败触发；管理员重置密码即解锁）" : "无锁定中的账号",
-                    System.currentTimeMillis() - t);
+                    System.currentTimeMillis() - t,
+                    "锁定数突然升高先看是不是同一 IP 在撞库；确认是本人忘记密码就走「重置密码」。");
         } catch (Exception e) {
-            return new Check("login", "登录安全态势", "warn", "检查失败：" + e.getMessage(), System.currentTimeMillis() - t);
+            return new Check("login", GROUP_SECURITY, "登录安全态势", "warn",
+                    "检查失败：" + e.getMessage(), System.currentTimeMillis() - t,
+                    "先确认成员表可读；检查失败不能当成「没有锁定账号」。");
         }
     }
 
@@ -215,8 +393,9 @@ public class OpsCheckupService {
         try {
             Map<String, String> gaps = toolRegistry.declarationGaps();
             if (!gaps.isEmpty()) {
-                return new Check("tools", "工具装配对账", "fail",
-                        "登记名与实现不一致：" + String.join("；", gaps.values()), System.currentTimeMillis() - t);
+                return new Check("tools", GROUP_CHAIN, "工具装配对账", "fail",
+                        "登记名与实现不一致：" + String.join("；", gaps.values()), System.currentTimeMillis() - t,
+                        "按清单修 ToolRegistry 的登记名或实现名，两者必须逐字对上。");
             }
             List<String> ungrouped = new ArrayList<>();
             int instances = 0;
@@ -228,17 +407,21 @@ public class OpsCheckupService {
                 }
             }
             if (!ungrouped.isEmpty()) {
-                return new Check("tools", "工具装配对账", "warn",
+                return new Check("tools", GROUP_CHAIN, "工具装配对账", "warn",
                         "这几把沙盒/记忆工具没在档位名单的组管理里（模型一直看得到，档位拦不住）："
-                                + String.join("、", ungrouped), System.currentTimeMillis() - t);
+                                + String.join("、", ungrouped), System.currentTimeMillis() - t,
+                        "把这些工具补进档位名单的组管理；否则模型看得见、档位拦不住。");
             }
-            return new Check("tools", "工具装配对账", "ok",
+            return new Check("tools", GROUP_CHAIN, "工具装配对账", "ok",
                     instances > 0 ? "登记与实现逐字对上；本进程 " + instances
                             + " 条常驻会话的沙盒与记忆工具都已进档位名单"
                             : "登记与实现逐字对上（本进程暂无常驻会话实例，未核对运行中的工具表）",
-                    System.currentTimeMillis() - t);
+                    System.currentTimeMillis() - t,
+                    "无需处理；出现不一致时按详情里的清单修登记或档位名单。");
         } catch (Exception e) {
-            return new Check("tools", "工具装配对账", "warn", "检查失败：" + e.getMessage(), System.currentTimeMillis() - t);
+            return new Check("tools", GROUP_CHAIN, "工具装配对账", "warn",
+                    "检查失败：" + e.getMessage(), System.currentTimeMillis() - t,
+                    "先确认工具注册表可读；检查失败不等于装配正确。");
         }
     }
 
@@ -253,23 +436,105 @@ public class OpsCheckupService {
         try {
             var sweep = orphanTurns.lastSweep();
             if (sweep.at().isBlank()) {
-                return new Check("resume", "长任务接续", "ok",
-                        "这一轮还没扫过（服务起来后立即跑首轮，之后按「长任务接续间隔」）", System.currentTimeMillis() - t);
+                return new Check("resume", GROUP_CHAIN, "长任务接续", "ok",
+                        "这一轮还没扫过（服务起来后立即跑首轮，之后按「长任务接续间隔」）", System.currentTimeMillis() - t,
+                        "无需处理；等首轮扫描跑完后这里会给出「发现几条、收口几条」。");
             }
             if (sweep.found() == 0) {
-                return new Check("resume", "长任务接续", "ok",
-                        "没有没答完的轮（最近一次扫描 " + sweep.at() + "）", System.currentTimeMillis() - t);
+                return new Check("resume", GROUP_CHAIN, "长任务接续", "ok",
+                        "没有没答完的轮（最近一次扫描 " + sweep.at() + "）", System.currentTimeMillis() - t,
+                        "无需处理。");
             }
             String line = "最近一次扫描发现 " + sweep.found() + " 条没人答完的轮，已按中断收口 "
                     + sweep.taken() + " 条";
             if (sweep.taken() < sweep.found() || !sweep.error().isBlank()) {
-                return new Check("resume", "长任务接续", "warn",
-                        line + "；接不上的原因：" + sweep.error(), System.currentTimeMillis() - t);
+                return new Check("resume", GROUP_CHAIN, "长任务接续", "warn",
+                        line + "；接不上的原因：" + sweep.error(), System.currentTimeMillis() - t,
+                        "看 error 原因；接续只收口不重跑，不会替用户多算一遍。");
             }
-            return new Check("resume", "长任务接续", "ok", line, System.currentTimeMillis() - t);
+            return new Check("resume", GROUP_CHAIN, "长任务接续", "ok", line, System.currentTimeMillis() - t,
+                    "无需处理。");
         } catch (Exception e) {
-            return new Check("resume", "长任务接续", "warn", "检查失败：" + e.getMessage(), System.currentTimeMillis() - t);
+            return new Check("resume", GROUP_CHAIN, "长任务接续", "warn",
+                    "检查失败：" + e.getMessage(), System.currentTimeMillis() - t,
+                    "先确认接续扫描状态可读；检查失败不等于没有孤儿轮。");
         }
+    }
+
+    // ==================== 落库/读数辅助 ====================
+
+    private void alertIfNeeded(String reportId, List<Check> checks) {
+        try {
+            if (!configService.getBoolean("ops.checkupAlertEnabled", ConfigDefaults.OPS_CHECKUP_ALERT_ENABLED)) return;
+            List<Check> failed = checks.stream().filter(c -> "fail".equals(c.level())).toList();
+            if (failed.isEmpty()) return;
+            String names = failed.stream().map(Check::name).collect(Collectors.joining("、"));
+            String keys = failed.stream().map(Check::key).sorted().collect(Collectors.joining(","));
+            notificationService.createForAdmins(Notification.TYPE_OPS_ALERT,
+                    "系统巡检发现必须处理的问题",
+                    "巡检项：" + names + "。打开「安全与运维 → 系统巡检」查看详情与处置建议。",
+                    "ops", reportId, "ops:checkup:" + keys);
+        } catch (Exception e) {
+            log.warn("[OPS] 巡检告警发送失败（不影响巡检本身）：{}", e.getMessage());
+        }
+    }
+
+    private String serializeChecks(List<Check> checks) {
+        try {
+            return objectMapper.writeValueAsString(checks);
+        } catch (Exception e) {
+            log.warn("[OPS] 巡检项序列化失败：{}", e.getMessage());
+            return "[]";
+        }
+    }
+
+    private List<Map<String, Object>> parseChecks(String json) {
+        if (json == null || json.isBlank()) return List.of();
+        try {
+            return objectMapper.readValue(json, new TypeReference<List<Map<String, Object>>>() { });
+        } catch (Exception e) {
+            log.warn("[OPS] 巡检项 JSON 解析失败：{}", e.getMessage());
+            return List.of();
+        }
+    }
+
+    private Map<String, Object> toMap(OpsCheckupReport row, List<?> checks) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("id", row.getId());
+        out.put("overall", row.getOverall());
+        out.put("at", row.getAt() == null ? null : row.getAt().toString());
+        out.put("trigger", row.getTriggerType());
+        out.put("tookMs", row.getTookMs());
+        out.put("checks", checks);
+        out.put("failCount", row.getFailCount());
+        out.put("warnCount", row.getWarnCount());
+        return out;
+    }
+
+    private Map<String, Object> summary(OpsCheckupReport row) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", row.getId());
+        m.put("overall", row.getOverall());
+        m.put("at", row.getAt() == null ? null : row.getAt().toString());
+        m.put("trigger", row.getTriggerType());
+        m.put("tookMs", row.getTookMs());
+        m.put("failCount", row.getFailCount());
+        m.put("warnCount", row.getWarnCount());
+        return m;
+    }
+
+    /** 巡检逐租户跑：系统线程没有租户上下文，默认租户之外的历史/告警会丢 */
+    private List<String> distinctTenants() {
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        out.add(TenantContext.DEFAULT_TENANT);
+        try {
+            for (String t : jdbc.queryForList("select distinct tenant_id from c_ai_user", String.class)) {
+                if (t != null && !t.isBlank()) out.add(t);
+            }
+        } catch (Exception e) {
+            log.warn("[OPS] 租户清单查询失败，按 default 单租户巡检：{}", e.getMessage());
+        }
+        return List.copyOf(out);
     }
 
     private static String gb(long bytes) {

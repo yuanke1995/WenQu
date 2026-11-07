@@ -449,7 +449,9 @@ CREATE TABLE IF NOT EXISTS `c_ai_user` (
     `update_time`  DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`uid`),
     UNIQUE KEY `uk_username` (`username`),
-    KEY `idx_department` (`department_id`)
+    KEY `idx_department` (`department_id`),
+    KEY `idx_user_last_login` (`tenant_id`, `last_login_time`),
+    KEY `idx_user_lock_fail` (`tenant_id`, `locked_until`, `login_fail_count`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='AI 用户表（画像/归属 + 本地登录凭据）';
 
 -- ============================================
@@ -1151,12 +1153,44 @@ CREATE TABLE IF NOT EXISTS `c_ai_announcement` (
     `content`       VARCHAR(2000) DEFAULT NULL COMMENT '正文（点开看详情；停机窗口/升级内容/影响范围）',
     `level`         VARCHAR(10)   NOT NULL DEFAULT 'info' COMMENT '级别: info=通知 warn=警示 danger=紧急（横幅按级别配色，danger 常驻不可关）',
     `enabled`       INT           NOT NULL DEFAULT 1 COMMENT '1=发布中 0=下线（下线保留行，历史可查，不真删）',
+    `content_format` VARCHAR(16)  NOT NULL DEFAULT 'plain' COMMENT '正文格式: plain=纯文本 markdown=Markdown（横幅按对应渲染器展示）',
+    `audience_type` VARCHAR(16)   NOT NULL DEFAULT 'all' COMMENT '展示对象: all=全员 department=指定部门 role=指定角色',
+    `audience_ids`  VARCHAR(1000) DEFAULT NULL COMMENT '展示对象 ID 清单（部门 ID / 角色 code，逗号分隔；all 时为空）',
+    `start_time`    DATETIME      DEFAULT NULL COMMENT '生效开始（空=发布时间起）',
+    `end_time`      DATETIME      DEFAULT NULL COMMENT '生效结束（空=直到手动下线）',
     `created_by`    VARCHAR(64)   DEFAULT NULL COMMENT '发布人 uid',
     `create_time`   DATETIME      DEFAULT CURRENT_TIMESTAMP COMMENT '发布时间',
     `update_time`   DATETIME      DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     PRIMARY KEY (`id`),
-    KEY `idx_ann_tenant_enabled` (`tenant_id`, `enabled`)
+    KEY `idx_ann_tenant_enabled` (`tenant_id`, `enabled`),
+    KEY `idx_ann_window` (`tenant_id`, `start_time`, `end_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='平台公告（治理沟通：停机窗口/升级/新功能通知，按租户发布，登录后横幅常显）';
+
+CREATE TABLE IF NOT EXISTS `c_ai_announcement_read` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
+    `ann_id`        VARCHAR(50)   NOT NULL COMMENT '公告ID（c_ai_announcement.id）',
+    `uid`           VARCHAR(64)   NOT NULL COMMENT '已读人 uid',
+    `read_time`     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '已读时刻（横幅关闭或展开详情时写入）',
+    PRIMARY KEY (`ann_id`, `uid`),
+    KEY `idx_ann_read_tenant` (`tenant_id`, `ann_id`),
+    KEY `idx_ann_read_uid` (`uid`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='平台公告已读回执（一人一条，重复关闭不累加；管理端据此展示已读进度）';
+
+CREATE TABLE IF NOT EXISTS `c_ai_ops_checkup_report` (
+    `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
+    `id`            VARCHAR(50)   NOT NULL COMMENT '巡检报告ID（UUID）',
+    `at`            DATETIME      NOT NULL COMMENT '巡检完成时刻（趋势按它聚合）',
+    `trigger_type`  VARCHAR(16)   NOT NULL DEFAULT 'manual' COMMENT '触发方式: manual=手动 schedule=定时',
+    `overall`       VARCHAR(8)    NOT NULL COMMENT '整体结论: ok/warn/fail（取最差项）',
+    `took_ms`       BIGINT        NOT NULL DEFAULT 0 COMMENT '本次巡检总耗时（毫秒）',
+    `fail_count`    INT           NOT NULL DEFAULT 0 COMMENT '必须处理项数量',
+    `warn_count`    INT           NOT NULL DEFAULT 0 COMMENT '需留意项数量',
+    `checks_json`   TEXT          NOT NULL COMMENT '逐项结果 JSON（key/group/name/level/detail/ms/hint）',
+    `created_by`    VARCHAR(64)   DEFAULT NULL COMMENT '触发人 uid（定时任务为空）',
+    `create_time`   DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '落库时刻',
+    PRIMARY KEY (`id`),
+    KEY `idx_ops_report_time` (`tenant_id`, `at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='系统巡检历史报告（运行状态体检的可回溯底座：趋势、定时告警与详情都读它）';
 
 CREATE TABLE IF NOT EXISTS `c_ai_usage_log` (
     `tenant_id`     VARCHAR(32)   NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',

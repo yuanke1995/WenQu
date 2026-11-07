@@ -80,8 +80,9 @@ public class RbacSeedRunner implements ApplicationRunner {
     private static final String[] IDENTITY_TAB_MENU =
             {"menu-identity-providers", "认证源", "/permissions?tab=identity", "15", "menu-permissions"};
 
+    /** 挂「安全与运维」下的页签：审计事件（Phase 3 P11，2026-11 从权限管理迁入） */
     private static final String[] AUDIT_TAB_MENU =
-            {"menu-audit-events", "审计事件", "/permissions?tab=audit", "70", "menu-permissions"};
+            {"menu-audit-events", "审计事件", "/security?tab=audit", "40", "menu-security"};
 
     private static final String[] CONTENT_SAFETY_TAB_MENU =
             {"menu-content-safety", "内容安全", "/permissions?tab=content", "80", "menu-permissions"};
@@ -226,6 +227,9 @@ public class RbacSeedRunner implements ApplicationRunner {
             seeded = true;
             log.info("[RbacSeed] 已补齐 {} 个内置 Tab 菜单", tabAdded);
         }
+        // 审计事件页签从「权限管理」迁到「安全与运维」：内置 Tab 行只在缺失时插入，
+        // 存量库那一行仍是旧 path/parent；这里做一次幂等同步（只改结构两列，不删角色绑定）。
+        if (syncBuiltinTab(AUDIT_TAB_MENU)) seeded = true;
         // user 角色基础菜单：按项补齐（此前是「全空才灌」，见方法注释）。
         // 已绑定的项不重复写，故对管理员的既有绑定零影响。
         Set<String> userMenuIds = new HashSet<>(roleMenuMapper.menuIdsOfRole("user"));
@@ -247,6 +251,28 @@ public class RbacSeedRunner implements ApplicationRunner {
             }
         }
         if (seeded) roleService.invalidateCaches();
+    }
+
+    /**
+     * 幂等同步一个内置 Tab 菜单的结构字段（path / parent / sort）。
+     * <p>只服务「页签搬家」这类结构性升级：内置菜单只在缺失时插入，存量行不会自己改 path，
+     * 不同步就会出现「菜单表里写着旧路径、代码里只认新宿主页」的半程态。只改结构，不碰角色绑定。
+     */
+    private boolean syncBuiltinTab(String[] d) {
+        Menu m = menuMapper.selectById(d[0]);
+        if (m == null) return false;
+        int sort = Integer.parseInt(d[3]);
+        if (java.util.Objects.equals(m.getPath(), d[2])
+                && java.util.Objects.equals(m.getParentId(), d[4])
+                && java.util.Objects.equals(m.getSortOrder(), sort)) {
+            return false;
+        }
+        m.setPath(d[2]);
+        m.setParentId(d[4]);
+        m.setSortOrder(sort);
+        menuMapper.updateById(m);
+        log.info("[RbacSeed] 已同步内置 Tab 菜单 {} -> {}（父 {}）", d[0], d[2], d[4]);
+        return true;
     }
 
     /** 全部租户 id（c_ai_user 的 distinct tenant_id ∪ default）——租户域角色要按租户各一套 */
@@ -338,12 +364,14 @@ public class RbacSeedRunner implements ApplicationRunner {
         // 运维管理员：运维域整包（数据清单；运行期可在权限页增删）
         List<String> opsPerms = List.of("ops:read", "ops:manage", "trace:read", "trace:manage", "audit:read",
                 "audit:verify", "stats:read", "search-index:manage", "desc-cache:manage", "config:read",
-                "content-safety:manage", "quota:read", "manual:sync", "retrieval-debug:run");
+                "content-safety:manage", "quota:read", "manual:sync", "retrieval-debug:run",
+                // 会话治理与公告定向要读成员/部门/角色；只读权限，不含任何成员写操作
+                "user:read", "department:read", "role:read");
         seedPresetRole("readonly-admin", "只读管理员", "内置：全部页面可见，全部动作只读（写类端点 403）",
                 readonlyPerms, validMenuIds, validMenuIds);
         seedPresetRole("ops-admin", "运维管理员", "内置：运维域（巡检/追踪/审计/统计/索引维护），不碰业务配置",
                 opsPerms, java.util.Set.of("menu-dashboard", "menu-settings", "menu-audit-events", "menu-stats",
-                        "menu-evaluation"), validMenuIds);
+                        "menu-evaluation", "menu-security"), validMenuIds);
     }
 
     /** 单个受限管理员预设：角色缺失才建（幂等），建完绑菜单（限定在现存菜单内）与授权点 */

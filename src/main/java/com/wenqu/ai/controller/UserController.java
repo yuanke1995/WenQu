@@ -46,15 +46,21 @@ public class UserController {
      * <p>刻意不复用 {@code /list}——那份全表下发，成员涨到几万时一次请求既捞不动也发不出。
      */
     @Operation(summary = "成员分页查询", description = "关键字（昵称/登录账号）与部门、状态在库侧过滤，按最近登录倒序分页；"
+            + "另支持会话治理的风险口径：locked=true（锁定中）、minFail（连续失败阈值）、inactiveDays（长期未登录）。"
             + "返回 {total, items, page, size}，items 字段口径同 /user/list")
     @Permission("user:read")
     @GetMapping("/page")
     public ResultJson page(@Parameter(description = "昵称或登录账号关键字") @RequestParam(value = "kw", required = false) String kw,
                            @Parameter(description = "部门 ID（空=全部）") @RequestParam(value = "departmentId", required = false) String departmentId,
                            @Parameter(description = "状态：1=启用 0=禁用（空=全部）") @RequestParam(value = "status", required = false) Integer status,
+                           @Parameter(description = "true=只看锁定中的账号") @RequestParam(value = "locked", required = false) Boolean locked,
+                           @Parameter(description = "只看连续失败次数 ≥ 该值的账号") @RequestParam(value = "minFail", required = false) Integer minFail,
+                           @Parameter(description = "只看最近登录早于 N 天前（含从未登录）的账号") @RequestParam(value = "inactiveDays", required = false) Integer inactiveDays,
+                           @Parameter(description = "true=只看今天登录过的账号") @RequestParam(value = "loggedInToday", required = false) Boolean loggedInToday,
                            @RequestParam(value = "page", defaultValue = "1") int page,
                            @RequestParam(value = "size", defaultValue = "20") int size) {
-        return ResultJson.ok(orgService.pageUsers(kw, departmentId, status, page, size));
+        return ResultJson.ok(orgService.pageUsers(kw, departmentId, status, locked, minFail, inactiveDays,
+                loggedInToday, page, size));
     }
 
     @Operation(summary = "新建用户", description = "{\"uid\":\"alice\",\"username\":\"Alice\",\"password\":\"必填\",\"departmentId\":\"可选\",\"roles\":[\"user\"]}")

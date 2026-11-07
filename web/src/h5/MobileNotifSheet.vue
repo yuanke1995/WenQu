@@ -57,6 +57,7 @@ const openNotif = n => {
   else if (n.refType === 'workflow' && n.refId) go({ path: '/agents', query: { tab: 'workflow' } })
   else if (n.refType === 'session' && n.refId) go({ path: '/m/chat', query: { sid: n.refId } })
   else if (n.refType === 'provider' && n.refId) go({ path: '/agents', query: { tab: 'providers' } })
+  else if (n.refType === 'ops') go({ path: '/security' })
 }
 </script>
 
