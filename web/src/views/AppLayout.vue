@@ -2150,7 +2150,16 @@ watch(() => route.fullPath, () => {
 }
 
 .notif-popover .ant-popover-inner { padding: 10px; border-radius: var(--app-radius); }
-.notif-popover .notif-panel { width: 380px; }
+/* 固定高度：从「待处理」切到「全部」时面板不再抽高/缩回；列表在内部滚动，页头与页脚不动 */
+.notif-popover .notif-panel {
+  width: 380px;
+  height: min(460px, 64vh);
+  display: flex;
+  flex-direction: column;
+}
+.notif-popover .notif-head,
+.notif-popover .notif-tabs,
+.notif-popover .notif-foot { flex: none; }
 .notif-popover .notif-head { display: flex; align-items: center; gap: 8px; padding: 2px 4px 8px; border-bottom: 1px solid var(--app-border); }
 .notif-popover .notif-title { font-weight: 600; font-size: 13px; color: var(--app-text); }
 .notif-popover .notif-unread { font-size: 10.5px; color: var(--app-warn-text); background: var(--app-warn-weak); border: 1px solid var(--app-warn-border); border-radius: 999px; padding: 3px 7px; line-height: 1; }
@@ -2162,7 +2171,7 @@ watch(() => route.fullPath, () => {
 .notif-popover .notif-tab:hover { color: var(--app-accent); }
 .notif-popover .notif-tab.on { color: var(--app-accent); border-bottom-color: var(--app-accent); font-weight: 600; }
 .notif-popover .notif-tab-b { font-family: var(--ui-monospace, monospace); font-size: 9.5px; color: var(--app-warn-text); background: var(--app-warn-weak); border-radius: 4px; padding: 0 4px; }
-.notif-popover .notif-list { max-height: min(420px, 60vh); overflow-y: auto; scrollbar-width: thin; margin: 0 -4px; padding: 4px 0; }
+.notif-popover .notif-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-width: thin; margin: 0 -4px; padding: 4px 0; }
 .notif-popover .notif-foot { display: flex; align-items: center; padding: 8px 4px 0; border-top: 1px solid var(--app-border); margin-top: 4px; font-size: 10.5px; color: var(--app-text3); }
 .notif-popover .notif-foot-links { margin-left: auto; display: flex; align-items: center; gap: 8px; }
 .notif-popover .notif-link { border: 0; background: transparent; color: var(--app-accent); font-size: 11px; cursor: pointer; padding: 0; }

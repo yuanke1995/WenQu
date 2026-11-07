@@ -299,6 +299,9 @@ onBeforeUnmount(() => { observer?.disconnect() })
 <style scoped>
 .nl { min-width: 0; }
 .nl-page { color: var(--app-text); }
+/* 浮层给了固定高度：列表区撑满，空态在剩余空间里居中，而不是按内容高度把面板抽短 */
+.nl-popover { min-height: 100%; display: flex; flex-direction: column; }
+.nl-popover .nl-state { flex: 1; justify-content: center; padding: 24px 16px; }
 .nl-popover, .nl-sheet { color: var(--app-text); }
 
 /* ============ 列表卡与日期头 ============ */
