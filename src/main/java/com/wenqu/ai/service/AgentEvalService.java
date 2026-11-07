@@ -480,11 +480,18 @@ public class AgentEvalService {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("runA", a);
         out.put("runB", b);
-        out.put("metrics", Map.of(
-                "passRateA", raRate, "passRateB", rbRate,
-                "avgScoreA", a.getAvgScore(), "avgScoreB", b.getAvgScore(),
-                "avgLatencyA", a.getAvgLatencyMs(), "avgLatencyB", b.getAvgLatencyMs(),
-                "avgTokensA", perCaseTokens(a), "avgTokensB", perCaseTokens(b)));
+        // 指标可空（评判不可用的运行没有综合分、失败运行没有耗时）——Map.of 不吃 null（NPE 真机踩过：
+        // 20:11 那次「无法评分」的运行一对比就 500），这里必须用允许 null 的 LinkedHashMap
+        Map<String, Object> metrics = new LinkedHashMap<>();
+        metrics.put("passRateA", raRate);
+        metrics.put("passRateB", rbRate);
+        metrics.put("avgScoreA", a.getAvgScore());
+        metrics.put("avgScoreB", b.getAvgScore());
+        metrics.put("avgLatencyA", a.getAvgLatencyMs());
+        metrics.put("avgLatencyB", b.getAvgLatencyMs());
+        metrics.put("avgTokensA", perCaseTokens(a));
+        metrics.put("avgTokensB", perCaseTokens(b));
+        out.put("metrics", metrics);
         out.put("rows", rows);
         out.put("counts", Map.of("changed", changed, "worse", worse, "better", better, "onlyBFailed", onlyBFailed));
         out.put("conclusion", conclusion);
@@ -603,8 +610,11 @@ public class AgentEvalService {
             dist.merge(status, 1, Integer::sum);
             AgentEvalSuite suite = suiteOf(a.getId());
             row.put("suite", suite == null ? null : Map.of(
-                    "id", suite.getId(), "thresholdRate", suite.getThresholdRate(),
-                    "passScore", suite.getPassScore(), "enabled", suite.getEnabled()));
+                    "id", suite.getId(),
+                    // Map.of 不吃 null：套件三设置字段做兜底（saveSuite 会填默认，防手工改库/老行）
+                    "thresholdRate", suite.getThresholdRate() == null ? 80.0 : suite.getThresholdRate(),
+                    "passScore", suite.getPassScore() == null ? 60.0 : suite.getPassScore(),
+                    "enabled", suite.getEnabled() == null ? 1 : suite.getEnabled()));
             row.put("caseCount", gate.get("caseCount"));
             AgentEvalRun last = latestRun(a.getId(), "succeeded");
             if (last != null) {
