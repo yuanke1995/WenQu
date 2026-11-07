@@ -20,6 +20,7 @@ import org.springframework.util.AntPathMatcher;
 
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -69,6 +70,7 @@ public class RoleService {
     private final RoleMapper roleMapper;
     private final RoleMenuMapper roleMenuMapper;
     private final MenuMapper menuMapper;
+    private final com.wenqu.ai.mapper.MenuApiMapper menuApiMapper;
     private final ApiEndpointMapper apiEndpointMapper;
     private final UserMapper userMapper;
     private final com.wenqu.ai.mapper.UserRoleMapper userRoleMapper;
@@ -707,6 +709,84 @@ public class RoleService {
                 out.computeIfAbsent(perm, k -> new ArrayList<>()).add(role.getCode());
             }
         }
+        return out;
+    }
+
+    /** 菜单 → 可见角色清单（菜单页「可见角色」列用；只读反查，不参与鉴权） */
+    public Map<String, List<String>> rolesByMenu() {
+        Map<String, List<String>> out = new LinkedHashMap<>();
+        for (Map<String, Object> row : roleMenuMapper.allBindings()) {
+            String role = String.valueOf(row.get("roleCode"));
+            String menu = String.valueOf(row.get("menuId"));
+            out.computeIfAbsent(menu, k -> new ArrayList<>()).add(role);
+        }
+        out.values().forEach(list -> list.sort(String::compareTo));
+        return out;
+    }
+
+    /**
+     * 权限域概览（权限页首屏与角色统计）：一次聚合角色、菜单、接口、授权点与临期授权。
+     * <p>只读展示口径，不写任何表、不影响鉴权缓存。</p>
+     */
+    public Map<String, Object> overview() {
+        List<Role> roles = list();
+        Map<String, Long> memberCounts = memberCountsByRole();
+        List<com.wenqu.ai.model.Menu> menus = menuMapper.selectList(null);
+        List<com.wenqu.ai.model.ApiEndpoint> apis = apiEndpointMapper.selectList(null);
+        Set<String> boundApiIds = new HashSet<>(menuApiMapper.boundApiIds());
+        long permissionTotal = permissionCatalogMapper.allCodes().size();
+
+        long activeRoles = roles.stream().filter(r -> r.getStatus() == null || r.getStatus() != 0).count();
+        long adminRoles = roles.stream().filter(r -> r.getAdminFlag() != null && r.getAdminFlag() == 1).count();
+        long emptyRoles = roles.stream()
+                .filter(r -> (r.getBuiltin() == null || r.getBuiltin() != 1)
+                        && memberCounts.getOrDefault(r.getCode(), 0L) == 0)
+                .count();
+        long hiddenMenus = menus.stream().filter(m -> m.getVisible() != null && m.getVisible() == 0).count();
+        long apisWithoutPermission = apis.stream()
+                .filter(a -> a.getPermissionCode() == null || a.getPermissionCode().isBlank()).count();
+        long apisWithoutMenu = apis.stream().filter(a -> !boundApiIds.contains(a.getId())).count();
+        long expiring;
+        try {
+            java.time.LocalDateTime now = java.time.LocalDateTime.now();
+            expiring = userRoleMapper.selectCount(new LambdaQueryWrapper<com.wenqu.ai.model.UserRole>()
+                    .gt(com.wenqu.ai.model.UserRole::getExpireAt, now)
+                    .le(com.wenqu.ai.model.UserRole::getExpireAt, now.plusDays(7)));
+        } catch (Exception e) {
+            expiring = 0;
+        }
+
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("roles", (long) roles.size());
+        summary.put("activeRoles", activeRoles);
+        summary.put("adminRoles", adminRoles);
+        summary.put("rolesWithoutMembers", emptyRoles);
+        summary.put("menus", (long) menus.size());
+        summary.put("hiddenMenus", hiddenMenus);
+        summary.put("apis", (long) apis.size());
+        summary.put("apisWithoutPermission", apisWithoutPermission);
+        summary.put("apisWithoutMenu", apisWithoutMenu);
+        summary.put("permissions", permissionTotal);
+        summary.put("expiringGrants", expiring);
+
+        List<Map<String, Object>> roleStats = new ArrayList<>();
+        for (Role role : roles) {
+            List<Map<String, Object>> rows = rolePermissionMapper.rowsOfRole(role.getCode());
+            long allowCount = rows.stream().filter(r -> !"deny".equalsIgnoreCase(String.valueOf(r.get("effect")))).count();
+            long denyCount = rows.stream().filter(r -> "deny".equalsIgnoreCase(String.valueOf(r.get("effect")))).count();
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("code", role.getCode());
+            m.put("memberCount", memberCounts.getOrDefault(role.getCode(), 0L));
+            m.put("menuCount", (long) roleMenuMapper.menuIdsOfRole(role.getCode()).size());
+            m.put("permissionCount", allowCount);
+            m.put("denyCount", denyCount);
+            m.put("lastUpdated", role.getUpdateTime());
+            roleStats.add(m);
+        }
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("summary", summary);
+        out.put("roles", roleStats);
         return out;
     }
 

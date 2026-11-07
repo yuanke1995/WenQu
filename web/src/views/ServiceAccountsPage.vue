@@ -1,12 +1,14 @@
 <template>
   <div class="app-page">
     <div class="app-page-head">
-      <h1 class="app-page-title sr-only">服务账号</h1>
-      <span class="head-count">共 <b>{{ accounts.length }}</b> 个服务账号</span>
-      <span class="head-hint-plain">给外部系统用的非人类身份：请求头带 <code>X-Service-Token</code>，权限走角色，不能登录网页</span>
-      <button class="app-btn" style="margin-left:auto" @click="openCreate">
-        <plus-outlined /> 新建服务账号
-      </button>
+      <div class="head-title">
+        <h1 class="app-page-title">服务账号</h1>
+        <span class="app-pill muted plain">共 {{ accounts.length }} 个</span>
+        <span class="head-hint-plain">给外部系统用的非人类身份：请求头带 <code>X-Service-Token</code>，权限走角色，不能登录网页</span>
+      </div>
+      <div class="head-acts">
+        <button class="app-btn" @click="openCreate"><plus-outlined /> 新建服务账号</button>
+      </div>
     </div>
 
     <div class="app-page-body">

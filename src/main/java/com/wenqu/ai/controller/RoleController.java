@@ -168,6 +168,20 @@ public class RoleController {
         return ResultJson.ok("数据范围已保存");
     }
 
+    @Operation(summary = "权限域概览", description = "角色/菜单/接口/授权点规模与异常项 + 各角色成员数、菜单数、授权点数（权限页首屏，只读聚合）")
+    @Permission("role:read")
+    @GetMapping("/overview")
+    public ResultJson overview() {
+        return ResultJson.ok(roleService.overview());
+    }
+
+    @Operation(summary = "菜单 → 可见角色", description = "menuId → 角色编码清单（菜单页「可见角色」列反查，只读，不参与鉴权）")
+    @Permission("role:read")
+    @GetMapping("/menu-roles")
+    public ResultJson menuRoles() {
+        return ResultJson.ok(roleService.rolesByMenu());
+    }
+
     @Operation(summary = "各角色成员数", description = "role_code → 用户数（角色列表徽标用，批次 D-2）")
     @Permission("role:read")
     @GetMapping("/members-counts")

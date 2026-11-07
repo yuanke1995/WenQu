@@ -1,96 +1,130 @@
 <template>
   <div class="app-page">
     <div class="app-page-head">
-      <h3 class="app-page-title">权限管理</h3>
+      <div class="head-title">
+        <h1 class="app-page-title">权限管理</h1>
+        <span class="head-hint-plain">角色 · 菜单 · 接口 · 接入治理</span>
+      </div>
+      <div class="pg-head-acts">
+        <button class="app-btn ghost" type="button" @click="openEffective('')">
+          <eye-outlined /> 有效权限查询
+        </button>
+        <button v-if="view === 'roles'" class="app-btn" type="button" @click="openRoleCreate">
+          <plus-outlined /> 新建角色
+        </button>
+      </div>
     </div>
 
-    <!-- 页签式 Tab：与「智能体工作台」同一形态。此处只承载导航，内容用下方共用卡片按 tab 渲染；
-         页签状态落 URL(?tab=)，刷新/回退/分享可还原 -->
-    <a-tabs v-model:active-key="tab" class="pg-tabs">
-      <a-tab-pane key="menus">
-        <template #tab><span class="pg-tab">菜单<i v-if="loaded.menus" class="pg-badge">{{ menus.length }}</i></span></template>
-      </a-tab-pane>
-      <a-tab-pane key="apis">
-        <template #tab><span class="pg-tab">接口<i v-if="loaded.apis" class="pg-badge">{{ apis.length }}</i></span></template>
-      </a-tab-pane>
-      <a-tab-pane key="roles">
-        <template #tab><span class="pg-tab">角色<i v-if="loaded.roles" class="pg-badge">{{ roles.length }}</i></span></template>
-      </a-tab-pane>
-      <!-- 并入本域的独立管理页：有哪些/叫什么/什么顺序全由菜单表数据驱动（renderAs=tab 且父为本页），
-           与「智能体工作台」同一套收编方式——管理员改名称、隐藏或收回角色授权，这里都跟着变 -->
-      <a-tab-pane v-for="t in extraTabs" :key="t.key">
-        <template #tab><span class="pg-tab">{{ t.name }}</span></template>
-      </a-tab-pane>
-    </a-tabs>
+    <div class="app-page-body pg-body">
+      <overview-strip :summary="summary" :active="view" @pick="onPick" />
 
-    <!-- 并入的整页组件自带页头工具栏（计数 + 说明 + 主操作），形态与上面三张表不同，
-         故不套共用卡片，而是整块替掉内容区 -->
-    <component v-if="activeExtra" :is="TAB_COMPONENTS[activeExtra.key]" />
-    <div v-else class="app-page-body">
-      <div class="app-card" style="padding:0;overflow:hidden">
-        <!-- 工具栏：搜索 + 新建（app-list-bar 全局类，卡片内嵌 in-card 变体）；计数只由页签徽标说 -->
+      <nav class="pg-nav" role="tablist" aria-label="权限管理分区">
+        <button v-for="v in navItems" :key="v.key" type="button" class="pg-nav-item"
+                :class="{ on: view === v.key }" role="tab" :aria-selected="view === v.key"
+                @click="setView(v.key)">
+          {{ v.label }}
+          <span v-if="v.count !== null" class="pg-nav-count">{{ v.count }}</span>
+        </button>
+        <span class="pg-nav-sep"></span>
+        <span class="pg-nav-group">接入与治理</span>
+        <button v-for="t in accessTabs" :key="t.key" type="button" class="pg-nav-item"
+                :class="{ on: view === 'access' && accessTab === t.key }"
+                role="tab" :aria-selected="view === 'access' && accessTab === t.key"
+                @click="openAccess(t.key)">
+          {{ t.name }}
+        </button>
+      </nav>
+
+      <!-- ==================== 角色（角色中心） ==================== -->
+      <div v-if="view === 'roles'" class="app-card pg-card pg-card-flush">
+        <a-spin :spinning="rolesLoading">
+          <role-workbench :roles="roles" :stats="roleStats" :menus="menus" :catalog="catalog"
+                          :initial-code="String(route.query.code || '')"
+                          @edit-role="openRoleEdit" @clone-role="cloneRole" @delete-role="askDeleteRole"
+                          @effective="openEffective" @open-members="goMembers"
+                          @refresh="refreshRoles" @select="onRoleSelect" />
+        </a-spin>
+      </div>
+
+      <!-- ==================== 菜单 ==================== -->
+      <div v-else-if="view === 'menus'" class="app-card pg-card pg-card-flush">
         <div class="app-list-bar in-card">
-          <a-input v-model:value="keyword" allow-clear size="small" class="rb-search"
-                   :placeholder="tab === 'apis' ? '搜索路径 / 名称' : tab === 'menus' ? '搜索菜单名称 / 路径' : '搜索角色编码 / 名称'">
-            <template #prefix><search-outlined class="rb-search-ic" /></template>
+          <a-input v-model:value="menuKeyword" allow-clear size="small" class="pg-search"
+                   placeholder="搜索菜单名称 / 路径">
+            <template #prefix><search-outlined class="pg-search-ic" /></template>
           </a-input>
-          <a-select v-if="tab === 'apis'" v-model:value="moduleFilter" allow-clear size="small" class="rb-filter"
-                    placeholder="全部模块" :options="moduleFilterOptions" />
-          <div class="rb-acts">
-            <button v-if="tab === 'roles'" class="app-btn" @click="openEffective">有效权限视图</button>
-            <button v-if="tab === 'menus'" class="app-btn" @click="openMenuCreate"><plus-outlined /> 新建菜单</button>
-            <button v-else-if="tab === 'apis'" class="app-btn" @click="openApiCreate"><plus-outlined /> 登记接口</button>
-            <button v-else class="app-btn" @click="openRoleCreate"><plus-outlined /> 新建角色</button>
-          </div>
+          <button v-for="f in MENU_FILTERS" :key="f.key" type="button" class="pg-chip"
+                  :class="{ on: menuRenderFilter === f.key }" @click="menuRenderFilter = f.key">
+            {{ f.label }}
+          </button>
+          <div class="pg-spacer"></div>
+          <button class="app-btn ghost" type="button" @click="toggleAllMenus">
+            {{ menuExpanded ? '收起全部' : '展开全部' }}
+          </button>
+          <button class="app-btn" type="button" @click="openMenuCreate"><plus-outlined /> 新建菜单</button>
         </div>
 
-        <a-spin :spinning="loading">
-          <!-- ==================== 菜单 ==================== -->
-          <a-table v-if="tab === 'menus'" :data-source="menuTree" :row-key="r => r.id" size="middle" :pagination="false">
+        <a-spin :spinning="menusLoading">
+          <a-table :data-source="menuRows" :row-key="r => r.id" size="middle" :pagination="false" :scroll="{ x: 1040 }">
+            <a-table-column title="" key="drag" width="34">
+              <template #default="{ record }">
+                <span class="pg-drag" draggable="true" title="拖拽到同级另一行上可调整顺序"
+                      @dragstart="onDragStart(record)" @dragend="dragId = ''"
+                      @dragover.prevent @drop.prevent="dropOn(record)">⠿</span>
+              </template>
+            </a-table-column>
             <a-table-column title="菜单" key="name">
               <template #default="{ record }">
-                <span class="rb-menu">
-                  <component :is="iconOf(record.icon)" class="rb-menu-ic" />
-                  <span class="rb-name">{{ record.name }}</span>
-                  <span v-if="record.builtin === 1" class="app-pill builtin">内置</span>
-                  <!-- 渲染位置：sidebar 是默认态不加噪，其余三类必须可见——
-                       尤其 tab 型不出现在侧栏，权限页里不标出来就成了「看不见的菜单」 -->
-                  <span v-if="(record.renderAs || 'sidebar') === 'tab'" class="app-pill rb-ra">Tab</span>
-                  <span v-else-if="(record.renderAs || 'sidebar') === 'group'" class="app-pill rb-ra">分组</span>
-                  <span v-else-if="(record.renderAs || 'sidebar') === 'hidden'" class="app-pill rb-ra">容器</span>
+                <span class="pg-menu" @dragover.prevent @drop.prevent="dropOn(record)">
+                  <span class="pg-indent" :style="{ width: Math.max(0, (record.__depth || 0)) * 16 + 'px' }"></span>
+                  <component :is="iconOf(record.icon)" class="pg-menu-ic" />
+                  <span class="pg-name">{{ record.name }}</span>
+                  <span v-if="record.builtin === 1" class="app-pill blue">内置</span>
+                  <span v-if="record.renderAs === 'tab'" class="app-pill violet">页内 Tab</span>
+                  <span v-else-if="record.renderAs === 'group'" class="app-pill muted">分组</span>
+                  <span v-else-if="record.renderAs === 'hidden'" class="app-pill muted">仅权限</span>
                 </span>
               </template>
             </a-table-column>
             <a-table-column title="路径" key="path">
               <template #default="{ record }">
-                <code v-if="record.path" class="rb-path">{{ record.path }}</code>
-                <span v-else class="rb-none">—</span>
+                <code v-if="record.path" class="pg-path">{{ record.path }}</code>
+                <span v-else class="pg-none">—</span>
               </template>
             </a-table-column>
-            <a-table-column title="图标" key="icon" width="180">
+            <a-table-column title="渲染位置" key="renderAs" width="100">
               <template #default="{ record }">
-                <span v-if="record.icon" class="rb-icon-opt" :title="record.icon">
-                  <component :is="iconOf(record.icon)" class="rb-icon-opt-ic" />
-                  <span class="rb-icon-opt-name">{{ iconLabel(record.icon) }}</span>
+                <span class="app-pill" :class="record.renderAs === 'tab' ? 'violet' : 'muted'">
+                  {{ renderLabel(record.renderAs) }}
                 </span>
-                <span v-else class="rb-none">—</span>
               </template>
             </a-table-column>
-            <a-table-column title="排序" key="sort" width="80">
-              <template #default="{ record }"><span class="rb-none">{{ record.sortOrder ?? 0 }}</span></template>
+            <a-table-column title="排序" key="sort" width="70">
+              <template #default="{ record }"><span class="pg-none">{{ record.sortOrder ?? 0 }}</span></template>
+            </a-table-column>
+            <a-table-column title="可见角色" key="roles" width="200">
+              <template #default="{ record }">
+                <template v-if="menuRolesFailed">
+                  <button class="app-link-btn" @click="loadMenuRoles">取数失败 · 重试</button>
+                </template>
+                <template v-else>
+                  <span v-for="rc in (menuRoles[record.id] || []).slice(0, 3)" :key="rc" class="pg-role-chip">{{ rc }}</span>
+                  <span v-if="(menuRoles[record.id] || []).length > 3" class="pg-role-chip more">
+                    +{{ menuRoles[record.id].length - 3 }}
+                  </span>
+                  <span v-if="!(menuRoles[record.id] || []).length" class="pg-none">无</span>
+                </template>
+              </template>
             </a-table-column>
             <a-table-column title="可见" key="visible" width="80">
               <template #default="{ record }">
-                <!-- 显示/隐藏是这一个菜单自己的开关，不该藏在编辑弹窗里：
-                     隐藏某项是日常动作（临时收口、给新页签让路），点开弹窗只为改这一格太重 -->
-                <a-switch size="small" :checked="record.visible !== 0"
-                          :loading="visibleSaving === record.id"
+                <a-switch size="small" :checked="record.visible !== 0" :loading="visibleSaving === record.id"
                           @change="v => toggleMenuVisible(record, v)" />
               </template>
             </a-table-column>
-            <a-table-column title="操作" key="action" width="130">
+            <a-table-column title="操作" key="action" width="120">
               <template #default="{ record }">
-                <span class="rb-inline">
+                <span class="pg-inline">
                   <button class="app-link-btn" @click="openMenuEdit(record)">编辑</button>
                   <a-popconfirm v-if="record.builtin !== 1" title="删除后绑定该菜单的角色将不再看到它，确定？"
                                 ok-text="删除" cancel-text="取消" @confirm="delMenu(record.id)">
@@ -99,141 +133,152 @@
                 </span>
               </template>
             </a-table-column>
-            <template #emptyText>
-              <div class="rb-empty"><span>暂无菜单</span></div>
-            </template>
           </a-table>
-
-          <!-- ==================== 接口 ==================== -->
-          <a-table v-else-if="tab === 'apis'" :data-source="filteredApis" :row-key="r => r.id" size="middle" :pagination="false">
-            <a-table-column title="方法" key="method" width="90">
-              <template #default="{ record }">
-                <span class="method-pill" :class="'m-' + (record.method || 'ALL').toLowerCase()">{{ record.method }}</span>
-              </template>
-            </a-table-column>
-            <a-table-column title="路径" key="path">
-              <template #default="{ record }"><code class="rb-path">{{ record.path }}</code></template>
-            </a-table-column>
-            <a-table-column title="名称" key="name">
-              <template #default="{ record }">
-                <span v-if="record.name" class="rb-name">{{ record.name }}</span>
-                <span v-else class="rb-none">—</span>
-              </template>
-            </a-table-column>
-            <a-table-column title="模块" key="module" width="130">
-              <template #default="{ record }">
-                <span v-if="record.module" class="rb-name">{{ record.module }}</span>
-                <span v-else class="rb-none">—</span>
-              </template>
-            </a-table-column>
-            <a-table-column title="授权点 / 已授权角色" key="perm" width="230">
-              <template #default="{ record }">
-                <template v-if="record.permissionCode">
-                  <code class="rb-path" style="margin-right:6px">{{ record.permissionCode }}</code>
-                  <span v-if="rolesOfPermission(record.permissionCode).length" class="tree-count">
-                    {{ rolesOfPermission(record.permissionCode).join('、') }}
-                  </span>
-                  <span v-else class="rb-none">未授权给任何角色</span>
-                </template>
-                <span v-else class="rb-none">公开 / 未标注</span>
-              </template>
-            </a-table-column>
-            <a-table-column title="所属菜单" key="menus" width="200">
-              <template #default="{ record }">
-                <template v-if="(record.menuIds || []).length">
-                  <span v-for="mid in record.menuIds" :key="mid" class="menu-tag">{{ menuNameOf(mid) }}</span>
-                </template>
-                <span v-else class="rb-none">未挂菜单</span>
-              </template>
-            </a-table-column>
-            <a-table-column title="操作" key="action" width="130">
-              <template #default="{ record }">
-                <span class="rb-inline">
-                  <button class="app-link-btn" @click="openApiEdit(record)">编辑</button>
-                  <a-popconfirm :title="record.builtin === 1 ? '代码中仍存在的端点重启后会重新登记，确定删除？' : '确定删除该接口登记？'"
-                                ok-text="删除" cancel-text="取消" @confirm="delApi(record.id)">
-                    <button class="app-link-btn danger">删除</button>
-                  </a-popconfirm>
-                </span>
-              </template>
-            </a-table-column>
-            <template #emptyText>
-              <div class="rb-empty"><span>{{ keyword ? '没有匹配的接口' : '暂无接口（启动时会自动扫描登记）' }}</span></div>
-            </template>
-          </a-table>
-
-          <!-- ==================== 角色 ==================== -->
-          <a-table v-else :data-source="filteredRoles" :row-key="r => r.code" size="middle" :pagination="false">
-            <a-table-column title="角色" key="code">
-              <template #default="{ record }">
-                <span class="rb-menu">
-                  <span class="rb-name">{{ record.name }}</span>
-                  <code class="rb-uid">{{ record.code }}</code>
-                  <span v-if="record.builtin === 1" class="app-pill builtin">内置</span>
-                </span>
-              </template>
-            </a-table-column>
-            <a-table-column title="管理员级" key="adminFlag" width="110">
-              <template #default="{ record }">
-                <span class="app-pill" :class="record.adminFlag === 1 ? 'ok' : ''">{{ record.adminFlag === 1 ? '是' : '否' }}</span>
-              </template>
-            </a-table-column>
-            <a-table-column title="租户" key="tenant" width="100">
-              <template #default="{ record }">
-                <code v-if="record.tenantId" class="rb-uid">{{ record.tenantId }}</code>
-                <span v-else class="rb-none">—</span>
-              </template>
-            </a-table-column>
-            <a-table-column title="成员数" key="members" width="90">
-              <template #default="{ record }">
-                <span class="tree-count" :class="{ warn: memberCountOf(record.code) === 0 && record.builtin !== 1 }">{{ memberCountOf(record.code) }}</span>
-              </template>
-            </a-table-column>
-            <a-table-column title="状态" key="status" width="90">
-              <template #default="{ record }">
-                <span class="app-pill" :class="record.status === 0 ? 'warn' : 'ok'">{{ record.status === 0 ? '停用' : '启用' }}</span>
-              </template>
-            </a-table-column>
-            <a-table-column title="描述" key="description">
-              <template #default="{ record }">
-                <span v-if="record.description" class="rb-desc">{{ record.description }}</span>
-                <span v-else class="rb-none">—</span>
-              </template>
-            </a-table-column>
-            <a-table-column title="操作" key="action" width="210">
-              <template #default="{ record }">
-                <span class="rb-inline">
-                  <button class="app-link-btn" @click="openRoleEdit(record)">编辑</button>
-                  <button class="app-link-btn" @click="openDrawer(record)">权限配置</button>
-                  <a-popconfirm v-if="record.builtin !== 1" title="删除后其绑定一并清除，确定？"
-                                ok-text="删除" cancel-text="取消" @confirm="delRole(record.code)">
-                    <button class="app-link-btn danger">删除</button>
-                  </a-popconfirm>
-                </span>
-              </template>
-            </a-table-column>
-            <template #emptyText>
-              <div class="rb-empty">
-                <span>{{ keyword ? '没有匹配的角色' : '暂无角色' }}</span>
-                <button v-if="!keyword" class="app-link-btn" @click="openRoleCreate">新建第一个角色</button>
-              </div>
-            </template>
-          </a-table>
+          <div v-if="!menuRows.length" class="pg-empty">没有匹配的菜单</div>
         </a-spin>
+        <div class="pg-foot-tip">拖拽仅在同级内生效；隐藏父级会使其页内 Tab 失去宿主，操作前会点名受影响的 Tab。</div>
+      </div>
+
+      <!-- ==================== 接口 ==================== -->
+      <div v-else-if="view === 'apis'" class="pg-api-layout">
+        <aside class="pg-rail">
+          <div class="pg-rail-title">状态</div>
+          <button v-for="f in API_STATUS" :key="f.key" type="button" class="pg-rail-row"
+                  :class="{ on: apiStatus === f.key }" @click="apiStatus = f.key">
+            <span>{{ f.label }}</span><span class="pg-rail-n">{{ f.count() }}</span>
+          </button>
+          <div class="pg-rail-title">按业务模块</div>
+          <button type="button" class="pg-rail-row" :class="{ on: !apiModule }" @click="apiModule = ''">
+            <span>全部模块</span><span class="pg-rail-n">{{ apis.length }}</span>
+          </button>
+          <button v-for="m in moduleOptions" :key="m" type="button" class="pg-rail-row"
+                  :class="{ on: apiModule === m }" @click="apiModule = m">
+            <span class="pg-ellipsis">{{ m }}</span><span class="pg-rail-n">{{ moduleCount(m) }}</span>
+          </button>
+        </aside>
+
+        <div class="app-card pg-card pg-card-flush">
+          <div class="app-list-bar in-card">
+            <a-input v-model:value="apiKeyword" allow-clear size="small" class="pg-search"
+                     placeholder="搜索路径 / 接口名 / 授权点">
+              <template #prefix><search-outlined class="pg-search-ic" /></template>
+            </a-input>
+            <div class="pg-spacer"></div>
+            <button class="app-btn ghost" type="button" @click="loadApis">刷新</button>
+            <button class="app-btn" type="button" @click="openApiCreate"><plus-outlined /> 登记接口</button>
+          </div>
+
+          <a-spin :spinning="apisLoading">
+            <a-table :data-source="pagedApis" :row-key="r => r.id" size="middle" :pagination="false"
+                     :row-selection="{ selectedRowKeys: selectedApiIds, onChange: onSelectApis }">
+              <a-table-column title="方法" key="method" width="82">
+                <template #default="{ record }">
+                  <span class="method-pill" :class="'m-' + (record.method || 'ALL').toLowerCase()">{{ record.method }}</span>
+                </template>
+              </a-table-column>
+              <a-table-column title="路径" key="path">
+                <template #default="{ record }"><code class="pg-path">{{ record.path }}</code></template>
+              </a-table-column>
+              <a-table-column title="名称" key="name" width="150">
+                <template #default="{ record }">
+                  <span v-if="record.name" class="pg-name">{{ record.name }}</span>
+                  <span v-else class="pg-none">—</span>
+                </template>
+              </a-table-column>
+              <a-table-column title="授权点" key="perm" width="170">
+                <template #default="{ record }">
+                  <template v-if="record.permissionCode">
+                    <b class="pg-perm-name">{{ permTitle(record.permissionCode) }}</b>
+                    <div><code class="pg-code">{{ record.permissionCode }}</code></div>
+                  </template>
+                  <span v-else class="app-pill warn">未标注</span>
+                </template>
+              </a-table-column>
+              <a-table-column title="已授权角色" key="roles" width="150">
+                <template #default="{ record }">
+                  <template v-if="permRolesFailed">
+                    <button class="app-link-btn" @click="loadPermRoles">取数失败 · 重试</button>
+                  </template>
+                  <template v-else-if="record.permissionCode && rolesOfPerm(record.permissionCode).length">
+                    <span v-for="rc in rolesOfPerm(record.permissionCode).slice(0, 2)" :key="rc" class="pg-role-chip">{{ rc }}</span>
+                    <span v-if="rolesOfPerm(record.permissionCode).length > 2" class="pg-role-chip more">
+                      +{{ rolesOfPerm(record.permissionCode).length - 2 }}
+                    </span>
+                  </template>
+                  <span v-else-if="record.permissionCode" class="app-pill err">未授权</span>
+                  <span v-else class="pg-none">公开 / 未标注</span>
+                </template>
+              </a-table-column>
+              <a-table-column title="所属菜单" key="menus" width="150">
+                <template #default="{ record }">
+                  <template v-if="(record.menuIds || []).length">
+                    <span v-for="mid in (record.menuIds || []).slice(0, 2)" :key="mid" class="pg-role-chip">{{ menuNameOf(mid) }}</span>
+                    <span v-if="(record.menuIds || []).length > 2" class="pg-role-chip more">
+                      +{{ record.menuIds.length - 2 }}
+                    </span>
+                  </template>
+                  <span v-else class="pg-none">未挂菜单</span>
+                </template>
+              </a-table-column>
+              <a-table-column title="来源" key="builtin" width="80">
+                <template #default="{ record }">
+                  <span class="app-pill" :class="record.builtin === 1 ? 'muted' : 'violet'">
+                    {{ record.builtin === 1 ? '扫描' : '手工' }}
+                  </span>
+                </template>
+              </a-table-column>
+              <a-table-column title="操作" key="action" width="96">
+                <template #default="{ record }">
+                  <span class="pg-inline">
+                    <button class="app-link-btn" @click="openApiEdit(record)">编辑</button>
+                    <a-popconfirm :title="record.builtin === 1 ? '代码中仍存在的端点重启后会重新登记，确定删除？' : '确定删除该接口登记？'"
+                                  ok-text="删除" cancel-text="取消" @confirm="delApi(record.id)">
+                      <button class="app-link-btn danger">删除</button>
+                    </a-popconfirm>
+                  </span>
+                </template>
+              </a-table-column>
+            </a-table>
+
+            <div v-if="!pagedApis.length" class="pg-empty">
+              {{ apiKeyword || apiModule || apiStatus !== 'all' ? '没有匹配的接口' : '暂无接口（启动时会自动扫描登记）' }}
+            </div>
+
+            <div class="pg-pager">
+              <span>共 {{ filteredApis.length }} 条 · 第 {{ apiPage }} / {{ apiPageCount }} 页</span>
+              <div class="pg-spacer"></div>
+              <button class="pg-pbtn" type="button" :disabled="apiPage <= 1" @click="apiPage--">‹</button>
+              <span class="pg-pbtn on">{{ apiPage }}</span>
+              <button class="pg-pbtn" type="button" :disabled="apiPage >= apiPageCount" @click="apiPage++">›</button>
+            </div>
+          </a-spin>
+
+          <div v-if="selectedApiIds.length" class="pg-bulk">
+            <div class="pg-bulk-sel">
+              已选 {{ selectedApiIds.length }} 个接口
+              <span>· 批量归属菜单</span>
+            </div>
+            <div class="pg-spacer"></div>
+            <button class="app-btn ghost" type="button" @click="selectedApiIds = []">取消选择</button>
+            <button class="app-btn" type="button" @click="openBatchMenu">批量归属菜单</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ==================== 接入与治理 ==================== -->
+      <div v-else-if="activeAccess" class="pg-access">
+        <component :is="activeAccess" />
       </div>
     </div>
 
-    <!-- 菜单弹窗 -->
-    <a-modal v-model:open="menuModal" :title="menuForm.id ? '编辑菜单' : '新建菜单'" :width="480"
+    <!-- ==================== 菜单弹窗 ==================== -->
+    <a-modal v-model:open="menuModal" :title="menuForm.id ? '编辑菜单' : '新建菜单'" :width="500"
              :confirm-loading="saving" ok-text="保存" cancel-text="取消" @ok="saveMenu">
       <a-form layout="vertical" style="margin-top:4px">
         <a-form-item label="父菜单（可选）">
           <a-tree-select v-model:value="menuForm.parentId" allow-clear tree-default-expand-all
                          placeholder="空 = 顶级菜单" style="width:100%"
                          :tree-data="parentTreeData" :field-names="{ label: 'name', value: 'id', children: 'children' }" />
-          <div v-if="menuForm.renderAs === 'tab'" class="form-tip">
-            Tab 型必须挂在宿主页面（如「智能体」）名下，且路径填 <code>/agents?tab=key</code> 形式。
-          </div>
         </a-form-item>
         <a-form-item label="渲染位置">
           <a-radio-group v-model:value="menuForm.renderAs" button-style="solid" size="small">
@@ -257,31 +302,29 @@
           <a-select v-model:value="menuForm.icon" allow-clear show-search style="width:100%"
                     placeholder="默认图标" :options="iconOptions" :filter-option="filterIcon">
             <template #option="opt">
-              <span class="rb-icon-opt">
-                <component :is="iconOf(opt.value)" class="rb-icon-opt-ic" />
-                <span class="rb-icon-opt-name">{{ opt.label }}</span>
-                <span class="rb-icon-opt-key">{{ opt.value }}</span>
+              <span class="pg-icon-opt">
+                <component :is="iconOf(opt.value)" class="pg-icon-opt-ic" />
+                <span class="pg-icon-opt-name">{{ opt.label }}</span>
+                <span class="pg-code">{{ opt.value }}</span>
               </span>
             </template>
             <template #optionLabel="opt">
-              <!-- opt 可能为 undefined：库里存了不在 ICONS 里的旧图标名时，select 找不到对应 option，
-                   antd 的 optionLabelRender 会以 undefined 调用本插槽（SingleSelector.js:135），必须容错 -->
-              <span class="rb-icon-opt">
-                <component :is="iconOf(opt?.value)" class="rb-icon-opt-ic" />
-                <span class="rb-icon-opt-name">{{ opt?.label }}</span>
+              <span class="pg-icon-opt">
+                <component :is="iconOf(opt?.value)" class="pg-icon-opt-ic" />
+                <span class="pg-icon-opt-name">{{ opt?.label }}</span>
               </span>
             </template>
           </a-select>
         </a-form-item>
         <a-form-item label="排序">
           <a-input-number v-model:value="menuForm.sort" :min="0" :max="9999" style="width:100%" />
-          <div class="form-tip">数字小的排前面。</div>
+          <div class="form-tip">数字小的排前面；也可以直接拖拽列表行调整同级顺序。</div>
         </a-form-item>
       </a-form>
     </a-modal>
 
-    <!-- 接口弹窗 -->
-    <a-modal v-model:open="apiModal" :title="apiForm.id ? '编辑接口' : '登记接口'" :width="500"
+    <!-- ==================== 接口弹窗 ==================== -->
+    <a-modal v-model:open="apiModal" :title="apiForm.id ? '编辑接口' : '登记接口'" :width="520"
              :confirm-loading="saving" ok-text="保存" cancel-text="取消" @ok="saveApi">
       <a-form layout="vertical" style="margin-top:4px">
         <a-form-item label="HTTP 方法">
@@ -309,37 +352,26 @@
       </a-form>
     </a-modal>
 
-    <!-- 角色弹窗 -->
-    <a-modal v-model:open="effectiveModal" title="有效权限视图" :width="560" :footer="null">
+    <!-- ==================== 批量归属菜单 ==================== -->
+    <a-modal v-model:open="batchModal" title="批量归属菜单" :width="460"
+             :confirm-loading="batchSaving" ok-text="应用" cancel-text="取消" @ok="saveBatchMenu">
       <p class="form-tip" style="margin-top:0">
-        给定登录账号，算出他实际可用的授权点集合（各角色 allow 并集 − 全局 deny；管理员级显示 admin:all-allow）。排查「为什么进不去 / 为什么进得来」从这里入手。
+        将 {{ selectedApiIds.length }} 个接口的所属菜单设为下面所选（覆盖原有归属）。归属只影响权限页分组，不影响鉴权。
       </p>
-      <a-input-search v-model:value="effectiveUid" placeholder="输入登录账号（uid）" enter-button="计算"
-                      :loading="effectiveLoading" @search="queryEffective" />
-      <div v-if="effectiveError" class="form-tip" style="color:var(--app-danger,#c0392b)">{{ effectiveError }}</div>
-      <template v-if="effectiveResult">
-        <div class="form-tip" style="margin:10px 0 4px">
-          <b>{{ effectiveResult.uid }}</b> · 角色：
-          <code v-for="r in effectiveResult.roles" :key="r" class="rb-uid" style="margin-right:6px">{{ r }}</code>
-        </div>
-        <a-tree v-if="effectiveGroups.length" default-expand-all :selectable="false" :tree-data="effectiveGroups">
-          <template #title="node">
-            <span class="tree-menu">
-              <span class="rb-name">{{ node.module }}</span>
-              <span class="tree-count">{{ (node.children || []).length }}</span>
-            </span>
-          </template>
-        </a-tree>
-        <div v-else class="rb-empty" style="padding:20px 0">该账号当前没有任何可用授权点</div>
-      </template>
+      <a-tree-select v-model:value="batchMenuIds" multiple tree-checkable :tree-check-strictly="true"
+                     :tree-data="menuSelectTree" :field-names="{ label: 'name', value: 'id', children: 'children' }"
+                     allow-clear tree-default-expand-all :max-tag-count="4" style="width:100%"
+                     placeholder="不选择 = 清空归属" />
     </a-modal>
-    <a-modal v-model:open="roleModal" :title="roleForm.isEdit ? '编辑角色' : '新建角色'" :width="460"
+
+    <!-- ==================== 角色弹窗 ==================== -->
+    <a-modal v-model:open="roleModal" :title="roleForm.isEdit ? '编辑角色' : '新建角色'" :width="480"
              :confirm-loading="saving" ok-text="保存" cancel-text="取消" @ok="saveRole">
       <a-form layout="vertical" style="margin-top:4px">
         <a-form-item label="角色编码">
           <a-input v-model:value="roleForm.code" :disabled="roleForm.isEdit"
                    placeholder="小写字母开头，如 editor（建后不可修改）" />
-          <div class="form-tip">即用户身上的角色值（用户建档时选择）。</div>
+          <div class="form-tip">即用户身上的角色值（成员建档时选择）。</div>
         </a-form-item>
         <a-form-item label="角色名称">
           <a-input v-model:value="roleForm.name" :maxlength="50" placeholder="如 内容编辑" />
@@ -348,8 +380,8 @@
           <a-input v-model:value="roleForm.description" :maxlength="255" placeholder="角色说明" />
         </a-form-item>
         <a-form-item label="管理员级">
-          <a-switch v-model:checked="roleAdmin" :disabled="roleForm.builtin" checked-children="是" un-checked-children="否" />
-          <div class="form-tip">管理员级角色放行全部接口与菜单，无需逐条绑定；内置角色的该开关不可改。</div>
+          <a-switch v-model:checked="roleAdmin" :disabled="!!roleForm.builtin" checked-children="是" un-checked-children="否" />
+          <div class="form-tip">管理员级角色默认拥有全部动作，只需在权限配置里设置禁止项。</div>
         </a-form-item>
         <a-form-item v-if="!roleForm.builtin" label="状态">
           <a-radio-group v-model:value="roleForm.status" button-style="solid" size="small">
@@ -365,184 +397,353 @@
                       { label: '本部门创建的可读', value: 'department' },
                       { label: '本部门及下级部门创建的可读', value: 'department_and_children' },
                       { label: '全部资源可读（只读口径）', value: 'all' }]" />
-          <div class="form-tip">范围只授予「看」（READ），管理权仍在创建者手里；资源侧没有共享入口（批次 C2）。</div>
+          <div class="form-tip">范围只授予「看」（READ），管理权仍在创建者手里。</div>
         </a-form-item>
-        <a-form-item v-if="roleForm.scopeType === 'department' || roleForm.scopeType === 'department_and_children'" label="生效部门">
+        <a-form-item v-if="roleForm.scopeType.startsWith('department')" label="生效部门">
           <a-select v-model:value="roleForm.scopeDepartmentId" :options="scopeDeptOptions" allow-clear
-                    placeholder="空=按成员自己的部门判定" style="width:100%" />
-          <div class="form-tip">
-            指定后：该角色成员看<b>那个部门</b>（含下级）创建的资源，自己不必在里面——审计、巡检这类岗位就这么配，
-            也是服务账号（本身没有部门）唯一能套上部门范围的写法。留空 = 沿用「看自己所在部门」。
-          </div>
+                    placeholder="空 = 按成员自己的部门判定" style="width:100%" />
         </a-form-item>
       </a-form>
     </a-modal>
 
-    <!-- 角色权限抽屉（单树：菜单 + 名下接口；勾菜单自动带上接口） -->
-    <a-drawer v-model:open="drawer" :title="drawerTitle" :width="580" destroy-on-close>
-      <a-alert v-if="drawerRole && drawerRole.adminFlag === 1" type="info" show-icon style="margin-bottom:12px"
-               message="管理员级角色天然拥有全部授权点；要收它的口子请用行尾的「排除」" />
-      <p class="form-tip" style="margin-top:0">
-        侧栏菜单控制「看得见」，功能授权点控制「调得动」——按业务动作授权，同一动作跨端点只勾一次。未授予的授权点调用将返回 403。
-        行尾「排除」压过勾选：勾了也调不动，对管理员级角色同样生效（「只读管理员」就是这么配的）。
-      </p>
-      <a-input v-model:value="drawerKeyword" allow-clear size="small" class="drawer-search"
-               placeholder="搜索菜单名称 / 授权点编码">
-        <template #prefix><search-outlined class="rb-search-ic" /></template>
-      </a-input>
-      <template v-if="drawer && (menuDrawerTreeFiltered.length || permDrawerTree.length)">
-        <div class="drawer-sec-title">侧栏菜单</div>
-        <a-tree v-if="menuDrawerTreeFiltered.length" checkable default-expand-all :selectable="false"
-                :check-strictly="true" :checked-keys="menuCheckedKeys" @check="onMenuCheck"
-                :tree-data="menuDrawerTreeFiltered">
-          <template #title="node">
-            <span class="tree-menu">
-              <component :is="iconOf(node.icon)" class="rb-menu-ic" />
-              <span class="rb-name">{{ node.name }}</span>
-            </span>
-          </template>
-        </a-tree>
-        <div class="drawer-sec-title">功能授权点</div>
-        <a-tree v-if="permDrawerTree.length" checkable default-expand-all :selectable="false"
-                :check-strictly="true" :checked-keys="permCheckedKeys" @check="onPermCheck"
-                :tree-data="permDrawerTree">
-          <template #title="node">
-            <span v-if="node.kind === 'perm'" class="tree-api">
-              <code class="rb-path">{{ node.label }}</code>
-              <button class="app-link-btn rb-deny" :class="{ on: deniedSet.has(node.key) }"
-                      :title="deniedSet.has(node.key) ? '取消排除' : '排除：勾了也调不动（压过本角色与其它角色的授权）'"
-                      @click.stop="toggleDeny(node.key)">
-                {{ deniedSet.has(node.key) ? '已排除' : '排除' }}
-              </button>
-              <button v-if="deniedSet.has(node.key)" class="app-link-btn rb-deny rb-deny-exempt"
-                      :class="{ on: denyMap[node.key] === 1 }"
-                      title="只压本角色自己给的授权：别人（或管理员级）仍能用这个动作"
-                      @click.stop="toggleExempt(node.key)">只压本角色</button>
-            </span>
-            <span v-else class="tree-menu">
-              <span class="rb-name">{{ node.groupName }}</span>
-              <span class="tree-count" :class="{ warn: node.grantedCount < node.ownedCount }">
-                {{ node.grantedCount }}/{{ node.ownedCount }}
-              </span>
-              <span v-if="groupDeniedCount(node)" class="tree-count deny">排除 {{ groupDeniedCount(node) }}</span>
-            </span>
-          </template>
-        </a-tree>
-      </template>
-      <div v-else-if="drawer" class="drawer-empty">
-        {{ drawerKeyword ? '没有匹配的菜单或授权点' : '暂无可配置的菜单或授权点' }}
-      </div>
-      <template #footer>
-        <button class="app-btn" style="margin-right:8px" @click="drawer = false">取消</button>
-        <button class="app-btn primary" :disabled="drawerSaving" @click="saveDrawer">
-          {{ drawerSaving ? '保存中…' : '保存权限' }}
-        </button>
-      </template>
-    </a-drawer>
+    <effective-permissions-modal v-model:open="effectiveOpen" :initial-uid="effectiveUid" :catalog="catalog" />
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch, onMounted } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
-import { SearchOutlined, PlusOutlined, MessageOutlined, RobotOutlined, DatabaseOutlined, TeamOutlined,
-         BarChartOutlined, ExperimentOutlined, SafetyOutlined, SettingOutlined, AppstoreOutlined,
-         FolderOutlined, UserOutlined, FileOutlined, FileTextOutlined } from '@ant-design/icons-vue'
-import { listMenus, createMenu, updateMenu, deleteMenu,
-         listApis, createApi, updateApi, deleteApi,
-         listRoles, createRole, updateRole, deleteRole,
-         getRolePermissions,
-         getPermissionCatalog, saveRolePermissionPoints, getEffectivePermissions,
-         getRoleMemberCounts, getPermissionRoles, listDepartments,
-         getRoleDataScope, saveRoleDataScope } from '../api'
+import {
+  SearchOutlined, PlusOutlined, EyeOutlined, MessageOutlined, RobotOutlined, DatabaseOutlined,
+  TeamOutlined, BarChartOutlined, ExperimentOutlined, SafetyOutlined, SettingOutlined,
+  AppstoreOutlined, FolderOutlined, UserOutlined, FileOutlined, FileTextOutlined
+} from '@ant-design/icons-vue'
+import {
+  listMenus, createMenu, updateMenu, deleteMenu,
+  listApis, createApi, updateApi, deleteApi,
+  listRoles, createRole, updateRole, deleteRole,
+  getRolePermissions, saveRolePermissionPoints,
+  getPermissionCatalog, getRoleOverview, getMenuRoles, getPermissionRoles,
+  listDepartments, getRoleDataScope, saveRoleDataScope
+} from '../api'
 import { ensureAuth } from '../utils/auth'
+import { permissionTitle } from '../utils/permissions'
+import OverviewStrip from '../components/permissions/OverviewStrip.vue'
+import RoleWorkbench from '../components/permissions/RoleWorkbench.vue'
+import EffectivePermissionsModal from '../components/permissions/EffectivePermissionsModal.vue'
 import IdentityProvidersPage from './IdentityProvidersPage.vue'
 import ServiceAccountsPage from './ServiceAccountsPage.vue'
 import ContentSafetyPage from './ContentSafetyPage.vue'
 
-/* ==================== 页签：状态落 URL / 数据懒加载 / 各页签独立记忆筛选 ==================== */
 const route = useRoute()
 const router = useRouter()
 
-/** 本页固有的三个页签：它们就是「权限管理」本身，不作为菜单行存在 */
-const BASE_TABS = ['menus', 'apis', 'roles']
-/** tabKey → 组件。菜单表不知道组件的存在，这张表是数据与视图之间唯一的桥（同 AgentsHubPage） */
-const TAB_COMPONENTS = { identity: IdentityProvidersPage, service: ServiceAccountsPage,
-                         content: ContentSafetyPage }
-/** 从 tab 菜单的 path（/permissions?tab=key）解析组件映射 key */
-const tabKeyOf = p => {
-  try { return new URLSearchParams(String(p || '').split('?')[1] || '').get('tab') } catch (e) { return null }
+/* ==================== 视图：角色中心 + 二级导航 ==================== */
+const ACCESS_COMPONENTS = {
+  identity: IdentityProvidersPage,
+  service: ServiceAccountsPage,
+  content: ContentSafetyPage
+}
+const accessTabs = ref([])
+const activeAccess = computed(() => (activeAccessKey.value ? ACCESS_COMPONENTS[activeAccessKey.value] : null))
+
+const tabKeyOf = path => {
+  try { return new URLSearchParams(String(path || '').split('?')[1] || '').get('tab') } catch (e) { return null }
 }
 
-const extraTabs = ref([])
-const tabKeys = computed(() => BASE_TABS.concat(extraTabs.value.map(t => t.key)))
-const tab = computed({
-  get: () => (tabKeys.value.includes(route.query.tab) ? route.query.tab : 'menus'),
-  set: v => router.replace({ path: '/permissions', query: v === 'menus' ? {} : { tab: v } })
+const view = computed({
+  get: () => {
+    const v = route.query.view
+    if (['roles', 'menus', 'apis', 'access'].includes(v)) return v
+    const t = route.query.tab
+    if (['menus', 'apis', 'roles'].includes(t)) return t
+    if (t && ACCESS_COMPONENTS[t]) return 'access'
+    return 'roles'
+  },
+  set: v => {
+    const query = v === 'roles' ? {} : { view: v }
+    if (v === 'access') query.tab = activeAccessKey.value
+    router.replace({ path: '/permissions', query })
+  }
 })
-const activeExtra = computed(() => extraTabs.value.find(t => t.key === tab.value) || null)
+const activeAccessKey = computed(() => {
+  const t = route.query.tab
+  if (t && ACCESS_COMPONENTS[t]) return t
+  return accessTabs.value.length ? accessTabs.value[0].key : 'identity'
+})
+
+function setView (v) {
+  if (v === 'access') { openAccess(activeAccessKey.value); return }
+  view.value = v
+}
+function openAccess (key) {
+  router.replace({ path: '/permissions', query: { view: 'access', tab: key } })
+}
+function onPick (key) {
+  if (key === 'pending') { message.info('空角色可在角色列表用「空角色」筛选；临期授权见成员管理顶部提醒'); return }
+  if (key === 'permissions') { setView('roles'); return }
+  setView(key)
+}
 
 onMounted(async () => {
-  // AppLayout 挂载时已 ensureAuth，此处命中模块级缓存，不重复请求
   const info = await ensureAuth()
   const host = (info?.menus || []).find(m => m && m.path === '/permissions')
-  extraTabs.value = ((host && host.children) || [])
+  const fromMenu = ((host && host.children) || [])
     .filter(c => c && c.renderAs === 'tab')
     .map(c => ({ id: c.id, key: tabKeyOf(c.path), name: c.name }))
-    .filter(t => t.key && TAB_COMPONENTS[t.key])  // 菜单表里有、代码里还没映射的 Tab 不渲染（升级半程态容错）
+    .filter(t => t.key && ACCESS_COMPONENTS[t.key])
+  // 菜单表里没有这三条 Tab 时仍给出默认入口：它们是权限域固有的一部分，不该因为少一条菜单记录而消失
+  accessTabs.value = fromMenu.length
+    ? fromMenu
+    : [
+        { id: 'default-identity', key: 'identity', name: '认证源' },
+        { id: 'default-service', key: 'service', name: '服务账号' },
+        { id: 'default-content', key: 'content', name: '内容安全' }
+      ]
 })
 
-/** 每个页签各记自己的搜索/筛选（此前共用一个 keyword，切页签即被清空） */
-const filters = reactive({
-  menus: { keyword: '' },
-  apis: { keyword: '', module: undefined },
-  roles: { keyword: '' }
-})
-const keyword = computed({
-  get: () => filters[tab.value].keyword,
-  set: v => { filters[tab.value].keyword = v }
+/* ==================== 概览 / 导航计数 ==================== */
+const overview = ref(null)
+const summary = computed(() => (overview.value && overview.value.summary) || {})
+const roleStats = computed(() => (overview.value && overview.value.roles) || [])
+
+/** 二级导航计数：数据未到时显示「—」而不是 0 */
+const navItems = computed(() => {
+  const s = summary.value
+  const n = v => (v === undefined || v === null ? null : v)
+  return [
+    { key: 'roles', label: '角色', count: n(s.roles) },
+    { key: 'menus', label: '菜单', count: n(s.menus) },
+    { key: 'apis', label: '接口', count: n(s.apis) }
+  ]
 })
 
-const loading = ref(false)
-const saving = ref(false)
+async function loadOverview () {
+  try {
+    const r = await getRoleOverview()
+    if (r && r.success !== false) overview.value = r.data || null
+  } catch (e) { /* 概览失败保留「—」，不阻塞列表 */ }
+}
+
+/* ==================== 数据 ==================== */
 const menus = ref([])
 const apis = ref([])
 const roles = ref([])
+const catalog = ref([])
+const memberCounts = ref({})
+const permRoles = ref({})
+const menuRoles = ref({})
+const permRolesFailed = ref(false)
+const menuRolesFailed = ref(false)
 
-// ==================== 公共工具 ====================
+const menusLoading = ref(false)
+const apisLoading = ref(false)
+const rolesLoading = ref(false)
+let menusLoaded = false
+let apisLoaded = false
+let rolesLoaded = false
+let catalogLoaded = false
+
+async function loadMenus (force = false) {
+  if (menusLoaded && !force) return
+  menusLoading.value = true
+  try {
+    const r = await listMenus()
+    menus.value = (r && r.data) || []
+    menusLoaded = true
+  } catch (e) { message.error(e.message || '菜单加载失败') } finally { menusLoading.value = false }
+}
+async function loadApis (force = false) {
+  if (apisLoaded && !force) return
+  apisLoading.value = true
+  try {
+    const r = await listApis()
+    apis.value = (r && r.data) || []
+    apisLoaded = true
+  } catch (e) { message.error(e.message || '接口加载失败') } finally { apisLoading.value = false }
+  loadPermRoles()
+  loadMenus()
+  loadCatalog()
+}
+async function loadRoles (force = false) {
+  if (rolesLoaded && !force) return
+  rolesLoading.value = true
+  try {
+    const r = await listRoles()
+    roles.value = (r && r.data) || []
+    rolesLoaded = true
+  } catch (e) { message.error(e.message || '角色加载失败') } finally { rolesLoading.value = false }
+}
+async function loadCatalog (force = false) {
+  if (catalogLoaded && !force) return
+  try {
+    const r = await getPermissionCatalog()
+    catalog.value = (r && r.data) || []
+    catalogLoaded = true
+  } catch (e) { /* 目录失败时编辑器按编码展示 */ }
+}
+async function loadPermRoles () {
+  try {
+    const r = await getPermissionRoles()
+    if (r && r.success === false) throw new Error(r.msg || '反查失败')
+    permRoles.value = (r && r.data) || {}
+    permRolesFailed.value = false
+  } catch (e) { permRolesFailed.value = true }
+}
+async function loadMenuRoles () {
+  try {
+    const r = await getMenuRoles()
+    if (r && r.success === false) throw new Error(r.msg || '反查失败')
+    menuRoles.value = (r && r.data) || {}
+    menuRolesFailed.value = false
+  } catch (e) { menuRolesFailed.value = true }
+}
+async function refreshRoles () {
+  await Promise.all([loadRoles(true), loadOverview()])
+}
+
+watch(view, v => {
+  if (v === 'roles') {
+    loadRoles(); loadMenus(); loadCatalog(); loadOverview()
+  } else if (v === 'menus') {
+    loadMenus(); loadMenuRoles(); loadOverview()
+  } else if (v === 'apis') {
+    loadApis(); loadOverview()
+  }
+}, { immediate: true })
+
+/* ==================== 角色 ==================== */
+const roleModal = ref(false)
+const roleForm = ref(blankRole())
+const roleAdmin = ref(false)
+const scopeDeptOptions = ref([])
+let scopeDeptLoaded = false
+
+function blankRole () {
+  return { isEdit: false, code: '', name: '', description: '', status: 1, builtin: 0, scopeType: 'own', scopeDepartmentId: null }
+}
+async function ensureScopeDepts () {
+  if (scopeDeptLoaded) return
+  try {
+    const r = await listDepartments()
+    scopeDeptOptions.value = ((r && r.data) || []).map(d => ({ label: d.name, value: d.id }))
+    scopeDeptLoaded = true
+  } catch (e) { /* 部门选项失败不阻塞弹窗 */ }
+}
+function openRoleCreate () { roleForm.value = blankRole(); roleAdmin.value = false; roleModal.value = true; ensureScopeDepts() }
+async function openRoleEdit (r) {
+  roleForm.value = {
+    isEdit: true, code: r.code, name: r.name || '', description: r.description || '',
+    status: r.status === 0 ? 0 : 1, builtin: r.builtin || 0, scopeType: 'own', scopeDepartmentId: null
+  }
+  roleAdmin.value = r.adminFlag === 1
+  roleModal.value = true
+  ensureScopeDepts()
+  try {
+    const d = await getRoleDataScope(r.code)
+    roleForm.value.scopeType = (d && d.data && d.data.scopeType) || 'own'
+    roleForm.value.scopeDepartmentId = (d && d.data && d.data.departmentId) || null
+  } catch (e) { /* 回显失败按默认 own，保存前不写回 */ }
+}
+async function saveRole () {
+  const f = roleForm.value
+  if (!f.isEdit && !/^[a-z][a-z0-9_-]{0,19}$/.test(String(f.code || '').trim())) {
+    message.warning('角色编码：小写字母开头，仅小写字母/数字/_/-，≤20 字符'); return
+  }
+  if (!String(f.name || '').trim()) { message.warning('请填写角色名称'); return }
+  saving.value = true
+  try {
+    const body = { name: f.name, description: f.description, adminFlag: roleAdmin.value ? 1 : 0, status: f.status }
+    const r = f.isEdit ? await updateRole(f.code, body) : await createRole({ ...body, code: String(f.code).trim() })
+    if (r && r.success === false) throw new Error(r.msg || '保存失败')
+    try {
+      await saveRoleDataScope(String(f.code).trim() || f.code, f.scopeType || 'own', f.scopeDepartmentId || null)
+    } catch (e) { message.warning('角色已保存，数据范围未保存') }
+    message.success('已保存')
+    roleModal.value = false
+    await refreshRoles()
+  } catch (e) { message.error(e.message || '保存失败') } finally { saving.value = false }
+}
+
+async function cloneRole (role) {
+  if (!role) return
+  const baseCode = `${role.code}-copy`
+  let code = baseCode
+  let i = 2
+  while (roles.value.some(r => r.code === code)) { code = `${baseCode}${i++}` }
+  saving.value = true
+  try {
+    const r = await createRole({
+      code, name: `${role.name} 副本`, description: role.description || '',
+      adminFlag: role.adminFlag === 1 ? 1 : 0, status: 1
+    })
+    if (r && r.success === false) throw new Error(r.msg || '创建失败')
+    try {
+      const src = await getRolePermissions(role.code)
+      const d = (src && src.data) || {}
+      await saveRolePermissionPoints(code, d.menuIds || [], d.permissions || [], d.denies || [])
+    } catch (e) { message.warning('角色已创建，但权限未复制，请在权限配置里手动设置') }
+    message.success(`已创建 ${code}`)
+    await refreshRoles()
+  } catch (e) { message.error(e.message || '复制失败') } finally { saving.value = false }
+}
+
+function askDeleteRole (role) {
+  if (!role || role.builtin === 1) { message.warning('内置角色不可删除'); return }
+  Modal.confirm({
+    title: `删除角色「${role.name}」？`,
+    content: '删除后该角色的菜单与授权点绑定一并清除，成员将失去该角色。',
+    okText: '删除', okType: 'danger', cancelText: '取消',
+    onOk: async () => {
+      try {
+        const r = await deleteRole(role.code)
+        if (r && r.success === false) throw new Error(r.msg || '删除失败')
+        message.success('已删除')
+        await refreshRoles()
+      } catch (e) { message.error(e.message || '删除失败') }
+    }
+  })
+}
+
+function onRoleSelect (code) {
+  const query = { ...route.query }
+  if (code) query.code = code
+  else delete query.code
+  router.replace({ path: '/permissions', query }).catch(() => {})
+}
+function goMembers () { router.push('/members') }
+
+/* ==================== 有效权限 ==================== */
+const effectiveOpen = ref(false)
+const effectiveUid = ref('')
+function openEffective (uid) {
+  effectiveUid.value = uid || ''
+  effectiveOpen.value = true
+}
+
+/* ==================== 菜单 ==================== */
 const ICONS = {
   MessageOutlined, RobotOutlined, DatabaseOutlined, TeamOutlined, BarChartOutlined,
   ExperimentOutlined, SafetyOutlined, SettingOutlined, AppstoreOutlined,
   FolderOutlined, UserOutlined, FileOutlined, FileTextOutlined
 }
-/** 图标中文名（值仍存英文类名，只用于界面展示；未登记的按类名原样显示） */
 const ICON_LABELS = {
-  MessageOutlined: '消息',
-  RobotOutlined: '机器人',
-  DatabaseOutlined: '数据库',
-  TeamOutlined: '团队',
-  BarChartOutlined: '图表',
-  ExperimentOutlined: '实验',
-  SafetyOutlined: '安全',
-  SettingOutlined: '设置',
-  AppstoreOutlined: '应用',
-  FolderOutlined: '文件夹',
-  UserOutlined: '用户',
-  FileOutlined: '文件',
-  FileTextOutlined: '文档'
+  MessageOutlined: '消息', RobotOutlined: '机器人', DatabaseOutlined: '数据库', TeamOutlined: '团队',
+  BarChartOutlined: '图表', ExperimentOutlined: '实验', SafetyOutlined: '安全', SettingOutlined: '设置',
+  AppstoreOutlined: '应用', FolderOutlined: '文件夹', UserOutlined: '用户', FileOutlined: '文件', FileTextOutlined: '文档'
 }
 const iconOf = name => ICONS[name] || FileOutlined
-const iconLabel = name => ICON_LABELS[name] || name
 const iconOptions = Object.keys(ICONS).map(k => ({ label: ICON_LABELS[k] || k, value: k }))
-/** 搜索同时匹配中文名与英文类名 */
 function filterIcon (input, option) {
   const q = String(input || '').trim().toLowerCase()
   if (!q) return true
   return String(option.label).toLowerCase().includes(q) || String(option.value).toLowerCase().includes(q)
 }
+function renderLabel (renderAs) {
+  return { sidebar: '侧栏', tab: '页内 Tab', group: '分组', hidden: '仅权限' }[renderAs || 'sidebar'] || '侧栏'
+}
 
-/** 平铺 → 树（按 parentId 组装；孤儿节点当顶级） */
 function buildTree (list) {
   const byId = new Map(list.map(m => [m.id, { ...m, children: undefined }]))
   const roots = []
@@ -556,26 +757,56 @@ function buildTree (list) {
   return roots
 }
 
-// ==================== 菜单 ====================
-const menuTree = computed(() => {
-  const k = filters.menus.keyword.trim().toLowerCase()
+const menuKeyword = ref('')
+const menuRenderFilter = ref('all')
+const menuExpanded = ref(true)
+const MENU_FILTERS = [
+  { key: 'all', label: '全部' },
+  { key: 'sidebar', label: '侧栏' },
+  { key: 'tab', label: '页内 Tab' },
+  { key: 'group', label: '分组' },
+  { key: 'hidden', label: '仅权限' }
+]
+
+/** 表格只接受扁平行：树按父级顺序展开，深度写进 __depth 供缩进 */
+const menuRows = computed(() => {
+  const k = menuKeyword.value.trim().toLowerCase()
   const tree = buildTree(menus.value)
-  if (!k) return tree
-  // 命中（自身或后代）的分支
-  const hit = node => (node.name || '').toLowerCase().includes(k) || (node.path || '').toLowerCase().includes(k)
-    || (node.children || []).some(hit)
-  const prune = list => list.filter(hit).map(n => ({ ...n, children: n.children ? prune(n.children) : undefined }))
-  return prune(tree)
+  const pass = n => {
+    const ra = n.renderAs || 'sidebar'
+    if (menuRenderFilter.value !== 'all' && ra !== menuRenderFilter.value) return false
+    if (!k) return true
+    return String(n.name || '').toLowerCase().includes(k) || String(n.path || '').toLowerCase().includes(k)
+  }
+  const rows = []
+  const walk = (list, depth) => {
+    for (const n of list) {
+      // 不能把 children 带进行数据：a-table 见到 children 会自己画展开箭头，与这里的缩进重复
+      const { children, ...rest } = n
+      if (pass(n)) rows.push({ ...rest, __depth: depth })
+      if (children && menuExpanded.value) walk(children, depth + 1)
+    }
+  }
+  walk(tree, 0)
+  return rows
 })
+function toggleAllMenus () { menuExpanded.value = !menuExpanded.value }
+
+const dragId = ref('')
+function onDragStart (record) { dragId.value = record.id }
+
 const menuModal = ref(false)
 const menuForm = ref(blankMenu())
+const visibleSaving = ref('')
 function blankMenu () { return { id: '', parentId: undefined, name: '', icon: undefined, path: '', sort: 0, renderAs: 'sidebar' } }
 function openMenuCreate () { menuForm.value = blankMenu(); menuModal.value = true }
 function openMenuEdit (r) {
-  menuForm.value = { id: r.id, parentId: r.parentId || undefined, name: r.name || '', icon: r.icon || undefined, path: r.path || '', sort: r.sortOrder ?? 0, renderAs: r.renderAs || 'sidebar' }
+  menuForm.value = {
+    id: r.id, parentId: r.parentId || undefined, name: r.name || '', icon: r.icon || undefined,
+    path: r.path || '', sort: r.sortOrder ?? 0, renderAs: r.renderAs || 'sidebar'
+  }
   menuModal.value = true
 }
-/** 父菜单候选：排除自身及其后代（防环） */
 const parentTreeData = computed(() => {
   const tree = buildTree(menus.value)
   if (!menuForm.value.id) return tree
@@ -589,21 +820,21 @@ async function saveMenu () {
   if (!String(f.name || '').trim()) { message.warning('请填写菜单名称'); return }
   saving.value = true
   try {
-    const body = { parentId: f.parentId || '', name: f.name, icon: f.icon || '', path: f.path || '', sortOrder: f.sort, renderAs: f.renderAs || 'sidebar' }
+    const body = {
+      parentId: f.parentId || '', name: f.name, icon: f.icon || '', path: f.path || '',
+      sortOrder: f.sort, renderAs: f.renderAs || 'sidebar'
+    }
     const r = f.id ? await updateMenu(f.id, body) : await createMenu(body)
-    if (r.success) { message.success('已保存'); menuModal.value = false; await refresh('menus') }
-    else message.error(r.msg || '保存失败')
-  } catch (e) { message.error(e.message || '保存失败') }
-  finally { saving.value = false }
+    if (r && r.success === false) throw new Error(r.msg || '保存失败')
+    message.success('已保存')
+    menuModal.value = false
+    await loadMenus(true)
+    await loadOverview()
+  } catch (e) { message.error(e.message || '保存失败') } finally { saving.value = false }
 }
-/** 行内「可见」开关：PUT 只带 visible 一个字段（后端按字段增量更新），新建菜单默认显示 */
-const visibleSaving = ref('')
 async function toggleMenuVisible (record, on) {
-  // 子级按 parentId 现查，不用 record.children：搜索态下那是剪过枝的子集，会漏报
   const kids = menus.value.filter(m => m.parentId === record.id && m.visible !== 0)
   if (!on && kids.length) {
-    // 隐藏父级不是「整枝收起来」：服务端把可见子级上提为顶级，Tab 型子级则因失去宿主而全部失效——
-    // 两种结果都反直觉，点下去之前必须点名
     const tabKids = kids.filter(c => (c.renderAs || 'sidebar') === 'tab')
     const rest = kids.filter(c => (c.renderAs || 'sidebar') !== 'tab')
     const lines = []
@@ -612,8 +843,7 @@ async function toggleMenuVisible (record, on) {
     Modal.confirm({
       title: `隐藏「${record.name}」？`,
       content: lines.join('；') + '。',
-      okText: '隐藏',
-      cancelText: '取消',
+      okText: '隐藏', cancelText: '取消',
       onOk: () => applyMenuVisible(record, false)
     })
     return
@@ -624,59 +854,130 @@ async function applyMenuVisible (record, on) {
   visibleSaving.value = record.id
   try {
     const r = await updateMenu(record.id, { visible: on ? 1 : 0 })
-    if (!r.success) { message.error(r.msg || '操作失败'); await refresh('menus'); return }
-    // 表格行是 menuTree 计算出的拷贝，改它不会重渲染：写回 menus 源数组，由 computed 组出新树
+    if (r && r.success === false) throw new Error(r.msg || '操作失败')
     const src = menus.value.find(m => m.id === record.id)
     if (src) src.visible = on ? 1 : 0
+    loadOverview()
   } catch (e) {
     message.error(e.message || '操作失败')
-    await refresh('menus')
+    await loadMenus(true)
   } finally { visibleSaving.value = '' }
 }
 async function delMenu (id) {
   try {
     const r = await deleteMenu(id)
-    if (r.success) { message.success('已删除'); await refresh('menus') }
-    else message.error(r.msg || '删除失败')
+    if (r && r.success === false) throw new Error(r.msg || '删除失败')
+    message.success('已删除')
+    await loadMenus(true)
+    await loadOverview()
   } catch (e) { message.error(e.message || '删除失败') }
 }
 
-// ==================== 接口 ====================
-const moduleFilter = computed({
-  get: () => filters.apis.module,
-  set: v => { filters.apis.module = v }
-})
-const moduleFilterOptions = computed(() => {
+/* ---------- 拖拽排序（同级内，10/20/30 序列） ---------- */
+async function dropOn (target) {
+  const from = menus.value.find(m => m.id === dragId.value)
+  dragId.value = ''
+  if (!from || !target || from.id === target.id) return
+  if ((from.parentId || '') !== (target.parentId || '')) {
+    message.warning('只能在同一父级内调整顺序')
+    return
+  }
+  const siblings = menus.value
+    .filter(m => (m.parentId || '') === (target.parentId || ''))
+    .slice()
+    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+  const fromIdx = siblings.findIndex(m => m.id === from.id)
+  const toIdx = siblings.findIndex(m => m.id === target.id)
+  if (fromIdx < 0 || toIdx < 0) return
+  const [moved] = siblings.splice(fromIdx, 1)
+  siblings.splice(toIdx, 0, moved)
+  const changed = []
+  siblings.forEach((m, i) => {
+    const next = (i + 1) * 10
+    if ((m.sortOrder ?? 0) !== next) {
+      m.sortOrder = next
+      changed.push(m)
+    }
+  })
+  if (!changed.length) return
+  // 树按扁平数组顺序组装，改完 sortOrder 必须重排源数组，否则界面要等下次拉取才变
+  menus.value = menus.value.slice().sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0))
+  try {
+    for (const m of changed) {
+      await updateMenu(m.id, { sortOrder: m.sortOrder })
+    }
+    message.success('顺序已保存')
+  } catch (e) {
+    message.error(e.message || '排序保存失败')
+    await loadMenus(true)
+  }
+}
+
+/* ==================== 接口 ==================== */
+const apiKeyword = ref('')
+const apiModule = ref('')
+const apiStatus = ref('all')
+const apiPage = ref(1)
+const apiPageSize = 50
+const selectedApiIds = ref([])
+
+const moduleOptions = computed(() => {
   const set = new Set(apis.value.map(a => a.module).filter(Boolean))
-  return [...set].sort().map(m => ({ label: m, value: m }))
+  return [...set].sort((a, b) => a.localeCompare(b, 'zh'))
 })
-const filteredApis = computed(() => {
-  const k = filters.apis.keyword.trim().toLowerCase()
-  const m = filters.apis.module
+const moduleCount = m => apis.value.filter(a => (a.module || '') === m).length
+
+const statusFiltered = computed(() => {
+  const k = apiKeyword.value.trim().toLowerCase()
   return apis.value.filter(a => {
-    if (m && (a.module || '') !== m) return false
-    if (k && !(a.path || '').toLowerCase().includes(k) && !(a.name || '').toLowerCase().includes(k)) return false
+    if (apiModule.value && (a.module || '') !== apiModule.value) return false
+    if (apiStatus.value === 'unauthorized' && !(!a.permissionCode || rolesOfPerm(a.permissionCode).length === 0)) return false
+    if (apiStatus.value === 'unbound' && (a.menuIds || []).length) return false
+    if (apiStatus.value === 'manual' && a.builtin === 1) return false
+    if (k) {
+      const title = a.permissionCode ? permTitle(a.permissionCode) : ''
+      const hay = `${a.path || ''} ${a.name || ''} ${a.permissionCode || ''} ${title}`.toLowerCase()
+      if (!hay.includes(k)) return false
+    }
     return true
   })
 })
+const filteredApis = computed(() => statusFiltered.value)
+const apiPageCount = computed(() => Math.max(1, Math.ceil(filteredApis.value.length / apiPageSize)))
+const pagedApis = computed(() => filteredApis.value.slice((apiPage.value - 1) * apiPageSize, apiPage.value * apiPageSize))
+
+const API_STATUS = computed(() => [
+  { key: 'all', label: '全部', count: () => apis.value.length },
+  {
+    key: 'unauthorized', label: '未授权',
+    count: () => apis.value.filter(a => !a.permissionCode || rolesOfPerm(a.permissionCode).length === 0).length
+  },
+  { key: 'unbound', label: '未挂菜单', count: () => apis.value.filter(a => !(a.menuIds || []).length).length },
+  { key: 'manual', label: '手工登记', count: () => apis.value.filter(a => a.builtin !== 1).length }
+])
+
+watch([apiKeyword, apiModule, apiStatus], () => { apiPage.value = 1 })
+
+function permTitle (code) {
+  const item = catalog.value.find(p => p.code === code) || { code }
+  return permissionTitle(item)
+}
+const rolesOfPerm = code => (permRoles.value || {})[code] || []
+const menuNameOf = id => (menus.value.find(m => m.id === id) || {}).name || id
+function onSelectApis (keys) { selectedApiIds.value = keys }
 
 const apiModal = ref(false)
 const apiForm = ref(blankApi())
 function blankApi () { return { id: '', method: 'GET', path: '', name: '', module: '', menuIds: [], builtin: 0 } }
 function openApiCreate () { apiForm.value = blankApi(); apiModal.value = true }
 function openApiEdit (r) {
-  apiForm.value = { id: r.id, method: r.method || 'GET', path: r.path || '', name: r.name || '', module: r.module || '',
-    menuIds: Array.isArray(r.menuIds) ? [...r.menuIds] : [], builtin: r.builtin || 0 }
+  apiForm.value = {
+    id: r.id, method: r.method || 'GET', path: r.path || '', name: r.name || '', module: r.module || '',
+    menuIds: Array.isArray(r.menuIds) ? [...r.menuIds] : [], builtin: r.builtin || 0
+  }
   apiModal.value = true
 }
-/** 所属菜单选择器数据源（复用菜单树；fieldNames 已映射 label:name/value:id） */
 const menuSelectTree = computed(() => buildTree(menus.value))
-/** 菜单 id → 名称（归属标签展示用；菜单未加载时回落 id） */
-const menuNameOf = id => (menus.value.find(m => m.id === id) || {}).name || id
-/**
- * 所属菜单选择值：treeCheckStrictly 会强制 labelInValue（值为 {value,label} 对象），
- * 这里归一成纯 id 数组存取，避免表单与其他逻辑感知 labelInValue。
- */
 const apiMenuSelectValue = computed({
   get: () => (apiForm.value.menuIds || []).map(id => ({ value: id, label: menuNameOf(id) })),
   set: v => { apiForm.value.menuIds = (v || []).map(x => (x && typeof x === 'object' ? x.value : x)) }
@@ -688,433 +989,151 @@ async function saveApi () {
   try {
     const body = { method: f.method, path: f.path, name: f.name, module: f.module, menuIds: f.menuIds || [] }
     const r = f.id ? await updateApi(f.id, body) : await createApi(body)
-    if (r.success) { message.success('已保存'); apiModal.value = false; await refresh('apis') }
-    else message.error(r.msg || '保存失败')
-  } catch (e) { message.error(e.message || '保存失败') }
-  finally { saving.value = false }
+    if (r && r.success === false) throw new Error(r.msg || '保存失败')
+    message.success('已保存')
+    apiModal.value = false
+    await loadApis(true)
+    await loadOverview()
+  } catch (e) { message.error(e.message || '保存失败') } finally { saving.value = false }
 }
 async function delApi (id) {
   try {
     const r = await deleteApi(id)
-    if (r.success) { message.success('已删除'); await refresh('apis') }
-    else message.error(r.msg || '删除失败')
+    if (r && r.success === false) throw new Error(r.msg || '删除失败')
+    message.success('已删除')
+    await loadApis(true)
+    await loadOverview()
   } catch (e) { message.error(e.message || '删除失败') }
 }
 
-// ==================== 角色 ====================
-const filteredRoles = computed(() => {
-  const k = filters.roles.keyword.trim().toLowerCase()
-  if (!k) return roles.value
-  return roles.value.filter(r => (r.code || '').toLowerCase().includes(k) || (r.name || '').toLowerCase().includes(k))
-})
-
-const roleModal = ref(false)
-const roleForm = ref(blankRole())
-const roleAdmin = ref(false)
-function blankRole () { return { isEdit: false, code: '', name: '', description: '', status: 1, builtin: 0, scopeType: 'own', scopeDepartmentId: null } }
-const scopeDeptOptions = ref([])
-const scopeDeptLoaded = ref(false)
-async function ensureScopeDepts () {
-  if (scopeDeptLoaded.value) return
+const batchModal = ref(false)
+const batchSaving = ref(false)
+const batchMenuIds = ref([])
+function openBatchMenu () { batchMenuIds.value = []; batchModal.value = true }
+async function saveBatchMenu () {
+  const targets = apis.value.filter(a => selectedApiIds.value.includes(a.id))
+  if (!targets.length) { batchModal.value = false; return }
+  batchSaving.value = true
+  let ok = 0
+  const failed = []
   try {
-    const r = await listDepartments()
-    scopeDeptOptions.value = ((r && r.data) || []).map(d => ({ label: d.name, value: d.id }))
-    scopeDeptLoaded.value = true
-  } catch (e) { /* 部门选项失败不阻塞弹窗（可留空按成员部门判定） */ }
-}
-function openRoleCreate () { roleForm.value = blankRole(); roleAdmin.value = false; roleModal.value = true; ensureScopeDepts() }
-async function openRoleEdit (r) {
-  roleForm.value = { isEdit: true, code: r.code, name: r.name || '', description: r.description || '', status: r.status === 0 ? 0 : 1, builtin: r.builtin || 0, scopeType: 'own', scopeDepartmentId: null }
-  roleAdmin.value = r.adminFlag === 1
-  roleModal.value = true
-  ensureScopeDepts()
-  try {
-    const d = await getRoleDataScope(r.code)
-    roleForm.value.scopeType = (d && d.data && d.data.scopeType) || 'own'
-    roleForm.value.scopeDepartmentId = (d && d.data && d.data.departmentId) || null
-  } catch (e) { /* 回显失败按默认 own */ }
-}
-async function saveRole () {
-  const f = roleForm.value
-  if (!f.isEdit && !/^[a-z][a-z0-9_-]{0,19}$/.test(String(f.code || '').trim())) {
-    message.warning('角色编码：小写字母开头，仅小写字母/数字/_/-，≤20 字符'); return
-  }
-  if (!String(f.name || '').trim()) { message.warning('请填写角色名称'); return }
-  saving.value = true
-  try {
-    const body = { name: f.name, description: f.description, adminFlag: roleAdmin.value ? 1 : 0, status: f.status }
-    const r = f.isEdit ? await updateRole(f.code, body) : await createRole({ ...body, code: String(f.code).trim() })
-    if (r.success) {
-      // C2：数据范围随角色保存（创建的角色也要落范围行）
-      try { await saveRoleDataScope(String(f.code).trim() || f.code, f.scopeType || 'own', f.scopeDepartmentId || null) } catch (e) { /* 范围保存失败不阻塞角色保存 */ }
-      message.success('已保存'); roleModal.value = false; await refresh('roles')
+    for (const a of targets) {
+      try {
+        const r = await updateApi(a.id, {
+          method: a.method, path: a.path, name: a.name, module: a.module, menuIds: batchMenuIds.value
+        })
+        if (r && r.success === false) throw new Error(r.msg || '失败')
+        ok++
+      } catch (e) { failed.push(a.path) }
     }
-    else message.error(r.msg || '保存失败')
-  } catch (e) { message.error(e.message || '保存失败') }
-  finally { saving.value = false }
-}
-// ==================== 反查（批次 D-1/D-2）：已授权角色 / 成员数 ====================
-const memberCounts = ref({})
-const permRoles = ref({})
-async function loadReverseData () {
-  try {
-    const [a, b] = await Promise.all([getRoleMemberCounts(), getPermissionRoles()])
-    memberCounts.value = (a && a.data) || {}
-    permRoles.value = (b && b.data) || {}
-  } catch (e) { /* 反查列失败不阻塞主表 */ }
-}
-const memberCountOf = code => (memberCounts.value || {})[code] || 0
-const rolesOfPermission = code => (permRoles.value || {})[code] || []
-
-// ==================== 有效权限视图（D-3 最小形态） ====================
-const effectiveModal = ref(false)
-const effectiveUid = ref('')
-const effectiveLoading = ref(false)
-const effectiveResult = ref(null)
-const effectiveError = ref('')
-function openEffective () {
-  effectiveUid.value = ''
-  effectiveResult.value = null
-  effectiveError.value = ''
-  effectiveModal.value = true
-}
-async function queryEffective () {
-  const uid = String(effectiveUid.value || '').trim()
-  if (!uid) { message.warning('请输入登录账号'); return }
-  effectiveLoading.value = true
-  effectiveError.value = ''
-  try {
-    const r = await getEffectivePermissions(uid)
-    if (r.success) {
-      effectiveResult.value = r.data
-      if (r.data.permissions.includes('admin:all-allow')) {
-        effectiveError.value = ''
-      }
-    } else { effectiveError.value = r.msg || '查询失败' }
-  } catch (e) { effectiveError.value = e.message || '查询失败' }
-  finally { effectiveLoading.value = false }
-}
-/** 有效授权点按模块分组展示（目录里没有的编码（如 admin 标记）落「其他」组） */
-const effectiveGroups = computed(() => {
-  if (!effectiveResult.value) return []
-  const perms = effectiveResult.value.permissions || []
-  const byModule = new Map()
-  for (const code of perms) {
-    const meta = permCatalog.value.find(p => p.code === code)
-    const mod = code === 'admin:all-allow' ? '管理员级' : (meta ? (meta.module || '其他') : '未登记（退役授权点？）')
-    if (!byModule.has(mod)) byModule.set(mod, [])
-    byModule.get(mod).push({ key: code, title: code })
-  }
-  return [...byModule.entries()].map(([mod, items]) => ({ key: 'eff:' + mod, module: mod, children: items }))
-})
-
-async function delRole (code) {
-  try {
-    const r = await deleteRole(code)
-    if (r.success) { message.success('已删除'); await refresh('roles') }
-    else message.error(r.msg || '删除失败')
-  } catch (e) { message.error(e.message || '删除失败') }
+    if (failed.length) message.warning(`已更新 ${ok} 个，失败 ${failed.length} 个：${failed.slice(0, 3).join('、')}`)
+    else message.success(`已更新 ${ok} 个接口的所属菜单`)
+    batchModal.value = false
+    selectedApiIds.value = []
+    await loadApis(true)
+  } finally { batchSaving.value = false }
 }
 
-// ==================== 权限抽屉（菜单树 + 授权点分组树，RBAC 批次 A7） ====================
-const drawer = ref(false)
-const drawerRole = ref(null)
-const drawerSaving = ref(false)
-const drawerTitle = computed(() => drawerRole.value ? `角色权限 · ${drawerRole.value.name}` : '角色权限')
-
-/** 源状态：菜单 id 集 + 授权点编码集（树的勾选由两者派生） */
-const checkedMenuIds = ref([])
-const checkedPerms = ref([])
-const checkedMenuSet = computed(() => new Set(checkedMenuIds.value))
-const checkedPermSet = computed(() => new Set(checkedPerms.value))
-
-/**
- * 排除规则（deny）：授权点编码 → exempt（1=只压本角色自己给的授权，0=压过其它角色与管理员级）。
- * <p>画在授权点行尾而不是另开一棵树：一条能力只有一个出口，勾选=允许、行尾=禁止，
- * 不用再回答「这两处哪一处说了算」。
- */
-const denyMap = ref({})
-const deniedSet = computed(() => new Set(Object.keys(denyMap.value)))
-function toggleDeny (code) {
-  const next = { ...denyMap.value }
-  if (code in next) delete next[code]
-  else next[code] = 0
-  denyMap.value = next
-}
-function toggleExempt (code) {
-  if (!(code in denyMap.value)) return
-  denyMap.value = { ...denyMap.value, [code]: denyMap.value[code] ? 0 : 1 }
-}
-function groupDeniedCount (node) {
-  return (node.children || []).filter(c => deniedSet.value.has(c.key)).length
-}
-function deniesPayload () {
-  return Object.entries(denyMap.value).map(([permissionCode, exempt]) => ({ permissionCode, exempt }))
-}
-
-/** 菜单 id → 直属子菜单 id 列表 */
-const menuChildrenMap = computed(() => {
-  const map = new Map()
-  for (const m of menus.value) {
-    const pid = m.parentId || ''
-    if (!map.has(pid)) map.set(pid, [])
-    map.get(pid).push(m.id)
-  }
-  return map
-})
-
-/** 菜单子树（含自身）id 集合 */
-function menuSubtreeIds (menuId) {
-  const out = new Set([menuId])
-  const stack = [menuId]
-  while (stack.length) {
-    const cur = stack.pop()
-    for (const child of (menuChildrenMap.value.get(cur) || [])) {
-      if (!out.has(child)) { out.add(child); stack.push(child) }
-    }
-  }
-  return out
-}
-
-/** 菜单树（不再挂接口叶子：接口能力走授权点，语义粒度由后端折算回端点绑定） */
-const menuDrawerTree = computed(() => {
-  const menuNode = m => ({
-    key: m.id,
-    name: m.name,
-    icon: m.icon,
-    children: (m.children || []).map(menuNode)
-  })
-  return buildTree(menus.value).map(menuNode)
-})
-const menuCheckedKeys = computed(() => [...checkedMenuIds.value])
-
-/** 授权点目录：module 分组 → 授权点（组级全选；目录来自 /role/permission-catalog） */
-const permCatalog = ref([])
-const permGrouped = computed(() => {
-  const byModule = new Map()
-  for (const p of permCatalog.value) {
-    const mod = p.module || '其他'
-    if (!byModule.has(mod)) byModule.set(mod, [])
-    byModule.get(mod).push(p)
-  }
-  return [...byModule.entries()]
-    .sort((a, b) => String(a[0]).localeCompare(String(b[0]), 'zh'))
-    .map(([mod, items]) => ({
-      key: 'module:' + mod,
-      kind: 'group',
-      groupName: mod,
-      ownedCount: items.length,
-      grantedCount: items.filter(p => checkedPermSet.value.has(p.code)).length,
-      children: items
-        .slice()
-        .sort((a, b) => String(a.code).localeCompare(String(b.code)))
-        .map(p => ({ key: p.code, kind: 'perm', label: `${p.code}${p.name && p.name !== p.code ? ' · ' + p.name : ''}` }))
-    }))
-})
-
-const drawerKeyword = ref('')
-const permDrawerTree = computed(() => {
-  const k = drawerKeyword.value.trim().toLowerCase()
-  if (!k) return permGrouped.value
-  const hit = x => String(x || '').toLowerCase().includes(k)
-  return permGrouped.value
-    .map(g => {
-      if (hit(g.groupName)) return g
-      const children = g.children.filter(c => hit(c.label))
-      if (!children.length) return null
-      return { ...g, children,
-               ownedCount: children.length,
-               grantedCount: children.filter(c => checkedPermSet.value.has(c.key)).length }
-    })
-    .filter(Boolean)
-})
-const menuDrawerTreeFiltered = computed(() => {
-  const k = drawerKeyword.value.trim().toLowerCase()
-  if (!k) return menuDrawerTree.value
-  const hit = x => String(x || '').toLowerCase().includes(k)
-  const prune = node => {
-    if (hit(node.name)) return { ...node }
-    const children = (node.children || []).map(prune).filter(Boolean)
-    return children.length ? { ...node, children } : null
-  }
-  return menuDrawerTree.value.map(prune).filter(Boolean)
-})
-
-/** 菜单勾选：勾/取消连同子树（菜单只管侧栏可见性，不再联动接口） */
-function onMenuCheck (_keys, e) {
-  const on = !!e?.checked
-  const subtree = menuSubtreeIds(e?.node?.key)
-  if (on) {
-    checkedMenuIds.value = [...new Set([...checkedMenuIds.value, ...subtree])]
-  } else {
-    checkedMenuIds.value = checkedMenuIds.value.filter(id => !subtree.has(id))
-  }
-}
-
-/** 授权点勾选：组节点=全选/清空该模块；叶子=单个授权点 */
-function onPermCheck (_keys, e) {
-  const on = !!e?.checked
-  const node = e?.node || {}
-  if (node.kind === 'perm') {
-    if (on) { if (!checkedPermSet.value.has(node.key)) checkedPerms.value = [...checkedPerms.value, node.key] }
-    else checkedPerms.value = checkedPerms.value.filter(x => x !== node.key)
-    return
-  }
-  const ids = (node.children || []).map(c => c.key)
-  const set = new Set(ids)
-  checkedPerms.value = on
-    ? [...new Set([...checkedPerms.value, ...ids])]
-    : checkedPerms.value.filter(x => !set.has(x))
-}
-
-async function openDrawer (role) {
-  drawerRole.value = role
-  drawer.value = true
-  // 先清空再回显（抽屉 destroy-on-close，直接加载）
-  checkedMenuIds.value = []
-  checkedPerms.value = []
-  denyMap.value = {}
-  drawerKeyword.value = ''
-  try {
-    // 菜单与授权点目录：从角色页签直接打开时可能还没加载过
-    await Promise.all([ensureData('menus'), loadPermCatalog()])
-    const r = await getRolePermissions(role.code)
-    const d = (r && r.data) || {}
-    // 只回显仍存在的绑定（菜单/授权点退役后库里可能残留旧值）
-    const validMenus = new Set(menus.value.map(m => m.id))
-    const validPerms = new Set(permCatalog.value.map(p => p.code))
-    checkedMenuIds.value = ((d.menuIds) || []).filter(id => validMenus.has(id))
-    checkedPerms.value = ((d.permissions) || []).filter(code => validPerms.has(code))
-    const dm = {}
-    for (const row of (d.denies || [])) {
-      if (!row || !validPerms.has(row.permissionCode)) continue
-      dm[row.permissionCode] = Number(row.exempt) === 1 ? 1 : 0
-    }
-    denyMap.value = dm
-  } catch (e) { message.error(e.message || '加载角色权限失败') }
-}
-
-/** 授权点目录懒加载（抽屉打开时才拉；失败留空，下次打开重试） */
-async function loadPermCatalog () {
-  if (permCatalog.value.length) return
-  const r = await getPermissionCatalog()
-  permCatalog.value = (r && r.data) || []
-}
-
-async function saveDrawer () {
-  const role = drawerRole.value
-  if (!role) return
-  drawerSaving.value = true
-  try {
-    const r = await saveRolePermissionPoints(role.code, checkedMenuIds.value, checkedPerms.value,
-            deniesPayload())
-    if (r.success) { message.success('权限已保存'); drawer.value = false }
-    else message.error(r.msg || '保存失败')
-  } catch (e) { message.error(e.message || '保存失败') }
-  finally { drawerSaving.value = false }
-}
-
-// ==================== 加载（按页签懒加载：首次切到该页签才拉，之后不再重复请求） ====================
-const loaded = reactive({ menus: false, apis: false, roles: false })
-
-async function loadMenus () {
-  const r = await listMenus()
-  menus.value = (r && r.data) || []
-}
-async function loadApis () {
-  const r = await listApis()
-  apis.value = (r && r.data) || []
-}
-async function loadRoles () {
-  const r = await listRoles()
-  roles.value = (r && r.data) || []
-  loadReverseData()
-}
-const LOADERS = { menus: loadMenus, apis: loadApis, roles: loadRoles }
-
-const inflight = new Map()
-/** 同一份数据的并发请求合并成一次（空闲预取与手动切换可能撞在一起） */
-function fetchData (name) {
-  if (!inflight.has(name)) {
-    const p = LOADERS[name]().finally(() => inflight.delete(name))
-    inflight.set(name, p)
-  }
-  return inflight.get(name)
-}
-
-/** 强制重拉（保存/删除后） */
-async function refresh (name) {
-  loading.value = true
-  try {
-    await fetchData(name)
-    loaded[name] = true
-  } catch (e) { message.error(e.message || '加载失败') }
-  finally { loading.value = false }
-}
-/** 首次需要该页签数据时才请求；失败不置 loaded，下次进入会重试 */
-async function ensureData (name) {
-  if (loaded[name]) return
-  await refresh(name)
-}
-/** 空闲预取：不动 loading、失败静默（真切到该页签时会重试） */
-async function prefetch (name) {
-  if (loaded[name]) return
-  try {
-    await fetchData(name)
-    loaded[name] = true
-  } catch (e) { /* 预取失败不打扰用户 */ }
-}
-/** 首屏只等当前页签，其余页签等浏览器空闲再补拉——只为让 Tab 角标有数字，各页签数据量都只有几十条 */
-const scheduleIdle = window.requestIdleCallback
-  ? cb => window.requestIdleCallback(cb, { timeout: 2000 })
-  : cb => setTimeout(cb, 300)
-
-// 页签即数据入口：URL 直达 ?tab=apis 时只拉接口；其余固有页签稍后空闲补拉
-// 接口页签额外预取菜单：表格「所属菜单」列需要菜单名
-// 并入的整页 Tab 不在这本懒加载账里——它自己挂载时拉清单，切走即销毁、再切回来重拉
-watch(tab, t => {
-  if (!LOADERS[t]) return
-  ensureData(t)
-  if (t === 'apis') ensureData('menus')
-  scheduleIdle(() => BASE_TABS.filter(x => x !== t).forEach(prefetch))
-}, { immediate: true })
+/* ==================== 公共 ==================== */
+const saving = ref(false)
 </script>
 
 <style scoped>
-/* 页签式 Tab（与「智能体工作台」的 .hub-tabs 同形）：只作导航，内容仍在下方共用卡片里按 tab 渲染 */
-.pg-tabs { flex: none; }
-.pg-tabs :deep(.ant-tabs-nav) { margin: 0; padding: 4px 20px 0; background: var(--app-panel); }
-.pg-tabs :deep(.ant-tabs-nav::before) { border-color: var(--app-border); }
-.pg-tabs :deep(.ant-tabs-tab) { font-size: 13px; padding: 10px 2px; }
-.pg-tab { display: inline-flex; align-items: center; }
-.pg-badge {
-  font-style: normal; font-size: 11px; line-height: 16px; margin-left: 6px;
-  padding: 0 6px; border-radius: 999px;
-  background: var(--app-accent-weak); color: var(--app-text3);
+.pg-body { padding: 14px 20px 20px; display: flex; flex-direction: column; }
+.pg-head-acts { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; }
+.head-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
+
+/* 接入与治理：三个并入页共用同一块容器，内部按它们各自的 flex 布局铺满 */
+.pg-access {
+  flex: 1; min-height: 460px; display: flex; flex-direction: column;
+  border: 1px solid var(--app-border); border-radius: var(--app-radius);
+  background: var(--app-panel); overflow: hidden;
 }
-.pg-tabs :deep(.ant-tabs-tab-active) .pg-badge { background: var(--app-accent); color: #fff; }
+.pg-access :deep(.app-page) { height: 100%; }
+.pg-access :deep(.app-page-body) { padding: 12px 14px; }
+.pg-access :deep(.cs-wrap) { padding: 14px 16px 12px; }
 
-.rb-search { width: 240px; }
-.rb-search-ic { color: var(--app-text3); }
-.rb-filter { width: 140px; flex: none; }
-/* 操作按钮成组贴右：逐颗挂 margin-left:auto 会把剩余空间平分给两颗，
-   于是一颗落在一排中间、一颗落在最右 */
-.rb-acts { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; flex: none; }
-.rb-inline { display: inline-flex; align-items: center; gap: 8px; }
-.rb-menu { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
-.rb-menu-ic { color: var(--app-text3); font-size: 13px; }
-.rb-name { color: var(--app-text); }
-.rb-uid { font-size: 11px; color: var(--app-text3); }
-.rb-path { font-size: 12px; color: var(--app-text2); }
-.rb-desc { color: var(--app-text2); }
-.rb-none { color: var(--app-text3); }
-.rb-icon-opt { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
-.rb-icon-opt-ic { color: var(--app-text2); font-size: 14px; flex: none; }
-.rb-icon-opt-name { color: var(--app-text); }
-.rb-icon-opt-key { font-size: 11px; color: var(--app-text3); }
-.rb-empty { padding: 28px 0; color: var(--app-text3); font-size: 12px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.pg-nav {
+  display: flex; align-items: center; gap: 4px; margin: 12px 0 10px;
+  padding: 3px; border-radius: 9px; background: var(--app-panel-2); border: 1px solid var(--app-border);
+  overflow-x: auto; flex: none;
+}
+.pg-nav-item {
+  border: 0; background: transparent; cursor: pointer; font-family: inherit;
+  padding: 5px 12px; border-radius: 7px; font-size: 12.5px; color: var(--app-text2);
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+}
+.pg-nav-item:hover { color: var(--app-text); background: var(--app-panel); }
+.pg-nav-item.on { background: var(--app-panel); color: var(--app-accent); font-weight: 600; box-shadow: 0 1px 2px rgba(16,24,40,.06); }
+.pg-nav-count { font-size: 10.5px; color: var(--app-text3); background: var(--app-panel-2); border-radius: 999px; padding: 0 5px; }
+.pg-nav-item.on .pg-nav-count { color: var(--app-accent); background: var(--app-accent-weak); }
+.pg-nav-sep { width: 1px; height: 16px; background: var(--app-border); margin: 0 6px; flex: none; }
+.pg-nav-group { font-size: 10.5px; color: var(--app-text3); letter-spacing: .04em; margin-right: 2px; white-space: nowrap; }
 
-.method-pill { display: inline-flex; align-items: center; font-size: 11px; line-height: 1; padding: 4px 8px; border-radius: 999px; font-weight: 500; }
+.pg-card { padding: 0; overflow: hidden; }
+.pg-card-flush { padding: 0; }
+.pg-search { width: 240px; }
+.pg-search-ic { color: var(--app-text3); }
+.pg-chip {
+  height: 24px; padding: 0 9px; border: 1px solid var(--app-border); border-radius: 999px;
+  background: var(--app-panel); color: var(--app-text2); font-size: 11px; cursor: pointer; font-family: inherit;
+}
+.pg-chip.on { background: var(--app-accent-weak); border-color: var(--app-accent-border); color: var(--app-accent); font-weight: 600; }
+.pg-spacer { flex: 1; }
+.pg-inline { display: inline-flex; align-items: center; gap: 8px; }
+.pg-menu { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
+.pg-indent { flex: none; }
+.pg-menu-ic { color: var(--app-text3); font-size: 13px; flex: none; }
+.pg-name { color: var(--app-text); }
+.pg-path { font-size: 11.5px; color: var(--app-text2); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.pg-code { font-size: 10px; color: var(--app-text3); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.pg-perm-name { font-size: 12px; font-weight: 600; color: var(--app-text); }
+.pg-none { color: var(--app-text3); }
+.pg-drag { cursor: grab; color: var(--app-border-strong); font-size: 13px; user-select: none; }
+.pg-drag:active { cursor: grabbing; }
+.pg-role-chip {
+  display: inline-flex; align-items: center; font-size: 10px; line-height: 18px; padding: 0 6px;
+  margin: 1px 4px 1px 0; border-radius: 4px; background: var(--app-panel-2);
+  border: 1px solid var(--app-border); color: var(--app-text2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.pg-role-chip.more { color: var(--app-accent); border-color: var(--app-accent-border); background: var(--app-accent-weak); }
+.pg-empty { padding: 24px 0; text-align: center; font-size: 12px; color: var(--app-text3); }
+.pg-foot-tip { padding: 7px 14px 10px; font-size: 11px; color: var(--app-text3); border-top: 1px solid var(--app-border); }
+
+.pg-api-layout { display: grid; grid-template-columns: 186px minmax(0, 1fr); gap: 10px; align-items: start; }
+.pg-rail { border: 1px solid var(--app-border); border-radius: var(--app-radius); background: var(--app-panel-2); padding: 6px; }
+.pg-rail-title { font-size: 10px; color: var(--app-text3); padding: 7px 8px 3px; letter-spacing: .05em; }
+.pg-rail-row {
+  display: flex; align-items: center; gap: 6px; width: 100%; padding: 5px 8px; border: 0;
+  border-radius: 6px; background: transparent; cursor: pointer; font-family: inherit;
+  font-size: 11.5px; color: var(--app-text2); text-align: left;
+}
+.pg-rail-row:hover { background: var(--app-panel); }
+.pg-rail-row.on { background: var(--app-panel); color: var(--app-accent); font-weight: 600; box-shadow: 0 1px 2px rgba(16,24,40,.05); }
+.pg-rail-n { margin-left: auto; font-size: 10px; color: var(--app-text3); font-variant-numeric: tabular-nums; }
+.pg-rail-row.on .pg-rail-n { color: var(--app-accent); }
+.pg-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.pg-pager { display: flex; align-items: center; gap: 5px; padding: 8px 12px; border-top: 1px solid var(--app-border); font-size: 11px; color: var(--app-text3); }
+.pg-pbtn {
+  min-width: 22px; height: 22px; padding: 0 6px; border: 1px solid var(--app-border); border-radius: 5px;
+  background: var(--app-panel); color: var(--app-text2); font-size: 11px; cursor: pointer; font-family: inherit;
+}
+.pg-pbtn.on { background: var(--app-accent); border-color: var(--app-accent); color: #fff; font-weight: 600; }
+.pg-pbtn:disabled { color: var(--app-border-strong); cursor: not-allowed; }
+.pg-bulk {
+  display: flex; align-items: center; gap: 8px; margin: 0 12px 12px; padding: 8px 11px;
+  border: 1px solid var(--app-accent-border); border-radius: var(--app-radius); background: var(--app-accent-weak);
+}
+.pg-bulk-sel { font-size: 12px; font-weight: 600; color: var(--app-text); }
+.pg-bulk-sel span { font-weight: 400; color: var(--app-text3); font-size: 11px; }
+
+.pg-icon-opt { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.pg-icon-opt-ic { color: var(--app-text2); font-size: 14px; flex: none; }
+.pg-icon-opt-name { color: var(--app-text); }
+
+.method-pill { display: inline-flex; align-items: center; font-size: 10.5px; line-height: 1; padding: 4px 7px; border-radius: 999px; font-weight: 500; }
 .method-pill.m-get { color: #1a7f37; background: #e6f4ea; }
 .method-pill.m-post { color: #1d5bd6; background: var(--app-accent-weak); }
 .method-pill.m-put { color: #9a6700; background: #fff3d6; }
@@ -1122,28 +1141,11 @@ watch(tab, t => {
 .method-pill.m-patch { color: #7c3aed; background: #f1eafd; }
 .method-pill.m-all { color: var(--app-text2); background: var(--app-panel-2); }
 
-/* 接口表「所属菜单」标签 */
-.menu-tag { display: inline-flex; align-items: center; font-size: 11px; line-height: 18px; padding: 0 8px; margin: 1px 4px 1px 0; border-radius: 999px; background: var(--app-accent-weak); color: var(--app-text2); }
-
-/* 权限树节点 */
-.tree-menu { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
-.tree-count { font-size: 11px; color: var(--app-text3); }
-.tree-count.warn { color: #9a6700; background: #fff3d6; padding: 0 6px; border-radius: 999px; }
-/* 排除（deny）态：与「已授予」的勾选分开一套颜色，避免把勾和禁看成同一种动作 */
-.tree-count.deny { color: var(--app-danger, #c0392b); margin-left: 6px; }
-.rb-deny { margin-left: 8px; font-size: 11px; color: var(--app-text3); opacity: .55; }
-.rb-deny:hover { opacity: 1; }
-.rb-deny.on { color: var(--app-danger, #c0392b); opacity: 1; }
-.rb-deny-exempt { border: 1px solid var(--app-border); border-radius: 999px; padding: 0 6px; }
-.rb-deny-exempt.on { background: var(--app-warn-weak, #faf3e6); border-color: var(--app-warn-border, #f0dfb6); color: var(--app-warn-text, #a3691b); }
-
-.tree-api { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
-.tree-shared { flex: none; font-size: 10px; line-height: 16px; padding: 0 6px; border-radius: 999px; color: var(--app-text3); border: 1px solid var(--app-border); }
-.gap-fill-btn { flex: none; }
-.drawer-search { margin-bottom: 10px; }
-.drawer-empty { padding: 24px 0; text-align: center; font-size: 12px; color: var(--app-text3); }
-
-.app-pill.builtin { color: var(--app-accent); background: var(--app-accent-weak); }
-.app-pill.rb-ra { color: #7c3aed; background: #f1eafd; }
 .form-tip { margin-top: 6px; font-size: 12px; color: var(--app-text3); line-height: 1.5; }
+
+@media (max-width: 900px) {
+  .pg-api-layout { grid-template-columns: 1fr; }
+  .pg-search { width: 100%; }
+  .pg-body { padding: 12px; }
+}
 </style>

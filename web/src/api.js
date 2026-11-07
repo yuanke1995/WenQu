@@ -1585,6 +1585,10 @@ export const getRoleMemberCounts = () => request('/role/members-counts')
 export const getRoleMembers = code => request(`/role/${encodeURIComponent(code)}/members`)
 /** 授权点 → 已授权角色映射（接口页反查列，批次 D-1） */
 export const getPermissionRoles = () => request('/role/permission-roles')
+/** 权限域概览（角色/菜单/接口/授权点规模与各角色统计；只读聚合） */
+export const getRoleOverview = () => request('/role/overview')
+/** 菜单 → 可见角色（菜单页反查列；只读） */
+export const getMenuRoles = () => request('/role/menu-roles')
 /** 即将到期的临时授权清单（批次 C1 提醒） */
 export const getExpiringRoles = days => request(`/role/expiring?days=${days || 7}`)
 /** 角色数据范围（批次 C2） */

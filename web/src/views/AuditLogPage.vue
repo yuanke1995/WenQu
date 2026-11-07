@@ -4,10 +4,12 @@
  * 一键导出 CSV 交合规，并校验哈希链有没有被改过。挂在「权限管理 → 审计事件」页签下。
  */
 import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
+import { useRoute } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { SearchOutlined } from '@ant-design/icons-vue'
 import { listAuditEvents, verifyAuditChain, exportAuditCsv } from '../api'
 
+const route = useRoute()
 const rows = ref([])
 const actions = ref([])
 const total = ref(0)
@@ -16,7 +18,17 @@ const exporting = ref(false)
 const verifying = ref(false)
 const chain = ref(null)
 const dropped = ref(0)
-const filters = ref({ days: 7, actor: '', action: undefined, keyword: '' })
+/** 初值支持深链：权限页「变更记录 → 查看全部」会带 ?keyword=角色编码&days=30 过来 */
+const initialDays = () => {
+  const d = Number(route.query.days)
+  return [1, 7, 30, 90, 365].includes(d) ? d : 7
+}
+const filters = ref({
+  days: initialDays(),
+  actor: String(route.query.actor || ''),
+  action: route.query.action ? String(route.query.action) : undefined,
+  keyword: String(route.query.keyword || '')
+})
 const page = ref(1)
 // 每页 15 条：控制列表长度，尽量让一屏放下、不出滚动条（后端 query 对 size 的上限是 500，改这里就够）
 const size = 15
@@ -52,6 +64,17 @@ const load = async () => {
   } catch (e) { message.error(e.message || '审计事件加载失败') } finally { loading.value = false }
 }
 const search = () => { page.value = 1; load() }
+
+/** 深链参数变化（同一页面再次从权限页跳来）时同步筛选并重查 */
+watch(() => [route.query.keyword, route.query.days, route.query.actor, route.query.action], () => {
+  if (route.path !== '/security') return
+  filters.value.days = initialDays()
+  filters.value.actor = String(route.query.actor || '')
+  filters.value.action = route.query.action ? String(route.query.action) : undefined
+  filters.value.keyword = String(route.query.keyword || '')
+  page.value = 1
+  load()
+})
 const onPage = (p) => { page.value = p; load() }
 const doExport = async () => {
   exporting.value = true

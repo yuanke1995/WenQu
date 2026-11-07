@@ -1,12 +1,16 @@
 <template>
   <div class="app-page">
     <div class="app-page-head">
-      <h1 class="app-page-title sr-only">认证源与身份同步</h1>
-      <span class="head-count">共 <b>{{ list.length }}</b> 个认证源</span>
-      <span class="head-hint-plain">SAML / SCIM / LDAP 统一登记；组映射规则决定 IdP 组自动授予的角色；OIDC 仍在「单点登录」页签</span>
-      <button class="app-btn" style="margin-left:auto" @click="openCreate">
-        <plus-outlined /> 新建认证源
-      </button>
+      <div class="head-title">
+        <h1 class="app-page-title">认证源与身份同步</h1>
+        <span class="app-pill muted plain">共 {{ list.length }} 个</span>
+        <span class="head-hint-plain">SAML / SCIM / LDAP 统一登记；组映射规则决定 IdP 组自动授予的角色</span>
+      </div>
+      <div class="head-acts">
+        <button class="app-btn" @click="openCreate">
+          <plus-outlined /> 新建认证源
+        </button>
+      </div>
     </div>
 
     <div class="app-page-body">

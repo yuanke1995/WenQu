@@ -159,6 +159,11 @@ const patternHint = computed(() => form.value.matchType === 'regex'
 
 <template>
   <div ref="wrapRef" class="cs-wrap">
+    <div class="cs-head">
+      <h1 class="app-page-title">内容安全规则</h1>
+      <span class="app-pill muted plain">共 {{ rows.length }} 条</span>
+      <span class="head-hint-plain">定「拦什么字」；闸门开关、外部检查服务与文案在「系统设置 → 内容安全」</span>
+    </div>
     <div class="app-list-bar">
       <a-input v-model:value="keyword" allow-clear size="small" class="cs-search" placeholder="搜索规则名 / 匹配内容 / 依据">
         <template #prefix><SearchOutlined class="cs-ic" /></template>
@@ -298,6 +303,8 @@ const patternHint = computed(() => form.value.matchType === 'regex'
    页内不滚（overflow hidden），表格体高度由 tableY 实测封顶、行多时表体内部滚动（表头固定）。
    内边距同 .app-page-body，与菜单/接口/角色三个页签对齐。 */
 .cs-wrap { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; padding: 16px 20px; }
+.cs-head { display: flex; align-items: center; gap: 10px; flex: none; margin-bottom: 10px; }
+.cs-head .head-hint-plain { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cs-search { width: 240px; }
 .cs-ic { color: var(--app-text-muted, #999); }
 .cs-dot { color: var(--app-text-muted, #bbb); }

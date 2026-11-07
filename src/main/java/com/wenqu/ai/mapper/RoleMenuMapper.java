@@ -22,6 +22,10 @@ public interface RoleMenuMapper {
     @Select("SELECT role_code FROM c_ai_role_menu WHERE menu_id = #{menuId}")
     List<String> roleCodesOfMenu(@Param("menuId") String menuId);
 
+    /** 全量绑定关系（菜单页「可见角色」反查用；表小，一次取回） */
+    @Select("SELECT role_code AS roleCode, menu_id AS menuId FROM c_ai_role_menu")
+    List<java.util.Map<String, Object>> allBindings();
+
     @Insert("INSERT IGNORE INTO c_ai_role_menu(role_code, menu_id) VALUES(#{roleCode}, #{menuId})")
     int bind(@Param("roleCode") String roleCode, @Param("menuId") String menuId);
 

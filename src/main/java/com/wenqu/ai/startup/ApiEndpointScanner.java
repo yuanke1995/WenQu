@@ -86,16 +86,19 @@ public class ApiEndpointScanner implements ApplicationRunner {
             Map.entry("Document", "文档"),
             Map.entry("Evaluation", "检索评估"),
             Map.entry("Graph", "知识图谱"),
+            Map.entry("Goal", "目标模式"),
+            Map.entry("IdentityAdmin", "身份管理"),
             Map.entry("KnowledgeBase", "知识库"),
             Map.entry("Knowledge", "知识块"),
+            Map.entry("Market", "市场"),
             Map.entry("Mcp", "MCP 工具"),
             Map.entry("Memory", "长期记忆"),
             Map.entry("Menu", "菜单"),
             Map.entry("Ocr", "解析引擎"),
             Map.entry("Oidc", "单点登录"),
-            Map.entry("OidcProvider", "单点登录"),
             Map.entry("Ops", "运维保障"),
             Map.entry("Project", "工作区"),
+            Map.entry("ProjectFileView", "项目文件"),
             Map.entry("Provider", "模型供应商"),
             Map.entry("Credential", "工作流凭据"),
             Map.entry("Notification", "站内通知"),
@@ -103,6 +106,9 @@ public class ApiEndpointScanner implements ApplicationRunner {
             Map.entry("Qa", "问答看板"),
             Map.entry("RetrievalDebug", "检索调试"),
             Map.entry("Role", "角色"),
+            Map.entry("Saml", "SAML 认证"),
+            Map.entry("SandboxToolCallback", "沙箱工具"),
+            Map.entry("Scim", "SCIM 同步"),
             Map.entry("ServiceAccount", "服务账号"),
             Map.entry("Sandbox", "沙盒"),
             Map.entry("Schedule", "任务调度"),
@@ -118,8 +124,126 @@ public class ApiEndpointScanner implements ApplicationRunner {
             Map.entry("Quota", "推理配额"),
             Map.entry("UsageStats", "使用统计"),
             Map.entry("User", "用户"),
+            Map.entry("WebPush", "消息推送"),
             Map.entry("Workflow", "工作流"),
             Map.entry("WorkflowApi", "工作流开放接口"));
+
+    /**
+     * 授权点中文展示名：key = {@code @Permission} 的 code。
+     * <p>目录表与权限页用它做主标题；未收录的 code 回落编码，新增授权点不会显示空白。
+     * 管理员在页面手工改过的名称优先（回填只覆盖 name == code 的存量行）。</p>
+     */
+    private static final Map<String, String> PERMISSION_ZH = Map.ofEntries(
+            Map.entry("agent:delete", "删除智能体"),
+            Map.entry("agent:publish", "发布智能体"),
+            Map.entry("agent:read", "查看智能体"),
+            Map.entry("agent:write", "编辑智能体"),
+            Map.entry("api-endpoint:manage", "管理接口登记"),
+            Map.entry("api-endpoint:read", "查看接口登记"),
+            Map.entry("apikey:delete", "删除 API 密钥"),
+            Map.entry("apikey:read", "查看 API 密钥"),
+            Map.entry("apikey:write", "创建 API 密钥"),
+            Map.entry("artifact:delete", "删除产物"),
+            Map.entry("artifact:read", "查看产物"),
+            Map.entry("artifact:write", "管理产物"),
+            Map.entry("audit:read", "查看审计事件"),
+            Map.entry("audit:verify", "校验审计链"),
+            Map.entry("chat:approve", "审批对话操作"),
+            Map.entry("chat:goal", "使用目标模式"),
+            Map.entry("chat:tool-output", "调用工具输出"),
+            Map.entry("chat:use", "使用对话"),
+            Map.entry("config:manage", "修改系统配置"),
+            Map.entry("config:read", "查看系统配置"),
+            Map.entry("content-safety:manage", "管理内容安全"),
+            Map.entry("credential:delete", "删除凭据"),
+            Map.entry("credential:read", "查看凭据"),
+            Map.entry("credential:write", "管理凭据"),
+            Map.entry("department:manage", "管理部门"),
+            Map.entry("department:read", "查看部门"),
+            Map.entry("desc-cache:manage", "管理描述缓存"),
+            Map.entry("document:admin", "管理全部文档"),
+            Map.entry("document:delete", "删除文档"),
+            Map.entry("document:read", "查看文档"),
+            Map.entry("document:restore", "恢复文档"),
+            Map.entry("document:write", "编辑文档"),
+            Map.entry("eval:read", "查看检索评估"),
+            Map.entry("eval:write", "执行检索评估"),
+            Map.entry("graph:build", "构建知识图谱"),
+            Map.entry("graph:delete", "删除知识图谱"),
+            Map.entry("graph:read", "查看知识图谱"),
+            Map.entry("identity:manage", "管理认证源"),
+            Map.entry("identity:read", "查看认证源"),
+            Map.entry("kb:delete", "删除知识库"),
+            Map.entry("kb:export", "导出知识库"),
+            Map.entry("kb:import", "导入知识库"),
+            Map.entry("kb:read", "查看知识库"),
+            Map.entry("kb:write", "管理知识库"),
+            Map.entry("knowledge:admin", "管理全部知识库"),
+            Map.entry("knowledge:delete", "删除知识"),
+            Map.entry("knowledge:read", "查看知识"),
+            Map.entry("knowledge:write", "编辑知识"),
+            Map.entry("manual:sync", "同步内置手册"),
+            Map.entry("market:install", "安装市场项"),
+            Map.entry("market:publish", "上架市场项"),
+            Map.entry("market:read", "浏览市场"),
+            Map.entry("mcp:delete", "删除 MCP 服务"),
+            Map.entry("mcp:read", "查看 MCP 服务"),
+            Map.entry("mcp:write", "管理 MCP 服务"),
+            Map.entry("menu:manage", "管理菜单"),
+            Map.entry("menu:read", "查看菜单"),
+            Map.entry("ocr:read", "使用 OCR"),
+            Map.entry("ops:manage", "管理运维"),
+            Map.entry("ops:read", "查看运维"),
+            Map.entry("project:delete", "删除工作区"),
+            Map.entry("project:read", "查看工作区"),
+            Map.entry("project:write", "管理工作区"),
+            Map.entry("provider:delete", "删除模型供应商"),
+            Map.entry("provider:read", "查看模型供应商"),
+            Map.entry("provider:write", "管理模型供应商"),
+            Map.entry("quota:manage", "管理配额"),
+            Map.entry("quota:read", "查看配额"),
+            Map.entry("retrieval-debug:run", "运行检索调试"),
+            Map.entry("role:manage", "管理角色与权限"),
+            Map.entry("role:read", "查看角色与权限"),
+            Map.entry("sandbox:read", "查看沙箱"),
+            Map.entry("sandbox:run", "运行沙箱"),
+            Map.entry("schedule:admin", "管理定时任务"),
+            Map.entry("scheduled:delete", "删除定时任务"),
+            Map.entry("scheduled:read", "查看定时任务"),
+            Map.entry("scheduled:run", "运行定时任务"),
+            Map.entry("scheduled:write", "编辑定时任务"),
+            Map.entry("search-index:manage", "管理搜索索引"),
+            Map.entry("self:memory", "管理个人记忆"),
+            Map.entry("self:notification", "管理个人通知"),
+            Map.entry("self:password", "修改个人密码"),
+            Map.entry("self:preference", "管理个人偏好"),
+            Map.entry("service-account:manage", "管理服务账号"),
+            Map.entry("service-account:read", "查看服务账号"),
+            Map.entry("session:delete", "删除会话"),
+            Map.entry("session:read", "查看会话"),
+            Map.entry("session:share", "分享会话"),
+            Map.entry("session:write", "编辑会话"),
+            Map.entry("skill:delete", "删除技能"),
+            Map.entry("skill:read", "查看技能"),
+            Map.entry("skill:write", "管理技能"),
+            Map.entry("stats:read", "查看使用统计"),
+            Map.entry("tenant:manage", "管理租户"),
+            Map.entry("tenant:read", "查看租户"),
+            Map.entry("trace:manage", "管理链路追踪"),
+            Map.entry("trace:read", "查看链路追踪"),
+            Map.entry("user:delete", "删除成员"),
+            Map.entry("user:read", "查看成员"),
+            Map.entry("user:write", "管理成员"),
+            Map.entry("webpush:manage", "管理消息推送"),
+            Map.entry("workflow:api", "调用工作流"),
+            Map.entry("workflow:approve", "审批工作流"),
+            Map.entry("workflow:delete", "删除工作流"),
+            Map.entry("workflow:export", "导出工作流"),
+            Map.entry("workflow:publish", "发布工作流"),
+            Map.entry("workflow:read", "查看工作流"),
+            Map.entry("workflow:run", "运行工作流"),
+            Map.entry("workflow:write", "编辑工作流"));
+
 
     /**
      * 默认菜单归属对照：Controller 类名（去 Controller 后缀）→ 内置菜单 id 列表（支持多归属，
@@ -341,15 +465,20 @@ public class ApiEndpointScanner implements ApplicationRunner {
             }
         }
         int cataloged = 0;
+        int nameBackfilled = 0;
         for (Map.Entry<String, String> e : permissionCatalog.entrySet()) {
             try {
-                cataloged += permissionCatalogMapper.register(e.getKey(), permissionDisplayName(e.getKey()), e.getValue());
+                String displayName = permissionDisplayName(e.getKey());
+                cataloged += permissionCatalogMapper.register(e.getKey(), displayName, e.getValue());
+                // 存量行 name 仍等于 code 时回填中文名；管理员改过的名称不覆盖
+                nameBackfilled += permissionCatalogMapper.backfillNameIfSame(e.getKey(), displayName);
             } catch (Exception ex) {
                 log.debug("[ApiScan] 授权点目录登记跳过 {}: {}", e.getKey(), ex.getMessage());
             }
         }
-        if (permUpdated > 0 || cataloged > 0) {
-            log.info("[ApiScan] 授权点回写 {} 个端点，目录登记 {} 个新授权点", permUpdated, cataloged);
+        if (permUpdated > 0 || cataloged > 0 || nameBackfilled > 0) {
+            log.info("[ApiScan] 授权点回写 {} 个端点，目录登记 {} 个新授权点，回填中文名 {} 条",
+                    permUpdated, cataloged, nameBackfilled);
         }
         // 标注覆盖自检：受控端点未标注 → WARN 逐条列出。判定侧对未标注端点只放管理员级，
         // 所以漏标不会造成越权，但会让普通角色突然 403——启动日志必须点名。
@@ -442,9 +571,9 @@ public class ApiEndpointScanner implements ApplicationRunner {
         }
     }
 
-    /** 授权点展示名（M1 先与编码同形；A2 逐 Controller 复核时换成可读名） */
+    /** 授权点展示名：中文名优先，未收录回落编码 */
     private static String permissionDisplayName(String code) {
-        return code;
+        return PERMISSION_ZH.getOrDefault(code, code);
     }
 
     /** 默认菜单归属：Controller 对照表 ∩ 现存菜单（未收录或菜单已退役 → 空，接口显示在「其他接口」分组） */
