@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { ensureAuth, isAdminSync, isLoggedIn, menuHasPath } from './utils/auth'
 import { preferMobileShell } from './h5/mobile'
+import { authVeil, coverAuthVeil, revealAuthVeil } from './utils/authTransition'
 
 // 视图全部懒加载：每个页面（连带其专属依赖，如 Stats/知识库的 echarts、
 // FlowEditor 的 vue-flow）各自成 chunk，首次导航才下载——手机首屏不再下载全站。
@@ -73,7 +74,25 @@ const router = createRouter({ history: createWebHistory(), routes })
 // 路由守卫：先要求登录（本地登录令牌），再对权限受控页校验——
 // 管理员级角色（admin/superadmin 或自定义 admin_flag=1）放行；
 // 普通角色若其角色绑定的菜单包含该路径（RBAC 授权）也放行，否则回对话页
+//
+// 登录 ⇄ 工作台之间还会先盖一层品牌过渡遮罩（见 utils/authTransition.js）：
+// 只在这道边界上生效——首次进入（无上一页）、站内跳转、公开分享页都不铺，
+// 否则日常导航会平白多出几百毫秒的等待。
+const isLoginSide = r => r.path === '/login' || r.path === '/auth/oidc/callback'
+let veilTimer = 0
+
 router.beforeEach(async to => {
+  const from = router.currentRoute.value
+  const toLogin = to.path === '/login'
+  const fromLogin = isLoginSide(from)
+  // from.matched 为空 = 首次进入（START_LOCATION），没有可衔接的上一页
+  const crossing = from.matched.length > 0 &&
+    ((fromLogin && !toLogin && !to.meta.public) || (toLogin && !fromLogin))
+  // 登录页 → 工作台时若还没有令牌，守卫会把人踢回登录页，这趟不该铺遮罩
+  if (crossing && !authVeil.visible && (toLogin || isLoggedIn())) {
+    await coverAuthVeil(toLogin ? 'out' : 'in')
+  }
+
   if (to.path === '/login' || to.meta.public) return true
   // 带上原路径：授权确认页这类「必须登录才能完成」的入口，登录后要能回到原处
   if (!isLoggedIn()) return { path: '/login', query: { redirect: to.fullPath }, replace: true }
@@ -91,6 +110,15 @@ router.beforeEach(async to => {
   if (isAdminSync() || menuHasPath(to.path)) return true
   message.warning('暂无该功能的访问权限（可联系管理员在权限管理中为角色授权）')
   return { path: '/chat', replace: true }
+})
+
+// 遮罩在导航落定后 80ms 揭开（给新页面一帧落版时间，避免揭开瞬间看到排版跳动）。
+// 守卫内部的重定向（如手机 /chat → /m/chat）会再触发一次 afterEach，这里重排定时器即可，
+// 不会重复盖遮罩（beforeEach 见 authVeil.visible 就直接放行）。
+router.afterEach(() => {
+  if (!authVeil.visible) return
+  clearTimeout(veilTimer)
+  veilTimer = setTimeout(() => { revealAuthVeil() }, 80)
 })
 
 export default router

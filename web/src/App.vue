@@ -1,5 +1,7 @@
 <template>
   <a-config-provider :locale="zhCN" :theme="antdThemeCfg">
+    <!-- 登录 ⇄ 工作台的品牌过渡遮罩：盖在整页之上（含布局外），只在跨这道边界时出现 -->
+    <AuthVeil />
     <a-layout style="min-height:100vh">
       <a-layout-content :class="contentClass">
         <router-view />
@@ -16,6 +18,7 @@ import zhCN from 'ant-design-vue/es/locale/zh_CN'
 import dayjs from 'dayjs'
 import 'dayjs/locale/zh-cn'
 import { themeState } from './utils/theme'
+import AuthVeil from './components/AuthVeil.vue'
 
 // antd 组件全局中文化（确认框按钮/分页/日期等）
 dayjs.locale('zh-cn')

@@ -325,3 +325,31 @@ html[data-theme='dark'] .app-pill.violet { color: #b69cff; background: #2a2140; 
   /* 贴底弹层（抽屉、弹窗）的底部按钮别被 Home Indicator 压住 */
   .ant-drawer-content-wrapper, .ant-modal-wrap { padding-bottom: var(--sab); }
 }
+
+/* ==================== 登录 → 工作台：四边向中心汇聚 ====================
+ * 由 utils/authTransition.js 在揭开遮罩的同一刻把 data-enter="converge" 挂到 <html>，
+ * 动画结束自动摘除。只在登录进入工作台的那一次生效：站内跳转、刷新、公开分享页都没有这个属性。
+ * 侧栏自左、输入区自下、顶栏自上、欢迎区由小放大——四路同时朝画面中心合拢。 */
+@keyframes wq-converge-side { from { transform: translateX(-100%); } to { transform: none; } }
+@keyframes wq-converge-bottom { from { transform: translateY(110%); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes wq-converge-top { from { transform: translateY(-10px); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes wq-converge-center { from { transform: scale(.96); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* 侧栏在 ≤768 是 fixed 抽屉（自身也用 transform 开合），让它不参与，避免盖住动画 */
+@media (min-width: 769px) {
+  html[data-enter='converge'] .app-root .side {
+    animation: wq-converge-side .5s cubic-bezier(.22, 1, .36, 1) both;
+  }
+}
+html[data-enter='converge'] .chat-head { animation: wq-converge-top .38s ease-out both; }
+html[data-enter='converge'] .welcome { animation: wq-converge-center .44s ease-out .06s both; }
+/* 输入区（chat/ChatInput.vue 的 .ci）：只在对话页存在，其它落点自然跳过 */
+html[data-enter='converge'] .ci {
+  animation: wq-converge-bottom .54s cubic-bezier(.22, 1, .36, 1) .02s both;
+}
+@media (prefers-reduced-motion: reduce) {
+  html[data-enter='converge'] .side,
+  html[data-enter='converge'] .chat-head,
+  html[data-enter='converge'] .welcome,
+  html[data-enter='converge'] .ci { animation: none; }
+}
