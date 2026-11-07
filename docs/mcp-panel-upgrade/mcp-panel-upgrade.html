@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>问渠 · MCP 外部工具升级效果图</title>
+<style>
+/* ============================================================
+   问渠 MCP 外部工具 · 升级效果图
+   画布 1600×1000（@2x 输出）；token 全部取自 web/src/views/app.css
+   ============================================================ */
+:root {
+  --app-bg: #f7f8fa;
+  --app-panel: #ffffff;
+  --app-panel-2: #fafbfc;
+  --app-border: #e6e9ed;
+  --app-border-strong: #d8dde3;
+  --app-text: #1f2329;
+  --app-text2: #5f6570;
+  --app-text3: #98a0aa;
+  --app-accent: #2e6be6;
+  --app-accent-hover: #1f5bd8;
+  --app-accent-weak: #eef2f7;
+  --app-danger: #d4552e;
+  --app-ok: #3b8f4e;
+  --app-warn: #c77c14;
+  --app-ok-weak: #eaf5ec;
+  --app-warn-weak: #faf3e6;
+  --app-warn-border: #f0dfb6;
+  --app-warn-text: #a3691b;
+  --app-danger-weak: #fff2f0;
+  --app-code-bg: #f6f8fa;
+  --app-shadow-sm: 0 1px 2px rgba(16, 24, 40, .04);
+  --app-shadow-lg: 0 12px 32px rgba(16, 24, 40, .14);
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+          'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: var(--font);
+  background: #eef1f5;
+  color: var(--app-text);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+svg.ic { stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ---------------- 设计稿外壳 ---------------- */
+.sheet { width: 1600px; margin: 0 auto; padding: 36px 0 60px; }
+.sheet-top { padding: 0 2px 22px; }
+.sheet-title { font-size: 22px; font-weight: 600; letter-spacing: .01em; color: #1f2329; }
+.sheet-sub { margin-top: 8px; font-size: 13px; color: #8a929d; }
+.sheet-sub b { color: #5f6570; font-weight: 500; }
+.scene-block { margin-top: 30px; }
+.scene-block:first-of-type { margin-top: 8px; }
+.cap {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 0 2px 10px; font-size: 13px; color: #5f6570;
+}
+.cap b { font-size: 11px; font-weight: 600; color: #98a0aa; letter-spacing: .08em; }
+.cap em { font-style: normal; color: #1f2329; font-weight: 600; font-size: 14px; }
+.cap span { color: #98a0aa; font-size: 12px; }
+.scene {
+  width: 1600px; height: 1000px; display: flex; overflow: hidden;
+  background: var(--app-bg); position: relative;
+  box-shadow: 0 20px 50px rgba(16, 24, 40, .16);
+}
+
+/* ---------------- 侧栏（AppLayout 现状） ---------------- */
+.side {
+  width: 232px; flex: none; height: 100%; display: flex; flex-direction: column;
+  background: var(--app-panel); border-right: 1px solid var(--app-border);
+  padding: 10px 8px 8px;
+}
+.logo-row { display: flex; align-items: center; gap: 8px; padding: 2px 6px 12px; }
+.logo-name { font-size: 13px; font-weight: 500; color: var(--app-text); }
+.logo-row .fold { margin-left: auto; color: var(--app-text3); width: 26px; height: 26px;
+  display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; }
+.side-nav { display: flex; flex-direction: column; gap: 1px; flex: none; }
+.nav-item {
+  display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 9px;
+  border-radius: 8px; font-size: 13px; color: var(--app-text2); white-space: nowrap;
+}
+.nav-item .ic { width: 14px; height: 14px; color: var(--app-text3); flex: none; }
+.nav-item.active { background: var(--app-accent-weak); color: var(--app-text); font-weight: 500; }
+.nav-item.active .ic { color: var(--app-text2); }
+.nav-item.new { color: var(--app-text2); margin-bottom: 2px; }
+.side-search {
+  flex: none; margin-top: 12px; height: 28px; display: flex; align-items: center; gap: 7px;
+  padding: 0 9px; border: 1px solid var(--app-border); border-radius: 6px;
+  color: var(--app-text3); font-size: 12px; background: var(--app-panel);
+}
+.side-search .ic { width: 12px; height: 12px; }
+.side-sec { margin-top: 16px; display: flex; align-items: center; gap: 4px; padding: 0 7px 5px; }
+.side-sec .t { font-size: 11px; font-weight: 600; color: var(--app-text3); letter-spacing: .04em; }
+.side-sec .n { font-size: 11px; color: var(--app-text3); opacity: .8; }
+.side-sec .plus { margin-left: auto; color: var(--app-text3); }
+.ws-row { display: flex; align-items: center; gap: 7px; height: 28px; padding: 0 7px; border-radius: 7px;
+  font-size: 12px; color: var(--app-text2); }
+.ws-row .ic { width: 12px; height: 12px; color: var(--app-text3); flex: none; }
+.ws-row.on { color: var(--app-text); font-weight: 500; }
+.side-empty { padding: 4px 8px 4px 25px; font-size: 11.5px; color: var(--app-text3); }
+.sess-row { display: flex; align-items: center; gap: 7px; height: 27px; padding: 0 7px 0 25px;
+  font-size: 12px; color: var(--app-text3); }
+.sess-row .ic { width: 12px; height: 12px; flex: none; }
+.sess-row span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side-foot {
+  margin-top: auto; display: flex; align-items: center; gap: 4px; padding: 8px 4px 2px;
+  border-top: 1px solid var(--app-border);
+}
+.avatar { width: 24px; height: 24px; border-radius: 50%; background: #e8ecf2; color: var(--app-text2);
+  font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; }
+.side-foot .sp { flex: 1; }
+.icon-btn { width: 26px; height: 26px; border: none; background: transparent; color: var(--app-text3);
+  display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; padding: 0; }
+.icon-btn .ic { width: 14px; height: 14px; }
+
+/* ---------------- 主区（智能体工作台 Tab 容器） ---------------- */
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--app-bg); }
+.hub-tabs {
+  flex: none; height: 46px; background: var(--app-panel); border-bottom: 1px solid var(--app-border);
+  display: flex; align-items: stretch; gap: 28px; padding: 0 20px;
+}
+.hub-tab { display: flex; align-items: center; position: relative; font-size: 13px; color: var(--app-text);
+  padding-top: 4px; }
+.hub-tab.on { color: var(--app-accent); font-weight: 500; }
+.hub-tab.on::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 2px;
+  border-radius: 1px; background: var(--app-accent); }
+
+.page-head {
+  flex: none; height: 56px; display: flex; align-items: center; gap: 12px;
+  padding: 0 20px; background: var(--app-panel); border-bottom: 1px solid var(--app-border);
+}
+.head-count { font-size: 12px; color: var(--app-text2); white-space: nowrap; }
+.head-count b { color: var(--app-text); font-weight: 600; }
+.head-count .dim { color: var(--app-text3); }
+.vline { width: 1px; height: 14px; background: var(--app-border); flex: none; }
+.stats-link { font-size: 12px; color: var(--app-text3); white-space: nowrap; flex: none; }
+.stats-link u { text-decoration: none; border-bottom: 1px dotted transparent; }
+.head-hint { font-size: 12px; color: var(--app-text3); min-width: 0; flex: 1 1 auto;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.head-r { flex: none; display: flex; align-items: center; gap: 8px; }
+.search {
+  width: 160px; height: 26px; display: flex; align-items: center; gap: 6px; padding: 0 8px;
+  border: 1px solid var(--app-border); border-radius: 6px; background: var(--app-panel);
+  color: var(--app-text3); font-size: 12px;
+}
+.search .ic { width: 12px; height: 12px; flex: none; }
+.btn {
+  display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 13px;
+  border-radius: 7px; border: none; background: var(--app-accent); color: #fff; font-size: 12px;
+  white-space: nowrap;
+}
+.btn .ic { width: 12px; height: 12px; }
+.btn.ghost { background: transparent; color: var(--app-text2); border: 1px solid var(--app-border); }
+.btn.sm { height: 26px; padding: 0 9px; border-radius: 6px; }
+.batch-group { display: flex; align-items: center; gap: 8px; padding-left: 12px;
+  border-left: 1px solid var(--app-border); }
+
+/* ---------------- 卡片列表 ---------------- */
+.page-body { flex: 1; min-height: 0; padding: 16px 20px; overflow: hidden; }
+.card {
+  background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 10px;
+  padding: 14px 16px; margin-bottom: 12px; box-shadow: var(--app-shadow-sm);
+}
+.card-top { display: flex; align-items: flex-start; gap: 14px; }
+.card-info { flex: 1; min-width: 0; }
+.card-head { display: flex; align-items: center; gap: 8px; height: 18px; }
+.dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.dot.ok { background: var(--app-ok); }
+.dot.bad { background: var(--app-danger); }
+.dot.muted { background: var(--app-text3); }
+.dot.pending { background: var(--app-warn); }
+.card-name { font-size: 13px; font-weight: 500; color: var(--app-text); max-width: 46%;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pill-platform { flex: none; font-size: 11px; line-height: 16px; padding: 0 6px; border-radius: 3px;
+  border: 1px solid var(--app-accent); color: var(--app-accent); background: transparent; }
+.chev { margin-left: auto; flex: none; color: var(--app-text3); display: inline-flex; margin-right: 2px; }
+.chev .ic { width: 12px; height: 12px; }
+.chev.up .ic { transform: rotate(180deg); }
+.card-sub { display: flex; align-items: center; gap: 8px; margin-top: 4px; min-width: 0;
+  font-size: 12px; color: var(--app-text3); }
+.state { flex: none; font-size: 12px; }
+.state.ok { color: var(--app-ok); }
+.state.bad { color: var(--app-danger); }
+.state.muted { color: var(--app-text3); }
+.state.pending { color: var(--app-warn); }
+.type-pill { flex: none; font-size: 11px; line-height: 16px; padding: 0 6px; border-radius: 3px;
+  background: var(--app-panel-2); color: var(--app-text3); }
+.url { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hdr-pill { flex: none; font-family: var(--mono); font-size: 11px; line-height: 16px; padding: 0 6px;
+  border-radius: 4px; background: var(--app-accent-weak); color: var(--app-accent); }
+.usage { flex: none; font-size: 11.5px; color: var(--app-text3); }
+.card-actions { flex: none; display: flex; align-items: center; gap: 9px; height: 18px; }
+.switch { width: 28px; height: 16px; border-radius: 999px; background: var(--app-accent); position: relative; flex: none; }
+.switch::after { content: ''; position: absolute; top: 2px; right: 2px; width: 12px; height: 12px;
+  border-radius: 50%; background: #fff; }
+.switch.off { background: #c9cdd4; }
+.switch.off::after { right: auto; left: 2px; }
+.link-btn { border: none; background: transparent; padding: 0; font-size: 12px; color: var(--app-accent);
+  white-space: nowrap; }
+.link-btn.danger { color: var(--app-danger); }
+.link-btn.off { color: var(--app-text3); }
+
+/* 工具清单（已连接卡展开） */
+.tools { margin-top: 8px; border-top: 1px dashed var(--app-border); padding-top: 6px; }
+.tool-row { display: flex; align-items: baseline; gap: 8px; height: 22px; font-size: 12px; }
+.tool-row code { flex: none; font-family: var(--mono); font-size: 11px; line-height: 16px;
+  background: var(--app-panel-2); padding: 1px 5px; border-radius: 4px; color: var(--app-text); }
+.tool-row code.raw { background: none; padding-left: 0; color: var(--app-text3); }
+.tool-desc { min-width: 0; flex: 1; color: var(--app-text3); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; font-size: 12px; }
+.tool-ops { flex: none; display: flex; gap: 10px; }
+.tool-ops .link-btn { color: var(--app-text3); font-size: 11.5px; }
+
+/* 失败卡展开 */
+.fail { margin-top: 8px; border-top: 1px dashed var(--app-border); padding-top: 9px; }
+.fail-reason { display: flex; align-items: flex-start; gap: 6px; font-size: 12.5px; line-height: 1.5;
+  color: var(--app-danger); }
+.fail-reason .ic { width: 12px; height: 12px; flex: none; margin-top: 2px; }
+.fold { margin: 7px 0 0 18px; }
+.fold-head { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--app-text2); }
+.fold-head .ic { width: 11px; height: 11px; color: var(--app-text3); }
+.fold-body { margin-top: 6px; }
+.err-code { display: flex; align-items: center; gap: 12px; background: var(--app-code-bg);
+  border-radius: 6px; padding: 7px 10px; font-family: var(--mono); font-size: 11.5px; color: var(--app-text2); }
+.err-code code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--mono); }
+.err-code .link-btn { font-size: 11.5px; color: var(--app-text3); flex: none; }
+.tips { margin: 6px 0 0; padding: 0 0 0 14px; font-size: 11.5px; color: var(--app-text3); line-height: 1.8; }
+.fail-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 9px;
+  padding-top: 8px; border-top: 1px dashed var(--app-border); }
+.retry-hint { font-size: 11.5px; color: var(--app-text3); }
+.fail-ops { display: flex; gap: 8px; }
+
+/* ---------------- 弹窗 / 抽屉（叠在主页上） ---------------- */
+.scene-bg { position: absolute; inset: 0; overflow: hidden; }
+.mask { position: absolute; inset: 0; background: rgba(16, 22, 32, .38); }
+.modal {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 660px; background: var(--app-panel); border-radius: 14px; box-shadow: var(--app-shadow-lg);
+  overflow: hidden;
+}
+.modal-head { padding: 18px 24px 0; }
+.modal-title { display: flex; align-items: baseline; gap: 4px; }
+.modal-title .t { font-size: 15px; font-weight: 600; color: var(--app-text); }
+.modal-title .tool { font-size: 15px; font-weight: 600; color: var(--app-text); }
+.modal-sub { margin-top: 4px; font-size: 12px; color: var(--app-text3); }
+.modal-note { position: absolute; right: 24px; top: 22px; font-size: 11.5px; color: var(--app-text3); }
+.modal-body { padding: 16px 24px 0; }
+.invoke-grid { display: grid; grid-template-columns: 1fr 216px; gap: 14px; }
+.field-label { font-size: 12px; color: var(--app-text2); margin-bottom: 6px; }
+.json-input {
+  height: 150px; border: 1px solid var(--app-border-strong); border-radius: 8px; background: var(--app-panel);
+  padding: 9px 10px; font-family: var(--mono); font-size: 11.5px; line-height: 1.65;
+  color: var(--app-text); white-space: pre; overflow: hidden;
+}
+.json-hint { margin-top: 6px; font-size: 11px; color: var(--app-text3); }
+.schema { min-height: 150px; background: var(--app-panel-2); border: 1px solid var(--app-border);
+  border-radius: 8px; padding: 9px 10px; overflow: hidden; }
+.schema-t { font-size: 11px; color: var(--app-text3); letter-spacing: .03em; margin-bottom: 8px; }
+.schema-row { margin-bottom: 9px; }
+.schema-line { display: flex; align-items: center; gap: 5px; }
+.schema-line code { font-family: var(--mono); font-size: 11.5px; color: var(--app-text); }
+.schema-line .ty { font-size: 10.5px; color: var(--app-text3); }
+.req { font-size: 10px; line-height: 14px; padding: 0 4px; border-radius: 3px;
+  color: var(--app-warn-text); background: var(--app-warn-weak); }
+.opt { font-size: 10px; line-height: 14px; color: var(--app-text3); }
+.schema-desc { margin-top: 2px; font-size: 11.5px; line-height: 1.5; color: var(--app-text3); }
+.result { margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--app-border); }
+.result-meta { display: flex; align-items: center; gap: 8px; }
+.pill-ok { display: inline-flex; align-items: center; font-size: 11px; line-height: 18px; padding: 0 7px;
+  border-radius: 999px; background: var(--app-ok-weak); color: var(--app-ok); }
+.result-ms { font-size: 11.5px; color: var(--app-text3); }
+.result-ms b { font-weight: 500; color: var(--app-text2); }
+.result-meta .link-btn { margin-left: auto; font-size: 11.5px; color: var(--app-text3); }
+.result-code { margin-top: 8px; background: var(--app-code-bg); border-radius: 8px; padding: 9px 11px;
+  font-family: var(--mono); font-size: 11.5px; line-height: 1.65; color: var(--app-text2);
+  max-height: 190px; overflow: hidden; white-space: pre; }
+.result-foot { margin-top: 6px; font-size: 11px; color: var(--app-text3); }
+.modal-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 16px 24px 18px; }
+
+.drawer {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 460px; background: var(--app-panel);
+  box-shadow: -14px 0 40px rgba(16, 24, 40, .18); display: flex; flex-direction: column;
+}
+.drawer-head { padding: 18px 20px 12px; border-bottom: 1px solid var(--app-border); position: relative; }
+.drawer-head .t { font-size: 15px; font-weight: 600; color: var(--app-text); }
+.drawer-head .s { margin-top: 4px; font-size: 12px; color: var(--app-text3); }
+.drawer-head .x { position: absolute; right: 16px; top: 16px; color: var(--app-text3); }
+.drawer-body { flex: 1; min-height: 0; padding: 16px 20px; overflow: hidden; }
+.sum { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.sum-cell { background: var(--app-panel-2); border: 1px solid var(--app-border); border-radius: 8px;
+  padding: 9px 10px; }
+.sum-cell .k { font-size: 11px; color: var(--app-text3); }
+.sum-cell .v { margin-top: 3px; font-size: 17px; font-weight: 600; color: var(--app-text);
+  font-variant-numeric: tabular-nums; }
+.sec-t { margin: 18px 0 6px; font-size: 12px; color: var(--app-text2); }
+.tbl { width: 100%; border-collapse: collapse; }
+.tbl th { font-size: 11px; font-weight: 400; color: var(--app-text3); text-align: left;
+  padding: 0 0 6px; border-bottom: 1px solid var(--app-border); }
+.tbl th.num { text-align: right; }
+.tbl td { font-size: 12px; color: var(--app-text2); padding: 7px 0; border-bottom: 1px solid #f1f3f5;
+  font-variant-numeric: tabular-nums; }
+.tbl td.name { color: var(--app-text); }
+.tbl td.num { text-align: right; }
+.tbl td .raw { display: block; font-family: var(--mono); font-size: 10.5px; color: var(--app-text3);
+  margin-top: 1px; }
+.tbl td .sub { color: var(--app-text3); font-size: 11px; }
+.drawer-foot { padding: 12px 20px 16px; border-top: 1px solid var(--app-border); font-size: 11.5px;
+  line-height: 1.75; color: var(--app-text3); }
+</style>
+</head>
+<body>
+<!-- 图标精灵 -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M20 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2z"/></symbol>
+  <symbol id="i-bot" viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4M9 12h.01M15 12h.01M9 16h6"/></symbol>
+  <symbol id="i-bag" viewBox="0 0 24 24"><path d="M5 8h14l1 12H4z"/><path d="M9 8a3 3 0 0 1 6 0"/></symbol>
+  <symbol id="i-db" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></symbol>
+  <symbol id="i-chart" viewBox="0 0 24 24"><path d="M5 20V11M12 20V6M19 20v-6"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5 21 21"/></symbol>
+  <symbol id="i-reload" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 4v7h-7"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12M7 10l5 5 5-5M4 21h16"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.5 2.5 0 0 1 3.5 3.5L7 20l-4 1 1-4z"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 13a8 8 0 0 1-9-9 8 8 0 1 0 9 9z"/></symbol>
+  <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 3v9"/><path d="M6.4 6.4a8 8 0 1 0 11.2 0"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+  <symbol id="i-fold" viewBox="0 0 24 24"><path d="M4 7h16M4 12h10M4 17h16"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+</svg>
+
+<div class="sheet">
+  <div class="sheet-top">
+    <div class="sheet-title">问渠 · MCP 外部工具升级效果图</div>
+    <div class="sheet-sub">按现有工作台与设计 token 制作 · <b>默认收起</b> · 失败可展开看人话原因 · 工具可试调用 · 用量只在需要时出现</div>
+  </div>
+
+  <!-- ============ 01 主页 ============ -->
+  <div class="scene-block">
+    <div class="cap"><b>01</b><em>主页</em><span>6 个服务里只展开 1 张失败卡与 1 张工具卡，其余保持现状的收起状态</span></div>
+    <div class="scene" id="scene-main">
+      <aside class="side">
+        <div class="logo-row">
+          <svg width="24" height="24" viewBox="0 0 64 64" fill="none">
+            <defs><linearGradient id="brand-g" x1="14" y1="4" x2="50" y2="60" gradientUnits="userSpaceOnUse">
+              <stop offset="0" stop-color="#5E93F5"/><stop offset="1" stop-color="#2A5FE0"/>
+            </linearGradient></defs>
+            <rect x="3" y="3" width="58" height="58" rx="17" fill="url(#brand-g)"/>
+            <circle cx="46" cy="16.5" r="3.6" fill="#fff"/>
+            <path d="M18 25c4.5-5.2 9-5.2 13.5 0s9 5.2 13.5 0" stroke="#fff" stroke-width="5.4" stroke-linecap="round"/>
+            <path d="M16 35c5-5.6 10-5.6 15 0s10 5.6 15 0" stroke="#fff" stroke-width="5.4" stroke-linecap="round"/>
+            <path d="M16 45c5-5.6 10-5.6 15 0s10 5.6 15 0" stroke="#fff" stroke-width="5.4" stroke-linecap="round"/>
+          </svg>
+          <span class="logo-name">问渠</span>
+          <span class="fold"><svg class="ic" width="14" height="14"><use href="#i-fold"/></svg></span>
+        </div>
+        <nav class="side-nav">
+          <div class="nav-item new"><svg class="ic"><use href="#i-plus"/></svg><span>新建对话</span></div>
+          <div class="nav-item"><svg class="ic"><use href="#i-chat"/></svg><span>对话</span></div>
+          <div class="nav-item active"><svg class="ic"><use href="#i-bot"/></svg><span>智能体</span></div>
+          <div class="nav-item"><svg class="ic"><use href="#i-bag"/></svg><span>市场</span></div>
+          <div class="nav-item"><svg class="ic"><use href="#i-db"/></svg><span>知识库</span></div>
+          <div class="nav-item"><svg class="ic"><use href="#i-file"/></svg><span>我的产物</span></div>
+          <div class="nav-item"><svg class="ic"><use href="#i-chart"/></svg><span>使用统计</span></div>
+        </nav>
+        <div class="side-search"><svg class="ic"><use href="#i-search"/></svg><span>搜索会话</span></div>
+        <div class="side-sec">
+          <span class="t">工作区</span><span class="n">(2)</span>
+          <svg class="ic plus" width="12" height="12"><use href="#i-plus"/></svg>
+        </div>
+        <div class="ws-row on"><svg class="ic"><use href="#i-folder"/></svg><span>问渠</span></div>
+        <div class="side-empty">暂无会话</div>
+        <div class="ws-row"><svg class="ic"><use href="#i-folder"/></svg><span>wenqu-local-demo</span></div>
+        <div class="sess-row"><svg class="ic"><use href="#i-chat"/></svg><span>写一个简单的 Java 时间工具</span></div>
+        <div class="side-foot">
+          <span class="avatar">t</span>
+          <span class="sp"></span>
+          <span class="icon-btn"><svg class="ic"><use href="#i-moon"/></svg></span>
+          <span class="icon-btn"><svg class="ic"><use href="#i-power"/></svg></span>
+        </div>
+      </aside>
+
+      <main class="main">
+        <div class="hub-tabs">
+          <div class="hub-tab">模型供应商</div>
+          <div class="hub-tab">智能体</div>
+          <div class="hub-tab">技能 Skills</div>
+          <div class="hub-tab on">MCP 外部工具</div>
+          <div class="hub-tab">工作流</div>
+          <div class="hub-tab">定时任务</div>
+        </div>
+        <div class="page-head">
+          <span class="head-count">共 <b>6</b> 个服务 · 已连接 <b>3</b><span class="dim"> · 更新于 14:26:08</span></span>
+          <i class="vline"></i>
+          <span class="stats-link">近 7 天 128 次 · 成功率 96%</span>
+          <span class="head-hint">外部 MCP 工具会自动注册给模型，与内置工具一样可被调用</span>
+          <div class="head-r">
+            <div class="search"><svg class="ic"><use href="#i-search"/></svg><span>搜索名称或地址</span></div>
+            <span class="icon-btn"><svg class="ic"><use href="#i-reload"/></svg></span>
+            <button class="btn ghost sm">全部重连</button>
+            <button class="btn ghost sm"><svg class="ic"><use href="#i-download"/></svg>导出</button>
+            <button class="btn"><svg class="ic"><use href="#i-plus"/></svg>添加服务</button>
+            <div class="batch-group"><button class="btn ghost sm">批量管理</button></div>
+          </div>
+        </div>
+        <div class="page-body">
+          <!-- 1. 已连接 + 工具展开 -->
+          <div class="card">
+            <div class="card-top">
+              <div class="card-info">
+                <div class="card-head">
+                  <i class="dot ok"></i>
+                  <span class="card-name">统计查询</span>
+                  <span class="chev up"><svg class="ic"><use href="#i-chev"/></svg></span>
+                </div>
+                <div class="card-sub">
+                  <span class="state ok">已连接 · 3 个工具</span>
+                  <span class="type-pill">streamable</span>
+                  <span class="url">http://127.0.0.1:8931/mcp</span>
+                  <span class="usage">近 7 天 46 次 · 98%</span>
+                </div>
+              </div>
+              <div class="card-actions">
+                <span class="switch"></span>
+                <button class="link-btn">重连</button>
+                <button class="link-btn">编辑</button>
+                <button class="link-btn danger">删除</button>
+              </div>
+            </div>
+            <div class="tools">
+              <div class="tool-row">
+                <code>指标查询</code><code class="raw">query_metrics</code>
+                <span class="tool-desc">按指标名与时间范围查询聚合数据</span>
+                <span class="tool-ops"><button class="link-btn">试一下</button><button class="link-btn">改名</button></span>
+              </div>
+              <div class="tool-row">
+                <code>维度聚合</code><code class="raw">group_by_dimension</code>
+                <span class="tool-desc">按渠道、地区等维度拆分指标</span>
+                <span class="tool-ops"><button class="link-btn">试一下</button><button class="link-btn">改名</button></span>
+              </div>
+              <div class="tool-row">
+                <code>口径说明</code><code class="raw">explain_metric</code>
+                <span class="tool-desc">返回指标的业务口径与计算方式</span>
+                <span class="tool-ops"><button class="link-btn">试一下</button><button class="link-btn">改名</button></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 2. 失败卡 + 详情展开 -->
+          <div class="card">
+            <div class="card-top">
+              <div class="card-info">
+                <div class="card-head">
+                  <i class="dot bad"></i>
+                  <span class="card-name">天气工具</span>
+                  <span class="chev up"><svg class="ic"><use href="#i-chev"/></svg></span>
+                </div>
+                <div class="card-sub">
+                  <span class="state bad">连接失败</span>
+                  <span class="type-pill">streamable</span>
+                  <span class="url">http://127.0.0.1:8941/mcp</span>
+                </div>
+              </div>
+              <div class="card-actions">
+                <span class="switch"></span>
+                <button class="link-btn">重连</button>
+                <button class="link-btn">编辑</button>
+                <button class="link-btn danger">删除</button>
+              </div>
+            </div>
+            <div class="fail">
+              <div class="fail-reason">
+                <svg class="ic"><use href="#i-warn"/></svg>
+                <span>远端返回的不是有效的 MCP 响应——地址可能不对，或被网关/代理拦截</span>
+              </div>
+              <div class="fold">
+                <div class="fold-head">
+                  <svg class="ic"><use href="#i-chev"/></svg>
+                  <span>错误原文与排查建议</span>
+                </div>
+                <div class="fold-body">
+                  <div class="err-code">
+                    <code>Client failed to initialize: header parser received no bytes</code>
+                    <button class="link-btn">复制</button>
+                  </div>
+                  <ul class="tips">
+                    <li>确认地址是 MCP 端点本体（streamable 默认路径 /mcp）</li>
+                    <li>如经过网关，确认它没有改写响应体或返回 HTML 错误页</li>
+                  </ul>
+                </div>
+              </div>
+              <div class="fail-foot">
+                <span class="retry-hint">第 3 次退避重试 · 约 120 秒后自动再试</span>
+                <span class="fail-ops">
+                  <button class="btn ghost sm">重连</button>
+                  <button class="btn ghost sm">测试连接</button>
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 3. 连接中 -->
+          <div class="card">
+            <div class="card-top">
+              <div class="card-info">
+                <div class="card-head">
+                  <i class="dot pending"></i>
+                  <span class="card-name">deepwiki</span>
+                </div>
+                <div class="card-sub">
+                  <span class="state pending">连接中…</span>
+                  <span class="type-pill">sse</span>
+                  <span class="url">https://mcp.deepwiki.com/sse</span>
+                </div>
+              </div>
+              <div class="card-actions">
+                <span class="switch"></span>
+                <button class="link-btn off">重连中…</button>
+                <button class="link-btn">编辑</button>
+                <button class="link-btn danger">删除</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 4. 已停用 + 凭据键名 -->
+          <div class="card">
+            <div class="card-top">
+              <div class="card-info">
+                <div class="card-head">
+                  <i class="dot muted"></i>
+                  <span class="card-name">内部知识库</span>
+                </div>
+                <div class="card-sub">
+                  <span class="state muted">已停用</span>
+                  <span class="type-pill">streamable</span>
+                  <span class="url">http://10.0.8.23:8080/mcp</span>
+                  <span class="hdr-pill">Authorization</span>
+                </div>
+              </div>
+              <div class="card-actions">
+                <span class="switch off"></span>
+                <button class="link-btn off">重连</button>
+                <button class="link-btn">编辑</button>
+                <button class="link-btn danger">删除</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 5. 平台卡 -->
+          <div class="card">
+            <div class="card-top">
+              <div class="card-info">
+                <div class="card-head">
+                  <i class="dot ok"></i>
+                  <span class="card-name">代码检索</span>
+                  <span class="pill-platform">平台</span>
+                  <span class="chev"><svg class="ic"><use href="#i-chev"/></svg></span>
+                </div>
+                <div class="card-sub">
+                  <span class="state ok">已连接 · 8 个工具</span>
+                  <span class="type-pill">streamable</span>
+                  <span class="url">https://mcp.internal.example.com/mcp</span>
+                  <span class="usage">近 7 天 82 次 · 99%</span>
+                </div>
+              </div>
+              <div class="card-actions">
+                <button class="link-btn">重连</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 6. 已连接（收起） + 凭据 -->
+          <div class="card">
+            <div class="card-top">
+              <div class="card-info">
+                <div class="card-head">
+                  <i class="dot ok"></i>
+                  <span class="card-name">图片生成</span>
+                  <span class="chev"><svg class="ic"><use href="#i-chev"/></svg></span>
+                </div>
+                <div class="card-sub">
+                  <span class="state ok">已连接 · 2 个工具</span>
+                  <span class="type-pill">sse</span>
+                  <span class="url">http://127.0.0.1:7860/sse</span>
+                  <span class="hdr-pill">X-Api-Key</span>
+                </div>
+              </div>
+              <div class="card-actions">
+                <span class="switch"></span>
+                <button class="link-btn">重连</button>
+                <button class="link-btn">编辑</button>
+                <button class="link-btn danger">删除</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- ============ 02 试调用 ============ -->
+  <div class="scene-block">
+    <div class="cap"><b>02</b><em>工具试调用</em><span>真实执行一次；入参在左，参数说明在右，结果只在执行后出现</span></div>
+    <div class="scene" id="scene-playground">
+      <div class="scene-bg"></div>
+      <div class="mask"></div>
+      <div class="modal">
+        <div class="modal-head">
+          <div class="modal-title"><span class="t">试调用 ·</span><span class="tool">指标查询</span></div>
+          <div class="modal-sub">服务：统计查询</div>
+          <span class="modal-note">真实执行一次 · 计入审计与统计</span>
+        </div>
+        <div class="modal-body">
+          <div class="invoke-grid">
+            <div>
+              <div class="field-label">入参（JSON）</div>
+              <div class="json-input">{
+  "metric": "dau",
+  "from": "2026-10-01",
+  "to": "2026-11-06"
+}</div>
+              <div class="json-hint">JSON 格式会在本地校验，不合法不会发请求</div>
+            </div>
+            <div>
+              <div class="field-label">参数说明</div>
+              <div class="schema">
+                <div class="schema-t">来自该工具的 inputSchema</div>
+                <div class="schema-row">
+                  <div class="schema-line"><code>metric</code><span class="ty">string</span><span class="req">必填</span></div>
+                  <div class="schema-desc">指标名，如 dau / retention</div>
+                </div>
+                <div class="schema-row">
+                  <div class="schema-line"><code>from</code><span class="ty">string</span><span class="req">必填</span></div>
+                  <div class="schema-desc">起始日期，YYYY-MM-DD</div>
+                </div>
+                <div class="schema-row">
+                  <div class="schema-line"><code>to</code><span class="ty">string</span><span class="opt">可选</span></div>
+                  <div class="schema-desc">结束日期，默认今天</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="result">
+            <div class="result-meta">
+              <span class="pill-ok">执行成功</span>
+              <span class="result-ms">耗时 <b>183</b> ms</span>
+              <button class="link-btn">复制结果</button>
+            </div>
+            <div class="result-code">{
+  "metric": "dau",
+  "total": 12480,
+  "series": [
+    { "date": "2026-11-01", "value": 11820 },
+    { "date": "2026-11-02", "value": 12154 },
+    "… 共 37 条"
+  ]
+}</div>
+            <div class="result-foot">返回体积较大，展示已截断；复制可拿全量</div>
+          </div>
+        </div>
+        <div class="modal-foot">
+          <button class="btn ghost">关闭</button>
+          <button class="btn">执行试调用</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 03 统计抽屉 ============ -->
+  <div class="scene-block">
+    <div class="cap"><b>03</b><em>个人调用统计</em><span>右侧抽屉；汇总在上、按服务与按工具两张紧凑表，数字右对齐</span></div>
+    <div class="scene" id="scene-stats">
+      <div class="scene-bg"></div>
+      <div class="mask"></div>
+      <aside class="drawer">
+        <div class="drawer-head">
+          <div class="t">近 7 天调用统计</div>
+          <div class="s">11月1日 – 11月7日 · 仅统计你自己的真实调用</div>
+          <span class="x"><svg class="ic" width="14" height="14"><use href="#i-x"/></svg></span>
+        </div>
+        <div class="drawer-body">
+          <div class="sum">
+            <div class="sum-cell"><div class="k">总调用</div><div class="v">128</div></div>
+            <div class="sum-cell"><div class="k">成功率</div><div class="v">96%</div></div>
+            <div class="sum-cell"><div class="k">平均耗时</div><div class="v">146<span style="font-size:11px;font-weight:400;color:var(--app-text3)"> ms</span></div></div>
+          </div>
+          <div class="sec-t">按服务</div>
+          <table class="tbl">
+            <thead><tr><th>服务</th><th class="num">调用</th><th class="num">成功率</th><th class="num">平均耗时</th></tr></thead>
+            <tbody>
+              <tr><td class="name">统计查询</td><td class="num">46</td><td class="num">98%</td><td class="num">128ms</td></tr>
+              <tr><td class="name">代码检索 <span class="sub">（平台）</span></td><td class="num">82</td><td class="num">99%</td><td class="num">152ms</td></tr>
+            </tbody>
+          </table>
+          <div class="sec-t">按工具（Top 20）</div>
+          <table class="tbl">
+            <thead><tr><th>工具</th><th class="num">调用</th><th class="num">失败</th><th class="num">平均耗时</th></tr></thead>
+            <tbody>
+              <tr><td class="name">指标查询<span class="raw">query_metrics</span></td><td class="num">30</td><td class="num">0</td><td class="num">121ms</td></tr>
+              <tr><td class="name">代码搜索<span class="raw">code_search</span></td><td class="num">46</td><td class="num">0</td><td class="num">148ms</td></tr>
+              <tr><td class="name">文件读取<span class="raw">read_file</span></td><td class="num">22</td><td class="num">0</td><td class="num">96ms</td></tr>
+              <tr><td class="name">维度聚合<span class="raw">group_by_dimension</span></td><td class="num">12</td><td class="num">1</td><td class="num">133ms</td></tr>
+              <tr><td class="name">口径说明<span class="raw">explain_metric</span></td><td class="num">4</td><td class="num">0</td><td class="num">88ms</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="drawer-foot">统计口径：本人在对话与工作流中的真实调用（试调用计入）；已删除服务的记录保留原样显示。</div>
+      </aside>
+    </div>
+  </div>
+</div>
+
+<script>
+  // 弹窗/抽屉场景的背景 = 主页克隆，避免三份外壳手写漂移
+  const main = document.getElementById('scene-main');
+  document.querySelectorAll('.scene-bg').forEach(box => {
+    const clone = main.cloneNode(true);
+    clone.removeAttribute('id');
+    clone.style.boxShadow = 'none';
+    box.appendChild(clone);
+  });
+</script>
+</body>
+</html>

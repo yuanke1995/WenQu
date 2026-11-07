@@ -63,6 +63,5 @@ config/application-local.yml
 /src/test/
 /.mockup/
 /skill-projections/
-/docs/
 /web/scripts/
 /.wenqu/

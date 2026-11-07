@@ -1,0 +1,798 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>问渠 · 市场三期 MCP 服务目录效果图</title>
+<style>
+/* ============================================================
+   问渠 · 市场三期（MCP 服务目录）效果图
+   画布 1600×1000；token 全部取自 web/src/views/app.css
+   ============================================================ */
+:root {
+  --app-bg: #f7f8fa;
+  --app-panel: #ffffff;
+  --app-panel-2: #fafbfc;
+  --app-border: #e6e9ed;
+  --app-border-strong: #d8dde3;
+  --app-text: #1f2329;
+  --app-text2: #5f6570;
+  --app-text3: #98a0aa;
+  --app-accent: #2e6be6;
+  --app-accent-hover: #1f5bd8;
+  --app-accent-weak: #eef2f7;
+  --app-accent-border: #bcd0f7;
+  --app-danger: #d4552e;
+  --app-ok: #3b8f4e;
+  --app-warn: #c77c14;
+  --app-ok-weak: #eaf5ec;
+  --app-warn-weak: #faf3e6;
+  --app-warn-border: #f0dfb6;
+  --app-warn-text: #a3691b;
+  --app-danger-weak: #fff2f0;
+  --app-code-bg: #f6f8fa;
+  --app-shadow-sm: 0 1px 2px rgba(16, 24, 40, .04);
+  --app-shadow-lg: 0 12px 32px rgba(16, 24, 40, .14);
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+          'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: var(--font);
+  background: #eef1f5;
+  color: var(--app-text);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+svg.ic { stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ---------------- 设计稿外壳 ---------------- */
+.sheet { width: 1600px; margin: 0 auto; padding: 34px 0 60px; }
+.sheet-top { padding: 0 2px 20px; }
+.sheet-title { font-size: 22px; font-weight: 600; letter-spacing: .01em; color: #1f2329; }
+.sheet-sub { margin-top: 8px; font-size: 13px; color: #8a929d; }
+.sheet-sub b { color: #5f6570; font-weight: 500; }
+
+/* 方案摘要 */
+.brief { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 20px 0 30px; }
+.brief-card { background: #fff; border: 1px solid var(--app-border); border-radius: 10px;
+  box-shadow: var(--app-shadow-sm); padding: 14px 16px 15px; }
+.brief-card .k { font-size: 11px; letter-spacing: .08em; color: var(--app-text3); font-weight: 600; }
+.brief-card .t { margin-top: 5px; font-size: 14px; font-weight: 600; color: var(--app-text); }
+.brief-card ul { margin: 9px 0 0; padding: 0 0 0 14px; font-size: 12px; line-height: 1.85; color: var(--app-text2); }
+.brief-card code { font-family: var(--mono); font-size: 11px; color: var(--app-text2);
+  background: var(--app-panel-2); border-radius: 3px; padding: 0 3px; }
+
+.scene-block { margin-top: 30px; }
+.scene-block:first-of-type { margin-top: 8px; }
+.cap { display: flex; align-items: baseline; gap: 10px; padding: 0 2px 10px; font-size: 13px; color: #5f6570; }
+.cap b { font-size: 11px; font-weight: 600; color: #98a0aa; letter-spacing: .08em; }
+.cap em { font-style: normal; color: #1f2329; font-weight: 600; font-size: 14px; }
+.cap span { color: #98a0aa; font-size: 12px; }
+.scene { width: 1600px; height: 1000px; display: flex; overflow: hidden;
+  background: var(--app-bg); position: relative; box-shadow: 0 20px 50px rgba(16, 24, 40, .16); }
+
+/* ---------------- 侧栏（AppLayout 现状） ---------------- */
+.side { width: 232px; flex: none; height: 100%; display: flex; flex-direction: column;
+  background: var(--app-panel); border-right: 1px solid var(--app-border); padding: 10px 8px 8px; }
+.logo-row { display: flex; align-items: center; gap: 8px; padding: 2px 6px 12px; }
+.logo-name { font-size: 13px; font-weight: 500; color: var(--app-text); }
+.logo-row .fold { margin-left: auto; color: var(--app-text3); width: 26px; height: 26px;
+  display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; }
+.side-nav { display: flex; flex-direction: column; gap: 1px; flex: none; }
+.nav-item { display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 9px;
+  border-radius: 8px; font-size: 13px; color: var(--app-text2); white-space: nowrap; }
+.nav-item .ic { width: 14px; height: 14px; color: var(--app-text3); flex: none; }
+.nav-item.active { background: var(--app-accent-weak); color: var(--app-text); font-weight: 500; }
+.nav-item.active .ic { color: var(--app-text2); }
+.nav-item.new { color: var(--app-text2); margin-bottom: 2px; }
+.side-search { flex: none; margin-top: 12px; height: 28px; display: flex; align-items: center; gap: 7px;
+  padding: 0 9px; border: 1px solid var(--app-border); border-radius: 6px;
+  color: var(--app-text3); font-size: 12px; background: var(--app-panel); }
+.side-search .ic { width: 12px; height: 12px; }
+.side-sec { margin-top: 16px; display: flex; align-items: center; gap: 4px; padding: 0 7px 5px; }
+.side-sec .t { font-size: 11px; font-weight: 600; color: var(--app-text3); letter-spacing: .04em; }
+.side-sec .n { font-size: 11px; color: var(--app-text3); opacity: .8; }
+.side-sec .plus { margin-left: auto; color: var(--app-text3); }
+.ws-row { display: flex; align-items: center; gap: 7px; height: 28px; padding: 0 7px; border-radius: 7px;
+  font-size: 12px; color: var(--app-text2); }
+.ws-row .ic { width: 12px; height: 12px; color: var(--app-text3); flex: none; }
+.ws-row.on { color: var(--app-text); font-weight: 500; }
+.side-empty { padding: 4px 8px 4px 25px; font-size: 11.5px; color: var(--app-text3); }
+.sess-row { display: flex; align-items: center; gap: 7px; height: 27px; padding: 0 7px 0 25px;
+  font-size: 12px; color: var(--app-text3); }
+.sess-row .ic { width: 12px; height: 12px; flex: none; }
+.sess-row span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side-foot { margin-top: auto; display: flex; align-items: center; gap: 4px; padding: 8px 4px 2px;
+  border-top: 1px solid var(--app-border); }
+.avatar { width: 24px; height: 24px; border-radius: 50%; background: #e8ecf2; color: var(--app-text2);
+  font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; }
+.side-foot .sp { flex: 1; }
+.icon-btn { width: 26px; height: 26px; border: none; background: transparent; color: var(--app-text3);
+  display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; padding: 0; }
+.icon-btn .ic { width: 14px; height: 14px; }
+
+/* ---------------- 市场页 ---------------- */
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--app-bg); }
+.page-head { flex: none; height: 56px; display: flex; align-items: center; gap: 12px;
+  padding: 0 20px; background: var(--app-panel); border-bottom: 1px solid var(--app-border); }
+.head-hint { font-size: 12px; color: var(--app-text3); min-width: 0; flex: 1 1 auto;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.head-r { flex: none; display: flex; align-items: center; gap: 8px; }
+.search { width: 210px; height: 28px; display: flex; align-items: center; gap: 6px; padding: 0 9px;
+  border: 1px solid var(--app-border); border-radius: 6px; background: var(--app-panel);
+  color: var(--app-text3); font-size: 12px; }
+.search .ic { width: 12px; height: 12px; flex: none; }
+.btn { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 13px;
+  border-radius: 7px; border: none; background: var(--app-accent); color: #fff; font-size: 12px; white-space: nowrap; }
+.btn .ic { width: 12px; height: 12px; }
+
+.mk-tabs { flex: none; height: 42px; display: flex; align-items: stretch; gap: 28px; padding: 0 20px;
+  background: var(--app-panel); border-bottom: 1px solid var(--app-border); }
+.mk-tab { display: flex; align-items: center; position: relative; font-size: 13px; color: var(--app-text); }
+.mk-tab.on { color: var(--app-accent); font-weight: 600; }
+.mk-tab.on::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 2px;
+  border-radius: 1px; background: var(--app-accent); }
+.mk-badge { font-style: normal; font-size: 11px; line-height: 16px; margin-left: 6px; padding: 0 6px;
+  border-radius: 999px; background: var(--app-accent-weak); color: var(--app-text3); }
+.mk-tab.on .mk-badge { background: var(--app-accent); color: #fff; }
+
+.page-body { flex: 1; min-height: 0; padding: 16px 20px; overflow: hidden; }
+.mk-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.mk-card { background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 10px;
+  padding: 13px 15px 12px; box-shadow: var(--app-shadow-sm); min-height: 182px; display: flex; flex-direction: column; }
+.mk-card-head { display: flex; align-items: center; gap: 6px; min-width: 0; height: 19px; }
+.mk-card-name { flex: 1; min-width: 0; font-size: 13px; font-weight: 500; color: var(--app-text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.type-pill { flex: none; font-size: 11px; line-height: 18px; padding: 0 7px; border-radius: 3px;
+  background: var(--app-panel-2); color: var(--app-text2); }
+.official-pill { flex: none; font-size: 11px; line-height: 16px; padding: 0 6px; border-radius: 3px;
+  border: 1px solid var(--app-accent); color: var(--app-accent); background: transparent; }
+.state-pill { flex: none; display: inline-flex; align-items: center; gap: 4px; font-size: 11px;
+  line-height: 18px; padding: 0 7px; border-radius: 999px; }
+.state-pill::before { content: ''; width: 4px; height: 4px; border-radius: 50%; background: currentColor; }
+.state-pill.ok { color: var(--app-ok); background: var(--app-ok-weak); }
+.state-pill.warn { color: var(--app-warn-text); background: var(--app-warn-weak); }
+.auth-chip { flex: none; font-size: 11px; line-height: 16px; padding: 0 6px; border-radius: 3px;
+  color: var(--app-warn-text); background: var(--app-warn-weak); }
+.mk-card-desc { font-size: 12px; color: var(--app-text3); line-height: 1.6; margin: 7px 0 7px;
+  height: 38px; overflow: hidden; }
+.url-row { display: flex; align-items: center; gap: 7px; min-width: 0; height: 18px; }
+.transport-pill { flex: none; font-family: var(--mono); font-size: 10.5px; line-height: 17px; padding: 0 6px;
+  border-radius: 3px; background: var(--app-panel-2); color: var(--app-text3); }
+.mk-url { min-width: 0; flex: 1; font-family: var(--mono); font-size: 11px; color: var(--app-text3);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mk-tags { display: flex; flex-wrap: wrap; gap: 5px; margin: 7px 0 0; height: 18px; overflow: hidden; }
+.mk-tag { border: 0; background: var(--app-panel-2); color: var(--app-text2); border-radius: 999px;
+  padding: 0 7px; font-size: 10.5px; line-height: 17px; }
+.mk-meta { display: flex; align-items: center; gap: 10px; font-size: 11px; color: var(--app-text3);
+  margin-top: 7px; white-space: nowrap; overflow: hidden; }
+.mk-meta .author { color: var(--app-text2); }
+.mk-ver { background: var(--app-panel-2); border-radius: 999px; padding: 0 6px; line-height: 16px; color: var(--app-text2); font-size: 10px; }
+.mk-foot { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: auto;
+  padding-top: 6px; border-top: 1px dashed var(--app-border); }
+.link-btn { border: none; background: transparent; padding: 0; font-size: 12px; color: var(--app-text2); white-space: nowrap; }
+.link-btn.accent { color: var(--app-accent); font-weight: 600; }
+.link-btn.muted { color: var(--app-text3); }
+.link-btn.disabled { color: var(--app-text3); opacity: .75; }
+.link-btn.danger { color: var(--app-danger); }
+.foot-hint { margin-top: 14px; font-size: 12px; color: var(--app-text3); line-height: 1.7; }
+
+/* ---------------- 叠加层 ---------------- */
+.scene.overlay { display: block; }
+.scene-bg { position: absolute; inset: 0; display: flex; overflow: hidden; }
+.mask { position: absolute; inset: 0; background: rgba(16, 22, 32, .40); }
+.modal { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  background: var(--app-panel); border-radius: 14px; box-shadow: var(--app-shadow-lg); overflow: hidden; }
+.modal-head { padding: 18px 24px 0; position: relative; }
+.modal-title { display: flex; align-items: baseline; gap: 8px; }
+.modal-title .t { font-size: 15px; font-weight: 600; color: var(--app-text); }
+.modal-sub { margin-top: 5px; font-size: 12px; color: var(--app-text3); line-height: 1.6; }
+.modal-x { position: absolute; right: 18px; top: 16px; color: var(--app-text3); }
+.modal-x .ic { width: 14px; height: 14px; }
+.modal-body { padding: 14px 24px 0; }
+.modal-foot { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 14px 24px 18px; }
+.btn.ghost { background: transparent; color: var(--app-text2); border: 1px solid var(--app-border); }
+.btn.sm { height: 26px; padding: 0 10px; border-radius: 6px; }
+
+/* 详情弹窗 */
+.detail-modal { width: 840px; }
+.detail-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; font-size: 12px; color: var(--app-text3); }
+.detail-meta .author { color: var(--app-text2); }
+.detail-tags { display: flex; gap: 6px; margin-top: 9px; }
+.detail-tabs { display: flex; gap: 16px; border-bottom: 1px solid var(--app-border); padding-bottom: 7px; margin-top: 14px; }
+.detail-tabs .tab { font-size: 12px; color: var(--app-text3); }
+.detail-tabs .tab.on { color: var(--app-accent); font-weight: 600; }
+.detail-body { margin-top: 10px; height: 300px; overflow: hidden; border: 1px solid var(--app-border);
+  border-radius: 8px; padding: 14px 16px; }
+.detail-body h4 { margin: 0 0 7px; font-size: 13px; font-weight: 600; color: var(--app-text); }
+.detail-body p { margin: 0 0 9px; font-size: 12.5px; line-height: 1.85; color: var(--app-text2); }
+.detail-body ul { margin: 0 0 10px; padding-left: 17px; font-size: 12.5px; line-height: 1.85; color: var(--app-text2); }
+.detail-body code { font-family: var(--mono); font-size: 11.5px; background: var(--app-code-bg); padding: 1px 4px; border-radius: 3px; }
+.auth-note { display: flex; align-items: flex-start; gap: 7px; margin-top: 11px; padding: 9px 11px;
+  border: 1px solid var(--app-warn-border); background: var(--app-warn-weak); border-radius: 8px;
+  font-size: 12px; line-height: 1.7; color: var(--app-warn-text); }
+.auth-note .ic { width: 12px; height: 12px; flex: none; margin-top: 3px; }
+.detail-foot-note { margin-right: auto; font-size: 11.5px; color: var(--app-text3); }
+
+/* 管理员新增弹窗 */
+.admin-modal { width: 640px; }
+.form-label { font-size: 12px; color: var(--app-text2); margin-bottom: 6px; }
+.form-label .req { color: var(--app-danger); margin-left: 2px; }
+.input { height: 30px; border: 1px solid var(--app-border); border-radius: 6px; background: var(--app-panel);
+  display: flex; align-items: center; padding: 0 10px; font-size: 12px; color: var(--app-text); }
+.input.placeholder { color: var(--app-text3); }
+.form-gap { margin-bottom: 12px; }
+.radio-row { display: flex; gap: 8px; }
+.radio { height: 28px; display: inline-flex; align-items: center; padding: 0 12px; border-radius: 6px;
+  border: 1px solid var(--app-border); font-size: 12px; color: var(--app-text2); }
+.radio.on { border-color: var(--app-accent); color: var(--app-accent); background: var(--app-accent-weak); font-weight: 500; }
+.form-hint { margin-top: 5px; font-size: 11.5px; color: var(--app-text3); line-height: 1.6; }
+.textarea { height: 76px; border: 1px solid var(--app-border); border-radius: 6px; background: var(--app-panel);
+  padding: 8px 10px; font-size: 12px; line-height: 1.65; color: var(--app-text3); }
+.check-row { display: flex; align-items: flex-start; gap: 8px; margin: 2px 0 12px; }
+.check-box { width: 14px; height: 14px; border: 1px solid var(--app-border-strong); border-radius: 3px; flex: none; margin-top: 2px; }
+.check-row .txt { font-size: 12px; color: var(--app-text2); line-height: 1.6; }
+.check-row .txt em { font-style: normal; color: var(--app-text3); }
+.test-ok { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--app-ok); margin-bottom: 4px; }
+.test-ok .ic { width: 12px; height: 12px; }
+.admin-note { font-size: 11.5px; color: var(--app-text3); line-height: 1.7; margin: 0 24px 2px; }
+
+/* 状态一览 */
+.state-scene { display: block; height: 500px; background: var(--app-bg); padding: 34px 40px 0; }
+.states-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 20px; }
+.states-head .t { font-size: 16px; font-weight: 600; color: var(--app-text); }
+.states-head .s { font-size: 12px; color: var(--app-text3); }
+.states-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+.state-col { display: flex; flex-direction: column; }
+.state-col .mk-card { min-height: 196px; }
+.state-col .cap2 { margin-top: 10px; font-size: 12px; color: var(--app-text3); line-height: 1.65; }
+.state-col .cap2 b { display: block; font-size: 12.5px; color: var(--app-text2); font-weight: 600; margin-bottom: 2px; }
+.state-foot-hint { margin-top: 30px; font-size: 12px; color: var(--app-text3); line-height: 1.8;
+  border-top: 1px dashed var(--app-border); padding-top: 14px; }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-chat" viewBox="0 0 24 24"><path d="M20 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2z"/></symbol>
+  <symbol id="i-bot" viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4M9 12h.01M15 12h.01M9 16h6"/></symbol>
+  <symbol id="i-bag" viewBox="0 0 24 24"><path d="M5 8h14l1 12H4z"/><path d="M9 8a3 3 0 0 1 6 0"/></symbol>
+  <symbol id="i-db" viewBox="0 0 24 24"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></symbol>
+  <symbol id="i-chart" viewBox="0 0 24 24"><path d="M5 20V11M12 20V6M19 20v-6"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5 21 21"/></symbol>
+  <symbol id="i-reload" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 4v7h-7"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v5M12 16h.01"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 13a8 8 0 0 1-9-9 8 8 0 1 0 9 9z"/></symbol>
+  <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 3v9"/><path d="M6.4 6.4a8 8 0 1 0 11.2 0"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+  <symbol id="i-fold" viewBox="0 0 24 24"><path d="M4 7h16M4 12h10M4 17h16"/></symbol>
+</svg>
+
+<div class="sheet">
+  <div class="sheet-top">
+    <div class="sheet-title">问渠 · 市场三期「MCP 服务」目录效果图</div>
+    <div class="sheet-sub">在现有市场页新增第 4 个类型页签 · <b>官方目录、一键安装</b> · 凭据永不下发 · 安装后落在「智能体 → MCP 外部工具」</div>
+  </div>
+
+  <div class="brief">
+    <div class="brief-card">
+      <div class="k">SCOPE</div>
+      <div class="t">做什么</div>
+      <ul>
+        <li>市场新增「MCP 服务」页签：浏览 / 搜索 / 详情 / 一键安装</li>
+        <li>官方目录由管理员新增、编辑、上下架</li>
+        <li>安装后提示并可跳转 MCP 页查看连接状态</li>
+      </ul>
+    </div>
+    <div class="brief-card">
+      <div class="k">DATA</div>
+      <div class="t">数据口径</div>
+      <ul>
+        <li><code>item_type = mcp</code>，复用现有市场表，不建新表</li>
+        <li>payload 仅存 <code>{ url, type, requiresAuth }</code></li>
+        <li>凭据（headers）永不进入市场；<code>item_key = 服务名</code></li>
+      </ul>
+    </div>
+    <div class="brief-card">
+      <div class="k">API</div>
+      <div class="t">接口复用</div>
+      <ul>
+        <li>列表 / 详情 / 安装沿用现有市场端点</li>
+        <li>新增管理员端点：<code>POST /market/mcp</code>、<code>PUT /market/mcp/{id}</code></li>
+        <li>安装落 <code>c_ai_user_mcp</code>，启用并后台连接</li>
+      </ul>
+    </div>
+    <div class="brief-card">
+      <div class="k">BOUNDARY</div>
+      <div class="t">明确不做</div>
+      <ul>
+        <li>不允许普通用户上架 MCP（防内网地址外泄/SSRF 放大）</li>
+        <li>不做 OAuth、stdio、游客/分享面</li>
+        <li>目录改动不覆盖已安装用户的服务配置</li>
+      </ul>
+    </div>
+  </div>
+
+  <!-- ============ 01 主页 ============ -->
+  <div class="scene-block">
+    <div class="cap"><b>01</b><em>市场 · MCP 服务页签（普通用户视角）</em><span>与现有市场同一套页头、页签、卡片与搜索；只多一个类型页签和安装态</span></div>
+    <div class="scene">
+      <aside class="side">
+        <div class="logo-row">
+          <svg width="24" height="24" viewBox="0 0 64 64" fill="none">
+            <defs><linearGradient id="brand-g" x1="14" y1="4" x2="50" y2="60" gradientUnits="userSpaceOnUse">
+              <stop offset="0" stop-color="#5E93F5"/><stop offset="1" stop-color="#2A5FE0"/>
+            </linearGradient></defs>
+            <rect x="3" y="3" width="58" height="58" rx="17" fill="url(#brand-g)"/>
+            <circle cx="46" cy="16.5" r="3.6" fill="#fff"/>
+            <path d="M18 25c4.5-5.2 9-5.2 13.5 0s9 5.2 13.5 0" stroke="#fff" stroke-width="5.4" stroke-linecap="round"/>
+            <path d="M16 35c5-5.6 10-5.6 15 0s10 5.6 15 0" stroke="#fff" stroke-width="5.4" stroke-linecap="round"/>
+            <path d="M16 45c5-5.6 10-5.6 15 0s10 5.6 15 0" stroke="#fff" stroke-width="5.4" stroke-linecap="round"/>
+          </svg>
+          <span class="logo-name">问渠</span>
+          <span class="fold"><svg class="ic" width="14" height="14"><use href="#i-fold"/></svg></span>
+        </div>
+        <nav class="side-nav">
+          <div class="nav-item new"><svg class="ic"><use href="#i-plus"/></svg><span>新建对话</span></div>
+          <div class="nav-item"><svg class="ic"><use href="#i-chat"/></svg><span>对话</span></div>
+          <div class="nav-item"><svg class="ic"><use href="#i-bot"/></svg><span>智能体</span></div>
+          <div class="nav-item active"><svg class="ic"><use href="#i-bag"/></svg><span>市场</span></div>
+          <div class="nav-item"><svg class="ic"><use href="#i-db"/></svg><span>知识库</span></div>
+          <div class="nav-item"><svg class="ic"><use href="#i-file"/></svg><span>我的产物</span></div>
+          <div class="nav-item"><svg class="ic"><use href="#i-chart"/></svg><span>使用统计</span></div>
+        </nav>
+        <div class="side-search"><svg class="ic"><use href="#i-search"/></svg><span>搜索会话</span></div>
+        <div class="side-sec">
+          <span class="t">工作区</span><span class="n">(2)</span>
+          <svg class="ic plus" width="12" height="12"><use href="#i-plus"/></svg>
+        </div>
+        <div class="ws-row on"><svg class="ic"><use href="#i-folder"/></svg><span>问渠</span></div>
+        <div class="side-empty">暂无会话</div>
+        <div class="ws-row"><svg class="ic"><use href="#i-folder"/></svg><span>wenqu-local-demo</span></div>
+        <div class="sess-row"><svg class="ic"><use href="#i-chat"/></svg><span>写一个简单的 Java 时间工具</span></div>
+        <div class="side-foot">
+          <span class="avatar">t</span>
+          <span class="sp"></span>
+          <span class="icon-btn"><svg class="ic"><use href="#i-moon"/></svg></span>
+          <span class="icon-btn"><svg class="ic"><use href="#i-power"/></svg></span>
+        </div>
+      </aside>
+
+      <main class="main">
+        <div class="page-head">
+          <span class="head-hint">官方精选的 MCP 服务，一键接入；它的工具自动注册给模型</span>
+          <div class="head-r">
+            <div class="search"><svg class="ic"><use href="#i-search"/></svg><span>搜索名称 / 简介 / 标签</span></div>
+            <span class="icon-btn"><svg class="ic"><use href="#i-reload"/></svg></span>
+          </div>
+        </div>
+
+        <div class="mk-tabs">
+          <div class="mk-tab">技能<i class="mk-badge">12</i></div>
+          <div class="mk-tab">应用模板<i class="mk-badge">5</i></div>
+          <div class="mk-tab">工作流<i class="mk-badge">9</i></div>
+          <div class="mk-tab on">MCP 服务<i class="mk-badge">9</i></div>
+          <div class="mk-tab">我的上架<i class="mk-badge">3</i></div>
+        </div>
+
+        <div class="page-body">
+          <div class="mk-grid">
+            <!-- 1 已安装 -->
+            <div class="mk-card">
+              <div class="mk-card-head">
+                <span class="mk-card-name">DeepWiki MCP</span>
+                <span class="type-pill">MCP 服务</span>
+                <span class="official-pill">平台官方</span>
+                <span class="state-pill ok">已在 MCP</span>
+              </div>
+              <div class="mk-card-desc">公开仓库的文档检索与问答：给出仓库名，即可查架构、API 与实现细节。</div>
+              <div class="url-row">
+                <span class="transport-pill">streamable</span>
+                <span class="mk-url">https://mcp.deepwiki.com/mcp</span>
+              </div>
+              <div class="mk-tags"><span class="mk-tag">文档检索</span><span class="mk-tag">代码理解</span><span class="mk-tag">公开</span></div>
+              <div class="mk-meta"><span class="author">平台官方</span><span class="mk-ver">v1</span><span>128 次安装</span><span>2026-11-06</span></div>
+              <div class="mk-foot"><span class="link-btn">详情</span><span class="link-btn accent">去 MCP 页</span></div>
+            </div>
+
+            <!-- 2 需认证 -->
+            <div class="mk-card">
+              <div class="mk-card-head">
+                <span class="mk-card-name">GitHub MCP</span>
+                <span class="type-pill">MCP 服务</span>
+                <span class="auth-chip">需认证</span>
+              </div>
+              <div class="mk-card-desc">仓库、Issue、PR 与代码搜索；安装后需在 MCP 页补充 Personal Access Token。</div>
+              <div class="url-row">
+                <span class="transport-pill">streamable</span>
+                <span class="mk-url">https://api.githubcopilot.com/mcp/</span>
+              </div>
+              <div class="mk-tags"><span class="mk-tag">代码托管</span><span class="mk-tag">Issue</span><span class="mk-tag">PR</span></div>
+              <div class="mk-meta"><span class="author">平台官方</span><span class="mk-ver">v1</span><span>86 次安装</span><span>2026-11-05</span></div>
+              <div class="mk-foot"><span class="link-btn">详情</span><span class="link-btn accent">安装</span></div>
+            </div>
+
+            <!-- 3 可安装 -->
+            <div class="mk-card">
+              <div class="mk-card-head">
+                <span class="mk-card-name">Context7</span>
+                <span class="type-pill">MCP 服务</span>
+                <span class="official-pill">平台官方</span>
+              </div>
+              <div class="mk-card-desc">检索最新版第三方库文档，把准确的 API 用法带进对话，减少模型凭记忆写代码。</div>
+              <div class="url-row">
+                <span class="transport-pill">streamable</span>
+                <span class="mk-url">https://mcp.context7.com/mcp</span>
+              </div>
+              <div class="mk-tags"><span class="mk-tag">开发</span><span class="mk-tag">文档</span></div>
+              <div class="mk-meta"><span class="author">平台官方</span><span class="mk-ver">v1</span><span>64 次安装</span><span>2026-11-04</span></div>
+              <div class="mk-foot"><span class="link-btn">详情</span><span class="link-btn accent">安装</span></div>
+            </div>
+
+            <!-- 4 同名冲突 -->
+            <div class="mk-card">
+              <div class="mk-card-head">
+                <span class="mk-card-name">内部系统查询</span>
+                <span class="type-pill">MCP 服务</span>
+                <span class="state-pill warn">同名已存在</span>
+              </div>
+              <div class="mk-card-desc">查询工单、订单与账号状态（内部网关，仅内网可达）。</div>
+              <div class="url-row">
+                <span class="transport-pill">sse</span>
+                <span class="mk-url">http://mcp.internal.example.com/sse</span>
+              </div>
+              <div class="mk-tags"><span class="mk-tag">内部系统</span><span class="mk-tag">只读</span></div>
+              <div class="mk-meta"><span class="author">平台官方</span><span class="mk-ver">v1</span><span>42 次安装</span><span>2026-11-03</span></div>
+              <div class="mk-foot"><span class="link-btn">详情</span><span class="link-btn accent">去 MCP 页处理</span></div>
+            </div>
+
+            <!-- 5 配额满 -->
+            <div class="mk-card">
+              <div class="mk-card-head">
+                <span class="mk-card-name">高德地图 MCP</span>
+                <span class="type-pill">MCP 服务</span>
+                <span class="state-pill warn">已达上限</span>
+              </div>
+              <div class="mk-card-desc">地点搜索、路径规划与天气；需要高德 Web 服务 Key，安装后补充。</div>
+              <div class="url-row">
+                <span class="transport-pill">streamable</span>
+                <span class="mk-url">https://mcp.amap.com/mcp</span>
+              </div>
+              <div class="mk-tags"><span class="mk-tag">地图</span><span class="mk-tag">出行</span><span class="mk-tag">需 Key</span></div>
+              <div class="mk-meta"><span class="author">平台官方</span><span class="mk-ver">v1</span><span>31 次安装</span><span>2026-11-02</span></div>
+              <div class="mk-foot"><span class="link-btn">详情</span><span class="link-btn disabled">已达上限（10/10）</span></div>
+            </div>
+
+            <!-- 6 可安装 -->
+            <div class="mk-card">
+              <div class="mk-card-head">
+                <span class="mk-card-name">团队知识库检索</span>
+                <span class="type-pill">MCP 服务</span>
+                <span class="official-pill">平台官方</span>
+              </div>
+              <div class="mk-card-desc">检索团队 Confluence 空间，按本人权限返回可读页面与摘要。</div>
+              <div class="url-row">
+                <span class="transport-pill">streamable</span>
+                <span class="mk-url">https://mcp.wenqu.internal/confluence/mcp</span>
+              </div>
+              <div class="mk-tags"><span class="mk-tag">知识库</span><span class="mk-tag">检索</span></div>
+              <div class="mk-meta"><span class="author">平台官方</span><span class="mk-ver">v1</span><span>27 次安装</span><span>2026-11-01</span></div>
+              <div class="mk-foot"><span class="link-btn">详情</span><span class="link-btn accent">安装</span></div>
+            </div>
+
+            <!-- 7 可安装 -->
+            <div class="mk-card">
+              <div class="mk-card-head">
+                <span class="mk-card-name">天气查询</span>
+                <span class="type-pill">MCP 服务</span>
+                <span class="official-pill">平台官方</span>
+              </div>
+              <div class="mk-card-desc">按城市查实时天气与未来 7 天预报，无需凭据，适合作为接入演示。</div>
+              <div class="url-row">
+                <span class="transport-pill">streamable</span>
+                <span class="mk-url">https://mcp.weather.example.com/mcp</span>
+              </div>
+              <div class="mk-tags"><span class="mk-tag">生活</span><span class="mk-tag">公开</span></div>
+              <div class="mk-meta"><span class="author">平台官方</span><span class="mk-ver">v1</span><span>19 次安装</span><span>2026-10-30</span></div>
+              <div class="mk-foot"><span class="link-btn">详情</span><span class="link-btn accent">安装</span></div>
+            </div>
+
+            <!-- 8 需认证 -->
+            <div class="mk-card">
+              <div class="mk-card-head">
+                <span class="mk-card-name">数据库只读查询</span>
+                <span class="type-pill">MCP 服务</span>
+                <span class="auth-chip">需认证</span>
+              </div>
+              <div class="mk-card-desc">对数据仓库执行只读 SQL；安装后补充连接串与访问令牌。</div>
+              <div class="url-row">
+                <span class="transport-pill">sse</span>
+                <span class="mk-url">https://mcp.bi.example.com/sse</span>
+              </div>
+              <div class="mk-tags"><span class="mk-tag">数据</span><span class="mk-tag">SQL</span><span class="mk-tag">只读</span></div>
+              <div class="mk-meta"><span class="author">平台官方</span><span class="mk-ver">v1</span><span>15 次安装</span><span>2026-10-28</span></div>
+              <div class="mk-foot"><span class="link-btn">详情</span><span class="link-btn accent">安装</span></div>
+            </div>
+
+            <!-- 9 需认证 -->
+            <div class="mk-card">
+              <div class="mk-card-head">
+                <span class="mk-card-name">Notion 工作区</span>
+                <span class="type-pill">MCP 服务</span>
+                <span class="auth-chip">需认证</span>
+              </div>
+              <div class="mk-card-desc">搜索与读取团队 Notion 页面；安装后补充 Integration Token。</div>
+              <div class="url-row">
+                <span class="transport-pill">streamable</span>
+                <span class="mk-url">https://mcp.notion.com/mcp</span>
+              </div>
+              <div class="mk-tags"><span class="mk-tag">文档</span><span class="mk-tag">协作</span></div>
+              <div class="mk-meta"><span class="author">平台官方</span><span class="mk-ver">v1</span><span>11 次安装</span><span>2026-10-26</span></div>
+              <div class="mk-foot"><span class="link-btn">详情</span><span class="link-btn accent">安装</span></div>
+            </div>
+          </div>
+          <div class="foot-hint">MCP 服务安装后出现在「智能体 → MCP 外部工具」，连接在后台进行；目录只下发地址与传输类型，需要认证的服务请在 MCP 页补充请求头。每人最多 10 个服务。</div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <!-- ============ 02 详情弹窗 ============ -->
+  <div class="scene-block">
+    <div class="cap"><b>02</b><em>详情弹窗</em><span>复用现有物品详情弹窗；MCP 只有「介绍 / 配置」两项，认证提醒常驻可见</span></div>
+    <div class="scene overlay">
+      <div class="scene-bg">
+        <aside class="side">
+          <div class="logo-row">
+            <svg width="24" height="24" viewBox="0 0 64 64" fill="none">
+              <rect x="3" y="3" width="58" height="58" rx="17" fill="#2A5FE0"/>
+              <path d="M18 25c4.5-5.2 9-5.2 13.5 0s9 5.2 13.5 0" stroke="#fff" stroke-width="5.4" stroke-linecap="round"/>
+              <path d="M16 35c5-5.6 10-5.6 15 0s10 5.6 15 0" stroke="#fff" stroke-width="5.4" stroke-linecap="round"/>
+              <path d="M16 45c5-5.6 10-5.6 15 0s10 5.6 15 0" stroke="#fff" stroke-width="5.4" stroke-linecap="round"/>
+            </svg>
+            <span class="logo-name">问渠</span>
+            <span class="fold"><svg class="ic" width="14" height="14"><use href="#i-fold"/></svg></span>
+          </div>
+          <nav class="side-nav">
+            <div class="nav-item new"><svg class="ic"><use href="#i-plus"/></svg><span>新建对话</span></div>
+            <div class="nav-item"><svg class="ic"><use href="#i-chat"/></svg><span>对话</span></div>
+            <div class="nav-item"><svg class="ic"><use href="#i-bot"/></svg><span>智能体</span></div>
+            <div class="nav-item active"><svg class="ic"><use href="#i-bag"/></svg><span>市场</span></div>
+            <div class="nav-item"><svg class="ic"><use href="#i-db"/></svg><span>知识库</span></div>
+            <div class="nav-item"><svg class="ic"><use href="#i-file"/></svg><span>我的产物</span></div>
+            <div class="nav-item"><svg class="ic"><use href="#i-chart"/></svg><span>使用统计</span></div>
+          </nav>
+        </aside>
+        <main class="main">
+          <div class="page-head"><span class="head-hint">官方精选的 MCP 服务，一键接入；它的工具自动注册给模型</span></div>
+          <div class="mk-tabs">
+            <div class="mk-tab">技能<i class="mk-badge">12</i></div>
+            <div class="mk-tab">应用模板<i class="mk-badge">5</i></div>
+            <div class="mk-tab">工作流<i class="mk-badge">9</i></div>
+            <div class="mk-tab on">MCP 服务<i class="mk-badge">9</i></div>
+            <div class="mk-tab">我的上架<i class="mk-badge">3</i></div>
+          </div>
+          <div class="page-body">
+            <div class="mk-grid">
+              <div class="mk-card"><div class="mk-card-head"><span class="mk-card-name">DeepWiki MCP</span><span class="type-pill">MCP 服务</span><span class="state-pill ok">已在 MCP</span></div><div class="mk-card-desc">公开仓库的文档检索与问答：给出仓库名，即可查架构、API 与实现细节。</div><div class="url-row"><span class="transport-pill">streamable</span><span class="mk-url">https://mcp.deepwiki.com/mcp</span></div><div class="mk-meta"><span class="author">平台官方</span><span class="mk-ver">v1</span><span>128 次安装</span></div><div class="mk-foot"><span class="link-btn">详情</span><span class="link-btn accent">去 MCP 页</span></div></div>
+              <div class="mk-card"><div class="mk-card-head"><span class="mk-card-name">Context7</span><span class="type-pill">MCP 服务</span></div><div class="mk-card-desc">检索最新版第三方库文档，把准确的 API 用法带进对话。</div><div class="url-row"><span class="transport-pill">streamable</span><span class="mk-url">https://mcp.context7.com/mcp</span></div><div class="mk-meta"><span class="author">平台官方</span><span class="mk-ver">v1</span><span>64 次安装</span></div><div class="mk-foot"><span class="link-btn">详情</span><span class="link-btn accent">安装</span></div></div>
+              <div class="mk-card"><div class="mk-card-head"><span class="mk-card-name">团队知识库检索</span><span class="type-pill">MCP 服务</span></div><div class="mk-card-desc">检索团队 Confluence 空间，按本人权限返回可读页面。</div><div class="url-row"><span class="transport-pill">streamable</span><span class="mk-url">https://mcp.wenqu.internal/confluence/mcp</span></div><div class="mk-meta"><span class="author">平台官方</span><span class="mk-ver">v1</span><span>27 次安装</span></div><div class="mk-foot"><span class="link-btn">详情</span><span class="link-btn accent">安装</span></div></div>
+            </div>
+          </div>
+        </main>
+      </div>
+      <div class="mask"></div>
+
+      <div class="modal detail-modal">
+        <div class="modal-head">
+          <div class="modal-title"><span class="t">物品：GitHub MCP</span></div>
+          <span class="modal-x"><svg class="ic"><use href="#i-x"/></svg></span>
+        </div>
+        <div class="modal-body">
+          <div class="detail-meta">
+            <span class="author">平台官方</span>
+            <span class="mk-ver">v1</span>
+            <span>86 次安装</span>
+            <span>更新于 2026-11-05</span>
+            <span class="auth-chip">需认证</span>
+          </div>
+          <div class="detail-tags"><span class="mk-tag">代码托管</span><span class="mk-tag">Issue</span><span class="mk-tag">PR</span><span class="mk-tag">代码搜索</span></div>
+          <div class="detail-tabs"><span class="tab on">介绍</span><span class="tab">配置</span></div>
+          <div class="detail-body">
+            <h4>能做什么</h4>
+            <p>把 GitHub 上的仓库、Issue、Pull Request 与代码检索接入对话。可以让模型直接查某个仓库的最近提交、某个 Issue 的讨论上下文，或跨仓库搜代码。</p>
+            <h4>适合谁</h4>
+            <ul>
+              <li>经常在对话里查开源项目实现细节的同学</li>
+              <li>需要汇总 Issue / PR 进展、写周报的项目成员</li>
+            </ul>
+            <h4>安装后</h4>
+            <p>服务会出现在「智能体 → MCP 外部工具」，工具自动注册给模型。首次连接若失败，可在 MCP 页展开失败卡查看原因。</p>
+            <div class="auth-note">
+              <svg class="ic"><use href="#i-warn"/></svg>
+              <span>该服务需要认证请求头。目录只下发地址与传输类型，不含任何凭据；安装后请在「MCP 外部工具 → 编辑 → 认证与请求头」补充 Personal Access Token。</span>
+            </div>
+          </div>
+        </div>
+        <div class="modal-foot">
+          <span class="detail-foot-note">安装即复制：目录后续修改不会覆盖你的服务配置。</span>
+          <button class="btn ghost sm">关闭</button>
+          <button class="btn sm">安装到我的 MCP</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 03 管理员新增 ============ -->
+  <div class="scene-block">
+    <div class="cap"><b>03</b><em>管理员新增目录条目</em><span>仅管理员可见「新增目录条目」；普通用户没有上架入口</span></div>
+    <div class="scene overlay">
+      <div class="scene-bg">
+        <aside class="side">
+          <div class="logo-row">
+            <svg width="24" height="24" viewBox="0 0 64 64" fill="none">
+              <rect x="3" y="3" width="58" height="58" rx="17" fill="#2A5FE0"/>
+              <path d="M18 25c4.5-5.2 9-5.2 13.5 0s9 5.2 13.5 0" stroke="#fff" stroke-width="5.4" stroke-linecap="round"/>
+              <path d="M16 35c5-5.6 10-5.6 15 0s10 5.6 15 0" stroke="#fff" stroke-width="5.4" stroke-linecap="round"/>
+              <path d="M16 45c5-5.6 10-5.6 15 0s10 5.6 15 0" stroke="#fff" stroke-width="5.4" stroke-linecap="round"/>
+            </svg>
+            <span class="logo-name">问渠</span>
+            <span class="fold"><svg class="ic" width="14" height="14"><use href="#i-fold"/></svg></span>
+          </div>
+          <nav class="side-nav">
+            <div class="nav-item new"><svg class="ic"><use href="#i-plus"/></svg><span>新建对话</span></div>
+            <div class="nav-item"><svg class="ic"><use href="#i-chat"/></svg><span>对话</span></div>
+            <div class="nav-item"><svg class="ic"><use href="#i-bot"/></svg><span>智能体</span></div>
+            <div class="nav-item active"><svg class="ic"><use href="#i-bag"/></svg><span>市场</span></div>
+            <div class="nav-item"><svg class="ic"><use href="#i-db"/></svg><span>知识库</span></div>
+            <div class="nav-item"><svg class="ic"><use href="#i-file"/></svg><span>我的产物</span></div>
+            <div class="nav-item"><svg class="ic"><use href="#i-chart"/></svg><span>使用统计</span></div>
+          </nav>
+        </aside>
+        <main class="main">
+          <div class="page-head">
+            <span class="head-hint">官方精选的 MCP 服务，一键接入；它的工具自动注册给模型</span>
+            <div class="head-r">
+              <div class="search"><svg class="ic"><use href="#i-search"/></svg><span>搜索名称 / 简介 / 标签</span></div>
+              <span class="icon-btn"><svg class="ic"><use href="#i-reload"/></svg></span>
+              <button class="btn"><svg class="ic"><use href="#i-plus"/></svg>新增目录条目</button>
+            </div>
+          </div>
+          <div class="mk-tabs">
+            <div class="mk-tab">技能<i class="mk-badge">12</i></div>
+            <div class="mk-tab">应用模板<i class="mk-badge">5</i></div>
+            <div class="mk-tab">工作流<i class="mk-badge">9</i></div>
+            <div class="mk-tab on">MCP 服务<i class="mk-badge">9</i></div>
+            <div class="mk-tab">我的上架<i class="mk-badge">3</i></div>
+          </div>
+          <div class="page-body">
+            <div class="mk-grid">
+              <div class="mk-card"><div class="mk-card-head"><span class="mk-card-name">DeepWiki MCP</span><span class="type-pill">MCP 服务</span><span class="state-pill ok">已在 MCP</span></div><div class="mk-card-desc">公开仓库的文档检索与问答：给出仓库名，即可查架构、API 与实现细节。</div><div class="url-row"><span class="transport-pill">streamable</span><span class="mk-url">https://mcp.deepwiki.com/mcp</span></div><div class="mk-meta"><span class="author">平台官方</span><span class="mk-ver">v1</span><span>128 次安装</span></div><div class="mk-foot"><span class="link-btn">详情</span><span class="link-btn">编辑</span><span class="link-btn">下架</span></div></div>
+              <div class="mk-card"><div class="mk-card-head"><span class="mk-card-name">GitHub MCP</span><span class="type-pill">MCP 服务</span><span class="auth-chip">需认证</span></div><div class="mk-card-desc">仓库、Issue、PR 与代码搜索；安装后需补充 Personal Access Token。</div><div class="url-row"><span class="transport-pill">streamable</span><span class="mk-url">https://api.githubcopilot.com/mcp/</span></div><div class="mk-meta"><span class="author">平台官方</span><span class="mk-ver">v1</span><span>86 次安装</span></div><div class="mk-foot"><span class="link-btn">详情</span><span class="link-btn">编辑</span><span class="link-btn">下架</span></div></div>
+              <div class="mk-card"><div class="mk-card-head"><span class="mk-card-name">Context7</span><span class="type-pill">MCP 服务</span></div><div class="mk-card-desc">检索最新版第三方库文档，把准确的 API 用法带进对话。</div><div class="url-row"><span class="transport-pill">streamable</span><span class="mk-url">https://mcp.context7.com/mcp</span></div><div class="mk-meta"><span class="author">平台官方</span><span class="mk-ver">v1</span><span>64 次安装</span></div><div class="mk-foot"><span class="link-btn">详情</span><span class="link-btn">编辑</span><span class="link-btn">下架</span></div></div>
+            </div>
+          </div>
+        </main>
+      </div>
+      <div class="mask"></div>
+
+      <div class="modal admin-modal">
+        <div class="modal-head">
+          <div class="modal-title"><span class="t">新增 MCP 目录条目</span></div>
+          <div class="modal-sub">面向全员展示；安装即复制到对方自己的 MCP 服务列表</div>
+          <span class="modal-x"><svg class="ic"><use href="#i-x"/></svg></span>
+        </div>
+        <div class="modal-body">
+          <div class="form-gap">
+            <div class="form-label">名称<span class="req">*</span></div>
+            <div class="input">DeepWiki MCP</div>
+            <div class="form-hint">最多 40 字，不能包含「/」；同名条目重复保存 = 更新同一条</div>
+          </div>
+          <div class="form-gap">
+            <div class="form-label">服务地址<span class="req">*</span></div>
+            <div class="input">https://mcp.deepwiki.com/mcp</div>
+            <div class="form-hint">仅 http(s) 地址；地址错误会直接导致安装后连接失败</div>
+          </div>
+          <div class="form-gap">
+            <div class="form-label">传输类型</div>
+            <div class="radio-row">
+              <span class="radio on">streamable（推荐）</span>
+              <span class="radio">SSE</span>
+            </div>
+            <div class="form-hint">streamable：标准 MCP 传输，默认端点 /mcp；SSE：旧版传输，默认端点 /sse</div>
+          </div>
+          <div class="form-gap">
+            <div class="form-label">一句话简介<span class="req">*</span></div>
+            <div class="input">公开仓库的文档检索与问答：给出仓库名即可查架构、API 与实现细节。</div>
+          </div>
+          <div class="form-gap">
+            <div class="form-label">详细介绍（可选）</div>
+            <div class="textarea">什么场景用它、适合谁、安装后需要做什么（Markdown）。安装的人在详情页看到。</div>
+          </div>
+          <div class="form-gap">
+            <div class="form-label">标签（可选）</div>
+            <div class="input placeholder">逗号或顿号分隔，如：文档检索, 代码理解, 公开</div>
+          </div>
+          <div class="check-row">
+            <span class="check-box"></span>
+            <span class="txt">该服务需要认证请求头 <em>（安装后由用户自行补充；目录不保存任何凭据）</em></span>
+          </div>
+          <div class="test-ok"><svg class="ic"><use href="#i-check"/></svg><span>连接正常，提供 12 个工具</span></div>
+        </div>
+        <div class="admin-note">目录不含请求头与凭据。编辑条目只影响后续安装：已安装用户的服务配置不会被改写（安装即复制）。</div>
+        <div class="modal-foot">
+          <button class="btn ghost sm">测试连接</button>
+          <button class="btn ghost sm">取消</button>
+          <button class="btn sm">保存并上架</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ 04 状态一览 ============ -->
+  <div class="scene-block">
+    <div class="cap"><b>04</b><em>安装态一览</em><span>卡片主操作随「是否已装 / 是否同名 / 是否满 10 个」变化，失败原因在 MCP 页展开查看</span></div>
+    <div class="scene state-scene">
+      <div class="states-head">
+        <span class="t">同一张卡片的四种状态</span>
+        <span class="s">状态由后端随列表返回；前端不做本地猜测，避免多端不一致</span>
+      </div>
+      <div class="states-grid">
+        <div class="state-col">
+          <div class="mk-card">
+            <div class="mk-card-head"><span class="mk-card-name">Context7</span><span class="type-pill">MCP 服务</span><span class="official-pill">平台官方</span></div>
+            <div class="mk-card-desc">检索最新版第三方库文档，把准确的 API 用法带进对话，减少模型凭记忆写代码。</div>
+            <div class="url-row"><span class="transport-pill">streamable</span><span class="mk-url">https://mcp.context7.com/mcp</span></div>
+            <div class="mk-tags"><span class="mk-tag">开发</span><span class="mk-tag">文档</span></div>
+            <div class="mk-meta"><span class="author">平台官方</span><span class="mk-ver">v1</span><span>64 次安装</span></div>
+            <div class="mk-foot"><span class="link-btn">详情</span><span class="link-btn accent">安装</span></div>
+          </div>
+          <div class="cap2"><b>可安装</b>点「安装」直接落库并后台连接；成功后卡片即时变为「已在 MCP」，无需刷新整页。</div>
+        </div>
+        <div class="state-col">
+          <div class="mk-card">
+            <div class="mk-card-head"><span class="mk-card-name">DeepWiki MCP</span><span class="type-pill">MCP 服务</span><span class="state-pill ok">已在 MCP</span></div>
+            <div class="mk-card-desc">公开仓库的文档检索与问答：给出仓库名，即可查架构、API 与实现细节。</div>
+            <div class="url-row"><span class="transport-pill">streamable</span><span class="mk-url">https://mcp.deepwiki.com/mcp</span></div>
+            <div class="mk-tags"><span class="mk-tag">文档检索</span><span class="mk-tag">公开</span></div>
+            <div class="mk-meta"><span class="author">平台官方</span><span class="mk-ver">v1</span><span>128 次安装</span></div>
+            <div class="mk-foot"><span class="link-btn">详情</span><span class="link-btn accent">去 MCP 页</span></div>
+          </div>
+          <div class="cap2"><b>已在 MCP（地址一致）</b>不再提供重复安装，只保留「去 MCP 页」；用户删掉服务后，列表会自动回到可安装。</div>
+        </div>
+        <div class="state-col">
+          <div class="mk-card">
+            <div class="mk-card-head"><span class="mk-card-name">内部系统查询</span><span class="type-pill">MCP 服务</span><span class="state-pill warn">同名已存在</span></div>
+            <div class="mk-card-desc">查询工单、订单与账号状态（内部网关，仅内网可达）。</div>
+            <div class="url-row"><span class="transport-pill">sse</span><span class="mk-url">http://mcp.internal.example.com/sse</span></div>
+            <div class="mk-tags"><span class="mk-tag">内部系统</span><span class="mk-tag">只读</span></div>
+            <div class="mk-meta"><span class="author">平台官方</span><span class="mk-ver">v1</span><span>42 次安装</span></div>
+            <div class="mk-foot"><span class="link-btn">详情</span><span class="link-btn accent">去 MCP 页处理</span></div>
+          </div>
+          <div class="cap2"><b>同名服务已存在（地址不同）</b>不覆盖用户自己的配置；引导到 MCP 页改名或删除后再装，避免静默改写。</div>
+        </div>
+        <div class="state-col">
+          <div class="mk-card">
+            <div class="mk-card-head"><span class="mk-card-name">高德地图 MCP</span><span class="type-pill">MCP 服务</span><span class="state-pill warn">已达上限</span></div>
+            <div class="mk-card-desc">地点搜索、路径规划与天气；需要高德 Web 服务 Key，安装后补充。</div>
+            <div class="url-row"><span class="transport-pill">streamable</span><span class="mk-url">https://mcp.amap.com/mcp</span></div>
+            <div class="mk-tags"><span class="mk-tag">地图</span><span class="mk-tag">出行</span></div>
+            <div class="mk-meta"><span class="author">平台官方</span><span class="mk-ver">v1</span><span>31 次安装</span></div>
+            <div class="mk-foot"><span class="link-btn">详情</span><span class="link-btn disabled">已达上限（10/10）</span></div>
+          </div>
+          <div class="cap2"><b>已达上限</b>每人 10 个的现有配额不变；安装按钮置灰并在卡片上说明原因，不让用户点了才报错。</div>
+        </div>
+      </div>
+      <div class="state-foot-hint">状态优先级：已安装 &gt; 同名服务 &gt; 配额已满 &gt; 可安装。「去 MCP 页」统一跳转 <code style="font-family:var(--mono);font-size:11px;background:var(--app-panel-2);padding:0 3px;border-radius:3px;">/agents?tab=mcp</code>；安装失败（重名/超限/服务不可见）也用同一套后端语义，市场侧只做展示。</div>
+    </div>
+  </div>
+</div>
+</body>
+</html>

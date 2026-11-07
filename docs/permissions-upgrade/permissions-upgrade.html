@@ -1,0 +1,2443 @@
+<!-- 权限界面 UI/UX / 功能升级方案 · 方案书 + 效果图 -->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>权限界面 UI/UX / 功能升级方案 · 问渠</title>
+<style>
+  :root {
+    --bg: #eef1f5;
+    --bg2: #ffffff;
+    --bg3: #f7f8fa;
+    --ink: #1f2329;
+    --muted: #5f6570;
+    --faint: #98a0aa;
+    --rule: #e6e9ed;
+    --rule-strong: #d8dde3;
+    --accent: #2e6be6;
+    --accent2: #5b8cf0;
+    --accent-weak: #eef2f7;
+    --accent-border: #bcd0f7;
+    --ok: #3b8f4e;
+    --ok-weak: #eaf5ec;
+    --warn: #c77c14;
+    --warn-weak: #faf3e6;
+    --warn-border: #f0dfb6;
+    --warn-text: #a3691b;
+    --danger: #d4552e;
+    --danger-weak: #fff2f0;
+    --danger-border: #ffccc7;
+    --danger-text: #cf1322;
+    --violet: #7c3aed;
+    --violet-weak: #f1eafd;
+    --radius: 10px;
+    --radius-lg: 16px;
+    --shadow: 0 12px 36px rgba(16, 24, 40, .09);
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --max: 1180px;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { font-size: 16px; scroll-behavior: smooth; }
+  body {
+    font-family: var(--font);
+    color: var(--ink);
+    background:
+      radial-gradient(1100px 520px at 8% -6%, rgba(46,107,230,.10), transparent 62%),
+      radial-gradient(900px 500px at 96% 4%, rgba(124,58,237,.07), transparent 60%),
+      var(--bg);
+    line-height: 1.68;
+    padding: 32px 18px 56px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .report {
+    max-width: var(--max);
+    margin: 0 auto;
+    background: var(--bg2);
+    border: 1px solid var(--rule);
+    border-radius: 22px;
+    box-shadow: var(--shadow);
+    padding: 54px 56px 44px;
+  }
+  .ico { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; flex: none; }
+  .ico-sm { width: 14px; height: 14px; }
+  .sr-svg { position: absolute; width: 0; height: 0; overflow: hidden; }
+
+  /* ============ 封面 ============ */
+  .cover { padding-bottom: 34px; border-bottom: 1px solid var(--rule); }
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 12px; letter-spacing: .14em; text-transform: uppercase;
+    color: var(--accent); font-weight: 700;
+  }
+  .eyebrow::before { content: ""; width: 22px; height: 2px; background: var(--accent); border-radius: 2px; }
+  h1 {
+    margin: 16px 0 0;
+    font-size: clamp(34px, 4.4vw, 50px);
+    line-height: 1.14;
+    letter-spacing: -.02em;
+    font-weight: 750;
+    max-width: 900px;
+  }
+  h1 em { font-style: normal; color: var(--accent); }
+  .lede {
+    margin-top: 18px; max-width: 800px;
+    font-size: 16px; line-height: 1.8; color: var(--muted);
+  }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 24px; }
+  .meta-chip {
+    font-size: 12px; color: var(--muted);
+    padding: 4px 10px; border: 1px solid var(--rule); border-radius: 999px;
+    background: var(--bg3);
+  }
+  .meta-chip b { color: var(--ink); font-weight: 600; }
+  .meta-chip.status { color: var(--warn-text); background: var(--warn-weak); border-color: var(--warn-border); }
+
+  .summary-band {
+    margin-top: 34px;
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
+  }
+  .summary-card {
+    background: var(--bg3);
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    padding: 16px 16px 14px;
+  }
+  .summary-card .num {
+    font-family: var(--mono);
+    font-size: 12px; font-weight: 700; color: var(--accent);
+    letter-spacing: .06em;
+  }
+  .summary-card strong { display: block; margin-top: 6px; font-size: 16px; font-weight: 700; }
+  .summary-card span { display: block; margin-top: 4px; font-size: 12px; line-height: 1.6; color: var(--muted); }
+
+  /* ============ 目录 ============ */
+  .toc { display: flex; flex-wrap: wrap; gap: 8px; margin: 28px 0 0; }
+  .toc a {
+    font-size: 12px; text-decoration: none; color: var(--muted);
+    padding: 5px 10px; border-radius: 999px; border: 1px solid var(--rule);
+    background: var(--bg2);
+    transition: all .15s;
+  }
+  .toc a:hover { color: var(--accent); border-color: var(--accent-border); background: var(--accent-weak); }
+
+  /* ============ 章节 ============ */
+  .sec { margin-top: 56px; scroll-margin-top: 24px; }
+  .sec-head { display: flex; align-items: baseline; gap: 14px; padding-bottom: 10px; border-bottom: 1px solid var(--rule); }
+  .sec-no { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--accent); letter-spacing: .08em; }
+  .sec h2 { font-size: 24px; line-height: 1.3; letter-spacing: -.01em; font-weight: 700; }
+  .sec h3 { font-size: 17px; margin: 30px 0 10px; font-weight: 700; display: flex; align-items: center; gap: 8px; }
+  .sec h3::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+  .sec p { margin-top: 10px; color: var(--muted); }
+  .sec p strong, .sec li strong { color: var(--ink); }
+  .sec ul, .sec ol { margin: 10px 0 0 20px; color: var(--muted); }
+  .sec li { margin-top: 6px; }
+  .lead { font-size: 15px; line-height: 1.8; color: var(--muted); max-width: 920px; }
+  .sublead { margin-top: 6px; font-size: 12.5px; color: var(--faint); }
+
+  .callout {
+    margin-top: 18px; padding: 14px 16px;
+    border-left: 3px solid var(--accent);
+    background: var(--accent-weak);
+    border-radius: 0 var(--radius) var(--radius) 0;
+    font-size: 13px; line-height: 1.7; color: var(--muted);
+  }
+  .callout b { color: var(--ink); }
+  .callout.warn { border-left-color: var(--warn); background: var(--warn-weak); }
+  .callout.danger { border-left-color: var(--danger); background: var(--danger-weak); }
+  .callout.ok { border-left-color: var(--ok); background: var(--ok-weak); }
+
+  /* ============ 现状 ============ */
+  .shot {
+    margin-top: 18px; border: 1px solid var(--rule); border-radius: var(--radius-lg);
+    overflow: hidden; background: var(--bg3);
+  }
+  .shot img { display: block; width: 100%; height: auto; }
+  .shot figcaption { font-size: 12px; color: var(--faint); padding: 8px 12px; border-top: 1px solid var(--rule); }
+
+  .issue-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 18px; }
+  .issue {
+    border: 1px solid var(--rule); border-radius: var(--radius);
+    background: var(--bg2); padding: 14px 16px;
+    border-top: 3px solid var(--danger);
+  }
+  .issue.p2 { border-top-color: var(--warn); }
+  .issue .tag { font-family: var(--mono); font-size: 11px; color: var(--danger); font-weight: 700; letter-spacing: .05em; }
+  .issue.p2 .tag { color: var(--warn-text); }
+  .issue h4 { margin-top: 6px; font-size: 14px; font-weight: 700; }
+  .issue p { margin-top: 5px; font-size: 12.5px; line-height: 1.7; color: var(--muted); }
+
+  .table-wrap { overflow-x: auto; border: 1px solid var(--rule); border-radius: var(--radius); margin-top: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; line-height: 1.6; background: var(--bg2); }
+  thead th {
+    text-align: left; font-weight: 700; color: var(--ink);
+    background: var(--bg3); border-bottom: 1px solid var(--rule-strong);
+    padding: 10px 12px; white-space: nowrap;
+  }
+  td { padding: 9px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; color: var(--muted); }
+  td b, td strong { color: var(--ink); }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody tr:hover td { background: #fafbfc; }
+  .prio { display: inline-block; font-family: var(--mono); font-size: 10px; font-weight: 700; letter-spacing: .04em; padding: 1px 6px; border-radius: 4px; }
+  .prio.p1 { background: var(--danger-weak); color: var(--danger-text); }
+  .prio.p2 { background: var(--warn-weak); color: var(--warn-text); }
+  .prio.p3 { background: var(--bg3); color: var(--muted); }
+
+  /* ============ 目标 ============ */
+  .goal-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 18px; }
+  .goal {
+    padding: 18px; border: 1px solid var(--rule); border-radius: var(--radius);
+    background: linear-gradient(180deg, var(--bg3), var(--bg2));
+  }
+  .goal .big { font-size: 32px; line-height: 1; font-weight: 750; letter-spacing: -.02em; color: var(--accent); }
+  .goal .big small { font-size: 13px; font-weight: 600; color: var(--muted); margin-left: 4px; }
+  .goal h4 { margin-top: 8px; font-size: 14px; }
+  .goal p { margin-top: 4px; font-size: 12px; line-height: 1.65; color: var(--muted); }
+
+  .principle-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 22px; }
+  .principle { display: flex; gap: 10px; padding: 12px 14px; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--bg2); }
+  .principle .pno { font-family: var(--mono); font-size: 11px; font-weight: 700; color: var(--accent); }
+  .principle div p { margin: 0; font-size: 12.5px; line-height: 1.65; }
+  .principle strong { display: block; color: var(--ink); font-size: 13px; margin-bottom: 2px; }
+
+  /* ============ 结构图 ============ */
+  .arch-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin-top: 18px; }
+  .arch {
+    border: 1px solid var(--rule); border-radius: var(--radius-lg);
+    background: var(--bg3); padding: 14px;
+  }
+  .arch-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  .arch-head .k { font-family: var(--mono); font-size: 11px; font-weight: 700; color: var(--accent); }
+  .arch-head h4 { font-size: 14px; }
+  .arch-head .tag { margin-left: auto; font-size: 10px; padding: 2px 7px; border-radius: 5px; background: var(--accent-weak); color: var(--accent); font-weight: 700; }
+  .arch-box {
+    border: 1px dashed var(--rule-strong); border-radius: 8px;
+    background: var(--bg2); padding: 7px 10px; font-size: 11.5px; color: var(--muted);
+    margin-top: 6px;
+  }
+  .arch-box b { color: var(--ink); }
+  .arch-box.on { border-style: solid; border-color: var(--accent-border); background: var(--accent-weak); color: var(--accent); font-weight: 600; }
+  .arch-row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .arch-foot { margin-top: 8px; font-size: 10.5px; color: var(--faint); }
+
+  /* ============ Mock 基础 ============ */
+  .mock-scroll { overflow-x: auto; padding-bottom: 4px; }
+  .mock {
+    width: 100%; min-width: 1080px; margin-top: 16px;
+    background: var(--bg2);
+    border: 1px solid var(--rule-strong);
+    border-radius: 14px; overflow: hidden;
+    box-shadow: 0 16px 40px rgba(16,24,40,.10);
+    font-size: 13px; line-height: 1.5;
+    color: var(--ink);
+  }
+  .m-bar {
+    height: 34px; display: flex; align-items: center; gap: 10px;
+    padding: 0 12px; background: #f1f3f5; border-bottom: 1px solid var(--rule);
+  }
+  .m-bar .dots { display: flex; gap: 5px; }
+  .m-bar .dots i { width: 9px; height: 9px; border-radius: 50%; background: #d3d8de; display: block; }
+  .m-bar .dots i:first-child { background: #e6a6a0; }
+  .m-bar .dots i:nth-child(2) { background: #e6cf9b; }
+  .m-bar .dots i:nth-child(3) { background: #a9cfae; }
+  .m-url {
+    flex: 1; max-width: 560px; margin: 0 auto;
+    height: 20px; border-radius: 6px; background: var(--bg2);
+    border: 1px solid var(--rule);
+    display: flex; align-items: center; padding: 0 10px;
+    font-family: var(--mono); font-size: 10px; color: var(--faint);
+    overflow: hidden; white-space: nowrap;
+  }
+  .m-shell { display: grid; grid-template-columns: 188px 1fr; min-height: 660px; }
+  .m-side { background: var(--bg3); border-right: 1px solid var(--rule); padding: 12px 10px; }
+  .m-brand { display: flex; align-items: center; gap: 8px; padding: 2px 6px 14px; font-weight: 700; }
+  .m-brand i { width: 24px; height: 24px; border-radius: 7px; background: var(--accent); color: var(--bg2); display: flex; align-items: center; justify-content: center; font-style: normal; font-size: 12px; font-weight: 700; }
+  .m-nav { display: flex; flex-direction: column; gap: 2px; }
+  .m-nav-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 7px; font-size: 12px; color: var(--muted); }
+  .m-nav-item .ico { width: 14px; height: 14px; color: var(--faint); }
+  .m-nav-item.on { background: var(--accent-weak); color: var(--accent); font-weight: 600; }
+  .m-nav-item.on .ico { color: var(--accent); }
+  .m-nav-item .count { margin-left: auto; font-family: var(--mono); font-size: 10px; color: var(--accent); background: var(--bg2); border: 1px solid var(--accent-border); border-radius: 999px; padding: 0 5px; }
+  .m-side-sec { margin: 16px 8px 6px; font-size: 10px; letter-spacing: .08em; color: var(--faint); text-transform: uppercase; }
+  .m-session { display: flex; align-items: center; gap: 7px; padding: 6px 8px; font-size: 11.5px; color: var(--muted); border-radius: 7px; }
+  .m-session .ico { width: 13px; height: 13px; color: var(--faint); }
+  .m-session span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .m-main { display: flex; flex-direction: column; min-width: 0; position: relative; }
+  .m-pagehead {
+    display: flex; align-items: center; gap: 10px;
+    padding: 11px 18px; background: var(--bg2); border-bottom: 1px solid var(--rule);
+    flex: none;
+  }
+  .m-pagehead h3 { margin: 0; font-size: 14px; font-weight: 600; }
+  .m-hint { font-size: 11.5px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .m-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; }
+  .m-btn {
+    height: 30px; display: inline-flex; align-items: center; gap: 5px;
+    padding: 0 10px; border-radius: 7px; border: 1px solid var(--rule);
+    background: var(--bg2); color: var(--muted); font-size: 11.5px; font-family: var(--font);
+  }
+  .m-btn .ico { width: 13px; height: 13px; }
+  .m-btn.icon { width: 30px; padding: 0; justify-content: center; }
+  .m-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .m-btn.ghost { border-color: var(--accent-border); color: var(--accent); background: var(--accent-weak); }
+  .m-btn.danger { color: var(--danger); border-color: var(--danger-border); background: var(--danger-weak); }
+  .m-body { padding: 12px 18px 18px; background: var(--bg2); flex: 1; min-height: 0; }
+
+  /* 概览条 */
+  .m-overview {
+    display: grid; grid-template-columns: repeat(5, 1fr);
+    border: 1px solid var(--rule); border-radius: var(--radius); overflow: hidden;
+    background: var(--bg2);
+  }
+  .m-ov { padding: 9px 12px; border-right: 1px solid var(--rule); display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+  .m-ov:last-child { border-right: 0; }
+  .m-ov .v { font-size: 19px; line-height: 1.2; font-weight: 700; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
+  .m-ov .l { font-size: 10.5px; color: var(--muted); }
+  .m-ov .d { font-size: 9.5px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .m-ov.warn .v { color: var(--warn); }
+  .m-ov.on { background: var(--accent-weak); box-shadow: inset 0 -2px 0 var(--accent); }
+  .m-ov.on .v { color: var(--accent); }
+
+  /* 页签 */
+  .m-tabsrow { display: flex; align-items: center; gap: 2px; border-bottom: 1px solid var(--rule); margin-top: 12px; }
+  .m-tab { padding: 7px 10px 8px; font-size: 12px; color: var(--muted); border-bottom: 2px solid transparent; display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+  .m-tab.on { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+  .m-tab .b { font-family: var(--mono); font-size: 9.5px; background: var(--bg3); border-radius: 6px; padding: 1px 5px; color: var(--faint); }
+  .m-tab.on .b { background: var(--accent-weak); color: var(--accent); }
+  .m-tabsep { width: 1px; height: 16px; background: var(--rule); margin: 0 8px; flex: none; }
+  .m-tabgroup { font-size: 9.5px; color: var(--faint); letter-spacing: .06em; margin-right: 2px; white-space: nowrap; }
+
+  /* 工具栏 */
+  .m-toolbar { display: flex; align-items: center; gap: 6px; padding: 9px 0 8px; flex-wrap: wrap; }
+  .m-search {
+    width: 230px; height: 28px; border: 1px solid var(--rule); border-radius: 7px;
+    display: flex; align-items: center; gap: 6px; padding: 0 9px;
+    color: var(--faint); background: var(--bg3);
+  }
+  .m-search .ico { width: 13px; height: 13px; }
+  .m-search span { font-size: 11px; }
+  .m-search kbd { margin-left: auto; font-family: var(--mono); font-size: 9px; color: var(--faint); border: 1px solid var(--rule); border-radius: 3px; padding: 0 3px; background: var(--bg2); }
+  .m-chip {
+    height: 23px; padding: 0 9px; border-radius: 999px; border: 1px solid var(--rule);
+    background: var(--bg2); color: var(--muted); font-size: 11px;
+    display: inline-flex; align-items: center; gap: 4px; white-space: nowrap;
+  }
+  .m-chip.on { background: var(--accent-weak); border-color: var(--accent-border); color: var(--accent); font-weight: 600; }
+  .m-chip.warn.on { background: var(--warn-weak); border-color: var(--warn); color: var(--warn); }
+  .m-chip .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); }
+  .m-spacer { flex: 1; }
+  .m-select {
+    height: 25px; padding: 0 8px; border-radius: 6px; border: 1px solid var(--rule);
+    background: var(--bg2); color: var(--muted); font-size: 11px;
+    display: inline-flex; align-items: center; gap: 5px;
+  }
+  .m-select .ico { width: 12px; height: 12px; color: var(--faint); }
+
+  /* 卡片 + 表格 */
+  .m-card { border: 1px solid var(--rule); border-radius: var(--radius); overflow: hidden; background: var(--bg2); }
+  .m-tbl { font-size: 11.5px; }
+  .m-tbl-head, .m-tbl-row { display: grid; align-items: center; gap: 8px; padding: 7px 12px; }
+  .m-tbl-head { background: var(--bg3); color: var(--muted); font-size: 10.5px; border-bottom: 1px solid var(--rule); }
+  .m-tbl-row { border-bottom: 1px solid var(--rule); }
+  .m-tbl-row:last-child { border-bottom: 0; }
+  .m-tbl-row:hover { background: #fafbfc; }
+  .t-roles { grid-template-columns: 1.3fr .78fr 1.28fr .72fr .52fr .66fr .92fr; }
+  .t-apis { grid-template-columns: 16px 48px 1.25fr .95fr 1.32fr .95fr .85fr .6fr .5fr; }
+  .t-menus { grid-template-columns: 14px 1.55fr 1.2fr .62fr 44px 1fr .5fr .48fr; }
+  .t-idp { grid-template-columns: 1.25fr .55fr .7fr .6fr .5fr .8fr .9fr; }
+  .t-members { grid-template-columns: .85fr 1.1fr .8fr .55fr .75fr; }
+  .m-cell { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .m-namecell { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .m-namecell .ico { width: 14px; height: 14px; color: var(--faint); flex: none; }
+  .m-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .m-code { font-family: var(--mono); font-size: 9.5px; color: var(--faint); }
+  .m-muted { color: var(--faint); }
+
+  /* 胶囊 */
+  .pill { display: inline-flex; align-items: center; gap: 4px; font-size: 9.5px; line-height: 1; padding: 3px 6px; border-radius: 999px; white-space: nowrap; }
+  .pill::before { content: ""; width: 4px; height: 4px; border-radius: 50%; background: currentColor; flex: none; }
+  .pill.plain::before { display: none; }
+  .pill.ok { color: var(--ok); background: var(--ok-weak); }
+  .pill.warn { color: var(--warn-text); background: var(--warn-weak); }
+  .pill.err { color: var(--danger); background: var(--danger-weak); }
+  .pill.muted { color: var(--faint); background: var(--bg3); }
+  .pill.blue { color: var(--accent); background: var(--accent-weak); }
+  .pill.violet { color: var(--violet); background: var(--violet-weak); }
+  .pill.line { color: var(--muted); background: transparent; border: 1px solid var(--rule); }
+
+  /* 头像 */
+  .avatars { display: flex; align-items: center; }
+  .av { width: 20px; height: 20px; border-radius: 50%; border: 2px solid #fff; margin-left: -5px; display: flex; align-items: center; justify-content: center; font-size: 8px; color: #fff; background: #8b9bb4; flex: none; }
+  .av:first-child { margin-left: 0; }
+  .av.b { background: #7c9cf0; } .av.c { background: #8ec5a8; } .av.d { background: #e0a86b; } .av.e { background: #a98fe0; }
+  .avn { margin-left: 6px; font-size: 10.5px; color: var(--muted); }
+  .avn.zero { color: var(--warn-text); }
+
+  /* 授权计数 */
+  .perm-mini { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .perm-mini b { font-size: 11px; font-weight: 600; }
+  .perm-mini b span { font-family: var(--mono); font-size: 9px; color: var(--faint); font-weight: 400; }
+  .perm-bar { height: 4px; width: 88px; border-radius: 3px; background: var(--bg3); overflow: hidden; display: flex; }
+  .perm-bar i { background: var(--accent); }
+  .perm-bar i.deny { background: var(--danger); }
+  .perm-bar i.rest { background: var(--rule); }
+
+  /* 左栏（接口模块） */
+  .m-apilayout { display: grid; grid-template-columns: 176px 1fr; gap: 10px; align-items: start; }
+  .m-rail { border: 1px solid var(--rule); border-radius: 9px; background: var(--bg3); padding: 6px; }
+  .m-railtitle { font-size: 9.5px; color: var(--faint); padding: 6px 8px 3px; letter-spacing: .06em; }
+  .m-railrow { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 6px; font-size: 10.5px; color: var(--muted); }
+  .m-railrow.on { background: var(--bg2); color: var(--accent); font-weight: 600; box-shadow: 0 1px 2px rgba(16,24,40,.04); }
+  .m-railrow .n { margin-left: auto; font-family: var(--mono); font-size: 9.5px; color: var(--faint); }
+  .m-railrow.on .n { color: var(--accent); }
+
+  /* 批量条 */
+  .m-bulk {
+    display: flex; align-items: center; gap: 8px;
+    margin-top: 8px; padding: 8px 11px;
+    border: 1px solid var(--accent-border); border-radius: var(--radius);
+    background: #f7faff; box-shadow: 0 6px 18px rgba(46,107,230,.10);
+  }
+  .m-bulk .sel { display: flex; align-items: center; gap: 7px; font-size: 11.5px; font-weight: 600; }
+  .m-bulk .sel span { font-weight: 400; color: var(--faint); font-size: 10.5px; }
+  .m-bulk .m-btn { height: 27px; }
+
+  /* 抽屉 */
+  .m-dim { opacity: .42; pointer-events: none; }
+  .m-drawer {
+    position: absolute; top: 0; right: 0; bottom: 0; width: 78%; min-width: 700px;
+    background: var(--bg2); border-left: 1px solid var(--rule-strong);
+    box-shadow: -18px 0 50px rgba(16,24,40,.16);
+    display: flex; flex-direction: column; z-index: 2;
+  }
+  .m-dh { padding: 12px 18px 10px; border-bottom: 1px solid var(--rule); display: flex; align-items: flex-start; gap: 8px; flex: none; }
+  .m-dh h4 { font-size: 14px; }
+  .m-dh .sub { font-size: 10.5px; color: var(--faint); margin-top: 3px; line-height: 1.5; }
+  .m-dh .x { margin-left: auto; color: var(--faint); font-size: 15px; flex: none; }
+  .m-db { flex: 1; padding: 11px 18px; min-height: 0; overflow: hidden; }
+  .m-df { border-top: 1px solid var(--rule); padding: 9px 18px; display: flex; align-items: center; gap: 8px; background: var(--bg2); flex: none; }
+  .m-df .dirty { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--warn-text); }
+  .m-df .dirty i { width: 6px; height: 6px; border-radius: 50%; background: var(--warn); }
+
+  /* 树 */
+  .m-sec { display: flex; align-items: center; gap: 6px; margin: 8px 0 5px; font-size: 10.5px; color: var(--faint); }
+  .m-sec b { font-size: 11px; color: var(--muted); font-weight: 600; }
+  .m-sec .cnt { font-family: var(--mono); font-size: 9.5px; color: var(--accent); background: var(--accent-weak); border-radius: 6px; padding: 0 5px; }
+  .m-treerow { display: flex; align-items: center; gap: 6px; padding: 3px 4px; border-radius: 5px; font-size: 11px; }
+  .m-treerow.child { padding-left: 22px; }
+  .m-treerow:hover { background: var(--bg3); }
+  .m-treerow .ico { width: 13px; height: 13px; color: var(--faint); }
+  .m-treerow .nm { color: var(--muted); }
+  .m-treerow .nm b { color: var(--ink); font-weight: 600; }
+  .m-treerow .tag { margin-left: auto; font-size: 9px; color: var(--faint); }
+  .cb { width: 13px; height: 13px; border: 1px solid var(--rule-strong); border-radius: 3px; flex: none; position: relative; background: var(--bg2); }
+  .cb.on { background: var(--accent); border-color: var(--accent); }
+  .cb.on::after { content: "✓"; color: #fff; font-size: 9px; position: absolute; left: 2.5px; top: -1.5px; }
+  .cb.half { background: var(--accent-weak); border-color: var(--accent-border); }
+  .cb.half::after { content: "—"; color: var(--accent); font-size: 8px; position: absolute; left: 2px; top: 0; }
+
+  /* 授权点分组 */
+  .m-permgroup { border: 1px solid var(--rule); border-radius: 8px; margin-bottom: 7px; overflow: hidden; background: var(--bg2); }
+  .m-ghead { display: flex; align-items: center; gap: 7px; padding: 6px 10px; background: var(--bg3); font-size: 10.5px; }
+  .m-ghead b { font-size: 11px; }
+  .m-ghead .cnt { font-family: var(--mono); font-size: 9.5px; color: var(--faint); }
+  .m-ghead .deny { font-size: 9px; color: var(--danger); }
+  .m-ghead .acts { margin-left: auto; display: flex; gap: 8px; font-size: 9.5px; color: var(--accent); }
+  .m-permrow { display: flex; align-items: center; gap: 8px; padding: 4px 10px; border-top: 1px solid var(--rule); font-size: 10.5px; }
+  .m-permrow .nm { min-width: 0; flex: 1; }
+  .m-permrow .nm b { display: block; font-size: 10.5px; color: var(--ink); font-weight: 600; line-height: 1.45; }
+  .m-permrow .nm code { font-family: var(--mono); font-size: 9px; color: var(--faint); }
+  .m-permrow .exempt { font-size: 8.5px; color: var(--warn-text); background: var(--warn-weak); border: 1px solid var(--warn-border); border-radius: 4px; padding: 1px 4px; white-space: nowrap; }
+
+  /* 三态 */
+  .tri { display: inline-flex; border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; height: 22px; flex: none; }
+  .tri button { border: 0; background: var(--bg2); font-size: 9px; padding: 0 7px; color: var(--faint); font-family: var(--font); }
+  .tri button + button { border-left: 1px solid var(--rule); }
+  .tri .on-allow { background: var(--ok-weak); color: var(--ok); font-weight: 700; }
+  .tri .on-deny { background: var(--danger-weak); color: var(--danger); font-weight: 700; }
+  .tri .on-none { background: var(--bg3); color: var(--muted); font-weight: 600; }
+
+  /* 角色中心 */
+  .m-subnav { display: flex; align-items: center; gap: 4px; padding: 8px 18px; border-bottom: 1px solid var(--rule); background: var(--bg2); }
+  .m-subnav .s { padding: 4px 10px; border-radius: 6px; font-size: 11.5px; color: var(--muted); }
+  .m-subnav .s.on { background: var(--accent-weak); color: var(--accent); font-weight: 600; }
+  .m-subnav .spacer { flex: 1; }
+  .m-wb { display: grid; grid-template-columns: 264px 1fr; min-height: 560px; }
+  .m-wbrail { border-right: 1px solid var(--rule); background: var(--bg3); padding: 11px 10px; }
+  .m-rolecard { border: 1px solid var(--rule); border-radius: 8px; background: var(--bg2); padding: 8px 10px; margin-bottom: 6px; }
+  .m-rolecard.on { border-color: var(--accent-border); box-shadow: 0 0 0 2px var(--accent-weak); }
+  .m-rolecard .top { display: flex; align-items: center; gap: 6px; }
+  .m-rolecard .nm { font-size: 12px; font-weight: 600; }
+  .m-rolecard .meta { margin-top: 3px; display: flex; align-items: center; gap: 8px; font-size: 9.5px; color: var(--faint); }
+  .m-rolecard .meta .st { margin-left: auto; }
+  .m-wbmain { display: flex; flex-direction: column; min-width: 0; }
+  .m-wbhead { padding: 12px 16px 9px; border-bottom: 1px solid var(--rule); }
+  .m-wbhead .top { display: flex; align-items: center; gap: 7px; }
+  .m-wbhead h3 { font-size: 16px; font-weight: 700; }
+  .m-wbhead .sub { margin-top: 4px; font-size: 10.5px; color: var(--faint); display: flex; gap: 10px; flex-wrap: wrap; }
+  .m-wbhead .sub b { color: var(--muted); }
+  .m-wbhead .acts { margin-left: auto; display: flex; gap: 6px; }
+  .m-segs { display: flex; gap: 2px; border-bottom: 1px solid var(--rule); padding: 0 16px; }
+  .m-seg { padding: 7px 10px 8px; font-size: 11.5px; color: var(--muted); border-bottom: 2px solid transparent; }
+  .m-seg.on { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+  .m-seg .b { font-family: var(--mono); font-size: 9px; color: var(--faint); margin-left: 4px; }
+  .m-wbbody { padding: 11px 16px; flex: 1; }
+  .m-wbcols { display: grid; grid-template-columns: 1fr 1.18fr; gap: 12px; align-items: start; }
+
+  /* 时间线 */
+  .m-tl { display: flex; flex-direction: column; gap: 9px; margin-top: 8px; }
+  .m-tli { display: flex; gap: 8px; }
+  .m-tld { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin-top: 5px; flex: none; }
+  .m-tld.warn { background: var(--warn); }
+  .m-tld.danger { background: var(--danger); }
+  .m-tlc { min-width: 0; }
+  .m-tlc b { font-size: 11px; }
+  .m-tlc .meta { font-size: 9.5px; color: var(--faint); margin-top: 1px; }
+
+  /* 空/错态示意 */
+  .m-empty { text-align: center; padding: 26px 0 20px; }
+  .m-empty .ico { width: 30px; height: 30px; color: var(--accent); }
+  .m-empty b { display: block; margin-top: 6px; font-size: 12px; }
+  .m-empty p { margin-top: 2px; font-size: 10.5px; color: var(--faint); }
+
+  /* 开关 / 分页 / 角色缩写 */
+  .sw { width: 26px; height: 14px; border-radius: 999px; background: var(--rule-strong); position: relative; display: inline-block; flex: none; }
+  .sw::after { content: ""; width: 10px; height: 10px; border-radius: 50%; background: #fff; position: absolute; top: 2px; left: 2px; }
+  .sw.on { background: var(--accent); }
+  .sw.on::after { left: 14px; }
+  .m-pagination { display: flex; align-items: center; gap: 4px; padding: 8px 12px; border-top: 1px solid var(--rule); font-size: 10.5px; color: var(--faint); }
+  .m-pagination .pbtn { width: 22px; height: 22px; border: 1px solid var(--rule); border-radius: 5px; display: flex; align-items: center; justify-content: center; background: var(--bg2); color: var(--muted); font-size: 10px; }
+  .m-pagination .pbtn.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
+  .m-pagination .pbtn.off { color: var(--rule-strong); }
+  .role-chip { font-family: var(--mono); font-size: 8.5px; color: var(--muted); background: var(--bg3); border: 1px solid var(--rule); border-radius: 4px; padding: 1px 4px; white-space: nowrap; }
+  .role-chip.more { color: var(--accent); border-color: var(--accent-border); background: var(--accent-weak); }
+
+  /* 标注 */
+  .notes { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px 20px; margin-top: 10px; }
+  .note { display: flex; gap: 8px; font-size: 12px; color: var(--muted); line-height: 1.6; }
+  .note .n { font-family: var(--mono); font-size: 10px; font-weight: 700; color: var(--accent); flex: none; margin-top: 2px; }
+  .note b { color: var(--ink); }
+
+  /* 规格卡 */
+  .spec-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 16px; }
+  .spec { border: 1px solid var(--rule); border-radius: var(--radius); background: var(--bg2); padding: 14px 16px; }
+  .spec h4 { font-size: 13.5px; display: flex; align-items: center; gap: 7px; }
+  .spec h4 .k { font-family: var(--mono); font-size: 10px; color: var(--accent); }
+  .spec p { margin-top: 5px; font-size: 12.5px; line-height: 1.7; }
+  .spec ul { margin-top: 5px; font-size: 12.5px; }
+
+  pre.code {
+    margin-top: 12px; padding: 14px 16px; border-radius: var(--radius);
+    background: #f6f8fa; border: 1px solid var(--rule);
+    font-family: var(--mono); font-size: 11.5px; line-height: 1.65; color: var(--muted);
+    overflow-x: auto; white-space: pre;
+  }
+  pre.code b { color: var(--ink); }
+
+  /* 阶段表 */
+  .phase { display: flex; flex-direction: column; gap: 0; margin-top: 16px; border: 1px solid var(--rule); border-radius: var(--radius); overflow: hidden; }
+  .phase-row { display: grid; grid-template-columns: 80px 1fr 220px; gap: 12px; padding: 12px 15px; border-bottom: 1px solid var(--rule); background: var(--bg2); }
+  .phase-row:last-child { border-bottom: 0; }
+  .phase-row .p { font-family: var(--mono); font-size: 11px; font-weight: 700; color: var(--accent); }
+  .phase-row .t b { font-size: 13px; }
+  .phase-row .t p { margin-top: 3px; font-size: 12px; }
+  .phase-row .o { font-size: 11.5px; color: var(--faint); text-align: right; }
+
+  /* 决策 */
+  .decision-list { display: flex; flex-direction: column; gap: 10px; margin-top: 18px; }
+  .decision { display: grid; grid-template-columns: 26px 1fr; gap: 12px; border: 1px solid var(--rule); border-radius: var(--radius); padding: 13px 15px; background: var(--bg2); }
+  .decision .dno { width: 24px; height: 24px; border-radius: 50%; background: var(--accent-weak); color: var(--accent); font-family: var(--mono); font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+  .decision h4 { font-size: 13.5px; }
+  .decision p { margin-top: 3px; font-size: 12px; }
+  .decision .rec { display: inline-block; margin-top: 6px; font-size: 10.5px; font-weight: 700; color: var(--ok); background: var(--ok-weak); border-radius: 5px; padding: 1px 7px; }
+
+  .check-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px 24px; margin-top: 14px; }
+  .check { display: flex; gap: 8px; font-size: 12.5px; color: var(--muted); line-height: 1.6; }
+  .check .box { width: 15px; height: 15px; border-radius: 3px; border: 1px solid var(--rule-strong); flex: none; margin-top: 3px; }
+
+  .footer { margin-top: 54px; padding-top: 20px; border-top: 1px solid var(--rule); display: flex; flex-wrap: wrap; gap: 10px 24px; font-size: 12px; color: var(--faint); }
+  .footer b { color: var(--muted); }
+
+  @media (max-width: 900px) {
+    .report { padding: 34px 22px; border-radius: 16px; }
+    .summary-band, .goal-grid { grid-template-columns: repeat(2, 1fr); }
+    .issue-grid, .principle-grid, .check-grid, .arch-grid, .spec-grid, .notes { grid-template-columns: 1fr; }
+    .phase-row { grid-template-columns: 70px 1fr; }
+    .phase-row .o { display: none; }
+    .cover { padding-bottom: 26px; }
+  }
+  @media (max-width: 600px) {
+    body { padding: 10px; }
+    .summary-band, .goal-grid { grid-template-columns: 1fr; }
+    h1 { font-size: 30px; }
+    .sec h2 { font-size: 20px; }
+  }
+  @media print {
+    body { background: #fff; padding: 0; }
+    .report { box-shadow: none; border: 0; border-radius: 0; max-width: none; }
+    .toc { display: none; }
+    .sec { break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<svg class="sr-svg" aria-hidden="true">
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/></symbol>
+  <symbol id="i-users" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3"/><path d="M2 20c0-3.3 3-6 7-6s7 2.7 7 6"/><circle cx="17" cy="9" r="2.4"/><path d="M15 20c0-2.4 1.4-4.2 4-4.6"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><circle cx="8" cy="15" r="4"/><path d="m11 12 8-8"/><path d="m16 3 3 3"/></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 5 5 9-10"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3 2 20h20z"/><path d="M12 9v5"/><path d="M12 17h.01"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"/><path d="M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></symbol>
+  <symbol id="i-drag" viewBox="0 0 24 24"><circle cx="9" cy="7" r="1"/><circle cx="15" cy="7" r="1"/><circle cx="9" cy="12" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="17" r="1"/><circle cx="15" cy="17" r="1"/></symbol>
+</svg>
+
+<div class="report">
+
+  <!-- ==================== 封面 ==================== -->
+  <header class="cover">
+    <span class="eyebrow">Permissions · UI / UX / Feature Upgrade</span>
+    <h1>权限界面<br><em>从「三张管理表」到权限工作台</em></h1>
+    <p class="lede">
+      当前权限管理能完成配置，但回答不了管理员最常问的四个问题：谁能进什么、哪些角色是空壳、哪些接口没人管、这次改动会影响谁。
+      本方案先给两套信息架构与 8 张高保真效果图，方向确认后再动代码。
+    </p>
+    <div class="meta-row">
+      <span class="meta-chip"><b>范围</b> 权限主页面 + 认证源 / 服务账号 / 内容安全</span>
+      <span class="meta-chip"><b>后端</b> 仅补 3 个只读能力</span>
+      <span class="meta-chip"><b>依据</b> master 工作树 + 现状截图</span>
+      <span class="meta-chip status">状态 · 待选方向 A / B</span>
+    </div>
+
+    <div class="summary-band">
+      <div class="summary-card">
+        <div class="num">01</div>
+        <strong>两套方向</strong>
+        <span>A 渐进增强：保留三页签，加概览、下钻与配置器 2.0<br>B 角色中心：左角色右详情，配置路径最短</span>
+      </div>
+      <div class="summary-card">
+        <div class="num">02</div>
+        <strong>8 张效果图</strong>
+        <span>A 4 张 + B 3 张 + 接入治理统一 1 张，全部按 1120px 真实应用宽度绘制</span>
+      </div>
+      <div class="summary-card">
+        <div class="num">03</div>
+        <strong>3 个只读接口</strong>
+        <span>概览统计、菜单→角色反查、授权点中文名回填；不动鉴权判定与表结构</span>
+      </div>
+      <div class="summary-card">
+        <div class="num">04</div>
+        <strong>先看图再动工</strong>
+        <span>本文件确认方向后才进入实现；A 为默认推荐，B 的组件可直接复用</span>
+      </div>
+    </div>
+
+    <nav class="toc" aria-label="目录">
+      <a href="#sec-1">01 一页结论</a>
+      <a href="#sec-2">02 现状诊断</a>
+      <a href="#sec-3">03 设计目标</a>
+      <a href="#sec-4">04 信息架构对比</a>
+      <a href="#sec-5">05 效果图 · 方向 A</a>
+      <a href="#sec-6">06 效果图 · 方向 B</a>
+      <a href="#sec-7">07 接入治理统一</a>
+      <a href="#sec-8">08 组件与交互规格</a>
+      <a href="#sec-9">09 数据与接口</a>
+      <a href="#sec-10">10 实施计划</a>
+      <a href="#sec-11">11 验收标准</a>
+      <a href="#sec-12">12 待确认决策</a>
+    </nav>
+  </header>
+
+  <main>
+
+  <!-- ==================== 01 一页结论 ==================== -->
+  <section class="sec" id="sec-1">
+    <div class="sec-head"><span class="sec-no">01</span><h2>一页结论</h2></div>
+    <p class="lead">
+      权限页的核心矛盾不是「表格不好看」，而是<strong>信息只以「管理对象」组织，没有以「角色」组织</strong>：
+      菜单表、接口表、角色表各自完整，但管理员要在三者之间来回跳，才能回答一个授权问题。
+    </p>
+
+    <div class="callout">
+      <b>建议先做方向 A。</b>保留现有三页签与路由机制，在列表上方加概览条、在行内加下钻、把权限抽屉升级为三态配置器。
+      这样改动集中在 <code>PermissionsPage.vue</code> 与 4 个新组件，回归风险低；方向 B 作为下一阶段，复用 A 的全部组件。
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>管理员问题</th><th>现状怎么回答</th><th>升级后怎么回答</th></tr></thead>
+        <tbody>
+          <tr><td><b>谁能进什么？</b></td><td>逐个角色开抽屉看，或手输 uid 查有效权限</td><td>角色行直接看「菜单 / 允许 / 禁止 / 成员」，点开即下钻</td></tr>
+          <tr><td><b>哪些角色是空壳？</b></td><td>只能看到成员数 0，但不知道权限数也为 0</td><td>概览条「待处理」+ 角色行 warn 标记 + 一键筛选</td></tr>
+          <tr><td><b>哪些接口没人管？</b></td><td>466 行平铺，只能搜索路径</td><td>接口页左侧「未授权 / 未挂菜单」筛选 + 模块计数</td></tr>
+          <tr><td><b>这次改动会影响谁？</b></td><td>保存前没有差异摘要，菜单隐藏只靠弹窗</td><td>抽屉保存条显示「N 项未保存」；菜单行显示可见角色</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ==================== 02 现状诊断 ==================== -->
+  <section class="sec" id="sec-2">
+    <div class="sec-head"><span class="sec-no">02</span><h2>现状诊断：能用，但不够好用</h2></div>
+    <p class="lead">
+      以下判断都来自当前工作树代码与截图，不是体感评价。问题按「影响管理员决策」的严重度排序。
+    </p>
+
+    <figure class="shot">
+      <img src="assets/current-permissions.png" alt="当前权限管理页面截图：菜单表格、页签计数与可见开关">
+      <figcaption>现状截图 · 权限管理 / 菜单页签。页头只有标题，页签只给计数，表格承载全部信息。</figcaption>
+    </figure>
+
+    <div class="issue-grid">
+      <div class="issue">
+        <div class="tag">P1 · 信息架构</div>
+        <h4>只按「管理对象」组织，没有角色视角</h4>
+        <p>菜单、接口、角色三张表各自完整，但「一个角色到底能做什么」只能开抽屉逐个看。角色表的成员数、权限数、数据范围没有聚合，管理员无法一眼巡检。</p>
+      </div>
+      <div class="issue">
+        <div class="tag">P1 · 可用性</div>
+        <h4>466 行接口一次性平铺</h4>
+        <p>无分页、无模块导航、无「未授权 / 未挂菜单」筛选，也没有批量归属菜单。找一个接口只能靠搜索路径，更无法回答「哪些接口没人管」。</p>
+      </div>
+      <div class="issue">
+        <div class="tag">P1 · 可读性</div>
+        <h4>110 个授权点全是裸编码</h4>
+        <p><code>manual:sync</code>、<code>chat:tool-output</code> 直接进入界面；分组按 Controller 类名，中英混杂。管理员看不懂，就只能凭记忆勾选。</p>
+      </div>
+      <div class="issue">
+        <div class="tag">P1 · 安全</div>
+        <h4>加载失败仍可保存，可能清空权限</h4>
+        <p>抽屉先打开再拉数据，失败只 toast；勾选为空但「保存权限」仍可点，而保存是全量替换。网络抖动就可能把角色权限清空。</p>
+      </div>
+      <div class="issue p2">
+        <div class="tag">P2 · 语义</div>
+        <h4>deny 用行尾文字按钮表达</h4>
+        <p>「排除 / 只压本角色」没有三态（允许 / 禁止 / 未置），允许与禁止的互斥关系靠提示文字解释；管理员很难确认自己到底配了什么。</p>
+      </div>
+      <div class="issue p2">
+        <div class="tag">P2 · 一致性</div>
+        <h4>并入的三个 Tab 各写一套壳</h4>
+        <p>认证源、服务账号、内容安全的页头（<code>head-count</code> / <code>sr-only</code>）、操作列（<code>a-button type=link</code> / <code>app-link-btn</code>）、空态都不一致，像三个不同产品拼在一起。</p>
+      </div>
+    </div>
+
+    <h3>问题与代码证据</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>编号</th><th>问题</th><th>证据</th><th>优先级</th></tr></thead>
+        <tbody>
+          <tr><td>S1</td><td>页头无概览，页签只给计数</td><td><code>PermissionsPage.vue:2-24</code></td><td><span class="prio p2">P2</span></td></tr>
+          <tr><td>S3</td><td>接口 466 行无分页 / 无模块导航</td><td><code>PermissionsPage.vue:108-163</code></td><td><span class="prio p1">P1</span></td></tr>
+          <tr><td>S4</td><td>反查失败显示成「未授权给任何角色」</td><td><code>PermissionsPage.vue:129-140</code>；检查清单 R-09</td><td><span class="prio p1">P1</span></td></tr>
+          <tr><td>S5</td><td>角色无权限数 / 最近变更，成员数不可点</td><td><code>PermissionsPage.vue:166-221</code></td><td><span class="prio p1">P1</span></td></tr>
+          <tr><td>S6</td><td>菜单「图标」列冗余，排序只读，无可见角色反查</td><td><code>PermissionsPage.vue:50-101</code></td><td><span class="prio p2">P2</span></td></tr>
+          <tr><td>S7</td><td>授权点裸编码、Controller 分组</td><td><code>PermissionsPage.vue:880-913</code>；<code>ApiEndpointScanner.java:446-448</code></td><td><span class="prio p1">P1</span></td></tr>
+          <tr><td>S8</td><td>deny 无三态，语义靠文字</td><td><code>PermissionsPage.vue:405-430</code></td><td><span class="prio p2">P2</span></td></tr>
+          <tr><td>S9</td><td>加载失败仍可保存，存在清空风险</td><td><code>PermissionsPage.vue:970-1015</code>；检查清单 R-09</td><td><span class="prio p1">P1</span></td></tr>
+          <tr><td>S10</td><td>有效权限需手输 uid，不显示 globalDenies</td><td><code>PermissionsPage.vue:313-335</code></td><td><span class="prio p2">P2</span></td></tr>
+          <tr><td>S11</td><td>三个并入 Tab 的壳不一致</td><td><code>ServiceAccountsPage.vue:1-12</code> 等</td><td><span class="prio p3">P3</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ==================== 03 设计目标 ==================== -->
+  <section class="sec" id="sec-3">
+    <div class="sec-head"><span class="sec-no">03</span><h2>设计目标与原则</h2></div>
+    <p class="lead">不引入新的视觉语言，只把现有信息重新组织，并把「配置」从表单升级为可核对的视图。</p>
+
+    <div class="goal-grid">
+      <div class="goal"><div class="big">3<small>秒</small></div><h4>先给结论</h4><p>进入页面先看到角色、授权点、接口、菜单的规模与异常，再进入表格。</p></div>
+      <div class="goal"><div class="big">4<small>个</small></div><h4>问题都能下钻</h4><p>谁能进、谁是空壳、谁没人管、改动影响谁，每个数字都能点进对应清单。</p></div>
+      <div class="goal"><div class="big">0<small>次</small></div><h4>凭记忆勾选</h4><p>授权点用「业务域 + 中文名 + code」展示，三态互斥，配置结果可核对。</p></div>
+    </div>
+
+    <div class="principle-grid">
+      <div class="principle"><span class="pno">P1</span><div><strong>先结论，后清单</strong><p>概览条只放能驱动决策的指标；不放装饰性图表。</p></div></div>
+      <div class="principle"><span class="pno">P2</span><div><strong>数字必须可下钻</strong><p>成员数、授权点数、可见角色数、未授权接口数都给出入口，避免「看到数字却不知道是谁」。</p></div></div>
+      <div class="principle"><span class="pno">P3</span><div><strong>看得懂再配置</strong><p>业务域分组、中文名双段、三态控件；不再让编码和「排除」按钮承担语义。</p></div></div>
+      <div class="principle"><span class="pno">P4</span><div><strong>不丢改动，不静默失败</strong><p>脏状态、离开确认、加载失败禁用保存、保存摘要，一个都不能少。</p></div></div>
+      <div class="principle"><span class="pno">P5</span><div><strong>沿用现有令牌</strong><p>只使用 <code>app.css</code> 的变量与通用类，深色主题零额外适配。</p></div></div>
+      <div class="principle"><span class="pno">P6</span><div><strong>两套方向同组件</strong><p>A 与 B 共享概览条、三态编辑器、成员抽屉与有效权限弹窗，便于切换与回退。</p></div></div>
+    </div>
+  </section>
+
+  <!-- ==================== 04 信息架构对比 ==================== -->
+  <section class="sec" id="sec-4">
+    <div class="sec-head"><span class="sec-no">04</span><h2>信息架构：两套方向</h2></div>
+    <p class="lead">
+      两套方向解决同一批问题，但组织方式不同：A 以「管理对象」为主轴，B 以「角色」为主轴。
+      下面先看结构，再看 §05 / §06 的真实界面效果图。
+    </p>
+
+    <div class="arch-grid">
+      <div class="arch">
+        <div class="arch-head"><span class="k">A</span><h4>渐进增强</h4><span class="tag">推荐 · 低风险</span></div>
+        <div class="arch-box on"><b>权限管理</b> · 概览条 · 有效权限入口</div>
+        <div class="arch-box"><b>菜单</b> | <b>接口</b> | <b>角色</b>　（主任务页签）</div>
+        <div class="arch-box"><span style="color:var(--faint)">接入与治理</span>：认证源 | 服务账号 | 内容安全</div>
+        <div class="arch-row2">
+          <div class="arch-box">角色页签<br>表格 + 成员抽屉 + 配置器</div>
+          <div class="arch-box">接口页签<br>模块导航 + 分页 + 批量</div>
+        </div>
+        <div class="arch-box">菜单页签：可见角色反查 + 拖拽排序</div>
+        <div class="arch-foot">改动集中在 PermissionsPage.vue 与 4 个新组件；路由 / 懒加载机制不变。</div>
+      </div>
+
+      <div class="arch">
+        <div class="arch-head"><span class="k">B</span><h4>角色中心工作台</h4><span class="tag">改动大 · 路径短</span></div>
+        <div class="arch-box on"><b>权限管理</b> · 二级导航 角色 / 菜单 / 接口 / 接入治理</div>
+        <div class="arch-row2">
+          <div class="arch-box"><b>左栏</b><br>角色卡片列表<br>搜索 · 状态筛选</div>
+          <div class="arch-box"><b>右栏</b><br>角色头部 + 分段<br>权限 / 成员 / 范围 / 变更</div>
+        </div>
+        <div class="arch-box">右栏权限配置：左菜单、右授权点，底部常驻保存条</div>
+        <div class="arch-box">成员 / 数据范围 / 变更记录都在角色上下文内</div>
+        <div class="arch-foot">主页面需重写；菜单与接口管理降为二级导航，旧 <code>?tab=</code> 深链需重定向。</div>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>维度</th><th>方向 A · 渐进增强</th><th>方向 B · 角色中心</th></tr></thead>
+        <tbody>
+          <tr><td><b>学习成本</b></td><td>低：仍是三个熟悉页签，只是多了概览与下钻</td><td>中：需要理解「左角色右详情」的新导航</td></tr>
+          <tr><td><b>首屏信息密度</b></td><td>高：概览 + 当前对象列表</td><td>高：角色列表 + 选中角色摘要</td></tr>
+          <tr><td><b>多角色对比</b></td><td>强：一张表横向对比 5 个角色</td><td>弱：一次只看一个角色，靠左栏切换</td></tr>
+          <tr><td><b>权限配置步数</b></td><td>3 步：角色页签 → 找角色 → 开抽屉</td><td>1 步：左栏点角色，右栏直接配</td></tr>
+          <tr><td><b>菜单 / 接口管理</b></td><td>强：仍是一级页签</td><td>中：降为二级导航，多一次点击</td></tr>
+          <tr><td><b>改动文件数</b></td><td>约 2 个页面 + 4 个组件 + 2 个后端接口</td><td>约 3 个页面 + 6 个组件 + 2 个后端接口</td></tr>
+          <tr><td><b>回归风险</b></td><td>低：现有 URL 与懒加载不变</td><td>中：主页面重写，需处理旧深链重定向</td></tr>
+          <tr><td><b>推荐场景</b></td><td>本期上线、要求低风险</td><td>管理员日常按角色巡检、后续持续投入</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout ok">
+      <b>推荐：A 先上线，B 后演进。</b>两套方向共享同一批组件，先做 A 不会浪费 B 的工作量；
+      §05 的 A1/A2 效果图也直接展示了 B 右栏可以复用的「三态配置器」。
+    </div>
+  </section>
+
+  <!-- ==================== 05 效果图 · 方向 A ==================== -->
+  <section class="sec" id="sec-5">
+    <div class="sec-head"><span class="sec-no">05</span><h2>效果图 · 方向 A 渐进增强</h2></div>
+    <p class="lead">
+      保留现有三页签骨架，在列表之上加概览条，在行内加下钻，在权限抽屉里加三态与脏状态。
+      以下 4 张图按真实应用 1120px 内容宽度绘制，配色取自 <code>app.css</code> 设计令牌；示例数据仅用于表达结构。
+    </p>
+
+    <h3 id="s5-1">A1 · 角色页签总览（默认落点）</h3>
+    <p>页头右侧常驻「有效权限查询」；概览条先给规模与异常；角色表把成员、授权、数据范围、最近更新放在同一行，所有数字都可下钻。</p>
+    <div class="mock-scroll">
+      <div class="mock">
+        <div class="m-bar">
+          <div class="dots"><i></i><i></i><i></i></div>
+          <div class="m-url">localhost:5800/#/permissions?tab=roles</div>
+        </div>
+        <div class="m-shell">
+          <aside class="m-side">
+            <div class="m-brand"><i>渠</i>问渠</div>
+            <nav class="m-nav">
+              <div class="m-nav-item"><svg class="ico"><use href="#i-plus"/></svg>新建对话</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-shield"/></svg>智能体</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-menu"/></svg>市场</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-key"/></svg>知识库</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-menu"/></svg>我的产物</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-clock"/></svg>使用统计</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-users"/></svg>成员管理</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-shield"/></svg>租户与开通</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-shield"/></svg>安全与运维</div>
+              <div class="m-nav-item on"><svg class="ico"><use href="#i-lock"/></svg>权限管理</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-lock"/></svg>系统设置</div>
+            </nav>
+            <div class="m-side-sec">会话</div>
+            <div class="m-session"><svg class="ico"><use href="#i-menu"/></svg><span>权限模型梳理</span></div>
+            <div class="m-session"><svg class="ico"><use href="#i-menu"/></svg><span>最近 30 天会话统计</span></div>
+          </aside>
+
+          <main class="m-main">
+            <div class="m-pagehead">
+              <h3>权限管理</h3>
+              <span class="m-hint">角色 · 菜单 · 接口 · 接入治理</span>
+              <div class="m-actions">
+                <button class="m-btn ghost"><svg class="ico"><use href="#i-eye"/></svg>有效权限查询</button>
+                <button class="m-btn primary"><svg class="ico"><use href="#i-plus"/></svg>新建角色</button>
+              </div>
+            </div>
+
+            <div class="m-body">
+              <div class="m-overview">
+                <div class="m-ov on"><span class="v">5</span><span class="l">角色</span><span class="d">启用 4 · 停用 1</span></div>
+                <div class="m-ov"><span class="v">109</span><span class="l">授权点</span><span class="d">14 个业务域</span></div>
+                <div class="m-ov warn"><span class="v">466</span><span class="l">接口</span><span class="d">12 未授权 · 8 未挂菜单</span></div>
+                <div class="m-ov"><span class="v">32</span><span class="l">菜单</span><span class="d">3 隐藏 · 6 个页内 Tab</span></div>
+                <div class="m-ov warn"><span class="v">2</span><span class="l">待处理</span><span class="d">1 空角色 · 1 项临期授权</span></div>
+              </div>
+
+              <div class="m-tabsrow">
+                <div class="m-tab">菜单 <span class="b">32</span></div>
+                <div class="m-tab">接口 <span class="b">466</span></div>
+                <div class="m-tab on">角色 <span class="b">5</span></div>
+                <div class="m-tabsep"></div>
+                <div class="m-tabgroup">接入与治理</div>
+                <div class="m-tab">认证源 <span class="b">2</span></div>
+                <div class="m-tab">服务账号 <span class="b">3</span></div>
+                <div class="m-tab">内容安全 <span class="b">18</span></div>
+              </div>
+
+              <div class="m-toolbar">
+                <div class="m-search"><svg class="ico"><use href="#i-search"/></svg><span>搜索角色编码 / 名称</span><kbd>/</kbd></div>
+                <button class="m-chip on">全部 5</button>
+                <button class="m-chip">启用 4</button>
+                <button class="m-chip">停用 1</button>
+                <button class="m-chip warn">待处理 2</button>
+                <div class="m-spacer"></div>
+                <button class="m-select">按成员数排序<svg class="ico"><use href="#i-chevron"/></svg></button>
+              </div>
+
+              <div class="m-card">
+                <div class="m-tbl">
+                  <div class="m-tbl-head t-roles">
+                    <span>角色</span><span>成员</span><span>授权</span><span>数据范围</span><span>状态</span><span>最近更新</span><span>操作</span>
+                  </div>
+
+                  <div class="m-tbl-row t-roles">
+                    <div class="m-cell"><div class="m-namecell"><span class="m-name">超级管理员</span></div><div style="display:flex;align-items:center;gap:5px;margin-top:1px"><code class="m-code">superadmin</code><span class="pill blue">内置</span><span class="pill violet">管理员级</span></div></div>
+                    <div class="m-cell"><div class="avatars"><span class="av">A</span><span class="av b">K</span><span class="avn">2 人</span></div></div>
+                    <div class="m-cell"><div class="perm-mini"><b>菜单 32 · 全部动作</b><span class="perm-bar"><i style="width:100%"></i></span></div></div>
+                    <div class="m-cell"><span class="pill line plain">全部资源</span></div>
+                    <div class="m-cell"><span class="pill ok">启用</span></div>
+                    <div class="m-cell m-muted">今天 09:41</div>
+                    <div class="m-cell"><span style="color:var(--accent);font-size:11px">权限配置</span> <svg class="ico" style="display:inline-block;width:12px;height:12px;color:var(--faint);vertical-align:-3px"><use href="#i-more"/></svg></div>
+                  </div>
+
+                  <div class="m-tbl-row t-roles">
+                    <div class="m-cell"><div class="m-namecell"><span class="m-name">平台管理员</span></div><div style="display:flex;align-items:center;gap:5px;margin-top:1px"><code class="m-code">admin</code><span class="pill blue">内置</span><span class="pill violet">管理员级</span></div></div>
+                    <div class="m-cell"><div class="avatars"><span class="av b">L</span><span class="av c">M</span><span class="av d">Z</span><span class="avn">3 人</span></div></div>
+                    <div class="m-cell"><div class="perm-mini"><b>菜单 28 · 允许 96 · 禁止 2</b><span class="perm-bar"><i style="width:88%"></i><i class="deny" style="width:2%"></i><i class="rest" style="width:10%"></i></span></div></div>
+                    <div class="m-cell"><span class="pill line plain">全部资源</span></div>
+                    <div class="m-cell"><span class="pill ok">启用</span></div>
+                    <div class="m-cell m-muted">昨天 18:20</div>
+                    <div class="m-cell"><span style="color:var(--accent);font-size:11px">权限配置</span> <svg class="ico" style="display:inline-block;width:12px;height:12px;color:var(--faint);vertical-align:-3px"><use href="#i-more"/></svg></div>
+                  </div>
+
+                  <div class="m-tbl-row t-roles">
+                    <div class="m-cell"><div class="m-namecell"><span class="m-name">内容编辑</span></div><div style="margin-top:1px"><code class="m-code">editor</code></div></div>
+                    <div class="m-cell"><div class="avatars"><span class="av c">W</span><span class="av d">C</span><span class="av e">Y</span><span class="avn">4 人</span></div></div>
+                    <div class="m-cell"><div class="perm-mini"><b>菜单 9 · 允许 22 · 禁止 1</b><span class="perm-bar"><i style="width:20%"></i><i class="deny" style="width:1%"></i><i class="rest" style="width:79%"></i></span></div></div>
+                    <div class="m-cell"><span class="pill line plain">本部门</span></div>
+                    <div class="m-cell"><span class="pill ok">启用</span></div>
+                    <div class="m-cell m-muted">11-05 14:12</div>
+                    <div class="m-cell"><span style="color:var(--accent);font-size:11px">权限配置</span> <svg class="ico" style="display:inline-block;width:12px;height:12px;color:var(--faint);vertical-align:-3px"><use href="#i-more"/></svg></div>
+                  </div>
+
+                  <div class="m-tbl-row t-roles">
+                    <div class="m-cell"><div class="m-namecell"><span class="m-name">审计员</span></div><div style="display:flex;align-items:center;gap:5px;margin-top:1px"><code class="m-code">auditor</code><span class="pill warn">空角色</span></div></div>
+                    <div class="m-cell"><div class="avatars"><span class="avn zero">0 人</span></div></div>
+                    <div class="m-cell"><div class="perm-mini"><b>菜单 6 · 允许 12 · 禁止 3</b><span class="perm-bar"><i style="width:11%"></i><i class="deny" style="width:3%"></i><i class="rest" style="width:86%"></i></span></div></div>
+                    <div class="m-cell"><span class="pill line plain">本部门及下级</span></div>
+                    <div class="m-cell"><span class="pill ok">启用</span></div>
+                    <div class="m-cell m-muted">11-04 09:08</div>
+                    <div class="m-cell"><span style="color:var(--accent);font-size:11px">权限配置</span> <svg class="ico" style="display:inline-block;width:12px;height:12px;color:var(--faint);vertical-align:-3px"><use href="#i-more"/></svg></div>
+                  </div>
+
+                  <div class="m-tbl-row t-roles">
+                    <div class="m-cell"><div class="m-namecell"><span class="m-name">访客</span></div><div style="margin-top:1px"><code class="m-code">guest</code></div></div>
+                    <div class="m-cell"><div class="avatars"><span class="av e">V</span><span class="avn">1 人</span></div></div>
+                    <div class="m-cell"><div class="perm-mini"><b>菜单 2 · 允许 4 · 禁止 0</b><span class="perm-bar"><i style="width:4%"></i><i class="rest" style="width:96%"></i></span></div></div>
+                    <div class="m-cell"><span class="pill line plain">本人</span></div>
+                    <div class="m-cell"><span class="pill muted">停用</span></div>
+                    <div class="m-cell m-muted">10-28 16:30</div>
+                    <div class="m-cell"><span style="color:var(--accent);font-size:11px">权限配置</span> <svg class="ico" style="display:inline-block;width:12px;height:12px;color:var(--faint);vertical-align:-3px"><use href="#i-more"/></svg></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="m-hint" style="display:block;margin-top:7px">权限数按授权点绑定计算；管理员级按「全部动作 − 禁止」展示。成员数为 0 且非内置的角色标记「空角色」。</div>
+            </div>
+          </main>
+        </div>
+      </div>
+    </div>
+    <div class="notes">
+      <div class="note"><span class="n">01</span><span><b>概览条先给结论</b>：5 个指标卡，异常项用 warn 色；点击接口卡会落到接口页签并预置「未授权」筛选。</span></div>
+      <div class="note"><span class="n">02</span><span><b>角色行横向可比</b>：成员、菜单、允许、禁止、数据范围一屏横读，不用逐角色开抽屉。</span></div>
+      <div class="note"><span class="n">03</span><span><b>所有数字可下钻</b>：成员数打开只读成员抽屉；授权数打开权限配置器；「空角色」可一键筛选。</span></div>
+      <div class="note"><span class="n">04</span><span><b>权限条表达结构</b>：蓝色=已允许，红色=已禁止，灰色=未授予；管理员级不再显示「允许 N」。</span></div>
+      <div class="note"><span class="n">05</span><span><b>页签分组</b>：主任务（菜单/接口/角色）与「接入与治理」用分隔线和小标题区分，减少六个页签平铺的认知负担。</span></div>
+    </div>
+
+    <h3 id="s5-2">A2 · 角色权限配置抽屉 2.0</h3>
+    <p>抽屉从「两棵勾选树」升级为「可见菜单 + 按业务域分组的授权点三态」；加载失败禁用保存，脏状态有计数与撤销。</p>
+    <div class="mock-scroll">
+      <div class="mock">
+        <div class="m-bar">
+          <div class="dots"><i></i><i></i><i></i></div>
+          <div class="m-url">localhost:5800/#/permissions?tab=roles&role=editor</div>
+        </div>
+        <div class="m-shell" style="min-height:740px">
+          <aside class="m-side">
+            <div class="m-brand"><i>渠</i>问渠</div>
+            <nav class="m-nav">
+              <div class="m-nav-item"><svg class="ico"><use href="#i-plus"/></svg>新建对话</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-shield"/></svg>智能体</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-menu"/></svg>市场</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-key"/></svg>知识库</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-menu"/></svg>我的产物</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-clock"/></svg>使用统计</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-users"/></svg>成员管理</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-shield"/></svg>租户与开通</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-shield"/></svg>安全与运维</div>
+              <div class="m-nav-item on"><svg class="ico"><use href="#i-lock"/></svg>权限管理</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-lock"/></svg>系统设置</div>
+            </nav>
+          </aside>
+
+          <main class="m-main">
+            <div class="m-dim" style="display:flex;flex-direction:column;height:100%">
+              <div class="m-pagehead">
+                <h3>权限管理</h3>
+                <span class="m-hint">角色 · 菜单 · 接口 · 接入治理</span>
+                <div class="m-actions"><button class="m-btn ghost">有效权限查询</button><button class="m-btn primary">新建角色</button></div>
+              </div>
+              <div class="m-body">
+                <div class="m-overview">
+                  <div class="m-ov on"><span class="v">5</span><span class="l">角色</span><span class="d">启用 4 · 停用 1</span></div>
+                  <div class="m-ov"><span class="v">109</span><span class="l">授权点</span><span class="d">14 个业务域</span></div>
+                  <div class="m-ov warn"><span class="v">466</span><span class="l">接口</span><span class="d">12 未授权</span></div>
+                  <div class="m-ov"><span class="v">32</span><span class="l">菜单</span><span class="d">3 隐藏</span></div>
+                  <div class="m-ov warn"><span class="v">2</span><span class="l">待处理</span><span class="d">1 空角色</span></div>
+                </div>
+                <div class="m-card" style="margin-top:12px">
+                  <div class="m-tbl">
+                    <div class="m-tbl-head t-roles"><span>角色</span><span>成员</span><span>授权</span><span>数据范围</span><span>状态</span><span>最近更新</span><span>操作</span></div>
+                    <div class="m-tbl-row t-roles">
+                      <div class="m-cell"><div class="m-namecell"><span class="m-name">内容编辑</span></div><div style="margin-top:1px"><code class="m-code">editor</code></div></div>
+                      <div class="m-cell"><div class="avatars"><span class="av c">W</span><span class="av d">C</span><span class="av e">Y</span><span class="avn">4 人</span></div></div>
+                      <div class="m-cell"><div class="perm-mini"><b>菜单 9 · 允许 22 · 禁止 1</b><span class="perm-bar"><i style="width:20%"></i><i class="deny" style="width:1%"></i><i class="rest" style="width:79%"></i></span></div></div>
+                      <div class="m-cell"><span class="pill line plain">本部门</span></div>
+                      <div class="m-cell"><span class="pill ok">启用</span></div>
+                      <div class="m-cell m-muted">11-05 14:12</div>
+                      <div class="m-cell"><span style="color:var(--accent);font-size:11px">权限配置</span></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <aside class="m-drawer">
+              <div class="m-dh">
+                <div>
+                  <h4>角色权限 · 内容编辑 <span class="pill blue plain" style="vertical-align:1px">editor</span></h4>
+                  <div class="sub">成员 4 · 菜单 9 · 允许 22 · 禁止 1 · 数据范围 本部门</div>
+                </div>
+                <span class="x">×</span>
+              </div>
+
+              <div class="m-db">
+                <div class="m-search" style="width:100%"><svg class="ico"><use href="#i-search"/></svg><span>搜索菜单名称 / 授权点中文名 / 编码</span><kbd>/</kbd></div>
+                <div style="display:flex;align-items:center;gap:5px;margin-top:7px">
+                  <button class="m-chip on">全部 109</button>
+                  <button class="m-chip">已允许 22</button>
+                  <button class="m-chip">已禁止 1</button>
+                  <button class="m-chip">未授予 86</button>
+                  <div class="m-spacer"></div>
+                  <span class="m-code" style="color:var(--accent)">组级：全选允许 / 全选禁止 / 清空</span>
+                </div>
+
+                <div class="m-sec"><b>可见菜单</b><span class="cnt">9 / 32</span><span class="m-code" style="margin-left:auto">展开全部 · 全选</span></div>
+                <div class="m-treerow"><span class="cb on"></span><svg class="ico"><use href="#i-menu"/></svg><span class="nm"><b>对话</b></span></div>
+                <div class="m-treerow"><span class="cb on"></span><svg class="ico"><use href="#i-shield"/></svg><span class="nm"><b>智能体</b></span></div>
+                <div class="m-treerow child"><span class="cb on"></span><span class="nm">页内 Tab · 智能体</span></div>
+                <div class="m-treerow"><span class="cb on"></span><svg class="ico"><use href="#i-key"/></svg><span class="nm"><b>知识库</b></span></div>
+                <div class="m-treerow"><span class="cb half"></span><svg class="ico"><use href="#i-menu"/></svg><span class="nm"><b>我的产物</b></span></div>
+                <div class="m-treerow"><span class="cb"></span><svg class="ico"><use href="#i-users"/></svg><span class="nm"><b>成员管理</b></span></div>
+
+                <div class="m-sec"><b>功能授权点</b><span class="cnt">22 / 109</span><span class="m-code" style="margin-left:auto">按业务域分组</span></div>
+
+                <div class="m-permgroup">
+                  <div class="m-ghead"><b>对话</b><span class="cnt">4 / 6</span><span class="deny">禁止 1</span><span class="acts">全选允许 · 清空</span></div>
+                  <div class="m-permrow">
+                    <div class="nm"><b>使用对话</b><code>chat:use</code></div>
+                    <span class="tri"><button class="on-allow">允许</button><button>禁止</button><button>未置</button></span>
+                  </div>
+                  <div class="m-permrow">
+                    <div class="nm"><b>查看历史会话</b><code>chat:history</code></div>
+                    <span class="tri"><button class="on-allow">允许</button><button>禁止</button><button>未置</button></span>
+                  </div>
+                  <div class="m-permrow">
+                    <div class="nm"><b>调用工具输出</b><code>chat:tool-output</code></div>
+                    <span class="exempt">仅本角色内生效</span>
+                    <span class="tri"><button>允许</button><button class="on-deny">禁止</button><button>未置</button></span>
+                  </div>
+                </div>
+
+                <div class="m-permgroup">
+                  <div class="m-ghead"><b>知识库</b><span class="cnt">3 / 5</span><span class="acts">全选允许 · 清空</span></div>
+                  <div class="m-permrow">
+                    <div class="nm"><b>查看知识库</b><code>knowledge:read</code></div>
+                    <span class="tri"><button class="on-allow">允许</button><button>禁止</button><button>未置</button></span>
+                  </div>
+                  <div class="m-permrow">
+                    <div class="nm"><b>管理知识库</b><code>kb:write</code></div>
+                    <span class="tri"><button>允许</button><button>禁止</button><button class="on-none">未置</button></span>
+                  </div>
+                </div>
+
+                <div class="m-permgroup">
+                  <div class="m-ghead"><b>手册</b><span class="cnt">1 / 2</span><span class="acts">全选允许 · 清空</span></div>
+                  <div class="m-permrow">
+                    <div class="nm"><b>同步内置手册</b><code>manual:sync</code></div>
+                    <span class="tri"><button class="on-allow">允许</button><button>禁止</button><button>未置</button></span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="m-df">
+                <span class="dirty"><i></i>3 项未保存</span>
+                <span class="m-code" style="color:var(--accent)">撤销</span>
+                <div class="m-spacer"></div>
+                <button class="m-btn">取消</button>
+                <button class="m-btn primary">保存权限</button>
+              </div>
+            </aside>
+          </main>
+        </div>
+      </div>
+    </div>
+    <div class="notes">
+      <div class="note"><span class="n">01</span><span><b>三态互斥</b>：允许 / 禁止 / 未置只有一个选中；禁止时可勾「仅本角色内生效」（对应 exempt），不再用「排除」文字按钮。</span></div>
+      <div class="note"><span class="n">02</span><span><b>按业务域分组</b>：用 <code>code</code> 前缀聚合（对话、知识库、手册…），组头显示 <code>已授予/总数</code> 与禁止数，支持组级全选。</span></div>
+      <div class="note"><span class="n">03</span><span><b>中文名 + 编码双段</b>：主标题是「使用对话」，副标题是 <code>chat:use</code>；搜索两者都能命中。</span></div>
+      <div class="note"><span class="n">04</span><span><b>脏状态可见</b>：底部常驻「3 项未保存」与撤销；关闭抽屉会弹确认，避免误丢配置。</span></div>
+      <div class="note"><span class="n">05</span><span><b>加载失败守门</b>：数据拉取失败时保存按钮禁用并给「重试」，从根上消除「空勾选全量替换」的清空风险。</span></div>
+    </div>
+
+    <h3 id="s5-3">A3 · 接口页签：从 466 行平铺到可巡检</h3>
+    <p>左侧模块导航承担「按域找接口」，顶部状态筛选回答「哪些没人管」，批量条承担「一次归属多个接口」。</p>
+    <div class="mock-scroll">
+      <div class="mock">
+        <div class="m-bar">
+          <div class="dots"><i></i><i></i><i></i></div>
+          <div class="m-url">localhost:5800/#/permissions?tab=apis</div>
+        </div>
+        <div class="m-shell">
+          <aside class="m-side">
+            <div class="m-brand"><i>渠</i>问渠</div>
+            <nav class="m-nav">
+              <div class="m-nav-item"><svg class="ico"><use href="#i-plus"/></svg>新建对话</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-shield"/></svg>智能体</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-menu"/></svg>市场</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-key"/></svg>知识库</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-menu"/></svg>我的产物</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-clock"/></svg>使用统计</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-users"/></svg>成员管理</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-shield"/></svg>租户与开通</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-shield"/></svg>安全与运维</div>
+              <div class="m-nav-item on"><svg class="ico"><use href="#i-lock"/></svg>权限管理</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-lock"/></svg>系统设置</div>
+            </nav>
+          </aside>
+
+          <main class="m-main">
+            <div class="m-pagehead">
+              <h3>权限管理</h3>
+              <span class="m-hint">角色 · 菜单 · 接口 · 接入治理</span>
+              <div class="m-actions">
+                <button class="m-btn ghost"><svg class="ico"><use href="#i-eye"/></svg>有效权限查询</button>
+                <button class="m-btn primary"><svg class="ico"><use href="#i-plus"/></svg>登记接口</button>
+              </div>
+            </div>
+
+            <div class="m-body">
+              <div class="m-overview">
+                <div class="m-ov"><span class="v">5</span><span class="l">角色</span><span class="d">启用 4 · 停用 1</span></div>
+                <div class="m-ov"><span class="v">109</span><span class="l">授权点</span><span class="d">14 个业务域</span></div>
+                <div class="m-ov on"><span class="v">466</span><span class="l">接口</span><span class="d">12 未授权 · 8 未挂菜单</span></div>
+                <div class="m-ov"><span class="v">32</span><span class="l">菜单</span><span class="d">3 隐藏 · 6 个页内 Tab</span></div>
+                <div class="m-ov warn"><span class="v">2</span><span class="l">待处理</span><span class="d">1 空角色 · 1 项临期授权</span></div>
+              </div>
+
+              <div class="m-tabsrow">
+                <div class="m-tab">菜单 <span class="b">32</span></div>
+                <div class="m-tab on">接口 <span class="b">466</span></div>
+                <div class="m-tab">角色 <span class="b">5</span></div>
+                <div class="m-tabsep"></div>
+                <div class="m-tabgroup">接入与治理</div>
+                <div class="m-tab">认证源 <span class="b">2</span></div>
+                <div class="m-tab">服务账号 <span class="b">3</span></div>
+                <div class="m-tab">内容安全 <span class="b">18</span></div>
+              </div>
+
+              <div class="m-toolbar">
+                <div class="m-search"><svg class="ico"><use href="#i-search"/></svg><span>搜索路径 / 接口名 / 授权点</span><kbd>/</kbd></div>
+                <button class="m-chip on">全部 466</button>
+                <button class="m-chip warn">未授权 12</button>
+                <button class="m-chip">未挂菜单 8</button>
+                <button class="m-chip">手工登记 2</button>
+                <div class="m-spacer"></div>
+                <button class="m-select">每页 50 条<svg class="ico"><use href="#i-chevron"/></svg></button>
+              </div>
+
+              <div class="m-apilayout">
+                <div class="m-rail">
+                  <div class="m-railtitle">状态</div>
+                  <div class="m-railrow on">全部 <span class="n">466</span></div>
+                  <div class="m-railrow">未授权 <span class="n">12</span></div>
+                  <div class="m-railrow">未挂菜单 <span class="n">8</span></div>
+                  <div class="m-railtitle">按业务模块</div>
+                  <div class="m-railrow">对话 <span class="n">82</span></div>
+                  <div class="m-railrow">知识库 <span class="n">64</span></div>
+                  <div class="m-railrow">智能体 <span class="n">58</span></div>
+                  <div class="m-railrow">成员 <span class="n">41</span></div>
+                  <div class="m-railrow">角色与权限 <span class="n">32</span></div>
+                  <div class="m-railrow">系统配置 <span class="n">120</span></div>
+                  <div class="m-railrow">其他 <span class="n">69</span></div>
+                </div>
+
+                <div>
+                  <div class="m-card">
+                    <div class="m-tbl">
+                      <div class="m-tbl-head t-apis">
+                        <span><span class="cb"></span></span><span>方法</span><span>路径</span><span>名称</span><span>授权点</span><span>已授权角色</span><span>所属菜单</span><span>来源</span><span>操作</span>
+                      </div>
+
+                      <div class="m-tbl-row t-apis">
+                        <div class="m-cell"><span class="cb"></span></div>
+                        <div class="m-cell"><span class="pill ok" style="font-family:var(--mono)">GET</span></div>
+                        <div class="m-cell"><code class="m-code" style="color:var(--muted)">/api/ai/menu/list</code></div>
+                        <div class="m-cell">菜单列表</div>
+                        <div class="m-cell"><b>查看菜单</b><div><code class="m-code">menu:read</code></div></div>
+                        <div class="m-cell"><span class="role-chip">admin</span> <span class="role-chip more">+1</span></div>
+                        <div class="m-cell"><span class="role-chip">权限管理</span></div>
+                        <div class="m-cell"><span class="pill muted plain">扫描</span></div>
+                        <div class="m-cell"><span style="color:var(--accent);font-size:10.5px">编辑</span> <svg class="ico" style="display:inline-block;width:11px;height:11px;color:var(--faint);vertical-align:-2px"><use href="#i-more"/></svg></div>
+                      </div>
+
+                      <div class="m-tbl-row t-apis">
+                        <div class="m-cell"><span class="cb"></span></div>
+                        <div class="m-cell"><span class="pill blue" style="font-family:var(--mono)">POST</span></div>
+                        <div class="m-cell"><code class="m-code" style="color:var(--muted)">/api/ai/role</code></div>
+                        <div class="m-cell">新建角色</div>
+                        <div class="m-cell"><b>管理角色</b><div><code class="m-code">role:manage</code></div></div>
+                        <div class="m-cell"><span class="role-chip">admin</span></div>
+                        <div class="m-cell"><span class="role-chip">权限管理</span></div>
+                        <div class="m-cell"><span class="pill muted plain">扫描</span></div>
+                        <div class="m-cell"><span style="color:var(--accent);font-size:10.5px">编辑</span> <svg class="ico" style="display:inline-block;width:11px;height:11px;color:var(--faint);vertical-align:-2px"><use href="#i-more"/></svg></div>
+                      </div>
+
+                      <div class="m-tbl-row t-apis" style="background:#fbfcff">
+                        <div class="m-cell"><span class="cb on">✓</span></div>
+                        <div class="m-cell"><span class="pill blue" style="font-family:var(--mono)">POST</span></div>
+                        <div class="m-cell"><code class="m-code" style="color:var(--muted)">/api/ai/chat/stream</code></div>
+                        <div class="m-cell">对话流式回答</div>
+                        <div class="m-cell"><b>使用对话</b><div><code class="m-code">chat:use</code></div></div>
+                        <div class="m-cell"><span class="pill err plain">未授权</span></div>
+                        <div class="m-cell"><span class="role-chip">对话</span></div>
+                        <div class="m-cell"><span class="pill muted plain">扫描</span></div>
+                        <div class="m-cell"><span style="color:var(--accent);font-size:10.5px">编辑</span> <svg class="ico" style="display:inline-block;width:11px;height:11px;color:var(--faint);vertical-align:-2px"><use href="#i-more"/></svg></div>
+                      </div>
+
+                      <div class="m-tbl-row t-apis">
+                        <div class="m-cell"><span class="cb"></span></div>
+                        <div class="m-cell"><span class="pill warn" style="font-family:var(--mono)">PUT</span></div>
+                        <div class="m-cell"><code class="m-code" style="color:var(--muted)">/api/ai/kb/{id}</code></div>
+                        <div class="m-cell">更新知识库</div>
+                        <div class="m-cell"><b>管理知识库</b><div><code class="m-code">kb:write</code></div></div>
+                        <div class="m-cell"><span class="role-chip">editor</span></div>
+                        <div class="m-cell"><span class="role-chip">知识库</span></div>
+                        <div class="m-cell"><span class="pill muted plain">扫描</span></div>
+                        <div class="m-cell"><span style="color:var(--accent);font-size:10.5px">编辑</span> <svg class="ico" style="display:inline-block;width:11px;height:11px;color:var(--faint);vertical-align:-2px"><use href="#i-more"/></svg></div>
+                      </div>
+
+                      <div class="m-tbl-row t-apis">
+                        <div class="m-cell"><span class="cb"></span></div>
+                        <div class="m-cell"><span class="pill err" style="font-family:var(--mono)">DELETE</span></div>
+                        <div class="m-cell"><code class="m-code" style="color:var(--muted)">/api/ai/tenant/{id}</code></div>
+                        <div class="m-cell">删除租户</div>
+                        <div class="m-cell"><b>管理租户</b><div><code class="m-code">tenant:manage</code></div></div>
+                        <div class="m-cell"><span class="role-chip">admin</span></div>
+                        <div class="m-cell"><span class="role-chip">租户与开通</span></div>
+                        <div class="m-cell"><span class="pill muted plain">扫描</span></div>
+                        <div class="m-cell"><span style="color:var(--accent);font-size:10.5px">编辑</span> <svg class="ico" style="display:inline-block;width:11px;height:11px;color:var(--faint);vertical-align:-2px"><use href="#i-more"/></svg></div>
+                      </div>
+
+                      <div class="m-tbl-row t-apis" style="background:#fbfcff">
+                        <div class="m-cell"><span class="cb on">✓</span></div>
+                        <div class="m-cell"><span class="pill ok" style="font-family:var(--mono)">GET</span></div>
+                        <div class="m-cell"><code class="m-code" style="color:var(--muted)">/api/ai/ops/checkup</code></div>
+                        <div class="m-cell">系统巡检</div>
+                        <div class="m-cell"><b>查看运维</b><div><code class="m-code">ops:read</code></div></div>
+                        <div class="m-cell"><span class="pill err plain">未授权</span></div>
+                        <div class="m-cell"><span class="role-chip">安全与运维</span></div>
+                        <div class="m-cell"><span class="pill muted plain">扫描</span></div>
+                        <div class="m-cell"><span style="color:var(--accent);font-size:10.5px">编辑</span> <svg class="ico" style="display:inline-block;width:11px;height:11px;color:var(--faint);vertical-align:-2px"><use href="#i-more"/></svg></div>
+                      </div>
+
+                      <div class="m-tbl-row t-apis">
+                        <div class="m-cell"><span class="cb"></span></div>
+                        <div class="m-cell"><span class="pill blue" style="font-family:var(--mono)">POST</span></div>
+                        <div class="m-cell"><code class="m-code" style="color:var(--muted)">/api/ai/service-account</code></div>
+                        <div class="m-cell">创建服务账号</div>
+                        <div class="m-cell"><b>管理服务账号</b><div><code class="m-code">service-account:manage</code></div></div>
+                        <div class="m-cell"><span class="role-chip">admin</span></div>
+                        <div class="m-cell"><span class="role-chip">服务账号</span></div>
+                        <div class="m-cell"><span class="pill violet plain">手工</span></div>
+                        <div class="m-cell"><span style="color:var(--accent);font-size:10.5px">编辑</span> <svg class="ico" style="display:inline-block;width:11px;height:11px;color:var(--faint);vertical-align:-2px"><use href="#i-more"/></svg></div>
+                      </div>
+
+                      <div class="m-tbl-row t-apis">
+                        <div class="m-cell"><span class="cb"></span></div>
+                        <div class="m-cell"><span class="pill ok" style="font-family:var(--mono)">GET</span></div>
+                        <div class="m-cell"><code class="m-code" style="color:var(--muted)">/api/ai/stats/usage</code></div>
+                        <div class="m-cell">使用统计</div>
+                        <div class="m-cell"><b>查看统计</b><div><code class="m-code">stats:read</code></div></div>
+                        <div class="m-cell"><span class="role-chip">admin</span> <span class="role-chip more">+2</span></div>
+                        <div class="m-cell"><span class="role-chip">使用统计</span></div>
+                        <div class="m-cell"><span class="pill muted plain">扫描</span></div>
+                        <div class="m-cell"><span style="color:var(--accent);font-size:10.5px">编辑</span> <svg class="ico" style="display:inline-block;width:11px;height:11px;color:var(--faint);vertical-align:-2px"><use href="#i-more"/></svg></div>
+                      </div>
+                    </div>
+
+                    <div class="m-pagination">
+                      <div class="m-spacer"></div>
+                      <span>共 466 条 · 第 1 / 10 页</span>
+                      <span class="pbtn off">‹</span><span class="pbtn on">1</span><span class="pbtn">2</span><span class="pbtn">3</span><span class="pbtn">›</span>
+                    </div>
+                  </div>
+
+                  <div class="m-bulk">
+                    <div class="sel">已选 2 个接口 <span>· 跨 2 个模块</span></div>
+                    <div class="m-spacer"></div>
+                    <button class="m-btn">取消选择</button>
+                    <button class="m-btn primary">批量归属菜单</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+    </div>
+    <div class="notes">
+      <div class="note"><span class="n">01</span><span><b>模块导航</b>：左侧先按状态（全部 / 未授权 / 未挂菜单），再按业务模块计数；点击即筛，不用在 466 行里翻。</span></div>
+      <div class="note"><span class="n">02</span><span><b>授权点双段</b>：主标题中文名，副标题编码；已授权角色用缩写 chip，超过 3 个显示 <code>+N</code>。</span></div>
+      <div class="note"><span class="n">03</span><span><b>未授权不再是空白</b>：明确红色「未授权给任何角色」；反查失败时显示「取数失败 · 重试」，不把故障读成事实。</span></div>
+      <div class="note"><span class="n">04</span><span><b>批量归属</b>：勾选后浮出批量条，逐条调用现有 <code>PUT /api/{id}</code> 更新所属菜单，失败项单独回报。</span></div>
+      <div class="note"><span class="n">05</span><span><b>分页</b>：默认 50 条/页，保留搜索与模块筛选；不再一次性渲染 466 行。</span></div>
+    </div>
+
+    <h3 id="s5-4">A4 · 菜单页签：反查可见角色 + 拖拽排序</h3>
+    <p>菜单不再只是「给自己看的清单」：每一行直接显示哪些角色能看到它，排序从数字输入改成拖拽，图标列删除。</p>
+    <div class="mock-scroll">
+      <div class="mock">
+        <div class="m-bar">
+          <div class="dots"><i></i><i></i><i></i></div>
+          <div class="m-url">localhost:5800/#/permissions?tab=menus</div>
+        </div>
+        <div class="m-shell">
+          <aside class="m-side">
+            <div class="m-brand"><i>渠</i>问渠</div>
+            <nav class="m-nav">
+              <div class="m-nav-item"><svg class="ico"><use href="#i-plus"/></svg>新建对话</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-shield"/></svg>智能体</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-menu"/></svg>市场</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-key"/></svg>知识库</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-menu"/></svg>我的产物</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-clock"/></svg>使用统计</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-users"/></svg>成员管理</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-shield"/></svg>租户与开通</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-shield"/></svg>安全与运维</div>
+              <div class="m-nav-item on"><svg class="ico"><use href="#i-lock"/></svg>权限管理</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-lock"/></svg>系统设置</div>
+            </nav>
+          </aside>
+
+          <main class="m-main">
+            <div class="m-pagehead">
+              <h3>权限管理</h3>
+              <span class="m-hint">角色 · 菜单 · 接口 · 接入治理</span>
+              <div class="m-actions">
+                <button class="m-btn ghost"><svg class="ico"><use href="#i-eye"/></svg>有效权限查询</button>
+                <button class="m-btn primary"><svg class="ico"><use href="#i-plus"/></svg>新建菜单</button>
+              </div>
+            </div>
+
+            <div class="m-body">
+              <div class="m-overview">
+                <div class="m-ov"><span class="v">5</span><span class="l">角色</span><span class="d">启用 4 · 停用 1</span></div>
+                <div class="m-ov"><span class="v">109</span><span class="l">授权点</span><span class="d">14 个业务域</span></div>
+                <div class="m-ov warn"><span class="v">466</span><span class="l">接口</span><span class="d">12 未授权 · 8 未挂菜单</span></div>
+                <div class="m-ov on"><span class="v">32</span><span class="l">菜单</span><span class="d">3 隐藏 · 6 个页内 Tab</span></div>
+                <div class="m-ov warn"><span class="v">2</span><span class="l">待处理</span><span class="d">1 空角色 · 1 项临期授权</span></div>
+              </div>
+
+              <div class="m-tabsrow">
+                <div class="m-tab on">菜单 <span class="b">32</span></div>
+                <div class="m-tab">接口 <span class="b">466</span></div>
+                <div class="m-tab">角色 <span class="b">5</span></div>
+                <div class="m-tabsep"></div>
+                <div class="m-tabgroup">接入与治理</div>
+                <div class="m-tab">认证源 <span class="b">2</span></div>
+                <div class="m-tab">服务账号 <span class="b">3</span></div>
+                <div class="m-tab">内容安全 <span class="b">18</span></div>
+              </div>
+
+              <div class="m-toolbar">
+                <div class="m-search"><svg class="ico"><use href="#i-search"/></svg><span>搜索菜单名称 / 路径</span><kbd>/</kbd></div>
+                <button class="m-chip on">全部 32</button>
+                <button class="m-chip">侧栏 22</button>
+                <button class="m-chip">页内 Tab 6</button>
+                <button class="m-chip">分组 2</button>
+                <button class="m-chip">仅权限 2</button>
+                <div class="m-spacer"></div>
+                <button class="m-btn">展开全部</button>
+                <button class="m-btn">收起全部</button>
+              </div>
+
+              <div class="m-card">
+                <div class="m-tbl">
+                  <div class="m-tbl-head t-menus">
+                    <span></span><span>菜单</span><span>路径</span><span>渲染位置</span><span>排序</span><span>可见角色</span><span>可见</span><span>操作</span>
+                  </div>
+
+                  <div class="m-tbl-row t-menus">
+                    <div class="m-cell"><svg class="ico" style="width:12px;height:12px;color:var(--rule-strong)"><use href="#i-drag"/></svg></div>
+                    <div class="m-cell m-namecell"><svg class="ico"><use href="#i-menu"/></svg><span class="m-name">对话</span><span class="pill blue">内置</span></div>
+                    <div class="m-cell"><code class="m-code">/chat</code></div>
+                    <div class="m-cell"><span class="pill muted plain">侧栏</span></div>
+                    <div class="m-cell m-muted">10</div>
+                    <div class="m-cell"><span class="role-chip">admin</span> <span class="role-chip">editor</span> <span class="role-chip">user</span></div>
+                    <div class="m-cell"><span class="sw on"></span></div>
+                    <div class="m-cell"><span style="color:var(--accent);font-size:10.5px">编辑</span></div>
+                  </div>
+
+                  <div class="m-tbl-row t-menus">
+                    <div class="m-cell"><svg class="ico" style="width:12px;height:12px;color:var(--rule-strong)"><use href="#i-drag"/></svg></div>
+                    <div class="m-cell m-namecell"><svg class="ico"><use href="#i-shield"/></svg><span class="m-name">智能体</span><span class="pill blue">内置</span></div>
+                    <div class="m-cell"><code class="m-code">/agents</code></div>
+                    <div class="m-cell"><span class="pill muted plain">侧栏</span></div>
+                    <div class="m-cell m-muted">20</div>
+                    <div class="m-cell"><span class="role-chip">admin</span> <span class="role-chip">editor</span> <span class="role-chip more">+1</span></div>
+                    <div class="m-cell"><span class="sw on"></span></div>
+                    <div class="m-cell"><span style="color:var(--accent);font-size:10.5px">编辑</span></div>
+                  </div>
+
+                  <div class="m-tbl-row t-menus">
+                    <div class="m-cell"></div>
+                    <div class="m-cell m-namecell" style="padding-left:18px"><span class="m-muted">└</span><span class="m-name">模型供应商</span><span class="pill violet plain">Tab</span></div>
+                    <div class="m-cell"><code class="m-code">/agents?tab=providers</code></div>
+                    <div class="m-cell"><span class="pill violet plain">页内 Tab</span></div>
+                    <div class="m-cell m-muted">21</div>
+                    <div class="m-cell"><span class="role-chip">admin</span></div>
+                    <div class="m-cell"><span class="sw on"></span></div>
+                    <div class="m-cell"><span style="color:var(--accent);font-size:10.5px">编辑</span></div>
+                  </div>
+
+                  <div class="m-tbl-row t-menus">
+                    <div class="m-cell"></div>
+                    <div class="m-cell m-namecell" style="padding-left:18px"><span class="m-muted">└</span><span class="m-name">智能体</span><span class="pill violet plain">Tab</span></div>
+                    <div class="m-cell"><code class="m-code">/agents?tab=agents</code></div>
+                    <div class="m-cell"><span class="pill violet plain">页内 Tab</span></div>
+                    <div class="m-cell m-muted">22</div>
+                    <div class="m-cell"><span class="role-chip">admin</span> <span class="role-chip">editor</span></div>
+                    <div class="m-cell"><span class="sw on"></span></div>
+                    <div class="m-cell"><span style="color:var(--accent);font-size:10.5px">编辑</span></div>
+                  </div>
+
+                  <div class="m-tbl-row t-menus">
+                    <div class="m-cell"><svg class="ico" style="width:12px;height:12px;color:var(--rule-strong)"><use href="#i-drag"/></svg></div>
+                    <div class="m-cell m-namecell"><svg class="ico"><use href="#i-menu"/></svg><span class="m-name">市场</span></div>
+                    <div class="m-cell"><code class="m-code">/market</code></div>
+                    <div class="m-cell"><span class="pill muted plain">侧栏</span></div>
+                    <div class="m-cell m-muted">25</div>
+                    <div class="m-cell"><span class="role-chip">admin</span> <span class="role-chip">editor</span> <span class="role-chip">user</span></div>
+                    <div class="m-cell"><span class="sw on"></span></div>
+                    <div class="m-cell"><span style="color:var(--accent);font-size:10.5px">编辑</span></div>
+                  </div>
+
+                  <div class="m-tbl-row t-menus">
+                    <div class="m-cell"><svg class="ico" style="width:12px;height:12px;color:var(--rule-strong)"><use href="#i-drag"/></svg></div>
+                    <div class="m-cell m-namecell"><svg class="ico"><use href="#i-key"/></svg><span class="m-name">知识库</span></div>
+                    <div class="m-cell"><code class="m-code">/knowledge</code></div>
+                    <div class="m-cell"><span class="pill muted plain">侧栏</span></div>
+                    <div class="m-cell m-muted">30</div>
+                    <div class="m-cell"><span class="role-chip">admin</span> <span class="role-chip">editor</span></div>
+                    <div class="m-cell"><span class="sw on"></span></div>
+                    <div class="m-cell"><span style="color:var(--accent);font-size:10.5px">编辑</span></div>
+                  </div>
+
+                  <div class="m-tbl-row t-menus">
+                    <div class="m-cell"><svg class="ico" style="width:12px;height:12px;color:var(--rule-strong)"><use href="#i-drag"/></svg></div>
+                    <div class="m-cell m-namecell"><svg class="ico"><use href="#i-users"/></svg><span class="m-name">成员管理</span></div>
+                    <div class="m-cell"><code class="m-code">/members</code></div>
+                    <div class="m-cell"><span class="pill muted plain">侧栏</span></div>
+                    <div class="m-cell m-muted">40</div>
+                    <div class="m-cell"><span class="role-chip">admin</span></div>
+                    <div class="m-cell"><span class="sw on"></span></div>
+                    <div class="m-cell"><span style="color:var(--accent);font-size:10.5px">编辑</span></div>
+                  </div>
+
+                  <div class="m-tbl-row t-menus">
+                    <div class="m-cell"><svg class="ico" style="width:12px;height:12px;color:var(--rule-strong)"><use href="#i-drag"/></svg></div>
+                    <div class="m-cell m-namecell"><svg class="ico"><use href="#i-shield"/></svg><span class="m-name">安全与运维</span></div>
+                    <div class="m-cell"><code class="m-code">/security</code></div>
+                    <div class="m-cell"><span class="pill muted plain">侧栏</span></div>
+                    <div class="m-cell m-muted">46</div>
+                    <div class="m-cell"><span class="role-chip">admin</span></div>
+                    <div class="m-cell"><span class="sw on"></span></div>
+                    <div class="m-cell"><span style="color:var(--accent);font-size:10.5px">编辑</span></div>
+                  </div>
+
+                  <div class="m-tbl-row t-menus" style="background:#fffdf9">
+                    <div class="m-cell"><svg class="ico" style="width:12px;height:12px;color:var(--rule-strong)"><use href="#i-drag"/></svg></div>
+                    <div class="m-cell m-namecell"><svg class="ico"><use href="#i-lock"/></svg><span class="m-name">权限管理</span><span class="pill blue">内置</span></div>
+                    <div class="m-cell"><code class="m-code">/permissions</code></div>
+                    <div class="m-cell"><span class="pill muted plain">侧栏</span></div>
+                    <div class="m-cell m-muted">70</div>
+                    <div class="m-cell"><span class="role-chip">admin</span></div>
+                    <div class="m-cell"><span class="sw on"></span></div>
+                    <div class="m-cell"><span style="color:var(--accent);font-size:10.5px">编辑</span></div>
+                  </div>
+
+                  <div class="m-tbl-row t-menus" style="background:#fffdf9">
+                    <div class="m-cell"><svg class="ico" style="width:12px;height:12px;color:var(--rule-strong)"><use href="#i-drag"/></svg></div>
+                    <div class="m-cell m-namecell"><svg class="ico"><use href="#i-lock"/></svg><span class="m-name">系统设置</span></div>
+                    <div class="m-cell"><code class="m-code">/settings</code></div>
+                    <div class="m-cell"><span class="pill muted plain">侧栏</span></div>
+                    <div class="m-cell m-muted">80</div>
+                    <div class="m-cell"><span class="role-chip">admin</span></div>
+                    <div class="m-cell"><span class="sw"></span> <span class="pill warn plain">隐藏</span></div>
+                    <div class="m-cell"><span style="color:var(--accent);font-size:10.5px">编辑</span></div>
+                  </div>
+                </div>
+              </div>
+              <div class="m-hint" style="display:block;margin-top:7px">隐藏父级会把它下面的页内 Tab 一并失效；操作前会点名受影响的 Tab 清单。</div>
+            </div>
+          </main>
+        </div>
+      </div>
+    </div>
+    <div class="notes">
+      <div class="note"><span class="n">01</span><span><b>可见角色反查</b>：每行直接列出能看到该菜单的角色；回答「收回这个菜单会影响谁」，不用逐角色开抽屉。</span></div>
+      <div class="note"><span class="n">02</span><span><b>渲染位置筛选</b>：侧栏 / 页内 Tab / 分组 / 仅权限四类可筛，Tab 型不再藏在树里。</span></div>
+      <div class="note"><span class="n">03</span><span><b>拖拽排序</b>：同父级内拖动，落库为 10/20/30 序列；失败回滚并提示，弹窗里的排序数字仍可编辑。</span></div>
+      <div class="note"><span class="n">04</span><span><b>删掉图标列</b>：图标已在菜单名左侧展示，独立列只是重复信息；图标编辑保留在弹窗内。</span></div>
+      <div class="note"><span class="n">05</span><span><b>隐藏行警示</b>：可见开关关闭的行用 warn 底色 +「隐藏」pill，避免误以为菜单被删。</span></div>
+    </div>
+  </section>
+
+  <!-- ==================== 06 效果图 · 方向 B ==================== -->
+  <section class="sec" id="sec-6">
+    <div class="sec-head"><span class="sec-no">06</span><h2>效果图 · 方向 B 角色中心</h2></div>
+    <p class="lead">
+      方向 B 把「角色」变成主页面的第一等公民：左栏选角色，右栏直接看权限、成员、数据范围与变更记录。
+      与 A 共用同一套三态配置器、概览条与有效权限弹窗，差异只体现在信息架构。
+    </p>
+
+    <h3 id="s6-1">B1 · 角色中心工作台（默认视图）</h3>
+    <p>左栏是角色的「卡片清单」，右栏是选中角色的摘要与四个分段；管理员日常巡检不再需要先切页签、再找角色。</p>
+    <div class="mock-scroll">
+      <div class="mock">
+        <div class="m-bar">
+          <div class="dots"><i></i><i></i><i></i></div>
+          <div class="m-url">localhost:5800/#/permissions?view=roles&code=admin</div>
+        </div>
+        <div class="m-shell">
+          <aside class="m-side">
+            <div class="m-brand"><i>渠</i>问渠</div>
+            <nav class="m-nav">
+              <div class="m-nav-item"><svg class="ico"><use href="#i-plus"/></svg>新建对话</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-shield"/></svg>智能体</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-menu"/></svg>市场</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-key"/></svg>知识库</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-menu"/></svg>我的产物</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-clock"/></svg>使用统计</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-users"/></svg>成员管理</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-shield"/></svg>租户与开通</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-shield"/></svg>安全与运维</div>
+              <div class="m-nav-item on"><svg class="ico"><use href="#i-lock"/></svg>权限管理</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-lock"/></svg>系统设置</div>
+            </nav>
+          </aside>
+
+          <main class="m-main">
+            <div class="m-pagehead">
+              <h3>权限管理</h3>
+              <span class="m-hint">按角色巡检 · 菜单 / 接口在二级导航</span>
+              <div class="m-actions">
+                <button class="m-btn ghost"><svg class="ico"><use href="#i-eye"/></svg>有效权限查询</button>
+                <button class="m-btn primary"><svg class="ico"><use href="#i-plus"/></svg>新建角色</button>
+              </div>
+            </div>
+
+            <div class="m-subnav">
+              <span class="s on">角色</span><span class="s">菜单</span><span class="s">接口</span><span class="s">接入治理</span>
+              <div class="spacer"></div>
+              <span class="m-code">5 个角色 · 2 个管理员级 · 1 个空角色</span>
+            </div>
+
+            <div class="m-wb">
+              <div class="m-wbrail">
+                <div class="m-search" style="width:100%"><svg class="ico"><use href="#i-search"/></svg><span>搜索角色</span></div>
+                <div style="display:flex;gap:4px;margin:7px 0 8px">
+                  <button class="m-chip on">全部 5</button>
+                  <button class="m-chip">启用 4</button>
+                  <button class="m-chip warn">空角色 1</button>
+                </div>
+
+                <div class="m-rolecard">
+                  <div class="top"><span class="nm">超级管理员</span><span class="pill blue">内置</span></div>
+                  <div class="meta"><code class="m-code">superadmin</code><span>2 成员</span><span>32 菜单</span><span class="st"><span class="pill ok">启用</span></span></div>
+                </div>
+
+                <div class="m-rolecard on">
+                  <div class="top"><span class="nm">平台管理员</span><span class="pill blue">内置</span><span class="pill violet">管理员级</span></div>
+                  <div class="meta"><code class="m-code">admin</code><span>3 成员</span><span>28 菜单</span><span class="st"><span class="pill ok">启用</span></span></div>
+                </div>
+
+                <div class="m-rolecard">
+                  <div class="top"><span class="nm">内容编辑</span></div>
+                  <div class="meta"><code class="m-code">editor</code><span>4 成员</span><span>9 菜单</span><span class="st"><span class="pill ok">启用</span></span></div>
+                </div>
+
+                <div class="m-rolecard">
+                  <div class="top"><span class="nm">审计员</span><span class="pill warn">空角色</span></div>
+                  <div class="meta"><code class="m-code">auditor</code><span>0 成员</span><span>6 菜单</span><span class="st"><span class="pill ok">启用</span></span></div>
+                </div>
+
+                <div class="m-rolecard">
+                  <div class="top"><span class="nm">访客</span></div>
+                  <div class="meta"><code class="m-code">guest</code><span>1 成员</span><span>2 菜单</span><span class="st"><span class="pill muted">停用</span></span></div>
+                </div>
+              </div>
+
+              <div class="m-wbmain">
+                <div class="m-wbhead">
+                  <div class="top">
+                    <h3>平台管理员</h3>
+                    <code class="m-code">admin</code>
+                    <span class="pill blue">内置</span>
+                    <span class="pill violet">管理员级</span>
+                    <span class="pill ok">启用</span>
+                    <div class="acts">
+                      <button class="m-btn">编辑</button>
+                      <button class="m-btn"><svg class="ico"><use href="#i-copy"/></svg>复制</button>
+                      <button class="m-btn ghost"><svg class="ico"><use href="#i-eye"/></svg>有效权限</button>
+                      <button class="m-btn icon"><svg class="ico"><use href="#i-more"/></svg></button>
+                    </div>
+                  </div>
+                  <div class="sub">
+                    <span>成员 <b>3</b></span><span>可见菜单 <b>28 / 32</b></span><span>允许 <b>96</b></span><span>禁止 <b>2</b></span><span>数据范围 <b>全部资源（只读口径）</b></span>
+                  </div>
+                </div>
+
+                <div class="m-segs">
+                  <span class="m-seg on">权限配置</span>
+                  <span class="m-seg">成员 <span class="b">3</span></span>
+                  <span class="m-seg">数据范围</span>
+                  <span class="m-seg">变更记录</span>
+                </div>
+
+                <div class="m-wbbody">
+                  <div class="m-wbcols">
+                    <div>
+                      <div class="m-sec"><b>可见菜单</b><span class="cnt">28 / 32</span><span class="m-code" style="margin-left:auto">展开全部</span></div>
+                      <div class="m-treerow"><span class="cb on"></span><svg class="ico"><use href="#i-menu"/></svg><span class="nm"><b>对话</b></span></div>
+                      <div class="m-treerow"><span class="cb on"></span><svg class="ico"><use href="#i-shield"/></svg><span class="nm"><b>智能体</b></span></div>
+                      <div class="m-treerow child"><span class="cb on"></span><span class="nm">模型供应商</span></div>
+                      <div class="m-treerow child"><span class="cb on"></span><span class="nm">智能体</span></div>
+                      <div class="m-treerow"><span class="cb on"></span><svg class="ico"><use href="#i-key"/></svg><span class="nm"><b>知识库</b></span></div>
+                      <div class="m-treerow"><span class="cb on"></span><svg class="ico"><use href="#i-users"/></svg><span class="nm"><b>成员管理</b></span></div>
+                      <div class="m-treerow"><span class="cb"></span><svg class="ico"><use href="#i-menu"/></svg><span class="nm"><b>检索评估</b></span></div>
+                    </div>
+
+                    <div>
+                      <div class="m-sec"><b>功能授权点</b><span class="cnt">96 允许 · 2 禁止</span><span class="m-code" style="margin-left:auto">按业务域</span></div>
+                      <div class="m-permgroup">
+                        <div class="m-ghead"><b>对话</b><span class="cnt">5 / 6</span><span class="deny">禁止 1</span><span class="acts">全选允许 · 清空</span></div>
+                        <div class="m-permrow"><div class="nm"><b>使用对话</b><code>chat:use</code></div><span class="tri"><button class="on-allow">允许</button><button>禁止</button><button>未置</button></span></div>
+                        <div class="m-permrow"><div class="nm"><b>调用工具输出</b><code>chat:tool-output</code></div><span class="exempt">仅本角色内生效</span><span class="tri"><button>允许</button><button class="on-deny">禁止</button><button>未置</button></span></div>
+                      </div>
+                      <div class="m-permgroup">
+                        <div class="m-ghead"><b>成员</b><span class="cnt">2 / 3</span><span class="acts">全选允许 · 清空</span></div>
+                        <div class="m-permrow"><div class="nm"><b>查看成员</b><code>user:read</code></div><span class="tri"><button class="on-allow">允许</button><button>禁止</button><button>未置</button></span></div>
+                        <div class="m-permrow"><div class="nm"><b>管理成员</b><code>user:write</code></div><span class="tri"><button>允许</button><button>禁止</button><button class="on-none">未置</button></span></div>
+                      </div>
+                      <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:2px">
+                        <span class="role-chip">知识库 4/5</span><span class="role-chip">角色与权限 3/3</span><span class="role-chip">系统配置 6/8</span><span class="role-chip more">+10 个业务域</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="m-df" style="border-top:1px solid var(--rule)">
+                  <span class="dirty"><i></i>2 项未保存</span>
+                  <span class="m-code" style="color:var(--accent)">撤销</span>
+                  <div class="m-spacer"></div>
+                  <button class="m-btn">取消</button>
+                  <button class="m-btn primary">保存权限</button>
+                </div>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+    </div>
+    <div class="notes">
+      <div class="note"><span class="n">01</span><span><b>角色卡片即入口</b>：成员数、菜单数、状态直接在卡片上，选中态用蓝色描边；空角色用 warn pill。</span></div>
+      <div class="note"><span class="n">02</span><span><b>右栏摘要</b>：角色名、编码、内置/管理员级/状态与四项计数在一行，配置前先确认对象。</span></div>
+      <div class="note"><span class="n">03</span><span><b>四个分段</b>：权限配置、成员、数据范围、变更记录都留在角色上下文里，不再跳到别的页面。</span></div>
+      <div class="note"><span class="n">04</span><span><b>二级导航</b>：菜单 / 接口 / 接入治理降为二级，角色成为默认落点；旧 <code>?tab=</code> 深链做重定向。</span></div>
+      <div class="note"><span class="n">05</span><span><b>常驻保存条</b>：与 A 的抽屉同一套脏状态逻辑，切换角色前提示未保存。</span></div>
+    </div>
+
+    <h3 id="s6-2">B2 · 右栏权限配置：左菜单 / 右授权点</h3>
+    <p>方向 B 的配置区不被抽屉高度限制，可以把「可见菜单」与「功能授权点」并排放；这是它相对 A 最直接的操作收益。</p>
+    <div class="mock-scroll">
+      <div class="mock">
+        <div class="m-bar">
+          <div class="dots"><i></i><i></i><i></i></div>
+          <div class="m-url">localhost:5800/#/permissions?view=roles&code=editor&tab=permissions</div>
+        </div>
+        <div class="m-shell">
+          <aside class="m-side">
+            <div class="m-brand"><i>渠</i>问渠</div>
+            <nav class="m-nav">
+              <div class="m-nav-item"><svg class="ico"><use href="#i-plus"/></svg>新建对话</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-shield"/></svg>智能体</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-menu"/></svg>市场</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-key"/></svg>知识库</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-menu"/></svg>我的产物</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-clock"/></svg>使用统计</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-users"/></svg>成员管理</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-shield"/></svg>租户与开通</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-shield"/></svg>安全与运维</div>
+              <div class="m-nav-item on"><svg class="ico"><use href="#i-lock"/></svg>权限管理</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-lock"/></svg>系统设置</div>
+            </nav>
+          </aside>
+
+          <main class="m-main">
+            <div class="m-pagehead">
+              <h3>权限管理</h3>
+              <span class="m-hint">按角色巡检 · 菜单 / 接口在二级导航</span>
+              <div class="m-actions"><button class="m-btn ghost">有效权限查询</button><button class="m-btn primary">新建角色</button></div>
+            </div>
+
+            <div class="m-subnav">
+              <span class="s on">角色</span><span class="s">菜单</span><span class="s">接口</span><span class="s">接入治理</span>
+              <div class="spacer"></div>
+              <span class="m-code">5 个角色 · 2 个管理员级 · 1 个空角色</span>
+            </div>
+
+            <div class="m-wb">
+              <div class="m-wbrail">
+                <div class="m-search" style="width:100%"><svg class="ico"><use href="#i-search"/></svg><span>搜索角色</span></div>
+                <div style="display:flex;gap:4px;margin:7px 0 8px">
+                  <button class="m-chip on">全部 5</button>
+                  <button class="m-chip">启用 4</button>
+                </div>
+                <div class="m-rolecard"><div class="top"><span class="nm">超级管理员</span><span class="pill blue">内置</span></div><div class="meta"><code class="m-code">superadmin</code><span>2 成员</span><span class="st"><span class="pill ok">启用</span></span></div></div>
+                <div class="m-rolecard"><div class="top"><span class="nm">平台管理员</span><span class="pill violet">管理员级</span></div><div class="meta"><code class="m-code">admin</code><span>3 成员</span><span class="st"><span class="pill ok">启用</span></span></div></div>
+                <div class="m-rolecard on"><div class="top"><span class="nm">内容编辑</span></div><div class="meta"><code class="m-code">editor</code><span>4 成员</span><span class="st"><span class="pill ok">启用</span></span></div></div>
+                <div class="m-rolecard"><div class="top"><span class="nm">审计员</span><span class="pill warn">空角色</span></div><div class="meta"><code class="m-code">auditor</code><span>0 成员</span><span class="st"><span class="pill ok">启用</span></span></div></div>
+                <div class="m-rolecard"><div class="top"><span class="nm">访客</span></div><div class="meta"><code class="m-code">guest</code><span>1 成员</span><span class="st"><span class="pill muted">停用</span></span></div></div>
+              </div>
+
+              <div class="m-wbmain">
+                <div class="m-wbhead">
+                  <div class="top">
+                    <h3>内容编辑</h3>
+                    <code class="m-code">editor</code>
+                    <span class="pill ok">启用</span>
+                    <div class="acts">
+                      <button class="m-btn">编辑</button>
+                      <button class="m-btn"><svg class="ico"><use href="#i-copy"/></svg>复制</button>
+                      <button class="m-btn ghost"><svg class="ico"><use href="#i-eye"/></svg>有效权限</button>
+                    </div>
+                  </div>
+                  <div class="sub"><span>成员 <b>4</b></span><span>菜单 <b>9 / 32</b></span><span>允许 <b>22</b></span><span>禁止 <b>1</b></span><span>数据范围 <b>本部门</b></span></div>
+                </div>
+
+                <div class="m-segs">
+                  <span class="m-seg on">权限配置</span>
+                  <span class="m-seg">成员 <span class="b">4</span></span>
+                  <span class="m-seg">数据范围</span>
+                  <span class="m-seg">变更记录</span>
+                </div>
+
+                <div class="m-wbbody">
+                  <div class="m-wbcols">
+                    <div>
+                      <div class="m-search" style="width:100%"><svg class="ico"><use href="#i-search"/></svg><span>搜索菜单</span></div>
+                      <div class="m-sec"><b>可见菜单</b><span class="cnt">9 / 32</span><span class="m-code" style="margin-left:auto">全选 · 清空</span></div>
+                      <div class="m-treerow"><span class="cb on"></span><svg class="ico"><use href="#i-menu"/></svg><span class="nm"><b>对话</b><span class="tag">3 个页内 Tab</span></span></div>
+                      <div class="m-treerow"><span class="cb on"></span><svg class="ico"><use href="#i-shield"/></svg><span class="nm"><b>智能体</b></span></div>
+                      <div class="m-treerow child"><span class="cb on"></span><span class="nm">智能体</span></div>
+                      <div class="m-treerow child"><span class="cb"></span><span class="nm">模型供应商</span></div>
+                      <div class="m-treerow"><span class="cb on"></span><svg class="ico"><use href="#i-key"/></svg><span class="nm"><b>知识库</b></span></div>
+                      <div class="m-treerow"><span class="cb half"></span><svg class="ico"><use href="#i-menu"/></svg><span class="nm"><b>我的产物</b></span></div>
+                      <div class="m-treerow"><span class="cb"></span><svg class="ico"><use href="#i-users"/></svg><span class="nm"><b>成员管理</b></span></div>
+                      <div class="m-treerow"><span class="cb"></span><svg class="ico"><use href="#i-lock"/></svg><span class="nm"><b>权限管理</b></span></div>
+                      <div class="m-treerow"><span class="cb"></span><svg class="ico"><use href="#i-lock"/></svg><span class="nm"><b>系统设置</b></span></div>
+                    </div>
+
+                    <div>
+                      <div class="m-search" style="width:100%"><svg class="ico"><use href="#i-search"/></svg><span>搜索授权点中文名 / 编码</span></div>
+                      <div style="display:flex;align-items:center;gap:5px;margin-top:7px">
+                        <button class="m-chip on">全部 109</button>
+                        <button class="m-chip">已允许 22</button>
+                        <button class="m-chip">已禁止 1</button>
+                        <button class="m-chip">未授予 86</button>
+                      </div>
+                      <div class="m-sec"><b>功能授权点</b><span class="cnt">22 / 109</span><span class="m-code" style="margin-left:auto">组级操作</span></div>
+
+                      <div class="m-permgroup">
+                        <div class="m-ghead"><b>对话</b><span class="cnt">4 / 6</span><span class="deny">禁止 1</span><span class="acts">全选允许 · 清空</span></div>
+                        <div class="m-permrow"><div class="nm"><b>使用对话</b><code>chat:use</code></div><span class="tri"><button class="on-allow">允许</button><button>禁止</button><button>未置</button></span></div>
+                        <div class="m-permrow"><div class="nm"><b>查看历史会话</b><code>chat:history</code></div><span class="tri"><button class="on-allow">允许</button><button>禁止</button><button>未置</button></span></div>
+                        <div class="m-permrow"><div class="nm"><b>调用工具输出</b><code>chat:tool-output</code></div><span class="exempt">仅本角色内生效</span><span class="tri"><button>允许</button><button class="on-deny">禁止</button><button>未置</button></span></div>
+                      </div>
+
+                      <div class="m-permgroup">
+                        <div class="m-ghead"><b>知识库</b><span class="cnt">3 / 5</span><span class="acts">全选允许 · 清空</span></div>
+                        <div class="m-permrow"><div class="nm"><b>查看知识库</b><code>knowledge:read</code></div><span class="tri"><button class="on-allow">允许</button><button>禁止</button><button>未置</button></span></div>
+                        <div class="m-permrow"><div class="nm"><b>管理知识库</b><code>kb:write</code></div><span class="tri"><button>允许</button><button>禁止</button><button class="on-none">未置</button></span></div>
+                      </div>
+
+                      <div class="m-permgroup">
+                        <div class="m-ghead"><b>手册</b><span class="cnt">1 / 2</span><span class="acts">全选允许 · 清空</span></div>
+                        <div class="m-permrow"><div class="nm"><b>同步内置手册</b><code>manual:sync</code></div><span class="tri"><button class="on-allow">允许</button><button>禁止</button><button>未置</button></span></div>
+                      </div>
+
+                      <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:2px">
+                        <span class="role-chip">智能体 2/4</span><span class="role-chip">成员 1/3</span><span class="role-chip">角色与权限 0/3</span><span class="role-chip more">+10 个业务域</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="m-df" style="border-top:1px solid var(--rule)">
+                  <span class="dirty"><i></i>3 项未保存</span>
+                  <span class="m-code" style="color:var(--accent)">撤销</span>
+                  <div class="m-spacer"></div>
+                  <button class="m-btn">取消</button>
+                  <button class="m-btn primary">保存权限</button>
+                </div>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+    </div>
+    <div class="notes">
+      <div class="note"><span class="n">01</span><span><b>左右并排</b>：菜单可见性在左，授权点在右；不再像抽屉那样上下堆叠，配置时不用来回滚动。</span></div>
+      <div class="note"><span class="n">02</span><span><b>角色上下文常驻</b>：顶部角色名、计数、数据范围一直在，不会「配到一半忘了配的是谁」。</span></div>
+      <div class="note"><span class="n">03</span><span><b>同样的三态</b>：允许 / 禁止 / 未置与 A2 完全一致，组件复用，学习成本不增加。</span></div>
+      <div class="note"><span class="n">04</span><span><b>页内 Tab 可见</b>：菜单树把「智能体」下的页内 Tab 直接展开，配置可见性时能看清宿主关系。</span></div>
+      <div class="note"><span class="n">05</span><span><b>切换角色守卫</b>：左栏切换角色时若当前有未保存改动，先弹确认再切换。</span></div>
+    </div>
+
+    <h3 id="s6-3">B3 · 成员 / 数据范围 / 变更记录</h3>
+    <p>成员不再是权限页之外的事：角色详情内直接列出成员、来源与有效权限入口；数据范围与最近变更同屏可见。</p>
+    <div class="mock-scroll">
+      <div class="mock">
+        <div class="m-bar">
+          <div class="dots"><i></i><i></i><i></i></div>
+          <div class="m-url">localhost:5800/#/permissions?view=roles&code=editor&tab=members</div>
+        </div>
+        <div class="m-shell" style="min-height:auto">
+          <aside class="m-side">
+            <div class="m-brand"><i>渠</i>问渠</div>
+            <nav class="m-nav">
+              <div class="m-nav-item"><svg class="ico"><use href="#i-plus"/></svg>新建对话</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-shield"/></svg>智能体</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-menu"/></svg>市场</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-key"/></svg>知识库</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-menu"/></svg>我的产物</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-clock"/></svg>使用统计</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-users"/></svg>成员管理</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-shield"/></svg>租户与开通</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-shield"/></svg>安全与运维</div>
+              <div class="m-nav-item on"><svg class="ico"><use href="#i-lock"/></svg>权限管理</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-lock"/></svg>系统设置</div>
+            </nav>
+          </aside>
+
+          <main class="m-main">
+            <div class="m-pagehead">
+              <h3>权限管理</h3>
+              <span class="m-hint">按角色巡检 · 菜单 / 接口在二级导航</span>
+              <div class="m-actions"><button class="m-btn ghost">有效权限查询</button><button class="m-btn primary">新建角色</button></div>
+            </div>
+
+            <div class="m-subnav">
+              <span class="s on">角色</span><span class="s">菜单</span><span class="s">接口</span><span class="s">接入治理</span>
+              <div class="spacer"></div>
+              <span class="m-code">5 个角色 · 2 个管理员级 · 1 个空角色</span>
+            </div>
+
+            <div class="m-wb">
+              <div class="m-wbrail">
+                <div class="m-search" style="width:100%"><svg class="ico"><use href="#i-search"/></svg><span>搜索角色</span></div>
+                <div class="m-rolecard"><div class="top"><span class="nm">超级管理员</span><span class="pill blue">内置</span></div><div class="meta"><code class="m-code">superadmin</code><span>2 成员</span><span class="st"><span class="pill ok">启用</span></span></div></div>
+                <div class="m-rolecard"><div class="top"><span class="nm">平台管理员</span><span class="pill violet">管理员级</span></div><div class="meta"><code class="m-code">admin</code><span>3 成员</span><span class="st"><span class="pill ok">启用</span></span></div></div>
+                <div class="m-rolecard on"><div class="top"><span class="nm">内容编辑</span></div><div class="meta"><code class="m-code">editor</code><span>4 成员</span><span class="st"><span class="pill ok">启用</span></span></div></div>
+                <div class="m-rolecard"><div class="top"><span class="nm">审计员</span><span class="pill warn">空角色</span></div><div class="meta"><code class="m-code">auditor</code><span>0 成员</span><span class="st"><span class="pill ok">启用</span></span></div></div>
+                <div class="m-rolecard"><div class="top"><span class="nm">访客</span></div><div class="meta"><code class="m-code">guest</code><span>1 成员</span><span class="st"><span class="pill muted">停用</span></span></div></div>
+              </div>
+
+              <div class="m-wbmain">
+                <div class="m-wbhead">
+                  <div class="top">
+                    <h3>内容编辑</h3><code class="m-code">editor</code><span class="pill ok">启用</span>
+                    <div class="acts"><button class="m-btn">编辑</button><button class="m-btn"><svg class="ico"><use href="#i-copy"/></svg>复制</button><button class="m-btn ghost"><svg class="ico"><use href="#i-eye"/></svg>有效权限</button></div>
+                  </div>
+                  <div class="sub"><span>成员 <b>4</b></span><span>菜单 <b>9 / 32</b></span><span>允许 <b>22</b></span><span>禁止 <b>1</b></span><span>数据范围 <b>本部门</b></span></div>
+                </div>
+
+                <div class="m-segs">
+                  <span class="m-seg">权限配置</span>
+                  <span class="m-seg on">成员 <span class="b">4</span></span>
+                  <span class="m-seg">数据范围</span>
+                  <span class="m-seg">变更记录</span>
+                </div>
+
+                <div class="m-wbbody">
+                  <div class="m-sec"><b>角色成员</b><span class="cnt">4 人</span><span class="m-code" style="margin-left:auto">去成员管理</span></div>
+                  <div class="m-card">
+                    <div class="m-tbl">
+                      <div class="m-tbl-head t-members"><span>账号</span><span>昵称</span><span>授予来源</span><span>状态</span><span>操作</span></div>
+                      <div class="m-tbl-row t-members">
+                        <div class="m-cell m-namecell"><span class="av c">W</span><code class="m-code">wang.li</code></div>
+                        <div class="m-cell">王莉</div>
+                        <div class="m-cell"><span class="pill muted plain">手动</span></div>
+                        <div class="m-cell"><span class="pill ok">正常</span></div>
+                        <div class="m-cell"><span style="color:var(--accent);font-size:10.5px">有效权限</span></div>
+                      </div>
+                      <div class="m-tbl-row t-members">
+                        <div class="m-cell m-namecell"><span class="av d">C</span><code class="m-code">chen.yu</code></div>
+                        <div class="m-cell">陈宇</div>
+                        <div class="m-cell"><span class="pill muted plain">手动</span></div>
+                        <div class="m-cell"><span class="pill ok">正常</span></div>
+                        <div class="m-cell"><span style="color:var(--accent);font-size:10.5px">有效权限</span></div>
+                      </div>
+                      <div class="m-tbl-row t-members">
+                        <div class="m-cell m-namecell"><span class="av e">Y</span><code class="m-code">yang.fan</code></div>
+                        <div class="m-cell">杨帆</div>
+                        <div class="m-cell"><span class="pill violet plain">认证源</span></div>
+                        <div class="m-cell"><span class="pill ok">正常</span></div>
+                        <div class="m-cell"><span style="color:var(--accent);font-size:10.5px">有效权限</span></div>
+                      </div>
+                      <div class="m-tbl-row t-members">
+                        <div class="m-cell m-namecell"><span class="av">L</span><code class="m-code">li.ming</code></div>
+                        <div class="m-cell">李明</div>
+                        <div class="m-cell"><span class="pill muted plain">手动</span></div>
+                        <div class="m-cell"><span class="pill muted">停用</span></div>
+                        <div class="m-cell"><span style="color:var(--accent);font-size:10.5px">有效权限</span></div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="m-hint" style="display:block;margin-top:5px">认证源授予的角色只读，需在认证源的组映射里调整。</div>
+
+                  <div style="display:grid;grid-template-columns:1fr 1.15fr;gap:12px;margin-top:12px;align-items:start">
+                    <div>
+                      <div class="m-sec"><b>数据范围</b><span class="m-code" style="margin-left:auto">修改</span></div>
+                      <div class="m-card" style="padding:10px 11px">
+                        <div class="pill blue plain" style="font-size:10.5px">本部门创建的（可读）</div>
+                        <div class="m-hint" style="margin-top:5px;white-space:normal">范围只授予「看」（READ），管理权仍在创建者手里；生效部门沿用成员自己的部门。</div>
+                      </div>
+                    </div>
+
+                    <div>
+                      <div class="m-sec"><b>最近变更</b><span class="m-code" style="margin-left:auto">查看全部</span></div>
+                      <div class="m-tl">
+                        <div class="m-tli"><span class="m-tld"></span><div class="m-tlc"><b>允许 kb:write 授权点</b><div class="meta">2026-11-05 14:12 · admin</div></div></div>
+                        <div class="m-tli"><span class="m-tld danger"></span><div class="m-tlc"><b>禁止 chat:tool-output（仅本角色）</b><div class="meta">2026-11-04 17:40 · admin</div></div></div>
+                        <div class="m-tli"><span class="m-tld warn"></span><div class="m-tlc"><b>菜单可见性：移除「成员管理」</b><div class="meta">2026-11-02 09:26 · admin</div></div></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </main>
+        </div>
+      </div>
+    </div>
+    <div class="notes">
+      <div class="note"><span class="n">01</span><span><b>成员清单只读</b>：账号、昵称、授予来源、状态；每行给「有效权限」入口，需要编辑时跳成员管理。</span></div>
+      <div class="note"><span class="n">02</span><span><b>认证源授予只读</b>：来源为「认证源」的行不提供移除按钮，与 D-5 口径一致，避免误操作。</span></div>
+      <div class="note"><span class="n">03</span><span><b>数据范围就地展示</b>：用一句人话说明范围，并明确「只读口径」；修改仍走原表单。</span></div>
+      <div class="note"><span class="n">04</span><span><b>变更记录</b>：复用审计事件接口按角色编码过滤，不需要新增后端接口。</span></div>
+      <div class="note"><span class="n">05</span><span><b>一屏三块</b>：成员、范围、变更同屏，回答「这个角色现在是什么状态」。</span></div>
+    </div>
+  </section>
+
+  <!-- ==================== 07 接入治理统一 ==================== -->
+  <section class="sec" id="sec-7">
+    <div class="sec-head"><span class="sec-no">07</span><h2>效果图 · 接入与治理三个 Tab 统一</h2></div>
+    <p class="lead">
+      认证源、服务账号、内容安全目前各写一套页头与操作列。统一后只保留一种壳：
+      标题 + 计数 + 说明 + 主操作；工具栏；卡片内表格；统一的操作链接与空/错态。下面以认证源为例。
+    </p>
+
+    <h3 id="s7-1">C1 · 认证源列表（统一壳）</h3>
+    <p>页头不再用 <code>sr-only</code> 标题 + 孤立计数；工具栏与操作列与权限主页面使用同一套通用类。</p>
+    <div class="mock-scroll">
+      <div class="mock">
+        <div class="m-bar">
+          <div class="dots"><i></i><i></i><i></i></div>
+          <div class="m-url">localhost:5800/#/permissions?tab=identity</div>
+        </div>
+        <div class="m-shell" style="min-height:auto">
+          <aside class="m-side">
+            <div class="m-brand"><i>渠</i>问渠</div>
+            <nav class="m-nav">
+              <div class="m-nav-item"><svg class="ico"><use href="#i-plus"/></svg>新建对话</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-shield"/></svg>智能体</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-menu"/></svg>市场</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-key"/></svg>知识库</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-menu"/></svg>我的产物</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-clock"/></svg>使用统计</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-users"/></svg>成员管理</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-shield"/></svg>租户与开通</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-shield"/></svg>安全与运维</div>
+              <div class="m-nav-item on"><svg class="ico"><use href="#i-lock"/></svg>权限管理</div>
+              <div class="m-nav-item"><svg class="ico"><use href="#i-lock"/></svg>系统设置</div>
+            </nav>
+          </aside>
+
+          <main class="m-main">
+            <div class="m-pagehead">
+              <h3>认证源与身份同步</h3>
+              <span class="pill muted plain">共 2 个</span>
+              <span class="m-hint">SAML / SCIM / LDAP 统一登记；组映射决定 IdP 组自动授予的角色</span>
+              <div class="m-actions">
+                <button class="m-btn">刷新</button>
+                <button class="m-btn primary"><svg class="ico"><use href="#i-plus"/></svg>新建认证源</button>
+              </div>
+            </div>
+
+            <div class="m-body">
+              <div class="m-tabsrow">
+                <div class="m-tab">菜单 <span class="b">32</span></div>
+                <div class="m-tab">接口 <span class="b">466</span></div>
+                <div class="m-tab">角色 <span class="b">5</span></div>
+                <div class="m-tabsep"></div>
+                <div class="m-tabgroup">接入与治理</div>
+                <div class="m-tab on">认证源 <span class="b">2</span></div>
+                <div class="m-tab">服务账号 <span class="b">3</span></div>
+                <div class="m-tab">内容安全 <span class="b">18</span></div>
+              </div>
+
+              <div class="m-toolbar">
+                <div class="m-search"><svg class="ico"><use href="#i-search"/></svg><span>搜索认证源名称 / 类型</span><kbd>/</kbd></div>
+                <button class="m-chip on">全部 2</button>
+                <button class="m-chip">SAML 1</button>
+                <button class="m-chip">LDAP 1</button>
+                <button class="m-chip">SCIM 0</button>
+                <div class="m-spacer"></div>
+                <button class="m-select">按状态<svg class="ico"><use href="#i-chevron"/></svg></button>
+              </div>
+
+              <div class="m-card">
+                <div class="m-tbl">
+                  <div class="m-tbl-head t-idp">
+                    <span>名称</span><span>类型</span><span>默认角色</span><span>绑定账号</span><span>状态</span><span>租户</span><span>操作</span>
+                  </div>
+
+                  <div class="m-tbl-row t-idp">
+                    <div class="m-cell m-namecell"><span class="m-name">企业微信 SAML</span><code class="m-code">corp-wx</code></div>
+                    <div class="m-cell"><span class="pill blue plain">SAML</span></div>
+                    <div class="m-cell"><span class="role-chip">user</span></div>
+                    <div class="m-cell">32 个账号</div>
+                    <div class="m-cell"><span class="sw on"></span></div>
+                    <div class="m-cell m-muted">问渠</div>
+                    <div class="m-cell"><span style="color:var(--accent);font-size:10.5px">组映射</span> <span style="color:var(--accent);font-size:10.5px">编辑</span> <span style="color:var(--danger);font-size:10.5px">删除</span></div>
+                  </div>
+
+                  <div class="m-tbl-row t-idp">
+                    <div class="m-cell m-namecell"><span class="m-name">总部 LDAP</span><code class="m-code">hq-ldap</code></div>
+                    <div class="m-cell"><span class="pill violet plain">LDAP</span></div>
+                    <div class="m-cell"><span class="role-chip">user</span></div>
+                    <div class="m-cell">18 个账号</div>
+                    <div class="m-cell"><span class="sw"></span></div>
+                    <div class="m-cell m-muted">问渠</div>
+                    <div class="m-cell"><span style="color:var(--accent);font-size:10.5px">组映射</span> <span style="color:var(--accent);font-size:10.5px">测试</span> <span style="color:var(--accent);font-size:10.5px">同步</span> <span style="color:var(--accent);font-size:10.5px">日志</span> <span style="color:var(--accent);font-size:10.5px">编辑</span></div>
+                  </div>
+                </div>
+              </div>
+
+              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px">
+                <div class="m-card" style="padding:9px 11px"><b style="font-size:11.5px">服务账号</b><div class="m-hint" style="white-space:normal;margin-top:3px">3 个非人类身份；权限走角色，令牌只在创建时显示一次。</div></div>
+                <div class="m-card" style="padding:9px 11px"><b style="font-size:11.5px">内容安全</b><div class="m-hint" style="white-space:normal;margin-top:3px">18 条规则；统一壳后与认证源同一套工具栏与操作列。</div></div>
+                <div class="m-card" style="padding:9px 11px"><b style="font-size:11.5px">审计事件</b><div class="m-hint" style="white-space:normal;margin-top:3px">权限变更记录从这里查；角色详情可带 keyword 过滤。</div></div>
+              </div>
+
+              <div class="m-hint" style="display:block;margin-top:8px">统一壳的验收口径：页头结构、搜索框 240px、操作列用 <code>.app-link-btn</code>、空/错态带重试。</div>
+            </div>
+          </main>
+        </div>
+      </div>
+    </div>
+    <div class="notes">
+      <div class="note"><span class="n">01</span><span><b>页头统一</b>：标题可见（不再 <code>sr-only</code>）+ 计数 + 说明 + 主操作右对齐，三个 Tab 一致。</span></div>
+      <div class="note"><span class="n">02</span><span><b>工具栏统一</b>：搜索 240px、筛选 chip、右侧操作，全部复用 <code>.app-list-bar.in-card</code>。</span></div>
+      <div class="note"><span class="n">03</span><span><b>操作列统一</b>：链接式按钮用 <code>.app-link-btn</code>，危险操作用 <code>.danger</code>，不再混用 antd 链接按钮。</span></div>
+      <div class="note"><span class="n">04</span><span><b>空/错态统一</b>：无数据、加载失败、无筛选结果三种状态文案与「重试」入口一致。</span></div>
+      <div class="note"><span class="n">05</span><span><b>治理入口并列</b>：服务账号、内容安全、审计事件在底部以同规格小卡提示，形成「接入与治理」的整体感。</span></div>
+    </div>
+  </section>
+
+  <!-- ==================== 08 组件与交互规格 ==================== -->
+  <section class="sec" id="sec-8">
+    <div class="sec-head"><span class="sec-no">08</span><h2>组件与交互规格</h2></div>
+    <p class="lead">
+      下面这些规格是效果图与实现之间的契约：组件边界、状态机、异常态与键盘行为都写死，避免实现时再发挥。
+    </p>
+
+    <div class="spec-grid">
+      <div class="spec">
+        <h4><span class="k">C1</span>概览指标条</h4>
+        <p>5 个指标卡：角色、授权点、接口、菜单、待处理。数字来自 <code>GET /role/overview</code>；失败时显示「—」并保留列表可用。</p>
+        <ul>
+          <li>异常项用 warn 色，零值弱化；不放装饰性图表。</li>
+          <li>点击卡片切到对应页签并预置筛选（如接口 → 未授权）。</li>
+        </ul>
+      </div>
+
+      <div class="spec">
+        <h4><span class="k">C2</span>三态授权控件</h4>
+        <p>每行授权点右侧是互斥的 <code>允许 | 禁止 | 未置</code> 分段控件；选「禁止」时出现「仅本角色内生效」开关（exempt）。</p>
+        <ul>
+          <li>同一授权点不会同时产生 allow 与 deny；服务端仍保留冲突报错兜底。</li>
+          <li>组头操作：全选允许 / 全部禁止 / 清空；只影响当前业务域。</li>
+          <li>键盘：Tab 进入分段，←/→ 切换，Space 选中。</li>
+        </ul>
+      </div>
+
+      <div class="spec">
+        <h4><span class="k">C3</span>脏状态与保存</h4>
+        <p>编辑器顶部记录初始快照，任一勾选/三态变化后进入 dirty；底部常驻「N 项未保存」与撤销。</p>
+        <ul>
+          <li>关闭抽屉、切换角色、离开页面都弹确认。</li>
+          <li>加载失败时保存禁用，显示错误横幅与「重试」。</li>
+          <li>保存成功提示带摘要：<code>已保存：菜单 12 · 允许 34 · 禁止 2</code>。</li>
+        </ul>
+      </div>
+
+      <div class="spec">
+        <h4><span class="k">C4</span>成员抽屉 / 成员分段</h4>
+        <p>只读列：账号、昵称、授予来源（手动 / 认证源）、状态；每行「有效权限」入口。</p>
+        <ul>
+          <li>认证源授予的行只读，并标注「在认证源组映射中调整」。</li>
+          <li>空态「该角色还没有成员」+「去成员管理」。</li>
+          <li>数据源复用 <code>GET /role/{code}/members</code>。</li>
+        </ul>
+      </div>
+
+      <div class="spec">
+        <h4><span class="k">C5</span>有效权限视图</h4>
+        <p>账号可从成员选择，也可手输 uid；结果按业务域分组，标注来源角色与 <code>globalDenies</code>。</p>
+        <ul>
+          <li>管理员级显示「管理员级：全部动作」横幅。</li>
+          <li>被禁止的点单独红色分组，不混在允许项里。</li>
+          <li>支持复制清单与导出 JSON。</li>
+        </ul>
+      </div>
+
+      <div class="spec">
+        <h4><span class="k">C6</span>接口页分页与批量</h4>
+        <p>默认 50 条/页；左侧模块导航与状态筛选联动；勾选后浮出批量条。</p>
+        <ul>
+          <li>批量归属逐条调用 <code>PUT /api/{id}</code>，失败项汇总提示。</li>
+          <li>反查失败显示「取数失败 · 重试」，不显示「未授权」。</li>
+          <li>搜索匹配路径、名称、授权点中文名与编码。</li>
+        </ul>
+      </div>
+
+      <div class="spec">
+        <h4><span class="k">C7</span>「只读管理员」一键模板</h4>
+        <p>配置器顶部提供「套用『只读管理员』模板」。只读 / 写类判据来自目录接口的 <code>readonly</code> 字段
+          （该授权点名下端点是否全为 GET/ALL，或 <code>self:*</code>），与后端 <code>RbacSeedRunner</code>
+          建预设角色的口径同源。</p>
+        <ul>
+          <li><b>普通角色</b>：允许全部只读授权点，写类保持未授予；可见菜单设为全部。</li>
+          <li><b>管理员级角色</b>：默认全允许，模板把写类授权点逐条设为「禁止（压过全员）」，即「能看不能改」。</li>
+          <li>套用只改草稿，仍需点「保存权限」；「撤销」可一键回到套用前。</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="callout ok">
+      <b>审计深链：</b>角色详情的「变更记录」右上角「在审计事件中查看全部」跳到
+      <code>/security?tab=audit&amp;keyword=角色编码&amp;days=30</code>，审计页读取 <code>keyword / days / actor / action</code>
+      作为初始筛选，与角色详情里的「近 30 天」口径一致。
+    </div>
+
+    <h3>状态矩阵</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>场景</th><th>界面表现</th><th>可操作</th></tr></thead>
+        <tbody>
+          <tr><td>首次加载</td><td>表格骨架 + 概览条「—」</td><td>无</td></tr>
+          <tr><td>无数据</td><td>「暂无菜单 / 角色 / 接口」+ 主操作按钮</td><td>新建 / 登记</td></tr>
+          <tr><td>无筛选结果</td><td>「没有匹配结果」+ 清除筛选</td><td>清除筛选</td></tr>
+          <tr><td>加载失败</td><td>错误横幅「取数失败」+ 重试</td><td>重试；保存禁用</td></tr>
+          <tr><td>无权限</td><td>沿用现有路由拦截，不进入页面</td><td>返回对话</td></tr>
+          <tr><td>保存冲突</td><td>提示冲突授权点编码，保留弹窗与改动</td><td>修正后重试</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout">
+      <b>键盘与无障碍：</b>搜索框支持 <kbd>/</kbd> 聚焦；表格操作列保留 <code>:focus-visible</code> 焦点环；
+      所有图标按钮补 <code>aria-label</code>；开关与三态控件提供 <code>aria-checked</code> / <code>aria-pressed</code>；
+      拖拽排序提供弹窗内的数字输入作为键盘替代。
+    </div>
+  </section>
+
+  <!-- ==================== 09 数据与接口 ==================== -->
+  <section class="sec" id="sec-9">
+    <div class="sec-head"><span class="sec-no">09</span><h2>数据与接口</h2></div>
+    <p class="lead">
+      后端只补 3 个只读能力，全部不参与鉴权判定、不改表结构；写路径仍然是现有
+      <code>PUT /role/{code}/permissions</code>。
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>能力</th><th>接口 / 位置</th><th>返回</th><th>用途</th></tr></thead>
+        <tbody>
+          <tr><td><b>概览统计</b></td><td><code>GET /api/ai/role/overview</code></td><td><code>{summary, roles[]}</code></td><td>概览条 + 角色表的成员/菜单/授权计数</td></tr>
+          <tr><td><b>菜单→角色反查</b></td><td><code>GET /api/ai/role/menu-roles</code></td><td><code>{menuId: [roleCode]}</code></td><td>菜单页「可见角色」列</td></tr>
+          <tr><td><b>授权点中文名</b></td><td><code>ApiEndpointScanner</code> + 目录回填</td><td><code>permission-catalog.name</code></td><td>配置器与接口页的中文主标题</td></tr>
+          <tr><td><b>只读标记</b></td><td><code>GET /api/ai/role/permission-catalog</code></td><td><code>readonly: 0|1</code></td><td>「只读管理员」一键模板的判据</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <pre class="code"><b>GET /api/ai/role/overview</b>   (role:read)
+
+{
+  "summary": {
+    "roles": 5, "activeRoles": 4, "adminRoles": 2, "rolesWithoutMembers": 1,
+    "menus": 32, "hiddenMenus": 3,
+    "apis": 466, "apisWithoutPermission": 12, "apisWithoutMenu": 8,
+    "permissions": 109, "expiringGrants": 0
+  },
+  "roles": [
+    { "code": "admin", "memberCount": 3, "menuCount": 28,
+      "permissionCount": 96, "denyCount": 2, "lastUpdated": "2026-11-06T18:20:00" }
+  ]
+}</pre>
+
+    <pre class="code"><b>GET /api/ai/role/menu-roles</b>   (role:read)
+
+{
+  "menu-chat": ["admin", "editor", "user"],
+  "menu-knowledge": ["admin", "editor"],
+  "menu-settings": ["admin"]
+}</pre>
+
+    <p style="margin-top:14px">
+      中文名回填规则：只在目录行的 <code>name == code</code> 时更新为中文名，<b>不覆盖管理员手工命名</b>。
+      前端始终以 <code>code</code> 作为唯一键，展示层优先取 <code>name</code>，缺失时回落编码。
+    </p>
+
+    <h3>复用的现有接口</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>接口</th><th>用在哪</th><th>备注</th></tr></thead>
+        <tbody>
+          <tr><td><code>GET /role/{code}/members</code></td><td>成员抽屉 / B3 成员分段</td><td>已有，无需改动</td></tr>
+          <tr><td><code>GET /role/{code}/permissions</code></td><td>配置器回显</td><td>含 <code>menuIds / permissions / denies</code></td></tr>
+          <tr><td><code>PUT /role/{code}/permissions</code></td><td>唯一写路径</td><td>菜单 + 允许 + deny 一次事务提交</td></tr>
+          <tr><td><code>GET /role/permission-catalog</code></td><td>授权点目录</td><td>分组改由前端按 code 前缀聚合</td></tr>
+          <tr><td><code>GET /role/permission-roles</code></td><td>接口页「已授权角色」</td><td>反查失败要显示错误态</td></tr>
+          <tr><td><code>GET /role/expiring?days=7</code></td><td>概览「待处理」</td><td>已有，权限页复用</td></tr>
+          <tr><td><code>GET /role/effective/{uid}</code></td><td>有效权限视图</td><td>含 <code>globalDenies</code></td></tr>
+          <tr><td><code>GET /audit?...</code></td><td>B3 变更记录</td><td>按角色 code 作为 keyword</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout warn">
+      <b>不做：</b>不改 <code>@Permission</code> 注解、不改 <code>RoleService</code> 判定核、不做菜单租户化、不做行级 ABAC、
+      不引入权限申请审批流。这些属于 RBAC 后续批次，不在本次 UI 升级范围内。
+    </div>
+  </section>
+
+  <!-- ==================== 10 实施计划 ==================== -->
+  <section class="sec" id="sec-10">
+    <div class="sec-head"><span class="sec-no">10</span><h2>实施计划</h2></div>
+    <p class="lead">阶段 0 只产出本文件，等方向确认后再进入代码；阶段 1 起才动源码。</p>
+
+    <div class="phase">
+      <div class="phase-row">
+        <span class="p">阶段 0</span>
+        <div class="t"><b>方案与效果图</b><p>产出本 HTML；复制现状截图；自检无横向溢出、锚点可用。不写业务代码。</p></div>
+        <div class="o">本次交付</div>
+      </div>
+      <div class="phase-row">
+        <span class="p">阶段 1</span>
+        <div class="t"><b>后端只读能力</b><p><code>RoleController</code> 加 overview / menu-roles；<code>RoleMenuMapper</code> 加全量绑定查询；<code>ApiEndpointScanner</code> 补 109 个中文名与回填。</p></div>
+        <div class="o">方向确认后</div>
+      </div>
+      <div class="phase-row">
+        <span class="p">阶段 2</span>
+        <div class="t"><b>前端公共层</b><p><code>api.js</code> 加 2 个方法；新建 <code>utils/permissions.js</code> 与 4 个组件（概览条、三态、配置器、成员抽屉、有效权限）。</p></div>
+        <div class="o">约 4 个组件</div>
+      </div>
+      <div class="phase-row">
+        <span class="p">阶段 3</span>
+        <div class="t"><b>主页面实现</b><p>A：改造 <code>PermissionsPage.vue</code> 四块；B：新建角色工作台并做旧 <code>?tab=</code> 重定向。</p></div>
+        <div class="o">二选一</div>
+      </div>
+      <div class="phase-row">
+        <span class="p">阶段 4</span>
+        <div class="t"><b>三个并入 Tab 统一</b><p>认证源 / 服务账号 / 内容安全统一页头、工具栏、操作列、空/错态；不改业务字段。</p></div>
+        <div class="o">3 个页面</div>
+      </div>
+      <div class="phase-row">
+        <span class="p">阶段 5</span>
+        <div class="t"><b>验证与收尾</b><p><code>npm run build</code>、后端编译、浏览器逐项验收、深色主题与四档宽度检查。</p></div>
+        <div class="o">验收</div>
+      </div>
+    </div>
+
+    <h3>改动文件清单（预估）</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>层</th><th>文件</th><th>改动</th></tr></thead>
+        <tbody>
+          <tr><td>后端</td><td><code>controller/RoleController.java</code></td><td>+2 个 GET</td></tr>
+          <tr><td>后端</td><td><code>service/RoleService.java</code></td><td>+overview / rolesByMenu</td></tr>
+          <tr><td>后端</td><td><code>mapper/RoleMenuMapper.java</code></td><td>+全量绑定查询</td></tr>
+          <tr><td>后端</td><td><code>mapper/PermissionCatalogMapper.java</code></td><td>+条件回填 name</td></tr>
+          <tr><td>后端</td><td><code>startup/ApiEndpointScanner.java</code></td><td>+PERMISSION_ZH / 回填</td></tr>
+          <tr><td>前端</td><td><code>views/PermissionsPage.vue</code></td><td>主页面改造 / 或降为壳</td></tr>
+          <tr><td>前端</td><td><code>api.js</code></td><td>+getRoleOverview / getMenuRoles</td></tr>
+          <tr><td>前端</td><td><code>utils/permissions.js</code></td><td>业务域分组 / 标签 / 三态</td></tr>
+          <tr><td>前端</td><td><code>components/permissions/*</code></td><td>概览条 / 三态 / 配置器 / 成员抽屉 / 有效权限</td></tr>
+          <tr><td>前端</td><td><code>views/IdentityProvidersPage.vue</code> 等 3 个</td><td>统一壳</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ==================== 11 验收标准 ==================== -->
+  <section class="sec" id="sec-11">
+    <div class="sec-head"><span class="sec-no">11</span><h2>验收标准</h2></div>
+    <p class="lead">方案书阶段与实现阶段分开验收；下面是实现完成后必须逐条通过的清单。</p>
+
+    <h3>方案书</h3>
+    <div class="check-grid">
+      <div class="check"><span class="box"></span><span>HTML 可直接打开，8 张效果图完整，无横向溢出。</span></div>
+      <div class="check"><span class="box"></span><span>A / B 两套方向有同场景对照，差异一眼可辨。</span></div>
+      <div class="check"><span class="box"></span><span>现状诊断每条都有代码行号或截图证据。</span></div>
+      <div class="check"><span class="box"></span><span>新增接口契约、实施阶段、验收标准齐全。</span></div>
+    </div>
+
+    <h3>功能</h3>
+    <div class="check-grid">
+      <div class="check"><span class="box"></span><span>概览数字与列表一致；点击指标落到对应页签/筛选。</span></div>
+      <div class="check"><span class="box"></span><span>角色成员数可点开抽屉，内容与 <code>GET /role/{code}/members</code> 一致。</span></div>
+      <div class="check"><span class="box"></span><span>接口页可分页、按模块/未授权/未挂菜单筛选；批量归属有成功与失败反馈。</span></div>
+      <div class="check"><span class="box"></span><span>菜单「可见角色」反查正确；拖拽排序落库后刷新保持。</span></div>
+      <div class="check"><span class="box"></span><span>三态互斥；允许 + 禁止同点无法提交；exempt 保存后回显。</span></div>
+      <div class="check"><span class="box"></span><span>抽屉加载失败时保存禁用并可重试；恢复后勾选完整（R-09）。</span></div>
+      <div class="check"><span class="box"></span><span>脏状态离开有确认；保存成功提示含菜单/允许/禁止数量。</span></div>
+      <div class="check"><span class="box"></span><span>有效权限展示来源角色与 globalDenies；管理员级横幅正确。</span></div>
+      <div class="check"><span class="box"></span><span>三个并入 Tab 的页头、工具栏、操作列、空/错态一致。</span></div>
+      <div class="check"><span class="box"></span><span>1240 / 1100 / 768 / 375 四档无横向溢出（表格内部滚动属预期）。</span></div>
+      <div class="check"><span class="box"></span><span>浅色与深色主题均无对比度异常、无硬编码颜色穿帮。</span></div>
+      <div class="check"><span class="box"></span><span><code>npm run build</code> 与后端 <code>mvn -DskipTests compile</code> 通过。</span></div>
+    </div>
+
+    <h3>不回归</h3>
+    <div class="check-grid">
+      <div class="check"><span class="box"></span><span>现有 <code>?tab=menus|apis|roles</code> 深链仍有效（B 下提供重定向）。</span></div>
+      <div class="check"><span class="box"></span><span>非管理员访问 <code>/permissions</code> 的拦截行为不变。</span></div>
+      <div class="check"><span class="box"></span><span>权限保存仍走唯一写路径，菜单/允许/deny 一次事务提交。</span></div>
+      <div class="check"><span class="box"></span><span>侧栏菜单下发与可见性逻辑不变。</span></div>
+    </div>
+  </section>
+
+  <!-- ==================== 12 待确认决策 ==================== -->
+  <section class="sec" id="sec-12">
+    <div class="sec-head"><span class="sec-no">12</span><h2>待确认的 4 个决策</h2></div>
+    <p class="lead">看完效果图后，只需要回这 4 个问题，就可以进入实现。</p>
+
+    <div class="decision-list">
+      <div class="decision">
+        <span class="dno">1</span>
+        <div>
+          <h4>选方向 A 还是方向 B？</h4>
+          <p>A：保留三页签，风险低，适合本期上线；B：角色中心，配置路径最短，但主页面要重写。</p>
+          <span class="rec">推荐 A 先上线，B 作为下一阶段；两套共用组件</span>
+        </div>
+      </div>
+
+      <div class="decision">
+        <span class="dno">2</span>
+        <div>
+          <h4>授权点中文名是否本期做？</h4>
+          <p>当前 109 个授权点都是裸编码。补中文名是「看得懂」的前提，但需要一次性整理 109 条映射并回填目录。</p>
+          <span class="rec">推荐本期做；否则三态配置器仍然要靠编码辨认</span>
+        </div>
+      </div>
+
+      <div class="decision">
+        <span class="dno">3</span>
+        <div>
+          <h4>菜单拖拽排序是否本期做？</h4>
+          <p>拖拽能明显改善日常整理体验，但需要同父级约束、乐观更新与失败回滚；也可以先保留排序数字输入。</p>
+          <span class="rec">推荐方向 A 本期做；方向 B 可后置</span>
+        </div>
+      </div>
+
+      <div class="decision">
+        <span class="dno">4</span>
+        <div>
+          <h4>审计事件是否并入权限域？</h4>
+          <p>方向 B 的「变更记录」直接复用审计接口；方向 A 可以先在角色行给一个「变更记录」入口，不新增页面。</p>
+          <span class="rec">推荐并入；不新增后端接口</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="callout ok">
+      <b>确认方式：</b>回复「方向 A / B」+ 后 3 个问题的选择即可。方向确认后，先做阶段 1 的只读接口，再按阶段 2～5 推进。
+    </div>
+  </section>
+
+
+
+
+  </main>
+
+  <footer class="footer">
+    <span><b>文档</b> 权限界面 UI/UX / 功能升级方案</span>
+    <span><b>版本</b> v1.0 · 效果图评审稿</span>
+    <span><b>范围</b> 权限主页面 + 认证源 / 服务账号 / 内容安全</span>
+    <span><b>状态</b> 待选方向 A / B，确认后再进入实现</span>
+  </footer>
+</div>
+
+</body>
+</html>
