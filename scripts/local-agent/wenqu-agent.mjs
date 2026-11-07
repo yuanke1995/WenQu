@@ -222,9 +222,34 @@ function acquireSingleInstanceLock () {
   throw err('E_LOCK', '无法获取执行器单实例锁')
 }
 
-process.on('exit', releaseSingleInstanceLock)
-process.on('SIGINT', () => { releaseSingleInstanceLock(); process.exit(0) })
-process.on('SIGTERM', () => { releaseSingleInstanceLock(); process.exit(0) })
+// 浏览器状态放在退出钩子之前声明：钩子执行时可能早于下面「本机浏览器」段求值（如抢锁失败直接
+// process.exit），用 let 会出现 TDZ。stopBrowser 在这里闭包引用它们，退出时一定拿得到。
+let browserChild = null
+let browserSession = null
+let browserBase = null
+let browserIdleTimer = null
+
+/**
+ * 收回整条浏览器子进程树：npx → playwright-mcp → Edge。只杀 npx 不够——Edge 是它的孙进程，
+ * 父进程没了照样在 Dock 里挂着，用户关窗口也关不掉。POSIX 下子进程是独立进程组（spawn 时
+ * detached），整组发 SIGTERM；Windows 用 taskkill /T。
+ */
+function stopBrowser () {
+  if (browserIdleTimer) { clearTimeout(browserIdleTimer); browserIdleTimer = null }
+  const child = browserChild
+  browserChild = null
+  browserSession = null
+  browserBase = null
+  if (!child || child.exitCode !== null) return
+  try {
+    if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'])
+    else process.kill(-child.pid, 'SIGTERM')
+  } catch { /* 已退出或没有权限 */ }
+}
+
+process.on('exit', () => { stopBrowser(); releaseSingleInstanceLock() })
+process.on('SIGINT', () => { stopBrowser(); releaseSingleInstanceLock(); process.exit(0) })
+process.on('SIGTERM', () => { stopBrowser(); releaseSingleInstanceLock(); process.exit(0) })
 
 async function postJson (url, body) {
   const res = await fetch(url, {
@@ -1959,9 +1984,20 @@ async function opPickDir() {
 // （旧实例的浏览器渠道/参数能和新代码不一致，误复用会把「找不到 Chrome」这类旧错带进来）。
 // 端口不需要被后端知道——执行器内部转发，后端只下发 browser op。子进程随执行器退出回收。
 const MCP_HEADERS = { 'content-type': 'application/json', accept: 'application/json, text/event-stream' }
-let browserChild = null
-let browserSession = null
-let browserBase = null
+// 浏览器是 headed 的：任务结束后不能一直挂着。最后一次 browser 调用再空闲这么久，就收回整条
+// 子进程树（窗口随之关掉）。手动关窗口只关页面，Playwright 进程还活着，Dock 图标便一直留在那里。
+const BROWSER_IDLE_CLOSE_MS = Number(process.env.WENQU_BROWSER_IDLE_MS) || 5 * 60 * 1000
+
+function armBrowserIdleClose () {
+  if (browserIdleTimer) clearTimeout(browserIdleTimer)
+  browserIdleTimer = setTimeout(() => {
+    browserIdleTimer = null
+    if (!browserChild) return
+    log('本机浏览器空闲，收回子进程（关闭窗口）')
+    stopBrowser()
+  }, BROWSER_IDLE_CLOSE_MS)
+  browserIdleTimer.unref()
+}
 
 function freePort () {
   return new Promise(resolve => {
@@ -2028,8 +2064,15 @@ async function ensureBrowser () {
     browserBase = `http://127.0.0.1:${port}/mcp`
     log(`启动本机浏览器服务 :${port}（headed，渠道 ${detectBrowserChannel()}）`)
     browserChild = spawn('npx', browserSpawnArgs(port),
-      { stdio: ['ignore', 'ignore', 'inherit'] })
-    browserChild.on('exit', () => { browserChild = null; browserSession = null })
+      // POSIX 下 detached 让子进程自成一组：stopBrowser 用 kill(-pid) 才能把 npx/playwright-mcp/Edge
+      // 一起带走。终端 Ctrl+C 的 SIGINT 由执行器自己的钩子处理，不依赖子进程同组。
+      { stdio: ['ignore', 'ignore', 'inherit'], detached: process.platform !== 'win32' })
+    browserChild.on('exit', () => {
+      browserChild = null
+      browserSession = null
+      browserBase = null
+      if (browserIdleTimer) { clearTimeout(browserIdleTimer); browserIdleTimer = null }
+    })
   }
   // 等它起来（首次 npx 要下载包，给足时间）
   const deadline = Date.now() + 90000
@@ -2046,6 +2089,7 @@ async function opBrowser (args) {
   const tool = String(args.tool || '')
   if (!tool.startsWith('browser_')) throw err('E_BROWSER_TOOL', '未知的浏览器工具：' + tool)
   const sid = await ensureBrowser()
+  armBrowserIdleClose()
   const out = await mcpRpc({ jsonrpc: '2.0', id: Date.now() % 100000, method: 'tools/call',
     params: { name: tool, arguments: args.args || {} } }, sid)
   const result = out.json && out.json.result
