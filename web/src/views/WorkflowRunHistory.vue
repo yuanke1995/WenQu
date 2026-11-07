@@ -68,26 +68,50 @@
         <div class="wf-block"><div class="wf-block-label">入参</div><pre class="wf-pre">{{ pretty(detail.inputs) }}</pre></div>
         <div class="wf-block"><div class="wf-block-label">出参</div><pre class="wf-pre">{{ pretty(detail.outputs) }}</pre></div>
         <div class="wf-block">
-          <div class="wf-block-label">节点 trace（{{ traces.length }}）</div>
-          <!-- 时间线式排布：左轨圆点按状态着色，执行顺序一眼可读 -->
-          <div class="wf-timeline">
-            <div v-for="(t, i) in traces" :key="i" class="wf-tl-item">
-              <div class="wf-tl-rail">
-                <span class="wf-tl-dot" :class="'td-' + t.status" />
-                <span v-if="i < traces.length - 1" class="wf-tl-line" />
+          <div class="wf-block-label wf-trace-label">节点 trace（{{ traces.length }}）<span v-if="hasParallel" class="wf-par-hint">· {{ traceGroups.filter(g => g.parallel).length }} 段并行</span>
+            <button v-if="ganttReady" class="wf-gantt-toggle" @click="ganttOpen = !ganttShown">{{ ganttShown ? '收起时间轴' : '时间轴' }}</button>
+          </div>
+          <!-- 甘特时间轴：每节点一条状态色横杠按 [startMs, startMs+elapsedMs] 定位，并行一目了然（点击滚到下方条目） -->
+          <div v-if="ganttShown" class="wf-gantt">
+            <div class="wf-gantt-scale">
+              <span v-for="(tk, k) in ganttTicks" :key="k" class="wf-gantt-tick" :style="{ left: tk.pct + '%' }">{{ tk.label }}</span>
+            </div>
+            <div class="wf-gantt-lanes">
+              <div class="wf-gantt-grid">
+                <span v-for="(tk, k) in ganttTicks" :key="k" class="wf-gantt-vline" :style="{ left: tk.pct + '%' }" />
               </div>
-              <div class="wf-tl-body">
-                <div class="wf-tl-head" @click="t._open = !t._open">
-                  <span class="wf-trace-name">{{ t.nodeId }}<span class="wf-meta">（{{ t.type }}）</span></span>
-                  <a-tag :color="runColor(t.status)" class="wf-tl-tag">{{ runLabel(t.status) }}</a-tag>
-                  <span class="wf-meta">{{ t.elapsedMs != null ? t.elapsedMs + ' ms' : '' }}</span>
-                  <span v-if="t.completionTokens != null" class="wf-meta">out {{ t.completionTokens }} tok</span>
-                  <span class="wf-trace-toggle">{{ t._open ? '收起' : '展开' }}</span>
+              <div v-for="w in windows" :key="w.i" class="wf-gantt-row" @click="jumpToTrace(w.i)">
+                <span class="wf-gantt-name" :title="w.t.nodeId">{{ w.t.nodeId }}</span>
+                <div class="wf-gantt-lane">
+                  <span class="wf-gantt-bar" :class="'gb-' + w.t.status"
+                        :style="{ left: (w.start / ganttTotal * 100) + '%', width: Math.max(0.6, (w.end - w.start) / ganttTotal * 100) + '%' }"
+                        :title="w.t.nodeId + ' · ' + runLabel(w.t.status) + ' · ' + (w.t.elapsedMs != null ? w.t.elapsedMs : 0) + 'ms'" />
                 </div>
-                <div v-if="t.error" class="wf-run-err">{{ t.error }}</div>
-                <div v-if="t._open" class="wf-trace-body">
-                  <div v-if="t.input" class="wf-block"><div class="wf-block-label">输入</div><pre class="wf-pre">{{ pretty(JSON.stringify(t.input)) }}</pre></div>
-                  <div v-if="t.output" class="wf-block"><div class="wf-block-label">输出</div><pre class="wf-pre">{{ pretty(JSON.stringify(t.output)) }}</pre></div>
+              </div>
+            </div>
+          </div>
+          <!-- 线性列表（完成序）：窗口相交的相邻段套「⫴ 并行 ×N」括线 -->
+          <div class="wf-timeline">
+            <div v-for="(g, gi) in traceGroups" :key="gi" class="wf-tl-group" :class="{ 'wf-tl-par': g.parallel }">
+              <div v-if="g.parallel" class="wf-tl-par-label">⫴ 并行 ×{{ g.items.length }} · 重叠 {{ fmtMs(g.overlap) }}</div>
+              <div v-for="w in g.items" :key="w.i" class="wf-tl-item" :id="'tl-' + w.i">
+                <div class="wf-tl-rail">
+                  <span class="wf-tl-dot" :class="'td-' + w.t.status" />
+                  <span v-if="w.i < traces.length - 1" class="wf-tl-line" />
+                </div>
+                <div class="wf-tl-body">
+                  <div class="wf-tl-head" @click="w.t._open = !w.t._open">
+                    <span class="wf-trace-name">{{ w.t.nodeId }}<span class="wf-meta">（{{ w.t.type }}）</span></span>
+                    <a-tag :color="runColor(w.t.status)" class="wf-tl-tag">{{ runLabel(w.t.status) }}</a-tag>
+                    <span class="wf-meta">{{ w.t.elapsedMs != null ? w.t.elapsedMs + ' ms' : '' }}</span>
+                    <span v-if="w.t.completionTokens != null" class="wf-meta">out {{ w.t.completionTokens }} tok</span>
+                    <span class="wf-trace-toggle">{{ w.t._open ? '收起' : '展开' }}</span>
+                  </div>
+                  <div v-if="w.t.error" class="wf-run-err">{{ w.t.error }}</div>
+                  <div v-if="w.t._open" class="wf-trace-body">
+                    <div v-if="w.t.input" class="wf-block"><div class="wf-block-label">输入</div><pre class="wf-pre">{{ pretty(JSON.stringify(w.t.input)) }}</pre></div>
+                    <div v-if="w.t.output" class="wf-block"><div class="wf-block-label">输出</div><pre class="wf-pre">{{ pretty(JSON.stringify(w.t.output)) }}</pre></div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -247,6 +271,64 @@ const canResume = computed(() =>
   && (detail.value.status === 'failed' || detail.value.status === 'timeout')
   && !!detail.value.stateSnapshot)
 
+// ---- 第 4 期：并行可视化（甘特时间轴 + 线性列表并行分组标） ----
+/** trace 时间窗 [startMs, startMs+elapsedMs]：startMs 齐全才可重建（老数据优雅降级为纯列表） */
+const windows = computed(() => traces.value.map((t, i) => ({
+  i, t,
+  start: Number.isFinite(t.startMs) ? t.startMs : null,
+  end: Number.isFinite(t.startMs) && t.elapsedMs != null ? t.startMs + t.elapsedMs : null
+})))
+const ganttReady = computed(() => traces.value.length > 0 && windows.value.every(w => w.start != null))
+/** 有并行段（完成序相邻的窗口相交）时甘特默认展开 */
+const hasParallel = computed(() => {
+  if (!ganttReady.value) return false
+  for (let k = 1; k < windows.value.length; k++) {
+    const a = windows.value[k - 1], b = windows.value[k]
+    if (b.start < a.end && a.start < b.end) return true
+  }
+  return false
+})
+const ganttOpen = ref(null)   // null=跟随默认（有并行段展开）；手动切换后以手动为准
+const ganttShown = computed(() => (ganttOpen.value === null ? hasParallel.value : ganttOpen.value))
+/** 时间轴总长：max(节点窗末, run 总耗时)，至少 1ms 兜底 */
+const ganttTotal = computed(() => Math.max(1, ...windows.value.map(w => w.end || 0), (detail.value && detail.value.durationMs) || 0))
+/** 刻度（4 段均分） */
+const ganttTicks = computed(() => {
+  const total = ganttTotal.value
+  return [0, 0.25, 0.5, 0.75, 1].map(f => ({ pct: f * 100, label: fmtMs(Math.round(f * total)) }))
+})
+/**
+ * 线性列表并行分组：按完成序把窗口相交的相邻 trace 归为一组（段内 ≥2 套「并行 ×N」括线）。
+ * 瞬时节点（elapsed=0）与任何窗口都不相交，天然不会被算进并行段。
+ */
+const traceGroups = computed(() => {
+  if (!ganttReady.value) return windows.value.map(w => ({ items: [w], parallel: false }))
+  const groups = []
+  let cur = null
+  for (const w of windows.value) {
+    if (cur && w.start < cur.end && cur.start < w.end) {
+      cur.items.push(w)
+      cur.end = Math.max(cur.end, w.end)
+      cur.start = Math.min(cur.start, w.start)
+    } else {
+      cur = { items: [w], start: w.start, end: w.end }
+      groups.push(cur)
+    }
+  }
+  for (const g of groups) {
+    g.parallel = g.items.length > 1
+    // 标签里的时长取真正的重叠窗（min(end)-max(start)），不是组总窗——llm 1.7s + code 14.6s 同组时
+    // 「并行 14.6s」会误读成俩节点并跑了 14.6s，实际重叠只有 1.7s
+    g.overlap = Math.max(0, Math.min(...g.items.map(w => w.end)) - Math.max(...g.items.map(w => w.start)))
+  }
+  return groups
+})
+/** 甘特行点击 → 滚动到线性列表对应条目 */
+const jumpToTrace = idx => {
+  const el = document.getElementById('tl-' + idx)
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+}
+
 /** 从失败点续跑：接口同步返回终态 run，就地刷新（与 doApprove 同款刷新模式） */
 const doResume = async () => {
   if (!detail.value) return
@@ -334,4 +416,37 @@ watch(() => props.initialRunId, async id => {
 .wf-tl-tag { margin: 0; }
 .wf-trace-name { font-size: 13px; font-weight: 500; font-family: ui-monospace, Menlo, monospace; }
 .wf-trace-toggle { font-size: 12px; color: var(--app-accent); margin-left: auto; }
+/* 第 4 期并行可视化：甘特时间轴 + 并行分组括线 */
+.wf-trace-label { display: flex; align-items: center; gap: 8px; }
+.wf-par-hint { color: var(--app-accent); font-weight: 400; }
+.wf-gantt-toggle {
+  margin-left: auto; border: 1px solid var(--app-border); background: var(--app-bg);
+  border-radius: 5px; padding: 1px 8px; font-size: 11px; color: var(--app-text2); cursor: pointer;
+}
+.wf-gantt-toggle:hover { color: var(--app-accent); border-color: var(--app-accent); }
+.wf-gantt { position: relative; border: 1px solid var(--app-border); border-radius: 8px; padding: 6px 10px 8px 8px; margin-bottom: 12px; }
+.wf-gantt-scale { position: relative; height: 15px; margin-left: 92px; margin-right: 2px; font-size: 10px; color: var(--app-text3); }
+.wf-gantt-tick { position: absolute; transform: translateX(-50%); white-space: nowrap; }
+.wf-gantt-tick:first-child { transform: none; }
+.wf-gantt-lanes { position: relative; }
+.wf-gantt-grid { position: absolute; left: 92px; right: 2px; top: 0; bottom: 2px; pointer-events: none; }
+.wf-gantt-vline { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--app-border); opacity: .45; }
+.wf-gantt-row { display: flex; align-items: center; height: 19px; cursor: pointer; border-radius: 4px; }
+.wf-gantt-row:hover { background: var(--app-bg); }
+.wf-gantt-name {
+  width: 84px; flex: none; font-size: 11px; color: var(--app-text2);
+  font-family: ui-monospace, Menlo, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.wf-gantt-lane { position: relative; flex: 1; height: 10px; margin-right: 2px; }
+.wf-gantt-bar { position: absolute; top: 1px; height: 8px; border-radius: 4px; min-width: 3px; }
+.gb-success { background: var(--app-ok); }
+.gb-failed { background: var(--app-danger); }
+.gb-retrying, .gb-waiting { background: var(--app-warn); }
+.gb-running { background: var(--app-accent); }
+.wf-tl-par {
+  border-left: 2px dashed var(--app-accent); margin-left: 5px; padding-left: 9px;
+  background: rgba(22, 119, 255, .04); border-radius: 0 6px 6px 0;
+}
+.wf-tl-par-label { font-size: 11px; color: var(--app-accent); margin: 2px 0 6px; padding-left: 24px; }
+@media (prefers-reduced-motion: reduce) { .wf-gantt-row { scroll-behavior: auto; } }
 </style>
