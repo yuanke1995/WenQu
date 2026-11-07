@@ -88,10 +88,10 @@
              :confirm-loading="saving" :ok-text="form.id ? '保存' : '创建并签发'" cancel-text="取消" @ok="save">
       <a-form layout="vertical" style="margin-top:4px">
         <a-form-item label="名称" required>
-          <a-input v-model:value="form.name" maxlength="100" placeholder="如 报表系统 / 对账作业" />
+          <a-input v-model:value="form.name" :maxlength="100" placeholder="如 报表系统 / 对账作业" />
         </a-form-item>
         <a-form-item label="用途说明">
-          <a-input v-model:value="form.description" maxlength="255" placeholder="谁在用、出问题找谁（交接线索）" />
+          <a-input v-model:value="form.description" :maxlength="255" placeholder="谁在用、出问题找谁（交接线索）" />
         </a-form-item>
         <a-form-item v-if="!form.id" label="角色" required>
           <a-select v-model:value="form.roles" mode="multiple" style="width:100%"

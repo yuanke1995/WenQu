@@ -248,7 +248,7 @@
           </div>
         </a-form-item>
         <a-form-item label="菜单名称">
-          <a-input v-model:value="menuForm.name" maxlength="50" placeholder="如 数据看板" />
+          <a-input v-model:value="menuForm.name" :maxlength="50" placeholder="如 数据看板" />
         </a-form-item>
         <a-form-item label="路由路径">
           <a-input v-model:value="menuForm.path" placeholder="如 /dashboard（留空 = 仅作分组节点）" />
@@ -294,10 +294,10 @@
           <div v-if="apiForm.builtin" class="form-tip">扫描登记的接口以代码为准，方法与路径不可改。</div>
         </a-form-item>
         <a-form-item label="名称">
-          <a-input v-model:value="apiForm.name" maxlength="100" placeholder="展示用名称（可选）" />
+          <a-input v-model:value="apiForm.name" :maxlength="100" placeholder="展示用名称（可选）" />
         </a-form-item>
         <a-form-item label="模块">
-          <a-input v-model:value="apiForm.module" maxlength="50" placeholder="如 智能体（可自定义归类）" />
+          <a-input v-model:value="apiForm.module" :maxlength="50" placeholder="如 智能体（可自定义归类）" />
         </a-form-item>
         <a-form-item label="所属菜单（可多选）">
           <a-tree-select v-model:value="apiMenuSelectValue" multiple tree-checkable :tree-check-strictly="true"
@@ -342,10 +342,10 @@
           <div class="form-tip">即用户身上的角色值（用户建档时选择）。</div>
         </a-form-item>
         <a-form-item label="角色名称">
-          <a-input v-model:value="roleForm.name" maxlength="50" placeholder="如 内容编辑" />
+          <a-input v-model:value="roleForm.name" :maxlength="50" placeholder="如 内容编辑" />
         </a-form-item>
         <a-form-item label="描述（可选）">
-          <a-input v-model:value="roleForm.description" maxlength="255" placeholder="角色说明" />
+          <a-input v-model:value="roleForm.description" :maxlength="255" placeholder="角色说明" />
         </a-form-item>
         <a-form-item label="管理员级">
           <a-switch v-model:checked="roleAdmin" :disabled="roleForm.builtin" checked-children="是" un-checked-children="否" />

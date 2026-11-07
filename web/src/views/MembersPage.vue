@@ -182,7 +182,7 @@
                    placeholder="请输入登录账号" @change="uidError = ''" />
         </a-form-item>
         <a-form-item label="用户昵称">
-          <a-input v-model:value="userForm.username" maxlength="100" placeholder="显示昵称，如 张三" />
+          <a-input v-model:value="userForm.username" :maxlength="100" placeholder="显示昵称，如 张三" />
         </a-form-item>
         <template v-if="!userForm.isEdit">
           <a-form-item label="初始密码" :validate-status="pwdError ? 'error' : ''" :help="pwdError">
@@ -360,10 +360,10 @@
                          :tree-data="deptParentTreeData" :field-names="{ label: 'name', value: 'id', children: 'children' }" />
         </a-form-item>
         <a-form-item label="部门名称">
-          <a-input v-model:value="deptForm.name" maxlength="100" placeholder="如 研发部" />
+          <a-input v-model:value="deptForm.name" :maxlength="100" placeholder="如 研发部" />
         </a-form-item>
         <a-form-item label="描述（可选）">
-          <a-input v-model:value="deptForm.description" maxlength="255" placeholder="部门说明" />
+          <a-input v-model:value="deptForm.description" :maxlength="255" placeholder="部门说明" />
         </a-form-item>
       </a-form>
     </a-modal>

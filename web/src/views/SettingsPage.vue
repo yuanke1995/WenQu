@@ -1623,7 +1623,7 @@ onMounted(() => { fetchAndFill(); loadToolInventory(); loadSkillOptions() })
 .set-nav-item.active .set-nav-count { background: #fff; }
 .set-content { flex: 1; min-width: 0; overflow-y: auto; padding: 14px 20px 24px; }
 /* 顶部统计带：本页一共多少项、默认露出多少、收起多少（含比例条） */
-.tier-stat { display: flex; align-items: center; gap: 12px; margin: 0 20px 12px; padding: 9px 13px;
+.tier-stat { display: flex; align-items: center; gap: 12px; margin: 12px 20px; padding: 9px 13px;
   background: var(--app-card); border: 1px solid var(--app-border); border-radius: 10px; font-size: 12px; }
 .tier-stat-main { color: var(--app-text2); }
 .tier-stat-main b { font-size: 15px; color: var(--app-text); }

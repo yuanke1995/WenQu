@@ -327,7 +327,7 @@
     <!-- 知识块编辑弹窗：Markdown 工具栏快捷插入 + 左写右看实时预览 + [图片N] 点选插入 + 未保存关闭提醒（与旧版同功能） -->
     <a-modal :open="kbEditVisible" title="编辑知识块" :footer="null" :width="900" :keyboard="!kbImgUrl" @cancel="closeKbEdit">
       <a-form layout="vertical">
-        <a-form-item label="标题"><a-input v-model:value="kbEditForm.title" maxlength="200" placeholder="知识块标题" /></a-form-item>
+        <a-form-item label="标题"><a-input v-model:value="kbEditForm.title" :maxlength="200" placeholder="知识块标题" /></a-form-item>
         <a-form-item label="内容">
           <div class="kb-md-bar">
             <a-space :size="2" wrap>
