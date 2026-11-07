@@ -984,6 +984,8 @@ public class ConfigService {
         // 的读取点随 SubAgentOrchestrator 一起归零——见本方法上方那段「已退役」清单的统一说明。
         d.put("agent.consultMaxPerTurn", String.valueOf(ConfigDefaults.AGENT_CONSULT_MAX_PER_TURN));   // 一轮最多咨询几位助手
         d.put("agent.consultTimeoutMs", String.valueOf(ConfigDefaults.AGENT_CONSULT_TIMEOUT_MS));      // 单次咨询等那条子轮的上限
+        d.put("agent.spawnForceSync", String.valueOf(ConfigDefaults.AGENT_SPAWN_FORCE_SYNC));           // 派遣子助手时父轮同步等它跑完（含人批卡那段）；关掉就等于把审批卡丢给没人接的异步
+        d.put("agent.spawnSyncTimeoutSeconds", String.valueOf(ConfigDefaults.AGENT_SPAWN_SYNC_TIMEOUT_SECONDS)); // 上面那档的等待秒数；0=自动 max(咨询预算, 审批预算)+60s，夹 [60,600]
         // tool.subagentConsult.enabled 已退役：派遣随工具总闸启用，平台级收口走 tool.deny（按工具名 agent_spawn）。
         // 智能体配置版本快照保留份数（超出按版本号最小先删）；设置页挂在「定时任务 → 智能体配置版本」
         d.put("agent.versionKeep", "20");

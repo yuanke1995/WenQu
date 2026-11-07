@@ -330,7 +330,8 @@ public class FrameworkSessions {
                 .sessionId(cmd.getSessionId());
         // 子助手强制同步等待：父轮要等到人的审批答复，而不是模型填的 30s 就转异步、结果没人接。
         // 超时时框架会调 WenquConsultSubagent.interrupt()，那一支会被真正 stopTurn 收口。
-        if (configService.getBoolean("agent.spawnForceSync", true)) {
+        if (configService.getBoolean("agent.spawnForceSync",
+                com.wenqu.ai.config.ConfigDefaults.AGENT_SPAWN_FORCE_SYNC)) {
             int syncSeconds = com.wenqu.ai.agent.subagent.SubAgentBranchRuntime.spawnSyncTimeoutSeconds(configService);
             ctxBuilder.put("agentscope.subagent.force_sync", Boolean.TRUE);
             ctxBuilder.put("agentscope.subagent.force_sync_timeout_seconds", syncSeconds);

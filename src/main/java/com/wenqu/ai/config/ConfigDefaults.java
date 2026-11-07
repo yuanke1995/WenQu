@@ -71,6 +71,17 @@ public final class ConfigDefaults {
     public static final int AGENT_CONSULT_MAX_PER_TURN = 3;
     /** agent.consultTimeoutMs：单次咨询要等那条子轮跑完的上限（超时按失败回报，不拖垮父轮） */
     public static final int AGENT_CONSULT_TIMEOUT_MS = 300_000;
+    /**
+     * agent.spawnForceSync：派遣子助手时父轮是否<b>同步</b>等它跑完（含人批卡的那段）。
+     * <p>关掉的后果不是快，而是那张要人批的卡没人接：框架几十秒就把这一支转成异步，
+     * 父轮继续往下走、异步回报又没人取，2026-11-06 线上那 5 分钟「正在溯源」就是这个形状。
+     */
+    public static final boolean AGENT_SPAWN_FORCE_SYNC = true;
+    /**
+     * agent.spawnSyncTimeoutSeconds：强制同步等待的秒数；0=自动，取
+     * {@code max(agent.consultTimeoutMs, chat.approvalTimeoutMs)/1000 + 60}，夹在 [60, 600]（框架上限）。
+     */
+    public static final int AGENT_SPAWN_SYNC_TIMEOUT_SECONDS = 0;
 
     // ---- 长期记忆 ----
 
