@@ -42,8 +42,8 @@
         :selectable="selectMode"
         :selected="selected"
         grouped
-        empty-title="还没有通知"
-        empty-desc="有新动静时会出现在这里。"
+        :empty-title="tab === 'action' ? '没有待处理的通知' : '还没有通知'"
+        :empty-desc="tab === 'action' ? '需要你处理的审批、提问或计划确认会出现在这里。' : '有新动静时会出现在这里。'"
         @open="openNotif"
         @toggle-select="toggleSelect"
         @mark-unread="markUnread"
@@ -71,14 +71,16 @@ const router = useRouter()
 const { items, loading, error, unreadCount, loadList, markRead, markAllRead, markUnread,
   markManyRead, remove, removeMany } = inject('wqNotif')
 
-const tab = ref('all')
+// 默认待处理；如果没有真正待处理的条目，打开时自动落到全部
+const tab = ref('action')
 const selectMode = ref(false)
 const selected = ref([])
 
-const actionCount = computed(() => items.value.filter(n => notifBucket(n.type) === 'action').length)
+const isPendingAction = n => notifBucket(n.type) === 'action' && n.actionable !== false
+const actionCount = computed(() => items.value.filter(isPendingAction).length)
 const visibleItems = computed(() => tab.value === 'all'
   ? items.value
-  : items.value.filter(n => notifBucket(n.type) === 'action'))
+  : items.value.filter(isPendingAction))
 
 // 打开即拉最新；若「待处理」为空，自动落到「全部」，避免首次打开就是空屏
 watch(() => props.open, async v => {

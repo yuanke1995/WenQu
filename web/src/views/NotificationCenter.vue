@@ -141,7 +141,8 @@ import NotificationList from '../components/notification/NotificationList.vue'
 const router = useRouter()
 
 // ==================== 筛选状态 ====================
-const bucket = ref('all')
+// 默认落在「待处理」：先回答有没有要我做的事，再看全部
+const bucket = ref('action')
 const typeFilter = ref('')
 const unreadOnly = ref(false)
 const keyword = ref('')
@@ -168,15 +169,17 @@ const bucketCounts = computed(() => {
   }
   return out
 })
-const bucketTabs = computed(() => [
-  ...NOTIF_BUCKET_ORDER.map(key => ({
+// 页签顺序：待处理 → 全部 → 异常 → 完成（待处理与全部相邻，默认停在待处理）
+const bucketTabs = computed(() => {
+  const tabOf = key => ({
     key,
     label: NOTIF_BUCKETS[key].label,
     tone: NOTIF_BUCKETS[key].tone,
     count: bucketCounts.value[key] || 0
-  })),
-  { key: 'all', label: '全部', tone: '', count: 0 }
-])
+  })
+  const others = NOTIF_BUCKET_ORDER.filter(k => k !== 'action').map(tabOf)
+  return [tabOf('action'), { key: 'all', label: '全部', tone: '', count: 0 }, ...others]
+})
 
 const typeOptions = computed(() => [
   { value: '', label: '全部类型' },

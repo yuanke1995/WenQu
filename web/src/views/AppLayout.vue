@@ -391,13 +391,13 @@
                 </div>
               </div>
               <div class="notif-tabs" role="tablist" aria-label="通知范围">
-                <button class="notif-tab" :class="{ on: notifTab === 'all' }" type="button"
-                        role="tab" :aria-selected="notifTab === 'all'" @click="notifTab = 'all'">
-                  全部
-                </button>
                 <button class="notif-tab" :class="{ on: notifTab === 'action' }" type="button"
                         role="tab" :aria-selected="notifTab === 'action'" @click="notifTab = 'action'">
                   待处理 <span v-if="notifActionCount" class="notif-tab-b">{{ notifActionCount }}</span>
+                </button>
+                <button class="notif-tab" :class="{ on: notifTab === 'all' }" type="button"
+                        role="tab" :aria-selected="notifTab === 'all'" @click="notifTab = 'all'">
+                  全部
                 </button>
               </div>
               <div class="notif-list">
@@ -406,8 +406,8 @@
                   variant="popover"
                   :loading="notifLoading"
                   :error="notifError"
-                  empty-title="还没有通知"
-                  empty-desc="有新动静时会出现在这里。"
+                  :empty-title="notifTab === 'action' ? '没有待处理的通知' : '还没有通知'"
+                  :empty-desc="notifTab === 'action' ? '需要你处理的审批、提问或计划确认会出现在这里。' : '有新动静时会出现在这里。'"
                   @open="openNotif"
                   @mark-unread="markNotifUnread"
                   @delete="deleteNotif"
@@ -1581,7 +1581,8 @@ const doLogout = async () => {
 // src/chat/useNotifications.js（后端触发面见该文件注释）；本页只管呈现（popover）
 // 与「点开跳哪」的路由语义——移动壳跳 /m/chat，两端落点不同、读状态口径必须相同。
 const notifOpen = ref(false)
-const notifTab = ref('all')
+// 默认落在「待处理」：先回答有没有要我做的事，再看全部
+const notifTab = ref('action')
 const notif = useNotifications()
 const { items: notifItems, loading: notifLoading, unreadCount, error: notifError,
         loadList: loadNotifs, markRead, markAllRead: markAllReadApi, markUnread, remove } = notif
@@ -1590,10 +1591,12 @@ const onNotifOpen = open => { if (open) loadNotifs() }
 // 会造出两份未读数，角标与列表会各说各话（与移动壳 provide 给 MobileNotifSheet 同口径）
 provide('wqNotif', notif)
 const markAllRead = () => markAllReadApi()
-const notifActionCount = computed(() => notifItems.value.filter(n => notifBucket(n.type) === 'action').length)
+// 「待处理」只算还真的在等人的：actionable=false 的已处理项留在「全部」里做历史
+const isPendingAction = n => notifBucket(n.type) === 'action' && n.actionable !== false
+const notifActionCount = computed(() => notifItems.value.filter(isPendingAction).length)
 const notifVisibleItems = computed(() => notifTab.value === 'all'
   ? notifItems.value
-  : notifItems.value.filter(n => notifBucket(n.type) === 'action'))
+  : notifItems.value.filter(isPendingAction))
 const markNotifUnread = n => markUnread(n)
 const deleteNotif = n => remove(n)
 // 点击通知：置已读（乐观更新，失败回滚在共用单元里），再按共享深链跳转
