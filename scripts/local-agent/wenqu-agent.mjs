@@ -34,7 +34,7 @@ import os from 'node:os'
 import path from 'node:path'
 import readline from 'node:readline'
 import { createHash } from 'node:crypto'
-import { spawn, execFile } from 'node:child_process'
+import { spawn, execFile, spawnSync } from 'node:child_process'
 import net from 'node:net'
 
 const argv = process.argv.slice(2)
@@ -169,7 +169,7 @@ function releaseSingleInstanceLock () {
 
 function acquireSingleInstanceLock () {
   const file = lockPathOf(SERVER)
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const fd = fs.openSync(file, 'wx', 0o600)
       try {
@@ -190,9 +190,31 @@ function acquireSingleInstanceLock () {
       if (pid) {
         try { process.kill(pid, 0); alive = true } catch (err) { alive = err.code === 'EPERM' }
       }
-      if (alive) {
-        log(`同一个服务器已有一个执行器在运行（pid=${pid}），本进程退出。`)
-        process.exit(4)
+      if (alive && pid !== process.pid) {
+        // 接管而非退出：否则代码更新后重启 dev 永远加载不到新代码（旧的占着锁）。
+        // 只停「确认是同 server 执行器」的进程；PID 被复用成无关进程时宁可退出也不误杀。
+        let cmdline = ''
+        try { cmdline = String(spawnSync('ps', ['-p', String(pid), '-o', 'args=']).stdout || '') } catch { /* 无 ps */ }
+        const sameAgent = cmdline.includes('wenqu-agent.mjs') && cmdline.includes(SERVER)
+        if (!sameAgent) {
+          log(`锁被一个无法确认的进程占用（pid=${pid}），本进程退出以免误杀。`)
+          process.exit(4)
+        }
+        log(`接管：停止同 server 的旧执行器 pid=${pid}，加载新代码。`)
+        try { process.kill(pid, 'SIGTERM') } catch { /* 已退出 */ }
+        const waitUntil = Date.now() + 5000
+        while (Date.now() < waitUntil) {
+          let still = true
+          try { process.kill(pid, 0) } catch { still = false }
+          if (!still) break
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 200)
+        }
+        let stillAlive = true
+        try { process.kill(pid, 0) } catch { stillAlive = false }
+        if (stillAlive) {
+          log(`旧执行器 pid=${pid} 未在时限内退出，本进程退出。`)
+          process.exit(4)
+        }
       }
       try { fs.unlinkSync(file) } catch { /* 已被别的进程清掉 */ }
     }
