@@ -18,6 +18,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -334,22 +335,48 @@ public class NotificationService {
             }
         }
 
+        List<String> autoReadIds = new ArrayList<>();
         for (Notification n : rows) {
             if (n == null) continue;
             String type = n.getType();
+            boolean resolvedAction = false;
             if (Notification.TYPE_TOOL_APPROVAL.equals(type)
                     || Notification.TYPE_TOOL_ASK.equals(type)
                     || Notification.TYPE_PLAN_APPROVAL.equals(type)) {
                 // 找不到记录 = 已被清理/不存在，同样不再让人「去处理」
-                n.setActionable("PENDING".equals(toolStatus.get(n.getRefSub())));
+                boolean act = "PENDING".equals(toolStatus.get(n.getRefSub()));
+                n.setActionable(act);
+                resolvedAction = !act;
             } else if (Notification.TYPE_WORKFLOW_APPROVAL.equals(type)) {
-                n.setActionable("waiting_approval".equals(runStatus.get(n.getRefSub())));
+                boolean act = "waiting_approval".equals(runStatus.get(n.getRefSub()));
+                n.setActionable(act);
+                resolvedAction = !act;
             } else if (Notification.TYPE_TENANT_REQUEST.equals(type)) {
-                n.setActionable("pending".equals(requestStatus.get(n.getRefId())));
+                boolean act = "pending".equals(requestStatus.get(n.getRefId()));
+                n.setActionable(act);
+                resolvedAction = !act;
             } else if (Notification.TYPE_MODEL_QUOTA.equals(type)
                     || Notification.TYPE_USAGE_QUOTA.equals(type)) {
                 // 配额类没有可查的「已处理」表：保留到用户手动清理
                 n.setActionable(true);
+            }
+            // 已经处理完的待办不再需要「未读」提醒：顺手置已读，未读角标与待处理桶一起收敛
+            if (resolvedAction && (n.getReadFlag() == null || n.getReadFlag() == 0)) {
+                n.setReadFlag(1);
+                n.setReadTime(LocalDateTime.now());
+                autoReadIds.add(n.getId());
+            }
+        }
+        if (!autoReadIds.isEmpty()) {
+            try {
+                notificationMapper.update(null, new LambdaUpdateWrapper<Notification>()
+                        .in(Notification::getId, autoReadIds)
+                        .eq(Notification::getReadFlag, 0)
+                        .set(Notification::getReadFlag, 1)
+                        .set(Notification::getReadTime, LocalDateTime.now()));
+            } catch (Exception e) {
+                // 自动归档失败不影响列表本身：本次返回仍按已处理展示，下次再试
+                log.warn("[NOTIFY] 已处理通知自动置已读失败 count={}: {}", autoReadIds.size(), e.getMessage());
             }
         }
     }
