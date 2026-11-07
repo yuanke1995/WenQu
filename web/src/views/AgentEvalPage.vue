@@ -74,7 +74,8 @@
               <a-table-column title="智能体" :width="230" key="name">
                 <template #default="{ record }">
                   <span class="agent-cell">
-                    <AgentAvatar :agent="record" :size="22" />
+                    <!-- 评测 summary 行的图标字段叫 agentIcon，AgentAvatar 读 icon——调用侧对齐字段名 -->
+                    <AgentAvatar :agent="{ icon: record.agentIcon, isBuiltin: record.isBuiltin }" :size="22" />
                     <span class="agent-name">{{ record.agentName }}</span>
                     <span class="agent-sub">v{{ record.agentVersion ?? '—' }}{{ record.isBuiltin === 1 ? ' · 内置' : '' }}</span>
                   </span>
@@ -184,7 +185,7 @@
         <span>{{ agentRow?.agentName || currentAgentId }}</span>
       </div>
       <div class="detail-head">
-        <AgentAvatar :agent="agentRow" :size="38" />
+        <AgentAvatar :agent="{ icon: agentRow?.agentIcon, isBuiltin: agentRow?.isBuiltin }" :size="38" />
         <div class="dh-main">
           <div class="dh-title">{{ agentRow?.agentName || currentAgentId }}
             <span class="pill plain mini">v{{ agentRow?.agentVersion ?? gate?.agentVersion ?? '—' }}</span>
@@ -455,7 +456,7 @@
       <div class="pick-list">
         <div v-if="!unevaluatedAgents.length" class="empty-line">所有可见智能体都已建立评测集</div>
         <div v-for="a in unevaluatedAgents" :key="a.agentId" class="pick-row" @click="openAgent(a.agentId, 'suite')">
-          <AgentAvatar :agent="a" :size="22" />
+          <AgentAvatar :agent="{ icon: a.agentIcon, isBuiltin: a.isBuiltin }" :size="22" />
           <span class="agent-name">{{ a.agentName }}</span>
           <span class="sp"></span>
           <right-outlined class="ic" />
