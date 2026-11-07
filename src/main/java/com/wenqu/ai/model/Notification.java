@@ -111,4 +111,10 @@ public class Notification {
     public static final String TYPE_GOAL_FAILED = "goal.failed";
     /** 系统巡检发现必须处理的问题（收件人为管理员级账号；按巡检项去重，恢复后不再重复提醒） */
     public static final String TYPE_OPS_ALERT = "ops.alert";
+    /** 新的租户开通申请（收件人为平台级管理员，需要批准或驳回） */
+    public static final String TYPE_TENANT_REQUEST = "tenant.request";
+    /** 租户已开通（给管理员的结果回执，不需要再处理） */
+    public static final String TYPE_TENANT_APPROVED = "tenant.approved";
+    /** 用量配额/预算触顶（收件人为管理员；quota 为存量类型值，不改名以免历史行失联） */
+    public static final String TYPE_USAGE_QUOTA = "quota";
 }

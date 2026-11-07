@@ -1993,19 +1993,24 @@ export const graphSearchEntity = (kbId, q) => request(`/graph/${kbId}/search?q=$
 export const graphChunk = (kbId, chunkId) => request(`/graph/${kbId}/chunk/${chunkId}`)
 
 // ---------- 站内通知（铃铛；解析/工作流/网页源刷新等异步事件的用户可感知面） ----------
-// list 支持筛选/游标分页：{limit, type, unreadOnly, cursor}；返回 {items,nextCursor,hasMore,total,unreadCount}
-export const notificationList = ({ limit = 50, type, unreadOnly, cursor = 0 } = {}) => {
-  const q = new URLSearchParams()
-  q.set('limit', String(limit))
-  if (type) q.set('type', type)
-  if (unreadOnly) q.set('unreadOnly', 'true')
-  if (cursor) q.set('cursor', String(cursor))
-  return request(`/notification/list?${q.toString()}`)
+// list 支持筛选/搜索/游标分页：{limit, type, types, q, unreadOnly, cursor}
+// 返回 {items,nextCursor,hasMore,total,unreadCount}；types 为数组，后端按逗号串解析。
+export const notificationList = ({ limit = 50, type, types, q, unreadOnly, cursor = 0 } = {}) => {
+  const params = new URLSearchParams()
+  params.set('limit', String(limit))
+  if (type) params.set('type', type)
+  if (Array.isArray(types) && types.length) params.set('types', types.join(','))
+  if (q) params.set('q', q)
+  if (unreadOnly) params.set('unreadOnly', 'true')
+  if (cursor) params.set('cursor', String(cursor))
+  return request(`/notification/list?${params.toString()}`)
 }
 export const notificationUnreadCount = () => request('/notification/unread-count')
 export const notificationCounts = () => request('/notification/counts')
 export const notificationMarkRead = ids => request('/notification/read', { method: 'POST', body: JSON.stringify({ ids }) })
 export const notificationMarkAllRead = () => request('/notification/read-all', { method: 'POST' })
+// 标记未读：只把属于自己的已读通知改回未读
+export const notificationMarkUnread = ids => request('/notification/unread', { method: 'POST', body: JSON.stringify({ ids }) })
 export const notificationDelete = ids => request('/notification/delete', { method: 'POST', body: JSON.stringify({ ids }) })
 export const notificationClear = scope => request('/notification/clear', { method: 'POST', body: JSON.stringify({ scope }) })
 export const notificationPreferences = () => request('/notification/preferences')

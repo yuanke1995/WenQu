@@ -2,263 +2,519 @@
   <div class="app-page notif-center">
     <div class="app-page-head">
       <h1 class="app-page-title">通知中心</h1>
-      <span class="head-hint-plain" title="解析/工作流/网页源刷新/定时任务/审批等异步事件的归档与处理">解析/工作流/网页源刷新/定时任务/审批等异步事件的归档与处理</span>
-      <!-- 筛选 + 操作区 -->
-      <div class="nc-tools">
-        <a-select v-model:value="typeFilter" class="nc-select" :options="typeOptions" @change="applyFilter" />
-        <a-switch v-model:checked="unreadOnly" @change="applyFilter">
-          <template #checkedChildren>仅未读</template>
-          <template #unCheckedChildren>全部</template>
-        </a-switch>
-        <button class="app-btn ghost small" :disabled="unreadCount === 0" @click="markAll">全部已读</button>
-        <a-dropdown :trigger="['click']" :disabled="!items.length">
-          <button class="app-btn ghost small">清空 <down-outlined /></button>
-          <template #overlay>
-            <a-menu>
-              <a-menu-item key="read" @click="clearRead">清空已读</a-menu-item>
-              <a-menu-item key="all" @click="clearAll">清空全部</a-menu-item>
-            </a-menu>
-          </template>
-        </a-dropdown>
-        <!-- 收哪些类、用什么方式收到，统一在「个人设置 → 通知与推送」一处管
-             （勾选类偏好不留两个入口，两边各存一份开关必然漂） -->
-        <button class="app-btn ghost small" @click="router.push('/profile?panel=notify')">
+      <span v-if="unreadCount" class="app-pill warn plain">{{ unreadCount }} 条未读</span>
+      <span class="head-hint-plain" title="解析、工作流、网页源刷新、定时任务、审批等异步事件的归档与处理">
+        解析、工作流、网页源刷新、定时任务、审批等异步事件都在这里
+      </span>
+      <div class="nc-head-acts">
+        <button v-if="unreadCount > 0" class="app-btn ghost small" type="button" @click="markAll">
+          全部已读
+        </button>
+        <button class="app-btn ghost small" type="button" @click="goSettings">
           <setting-outlined /> 通知与推送设置
         </button>
       </div>
     </div>
 
-    <!-- 批量操作栏：有勾选即出现（点勾选命中区进入，见 .nc-check） -->
-    <div v-if="selected.length" class="nc-batch">
-      <span class="nc-batch-count">已选 {{ selected.length }} 条：</span>
-      <button class="app-btn ghost small" @click="markRead([...selected])">标记已读</button>
-      <a-popconfirm title="确定删除选中的通知？" ok-text="删除" cancel-text="取消" @confirm="deleteSelected">
-        <button class="app-btn ghost small nc-danger">删除</button>
-      </a-popconfirm>
-      <button class="app-link-btn" @click="selected = []">取消选择</button>
-    </div>
-
     <div class="app-page-body">
-      <a-spin :spinning="loading">
-        <div v-if="!items.length && !loading" class="nc-empty">
-          <bell-outlined class="nc-empty-ic" />
-          <p>{{ typeFilter || unreadOnly ? '当前筛选下没有通知' : '还没有通知' }}</p>
+      <!-- 吸顶工具条：桶页签 + 搜索 + 类型 + 仅未读 + 批量入口 + 清空 -->
+      <div class="nc-toolbar">
+        <div class="nc-tabs" role="tablist" aria-label="通知分类">
+          <button
+            v-for="tab in bucketTabs"
+            :key="tab.key"
+            class="nc-tab"
+            :class="{ on: bucket === tab.key }"
+            type="button"
+            role="tab"
+            :aria-selected="bucket === tab.key"
+            @click="onBucket(tab.key)"
+          >
+            {{ tab.label }}
+            <span v-if="tab.count" class="nc-tab-badge" :class="tab.tone">{{ tab.count }}</span>
+          </button>
         </div>
-        <template v-else>
-          <div v-for="n in items" :key="n.id" class="nc-item" :class="{ unread: !n.readFlag }"
-               @click="openRow(n, $event)">
-            <a-checkbox class="nc-check" :checked="selected.includes(n.id)" @change="e => toggleSelect(n.id, e.target.checked)" />
-            <component :is="iconOf(n.type)" class="nc-ic" :class="toneOf(n.type)" />
-            <div class="nc-body">
-              <div class="nc-row1">
-                <span class="nc-title">{{ n.title }}</span>
-                <span v-if="n.hitCount > 1" class="nc-hit">×{{ n.hitCount }}</span>
-                <span v-if="!n.readFlag" class="nc-dot" />
-              </div>
-              <div v-if="n.content" class="nc-content">{{ n.content }}</div>
-              <div class="nc-meta">
-                <span class="nc-type">{{ labelOf(n.type) }}</span>
-                <span>{{ fmt(n.createTime) }}</span>
-                <span v-if="navOf(n)" class="nc-link">查看详情 ›</span>
-              </div>
-            </div>
-            <button class="nc-del" title="删除" @click.stop="remove([n.id])"><delete-outlined /></button>
-          </div>
-          <div v-if="hasMore" class="nc-more">
-            <button class="app-btn ghost small" :disabled="loading" @click="loadMore">加载更多</button>
-          </div>
-          <div v-else-if="items.length" class="nc-foot-meta">共 {{ total }} 条</div>
+
+        <div class="nc-tools">
+          <a-input
+            v-model:value="keyword"
+            class="nc-search"
+            placeholder="搜索通知内容"
+            allow-clear
+          >
+            <template #prefix><search-outlined /></template>
+          </a-input>
+          <span class="nc-switch">
+            <a-switch v-model:checked="unreadOnly" size="small" @change="load" />
+            <span>仅未读</span>
+          </span>
+          <a-select
+            v-model:value="typeFilter"
+            class="nc-select"
+            :options="typeOptions"
+            @change="onType"
+          />
+          <button class="app-btn ghost small" :class="{ 'nc-on': selectMode }" type="button"
+                  @click="toggleSelectMode">
+            {{ selectMode ? '退出选择' : '选择' }}
+          </button>
+          <a-dropdown :trigger="['click']">
+            <button class="app-btn ghost small" type="button" :disabled="!items.length">
+              清空 <down-outlined />
+            </button>
+            <template #overlay>
+              <a-menu>
+                <a-menu-item key="read" @click="confirmClear('read')">清空已读</a-menu-item>
+                <a-menu-item key="all" @click="confirmClear('all')">清空全部</a-menu-item>
+              </a-menu>
+            </template>
+          </a-dropdown>
+        </div>
+      </div>
+
+      <!-- 筛选摘要：每个条件可单独清除 -->
+      <div v-if="filterChips.length" class="nc-filterrow">
+        <button v-for="chip in filterChips" :key="chip.key" class="nc-fchip" type="button"
+                @click="chip.clear">
+          {{ chip.label }} <span class="nc-fchip-x">×</span>
+        </button>
+        <button class="app-link-btn" type="button" @click="resetFilters">清除全部筛选</button>
+      </div>
+
+      <!-- 批量条：与列表一起滚动，操作后清空选择 -->
+      <div v-if="selectMode" class="nc-batch">
+        <span class="nc-batch-count">已选 {{ selected.length }} 条</span>
+        <button class="app-btn ghost small" type="button" :disabled="!selected.length"
+                @click="markSelectedRead">标记已读</button>
+        <button class="app-btn ghost small nc-danger" type="button" :disabled="!selected.length"
+                @click="confirmDeleteSelected">删除</button>
+        <button class="app-btn ghost small" type="button" @click="selectAllLoaded">全选已加载</button>
+        <button class="app-link-btn" type="button" @click="selected = []">取消选择</button>
+      </div>
+
+      <NotificationList
+        :items="items"
+        variant="page"
+        :loading="loading"
+        :error="error"
+        :selectable="selectMode"
+        :selected="selected"
+        show-date-headers
+        :grouped="grouped"
+        :has-more="hasMore"
+        :total="total"
+        :empty-title="emptyTitle"
+        :empty-desc="emptyDesc"
+        @open="openRow"
+        @toggle-select="toggleSelect"
+        @mark-unread="markUnread"
+        @delete="removeOne"
+        @load-more="loadMore"
+        @retry="load"
+      >
+        <template #empty-action>
+          <button class="app-btn ghost small" type="button" @click="goSettings">
+            <setting-outlined /> 通知与推送设置
+          </button>
         </template>
-      </a-spin>
+      </NotificationList>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { message } from 'ant-design-vue'
-import { BellOutlined, DownOutlined, SettingOutlined, DeleteOutlined } from '@ant-design/icons-vue'
+import { message, Modal } from 'ant-design-vue'
+import { DownOutlined, SearchOutlined, SettingOutlined } from '@ant-design/icons-vue'
 import {
   notificationList, notificationCounts, notificationMarkRead, notificationMarkAllRead,
-  notificationDelete, notificationClear
+  notificationDelete, notificationClear, notificationMarkUnread
 } from '../api'
-import { NOTIF_TYPES } from '../chat/useNotifications'
+import {
+  NOTIF_BUCKETS, NOTIF_BUCKET_ORDER, NOTIF_TYPES, emitNotifChanged, notifBucket, notifLabel,
+  notifTarget
+} from '../chat/useNotifications'
+import NotificationList from '../components/notification/NotificationList.vue'
 
 const router = useRouter()
 
-// 类型元数据（标签/图标/语义色）在 chat/useNotifications 一份：
-// 铃铛列表、这里的筛选、个人设置里「收哪些类」三处必须同一批词，不各抄一份
-const TYPES = NOTIF_TYPES
-const META = Object.fromEntries(TYPES.map(t => [t.type, t]))
-const iconOf = t => (META[t]?.icon) || BellOutlined
-const toneOf = t => (META[t]?.tone) || ''
-const labelOf = t => (META[t]?.label) || t
-
-// 筛选下拉：全部 + 各类型（带未读角标）
+// ==================== 筛选状态 ====================
+const bucket = ref('all')
 const typeFilter = ref('')
 const unreadOnly = ref(false)
-const typeOptions = computed(() => [
-  { value: '', label: '全部类型' },
-  ...TYPES.map(t => ({
-    value: t.type,
-    label: t.label + (counts.value[t.type] ? ` (${counts.value[t.type]})` : '')
-  }))
-])
+const keyword = ref('')
+const debouncedKeyword = ref('')
+const selectMode = ref(false)
 
-// 列表状态
+// ==================== 列表状态 ====================
 const items = ref([])
 const cursor = ref(0)
 const hasMore = ref(false)
 const total = ref(0)
 const unreadCount = ref(0)
 const loading = ref(false)
+const error = ref('')
 const selected = ref([])
 const counts = ref({})
 
-const fetchPage = async (reset) => {
+// 桶页签：待处理 / 异常 / 完成 / 全部；角标只数未读（与铃铛同一口径）
+const bucketCounts = computed(() => {
+  const out = { action: 0, alert: 0, done: 0 }
+  for (const [type, n] of Object.entries(counts.value || {})) {
+    const b = notifBucket(type)
+    if (out[b] != null) out[b] += n
+  }
+  return out
+})
+const bucketTabs = computed(() => [
+  ...NOTIF_BUCKET_ORDER.map(key => ({
+    key,
+    label: NOTIF_BUCKETS[key].label,
+    tone: NOTIF_BUCKETS[key].tone,
+    count: bucketCounts.value[key] || 0
+  })),
+  { key: 'all', label: '全部', tone: '', count: 0 }
+])
+
+const typeOptions = computed(() => [
+  { value: '', label: '全部类型' },
+  ...NOTIF_TYPES.map(t => ({
+    value: t.type,
+    label: t.label + (counts.value[t.type] ? ` (${counts.value[t.type]})` : '')
+  }))
+])
+
+// 当前请求的类型集合：单类型优先；否则按桶；全部=空
+const activeTypes = computed(() => {
+  if (typeFilter.value) return [typeFilter.value]
+  if (bucket.value !== 'all') return NOTIF_BUCKETS[bucket.value].types
+  return []
+})
+
+// 搜索关键词非空时不做聚合：命中的每条都直接露出来
+const grouped = computed(() => !debouncedKeyword.value)
+
+const hasFilters = computed(() => !!(typeFilter.value || unreadOnly.value || debouncedKeyword.value))
+const filterChips = computed(() => {
+  const chips = []
+  if (debouncedKeyword.value) {
+    chips.push({
+      key: 'q', label: `搜索：${debouncedKeyword.value}`,
+      // 清空输入即由 keyword watcher 立即回拉，避免这里再 load 一次造成双请求
+      clear: () => { keyword.value = '' }
+    })
+  }
+  if (typeFilter.value) {
+    chips.push({
+      key: 'type', label: `类型：${notifLabel(typeFilter.value)}`,
+      clear: () => { typeFilter.value = ''; load() }
+    })
+  }
+  if (unreadOnly.value) {
+    chips.push({
+      key: 'unread', label: '仅未读',
+      clear: () => { unreadOnly.value = false; load() }
+    })
+  }
+  return chips
+})
+
+const emptyTitle = computed(() => {
+  if (debouncedKeyword.value) return `没有找到「${debouncedKeyword.value}」`
+  if (hasFilters.value) return '没有符合条件的通知'
+  return '还没有通知'
+})
+const emptyDesc = computed(() => {
+  if (debouncedKeyword.value || hasFilters.value) return '换个关键词，或清除筛选后再看。'
+  return '解析、工作流、定时任务或对话需要你处理时，会出现在这里。'
+})
+
+// ==================== 取数 ====================
+const fetchPage = async reset => {
   loading.value = true
+  if (reset) error.value = ''
   try {
     const r = await notificationList({
-      limit: 50, type: typeFilter.value || undefined,
+      limit: 50,
+      types: activeTypes.value,
+      q: debouncedKeyword.value || undefined,
       unreadOnly: unreadOnly.value || undefined,
       cursor: reset ? 0 : cursor.value
     })
     const body = r?.data || {}
     const rows = body.items || []
-    if (reset) { items.value = rows; cursor.value = 0 }
-    else items.value = [...items.value, ...rows]
+    if (reset) {
+      items.value = rows
+      cursor.value = 0
+    } else {
+      items.value = [...items.value, ...rows]
+    }
     hasMore.value = !!body.hasMore
     if (body.nextCursor != null) cursor.value = body.nextCursor
     total.value = body.total || 0
     unreadCount.value = body.unreadCount || 0
-    // 选中项对账：被删的 id 移除
+    error.value = ''
+    // 选中项对账：被删/被筛掉的 id 移除
     const alive = new Set(items.value.map(x => x.id))
     selected.value = selected.value.filter(id => alive.has(id))
   } catch (e) {
-    message.error('通知加载失败：' + (e.message || ''))
+    error.value = e.message || '通知加载失败'
+    if (!reset) message.error(error.value)
+    if (reset) items.value = []
   } finally {
     loading.value = false
   }
 }
 const load = () => fetchPage(true)
-const loadMore = () => fetchPage(false)
-const applyFilter = () => load()
+const loadMore = () => { if (!loading.value && hasMore.value) fetchPage(false) }
+
 const refreshCounts = async () => {
-  try { const r = await notificationCounts(); counts.value = (r?.data?.counts) || {}; unreadCount.value = r?.data?.unread || 0 }
-  catch (e) { /* 静默 */ }
+  try {
+    const r = await notificationCounts()
+    counts.value = (r?.data?.counts) || {}
+    unreadCount.value = r?.data?.unread || 0
+  } catch { /* 计数失败不打扰列表 */ }
 }
 
-const toggleSelect = (id, checked) => {
-  selected.value = checked ? [...selected.value, id] : selected.value.filter(x => x !== id)
+// 搜索防抖：300ms；清空时立即恢复
+let searchTimer = null
+const applyKeyword = () => {
+  clearTimeout(searchTimer)
+  if (!keyword.value.trim()) {
+    debouncedKeyword.value = ''
+    load()
+    return
+  }
+  searchTimer = setTimeout(() => {
+    debouncedKeyword.value = keyword.value.trim()
+    load()
+  }, 300)
 }
+watch(keyword, applyKeyword)
+
+// ==================== 筛选交互 ====================
+const onBucket = key => {
+  if (bucket.value === key && !typeFilter.value) return
+  bucket.value = key
+  typeFilter.value = '' // 桶与单类型互斥：选桶即清类型
+  load()
+}
+const onType = v => {
+  typeFilter.value = v || ''
+  if (typeFilter.value) bucket.value = 'all' // 选类型即回到全部桶
+  load()
+}
+const resetFilters = () => {
+  keyword.value = ''
+  debouncedKeyword.value = ''
+  typeFilter.value = ''
+  unreadOnly.value = false
+  bucket.value = 'all'
+  load()
+}
+const toggleSelectMode = () => {
+  selectMode.value = !selectMode.value
+  if (!selectMode.value) selected.value = []
+}
+const toggleSelect = (ids, checked) => {
+  if (checked) selected.value = [...new Set([...selected.value, ...ids])]
+  else selected.value = selected.value.filter(id => !ids.includes(id))
+}
+const selectAllLoaded = () => { selected.value = items.value.map(i => i.id) }
+
+// ==================== 读状态 ====================
 const markRead = async ids => {
   if (!ids.length) return
+  const set = new Set(ids)
+  const wasUnread = items.value.filter(it => set.has(it.id) && !it.readFlag).length
   try {
     await notificationMarkRead(ids)
-    ids.forEach(id => { const it = items.value.find(x => x.id === id); if (it) it.readFlag = 1 })
-    unreadCount.value = Math.max(0, unreadCount.value - ids.length)
+    items.value.forEach(it => { if (set.has(it.id)) it.readFlag = 1 })
+    unreadCount.value = Math.max(0, unreadCount.value - wasUnread)
+    // 仅未读视图下已读行应立即消失，而不是留在列表里与新口径打架
+    if (unreadOnly.value) {
+      items.value = items.value.filter(it => !set.has(it.id))
+      total.value = Math.max(0, total.value - wasUnread)
+    }
     refreshCounts()
-  } catch (e) { message.error('标记已读失败：' + (e.message || '')) }
+    emitNotifChanged('center')
+  } catch (e) {
+    message.error('标记已读失败：' + (e.message || ''))
+  }
+}
+const markSelectedRead = async () => {
+  await markRead([...selected.value])
+  selected.value = []
 }
 const markAll = async () => {
-  try { await notificationMarkAllRead(); items.value.forEach(it => it.readFlag = 1); unreadCount.value = 0; refreshCounts() }
-  catch (e) { message.error('操作失败：' + (e.message || '')) }
-}
-const remove = async ids => {
-  if (!ids.length) return
   try {
-    await notificationDelete(ids)
-    items.value = items.value.filter(x => !ids.includes(x.id))
-    selected.value = selected.value.filter(x => !ids.includes(x))
+    await notificationMarkAllRead()
+    items.value.forEach(it => { it.readFlag = 1 })
+    unreadCount.value = 0
+    // 「仅未读」视图下全部已读后应回到空态（重新拉一次，避免留下已读行）
+    if (unreadOnly.value) load()
     refreshCounts()
-  } catch (e) { message.error('删除失败：' + (e.message || '')) }
+    emitNotifChanged('center')
+  } catch (e) {
+    message.error('操作失败：' + (e.message || ''))
+  }
 }
-const deleteSelected = () => remove([...selected.value])
-const clearRead = async () => {
-  try { await notificationClear('read'); await load(); refreshCounts() }
-  catch (e) { message.error('清空失败：' + (e.message || '')) }
-}
-const clearAll = async () => {
-  try { await notificationClear('all'); await load(); refreshCounts() }
-  catch (e) { message.error('清空失败：' + (e.message || '')) }
-}
-
-// 点击行：乐观置已读 + 按 ref 跳转（审批类带二级目标直达可裁决位置）
-const navOf = n => {
-  if (n.type === 'workflow.approval' && n.refId && n.refSub)
-    return { path: '/agents', query: { tab: 'workflow', wf: n.refId, run: n.refSub } }
-  if (n.type === 'tool.approval' && n.refId && n.refSub)
-    return { path: '/chat', query: { sid: n.refId, approval: n.refSub } }
-  if (n.refType === 'kb' && n.refId) return { path: `/knowledge/${n.refId}/docs` }
-  if (n.refType === 'workflow' && n.refId) return { path: '/agents', query: { tab: 'workflow' } }
-  if (n.refType === 'session' && n.refId) return { path: '/chat', query: { sid: n.refId } }
-  // 模型额度不足：直达模型供应商页（供应商管理并入智能体页 ?tab=providers）
-  if (n.refType === 'provider' && n.refId) return { path: '/agents', query: { tab: 'providers' } }
-  if (n.refType === 'ops') return { path: '/security' }
-  return null
-}
-const openRow = (n, e) => {
-  const t = e?.target
-  // 勾选命中区（antd wrapper 是 label，@click.stop 只盖住内层 16px）：只勾选、不跳转
-  if (t?.closest?.('.nc-check')) return
-  // 批量勾选中：点行=勾选/取消，避免勾选时误触「查看详情」跳走；点链接仍可直达详情
-  if (selected.value.length && !t?.closest?.('.nc-link')) return toggleSelect(n.id, !selected.value.includes(n.id))
-  if (!n.readFlag) markRead([n.id])
-  const to = navOf(n)
-  if (to) router.push(to)
+const markUnread = async item => {
+  if (!item || !item.readFlag) return
+  try {
+    await notificationMarkUnread([item.id])
+    item.readFlag = 0
+    unreadCount.value += 1
+    refreshCounts()
+    emitNotifChanged('center')
+  } catch (e) {
+    message.error('标记未读失败：' + (e.message || ''))
+  }
 }
 
-// 时间格式化（与铃铛一致）
-const fmt = v => {
-  if (!v) return ''
-  const d = new Date(v)
-  if (isNaN(d)) return ''
-  const diff = Date.now() - d.getTime()
-  if (diff < 60_000) return '刚刚'
-  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)} 分钟前`
-  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)} 小时前`
-  if (diff < 7 * 86_400_000) return `${Math.floor(diff / 86_400_000)} 天前`
-  const p = n => String(n).padStart(2, '0')
-  return `${d.getMonth() + 1}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
+// ==================== 删除 / 清空 ====================
+const removeOne = async item => {
+  try {
+    await notificationDelete([item.id])
+    items.value = items.value.filter(x => x.id !== item.id)
+    selected.value = selected.value.filter(x => x !== item.id)
+    if (!item.readFlag) unreadCount.value = Math.max(0, unreadCount.value - 1)
+    total.value = Math.max(0, total.value - 1)
+    refreshCounts()
+    emitNotifChanged('center')
+  } catch (e) {
+    message.error('删除失败：' + (e.message || ''))
+  }
+}
+const confirmDeleteSelected = () => {
+  const ids = [...selected.value]
+  if (!ids.length) return
+  Modal.confirm({
+    title: `删除选中的 ${ids.length} 条通知？`,
+    content: '删除后不可恢复。',
+    okText: '删除',
+    okType: 'danger',
+    cancelText: '取消',
+    onOk: async () => {
+      try {
+        await notificationDelete(ids)
+        items.value = items.value.filter(x => !ids.includes(x.id))
+        selected.value = []
+        total.value = Math.max(0, total.value - ids.length)
+        await refreshCounts()
+        emitNotifChanged('center')
+      } catch (e) {
+        message.error('删除失败：' + (e.message || ''))
+        throw e
+      }
+    }
+  })
+}
+const confirmClear = scope => {
+  Modal.confirm({
+    title: scope === 'read' ? '清空已读通知？' : '清空全部通知？',
+    content: '此操作不可恢复。',
+    okText: '清空',
+    okType: 'danger',
+    cancelText: '取消',
+    onOk: async () => {
+      try {
+        await notificationClear(scope)
+        await load()
+        await refreshCounts()
+        emitNotifChanged('center')
+      } catch (e) {
+        message.error('清空失败：' + (e.message || ''))
+        throw e
+      }
+    }
+  })
 }
 
-onMounted(() => { load(); refreshCounts() })
+// ==================== 打开与跳转 ====================
+const openRow = item => {
+  if (!item?.readFlag) markRead([item.id])
+  const to = notifTarget(item)
+  if (to) router.push(to).catch(() => {})
+}
+const goSettings = () => router.push('/profile?panel=notify')
+
+// 浮层/sheet 里「全部已读」等操作后，中心页跟着刷新
+const onChanged = e => {
+  if (e?.detail?.source === 'widget') {
+    load()
+    refreshCounts()
+  }
+}
+
+onMounted(() => {
+  load()
+  refreshCounts()
+  window.addEventListener('app:notif-changed', onChanged)
+})
+onUnmounted(() => {
+  clearTimeout(searchTimer)
+  window.removeEventListener('app:notif-changed', onChanged)
+})
 </script>
 
 <style scoped>
-.nc-tools { display: flex; align-items: center; gap: 10px; margin-left: auto; flex-wrap: wrap; }
+.nc-head-acts { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; }
+
+/* 吸顶工具条：负边距抵消 .app-page-body 的 16/20 内边距 */
+.nc-toolbar {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: -16px -20px 10px; padding: 12px 20px 10px;
+  background: var(--app-bg); border-bottom: 1px solid var(--app-border);
+}
+.nc-tabs { display: flex; align-items: center; gap: 2px; flex: none; }
+.nc-tab {
+  display: inline-flex; align-items: center; gap: 5px;
+  border: 0; background: transparent; color: var(--app-text2); cursor: pointer;
+  font-size: 12px; padding: 6px 10px; border-radius: 7px; transition: background .15s, color .15s;
+}
+.nc-tab:hover { background: var(--app-panel-2); color: var(--app-text); }
+.nc-tab.on { background: var(--app-accent-weak); color: var(--app-accent); font-weight: 600; }
+.nc-tab-badge { font-family: var(--ui-monospace, monospace); font-size: 10px; line-height: 1; padding: 2px 5px; border-radius: 5px; background: var(--app-panel-2); color: var(--app-text3); }
+.nc-tab-badge.warn { background: var(--app-warn-weak); color: var(--app-warn-text); }
+.nc-tab-badge.err { background: var(--app-danger-weak); color: var(--app-danger); }
+.nc-tab-badge.ok { background: var(--app-ok-weak); color: var(--app-ok); }
+
+.nc-tools { margin-left: auto; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.nc-search { width: 210px; }
+.nc-switch { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--app-text2); white-space: nowrap; }
 .nc-select { width: 160px; }
+.nc-on { border-color: var(--app-accent-border) !important; color: var(--app-accent) !important; background: var(--app-accent-weak) !important; }
 .nc-danger { color: var(--app-danger); }
 .nc-danger:hover:not(:disabled) { background: var(--app-danger-weak); }
-.nc-meta { font-size: 12px; color: var(--app-text3); margin-right: auto; }
-.nc-batch { display: flex; align-items: center; gap: 10px; padding: 8px 12px; margin: 0 0 10px; background: var(--app-accent-weak); border: 1px solid var(--app-accent-border); border-radius: 8px; font-size: 12px; color: var(--app-accent); }
+
+.nc-filterrow {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 0 0 10px; font-size: 12px;
+}
+.nc-fchip {
+  display: inline-flex; align-items: center; gap: 5px;
+  border: 1px solid var(--app-accent-border); background: var(--app-accent-weak);
+  color: var(--app-accent); border-radius: 999px; padding: 3px 9px;
+  font-size: 11px; cursor: pointer;
+}
+.nc-fchip:hover { background: var(--app-panel-2); }
+.nc-fchip-x { font-weight: 700; }
+
+.nc-batch {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 12px; margin: 0 0 10px;
+  background: var(--app-accent-weak); border: 1px solid var(--app-accent-border);
+  border-radius: 8px; font-size: 12px; color: var(--app-accent);
+}
 .nc-batch-count { font-weight: 600; }
-.nc-empty { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 60px 0; color: var(--app-text3); }
-.nc-empty-ic { font-size: 40px; opacity: .5; }
-.nc-item { display: flex; align-items: flex-start; gap: 10px; padding: 12px; border-radius: 8px; cursor: pointer; border: 1px solid transparent; }
-.nc-item:hover { background: var(--app-panel-2); }
-.nc-item.unread { background: var(--app-accent-weak); }
-/* 勾选命中区：antd wrapper 本身即可点 label —— 内边距 + 负外边距把命中区撑满「文字前的整个左侧」
-   （行左边界 → 图标前，整行高度）；内层 .ant-checkbox 默认 align-self:center（拉高后会居中下沉），
-   改回 flex-start，并让上内边距多 2.5px 抵消，勾选框视觉位置与原来逐像素一致 */
-.nc-item :deep(.nc-check) { align-self: stretch; align-items: flex-start; padding: 14.5px 9px 9.5px 13px; margin: -12px -9px -12px -13px; }
-.nc-item :deep(.nc-check .ant-checkbox) { align-self: flex-start; }
-.nc-ic { font-size: 17px; margin-top: 2px; flex: none; }
-.nc-ic.ok { color: var(--app-ok); }
-.nc-ic.err { color: var(--app-danger); }
-.nc-ic.warn { color: var(--app-warn); }
-.nc-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
-.nc-row1 { display: flex; align-items: center; gap: 8px; }
-.nc-title { font-size: 13px; color: var(--app-text); line-height: 1.4; }
-.nc-item.unread .nc-title { font-weight: 600; }
-.nc-hit { font-size: 11px; color: var(--app-warn-text); background: var(--app-warn-weak); border-radius: 8px; padding: 1px 7px; flex: none; }
-.nc-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--app-accent); flex: none; }
-.nc-content { font-size: 12px; color: var(--app-text2); line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: break-all; }
-.nc-meta { display: flex; align-items: center; gap: 10px; font-size: 11px; color: var(--app-text3); }
-.nc-link { color: var(--app-accent); }
-.nc-del { border: none; background: none; color: var(--app-text3); cursor: pointer; padding: 4px; border-radius: 6px; flex: none; }
-.nc-del:hover { color: var(--app-danger); background: var(--app-panel-2); }
-.nc-more { text-align: center; padding: 14px 0; }
-.nc-foot-meta { text-align: center; padding: 14px 0; font-size: 12px; color: var(--app-text3); }
+
+@media (max-width: 900px) {
+  .head-hint-plain { display: none; }
+  .nc-tools { margin-left: 0; width: 100%; }
+  .nc-search { flex: 1; min-width: 180px; }
+  .nc-select { width: 140px; }
+}
 </style>

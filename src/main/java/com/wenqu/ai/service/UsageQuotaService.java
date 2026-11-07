@@ -7,6 +7,7 @@ import com.wenqu.ai.mapper.QuotaMapper;
 import com.wenqu.ai.mapper.UsageLogMapper;
 import com.wenqu.ai.mapper.UserMapper;
 import com.wenqu.ai.model.ModelInfo;
+import com.wenqu.ai.model.Notification;
 import com.wenqu.ai.model.Quota;
 import com.wenqu.ai.model.User;
 import lombok.extern.slf4j.Slf4j;
@@ -413,7 +414,7 @@ public class UsageQuotaService {
                     + "。" + (q.getEnforce() != null && q.getEnforce() == 0
                     ? "本规则设为只告警，调用未被拦下。" : "后续该用途的模型调用已被拦下。")
                     + " 需要调整请到「数据看板 → 费用 → 配额与预算」。";
-            notificationService.createForAdmins("quota", title, body, "quota", q.getId());
+            notificationService.createForAdmins(Notification.TYPE_USAGE_QUOTA, title, body, "quota", q.getId());
             audit.record("[AUDIT][QUOTA] 触顶 quota={} scope={} scopeId={} period={} breach={} uid={} enforce={}",
                     q.getId(), q.getScope(), q.getScopeId(), q.getPeriod(), breach, uid, q.getEnforce());
         } catch (Exception e) {

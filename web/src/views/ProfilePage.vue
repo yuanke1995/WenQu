@@ -126,6 +126,41 @@
 
           <div class="pf-field">
             <div class="pf-field-head">
+              <span class="pf-label">接收哪些通知</span>
+              <span class="pf-meta-right">
+                <span v-if="muteDirty" class="pf-dirty">未保存</span>
+                <span class="pf-sub-hint">{{ mutedTypes.length ? `已静音 ${mutedTypes.length} 类` : '全部接收' }}</span>
+                <button class="app-link-btn" type="button" @click="receiveAll">全部接收</button>
+                <button class="app-link-btn" type="button" @click="restoreDefault">恢复默认</button>
+              </span>
+            </div>
+            <div class="np-groups">
+              <div v-for="g in notifGroups" :key="g.key" class="np-group">
+                <div class="np-group-head">
+                  <span class="np-group-title">{{ g.label }}</span>
+                  <span class="np-group-count">{{ g.types.length }} 类</span>
+                  <div class="np-group-acts">
+                    <button class="app-link-btn" type="button" @click="setGroupMuted(g, false)">全开</button>
+                    <button class="app-link-btn" type="button" @click="setGroupMuted(g, true)">全关</button>
+                  </div>
+                </div>
+                <div class="np-grid">
+                  <label v-for="t in g.types" :key="t.type" class="np-item">
+                    <a-switch :checked="!muted(t.type)" size="small" @change="v => toggleMute(t.type, v)" />
+                    <component :is="t.icon" class="np-ic" :class="t.tone" />
+                    <span>{{ t.label }}</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+            <div class="np-foot">
+              <span class="pf-sub-hint">改完点「保存」才生效。系统级推送同样尊重这份清单——被关掉的类不会弹横幅。</span>
+              <button class="app-btn small" type="button" :disabled="muteSaving || !muteDirty" @click="saveMutes">保存</button>
+            </div>
+          </div>
+
+          <div class="pf-field">
+            <div class="pf-field-head">
               <span class="pf-label">这台设备的系统级通知</span>
               <span class="pf-sub-hint">{{ pushStateHint }}</span>
             </div>
@@ -144,24 +179,9 @@
           </div>
 
           <div class="pf-field">
-            <div class="pf-field-head">
-              <span class="pf-label">收哪些类</span>
-              <span class="pf-meta-right">
-                <span v-if="muteDirty" class="pf-dirty">未保存</span>
-                <span class="pf-sub-hint">关掉即不再接收该类通知</span>
-              </span>
-            </div>
-            <div class="np-grid">
-              <label v-for="t in NOTIF_TYPES" :key="t.type" class="np-item">
-                <a-switch :checked="!muted(t.type)" size="small" @change="v => toggleMute(t.type, v)" />
-                <component :is="t.icon" class="np-ic" :class="t.tone" />
-                <span>{{ t.label }}</span>
-              </label>
-            </div>
-            <div class="np-foot">
-              <span class="pf-sub-hint">改完点「保存」才生效。系统级推送同样尊重这份清单——被关掉的类不会弹横幅。</span>
-              <button class="app-btn small" type="button" :disabled="muteSaving || !muteDirty" @click="saveMutes">保存</button>
-            </div>
+            <div class="pf-field-head"><span class="pf-label">说明</span></div>
+            <p class="pf-sub-hint">静音只影响新产生的通知；已经收到的仍留在通知中心。通知保留期由管理员在「系统设置 → 清理与保留」统一配置。</p>
+            <p class="pf-sub-hint">浏览器系统通知需要 https 或 localhost；iPhone / iPad 需先把本站安装到主屏幕，Safari 标签页里不支持。</p>
           </div>
         </div>
 
@@ -446,7 +466,7 @@ import { copyText } from '../utils/clipboard'
 import { parseMemoryDoc, serializeMemoryDoc, nextEntryId } from '../utils/memoryDoc'
 import { shareUrlOf } from './shareSession'
 import { markSessionShared, resetSessionStore } from './store'
-import { NOTIF_TYPES } from '../chat/useNotifications'
+import { NOTIF_BUCKETS, NOTIF_BUCKET_ORDER, NOTIF_TYPES, emitNotifChanged, notifBucket } from '../chat/useNotifications'
 import { changePasswordApi, getUserPreference, setUserPreference, updateMyProfile, uploadAvatarApi,
          notificationPreferences, notificationSavePreferences,
          listMySessionShares, stopShareBySession, purgeShareRecord, enableSessionShare,
@@ -585,6 +605,26 @@ const muted = t => mutedTypes.value.includes(t)
 const toggleMute = (t, on) => {
   mutedTypes.value = on ? mutedTypes.value.filter(x => x !== t) : [...new Set([...mutedTypes.value, t])]
 }
+// 按语义桶分组：19 个开关平铺读不动，先给「需要你处理 / 异常与失败 / 完成」三组
+const notifGroups = computed(() => NOTIF_BUCKET_ORDER
+  .map(key => ({
+    key,
+    label: NOTIF_BUCKETS[key].label,
+    types: NOTIF_TYPES.filter(t => notifBucket(t.type) === key)
+  }))
+  .filter(g => g.types.length))
+// 组级全开/全关：mutedFlag=true 表示把整组加入静音清单
+const setGroupMuted = (g, mutedFlag) => {
+  const ids = g.types.map(t => t.type)
+  mutedTypes.value = mutedFlag
+    ? [...new Set([...mutedTypes.value, ...ids])]
+    : mutedTypes.value.filter(x => !ids.includes(x))
+}
+const receiveAll = () => { mutedTypes.value = [] }
+const restoreDefault = async () => {
+  receiveAll()
+  await saveMutes()
+}
 const loadMutes = async () => {
   try {
     const r = await notificationPreferences()
@@ -599,6 +639,8 @@ const saveMutes = async () => {
     await notificationSavePreferences(mutedTypes.value)
     savedMutedTypes.value = [...mutedTypes.value]
     message.success('已保存')
+    // 静音变化不影响已收到的通知，但通知中心的筛选计数应与新偏好保持一致
+    emitNotifChanged('center')
   } catch (e) { message.error('保存失败：' + (e.message || '')) }
   finally { muteSaving.value = false }
 }
@@ -1172,6 +1214,13 @@ watch(current, v => { if (v === 'notify') refreshPushState().then(refreshCap).ca
 
 <style scoped>
 /* 收哪些类：开关 + 图标 + 标签成行，窄屏自动换列（与通知中心原来那块同形，搬过来不改观感） */
+.np-groups { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+.np-group { border: 1px solid var(--app-border); border-radius: 8px; overflow: hidden; }
+.np-group-head { display: flex; align-items: center; gap: 8px; padding: 7px 10px; background: var(--app-panel-2); }
+.np-group-title { font-size: 12px; font-weight: 600; color: var(--app-text); }
+.np-group-count { font-size: 11px; color: var(--app-text3); }
+.np-group-acts { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.np-group .np-grid { padding: 10px; }
 .np-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px 16px; }
 .np-item { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--app-text); }
 .np-ic { font-size: 15px; flex: none; }

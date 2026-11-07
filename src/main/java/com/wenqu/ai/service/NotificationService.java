@@ -16,6 +16,8 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -98,8 +100,8 @@ public class NotificationService {
                         .last("LIMIT 1"));
                 if (exist != null) {
                     exist.setHitCount((exist.getHitCount() == null ? 1 : exist.getHitCount()) + 1);
-                    exist.setTitle(abbreviate(title, 190));
-                    exist.setContent(abbreviate(content, 990));
+                    exist.setTitle(clean(title, 190));
+                    exist.setContent(clean(content, 990));
                     exist.setRefType(refType);
                     exist.setRefId(refId);
                     exist.setRefSub(refSub);
@@ -113,8 +115,8 @@ public class NotificationService {
             Notification n = new Notification();
             n.setUid(uid);
             n.setType(type);
-            n.setTitle(abbreviate(title, 190));
-            n.setContent(abbreviate(content, 990));
+            n.setTitle(clean(title, 190));
+            n.setContent(clean(content, 990));
             n.setRefType(refType);
             n.setRefId(refId);
             n.setRefSub(refSub);
@@ -257,34 +259,46 @@ public class NotificationService {
         }
     }
 
-    /**
-     * 某用户的通知列表（新→旧，支持类型筛选/仅未读/游标分页）。
-     *
-     * @param limit     单页条数（默认 50，上限 {@value #LIST_MAX_LIMIT}）
-     * @param type      类型筛选（可空 = 全部）
-     * @param unreadOnly 仅未读（可空 = 全部）
-     * @param cursor    游标（已加载条数 offset；首屏传 0）
-     * @return {items, nextCursor, hasMore, total, unreadCount}；unreadCount 为该用户总未读（不受筛选影响）
-     */
-    /** 列表/计数共用的基础筛选（按接收人 + 可选类型/仅未读） */
-    private LambdaQueryWrapper<Notification> baseWrap(String uid, String type, Boolean unreadOnly) {
+    /** 列表/计数共用的基础筛选（按接收人 + 可选类型集合/仅未读/关键词） */
+    private LambdaQueryWrapper<Notification> baseWrap(String uid, String type, List<String> types,
+                                                      Boolean unreadOnly, String q) {
         LambdaQueryWrapper<Notification> w = new LambdaQueryWrapper<>();
         w.eq(Notification::getUid, uid);
-        if (type != null && !type.isBlank()) w.eq(Notification::getType, type);
+        if (types != null && !types.isEmpty()) {
+            w.in(Notification::getType, types);
+        } else if (type != null && !type.isBlank()) {
+            w.eq(Notification::getType, type);
+        }
         if (Boolean.TRUE.equals(unreadOnly)) w.eq(Notification::getReadFlag, 0);
+        if (q != null && !q.isBlank()) {
+            String kw = q.trim();
+            w.and(x -> x.like(Notification::getTitle, kw).or().like(Notification::getContent, kw));
+        }
         return w;
     }
 
-    public Map<String, Object> list(String uid, int limit, String type, Boolean unreadOnly, long cursor) {
+    /**
+     * 某用户的通知列表（新→旧，支持类型集合/关键词/仅未读/游标分页）。
+     *
+     * @param limit      单页条数（默认 50，上限 {@value #LIST_MAX_LIMIT}）
+     * @param type       单类型筛选（历史参数；types 非空时被忽略）
+     * @param types      类型集合（可空；如「待处理」桶一次筛多个类型）
+     * @param unreadOnly 仅未读（可空 = 全部）
+     * @param q          关键词（标题/正文 LIKE；可空）
+     * @param cursor     游标（已加载条数 offset；首屏传 0）
+     * @return {items, nextCursor, hasMore, total, unreadCount}；unreadCount 为该用户总未读（不受筛选影响）
+     */
+    public Map<String, Object> list(String uid, int limit, String type, List<String> types,
+                                    Boolean unreadOnly, String q, long cursor) {
         int n = Math.max(1, Math.min(limit <= 0 ? 50 : limit, LIST_MAX_LIMIT));
         // 多取 1 条判断是否还有下一页
-        LambdaQueryWrapper<Notification> w = baseWrap(uid, type, unreadOnly);
+        LambdaQueryWrapper<Notification> w = baseWrap(uid, type, types, unreadOnly, q);
         w.orderByDesc(Notification::getCreateTime).orderByDesc(Notification::getId);
         w.last("LIMIT " + (n + 1) + " OFFSET " + Math.max(0L, cursor));
         List<Notification> rows = notificationMapper.selectList(w);
         boolean hasMore = rows.size() > n;
         if (hasMore) rows = rows.subList(0, n);
-        long total = notificationMapper.selectCount(baseWrap(uid, type, unreadOnly));
+        long total = notificationMapper.selectCount(baseWrap(uid, type, types, unreadOnly, q));
         Map<String, Object> out = new java.util.LinkedHashMap<>();
         out.put("items", rows);
         out.put("nextCursor", hasMore ? (Math.max(0L, cursor) + n) : null);
@@ -346,6 +360,17 @@ public class NotificationService {
                 .set(Notification::getReadTime, LocalDateTime.now()));
     }
 
+    /** 标记未读（只把属于自己的已读改回未读；用于「稍后再看」） */
+    public int markUnread(String uid, List<String> ids) {
+        if (ids == null || ids.isEmpty()) return 0;
+        return notificationMapper.update(null, new LambdaUpdateWrapper<Notification>()
+                .eq(Notification::getUid, uid)
+                .eq(Notification::getReadFlag, 1)
+                .in(Notification::getId, ids)
+                .set(Notification::getReadFlag, 0)
+                .set(Notification::getReadTime, null));
+    }
+
     /**
      * 超期清理（ScheduleCenter 周期调用）：按产生时间物理删除，不区分已读未读——
      * 通知指向的解析任务/运行记录本身也有保留期，通知活得比它们久没有意义。
@@ -358,6 +383,35 @@ public class NotificationService {
         LocalDateTime threshold = LocalDateTime.now().minusDays(retentionDays);
         return notificationMapper.delete(new LambdaQueryWrapper<Notification>()
                 .lt(Notification::getCreateTime, threshold));
+    }
+
+    /**
+     * 通知文案清洗：折叠空白 → 去 URL 的 query/fragment → 长 URL 只留 host/… → 截断。
+     * <p>URL 正则刻意在中文标点/括号处收口，避免把正文里的「」」一并吃掉。
+     * 历史脏数据由前端渲染层用同一规则再洗一遍，新数据在这里落库前就干净。
+     */
+    private static final Pattern URL_PATTERN =
+            Pattern.compile("https?://[^\\s，。；、）)】」》]+");
+
+    private static String clean(String s, int max) {
+        if (s == null) return null;
+        String t = s.trim().replaceAll("\\s+", " ");
+        Matcher m = URL_PATTERN.matcher(t);
+        StringBuilder sb = new StringBuilder();
+        while (m.find()) {
+            String url = m.group();
+            String base = url.split("[?#]", 2)[0].replaceFirst("^https?://", "");
+            String replacement;
+            if (base.length() > 48) {
+                String host = base.split("/", 2)[0];
+                replacement = host + "/…";
+            } else {
+                replacement = base;
+            }
+            m.appendReplacement(sb, Matcher.quoteReplacement(replacement));
+        }
+        m.appendTail(sb);
+        return abbreviate(sb.toString(), max);
     }
 
     /** 截断（appendOnly 简版：超长截 + 省略号） */

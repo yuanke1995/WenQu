@@ -189,7 +189,8 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { PlusOutlined } from '@ant-design/icons-vue'
 import {
@@ -200,7 +201,10 @@ import { isSuperadminSync } from '../utils/auth'
 
 // 平台级判据在后端（requirePlatform），这里只管把不够格的按钮藏起来——藏不住的请求服务端也会拒
 const superadmin = isSuperadminSync()
-const tab = ref('tenants')
+const route = useRoute()
+// 通知深链：租户开通申请 → ?tab=requests；租户已开通 → ?tab=tenants
+const tab = ref(route.query.tab === 'requests' ? 'requests' : 'tenants')
+watch(() => route.query.tab, v => { tab.value = v === 'requests' ? 'requests' : 'tenants' })
 
 const tenants = ref([])
 const requests = ref([])

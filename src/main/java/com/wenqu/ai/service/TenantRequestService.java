@@ -3,6 +3,7 @@ package com.wenqu.ai.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.mapper.TenantRequestMapper;
+import com.wenqu.ai.model.Notification;
 import com.wenqu.ai.model.Tenant;
 import com.wenqu.ai.model.TenantRequest;
 import com.wenqu.ai.model.User;
@@ -86,7 +87,7 @@ public class TenantRequestService {
         mapper.insert(r);
 
         audit.record("[AUDIT] 租户开通申请 机构={} 邮箱={} 期望标识={}", org, email, desired == null ? "（未填）" : desired);
-        notificationService.createForSuperadmins("tenant-request",
+        notificationService.createForSuperadmins(Notification.TYPE_TENANT_REQUEST,
                 "新的租户开通申请：" + org,
                 "联系人 " + (name == null ? "（未填）" : name) + "（" + email + "），期望标识 "
                         + (desired == null ? "（未填）" : desired) + "。用途：" + why
@@ -179,7 +180,7 @@ public class TenantRequestService {
         mapper.updateById(r);
         audit.record("[AUDIT] 租户开通申请批准 申请={} 租户={} 首位管理员={} 审批人={}",
                 r.getId(), t.getId(), admin.getUid(), reviewer);
-        notificationService.createForAdmins("tenant-request",
+        notificationService.createForAdmins(Notification.TYPE_TENANT_APPROVED,
                 "租户已开通：" + r.getOrgName(),
                 "标识 " + t.getId() + "，首位管理员 " + admin.getUid() + "（口令已发给申请人，本平台不保存明文）。",
                 "tenant", t.getId());

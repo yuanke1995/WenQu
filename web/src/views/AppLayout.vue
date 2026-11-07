@@ -385,22 +385,44 @@
             <div class="notif-panel">
               <div class="notif-head">
                 <span class="notif-title">通知</span>
+                <span v-if="unreadCount" class="notif-unread">{{ unreadCount }} 条未读</span>
                 <div class="notif-head-actions">
                   <button v-if="unreadCount > 0" class="notif-readall" @click="markAllRead">全部已读</button>
-                  <button class="notif-readall" @click="goNotifCenter">查看全部</button>
                 </div>
               </div>
-              <a-spin v-if="notifLoading" size="small" style="display:block;margin:24px auto" />
-              <div v-else-if="!notifItems.length" class="notif-empty">暂无通知</div>
-              <div v-else class="notif-list">
-                <button v-for="n in notifItems" :key="n.id" class="notif-item" :class="{ unread: !n.readFlag }" @click="openNotif(n)">
-                  <component :is="notifIcon(n.type)" class="notif-ic" :class="notifClass(n.type)" />
-                  <span class="notif-body">
-                    <span class="notif-item-title">{{ n.title }}<span v-if="!n.readFlag" class="notif-dot" /></span>
-                    <span v-if="n.content" class="notif-content">{{ n.content }}</span>
-                    <span class="notif-time">{{ notifTime(n.createTime) }}</span>
-                  </span>
+              <div class="notif-tabs" role="tablist" aria-label="通知范围">
+                <button class="notif-tab" :class="{ on: notifTab === 'all' }" type="button"
+                        role="tab" :aria-selected="notifTab === 'all'" @click="notifTab = 'all'">
+                  全部
                 </button>
+                <button class="notif-tab" :class="{ on: notifTab === 'action' }" type="button"
+                        role="tab" :aria-selected="notifTab === 'action'" @click="notifTab = 'action'">
+                  待处理 <span v-if="notifActionCount" class="notif-tab-b">{{ notifActionCount }}</span>
+                </button>
+              </div>
+              <div class="notif-list">
+                <NotificationList
+                  :items="notifVisibleItems"
+                  variant="popover"
+                  :loading="notifLoading"
+                  :error="notifError"
+                  empty-title="还没有通知"
+                  empty-desc="有新动静时会出现在这里。"
+                  @open="openNotif"
+                  @mark-unread="markNotifUnread"
+                  @delete="deleteNotif"
+                />
+              </div>
+              <div class="notif-foot">
+                <span>共 {{ notifItems.length }} 条</span>
+                <div class="notif-foot-links">
+                  <button class="notif-link" type="button" @click="goNotifCenter">查看全部通知</button>
+                  <a-tooltip title="通知与推送设置" placement="top">
+                    <button class="app-icon-btn notif-set" type="button" @click="goNotifSettings">
+                      <setting-outlined />
+                    </button>
+                  </a-tooltip>
+                </div>
               </div>
             </div>
           </template>
@@ -506,7 +528,8 @@ import { deleteSessionApi, logoutApi, renameSessionApi, pinSession, favoriteSess
          getMyMenuLayout, saveMyMenuLayout, setNewSessionProject,
          updateProject, deleteProject, createProject, setProjectStatus,
          listProjects, moveSessionProject, openProjectFolder, listExecutors } from '../api'
-import { useNotifications, notifIcon, notifClass, notifTime } from '../chat/useNotifications'
+import { useNotifications, notifBucket, notifTarget } from '../chat/useNotifications'
+import NotificationList from '../components/notification/NotificationList.vue'
 import { themeState, toggleTheme } from '../utils/theme'
 import { authUser, ensureAuth, isAdminSync, clearAuth } from '../utils/auth'
 import { localExecutorId, setLocalExecutorId } from '../utils/localExecutor'
@@ -1558,30 +1581,35 @@ const doLogout = async () => {
 // src/chat/useNotifications.js（后端触发面见该文件注释）；本页只管呈现（popover）
 // 与「点开跳哪」的路由语义——移动壳跳 /m/chat，两端落点不同、读状态口径必须相同。
 const notifOpen = ref(false)
-const { items: notifItems, loading: notifLoading, unreadCount,
-        loadList: loadNotifs, markRead, markAllRead: markAllReadApi } = useNotifications()
+const notifTab = ref('all')
+const notif = useNotifications()
+const { items: notifItems, loading: notifLoading, unreadCount, error: notifError,
+        loadList: loadNotifs, markRead, markAllRead: markAllReadApi, markUnread, remove } = notif
 const onNotifOpen = open => { if (open) loadNotifs() }
-// H5 外壳的通知 sheet（顶栏铃铛）经 provide 取同一份实例——各调一次 useNotifications
+// H5 外壳的通知 sheet（顶栏铃铛）经 provide 取同一份完整实例——各调一次 useNotifications
 // 会造出两份未读数，角标与列表会各说各话（与移动壳 provide 给 MobileNotifSheet 同口径）
-provide('wqNotif', { items: notifItems, loading: notifLoading, unreadCount, loadList: loadNotifs, markRead, markAllRead: markAllReadApi })
+provide('wqNotif', notif)
 const markAllRead = () => markAllReadApi()
-// 点击通知：置已读（乐观更新，失败回滚在共用单元里），再按 ref 跳转（审批类带二级目标直达可裁决位置）
-const openNotif = async n => {
+const notifActionCount = computed(() => notifItems.value.filter(n => notifBucket(n.type) === 'action').length)
+const notifVisibleItems = computed(() => notifTab.value === 'all'
+  ? notifItems.value
+  : notifItems.value.filter(n => notifBucket(n.type) === 'action'))
+const markNotifUnread = n => markUnread(n)
+const deleteNotif = n => remove(n)
+// 点击通知：置已读（乐观更新，失败回滚在共用单元里），再按共享深链跳转
+const openNotif = n => {
   markRead(n)
-  if (n.type === 'workflow.approval' && n.refId && n.refSub) {
-    router.push({ path: '/agents', query: { tab: 'workflow', wf: n.refId, run: n.refSub } })
-  } else if (n.type === 'tool.approval' && n.refId && n.refSub) {
-    goChat({ path: '/chat', query: { sid: n.refId, approval: n.refSub } })
-  } else if (n.refType === 'kb' && n.refId) router.push(`/knowledge/${n.refId}/docs`)
-  else if (n.refType === 'workflow' && n.refId) router.push({ path: '/agents', query: { tab: 'workflow' } })
-  else if (n.refType === 'session' && n.refId) goChat({ path: '/chat', query: { sid: n.refId } })
-  else if (n.refType === 'provider' && n.refId) router.push({ path: '/agents', query: { tab: 'providers' } })
-  else if (n.refType === 'ops') router.push('/security')
+  const to = notifTarget(n)
+  if (to) {
+    if (to.path === '/chat') goChat(to)
+    else router.push(to).catch(() => {})
+  }
   notifOpen.value = false
 }
 
-// 铃铛 → 通知中心页
+// 铃铛 → 通知中心页 / 通知设置
 const goNotifCenter = () => { notifOpen.value = false; router.push('/notifications') }
+const goNotifSettings = () => { notifOpen.value = false; router.push('/profile?panel=notify') }
 onMounted(async () => {
   // 先挂跨页签订阅再拉列表：拉取在途的那几百毫秒里，别的页签改了一次列表不该就这次刷新丢掉
   startSessionTabSync()
@@ -2119,30 +2147,24 @@ watch(() => route.fullPath, () => {
 }
 
 .notif-popover .ant-popover-inner { padding: 10px; border-radius: var(--app-radius); }
-.notif-popover .notif-panel { width: 320px; }
-.notif-popover .notif-head { display: flex; align-items: center; justify-content: space-between; padding: 2px 4px 8px; border-bottom: 1px solid var(--app-border); }
+.notif-popover .notif-panel { width: 380px; }
+.notif-popover .notif-head { display: flex; align-items: center; gap: 8px; padding: 2px 4px 8px; border-bottom: 1px solid var(--app-border); }
 .notif-popover .notif-title { font-weight: 600; font-size: 13px; color: var(--app-text); }
-.notif-popover .notif-readall { border: none; background: none; color: var(--app-accent); cursor: pointer; font-size: 12px; padding: 0; }
+.notif-popover .notif-unread { font-size: 10.5px; color: var(--app-warn-text); background: var(--app-warn-weak); border: 1px solid var(--app-warn-border); border-radius: 999px; padding: 3px 7px; line-height: 1; }
+.notif-popover .notif-readall { border: none; background: none; color: var(--app-accent); cursor: pointer; font-size: 12px; padding: 0; margin-left: auto; }
 .notif-popover .notif-readall:hover { color: var(--app-accent-hover); }
-.notif-popover .notif-head-actions { display: flex; align-items: center; gap: 12px; }
-.notif-popover .notif-head-actions .notif-readall + .notif-readall { position: relative; }
-.notif-popover .notif-head-actions .notif-readall + .notif-readall::before { content: ''; position: absolute; left: -6px; top: 2px; bottom: 2px; width: 1px; background: var(--app-border); }
-.notif-popover .notif-empty { padding: 30px 0; text-align: center; color: var(--app-text3); font-size: 12px; }
-.notif-popover .notif-list { max-height: 380px; overflow-y: auto; scrollbar-width: thin; }
-.notif-popover .notif-item { display: flex; gap: 10px; align-items: flex-start; width: 100%; border: none; background: none; text-align: left; padding: 10px 8px; border-radius: 8px; cursor: pointer; }
-.notif-popover .notif-item:hover { background: var(--app-panel-2); }
-.notif-popover .notif-item.unread { background: var(--app-accent-weak); }
-.notif-popover .notif-item.unread:hover { background: var(--app-panel-2); }
-.notif-popover .notif-ic { font-size: 16px; margin-top: 2px; flex: none; }
-.notif-popover .notif-ic.ok { color: var(--app-ok); }
-.notif-popover .notif-ic.err { color: var(--app-danger); }
-.notif-popover .notif-ic.warn { color: var(--app-warn); }
-.notif-popover .notif-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.notif-popover .notif-item-title { font-size: 13px; color: var(--app-text); line-height: 1.4; }
-.notif-popover .notif-item.unread .notif-item-title { font-weight: 600; }
-.notif-popover .notif-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--app-accent); margin-left: 6px; vertical-align: middle; }
-.notif-popover .notif-content { font-size: 12px; color: var(--app-text2); line-height: 1.45; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; word-break: break-all; }
-.notif-popover .notif-time { font-size: 11px; color: var(--app-text3); }
+.notif-popover .notif-head-actions { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+.notif-popover .notif-tabs { display: flex; gap: 2px; padding: 6px 4px 0; border-bottom: 1px solid var(--app-border); }
+.notif-popover .notif-tab { border: 0; background: transparent; color: var(--app-text2); font-size: 11.5px; padding: 4px 8px 7px; border-bottom: 2px solid transparent; cursor: pointer; display: inline-flex; align-items: center; gap: 4px; }
+.notif-popover .notif-tab:hover { color: var(--app-accent); }
+.notif-popover .notif-tab.on { color: var(--app-accent); border-bottom-color: var(--app-accent); font-weight: 600; }
+.notif-popover .notif-tab-b { font-family: var(--ui-monospace, monospace); font-size: 9.5px; color: var(--app-warn-text); background: var(--app-warn-weak); border-radius: 4px; padding: 0 4px; }
+.notif-popover .notif-list { max-height: min(420px, 60vh); overflow-y: auto; scrollbar-width: thin; margin: 0 -4px; padding: 4px 0; }
+.notif-popover .notif-foot { display: flex; align-items: center; padding: 8px 4px 0; border-top: 1px solid var(--app-border); margin-top: 4px; font-size: 10.5px; color: var(--app-text3); }
+.notif-popover .notif-foot-links { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.notif-popover .notif-link { border: 0; background: transparent; color: var(--app-accent); font-size: 11px; cursor: pointer; padding: 0; }
+.notif-popover .notif-link:hover { text-decoration: underline; }
+.notif-popover .notif-set { width: 22px; height: 22px; font-size: 12px; }
 /* 新建工作区：本机源文件夹（可多个） */
 .pj-mode-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
 .pj-mode-label { font-size: 12px; color: var(--app-text2); white-space: nowrap; }

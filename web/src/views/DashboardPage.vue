@@ -421,7 +421,8 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, h } from 'vue'
+import { ref, computed, onMounted, h, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { message } from 'ant-design-vue'
 import {
   getAnalytics, getUnmatchedQuestions, createKnowledge, getBadCases, addEvalCase, getEvalLastReport, runEvalAutoCheck,
@@ -430,7 +431,11 @@ import {
 } from '../api'
 import { isSuperadminSync } from '../utils/auth'
 
-const tab = ref('overview')
+// 通知深链：用量配额触顶 → ?tab=cost（费用页签的配额与预算表）
+const DASH_TABS = ['overview', 'trace', 'pool', 'cost']
+const route = useRoute()
+const tab = ref(DASH_TABS.includes(route.query.tab) ? route.query.tab : 'overview')
+watch(() => route.query.tab, v => { if (DASH_TABS.includes(v)) tab.value = v })
 const qCols = [
   { title: '问题', dataIndex: 'question', key: 'question', ellipsis: true },
   { title: '次数', dataIndex: 'count', key: 'count', width: 70 }

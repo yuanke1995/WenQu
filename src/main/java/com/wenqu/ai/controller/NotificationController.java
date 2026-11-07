@@ -34,15 +34,33 @@ public class NotificationController {
 
     private final NotificationService notificationService;
 
-    @Operation(summary = "通知列表", description = "当前用户的通知（新→旧）；支持 type 类型筛选、unreadOnly 仅未读、cursor 游标分页。" +
+    @Operation(summary = "通知列表", description = "当前用户的通知（新→旧）；支持 type/types 类型筛选、q 关键词、unreadOnly 仅未读、cursor 游标分页。" +
             "返回 {items:[通知], nextCursor, hasMore, total, unreadCount}")
     @Permission("self:notification")
     @GetMapping("/list")
     public ResultJson list(@RequestParam(value = "limit", defaultValue = "50") int limit,
                            @RequestParam(value = "type", required = false) String type,
+                           @RequestParam(value = "types", required = false) String types,
+                           @RequestParam(value = "q", required = false) String q,
                            @RequestParam(value = "unreadOnly", required = false) Boolean unreadOnly,
                            @RequestParam(value = "cursor", defaultValue = "0") long cursor) {
-        return ResultJson.ok(notificationService.list(RequestUser.uid(), limit, type, unreadOnly, cursor));
+        return ResultJson.ok(notificationService.list(RequestUser.uid(), limit, type,
+                parseTypes(types), unreadOnly, parseKeyword(q), cursor));
+    }
+
+    /** 关键词：trim 后最长 60 字符（空串按未传处理） */
+    private static String parseKeyword(String raw) {
+        if (raw == null) return null;
+        String v = raw.trim();
+        if (v.isEmpty()) return null;
+        return v.length() > 60 ? v.substring(0, 60) : v;
+    }
+
+    /** types 逗号串 → 去重类型集合（最多 30 项；空项丢弃） */
+    private static List<String> parseTypes(String raw) {
+        if (raw == null || raw.isBlank()) return List.of();
+        return java.util.Arrays.stream(raw.split(","))
+                .map(String::trim).filter(t -> !t.isBlank()).distinct().limit(30).toList();
     }
 
     @Operation(summary = "未读数", description = "当前用户未读通知条数（铃铛 Badge 轮询用）")
@@ -74,6 +92,15 @@ public class NotificationController {
     @PostMapping("/read-all")
     public ResultJson markAllRead() {
         return ResultJson.ok(Map.of("updated", notificationService.markAllRead(RequestUser.uid())));
+    }
+
+    @Operation(summary = "标记未读", description = "body: {ids:[通知ID]}；只把属于自己的已读通知改回未读")
+    @Permission("self:notification")
+    @PostMapping("/unread")
+    public ResultJson markUnread(@RequestBody Map<String, Object> body) {
+        Object raw = body == null ? null : body.get("ids");
+        List<String> ids = raw instanceof List<?> l ? l.stream().map(String::valueOf).toList() : List.of();
+        return ResultJson.ok(Map.of("updated", notificationService.markUnread(RequestUser.uid(), ids)));
     }
 
     @Operation(summary = "删除通知", description = "body: {ids:[通知ID]}；只删除属于自己的通知")
