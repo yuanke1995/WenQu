@@ -453,9 +453,10 @@ const onChanged = e => {
   }
 }
 
-onMounted(() => {
-  load()
-  refreshCounts()
+onMounted(async () => {
+  // 先拉列表：已处理的待办会在这次请求里自动置已读，随后再取计数才是新口径
+  await load()
+  await refreshCounts()
   window.addEventListener('app:notif-changed', onChanged)
 })
 onUnmounted(() => {
