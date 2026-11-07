@@ -45,6 +45,7 @@ public class LocalBrowserToolProvider implements ToolFamilyProvider {
     @Override
     public List<ToolDescriptor> descriptors() {
         return List.of(
+                desc("localBrowserOpen", "打开本机浏览器并读页面", "打开网址并返回页面快照；看页面优先用它，不要点地址栏"),
                 desc("localBrowserNavigate", "打开本机浏览器网页", "在你电脑的浏览器打开网址（可看 localhost/内网）"),
                 desc("localBrowserSnapshot", "读取本机浏览器页面", "读取当前页面结构化快照，含元素 ref"),
                 desc("localBrowserClick", "点击本机浏览器元素", "按快照 ref 点击当前页面元素"),

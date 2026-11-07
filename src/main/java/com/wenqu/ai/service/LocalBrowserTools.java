@@ -69,6 +69,16 @@ public class LocalBrowserTools {
         return call(ctx, "browser_navigate", Map.of("url", url));
     }
 
+    @Tool(description = "打开网址并立即返回页面结构化快照（含元素 ref）。要看一个页面时优先用这一个工具，"
+            + "不要试图点击浏览器地址栏或手动输入网址。")
+    public String localBrowserOpen(
+            @ToolParam(description = "要打开的完整 URL，如 http://localhost:5800/ 或 https://example.com") String url,
+            ToolContext ctx) {
+        String nav = call(ctx, "browser_navigate", Map.of("url", url));
+        String snap = call(ctx, "browser_snapshot", Map.of());
+        return nav + "\n\n" + snap;
+    }
+
     @Tool(description = "读取你电脑浏览器当前页面的结构化快照（含元素 ref），用于决定下一步点击/填写。")
     public String localBrowserSnapshot(ToolContext ctx) {
         return call(ctx, "browser_snapshot", Map.of());
