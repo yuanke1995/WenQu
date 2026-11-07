@@ -291,12 +291,13 @@ public class WorkflowEngine {
             Map<String, Object> inputSnapshot = ctx == null ? Map.of() : inputSnapshot(n, ctx, state);
             int attempts = cfgInt(n, "retries", 0, 0, 3) + 1;
             Exception last = null;
+            final long startMs = ctx == null ? 0 : t0 - ctx.t0;   // 执行起点偏移：历史页并行段重建用
             for (int attempt = 1; attempt <= attempts; attempt++) {
                 try {
                     NodeOut out = body.apply(state);
                     long ms = System.currentTimeMillis() - t0;
                     if (ctx != null) {
-                        ctx.trace(n.getId(), n.getType(), "success", inputSnapshot, out.traceOutput(), ms,
+                        ctx.trace(n.getId(), n.getType(), "success", inputSnapshot, out.traceOutput(), ms, startMs,
                                 out.promptTokens(), out.completionTokens(),
                                 attempt > 1 ? "第 " + attempt + " 次尝试成功（前 " + (attempt - 1) + " 次失败已重试）" : null);
                         ctx.fullOutputs.put(n.getId(), out.output());
@@ -305,7 +306,7 @@ public class WorkflowEngine {
                 } catch (WorkflowSuspendException e) {
                     if (ctx != null) {
                         ctx.trace(n.getId(), n.getType(), "waiting", inputSnapshot, e.traceOutput,
-                                System.currentTimeMillis() - t0, null, null, null);
+                                System.currentTimeMillis() - t0, startMs, null, null, null);
                     }
                     throw e;
                 } catch (Exception e) {
@@ -314,7 +315,7 @@ public class WorkflowEngine {
                     if (attempt < attempts) {
                         if (ctx != null) {
                             ctx.trace(n.getId(), n.getType(), "retrying", inputSnapshot, null,
-                                    System.currentTimeMillis() - t0, null, null,
+                                    System.currentTimeMillis() - t0, startMs, null, null,
                                     "第 " + attempt + " 次失败，重试中（共 " + (attempts - 1) + " 次重试）："
                                             + WorkflowRunCtx.abbreviate(e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage(), 300));
                         }
@@ -324,7 +325,7 @@ public class WorkflowEngine {
             }
             long ms = System.currentTimeMillis() - t0;
             if (ctx != null) {
-                ctx.trace(n.getId(), n.getType(), "failed", inputSnapshot, null, ms, null, null,
+                ctx.trace(n.getId(), n.getType(), "failed", inputSnapshot, null, ms, startMs, null, null,
                         attempts > 1 && last != null
                                 ? "重试 " + (attempts - 1) + " 次后仍失败：" + WorkflowRunCtx.abbreviate(
                                         last.getMessage() == null ? last.getClass().getSimpleName() : last.getMessage(), 300)

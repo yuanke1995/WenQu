@@ -157,10 +157,13 @@ public final class WorkflowRunCtx {
     /**
      * 写一条节点 trace（幂等键：nodeId+完成时刻；字段口径见 c_ai_workflow_run.node_traces）。
      * output 截断进摘要，避免 LLM 长回答把 trace 撑爆（完整输出在 state 里供 end 节点引用）。
+     *
+     * @param startMs 节点开始执行的相对偏移（t0 - ctx.t0）：与 elapsedMs 合成 [start, start+elapsed]
+     *                时间窗，历史页据此重建并行段（完成序本身重建不出重叠）
      */
     synchronized void trace(String nodeId, String type, String status, Map<String, Object> input,
-                            Object output, long elapsedMs, Integer promptTokens, Integer completionTokens,
-                            String error) {
+                            Object output, long elapsedMs, long startMs, Integer promptTokens,
+                            Integer completionTokens, String error) {
         Map<String, Object> t = new LinkedHashMap<>();
         t.put("nodeId", nodeId);
         t.put("type", type);
@@ -168,6 +171,7 @@ public final class WorkflowRunCtx {
         if (input != null && !input.isEmpty()) t.put("input", truncateForTrace(input, traceInputMax));
         if (output != null) t.put("output", truncateForTrace(output, traceOutputMax));
         t.put("elapsedMs", elapsedMs);
+        t.put("startMs", startMs);
         if (promptTokens != null) t.put("promptTokens", promptTokens);
         if (completionTokens != null) t.put("completionTokens", completionTokens);
         if (error != null && !error.isBlank()) t.put("error", abbreviate(error, traceErrorMax));
