@@ -92,7 +92,7 @@ public class DynamicOpenAiChatModel implements ChatModel {
         String modelRef = modelOf(prompt);
         ChatResponse resp;
         try {
-            resp = current(route).call(rewriteModel(prompt, route));
+            resp = current(route).call(rewriteModel(withRegisteredMaxTokens(prompt, modelRef), route));
         } catch (Exception e) {
             throw quotaAware(e, route, modelRef);
         }
@@ -165,7 +165,7 @@ public class DynamicOpenAiChatModel implements ChatModel {
     public Flux<ChatResponse> stream(Prompt prompt) {
         ModelRegistryService.ModelRoute route = requireRoute(prompt);
         String modelRef = modelOf(prompt);
-        Prompt rewritten = rewriteModel(prompt, route);
+        Prompt rewritten = rewriteModel(withRegisteredMaxTokens(prompt, modelRef), route);
         OpenAiChatModel delegate = current(route);
         return Flux.defer(() -> {
             // 配额闸按订阅判：工具循环里每一轮都是一次真实计费请求，触顶后最多再花当前这一轮
@@ -334,6 +334,27 @@ public class DynamicOpenAiChatModel implements ChatModel {
             return new Prompt(prompt.getInstructions(), copy);
         }
         return prompt;
+    }
+
+    /**
+     * 按模型登记值补 max_tokens（请求未显式设置时）：登记为空/非正=不下发，行为与改前一致。
+     * <p>为什么要在这里补：这是全平台 Spring AI 请求的必经点，手写侧聊天、摘要、评测评判、
+     * 连通性探测都从这里过——不设的话单次补全上限一直是厂商默认（token-plan 族实测 8192），
+     * 模型把大产物内联进工具参数必被截断成残缺参数（真机 2026-11-07 presentArtifact 空参案，
+     * 能力是 2026-10-13 P6 迁移删 RagService 时丢的，见 docs/max-tokens-dispatch/ 方案）。
+     * <p>显式 per-request 的 maxTokens 永远赢（评测评判的 200、压缩的预算等各自语义不动）；
+     * 供应商级 delegate 缓存是多个模型共享的，所以只能按请求注入、不能进 defaultOptions。
+     */
+    private Prompt withRegisteredMaxTokens(Prompt prompt, String modelRef) {
+        if (!(prompt.getOptions() instanceof OpenAiChatOptions o) || o.getMaxTokens() != null) {
+            return prompt;
+        }
+        com.wenqu.ai.model.ModelInfo mi = registry.modelInfoOf(modelRef);
+        Integer max = mi == null ? null : mi.getMaxOutput();
+        if (max == null || max <= 0) return prompt;
+        OpenAiChatOptions copy = OpenAiChatOptions.fromOptions(o);
+        copy.setMaxTokens(max);
+        return new Prompt(prompt.getInstructions(), copy);
     }
 
     /** 按路由指纹取客户端（缓存命中复用；未命中构建并缓存，本地构建无网络开销） */

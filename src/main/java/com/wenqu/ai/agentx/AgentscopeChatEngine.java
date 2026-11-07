@@ -1695,6 +1695,19 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
     }
 
     /**
+     * 模型登记的最大输出 token（作为 max_tokens 随请求下发）；未登记返回 0=不下发，交厂商默认。
+     * <p>为什么必须有这一刀：2026-10-03 老链路按行下发（f77ef04a），10-13 P6 迁移删 RagService
+     * 时能力丢失，此后单次补全上限一直是厂商默认——token-plan 那族实测 8192，模型把大产物内联进
+     * 工具参数时输出在参数中途被截断，框架只收到空参 {}（真机 2026-11-07 presentArtifact 空参案）。
+     * 口径与 {@link #modelContextWindow} 同源：登记什么下发什么，登记为空行为零变化。
+     */
+    private int modelMaxOutput(String modelRef) {
+        com.wenqu.ai.model.ModelInfo mi = modelRegistry.modelInfoOf(modelRef);
+        Integer max = mi == null ? null : mi.getMaxOutput();
+        return max == null || max <= 0 ? 0 : max;
+    }
+
+    /**
      * 本轮墙钟上限（秒），恒定取问答侧 SSE 超时：两套运行时共用一个天花板。
      * <p>框架（AgentScope）对单把工具有自带的 5 分钟硬超时（{@code ExecutionConfig.TOOL_DEFAULTS}，
      * 不重试），不显式覆盖就会多一道没人知道的天花板——咨询子轮、沙盒长命令都会撞上去
@@ -2546,7 +2559,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * @param key 智能体 id + 配置更新时间：换人、改配置都会让它变
      */
     private record AgentBinding(Agent row, String key, io.agentscope.core.skill.SkillFilter skillFilter,
-                                int contextWindow) {
+                                int contextWindow, int maxOutput) {
     }
 
     /**
@@ -2663,10 +2676,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 上下文窗口档并进指纹：它决定框架的压缩阈值与输入上限，烤死在实例里，不重建就等于改档位没改。
         // 窗口现在恒等于模型登记上限（档位选择已退役），并进来是为了管理员改了登记值时这一轮就重建。
         int contextWindow = modelContextWindow(modelRef);
-        key = key + "|ctx=" + contextWindow;
+        // 最大输出同理烤在实例里（作为 max_tokens 随请求下发），登记值改了也得重建才生效。
+        int maxOutput = modelMaxOutput(modelRef);
+        key = key + "|ctx=" + contextWindow + "|out=" + maxOutput;
         // 思考开关仍留在指纹外：它同样烤在实例里，但续跑轮的 ChatCommand 复原不了它，并进来会让
         // 续跑按默认档重建。那一档的变更仍欠「按调用传 GenerateOptions」那一刀。
-        return new AgentBinding(row, key, skillFilterOf(row), contextWindow);
+        return new AgentBinding(row, key, skillFilterOf(row), contextWindow, maxOutput);
     }
 
     /**
@@ -3375,10 +3390,13 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * <p>温度那条同理：主流网关在思考开启时忽略 temperature（不报错也不生效），与其设了静默失效，
      * 不如不下发，免得被读成「温度已按配置生效」。
      */
-    private io.agentscope.core.model.GenerateOptions generateOptions(ChatCommand cmd, String ref) {
+    private io.agentscope.core.model.GenerateOptions generateOptions(ChatCommand cmd, String ref, int maxOutput) {
         io.agentscope.core.model.GenerateOptions.Builder b =
                 io.agentscope.core.model.GenerateOptions.builder()
                         .executionConfig(modelExecutionConfig(MODEL_MAX_ATTEMPTS));
+        // 登记了最大输出才下发 max_tokens（0=未登记，交厂商默认）：不设的话单次补全上限就是
+        // 厂商默认（token-plan 族实测 8192），模型内联大产物必被截断成残缺参数。
+        if (maxOutput > 0) b.maxTokens(maxOutput);
         String thinkLevel = cmd.getReasoningLevel() != null ? cmd.getReasoningLevel()
                 : modelRegistry.defaultReasoningLevelOf(ref);
         boolean thinkingOn = cmd.isDeepThink()
@@ -3428,6 +3446,9 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
      * 发了会被网关 400 拒掉，真机为 GLM 那条踩过并写进方法注释）。这一族确实省不掉，至少不再
      * 把主链的「思考强度档位」也叠上去。
      * <p>温度沿用设置页那一个值：这两类调用本来就跟着问答走，不为它们另开一档。
+     * <p><b>刻意不下发登记的 max_tokens</b>（与主链 {@code generateOptions} 唯一的参数差）：
+     * 摘要/压缩的输出天然短，厂商默认上限（8192 级）在这里是 runaway 护栏而非瓶颈——
+     * 放大到登记值只会在恒思考族上给失控推理更大的燃烧空间，换不来任何收益。
      */
     private io.agentscope.core.model.GenerateOptions auxGenerateOptions(ChatCommand cmd, String ref) {
         io.agentscope.core.model.GenerateOptions.Builder b =
@@ -3647,7 +3668,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 .modelName(route.modelId())
                 .stream(true)
                 .httpTransport(modelTransport)
-                .generateOptions(generateOptions(cmd, hooks.modelRef()))
+                .generateOptions(generateOptions(cmd, hooks.modelRef(), binding.maxOutput()))
                 .endpointPath(completionsPath);
         // 窗口拿得到登记值才交给模型：没拿到时一次都不调，让框架按模型名查它自己的内置表。
         // 显式传 0 会被框架当成「这条模型的窗口是 0」，输入上限直接掉到 64000 兜底值——
