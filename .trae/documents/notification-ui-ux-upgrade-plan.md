@@ -1,0 +1,652 @@
+# 通知功能完善与 UI/UX 升级方案（先出方案书与效果图，确认后再写代码）
+
+## 0. 结论先行
+
+| 项 | 结论 |
+|---|---|
+| **本次第一步** | 产出 `docs/notification-upgrade/notification-upgrade.html`：完整方案书 + 7 张高保真效果图；**这一步不写任何业务代码** |
+| **确认后再做** | 你在效果图中确认信息架构与视觉方向后，再按 §8 的阶段 1–7 实施 |
+| **改造范围** | 通知中心页、侧栏铃铛浮层、移动端通知 sheet、个人设置「通知与推送」四处统一升级 |
+| **后端** | 只做必要调整：列表支持多类型/关键词筛选、补「标记未读」、通知文案清洗、补全 2 个漏登记的通知类型；**不改数据库表结构** |
+| **前端** | 新增 1 个共享通知列表组件 + 扩展共用取数模块，四处复用同一套分组、文案、跳转与状态 |
+| **首批重点** | 「降噪」与「视觉重排」并行：同会话重复审批聚合成一组；裸 URL / 内部类型常量不再出现在界面 |
+| **不做** | 不改审批与工具卡链路、不改会话标题生成、不做免打扰时段/摘要推送/已处理状态同步（列入后续可选） |
+| **验证** | HTML 自检无横向溢出 + `npm run build` + `mvn -DskipTests compile` + 桌面/移动/暗色/键盘四组人工回归 |
+
+> 本文件是执行计划，不是最终方案书。方案书正文、效果图、组件标注与接口契约将按 §6 生成到 HTML 文件中。
+> 视觉方向以 HTML 效果图为准；若评审后需要改信息架构，先改 HTML 再同步回本计划，然后才进入代码阶段。
+
+---
+
+## 1. 现状诊断（基于代码与截图）
+
+### 1.1 截图暴露的 5 个问题
+
+| 编号 | 问题 | 根因 |
+|---|---|---|
+| P1 | 同一会话的「有一个操作等你批准」连续刷 3 条，内容几乎完全相同 | 去重键按 `approval:<approvalId>`，不同审批 ID 不会合并；界面也没有按会话聚合 |
+| P2 | 正文出现完整裸 URL：`会话「打开 http://localhost:5800/chat?sid=12dcf...」` | 会话标题取首条用户消息前 50 字（[SessionService.java](file:///Users/yuki/IdeaProjects/wenqu/src/main/java/com/wenqu/ai/service/SessionService.java#L1301-L1309)），通知正文直接复用了标题，未清洗 URL 与 query 串 |
+| P3 | 19 类通知平铺，没有「要处理 / 异常 / 完成」的优先级，也没有日期分段 | 类型元数据只有标签/图标/色值，没有语义桶；列表按时间倒序单层渲染 |
+| P4 | 侧栏铃铛浮层 320px 宽，长内容被 2 行截断，底部条目被裁切，和侧栏会话列表视觉黏在一起 | [AppLayout.vue](file:///Users/yuki/IdeaProjects/wenqu/web/src/views/AppLayout.vue#L383-L412) 与固定 320px / 380px 高度样式（[AppLayout.vue](file:///Users/yuki/IdeaProjects/wenqu/web/src/views/AppLayout.vue#L2121-L2145)） |
+| P5 | 在通知中心点「全部已读」后，侧栏铃铛角标最多要等 30 秒才归零 | 通知中心自持一套列表与未读数，没有和 `useNotifications` 共享状态或发变更事件 |
+
+补充发现的**功能缺口**（截图中未直接暴露，但属于「完善」范围）：
+
+| 编号 | 缺口 | 证据 |
+|---|---|---|
+| G1 | 后端用字面量类型 `tenant-request`、`quota` 发通知，前端类型表没有登记，界面会露出裸常量 | [TenantRequestService.java](file:///Users/yuki/IdeaProjects/wenqu/src/main/java/com/wenqu/ai/service/TenantRequestService.java#L89-L94)、[UsageQuotaService.java](file:///Users/yuki/IdeaProjects/wenqu/src/main/java/com/wenqu/ai/service/UsageQuotaService.java#L416-L416) |
+| G2 | `refType=tenant-request / tenant / quota` 没有任何跳转落点，这两类通知点不开 | [NotificationCenter.vue](file:///Users/yuki/IdeaProjects/wenqu/web/src/views/NotificationCenter.vue#L188-L200) |
+| G3 | 列表接口只支持单类型筛选，没有关键词搜索；无法「标记未读」 | [NotificationService.java](file:///Users/yuki/IdeaProjects/wenqu/src/main/java/com/wenqu/ai/service/NotificationService.java#L278-L295)、[NotificationController.java](file:///Users/yuki/IdeaProjects/wenqu/src/main/java/com/wenqu/ai/controller/NotificationController.java#L40-L46) |
+| G4 | PC 浮层、通知中心、移动 sheet 各写一份「点开跳哪」的路由语义，已经出现分叉 | 三处 `openNotif`：AppLayout、NotificationCenter、MobileNotifSheet |
+
+### 1.2 已有的好设计（必须保留，不许改坏）
+
+1. **类型元数据只有一份**：`NOTIF_TYPES` 由标签/图标/色值派生，铃铛、通知中心筛选、设置页三处共用（[useNotifications.js](file:///Users/yuki/IdeaProjects/wenqu/web/src/chat/useNotifications.js#L70-L95)）。
+2. **去重合并语义**：同 `(uid,type,dedupKey)` 在窗口内且未读时合并为一条并 `hitCount+1`（[NotificationService.java](file:///Users/yuki/IdeaProjects/wenqu/src/main/java/com/wenqu/ai/service/NotificationService.java#L91-L112)）。本次只在展示层聚合，不改这个数据语义——否则会丢掉每个审批各自的 `approvalId`。
+3. **旁路纪律**：通知写库/推送失败不影响主链路，异常只记 WARN。
+4. **静音清单只在个人设置里维护**：通知中心只留跳转入口，避免两处开关漂移。
+5. **Web Push 挂在「真的新增一条」之后**，合并命中不推送。
+
+---
+
+## 2. 设计目标与原则
+
+1. **先回答「有没有要我处理的事」，再回答「发生了什么」**：首屏先给待处理数量，再给时间线。
+2. **同一件事只出现一次**：同一资源的多个待处理项折叠成一组，可展开，不丢任何一条的深链。
+3. **文案像人话**：不出现裸 URL、query 串、内部类型常量；会话/工作流/供应商有名字就报名字。
+4. **三端同一套信息，密度不同**：PC 页负责管理，浮层负责速览，手机 sheet 负责点开就走。
+5. **只复用现有设计令牌**：`--app-accent / --app-ok / --app-warn / --app-danger / --app-panel / --app-panel-2 / --app-text3 / --app-radius`，不引入新色板或新组件库。
+6. **能不新增数据表就不新增**：本次全部改动可通过「前端派生 + 接口增量参数 + 文案清洗」完成。
+
+---
+
+## 3. 信息架构定稿
+
+### 3.1 语义桶（前端派生，唯一来源）
+
+在 `web/src/chat/useNotifications.js` 增加：
+
+```js
+export const NOTIF_BUCKETS = {
+  action: {
+    label: '待处理',
+    tone: 'warn',
+    types: ['tool.approval', 'tool.ask', 'plan.approval', 'workflow.approval',
+            'model.quota', 'quota', 'tenant.request']
+  },
+  alert: {
+    label: '异常',
+    tone: 'err',
+    types: ['parse.failed', 'parse.batch.failed', 'workflow.failed', 'workflow.timeout',
+            'web.refresh.failed', 'schedule.failed', 'eval.decline', 'chat.turn.failed',
+            'goal.failed', 'ops.alert']
+  },
+  done: {
+    label: '完成',
+    tone: 'ok',
+    types: ['parse.done', 'schedule.done', 'chat.turn.done', 'goal.achieved',
+            'tenant.approved']
+  }
+}
+export const notifBucket = type => /* 命中 action/alert/done，否则 'info' */
+```
+
+- `info` 是兜底桶（例如历史 `tenant-request` 混合记录、未知新类型），不单独出页签，归入「全部」。
+- 新增通知类型时只改 `NOTIF_LABELS + NOTIF_ICONS + NOTIF_TONES + NOTIF_BUCKETS` 四处，界面自动跟上。
+
+### 3.2 聚合规则（只做展示层，不改数据）
+
+```js
+// 仅 action 桶、且有 refType + refId 的条目参与聚合
+groupKey(n) = n.refType && n.refId ? `${n.refType}|${n.refId}` : null
+```
+
+- **聚合条件**：同一日期分段内，`groupKey` 相同且 action 桶条目数 ≥ 2。
+- **不聚合**：异常/完成/信息类条目、没 `refType/refId` 的条目、搜索关键词非空时的结果。
+- **中心页按日期分段后再聚合**（今天 / 昨天 / 更早），避免跨天条目被折进今天的组。
+- **浮层与手机 sheet 不做日期分段**，直接对全量已加载条目聚合。
+- **展开状态**存 `localStorage` key `wq.notif.expanded`（数组，上限 20 个 key，超出淘汰最旧）。
+- 组内子条目按时间倒序；组本身显示 `items.length`，每个子条目仍保留自己的 `×hitCount`。
+- **不丢深链**：组内每条都能单独「去处理」，跳转用各自的 `refSub`。
+
+### 3.3 日期分段
+
+| 分段 | 规则 | 列表头 |
+|---|---|---|
+| 今天 | 本地时区当天 00:00 之后 | `今天` |
+| 昨天 | 本地时区昨天 00:00–24:00 | `昨天` |
+| 更早 | 其余 | `更早`（条目 meta 显示 `MM-DD HH:mm`） |
+
+### 3.4 文案清洗（前后端同一套规则）
+
+**后端**（落库前，新通知与合并更新都过一遍）：
+在 `NotificationService` 内增加 `private static String clean(String s, int max)`，规则：
+
+1. `\r\n\t` 转空格、连续空白折叠为一个空格、`strip()`。
+2. 匹配 `https?://` 开头的 URL：
+   - 总是去掉 `?` / `#` 及其后的 query/fragment；
+   - 若清洗后 URL 长度 > 64，只保留 `host/…`（例：`http://localhost:5800/chat?sid=abc` → `localhost:5800/chat`）；
+   - 若清洗后 ≤ 64，保留完整路径。
+3. 去掉 URL 两侧残留的空引号/空括号。
+4. 按列宽截断：标题 190、正文 990（沿用现有 `abbreviate` 的上限）。
+
+**前端**（渲染历史脏数据，新数据也过一遍幂等）：在 `useNotifications.js` 导出 `notifCleanText(s)`，正则与规则同上，长度只截到 240 字符（视觉再靠 CSS line-clamp）。
+
+示例：
+
+```
+原：会话「打开 http://localhost:5800/chat?sid=12dcf152cfb446e」 · 打开本机浏览器并浏览页面
+新：会话「打开 localhost:5800/chat」 · 打开本机浏览器并浏览页面
+```
+
+**主体抽取** `notifSubject(n)`：
+- `refType === 'session'`：取 `content` 第一个 ` · ` 段（即 `会话「X」`）；
+- `refType === 'workflow'`：从 `title` 正则提取 `工作流「X」`；
+- `refType === 'provider'`：从 `title` 提取 `模型供应商「X」`；
+- 其余：清洗后的 `title`。
+
+**明细抽取** `notifDetail(n)`：`content` 第二个 ` · ` 段；没有则用 `title`。用于组标题下的「最近：…」。
+
+---
+
+## 4. 四处界面规格
+
+### 4.1 通知中心页（`/notifications`）
+
+```
+┌ 页头 ────────────────────────────────────────────────────────────────┐
+│ 通知中心  [12 条未读]                    [全部已读] [通知与推送设置] │
+├ 工具条（sticky） ─────────────────────────────────────────────────────┤
+│ [待处理 8] [异常 3] [完成 1] [全部]      [搜索] [仅未读◻] [类型▾] [清空▾] │
+├ 列表卡片 ─────────────────────────────────────────────────────────────┤
+│ 今天                                                            共 9 条 │
+│ ┌ 会话「打开 localhost:5800/chat」 · 共 3 件待处理        [展开▾] ┐│
+│ │ 最近：打开本机浏览器并浏览页面 · 4 小时前                    ││
+│ └───────────────────────────────────────────────────────────────┘│
+│ ┌ 有一个操作等你批准                              [去处理 ›] [⋯] ┐│
+│ │ 会话「…」 · 打开本机浏览器并浏览页面                          ││
+│ │ 工具审批待决 · 4 小时前                                       ││
+│ └───────────────────────────────────────────────────────────────┘│
+│ 昨天                                                            共 4 条 │
+│ …                                                                     │
+│                         [加载更多]（滚到底自动触发）                  │
+└───────────────────────────────────────────────────────────────────────┘
+```
+
+**页头**
+
+- 标题「通知中心」+ 未读胶囊 `N 条未读`（`app-pill warn`，0 时不显示）。
+- 删除现有那行长说明；保留 `title` 悬浮提示「解析、工作流、网页源刷新、定时任务、审批等异步事件的归档与处理」。
+- 右侧动作：「全部已读」（未读为 0 时隐藏）、「通知与推送设置」（ghost 小按钮，跳 `/profile?panel=notify`）。
+
+**工具条（`position: sticky; top: 0`，页面主体滚动时吸顶）**
+
+- 语义桶页签：`待处理 / 异常 / 完成 / 全部`，角标显示**未读数**（来自 `/notification/counts` 的类型计数求和），0 不显示角标。
+- 搜索框：`a-input`，宽 220，`allow-clear`，placeholder「搜索通知内容」，300ms 防抖；非空时禁用聚合。
+- 「仅未读」开关（保留现有语义）。
+- 类型筛选下拉：保留现有「全部类型」+ 各类型未读计数。
+- **互斥规则**：选类型 → 桶自动回到「全部」，清空类型时桶保持；选桶 → 清空类型。
+- 「清空」下拉：`清空已读` / `清空全部`，用 `Modal.confirm` 二次确认，文案写明「此操作不可恢复」。
+- 有任何筛选时，工具条下方出现一行筛选摘要：`类型：工具审批待决 ×`、`搜索：xxx ×`、`仅未读 ×`，点 × 逐项清除，右侧「清除全部筛选」。
+
+**列表**
+
+- 外层白卡片（`--app-panel` + 边框 + `--app-radius`），内部行用细分隔线。
+- 日期分段头：12px `--app-text3`，吸顶；右侧显示该分段条目数。
+- 单条行（cozy，桌面）：
+  - 左侧 3px 未读竖条（仅未读行显示，`--app-accent`）。
+  - 图标放在 28px 圆角方块里，底色按 tone 用 `--app-ok-weak / --app-danger-weak / --app-warn-weak / --app-accent-weak`。
+  - 标题 13px，未读 600；`overflow-wrap:anywhere`。
+  - 明细 12px `--app-text2`，最多 2 行 `line-clamp`；`overflow-wrap:anywhere`。
+  - 元信息行：类型标签（`app-pill` 小号）+ 相对时间 + 来源；不重复标题里已有的内容。
+  - 右侧动作：action 类型显示「去处理 ›」常驻文字链接；所有类型在 hover/focus 时显示「⋯」菜单（`标记未读` / `删除`）。触屏或窄屏时「⋯」常驻。
+  - 已读行：无竖条、标题常规字重、图标底色降为 `--app-panel-2`。
+  - 不再用整行 `--app-accent-weak` 底色（满屏未读时色块太重）。
+- 聚合组行：
+  - 标题：`{notifSubject} · 共 N 件待处理`，例如 `会话「X」 · 共 3 件待处理`、`工作流「X」 · 共 2 次运行待审核`（按组内类型全为 `workflow.approval` 时用后者）。
+  - 副标题：`最近：{notifDetail(latest)} · {notifTime(latest)}`。
+  - 右侧：`去处理 ›`（跳最新一条）+ `展开/收起 ▾`（`aria-expanded`）。
+  - 收起时组是单行卡片；展开后在组内渲染子条目（缩进 12px，左侧细线）。
+  - 组头 checkbox：勾选/取消勾选组内全部子条目。
+- 批量模式（工具条右侧「选择」按钮进入）：
+  - 每行显示 checkbox；再点「选择」退出并清空选择。
+  - 批量条吸顶在列表上方：`已选 N 条` + `标记已读` + `删除` + `全选已加载` + `取消选择`。
+  - 删除用 `Modal.confirm`。
+- 加载 / 空 / 错误：
+  - 首屏加载：6 行骨架（灰块 shimmer，`prefers-reduced-motion` 下静态）。
+  - 加载更多：底部按钮 + 滚动到距底 120px 自动触发；按钮保留作兜底。
+  - 无任何通知：铃铛图标 + 「还没有通知」+ 「解析、工作流、定时任务或对话需要你处理时，会出现在这里」+ 「通知与推送设置」按钮。
+  - 筛选/搜索无结果：「没有符合条件的通知」+ 「清除筛选」。
+  - 加载失败：行内错误态 + 「重试」按钮，不再只弹一次 message。
+- 页脚：`共 N 条`。
+
+**交互与跳转**
+
+- 点击单条：先乐观置已读（失败回滚），再按共享 `notifTarget` 跳转。
+- 点击组头正文：跳组内最新一条；点「展开/收起」只展开，不跳转。
+- 删除单条：乐观移除 + 失败回滚；不弹确认（可在批量删除时确认）。
+- 全部已读：本地全部置已读 + 未读归零 + 广播 `app:notif-changed`（source=center）。
+- 清空/删除/标记未读后同样广播。
+
+### 4.2 侧栏铃铛浮层（`AppLayout.vue`）
+
+- 面板宽度 **380px**，最大高度 `min(460px, 64vh)`，内部滚动；页头与页脚固定。
+- 页头：`通知` + 未读胶囊；右侧「全部已读」（未读为 0 时隐藏）。
+- 页头下方两个轻量页签：`全部` / `待处理 N`（切换本地过滤，不发新请求，当前实例最多 50 条）。
+- 列表使用共享组件的 `compact` 密度：
+  - 行高 48px，图标 24px，标题 13px，明细 1 行 `line-clamp`，时间右侧同一行。
+  - 未读行左侧竖条 + 标题 600。
+  - action 行显示 `去处理 ›`；其他行整行可点。
+  - hover 显示「⋯」（标记未读/删除）。
+  - 聚合组在浮层内**默认收起**，组头显示 `×N` 计数；点 ▾ 展开。
+- 空态：「还没有通知」。
+- 加载态：3 行紧凑骨架。
+- 页脚左右分列：左侧「共 N 条」；右侧「查看全部通知」+ 齿轮图标（跳通知设置）。
+- 打开浮层时 `loadList()`；点击条目后关闭浮层并跳转。
+- 删除 `AppLayout.vue` 底部非 scoped 块中重复的 `.notif-item / .notif-ic / .notif-body / .notif-content / .notif-time` 样式，只保留 `.notif-popover .ant-popover-inner` 与面板宽度规则。
+- `provide('wqNotif', notif)` 改为提供完整实例（见 §7），让 H5 外壳的 sheet 也能用新增方法。
+
+### 4.3 移动端通知 sheet（`MobileNotifSheet.vue`）
+
+- 继续使用 `BottomSheet`，`max-height 78dvh`，标题「通知」，副标题 `N 条未读`。
+- 顶部操作行：分段控件 `待处理 N` / `全部` + 「全部已读」（未读为 0 时禁用）。
+- 列表：共享组件 `touch` 密度：
+  - 行最小高度 56px，图标 26px，标题 14px，明细 1–2 行，时间 11px。
+  - 未读竖条 + 标题 600；action 行右侧 `›`。
+  - 聚合组默认收起，点组头正文跳最新一条，点右侧 `▾` 展开。
+- 去掉现有那段长说明；底部只留一行 12px `只显示最近 50 条，点开直达可以处理的位置`。
+- 加载态 4 行骨架；空态「还没有通知」。
+- 点击条目：乐观置已读 → 关闭 sheet → 跳转（`notifTarget(n, { mobile: true })`）。
+- 不做滑动删除；提供「选择」批量模式（勾选、全选、标记已读、删除、取消选择）。
+
+### 4.4 个人设置「通知与推送」（`ProfilePage.vue`）
+
+重排为三块，顺序按用户关心程度：
+
+```
+通知与推送
+├─ 1. 接收哪些通知
+│   已静音 2 类                              [全部接收] [恢复默认]
+│   ▸ 需要你处理 (8)                         [全开] [全关]
+│     ○ 工具审批待决   ○ 智能体提问待答  ...
+│   ▸ 异常与失败 (10)                        [全开] [全关]
+│   ▸ 完成 (5)                               [全开] [全关]
+│   改完点「保存」才生效（未保存提示保留）
+├─ 2. 这台设备的系统级通知
+│   状态 + [允许通知] / [发一条测试] [取消这台设备] + 失败原因说明
+└─ 3. 说明
+    静音只影响新产生的通知；已收到的仍留在通知中心。
+    通知保留期由管理员在「系统设置 → 清理与保留」统一配置。
+    浏览器系统通知需要 https/localhost；iPhone 需先安装到主屏幕。
+```
+
+- 分组标题行右侧放「全开 / 全关」文字按钮：`全开` 从静音清单移除该组全部类型；`全关` 加入该组全部类型。
+- 顶部「全部接收」= 清空静音清单；「恢复默认」= 清空静音清单并保存一次（等价，但文案更明确）。
+- 每个类型一行：开关 + tone 图标 + 中文标签；沿用现有 `np-grid`，桌面 2–3 列，窄屏 1 列。
+- 保存按钮与「未保存」提示保持现有逻辑；保存成功后广播 `app:notif-changed`（静音变化只影响之后的通知，不需要刷新列表）。
+- 不新增免打扰/摘要设置。
+
+### 4.5 公共行组件视觉规格
+
+| 项 | page（cozy） | popover（compact） | sheet（touch） |
+|---|---|---|---|
+| 行内边距 | 12px 14px | 9px 10px | 11px 12px |
+| 最小高度 | 56px | 48px | 56px |
+| 图标容器 | 28px 圆角 8px | 24px 圆角 7px | 26px 圆角 8px |
+| 标题 | 13px / 未读 600 | 13px / 未读 600 | 14px / 未读 600 |
+| 明细 | 12px，2 行 | 12px，1 行 | 12px，2 行 |
+| 未读竖条 | 3px | 3px | 3px |
+| 右侧动作 | 去处理 + ⋯ | 去处理 + ⋯ | › |
+
+- 颜色只用令牌；暗色主题自动跟随。
+- 所有标题/明细 `overflow-wrap:anywhere` + `min-width:0`，右侧动作 `flex:none`，从根源上消除截图里的横向溢出。
+- 行容器用 `div role="button" tabindex="0"`，Enter/Space 触发打开；内部 checkbox/按钮 `@click.stop`。
+- 组头 `aria-expanded`；页签 `role="tablist"` + `aria-selected`；未读角标 `aria-label="N 条未读"`。
+- focus-visible 沿用全局 `outline: 2px solid var(--app-accent)`。
+
+---
+
+## 5. 后端与接口（必要调整）
+
+### 5.1 `GET /api/ai/notification/list` 增加两个可选参数
+
+| 参数 | 类型 | 说明 |
+|---|---|---|
+| `types` | `String` | 逗号分隔的类型集合；优先于现有 `type`；最多 30 项，空项丢弃 |
+| `q` | `String` | 关键词，trim 后最长 60 字符；对 `title`/`content` 做 LIKE（`or`） |
+
+- 保留现有 `type`、`unreadOnly`、`cursor`、`limit` 行为不变，旧前端不受影响。
+- `baseWrap` 改为接收 `List<String> types`：非空用 `in`，否则回落单 `type` eq。
+- 分页 `total` 与 `hasMore` 逻辑不变。
+
+### 5.2 新增「标记未读」
+
+`POST /api/ai/notification/unread`
+
+```json
+{ "ids": ["n1", "n2"] }
+// -> { "updated": 2 }
+```
+
+- Service：`update set read_flag=0, read_time=null where uid=? and read_flag=1 and id in (...)`。
+- 只影响当前用户、只把已读改回未读；不存在/别人的 id 静默忽略。
+
+### 5.3 补全通知类型与常量
+
+| 位置 | 改动 |
+|---|---|
+| `Notification.java` | 新增 `TYPE_TENANT_REQUEST = "tenant.request"`、`TYPE_TENANT_APPROVED = "tenant.approved"`、`TYPE_USAGE_QUOTA = "quota"` |
+| `TenantRequestService.java` | 第 89 行改用 `TYPE_TENANT_REQUEST`；第 182 行改用 `TYPE_TENANT_APPROVED` |
+| `UsageQuotaService.java` | 第 416 行改用 `TYPE_USAGE_QUOTA`（字符串值仍为 `quota`，历史数据可识别） |
+| 前端 `NOTIF_LABELS/ICONS/TONES/BUCKETS` | 新增：租户开通申请（action）、租户已开通（done）、用量配额触顶（action）；历史 `tenant-request` 显示「租户开通」，归 info 桶 |
+
+> 不改 `c_ai_notification` 表结构；`SchemaMigrator` 不参与，无迁移风险。
+
+### 5.4 跳转落点补全（共享 `notifTarget`）
+
+| 通知 | 落点 |
+|---|---|
+| `tool.approval` | PC `/chat?sid=&approval=`；移动 `/m/chat?sid=&approval=` |
+| `workflow.approval` | `/agents?tab=workflow&wf=&run=` |
+| `refType=session` | PC `/chat?sid=`；移动 `/m/chat?sid=` |
+| `refType=kb` | `/knowledge/{id}/docs` |
+| `refType=workflow` | `/agents?tab=workflow` |
+| `refType=provider` | `/agents?tab=providers` |
+| `refType=ops` | `/security` |
+| `refType=tenant-request / tenant` | `/tenants?tab=requests` |
+| `refType=quota` | `/dashboard?tab=cost` |
+
+配套小改（各 3–5 行）：
+- `TenantsPage.vue` 初始化 `tab` 时读 `route.query.tab`（`requests` / `tenants`），并 `watch` query 变化。
+- `DashboardPage.vue` 初始化 `tab` 时读 `route.query.tab`（`overview/trace/pool/cost`），并 `watch` query 变化。
+
+### 5.5 跨端角标同步
+
+新增全局事件 `app:notif-changed`，`detail: { source: 'center' | 'widget' }`：
+
+- `useNotifications` 监听：`source !== 'widget'` 时刷新未读数（中心页操作后铃铛 1 秒内归零）。
+- 通知中心监听：`source === 'widget'` 时重新拉列表 + counts（浮层里「全部已读」后中心同步）。
+- 浮层/sheet 自身的操作会直接更新共用实例，不需要再广播。
+- 通知中心自身操作成功后广播 `source: 'center'`。
+
+### 5.6 列表错误态
+
+`useNotifications` 增加 `error` ref（字符串）；`loadList` 失败时写入、成功时清空，轮询未读数失败仍静默。
+
+---
+
+## 6. 第一步交付物：方案书 + 效果图（本次执行的第一段）
+
+### 6.1 文件
+
+| 文件 | 说明 |
+|---|---|
+| `docs/notification-upgrade/notification-upgrade.html` | 自包含 HTML（内联 CSS/JS，无外部依赖），沿用 `docs/permissions-upgrade/permissions-upgrade.html` 的版式与 `web/src/views/app.css` 令牌 |
+| `docs/notification-upgrade/assets/current-notification.png` | 现状截图（复制自用户上传的原图，只读原件不动） |
+| 不新增其他文档 | Markdown 方案只保留本计划文件 |
+
+### 6.2 文档章节
+
+| 章节 | 内容 |
+|---|---|
+| 封面 | 标题、范围、状态「效果图评审稿」、日期、指标带（5 个问题 / 3 个缺口 / 7 张效果图 / 0 张表变更） |
+| 01 一页结论 | 4 张摘要卡：现状问题、改动范围、后端增量、第一步交付 |
+| 02 现状诊断 | 现状截图 + §1 的 P1–P5 / G1–G4 表格 + 代码证据链接 |
+| 03 设计目标与原则 | §2 六条 |
+| 04 信息架构 | 语义桶示意图 + 聚合规则图 + 日期分段 + 文案清洗前后对照 |
+| 05 效果图 · 通知中心 | N1–N4 |
+| 06 效果图 · 浮层与移动端 | N5–N6 |
+| 07 效果图 · 通知设置 | N7 |
+| 08 组件与交互规格 | 三种密度表、状态矩阵（未读/已读/展开/选中/加载/空/错误）、键盘与无障碍 |
+| 09 数据与接口 | §5 的 3 个增量能力 + 类型补全 + 跳转落点 |
+| 10 实施计划 | §8 阶段表（阶段 0 已产出本文，阶段 1–7 待实施） |
+| 11 验收标准 | §9 |
+| 12 待确认的 3 个决策 | 聚合组默认展开还是收起、浮层是否需要逐条删除、手机 sheet 是否需要批量管理 |
+
+### 6.3 7 张效果图
+
+| 编号 | 名称 | 必须表达的内容 |
+|---|---|---|
+| N1 | 通知中心 · 默认态 | 页头未读胶囊、桶页签、聚合组收起态、单条未读/已读对照、日期分段、页脚 |
+| N2 | 通知中心 · 聚合组展开 | 组内 3 条子项各自「去处理」、组头 `aria-expanded`、行内「⋯」菜单展开态 |
+| N3 | 通知中心 · 批量选择 + 搜索筛选 | checkbox、吸顶批量条、筛选摘要 chip、搜索高亮、互斥筛选后的结果 |
+| N4 | 通知中心 · 空/骨架/错误三态 | 同屏对比三种状态，含正确文案与「重试」 |
+| N5 | 侧栏铃铛浮层 | 380px 宽、`全部/待处理` 页签、紧凑行、聚合收起、页脚查看全部 + 设置入口；同时画出与侧栏的相对位置 |
+| N6 | 移动端通知 sheet | 390×844、分段筛选、紧凑触屏行、聚合收起、底部短说明 |
+| N7 | 个人设置 · 通知与推送 | 三组分类型开关、组级全开/全关、系统级推送状态卡、说明区、未保存态 |
+
+### 6.4 制作要求
+
+- **尺寸**：桌面内容宽 1120px，外壳为应用桌面布局（左侧栏 + 内容区），与现状截图一致；移动效果图用 390×844 设备框。
+- **令牌**：所有颜色、圆角、字号取自 `web/src/views/app.css`；不引入新色板。
+- **示例数据**：统一使用「3 条同会话工具审批 + 1 条工作流审批 + 1 条解析失败 + 1 条一轮跑完」，并在图角标注「示例数据」。
+- **文案**：图中不得出现裸 URL、`tool.approval` 这类类型常量；必须展示清洗后的可读文案。
+- **标注**：每张图配 3–5 条编号标注，说明「新增了什么、为什么、对应本计划哪一节」。
+- **状态**：N1–N4 必须能看出未读/已读、收起/展开、选中/未选中的差异。
+- **自检**：浏览器打开无横向溢出；锚点导航可用；浅色主题正常；截图（可选）保存到 `docs/notification-upgrade/assets/` 供快速预览。
+- **不改代码**：阶段 0 只产出文档与图片，不触碰 `web/src` 与 `src/main`。
+
+---
+
+## 7. 文件级改动清单（阶段 1 起）
+
+### 7.1 共享层
+
+**`web/src/chat/useNotifications.js`（扩展，不重写）**
+
+新增导出：
+```js
+NOTIF_BUCKETS, notifBucket, notifBucketLabel
+notifCleanText, notifSubject, notifDetail
+notifTarget(n, { mobile = false })
+groupNotifications(items, { group = true })   // 返回 [{ kind:'group', key, items, latest } | { kind:'single', item }]
+emitNotifChanged(source)
+```
+
+新增 `useNotifications` 返回值：
+```js
+error, markUnread(n), remove(n)
+```
+
+- `markUnread` 乐观更新（`readFlag=0`，未读 +1，失败回滚并 `refreshUnread`）。
+- `remove` 乐观删除（失败回滚并重新拉取）。
+- 监听 `app:notif-changed`（`source !== 'widget'` 时 `refreshUnread`）。
+- `markAllRead` 成功后 `emitNotifChanged('widget')`。
+
+**`web/src/api.js`**
+
+```js
+notificationList({ limit, type, types, unreadOnly, q, cursor })  // types 数组 -> 逗号串；q 透传
+notificationMarkUnread(ids)                                      // POST /notification/unread
+```
+
+**新增 `web/src/components/notification/NotificationList.vue`**
+
+Props：
+```js
+items: Array
+variant: 'page' | 'popover' | 'sheet'   // default 'page'
+loading: Boolean
+error: String
+selectable: Boolean
+selected: Array
+showDateHeaders: Boolean                // only page
+grouped: Boolean                        // default true
+emptyTitle / emptyDesc: String
+```
+
+Emits：
+```js
+open(item)                 // 行正文点击
+toggle-select(ids, checked) // 含组头全选
+mark-unread(item)
+delete(item)
+load-more()
+retry()
+```
+
+内部职责：
+- 日期分段（`showDateHeaders`）
+- 聚合/展开（`localStorage` 持久化）
+- 三种密度样式、骨架、空态、错误态
+- 所有文案清洗与主体抽取
+- 页脚「加载更多」与滚动触发（page variant）
+
+### 7.2 页面改动
+
+| 文件 | 改动 |
+|---|---|
+| [NotificationCenter.vue](file:///Users/yuki/IdeaProjects/wenqu/web/src/views/NotificationCenter.vue) | 重写模板与样式：页头/工具条/筛选摘要/批量条/`NotificationList`；删除本地 `fmt` 与 `navOf`，改用共享 `notifTime/notifTarget`；增加搜索、桶页签、标记未读、错误态、骨架；所有变更广播 `app:notif-changed` |
+| [AppLayout.vue](file:///Users/yuki/IdeaProjects/wenqu/web/src/views/AppLayout.vue) | 浮层改用 `NotificationList variant="popover"`；宽度 380 / 最大高 460；页签「全部/待处理」；页脚查看全部+设置；`provide('wqNotif', notif)` 提供完整实例；删除重复 `.notif-*` 样式；`openNotif` 改用 `notifTarget` |
+| [MobileNotifSheet.vue](file:///Users/yuki/IdeaProjects/wenqu/web/src/h5/MobileNotifSheet.vue) | 改用 `NotificationList variant="sheet"`；分段「待处理/全部」；去掉长说明；`openNotif` 改用 `notifTarget({mobile:true})` |
+| [ProfilePage.vue](file:///Users/yuki/IdeaProjects/wenqu/web/src/views/ProfilePage.vue) | 「收哪些类」拆成 action/alert/done 三组，加组级全开/全关、顶部全部接收、恢复默认；保存后广播 `app:notif-changed` |
+| [TenantsPage.vue](file:///Users/yuki/IdeaProjects/wenqu/web/src/views/TenantsPage.vue) | 支持 `?tab=requests` 深链 |
+| [DashboardPage.vue](file:///Users/yuki/IdeaProjects/wenqu/web/src/views/DashboardPage.vue) | 支持 `?tab=cost` 深链 |
+
+### 7.3 后端改动
+
+| 文件 | 改动 |
+|---|---|
+| [NotificationService.java](file:///Users/yuki/IdeaProjects/wenqu/src/main/java/com/wenqu/ai/service/NotificationService.java) | `clean()` 文案清洗（新建与合并两路）；`list` 支持 `types` + `q`；新增 `markUnread` |
+| [NotificationController.java](file:///Users/yuki/IdeaProjects/wenqu/src/main/java/com/wenqu/ai/controller/NotificationController.java) | `list` 增加 `types`、`q` 参数；新增 `POST /unread` |
+| [Notification.java](file:///Users/yuki/IdeaProjects/wenqu/src/main/java/com/wenqu/ai/model/Notification.java) | 新增 3 个类型常量 |
+| [TenantRequestService.java](file:///Users/yuki/IdeaProjects/wenqu/src/main/java/com/wenqu/ai/service/TenantRequestService.java) | 改用新常量（申请 / 已开通两类） |
+| [UsageQuotaService.java](file:///Users/yuki/IdeaProjects/wenqu/src/main/java/com/wenqu/ai/service/UsageQuotaService.java) | 改用 `TYPE_USAGE_QUOTA` 常量 |
+
+**不新增/修改**：`schema.sql`、`SchemaMigrator`、`NotificationMapper`、审批与工具卡链路、会话标题生成、Web Push 协议。
+
+---
+
+## 8. 实施阶段（按顺序执行，每阶段可独立验收）
+
+### 阶段 0：产出方案书与效果图（本次执行的第一段）
+
+1. 创建 `docs/notification-upgrade/assets/`，复制现状截图。
+2. 按 §3–§6 编写 `notification-upgrade.html`，完成 N1–N7 共 7 张效果图。
+3. 浏览器打开自检：无横向溢出、锚点导航可用、移动效果图设备框正常。
+4. 调用 `NotifyUser` 提交评审，**不开始任何代码改动**，等你确认视觉方向与 §6.2/6.3 的待确认决策。
+
+### 阶段 1：共享层与后端增量（不动任何界面）
+
+1. 后端：`clean()`、`types`/`q`、`markUnread`、3 个类型常量、租户类型拆分、quota 常量。
+2. 前端：`useNotifications` 新导出（桶/清洗/主体/跳转/聚合/事件/`markUnread`/`remove`/`error`）；`api.js` 两个函数。
+3. 验收：旧界面行为不变；验证 `types`、`q`、`unread` 三个接口。
+
+### 阶段 2：共享列表组件
+
+1. 新增 `NotificationList.vue`，三种 variant、日期分段、聚合展开、选择、骨架/空态/错误态。
+2. 先只在通知中心接入，浮层与 sheet 暂不接。
+3. 验收：中心页功能完整（搜索/筛选/桶/批量/标记未读/加载更多/跳转）。
+
+### 阶段 3：通知中心页重排
+
+1. 页头、吸顶工具条、筛选摘要、批量条、页脚。
+2. 删除本地重复的 `fmt`/`navOf`，改用共享函数。
+3. 验证聚合：同一会话 3 条审批 → 1 组；展开 3 条；每条「去处理」落到各自 approval。
+
+### 阶段 4：铃铛浮层
+
+1. 宽度/高度、页签、紧凑列表、页脚、完整实例 provide。
+2. 删除重复 CSS。
+3. 验证：1280×720 与 1440×900 下无裁切、无横向滚动；「全部已读」后中心页同步。
+
+### 阶段 5：移动端 sheet
+
+1. 分段筛选、紧凑/触屏密度、短说明、深链。
+2. 验证 390×844：可滚动、点击热区 ≥44px、无文字裁切。
+
+### 阶段 6：设置页与深链补全
+
+1. 三组分类、组级开/关、全部接收、恢复默认、说明区。
+2. `TenantsPage` / `DashboardPage` query 深链。
+3. 验证：静音某类后新通知不再产生；保存后刷新仍生效。
+
+### 阶段 7：全量回归
+
+见 §9。
+
+---
+
+## 9. 验收标准
+
+### 9.1 方案书与效果图（阶段 0）
+
+1. HTML 可直接双击打开，无外部依赖、无横向溢出。
+2. N1–N7 共 7 张效果图完整，每张 3–5 条编号标注。
+3. 图中不出现裸 URL 与内部类型常量；示例数据统一并标注「示例数据」。
+4. 锚点导航、目录、章节编号可用。
+5. 移动效果图为 390×844 设备框，触屏行高与热区一眼可辨。
+6. 现状截图已复制到 assets，原上传文件未被修改。
+
+### 9.2 功能（阶段 1–7）
+
+1. **聚合降噪**：同一会话产生 3 条 `tool.approval` → 通知中心只出现 1 个组「会话「X」 · 共 3 件待处理」；展开后 3 条子项，每条「去处理」直达对应 `approvalId`；不丢任何一条。
+2. **文案清洗**：会话标题含 `http://localhost:5800/chat?sid=...` 时，通知中心、浮层、sheet、Web Push 文案都不含 query 串；历史数据同样被渲染层清洗。
+3. **类型补全**：`tenant.request`、`tenant.approved`、`quota`、历史 `tenant-request` 都显示中文标签；租户类跳 `/tenants?tab=requests`，配额类跳 `/dashboard?tab=cost`。
+4. **筛选**：桶页签、类型下拉、搜索、仅未读可独立与组合使用；互斥规则正确；清除筛选恢复全量。
+5. **批量**：进入选择模式后全选已加载 / 取消 / 标记已读 / 删除均生效；组头勾选等于组内全选。
+6. **状态**：标记未读、单条删除、全部已读、清空已读/全部均有乐观更新与失败回滚。
+7. **角标同步**：中心页「全部已读」后铃铛角标 ≤1s 归零；浮层「全部已读」后中心页列表同步刷新。
+8. **加载**：首屏骨架、滚动加载更多、失败重试、空态与筛选空态均出现正确文案。
+
+### 9.3 视觉与可用性
+
+1. 1280×720、1440×900 下浮层完整可见，条目不被裁切，页面无横向滚动条。
+2. 390×844 下 sheet 内部滚动，顶部操作与底部说明不被遮挡。
+3. 暗色主题下所有底色/文字/语义色正常，无硬编码白底。
+4. 键盘：Tab 可到达行、组展开、页签、行内动作；Enter/Space 打开；focus 环可见。
+5. 触屏点击热区 ≥44px；hover 才出现的动作在触屏设备上常驻。
+
+### 9.4 不回归
+
+1. 通知静音清单保存、系统级推送订阅/测试/退订仍正常。
+2. 工具审批、提问、计划、工作流审批的深链落点与原来一致。
+3. 未读数 30s 轮询、窗口聚焦刷新、系统推送后刷新仍正常。
+4. 旧 `type` 参数调用方式仍可用。
+
+### 9.5 构建
+
+```bash
+cd /Users/yuki/IdeaProjects/wenqu/web && npm run build
+cd /Users/yuki/IdeaProjects/wenqu && mvn -q -DskipTests compile
+```
+
+---
+
+## 10. 假设与决策
+
+| 决策 | 理由 |
+|---|---|
+| 不新增数据库列/表 | 优先级、桶、聚合都可由 `type + refType + refId + createTime` 派生，避免迁移与历史数据回填 |
+| 聚合只发生在展示层 | 每条审批的 `approvalId` 都必须保留，合并数据会丢深链 |
+| 点击仍自动置已读 | 沿用现有语义；「已处理」状态需要审批链路回调，本次不做 |
+| 历史脏文案在渲染层清洗 | 保留期 30 天，没必要做一次性 SQL 洗库；新数据落库前也清洗，Web Push 同步受益 |
+| 搜索走后端 LIKE | 只搜已加载的分页会在翻页时给出误导结果 |
+| 桶与类型筛选互斥 | 两个筛选维度同时生效会产生「待处理里筛解析完成」的空结果，体验更差 |
+| 浮层只展示 50 条且不做完整管理 | 管理动作（搜索/批量/清空）集中在通知中心，浮层负责速览 |
+| 手机端做批量、不做滑动删除 | 已确认：选择模式 + 二次确认删除；滑动删除在触屏上误触成本高 |
+| 聚合组默认收起 | 已确认：先看「共 N 件待处理」，点 ▾ 展开 |
+| 浮层保留逐条删除 | 已确认：行内「⋯」提供标记未读 / 删除 |
+| 设置页保留显式保存 | 现有语义「改完点保存才生效」，不改成即时保存 |
+| 效果图先于代码 | 信息架构与密度先评审，避免四处界面按错误方向返工 |
+
+---
+
+## 11. 后续可选（本次不做）
+
+1. 免打扰时段：站内照常记录，只抑制 Web Push 横幅。
+2. 摘要/日报：按小时/按天合并推送。
+3. 按渠道偏好矩阵：站内 / 系统通知 / 邮件分别开关。
+4. 已处理状态同步：审批解决后自动标记通知已处理（需在 `HitlDecisionService` 与工作流裁决处回调）。
+5. 通知置顶与稍后提醒（snooze）。
+
+---
+
+## 12. 本次执行第一步
+
+只执行阶段 0：
+
+1. 创建 `docs/notification-upgrade/assets/` 并复制现状截图。
+2. 生成 `docs/notification-upgrade/notification-upgrade.html`（方案书 + N1–N7 效果图）。
+3. 浏览器自检后调用 `NotifyUser` 提交评审。
+4. 收到「视觉方向确认」与 §6.2 三个待确认决策的答复后，再从阶段 1 开始写代码。
