@@ -48,6 +48,12 @@ public final class ConfigDefaults {
     public static final int WORKFLOW_MAX_STEPS = 50;
     /** workflow.runQueueCapacity：异步运行排队容量（队列满即拒绝） */
     public static final int WORKFLOW_RUN_QUEUE_CAPACITY = 50;
+    /** workflow.traceInputMaxChars：节点 trace 输入摘要截断长度（默认=历史硬编码值，行为零变化） */
+    public static final int WORKFLOW_TRACE_INPUT_MAX = 400;
+    /** workflow.traceOutputMaxChars：节点 trace 输出摘要截断长度 */
+    public static final int WORKFLOW_TRACE_OUTPUT_MAX = 800;
+    /** workflow.traceErrorMaxChars：节点 trace 错误信息截断长度 */
+    public static final int WORKFLOW_TRACE_ERROR_MAX = 500;
 
     // ---- 其它多读点项 ----
 

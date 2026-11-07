@@ -963,6 +963,10 @@ public class ConfigService {
         d.put("workflow.runCleanupIntervalMs", "86400000"); // 工作流运行记录清理间隔（ms，默认每日；≤0 暂停）
         d.put("workflow.scheduleScanIntervalMs", "30000");  // 工作流定时触发扫描间隔（ms，默认 30s；≤0 暂停「工作流定时触发」任务）
         d.put("workflow.approvalReapIntervalMs", "60000"); // 审批超时回收间隔（ms，默认 60s；≤0 暂停，暂停后挂起 run 不落终态）
+        d.put("workflow.traceInputMaxChars", String.valueOf(ConfigDefaults.WORKFLOW_TRACE_INPUT_MAX));    // 节点 trace 输入摘要截断长度（0 下限钳 1；默认=历史硬编码 400）
+        d.put("workflow.traceOutputMaxChars", String.valueOf(ConfigDefaults.WORKFLOW_TRACE_OUTPUT_MAX));  // 节点 trace 输出摘要截断长度（默认=历史硬编码 800）
+        d.put("workflow.traceErrorMaxChars", String.valueOf(ConfigDefaults.WORKFLOW_TRACE_ERROR_MAX));    // 节点 trace 错误信息截断长度（默认=历史硬编码 500）
+        d.put("workflow.eventTriggerEnabled", "true");     // 第 4 期：工作流事件触发总闸（kb.docIndexed 源；异常时一键停用，不用改代码/重启）
         d.put("config.reloadIntervalMs", "300000");        // 多副本配置同步的周期兜底刷新间隔（ms，默认 5min；≤0 暂停）
         d.put("notification.retentionDays", "30");          // 站内通知保留天数（超期由「站内通知清理」任务物理删除，不区分已读未读）
         d.put("notification.turnEnabled", "true");           // 问答轮次与目标的站内通知总闸（平台级）：个人想收哪几类走个人静音偏好
