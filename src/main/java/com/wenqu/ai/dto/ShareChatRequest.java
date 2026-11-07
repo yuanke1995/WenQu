@@ -4,6 +4,7 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import lombok.Data;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 游客提问请求体（/api/ai/share/{token}/chat）。
@@ -42,6 +43,10 @@ public class ShareChatRequest {
 
     @Schema(description = "本轮文档附件（fileId 引用；需发布者开启「允许游客上传附件」）")
     private List<ChatRequest.Attachment> attachments;
+
+    @Schema(description = "调用变量（宿主页面 JS 随轮传入的业务上下文，如 userId/pageState）；"
+            + "需发布者开启「调用变量」开关，未开启时静默忽略（与未传不可区分）")
+    private Map<String, String> variables;
 
     /**
      * 重新生成：该问题的用户消息已随上一轮即时落库，true 时跳过重复落库。

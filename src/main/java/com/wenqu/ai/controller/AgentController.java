@@ -282,13 +282,15 @@ public class AgentController {
         // 未发布时能力位一律 false：多模态开关与分享同生命周期，分享没开就没有"游客能不能发图"这回事
         if (share == null) {
             return ResultJson.ok(Map.of("enabled", false, "mcpEnabled", false,
-                    "guestImages", false, "guestFiles", false, "guestMcpServers", List.of()));
+                    "guestImages", false, "guestFiles", false, "guestMcpServers", List.of(),
+                    "variables", false));
         }
         java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
         out.put("enabled", share.getEnabled() != null && share.getEnabled() == 1);
         out.put("mcpEnabled", share.getMcpEnabled() != null && share.getMcpEnabled() == 1);
         out.put("guestImages", AgentShareService.guestImagesOn(share));
         out.put("guestFiles", AgentShareService.guestFilesOn(share));
+        out.put("variables", AgentShareService.variablesEnabled(share));
         out.put("guestMcpServers", List.copyOf(AgentShareService.guestMcpServersOf(share)));
         out.put("token", share.getToken() == null ? "" : share.getToken());
         out.put("modelRef", share.getModelRef() == null ? "" : share.getModelRef());
@@ -313,6 +315,7 @@ public class AgentController {
         boolean mcpEnabled = Boolean.parseBoolean(String.valueOf(body.get("mcpEnabled")));
         boolean guestImages = Boolean.parseBoolean(String.valueOf(body.get("guestImages")));
         boolean guestFiles = Boolean.parseBoolean(String.valueOf(body.get("guestFiles")));
+        boolean variables = Boolean.parseBoolean(String.valueOf(body.get("variables")));
         Object refObj = body.get("modelRef");
         String modelRef = refObj == null ? "" : String.valueOf(refObj).trim();
         // 游客 MCP 名单：只收字符串数组，去重去空
@@ -332,6 +335,7 @@ public class AgentController {
         if (!enabled) {
             guestImages = false;
             guestFiles = false;
+            variables = false;
         }
         // 游客 MCP 名单同样依赖分享本体，且必须是发布者自己登记且启用的 server（fail-loud：
         // 名单对不上=发布弹窗开着的时候 server 被删过，让发布者重开弹窗再勾，而不是静默丢勾选）
@@ -361,13 +365,14 @@ public class AgentController {
         // 把判断留给最清楚自己用哪个模型的人
         var share = agentShareService.publish(id,
                 new AgentShareService.PublishSpec(enabled, mcpEnabled, guestImages, guestFiles, modelRef,
-                        guestMcpAllow),
+                        guestMcpAllow, variables),
                 RequestUser.uid());
         java.util.Map<String, Object> ok = new java.util.LinkedHashMap<>();
         ok.put("enabled", enabled);
         ok.put("mcpEnabled", mcpEnabled);
         ok.put("guestImages", AgentShareService.guestImagesOn(share));
         ok.put("guestFiles", AgentShareService.guestFilesOn(share));
+        ok.put("variables", AgentShareService.variablesEnabled(share));
         ok.put("guestMcpServers", List.copyOf(AgentShareService.guestMcpServersOf(share)));
         ok.put("token", share.getToken() == null ? "" : share.getToken());
         ok.put("modelRef", share.getModelRef() == null ? "" : share.getModelRef());

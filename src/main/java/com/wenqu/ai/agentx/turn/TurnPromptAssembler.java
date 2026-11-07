@@ -173,7 +173,29 @@ public final class TurnPromptAssembler {
         }
         // 4) 本轮指定技能：点名了就把正文送进去，否则「选了技能」这件事对模型完全不可见
         sb.append(pickedSkillsText(cmd, skillFilter));
+        // 5) 调用变量（嵌入方随轮传入的业务上下文）：键排序保证确定性；值是外部数据不是指令，
+        //    信封消毒与 @ 文档同口径。空 map 时整段缺席——不传变量的调用与改造前逐字节一致。
+        sb.append(hostVariablesText(cmd.getVariables()));
         return sb.toString();
+    }
+
+    /**
+     * 调用变量 → 「调用方上下文」段。变量来自调用方系统（嵌入页面的 JS / API Key 调用方），
+     * 值的可信度与附件正文同级——是数据不是指令，所以整个键值块进 {@code UntrustedContent} 信封。
+     */
+    private String hostVariablesText(java.util.Map<String, String> variables) {
+        if (variables == null || variables.isEmpty()) return "";
+        StringBuilder kv = new StringBuilder();
+        List<String> keys = new ArrayList<>(variables.keySet());
+        java.util.Collections.sort(keys);
+        for (String k : keys) {
+            String v = variables.get(k);
+            if (v == null || v.isEmpty()) continue;
+            kv.append("- ").append(k).append("：").append(v).append('\n');
+        }
+        if (kv.length() == 0) return "";
+        return "\n【调用方上下文】（以下键值是发起调用的系统随本轮传入的业务上下文，供作答参考）\n"
+                + UntrustedContent.envelope("host-variables", kv.toString());
     }
 
     /**

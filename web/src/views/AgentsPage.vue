@@ -566,6 +566,15 @@
             <div class="pub-switch-d">访客可上传 PDF / Word / Excel / 代码等；逐访客隔离落盘，24 小时后自动清理</div>
           </div>
         </div>
+        <!-- 调用变量：嵌入页 JS 随轮传业务上下文（如当前用户/单号）。默认关——变量直进模型上下文，
+             等于给了宿主页面向提示词塞上下文的通道，发布者显式同意才生效；关闭时传入的变量静默忽略 -->
+        <div class="pub-switch-row">
+          <a-switch v-model:checked="pubVariables" :disabled="!pubEnabled" size="small" @change="savePublish" />
+          <div class="pub-switch-t">
+            <div class="pub-switch-label">允许调用变量</div>
+            <div class="pub-switch-d">嵌入网页可随每次提问传入业务上下文（如当前用户、单号），注入本轮作答参考；关闭时传入的变量被忽略</div>
+          </div>
+        </div>
         <div v-if="!pubEnabled" class="pub-warn">
           <exclamation-circle-outlined />
           <span>这两项依赖公开分享：分享停用后访客入口随之消失</span>
@@ -1297,6 +1306,8 @@ const pubToken = ref('')
 /** 游客输入开关（默认关；发布者显式打开才给访客多模态入口） */
 const pubGuestImages = ref(false)
 const pubGuestFiles = ref(false)
+/** 调用变量开关（默认关 fail-closed；嵌入页随轮传业务上下文，发布者显式同意才注入） */
+const pubVariables = ref(false)
 /** 游客可用 MCP server 勾选（server 名数组；空=关闭。MCP 是发布者个人资产，按 server 粒度亮出） */
 const pubGuestMcp = ref([])
 /** 勾选项：发布者自己已启用、且落在**被发布智能体的 MCP 配置范围内**的 server（openPublish 时按智能体算；
@@ -1390,6 +1401,7 @@ async function openPublish (a) {
   pubModelRef.value = ''
   pubGuestImages.value = false
   pubGuestFiles.value = false
+  pubVariables.value = false
   pubGuestMcp.value = []
   pubTab.value = 'link'
   pubVisitCount.value = 0
@@ -1410,6 +1422,7 @@ async function openPublish (a) {
       pubMcpEnabled.value = !!r.data.mcpEnabled
       pubGuestImages.value = !!r.data.guestImages
       pubGuestFiles.value = !!r.data.guestFiles
+      pubVariables.value = !!r.data.variables
       // 已存名单先按本次勾选项收口：智能体配置改过（或 server 被删）后，名单里的残留名
       // 运行期装配时交集为空、勾了也白勾——回显就剪掉，下次保存自然把库里那份一起清掉
       const allowNames = new Set(myMcpServerChoices.value.map(s => s.name))
@@ -1435,13 +1448,14 @@ async function doSave (toast) {
   if (!pubEnabled.value) pubMcpEnabled.value = false
   // 游客输入同理依赖分享本身：链接都停了就无所谓"访客能不能发图"，收了才不会回显出
   // 「未发布 + 已允许发图」这种自相矛盾的状态（后端也归一成关，两边口径一致）
-  if (!pubEnabled.value) { pubGuestImages.value = false; pubGuestFiles.value = false; pubGuestMcp.value = [] }
+  if (!pubEnabled.value) { pubGuestImages.value = false; pubGuestFiles.value = false; pubVariables.value = false; pubGuestMcp.value = [] }
   try {
     const r = await publishAgent(pubAgentId.value, {
       enabled: pubEnabled.value,
       mcpEnabled: pubMcpEnabled.value,
       guestImages: pubGuestImages.value,
       guestFiles: pubGuestFiles.value,
+      variables: pubVariables.value,
       guestMcpServers: pubGuestMcp.value.slice(),
       modelRef: pubModelRef.value || ''
     })
@@ -1451,6 +1465,7 @@ async function doSave (toast) {
       // 以后端归一后的值为准（停用分享时它会把两个能力位一起压成 false）
       pubGuestImages.value = !!r.data.guestImages
       pubGuestFiles.value = !!r.data.guestFiles
+      pubVariables.value = !!r.data.variables
       if (Array.isArray(r.data.guestMcpServers)) pubGuestMcp.value = r.data.guestMcpServers.slice()
       // 同步列表行：卡片上的「已发布」标记即时反映，不用重拉列表
       const row = agents.value.find(x => x.id === pubAgentId.value)

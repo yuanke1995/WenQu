@@ -290,6 +290,10 @@ public class ShareController {
         List<String> images = parseGuestImages(ctx.share(), body.getImages());
         List<ChatRequest.Attachment> attachments =
                 parseGuestAttachments(ctx.share(), body.getAttachments(), visitorUid);
+        // 调用变量：发布者显式开启才收（fail-closed）。关闭时静默丢弃——变量与图片不同，
+        // 它不产生上游成本，宿主页多传几个键不该把整个提问打回；开着但超限才拒绝（fail-loud）。
+        java.util.Map<String, String> variables = AgentShareService.variablesEnabled(ctx.share())
+                ? ChatCommand.normalizeVariables(body.getVariables()) : null;
 
         String sessionId = body.getSessionId();
         if (sessionId == null || sessionId.isBlank()) {
@@ -332,6 +336,7 @@ public class ShareController {
                 // regenerate + replaceMessageId：分享页的「重新生成」复用登录态同一套语义
                 // （不重复落库用户消息；工作流驱动的智能体还会据此软删旧回答）
                 .regenerate(body.isRegenerate()).replaceMessageId(replaceMessageId)
+                .variables(variables)
                 .build(), emitter);
         agentShareService.incrementVisit(ctx.share().getId());
         audit.record("[AUDIT] 游客对话 ip={} agent={} session={} 图片={} 附件={} 重新生成={}",

@@ -56,7 +56,7 @@ public class AgentShareService {
      */
     public record PublishSpec(boolean enabled, boolean mcpEnabled, boolean guestImages,
                               boolean guestFiles, String modelRef,
-                              java.util.Set<String> guestMcpServers) {
+                              java.util.Set<String> guestMcpServers, boolean variablesEnabled) {
     }
 
     /** 游客发图是否开启（列可能为 NULL——存量行由 SchemaMigrator 补列前就是 NULL，按关闭兜底） */
@@ -67,6 +67,11 @@ public class AgentShareService {
     /** 游客上传附件是否开启（NULL 按关闭兜底，同上） */
     public static boolean guestFilesOn(AgentShare share) {
         return share != null && share.getGuestFilesEnabled() != null && share.getGuestFilesEnabled() == 1;
+    }
+
+    /** 游客请求能否携带调用变量（variables；NULL 按关闭兜底，fail-closed 同上） */
+    public static boolean variablesEnabled(AgentShare share) {
+        return share != null && share.getVariablesEnabled() != null && share.getVariablesEnabled() == 1;
     }
 
     /**
@@ -123,6 +128,7 @@ public class AgentShareService {
         share.setMcpEnabled(spec.mcpEnabled() ? 1 : 0);
         share.setGuestImagesEnabled(spec.guestImages() ? 1 : 0);
         share.setGuestFilesEnabled(spec.guestFiles() ? 1 : 0);
+        share.setVariablesEnabled(spec.variablesEnabled() ? 1 : 0);
         share.setModelRef(spec.modelRef() == null || spec.modelRef().isBlank() ? null : spec.modelRef().trim());
         share.setGuestMcpServers(guestMcpServersCsv(spec.guestMcpServers()));
         if (share.getId() == null) {

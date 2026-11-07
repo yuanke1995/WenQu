@@ -221,6 +221,10 @@ public class ChatController {
             }
         }
 
+        // 调用变量（嵌入方随轮传入的业务上下文）：fail-loud 归一（坏键名/超限 400），
+        // 收口在 ChatCommand.normalizeVariables——游客链路用同一把尺
+        java.util.Map<String, String> variables = ChatCommand.normalizeVariables(request.getVariables());
+
         String sessionId = request.getSessionId();
         if (sessionId == null || sessionId.isEmpty()) {
             sessionId = sessionService.createSession(userId);
@@ -306,6 +310,7 @@ public class ChatController {
                 .reasoningLevel(request.getReasoningLevel())
                 .editVariantGroup(editVariantGroup).planMode(request.isPlanMode())
                 .fromSteer(request.isFromSteer())
+                .variables(variables)
                 .build(), emitter);
         return emitter;
     }

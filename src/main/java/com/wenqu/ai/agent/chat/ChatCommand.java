@@ -153,6 +153,14 @@ public final class ChatCommand {
      */
     final String source;
     /**
+     * 调用变量（嵌入方随轮传入的业务上下文）：由控制器经 {@link #normalizeVariables(Map)} 归一后传入，
+     * {@code TurnPromptAssembler} 注入本轮用户消息的「调用方上下文」段。
+     * <p><b>为什么进用户消息而不是系统提示词</b>：系统提示词按会话烤在常驻引擎实例里
+     * （实例指纹不含请求内容），轮级变量进 sysPrompt 要么每轮重建实例、要么打爆供应商前缀缓存；
+     * 用户消息侧每轮现装，零缓存代价。null = 本轮无变量（上下文段整段缺席，与旧行为逐字节一致）。
+     */
+    final java.util.Map<String, String> variables;
+    /**
      * 发起方的展示名（定时任务名 / 工作流子智能体名）。网页问答不传——守卫侧按会话标题展示。
      * 有了它，工作区被占时的报错才能从含糊的「另一个任务在跑」变成「定时任务『周报』正在跑」。
      */
@@ -184,6 +192,44 @@ public final class ChatCommand {
     /** 只带最小三要素的命令（后台续跑、子 agent、定时任务这类没有前端请求体的调用方用） */
     public static ChatCommandBuilder of(String sessionId, String question, String userId) {
         return builder().sessionId(sessionId).question(question).userId(userId);
+    }
+
+    /** 调用变量的上限口径（登录态与游客链路同一把尺，收口在这） */
+    public static final int VARIABLES_MAX_ENTRIES = 32;
+    public static final int VARIABLES_VALUE_MAX_CHARS = 4096;
+    public static final int VARIABLES_TOTAL_MAX_CHARS = 32 * 1024;
+
+    /**
+     * 调用变量归一化（fail-loud：坏键名/超限直接 400——静默丢弃会让宿主「明明传了上下文」
+     * 而模型「明明没收到」，两边都对不上账）。空键跳过；返回 null = 无有效变量。
+     */
+    public static java.util.Map<String, String> normalizeVariables(java.util.Map<String, String> in) {
+        if (in == null || in.isEmpty()) return null;
+        if (in.size() > VARIABLES_MAX_ENTRIES) {
+            throw new com.wenqu.ai.common.BizException("调用变量最多 " + VARIABLES_MAX_ENTRIES + " 项");
+        }
+        java.util.LinkedHashMap<String, String> out = new java.util.LinkedHashMap<>();
+        int total = 0;
+        for (java.util.Map.Entry<String, String> e : in.entrySet()) {
+            String k = e.getKey() == null ? "" : e.getKey().trim();
+            String v = e.getValue() == null ? "" : e.getValue();
+            if (k.isEmpty()) continue;
+            if (!k.matches("[A-Za-z0-9_]{1,64}")) {
+                throw new com.wenqu.ai.common.BizException(
+                        "变量名不合法：" + k + "（仅限字母/数字/下划线，最长 64 字符）");
+            }
+            if (v.length() > VARIABLES_VALUE_MAX_CHARS) {
+                throw new com.wenqu.ai.common.BizException("变量 " + k + " 超长（单值最多 "
+                        + VARIABLES_VALUE_MAX_CHARS + " 字符）");
+            }
+            total += k.length() + v.length();
+            if (total > VARIABLES_TOTAL_MAX_CHARS) {
+                throw new com.wenqu.ai.common.BizException("调用变量总量超限（最多 "
+                        + (VARIABLES_TOTAL_MAX_CHARS / 1024) + "KB）");
+            }
+            out.put(k, v);
+        }
+        return out.isEmpty() ? null : out;
     }
 
     /** 插话的身份声明（只进模型上下文，用户看不见） */

@@ -69,6 +69,14 @@ public class AgentShare {
     private Integer guestFilesEnabled;
 
     /**
+     * 游客请求能否携带调用变量（variables）：1=允许注入本轮上下文，0=关闭（默认，fail-closed）。
+     * <p>变量由<b>宿主页面的 JS</b> 传入（不是匿名访客手打的），注入形态是「调用方上下文」数据段
+     * （{@code UntrustedContent} 信封消毒）。默认关与 guestImages/guestFiles 同口径：发布者没显式
+     * 同意的能力不该默认生效——变量直进模型上下文，等于给了宿主页面向提示词塞上下文的通道。
+     */
+    private Integer variablesEnabled;
+
+    /**
      * 游客可用的 MCP server 名单（逗号分隔的 server 名，空/NULL=全部关闭，默认关）。
      * <p>为什么是名单而不是布尔：MCP server 是发布者的<b>个人资产</b>，一个发布者名下往往
      * 挂着内网数据库查询这类绝不给匿名访客碰的服务——一刀切的「游客可用 MCP」等于把

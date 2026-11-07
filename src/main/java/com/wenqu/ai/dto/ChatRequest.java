@@ -6,6 +6,7 @@ import jakarta.validation.constraints.Size;
 import lombok.Data;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 聊天请求 DTO
@@ -136,4 +137,9 @@ public class ChatRequest {
             + "不是一次新提问。服务端据此在问题前加一句上下文声明。不带这个标记，"
             + "模型会把插话当成用户又问了一遍（短问答场景必现），插话的语义就废了")
     private boolean fromSteer;
+
+    @Schema(description = "调用变量（嵌入方随轮传入的业务上下文，如 userId/orderId/pageUrl）："
+            + "注入本轮用户消息的「调用方上下文」段（数据身份，经信封消毒）。"
+            + "≤32 项、键 [A-Za-z0-9_]≤64 字符、单值 ≤4096 字符、总量 ≤32KB；不进系统提示词（系统提示词按会话常驻缓存）")
+    private Map<String, String> variables;
 }
