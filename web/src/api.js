@@ -913,6 +913,17 @@ export const batchDeleteMcpServers = ids =>
 export const batchSetMcpServersEnabled = (ids, enabled) =>
   request('/mcp/servers/batch-enabled', { method: 'POST', body: JSON.stringify({ ids, enabled }) })
 
+/** 工具入参 schema（试调用右侧参数说明）；服务未连接/工具不存在会抛错 */
+export const getMcpToolSchema = (id, tool) =>
+  request(`/mcp/servers/${id}/tools/${encodeURIComponent(tool)}/schema`, { timeout: 65000 })
+/** 工具试调用：真实执行一次（审计照落）；返回 {ok, resultText|error, durationMs} */
+export const invokeMcpTool = (id, tool, args) =>
+  request(`/mcp/servers/${id}/tools/${encodeURIComponent(tool)}/invoke`, {
+    method: 'POST', body: JSON.stringify({ args }), timeout: 65000
+  })
+/** 个人近 N 天出站调用统计（1..30，默认 7） */
+export const getMcpSelfStats = (days = 7) => request(`/mcp/stats/self?days=${days}`)
+
 /** MCP 调用审计（仅管理员）：外部客户端调用 /ai/mcp 端点的每次工具执行 */
 export const getMcpAuditLogs = ({ channel, tool, success, page, size } = {}) => {
   const q = new URLSearchParams()

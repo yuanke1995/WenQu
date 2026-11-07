@@ -10,7 +10,9 @@
         共 <b>{{ servers.length }}</b> 个服务 · 已连接 <b>{{ connectedCount }}</b>
         <span v-if="checkedAt" class="head-dim">· 更新于 {{ checkedAt }}</span>
       </span>
-      <span class="head-hint-plain" title="接入外部 MCP 服务，它的工具自动注册给模型，与内置工具一样可被调用">接入外部 MCP 服务，它的工具自动注册给模型，与内置工具一样可被调用</span>
+      <span class="head-divider"></span>
+      <button class="head-stats" type="button" title="查看近 7 天调用明细" @click="openStats">{{ statsSummary }}</button>
+      <span class="head-hint-plain" title="外部 MCP 工具会自动注册给模型，与内置工具一样可被调用">外部 MCP 工具会自动注册给模型，与内置工具一样可被调用</span>
       <!-- 页头右侧一组（对齐智能体 Tab）：搜索 + 刷新 + 重连 + 添加 + 批量区（分隔线独立成区） -->
       <div class="head-r">
         <a-input v-model:value="keyword" class="head-search" size="small" allow-clear placeholder="搜索名称或地址">
@@ -21,6 +23,9 @@
         </a-tooltip>
         <button class="app-btn ghost small" :disabled="reloading" @click="doReload">
           {{ reloading ? '重连中…' : '全部重连' }}
+        </button>
+        <button class="app-btn ghost small" :disabled="!servers.length" @click="doExport">
+          <download-outlined /> 导出
         </button>
         <button class="app-btn" @click="openAdd">
           <plus-outlined /> 添加服务
@@ -62,9 +67,9 @@
 
       <template v-else>
         <div v-for="s in filtered" :key="s.id" class="app-card mcp-card">
-          <div class="mcp-card-top" :class="{ clickable: s.connected }"
-               :title="s.connected ? (expanded === s.id ? '点击收起工具' : '点击查看工具') : ''"
-               @click="s.connected && toggleTools(s)">
+          <div class="mcp-card-top" :class="{ clickable: expandable(s) }"
+               :title="expandable(s) ? (expanded === s.id ? '点击收起' : '点击展开') : ''"
+               @click="expandable(s) && toggleTools(s)">
             <div class="mcp-card-info">
               <div class="mcp-card-head">
                 <a-checkbox v-if="batchMode && !isPlatform(s)" class="mcp-check" :checked="selected.includes(s.id)"
@@ -73,11 +78,16 @@
                 <span class="mcp-card-name">{{ s.name }}</span>
                 <span v-if="isPlatform(s)" class="mcp-pill-platform"
                       title="平台为全员提供：管理员维护地址与工具名，普通用户只读可用">平台</span>
-                <span class="mcp-state" :class="stateCls(s)" :title="s.state || ''">{{ stateText(s) }}</span>
+                <span v-if="expandable(s)" class="mcp-chev" :class="{ up: expanded === s.id }" aria-hidden="true">
+                  <down-outlined />
+                </span>
               </div>
               <div class="mcp-card-sub">
+                <span class="mcp-state" :class="stateCls(s)" :title="s.state || ''">{{ stateText(s) }}</span>
                 <span class="mcp-type-pill">{{ s.type }}</span>
                 <span class="mcp-url" :title="s.url">{{ s.url }}</span>
+                <code v-for="k in (s.headerKeys || [])" :key="k" class="mcp-hdr-pill" :title="k">{{ k }}</code>
+                <span v-if="usageOf(s)" class="mcp-usage" :title="usageTitle(s)">{{ usageOf(s) }}</span>
               </div>
             </div>
             <div class="mcp-card-actions" @click.stop>
@@ -95,7 +105,9 @@
               </a-popconfirm>
             </div>
           </div>
-          <div v-if="expanded === s.id" class="mcp-tools">
+
+          <!-- 已连接：展开工具清单（行尾可试调用 / 改名） -->
+          <div v-if="expanded === s.id && s.connected" class="mcp-tools">
             <div v-for="t in s.tools" :key="t.name" class="mcp-tool">
               <template v-if="toolEditing === s.id + '|' + t.name">
                 <input v-model="toolDraft" class="app-input mcp-tool-name-input" maxlength="16"
@@ -111,12 +123,48 @@
                       :title="t.name">{{ t.label && t.label !== t.name ? t.label : t.name }}</code>
                 <code v-if="t.label && t.label !== t.name" class="mcp-tool-raw" title="工具原名">{{ t.name }}</code>
                 <span class="mcp-tool-desc">{{ t.description || '（无描述）' }}</span>
-                <button class="app-link-btn mcp-tool-rename" @click="startToolEdit(s, t)">
-                  {{ t.label && t.label !== t.name ? '改名' : '起中文名' }}
-                </button>
+                <span class="mcp-tool-ops">
+                  <button class="app-link-btn mcp-tool-try" @click.stop="openInvoke(s, t)">试一下</button>
+                  <button class="app-link-btn mcp-tool-rename" @click.stop="startToolEdit(s, t)">
+                    {{ t.label && t.label !== t.name ? '改名' : '起中文名' }}
+                  </button>
+                </span>
               </template>
             </div>
             <div v-if="!s.tools.length" class="key-dim">该服务未提供任何工具</div>
+          </div>
+
+          <!-- 失败：展开错误详情（人话原因 + 折叠原文/建议 + 手动重连/复测） -->
+          <div v-else-if="expanded === s.id && isFailed(s)" class="mcp-fail">
+            <div class="mcp-fail-reason">
+              <warning-outlined />
+              <span>{{ failInfo(s).reason }}</span>
+            </div>
+            <div class="mcp-fail-fold">
+              <button class="mcp-fold-head" type="button" @click="toggleRaw(s.id)">
+                <down-outlined :class="{ up: rawOpenId === s.id }" />
+                <span>错误原文与排查建议</span>
+              </button>
+              <div v-if="rawOpenId === s.id" class="mcp-fold-body">
+                <div class="mcp-err-code">
+                  <code>{{ failInfo(s).raw || '（无错误原文）' }}</code>
+                  <button class="app-link-btn" @click="copyText(failInfo(s).raw)">复制</button>
+                </div>
+                <ul class="mcp-tips">
+                  <li v-for="(tip, i) in failInfo(s).tips" :key="i">{{ tip }}</li>
+                </ul>
+              </div>
+            </div>
+            <div class="mcp-fail-foot">
+              <span class="mcp-retry-hint">失败后会自动按退避间隔重试（30 秒 → 10 分钟）</span>
+              <span class="mcp-fail-ops">
+                <button class="app-btn ghost small" :disabled="!s.enabled || !!reconnectingId"
+                        @click="reconnectServer(s)">重连</button>
+                <button class="app-btn ghost small" :disabled="!!testingId" @click="testFailed(s)">
+                  {{ testingId === s.id ? '测试中…' : '测试连接' }}
+                </button>
+              </span>
+            </div>
           </div>
         </div>
       </template>
@@ -224,16 +272,22 @@
         </button>
       </div>
     </a-modal>
+
+    <McpInvokeModal v-model:open="invokeOpen" :server="invokeServer" :tool="invokeTool" @executed="onInvoked" />
+    <McpStatsDrawer v-model:open="statsOpen" :stats="stats" :loading="statsLoading" :labels="toolLabels" />
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { message, Modal } from 'ant-design-vue'
-import { SearchOutlined, ReloadOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons-vue'
+import { SearchOutlined, ReloadOutlined, PlusOutlined, DeleteOutlined, DownloadOutlined, DownOutlined, WarningOutlined } from '@ant-design/icons-vue'
 import { getMcpStatus, reloadMcp, probeMcp, addMcpServer, updateMcpServer, setMcpServerEnabled, deleteMcpServer,
-         reconnectMcpServer, batchDeleteMcpServers, batchSetMcpServersEnabled, importMcpServers, setMcpToolLabel } from '../api'
+         reconnectMcpServer, batchDeleteMcpServers, batchSetMcpServersEnabled, importMcpServers, setMcpToolLabel,
+         getMcpSelfStats } from '../api'
 import { isAdminSync } from '../utils/auth'
+import McpInvokeModal from '../components/McpInvokeModal.vue'
+import McpStatsDrawer from '../components/McpStatsDrawer.vue'
 
 /** 平台行为全员提供（地址与工具名由管理员维护）：普通用户只读可用，连启停开关都不给 */
 const isAdmin = isAdminSync()
@@ -247,6 +301,8 @@ const reloading = ref(false)
 const checkedAt = ref('')
 const keyword = ref('')
 const expanded = ref('')
+const rawOpenId = ref('')      // 失败卡里「错误原文与排查建议」的展开项
+const testingId = ref('')      // 失败卡「测试连接」进行中
 const togglingId = ref('')
 const reconnectingId = ref('')
 const saving = ref(false)
@@ -267,6 +323,71 @@ const importText = ref('')
 const importPreview = ref([])
 const importBusy = ref(false)
 const importable = computed(() => importPreview.value.filter(x => x.ok))
+
+// ---- 近 7 天用量：页头小字、卡片用量与统计抽屉共用同一份数据 ----
+const emptyStats = () => ({ total: 0, success: 0, failed: 0, avgMs: 0, byServer: [], byTool: [] })
+const stats = ref(emptyStats())
+const statsLoading = ref(false)
+const statsOpen = ref(false)
+const statsByServer = computed(() => {
+  const m = {}
+  for (const x of (stats.value.byServer || [])) if (x && x.server) m[x.server] = x
+  return m
+})
+/** 工具裸名 → 用户起的中文名（未起名的不进表，统计里直接显示裸名） */
+const toolLabels = computed(() => {
+  const m = {}
+  for (const s of servers.value) {
+    for (const t of (s.tools || [])) {
+      if (t.label && t.label !== t.name) m[t.name] = t.label
+    }
+  }
+  return m
+})
+const statsSummary = computed(() => {
+  if (statsLoading.value && !stats.value.total) return '近 7 天统计加载中…'
+  if (!stats.value.total) return '近 7 天暂无调用'
+  const total = Number(stats.value.total) || 0
+  const failed = Number(stats.value.failed) || 0
+  return `近 7 天 ${total} 次 · 成功率 ${total ? Math.round((total - failed) / total * 100) : 0}%`
+})
+const usageOf = s => {
+  const x = statsByServer.value[s.name]
+  if (!x || !Number(x.calls)) return ''
+  const rate = Math.round((x.calls - (x.failed || 0)) / x.calls * 100)
+  return `近 7 天 ${x.calls} 次 · ${rate}%`
+}
+const usageTitle = s => {
+  const x = statsByServer.value[s.name]
+  return x ? `${x.calls} 次调用，失败 ${x.failed} 次，平均 ${x.avgMs}ms` : ''
+}
+
+// ---- 工具试调用 ----
+const invokeOpen = ref(false)
+const invokeServer = ref(null)
+const invokeTool = ref(null)
+const openInvoke = (s, t) => {
+  invokeServer.value = { id: s.id, name: s.name }
+  invokeTool.value = { name: t.name, label: t.label }
+  invokeOpen.value = true
+}
+const onInvoked = () => loadStats({ silent: true })
+
+const loadStats = async ({ silent = false } = {}) => {
+  statsLoading.value = true
+  try {
+    const r = await getMcpSelfStats(7)
+    if (r.success) stats.value = { ...emptyStats(), ...(r.data || {}) }
+  } catch (e) {
+    if (!silent) message.error(e.message || '统计加载失败')
+  } finally {
+    statsLoading.value = false
+  }
+}
+const openStats = () => {
+  statsOpen.value = true
+  loadStats()
+}
 
 const connectedCount = computed(() => servers.value.filter(s => s.connected).length)
 const filtered = computed(() => {
@@ -345,17 +466,101 @@ const doBatchDelete = () => {
   })
 }
 
-/** 失败态去掉 failed: 前缀只留原因；停用是明确语义，不叫「失败」；连接中是后台建连的过渡态 */
+/** 失败态只在状态行留结论，原因放到展开区（状态行不再被 Java 原文截断） */
 const stateText = s => {
   if (!s.enabled) return '已停用'
   if (s.connected) return `已连接 · ${s.toolCount || 0} 个工具`
   const st = s.state || ''
   if (st === 'connecting') return '连接中…'
-  if (st.startsWith('failed:')) return '连接失败：' + st.slice(7)
+  if (st.startsWith('failed:')) return '连接失败'
   return '未连接'
 }
 const stateCls = s =>
   (!s.enabled ? 'muted' : (s.connected ? 'ok' : (s.state === 'connecting' ? 'pending' : 'bad')))
+const isFailed = s => String(s.state || '').startsWith('failed:')
+const expandable = s => s.connected || isFailed(s)
+
+/** 错误原文 → 人话原因 + 排查建议；没命中映射表就把原文截 120 字原样展示 */
+const ERROR_MAP = [
+  { keys: ['header parser', 'client failed to initialize'], reason: '远端返回的不是有效的 MCP 响应——地址可能不对，或被网关/代理拦截', tips: ['确认地址是 MCP 端点本体（streamable 默认路径 /mcp）', '如经过网关，确认它没有改写响应体或返回 HTML 错误页'] },
+  { keys: ['timeout', 'timeoutexception'], reason: '连接超时——网络不通或远端没有响应', tips: ['检查网络可达性，稍后用「测试连接」复测', '远端服务可能正忙，稍等再试'] },
+  { keys: ['closedchannel', 'connection closed', '连接已断开'], reason: '连接被远端关闭——服务可能已重启或空闲超时', tips: ['点「重连」重新建立连接；仍失败时确认远端服务在运行', '检查远端是否限制了并发连接或空闲时长'] },
+  { keys: ['terminated the handshake', 'ssl', 'certificate'], reason: 'TLS 握手被终止——https 证书或端口不对', tips: ['确认该地址是否应使用 http', '检查证书是否过期或不被信任'] },
+  { keys: ['401', '403', 'unauthorized'], reason: '鉴权未通过——检查认证请求头', tips: ['在「编辑 → 认证与请求头」补全或更新凭据', '确认密钥没有过期'] },
+  { keys: ['404'], reason: '端点不存在——检查地址路径', tips: ['streamable 默认 /mcp，SSE 默认 /sse', '确认地址里没有多余的路径'] },
+  { keys: ['connection refused'], reason: '拒绝连接——服务未启动或端口不对', tips: ['确认服务已启动、端口与地址一致', '检查防火墙是否放行'] },
+  { keys: ['unknownhost'], reason: '域名无法解析', tips: ['检查域名拼写与 DNS', '确认当前网络能访问外网'] }
+]
+const failInfo = s => {
+  const raw = String(s.state || '').replace(/^failed:/, '').trim()
+  const low = raw.toLowerCase()
+  const hit = ERROR_MAP.find(x => x.keys.some(k => low.includes(k)))
+  return {
+    raw,
+    reason: hit ? hit.reason : (raw ? (raw.length > 120 ? raw.slice(0, 120) + '…' : raw) : '连接失败，原因未知'),
+    tips: hit ? hit.tips : ['检查服务地址、端口与网络连通性', '确认远端服务已启动且返回 MCP 协议响应']
+  }
+}
+const toggleRaw = id => { rawOpenId.value = rawOpenId.value === id ? '' : id }
+
+const copyText = async text => {
+  if (!text) return
+  try {
+    await navigator.clipboard.writeText(text)
+    message.success('已复制')
+  } catch (e) {
+    message.error('复制失败，请手动选择文本')
+  }
+}
+
+/** 失败卡「测试连接」：用该服务已保存的配置与凭据再探一次，结果只走 toast（不改卡片状态） */
+const testFailed = async s => {
+  if (testingId.value) return
+  testingId.value = s.id
+  try {
+    const r = await probeMcp(s.url, s.type, undefined, s.id)
+    if (!r.success) { message.error(r.msg || '测试失败'); return }
+    const d = r.data || {}
+    if (d.available) message.success(`连接正常，提供 ${(d.tools || []).length} 个工具`)
+    else message.error('连接失败：' + (d.error || '未知错误'))
+  } catch (e) {
+    message.error(e.message || '测试失败')
+  } finally {
+    testingId.value = ''
+  }
+}
+
+/** 导出为 Claude/Cursor 兼容的 mcpServers JSON；请求头只提示需重填，不落值 */
+const doExport = () => {
+  if (!servers.value.length) return
+  const withHeaders = servers.value.filter(s => s.hasHeaders)
+  Modal.confirm({
+    title: `导出 ${servers.value.length} 个 MCP 服务？`,
+    content: '将导出为 mcpServers JSON（Claude/Cursor 兼容格式），可直接粘贴回问渠或分享给同事。'
+      + (withHeaders.length ? ' 请求头的值不会导出，带凭据的服务导入后需重新填写。' : ''),
+    okText: '导出全部', cancelText: '取消',
+    onOk: downloadExport
+  })
+}
+const downloadExport = () => {
+  const mcpServers = {}
+  servers.value.forEach(s => { mcpServers[s.name] = { url: s.url, type: s.type } })
+  const payload = { mcpServers }
+  const withHeaders = servers.value.filter(s => s.hasHeaders).map(s => s.name)
+  if (withHeaders.length) {
+    payload['x-wenqu-notes'] = `以下服务配置了请求头，导入后需重新填写：${withHeaders.join('、')}`
+  }
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'wenqu-mcp-servers.json'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+  message.success(`已导出 ${servers.value.length} 个服务`)
+}
 
 /* 连接在后台进行（进页面/增删改后都有 connecting 过渡态）：链式轮询直到没有连接中的
    服务为止。不用 setInterval——上一发状态请求本身可能因在线校验拖 1~3s，必须等它回来
@@ -413,7 +618,13 @@ const doReload = async () => {
   finally { reloading.value = false }
 }
 
-const toggleTools = s => { expanded.value = expanded.value === s.id ? '' : s.id }
+/** 展开/收起：已连接看工具，失败看错误详情；失败卡展开时默认把原文折叠项也打开 */
+const toggleTools = s => {
+  if (!expandable(s)) return
+  const willOpen = expanded.value !== s.id
+  expanded.value = willOpen ? s.id : ''
+  rawOpenId.value = willOpen && isFailed(s) ? s.id : ''
+}
 
 // ---- 工具中文名：手工逐条起名（后端不再自动翻译；没起名就展示工具原名） ----
 const toolEditing = ref('')   // `${serverId}|${toolName}`
@@ -647,7 +858,10 @@ const reconnectServer = async s => {
   finally { reconnectingId.value = '' }
 }
 
-onMounted(loadStatus)
+onMounted(() => {
+  loadStatus()
+  loadStats({ silent: true })
+})
 onBeforeUnmount(stopPoll) // 离开页面就别再轮询了
 </script>
 
@@ -657,7 +871,10 @@ onBeforeUnmount(stopPoll) // 离开页面就别再轮询了
 .head-count { font-size: 12px; color: var(--app-text2); white-space: nowrap; }
 .head-count b { color: var(--app-text); font-weight: 600; }
 .head-dim { color: var(--app-text3); font-size: 12px; }
-.head-search { width: 200px; }
+.head-divider { width: 1px; height: 14px; background: var(--app-border); flex: none; }
+.head-stats { border: none; background: transparent; padding: 0; font-size: 12px; color: var(--app-text3); white-space: nowrap; cursor: pointer; }
+.head-stats:hover { color: var(--app-accent); }
+.head-search { width: 180px; }
 .head-search-ic { color: var(--app-text3); font-size: 12px; }
 .batch-group { display: flex; align-items: center; gap: 8px; padding-left: 12px; border-left: 1px solid var(--app-border); }
 .batch-on { color: var(--app-accent); border-color: var(--app-accent); }
@@ -673,16 +890,20 @@ onBeforeUnmount(stopPoll) // 离开页面就别再轮询了
 /* 尺寸/圆角/边框复用 .app-card，与模型供应商卡片同规格 */
 .mcp-card { margin-bottom: 12px; }
 .mcp-card:last-child { margin-bottom: 0; }
-.mcp-card-top { display: flex; align-items: center; gap: 12px; }
+.mcp-card-top { display: flex; align-items: flex-start; gap: 12px; }
 .mcp-card-top.clickable { cursor: pointer; user-select: none; }
 .mcp-card-info { flex: 1; min-width: 0; }
 .mcp-card-head { display: flex; align-items: center; gap: 8px; }
 .mcp-card-name { font-size: 13px; font-weight: 500; max-width: 40%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.mcp-card-head .mcp-state { font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mcp-chev { margin-left: auto; flex: none; display: inline-flex; align-items: center; color: var(--app-text3); font-size: 11px; transition: transform .15s ease; }
+.mcp-chev.up { transform: rotate(180deg); }
 .mcp-card-actions { flex: none; display: flex; align-items: center; gap: 8px; }
 .mcp-card-actions .app-link-btn { display: inline-flex; align-items: center; line-height: 1; }
-.mcp-card-sub { display: flex; align-items: center; gap: 8px; margin-top: 4px; font-size: 12px; color: var(--app-text3); }
+.mcp-card-sub { display: flex; align-items: center; gap: 8px; margin-top: 4px; min-width: 0; overflow: hidden; font-size: 12px; color: var(--app-text3); }
 .mcp-card-sub .mcp-url { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mcp-state { flex: none; font-size: 12px; }
+.mcp-usage { flex: none; font-size: 11.5px; color: var(--app-text3); }
+.mcp-hdr-pill { flex: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; line-height: 16px; padding: 0 6px; border-radius: 4px; background: var(--app-accent-weak); color: var(--app-accent); }
 .mcp-type-pill { flex: none; font-size: 11px; padding: 0 6px; border-radius: 3px; background: var(--app-panel-2); color: var(--app-text3); }
 .mcp-pill-platform { flex: none; font-size: 11px; padding: 0 6px; border-radius: 3px; border: 1px solid var(--app-accent); color: var(--app-accent); background: transparent; }
 .mcp-tools { margin-top: 8px; border-top: 1px dashed var(--app-border); padding-top: 6px; }
@@ -690,11 +911,32 @@ onBeforeUnmount(stopPoll) // 离开页面就别再轮询了
 .mcp-tool code { flex: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; background: var(--app-panel-2); padding: 1px 5px; border-radius: 4px; }
 .mcp-tool-label.named { color: var(--app-text); }
 .mcp-tool-raw { color: var(--app-text3); background: none !important; padding-left: 0 !important; }
-.mcp-tool-rename { margin-left: auto; flex: none; font-size: 12px; }
+.mcp-tool-ops { margin-left: auto; flex: none; display: flex; gap: 10px; }
+.mcp-tool-try,
+.mcp-tool-rename { font-size: 11.5px; color: var(--app-text3); }
+.mcp-tool-try:hover,
+.mcp-tool-rename:hover { color: var(--app-accent); }
 .mcp-tool-name-input { width: 180px; flex: none; }
 .mcp-tool-desc { min-width: 0; color: var(--app-text3); }
 .mcp-probe-ok { font-size: 12px; color: var(--app-ok); }
 .mcp-probe-bad { font-size: 12px; color: var(--app-danger); word-break: break-all; }
+
+/* 失败卡展开：人话原因 → 折叠的错误原文/建议 → 退避提示 + 手动重连/复测 */
+.mcp-fail { margin-top: 8px; border-top: 1px dashed var(--app-border); padding-top: 9px; }
+.mcp-fail-reason { display: flex; align-items: flex-start; gap: 6px; font-size: 12.5px; line-height: 1.5; color: var(--app-danger); }
+.mcp-fail-reason .anticon { flex: none; margin-top: 2px; font-size: 12px; }
+.mcp-fail-fold { margin: 7px 0 0 18px; }
+.mcp-fold-head { display: flex; align-items: center; gap: 5px; padding: 0; border: none; background: transparent; cursor: pointer; font-size: 12px; color: var(--app-text2); }
+.mcp-fold-head .anticon { flex: none; font-size: 11px; color: var(--app-text3); transition: transform .15s ease; }
+.mcp-fold-head .anticon.up { transform: rotate(180deg); }
+.mcp-fold-body { margin-top: 6px; }
+.mcp-err-code { display: flex; align-items: center; gap: 12px; padding: 7px 10px; border-radius: 6px; background: var(--app-code-bg); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; color: var(--app-text2); }
+.mcp-err-code code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.mcp-err-code .app-link-btn { flex: none; font-size: 11.5px; color: var(--app-text3); }
+.mcp-tips { margin: 6px 0 0; padding: 0 0 0 14px; font-size: 11.5px; line-height: 1.8; color: var(--app-text3); }
+.mcp-fail-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 9px; padding-top: 8px; border-top: 1px dashed var(--app-border); }
+.mcp-retry-hint { font-size: 11.5px; color: var(--app-text3); }
+.mcp-fail-ops { display: flex; gap: 8px; }
 
 /* 添加弹窗标题行的 JSON 导入入口 */
 .import-entry { margin-left: 12px; font-size: 12px; font-weight: 400; }
@@ -726,10 +968,11 @@ onBeforeUnmount(stopPoll) // 离开页面就别再轮询了
 .mcp-dot.ok { background: var(--app-ok); }
 .mcp-dot.bad { background: var(--app-danger); }
 .mcp-dot.muted { background: var(--app-text3); }
-.mcp-dot.pending { background: var(--app-warn); }
-.mcp-state { flex: none; }
+.mcp-dot.pending { background: var(--app-warn); animation: mcp-breathe 1.5s ease-in-out infinite; }
+@keyframes mcp-breathe { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .mcp-dot.pending { animation: none; } }
 .mcp-state.ok { color: var(--app-ok); }
 .mcp-state.muted { color: var(--app-text3); }
 .mcp-state.pending { color: var(--app-warn); }
-.mcp-state.bad { color: var(--app-danger); max-width: 320px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.mcp-state.bad { color: var(--app-danger); }
 </style>

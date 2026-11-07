@@ -31,11 +31,13 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import com.wenqu.ai.security.Permission;
 
 /**
@@ -67,6 +69,8 @@ public class McpController {
     private final McpCallLogMapper mcpCallLogMapper;
     private final AdminGuard adminGuard;
     private final ConfigCryptoService cryptoService;
+    /** 试调用互斥：每 uid 同时只允许一个在跑（工具可能很慢，连点会把远端打爆） */
+    private final Map<String, Boolean> invoking = new ConcurrentHashMap<>();
 
     @Operation(summary = "连接状态一览", description = "工具调用总开关 + 本人每个 server 的地址/类型/启停/连接状态/可用工具数（连接失败带原因）；立即返回，尚未连上的服务状态为 connecting（后台建连中，前端轮询到收敛）；retryBroken=true 时先对未连上的服务补一次同步重连（点「刷新」用，连接中的服务会跳过）")
     @Permission("mcp:read")
@@ -334,6 +338,103 @@ public class McpController {
         return ResultJson.ok(data);
     }
 
+    // ==================== 工具试调用 / 个人调用统计 ====================
+
+    @Operation(summary = "工具入参 schema", description = "返回单个工具的 {name,label,description,inputSchema}；"
+            + "优先读连接池的工具缓存，缓存未命中时对该服务发一次 listTools；服务未连接或工具不存在均报错")
+    @Permission("mcp:read")
+    @GetMapping("/servers/{id}/tools/{tool}/schema")
+    public ResultJson toolSchema(@PathVariable("id") String id, @PathVariable("tool") String tool) {
+        UserMcp row = visible(id);
+        return ResultJson.ok(mcpClientService.toolSchema(RequestUser.uid(), row.getName(), tool));
+    }
+
+    @Operation(summary = "工具试调用", description = "body: {args:{...}}；真实执行一次工具调用（审计照落）。"
+            + "返回 {ok:true,resultText,durationMs} 或 {ok:false,error,durationMs}（业务失败不抛 5xx）；"
+            + "每用户同时只允许一个试调用在跑")
+    @Permission("mcp:write")
+    @PostMapping("/servers/{id}/tools/{tool}/invoke")
+    public ResultJson invokeTool(@PathVariable("id") String id, @PathVariable("tool") String tool,
+                                 @RequestBody(required = false) Map<String, Object> body) {
+        UserMcp row = visible(id);
+        String uid = RequestUser.uid();
+        Object raw = body == null ? null : body.get("args");
+        if (raw != null && !(raw instanceof Map)) throw new BizException("入参必须是 JSON 对象");
+        Map<String, Object> args = new LinkedHashMap<>();
+        if (raw instanceof Map<?, ?> m) {
+            m.forEach((k, v) -> args.put(String.valueOf(k), v));
+        }
+        if (invoking.putIfAbsent(uid, Boolean.TRUE) != null) {
+            throw new BizException("上一个试调用还在执行，请稍候");
+        }
+        try {
+            return ResultJson.ok(mcpClientService.invokeTool(uid, row.getName(), tool, args));
+        } finally {
+            invoking.remove(uid);
+        }
+    }
+
+    @Operation(summary = "个人调用统计", description = "近 N 天（1..30，默认 7）本人的出站调用："
+            + "总调用/成功/失败/平均耗时 + 按服务 + 按工具（Top 20）。只统计 channel=outbound 且 owner_uid=本人；"
+            + "试调用同样计入；已删除服务的记录保留原服务名")
+    @Permission("mcp:read")
+    @GetMapping("/stats/self")
+    public ResultJson selfStats(@RequestParam(value = "days", defaultValue = "7") Integer days) {
+        int d = Math.max(1, Math.min(30, days == null ? 7 : days));
+        String uid = RequestUser.uid();
+        LocalDateTime since = LocalDateTime.now().minusDays(d);
+
+        List<Map<String, Object>> sums = mcpCallLogMapper.selectMaps(new QueryWrapper<McpCallLog>()
+                .select("COUNT(*) AS total", "SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) AS failedCnt",
+                        "ROUND(AVG(duration_ms)) AS avgMs")
+                .eq("channel", "outbound").eq("owner_uid", uid).ge("created_at", since));
+        Map<String, Object> sum = sums.isEmpty() ? Map.of() : sums.get(0);
+        long total = num(sum.get("total"));
+        long failed = num(sum.get("failedCnt"));
+        long avgMs = num(sum.get("avgMs"));
+
+        List<Map<String, Object>> byServerRaw = mcpCallLogMapper.selectMaps(new QueryWrapper<McpCallLog>()
+                .select("credential_ref AS credRef", "COUNT(*) AS calls",
+                        "SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) AS failedCnt",
+                        "ROUND(AVG(duration_ms)) AS avgMs")
+                .eq("channel", "outbound").eq("owner_uid", uid).ge("created_at", since)
+                .groupBy("credential_ref").orderByDesc("calls"));
+        List<Map<String, Object>> byServer = new ArrayList<>();
+        for (Map<String, Object> r : byServerRaw) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("server", serverOfCredentialRef(str(r.get("credRef"))));
+            m.put("calls", num(r.get("calls")));
+            m.put("failed", num(r.get("failedCnt")));
+            m.put("avgMs", num(r.get("avgMs")));
+            byServer.add(m);
+        }
+
+        List<Map<String, Object>> byToolRaw = mcpCallLogMapper.selectMaps(new QueryWrapper<McpCallLog>()
+                .select("tool_name AS toolName", "COUNT(*) AS calls",
+                        "SUM(CASE WHEN success = 0 THEN 1 ELSE 0 END) AS failedCnt",
+                        "ROUND(AVG(duration_ms)) AS avgMs")
+                .eq("channel", "outbound").eq("owner_uid", uid).ge("created_at", since)
+                .groupBy("tool_name").orderByDesc("calls").last("LIMIT 20"));
+        List<Map<String, Object>> byTool = new ArrayList<>();
+        for (Map<String, Object> r : byToolRaw) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("tool", bareToolName(str(r.get("toolName"))));
+            m.put("calls", num(r.get("calls")));
+            m.put("failed", num(r.get("failedCnt")));
+            m.put("avgMs", num(r.get("avgMs")));
+            byTool.add(m);
+        }
+
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("total", total);
+        data.put("success", total - failed);
+        data.put("failed", failed);
+        data.put("avgMs", avgMs);
+        data.put("byServer", byServer);
+        data.put("byTool", byTool);
+        return ResultJson.ok(data);
+    }
+
     // ==================== MCP 调用审计（仅管理员） ====================
 
     @Operation(summary = "MCP 调用审计-明细", description = "两个方向的全量记录：入站（外部客户端调 /ai/mcp/{token} 与 /ai/mcp）与出站（模型调用用户接入的外部工具）。字段：渠道/工具/凭据指代/归属/IP/耗时/结果。仅管理员；按时间倒序分页，支持渠道/工具/结果筛选")
@@ -387,6 +488,30 @@ public class McpController {
     }
 
     // ==================== 内部 ====================
+
+    /** 出站凭据指代 mcp:{uid}/{服务名} → 服务名（服务名本身不允许含 /） */
+    private static String serverOfCredentialRef(String ref) {
+        if (ref == null || ref.isBlank()) return "";
+        int slash = ref.lastIndexOf('/');
+        return slash >= 0 && slash < ref.length() - 1 ? ref.substring(slash + 1) : ref;
+    }
+
+    /** Spring AI callback 名带短前缀（现为 w_q_，历史值 wen_qu_）：统计展示回裸名 */
+    private static String bareToolName(String name) {
+        if (name == null) return "";
+        for (String p : new String[]{"w_q_", "wen_qu_"}) {
+            if (name.startsWith(p)) return name.substring(p.length());
+        }
+        return name;
+    }
+
+    private static long num(Object v) {
+        return v instanceof Number n ? n.longValue() : 0L;
+    }
+
+    private static String str(Object v) {
+        return v == null ? "" : String.valueOf(v);
+    }
 
     /**
      * 审计是管理员视角（外部调用盘点）。注意 {@code /api/ai/mcp/**} 在 SecurityConfig 的

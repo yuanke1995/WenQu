@@ -1,6 +1,8 @@
 package com.wenqu.ai.service;
 
+import com.alibaba.fastjson2.JSON;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.wenqu.ai.common.BizException;
 import com.wenqu.ai.mapper.McpCallLogMapper;
 import com.wenqu.ai.mapper.UserMcpMapper;
 import com.wenqu.ai.model.UserMcp;
@@ -621,6 +623,105 @@ public class McpClientService {
                 }
             }
         }
+    }
+
+    /**
+     * 单个工具的入参 schema（管理页「试调用」右侧参数说明用）。
+     * <p>优先读连接池里的工具缓存；缓存没有时对该服务发一次 listTools（只在用户打开弹窗时发生）。
+     * 服务未连接/工具不存在都走 {@link BizException}：管理页已经拿到工具清单，这里失败说明
+     * 连接在打开弹窗的间隙掉了，直接告诉用户比返回一份空 schema 更可预期。
+     */
+    public Map<String, Object> toolSchema(String uid, String serverName, String toolName) {
+        UserPool pool = ensureConnections(uid);
+        awaitConnect(pool, Math.max(0, configService.getInt("mcp.turnWaitMs", 1500)));
+        McpSyncClient client;
+        List<McpSchema.Tool> cachedTools = null;
+        synchronized (pool) {
+            client = pool.clients.get(serverName);
+            CachedTools cached = pool.toolsCache.get(serverName);
+            if (cached != null) cachedTools = cached.tools();
+        }
+        if (client == null) {
+            throw new BizException("服务「" + serverName + "」当前未连接，拿不到入参说明");
+        }
+        List<McpSchema.Tool> tools = cachedTools;
+        if (tools == null) {
+            try {
+                tools = client.listTools().tools();
+                putCacheIfCurrent(pool, serverName, client, tools);
+            } catch (Exception e) {
+                throw new BizException("获取工具清单失败：" + rootMessage(e));
+            }
+        }
+        McpSchema.Tool target = tools.stream()
+                .filter(t -> toolName.equals(t.name()))
+                .findFirst().orElse(null);
+        if (target == null) throw new BizException("找不到工具「" + toolName + "」");
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("name", target.name());
+        out.put("label", Objects.requireNonNullElse(labelService.label(uid, target.name()), target.name()));
+        out.put("description", target.description() == null ? "" : target.description());
+        McpSchema.JsonSchema js = target.inputSchema();
+        Map<String, Object> schema = new LinkedHashMap<>();
+        if (js == null) {
+            schema.put("type", "object");
+            schema.put("properties", Map.of());
+        } else {
+            schema.put("type", js.type() == null ? "object" : js.type());
+            schema.put("properties", js.properties() == null ? Map.of() : js.properties());
+            if (js.required() != null) schema.put("required", js.required());
+            if (js.additionalProperties() != null) schema.put("additionalProperties", js.additionalProperties());
+            if (js.defs() != null) schema.put("$defs", js.defs());
+            if (js.definitions() != null) schema.put("definitions", js.definitions());
+        }
+        out.put("inputSchema", schema);
+        return out;
+    }
+
+    /**
+     * 管理页「试调用」：真实执行一次工具调用。
+     * <p>复用 {@link #toolCallbacks} 取回调（审计包装随之生效，channel=outbound、agentId 为空）；
+     * 工具按<b>裸名</b>匹配（Spring AI 的 callback 名带 {@code w_q_} 前缀，见 WorkflowEngine 的同款判据）。
+     * <p>业务失败（工具报错/超时/找不到工具）返回 {@code ok=false} 而不是抛 5xx：试调用本来就是
+     * 「看看它会怎么坏」的入口，前端要把错误原文展示出来。返回正文截 50KB，避免一次大结果撑爆响应。
+     */
+    public Map<String, Object> invokeTool(String uid, String serverName, String toolName,
+                                          Map<String, Object> args) {
+        long start = System.currentTimeMillis();
+        List<ToolCallback> callbacks = toolCallbacks(uid, Set.of(serverName), null);
+        ToolCallback target = callbacks.stream()
+                .filter(c -> toolName.equals(originalToolName(c)))
+                .findFirst().orElse(null);
+        if (target == null) {
+            return invokeFail("找不到工具「" + toolName + "」（服务未启用、连接失败或该服务没有同名工具）", start);
+        }
+        try {
+            String text = target.call(JSON.toJSONString(args == null ? Map.of() : args));
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("ok", true);
+            out.put("durationMs", System.currentTimeMillis() - start);
+            String body = text == null ? "" : text;
+            out.put("resultText", body.length() > 50_000 ? body.substring(0, 50_000) + "…" : body);
+            return out;
+        } catch (Exception e) {
+            return invokeFail(e.getMessage() == null || e.getMessage().isBlank()
+                    ? e.getClass().getSimpleName() : e.getMessage(), start);
+        }
+    }
+
+    private static Map<String, Object> invokeFail(String error, long start) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("ok", false);
+        out.put("error", error);
+        out.put("durationMs", System.currentTimeMillis() - start);
+        return out;
+    }
+
+    /** 回调的裸工具名（MCP server 报的名字）：{@code SyncMcpToolCallback.getOriginalToolName()}。 */
+    private static String originalToolName(ToolCallback c) {
+        if (c instanceof SyncMcpToolCallback sync) return sync.getOriginalToolName();
+        return c.getToolDefinition() == null ? null : c.getToolDefinition().name();
     }
 
     /**
