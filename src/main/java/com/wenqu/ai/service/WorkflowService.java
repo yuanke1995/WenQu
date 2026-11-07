@@ -246,6 +246,7 @@ public class WorkflowService {
         WorkflowDsl dsl = parseDsl(dslText);
         List<String> errors = validator.validate(dsl);
         if (!errors.isEmpty()) throw new BizException("工作流校验未通过：" + String.join("；", errors));
+        assertCompilable(dsl);
         Workflow row = new Workflow();
         row.setId(UUID.randomUUID().toString());
         row.setUid(RequestUser.uid());
@@ -283,6 +284,7 @@ public class WorkflowService {
             WorkflowDsl dsl = parseDsl(dslText);
             List<String> errors = validator.validate(dsl);
             if (!errors.isEmpty()) throw new BizException("工作流校验未通过：" + String.join("；", errors));
+            assertCompilable(dsl);
             row.setDsl(dslText.trim());
         }
         row.setUpdateTime(LocalDateTime.now());
@@ -400,6 +402,25 @@ public class WorkflowService {
             return WorkflowDsl.parse(dslText);
         } catch (Exception e) {
             throw new BizException("DSL 不是合法 JSON：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 编译闸（保存/发布前 fail-loud）：结构校验管不到的「图不可编译」问题——典型如并行分支没有汇聚到
+     * 同一节点——此前只能拖到运行时才炸，且框架报错指向两跳外的节点，用户没法自查。
+     * 这里复用引擎编译（框架仍是唯一裁决者，不自建第二套汇聚分析），只把典型报错翻译成可操作的指引。
+     */
+    private void assertCompilable(WorkflowDsl dsl) {
+        try {
+            engine.compile(dsl);
+        } catch (BizException e) {
+            // 引擎抛出的消息已带「图编译失败：」前缀，这里只做典型报错的指引翻译，不加第二层前缀
+            String msg = e.getMessage() == null ? "" : e.getMessage();
+            if (msg.contains("parallel")) {
+                throw new BizException(msg
+                        + "。并行分支必须在同一点汇聚：请把各分支的末尾连到同一个节点（例如接一个「模板转换」节点做多路聚合）");
+            }
+            throw new BizException(msg);
         }
     }
 
@@ -553,6 +574,7 @@ public class WorkflowService {
         WorkflowDsl dsl = parseDsl(row.getDsl());
         List<String> errors = validator.validate(dsl);
         if (!errors.isEmpty()) throw new BizException("工作流校验未通过，无法发布：" + String.join("；", errors));
+        assertCompilable(dsl);
         int version = nextVersion(row.getId());
         WorkflowVersion v = new WorkflowVersion();
         v.setId(UUID.randomUUID().toString());
