@@ -243,18 +243,17 @@
               <div class="legend"><span><i class="dot ok"></i>达标</span><span><i class="dot err"></i>低于门槛</span></div>
             </div>
             <svg v-if="trendPoints.length > 1" viewBox="0 0 1120 112" preserveAspectRatio="none" class="trend-svg">
-              <line x1="0" y1="28" x2="1120" y2="28" stroke="var(--app-border)" />
-              <line x1="0" y1="56" x2="1120" y2="56" stroke="var(--app-border)" />
-              <line x1="0" y1="84" x2="1120" y2="84" stroke="var(--app-border)" />
-              <text x="0" y="24" font-size="10" fill="var(--app-text3)">100%</text>
-              <text x="0" y="52" font-size="10" fill="var(--app-text3)">66%</text>
-              <text x="0" y="80" font-size="10" fill="var(--app-text3)">33%</text>
+              <line v-for="(t, i) in trendTicks" :key="'g' + i" x1="30" :y1="t.y" x2="1120" :y2="t.y" stroke="var(--app-border)" />
+              <text v-for="(t, i) in trendTicks.filter(t => t.y >= 12 && t.y <= 104)" :key="'t' + i"
+                    x="0" :y="Math.min(110, Math.max(10, t.y - 4))" font-size="10" fill="var(--app-text3)">{{ t.label }}</text>
               <polygon :points="detailTrendArea" fill="var(--app-accent-weak)" opacity=".7"></polygon>
               <polyline :points="detailTrendLine" fill="none" stroke="var(--app-accent)" stroke-width="2"></polyline>
               <circle v-for="(p, i) in trendPoints" :key="i" :cx="p.x" :cy="p.y" r="4"
                       :fill="p.ok ? 'var(--app-ok)' : 'var(--app-danger)'">
                 <title>{{ p.label }}</title>
               </circle>
+              <text v-for="(p, i) in trendPoints" :key="'p' + i" :x="Math.min(1080, Math.max(40, p.x))" y="109"
+                    font-size="10" fill="var(--app-text3)" text-anchor="middle">{{ p.labelShort }}</text>
             </svg>
             <div v-else class="trend-empty">成功运行满 2 次后展示趋势</div>
           </div>
@@ -621,6 +620,11 @@ async function viewRun (runId, silent) {
     if (r.success) {
       detail.value = r.data
       enrichResults()
+      if (!silent) {
+        // 历史运行页点「查看结果」：切到本次结果页签，否则数据换了用户却看不见（真机踩过：点了没反应）
+        innerTab.value = 'results'
+        failOnly.value = false
+      }
       if (r.data?.running) scheduleDetailPoll(runId)
     } else if (!silent) message.error(r.msg || '加载运行详情失败')
   } catch (e) { if (!silent) message.error(e.message || '加载运行详情失败') }
@@ -816,19 +820,49 @@ function enrichResults () {
   }
 }
 const refTitle = id => detail.value?.refTitles?.[id] || id
-const trendPoints = computed(() => {
+/** 趋势图比例尺：动态 y 域（数据上下各让 8 分收进 0-100；两点同值保底 ±5 分），点少时 x 内收别顶到两端 */
+const trendScale = computed(() => {
   const runs = succeededRuns.value.slice(0, 6).reverse()
-  const th = suiteInfo.value?.suite?.thresholdRate ?? 80
-  return runs.map((r, i) => ({
-    x: runs.length === 1 ? 560 : Math.round(60 + (1060 - 60) * i / Math.max(1, runs.length - 1)),
-    y: Math.round(100 - (Math.min(100, Math.max(0, r.passRate ?? 0)) / 100) * 96),
-    ok: (r.passRate ?? 0) >= th,
-    label: `v${r.agentVersion ?? '?'} · ${pct(r.passRate)} · ${shortTime(r.finishedAt)}`
+  const rates = runs.map(r => Math.min(100, Math.max(0, r.passRate ?? 0)))
+  const lo = rates.length ? Math.min(...rates) : 0
+  const hi = rates.length ? Math.max(...rates) : 100
+  let yMin = Math.max(0, Math.floor(lo - 8))
+  let yMax = Math.min(100, Math.ceil(hi + 8))
+  if (yMax - yMin < 10) {
+    const mid = (yMax + yMin) / 2
+    yMin = Math.max(0, Math.round(mid - 5))
+    yMax = Math.min(100, Math.round(mid + 5))
+  }
+  // 域边界吸附 5 的倍数：平线在 0% 时出 0%/5%/10% 整刻度，不出 9% 这类怪数
+  yMin = Math.max(0, Math.floor(yMin / 5) * 5)
+  yMax = Math.min(100, Math.ceil(yMax / 5) * 5)
+  if (yMax <= yMin) yMax = Math.min(100, yMin + 5)
+  const n = runs.length
+  const xPad = n <= 2 ? 280 : n <= 4 ? 160 : 80
+  const yOf = v => Math.round(4 + 92 * (1 - (v - yMin) / Math.max(1, yMax - yMin)))
+  const points = runs.map((r, i) => ({
+    x: n === 1 ? 560 : Math.round(xPad + (1120 - 2 * xPad) * i / (n - 1)),
+    y: yOf(Math.min(100, Math.max(0, r.passRate ?? 0))),
+    ok: (r.passRate ?? 0) >= (suiteInfo.value?.suite?.thresholdRate ?? 80),
+    label: `v${r.agentVersion ?? '?'} · ${pct(r.passRate)} · ${shortTime(r.finishedAt)}`,
+    labelShort: `v${r.agentVersion ?? '?'} · ${pct(r.passRate)}`
   }))
+  // 三条网格线取域顶/域中/域底，标签用真实刻度值
+  const yTop = yOf(yMax)
+  const yMid = yOf(Math.round((yMax + yMin) / 2))
+  const yBot = yOf(yMin)
+  const ticks = [
+    { y: yTop, label: pct(yMax) },
+    { y: yMid, label: pct(Math.round((yMax + yMin) / 2)) },
+    { y: yBot, label: pct(yMin) }
+  ]
+  return { points, ticks, line: points.map(p => `${p.x},${p.y}`).join(' '),
+           area: points.length ? points.map(p => `${p.x},${p.y}`).join(' ') + ` ${points[points.length - 1].x},112 ${points[0].x},112` : '' }
 })
-const detailTrendLine = computed(() => trendPoints.value.map(p => `${p.x},${p.y}`).join(' '))
-const detailTrendArea = computed(() => trendPoints.value.length
-  ? detailTrendLine.value + ` ${trendPoints.value[trendPoints.value.length - 1].x},112 ${trendPoints.value[0].x},112` : '')
+const trendPoints = computed(() => trendScale.value.points)
+const trendTicks = computed(() => trendScale.value.ticks)
+const detailTrendLine = computed(() => trendScale.value.line)
+const detailTrendArea = computed(() => trendScale.value.area)
 const sparkLine = computed(() => {
   const pts = s.value.trend || []
   const vals = pts.map(p => p.value)
