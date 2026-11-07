@@ -89,14 +89,19 @@ public class MarketController {
     // ==================== 写 ====================
 
     @Operation(summary = "上架",
-            description = "body: {type: skill|agent|workflow, ref, summary?, description?, tags?, version?}——"
+            description = "body: {type: skill|agent|workflow|mcp, ref, summary?, description?, tags?, version?}——"
                     + "ref：skill=技能名（仅「我的技能」）、agent=智能体 id（须本人可管理）、workflow=工作流 id（须本人可管理）。"
+                    + "type=mcp 为管理员专用目录上架（body 直接带 name/url/mcpType/requiresAuth，无 ref，条目挂平台官方名下）。"
                     + "同一物品重复上架=更新同一条（快照覆盖）；「有更新」按内容指纹判定，与版本号无关")
     @Permission("market:publish")
     @PostMapping("/publish")
     public ResultJson publish(@RequestBody Map<String, Object> body) {
+        String type = text(body.get("type"));
+        if ("mcp".equalsIgnoreCase(type == null ? "" : type.trim())) {
+            return ResultJson.ok(market.publishMcp(uid(), body), "已上架");
+        }
         Map<String, Object> item = market.publish(uid(),
-                text(body.get("type")), text(body.get("ref")),
+                type, text(body.get("ref")),
                 text(body.get("summary")), text(body.get("description")),
                 text(body.get("tags")), text(body.get("version")));
         return ResultJson.ok(item, "已上架");

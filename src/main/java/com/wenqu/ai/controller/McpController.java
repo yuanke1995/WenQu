@@ -16,6 +16,7 @@ import com.wenqu.ai.service.McpClientService;
 import com.wenqu.ai.service.McpToolLabelService;
 import com.wenqu.ai.util.BatchResults;
 import com.wenqu.ai.util.McpHeaders;
+import com.wenqu.ai.util.McpServerRules;
 import com.wenqu.ai.util.RequestUser;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
@@ -59,8 +60,8 @@ import com.wenqu.ai.security.Permission;
 @Tag(name = "MCP 外部工具", description = "个人 MCP Server：增删改 / 连接状态 / 重连 / 测试")
 public class McpController {
 
-    /** 每个用户最多登记的 server 数（与连接池上限一致，防止一次接入几十个外部服务拖垮问答） */
-    private static final int MAX_SERVERS = 10;
+    /** 每个用户最多登记的 server 数（与连接池上限一致；口径单一事实源在 {@link McpServerRules}） */
+    private static final int MAX_SERVERS = McpServerRules.MAX_SERVERS_PER_USER;
 
     private final McpClientService mcpClientService;
     private final McpToolLabelService labelService;
@@ -565,19 +566,11 @@ public class McpController {
     }
 
     private static void validate(String name, String url) {
-        if (name == null || name.isBlank()) throw new BizException("请填写服务名称");
-        if (name.length() > 40) throw new BizException("服务名称不超过 40 个字符");
-        // 服务名会参与智能体引用串 {uid}/{name} 的拆分，含 '/' 会让引用解析错位
-        if (name.contains("/")) throw new BizException("服务名称不能包含 /");
-        if (url == null || url.isBlank()) throw new BizException("请填写服务地址");
-        if (!url.startsWith("http://") && !url.startsWith("https://")) {
-            throw new BizException("服务地址需以 http:// 或 https:// 开头");
-        }
+        McpServerRules.validate(name, url);
     }
 
     private static String normalizeType(String type) {
-        if (type == null || type.isBlank()) return "streamable";
-        return "sse".equalsIgnoreCase(type.trim()) ? "sse" : "streamable";
+        return McpServerRules.normalizeType(type);
     }
 
     private static String text(Map<?, ?> body, String key) {

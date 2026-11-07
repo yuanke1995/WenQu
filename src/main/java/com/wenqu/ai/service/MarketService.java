@@ -20,6 +20,7 @@ import com.wenqu.ai.model.UserMcp;
 import com.wenqu.ai.model.Workflow;
 import com.wenqu.ai.skill.UserSkillStore;
 import com.wenqu.ai.skill.WenquSkillRepository;
+import com.wenqu.ai.util.McpServerRules;
 import com.wenqu.ai.util.RequestUser;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -92,6 +93,7 @@ public class MarketService {
     private final WorkflowService workflowService;
     private final KnowledgeBaseMapper kbMapper;
     private final UserMcpMapper userMcpMapper;
+    private final McpClientService mcpClientService;
     private final ResourceVisibilityService visibility;
     private final UserRoleService userRoleService;
 
@@ -105,6 +107,7 @@ public class MarketService {
             UserMapper userMapper, RoleService roleService,
             AgentService agentService, WorkflowService workflowService,
             KnowledgeBaseMapper kbMapper, UserMcpMapper userMcpMapper,
+            McpClientService mcpClientService,
             ResourceVisibilityService visibility, UserRoleService userRoleService,
             AuditService audit) {
         this.audit = audit;
@@ -120,6 +123,7 @@ public class MarketService {
         this.workflowService = workflowService;
         this.kbMapper = kbMapper;
         this.userMcpMapper = userMcpMapper;
+        this.mcpClientService = mcpClientService;
         this.visibility = visibility;
         this.userRoleService = userRoleService;
     }
@@ -140,9 +144,11 @@ public class MarketService {
                 items.stream().map(MarketItem::getId).collect(Collectors.toSet()));
         Map<String, String> authorNames = authorNames(items.stream()
                 .map(MarketItem::getAuthorUid).collect(Collectors.toSet()));
-        return items.stream()
+        List<Map<String, Object>> views = items.stream()
                 .map(i -> view(i, installed.get(i.getId()), authorNames, uid))
                 .collect(Collectors.toList());
+        enrichMcpViews(uid, views, items);
+        return views;
     }
 
     /**
@@ -152,12 +158,19 @@ public class MarketService {
      */
     public Map<String, Object> counts(String uid, String keyword, String tag) {
         Map<String, Long> byType = new LinkedHashMap<>();
-        for (String type : List.of(MarketItem.TYPE_SKILL, MarketItem.TYPE_AGENT, MarketItem.TYPE_WORKFLOW)) {
+        for (String type : List.of(MarketItem.TYPE_SKILL, MarketItem.TYPE_AGENT,
+                MarketItem.TYPE_WORKFLOW, MarketItem.TYPE_MCP)) {
             byType.put(type, count(uid, type, keyword, tag, false));
         }
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("byType", byType);
         out.put("mine", count(uid, null, keyword, tag, true));
+        // MCP 配额（「已达上限（N/10）」文案与四态判定的同源数据）：一张卡都不用猜
+        Long used = userMcpMapper.selectCount(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<UserMcp>()
+                        .eq(UserMcp::getUid, uid));
+        out.put("mcpQuota", Map.of("used", used == null ? 0 : used.intValue(),
+                "max", McpServerRules.MAX_SERVERS_PER_USER));
         return out;
     }
 
@@ -183,15 +196,19 @@ public class MarketService {
         return w;
     }
 
-    /** 详情：元信息 + 详细介绍 + 内容预览（skill=SKILL.md 原文；agent/workflow=载荷 JSON，装前可审阅）。 */
+    /** 详情：元信息 + 详细介绍 + 内容预览（skill=SKILL.md 原文；agent/workflow/mcp=载荷 JSON，装前可审阅）。 */
     public Map<String, Object> detail(String uid, String id) {
         MarketItem item = requireVisible(uid, id);
-        Map<String, Object> m = view(item, installsOf(uid, Set.of(id)).get(id), Map.of(), uid);
+        Map<String, String> names = authorNames(Set.of(item.getAuthorUid()));
+        Map<String, Object> m = view(item, installsOf(uid, Set.of(id)).get(id), names, uid);
         m.put("description", item.getDescription());
         if (MarketItem.TYPE_SKILL.equals(item.getItemType())) {
             m.put("skillMd", readSkillMdFromPayload(item));
         } else {
             m.put("configJson", prettyPayload(item));
+        }
+        if (MarketItem.TYPE_MCP.equals(item.getItemType())) {
+            enrichMcpViews(uid, List.of(m), List.of(item));
         }
         return m;
     }
@@ -286,6 +303,141 @@ public class MarketService {
         return view(item, null, Map.of(), uid);
     }
 
+    /**
+     * MCP 目录条目上架（<b>仅管理员</b>）：没有 ref 概念，管理员直接登记服务地址——
+     * 不允许普通用户上架（目录面向全员展示，会变成内网地址外泄与 SSRF 放大面）。
+     * <p>payload 只存 {@code {name, url, type, requiresAuth}}，<b>永不收凭据</b>（headers 由安装人
+     * 在 MCP 页自行补充）；条目统一 {@code author_uid=system}（平台官方），重复保存同名 = 更新同一条。
+     */
+    public Map<String, Object> publishMcp(String uid, Map<String, Object> body) {
+        if (!isAdmin()) throw new BizException(403, "MCP 目录仅平台管理员可维护");
+        String name = str(body, "name");
+        String url = str(body, "url");
+        String mcpType = McpServerRules.normalizeType(str(body, "mcpType"));
+        McpServerRules.validate(name, url);
+        boolean requiresAuth = Boolean.TRUE.equals(body.get("requiresAuth"))
+                || "true".equalsIgnoreCase(String.valueOf(body.get("requiresAuth")));
+        String summary = clean(str(body, "summary"), MAX_SUMMARY, "简介");
+        String finalTags = normalizeTags(str(body, "tags"));
+        String version = resolveVersion(uid, MarketItem.TYPE_MCP, name, str(body, "version"));
+
+        JSONObject payload = new JSONObject();
+        payload.put("name", name);
+        payload.put("url", url.trim());
+        payload.put("type", mcpType);
+        payload.put("requiresAuth", requiresAuth);
+        byte[] payloadBytes = payload.toJSONString().getBytes(StandardCharsets.UTF_8);
+
+        // 目录条目统一挂官方名下：同一服务名重复保存 = 更新同一条（与官方模板种子同口径）
+        MarketItem item = itemMapper.selectOne(new QueryWrapper<MarketItem>()
+                .eq("item_type", MarketItem.TYPE_MCP)
+                .eq("item_key", name)
+                .eq("author_uid", MarketItem.AUTHOR_SYSTEM));
+        boolean update = item != null;
+        if (item == null) item = new MarketItem();
+        if (!update) {
+            item.setId(UUID.randomUUID().toString().replace("-", ""));
+            item.setItemType(MarketItem.TYPE_MCP);
+            item.setItemKey(name);
+            item.setAuthorUid(MarketItem.AUTHOR_SYSTEM);
+            item.setInstallCount(0);
+        }
+        item.setName(name);
+        item.setSummary(summary);
+        item.setDescription(str(body, "description") == null ? "" : str(body, "description").trim());
+        item.setTags(finalTags);
+        item.setVersion(version);
+        item.setStatus(MarketItem.STATUS_ONLINE);
+        String rel = MarketItem.TYPE_MCP + "/" + item.getId() + ".json";
+        writePayloadBytes(payloadBytes, rel);
+        item.setPayloadPath(rel);
+        item.setContentHash(sha256Of(payloadBytes));
+        if (update) {
+            itemMapper.updateById(item);
+        } else {
+            itemMapper.insert(item);
+        }
+        audit.record("[AUDIT] 市场 MCP 目录{} uid={} item={} key={} url={} update={}",
+                update ? "更新" : "上架", uid, item.getId(), name, url, update);
+        return view(itemMapper.selectById(item.getId()), null, Map.of(), uid);
+    }
+
+    /** MCP 目录安装：落安装人自己的 {@code c_ai_user_mcp}（安装即复制）并后台连接；重名/超限走既有失败语义。 */
+    private UserMcp installMcp(String uid, MarketItem item) {
+        JSONObject payload = payloadJson(item);
+        String name = str(payload, "name");
+        String url = str(payload, "url");
+        McpServerRules.validate(name, url);
+        List<UserMcp> mine = userMcpMapper.selectList(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<UserMcp>()
+                        .eq(UserMcp::getUid, uid));
+        // 同名先判（优先级高于配额）：同名同址=已装过，同名不同址=不静默改写用户自己的配置
+        for (UserMcp row : mine) {
+            if (name.equals(row.getName())) {
+                if (url.equals(row.getUrl())) {
+                    throw new BizException("该服务已在你的 MCP 列表里（同名同址），无需重复安装");
+                }
+                throw new BizException("已存在同名 MCP 服务（" + name + "）；目录不会覆盖你的配置，"
+                        + "请到「MCP 外部工具」改名或删除后再安装");
+            }
+        }
+        if (mine.size() >= McpServerRules.MAX_SERVERS_PER_USER) {
+            throw new BizException("已达上限（每人最多 " + McpServerRules.MAX_SERVERS_PER_USER + " 个 MCP 服务）");
+        }
+        UserMcp row = new UserMcp();
+        row.setId(UUID.randomUUID().toString());
+        row.setUid(uid);
+        row.setScope(UserMcp.SCOPE_PERSONAL);
+        row.setName(name);
+        row.setUrl(url);
+        row.setType(McpServerRules.normalizeType(str(payload, "type")));
+        row.setEnabled(1);
+        userMcpMapper.insert(row);
+        mcpClientService.refresh(uid); // 增量对齐：只连这一个新服务，其余连接不动
+        audit.record("[AUDIT] 市场 MCP 安装 uid={} item={} key={} mcpId={}", uid, item.getId(), name, row.getId());
+        return row;
+    }
+
+    /**
+     * MCP 条目的视图增强：下发 url / 传输类型 / 是否需认证 / 安装四态
+     * （installed 同名同址已装 &gt; name_conflict 同名不同址 &gt; quota_full 配额满 &gt; 可安装）。
+     * 状态由后端随列表返回，前端不做本地猜测，避免多端口径不一致。
+     */
+    private void enrichMcpViews(String uid, List<Map<String, Object>> views, List<MarketItem> items) {
+        boolean hasMcp = items.stream().anyMatch(i -> MarketItem.TYPE_MCP.equals(i.getItemType()));
+        if (!hasMcp) return;
+        List<UserMcp> mine = userMcpMapper.selectList(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<UserMcp>()
+                        .eq(UserMcp::getUid, uid));
+        Map<String, String> mineUrlByName = new LinkedHashMap<>();
+        for (UserMcp row : mine) mineUrlByName.put(row.getName(), row.getUrl());
+        for (int i = 0; i < items.size(); i++) {
+            MarketItem item = items.get(i);
+            if (!MarketItem.TYPE_MCP.equals(item.getItemType())) continue;
+            Map<String, Object> m = views.get(i);
+            JSONObject payload;
+            try {
+                payload = payloadJson(item);
+            } catch (Exception e) {
+                // 载荷损坏不让整页炸：缺 url 的条目前端按「目录条目异常」展示，安装时 fail-loud
+                m.put("mcpState", "broken");
+                continue;
+            }
+            m.put("url", str(payload, "url"));
+            m.put("mcpType", McpServerRules.normalizeType(str(payload, "type")));
+            m.put("requiresAuth", Boolean.TRUE.equals(payload.get("requiresAuth")));
+            m.put("mcpState", mcpState(str(payload, "name"), str(payload, "url"),
+                    mineUrlByName, mine.size()));
+        }
+    }
+
+    private static String mcpState(String name, String url, Map<String, String> mineUrlByName, int mineCount) {
+        String owned = mineUrlByName.get(name);
+        if (owned != null) return url.equals(owned) ? "installed" : "name_conflict";
+        if (mineCount >= McpServerRules.MAX_SERVERS_PER_USER) return "quota_full";
+        return "installable";
+    }
+
     // ==================== 安装 ====================
 
     /**
@@ -294,6 +446,8 @@ public class MarketService {
      *   <li>skill：快照 zip → 本人技能目录（与上传 zip 同校验链），同名时按 overwrite 决定是否整包替换；</li>
      *   <li>agent / workflow：<b>每次安装都是新建一份</b>（fork），无同名冲突概念，overwrite 不参与；
      *       智能体模板里的引用（知识库 / MCP / 技能 / 绑定工作流）按安装人权限裁剪，逐项告警放进 warnings。</li>
+     *   <li>mcp：落一条安装人自己的 c_ai_user_mcp（只含地址与传输类型，凭据由安装人后续补充），
+     *       同名同址拒绝重复安装、同名不同址拒绝静默覆盖，超限走每人 10 个的既有配额。</li>
      * </ul>
      */
     public Map<String, Object> install(String uid, String id, boolean overwrite) {
@@ -322,6 +476,11 @@ public class MarketService {
                 m = finishInstall(uid, item);
                 m.put("agentId", created.getId());
                 m.put("agentName", created.getName());
+            }
+            case MarketItem.TYPE_MCP -> {
+                UserMcp row = installMcp(uid, item);
+                m = finishInstall(uid, item);
+                m.put("mcpName", row.getName());
             }
             default -> throw new BizException("暂不支持该物品类型：" + item.getItemType());
         }
@@ -637,6 +796,12 @@ public class MarketService {
     private static String str(JSONObject o, String key) {
         if (o == null) return null;
         Object v = o.get(key);
+        return v == null ? null : String.valueOf(v);
+    }
+
+    private static String str(Map<String, Object> body, String key) {
+        if (body == null) return null;
+        Object v = body.get(key);
         return v == null ? null : String.valueOf(v);
     }
 

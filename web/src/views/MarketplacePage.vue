@@ -15,7 +15,9 @@
         <a-tooltip title="刷新列表">
           <button class="app-icon-btn" aria-label="刷新市场列表" :disabled="loading" @click="load"><reload-outlined /></button>
         </a-tooltip>
-        <button class="app-btn" @click="publishOpen = true"><cloud-upload-outlined /> 上架</button>
+        <!-- MCP 页签没有「我的上架」发布链路：普通用户只浏览/安装，管理员维护目录条目 -->
+        <button v-if="tab !== 'mcp'" class="app-btn" @click="publishOpen = true"><cloud-upload-outlined /> 上架</button>
+        <button v-else-if="isAdmin" class="app-btn" @click="openMcpModal()"><plus-outlined /> 新增目录条目</button>
       </div>
     </div>
 
@@ -42,7 +44,8 @@
             : (keyword ? '没有名称、简介或标签包含「' + keyword + '」的物品。' : '第一个上架的人就是你。') }}
         </div>
         <div class="key-empty-ops">
-          <button class="app-btn" @click="publishOpen = true"><cloud-upload-outlined /> 上架</button>
+          <button v-if="tab !== 'mcp'" class="app-btn" @click="publishOpen = true"><cloud-upload-outlined /> 上架</button>
+          <button v-else-if="isAdmin" class="app-btn" @click="openMcpModal()"><plus-outlined /> 新增目录条目</button>
           <button v-if="keyword" class="app-btn ghost small" @click="keyword = ''; load()">清除搜索</button>
         </div>
       </div>
@@ -51,12 +54,27 @@
         <div v-for="it in items" :key="it.id" class="app-card mk-card">
           <div class="mk-card-head">
             <span class="mk-card-name" :title="it.name">{{ it.name }}</span>
-            <span class="app-pill key-tag" :class="it.itemType === 'skill' ? 'type' : ''">{{ typeLabel(it.itemType) }}</span>
-            <span v-if="it.mine && !it.online" class="app-pill warn key-tag">已下架</span>
-            <span v-if="it.hasUpdate" class="app-pill warn key-tag">有更新</span>
-            <span v-else-if="it.installed" class="app-pill ok key-tag">已安装</span>
+            <!-- MCP 目录条目：官方徽标 + 认证提示 + 安装四态（状态由后端随列表下发，前端不本地猜测）；
+                 类型 pill 省略——MCP 条目只出现在本页签（官方条目不进「我的上架」），窄卡下名字优先 -->
+            <template v-if="it.itemType === 'mcp'">
+              <span v-if="it.authorUid === 'system'" class="app-pill plain key-tag mk-official">平台官方</span>
+              <span v-if="it.requiresAuth" class="app-pill warn plain key-tag">需认证</span>
+              <span v-if="!it.online" class="app-pill warn key-tag">已下架</span>
+              <span v-else class="app-pill key-tag" :class="mcpStateMeta(it).cls">{{ mcpStateMeta(it).label }}</span>
+            </template>
+            <template v-else>
+              <span class="app-pill key-tag" :class="it.itemType === 'skill' ? 'type' : ''">{{ typeLabel(it.itemType) }}</span>
+              <span v-if="it.mine && !it.online" class="app-pill warn key-tag">已下架</span>
+              <span v-if="it.hasUpdate" class="app-pill warn key-tag">有更新</span>
+              <span v-else-if="it.installed" class="app-pill ok key-tag">已安装</span>
+            </template>
           </div>
           <div class="mk-card-desc" :title="it.summary || ''">{{ it.summary || '（无简介）' }}</div>
+          <!-- MCP：目录只下发地址与传输类型（等宽字体一眼可辨），不含任何凭据 -->
+          <div v-if="it.itemType === 'mcp' && it.url" class="mk-url-row">
+            <span class="mk-transport">{{ it.mcpType || 'streamable' }}</span>
+            <span class="mk-url" :title="it.url">{{ it.url }}</span>
+          </div>
           <div v-if="it.tags && it.tags.length" class="mk-card-tags">
             <button v-for="t in it.tags" :key="t" class="mk-tag" type="button" @click="searchTag(t)">{{ t }}</button>
           </div>
@@ -68,7 +86,25 @@
           </div>
           <div class="mk-card-foot">
             <button class="app-link-btn" @click="openDetail(it)">详情</button>
-            <template v-if="!it.mine">
+            <!-- MCP 目录：管理员=编辑/下架；用户按四态分流（已装>同名>超限>可装），失败原因去 MCP 页看 -->
+            <template v-if="it.itemType === 'mcp'">
+              <template v-if="isAdmin">
+                <button class="app-link-btn" @click="openMcpModal(it)">编辑</button>
+                <button class="app-link-btn" @click="toggleOnline(it)">{{ it.online ? '下架' : '重新上架' }}</button>
+              </template>
+              <template v-else-if="it.online">
+                <button v-if="it.mcpState === 'installed'" class="app-link-btn accent" @click="goMcpPanel">去 MCP 页</button>
+                <button v-else-if="it.mcpState === 'name_conflict'" class="app-link-btn accent" @click="goMcpPanel">去 MCP 页处理</button>
+                <span v-else-if="it.mcpState === 'quota_full'" class="mk-uptodate">
+                  已达上限（{{ mcpQuota.used }}/{{ mcpQuota.max }}）
+                </span>
+                <span v-else-if="it.mcpState === 'broken'" class="mk-uptodate">目录条目异常</span>
+                <button v-else class="app-link-btn accent" :disabled="busy(it.id)" @click="doInstall(it, false)">
+                  {{ busy(it.id) ? '安装中…' : '安装' }}
+                </button>
+              </template>
+            </template>
+            <template v-else-if="!it.mine">
               <!-- 技能：装进目录，同名冲突有确认流 -->
               <template v-if="it.itemType === 'skill'">
                 <button v-if="it.hasUpdate" class="app-link-btn accent" :disabled="busy(it.id)" @click="install(it, true)">
@@ -93,7 +129,11 @@
         </div>
       </div>
 
-      <p class="mk-foot-hint">
+      <p v-if="tab === 'mcp'" class="mk-foot-hint">
+        MCP 服务安装后出现在「智能体 → MCP 外部工具」，连接在后台进行，失败原因可在 MCP 页展开查看；
+        目录只下发地址与传输类型，需要认证的服务请在 MCP 页补充请求头。每人最多 {{ mcpQuota.max }} 个服务。
+      </p>
+      <p v-else class="mk-foot-hint">
         安装即复制：技能装进你的技能目录；应用模板/工作流 fork 成你的新副本（引用按你的权限自动裁剪并提示）。
         作者改版/下架/删除都不影响已装副本；重新上架后内容有变化，装过的人会看到「有更新/有新版」。
       </p>
@@ -108,9 +148,15 @@
           <span class="mk-ver">{{ fmtVersion(detail.version) }}</span>
           <span v-if="detail.installCount">{{ detail.installCount }} 次安装</span>
           <span v-if="detail.updateTime">更新于 {{ fmtDate(detail.updateTime) }}</span>
-          <span v-if="detail.mine && !detail.online" class="app-pill warn key-tag">已下架</span>
-          <span v-else-if="detail.hasUpdate" class="app-pill warn key-tag">有更新</span>
-          <span v-else-if="detail.installed" class="app-pill ok key-tag">已安装</span>
+          <span v-if="detail.itemType === 'mcp' && detail.requiresAuth" class="app-pill warn plain key-tag">需认证</span>
+          <span v-if="detail.itemType !== 'mcp' && detail.mine && !detail.online" class="app-pill warn key-tag">已下架</span>
+          <span v-else-if="detail.itemType !== 'mcp' && detail.hasUpdate" class="app-pill warn key-tag">有更新</span>
+          <span v-else-if="detail.itemType !== 'mcp' && detail.installed" class="app-pill ok key-tag">已安装</span>
+        </div>
+        <!-- MCP：地址与传输类型常驻可见（装前可核对装的是什么） -->
+        <div v-if="detail.itemType === 'mcp' && detail.url" class="mk-url-row" style="margin:0 0 8px">
+          <span class="mk-transport">{{ detail.mcpType || 'streamable' }}</span>
+          <span class="mk-url" :title="detail.url">{{ detail.url }}</span>
         </div>
         <div v-if="detail.tags && detail.tags.length" class="mk-card-tags" style="margin-bottom:8px">
           <button v-for="t in detail.tags" :key="t" class="mk-tag" type="button" @click="searchTag(t)">{{ t }}</button>
@@ -118,7 +164,7 @@
         <div class="mk-view-tabs">
           <button class="app-link-btn" :class="{ on: detailTab === 'desc' }" @click="detailTab = 'desc'">介绍</button>
           <button class="app-link-btn" :class="{ on: detailTab === 'content' }" @click="detailTab = 'content'">
-            {{ detail.itemType === 'skill' ? 'SKILL.md' : '内容' }}
+            {{ detail.itemType === 'skill' ? 'SKILL.md' : (detail.itemType === 'mcp' ? '配置' : '内容') }}
           </button>
         </div>
         <!-- eslint-disable-next-line vue/no-v-html -->
@@ -131,14 +177,29 @@
             <div v-if="skillRender" class="md mk-view-body" v-html="skillRender" />
             <pre v-else class="mk-view-raw">{{ detail.skillMd || '（快照里读不到 SKILL.md，可下载物品包查看）' }}</pre>
           </template>
-          <!-- 应用模板/工作流：载荷 JSON（装前可审阅完整配置） -->
+          <!-- 应用模板/工作流/MCP：载荷 JSON（装前可审阅完整配置） -->
           <pre v-else class="mk-view-raw">{{ detail.configJson || '（载荷读取失败，可下载物品包查看）' }}</pre>
         </template>
 
+        <!-- MCP：认证提醒常驻可见（不随页签切换消失） -->
+        <div v-if="detail.itemType === 'mcp' && detail.requiresAuth" class="mk-auth-note">
+          该服务需要认证请求头。目录只下发地址与传输类型，不含任何凭据；
+          安装后请在「智能体 → MCP 外部工具」编辑该服务，补充请求头凭据。
+        </div>
+
         <div class="key-modal-foot">
-          <button class="app-btn ghost" @click="download(detail)">下载物品包</button>
-          <!-- 作者也能装：上架后自己装一遍验证是常事（后端本就放行） -->
-          <button v-if="detail.online" class="app-btn" :disabled="busy(detail.id)"
+          <span v-if="detail.itemType === 'mcp'" class="mk-foot-note">安装即复制：目录后续修改不会覆盖你的服务配置。</span>
+          <button v-if="detail.itemType !== 'mcp'" class="app-btn ghost" @click="download(detail)">下载物品包</button>
+          <!-- MCP：按四态分流（与卡片同口径）；非 MCP 走原有安装流（作者也能装：上架后自己装一遍验证是常事） -->
+          <template v-if="detail.itemType === 'mcp' && detail.online">
+            <button v-if="detail.mcpState === 'installed'" class="app-btn ghost" @click="goMcpPanel">去 MCP 页</button>
+            <button v-else-if="detail.mcpState === 'name_conflict'" class="app-btn ghost" @click="goMcpPanel">去 MCP 页处理</button>
+            <button v-else-if="detail.mcpState === 'quota_full'" class="app-btn" disabled>已达上限</button>
+            <button v-else-if="detail.mcpState !== 'broken'" class="app-btn" :disabled="busy(detail.id)" @click="doInstall(detail, false)">
+              {{ busy(detail.id) ? '安装中…' : '安装到我的 MCP' }}
+            </button>
+          </template>
+          <button v-else-if="detail.itemType !== 'mcp' && detail.online" class="app-btn" :disabled="busy(detail.id)"
                   @click="detail.itemType === 'skill' ? install(detail, !!detail.installed) : installCopy(detail)">
             {{ busy(detail.id) ? '安装中…' : installLabel(detail) }}
           </button>
@@ -149,6 +210,8 @@
 
     <!-- 上架（与技能页共用弹窗组件） -->
     <MarketPublishModal v-model:open="publishOpen" @published="onPublished" />
+    <!-- MCP 目录条目（仅管理员；新增与编辑共用） -->
+    <MarketMcpPublishModal v-model:open="mcpModalOpen" :edit-item="mcpEditItem" @published="load" />
   </div>
 </template>
 
@@ -156,20 +219,23 @@
 import { computed, h, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message, Modal } from 'ant-design-vue'
-import { CloudUploadOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons-vue'
+import { CloudUploadOutlined, PlusOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons-vue'
 import {
   deleteMarketItem, downloadMarketItem, getMarketItem, installMarketItem,
   listMarketItems, setMarketItemStatus
 } from '../api'
 import { renderMd } from '../utils/markdown'
+import { ensureAuth } from '../utils/auth'
 import MarketPublishModal from '../components/MarketPublishModal.vue'
+import MarketMcpPublishModal from '../components/MarketMcpPublishModal.vue'
 
-const TYPE_LABEL = { skill: '技能', agent: '应用模板', workflow: '工作流' }
+const TYPE_LABEL = { skill: '技能', agent: '应用模板', workflow: '工作流', mcp: 'MCP 服务' }
 /** 类型页签（物品类型过滤）+ 跨类型的「我的上架」 */
 const TYPE_TABS = [
   { key: 'skill', label: '技能' },
   { key: 'agent', label: '应用模板' },
-  { key: 'workflow', label: '工作流' }
+  { key: 'workflow', label: '工作流' },
+  { key: 'mcp', label: 'MCP 服务' }
 ]
 const TABS = [...TYPE_TABS.map(t => t.key), 'mine']
 
@@ -196,6 +262,29 @@ const detailTab = ref('desc')
 
 const busy = id => !!installing.value[id]
 const typeLabel = t => TYPE_LABEL[t] || t || '物品'
+
+// ---------------- MCP 目录（第 4 页签） ----------------
+/** 管理员才看得到目录维护入口；ensureAuth 命中模块级缓存，不额外发请求 */
+const isAdmin = ref(false)
+/** 安装四态（与后端 mcpState 同口径；文案与优先级见 MarketService.enrichMcpViews） */
+const MCP_STATES = {
+  installed: { label: '已在 MCP', cls: 'ok' },
+  name_conflict: { label: '同名已存在', cls: 'warn' },
+  quota_full: { label: '已达上限', cls: 'warn' },
+  broken: { label: '条目异常', cls: 'warn' }
+}
+const mcpStateMeta = it => MCP_STATES[it.mcpState] || { label: '可安装', cls: 'blue' }
+/** MCP 个人配额（counts.mcpQuota 后端随列表下发，与四态判定同源） */
+const mcpQuota = computed(() => counts.value?.mcpQuota || { used: 0, max: 10 })
+const mcpModalOpen = ref(false)
+const mcpEditItem = ref(null)
+const openMcpModal = it => {
+  mcpEditItem.value = it || null
+  mcpModalOpen.value = true
+}
+/** 「去 MCP 页」统一落智能体中心的 MCP 外部工具页签 */
+const goMcpPanel = () => router.push({ path: '/agents', query: { tab: 'mcp' } })
+
 const skillRender = computed(() => {
   // SKILL.md 以 frontmatter 开头，直接渲染 markdown 会把 --- 块吞成分隔线：
   // 与技能详情页同口径预览正文，原文切到 pre 视图看
@@ -274,10 +363,11 @@ const install = (it, overwrite) => {
 /** fork 类物品（应用模板/工作流）：每次安装都是新副本，没有覆盖语义、不用确认 */
 const installCopy = it => doInstall(it, false)
 
-/** 安装成功后的按类型文案（返回的实体名由后端给：skillName / workflowName / agentName） */
+/** 安装成功后的按类型文案（返回的实体名由后端给：skillName / workflowName / agentName / mcpName） */
 const installedName = (it, data) =>
-  data?.skillName || data?.workflowName || data?.agentName || it.name
+  data?.skillName || data?.workflowName || data?.agentName || data?.mcpName || it.name
 const installedVerb = (it, data) => {
+  if (it.itemType === 'mcp') return '已接入 MCP 服务「'
   if (it.itemType === 'workflow') return data?.workflowId ? '已复制为你的工作流「' : '已安装「'
   if (it.itemType === 'agent') return data?.agentId ? '已复制为你的智能体「' : '已安装「'
   return it.hasUpdate ? '已更新技能「' : '已安装技能「'
@@ -379,7 +469,11 @@ const download = async it => {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  // 管理员标记只影响目录维护入口的显隐；失败按非管理员处理（后端仍兜底鉴权）
+  ensureAuth().then(info => { isAdmin.value = !!info?.admin }).catch(() => { /* 登录态由路由守卫负责 */ })
+})
 </script>
 
 <style scoped>
@@ -418,6 +512,20 @@ onMounted(load)
 .mk-author { max-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mk-ver { background: var(--app-panel-2); border-radius: 999px; padding: 0 7px; line-height: 17px; color: var(--app-text2); font-size: 10px; }
 .mk-uptodate { font-size: 11px; color: var(--app-text3); }
+/* MCP 目录条目：官方描边徽标（区别于普通 pill 的实心底） */
+.mk-official { border: 1px solid var(--app-accent); color: var(--app-accent); background: transparent; }
+/* MCP 地址行：传输类型等宽 pill + 等宽地址（一眼可辨装的是什么） */
+.mk-url-row { display: flex; align-items: center; gap: 7px; min-width: 0; margin-bottom: 6px; }
+.mk-transport { flex: none; font-family: var(--app-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 10.5px; line-height: 17px; padding: 0 6px; border-radius: 3px;
+  background: var(--app-panel-2); color: var(--app-text3); }
+.mk-url { min-width: 0; flex: 1; font-family: var(--app-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px; color: var(--app-text3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* MCP 详情弹窗：认证提醒常驻条 */
+.mk-auth-note { margin-top: 10px; padding: 9px 11px; border: 1px solid #f0dfb6; background: #faf3e6;
+  border-radius: 8px; font-size: 12px; line-height: 1.7; color: #a3691b; }
+html[data-theme='dark'] .mk-auth-note { border-color: rgba(240, 223, 182, .25); background: rgba(250, 243, 230, .08); }
+.mk-foot-note { margin-right: auto; font-size: 11.5px; color: var(--app-text3); }
 .mk-card-foot { display: flex; align-items: center; justify-content: flex-end; gap: 2px; border-top: 1px dashed var(--app-border); padding-top: 4px; }
 .app-link-btn.accent { color: var(--app-accent); font-weight: 600; }
 .app-link-btn:disabled { opacity: .55; cursor: not-allowed; }

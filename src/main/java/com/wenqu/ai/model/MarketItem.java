@@ -25,6 +25,12 @@ public class MarketItem {
     public static final String TYPE_AGENT = "agent";
     /** 工作流：payload = {name, description, dsl}，安装 = 创建为自己的草稿 */
     public static final String TYPE_WORKFLOW = "workflow";
+    /**
+     * MCP 目录条目：payload = {name, url, type, requiresAuth}，<b>不含任何凭据</b>；
+     * 安装 = 落一条安装人自己的 {@code c_ai_user_mcp}（安装即复制，目录后续改动不回写已装配置）。
+     * 目录条目统一 {@link #AUTHOR_SYSTEM}（平台官方），仅管理员可维护。
+     */
+    public static final String TYPE_MCP = "mcp";
     /** 官方条目作者（内置模板种入市场用）：显示名固定「平台官方」，不可被用户删除 */
     public static final String AUTHOR_SYSTEM = "system";
     public static final String STATUS_ONLINE = "online";
