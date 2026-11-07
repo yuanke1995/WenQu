@@ -7,9 +7,9 @@
       <div v-if="!isNarrow" class="chat-head">
         <span class="chat-title">{{ currentSessionTitle }}</span>
         <!-- 当前工作区标识：约定每轮注入 system prompt，用户有权在聊天的当场看见它在生效；
-             没有工作区/非本人会话时接口返回 null，标识不显示（不编名字）。
+             没挂工作区的会话接口仍返回档位等字段，但 projectId 为空——这里按它判断，标识不显示（不编名字）。
              点它直接进工作区页面（目录/记忆/隔离都在那一页） -->
-        <button v-if="sessionWorkspace" class="head-ws" :class="{ 'head-ws-archived': sessionWorkspace.archived }"
+        <button v-if="sessionWorkspace && sessionWorkspace.projectId" class="head-ws" :class="{ 'head-ws-archived': sessionWorkspace.archived }"
                 :title="wsTitle" @click="router.push('/project/' + sessionWorkspace.projectId)">
           <folder-open-outlined class="head-ws-ic" />
           <span class="head-ws-name">{{ sessionWorkspace.name }}</span>
@@ -1093,11 +1093,12 @@
         chip 是文档里的节点，能排在字与字之间，全选复制也就带得上它们（见 chat/Composer.vue） -->
         <template #left-lead>
           <!-- 会话级权限档位：仅可查看 / 工作区内修改 / 完全权限。改的是这条会话，
-               下一次工具调用起生效。只在真工作区的会话里出现：档位管的是「工作区目录里的读写」，
-               侧栏「会话」（implicit 兜底容器）没有目录，摆一档下来只会让人以为按它执行了。
+               下一次工具调用起生效。每条会话都有工作区后端（显式工作区用其目录；「会话」与
+               未挂工作区的会话用本机执行器目录，离线时是云端沙盒），所以不按工作区有无隐藏，
+               否则用户在没有工作区标识的会话里永远改不了档位。
                胶囊与菜单都只报具体档位，不再有「跟随智能体」这一项：没在本会话选过时，
                报的就是这位智能体自己的档位（由后端下发的档位名册 + 智能体档位算出）。 -->
-          <a-dropdown v-if="inWorkspaceSession" :trigger="['click']" placement="topLeft">
+          <a-dropdown v-if="currentSessionId" :trigger="['click']" placement="topLeft">
             <button class="perm-pill" :class="{ on: !!sessionPermission && effectivePermission !== 'autonomous', danger: effectivePermission === 'autonomous' }"
                     type="button"
                     :title="'权限：' + permissionLabel">
@@ -3612,11 +3613,9 @@ watch(() => messages.value, () => nextTick(() => { updateTailSpacer(); scrollFor
 // ==================== 当前工作区标识（聊天页头部） ====================
 // 把「我在哪个工作区」摆在标题旁边，点一下进工作区页（目录/记忆/隔离都在那一页）。
 // 取数口径与后端 SessionService.workspaceOfSession 同源（session → project），
-// 切换会话即刷新；取不到（无工作区/非本人/接口异常）一律不显示，不用侧栏分组猜。
+// 切换会话即刷新；没挂工作区的会话接口也会返回档位等字段（projectId 为空），
+// 头部标识按 projectId 判断显示，不看接口有没有 data，不用侧栏分组猜。
 const sessionWorkspace = ref(null)
-/** 这条会话是不是挂在一个工作区下：显式工作区与隐式会话都算——隐式会话现在也有本机执行器目录
- *  （侧栏「会话」不再等于「没有目录」；离线时退回云端沙盒，文件仍在服务器上有目录可执行）。 */
-const inWorkspaceSession = computed(() => !!sessionWorkspace.value)
 // ---------- 会话级权限档位（本机工作区的文件/命令能干什么） ----------
 const permissionPresets = ref([])
 /** 当前会话选的档位码；''=这条会话还没选过，按智能体自己的档位执行。切会话时从 sessionWorkspace 恢复。 */
@@ -5333,7 +5332,10 @@ onMounted(async () => {
 .askp-box { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
 .askp-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .askp-tag { flex: none; font-size: 12px; line-height: 1; padding: 5px 9px; border-radius: 999px; background: var(--app-panel-2); border: 1px solid var(--app-border); color: var(--app-text2); }
-.askp-q { font-size: 13.5px; font-weight: 600; color: var(--app-text); }
+/* 题面是唯一可伸缩项（basis 0 + grow）：题干长时在自己的盒内折行，倒计时/状态徽标/翻页器
+   永远钉在首行右侧——否则长题干占满首行，margin-left:auto 会把倒计时单独挤到第二行，
+   右对齐孤零零一行（真机见过）。短题干时仍与徽标同一行，观感不变。 */
+.askp-q { flex: 1 1 0; min-width: 0; font-size: 13.5px; font-weight: 600; color: var(--app-text); }
 /* 「可多选」= 这一题可以勾不止一个候选（不是「这张卡有几个问句」，那由翻页 ‹1/2› 说）。
    画在题面旁边，用户勾第二个之前就得知道勾第一个不会被顶掉 */
 .askp-multi { flex: none; font-size: 11px; line-height: 1.5; padding: 1px 6px; border-radius: 999px; background: var(--app-panel-2); border: 1px solid var(--app-border); color: var(--app-text2); }

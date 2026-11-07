@@ -158,7 +158,8 @@ watch(() => props.ask.askId, () => {
   font-size: 12px; color: #2563eb; background: #eff6ff;
   border-radius: 4px; padding: 1px 6px;
 }
-.sa-q { font-weight: 600; font-size: 14px; }
+/* 题面 basis 0 + grow：长题干在自己盒内折行，状态徽标/翻页器不被挤到第二行孤行（与 ChatPage askp-q 同因） */
+.sa-q { flex: 1 1 0; min-width: 0; font-weight: 600; font-size: 14px; }
 .sa-multi { font-size: 12px; color: #6b7280; border: 1px solid #e5e7eb; border-radius: 4px; padding: 0 5px; }
 .sa-state { font-size: 12px; }
 .sa-state.ok { color: #16a34a; }

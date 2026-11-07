@@ -501,7 +501,8 @@ export const setSessionPermission = (sid, preset) =>
 
 /** 读取会话已存的模型覆盖（切到列表未加载的会话时按需恢复选择器） */
 export const getSessionModelApi = sid => request(`/session/${sid}/model`)
-/** 当前会话所属工作区摘要（聊天页头部标识）：无工作区/非本人会话返回 data=null */
+/** 当前会话所属工作区摘要：头部标识 + 会话级权限档位。没挂工作区的会话仍返回（projectId 为空）；
+ *  工作区已不存在/非本人会话返回 data=null */
 export const getSessionWorkspace = sid => request(`/session/${sid}/workspace`)
 /** 移动会话到其他工作区（连同其产物一起改归属）；projectId 空串 = 摘掉归属 */
 export const moveSessionProject = (sid, projectId) =>

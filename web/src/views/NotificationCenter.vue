@@ -477,10 +477,12 @@ onMounted(async () => {
   await load()
   await refreshCounts()
   window.addEventListener('app:notif-changed', onChanged)
+  window.addEventListener('app:notif-goto', onNotifGoto)
 })
 onUnmounted(() => {
   clearTimeout(searchTimer)
   window.removeEventListener('app:notif-changed', onChanged)
+  window.removeEventListener('app:notif-goto', onNotifGoto)
 })
 </script>
 

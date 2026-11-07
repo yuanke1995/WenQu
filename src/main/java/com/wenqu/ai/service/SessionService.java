@@ -211,7 +211,10 @@ public class SessionService {
      * 当前会话所属工作区的摘要（聊天页头部标识用）：名字 + 是否已归档。
      *
      * <p>用户有权在聊天的当场看见「我现在处于哪个工作区」，否则工作区归属就是一串看不见的后台字段。
-     * <p>没有工作区 / 工作区已不存在 / 非本人会话一律返回 {@code null}（标识不显示）：
+     * <p><b>没挂工作区的会话也返回</b>（{@code projectId} 留空）：它仍有会话级工作区后端
+     * （本机执行器目录，离线时云端沙盒）与权限档位，聊天页的档位选择器要读这两个字段。
+     * 头部标识按 {@code projectId} 是否为空决定显示，不编工作区名。
+     * <p>工作区已不存在 / 非本人会话仍返回 {@code null}（标识不显示）：
      * 不编名字——界面上不存在的名词会被复述出来（与 {@code ProjectService} 同一口径）。
      * 解析失败按无工作区处理，不抛：一个标识不该让聊天页开不了场。
      */
@@ -225,29 +228,32 @@ public class SessionService {
             boolean mine = Objects.equals(s.getUserId(), uid);
             if (!mine) return null;
             String pid = s.getProjectId();
-            if (pid == null || pid.isBlank()) return null;
-            Project p = projectService.byId(pid);
-            if (p == null) return null;
+            // 没挂工作区的会话不再整条返回 null：projectId 留空表示「没有工作区标识」，
+            // 其余会话级字段（后端 / 档位）照常带出，聊天页的档位选择器据此可用。
+            Project p = (pid == null || pid.isBlank()) ? null : projectService.byId(pid);
+            if (p == null && pid != null && !pid.isBlank()) return null;   // 工作区已不存在：标识不显示
             Map<String, Object> m = new LinkedHashMap<>();
-            m.put("projectId", p.getId());
+            m.put("projectId", p == null ? "" : p.getId());
             // implicit 兜底容器没有名字：显示「会话」（与侧栏那一栏同名，不另造名词）
-            m.put("name", p.getName() == null || p.getName().isBlank() ? "会话" : p.getName());
-            m.put("implicit", Project.SELECTION_IMPLICIT.equals(p.getSelectionStatus()));
-            m.put("archived", Project.STATUS_ARCHIVED.equals(p.getStatus()));
-            m.put("isLocal", projectService.isLocal(p));
-            m.put("executorId", p.getExecutorId() == null ? "" : p.getExecutorId());
+            m.put("name", p == null || p.getName() == null || p.getName().isBlank() ? "会话" : p.getName());
+            m.put("implicit", p == null || Project.SELECTION_IMPLICIT.equals(p.getSelectionStatus()));
+            m.put("archived", p != null && Project.STATUS_ARCHIVED.equals(p.getStatus()));
+            m.put("isLocal", p != null && projectService.isLocal(p));
+            m.put("executorId", p == null || p.getExecutorId() == null ? "" : p.getExecutorId());
             // 目录清单：聊天页标题的悬浮提示与「本机文件」入口要用；不把绝对路径塞进页面正文
             java.util.List<Map<String, Object>> roots = new java.util.ArrayList<>();
-            for (com.wenqu.ai.model.ProjectRoot r : projectService.rootsOf(p)) {
-                Map<String, Object> one = new LinkedHashMap<>();
-                one.put("alias", r.getAlias());
-                one.put("path", r.getPath());
-                one.put("primary", r.getPrimaryRoot() != null
-                        && r.getPrimaryRoot() == com.wenqu.ai.model.ProjectRoot.PRIMARY);
-                roots.add(one);
+            if (p != null) {
+                for (com.wenqu.ai.model.ProjectRoot r : projectService.rootsOf(p)) {
+                    Map<String, Object> one = new LinkedHashMap<>();
+                    one.put("alias", r.getAlias());
+                    one.put("path", r.getPath());
+                    one.put("primary", r.getPrimaryRoot() != null
+                            && r.getPrimaryRoot() == com.wenqu.ai.model.ProjectRoot.PRIMARY);
+                    roots.add(one);
+                }
             }
             m.put("roots", roots);
-            m.put("executorOnline", p.getExecutorId() != null && !p.getExecutorId().isBlank()
+            m.put("executorOnline", p != null && p.getExecutorId() != null && !p.getExecutorId().isBlank()
                     && executorRegistry.online(p.getExecutorId()));
             // 隐式会话的工作区后端（本机执行器目录 / 离线时云端沙盒）：界面按它决定
             // 「权限档位选择器要不要摆」「文件栏是不是本机目录」。

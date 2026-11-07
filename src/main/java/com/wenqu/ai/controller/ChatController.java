@@ -825,8 +825,9 @@ public class ChatController {
     }
 
     @Operation(summary = "当前会话所属工作区",
-            description = "聊天页头部标识用：工作区名 + 是否带约定（约定每轮生效）。"
-                    + "没有工作区 / 工作区已不存在 / 非本人会话一律返回 data=null（标识不显示，不编名字）")
+            description = "聊天页头部标识与权限档位选择器用：工作区名 + 是否带约定（约定每轮生效）+ 会话级档位。"
+                    + "没挂工作区的会话仍返回 data（projectId 为空，头部标识不显示，不编名字）；"
+                    + "工作区已不存在 / 非本人会话一律返回 data=null")
     @Permission("session:read")
     @GetMapping("/session/{sessionId}/workspace")
     public ResultJson sessionWorkspace(

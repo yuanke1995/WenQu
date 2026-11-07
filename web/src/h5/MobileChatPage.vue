@@ -1280,7 +1280,8 @@ onUnmounted(() => {
 .m-askp { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
 .m-askp-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .m-askp-tag { flex: none; font-size: 12px; line-height: 1; padding: 5px 9px; border-radius: 999px; background: var(--app-panel); border: 1px solid var(--app-border); color: var(--app-text2); }
-.m-askp-q { font-size: 14px; font-weight: 600; color: var(--app-text); }
+/* 与桌面壳同因：题面 basis 0 + grow，长题干在自己盒内折行，倒计时不再被挤到第二行孤行 */
+.m-askp-q { flex: 1 1 0; min-width: 0; font-size: 14px; font-weight: 600; color: var(--app-text); }
 /* 「可多选」与勾选框与 PC 的 askp-multi / askp-tick 同一套语义（触屏框更大一号）：
    勾上=这一项进答案，再点取消；单选题不画框，一行只可能留一项 */
 .m-askp-multi { flex: none; font-size: 11px; line-height: 1.5; padding: 1px 6px; border-radius: 999px; background: var(--app-panel); border: 1px solid var(--app-border); color: var(--app-text2); }
