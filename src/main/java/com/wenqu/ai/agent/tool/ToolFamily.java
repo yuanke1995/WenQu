@@ -32,7 +32,9 @@ public enum ToolFamily {
     /** 沙盒执行（隔离容器里的命令与文件读写）；审批 off 档整族不挂 */
     SANDBOX("sandbox", "沙盒执行", true),
     /** MCP 外部工具：按用户登记动态合入，没有静态清单；审批 off 档整族不挂 */
-    MCP("mcp", "MCP 外部工具", true);
+    MCP("mcp", "MCP 外部工具", true),
+    /** 本机浏览器：经本机执行器驱动用户电脑上的浏览器（仅执行器在线时挂载）；审批 off 档整族不挂 */
+    LOCAL_BROWSER("local_browser", "本机浏览器", true);
 
     private final String code;
     private final String familyLabel;

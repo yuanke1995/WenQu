@@ -1925,7 +1925,83 @@ async function opPickDir() {
   return { path: picked }
 }
 
+// ==================== 本机浏览器（browser op） =================
+//
+// 远端后端的智能体要操作「这台电脑」的浏览器时，把 browser_* 调用经执行器下发到这里，
+// 由本机一个 @playwright/mcp 子进程真正驱动浏览器（headed，用户看得见）。
+// 为什么托管一个本地 MCP 而不是内嵌 Playwright：工具名/参数/aria 快照与云端 browser-mcp
+// 完全一致，智能体提示词不用分两套；执行器只做「MCP 转发」，不 reimplement ref→元素。
+//
+// 端口用 8933（避开开发态手动起的 8931）。若该端口已有一个可握手的 MCP（上次执行器留下的
+// 或用户手动起的），直接复用，不重复 spawn。子进程随执行器退出回收。
+const BROWSER_PORT = Number(arg('browser-port', '8933')) || 8933
+const BROWSER_BASE = `http://127.0.0.1:${BROWSER_PORT}/mcp`
+const MCP_HEADERS = { 'content-type': 'application/json', accept: 'application/json, text/event-stream' }
+let browserChild = null
+let browserSession = null
+
+async function mcpRpc (body, sid) {
+  const res = await fetch(BROWSER_BASE, {
+    method: 'POST',
+    headers: sid ? { ...MCP_HEADERS, 'mcp-session-id': sid } : MCP_HEADERS,
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(120000)
+  })
+  const text = await res.text()
+  const data = text.split('\n').filter(l => l.startsWith('data: ')).map(l => l.slice(6)).join('')
+  return { sid: res.headers.get('mcp-session-id'), json: data ? JSON.parse(data) : null, status: res.status }
+}
+
+async function browserHandshake () {
+  const init = await mcpRpc({ jsonrpc: '2.0', id: 1, method: 'initialize',
+    params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'wenqu-executor', version: '1.0.0' } } })
+  if (!init.sid) throw err('E_BROWSER_UNAVAILABLE', '本机浏览器服务握手失败')
+  await mcpRpc({ jsonrpc: '2.0', method: 'notifications/initialized' }, init.sid)
+  return init.sid
+}
+
+async function ensureBrowser () {
+  // 已有可握手的实例（复用）
+  if (browserSession) return browserSession
+  try {
+    browserSession = await browserHandshake()
+    return browserSession
+  } catch { /* 端口没人，往下 spawn */ }
+  if (!browserChild) {
+    log(`启动本机浏览器服务 :${BROWSER_PORT}（headed）`)
+    browserChild = spawn('npx', ['--yes', '@playwright/mcp@0.0.84',
+      '--host', '127.0.0.1', '--port', String(BROWSER_PORT),
+      '--isolated', '--no-webmcp', '--allowed-hosts', '*'],
+      { stdio: ['ignore', 'ignore', 'inherit'] })
+    browserChild.on('exit', () => { browserChild = null; browserSession = null })
+  }
+  // 等它起来（首次 npx 要下载包，给足时间）
+  const deadline = Date.now() + 90000
+  while (Date.now() < deadline) {
+    try {
+      browserSession = await browserHandshake()
+      return browserSession
+    } catch { await new Promise(r => setTimeout(r, 1000)) }
+  }
+  throw err('E_BROWSER_UNAVAILABLE', '本机浏览器服务启动超时（首次需下载 @playwright/mcp，检查网络）')
+}
+
+async function opBrowser (args) {
+  const tool = String(args.tool || '')
+  if (!tool.startsWith('browser_')) throw err('E_BROWSER_TOOL', '未知的浏览器工具：' + tool)
+  const sid = await ensureBrowser()
+  const out = await mcpRpc({ jsonrpc: '2.0', id: Date.now() % 100000, method: 'tools/call',
+    params: { name: tool, arguments: args.args || {} } }, sid)
+  const result = out.json && out.json.result
+  if (out.json && out.json.error) throw err('E_BROWSER_TOOL', out.json.error.message || '浏览器调用失败')
+  const text = result && Array.isArray(result.content)
+    ? result.content.map(c => c.text || '').join('\n')
+    : JSON.stringify(result || {})
+  return { text }
+}
+
 const HANDLERS = {
+  browser: opBrowser,
   list: opList,
   pickDir: opPickDir,
   find: opFind,

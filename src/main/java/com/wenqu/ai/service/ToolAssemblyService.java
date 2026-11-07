@@ -180,7 +180,7 @@ public class ToolAssemblyService {
             case SANDBOX -> null;   // 沙盒暂无智能体级列（c_ai_agent 未建 toolSandbox，见 SandboxTools 类注释）
             // 派遣助手已改由框架的 agent_spawn 驱使（登记见 WenquAgentxTools#consultSubagentTargets），
             // 问渠侧没有这一族了。要按人/按智能体收口走平台停用名单（tool.deny 按工具名 agent_spawn）。
-            case TODO, MCP -> null;
+            case TODO, MCP, LOCAL_BROWSER -> null;
         };
     }
 
