@@ -30,9 +30,11 @@ import java.util.function.Function;
  * {@code call(List<Msg>)} 的文本；{@code stream(...)} 那条挂在 {@code SubagentEventBus} 上
  * （问渠不设置那个 reactor context key，走不到），仍按一次成结果给出一帧，避免留一个会抛错的方法。
  *
- * <p>{@code interrupt()} 不接：叫停的权力在子轮自己手上——{@code SubAgentBranchRuntime} 持着那条
- * 临时会话，到 {@code agent.consultTimeoutMs} 会自己 {@code stopTurn} 并把这一支结算成超时回报。
- * 框架的取消只能让父侧不再等，那一支最多多跑到那个上限，不会无限留着。
+ * <p>{@code interrupt()} 仍是空实现，但<b>不会留下孤儿</b>：框架的
+ * {@code AgentSpawnTool.interruptAgent} 只对 {@code ReActAgent} 调用 {@code interrupt()}
+ * （本类只实现 {@code Agent}，调用不到），所以真正的叫停放在
+ * {@code SubAgentBranchRuntime}——它按 {@code agent.consultTimeoutMs} 与审批剩余预算收口，
+ * 且强制同步等待的截止时间留出余量，保证父轮报超时之前这一支已经停下。
  *
  * @author yuanke
  */
@@ -97,7 +99,8 @@ final class WenquConsultSubagent implements Agent {
 
     @Override
     public void interrupt() {
-        // 见类注释：这一支由子轮自己的超时结算，框架的取消只解除父侧的等待
+        // 见类注释：框架的 interruptAgent 只认 ReActAgent，本类收不到；
+        // 真正的叫停在 SubAgentBranchRuntime（consultTimeout + 审批预算，且早于 force_sync 截止）
     }
 
     @Override

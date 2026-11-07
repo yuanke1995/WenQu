@@ -155,9 +155,18 @@ public class TurnNotifyService {
     /** 工具审批卡挂起。{@code label} 必须走与工具卡同源的展示名，不许印裸工具名。 */
     public void onApprovalPending(ChatCommand cmd, String approvalId, String label) {
         if (!turnDoneEnabled()) return;
-        String uid = turnUid(cmd);
-        if (uid == null) return;
-        String sessionId = cmd.getSessionId();
+        String sid = cmd.getSessionId();
+        String resolvedUid = turnUid(cmd);
+        if (resolvedUid == null) {
+            // 分支轮没有自己的观众：通知要落回父会话，否则点进去是一条看不见的临时会话
+            String parent = cmd.getParentSessionId();
+            if (parent == null || parent.isBlank()) return;
+            sid = parent;
+            resolvedUid = ownerUid(sid);
+            if (resolvedUid == null) return;
+        }
+        final String sessionId = sid;
+        final String uid = resolvedUid;
         submit("审批待决通知", () -> notifications.create(uid, Notification.TYPE_TOOL_APPROVAL,
                 "有一个操作等你批准",
                 describe(sessionService.titleOf(sessionId))

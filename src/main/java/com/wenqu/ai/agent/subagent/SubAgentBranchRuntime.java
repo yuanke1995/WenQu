@@ -48,21 +48,58 @@ public class SubAgentBranchRuntime {
     private final ArtifactService artifactService;
     private final DocumentMetaCache documentMetaCache;
     private final ChatRunRuntime runtime;
+    private final com.wenqu.ai.agentx.FrameworkSessions frameworkSessions;
+    private final com.wenqu.ai.agent.hitl.HitlDecisionService hitl;
+
+    /** 父会话 → 正在跑的分支：父轮结束或强制同步超时要能精确叫停并收口待办。 */
+    private final java.util.concurrent.ConcurrentHashMap<String, java.util.Set<BranchHandle>> branches =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** 一支正在跑的分支（叫停所需的最小身份） */
+    private record BranchHandle(String childSession, String userId, CollectingSseEmitter sink) {
+    }
 
     public SubAgentBranchRuntime(ConfigService configService,
                                 SessionService sessionService,
                                 ArtifactService artifactService,
                                 DocumentMetaCache documentMetaCache,
-                                ChatRunRuntime runtime) {
+                                ChatRunRuntime runtime,
+                                com.wenqu.ai.agentx.FrameworkSessions frameworkSessions,
+                                com.wenqu.ai.agent.hitl.HitlDecisionService hitl) {
         this.configService = configService;
         this.sessionService = sessionService;
         this.artifactService = artifactService;
         this.documentMetaCache = documentMetaCache;
         this.runtime = runtime;
+        this.frameworkSessions = frameworkSessions;
+        this.hitl = hitl;
+    }
+
+    /**
+     * 子助手强制同步等待秒数：框架 ctx（{@code FrameworkSessions}）与分支自身收口共用这一份。
+     * <p>取 max(子轮预算, 审批预算) + 60s，夹在 [60, 600]（框架上限）；配置
+     * {@code agent.spawnSyncTimeoutSeconds} &gt; 0 时以它为准。
+     */
+    public static int spawnSyncTimeoutSeconds(ConfigService configService) {
+        int configured = configService.getInt("agent.spawnSyncTimeoutSeconds", 0);
+        if (configured > 0) return Math.min(600, Math.max(30, configured));
+        long budget = Math.max(configService.getLong("agent.consultTimeoutMs", 300_000L),
+                configService.getLong("chat.approvalTimeoutMs", 120_000L));
+        return (int) Math.min(600L, Math.max(60L, budget / 1000L + 60L));
     }
 
     public BranchRunner branchRunner(TurnRunner turn, String parentSessionId, String parentTurnId, String userId,
                                      boolean guestMode, boolean apiKey, SseEmitter parentEmitter) {
+        return branchRunner(turn, parentSessionId, parentTurnId, userId, guestMode, apiKey, parentEmitter, null, null);
+    }
+
+    /**
+     * 带父轮审批档位与来源的版本：{@code inheritedApprovalMode} 供子轮「未显式设置才继承」，
+     * {@code source} 让子轮沿用父轮发起方身份（无观众链路 fail-closed 的判据）。
+     */
+    public BranchRunner branchRunner(TurnRunner turn, String parentSessionId, String parentTurnId, String userId,
+                                     boolean guestMode, boolean apiKey, SseEmitter parentEmitter,
+                                     String inheritedApprovalMode, String source) {
         return req -> {
             long start = System.currentTimeMillis();
             String childSession = null;
@@ -80,6 +117,15 @@ public class SubAgentBranchRuntime {
             final int branchIndex = Math.max(0, req.branchIndex());
             final boolean[] first = {false};
             sink.forwardProcess((type, content) -> {
+                // 审批卡上翻：子轮没有观众，这张卡只有转给父轮才有人批。
+                // 载荷原样保留（approvalId/tool/args/timeoutMs），只补来源与提示；前端卡片读这些字段。
+                if ("approval_required".equals(type)) {
+                    String enriched = enrichApprovalCard(content, req.childAgentName());
+                    boolean sentToParent = runtime.sendSseEvent(parentEmitter, "approval_required", enriched, parentSessionId);
+                    log.info("[SUBAGENT] 分支审批卡已上翻：branch={} agent={} 父轮接收={} session={}",
+                            branchIndex, req.childAgentName(), sentToParent, parentSessionId);
+                    return;
+                }
                 Map<String, Object> step = new LinkedHashMap<>();
                 step.put("i", branchIndex);
                 step.put("agent", req.childAgentName());
@@ -118,8 +164,11 @@ public class SubAgentBranchRuntime {
                     }
                 }
             });
+            BranchHandle handle = null;
             try {
                 childSession = sessionService.createTempSession(req.userId());
+                handle = new BranchHandle(childSession, req.userId(), sink);
+                registerBranch(parentSessionId, handle);
                 turn.run(ChatCommand.builder()
                         .sessionId(childSession)
                         .question(req.question())
@@ -135,8 +184,35 @@ public class SubAgentBranchRuntime {
                         .subagentDepth(req.depth())
                         .parentBrief(req.parentBrief())
                         .parentSessionId(req.parentSessionId())
+                        .parentTurnId(parentTurnId)
+                        .inheritedApprovalMode(inheritedApprovalMode)
+                        .source(source)
                         .build(), sink);
-                if (!sink.awaitDone(req.timeoutMs())) {
+                // 强制同步时父轮会一直等到这里返回。分支必须在 force_sync 截止前收口（留 5s 让回报送达），
+                // 否则会出现「父轮报同步超时、子轮还在跑」的孤儿。没有开强制同步时不做这道硬截止。
+                long forceSyncMs = configService.getBoolean("agent.spawnForceSync", true)
+                        ? spawnSyncTimeoutSeconds(configService) * 1000L : 0L;
+                long hardDeadline = forceSyncMs > 0 ? start + forceSyncMs - 5_000L : Long.MAX_VALUE;
+                long firstWait = req.timeoutMs();
+                if (hardDeadline != Long.MAX_VALUE) {
+                    firstWait = Math.min(firstWait, Math.max(1_000L, hardDeadline - System.currentTimeMillis()));
+                }
+                boolean settled = sink.awaitDone(firstWait);
+                if (!settled) {
+                    // 有人正在等答复（审批/提问/计划）时不要先杀子轮：它卡在人的手上，
+                    // 按那一类卡自己的剩余预算再等一段，让引擎先按 TIMEOUT 干净收口。
+                    long remain = hitl.pendingInteractionRemainingMs(childSession, req.userId());
+                    // 没有待交互也给 5s 收尾：子轮可能正在写 Timeout 终态，掐在同一毫秒会把收口截断
+                    long grace = remain > 0 ? remain + 60_000L : 5_000L;
+                    if (hardDeadline != Long.MAX_VALUE) {
+                        grace = Math.min(grace, Math.max(0L, hardDeadline - System.currentTimeMillis()));
+                    }
+                    if (grace > 0) {
+                        log.info("[SUBAGENT] 超时宽限 {}ms（待交互剩余 {}ms）: session={}", grace, remain, childSession);
+                        settled = sink.awaitDone(grace);
+                    }
+                }
+                if (!settled) {
                     // 超时必须把那一支叫停：它还在流水线里跑，而父轮已经不等它了。
                     // 不叫停的后果是"删了一条还在被写的会话"+"一条线程被派出去的任务占住"，
                     // 并发几轮之后问答池就被没人等的分支填满。
@@ -228,6 +304,16 @@ public class SubAgentBranchRuntime {
                         req.describe(), cause.toString());
                 return BranchReport.failed(BranchReport.FAILED, cause.toString(), System.currentTimeMillis() - start, workSteps);
             } finally {
+                if (handle != null) unregisterBranch(parentSessionId, handle);
+                // 子轮结束（正常/异常/被叫停）时还挂着的待办一律落 STOPPED：
+                // 临时会话马上要删，PENDING 留着只会在父会话刷新时被重建出一张点了没反应的卡
+                if (childSession != null) {
+                    try {
+                        frameworkSessions.markPendingTerminal(req.userId(), childSession, "STOPPED");
+                    } catch (Exception ignored) {
+                        // 收口失败不影响回答，下一次启动期清理会兜底
+                    }
+                }
                 // 收集型通道不触发 onCompletion，登记必须主动清（否则整轮台账与断开表挂着引用）
                 ChatRunRuntime.forgetSseChannel(sink);
                 if (childSession != null) {
@@ -239,6 +325,43 @@ public class SubAgentBranchRuntime {
                 }
             }
         };
+    }
+
+    private void registerBranch(String parentSessionId, BranchHandle h) {
+        branches.computeIfAbsent(parentSessionId,
+                k -> java.util.concurrent.ConcurrentHashMap.newKeySet()).add(h);
+    }
+
+    private void unregisterBranch(String parentSessionId, BranchHandle h) {
+        java.util.Set<BranchHandle> set = branches.get(parentSessionId);
+        if (set == null) return;
+        set.remove(h);
+        if (set.isEmpty()) branches.remove(parentSessionId, set);
+    }
+
+    /** 父轮结束（正常/停止/异常）：这一轮派出去、还在跑的分支全部收口。 */
+    public void cancelAll(String parentSessionId) {
+        java.util.Set<BranchHandle> set = branches.get(parentSessionId);
+        if (set == null) return;
+        for (BranchHandle h : List.copyOf(set)) cancelHandle(h, "父轮已结束");
+    }
+
+    private void cancelHandle(BranchHandle h, String reason) {
+        try {
+            h.sink().cancel(reason);
+        } catch (Exception ignored) {
+            // 通道已被收掉不影响下一步收口
+        }
+        try {
+            frameworkSessions.markPendingTerminal(h.userId(), h.childSession(), "STOPPED");
+        } catch (Exception ignored) {
+            // 下一轮启动期清理会兜底
+        }
+        try {
+            runtime.stopTurn(h.childSession(), h.userId());
+        } catch (Exception e) {
+            log.warn("[SUBAGENT] 叫停分支失败 session={}: {}", h.childSession(), e.getMessage());
+        }
     }
 
     /** 展示层签名 URL → 原始 URL（与库内/上下文里存的那份同源，才能与主链路的编号表对上） */
@@ -282,6 +405,30 @@ public class SubAgentBranchRuntime {
                     workSteps.add(one);
                 }
             }
+        }
+    }
+
+    /**
+     * 子轮审批卡上翻前的加工：补来源（前端据此显示「主助手 / 子助手·名字」），其余字段原样保留。
+     * <p>approvalId/tool/args/timeoutMs 不能改——父轮那张卡的裁决端点按 approvalId 找回子会话。
+     */
+    private static String enrichApprovalCard(String content, String agentName) {
+        try {
+            com.alibaba.fastjson2.JSONObject card =
+                    com.alibaba.fastjson2.JSON.parseObject(content == null ? "" : content);
+            if (card == null) return content;
+            String name = agentName == null || agentName.isBlank() ? "子助手" : agentName;
+            Map<String, Object> src = new LinkedHashMap<>();
+            src.put("kind", "subagent");
+            src.put("agent", name);
+            card.put("subagent", src);
+            String hint = card.getString("hint");
+            String suffix = "来自「" + name + "」";
+            card.put("hint", hint == null || hint.isBlank() ? suffix : hint + " · " + suffix);
+            return com.alibaba.fastjson2.JSON.toJSONString(card);
+        } catch (Exception e) {
+            // 加不上来源不改变这张卡的语义：宁可少一个标签，也不能把审批号弄丢
+            return content;
         }
     }
 }

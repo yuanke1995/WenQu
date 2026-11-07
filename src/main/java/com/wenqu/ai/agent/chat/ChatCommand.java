@@ -137,6 +137,14 @@ public final class ChatCommand {
     final String parentBrief;
     /** 派出这一支的父会话 id（日志关联用；产物收养在分支执行器内直接按它落，不经本字段传递语义） */
     final String parentSessionId;
+    /** 派出这一支的父轮 id：审批卡上翻后刷新恢复要挂回父轮气泡（仅分支轮有值） */
+    final String parentTurnId;
+    /**
+     * 父轮生效的审批档位（auto/ask/off）。仅分支轮有值；子智能体自己<b>未显式</b>设置
+     * {@code tool_approval_mode} 时继承它（显式 &gt; 继承 &gt; 预设），避免「父 auto、子落预设 ask」
+     * 挂出一张没人看的审批卡。null = 不继承（顶层轮）。
+     */
+    final String inheritedApprovalMode;
 
     /**
      * 本轮的<b>发起方身份</b>（工作区轮次守卫展示用）：{@code user}=网页问答（缺省）、

@@ -18,10 +18,13 @@ export const roundSteps = m => toolCallsView(m && m.toolCalls)
  */
 export function roundHold (m) {
   if (!m) return null
-  if (m.approval) {
-    const a = m.approval
+  const approvals = Array.isArray(m.approvals) ? m.approvals : []
+  if (approvals.length) {
+    const a = approvals[0]
     const brief = toolBrief({ name: a.tool, label: a.label, args: a.args })
-    return { kind: 'approval', text: '等你批准这一步' + (brief ? ' · ' + brief : ''), tip: '点到那条回答下的审批卡', go: 'hitl' }
+    const who = a.subagent && a.subagent.agent ? '「' + a.subagent.agent + '」' : ''
+    const more = approvals.length > 1 ? '（共 ' + approvals.length + ' 项）' : ''
+    return { kind: 'approval', text: '等你批准' + who + '这一步' + (brief ? ' · ' + brief : '') + more, tip: '点到那条回答下的审批卡', go: 'hitl' }
   }
   const q = m.ask
   if (q && !q.answered) {

@@ -80,6 +80,13 @@ public class PermissionPolicyResolver {
      */
     public ExecutionPolicy resolve(String sessionPresetCode, String agentPresetCode, String agentApprovalMode,
                                    boolean guestMode, String agentToolDeny, BiConsumer<String, String> onClamp) {
+        return resolve(sessionPresetCode, agentPresetCode, agentApprovalMode, null, guestMode, agentToolDeny, onClamp);
+    }
+
+    /** 带父轮审批档位继承的版本（分支轮用）：继承值仅在智能体未显式设置时生效，见 {@link ExecutionPolicy#of}。 */
+    public ExecutionPolicy resolve(String sessionPresetCode, String agentPresetCode, String agentApprovalMode,
+                                   String inheritedApprovalMode, boolean guestMode, String agentToolDeny,
+                                   BiConsumer<String, String> onClamp) {
         PermissionPreset preset = requestedPreset(agentPresetCode);
         if (sessionPresetCode != null && !sessionPresetCode.isBlank()) {
             PermissionPreset sessionPreset = PermissionPreset.fromCode(sessionPresetCode);
@@ -104,7 +111,7 @@ public class PermissionPolicyResolver {
                             + "」，本轮按上限执行（沙盒" + ceiling.sandboxMode().label() + "）");
             preset = ceiling;
         }
-        return ExecutionPolicy.of(preset, agentApprovalMode,
+        return ExecutionPolicy.of(preset, agentApprovalMode, inheritedApprovalMode,
                 configService.get("sandbox.virtualPathPrefix"),
                 // 平台停用名单与智能体自己的黑名单取并集：前者是"这个工具平台先停一停"，
                 // 后者是"这个智能体不用它"，两条互不覆盖——成员不能靠删自己那条把平台停用的召回来

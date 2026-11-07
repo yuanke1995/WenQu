@@ -178,6 +178,13 @@ public class HitlDecisionService {
      */
     public void recordFrameworkPending(String id, String sessionId, String userId, String turnId,
                                        String toolName, String requestArgs) {
+        recordFrameworkPending(id, sessionId, userId, turnId, toolName, requestArgs, null, null);
+    }
+
+    /** 带父链的版本（子助手分支）：父会话/父轮用于审批卡上翻后的恢复与通知。 */
+    public void recordFrameworkPending(String id, String sessionId, String userId, String turnId,
+                                       String toolName, String requestArgs,
+                                       String parentSessionId, String parentTurnId) {
         if (id == null || id.isBlank()) return;
         try {
             if (toolApprovalMapper.selectById(id) != null) return;
@@ -186,6 +193,8 @@ public class HitlDecisionService {
             rec.setSessionId(sessionId);
             rec.setUserId(userId);
             rec.setTurnId(turnId);
+            rec.setParentSessionId(parentSessionId);
+            rec.setParentTurnId(parentTurnId);
             rec.setToolName(toolName);
             rec.setStatus("PENDING");
             rec.setRequestArgs(requestArgs == null ? ""
@@ -439,7 +448,9 @@ public class HitlDecisionService {
         try {
             List<ToolApproval> rows = toolApprovalMapper.selectList(
                     new LambdaQueryWrapper<ToolApproval>()
-                            .eq(ToolApproval::getSessionId, sessionId)
+                            // 父会话也要能取回子助手分支上翻的卡：两条来源取并集，其余条件照旧
+                            .and(w -> w.eq(ToolApproval::getSessionId, sessionId)
+                                    .or().eq(ToolApproval::getParentSessionId, sessionId))
                             .eq(ToolApproval::getUserId, uid)
                             .eq(ToolApproval::getStatus, "PENDING")
                             .notIn(ToolApproval::getToolName, "askUser", "planApproval")
@@ -452,8 +463,12 @@ public class HitlDecisionService {
                 if (remaining <= 0) continue;
                 Map<String, Object> item = new LinkedHashMap<>();
                 item.put("approvalId", rec.getId());
-                // 归属轮次：与提问卡同一口径，恢复时挂回自己那一轮而不是最后一条助手气泡
-                item.put("turnId", rec.getTurnId() == null ? "" : rec.getTurnId());
+                // 归属轮次：分支卡挂回**父轮**气泡（本表 turn_id 记的是子轮）。
+                // 与提问卡同一口径，恢复时挂回自己那一轮而不是最后一条助手气泡
+                item.put("turnId", rec.getParentTurnId() != null && !rec.getParentTurnId().isBlank()
+                        ? rec.getParentTurnId()
+                        : (rec.getTurnId() == null ? "" : rec.getTurnId()));
+                if (rec.getParentSessionId() != null) item.put("parentSessionId", rec.getParentSessionId());
                 item.put("tool", rec.getToolName());
                 // 展示名与实时审批卡同源（注册中心）：恢复出来的卡片若只给英文名，用户在同一张卡上
                 // 会先看到「运行命令」、刷新后看到「execute」
@@ -470,6 +485,38 @@ public class HitlDecisionService {
             log.warn("[TOOL] 待批准审批查询失败 session={}: {}", sessionId, e.getMessage());
         }
         return out;
+    }
+
+    /**
+     * 这条会话还挂着的交互里，最长的一档还剩多少毫秒（0=没有）。
+     * <p>分支轮超时判断用：有人正在等答复时不要把子轮提前杀掉，让它按自己的预算收口；
+     * 三类卡窗口不同，按工具名分别取。
+     */
+    public long pendingInteractionRemainingMs(String sessionId, String uid) {
+        if (sessionId == null || sessionId.isBlank()) return 0L;
+        long now = System.currentTimeMillis();
+        long max = 0L;
+        try {
+            com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<ToolApproval> q =
+                    new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<ToolApproval>()
+                            .eq(ToolApproval::getSessionId, sessionId)
+                            .eq(ToolApproval::getStatus, "PENDING");
+            if (uid != null && !uid.isBlank()) q.eq(ToolApproval::getUserId, uid);
+            for (ToolApproval rec : toolApprovalMapper.selectList(q)) {
+                long window = switch (rec.getToolName() == null ? "" : rec.getToolName()) {
+                    case "askUser" -> askTimeoutMs();
+                    case "planApproval" -> planTimeoutMs();
+                    default -> approvalTimeoutMs();
+                };
+                long created = rec.getCreatedAt() == null ? 0L
+                        : rec.getCreatedAt().atZone(java.time.ZoneId.systemDefault()).toInstant().toEpochMilli();
+                long remain = created > 0 ? Math.max(0L, created + window - now) : window;
+                if (remain > max) max = remain;
+            }
+        } catch (Exception e) {
+            log.warn("[TOOL] 查询会话待交互剩余预算失败 session={}: {}", sessionId, e.getMessage());
+        }
+        return max;
     }
 
     /**

@@ -1843,6 +1843,12 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         };
     }
 
+    /** 这一轮有没有在场观众能答审批卡：网页问答（source 空/user）才有；定时任务/工作流没有。 */
+    private static boolean interactiveTurn(ChatCommand cmd) {
+        String src = cmd == null ? null : cmd.getSource();
+        return src == null || src.isBlank() || "user".equalsIgnoreCase(src);
+    }
+
     /**
      * 提问卡等满预算：把「这一题用户没回答」当成答案送回原工具，让模型接着往下走，
      * <b>不</b>把这一轮掐掉。
@@ -3589,7 +3595,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         // 游客轮 approvalCanAsk=false：分享页没有审批卡通道，漏挂的需审批工具在适配器层直接 deny
         // （fail-closed 拒答，模型收到报错改路）而不是 ask 挂 120s 超时。主闸在
         // ToolMountContext.turnAllows 的 guestMode 轴，这里是兜底。
-        }, !cmd.isGuestMode() && !cmd.isApiKey(),
+        }, !cmd.isGuestMode() && !cmd.isApiKey() && interactiveTurn(cmd),
                 // 沙盒没装配成功时 run_code 也不该挂：文件系统已退回临时目录，挂一把必然失败的工具
                 // 只会让模型白试一步。
                 sandboxEnabled && sessions.sandboxAttached(sessions.key(cmd)),
@@ -3707,7 +3713,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
                 // 模型自己在推理中调用 plan_enter 决定。问渠不再做「按消息意图预判」——PlanModeService
                 // 与 chat.planAutoIntent 已删除，计划怎么执行全交框架的 plan_enter/write/exit + 只读拦截。
                 // 历史计划卡的多版本落库仍由 Recording.planVersions 负责，与意图判定无关。
-                .enablePlanMode()
+                .enablePlanMode(!cmd.branchTurn())
                 // 目标模式（Goal Mode）：不再借框架的任务上下文投影（Scope/要求/验证）——那一套
                 // 是「验收标准」范式的载体，已经随产品简化退役。当前目标改由问渠自己带进模型输入
                 // （交互轮拼目标上下文，续跑轮用 GoalPromptBuilder 的续跑提示词），副作用是
@@ -3895,7 +3901,7 @@ public class AgentscopeChatEngine implements ChatEngine, FrameworkSessions.Resum
         if (toolkit == null) return;
         List<String> roots = workspaceRootsOf(cmd);
         // 游客分享/API Key 轮没有审批卡通道：污点触发时直接拒，别挂一张没人答的卡等超时
-        boolean canAsk = !cmd.isGuestMode() && !cmd.isApiKey();
+        boolean canAsk = !cmd.isGuestMode() && !cmd.isApiKey() && interactiveTurn(cmd);
         wrapNative(toolkit, slot, roots, canAsk, FrameworkToolLabels.FilesystemToolNames.READ_FILE,
                 AgentxNativeToolGuard.Kind.DATA);
         wrapNative(toolkit, slot, roots, canAsk, FrameworkToolLabels.FilesystemToolNames.GREP_FILES,

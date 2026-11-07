@@ -248,8 +248,9 @@ public class WenquAgentxTools {
             }
             if (family == com.wenqu.ai.agent.tool.ToolFamily.ASK_USER) {
                 // 提问卡换成框架原生实现（AskUserTool）：内置那个靠阻塞 future 等答案，挂起信号又会被
-                // Spring AI 包掉——框架内只留一套「等人」，不并存
-                holders.add(new AskUserTool());
+                // Spring AI 包掉——框架内只留一套「等人」，不并存。
+                // 分支轮没有观众：提问卡只会在临时会话里挂到超时，按既有 viewerRequired 口径不挂。
+                if (!cmd.branchTurn()) holders.add(new AskUserTool());
                 mountFrom(provider, mc, holders, cmd, slot, rawCallbacks, mcpToolNames, policy, approvalCanAsk,
                         name -> Map.of());
                 continue;
@@ -547,7 +548,8 @@ public class WenquAgentxTools {
             ChatCommand cmd, java.util.function.BiConsumer<String, String> onClamp) {
         String sessionPreset = cmd.getSessionId() == null ? null : sessionService.permissionPresetOf(cmd.getSessionId());
         com.wenqu.ai.agent.permission.ExecutionPolicy policy =
-                toolAssembly.resolvePermissionPolicy(agentOf(cmd), sessionPreset, cmd.isGuestMode(), onClamp);
+                toolAssembly.resolvePermissionPolicy(agentOf(cmd), sessionPreset,
+                        cmd.getInheritedApprovalMode(), cmd.isGuestMode(), onClamp);
         if (!cmd.isApiKey()) return policy;
         // API Key 只开放问答：把文件/命令工具按名禁用。装配侧（allowsTool）与执行闸
         // （AgentxFrameworkToolGate.permits）读的是同一份 deny，框架原生工具也拦得住。
@@ -737,7 +739,8 @@ public class WenquAgentxTools {
                                             Map.of("id", consultedId, "name", consultedName))));
             com.wenqu.ai.agent.subagent.BranchRunner runner = branchTurnRunner == null ? null
                     : branchRuntime.branchRunner(branchTurnRunner, cmd.getSessionId(), t.turnId(),
-                            cmd.getUserId(), cmd.isGuestMode(), cmd.isApiKey(), t.channel().emitter());
+                            cmd.getUserId(), cmd.isGuestMode(), cmd.isApiKey(), t.channel().emitter(),
+                            t.policy() == null ? null : t.policy().approvalMode(), cmd.getSource());
             // runner=null 时咨询服务自己回一句「通道未就绪」给模型（可见降级），不 NPE 也不静默。
             // asCaller 罩住整次咨询：子轮是在这条弹性线程上「再起一整轮」的，身份与覆盖得跟着进去
             return asCaller(hooks,

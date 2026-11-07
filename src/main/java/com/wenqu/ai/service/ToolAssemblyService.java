@@ -159,10 +159,18 @@ public class ToolAssemblyService {
      */
     public ExecutionPolicy resolvePermissionPolicy(Agent agent, String sessionPresetCode, boolean guestMode,
                                                    BiConsumer<String, String> onClamp) {
+        return resolvePermissionPolicy(agent, sessionPresetCode, null, guestMode, onClamp);
+    }
+
+    /** 带父轮审批档位继承的版本（分支轮用）：继承值仅在智能体未显式设置时生效。 */
+    public ExecutionPolicy resolvePermissionPolicy(Agent agent, String sessionPresetCode,
+                                                   String inheritedApprovalMode, boolean guestMode,
+                                                   BiConsumer<String, String> onClamp) {
         return permissionPolicyResolver.resolve(
                 sessionPresetCode,
                 agent == null ? null : agent.getPermissionPreset(),
                 agent == null ? null : agent.getToolApprovalMode(),
+                inheritedApprovalMode,
                 guestMode,
                 agent == null ? null : agent.getToolDeny(),
                 onClamp);

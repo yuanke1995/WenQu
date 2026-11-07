@@ -170,7 +170,8 @@ public class ChatService {
      */
     private final ChatRunRuntime runtime;
 
-
+    /** 子智能体分支簿记：顶层轮结束时把这一轮派出去、还挂在审批/执行上的分支同步收口。 */
+    private final com.wenqu.ai.agent.subagent.SubAgentBranchRuntime branchRuntime;
 
     /**
      * chatflow 桥（P6 刀 4）：智能体绑定了工作流的那条路——每轮把问题送进图，end 节点出参就是回答。
@@ -381,7 +382,8 @@ public class ChatService {
                       com.wenqu.ai.agent.chatflow.ChatflowBridge chatflow,
                       com.wenqu.ai.engine.ChatEngineFactory chatEngines,
                       com.wenqu.ai.service.contentsafety.ContentSafetyService contentSafety,
-                      UserRoleService userRoleService) {
+                      UserRoleService userRoleService,
+                      com.wenqu.ai.agent.subagent.SubAgentBranchRuntime branchRuntime) {
         this.sessionService = sessionService;
         this.configService = configService;
         this.chatAttachments = chatAttachments;
@@ -402,6 +404,7 @@ public class ChatService {
         this.chatEngines = chatEngines;
         this.contentSafety = contentSafety;
         this.userRoleService = userRoleService;
+        this.branchRuntime = branchRuntime;
     }
 
     /**
@@ -590,6 +593,15 @@ public class ChatService {
                         // 只剩「把手还挂着」的路径（如收集型通道）靠它判：stopMark 已在上面取过，
                         // 两种桥同一语义（用户点停）
                         sessionService.markTurnStopped(sessionId, "stopped");
+                    }
+                    // 顶层轮结束（正常/停止/异常）：这一轮派出去、还挂在审批或执行上的子分支同步收口。
+                    // 分支轮本身不走这里（parentSessionId 非空），否则会把自己也停掉。
+                    if (cmd.getParentSessionId() == null || cmd.getParentSessionId().isBlank()) {
+                        try {
+                            branchRuntime.cancelAll(sessionId);
+                        } catch (Exception e) {
+                            log.warn("[SUBAGENT] 父轮结束收分支失败 session={}: {}", sessionId, e.getMessage());
+                        }
                     }
                     runtime.endTurnMutex(sessionId);
                     if (projectId != null) projectTurnGuard.end(projectId, turnId);

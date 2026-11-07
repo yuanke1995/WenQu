@@ -53,10 +53,26 @@ public record ExecutionPolicy(
      */
     public static ExecutionPolicy of(PermissionPreset preset, String agentApprovalMode,
                                      String writableRoot, String denyCsv) {
+        return of(preset, agentApprovalMode, null, writableRoot, denyCsv);
+    }
+
+    /**
+     * 带父轮继承的版本（分支轮用）：审批档位优先级为 <b>显式 &gt; 继承 &gt; 预设</b>。
+     *
+     * @param inheritedApprovalMode 父轮生效档位；仅当智能体自己未显式设置时才继承它（null=不继承）
+     */
+    public static ExecutionPolicy of(PermissionPreset preset, String agentApprovalMode,
+                                     String inheritedApprovalMode, String writableRoot, String denyCsv) {
         PermissionPreset p = preset == null ? PermissionPreset.STANDARD : preset;
         SandboxMode mode = p.sandboxMode();
-        String approval = agentApprovalMode == null || agentApprovalMode.isBlank()
-                ? p.approvalDefault() : agentApprovalMode.trim();
+        String approval;
+        if (agentApprovalMode != null && !agentApprovalMode.isBlank()) {
+            approval = agentApprovalMode.trim();
+        } else if (inheritedApprovalMode != null && !inheritedApprovalMode.isBlank()) {
+            approval = inheritedApprovalMode.trim();
+        } else {
+            approval = p.approvalDefault();
+        }
         // 命令可执行 + 要求路径收束 = 命令内部的写入拦不住，兑现程度只能是 partial；
         // 只读档不挂 execute（能力面就是约束），不受限档没有约束要兑现，两者都是 full。
         SandboxEnforcement enforcement = mode == SandboxMode.WORKSPACE_WRITE && mode.executable()

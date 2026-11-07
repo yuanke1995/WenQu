@@ -407,24 +407,28 @@
               <PlanCard v-if="m.planCard" :card="m.planCard" />
               <!-- 工具执行审批（人在回路）：智能体开启"执行前确认"后，有副作用工具（沙盒/MCP）执行前需用户批准。
                    通知深链也定位到这一张（引擎 hydratePendingApprovals → 滚动 + 闪一圈），顶部不再另画横幅 -->
-              <div v-if="m.approval" class="approval-card" data-approval-card :data-approval-id="m.approval.id">
+              <div v-if="(m.approvals || []).length > 1" class="approval-count">
+                本轮有 <b>{{ m.approvals.length }}</b> 项操作等你批准（可分别处理）
+              </div>
+              <div v-for="a in (m.approvals || [])" :key="a.id" class="approval-card" data-approval-card :data-approval-id="a.id">
                 <div class="approval-head">
                   <exclamation-circle-outlined class="approval-warn" />
                   <span class="approval-lead">需要你批准</span>
-                  <span class="approval-tool" :title="toolDesc(m.approval.tool, m.approval.hint)">{{ toolLabel(m.approval.tool, m.approval.label) }}</span>
-                  <code v-if="m.approval.label && m.approval.label !== m.approval.tool" class="approval-raw">{{ m.approval.tool }}</code>
-                  <span class="approval-clock" :class="{ over: approvalLeftSecOf(m.approval) <= 0 }">
+                  <span v-if="a.subagent && a.subagent.agent" class="approval-src">{{ a.subagent.agent }}</span>
+                  <span class="approval-tool" :title="toolDesc(a.tool, a.hint)">{{ toolLabel(a.tool, a.label) }}</span>
+                  <code v-if="a.label && a.label !== a.tool" class="approval-raw">{{ a.tool }}</code>
+                  <span class="approval-clock" :class="{ over: approvalLeftSecOf(a) <= 0 }">
                     <clock-circle-outlined />
-                    {{ approvalLeftSecOf(m.approval) > 0 ? '剩 ' + approvalLeftSecOf(m.approval) + ' 秒' : '已超时' }}
+                    {{ approvalLeftSecOf(a) > 0 ? '剩 ' + approvalLeftSecOf(a) + ' 秒' : '已超时' }}
                   </span>
                 </div>
-                <pre v-if="approvalArgsText(m.approval.args)" class="approval-args">{{ approvalArgsText(m.approval.args) }}</pre>
+                <pre v-if="approvalArgsText(a.args)" class="approval-args">{{ approvalArgsText(a.args) }}</pre>
                 <div class="approval-actions">
-                  <span class="approval-hint">{{ approvalLeftSecOf(m.approval) > 0 ? '批准后立即执行这一步' : '已超时，本轮将按拒绝继续' }}</span>
-                  <button class="app-btn ghost small" :disabled="m.approval.busy || approvalLeftSecOf(m.approval) <= 0"
-                          @click="resolveApproval(m, false)">拒绝</button>
-                  <button class="app-btn small" :disabled="m.approval.busy || approvalLeftSecOf(m.approval) <= 0"
-                          @click="resolveApproval(m, true)">批准执行</button>
+                  <span class="approval-hint">{{ approvalLeftSecOf(a) > 0 ? '批准后立即执行这一步' : '已超时，本轮将按拒绝继续' }}</span>
+                  <button class="app-btn ghost small" :disabled="a.busy || approvalLeftSecOf(a) <= 0"
+                          @click="resolveApproval(m, a, false)">拒绝</button>
+                  <button class="app-btn small" :disabled="a.busy || approvalLeftSecOf(a) <= 0"
+                          @click="resolveApproval(m, a, true)">批准执行</button>
                 </div>
               </div>
               <!-- 智能体提问（askUser）的「待答」态不再渲染在气泡里：桌面壳把底部聊天输入框整块
@@ -5287,6 +5291,9 @@ onMounted(async () => {
 .dbg-snippet { margin-top: 3px; font-size: 12px; color: var(--app-text3); word-break: break-all; }
 
 /* 工具执行审批（人在回路）：贴着被审批的那一步，通知深链也落在这里 */
+.approval-count { margin-top: 8px; font-size: 12px; color: var(--app-warn-text); }
+.approval-count b { font-weight: 700; }
+.approval-src { flex: 0 0 auto; font-size: 10.5px; color: var(--app-text2); background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 5px; padding: 1px 6px; white-space: nowrap; }
 .approval-card { margin-top: 8px; border: 1px solid var(--app-warn-border); border-left: 3px solid #dda23f; background: var(--app-warn-weak); border-radius: 8px; padding: 10px 12px; max-width: 640px; }
 .approval-card.flash { animation: approvalFlash 1.6s ease-out; }
 @keyframes approvalFlash {

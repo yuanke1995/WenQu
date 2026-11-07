@@ -74,6 +74,15 @@ public class CollectingSseEmitter extends SseEmitter {
         this.forwarder = listener;
     }
 
+    /**
+     * 父轮不再等待（停止或超时）：让 {@link #awaitDone} 立即返回，分支执行器据此收尾。
+     * <p>只负责解除等待，真正叫停子轮由分支执行器调 {@code ChatRunRuntime.stopTurn}。
+     */
+    public void cancel(String reason) {
+        if (lastError == null || lastError.isBlank()) lastError = reason == null ? "父轮已结束" : reason;
+        settle();
+    }
+
     /** 解析一帧：event 名 + data 里的 {type,content,...} */
     private void consume(String raw) {
         try {
@@ -95,7 +104,7 @@ public class CollectingSseEmitter extends SseEmitter {
                     donePayload = c == null ? null : JSON.toJSONString(c);
                     settle();
                 }
-                case "tool_status", "tool_output" -> {
+                case "tool_status", "tool_output", "approval_required" -> {
                     java.util.function.BiConsumer<String, String> f = forwarder;
                     if (f != null) {
                         try {

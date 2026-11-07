@@ -808,6 +808,8 @@ CREATE TABLE IF NOT EXISTS `c_ai_tool_approval` (
     `user_id`      VARCHAR(64)   DEFAULT NULL COMMENT '发起问答的用户（仅本人可裁决）',
     `tool_name`    VARCHAR(100)  DEFAULT NULL COMMENT '挂的是哪张卡：审批类=工具名、提问类=askUser、计划类=planApproval。三类各有各的超时窗口，遗留清理按它分开收（缺这一列整条清理静默失败，只剩一行 WARN）',
     `turn_id`      VARCHAR(64)   DEFAULT NULL COMMENT '归属轮次（与 c_ai_message.turn_id 同源）：断线重连时把卡片挂回它自己那一轮；NULL=无问答轮次',
+    `parent_session_id` VARCHAR(50) DEFAULT NULL COMMENT '子助手分支的父会话：审批卡上翻后按父会话恢复/通知；NULL=顶层轮',
+    `parent_turn_id`    VARCHAR(64) DEFAULT NULL COMMENT '子助手分支的父轮：刷新恢复时把卡挂回父轮气泡；NULL=顶层轮',
     `status`       VARCHAR(16)   NOT NULL DEFAULT 'PENDING' COMMENT '状态: PENDING/APPROVED/REJECTED/TIMEOUT/STOPPED(用户叫停本轮)/INTERRUPTED(无人查看宽限中止)/REVISED/SUPERSEDED(计划版本链)',
     `request_args` TEXT          DEFAULT NULL COMMENT '工具入参摘要（审批类截 2000 字符；计划类存 {plan} JSON、提问类存 {questions} JSON，一份多步计划常态超 2000 字，故整列放宽成 TEXT）',
     `answer`       TEXT          DEFAULT NULL COMMENT '裁决内容：提问类（askUser）记录存用户所选/输入的答案；超时/忽略不代答时落给模型的「未作答」说明',
@@ -815,7 +817,8 @@ CREATE TABLE IF NOT EXISTS `c_ai_tool_approval` (
     `resolved_at`  DATETIME      DEFAULT NULL COMMENT '裁决/超时时刻',
     PRIMARY KEY (`id`),
     KEY `idx_status_created` (`status`, `created_at`),
-    KEY `idx_user` (`user_id`)
+    KEY `idx_user` (`user_id`),
+    KEY `idx_parent_session` (`parent_session_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='工具执行审批/智能体提问记录（人在回路：持久化 + 审计 + 进程重启后可见）';
 
 -- ============================================

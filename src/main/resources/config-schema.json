@@ -2300,6 +2300,34 @@
       "tier": 2
     },
     {
+      "backendKey": "agent.spawnForceSync",
+      "panel": "tool",
+      "section": 3,
+      "group": "agent",
+      "key": "spawnForceSync",
+      "path": "agent.spawnForceSync",
+      "label": "子助手强制同步等待",
+      "type": "switch",
+      "def": true,
+      "note": "父轮等子助手跑完再继续，而不是模型填几十秒就转异步（转异步后人工审批卡没人接）。超时由子助手 interrupt 真正叫停那一支",
+      "tier": 2
+    },
+    {
+      "backendKey": "agent.spawnSyncTimeoutSeconds",
+      "panel": "tool",
+      "section": 3,
+      "group": "agent",
+      "key": "spawnSyncTimeoutSeconds",
+      "path": "agent.spawnSyncTimeoutSeconds",
+      "label": "子助手同步等待上限(秒)",
+      "type": "number",
+      "def": 0,
+      "min": 0,
+      "max": 600,
+      "note": "0=自动：max(子轮咨询预算, 审批预算)+60 秒，夹在 [60,600]（框架上限）；仅在「子助手强制同步等待」开启时生效",
+      "tier": 2
+    },
+    {
       "backendKey": "agent.subagentMode",
       "panel": "tool",
       "section": 3,

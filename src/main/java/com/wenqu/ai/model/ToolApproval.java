@@ -39,6 +39,12 @@ public class ToolApproval {
      */
     private String turnId;
 
+    /** 子助手分支的父会话：审批卡上翻后按父会话恢复/通知；NULL=顶层轮 */
+    private String parentSessionId;
+
+    /** 子助手分支的父轮：刷新恢复时把卡挂回父轮气泡；NULL=顶层轮 */
+    private String parentTurnId;
+
     /** 待审批工具名（沙盒/MCP） */
     private String toolName;
 

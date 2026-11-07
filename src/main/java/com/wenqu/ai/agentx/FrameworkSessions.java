@@ -145,11 +145,13 @@ public class FrameworkSessions {
             com.wenqu.ai.agent.hitl.HitlDecisionService hitl,
             com.wenqu.ai.service.SandboxService sandboxService,
             SessionLogArchive archive,
-            AgentxCluster cluster) {
+            AgentxCluster cluster,
+            com.wenqu.ai.service.ConfigService configService) {
         this.hitl = hitl;
         this.sandboxService = sandboxService;
         this.archive = archive;
         this.cluster = cluster;
+        this.configService = configService;
     }
 
     /** 持有者侧执行方：答复在别的副本点下来时，由<b>持有实例的这个进程</b>照本地路径跑一遍 */
@@ -165,6 +167,8 @@ public class FrameworkSessions {
 
     /** 会话事件日志的归档出口（框架 SessionExportSink，开关关闭时不挂） */
     private final SessionLogArchive archive;
+    /** 配置读取（子助手强制同步等待的开关与秒数） */
+    private final com.wenqu.ai.service.ConfigService configService;
 
     /**
      * 进程重启后的续跑入口（由引擎在装配期登记）。
@@ -243,7 +247,9 @@ public class FrameworkSessions {
                               String toolName, String requestArgs) {
         if (requestId == null || requestId.isBlank()) return;
         pendingOwner.put(requestId, sessionKey);
-        hitl.recordFrameworkPending(requestId, cmd.getSessionId(), cmd.getUserId(), turnId, toolName, requestArgs);
+        // 分支轮的父会话/父轮一并落库：审批卡上翻后，父会话刷新与通知都要靠它找回这张卡
+        hitl.recordFrameworkPending(requestId, cmd.getSessionId(), cmd.getUserId(), turnId, toolName, requestArgs,
+                cmd.getParentSessionId(), cmd.getParentTurnId());
     }
 
 
@@ -322,6 +328,15 @@ public class FrameworkSessions {
         RuntimeContext.Builder ctxBuilder = RuntimeContext.builder()
                 .userId(ctxUid)
                 .sessionId(cmd.getSessionId());
+        // 子助手强制同步等待：父轮要等到人的审批答复，而不是模型填的 30s 就转异步、结果没人接。
+        // 超时时框架会调 WenquConsultSubagent.interrupt()，那一支会被真正 stopTurn 收口。
+        if (configService.getBoolean("agent.spawnForceSync", true)) {
+            int syncSeconds = com.wenqu.ai.agent.subagent.SubAgentBranchRuntime.spawnSyncTimeoutSeconds(configService);
+            ctxBuilder.put("agentscope.subagent.force_sync", Boolean.TRUE);
+            ctxBuilder.put("agentscope.subagent.force_sync_timeout_seconds", syncSeconds);
+            log.info("[agentx] 子助手强制同步等待：{}s（session={}；超时后由 interrupt 真停分支）",
+                    syncSeconds, cmd.getSessionId());
+        }
         // 沙盒上下文（框架化 P1）：挂上后框架的文件工具与 ShellExecuteTool 才有沙箱可用。
         // 取不到时返回 null（沙盒不可用 / 无会话），此时本轮不挂框架沙箱，
         // 形态与 P1 之前一致——模型退回无沙箱工具，而不是整轮失败。
@@ -749,6 +764,11 @@ public class FrameworkSessions {
      * @param status {@code TIMEOUT}=等满预算，{@code STOPPED}=用户叫停（与手写侧
      *               {@code HitlDecisionService.terminateSessionWaits} 同一组词）
      */
+    public void markPendingTerminal(String userId, String sessionId, String status) {
+        if (sessionId == null || sessionId.isBlank()) return;
+        markPendingTerminal((userId == null || userId.isBlank() ? "guest" : userId) + "|" + sessionId, status);
+    }
+
     public void markPendingTerminal(String sessionKey, String status) {
         if (sessionKey == null) return;
         for (Map.Entry<String, String> e : new java.util.LinkedHashMap<>(pendingOwner).entrySet()) {

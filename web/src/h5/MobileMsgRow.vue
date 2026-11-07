@@ -306,22 +306,23 @@
         </div>
 
         <!-- 工具审批（人在回路）：贴着被审批的那一步；通知深链也定位到这一张 -->
-        <div v-if="m.approval" class="approval" :data-approval-id="m.approval.id">
+        <div v-for="a in (m.approvals || [])" :key="a.id" class="approval" :data-approval-id="a.id">
           <div class="approval-head">
             <exclamation-circle-outlined class="approval-warn" />
             <span class="approval-lead">需要你批准</span>
-            <span class="approval-tool">{{ toolLabel(m.approval.tool, m.approval.label) }}</span>
-            <code v-if="m.approval.label && m.approval.label !== m.approval.tool" class="approval-raw">{{ m.approval.tool }}</code>
-            <span class="approval-clock" :class="{ over: approvalLeftOf(m.approval) <= 0 }">
+            <span v-if="a.subagent && a.subagent.agent" class="approval-src">{{ a.subagent.agent }}</span>
+            <span class="approval-tool">{{ toolLabel(a.tool, a.label) }}</span>
+            <code v-if="a.label && a.label !== a.tool" class="approval-raw">{{ a.tool }}</code>
+            <span class="approval-clock" :class="{ over: approvalLeftOf(a) <= 0 }">
               <clock-circle-outlined />
-              {{ approvalLeftOf(m.approval) > 0 ? '剩 ' + approvalLeftOf(m.approval) + ' 秒' : '已超时' }}
+              {{ approvalLeftOf(a) > 0 ? '剩 ' + approvalLeftOf(a) + ' 秒' : '已超时' }}
             </span>
           </div>
-          <pre v-if="approvalArgsText(m.approval.args)" class="io-pre">{{ approvalArgsText(m.approval.args) }}</pre>
+          <pre v-if="approvalArgsText(a.args)" class="io-pre">{{ approvalArgsText(a.args) }}</pre>
           <div class="approval-actions">
-            <span class="approval-hint">{{ approvalLeftOf(m.approval) > 0 ? '批准后立即执行这一步' : '已超时，本轮将按拒绝继续' }}</span>
-            <button class="btn-ghost" :disabled="m.approval.busy || approvalLeftOf(m.approval) <= 0" @click.stop="$emit('approve', m, false)">拒绝</button>
-            <button class="btn-primary" :disabled="m.approval.busy || approvalLeftOf(m.approval) <= 0" @click.stop="$emit('approve', m, true)">批准执行</button>
+            <span class="approval-hint">{{ approvalLeftOf(a) > 0 ? '批准后立即执行这一步' : '已超时，本轮将按拒绝继续' }}</span>
+            <button class="btn-ghost" :disabled="a.busy || approvalLeftOf(a) <= 0" @click.stop="$emit('approve', m, a, false)">拒绝</button>
+            <button class="btn-primary" :disabled="a.busy || approvalLeftOf(a) <= 0" @click.stop="$emit('approve', m, a, true)">批准执行</button>
           </div>
         </div>
 
@@ -735,6 +736,7 @@ const onBodyPreview = (urls, index) => emit('preview', urls, index)
   100% { box-shadow: 0 0 0 0 rgba(199, 124, 20, 0); }
 }
 .approval-head { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.approval-src { flex: 0 0 auto; font-size: 10px; color: var(--app-text2); background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 5px; padding: 1px 5px; white-space: nowrap; }
 .approval-warn { color: #b07818; flex: 0 0 auto; }
 .approval-lead { font-size: 13px; font-weight: 600; color: var(--app-warn-text); white-space: nowrap; }
 .approval-tool { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

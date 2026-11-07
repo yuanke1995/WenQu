@@ -1172,7 +1172,7 @@ const switchSession = async sid => {
       // 深链带了 approval 时只挂它点名的那一张：同一轮可能并行挂着多张，先挂「最新一张」会占掉卡位、
       // 让用户点通知进来却看到另一张
       const deepApproval = route.query.approval ? String(route.query.approval) : ''
-      if (!live || !live.msg.approval) hydratePendingApprovals(sid, deepApproval)
+      if (!live || !(live.msg.approvals || []).length || deepApproval) hydratePendingApprovals(sid, deepApproval)
       // 通知深链点名的审批：落到对话里那张卡上并闪一圈；已处理/已失效只提示一句。
       // 放在历史与接流之后——此时气泡和 turnId 才能对上，卡片不会挂到错误的一轮
       if (deepApproval) void handleApprovalDeepLink(sid, deepApproval)
@@ -1405,9 +1405,9 @@ const send = async (opts = {}) => {
   streamAnswer(q, imgs, null, messages.value.length === 1, 1, deep, atts, skills, mentions, null, historyRefs, '', userMsg, planMode)
 }
 /** 工具执行审批：批准/拒绝当前气泡挂起的工具请求；后端以错误结果回给模型继续回答 */
-async function resolveApproval (m, approved) {
-  // 与 ignoreAsk 同理：等待响应期间本轮的审批终态事件可能已把 m.approval 清空，卡片引用先落本地
-  const a = m && m.approval
+async function resolveApproval (m, card, approved) {
+  // 多卡：调用方传具体那张卡；兼容只传 (m, approved) 的旧调用点（取第一张）
+  const a = card && card.id ? card : (m && (m.approvals || [])[0])
   if (!a || a.busy) return
   // 倒计时已到点：后端马上会按拒绝收尾，按钮不再发一个必然失败的请求
   if (a.deadline && approvalLeftSecOf(a) <= 0) {
@@ -1425,12 +1425,12 @@ async function resolveApproval (m, approved) {
       a.busy = false
       return
     }
-    m.approval = null
+    if (m && Array.isArray(m.approvals)) m.approvals = m.approvals.filter(x => x.id !== a.id)
     if (background) pollRestoredAnswer(currentSessionId.value)
     else hooks.scrollSoft?.()
   } catch (e) {
     message.error(e.message || '审批提交失败')
-    if (m.approval) m.approval.busy = false
+    a.busy = false
   }
 }
 /**
@@ -2062,8 +2062,9 @@ const hydratePendingPlans = async sid => {
 const hydratePendingApprovals = async (sid, onlyId = '') => {
   if (!sid) return 'none'
   const st = chatStreams.get(sid)
-  // 实时卡还挂在这一轮上：深链点名的就是它时直接算「已在屏上」，别重复挂
-  if (st && st.msg && st.msg.approval && (!onlyId || st.msg.approval.id === onlyId)) return 'exists'
+  // 实时卡已挂着：深链点名的那张已在屏上时不重复挂
+  const liveCards = (st && st.msg && Array.isArray(st.msg.approvals)) ? st.msg.approvals : []
+  if (liveCards.length && (!onlyId || liveCards.some(x => String(x.id) === String(onlyId)))) return 'exists'
   let items
   try {
     const r = await listPendingApprovals(sid)
@@ -2077,40 +2078,53 @@ const hydratePendingApprovals = async (sid, onlyId = '') => {
     if (!onlyId) return 'none'
     return dead.length ? 'dead' : 'gone'
   }
-  const item = alive[alive.length - 1]
-  const remainMs = Number(item.remainingMs) || 0
-  // timeoutMs 传「还剩多少」而不是整窗：卡片倒计时直接读 deadline，
-  // 恢复出来的卡若给整窗，用户会以为还有两分钟，实际下一秒就超时按拒绝了
-  const card = {
-    id: item.approvalId, tool: item.tool, label: item.label, hint: item.hint, args: item.args,
-    timeoutMs: remainMs, deadline: remainMs > 0 ? Date.now() + remainMs : 0, busy: false, restored: true
-  }
-  const target = cardTargetFor(st, item.turnId)
-  if (target && target.approval) return 'exists'   // 这张卡已经挂着了
-  if (target) {
-    target.approval = card
-    if (!onlyId) hooks.scrollForce?.()
-    return 'mounted'
+  // 多卡：alive 全部挂上（按 id 去重）；同一轮没有气泡的合并成一个占位泡
+  const orphanByTurn = new Map()
+  let mounted = 0
+  for (const item of alive) {
+    const remainMs = Number(item.remainingMs) || 0
+    // timeoutMs 传「还剩多少」而不是整窗：卡片倒计时直接读 deadline，
+    // 恢复出来的卡若给整窗，用户会以为还有两分钟，实际下一秒就超时按拒绝了
+    const card = {
+      id: item.approvalId, tool: item.tool, label: item.label, hint: item.hint, args: item.args,
+      subagent: item.subagent || (item.parentSessionId ? { kind: 'subagent', agent: '子助手' } : null),
+      timeoutMs: remainMs, deadline: remainMs > 0 ? Date.now() + remainMs : 0, busy: false, restored: true
+    }
+    const target = cardTargetFor(st, item.turnId)
+    if (target) {
+      const list = Array.isArray(target.approvals) ? target.approvals : []
+      if (list.some(x => String(x.id) === String(card.id))) continue
+      target.approvals = [...list, card]
+      mounted++
+      continue
+    }
+    const key = item.turnId || ''
+    if (!orphanByTurn.has(key)) orphanByTurn.set(key, { turnId: item.turnId || '', cards: [] })
+    orphanByTurn.get(key).cards.push(card)
   }
   // 这一轮在这台设备的视图里没有气泡（在别的设备上跑、或本轮的助手消息还没落库）：
   // 补一个「等你批准执行」的占位泡。那一轮是真的卡在审批上（live=唤醒句柄还在），
   // 什么都不挂就是用户读到的「智能体莫名其妙不动了」
-  const anchor = reactive({ role: 'ai', content: '', images: [], sources: [], related: [],
-    degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '',
-    thinkLoading: false, time: Date.now(), artifacts: [],
-    toolCalls: [], plan: null, planCard: null, timeline: [], errorCard: null,
-    model: '', approval: null, turnId: item.turnId || '' })
-  anchor.approval = card
-  messages.value = [...messages.value, anchor]
-  if (!onlyId) hooks.scrollForce?.()
-  return 'mounted'
+  for (const g of orphanByTurn.values()) {
+    const anchor = reactive({ role: 'ai', content: '', images: [], sources: [], related: [],
+      degradations: [], warnMsg: '', loading: true, retrying: false, thinking: '',
+      thinkLoading: false, time: Date.now(), artifacts: [],
+      toolCalls: [], plan: null, planCard: null, timeline: [], errorCard: null,
+      model: '', approvals: g.cards, turnId: g.turnId })
+    messages.value = [...messages.value, anchor]
+    mounted += g.cards.length
+  }
+  if (!onlyId && mounted) hooks.scrollForce?.()
+  if (onlyId) return mounted ? 'mounted' : 'exists'
+  return mounted ? 'mounted' : 'none'
 }
 
 // 审批倒计时：只在屏上还有带 deadline 的审批卡时走表（停/批准后自动停），
 // 与计划卡的 planNow 同一套节奏。PC 与移动壳都读这一份。
 const approvalNow = ref(Date.now())
 let approvalTimer = null
-watch(() => messages.value.some(m => m && m.approval && m.approval.deadline), v => {
+watch(() => messages.value.some(m => m && Array.isArray(m.approvals)
+  && m.approvals.some(a => a && a.deadline)), v => {
   if (v && !approvalTimer) approvalTimer = setInterval(() => { approvalNow.value = Date.now() }, 1000)
   if (!v && approvalTimer) { clearInterval(approvalTimer); approvalTimer = null }
 })
@@ -2129,8 +2143,10 @@ const clearApprovalQuery = approvalId => {
 const clearApprovalCard = approvalId => {
   let changed = false
   for (const m of messages.value) {
-    if (m && m.approval && String(m.approval.id) === String(approvalId)) {
-      m.approval = null
+    if (!m || !Array.isArray(m.approvals)) continue
+    const next = m.approvals.filter(a => !a || String(a.id) !== String(approvalId))
+    if (next.length !== m.approvals.length) {
+      m.approvals = next
       changed = true
     }
   }
@@ -2160,8 +2176,11 @@ const handleApprovalDeepLink = async (sid, approvalId) => {
     clearApprovalQuery(approvalId)
     return
   }
-  // 链接里的审批不属于当前会话（旧链接/会话已切走）：不在这里裁决，也不冒充「已失效」
-  if (rec.sessionId && String(rec.sessionId) !== String(sid)) {
+  // 链接里的审批不属于当前会话（旧链接/会话已切走）：不在这里裁决，也不冒充「已失效」。
+  // 子助手分支上翻的卡 sessionId 是临时子会话，归属看 parentSessionId
+  const recSid = rec.sessionId ? String(rec.sessionId) : ''
+  const recParent = rec.parentSessionId ? String(rec.parentSessionId) : ''
+  if ((recSid || recParent) && recSid !== String(sid) && recParent !== String(sid)) {
     clearApprovalQuery(approvalId)
     return
   }
@@ -2661,12 +2680,16 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
     },
     onApprovalRequired: payload => {
       // 工具执行审批（人在回路）：卡片挂到当前 AI 气泡，批准/拒绝后模型继续走。
+      // 多卡：父轮自己的审批与子助手分支上翻的审批可能同时挂起，按 id 去重、同一气泡内堆叠。
       // deadline 让卡片自己走真实倒计时（timeoutMs 是事件下发那一刻的整窗，不能当剩余秒数用）
       try {
         const j = typeof payload === 'string' ? JSON.parse(payload) : payload
         const timeoutMs = Number(j.timeoutMs) || 120000
-        msg.approval = { id: j.approvalId, tool: j.tool, label: j.label, hint: j.hint, args: j.args,
-          timeoutMs, deadline: Date.now() + timeoutMs, busy: false }
+        const card = { id: j.approvalId, tool: j.tool, label: j.label, hint: j.hint, args: j.args,
+          subagent: j.subagent || null, timeoutMs, deadline: Date.now() + timeoutMs, busy: false }
+        const list = (Array.isArray(msg.approvals) ? msg.approvals : []).filter(x => x && x.id !== card.id)
+        list.push(card)
+        msg.approvals = list
         liveScroll()
       } catch (e) { /* 忽略 */ }
     },
@@ -2984,7 +3007,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       // 审批卡同理：超时后后端按拒绝继续，这张卡不该在答案出来以后还挂着
       msg.ask = null
       msg.askQueue = []
-      msg.approval = null
+      msg.approvals = []
       // 整轮结束时刻（右栏「生成回答」行的 duration 用它）；历史恢复的消息无此值则不显示
       msg.doneTime = Date.now()
       // 生成完成：编排卡片收起为一行（用户未手动干预时），避免答案出来后还占着版面
@@ -3087,7 +3110,7 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       msg.loading = false
       msg.retrying = false
       // 这一轮已经断了，审批卡不会再有结果：撤掉，别留两颗必然点不动的按钮
-      msg.approval = null
+      msg.approvals = []
       // 本轮失败：正在长的那一段思考必须停下进行中标记（它认的是「这一轮还在流」，
       // 而 loading 已假 → 该段自然收起），否则那一行会永远转下去，把「这一轮断了」读成「它还在想」
       msg.thinkLoading = false
