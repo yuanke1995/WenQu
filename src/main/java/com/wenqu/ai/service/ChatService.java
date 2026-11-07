@@ -1063,6 +1063,31 @@ public class ChatService {
                 // 载荷不是 JSON（历史行或被截断）：照旧只给摘要，对照视图少一个编号而已
             }
         }
+        // 子智能体运行过程（2026-11-07）：摘要是给人看的一行话；完整帧流整份带上——
+        // 派遣卡上的「完整过程」回放就是从这里懒取的，别的类型不带全量（账本不是原文复读机）
+        if ("subagent".equals(ev.getType())) {
+            try {
+                com.alibaba.fastjson2.JSONObject o = com.alibaba.fastjson2.JSON.parseObject(p);
+                if (o != null) {
+                    String name = o.getString("agentName");
+                    String st = o.getString("status");
+                    long ms = o.getLongValue("elapsedMs");
+                    int n = o.getJSONArray("frames") == null ? 0 : o.getJSONArray("frames").size();
+                    item.put("summary", "子智能体运行 · " + (name == null ? "未知助手" : name)
+                            + " · " + ("done".equals(st) ? "完成" : ("timeout".equals(st) ? "超时" : "失败"))
+                            + " · " + (ms < 1000 ? ms + "ms" : String.format("%.1fs", ms / 1000.0))
+                            + " · " + n + " 帧"
+                            + (o.getString("error") == null || o.getString("error").isBlank() ? "" : " · " + o.getString("error")));
+                    item.put("agentName", name);
+                    item.put("status", st);
+                    item.put("elapsedMs", ms);
+                    item.put("frameCount", n);
+                    item.put("payload", p);
+                }
+            } catch (Exception ignore) {
+                // 载荷解析不出（被截断的历史行）：照旧只给原始摘要
+            }
+        }
         return item;
     }
 

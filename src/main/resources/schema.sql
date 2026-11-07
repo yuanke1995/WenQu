@@ -1193,7 +1193,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_session_event` (
     `turn_id`    VARCHAR(50)  DEFAULT NULL COMMENT '本轮唯一ID（一轮的多条事件按它聚成一条轨迹）',
     `goal_id`    VARCHAR(64)  DEFAULT NULL COMMENT '归属目标（c_ai_goal.id；目标态变更/验证/跨轮帧按它聚合，不新建表）',
     `type`       VARCHAR(32)  NOT NULL COMMENT '事件类型: tool/approval/ask_user/plan/artifact/subagent/agent/done/error/stop/goal_state/goal_turn/goal_verify…',
-    `payload`    TEXT         DEFAULT NULL COMMENT '事件载荷摘要（工具名/状态/耗时/入参截断，上限 4000 字符）',
+    `payload`    MEDIUMTEXT   DEFAULT NULL COMMENT '事件载荷摘要（工具名/状态/耗时/入参截断，上限 4000 字符；子智能体运行过程 type=subagent 为整段关键帧流，上限 200k 字符）',
     `created_at` DATETIME     DEFAULT CURRENT_TIMESTAMP COMMENT '发生时刻',
     PRIMARY KEY (`id`),
     KEY `idx_se_session_turn` (`session_id`, `turn_id`),

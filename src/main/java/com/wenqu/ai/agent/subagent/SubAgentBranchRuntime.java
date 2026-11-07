@@ -50,6 +50,14 @@ public class SubAgentBranchRuntime {
     private final ChatRunRuntime runtime;
     private final com.wenqu.ai.agentx.FrameworkSessions frameworkSessions;
     private final com.wenqu.ai.agent.hitl.HitlDecisionService hitl;
+    private final com.wenqu.ai.service.SessionEventService sessionEventService;
+
+    /** 运行视角（2026-11-07）：随账本落库的关键帧类型。tool_output 只直播不落库——终态工具卡已带 result。 */
+    private static final Set<String> RUN_FRAME_TYPES = Set.of(
+            "tool_status", "retrieved", "artifact", "warn", "approval_required", "ask_user");
+    /** 帧缓冲上限（条 / 单帧字符）：回放要的是「哪一步干了什么」，不是流水账全文 */
+    private static final int RUN_FRAME_MAX = 240;
+    private static final int RUN_FRAME_CHARS = 2000;
 
     /** 父会话 → 正在跑的分支：父轮结束或强制同步超时要能精确叫停并收口待办。 */
     private final java.util.concurrent.ConcurrentHashMap<String, java.util.Set<BranchHandle>> branches =
@@ -65,7 +73,8 @@ public class SubAgentBranchRuntime {
                                 DocumentMetaCache documentMetaCache,
                                 ChatRunRuntime runtime,
                                 com.wenqu.ai.agentx.FrameworkSessions frameworkSessions,
-                                com.wenqu.ai.agent.hitl.HitlDecisionService hitl) {
+                                com.wenqu.ai.agent.hitl.HitlDecisionService hitl,
+                                com.wenqu.ai.service.SessionEventService sessionEventService) {
         this.configService = configService;
         this.sessionService = sessionService;
         this.artifactService = artifactService;
@@ -73,6 +82,7 @@ public class SubAgentBranchRuntime {
         this.runtime = runtime;
         this.frameworkSessions = frameworkSessions;
         this.hitl = hitl;
+        this.sessionEventService = sessionEventService;
     }
 
     /**
@@ -117,7 +127,22 @@ public class SubAgentBranchRuntime {
             // （终态步骤清单 2026-10-25 起随 subChat.steps 落库，见上）。
             final int branchIndex = Math.max(0, req.branchIndex());
             final boolean[] first = {false};
+            // 运行视角的回放采集（2026-11-07）：转发过来的关键帧顺手留一份，收束时随账本整批落一条。
+            // 同一帧可能经两条路各到一遍（SSE 直发 + 总线扇出，与 workSteps 同款雷），按类型+内容前缀去重。
+            List<Map<String, Object>> runFrames = java.util.Collections.synchronizedList(new ArrayList<>());
+            java.util.Set<String> seenRunKeys = java.util.Collections.synchronizedSet(new java.util.HashSet<>());
             sink.forwardProcess((type, content) -> {
+                if (RUN_FRAME_TYPES.contains(type) && runFrames.size() < RUN_FRAME_MAX) {
+                    String c = content == null ? "" : content;
+                    if (c.length() > RUN_FRAME_CHARS) c = c.substring(0, RUN_FRAME_CHARS) + "…";
+                    String runKey = type + "|" + c.substring(0, Math.min(200, c.length()));
+                    if (seenRunKeys.add(runKey)) {
+                        Map<String, Object> f = new LinkedHashMap<>();
+                        f.put("t", type);
+                        f.put("c", c);
+                        runFrames.add(f);
+                    }
+                }
                 // 审批卡上翻：子轮没有观众，这张卡只有转给父轮才有人批。
                 // 载荷原样保留（approvalId/tool/args/timeoutMs），只补来源与提示；前端卡片读这些字段。
                 if ("approval_required".equals(type)) {
@@ -219,17 +244,23 @@ public class SubAgentBranchRuntime {
                     // 不叫停的后果是"删了一条还在被写的会话"+"一条线程被派出去的任务占住"，
                     // 并发几轮之后问答池就被没人等的分支填满。
                     runtime.stopTurn(childSession, req.userId());
-                    return BranchReport.failed(BranchReport.TIMEOUT,
+                    BranchReport rep = BranchReport.failed(BranchReport.TIMEOUT,
                             "分支超时（" + req.timeoutMs() / 1000 + " 秒）", System.currentTimeMillis() - start, workSteps);
+                    writeRunLedger(req, rep, runFrames);
+                    return rep;
                 }
                 if (sink.lastError() != null && !sink.lastError().isBlank()) {
-                    return BranchReport.failed(BranchReport.FAILED, sink.lastError(),
+                    BranchReport rep = BranchReport.failed(BranchReport.FAILED, sink.lastError(),
                             System.currentTimeMillis() - start, workSteps);
+                    writeRunLedger(req, rep, runFrames);
+                    return rep;
                 }
                 String answer = sink.answer() == null ? "" : sink.answer().strip();
                 if (answer.isBlank()) {
-                    return BranchReport.failed(BranchReport.FAILED, "子智能体未产生回答",
+                    BranchReport rep = BranchReport.failed(BranchReport.FAILED, "子智能体未产生回答",
                             System.currentTimeMillis() - start, workSteps);
+                    writeRunLedger(req, rep, runFrames);
+                    return rep;
                 }
                 // 子轮的引用/图片表是父轮续编编号的依据（done 载荷里那份是<b>已签名</b>的展示副本，
                 // 存进回报前先把签名参数剥掉，回到与主链路一致的原始 URL）
@@ -297,14 +328,19 @@ public class SubAgentBranchRuntime {
                 long ms = System.currentTimeMillis() - start;
                 log.info("[SUBAGENT] 全循环分支完成 {}：正文 {}字 引用 {} 条 工具步 {} 产物 {} 个 耗时 {}ms",
                         req.describe(), answer.length(), childSources.size(), steps, artifactFiles.size(), ms);
-                return new BranchReport(BranchReport.DONE, answer, List.copyOf(childSources),
+                BranchReport rep = new BranchReport(BranchReport.DONE, answer, List.copyOf(childSources),
                         List.copyOf(childImages), steps, List.copyOf(workSteps),
                         List.copyOf(artifactFiles), List.copyOf(artifactDetail), ms, null);
+                writeRunLedger(req, rep, runFrames);
+                return rep;
             } catch (Exception e) {
                 Throwable cause = e.getCause() != null ? e.getCause() : e;
                 log.warn("[SUBAGENT] 全循环分支异常（按失败降级，不影响主链路）{}: {}",
                         req.describe(), cause.toString());
-                return BranchReport.failed(BranchReport.FAILED, cause.toString(), System.currentTimeMillis() - start, workSteps);
+                BranchReport rep = BranchReport.failed(BranchReport.FAILED, cause.toString(),
+                        System.currentTimeMillis() - start, workSteps);
+                writeRunLedger(req, rep, runFrames);
+                return rep;
             } finally {
                 if (handle != null) unregisterBranch(parentSessionId, handle);
                 // 子轮结束（正常/异常/被叫停）时还挂着的待办一律落 STOPPED：
@@ -327,6 +363,38 @@ public class SubAgentBranchRuntime {
                 }
             }
         };
+    }
+
+    /**
+     * 运行视角的落库（2026-11-07）：这一支的关键帧流随收束写一条 {@code type=subagent} 账本事件，
+     * 挂<b>父会话与父轮</b>——刷新/换设备后卡片上的「完整过程」从它懒取回放（与 subChat 快照互补：
+     * 那份是≤20 步的摘要，这份是关键帧全量）。旁路纪律与账本一致：写失败只留一行 warn，不碰回报；
+     * 成功且零帧（digest 支没有过程可看）不写，避免每轮多一条空行。
+     */
+    private void writeRunLedger(BranchRequest req, BranchReport report, List<Map<String, Object>> frames) {
+        try {
+            if (BranchReport.DONE.equals(report.status()) && frames.isEmpty()) return;
+            List<Map<String, Object>> kept = new ArrayList<>(frames);
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("agentId", req.childAgentId());
+            payload.put("agentName", req.childAgentName());
+            payload.put("question", req.question() == null ? "" : req.question());
+            payload.put("status", report.status());
+            if (report.error() != null && !report.error().isBlank()) payload.put("error", report.error());
+            payload.put("elapsedMs", report.elapsedMs());
+            String json;
+            while (true) {
+                payload.put("frames", kept);
+                json = JSON.toJSONString(payload);
+                if (json.length() <= 190_000 || kept.size() <= 20) break;
+                // 兜底截断：帧缓冲本就有 240×2000 的上限，走到这里说明 JSON 转义膨胀超了——
+                // 砍较早的一半，最近的步骤对排障最有价值
+                kept.subList(0, kept.size() / 2).clear();
+            }
+            sessionEventService.appendLarge(req.parentSessionId(), req.userId(), req.parentTurnId(), "subagent", json);
+        } catch (Exception e) {
+            log.warn("[SUBAGENT] 运行过程落账失败（不影响回报）: {} {}", req.describe(), e.getMessage());
+        }
     }
 
     private void registerBranch(String parentSessionId, BranchHandle h) {

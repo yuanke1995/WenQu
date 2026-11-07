@@ -60,15 +60,31 @@
             <span class="ev-types">{{ evTypeSummary(t) }}</span>
           </button>
           <div v-if="t._open" class="ev-list">
-            <div v-for="e in t.events" :key="e.id" class="ev-row"
-                 :class="{ clickable: e._step != null, hit: e._step != null && active === e._step }"
-                 @click="e._step != null && focus(e._step, 'ledger')">
-              <span class="ev-type">
-                <span v-if="e._step != null" class="ev-no">{{ e._step + 1 }}</span>{{ evTypeLabel(e.type) }}
-              </span>
-              <span class="ev-at">{{ fmtEvClock(e.at) }}</span>
-              <span class="ev-sum" :title="e.summary">{{ e.summary }}</span>
-            </div>
+            <template v-for="e in t.events" :key="e.id">
+              <!-- 子智能体运行过程（2026-11-07）：一行聚合 + 可展开的完整帧流。
+                   payload 随行带全量（别的类型只有 240 字摘要），展开就是派遣卡上那份同构帧流 -->
+              <template v-if="e.type === 'subagent'">
+                <div class="ev-row subagent-row" @click="e._open = !e._open">
+                  <span class="ev-type sg-type">
+                    <caret-right-outlined class="ev-caret sg-caret" :class="{ open: e._open }" />子智能体
+                  </span>
+                  <span class="ev-at">{{ fmtEvClock(e.at) }}</span>
+                  <span class="ev-sum sg-sum">{{ e.summary }}</span>
+                </div>
+                <div v-if="e._open" class="sg-body">
+                  <SubAgentRunFrames :frames="framesOf(e)" :live="false" :max-height="260" />
+                </div>
+              </template>
+              <div v-else class="ev-row"
+                   :class="{ clickable: e._step != null, hit: e._step != null && active === e._step }"
+                   @click="e._step != null && focus(e._step, 'ledger')">
+                <span class="ev-type">
+                  <span v-if="e._step != null" class="ev-no">{{ e._step + 1 }}</span>{{ evTypeLabel(e.type) }}
+                </span>
+                <span class="ev-at">{{ fmtEvClock(e.at) }}</span>
+                <span class="ev-sum" :title="e.summary">{{ e.summary }}</span>
+              </div>
+            </template>
           </div>
         </div>
       </section>
@@ -84,6 +100,7 @@ import { getSessionEvents } from '../api'
 // 「180000ms」会让同一个数在两处长得不一样，读的人先要怀疑是不是数错了
 import { toolDuration } from '../chat/projections'
 import AnswerBody from './AnswerBody.vue'
+import SubAgentRunFrames from './SubAgentRunFrames.vue'
 
 // viewer=false（移动壳）时正文里的角标/图片点击往外抛，由页面用它自己的底部抽屉展示——
 // 不许在面板里留一个点了没反应的角标
@@ -180,6 +197,14 @@ watch(() => [props.open, props.sessionId, props.turnId],
   }, { immediate: true })
 
 function toggleTurn (t) { t._open = !t._open }
+
+/** subagent 行的完整帧流：payload 随行带全量（service 端 eventItem 对这一类特判） */
+function framesOf (e) {
+  try {
+    const p = typeof e.payload === 'string' ? JSON.parse(e.payload) : e.payload
+    return Array.isArray(p?.frames) ? p.frames : []
+  } catch { return [] }
+}
 
 const EV_TYPE_LABEL = {
   tool: '工具', approval: '工具审批', approval_required: '工具待批准', ask_user: '提问卡',
@@ -280,4 +305,11 @@ function evTypeSummary (t) {
   flex: 1; min-width: 0; color: var(--app-text); word-break: break-all;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
 }
+/* 子智能体聚合行：与普通行同形，主色弱底标出「这一行能展开」 */
+.subagent-row { cursor: pointer; border-radius: 6px; padding-left: 4px; }
+.subagent-row:hover { background: var(--app-accent-weak); }
+.sg-type { color: var(--app-accent); display: inline-flex; align-items: center; gap: 2px; }
+.sg-caret { font-size: 10px; }
+.sg-sum { color: var(--app-text); }
+.sg-body { padding: 6px 0 8px 20px; }
 </style>

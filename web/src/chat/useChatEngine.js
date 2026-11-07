@@ -2842,7 +2842,32 @@ const streamAnswer = (question, imgs, replaceMsg, isFirstMessage, autoRetry = 1,
       // （_steps，也只活这一次）——跑完后 subChat.steps（后端同源落库）接管，刷新不丢。
       try {
         const o = typeof payload === 'string' ? JSON.parse(payload) : payload
-        if (!o || o.type !== 'tool_status' || !o.agent) return
+        if (!o || !o.agent) return
+        // 完整过程的直播帧（2026-11-07）：关键帧全量累积进派遣卡的 _frames，「完整过程」抽屉直播就吃它。
+        // 同一帧可能经两条路各到一遍（SSE 直发 + 总线扇出），按类型+内容前缀去重；上限 240 帧，超出丢最早。
+        // tool_status 之外的新帧型（检索/产物/提醒/待裁决）在这里只进抽屉，下面的迷你时间线逻辑不变。
+        {
+          const all = Array.isArray(msg.toolCalls) ? msg.toolCalls : []
+          let any = [...all].reverse().find(x => isDispatchTool(x.name) && x.status === 'start'
+            && consultNameOf(x) === o.agent)
+          if (!any) {
+            const running = all.filter(x => isDispatchTool(x.name) && x.status === 'start')
+            if (running.length === 1) any = running[0]
+          }
+          if (any) {
+            const content = typeof o.content === 'string' ? o.content : JSON.stringify(o.content ?? '')
+            const key = (o.type || '') + '|' + content.slice(0, 200)
+            any._frameKeys = any._frameKeys instanceof Set ? any._frameKeys : new Set()
+            if (!any._frameKeys.has(key)) {
+              any._frameKeys.add(key)
+              any._frames = Array.isArray(any._frames) ? any._frames : []
+              any._frames.push({ t: o.type || '', c: content })
+              if (any._frames.length > 240) any._frames.splice(0, any._frames.length - 240)
+              liveScroll()
+            }
+          }
+        }
+        if (o.type !== 'tool_status' || !o.agent) return
         const c = typeof o.content === 'string' ? JSON.parse(o.content) : o.content
         if (!c || !c.name) return
         const terminal = c.status === 'done' || c.status === 'error'

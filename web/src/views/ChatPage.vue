@@ -248,6 +248,14 @@
                               <ToolSpillButton v-if="lr.t.spillId" :id="lr.t.spillId" :tool="lr.t.name" kind="输出" />
                             </div>
                           </div>
+                          <!-- 咨询另一位助手（2026-11-07）：平铺行的详情里也挂子对话卡（问它/执行过程/它的回答
+                               +「完整过程」抽屉）。此前它只挂在 tl-card 路径上，DSH 平铺行成了主流后 subChat
+                               就没了着落（旧派遣卡点开只有入参/输出）——挂在这里两条路径同构 -->
+                          <SubAgentChatCard v-if="isDispatchTool(lr.t.name) && (lr.t.subChat || (lr.t._steps && lr.t._steps.length))"
+                                            :t="lr.t"
+                                            :agent="lr.t.subChat ? agentBadgeOf(agentList, lr.t.subChat.agentId, lr.t.subChat.agentName) : null"
+                                            :sources="m.sources"
+                                            :session-id="currentSessionId || ''" :turn-id="m.turnId || ''" />
                         </div>
                         <!-- 还没换来工具的尾部思考/独白：它就是「当前这一步」，自成一节。
                              转圈只在真的还在长时出现（此前是写死的 loading，本轮答完它还在转）；
@@ -326,7 +334,8 @@
                              直播期（subChat 未到、_steps 已有）挂执行中形态：卡内时间线逐步追加 -->
                         <SubAgentChatCard v-if="(t.subChat || (t._steps && t._steps.length)) && toolCardOpen(t)" :t="t"
                                           :agent="t.subChat ? agentBadgeOf(agentList, t.subChat.agentId, t.subChat.agentName) : null"
-                                          :sources="m.sources" />
+                                          :sources="m.sources"
+                                          :session-id="currentSessionId || ''" :turn-id="m.turnId || ''" />
                         <div v-if="t._open" class="tl-card-body">
                       <!-- 脚本扇出清单（P3b 过程下钻）：一次运行内部调了什么、各多久、有没有被挡下。
                            子调用刻意不各占一张顶层卡片（会被刷成一堵墙），结构就收在这里 -->
@@ -1721,7 +1730,7 @@ import { toolLabel, toolDesc, toolCallsView, executedCount, toolDuration,
          fmtWindow, externalOrigin, sourceName, fmtSourceScore, scoreTitle,
          fmtMsgTime, fmtSize, errorBrief, histItemTitle, histItemDigest, verLocal, canSwitchPrev, canSwitchNext, verLabel,
          pasteTitle, pasteSub, isPastedText,
-         THINK_LEVEL_ON, levelLabel, stopTick, agentBadgeOf,
+         THINK_LEVEL_ON, levelLabel, stopTick, agentBadgeOf, isDispatchTool,
          usageCtxTokens, usageTip, oneLine, toolCardOpen, toggleToolCard, spawnAnchorOf, openDispatchCard } from '../chat/projections'
 
 // 簇头的活动图标（DSH ProcessGroupHeader 的 activityIcon 同位）：类别 → 图标，收起时常显、悬停/展开让位给下开三角

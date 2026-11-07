@@ -104,7 +104,10 @@ public class CollectingSseEmitter extends SseEmitter {
                     donePayload = c == null ? null : JSON.toJSONString(c);
                     settle();
                 }
-                case "tool_status", "tool_output", "approval_required" -> {
+                case "tool_status", "tool_output", "approval_required",
+                     // 运行视角（2026-11-07）：分支的关键帧一并转发，父轮卡上的「完整过程」
+                     // 才能直播到检索/产物/降级提醒/待裁决——token/thinking/正文增量仍不在此列
+                     "retrieved", "artifact", "warn", "ask_user" -> {
                     java.util.function.BiConsumer<String, String> f = forwarder;
                     if (f != null) {
                         try {

@@ -59,6 +59,8 @@
 
 ### 其他已完成流
 
+- **子智能体运行视角**（2026-11-07，58c175c8）：实时直播+事后回放落地——收集通道转发白名单加宽（retrieved/artifact/warn/ask_user）、分支收束统一写一条 `type=subagent` 账本事件（挂父会话+父轮，关键帧 ≤240×2000 字，`appendLarge` 200k 上限、payload 列升 MEDIUMTEXT 已 ALTER）、前端 `SubAgentRunFrames.vue` 共用渲染（派遣卡「完整过程」抽屉直播吃 `_frames`/终态账本懒取 + 事件面板 subagent 聚合块）。四轮真机 E2E 全过（直播帧/刷新回放/账本聚合/老消息优雅空态）；**顺带修复**：DSH 平铺行路径原本不挂 SubAgentChatCard，subChat（问它/它的回答）在新口径下不可见——已在平铺行详情挂载，两条路径同构。遗留债：BranchMode(digest/full) 在框架通路未按档分流。
+
 - **市场一期技能**：✅ c92db191。
 - **RBAC 升级 v1.0**（2026-11-03~04）：10 提交、判定核 19 测全绿、三态双跑/enforce 全验证；方案在 docs/rbac-upgrade-plan.md（gitignored）。坑账：新 RBAC 表必须进 GLOBAL_TABLES（三踩）、种子须反向折算 role_api。
 - **每轮文件改动卡**（DSH workspace-changes 口径，2026-11-05）：执行器快照+捕获+比对、c_ai_message.changes、改动卡+预览台 diff 档。

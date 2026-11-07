@@ -40,6 +40,8 @@ public class SessionEventService {
 
     /** 载荷摘要上限（与审批入参同量级：审计够用，又不至于让账本行比消息本身还大） */
     private static final int PAYLOAD_MAX = 4000;
+    /** 大载荷上限：仅「子智能体运行过程」一类的整段帧流用（列已升 MEDIUMTEXT） */
+    private static final int PAYLOAD_MAX_LARGE = 200_000;
 
     private final SessionEventMapper sessionEventMapper;
     private final MessageMapper messageMapper;
@@ -62,6 +64,20 @@ public class SessionEventService {
      */
     public Long append(String sessionId, String userId, String turnId, String goalId,
                        String type, String payload) {
+        return doAppend(sessionId, userId, turnId, goalId, type, payload, PAYLOAD_MAX);
+    }
+
+    /**
+     * 记一条<b>大载荷</b>事件：与 {@link #append} 同一套旁路纪律，只是放得下一整段过程——
+     * 目前唯一的使用方是子智能体运行过程（{@code type=subagent}，一支子轮的关键帧流整批落一行）。
+     * 载荷超出上限仍然截断（列是 MEDIUMTEXT，200k 字符是刻意留的余量，不是列宽）。
+     */
+    public Long appendLarge(String sessionId, String userId, String turnId, String type, String payload) {
+        return doAppend(sessionId, userId, turnId, null, type, payload, PAYLOAD_MAX_LARGE);
+    }
+
+    private Long doAppend(String sessionId, String userId, String turnId, String goalId,
+                          String type, String payload, int payloadMax) {
         if (sessionId == null || sessionId.isBlank() || type == null || type.isBlank()) return null;
         if (!configService.getBoolean("trace.sessionEventEnabled", true)) return null;
         try {
@@ -71,8 +87,8 @@ public class SessionEventService {
             event.setTurnId(turnId);
             event.setGoalId(goalId);
             event.setType(type);
-            event.setPayload(payload == null || payload.length() <= PAYLOAD_MAX
-                    ? payload : payload.substring(0, PAYLOAD_MAX) + "…");
+            event.setPayload(payload == null || payload.length() <= payloadMax
+                    ? payload : payload.substring(0, payloadMax) + "…");
             event.setCreatedAt(LocalDateTime.now());
             sessionEventMapper.insert(event);
             return event.getId();

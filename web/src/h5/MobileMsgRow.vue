@@ -242,6 +242,7 @@
                   <!-- askUser 问答记录：可折叠（默认展开），与 PC 同构 -->
                   <AskRecordCard v-if="t.name === 'askUser' && t.status !== 'start'" :t="t" />
                   <SubAgentChatCard v-if="(t.subChat || (t._steps && t._steps.length)) && toolCardOpen(t)" :t="t" :sources="m.sources"
+                                    :session-id="sessionId" :turn-id="m.turnId || ''"
                                     :viewer="false" @citation="onBodyCitation" @preview="onBodyPreview" />
                   <div v-show="t._open" class="card-body">
                     <!-- 脚本扇出清单（P3b 过程下钻）：子调用不各占一张顶层卡片，结构收在这里 -->

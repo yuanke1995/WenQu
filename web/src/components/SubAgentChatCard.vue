@@ -9,13 +9,20 @@
       <div class="sac-q">{{ v.question }}</div>
     </div>
 
-    <!-- 执行过程（干活视角）：直播时逐步追加，终态后取落库那份；digest 支没有工具步，这段自然不渲染 -->
+    <!-- 执行过程（干活视角）：直播时逐步追加，终态后取落库那份；digest 支没有工具步，这段自然不渲染。
+         「完整过程」开关（2026-11-07）：展开看关键帧全量——直播吃引擎侧 _frames，终态从账本事件懒取回放；
+         迷你时间线（≤20 步摘要）在展开时让位。老消息既没有 turnId 也没有直播帧，开关不出现，行为零变化 -->
     <div v-if="stepsView.length" class="sac-line">
       <div class="sac-label">
         {{ live ? '执行中' : '执行过程' }}
         <span class="sac-meta">{{ stepsView.length }} 步</span>
+        <button v-if="canShowFull" class="app-link-btn sac-full-btn" type="button" @click="toggleFull">
+          {{ fullOpen ? '收起完整过程' : '完整过程' }}
+          <caret-right-outlined class="sac-full-caret" :class="{ open: fullOpen }" />
+        </button>
+        <span v-if="canShowFull" class="sac-newtag">新增</span>
       </div>
-      <div class="sac-steps">
+      <div v-show="!fullOpen" class="sac-steps">
         <div v-for="(s, i) in stepsView" :key="i"
              class="sac-step" :class="{ err: s.st === 'error', denied: s.denied }">
           <span class="sac-step-dot">{{ s.st === 'error' ? '✕' : '✓' }}</span>
@@ -24,6 +31,7 @@
           <span v-if="s.ms" class="sac-step-ms">{{ stepMs(s.ms) }}</span>
         </div>
       </div>
+      <SubAgentRunFrames v-if="fullOpen" :frames="fullFrames" :live="live" style="margin-top:4px" />
     </div>
 
     <div v-if="!live" class="sac-line">
@@ -72,9 +80,12 @@
 // 老消息没这份 ⇒ 父级按 consultChatView 返回 null 直接不渲染本组件，退回普通工具卡，不空块不报错。
 // 直播期（subChat 未到）父级按 _steps 有值也挂本组件：执行中形态只渲染时间线，问/答/资料段空着不占位。
 import { computed, ref } from 'vue'
+import { CaretRightOutlined } from '@ant-design/icons-vue'
 import AgentAvatar from './AgentAvatar.vue'
 import AnswerBody from './AnswerBody.vue'
+import SubAgentRunFrames from './SubAgentRunFrames.vue'
 import { consultChatView } from '../chat/projections'
+import { getSessionEvents } from '../api'
 import { resolveImg } from '../utils/markdown'
 
 const props = defineProps({
@@ -85,7 +96,10 @@ const props = defineProps({
   /** 本轮引用表：子对话里的角标与主管线共用这一份编号 */
   sources: { type: Array, default: () => [] },
   /** true=点角标走共用浮层；false=外发给页面（移动壳用底部抽屉） */
-  viewer: { type: Boolean, default: true }
+  viewer: { type: Boolean, default: true },
+  /** 所属会话与轮身份：终态后「完整过程」从账本懒取回放的两把钥匙（老消息没有就不出开关） */
+  sessionId: { type: String, default: '' },
+  turnId: { type: String, default: '' }
 })
 defineEmits(['citation', 'preview'])
 
@@ -99,6 +113,34 @@ const v = computed(() => consultChatView(props.t) || {
 const stepsView = computed(() => v.value.stepList.length
   ? v.value.stepList
   : (Array.isArray(props.t._steps) ? props.t._steps : []))
+
+// —— 完整过程（2026-11-07）：直播帧 + 账本回放 ——
+const fullOpen = ref(false)
+const replayFrames = ref(null)
+/** 直播帧：引擎侧 onSubagentStep 累积的 _frames（关键帧全量，≤240 条） */
+const liveFrames = computed(() => (Array.isArray(props.t._frames) && props.t._frames.length) ? props.t._frames : [])
+const canShowFull = computed(() => liveFrames.value.length > 0
+  || (!!props.turnId && !!props.sessionId && !!props.t.subChat))
+const fullFrames = computed(() => live.value ? liveFrames.value : (replayFrames.value || []))
+async function toggleFull () {
+  fullOpen.value = !fullOpen.value
+  // 终态回放取数是懒的：第一次展开才去账本拿（大多数时候用户根本不点，不白花这一次请求）
+  if (fullOpen.value && !live.value && replayFrames.value == null && props.turnId && props.sessionId) {
+    replayFrames.value = []
+    try {
+      const r = await getSessionEvents(props.sessionId, 1, props.turnId)
+      const turns = (r && r.data && Array.isArray(r.data.turns)) ? r.data.turns : []
+      const mine = turns.flatMap(t => (t.events || []).filter(e => e.type === 'subagent'))
+        .map(e => { try { return typeof e.payload === 'string' ? JSON.parse(e.payload) : e.payload } catch { return null } })
+        .filter(Boolean)
+      // 同一轮可以派多位（或同一位失败重派过）：先按 助手+任务 对上号，退而取最近一条
+      const wantId = v.value.agentId || ''
+      const wantQ = v.value.question || ''
+      const pick = mine.find(p => p.agentId === wantId && (!wantQ || p.question === wantQ)) || mine[mine.length - 1] || null
+      replayFrames.value = (pick && Array.isArray(pick.frames)) ? pick.frames : []
+    } catch { replayFrames.value = [] }
+  }
+}
 // 长回答不把它撑成一堵墙：超过这个字数先夹高，想看全文点一下展开
 const CLIP_CHARS = 600
 const full = ref(false)
@@ -124,6 +166,14 @@ const fmtSize = n => n >= 1048576 ? `${(n / 1048576).toFixed(1)}MB`
 .sac-who { color: var(--app-text2); font-weight: 500; }
 .sac-meta { color: var(--app-text3); }
 .sac-meta::before { content: '·'; margin-right: 5px; }
+/* 完整过程开关与「新增」徽标：与卡上 11px 标签同一档 */
+.sac-full-btn { font-size: 11.5px; display: inline-flex; align-items: center; gap: 2px; }
+.sac-full-caret { font-size: 10px; transition: transform .15s; }
+.sac-full-caret.open { transform: rotate(90deg); }
+.sac-newtag {
+  flex: none; font-size: 10px; line-height: 16px; padding: 0 7px; border-radius: 999px;
+  background: var(--app-accent-weak); color: var(--app-accent); font-weight: 500;
+}
 .sac-q {
   font-size: 12.5px; line-height: 1.7; color: var(--app-text2);
   padding: 6px 9px; background: var(--app-panel-2); border-left: 2px solid var(--app-border);
