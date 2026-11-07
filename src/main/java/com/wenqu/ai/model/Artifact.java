@@ -50,6 +50,13 @@ public class Artifact {
     /** 存储相对路径：artifacts/{uid}/{yyyyMM}/{id}_{filename} */
     private String objectKey;
 
+    /**
+     * 用户重命名后的显示名（不含扩展名）。
+     * <p>NULL = 未重命名，展示时回退 filename 去后缀。只影响列表展示与 ZIP 条目名，
+     * 不改 {@link #filename} / {@link #objectKey}，所以已分享链接与下载地址都不受影响。
+     */
+    private String displayName;
+
     /** 给用户的产物说明（工具调用时由模型给出） */
     private String description;
 

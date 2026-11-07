@@ -543,13 +543,21 @@ export const getKbParamDefaults = () => request('/kb/param-defaults')
 export const getKbParamTips = () => request('/kb/param-tips')
 
 // 我的产物（模型在回答中生成的可下载文件，按用户归属；url 为可直接下载的签名地址）
-// projectId 可选：只看某个工作区的产物；传 __unassigned__ 只看没挂工作区的存量产物；不传=全部
-export const listArtifacts = (keyword, projectId) => {
+// 参数：keyword / projectId（__unassigned__=没挂工作区）/ kind / timeRange / expiring / sort，
+// 全部在服务端过滤与排序（产物可能很多，前端筛会把整表拉回来）。
+export const listArtifacts = (params = {}) => {
+  const p = params || {}
   const qs = []
-  if (keyword) qs.push('keyword=' + encodeURIComponent(keyword))
-  if (projectId) qs.push('projectId=' + encodeURIComponent(projectId))
+  if (p.keyword) qs.push('keyword=' + encodeURIComponent(p.keyword))
+  if (p.projectId) qs.push('projectId=' + encodeURIComponent(p.projectId))
+  if (p.kind && p.kind !== 'all') qs.push('kind=' + encodeURIComponent(p.kind))
+  if (p.timeRange && p.timeRange !== 'all') qs.push('timeRange=' + encodeURIComponent(p.timeRange))
+  if (p.expiring) qs.push('expiring=true')
+  if (p.sort) qs.push('sort=' + encodeURIComponent(p.sort))
   return request('/artifact/list' + (qs.length ? '?' + qs.join('&') : ''))
 }
+// 概览：全局口径（数量/占用/7 天内清理/本月新增/各类型数量），不随列表筛选变化
+export const getArtifactStats = () => request('/artifact/stats')
 // ==== 本机执行器：授权码配对 / 目录浏览 / 工作区绑定 ====
 // 执行器在用户电脑上主动长轮询；配对由执行器发起（终端打印链接+6 位码），这里只做确认与目录浏览
 export const listExecutors = () => request('/executor/devices')
@@ -619,6 +627,44 @@ export const downloadProjectFile = async (id, path, filename, dir) => {
 export const updateProject = (id, body) =>
   said(request(`/project/${id}`, { method: 'PUT', body: JSON.stringify(body || {}) }), { k: 'spaces' })
 export const deleteArtifact = id => request(`/artifact/${id}`, { method: 'DELETE' })
+// 重命名显示名：只改展示名（不含扩展名），不改文件名与下载地址；displayName 传空 = 恢复原文件名
+export const renameArtifact = (id, displayName) =>
+  request(`/artifact/${encodeURIComponent(id)}/name`, {
+    method: 'PUT', body: JSON.stringify({ displayName: displayName || '' })
+  })
+// 批量移动产物到同一工作区；projectId 空串 = 摘掉归属
+export const moveArtifactsBatch = (ids, projectId) =>
+  request('/artifact/project-batch', {
+    method: 'PUT', body: JSON.stringify({ ids: ids || [], projectId: projectId || '' })
+  })
+// 批量下载：先校验后开流，成功回 application/zip；失败回 JSON（按正文里的 msg 抛可读错误）。
+// 必须走 fetch 带 Authorization（后端认 JWT，不认 cookie），再落成本地文件。
+export const downloadArtifactsZip = async ids => {
+  const res = await fetch(`${BASE}/artifact/batch-download`, {
+    method: 'POST',
+    headers: authHeaders(),
+    body: JSON.stringify({ ids: ids || [] })
+  })
+  if (!res.ok) {
+    let msg = `下载失败(${res.status})`
+    try {
+      const data = await res.json()
+      if (data && data.msg) msg = data.msg
+    } catch (e) { /* 非 JSON 响应 */ }
+    throw new Error(msg)
+  }
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  const d = new Date()
+  const pad = n => String(n).padStart(2, '0')
+  a.href = url
+  a.download = `我的产物_${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}.zip`
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 2000)
+}
 // 换发产物签名：产物签名 1 小时过期，对话页卡片上的 URL 是 SSE 下发/历史接口里那一份「签好就不变」的，
 // 页面开久后点下载必然 401（「我的产物」页因每次进页面都重签而始终正常）。渲染卡片前调它换一批新签名。
 // 入参是产物 id 而非 url：避免前端能构造任意路径让服务端签名。取不回的（不存在/已删/无权/文件已清理）静默跳过。
@@ -1089,6 +1135,9 @@ export const listAgentVersions = id => request(`/agent/${id}/versions`)
 /** 回滚到历史版本（把该版配置重新应用并落一版新快照，历史不被改写） */
 export const rollbackAgent = (id, version) =>
   request(`/agent/${id}/rollback`, { method: 'POST', body: JSON.stringify({ version }) })
+/** HTTP 工具集导入预览：解析 OpenAPI 3 规格得到操作清单（与保存同一解析器，预览即所见） */
+export const previewAgentHttpTools = spec =>
+  request('/agent/http-tools/preview', { method: 'POST', body: JSON.stringify({ spec }) })
 
 // ==================== 智能体公开分享（发布管理 + 游客通道） ====================
 /** 查询智能体的公开分享配置（未发布返回 enabled=false） */

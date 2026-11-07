@@ -6,6 +6,8 @@ import com.wenqu.ai.util.RequestUser;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -15,7 +17,10 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.servlet.mvc.method.annotation.StreamingResponseBody;
 
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -40,13 +45,27 @@ public class ArtifactController {
     private final ArtifactService artifactService;
 
     @Operation(summary = "我的产物列表",
-            description = "当前用户生成的产物（时间倒序；keyword 匹配文件名）；url 为可直接下载的签名地址。"
-                    + "可选 projectId：只看某个工作区的产物；传 __unassigned__ 只看没挂工作区的存量产物；不传=全部")
+            description = "当前用户生成的产物；keyword 匹配文件名/显示名/说明，url 为可直接下载的签名地址。"
+                    + "可选 projectId（__unassigned__=没挂工作区的存量产物）、kind（page/doc/sheet/image/code/archive/other）、"
+                    + "timeRange（7d/30d/90d/mtd）、expiring（只看 7 天内清理）、"
+                    + "sort（time_desc/time_asc/size_desc/size_asc/name_asc）")
     @Permission("artifact:read")
     @GetMapping("/list")
     public ResultJson list(@RequestParam(value = "keyword", required = false) String keyword,
-                           @RequestParam(value = "projectId", required = false) String projectId) {
-        return ResultJson.ok(artifactService.list(RequestUser.uid(), keyword, projectId));
+                           @RequestParam(value = "projectId", required = false) String projectId,
+                           @RequestParam(value = "kind", required = false) String kind,
+                           @RequestParam(value = "timeRange", required = false) String timeRange,
+                           @RequestParam(value = "expiring", required = false) Boolean expiring,
+                           @RequestParam(value = "sort", required = false) String sort) {
+        return ResultJson.ok(artifactService.list(RequestUser.uid(), keyword, projectId,
+                kind, timeRange, expiring, sort));
+    }
+
+    @Operation(summary = "我的产物概览", description = "全局口径：数量、占用空间、7/30 天内清理、本月新增、各类型数量")
+    @Permission("artifact:read")
+    @GetMapping("/stats")
+    public ResultJson stats() {
+        return ResultJson.ok(artifactService.stats(RequestUser.uid()));
     }
 
     @Operation(summary = "移动产物到其他工作区",
@@ -63,6 +82,70 @@ public class ArtifactController {
         } catch (IllegalArgumentException e) {
             return ResultJson.error(400, e.getMessage());
         }
+    }
+
+    @Operation(summary = "重命名产物显示名",
+            description = "只改 display_name（不含扩展名），不改文件名/存储路径/下载地址；"
+                    + "body: {displayName}，空白 = 恢复原文件名")
+    @Permission("artifact:write")
+    @PutMapping("/{id}/name")
+    public ResultJson rename(@PathVariable("id") String id,
+                             @RequestBody(required = false) Map<String, String> body) {
+        try {
+            String displayName = body == null ? null : body.get("displayName");
+            return ResultJson.ok(artifactService.rename(RequestUser.uid(), id, displayName), "已保存");
+        } catch (IllegalArgumentException e) {
+            return ResultJson.error(400, e.getMessage());
+        }
+    }
+
+    /** 批量移动请求体 */
+    public record BatchMoveReq(List<String> ids, String projectId) {
+    }
+
+    @Operation(summary = "批量移动产物到工作区",
+            description = "body: {ids, projectId}；projectId 空串/__none__ = 摘掉归属。逐条校验归属，"
+                    + "返回 {moved, skipped}，skipped 为不存在/已删除/无权的 id")
+    @Permission("artifact:write")
+    @PutMapping("/project-batch")
+    public ResultJson moveProjectBatch(@RequestBody(required = false) BatchMoveReq req) {
+        if (req == null || req.ids() == null || req.ids().isEmpty()) {
+            return ResultJson.error("未选择要移动的产物");
+        }
+        try {
+            return ResultJson.ok(artifactService.moveProjectBatch(
+                    RequestUser.uid(), req.ids(), req.projectId()), "已移动");
+        } catch (IllegalArgumentException e) {
+            return ResultJson.error(400, e.getMessage());
+        }
+    }
+
+    /**
+     * 批量下载：先校验后开流。成功时回 application/zip，失败（没选中/超限/全部不可取）回 400 JSON。
+     * <p>用 {@link StreamingResponseBody} 逐条写盘，不把整包读进内存。
+     */
+    @Operation(summary = "批量下载产物", description = "body: {ids}；单次 ≤50 个 / ≤100MB。"
+            + "成功回 application/zip，同名条目自动加序号；取不回的单条静默跳过")
+    @Permission("artifact:read")
+    @PostMapping("/batch-download")
+    public ResponseEntity<?> batchDownload(@RequestBody(required = false) BatchDeleteReq req) {
+        if (req == null || req.ids() == null || req.ids().isEmpty()) {
+            return ResponseEntity.badRequest().body(ResultJson.error("未选择要下载的产物"));
+        }
+        ArtifactService.ZipPlan plan;
+        try {
+            plan = artifactService.prepareZip(RequestUser.uid(), req.ids());
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(ResultJson.error(e.getMessage()));
+        }
+        String filename = "artifacts-" + LocalDateTime.now()
+                .format(DateTimeFormatter.ofPattern("yyyyMMdd-HHmm")) + ".zip";
+        StreamingResponseBody body = out -> artifactService.writeZip(plan, out);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_TYPE, "application/zip")
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
+                .header(HttpHeaders.CACHE_CONTROL, "no-store")
+                .body(body);
     }
 
     @Operation(summary = "删除产物", description = "删除自己的产物（同时删除文件）；删他人的返回 403")

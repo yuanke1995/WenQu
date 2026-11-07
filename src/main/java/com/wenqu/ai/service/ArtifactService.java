@@ -15,24 +15,30 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
+import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 /**
  * 产物交付（present_artifacts 模式）：模型在回答中调用工具生成文件，
@@ -69,6 +75,12 @@ public class ArtifactService {
     private static final int MAX_NAME_LEN = 80;
     /** 产物说明最大长度（列宽 255，留余量） */
     private static final int MAX_DESC_LEN = 200;
+    /** 用户重命名显示名最大长度（列宽 120，留余量） */
+    private static final int MAX_DISPLAY_NAME_LEN = 60;
+    /** 一次打包下载的产物数量上限：再多就该分批，避免一个请求长时间占用服务器 */
+    private static final int MAX_ZIP_ITEMS = 50;
+    /** 一次打包下载的总字节上限（单个产物帽子是 1MB，50 个也远小于此值；此处防历史异常数据） */
+    private static final long MAX_ZIP_BYTES = 100L * 1024 * 1024;
 
     private final AppProperties properties;
     private final ImageUrlSigner imageUrlSigner;
@@ -337,37 +349,137 @@ public class ArtifactService {
     }
 
     /**
-     * 我的产物列表（按 uid 归属，时间倒序；keyword 匹配文件名）。
+     * 我的产物列表（按 uid 归属；keyword 匹配文件名/显示名/说明）。
      * <p>url 已按需签名；expireTime 按当前全局保留天数动态算出。
      *
      * @param projectId 可选：只看某个工作区的产物。{@code null}=不限工作区（现状行为）；
      *                  传 {@code "__unassigned__"} 只看没挂工作区的（存量产物）。
      */
     public List<Map<String, Object>> list(String uid, String keyword, String projectId) {
+        return list(uid, keyword, projectId, null, null, null, null);
+    }
+
+    /** 保持原签名（工作区过滤是新增可选维度，不该逼所有调用方改） */
+    public List<Map<String, Object>> list(String uid, String keyword) {
+        return list(uid, keyword, null);
+    }
+
+    /**
+     * 「我的产物」完整查询：关键词 + 工作区 + 类型 + 时间范围 + 即将清理 + 排序。
+     *
+     * <p>过滤一律在服务端做（产物可能很多，前端筛会把整表拉回来）。排序只接受白名单，
+     * 不把前端字符串拼进 ORDER BY。
+     *
+     * @param kind        page/doc/sheet/image/code/archive/other；空或 all = 不限
+     * @param timeRange   7d/30d/90d/mtd；空或 all = 不限
+     * @param expiring    只看 7 天内将被清理的产物（保留天数 ≤0 时天然为空）
+     * @param sort        time_desc（默认）/ time_asc / size_desc / size_asc / name_asc
+     */
+    public List<Map<String, Object>> list(String uid, String keyword, String projectId,
+                                          String kind, String timeRange, Boolean expiring, String sort) {
         if (uid == null || uid.isBlank()) return List.of();
         int retentionDays = assetRetentionDays();
+        if (Boolean.TRUE.equals(expiring) && retentionDays <= 0) return List.of();
+        LocalDateTime now = LocalDateTime.now();
         LambdaQueryWrapper<Artifact> w = new LambdaQueryWrapper<Artifact>()
                 .eq(Artifact::getUid, uid)
-                .eq(Artifact::getDeleted, 0)
-                .orderByDesc(Artifact::getCreateTime);
+                .eq(Artifact::getDeleted, 0);
+
         if (keyword != null && !keyword.isBlank()) {
-            w.like(Artifact::getFilename, keyword.trim());
+            String kw = keyword.trim();
+            // 说明里常有关键词，只搜文件名会漏；三者按「或」组合，外层仍与本查询其它条件是「与」
+            w.and(q -> q.like(Artifact::getFilename, kw)
+                    .or().like(Artifact::getDisplayName, kw)
+                    .or().like(Artifact::getDescription, kw));
         }
         if (UNASSIGNED_PROJECT.equals(projectId)) {
             w.isNull(Artifact::getProjectId);
         } else if (projectId != null && !projectId.isBlank()) {
             w.eq(Artifact::getProjectId, projectId);
         }
-        List<Map<String, Object>> out = new ArrayList<>();
-        for (Artifact row : artifactMapper.selectList(w)) {
-            out.add(toDto(row, retentionDays));
+        if (kind != null && !kind.isBlank() && !"all".equalsIgnoreCase(kind)) {
+            String k = kind.trim().toLowerCase(Locale.ROOT);
+            if ("other".equals(k)) {
+                // ext 为 NULL 或不在任何已知分组里；NOT IN 对 NULL 不成立，所以先显式兜住 NULL
+                w.and(q -> q.isNull(Artifact::getExt)
+                        .or().notIn(Artifact::getExt, PreviewTypes.ARTIFACT_KIND_EXTS));
+            } else {
+                Set<String> exts = PreviewTypes.extsOfKind(k);
+                if (exts.isEmpty()) return List.of();
+                w.in(Artifact::getExt, exts);
+            }
+        }
+        LocalDateTime start = timeRangeStart(timeRange, now);
+        if (start != null) w.ge(Artifact::getCreateTime, start);
+        if (Boolean.TRUE.equals(expiring)) {
+            // 到期时间 = create_time + retentionDays；未来 7 天内到期 ⇒ create_time ≤ now+7-retention。
+            // 已过期的（清理任务还没跑到）不算「即将清理」，否则概览数字会一直虚高
+            LocalDateTime earliest = now.minusDays(retentionDays);
+            LocalDateTime deadline = now.plusDays(7).minusDays(retentionDays);
+            w.ge(Artifact::getCreateTime, earliest).le(Artifact::getCreateTime, deadline);
+        }
+
+        String sortKey = sortKey(sort);
+        switch (sortKey) {
+            case "time_asc" -> w.orderByAsc(Artifact::getCreateTime);
+            case "size_desc" -> w.orderByDesc(Artifact::getSize).orderByDesc(Artifact::getCreateTime);
+            case "size_asc" -> w.orderByAsc(Artifact::getSize).orderByDesc(Artifact::getCreateTime);
+            case "name_asc" -> { /* 名称要按显示名（display_name 可能为 NULL），查出后内存排序 */ }
+            default -> w.orderByDesc(Artifact::getCreateTime);
+        }
+
+        List<Artifact> rows = artifactMapper.selectList(w);
+        if ("name_asc".equals(sortKey)) {
+            rows.sort(Comparator.comparing(ArtifactService::displayNameOf, String.CASE_INSENSITIVE_ORDER));
+        }
+        Map<String, String> sessionTitles = sessionTitles(rows);
+        List<Map<String, Object>> out = new ArrayList<>(rows.size());
+        for (Artifact row : rows) {
+            out.add(toDto(row, retentionDays, sessionTitles));
         }
         return out;
     }
 
-    /** 保持原签名（工作区过滤是新增可选维度，不该逼所有调用方改） */
-    public List<Map<String, Object>> list(String uid, String keyword) {
-        return list(uid, keyword, null);
+    /** 时间范围起点；null = 不限 */
+    private static LocalDateTime timeRangeStart(String timeRange, LocalDateTime now) {
+        if (timeRange == null || timeRange.isBlank() || "all".equalsIgnoreCase(timeRange)) return null;
+        return switch (timeRange.trim().toLowerCase(Locale.ROOT)) {
+            case "7d" -> now.minusDays(7);
+            case "30d" -> now.minusDays(30);
+            case "90d" -> now.minusDays(90);
+            case "mtd" -> LocalDate.now().withDayOfMonth(1).atStartOfDay();
+            default -> null;
+        };
+    }
+
+    /** 排序白名单：只认五个枚举，其余一律回落到最新优先 */
+    private static String sortKey(String sort) {
+        if (sort == null) return "time_desc";
+        return switch (sort.trim().toLowerCase(Locale.ROOT)) {
+            case "time_asc", "size_desc", "size_asc", "name_asc" -> sort.trim().toLowerCase(Locale.ROOT);
+            default -> "time_desc";
+        };
+    }
+
+    /** 批量取会话标题：去重后一次 selectBatchIds，避免逐行查会话造成 N+1 */
+    private Map<String, String> sessionTitles(List<Artifact> rows) {
+        Set<String> ids = new HashSet<>();
+        for (Artifact row : rows) {
+            if (row.getSessionId() != null && !row.getSessionId().isBlank()) ids.add(row.getSessionId());
+        }
+        if (ids.isEmpty()) return Map.of();
+        Map<String, String> out = new LinkedHashMap<>();
+        try {
+            for (Session s : sessionMapper.selectBatchIds(ids)) {
+                if (s != null && s.getId() != null) {
+                    out.put(s.getId(), s.getTitle() == null ? "" : s.getTitle());
+                }
+            }
+        } catch (Exception e) {
+            // 标题只是辅助信息；查不到就退化成「来源会话已删除」，不影响列表本身
+            log.warn("[ARTIFACT] 会话标题批量读取失败: {}", e.getMessage());
+        }
+        return out;
     }
 
     /**
@@ -414,6 +526,162 @@ public class ArtifactService {
                 .eq(Artifact::getId, artifactId)
                 .set(Artifact::getProjectId, target));
         log.info("[ARTIFACT] 产物移动工作区 uid={} id={} {} → {}", uid, artifactId, row.getProjectId(), target);
+    }
+
+    /**
+     * 批量移动产物到同一个工作区。逐条复用归属校验，返回 moved/skipped；
+     * 目标工作区先解析一次——目标本身不合法时整批 400，不产生「部分移动」的半成品。
+     */
+    public Map<String, Object> moveProjectBatch(String uid, List<String> ids, String projectId) {
+        if (ids == null || ids.isEmpty()) {
+            throw new IllegalArgumentException("未选择要移动的产物");
+        }
+        projectService.resolveMoveTarget(uid, projectId);   // 目标不合法先 fail-loud
+        int moved = 0;
+        List<String> skipped = new ArrayList<>();
+        for (String id : ids) {
+            try {
+                moveProject(uid, id, projectId);
+                moved++;
+            } catch (RuntimeException e) {
+                skipped.add(id);
+            }
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("moved", moved);
+        out.put("skipped", skipped);
+        return out;
+    }
+
+    /**
+     * 重命名产物：只改 {@code display_name}，不动 filename / objectKey / 签名地址。
+     * <p>空白（null / 空串 / 纯空格）= 清空显示名，回退到原文件名去后缀。
+     */
+    public Map<String, Object> rename(String uid, String artifactId, String displayName) {
+        Artifact row = getOwned(artifactId, uid);
+        if (row == null) throw new IllegalArgumentException("产物不存在或已删除");
+        String name = normalizeDisplayName(displayName, row.getExt());
+        artifactMapper.update(null, new LambdaUpdateWrapper<Artifact>()
+                .eq(Artifact::getId, artifactId)
+                .set(Artifact::getDisplayName, name));
+        row.setDisplayName(name);
+        log.info("[ARTIFACT] 重命名 uid={} id={} displayName={}", uid, artifactId, name);
+        // 返回值带上来源会话标题：调用方若直接用它替换行数据，来源 chip 不会变成「会话已删除」
+        return toDto(row, assetRetentionDays(), sessionTitles(Collections.singletonList(row)));
+    }
+
+    /**
+     * 「我的产物」概览统计：全局口径（不随列表筛选变化）。
+     * <p>一次查出该用户的未删除产物后在内存聚合：数量小、口径与列表完全同源，
+     * 也避免为每个指标各写一条 SQL 后出现「概览说 23、列表共 22」。
+     */
+    public Map<String, Object> stats(String uid) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (uid == null || uid.isBlank()) {
+            out.put("count", 0);
+            out.put("totalSize", 0L);
+            out.put("expiring7", 0);
+            out.put("expiring30", 0);
+            out.put("monthAdded", 0);
+            out.put("byKind", Map.of());
+            return out;
+        }
+        int retentionDays = assetRetentionDays();
+        List<Artifact> rows = artifactMapper.selectList(new LambdaQueryWrapper<Artifact>()
+                .eq(Artifact::getUid, uid)
+                .eq(Artifact::getDeleted, 0));
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime monthStart = LocalDate.now().withDayOfMonth(1).atStartOfDay();
+        long totalSize = 0;
+        int expiring7 = 0;
+        int expiring30 = 0;
+        int monthAdded = 0;
+        Map<String, Integer> byKind = new LinkedHashMap<>();
+        for (String k : List.of("page", "doc", "sheet", "image", "code", "archive", "other")) {
+            byKind.put(k, 0);
+        }
+        for (Artifact row : rows) {
+            totalSize += row.getSize() == null ? 0 : Math.max(0, row.getSize());
+            String kind = PreviewTypes.artifactKindOf(row.getExt());
+            byKind.merge(kind, 1, Integer::sum);
+            LocalDateTime created = row.getCreateTime();
+            if (created == null) continue;
+            if (!created.isBefore(monthStart)) monthAdded++;
+            if (retentionDays > 0) {
+                LocalDateTime expire = created.plusDays(retentionDays);
+                if (!expire.isBefore(now) && !expire.isAfter(now.plusDays(7))) expiring7++;
+                if (!expire.isBefore(now) && !expire.isAfter(now.plusDays(30))) expiring30++;
+            }
+        }
+        out.put("count", rows.size());
+        out.put("totalSize", totalSize);
+        out.put("expiring7", expiring7);
+        out.put("expiring30", expiring30);
+        out.put("monthAdded", monthAdded);
+        out.put("byKind", byKind);
+        return out;
+    }
+
+    /** 打包下载的一条条目（file 已确认存在） */
+    public record ZipItem(Path file, String entryName) {
+    }
+
+    /** 打包下载计划：先校验与收集，再交给流式写出 */
+    public record ZipPlan(List<ZipItem> items, long totalBytes) {
+    }
+
+    /**
+     * 批量下载前置校验：逐条取回属于本人的产物并确认文件仍在磁盘，收集成 ZIP 计划。
+     *
+     * <p><b>先校验后开流</b>：一旦开始写 ZIP 响应头，中途失败只能给用户一个损坏的包；
+     * 所以这里把所有「不存在/已删/无权/文件已清理/超限」都在开流前处理掉。
+     * <p>取不回的条目静默跳过（与 refresh-sign 同一口径，不泄露他人产物是否存在）；
+     * 一个都取不回时抛可读错误，由控制器返回 400。
+     */
+    public ZipPlan prepareZip(String uid, List<String> ids) {
+        if (ids == null || ids.isEmpty()) {
+            throw new IllegalArgumentException("未选择要下载的产物");
+        }
+        if (ids.size() > MAX_ZIP_ITEMS) {
+            throw new IllegalArgumentException("一次最多下载 " + MAX_ZIP_ITEMS + " 个产物，请分批操作");
+        }
+        Path root = baseDir();
+        List<ZipItem> items = new ArrayList<>();
+        Set<String> usedNames = new HashSet<>();
+        long total = 0;
+        for (String id : ids) {
+            if (id == null || id.isBlank()) continue;
+            Artifact row;
+            try {
+                row = getOwned(id, uid);
+            } catch (IllegalArgumentException e) {
+                continue;   // 他人的产物：跳过，不暴露存在性
+            }
+            if (row == null || row.getObjectKey() == null || row.getObjectKey().isBlank()) continue;
+            Path file = root.resolve(row.getObjectKey()).normalize();
+            if (!file.startsWith(root) || !Files.isRegularFile(file)) continue;
+            long size = row.getSize() == null ? 0 : Math.max(0, row.getSize());
+            total += size;
+            if (total > MAX_ZIP_BYTES) {
+                throw new IllegalArgumentException("所选产物超过 100MB 上限，请分批下载");
+            }
+            items.add(new ZipItem(file, uniqueZipName(zipNameOf(row), usedNames)));
+        }
+        if (items.isEmpty()) {
+            throw new IllegalArgumentException("所选产物已不存在或文件已被清理");
+        }
+        return new ZipPlan(items, total);
+    }
+
+    /** 流式写出 ZIP：逐个文件复制，不把整包读进内存 */
+    public void writeZip(ZipPlan plan, OutputStream out) throws IOException {
+        try (ZipOutputStream zip = new ZipOutputStream(out)) {
+            for (ZipItem item : plan.items()) {
+                zip.putNextEntry(new ZipEntry(item.entryName()));
+                Files.copy(item.file(), zip);
+                zip.closeEntry();
+            }
+        }
     }
 
     /** 取单个产物（校验归属，数据按 userId 隔离）。返回 null = 不存在或已删除。 */
@@ -692,14 +960,34 @@ public class ArtifactService {
     }
 
     private Map<String, Object> toDto(Artifact row, int retentionDays) {
+        return toDto(row, retentionDays, null);
+    }
+
+    /**
+     * 列表 DTO。加了三样列表页需要、但库里没有现成列的东西：
+     * displayName（重命名的显示名，没重命名就回退文件名去后缀）、kind（类型分组）、
+     * sessionTitle/sessionExists（来源会话标题与是否还在）。
+     */
+    private Map<String, Object> toDto(Artifact row, int retentionDays, Map<String, String> sessionTitles) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", row.getId());
         m.put("filename", row.getFilename());
+        m.put("originalFilename", row.getFilename());
+        m.put("displayName", displayNameOf(row));
         m.put("ext", row.getExt());
+        m.put("kind", PreviewTypes.artifactKindOf(row.getExt()));
         m.put("preview", PreviewTypes.kindOf(row.getExt()));
         m.put("size", row.getSize());
         m.put("description", row.getDescription() == null ? "" : row.getDescription());
         m.put("sessionId", row.getSessionId());
+        String sid = row.getSessionId();
+        if (sid == null || sid.isBlank() || sessionTitles == null) {
+            m.put("sessionTitle", null);
+            m.put("sessionExists", false);
+        } else {
+            m.put("sessionTitle", sessionTitles.get(sid));
+            m.put("sessionExists", sessionTitles.containsKey(sid));
+        }
         // 工作区归属：null=没挂工作区（存量产物）。前端据此分组；**不**把 null 归进任何工作区，
         // 因为"错误归属"比"没挂工作区"更难纠正（用户没法知道系统把哪份文件分错了）
         m.put("projectId", row.getProjectId());
@@ -709,6 +997,68 @@ public class ArtifactService {
         m.put("expireTime", expireTimeOf(row, retentionDays));
         m.put("url", imageUrlSigner.signUrl("/ai/" + row.getObjectKey()));
         return m;
+    }
+
+    /** 列表展示名：用户重命名优先；否则文件名去掉扩展名（扩展名由类型 chip 单独展示） */
+    private static String displayNameOf(Artifact row) {
+        String dn = row.getDisplayName();
+        if (dn != null && !dn.isBlank()) return dn;
+        return stripExt(row.getFilename());
+    }
+
+    /** 去掉最后一个扩展名；无扩展名或点是首字符时原样返回 */
+    private static String stripExt(String name) {
+        if (name == null) return "";
+        int dot = name.lastIndexOf('.');
+        return dot > 0 ? name.substring(0, dot) : name;
+    }
+
+    /**
+     * 重命名显示名：去控制字符、去尾部扩展名（前端不允许改扩展名，用户粘进来时自动剥掉）、限长。
+     * 返回 null = 清空显示名（回退原文件名）。
+     */
+    private static String normalizeDisplayName(String raw, String ext) {
+        if (raw == null) return null;
+        String s = raw.replaceAll("\\p{Cntrl}", "").trim();
+        if (s.isEmpty()) return null;
+        if (ext != null && !ext.isBlank()) {
+            String suffix = "." + ext.toLowerCase(Locale.ROOT);
+            if (s.toLowerCase(Locale.ROOT).endsWith(suffix)) {
+                s = s.substring(0, s.length() - suffix.length()).trim();
+            }
+        }
+        if (s.isEmpty()) return null;
+        return s.length() <= MAX_DISPLAY_NAME_LEN ? s : s.substring(0, MAX_DISPLAY_NAME_LEN);
+    }
+
+    /** ZIP 条目名：显示名（或原名去后缀）+ 扩展名；路径分隔符/控制字符替换成下划线 */
+    private static String zipNameOf(Artifact row) {
+        String base = row.getDisplayName() != null && !row.getDisplayName().isBlank()
+                ? row.getDisplayName() : stripExt(row.getFilename());
+        String ext = row.getExt();
+        String name = base + (ext == null || ext.isBlank() ? "" : "." + ext);
+        name = name.replaceAll("[/\\\\:*?\"<>|\\x00-\\x1f]", "_").trim();
+        if (name.isEmpty() || ".".equals(name) || "..".equals(name)) return "artifact";
+        return name.length() <= 120 ? name : name.substring(0, 120);
+    }
+
+    /** 同名条目自动加 (1)(2)…，避免解压时互相覆盖 */
+    private static String uniqueZipName(String name, Set<String> used) {
+        if (!used.contains(name)) {
+            used.add(name);
+            return name;
+        }
+        int dot = name.lastIndexOf('.');
+        String base = dot > 0 ? name.substring(0, dot) : name;
+        String ext = dot > 0 ? name.substring(dot) : "";
+        int n = 1;
+        String candidate;
+        do {
+            candidate = base + "(" + n + ")" + ext;
+            n++;
+        } while (used.contains(candidate));
+        used.add(candidate);
+        return candidate;
     }
 
     /** 预计清理时间（ISO 字符串）；永不清理或无创建时间返回 null。 */

@@ -44,6 +44,55 @@ public final class PreviewTypes {
     /** 压缩包：只下载不预览 */
     public static final Set<String> ARCHIVE_EXTS = Set.of("zip");
 
+    // ==================== 「我的产物」筛选分组（与 preview 的渲染档不是一回事） ====================
+    // preview 回答「怎么打开」，kind 回答「它属于哪一类」。列表的图标/颜色与类型筛选都认这一份，
+    // 前端不再自己抄一张扩展名表——新增类型只改这里。
+    /** 表格类：分隔符表与 Office 表格 */
+    public static final Set<String> SHEET_KIND_EXTS = Set.of("csv", "tsv", "xlsx", "xls", "ods");
+    /** 文档类：文本、Markdown、PDF 与 Office 文档 */
+    public static final Set<String> DOC_KIND_EXTS = Set.of(
+            "md", "markdown", "txt", "log", "pdf", "doc", "docx", "ppt", "pptx", "rtf", "odt");
+    /** 代码/结构化数据类：JSON、YAML、源码与配置 */
+    public static final Set<String> CODE_KIND_EXTS = Set.of(
+            "json", "yaml", "yml", "xml", "toml", "ini", "conf", "properties",
+            "py", "js", "mjs", "ts", "jsx", "tsx", "java", "go", "rs", "sql", "sh", "bash", "zsh",
+            "css", "scss", "vue");
+    /** 压缩包类：交付支持 zip，其余为历史数据兜底 */
+    public static final Set<String> ARCHIVE_KIND_EXTS = Set.of("zip", "gz", "tar", "7z", "rar", "bz2");
+    /** 所有已归类的扩展名；「其他」筛选用它做补集 */
+    public static final Set<String> ARTIFACT_KIND_EXTS = union(
+            PAGE_EXTS, IMAGE_EXTS, SHEET_KIND_EXTS, DOC_KIND_EXTS, CODE_KIND_EXTS, ARCHIVE_KIND_EXTS);
+
+    /**
+     * 「我的产物」类型分组：page / doc / sheet / image / code / archive / other。
+     * <p>只给列表的图标、颜色与筛选用；预览用 {@link #kindOf}。
+     */
+    public static String artifactKindOf(String ext) {
+        if (ext == null || ext.isBlank()) return "other";
+        String e = ext.toLowerCase(java.util.Locale.ROOT);
+        if (PAGE_EXTS.contains(e)) return "page";
+        if (IMAGE_EXTS.contains(e)) return "image";
+        if (SHEET_KIND_EXTS.contains(e)) return "sheet";
+        if (ARCHIVE_KIND_EXTS.contains(e)) return "archive";
+        if (DOC_KIND_EXTS.contains(e)) return "doc";
+        if (CODE_KIND_EXTS.contains(e)) return "code";
+        return "other";
+    }
+
+    /** 某个 kind 对应的扩展名集合；空集 = 未知类型（调用方按「无结果」处理） */
+    public static Set<String> extsOfKind(String kind) {
+        if (kind == null) return Set.of();
+        return switch (kind.toLowerCase(java.util.Locale.ROOT)) {
+            case "page" -> PAGE_EXTS;
+            case "doc" -> DOC_KIND_EXTS;
+            case "sheet" -> SHEET_KIND_EXTS;
+            case "image" -> IMAGE_EXTS;
+            case "code" -> CODE_KIND_EXTS;
+            case "archive" -> ARCHIVE_KIND_EXTS;
+            default -> Set.of();
+        };
+    }
+
     /** 模型能写成文本产物的类型：可读文本 + 网页 */
     public static final Set<String> TEXT_ARTIFACT_EXTS = union(READABLE_EXTS, PAGE_EXTS);
     /** 沙盒里能交付成文件产物的类型：文本 + 图片 + PDF + Office + 压缩包 */

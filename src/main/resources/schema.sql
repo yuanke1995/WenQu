@@ -667,6 +667,7 @@ CREATE TABLE IF NOT EXISTS `c_ai_artifact` (
     `session_id`  VARCHAR(64)  DEFAULT NULL COMMENT '产生该产物的会话（可空：会话清理后成果仍归人）',
     `project_id`  VARCHAR(64)  DEFAULT NULL COMMENT '所属工作区（c_ai_project.id；由 session_id 反推写入，NULL=没挂工作区。删工作区时置 NULL 而不删行——"成果归人"这条设计意图不许被级联删除破坏）',
     `filename`    VARCHAR(120) NOT NULL COMMENT '产物文件名（已净化，含扩展名）',
+    `display_name` VARCHAR(120) DEFAULT NULL COMMENT '用户重命名后的显示名（不含扩展名；不改 filename/object_key）',
     `ext`         VARCHAR(10)  DEFAULT NULL COMMENT '扩展名（小写，无点）',
     `size`        INT          DEFAULT 0 COMMENT '字节数',
     `object_key`  VARCHAR(255) NOT NULL COMMENT '存储相对路径 artifacts/{uid}/{yyyyMM}/{id}_{name}',
