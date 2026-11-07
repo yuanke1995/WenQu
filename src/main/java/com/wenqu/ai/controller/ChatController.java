@@ -521,7 +521,15 @@ public class ChatController {
         boolean ok = frameworkSessions.respond(approvalId, approved,
                 approved ? null : String.valueOf(body.get("reason")))
                 || hitl.resolveApproval(approvalId, approved, com.wenqu.ai.util.RequestUser.uid());
-        if (!ok) return ResultJson.error("审批请求不存在或已失效（可能已超时）");
+        if (!ok) {
+            // 行还是 PENDING 说明只是这一次没投递进去（同一会话上一张卡刚批完、子轮正在执行），
+            // 卡片仍有效，别报成「已失效」让用户以为白点了
+            var rec = hitl.getApproval(approvalId, com.wenqu.ai.util.RequestUser.uid());
+            if (rec != null && "PENDING".equals(rec.getStatus())) {
+                return ResultJson.error("这一步还在执行上一步，请稍后再点一次（卡片仍有效）");
+            }
+            return ResultJson.error("审批请求不存在或已失效（可能已超时）");
+        }
         return ResultJson.ok(approved ? "已批准" : "已拒绝");
     }
 

@@ -642,18 +642,56 @@ public class FrameworkSessions {
     }
 
     private boolean respondLocal(String approvalId, boolean approved, String reason) {
-        String sessionKey = pendingOwner.remove(approvalId);
+        // 归属不先摘：会话正忙导致这次没投递出去时，用户再点一次还要靠它找回这条会话
+        String sessionKey = pendingOwner.get(approvalId);
         Held h = sessionKey == null ? null : held.get(sessionKey);
         if (h == null) return resume(approvalId, "approval", approved, reason, null) != null;
         // 框架自己找回待办所属的原任务与工具调用并安排接续执行，这里不拼工具 ID、也不再调 resume
-        AgentSession.Task resumed = h.session().respond(approvalId,
-                approved ? io.agentscope.harness.agent.session.SessionAnswer.approve()
-                        : io.agentscope.harness.agent.session.SessionAnswer.reject(reason));
+        AgentSession.Task resumed;
+        try {
+            resumed = respondWhenIdle(() -> h.session().respond(approvalId,
+                    approved ? io.agentscope.harness.agent.session.SessionAnswer.approve()
+                            : io.agentscope.harness.agent.session.SessionAnswer.reject(reason)));
+        } catch (IllegalStateException busy) {
+            log.warn("[agentx] 裁决未投递：会话仍在执行上一步，卡片保留可重试 id={} session={}: {}",
+                    approvalId, sessionKey, busy.getMessage());
+            return false;
+        }
+        pendingOwner.remove(approvalId);
         hitl.resolveFrameworkPending(approvalId, approved ? "APPROVED" : "REJECTED", null, reason);
         log.info("[agentx] 待办已答复 requestId={} approved={} → 接续任务={}",
                 approvalId, approved, resumed == null ? "无" : resumed.commandId());
         ensureFollowing(approvalId);
         return resumed != null;
+    }
+
+    /**
+     * 等会话空闲再投递一次裁决。
+     * <p>为什么需要等：框架的 {@code AgentSession.respond} 要求会话空闲（{@code requireIdle}）。
+     * 同一会话并行挂着多张待办时，用户先批一张、子轮立刻开跑，紧接着批第二张就会撞上
+     * 「Wait for the current execution to stop」——线上实测点了两张挨着的审批卡，
+     * 第二张直接 500。这里在繁忙时短暂重试：执行通常只是在跑上一步的工具，几秒内就会回到等人状态。
+     * <p>超时仍繁忙就抛回给调用方，由它返回「稍后重试」而不是把卡片作废（待办行保持 PENDING）。
+     */
+    private static AgentSession.Task respondWhenIdle(java.util.function.Supplier<AgentSession.Task> call) {
+        long deadline = System.currentTimeMillis() + 8_000L;
+        long waitMs = 100L;
+        while (true) {
+            try {
+                return call.get();
+            } catch (IllegalStateException busy) {
+                String m = busy.getMessage();
+                boolean idleGuard = m != null && m.contains("current execution to stop");
+                if (!idleGuard || System.currentTimeMillis() >= deadline) throw busy;
+                try {
+                    Thread.sleep(waitMs);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    throw busy;
+                }
+                waitMs = Math.min(400L, waitMs * 2);
+            }
+        }
     }
 
     /**
@@ -667,11 +705,19 @@ public class FrameworkSessions {
     }
 
     private boolean respondAskLocal(String askId, String answerText) {
-        String sessionKey = pendingOwner.remove(askId);
+        String sessionKey = pendingOwner.get(askId);
         Held h = sessionKey == null ? null : held.get(sessionKey);
         if (h == null) return resume(askId, "ask", true, null, answerText) != null;
-        AgentSession.Task resumed = h.session().respond(askId,
-                io.agentscope.harness.agent.session.SessionAnswer.text(answerText));
+        AgentSession.Task resumed;
+        try {
+            resumed = respondWhenIdle(() -> h.session().respond(askId,
+                    io.agentscope.harness.agent.session.SessionAnswer.text(answerText)));
+        } catch (IllegalStateException busy) {
+            log.warn("[agentx] 提问答复未投递：会话仍在执行上一步，卡片保留可重试 askId={} session={}: {}",
+                    askId, sessionKey, busy.getMessage());
+            return false;
+        }
+        pendingOwner.remove(askId);
         hitl.resolveFrameworkPending(askId, "ANSWERED", null, answerText);
         log.info("[agentx] 提问已答复 askId={} → 接续任务={}", askId, resumed.commandId());
         ensureFollowing(askId);
@@ -700,7 +746,6 @@ public class FrameworkSessions {
 
     private boolean respondPlanLocal(String planApprovalId, boolean approved, String reason, String outcome) {
         String sessionKey = ownerOf(planApprovalId);
-        pendingOwner.remove(planApprovalId);
         Held live = sessionKey == null ? null : held.get(sessionKey);
         String why = reason == null || reason.isBlank() ? "用户未批准这版计划" : reason;
         if (live == null) {
@@ -708,13 +753,21 @@ public class FrameworkSessions {
             // （原写法在 remove 之后再回查 pendingOwner，取到的永远是空串——终态存进空键，
             //  引擎按会话键取不到，卡片就在「已拒绝」之后仍挂着「等待中」）
             if (sessionKey == null || resume(planApprovalId, "plan", approved, why, null) == null) return false;
+            pendingOwner.remove(planApprovalId);
             planOutcomes.put(sessionKey, outcome == null ? "reject" : outcome);
             return true;
         }
         Held h = live;
-        h.session().respond(planApprovalId, approved
-                ? io.agentscope.harness.agent.session.SessionAnswer.approve()
-                : io.agentscope.harness.agent.session.SessionAnswer.reject(why));
+        try {
+            respondWhenIdle(() -> h.session().respond(planApprovalId, approved
+                    ? io.agentscope.harness.agent.session.SessionAnswer.approve()
+                    : io.agentscope.harness.agent.session.SessionAnswer.reject(why)));
+        } catch (IllegalStateException busy) {
+            log.warn("[agentx] 计划裁决未投递：会话仍在执行上一步，卡片保留可重试 id={} session={}: {}",
+                    planApprovalId, sessionKey, busy.getMessage());
+            return false;
+        }
+        pendingOwner.remove(planApprovalId);
         hitl.resolveFrameworkPending(planApprovalId, approved ? "APPROVED"
                 : "supersede".equals(outcome) ? "SUPERSEDED" : "REJECTED", null, why);
         planOutcomes.put(sessionKey, outcome == null ? "reject" : outcome);
