@@ -2053,3 +2053,42 @@ export const searchToolOutput = (spillId, q) =>
 export const getSessionEvents = (sid, turns = 5, turn = '') =>
   request(`/session/${encodeURIComponent(sid)}/events?turns=${encodeURIComponent(turns)}`
     + (turn ? `&turn=${encodeURIComponent(turn)}` : ''), { silentForbidden: true })
+
+// ==================== 智能体评测与发布门禁（/agent-eval） ====================
+/** 评测总览：可见智能体逐行门禁状态 + 汇总统计 + 近 6 周通过率趋势 + 最近回归 */
+export const agentEvalSummary = () => request('/agent-eval/summary', { timeout: 60000 })
+/** 套件与用例（无套件时 suite 为 null = 未评测态） */
+export const agentEvalSuite = agentId => request(`/agent-eval/agents/${encodeURIComponent(agentId)}/suite`)
+/** 创建/更新套件设置（门槛/通过分/启停/名称） */
+export const agentEvalSaveSuite = (agentId, body) =>
+  request(`/agent-eval/agents/${encodeURIComponent(agentId)}/suite`, { method: 'POST', body: JSON.stringify(body || {}) })
+/** 批量维护用例：{add:[...], update:[...], delete:[id]} */
+export const agentEvalMutateCases = (agentId, body) =>
+  request(`/agent-eval/agents/${encodeURIComponent(agentId)}/cases`, { method: 'POST', body: JSON.stringify(body) })
+/** 从会话采样生成用例：{count, onlyBad}；差评轮次优先，同问题去重 */
+export const agentEvalGenerateCases = (agentId, body) =>
+  request(`/agent-eval/agents/${encodeURIComponent(agentId)}/cases/generate`, { method: 'POST', body: JSON.stringify(body || {}) })
+/** 启动回归：{caseIds?, trigger?, allowSideEffects?}；默认跑全部启用用例（评测只读，需人工确认的工具自动拒绝） */
+export const agentEvalStartRun = (agentId, body) =>
+  request(`/agent-eval/agents/${encodeURIComponent(agentId)}/runs`, { method: 'POST', body: JSON.stringify(body || {}), timeout: 60000 })
+/** 运行历史（分页） */
+export const agentEvalRuns = (agentId, page = 1, size = 20) =>
+  request(`/agent-eval/agents/${encodeURIComponent(agentId)}/runs?page=${page}&size=${size}`)
+/** 运行详情（逐条结果 + 期望引用标题对照；running 时按 done/total 展示进度） */
+export const agentEvalRun = runId =>
+  request(`/agent-eval/runs/${encodeURIComponent(runId)}`, { timeout: 60000 })
+/** 取消运行（已完成用例结果保留） */
+export const agentEvalCancelRun = runId =>
+  request(`/agent-eval/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' })
+/** 把某次成功运行设为「较上版」的比较基线 */
+export const agentEvalSetBaseline = (agentId, runId) =>
+  request(`/agent-eval/agents/${encodeURIComponent(agentId)}/set-baseline`, { method: 'POST', body: JSON.stringify({ runId }) })
+/** 两次运行对比：A/B 逐用例变化（变好/变差/仅B失败/持平）+ 结论 */
+export const agentEvalCompare = (agentId, runA, runB) =>
+  request(`/agent-eval/agents/${encodeURIComponent(agentId)}/compare?runA=${encodeURIComponent(runA)}&runB=${encodeURIComponent(runB)}`, { timeout: 60000 })
+/** 门禁状态（五态：none/unevaluated/changed/running/pass/below） */
+export const agentEvalGate = agentId =>
+  request(`/agent-eval/agents/${encodeURIComponent(agentId)}/gate`)
+/** 保存前检查：body = 智能体保存 payload 原样透传，返回门禁状态 + 本次保存的字段级变更清单（不落数据） */
+export const agentEvalGateCheck = (agentId, payload) =>
+  request(`/agent-eval/agents/${encodeURIComponent(agentId)}/gate`, { method: 'POST', body: JSON.stringify(payload || {}), timeout: 60000 })

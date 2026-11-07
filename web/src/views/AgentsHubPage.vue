@@ -29,6 +29,7 @@ import McpPanel from './McpPanel.vue'
 import ScheduledPanel from './ScheduledPanel.vue'
 import WorkflowPanel from './WorkflowPanel.vue'
 import SkillsPage from './SkillsPage.vue'
+import AgentEvalPage from './AgentEvalPage.vue'
 import { ensureAuth } from '../utils/auth'
 
 /** tabKey → 组件。菜单表不知道组件的存在，这张表是数据与视图之间唯一的桥 */
@@ -38,7 +39,8 @@ const TAB_COMPONENTS = {
   skills: SkillsPage,
   mcp: McpPanel,
   workflow: WorkflowPanel,
-  scheduled: ScheduledPanel
+  scheduled: ScheduledPanel,
+  eval: AgentEvalPage
 }
 
 /** 从 tab 菜单的 path（/agents?tab=xxx）解析组件映射 key */

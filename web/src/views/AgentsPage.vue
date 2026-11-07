@@ -127,6 +127,9 @@
               <star-outlined />
             </button>
           </a-tooltip>
+          <button v-if="editingId" class="app-btn ghost small" @click="openEvalTab">
+            <experiment-outlined style="margin-right:4px" />评测
+          </button>
           <button v-if="editingId" class="app-btn ghost small" @click="openVersions">
             <history-outlined style="margin-right:4px" />历史版本
           </button>
@@ -462,6 +465,9 @@
       </a-spin>
     </a-drawer>
 
+    <!-- 保存前检查（评测门禁，hint 口径）：有评测集且本次有变更/低于门槛时才弹；无评测集静默直存 -->
+    <EvalGateModal v-model:open="gateOpen" :info="gateInfo" :saving="saving" @confirm="onGateConfirm" />
+
     <!-- 公开分享（/s/{token} 免登录对话 + iframe 嵌入 + MCP 端点）
          结构：状态卡（一个总开关说清"发布没发布"）→ 游客能力（模型 / MCP）→ 分发方式（Tab 三选一）。
          此前把链接、iframe、MCP 三段形态连同四段说明文字平铺一列，弹窗被撑到一屏半、
@@ -738,14 +744,15 @@ import {
   FileSearchOutlined, CalculatorOutlined, FileDoneOutlined, AppstoreOutlined, ApiOutlined,
   PartitionOutlined, GlobalOutlined, HistoryOutlined, DownOutlined,
   AimOutlined,
-  SettingOutlined, EditOutlined,
+  SettingOutlined, EditOutlined, ExperimentOutlined,
   CopyOutlined, ExportOutlined, LinkOutlined, ExclamationCircleOutlined
 } from '@ant-design/icons-vue'
 import { listAgents, createAgent, updateAgent, deleteAgent, batchDeleteAgents, setAgentDefault, listKnowledgeBases,
          listAvailableSkills, getMcpStatus, listSubAgents, getToolCatalog, getPermissionPresets,
          getAgentConfigDefaults,
          getAgentPublish, publishAgent, revokeAgentPublish, listWorkflows, createWorkflowFromAgent,
-         listAgentVersions, rollbackAgent } from '../api'
+         listAgentVersions, rollbackAgent, agentEvalGateCheck, agentEvalStartRun } from '../api'
+import EvalGateModal from '../components/agent/EvalGateModal.vue'
 import ProviderIcon from '../components/ProviderIcon.vue'
 import ModelSelect from '../components/ModelSelect.vue'
 import AgentAvatar from '../components/AgentAvatar.vue'
@@ -1931,6 +1938,31 @@ const save = async () => {
       payload[c.listKey] = null
     }
   }
+  // 保存前门禁（评测线，hint 口径）：有评测集且「有变更未评测 / 低于门槛」时先弹检查弹窗；
+  // 无评测集、查询失败、非编辑态一律静默直存——门禁永远不能挡住既有保存路径
+  if (editingId.value) {
+    try {
+      const g = await agentEvalGateCheck(editingId.value, payload)
+      if (g.success && g.data?.hasSuite) {
+        const info = g.data
+        if (info.gateMode === 'block' && info.gate === 'below') {
+          message.error('门禁：该智能体当前评测低于门槛，保存被拒绝（管理员可在设置页调整 agentEval.gateMode）')
+          return
+        }
+        if ((info.changes?.length || 0) > 0 || info.gate === 'below') {
+          gateInfo.value = info
+          gatePayload.value = payload
+          gateOpen.value = true
+          return
+        }
+      }
+    } catch (e) { /* 门禁查询失败不拦保存 */ }
+  }
+  await doSaveNow(payload)
+}
+
+/** 保存主体（门禁弹窗的两个动作与直接保存共用同一条路径） */
+const doSaveNow = async payload => {
   saving.value = true
   try {
     const r = editingId.value ? await updateAgent(editingId.value, payload) : await createAgent(payload)
@@ -1938,9 +1970,42 @@ const save = async () => {
       message.success(editingId.value ? '已保存' : '已创建')
       editing.value = false
       await reload()
+      return true
     } else message.error(r.msg || '保存失败')
   } catch (e) { message.error(e.message || '保存失败') }
   finally { saving.value = false }
+  return false
+}
+
+// ==================== 保存前检查（评测门禁） ====================
+const gateOpen = ref(false)
+const gateInfo = ref(null)
+const gatePayload = ref(null)
+
+/** 弹窗动作：save=仍然保存；saveAndRun=保存成功后立即以 gate 触发一次回归并跳评测详情 */
+const onGateConfirm = async action => {
+  const payload = gatePayload.value
+  gateOpen.value = false
+  gateInfo.value = null
+  if (!payload) return
+  const agentId = editingId.value
+  const ok = await doSaveNow(payload)
+  gatePayload.value = null
+  if (ok && action === 'saveAndRun' && agentId) {
+    try {
+      const r = await agentEvalStartRun(agentId, { trigger: 'gate' })
+      if (r.success) {
+        message.success('回归已启动，正在转到评测详情')
+        router.push({ path: '/agents', query: { tab: 'eval', agent: agentId } })
+      } else message.error(r.msg || '回归启动失败（配置已保存）')
+    } catch (e) { message.error(e.message || '回归启动失败（配置已保存）') }
+  }
+}
+
+/** 页头「评测」：跳到评测页签的该智能体详情 */
+const openEvalTab = () => {
+  if (!editingId.value) return
+  router.push({ path: '/agents', query: { tab: 'eval', agent: editingId.value } })
 }
 
 const doDelete = async id => {
