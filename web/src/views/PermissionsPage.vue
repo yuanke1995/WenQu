@@ -140,128 +140,148 @@
       </div>
 
       <!-- ==================== 接口 ==================== -->
-      <div v-else-if="view === 'apis'" class="pg-api-layout">
-        <aside class="pg-rail">
-          <div class="pg-rail-title">状态</div>
-          <button v-for="f in API_STATUS" :key="f.key" type="button" class="pg-rail-row"
-                  :class="{ on: apiStatus === f.key }" @click="apiStatus = f.key">
-            <span>{{ f.label }}</span><span class="pg-rail-n">{{ f.count() }}</span>
-          </button>
-          <div class="pg-rail-title">按业务模块</div>
-          <button type="button" class="pg-rail-row" :class="{ on: !apiModule }" @click="apiModule = ''">
-            <span>全部模块</span><span class="pg-rail-n">{{ apis.length }}</span>
-          </button>
-          <button v-for="m in moduleOptions" :key="m" type="button" class="pg-rail-row"
-                  :class="{ on: apiModule === m }" @click="apiModule = m">
-            <span class="pg-ellipsis">{{ m }}</span><span class="pg-rail-n">{{ moduleCount(m) }}</span>
-          </button>
-        </aside>
-
-        <div class="app-card pg-card pg-card-flush">
-          <div class="app-list-bar in-card">
+      <div v-else-if="view === 'apis'" class="app-card pg-card pg-card-flush">
+        <div class="app-list-bar in-card pg-api-bar">
+          <div class="pg-seg" role="tablist" aria-label="按治理状态筛选">
+            <button v-for="f in API_STATUS" :key="f.key" type="button" class="pg-seg-item"
+                    :class="{ on: apiStatus === f.key, warn: f.key === 'problem' && f.count() > 0 }"
+                    role="tab" :aria-selected="apiStatus === f.key" @click="apiStatus = f.key">
+              {{ f.label }}<span class="pg-seg-n">{{ f.count() }}</span>
+            </button>
+          </div>
+          <div class="pg-spacer"></div>
+          <div class="pg-api-tools">
             <a-input v-model:value="apiKeyword" allow-clear size="small" class="pg-search"
                      placeholder="搜索路径 / 接口名 / 授权点">
               <template #prefix><search-outlined class="pg-search-ic" /></template>
             </a-input>
-            <div class="pg-spacer"></div>
+            <a-select v-model:value="apiModule" size="small" show-search class="pg-module-select"
+                      :options="moduleSelectOptions" option-filter-prop="label" placeholder="全部模块" />
             <button class="app-btn ghost" type="button" @click="loadApis">刷新</button>
             <button class="app-btn" type="button" @click="openApiCreate"><plus-outlined /> 登记接口</button>
           </div>
+        </div>
 
-          <a-spin :spinning="apisLoading">
-            <a-table :data-source="pagedApis" :row-key="r => r.id" size="middle" :pagination="false"
-                     :row-selection="{ selectedRowKeys: selectedApiIds, onChange: onSelectApis }">
-              <a-table-column title="方法" key="method" width="82">
-                <template #default="{ record }">
-                  <span class="method-pill" :class="'m-' + (record.method || 'ALL').toLowerCase()">{{ record.method }}</span>
-                </template>
-              </a-table-column>
-              <a-table-column title="路径" key="path">
-                <template #default="{ record }"><code class="pg-path">{{ record.path }}</code></template>
-              </a-table-column>
-              <a-table-column title="名称" key="name" width="150">
-                <template #default="{ record }">
-                  <span v-if="record.name" class="pg-name">{{ record.name }}</span>
-                  <span v-else class="pg-none">—</span>
-                </template>
-              </a-table-column>
-              <a-table-column title="授权点" key="perm" width="170">
-                <template #default="{ record }">
-                  <template v-if="record.permissionCode">
+        <a-spin :spinning="apisLoading">
+          <a-table :data-source="pagedApis" :row-key="r => r.id" size="middle" :pagination="false"
+                   :row-selection="{ selectedRowKeys: selectedApiIds, onChange: onSelectApis }">
+            <a-table-column title="方法" key="method" width="78">
+              <template #default="{ record }">
+                <span class="method-pill" :class="'m-' + (record.method || 'ALL').toLowerCase()">{{ record.method }}</span>
+              </template>
+            </a-table-column>
+            <a-table-column title="接口" key="iface">
+              <template #default="{ record }">
+                <div class="pg-iface">
+                  <code class="pg-path" :title="record.path">{{ record.path }}</code>
+                  <span v-if="record.builtin !== 1" class="app-pill violet pg-iface-src">手工</span>
+                </div>
+                <div v-if="record.name" class="pg-iface-sub">{{ record.name }}</div>
+              </template>
+            </a-table-column>
+            <a-table-column title="授权点" key="perm" width="156">
+              <template #default="{ record }">
+                <template v-if="record.permissionCode">
+                  <a-tooltip :title="record.permissionCode">
                     <b class="pg-perm-name">{{ permTitle(record.permissionCode) }}</b>
-                    <div><code class="pg-code">{{ record.permissionCode }}</code></div>
-                  </template>
-                  <span v-else class="app-pill warn">未标注</span>
+                  </a-tooltip>
+                  <div class="pg-perm-sub">
+                    <template v-if="permRolesFailed">
+                      <button class="app-link-btn" @click="loadPermRoles">角色反查失败 · 重试</button>
+                    </template>
+                    <template v-else-if="!permRolesReady">
+                      <span class="pg-none">读取中…</span>
+                    </template>
+                    <template v-else-if="rolesOfPerm(record.permissionCode).length">
+                      <span class="pg-role-chip">{{ rolesOfPerm(record.permissionCode)[0] }}</span>
+                      <span v-if="rolesOfPerm(record.permissionCode).length > 1" class="pg-role-chip more">
+                        +{{ rolesOfPerm(record.permissionCode).length - 1 }}
+                      </span>
+                    </template>
+                    <span v-else class="pg-none">未授予角色</span>
+                  </div>
                 </template>
-              </a-table-column>
-              <a-table-column title="已授权角色" key="roles" width="150">
-                <template #default="{ record }">
-                  <template v-if="permRolesFailed">
-                    <button class="app-link-btn" @click="loadPermRoles">取数失败 · 重试</button>
+                <span v-else class="app-pill warn">未标注</span>
+              </template>
+            </a-table-column>
+            <a-table-column title="治理状态" key="health" width="102">
+              <template #default="{ record }">
+                <a-tooltip :title="governanceOf(record).tip">
+                  <span class="app-pill" :class="governanceOf(record).tone">{{ governanceOf(record).label }}</span>
+                </a-tooltip>
+                <span v-if="governanceOf(record).more" class="pg-more">+{{ governanceOf(record).more }}</span>
+              </template>
+            </a-table-column>
+            <a-table-column title="操作" key="action" width="92">
+              <template #default="{ record }">
+                <span class="pg-inline">
+                  <button class="app-link-btn" @click="openApiEdit(record)">编辑</button>
+                  <a-popconfirm :title="record.builtin === 1 ? '代码中仍存在的端点重启后会重新登记，确定删除？' : '确定删除该接口登记？'"
+                                ok-text="删除" cancel-text="取消" @confirm="delApi(record.id)">
+                    <button class="app-link-btn danger">删除</button>
+                  </a-popconfirm>
+                </span>
+              </template>
+            </a-table-column>
+
+            <!-- 展开行：把授权点编码、完整角色与菜单列表收进按需展开，列表本身只留一列结论 -->
+            <template #expandedRowRender="{ record }">
+              <div class="pg-detail">
+                <div class="pg-detail-item">
+                  <span class="pg-detail-k">授权点</span>
+                  <template v-if="record.permissionCode">
+                    <b>{{ permTitle(record.permissionCode) }}</b>
+                    <code class="pg-code">{{ record.permissionCode }}</code>
                   </template>
-                  <template v-else-if="record.permissionCode && rolesOfPerm(record.permissionCode).length">
-                    <span v-for="rc in rolesOfPerm(record.permissionCode).slice(0, 2)" :key="rc" class="pg-role-chip">{{ rc }}</span>
-                    <span v-if="rolesOfPerm(record.permissionCode).length > 2" class="pg-role-chip more">
-                      +{{ rolesOfPerm(record.permissionCode).length - 2 }}
-                    </span>
+                  <span v-else class="pg-none">未标注</span>
+                </div>
+                <div class="pg-detail-item">
+                  <span class="pg-detail-k">已授权角色</span>
+                  <template v-if="rolesOfPerm(record.permissionCode || '').length">
+                    <span v-for="rc in rolesOfPerm(record.permissionCode)" :key="rc" class="pg-role-chip">{{ rc }}</span>
                   </template>
-                  <span v-else-if="record.permissionCode" class="app-pill err">未授权</span>
-                  <span v-else class="pg-none">公开 / 未标注</span>
-                </template>
-              </a-table-column>
-              <a-table-column title="所属菜单" key="menus" width="150">
-                <template #default="{ record }">
+                  <span v-else-if="!permRolesReady" class="pg-none">读取中…</span>
+                  <span v-else-if="record.permissionCode" class="pg-none">暂未授予任何角色</span>
+                  <span v-else class="pg-none">—</span>
+                </div>
+                <div class="pg-detail-item">
+                  <span class="pg-detail-k">所属菜单</span>
                   <template v-if="(record.menuIds || []).length">
-                    <span v-for="mid in (record.menuIds || []).slice(0, 2)" :key="mid" class="pg-role-chip">{{ menuNameOf(mid) }}</span>
-                    <span v-if="(record.menuIds || []).length > 2" class="pg-role-chip more">
-                      +{{ record.menuIds.length - 2 }}
-                    </span>
+                    <span v-for="mid in (record.menuIds || [])" :key="mid" class="pg-role-chip">{{ menuNameOf(mid) }}</span>
                   </template>
                   <span v-else class="pg-none">未挂菜单</span>
-                </template>
-              </a-table-column>
-              <a-table-column title="来源" key="builtin" width="80">
-                <template #default="{ record }">
-                  <span class="app-pill" :class="record.builtin === 1 ? 'muted' : 'violet'">
-                    {{ record.builtin === 1 ? '扫描' : '手工' }}
-                  </span>
-                </template>
-              </a-table-column>
-              <a-table-column title="操作" key="action" width="96">
-                <template #default="{ record }">
-                  <span class="pg-inline">
-                    <button class="app-link-btn" @click="openApiEdit(record)">编辑</button>
-                    <a-popconfirm :title="record.builtin === 1 ? '代码中仍存在的端点重启后会重新登记，确定删除？' : '确定删除该接口登记？'"
-                                  ok-text="删除" cancel-text="取消" @confirm="delApi(record.id)">
-                      <button class="app-link-btn danger">删除</button>
-                    </a-popconfirm>
-                  </span>
-                </template>
-              </a-table-column>
-            </a-table>
+                </div>
+                <div class="pg-detail-item">
+                  <span class="pg-detail-k">模块 / 来源</span>
+                  <span>{{ record.module || '未归类' }}</span>
+                  <span class="pg-none">·</span>
+                  <span>{{ record.builtin === 1 ? '启动扫描登记' : '手工登记' }}</span>
+                </div>
+              </div>
+            </template>
+          </a-table>
 
-            <div v-if="!pagedApis.length" class="pg-empty">
-              {{ apiKeyword || apiModule || apiStatus !== 'all' ? '没有匹配的接口' : '暂无接口（启动时会自动扫描登记）' }}
-            </div>
-
-            <div class="pg-pager">
-              <span>共 {{ filteredApis.length }} 条 · 第 {{ apiPage }} / {{ apiPageCount }} 页</span>
-              <div class="pg-spacer"></div>
-              <button class="pg-pbtn" type="button" :disabled="apiPage <= 1" @click="apiPage--">‹</button>
-              <span class="pg-pbtn on">{{ apiPage }}</span>
-              <button class="pg-pbtn" type="button" :disabled="apiPage >= apiPageCount" @click="apiPage++">›</button>
-            </div>
-          </a-spin>
-
-          <div v-if="selectedApiIds.length" class="pg-bulk">
-            <div class="pg-bulk-sel">
-              已选 {{ selectedApiIds.length }} 个接口
-              <span>· 批量归属菜单</span>
-            </div>
-            <div class="pg-spacer"></div>
-            <button class="app-btn ghost" type="button" @click="selectedApiIds = []">取消选择</button>
-            <button class="app-btn" type="button" @click="openBatchMenu">批量归属菜单</button>
+          <div v-if="!pagedApis.length" class="pg-empty">
+            {{ apiKeyword || apiModule || apiStatus !== 'all' ? '没有匹配的接口' : '暂无接口（启动时会自动扫描登记）' }}
           </div>
+
+          <div class="pg-pager">
+            <span>共 {{ filteredApis.length }} 条 · 第 {{ apiPage }} / {{ apiPageCount }} 页</span>
+            <div class="pg-spacer"></div>
+            <button class="pg-pbtn" type="button" :disabled="apiPage <= 1" @click="apiPage--">‹</button>
+            <span class="pg-pbtn on">{{ apiPage }}</span>
+            <button class="pg-pbtn" type="button" :disabled="apiPage >= apiPageCount" @click="apiPage++">›</button>
+          </div>
+        </a-spin>
+
+        <div v-if="selectedApiIds.length" class="pg-bulk">
+          <div class="pg-bulk-sel">
+            已选 {{ selectedApiIds.length }} 个接口
+            <span>· 批量归属菜单</span>
+          </div>
+          <div class="pg-spacer"></div>
+          <button class="app-btn ghost" type="button" @click="selectedApiIds = []">取消选择</button>
+          <button class="app-btn" type="button" @click="openBatchMenu">批量归属菜单</button>
         </div>
       </div>
 
@@ -535,6 +555,7 @@ const memberCounts = ref({})
 const permRoles = ref({})
 const menuRoles = ref({})
 const permRolesFailed = ref(false)
+const permRolesReady = ref(false)
 const menuRolesFailed = ref(false)
 
 const menusLoading = ref(false)
@@ -589,7 +610,11 @@ async function loadPermRoles () {
     if (r && r.success === false) throw new Error(r.msg || '反查失败')
     permRoles.value = (r && r.data) || {}
     permRolesFailed.value = false
-  } catch (e) { permRolesFailed.value = true }
+    permRolesReady.value = true
+  } catch (e) {
+    permRolesFailed.value = true
+    permRolesReady.value = false
+  }
 }
 async function loadMenuRoles () {
   try {
@@ -918,7 +943,7 @@ const apiKeyword = ref('')
 const apiModule = ref('')
 const apiStatus = ref('all')
 const apiPage = ref(1)
-const apiPageSize = 50
+const apiPageSize = 30
 const selectedApiIds = ref([])
 
 const moduleOptions = computed(() => {
@@ -926,13 +951,39 @@ const moduleOptions = computed(() => {
   return [...set].sort((a, b) => a.localeCompare(b, 'zh'))
 })
 const moduleCount = m => apis.value.filter(a => (a.module || '') === m).length
+const moduleSelectOptions = computed(() => [
+  { label: `全部模块（${apis.value.length}）`, value: '' },
+  ...moduleOptions.value.map(m => ({ label: `${m}（${moduleCount(m)}）`, value: m }))
+])
+
+/** 治理判定：未标注（无授权点）/ 未授权（授权点没有角色）/ 未挂菜单，三者任一即「待治理」 */
+const isUnlabeled = a => !a.permissionCode
+const isUnauthorized = a => !!a.permissionCode && permRolesReady.value && !rolesOfPerm(a.permissionCode).length
+const isUnbound = a => !(a.menuIds || []).length
+const hasProblem = a => isUnlabeled(a) || isUnauthorized(a) || isUnbound(a)
+
+/** 每行只给一个结论，多个问题用 +N 与 tooltip 补充，避免表格里堆满彩色胶囊 */
+function governanceOf (record) {
+  const issues = []
+  if (!record.permissionCode) {
+    issues.push({ label: '未标注', tone: 'warn', tip: '没有绑定授权点，登录用户即可调用' })
+  } else if (isUnauthorized(record)) {
+    issues.push({ label: '未授权', tone: 'err', tip: '授权点尚未授予任何角色' })
+  }
+  if (!(record.menuIds || []).length) {
+    issues.push({ label: '未挂菜单', tone: 'warn', tip: '未归属任何菜单，无法按业务定位' })
+  }
+  if (!issues.length) return { label: '已治理', tone: 'muted', tip: '已绑定授权点与菜单', more: 0 }
+  return { ...issues[0], tip: issues.map(i => i.label).join(' · '), more: issues.length - 1 }
+}
 
 const statusFiltered = computed(() => {
   const k = apiKeyword.value.trim().toLowerCase()
   return apis.value.filter(a => {
     if (apiModule.value && (a.module || '') !== apiModule.value) return false
-    if (apiStatus.value === 'unauthorized' && !(!a.permissionCode || rolesOfPerm(a.permissionCode).length === 0)) return false
-    if (apiStatus.value === 'unbound' && (a.menuIds || []).length) return false
+    if (apiStatus.value === 'problem' && !hasProblem(a)) return false
+    if (apiStatus.value === 'unauthorized' && !(isUnlabeled(a) || isUnauthorized(a))) return false
+    if (apiStatus.value === 'unbound' && !isUnbound(a)) return false
     if (apiStatus.value === 'manual' && a.builtin === 1) return false
     if (k) {
       const title = a.permissionCode ? permTitle(a.permissionCode) : ''
@@ -948,11 +999,12 @@ const pagedApis = computed(() => filteredApis.value.slice((apiPage.value - 1) * 
 
 const API_STATUS = computed(() => [
   { key: 'all', label: '全部', count: () => apis.value.length },
+  { key: 'problem', label: '待治理', count: () => apis.value.filter(hasProblem).length },
   {
     key: 'unauthorized', label: '未授权',
-    count: () => apis.value.filter(a => !a.permissionCode || rolesOfPerm(a.permissionCode).length === 0).length
+    count: () => (permRolesReady.value ? apis.value.filter(a => isUnlabeled(a) || isUnauthorized(a)).length : '—')
   },
-  { key: 'unbound', label: '未挂菜单', count: () => apis.value.filter(a => !(a.menuIds || []).length).length },
+  { key: 'unbound', label: '未挂菜单', count: () => apis.value.filter(isUnbound).length },
   { key: 'manual', label: '手工登记', count: () => apis.value.filter(a => a.builtin !== 1).length }
 ])
 
@@ -1040,6 +1092,8 @@ const saving = ref(false)
 
 <style scoped>
 .pg-body { padding: 14px 20px 20px; display: flex; flex-direction: column; }
+/* 内容超过一屏时由 .app-page-body 滚动，概览与列表卡片保持自身高度，禁止被 flex 压扁 */
+.pg-body > .ov { flex: none; }
 .pg-head-acts { margin-left: auto; display: flex; align-items: center; gap: 8px; flex: none; }
 .head-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
 
@@ -1070,7 +1124,7 @@ const saving = ref(false)
 .pg-nav-sep { width: 1px; height: 16px; background: var(--app-border); margin: 0 6px; flex: none; }
 .pg-nav-group { font-size: 10.5px; color: var(--app-text3); letter-spacing: .04em; margin-right: 2px; white-space: nowrap; }
 
-.pg-card { padding: 0; overflow: hidden; }
+.pg-card { padding: 0; overflow: hidden; flex: none; }
 .pg-card-flush { padding: 0; }
 .pg-search { width: 240px; }
 .pg-search-ic { color: var(--app-text3); }
@@ -1087,7 +1141,12 @@ const saving = ref(false)
 .pg-name { color: var(--app-text); }
 .pg-path { font-size: 11.5px; color: var(--app-text2); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .pg-code { font-size: 10px; color: var(--app-text3); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-.pg-perm-name { font-size: 12px; font-weight: 600; color: var(--app-text); }
+.pg-perm-name {
+  display: block; font-size: 12px; font-weight: 600; color: var(--app-text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.pg-perm-sub { display: flex; align-items: center; gap: 4px; margin-top: 3px; min-width: 0; }
+.pg-perm-sub .app-link-btn { font-size: 10.5px; padding: 0; color: var(--app-warn-text); }
 .pg-none { color: var(--app-text3); }
 .pg-drag { cursor: grab; color: var(--app-border-strong); font-size: 13px; user-select: none; }
 .pg-drag:active { cursor: grabbing; }
@@ -1101,19 +1160,32 @@ const saving = ref(false)
 .pg-empty { padding: 24px 0; text-align: center; font-size: 12px; color: var(--app-text3); }
 .pg-foot-tip { padding: 7px 14px 10px; font-size: 11px; color: var(--app-text3); border-top: 1px solid var(--app-border); }
 
-.pg-api-layout { display: grid; grid-template-columns: 186px minmax(0, 1fr); gap: 10px; align-items: start; }
-.pg-rail { border: 1px solid var(--app-border); border-radius: var(--app-radius); background: var(--app-panel-2); padding: 6px; }
-.pg-rail-title { font-size: 10px; color: var(--app-text3); padding: 7px 8px 3px; letter-spacing: .05em; }
-.pg-rail-row {
-  display: flex; align-items: center; gap: 6px; width: 100%; padding: 5px 8px; border: 0;
-  border-radius: 6px; background: transparent; cursor: pointer; font-family: inherit;
-  font-size: 11.5px; color: var(--app-text2); text-align: left;
+.pg-api-bar { align-items: center; row-gap: 8px; }
+.pg-seg {
+  display: inline-flex; align-items: center; gap: 2px; padding: 2px; flex: none; max-width: 100%;
+  border: 1px solid var(--app-border); border-radius: 8px; background: var(--app-panel-2);
+  overflow-x: auto;
 }
-.pg-rail-row:hover { background: var(--app-panel); }
-.pg-rail-row.on { background: var(--app-panel); color: var(--app-accent); font-weight: 600; box-shadow: 0 1px 2px rgba(16,24,40,.05); }
-.pg-rail-n { margin-left: auto; font-size: 10px; color: var(--app-text3); font-variant-numeric: tabular-nums; }
-.pg-rail-row.on .pg-rail-n { color: var(--app-accent); }
-.pg-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pg-seg-item {
+  border: 0; background: transparent; cursor: pointer; font-family: inherit;
+  padding: 4px 9px; border-radius: 6px; font-size: 11.5px; color: var(--app-text2);
+  display: inline-flex; align-items: center; gap: 5px; white-space: nowrap;
+}
+.pg-seg-item:hover { color: var(--app-text); background: var(--app-panel); }
+.pg-seg-item.on { background: var(--app-panel); color: var(--app-accent); font-weight: 600; box-shadow: var(--app-shadow-sm); }
+.pg-seg-n { font-size: 10px; color: var(--app-text3); font-variant-numeric: tabular-nums; }
+.pg-seg-item.on .pg-seg-n { color: var(--app-accent); }
+.pg-seg-item.warn:not(.on) .pg-seg-n { color: var(--app-warn); font-weight: 600; }
+.pg-api-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+.pg-module-select { width: 168px; }
+.pg-iface { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.pg-iface .pg-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pg-iface-src { font-size: 10px; padding: 2px 6px; flex: none; }
+.pg-iface-sub { margin-top: 2px; font-size: 11px; color: var(--app-text3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pg-more { margin-left: 4px; font-size: 10px; color: var(--app-text3); }
+.pg-detail { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px 20px; padding: 4px 10px 8px; }
+.pg-detail-item { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: 11.5px; color: var(--app-text2); min-width: 0; }
+.pg-detail-k { flex: none; min-width: 66px; font-size: 10.5px; color: var(--app-text3); }
 
 .pg-pager { display: flex; align-items: center; gap: 5px; padding: 8px 12px; border-top: 1px solid var(--app-border); font-size: 11px; color: var(--app-text3); }
 .pg-pbtn {
@@ -1144,8 +1216,9 @@ const saving = ref(false)
 .form-tip { margin-top: 6px; font-size: 12px; color: var(--app-text3); line-height: 1.5; }
 
 @media (max-width: 900px) {
-  .pg-api-layout { grid-template-columns: 1fr; }
   .pg-search { width: 100%; }
+  .pg-api-tools { width: 100%; }
+  .pg-module-select { flex: 1 1 140px; width: auto; }
   .pg-body { padding: 12px; }
 }
 </style>
