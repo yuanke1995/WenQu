@@ -1,0 +1,330 @@
+# 智能体评测与发布门禁 · 立项方案
+
+> 2026-11-07 立项。目标是把「改智能体靠感觉」变成「改完能回归、发布前有分数」。
+> 本方案只覆盖智能体质量闭环，不涉及运维/监控面。效果图见 `docs/agent-eval/agent-eval.html`。
+>
+> **实施记录（2026-11-07 当日落地 P1 + P1.5 + 运行对比）**：后端 e9c3ee49、前端 4b4e0de6；
+> 效果图四场景全部上线。真机验证：API 冒烟（summary/采样/起跑/互斥/轮询/门禁/对比/基线/取消/
+> 重启清理/入账/跨用户隔离）+ 浏览器四场景走查 + 回归面（无套件保存直通、/evaluation 不受影响、
+> temp 会话无泄漏、用量统计出现「智能体评测」）。真机修掉的坑：`trigger` MySQL 保留字改
+> trigger_kind、done 载荷双重序列化剥两层、评判调用接 reasoningOffBody 防思考吃空 max_tokens、
+> 评判 maxTokens 200→300、门禁 diff 空集合归一防假变更、GET /suite 补可读校验、Math.rint 修渲染。
+> 遗留（P2）：历史版本重测（config override 收口）、工具期望评分、多轮评测、定时回归、评测集
+> 市场模板；block 门禁目前仅前端拦截（API 层可绕，待草稿态时收口服务端）；存量库每个租户需在
+> 权限页给普通角色补勾一次 agentEval:read/write（新库 RbacUserRoleSeeder 自动推导）。
+
+## 1. 目标与非目标
+
+### 目标
+
+1. 每个智能体拥有自己的评测集（问题 + 期望引用/期望行为）。
+2. 保存配置后能一键跑回归，得到通过率、综合分、逐条失败原因。
+3. 智能体列表与编辑器里能一眼看到「达标 / 低于门槛 / 未评测 / 有变更未评测」。
+4. 保存前给出门禁提示，默认提醒、可配置为阻断。
+5. 支持两次运行对比，回答「这版比上版好还是坏」。
+
+### 非目标（本期不做）
+
+- 不做运维监控、健康巡检、审计报表。
+- 不重做现有 `/evaluation` 检索评估页；两边并存，口径分清楚。
+- 不做公开排行榜、跨用户对比。
+- 不做自动改 prompt（评测只负责发现问题，不自动优化）。
+- 不做多轮对话评测（第一期一题一轮；多轮在 P2 评估）。
+
+## 2. 现状与缺口
+
+| 能力 | 现状 | 缺口 |
+|---|---|---|
+| 检索评估 | [EvaluationPage.vue](file:///Users/yuki/IdeaProjects/wenqu/web/src/views/EvaluationPage.vue) 已有全局评估集、一键体检、答案质量评测；后端 [RetrievalEvaluationService.java](file:///Users/yuki/IdeaProjects/wenqu/src/main/java/com/wenqu/ai/service/RetrievalEvaluationService.java) | 全局单份 JSON、无智能体维度、不覆盖人设/工具/模型配置 |
+| 智能体版本 | [AgentService.java](file:///Users/yuki/IdeaProjects/wenqu/src/main/java/com/wenqu/ai/service/AgentService.java) 已有保存即快照、字段级 diff、回滚；表 `c_ai_agent_version` | 版本只有「配置」，没有「这一版质量如何」 |
+| 完整问答执行 | [ChatService.java](file:///Users/yuki/IdeaProjects/wenqu/src/main/java/com/wenqu/ai/service/ChatService.java) + [CollectingSseEmitter.java](file:///Users/yuki/IdeaProjects/wenqu/src/main/java/com/wenqu/ai/service/CollectingSseEmitter.java) 已被定时任务复用 | 没有「用指定智能体跑一组题并采集指标」的编排 |
+| 临时会话 | `c_ai_session.kind=temp`（子智能体、工作流节点已用，跑完即删） | 评测需要复用同一套清理口径，避免污染会话列表 |
+| 智能体编辑 | [AgentsPage.vue](file:///Users/yuki/IdeaProjects/wenqu/web/src/views/AgentsPage.vue) 有保存/历史版本/生效摘要 | 保存时不知道这版改动会不会答坏 |
+
+## 3. 产品设计
+
+### 3.1 信息架构
+
+- 入口：智能体工作台新增第 7 个 Tab「评测」（`/agents?tab=eval`），全员可见，按智能体创建者隔离。
+- 列表：每个智能体一行，展示评测集规模、最近通过率、较上版变化、最近运行时间、门禁状态。
+- 详情：Tab 内二级视图（`?tab=eval&agent={id}`），不再单开路由。包含概览、趋势、本次结果、历史运行、评测集。
+- 编辑器入口：智能体编辑页头「评测」按钮，跳到该智能体的评测详情；保存时弹「保存前检查」。
+- 版本对比：详情页「对比版本」打开宽弹窗，A/B 两次运行并排。
+
+### 3.2 门禁状态（列表与详情共用同一判据）
+
+| 状态 | 判据 | 展示 |
+|---|---|---|
+| 未评测 | 没有成功的运行 | 灰 `未评测` |
+| 有变更未评测 | 最新版本号 > 最近一次成功运行时的版本号 | 黄 `有变更` |
+| 达标 | 通过率 ≥ 套件门槛且无 0 分严重失败 | 绿 `达标` |
+| 低于门槛 | 通过率 < 门槛或有严重失败 | 红 `低于门槛` |
+| 运行中 | 有 running 运行 | 蓝 `运行中` + 进度 |
+
+### 3.3 保存前检查（轻门禁）
+
+保存智能体时：
+
+1. 对比本次保存与上一版，列出变更项数量与摘要（人设 / 知识范围 / 工具 / 其他）。
+2. 查该智能体的门禁状态：
+   - 无评测集 → 提示「尚未建立评测集」，不阻断。
+   - 有变更未评测 → 提示「本版有 N 处变更，尚未回归」，给三个动作：**保存并运行回归** / **仍然保存** / **取消**。
+   - 低于门槛 → 提示上次分数与失败条目，默认仍允许保存。
+3. 管理员可在设置 `agentEval.gateMode` 选择 `hint`（默认，提示）/ `block`（低于门槛时禁止保存）。第一期默认 `hint`，避免打断既有工作流。
+
+> 为什么不做强阻断：当前智能体保存即生效，没有草稿/发布两态。直接硬门禁会让「先改一半再跑评测」的正常操作走不通；先把门禁做成提示，等 P2 引入草稿态再升级为硬门禁。
+
+### 3.4 指标口径
+
+单条用例：
+
+- **引用召回**：该用例期望的知识块/文档，在本轮回答 `sources` 中被引用的比例（无期望引用的用例不计此项）。
+- **忠实度**：评判模型按回答与引用内容打 0–100，判断是否编造/越界。
+- **相关性**：评判模型按回答与本问题的匹配度打 0–100。
+- **综合分** = 引用召回 × 40% + 忠实度 × 30% + 相关性 × 30%（无期望引用时按 0/50/50 归一）。
+- **通过**：综合分 ≥ 60 且若用例有期望引用则召回 ≥ 1 条。
+- **观察项**（不参与通过判定）：耗时、输入/输出 token、工具调用次数、首字延迟。避免因为机器抖动误杀内容质量。
+
+套件级：
+
+- 通过率 = 通过条数 / 启用条数。
+- 平均综合分、平均耗时、总 token、估算费用。
+- 门槛默认通过率 ≥ 80%，可在套件设置里改。
+
+### 3.5 评测执行规则
+
+- 一题一轮，使用真实问答流水线（检索、人设、工具、引用完全一致），不是简化模拟。
+- **工具安全**：默认「只读评测」——需要人工确认的工具按拒绝处理，并在结果里记「工具待确认（评测未执行）」；勾选「允许有副作用工具」需二次确认，且只对该次运行生效。
+- **隔离**：每题使用 `kind=temp` 的临时会话，归属为当前用户，跑完全部用例后删除会话与消息；结果表保留答案、引用、指标快照，不依赖会话。
+- **并发与上限**：每智能体同时只允许 1 个运行；全局并发 2；单套件 ≤ 50 条，单次默认跑全部但可勾选；单题超时 180s；单次总超时 15 分钟；可取消，取消后已完成的用例结果保留。
+- **计量**：评测产生的模型调用照常计入当前用户用量，`source=eval`，费用视图单列「评测消耗」。
+
+### 3.6 评测集来源
+
+1. 手动新增：问题 + 期望引用的知识块（从知识库选择）+ 备注/标签。
+2. 从会话采样：按智能体筛选最近问答，默认取「有引用」与「差评」样本；差评优先。
+3. 从轨迹采样：数据看板 Trace / 采样池里「加入评测集」按钮增加目标智能体选项（复用现有回流入口）。
+4. 批量导入/导出：JSON，字段见 §5.2。
+
+## 4. 效果图
+
+`docs/agent-eval/agent-eval.html`，四个场景：
+
+1. 评测总览（Tab 列表 + 顶部质量概况）。
+2. 智能体评测详情（质量分、趋势、门禁、运行结果表、失败原因展开）。
+3. 版本对比弹窗（A/B 指标与逐题变化）。
+4. 保存前检查（智能体编辑页保存时的门禁弹窗）。
+
+对应静态图：`docs/agent-eval/01-overview.png`、`02-detail.png`、`03-compare.png`、`04-gate.png`（均为 1600×1000）。
+
+效果图严格使用 `web/src/views/app.css` 的真实 token：`--app-*` 色板、13px 正文、28px 控件、紧凑表格（表头 32px / 行 34px）、自绘 42px Tab、2px 主色下划线。
+
+## 5. 数据结构
+
+新增 4 张表，全部带 `tenant_id`，沿用现有建表口径；`schema.sql` 追加，启动自动建表。
+
+### 5.1 `c_ai_agent_eval_suite`
+
+| 字段 | 说明 |
+|---|---|
+| id | UUID |
+| agent_id | 智能体 ID |
+| name | 套件名（默认「默认评测集」） |
+| threshold_rate | 通过率门槛（默认 80） |
+| pass_score | 单条通过分（默认 60） |
+| enabled | 是否参与门禁 |
+| created_by / create_time / update_time | 归属与时间 |
+
+唯一键 `uk_suite_agent (agent_id)`：第一期一个智能体一个套件，避免选择成本。
+
+### 5.2 `c_ai_agent_eval_case`
+
+| 字段 | 说明 |
+|---|---|
+| id | UUID |
+| suite_id / agent_id | 归属 |
+| question | 问题 |
+| expected_knowledge_ids | 期望知识块 ID（JSON 数组，可空） |
+| expected_doc_ids | 期望文档 ID（JSON 数组，可空） |
+| expected_tools | 期望调用的工具名（JSON 数组，可空，P2 参与评分） |
+| note | 备注 / 考察点 |
+| tags | 标签（JSON 数组） |
+| source | manual / session / feedback / trace / import |
+| enabled | 是否启用 |
+| create_time / update_time | 时间 |
+
+### 5.3 `c_ai_agent_eval_run`
+
+| 字段 | 说明 |
+|---|---|
+| id | UUID |
+| suite_id / agent_id | 归属 |
+| agent_version | 运行时智能体版本号（当前版本，P2 支持指定历史版本） |
+| trigger | manual / gate / scheduled |
+| status | running / succeeded / failed / cancelled |
+| total / passed | 条数与通过数 |
+| pass_rate / avg_score | 汇总 |
+| avg_latency_ms / total_tokens | 观察项 |
+| baseline_run_id | 对比基线（默认上一次成功运行） |
+| judge_model / answer_model | 评判与作答模型（快照） |
+| threshold_rate / pass_score | 运行时门槛快照（防止改设置后历史口径漂移） |
+| error | 失败原因 |
+| started_at / finished_at | 时间 |
+| created_by | 触发人 |
+
+### 5.4 `c_ai_agent_eval_result`
+
+| 字段 | 说明 |
+|---|---|
+| id | UUID |
+| run_id / case_id | 归属 |
+| question / answer | 问题与回答快照（answer 截断 ≤ 8000 字） |
+| sources | 本轮引用来源 JSON（截断） |
+| tool_calls | 工具调用摘要 JSON（截断） |
+| recall | 引用召回（0–1，无期望引用为 null） |
+| faithfulness / relevance | 两维评分 |
+| score | 综合分 |
+| passed | 是否通过 |
+| failure_reason | 失败原因（人话，如「期望引用 2 条，命中 0 条」） |
+| latency_ms / tokens | 观察项 |
+| create_time | 时间 |
+
+## 6. 后端设计
+
+### 6.1 端点（新增 `AgentEvalController`，前缀 `/api/ai/agent-eval`）
+
+| 方法 | 路径 | 作用 |
+|---|---|---|
+| GET | `/summary` | 评测总览：所有可见智能体 + 门禁状态 + 最近运行摘要 |
+| GET | `/agents/{agentId}/suite` | 套件与用例 |
+| POST | `/agents/{agentId}/suite` | 创建/更新套件设置（门槛、启停） |
+| POST | `/agents/{agentId}/cases` | 新增/编辑/删除用例（整条或批量） |
+| POST | `/agents/{agentId}/cases/generate` | 从最近会话采样生成（可指定来源与条数） |
+| POST | `/agents/{agentId}/runs` | 启动回归（可选 caseIds、是否允许副作用工具） |
+| GET | `/agents/{agentId}/runs` | 运行历史（分页） |
+| GET | `/runs/{runId}` | 单次运行详情（含逐条结果） |
+| POST | `/runs/{runId}/cancel` | 取消运行 |
+| GET | `/agents/{agentId}/compare?runA=&runB=` | 两次运行对比 |
+| GET | `/agents/{agentId}/gate` | 门禁状态（编辑器保存前查询） |
+
+权限：全部要求登录；`agentId` 必须属于当前用户（管理员按现有管理口径放行）。新增权限点 `agentEval:read` / `agentEval:write`，挂到菜单「评测」名下，沿用 RBAC 的菜单×接口授权模式。
+
+### 6.2 执行器 `AgentEvalRunner`
+
+复用现有完整流水线，不新写问答链路：
+
+```java
+// 每题：临时会话 + 收集型通道
+String sessionId = sessionService.createTempSession(uid);   // kind=temp
+CollectingSseEmitter sink = new CollectingSseEmitter();
+chatService.chat(ChatCommand.builder()
+        .sessionId(sessionId).question(case.question).userId(uid)
+        .agentId(agentId)
+        .build(), sink);
+sink.awaitDone(perCaseTimeoutMs);
+// 从消息表读回本轮 assistant 消息：sources / tool_calls / tokens / content
+// 评分 → 写 eval_result → 清理 temp 会话与消息
+```
+
+要点：
+
+- 参考 [ScheduledJobService.java](file:///Users/yuki/IdeaProjects/wenqu/src/main/java/com/wenqu/ai/service/ScheduledJobService.java#L426-L446) 的 `awaitDone` + `forgetSseChannel` 收口，避免 ACTIVE_SSE 残留。
+- 临时会话清理复用子智能体/工作流节点的既有删除口径（物理删除消息与会话），失败也要在 finally 清理。
+- 使用独立有界线程池（2 线程），不要占用问答流水线线程；全局同时最多 2 个评测运行，每智能体 1 个。
+- 运行状态落库在启动时写 `running`，进程重启时启动清理器把残留 `running` 置为 `failed`（「服务重启，运行中断」）。
+
+### 6.3 评分器 `AgentEvalScorer`
+
+- 引用召回：解析 `sources` 的 `knowledgeId` / `docId`，与用例期望集合求交集比例。
+- 忠实度 / 相关性：复用 `eval.judgeModel` 配置；评判提示词独立于检索评估的答案评测（输入含问题 + 回答 + 引用片段），输出严格 JSON：`{faithfulness:0-100, relevance:0-100, reason:"..."}`。
+- 评判失败时：忠实度/相关性记 `null`，综合分按引用召回单独计算并在 `failure_reason` 标注「评判模型不可用，仅按引用命中计分」，不把整次运行判失败。
+- 所有模型输出落库前截断，避免大文本撑爆 MEDIUMTEXT。
+
+### 6.4 版本对比（P2）
+
+第一期只评「当前版本」，对比是「本次运行 vs 上一次成功运行」。P2 支持指定历史版本评测：
+
+- `ChatCommand` 增加 `agentConfigOverride`（仅评测内部使用）。
+- 在 `AgentService` 增加 `resolveForTurn(agentId, override)`，把当前散落的 4 处直读收口（[ChatService.java](file:///Users/yuki/IdeaProjects/wenqu/src/main/java/com/wenqu/ai/service/ChatService.java#L102-L117) 装载检索开关、[ChatService.java](file:///Users/yuki/IdeaProjects/wenqu/src/main/java/com/wenqu/ai/service/ChatService.java#L211-L220) 工作流绑定判断、[ChatService.java](file:///Users/yuki/IdeaProjects/wenqu/src/main/java/com/wenqu/ai/service/ChatService.java#L718-L731) 作答方解析、[WenquAgentxTools.java](file:///Users/yuki/IdeaProjects/wenqu/src/main/java/com/wenqu/ai/agentx/WenquAgentxTools.java#L589-L590) `agentOf`）。
+- 历史版本配置 JSON → `Agent` 对象只用于该次评测的临时会话，不写库、不影响线上。
+- 若该重构评估为高风险，退化方案是「回滚到历史版本 → 重测 → 再滚回」，但会在版本历史里多产生两条记录，不作为默认推荐。
+
+### 6.5 配置项（`ConfigDefaults` 登记）
+
+| key | 默认 | 说明 |
+|---|---|---|
+| `agentEval.enabled` | true | 总开关 |
+| `agentEval.gateMode` | hint | hint / block |
+| `agentEval.thresholdRate` | 80 | 默认通过率门槛 |
+| `agentEval.maxCases` | 30 | 单次运行条数上限 |
+| `agentEval.concurrency` | 2 | 全局并发 |
+| `agentEval.perCaseTimeoutMs` | 180000 | 单题超时 |
+| `agentEval.runTimeoutMs` | 900000 | 单次总超时 |
+| `agentEval.judgeModel` | 空 | 空则复用 `eval.judgeModel` |
+
+## 7. 前端设计
+
+### 7.1 落点
+
+- [AgentsHubPage.vue](file:///Users/yuki/IdeaProjects/wenqu/web/src/views/AgentsHubPage.vue)：`TAB_COMPONENTS` 增加 `eval` 映射；菜单种子新增 `menu-agents-eval`（`renderAs=tab`，`sortOrder` 排在「定时任务」之后）。
+- 新增 `web/src/views/AgentEvalPage.vue`：总览/详情两态，全部在组件内切换；详情用 query `agent` 还原。
+- 新增 `web/src/components/agent/EvalRunTable.vue`、`EvalCompareModal.vue`、`EvalGateModal.vue`、`EvalCaseEditor.vue`（可从页面拆出，避免单文件过大）。
+- [AgentsPage.vue](file:///Users/yuki/IdeaProjects/wenqu/web/src/views/AgentsPage.vue)：页头「历史版本」旁加「评测」；`save()` 成功后或保存前调用 `/gate` 弹保存前检查。
+- [api.js](file:///Users/yuki/IdeaProjects/wenqu/web/src/api.js)：新增 11 个端点封装。
+
+### 7.2 页面规格
+
+- 页头：标题「智能体评测」+ 说明「用真实问题回归配置改动」+ 搜索 + 筛选 + 「新建评测集」。
+- 统计条：4 个紧凑指标（已评测 / 本周回归 / 平均通过率 / 低于门槛），数字 20px，标签 11px 弱文本。
+- 质量概况条：门禁分布（达标 / 有变更 / 低于门槛 / 未评测 / 运行中）+ 近 6 周平均通过率迷你折线 + 本周回归与消耗摘要；高度 92px。
+- 列表：紧凑表格，表头 32px、行 34px、浅底表头、细行分隔。
+  - 列：智能体（头像 + 名称 + 当前版本）｜评测集｜最近通过率（进度条 + 数值）｜较上版｜最近运行｜门禁状态｜操作。
+  - 操作：`运行回归` 主链接、`详情`、`设置`。
+  - 运行中行：进度条 + 「12/20」+ 取消。
+- 列表下方两栏：左「最近回归」3 条、右「需要处理」3 项（低于门槛 / 有变更未评测 / 未建立评测集）；高度 156px。
+- 详情：返回链接 + 智能体头 + 当前版本 + 状态胶囊 + 操作组。
+  - 概览卡：质量分（大数字）、通过率、平均耗时、平均 token、估算费用。
+  - 趋势：近 6 次运行的通过率折线（SVG 手绘，不引图表库）；点上悬浮显示版本与时间。
+  - 门禁卡：门槛、当前状态、最近一次运行、配置门禁模式的入口。
+  - 页内 Tab（自绘 42px、2px 下划线、带计数胶囊）：本次结果 / 历史运行 / 评测集。
+  - 结果表：用例｜来源｜综合分｜引用召回｜忠实度｜相关性｜耗时｜状态；失败行左侧 3px 红条，展开显示失败原因与引用对比。
+- 版本对比弹窗：宽 980px，顶部 A/B 两个运行选择器；中部指标对照（通过率、平均分、平均耗时、token）；下部逐题变化列表（变好 / 变差 / 仅 B 失败），支持筛选。
+- 保存前检查弹窗：宽 520px，标题「保存前检查」；列出变更摘要与门禁状态；底部三按钮：取消 / 仍然保存 / 保存并运行回归（主）。
+- 空态：没有评测集时，列表行显示「未评测 · 建立评测集」；详情页给三步引导（采样 → 跑一次 → 设门槛）。
+
+### 7.3 交互约束
+
+- 运行回归前弹确认：显示条数、预计模型调用次数（条数 × 2 + 检索）、预计费用区间、是否含副作用工具；确认后启动。
+- 运行中每 3 秒轮询 `/runs/{id}`；完成后自动刷新列表与详情，发站内通知「评测完成：通过率 85%」。
+- 所有失败文案人话化，不把评判模型原始报错直接抛给用户。
+- 移动端：该 Tab 只做只读摘要 + 桌面引导（与市场/工作流一致），不在手机上跑评测。
+
+## 8. 实施分期
+
+| 期 | 内容 | 可独立验收 |
+|---|---|---|
+| P1（建议先做） | 4 张表 + 套件/用例 CRUD + 从会话采样 + 当前版本运行 + 结果详情 + 列表门禁状态 | 是 |
+| P1.5 | 保存前检查弹窗 + 站内通知 + 费用标记 | 是 |
+| P2 | 历史版本对比（config override 收口）、工具期望评分、多轮评测、定时回归 | 是 |
+| P3 | 评测集市场模板 / 跨智能体复用 | 待定 |
+
+## 9. 验收清单
+
+1. 新建智能体 → 建套件 → 从会话采样 10 条 → 跑回归 → 结果表与通过率正确。
+2. 改人设后保存 → 列表变「有变更」→ 跑回归后恢复「达标/低于门槛」。
+3. 门禁 `block` 模式下低于门槛保存被拒；`hint` 模式下三按钮行为正确。
+4. 运行中取消：状态 `cancelled`，已完成用例结果保留，临时会话全部清理。
+5. 并发限制：同一智能体第二次启动被拒并给出人话提示；全局并发不超过 2。
+6. 权限：用户 A 看不到用户 B 的智能体评测；跨用户 agentId 返回 404/403。
+7. 评判模型不可用：运行仍完成，失败原因标注，不整次判失败。
+8. 回归面：`/evaluation` 检索评估不受影响；智能体保存默认行为不变（`hint` 模式）；会话列表无临时会话泄漏；用量统计能看到评测消耗。
+9. 进程重启：残留 `running` 置为 `failed`，不永久卡住。
+
+## 10. 风险与开放问题
+
+- **配置直读点多**：版本对比依赖 `agentConfigOverride` 收口，若发现更多直读点，P2 可能延期；P1 不依赖它。
+- **评判模型偏差**：忠实度/相关性是模型主观分，需在 UI 标注「模型判定，仅供参考」，并通过同一评判模型对比来抵消偏差。
+- **成本**：每题至少 1 次作答 + 1 次评判。默认 30 条上限、确认弹窗明示调用次数，避免误点烧钱。
+- **工具副作用**：默认只读评测，允许副作用需二次确认；这条是安全边界，不随配置默认放开。
+- **与 `/evaluation` 的关系**：检索评估回答「检索参数哪组好」，智能体评测回答「这个智能体这版好不好」。文案必须区分，避免用户混淆。
+- **待拍板**：门禁默认 `hint` 还是 `block`；评测集是否允许跨智能体复制；是否把评测消耗从个人用量中豁免（建议不豁免，保持账实一致）。

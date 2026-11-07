@@ -1,0 +1,1123 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>问渠 · 智能体评测与发布门禁效果图</title>
+<style>
+/* ============================================================
+   问渠 · 智能体评测与发布门禁
+   画布 1600×1000；token 全部取自 web/src/views/app.css
+   ============================================================ */
+:root {
+  --app-bg: #f7f8fa;
+  --app-panel: #ffffff;
+  --app-panel-2: #fafbfc;
+  --app-border: #e6e9ed;
+  --app-border-strong: #d8dde3;
+  --app-text: #1f2329;
+  --app-text2: #5f6570;
+  --app-text3: #98a0aa;
+  --app-accent: #2e6be6;
+  --app-accent-hover: #1f5bd8;
+  --app-accent-weak: #eef2f7;
+  --app-danger: #d4552e;
+  --app-danger-text: #cf1322;
+  --app-ok: #3b8f4e;
+  --app-warn: #c77c14;
+  --app-warn-text: #a3691b;
+  --app-ok-weak: #eaf5ec;
+  --app-warn-weak: #faf3e6;
+  --app-warn-border: #f0dfb6;
+  --app-danger-weak: #fff2f0;
+  --app-accent-border: #bcd0f7;
+  --app-danger-border: #ffccc7;
+  --app-code-bg: #f6f8fa;
+  --app-shadow-sm: 0 1px 2px rgba(16, 24, 40, .04);
+  --app-shadow-lg: 0 12px 32px rgba(16, 24, 40, .14);
+  --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+          'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: var(--font);
+  background: #eef1f5;
+  color: var(--app-text);
+  font-size: 13px;
+  -webkit-font-smoothing: antialiased;
+}
+svg.ic { stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ---------------- 设计稿外壳 ---------------- */
+.sheet { width: 1600px; margin: 0 auto; padding: 36px 0 60px; }
+.sheet-top { padding: 0 2px 22px; }
+.sheet-title { font-size: 22px; font-weight: 600; color: #1f2329; }
+.sheet-sub { margin-top: 8px; font-size: 13px; line-height: 1.7; color: #8a929d; }
+.sheet-sub b { color: #5f6570; font-weight: 500; }
+.scene-block { margin-top: 34px; }
+.scene-block:first-of-type { margin-top: 8px; }
+.cap { display: flex; align-items: baseline; gap: 10px; padding: 0 2px 10px; font-size: 13px; color: #5f6570; }
+.cap b { font-size: 11px; font-weight: 600; color: #98a0aa; letter-spacing: .08em; }
+.cap em { font-style: normal; color: #1f2329; font-weight: 600; font-size: 14px; }
+.cap span { color: #98a0aa; font-size: 12px; }
+.scene {
+  width: 1600px; height: 1000px; display: flex; overflow: hidden;
+  background: var(--app-bg); position: relative;
+  box-shadow: 0 20px 50px rgba(16, 24, 40, .16);
+}
+
+/* ---------------- 侧栏 ---------------- */
+.side {
+  width: 232px; flex: none; height: 100%; display: flex; flex-direction: column;
+  background: var(--app-panel); border-right: 1px solid var(--app-border);
+  padding: 10px 8px 8px;
+}
+.logo-row { display: flex; align-items: center; gap: 8px; padding: 2px 6px 12px; }
+.logo-mark { width: 22px; height: 22px; border-radius: 6px; background: var(--app-accent);
+  color: #fff; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; }
+.logo-name { font-size: 13px; font-weight: 500; color: var(--app-text); }
+.logo-row .fold { margin-left: auto; color: var(--app-text3); width: 26px; height: 26px;
+  display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; }
+.side-nav { display: flex; flex-direction: column; gap: 1px; flex: none; }
+.nav-item {
+  display: flex; align-items: center; gap: 9px; height: 30px; padding: 0 9px;
+  border-radius: 8px; font-size: 13px; color: var(--app-text2); white-space: nowrap;
+}
+.nav-item .ic { width: 14px; height: 14px; color: var(--app-text3); flex: none; }
+.nav-item.active { background: var(--app-accent-weak); color: var(--app-text); font-weight: 500; }
+.nav-item.active .ic { color: var(--app-text2); }
+.side-search {
+  flex: none; margin-top: 12px; height: 28px; display: flex; align-items: center; gap: 7px;
+  padding: 0 9px; border: 1px solid var(--app-border); border-radius: 6px;
+  color: var(--app-text3); font-size: 12px; background: var(--app-panel);
+}
+.side-search .ic { width: 12px; height: 12px; }
+.side-sec { margin-top: 16px; display: flex; align-items: center; gap: 4px; padding: 0 7px 5px; }
+.side-sec .t { font-size: 11px; font-weight: 600; color: var(--app-text3); letter-spacing: .04em; }
+.side-sec .n { font-size: 11px; color: var(--app-text3); opacity: .8; }
+.side-sec .plus { margin-left: auto; color: var(--app-text3); }
+.ws-row { display: flex; align-items: center; gap: 7px; height: 28px; padding: 0 7px; border-radius: 7px;
+  font-size: 12px; color: var(--app-text2); }
+.ws-row .ic { width: 12px; height: 12px; color: var(--app-text3); flex: none; }
+.ws-row.on { color: var(--app-text); font-weight: 500; }
+.sess-row { display: flex; align-items: center; gap: 7px; height: 27px; padding: 0 7px 0 25px;
+  font-size: 12px; color: var(--app-text3); }
+.sess-row .ic { width: 12px; height: 12px; flex: none; }
+.sess-row span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side-foot {
+  margin-top: auto; display: flex; align-items: center; gap: 4px; padding: 8px 4px 2px;
+  border-top: 1px solid var(--app-border);
+}
+.avatar { width: 24px; height: 24px; border-radius: 50%; background: #e8ecf2; color: var(--app-text2);
+  font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; }
+.side-foot .sp { flex: 1; }
+.icon-btn { width: 26px; height: 26px; border: none; background: transparent; color: var(--app-text3);
+  display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; padding: 0; }
+.icon-btn .ic { width: 14px; height: 14px; }
+
+/* ---------------- 主区与 Tab ---------------- */
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--app-bg); }
+.hub-tabs {
+  flex: none; height: 46px; background: var(--app-panel); border-bottom: 1px solid var(--app-border);
+  display: flex; align-items: stretch; gap: 24px; padding: 0 20px;
+}
+.hub-tab { display: flex; align-items: center; position: relative; font-size: 13px; color: var(--app-text);
+  padding-top: 4px; white-space: nowrap; }
+.hub-tab.on { color: var(--app-accent); font-weight: 500; }
+.hub-tab.on::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 2px;
+  border-radius: 1px; background: var(--app-accent); }
+
+.page-head {
+  flex: none; height: 56px; display: flex; align-items: center; gap: 12px;
+  padding: 0 20px; background: var(--app-panel); border-bottom: 1px solid var(--app-border);
+}
+.page-title { font-size: 14px; font-weight: 500; margin: 0; white-space: nowrap; }
+.head-hint { font-size: 12px; color: var(--app-text3); min-width: 0; flex: 1 1 auto;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.head-r { flex: none; display: flex; align-items: center; gap: 8px; }
+.vline { width: 1px; height: 14px; background: var(--app-border); flex: none; }
+
+.search {
+  width: 180px; height: 28px; display: flex; align-items: center; gap: 6px; padding: 0 8px;
+  border: 1px solid var(--app-border); border-radius: 6px; background: var(--app-panel);
+  color: var(--app-text3); font-size: 12px;
+}
+.search .ic { width: 12px; height: 12px; flex: none; }
+.select {
+  height: 28px; display: inline-flex; align-items: center; gap: 6px; padding: 0 9px;
+  border: 1px solid var(--app-border); border-radius: 6px; background: var(--app-panel);
+  color: var(--app-text2); font-size: 12px; white-space: nowrap;
+}
+.select .ic { width: 10px; height: 10px; color: var(--app-text3); }
+
+.btn {
+  display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 13px;
+  border-radius: 7px; border: none; background: var(--app-accent); color: #fff; font-size: 12px;
+  white-space: nowrap; cursor: pointer;
+}
+.btn .ic { width: 12px; height: 12px; }
+.btn.ghost { background: transparent; color: var(--app-text2); border: 1px solid var(--app-border); }
+.btn.danger-ghost { background: transparent; color: var(--app-danger); border: 1px solid #eecdc2; }
+.btn.sm { height: 26px; padding: 0 10px; border-radius: 6px; }
+.btn[disabled] { background: #c6d4f2; cursor: not-allowed; }
+
+/* ---------------- 通用卡片 / 指标 ---------------- */
+.body { flex: 1; min-height: 0; padding: 16px 20px; overflow: hidden; }
+.card { background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 10px;
+  box-shadow: var(--app-shadow-sm); }
+.stat-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 14px; }
+.stat { height: 76px; padding: 12px 16px; display: flex; flex-direction: column; justify-content: center; gap: 5px; }
+.stat .lab { font-size: 11px; color: var(--app-text3); }
+.stat .val { font-size: 20px; font-weight: 600; letter-spacing: -.01em; }
+.stat .val em { font-style: normal; font-size: 12px; font-weight: 500; color: var(--app-text3); margin-left: 4px; }
+.stat .sub { font-size: 11px; color: var(--app-text3); }
+.stat .sub.good { color: var(--app-ok); }
+.stat .sub.bad { color: var(--app-danger); }
+
+/* 质量概况条 */
+.quality-strip { height: 92px; display: flex; align-items: stretch; margin-bottom: 14px; overflow: hidden; }
+.qs-cell { display: flex; align-items: center; gap: 16px; padding: 0 18px; }
+.qs-cell + .qs-cell { border-left: 1px solid var(--app-border); }
+.qs-lab { font-size: 11px; color: var(--app-text3); margin-bottom: 7px; }
+.qs-items { display: flex; align-items: center; gap: 16px; }
+.qs-item { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--app-text2); white-space: nowrap; }
+.qs-item i { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
+.qs-item b { font-size: 14px; font-weight: 600; color: var(--app-text); }
+.qs-trend { flex: 1; min-width: 0; padding: 0 18px; display: flex; flex-direction: column; justify-content: center; }
+.qs-trend svg { width: 100%; height: 42px; display: block; }
+.qs-note { width: 270px; display: flex; flex-direction: column; justify-content: center; gap: 4px; padding: 0 18px; border-left: 1px solid var(--app-border); }
+.qs-note .t { font-size: 12px; color: var(--app-text2); }
+.qs-note .t b { color: var(--app-text); font-weight: 600; }
+.qs-note .s { font-size: 11px; color: var(--app-text3); }
+
+/* 底部两栏 */
+.bottom-grid { display: grid; grid-template-columns: 1.25fr 1fr; gap: 12px; height: 156px; margin-top: 14px; }
+.mini-card { padding: 12px 16px; display: flex; flex-direction: column; overflow: hidden; }
+.mini-card .h { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+.mini-card .h .more { margin-left: auto; font-size: 11px; font-weight: 400; }
+.mini-row { display: flex; align-items: center; gap: 8px; height: 34px; border-top: 1px solid #eef1f4; font-size: 12px; color: var(--app-text2); }
+.mini-row .name { color: var(--app-text); font-weight: 500; width: 150px; flex: none; }
+.mini-row .meta { color: var(--app-text3); font-size: 11px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mini-row .sp { flex: 1; }
+
+/* ---------------- 紧凑表格 ---------------- */
+.tbl-wrap { overflow: hidden; }
+.tbl { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.tbl th {
+  height: 32px; padding: 0 10px; background: var(--app-panel-2); border-bottom: 1px solid var(--app-border);
+  color: var(--app-text3); font-size: 11px; font-weight: 500; text-align: left; white-space: nowrap;
+}
+.tbl td { height: 34px; padding: 0 10px; border-bottom: 1px solid #eef1f4; font-size: 12px;
+  color: var(--app-text2); vertical-align: middle; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tbl tr:last-child td { border-bottom: none; }
+.tbl tr.row { position: relative; }
+.tbl td.agent-cell { display: flex; align-items: center; gap: 9px; height: 34px; }
+.agent-ico { width: 22px; height: 22px; border-radius: 6px; display: inline-flex; align-items: center;
+  justify-content: center; font-size: 12px; flex: none; }
+.agent-name { font-size: 12px; color: var(--app-text); font-weight: 500; }
+.agent-sub { font-size: 10px; color: var(--app-text3); margin-left: 6px; font-weight: 400; }
+.cell-num { font-variant-numeric: tabular-nums; }
+.cell-strong { color: var(--app-text); font-weight: 600; }
+.cell-muted { color: var(--app-text3); }
+.cell-good { color: var(--app-ok); font-weight: 600; }
+.cell-bad { color: var(--app-danger); font-weight: 600; }
+
+.pill { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; line-height: 1;
+  padding: 4px 7px; border-radius: 999px; white-space: nowrap; }
+.pill::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.pill.plain::before { display: none; }
+.pill.ok { color: var(--app-ok); background: var(--app-ok-weak); }
+.pill.warn { color: var(--app-warn-text); background: var(--app-warn-weak); }
+.pill.err { color: var(--app-danger); background: #fbecea; }
+.pill.muted { color: var(--app-text3); background: #f1f3f5; }
+.pill.blue { color: var(--app-accent); background: var(--app-accent-weak); }
+
+.bar { width: 68px; height: 5px; border-radius: 3px; background: #eef1f4; display: inline-block;
+  vertical-align: middle; overflow: hidden; margin-right: 7px; }
+.bar i { display: block; height: 100%; border-radius: 3px; background: var(--app-ok); }
+.bar.low i { background: var(--app-danger); }
+.bar.mid i { background: var(--app-warn); }
+.bar.blue i { background: var(--app-accent); }
+
+.link { color: var(--app-accent); font-size: 12px; text-decoration: none; }
+.link.muted { color: var(--app-text3); }
+.link + .link { margin-left: 8px; }
+
+/* ---------------- 详情页 ---------------- */
+.crumb { display: flex; align-items: center; gap: 8px; color: var(--app-text3); font-size: 12px;
+  padding: 0 20px; height: 40px; background: var(--app-panel); border-bottom: 1px solid var(--app-border); flex: none; }
+.crumb .back { display: inline-flex; align-items: center; gap: 4px; color: var(--app-text2); }
+.detail-head { flex: none; height: 68px; display: flex; align-items: center; gap: 12px;
+  padding: 0 20px; background: var(--app-panel); border-bottom: 1px solid var(--app-border); }
+.big-avatar { width: 38px; height: 38px; border-radius: 10px; background: #f1eafd; color: #7c3aed;
+  display: inline-flex; align-items: center; justify-content: center; font-size: 18px; flex: none; }
+.detail-title { font-size: 15px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.detail-sub { font-size: 12px; color: var(--app-text3); margin-top: 4px; }
+.detail-acts { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+
+.sum-grid { display: grid; grid-template-columns: 220px repeat(3, 1fr) 250px; gap: 12px; margin-bottom: 14px; }
+.score-card { padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; }
+.score-card .lab { font-size: 11px; color: var(--app-text3); }
+.score-card .score { font-size: 34px; font-weight: 650; letter-spacing: -.02em; line-height: 1.15; }
+.score-card .score em { font-style: normal; font-size: 12px; font-weight: 500; color: var(--app-text3); margin-left: 4px; }
+.score-card .delta { font-size: 11px; }
+.score-card .delta.bad { color: var(--app-danger); }
+.score-card .delta.good { color: var(--app-ok); }
+.mini-stat { padding: 14px 16px; display: flex; flex-direction: column; justify-content: space-between; }
+.mini-stat .lab { font-size: 11px; color: var(--app-text3); }
+.mini-stat .val { font-size: 18px; font-weight: 600; }
+.mini-stat .val em { font-style: normal; font-size: 11px; color: var(--app-text3); font-weight: 400; margin-left: 3px; }
+.mini-stat .sub { font-size: 11px; color: var(--app-text3); }
+.gate-card { padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; border-left: 3px solid var(--app-danger); }
+.gate-card.ok { border-left-color: var(--app-ok); }
+.gate-card.warn { border-left-color: var(--app-warn); }
+.gate-card .row1 { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; }
+.gate-card .row2 { font-size: 11px; color: var(--app-text3); line-height: 1.55; }
+.gate-card .row2 b { color: var(--app-text2); font-weight: 500; }
+.gate-card .row3 { margin-top: auto; }
+
+.inner-tabs { height: 42px; display: flex; align-items: stretch; gap: 24px; padding: 0 4px;
+  border-bottom: 1px solid var(--app-border); margin-bottom: 14px; flex: none; }
+.inner-tab { position: relative; display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--app-text2); }
+.inner-tab.on { color: var(--app-text); font-weight: 500; }
+.inner-tab.on::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
+  background: var(--app-accent); border-radius: 1px; }
+.cnt { font-size: 10px; line-height: 16px; padding: 0 5px; border-radius: 3px; background: #f1f3f5;
+  color: var(--app-text3); }
+.inner-tab.on .cnt { background: var(--app-accent-weak); color: var(--app-accent); }
+
+.detail-body { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+
+/* 失败行与展开 */
+.tbl tr.fail td:first-child { box-shadow: inset 3px 0 0 var(--app-danger); }
+.tbl tr.fail { background: #fffbfa; }
+.detail-row td { height: auto; padding: 0; border-bottom: 1px solid var(--app-border); background: #fffbfa;
+  white-space: normal; overflow: visible; }
+.detail-inner { padding: 12px 16px 14px 20px; display: flex; flex-wrap: wrap; gap: 20px 24px; }
+.detail-col { flex: 1; min-width: 0; }
+.detail-col .k { font-size: 11px; color: var(--app-text3); margin-bottom: 5px; }
+.detail-col .v { font-size: 12px; color: var(--app-text2); line-height: 1.6; }
+.reason { color: var(--app-danger-text); }
+.src-row { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; font-size: 11px; margin-bottom: 5px; }
+.src-row .tag { padding: 1px 5px; border-radius: 3px; background: var(--app-panel-2); border: 1px solid var(--app-border); color: var(--app-text3); }
+.src-row .miss { color: var(--app-danger); border-color: #f3c9be; background: var(--app-danger-weak); }
+
+/* ---------------- 弹窗 ---------------- */
+.mask { position: absolute; inset: 0; background: rgba(17, 24, 39, .46); display: flex;
+  align-items: center; justify-content: center; z-index: 20; }
+.modal { background: var(--app-panel); border-radius: 12px; box-shadow: 0 24px 64px rgba(16,24,40,.28);
+  display: flex; flex-direction: column; overflow: hidden; }
+.modal-head { flex: none; padding: 16px 20px 14px; border-bottom: 1px solid var(--app-border); display: flex; align-items: flex-start; gap: 12px; }
+.modal-title { font-size: 15px; font-weight: 600; }
+.modal-sub { font-size: 12px; color: var(--app-text3); margin-top: 5px; line-height: 1.55; }
+.modal-head .x { margin-left: auto; color: var(--app-text3); width: 26px; height: 26px; display: inline-flex;
+  align-items: center; justify-content: center; border-radius: 6px; }
+.modal-body { flex: 1; min-height: 0; overflow: hidden; padding: 16px 20px; }
+.modal-foot { flex: none; padding: 12px 20px; border-top: 1px solid var(--app-border);
+  display: flex; align-items: center; gap: 8px; background: var(--app-panel-2); }
+.modal-foot .sp { flex: 1; }
+
+/* 对比弹窗 */
+.cmp-modal { width: 980px; height: 600px; }
+.cmp-pickers { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.run-pick { flex: 1; display: flex; align-items: center; gap: 10px; border: 1px solid var(--app-border);
+  border-radius: 8px; padding: 9px 12px; background: var(--app-panel-2); }
+.run-pick .side-lab { font-size: 10px; font-weight: 700; color: #fff; width: 18px; height: 18px;
+  border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; background: var(--app-text3); }
+.run-pick.b .side-lab { background: var(--app-accent); }
+.run-pick .meta { flex: 1; min-width: 0; }
+.run-pick .t { font-size: 12px; color: var(--app-text); font-weight: 500; }
+.run-pick .s { font-size: 11px; color: var(--app-text3); margin-top: 3px; }
+.run-pick .caret { color: var(--app-text3); }
+.cmp-metrics { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 14px; }
+.cmp-metric { border: 1px solid var(--app-border); border-radius: 8px; padding: 10px 12px; }
+.cmp-metric .k { font-size: 11px; color: var(--app-text3); }
+.cmp-metric .vals { display: flex; align-items: baseline; gap: 8px; margin-top: 4px; }
+.cmp-metric .a { font-size: 13px; color: var(--app-text3); }
+.cmp-metric .b { font-size: 17px; font-weight: 600; color: var(--app-text); }
+.cmp-metric .d { font-size: 11px; }
+.cmp-metric .d.bad { color: var(--app-danger); }
+.cmp-metric .d.good { color: var(--app-ok); }
+.filter-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 12px; color: var(--app-text3); }
+.chip { font-size: 11px; padding: 4px 8px; border-radius: 999px; border: 1px solid var(--app-border);
+  color: var(--app-text2); background: var(--app-panel); }
+.chip.on { border-color: var(--app-accent-border); color: var(--app-accent); background: var(--app-accent-weak); }
+.cmp-tbl th { height: 30px; }
+.cmp-tbl td { height: 32px; }
+.delta-badge { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; font-weight: 600;
+  padding: 2px 6px; border-radius: 4px; }
+.delta-badge.bad { color: var(--app-danger); background: var(--app-danger-weak); }
+.delta-badge.good { color: var(--app-ok); background: var(--app-ok-weak); }
+.delta-badge.flat { color: var(--app-text3); background: #f1f3f5; }
+
+/* 门禁弹窗 */
+.gate-modal { width: 540px; }
+.gate-body { padding: 16px 20px 18px; }
+.gate-status { border: 1px solid var(--app-warn-border); background: var(--app-warn-weak);
+  border-radius: 8px; padding: 10px 12px; display: flex; align-items: flex-start; gap: 10px; }
+.gate-status .ico { width: 22px; height: 22px; border-radius: 50%; background: #fff; color: var(--app-warn-text);
+  display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.gate-status .t { font-size: 12px; font-weight: 600; color: var(--app-warn-text); }
+.gate-status .s { font-size: 11px; color: #8a6320; line-height: 1.6; margin-top: 3px; }
+.change-list { margin-top: 14px; }
+.change-list .k { font-size: 11px; color: var(--app-text3); margin-bottom: 7px; }
+.change-item { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px dashed var(--app-border); }
+.change-item:last-child { border-bottom: none; }
+.change-item .num { width: 18px; height: 18px; border-radius: 4px; background: var(--app-accent-weak);
+  color: var(--app-accent); font-size: 10px; font-weight: 600; display: inline-flex;
+  align-items: center; justify-content: center; flex: none; }
+.change-item .t { font-size: 12px; color: var(--app-text2); }
+.change-item .b { margin-left: auto; font-size: 11px; color: var(--app-text3); }
+.last-run { margin-top: 14px; padding: 10px 12px; border: 1px solid var(--app-border); border-radius: 8px;
+  background: var(--app-panel-2); display: flex; align-items: center; gap: 10px; }
+.last-run .t { font-size: 12px; color: var(--app-text2); }
+.last-run .t b { color: var(--app-text); font-weight: 600; }
+.last-run .s { font-size: 11px; color: var(--app-text3); margin-top: 3px; }
+.last-run .sp { flex: 1; }
+
+/* 简化编辑器背景 */
+.editor-head { flex: none; height: 56px; display: flex; align-items: center; gap: 12px; padding: 0 20px;
+  background: var(--app-panel); border-bottom: 1px solid var(--app-border); }
+.editor-body { flex: 1; display: flex; min-height: 0; }
+.form-area { flex: 1; padding: 16px 20px; min-width: 0; }
+.form-sec { background: var(--app-panel); border: 1px solid var(--app-border); border-radius: 10px;
+  padding: 14px 16px; margin-bottom: 12px; }
+.form-sec .h { font-size: 12px; font-weight: 600; color: var(--app-text); margin-bottom: 10px;
+  display: flex; align-items: center; gap: 6px; }
+.form-sec .line { height: 28px; border: 1px solid var(--app-border); border-radius: 6px;
+  background: var(--app-panel-2); margin-bottom: 8px; }
+.form-sec .line.short { width: 70%; }
+.side-panel { width: 300px; flex: none; border-left: 1px solid var(--app-border); background: var(--app-panel);
+  padding: 16px; }
+.side-panel .h { font-size: 12px; font-weight: 600; margin-bottom: 10px; }
+.side-item { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--app-text3);
+  padding: 6px 0; border-bottom: 1px dashed var(--app-border); }
+.side-item b { color: var(--app-text2); font-weight: 500; }
+
+/* 趋势图 */
+.trend { width: 100%; height: 96px; display: block; }
+.legend { display: flex; align-items: center; gap: 14px; font-size: 11px; color: var(--app-text3); }
+.legend i { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 4px; }
+</style>
+</head>
+<body>
+<div class="sheet">
+  <div class="sheet-top">
+    <div class="sheet-title">问渠 · 智能体评测与发布门禁 · 效果图</div>
+    <div class="sheet-sub">
+      场景：智能体工作台第 7 个 Tab「评测」。<b>列表看门禁</b> → <b>详情看失败原因与趋势</b> →
+      <b>版本对比看改动好坏</b> → <b>保存前检查做最后一道拦截</b>。<br>
+      画布 1600×1000，全部 token 取自 <code>web/src/views/app.css</code>；表格沿用紧凑规格（表头 32px / 行 34px）。
+    </div>
+  </div>
+
+  <!-- ============================================================
+       场景 01 · 评测总览
+       ============================================================ -->
+  <div class="scene-block">
+    <div class="cap"><b>01</b><em>评测总览</em><span>智能体列表 + 质量概况 + 门禁状态；运行中行直接显示进度</span></div>
+    <div class="scene">
+      <!-- 侧栏 -->
+      <aside class="side">
+        <div class="logo-row">
+          <span class="logo-mark">问</span>
+          <span class="logo-name">问渠</span>
+          <span class="fold"><svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg></span>
+        </div>
+        <nav class="side-nav">
+          <div class="nav-item"><svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>对话</div>
+          <div class="nav-item active"><svg class="ic" width="14" height="14" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v2"/></svg>智能体</div>
+          <div class="nav-item"><svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="M3 9l9-6 9 6-9 6z"/><path d="M3 15l9 6 9-6"/></svg>市场</div>
+          <div class="nav-item"><svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="M4 5a2 2 0 0 1 2-2h13v18H6a2 2 0 0 1-2-2z"/><path d="M8 7h8M8 11h8"/></svg>知识库</div>
+          <div class="nav-item"><svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="M3 7h18v13H3z"/><path d="M3 7l9 6 9-6"/></svg>我的产物</div>
+          <div class="nav-item"><svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>使用统计</div>
+        </nav>
+        <div class="side-search">
+          <svg class="ic" width="12" height="12" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+          搜索会话
+        </div>
+        <div class="side-sec"><span class="t">工作区</span><span class="n">3</span><span class="plus"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span></div>
+        <div class="ws-row on"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>合同中心</div>
+        <div class="ws-row"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>内容运营</div>
+        <div class="side-sec"><span class="t">最近会话</span></div>
+        <div class="sess-row"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg><span>合同付款条件核对</span></div>
+        <div class="sess-row"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg><span>保密协议条款梳理</span></div>
+        <div class="side-foot">
+          <span class="avatar">Y</span>
+          <span style="font-size:12px;color:var(--app-text2)">yuanke</span>
+          <span class="sp"></span>
+          <button class="icon-btn"><svg class="ic" width="14" height="14" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/></svg></button>
+        </div>
+      </aside>
+
+      <!-- 主区 -->
+      <div class="main">
+        <div class="hub-tabs">
+          <div class="hub-tab">模型供应商</div>
+          <div class="hub-tab">智能体</div>
+          <div class="hub-tab">技能 Skills</div>
+          <div class="hub-tab">MCP 外部工具</div>
+          <div class="hub-tab">工作流</div>
+          <div class="hub-tab">定时任务</div>
+          <div class="hub-tab on">评测</div>
+        </div>
+
+        <div class="page-head">
+          <h3 class="page-title">智能体评测</h3>
+          <span class="head-hint">用真实问题回归配置改动，发布前知道变好还是变坏</span>
+          <div class="head-r">
+            <div class="search"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>搜索智能体</div>
+            <div class="select">全部门禁状态<svg class="ic" width="10" height="10" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></div>
+            <button class="btn ghost"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>新建评测集</button>
+          </div>
+        </div>
+
+        <div class="body">
+          <div class="stat-row">
+            <div class="card stat">
+              <span class="lab">已建立评测集</span>
+              <span class="val">8<em>/ 9 个智能体</em></span>
+              <span class="sub">1 个智能体尚未建立</span>
+            </div>
+            <div class="card stat">
+              <span class="lab">本周回归</span>
+              <span class="val">12<em>次</em></span>
+              <span class="sub good">比上周 +4 次</span>
+            </div>
+            <div class="card stat">
+              <span class="lab">平均通过率</span>
+              <span class="val">84<em>%</em></span>
+              <span class="sub good">较上版 +1.8 个百分点</span>
+            </div>
+            <div class="card stat">
+              <span class="lab">低于门槛</span>
+              <span class="val" style="color:var(--app-danger)">1<em>个</em></span>
+              <span class="sub bad">合同审阅助手 78% / 门槛 80%</span>
+            </div>
+          </div>
+
+          <div class="card quality-strip">
+            <div class="qs-cell">
+              <div>
+                <div class="qs-lab">门禁分布</div>
+                <div class="qs-items">
+                  <span class="qs-item"><i style="background:var(--app-ok)"></i>达标 <b>5</b></span>
+                  <span class="qs-item"><i style="background:var(--app-warn)"></i>有变更 <b>1</b></span>
+                  <span class="qs-item"><i style="background:var(--app-danger)"></i>低于门槛 <b>1</b></span>
+                  <span class="qs-item"><i style="background:#c3c9d1"></i>未评测 <b>1</b></span>
+                  <span class="qs-item"><i style="background:var(--app-accent)"></i>运行中 <b>1</b></span>
+                </div>
+              </div>
+            </div>
+            <div class="qs-trend">
+              <div class="qs-lab" style="margin-bottom:2px">近 6 周平均通过率</div>
+              <svg viewBox="0 0 400 42" preserveAspectRatio="none">
+                <path d="M0,32 L80,34 L160,28 L240,24 L320,20 L400,16" fill="none" stroke="#2e6be6" stroke-width="1.6"/>
+                <path d="M0,32 L80,34 L160,28 L240,24 L320,20 L400,16 L400,42 L0,42 Z" fill="#eef2f7" opacity=".75"/>
+                <circle cx="0" cy="32" r="2.5" fill="#2e6be6"/><circle cx="80" cy="34" r="2.5" fill="#2e6be6"/>
+                <circle cx="160" cy="28" r="2.5" fill="#2e6be6"/><circle cx="240" cy="24" r="2.5" fill="#2e6be6"/>
+                <circle cx="320" cy="20" r="2.5" fill="#2e6be6"/><circle cx="400" cy="16" r="2.5" fill="#2e6be6"/>
+              </svg>
+            </div>
+            <div class="qs-note">
+              <div class="t">本周回归 <b>12</b> 次 · 新增失败 <b>5</b> 条 · 已修复 <b>3</b> 条</div>
+              <div class="s">评测消耗 ¥2.18 · 单列在「使用统计 · 评测」</div>
+            </div>
+          </div>
+
+          <div class="card tbl-wrap">
+            <table class="tbl">
+              <colgroup>
+                <col style="width:252px"><col style="width:92px"><col style="width:156px">
+                <col style="width:92px"><col style="width:150px"><col style="width:132px"><col style="width:120px">
+              </colgroup>
+              <thead>
+                <tr>
+                  <th>智能体</th><th>评测集</th><th>最近通过率</th><th>较上版</th>
+                  <th>最近运行</th><th>门禁状态</th><th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr class="row">
+                  <td class="agent-cell"><span class="agent-ico" style="background:#eef2f7;color:#2e6be6">▣</span><span class="agent-name">知识库助手</span><span class="agent-sub">v12 · 内置</span></td>
+                  <td class="cell-num">20 条</td>
+                  <td><span class="bar"><i style="width:92%"></i></span><span class="cell-strong">92%</span></td>
+                  <td><span class="cell-good">+4.2</span></td>
+                  <td class="cell-muted">2 分钟前 · 2.8s</td>
+                  <td><span class="pill ok">达标</span></td>
+                  <td><a class="link" href="#">运行回归</a> <a class="link" href="#">详情</a></td>
+                </tr>
+                <tr class="row">
+                  <td class="agent-cell"><span class="agent-ico" style="background:#f1eafd;color:#7c3aed">◈</span><span class="agent-name">合同审阅助手</span><span class="agent-sub">v8</span></td>
+                  <td class="cell-num">36 条</td>
+                  <td><span class="bar low"><i style="width:78%"></i></span><span class="cell-bad">78%</span></td>
+                  <td><span class="cell-bad">-2.6</span></td>
+                  <td class="cell-muted">今天 11:20 · 3.4s</td>
+                  <td><span class="pill err">低于门槛</span></td>
+                  <td><a class="link" href="#">运行回归</a> <a class="link" href="#">详情</a></td>
+                </tr>
+                <tr class="row">
+                  <td class="agent-cell"><span class="agent-ico" style="background:#eaf5ec;color:#3b8f4e">✎</span><span class="agent-name">内容运营助手</span><span class="agent-sub">v5</span></td>
+                  <td class="cell-num">18 条</td>
+                  <td><span class="bar"><i style="width:88%"></i></span><span class="cell-strong">88%</span></td>
+                  <td><span class="cell-good">+6.0</span></td>
+                  <td class="cell-muted">昨天 17:40 · 2.1s</td>
+                  <td><span class="pill ok">达标</span></td>
+                  <td><a class="link" href="#">运行回归</a> <a class="link" href="#">详情</a></td>
+                </tr>
+                <tr class="row">
+                  <td class="agent-cell"><span class="agent-ico" style="background:#faf3e6;color:#a3691b">▤</span><span class="agent-name">数据分析助手</span><span class="agent-sub">v3</span></td>
+                  <td class="cell-muted">未建立</td>
+                  <td class="cell-muted">—</td>
+                  <td class="cell-muted">—</td>
+                  <td class="cell-muted">—</td>
+                  <td><span class="pill muted">未评测</span></td>
+                  <td><a class="link" href="#">建立评测集</a></td>
+                </tr>
+                <tr class="row">
+                  <td class="agent-cell"><span class="agent-ico" style="background:#eef2f7;color:#5f6570">☷</span><span class="agent-name">客服质检助手</span><span class="agent-sub">v11</span></td>
+                  <td class="cell-num">24 条</td>
+                  <td><span class="bar blue"><i style="width:50%"></i></span><span class="cell-muted">12 / 24</span></td>
+                  <td class="cell-muted">—</td>
+                  <td class="cell-muted">正在运行 · 已用 1m 12s</td>
+                  <td><span class="pill blue">运行中</span></td>
+                  <td><a class="link" href="#">取消</a></td>
+                </tr>
+                <tr class="row">
+                  <td class="agent-cell"><span class="agent-ico" style="background:#eef2f7;color:#2e6be6">◎</span><span class="agent-name">入职引导助手</span><span class="agent-sub">v6</span></td>
+                  <td class="cell-num">14 条</td>
+                  <td><span class="bar"><i style="width:85%"></i></span><span class="cell-strong">85%</span></td>
+                  <td><span class="cell-good">+0.5</span></td>
+                  <td class="cell-muted">昨天 09:12 · 2.4s</td>
+                  <td><span class="pill warn">有变更未评测</span></td>
+                  <td><a class="link" href="#">运行回归</a> <a class="link" href="#">详情</a></td>
+                </tr>
+                <tr class="row">
+                  <td class="agent-cell"><span class="agent-ico" style="background:#f1eafd;color:#7c3aed">▥</span><span class="agent-name">投标文件助手</span><span class="agent-sub">v9</span></td>
+                  <td class="cell-num">28 条</td>
+                  <td><span class="bar"><i style="width:81%"></i></span><span class="cell-strong">81%</span></td>
+                  <td><span class="cell-good">+3.1</span></td>
+                  <td class="cell-muted">3 天前 · 3.0s</td>
+                  <td><span class="pill ok">达标</span></td>
+                  <td><a class="link" href="#">运行回归</a> <a class="link" href="#">详情</a></td>
+                </tr>
+                <tr class="row">
+                  <td class="agent-cell"><span class="agent-ico" style="background:#eaf5ec;color:#3b8f4e">¥</span><span class="agent-name">财务报销助手</span><span class="agent-sub">v4</span></td>
+                  <td class="cell-num">12 条</td>
+                  <td><span class="bar"><i style="width:90%"></i></span><span class="cell-strong">90%</span></td>
+                  <td><span class="cell-good">+2.0</span></td>
+                  <td class="cell-muted">2 天前 · 1.9s</td>
+                  <td><span class="pill ok">达标</span></td>
+                  <td><a class="link" href="#">运行回归</a> <a class="link" href="#">详情</a></td>
+                </tr>
+                <tr class="row">
+                  <td class="agent-cell"><span class="agent-ico" style="background:#eef2f7;color:#5f6570">§</span><span class="agent-name">法务咨询助手</span><span class="agent-sub">v7</span></td>
+                  <td class="cell-num">22 条</td>
+                  <td><span class="bar"><i style="width:83%"></i></span><span class="cell-strong">83%</span></td>
+                  <td><span class="cell-bad">-0.8</span></td>
+                  <td class="cell-muted">4 天前 · 3.2s</td>
+                  <td><span class="pill ok">达标</span></td>
+                  <td><a class="link" href="#">运行回归</a> <a class="link" href="#">详情</a></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <div class="bottom-grid">
+            <div class="card mini-card">
+              <div class="h">最近回归<span class="more"><a class="link" href="#">全部运行</a></span></div>
+              <div class="mini-row"><span class="name">知识库助手 · v12</span><span class="meta">20 条 · 用时 2m 08s</span><span class="cell-good">92%</span><span class="pill ok">达标</span></div>
+              <div class="mini-row"><span class="name">合同审阅助手 · v8</span><span class="meta">36 条 · 用时 3m 44s</span><span class="cell-bad">78%</span><span class="pill err">低于门槛</span></div>
+              <div class="mini-row"><span class="name">内容运营助手 · v5</span><span class="meta">18 条 · 用时 1m 32s</span><span class="cell-good">88%</span><span class="pill ok">达标</span></div>
+            </div>
+            <div class="card mini-card">
+              <div class="h">需要处理<span class="more"><span class="pill plain" style="color:var(--app-text3)">3 项</span></span></div>
+              <div class="mini-row"><span class="name">合同审阅助手</span><span class="meta">低于门槛 · 78% / 80%</span><a class="link" href="#">去运行</a></div>
+              <div class="mini-row"><span class="name">入职引导助手</span><span class="meta">有变更未评测 · v6</span><a class="link" href="#">去运行</a></div>
+              <div class="mini-row"><span class="name">数据分析助手</span><span class="meta">尚未建立评测集</span><a class="link" href="#">去建立</a></div>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:8px;padding:10px 2px 0;font-size:11px;color:var(--app-text3)">
+            <span>门禁判定：通过率 ≥ 套件门槛且无 0 分严重失败；默认门槛 80%。</span>
+            <span style="flex:1"></span>
+            <span>评测默认只读，不执行需要人工确认的工具</span>
+            <a class="link" href="#">查看评测口径</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       场景 02 · 智能体评测详情
+       ============================================================ -->
+  <div class="scene-block">
+    <div class="cap"><b>02</b><em>智能体评测详情</em><span>质量分 / 趋势 / 门禁 / 逐条结果；失败项展开直接看到「为什么」</span></div>
+    <div class="scene">
+      <aside class="side">
+        <div class="logo-row">
+          <span class="logo-mark">问</span><span class="logo-name">问渠</span>
+          <span class="fold"><svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg></span>
+        </div>
+        <nav class="side-nav">
+          <div class="nav-item"><svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>对话</div>
+          <div class="nav-item active"><svg class="ic" width="14" height="14" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v2"/></svg>智能体</div>
+          <div class="nav-item"><svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="M3 9l9-6 9 6-9 6z"/><path d="M3 15l9 6 9-6"/></svg>市场</div>
+          <div class="nav-item"><svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="M4 5a2 2 0 0 1 2-2h13v18H6a2 2 0 0 1-2-2z"/><path d="M8 7h8M8 11h8"/></svg>知识库</div>
+          <div class="nav-item"><svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="M3 7h18v13H3z"/><path d="M3 7l9 6 9-6"/></svg>我的产物</div>
+          <div class="nav-item"><svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>使用统计</div>
+        </nav>
+        <div class="side-search">
+          <svg class="ic" width="12" height="12" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>搜索会话
+        </div>
+        <div class="side-sec"><span class="t">工作区</span><span class="n">3</span><span class="plus"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></span></div>
+        <div class="ws-row on"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>合同中心</div>
+        <div class="ws-row"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>内容运营</div>
+        <div class="side-sec"><span class="t">最近会话</span></div>
+        <div class="sess-row"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg><span>合同付款条件核对</span></div>
+        <div class="sess-row"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg><span>保密协议条款梳理</span></div>
+        <div class="side-foot">
+          <span class="avatar">Y</span><span style="font-size:12px;color:var(--app-text2)">yuanke</span>
+          <span class="sp"></span>
+          <button class="icon-btn"><svg class="ic" width="14" height="14" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/></svg></button>
+        </div>
+      </aside>
+
+      <div class="main">
+        <div class="hub-tabs">
+          <div class="hub-tab">模型供应商</div>
+          <div class="hub-tab">智能体</div>
+          <div class="hub-tab">技能 Skills</div>
+          <div class="hub-tab">MCP 外部工具</div>
+          <div class="hub-tab">工作流</div>
+          <div class="hub-tab">定时任务</div>
+          <div class="hub-tab on">评测</div>
+        </div>
+
+        <div class="crumb">
+          <span class="back"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>评测总览</span>
+          <span>/</span><span>合同审阅助手</span>
+        </div>
+
+        <div class="detail-head">
+          <span class="big-avatar">◈</span>
+          <div>
+            <div class="detail-title">合同审阅助手 <span class="pill muted plain">v8</span></div>
+            <div class="detail-sub">36 条用例 · 门槛 80% · 最近运行 今天 11:20 · 由 yuanke 触发</div>
+          </div>
+          <div class="detail-acts">
+            <button class="btn ghost"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>评测集</button>
+            <button class="btn ghost"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><path d="M8 3v4M16 3v4M4 9h16M5 5h14a1 1 0 0 1 1 1v14H4V6a1 1 0 0 1 1-1z"/></svg>对比版本</button>
+            <button class="btn"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><path d="M8 5l12 7-12 7z"/></svg>运行回归</button>
+          </div>
+        </div>
+
+        <div class="body">
+          <div class="sum-grid">
+            <div class="card score-card">
+              <span class="lab">本次综合分</span>
+              <span class="score" style="color:var(--app-danger)">74.2</span>
+              <span class="delta bad">▼ 3.2 · 上版 77.4</span>
+              <span class="sub" style="font-size:11px;color:var(--app-text3)">召回 82 · 忠实 71 · 相关 76</span>
+            </div>
+            <div class="card mini-stat">
+              <span class="lab">通过率</span>
+              <span class="val" style="color:var(--app-danger)">78<em>%</em></span>
+              <span class="sub">28 / 36 条通过 · 门槛 80%</span>
+            </div>
+            <div class="card mini-stat">
+              <span class="lab">平均耗时</span>
+              <span class="val">3.4<em>s</em></span>
+              <span class="sub">首字 1.2s · 最慢 7.8s</span>
+            </div>
+            <div class="card mini-stat">
+              <span class="lab">本次消耗</span>
+              <span class="val">¥0.32</span>
+              <span class="sub">76.4k tokens · 36 次作答 + 36 次评判</span>
+            </div>
+            <div class="card gate-card">
+              <div class="row1"><span class="pill err">低于门槛</span><span style="color:var(--app-text2);font-weight:500">保存前会被提示</span></div>
+              <div class="row2">通过率 <b>78%</b> 低于门槛 <b>80%</b>；有 <b>3</b> 条内容质量失败。门禁模式：<b>提示</b>。</div>
+              <div class="row3"><a class="link" href="#">调整门槛</a> <span style="color:var(--app-text3);font-size:11px"> · </span> <a class="link" href="#">设为基线</a></div>
+            </div>
+          </div>
+
+          <div class="card" style="padding:12px 16px;margin-bottom:14px">
+            <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px">
+              <span style="font-size:12px;font-weight:600">近 6 次回归</span>
+              <span style="font-size:11px;color:var(--app-text3)">通过率趋势 · 点悬浮看版本与时间</span>
+              <span style="flex:1"></span>
+              <div class="legend"><span><i style="background:var(--app-ok)"></i>达标</span><span><i style="background:var(--app-danger)"></i>低于门槛</span></div>
+            </div>
+            <svg class="trend" viewBox="0 0 1120 112" preserveAspectRatio="none">
+              <line x1="0" y1="28" x2="1120" y2="28" stroke="#eef1f4"/>
+              <line x1="0" y1="56" x2="1120" y2="56" stroke="#eef1f4"/>
+              <line x1="0" y1="84" x2="1120" y2="84" stroke="#eef1f4"/>
+              <text x="0" y="24" font-size="10" fill="#98a0aa">90%</text>
+              <text x="0" y="52" font-size="10" fill="#98a0aa">80%</text>
+              <text x="0" y="80" font-size="10" fill="#98a0aa">70%</text>
+              <path d="M60,66 L260,48 L460,54 L660,40 L860,46 L1060,66" fill="none" stroke="#2e6be6" stroke-width="2"/>
+              <path d="M60,66 L260,48 L460,54 L660,40 L860,46 L1060,66 L1060,112 L60,112 Z" fill="#eef2f7" opacity=".7"/>
+              <circle cx="60" cy="66" r="4" fill="#3b8f4e"/>
+              <circle cx="260" cy="48" r="4" fill="#3b8f4e"/>
+              <circle cx="460" cy="54" r="4" fill="#3b8f4e"/>
+              <circle cx="660" cy="40" r="4" fill="#3b8f4e"/>
+              <circle cx="860" cy="46" r="4" fill="#3b8f4e"/>
+              <circle cx="1060" cy="66" r="4" fill="#d4552e"/>
+              <g font-size="10" fill="#98a0aa">
+                <text x="46" y="108">v3 · 76%</text><text x="246" y="108">v4 · 82%</text><text x="446" y="108">v5 · 80%</text>
+                <text x="646" y="108">v6 · 84%</text><text x="846" y="108">v7 · 81%</text><text x="1026" y="108">v8 · 78%</text>
+              </g>
+            </svg>
+          </div>
+
+          <div class="inner-tabs">
+            <div class="inner-tab on">本次结果 <span class="cnt">36</span></div>
+            <div class="inner-tab">历史运行 <span class="cnt">12</span></div>
+            <div class="inner-tab">评测集 <span class="cnt">36</span></div>
+            <span style="flex:1"></span>
+            <div style="display:flex;align-items:center;gap:8px;padding-bottom:6px">
+              <span class="chip on">仅失败 8</span><span class="chip">全部</span>
+            </div>
+          </div>
+
+          <div class="card tbl-wrap" style="flex:1;min-height:0">
+            <table class="tbl">
+              <colgroup>
+                <col style="width:330px"><col style="width:90px"><col style="width:90px"><col style="width:96px">
+                <col style="width:88px"><col style="width:88px"><col style="width:82px"><col style="width:96px">
+              </colgroup>
+              <thead>
+                <tr>
+                  <th>用例</th><th>来源</th><th>综合分</th><th>引用召回</th>
+                  <th>忠实度</th><th>相关性</th><th>耗时</th><th>状态</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr class="row">
+                  <td>一份采购合同里的付款条件是否与附件一致？</td><td class="cell-muted">差评回流</td>
+                  <td class="cell-strong">88</td><td class="cell-good">2 / 2</td><td>86</td><td>90</td><td class="cell-muted">3.1s</td><td><span class="pill ok">通过</span></td>
+                </tr>
+                <tr class="row">
+                  <td>这份保密协议的有效期是多久？</td><td class="cell-muted">会话采样</td>
+                  <td class="cell-strong">92</td><td class="cell-good">1 / 1</td><td>93</td><td>91</td><td class="cell-muted">2.7s</td><td><span class="pill ok">通过</span></td>
+                </tr>
+                <tr class="row fail">
+                  <td>违约责任条款是否缺失？</td><td class="cell-muted">手动新增</td>
+                  <td class="cell-bad">34</td><td class="cell-bad">0 / 2</td><td>42</td><td>58</td><td class="cell-muted">3.8s</td><td><span class="pill err">失败</span></td>
+                </tr>
+                <tr class="detail-row">
+                  <td colspan="8">
+                    <div class="detail-inner">
+                      <div class="detail-col" style="flex:1.2">
+                        <div class="k">失败原因</div>
+                        <div class="v reason">期望引用 2 条，命中 0 条。回答没有引用《合同违约责任指引》与《采购合同模板 v3》，内容来自模型自身推断。</div>
+                        <div class="k" style="margin-top:10px">建议</div>
+                        <div class="v">检查该知识库是否在当前智能体的资料范围内，或补充「违约责任」相关文档后重跑。</div>
+                      </div>
+                      <div class="detail-col" style="flex:1">
+                        <div class="k">期望引用 · 2 条</div>
+                        <div class="src-row"><span class="tag">知识块</span>合同违约责任指引 · 第 3 节 <span class="miss">未命中</span></div>
+                        <div class="src-row"><span class="tag">文档</span>采购合同模板 v3 <span class="miss">未命中</span></div>
+                        <div class="k" style="margin-top:10px">实际引用 · 0 条</div>
+                        <div class="v" style="color:var(--app-text3)">本轮没有引用任何知识库内容</div>
+                      </div>
+                      <div class="detail-col" style="flex:.9">
+                        <div class="k">评判摘要</div>
+                        <div class="v">忠实度 42：「违约责任」段落出现了未在合同中出现的「每日 0.5% 违约金」表述，疑似编造。</div>
+                        <div style="margin-top:10px"><a class="link" href="#">查看完整回答</a> <span style="color:var(--app-text3);font-size:11px"> · </span> <a class="link" href="#">对话回放</a></div>
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+                <tr class="row">
+                  <td>合同主体名称与营业执照是否一致？</td><td class="cell-muted">会话采样</td>
+                  <td class="cell-strong">78</td><td class="cell-good">1 / 1</td><td>76</td><td>79</td><td class="cell-muted">3.6s</td><td><span class="pill ok">通过</span></td>
+                </tr>
+                <tr class="row fail">
+                  <td>试用期长度是否合法？</td><td class="cell-muted">差评回流</td>
+                  <td class="cell-bad">28</td><td class="cell-bad">1 / 2</td><td class="cell-bad">31</td><td>64</td><td class="cell-muted">4.2s</td><td><span class="pill err">失败</span></td>
+                </tr>
+                <tr class="row fail">
+                  <td>付款节点逾期如何处理？</td><td class="cell-muted">差评回流</td>
+                  <td class="cell-bad">55</td><td class="cell-bad">1 / 2</td><td>61</td><td>58</td><td class="cell-muted">3.4s</td><td><span class="pill err">失败</span></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       场景 03 · 版本对比
+       ============================================================ -->
+  <div class="scene-block">
+    <div class="cap"><b>03</b><em>版本对比</em><span>v7 → v8：哪些题变好、哪些题变差，一眼看出这次改动值不值</span></div>
+    <div class="scene">
+      <aside class="side">
+        <div class="logo-row">
+          <span class="logo-mark">问</span><span class="logo-name">问渠</span>
+          <span class="fold"><svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg></span>
+        </div>
+        <nav class="side-nav">
+          <div class="nav-item"><svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>对话</div>
+          <div class="nav-item active"><svg class="ic" width="14" height="14" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v2"/></svg>智能体</div>
+          <div class="nav-item"><svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="M3 9l9-6 9 6-9 6z"/><path d="M3 15l9 6 9-6"/></svg>市场</div>
+          <div class="nav-item"><svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="M4 5a2 2 0 0 1 2-2h13v18H6a2 2 0 0 1-2-2z"/><path d="M8 7h8M8 11h8"/></svg>知识库</div>
+        </nav>
+        <div class="side-search">
+          <svg class="ic" width="12" height="12" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>搜索会话
+        </div>
+        <div class="side-sec"><span class="t">工作区</span><span class="n">3</span></div>
+        <div class="ws-row on"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>合同中心</div>
+        <div class="side-foot"><span class="avatar">Y</span><span style="font-size:12px;color:var(--app-text2)">yuanke</span><span class="sp"></span></div>
+      </aside>
+
+      <div class="main">
+        <div class="hub-tabs">
+          <div class="hub-tab">模型供应商</div><div class="hub-tab">智能体</div><div class="hub-tab">技能 Skills</div>
+          <div class="hub-tab">MCP 外部工具</div><div class="hub-tab">工作流</div><div class="hub-tab">定时任务</div><div class="hub-tab on">评测</div>
+        </div>
+        <div class="crumb"><span class="back"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>评测总览</span><span>/</span><span>合同审阅助手</span></div>
+        <div class="detail-head">
+          <span class="big-avatar">◈</span>
+          <div>
+            <div class="detail-title">合同审阅助手 <span class="pill muted plain">v8</span></div>
+            <div class="detail-sub">36 条用例 · 门槛 80% · 最近运行 今天 11:20</div>
+          </div>
+          <div class="detail-acts">
+            <button class="btn ghost">评测集</button>
+            <button class="btn ghost">对比版本</button>
+            <button class="btn">运行回归</button>
+          </div>
+        </div>
+        <div class="body" style="filter:blur(1px);opacity:.55">
+          <div class="sum-grid">
+            <div class="card score-card"><span class="lab">本次综合分</span><span class="score" style="color:var(--app-danger)">74.2</span></div>
+            <div class="card mini-stat"><span class="lab">通过率</span><span class="val">78<em>%</em></span></div>
+            <div class="card mini-stat"><span class="lab">平均耗时</span><span class="val">3.4<em>s</em></span></div>
+            <div class="card mini-stat"><span class="lab">本次消耗</span><span class="val">¥0.32</span></div>
+            <div class="card gate-card"><div class="row1"><span class="pill err">低于门槛</span></div></div>
+          </div>
+          <div class="card" style="height:150px"></div>
+        </div>
+      </div>
+
+      <div class="mask">
+        <div class="modal cmp-modal">
+          <div class="modal-head">
+            <div>
+              <div class="modal-title">版本对比 · v7 → v8</div>
+              <div class="modal-sub">同一套 36 条用例，用两个版本各跑一次。只看变化，不比较绝对值。</div>
+            </div>
+            <span class="x"><svg class="ic" width="16" height="16" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></span>
+          </div>
+          <div class="modal-body">
+            <div class="cmp-pickers">
+              <div class="run-pick a">
+                <span class="side-lab">A</span>
+                <div class="meta"><div class="t">v7 · 2026-11-03 16:40</div><div class="s">通过 29 / 36 · 综合分 77.4</div></div>
+                <span class="caret"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></span>
+              </div>
+              <span style="color:var(--app-text3);font-size:12px">对比</span>
+              <div class="run-pick b">
+                <span class="side-lab">B</span>
+                <div class="meta"><div class="t">v8 · 2026-11-07 11:20</div><div class="s">通过 28 / 36 · 综合分 74.2</div></div>
+                <span class="caret"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></svg></span>
+              </div>
+            </div>
+
+            <div class="cmp-metrics">
+              <div class="cmp-metric">
+                <div class="k">通过率</div>
+                <div class="vals"><span class="a">80.6%</span><span class="b">78.0%</span><span class="d bad">▼ 2.6pp</span></div>
+              </div>
+              <div class="cmp-metric">
+                <div class="k">平均综合分</div>
+                <div class="vals"><span class="a">77.4</span><span class="b">74.2</span><span class="d bad">▼ 3.2</span></div>
+              </div>
+              <div class="cmp-metric">
+                <div class="k">平均耗时</div>
+                <div class="vals"><span class="a">3.1s</span><span class="b">3.4s</span><span class="d bad">▲ 0.3s</span></div>
+              </div>
+              <div class="cmp-metric">
+                <div class="k">平均 token</div>
+                <div class="vals"><span class="a">1.9k</span><span class="b">2.1k</span><span class="d bad">▲ 200</span></div>
+              </div>
+            </div>
+
+            <div class="filter-row">
+              <span class="chip on">有变化 8</span>
+              <span class="chip">变差 3</span>
+              <span class="chip">变好 1</span>
+              <span class="chip">仅 B 失败 2</span>
+              <span style="flex:1"></span>
+              <span>结论：<b style="color:var(--app-danger);font-weight:600">本版整体变差</b>，不建议发布</span>
+            </div>
+
+            <div class="card tbl-wrap" style="border-radius:8px">
+              <table class="tbl cmp-tbl">
+                <colgroup><col style="width:360px"><col style="width:100px"><col style="width:100px"><col style="width:110px"><col></colgroup>
+                <thead><tr><th>用例</th><th>A · v7</th><th>B · v8</th><th>变化</th><th>说明</th></tr></thead>
+                <tbody>
+                  <tr class="row">
+                    <td>试用期长度是否合法？</td><td>86</td><td class="cell-bad">28</td>
+                    <td><span class="delta-badge bad">▼ 58</span></td><td class="cell-muted">引用冲突：条款 6 个月 vs 回答 3 个月</td>
+                  </tr>
+                  <tr class="row">
+                    <td>违约责任条款是否缺失？</td><td>72</td><td class="cell-bad">34</td>
+                    <td><span class="delta-badge bad">▼ 38</span></td><td class="cell-muted">期望引用 2 条，命中 0 条</td>
+                  </tr>
+                  <tr class="row">
+                    <td>付款节点逾期如何处理？</td><td>68</td><td class="cell-bad">55</td>
+                    <td><span class="delta-badge bad">▼ 13</span></td><td class="cell-muted">引用召回从 2/2 降到 1/2</td>
+                  </tr>
+                  <tr class="row">
+                    <td>合同主体名称与营业执照是否一致？</td><td>70</td><td class="cell-good">78</td>
+                    <td><span class="delta-badge good">▲ 8</span></td><td class="cell-muted">回答更完整，引用未变</td>
+                  </tr>
+                  <tr class="row">
+                    <td>争议解决方式是什么？</td><td>60</td><td>64</td>
+                    <td><span class="delta-badge flat">▲ 4</span></td><td class="cell-muted">仍通过，表述更简洁</td>
+                  </tr>
+                  <tr class="row">
+                    <td>保密协议有效期是多久？</td><td>90</td><td>92</td>
+                    <td><span class="delta-badge flat">▲ 2</span></td><td class="cell-muted">稳定</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="modal-foot">
+            <a class="link" href="#">导出对比报告</a>
+            <span class="sp"></span>
+            <button class="btn ghost">关闭</button>
+            <button class="btn">把 A 设为基线</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       场景 04 · 保存前检查
+       ============================================================ -->
+  <div class="scene-block">
+    <div class="cap"><b>04</b><em>保存前检查</em><span>智能体编辑页保存时的门禁弹窗；默认提示、可配置阻断</span></div>
+    <div class="scene">
+      <aside class="side">
+        <div class="logo-row">
+          <span class="logo-mark">问</span><span class="logo-name">问渠</span>
+          <span class="fold"><svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg></span>
+        </div>
+        <nav class="side-nav">
+          <div class="nav-item"><svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z"/></svg>对话</div>
+          <div class="nav-item active"><svg class="ic" width="14" height="14" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21v-2a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v2"/></svg>智能体</div>
+          <div class="nav-item"><svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="M3 9l9-6 9 6-9 6z"/><path d="M3 15l9 6 9-6"/></svg>市场</div>
+          <div class="nav-item"><svg class="ic" width="14" height="14" viewBox="0 0 24 24"><path d="M4 5a2 2 0 0 1 2-2h13v18H6a2 2 0 0 1-2-2z"/><path d="M8 7h8M8 11h8"/></svg>知识库</div>
+        </nav>
+        <div class="side-search"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>搜索会话</div>
+        <div class="side-sec"><span class="t">工作区</span><span class="n">3</span></div>
+        <div class="ws-row on"><svg class="ic" width="12" height="12" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>合同中心</div>
+        <div class="side-foot"><span class="avatar">Y</span><span style="font-size:12px;color:var(--app-text2)">yuanke</span><span class="sp"></span></div>
+      </aside>
+
+      <div class="main">
+        <div class="editor-head">
+          <span class="big-avatar" style="width:32px;height:32px;font-size:15px;background:#f1eafd;color:#7c3aed">▥</span>
+          <div>
+            <div style="font-size:14px;font-weight:600">投标文件助手</div>
+            <div style="font-size:11px;color:var(--app-text3);margin-top:2px">编辑配置 · 当前 v6</div>
+          </div>
+          <div style="margin-left:auto;display:flex;gap:8px">
+            <button class="btn ghost">历史版本</button>
+            <button class="btn ghost">评测</button>
+            <button class="btn">保存</button>
+          </div>
+        </div>
+        <div class="editor-body">
+          <div class="form-area">
+            <div class="form-sec">
+              <div class="h"><span style="color:var(--app-accent)">01</span> 运行方式与身份</div>
+              <div class="line short"></div>
+              <div class="line"></div>
+            </div>
+            <div class="form-sec">
+              <div class="h"><span style="color:var(--app-accent)">02</span> 资料范围</div>
+              <div class="line"></div>
+              <div class="line short"></div>
+            </div>
+            <div class="form-sec">
+              <div class="h"><span style="color:var(--app-accent)">03</span> 能力开关与工具</div>
+              <div class="line"></div>
+              <div class="line short"></div>
+            </div>
+          </div>
+          <div class="side-panel">
+            <div class="h">生效摘要</div>
+            <div class="side-item"><span style="color:var(--app-warn)">●</span>系统提示词 <b>已修改</b></div>
+            <div class="side-item"><span style="color:var(--app-warn)">●</span>知识库范围 <b>2 处变更</b></div>
+            <div class="side-item"><span style="color:var(--app-warn)">●</span>工具黑名单 <b>已修改</b></div>
+            <div class="side-item"><span style="color:var(--app-text3)">○</span>运行方式 <b>未变</b></div>
+            <div style="margin-top:14px;padding:10px 12px;border:1px solid var(--app-danger-border);border-radius:8px;background:var(--app-danger-weak)">
+              <div style="font-size:11px;font-weight:600;color:var(--app-danger-text)">3 处变更尚未评测</div>
+              <div style="font-size:11px;color:var(--app-text3);margin-top:4px;line-height:1.55">最近一次成功运行基于 v5，通过率 85%。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="mask">
+        <div class="modal gate-modal">
+          <div class="modal-head">
+            <div>
+              <div class="modal-title">保存前检查</div>
+              <div class="modal-sub">这次改动会影响 3 个配置项。先跑一次回归，能确认没有把原来的问题改坏。</div>
+            </div>
+            <span class="x"><svg class="ic" width="16" height="16" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></span>
+          </div>
+          <div class="gate-body">
+            <div class="gate-status">
+              <span class="ico"><svg class="ic" width="13" height="13" viewBox="0 0 24 24"><path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9L2.4 18a2 2 0 0 0 1.7 3h15.8a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg></span>
+              <div>
+                <div class="t">有变更未评测</div>
+                <div class="s">最近一次成功运行基于 v5（通过率 85%，门槛 80%）。当前编辑内容为 v6，尚未回归。</div>
+              </div>
+            </div>
+
+            <div class="change-list">
+              <div class="k">本次变更 · 3 处</div>
+              <div class="change-item"><span class="num">1</span><span class="t">系统提示词</span><span class="b">新增「逐条对照招标文件」约束</span></div>
+              <div class="change-item"><span class="num">2</span><span class="t">知识库范围</span><span class="b">新增 2 个库、移除 1 个库</span></div>
+              <div class="change-item"><span class="num">3</span><span class="t">工具黑名单</span><span class="b">屏蔽 web_search</span></div>
+            </div>
+
+            <div class="last-run">
+              <div>
+                <div class="t">建议先跑一次回归：<b>14 条用例 · 约 2 分钟 · 预计 28 次模型调用</b></div>
+                <div class="s">评测默认只读，不会执行需要人工确认的工具。</div>
+              </div>
+              <span class="sp"></span>
+              <span class="pill warn">未评测</span>
+            </div>
+          </div>
+          <div class="modal-foot">
+            <span style="font-size:11px;color:var(--app-text3)">门禁模式：提示（管理员可配置阻断）</span>
+            <span class="sp"></span>
+            <button class="btn ghost">取消</button>
+            <button class="btn ghost">仍然保存</button>
+            <button class="btn">保存并运行回归</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+</body>
+</html>
