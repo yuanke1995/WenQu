@@ -237,23 +237,12 @@
           <!-- 趋势 -->
           <div class="app-card trend-card">
             <div class="trend-head">
-              <span class="t">近 {{ trendPoints.length || 0 }} 次回归</span>
+              <span class="t">近 {{ trendRuns.length || 0 }} 次回归</span>
               <span class="s">通过率趋势 · 只统计成功运行</span>
               <span class="sp"></span>
               <div class="legend"><span><i class="dot ok"></i>达标</span><span><i class="dot err"></i>低于门槛</span></div>
             </div>
-            <svg v-if="trendPoints.length > 1" viewBox="0 0 1120 112" preserveAspectRatio="none" class="trend-svg">
-              <line v-for="(t, i) in trendTicks" :key="'g' + i" x1="30" :y1="t.y" x2="1120" :y2="t.y" stroke="var(--app-border)" />
-              <text v-for="(t, i) in trendTicks" :key="'t' + i" x="0" :y="t.y + 3" font-size="10" fill="var(--app-text3)">{{ t.label }}</text>
-              <polygon v-if="detailTrendArea" :points="detailTrendArea" fill="var(--app-accent-weak)" opacity=".7"></polygon>
-              <polyline :points="detailTrendLine" fill="none" stroke="var(--app-accent)" stroke-width="2"></polyline>
-              <circle v-for="(p, i) in trendPoints" :key="i" :cx="p.x" :cy="p.y" r="4"
-                      :fill="p.ok ? 'var(--app-ok)' : 'var(--app-danger)'">
-                <title>{{ p.label }}</title>
-              </circle>
-              <text v-for="(p, i) in trendPoints" :key="'p' + i" :x="Math.min(1080, Math.max(40, p.x))" :y="p.labelY"
-                    font-size="10" fill="var(--app-text3)" text-anchor="middle">{{ p.labelShort }}</text>
-            </svg>
+            <div v-if="trendRuns.length > 1" ref="trendEl" class="trend-chart"></div>
             <div v-else class="trend-empty">成功运行满 2 次后展示趋势</div>
           </div>
 
@@ -467,16 +456,23 @@
 </template>
 
 <script setup>
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
+import * as echarts from 'echarts/core'
+import { LineChart } from 'echarts/charts'
+import { TooltipComponent, GridComponent, MarkLineComponent } from 'echarts/components'
+import { CanvasRenderer } from 'echarts/renderers'
 import { SearchOutlined, PlusOutlined, LeftOutlined, RightOutlined } from '@ant-design/icons-vue'
 import EvalCompareModal from '../components/agent/EvalCompareModal.vue'
 import AgentAvatar from '../components/AgentAvatar.vue'
+import { themeState } from '../utils/theme'
 import {
   agentEvalSummary, agentEvalSuite, agentEvalSaveSuite, agentEvalMutateCases, agentEvalGenerateCases,
   agentEvalStartRun, agentEvalRuns, agentEvalRun, agentEvalCancelRun, agentEvalGate
 } from '../api'
+
+echarts.use([LineChart, TooltipComponent, GridComponent, MarkLineComponent, CanvasRenderer])
 
 const route = useRoute()
 const router = useRouter()
@@ -819,59 +815,133 @@ function enrichResults () {
   }
 }
 const refTitle = id => detail.value?.refTitles?.[id] || id
-/** 趋势图比例尺：动态 y 域（数据上下各让 8 分收进 0-100；两点同值保底 ±5 分），点少时 x 内收别顶到两端 */
-const trendScale = computed(() => {
-  const runs = succeededRuns.value.slice(0, 6).reverse()
+
+// ==================== 通过率趋势（ECharts） ====================
+/** 最近 6 次成功运行，按时间正序（左旧右新） */
+const trendRuns = computed(() => succeededRuns.value.slice(0, 6).reverse())
+const trendEl = ref(null)
+let trendChart = null, trendRo = null
+
+const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+const withAlpha = (hex, a) => {
+  const h = (hex || '#2e6be6').replace('#', '')
+  const n = h.length === 3 ? h.split('').map(c => c + c).join('') : h
+  const r = parseInt(n.slice(0, 2), 16), g = parseInt(n.slice(2, 4), 16), b = parseInt(n.slice(4, 6), 16)
+  return `rgba(${r},${g},${b},${a})`
+}
+
+const renderTrend = () => {
+  const runs = trendRuns.value
+  if (!trendEl.value || runs.length < 2) return
+  if (!trendChart) trendChart = echarts.init(trendEl.value)
+  if (typeof ResizeObserver !== 'undefined' && !trendRo) {
+    trendRo = new ResizeObserver(() => trendChart?.resize())
+    trendRo.observe(trendEl.value)
+  }
+  const dark = themeState.value === 'dark'
+  const accent = cssVar('--app-accent') || '#2e6be6'
+  const ok = cssVar('--app-ok') || '#3b8f4e'
+  const danger = cssVar('--app-danger') || '#d4552e'
+  const border = cssVar('--app-border') || '#e6e9ed'
+  const text = cssVar('--app-text') || '#1f2329'
+  const text3 = cssVar('--app-text3') || '#98a0aa'
+  const panel = cssVar('--app-panel') || '#ffffff'
+  const threshold = Number(suiteInfo.value?.suite?.thresholdRate ?? 80)
+
   const rates = runs.map(r => Math.min(100, Math.max(0, r.passRate ?? 0)))
-  const lo = rates.length ? Math.min(...rates) : 0
-  const hi = rates.length ? Math.max(...rates) : 100
-  let yMin = Math.max(0, Math.floor(lo - 8))
-  let yMax = Math.min(100, Math.ceil(hi + 8))
-  if (yMax - yMin < 10) {
-    const mid = (yMax + yMin) / 2
-    yMin = Math.max(0, Math.round(mid - 5))
-    yMax = Math.min(100, Math.round(mid + 5))
+  // y 域同时容纳门槛线与数据：既能看出涨跌，又能看出离门槛还差多少；
+  // 边界吸附 10 的倍数，刻度落在整十数上（0/50/85 这种不均匀刻度看着很别扭）
+  const lo = Math.min(threshold, ...rates)
+  const hi = Math.max(threshold, ...rates)
+  let yMin = Math.max(0, Math.floor((lo - 5) / 10) * 10)
+  let yMax = Math.min(100, Math.ceil((hi + 5) / 10) * 10)
+  if (yMax - yMin < 20) {
+    yMax = Math.min(100, yMin + 20)
+    yMin = Math.max(0, yMax - 20)
   }
-  // 域边界吸附 5 的倍数：平线在 0% 时出 0%/5%/10% 整刻度，不出 9% 这类怪数
-  yMin = Math.max(0, Math.floor(yMin / 5) * 5)
-  yMax = Math.min(100, Math.ceil(yMax / 5) * 5)
-  if (yMax <= yMin) yMax = Math.min(100, yMin + 5)
-  const n = runs.length
-  const xPad = n <= 2 ? 280 : n <= 4 ? 160 : 80
-  const yOf = v => Math.round(4 + 92 * (1 - (v - yMin) / Math.max(1, yMax - yMin)))
-  const points = runs.map((r, i) => {
-    const y = yOf(Math.min(100, Math.max(0, r.passRate ?? 0)))
-    return {
-      x: n === 1 ? 560 : Math.round(xPad + (1120 - 2 * xPad) * i / (n - 1)),
-      y,
-      // 标签避开贴底：点靠近底部时标签放点上方，否则放下方（都留出与点的间隙）
-      labelY: y >= 82 ? y - 12 : Math.min(110, y + 18),
-      ok: (r.passRate ?? 0) >= (suiteInfo.value?.suite?.thresholdRate ?? 80),
-      label: `v${r.agentVersion ?? '?'} · ${pct(r.passRate)} · ${shortTime(r.finishedAt)}`,
-      labelShort: `v${r.agentVersion ?? '?'} · ${pct(r.passRate)}`
-    }
-  })
-  // 三条网格线取域顶/域中/域底，标签用真实刻度值；靠得太近的标签去重（≥14px 才画）
-  const tickRaw = [
-    { y: yOf(yMax), label: pct(yMax) },
-    { y: yOf(Math.round((yMax + yMin) / 2)), label: pct(Math.round((yMax + yMin) / 2)) },
-    { y: yOf(yMin), label: pct(yMin) }
-  ].sort((a, b) => a.y - b.y)
-  const ticks = []
-  for (const t of tickRaw) {
-    if (t.y < 8 || t.y > 106) continue
-    if (ticks.length && t.y - ticks[ticks.length - 1].y < 14) continue
-    ticks.push(t)
-  }
-  // 全平（跨度 <2pp）不画面积：满宽条带看着像渲染 bug，只留点与连线
-  const flat = hi - lo < 2
-  return { points, ticks, line: points.map(p => `${p.x},${p.y}`).join(' '),
-           area: (!flat && points.length) ? points.map(p => `${p.x},${p.y}`).join(' ') + ` ${points[points.length - 1].x},112 ${points[0].x},112` : '' }
+
+  const tips = runs.map(r => ({
+    head: `v${r.agentVersion ?? '?'} · ${shortTime(r.finishedAt)}`,
+    rate: pct(r.passRate),
+    score: num1(r.avgScore),
+    passed: r.passed != null && r.total != null ? `${r.passed}/${r.total}` : '—',
+    ok: (r.passRate ?? 0) >= threshold
+  }))
+
+  trendChart.setOption({
+    animationDuration: 420,
+    grid: { left: 4, right: 14, top: 22, bottom: 6, containLabel: true },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: dark ? '#262b33' : '#ffffff',
+      borderColor: border,
+      padding: [8, 10],
+      textStyle: { color: text, fontSize: 12 },
+      axisPointer: { type: 'line', lineStyle: { color: border } },
+      formatter: ps => {
+        const d = tips[ps[0].dataIndex]
+        const c = d.ok ? ok : danger
+        return `<div style="font-weight:600;margin-bottom:3px">${d.head}</div>`
+          + `<div style="line-height:1.7">通过率 <b style="color:${c}">${d.rate}</b>`
+          + `<span style="color:${text3}"> · 门槛 ${pct(threshold)}</span></div>`
+          + `<div style="color:${text3};line-height:1.7">综合分 ${d.score} · 通过 ${d.passed} 条</div>`
+      }
+    },
+    xAxis: {
+      type: 'category', boundaryGap: true,
+      data: runs.map(r => `v${r.agentVersion ?? '?'} · ${shortTime(r.finishedAt).slice(0, 5)}`),
+      axisLine: { lineStyle: { color: border } },
+      axisTick: { show: false },
+      axisLabel: { color: text3, fontSize: 11, interval: 0, margin: 8 }
+    },
+    yAxis: {
+      type: 'value', min: yMin, max: yMax, splitNumber: 3,
+      splitLine: { lineStyle: { color: border, type: 'dashed' } },
+      axisLabel: { color: text3, fontSize: 11, formatter: v => v + '%' }
+    },
+    series: [{
+      type: 'line', smooth: 0.35, showSymbol: true, symbol: 'circle', symbolSize: 8,
+      lineStyle: { width: 2, color: accent },
+      itemStyle: { borderWidth: 2, borderColor: panel },
+      // 点为 0% 时贴底，放开裁剪让圆点完整可见
+      clip: false,
+      areaStyle: {
+        color: {
+          type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
+          colorStops: [{ offset: 0, color: withAlpha(accent, 0.2) }, { offset: 1, color: withAlpha(accent, 0) }]
+        }
+      },
+      label: {
+        show: true, position: 'top', distance: 7, color: text3, fontSize: 11,
+        formatter: p => pct(p.value)
+      },
+      data: rates.map((v, i) => ({
+        value: v,
+        itemStyle: { color: (runs[i].passRate ?? 0) >= threshold ? ok : danger }
+      })),
+      markLine: {
+        silent: true, symbol: 'none',
+        lineStyle: { color: accent, type: 'dashed', width: 1, opacity: 0.5 },
+        label: { color: text3, fontSize: 10, formatter: `门槛 ${pct(threshold)}`, position: 'insideEndTop' },
+        data: [{ yAxis: threshold }]
+      }
+    }]
+  }, true)
+}
+
+// 数据/门槛/主题/详情变化后重绘；等待 v-if 的容器挂载完成再 init
+// （detail 单独在 watch 里：首次进入详情时 runsRows 先到、容器后随 detail 挂载）
+watch([trendRuns, detail, themeState, () => suiteInfo.value?.suite?.thresholdRate], async () => {
+  await nextTick()
+  renderTrend()
 })
-const trendPoints = computed(() => trendScale.value.points)
-const trendTicks = computed(() => trendScale.value.ticks)
-const detailTrendLine = computed(() => trendScale.value.line)
-const detailTrendArea = computed(() => trendScale.value.area)
+// 详情关闭后容器被移除：旧实例绑定在已卸载的节点上，必须销毁，重新打开时再 init
+watch(trendEl, el => {
+  if (!el) {
+    trendRo?.disconnect(); trendRo = null
+    trendChart?.dispose(); trendChart = null
+  }
+})
 const sparkLine = computed(() => {
   const pts = s.value.trend || []
   const vals = pts.map(p => p.value)
@@ -960,6 +1030,8 @@ onMounted(async () => {
 onUnmounted(() => {
   if (summaryTimer) clearInterval(summaryTimer)
   if (detailTimer) clearInterval(detailTimer)
+  trendRo?.disconnect(); trendRo = null
+  trendChart?.dispose(); trendChart = null
 })
 </script>
 
@@ -1116,7 +1188,7 @@ onUnmounted(() => {
 .trend-head .sp { flex: 1; }
 .legend { display: flex; align-items: center; gap: 14px; font-size: 11px; color: var(--app-text3); }
 .legend .dot { margin-right: 4px; }
-.trend-svg { width: 100%; height: 96px; display: block; }
+.trend-chart { width: 100%; height: 128px; }
 .trend-empty { height: 60px; display: flex; align-items: center; justify-content: center;
   font-size: 12px; color: var(--app-text3); }
 
