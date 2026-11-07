@@ -153,7 +153,20 @@ public class BrowserCapabilitySeeder implements ApplicationRunner {
     private void seedBrowserAgent(String tenant) {
         try {
             String id = tenantId(AGENT_ID, tenant);
-            if (agentMapper.selectById(id) != null) return;
+            Agent existing = agentMapper.selectById(id);
+            if (existing != null) {
+                // 被委派时必须跑完整管线：默认 digest 档只做并行检索与提炼，工具根本不会挂上，
+                // 真机现象是主助手把它派出去后，它回答「我这台环境里没有可用的浏览器」。
+                // 这是本预置助手的能力形态、不是可调偏好，故在启动维护里归一（与内置问渠的图标/用途同理）。
+                if (!"full".equals(existing.getSubagentMode())) {
+                    agentMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Agent>()
+                            .eq(Agent::getId, id)
+                            .set(Agent::getSubagentMode, "full")
+                            .set(Agent::getUpdateTime, LocalDateTime.now()));
+                    log.info("[BROWSER] 租户 {} 的网页操作助手被委派形态修正为 full（原 {}）", tenant, existing.getSubagentMode());
+                }
+                return;
+            }
             Agent a = new Agent();
             a.setId(id);
             a.setName("网页操作助手");
@@ -165,10 +178,15 @@ public class BrowserCapabilitySeeder implements ApplicationRunner {
             a.setToolKnowledge(0);
             a.setToolMcp(1);
             a.setMcps(MCP_NAME);
-            a.setToolApprovalMode("ask");
+            // 必须是 auto：被委派的轮次没有审批通道，ask 档下这一族工具会被整族摘掉
+            // （AgentxFrameworkToolGate：分支轮 + ask → 不暴露需审批的工具）。护栏靠 deny 黑名单、
+            // 出口隔离与提示词里「不可撤销操作先问人」，不靠逐次确认。
+            a.setToolApprovalMode("auto");
             a.setPermissionPreset("standard");
             a.setMaxToolSteps(30);
             a.setToolDeny(DENIED_TOOLS);
+            // 被委派时跑完整问答管线（工具/沙盒/产物都按本行配置生效），否则浏览器工具挂不上
+            a.setSubagentMode("full");
             a.setIsSubagent(0);
             a.setIsDefault(0);
             a.setCreatedBy("system");
