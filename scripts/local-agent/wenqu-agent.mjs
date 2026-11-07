@@ -35,6 +35,7 @@ import path from 'node:path'
 import readline from 'node:readline'
 import { createHash } from 'node:crypto'
 import { spawn, execFile } from 'node:child_process'
+import net from 'node:net'
 
 const argv = process.argv.slice(2)
 const arg = (name, dflt) => {
@@ -1932,16 +1933,23 @@ async function opPickDir() {
 // 为什么托管一个本地 MCP 而不是内嵌 Playwright：工具名/参数/aria 快照与云端 browser-mcp
 // 完全一致，智能体提示词不用分两套；执行器只做「MCP 转发」，不 reimplement ref→元素。
 //
-// 端口用 8933（避开开发态手动起的 8931）。若该端口已有一个可握手的 MCP（上次执行器留下的
-// 或用户手动起的），直接复用，不重复 spawn。子进程随执行器退出回收。
-const BROWSER_PORT = Number(arg('browser-port', '8933')) || 8933
-const BROWSER_BASE = `http://127.0.0.1:${BROWSER_PORT}/mcp`
+// 每次执行器启动自选一个空闲端口、只认自己 spawn 的实例：不复用端口上可能残留的旧服务
+// （旧实例的浏览器渠道/参数能和新代码不一致，误复用会把「找不到 Chrome」这类旧错带进来）。
+// 端口不需要被后端知道——执行器内部转发，后端只下发 browser op。子进程随执行器退出回收。
 const MCP_HEADERS = { 'content-type': 'application/json', accept: 'application/json, text/event-stream' }
 let browserChild = null
 let browserSession = null
+let browserBase = null
+
+function freePort () {
+  return new Promise(resolve => {
+    const s = net.createServer()
+    s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => resolve(p)) })
+  })
+}
 
 async function mcpRpc (body, sid) {
-  const res = await fetch(BROWSER_BASE, {
+  const res = await fetch(browserBase, {
     method: 'POST',
     headers: sid ? { ...MCP_HEADERS, 'mcp-session-id': sid } : MCP_HEADERS,
     body: JSON.stringify(body),
@@ -1960,18 +1968,44 @@ async function browserHandshake () {
   return init.sid
 }
 
+// @playwright/mcp 默认找系统 Chrome；没装 Chrome 的机器（如只装了 Edge 的 Mac）会直接报
+// 「找不到 Chrome」。这里探测一个真实存在的浏览器渠道；都没有才退回随包 Chromium（需已安装）。
+function detectBrowserChannel () {
+  const exists = p => { try { fs.accessSync(p); return true } catch { return false } }
+  if (process.platform === 'darwin') {
+    if (exists('/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge')) return 'msedge'
+    if (exists('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')) return 'chrome'
+  } else if (process.platform === 'win32') {
+    const pf = process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)'
+    const pf64 = process.env.PROGRAMFILES || 'C:\\Program Files'
+    if (exists(path.join(pf, 'Microsoft', 'Edge', 'Application', 'msedge.exe'))) return 'msedge'
+    if (exists(path.join(pf64, 'Google', 'Chrome', 'Application', 'chrome.exe'))) return 'chrome'
+  } else {
+    if (exists('/usr/bin/google-chrome')) return 'chrome'
+    if (exists('/usr/bin/microsoft-edge')) return 'msedge'
+  }
+  return 'chromium'
+}
+
+function browserSpawnArgs (port) {
+  const base = ['--yes', '@playwright/mcp@0.0.84',
+    '--host', '127.0.0.1', '--port', String(port),
+    '--isolated', '--no-webmcp', '--allowed-hosts', '*']
+  const channel = detectBrowserChannel()
+  if (channel !== 'chromium') return [...base, '--browser', channel]
+  // 随包 Chromium：MCP 默认渠道是 chrome，必须用配置显式指到 chromium
+  const cfg = path.join(os.homedir(), '.wenqu', 'browser-mcp-config.json')
+  try { fs.mkdirSync(path.dirname(cfg), { recursive: true }); fs.writeFileSync(cfg, JSON.stringify({ browser: { browserName: 'chromium' } })) } catch { /* 写不了就让 MCP 报缺浏览器 */ }
+  return [...base, '--config', cfg]
+}
+
 async function ensureBrowser () {
-  // 已有可握手的实例（复用）
   if (browserSession) return browserSession
-  try {
-    browserSession = await browserHandshake()
-    return browserSession
-  } catch { /* 端口没人，往下 spawn */ }
   if (!browserChild) {
-    log(`启动本机浏览器服务 :${BROWSER_PORT}（headed）`)
-    browserChild = spawn('npx', ['--yes', '@playwright/mcp@0.0.84',
-      '--host', '127.0.0.1', '--port', String(BROWSER_PORT),
-      '--isolated', '--no-webmcp', '--allowed-hosts', '*'],
+    const port = await freePort()
+    browserBase = `http://127.0.0.1:${port}/mcp`
+    log(`启动本机浏览器服务 :${port}（headed，渠道 ${detectBrowserChannel()}）`)
+    browserChild = spawn('npx', browserSpawnArgs(port),
       { stdio: ['ignore', 'ignore', 'inherit'] })
     browserChild.on('exit', () => { browserChild = null; browserSession = null })
   }
