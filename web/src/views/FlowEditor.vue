@@ -84,7 +84,11 @@
                 </div>
               </div>
               <div class="wf-node-sub">{{ subText(props.data) }}</div>
-              <div v-if="props.data.run" class="wf-node-badge" :class="`badge-${props.data.run.status}`">
+              <!-- 第 4 期并发可视化：执行中呼吸灯（node_start 实时点亮，并行分支多节点同时亮；完成被徽章覆盖） -->
+              <div v-if="props.data.run && props.data.run.status === 'running'" class="wf-node-running">
+                <span class="wf-node-breath"></span><span>执行中…</span>
+              </div>
+              <div v-else-if="props.data.run" class="wf-node-badge" :class="`badge-${props.data.run.status}`">
                 {{ props.data.run.status === 'success' ? '✓' : props.data.run.status === 'waiting' ? '✋' : props.data.run.status === 'retrying' ? '↻' : '✕' }} {{ fmtMs(props.data.run.elapsedMs) }}
               </div>
             </div>
@@ -187,6 +191,42 @@
                 <div class="wf-hint">排序分（重排分，未启用重排时为融合分）低于它的块不进结果也不占 topK 名额。</div>
               </div>
               <div class="wf-hint"><code>text</code> 是可直接拼进 prompt 的拼接文本；<code>chunks</code> 保留结构（标题/路径/得分），<code>count</code> 是命中数。</div>
+            </template>
+
+            <!-- kb_write -->
+            <template v-else-if="selected.data.nodeType === 'kb_write'">
+              <div class="wf-form-item"><label>目标知识库（只有你创建的库可写）</label>
+                <a-select v-model:value="editConfig.kbId" style="width: 100%" show-search option-filter-prop="label"
+                          placeholder="选择要写入的知识库" :options="kbOptions" />
+              </div>
+              <div class="wf-form-item"><label>写入模式</label>
+                <a-radio-group v-model:value="editConfig.mode">
+                  <a-radio value="create">新建文档</a-radio>
+                  <a-radio value="update">更新已有文档</a-radio>
+                </a-radio-group>
+              </div>
+              <div v-if="editConfig.mode === 'update'" class="wf-form-item"><label>文档ID（支持引用上游输出）</label>
+                <a-input v-model:value="editConfig.docId" :placeholder="'如：{{http.docId}}'" />
+                <a-select v-if="refGroups.length" class="wf-ref-pick" size="small" :value="null"
+                          :options="refGroups" show-search option-filter-prop="label"
+                          placeholder="+ 插入上游引用（选节点 · 输出键）" @change="v => insertRef('docId', v, ' ')" />
+                <div class="wf-hint">更新只替换内容并重新解析，文档身份与归属不变（不支持网页型文档）。</div>
+              </div>
+              <div class="wf-form-item"><label>文档标题（支持 <code v-pre>{{nodeId.key}}</code> 引用）</label>
+                <a-input v-model:value="editConfig.title" :disabled="editConfig.mode === 'update'"
+                         :placeholder="editConfig.mode === 'update' ? '更新模式不改动标题' : '如：{{start.title}}'" />
+                <a-select v-if="editConfig.mode !== 'update' && refGroups.length" class="wf-ref-pick" size="small" :value="null"
+                          :options="refGroups" show-search option-filter-prop="label"
+                          placeholder="+ 插入上游引用（选节点 · 输出键）" @change="v => insertRef('title', v, ' ')" />
+              </div>
+              <div class="wf-form-item"><label>文档内容（支持 <code v-pre>{{nodeId.key}}</code> 引用）</label>
+                <a-textarea v-model:value="editConfig.content" :rows="6"
+                            :placeholder="'如：{{retrieval.text}} 或 {{llm.answer}}'" />
+                <a-select v-if="refGroups.length" class="wf-ref-pick" size="small" :value="null"
+                          :options="refGroups" show-search option-filter-prop="label"
+                          placeholder="+ 插入上游引用（选节点 · 输出键）" @change="v => insertRef('content', '\n' + v)" />
+              </div>
+              <div class="wf-hint">提交后<b>异步解析入库</b>（运行不等待解析完成）；输出 <code>docId</code> 可供下游节点引用。</div>
             </template>
 
             <!-- condition -->
@@ -623,15 +663,16 @@ const TYPE_META = {
   loop: { label: '循环', icon: '↻', color: '#d4b106', brief: '按分支回跳重跑，最多 maxLoops 轮', out: ['route', 'loopCount'] },
   template: { label: '模板转换', icon: '✎', color: '#08979c', brief: '把多路上游输出拼成一段文本', out: ['text'] },
   skill: { label: '技能', icon: '📘', color: '#c41d7f', brief: '把所选技能全文注入下游 LLM 上下文', out: ['text', 'skills'] },
-  mcp: { label: 'MCP 工具', icon: '🔌', color: '#1d39c4', brief: '调用你名下 MCP 服务里的某个工具', out: ['result', 'server', 'tool'] }
+  mcp: { label: 'MCP 工具', icon: '🔌', color: '#1d39c4', brief: '调用你名下 MCP 服务里的某个工具', out: ['result', 'server', 'tool'] },
+  kb_write: { label: '知识写入', icon: '⇧', color: '#389e0d', brief: '把上游文本提交进知识库（异步解析入库）', out: ['docId', 'fileName', 'status'] }
 }
-const PALETTE = ['start', 'end', 'llm', 'retrieval', 'condition', 'http', 'code', 'subagent', 'approval', 'loop', 'template', 'skill', 'mcp']
+const PALETTE = ['start', 'end', 'llm', 'retrieval', 'condition', 'http', 'code', 'subagent', 'approval', 'loop', 'template', 'skill', 'mcp', 'kb_write']
   .map(t => ({ type: t, ...TYPE_META[t] }))
 /** 左侧节点面板分组（13 类平铺太散，按用途分组更好找） */
 const PALETTE_GROUPS = [
   { title: '流程', types: ['start', 'end'] },
   { title: '模型', types: ['llm', 'subagent'] },
-  { title: '数据', types: ['retrieval', 'http', 'code', 'template'] },
+  { title: '数据', types: ['retrieval', 'http', 'code', 'template', 'kb_write'] },
   { title: '控制', types: ['condition', 'approval', 'loop'] },
   { title: '生态', types: ['skill', 'mcp'] }
 ]
@@ -727,7 +768,8 @@ const OUTPUT_KEYS = {
   loop: ['route', 'loopCount'],
   template: ['text'],
   skill: ['text', 'skills'],
-  mcp: ['result', 'server', 'tool']
+  mcp: ['result', 'server', 'tool'],
+  kb_write: ['docId', 'fileName', 'status']
 }
 
 /** 某节点的全部上游祖先（沿入边反向 BFS；loop 回跳成环由 seen 去重兜住）。
@@ -795,7 +837,8 @@ const BLANK_CONFIGS = {
   loop: { maxLoops: 5, branches: [{ key: 'retry', expr: '' }, { key: 'done', expr: '' }] },
   template: { template: '' },
   skill: { skills: [] },
-  mcp: { server: '', tool: '', args: [] }
+  mcp: { server: '', tool: '', args: [] },
+  kb_write: { kbId: '', mode: 'create', docId: '', title: '', content: '' }
 }
 const blankConfig = t => JSON.parse(JSON.stringify(BLANK_CONFIGS[t] || {}))
 
@@ -1312,6 +1355,12 @@ function onStreamEvent (name, payload) {
     applyTrace(payload)
     return
   }
+  if (name === 'node_start' && payload) {
+    // 第 4 期并发可视化：节点开始执行 → 呼吸灯点亮（并行分支多节点同时亮）；
+    // 完成 trace 到达后 applyTrace 按终态覆盖徽章
+    if (findNode(payload.nodeId)) updateNodeData(payload.nodeId, { run: { status: 'running' } })
+    return
+  }
   if (name === 'status' && payload) {
     if (runResult.value) runResult.value.status = payload.status
     if (payload.status === 'running') message.info('开始执行…')
@@ -1343,6 +1392,10 @@ async function finalizeRun (payload) {
   }
   // 兜底：done 里若有增量未覆盖的节点（正常不会），按终态重染一遍
   for (const t of traces) applyTrace(t)
+  // 清残留呼吸灯：终态仍未完成的节点（run 在该节点前失败/被跳过）不能一直亮着
+  for (const n of nodes.value) {
+    if (n.data.run && n.data.run.status === 'running') updateNodeData(n.id, { run: null })
+  }
   if (runResult.value.status === 'success') {
     message.success('运行成功')
   } else if (runResult.value.status === 'waiting_approval') {
@@ -1786,6 +1839,24 @@ load()
 .wf-node.run-failed { border-color: var(--app-danger); box-shadow: 0 0 0 2px rgba(255, 77, 79, 0.15); }
 .wf-node.run-waiting { border-color: var(--app-warn); box-shadow: 0 0 0 2px rgba(250, 140, 22, 0.2); }
 .wf-node.run-retrying { border-color: var(--app-warn); box-shadow: 0 0 0 2px rgba(250, 173, 20, 0.18); }
+/* 第 4 期并发可视化：执行中呼吸灯（node_start 实时点亮；并行分支多节点同亮，完成被 ✓/✕ 徽章覆盖） */
+.wf-node.run-running { border-color: var(--nc, var(--app-accent)); box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.12); }
+.wf-node-running {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 6px; font-size: 11px; color: var(--nc, var(--app-accent));
+}
+.wf-node-breath {
+  width: 8px; height: 8px; border-radius: 50%; flex: none;
+  background: var(--nc, var(--app-accent));
+  animation: wf-breath 1.6s ease-in-out infinite;
+}
+@keyframes wf-breath {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.25; transform: scale(0.72); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wf-node-breath { animation: none; opacity: 0.55; }
+}
 .wf-node-badge {
   position: absolute; top: -9px; right: -9px;
   font-size: 10px; line-height: 1; padding: 3px 6px; border-radius: 9px; color: #fff;

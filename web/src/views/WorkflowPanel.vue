@@ -83,7 +83,7 @@
                   </button>
                   <template v-if="canManage(r)">
                     <button class="app-btn ghost small" @click="openAutomation(r)">
-                      <clock-circle-outlined /> 定时/回调
+                      <clock-circle-outlined /> 自动化
                     </button>
                     <button class="app-btn ghost small" @click="doExport(r)">
                       <download-outlined /> 导出
@@ -156,8 +156,8 @@
       </a-spin>
     </a-modal>
 
-    <!-- 第 1 期：定时触发 + 终态回调 -->
-    <a-modal v-model:open="autoModal" :title="`定时与回调${autoRow ? ' · ' + autoRow.name : ''}`"
+    <!-- 第 1 期定时/回调 + 第 4 期 webhook 入站与事件触发：四区单弹窗（自动化） -->
+    <a-modal v-model:open="autoModal" :title="`自动化${autoRow ? ' · ' + autoRow.name : ''}`"
              :confirm-loading="autoSaving" ok-text="保存" cancel-text="取消" width="560px" @ok="saveAutomation">
       <div class="auto-block">
         <div class="auto-block-title">定时触发</div>
@@ -192,6 +192,44 @@
           回调头带 X-Wenqu-Signature: sha256=…（对请求体做 HMAC-SHA256）；地址不得指向内网
         </div>
       </div>
+      <div class="auto-block">
+        <div class="auto-block-title">Webhook 入站</div>
+        <div class="auto-row">
+          <span class="auto-label">启用</span>
+          <a-switch v-model:checked="autoForm.webhookEnabled" size="small" />
+          <span class="wf-meta">外部系统 POST 即触发，只运行<strong>已发布版本</strong></span>
+        </div>
+        <template v-if="autoForm.webhookEnabled">
+          <div class="auto-row">
+            <span class="auto-label">触发地址</span>
+            <a-input :value="autoForm.webhookPath" readonly placeholder="保存后生成" />
+            <button class="app-btn ghost small" :disabled="!autoForm.webhookPath" @click="copyText(autoForm.webhookPath)">复制地址</button>
+          </div>
+          <div class="auto-row">
+            <span class="auto-label">令牌</span>
+            <a-input :value="autoForm.webhookToken" readonly placeholder="保存后生成" />
+            <button class="app-btn ghost small" @click="autoForm.webhookResetToken = true; message.info('保存后生成新令牌，旧地址即失效')">重置令牌</button>
+          </div>
+        </template>
+        <div class="wf-meta auto-hint">
+          请求体 JSON 整体作为开始节点入参（<code v-pre>{{start.key}}</code> 取值）；异步执行立即返回 runId；
+          含人工审核节点的工作流将拒绝 webhook 触发
+        </div>
+      </div>
+      <div class="auto-block">
+        <div class="auto-block-title">事件触发</div>
+        <div v-for="(sub, i) in autoForm.eventTriggers" :key="i" class="auto-row auto-sub">
+          <a-select v-model:value="sub.type" style="width: 46%" :options="eventTypeOptions" />
+          <a-select v-model:value="sub.kbId" style="flex: 1" allow-clear show-search option-filter-prop="label"
+                    placeholder="全部知识库" :options="autoKbOptions" />
+          <button class="app-btn ghost small" @click="autoForm.eventTriggers.splice(i, 1)">删</button>
+        </div>
+        <button class="app-btn ghost small" @click="addEventSub">+ 添加事件订阅</button>
+        <div class="wf-meta auto-hint">
+          文档解析完成后自动运行；触发时入参 <code>kbId / docId / docTitle</code>（<code v-pre>{{start.docId}}</code> 取值）；
+          配合「知识写入」节点做知识闭环时，链式触发上限 3 层、自动防环
+        </div>
+      </div>
       <template #footer>
         <button class="app-btn ghost small" :disabled="autoBusy" @click="doRunScheduleNow">
           <play-circle-outlined /> 立即运行一次
@@ -218,7 +256,8 @@ import WorkflowRunHistory from './WorkflowRunHistory.vue'
 import {
   listWorkflows, deleteWorkflow, publishWorkflow, unpublishWorkflow,
   listWorkflowVersions, rollbackWorkflow,
-  listWorkflowTemplates, createWorkflow, getWorkflow,
+  listWorkflowTemplates, createWorkflow, exportWorkflow, importWorkflow,
+  listKnowledgeBases,
   batchDeleteWorkflows, batchPublishWorkflows, batchUnpublishWorkflows,
   getWorkflowAutomation, saveWorkflowAutomation, runWorkflowScheduleNow
 } from '../api'
@@ -330,13 +369,13 @@ const doBatchUnpublish = async () => {
   }
 }
 
-/** 批量导出：逐个取详情，合并为一个 {items:[...]} 文件下载（导入端识别 items 循环创建） */
+/** 批量导出：逐条走导出端点（{name,description,dsl} 单一事实源），合并为一个 {items:[...]} 文件下载（导入端识别 items 循环创建） */
 const doBatchExport = async () => {
   batchBusy.value = true
   try {
     const items = []
     for (const id of selected.value) {
-      const r = await getWorkflow(id)
+      const r = await exportWorkflow(id)
       const wf = (r && r.data) || {}
       if (!wf.dsl) { message.error(`「${wf.name || id}」没有 DSL 可导出，已中止`); return }
       items.push({ name: wf.name, description: wf.description, dsl: JSON.parse(wf.dsl) })
@@ -482,21 +521,55 @@ const doRollback = async v => {
   })
 }
 
-// ---- 第 1 期：定时与回调 ----
+// ---- 第 1 期定时/回调 + 第 4 期 webhook 入站与事件触发（自动化四区单弹窗） ----
 const autoModal = ref(false)
 const autoRow = ref(null)
 const autoSaving = ref(false)
 const autoBusy = ref(false)
 const autoSecretSet = ref(false)
 const autoNextRunAt = ref(null)
-const autoForm = ref({ scheduleEnabled: false, cron: '', timezone: 'Asia/Shanghai', callbackUrl: '', callbackSecret: '' })
+const autoKbOptions = ref([])
+const eventTypeOptions = [{ value: 'kb.docIndexed', label: '文档解析完成' }]
+const autoForm = ref({
+  scheduleEnabled: false, cron: '', timezone: 'Asia/Shanghai', callbackUrl: '', callbackSecret: '',
+  webhookEnabled: false, webhookToken: '', webhookPath: '', webhookResetToken: false,
+  eventTriggers: []
+})
+
+const addEventSub = () => {
+  autoForm.value.eventTriggers.push({ type: 'kb.docIndexed', kbId: '' })
+}
+
+const copyText = async t => {
+  if (!t) return
+  try {
+    await navigator.clipboard.writeText(t)
+    message.success('已复制')
+  } catch (e) {
+    message.warning('复制失败，请手动选择复制')
+  }
+}
+
+/** 事件订阅下拉的知识库：懒加载一次（/kb/list 只回本人可读的库；写权限由后端 fail-loud 把关） */
+const ensureKbOptions = async () => {
+  if (autoKbOptions.value.length) return
+  try {
+    const r = await listKnowledgeBases()
+    autoKbOptions.value = ((r && r.data) || []).map(k => ({ value: k.id, label: k.name || k.id }))
+  } catch (e) { /* 下拉为空时用户仍可保存空 kbId（=全部库） */ }
+}
 
 const openAutomation = async row => {
   autoRow.value = row
-  autoForm.value = { scheduleEnabled: false, cron: '', timezone: 'Asia/Shanghai', callbackUrl: '', callbackSecret: '' }
+  autoForm.value = {
+    scheduleEnabled: false, cron: '', timezone: 'Asia/Shanghai', callbackUrl: '', callbackSecret: '',
+    webhookEnabled: false, webhookToken: '', webhookPath: '', webhookResetToken: false,
+    eventTriggers: []
+  }
   autoSecretSet.value = false
   autoNextRunAt.value = null
   autoModal.value = true
+  ensureKbOptions()
   try {
     const r = await getWorkflowAutomation(row.id)
     const d = (r && r.data) || {}
@@ -505,7 +578,12 @@ const openAutomation = async row => {
       cron: d.cron || '',
       timezone: d.timezone || 'Asia/Shanghai',
       callbackUrl: d.callbackUrl || '',
-      callbackSecret: ''
+      callbackSecret: '',
+      webhookEnabled: !!d.webhookEnabled,
+      webhookToken: d.webhookToken || '',
+      webhookPath: d.webhookPath || '',
+      webhookResetToken: false,
+      eventTriggers: Array.isArray(d.eventTriggers) ? d.eventTriggers.map(s => ({ type: s.type, kbId: s.kbId || '' })) : []
     }
     autoSecretSet.value = !!d.callbackSecretSet
     autoNextRunAt.value = d.nextRunAt || null
@@ -520,19 +598,26 @@ const saveAutomation = async () => {
     message.warning('启用定时触发前请填写 cron 表达式')
     return
   }
+  if (autoForm.value.eventTriggers.some(s => !s.type)) {
+    message.warning('事件订阅的事件类型不能为空')
+    return
+  }
   autoSaving.value = true
   try {
     const body = {
       scheduleEnabled: autoForm.value.scheduleEnabled,
       cron: autoForm.value.cron,
       timezone: autoForm.value.timezone,
-      callbackUrl: autoForm.value.callbackUrl
+      callbackUrl: autoForm.value.callbackUrl,
+      webhookEnabled: autoForm.value.webhookEnabled,
+      eventTriggers: autoForm.value.eventTriggers
     }
     // 密钥留空 = 不修改（placeholder 已提示）；填了才覆盖
     if (String(autoForm.value.callbackSecret || '').trim()) body.callbackSecret = autoForm.value.callbackSecret
+    if (autoForm.value.webhookResetToken) body.webhookResetToken = true
     const r = await saveWorkflowAutomation(autoRow.value.id, body)
     if (r && r.success) {
-      message.success('自动化配置已保存')
+      message.success(autoForm.value.webhookResetToken ? '自动化配置已保存（webhook 令牌已重置）' : '自动化配置已保存')
       autoModal.value = false
       await load()
     } else {
@@ -612,7 +697,7 @@ const useTemplate = async t => {
 const importInput = ref(null)
 const pickImport = () => { importInput.value && importInput.value.click() }
 
-/** 导入：读导出的 JSON 文件（包装格式 {name, description, dsl} 或裸 DSL 均可），走创建接口复用全部校验 */
+/** 导入：读导出的 JSON 文件（包装格式 {name, description, dsl} 或裸 DSL 均可），走导入端点（后端同款校验） */
 const doImport = async ev => {
   const file = ev.target.files && ev.target.files[0]
   ev.target.value = ''   // 允许连续导入同一文件
@@ -628,7 +713,7 @@ const doImport = async ev => {
       message.error('文件里没有可识别的 DSL（缺少 nodes 字段）')
       return
     }
-    const r = await createWorkflow({
+    const r = await importWorkflow({
       name,
       description: (parsed && parsed.description) || `导入自 ${file.name}`,
       dsl: JSON.stringify(dsl)
@@ -645,7 +730,7 @@ const doImport = async ev => {
   }
 }
 
-/** 批量导入：items 数组逐条走创建接口（复用全部校验）；成功 n 条 + 失败条目逐条带原因 */
+/** 批量导入：items 数组逐条走导入端点（后端同款校验）；成功 n 条 + 失败条目逐条带原因 */
 const importMany = async (items, fileName) => {
   let ok = 0
   const failed = []
@@ -655,7 +740,7 @@ const importMany = async (items, fileName) => {
       continue
     }
     try {
-      const r = await createWorkflow({
+      const r = await importWorkflow({
         name: item.name || '导入的工作流',
         description: item.description || `导入自 ${fileName}`,
         dsl: JSON.stringify(item.dsl)
@@ -675,10 +760,10 @@ const importMany = async (items, fileName) => {
   })
 }
 
-/** 导出：下载 {exportedFrom, name, description, dsl} 包装 JSON（导入接口同款可再导入） */
+/** 导出：走导出端点（单一事实源），包装 {exportedFrom, exportedAt} 元数据后下载（导入端同款可再导入） */
 const doExport = async row => {
   try {
-    const r = await getWorkflow(row.id)
+    const r = await exportWorkflow(row.id)
     const wf = (r && r.data) || {}
     if (!wf.dsl) { message.error('该工作流没有 DSL 可导出'); return }
     const payload = {
@@ -759,12 +844,13 @@ watch(() => [route.query.wf, route.query.run, route.query.wfedit], () => { if (m
   padding: 2px 7px; border-radius: 10px; flex: none;
 }
 .wf-tag-sched { color: var(--app-accent); background: var(--app-accent-weak); }
-/* 定时与回调弹窗 */
+/* 自动化弹窗（定时/回调/webhook/事件 四区） */
 .auto-block { margin-bottom: 16px; }
 .auto-block:last-of-type { margin-bottom: 0; }
 .auto-block-title { font-size: 13px; font-weight: 500; color: var(--app-text); margin-bottom: 8px; }
 .auto-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
 .auto-label { width: 56px; flex: none; font-size: 13px; color: var(--app-text2); }
 .auto-hint { margin-top: 2px; }
+.auto-sub { align-items: center; }
 .flex-gap { flex: 1 1 auto; }
 </style>

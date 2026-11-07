@@ -35,8 +35,7 @@ public class WorkflowController {
 
     private final WorkflowService workflowService;
 
-    @Operation(summary = "工作流列表", description = "分栏返回 {mine:[我创建的], shared:[共享给我的]}，各自按更新时间倒序；"
-            + "每条带 myPermission（MANAGE/READ）与 mine，前端据此渲染可编辑/只读")
+    @Operation(summary = "工作流列表", description = "返回本人创建的工作流（个人资产，谁建归谁），按更新时间倒序")
     @Permission("workflow:read")
     @GetMapping("/list")
     public ResultJson list() {
