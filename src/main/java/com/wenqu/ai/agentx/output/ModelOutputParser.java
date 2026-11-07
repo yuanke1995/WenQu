@@ -17,6 +17,12 @@ import java.util.List;
  * 其余立即下发。固定扣 19 字符的老写法让正文恒滞后一个标签长度，而旁路事件（工具卡、产物）即时下发，
  * 实时时间线就会错序断词——这里不复现那个坑。
  *
+ * <p><b>孤儿闭标签</b>：正文态（BODY）遇到的 {@code </related>}/{@code </process>} 必然没配到开标签
+ * （真块在 RELATED/PROCESS 态里消费自己的闭合标签），吞掉标签本身、前后正文照走。起因是真机
+ * 2026-11-07 那轮：模型把闭标签当每条建议的收尾符逐条吐——{@code <related>建议1</related>|建议2</related>|建议3</related>}，
+ * 只有第一块带开标签，后面两截连标签带正文全部印进了回答并落库。这里只吞标签不抢救内容：
+ * 建议文本在流式链路里已经下发给前端了，收不回来，硬拆反而会造成「芯片与正文重复」。
+ *
  * <p>{@code <process>} 一并处理：块内内容进 {@link #process()}（落库的过程独白列 + 实时 {@code process} 帧），
  * 不混进正文。每次 {@link #feed(String)} 只回本次新增的两路增量，调用方不必再拿累计长度做差。
  *
@@ -44,9 +50,10 @@ public final class ModelOutputParser {
 
     private enum Mode {BODY, RELATED, PROCESS, DSML}
 
-    /** 三个开标签里最长的那个减去一：尾巴最多可能像它这么长。 */
+    /** 五个标签（三开两闭）里最长的那个减去一：尾巴最多可能像它这么长。 */
     private static final int MAX_PREFIX =
-            Math.max(DSML_OPEN.length(), Math.max(REL_OPEN.length(), PROC_OPEN.length())) - 1;
+            Math.max(Math.max(DSML_OPEN.length(), Math.max(REL_OPEN.length(), PROC_OPEN.length())),
+                    Math.max(REL_CLOSE.length(), PROC_CLOSE.length())) - 1;
 
     /** 一次增量解析出的两路新内容：正文与过程独白。没有新增的那一路为空串。 */
     /**
@@ -103,7 +110,13 @@ public final class ModelOutputParser {
                 int r = s.indexOf(REL_OPEN);
                 int p = s.indexOf(PROC_OPEN);
                 int d = s.indexOf(DSML_OPEN);
-                int cut = firstHit(firstHit(r, p), d);
+                // 孤儿闭标签：模型有时把 </related> 当每条建议的收尾符逐条吐（真机 2026-11-07：
+                // <related>建议1</related>|建议2</related>|建议3</related>，只有第一块带开标签）。
+                // BODY 里遇到的闭合标签必然没配到开标签——真块在 RELATED/PROCESS 模式里消费自己的
+                // 闭合标签——原文下发就是把标签印进回答，所以吞掉标签本身，前后正文照走。
+                int rc = s.indexOf(REL_CLOSE);
+                int pc = s.indexOf(PROC_CLOSE);
+                int cut = firstHit(firstHit(firstHit(r, p), d), firstHit(rc, pc));
                 if (cut < 0) {
                     // 没有完整开标签：能确定不是标签前缀的部分立刻走，其余留着
                     int hold = prefixHoldLen(s);
@@ -118,6 +131,8 @@ public final class ModelOutputParser {
                 }
                 boolean isRelated = r >= 0 && cut == r;
                 boolean isDsml = d >= 0 && cut == d;
+                boolean isOrphanClose = !isRelated && !isDsml
+                        && ((rc >= 0 && cut == rc) || (pc >= 0 && cut == pc));
                 out.append(s, 0, cut);
                 markText(cut);
                 pending.setLength(0);
@@ -126,6 +141,11 @@ public final class ModelOutputParser {
                     dsml.append(s.substring(d));
                     mode = Mode.DSML;
                     return out.toString();
+                }
+                if (isOrphanClose) {
+                    // 只吞标签不换模式：闭标签后面的内容仍然是正文
+                    pending.append(s.substring(cut + (cut == rc ? REL_CLOSE.length() : PROC_CLOSE.length())));
+                    continue;
                 }
                 pending.append(s.substring(cut + (isRelated ? REL_OPEN.length() : PROC_OPEN.length())));
                 mode = isRelated ? Mode.RELATED : Mode.PROCESS;
@@ -199,6 +219,12 @@ public final class ModelOutputParser {
             if (tail.startsWith(REL_OPEN)) return feed(tail.substring(REL_OPEN.length())).text();
             if (tail.startsWith(PROC_OPEN)) return feed(tail.substring(PROC_OPEN.length())).text();
             if (tail.startsWith(DSML_OPEN)) return feed(tail.substring(DSML_OPEN.length())).text();
+            return "";
+        }
+        // 流到此为止还差几步才凑齐的闭合标签：它永远长不成完整标签了，按孤儿 debris 吞掉
+        // （与上面开标签前缀「留在所属块」不同，BODY 里的闭标签没有归属，留着就是印进回答）
+        if (tail.equals(REL_CLOSE) || tail.equals(PROC_CLOSE)
+                || isProperPrefix(tail, REL_CLOSE) || isProperPrefix(tail, PROC_CLOSE)) {
             return "";
         }
         return tail;
@@ -278,7 +304,8 @@ public final class ModelOutputParser {
         for (int i = Math.max(0, s.length() - MAX_PREFIX); i < s.length(); i++) {
             String tail = s.substring(i);
             if (isProperPrefix(tail, REL_OPEN) || isProperPrefix(tail, PROC_OPEN)
-                    || isProperPrefix(tail, DSML_OPEN)) {
+                    || isProperPrefix(tail, DSML_OPEN)
+                    || isProperPrefix(tail, REL_CLOSE) || isProperPrefix(tail, PROC_CLOSE)) {
                 return s.length() - i;
             }
         }
