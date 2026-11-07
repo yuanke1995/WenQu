@@ -776,6 +776,15 @@ public class ConfigService {
         d.put("eval.answerModel", "");             // 答案级评测的生成模型（留空=复用评判模型）
         d.put("eval.autoIntervalMs", "86400000");  // 自动体检周期(ms，≤0=暂停)
         d.put("eval.autoThresholdPct", "10");      // 退化判定：指标相对跌幅百分比阈值
+        // 智能体评测与发布门禁（plan-agent-eval.md §6.5）：与检索评估 eval.* 是两条线，键前缀区分
+        d.put("agentEval.enabled", "true");        // 总开关（关=评测端点全部拒绝，门禁查询按「未评测」处理）
+        d.put("agentEval.gateMode", "hint");       // 保存前门禁：hint=提示可继续 / block=低于门槛禁止保存（第一期仅提示级）
+        d.put("agentEval.thresholdRate", "80");    // 新建套件的默认通过率门槛（百分比）
+        d.put("agentEval.maxCases", "30");         // 单次运行条数上限（每条=1 次作答+1 次评判，账单敏感）
+        d.put("agentEval.concurrency", "2");       // 全局同时在跑的评测运行数（执行器线程池同宽）
+        d.put("agentEval.perCaseTimeoutMs", "180000"); // 单题超时(ms)；超时按该题失败记，不中断整次运行
+        d.put("agentEval.runTimeoutMs", "900000"); // 单次运行总预算(ms)，超出记 failed，已完成结果保留
+        d.put("agentEval.judgeModel", "");         // 评测评判模型（留空=复用 eval.judgeModel；两者都空=只按引用召回计分）
         // 定时任务（schedule 包读取；≤0=暂停对应任务）
         // 清理/回收类任务的**共用节拍**：原先 11 个「每日清理间隔」各说同一件事，改一个留十个。
         // 下面这些 *IntervalMs 旧键本版本停止读取（保留登记只为回滚窗口），下一版本连同 schema 条目一起删。

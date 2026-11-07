@@ -231,6 +231,10 @@ public class SecurityConfig implements WebMvcConfigurer {
         if (path.equals("/api/ai/project") || path.startsWith("/api/ai/project/")) return true;
         // 定时执行智能体（个人资产）：每人管自己的任务（ScheduledJobController 内按 uid 归属校验）
         if (path.equals("/api/ai/scheduled") || path.startsWith("/api/ai/scheduled/")) return true;
+        // 智能体评测（个人资产线，同 /scheduled 口径）：读端点要求智能体对当前用户可读（含共享范围），
+        // 写端点与「运行回归」要求可管理（谁建归谁）——归属校验收在 AgentEvalService 的
+        // mustReadable / mustManageable，这里只按端点放行
+        if (path.equals("/api/ai/agent-eval") || path.startsWith("/api/ai/agent-eval/")) return true;
         // API 密钥（2026-11-02 下放为个人资产）：登录用户自管自己的 Key——普通用户签发即绑本人，
         // 列表按共享范围过滤、改动走 ensureManageable（资源级判定在 ApiKeyService 内做）。
         // 这组端点同时在 isKeyDeniedEndpoint 内：Key 本身不能管理 Key（否则一把泄露的 Key
@@ -292,6 +296,9 @@ public class SecurityConfig implements WebMvcConfigurer {
         if (path.equals("/api/ai/mcp") || path.startsWith("/api/ai/mcp/")) return true;
         if (path.equals("/api/ai/market") || path.startsWith("/api/ai/market/")) return true;
         if (path.equals("/api/ai/scheduled") || path.startsWith("/api/ai/scheduled/")) return true;
+        // 智能体评测（跑一轮=两次真实模型调用，批量就是一份账单）：Key 不开放，防一把泄露的 Key
+        // 烧光代表账号的额度；界面内评测走登录态且用例数有上限
+        if (path.equals("/api/ai/agent-eval") || path.startsWith("/api/ai/agent-eval/")) return true;
         if (path.equals("/api/ai/credential") || path.startsWith("/api/ai/credential/")) return true;
         // 资源破坏性动作与共享管理：会话可以建、可以读、可以问，但不能删别人的历史
         if (path.equals("/api/ai/session-shares") || path.startsWith("/api/ai/session-shares/")) return true;

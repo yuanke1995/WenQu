@@ -975,6 +975,45 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         return v == null ? "" : String.valueOf(v);
     }
 
+    /** 当前版本号（保存即 +1 的计数口径）：评测运行快照与「有变更未评测」门禁判据的读数出口 */
+    public int currentVersionNumber(String agentId) {
+        return versionCount(agentId);
+    }
+
+    /**
+     * 保存前门禁：待保存 payload 与当前配置的字段级 diff（{@link #VERSION_FIELDS} 白名单）。
+     * <p>payload <b>没带的键视为不变</b>（合并在当前快照之上再比）——前端按模式省略字段
+     * （内置智能体不带 icon 等）不应被误报成「已修改」。空集合与空值归一
+     * （前端 payload 惯带 {@code httpTools: []} 而存量是 null，不归一会每次保存都报一条假变更）。
+     * 供评测保存前检查弹窗使用，不落任何数据。</p>
+     */
+    public List<Map<String, Object>> diffForGate(String agentId, Map<String, Object> payload) {
+        Agent a = mapper.selectById(agentId);
+        if (a == null) throw new BizException(404, "智能体不存在");
+        JSONObject from = (JSONObject) JSON.parse(snapshotJson(a));
+        JSONObject to = new JSONObject();
+        to.putAll(from);
+        if (payload != null && !payload.isEmpty()) {
+            JSONObject p = (JSONObject) JSON.toJSON(payload);
+            for (String f : VERSION_FIELDS.keySet()) {
+                if (p.containsKey(f)) to.put(f, p.get(f));
+            }
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> c : diffConfig(from, to)) {
+            if (isEmptyish(c.get("from")) && isEmptyish(c.get("to"))) continue;
+            out.add(c);
+        }
+        return out;
+    }
+
+    /** 空值/空串/空集合/字面 "null" 都算「空」——门禁 diff 的噪声归一口径 */
+    private static boolean isEmptyish(Object v) {
+        if (v == null) return true;
+        String s = String.valueOf(v).trim();
+        return s.isEmpty() || "null".equals(s) || "[]".equals(s) || "{}".equals(s) || "''".equals(s);
+    }
+
     /** 把快照配置写回智能体行：逐列显式 set（含 null——回滚到"未设置"是合法目标，NOT_NULL 策略会漏掉）
      *  <p>内置「问渠」跳过 icon / isSubagent：这两项是身份锁死项，历史快照里可能存着旧值
      *  （本次锁死之前允许改），回滚若照写会把身份字段改回去，而配置页已无入口可纠正。</p> */

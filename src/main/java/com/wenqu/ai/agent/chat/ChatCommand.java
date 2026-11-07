@@ -148,7 +148,8 @@ public final class ChatCommand {
 
     /**
      * 本轮的<b>发起方身份</b>（工作区轮次守卫展示用）：{@code user}=网页问答（缺省）、
-     * {@code scheduled}=定时任务、{@code workflow}=工作流子智能体节点。
+     * {@code scheduled}=定时任务、{@code workflow}=工作流子智能体节点、{@code eval}=智能体评测回归
+     * （非 user 即无在场观众：需人工确认的工具按「无人可问」拒绝——评测只读语义的落点）。
      * 只进租约与报错文案，不参与任何路由/权限判断。
      */
     final String source;

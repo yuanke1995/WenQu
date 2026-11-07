@@ -120,6 +120,7 @@ public class RbacSeedRunner implements ApplicationRunner {
             new String[]{"menu-agents-tab-mcp", "MCP 外部工具", "/agents?tab=mcp", "40", "menu-agents"},
             new String[]{"menu-agents-tab-workflow", "工作流", "/agents?tab=workflow", "50", "menu-agents"},
             new String[]{"menu-agents-tab-scheduled", "定时任务", "/agents?tab=scheduled", "60", "menu-agents"},
+            new String[]{"menu-agents-tab-eval", "评测", "/agents?tab=eval", "70", "menu-agents"},
             IDENTITY_TAB_MENU,
             SERVICE_ACCOUNT_TAB_MENU,
             AUDIT_TAB_MENU,
@@ -139,9 +140,11 @@ public class RbacSeedRunner implements ApplicationRunner {
     /** user 角色默认可见的内置菜单 id（个人资产类与问答类一致，默认对所有人开放） */
     private static final List<String> USER_MENUS =
             List.of("menu-chat", "menu-agents", "menu-market", "menu-knowledge", "menu-artifacts", "menu-stats",
-                    // 智能体的 6 个 Tab：拆分前「能进智能体 = 6 个 Tab 全有」，拆分后按项绑定保持行为不变
+                    // 智能体的 7 个 Tab：拆分前「能进智能体 = 6 个 Tab 全有」，拆分后按项绑定保持行为不变
+                    // （2026-11-07 增第 7 个「评测」Tab：菜单全员可见；存量库的接口授权点需在权限页补勾一次）
                     "menu-agents-tab-providers", "menu-agents-tab-agents", "menu-agents-tab-skills",
-                    "menu-agents-tab-mcp", "menu-agents-tab-workflow", "menu-agents-tab-scheduled");
+                    "menu-agents-tab-mcp", "menu-agents-tab-workflow", "menu-agents-tab-scheduled",
+                    "menu-agents-tab-eval");
 
     private final RoleMapper roleMapper;
     private final MenuMapper menuMapper;

@@ -75,6 +75,7 @@ public class ApiEndpointScanner implements ApplicationRunner {
      */
     private static final Map<String, String> MODULE_ZH = Map.ofEntries(
             Map.entry("Agent", "智能体"),
+            Map.entry("AgentEval", "智能体评测"),
             Map.entry("ApiEndpoint", "接口管理"),
             Map.entry("ApiKey", "API 密钥"),
             Map.entry("Artifact", "产物"),
@@ -136,6 +137,8 @@ public class ApiEndpointScanner implements ApplicationRunner {
     private static final Map<String, String> PERMISSION_ZH = Map.ofEntries(
             Map.entry("agent:delete", "删除智能体"),
             Map.entry("agent:publish", "发布智能体"),
+            Map.entry("agentEval:read", "查看智能体评测"),
+            Map.entry("agentEval:write", "运行智能体评测"),
             Map.entry("agent:read", "查看智能体"),
             Map.entry("agent:write", "编辑智能体"),
             Map.entry("api-endpoint:manage", "管理接口登记"),
@@ -253,6 +256,7 @@ public class ApiEndpointScanner implements ApplicationRunner {
      */
     private static final Map<String, List<String>> DEFAULT_MENUS = Map.ofEntries(
             Map.entry("Agent", List.of("menu-agents-tab-agents")),
+            Map.entry("AgentEval", List.of("menu-agents-tab-eval")),
             Map.entry("ApiEndpoint", List.of("menu-permissions")),
             Map.entry("ApiKey", List.of("menu-settings")),
             Map.entry("Artifact", List.of("menu-artifacts")),

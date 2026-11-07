@@ -21,6 +21,7 @@ public record TurnLease(String turnId, String sessionId, String kind, String nam
     public static final String KIND_USER = "user";
     public static final String KIND_SCHEDULED = "scheduled";
     public static final String KIND_WORKFLOW = "workflow";
+    public static final String KIND_EVAL = "eval";
 
     /** 租约是否已过期末（读路径据此把死租约清掉，等价于框架 leaseTtl 的自愈语义） */
     public boolean expired() {
@@ -38,6 +39,7 @@ public record TurnLease(String turnId, String sessionId, String kind, String nam
         return switch (kind == null ? KIND_USER : kind) {
             case KIND_SCHEDULED -> "定时任务" + n;
             case KIND_WORKFLOW -> "工作流子智能体" + n;
+            case KIND_EVAL -> "评测回归" + n;
             default -> "会话" + n + "的一轮对话";
         };
     }

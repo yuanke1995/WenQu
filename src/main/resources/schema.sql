@@ -1699,3 +1699,99 @@ CREATE TABLE IF NOT EXISTS `c_ai_tenant_request` (
     PRIMARY KEY (`id`),
     KEY `idx_tenant_request_status` (`status`, `create_time`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='租户开通申请（提交自助、开通人工批准）';
+
+-- ====================================================================
+-- 2026-11-07 智能体评测与发布门禁（plan-agent-eval.md §5）
+-- 一个智能体一套评测集（uk agent_id）：用例=问题+期望引用；一次回归一行 run、
+-- 逐用例一行 result（答案/引用/指标快照，不依赖临时会话存活）。
+-- 门禁口径：通过率 ≥ 套件门槛且无 0 分严重失败 → 达标；最新版本号 > 最近成功
+-- 运行快照的版本号 → 有变更未评测。评测走真实问答流水线（source=eval，
+-- 需人工确认的工具自动拒绝），临时会话跑完即删。
+-- ====================================================================
+CREATE TABLE IF NOT EXISTS `c_ai_agent_eval_suite` (
+    `tenant_id`       VARCHAR(32)  NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
+    `id`              VARCHAR(50)  NOT NULL COMMENT '主键ID',
+    `agent_id`        VARCHAR(50)  NOT NULL COMMENT '智能体ID（一期一个智能体一个套件）',
+    `name`            VARCHAR(100) DEFAULT NULL COMMENT '套件名（NULL=前端按「默认评测集」展示）',
+    `threshold_rate`  DOUBLE       DEFAULT 80 COMMENT '通过率门槛（百分比 0-100；默认 80）',
+    `pass_score`      DOUBLE       DEFAULT 60 COMMENT '单条通过综合分（0-100；默认 60）',
+    `enabled`         INT          DEFAULT 1 COMMENT '是否参与门禁：1=是 0=暂停',
+    `created_by`      VARCHAR(64)  DEFAULT NULL COMMENT '创建人 uid',
+    `create_time`     DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    `update_time`     DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_suite_agent` (`agent_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='智能体评测套件（评测集设置：门槛/通过分/启停）';
+
+CREATE TABLE IF NOT EXISTS `c_ai_agent_eval_case` (
+    `tenant_id`              VARCHAR(32)  NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
+    `id`                     VARCHAR(50)  NOT NULL COMMENT '主键ID',
+    `suite_id`               VARCHAR(50)  NOT NULL COMMENT '所属套件ID',
+    `agent_id`               VARCHAR(50)  NOT NULL COMMENT '智能体ID（冗余，按智能体删套件时连带清理）',
+    `question`               VARCHAR(2000) NOT NULL COMMENT '问题（一题一轮）',
+    `expected_knowledge_ids` TEXT         DEFAULT NULL COMMENT '期望知识块ID（JSON数组字符串；NULL=无期望引用，不参与引用召回）',
+    `expected_doc_ids`       TEXT         DEFAULT NULL COMMENT '期望文档ID（JSON数组字符串；与知识块任一命中即算召回命中）',
+    `expected_tools`         VARCHAR(1000) DEFAULT NULL COMMENT '期望调用的工具名（JSON数组字符串；P2 参与评分，本期仅记录）',
+    `note`                   VARCHAR(500) DEFAULT NULL COMMENT '备注/考察点',
+    `tags`                   VARCHAR(500) DEFAULT NULL COMMENT '标签（JSON数组字符串）',
+    `source`                 VARCHAR(16)  NOT NULL DEFAULT 'manual' COMMENT '用例来源: manual=手动新增 session=会话采样 import=批量导入',
+    `enabled`                INT          DEFAULT 1 COMMENT '是否启用：1=参与回归 0=停用',
+    `create_time`            DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    `update_time`            DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_case_suite` (`suite_id`, `enabled`),
+    KEY `idx_case_agent` (`agent_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='智能体评测用例（问题+期望引用）';
+
+CREATE TABLE IF NOT EXISTS `c_ai_agent_eval_run` (
+    `tenant_id`      VARCHAR(32)  NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
+    `id`             VARCHAR(50)  NOT NULL COMMENT '主键ID',
+    `suite_id`       VARCHAR(50)  NOT NULL COMMENT '所属套件ID',
+    `agent_id`       VARCHAR(50)  NOT NULL COMMENT '智能体ID',
+    `agent_version`  INT          DEFAULT NULL COMMENT '运行时智能体版本号快照（versionCount；门禁「有变更未评测」= 当前版本号 > 本列的最近成功值）',
+    `trigger_kind`   VARCHAR(16)  NOT NULL DEFAULT 'manual' COMMENT '触发方式: manual=手动 gate=保存门禁 scheduled=定时(P2)。命名避开 MySQL 保留字 trigger（撞过：MP 生成的 SELECT 直接语法错）',
+    `status`         VARCHAR(20)  NOT NULL DEFAULT 'running' COMMENT 'running/succeeded/failed/cancelled（重启残留 running 由启动清理器置 failed）',
+    `total`          INT          DEFAULT 0 COMMENT '本轮用例数',
+    `passed`         INT          DEFAULT 0 COMMENT '通过条数',
+    `pass_rate`      DOUBLE       DEFAULT NULL COMMENT '通过率（百分比 0-100 = passed/total）',
+    `avg_score`      DOUBLE       DEFAULT NULL COMMENT '平均综合分',
+    `avg_latency_ms` BIGINT       DEFAULT NULL COMMENT '平均单题耗时（毫秒）',
+    `total_tokens`   BIGINT       DEFAULT NULL COMMENT '本轮总 token（作答+评判）',
+    `baseline_run_id` VARCHAR(50) DEFAULT NULL COMMENT '对比基线运行ID（NULL=按上一次成功运行推断）',
+    `judge_model`    VARCHAR(190) DEFAULT NULL COMMENT '评判模型引用快照（防止改配置后历史口径漂移；NULL=未启用评判）',
+    `answer_model`   VARCHAR(190) DEFAULT NULL COMMENT '作答模型引用快照（NULL=跟随智能体/全局路由）',
+    `threshold_rate` DOUBLE       DEFAULT NULL COMMENT '运行时门槛快照',
+    `pass_score`     DOUBLE       DEFAULT NULL COMMENT '运行时单条通过分快照',
+    `error`          VARCHAR(1000) DEFAULT NULL COMMENT '失败原因（人话；单条用例失败不写这里，写在 result）',
+    `started_at`     DATETIME     DEFAULT NULL COMMENT '开始时刻',
+    `finished_at`    DATETIME     DEFAULT NULL COMMENT '结束时刻',
+    `created_by`     VARCHAR(64)  DEFAULT NULL COMMENT '触发人 uid',
+    `create_time`    DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_run_agent` (`agent_id`, `status`),
+    KEY `idx_run_suite` (`suite_id`, `create_time`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='智能体评测运行（一次回归一行）';
+
+CREATE TABLE IF NOT EXISTS `c_ai_agent_eval_result` (
+    `tenant_id`      VARCHAR(32)  NOT NULL DEFAULT 'default' COMMENT '租户ID（Phase 4 多租户：本行归属的租户）',
+    `id`             VARCHAR(50)  NOT NULL COMMENT '主键ID',
+    `run_id`         VARCHAR(50)  NOT NULL COMMENT '所属运行ID',
+    `case_id`        VARCHAR(50)  DEFAULT NULL COMMENT '用例ID（用例可能在跑之前被删，NULL=用例已不存在）',
+    `question`       VARCHAR(2000) DEFAULT NULL COMMENT '问题快照',
+    `answer`         MEDIUMTEXT   DEFAULT NULL COMMENT '回答快照（≤8000 字截断）',
+    `sources`        TEXT         DEFAULT NULL COMMENT '本轮引用来源快照（JSON数组，截断≤32KB）',
+    `tool_calls`     TEXT         DEFAULT NULL COMMENT '工具调用摘要（JSON数组 [{name,status}]，截断≤8KB）',
+    `recall`         DOUBLE       DEFAULT NULL COMMENT '引用召回 0-1（期望命中数/期望条数；NULL=无期望引用不计此项）',
+    `faithfulness`   DOUBLE       DEFAULT NULL COMMENT '忠实度 0-100（评判模型打分；NULL=评判不可用）',
+    `relevance`      DOUBLE       DEFAULT NULL COMMENT '相关性 0-100（评判模型打分；NULL=评判不可用）',
+    `judge_note`     VARCHAR(1000) DEFAULT NULL COMMENT '评判摘要/issue（一句话指出最主要的问题）',
+    `score`          DOUBLE       DEFAULT NULL COMMENT '综合分 0-100（引用召回×40%+忠实度×30%+相关性×30%；无期望引用按 0/50/50 归一）',
+    `passed`         INT          DEFAULT 0 COMMENT '是否通过：score≥pass_score 且有期望引用时召回命中≥1',
+    `failure_reason` VARCHAR(1000) DEFAULT NULL COMMENT '失败原因（人话，如「期望引用 2 条，命中 0 条」）',
+    `latency_ms`     BIGINT       DEFAULT NULL COMMENT '单题耗时（毫秒）',
+    `tokens`         BIGINT       DEFAULT NULL COMMENT '本题 token（作答+评判）',
+    `create_time`    DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (`id`),
+    KEY `idx_result_run` (`run_id`),
+    KEY `idx_result_case` (`case_id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='智能体评测逐条结果（失败原因与指标快照）';

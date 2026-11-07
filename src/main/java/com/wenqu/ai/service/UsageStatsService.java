@@ -96,6 +96,7 @@ public class UsageStatsService {
             case "compress" -> "对话历史压缩";
             case "citecheck" -> "引用一致性自检";
             case "memory" -> "长期记忆提取";
+            case "eval" -> "智能体评测";
             default -> kind;
         };
     }
