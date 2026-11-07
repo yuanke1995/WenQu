@@ -244,15 +244,14 @@
             </div>
             <svg v-if="trendPoints.length > 1" viewBox="0 0 1120 112" preserveAspectRatio="none" class="trend-svg">
               <line v-for="(t, i) in trendTicks" :key="'g' + i" x1="30" :y1="t.y" x2="1120" :y2="t.y" stroke="var(--app-border)" />
-              <text v-for="(t, i) in trendTicks.filter(t => t.y >= 12 && t.y <= 104)" :key="'t' + i"
-                    x="0" :y="Math.min(110, Math.max(10, t.y - 4))" font-size="10" fill="var(--app-text3)">{{ t.label }}</text>
-              <polygon :points="detailTrendArea" fill="var(--app-accent-weak)" opacity=".7"></polygon>
+              <text v-for="(t, i) in trendTicks" :key="'t' + i" x="0" :y="t.y + 3" font-size="10" fill="var(--app-text3)">{{ t.label }}</text>
+              <polygon v-if="detailTrendArea" :points="detailTrendArea" fill="var(--app-accent-weak)" opacity=".7"></polygon>
               <polyline :points="detailTrendLine" fill="none" stroke="var(--app-accent)" stroke-width="2"></polyline>
               <circle v-for="(p, i) in trendPoints" :key="i" :cx="p.x" :cy="p.y" r="4"
                       :fill="p.ok ? 'var(--app-ok)' : 'var(--app-danger)'">
                 <title>{{ p.label }}</title>
               </circle>
-              <text v-for="(p, i) in trendPoints" :key="'p' + i" :x="Math.min(1080, Math.max(40, p.x))" y="109"
+              <text v-for="(p, i) in trendPoints" :key="'p' + i" :x="Math.min(1080, Math.max(40, p.x))" :y="p.labelY"
                     font-size="10" fill="var(--app-text3)" text-anchor="middle">{{ p.labelShort }}</text>
             </svg>
             <div v-else class="trend-empty">成功运行满 2 次后展示趋势</div>
@@ -840,24 +839,34 @@ const trendScale = computed(() => {
   const n = runs.length
   const xPad = n <= 2 ? 280 : n <= 4 ? 160 : 80
   const yOf = v => Math.round(4 + 92 * (1 - (v - yMin) / Math.max(1, yMax - yMin)))
-  const points = runs.map((r, i) => ({
-    x: n === 1 ? 560 : Math.round(xPad + (1120 - 2 * xPad) * i / (n - 1)),
-    y: yOf(Math.min(100, Math.max(0, r.passRate ?? 0))),
-    ok: (r.passRate ?? 0) >= (suiteInfo.value?.suite?.thresholdRate ?? 80),
-    label: `v${r.agentVersion ?? '?'} · ${pct(r.passRate)} · ${shortTime(r.finishedAt)}`,
-    labelShort: `v${r.agentVersion ?? '?'} · ${pct(r.passRate)}`
-  }))
-  // 三条网格线取域顶/域中/域底，标签用真实刻度值
-  const yTop = yOf(yMax)
-  const yMid = yOf(Math.round((yMax + yMin) / 2))
-  const yBot = yOf(yMin)
-  const ticks = [
-    { y: yTop, label: pct(yMax) },
-    { y: yMid, label: pct(Math.round((yMax + yMin) / 2)) },
-    { y: yBot, label: pct(yMin) }
-  ]
+  const points = runs.map((r, i) => {
+    const y = yOf(Math.min(100, Math.max(0, r.passRate ?? 0)))
+    return {
+      x: n === 1 ? 560 : Math.round(xPad + (1120 - 2 * xPad) * i / (n - 1)),
+      y,
+      // 标签避开贴底：点靠近底部时标签放点上方，否则放下方（都留出与点的间隙）
+      labelY: y >= 82 ? y - 12 : Math.min(110, y + 18),
+      ok: (r.passRate ?? 0) >= (suiteInfo.value?.suite?.thresholdRate ?? 80),
+      label: `v${r.agentVersion ?? '?'} · ${pct(r.passRate)} · ${shortTime(r.finishedAt)}`,
+      labelShort: `v${r.agentVersion ?? '?'} · ${pct(r.passRate)}`
+    }
+  })
+  // 三条网格线取域顶/域中/域底，标签用真实刻度值；靠得太近的标签去重（≥14px 才画）
+  const tickRaw = [
+    { y: yOf(yMax), label: pct(yMax) },
+    { y: yOf(Math.round((yMax + yMin) / 2)), label: pct(Math.round((yMax + yMin) / 2)) },
+    { y: yOf(yMin), label: pct(yMin) }
+  ].sort((a, b) => a.y - b.y)
+  const ticks = []
+  for (const t of tickRaw) {
+    if (t.y < 8 || t.y > 106) continue
+    if (ticks.length && t.y - ticks[ticks.length - 1].y < 14) continue
+    ticks.push(t)
+  }
+  // 全平（跨度 <2pp）不画面积：满宽条带看着像渲染 bug，只留点与连线
+  const flat = hi - lo < 2
   return { points, ticks, line: points.map(p => `${p.x},${p.y}`).join(' '),
-           area: points.length ? points.map(p => `${p.x},${p.y}`).join(' ') + ` ${points[points.length - 1].x},112 ${points[0].x},112` : '' }
+           area: (!flat && points.length) ? points.map(p => `${p.x},${p.y}`).join(' ') + ` ${points[points.length - 1].x},112 ${points[0].x},112` : '' }
 })
 const trendPoints = computed(() => trendScale.value.points)
 const trendTicks = computed(() => trendScale.value.ticks)
