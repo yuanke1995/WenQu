@@ -23,6 +23,13 @@ public enum ToolFamily {
     KNOWLEDGE("knowledge", "知识库精确检索"),
     /** 联网搜索（Provider 壳，外部计费与配额都在这族） */
     WEBSEARCH("websearch", "联网搜索"),
+    /**
+     * HTTP 工具（OpenAPI 导入的宿主 API 工具集，按智能体 {@code http_tools} 配置动态合入）。
+     * <p>与 WEBSEARCH 同口径：<b>刻意不受审批 off 档管辖</b>——嵌入场景要的正是无人值守
+     * （审批=off 时照常自动调用）；ask 档仍会逐次问（动态工具名未登记注册中心，
+     * {@code ToolRegistry.requiresApproval} fail-closed 返回 true，与 MCP 同一兜底）。
+     */
+    HTTP_API("http_api", "HTTP 工具"),
     /** 产物交付（模型生成的可下载文件） */
     ARTIFACT("artifact", "产物交付"),
     /** 技能（Skills 渐进披露的取回端，个人资产）；智能体级开关 tool_skill 控制它开不开 */

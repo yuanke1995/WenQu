@@ -79,6 +79,8 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
     private final RoleService roleService;
     /** 工具注册中心：保存工具黑名单时逐个核对名字真存在（认不出直接拒，与权限档位码同口径） */
     private final com.wenqu.ai.agent.tool.ToolRegistry toolRegistry;
+    /** HTTP 工具集：保存期归一化/凭据加密、回显脱敏（v1 对外能力第一批） */
+    private final com.wenqu.ai.service.httptool.HttpToolService httpToolService;
 
     /**
      * 配置快照字段白名单（有序：字段 → 中文名），只快照「调优内容」——改动才产生新版本的字段。
@@ -103,6 +105,8 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         m.put("toolArtifact", "产物交付");
         m.put("toolMcp", "MCP 外部工具");
         m.put("toolWebsearch", "联网搜索");
+        m.put("toolHttp", "HTTP 工具");
+        m.put("httpTools", "HTTP 工具集");
         m.put("toolApprovalMode", "工具审批模式");
         m.put("permissionPreset", "权限档位");
         m.put("toolDeny", "工具黑名单");
@@ -250,11 +254,13 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         }
     }
 
-    /** 列表（默认智能体在前，其余按创建时间倒序） */
+    /** 列表（默认智能体在前，其余按创建时间倒序）；出参脱敏（HTTP 工具集的鉴权密文不出服务层） */
     public List<Agent> list() {
-        return mapper.selectList(new LambdaQueryWrapper<Agent>()
+        List<Agent> out = mapper.selectList(new LambdaQueryWrapper<Agent>()
                 .orderByDesc(Agent::getIsDefault)
                 .orderByDesc(Agent::getCreateTime));
+        for (Agent a : out) maskHttpTools(a);
+        return out;
     }
 
     /**
@@ -445,6 +451,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         }
         mapper.insert(a);
         snapshot(a, "创建");
+        maskHttpTools(a);
         log.info("[AGENT] 新建智能体 {}（{}）", a.getId(), a.getName());
         return a;
     }
@@ -504,6 +511,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         }
         updateColumns(id, body, a);
         snapshot(a, "保存");
+        maskHttpTools(a);
         log.info("[AGENT] 更新智能体 {}（{}）", a.getId(), a.getName());
         return a;
     }
@@ -532,6 +540,8 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         if (b.containsKey("toolArtifact")) uw.set(Agent::getToolArtifact, a.getToolArtifact());
         if (b.containsKey("toolMcp")) uw.set(Agent::getToolMcp, a.getToolMcp());
         if (b.containsKey("toolWebsearch")) uw.set(Agent::getToolWebsearch, a.getToolWebsearch());
+        if (b.containsKey("toolHttp")) uw.set(Agent::getToolHttp, a.getToolHttp());
+        if (b.containsKey("httpTools")) uw.set(Agent::getHttpTools, a.getHttpTools());
         // 工具执行审批三态（auto/ask/off；null=跟随权限档位的建议值）
         if (b.containsKey("toolApprovalMode")) uw.set(Agent::getToolApprovalMode, a.getToolApprovalMode());
         // 权限档位（P2；null=跟随平台默认档）
@@ -621,6 +631,12 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         if (body.containsKey("toolArtifact")) a.setToolArtifact(toTri(body.get("toolArtifact")));
         if (body.containsKey("toolMcp")) a.setToolMcp(toTri(body.get("toolMcp")));
         if (body.containsKey("toolWebsearch")) a.setToolWebsearch(toTri(body.get("toolWebsearch")));
+        if (body.containsKey("toolHttp")) a.setToolHttp(toTri(body.get("toolHttp")));
+        // HTTP 工具集：归一化+上限+凭据加密（先于 toolDeny 校验，后者要认识新配置里的动态工具名）
+        if (body.containsKey("httpTools")) {
+            String prev = a.getHttpTools();
+            a.setHttpTools(httpToolService.normalizeFromSave(body.get("httpTools"), prev));
+        }
         // 目标模式（资源级三态）：与任务态投影/候选要求工具同源判据，改它要重建常驻实例
         if (body.containsKey("goalEnabled")) a.setGoalEnabled(toTri(body.get("goalEnabled")));
         // 工具执行审批三态（auto/ask/off；null/空=跟随权限档位的建议值）
@@ -663,7 +679,9 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
                     String n = part.trim();
                     if (n.isEmpty()) continue;
                     if (names.contains(n)) continue;   // 重复项去重，不报错（同一条禁两次没有第二种语义）
-                    if (toolRegistry.find(n).isEmpty() && !com.wenqu.ai.agent.tool.ToolFamily.looksLikeMcpTool(n)) {
+                    if (toolRegistry.find(n).isEmpty()
+                            && !com.wenqu.ai.agent.tool.ToolFamily.looksLikeMcpTool(n)
+                            && !httpToolService.opNames(a.getHttpTools()).contains(n)) {
                         unknown.add(n);
                     }
                     names.add(n);
@@ -763,12 +781,16 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
                 .eq(AgentVersion::getAgentId, id)
                 .orderByDesc(AgentVersion::getVersion));
         Map<String, Object> currentCfg = configOf(agent);
+        maskCfgHttpTools(currentCfg);   // 与下方展示快照同一脱敏，否则 identical 比较恒不等
         int latest = rows.isEmpty() ? 0 : rows.get(0).getVersion();
         List<Map<String, Object>> out = new ArrayList<>();
         for (int i = 0; i < rows.size(); i++) {
             AgentVersion v = rows.get(i);
             Map<String, Object> cfg = parseConfig(v.getConfig());
+            maskCfgHttpTools(cfg);
             Map<String, Object> prev = i + 1 < rows.size() ? parseConfig(rows.get(i + 1).getConfig()) : null;
+            maskCfgHttpTools(prev);   // 两侧同脱敏，否则 diff 恒把 httpTools 记成变更
+
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("version", v.getVersion());
             m.put("reason", v.getReason());
@@ -800,6 +822,7 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         Agent updated = mapper.selectById(id);
         // 版本记录 best-effort：配置已应用，快照写失败不应把回滚报成失败（否则用户以为没回滚、实际已回滚）
         recordVersion(id, snapshotJson(updated), "回滚自 v" + targetVersion);
+        maskHttpTools(updated);
         log.info("[AGENT] 回滚智能体 {}（{}）至 v{} → 新版本 uid={}", id, updated.getName(), targetVersion, RequestUser.uid());
         Map<String, Object> r = new LinkedHashMap<>();
         r.put("id", id);
@@ -872,14 +895,51 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
     /**
      * 配置快照 JSON（{@link #VERSION_FIELDS} 白名单）——市场上架「应用模板」用，
      * 与版本回滚同源同口径：模板装到谁名下，就等价于把作者当前的这份配置存成新智能体。
+     * <p>HTTP 工具集的鉴权凭据必须摘除后再出模板：密文虽是 JWE，但<b>平台侧持有密钥</b>——
+     * 模板装到别人名下后运行期就能拿发布者的凭据去调宿主 API，等于凭据出借。
+     * 脱敏后模板携带工具集结构（地址/操作/schema），凭据由安装者自己填。
      */
     public String configJson(Agent a) {
-        return snapshotJson(a);
+        String json = snapshotJson(a);
+        if (a == null || a.getHttpTools() == null || a.getHttpTools().isBlank()) return json;
+        try {
+            com.alibaba.fastjson2.JSONObject o = com.alibaba.fastjson2.JSON.parseObject(json);
+            String masked = httpToolService.mask(a.getHttpTools());
+            if (masked == null) o.remove("httpTools");
+            else o.put("httpTools", masked);
+            return o.toJSONString();
+        } catch (Exception e) {
+            log.warn("[AGENT] 市场模板脱敏失败，移除 httpTools: {}", e.getMessage());
+            try {
+                com.alibaba.fastjson2.JSONObject o = com.alibaba.fastjson2.JSON.parseObject(json);
+                o.remove("httpTools");
+                return o.toJSONString();
+            } catch (Exception ignored) {
+                return json;
+            }
+        }
     }
 
     /** 智能体行 → 快照对象（与 snapshotJson 同源，供列表比对当前态） */
     private Map<String, Object> configOf(Agent a) {
         return parseConfig(snapshotJson(a));
+    }
+
+    /**
+     * 出参脱敏：HTTP 工具集的鉴权密文不出服务层（回显只留 hasValue）。
+     * mask 失败返回 null = 整段不回显——宁可编辑表单空白，不回显密文。
+     */
+    private void maskHttpTools(Agent a) {
+        if (a == null || a.getHttpTools() == null) return;
+        a.setHttpTools(httpToolService.mask(a.getHttpTools()));
+    }
+
+    /** 版本快照展示的脱敏（config 里的 httpTools 是 JSON 字符串；与实体出参同一口径） */
+    private void maskCfgHttpTools(Map<String, Object> cfg) {
+        if (cfg == null || cfg.get("httpTools") == null) return;
+        Object v = cfg.get("httpTools");
+        String s = v instanceof String str ? str : com.alibaba.fastjson2.JSON.toJSONString(v);
+        cfg.put("httpTools", httpToolService.mask(s));
     }
 
     private Map<String, Object> parseConfig(String json) {
@@ -940,6 +1000,8 @@ public class AgentService implements org.springframework.boot.ApplicationRunner 
         uw.set(Agent::getToolArtifact, asInt(cfg.get("toolArtifact")));
         uw.set(Agent::getToolMcp, asInt(cfg.get("toolMcp")));
         uw.set(Agent::getToolWebsearch, asInt(cfg.get("toolWebsearch")));
+        uw.set(Agent::getToolHttp, asInt(cfg.get("toolHttp")));
+        uw.set(Agent::getHttpTools, raw(cfg.get("httpTools")));
         uw.set(Agent::getToolApprovalMode, raw(cfg.get("toolApprovalMode")));
         uw.set(Agent::getPermissionPreset, raw(cfg.get("permissionPreset")));
         uw.set(Agent::getToolDeny, raw(cfg.get("toolDeny")));

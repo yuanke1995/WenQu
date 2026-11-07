@@ -183,6 +183,7 @@ public class ToolAssemblyService {
             case ASK_USER -> agent.getToolBuiltin();
             case KNOWLEDGE -> agent.getToolKnowledge();
             case WEBSEARCH -> agent.getToolWebsearch();
+            case HTTP_API -> agent.getToolHttp();
             case ARTIFACT -> agent.getToolArtifact();
             case SKILL -> agent.getToolSkill();
             case SANDBOX -> null;   // 沙盒暂无智能体级列（c_ai_agent 未建 toolSandbox，见 SandboxTools 类注释）

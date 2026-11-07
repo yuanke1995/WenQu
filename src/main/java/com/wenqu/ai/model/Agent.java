@@ -92,6 +92,9 @@ public class Agent {
     /** 联网搜索工具（webSearch）：1=开 0=关 NULL=继承 */
     private Integer toolWebsearch;
 
+    /** HTTP 工具（OpenAPI 导入的宿主 API 工具集）：1=开 0=关 NULL=继承 */
+    private Integer toolHttp;
+
     /**
      * 目标模式开关（资源级）: 1=开 0=关 NULL=开。平台级总闸已去掉，这一格就是唯一判据。
      * <p>关=界面无入口、引擎不接目标上下文、续跑驱动不接管；与「任务上下文投影」已解耦
@@ -148,6 +151,13 @@ public class Agent {
 
     /** 内置工具范围（具体项筛选）：NULL=跟随全局；空串=不用任何内置工具；逗号分隔=只用这些 */
     private String builtinTools;
+
+    /**
+     * HTTP 工具集（归一化 JSON 数组，智能体自有配置而非引用他人资产，故不走 mcps 那种引用串）：
+     * [{id,name,baseUrl,timeoutMs,enabled,auth:{type,header,value(JWE 密文)},ops:[{name,method,path,summary,params,hasBody,inputSchema}]}]
+     * 每轮由 {@code HttpApiToolProvider} 按它动态构建对话工具。NULL=未配置（该族无工具可挂）。
+     */
+    private String httpTools;
 
     /**
      * 是否子智能体：0=主智能体（可在对话页直接选用）；1=子智能体（不直接选用，供主智能体委派）。

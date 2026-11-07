@@ -70,6 +70,14 @@
       ]
     },
     {
+      "key": "httpTool",
+      "title": "HTTP 工具（OpenAPI 导入的宿主 API 工具集）",
+      "sections": [
+        "总开关",
+        "安全"
+      ]
+    },
+    {
       "key": "skills",
       "title": "技能",
       "sections": [
@@ -2688,6 +2696,54 @@
       "tips": "webSearchEnabled"
     },
     {
+      "backendKey": "httpTool.enabled",
+      "panel": "httpTool",
+      "section": 0,
+      "group": "httpTool",
+      "key": "enabled",
+      "path": "httpTool.enabled",
+      "label": "总开关",
+      "type": "switch",
+      "def": true,
+      "vif": "tool.enabled",
+      "tier": 2,
+      "note": "开启后智能体可挂载自己配置的 HTTP 工具集（OpenAPI 导入）。默认开不改变任何存量行为——没有配置工具集的智能体不会有任何工具。",
+      "tips": "httpToolEnabled"
+    },
+    {
+      "backendKey": "httpTool.timeoutMs",
+      "panel": "httpTool",
+      "section": 0,
+      "group": "httpTool",
+      "key": "timeoutMs",
+      "path": "httpTool.timeoutMs",
+      "label": "默认超时(ms)",
+      "type": "number",
+      "def": 10000,
+      "min": 1000,
+      "max": 60000,
+      "step": 1000,
+      "width": 200,
+      "note": "工具集未单独配置超时时用这一档。模型调用线程是同步阻塞的，调大要慎重。",
+      "vif": "httpTool.enabled",
+      "tier": 3
+    },
+    {
+      "backendKey": "httpTool.allowPrivateNetwork",
+      "panel": "httpTool",
+      "section": 1,
+      "group": "httpTool",
+      "key": "allowPrivateNetwork",
+      "path": "httpTool.allowPrivateNetwork",
+      "label": "允许调用内网地址",
+      "type": "switch",
+      "def": true,
+      "vif": "httpTool.enabled",
+      "tier": 2,
+      "note": "自宿主场景宿主 API 常在内网，保持开启；公网多租户部署建议关闭，防止借智能体探测内网。",
+      "tips": "httpToolAllowPrivateNetwork"
+    },
+    {
       "backendKey": "webSearch.provider",
       "panel": "webSearch",
       "section": 0,
@@ -4612,9 +4668,14 @@
     "mcpServerTimeout": "外部客户端调 MCP 工具时，服务端等一轮问答跑完的上限。到点向客户端报错并中止那一轮——不中止的话那一轮会在后台把 token 跑完，而客户端早就不等了。多数 MCP 客户端自己只等 60 秒，所以默认压在 50 秒；要接慢的智能体，把这里和客户端侧一起调大。",
     "mcpServerAllowedOrigins": "MCP 规范要求 HTTP 传输校验 Origin 头以防御 DNS rebinding 攻击。留空时只允许本机回环（localhost/127.0.0.1）的浏览器请求；需要通过网页跨域调用时把来源地址填进来。",
     "webSearchProvider": "联网搜索服务商。tavily/bocha 为托管服务（需 API Key、按次计费）；generic 走自建 SearXNG 或内部搜索服务（baseUrl 必填，通常无需密钥）。",
+    "workflowTraceInput": "工作流节点 trace 里输入摘要的单字符串截断长度（字符）。加大方便排查、代价是 node_traces 大字段膨胀；改完下一次运行生效。",
+    "workflowTraceOutput": "工作流节点 trace 里输出摘要的单字符串截断长度（字符）。LLM 长回答默认只留前若干字，完整输出始终在结束节点出参里；改完下一次运行生效。",
+    "workflowTraceError": "工作流节点 trace 里错误信息的截断长度（字符）。运行记录的 error 列另有 1000 字上限，这里管的是节点 trace 内的展示粒度；改完下一次运行生效。",
     "webSearchApiKey": "服务商控制台申请的 API Key。以 .apiKey 结尾的配置会 RSA 加密入库；generic 自建实例通常无鉴权，可留空。",
     "webSearchRequireApproval": "开启后联网搜索视同「有副作用工具」：智能体审批模式为 ask 时，每次搜索前需用户确认。默认开启——搜索会把用户输入发到外网并产生外部计费，不该由模型自主决定是否发起；确定要自动执行（如批量查询已授权的接口）可再关掉。",
     "webSearchEnabled": "联网搜索总开关。需先开启「工具调用（Function Calling）」总开关；关闭时模型完全没有联网能力，只能依据知识库与自身知识作答。",
+    "httpToolEnabled": "HTTP 工具总开关：智能体按 OpenAPI 规格导入的工具集（调宿主项目的业务 API）受它管辖。默认开——没有配置工具集的智能体不会挂任何 HTTP 工具，开着不产生行为；关闭则所有智能体的 HTTP 工具整族消失。",
+    "httpToolAllowPrivateNetwork": "工具集能否调用内网/环回地址。自宿主部署时宿主项目的 API 常在内网，保持开启；公网多租户部署务必关闭，防止有人借智能体工具探测内网。",
     "webSearchBaseUrl": "留空用服务商默认地址。generic（自建 SearXNG / 内部搜索服务）必填，如 http://127.0.0.1:8888；用 http 时搜索词与密钥明文传输，仅建议内网自建场景。",
     "webSearchMaxResults": "单次搜索返回的结果条数上限。服务商实际返回可能少于此值；条数越多上下文占用越大。",
     "webSearchMaxCallsPerTurn": "单轮问答允许的联网搜索次数。防模型陷入「搜→不满意→再搜」烧配额；0 表示不限制。",

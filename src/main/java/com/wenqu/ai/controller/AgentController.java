@@ -52,6 +52,8 @@ public class AgentController {
     private final com.wenqu.ai.service.ToolInventoryService toolInventoryService;
     /** 权限档位（P2）名册：配置页的档位选项与「管理员有没有放开这一档」从这里来，不在前端抄第二份 */
     private final com.wenqu.ai.agent.permission.PermissionPolicyResolver permissionPolicyResolver;
+    /** HTTP 工具集（v1 对外能力第一批）：导入预览的解析口 */
+    private final com.wenqu.ai.service.httptool.HttpToolService httpToolService;
 
     /**
      * 当前用户能否管理该智能体（谁建归谁：创建者；内置「问渠」为管理员级可配置）。
@@ -153,9 +155,25 @@ public class AgentController {
         return ResultJson.ok(permissionPolicyResolver.catalog());
     }
 
+    /**
+     * OpenAPI 规格解析预览（不落库）：粘贴 spec → 操作清单 + 警告 + 名称/地址建议。
+     * 与保存同一解析器（{@link com.wenqu.ai.service.httptool.OpenApiSpecParser}），预览即所见。
+     * 落在智能体自助端点分支（isAgentSelfEndpoint），与 tool-catalog 同一访问控制。
+     */
+    @Operation(summary = "HTTP 工具集导入预览", description = "body: {spec}（OpenAPI 3.x 的 JSON/YAML 文本）→"
+            + " {suggestedName, suggestedBaseUrl, ops:[{operationId,method,path,summary,hasBody,params,inputSchema}], warnings}")
+    @Permission("agent:write")
+    @PostMapping("/http-tools/preview")
+    public ResultJson previewHttpTools(@RequestBody Map<String, Object> body) {
+        Object spec = body == null ? null : body.get("spec");
+        return ResultJson.ok(httpToolService.preview(spec == null ? "" : String.valueOf(spec)));
+    }
+
     @Operation(summary = "新建智能体", description = "body 字段：name(必填)/icon(图标：wenqu=问渠品牌标（内置「问渠」专属，其它智能体不可用）/ emoji 字符，省略=默认展示)/"
             + "description/model/systemPrompt/knowledgeScope/"
-            + "toolKnowledge/toolBuiltin/toolSkill/toolArtifact/toolMcp/toolWebsearch(1开0关，省略=继承)/"
+            + "toolKnowledge/toolBuiltin/toolSkill/toolArtifact/toolMcp/toolWebsearch/toolHttp(1开0关，省略=继承)/"
+            + "httpTools(HTTP 工具集数组：[{name,baseUrl,timeoutMs,enabled,auth:{type,header,value},ops:[{operationId,method,path,summary,params,hasBody,inputSchema}]}]；"
+            + "ops 由 /http-tools/preview 解析得出，auth.value 明文提交、服务端 JWE 加密落库)/"
             + "permissionPreset(权限档位 research/standard/autonomous，省略=跟随平台默认档)/"
             + "toolDeny(按名禁用的工具，逗号分隔；省略或空=不禁用)/"
             + "skills/mcps/builtinTools(具体项范围：省略=跟随全局、空串=不使用、逗号串=仅这些)/"
@@ -168,7 +186,7 @@ public class AgentController {
     }
 
     @Operation(summary = "编辑智能体", description = "仅更新 body 中出现的字段（icon：wenqu=问渠品牌标（内置「问渠」专属）/ emoji；内置智能体的名称不可修改）；"
-            + "工具开关传 null 表示恢复继承；仅创建者/被授权人/管理员可改")
+            + "工具开关传 null 表示恢复继承；httpTools 的 auth.value 留空=沿用旧凭据；仅创建者/被授权人/管理员可改")
     @Permission("agent:write")
     @PutMapping("/{id}")
     public ResultJson update(@PathVariable("id") String id, @RequestBody Map<String, Object> body) {

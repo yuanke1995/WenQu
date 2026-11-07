@@ -877,6 +877,12 @@ public class ConfigService {
         d.put("webSearch.fallbackMinOverlap", "0.2");     // 重排不可用时的词面下限(0=整批发出不过滤)，判据见 WebSearchTools.lexicalOverlap
         d.put("webSearch.snippetChars", "600");           // 单条摘要截断字符数（控制工具结果 token 量）
         d.put("webSearch.requireApproval", "true");       // 是否纳入"有副作用工具"：true=受智能体 toolApprovalMode=ask 管辖。默认开：联网是唯一会向外部第三方发请求、可能对用户计费的能力，让模型自主决定花谁的钱不该是默认态
+        // ---------- HTTP 工具（OpenAPI 导入的宿主 API 工具集；配置存智能体行 http_tools）----------
+        // enabled 默认开不改变任何存量行为：没有配置工具集的智能体该族天然不挂（闸开着也无工具可出），
+        // 与 webSearch「默认关」的理由（不配置必失败）正好相反——这里不配置就没有任何调用发生。
+        d.put("httpTool.enabled", "true");                // HTTP 工具总开关（需 tool.enabled 总闸开启）
+        d.put("httpTool.timeoutMs", "10000");             // 工具集未单独配置时的默认超时(ms)
+        d.put("httpTool.allowPrivateNetwork", "true");    // 允许工具集调用内网/环回地址（自宿主场景宿主 API 常在内网；公网多租户部署建议关，防借智能体探测内网）
         // 技能：内置随版本分发 + 用户自装（user-data/skills-users/{uid}）+ 助手在对话里沉淀到沙盒工作区。
         // 平台侧只剩两件事：哪些技能全平台不再用（skill.disabled），以及 URL 安装允许哪些来源域名。
         // 技能正文读取上限改为平台常量（SKILL_MAX_FILE_CHARS），不再作为设置项。
