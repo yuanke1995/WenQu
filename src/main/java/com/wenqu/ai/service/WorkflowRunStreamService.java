@@ -215,6 +215,15 @@ public class WorkflowRunStreamService {
         bus.publishToSession(key(runId), "trace", JSON.toJSONString(trace));
     }
 
+    /**
+     * 节点开始事件（第 4 期并发可视化）：<b>只实时推，不进缓冲快照</b>——中途重连的观众按
+     * 快照回放只能看到已完成节点（与旧行为一致），进行中状态仅对一直在线的观众有意义；
+     * 也不落库（run 收口的 node_traces 仍只含完成态，历史回放语义不变）。
+     */
+    public void publishNodeStart(String runId, Map<String, Object> m) {
+        bus.publishToSession(key(runId), "node_start", JSON.toJSONString(m));
+    }
+
     /** 状态迁移事件（queued → running 等） */
     public void publishStatus(String runId, String status, String message) {
         Buffer b = buffers.get(key(runId));

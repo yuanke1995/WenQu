@@ -66,6 +66,17 @@ public class Workflow {
     /** 回调 HMAC-SHA256 签名密钥（敏感：出参一律置空，仅以 callbackSecretSet 告知是否已配置） */
     private String callbackSecret;
 
+    // ---- 第 4 期：事件触发（webhook 入站 + 平台内部事件，仅创建者可配置） ----
+    /** webhook 入站触发开关（1=启用）：外部系统 POST /api/ai/v1/workflows/webhook/{token} 即触发已发布版本 */
+    private Integer webhookEnabled;
+    /** webhook 入站令牌（高熵随机，URL 自证明身份；服务端生成、可在自动化弹窗重置） */
+    private String webhookToken;
+    /**
+     * 事件触发订阅（JSON 数组：[{"type":"kb.docIndexed","kbId":"…"}]；NULL=未订阅）。
+     * type=事件类型（首个源：kb.docIndexed=知识库文档解析完成）；kbId=过滤条件（该类型的限定库，空=全部库）。
+     */
+    private String eventTriggers;
+
     /**
      * 最近一次运行状态（列表页展示用，非列）：由 {@code WorkflowService.listVisible} 批量回填，
      * 不落库——它是一次查询的派生信息，单独建列会与真实运行记录不一致。

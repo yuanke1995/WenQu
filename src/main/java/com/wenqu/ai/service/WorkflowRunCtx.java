@@ -95,20 +95,49 @@ public final class WorkflowRunCtx {
         this.traceSink = sink;
     }
 
+    /**
+     * 节点开始回调（第 4 期并发可视化）：节点真正开始执行前回调一次（重试不重复回调；
+     * 短路重放的节点不算"开始"）。只进实时流（SSE node_start 事件），<b>不落库不进快照</b>——
+     * 进行中状态仅对实时观众有意义，历史回放按完成态 trace 渲染，语义不变。
+     */
+    private volatile Consumer<Map<String, Object>> nodeStartSink;
+
+    /** 安装节点开始回调（运行开始前设置；回调异常不得影响执行） */
+    void setNodeStartSink(Consumer<Map<String, Object>> sink) {
+        this.nodeStartSink = sink;
+    }
+
+    /** 节点开始事件（与 trace 同款容错：推送异常绝不影响运行本身） */
+    void nodeStart(String nodeId, String type) {
+        Consumer<Map<String, Object>> sink = this.nodeStartSink;
+        if (sink == null) return;
+        try {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("nodeId", nodeId);
+            m.put("type", type);
+            m.put("at", System.currentTimeMillis());
+            sink.accept(m);
+        } catch (Exception ignored) {
+            // 推送失败不影响运行本身
+        }
+    }
+
     /** 开始时刻（run 总耗时用） */
     final long t0 = System.currentTimeMillis();
 
-    WorkflowRunCtx(String runId, String uid, String departmentId, String role,
-                   Map<String, String> baseOverrides, Map<String, String> baseUserOverrides,
-                   Map<String, Object> inputs, double defaultTemperature, int maxSteps) {
-        this(runId, uid, departmentId, role, baseOverrides, baseUserOverrides, inputs, defaultTemperature, maxSteps,
-                null, null);
-    }
+    /**
+     * trace 摘要截断长度（第 4 期配置化：运行开始时从配置读好显式携带，节点线程不再读配置——
+     * 与 {@code defaultTemperature} 同款口径）。默认值见 {@code ConfigDefaults} 三常量（=历史硬编码值）。
+     */
+    final int traceInputMax;
+    final int traceOutputMax;
+    final int traceErrorMax;
 
     WorkflowRunCtx(String runId, String uid, String departmentId, String role,
                    Map<String, String> baseOverrides, Map<String, String> baseUserOverrides,
                    Map<String, Object> inputs, double defaultTemperature, int maxSteps, Consumer<String> tokenSink,
-                   Consumer<List<String>> imageSink) {
+                   Consumer<List<String>> imageSink,
+                   int traceInputMax, int traceOutputMax, int traceErrorMax) {
         this.runId = runId;
         this.uid = uid;
         this.departmentId = departmentId;
@@ -120,6 +149,9 @@ public final class WorkflowRunCtx {
         this.maxSteps = maxSteps;
         this.tokenSink = tokenSink;
         this.imageSink = imageSink;
+        this.traceInputMax = Math.max(1, traceInputMax);
+        this.traceOutputMax = Math.max(1, traceOutputMax);
+        this.traceErrorMax = Math.max(1, traceErrorMax);
     }
 
     /**
@@ -133,12 +165,12 @@ public final class WorkflowRunCtx {
         t.put("nodeId", nodeId);
         t.put("type", type);
         t.put("status", status);
-        if (input != null && !input.isEmpty()) t.put("input", truncateForTrace(input, 400));
-        if (output != null) t.put("output", truncateForTrace(output, 800));
+        if (input != null && !input.isEmpty()) t.put("input", truncateForTrace(input, traceInputMax));
+        if (output != null) t.put("output", truncateForTrace(output, traceOutputMax));
         t.put("elapsedMs", elapsedMs);
         if (promptTokens != null) t.put("promptTokens", promptTokens);
         if (completionTokens != null) t.put("completionTokens", completionTokens);
-        if (error != null && !error.isBlank()) t.put("error", abbreviate(error, 500));
+        if (error != null && !error.isBlank()) t.put("error", abbreviate(error, traceErrorMax));
         traces.add(t);
         // 实时进度：节点一完成立即推一条（回调异常绝不能影响执行，故整体兜住）
         Consumer<Map<String, Object>> sink = this.traceSink;

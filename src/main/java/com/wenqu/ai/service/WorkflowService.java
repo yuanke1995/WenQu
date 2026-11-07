@@ -45,6 +45,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Consumer;
 
@@ -788,7 +789,7 @@ public class WorkflowService {
         run.setStatus("queued");
         WorkflowRunCtx ctx = newCtx(run.getId(), p, inputs, null, null);
         stream.beginRun(run.getId(), p.uid());   // 挂上运行总线：排队期就能订阅，中途刷新也接得回时间线
-        ctx.setTraceSink(tr -> stream.publishTrace(run.getId(), tr));   // 节点完成即推
+        installStreamSinks(run.getId(), ctx);   // 节点完成即推 + 节点开始即推
         runMapper.insert(run);
         submitAsync(run, ctx, row, dsl);
         return run;
@@ -962,6 +963,15 @@ public class WorkflowService {
         return run;
     }
 
+    /**
+     * 实时观测通道（有观众的运行才装）：节点完成推 trace、节点开始推 node_start（第 4 期并发可视化）。
+     * 两个回调的异常都在 ctx 侧兜住，不影响执行。
+     */
+    private void installStreamSinks(String runId, WorkflowRunCtx ctx) {
+        ctx.setTraceSink(tr -> stream.publishTrace(runId, tr));
+        ctx.setNodeStartSink(m -> stream.publishNodeStart(runId, m));
+    }
+
     /** 建运行上下文（trace 增量回调由调用方按需安装，见 {@code ctx.setTraceSink}） */
     private WorkflowRunCtx newCtx(String runId, Principal p, Map<String, Object> inputs,
                                   Consumer<String> tokenSink, Consumer<List<String>> imageSink) {
@@ -969,7 +979,10 @@ public class WorkflowService {
                 configService.currentOverrides(), userConfigService.overrides(p.uid()), inputs,
                 configService.getDouble("chat.temperature"),
                 configService.getInt("workflow.maxSteps", ConfigDefaults.WORKFLOW_MAX_STEPS),
-                tokenSink, imageSink);
+                tokenSink, imageSink,
+                configService.getInt("workflow.traceInputMaxChars", ConfigDefaults.WORKFLOW_TRACE_INPUT_MAX),
+                configService.getInt("workflow.traceOutputMaxChars", ConfigDefaults.WORKFLOW_TRACE_OUTPUT_MAX),
+                configService.getInt("workflow.traceErrorMaxChars", ConfigDefaults.WORKFLOW_TRACE_ERROR_MAX));
     }
 
     /**
@@ -1147,9 +1160,13 @@ public class WorkflowService {
                 configService.currentOverrides(), userConfigService.overrides(RequestUser.uid()),
                 parseJsonObject(run.getInputs()),
                 configService.getDouble("chat.temperature"),
-                configService.getInt("workflow.maxSteps", ConfigDefaults.WORKFLOW_MAX_STEPS));
+                configService.getInt("workflow.maxSteps", ConfigDefaults.WORKFLOW_MAX_STEPS),
+                null, null,
+                configService.getInt("workflow.traceInputMaxChars", ConfigDefaults.WORKFLOW_TRACE_INPUT_MAX),
+                configService.getInt("workflow.traceOutputMaxChars", ConfigDefaults.WORKFLOW_TRACE_OUTPUT_MAX),
+                configService.getInt("workflow.traceErrorMaxChars", ConfigDefaults.WORKFLOW_TRACE_ERROR_MAX));
         stream.beginRun(runId, RequestUser.uid());   // 续跑同样要在总线上（审批期间观众可能已经走光、或正等着接回来）
-        ctx.setTraceSink(tr -> stream.publishTrace(runId, tr));   // 续跑也边跑边亮（画布流未关时可见）
+        installStreamSinks(runId, ctx);   // 续跑也边跑边亮（画布流未关时可见）
         // 快照回填：已完成节点输出短路回放；裁决传给审核节点路由
         Map<String, Object> outputs = (Map<String, Object>) snapshot.get("outputs");
         if (outputs != null) {
@@ -1223,9 +1240,13 @@ public class WorkflowService {
                 configService.currentOverrides(), userConfigService.overrides(RequestUser.uid()),
                 parseJsonObject(run.getInputs()),
                 configService.getDouble("chat.temperature"),
-                configService.getInt("workflow.maxSteps", ConfigDefaults.WORKFLOW_MAX_STEPS));
+                configService.getInt("workflow.maxSteps", ConfigDefaults.WORKFLOW_MAX_STEPS),
+                null, null,
+                configService.getInt("workflow.traceInputMaxChars", ConfigDefaults.WORKFLOW_TRACE_INPUT_MAX),
+                configService.getInt("workflow.traceOutputMaxChars", ConfigDefaults.WORKFLOW_TRACE_OUTPUT_MAX),
+                configService.getInt("workflow.traceErrorMaxChars", ConfigDefaults.WORKFLOW_TRACE_ERROR_MAX));
         stream.beginRun(runId, RequestUser.uid());   // 续跑同样要在总线上（审批期间观众可能已经走光、或正等着接回来）
-        ctx.setTraceSink(tr -> stream.publishTrace(runId, tr));   // 续跑也边跑边亮（画布流未关时可见）
+        installStreamSinks(runId, ctx);   // 续跑也边跑边亮（画布流未关时可见）
         // 快照回填：已完成节点输出短路回放；同时登记进 fullOutputs——本轮再失败时新检查点仍完整
         for (Map.Entry<String, Object> e : outputs.entrySet()) {
             Map<String, Object> nodeOut = new LinkedHashMap<>();
@@ -1501,13 +1522,45 @@ public class WorkflowService {
                 .set(Workflow::getUpdateTime, LocalDateTime.now());
         if (setUrl) up.set(Workflow::getCallbackUrl, callbackUrl);
         if (setSecret) up.set(Workflow::getCallbackSecret, secret);
+
+        // ---- 第 4 期：webhook 入站 ----
+        // 开关切换不删令牌（重新打开沿用，外部系统不必改配置）；首次开启或显式重置时才生成新令牌
+        boolean webhookOn = asBool(body.get("webhookEnabled"));
+        String webhookToken = row.getWebhookToken();
+        if (webhookOn && (webhookToken == null || webhookToken.isBlank() || asBool(body.get("webhookResetToken")))) {
+            webhookToken = java.util.UUID.randomUUID().toString().replace("-", "");
+        }
+        up.set(Workflow::getWebhookEnabled, webhookOn ? 1 : 0);
+        up.set(Workflow::getWebhookToken, webhookToken);
+
+        // ---- 第 4 期：事件触发订阅 ----
+        if (body.containsKey("eventTriggers")) {
+            Object v = body.get("eventTriggers");
+            List<Map<String, Object>> subs = new ArrayList<>();
+            if (v instanceof List<?> list) {
+                for (Object o : list) {
+                    if (!(o instanceof Map<?, ?> m)) continue;
+                    String type = m.get("type") == null ? "" : String.valueOf(m.get("type")).trim();
+                    if (!EVENT_TYPES.contains(type)) {
+                        throw new BizException("不支持的事件类型：" + type + "（可用：" + String.join(", ", EVENT_TYPES) + "）");
+                    }
+                    Map<String, Object> sub = new LinkedHashMap<>();
+                    sub.put("type", type);
+                    String kbId = m.get("kbId") == null ? "" : String.valueOf(m.get("kbId")).trim();
+                    if (!kbId.isEmpty()) sub.put("kbId", kbId);
+                    subs.add(sub);
+                }
+            }
+            up.set(Workflow::getEventTriggers, subs.isEmpty() ? null : com.alibaba.fastjson2.JSON.toJSONString(subs));
+        }
+
         workflowMapper.update(null, up);
         log.info("[WORKFLOW] 保存自动化配置 {}（{}）：定时={} cron={} 回调={}", row.getName(), row.getId(),
                 enabled, cron, callbackUrl == null ? "未配置" : callbackUrl);
         return automationConfig(row.getId());
     }
 
-    /** 自动化配置（密钥脱敏）：定时开关/cron/时区/下次执行 + 回调地址/是否已设密钥。含回调地址，读取同样要管理权 */
+    /** 自动化配置（密钥脱敏）：定时开关/cron/时区/下次执行 + 回调地址/是否已设密钥 + webhook/事件订阅。含回调地址，读取同样要管理权 */
     public Map<String, Object> automationConfig(String id) {
         Workflow row = requireManage(id);
         Map<String, Object> m = new LinkedHashMap<>();
@@ -1518,9 +1571,19 @@ public class WorkflowService {
         m.put("nextRunAt", row.getScheduleNextRunAt());
         m.put("callbackUrl", row.getCallbackUrl());
         m.put("callbackSecretSet", row.getCallbackSecret() != null && !row.getCallbackSecret().isBlank());
+        // 第 4 期：webhook（令牌明文回显——管理权已把关，外部系统配置时要从这里复制）+ 事件订阅
+        m.put("webhookEnabled", Integer.valueOf(1).equals(row.getWebhookEnabled()));
+        m.put("webhookToken", row.getWebhookToken());
+        m.put("webhookPath", row.getWebhookToken() == null || row.getWebhookToken().isBlank()
+                ? null : "/api/ai/v1/workflows/webhook/" + row.getWebhookToken());
+        m.put("webhookPublished", "published".equals(row.getStatus()));
+        m.put("eventTriggers", parseEventTriggers(row.getEventTriggers()));
         m.put("published", "published".equals(row.getStatus()));
         return m;
     }
+
+    /** 支持的事件类型注册表（第 4 期首源；新增源在此登记并由 WorkflowEventTriggerService 接线） */
+    public static final Set<String> EVENT_TYPES = Set.of("kb.docIndexed");
 
     /**
      * 定时触发扫描（ScheduleCenter 周期调用）：取到期的启用定时工作流，<b>先推进 next_run_at 再异步派发</b>，
@@ -1601,6 +1664,95 @@ public class WorkflowService {
         Principal p = Principal.ofUser(row.getUid(), userMapper, userRoleService);
         return execute(row, row.getPublishedDsl(), "schedule", row.getUid(), null, row.getPublishedVersion(),
                 "published", Map.of(), null, null, p);
+    }
+
+    // --------------------------------------------------------------------------------------------------
+    // 第 4 期：webhook 入站触发 + 事件触发派发
+    // --------------------------------------------------------------------------------------------------
+
+    /**
+     * Webhook 入站触发：按令牌定位工作流（令牌即凭证，URL 不暴露工作流 id；令牌错/未启用一律 404 不区分——
+     * 不给枚举者探明「存在但没开」的信息）。守卫与定时同口径：只跑已发布、含人工审核节点 fail-loud、
+     * 归属工作区已归档拒绝。异步入派发池（排队/取消语义与调试运行完全一致），立即返回 run 供外部系统核对。
+     * 触发身份 = 工作流创建者（webhook 没有登录身份，资源级判权全部收敛到归属人）。
+     *
+     * @param inputs 请求体整体作为开始节点入参（{{start.key}} 取值来源）
+     */
+    public WorkflowRun runByWebhook(String token, Map<String, Object> inputs) {
+        if (token == null || token.isBlank()) throw new BizException(404, "webhook 不存在");
+        Workflow row = workflowMapper.selectOne(new LambdaQueryWrapper<Workflow>()
+                .eq(Workflow::getWebhookToken, token.trim())
+                .last("LIMIT 1"));
+        if (row == null || !Integer.valueOf(1).equals(row.getWebhookEnabled())) {
+            throw new BizException(404, "webhook 不存在");
+        }
+        assertProjectArchived(row, "webhook 触发");
+        if (!"published".equals(row.getStatus()) || row.getPublishedDsl() == null || row.getPublishedDsl().isBlank()) {
+            throw new BizException(400, "工作流尚未发布：webhook 只跑已发布版本");
+        }
+        WorkflowDsl dsl = parseDsl(row.getPublishedDsl());   // 入队前解析：坏 DSL 立即报错，不占队列
+        assertNoApprovalNode(dsl, "webhook 触发");
+        return startAsyncPublishedRun(row, "webhook", dsl, inputs);
+    }
+
+    /** 已发布版本的异步入队（webhook/事件触发共用）：建 run+ctx、挂运行流、投派发池 */
+    private WorkflowRun startAsyncPublishedRun(Workflow row, String triggerType, WorkflowDsl dsl,
+                                               Map<String, Object> inputs) {
+        Principal p = Principal.ofUser(row.getUid(), userMapper, userRoleService);
+        WorkflowRun run = newRun(row, row.getPublishedDsl(), triggerType, row.getUid(), null,
+                row.getPublishedVersion(), "published", inputs);
+        run.setStatus("queued");
+        WorkflowRunCtx ctx = newCtx(run.getId(), p, inputs, null, null);
+        stream.beginRun(run.getId(), row.getUid());
+        installStreamSinks(run.getId(), ctx);
+        runMapper.insert(run);
+        submitAsync(run, ctx, row, dsl);
+        return run;
+    }
+
+    /**
+     * 事件触发运行（第 4 期，{@code WorkflowEventTriggerService} 派发）：守卫与定时同口径——
+     * 未发布/含审批节点抛 BizException（调用方按「跳过并告警」处理），归档拒绝。异步入派发池，
+     * 排队/取消/SSE 与调试运行完全一致。触发身份 = 工作流创建者。
+     */
+    public WorkflowRun runByEvent(String workflowId, Map<String, Object> inputs) {
+        Workflow row = workflowMapper.selectById(workflowId);
+        if (row == null) return null;
+        if (!"published".equals(row.getStatus()) || row.getPublishedDsl() == null || row.getPublishedDsl().isBlank()) {
+            throw new BizException("工作流「" + row.getName() + "」未发布：事件触发只跑已发布版本");
+        }
+        assertProjectArchived(row, "事件触发");
+        WorkflowDsl dsl = parseDsl(row.getPublishedDsl());
+        assertNoApprovalNode(dsl, "事件触发");
+        return startAsyncPublishedRun(row, "event", dsl, inputs);
+    }
+
+    /** 事件触发派发的守卫（与 runScheduledSync 同口径）走这里：归档校验的共享小方法 */
+    private void assertProjectArchived(Workflow row, String scene) {
+        if (row.getProjectId() == null || row.getProjectId().isBlank()) return;
+        Project proj = projectService.byId(row.getProjectId());
+        if (proj != null && Project.STATUS_ARCHIVED.equals(proj.getStatus())) {
+            throw new BizException("该工作流归属的工作区已归档：" + scene + "被拒绝（恢复工作区后再试）");
+        }
+    }
+
+    /** 解析 event_triggers JSON 列（坏数据按未订阅处理，不炸读取路径） */
+    static List<Map<String, Object>> parseEventTriggers(String json) {
+        if (json == null || json.isBlank()) return List.of();
+        try {
+            List<Map<String, Object>> out = new ArrayList<>();
+            for (Object o : com.alibaba.fastjson2.JSON.parseArray(json)) {
+                if (o instanceof Map<?, ?> m) {
+                    Map<String, Object> sub = new LinkedHashMap<>();
+                    sub.put("type", String.valueOf(m.get("type")));
+                    sub.put("kbId", m.get("kbId") == null ? "" : String.valueOf(m.get("kbId")));
+                    out.add(sub);
+                }
+            }
+            return out;
+        } catch (Exception e) {
+            return List.of();
+        }
     }
 
     /** 回调地址校验：http/https + 过 SSRF（内网地址拒绝，与 http 节点同口径） */

@@ -84,6 +84,9 @@ public class SecurityConfig implements WebMvcConfigurer {
         if ("GET".equals(method) && "/api/ai/auth/me".equals(path)) return true;
         // 游客分享通道：分享 token 即凭据
         if (isShareGuestEndpoint(path)) return true;
+        // 工作流 webhook 入站（第 4 期）：令牌即凭据（POST /api/ai/v1/workflows/webhook/{token}），
+        // 与游客分享同一形态——逐条列名放行，资源级校验在 WorkflowService.runByWebhook
+        if (isWorkflowWebhookEndpoint(method, path)) return true;
         // 租户开通申请：免登录的唯一写入端点（精确 POST）
         if (isTenantApplyEndpoint(method, path)) return true;
         // 沙盒脚本回调：一次性运行凭据
@@ -469,6 +472,16 @@ public class SecurityConfig implements WebMvcConfigurer {
     }
 
     /**
+     * 工作流 webhook 入站（第 4 期）：免登录通道——令牌即凭据（高熵随机，URL 自证明身份）。
+     * 只对 POST 且精确前缀 /api/ai/v1/workflows/webhook/ 放行；令牌错/未启用 404、
+     * 发布态/审批节点/归档校验收在 WorkflowService.runByWebhook（fail-loud）。
+     * 与游客分享同一形态：没有登录态也没有角色的调用方，RBAC 层必须显式放过（isPublicChannelEndpoint 同款分支）。
+     */
+    public static boolean isWorkflowWebhookEndpoint(String method, String path) {
+        return "POST".equals(method) && path != null && path.startsWith("/api/ai/v1/workflows/webhook/");
+    }
+
+    /**
      * 访问控制：API Key 放行 → 登录门禁 → 管理员判定（三层，fail-closed）。
      * <p>身份一律取自 {@link UserContextInterceptor} 装载的登录态，不读取用户自报请求头。</p>
      */
@@ -524,7 +537,8 @@ public class SecurityConfig implements WebMvcConfigurer {
                     && !isAuthBootstrapEndpoint(method, path) && !isShareGuestEndpoint(path)
                     && !isTenantApplyEndpoint(method, path)
                     && !isSandboxCallbackEndpoint(method, path)
-                    && !isExecutorEndpoint(method, path)) {
+                    && !isExecutorEndpoint(method, path)
+                    && !isWorkflowWebhookEndpoint(method, path)) {
                 response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
                 response.setContentType("application/json;charset=UTF-8");
                 response.getWriter().write(objectMapper.writeValueAsString(

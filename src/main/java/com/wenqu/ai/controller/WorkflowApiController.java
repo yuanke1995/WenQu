@@ -67,4 +67,19 @@ public class WorkflowApiController {
         Object keyId = request.getAttribute(SecurityConfig.ATTR_API_KEY_ID);
         return ResultJson.ok(workflowService.getRunForApi(id, runId, keyId == null ? null : String.valueOf(keyId)));
     }
+
+    /**
+     * Webhook 入站触发（第 4 期）：令牌即凭据（免登录通道，SecurityConfig 显式放行）。
+     * 请求体整体作为开始节点入参；异步入队立即返回 runId，外部系统按 runId 补查结果（上面的查询端点，
+     * 或工作流自身配置的终态回调）。令牌错/未启用 404（不区分，防枚举）；未发布 400；含审核节点 400。
+     */
+    @Operation(summary = "Webhook 入站触发", description = "按令牌触发已发布工作流（自动化弹窗里复制完整地址）："
+            + "请求体 JSON 整体作为开始节点入参（{{start.key}} 取值来源），异步执行立即返回 {runId, status}；"
+            + "队列满报「运行队列已满」可稍后重试")
+    @PostMapping("/webhook/{token}")
+    public ResultJson webhook(@PathVariable("token") String token,
+                              @RequestBody(required = false) Map<String, Object> body) {
+        WorkflowRun run = workflowService.runByWebhook(token, body == null ? Map.of() : body);
+        return ResultJson.ok(Map.of("runId", run.getId(), "status", run.getStatus()));
+    }
 }
