@@ -126,6 +126,10 @@ public class WorkflowEngine {
     private final CredentialService credentialService;
     /** 库级检索参数：重排模型按节点选中的库收敛（与问答工具同一口径） */
     private final KbRetrievalParamService kbRetrievalParams;
+    /** 知识写入节点：文本入库（复用上传解析管线） */
+    private final DocumentService documentService;
+    /** 知识写入防环登记：本 run 写入的文档被 kb.docIndexed 订阅命中时按链深熔断 */
+    private final WorkflowEventChainRegistry eventChainRegistry;
 
     public WorkflowEngine(WorkflowValidator validator, ChatClient chatClient,
                           HybridRetrievalService retrievalService, ConfigService configService,
@@ -138,7 +142,9 @@ public class WorkflowEngine {
                           com.wenqu.ai.skill.WenquSkillRepository skillRepository,
                           McpClientService mcpClientService, CredentialService credentialService,
                           com.wenqu.ai.mapper.SessionMapper sessionMapper,
-                          KbRetrievalParamService kbRetrievalParams) {
+                          KbRetrievalParamService kbRetrievalParams,
+                          DocumentService documentService,
+                          WorkflowEventChainRegistry eventChainRegistry) {
         this.validator = validator;
         this.chatClient = chatClient;
         this.retrievalService = retrievalService;
@@ -156,6 +162,8 @@ public class WorkflowEngine {
         this.mcpClientService = mcpClientService;
         this.credentialService = credentialService;
         this.kbRetrievalParams = kbRetrievalParams;
+        this.documentService = documentService;
+        this.eventChainRegistry = eventChainRegistry;
     }
 
     /**
@@ -165,7 +173,7 @@ public class WorkflowEngine {
     public static final List<String> EXECUTABLE = List.of(
             "start", "end", "llm", "retrieval", "condition",
             "http", "code", "subagent", "approval", "loop", "template",
-            "skill", "mcp");
+            "skill", "mcp", "kb_write");
 
     /** 条件类（路由器）节点：出边携带分支键、节点体内裁决路由（condition/approval/loop 同范式） */
     public static final Set<String> ROUTER_TYPES = Set.of("condition", "approval", "loop");
@@ -278,6 +286,8 @@ public class WorkflowEngine {
                 return namespace(n.getId(), ctx.resumeOutputs.get(n.getId()));
             }
             long t0 = System.currentTimeMillis();
+            // 第 4 期并发可视化：节点开始事件（重试不重复回调；挂起/短路重放的节点不回调——它们不是"开始"）
+            if (ctx != null) ctx.nodeStart(n.getId(), n.getType());
             Map<String, Object> inputSnapshot = ctx == null ? Map.of() : inputSnapshot(n, ctx, state);
             int attempts = cfgInt(n, "retries", 0, 0, 3) + 1;
             Exception last = null;
@@ -346,6 +356,7 @@ public class WorkflowEngine {
             case "template" -> templateBody(n, ctx);
             case "skill" -> skillBody(n, ctx);
             case "mcp" -> mcpBody(n, ctx);
+            case "kb_write" -> kbWriteBody(n, ctx);
             case "end" -> endBody(n, ctx);
             default -> throw new BizException("节点「" + n.getId() + "」类型 " + n.getType() + " 无执行体");
         };
@@ -1166,6 +1177,56 @@ public class WorkflowEngine {
             String text = render(cfgStr(n, "template", true), ref -> resolveRef(ref, ctx, state));
             return NodeOut.of(Map.of("text", text));
         };
+    }
+
+    // ---- 第 4 期：kb_write（知识写入，与 retrieval 成读→加工→写回闭环） ----
+
+    /**
+     * 知识写入节点：把上游文本提交进知识库（走 {@link DocumentService#ingestText} 全套入库管线）。
+     * 入库解析<b>异步</b>进行——节点语义是「提交」：docId 提交即定可被下游引用，run 收口不等待解析完成。
+     * <p>
+     * 权限在 ingestText 内 fail-loud（只有库创建者可写，自动化入口从严）；身份经 {@code withReplay}
+     * 重放为运行发起人（ingestText 内部读 RequestUser 的口径与 upload 一致）。
+     * <p>
+     * 事件防环：本节点写入的文档登记进 {@link WorkflowEventChainRegistry}（链深 = 本 run 深度 + 1），
+     * 文档解析完成事件再触发订阅工作流时按链深熔断——「写入→解析→再触发」的自环跑到上限自动停。
+     */
+    private Function<OverAllState, NodeOut> kbWriteBody(WorkflowDsl.Node n, WorkflowRunCtx ctx) {
+        return state -> {
+            String kbId = cfgStr(n, "kbId", true);
+            String mode = cfgStr(n, "mode", false);
+            boolean update = "update".equalsIgnoreCase(mode);
+            String title = render(cfgStr(n, "title", !update), ref -> resolveRef(ref, ctx, state));
+            String content = render(cfgStr(n, "content", true), ref -> resolveRef(ref, ctx, state));
+            String docIdRef = render(cfgStr(n, "docId", false), ref -> resolveRef(ref, ctx, state));
+            com.wenqu.ai.model.AiDocument doc = withReplay(ctx, () -> {
+                try {
+                    return documentService.ingestText(title, content, kbId, mode, docIdRef);
+                } catch (BizException e) {
+                    throw e;
+                } catch (Exception e) {
+                    throw new BizException("节点「" + n.getId() + "」知识写入失败：" + e.getMessage());
+                }
+            });
+            // 链深登记：外部上传的文档无登记按 1 层起算（见 registry.chainDepth）
+            eventChainRegistry.registerWrittenDoc(doc.getId(), chainDepthOf(ctx) + 1);
+            Map<String, Object> trace = new LinkedHashMap<>();
+            trace.put("kbId", kbId);
+            trace.put("mode", update ? "update" : "create");
+            if (update) trace.put("docId", doc.getId());
+            return new NodeOut(Map.of("docId", doc.getId(),
+                            "fileName", doc.getFileName() == null ? "" : doc.getFileName(),
+                            "status", "submitted"),
+                    null, null, trace);
+        };
+    }
+
+    /** 本 run 的链深（事件触发派发时注入 inputs._wfChainDepth；手动/API/定时/智能体触发 = 0） */
+    static int chainDepthOf(WorkflowRunCtx ctx) {
+        Object v = ctx == null || ctx.inputs == null ? null : ctx.inputs.get("_wfChainDepth");
+        if (v instanceof Number num) return Math.max(0, num.intValue());
+        if (v instanceof String s && s.matches("\\d+")) return Math.max(0, Integer.parseInt(s));
+        return 0;
     }
 
     // ---- 第 3 期：skill / mcp（生态节点） ----

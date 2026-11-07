@@ -39,7 +39,7 @@ public class WorkflowValidator {
     public static final Set<String> KNOWN_TYPES = Set.of(
             "start", "end", "llm", "retrieval", "condition",
             "http", "code", "subagent", "approval", "loop", "template",
-            "skill", "mcp");
+            "skill", "mcp", "kb_write");
     /** 开始节点的固定 id 语义：变量引用 {{start.xxx}} 指向入参 */
     public static final String START_SEMANTIC = "start";
     public static final String END_TYPE = "end";

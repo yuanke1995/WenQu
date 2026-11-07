@@ -93,6 +93,8 @@ public class DocumentService {
     private final DocumentAclTags documentAclTags;
     private final com.wenqu.ai.mapper.QaLogMapper qaLogMapper;
     private final List<DocumentParser> parsers;
+    /** Spring 事件发布（第 4 期）：文档解析完成发 DocIndexedEvent，工作流事件触发订阅（旁路，失败不影响解析） */
+    private final org.springframework.context.ApplicationEventPublisher eventPublisher;
 
     /** 上传支持格式清单（聚合全部解析器声明；解析器增删后报错文案自动跟上，不再写死过期） */
     private String supportedExtsCsv() {
@@ -387,9 +389,79 @@ public class DocumentService {
         }
     }
 
+    /**
+     * 文本直接入库（工作流 kb_write 节点专用入口）：内容以 UTF-8 构造 .md 内存文件，
+     * 走与上传完全相同的入库链路（同名 upsert / 同 docId 替换 → 源文件落盘 → 异步解析/分块/向量化/关键词索引）。
+     * 解析异步进行：返回时文档处于「解析中」，docId 已可被下游节点引用（trace 注明该语义）。
+     * <p>
+     * 权限：只有知识库创建者可写（比手动上传更严——自动化入口无人盯着，归属校验 fail-loud）。
+     * 身份取 {@code RequestUser}：工作流节点线程经 {@code withReplay} 已重放为运行发起人。
+     *
+     * @param mode create=新建（同名 upsert）；update=按 docId 覆盖内容重解析（文档身份/归属不变，标题不参与）
+     */
+    public AiDocument ingestText(String title, String content, String kbId, String mode, String docId) throws Exception {
+        boolean update = "update".equalsIgnoreCase(mode == null ? "" : mode.trim());
+        if (content == null || content.isBlank()) {
+            throw new BizException("文档内容为空：kb_write 节点需要非空正文");
+        }
+        String targetKbId = kbId == null || kbId.isBlank() ? kbService.defaultId(RequestUser.uid()) : kbId.trim();
+        KnowledgeBase kb = kbMapper.selectById(targetKbId);
+        if (kb == null || (kb.getDeleted() != null && kb.getDeleted() == 1)) {
+            throw new BizException("目标知识库不存在或已删除");
+        }
+        if (kb.getCreatedBy() != null && !kb.getCreatedBy().equals(RequestUser.uid())) {
+            throw new BizException("只有知识库创建者可以写入：「" + kb.getName() + "」");
+        }
+
+        // update 模式：按 docId 定位既有文档，覆盖内容重解析（replaceExisting 的 CAS/快照/重嵌全套语义）
+        if (update) {
+            if (docId == null || docId.isBlank()) {
+                throw new BizException("更新模式需要文档ID（可引用上游节点输出，如 {{节点id.docId}}）");
+            }
+            AiDocument existing = documentMapper.selectById(docId.trim());
+            if (existing == null) {
+                throw new BizException("要更新的文档不存在：" + docId.trim());
+            }
+            if (!targetKbId.equals(existing.getKbId())) {
+                throw new BizException("文档「" + existing.getFileName() + "」不在目标知识库里（更新不改变归属，请选对库）");
+            }
+            if ("url".equalsIgnoreCase(existing.getFileType())) {
+                throw new BizException("不支持覆盖网页型文档（其内容由定时抓取维护）");
+            }
+            DocumentParser parser = parsers.stream().filter(p -> p.supports("md")).findFirst()
+                    .orElseThrow(() -> new BizException("文本解析器未就绪"));
+            Object lock = uploadLocks.computeIfAbsent(existing.getFileName(), k -> new Object());
+            try {
+                synchronized (lock) {
+                    return replaceExisting(existing, new InMemoryPage(
+                            content.getBytes(java.nio.charset.StandardCharsets.UTF_8), existing.getFileName()),
+                            "由工作流更新", parser, null);
+                }
+            } finally {
+                uploadLocks.remove(existing.getFileName(), lock);
+            }
+        }
+
+        // create 模式：标题 → 文件名（清洗口径与 importFromUrl 相同），同名走 doUpload 的 upsert 语义
+        String name = title == null ? "" : title.replaceAll("\\p{Cntrl}", " ").trim();
+        if (name.isBlank()) name = "未命名文档";
+        if (name.length() > 200) name = name.substring(0, 200);
+        String fileName = name + ".md";
+        DocumentParser parser = parsers.stream().filter(p -> p.supports("md")).findFirst()
+                .orElseThrow(() -> new BizException("文本解析器未就绪"));
+        Object lock = uploadLocks.computeIfAbsent(fileName, k -> new Object());
+        try {
+            synchronized (lock) {
+                return doUpload(new InMemoryPage(content.getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                        fileName), fileName, "md", "由工作流写入", parser, targetKbId, null);
+            }
+        } finally {
+            uploadLocks.remove(fileName, lock);
+        }
+    }
+
     /** 单次扫描最多触发的刷新数（防一次积压打满抓取/解析链路） */
     private static final int WEB_REFRESH_SCAN_LIMIT = 20;
-
     /**
      * 网页源定时刷新：扫描到期（next_refresh_at<=now）且开启自动刷新的 url 文档，
      * 逐个重新抓网 + 同名替换重建（复用 {@link #importFromUrl} 全套入库链路：落盘/异步解析/向量化/索引），
@@ -1337,6 +1409,14 @@ public class DocumentService {
             // P1 GraphRAG：库级开关开启时异步抽实体关系三元组（抽取模型与判权按库主，
             // 见 GraphRagService.extractDoc；这里传的 uid 仅作库主缺失时的兜底）
             graphRagService.onDocParsed(docId, null, "user");
+            // 第 4 期：解析完成事件（工作流事件触发源 kb.docIndexed）。旁路发布——
+            // 与「解析完成」通知同款语义：监听侧自兜异常，这里任何抖动都不许影响解析收口
+            try {
+                eventPublisher.publishEvent(new DocIndexedEvent(docId, doc.getKbId(),
+                        doc.getFileName(), doc.getCreatedBy()));
+            } catch (Exception ex) {
+                log.warn("[{}] 解析完成事件发布失败（已忽略）: {}", docId, ex.getMessage());
+            }
         } catch (Exception e) {
             // 删除场景：线程被 delete() 中断（interrupt）或检查点发现删除 → 只清理产物，不置失败状态
             if (deletedFlags.containsKey(docId)) {
