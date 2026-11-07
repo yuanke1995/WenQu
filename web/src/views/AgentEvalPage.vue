@@ -74,7 +74,7 @@
               <a-table-column title="智能体" :width="230" key="name">
                 <template #default="{ record }">
                   <span class="agent-cell">
-                    <span class="agent-ico" :class="{ builtin: record.isBuiltin === 1 }">{{ iconOf(record) }}</span>
+                    <AgentAvatar :agent="record" :size="22" />
                     <span class="agent-name">{{ record.agentName }}</span>
                     <span class="agent-sub">v{{ record.agentVersion ?? '—' }}{{ record.isBuiltin === 1 ? ' · 内置' : '' }}</span>
                   </span>
@@ -184,7 +184,7 @@
         <span>{{ agentRow?.agentName || currentAgentId }}</span>
       </div>
       <div class="detail-head">
-        <span class="big-avatar">{{ iconOf(agentRow || {}) }}</span>
+        <AgentAvatar :agent="agentRow" :size="38" />
         <div class="dh-main">
           <div class="dh-title">{{ agentRow?.agentName || currentAgentId }}
             <span class="pill plain mini">v{{ agentRow?.agentVersion ?? gate?.agentVersion ?? '—' }}</span>
@@ -455,7 +455,7 @@
       <div class="pick-list">
         <div v-if="!unevaluatedAgents.length" class="empty-line">所有可见智能体都已建立评测集</div>
         <div v-for="a in unevaluatedAgents" :key="a.agentId" class="pick-row" @click="openAgent(a.agentId, 'suite')">
-          <span class="agent-ico">{{ iconOf(a) }}</span>
+          <AgentAvatar :agent="a" :size="22" />
           <span class="agent-name">{{ a.agentName }}</span>
           <span class="sp"></span>
           <right-outlined class="ic" />
@@ -473,6 +473,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { message } from 'ant-design-vue'
 import { SearchOutlined, PlusOutlined, LeftOutlined, RightOutlined } from '@ant-design/icons-vue'
 import EvalCompareModal from '../components/agent/EvalCompareModal.vue'
+import AgentAvatar from '../components/AgentAvatar.vue'
 import {
   agentEvalSummary, agentEvalSuite, agentEvalSaveSuite, agentEvalMutateCases, agentEvalGenerateCases,
   agentEvalStartRun, agentEvalRuns, agentEvalRun, agentEvalCancelRun, agentEvalGate
@@ -852,7 +853,6 @@ const signed = v => (v == null ? '—' : (v > 0 ? '+' : '') + (Math.round(v * 10
 const secs = v => (v == null ? '—' : v >= 60000 ? Math.round(v / 6000) / 100 + 'm' : (Math.round(v / 100) / 10) + 's')
 const tokens = v => (v == null ? '—' : v >= 1000 ? Math.round(v / 100) / 10 + 'k' : String(v))
 const shortTime = t => (t ? String(t).replace('T', ' ').slice(5, 16) : '—')
-const iconOf = a => (a?.agentIcon && String(a.agentIcon).trim()) || '▣'
 const dimClass = v => (v == null ? 'muted' : v >= 80 ? 'cell-good' : v >= 60 ? '' : 'cell-bad')
 const scoreTone = v => (v == null ? '' : v >= 80 ? 'good' : v >= 60 ? '' : 'bad')
 const rateClass = r => (r.lastRun.passRate >= (r.gate?.thresholdRate ?? 80) ? 'cell-strong' : 'cell-bad')
