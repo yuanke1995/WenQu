@@ -83,7 +83,12 @@ public class SubAgentConsultService {
         List<Registered> registerAll(List<Map<String, Object>> childSources);
     }
 
-    /** 本轮已咨询过的助手 → 当时那份「给模型的文本」（同一位问两次不该再花一整条子轮） */
+    /**
+     * 本轮已咨询过的问题 → 当时那份「给模型的文本」。
+     * <p>键必须是「助手 + 问题」，不能只有助手：同一轮里对同一位追问不同内容是合法场景
+     * （先要总量、再补剩下的维度），只按助手去重会把第二次追问直接挡回第一次的旧答案
+     * （2026-11-08 真机：取数助手连续三次返回同一份「步数用尽」回报）。
+     */
     public static final class Ledger {
         private final Map<String, String> answered = new LinkedHashMap<>();
         /**
@@ -94,12 +99,17 @@ public class SubAgentConsultService {
         private final Map<String, Map<String, Object>> reports = new ConcurrentHashMap<>();
         private int started;
 
-        synchronized String cached(String agentId) {
-            return answered.get(agentId);
+        synchronized String cached(String agentId, String question) {
+            return answered.get(cacheKey(agentId, question));
         }
 
-        synchronized void remember(String agentId, String text) {
-            answered.put(agentId, text);
+        synchronized void remember(String agentId, String question, String text) {
+            answered.put(cacheKey(agentId, question), text);
+        }
+
+        /** 同一助手 + 同一问题才算重复；问句不同就要真跑一趟（次数上限仍由 consult 兜住） */
+        private static String cacheKey(String agentId, String question) {
+            return agentId + '\u0000' + (question == null ? "" : question.strip());
         }
 
         /** 记一次已发起的咨询（上限判定在 consult 里做，这里只计数） */
@@ -155,10 +165,10 @@ public class SubAgentConsultService {
             //（实测发生过：@ 智报 + 模型自己又派了智报 → 两条分支、双份开销）
             return "本轮已经咨询过这位助手，它的结论与资料已在你的上下文里，无需重复咨询；请据此作答，或改问清单里的其他助手。";
         }
-        String hit = ledger.cached(id);
+        String hit = ledger.cached(id, question);
         if (hit != null) {
-            log.info("[CONSULT] 本轮已咨询过 {}，直接回上次回报（省一条子轮）", a.getName());
-            return hit + "\n\n（提示：这位助手本轮已经答过，上面就是它的回报，不要再问它。）";
+            log.info("[CONSULT] 本轮已咨询过 {} 的同一个问题，直接回上次回报（省一条子轮）", a.getName());
+            return hit + "\n\n（提示：这个问题本轮已经问过这位助手，上面就是它的回报，不要再重复问。）";
         }
         int cap = Math.max(1, configService.getInt("agent.consultMaxPerTurn", ConfigDefaults.AGENT_CONSULT_MAX_PER_TURN));
         if (ledger.used() + 1 > cap) {
@@ -187,13 +197,13 @@ public class SubAgentConsultService {
             String why = report.error() == null || report.error().isBlank() ? "未产出可用结论" : report.error();
             String text = "咨询「" + a.getName() + "」没有拿到结果（" + why + "，用时 " + ms / 1000 + " 秒）。"
                     + "换一位助手或换个问法再试，也可以基于现有资料作答并说明这一部分没查到。";
-            ledger.remember(id, text);
+            ledger.remember(id, question, text);
             ledger.report(id, failedChat(a, question, report.status(), why, ms));
             return text;
         }
 
         Rendered r = render(a, question, report, sink, ms);
-        ledger.remember(id, r.text());
+        ledger.remember(id, question, r.text());
         ledger.report(id, r.chat());
         if (ctx.onConsulted() != null) {
             try {
